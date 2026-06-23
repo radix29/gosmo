@@ -25,11 +25,12 @@ type Table struct {
 }
 
 // FullName returns [Schema].[Name].
-func (t *Table) FullName() string {
-	return fmt.Sprintf("[%s].[%s]", t.Schema, t.Name)
-}
+func (t *Table) FullName() string { return qualifiedName(t.Schema, t.Name) }
 
-// ── Columns ───────────────────────────────────────────────────────────────────
+// DB returns the parent Database.
+func (t *Table) DB() *Database { return t.db }
+
+// -- Columns -------------------------------------------------------------------
 
 // Column mirrors Microsoft.SqlServer.Management.Smo.Column.
 type Column struct {
@@ -52,24 +53,32 @@ type Column struct {
 
 // Columns returns all columns for this table in ordinal order.
 func (t *Table) Columns() ([]*Column, error) {
+	return t.ColumnsContext(context.Background())
+}
+
+// ColumnsContext is the context-aware variant of Columns.
+func (t *Table) ColumnsContext(ctx context.Context) ([]*Column, error) {
 	const q = `
 SELECT c.name, c.column_id,
-       tp.name AS type_name, c.max_length, c.precision, c.scale,
+       tp.name,
+       c.max_length, c.precision, c.scale,
        c.is_nullable, c.is_identity, c.is_computed,
        ISNULL(cc.definition, ''),
-       ISNULL(dc.name,''), ISNULL(dc.definition,''),
-       c.is_rowguidcol, ISNULL(c.collation_name,''),
+       ISNULL(dc.name, ''), ISNULL(dc.definition, ''),
+       c.is_rowguidcol, ISNULL(c.collation_name, ''),
        ISNULL(ic.seed_value, 0), ISNULL(ic.increment_value, 0)
 FROM   sys.columns c
 JOIN   sys.types tp ON tp.user_type_id = c.user_type_id
-LEFT   JOIN sys.computed_columns cc ON cc.object_id = c.object_id AND cc.column_id = c.column_id
-LEFT   JOIN sys.default_constraints dc ON dc.parent_object_id = c.object_id
-                                       AND dc.parent_column_id = c.column_id
-LEFT   JOIN sys.identity_columns ic ON ic.object_id = c.object_id AND ic.column_id = c.column_id
-WHERE  c.object_id = ?
+LEFT   JOIN sys.computed_columns cc
+       ON  cc.object_id  = c.object_id AND cc.column_id = c.column_id
+LEFT   JOIN sys.default_constraints dc
+       ON  dc.parent_object_id = c.object_id AND dc.parent_column_id = c.column_id
+LEFT   JOIN sys.identity_columns ic
+       ON  ic.object_id  = c.object_id AND ic.column_id = c.column_id
+WHERE  c.object_id = @p1
 ORDER  BY c.column_id`
 
-	rows, err := t.db.query(context.Background(), q, t.ObjectID)
+	rows, err := t.db.query(ctx, q, t.ObjectID)
 	if err != nil {
 		return nil, fmt.Errorf("gosmo: list columns for %s: %w", t.FullName(), err)
 	}
@@ -102,7 +111,7 @@ ORDER  BY c.column_id`
 	return cols, rows.Err()
 }
 
-// ── Indexes ───────────────────────────────────────────────────────────────────
+// -- Indexes -------------------------------------------------------------------
 
 // Index mirrors Microsoft.SqlServer.Management.Smo.Index.
 type Index struct {
@@ -129,15 +138,20 @@ type IndexColumn struct {
 
 // Indexes returns all indexes on the table.
 func (t *Table) Indexes() ([]*Index, error) {
+	return t.IndexesContext(context.Background())
+}
+
+// IndexesContext is the context-aware variant of Indexes.
+func (t *Table) IndexesContext(ctx context.Context) ([]*Index, error) {
 	const q = `
 SELECT i.name, i.index_id, i.type_desc, i.is_unique, i.is_primary_key,
        i.is_unique_constraint, i.is_disabled, i.fill_factor,
-       ISNULL(i.filter_definition,'')
+       ISNULL(i.filter_definition, '')
 FROM   sys.indexes i
-WHERE  i.object_id = ? AND i.type > 0
+WHERE  i.object_id = @p1 AND i.type > 0
 ORDER  BY i.index_id`
 
-	rows, err := t.db.query(context.Background(), q, t.ObjectID)
+	rows, err := t.db.query(ctx, q, t.ObjectID)
 	if err != nil {
 		return nil, fmt.Errorf("gosmo: list indexes for %s: %w", t.FullName(), err)
 	}
@@ -147,13 +161,11 @@ ORDER  BY i.index_id`
 	for rows.Next() {
 		idx := &Index{}
 		var typeDesc sql.NullString
-		var filterDef string
 		if err := rows.Scan(&idx.Name, &idx.IndexID, &typeDesc,
 			&idx.IsUnique, &idx.IsPrimaryKey, &idx.IsUniqueConstraint,
-			&idx.IsDisabled, &idx.FillFactor, &filterDef); err != nil {
+			&idx.IsDisabled, &idx.FillFactor, &idx.FilterDefinition); err != nil {
 			return nil, err
 		}
-		idx.FilterDefinition = filterDef
 		switch strings.TrimSpace(typeDesc.String) {
 		case "CLUSTERED":
 			idx.Type = IndexTypeClustered
@@ -168,8 +180,7 @@ ORDER  BY i.index_id`
 			idx.Type = IndexTypeColumnStore
 		}
 
-		// Load columns
-		cols, err := t.indexColumns(idx.IndexID)
+		cols, err := t.indexColumnsContext(ctx, idx.IndexID)
 		if err != nil {
 			return nil, err
 		}
@@ -185,15 +196,15 @@ ORDER  BY i.index_id`
 	return indexes, rows.Err()
 }
 
-func (t *Table) indexColumns(indexID int) ([]IndexColumn, error) {
+func (t *Table) indexColumnsContext(ctx context.Context, indexID int) ([]IndexColumn, error) {
 	const q = `
 SELECT c.name, ic.is_descending_key, ic.is_included_column
 FROM   sys.index_columns ic
 JOIN   sys.columns c ON c.object_id = ic.object_id AND c.column_id = ic.column_id
-WHERE  ic.object_id = ? AND ic.index_id = ?
+WHERE  ic.object_id = @p1 AND ic.index_id = @p2
 ORDER  BY ic.key_ordinal, ic.index_column_id`
 
-	rows, err := t.db.query(context.Background(), q, t.ObjectID, indexID)
+	rows, err := t.db.query(ctx, q, t.ObjectID, indexID)
 	if err != nil {
 		return nil, err
 	}
@@ -210,7 +221,7 @@ ORDER  BY ic.key_ordinal, ic.index_column_id`
 	return cols, rows.Err()
 }
 
-// ── Foreign keys ──────────────────────────────────────────────────────────────
+// -- Foreign keys --------------------------------------------------------------
 
 // ForeignKey mirrors Microsoft.SqlServer.Management.Smo.ForeignKey.
 type ForeignKey struct {
@@ -227,24 +238,33 @@ type ForeignKey struct {
 
 // ForeignKeys returns all foreign keys on the table.
 func (t *Table) ForeignKeys() ([]*ForeignKey, error) {
+	return t.ForeignKeysContext(context.Background())
+}
+
+// ForeignKeysContext is the context-aware variant of ForeignKeys.
+func (t *Table) ForeignKeysContext(ctx context.Context) ([]*ForeignKey, error) {
 	const q = `
 SELECT fk.name, fk.is_disabled, fk.is_not_for_replication,
        fk.delete_referential_action_desc, fk.update_referential_action_desc,
-       SCHEMA_NAME(rt.schema_id) AS ref_schema, rt.name AS ref_table,
+       SCHEMA_NAME(rt.schema_id), rt.name,
        (SELECT STRING_AGG(c.name, ',') WITHIN GROUP (ORDER BY fkc.constraint_column_id)
-        FROM sys.foreign_key_columns fkc
-        JOIN sys.columns c ON c.object_id = fkc.parent_object_id AND c.column_id = fkc.parent_column_id
-        WHERE fkc.constraint_object_id = fk.object_id) AS cols,
+        FROM   sys.foreign_key_columns fkc
+        JOIN   sys.columns c
+               ON  c.object_id = fkc.parent_object_id
+               AND c.column_id = fkc.parent_column_id
+        WHERE  fkc.constraint_object_id = fk.object_id),
        (SELECT STRING_AGG(c.name, ',') WITHIN GROUP (ORDER BY fkc.constraint_column_id)
-        FROM sys.foreign_key_columns fkc
-        JOIN sys.columns c ON c.object_id = fkc.referenced_object_id AND c.column_id = fkc.referenced_column_id
-        WHERE fkc.constraint_object_id = fk.object_id) AS ref_cols
+        FROM   sys.foreign_key_columns fkc
+        JOIN   sys.columns c
+               ON  c.object_id = fkc.referenced_object_id
+               AND c.column_id = fkc.referenced_column_id
+        WHERE  fkc.constraint_object_id = fk.object_id)
 FROM   sys.foreign_keys fk
 JOIN   sys.tables rt ON rt.object_id = fk.referenced_object_id
-WHERE  fk.parent_object_id = ?
+WHERE  fk.parent_object_id = @p1
 ORDER  BY fk.name`
 
-	rows, err := t.db.query(context.Background(), q, t.ObjectID)
+	rows, err := t.db.query(ctx, q, t.ObjectID)
 	if err != nil {
 		return nil, fmt.Errorf("gosmo: list foreign keys for %s: %w", t.FullName(), err)
 	}
@@ -271,28 +291,33 @@ ORDER  BY fk.name`
 	return fks, rows.Err()
 }
 
-// ── Check constraints ─────────────────────────────────────────────────────────
+// -- Check constraints ---------------------------------------------------------
 
 // CheckConstraint represents a CHECK constraint.
 type CheckConstraint struct {
 	Name       string
 	Definition string
 	IsDisabled bool
-	Column     string
+	Column     string // empty for table-level checks
 }
 
 // CheckConstraints returns all CHECK constraints on the table.
 func (t *Table) CheckConstraints() ([]*CheckConstraint, error) {
+	return t.CheckConstraintsContext(context.Background())
+}
+
+// CheckConstraintsContext is the context-aware variant of CheckConstraints.
+func (t *Table) CheckConstraintsContext(ctx context.Context) ([]*CheckConstraint, error) {
 	const q = `
-SELECT cc.name, cc.definition, cc.is_disabled,
-       ISNULL(c.name,'')
+SELECT cc.name, cc.definition, cc.is_disabled, ISNULL(c.name, '')
 FROM   sys.check_constraints cc
-LEFT   JOIN sys.columns c ON c.object_id = cc.parent_object_id
-                          AND c.column_id = cc.parent_column_id
-WHERE  cc.parent_object_id = ?
+LEFT   JOIN sys.columns c
+       ON  c.object_id  = cc.parent_object_id
+       AND c.column_id  = cc.parent_column_id
+WHERE  cc.parent_object_id = @p1
 ORDER  BY cc.name`
 
-	rows, err := t.db.query(context.Background(), q, t.ObjectID)
+	rows, err := t.db.query(ctx, q, t.ObjectID)
 	if err != nil {
 		return nil, fmt.Errorf("gosmo: list check constraints for %s: %w", t.FullName(), err)
 	}
@@ -309,7 +334,7 @@ ORDER  BY cc.name`
 	return ccs, rows.Err()
 }
 
-// ── DDL helpers ───────────────────────────────────────────────────────────────
+// -- DDL helpers ---------------------------------------------------------------
 
 // CreateTableRequest describes a table to be created.
 type CreateTableRequest struct {
@@ -322,25 +347,40 @@ type CreateTableRequest struct {
 type ColumnDefinition struct {
 	Name         string
 	DataType     DataType
-	MaxLength    int // used for char/varchar/nchar/nvarchar; 0 = omit; -1 = MAX
-	Precision    int // for decimal/numeric
-	Scale        int // for decimal/numeric
+	MaxLength    int    // char/varchar/nchar/nvarchar: 0 = omit, -1 = MAX
+	Precision    int    // decimal/numeric
+	Scale        int    // decimal/numeric / datetime2 / time
 	IsNullable   bool
 	IsIdentity   bool
 	IdentitySeed int64
 	IdentityIncr int64
-	DefaultValue string // e.g. "getdate()" or "0"
+	DefaultValue string // expression, e.g. "sysdatetime()" or "0"
 	IsPrimaryKey bool
 }
 
 // CreateTable creates a table from a CreateTableRequest.
 func (d *Database) CreateTable(req CreateTableRequest) error {
+	return d.CreateTableContext(context.Background(), req)
+}
+
+// CreateTableContext is the context-aware variant of CreateTable.
+func (d *Database) CreateTableContext(ctx context.Context, req CreateTableRequest) error {
+	if req.Schema == "" {
+		req.Schema = "dbo"
+	}
+	if req.Name == "" {
+		return fmt.Errorf("gosmo: create table: name is required")
+	}
+	if len(req.Columns) == 0 {
+		return fmt.Errorf("gosmo: create table: at least one column is required")
+	}
+
 	var sb strings.Builder
-	fmt.Fprintf(&sb, "CREATE TABLE [%s].[%s] (\n", req.Schema, req.Name)
+	fmt.Fprintf(&sb, "CREATE TABLE %s (\n", qualifiedName(req.Schema, req.Name))
 
 	var pkCols []string
-	for i, col := range req.Columns {
-		fmt.Fprintf(&sb, "    [%s] %s", col.Name, colTypeSQL(col))
+	for _, col := range req.Columns {
+		fmt.Fprintf(&sb, "    %s %s", quoteIdent(col.Name), colTypeSQL(col))
 		if col.IsIdentity {
 			fmt.Fprintf(&sb, " IDENTITY(%d,%d)", col.IdentitySeed, col.IdentityIncr)
 		}
@@ -353,99 +393,133 @@ func (d *Database) CreateTable(req CreateTableRequest) error {
 			fmt.Fprintf(&sb, " DEFAULT (%s)", col.DefaultValue)
 		}
 		if col.IsPrimaryKey {
-			pkCols = append(pkCols, fmt.Sprintf("[%s]", col.Name))
+			pkCols = append(pkCols, quoteIdent(col.Name))
 		}
-		if i < len(req.Columns)-1 || len(pkCols) > 0 {
-			sb.WriteString(",")
-		}
-		sb.WriteString("\n")
+		sb.WriteString(",\n")
 	}
 	if len(pkCols) > 0 {
-		fmt.Fprintf(&sb, "    CONSTRAINT [PK_%s] PRIMARY KEY CLUSTERED (%s)\n",
-			req.Name, strings.Join(pkCols, ", "))
+		fmt.Fprintf(&sb, "    CONSTRAINT %s PRIMARY KEY CLUSTERED (%s)\n",
+			quoteIdent("PK_"+req.Name), strings.Join(pkCols, ", "))
+	} else {
+		// trim the trailing comma from the last column line
+		s := sb.String()
+		if i := strings.LastIndex(s, ",\n"); i >= 0 {
+			sb.Reset()
+			sb.WriteString(s[:i])
+			sb.WriteString("\n")
+		}
 	}
 	sb.WriteString(")")
 
-	_, err := d.exec(context.Background(), sb.String())
-	if err != nil {
-		return fmt.Errorf("gosmo: create table [%s].[%s]: %w", req.Schema, req.Name, err)
+	if _, err := d.exec(ctx, sb.String()); err != nil {
+		return fmt.Errorf("gosmo: create table %s: %w", qualifiedName(req.Schema, req.Name), err)
 	}
 	return nil
 }
 
-// DropTable drops a table. Set cascade=true to first drop all FK constraints pointing to it.
+// DropTable drops a table.
+// When cascade=true it first drops all incoming foreign-key constraints.
 func (d *Database) DropTable(schema, name string, cascade bool) error {
+	return d.DropTableContext(context.Background(), schema, name, cascade)
+}
+
+// DropTableContext is the context-aware variant of DropTable.
+func (d *Database) DropTableContext(ctx context.Context, schema, name string, cascade bool) error {
 	if cascade {
-		// Disable / drop FKs referencing this table first
-		_, _ = d.exec(context.Background(), fmt.Sprintf(`
-DECLARE @sql NVARCHAR(MAX) = '';
-SELECT @sql += 'ALTER TABLE ['+SCHEMA_NAME(fk.schema_id)+'].['+OBJECT_NAME(fk.parent_object_id)+
-               '] DROP CONSTRAINT ['+fk.name+']; '
+		const dropFKs = `
+DECLARE @sql NVARCHAR(MAX) = N'';
+SELECT @sql += N'ALTER TABLE ' + QUOTENAME(SCHEMA_NAME(fk.schema_id)) +
+               N'.' + QUOTENAME(OBJECT_NAME(fk.parent_object_id)) +
+               N' DROP CONSTRAINT ' + QUOTENAME(fk.name) + N'; '
 FROM   sys.foreign_keys fk
-WHERE  OBJECT_NAME(fk.referenced_object_id) = N'%s'
-  AND  SCHEMA_NAME(OBJECT_SCHEMA_ID(fk.referenced_object_id)) = N'%s';
-EXEC sp_executesql @sql;`, escapeSingle(name), escapeSingle(schema)))
+WHERE  fk.referenced_object_id = OBJECT_ID(@p1);
+IF LEN(@sql) > 0 EXEC sp_executesql @sql;`
+		if _, err := d.exec(ctx, dropFKs, qualifiedName(schema, name)); err != nil {
+			return fmt.Errorf("gosmo: drop incoming FKs for %s: %w", qualifiedName(schema, name), err)
+		}
 	}
-	_, err := d.exec(context.Background(),
-		fmt.Sprintf("DROP TABLE IF EXISTS [%s].[%s]", schema, name))
-	if err != nil {
-		return fmt.Errorf("gosmo: drop table [%s].[%s]: %w", schema, name, err)
+	if _, err := d.exec(ctx, "DROP TABLE IF EXISTS "+qualifiedName(schema, name)); err != nil {
+		return fmt.Errorf("gosmo: drop table %s: %w", qualifiedName(schema, name), err)
 	}
 	return nil
 }
 
 // RenameTable renames a table using sp_rename.
 func (d *Database) RenameTable(schema, oldName, newName string) error {
-	_, err := d.exec(context.Background(),
-		fmt.Sprintf("EXEC sp_rename N'[%s].[%s]', N'%s', 'OBJECT'",
-			schema, oldName, escapeSingle(newName)))
-	if err != nil {
-		return fmt.Errorf("gosmo: rename table: %w", err)
+	return d.RenameTableContext(context.Background(), schema, oldName, newName)
+}
+
+// RenameTableContext is the context-aware variant of RenameTable.
+func (d *Database) RenameTableContext(ctx context.Context, schema, oldName, newName string) error {
+	if _, err := d.exec(ctx,
+		"EXEC sp_rename @objname = @p1, @newname = @p2, @objtype = N'OBJECT'",
+		qualifiedName(schema, oldName), newName,
+	); err != nil {
+		return fmt.Errorf("gosmo: rename table %s -> %s: %w", qualifiedName(schema, oldName), newName, err)
 	}
 	return nil
 }
 
 // TruncateTable truncates a table.
 func (t *Table) TruncateTable() error {
-	_, err := t.db.exec(context.Background(),
-		fmt.Sprintf("TRUNCATE TABLE %s", t.FullName()))
-	if err != nil {
+	return t.TruncateTableContext(context.Background())
+}
+
+// TruncateTableContext is the context-aware variant of TruncateTable.
+func (t *Table) TruncateTableContext(ctx context.Context) error {
+	if _, err := t.db.exec(ctx, "TRUNCATE TABLE "+t.FullName()); err != nil {
 		return fmt.Errorf("gosmo: truncate %s: %w", t.FullName(), err)
 	}
 	return nil
 }
 
-// RowCount returns the approximate row count using partition stats.
+// RowCount returns the approximate row count using partition statistics.
 func (t *Table) RowCount() (int64, error) {
+	return t.RowCountContext(context.Background())
+}
+
+// RowCountContext is the context-aware variant of RowCount.
+func (t *Table) RowCountContext(ctx context.Context) (int64, error) {
+	row, release, err := t.db.queryRow(ctx, `
+SELECT SUM(p.rows)
+FROM   sys.partitions p
+WHERE  p.object_id = @p1 AND p.index_id IN (0, 1)`, t.ObjectID)
+	if err != nil {
+		return 0, err
+	}
+	defer release()
+
 	var n int64
-	row := t.db.queryRow(context.Background(), `
-SELECT SUM(p.rows) FROM sys.partitions p
-WHERE  p.object_id = ? AND p.index_id IN (0,1)`, t.ObjectID)
 	if err := row.Scan(&n); err != nil {
 		return 0, fmt.Errorf("gosmo: row count for %s: %w", t.FullName(), err)
 	}
 	return n, nil
 }
 
-// ── Column type builder ───────────────────────────────────────────────────────
+// -- Column type builder -------------------------------------------------------
 
+// colTypeSQL returns the T-SQL data-type fragment for a ColumnDefinition.
+// This is the single canonical implementation; scripter.go calls formatColumnType
+// on a *Column (from sys.columns), which uses different field names.
 func colTypeSQL(col ColumnDefinition) string {
 	switch col.DataType {
-	case DataTypeVarChar, DataTypeChar, DataTypeBinary, DataTypeVarBinary:
-		if col.MaxLength == -1 {
+	case DataTypeVarChar, DataTypeChar, DataTypeBinary, DataTypeVarBinary,
+		DataTypeNVarChar, DataTypeNChar:
+		switch col.MaxLength {
+		case -1:
 			return fmt.Sprintf("%s(MAX)", col.DataType)
-		} else if col.MaxLength > 0 {
-			return fmt.Sprintf("%s(%d)", col.DataType, col.MaxLength)
-		}
-	case DataTypeNVarChar, DataTypeNChar:
-		if col.MaxLength == -1 {
-			return fmt.Sprintf("%s(MAX)", col.DataType)
-		} else if col.MaxLength > 0 {
+		case 0:
+			return string(col.DataType)
+		default:
 			return fmt.Sprintf("%s(%d)", col.DataType, col.MaxLength)
 		}
 	case DataTypeDecimal, DataTypeNumeric:
 		if col.Precision > 0 {
 			return fmt.Sprintf("%s(%d,%d)", col.DataType, col.Precision, col.Scale)
+		}
+	case DataTypeDatetime2, DataTypeTime, DataTypeDatetimeOffset:
+		if col.Scale > 0 {
+			return fmt.Sprintf("%s(%d)", col.DataType, col.Scale)
 		}
 	}
 	return string(col.DataType)

@@ -1,4 +1,4 @@
-// package gosmo provides a Go library that mimics Microsoft SQL Server Management Objects (SMO).
+// Package smo provides a Go library that mimics Microsoft SQL Server Management Objects (SMO).
 // It allows you to connect to SQL Server instances and programmatically manage databases,
 // tables, schemas, users, logins, indexes, stored procedures, and more.
 package gosmo
@@ -25,8 +25,8 @@ const (
 type RecoveryModel string
 
 const (
-	RecoveryModelSimple     RecoveryModel = "SIMPLE"
-	RecoveryModelFull       RecoveryModel = "FULL"
+	RecoveryModelSimple   RecoveryModel = "SIMPLE"
+	RecoveryModelFull     RecoveryModel = "FULL"
 	RecoveryModelBulkLogged RecoveryModel = "BULK_LOGGED"
 )
 
@@ -143,50 +143,50 @@ type FileGroup struct {
 
 // DatabaseFile represents a single data or log file.
 type DatabaseFile struct {
-	Name          string
-	PhysicalName  string
-	Size          int64  // in KB
-	MaxSize       int64  // in KB; -1 = unlimited
-	GrowthType    string // "KB" | "PERCENT"
-	Growth        int64
-	IsPrimaryFile bool
-	FileGroupName string
+	Name            string
+	PhysicalName    string
+	Size            int64  // in KB
+	MaxSize         int64  // in KB; -1 = unlimited
+	GrowthType      string // "KB" | "PERCENT"
+	Growth          int64
+	IsPrimaryFile   bool
+	FileGroupName   string
 }
 
 // ServerInfo holds basic information about the connected SQL Server instance.
 type ServerInfo struct {
-	Name              string
-	Edition           string
-	ProductVersion    string
-	ProductLevel      string
-	VersionMajor      int
-	VersionMinor      int
-	VersionBuild      int
-	Collation         string
-	IsClustered       bool
-	IsHADREnabled     bool
-	OSVersion         string
-	Platform          string
-	MaxConnections    int
-	PhysicalMemoryMB  int64
-	LogicalCPUCount   int
-	DefaultDataPath   string
-	DefaultLogPath    string
+	Name            string
+	Edition         string
+	ProductVersion  string
+	ProductLevel    string
+	VersionMajor    int
+	VersionMinor    int
+	VersionBuild    int
+	Collation       string
+	IsClustered     bool
+	IsHADREnabled   bool
+	OSVersion       string
+	Platform        string
+	MaxConnections  int
+	PhysicalMemoryMB int64
+	LogicalCPUCount  int
+	DefaultDataPath  string
+	DefaultLogPath   string
 	DefaultBackupPath string
 }
 
 // BackupInfo holds metadata about a specific database backup.
 type BackupInfo struct {
-	DatabaseName       string
-	BackupSetName      string
-	Description        string
-	BackupType         BackupAction
-	BackupStart        time.Time
-	BackupFinish       time.Time
-	BackupSize         int64
-	DeviceName         string
-	UserName           string
-	ServerName         string
-	DatabaseVersion    int
+	DatabaseName   string
+	BackupSetName  string
+	Description    string
+	BackupType     BackupAction
+	BackupStart    time.Time
+	BackupFinish   time.Time
+	BackupSize     int64
+	DeviceName     string
+	UserName       string
+	ServerName     string
+	DatabaseVersion int
 	CompatibilityLevel CompatibilityLevel
 }

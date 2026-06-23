@@ -19,16 +19,18 @@ type Schema struct {
 }
 
 // Drop drops the schema.
-func (s *Schema) Drop() error {
-	return s.db.DropSchema(s.Name)
+func (s *Schema) Drop() error { return s.db.DropSchema(s.Name) }
+
+// ChangeOwner transfers schema ownership to a new principal.
+func (s *Schema) ChangeOwner(newOwner string) error {
+	return s.ChangeOwnerContext(context.Background(), newOwner)
 }
 
-// ChangeOwner changes the schema owner.
-func (s *Schema) ChangeOwner(newOwner string) error {
-	_, err := s.db.exec(context.Background(),
-		fmt.Sprintf("ALTER AUTHORIZATION ON SCHEMA::[%s] TO [%s]", s.Name, newOwner))
-	if err != nil {
-		return fmt.Errorf("gosmo: change schema owner: %w", err)
+func (s *Schema) ChangeOwnerContext(ctx context.Context, newOwner string) error {
+	q := fmt.Sprintf("ALTER AUTHORIZATION ON SCHEMA::%s TO %s",
+		quoteIdent(s.Name), quoteIdent(newOwner))
+	if _, err := s.db.exec(ctx, q); err != nil {
+		return fmt.Errorf("gosmo: change schema %q owner to %q: %w", s.Name, newOwner, err)
 	}
 	s.Owner = newOwner
 	return nil
@@ -51,9 +53,7 @@ type User struct {
 }
 
 // Drop drops the database user.
-func (u *User) Drop() error {
-	return u.db.DropUser(u.Name)
-}
+func (u *User) Drop() error { return u.db.DropUser(u.Name) }
 
 // AddToRole adds the user to a database role.
 func (u *User) AddToRole(roleName string) error {
@@ -65,34 +65,43 @@ func (u *User) RemoveFromRole(roleName string) error {
 	return u.db.RemoveRoleMember(roleName, u.Name)
 }
 
-// Grant grants a permission on an object to the user.
+// Grant grants a permission on a schema-qualified object to the user.
 func (u *User) Grant(permission ObjectPermission, objectSchema, objectName string) error {
-	q := fmt.Sprintf("GRANT %s ON [%s].[%s] TO [%s]",
-		permission, objectSchema, objectName, u.Name)
-	_, err := u.db.exec(context.Background(), q)
-	if err != nil {
+	return u.GrantContext(context.Background(), permission, objectSchema, objectName)
+}
+
+func (u *User) GrantContext(ctx context.Context, permission ObjectPermission, objectSchema, objectName string) error {
+	q := fmt.Sprintf("GRANT %s ON %s TO %s",
+		permission, qualifiedName(objectSchema, objectName), quoteIdent(u.Name))
+	if _, err := u.db.exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: grant %s to user %q: %w", permission, u.Name, err)
 	}
 	return nil
 }
 
-// Deny denies a permission on an object to the user.
+// Deny denies a permission on a schema-qualified object to the user.
 func (u *User) Deny(permission ObjectPermission, objectSchema, objectName string) error {
-	q := fmt.Sprintf("DENY %s ON [%s].[%s] TO [%s]",
-		permission, objectSchema, objectName, u.Name)
-	_, err := u.db.exec(context.Background(), q)
-	if err != nil {
+	return u.DenyContext(context.Background(), permission, objectSchema, objectName)
+}
+
+func (u *User) DenyContext(ctx context.Context, permission ObjectPermission, objectSchema, objectName string) error {
+	q := fmt.Sprintf("DENY %s ON %s TO %s",
+		permission, qualifiedName(objectSchema, objectName), quoteIdent(u.Name))
+	if _, err := u.db.exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: deny %s to user %q: %w", permission, u.Name, err)
 	}
 	return nil
 }
 
-// Revoke revokes a permission on an object from the user.
+// Revoke revokes a permission on a schema-qualified object from the user.
 func (u *User) Revoke(permission ObjectPermission, objectSchema, objectName string) error {
-	q := fmt.Sprintf("REVOKE %s ON [%s].[%s] FROM [%s]",
-		permission, objectSchema, objectName, u.Name)
-	_, err := u.db.exec(context.Background(), q)
-	if err != nil {
+	return u.RevokeContext(context.Background(), permission, objectSchema, objectName)
+}
+
+func (u *User) RevokeContext(ctx context.Context, permission ObjectPermission, objectSchema, objectName string) error {
+	q := fmt.Sprintf("REVOKE %s ON %s FROM %s",
+		permission, qualifiedName(objectSchema, objectName), quoteIdent(u.Name))
+	if _, err := u.db.exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: revoke %s from user %q: %w", permission, u.Name, err)
 	}
 	return nil

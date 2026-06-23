@@ -7,7 +7,7 @@ import (
 )
 
 // ============================================================
-// Server Configuration  (sp_configure)
+// Server Configuration  (sp_configure / sys.configurations)
 // ============================================================
 
 // ConfigurationOption mirrors a row from sys.configurations.
@@ -19,20 +19,25 @@ type ConfigurationOption struct {
 	ValueInUse  int64
 	Minimum     int64
 	Maximum     int64
-	IsDynamic   bool // no restart needed
+	IsDynamic   bool // true = change takes effect without a restart
 	IsAdvanced  bool
 	Description string
 }
 
-// Configurations returns all SQL Server configuration options.
+// Configurations returns all server configuration options.
 func (s *Server) Configurations() ([]*ConfigurationOption, error) {
+	return s.ConfigurationsContext(context.Background())
+}
+
+// ConfigurationsContext is the context-aware variant of Configurations.
+func (s *Server) ConfigurationsContext(ctx context.Context) ([]*ConfigurationOption, error) {
 	const q = `
 SELECT configuration_id, name, value, value_in_use,
        minimum, maximum, is_dynamic, is_advanced, description
 FROM   sys.configurations
 ORDER  BY name`
 
-	rows, err := s.db.QueryContext(context.Background(), q)
+	rows, err := s.db.QueryContext(ctx, q)
 	if err != nil {
 		return nil, fmt.Errorf("gosmo: list configurations: %w", err)
 	}
@@ -54,50 +59,72 @@ ORDER  BY name`
 	return opts, rows.Err()
 }
 
-// ConfigurationByName returns a single configuration option by name.
+// ConfigurationByName returns a single option using a direct parameterised query.
 func (s *Server) ConfigurationByName(name string) (*ConfigurationOption, error) {
-	cfgs, err := s.Configurations()
-	if err != nil {
-		return nil, err
-	}
-	for _, c := range cfgs {
-		if c.Name == name {
-			return c, nil
-		}
-	}
-	return nil, fmt.Errorf("gosmo: configuration option %q not found", name)
+	return s.ConfigurationByNameContext(context.Background(), name)
 }
 
-// SetValue changes the value of the configuration option using sp_configure.
-// Call Reconfigure() after setting non-dynamic options.
+// ConfigurationByNameContext is the context-aware variant.
+func (s *Server) ConfigurationByNameContext(ctx context.Context, name string) (*ConfigurationOption, error) {
+	const q = `
+SELECT configuration_id, name, value, value_in_use,
+       minimum, maximum, is_dynamic, is_advanced, description
+FROM   sys.configurations
+WHERE  name = @p1`
+
+	c := &ConfigurationOption{server: s}
+	var desc sql.NullString
+	row := s.db.QueryRowContext(ctx, q, name)
+	if err := row.Scan(
+		&c.ConfigID, &c.Name, &c.Value, &c.ValueInUse,
+		&c.Minimum, &c.Maximum, &c.IsDynamic, &c.IsAdvanced, &desc,
+	); err != nil {
+		if err == sql.ErrNoRows {
+			return nil, fmt.Errorf("gosmo: configuration option %q not found", name)
+		}
+		return nil, fmt.Errorf("gosmo: configuration by name: %w", err)
+	}
+	c.Description = desc.String
+	return c, nil
+}
+
+// SetValue changes the option value using sp_configure.
+// For non-dynamic options, call Server.Reconfigure() afterwards.
 func (c *ConfigurationOption) SetValue(value int64) error {
-	_, err := c.server.db.ExecContext(context.Background(),
-		fmt.Sprintf("EXEC sp_configure N'%s', %d", escapeSingle(c.Name), value))
-	if err != nil {
+	return c.SetValueContext(context.Background(), value)
+}
+
+func (c *ConfigurationOption) SetValueContext(ctx context.Context, value int64) error {
+	q := fmt.Sprintf("EXEC sp_configure N'%s', %d", escapeSingle(c.Name), value)
+	if _, err := c.server.db.ExecContext(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: set configuration %q = %d: %w", c.Name, value, err)
 	}
 	c.Value = value
 	return nil
 }
 
-// Reconfigure applies pending configuration changes (RECONFIGURE WITH OVERRIDE).
+// Reconfigure applies pending sp_configure changes.
+// Pass override=true to use RECONFIGURE WITH OVERRIDE (bypasses range checks).
 func (s *Server) Reconfigure(override bool) error {
+	return s.ReconfigureContext(context.Background(), override)
+}
+
+func (s *Server) ReconfigureContext(ctx context.Context, override bool) error {
 	q := "RECONFIGURE"
 	if override {
 		q += " WITH OVERRIDE"
 	}
-	_, err := s.db.ExecContext(context.Background(), q)
-	if err != nil {
+	if _, err := s.db.ExecContext(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: reconfigure: %w", err)
 	}
 	return nil
 }
 
 // ============================================================
-// Active Sessions / Connections
+// Active Sessions
 // ============================================================
 
-// ActiveSession holds information about a running session.
+// ActiveSession holds information about one session from sys.dm_exec_sessions.
 type ActiveSession struct {
 	SessionID         int
 	LoginName         string
@@ -115,9 +142,14 @@ type ActiveSession struct {
 	WaitTimeMS        int64
 }
 
-// ActiveSessions returns all non-sleeping active sessions.
-// Pass includeSystem=true to also include system sessions.
+// ActiveSessions returns running sessions.
+// Set includeSystem=true to include SQL Server internal sessions.
 func (s *Server) ActiveSessions(includeSystem bool) ([]*ActiveSession, error) {
+	return s.ActiveSessionsContext(context.Background(), includeSystem)
+}
+
+// ActiveSessionsContext is the context-aware variant of ActiveSessions.
+func (s *Server) ActiveSessionsContext(ctx context.Context, includeSystem bool) ([]*ActiveSession, error) {
 	sysFilter := "AND s.is_user_process = 1"
 	if includeSystem {
 		sysFilter = ""
@@ -137,7 +169,7 @@ OUTER  APPLY sys.dm_exec_sql_text(r.sql_handle) t
 WHERE  s.session_id != @@SPID %s
 ORDER  BY s.session_id`, sysFilter)
 
-	rows, err := s.db.QueryContext(context.Background(), q)
+	rows, err := s.db.QueryContext(ctx, q)
 	if err != nil {
 		return nil, fmt.Errorf("gosmo: active sessions: %w", err)
 	}
@@ -166,31 +198,37 @@ ORDER  BY s.session_id`, sysFilter)
 	return sessions, rows.Err()
 }
 
-// KillSession terminates a session by ID.
+// KillSession terminates a session by session ID.
 func (s *Server) KillSession(sessionID int) error {
-	_, err := s.db.ExecContext(context.Background(),
-		fmt.Sprintf("KILL %d", sessionID))
-	if err != nil {
+	return s.KillSessionContext(context.Background(), sessionID)
+}
+
+func (s *Server) KillSessionContext(ctx context.Context, sessionID int) error {
+	if _, err := s.db.ExecContext(ctx, fmt.Sprintf("KILL %d", sessionID)); err != nil {
 		return fmt.Errorf("gosmo: kill session %d: %w", sessionID, err)
 	}
 	return nil
 }
 
 // ============================================================
-// Audit / Error Log
+// Error Log
 // ============================================================
 
-// ErrorLogEntry represents one row from the SQL Server error log.
+// ErrorLogEntry represents one row returned by xp_readerrorlog.
 type ErrorLogEntry struct {
 	LogDate string
 	Process string
 	Text    string
 }
 
-// ReadErrorLog reads the current SQL Server error log.
-// Pass logNumber=0 for the current log, 1 for the first archive, etc.
+// ReadErrorLog reads a SQL Server error log file.
+// Pass logNumber=0 for the current log, 1 for the first archived log, etc.
 func (s *Server) ReadErrorLog(logNumber int) ([]*ErrorLogEntry, error) {
-	rows, err := s.db.QueryContext(context.Background(),
+	return s.ReadErrorLogContext(context.Background(), logNumber)
+}
+
+func (s *Server) ReadErrorLogContext(ctx context.Context, logNumber int) ([]*ErrorLogEntry, error) {
+	rows, err := s.db.QueryContext(ctx,
 		fmt.Sprintf("EXEC xp_readerrorlog %d, 1", logNumber))
 	if err != nil {
 		return nil, fmt.Errorf("gosmo: read error log: %w", err)
@@ -208,17 +246,21 @@ func (s *Server) ReadErrorLog(logNumber int) ([]*ErrorLogEntry, error) {
 	return entries, rows.Err()
 }
 
-// CycleErrorLog closes the current error log and opens a new one (sp_cycle_errorlog).
+// CycleErrorLog closes the current error log and opens a new one.
+// Equivalent to sp_cycle_errorlog.
 func (s *Server) CycleErrorLog() error {
-	_, err := s.db.ExecContext(context.Background(), "EXEC sp_cycle_errorlog")
-	if err != nil {
+	return s.CycleErrorLogContext(context.Background())
+}
+
+func (s *Server) CycleErrorLogContext(ctx context.Context) error {
+	if _, err := s.db.ExecContext(ctx, "EXEC sp_cycle_errorlog"); err != nil {
 		return fmt.Errorf("gosmo: cycle error log: %w", err)
 	}
 	return nil
 }
 
 // ============================================================
-// Database Mail  (no WMI required)
+// Database Mail  (no WMI/COM required, pure T-SQL)
 // ============================================================
 
 // MailProfile represents an msdb Database Mail profile.
@@ -229,17 +271,21 @@ type MailProfile struct {
 	IsDefault   bool
 }
 
-// MailProfiles returns all Database Mail profiles.
+// MailProfiles returns all Database Mail profiles from msdb.
 func (s *Server) MailProfiles() ([]*MailProfile, error) {
+	return s.MailProfilesContext(context.Background())
+}
+
+func (s *Server) MailProfilesContext(ctx context.Context) ([]*MailProfile, error) {
 	const q = `
 SELECT p.profile_id, p.name, ISNULL(p.description,''),
        ISNULL(pp.is_default, 0)
 FROM   msdb.dbo.sysmail_profile p
 LEFT   JOIN msdb.dbo.sysmail_principalprofile pp
-       ON pp.profile_id = p.profile_id AND pp.principal_sid = 0x00
+       ON  pp.profile_id = p.profile_id AND pp.principal_sid = 0x00
 ORDER  BY p.name`
 
-	rows, err := s.db.QueryContext(context.Background(), q)
+	rows, err := s.db.QueryContext(ctx, q)
 	if err != nil {
 		return nil, fmt.Errorf("gosmo: list mail profiles: %w", err)
 	}
@@ -256,21 +302,19 @@ ORDER  BY p.name`
 	return profiles, rows.Err()
 }
 
-// SendMail sends an e-mail using Database Mail (sp_send_dbmail).
+// SendMail sends an email via Database Mail (sp_send_dbmail).
 func (s *Server) SendMail(profile, recipients, subject, body string) error {
-	q := fmt.Sprintf(`
-EXEC msdb.dbo.sp_send_dbmail
-    @profile_name  = N'%s',
-    @recipients    = N'%s',
-    @subject       = N'%s',
-    @body          = N'%s'`,
-		escapeSingle(profile),
-		escapeSingle(recipients),
-		escapeSingle(subject),
-		escapeSingle(body),
+	return s.SendMailContext(context.Background(), profile, recipients, subject, body)
+}
+
+func (s *Server) SendMailContext(ctx context.Context, profile, recipients, subject, body string) error {
+	q := fmt.Sprintf(
+		"EXEC msdb.dbo.sp_send_dbmail @profile_name = N'%s', @recipients = N'%s', "+
+			"@subject = N'%s', @body = N'%s'",
+		escapeSingle(profile), escapeSingle(recipients),
+		escapeSingle(subject), escapeSingle(body),
 	)
-	_, err := s.db.ExecContext(context.Background(), q)
-	if err != nil {
+	if _, err := s.db.ExecContext(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: send mail: %w", err)
 	}
 	return nil

@@ -128,7 +128,7 @@ EXEC sp_dropextendedproperty
 	return nil
 }
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
+// -- Helpers -------------------------------------------------------------------
 
 func scanExtProps(rows *sql.Rows) ([]*ExtendedProperty, error) {
 	var props []*ExtendedProperty
@@ -140,11 +140,4 @@ func scanExtProps(rows *sql.Rows) ([]*ExtendedProperty, error) {
 		props = append(props, p)
 	}
 	return props, rows.Err()
-}
-
-func nullableStr(s string) string {
-	if s == "" {
-		return "NULL"
-	}
-	return fmt.Sprintf("N'%s'", escapeSingle(s))
 }

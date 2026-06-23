@@ -6,7 +6,7 @@ A Go library that mimics **Microsoft SQL Server Management Objects (SMO)** — w
 go get github.com/radix29/gosmo
 ```
 
-> **Go version note:** The module requires Go 1.23+. Go 1.26.4 does not yet exist (latest release at time of writing is 1.23.x); update `go.mod` once that version ships.
+> **Go version note:** The module requires Go 1.26.4 
 
 ---
 
@@ -14,7 +14,7 @@ go get github.com/radix29/gosmo
 
 | Path | Purpose |
 |------|---------|
-| `smo/` | All SMO types and logic |
+| `/` | All SMO types and logic |
 | `examples/` | Full end-to-end demo |
 
 ---

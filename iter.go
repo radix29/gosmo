@@ -5,13 +5,13 @@ package gosmo
 // idiomatic in Go 1.26).  Callers can range over these directly:
 //
 //	for t, err := range db.TableSeq() {
-//	    if err != nil { … }
+//	    if err != nil { ... }
 //	    fmt.Println(t.FullName())
 //	}
 
 import "iter"
 
-// ── Server ────────────────────────────────────────────────────────────────────
+// -- Server --------------------------------------------------------------------
 
 // DatabaseSeq returns an iterator over all databases on the server.
 // The second yield value carries any error that stopped the iteration.
@@ -62,7 +62,7 @@ func (s *Server) JobSeq() iter.Seq2[*Job, error] {
 	}
 }
 
-// ── Database ──────────────────────────────────────────────────────────────────
+// -- Database ------------------------------------------------------------------
 
 // TableSeq returns an iterator over all user tables in the database.
 func (d *Database) TableSeq() iter.Seq2[*Table, error] {
@@ -160,7 +160,7 @@ func (d *Database) SequenceSeq() iter.Seq2[*Sequence, error] {
 	}
 }
 
-// ── Table ─────────────────────────────────────────────────────────────────────
+// -- Table ---------------------------------------------------------------------
 
 // ColumnSeq returns an iterator over all columns in the table, in ordinal order.
 func (t *Table) ColumnSeq() iter.Seq2[*Column, error] {

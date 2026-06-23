@@ -7,16 +7,16 @@ import (
 )
 
 // ============================================================
-// Always Encrypted – Column Master Keys & Column Encryption Keys
+// Always Encrypted - Column Master Keys & Column Encryption Keys
 // ============================================================
 
 // ColumnMasterKey mirrors sys.column_master_keys.
 type ColumnMasterKey struct {
-	db                       *Database
-	Name                     string
-	ID                       int
-	KeyStoreProviderName     string
-	KeyPath                  string
+	db                *Database
+	Name              string
+	ID                int
+	KeyStoreProviderName string
+	KeyPath           string
 	AllowEnclaveComputations bool
 }
 
@@ -56,7 +56,7 @@ func (d *Database) CreateColumnMasterKey(name, keyStoreProvider, keyPath string,
 		enclave = "NO"
 	}
 	q := fmt.Sprintf(`
-CREATE COLUMN MASTER KEY [%s]
+CREATE COLUMN MASTER KEY %s
 WITH (
     KEY_STORE_PROVIDER_NAME = N'%s',
     KEY_PATH = N'%s',
@@ -72,21 +72,21 @@ WITH (
 // Drop drops the column master key.
 func (cmk *ColumnMasterKey) Drop() error {
 	_, err := cmk.db.exec(context.Background(),
-		fmt.Sprintf("DROP COLUMN MASTER KEY [%s]", cmk.Name))
+		fmt.Sprintf("DROP COLUMN MASTER KEY %s", quoteIdent(cmk.Name)))
 	if err != nil {
 		return fmt.Errorf("gosmo: drop column master key [%s]: %w", cmk.Name, err)
 	}
 	return nil
 }
 
-// ── Column Encryption Keys ────────────────────────────────────────────────────
+// -- Column Encryption Keys ----------------------------------------------------
 
 // ColumnEncryptionKey mirrors sys.column_encryption_keys.
 type ColumnEncryptionKey struct {
-	db                  *Database
-	Name                string
-	ID                  int
-	MasterKeyName       string
+	db               *Database
+	Name             string
+	ID               int
+	MasterKeyName    string
 	EncryptionAlgorithm string
 }
 
@@ -123,7 +123,7 @@ ORDER  BY cek.name`
 // Drop drops the column encryption key.
 func (cek *ColumnEncryptionKey) Drop() error {
 	_, err := cek.db.exec(context.Background(),
-		fmt.Sprintf("DROP COLUMN ENCRYPTION KEY [%s]", cek.Name))
+		fmt.Sprintf("DROP COLUMN ENCRYPTION KEY %s", quoteIdent(cek.Name)))
 	if err != nil {
 		return fmt.Errorf("gosmo: drop column encryption key [%s]: %w", cek.Name, err)
 	}
@@ -131,27 +131,27 @@ func (cek *ColumnEncryptionKey) Drop() error {
 }
 
 // ============================================================
-// Row-Level Security – Security Policies
+// Row-Level Security - Security Policies
 // ============================================================
 
 // SecurityPolicy mirrors sys.security_policies.
 type SecurityPolicy struct {
-	db                  *Database
-	Name                string
-	Schema              string
-	ObjectID            int
-	IsEnabled           bool
+	db          *Database
+	Name        string
+	Schema      string
+	ObjectID    int
+	IsEnabled   bool
 	IsNotForReplication bool
-	Predicates          []*SecurityPredicate
+	Predicates  []*SecurityPredicate
 }
 
 // SecurityPredicate represents one predicate in a security policy.
 type SecurityPredicate struct {
-	PredicateType       string // "FILTER" or "BLOCK"
+	PredicateType  string // "FILTER" or "BLOCK"
 	PredicateDefinition string
-	TargetSchema        string
-	TargetTable         string
-	Operation           string // for BLOCK: AFTER INSERT, AFTER UPDATE, etc.
+	TargetSchema   string
+	TargetTable    string
+	Operation      string // for BLOCK: AFTER INSERT, AFTER UPDATE, etc.
 }
 
 // SecurityPolicies returns all security policies in the database.
@@ -193,7 +193,7 @@ SELECT spr.predicate_type_desc, spr.predicate_definition,
        SCHEMA_NAME(t.schema_id), t.name, spr.operation_desc
 FROM   sys.security_predicates spr
 JOIN   sys.tables t ON t.object_id = spr.target_object_id
-WHERE  spr.object_id = ?
+WHERE  spr.object_id = @p1
 ORDER  BY spr.predicate_type_desc`
 
 	rows, err := d.query(context.Background(), q, policyObjectID)
@@ -219,7 +219,7 @@ ORDER  BY spr.predicate_type_desc`
 // Enable enables the security policy.
 func (p *SecurityPolicy) Enable() error {
 	_, err := p.db.exec(context.Background(),
-		fmt.Sprintf("ALTER SECURITY POLICY [%s].[%s] WITH (STATE = ON)", p.Schema, p.Name))
+		fmt.Sprintf("ALTER SECURITY POLICY %s WITH (STATE = ON)", qualifiedName(p.Schema, p.Name)))
 	if err != nil {
 		return fmt.Errorf("gosmo: enable security policy [%s]: %w", p.Name, err)
 	}
@@ -230,7 +230,7 @@ func (p *SecurityPolicy) Enable() error {
 // Disable disables the security policy.
 func (p *SecurityPolicy) Disable() error {
 	_, err := p.db.exec(context.Background(),
-		fmt.Sprintf("ALTER SECURITY POLICY [%s].[%s] WITH (STATE = OFF)", p.Schema, p.Name))
+		fmt.Sprintf("ALTER SECURITY POLICY %s WITH (STATE = OFF)", qualifiedName(p.Schema, p.Name)))
 	if err != nil {
 		return fmt.Errorf("gosmo: disable security policy [%s]: %w", p.Name, err)
 	}
@@ -241,7 +241,7 @@ func (p *SecurityPolicy) Disable() error {
 // Drop drops the security policy.
 func (p *SecurityPolicy) Drop() error {
 	_, err := p.db.exec(context.Background(),
-		fmt.Sprintf("DROP SECURITY POLICY IF EXISTS [%s].[%s]", p.Schema, p.Name))
+		fmt.Sprintf("DROP SECURITY POLICY IF EXISTS %s", qualifiedName(p.Schema, p.Name)))
 	if err != nil {
 		return fmt.Errorf("gosmo: drop security policy [%s]: %w", p.Name, err)
 	}

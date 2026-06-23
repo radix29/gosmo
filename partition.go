@@ -18,7 +18,7 @@ type PartitionFunction struct {
 	FunctionID    int
 	InputType     DataType
 	BoundaryCount int
-	IsRight       bool // RIGHT = boundary is in right partition
+	IsRight       bool   // RIGHT = boundary is in right partition
 	Boundaries    []string
 }
 
@@ -77,8 +77,8 @@ func (d *Database) CreatePartitionFunction(req CreatePartitionFunctionRequest) e
 	}
 	vals := strings.Join(req.Boundaries, ", ")
 	q := fmt.Sprintf(
-		"CREATE PARTITION FUNCTION [%s] (%s) AS RANGE %s FOR VALUES (%s)",
-		req.Name, req.InputType, side, vals,
+		"CREATE PARTITION FUNCTION %s (%s) AS RANGE %s FOR VALUES (%s)",
+		quoteIdent(req.Name), req.InputType, side, vals,
 	)
 	_, err := d.exec(context.Background(), q)
 	if err != nil {
@@ -90,7 +90,7 @@ func (d *Database) CreatePartitionFunction(req CreatePartitionFunctionRequest) e
 // Drop drops the partition function.
 func (pf *PartitionFunction) Drop() error {
 	_, err := pf.db.exec(context.Background(),
-		fmt.Sprintf("DROP PARTITION FUNCTION [%s]", pf.Name))
+		fmt.Sprintf("DROP PARTITION FUNCTION %s", quoteIdent(pf.Name)))
 	if err != nil {
 		return fmt.Errorf("gosmo: drop partition function [%s]: %w", pf.Name, err)
 	}
@@ -100,7 +100,7 @@ func (pf *PartitionFunction) Drop() error {
 // SplitRange adds a new boundary value to the partition function.
 func (pf *PartitionFunction) SplitRange(value string) error {
 	_, err := pf.db.exec(context.Background(),
-		fmt.Sprintf("ALTER PARTITION FUNCTION [%s]() SPLIT RANGE (%s)", pf.Name, value))
+		fmt.Sprintf("ALTER PARTITION FUNCTION %s() SPLIT RANGE (%s)", quoteIdent(pf.Name), value))
 	if err != nil {
 		return fmt.Errorf("gosmo: split range on [%s]: %w", pf.Name, err)
 	}
@@ -110,22 +110,22 @@ func (pf *PartitionFunction) SplitRange(value string) error {
 // MergeRange removes a boundary value from the partition function.
 func (pf *PartitionFunction) MergeRange(value string) error {
 	_, err := pf.db.exec(context.Background(),
-		fmt.Sprintf("ALTER PARTITION FUNCTION [%s]() MERGE RANGE (%s)", pf.Name, value))
+		fmt.Sprintf("ALTER PARTITION FUNCTION %s() MERGE RANGE (%s)", quoteIdent(pf.Name), value))
 	if err != nil {
 		return fmt.Errorf("gosmo: merge range on [%s]: %w", pf.Name, err)
 	}
 	return nil
 }
 
-// ── Partition Schemes ─────────────────────────────────────────────────────────
+// -- Partition Schemes ---------------------------------------------------------
 
 // PartitionScheme mirrors sys.partition_schemes.
 type PartitionScheme struct {
-	db           *Database
-	Name         string
-	SchemeID     int
-	FunctionName string
-	FileGroups   []string
+	db              *Database
+	Name            string
+	SchemeID        int
+	FunctionName    string
+	FileGroups      []string
 }
 
 // PartitionSchemes returns all partition schemes in the database.
@@ -171,8 +171,8 @@ func (d *Database) CreatePartitionScheme(name, functionName string, fileGroups [
 		fgs[i] = fmt.Sprintf("[%s]", fg)
 	}
 	q := fmt.Sprintf(
-		"CREATE PARTITION SCHEME [%s] AS PARTITION [%s] TO (%s)",
-		name, functionName, strings.Join(fgs, ", "),
+		"CREATE PARTITION SCHEME %s AS PARTITION %s TO (%s)",
+		quoteIdent(name), quoteIdent(functionName), strings.Join(fgs, ", "),
 	)
 	_, err := d.exec(context.Background(), q)
 	if err != nil {
@@ -184,14 +184,14 @@ func (d *Database) CreatePartitionScheme(name, functionName string, fileGroups [
 // Drop drops the partition scheme.
 func (ps *PartitionScheme) Drop() error {
 	_, err := ps.db.exec(context.Background(),
-		fmt.Sprintf("DROP PARTITION SCHEME [%s]", ps.Name))
+		fmt.Sprintf("DROP PARTITION SCHEME %s", quoteIdent(ps.Name)))
 	if err != nil {
 		return fmt.Errorf("gosmo: drop partition scheme [%s]: %w", ps.Name, err)
 	}
 	return nil
 }
 
-// ── Table partition info ──────────────────────────────────────────────────────
+// -- Table partition info ------------------------------------------------------
 
 // PartitionInfo holds per-partition row counts for a table.
 type PartitionInfo struct {
@@ -205,7 +205,7 @@ func (t *Table) Partitions() ([]*PartitionInfo, error) {
 	const q = `
 SELECT p.partition_number, p.rows, p.data_compression_desc
 FROM   sys.partitions p
-WHERE  p.object_id = ? AND p.index_id IN (0,1)
+WHERE  p.object_id = @p1 AND p.index_id IN (0,1)
 ORDER  BY p.partition_number`
 
 	rows, err := t.db.query(context.Background(), q, t.ObjectID)

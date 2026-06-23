@@ -15,15 +15,13 @@ import (
 type ScriptOptions struct {
 	// IncludeHeaders adds an informational header comment.
 	IncludeHeaders bool
-	// IncludeIfNotExists wraps DDL in existence checks.
+	// IncludeIfNotExists wraps DDL in an existence check.
 	IncludeIfNotExists bool
-	// IncludeDependencies pulls in referenced objects (best-effort).
-	IncludeDependencies bool
-	// ScriptDrops emits DROP statements instead of CREATE.
+	// ScriptDrops emits DROP statements instead of CREATE statements.
 	ScriptDrops bool
 	// SchemaQualify prefixes object names with their schema.
 	SchemaQualify bool
-	// AnsiPadding adds SET ANSI_PADDING ON/OFF.
+	// AnsiPadding emits SET ANSI_PADDING ON before CREATE TABLE.
 	AnsiPadding bool
 }
 
@@ -37,7 +35,7 @@ func DefaultScriptOptions() ScriptOptions {
 	}
 }
 
-// Scripter can generate T-SQL DDL scripts for objects in a database.
+// Scripter generates T-SQL DDL scripts for objects in a database.
 type Scripter struct {
 	db   *Database
 	opts ScriptOptions
@@ -48,34 +46,41 @@ func NewScripter(db *Database, opts ScriptOptions) *Scripter {
 	return &Scripter{db: db, opts: opts}
 }
 
-// ── Table ─────────────────────────────────────────────────────────────────────
+// ============================================================
+// Table
+// ============================================================
 
 // ScriptTable generates a CREATE TABLE (or DROP TABLE) script.
 func (sc *Scripter) ScriptTable(schema, name string) (string, error) {
-	t, err := sc.db.TableByName(schema, name)
+	return sc.ScriptTableContext(context.Background(), schema, name)
+}
+
+// ScriptTableContext is the context-aware variant of ScriptTable.
+func (sc *Scripter) ScriptTableContext(ctx context.Context, schema, name string) (string, error) {
+	t, err := sc.db.TableByNameContext(ctx, schema, name)
 	if err != nil {
 		return "", err
 	}
-	cols, err := t.Columns()
+	cols, err := t.ColumnsContext(ctx)
 	if err != nil {
 		return "", err
 	}
-	indexes, err := t.Indexes()
+	indexes, err := t.IndexesContext(ctx)
 	if err != nil {
 		return "", err
 	}
-	fks, err := t.ForeignKeys()
+	fks, err := t.ForeignKeysContext(ctx)
 	if err != nil {
 		return "", err
 	}
 
+	fullName := qualifiedName(schema, name)
 	var sb strings.Builder
-	fullName := fmt.Sprintf("[%s].[%s]", schema, name)
 
 	if sc.opts.ScriptDrops {
 		if sc.opts.IncludeIfNotExists {
-			fmt.Fprintf(&sb, "IF OBJECT_ID(N'%s.%s', N'U') IS NOT NULL\n", schema, name)
-			sb.WriteString("    ")
+			fmt.Fprintf(&sb, "IF OBJECT_ID(N'%s.%s', N'U') IS NOT NULL\n    ",
+				escapeSingle(schema), escapeSingle(name))
 		}
 		fmt.Fprintf(&sb, "DROP TABLE %s;\nGO\n", fullName)
 		return sb.String(), nil
@@ -88,76 +93,70 @@ func (sc *Scripter) ScriptTable(schema, name string) (string, error) {
 		sb.WriteString("SET ANSI_PADDING ON;\nGO\n\n")
 	}
 	if sc.opts.IncludeIfNotExists {
-		fmt.Fprintf(&sb, "IF OBJECT_ID(N'%s.%s', N'U') IS NULL\nBEGIN\n", schema, name)
+		fmt.Fprintf(&sb, "IF OBJECT_ID(N'%s.%s', N'U') IS NULL\nBEGIN\n",
+			escapeSingle(schema), escapeSingle(name))
 	}
 
 	fmt.Fprintf(&sb, "CREATE TABLE %s (\n", fullName)
 
-	var pkCols []string
+	// Find PK index once
+	var pkIdx *Index
+	for _, idx := range indexes {
+		if idx.IsPrimaryKey {
+			pkIdx = idx
+			break
+		}
+	}
+
 	for i, col := range cols {
-		sb.WriteString("    ")
-		fmt.Fprintf(&sb, "[%s] %s", col.Name, scriptColType(col))
-		if col.IsIdentity {
-			fmt.Fprintf(&sb, " IDENTITY(%d,%d)", col.IdentitySeed, col.IdentityIncrement)
-		}
 		if col.IsComputed && col.ComputedText != "" {
-			// rewrite as computed
-			sb.Reset()
-			fmt.Fprintf(&sb, "    [%s] AS %s", col.Name, col.ComputedText)
-		} else if !col.IsNullable {
-			sb.WriteString(" NOT NULL")
+			fmt.Fprintf(&sb, "    %s AS %s", quoteIdent(col.Name), col.ComputedText)
 		} else {
-			sb.WriteString(" NULL")
-		}
-		if col.DefaultValue != nil {
-			fmt.Fprintf(&sb, "\n        CONSTRAINT [%s] DEFAULT %s",
-				col.DefaultValue.Name, col.DefaultValue.Definition)
-		}
-		// check if part of clustered PK
-		for _, idx := range indexes {
-			if idx.IsPrimaryKey && idx.IsClustered {
-				for _, kc := range idx.KeyColumns {
-					if strings.EqualFold(kc.Name, col.Name) {
-						pkCols = append(pkCols, fmt.Sprintf("[%s]", col.Name))
-					}
-				}
-				break
+			fmt.Fprintf(&sb, "    %s %s", quoteIdent(col.Name), scriptColType(col))
+			if col.IsIdentity {
+				fmt.Fprintf(&sb, " IDENTITY(%d,%d)", col.IdentitySeed, col.IdentityIncrement)
+			}
+			if !col.IsNullable {
+				sb.WriteString(" NOT NULL")
+			} else {
+				sb.WriteString(" NULL")
+			}
+			if col.DefaultValue != nil {
+				fmt.Fprintf(&sb, " CONSTRAINT %s DEFAULT %s",
+					quoteIdent(col.DefaultValue.Name), col.DefaultValue.Definition)
 			}
 		}
-		if i < len(cols)-1 || len(pkCols) > 0 {
+		isLast := i == len(cols)-1
+		if !isLast || pkIdx != nil {
 			sb.WriteString(",")
 		}
 		sb.WriteString("\n")
 	}
 
-	// Primary key constraint
-	for _, idx := range indexes {
-		if idx.IsPrimaryKey {
-			keyCols := make([]string, len(idx.KeyColumns))
-			for i, kc := range idx.KeyColumns {
-				dir := "ASC"
-				if kc.Descending {
-					dir = "DESC"
-				}
-				keyCols[i] = fmt.Sprintf("[%s] %s", kc.Name, dir)
+	if pkIdx != nil {
+		keyCols := make([]string, len(pkIdx.KeyColumns))
+		for i, kc := range pkIdx.KeyColumns {
+			dir := "ASC"
+			if kc.Descending {
+				dir = "DESC"
 			}
-			clust := "NONCLUSTERED"
-			if idx.IsClustered {
-				clust = "CLUSTERED"
-			}
-			fmt.Fprintf(&sb, "    CONSTRAINT [%s] PRIMARY KEY %s (%s)\n",
-				idx.Name, clust, strings.Join(keyCols, ", "))
-			break
+			keyCols[i] = fmt.Sprintf("%s %s", quoteIdent(kc.Name), dir)
 		}
+		clust := "NONCLUSTERED"
+		if pkIdx.IsClustered {
+			clust = "CLUSTERED"
+		}
+		fmt.Fprintf(&sb, "    CONSTRAINT %s PRIMARY KEY %s (%s)\n",
+			quoteIdent(pkIdx.Name), clust, strings.Join(keyCols, ", "))
 	}
+
 	sb.WriteString(");\nGO\n\n")
 
 	// Non-PK indexes
 	for _, idx := range indexes {
-		if idx.IsPrimaryKey {
-			continue
+		if !idx.IsPrimaryKey {
+			sb.WriteString(sc.scriptIndex(idx, t))
 		}
-		sb.WriteString(sc.scriptIndex(idx, t))
 	}
 
 	// Foreign keys
@@ -183,14 +182,14 @@ func (sc *Scripter) scriptIndex(idx *Index, t *Table) string {
 		if kc.Descending {
 			dir = "DESC"
 		}
-		keyCols[i] = fmt.Sprintf("[%s] %s", kc.Name, dir)
+		keyCols[i] = fmt.Sprintf("%s %s", quoteIdent(kc.Name), dir)
 	}
-	fmt.Fprintf(&sb, "CREATE %s%s INDEX [%s]\n    ON %s (%s)",
-		uniq, idx.Type, idx.Name, t.FullName(), strings.Join(keyCols, ", "))
+	fmt.Fprintf(&sb, "CREATE %s%s INDEX %s\n    ON %s (%s)",
+		uniq, idx.Type, quoteIdent(idx.Name), t.FullName(), strings.Join(keyCols, ", "))
 	if len(idx.IncludedColumns) > 0 {
 		inc := make([]string, len(idx.IncludedColumns))
 		for i, c := range idx.IncludedColumns {
-			inc[i] = fmt.Sprintf("[%s]", c.Name)
+			inc[i] = quoteIdent(c.Name)
 		}
 		fmt.Fprintf(&sb, "\n    INCLUDE (%s)", strings.Join(inc, ", "))
 	}
@@ -208,17 +207,17 @@ func (sc *Scripter) scriptForeignKey(fk *ForeignKey, t *Table) string {
 	var sb strings.Builder
 	cols := make([]string, len(fk.Columns))
 	for i, c := range fk.Columns {
-		cols[i] = fmt.Sprintf("[%s]", c)
+		cols[i] = quoteIdent(c)
 	}
 	refCols := make([]string, len(fk.ReferencedColumns))
 	for i, c := range fk.ReferencedColumns {
-		refCols[i] = fmt.Sprintf("[%s]", c)
+		refCols[i] = quoteIdent(c)
 	}
 	fmt.Fprintf(&sb,
-		"ALTER TABLE %s\n    ADD CONSTRAINT [%s]\n    FOREIGN KEY (%s)\n    REFERENCES [%s].[%s] (%s)",
-		t.FullName(), fk.Name,
+		"ALTER TABLE %s\n    ADD CONSTRAINT %s\n    FOREIGN KEY (%s)\n    REFERENCES %s (%s)",
+		t.FullName(), quoteIdent(fk.Name),
 		strings.Join(cols, ", "),
-		fk.ReferencedSchema, fk.ReferencedTable,
+		qualifiedName(fk.ReferencedSchema, fk.ReferencedTable),
 		strings.Join(refCols, ", "),
 	)
 	if fk.DeleteAction != "" && fk.DeleteAction != "NO_ACTION" {
@@ -231,89 +230,125 @@ func (sc *Scripter) scriptForeignKey(fk *ForeignKey, t *Table) string {
 	return sb.String()
 }
 
-// ── View ──────────────────────────────────────────────────────────────────────
+// ============================================================
+// View
+// ============================================================
 
-// ScriptView returns the CREATE VIEW definition.
+// ScriptView returns the CREATE VIEW definition as stored in sys.sql_modules.
 func (sc *Scripter) ScriptView(schema, name string) (string, error) {
-	row := sc.db.queryRow(context.Background(), `
+	return sc.ScriptViewContext(context.Background(), schema, name)
+}
+
+// ScriptViewContext is the context-aware variant of ScriptView.
+func (sc *Scripter) ScriptViewContext(ctx context.Context, schema, name string) (string, error) {
+	if sc.opts.ScriptDrops {
+		return fmt.Sprintf("DROP VIEW IF EXISTS %s;\nGO\n", qualifiedName(schema, name)), nil
+	}
+	row, release, err := sc.db.queryRow(ctx, `
 SELECT m.definition
 FROM   sys.views v
 JOIN   sys.sql_modules m ON m.object_id = v.object_id
-WHERE  SCHEMA_NAME(v.schema_id) = ? AND v.name = ?`, schema, name)
+WHERE  SCHEMA_NAME(v.schema_id) = @p1 AND v.name = @p2`, schema, name)
+	if err != nil {
+		return "", err
+	}
+	defer release()
 
 	var def string
 	if err := row.Scan(&def); err != nil {
 		if err == sql.ErrNoRows {
-			return "", fmt.Errorf("gosmo: view [%s].[%s] not found", schema, name)
+			return "", fmt.Errorf("gosmo: view %s not found", qualifiedName(schema, name))
 		}
 		return "", err
-	}
-	if sc.opts.ScriptDrops {
-		return fmt.Sprintf("DROP VIEW IF EXISTS [%s].[%s];\nGO\n", schema, name), nil
 	}
 	return def + "\nGO\n", nil
 }
 
-// ── Stored procedure ──────────────────────────────────────────────────────────
+// ============================================================
+// Stored Procedure
+// ============================================================
 
 // ScriptStoredProcedure returns the CREATE PROCEDURE definition.
 func (sc *Scripter) ScriptStoredProcedure(schema, name string) (string, error) {
-	row := sc.db.queryRow(context.Background(), `
+	return sc.ScriptStoredProcedureContext(context.Background(), schema, name)
+}
+
+// ScriptStoredProcedureContext is the context-aware variant.
+func (sc *Scripter) ScriptStoredProcedureContext(ctx context.Context, schema, name string) (string, error) {
+	if sc.opts.ScriptDrops {
+		return fmt.Sprintf("DROP PROCEDURE IF EXISTS %s;\nGO\n", qualifiedName(schema, name)), nil
+	}
+	row, release, err := sc.db.queryRow(ctx, `
 SELECT m.definition
 FROM   sys.procedures p
 JOIN   sys.sql_modules m ON m.object_id = p.object_id
-WHERE  SCHEMA_NAME(p.schema_id) = ? AND p.name = ?`, schema, name)
+WHERE  SCHEMA_NAME(p.schema_id) = @p1 AND p.name = @p2`, schema, name)
+	if err != nil {
+		return "", err
+	}
+	defer release()
 
 	var def string
 	if err := row.Scan(&def); err != nil {
 		if err == sql.ErrNoRows {
-			return "", fmt.Errorf("gosmo: stored procedure [%s].[%s] not found", schema, name)
+			return "", fmt.Errorf("gosmo: stored procedure %s not found", qualifiedName(schema, name))
 		}
 		return "", err
-	}
-	if sc.opts.ScriptDrops {
-		return fmt.Sprintf("DROP PROCEDURE IF EXISTS [%s].[%s];\nGO\n", schema, name), nil
 	}
 	return def + "\nGO\n", nil
 }
 
-// ── Function ──────────────────────────────────────────────────────────────────
+// ============================================================
+// Function
+// ============================================================
 
 // ScriptFunction returns the CREATE FUNCTION definition.
 func (sc *Scripter) ScriptFunction(schema, name string) (string, error) {
-	row := sc.db.queryRow(context.Background(), `
+	return sc.ScriptFunctionContext(context.Background(), schema, name)
+}
+
+// ScriptFunctionContext is the context-aware variant.
+func (sc *Scripter) ScriptFunctionContext(ctx context.Context, schema, name string) (string, error) {
+	if sc.opts.ScriptDrops {
+		return fmt.Sprintf("DROP FUNCTION IF EXISTS %s;\nGO\n", qualifiedName(schema, name)), nil
+	}
+	row, release, err := sc.db.queryRow(ctx, `
 SELECT m.definition
 FROM   sys.objects o
 JOIN   sys.sql_modules m ON m.object_id = o.object_id
-WHERE  SCHEMA_NAME(o.schema_id) = ? AND o.name = ?
+WHERE  SCHEMA_NAME(o.schema_id) = @p1 AND o.name = @p2
   AND  o.type IN ('FN','TF','IF')`, schema, name)
+	if err != nil {
+		return "", err
+	}
+	defer release()
 
 	var def string
 	if err := row.Scan(&def); err != nil {
 		if err == sql.ErrNoRows {
-			return "", fmt.Errorf("gosmo: function [%s].[%s] not found", schema, name)
+			return "", fmt.Errorf("gosmo: function %s not found", qualifiedName(schema, name))
 		}
 		return "", err
-	}
-	if sc.opts.ScriptDrops {
-		return fmt.Sprintf("DROP FUNCTION IF EXISTS [%s].[%s];\nGO\n", schema, name), nil
 	}
 	return def + "\nGO\n", nil
 }
 
-// ── Database-level script ─────────────────────────────────────────────────────
+// ============================================================
+// Database
+// ============================================================
 
-// ScriptDatabase generates a CREATE DATABASE script for the current database.
+// ScriptDatabase generates a CREATE DATABASE script for the attached database.
 func (sc *Scripter) ScriptDatabase() (string, error) {
 	var sb strings.Builder
 	d := sc.db
 	if sc.opts.IncludeHeaders {
-		fmt.Fprintf(&sb, "/* Database: %s  Version: %s */\n\n", d.name, d.server.info.ProductVersion)
+		fmt.Fprintf(&sb, "/* Database: %s  Version: %s */\n\n",
+			d.name, d.server.info.ProductVersion)
 	}
 	if sc.opts.IncludeIfNotExists {
 		fmt.Fprintf(&sb, "IF DB_ID(N'%s') IS NULL\nBEGIN\n    ", escapeSingle(d.name))
 	}
-	fmt.Fprintf(&sb, "CREATE DATABASE [%s]", d.name)
+	fmt.Fprintf(&sb, "CREATE DATABASE %s", quoteIdent(d.name))
 	if d.collation != "" {
 		fmt.Fprintf(&sb, " COLLATE %s", d.collation)
 	}
@@ -323,27 +358,35 @@ func (sc *Scripter) ScriptDatabase() (string, error) {
 	} else {
 		sb.WriteString("GO\n\n")
 	}
-	fmt.Fprintf(&sb, "ALTER DATABASE [%s] SET RECOVERY %s;\nGO\n", d.name, d.recoveryModel)
-	fmt.Fprintf(&sb, "ALTER DATABASE [%s] SET COMPATIBILITY_LEVEL = %d;\nGO\n", d.name, d.compatLevel)
+	fmt.Fprintf(&sb, "ALTER DATABASE %s SET RECOVERY %s;\nGO\n",
+		quoteIdent(d.name), d.recoveryModel)
+	fmt.Fprintf(&sb, "ALTER DATABASE %s SET COMPATIBILITY_LEVEL = %d;\nGO\n",
+		quoteIdent(d.name), d.compatLevel)
 	return sb.String(), nil
 }
 
-// ── Column type helper ────────────────────────────────────────────────────────
+// ============================================================
+// Column type formatting (used by ScriptTable)
+// ============================================================
 
+// scriptColType returns the T-SQL data-type fragment for a Column read from
+// sys.columns. nchar/nvarchar store max_length in bytes (2 per character).
 func scriptColType(col *Column) string {
 	switch col.DataType {
-	case DataTypeVarChar, DataTypeChar, DataTypeBinary, DataTypeVarBinary,
-		DataTypeNVarChar, DataTypeNChar:
+	case DataTypeVarChar, DataTypeChar, DataTypeBinary, DataTypeVarBinary:
 		if col.MaxLength == -1 {
 			return fmt.Sprintf("%s(MAX)", col.DataType)
 		}
 		if col.MaxLength > 0 {
-			l := col.MaxLength
-			// nchar/nvarchar store length in bytes (2 per char)
-			if col.DataType == DataTypeNVarChar || col.DataType == DataTypeNChar {
-				l = l / 2
-			}
-			return fmt.Sprintf("%s(%d)", col.DataType, l)
+			return fmt.Sprintf("%s(%d)", col.DataType, col.MaxLength)
+		}
+	case DataTypeNVarChar, DataTypeNChar:
+		if col.MaxLength == -1 {
+			return fmt.Sprintf("%s(MAX)", col.DataType)
+		}
+		if col.MaxLength > 0 {
+			// SQL Server stores nchar/nvarchar max_length in bytes (2 per char).
+			return fmt.Sprintf("%s(%d)", col.DataType, col.MaxLength/2)
 		}
 	case DataTypeDecimal, DataTypeNumeric:
 		if col.Precision > 0 {

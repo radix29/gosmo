@@ -145,7 +145,7 @@ func (seq *Sequence) Restart(value int64) error {
 
 // NextValue retrieves the next value from the sequence.
 func (seq *Sequence) NextValue() (int64, error) {
-	row := seq.db.queryRow(context.Background(),
+	row, _, _ := seq.db.queryRow(context.Background(),
 		fmt.Sprintf("SELECT NEXT VALUE FOR [%s].[%s]", seq.Schema, seq.Name))
 	var val int64
 	if err := row.Scan(&val); err != nil {

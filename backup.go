@@ -2,6 +2,7 @@ package gosmo
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"strings"
 	"time"
@@ -13,11 +14,11 @@ import (
 
 // BackupOptions configures a BACKUP DATABASE or BACKUP LOG operation.
 type BackupOptions struct {
-	// Database to back up.
+	// Database to back up (required).
 	Database string
-	// Action: DATABASE, LOG, or FILES.
+	// Action: DATABASE (default), LOG, or FILES.
 	Action BackupAction
-	// Devices is one or more backup device paths (e.g. "C:\\Backups\\MyDB.bak").
+	// Devices is one or more backup device paths, e.g. `C:\Backups\MyDB.bak`.
 	Devices []string
 	// BackupSetName is the NAME clause.
 	BackupSetName string
@@ -25,8 +26,7 @@ type BackupOptions struct {
 	Description string
 	// MediaDescription is the MEDIADESCRIPTION clause.
 	MediaDescription string
-	// Compression controls backup compression (true = with, false = without).
-	// With Go 1.26+ you can write: Compression: new(true)
+	// Compression: nil = server default, new(true) = force on, new(false) = force off.
 	Compression *bool
 	// CopyOnly marks this as a copy-only backup (does not break the log chain).
 	CopyOnly bool
@@ -42,6 +42,14 @@ type BackupOptions struct {
 
 // Backup performs a BACKUP DATABASE (or LOG) operation.
 func (s *Server) Backup(opts BackupOptions) error {
+	return s.BackupContext(context.Background(), opts)
+}
+
+// BackupContext is the context-aware variant of Backup.
+func (s *Server) BackupContext(ctx context.Context, opts BackupOptions) error {
+	if opts.Database == "" {
+		return fmt.Errorf("gosmo: backup: database name is required")
+	}
 	if len(opts.Devices) == 0 {
 		return fmt.Errorf("gosmo: backup: at least one device is required")
 	}
@@ -50,7 +58,7 @@ func (s *Server) Backup(opts BackupOptions) error {
 	}
 
 	var sb strings.Builder
-	fmt.Fprintf(&sb, "BACKUP %s [%s] TO ", opts.Action, opts.Database)
+	fmt.Fprintf(&sb, "BACKUP %s %s TO ", opts.Action, quoteIdent(opts.Database))
 
 	deviceList := make([]string, len(opts.Devices))
 	for i, d := range opts.Devices {
@@ -90,13 +98,11 @@ func (s *Server) Backup(opts BackupOptions) error {
 	if opts.Stats > 0 {
 		withs = append(withs, fmt.Sprintf("STATS = %d", opts.Stats))
 	}
-
 	if len(withs) > 0 {
-		sb.WriteString(" WITH " + strings.Join(withs, ", "))
+		fmt.Fprintf(&sb, " WITH %s", strings.Join(withs, ", "))
 	}
 
-	_, err := s.db.ExecContext(context.Background(), sb.String())
-	if err != nil {
+	if _, err := s.db.ExecContext(ctx, sb.String()); err != nil {
 		return fmt.Errorf("gosmo: backup %q: %w", opts.Database, err)
 	}
 	return nil
@@ -108,27 +114,27 @@ func (s *Server) Backup(opts BackupOptions) error {
 
 // RestoreOptions configures a RESTORE DATABASE or RESTORE LOG operation.
 type RestoreOptions struct {
-	// Database is the target database name.
+	// Database is the target database name (required).
 	Database string
-	// Action: DATABASE or LOG.
+	// Action: DATABASE (default) or LOG.
 	Action BackupAction
-	// Devices is one or more backup file paths.
+	// Devices is one or more backup file paths (required).
 	Devices []string
-	// RelocateFiles maps logical names to new physical paths.
+	// RelocateFiles maps logical file names to new physical paths.
 	RelocateFiles []RelocateFile
-	// NoRecovery keeps the database in RESTORING state.
+	// NoRecovery keeps the database in RESTORING state (for log shipping / tail-log).
 	NoRecovery bool
-	// Recovery transitions the database to ONLINE.
+	// Recovery transitions the database to ONLINE (default when neither flag is set).
 	Recovery bool
-	// StandBy sets the database to standby mode with the given undo file path.
+	// StandBy sets standby mode; provide the undo-file path.
 	StandBy string
-	// Replace forces restoration even if a database already exists.
+	// Replace forces restoration over an existing database.
 	Replace bool
 	// Checksum verifies backup checksums.
 	Checksum bool
-	// Stats controls progress reporting.
+	// Stats controls progress reporting frequency.
 	Stats int
-	// StopAt stops at a specific point in time.
+	// StopAt performs a point-in-time restore.
 	StopAt *time.Time
 }
 
@@ -140,6 +146,14 @@ type RelocateFile struct {
 
 // Restore performs a RESTORE DATABASE (or LOG) operation.
 func (s *Server) Restore(opts RestoreOptions) error {
+	return s.RestoreContext(context.Background(), opts)
+}
+
+// RestoreContext is the context-aware variant of Restore.
+func (s *Server) RestoreContext(ctx context.Context, opts RestoreOptions) error {
+	if opts.Database == "" {
+		return fmt.Errorf("gosmo: restore: database name is required")
+	}
 	if len(opts.Devices) == 0 {
 		return fmt.Errorf("gosmo: restore: at least one device is required")
 	}
@@ -148,7 +162,7 @@ func (s *Server) Restore(opts RestoreOptions) error {
 	}
 
 	var sb strings.Builder
-	fmt.Fprintf(&sb, "RESTORE %s [%s] FROM ", opts.Action, opts.Database)
+	fmt.Fprintf(&sb, "RESTORE %s %s FROM ", opts.Action, quoteIdent(opts.Database))
 
 	deviceList := make([]string, len(opts.Devices))
 	for i, d := range opts.Devices {
@@ -158,10 +172,8 @@ func (s *Server) Restore(opts RestoreOptions) error {
 
 	var withs []string
 	for _, rf := range opts.RelocateFiles {
-		withs = append(withs, fmt.Sprintf(
-			"MOVE N'%s' TO N'%s'",
-			escapeSingle(rf.LogicalName), escapeSingle(rf.PhysicalName),
-		))
+		withs = append(withs, fmt.Sprintf("MOVE N'%s' TO N'%s'",
+			escapeSingle(rf.LogicalName), escapeSingle(rf.PhysicalName)))
 	}
 	if opts.NoRecovery {
 		withs = append(withs, "NORECOVERY")
@@ -183,13 +195,11 @@ func (s *Server) Restore(opts RestoreOptions) error {
 	if opts.StopAt != nil {
 		withs = append(withs, fmt.Sprintf("STOPAT = '%s'", opts.StopAt.Format("2006-01-02T15:04:05")))
 	}
-
 	if len(withs) > 0 {
-		sb.WriteString(" WITH " + strings.Join(withs, ", "))
+		fmt.Fprintf(&sb, " WITH %s", strings.Join(withs, ", "))
 	}
 
-	_, err := s.db.ExecContext(context.Background(), sb.String())
-	if err != nil {
+	if _, err := s.db.ExecContext(ctx, sb.String()); err != nil {
 		return fmt.Errorf("gosmo: restore %q: %w", opts.Database, err)
 	}
 	return nil
@@ -197,17 +207,22 @@ func (s *Server) Restore(opts RestoreOptions) error {
 
 // BackupHistory returns the backup history for a database from msdb.
 func (s *Server) BackupHistory(databaseName string) ([]*BackupInfo, error) {
+	return s.BackupHistoryContext(context.Background(), databaseName)
+}
+
+// BackupHistoryContext is the context-aware variant of BackupHistory.
+func (s *Server) BackupHistoryContext(ctx context.Context, databaseName string) ([]*BackupInfo, error) {
 	const q = `
-SELECT bs.database_name, bs.name, bs.description, bs.type,
+SELECT bs.database_name, bs.name, ISNULL(bs.description,''), bs.type,
        bs.backup_start_date, bs.backup_finish_date, bs.backup_size,
        bmf.physical_device_name, bs.user_name, bs.server_name,
        bs.database_version, bs.compatibility_level
 FROM   msdb.dbo.backupset bs
 JOIN   msdb.dbo.backupmediafamily bmf ON bmf.media_set_id = bs.media_set_id
-WHERE  bs.database_name = ?
+WHERE  bs.database_name = @p1
 ORDER  BY bs.backup_finish_date DESC`
 
-	rows, err := s.db.QueryContext(context.Background(), q, databaseName)
+	rows, err := s.db.QueryContext(ctx, q, databaseName)
 	if err != nil {
 		return nil, fmt.Errorf("gosmo: backup history for %q: %w", databaseName, err)
 	}
@@ -217,14 +232,16 @@ ORDER  BY bs.backup_finish_date DESC`
 	for rows.Next() {
 		b := &BackupInfo{}
 		var bType string
+		var desc sql.NullString
 		if err := rows.Scan(
-			&b.DatabaseName, &b.BackupSetName, &b.Description, &bType,
+			&b.DatabaseName, &b.BackupSetName, &desc, &bType,
 			&b.BackupStart, &b.BackupFinish, &b.BackupSize,
 			&b.DeviceName, &b.UserName, &b.ServerName,
 			&b.DatabaseVersion, &b.CompatibilityLevel,
 		); err != nil {
 			return nil, err
 		}
+		b.Description = desc.String
 		switch bType {
 		case "D":
 			b.BackupType = BackupActionDatabase
