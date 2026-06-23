@@ -1,6 +1,6 @@
 module github.com/radix29/gosmo
 
-go 1.26.4
+go 1.26
 
 require github.com/microsoft/go-mssqldb v1.7.2
 

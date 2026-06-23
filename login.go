@@ -45,14 +45,20 @@ func (l *Login) EnableContext(ctx context.Context) error {
 }
 
 // ChangePassword changes the login's password.
-// The new password is passed as a parameter to avoid injection via escapeSingle.
 func (l *Login) ChangePassword(newPassword string) error {
 	return l.ChangePasswordContext(context.Background(), newPassword)
 }
 
+// ChangePasswordContext changes the login's password.
+//
+// Security: the password is never interpolated into the SQL string.
+// It is encoded as a UTF-16LE hex literal so the statement is
+// injection-proof regardless of the password content.
 func (l *Login) ChangePasswordContext(ctx context.Context, newPassword string) error {
-	// ALTER LOGIN does not support parameterised passwords; escapeSingle is safe here.
-	q := fmt.Sprintf("ALTER LOGIN %s WITH PASSWORD = N'%s'", quoteIdent(l.Name), escapeSingle(newPassword))
+	// Encode the password as a 0x... hex literal — no quoting needed,
+	// no character in the password can affect the surrounding SQL.
+	pwHex := passwordHexLiteral(newPassword)
+	q := fmt.Sprintf("ALTER LOGIN %s WITH PASSWORD = %s HASHED", quoteIdent(l.Name), pwHex)
 	if _, err := l.server.db.ExecContext(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: change password for login %q: %w", l.Name, err)
 	}

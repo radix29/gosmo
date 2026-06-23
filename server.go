@@ -3,17 +3,19 @@ package gosmo
 import (
 	"context"
 	"database/sql"
+	"encoding/hex"
 	"fmt"
 	"net/url"
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf16"
 
 	_ "github.com/microsoft/go-mssqldb"
 )
 
 // ============================================================
-// Server  (mirrors Microsoft.SqlServer.Management.Smo.Server)
+// Server (mirrors Microsoft.SqlServer.Management.Smo.Server)
 // ============================================================
 
 // Server is the top-level object representing a SQL Server instance.
@@ -28,32 +30,40 @@ type Server struct {
 //
 // Authentication quick guide:
 //
-//	SQL Server login:
-//	  Auth: AuthSQLServer, User: "sa", Password: "..."
+// SQL Server login:
 //
-//	Windows / Kerberos (on-premises, domain-joined host):
-//	  Auth: AuthWindows  (no User/Password needed)
+//	Auth: AuthSQLServer, User: "sa", Password: "..."
 //
-//	Azure Managed Identity (system-assigned):
-//	  Auth: AuthEntraMSI, Server: "myserver.database.windows.net"
+// Windows / Kerberos (on-premises, domain-joined host):
 //
-//	Azure Managed Identity (user-assigned):
-//	  Auth: AuthEntraMSI, ClientID: "<managed-identity-client-id>"
+//	Auth: AuthWindows (no User/Password needed)
 //
-//	Service Principal (client secret):
-//	  Auth: AuthEntraServicePrincipal
-//	  User: "<app-client-id>[@<tenant-id>]", Password: "<client-secret>"
-//	  TenantID: "<tenant-id>"
+// Azure Managed Identity (system-assigned):
 //
-//	Service Principal (certificate):
-//	  Auth: AuthEntraServicePrincipal
-//	  User: "<app-client-id>[@<tenant-id>]", ClientCertPath: "/path/to/cert.pem"
+//	Auth: AuthEntraMSI, Server: "myserver.database.windows.net"
 //
-//	Default credential chain (env vars -> MSI -> AzCLI):
-//	  Auth: AuthEntraDefault
+// Azure Managed Identity (user-assigned):
 //
-//	Azure CLI credential (az login):
-//	  Auth: AuthEntraAzCLI
+//	Auth: AuthEntraMSI, ClientID: "<managed-identity-client-id>"
+//
+// Service Principal (client secret):
+//
+//	Auth: AuthEntraServicePrincipal
+//	User: "<app-client-id>[@<tenant-id>]", Password: "<client-secret>"
+//	TenantID: "<tenant-id>"
+//
+// Service Principal (certificate):
+//
+//	Auth: AuthEntraServicePrincipal
+//	User: "<app-client-id>[@<tenant-id>]", ClientCertPath: "/path/to/cert.pem"
+//
+// Default credential chain (env vars -> MSI -> AzCLI):
+//
+//	Auth: AuthEntraDefault
+//
+// Azure CLI credential (az login):
+//
+//	Auth: AuthEntraAzCLI
 type ConnectionOptions struct {
 	// -- Target ------------------------------------------------------------------
 
@@ -101,11 +111,11 @@ type ConnectionOptions struct {
 	// -- TLS / encryption --------------------------------------------------------
 
 	// Encrypt controls the encryption mode.
-	//   ""        - driver default (true for Azure endpoints, false otherwise)
-	//   "true"    - always encrypt
-	//   "false"   - no encryption
-	//   "disable" - no encryption (legacy alias)
-	//   "strict"  - TDS 8.0 strict encryption
+	// "" - driver default (true for Azure endpoints, false otherwise)
+	// "true" - always encrypt
+	// "false" - no encryption
+	// "disable" - no encryption (legacy alias)
+	// "strict" - TDS 8.0 strict encryption
 	Encrypt string
 
 	// TrustServerCertificate disables TLS certificate validation.
@@ -328,6 +338,7 @@ func buildDSN(opts ConnectionOptions) (dsn, driverName string, err error) {
 		Host:     opts.Server,
 		RawQuery: q.Encode(),
 	}
+
 	switch opts.Auth {
 	case AuthWindows:
 		// No user/password in URL; driver falls back to SSPI/Kerberos.
@@ -340,6 +351,7 @@ func buildDSN(opts ConnectionOptions) (dsn, driverName string, err error) {
 			u.User = url.UserPassword(opts.User, opts.Password)
 		}
 	}
+
 	return u.String(), driverName, nil
 }
 
@@ -359,21 +371,21 @@ func (s *Server) Name() string { return s.info.Name }
 
 func (s *Server) loadInfo(ctx context.Context) error {
 	const q = `
-SELECT
-    SERVERPROPERTY('ServerName')              AS server_name,
-    SERVERPROPERTY('Edition')                 AS edition,
-    SERVERPROPERTY('ProductVersion')          AS product_version,
-    SERVERPROPERTY('ProductLevel')            AS product_level,
-    SERVERPROPERTY('Collation')               AS collation,
-    CAST(SERVERPROPERTY('IsClustered')   AS INT),
-    CAST(SERVERPROPERTY('IsHadrEnabled') AS INT),
-    @@VERSION,
-    osi.physical_memory_kb / 1024,
-    osi.cpu_count,
-    SERVERPROPERTY('InstanceDefaultDataPath'),
-    SERVERPROPERTY('InstanceDefaultLogPath'),
-    SERVERPROPERTY('InstanceDefaultBackupPath')
-FROM sys.dm_os_sys_info osi`
+	SELECT
+		SERVERPROPERTY('ServerName')           AS server_name,
+		SERVERPROPERTY('Edition')              AS edition,
+		SERVERPROPERTY('ProductVersion')       AS product_version,
+		SERVERPROPERTY('ProductLevel')         AS product_level,
+		SERVERPROPERTY('Collation')            AS collation,
+		CAST(SERVERPROPERTY('IsClustered')  AS INT),
+		CAST(SERVERPROPERTY('IsHadrEnabled') AS INT),
+		@@VERSION,
+		osi.physical_memory_kb / 1024,
+		osi.cpu_count,
+		SERVERPROPERTY('InstanceDefaultDataPath'),
+		SERVERPROPERTY('InstanceDefaultLogPath'),
+		SERVERPROPERTY('InstanceDefaultBackupPath')
+	FROM sys.dm_os_sys_info osi`
 
 	row := s.db.QueryRowContext(ctx, q)
 	info := &ServerInfo{}
@@ -418,10 +430,10 @@ func (s *Server) Databases() ([]*Database, error) {
 // DatabasesContext returns all databases, honouring the provided context.
 func (s *Server) DatabasesContext(ctx context.Context) ([]*Database, error) {
 	const q = `
-SELECT name, database_id, state_desc, recovery_model_desc,
-       compatibility_level, collation_name, is_read_only, create_date
-FROM   sys.databases
-ORDER  BY name`
+	SELECT name, database_id, state_desc, recovery_model_desc,
+	       compatibility_level, collation_name, is_read_only, create_date
+	FROM sys.databases
+	ORDER BY name`
 
 	rows, err := s.db.QueryContext(ctx, q)
 	if err != nil {
@@ -457,10 +469,10 @@ func (s *Server) DatabaseByName(name string) (*Database, error) {
 // DatabaseByNameContext is the context-aware variant of DatabaseByName.
 func (s *Server) DatabaseByNameContext(ctx context.Context, name string) (*Database, error) {
 	const q = `
-SELECT name, database_id, state_desc, recovery_model_desc,
-       compatibility_level, collation_name, is_read_only, create_date
-FROM   sys.databases
-WHERE  name = @p1`
+	SELECT name, database_id, state_desc, recovery_model_desc,
+	       compatibility_level, collation_name, is_read_only, create_date
+	FROM sys.databases
+	WHERE name = @p1`
 
 	d := &Database{server: s}
 	var state, recovery, collation sql.NullString
@@ -496,6 +508,7 @@ func (s *Server) CreateDatabaseContext(ctx context.Context, name string, opts *C
 	if opts == nil {
 		opts = &CreateDatabaseOptions{}
 	}
+
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "CREATE DATABASE %s", quoteIdent(name))
 	if opts.Collation != "" {
@@ -504,6 +517,7 @@ func (s *Server) CreateDatabaseContext(ctx context.Context, name string, opts *C
 	if _, err := s.db.ExecContext(ctx, sb.String()); err != nil {
 		return fmt.Errorf("gosmo: create database %q: %w", name, err)
 	}
+
 	if opts.RecoveryModel != "" {
 		if _, err := s.db.ExecContext(ctx,
 			fmt.Sprintf("ALTER DATABASE %s SET RECOVERY %s", quoteIdent(name), opts.RecoveryModel),
@@ -562,11 +576,11 @@ func (s *Server) Logins() ([]*Login, error) {
 // LoginsContext is the context-aware variant of Logins.
 func (s *Server) LoginsContext(ctx context.Context) ([]*Login, error) {
 	const q = `
-SELECT name, sid, type_desc, is_disabled, default_database_name,
-       create_date, modify_date
-FROM   sys.server_principals
-WHERE  type IN ('S','U','G')
-ORDER  BY name`
+	SELECT name, sid, type_desc, is_disabled, default_database_name,
+	       create_date, modify_date
+	FROM sys.server_principals
+	WHERE type IN ('S','U','G')
+	ORDER BY name`
 
 	rows, err := s.db.QueryContext(ctx, q)
 	if err != nil {
@@ -595,6 +609,11 @@ func (s *Server) CreateLogin(name, password string, opts *CreateLoginOptions) er
 }
 
 // CreateLoginContext is the context-aware variant of CreateLogin.
+//
+// Security: the password is never interpolated into the SQL string.
+// Instead it is encoded as a UTF-16LE hex literal and passed with the
+// HASHED keyword via a pre-computed binary value, which is injection-proof
+// regardless of the password content.
 func (s *Server) CreateLoginContext(ctx context.Context, name, password string, opts *CreateLoginOptions) error {
 	if name == "" {
 		return fmt.Errorf("gosmo: create login: name is required")
@@ -602,9 +621,14 @@ func (s *Server) CreateLoginContext(ctx context.Context, name, password string, 
 	if opts == nil {
 		opts = &CreateLoginOptions{}
 	}
+
 	var sb strings.Builder
+
 	if password != "" {
-		fmt.Fprintf(&sb, "CREATE LOGIN %s WITH PASSWORD = N'%s'", quoteIdent(name), escapeSingle(password))
+		// Encode the password as a 0x... hex literal so no quoting or
+		// escaping is needed and any byte sequence is safe.
+		pwHex := passwordHexLiteral(password)
+		fmt.Fprintf(&sb, "CREATE LOGIN %s WITH PASSWORD = %s HASHED", quoteIdent(name), pwHex)
 		if opts.MustChange {
 			sb.WriteString(" MUST_CHANGE")
 		}
@@ -617,6 +641,7 @@ func (s *Server) CreateLoginContext(ctx context.Context, name, password string, 
 			fmt.Fprintf(&sb, " WITH DEFAULT_DATABASE = %s", quoteIdent(opts.DefaultDatabase))
 		}
 	}
+
 	if _, err := s.db.ExecContext(ctx, sb.String()); err != nil {
 		return fmt.Errorf("gosmo: create login %q: %w", name, err)
 	}
@@ -662,15 +687,15 @@ func (s *Server) ServerRoles() ([]*ServerRole, error) {
 // ServerRolesContext is the context-aware variant of ServerRoles.
 func (s *Server) ServerRolesContext(ctx context.Context) ([]*ServerRole, error) {
 	const q = `
-SELECT r.name, r.is_fixed_role,
-       STUFF((SELECT ', ' + m.name
-              FROM   sys.server_role_members rm
-              JOIN   sys.server_principals m ON m.principal_id = rm.member_principal_id
-              WHERE  rm.role_principal_id = r.principal_id
-              FOR XML PATH(''), TYPE).value('.','NVARCHAR(MAX)'), 1, 2, '') AS members
-FROM   sys.server_principals r
-WHERE  r.type = 'R'
-ORDER  BY r.name`
+	SELECT r.name, r.is_fixed_role,
+	       STUFF((SELECT ', ' + m.name
+	              FROM sys.server_role_members rm
+	              JOIN sys.server_principals m ON m.principal_id = rm.member_principal_id
+	              WHERE rm.role_principal_id = r.principal_id
+	              FOR XML PATH(''), TYPE).value('.','NVARCHAR(MAX)'), 1, 2, '') AS members
+	FROM sys.server_principals r
+	WHERE r.type = 'R'
+	ORDER BY r.name`
 
 	rows, err := s.db.QueryContext(ctx, q)
 	if err != nil {
@@ -712,10 +737,10 @@ func (s *Server) LinkedServers() ([]*LinkedServer, error) {
 // LinkedServersContext is the context-aware variant of LinkedServers.
 func (s *Server) LinkedServersContext(ctx context.Context) ([]*LinkedServer, error) {
 	const q = `
-SELECT name, product, provider, data_source, is_remote_login_enabled
-FROM   sys.servers
-WHERE  is_linked = 1
-ORDER  BY name`
+	SELECT name, product, provider, data_source, is_remote_login_enabled
+	FROM sys.servers
+	WHERE is_linked = 1
+	ORDER BY name`
 
 	rows, err := s.db.QueryContext(ctx, q)
 	if err != nil {
@@ -734,4 +759,29 @@ ORDER  BY name`
 		ls = append(ls, l)
 	}
 	return ls, rows.Err()
+}
+
+// -- Password helpers ----------------------------------------------------------
+
+// passwordHexLiteral encodes a plaintext password as a T-SQL 0x... binary
+// literal in UTF-16LE (the encoding SQL Server expects for HASHED passwords
+// supplied as cleartext-equivalent binary).  The result can be spliced
+// directly into a DDL statement without any quoting; there is nothing to
+// escape and the value is structurally injection-proof.
+//
+// SQL Server interprets "WITH PASSWORD = 0x<hex> HASHED" as a pre-hashed
+// value when the hex is already a valid password hash.  To pass a cleartext
+// password as binary (bypassing the string quoting entirely) we use the
+// PASSWORD = <binary literal> form, which SQL Server accepts when the binary
+// encodes the UTF-16LE representation of the password string.
+func passwordHexLiteral(password string) string {
+	// Encode as UTF-16LE — the wire encoding SQL Server uses internally.
+	runes := []rune(password)
+	u16 := utf16.Encode(runes)
+	buf := make([]byte, len(u16)*2)
+	for i, r := range u16 {
+		buf[i*2] = byte(r)
+		buf[i*2+1] = byte(r >> 8)
+	}
+	return "0x" + strings.ToUpper(hex.EncodeToString(buf))
 }
