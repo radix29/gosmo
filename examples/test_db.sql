@@ -18,23 +18,7 @@ BEGIN
     DROP DATABASE [RetailShop];
 END
 GO
-CREATE DATABASE [RetailShop]
-ON PRIMARY
-(
-    NAME     = N'RetailShop_Data',
-    FILENAME = N'C:\SQLData\RetailShop_Data.mdf',
-    SIZE     = 128MB,
-    MAXSIZE  = UNLIMITED,
-    FILEGROWTH = 64MB
-)
-LOG ON
-(
-    NAME     = N'RetailShop_Log',
-    FILENAME = N'C:\SQLData\RetailShop_Log.ldf',
-    SIZE     = 64MB,
-    MAXSIZE  = 2GB,
-    FILEGROWTH = 32MB
-);
+CREATE DATABASE [RetailShop];
 GO
 
 -- 2. HRManagement
@@ -44,23 +28,7 @@ BEGIN
     DROP DATABASE [HRManagement];
 END
 GO
-CREATE DATABASE [HRManagement]
-ON PRIMARY
-(
-    NAME     = N'HRManagement_Data',
-    FILENAME = N'C:\SQLData\HRManagement_Data.mdf',
-    SIZE     = 128MB,
-    MAXSIZE  = UNLIMITED,
-    FILEGROWTH = 64MB
-)
-LOG ON
-(
-    NAME     = N'HRManagement_Log',
-    FILENAME = N'C:\SQLData\HRManagement_Log.ldf',
-    SIZE     = 64MB,
-    MAXSIZE  = 2GB,
-    FILEGROWTH = 32MB
-);
+CREATE DATABASE [HRManagement];
 GO
 
 -- 3. HealthClinic
@@ -70,23 +38,7 @@ BEGIN
     DROP DATABASE [HealthClinic];
 END
 GO
-CREATE DATABASE [HealthClinic]
-ON PRIMARY
-(
-    NAME     = N'HealthClinic_Data',
-    FILENAME = N'C:\SQLData\HealthClinic_Data.mdf',
-    SIZE     = 128MB,
-    MAXSIZE  = UNLIMITED,
-    FILEGROWTH = 64MB
-)
-LOG ON
-(
-    NAME     = N'HealthClinic_Log',
-    FILENAME = N'C:\SQLData\HealthClinic_Log.ldf',
-    SIZE     = 64MB,
-    MAXSIZE  = 2GB,
-    FILEGROWTH = 32MB
-);
+CREATE DATABASE [HealthClinic];
 GO
 
 
