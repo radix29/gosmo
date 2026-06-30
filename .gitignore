@@ -4,3 +4,4 @@ dist/
 *.out
 vendor/
 .DS_Store
+*.ps1
