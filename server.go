@@ -554,6 +554,23 @@ func (s *Server) Info() *ServerInfo { return s.info }
 // Name returns the SQL Server instance name.
 func (s *Server) Name() string { return s.info.Name }
 
+// CurrentDatabase returns the name of the database the connection is
+// currently in — the login's default database when ConnectionOptions.Database
+// was left empty at connect time, or whatever a session-level USE has since
+// switched to.
+func (s *Server) CurrentDatabase() (string, error) {
+	return s.CurrentDatabaseContext(context.Background())
+}
+
+// CurrentDatabaseContext is the context-aware variant of CurrentDatabase.
+func (s *Server) CurrentDatabaseContext(ctx context.Context) (string, error) {
+	var name string
+	if err := s.db.QueryRowContext(ctx, "SELECT DB_NAME()").Scan(&name); err != nil {
+		return "", fmt.Errorf("gosmo: current database: %w", err)
+	}
+	return name, nil
+}
+
 // -- Internal helpers ----------------------------------------------------------
 
 func (s *Server) loadInfo(ctx context.Context) error {
