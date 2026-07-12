@@ -1,0 +1,7 @@
+dist/
+*.exe
+*.test
+*.out
+vendor/
+.DS_Store
+*.ps1
