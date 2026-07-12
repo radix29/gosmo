@@ -42,7 +42,7 @@ const Name = "gosmo"
 const modulePath = "github.com/radix29/gosmo"
 
 var (
-	Version = "v0.0.3"
+	Version = "v0.0.4"
 	Commit  = "unknown"
 	Date    = "unknown"
 )
