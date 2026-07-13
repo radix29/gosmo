@@ -1,0 +1,9 @@
+git tag -d v0.0.0-alpha.0
+
+git tag -a v0.0.0-alpha.1 -m "security fixes, injection"
+
+git describe
+
+git describe --always --long --dirty
+
+git show

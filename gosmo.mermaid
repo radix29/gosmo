@@ -1,0 +1,890 @@
+classDiagram
+    %% =========================================================
+    %% Top-level entry point
+    %% =========================================================
+    class ConnectionOptions {
+        +Server string
+        +Database string
+        +Auth AuthMethod
+        +User string
+        +Password string
+        +TenantID string
+        +ClientID string
+        +ClientCertPath string
+        +AccessToken string
+        +AccessTokenProvider func
+        +ServerSPN string
+        +Kerberos KerberosOptions
+        +ConnectTimeout Duration
+        +ApplicationName string
+        +MaxOpenConns int
+        +MaxIdleConns int
+        +ConnMaxLifetime Duration
+        +SessionInitSQL string
+        +TrustServerCertificate bool
+        +Encrypt string
+    }
+
+    class Server {
+        -db *sql.DB
+        -info *ServerInfo
+        +Connect(opts) *Server
+        +ConnectContext(ctx, opts) *Server
+        +ParseServerAddress(server) string
+        +Close() error
+        +DB() *sql.DB
+        +Info() *ServerInfo
+        +Name() string
+        +CurrentDatabase() string
+        +Databases() []*Database
+        +DatabaseByName(name) *Database
+        +CreateDatabase(name, opts) error
+        +DropDatabase(name, force) error
+        +Logins() []*Login
+        +LoginByName(name) *Login
+        +CreateLogin(name, password, opts) error
+        +DropLogin(name) error
+        +ServerRoles() []*ServerRole
+        +LinkedServers() []*LinkedServer
+        +Configurations() []*Configuration
+        +Jobs() []*AgentJob
+        +ActiveSessions(sys) []*Session
+        +KillSession(id) error
+        +ReadErrorLog(n) []*ErrorLogEntry
+        +MailProfiles() []*MailProfile
+        +SendMail(opts) error
+        +Backup(opts) error
+        +Restore(opts) error
+        +SecurityInfo() *ServerSecurityInfo
+        +ServerPermissions() []*ServerPermissionEntry
+        +GrantServerPermission(perm, principal) error
+        +DenyServerPermission(perm, principal) error
+        +RevokeServerPermission(perm, principal) error
+        +Credentials() []*Credential
+        +MemoryStats() *ServerMemoryStats
+        +Languages() []*Language
+    }
+
+    class ServerInfo {
+        +Name string
+        +Edition string
+        +ProductVersion string
+        +ProductLevel string
+        +Collation string
+        +IsClustered bool
+        +IsHADREnabled bool
+        +OSVersion string
+        +PhysicalMemoryMB int64
+        +LogicalCPUCount int
+        +DefaultDataPath string
+        +DefaultLogPath string
+        +DefaultBackupPath string
+        +VersionMajor int
+        +VersionMinor int
+        +VersionBuild int
+    }
+
+    %% =========================================================
+    %% Authentication
+    %% =========================================================
+    class AuthMethod {
+        <<enumeration>>
+        AuthSQLServer
+        AuthWindows
+        AuthEntraMSI
+        AuthEntraServicePrincipal
+        AuthEntraPassword
+        AuthEntraInteractive
+        AuthEntraDeviceCode
+        AuthEntraDefault
+        AuthEntraAzCLI
+        AuthEntraAzurePipelines
+        AuthEntraServicePrincipalAccessToken
+        AuthEntraOnBehalfOf
+    }
+
+    class KerberosOptions {
+        +ConfigFile string
+        +CredCacheFile string
+        +KeytabFile string
+        +Realm string
+        +DNSLookupKDC *bool
+        +UDPPreferenceLimit int
+        Native SSPI on Windows, unless set.
+        Every other platform authenticates
+        AuthWindows via Kerberos, using this or
+        the ambient kinit cache when it is the
+        zero value.
+    }
+
+    %% =========================================================
+    %% Server security, permissions, memory, languages
+    %% =========================================================
+    class ServerSecurityInfo {
+        +AuthenticationMode string
+    }
+
+    class ServerPermissionEntry {
+        +Principal string
+        +PrincipalType string
+        +Grantor string
+        +Permission string
+        +State string
+    }
+
+    class Credential {
+        +Name string
+        +Identity string
+        +CreateDate time.Time
+        +ModifyDate time.Time
+    }
+
+    class ServerMemoryStats {
+        +PhysicalMemoryMB int64
+        +AvailableMemoryMB int64
+        +TargetServerMemoryMB int64
+        +TotalServerMemoryMB int64
+    }
+
+    class Language {
+        +LangID int
+        +Name string
+        +Alias string
+    }
+
+    %% =========================================================
+    %% Login
+    %% =========================================================
+    class Login {
+        +Name string
+        +SID []byte
+        +LoginType string
+        +IsDisabled bool
+        +DefaultDatabase string
+        +CreateDate time.Time
+        +ModifyDate time.Time
+        +Enable() error
+        +Disable() error
+        +ChangePassword(newPassword) error
+        +ChangePasswordWithOptions(pw, mustChange, unlock) error
+        +AddServerRoleMember(role) error
+        +RemoveServerRoleMember(role) error
+        +Drop() error
+        +Details() *LoginDetails
+        +Rename(newName) error
+        +SetDefaultDatabase(name) error
+        +SetDefaultLanguage(lang) error
+        +SetPasswordPolicy(checkPolicy, checkExpiration) error
+        +MapCredential(credential) error
+        +UnmapCredential(credential) error
+        +UserMappings() []*LoginUserMapping
+        +MapToDatabase(dbName, user, schema) error
+        +UnmapFromDatabase(dbName) error
+    }
+
+    class LoginDetails {
+        +IsLocked bool
+        +IsExpired bool
+        +MustChangePassword bool
+        +IsPolicyChecked bool
+        +IsExpirationChecked bool
+        +PasswordLastSet time.Time
+        +LastLogin time.Time
+        +BadPasswordCount int
+        +DefaultLanguage string
+        +CredentialName string
+        +ConnectSQLState string
+    }
+
+    class LoginUserMapping {
+        +Database string
+        +User string
+        +DefaultSchema string
+        +Roles []string
+    }
+
+    class passwordHexLiteral {
+        <<internal helper>>
+        Encodes plaintext password
+        as UTF-16LE 0x... binary literal.
+        No quoting needed — injection-proof
+        for any password byte sequence.
+        Used by CreateLogin and ChangePassword.
+    }
+
+    %% =========================================================
+    %% Database
+    %% =========================================================
+    class Database {
+        -server *Server
+        -name string
+        -id int
+        -state string
+        -recoveryModel RecoveryModel
+        -compatLevel CompatibilityLevel
+        -collation string
+        -isReadOnly bool
+        -createDate time.Time
+        +Name() string
+        +ID() int
+        +State() string
+        +IsSystem() bool
+        +RecoveryModel() RecoveryModel
+        +CompatibilityLevel() CompatibilityLevel
+        +Tables() []*Table
+        +TablesBySchema(schema) []*Table
+        +TableByName(schema, name) *Table
+        +CreateTable(req) error
+        +DropTable(schema, name, cascade) error
+        +Views() []*View
+        +StoredProcedures() []*StoredProcedure
+        +CreateStoredProcedure(schema, name, body) error
+        +DropStoredProcedure(schema, name) error
+        +UserDefinedFunctions() []*UserDefinedFunction
+        +Schemas() []*Schema
+        +CreateSchema(name, owner) error
+        +DropSchema(name) error
+        +Users() []*User
+        +CreateUser(user, login, schema) error
+        +DropUser(name) error
+        +DatabaseRoles() []*DatabaseRole
+        +AddRoleMember(role, member) error
+        +RemoveRoleMember(role, member) error
+        +FileGroups() []*FileGroup
+        +Triggers() []*Trigger
+        +Sequences() []*Sequence
+        +Synonyms() []*Synonym
+        +PartitionFunctions() []*PartitionFunction
+        +PartitionSchemes() []*PartitionScheme
+        +ExtendedProperties(level) []*ExtendedProperty
+        +AddExtendedProperty(name, value, level) error
+        +SetExtendedProperty(name, value, level) error
+        +DropExtendedProperty(name, level) error
+        +ColumnMasterKeys() []*ColumnMasterKey
+        +ColumnEncryptionKeys() []*ColumnEncryptionKey
+        +SecurityPolicies() []*SecurityPolicy
+        +SpaceUsed() SpaceInfo
+        +SetRecoveryModel(model) error
+        +SetCompatibilityLevel(level) error
+        +SetReadOnly(bool) error
+        +Options() *DatabaseOptions
+        +SetDatabaseOption(opt, value) error
+        +SetOwner(principal) error
+        +Files() []*DatabaseFileInfo
+        +AddFile(spec) error
+        +AlterFile(name, m) error
+        +RemoveFile(name) error
+        +AddFileGroup(name) error
+        +RemoveFileGroup(name) error
+        +SetDefaultFileGroup(name) error
+        +SetFileGroupReadOnly(name, ro) error
+        +ChangeTracking() *ChangeTrackingInfo
+        +SetChangeTracking(info) error
+        +TableChangeTracking() []*TableChangeTracking
+        +SetTableChangeTracking(schema, name, enable, cols) error
+        +Dependencies(schema, name) []*Dependency
+        +Dependents(schema, name) []*Dependency
+        +Search(pattern) []*SearchResult
+        +Permissions(schema, name) []*PermissionEntry
+        +GrantPermission(schema, name, perm, principal) error
+        +DenyPermission(schema, name, perm, principal) error
+        +RevokePermission(schema, name, perm, principal) error
+        +DatabasePermissions() []*DatabasePermissionEntry
+        +GrantDatabasePermission(perm, principal) error
+        +DenyDatabasePermission(perm, principal) error
+        +RevokeDatabasePermission(perm, principal) error
+        +EstimatedPlan(sql) *ExecutionPlan
+        +ActualPlan(sql) *ExecutionPlan
+        +ExecProc(schema, name, params) ProcResult
+        +BulkInsert(bc, rows) int64
+    }
+
+    %% =========================================================
+    %% Connection helpers (internal)
+    %% =========================================================
+    class withConn {
+        <<internal helper>>
+        Acquires *sql.Conn from pool.
+        Executes USE db.
+        Runs callback fn(*sql.Conn).
+        Releases conn via defer.
+        Used by exec, scanRow, queryRow.
+    }
+
+    class rowsWithConn {
+        <<internal type>>
+        -Rows *sql.Rows
+        -conn *sql.Conn
+        +Close() error
+        Closes Rows then conn atomically.
+        Prevents conn leaks on early
+        iteration exits or error returns.
+        Returned by query().
+    }
+
+    class scanRow {
+        <<internal helper>>
+        Callback-style single-row query.
+        conn lifetime fully internal —
+        no release() needed by caller.
+        Used by SpaceUsed, TableByName.
+    }
+
+    class queryRow {
+        <<internal helper>>
+        Returns (*sql.Row, func(), error).
+        Caller MUST defer release().
+        conn is held until release() fires.
+        Used by scripter.go, table.go.
+    }
+
+    class withRetry {
+        <<internal helper>>
+        Generic retry wrapper for idempotent
+        reads only. 3 attempts, linear backoff
+        of attempt times 50ms. Used by
+        Database.query and Database.queryRow.
+    }
+
+    class IsRetryable {
+        <<package function>>
+        True for the driver's RetryableError or
+        a dropped pooled connection (ErrBadConn),
+        including wrapped errors. Exported so
+        callers running their own statements can
+        make the same retry decision.
+    }
+
+    %% =========================================================
+    %% Quoting (shared identifier / literal escaping)
+    %% =========================================================
+    class Quoting {
+        <<package functions>>
+        +QuoteName(name) string
+        +QuoteLiteral(s) string
+        Backed by the driver's own TSQLQuoter,
+        so gosmo, its callers, and gossms share
+        one quoting implementation. The internal
+        quoteIdent helper delegates to QuoteName.
+    }
+
+    %% =========================================================
+    %% Errors
+    %% =========================================================
+    class SQLError {
+        +Number int32
+        +State uint8
+        +Class uint8
+        +Message string
+        +ServerName string
+        +ProcName string
+        +LineNo int32
+        +All []SQLError
+        +AsSQLError(err) *SQLError
+        +Header() string
+        +Error() string
+        +IsError() bool
+    }
+
+    %% =========================================================
+    %% Scripting pending writes (dry-run)
+    %% =========================================================
+    class ScriptCollector {
+        +Statements []string
+        +WithScript(ctx) *ScriptCollector
+        Captures the exact statement(s) a set of
+        pending write calls would run, without
+        running them. Every write funnels through
+        Server.execContext or Database.exec, the
+        two chokepoints WithScript intercepts.
+    }
+
+    %% =========================================================
+    %% Database files, filegroups, and options
+    %% =========================================================
+    class DatabaseFileInfo {
+        +FileID int
+        +Name string
+        +PhysicalName string
+        +Type string
+        +FileGroup string
+        +State string
+        +SizeKB int64
+        +MaxSizeKB int64
+        +GrowthKB int64
+        +GrowthPercent int
+        +IsPercentGrowth bool
+    }
+
+    class DatabaseFileSpec {
+        +Name string
+        +FileGroup string
+        +Type string
+        +Path string
+        +SizeKB int64
+        +GrowthKB int64
+        +GrowthPercent int
+        +MaxSizeKB int64
+    }
+
+    class FileModify {
+        +NewName string
+        +SizeKB int64
+        +GrowthKB int64
+        +GrowthPercent int
+        +MaxSizeKB int64
+    }
+
+    class DatabaseOptions {
+        +Owner string
+        +PageVerify string
+        +UserAccess string
+        +Containment string
+        +DefaultCursor string
+        +SnapshotIsolation string
+        +AutoClose bool
+        +AutoShrink bool
+        +AutoCreateStats bool
+        +AutoUpdateStats bool
+        +AutoUpdateStatsAsync bool
+        +ANSINullDefault bool
+        +ANSINulls bool
+        +ANSIPadding bool
+        +ANSIWarnings bool
+        +ArithAbort bool
+        +ConcatNullYieldsNull bool
+        +NumericRoundAbort bool
+        +QuotedIdentifier bool
+        +RecursiveTriggers bool
+        +CursorCloseOnCommit bool
+        +ReadCommittedSnapshot bool
+        +IsTrustworthy bool
+        +IsBrokerEnabled bool
+    }
+
+    %% =========================================================
+    %% Change tracking
+    %% =========================================================
+    class ChangeTrackingInfo {
+        +Enabled bool
+        +AutoCleanup bool
+        +RetentionPeriod int
+        +RetentionUnit string
+    }
+
+    class TableChangeTracking {
+        +Schema string
+        +Name string
+        +Enabled bool
+        +TrackColumnsUpdated bool
+    }
+
+    %% =========================================================
+    %% Dependencies and object search
+    %% =========================================================
+    class Dependency {
+        +Schema string
+        +Name string
+        +TypeDesc string
+        +IsSchemaBound bool
+    }
+
+    class SearchResult {
+        +Schema string
+        +Name string
+        +TypeDesc string
+    }
+
+    %% =========================================================
+    %% Execution plans
+    %% =========================================================
+    class ExecutionPlan {
+        +XML string
+    }
+
+    %% =========================================================
+    %% Object and database-scoped permissions
+    %% =========================================================
+    class PermissionEntry {
+        +Principal string
+        +PrincipalType string
+        +Permission ObjectPermission
+        +State PermissionState
+    }
+
+    class DatabasePermissionEntry {
+        +Principal string
+        +PrincipalType string
+        +Grantor string
+        +Permission string
+        +State string
+    }
+
+    %% =========================================================
+    %% Bulk copy (fast import — bcp / SSMS "Import Data")
+    %% =========================================================
+    class BulkCopy {
+        +Schema string
+        +Table string
+        +Columns []string
+        +Options BulkOptions
+        +SliceRows(rows) iter.Seq2
+    }
+
+    class BulkOptions {
+        +CheckConstraints bool
+        +FireTriggers bool
+        +KeepNulls bool
+        +TableLock bool
+        +RowsPerBatch int
+        +KilobytesPerBatch int
+        +Order []string
+    }
+
+    %% =========================================================
+    %% Stored-procedure execution
+    %% =========================================================
+    class ProcParam {
+        +In(name, value) ProcParam
+        +Out(name, dest) ProcParam
+        +InOut(name, dest) ProcParam
+    }
+
+    class ProcResult {
+        +ReturnStatus int32
+    }
+
+    %% =========================================================
+    %% Table and its children
+    %% =========================================================
+    class Table {
+        +ObjectID int
+        +Schema string
+        +Name string
+        +CreateDate time.Time
+        +ModifyDate time.Time
+        +HasReplicationFilter bool
+        +IsMemoryOptimized bool
+        +FullName() string
+        +Columns() []*Column
+        +Indexes() []*Index
+        +ForeignKeys() []*ForeignKey
+        +CheckConstraints() []*CheckConstraint
+        +Statistics() []*Statistic
+        +Partitions() []*Partition
+        +Triggers() []*Trigger
+        +RowCount() int64
+        +TruncateTable() error
+        +FragmentationStats(mode) []*FragStat
+        +RebuildAllIndexes(fillFactor) error
+        +UpdateAllStatistics(samplePct) error
+        +CreateIndex(req) error
+        +CreateStatistic(name, cols, pct) error
+        +AddColumn(col) error
+        +AlterColumn(col) error
+        +DropColumn(name) error
+    }
+
+    class Column {
+        +Name string
+        +OrdinalPosition int
+        +DataType DataType
+        +MaxLength int
+        +Precision int
+        +Scale int
+        +IsNullable bool
+        +IsIdentity bool
+        +IdentitySeed int64
+        +IdentityIncrement int64
+        +IsComputed bool
+        +ComputedText string
+        +DefaultValue *ColumnDefault
+        +IsRowGUID bool
+        +IsPrimaryKey bool
+        +Collation string
+    }
+
+    class Index {
+        +Name string
+        +IndexID int
+        +Type IndexType
+        +IsClustered bool
+        +IsUnique bool
+        +IsPrimaryKey bool
+        +IsDisabled bool
+        +FillFactor int
+        +KeyColumns []IndexColumn
+        +IncludedColumns []IndexColumn
+        +FilterDefinition string
+        +Rebuild(t, fillFactor) error
+        +Reorganize(t) error
+        +Disable(t) error
+        +Enable(t) error
+        +Drop(t) error
+    }
+
+    class ForeignKey {
+        +Name string
+        +Columns []string
+        +ReferencedTable string
+        +ReferencedSchema string
+        +ReferencedColumns []string
+        +DeleteAction string
+        +UpdateAction string
+        +IsDisabled bool
+    }
+
+    class CheckConstraint {
+        +Name string
+        +Definition string
+        +IsDisabled bool
+        +Column string
+    }
+
+    class Statistic {
+        +Name string
+        +StatID int
+        +IsAutoCreated bool
+        +IsUserCreated bool
+        +HasFilter bool
+        +FilterDef string
+        +LastUpdated time.Time
+        +RowsSampled int64
+        +TotalRows int64
+        +Steps int
+        +Update(samplePct) error
+        +Drop() error
+    }
+
+    %% =========================================================
+    %% Scripter (generates CREATE DDL for existing objects — distinct
+    %% from ScriptCollector, which captures pending write statements)
+    %% =========================================================
+    class Scripter {
+        -db *Database
+        -opts ScriptOptions
+        +NewScripter(db, opts) *Scripter
+        +ScriptTable(schema, name) string
+        +ScriptView(schema, name) string
+        +ScriptStoredProcedure(schema, name) string
+        +ScriptFunction(schema, name) string
+        +ScriptDatabase() string
+    }
+
+    class ScriptOptions {
+        +IncludeHeaders bool
+        +IncludeIfNotExists bool
+        +ScriptDrops bool
+        +SchemaQualify bool
+        +AnsiPadding bool
+    }
+
+    %% =========================================================
+    %% Database objects
+    %% =========================================================
+    class Schema {
+        +Name string
+        +ID int
+        +Owner string
+    }
+
+    class View {
+        +ObjectID int
+        +Schema string
+        +Name string
+        +Definition string
+        +CreateDate time.Time
+        +ModifyDate time.Time
+    }
+
+    class StoredProcedure {
+        +ObjectID int
+        +Schema string
+        +Name string
+        +Definition string
+        +CreateDate time.Time
+        +ModifyDate time.Time
+    }
+
+    class UserDefinedFunction {
+        +ObjectID int
+        +Schema string
+        +Name string
+        +FuncType string
+        +Definition string
+        +CreateDate time.Time
+        +ModifyDate time.Time
+    }
+
+    class User {
+        +Name string
+        +ID int
+        +UserType string
+        +DefaultSchema string
+        +AuthType string
+        +CreateDate time.Time
+        +ModifyDate time.Time
+    }
+
+    class DatabaseRole {
+        +Name string
+        +ID int
+        +IsFixedRole bool
+        +Owner string
+        +Members []string
+    }
+
+    class FileGroup {
+        +Name string
+        +IsDefault bool
+        +Files []DatabaseFile
+    }
+
+    class Trigger {
+        +Name string
+        +TableName string
+        +Schema string
+        +IsEnabled bool
+        +Events []string
+        +Definition string
+    }
+
+    class ServerRole {
+        +Name string
+        +IsFixedRole bool
+        +Members []string
+    }
+
+    class LinkedServer {
+        +Name string
+        +Product string
+        +Provider string
+        +DataSource string
+        +IsRemote bool
+    }
+
+    %% =========================================================
+    %% Backup / Restore
+    %% =========================================================
+    class BackupOptions {
+        +Database string
+        +Devices []string
+        +BackupType BackupType
+        +CopyOnly bool
+        +Compression bool
+        +Checksum bool
+        +Description string
+        +Name string
+        +MediaName string
+        +Expiry time.Time
+        +RetainDays int
+        +BlockSize int
+        +BufferCount int
+        +MaxTransferSize int
+        +Stats int
+        +Init bool
+        +Format bool
+        +Progress func
+        +BuildBackupStatement(opts) string
+    }
+
+    class RestoreOptions {
+        +Database string
+        +Devices []string
+        +RestoreType RestoreType
+        +RelocateFiles []RelocateFile
+        +Recovery bool
+        +Replace bool
+        +Checksum bool
+        +Stats int
+        +StopAt time.Time
+        +StopAtMarkName string
+        +FileNumber int
+    }
+
+    %% =========================================================
+    %% Agent Jobs
+    %% =========================================================
+    class AgentJob {
+        +JobID string
+        +Name string
+        +Enabled bool
+        +Description string
+        +Steps []*JobStep
+        +Schedules []*JobSchedule
+        +AddStep(req) error
+        +AddSchedule(req) error
+        +Start(stepName) error
+        +Stop() error
+        +Drop() error
+    }
+
+    %% =========================================================
+    %% Relationships
+    %% =========================================================
+    ConnectionOptions --> AuthMethod : uses
+    ConnectionOptions --> KerberosOptions : configures AuthWindows via
+    Server --> ConnectionOptions : created from
+    Server --> ServerInfo : has
+    Server "1" --> "*" Database : owns
+    Server "1" --> "*" Login : owns
+    Server "1" --> "*" ServerRole : owns
+    Server "1" --> "*" LinkedServer : owns
+    Server "1" --> "*" AgentJob : owns
+    Server --> BackupOptions : accepts
+    Server --> RestoreOptions : accepts
+    Server --> ServerSecurityInfo : has
+    Server "1" --> "*" ServerPermissionEntry : grants
+    Server "1" --> "*" Credential : owns
+    Server --> ServerMemoryStats : has
+    Server "1" --> "*" Language : lists
+
+    Login ..> passwordHexLiteral : password encoded by
+    Login --> LoginDetails : has
+    Login "1" --> "*" LoginUserMapping : mapped via
+
+    Database "1" --> "*" Table : contains
+    Database "1" --> "*" View : contains
+    Database "1" --> "*" StoredProcedure : contains
+    Database "1" --> "*" UserDefinedFunction : contains
+    Database "1" --> "*" Schema : contains
+    Database "1" --> "*" User : contains
+    Database "1" --> "*" DatabaseRole : contains
+    Database "1" --> "*" FileGroup : contains
+    Database "1" --> "*" Trigger : contains
+    Database "1" --> "*" DatabaseFileInfo : contains
+    Database --> DatabaseOptions : has
+    Database --> ChangeTrackingInfo : has
+    Database "1" --> "*" TableChangeTracking : tracks
+    Database "1" --> "*" Dependency : dependencies of
+    Database "1" --> "*" SearchResult : search() returns
+    Database --> ExecutionPlan : produces
+    Database "1" --> "*" PermissionEntry : grants
+    Database "1" --> "*" DatabasePermissionEntry : grants
+    Database ..> BulkCopy : bulk-loads via
+    Database ..> ProcParam : executes procs with
+    Database --> ProcResult : returns
+
+    Database ..> withConn : uses internally
+    Database ..> rowsWithConn : query() returns
+    Database ..> scanRow : single-row callback
+    Database ..> queryRow : single-row with release()
+    Database ..> withRetry : reads retried via
+
+    withConn <.. rowsWithConn : conn acquired by
+    withConn <.. scanRow : delegates to
+    withConn <.. queryRow : delegates to
+    withRetry <.. IsRetryable : same failure test as
+
+    Table "1" --> "*" Column : has
+    Table "1" --> "*" Index : has
+    Table "1" --> "*" ForeignKey : has
+    Table "1" --> "*" CheckConstraint : has
+    Table "1" --> "*" Statistic : has
+    Table "1" --> "*" Trigger : has
+
+    Scripter --> Database : scripts objects from
+    Scripter --> ScriptOptions : configured by
+
+    ScriptCollector ..> Server : captures writes from
+    ScriptCollector ..> Database : captures writes from
