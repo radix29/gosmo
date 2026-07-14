@@ -3,6 +3,7 @@ package gosmo
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"time"
 )
@@ -150,7 +151,7 @@ WHERE  j.name = @p1`
 		&j.DateCreated, &j.DateModified, &j.StartStepID,
 		&lastRun, &lastOutcome, &lastDuration, &nextRun, &jobState,
 	); err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
 			return nil, fmt.Errorf("gosmo: agent job %q not found", name)
 		}
 		return nil, fmt.Errorf("gosmo: job by name: %w", err)

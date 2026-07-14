@@ -455,9 +455,9 @@ type CreateTableRequest struct {
 type ColumnDefinition struct {
 	Name         string
 	DataType     DataType
-	MaxLength    int    // char/varchar/nchar/nvarchar: 0 = omit, -1 = MAX
-	Precision    int    // decimal/numeric
-	Scale        int    // decimal/numeric / datetime2 / time
+	MaxLength    int // char/varchar/nchar/nvarchar: 0 = omit, -1 = MAX
+	Precision    int // decimal/numeric
+	Scale        int // decimal/numeric / datetime2 / time
 	IsNullable   bool
 	IsIdentity   bool
 	IdentitySeed int64

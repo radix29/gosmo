@@ -5,38 +5,49 @@ import (
 	"testing"
 )
 
-func TestBuildChangePasswordStatementHashedByDefault(t *testing.T) {
+func TestBuildChangePasswordStatementQuotesLiteralByDefault(t *testing.T) {
 	got := buildChangePasswordStatement("app_login", "hunter2", false, false)
-	want := "ALTER LOGIN [app_login] WITH PASSWORD = " + passwordHexLiteral("hunter2") + " HASHED"
+	want := "ALTER LOGIN [app_login] WITH PASSWORD = " + nStringLiteral("hunter2")
 	if got != want {
 		t.Errorf("got:\n%s\nwant:\n%s", got, want)
+	}
+	if strings.Contains(got, "HASHED") {
+		t.Error("statement used HASHED, which tells SQL Server the value is already a password hash, not cleartext")
 	}
 }
 
-func TestBuildChangePasswordStatementMustChangeUsesCleartextLiteral(t *testing.T) {
-	// MUST_CHANGE can't be combined with a HASHED password (SQL Server
-	// rejects it), so this path must fall back to a quoted literal instead
-	// of the UTF-16LE hex encoding every other password change uses.
+func TestBuildChangePasswordStatementMustChangeAddsCheckExpiration(t *testing.T) {
+	// MUST_CHANGE requires CHECK_EXPIRATION = ON or SQL Server rejects it.
 	got := buildChangePasswordStatement("app_login", "hunter2", true, false)
-	want := "ALTER LOGIN [app_login] WITH PASSWORD = " + QuoteLiteral("hunter2") + " MUST_CHANGE"
+	want := "ALTER LOGIN [app_login] WITH PASSWORD = " + nStringLiteral("hunter2") + " MUST_CHANGE, CHECK_EXPIRATION = ON"
 	if got != want {
 		t.Errorf("got:\n%s\nwant:\n%s", got, want)
-	}
-	if strings.Contains(got, passwordHexLiteral("hunter2")) {
-		t.Error("MUST_CHANGE statement used the HASHED encoding, which SQL Server rejects alongside MUST_CHANGE")
 	}
 }
 
 func TestBuildChangePasswordStatementUnlock(t *testing.T) {
+	// UNLOCK is a password-clause modifier, space-separated after
+	// PASSWORD = '...' — not a comma-separated <set_option> — confirmed
+	// against a live server ("ALTER LOGIN ... WITH PASSWORD = '...', UNLOCK"
+	// is rejected with "Incorrect syntax near 'UNLOCK'").
 	got := buildChangePasswordStatement("app_login", "hunter2", false, true)
-	if !strings.Contains(got, ", UNLOCK") {
-		t.Errorf("statement missing UNLOCK clause: %s", got)
+	want := "ALTER LOGIN [app_login] WITH PASSWORD = " + nStringLiteral("hunter2") + " UNLOCK"
+	if got != want {
+		t.Errorf("got:\n%s\nwant:\n%s", got, want)
 	}
 }
 
-func TestBuildChangePasswordStatementEscapesQuotesInCleartextPath(t *testing.T) {
+func TestBuildChangePasswordStatementMustChangeAndUnlock(t *testing.T) {
+	got := buildChangePasswordStatement("app_login", "hunter2", true, true)
+	want := "ALTER LOGIN [app_login] WITH PASSWORD = " + nStringLiteral("hunter2") + " MUST_CHANGE UNLOCK, CHECK_EXPIRATION = ON"
+	if got != want {
+		t.Errorf("got:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+func TestBuildChangePasswordStatementEscapesQuotes(t *testing.T) {
 	got := buildChangePasswordStatement("app_login", "it's a secret", true, false)
-	want := "ALTER LOGIN [app_login] WITH PASSWORD = " + QuoteLiteral("it's a secret") + " MUST_CHANGE"
+	want := "ALTER LOGIN [app_login] WITH PASSWORD = " + nStringLiteral("it's a secret") + " MUST_CHANGE, CHECK_EXPIRATION = ON"
 	if got != want {
 		t.Errorf("got:\n%s\nwant:\n%s", got, want)
 	}

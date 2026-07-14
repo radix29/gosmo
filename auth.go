@@ -99,16 +99,16 @@ func (m AuthMethod) isEntraMethod() bool {
 // fedauthValue maps an AuthMethod to the fedauth= query-string value
 // expected by github.com/microsoft/go-mssqldb/azuread.
 var fedauthValue = map[AuthMethod]string{
-	AuthEntraDefault:                      "ActiveDirectoryDefault",
-	AuthEntraPassword:                     "ActiveDirectoryPassword",
-	AuthEntraMSI:                          "ActiveDirectoryManagedIdentity",
-	AuthEntraServicePrincipal:             "ActiveDirectoryServicePrincipal",
-	AuthEntraServicePrincipalAccessToken:  "ActiveDirectoryServicePrincipalAccessToken",
-	AuthEntraIntegrated:                   "ActiveDirectoryIntegrated",
-	AuthEntraInteractive:                  "ActiveDirectoryInteractive",
-	AuthEntraDeviceCode:                   "ActiveDirectoryDeviceCode",
-	AuthEntraAzCLI:                        "ActiveDirectoryAzCli",
-	AuthEntraAzureDeveloperCLI:            "ActiveDirectoryAzureDeveloperCli",
-	AuthEntraAzurePipelines:               "ActiveDirectoryAzurePipelines",
-	AuthEntraOnBehalfOf:                   "ActiveDirectoryOnBehalfOf",
+	AuthEntraDefault:                     "ActiveDirectoryDefault",
+	AuthEntraPassword:                    "ActiveDirectoryPassword",
+	AuthEntraMSI:                         "ActiveDirectoryManagedIdentity",
+	AuthEntraServicePrincipal:            "ActiveDirectoryServicePrincipal",
+	AuthEntraServicePrincipalAccessToken: "ActiveDirectoryServicePrincipalAccessToken",
+	AuthEntraIntegrated:                  "ActiveDirectoryIntegrated",
+	AuthEntraInteractive:                 "ActiveDirectoryInteractive",
+	AuthEntraDeviceCode:                  "ActiveDirectoryDeviceCode",
+	AuthEntraAzCLI:                       "ActiveDirectoryAzCli",
+	AuthEntraAzureDeveloperCLI:           "ActiveDirectoryAzureDeveloperCli",
+	AuthEntraAzurePipelines:              "ActiveDirectoryAzurePipelines",
+	AuthEntraOnBehalfOf:                  "ActiveDirectoryOnBehalfOf",
 }

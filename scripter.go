@@ -3,6 +3,7 @@ package gosmo
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 )
@@ -256,7 +257,7 @@ WHERE  SCHEMA_NAME(v.schema_id) = @p1 AND v.name = @p2`, schema, name)
 
 	var def string
 	if err := row.Scan(&def); err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
 			return "", fmt.Errorf("gosmo: view %s not found", qualifiedName(schema, name))
 		}
 		return "", err
@@ -290,7 +291,7 @@ WHERE  SCHEMA_NAME(p.schema_id) = @p1 AND p.name = @p2`, schema, name)
 
 	var def string
 	if err := row.Scan(&def); err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
 			return "", fmt.Errorf("gosmo: stored procedure %s not found", qualifiedName(schema, name))
 		}
 		return "", err
@@ -325,7 +326,7 @@ WHERE  SCHEMA_NAME(o.schema_id) = @p1 AND o.name = @p2
 
 	var def string
 	if err := row.Scan(&def); err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
 			return "", fmt.Errorf("gosmo: function %s not found", qualifiedName(schema, name))
 		}
 		return "", err

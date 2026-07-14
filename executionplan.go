@@ -52,7 +52,7 @@ func (d *Database) capturePlan(ctx context.Context, setOpt, sqlText string) (*Ex
 	var plan string
 	err := d.withConn(ctx, func(conn *sql.Conn) error {
 		if _, err := conn.ExecContext(ctx, "SET "+setOpt+" ON"); err != nil {
-			return fmt.Errorf("enable %s: %w", setOpt, err)
+			return fmt.Errorf("gosmo: enable %s: %w", setOpt, err)
 		}
 		defer conn.ExecContext(context.Background(), "SET "+setOpt+" OFF")
 

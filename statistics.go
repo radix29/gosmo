@@ -14,17 +14,17 @@ import (
 
 // Statistic mirrors sys.stats for a table.
 type Statistic struct {
-	table         *Table
-	Name          string
-	StatID        int
-	IsAutoCreated bool
-	IsUserCreated bool
-	HasFilter     bool
-	FilterDef     string
-	LastUpdated   time.Time
-	RowsSampled   int64
-	TotalRows     int64 // renamed from RowCount to avoid shadowing Table.RowCount()
-	Steps         int
+	table          *Table
+	Name           string
+	StatID         int
+	IsAutoCreated  bool
+	IsUserCreated  bool
+	HasFilter      bool
+	FilterDef      string
+	LastUpdated    time.Time
+	RowsSampled    int64
+	TotalRows      int64 // renamed from RowCount to avoid shadowing Table.RowCount()
+	Steps          int
 	UnfilteredRows int64
 }
 

@@ -3,6 +3,7 @@ package gosmo
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 )
 
@@ -79,7 +80,7 @@ WHERE  name = @p1`
 		&o.CursorCloseOnCommit, &o.ReadCommittedSnapshot,
 		&o.IsTrustworthy, &o.IsBrokerEnabled,
 	); err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
 			return nil, fmt.Errorf("gosmo: database %q not found", d.name)
 		}
 		return nil, fmt.Errorf("gosmo: database options for %q: %w", d.name, err)

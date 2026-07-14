@@ -633,19 +633,3 @@ func TestBuildConnectorInvalidServer(t *testing.T) {
 		t.Fatal("want error for empty Server, got nil")
 	}
 }
-
-func TestPasswordHexLiteral(t *testing.T) {
-	cases := []struct {
-		password string
-		want     string
-	}{
-		{"", "0x"},
-		{"Ab", "0x41006200"},
-		{"é", "0xE900"}, // é, single UTF-16 code unit
-	}
-	for _, c := range cases {
-		if got := passwordHexLiteral(c.password); got != c.want {
-			t.Errorf("passwordHexLiteral(%q) = %q, want %q", c.password, got, c.want)
-		}
-	}
-}

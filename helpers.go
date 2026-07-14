@@ -27,6 +27,14 @@ func nullableStr(s string) string {
 	return fmt.Sprintf("N'%s'", escapeSingle(s))
 }
 
+// nStringLiteral quotes s as an N'...' T-SQL string literal, escaping any
+// embedded quote. Unlike nullableStr, an empty s still quotes to N” rather
+// than becoming NULL — callers use this for values (e.g. passwords) where
+// NULL is never the intended result.
+func nStringLiteral(s string) string {
+	return fmt.Sprintf("N'%s'", escapeSingle(s))
+}
+
 // boolToInt converts a bool to 0/1 for T-SQL BIT parameters.
 func boolToInt(b bool) int {
 	if b {

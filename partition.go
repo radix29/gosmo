@@ -18,7 +18,7 @@ type PartitionFunction struct {
 	FunctionID    int
 	InputType     DataType
 	BoundaryCount int
-	IsRight       bool   // RIGHT = boundary is in right partition
+	IsRight       bool // RIGHT = boundary is in right partition
 	Boundaries    []string
 }
 
@@ -121,11 +121,11 @@ func (pf *PartitionFunction) MergeRange(value string) error {
 
 // PartitionScheme mirrors sys.partition_schemes.
 type PartitionScheme struct {
-	db              *Database
-	Name            string
-	SchemeID        int
-	FunctionName    string
-	FileGroups      []string
+	db           *Database
+	Name         string
+	SchemeID     int
+	FunctionName string
+	FileGroups   []string
 }
 
 // PartitionSchemes returns all partition schemes in the database.

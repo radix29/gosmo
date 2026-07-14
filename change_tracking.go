@@ -3,6 +3,7 @@ package gosmo
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 )
 
@@ -41,7 +42,7 @@ WHERE  sd.name = @p1`
 	info := &ChangeTrackingInfo{}
 	row := d.server.db.QueryRowContext(ctx, q, d.name)
 	if err := row.Scan(&info.Enabled, &info.AutoCleanup, &info.RetentionPeriod, &info.RetentionUnit); err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
 			return nil, fmt.Errorf("gosmo: database %q not found", d.name)
 		}
 		return nil, fmt.Errorf("gosmo: change tracking for %q: %w", d.name, err)

@@ -2,6 +2,8 @@ module github.com/radix29/gosmo
 
 go 1.26
 
+toolchain go1.26.5
+
 require (
 	github.com/golang-sql/sqlexp v0.1.0
 	github.com/microsoft/go-mssqldb v1.10.0

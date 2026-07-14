@@ -3,6 +3,7 @@ package gosmo
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -53,14 +54,14 @@ func (l *Login) ChangePassword(newPassword string) error {
 
 // ChangePasswordContext changes the login's password.
 //
-// Security: the password is never interpolated into the SQL string.
-// It is encoded as a UTF-16LE hex literal so the statement is
-// injection-proof regardless of the password content.
+// Security: the password is quoted via nStringLiteral (N'...', doubling
+// any embedded quote) rather than interpolated raw. HASHED is
+// deliberately not used — it tells SQL Server the value is already one of
+// its own password-hash formats, not cleartext, so passing a hex encoding
+// of the cleartext under HASHED either fails outright or creates a login
+// nothing can ever authenticate as.
 func (l *Login) ChangePasswordContext(ctx context.Context, newPassword string) error {
-	// Encode the password as a 0x... hex literal — no quoting needed,
-	// no character in the password can affect the surrounding SQL.
-	pwHex := passwordHexLiteral(newPassword)
-	q := fmt.Sprintf("ALTER LOGIN %s WITH PASSWORD = %s HASHED", quoteIdent(l.Name), pwHex)
+	q := fmt.Sprintf("ALTER LOGIN %s WITH PASSWORD = %s", quoteIdent(l.Name), nStringLiteral(newPassword))
 	if err := l.server.execContext(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: change password for login %q: %w", l.Name, err)
 	}
@@ -160,7 +161,7 @@ WHERE  sp.name = @p1`
 		&pwdLastSet, &lastLogin, &det.BadPasswordCount,
 		&det.DefaultLanguage, &det.CredentialName, &det.ConnectSQLState,
 	); err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
 			return nil, fmt.Errorf("gosmo: login %q not found", l.Name)
 		}
 		return nil, fmt.Errorf("gosmo: login details for %q: %w", l.Name, err)
@@ -242,8 +243,8 @@ func (l *Login) SetPasswordPolicyContext(ctx context.Context, checkPolicy, check
 }
 
 // ChangePasswordWithOptions changes the login's password with the same
-// injection-proof HASHED encoding ChangePassword uses, plus MUST_CHANGE
-// (force a password change at next login) and UNLOCK (clear a lockout).
+// quoted-literal encoding ChangePassword uses, plus MUST_CHANGE (force a
+// password change at next login) and UNLOCK (clear a lockout).
 func (l *Login) ChangePasswordWithOptions(newPassword string, mustChange, unlock bool) error {
 	return l.ChangePasswordWithOptionsContext(context.Background(), newPassword, mustChange, unlock)
 }
@@ -261,21 +262,27 @@ func (l *Login) ChangePasswordWithOptionsContext(ctx context.Context, newPasswor
 // buildChangePasswordStatement builds the ALTER LOGIN ... WITH PASSWORD
 // statement for ChangePasswordWithOptions. Unexported and side-effect-free
 // so it's unit-testable without a server.
+//
+// MUST_CHANGE and UNLOCK are password-clause modifiers, not comma-separated
+// <set_option> items — SQL Server rejects "PASSWORD = '...', UNLOCK" and
+// "..., MUST_CHANGE" outright ("Incorrect syntax near 'UNLOCK'"), confirmed
+// against a live server. Both must instead follow PASSWORD = '...'
+// space-separated, in either order; CHECK_EXPIRATION = ON is the one that
+// belongs after a comma, as its own <set_option>.
 func buildChangePasswordStatement(loginName, newPassword string, mustChange, unlock bool) string {
 	var sb strings.Builder
-	sb.WriteString("ALTER LOGIN " + quoteIdent(loginName) + " WITH PASSWORD = ")
+	sb.WriteString("ALTER LOGIN " + quoteIdent(loginName) + " WITH PASSWORD = " + nStringLiteral(newPassword))
 	if mustChange {
-		// MUST_CHANGE requires SQL Server to policy-check the password
-		// itself, which it can only do against a cleartext value — it
-		// rejects MUST_CHANGE combined with the HASHED form
-		// ChangePasswordContext otherwise always uses. The literal is
-		// still injection-safe via QuoteLiteral's escaping.
-		fmt.Fprintf(&sb, "%s MUST_CHANGE", QuoteLiteral(newPassword))
-	} else {
-		fmt.Fprintf(&sb, "%s HASHED", passwordHexLiteral(newPassword))
+		sb.WriteString(" MUST_CHANGE")
 	}
 	if unlock {
-		sb.WriteString(", UNLOCK")
+		sb.WriteString(" UNLOCK")
+	}
+	if mustChange {
+		// MUST_CHANGE requires CHECK_EXPIRATION = ON (and CHECK_POLICY =
+		// ON, already the server default) — SQL Server rejects MUST_CHANGE
+		// otherwise.
+		sb.WriteString(", CHECK_EXPIRATION = ON")
 	}
 	return sb.String()
 }

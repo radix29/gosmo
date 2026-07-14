@@ -3,14 +3,13 @@ package gosmo
 import (
 	"context"
 	"database/sql"
-	"encoding/hex"
+	"errors"
 	"fmt"
 	"net/url"
 	"runtime"
 	"strconv"
 	"strings"
 	"time"
-	"unicode/utf16"
 
 	mssql "github.com/microsoft/go-mssqldb"
 	"github.com/microsoft/go-mssqldb/azuread"
@@ -687,7 +686,7 @@ func (s *Server) DatabaseByNameContext(ctx context.Context, name string) (*Datab
 		&d.name, &d.id, &state, &recovery,
 		&compatLevel, &collation, &d.isReadOnly, &d.createDate,
 	); err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
 			return nil, fmt.Errorf("gosmo: database %q not found", name)
 		}
 		return nil, fmt.Errorf("gosmo: database by name: %w", err)
@@ -825,7 +824,7 @@ func (s *Server) LoginByNameContext(ctx context.Context, name string) (*Login, e
 	row := s.db.QueryRowContext(ctx, q, name)
 	if err := row.Scan(&l.Name, &l.SID, &l.LoginType, &l.IsDisabled,
 		&defDB, &l.CreateDate, &l.ModifyDate); err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
 			return nil, fmt.Errorf("gosmo: login %q not found", name)
 		}
 		return nil, fmt.Errorf("gosmo: find login %q: %w", name, err)
@@ -842,10 +841,14 @@ func (s *Server) CreateLogin(name, password string, opts *CreateLoginOptions) er
 
 // CreateLoginContext is the context-aware variant of CreateLogin.
 //
-// Security: the password is never interpolated into the SQL string.
-// Instead it is encoded as a UTF-16LE hex literal and passed with the
-// HASHED keyword via a pre-computed binary value, which is injection-proof
-// regardless of the password content.
+// Security: the password is never string-concatenated raw into the SQL
+// text — it's quoted via nStringLiteral (N'...', doubling any embedded
+// quote), the same escaping every other literal in this package uses.
+// HASHED is deliberately not used here: it tells SQL Server the value is
+// already one of its own password-hash formats, not a cleartext password,
+// so passing an arbitrary hex encoding of the cleartext under HASHED
+// either fails outright or creates a login nothing can ever authenticate
+// as.
 func (s *Server) CreateLoginContext(ctx context.Context, name, password string, opts *CreateLoginOptions) error {
 	if name == "" {
 		return fmt.Errorf("gosmo: create login: name is required")
@@ -857,12 +860,12 @@ func (s *Server) CreateLoginContext(ctx context.Context, name, password string, 
 	var sb strings.Builder
 
 	if password != "" {
-		// Encode the password as a 0x... hex literal so no quoting or
-		// escaping is needed and any byte sequence is safe.
-		pwHex := passwordHexLiteral(password)
-		fmt.Fprintf(&sb, "CREATE LOGIN %s WITH PASSWORD = %s HASHED", quoteIdent(name), pwHex)
+		fmt.Fprintf(&sb, "CREATE LOGIN %s WITH PASSWORD = %s", quoteIdent(name), nStringLiteral(password))
 		if opts.MustChange {
-			sb.WriteString(" MUST_CHANGE")
+			// MUST_CHANGE requires CHECK_EXPIRATION = ON (and CHECK_POLICY =
+			// ON, already the server default) — SQL Server rejects
+			// MUST_CHANGE otherwise.
+			sb.WriteString(" MUST_CHANGE, CHECK_EXPIRATION = ON")
 		}
 		if opts.DefaultDatabase != "" {
 			fmt.Fprintf(&sb, ", DEFAULT_DATABASE = %s", quoteIdent(opts.DefaultDatabase))
@@ -991,23 +994,4 @@ func (s *Server) LinkedServersContext(ctx context.Context) ([]*LinkedServer, err
 		ls = append(ls, l)
 	}
 	return ls, rows.Err()
-}
-
-// -- Password helpers ----------------------------------------------------------
-
-// passwordHexLiteral encodes a plaintext password as a T-SQL 0x... binary
-// literal in UTF-16LE, the encoding SQL Server's "WITH PASSWORD = 0x<hex>
-// HASHED" form expects for a cleartext password passed as binary. The
-// result can be spliced directly into a DDL statement with no quoting or
-// escaping needed.
-func passwordHexLiteral(password string) string {
-	// Encode as UTF-16LE — the wire encoding SQL Server uses internally.
-	runes := []rune(password)
-	u16 := utf16.Encode(runes)
-	buf := make([]byte, len(u16)*2)
-	for i, r := range u16 {
-		buf[i*2] = byte(r)
-		buf[i*2+1] = byte(r >> 8)
-	}
-	return "0x" + strings.ToUpper(hex.EncodeToString(buf))
 }

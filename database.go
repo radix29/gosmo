@@ -3,6 +3,7 @@ package gosmo
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -338,7 +339,7 @@ WHERE  t.is_ms_shipped = 0
 	if err := row.Scan(&t.ObjectID, &t.Schema, &t.Name,
 		&t.CreateDate, &t.ModifyDate,
 		&t.HasReplicationFilter, &t.IsMemoryOptimized); err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
 			return nil, fmt.Errorf("gosmo: table [%s].[%s] not found in %q", schema, name, d.name)
 		}
 		return nil, err

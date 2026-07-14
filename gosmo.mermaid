@@ -203,13 +203,16 @@ classDiagram
         +Roles []string
     }
 
-    class passwordHexLiteral {
+    class nStringLiteral {
         <<internal helper>>
-        Encodes plaintext password
-        as UTF-16LE 0x... binary literal.
-        No quoting needed — injection-proof
-        for any password byte sequence.
-        Used by CreateLogin and ChangePassword.
+        Quotes a password as an N'...'
+        T-SQL string literal, escaping
+        any embedded quote.
+        Used by CreateLogin and ChangePassword —
+        HASHED is never used, since it tells
+        SQL Server the value is already one of
+        its own password-hash formats, not
+        cleartext.
     }
 
     %% =========================================================
@@ -839,7 +842,7 @@ classDiagram
     Server --> ServerMemoryStats : has
     Server "1" --> "*" Language : lists
 
-    Login ..> passwordHexLiteral : password encoded by
+    Login ..> nStringLiteral : password quoted by
     Login --> LoginDetails : has
     Login "1" --> "*" LoginUserMapping : mapped via
 

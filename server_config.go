@@ -3,6 +3,7 @@ package gosmo
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 )
 
@@ -79,7 +80,7 @@ WHERE  name = @p1`
 		&c.ConfigID, &c.Name, &c.Value, &c.ValueInUse,
 		&c.Minimum, &c.Maximum, &c.IsDynamic, &c.IsAdvanced, &desc,
 	); err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
 			return nil, fmt.Errorf("gosmo: configuration option %q not found", name)
 		}
 		return nil, fmt.Errorf("gosmo: configuration by name: %w", err)
