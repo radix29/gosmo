@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"slices"
 )
 
 // ============================================================
@@ -258,6 +259,7 @@ func (p *SecurityPolicy) Drop() error {
 type PermissionEntry struct {
 	Principal     string
 	PrincipalType string // e.g. "DATABASE_ROLE", "SQL_USER"
+	Grantor       string
 	Permission    ObjectPermission
 	State         PermissionState
 }
@@ -271,9 +273,10 @@ func (d *Database) Permissions(schema, name string) ([]*PermissionEntry, error) 
 // PermissionsContext is the context-aware variant of Permissions.
 func (d *Database) PermissionsContext(ctx context.Context, schema, name string) ([]*PermissionEntry, error) {
 	const q = `
-SELECT pr.name, pr.type_desc, dp.permission_name, dp.state_desc
+SELECT pr.name, pr.type_desc, grantor.name, dp.permission_name, dp.state_desc
 FROM   sys.database_permissions dp
 JOIN   sys.database_principals pr ON pr.principal_id = dp.grantee_principal_id
+JOIN   sys.database_principals grantor ON grantor.principal_id = dp.grantor_principal_id
 WHERE  dp.major_id = OBJECT_ID(@p1) AND dp.minor_id = 0
 ORDER  BY pr.name, dp.permission_name`
 
@@ -288,7 +291,7 @@ ORDER  BY pr.name, dp.permission_name`
 	for rows.Next() {
 		g := &PermissionEntry{}
 		var perm, state string
-		if err := rows.Scan(&g.Principal, &g.PrincipalType, &perm, &state); err != nil {
+		if err := rows.Scan(&g.Principal, &g.PrincipalType, &g.Grantor, &perm, &state); err != nil {
 			return nil, err
 		}
 		g.Permission = ObjectPermission(perm)
@@ -298,6 +301,122 @@ ORDER  BY pr.name, dp.permission_name`
 	return grants, rows.Err()
 }
 
+// PrincipalSecurable is one GRANT/DENY entry for a securable that a
+// principal (typically a database role) has an explicit permission on —
+// the inverse of Permissions, which is "one securable, every principal."
+// This is "one principal, every securable" — SSMS's Database Role
+// Properties > Securables page. SecurableType is "TABLE", "VIEW",
+// "SCHEMA", or "DATABASE"; Schema and Name are empty for "DATABASE".
+type PrincipalSecurable struct {
+	SecurableType string
+	Schema        string
+	Name          string
+	Permission    string
+	State         string
+}
+
+// securableObjectTypeNames maps sys.objects.type_desc to the SecurableType
+// string PrincipalSecurable reports.
+var securableObjectTypeNames = map[string]string{
+	"USER_TABLE": "TABLE",
+	"VIEW":       "VIEW",
+}
+
+// PermissionsForPrincipal returns every explicit GRANT/DENY entry recorded
+// for principal across database-, schema-, and table/view-scoped
+// securables. Stored procedure and function securables are deliberately
+// excluded — they need their own permission catalog (EXECUTE-centric,
+// distinct from the table/view one) not built yet; see SchemaPermissionNames/
+// ObjectPermissionNames for the catalogs this DOES cover.
+func (d *Database) PermissionsForPrincipal(principal string) ([]*PrincipalSecurable, error) {
+	return d.PermissionsForPrincipalContext(context.Background(), principal)
+}
+
+// PermissionsForPrincipalContext is the context-aware variant of
+// PermissionsForPrincipal.
+func (d *Database) PermissionsForPrincipalContext(ctx context.Context, principal string) ([]*PrincipalSecurable, error) {
+	const q = `
+SELECT dp.class_desc, dp.permission_name, dp.state_desc,
+       COALESCE(objSchema.name, sch.name, N'') AS schema_name,
+       COALESCE(obj.name, N'') AS object_name,
+       COALESCE(obj.type_desc, N'') AS object_type
+FROM   sys.database_permissions dp
+JOIN   sys.database_principals pr ON pr.principal_id = dp.grantee_principal_id
+LEFT   JOIN sys.schemas sch ON dp.class_desc = 'SCHEMA' AND sch.schema_id = dp.major_id
+LEFT   JOIN sys.objects obj ON dp.class_desc = 'OBJECT_OR_COLUMN' AND obj.object_id = dp.major_id
+                            AND dp.minor_id = 0 AND obj.type IN ('U','V')
+LEFT   JOIN sys.schemas objSchema ON objSchema.schema_id = obj.schema_id
+WHERE  pr.name = @p1
+AND    dp.class_desc IN ('DATABASE','SCHEMA','OBJECT_OR_COLUMN')
+AND    (dp.class_desc <> 'OBJECT_OR_COLUMN' OR obj.object_id IS NOT NULL)
+ORDER  BY dp.class_desc, schema_name, object_name, dp.permission_name`
+
+	rows, err := d.query(ctx, q, principal)
+	if err != nil {
+		return nil, fmt.Errorf("gosmo: permissions for principal %q in %q: %w", principal, d.name, err)
+	}
+	defer rows.Close()
+
+	var entries []*PrincipalSecurable
+	for rows.Next() {
+		e := &PrincipalSecurable{}
+		var class, objType string
+		if err := rows.Scan(&class, &e.Permission, &e.State, &e.Schema, &e.Name, &objType); err != nil {
+			return nil, err
+		}
+		switch class {
+		case "DATABASE":
+			e.SecurableType = "DATABASE"
+		case "SCHEMA":
+			// The query's schema_name column lands in e.Schema for every
+			// class (it's what resolves an OBJECT_OR_COLUMN row's
+			// containing schema) — but for a SCHEMA row itself, that value
+			// *is* the securable's own name, not a containing schema.
+			// Normalize so Name is always "the securable's own name" and
+			// Schema is always "containing schema, empty if none", matching
+			// every other securable-type row (and what callers building a
+			// display label/key from Type+Schema+Name expect).
+			e.SecurableType = "SCHEMA"
+			e.Name = e.Schema
+			e.Schema = ""
+		default:
+			e.SecurableType = securableObjectTypeNames[objType]
+		}
+		entries = append(entries, e)
+	}
+	return entries, rows.Err()
+}
+
+// objectPermissionNames allowlists every object-scoped permission name SQL
+// Server accepts in a GRANT/DENY/REVOKE ... statement — see
+// serverPermissionNames (server_security.go) for why an allowlist rather
+// than quoting. This is the set valid on tables/views specifically —
+// verified live (GRANT EXECUTE ON a table fails with "Granted or revoked
+// privilege EXECUTE is not compatible with object"); a future
+// stored-procedure/function securable would need its own (EXECUTE
+// applies there, REFERENCES does not).
+var objectPermissionNames = map[ObjectPermission]bool{
+	PermAlter: true, PermControl: true, PermDelete: true,
+	PermInsert: true, PermReferences: true, PermSelect: true, PermTakeOwnership: true,
+	PermUpdate: true, PermView: true, PermViewChangeTracking: true,
+}
+
+// validObjectPermission reports whether name is a recognized object-scoped
+// permission name.
+func validObjectPermission(name ObjectPermission) bool { return objectPermissionNames[name] }
+
+// ObjectPermissionNames returns every object-scoped permission name
+// GRANT/DENY/REVOKE accepts on a table or view, sorted — see
+// ServerPermissionNames for what it's used for.
+func ObjectPermissionNames() []string {
+	names := make([]string, 0, len(objectPermissionNames))
+	for name := range objectPermissionNames {
+		names = append(names, string(name))
+	}
+	slices.Sort(names)
+	return names
+}
+
 // GrantPermission grants permission on schema.name to principal.
 func (d *Database) GrantPermission(schema, name string, permission ObjectPermission, principal string) error {
 	return d.GrantPermissionContext(context.Background(), schema, name, permission, principal)
@@ -305,6 +424,9 @@ func (d *Database) GrantPermission(schema, name string, permission ObjectPermiss
 
 // GrantPermissionContext is the context-aware variant of GrantPermission.
 func (d *Database) GrantPermissionContext(ctx context.Context, schema, name string, permission ObjectPermission, principal string) error {
+	if !validObjectPermission(permission) {
+		return fmt.Errorf("gosmo: grant permission: unrecognized permission %q", permission)
+	}
 	ref := qualifiedName(schema, name)
 	q := fmt.Sprintf("GRANT %s ON %s TO %s", permission, ref, quoteIdent(principal))
 	if _, err := d.exec(ctx, q); err != nil {
@@ -320,6 +442,9 @@ func (d *Database) DenyPermission(schema, name string, permission ObjectPermissi
 
 // DenyPermissionContext is the context-aware variant of DenyPermission.
 func (d *Database) DenyPermissionContext(ctx context.Context, schema, name string, permission ObjectPermission, principal string) error {
+	if !validObjectPermission(permission) {
+		return fmt.Errorf("gosmo: deny permission: unrecognized permission %q", permission)
+	}
 	ref := qualifiedName(schema, name)
 	q := fmt.Sprintf("DENY %s ON %s TO %s", permission, ref, quoteIdent(principal))
 	if _, err := d.exec(ctx, q); err != nil {
@@ -335,10 +460,137 @@ func (d *Database) RevokePermission(schema, name string, permission ObjectPermis
 
 // RevokePermissionContext is the context-aware variant of RevokePermission.
 func (d *Database) RevokePermissionContext(ctx context.Context, schema, name string, permission ObjectPermission, principal string) error {
+	if !validObjectPermission(permission) {
+		return fmt.Errorf("gosmo: revoke permission: unrecognized permission %q", permission)
+	}
 	ref := qualifiedName(schema, name)
 	q := fmt.Sprintf("REVOKE %s ON %s FROM %s", permission, ref, quoteIdent(principal))
 	if _, err := d.exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: revoke %s on %s from %q: %w", permission, ref, principal, err)
+	}
+	return nil
+}
+
+// ============================================================
+// Schema-scoped permissions (GRANT/DENY ON SCHEMA::x — grants every
+// current and future object in the schema at once)
+// ============================================================
+
+// schemaPermissionNames allowlists every schema-scoped permission name SQL
+// Server accepts in a GRANT/DENY/REVOKE ... ON SCHEMA::x statement — the
+// same set as objectPermissionNames plus EXECUTE, which tables/views
+// reject but schemas accept (grants EXECUTE on every routine in the
+// schema). Verified live: GRANT EXECUTE/ALTER/SELECT/VIEW CHANGE
+// TRACKING/TAKE OWNERSHIP ON SCHEMA::x all succeed.
+var schemaPermissionNames = map[ObjectPermission]bool{
+	PermAlter: true, PermControl: true, PermDelete: true, PermExecute: true,
+	PermInsert: true, PermReferences: true, PermSelect: true, PermTakeOwnership: true,
+	PermUpdate: true, PermView: true, PermViewChangeTracking: true,
+}
+
+// validSchemaPermission reports whether name is a recognized schema-scoped
+// permission name.
+func validSchemaPermission(name ObjectPermission) bool { return schemaPermissionNames[name] }
+
+// SchemaPermissionNames returns every schema-scoped permission name
+// GRANT/DENY/REVOKE accepts ON SCHEMA::x, sorted — see ObjectPermissionNames
+// for what it's used for.
+func SchemaPermissionNames() []string {
+	names := make([]string, 0, len(schemaPermissionNames))
+	for name := range schemaPermissionNames {
+		names = append(names, string(name))
+	}
+	slices.Sort(names)
+	return names
+}
+
+// SchemaPermissions returns the GRANT/DENY entries recorded on
+// SCHEMA::schemaName — SSMS's Schema Properties > Permissions page. This
+// is the schema-scoped analog of Permissions: that one resolves its
+// securable via OBJECT_ID(schema.name), which only works for table/view
+// securables — a schema has no OBJECT_ID, so it needs its own query
+// keyed on SCHEMA_ID instead.
+func (d *Database) SchemaPermissions(schemaName string) ([]*PermissionEntry, error) {
+	return d.SchemaPermissionsContext(context.Background(), schemaName)
+}
+
+// SchemaPermissionsContext is the context-aware variant of SchemaPermissions.
+func (d *Database) SchemaPermissionsContext(ctx context.Context, schemaName string) ([]*PermissionEntry, error) {
+	const q = `
+SELECT pr.name, pr.type_desc, grantor.name, dp.permission_name, dp.state_desc
+FROM   sys.database_permissions dp
+JOIN   sys.database_principals pr      ON pr.principal_id = dp.grantee_principal_id
+JOIN   sys.database_principals grantor ON grantor.principal_id = dp.grantor_principal_id
+WHERE  dp.class_desc = 'SCHEMA' AND dp.major_id = SCHEMA_ID(@p1)
+ORDER  BY pr.name, dp.permission_name`
+
+	rows, err := d.query(ctx, q, schemaName)
+	if err != nil {
+		return nil, fmt.Errorf("gosmo: schema permissions for %q in %q: %w", schemaName, d.name, err)
+	}
+	defer rows.Close()
+
+	var grants []*PermissionEntry
+	for rows.Next() {
+		g := &PermissionEntry{}
+		var perm, state string
+		if err := rows.Scan(&g.Principal, &g.PrincipalType, &g.Grantor, &perm, &state); err != nil {
+			return nil, err
+		}
+		g.Permission = ObjectPermission(perm)
+		g.State = PermissionState(state)
+		grants = append(grants, g)
+	}
+	return grants, rows.Err()
+}
+
+// GrantSchemaPermission grants permission on a schema to principal.
+func (d *Database) GrantSchemaPermission(schemaName string, permission ObjectPermission, principal string) error {
+	return d.GrantSchemaPermissionContext(context.Background(), schemaName, permission, principal)
+}
+
+// GrantSchemaPermissionContext is the context-aware variant of GrantSchemaPermission.
+func (d *Database) GrantSchemaPermissionContext(ctx context.Context, schemaName string, permission ObjectPermission, principal string) error {
+	if !validSchemaPermission(permission) {
+		return fmt.Errorf("gosmo: grant schema permission: unrecognized permission %q", permission)
+	}
+	q := fmt.Sprintf("GRANT %s ON SCHEMA::%s TO %s", permission, quoteIdent(schemaName), quoteIdent(principal))
+	if _, err := d.exec(ctx, q); err != nil {
+		return fmt.Errorf("gosmo: grant %s on schema %q to %q: %w", permission, schemaName, principal, err)
+	}
+	return nil
+}
+
+// DenySchemaPermission denies permission on a schema to principal.
+func (d *Database) DenySchemaPermission(schemaName string, permission ObjectPermission, principal string) error {
+	return d.DenySchemaPermissionContext(context.Background(), schemaName, permission, principal)
+}
+
+// DenySchemaPermissionContext is the context-aware variant of DenySchemaPermission.
+func (d *Database) DenySchemaPermissionContext(ctx context.Context, schemaName string, permission ObjectPermission, principal string) error {
+	if !validSchemaPermission(permission) {
+		return fmt.Errorf("gosmo: deny schema permission: unrecognized permission %q", permission)
+	}
+	q := fmt.Sprintf("DENY %s ON SCHEMA::%s TO %s", permission, quoteIdent(schemaName), quoteIdent(principal))
+	if _, err := d.exec(ctx, q); err != nil {
+		return fmt.Errorf("gosmo: deny %s on schema %q to %q: %w", permission, schemaName, principal, err)
+	}
+	return nil
+}
+
+// RevokeSchemaPermission revokes permission on a schema from principal.
+func (d *Database) RevokeSchemaPermission(schemaName string, permission ObjectPermission, principal string) error {
+	return d.RevokeSchemaPermissionContext(context.Background(), schemaName, permission, principal)
+}
+
+// RevokeSchemaPermissionContext is the context-aware variant of RevokeSchemaPermission.
+func (d *Database) RevokeSchemaPermissionContext(ctx context.Context, schemaName string, permission ObjectPermission, principal string) error {
+	if !validSchemaPermission(permission) {
+		return fmt.Errorf("gosmo: revoke schema permission: unrecognized permission %q", permission)
+	}
+	q := fmt.Sprintf("REVOKE %s ON SCHEMA::%s FROM %s", permission, quoteIdent(schemaName), quoteIdent(principal))
+	if _, err := d.exec(ctx, q); err != nil {
+		return fmt.Errorf("gosmo: revoke %s on schema %q from %q: %w", permission, schemaName, principal, err)
 	}
 	return nil
 }
@@ -397,9 +649,12 @@ ORDER  BY pr.name, dp.permission_name`
 // databasePermissionNames allowlists every database-scoped permission name
 // SQL Server accepts in a GRANT/DENY/REVOKE ... statement — see
 // serverPermissionNames (server_security.go) for why an allowlist rather
-// than quoting.
+// than quoting. Deliberately excludes "ADMINISTER DATABASE BULK
+// OPERATIONS" — verified live that granting it fails with "The permission
+// 'ADMINISTER DATABASE BULK OPERATIONS' is not supported in this version
+// of SQL Server. Alternatively, use the server level 'ADMINISTER BULK
+// OPERATIONS' permission." (which serverPermissionNames already has).
 var databasePermissionNames = map[string]bool{
-	"ADMINISTER DATABASE BULK OPERATIONS":    true,
 	"ALTER":                                  true,
 	"ALTER ANY APPLICATION ROLE":             true,
 	"ALTER ANY ASSEMBLY":                     true,
@@ -471,6 +726,18 @@ var databasePermissionNames = map[string]bool{
 // validDatabasePermission reports whether name is a recognized
 // database-scoped permission name.
 func validDatabasePermission(name string) bool { return databasePermissionNames[name] }
+
+// DatabasePermissionNames returns every database-scoped permission name
+// GRANT/DENY/REVOKE accepts, sorted — see ServerPermissionNames for what
+// it's used for.
+func DatabasePermissionNames() []string {
+	names := make([]string, 0, len(databasePermissionNames))
+	for name := range databasePermissionNames {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+	return names
+}
 
 // GrantDatabasePermission grants a database-level permission to principal.
 func (d *Database) GrantDatabasePermission(permission, principal string) error {

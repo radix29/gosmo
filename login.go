@@ -117,8 +117,11 @@ type LoginDetails struct {
 	// the zero Time if no matching session is currently visible.
 	LastLogin        time.Time
 	BadPasswordCount int
-	DefaultLanguage  string
-	CredentialName   string
+	// BadPasswordTime is the last failed-login attempt time, or the zero
+	// Time if none is recorded.
+	BadPasswordTime time.Time
+	DefaultLanguage string
+	CredentialName  string
 	// ConnectSQLState is "GRANT", "DENY", or "" (default/unset) for the
 	// login's explicit CONNECT SQL server permission.
 	ConnectSQLState string
@@ -141,6 +144,7 @@ SELECT
     CAST(LOGINPROPERTY(@p1, 'PasswordLastSetTime') AS DATETIME2),
     (SELECT MAX(login_time) FROM sys.dm_exec_sessions WHERE login_name = @p1),
     ISNULL(CAST(LOGINPROPERTY(@p1, 'BadPasswordCount') AS INT), 0),
+    CAST(LOGINPROPERTY(@p1, 'BadPasswordTime') AS DATETIME2),
     ISNULL(sl.default_language_name, ''),
     ISNULL(cr.name, ''),
     ISNULL((SELECT TOP 1 perm.state_desc FROM sys.server_permissions perm
@@ -152,13 +156,13 @@ WHERE  sp.name = @p1`
 
 	det := &LoginDetails{}
 	var isLocked, isExpired, isMustChange int
-	var pwdLastSet, lastLogin sql.NullTime
+	var pwdLastSet, lastLogin, badPasswordTime sql.NullTime
 
 	row := l.server.db.QueryRowContext(ctx, q, l.Name)
 	if err := row.Scan(
 		&isLocked, &isExpired, &isMustChange,
 		&det.IsPolicyChecked, &det.IsExpirationChecked,
-		&pwdLastSet, &lastLogin, &det.BadPasswordCount,
+		&pwdLastSet, &lastLogin, &det.BadPasswordCount, &badPasswordTime,
 		&det.DefaultLanguage, &det.CredentialName, &det.ConnectSQLState,
 	); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -171,6 +175,7 @@ WHERE  sp.name = @p1`
 	det.MustChangePassword = isMustChange != 0
 	det.PasswordLastSet = pwdLastSet.Time
 	det.LastLogin = lastLogin.Time
+	det.BadPasswordTime = badPasswordTime.Time
 	return det, nil
 }
 

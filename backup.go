@@ -331,6 +331,8 @@ ORDER  BY bs.backup_finish_date DESC`
 		switch bType {
 		case "D":
 			b.BackupType = BackupActionDatabase
+		case "I":
+			b.BackupType = BackupActionDifferential
 		case "L":
 			b.BackupType = BackupActionLog
 		case "F":

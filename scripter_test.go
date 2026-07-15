@@ -2,7 +2,7 @@ package gosmo
 
 import "testing"
 
-func TestScriptColType(t *testing.T) {
+func TestColumnTypeString(t *testing.T) {
 	cases := []struct {
 		name string
 		col  *Column
@@ -23,8 +23,8 @@ func TestScriptColType(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			if got := scriptColType(c.col); got != c.want {
-				t.Errorf("scriptColType(%+v) = %q, want %q", c.col, got, c.want)
+			if got := ColumnTypeString(c.col); got != c.want {
+				t.Errorf("ColumnTypeString(%+v) = %q, want %q", c.col, got, c.want)
 			}
 		})
 	}

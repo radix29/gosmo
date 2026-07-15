@@ -633,3 +633,60 @@ func TestBuildConnectorInvalidServer(t *testing.T) {
 		t.Fatal("want error for empty Server, got nil")
 	}
 }
+
+func TestBuildCreateDatabaseStatement(t *testing.T) {
+	cases := []struct {
+		name string
+		opts *CreateDatabaseOptions
+		want string
+	}{
+		{
+			name: "nil opts — bare create, unchanged from before file support existed",
+			opts: &CreateDatabaseOptions{},
+			want: "CREATE DATABASE [SalesDW]",
+		},
+		{
+			name: "collation only",
+			opts: &CreateDatabaseOptions{Collation: "SQL_Latin1_General_CP1_CI_AS"},
+			want: "CREATE DATABASE [SalesDW] COLLATE SQL_Latin1_General_CP1_CI_AS",
+		},
+		{
+			name: "primary file only",
+			opts: &CreateDatabaseOptions{
+				PrimaryFile: &DatabaseFileSpec{
+					Name: "SalesDW", Path: `F:\MSSQL\DATA\SalesDW.mdf`,
+					SizeKB: 256 * 1024, GrowthKB: 64 * 1024,
+				},
+			},
+			want: "CREATE DATABASE [SalesDW] ON PRIMARY \n" +
+				"( NAME = [SalesDW], FILENAME = 'F:\\MSSQL\\DATA\\SalesDW.mdf', SIZE = 262144KB, FILEGROWTH = 65536KB )",
+		},
+		{
+			name: "primary and log files, with collation",
+			opts: &CreateDatabaseOptions{
+				Collation: "SQL_Latin1_General_CP1_CI_AS",
+				PrimaryFile: &DatabaseFileSpec{
+					Name: "SalesDW", Path: `F:\MSSQL\DATA\SalesDW.mdf`,
+					SizeKB: 256 * 1024, GrowthKB: 64 * 1024, MaxSizeKB: -1,
+				},
+				LogFile: &DatabaseFileSpec{
+					Name: "SalesDW_log", Path: `L:\MSSQL\LOG\SalesDW_log.ldf`,
+					SizeKB: 128 * 1024, GrowthPercent: 10,
+				},
+			},
+			want: "CREATE DATABASE [SalesDW] ON PRIMARY \n" +
+				"( NAME = [SalesDW], FILENAME = 'F:\\MSSQL\\DATA\\SalesDW.mdf', SIZE = 262144KB, MAXSIZE = UNLIMITED, FILEGROWTH = 65536KB ) \n" +
+				"LOG ON \n" +
+				"( NAME = [SalesDW_log], FILENAME = 'L:\\MSSQL\\LOG\\SalesDW_log.ldf', SIZE = 131072KB, FILEGROWTH = 10% ) " +
+				"COLLATE SQL_Latin1_General_CP1_CI_AS",
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := buildCreateDatabaseStatement("SalesDW", c.opts)
+			if got != c.want {
+				t.Errorf("got:\n%s\nwant:\n%s", got, c.want)
+			}
+		})
+	}
+}

@@ -582,6 +582,8 @@ func (s *Server) loadInfo(ctx context.Context) error {
 		SERVERPROPERTY('Collation')            AS collation,
 		CAST(SERVERPROPERTY('IsClustered')  AS INT),
 		CAST(SERVERPROPERTY('IsHadrEnabled') AS INT),
+		CAST(SERVERPROPERTY('IsSingleUser') AS INT),
+		CAST(SERVERPROPERTY('EngineEdition') AS INT),
 		@@VERSION,
 		osi.physical_memory_kb / 1024,
 		osi.cpu_count,
@@ -592,13 +594,13 @@ func (s *Server) loadInfo(ctx context.Context) error {
 
 	row := s.db.QueryRowContext(ctx, q)
 	info := &ServerInfo{}
-	var isClustered, isHADR sql.NullInt64
+	var isClustered, isHADR, isSingleUser, engineEdition sql.NullInt64
 	var osVer, dataPath, logPath, backupPath sql.NullString
 	var memMB, cpuCount sql.NullInt64
 
 	if err := row.Scan(
 		&info.Name, &info.Edition, &info.ProductVersion, &info.ProductLevel,
-		&info.Collation, &isClustered, &isHADR, &osVer,
+		&info.Collation, &isClustered, &isHADR, &isSingleUser, &engineEdition, &osVer,
 		&memMB, &cpuCount, &dataPath, &logPath, &backupPath,
 	); err != nil {
 		return fmt.Errorf("gosmo: load server info: %w", err)
@@ -606,6 +608,8 @@ func (s *Server) loadInfo(ctx context.Context) error {
 
 	info.IsClustered = isClustered.Int64 == 1
 	info.IsHADREnabled = isHADR.Int64 == 1
+	info.IsSingleUser = isSingleUser.Int64 == 1
+	info.EngineEdition = int(engineEdition.Int64)
 	info.OSVersion = osVer.String
 	info.PhysicalMemoryMB = memMB.Int64
 	info.LogicalCPUCount = int(cpuCount.Int64)
@@ -698,6 +702,24 @@ func (s *Server) DatabaseByNameContext(ctx context.Context, name string) (*Datab
 	return d, nil
 }
 
+// Database returns a lightweight handle for name without querying the
+// server at all — unlike DatabaseByName/DatabaseByNameContext, it doesn't
+// verify the database exists or populate State/RecoveryModel/Collation/
+// CompatibilityLevel/etc. (they stay at their zero value). Every write
+// method on *Database (AddFileGroupContext, SetDatabaseOptionContext,
+// SetOwnerContext, ...) only ever needs the database's name, never those
+// cached fields, so this is sufficient for issuing further ALTER-style
+// calls against a database the caller already knows exists — most
+// commonly one it just created in the same operation. It's also the only
+// way to do that under a WithScript-derived context: DatabaseByNameContext's
+// own lookup query is a real read, not a write, so it isn't captured by
+// ScriptCollector and would fail outright (or return stale data) for a
+// database whose CREATE DATABASE was itself only scripted, not actually
+// run.
+func (s *Server) Database(name string) *Database {
+	return &Database{server: s, name: name}
+}
+
 // CreateDatabase creates a new database with the given name and optional options.
 func (s *Server) CreateDatabase(name string, opts *CreateDatabaseOptions) error {
 	return s.CreateDatabaseContext(context.Background(), name, opts)
@@ -712,12 +734,7 @@ func (s *Server) CreateDatabaseContext(ctx context.Context, name string, opts *C
 		opts = &CreateDatabaseOptions{}
 	}
 
-	var sb strings.Builder
-	fmt.Fprintf(&sb, "CREATE DATABASE %s", quoteIdent(name))
-	if opts.Collation != "" {
-		fmt.Fprintf(&sb, " COLLATE %s", opts.Collation)
-	}
-	if err := s.execContext(ctx, sb.String()); err != nil {
+	if err := s.execContext(ctx, buildCreateDatabaseStatement(name, opts)); err != nil {
 		return fmt.Errorf("gosmo: create database %q: %w", name, err)
 	}
 
@@ -738,11 +755,40 @@ func (s *Server) CreateDatabaseContext(ctx context.Context, name string, opts *C
 	return nil
 }
 
+// buildCreateDatabaseStatement builds the CREATE DATABASE statement for
+// name/opts. Unexported and side-effect-free so it's unit-testable without
+// a server, mirroring buildAddFileStatement.
+func buildCreateDatabaseStatement(name string, opts *CreateDatabaseOptions) string {
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "CREATE DATABASE %s", quoteIdent(name))
+	if opts.PrimaryFile != nil {
+		fmt.Fprintf(&sb, " ON PRIMARY \n%s", buildFileDefClause(*opts.PrimaryFile))
+	}
+	if opts.LogFile != nil {
+		fmt.Fprintf(&sb, " \nLOG ON \n%s", buildFileDefClause(*opts.LogFile))
+	}
+	if opts.Collation != "" {
+		fmt.Fprintf(&sb, " COLLATE %s", opts.Collation)
+	}
+	return sb.String()
+}
+
 // CreateDatabaseOptions holds optional parameters for CreateDatabase.
 type CreateDatabaseOptions struct {
 	Collation     string
 	RecoveryModel RecoveryModel
 	CompatLevel   CompatibilityLevel
+
+	// PrimaryFile and LogFile customize the database's initial data and
+	// log file (name, path, size, growth, max size) via CREATE DATABASE's
+	// ON PRIMARY/LOG ON clauses. Leaving either nil lets the server place
+	// that file at its own default path/size, exactly like CreateDatabase
+	// with a zero-valued CreateDatabaseOptions always has. FileGroup is
+	// ignored on both (PrimaryFile is always PRIMARY; LogFile has none) —
+	// additional filegroups and files are added after creation via
+	// AddFileGroupContext/AddFileContext, not here.
+	PrimaryFile *DatabaseFileSpec
+	LogFile     *DatabaseFileSpec
 }
 
 // DropDatabase drops the named database.
@@ -831,6 +877,20 @@ func (s *Server) LoginByNameContext(ctx context.Context, name string) (*Login, e
 	}
 	l.DefaultDatabase = defDB.String
 	return l, nil
+}
+
+// Login returns a lightweight handle for name without querying the server
+// at all — unlike LoginByName/LoginByNameContext, it doesn't verify the
+// login exists or populate SID/LoginType/IsDisabled/etc. (they stay at
+// their zero value). Every write method on *Login (AddServerRoleMemberContext,
+// DisableContext, ChangePasswordContext, ...) only ever needs the login's
+// name, never those cached fields, so this is sufficient for issuing
+// further ALTER-style calls against a login the caller already knows
+// exists — most commonly one it just created in the same operation. See
+// Server.Database's doc comment for why this also matters under a
+// WithScript-derived context.
+func (s *Server) Login(name string) *Login {
+	return &Login{server: s, Name: name}
 }
 
 // CreateLogin creates a SQL Server or Windows login.

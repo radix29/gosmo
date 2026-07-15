@@ -99,6 +99,41 @@ func (d *Database) AddFileContext(ctx context.Context, spec DatabaseFileSpec) er
 	return nil
 }
 
+// writeFileSizeClauses appends the SIZE/MAXSIZE/FILEGROWTH portions of spec
+// to sb, in the order CREATE DATABASE and ALTER DATABASE ADD/MODIFY FILE
+// expect them, omitting any spec leaves at its zero value (server default).
+// Shared by buildAddFileStatement and buildFileDefClause so the two file-
+// definition syntaxes (ALTER DATABASE ADD FILE's flat clause list and
+// CREATE DATABASE's parenthesized ON PRIMARY/LOG ON file definitions)
+// never drift apart.
+func writeFileSizeClauses(sb *strings.Builder, spec DatabaseFileSpec) {
+	if spec.SizeKB > 0 {
+		fmt.Fprintf(sb, ", SIZE = %dKB", spec.SizeKB)
+	}
+	switch {
+	case spec.MaxSizeKB < 0:
+		sb.WriteString(", MAXSIZE = UNLIMITED")
+	case spec.MaxSizeKB > 0:
+		fmt.Fprintf(sb, ", MAXSIZE = %dKB", spec.MaxSizeKB)
+	}
+	switch {
+	case spec.GrowthPercent > 0:
+		fmt.Fprintf(sb, ", FILEGROWTH = %d%%", spec.GrowthPercent)
+	case spec.GrowthKB > 0:
+		fmt.Fprintf(sb, ", FILEGROWTH = %dKB", spec.GrowthKB)
+	}
+}
+
+// buildFileDefClause renders a "( NAME = ..., FILENAME = ..., ... )" file
+// definition, as used inside CREATE DATABASE's ON PRIMARY/LOG ON clauses.
+func buildFileDefClause(spec DatabaseFileSpec) string {
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "( NAME = %s, FILENAME = %s", quoteIdent(spec.Name), QuoteLiteral(spec.Path))
+	writeFileSizeClauses(&sb, spec)
+	sb.WriteString(" )")
+	return sb.String()
+}
+
 // buildAddFileStatement builds the ALTER DATABASE ... ADD FILE statement
 // for spec. Unexported and side-effect-free so it's unit-testable without
 // a server.
@@ -118,21 +153,7 @@ func buildAddFileStatement(dbName string, spec DatabaseFileSpec) (string, error)
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "ALTER DATABASE %s %s (NAME = %s, FILENAME = %s",
 		quoteIdent(dbName), clause, quoteIdent(spec.Name), QuoteLiteral(spec.Path))
-	if spec.SizeKB > 0 {
-		fmt.Fprintf(&sb, ", SIZE = %dKB", spec.SizeKB)
-	}
-	switch {
-	case spec.MaxSizeKB < 0:
-		sb.WriteString(", MAXSIZE = UNLIMITED")
-	case spec.MaxSizeKB > 0:
-		fmt.Fprintf(&sb, ", MAXSIZE = %dKB", spec.MaxSizeKB)
-	}
-	switch {
-	case spec.GrowthPercent > 0:
-		fmt.Fprintf(&sb, ", FILEGROWTH = %d%%", spec.GrowthPercent)
-	case spec.GrowthKB > 0:
-		fmt.Fprintf(&sb, ", FILEGROWTH = %dKB", spec.GrowthKB)
-	}
+	writeFileSizeClauses(&sb, spec)
 	sb.WriteString(")")
 	if spec.FileGroup != "" && !isLog {
 		fmt.Fprintf(&sb, " TO FILEGROUP %s", quoteIdent(spec.FileGroup))

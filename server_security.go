@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"slices"
 	"time"
 )
 
@@ -132,6 +133,19 @@ var serverPermissionNames = map[string]bool{
 // validServerPermission reports whether name is a recognized server-scoped
 // permission name.
 func validServerPermission(name string) bool { return serverPermissionNames[name] }
+
+// ServerPermissionNames returns every server-scoped permission name
+// GRANT/DENY/REVOKE accepts, sorted — the catalog SSMS's Server Properties
+// > Permissions page enumerates for a principal regardless of whether it
+// already has an explicit GRANT/DENY entry.
+func ServerPermissionNames() []string {
+	names := make([]string, 0, len(serverPermissionNames))
+	for name := range serverPermissionNames {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+	return names
+}
 
 // GrantServerPermission grants a server-level permission to principal.
 func (s *Server) GrantServerPermission(permission, principal string) error {

@@ -30,6 +30,61 @@ func (t *Table) FullName() string { return qualifiedName(t.Schema, t.Name) }
 // DB returns the parent Database.
 func (t *Table) DB() *Database { return t.db }
 
+// TableDetail holds the sys.tables columns and related lookups Table itself
+// doesn't carry (Table is also used to populate the Object Explorer tree
+// and the scripter, so it stays lean) — SSMS's Table Properties > General
+// page's "Object details" and "Dependencies" sections.
+type TableDetail struct {
+	SchemaOwner    string
+	LockEscalation string // e.g. "TABLE", "AUTO", "DISABLE"
+	UsesAnsiNulls  bool
+	IsReplicated   bool
+	IsTrackedByCDC bool
+	TemporalType   string // e.g. "NON_TEMPORAL_TABLE", "SYSTEM_VERSIONED_TEMPORAL_TABLE"
+	Durability     string // "SCHEMA_AND_DATA" or "SCHEMA_ONLY" — memory-optimized tables only
+	LedgerType     string // e.g. "NON_LEDGER_TABLE", "APPEND_ONLY_LEDGER_TABLE"
+	PrimaryKeyName string // "" if the table has no primary key
+	DataSpace      string // filegroup (or partition scheme) backing the heap/clustered index
+}
+
+// Detail returns TableDetail for the table.
+func (t *Table) Detail() (*TableDetail, error) {
+	return t.DetailContext(context.Background())
+}
+
+// DetailContext is the context-aware variant of Detail.
+func (t *Table) DetailContext(ctx context.Context) (*TableDetail, error) {
+	const q = `
+SELECT owner.name, t.lock_escalation_desc, t.uses_ansi_nulls,
+       t.is_replicated, t.is_tracked_by_cdc, t.temporal_type_desc,
+       t.durability_desc, t.ledger_type_desc,
+       ISNULL((SELECT TOP 1 i.name FROM sys.indexes i
+               WHERE i.object_id = t.object_id AND i.is_primary_key = 1), ''),
+       ISNULL((SELECT TOP 1 ds.name FROM sys.indexes i
+               JOIN sys.data_spaces ds ON ds.data_space_id = i.data_space_id
+               WHERE i.object_id = t.object_id AND i.index_id IN (0,1)), '')
+FROM   sys.tables t
+JOIN   sys.schemas s ON s.schema_id = t.schema_id
+JOIN   sys.database_principals owner ON owner.principal_id = s.principal_id
+WHERE  t.object_id = @p1`
+
+	row, release, err := t.db.queryRow(ctx, q, t.ObjectID)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+
+	d := &TableDetail{}
+	if err := row.Scan(
+		&d.SchemaOwner, &d.LockEscalation, &d.UsesAnsiNulls,
+		&d.IsReplicated, &d.IsTrackedByCDC, &d.TemporalType,
+		&d.Durability, &d.LedgerType, &d.PrimaryKeyName, &d.DataSpace,
+	); err != nil {
+		return nil, fmt.Errorf("gosmo: table detail for %s: %w", t.FullName(), err)
+	}
+	return d, nil
+}
+
 // -- Columns -------------------------------------------------------------------
 
 // Column mirrors Microsoft.SqlServer.Management.Smo.Column.

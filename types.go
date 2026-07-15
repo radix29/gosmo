@@ -41,6 +41,7 @@ const (
 	CompatLevel2017 CompatibilityLevel = 140
 	CompatLevel2019 CompatibilityLevel = 150
 	CompatLevel2022 CompatibilityLevel = 160
+	CompatLevel2025 CompatibilityLevel = 170
 )
 
 // DataType mirrors SQL Server column data types.
@@ -106,22 +107,27 @@ const (
 type ObjectPermission string
 
 const (
-	PermSelect  ObjectPermission = "SELECT"
-	PermInsert  ObjectPermission = "INSERT"
-	PermUpdate  ObjectPermission = "UPDATE"
-	PermDelete  ObjectPermission = "DELETE"
-	PermExecute ObjectPermission = "EXECUTE"
-	PermControl ObjectPermission = "CONTROL"
-	PermView    ObjectPermission = "VIEW DEFINITION"
+	PermSelect             ObjectPermission = "SELECT"
+	PermInsert             ObjectPermission = "INSERT"
+	PermUpdate             ObjectPermission = "UPDATE"
+	PermDelete             ObjectPermission = "DELETE"
+	PermExecute            ObjectPermission = "EXECUTE"
+	PermControl            ObjectPermission = "CONTROL"
+	PermView               ObjectPermission = "VIEW DEFINITION"
+	PermAlter              ObjectPermission = "ALTER"
+	PermReferences         ObjectPermission = "REFERENCES"
+	PermTakeOwnership      ObjectPermission = "TAKE OWNERSHIP"
+	PermViewChangeTracking ObjectPermission = "VIEW CHANGE TRACKING"
 )
 
 // BackupAction mirrors SQL Server backup types.
 type BackupAction string
 
 const (
-	BackupActionDatabase BackupAction = "DATABASE"
-	BackupActionLog      BackupAction = "LOG"
-	BackupActionFiles    BackupAction = "FILES"
+	BackupActionDatabase     BackupAction = "DATABASE"
+	BackupActionLog          BackupAction = "LOG"
+	BackupActionFiles        BackupAction = "FILES"
+	BackupActionDifferential BackupAction = "DATABASE_DIFFERENTIAL"
 )
 
 // ============================================================
@@ -136,9 +142,10 @@ type ColumnDefault struct {
 
 // FileGroup represents a SQL Server filegroup.
 type FileGroup struct {
-	Name      string
-	IsDefault bool
-	Files     []DatabaseFile
+	Name       string
+	IsDefault  bool
+	IsReadOnly bool
+	Files      []DatabaseFile
 }
 
 // DatabaseFile represents a single data or log file.
@@ -165,6 +172,8 @@ type ServerInfo struct {
 	Collation         string
 	IsClustered       bool
 	IsHADREnabled     bool
+	IsSingleUser      bool
+	EngineEdition     int
 	OSVersion         string
 	Platform          string
 	MaxConnections    int

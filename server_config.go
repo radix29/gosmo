@@ -162,6 +162,73 @@ SELECT
 }
 
 // ============================================================
+// Processors  (CPU/NUMA topology — Server Properties > Processors page)
+// ============================================================
+
+// ProcessorInfo holds server-wide CPU/NUMA topology: the header counts on
+// Server Properties > Processors (CPU count, NUMA nodes, hyperthread
+// ratio) and the NUMA column in its per-CPU affinity grid.
+// CPUNUMANode[i] is the NUMA node hosting logical CPU i.
+type ProcessorInfo struct {
+	CPUCount         int
+	HyperthreadRatio int
+	NUMANodeCount    int
+	CPUNUMANode      []int
+}
+
+// ProcessorInfo returns server-wide CPU/NUMA topology.
+func (s *Server) ProcessorInfo() (*ProcessorInfo, error) {
+	return s.ProcessorInfoContext(context.Background())
+}
+
+// ProcessorInfoContext is the context-aware variant of ProcessorInfo.
+func (s *Server) ProcessorInfoContext(ctx context.Context) (*ProcessorInfo, error) {
+	info := &ProcessorInfo{}
+	const q = `SELECT cpu_count, hyperthread_ratio FROM sys.dm_os_sys_info`
+	if err := s.db.QueryRowContext(ctx, q).Scan(&info.CPUCount, &info.HyperthreadRatio); err != nil {
+		return nil, fmt.Errorf("gosmo: processor info: %w", err)
+	}
+
+	const nq = `
+SELECT cpu_id, parent_node_id
+FROM   sys.dm_os_schedulers
+WHERE  status = 'VISIBLE ONLINE'
+GROUP  BY cpu_id, parent_node_id
+ORDER  BY cpu_id`
+
+	rows, err := s.db.QueryContext(ctx, nq)
+	if err != nil {
+		return nil, fmt.Errorf("gosmo: processor NUMA map: %w", err)
+	}
+	defer rows.Close()
+
+	nodes := make(map[int]bool)
+	cpuNode := make(map[int]int)
+	maxCPU := -1
+	for rows.Next() {
+		var cpu, node int
+		if err := rows.Scan(&cpu, &node); err != nil {
+			return nil, err
+		}
+		cpuNode[cpu] = node
+		nodes[node] = true
+		if cpu > maxCPU {
+			maxCPU = cpu
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	info.CPUNUMANode = make([]int, maxCPU+1)
+	for cpu, node := range cpuNode {
+		info.CPUNUMANode[cpu] = node
+	}
+	info.NUMANodeCount = len(nodes)
+	return info, nil
+}
+
+// ============================================================
 // Languages
 // ============================================================
 
@@ -234,7 +301,7 @@ func (s *Server) ActiveSessionsContext(ctx context.Context, includeSystem bool) 
 		sysFilter = ""
 	}
 	q := fmt.Sprintf(`
-SELECT s.session_id, s.login_name, s.host_name, s.program_name,
+SELECT s.session_id, ISNULL(s.login_name, ''), ISNULL(s.host_name, ''), ISNULL(s.program_name, ''),
        DB_NAME(s.database_id), s.status,
        s.cpu_time, s.memory_usage, s.total_elapsed_time,
        CONVERT(VARCHAR(30), s.last_request_start_time, 121),

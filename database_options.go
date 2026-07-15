@@ -41,6 +41,7 @@ type DatabaseOptions struct {
 	ReadCommittedSnapshot bool
 	IsTrustworthy         bool
 	IsBrokerEnabled       bool
+	IsEncrypted           bool
 }
 
 // Options returns the database's ALTER DATABASE SET options.
@@ -61,7 +62,7 @@ SELECT SUSER_SNAME(owner_sid), page_verify_option_desc, user_access_desc,
        is_ansi_warnings_on, is_arithabort_on, is_concat_null_yields_null_on,
        is_numeric_roundabort_on, is_quoted_identifier_on, is_recursive_triggers_on,
        is_cursor_close_on_commit_on, is_read_committed_snapshot_on,
-       is_trustworthy_on, is_broker_enabled
+       is_trustworthy_on, is_broker_enabled, is_encrypted
 FROM   sys.databases
 WHERE  name = @p1`
 
@@ -78,7 +79,7 @@ WHERE  name = @p1`
 		&o.ANSIWarnings, &o.ArithAbort, &o.ConcatNullYieldsNull,
 		&o.NumericRoundAbort, &o.QuotedIdentifier, &o.RecursiveTriggers,
 		&o.CursorCloseOnCommit, &o.ReadCommittedSnapshot,
-		&o.IsTrustworthy, &o.IsBrokerEnabled,
+		&o.IsTrustworthy, &o.IsBrokerEnabled, &o.IsEncrypted,
 	); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, fmt.Errorf("gosmo: database %q not found", d.name)
@@ -136,6 +137,28 @@ var databaseOptionNames = map[DatabaseOption]bool{
 
 // validDatabaseOption reports whether opt is a recognized SET option.
 func validDatabaseOption(opt DatabaseOption) bool { return databaseOptionNames[opt] }
+
+// isSimpleIdentifier reports whether s is a bare identifier token (letters,
+// digits, underscore) — the shape a database scoped configuration option
+// name always takes (MAXDOP, LEGACY_CARDINALITY_ESTIMATION, ...), unlike
+// isSimpleSetValue's more permissive value grammar. Used instead of an
+// exhaustive name allowlist because SQL Server adds new scoped
+// configuration options with every release; validating the token shape
+// blocks injection without going stale as new options appear.
+func isSimpleIdentifier(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, r := range s {
+		switch {
+		case r >= 'A' && r <= 'Z', r >= 'a' && r <= 'z', r >= '0' && r <= '9':
+		case r == '_':
+		default:
+			return false
+		}
+	}
+	return true
+}
 
 // isSimpleSetValue reports whether s is safe to splice directly after a
 // SET option keyword: SQL Server SET-option values are always a bare

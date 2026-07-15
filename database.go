@@ -558,6 +558,45 @@ ORDER  BY name`
 	return users, rows.Err()
 }
 
+// UserByName returns a single database user by name, with its SID and
+// matching server login (if any) filled in — UsersContext leaves these
+// out since Object Explorer's tree listing never needs them.
+func (d *Database) UserByName(name string) (*User, error) {
+	return d.UserByNameContext(context.Background(), name)
+}
+
+// UserByNameContext is the context-aware variant of UserByName.
+func (d *Database) UserByNameContext(ctx context.Context, name string) (*User, error) {
+	const q = `
+SELECT dp.principal_id, dp.type_desc, dp.default_schema_name,
+       dp.create_date, dp.modify_date, dp.authentication_type_desc, dp.sid,
+       sp.name, sp.is_disabled
+FROM   sys.database_principals dp
+LEFT   JOIN sys.server_principals sp ON sp.sid = dp.sid
+WHERE  dp.type IN ('S','U','G') AND dp.name = @p1`
+
+	u := &User{db: d, Name: name}
+	var defSchema, authType, loginName sql.NullString
+	var loginDisabled sql.NullBool
+	row, release, err := d.queryRow(ctx, q, name)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+	if err := row.Scan(&u.ID, &u.UserType, &defSchema, &u.CreateDate, &u.ModifyDate,
+		&authType, &u.SID, &loginName, &loginDisabled); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, fmt.Errorf("gosmo: database user %q not found in %q", name, d.name)
+		}
+		return nil, fmt.Errorf("gosmo: find database user %q in %q: %w", name, d.name, err)
+	}
+	u.DefaultSchema = defSchema.String
+	u.AuthType = authType.String
+	u.LoginName = loginName.String
+	u.LoginDisabled = loginDisabled.Bool
+	return u, nil
+}
+
 // CreateUser creates a database user mapped to a login.
 func (d *Database) CreateUser(userName, loginName, defaultSchema string) error {
 	return d.CreateUserContext(context.Background(), userName, loginName, defaultSchema)
@@ -601,6 +640,9 @@ type DatabaseRole struct {
 	IsFixedRole bool
 	Owner       string
 	Members     []string
+	SID         []byte
+	CreateDate  time.Time
+	ModifyDate  time.Time
 }
 
 // DatabaseRoles returns all roles defined in the database.
@@ -641,6 +683,116 @@ ORDER  BY r.name`
 		roles = append(roles, r)
 	}
 	return roles, rows.Err()
+}
+
+// RoleByName returns a single database role by name, with its principal
+// detail (SID, create/modify dates) filled in — DatabaseRolesContext
+// leaves these out since Object Explorer's tree listing never needs them.
+func (d *Database) RoleByName(name string) (*DatabaseRole, error) {
+	return d.RoleByNameContext(context.Background(), name)
+}
+
+// RoleByNameContext is the context-aware variant of RoleByName.
+func (d *Database) RoleByNameContext(ctx context.Context, name string) (*DatabaseRole, error) {
+	const q = `
+SELECT r.principal_id, r.is_fixed_role, p.name AS owner,
+       r.sid, r.create_date, r.modify_date,
+       STUFF((SELECT ', ' + m.name
+              FROM   sys.database_role_members rm
+              JOIN   sys.database_principals m ON m.principal_id = rm.member_principal_id
+              WHERE  rm.role_principal_id = r.principal_id
+              FOR XML PATH(''), TYPE).value('.','NVARCHAR(MAX)'), 1, 2, '') AS members
+FROM   sys.database_principals r
+JOIN   sys.database_principals p ON p.principal_id = r.owning_principal_id
+WHERE  r.type = 'R' AND r.name = @p1`
+
+	r := &DatabaseRole{db: d, Name: name}
+	var members sql.NullString
+	row, release, err := d.queryRow(ctx, q, name)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+	if err := row.Scan(&r.ID, &r.IsFixedRole, &r.Owner, &r.SID, &r.CreateDate, &r.ModifyDate, &members); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, fmt.Errorf("gosmo: database role %q not found in %q", name, d.name)
+		}
+		return nil, fmt.Errorf("gosmo: find database role %q in %q: %w", name, d.name, err)
+	}
+	if members.Valid && members.String != "" {
+		r.Members = strings.Split(members.String, ", ")
+	}
+	return r, nil
+}
+
+// Rename changes the database role's name.
+func (r *DatabaseRole) Rename(newName string) error {
+	return r.RenameContext(context.Background(), newName)
+}
+
+// RenameContext is the context-aware variant of Rename.
+func (r *DatabaseRole) RenameContext(ctx context.Context, newName string) error {
+	q := fmt.Sprintf("ALTER ROLE %s WITH NAME = %s", quoteIdent(r.Name), quoteIdent(newName))
+	if _, err := r.db.exec(ctx, q); err != nil {
+		return fmt.Errorf("gosmo: rename database role %q to %q: %w", r.Name, newName, err)
+	}
+	r.Name = newName
+	return nil
+}
+
+// ChangeOwner transfers ownership of the database role to a new principal.
+func (r *DatabaseRole) ChangeOwner(newOwner string) error {
+	return r.ChangeOwnerContext(context.Background(), newOwner)
+}
+
+// ChangeOwnerContext is the context-aware variant of ChangeOwner.
+func (r *DatabaseRole) ChangeOwnerContext(ctx context.Context, newOwner string) error {
+	q := fmt.Sprintf("ALTER AUTHORIZATION ON ROLE::%s TO %s", quoteIdent(r.Name), quoteIdent(newOwner))
+	if _, err := r.db.exec(ctx, q); err != nil {
+		return fmt.Errorf("gosmo: change database role %q owner to %q: %w", r.Name, newOwner, err)
+	}
+	r.Owner = newOwner
+	return nil
+}
+
+// RoleMember is one direct member of a database role.
+type RoleMember struct {
+	Name string
+	Type string // e.g. "SQL_USER", "WINDOWS_USER", "DATABASE_ROLE"
+}
+
+// RoleMembers returns the direct members of a database role, with each
+// member's principal type — DatabaseRolesContext/RoleByNameContext only
+// return member names, concatenated, with no type.
+func (d *Database) RoleMembers(roleName string) ([]*RoleMember, error) {
+	return d.RoleMembersContext(context.Background(), roleName)
+}
+
+// RoleMembersContext is the context-aware variant of RoleMembers.
+func (d *Database) RoleMembersContext(ctx context.Context, roleName string) ([]*RoleMember, error) {
+	const q = `
+SELECT m.name, m.type_desc
+FROM   sys.database_role_members rm
+JOIN   sys.database_principals r ON r.principal_id = rm.role_principal_id
+JOIN   sys.database_principals m ON m.principal_id = rm.member_principal_id
+WHERE  r.name = @p1
+ORDER  BY m.name`
+
+	rows, err := d.query(ctx, q, roleName)
+	if err != nil {
+		return nil, fmt.Errorf("gosmo: members of role %q in %q: %w", roleName, d.name, err)
+	}
+	defer rows.Close()
+
+	var members []*RoleMember
+	for rows.Next() {
+		m := &RoleMember{}
+		if err := rows.Scan(&m.Name, &m.Type); err != nil {
+			return nil, err
+		}
+		members = append(members, m)
+	}
+	return members, rows.Err()
 }
 
 // AddRoleMember adds a user to a database role.
@@ -727,6 +879,67 @@ func (d *Database) SetReadOnlyContext(ctx context.Context, readOnly bool) error 
 	return nil
 }
 
+// userAccessModes allowlists the ALTER DATABASE SET user-access keywords —
+// can't be identifier-quoted or parameterised (ALTER DATABASE is DDL).
+var userAccessModes = map[string]bool{
+	"MULTI_USER": true, "SINGLE_USER": true, "RESTRICTED_USER": true,
+}
+
+// SetUserAccess changes the database's user-access mode (MULTI_USER,
+// SINGLE_USER, or RESTRICTED_USER — SSMS's Database Properties > Options
+// "Restrict access" setting). Existing connections that would violate the
+// new mode are rolled back immediately, matching SSMS's own behavior.
+func (d *Database) SetUserAccess(mode string) error {
+	return d.SetUserAccessContext(context.Background(), mode)
+}
+
+// SetUserAccessContext is the context-aware variant of SetUserAccess.
+func (d *Database) SetUserAccessContext(ctx context.Context, mode string) error {
+	if !userAccessModes[mode] {
+		return fmt.Errorf("gosmo: set user access: unrecognized mode %q", mode)
+	}
+	if err := d.server.execContext(ctx,
+		fmt.Sprintf("ALTER DATABASE %s SET %s WITH ROLLBACK IMMEDIATE", quoteIdent(d.name), mode),
+	); err != nil {
+		return fmt.Errorf("gosmo: set user access %s: %w", mode, err)
+	}
+	return nil
+}
+
+// SetOffline takes the database offline.
+func (d *Database) SetOffline() error {
+	return d.SetOfflineContext(context.Background())
+}
+
+// SetOfflineContext is the context-aware variant of SetOffline. Existing
+// connections are rolled back immediately, matching SSMS's Object Explorer
+// "Take Database Offline" behavior.
+func (d *Database) SetOfflineContext(ctx context.Context) error {
+	if err := d.server.execContext(ctx,
+		fmt.Sprintf("ALTER DATABASE %s SET OFFLINE WITH ROLLBACK IMMEDIATE", quoteIdent(d.name)),
+	); err != nil {
+		return fmt.Errorf("gosmo: set offline: %w", err)
+	}
+	d.state = "OFFLINE"
+	return nil
+}
+
+// SetOnline brings an offline database back online.
+func (d *Database) SetOnline() error {
+	return d.SetOnlineContext(context.Background())
+}
+
+// SetOnlineContext is the context-aware variant of SetOnline.
+func (d *Database) SetOnlineContext(ctx context.Context) error {
+	if err := d.server.execContext(ctx,
+		fmt.Sprintf("ALTER DATABASE %s SET ONLINE", quoteIdent(d.name)),
+	); err != nil {
+		return fmt.Errorf("gosmo: set online: %w", err)
+	}
+	d.state = "ONLINE"
+	return nil
+}
+
 // -- Filegroups ----------------------------------------------------------------
 
 // FileGroups returns all filegroups and their files.
@@ -737,7 +950,7 @@ func (d *Database) FileGroups() ([]*FileGroup, error) {
 // FileGroupsContext is the context-aware variant of FileGroups.
 func (d *Database) FileGroupsContext(ctx context.Context) ([]*FileGroup, error) {
 	const q = `
-SELECT fg.name, fg.is_default,
+SELECT fg.name, fg.is_default, fg.is_read_only,
        df.name, df.physical_name, df.size * 8, df.max_size, df.growth,
        df.is_percent_growth,
        CASE WHEN df.file_id = 1 THEN 1 ELSE 0 END AS is_primary
@@ -755,9 +968,9 @@ ORDER  BY fg.name, df.file_id`
 	var order []string
 	for rows.Next() {
 		var fgName string
-		var fgDefault, isPctGrowth, isPrimary bool
+		var fgDefault, fgReadOnly, isPctGrowth, isPrimary bool
 		f := DatabaseFile{}
-		if err := rows.Scan(&fgName, &fgDefault,
+		if err := rows.Scan(&fgName, &fgDefault, &fgReadOnly,
 			&f.Name, &f.PhysicalName, &f.Size, &f.MaxSize, &f.Growth,
 			&isPctGrowth, &isPrimary); err != nil {
 			return nil, err
@@ -772,7 +985,7 @@ ORDER  BY fg.name, df.file_id`
 
 		fg, ok := fgMap[fgName]
 		if !ok {
-			fg = &FileGroup{Name: fgName, IsDefault: fgDefault}
+			fg = &FileGroup{Name: fgName, IsDefault: fgDefault, IsReadOnly: fgReadOnly}
 			fgMap[fgName] = fg
 			order = append(order, fgName)
 		}

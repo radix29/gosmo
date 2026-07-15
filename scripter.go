@@ -113,7 +113,7 @@ func (sc *Scripter) ScriptTableContext(ctx context.Context, schema, name string)
 		if col.IsComputed && col.ComputedText != "" {
 			fmt.Fprintf(&sb, "    %s AS %s", quoteIdent(col.Name), col.ComputedText)
 		} else {
-			fmt.Fprintf(&sb, "    %s %s", quoteIdent(col.Name), scriptColType(col))
+			fmt.Fprintf(&sb, "    %s %s", quoteIdent(col.Name), ColumnTypeString(col))
 			if col.IsIdentity {
 				fmt.Fprintf(&sb, " IDENTITY(%d,%d)", col.IdentitySeed, col.IdentityIncrement)
 			}
@@ -367,12 +367,13 @@ func (sc *Scripter) ScriptDatabase() (string, error) {
 }
 
 // ============================================================
-// Column type formatting (used by ScriptTable)
+// Column type formatting (used by ScriptTable and by callers rendering a
+// Column's type for display, e.g. SSMS's Table Properties > Columns page)
 // ============================================================
 
-// scriptColType returns the T-SQL data-type fragment for a Column read from
+// ColumnTypeString returns the T-SQL data-type fragment for a Column read from
 // sys.columns. nchar/nvarchar store max_length in bytes (2 per character).
-func scriptColType(col *Column) string {
+func ColumnTypeString(col *Column) string {
 	switch col.DataType {
 	case DataTypeVarChar, DataTypeChar, DataTypeBinary, DataTypeVarBinary:
 		if col.MaxLength == -1 {
