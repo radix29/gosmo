@@ -24,6 +24,11 @@ type PartitionFunction struct {
 
 // PartitionFunctions returns all partition functions in the database.
 func (d *Database) PartitionFunctions() ([]*PartitionFunction, error) {
+	return d.PartitionFunctionsContext(context.Background())
+}
+
+// PartitionFunctionsContext is the context-aware variant of PartitionFunctions.
+func (d *Database) PartitionFunctionsContext(ctx context.Context) ([]*PartitionFunction, error) {
 	const q = `
 SELECT pf.name, pf.function_id, pf.fanout - 1,
        tp.name AS input_type, pf.boundary_value_on_right,
@@ -36,7 +41,7 @@ JOIN   sys.partition_parameters pp ON pp.function_id = pf.function_id
 JOIN   sys.types tp ON tp.user_type_id = pp.user_type_id
 ORDER  BY pf.name`
 
-	rows, err := d.query(context.Background(), q)
+	rows, err := d.query(ctx, q)
 	if err != nil {
 		return nil, fmt.Errorf("gosmo: list partition functions: %w", err)
 	}
@@ -68,6 +73,11 @@ type CreatePartitionFunctionRequest struct {
 
 // CreatePartitionFunction creates a partition function.
 func (d *Database) CreatePartitionFunction(req CreatePartitionFunctionRequest) error {
+	return d.CreatePartitionFunctionContext(context.Background(), req)
+}
+
+// CreatePartitionFunctionContext is the context-aware variant of CreatePartitionFunction.
+func (d *Database) CreatePartitionFunctionContext(ctx context.Context, req CreatePartitionFunctionRequest) error {
 	if len(req.Boundaries) == 0 {
 		return fmt.Errorf("gosmo: create partition function: at least one boundary required")
 	}
@@ -80,7 +90,7 @@ func (d *Database) CreatePartitionFunction(req CreatePartitionFunctionRequest) e
 		"CREATE PARTITION FUNCTION %s (%s) AS RANGE %s FOR VALUES (%s)",
 		quoteIdent(req.Name), req.InputType, side, vals,
 	)
-	_, err := d.exec(context.Background(), q)
+	_, err := d.exec(ctx, q)
 	if err != nil {
 		return fmt.Errorf("gosmo: create partition function [%s]: %w", req.Name, err)
 	}
@@ -89,7 +99,12 @@ func (d *Database) CreatePartitionFunction(req CreatePartitionFunctionRequest) e
 
 // Drop drops the partition function.
 func (pf *PartitionFunction) Drop() error {
-	_, err := pf.db.exec(context.Background(),
+	return pf.DropContext(context.Background())
+}
+
+// DropContext is the context-aware variant of Drop.
+func (pf *PartitionFunction) DropContext(ctx context.Context) error {
+	_, err := pf.db.exec(ctx,
 		fmt.Sprintf("DROP PARTITION FUNCTION %s", quoteIdent(pf.Name)))
 	if err != nil {
 		return fmt.Errorf("gosmo: drop partition function [%s]: %w", pf.Name, err)
@@ -99,7 +114,12 @@ func (pf *PartitionFunction) Drop() error {
 
 // SplitRange adds a new boundary value to the partition function.
 func (pf *PartitionFunction) SplitRange(value string) error {
-	_, err := pf.db.exec(context.Background(),
+	return pf.SplitRangeContext(context.Background(), value)
+}
+
+// SplitRangeContext is the context-aware variant of SplitRange.
+func (pf *PartitionFunction) SplitRangeContext(ctx context.Context, value string) error {
+	_, err := pf.db.exec(ctx,
 		fmt.Sprintf("ALTER PARTITION FUNCTION %s() SPLIT RANGE (%s)", quoteIdent(pf.Name), value))
 	if err != nil {
 		return fmt.Errorf("gosmo: split range on [%s]: %w", pf.Name, err)
@@ -109,7 +129,12 @@ func (pf *PartitionFunction) SplitRange(value string) error {
 
 // MergeRange removes a boundary value from the partition function.
 func (pf *PartitionFunction) MergeRange(value string) error {
-	_, err := pf.db.exec(context.Background(),
+	return pf.MergeRangeContext(context.Background(), value)
+}
+
+// MergeRangeContext is the context-aware variant of MergeRange.
+func (pf *PartitionFunction) MergeRangeContext(ctx context.Context, value string) error {
+	_, err := pf.db.exec(ctx,
 		fmt.Sprintf("ALTER PARTITION FUNCTION %s() MERGE RANGE (%s)", quoteIdent(pf.Name), value))
 	if err != nil {
 		return fmt.Errorf("gosmo: merge range on [%s]: %w", pf.Name, err)
@@ -130,6 +155,11 @@ type PartitionScheme struct {
 
 // PartitionSchemes returns all partition schemes in the database.
 func (d *Database) PartitionSchemes() ([]*PartitionScheme, error) {
+	return d.PartitionSchemesContext(context.Background())
+}
+
+// PartitionSchemesContext is the context-aware variant of PartitionSchemes.
+func (d *Database) PartitionSchemesContext(ctx context.Context) ([]*PartitionScheme, error) {
 	const q = `
 SELECT ps.name, ps.data_space_id, pf.name AS func_name,
        (SELECT STRING_AGG(fg.name, ',') WITHIN GROUP (ORDER BY dds.destination_id)
@@ -140,7 +170,7 @@ FROM   sys.partition_schemes ps
 JOIN   sys.partition_functions pf ON pf.function_id = ps.function_id
 ORDER  BY ps.name`
 
-	rows, err := d.query(context.Background(), q)
+	rows, err := d.query(ctx, q)
 	if err != nil {
 		return nil, fmt.Errorf("gosmo: list partition schemes: %w", err)
 	}
@@ -163,18 +193,23 @@ ORDER  BY ps.name`
 
 // CreatePartitionScheme creates a partition scheme backed by a partition function.
 func (d *Database) CreatePartitionScheme(name, functionName string, fileGroups []string) error {
+	return d.CreatePartitionSchemeContext(context.Background(), name, functionName, fileGroups)
+}
+
+// CreatePartitionSchemeContext is the context-aware variant of CreatePartitionScheme.
+func (d *Database) CreatePartitionSchemeContext(ctx context.Context, name, functionName string, fileGroups []string) error {
 	if len(fileGroups) == 0 {
 		return fmt.Errorf("gosmo: create partition scheme: at least one filegroup required")
 	}
 	fgs := make([]string, len(fileGroups))
 	for i, fg := range fileGroups {
-		fgs[i] = fmt.Sprintf("[%s]", fg)
+		fgs[i] = quoteIdent(fg)
 	}
 	q := fmt.Sprintf(
 		"CREATE PARTITION SCHEME %s AS PARTITION %s TO (%s)",
 		quoteIdent(name), quoteIdent(functionName), strings.Join(fgs, ", "),
 	)
-	_, err := d.exec(context.Background(), q)
+	_, err := d.exec(ctx, q)
 	if err != nil {
 		return fmt.Errorf("gosmo: create partition scheme [%s]: %w", name, err)
 	}
@@ -183,7 +218,12 @@ func (d *Database) CreatePartitionScheme(name, functionName string, fileGroups [
 
 // Drop drops the partition scheme.
 func (ps *PartitionScheme) Drop() error {
-	_, err := ps.db.exec(context.Background(),
+	return ps.DropContext(context.Background())
+}
+
+// DropContext is the context-aware variant of Drop.
+func (ps *PartitionScheme) DropContext(ctx context.Context) error {
+	_, err := ps.db.exec(ctx,
 		fmt.Sprintf("DROP PARTITION SCHEME %s", quoteIdent(ps.Name)))
 	if err != nil {
 		return fmt.Errorf("gosmo: drop partition scheme [%s]: %w", ps.Name, err)

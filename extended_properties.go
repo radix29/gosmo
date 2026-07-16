@@ -28,13 +28,18 @@ type ExtendedPropertyLevel struct {
 
 // DatabaseExtendedProperties returns all extended properties at database level.
 func (d *Database) DatabaseExtendedProperties() ([]*ExtendedProperty, error) {
+	return d.DatabaseExtendedPropertiesContext(context.Background())
+}
+
+// DatabaseExtendedPropertiesContext is the context-aware variant of DatabaseExtendedProperties.
+func (d *Database) DatabaseExtendedPropertiesContext(ctx context.Context) ([]*ExtendedProperty, error) {
 	const q = `
 SELECT name, CAST(value AS NVARCHAR(4000))
 FROM   sys.extended_properties
 WHERE  class = 0
 ORDER  BY name`
 
-	rows, err := d.query(context.Background(), q)
+	rows, err := d.query(ctx, q)
 	if err != nil {
 		return nil, fmt.Errorf("gosmo: database extended properties: %w", err)
 	}
@@ -44,6 +49,11 @@ ORDER  BY name`
 
 // ExtendedProperties returns the extended properties for a specific object.
 func (d *Database) ExtendedProperties(level ExtendedPropertyLevel) ([]*ExtendedProperty, error) {
+	return d.ExtendedPropertiesContext(context.Background(), level)
+}
+
+// ExtendedPropertiesContext is the context-aware variant of ExtendedProperties.
+func (d *Database) ExtendedPropertiesContext(ctx context.Context, level ExtendedPropertyLevel) ([]*ExtendedProperty, error) {
 	q := fmt.Sprintf(`
 SELECT name, CAST(value AS NVARCHAR(4000))
 FROM   fn_listextendedproperty(
@@ -59,7 +69,7 @@ ORDER  BY name`,
 		nullableStr(level.Level1Type), nullableStr(level.Level1Name),
 		nullableStr(level.Level2Type), nullableStr(level.Level2Name),
 	)
-	rows, err := d.query(context.Background(), q)
+	rows, err := d.query(ctx, q)
 	if err != nil {
 		return nil, fmt.Errorf("gosmo: extended properties: %w", err)
 	}

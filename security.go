@@ -23,6 +23,11 @@ type ColumnMasterKey struct {
 
 // ColumnMasterKeys returns all column master keys in the database.
 func (d *Database) ColumnMasterKeys() ([]*ColumnMasterKey, error) {
+	return d.ColumnMasterKeysContext(context.Background())
+}
+
+// ColumnMasterKeysContext is the context-aware variant of ColumnMasterKeys.
+func (d *Database) ColumnMasterKeysContext(ctx context.Context) ([]*ColumnMasterKey, error) {
 	const q = `
 SELECT name, column_master_key_id,
        key_store_provider_name, key_path,
@@ -30,7 +35,7 @@ SELECT name, column_master_key_id,
 FROM   sys.column_master_keys
 ORDER  BY name`
 
-	rows, err := d.query(context.Background(), q)
+	rows, err := d.query(ctx, q)
 	if err != nil {
 		return nil, fmt.Errorf("gosmo: list column master keys: %w", err)
 	}
@@ -52,6 +57,11 @@ ORDER  BY name`
 // CreateColumnMasterKey creates a column master key metadata entry.
 // Note: the actual key must already exist in the key store.
 func (d *Database) CreateColumnMasterKey(name, keyStoreProvider, keyPath string, enclaveComputations bool) error {
+	return d.CreateColumnMasterKeyContext(context.Background(), name, keyStoreProvider, keyPath, enclaveComputations)
+}
+
+// CreateColumnMasterKeyContext is the context-aware variant of CreateColumnMasterKey.
+func (d *Database) CreateColumnMasterKeyContext(ctx context.Context, name, keyStoreProvider, keyPath string, enclaveComputations bool) error {
 	enclave := "YES"
 	if !enclaveComputations {
 		enclave = "NO"
@@ -62,8 +72,8 @@ WITH (
     KEY_STORE_PROVIDER_NAME = N'%s',
     KEY_PATH = N'%s',
     ENCLAVE_COMPUTATIONS = %s
-)`, name, escapeSingle(keyStoreProvider), escapeSingle(keyPath), enclave)
-	_, err := d.exec(context.Background(), q)
+)`, quoteIdent(name), escapeSingle(keyStoreProvider), escapeSingle(keyPath), enclave)
+	_, err := d.exec(ctx, q)
 	if err != nil {
 		return fmt.Errorf("gosmo: create column master key [%s]: %w", name, err)
 	}
@@ -72,7 +82,12 @@ WITH (
 
 // Drop drops the column master key.
 func (cmk *ColumnMasterKey) Drop() error {
-	_, err := cmk.db.exec(context.Background(),
+	return cmk.DropContext(context.Background())
+}
+
+// DropContext is the context-aware variant of Drop.
+func (cmk *ColumnMasterKey) DropContext(ctx context.Context) error {
+	_, err := cmk.db.exec(ctx,
 		fmt.Sprintf("DROP COLUMN MASTER KEY %s", quoteIdent(cmk.Name)))
 	if err != nil {
 		return fmt.Errorf("gosmo: drop column master key [%s]: %w", cmk.Name, err)
@@ -93,6 +108,11 @@ type ColumnEncryptionKey struct {
 
 // ColumnEncryptionKeys returns all column encryption keys in the database.
 func (d *Database) ColumnEncryptionKeys() ([]*ColumnEncryptionKey, error) {
+	return d.ColumnEncryptionKeysContext(context.Background())
+}
+
+// ColumnEncryptionKeysContext is the context-aware variant of ColumnEncryptionKeys.
+func (d *Database) ColumnEncryptionKeysContext(ctx context.Context) ([]*ColumnEncryptionKey, error) {
 	const q = `
 SELECT cek.name, cek.column_encryption_key_id,
        cmk.name AS master_key_name,
@@ -102,7 +122,7 @@ JOIN   sys.column_encryption_key_values cekv ON cekv.column_encryption_key_id = 
 JOIN   sys.column_master_keys cmk ON cmk.column_master_key_id = cekv.column_master_key_id
 ORDER  BY cek.name`
 
-	rows, err := d.query(context.Background(), q)
+	rows, err := d.query(ctx, q)
 	if err != nil {
 		return nil, fmt.Errorf("gosmo: list column encryption keys: %w", err)
 	}
@@ -123,7 +143,12 @@ ORDER  BY cek.name`
 
 // Drop drops the column encryption key.
 func (cek *ColumnEncryptionKey) Drop() error {
-	_, err := cek.db.exec(context.Background(),
+	return cek.DropContext(context.Background())
+}
+
+// DropContext is the context-aware variant of Drop.
+func (cek *ColumnEncryptionKey) DropContext(ctx context.Context) error {
+	_, err := cek.db.exec(ctx,
 		fmt.Sprintf("DROP COLUMN ENCRYPTION KEY %s", quoteIdent(cek.Name)))
 	if err != nil {
 		return fmt.Errorf("gosmo: drop column encryption key [%s]: %w", cek.Name, err)
@@ -157,13 +182,18 @@ type SecurityPredicate struct {
 
 // SecurityPolicies returns all security policies in the database.
 func (d *Database) SecurityPolicies() ([]*SecurityPolicy, error) {
+	return d.SecurityPoliciesContext(context.Background())
+}
+
+// SecurityPoliciesContext is the context-aware variant of SecurityPolicies.
+func (d *Database) SecurityPoliciesContext(ctx context.Context) ([]*SecurityPolicy, error) {
 	const q = `
 SELECT sp.name, SCHEMA_NAME(sp.schema_id), sp.object_id,
        sp.is_enabled, sp.is_not_for_replication
 FROM   sys.security_policies sp
 ORDER  BY sp.name`
 
-	rows, err := d.query(context.Background(), q)
+	rows, err := d.query(ctx, q)
 	if err != nil {
 		return nil, fmt.Errorf("gosmo: list security policies: %w", err)
 	}
@@ -178,7 +208,7 @@ ORDER  BY sp.name`
 		}
 
 		// Load predicates
-		preds, err := d.securityPredicates(p.ObjectID)
+		preds, err := d.securityPredicates(ctx, p.ObjectID)
 		if err != nil {
 			return nil, err
 		}
@@ -188,7 +218,7 @@ ORDER  BY sp.name`
 	return policies, rows.Err()
 }
 
-func (d *Database) securityPredicates(policyObjectID int) ([]*SecurityPredicate, error) {
+func (d *Database) securityPredicates(ctx context.Context, policyObjectID int) ([]*SecurityPredicate, error) {
 	const q = `
 SELECT spr.predicate_type_desc, spr.predicate_definition,
        SCHEMA_NAME(t.schema_id), t.name, spr.operation_desc
@@ -197,7 +227,7 @@ JOIN   sys.tables t ON t.object_id = spr.target_object_id
 WHERE  spr.object_id = @p1
 ORDER  BY spr.predicate_type_desc`
 
-	rows, err := d.query(context.Background(), q, policyObjectID)
+	rows, err := d.query(ctx, q, policyObjectID)
 	if err != nil {
 		return nil, err
 	}
@@ -219,7 +249,12 @@ ORDER  BY spr.predicate_type_desc`
 
 // Enable enables the security policy.
 func (p *SecurityPolicy) Enable() error {
-	_, err := p.db.exec(context.Background(),
+	return p.EnableContext(context.Background())
+}
+
+// EnableContext is the context-aware variant of Enable.
+func (p *SecurityPolicy) EnableContext(ctx context.Context) error {
+	_, err := p.db.exec(ctx,
 		fmt.Sprintf("ALTER SECURITY POLICY %s WITH (STATE = ON)", qualifiedName(p.Schema, p.Name)))
 	if err != nil {
 		return fmt.Errorf("gosmo: enable security policy [%s]: %w", p.Name, err)
@@ -230,7 +265,12 @@ func (p *SecurityPolicy) Enable() error {
 
 // Disable disables the security policy.
 func (p *SecurityPolicy) Disable() error {
-	_, err := p.db.exec(context.Background(),
+	return p.DisableContext(context.Background())
+}
+
+// DisableContext is the context-aware variant of Disable.
+func (p *SecurityPolicy) DisableContext(ctx context.Context) error {
+	_, err := p.db.exec(ctx,
 		fmt.Sprintf("ALTER SECURITY POLICY %s WITH (STATE = OFF)", qualifiedName(p.Schema, p.Name)))
 	if err != nil {
 		return fmt.Errorf("gosmo: disable security policy [%s]: %w", p.Name, err)
@@ -241,7 +281,12 @@ func (p *SecurityPolicy) Disable() error {
 
 // Drop drops the security policy.
 func (p *SecurityPolicy) Drop() error {
-	_, err := p.db.exec(context.Background(),
+	return p.DropContext(context.Background())
+}
+
+// DropContext is the context-aware variant of Drop.
+func (p *SecurityPolicy) DropContext(ctx context.Context) error {
+	_, err := p.db.exec(ctx,
 		fmt.Sprintf("DROP SECURITY POLICY IF EXISTS %s", qualifiedName(p.Schema, p.Name)))
 	if err != nil {
 		return fmt.Errorf("gosmo: drop security policy [%s]: %w", p.Name, err)

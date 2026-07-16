@@ -86,6 +86,11 @@ type CreateSequenceRequest struct {
 
 // CreateSequence creates a new sequence in the database.
 func (d *Database) CreateSequence(req CreateSequenceRequest) error {
+	return d.CreateSequenceContext(context.Background(), req)
+}
+
+// CreateSequenceContext is the context-aware variant of CreateSequence.
+func (d *Database) CreateSequenceContext(ctx context.Context, req CreateSequenceRequest) error {
 	if req.DataType == "" {
 		req.DataType = DataTypeBigInt
 	}
@@ -94,7 +99,7 @@ func (d *Database) CreateSequence(req CreateSequenceRequest) error {
 		schema = "dbo"
 	}
 
-	q := fmt.Sprintf("CREATE SEQUENCE [%s].[%s] AS %s", schema, req.Name, req.DataType)
+	q := fmt.Sprintf("CREATE SEQUENCE %s AS %s", qualifiedName(schema, req.Name), req.DataType)
 	q += fmt.Sprintf(" START WITH %d INCREMENT BY %d", req.StartValue, req.Increment)
 	if req.MinValue != nil {
 		q += fmt.Sprintf(" MINVALUE %d", *req.MinValue)
@@ -119,7 +124,7 @@ func (d *Database) CreateSequence(req CreateSequenceRequest) error {
 		q += fmt.Sprintf(" CACHE %d", *req.Cache)
 	}
 
-	_, err := d.exec(context.Background(), q)
+	_, err := d.exec(ctx, q)
 	if err != nil {
 		return fmt.Errorf("gosmo: create sequence [%s].[%s]: %w", schema, req.Name, err)
 	}
@@ -128,8 +133,13 @@ func (d *Database) CreateSequence(req CreateSequenceRequest) error {
 
 // Drop drops the sequence.
 func (seq *Sequence) Drop() error {
-	_, err := seq.db.exec(context.Background(),
-		fmt.Sprintf("DROP SEQUENCE [%s].[%s]", seq.Schema, seq.Name))
+	return seq.DropContext(context.Background())
+}
+
+// DropContext is the context-aware variant of Drop.
+func (seq *Sequence) DropContext(ctx context.Context) error {
+	_, err := seq.db.exec(ctx,
+		fmt.Sprintf("DROP SEQUENCE %s", qualifiedName(seq.Schema, seq.Name)))
 	if err != nil {
 		return fmt.Errorf("gosmo: drop sequence [%s].[%s]: %w", seq.Schema, seq.Name, err)
 	}
@@ -138,9 +148,14 @@ func (seq *Sequence) Drop() error {
 
 // Restart restarts the sequence at the given value.
 func (seq *Sequence) Restart(value int64) error {
-	_, err := seq.db.exec(context.Background(),
-		fmt.Sprintf("ALTER SEQUENCE [%s].[%s] RESTART WITH %d",
-			seq.Schema, seq.Name, value))
+	return seq.RestartContext(context.Background(), value)
+}
+
+// RestartContext is the context-aware variant of Restart.
+func (seq *Sequence) RestartContext(ctx context.Context, value int64) error {
+	_, err := seq.db.exec(ctx,
+		fmt.Sprintf("ALTER SEQUENCE %s RESTART WITH %d",
+			qualifiedName(seq.Schema, seq.Name), value))
 	if err != nil {
 		return fmt.Errorf("gosmo: restart sequence [%s].[%s]: %w", seq.Schema, seq.Name, err)
 	}
@@ -150,8 +165,18 @@ func (seq *Sequence) Restart(value int64) error {
 
 // NextValue retrieves the next value from the sequence.
 func (seq *Sequence) NextValue() (int64, error) {
-	row, _, _ := seq.db.queryRow(context.Background(),
-		fmt.Sprintf("SELECT NEXT VALUE FOR [%s].[%s]", seq.Schema, seq.Name))
+	return seq.NextValueContext(context.Background())
+}
+
+// NextValueContext is the context-aware variant of NextValue.
+func (seq *Sequence) NextValueContext(ctx context.Context) (int64, error) {
+	row, release, err := seq.db.queryRow(ctx,
+		fmt.Sprintf("SELECT NEXT VALUE FOR %s", qualifiedName(seq.Schema, seq.Name)))
+	if err != nil {
+		return 0, fmt.Errorf("gosmo: next value for [%s].[%s]: %w", seq.Schema, seq.Name, err)
+	}
+	defer release()
+
 	var val int64
 	if err := row.Scan(&val); err != nil {
 		return 0, fmt.Errorf("gosmo: next value for [%s].[%s]: %w", seq.Schema, seq.Name, err)
@@ -207,11 +232,16 @@ ORDER  BY SCHEMA_NAME(schema_id), name`
 // CreateSynonym creates a synonym for a base object.
 // baseObject should be the fully qualified name, e.g. "[OtherDB].[dbo].[MyTable]".
 func (d *Database) CreateSynonym(schema, name, baseObject string) error {
+	return d.CreateSynonymContext(context.Background(), schema, name, baseObject)
+}
+
+// CreateSynonymContext is the context-aware variant of CreateSynonym.
+func (d *Database) CreateSynonymContext(ctx context.Context, schema, name, baseObject string) error {
 	if schema == "" {
 		schema = "dbo"
 	}
-	_, err := d.exec(context.Background(),
-		fmt.Sprintf("CREATE SYNONYM [%s].[%s] FOR %s", schema, name, baseObject))
+	_, err := d.exec(ctx,
+		fmt.Sprintf("CREATE SYNONYM %s FOR %s", qualifiedName(schema, name), baseObject))
 	if err != nil {
 		return fmt.Errorf("gosmo: create synonym [%s].[%s]: %w", schema, name, err)
 	}
@@ -220,8 +250,13 @@ func (d *Database) CreateSynonym(schema, name, baseObject string) error {
 
 // Drop drops the synonym.
 func (syn *Synonym) Drop() error {
-	_, err := syn.db.exec(context.Background(),
-		fmt.Sprintf("DROP SYNONYM IF EXISTS [%s].[%s]", syn.Schema, syn.Name))
+	return syn.DropContext(context.Background())
+}
+
+// DropContext is the context-aware variant of Drop.
+func (syn *Synonym) DropContext(ctx context.Context) error {
+	_, err := syn.db.exec(ctx,
+		fmt.Sprintf("DROP SYNONYM IF EXISTS %s", qualifiedName(syn.Schema, syn.Name)))
 	if err != nil {
 		return fmt.Errorf("gosmo: drop synonym [%s].[%s]: %w", syn.Schema, syn.Name, err)
 	}

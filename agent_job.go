@@ -68,16 +68,20 @@ SELECT j.job_id, j.name, ISNULL(j.description,''),
        j.enabled, ISNULL(c.name,''), ISNULL(l.name,''),
        j.date_created, j.date_modified, j.start_step_id,
        ja.last_executed_step_date,
-       ISNULL(ja.last_run_outcome, 5),
-       ISNULL(ja.last_run_duration, 0),
+       ISNULL(js.last_run_outcome, 5),
+       ISNULL(js.last_run_duration, 0),
        ISNULL(ja.next_scheduled_run_date, '19000101'),
-       ISNULL(ja.job_state, 1)
+       CASE WHEN ja.start_execution_date IS NOT NULL AND ja.stop_execution_date IS NULL
+            THEN 4 ELSE 1 END
 FROM   msdb.dbo.sysjobs j
 LEFT   JOIN msdb.dbo.syscategories c ON c.category_id = j.category_id
 LEFT   JOIN master.sys.server_principals l ON l.sid = j.owner_sid
 LEFT   JOIN msdb.dbo.sysjobactivity ja
        ON  ja.job_id = j.job_id
        AND ja.session_id = (SELECT MAX(session_id) FROM msdb.dbo.sysjobactivity)
+LEFT   JOIN msdb.dbo.sysjobservers js
+       ON  js.job_id = j.job_id
+       AND js.server_id = 0
 ORDER  BY j.name`
 
 	rows, err := s.db.QueryContext(ctx, q)
@@ -129,16 +133,20 @@ SELECT j.job_id, j.name, ISNULL(j.description,''),
        j.enabled, ISNULL(c.name,''), ISNULL(l.name,''),
        j.date_created, j.date_modified, j.start_step_id,
        ja.last_executed_step_date,
-       ISNULL(ja.last_run_outcome, 5),
-       ISNULL(ja.last_run_duration, 0),
+       ISNULL(js.last_run_outcome, 5),
+       ISNULL(js.last_run_duration, 0),
        ISNULL(ja.next_scheduled_run_date, '19000101'),
-       ISNULL(ja.job_state, 1)
+       CASE WHEN ja.start_execution_date IS NOT NULL AND ja.stop_execution_date IS NULL
+            THEN 4 ELSE 1 END
 FROM   msdb.dbo.sysjobs j
 LEFT   JOIN msdb.dbo.syscategories c ON c.category_id = j.category_id
 LEFT   JOIN master.sys.server_principals l ON l.sid = j.owner_sid
 LEFT   JOIN msdb.dbo.sysjobactivity ja
        ON  ja.job_id = j.job_id
        AND ja.session_id = (SELECT MAX(session_id) FROM msdb.dbo.sysjobactivity)
+LEFT   JOIN msdb.dbo.sysjobservers js
+       ON  js.job_id = j.job_id
+       AND js.server_id = 0
 WHERE  j.name = @p1`
 
 	row := s.db.QueryRowContext(ctx, q, name)

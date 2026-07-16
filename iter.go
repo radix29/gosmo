@@ -75,6 +75,40 @@ func (d *Database) SchemaSeq() iter.Seq2[*Schema, error] { return seqFrom(d.Sche
 // SequenceSeq returns an iterator over all sequences in the database.
 func (d *Database) SequenceSeq() iter.Seq2[*Sequence, error] { return seqFrom(d.Sequences) }
 
+// SynonymSeq returns an iterator over all synonyms in the database.
+func (d *Database) SynonymSeq() iter.Seq2[*Synonym, error] { return seqFrom(d.Synonyms) }
+
+// PartitionFunctionSeq returns an iterator over all partition functions in the database.
+func (d *Database) PartitionFunctionSeq() iter.Seq2[*PartitionFunction, error] {
+	return seqFrom(d.PartitionFunctions)
+}
+
+// PartitionSchemeSeq returns an iterator over all partition schemes in the database.
+func (d *Database) PartitionSchemeSeq() iter.Seq2[*PartitionScheme, error] {
+	return seqFrom(d.PartitionSchemes)
+}
+
+// DatabaseExtendedPropertySeq returns an iterator over all extended
+// properties at database level.
+func (d *Database) DatabaseExtendedPropertySeq() iter.Seq2[*ExtendedProperty, error] {
+	return seqFrom(d.DatabaseExtendedProperties)
+}
+
+// ColumnMasterKeySeq returns an iterator over all column master keys in the database.
+func (d *Database) ColumnMasterKeySeq() iter.Seq2[*ColumnMasterKey, error] {
+	return seqFrom(d.ColumnMasterKeys)
+}
+
+// ColumnEncryptionKeySeq returns an iterator over all column encryption keys in the database.
+func (d *Database) ColumnEncryptionKeySeq() iter.Seq2[*ColumnEncryptionKey, error] {
+	return seqFrom(d.ColumnEncryptionKeys)
+}
+
+// SecurityPolicySeq returns an iterator over all security policies in the database.
+func (d *Database) SecurityPolicySeq() iter.Seq2[*SecurityPolicy, error] {
+	return seqFrom(d.SecurityPolicies)
+}
+
 // DatabasePermissionSeq returns an iterator over all database-scoped GRANT/DENY entries.
 func (d *Database) DatabasePermissionSeq() iter.Seq2[*DatabasePermissionEntry, error] {
 	return seqFrom(d.DatabasePermissions)
@@ -107,6 +141,9 @@ func (t *Table) IndexSeq() iter.Seq2[*Index, error] { return seqFrom(t.Indexes) 
 
 // ForeignKeySeq returns an iterator over all foreign keys on the table.
 func (t *Table) ForeignKeySeq() iter.Seq2[*ForeignKey, error] { return seqFrom(t.ForeignKeys) }
+
+// PartitionSeq returns an iterator over per-partition row counts for the table.
+func (t *Table) PartitionSeq() iter.Seq2[*PartitionInfo, error] { return seqFrom(t.Partitions) }
 
 // StatisticSeq returns an iterator over all statistics on the table.
 func (t *Table) StatisticSeq() iter.Seq2[*Statistic, error] { return seqFrom(t.Statistics) }
