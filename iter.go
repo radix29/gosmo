@@ -72,9 +72,25 @@ func (d *Database) TableSeq() iter.Seq2[*Table, error] { return seqFrom(d.Tables
 // ViewSeq returns an iterator over all views in the database.
 func (d *Database) ViewSeq() iter.Seq2[*View, error] { return seqFrom(d.Views) }
 
+// SystemViewSeq returns an iterator over every system catalog view in the
+// "sys" schema.
+func (d *Database) SystemViewSeq() iter.Seq2[*View, error] { return seqFrom(d.SystemViews) }
+
 // StoredProcedureSeq returns an iterator over all stored procedures.
 func (d *Database) StoredProcedureSeq() iter.Seq2[*StoredProcedure, error] {
 	return seqFrom(d.StoredProcedures)
+}
+
+// SystemStoredProcedureSeq returns an iterator over every system stored
+// procedure in the "sys" schema.
+func (d *Database) SystemStoredProcedureSeq() iter.Seq2[*StoredProcedure, error] {
+	return seqFrom(d.SystemStoredProcedures)
+}
+
+// SystemFunctionSeq returns an iterator over every system function in the
+// "sys" schema.
+func (d *Database) SystemFunctionSeq() iter.Seq2[*UserDefinedFunction, error] {
+	return seqFrom(d.SystemFunctions)
 }
 
 // UserSeq returns an iterator over all database users.

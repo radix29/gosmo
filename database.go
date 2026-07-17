@@ -392,6 +392,46 @@ ORDER  BY SCHEMA_NAME(v.schema_id), v.name`
 	return views, rows.Err()
 }
 
+// SystemViews returns every catalog view SQL Server ships in the "sys"
+// schema (sys.tables, sys.columns, sys.objects, ...) — see SystemViewsContext.
+func (d *Database) SystemViews() ([]*View, error) {
+	return d.SystemViewsContext(context.Background())
+}
+
+// SystemViewsContext is the context-aware variant of SystemViews. Unlike
+// Views, this reads sys.all_objects/sys.all_sql_modules rather than
+// sys.views/sys.sql_modules: the "sys." schema's own views are shipped
+// objects (is_ms_shipped=1), invisible through the non-"all_" catalog
+// views — same reasoning as SystemCatalogContext. The "sys" schema's
+// catalog views are defined identically in every database on a server, so
+// a caller only needs to load this once per connection.
+func (d *Database) SystemViewsContext(ctx context.Context) ([]*View, error) {
+	const q = `
+SELECT o.object_id, SCHEMA_NAME(o.schema_id), o.name,
+       ISNULL(m.definition,''), o.create_date, o.modify_date
+FROM   sys.all_objects o
+LEFT JOIN sys.all_sql_modules m ON m.object_id = o.object_id
+WHERE  o.type = 'V' AND o.is_ms_shipped = 1 AND SCHEMA_NAME(o.schema_id) = 'sys'
+ORDER  BY o.name`
+
+	rows, err := d.query(ctx, q)
+	if err != nil {
+		return nil, fmt.Errorf("gosmo: list system views in %q: %w", d.name, err)
+	}
+	defer rows.Close()
+
+	var views []*View
+	for rows.Next() {
+		v := &View{}
+		if err := rows.Scan(&v.ObjectID, &v.Schema, &v.Name,
+			&v.Definition, &v.CreateDate, &v.ModifyDate); err != nil {
+			return nil, err
+		}
+		views = append(views, v)
+	}
+	return views, rows.Err()
+}
+
 // -- Stored procedures ---------------------------------------------------------
 
 // StoredProcedure represents a stored procedure.
@@ -474,6 +514,49 @@ func (d *Database) DropStoredProcedureContext(ctx context.Context, schema, name 
 	return nil
 }
 
+// SystemStoredProcedures returns every system stored procedure SQL Server
+// ships in the "sys" schema (sp_help, sp_who, ...) — see
+// SystemStoredProceduresContext.
+func (d *Database) SystemStoredProcedures() ([]*StoredProcedure, error) {
+	return d.SystemStoredProceduresContext(context.Background())
+}
+
+// SystemStoredProceduresContext is the context-aware variant of
+// SystemStoredProcedures. Reads sys.all_objects rather than sys.procedures
+// for the same reason SystemViewsContext reads sys.all_objects instead of
+// sys.views: shipped objects are invisible through the non-"all_" catalog
+// views. Restricted to types 'P'/'PC' (SQL/CLR stored procedure), matching
+// what sys.procedures itself documents — extended stored procedures ('X',
+// e.g. xp_cmdshell) are a distinct object kind and excluded. The "sys"
+// schema is identical in every database on a server, so this only needs
+// loading once per connection.
+func (d *Database) SystemStoredProceduresContext(ctx context.Context) ([]*StoredProcedure, error) {
+	const q = `
+SELECT o.object_id, SCHEMA_NAME(o.schema_id), o.name,
+       ISNULL(m.definition,''), o.create_date, o.modify_date
+FROM   sys.all_objects o
+LEFT JOIN sys.all_sql_modules m ON m.object_id = o.object_id
+WHERE  o.type IN ('P','PC') AND o.is_ms_shipped = 1 AND SCHEMA_NAME(o.schema_id) = 'sys'
+ORDER  BY o.name`
+
+	rows, err := d.query(ctx, q)
+	if err != nil {
+		return nil, fmt.Errorf("gosmo: list system stored procs in %q: %w", d.name, err)
+	}
+	defer rows.Close()
+
+	var procs []*StoredProcedure
+	for rows.Next() {
+		p := &StoredProcedure{}
+		if err := rows.Scan(&p.ObjectID, &p.Schema, &p.Name,
+			&p.Definition, &p.CreateDate, &p.ModifyDate); err != nil {
+			return nil, err
+		}
+		procs = append(procs, p)
+	}
+	return procs, rows.Err()
+}
+
 // -- User-defined functions -----------------------------------------------------
 
 // UserDefinedFunction represents a UDF.
@@ -505,6 +588,49 @@ ORDER  BY SCHEMA_NAME(o.schema_id), o.name`
 	rows, err := d.query(ctx, q)
 	if err != nil {
 		return nil, fmt.Errorf("gosmo: list UDFs in %q: %w", d.name, err)
+	}
+	defer rows.Close()
+
+	var funcs []*UserDefinedFunction
+	for rows.Next() {
+		f := &UserDefinedFunction{}
+		if err := rows.Scan(&f.ObjectID, &f.Schema, &f.Name, &f.FuncType,
+			&f.Definition, &f.CreateDate, &f.ModifyDate); err != nil {
+			return nil, err
+		}
+		f.FuncType = strings.TrimSpace(f.FuncType)
+		funcs = append(funcs, f)
+	}
+	return funcs, rows.Err()
+}
+
+// SystemFunctions returns every system function SQL Server ships in the
+// "sys" schema (sys.fn_listextendedproperty, ...) — see
+// SystemFunctionsContext.
+func (d *Database) SystemFunctions() ([]*UserDefinedFunction, error) {
+	return d.SystemFunctionsContext(context.Background())
+}
+
+// SystemFunctionsContext is the context-aware variant of SystemFunctions.
+// Reads sys.all_objects rather than sys.objects for the same reason
+// SystemViewsContext reads sys.all_objects instead of sys.views: shipped
+// objects are invisible through the non-"all_" catalog views. Restricted
+// to the same type set as UserDefinedFunctionsContext ('FN'/'TF'/'IF') —
+// aggregate ('AF') and CLR scalar ('FS') functions are excluded, matching
+// that same scope. The "sys" schema is identical in every database on a
+// server, so this only needs loading once per connection.
+func (d *Database) SystemFunctionsContext(ctx context.Context) ([]*UserDefinedFunction, error) {
+	const q = `
+SELECT o.object_id, SCHEMA_NAME(o.schema_id), o.name, o.type,
+       ISNULL(m.definition,''), o.create_date, o.modify_date
+FROM   sys.all_objects o
+LEFT JOIN sys.all_sql_modules m ON m.object_id = o.object_id
+WHERE  o.type IN ('FN','TF','IF') AND o.is_ms_shipped = 1 AND SCHEMA_NAME(o.schema_id) = 'sys'
+ORDER  BY o.name`
+
+	rows, err := d.query(ctx, q)
+	if err != nil {
+		return nil, fmt.Errorf("gosmo: list system UDFs in %q: %w", d.name, err)
 	}
 	defer rows.Close()
 
