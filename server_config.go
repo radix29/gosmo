@@ -229,6 +229,70 @@ ORDER  BY cpu_id`
 }
 
 // ============================================================
+// Disk volumes
+// ============================================================
+
+// DiskVolumeInfo describes free/total space for one storage volume backing
+// at least one of the server's database files, as reported by
+// sys.dm_os_volume_stats — a DMV SQL Server exposes identically on Windows
+// and Linux, so this is usable regardless of the host OS.
+type DiskVolumeInfo struct {
+	// MountPoint is the drive letter (Windows) or mount path (Linux). Some
+	// hosts — e.g. a containerized Linux instance without a distinct OS
+	// volume — report this as empty.
+	MountPoint string
+	// VolumeName is the OS volume label, also sometimes empty.
+	VolumeName string
+	// SamplePath is one database file's path stored on this volume, for
+	// display when MountPoint and VolumeName are both empty.
+	SamplePath  string
+	TotalMB     float64
+	AvailableMB float64
+}
+
+// DiskVolumes returns free/total space for every storage volume backing a
+// database file on the server.
+func (s *Server) DiskVolumes() ([]DiskVolumeInfo, error) {
+	return s.DiskVolumesContext(context.Background())
+}
+
+// DiskVolumesContext is the context-aware variant of DiskVolumes.
+func (s *Server) DiskVolumesContext(ctx context.Context) ([]DiskVolumeInfo, error) {
+	const q = `
+SELECT
+    vs.volume_mount_point,
+    vs.logical_volume_name,
+    MIN(mf.physical_name)          AS sample_path,
+    vs.total_bytes / 1048576.0     AS total_mb,
+    vs.available_bytes / 1048576.0 AS available_mb
+FROM sys.master_files mf
+CROSS APPLY sys.dm_os_volume_stats(mf.database_id, mf.file_id) vs
+GROUP BY vs.volume_mount_point, vs.logical_volume_name, vs.total_bytes, vs.available_bytes
+ORDER BY vs.volume_mount_point`
+
+	rows, err := s.db.QueryContext(ctx, q)
+	if err != nil {
+		return nil, fmt.Errorf("gosmo: disk volumes: %w", err)
+	}
+	defer rows.Close()
+
+	var out []DiskVolumeInfo
+	for rows.Next() {
+		var v DiskVolumeInfo
+		var mount, name, path sql.NullString
+		if err := rows.Scan(&mount, &name, &path, &v.TotalMB, &v.AvailableMB); err != nil {
+			return nil, fmt.Errorf("gosmo: disk volumes: %w", err)
+		}
+		v.MountPoint, v.VolumeName, v.SamplePath = mount.String, name.String, path.String
+		out = append(out, v)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("gosmo: disk volumes: %w", err)
+	}
+	return out, nil
+}
+
+// ============================================================
 // Languages
 // ============================================================
 

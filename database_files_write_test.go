@@ -31,6 +31,11 @@ func TestBuildAddFileStatement(t *testing.T) {
 			spec: DatabaseFileSpec{Name: "f1", Path: "/var/opt/mssql/data/f1.ndf"},
 			want: "ALTER DATABASE [appdb] ADD FILE (NAME = [f1], FILENAME = '/var/opt/mssql/data/f1.ndf')",
 		},
+		{
+			name: "bounded (positive) max size, not unlimited",
+			spec: DatabaseFileSpec{Name: "f2", Path: "/var/opt/mssql/data/f2.ndf", MaxSizeKB: 102400},
+			want: "ALTER DATABASE [appdb] ADD FILE (NAME = [f2], FILENAME = '/var/opt/mssql/data/f2.ndf', MAXSIZE = 102400KB)",
+		},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -69,6 +74,11 @@ func TestBuildAlterFileStatement(t *testing.T) {
 			name: "unlimited max size, percent growth",
 			m:    FileModify{MaxSizeKB: -1, GrowthPercent: 15},
 			want: "ALTER DATABASE [appdb] MODIFY FILE (NAME = [appdb], MAXSIZE = UNLIMITED, FILEGROWTH = 15%)",
+		},
+		{
+			name: "growth in KB rather than percent",
+			m:    FileModify{GrowthKB: 4096},
+			want: "ALTER DATABASE [appdb] MODIFY FILE (NAME = [appdb], FILEGROWTH = 4096KB)",
 		},
 	}
 	for _, c := range cases {

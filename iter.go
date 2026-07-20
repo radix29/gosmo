@@ -53,6 +53,9 @@ func (s *Server) CredentialSeq() iter.Seq2[*Credential, error] { return seqFrom(
 // LanguageSeq returns an iterator over all languages installed on the server.
 func (s *Server) LanguageSeq() iter.Seq2[*Language, error] { return seqFrom(s.Languages) }
 
+// DiskVolumeSeq returns an iterator over the server's storage volumes.
+func (s *Server) DiskVolumeSeq() iter.Seq2[DiskVolumeInfo, error] { return seqFrom(s.DiskVolumes) }
+
 // BackupHeaderSeq returns an iterator over the backup sets on a backup device.
 func (s *Server) BackupHeaderSeq(device string) iter.Seq2[*BackupHeader, error] {
 	return seqFrom(func() ([]*BackupHeader, error) { return s.BackupHeaders(device) })

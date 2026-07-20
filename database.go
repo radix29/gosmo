@@ -166,6 +166,9 @@ type SpaceInfo struct {
 	// not free disk space — it can only shrink the database's on-disk
 	// footprint, not grow it, without a file autogrowth event.
 	UnallocatedMB float64
+	// AvailLogMB is the same free-space measure as UnallocatedMB, but for
+	// the log file(s) rather than the data file(s).
+	AvailLogMB float64
 }
 
 // SpaceUsed returns space usage for the database.
@@ -182,7 +185,10 @@ SELECT
     SUM(CASE WHEN type_desc =  'LOG' THEN size ELSE 0 END) * 8.0 / 1024     AS log_mb,
     SUM(CASE WHEN type_desc <> 'LOG'
              THEN size - CAST(FILEPROPERTY(name, 'SpaceUsed') AS INT)
-             ELSE 0 END) * 8.0 / 1024                                       AS unallocated_mb
+             ELSE 0 END) * 8.0 / 1024                                       AS unallocated_mb,
+    SUM(CASE WHEN type_desc = 'LOG'
+             THEN size - CAST(FILEPROPERTY(name, 'SpaceUsed') AS INT)
+             ELSE 0 END) * 8.0 / 1024                                       AS avail_log_mb
 FROM sys.database_files`
 
 	row, release, err := d.queryRow(ctx, q)
@@ -192,7 +198,7 @@ FROM sys.database_files`
 	defer release()
 
 	var si SpaceInfo
-	if err := row.Scan(&si.TotalMB, &si.DataMB, &si.LogMB, &si.UnallocatedMB); err != nil {
+	if err := row.Scan(&si.TotalMB, &si.DataMB, &si.LogMB, &si.UnallocatedMB, &si.AvailLogMB); err != nil {
 		return SpaceInfo{}, fmt.Errorf("gosmo: space used: %w", err)
 	}
 	return si, nil
