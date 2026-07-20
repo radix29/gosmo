@@ -1,30 +1,41 @@
-// Package version holds gosmo's own version metadata. Commit/Date are
-// filled in automatically at build time — no ldflags or Makefile required
-// — but init reads them from a different place depending on how gosmo
-// ends up in the running binary:
+// Package version holds gosmo's own version metadata, mirroring the same
+// pattern gossms/internal/version/version.go uses. Version/Commit/Date are
+// never hand-edited — they resolve automatically, in priority order:
 //
-//   - Built as the main module (gosmo's own tests, examples, or a
-//     standalone gosmo binary): the Go toolchain's VCS stamp (go help
-//     buildvcs) already describes gosmo's own repo, so init reads
-//     Commit/Date straight from debug.BuildInfo.Settings.
-//   - Embedded as a dependency of another program (gossms, in practice):
-//     that same VCS stamp describes the *host* program instead, not
-//     gosmo — Settings is one global stamp for the whole binary, not
-//     per-module. init instead finds gosmo's own entry in
-//     debug.BuildInfo.Deps and, if its Version is a Go pseudo-version
-//     (vX.Y.Z-yyyymmddhhmmss-abcdefabcdef), decodes the commit and time
-//     embedded in the version string itself — that part Go's module
-//     system does track per-dependency, regardless of who is the main
-//     module. A plain semver tag ("v0.0.3") or a local filesystem
-//     replace ("(devel)") carries no such info, so Commit/Date stay
-//     "unknown" in that case; there's genuinely nothing to decode.
+//  1. -ldflags -X, for a packaging build that wants to stamp its own
+//     values:
 //
-// Version/Commit/Date remain vars, not consts, so a packaging build can
-// still override them at link time via:
+//     -ldflags "-X github.com/radix29/gosmo/version.Version=... \
+//     -X github.com/radix29/gosmo/version.Commit=...  \
+//     -X github.com/radix29/gosmo/version.Date=..."
 //
-//	-ldflags "-X github.com/radix29/gosmo/version.Version=... \
-//	          -X github.com/radix29/gosmo/version.Commit=...  \
-//	          -X github.com/radix29/gosmo/version.Date=..."
+//  2. debug.BuildInfo, read in init, only for whichever of Version/
+//     Commit/Date ldflags didn't already set — from a different place
+//     depending on how gosmo ends up in the running binary:
+//
+//     - Built as the main module (gosmo's own tests, examples, or a
+//     standalone gosmo binary): Version comes from debug.BuildInfo.
+//     Main.Version (populated by `go install
+//     github.com/radix29/gosmo/examples@<tag>`); Commit/Date come from
+//     the Go toolchain's VCS stamp (go help buildvcs), which describes
+//     gosmo's own repo in this case.
+//     - Embedded as a dependency of another program (gossms, in
+//     practice): the VCS stamp above describes the *host* program
+//     instead, not gosmo — debug.BuildInfo.Settings is one global stamp
+//     for the whole binary, not per-module. init instead finds gosmo's
+//     own entry in debug.BuildInfo.Deps and reads Version straight off
+//     it — the resolved module version the host's own go.mod pins
+//     (e.g. "v0.0.4"), or "(devel)" for a local filesystem replace.
+//     Commit/Date, which a plain semver tag doesn't carry, get decoded
+//     from that same entry's Version when it's instead a Go
+//     pseudo-version (vX.Y.Z-yyyymmddhhmmss-abcdefabcdef) — the form
+//     go.mod uses for a dependency pinned to a commit rather than a
+//     tag; a plain tag or "(devel)" carries no such info, so Commit/
+//     Date stay "unknown" in that case.
+//
+//  3. The literal "(devel)" default, left alone when neither of the
+//     above resolved anything — matching the same convention `go
+//     version -m` itself uses for an unresolved main-module version.
 package version
 
 import (
@@ -42,7 +53,7 @@ const Name = "gosmo"
 const modulePath = "github.com/radix29/gosmo"
 
 var (
-	Version = "v0.0.4"
+	Version = "(devel)"
 	Commit  = "unknown"
 	Date    = "unknown"
 )
@@ -53,6 +64,9 @@ func init() {
 		return
 	}
 	if info.Main.Path == modulePath {
+		if Version == "(devel)" && info.Main.Version != "" && info.Main.Version != "(devel)" {
+			Version = info.Main.Version
+		}
 		fillFromVCS(info.Settings)
 		return
 	}
@@ -87,10 +101,10 @@ func fillFromVCS(settings []debug.BuildSetting) {
 	}
 }
 
-// fillFromDep reads Commit/Date out of gosmo's own module version string,
-// as recorded by the Go module system for the binary that embeds it —
-// correct regardless of who the main module is, unlike the whole-binary
-// VCS stamp fillFromVCS reads.
+// fillFromDep reads Version/Commit/Date out of gosmo's own module version
+// string, as recorded by the Go module system for the binary that embeds
+// it — correct regardless of who the main module is, unlike the whole-
+// binary VCS stamp fillFromVCS reads.
 func fillFromDep(deps []*debug.Module) {
 	for _, m := range deps {
 		if m.Path != modulePath {
@@ -98,6 +112,9 @@ func fillFromDep(deps []*debug.Module) {
 		}
 		for m.Replace != nil {
 			m = m.Replace
+		}
+		if Version == "(devel)" && m.Version != "" && m.Version != "(devel)" {
+			Version = m.Version
 		}
 		if commit, date, ok := parsePseudoVersion(m.Version); ok {
 			if Commit == "unknown" {

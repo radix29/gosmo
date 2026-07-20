@@ -53,10 +53,12 @@ classDiagram
         +CurrentDatabase() string
         +Databases() []*Database
         +DatabaseByName(name) *Database
+        +Database(name) *Database
         +CreateDatabase(name, opts) error
         +DropDatabase(name, force) error
         +Logins() []*Login
         +LoginByName(name) *Login
+        +Login(name) *Login
         +CreateLogin(name, password, opts) error
         +DropLogin(name) error
         +ServerRoles() []*ServerRole
@@ -70,14 +72,20 @@ classDiagram
         +SendMail(opts) error
         +Backup(opts) error
         +Restore(opts) error
+        +VerifyBackup(device) error
+        +BackupHeaders(device) []*BackupHeader
+        +BackupFileList(device) []*BackupFile
         +SecurityInfo() *ServerSecurityInfo
         +ServerPermissions() []*ServerPermissionEntry
         +GrantServerPermission(perm, principal) error
         +DenyServerPermission(perm, principal) error
         +RevokeServerPermission(perm, principal) error
+        +ServerPermissionNames() []string
         +Credentials() []*Credential
         +MemoryStats() *ServerMemoryStats
         +Languages() []*Language
+        +ProcessorInfo() *ProcessorInfo
+        +DiskVolumes() []DiskVolumeInfo
     }
 
     class ServerInfo {
@@ -88,6 +96,8 @@ classDiagram
         +Collation string
         +IsClustered bool
         +IsHADREnabled bool
+        +IsSingleUser bool
+        +EngineEdition int
         +OSVersion string
         +PhysicalMemoryMB int64
         +LogicalCPUCount int
@@ -167,6 +177,21 @@ classDiagram
         +Alias string
     }
 
+    class ProcessorInfo {
+        +CPUCount int
+        +HyperthreadRatio int
+        +NUMANodeCount int
+        +CPUNUMANode []int
+    }
+
+    class DiskVolumeInfo {
+        +MountPoint string
+        +VolumeName string
+        +SamplePath string
+        +TotalMB float64
+        +AvailableMB float64
+    }
+
     %% =========================================================
     %% Login
     %% =========================================================
@@ -206,6 +231,7 @@ classDiagram
         +PasswordLastSet time.Time
         +LastLogin time.Time
         +BadPasswordCount int
+        +BadPasswordTime time.Time
         +DefaultLanguage string
         +CredentialName string
         +ConnectSQLState string
@@ -254,18 +280,26 @@ classDiagram
         +TableByName(schema, name) *Table
         +CreateTable(req) error
         +DropTable(schema, name, cascade) error
+        +Catalog() *Catalog
+        +SystemCatalog() *Catalog
         +Views() []*View
         +StoredProcedures() []*StoredProcedure
         +CreateStoredProcedure(schema, name, body) error
         +DropStoredProcedure(schema, name) error
         +UserDefinedFunctions() []*UserDefinedFunction
+        +SystemViews() []*View
+        +SystemStoredProcedures() []*StoredProcedure
+        +SystemFunctions() []*UserDefinedFunction
         +Schemas() []*Schema
         +CreateSchema(name, owner) error
         +DropSchema(name) error
         +Users() []*User
+        +UserByName(name) *User
         +CreateUser(user, login, schema) error
         +DropUser(name) error
         +DatabaseRoles() []*DatabaseRole
+        +RoleByName(name) *DatabaseRole
+        +RoleMembers(role) []*RoleMember
         +AddRoleMember(role, member) error
         +RemoveRoleMember(role, member) error
         +FileGroups() []*FileGroup
@@ -285,9 +319,18 @@ classDiagram
         +SetRecoveryModel(model) error
         +SetCompatibilityLevel(level) error
         +SetReadOnly(bool) error
+        +SetUserAccess(mode) error
+        +SetOffline() error
+        +SetOnline() error
         +Options() *DatabaseOptions
         +SetDatabaseOption(opt, value) error
         +SetOwner(principal) error
+        +DatabaseScopedConfigs() []*DatabaseScopedConfig
+        +SetDatabaseScopedConfig(name, value, forSecondary) error
+        +QueryStore() *QueryStoreInfo
+        +SetQueryStoreOptions(opts) error
+        +FlushQueryStore() error
+        +ClearQueryStore() error
         +Files() []*DatabaseFileInfo
         +AddFile(spec) error
         +AlterFile(name, m) error
@@ -307,6 +350,11 @@ classDiagram
         +GrantPermission(schema, name, perm, principal) error
         +DenyPermission(schema, name, perm, principal) error
         +RevokePermission(schema, name, perm, principal) error
+        +PermissionsForPrincipal(principal) []*PrincipalSecurable
+        +SchemaPermissions(schema) []*PermissionEntry
+        +GrantSchemaPermission(schema, perm, principal) error
+        +DenySchemaPermission(schema, perm, principal) error
+        +RevokeSchemaPermission(schema, perm, principal) error
         +DatabasePermissions() []*DatabasePermissionEntry
         +GrantDatabasePermission(perm, principal) error
         +DenyDatabasePermission(perm, principal) error
@@ -498,6 +546,54 @@ classDiagram
     }
 
     %% =========================================================
+    %% Catalog snapshot (bulk table/view + column inventory)
+    %% =========================================================
+    class Catalog {
+        +Schemas []string
+        +Objects []CatalogObject
+    }
+
+    class CatalogObject {
+        +ObjectID int
+        +Schema string
+        +Name string
+        +Type CatalogObjectType
+        +Columns []CatalogColumn
+    }
+
+    class CatalogColumn {
+        +Name string
+        +DataType DataType
+        +MaxLength int
+        +Precision int
+        +Scale int
+        +IsNullable bool
+    }
+
+    %% =========================================================
+    %% Query Store and Database Scoped Configuration
+    %% =========================================================
+    class QueryStoreInfo {
+        +DesiredState string
+        +ActualState string
+        +ReadOnlyReason int
+        +CurrentStorageMB int64
+        +MaxStorageMB int64
+        +CaptureMode string
+        +SizeCleanupMode string
+        +StaleThresholdDays int
+        +WaitStatsCaptureMode string
+    }
+
+    class DatabaseScopedConfig {
+        +ID int
+        +Name string
+        +Value string
+        +ValueForSecondary string
+        +IsValueDefault bool
+    }
+
+    %% =========================================================
     %% Dependencies and object search
     %% =========================================================
     class Dependency {
@@ -526,6 +622,7 @@ classDiagram
     class PermissionEntry {
         +Principal string
         +PrincipalType string
+        +Grantor string
         +Permission ObjectPermission
         +State PermissionState
     }
@@ -534,6 +631,14 @@ classDiagram
         +Principal string
         +PrincipalType string
         +Grantor string
+        +Permission string
+        +State string
+    }
+
+    class PrincipalSecurable {
+        +SecurableType string
+        +Schema string
+        +Name string
         +Permission string
         +State string
     }
@@ -592,6 +697,8 @@ classDiagram
         +Partitions() []*Partition
         +Triggers() []*Trigger
         +RowCount() int64
+        +Detail() *TableDetail
+        +SpaceUsed() *TableSpaceInfo
         +TruncateTable() error
         +FragmentationStats(mode) []*FragStat
         +RebuildAllIndexes(fillFactor) error
@@ -674,6 +781,28 @@ classDiagram
         +Drop() error
     }
 
+    class TableDetail {
+        +SchemaOwner string
+        +LockEscalation string
+        +UsesAnsiNulls bool
+        +IsReplicated bool
+        +IsTrackedByCDC bool
+        +TemporalType string
+        +Durability string
+        +LedgerType string
+        +PrimaryKeyName string
+        +DataSpace string
+    }
+
+    class TableSpaceInfo {
+        +ReservedKB int64
+        +DataKB int64
+        +IndexKB int64
+        +LOBKB int64
+        +UnusedKB int64
+        +FileGroup string
+    }
+
     %% =========================================================
     %% Scripter (generates CREATE DDL for existing objects — distinct
     %% from ScriptCollector, which captures pending write statements)
@@ -704,6 +833,7 @@ classDiagram
         +Name string
         +ID int
         +Owner string
+        +ObjectCount() int
     }
 
     class View {
@@ -742,6 +872,12 @@ classDiagram
         +AuthType string
         +CreateDate time.Time
         +ModifyDate time.Time
+        +SID []byte
+        +LoginName string
+        +LoginDisabled bool
+        +Rename(newName) error
+        +SetDefaultSchema(schemaName) error
+        +SetLogin(loginName) error
     }
 
     class DatabaseRole {
@@ -750,11 +886,22 @@ classDiagram
         +IsFixedRole bool
         +Owner string
         +Members []string
+        +SID []byte
+        +CreateDate time.Time
+        +ModifyDate time.Time
+        +Rename(newName) error
+        +ChangeOwner(newOwner) error
+    }
+
+    class RoleMember {
+        +Name string
+        +Type string
     }
 
     class FileGroup {
         +Name string
         +IsDefault bool
+        +IsReadOnly bool
         +Files []DatabaseFile
     }
 
@@ -818,6 +965,32 @@ classDiagram
         +StopAt time.Time
         +StopAtMarkName string
         +FileNumber int
+        +Progress func
+        +BuildRestoreStatement(opts) string
+    }
+
+    class BackupHeader {
+        +BackupName string
+        +Description string
+        +BackupType BackupAction
+        +Position int
+        +DatabaseName string
+        +BackupStart time.Time
+        +BackupFinish time.Time
+        +BackupSize int64
+        +Compressed bool
+        +HasChecksums bool
+        +IsCopyOnly bool
+        +RecoveryModel string
+    }
+
+    class BackupFile {
+        +LogicalName string
+        +PhysicalName string
+        +Type string
+        +FileGroupName string
+        +Size int64
+        +MaxSize int64
     }
 
     %% =========================================================
@@ -856,6 +1029,10 @@ classDiagram
     Server "1" --> "*" Credential : owns
     Server --> ServerMemoryStats : has
     Server "1" --> "*" Language : lists
+    Server --> ProcessorInfo : has
+    Server "1" --> "*" DiskVolumeInfo : lists
+    Server "1" --> "*" BackupHeader : BackupHeaders() returns
+    Server "1" --> "*" BackupFile : BackupFileList() returns
 
     Login ..> nStringLiteral : password quoted by
     Login --> LoginDetails : has
@@ -879,6 +1056,13 @@ classDiagram
     Database --> ExecutionPlan : produces
     Database "1" --> "*" PermissionEntry : grants
     Database "1" --> "*" DatabasePermissionEntry : grants
+    Database "1" --> "*" PrincipalSecurable : PermissionsForPrincipal() returns
+    Database --> Catalog : Catalog()/SystemCatalog() returns
+    Catalog "1" --> "*" CatalogObject : contains
+    CatalogObject "1" --> "*" CatalogColumn : has
+    Database --> QueryStoreInfo : has
+    Database "1" --> "*" DatabaseScopedConfig : lists
+    Database "1" --> "*" RoleMember : RoleMembers() returns
     Database ..> BulkCopy : bulk-loads via
     Database ..> ProcParam : executes procs with
     Database --> ProcResult : returns
@@ -900,6 +1084,8 @@ classDiagram
     Table "1" --> "*" CheckConstraint : has
     Table "1" --> "*" Statistic : has
     Table "1" --> "*" Trigger : has
+    Table --> TableDetail : has
+    Table --> TableSpaceInfo : has
 
     Scripter --> Database : scripts objects from
     Scripter --> ScriptOptions : configured by
@@ -953,9 +1139,9 @@ fmt.Println(srv.Info().ProductVersion)
 
 | SMO equivalent          | gosmo                                      |
 | ----------------------- | ------------------------------------------ |
-| `Server.Databases`      | `srv.Databases()`                          |
+| `Server.Databases`      | `srv.Databases()` / `srv.Database(name)` (no-I/O handle) |
 | Current database         | `srv.CurrentDatabase()`                    |
-| `Server.Logins`         | `srv.Logins()` / `srv.LoginByName(name)`   |
+| `Server.Logins`         | `srv.Logins()` / `srv.LoginByName(name)` / `srv.Login(name)` (no-I/O handle) |
 | `Server.Roles`          | `srv.ServerRoles()`                        |
 | `Server.LinkedServers`  | `srv.LinkedServers()`                      |
 | `Server.Configuration`  | `srv.Configurations()`                     |
@@ -966,10 +1152,13 @@ fmt.Println(srv.Info().ProductVersion)
 | Database Mail           | `srv.MailProfiles()` / `srv.SendMail(...)` |
 | Create login (safe)     | `srv.CreateLogin(name, password, opts)`    |
 | Authentication mode     | `srv.SecurityInfo()`                       |
-| Server-level permissions | `srv.ServerPermissions()` / `srv.Grant\|Deny\|RevokeServerPermission(...)` |
+| Server-level permissions | `srv.ServerPermissions()` / `srv.Grant\|Deny\|RevokeServerPermission(...)` / `srv.ServerPermissionNames()` |
 | Credentials              | `srv.Credentials()`                        |
 | Live memory stats        | `srv.MemoryStats()`                        |
 | Languages                | `srv.Languages()`                          |
+| Processors / NUMA topology | `srv.ProcessorInfo()`                    |
+| Disk volumes              | `srv.DiskVolumes()`                        |
+| Verify / inspect a backup device | `srv.VerifyBackup(device)` / `srv.BackupHeaders(device)` / `srv.BackupFileList(device)` |
 
 ### Database
 
@@ -977,12 +1166,16 @@ fmt.Println(srv.Info().ProductVersion)
 | ------------------------------- | ------------------------------------------- |
 | Is a system database             | `db.IsSystem()`                             |
 | `Database.Tables`               | `db.Tables()` / `db.TablesBySchema(schema)` |
+| Bulk table/view + column snapshot | `db.Catalog()` (user objects) / `db.SystemCatalog()` (`sys` schema) |
 | `Database.Views`                | `db.Views()`                                |
 | `Database.StoredProcedures`     | `db.StoredProcedures()`                     |
 | `Database.UserDefinedFunctions` | `db.UserDefinedFunctions()`                 |
-| `Database.Schemas`              | `db.Schemas()`                              |
-| `Database.Users`                | `db.Users()`                                |
-| `Database.Roles`                | `db.DatabaseRoles()`                        |
+| System Views/Procedures/Functions | `db.SystemViews()` / `db.SystemStoredProcedures()` / `db.SystemFunctions()` |
+| `Database.Schemas`              | `db.Schemas()` / `schema.ObjectCount()`     |
+| `Database.Users`                | `db.Users()` / `db.UserByName(name)`        |
+| Database user administration    | `user.Rename(newName)` / `user.SetDefaultSchema(schemaName)` / `user.SetLogin(loginName)` |
+| `Database.Roles`                | `db.DatabaseRoles()` / `db.RoleByName(name)` / `db.RoleMembers(roleName)` |
+| Database role administration    | `role.Rename(newName)` / `role.ChangeOwner(newOwner)` |
 | `Database.FileGroups`           | `db.FileGroups()`                           |
 | `Database.Triggers`             | `db.Triggers()`                             |
 | `Database.Sequences`            | `db.Sequences()`                            |
@@ -997,11 +1190,16 @@ fmt.Println(srv.Info().ProductVersion)
 | `Database.CompatibilityLevel`   | `db.SetCompatibilityLevel(level)`           |
 | Space used                      | `db.SpaceUsed()`                            |
 | ALTER DATABASE SET options      | `db.Options()` / `db.SetDatabaseOption(opt, value)` |
+| Restrict access (single/multi/restricted user) | `db.SetUserAccess(mode)`     |
+| Take offline / bring online     | `db.SetOffline()` / `db.SetOnline()`        |
 | Change ownership                | `db.SetOwner(principal)`                    |
+| Database Scoped Configuration   | `db.DatabaseScopedConfigs()` / `db.SetDatabaseScopedConfig(name, value, forSecondary)` |
+| Query Store                     | `db.QueryStore()` / `db.SetQueryStoreOptions(opts)` / `db.FlushQueryStore()` / `db.ClearQueryStore()` |
 | Every file, incl. log           | `db.Files()`                                |
 | Add / alter / remove file       | `db.AddFile(spec)` / `db.AlterFile(name, m)` / `db.RemoveFile(name)` |
 | Add / remove filegroup          | `db.AddFileGroup(name)` / `db.RemoveFileGroup(name)` |
 | Filegroup default / read-only   | `db.SetDefaultFileGroup(name)` / `db.SetFileGroupReadOnly(name, ro)` |
+| CREATE DATABASE file placement  | `CreateDatabaseOptions.PrimaryFile` / `.LogFile` (`*DatabaseFileSpec`) |
 | Change tracking                 | `db.ChangeTracking()` / `db.SetChangeTracking(info)` |
 | Table change tracking           | `db.TableChangeTracking()` / `db.SetTableChangeTracking(...)` |
 | Database-level permissions      | `db.DatabasePermissions()` / `db.Grant\|Deny\|RevokeDatabasePermission(...)` |
@@ -1018,6 +1216,8 @@ fmt.Println(srv.Info().ProductVersion)
 | `Table.Partitions`    | `t.Partitions()`                   |
 | `Table.Triggers`      | `t.Triggers()`                     |
 | `Table.RowCount`      | `t.RowCount()`                     |
+| Object details (lock escalation, ANSI_NULLS, CDC, temporal, ledger, ...) | `t.Detail()` |
+| Space used (`sp_spaceused`-style) | `t.SpaceUsed()`               |
 | Truncate              | `t.TruncateTable()`                |
 | Fragmentation         | `t.FragmentationStats(mode)`       |
 | Rebuild all indexes   | `t.RebuildAllIndexes(fillFactor)`  |
@@ -1063,6 +1263,10 @@ fmt.Println(srv.Info().ProductVersion)
 | Object search                | `db.Search(pattern)`                                      |
 | Object permissions           | `db.Permissions(schema, name)`                            |
 | Grant / deny / revoke        | `db.GrantPermission(...)` / `db.DenyPermission(...)` / `db.RevokePermission(...)` |
+| Schema permissions            | `db.SchemaPermissions(schema)`                            |
+| Grant / deny / revoke (schema) | `db.GrantSchemaPermission(...)` / `db.DenySchemaPermission(...)` / `db.RevokeSchemaPermission(...)` |
+| Every securable one principal holds | `db.PermissionsForPrincipal(principal)`             |
+| Permission-name catalogs (for pickers) | `gosmo.ObjectPermissionNames()` / `SchemaPermissionNames()` / `DatabasePermissionNames()` / `ServerPermissionNames()` |
 | Estimated execution plan     | `db.EstimatedPlan(sql)` (`SET SHOWPLAN_XML`, statement not run) |
 | Actual execution plan        | `db.ActualPlan(sql)` (`SET STATISTICS XML`, statement runs)|
 
@@ -1124,7 +1328,15 @@ srv.Restore(gosmo.RestoreOptions{
     },
     Recovery: true,
     Replace:  true,
+    // Optional: same progress callback as Backup, above.
+    Progress: func(pct int, message string) { fmt.Println(pct, message) },
 })
+
+// Inspect a backup device before restoring — SSMS's Restore Database
+// dialog's backup-set/file picker.
+headers, _ := srv.BackupHeaders(`C:\Backups\MyDB.bak`)
+files, _ := srv.BackupFileList(`C:\Backups\MyDB.bak`)
+err := srv.VerifyBackup(`C:\Backups\MyDB.bak`)
 ```
 
 ### Agent Jobs
