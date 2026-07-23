@@ -153,11 +153,22 @@ func (s *Server) GrantServerPermission(permission, principal string) error {
 }
 
 // GrantServerPermissionContext is the context-aware variant of GrantServerPermission.
+//
+// Live-verified: SQL Server rejects GRANT/DENY/REVOKE at server scope
+// outright unless the session's current database is master ("Permissions
+// at the server scope can only be granted when the current database is
+// master") — a real restriction, not something gosmo enforces itself — so
+// every statement here is prefixed with USE master in the same batch. Sent
+// as one round trip, this doesn't leave the connection's database context
+// changed for whatever runs next: database/sql doesn't guarantee this
+// exact pooled connection is reused for the caller's next call, and even
+// if it is, that next call is a fresh statement/batch that sets its own
+// context if it needs to.
 func (s *Server) GrantServerPermissionContext(ctx context.Context, permission, principal string) error {
 	if !validServerPermission(permission) {
 		return fmt.Errorf("gosmo: grant server permission: unrecognized permission %q", permission)
 	}
-	q := fmt.Sprintf("GRANT %s TO %s", permission, quoteIdent(principal))
+	q := fmt.Sprintf("USE master; GRANT %s TO %s", permission, quoteIdent(principal))
 	if err := s.execContext(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: grant %s to %q: %w", permission, principal, err)
 	}
@@ -170,11 +181,12 @@ func (s *Server) DenyServerPermission(permission, principal string) error {
 }
 
 // DenyServerPermissionContext is the context-aware variant of DenyServerPermission.
+// See GrantServerPermissionContext's doc comment for the USE master prefix.
 func (s *Server) DenyServerPermissionContext(ctx context.Context, permission, principal string) error {
 	if !validServerPermission(permission) {
 		return fmt.Errorf("gosmo: deny server permission: unrecognized permission %q", permission)
 	}
-	q := fmt.Sprintf("DENY %s TO %s", permission, quoteIdent(principal))
+	q := fmt.Sprintf("USE master; DENY %s TO %s", permission, quoteIdent(principal))
 	if err := s.execContext(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: deny %s to %q: %w", permission, principal, err)
 	}
@@ -187,11 +199,12 @@ func (s *Server) RevokeServerPermission(permission, principal string) error {
 }
 
 // RevokeServerPermissionContext is the context-aware variant of RevokeServerPermission.
+// See GrantServerPermissionContext's doc comment for the USE master prefix.
 func (s *Server) RevokeServerPermissionContext(ctx context.Context, permission, principal string) error {
 	if !validServerPermission(permission) {
 		return fmt.Errorf("gosmo: revoke server permission: unrecognized permission %q", permission)
 	}
-	q := fmt.Sprintf("REVOKE %s FROM %s", permission, quoteIdent(principal))
+	q := fmt.Sprintf("USE master; REVOKE %s FROM %s", permission, quoteIdent(principal))
 	if err := s.execContext(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: revoke %s from %q: %w", permission, principal, err)
 	}

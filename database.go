@@ -65,15 +65,29 @@ func (d *Database) Server() *Server { return d.server }
 // This is safe under connection pooling because we hold the *sql.Conn for the
 // entire duration of the call.
 
+// withConn acquires a connection and switches it to d's database (USE) —
+// both idempotent and safe to retry against a fresh connection on a
+// transient failure (a dropped pooled connection, etc.), same as
+// query/queryRow's own acquire step below — before handing it to fn, which
+// is not retried: fn is the caller's actual write, and blindly re-running
+// it on a fresh connection after a partial failure could re-apply side
+// effects that already took hold.
 func (d *Database) withConn(ctx context.Context, fn func(*sql.Conn) error) error {
-	conn, err := d.server.db.Conn(ctx)
+	conn, err := withRetry(ctx, func() (*sql.Conn, error) {
+		conn, err := d.server.db.Conn(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("gosmo: acquire connection: %w", err)
+		}
+		if _, err := conn.ExecContext(ctx, "USE "+quoteIdent(d.name)); err != nil {
+			conn.Close()
+			return nil, fmt.Errorf("gosmo: USE %s: %w", d.name, err)
+		}
+		return conn, nil
+	})
 	if err != nil {
-		return fmt.Errorf("gosmo: acquire connection: %w", err)
+		return err
 	}
 	defer conn.Close()
-	if _, err := conn.ExecContext(ctx, "USE "+quoteIdent(d.name)); err != nil {
-		return fmt.Errorf("gosmo: USE %s: %w", d.name, err)
-	}
 	return fn(conn)
 }
 

@@ -180,3 +180,61 @@ func (t *Table) StatisticSeq() iter.Seq2[*Statistic, error] { return seqFrom(t.S
 
 // TriggerSeq returns an iterator over all DML triggers attached to the table.
 func (t *Table) TriggerSeq() iter.Seq2[*Trigger, error] { return seqFrom(t.Triggers) }
+
+// -- Statistic -------------------------------------------------------------
+
+// ColumnSeq returns an iterator over this statistic's columns, in
+// stat-column order.
+func (st *Statistic) ColumnSeq() iter.Seq2[string, error] { return seqFrom(st.Columns) }
+
+// DensityVectorSeq returns an iterator over this statistic's density
+// vector.
+func (st *Statistic) DensityVectorSeq() iter.Seq2[*StatisticDensity, error] {
+	return seqFrom(st.DensityVector)
+}
+
+// HistogramSeq returns an iterator over this statistic's histogram steps.
+func (st *Statistic) HistogramSeq() iter.Seq2[*StatisticHistogramStep, error] {
+	return seqFrom(st.Histogram)
+}
+
+// -- SQL Server Agent ------------------------------------------------------
+
+// StepSeq returns an iterator over a job's steps, in step_id order.
+func (j *Job) StepSeq() iter.Seq2[*JobStep, error] { return seqFrom(j.Steps) }
+
+// ScheduleSeq returns an iterator over all SQL Server Agent schedules.
+func (s *Server) ScheduleSeq() iter.Seq2[*Schedule, error] { return seqFrom(s.Schedules) }
+
+// ScheduleSeq returns an iterator over the schedules attached to this job.
+func (j *Job) ScheduleSeq() iter.Seq2[*Schedule, error] { return seqFrom(j.Schedules) }
+
+// JobSeq returns an iterator over the jobs this schedule is attached to.
+func (sch *Schedule) JobSeq() iter.Seq2[*Job, error] { return seqFrom(sch.Jobs) }
+
+// AlertSeq returns an iterator over all SQL Server Agent alerts.
+func (s *Server) AlertSeq() iter.Seq2[*Alert, error] { return seqFrom(s.Alerts) }
+
+// EventAlertSeq returns an iterator over the SQL-only-implementable subset
+// of alerts (see Server.EventAlerts).
+func (s *Server) EventAlertSeq() iter.Seq2[*Alert, error] { return seqFrom(s.EventAlerts) }
+
+// OperatorSeq returns an iterator over all SQL Server Agent operators.
+func (s *Server) OperatorSeq() iter.Seq2[*Operator, error] { return seqFrom(s.Operators) }
+
+// NotificationSeq returns an iterator over every operator notified by this alert.
+func (a *Alert) NotificationSeq() iter.Seq2[*AlertNotification, error] {
+	return seqFrom(a.Notifications)
+}
+
+// NotifyingAlertSeq returns an iterator over every alert configured to
+// notify this operator.
+func (o *Operator) NotifyingAlertSeq() iter.Seq2[*AlertNotificationRef, error] {
+	return seqFrom(o.NotifyingAlerts)
+}
+
+// NotifyingJobSeq returns an iterator over every job configured to e-mail
+// this operator on completion.
+func (o *Operator) NotifyingJobSeq() iter.Seq2[*JobNotificationRef, error] {
+	return seqFrom(o.NotifyingJobs)
+}

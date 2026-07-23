@@ -26,6 +26,9 @@ func TestApplyDefaults(t *testing.T) {
 	if opts.MaxIdleConns != 2 {
 		t.Errorf("MaxIdleConns = %d, want 2", opts.MaxIdleConns)
 	}
+	if opts.ConnMaxIdleTime != 5*time.Minute {
+		t.Errorf("ConnMaxIdleTime = %v, want 5m", opts.ConnMaxIdleTime)
+	}
 }
 
 func TestApplyDefaultsDoesNotOverwriteExplicitValues(t *testing.T) {
@@ -34,6 +37,7 @@ func TestApplyDefaultsDoesNotOverwriteExplicitValues(t *testing.T) {
 		ApplicationName: "myapp",
 		Database:        "mydb",
 		MaxIdleConns:    10,
+		ConnMaxIdleTime: 90 * time.Second,
 	}
 	applyDefaults(&opts)
 
@@ -48,6 +52,9 @@ func TestApplyDefaultsDoesNotOverwriteExplicitValues(t *testing.T) {
 	}
 	if opts.MaxIdleConns != 10 {
 		t.Errorf("MaxIdleConns = %d, want 10", opts.MaxIdleConns)
+	}
+	if opts.ConnMaxIdleTime != 90*time.Second {
+		t.Errorf("ConnMaxIdleTime = %v, want 90s", opts.ConnMaxIdleTime)
 	}
 }
 

@@ -5,7 +5,11 @@ import (
 	"database/sql/driver"
 	"errors"
 	"fmt"
+	"io"
+	"net"
 	"testing"
+
+	mssql "github.com/microsoft/go-mssqldb"
 )
 
 func TestIsRetryable(t *testing.T) {
@@ -18,6 +22,12 @@ func TestIsRetryable(t *testing.T) {
 		{"plain", errors.New("boom"), false},
 		{"bad conn", driver.ErrBadConn, true},
 		{"wrapped bad conn", fmt.Errorf("query: %w", driver.ErrBadConn), true},
+		{"io.EOF", io.EOF, true},
+		{"wrapped io.EOF", fmt.Errorf("read: %w", io.EOF), true},
+		{"net error", &net.OpError{Op: "read", Err: errors.New("connection reset")}, true},
+		{"wrapped net error", fmt.Errorf("query: %w", &net.OpError{Op: "read", Err: errors.New("reset")}), true},
+		{"stream error", mssql.StreamError{InnerError: errors.New("corrupt")}, true},
+		{"server error", mssql.ServerError{}, true},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

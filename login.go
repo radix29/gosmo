@@ -77,11 +77,7 @@ func (l *Login) AddServerRoleMember(roleName string) error {
 }
 
 func (l *Login) AddServerRoleMemberContext(ctx context.Context, roleName string) error {
-	q := fmt.Sprintf("ALTER SERVER ROLE %s ADD MEMBER %s", quoteIdent(roleName), quoteIdent(l.Name))
-	if err := l.server.execContext(ctx, q); err != nil {
-		return fmt.Errorf("gosmo: add %q to server role %q: %w", l.Name, roleName, err)
-	}
-	return nil
+	return l.server.AddServerRoleMemberContext(ctx, roleName, l.Name)
 }
 
 // RemoveServerRoleMember removes this login from a server role.
@@ -90,11 +86,7 @@ func (l *Login) RemoveServerRoleMember(roleName string) error {
 }
 
 func (l *Login) RemoveServerRoleMemberContext(ctx context.Context, roleName string) error {
-	q := fmt.Sprintf("ALTER SERVER ROLE %s DROP MEMBER %s", quoteIdent(roleName), quoteIdent(l.Name))
-	if err := l.server.execContext(ctx, q); err != nil {
-		return fmt.Errorf("gosmo: remove %q from server role %q: %w", l.Name, roleName, err)
-	}
-	return nil
+	return l.server.RemoveServerRoleMemberContext(ctx, roleName, l.Name)
 }
 
 // -- Status / details --------------------------------------------------------

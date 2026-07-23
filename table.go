@@ -275,6 +275,11 @@ type Index struct {
 	IsUniqueConstraint bool
 	IsDisabled         bool
 	FillFactor         int
+	IsPadded           bool
+	IgnoreDupKey       bool
+	AllowRowLocks      bool
+	AllowPageLocks     bool
+	DataCompression    string
 	KeyColumns         []IndexColumn
 	IncludedColumns    []IndexColumn
 	FilterDefinition   string
@@ -297,8 +302,13 @@ func (t *Table) IndexesContext(ctx context.Context) ([]*Index, error) {
 	const q = `
 SELECT i.name, i.index_id, i.type_desc, i.is_unique, i.is_primary_key,
        i.is_unique_constraint, i.is_disabled, i.fill_factor,
-       ISNULL(i.filter_definition, '')
+       ISNULL(i.filter_definition, ''),
+       i.is_padded, i.ignore_dup_key, i.allow_row_locks, i.allow_page_locks,
+       ISNULL(p.data_compression_desc, 'NONE')
 FROM   sys.indexes i
+OUTER  APPLY (SELECT TOP 1 pp.data_compression_desc FROM sys.partitions pp
+              WHERE pp.object_id = i.object_id AND pp.index_id = i.index_id
+              ORDER BY pp.partition_number) p
 WHERE  i.object_id = @p1 AND i.type > 0
 ORDER  BY i.index_id`
 
@@ -314,7 +324,9 @@ ORDER  BY i.index_id`
 		var typeDesc sql.NullString
 		if err := rows.Scan(&idx.Name, &idx.IndexID, &typeDesc,
 			&idx.IsUnique, &idx.IsPrimaryKey, &idx.IsUniqueConstraint,
-			&idx.IsDisabled, &idx.FillFactor, &idx.FilterDefinition); err != nil {
+			&idx.IsDisabled, &idx.FillFactor, &idx.FilterDefinition,
+			&idx.IsPadded, &idx.IgnoreDupKey, &idx.AllowRowLocks, &idx.AllowPageLocks,
+			&idx.DataCompression); err != nil {
 			return nil, err
 		}
 		switch strings.TrimSpace(typeDesc.String) {
@@ -657,6 +669,51 @@ WHERE  p.object_id = @p1 AND p.index_id IN (0, 1)`, t.ObjectID)
 		return 0, fmt.Errorf("gosmo: row count for %s: %w", t.FullName(), err)
 	}
 	return n, nil
+}
+
+// -- Predicate helpers -----------------------------------------------------
+
+// CountWhere returns the number of rows in the table matching a WHERE
+// predicate — used to estimate qualifying rows for a filtered index or
+// filtered statistic's predicate (SSMS's "Estimate Rows" action).
+func (t *Table) CountWhere(predicate string) (int64, error) {
+	return t.CountWhereContext(context.Background(), predicate)
+}
+
+// CountWhereContext is the context-aware variant of CountWhere. predicate is
+// interpolated as-is after WHERE; callers pass a filter expression already
+// captured from the server (e.g. an index or statistic's own
+// FilterDefinition), not raw user input.
+func (t *Table) CountWhereContext(ctx context.Context, predicate string) (int64, error) {
+	q := fmt.Sprintf("SELECT COUNT_BIG(*) FROM %s WHERE %s", t.FullName(), predicate)
+	row, release, err := t.db.queryRow(ctx, q)
+	if err != nil {
+		return 0, fmt.Errorf("gosmo: count where for %s: %w", t.FullName(), err)
+	}
+	defer release()
+
+	var n int64
+	if err := row.Scan(&n); err != nil {
+		return 0, fmt.Errorf("gosmo: count where for %s: %w", t.FullName(), err)
+	}
+	return n, nil
+}
+
+// CheckWhereSyntax validates a WHERE predicate against the table without
+// scanning any data (SSMS's "Check Syntax" action for a filtered index or
+// statistic's predicate).
+func (t *Table) CheckWhereSyntax(predicate string) error {
+	return t.CheckWhereSyntaxContext(context.Background(), predicate)
+}
+
+// CheckWhereSyntaxContext is the context-aware variant of CheckWhereSyntax.
+func (t *Table) CheckWhereSyntaxContext(ctx context.Context, predicate string) error {
+	q := fmt.Sprintf("SELECT TOP (0) 1 AS ok FROM %s WHERE %s", t.FullName(), predicate)
+	rows, err := t.db.query(ctx, q)
+	if err != nil {
+		return fmt.Errorf("gosmo: check syntax for %s: %w", t.FullName(), err)
+	}
+	return rows.Close()
 }
 
 // -- Column type builder -------------------------------------------------------
