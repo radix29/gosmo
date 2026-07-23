@@ -67,6 +67,37 @@ func (s *Server) BackupFileSeq(device string) iter.Seq2[*BackupFile, error] {
 	return seqFrom(func() ([]*BackupFile, error) { return s.BackupFileList(device) })
 }
 
+// ServerRoleSeq returns an iterator over all server-level roles.
+func (s *Server) ServerRoleSeq() iter.Seq2[*ServerRole, error] { return seqFrom(s.ServerRoles) }
+
+// ServerRoleMemberSeq returns an iterator over a server role's members.
+func (s *Server) ServerRoleMemberSeq(roleName string) iter.Seq2[*RoleMember, error] {
+	return seqFrom(func() ([]*RoleMember, error) { return s.ServerRoleMembers(roleName) })
+}
+
+// LinkedServerSeq returns an iterator over all linked servers.
+func (s *Server) LinkedServerSeq() iter.Seq2[*LinkedServer, error] { return seqFrom(s.LinkedServers) }
+
+// MailProfileSeq returns an iterator over all Database Mail profiles.
+func (s *Server) MailProfileSeq() iter.Seq2[*MailProfile, error] { return seqFrom(s.MailProfiles) }
+
+// ConfigurationSeq returns an iterator over all sp_configure options.
+func (s *Server) ConfigurationSeq() iter.Seq2[*ConfigurationOption, error] {
+	return seqFrom(s.Configurations)
+}
+
+// CategorySeq returns an iterator over every category of the given class
+// (job or alert categories).
+func (s *Server) CategorySeq(class CategoryClass) iter.Seq2[*Category, error] {
+	return seqFrom(func() ([]*Category, error) { return s.Categories(class) })
+}
+
+// JobHistorySeq returns an iterator over the most recent job history
+// entries across every SQL Server Agent job, up to limit.
+func (s *Server) JobHistorySeq(limit int) iter.Seq2[*JobHistoryEntry, error] {
+	return seqFrom(func() ([]*JobHistoryEntry, error) { return s.JobHistory(limit) })
+}
+
 // -- Database ------------------------------------------------------------------
 
 // TableSeq returns an iterator over all user tables in the database.
@@ -153,6 +184,62 @@ func (d *Database) TableChangeTrackingSeq() iter.Seq2[*TableChangeTracking, erro
 	return seqFrom(d.TableChangeTracking)
 }
 
+// DatabaseRoleSeq returns an iterator over all database-level roles.
+func (d *Database) DatabaseRoleSeq() iter.Seq2[*DatabaseRole, error] {
+	return seqFrom(d.DatabaseRoles)
+}
+
+// RoleMemberSeq returns an iterator over a database role's members.
+func (d *Database) RoleMemberSeq(roleName string) iter.Seq2[*RoleMember, error] {
+	return seqFrom(func() ([]*RoleMember, error) { return d.RoleMembers(roleName) })
+}
+
+// FileGroupSeq returns an iterator over all filegroups in the database.
+func (d *Database) FileGroupSeq() iter.Seq2[*FileGroup, error] { return seqFrom(d.FileGroups) }
+
+// DatabaseScopedConfigSeq returns an iterator over all database-scoped
+// configuration options.
+func (d *Database) DatabaseScopedConfigSeq() iter.Seq2[*DatabaseScopedConfig, error] {
+	return seqFrom(d.DatabaseScopedConfigs)
+}
+
+// UserDefinedFunctionSeq returns an iterator over all user-created
+// functions (as opposed to SystemFunctionSeq's "sys" schema functions).
+func (d *Database) UserDefinedFunctionSeq() iter.Seq2[*UserDefinedFunction, error] {
+	return seqFrom(d.UserDefinedFunctions)
+}
+
+// TablesBySchemaSeq returns an iterator over every user table in the
+// given schema.
+func (d *Database) TablesBySchemaSeq(schema string) iter.Seq2[*Table, error] {
+	return seqFrom(func() ([]*Table, error) { return d.TablesBySchema(schema) })
+}
+
+// DependencySeq returns an iterator over the objects schema.name's own
+// definition references.
+func (d *Database) DependencySeq(schema, name string) iter.Seq2[*Dependency, error] {
+	return seqFrom(func() ([]*Dependency, error) { return d.Dependencies(schema, name) })
+}
+
+// DependentSeq returns an iterator over the objects whose own definition
+// references schema.name.
+func (d *Database) DependentSeq(schema, name string) iter.Seq2[*Dependency, error] {
+	return seqFrom(func() ([]*Dependency, error) { return d.Dependents(schema, name) })
+}
+
+// ExtendedPropertySeq returns an iterator over the extended properties at
+// the given level (as opposed to DatabaseExtendedPropertySeq's
+// database-level-only shortcut).
+func (d *Database) ExtendedPropertySeq(level ExtendedPropertyLevel) iter.Seq2[*ExtendedProperty, error] {
+	return seqFrom(func() ([]*ExtendedProperty, error) { return d.ExtendedProperties(level) })
+}
+
+// SchemaPermissionSeq returns an iterator over a schema's explicit
+// GRANT/DENY entries.
+func (d *Database) SchemaPermissionSeq(schemaName string) iter.Seq2[*PermissionEntry, error] {
+	return seqFrom(func() ([]*PermissionEntry, error) { return d.SchemaPermissions(schemaName) })
+}
+
 // -- Login ---------------------------------------------------------------------
 
 // UserMappingSeq returns an iterator over every database this login is
@@ -181,6 +268,11 @@ func (t *Table) StatisticSeq() iter.Seq2[*Statistic, error] { return seqFrom(t.S
 // TriggerSeq returns an iterator over all DML triggers attached to the table.
 func (t *Table) TriggerSeq() iter.Seq2[*Trigger, error] { return seqFrom(t.Triggers) }
 
+// CheckConstraintSeq returns an iterator over all CHECK constraints on the table.
+func (t *Table) CheckConstraintSeq() iter.Seq2[*CheckConstraint, error] {
+	return seqFrom(t.CheckConstraints)
+}
+
 // -- Statistic -------------------------------------------------------------
 
 // ColumnSeq returns an iterator over this statistic's columns, in
@@ -202,6 +294,12 @@ func (st *Statistic) HistogramSeq() iter.Seq2[*StatisticHistogramStep, error] {
 
 // StepSeq returns an iterator over a job's steps, in step_id order.
 func (j *Job) StepSeq() iter.Seq2[*JobStep, error] { return seqFrom(j.Steps) }
+
+// HistorySeq returns an iterator over this job's most recent history
+// entries, up to limit.
+func (j *Job) HistorySeq(limit int) iter.Seq2[*JobHistoryEntry, error] {
+	return seqFrom(func() ([]*JobHistoryEntry, error) { return j.History(limit) })
+}
 
 // ScheduleSeq returns an iterator over all SQL Server Agent schedules.
 func (s *Server) ScheduleSeq() iter.Seq2[*Schedule, error] { return seqFrom(s.Schedules) }

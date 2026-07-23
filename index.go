@@ -165,6 +165,12 @@ func (idx *Index) RebuildWithOptions(t *Table, fillFactor int, padIndex bool, da
 
 // RebuildWithOptionsContext is the context-aware variant of RebuildWithOptions.
 func (idx *Index) RebuildWithOptionsContext(ctx context.Context, t *Table, fillFactor int, padIndex bool, dataCompression string) error {
+	switch dataCompression {
+	case "", "NONE", "ROW", "PAGE", "COLUMNSTORE", "COLUMNSTORE_ARCHIVE":
+	default:
+		return fmt.Errorf("gosmo: rebuild index %q with options: invalid data compression %q (must be NONE, ROW, PAGE, COLUMNSTORE, or COLUMNSTORE_ARCHIVE)", idx.Name, dataCompression)
+	}
+
 	withParts := []string{fmt.Sprintf("PAD_INDEX = %s", onOffKeyword(padIndex))}
 	if fillFactor > 0 {
 		withParts = append(withParts, fmt.Sprintf("FILLFACTOR = %d", fillFactor))
