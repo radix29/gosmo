@@ -55,7 +55,12 @@ func (idx *Index) DisableContext(ctx context.Context, t *Table) error {
 
 // Enable re-enables a disabled index by rebuilding it.
 func (idx *Index) Enable(t *Table) error {
-	return idx.RebuildContext(context.Background(), t, 0)
+	return idx.EnableContext(context.Background(), t)
+}
+
+// EnableContext is the context-aware variant of Enable.
+func (idx *Index) EnableContext(ctx context.Context, t *Table) error {
+	return idx.RebuildContext(ctx, t, 0)
 }
 
 // Drop drops the index.

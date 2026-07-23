@@ -67,6 +67,12 @@ func (s *Server) BackupFileSeq(device string) iter.Seq2[*BackupFile, error] {
 	return seqFrom(func() ([]*BackupFile, error) { return s.BackupFileList(device) })
 }
 
+// BackupHistorySeq returns an iterator over databaseName's backup/restore
+// history, as recorded in msdb.
+func (s *Server) BackupHistorySeq(databaseName string) iter.Seq2[*BackupInfo, error] {
+	return seqFrom(func() ([]*BackupInfo, error) { return s.BackupHistory(databaseName) })
+}
+
 // ServerRoleSeq returns an iterator over all server-level roles.
 func (s *Server) ServerRoleSeq() iter.Seq2[*ServerRole, error] { return seqFrom(s.ServerRoles) }
 
@@ -96,6 +102,18 @@ func (s *Server) CategorySeq(class CategoryClass) iter.Seq2[*Category, error] {
 // entries across every SQL Server Agent job, up to limit.
 func (s *Server) JobHistorySeq(limit int) iter.Seq2[*JobHistoryEntry, error] {
 	return seqFrom(func() ([]*JobHistoryEntry, error) { return s.JobHistory(limit) })
+}
+
+// ActiveSessionSeq returns an iterator over every session currently
+// connected to the server, optionally including system sessions.
+func (s *Server) ActiveSessionSeq(includeSystem bool) iter.Seq2[*ActiveSession, error] {
+	return seqFrom(func() ([]*ActiveSession, error) { return s.ActiveSessions(includeSystem) })
+}
+
+// ReadErrorLogSeq returns an iterator over the lines of the given SQL
+// Server error log (0 = current, 1 = Errorlog.1, …).
+func (s *Server) ReadErrorLogSeq(logNumber int) iter.Seq2[*ErrorLogEntry, error] {
+	return seqFrom(func() ([]*ErrorLogEntry, error) { return s.ReadErrorLog(logNumber) })
 }
 
 // -- Database ------------------------------------------------------------------
@@ -184,6 +202,12 @@ func (d *Database) TableChangeTrackingSeq() iter.Seq2[*TableChangeTracking, erro
 	return seqFrom(d.TableChangeTracking)
 }
 
+// TriggerSeq returns an iterator over every DML trigger in the database
+// (as opposed to Table.TriggerSeq's single-table scope).
+func (d *Database) TriggerSeq() iter.Seq2[*Trigger, error] {
+	return seqFrom(d.Triggers)
+}
+
 // DatabaseRoleSeq returns an iterator over all database-level roles.
 func (d *Database) DatabaseRoleSeq() iter.Seq2[*DatabaseRole, error] {
 	return seqFrom(d.DatabaseRoles)
@@ -240,6 +264,25 @@ func (d *Database) SchemaPermissionSeq(schemaName string) iter.Seq2[*PermissionE
 	return seqFrom(func() ([]*PermissionEntry, error) { return d.SchemaPermissions(schemaName) })
 }
 
+// PermissionSeq returns an iterator over the GRANT/DENY entries recorded
+// for schema.name.
+func (d *Database) PermissionSeq(schema, name string) iter.Seq2[*PermissionEntry, error] {
+	return seqFrom(func() ([]*PermissionEntry, error) { return d.Permissions(schema, name) })
+}
+
+// PermissionsForPrincipalSeq returns an iterator over every explicit
+// GRANT/DENY entry recorded for principal across database-, schema-, and
+// table/view-scoped securables.
+func (d *Database) PermissionsForPrincipalSeq(principal string) iter.Seq2[*PrincipalSecurable, error] {
+	return seqFrom(func() ([]*PrincipalSecurable, error) { return d.PermissionsForPrincipal(principal) })
+}
+
+// SearchSeq returns an iterator over every table, view, stored procedure,
+// function, and trigger whose name contains pattern.
+func (d *Database) SearchSeq(pattern string) iter.Seq2[*SearchResult, error] {
+	return seqFrom(func() ([]*SearchResult, error) { return d.Search(pattern) })
+}
+
 // -- Login ---------------------------------------------------------------------
 
 // UserMappingSeq returns an iterator over every database this login is
@@ -271,6 +314,13 @@ func (t *Table) TriggerSeq() iter.Seq2[*Trigger, error] { return seqFrom(t.Trigg
 // CheckConstraintSeq returns an iterator over all CHECK constraints on the table.
 func (t *Table) CheckConstraintSeq() iter.Seq2[*CheckConstraint, error] {
 	return seqFrom(t.CheckConstraints)
+}
+
+// FragmentationStatsSeq returns an iterator over fragmentation info for
+// all indexes on the table. mode must be one of "LIMITED" (fast, default),
+// "SAMPLED", or "DETAILED".
+func (t *Table) FragmentationStatsSeq(mode string) iter.Seq2[*IndexFragmentation, error] {
+	return seqFrom(func() ([]*IndexFragmentation, error) { return t.FragmentationStats(mode) })
 }
 
 // -- Statistic -------------------------------------------------------------

@@ -19,7 +19,12 @@ type Schema struct {
 }
 
 // Drop drops the schema.
-func (s *Schema) Drop() error { return s.db.DropSchema(s.Name) }
+func (s *Schema) Drop() error { return s.DropContext(context.Background()) }
+
+// DropContext is the context-aware variant of Drop.
+func (s *Schema) DropContext(ctx context.Context) error {
+	return s.db.DropSchemaContext(ctx, s.Name)
+}
 
 // ChangeOwner transfers schema ownership to a new principal.
 func (s *Schema) ChangeOwner(newOwner string) error {
@@ -91,7 +96,12 @@ type User struct {
 }
 
 // Drop drops the database user.
-func (u *User) Drop() error { return u.db.DropUser(u.Name) }
+func (u *User) Drop() error { return u.DropContext(context.Background()) }
+
+// DropContext is the context-aware variant of Drop.
+func (u *User) DropContext(ctx context.Context) error {
+	return u.db.DropUserContext(ctx, u.Name)
+}
 
 // Rename changes the database user's name.
 func (u *User) Rename(newName string) error {
@@ -140,12 +150,22 @@ func (u *User) SetLoginContext(ctx context.Context, loginName string) error {
 
 // AddToRole adds the user to a database role.
 func (u *User) AddToRole(roleName string) error {
-	return u.db.AddRoleMember(roleName, u.Name)
+	return u.AddToRoleContext(context.Background(), roleName)
+}
+
+// AddToRoleContext is the context-aware variant of AddToRole.
+func (u *User) AddToRoleContext(ctx context.Context, roleName string) error {
+	return u.db.AddRoleMemberContext(ctx, roleName, u.Name)
 }
 
 // RemoveFromRole removes the user from a database role.
 func (u *User) RemoveFromRole(roleName string) error {
-	return u.db.RemoveRoleMember(roleName, u.Name)
+	return u.RemoveFromRoleContext(context.Background(), roleName)
+}
+
+// RemoveFromRoleContext is the context-aware variant of RemoveFromRole.
+func (u *User) RemoveFromRoleContext(ctx context.Context, roleName string) error {
+	return u.db.RemoveRoleMemberContext(ctx, roleName, u.Name)
 }
 
 // Grant grants a permission on a schema-qualified object to the user.
@@ -154,6 +174,9 @@ func (u *User) Grant(permission ObjectPermission, objectSchema, objectName strin
 }
 
 func (u *User) GrantContext(ctx context.Context, permission ObjectPermission, objectSchema, objectName string) error {
+	if !validObjectPermission(permission) {
+		return fmt.Errorf("gosmo: grant permission: unrecognized permission %q", permission)
+	}
 	q := fmt.Sprintf("GRANT %s ON %s TO %s",
 		permission, qualifiedName(objectSchema, objectName), quoteIdent(u.Name))
 	if _, err := u.db.exec(ctx, q); err != nil {
@@ -168,6 +191,9 @@ func (u *User) Deny(permission ObjectPermission, objectSchema, objectName string
 }
 
 func (u *User) DenyContext(ctx context.Context, permission ObjectPermission, objectSchema, objectName string) error {
+	if !validObjectPermission(permission) {
+		return fmt.Errorf("gosmo: deny permission: unrecognized permission %q", permission)
+	}
 	q := fmt.Sprintf("DENY %s ON %s TO %s",
 		permission, qualifiedName(objectSchema, objectName), quoteIdent(u.Name))
 	if _, err := u.db.exec(ctx, q); err != nil {
@@ -182,6 +208,9 @@ func (u *User) Revoke(permission ObjectPermission, objectSchema, objectName stri
 }
 
 func (u *User) RevokeContext(ctx context.Context, permission ObjectPermission, objectSchema, objectName string) error {
+	if !validObjectPermission(permission) {
+		return fmt.Errorf("gosmo: revoke permission: unrecognized permission %q", permission)
+	}
 	q := fmt.Sprintf("REVOKE %s ON %s FROM %s",
 		permission, qualifiedName(objectSchema, objectName), quoteIdent(u.Name))
 	if _, err := u.db.exec(ctx, q); err != nil {

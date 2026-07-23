@@ -69,7 +69,12 @@ func (l *Login) ChangePasswordContext(ctx context.Context, newPassword string) e
 }
 
 // Drop drops the login from the server.
-func (l *Login) Drop() error { return l.server.DropLogin(l.Name) }
+func (l *Login) Drop() error { return l.DropContext(context.Background()) }
+
+// DropContext is the context-aware variant of Drop.
+func (l *Login) DropContext(ctx context.Context) error {
+	return l.server.DropLoginContext(ctx, l.Name)
+}
 
 // AddServerRoleMember adds this login to a server role.
 func (l *Login) AddServerRoleMember(roleName string) error {

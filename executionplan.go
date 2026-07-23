@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"time"
 )
 
 // ============================================================
@@ -54,7 +55,17 @@ func (d *Database) capturePlan(ctx context.Context, setOpt, sqlText string) (*Ex
 		if _, err := conn.ExecContext(ctx, "SET "+setOpt+" ON"); err != nil {
 			return fmt.Errorf("gosmo: enable %s: %w", setOpt, err)
 		}
-		defer conn.ExecContext(context.Background(), "SET "+setOpt+" OFF")
+		// Cleanup must still run (and return conn to the pool in a known
+		// state) even if ctx is already canceled by the time capturePlan
+		// returns — context.WithoutCancel keeps ctx's values without its
+		// cancellation, and the timeout bounds how long a genuinely
+		// unresponsive connection can block it, unlike context.Background()
+		// which never times out.
+		defer func() {
+			cctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+			defer cancel()
+			conn.ExecContext(cctx, "SET "+setOpt+" OFF")
+		}()
 
 		rows, err := conn.QueryContext(ctx, sqlText)
 		if err != nil {
