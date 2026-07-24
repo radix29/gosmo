@@ -63,7 +63,7 @@ func (s *Server) Operators() ([]*Operator, error) { return s.OperatorsContext(co
 func (s *Server) OperatorsContext(ctx context.Context) ([]*Operator, error) {
 	q := "SELECT " + operatorColumns + " " + operatorFrom + " ORDER BY o.name"
 
-	rows, err := s.db.QueryContext(ctx, q)
+	rows, err := s.query(ctx, q)
 	if err != nil {
 		return nil, fmt.Errorf("gosmo: list operators: %w", err)
 	}
@@ -89,8 +89,12 @@ func (s *Server) OperatorByName(name string) (*Operator, error) {
 func (s *Server) OperatorByNameContext(ctx context.Context, name string) (*Operator, error) {
 	q := "SELECT " + operatorColumns + " " + operatorFrom + " WHERE o.name = @p1"
 
-	row := s.db.QueryRowContext(ctx, q, name)
-	o, err := scanOperator(s, row.Scan)
+	var o *Operator
+	err := s.queryRow(ctx, func(row *sql.Row) error {
+		var scanErr error
+		o, scanErr = scanOperator(s, row.Scan)
+		return scanErr
+	}, q, name)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, fmt.Errorf("gosmo: operator %q not found", name)

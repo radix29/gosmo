@@ -20,6 +20,13 @@ const (
 	CategoryClassOperator CategoryClass = "OPERATOR"
 )
 
+var categoryClassNames = map[CategoryClass]bool{
+	CategoryClassJob: true, CategoryClassAlert: true, CategoryClassOperator: true,
+}
+
+// validCategoryClass reports whether c is a recognized category class.
+func validCategoryClass(c CategoryClass) bool { return categoryClassNames[c] }
+
 // code returns the numeric syscategories.category_class this class filters to.
 func (c CategoryClass) code() int {
 	switch c {
@@ -49,13 +56,16 @@ func (s *Server) Categories(class CategoryClass) ([]*Category, error) {
 
 // CategoriesContext is the context-aware variant of Categories.
 func (s *Server) CategoriesContext(ctx context.Context, class CategoryClass) ([]*Category, error) {
+	if !validCategoryClass(class) {
+		return nil, fmt.Errorf("gosmo: list categories: unrecognized category class %q", class)
+	}
 	const q = `
 SELECT category_id, name
 FROM   msdb.dbo.syscategories
 WHERE  category_class = @p1
 ORDER  BY name`
 
-	rows, err := s.db.QueryContext(ctx, q, class.code())
+	rows, err := s.query(ctx, q, class.code())
 	if err != nil {
 		return nil, fmt.Errorf("gosmo: list %s categories: %w", class, err)
 	}
@@ -91,6 +101,9 @@ func (s *Server) CreateCategory(class CategoryClass, name string) error {
 
 // CreateCategoryContext is the context-aware variant of CreateCategory.
 func (s *Server) CreateCategoryContext(ctx context.Context, class CategoryClass, name string) error {
+	if !validCategoryClass(class) {
+		return fmt.Errorf("gosmo: create category: unrecognized category class %q", class)
+	}
 	q := fmt.Sprintf("EXEC msdb.dbo.sp_add_category @class = N'%s', @type = N'%s', @name = N'%s'",
 		string(class), addCategoryType(class), escapeSingle(name))
 	if err := s.execContext(ctx, q); err != nil {
@@ -106,6 +119,9 @@ func (s *Server) DeleteCategory(class CategoryClass, name string) error {
 
 // DeleteCategoryContext is the context-aware variant of DeleteCategory.
 func (s *Server) DeleteCategoryContext(ctx context.Context, class CategoryClass, name string) error {
+	if !validCategoryClass(class) {
+		return fmt.Errorf("gosmo: delete category: unrecognized category class %q", class)
+	}
 	q := fmt.Sprintf("EXEC msdb.dbo.sp_delete_category @class = N'%s', @name = N'%s'",
 		string(class), escapeSingle(name))
 	if err := s.execContext(ctx, q); err != nil {

@@ -30,6 +30,13 @@ const (
 	RecoveryModelBulkLogged RecoveryModel = "BULK_LOGGED"
 )
 
+var recoveryModelNames = map[RecoveryModel]bool{
+	RecoveryModelSimple: true, RecoveryModelFull: true, RecoveryModelBulkLogged: true,
+}
+
+// validRecoveryModel reports whether m is a recognized recovery model.
+func validRecoveryModel(m RecoveryModel) bool { return recoveryModelNames[m] }
+
 // CompatibilityLevel mirrors SQL Server database compatibility levels.
 type CompatibilityLevel int
 
@@ -83,6 +90,21 @@ const (
 	DataTypeXML              DataType = "xml"
 )
 
+var dataTypeNames = map[DataType]bool{
+	DataTypeBigInt: true, DataTypeBinary: true, DataTypeBit: true, DataTypeChar: true,
+	DataTypeDate: true, DataTypeDatetime: true, DataTypeDatetime2: true, DataTypeDatetimeOffset: true,
+	DataTypeDecimal: true, DataTypeFloat: true, DataTypeGeography: true, DataTypeGeometry: true,
+	DataTypeHierarchyID: true, DataTypeImage: true, DataTypeInt: true, DataTypeMoney: true,
+	DataTypeNChar: true, DataTypeNText: true, DataTypeNumeric: true, DataTypeNVarChar: true,
+	DataTypeReal: true, DataTypeRowVersion: true, DataTypeSmallDatetime: true, DataTypeSmallInt: true,
+	DataTypeSmallMoney: true, DataTypeSQLVariant: true, DataTypeText: true, DataTypeTime: true,
+	DataTypeTinyInt: true, DataTypeUniqueIdentifier: true, DataTypeVarBinary: true,
+	DataTypeVarChar: true, DataTypeXML: true,
+}
+
+// validDataType reports whether t is a recognized column data type.
+func validDataType(t DataType) bool { return dataTypeNames[t] }
+
 // IndexType represents the type of an index.
 type IndexType string
 
@@ -129,6 +151,14 @@ const (
 	BackupActionFiles        BackupAction = "FILES"
 	BackupActionDifferential BackupAction = "DATABASE_DIFFERENTIAL"
 )
+
+var backupActionNames = map[BackupAction]bool{
+	BackupActionDatabase: true, BackupActionLog: true, BackupActionFiles: true,
+	BackupActionDifferential: true,
+}
+
+// validBackupAction reports whether a is a recognized backup/restore action.
+func validBackupAction(a BackupAction) bool { return backupActionNames[a] }
 
 // ============================================================
 // Shared value types

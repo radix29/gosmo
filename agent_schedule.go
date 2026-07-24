@@ -134,7 +134,7 @@ func (s *Server) Schedules() ([]*Schedule, error) { return s.SchedulesContext(co
 func (s *Server) SchedulesContext(ctx context.Context) ([]*Schedule, error) {
 	q := "SELECT " + scheduleColumns + " " + scheduleFrom + " ORDER BY sch.name"
 
-	rows, err := s.db.QueryContext(ctx, q)
+	rows, err := s.query(ctx, q)
 	if err != nil {
 		return nil, fmt.Errorf("gosmo: list schedules: %w", err)
 	}
@@ -160,8 +160,12 @@ func (s *Server) ScheduleByName(name string) (*Schedule, error) {
 func (s *Server) ScheduleByNameContext(ctx context.Context, name string) (*Schedule, error) {
 	q := "SELECT " + scheduleColumns + " " + scheduleFrom + " WHERE sch.name = @p1"
 
-	row := s.db.QueryRowContext(ctx, q, name)
-	sch, err := scanSchedule(s, row.Scan)
+	var sch *Schedule
+	err := s.queryRow(ctx, func(row *sql.Row) error {
+		var scanErr error
+		sch, scanErr = scanSchedule(s, row.Scan)
+		return scanErr
+	}, q, name)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, fmt.Errorf("gosmo: schedule %q not found", name)

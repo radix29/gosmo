@@ -91,6 +91,9 @@ func BuildBackupStatement(opts BackupOptions) (string, error) {
 	if opts.Action == "" {
 		opts.Action = BackupActionDatabase
 	}
+	if !validBackupAction(opts.Action) {
+		return "", fmt.Errorf("gosmo: backup: unrecognized action %q", opts.Action)
+	}
 
 	// A differential backup is not its own BACKUP verb — it's a plain
 	// BACKUP DATABASE with a DIFFERENTIAL clause.
@@ -287,6 +290,9 @@ func BuildRestoreStatement(opts RestoreOptions) (string, error) {
 	if opts.Action == "" {
 		opts.Action = BackupActionDatabase
 	}
+	if !validBackupAction(opts.Action) {
+		return "", fmt.Errorf("gosmo: restore: unrecognized action %q", opts.Action)
+	}
 
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "RESTORE %s %s FROM ", opts.Action, quoteIdent(opts.Database))
@@ -345,7 +351,7 @@ JOIN   msdb.dbo.backupmediafamily bmf ON bmf.media_set_id = bs.media_set_id
 WHERE  bs.database_name = @p1
 ORDER  BY bs.backup_finish_date DESC`
 
-	rows, err := s.db.QueryContext(ctx, q, databaseName)
+	rows, err := s.query(ctx, q, databaseName)
 	if err != nil {
 		return nil, fmt.Errorf("gosmo: backup history for %q: %w", databaseName, err)
 	}
@@ -441,7 +447,7 @@ func (s *Server) BackupHeaders(device string) ([]*BackupHeader, error) {
 // BackupHeadersContext is the context-aware variant of BackupHeaders.
 func (s *Server) BackupHeadersContext(ctx context.Context, device string) ([]*BackupHeader, error) {
 	q := fmt.Sprintf("RESTORE HEADERONLY FROM DISK = N'%s'", escapeSingle(device))
-	rows, err := s.db.QueryContext(ctx, q)
+	rows, err := s.query(ctx, q)
 	if err != nil {
 		return nil, fmt.Errorf("gosmo: read backup header %q: %w", device, err)
 	}
@@ -506,7 +512,7 @@ func (s *Server) BackupFileList(device string) ([]*BackupFile, error) {
 // BackupFileListContext is the context-aware variant of BackupFileList.
 func (s *Server) BackupFileListContext(ctx context.Context, device string) ([]*BackupFile, error) {
 	q := fmt.Sprintf("RESTORE FILELISTONLY FROM DISK = N'%s'", escapeSingle(device))
-	rows, err := s.db.QueryContext(ctx, q)
+	rows, err := s.query(ctx, q)
 	if err != nil {
 		return nil, fmt.Errorf("gosmo: read backup file list %q: %w", device, err)
 	}

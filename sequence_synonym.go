@@ -94,6 +94,9 @@ func (d *Database) CreateSequenceContext(ctx context.Context, req CreateSequence
 	if req.DataType == "" {
 		req.DataType = DataTypeBigInt
 	}
+	if !validDataType(req.DataType) {
+		return fmt.Errorf("gosmo: create sequence %q: unrecognized data type %q", req.Name, req.DataType)
+	}
 	schema := req.Schema
 	if schema == "" {
 		schema = "dbo"

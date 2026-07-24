@@ -130,7 +130,7 @@ func (s *Server) Alerts() ([]*Alert, error) { return s.AlertsContext(context.Bac
 func (s *Server) AlertsContext(ctx context.Context) ([]*Alert, error) {
 	q := "SELECT " + alertColumns + " " + alertFrom + " ORDER BY a.name"
 
-	rows, err := s.db.QueryContext(ctx, q)
+	rows, err := s.query(ctx, q)
 	if err != nil {
 		return nil, fmt.Errorf("gosmo: list alerts: %w", err)
 	}
@@ -177,8 +177,12 @@ func (s *Server) AlertByName(name string) (*Alert, error) {
 func (s *Server) AlertByNameContext(ctx context.Context, name string) (*Alert, error) {
 	q := "SELECT " + alertColumns + " " + alertFrom + " WHERE a.name = @p1"
 
-	row := s.db.QueryRowContext(ctx, q, name)
-	a, err := scanAlert(s, row.Scan)
+	var a *Alert
+	err := s.queryRow(ctx, func(row *sql.Row) error {
+		var scanErr error
+		a, scanErr = scanAlert(s, row.Scan)
+		return scanErr
+	}, q, name)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, fmt.Errorf("gosmo: alert %q not found", name)

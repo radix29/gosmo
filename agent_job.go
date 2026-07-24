@@ -38,10 +38,9 @@ SELECT status_desc, last_startup_time
 FROM   sys.dm_server_services
 WHERE  servicename LIKE N'SQL Server Agent%'`
 
-	row := s.db.QueryRowContext(ctx, q)
 	st := &AgentStatus{}
 	var startup sql.NullTime
-	if err := row.Scan(&st.StatusText, &startup); err != nil {
+	if err := s.queryRowScan(ctx, q, nil, &st.StatusText, &startup); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return &AgentStatus{StatusText: "Unknown"}, nil
 		}
@@ -149,7 +148,7 @@ LEFT   JOIN msdb.dbo.sysjobservers js
        AND js.server_id = 0
 ORDER  BY j.name`
 
-	rows, err := s.db.QueryContext(ctx, q)
+	rows, err := s.query(ctx, q)
 	if err != nil {
 		return nil, fmt.Errorf("gosmo: list agent jobs: %w", err)
 	}
@@ -217,11 +216,10 @@ LEFT   JOIN msdb.dbo.sysjobservers js
        AND js.server_id = 0
 WHERE  j.name = @p1`
 
-	row := s.db.QueryRowContext(ctx, q, name)
 	j := &Job{server: s}
 	var lastRun, nextRun sql.NullTime
 	var lastOutcome, jobState, lastDuration sql.NullInt64
-	if err := row.Scan(
+	if err := s.queryRowScan(ctx, q, []any{name},
 		&j.JobID, &j.Name, &j.Description,
 		&j.IsEnabled, &j.Category, &j.OwnerLoginName,
 		&j.DateCreated, &j.DateModified, &j.StartStepID,
@@ -531,7 +529,7 @@ JOIN   msdb.dbo.sysjobs j ON j.job_id = h.job_id
 WHERE  h.step_id = 0
 ORDER  BY h.run_date DESC, h.run_time DESC`, limit)
 
-	rows, err := s.db.QueryContext(ctx, q)
+	rows, err := s.query(ctx, q)
 	if err != nil {
 		return nil, fmt.Errorf("gosmo: job history: %w", err)
 	}

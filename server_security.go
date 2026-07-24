@@ -35,7 +35,7 @@ func (s *Server) SecurityInfoContext(ctx context.Context) (*ServerSecurityInfo, 
 	                   WHEN 1 THEN 'WINDOWS' ELSE 'MIXED' END`
 
 	info := &ServerSecurityInfo{}
-	if err := s.db.QueryRowContext(ctx, q).Scan(&info.AuthenticationMode); err != nil {
+	if err := s.queryRowScan(ctx, q, nil, &info.AuthenticationMode); err != nil {
 		return nil, fmt.Errorf("gosmo: server security info: %w", err)
 	}
 	return info, nil
@@ -69,7 +69,7 @@ JOIN   sys.server_principals grantor ON grantor.principal_id = sp.grantor_princi
 WHERE  sp.class_desc = 'SERVER'
 ORDER  BY pr.name, sp.permission_name`
 
-	rows, err := s.db.QueryContext(ctx, q)
+	rows, err := s.query(ctx, q)
 	if err != nil {
 		return nil, fmt.Errorf("gosmo: server permissions: %w", err)
 	}
@@ -234,7 +234,7 @@ SELECT name, credential_identity, create_date, modify_date
 FROM   sys.credentials
 ORDER  BY name`
 
-	rows, err := s.db.QueryContext(ctx, q)
+	rows, err := s.query(ctx, q)
 	if err != nil {
 		return nil, fmt.Errorf("gosmo: list credentials: %w", err)
 	}

@@ -105,6 +105,21 @@ func (d *Database) SetQueryStoreOptions(opts QueryStoreOptions) error {
 	return d.SetQueryStoreOptionsContext(context.Background(), opts)
 }
 
+// queryStoreOperationModes allowlists the ALTER DATABASE SET QUERY_STORE
+// OPERATION_MODE keywords SQL Server accepts (once already past the OFF
+// case, handled separately below) — can't be identifier-quoted or
+// parameterised (ALTER DATABASE is DDL).
+var queryStoreOperationModes = map[string]bool{"READ_ONLY": true, "READ_WRITE": true}
+
+// queryStoreCaptureModes allowlists the QUERY_CAPTURE_MODE keywords.
+var queryStoreCaptureModes = map[string]bool{"NONE": true, "AUTO": true, "ALL": true, "CUSTOM": true}
+
+// queryStoreCleanupModes allowlists the SIZE_BASED_CLEANUP_MODE keywords.
+var queryStoreCleanupModes = map[string]bool{"OFF": true, "AUTO": true}
+
+// queryStoreWaitStatsModes allowlists the WAIT_STATS_CAPTURE_MODE keywords.
+var queryStoreWaitStatsModes = map[string]bool{"OFF": true, "ON": true}
+
 // SetQueryStoreOptionsContext is the context-aware variant of
 // SetQueryStoreOptions. Like SetRecoveryModelContext, this is an ALTER
 // DATABASE statement naming the database explicitly, so it runs through
@@ -117,6 +132,19 @@ func (d *Database) SetQueryStoreOptionsContext(ctx context.Context, opts QuerySt
 			return fmt.Errorf("gosmo: disable query store on %q: %w", d.name, err)
 		}
 		return nil
+	}
+
+	if !queryStoreOperationModes[opts.DesiredState] {
+		return fmt.Errorf("gosmo: set query store options on %q: unrecognized operation mode %q", d.name, opts.DesiredState)
+	}
+	if !queryStoreCaptureModes[opts.CaptureMode] {
+		return fmt.Errorf("gosmo: set query store options on %q: unrecognized capture mode %q", d.name, opts.CaptureMode)
+	}
+	if !queryStoreCleanupModes[opts.SizeCleanupMode] {
+		return fmt.Errorf("gosmo: set query store options on %q: unrecognized size cleanup mode %q", d.name, opts.SizeCleanupMode)
+	}
+	if !queryStoreWaitStatsModes[opts.WaitStatsCaptureMode] {
+		return fmt.Errorf("gosmo: set query store options on %q: unrecognized wait stats capture mode %q", d.name, opts.WaitStatsCaptureMode)
 	}
 
 	withs := []string{

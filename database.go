@@ -980,6 +980,9 @@ func (d *Database) SetRecoveryModel(model RecoveryModel) error {
 
 // SetRecoveryModelContext is the context-aware variant.
 func (d *Database) SetRecoveryModelContext(ctx context.Context, model RecoveryModel) error {
+	if !validRecoveryModel(model) {
+		return fmt.Errorf("gosmo: set recovery model: unrecognized recovery model %q", model)
+	}
 	if err := d.server.execContext(ctx,
 		fmt.Sprintf("ALTER DATABASE %s SET RECOVERY %s", quoteIdent(d.name), model),
 	); err != nil {

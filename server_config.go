@@ -38,7 +38,7 @@ SELECT configuration_id, name, value, value_in_use,
 FROM   sys.configurations
 ORDER  BY name`
 
-	rows, err := s.db.QueryContext(ctx, q)
+	rows, err := s.query(ctx, q)
 	if err != nil {
 		return nil, fmt.Errorf("gosmo: list configurations: %w", err)
 	}
@@ -75,8 +75,7 @@ WHERE  name = @p1`
 
 	c := &ConfigurationOption{server: s}
 	var desc sql.NullString
-	row := s.db.QueryRowContext(ctx, q, name)
-	if err := row.Scan(
+	if err := s.queryRowScan(ctx, q, []any{name},
 		&c.ConfigID, &c.Name, &c.Value, &c.ValueInUse,
 		&c.Minimum, &c.Maximum, &c.IsDynamic, &c.IsAdvanced, &desc,
 	); err != nil {
@@ -154,8 +153,9 @@ SELECT
       WHERE object_name LIKE '%Memory Manager%' AND counter_name = 'Total Server Memory (KB)')`
 
 	m := &ServerMemoryStats{}
-	row := s.db.QueryRowContext(ctx, q)
-	if err := row.Scan(&m.PhysicalMemoryMB, &m.AvailableMemoryMB, &m.TargetServerMemoryMB, &m.TotalServerMemoryMB); err != nil {
+	if err := s.queryRowScan(ctx, q, nil,
+		&m.PhysicalMemoryMB, &m.AvailableMemoryMB, &m.TargetServerMemoryMB, &m.TotalServerMemoryMB,
+	); err != nil {
 		return nil, fmt.Errorf("gosmo: server memory stats: %w", err)
 	}
 	return m, nil
@@ -185,7 +185,7 @@ func (s *Server) ProcessorInfo() (*ProcessorInfo, error) {
 func (s *Server) ProcessorInfoContext(ctx context.Context) (*ProcessorInfo, error) {
 	info := &ProcessorInfo{}
 	const q = `SELECT cpu_count, hyperthread_ratio FROM sys.dm_os_sys_info`
-	if err := s.db.QueryRowContext(ctx, q).Scan(&info.CPUCount, &info.HyperthreadRatio); err != nil {
+	if err := s.queryRowScan(ctx, q, nil, &info.CPUCount, &info.HyperthreadRatio); err != nil {
 		return nil, fmt.Errorf("gosmo: processor info: %w", err)
 	}
 
@@ -196,7 +196,7 @@ WHERE  status = 'VISIBLE ONLINE'
 GROUP  BY cpu_id, parent_node_id
 ORDER  BY cpu_id`
 
-	rows, err := s.db.QueryContext(ctx, nq)
+	rows, err := s.query(ctx, nq)
 	if err != nil {
 		return nil, fmt.Errorf("gosmo: processor NUMA map: %w", err)
 	}
@@ -270,7 +270,7 @@ CROSS APPLY sys.dm_os_volume_stats(mf.database_id, mf.file_id) vs
 GROUP BY vs.volume_mount_point, vs.logical_volume_name, vs.total_bytes, vs.available_bytes
 ORDER BY vs.volume_mount_point`
 
-	rows, err := s.db.QueryContext(ctx, q)
+	rows, err := s.query(ctx, q)
 	if err != nil {
 		return nil, fmt.Errorf("gosmo: disk volumes: %w", err)
 	}
@@ -313,7 +313,7 @@ func (s *Server) Languages() ([]*Language, error) {
 func (s *Server) LanguagesContext(ctx context.Context) ([]*Language, error) {
 	const q = `SELECT langid, name, alias FROM sys.syslanguages ORDER BY name`
 
-	rows, err := s.db.QueryContext(ctx, q)
+	rows, err := s.query(ctx, q)
 	if err != nil {
 		return nil, fmt.Errorf("gosmo: list languages: %w", err)
 	}
@@ -379,7 +379,7 @@ OUTER  APPLY sys.dm_exec_sql_text(r.sql_handle) t
 WHERE  s.session_id != @@SPID %s
 ORDER  BY s.session_id`, sysFilter)
 
-	rows, err := s.db.QueryContext(ctx, q)
+	rows, err := s.query(ctx, q)
 	if err != nil {
 		return nil, fmt.Errorf("gosmo: active sessions: %w", err)
 	}
@@ -438,7 +438,7 @@ func (s *Server) ReadErrorLog(logNumber int) ([]*ErrorLogEntry, error) {
 }
 
 func (s *Server) ReadErrorLogContext(ctx context.Context, logNumber int) ([]*ErrorLogEntry, error) {
-	rows, err := s.db.QueryContext(ctx,
+	rows, err := s.query(ctx,
 		fmt.Sprintf("EXEC xp_readerrorlog %d, 1", logNumber))
 	if err != nil {
 		return nil, fmt.Errorf("gosmo: read error log: %w", err)
@@ -495,7 +495,7 @@ LEFT   JOIN msdb.dbo.sysmail_principalprofile pp
        ON  pp.profile_id = p.profile_id AND pp.principal_sid = 0x00
 ORDER  BY p.name`
 
-	rows, err := s.db.QueryContext(ctx, q)
+	rows, err := s.query(ctx, q)
 	if err != nil {
 		return nil, fmt.Errorf("gosmo: list mail profiles: %w", err)
 	}

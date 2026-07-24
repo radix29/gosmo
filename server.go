@@ -577,13 +577,53 @@ func (s *Server) CurrentDatabase() (string, error) {
 // CurrentDatabaseContext is the context-aware variant of CurrentDatabase.
 func (s *Server) CurrentDatabaseContext(ctx context.Context) (string, error) {
 	var name string
-	if err := s.db.QueryRowContext(ctx, "SELECT DB_NAME()").Scan(&name); err != nil {
+	if err := s.queryRowScan(ctx, "SELECT DB_NAME()", nil, &name); err != nil {
 		return "", fmt.Errorf("gosmo: current database: %w", err)
 	}
 	return name, nil
 }
 
 // -- Internal helpers ----------------------------------------------------------
+
+// query runs a server-scoped, rows-returning read against the pool,
+// retrying once on a transient connection failure (a dropped pooled
+// connection, etc.) — the Server-level counterpart of Database.query. A
+// single read is idempotent, so it's always safe to re-run on a fresh
+// connection; unlike Database.query, there's no USE to redo first, since a
+// Server-scoped query never targets a specific database.
+func (s *Server) query(ctx context.Context, q string, args ...any) (*sql.Rows, error) {
+	return withRetry(ctx, func() (*sql.Rows, error) {
+		return s.db.QueryContext(ctx, q, args...)
+	})
+}
+
+// queryRow runs a server-scoped, single-row read and hands the result to
+// scan, retrying the whole query+scan as one unit on a transient connection
+// failure. Unlike query (and unlike Database.queryRow), this can't hand the
+// caller a live *sql.Row to scan later: QueryRowContext itself never
+// returns an error — it only ever surfaces at Scan — so the scan has to run
+// inside the retried closure to be covered by it at all. scan is usually
+// row.Scan(&dest1, &dest2, ...) wrapped in a closure, or — for the several
+// row types with a shared scanX(server, row.Scan) helper (see
+// agent_schedule.go/agent_alert.go/agent_operator.go) — a closure around
+// that call instead.
+func (s *Server) queryRow(ctx context.Context, scan func(*sql.Row) error, q string, args ...any) error {
+	_, err := withRetry(ctx, func() (struct{}, error) {
+		return struct{}{}, scan(s.db.QueryRowContext(ctx, q, args...))
+	})
+	return err
+}
+
+// queryRowScan is a queryRow convenience for the common case of scanning
+// straight into a fixed list of destinations, sparing the caller a
+// `func(row *sql.Row) error { return row.Scan(dest...) }` closure of their
+// own. Callers that need to do something other than a bare Scan (e.g. the
+// shared scanAlert/scanOperator/scanSchedule helpers in
+// agent_alert.go/agent_operator.go/agent_schedule.go) should keep calling
+// queryRow directly.
+func (s *Server) queryRowScan(ctx context.Context, q string, args []any, dest ...any) error {
+	return s.queryRow(ctx, func(row *sql.Row) error { return row.Scan(dest...) }, q, args...)
+}
 
 func (s *Server) loadInfo(ctx context.Context) error {
 	const q = `
@@ -605,13 +645,12 @@ func (s *Server) loadInfo(ctx context.Context) error {
 		SERVERPROPERTY('InstanceDefaultBackupPath')
 	FROM sys.dm_os_sys_info osi`
 
-	row := s.db.QueryRowContext(ctx, q)
 	info := &ServerInfo{}
 	var isClustered, isHADR, isSingleUser, engineEdition sql.NullInt64
 	var osVer, dataPath, logPath, backupPath sql.NullString
 	var memMB, cpuCount sql.NullInt64
 
-	if err := row.Scan(
+	if err := s.queryRowScan(ctx, q, nil,
 		&info.Name, &info.Edition, &info.ProductVersion, &info.ProductLevel,
 		&info.Collation, &isClustered, &isHADR, &isSingleUser, &engineEdition, &osVer,
 		&memMB, &cpuCount, &dataPath, &logPath, &backupPath,
@@ -655,7 +694,7 @@ func (s *Server) DatabasesContext(ctx context.Context) ([]*Database, error) {
 	FROM sys.databases
 	ORDER BY name`
 
-	rows, err := s.db.QueryContext(ctx, q)
+	rows, err := s.query(ctx, q)
 	if err != nil {
 		return nil, fmt.Errorf("gosmo: list databases: %w", err)
 	}
@@ -698,8 +737,7 @@ func (s *Server) DatabaseByNameContext(ctx context.Context, name string) (*Datab
 	var state, recovery, collation sql.NullString
 	var compatLevel sql.NullInt64
 
-	row := s.db.QueryRowContext(ctx, q, name)
-	if err := row.Scan(
+	if err := s.queryRowScan(ctx, q, []any{name},
 		&d.name, &d.id, &state, &recovery,
 		&compatLevel, &collation, &d.isReadOnly, &d.createDate,
 	); err != nil {
@@ -745,6 +783,9 @@ func (s *Server) CreateDatabaseContext(ctx context.Context, name string, opts *C
 	}
 	if opts == nil {
 		opts = &CreateDatabaseOptions{}
+	}
+	if opts.RecoveryModel != "" && !validRecoveryModel(opts.RecoveryModel) {
+		return fmt.Errorf("gosmo: create database %q: unrecognized recovery model %q", name, opts.RecoveryModel)
 	}
 
 	if err := s.execContext(ctx, buildCreateDatabaseStatement(name, opts)); err != nil {
@@ -844,7 +885,7 @@ func (s *Server) LoginsContext(ctx context.Context) ([]*Login, error) {
 	WHERE type IN ('S','U','G')
 	ORDER BY name`
 
-	rows, err := s.db.QueryContext(ctx, q)
+	rows, err := s.query(ctx, q)
 	if err != nil {
 		return nil, fmt.Errorf("gosmo: list logins: %w", err)
 	}
@@ -880,9 +921,9 @@ func (s *Server) LoginByNameContext(ctx context.Context, name string) (*Login, e
 	l := &Login{server: s}
 	var defDB sql.NullString
 
-	row := s.db.QueryRowContext(ctx, q, name)
-	if err := row.Scan(&l.Name, &l.SID, &l.LoginType, &l.IsDisabled,
-		&defDB, &l.CreateDate, &l.ModifyDate); err != nil {
+	if err := s.queryRowScan(ctx, q, []any{name},
+		&l.Name, &l.SID, &l.LoginType, &l.IsDisabled, &defDB, &l.CreateDate, &l.ModifyDate,
+	); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, fmt.Errorf("gosmo: login %q not found", name)
 		}
@@ -1012,7 +1053,7 @@ func (s *Server) ServerRolesContext(ctx context.Context) ([]*ServerRole, error) 
 	WHERE r.type = 'R'
 	ORDER BY r.name`
 
-	rows, err := s.db.QueryContext(ctx, q)
+	rows, err := s.query(ctx, q)
 	if err != nil {
 		return nil, fmt.Errorf("gosmo: list server roles: %w", err)
 	}
@@ -1057,8 +1098,9 @@ func (s *Server) ServerRoleByNameContext(ctx context.Context, name string) (*Ser
 
 	r := &ServerRole{server: s, Name: name}
 	var members sql.NullString
-	row := s.db.QueryRowContext(ctx, q, name)
-	if err := row.Scan(&r.ID, &r.IsFixedRole, &r.Owner, &r.SID, &r.CreateDate, &r.ModifyDate, &members); err != nil {
+	if err := s.queryRowScan(ctx, q, []any{name},
+		&r.ID, &r.IsFixedRole, &r.Owner, &r.SID, &r.CreateDate, &r.ModifyDate, &members,
+	); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, fmt.Errorf("gosmo: server role %q not found", name)
 		}
@@ -1118,7 +1160,7 @@ JOIN   sys.server_principals m ON m.principal_id = rm.member_principal_id
 WHERE  r.name = @p1
 ORDER  BY m.name`
 
-	rows, err := s.db.QueryContext(ctx, q, roleName)
+	rows, err := s.query(ctx, q, roleName)
 	if err != nil {
 		return nil, fmt.Errorf("gosmo: members of server role %q: %w", roleName, err)
 	}
@@ -1188,7 +1230,7 @@ func (s *Server) LinkedServersContext(ctx context.Context) ([]*LinkedServer, err
 	WHERE is_linked = 1
 	ORDER BY name`
 
-	rows, err := s.db.QueryContext(ctx, q)
+	rows, err := s.query(ctx, q)
 	if err != nil {
 		return nil, fmt.Errorf("gosmo: list linked servers: %w", err)
 	}

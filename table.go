@@ -185,6 +185,9 @@ func (t *Table) AddColumnContext(ctx context.Context, col ColumnDefinition) erro
 	if col.Name == "" {
 		return fmt.Errorf("gosmo: add column: name is required")
 	}
+	if !validDataType(col.DataType) {
+		return fmt.Errorf("gosmo: add column %q: unrecognized data type %q", col.Name, col.DataType)
+	}
 
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "ALTER TABLE %s ADD %s %s", t.FullName(), quoteIdent(col.Name), colTypeSQL(col))
@@ -218,6 +221,9 @@ func (t *Table) AlterColumn(col ColumnDefinition) error {
 func (t *Table) AlterColumnContext(ctx context.Context, col ColumnDefinition) error {
 	if col.Name == "" {
 		return fmt.Errorf("gosmo: alter column: name is required")
+	}
+	if !validDataType(col.DataType) {
+		return fmt.Errorf("gosmo: alter column %q: unrecognized data type %q", col.Name, col.DataType)
 	}
 
 	var sb strings.Builder
@@ -549,6 +555,11 @@ func (d *Database) CreateTableContext(ctx context.Context, req CreateTableReques
 	if len(req.Columns) == 0 {
 		return fmt.Errorf("gosmo: create table: at least one column is required")
 	}
+	for _, col := range req.Columns {
+		if !validDataType(col.DataType) {
+			return fmt.Errorf("gosmo: create table %q: unrecognized data type %q for column %q", req.Name, col.DataType, col.Name)
+		}
+	}
 
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "CREATE TABLE %s (\n", qualifiedName(req.Schema, req.Name))
@@ -719,8 +730,10 @@ func (t *Table) CheckWhereSyntaxContext(ctx context.Context, predicate string) e
 // -- Column type builder -------------------------------------------------------
 
 // colTypeSQL returns the T-SQL data-type fragment for a ColumnDefinition.
-// This is the single canonical implementation; scripter.go calls formatColumnType
-// on a *Column (from sys.columns), which uses different field names.
+// Callers must validate col.DataType (see validDataType) before calling this
+// — it trusts its input and does not itself reject an unrecognized type.
+// scripter.go's ColumnTypeString does the equivalent for a *Column (from
+// sys.columns), which uses different field names.
 func colTypeSQL(col ColumnDefinition) string {
 	switch col.DataType {
 	case DataTypeVarChar, DataTypeChar, DataTypeBinary, DataTypeVarBinary,

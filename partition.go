@@ -4,8 +4,22 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"regexp"
 	"strings"
 )
+
+// partitionBoundaryPattern matches a well-formed SQL Server literal: a
+// signed integer or decimal, a hex literal, a properly quoted (and
+// escaped) string/date literal, or NULL.
+var partitionBoundaryPattern = regexp.MustCompile(`(?i)^(-?\d+(\.\d+)?|0x[0-9a-f]+|n?'(?:[^']|'')*'|null)$`)
+
+// validPartitionBoundary reports whether v is safe to splice directly into
+// a partition function's VALUES/SPLIT RANGE/MERGE RANGE clause. These
+// values can't be parameterized in DDL, so this validates literal *shape*
+// rather than checking against a fixed set of values.
+func validPartitionBoundary(v string) bool {
+	return partitionBoundaryPattern.MatchString(strings.TrimSpace(v))
+}
 
 // ============================================================
 // Partition Functions & Schemes
@@ -81,6 +95,14 @@ func (d *Database) CreatePartitionFunctionContext(ctx context.Context, req Creat
 	if len(req.Boundaries) == 0 {
 		return fmt.Errorf("gosmo: create partition function: at least one boundary required")
 	}
+	if !validDataType(req.InputType) {
+		return fmt.Errorf("gosmo: create partition function %q: unrecognized data type %q", req.Name, req.InputType)
+	}
+	for _, b := range req.Boundaries {
+		if !validPartitionBoundary(b) {
+			return fmt.Errorf("gosmo: create partition function %q: invalid boundary literal %q", req.Name, b)
+		}
+	}
 	side := "LEFT"
 	if req.IsRight {
 		side = "RIGHT"
@@ -119,6 +141,9 @@ func (pf *PartitionFunction) SplitRange(value string) error {
 
 // SplitRangeContext is the context-aware variant of SplitRange.
 func (pf *PartitionFunction) SplitRangeContext(ctx context.Context, value string) error {
+	if !validPartitionBoundary(value) {
+		return fmt.Errorf("gosmo: split range on [%s]: invalid boundary literal %q", pf.Name, value)
+	}
 	_, err := pf.db.exec(ctx,
 		fmt.Sprintf("ALTER PARTITION FUNCTION %s() SPLIT RANGE (%s)", quoteIdent(pf.Name), value))
 	if err != nil {
@@ -134,6 +159,9 @@ func (pf *PartitionFunction) MergeRange(value string) error {
 
 // MergeRangeContext is the context-aware variant of MergeRange.
 func (pf *PartitionFunction) MergeRangeContext(ctx context.Context, value string) error {
+	if !validPartitionBoundary(value) {
+		return fmt.Errorf("gosmo: merge range on [%s]: invalid boundary literal %q", pf.Name, value)
+	}
 	_, err := pf.db.exec(ctx,
 		fmt.Sprintf("ALTER PARTITION FUNCTION %s() MERGE RANGE (%s)", quoteIdent(pf.Name), value))
 	if err != nil {
