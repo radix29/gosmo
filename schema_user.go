@@ -2,6 +2,7 @@ package gosmo
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"time"
 )
@@ -53,14 +54,8 @@ func (s *Schema) ObjectCount() (int, error) {
 func (s *Schema) ObjectCountContext(ctx context.Context) (int, error) {
 	const q = `SELECT COUNT(*) FROM sys.objects o WHERE o.schema_id = SCHEMA_ID(@p1) AND o.is_ms_shipped = 0`
 
-	row, release, err := s.db.queryRow(ctx, q, s.Name)
-	if err != nil {
-		return 0, err
-	}
-	defer release()
-
 	var count int
-	if err := row.Scan(&count); err != nil {
+	if err := s.db.queryRow(ctx, func(row *sql.Row) error { return row.Scan(&count) }, q, s.Name); err != nil {
 		return 0, fmt.Errorf("gosmo: object count for schema %q: %w", s.Name, err)
 	}
 	return count, nil

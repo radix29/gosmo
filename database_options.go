@@ -70,17 +70,19 @@ WHERE  name = @p1`
 	var owner sql.NullString
 	var isLocalCursor bool
 
-	row := d.server.db.QueryRowContext(ctx, q, d.name)
-	if err := row.Scan(
-		&owner, &o.PageVerify, &o.UserAccess, &o.Containment, &isLocalCursor, &o.SnapshotIsolation,
-		&o.AutoClose, &o.AutoShrink, &o.AutoCreateStats,
-		&o.AutoUpdateStats, &o.AutoUpdateStatsAsync,
-		&o.ANSINullDefault, &o.ANSINulls, &o.ANSIPadding,
-		&o.ANSIWarnings, &o.ArithAbort, &o.ConcatNullYieldsNull,
-		&o.NumericRoundAbort, &o.QuotedIdentifier, &o.RecursiveTriggers,
-		&o.CursorCloseOnCommit, &o.ReadCommittedSnapshot,
-		&o.IsTrustworthy, &o.IsBrokerEnabled, &o.IsEncrypted,
-	); err != nil {
+	err := d.server.queryRow(ctx, func(row *sql.Row) error {
+		return row.Scan(
+			&owner, &o.PageVerify, &o.UserAccess, &o.Containment, &isLocalCursor, &o.SnapshotIsolation,
+			&o.AutoClose, &o.AutoShrink, &o.AutoCreateStats,
+			&o.AutoUpdateStats, &o.AutoUpdateStatsAsync,
+			&o.ANSINullDefault, &o.ANSINulls, &o.ANSIPadding,
+			&o.ANSIWarnings, &o.ArithAbort, &o.ConcatNullYieldsNull,
+			&o.NumericRoundAbort, &o.QuotedIdentifier, &o.RecursiveTriggers,
+			&o.CursorCloseOnCommit, &o.ReadCommittedSnapshot,
+			&o.IsTrustworthy, &o.IsBrokerEnabled, &o.IsEncrypted,
+		)
+	}, q, d.name)
+	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, fmt.Errorf("gosmo: database %q not found", d.name)
 		}

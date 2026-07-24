@@ -583,6 +583,23 @@ func (s *Server) CurrentDatabaseContext(ctx context.Context) (string, error) {
 	return name, nil
 }
 
+// CurrentLogin returns the server login name the connection is
+// authenticated as (SUSER_NAME()) — the real login behind the
+// connection, which for Windows/Entra auth differs from whatever was
+// passed as ConnectionOptions.User (often empty for those methods).
+func (s *Server) CurrentLogin() (string, error) {
+	return s.CurrentLoginContext(context.Background())
+}
+
+// CurrentLoginContext is the context-aware variant of CurrentLogin.
+func (s *Server) CurrentLoginContext(ctx context.Context) (string, error) {
+	var name string
+	if err := s.queryRowScan(ctx, "SELECT SUSER_NAME()", nil, &name); err != nil {
+		return "", fmt.Errorf("gosmo: current login: %w", err)
+	}
+	return name, nil
+}
+
 // -- Internal helpers ----------------------------------------------------------
 
 // query runs a server-scoped, rows-returning read against the pool,

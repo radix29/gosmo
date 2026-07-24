@@ -68,18 +68,14 @@ JOIN   sys.schemas s ON s.schema_id = t.schema_id
 JOIN   sys.database_principals owner ON owner.principal_id = s.principal_id
 WHERE  t.object_id = @p1`
 
-	row, release, err := t.db.queryRow(ctx, q, t.ObjectID)
-	if err != nil {
-		return nil, err
-	}
-	defer release()
-
 	d := &TableDetail{}
-	if err := row.Scan(
-		&d.SchemaOwner, &d.LockEscalation, &d.UsesAnsiNulls,
-		&d.IsReplicated, &d.IsTrackedByCDC, &d.TemporalType,
-		&d.Durability, &d.LedgerType, &d.PrimaryKeyName, &d.DataSpace,
-	); err != nil {
+	if err := t.db.queryRow(ctx, func(row *sql.Row) error {
+		return row.Scan(
+			&d.SchemaOwner, &d.LockEscalation, &d.UsesAnsiNulls,
+			&d.IsReplicated, &d.IsTrackedByCDC, &d.TemporalType,
+			&d.Durability, &d.LedgerType, &d.PrimaryKeyName, &d.DataSpace,
+		)
+	}, q, t.ObjectID); err != nil {
 		return nil, fmt.Errorf("gosmo: table detail for %s: %w", t.FullName(), err)
 	}
 	return d, nil
@@ -666,17 +662,11 @@ func (t *Table) RowCount() (int64, error) {
 
 // RowCountContext is the context-aware variant of RowCount.
 func (t *Table) RowCountContext(ctx context.Context) (int64, error) {
-	row, release, err := t.db.queryRow(ctx, `
+	var n int64
+	if err := t.db.queryRow(ctx, func(row *sql.Row) error { return row.Scan(&n) }, `
 SELECT SUM(p.rows)
 FROM   sys.partitions p
-WHERE  p.object_id = @p1 AND p.index_id IN (0, 1)`, t.ObjectID)
-	if err != nil {
-		return 0, err
-	}
-	defer release()
-
-	var n int64
-	if err := row.Scan(&n); err != nil {
+WHERE  p.object_id = @p1 AND p.index_id IN (0, 1)`, t.ObjectID); err != nil {
 		return 0, fmt.Errorf("gosmo: row count for %s: %w", t.FullName(), err)
 	}
 	return n, nil
@@ -697,14 +687,8 @@ func (t *Table) CountWhere(predicate string) (int64, error) {
 // FilterDefinition), not raw user input.
 func (t *Table) CountWhereContext(ctx context.Context, predicate string) (int64, error) {
 	q := fmt.Sprintf("SELECT COUNT_BIG(*) FROM %s WHERE %s", t.FullName(), predicate)
-	row, release, err := t.db.queryRow(ctx, q)
-	if err != nil {
-		return 0, fmt.Errorf("gosmo: count where for %s: %w", t.FullName(), err)
-	}
-	defer release()
-
 	var n int64
-	if err := row.Scan(&n); err != nil {
+	if err := t.db.queryRow(ctx, func(row *sql.Row) error { return row.Scan(&n) }, q); err != nil {
 		return 0, fmt.Errorf("gosmo: count where for %s: %w", t.FullName(), err)
 	}
 	return n, nil

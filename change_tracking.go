@@ -40,8 +40,10 @@ LEFT   JOIN sys.change_tracking_databases ctd ON ctd.database_id = sd.database_i
 WHERE  sd.name = @p1`
 
 	info := &ChangeTrackingInfo{}
-	row := d.server.db.QueryRowContext(ctx, q, d.name)
-	if err := row.Scan(&info.Enabled, &info.AutoCleanup, &info.RetentionPeriod, &info.RetentionUnit); err != nil {
+	err := d.server.queryRow(ctx, func(row *sql.Row) error {
+		return row.Scan(&info.Enabled, &info.AutoCleanup, &info.RetentionPeriod, &info.RetentionUnit)
+	}, q, d.name)
+	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, fmt.Errorf("gosmo: database %q not found", d.name)
 		}

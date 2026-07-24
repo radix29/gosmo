@@ -245,7 +245,7 @@ JOIN   msdb.dbo.sysalerts a ON a.id = n.alert_id
 WHERE  n.operator_id = @p1
 ORDER  BY a.name`
 
-	rows, err := o.server.db.QueryContext(ctx, q, o.ID)
+	rows, err := o.server.query(ctx, q, o.ID)
 	if err != nil {
 		return nil, fmt.Errorf("gosmo: notifying alerts for operator %q: %w", o.Name, err)
 	}
@@ -286,7 +286,7 @@ FROM   msdb.dbo.sysjobs
 WHERE  notify_email_operator_id = @p1
 ORDER  BY name`
 
-	rows, err := o.server.db.QueryContext(ctx, q, o.ID)
+	rows, err := o.server.query(ctx, q, o.ID)
 	if err != nil {
 		return nil, fmt.Errorf("gosmo: notifying jobs for operator %q: %w", o.Name, err)
 	}

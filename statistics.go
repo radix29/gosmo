@@ -228,19 +228,15 @@ func (st *Statistic) HeaderContext(ctx context.Context) (*StatisticHeader, error
 	q := fmt.Sprintf("DBCC SHOW_STATISTICS (N'%s', N'%s') WITH STAT_HEADER, NO_INFOMSGS",
 		escapeSingle(st.table.FullName()), escapeSingle(st.Name))
 
-	row, release, err := st.table.db.queryRow(ctx, q)
-	if err != nil {
-		return nil, fmt.Errorf("gosmo: statistics header for %q: %w", st.Name, err)
-	}
-	defer release()
-
 	var name string
 	var updated, stringIndex, filterExpr sql.NullString
 	var rowsN, rowsSampled, unfiltered sql.NullInt64
 	var steps sql.NullInt16
 	var density, avgKeyLen, samplePct sql.NullFloat64
-	if err := row.Scan(&name, &updated, &rowsN, &rowsSampled, &steps, &density,
-		&avgKeyLen, &stringIndex, &filterExpr, &unfiltered, &samplePct); err != nil {
+	if err := st.table.db.queryRow(ctx, func(row *sql.Row) error {
+		return row.Scan(&name, &updated, &rowsN, &rowsSampled, &steps, &density,
+			&avgKeyLen, &stringIndex, &filterExpr, &unfiltered, &samplePct)
+	}, q); err != nil {
 		return nil, fmt.Errorf("gosmo: statistics header for %q: %w", st.Name, err)
 	}
 	return &StatisticHeader{

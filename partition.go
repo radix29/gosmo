@@ -340,15 +340,11 @@ JOIN   sys.allocation_units a ON a.container_id = p.partition_id
 JOIN   sys.indexes i ON i.object_id = p.object_id AND i.index_id = p.index_id
 WHERE  p.object_id = @p1`
 
-	row, release, err := t.db.queryRow(ctx, q, t.ObjectID)
-	if err != nil {
-		return nil, err
-	}
-	defer release()
-
 	info := &TableSpaceInfo{}
 	var fg sql.NullString
-	if err := row.Scan(&info.ReservedKB, &info.DataKB, &info.IndexKB, &info.LOBKB, &info.UnusedKB, &fg); err != nil {
+	if err := t.db.queryRow(ctx, func(row *sql.Row) error {
+		return row.Scan(&info.ReservedKB, &info.DataKB, &info.IndexKB, &info.LOBKB, &info.UnusedKB, &fg)
+	}, q, t.ObjectID); err != nil {
 		return nil, fmt.Errorf("gosmo: space used for %s: %w", t.FullName(), err)
 	}
 	info.FileGroup = fg.String

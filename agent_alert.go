@@ -446,7 +446,7 @@ JOIN   msdb.dbo.sysoperators o ON o.id = n.operator_id
 WHERE  n.alert_id = @p1
 ORDER  BY o.name`
 
-	rows, err := a.server.db.QueryContext(ctx, q, a.ID)
+	rows, err := a.server.query(ctx, q, a.ID)
 	if err != nil {
 		return nil, fmt.Errorf("gosmo: notifications for alert %q: %w", a.Name, err)
 	}

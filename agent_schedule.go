@@ -380,7 +380,7 @@ JOIN   msdb.dbo.sysjobschedules js ON js.job_id = j.job_id
 WHERE  js.schedule_id = @p1
 ORDER  BY j.name`
 
-	rows, err := sch.server.db.QueryContext(ctx, q, sch.ID)
+	rows, err := sch.server.query(ctx, q, sch.ID)
 	if err != nil {
 		return nil, fmt.Errorf("gosmo: jobs for schedule %q: %w", sch.Name, err)
 	}
@@ -407,7 +407,7 @@ JOIN   msdb.dbo.sysjobschedules js ON js.schedule_id = sch.schedule_id
 WHERE  js.job_id = @p1
 ORDER  BY sch.name`
 
-	rows, err := j.server.db.QueryContext(ctx, q, j.JobID)
+	rows, err := j.server.query(ctx, q, j.JobID)
 	if err != nil {
 		return nil, fmt.Errorf("gosmo: schedules for job %q: %w", j.Name, err)
 	}

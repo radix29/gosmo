@@ -245,18 +245,13 @@ func (sc *Scripter) ScriptViewContext(ctx context.Context, schema, name string) 
 	if sc.opts.ScriptDrops {
 		return fmt.Sprintf("DROP VIEW IF EXISTS %s;\nGO\n", qualifiedName(schema, name)), nil
 	}
-	row, release, err := sc.db.queryRow(ctx, `
+	var def string
+	err := sc.db.queryRow(ctx, func(row *sql.Row) error { return row.Scan(&def) }, `
 SELECT m.definition
 FROM   sys.views v
 JOIN   sys.sql_modules m ON m.object_id = v.object_id
 WHERE  SCHEMA_NAME(v.schema_id) = @p1 AND v.name = @p2`, schema, name)
 	if err != nil {
-		return "", err
-	}
-	defer release()
-
-	var def string
-	if err := row.Scan(&def); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return "", fmt.Errorf("gosmo: view %s not found", qualifiedName(schema, name))
 		}
@@ -279,18 +274,13 @@ func (sc *Scripter) ScriptStoredProcedureContext(ctx context.Context, schema, na
 	if sc.opts.ScriptDrops {
 		return fmt.Sprintf("DROP PROCEDURE IF EXISTS %s;\nGO\n", qualifiedName(schema, name)), nil
 	}
-	row, release, err := sc.db.queryRow(ctx, `
+	var def string
+	err := sc.db.queryRow(ctx, func(row *sql.Row) error { return row.Scan(&def) }, `
 SELECT m.definition
 FROM   sys.procedures p
 JOIN   sys.sql_modules m ON m.object_id = p.object_id
 WHERE  SCHEMA_NAME(p.schema_id) = @p1 AND p.name = @p2`, schema, name)
 	if err != nil {
-		return "", err
-	}
-	defer release()
-
-	var def string
-	if err := row.Scan(&def); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return "", fmt.Errorf("gosmo: stored procedure %s not found", qualifiedName(schema, name))
 		}
@@ -313,19 +303,14 @@ func (sc *Scripter) ScriptFunctionContext(ctx context.Context, schema, name stri
 	if sc.opts.ScriptDrops {
 		return fmt.Sprintf("DROP FUNCTION IF EXISTS %s;\nGO\n", qualifiedName(schema, name)), nil
 	}
-	row, release, err := sc.db.queryRow(ctx, `
+	var def string
+	err := sc.db.queryRow(ctx, func(row *sql.Row) error { return row.Scan(&def) }, `
 SELECT m.definition
 FROM   sys.objects o
 JOIN   sys.sql_modules m ON m.object_id = o.object_id
 WHERE  SCHEMA_NAME(o.schema_id) = @p1 AND o.name = @p2
   AND  o.type IN ('FN','TF','IF')`, schema, name)
 	if err != nil {
-		return "", err
-	}
-	defer release()
-
-	var def string
-	if err := row.Scan(&def); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return "", fmt.Errorf("gosmo: function %s not found", qualifiedName(schema, name))
 		}

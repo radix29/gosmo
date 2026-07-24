@@ -172,16 +172,21 @@ func (seq *Sequence) NextValue() (int64, error) {
 }
 
 // NextValueContext is the context-aware variant of NextValue.
+//
+// This deliberately uses withConn, not queryRow: "NEXT VALUE FOR" advances
+// the sequence as a side effect of being read, so it isn't safe to retry —
+// unlike every other queryRow caller in this package, re-running it on a
+// fresh connection after a transient failure could silently skip a value.
+// withConn still retries the acquire+USE step (safe, nothing server-side
+// has happened yet), just not the query itself.
 func (seq *Sequence) NextValueContext(ctx context.Context) (int64, error) {
-	row, release, err := seq.db.queryRow(ctx,
-		fmt.Sprintf("SELECT NEXT VALUE FOR %s", qualifiedName(seq.Schema, seq.Name)))
-	if err != nil {
-		return 0, fmt.Errorf("gosmo: next value for [%s].[%s]: %w", seq.Schema, seq.Name, err)
-	}
-	defer release()
-
 	var val int64
-	if err := row.Scan(&val); err != nil {
+	err := seq.db.withConn(ctx, func(conn *sql.Conn) error {
+		return conn.QueryRowContext(ctx,
+			fmt.Sprintf("SELECT NEXT VALUE FOR %s", qualifiedName(seq.Schema, seq.Name)),
+		).Scan(&val)
+	})
+	if err != nil {
 		return 0, fmt.Errorf("gosmo: next value for [%s].[%s]: %w", seq.Schema, seq.Name, err)
 	}
 	seq.CurrentValue = val

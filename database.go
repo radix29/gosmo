@@ -106,7 +106,7 @@ func (d *Database) exec(ctx context.Context, q string, args ...any) (sql.Result,
 		// The real path below always runs q after a USE — captured
 		// statements need that made explicit, since the script may be
 		// handed to a session scoped to a different database (or none).
-		c.Statements = append(c.Statements, "USE "+quoteIdent(d.name)+";\n"+q)
+		c.append("USE " + quoteIdent(d.name) + ";\n" + q)
 		return scriptResult{}, nil
 	}
 	var res sql.Result
@@ -143,29 +143,28 @@ func (d *Database) query(ctx context.Context, q string, args ...any) (*sql.Rows,
 	})
 }
 
-// rowConn pairs a single-row result with the closer that releases its
-// dedicated connection, so both survive the retry wrapper together.
-type rowConn struct {
-	row     *sql.Row
-	release func()
-}
-
-func (d *Database) queryRow(ctx context.Context, q string, args ...any) (*sql.Row, func(), error) {
-	rc, err := withRetry(ctx, func() (rowConn, error) {
+// queryRow acquires a connection, switches it to d's database (USE), runs
+// q, and hands the resulting row to scan — retrying the whole acquire+USE+
+// scan sequence as one unit on a transient connection failure, same as
+// Server.queryRow and for the same reason: QueryRowContext itself never
+// returns an error, only Scan does, so scan has to run inside the retried
+// closure to be covered by it at all. Handing the caller a live *sql.Row
+// to scan later (as this used to do) would let withRetry see a nil error
+// and return before the failure that only surfaces at Scan time ever
+// happens, silently skipping the retry.
+func (d *Database) queryRow(ctx context.Context, scan func(*sql.Row) error, q string, args ...any) error {
+	_, err := withRetry(ctx, func() (struct{}, error) {
 		conn, err := d.server.db.Conn(ctx)
 		if err != nil {
-			return rowConn{}, fmt.Errorf("gosmo: acquire connection: %w", err)
+			return struct{}{}, fmt.Errorf("gosmo: acquire connection: %w", err)
 		}
+		defer conn.Close()
 		if _, err := conn.ExecContext(ctx, "USE "+quoteIdent(d.name)); err != nil {
-			conn.Close()
-			return rowConn{}, fmt.Errorf("gosmo: USE %s: %w", d.name, err)
+			return struct{}{}, fmt.Errorf("gosmo: USE %s: %w", d.name, err)
 		}
-		return rowConn{row: conn.QueryRowContext(ctx, q, args...), release: func() { conn.Close() }}, nil
+		return struct{}{}, scan(conn.QueryRowContext(ctx, q, args...))
 	})
-	if err != nil {
-		return nil, nil, err
-	}
-	return rc.row, rc.release, nil
+	return err
 }
 
 // -- Size / space --------------------------------------------------------------
@@ -205,14 +204,10 @@ SELECT
              ELSE 0 END) * 8.0 / 1024                                       AS avail_log_mb
 FROM sys.database_files`
 
-	row, release, err := d.queryRow(ctx, q)
-	if err != nil {
-		return SpaceInfo{}, err
-	}
-	defer release()
-
 	var si SpaceInfo
-	if err := row.Scan(&si.TotalMB, &si.DataMB, &si.LogMB, &si.UnallocatedMB, &si.AvailLogMB); err != nil {
+	if err := d.queryRow(ctx, func(row *sql.Row) error {
+		return row.Scan(&si.TotalMB, &si.DataMB, &si.LogMB, &si.UnallocatedMB, &si.AvailLogMB)
+	}, q); err != nil {
 		return SpaceInfo{}, fmt.Errorf("gosmo: space used: %w", err)
 	}
 	return si, nil
@@ -349,16 +344,13 @@ WHERE  t.is_ms_shipped = 0
   AND  SCHEMA_NAME(t.schema_id) = @p1
   AND  t.name                   = @p2`
 
-	row, release, err := d.queryRow(ctx, q, schema, name)
-	if err != nil {
-		return nil, err
-	}
-	defer release()
-
 	t := &Table{db: d}
-	if err := row.Scan(&t.ObjectID, &t.Schema, &t.Name,
-		&t.CreateDate, &t.ModifyDate,
-		&t.HasReplicationFilter, &t.IsMemoryOptimized); err != nil {
+	err := d.queryRow(ctx, func(row *sql.Row) error {
+		return row.Scan(&t.ObjectID, &t.Schema, &t.Name,
+			&t.CreateDate, &t.ModifyDate,
+			&t.HasReplicationFilter, &t.IsMemoryOptimized)
+	}, q, schema, name)
+	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, fmt.Errorf("gosmo: table [%s].[%s] not found in %q", schema, name, d.name)
 		}
@@ -724,13 +716,11 @@ WHERE  dp.type IN ('S','U','G') AND dp.name = @p1`
 	u := &User{db: d, Name: name}
 	var defSchema, authType, loginName sql.NullString
 	var loginDisabled sql.NullBool
-	row, release, err := d.queryRow(ctx, q, name)
+	err := d.queryRow(ctx, func(row *sql.Row) error {
+		return row.Scan(&u.ID, &u.UserType, &defSchema, &u.CreateDate, &u.ModifyDate,
+			&authType, &u.SID, &loginName, &loginDisabled)
+	}, q, name)
 	if err != nil {
-		return nil, err
-	}
-	defer release()
-	if err := row.Scan(&u.ID, &u.UserType, &defSchema, &u.CreateDate, &u.ModifyDate,
-		&authType, &u.SID, &loginName, &loginDisabled); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, fmt.Errorf("gosmo: database user %q not found in %q", name, d.name)
 		}
@@ -854,12 +844,10 @@ WHERE  r.type = 'R' AND r.name = @p1`
 
 	r := &DatabaseRole{db: d, Name: name}
 	var members sql.NullString
-	row, release, err := d.queryRow(ctx, q, name)
+	err := d.queryRow(ctx, func(row *sql.Row) error {
+		return row.Scan(&r.ID, &r.IsFixedRole, &r.Owner, &r.SID, &r.CreateDate, &r.ModifyDate, &members)
+	}, q, name)
 	if err != nil {
-		return nil, err
-	}
-	defer release()
-	if err := row.Scan(&r.ID, &r.IsFixedRole, &r.Owner, &r.SID, &r.CreateDate, &r.ModifyDate, &members); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, fmt.Errorf("gosmo: database role %q not found in %q", name, d.name)
 		}

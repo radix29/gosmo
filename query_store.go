@@ -50,26 +50,22 @@ SELECT desired_state_desc, actual_state_desc, readonly_reason,
        capture_policy_total_execution_cpu_time_ms, capture_policy_stale_threshold_hours
 FROM   sys.database_query_store_options`
 
-	row, release, err := d.queryRow(ctx, q)
-	if err != nil {
-		return nil, err
-	}
-	defer release()
-
 	// The four capture_policy_* columns are NULL whenever query capture
 	// mode isn't CUSTOM (the common case) — verified live, not assumed.
 	var execCount, staleHours sql.NullInt64
 	var compileCPU, execCPU sql.NullInt64
 
 	info := &QueryStoreInfo{}
-	if err := row.Scan(
-		&info.DesiredState, &info.ActualState, &info.ReadOnlyReason,
-		&info.CurrentStorageMB, &info.MaxStorageMB,
-		&info.FlushIntervalSec, &info.IntervalMinutes, &info.MaxPlansPerQuery,
-		&info.CaptureMode, &info.SizeCleanupMode,
-		&info.StaleThresholdDays, &info.WaitStatsCaptureMode,
-		&execCount, &compileCPU, &execCPU, &staleHours,
-	); err != nil {
+	if err := d.queryRow(ctx, func(row *sql.Row) error {
+		return row.Scan(
+			&info.DesiredState, &info.ActualState, &info.ReadOnlyReason,
+			&info.CurrentStorageMB, &info.MaxStorageMB,
+			&info.FlushIntervalSec, &info.IntervalMinutes, &info.MaxPlansPerQuery,
+			&info.CaptureMode, &info.SizeCleanupMode,
+			&info.StaleThresholdDays, &info.WaitStatsCaptureMode,
+			&execCount, &compileCPU, &execCPU, &staleHours,
+		)
+	}, q); err != nil {
 		return nil, fmt.Errorf("gosmo: query store options for %q: %w", d.name, err)
 	}
 	info.CapturePolicyExecCount = int(execCount.Int64)

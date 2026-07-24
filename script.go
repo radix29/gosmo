@@ -1,13 +1,27 @@
 package gosmo
 
-import "context"
+import (
+	"context"
+	"sync"
+)
 
 type scriptCtxKey struct{}
 
 // ScriptCollector accumulates the SQL statements a write method would have
-// executed, instead of running them. See WithScript.
+// executed, instead of running them. See WithScript. Statements is guarded
+// by mu since nothing stops a caller from reusing one collector/context
+// across write calls issued from multiple goroutines concurrently.
 type ScriptCollector struct {
+	mu         sync.Mutex
 	Statements []string
+}
+
+// append adds stmt under mu — the only way execContext/exec should touch
+// Statements.
+func (c *ScriptCollector) append(stmt string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.Statements = append(c.Statements, stmt)
 }
 
 // WithScript returns a derived context carrying a *ScriptCollector. Every
@@ -36,7 +50,7 @@ func scriptFrom(ctx context.Context) (*ScriptCollector, bool) {
 // reaching here, since none of these are parameterizable DDL/EXEC calls.
 func (s *Server) execContext(ctx context.Context, stmt string) error {
 	if c, ok := scriptFrom(ctx); ok {
-		c.Statements = append(c.Statements, stmt)
+		c.append(stmt)
 		return nil
 	}
 	_, err := s.db.ExecContext(ctx, stmt)

@@ -306,16 +306,13 @@ LEFT   JOIN sys.allocation_units a ON a.container_id = p.partition_id
 WHERE  i.object_id = @p1 AND i.index_id = @p2
 GROUP  BY ds.name, ds.type, pf.name, i.object_id, i.index_id`
 
-	row, release, err := t.db.queryRow(ctx, headerQ, t.ObjectID, idx.IndexID)
-	if err != nil {
-		return nil, fmt.Errorf("gosmo: storage info for index %q: %w", idx.Name, err)
-	}
 	info := &IndexStorageInfo{}
 	var dsType string
 	var fgOrPS string
-	err = row.Scan(&fgOrPS, &dsType, &info.PartitionScheme, &info.PartitionColumn,
-		&info.RowCount, &info.UsedKB, &info.ReservedKB)
-	release()
+	err := t.db.queryRow(ctx, func(row *sql.Row) error {
+		return row.Scan(&fgOrPS, &dsType, &info.PartitionScheme, &info.PartitionColumn,
+			&info.RowCount, &info.UsedKB, &info.ReservedKB)
+	}, headerQ, t.ObjectID, idx.IndexID)
 	if err != nil {
 		return nil, fmt.Errorf("gosmo: storage info for index %q: %w", idx.Name, err)
 	}
@@ -329,12 +326,9 @@ GROUP  BY ds.name, ds.type, pf.name, i.object_id, i.index_id`
 SELECT TOP 1 avg_record_size_in_bytes
 FROM   sys.dm_db_index_physical_stats(DB_ID(), @p1, @p2, NULL, 'SAMPLED')
 WHERE  index_level = 0`
-	if avgRow, avgRelease, err := t.db.queryRow(ctx, avgQ, t.ObjectID, idx.IndexID); err == nil {
-		var avg sql.NullFloat64
-		if avgRow.Scan(&avg) == nil {
-			info.AvgRecordSize = avg.Float64
-		}
-		avgRelease()
+	var avg sql.NullFloat64
+	if err := t.db.queryRow(ctx, func(row *sql.Row) error { return row.Scan(&avg) }, avgQ, t.ObjectID, idx.IndexID); err == nil {
+		info.AvgRecordSize = avg.Float64
 	}
 
 	const allocQ = `
@@ -394,15 +388,11 @@ JOIN   sys.indexes i ON i.object_id = s.object_id AND i.index_id = s.index_id
 WHERE  s.index_level = 0`,
 		escapeSingle(t.Schema), escapeSingle(t.Name), idx.IndexID, mode)
 
-	row, release, err := t.db.queryRow(ctx, q)
-	if err != nil {
-		return nil, fmt.Errorf("gosmo: fragmentation for index %q: %w", idx.Name, err)
-	}
-	defer release()
-
 	f := &IndexFragmentation{}
 	var density sql.NullFloat64
-	if err := row.Scan(&f.IndexName, &f.IndexID, &f.AvgFragmentationPct, &f.PageCount, &f.FragmentCount, &density); err != nil {
+	if err := t.db.queryRow(ctx, func(row *sql.Row) error {
+		return row.Scan(&f.IndexName, &f.IndexID, &f.AvgFragmentationPct, &f.PageCount, &f.FragmentCount, &density)
+	}, q); err != nil {
 		return nil, fmt.Errorf("gosmo: fragmentation for index %q: %w", idx.Name, err)
 	}
 	f.AvgPageSpaceUsedPct = density.Float64

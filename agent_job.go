@@ -445,7 +445,7 @@ FROM   msdb.dbo.sysjobsteps
 WHERE  job_id = @p1
 ORDER  BY step_id`
 
-	rows, err := j.server.db.QueryContext(ctx, q, j.JobID)
+	rows, err := j.server.query(ctx, q, j.JobID)
 	if err != nil {
 		return nil, fmt.Errorf("gosmo: steps for job %q: %w", j.Name, err)
 	}
@@ -486,7 +486,7 @@ FROM   msdb.dbo.sysjobhistory
 WHERE  job_id = @p1
 ORDER  BY run_date DESC, run_time DESC`, limit)
 
-	rows, err := j.server.db.QueryContext(ctx, q, j.JobID)
+	rows, err := j.server.query(ctx, q, j.JobID)
 	if err != nil {
 		return nil, fmt.Errorf("gosmo: history for job %q: %w", j.Name, err)
 	}

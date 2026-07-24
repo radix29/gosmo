@@ -155,13 +155,15 @@ WHERE  sp.name = @p1`
 	var isLocked, isExpired, isMustChange int
 	var pwdLastSet, lastLogin, badPasswordTime sql.NullTime
 
-	row := l.server.db.QueryRowContext(ctx, q, l.Name)
-	if err := row.Scan(
-		&isLocked, &isExpired, &isMustChange,
-		&det.IsPolicyChecked, &det.IsExpirationChecked,
-		&pwdLastSet, &lastLogin, &det.BadPasswordCount, &badPasswordTime,
-		&det.DefaultLanguage, &det.CredentialName, &det.ConnectSQLState,
-	); err != nil {
+	err := l.server.queryRow(ctx, func(row *sql.Row) error {
+		return row.Scan(
+			&isLocked, &isExpired, &isMustChange,
+			&det.IsPolicyChecked, &det.IsExpirationChecked,
+			&pwdLastSet, &lastLogin, &det.BadPasswordCount, &badPasswordTime,
+			&det.DefaultLanguage, &det.CredentialName, &det.ConnectSQLState,
+		)
+	}, q, l.Name)
+	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, fmt.Errorf("gosmo: login %q not found", l.Name)
 		}
