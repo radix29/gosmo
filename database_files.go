@@ -237,6 +237,68 @@ func (d *Database) RemoveFileContext(ctx context.Context, name string) error {
 	return nil
 }
 
+// -- Filegroups ----------------------------------------------------------------
+
+// FileGroups returns all filegroups and their files.
+func (d *Database) FileGroups() ([]*FileGroup, error) {
+	return d.FileGroupsContext(context.Background())
+}
+
+// FileGroupsContext is the context-aware variant of FileGroups.
+func (d *Database) FileGroupsContext(ctx context.Context) ([]*FileGroup, error) {
+	const q = `
+SELECT fg.name, fg.is_default, fg.is_read_only,
+       df.name, df.physical_name, df.size * 8, df.max_size, df.growth,
+       df.is_percent_growth,
+       CASE WHEN df.file_id = 1 THEN 1 ELSE 0 END AS is_primary
+FROM   sys.filegroups fg
+JOIN   sys.database_files df ON df.data_space_id = fg.data_space_id
+ORDER  BY fg.name, df.file_id`
+
+	rows, err := d.query(ctx, q)
+	if err != nil {
+		return nil, fmt.Errorf("gosmo: list filegroups: %w", err)
+	}
+	defer rows.Close()
+
+	fgMap := make(map[string]*FileGroup)
+	var order []string
+	for rows.Next() {
+		var fgName string
+		var fgDefault, fgReadOnly, isPctGrowth, isPrimary bool
+		f := DatabaseFile{}
+		if err := rows.Scan(&fgName, &fgDefault, &fgReadOnly,
+			&f.Name, &f.PhysicalName, &f.Size, &f.MaxSize, &f.Growth,
+			&isPctGrowth, &isPrimary); err != nil {
+			return nil, err
+		}
+		if isPctGrowth {
+			f.GrowthType = "PERCENT"
+		} else {
+			f.GrowthType = "KB"
+		}
+		f.IsPrimaryFile = isPrimary
+		f.FileGroupName = fgName
+
+		fg, ok := fgMap[fgName]
+		if !ok {
+			fg = &FileGroup{Name: fgName, IsDefault: fgDefault, IsReadOnly: fgReadOnly}
+			fgMap[fgName] = fg
+			order = append(order, fgName)
+		}
+		fg.Files = append(fg.Files, f)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	fgs := make([]*FileGroup, 0, len(order))
+	for _, n := range order {
+		fgs = append(fgs, fgMap[n])
+	}
+	return fgs, nil
+}
+
 // AddFileGroup adds a new (empty) filegroup to the database.
 func (d *Database) AddFileGroup(name string) error {
 	return d.AddFileGroupContext(context.Background(), name)
