@@ -804,6 +804,9 @@ func (s *Server) CreateDatabaseContext(ctx context.Context, name string, opts *C
 	if opts.RecoveryModel != "" && !validRecoveryModel(opts.RecoveryModel) {
 		return fmt.Errorf("gosmo: create database %q: unrecognized recovery model %q", name, opts.RecoveryModel)
 	}
+	if opts.Collation != "" && !isSimpleIdentifier(opts.Collation) {
+		return fmt.Errorf("gosmo: create database %q: invalid collation %q", name, opts.Collation)
+	}
 
 	if err := s.execContext(ctx, buildCreateDatabaseStatement(name, opts)); err != nil {
 		return fmt.Errorf("gosmo: create database %q: %w", name, err)

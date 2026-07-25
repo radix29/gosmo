@@ -2,7 +2,6 @@ package gosmo
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 )
 
@@ -156,7 +155,7 @@ EXEC sp_dropextendedproperty
 
 // -- Helpers -------------------------------------------------------------------
 
-func scanExtProps(rows *sql.Rows) ([]*ExtendedProperty, error) {
+func scanExtProps(rows *dbRows) ([]*ExtendedProperty, error) {
 	var props []*ExtendedProperty
 	for rows.Next() {
 		p := &ExtendedProperty{}

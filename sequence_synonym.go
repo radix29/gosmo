@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"regexp"
 )
 
 // ============================================================
@@ -237,6 +238,29 @@ ORDER  BY SCHEMA_NAME(schema_id), name`
 	return syns, rows.Err()
 }
 
+// qualifiedObjectNamePart matches one part of a dot-separated multi-part
+// T-SQL object name: either a bracket-quoted identifier (embedded ']'
+// doubled, embedded '.' allowed same as SQL Server itself allows inside
+// brackets) or a bare identifier.
+const qualifiedObjectNamePart = `(?:\[(?:[^\]]|\]\])+\]|[A-Za-z_][A-Za-z0-9_]*)`
+
+// qualifiedObjectNamePattern matches a one- to four-part T-SQL object name
+// (linked_server.database.schema.object, or any suffix of it) end to end —
+// the shape CreateSynonymContext's baseObject documents callers must
+// already have built, e.g. "[OtherDB].[dbo].[MyTable]".
+var qualifiedObjectNamePattern = regexp.MustCompile(`^` + qualifiedObjectNamePart + `(?:\.` + qualifiedObjectNamePart + `){0,3}$`)
+
+// validQualifiedObjectName reports whether s is a well-formed multi-part
+// object name with no stray T-SQL syntax (a ';', '--', unmatched bracket,
+// ...) outside of dot-separated, individually-quoted-or-bare parts.
+// baseObject can span server/database/schema/object, so it can't be quoted
+// as a single identifier the way qualifiedName's schema+name pair is —
+// this validation is CreateSynonymContext's injection defense in its
+// place.
+func validQualifiedObjectName(s string) bool {
+	return qualifiedObjectNamePattern.MatchString(s)
+}
+
 // CreateSynonym creates a synonym for a base object.
 // baseObject should be the fully qualified name, e.g. "[OtherDB].[dbo].[MyTable]".
 func (d *Database) CreateSynonym(schema, name, baseObject string) error {
@@ -247,6 +271,9 @@ func (d *Database) CreateSynonym(schema, name, baseObject string) error {
 func (d *Database) CreateSynonymContext(ctx context.Context, schema, name, baseObject string) error {
 	if schema == "" {
 		schema = "dbo"
+	}
+	if !validQualifiedObjectName(baseObject) {
+		return fmt.Errorf("gosmo: create synonym [%s].[%s]: invalid base object %q", schema, name, baseObject)
 	}
 	_, err := d.exec(ctx,
 		fmt.Sprintf("CREATE SYNONYM %s FOR %s", qualifiedName(schema, name), baseObject))

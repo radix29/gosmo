@@ -118,14 +118,32 @@ func (d *Database) exec(ctx context.Context, q string, args ...any) (sql.Result,
 	return res, err
 }
 
-func (d *Database) query(ctx context.Context, q string, args ...any) (*sql.Rows, error) {
+// dbRows wraps a *sql.Rows obtained from a *sql.Conn pinned specifically for
+// it (see Database.query), so that closing the rows also returns the pinned
+// connection to the pool. *sql.Rows.Close alone only releases the query's
+// own resources — a *sql.Conn stays checked out from the pool until its own
+// Close is called, and nothing does that automatically.
+type dbRows struct {
+	*sql.Rows
+	conn *sql.Conn
+}
+
+func (r *dbRows) Close() error {
+	err := r.Rows.Close()
+	if cerr := r.conn.Close(); err == nil {
+		err = cerr
+	}
+	return err
+}
+
+func (d *Database) query(ctx context.Context, q string, args ...any) (*dbRows, error) {
 	// For queries that return rows we cannot use withConn (the conn would be
 	// released before the caller finishes iterating). Instead we acquire a
-	// dedicated conn, switch DB, run the query, and return the rows.  The
-	// caller must close the rows, which releases the underlying conn automatically.
+	// dedicated conn, switch DB, run the query, and return the rows wrapped
+	// with that conn — the caller's defer rows.Close() releases both.
 	// A single read is idempotent, so a transient failure (dropped pooled
 	// connection, etc.) is retried on a fresh connection.
-	return withRetry(ctx, func() (*sql.Rows, error) {
+	return withRetry(ctx, func() (*dbRows, error) {
 		conn, err := d.server.db.Conn(ctx)
 		if err != nil {
 			return nil, fmt.Errorf("gosmo: acquire connection: %w", err)
@@ -139,7 +157,7 @@ func (d *Database) query(ctx context.Context, q string, args ...any) (*sql.Rows,
 			conn.Close()
 			return nil, err
 		}
-		return rows, nil
+		return &dbRows{Rows: rows, conn: conn}, nil
 	})
 }
 
