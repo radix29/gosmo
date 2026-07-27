@@ -275,7 +275,7 @@ func (l *Login) ChangePasswordWithOptionsContext(ctx context.Context, newPasswor
 // belongs after a comma, as its own <set_option>.
 func buildChangePasswordStatement(loginName, newPassword string, mustChange, unlock bool) string {
 	var sb strings.Builder
-	sb.WriteString("ALTER LOGIN " + quoteIdent(loginName) + " WITH PASSWORD = " + nStringLiteral(newPassword))
+	sb.WriteString(fmt.Sprintf("ALTER LOGIN %s WITH PASSWORD = %s", quoteIdent(loginName), nStringLiteral(newPassword)))
 	if mustChange {
 		sb.WriteString(" MUST_CHANGE")
 	}
