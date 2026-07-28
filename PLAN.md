@@ -3,18 +3,12 @@
 ## Working style
 
 This is a spare-time project — no deadlines, no sprints, no committed
-velocity. The date below is a target, not a promise. Work happens in
-whatever order priorities and available time allow; this document tracks
-*what's next*, not *when*.
+velocity. Work happens in whatever order priorities and available time
+allow; this document tracks *what's next*, not *when*.
 
-## Release target
-
-**First usable version: July 2026.**
-
-gosmo's main consumer today is [goSSMS](https://github.com/radix29/gossms)
-(see that repo's own `PLAN.md`), which is targeting the same date — the
-two releases are effectively coupled: gosmo needs to cover whatever
-goSSMS's v1 feature set actually calls into.
+gosmo's main consumer is [goSSMS](https://github.com/radix29/gossms) (see
+that repo's own `PLAN.md`), and the two evolve together: gosmo needs to
+cover whatever goSSMS actually calls into.
 
 ## Ongoing practices (no end date)
 
@@ -24,9 +18,11 @@ These continue for the life of the project, release or not:
 - Triage incoming issues and re-prioritize implementation work as they
   land.
 - Keep the `README.md` feature map (`Server`, `Database`, `Table`,
-  `Index`, `Login`, dependencies/search/permissions/execution plans,
-  `Scripter`, Backup & Restore, Agent Jobs) in sync with the code as
-  methods are added — it's the API surface consumers actually read.
+  `Index`, Statistics, `Login`, dependencies/search/permissions/execution
+  plans, `Scripter`, Backup & Restore, SQL Server Agent) in sync with the
+  code as methods are added — it's the API surface consumers actually
+  read. The class diagram in the same file (and its standalone
+  `gosmo.mermaid` copy, kept byte-identical) needs the same treatment.
 - New work follows the conventions already documented in gossms's
   `CLAUDE.md`: one file per SMO object family at the repo root, every
   DB-hitting method as a `Foo`/`FooContext` pair, a matching `FooSeq` in
@@ -64,6 +60,10 @@ for a cross-platform, pure-Go library:
 - Windows Event Log reading.
 - Registry reads for SQL Server configuration outside
   `sys.configurations`.
+- Creating or editing WMI and performance-condition SQL Server Agent
+  alerts (they're still listed; `Alert.IsEventAlert` marks the subset
+  gosmo can manage).
+- Multi-server Agent administration (master/target servers).
 
 ## Contributing note
 

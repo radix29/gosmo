@@ -35,6 +35,7 @@ classDiagram
         +MaxOpenConns int
         +MaxIdleConns int
         +ConnMaxLifetime Duration
+        +ConnMaxIdleTime Duration
         +SessionInitSQL string
         +TrustServerCertificate bool
         +Encrypt string
@@ -51,6 +52,7 @@ classDiagram
         +Info() *ServerInfo
         +Name() string
         +CurrentDatabase() string
+        +CurrentLogin() string
         +Databases() []*Database
         +DatabaseByName(name) *Database
         +Database(name) *Database
@@ -62,9 +64,30 @@ classDiagram
         +CreateLogin(name, password, opts) error
         +DropLogin(name) error
         +ServerRoles() []*ServerRole
+        +ServerRoleByName(name) *ServerRole
+        +ServerRoleMembers(role) []*RoleMember
+        +AddServerRoleMember(role, member) error
+        +RemoveServerRoleMember(role, member) error
         +LinkedServers() []*LinkedServer
         +Configurations() []*Configuration
-        +Jobs() []*AgentJob
+        +AgentInfo() *AgentStatus
+        +Jobs() []*Job
+        +JobByName(name) *Job
+        +CreateJob(req) *Job
+        +JobHistory(limit) []*JobHistoryEntry
+        +Alerts() []*Alert
+        +EventAlerts() []*Alert
+        +AlertByName(name) *Alert
+        +CreateAlert(req) *Alert
+        +Operators() []*Operator
+        +OperatorByName(name) *Operator
+        +CreateOperator(req) *Operator
+        +Schedules() []*Schedule
+        +ScheduleByName(name) *Schedule
+        +CreateSchedule(req) *Schedule
+        +Categories(class) []*Category
+        +CreateCategory(class, name) error
+        +DeleteCategory(class, name) error
         +ActiveSessions(sys) []*Session
         +KillSession(id) error
         +ReadErrorLog(n) []*ErrorLogEntry
@@ -371,52 +394,60 @@ classDiagram
     class withConn {
         <<internal helper>>
         Acquires *sql.Conn from pool.
-        Executes USE db.
-        Runs callback fn(*sql.Conn).
+        Executes USE db, retried on a
+        transient failure. Runs callback
+        fn(*sql.Conn) — NOT retried, since
+        fn is the caller's actual write.
         Releases conn via defer.
-        Used by exec, scanRow, queryRow.
+        Used by Database.exec.
     }
 
-    class rowsWithConn {
+    class dbRows {
         <<internal type>>
         -Rows *sql.Rows
         -conn *sql.Conn
         +Close() error
-        Closes Rows then conn atomically.
-        Prevents conn leaks on early
-        iteration exits or error returns.
-        Returned by query().
+        Closes Rows then the conn pinned
+        for them. *sql.Rows.Close alone
+        leaves the conn checked out of the
+        pool forever. Returned by
+        Database.query().
     }
 
-    class scanRow {
+    class DatabaseQueryRow {
         <<internal helper>>
-        Callback-style single-row query.
-        conn lifetime fully internal —
-        no release() needed by caller.
-        Used by SpaceUsed, TableByName.
+        Database.queryRow(ctx, scan, q, args)
+        Acquires conn, runs USE, hands the row
+        to scan — all inside one retry unit.
+        scan must run inside it: QueryRowContext
+        never errors, only Scan does.
     }
 
-    class queryRow {
-        <<internal helper>>
-        Returns (*sql.Row, func(), error).
-        Caller MUST defer release().
-        conn is held until release() fires.
-        Used by scripter.go, table.go.
+    class ServerQuery {
+        <<internal helpers>>
+        Server.query(ctx, q, args)
+        Server.queryRow(ctx, scan, q, args)
+        Server.queryRowScan(ctx, q, args, dest)
+        Server-scoped counterparts, with no USE
+        to redo. queryRowScan is the bare-Scan
+        convenience over queryRow.
     }
 
     class withRetry {
         <<internal helper>>
         Generic retry wrapper for idempotent
         reads only. 3 attempts, linear backoff
-        of attempt times 50ms. Used by
-        Database.query and Database.queryRow.
+        of attempt times 50ms. Used by every
+        query/queryRow helper above.
     }
 
     class IsRetryable {
         <<package function>>
-        True for the driver's RetryableError or
-        a dropped pooled connection (ErrBadConn),
-        including wrapped errors. Exported so
+        True for the driver's RetryableError, a
+        dropped pooled connection (ErrBadConn),
+        a net.Error, a corrupted TDS stream, a
+        connection-severing ServerError, or EOF
+        — including wrapped errors. Exported so
         callers running their own statements can
         make the same retry decision.
     }
@@ -456,6 +487,7 @@ classDiagram
     %% Scripting pending writes (dry-run)
     %% =========================================================
     class ScriptCollector {
+        -mu sync.Mutex
         +Statements []string
         +WithScript(ctx) *ScriptCollector
         Captures the exact statement(s) a set of
@@ -463,6 +495,8 @@ classDiagram
         running them. Every write funnels through
         Server.execContext or Database.exec, the
         two chokepoints WithScript intercepts.
+        Statements is mutex-guarded: one collector
+        may be shared across goroutines.
     }
 
     %% =========================================================
@@ -697,10 +731,12 @@ classDiagram
         +Partitions() []*Partition
         +Triggers() []*Trigger
         +RowCount() int64
+        +CountWhere(predicate) int64
+        +CheckWhereSyntax(predicate) error
         +Detail() *TableDetail
         +SpaceUsed() *TableSpaceInfo
         +TruncateTable() error
-        +FragmentationStats(mode) []*FragStat
+        +FragmentationStats(mode) []*IndexFragmentation
         +RebuildAllIndexes(fillFactor) error
         +UpdateAllStatistics(samplePct) error
         +CreateIndex(req) error
@@ -738,14 +774,53 @@ classDiagram
         +IsPrimaryKey bool
         +IsDisabled bool
         +FillFactor int
+        +IsPadded bool
+        +IgnoreDupKey bool
+        +AllowRowLocks bool
+        +AllowPageLocks bool
+        +DataCompression string
         +KeyColumns []IndexColumn
         +IncludedColumns []IndexColumn
         +FilterDefinition string
         +Rebuild(t, fillFactor) error
+        +RebuildWithOptions(t, fillFactor, padIndex, compression) error
         +Reorganize(t) error
         +Disable(t) error
         +Enable(t) error
+        +Rename(t, newName) error
+        +SetOptions(t, ignoreDupKey, rowLocks, pageLocks) error
+        +SetLockOptions(t, rowLocks, pageLocks) error
+        +SetIncludedColumns(t, columns) error
+        +UpdateStatistics(t) error
+        +StorageInfo(t) *IndexStorageInfo
+        +Fragmentation(t, mode) *IndexFragmentation
         +Drop(t) error
+    }
+
+    class IndexStorageInfo {
+        +FileGroup string
+        +PartitionScheme string
+        +PartitionColumn string
+        +RowCount int64
+        +UsedKB int64
+        +ReservedKB int64
+        +AvgRecordSize float64
+        +Allocations []IndexAllocationUnit
+    }
+
+    class IndexAllocationUnit {
+        +Type string
+        +Pages int64
+        +UsedKB int64
+    }
+
+    class IndexFragmentation {
+        +IndexName string
+        +IndexID int
+        +AvgFragmentationPct float64
+        +PageCount int64
+        +FragmentCount int64
+        +AvgPageSpaceUsedPct float64
     }
 
     class ForeignKey {
@@ -777,8 +852,43 @@ classDiagram
         +RowsSampled int64
         +TotalRows int64
         +Steps int
+        +UnfilteredRows int64
+        +NoRecompute bool
+        +IsIncremental bool
+        +ModificationCounter int64
+        +Columns() []string
+        +Header() *StatisticHeader
+        +DensityVector() []*StatisticDensity
+        +Histogram() []*StatisticHistogramStep
         +Update(samplePct) error
         +Drop() error
+    }
+
+    class StatisticHeader {
+        +Updated string
+        +Rows int64
+        +RowsSampled int64
+        +Steps int
+        +Density float64
+        +AverageKeyLength float64
+        +StringIndex string
+        +FilterExpression string
+        +UnfilteredRows int64
+        +PersistedSamplePercent float64
+    }
+
+    class StatisticDensity {
+        +AllDensity float64
+        +AverageLength float64
+        +Columns string
+    }
+
+    class StatisticHistogramStep {
+        +RangeHighKey string
+        +RangeRows float64
+        +EqRows float64
+        +DistinctRangeRows int64
+        +AvgRangeRows float64
     }
 
     class TableDetail {
@@ -915,9 +1025,16 @@ classDiagram
     }
 
     class ServerRole {
+        +ID int
         +Name string
         +IsFixedRole bool
+        +Owner string
+        +SID []byte
+        +CreateDate time.Time
+        +ModifyDate time.Time
         +Members []string
+        +Rename(newName) error
+        +ChangeOwner(newOwner) error
     }
 
     class LinkedServer {
@@ -994,20 +1111,235 @@ classDiagram
     }
 
     %% =========================================================
-    %% Agent Jobs
+    %% SQL Server Agent
     %% =========================================================
-    class AgentJob {
+    class AgentStatus {
+        +Running bool
+        +StatusText string
+        +LastStartupTime time.Time
+    }
+
+    class Job {
         +JobID string
         +Name string
-        +Enabled bool
         +Description string
-        +Steps []*JobStep
-        +Schedules []*JobSchedule
+        +IsEnabled bool
+        +Category string
+        +OwnerLoginName string
+        +DateCreated time.Time
+        +DateModified time.Time
+        +StartStepID int
+        +DeleteLevel NotifyLevel
+        +NotifyLevelEmail NotifyLevel
+        +NotifyEmailOperatorName string
+        +LastRunDate time.Time
+        +LastRunOutcome JobOutcome
+        +LastRunDuration Duration
+        +NextRunDate time.Time
+        +CurrentState JobState
+        +Steps() []*JobStep
         +AddStep(req) error
+        +Schedules() []*Schedule
         +AddSchedule(req) error
+        +AttachSchedule(name) error
+        +DetachSchedule(name) error
+        +History(limit) []*JobHistoryEntry
         +Start(stepName) error
         +Stop() error
+        +Enable() error
+        +Disable() error
+        +Rename(newName) error
+        +SetDescription(desc) error
+        +SetCategory(category) error
+        +SetOwner(login) error
+        +SetStartStep(stepID) error
+        +SetDeleteLevel(level) error
+        +SetEmailNotify(operator, level) error
         +Drop() error
+    }
+
+    class JobStep {
+        +StepID int
+        +Name string
+        +Subsystem string
+        +Command string
+        +Database string
+        +OnSuccessAction int
+        +OnSuccessStepID int
+        +OnFailAction int
+        +OnFailStepID int
+        +LastRunOutcome JobOutcome
+        +LastRunDuration int
+        +RetryAttempts int
+        +RetryInterval int
+        +OutputFileName string
+        +Flags int
+        +Update(req) error
+        +Delete() error
+    }
+
+    class JobHistoryEntry {
+        +JobName string
+        +RunDate time.Time
+        +Duration Duration
+        +Outcome JobOutcome
+        +Message string
+        +StepID int
+        +StepName string
+    }
+
+    class Alert {
+        +ID int
+        +Name string
+        +Enabled bool
+        +EventSource string
+        +ErrorNumber int
+        +Severity int
+        +DatabaseName string
+        +DelayBetweenResponses Duration
+        +NotificationMessage string
+        +IncludeEventDescriptionIn int
+        +Category string
+        +JobName string
+        +PerformanceCondition string
+        +OccurrenceCount int
+        +LastOccurrence time.Time
+        +LastResponse time.Time
+        +IsEventAlert() bool
+        +Enable() error
+        +Disable() error
+        +Rename(newName) error
+        +SetTrigger(errorNumber, severity) error
+        +SetDatabase(dbName) error
+        +SetDelay(d) error
+        +SetNotificationMessage(msg) error
+        +SetJobResponse(jobName) error
+        +SetCategory(category) error
+        +Notifications() []*AlertNotification
+        +Notify(operator, method) error
+        +RemoveNotify(operator) error
+        +Drop() error
+    }
+
+    class AlertNotification {
+        +OperatorName string
+        +Method NotificationMethod
+    }
+
+    class Operator {
+        +ID int
+        +Name string
+        +Enabled bool
+        +EmailAddress string
+        +PagerAddress string
+        +NetSendAddress string
+        +Category string
+        +LastEmailDate time.Time
+        +LastPagerDate time.Time
+        +LastNetSendDate time.Time
+        +Enable() error
+        +Disable() error
+        +Rename(newName) error
+        +SetEmailAddress(addr) error
+        +SetCategory(category) error
+        +NotifyingAlerts() []*AlertNotificationRef
+        +NotifyingJobs() []*JobNotificationRef
+        +Drop() error
+    }
+
+    class AlertNotificationRef {
+        +AlertName string
+        +Method NotificationMethod
+    }
+
+    class JobNotificationRef {
+        +JobName string
+        +Level NotifyLevel
+    }
+
+    class Schedule {
+        +ID int
+        +Name string
+        +Enabled bool
+        +FreqType ScheduleFreqType
+        +FreqInterval int
+        +FreqSubdayType ScheduleSubdayType
+        +FreqSubdayInterval int
+        +FreqRelativeInterval int
+        +FreqRecurrenceFactor int
+        +ActiveStartDate time.Time
+        +ActiveEndDate time.Time
+        +ActiveStartTime int
+        +ActiveEndTime int
+        +OwnerLoginName string
+        +CreateDate time.Time
+        +ModifyDate time.Time
+        +Description() string
+        +Enable() error
+        +Disable() error
+        +Rename(newName) error
+        +SetOwner(login) error
+        +SetFrequency(f) error
+        +SetActiveRange(startDate, endDate, startTime, endTime) error
+        +Jobs() []*Job
+        +Drop() error
+    }
+
+    class ScheduleFrequency {
+        +FreqType ScheduleFreqType
+        +FreqInterval int
+        +FreqSubdayType ScheduleSubdayType
+        +FreqSubdayInterval int
+        +FreqRelativeInterval int
+        +FreqRecurrenceFactor int
+    }
+
+    class Category {
+        +ID int
+        +Class CategoryClass
+        +Name string
+    }
+
+    class ScheduleFreqType {
+        <<enumeration>>
+        FreqOnce
+        FreqDaily
+        FreqWeekly
+        FreqMonthly
+        FreqMonthlyRelative
+        FreqAutoStart
+        FreqOnIdle
+    }
+
+    class ScheduleSubdayType {
+        <<enumeration>>
+        SubdayOnce
+        SubdaySeconds
+        SubdayMinutes
+        SubdayHours
+    }
+
+    class NotificationMethod {
+        <<enumeration>>
+        NotifyMethodEmail
+        NotifyMethodPager
+        NotifyMethodNetSend
+        +String() string
+    }
+
+    class NotifyLevel {
+        <<enumeration>>
+        NotifyNever
+        NotifyOnSuccess
+        NotifyOnFailure
+        NotifyOnComplete
+    }
+
+    class CategoryClass {
+        <<enumeration>>
+        CategoryClassJob
+        CategoryClassAlert
+        CategoryClassOperator
     }
 
     %% =========================================================
@@ -1020,8 +1352,15 @@ classDiagram
     Server "1" --> "*" Database : owns
     Server "1" --> "*" Login : owns
     Server "1" --> "*" ServerRole : owns
+    Server "1" --> "*" RoleMember : ServerRoleMembers() returns
     Server "1" --> "*" LinkedServer : owns
-    Server "1" --> "*" AgentJob : owns
+    Server --> AgentStatus : AgentInfo() returns
+    Server "1" --> "*" Job : owns
+    Server "1" --> "*" Alert : owns
+    Server "1" --> "*" Operator : owns
+    Server "1" --> "*" Schedule : owns
+    Server "1" --> "*" Category : owns
+    Server "1" --> "*" JobHistoryEntry : JobHistory() returns
     Server --> BackupOptions : accepts
     Server --> RestoreOptions : accepts
     Server --> ServerSecurityInfo : has
@@ -1067,15 +1406,17 @@ classDiagram
     Database ..> ProcParam : executes procs with
     Database --> ProcResult : returns
 
-    Database ..> withConn : uses internally
-    Database ..> rowsWithConn : query() returns
-    Database ..> scanRow : single-row callback
-    Database ..> queryRow : single-row with release()
+    Database ..> withConn : writes run via
+    Database ..> dbRows : query() returns
+    Database ..> DatabaseQueryRow : single-row reads via
     Database ..> withRetry : reads retried via
+    Server ..> ServerQuery : reads run via
+    Server ..> withRetry : reads retried via
 
-    withConn <.. rowsWithConn : conn acquired by
-    withConn <.. scanRow : delegates to
-    withConn <.. queryRow : delegates to
+    withRetry <.. withConn : acquire+USE retried by
+    withRetry <.. dbRows : acquire+USE+query retried by
+    withRetry <.. DatabaseQueryRow : whole scan retried by
+    withRetry <.. ServerQuery : whole scan retried by
     withRetry <.. IsRetryable : same failure test as
 
     Table "1" --> "*" Column : has
@@ -1086,6 +1427,29 @@ classDiagram
     Table "1" --> "*" Trigger : has
     Table --> TableDetail : has
     Table --> TableSpaceInfo : has
+    Table "1" --> "*" IndexFragmentation : FragmentationStats() returns
+
+    Index --> IndexStorageInfo : StorageInfo() returns
+    IndexStorageInfo "1" --> "*" IndexAllocationUnit : breaks down into
+    Index --> IndexFragmentation : Fragmentation() returns
+
+    Statistic --> StatisticHeader : Header() returns
+    Statistic "1" --> "*" StatisticDensity : DensityVector() returns
+    Statistic "1" --> "*" StatisticHistogramStep : Histogram() returns
+
+    Job "1" --> "*" JobStep : has
+    Job "1" --> "*" Schedule : attached to
+    Job "1" --> "*" JobHistoryEntry : History() returns
+    Job --> NotifyLevel : notified per
+    Schedule --> ScheduleFrequency : SetFrequency() accepts
+    Schedule --> ScheduleFreqType : recurs per
+    Schedule --> ScheduleSubdayType : repeats per
+    Alert "1" --> "*" AlertNotification : notifies via
+    Alert --> Job : responds by running
+    Operator "1" --> "*" AlertNotificationRef : notified by
+    Operator "1" --> "*" JobNotificationRef : emailed by
+    AlertNotification --> NotificationMethod : delivered by
+    Category --> CategoryClass : classified by
 
     Scripter --> Database : scripts objects from
     Scripter --> ScriptOptions : configured by
@@ -1098,8 +1462,9 @@ classDiagram
 
 ## Security
 
-- **Passwords are never interpolated into SQL strings.** `CreateLogin` and `ChangePassword` encode the password as a UTF-16LE binary literal (`0x...`), making them injection-proof regardless of password content.
-- **Connection lifetimes are correctly scoped.** Every `query()` call returns a `rowsWithConn` that holds the underlying `*sql.Conn` and releases it atomically on `Close()`, preventing silent connection leaks on early iteration exits.
+- **Passwords are escaped, never spliced in raw.** `CreateLogin`, `ChangePassword`, and `ChangePasswordWithOptions` quote the password as an `N'...'` literal through the same `nStringLiteral` escaping every other string literal in the package uses, so it's injection-proof regardless of password content.
+- **Connection lifetimes are correctly scoped.** `Database.query` returns a `*dbRows` that owns both the `*sql.Rows` and the `*sql.Conn` pinned to run its `USE`, closing both together — `*sql.Rows.Close` on its own would leave that connection checked out of the pool for good.
+- **Values that can't be parameterized are validated by shape or allowlist.** DDL can't parameterize keyword or literal arguments, so anything spliced into one is checked first: recovery models, data types, and backup actions against their known sets; partition function boundary values against the shape of a well-formed SQL Server literal; Query Store mode keywords and index data-compression settings against their allowlists.
 - **One shared quoting implementation.** `QuoteName` and `QuoteLiteral` wrap the driver's own `TSQLQuoter`, so gosmo's internal identifier/literal escaping — and any caller or downstream consumer (e.g. gossms) building its own DDL — go through the same tested implementation rather than a hand-rolled one.
 - **Permission and SET-option names are allowlisted, not interpolated.** `GRANT`/`DENY`/`REVOKE` and `ALTER DATABASE ... SET` are DDL and can't parameterize their keyword arguments; every method that accepts one (`GrantServerPermission`, `GrantPermission`, `GrantDatabasePermission`, `SetDatabaseOption`, ...) rejects any name not on its allowlist instead of splicing caller input directly into the statement.
 
@@ -1141,11 +1506,13 @@ fmt.Println(srv.Info().ProductVersion)
 | ----------------------- | ------------------------------------------ |
 | `Server.Databases`      | `srv.Databases()` / `srv.Database(name)` (no-I/O handle) |
 | Current database         | `srv.CurrentDatabase()`                    |
+| Current login (`SUSER_NAME()`) | `srv.CurrentLogin()`                 |
 | `Server.Logins`         | `srv.Logins()` / `srv.LoginByName(name)` / `srv.Login(name)` (no-I/O handle) |
-| `Server.Roles`          | `srv.ServerRoles()`                        |
+| `Server.Roles`          | `srv.ServerRoles()` / `srv.ServerRoleByName(name)` / `srv.ServerRoleMembers(role)` |
+| Server role administration | `role.Rename(newName)` / `role.ChangeOwner(owner)` / `srv.Add\|RemoveServerRoleMember(role, member)` |
 | `Server.LinkedServers`  | `srv.LinkedServers()`                      |
 | `Server.Configuration`  | `srv.Configurations()`                     |
-| `Server.JobServer.Jobs` | `srv.Jobs()`                               |
+| `Server.JobServer` (Agent) | see [SQL Server Agent](#sql-server-agent) below |
 | Active sessions         | `srv.ActiveSessions(includeSystem)`        |
 | Kill session            | `srv.KillSession(id)`                      |
 | Error log               | `srv.ReadErrorLog(n)`                      |
@@ -1216,6 +1583,8 @@ fmt.Println(srv.Info().ProductVersion)
 | `Table.Partitions`    | `t.Partitions()`                   |
 | `Table.Triggers`      | `t.Triggers()`                     |
 | `Table.RowCount`      | `t.RowCount()`                     |
+| Rows matching a filter predicate | `t.CountWhere(predicate)`  |
+| Validate a filter predicate | `t.CheckWhereSyntax(predicate)` |
 | Object details (lock escalation, ANSI_NULLS, CDC, temporal, ledger, ...) | `t.Detail()` |
 | Space used (`sp_spaceused`-style) | `t.SpaceUsed()`               |
 | Truncate              | `t.TruncateTable()`                |
@@ -1232,9 +1601,28 @@ fmt.Println(srv.Info().ProductVersion)
 | gosmo                               |
 | ----------------------------------- |
 | `idx.Rebuild(t, fillFactor)`        |
+| `idx.RebuildWithOptions(t, fillFactor, padIndex, dataCompression)` |
 | `idx.Reorganize(t)`                 |
 | `idx.Disable(t)` / `idx.Enable(t)` |
+| `idx.Rename(t, newName)` — also renames a PK/UNIQUE constraint |
+| `idx.SetOptions(t, ignoreDupKey, allowRowLocks, allowPageLocks)` |
+| `idx.SetLockOptions(t, allowRowLocks, allowPageLocks)` — no `IGNORE_DUP_KEY`, which a PK/UNIQUE-backing index rejects |
+| `idx.SetIncludedColumns(t, columns)` — via `CREATE INDEX ... DROP_EXISTING` |
+| `idx.UpdateStatistics(t)`           |
+| `idx.StorageInfo(t)` — filegroup, partitioning, allocation-unit space |
+| `idx.Fragmentation(t, mode)` — one index (`t.FragmentationStats(mode)` does all) |
 | `idx.Drop(t)`                       |
+
+### Statistics
+
+| SSMS equivalent                | gosmo                                     |
+| ------------------------------ | ----------------------------------------- |
+| Statistics of a table          | `t.Statistics()` / `t.CreateStatistic(name, cols, pct)` |
+| Statistic's key columns        | `st.Columns()`                            |
+| `DBCC SHOW_STATISTICS` header  | `st.Header()` → `*StatisticHeader`        |
+| ... density vector             | `st.DensityVector()` → `[]*StatisticDensity` |
+| ... histogram                  | `st.Histogram()` → `[]*StatisticHistogramStep` |
+| Update / drop                  | `st.Update(samplePct)` / `st.Drop()`      |
 
 ### Login
 
@@ -1339,7 +1727,21 @@ files, _ := srv.BackupFileList(`C:\Backups\MyDB.bak`)
 err := srv.VerifyBackup(`C:\Backups\MyDB.bak`)
 ```
 
-### Agent Jobs
+### SQL Server Agent
+
+Everything under SSMS's SQL Server Agent node that a SQL-only client can
+reach: jobs and their steps, shared schedules, alerts, operators, and the
+categories they're filed under. WMI alerts and performance-condition
+alerts are visible but not manageable — see
+[Features intentionally excluded](#features-intentionally-excluded-require-wmi--com--os-apis).
+
+```go
+// Is Agent even running? (Reported, not inferred from a failed call.)
+status, _ := srv.AgentInfo()
+fmt.Println(status.Running, status.StatusText, status.LastStartupTime)
+```
+
+#### Jobs and steps
 
 ```go
 job, _ := srv.CreateJob(gosmo.CreateJobRequest{Name: "NightlyBackup", Enabled: true})
@@ -1351,15 +1753,76 @@ job.AddStep(gosmo.JobStepRequest{
     OnSuccessAction: 1,
     OnFailAction:    2,
 })
-job.AddSchedule(gosmo.JobScheduleRequest{
-    Name:            "Every night at 2am",
-    Enabled:         true,
-    FreqType:        4,     // daily
-    FreqInterval:    1,
-    FreqSubdayType:  1,     // once
-    ActiveStartTime: 20000, // 02:00:00
-})
+job.SetEmailNotify("DBA on call", gosmo.NotifyOnFailure)
 job.Start("")
+
+// Edit or remove a step in place.
+steps, _ := job.Steps()
+steps[0].Update(gosmo.JobStepRequest{ /* ... */ })
+steps[0].Delete()
+
+// History, per job or across every job at once.
+entries, _ := job.History(50)
+recent, _ := srv.JobHistory(200)
+```
+
+#### Shared schedules
+
+A schedule is an object in its own right, shared by any number of jobs —
+`Job.AddSchedule` creates one and attaches it in a single step, while
+`AttachSchedule`/`DetachSchedule` wire up (or unwire) one that already
+exists without creating or deleting it.
+
+```go
+sched, _ := srv.CreateSchedule(gosmo.CreateScheduleRequest{
+    Name:            "Weeknights at 2am",
+    Enabled:         true,
+    FreqType:        gosmo.FreqWeekly,
+    FreqInterval:    gosmo.WeekdayMonday | gosmo.WeekdayTuesday | gosmo.WeekdayWednesday |
+                     gosmo.WeekdayThursday | gosmo.WeekdayFriday,
+    FreqSubdayType:  gosmo.SubdayOnce,
+    ActiveStartTime: 20000, // HHMMSS — 02:00:00
+})
+
+job.AttachSchedule(sched.Name)
+// "Occurs every week on Monday, Tuesday, Wednesday, Thursday, Friday at
+// 02:00:00. Schedule is active from 2026-07-28."
+fmt.Println(sched.Description())
+
+jobs, _ := sched.Jobs() // which jobs this schedule drives
+```
+
+#### Alerts and operators
+
+```go
+op, _ := srv.CreateOperator(gosmo.CreateOperatorRequest{
+    Name:         "DBA on call",
+    Enabled:      true,
+    EmailAddress: "dba@example.com",
+})
+
+alert, _ := srv.CreateAlert(gosmo.CreateAlertRequest{
+    Name:     "Severity 17+",
+    Enabled:  true,
+    Severity: 17,
+})
+alert.Notify(op.Name, gosmo.NotifyMethodEmail)
+alert.SetJobResponse("NightlyBackup") // run a job in response
+
+// The "referenced by" direction, for an operator's properties page.
+alerts, _ := op.NotifyingAlerts()
+notified, _ := op.NotifyingJobs()
+
+// Only the alerts gosmo can fully manage (no WMI, no perf counters).
+manageable, _ := srv.EventAlerts()
+```
+
+#### Categories
+
+```go
+cats, _ := srv.Categories(gosmo.CategoryClassJob)
+srv.CreateCategory(gosmo.CategoryClassAlert, "Storage")
+srv.DeleteCategory(gosmo.CategoryClassAlert, "Storage")
 ```
 
 ### Bulk copy
@@ -1454,17 +1917,24 @@ same parsing `Connect`/`ConnectContext` rely on internally.
 
 ## Connection helpers (internal)
 
-| Helper         | Purpose                                                                                   |
-| -------------- | ----------------------------------------------------------------------------------------- |
-| `withConn`     | Acquires a `*sql.Conn`, runs `USE <db>`, executes a callback, then releases the conn.    |
-| `query`        | Returns `*rowsWithConn`; `Close()` releases both rows **and** the underlying connection. |
-| `queryRow`     | Returns `(*sql.Row, func(), error)`; always `defer release()` before scanning.           |
-| `scanRow`      | Callback-style single-row helper; conn is fully internal, no release needed.             |
-| `exec`         | Thin wrapper over `withConn` for non-SELECT statements.                                   |
-| `withRetry`    | Retries `Database.query`/`queryRow` up to 3 times (linear backoff) on a transient/dropped-connection failure — reads only, since retrying is only safe when the operation is idempotent. |
+A `Database`-scoped call has to run `USE <db>` on the same connection as
+its statement, so it can't use the pool directly — it pins a `*sql.Conn`
+for the duration. `Server`-scoped calls have no `USE` to redo and go
+straight to the pool.
 
-`gosmo.IsRetryable(err)` exposes the same retryable/dropped-connection
-test `withRetry` uses, for callers running their own statements outside
+| Helper                 | Purpose                                                                                     |
+| ---------------------- | ------------------------------------------------------------------------------------------- |
+| `Database.withConn`    | Acquires a `*sql.Conn` and runs `USE <db>` (retried), then hands it to a callback (not retried — the callback is the caller's write), releasing the conn on return. |
+| `Database.query`       | Returns `*dbRows`, whose `Close()` closes the rows **and** the conn pinned for them. `*sql.Rows.Close` alone would leak that conn out of the pool permanently. |
+| `Database.queryRow`    | Takes a `func(*sql.Row) error` scan callback and runs acquire + `USE` + scan as one retried unit. The scan has to be inside it: `QueryRowContext` never returns an error, so a scan run afterwards would never be retried. |
+| `Database.exec`        | Thin wrapper over `withConn` for non-SELECT statements; also where `WithScript` intercepts database-scoped writes. |
+| `Server.query`         | Server-scoped rows-returning read, retried — no `USE`, so a plain `*sql.Rows` is enough.    |
+| `Server.queryRow`      | Server-scoped single-row read, same scan-callback shape and reason as `Database.queryRow`.   |
+| `Server.queryRowScan`  | `queryRow` convenience for a plain `row.Scan(dest...)`, sparing the caller a closure.        |
+| `withRetry`            | Retries each of the read helpers above up to 3 times (linear backoff) on a transient/dropped-connection failure — reads only, since retrying is only safe when the operation is idempotent. |
+
+`gosmo.IsRetryable(err)` exposes the same transient-failure test
+`withRetry` uses, for callers running their own statements outside
 gosmo's query helpers.
 
 ---
@@ -1488,6 +1958,12 @@ go run ./examples/main.go
 - SQL Server Browser service interaction
 - Windows Event Log reading
 - Registry reads for SQL Server configuration outside `sys.configurations`
+- WMI and performance-condition SQL Server Agent alerts — these are listed
+  by `srv.Alerts()` but not creatable or editable, since they depend on a
+  WMI provider or Windows performance counters. `Alert.IsEventAlert()` and
+  `srv.EventAlerts()` identify the manageable subset.
+- Multi-server Agent administration (master/target servers) — jobs are
+  created as `LOCAL`, enlisted on `(local)`
 
 All of the above require WMI or Windows-only APIs and are out of scope for a cross-platform Go library.
 

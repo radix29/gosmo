@@ -4,6 +4,58 @@ High-level, release-to-release summary of what gosmo does at each tag —
 what changed in spirit, not the full diff. For the itemized, per-symbol
 detail behind each release from `v0.0.4` onward, see `CHANGELOG.md`.
 
+## v0.0.6
+
+Two themes: SQL Server Agent grows from "jobs only" into the whole Agent
+node SSMS shows — alerts, operators, shared schedules, and categories —
+and the connection layer underneath every read in the package gets
+rebuilt after a pooled-connection leak turned out to be able to wedge a
+long-running application outright.
+
+- SQL Server Agent, completed: alerts (create/edit/enable/drop, error-
+  number or severity triggers, database scoping, response job, operator
+  notifications), operators (create/edit/enable/drop, plus the
+  "referenced by" direction — every alert and job that notifies one),
+  shared schedules (create/edit/enable/drop, attach to and detach from
+  jobs, and a one-line English description of a frequency), job/alert/
+  operator categories, and Agent's own run state so a caller can say
+  "Agent is stopped" rather than surfacing an error.
+- Agent jobs, rounded out: rename, description, category, owner, start
+  step, auto-delete condition, and completion-email operator are all
+  writable now; a job step can be edited in place or deleted; and job
+  history is readable across every job at once, not just per job.
+- **A connection leak fixed.** Every rows-returning database read
+  permanently consumed one connection from the pool — the connection each
+  read pins to run its `USE` was never returned. An application that
+  caps `MaxOpenConns` stopped working entirely after that many reads;
+  one that doesn't grew its connection count without bound. Alongside it:
+  single-row reads were retrying transient failures in a way that could
+  never actually catch one, server-level reads weren't retrying at all,
+  and `IsRetryable` now recognizes the raw network/TDS-stream failures
+  the driver itself treats as fatal to a connection. Connections also
+  no longer sit in the pool indefinitely once idle (new
+  `ConnMaxIdleTime`, defaulting to 5 minutes), which is what let a
+  connection dropped by a firewall or load balancer look usable until
+  something tried it.
+- Server-scope `GRANT`/`DENY`/`REVOKE` worked only from a connection that
+  happened to be sitting in `master` — a real engine restriction gosmo
+  now handles itself rather than failing silently.
+- Index and statistics administration to match SSMS's own property
+  pages: index options, lock granularity, rename, rebuild with fill
+  factor/compression, included-column changes, storage and fragmentation
+  detail; and the full `DBCC SHOW_STATISTICS` output (header, density
+  vector, histogram) as typed results.
+- Server roles gained the administration surface database roles already
+  had — rename, change owner, typed membership, add/remove members.
+- Validation added wherever a value has to be spliced into DDL rather
+  than parameterized (recovery models, data types, backup actions,
+  partition boundary literals, Query Store mode keywords, index data
+  compression).
+- 40 new `*Seq()` iterators and 9 previously missing `FooContext` twins
+  close out the `Foo`/`FooContext`/`FooSeq` convention across the
+  package, and `database.go` was split by object family (`view.go`,
+  `procedure.go`, `function.go`, `database_role.go`).
+
 ## v0.0.5
 
 Closes out remaining gaps in the SMO surface's write/administration

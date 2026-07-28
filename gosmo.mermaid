@@ -20,6 +20,7 @@ classDiagram
         +MaxOpenConns int
         +MaxIdleConns int
         +ConnMaxLifetime Duration
+        +ConnMaxIdleTime Duration
         +SessionInitSQL string
         +TrustServerCertificate bool
         +Encrypt string
@@ -36,18 +37,42 @@ classDiagram
         +Info() *ServerInfo
         +Name() string
         +CurrentDatabase() string
+        +CurrentLogin() string
         +Databases() []*Database
         +DatabaseByName(name) *Database
+        +Database(name) *Database
         +CreateDatabase(name, opts) error
         +DropDatabase(name, force) error
         +Logins() []*Login
         +LoginByName(name) *Login
+        +Login(name) *Login
         +CreateLogin(name, password, opts) error
         +DropLogin(name) error
         +ServerRoles() []*ServerRole
+        +ServerRoleByName(name) *ServerRole
+        +ServerRoleMembers(role) []*RoleMember
+        +AddServerRoleMember(role, member) error
+        +RemoveServerRoleMember(role, member) error
         +LinkedServers() []*LinkedServer
         +Configurations() []*Configuration
-        +Jobs() []*AgentJob
+        +AgentInfo() *AgentStatus
+        +Jobs() []*Job
+        +JobByName(name) *Job
+        +CreateJob(req) *Job
+        +JobHistory(limit) []*JobHistoryEntry
+        +Alerts() []*Alert
+        +EventAlerts() []*Alert
+        +AlertByName(name) *Alert
+        +CreateAlert(req) *Alert
+        +Operators() []*Operator
+        +OperatorByName(name) *Operator
+        +CreateOperator(req) *Operator
+        +Schedules() []*Schedule
+        +ScheduleByName(name) *Schedule
+        +CreateSchedule(req) *Schedule
+        +Categories(class) []*Category
+        +CreateCategory(class, name) error
+        +DeleteCategory(class, name) error
         +ActiveSessions(sys) []*Session
         +KillSession(id) error
         +ReadErrorLog(n) []*ErrorLogEntry
@@ -55,14 +80,20 @@ classDiagram
         +SendMail(opts) error
         +Backup(opts) error
         +Restore(opts) error
+        +VerifyBackup(device) error
+        +BackupHeaders(device) []*BackupHeader
+        +BackupFileList(device) []*BackupFile
         +SecurityInfo() *ServerSecurityInfo
         +ServerPermissions() []*ServerPermissionEntry
         +GrantServerPermission(perm, principal) error
         +DenyServerPermission(perm, principal) error
         +RevokeServerPermission(perm, principal) error
+        +ServerPermissionNames() []string
         +Credentials() []*Credential
         +MemoryStats() *ServerMemoryStats
         +Languages() []*Language
+        +ProcessorInfo() *ProcessorInfo
+        +DiskVolumes() []DiskVolumeInfo
     }
 
     class ServerInfo {
@@ -73,6 +104,8 @@ classDiagram
         +Collation string
         +IsClustered bool
         +IsHADREnabled bool
+        +IsSingleUser bool
+        +EngineEdition int
         +OSVersion string
         +PhysicalMemoryMB int64
         +LogicalCPUCount int
@@ -152,6 +185,21 @@ classDiagram
         +Alias string
     }
 
+    class ProcessorInfo {
+        +CPUCount int
+        +HyperthreadRatio int
+        +NUMANodeCount int
+        +CPUNUMANode []int
+    }
+
+    class DiskVolumeInfo {
+        +MountPoint string
+        +VolumeName string
+        +SamplePath string
+        +TotalMB float64
+        +AvailableMB float64
+    }
+
     %% =========================================================
     %% Login
     %% =========================================================
@@ -191,6 +239,7 @@ classDiagram
         +PasswordLastSet time.Time
         +LastLogin time.Time
         +BadPasswordCount int
+        +BadPasswordTime time.Time
         +DefaultLanguage string
         +CredentialName string
         +ConnectSQLState string
@@ -239,18 +288,26 @@ classDiagram
         +TableByName(schema, name) *Table
         +CreateTable(req) error
         +DropTable(schema, name, cascade) error
+        +Catalog() *Catalog
+        +SystemCatalog() *Catalog
         +Views() []*View
         +StoredProcedures() []*StoredProcedure
         +CreateStoredProcedure(schema, name, body) error
         +DropStoredProcedure(schema, name) error
         +UserDefinedFunctions() []*UserDefinedFunction
+        +SystemViews() []*View
+        +SystemStoredProcedures() []*StoredProcedure
+        +SystemFunctions() []*UserDefinedFunction
         +Schemas() []*Schema
         +CreateSchema(name, owner) error
         +DropSchema(name) error
         +Users() []*User
+        +UserByName(name) *User
         +CreateUser(user, login, schema) error
         +DropUser(name) error
         +DatabaseRoles() []*DatabaseRole
+        +RoleByName(name) *DatabaseRole
+        +RoleMembers(role) []*RoleMember
         +AddRoleMember(role, member) error
         +RemoveRoleMember(role, member) error
         +FileGroups() []*FileGroup
@@ -270,9 +327,18 @@ classDiagram
         +SetRecoveryModel(model) error
         +SetCompatibilityLevel(level) error
         +SetReadOnly(bool) error
+        +SetUserAccess(mode) error
+        +SetOffline() error
+        +SetOnline() error
         +Options() *DatabaseOptions
         +SetDatabaseOption(opt, value) error
         +SetOwner(principal) error
+        +DatabaseScopedConfigs() []*DatabaseScopedConfig
+        +SetDatabaseScopedConfig(name, value, forSecondary) error
+        +QueryStore() *QueryStoreInfo
+        +SetQueryStoreOptions(opts) error
+        +FlushQueryStore() error
+        +ClearQueryStore() error
         +Files() []*DatabaseFileInfo
         +AddFile(spec) error
         +AlterFile(name, m) error
@@ -292,6 +358,11 @@ classDiagram
         +GrantPermission(schema, name, perm, principal) error
         +DenyPermission(schema, name, perm, principal) error
         +RevokePermission(schema, name, perm, principal) error
+        +PermissionsForPrincipal(principal) []*PrincipalSecurable
+        +SchemaPermissions(schema) []*PermissionEntry
+        +GrantSchemaPermission(schema, perm, principal) error
+        +DenySchemaPermission(schema, perm, principal) error
+        +RevokeSchemaPermission(schema, perm, principal) error
         +DatabasePermissions() []*DatabasePermissionEntry
         +GrantDatabasePermission(perm, principal) error
         +DenyDatabasePermission(perm, principal) error
@@ -308,52 +379,60 @@ classDiagram
     class withConn {
         <<internal helper>>
         Acquires *sql.Conn from pool.
-        Executes USE db.
-        Runs callback fn(*sql.Conn).
+        Executes USE db, retried on a
+        transient failure. Runs callback
+        fn(*sql.Conn) — NOT retried, since
+        fn is the caller's actual write.
         Releases conn via defer.
-        Used by exec, scanRow, queryRow.
+        Used by Database.exec.
     }
 
-    class rowsWithConn {
+    class dbRows {
         <<internal type>>
         -Rows *sql.Rows
         -conn *sql.Conn
         +Close() error
-        Closes Rows then conn atomically.
-        Prevents conn leaks on early
-        iteration exits or error returns.
-        Returned by query().
+        Closes Rows then the conn pinned
+        for them. *sql.Rows.Close alone
+        leaves the conn checked out of the
+        pool forever. Returned by
+        Database.query().
     }
 
-    class scanRow {
+    class DatabaseQueryRow {
         <<internal helper>>
-        Callback-style single-row query.
-        conn lifetime fully internal —
-        no release() needed by caller.
-        Used by SpaceUsed, TableByName.
+        Database.queryRow(ctx, scan, q, args)
+        Acquires conn, runs USE, hands the row
+        to scan — all inside one retry unit.
+        scan must run inside it: QueryRowContext
+        never errors, only Scan does.
     }
 
-    class queryRow {
-        <<internal helper>>
-        Returns (*sql.Row, func(), error).
-        Caller MUST defer release().
-        conn is held until release() fires.
-        Used by scripter.go, table.go.
+    class ServerQuery {
+        <<internal helpers>>
+        Server.query(ctx, q, args)
+        Server.queryRow(ctx, scan, q, args)
+        Server.queryRowScan(ctx, q, args, dest)
+        Server-scoped counterparts, with no USE
+        to redo. queryRowScan is the bare-Scan
+        convenience over queryRow.
     }
 
     class withRetry {
         <<internal helper>>
         Generic retry wrapper for idempotent
         reads only. 3 attempts, linear backoff
-        of attempt times 50ms. Used by
-        Database.query and Database.queryRow.
+        of attempt times 50ms. Used by every
+        query/queryRow helper above.
     }
 
     class IsRetryable {
         <<package function>>
-        True for the driver's RetryableError or
-        a dropped pooled connection (ErrBadConn),
-        including wrapped errors. Exported so
+        True for the driver's RetryableError, a
+        dropped pooled connection (ErrBadConn),
+        a net.Error, a corrupted TDS stream, a
+        connection-severing ServerError, or EOF
+        — including wrapped errors. Exported so
         callers running their own statements can
         make the same retry decision.
     }
@@ -393,6 +472,7 @@ classDiagram
     %% Scripting pending writes (dry-run)
     %% =========================================================
     class ScriptCollector {
+        -mu sync.Mutex
         +Statements []string
         +WithScript(ctx) *ScriptCollector
         Captures the exact statement(s) a set of
@@ -400,6 +480,8 @@ classDiagram
         running them. Every write funnels through
         Server.execContext or Database.exec, the
         two chokepoints WithScript intercepts.
+        Statements is mutex-guarded: one collector
+        may be shared across goroutines.
     }
 
     %% =========================================================
@@ -483,6 +565,54 @@ classDiagram
     }
 
     %% =========================================================
+    %% Catalog snapshot (bulk table/view + column inventory)
+    %% =========================================================
+    class Catalog {
+        +Schemas []string
+        +Objects []CatalogObject
+    }
+
+    class CatalogObject {
+        +ObjectID int
+        +Schema string
+        +Name string
+        +Type CatalogObjectType
+        +Columns []CatalogColumn
+    }
+
+    class CatalogColumn {
+        +Name string
+        +DataType DataType
+        +MaxLength int
+        +Precision int
+        +Scale int
+        +IsNullable bool
+    }
+
+    %% =========================================================
+    %% Query Store and Database Scoped Configuration
+    %% =========================================================
+    class QueryStoreInfo {
+        +DesiredState string
+        +ActualState string
+        +ReadOnlyReason int
+        +CurrentStorageMB int64
+        +MaxStorageMB int64
+        +CaptureMode string
+        +SizeCleanupMode string
+        +StaleThresholdDays int
+        +WaitStatsCaptureMode string
+    }
+
+    class DatabaseScopedConfig {
+        +ID int
+        +Name string
+        +Value string
+        +ValueForSecondary string
+        +IsValueDefault bool
+    }
+
+    %% =========================================================
     %% Dependencies and object search
     %% =========================================================
     class Dependency {
@@ -511,6 +641,7 @@ classDiagram
     class PermissionEntry {
         +Principal string
         +PrincipalType string
+        +Grantor string
         +Permission ObjectPermission
         +State PermissionState
     }
@@ -519,6 +650,14 @@ classDiagram
         +Principal string
         +PrincipalType string
         +Grantor string
+        +Permission string
+        +State string
+    }
+
+    class PrincipalSecurable {
+        +SecurableType string
+        +Schema string
+        +Name string
         +Permission string
         +State string
     }
@@ -577,8 +716,12 @@ classDiagram
         +Partitions() []*Partition
         +Triggers() []*Trigger
         +RowCount() int64
+        +CountWhere(predicate) int64
+        +CheckWhereSyntax(predicate) error
+        +Detail() *TableDetail
+        +SpaceUsed() *TableSpaceInfo
         +TruncateTable() error
-        +FragmentationStats(mode) []*FragStat
+        +FragmentationStats(mode) []*IndexFragmentation
         +RebuildAllIndexes(fillFactor) error
         +UpdateAllStatistics(samplePct) error
         +CreateIndex(req) error
@@ -616,14 +759,53 @@ classDiagram
         +IsPrimaryKey bool
         +IsDisabled bool
         +FillFactor int
+        +IsPadded bool
+        +IgnoreDupKey bool
+        +AllowRowLocks bool
+        +AllowPageLocks bool
+        +DataCompression string
         +KeyColumns []IndexColumn
         +IncludedColumns []IndexColumn
         +FilterDefinition string
         +Rebuild(t, fillFactor) error
+        +RebuildWithOptions(t, fillFactor, padIndex, compression) error
         +Reorganize(t) error
         +Disable(t) error
         +Enable(t) error
+        +Rename(t, newName) error
+        +SetOptions(t, ignoreDupKey, rowLocks, pageLocks) error
+        +SetLockOptions(t, rowLocks, pageLocks) error
+        +SetIncludedColumns(t, columns) error
+        +UpdateStatistics(t) error
+        +StorageInfo(t) *IndexStorageInfo
+        +Fragmentation(t, mode) *IndexFragmentation
         +Drop(t) error
+    }
+
+    class IndexStorageInfo {
+        +FileGroup string
+        +PartitionScheme string
+        +PartitionColumn string
+        +RowCount int64
+        +UsedKB int64
+        +ReservedKB int64
+        +AvgRecordSize float64
+        +Allocations []IndexAllocationUnit
+    }
+
+    class IndexAllocationUnit {
+        +Type string
+        +Pages int64
+        +UsedKB int64
+    }
+
+    class IndexFragmentation {
+        +IndexName string
+        +IndexID int
+        +AvgFragmentationPct float64
+        +PageCount int64
+        +FragmentCount int64
+        +AvgPageSpaceUsedPct float64
     }
 
     class ForeignKey {
@@ -655,8 +837,65 @@ classDiagram
         +RowsSampled int64
         +TotalRows int64
         +Steps int
+        +UnfilteredRows int64
+        +NoRecompute bool
+        +IsIncremental bool
+        +ModificationCounter int64
+        +Columns() []string
+        +Header() *StatisticHeader
+        +DensityVector() []*StatisticDensity
+        +Histogram() []*StatisticHistogramStep
         +Update(samplePct) error
         +Drop() error
+    }
+
+    class StatisticHeader {
+        +Updated string
+        +Rows int64
+        +RowsSampled int64
+        +Steps int
+        +Density float64
+        +AverageKeyLength float64
+        +StringIndex string
+        +FilterExpression string
+        +UnfilteredRows int64
+        +PersistedSamplePercent float64
+    }
+
+    class StatisticDensity {
+        +AllDensity float64
+        +AverageLength float64
+        +Columns string
+    }
+
+    class StatisticHistogramStep {
+        +RangeHighKey string
+        +RangeRows float64
+        +EqRows float64
+        +DistinctRangeRows int64
+        +AvgRangeRows float64
+    }
+
+    class TableDetail {
+        +SchemaOwner string
+        +LockEscalation string
+        +UsesAnsiNulls bool
+        +IsReplicated bool
+        +IsTrackedByCDC bool
+        +TemporalType string
+        +Durability string
+        +LedgerType string
+        +PrimaryKeyName string
+        +DataSpace string
+    }
+
+    class TableSpaceInfo {
+        +ReservedKB int64
+        +DataKB int64
+        +IndexKB int64
+        +LOBKB int64
+        +UnusedKB int64
+        +FileGroup string
     }
 
     %% =========================================================
@@ -689,6 +928,7 @@ classDiagram
         +Name string
         +ID int
         +Owner string
+        +ObjectCount() int
     }
 
     class View {
@@ -727,6 +967,12 @@ classDiagram
         +AuthType string
         +CreateDate time.Time
         +ModifyDate time.Time
+        +SID []byte
+        +LoginName string
+        +LoginDisabled bool
+        +Rename(newName) error
+        +SetDefaultSchema(schemaName) error
+        +SetLogin(loginName) error
     }
 
     class DatabaseRole {
@@ -735,11 +981,22 @@ classDiagram
         +IsFixedRole bool
         +Owner string
         +Members []string
+        +SID []byte
+        +CreateDate time.Time
+        +ModifyDate time.Time
+        +Rename(newName) error
+        +ChangeOwner(newOwner) error
+    }
+
+    class RoleMember {
+        +Name string
+        +Type string
     }
 
     class FileGroup {
         +Name string
         +IsDefault bool
+        +IsReadOnly bool
         +Files []DatabaseFile
     }
 
@@ -753,9 +1010,16 @@ classDiagram
     }
 
     class ServerRole {
+        +ID int
         +Name string
         +IsFixedRole bool
+        +Owner string
+        +SID []byte
+        +CreateDate time.Time
+        +ModifyDate time.Time
         +Members []string
+        +Rename(newName) error
+        +ChangeOwner(newOwner) error
     }
 
     class LinkedServer {
@@ -803,23 +1067,264 @@ classDiagram
         +StopAt time.Time
         +StopAtMarkName string
         +FileNumber int
+        +Progress func
+        +BuildRestoreStatement(opts) string
+    }
+
+    class BackupHeader {
+        +BackupName string
+        +Description string
+        +BackupType BackupAction
+        +Position int
+        +DatabaseName string
+        +BackupStart time.Time
+        +BackupFinish time.Time
+        +BackupSize int64
+        +Compressed bool
+        +HasChecksums bool
+        +IsCopyOnly bool
+        +RecoveryModel string
+    }
+
+    class BackupFile {
+        +LogicalName string
+        +PhysicalName string
+        +Type string
+        +FileGroupName string
+        +Size int64
+        +MaxSize int64
     }
 
     %% =========================================================
-    %% Agent Jobs
+    %% SQL Server Agent
     %% =========================================================
-    class AgentJob {
+    class AgentStatus {
+        +Running bool
+        +StatusText string
+        +LastStartupTime time.Time
+    }
+
+    class Job {
         +JobID string
         +Name string
-        +Enabled bool
         +Description string
-        +Steps []*JobStep
-        +Schedules []*JobSchedule
+        +IsEnabled bool
+        +Category string
+        +OwnerLoginName string
+        +DateCreated time.Time
+        +DateModified time.Time
+        +StartStepID int
+        +DeleteLevel NotifyLevel
+        +NotifyLevelEmail NotifyLevel
+        +NotifyEmailOperatorName string
+        +LastRunDate time.Time
+        +LastRunOutcome JobOutcome
+        +LastRunDuration Duration
+        +NextRunDate time.Time
+        +CurrentState JobState
+        +Steps() []*JobStep
         +AddStep(req) error
+        +Schedules() []*Schedule
         +AddSchedule(req) error
+        +AttachSchedule(name) error
+        +DetachSchedule(name) error
+        +History(limit) []*JobHistoryEntry
         +Start(stepName) error
         +Stop() error
+        +Enable() error
+        +Disable() error
+        +Rename(newName) error
+        +SetDescription(desc) error
+        +SetCategory(category) error
+        +SetOwner(login) error
+        +SetStartStep(stepID) error
+        +SetDeleteLevel(level) error
+        +SetEmailNotify(operator, level) error
         +Drop() error
+    }
+
+    class JobStep {
+        +StepID int
+        +Name string
+        +Subsystem string
+        +Command string
+        +Database string
+        +OnSuccessAction int
+        +OnSuccessStepID int
+        +OnFailAction int
+        +OnFailStepID int
+        +LastRunOutcome JobOutcome
+        +LastRunDuration int
+        +RetryAttempts int
+        +RetryInterval int
+        +OutputFileName string
+        +Flags int
+        +Update(req) error
+        +Delete() error
+    }
+
+    class JobHistoryEntry {
+        +JobName string
+        +RunDate time.Time
+        +Duration Duration
+        +Outcome JobOutcome
+        +Message string
+        +StepID int
+        +StepName string
+    }
+
+    class Alert {
+        +ID int
+        +Name string
+        +Enabled bool
+        +EventSource string
+        +ErrorNumber int
+        +Severity int
+        +DatabaseName string
+        +DelayBetweenResponses Duration
+        +NotificationMessage string
+        +IncludeEventDescriptionIn int
+        +Category string
+        +JobName string
+        +PerformanceCondition string
+        +OccurrenceCount int
+        +LastOccurrence time.Time
+        +LastResponse time.Time
+        +IsEventAlert() bool
+        +Enable() error
+        +Disable() error
+        +Rename(newName) error
+        +SetTrigger(errorNumber, severity) error
+        +SetDatabase(dbName) error
+        +SetDelay(d) error
+        +SetNotificationMessage(msg) error
+        +SetJobResponse(jobName) error
+        +SetCategory(category) error
+        +Notifications() []*AlertNotification
+        +Notify(operator, method) error
+        +RemoveNotify(operator) error
+        +Drop() error
+    }
+
+    class AlertNotification {
+        +OperatorName string
+        +Method NotificationMethod
+    }
+
+    class Operator {
+        +ID int
+        +Name string
+        +Enabled bool
+        +EmailAddress string
+        +PagerAddress string
+        +NetSendAddress string
+        +Category string
+        +LastEmailDate time.Time
+        +LastPagerDate time.Time
+        +LastNetSendDate time.Time
+        +Enable() error
+        +Disable() error
+        +Rename(newName) error
+        +SetEmailAddress(addr) error
+        +SetCategory(category) error
+        +NotifyingAlerts() []*AlertNotificationRef
+        +NotifyingJobs() []*JobNotificationRef
+        +Drop() error
+    }
+
+    class AlertNotificationRef {
+        +AlertName string
+        +Method NotificationMethod
+    }
+
+    class JobNotificationRef {
+        +JobName string
+        +Level NotifyLevel
+    }
+
+    class Schedule {
+        +ID int
+        +Name string
+        +Enabled bool
+        +FreqType ScheduleFreqType
+        +FreqInterval int
+        +FreqSubdayType ScheduleSubdayType
+        +FreqSubdayInterval int
+        +FreqRelativeInterval int
+        +FreqRecurrenceFactor int
+        +ActiveStartDate time.Time
+        +ActiveEndDate time.Time
+        +ActiveStartTime int
+        +ActiveEndTime int
+        +OwnerLoginName string
+        +CreateDate time.Time
+        +ModifyDate time.Time
+        +Description() string
+        +Enable() error
+        +Disable() error
+        +Rename(newName) error
+        +SetOwner(login) error
+        +SetFrequency(f) error
+        +SetActiveRange(startDate, endDate, startTime, endTime) error
+        +Jobs() []*Job
+        +Drop() error
+    }
+
+    class ScheduleFrequency {
+        +FreqType ScheduleFreqType
+        +FreqInterval int
+        +FreqSubdayType ScheduleSubdayType
+        +FreqSubdayInterval int
+        +FreqRelativeInterval int
+        +FreqRecurrenceFactor int
+    }
+
+    class Category {
+        +ID int
+        +Class CategoryClass
+        +Name string
+    }
+
+    class ScheduleFreqType {
+        <<enumeration>>
+        FreqOnce
+        FreqDaily
+        FreqWeekly
+        FreqMonthly
+        FreqMonthlyRelative
+        FreqAutoStart
+        FreqOnIdle
+    }
+
+    class ScheduleSubdayType {
+        <<enumeration>>
+        SubdayOnce
+        SubdaySeconds
+        SubdayMinutes
+        SubdayHours
+    }
+
+    class NotificationMethod {
+        <<enumeration>>
+        NotifyMethodEmail
+        NotifyMethodPager
+        NotifyMethodNetSend
+        +String() string
+    }
+
+    class NotifyLevel {
+        <<enumeration>>
+        NotifyNever
+        NotifyOnSuccess
+        NotifyOnFailure
+        NotifyOnComplete
+    }
+
+    class CategoryClass {
+        <<enumeration>>
+        CategoryClassJob
+        CategoryClassAlert
+        CategoryClassOperator
     }
 
     %% =========================================================
@@ -832,8 +1337,15 @@ classDiagram
     Server "1" --> "*" Database : owns
     Server "1" --> "*" Login : owns
     Server "1" --> "*" ServerRole : owns
+    Server "1" --> "*" RoleMember : ServerRoleMembers() returns
     Server "1" --> "*" LinkedServer : owns
-    Server "1" --> "*" AgentJob : owns
+    Server --> AgentStatus : AgentInfo() returns
+    Server "1" --> "*" Job : owns
+    Server "1" --> "*" Alert : owns
+    Server "1" --> "*" Operator : owns
+    Server "1" --> "*" Schedule : owns
+    Server "1" --> "*" Category : owns
+    Server "1" --> "*" JobHistoryEntry : JobHistory() returns
     Server --> BackupOptions : accepts
     Server --> RestoreOptions : accepts
     Server --> ServerSecurityInfo : has
@@ -841,6 +1353,10 @@ classDiagram
     Server "1" --> "*" Credential : owns
     Server --> ServerMemoryStats : has
     Server "1" --> "*" Language : lists
+    Server --> ProcessorInfo : has
+    Server "1" --> "*" DiskVolumeInfo : lists
+    Server "1" --> "*" BackupHeader : BackupHeaders() returns
+    Server "1" --> "*" BackupFile : BackupFileList() returns
 
     Login ..> nStringLiteral : password quoted by
     Login --> LoginDetails : has
@@ -864,19 +1380,28 @@ classDiagram
     Database --> ExecutionPlan : produces
     Database "1" --> "*" PermissionEntry : grants
     Database "1" --> "*" DatabasePermissionEntry : grants
+    Database "1" --> "*" PrincipalSecurable : PermissionsForPrincipal() returns
+    Database --> Catalog : Catalog()/SystemCatalog() returns
+    Catalog "1" --> "*" CatalogObject : contains
+    CatalogObject "1" --> "*" CatalogColumn : has
+    Database --> QueryStoreInfo : has
+    Database "1" --> "*" DatabaseScopedConfig : lists
+    Database "1" --> "*" RoleMember : RoleMembers() returns
     Database ..> BulkCopy : bulk-loads via
     Database ..> ProcParam : executes procs with
     Database --> ProcResult : returns
 
-    Database ..> withConn : uses internally
-    Database ..> rowsWithConn : query() returns
-    Database ..> scanRow : single-row callback
-    Database ..> queryRow : single-row with release()
+    Database ..> withConn : writes run via
+    Database ..> dbRows : query() returns
+    Database ..> DatabaseQueryRow : single-row reads via
     Database ..> withRetry : reads retried via
+    Server ..> ServerQuery : reads run via
+    Server ..> withRetry : reads retried via
 
-    withConn <.. rowsWithConn : conn acquired by
-    withConn <.. scanRow : delegates to
-    withConn <.. queryRow : delegates to
+    withRetry <.. withConn : acquire+USE retried by
+    withRetry <.. dbRows : acquire+USE+query retried by
+    withRetry <.. DatabaseQueryRow : whole scan retried by
+    withRetry <.. ServerQuery : whole scan retried by
     withRetry <.. IsRetryable : same failure test as
 
     Table "1" --> "*" Column : has
@@ -885,6 +1410,31 @@ classDiagram
     Table "1" --> "*" CheckConstraint : has
     Table "1" --> "*" Statistic : has
     Table "1" --> "*" Trigger : has
+    Table --> TableDetail : has
+    Table --> TableSpaceInfo : has
+    Table "1" --> "*" IndexFragmentation : FragmentationStats() returns
+
+    Index --> IndexStorageInfo : StorageInfo() returns
+    IndexStorageInfo "1" --> "*" IndexAllocationUnit : breaks down into
+    Index --> IndexFragmentation : Fragmentation() returns
+
+    Statistic --> StatisticHeader : Header() returns
+    Statistic "1" --> "*" StatisticDensity : DensityVector() returns
+    Statistic "1" --> "*" StatisticHistogramStep : Histogram() returns
+
+    Job "1" --> "*" JobStep : has
+    Job "1" --> "*" Schedule : attached to
+    Job "1" --> "*" JobHistoryEntry : History() returns
+    Job --> NotifyLevel : notified per
+    Schedule --> ScheduleFrequency : SetFrequency() accepts
+    Schedule --> ScheduleFreqType : recurs per
+    Schedule --> ScheduleSubdayType : repeats per
+    Alert "1" --> "*" AlertNotification : notifies via
+    Alert --> Job : responds by running
+    Operator "1" --> "*" AlertNotificationRef : notified by
+    Operator "1" --> "*" JobNotificationRef : emailed by
+    AlertNotification --> NotificationMethod : delivered by
+    Category --> CategoryClass : classified by
 
     Scripter --> Database : scripts objects from
     Scripter --> ScriptOptions : configured by
