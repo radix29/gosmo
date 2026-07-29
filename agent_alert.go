@@ -58,10 +58,9 @@ type Alert struct {
 	// IncludeEventDescriptionIn is sysalerts.include_event_description —
 	// msdb's own bitmask for which notification channel(s) get the event
 	// description text appended (0=None, 1=Email, 2=Pager, 4=NetSend,
-	// 7=All). Named "...In" (matching sp_add_alert/sp_update_alert's own
-	// @include_event_description_in parameter, not the column, which has
-	// no "_in" suffix — confirmed live against SQL Server 2025: the column
-	// and the stored-procedure parameter names genuinely diverge here).
+	// 7=All). Named "...In" after sp_add_alert/sp_update_alert's
+	// @include_event_description_in parameter; the column itself has no
+	// "_in" suffix, the two names genuinely diverge.
 	IncludeEventDescriptionIn int
 	EventDescriptionKeyword   string
 	Category                  string
@@ -79,10 +78,10 @@ type Alert struct {
 // Server Agent alerts (no WMI provider, no performance counter access).
 // See Server.EventAlerts. Only EventSource and PerformanceCondition are
 // checked — sysalerts.wmi_query/wmi_namespace, WMI's own supplementary
-// columns, don't exist on every build (confirmed absent against a live
-// SQL Server 2025 on Linux instance, where WMI doesn't apply at all), so
-// gosmo doesn't select them; event_source = 'WMI' is the reliable, always-
-// present discriminator SQL Server itself sets for a WMI alert.
+// columns, don't exist on every build (they're absent on SQL Server on
+// Linux, where WMI doesn't apply at all), so gosmo doesn't select them;
+// event_source = 'WMI' is the reliable, always-present discriminator SQL
+// Server itself sets for a WMI alert.
 func (a *Alert) IsEventAlert() bool {
 	return a.PerformanceCondition == "" && !strings.EqualFold(a.EventSource, "WMI")
 }
@@ -341,8 +340,8 @@ func (a *Alert) SetNotificationMessageContext(ctx context.Context, msg string) e
 // SetCategory reassigns the alert's category. category == "" clears it —
 // sent as the real [Uncategorized] category, since sp_update_alert rejects
 // an empty name outright ("The specified @category_name (”) does not
-// exist", live-verified) and [Uncategorized] is what an alert created with
-// no category actually holds in msdb.dbo.syscategories.
+// exist") and [Uncategorized] is what an alert created with no category
+// actually holds in msdb.dbo.syscategories.
 func (a *Alert) SetCategory(category string) error {
 	return a.SetCategoryContext(context.Background(), category)
 }

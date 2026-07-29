@@ -269,10 +269,10 @@ func (l *Login) ChangePasswordWithOptionsContext(ctx context.Context, newPasswor
 //
 // MUST_CHANGE and UNLOCK are password-clause modifiers, not comma-separated
 // <set_option> items — SQL Server rejects "PASSWORD = '...', UNLOCK" and
-// "..., MUST_CHANGE" outright ("Incorrect syntax near 'UNLOCK'"), confirmed
-// against a live server. Both must instead follow PASSWORD = '...'
-// space-separated, in either order; CHECK_EXPIRATION = ON is the one that
-// belongs after a comma, as its own <set_option>.
+// "..., MUST_CHANGE" outright ("Incorrect syntax near 'UNLOCK'"). Both must
+// instead follow PASSWORD = '...' space-separated, in either order;
+// CHECK_EXPIRATION = ON is the one that belongs after a comma, as its own
+// <set_option>.
 func buildChangePasswordStatement(loginName, newPassword string, mustChange, unlock bool) string {
 	var sb strings.Builder
 	sb.WriteString(fmt.Sprintf("ALTER LOGIN %s WITH PASSWORD = %s", quoteIdent(loginName), nStringLiteral(newPassword)))

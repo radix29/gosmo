@@ -85,13 +85,29 @@ ORDER  BY s.name`
 	return stats, rows.Err()
 }
 
+// checkSamplePct rejects a sampling percentage outside the 0-100 range
+// SAMPLE n PERCENT accepts, so a caller's out-of-range value fails here
+// with a gosmo error instead of as a server-side syntax error. 0 is always
+// allowed — every caller reads it as "not a percentage" (FULLSCAN, or the
+// server's default sampling).
+func checkSamplePct(op string, samplePct int) error {
+	if samplePct < 0 || samplePct > 100 {
+		return fmt.Errorf("gosmo: %s: sample percentage %d out of range (0-100)", op, samplePct)
+	}
+	return nil
+}
+
 // Update updates this statistic.
 // Pass samplePct=0 for a FULLSCAN; any value 1-100 uses SAMPLE n PERCENT.
 func (st *Statistic) Update(samplePct int) error {
 	return st.UpdateContext(context.Background(), samplePct)
 }
 
+// UpdateContext is the context-aware variant of Update.
 func (st *Statistic) UpdateContext(ctx context.Context, samplePct int) error {
+	if err := checkSamplePct("update statistic "+st.Name, samplePct); err != nil {
+		return err
+	}
 	option := "FULLSCAN"
 	if samplePct > 0 {
 		option = fmt.Sprintf("SAMPLE %d PERCENT", samplePct)
@@ -111,6 +127,7 @@ func (st *Statistic) Drop() error {
 	return st.DropContext(context.Background())
 }
 
+// DropContext is the context-aware variant of Drop.
 func (st *Statistic) DropContext(ctx context.Context) error {
 	// DROP STATISTICS syntax: schema.table.stat (not quoted as one unit)
 	q := fmt.Sprintf("DROP STATISTICS %s.%s.%s",
@@ -126,7 +143,12 @@ func (t *Table) UpdateAllStatistics(samplePct int) error {
 	return t.UpdateAllStatisticsContext(context.Background(), samplePct)
 }
 
+// UpdateAllStatisticsContext is the context-aware variant of
+// UpdateAllStatistics.
 func (t *Table) UpdateAllStatisticsContext(ctx context.Context, samplePct int) error {
+	if err := checkSamplePct("update all statistics on "+t.FullName(), samplePct); err != nil {
+		return err
+	}
 	option := "FULLSCAN"
 	if samplePct > 0 {
 		option = fmt.Sprintf("SAMPLE %d PERCENT", samplePct)
@@ -142,12 +164,16 @@ func (t *Table) CreateStatistic(name string, columns []string, samplePct int) er
 	return t.CreateStatisticContext(context.Background(), name, columns, samplePct)
 }
 
+// CreateStatisticContext is the context-aware variant of CreateStatistic.
 func (t *Table) CreateStatisticContext(ctx context.Context, name string, columns []string, samplePct int) error {
 	if name == "" {
 		return fmt.Errorf("gosmo: create statistic: name is required")
 	}
 	if len(columns) == 0 {
 		return fmt.Errorf("gosmo: create statistic: at least one column required")
+	}
+	if err := checkSamplePct("create statistic "+name, samplePct); err != nil {
+		return err
 	}
 	quotedCols := make([]string, len(columns))
 	for i, c := range columns {

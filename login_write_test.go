@@ -27,9 +27,9 @@ func TestBuildChangePasswordStatementMustChangeAddsCheckExpiration(t *testing.T)
 
 func TestBuildChangePasswordStatementUnlock(t *testing.T) {
 	// UNLOCK is a password-clause modifier, space-separated after
-	// PASSWORD = '...' — not a comma-separated <set_option> — confirmed
-	// against a live server ("ALTER LOGIN ... WITH PASSWORD = '...', UNLOCK"
-	// is rejected with "Incorrect syntax near 'UNLOCK'").
+	// PASSWORD = '...', not a comma-separated <set_option>:
+	// "ALTER LOGIN ... WITH PASSWORD = '...', UNLOCK" is rejected with
+	// "Incorrect syntax near 'UNLOCK'".
 	got := buildChangePasswordStatement("app_login", "hunter2", false, true)
 	want := "ALTER LOGIN [app_login] WITH PASSWORD = " + nStringLiteral("hunter2") + " UNLOCK"
 	if got != want {

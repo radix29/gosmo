@@ -4,6 +4,19 @@ High-level, release-to-release summary of what gosmo does at each tag —
 what changed in spirit, not the full diff. For the itemized, per-symbol
 detail behind each release from `v0.0.4` onward, see `CHANGELOG.md`.
 
+## v0.0.7 (unreleased)
+
+A follow-up to `v0.0.6`'s context-everywhere work, finishing the one part
+of the public API it missed.
+
+- **Breaking:** every `*Seq()` iterator now takes a `context.Context`
+  (`db.TableSeq(ctx)`), running on the matching `FooContext` method.
+  They previously used `context.Background()`, leaving the whole
+  iterator API uncancellable.
+- Statistics sampling percentages are validated before they reach the
+  server, and `Table.CheckWhereSyntax` now wraps the error it reports
+  like every other failure in the package.
+
 ## v0.0.6
 
 Two themes: SQL Server Agent grows from "jobs only" into the whole Agent

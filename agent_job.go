@@ -559,10 +559,9 @@ func (s *Server) CreateJob(req CreateJobRequest) (*Job, error) {
 // enlists the job to run on the local server via sp_add_jobserver —
 // without that, SQL Server Agent refuses to start the job (sp_start_job:
 // "does not have any job server or servers defined") or let an alert
-// target it (sp_update_alert/sp_add_alert: "cannot be used by an alert"),
-// confirmed live against a real server. SSMS's own New Job dialog does
-// this same enlistment implicitly; multi-server (MSX/TSX) target-server
-// selection is out of scope here, so "(local)" is the only target.
+// target it (sp_update_alert/sp_add_alert: "cannot be used by an alert").
+// Multi-server (MSX/TSX) target-server selection is out of scope here, so
+// "(local)" is the only target.
 func (s *Server) CreateJobContext(ctx context.Context, req CreateJobRequest) (*Job, error) {
 	if req.Name == "" {
 		return nil, fmt.Errorf("gosmo: create job: name is required")
@@ -724,9 +723,7 @@ type JobStep struct {
 	// Flags is the raw sysjobsteps.flags bitmask (append-to-output-file,
 	// log-to-table, include-step-output-in-history, ...). See Microsoft's
 	// sp_add_jobstep documentation for bit meanings; gosmo round-trips it
-	// as-is rather than decoding it into named booleans, since the exact
-	// bit assignments are worth confirming against a live server before
-	// being exposed that way.
+	// as-is rather than decoding it into named booleans.
 	Flags int
 }
 

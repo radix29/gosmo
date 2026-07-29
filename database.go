@@ -167,9 +167,8 @@ func (d *Database) query(ctx context.Context, q string, args ...any) (*dbRows, e
 // Server.queryRow and for the same reason: QueryRowContext itself never
 // returns an error, only Scan does, so scan has to run inside the retried
 // closure to be covered by it at all. Handing the caller a live *sql.Row
-// to scan later (as this used to do) would let withRetry see a nil error
-// and return before the failure that only surfaces at Scan time ever
-// happens, silently skipping the retry.
+// to scan later would let withRetry see a nil error and return before the
+// failure that only surfaces at Scan time, silently skipping the retry.
 func (d *Database) queryRow(ctx context.Context, scan func(*sql.Row) error, q string, args ...any) error {
 	_, err := withRetry(ctx, func() (struct{}, error) {
 		conn, err := d.server.db.Conn(ctx)

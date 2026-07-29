@@ -79,12 +79,10 @@ type User struct {
 	// LoginName is the server login this user's SID matches, or empty if
 	// none does — only populated by UserByNameContext (UsersContext's
 	// tree-listing query doesn't join sys.server_principals). A blank
-	// LoginName is ambiguous only by itself: check AuthType too — a
-	// genuine CREATE USER ... WITHOUT LOGIN reports AuthType "NONE",
-	// while a user created FOR LOGIN whose login was later dropped keeps
-	// AuthType "INSTANCE" with no matching login (i.e. orphaned) —
-	// verified live these two cases are in fact distinguishable, unlike
-	// what an earlier version of this comment assumed.
+	// LoginName is ambiguous by itself: check AuthType too. A genuine
+	// CREATE USER ... WITHOUT LOGIN reports AuthType "NONE", while a user
+	// created FOR LOGIN whose login was later dropped keeps AuthType
+	// "INSTANCE" with no matching login, i.e. orphaned.
 	LoginName string
 	// LoginDisabled is only meaningful when LoginName is non-empty.
 	LoginDisabled bool

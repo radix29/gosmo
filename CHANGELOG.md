@@ -5,6 +5,24 @@ starts tracking detail from `v0.0.4` onward; `RELEASE.md` covers the
 high-level shape of every release, including the ones before this file
 existed.
 
+## v0.0.7 (unreleased)
+
+### Added
+
+- **Sampling-percentage validation** (`statistics.go`): `Statistic.Update`, `Table.UpdateAllStatistics`, and `Table.CreateStatistic` (and their `Context` variants) now reject a `samplePct` outside 0-100 with a gosmo error rather than letting it reach the server as a `SAMPLE n PERCENT` syntax error. 0 keeps its existing meaning of "not a percentage" — FULLSCAN, or the server's own default sampling.
+
+### Changed
+
+- **BREAKING: every `*Seq()` iterator now takes a `context.Context`** (`iter.go`) — `db.TableSeq()` becomes `db.TableSeq(ctx)`, and so on for all 75 of them. They previously wrapped the plain (non-`Context`) collection method, i.e. `context.Background()`, so ranging over one was uncancellable and unbounded — the one part of the public API `v0.0.6`'s context-everywhere work didn't reach. Each now runs on the matching `...Context` method, so an iterator is cancellable and can carry a deadline like any other read here. The fetch is still deferred until the iterator is actually ranged over, so `ctx` is evaluated then, not at the call that builds it. No iterator was added or removed.
+
+### Fixed
+
+- **`Table.CheckWhereSyntax` discarded the error it exists to report.** It returned `rows.Close()` bare, so a predicate rejected by the server came back as the driver's own unwrapped error instead of gosmo's `check syntax for <table>` wrapping, unlike every other failure path in the method.
+
+### Dependencies
+
+No dependency changes.
+
 ## v0.0.6
 
 ### Added

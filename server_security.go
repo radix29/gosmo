@@ -154,11 +154,11 @@ func (s *Server) GrantServerPermission(permission, principal string) error {
 
 // GrantServerPermissionContext is the context-aware variant of GrantServerPermission.
 //
-// Live-verified: SQL Server rejects GRANT/DENY/REVOKE at server scope
-// outright unless the session's current database is master ("Permissions
-// at the server scope can only be granted when the current database is
-// master") — a real restriction, not something gosmo enforces itself — so
-// every statement here is prefixed with USE master in the same batch. Sent
+// SQL Server rejects GRANT/DENY/REVOKE at server scope outright unless the
+// session's current database is master ("Permissions at the server scope
+// can only be granted when the current database is master") — its own
+// restriction, not one gosmo imposes — so every statement here is prefixed
+// with USE master in the same batch. Sent
 // as one round trip, this doesn't leave the connection's database context
 // changed for whatever runs next: database/sql doesn't guarantee this
 // exact pooled connection is reused for the caller's next call, and even

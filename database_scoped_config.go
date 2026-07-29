@@ -14,9 +14,9 @@ import (
 // sys.database_scoped_configurations. Value and ValueForSecondary are the
 // raw CAST(... AS NVARCHAR) text SQL Server reports for that option's
 // sql_variant column — boolean-style options render as "0"/"1" this way,
-// not "OFF"/"ON" (verified live), while enum-style options like
-// ELEVATE_ONLINE render their keyword directly (e.g. "OFF"). Callers that
-// know an option is boolean should compare against "1", not "ON".
+// not "OFF"/"ON", while enum-style options like ELEVATE_ONLINE render
+// their keyword directly (e.g. "OFF"). Callers that know an option is
+// boolean should compare against "1", not "ON".
 type DatabaseScopedConfig struct {
 	ID                int
 	Name              string

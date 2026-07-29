@@ -84,9 +84,9 @@ ORDER  BY name`
 
 // addCategoryType returns the @type sp_add_category requires for a class:
 // LOCAL for JOB (multi-server administration is out of scope — see
-// CLAUDE.md's SQL-only exclusions), NONE for ALERT and OPERATOR — the only
+// CLAUDE.md's SQL-only exclusions), NONE for ALERT and OPERATOR, the only
 // value those classes accept ("The specified '@type' is invalid (valid
-// values are: NONE)", live-verified).
+// values are: NONE)").
 func addCategoryType(class CategoryClass) string {
 	if class == CategoryClassJob {
 		return "LOCAL"

@@ -51,7 +51,7 @@ SELECT desired_state_desc, actual_state_desc, readonly_reason,
 FROM   sys.database_query_store_options`
 
 	// The four capture_policy_* columns are NULL whenever query capture
-	// mode isn't CUSTOM (the common case) — verified live, not assumed.
+	// mode isn't CUSTOM, which is the common case.
 	var execCount, staleHours sql.NullInt64
 	var compileCPU, execCPU sql.NullInt64
 

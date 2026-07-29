@@ -708,7 +708,10 @@ func (t *Table) CheckWhereSyntaxContext(ctx context.Context, predicate string) e
 	if err != nil {
 		return fmt.Errorf("gosmo: check syntax for %s: %w", t.FullName(), err)
 	}
-	return rows.Close()
+	if err := rows.Close(); err != nil {
+		return fmt.Errorf("gosmo: check syntax for %s: %w", t.FullName(), err)
+	}
+	return nil
 }
 
 // -- Column type builder -------------------------------------------------------

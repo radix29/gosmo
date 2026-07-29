@@ -119,11 +119,10 @@ func TestParseServerAddress(t *testing.T) {
 	}
 }
 
-// TestBuildDSNNamedInstance pins the fix for a real bug: a literal
-// backslash in ConnectionOptions.Server used to get percent-escaped by
-// url.URL (Host: opts.Server), which go-mssqldb's own DSN parser then
-// rejected outright with "invalid URL escape". The instance name must
-// instead travel as a URL path segment (host:port/instance).
+// TestBuildDSNNamedInstance pins down that a named instance travels as a
+// URL path segment (host:port/instance): putting the literal backslash in
+// url.URL's Host percent-escapes it, and go-mssqldb's own DSN parser then
+// rejects it outright with "invalid URL escape".
 func TestBuildDSNNamedInstance(t *testing.T) {
 	dsn, _, err := buildDSN(ConnectionOptions{
 		Server: `myserver\SQLEXPRESS`,
@@ -182,11 +181,11 @@ func TestBuildDSNNamedInstanceWithPort(t *testing.T) {
 }
 
 // TestBuildDSNNamedInstanceRoundTripsThroughDriver feeds the DSN all the
-// way through go-mssqldb's own msdsn.Parse — the exact parser that
-// silently failed on a raw backslash before this fix (either erroring on
-// "invalid URL escape %5C", or, for the comma-port form, dialing a
-// hostname with a literal comma in it) — confirming the driver actually
-// resolves host/instance/port as SSMS's "Server name" field would.
+// way through go-mssqldb's own msdsn.Parse — the parser a raw backslash
+// fails in, either erroring on "invalid URL escape %5C" or, for the
+// comma-port form, dialing a hostname with a literal comma in it —
+// confirming the driver resolves host/instance/port as SSMS's "Server
+// name" field would.
 func TestBuildDSNNamedInstanceRoundTripsThroughDriver(t *testing.T) {
 	cases := []struct {
 		name         string

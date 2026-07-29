@@ -124,7 +124,7 @@ func (idx *Index) SetOptionsContext(ctx context.Context, t *Table, ignoreDupKey,
 // this never touches IGNORE_DUP_KEY, which SQL Server rejects outright on an
 // index backing a PRIMARY KEY or UNIQUE constraint ("Cannot use index option
 // ignore_dup_key to alter index '...' as it enforces a primary or unique
-// constraint"), live-verified against a real PK-backed index.
+// constraint").
 func (idx *Index) SetLockOptions(t *Table, allowRowLocks, allowPageLocks bool) error {
 	return idx.SetLockOptionsContext(context.Background(), t, allowRowLocks, allowPageLocks)
 }

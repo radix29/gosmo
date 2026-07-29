@@ -47,14 +47,12 @@ func init() {
 	sql.Register("fakequery", fakeQueryDriver{})
 }
 
-// TestDatabaseQueryReleasesConnection guards against the connection leak in
+// TestDatabaseQueryReleasesConnection guards against a connection leak in
 // Database.query: closing the *dbRows it returns must also release the
-// *sql.Conn pinned for the query back to the pool (sql.DB.Stats().InUse back
-// to 0), not just the query's own driver-level resources. Before dbRows
-// existed, Database.query returned a bare *sql.Rows and every acquired
-// *sql.Conn stayed checked out forever — verified live against a real SQL
-// Server: the pool was exhausted (and every further read timed out) after as
-// few as maxOpenConns reads.
+// *sql.Conn pinned for the query back to the pool (sql.DB.Stats().InUse
+// back to 0), not just the query's own driver-level resources. Returning a
+// bare *sql.Rows instead leaves every acquired *sql.Conn checked out
+// forever, exhausting the pool after as few as maxOpenConns reads.
 func TestDatabaseQueryReleasesConnection(t *testing.T) {
 	db, err := sql.Open("fakequery", "")
 	if err != nil {

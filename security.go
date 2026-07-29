@@ -435,11 +435,11 @@ ORDER  BY dp.class_desc, schema_name, object_name, dp.permission_name`
 // objectPermissionNames allowlists every object-scoped permission name SQL
 // Server accepts in a GRANT/DENY/REVOKE ... statement — see
 // serverPermissionNames (server_security.go) for why an allowlist rather
-// than quoting. This is the set valid on tables/views specifically —
-// verified live (GRANT EXECUTE ON a table fails with "Granted or revoked
-// privilege EXECUTE is not compatible with object"); a future
-// stored-procedure/function securable would need its own (EXECUTE
-// applies there, REFERENCES does not).
+// than quoting. This is the set valid on tables/views specifically — GRANT
+// EXECUTE on a table fails with "Granted or revoked privilege EXECUTE is
+// not compatible with object". A future stored-procedure/function
+// securable would need its own set (EXECUTE applies there, REFERENCES does
+// not).
 var objectPermissionNames = map[ObjectPermission]bool{
 	PermAlter: true, PermControl: true, PermDelete: true,
 	PermInsert: true, PermReferences: true, PermSelect: true, PermTakeOwnership: true,
@@ -524,9 +524,8 @@ func (d *Database) RevokePermissionContext(ctx context.Context, schema, name str
 // schemaPermissionNames allowlists every schema-scoped permission name SQL
 // Server accepts in a GRANT/DENY/REVOKE ... ON SCHEMA::x statement — the
 // same set as objectPermissionNames plus EXECUTE, which tables/views
-// reject but schemas accept (grants EXECUTE on every routine in the
-// schema). Verified live: GRANT EXECUTE/ALTER/SELECT/VIEW CHANGE
-// TRACKING/TAKE OWNERSHIP ON SCHEMA::x all succeed.
+// reject but schemas accept (it grants EXECUTE on every routine in the
+// schema).
 var schemaPermissionNames = map[ObjectPermission]bool{
 	PermAlter: true, PermControl: true, PermDelete: true, PermExecute: true,
 	PermInsert: true, PermReferences: true, PermSelect: true, PermTakeOwnership: true,
@@ -695,10 +694,10 @@ ORDER  BY pr.name, dp.permission_name`
 // SQL Server accepts in a GRANT/DENY/REVOKE ... statement — see
 // serverPermissionNames (server_security.go) for why an allowlist rather
 // than quoting. Deliberately excludes "ADMINISTER DATABASE BULK
-// OPERATIONS" — verified live that granting it fails with "The permission
-// 'ADMINISTER DATABASE BULK OPERATIONS' is not supported in this version
-// of SQL Server. Alternatively, use the server level 'ADMINISTER BULK
-// OPERATIONS' permission." (which serverPermissionNames already has).
+// OPERATIONS": granting it fails with "The permission 'ADMINISTER DATABASE
+// BULK OPERATIONS' is not supported in this version of SQL Server.
+// Alternatively, use the server level 'ADMINISTER BULK OPERATIONS'
+// permission." — which serverPermissionNames already has.
 var databasePermissionNames = map[string]bool{
 	"ALTER":                                  true,
 	"ALTER ANY APPLICATION ROLE":             true,
