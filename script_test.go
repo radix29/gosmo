@@ -60,3 +60,26 @@ func TestWithScriptCollectorsAreIndependent(t *testing.T) {
 		t.Errorf("script2.Statements = %v, want exactly the grant to \"b\"", script2.Statements)
 	}
 }
+
+// Scripting is what lets a caller tell a recorded write from one that
+// really ran, so it can hold back state (a renamed object's new name, say)
+// that the server doesn't actually have yet.
+func TestScriptingReportsWhetherWritesAreRecorded(t *testing.T) {
+	plain := context.Background()
+	if Scripting(plain) {
+		t.Error("Scripting(context.Background()) = true, want false")
+	}
+
+	ctx, _ := WithScript(plain)
+	if !Scripting(ctx) {
+		t.Error("Scripting(WithScript(...)) = false, want true")
+	}
+
+	// The marker rides on the context, so it survives further derivation
+	// the way a caller adding its own timeout would leave it.
+	derived, cancel := context.WithCancel(ctx)
+	defer cancel()
+	if !Scripting(derived) {
+		t.Error("Scripting lost the collector across context.WithCancel")
+	}
+}

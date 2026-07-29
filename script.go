@@ -38,6 +38,21 @@ func WithScript(ctx context.Context) (context.Context, *ScriptCollector) {
 	return context.WithValue(ctx, scriptCtxKey{}, c), c
 }
 
+// Scripting reports whether ctx came from WithScript — that is, whether
+// write methods invoked with it record their statement instead of running
+// it.
+//
+// A caller that mirrors a write into its own state needs to know: under
+// WithScript a write returns success without the server ever seeing it, so
+// state derived from "it worked" is wrong. The case this exists for is a
+// rename — an editor that renames an object and then re-reads it by the new
+// name finds nothing, because the old name is still what the server has.
+// Reads are unaffected by WithScript and go to the real server either way.
+func Scripting(ctx context.Context) bool {
+	_, ok := scriptFrom(ctx)
+	return ok
+}
+
 func scriptFrom(ctx context.Context) (*ScriptCollector, bool) {
 	c, ok := ctx.Value(scriptCtxKey{}).(*ScriptCollector)
 	return c, ok
