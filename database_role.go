@@ -113,7 +113,7 @@ func (r *DatabaseRole) RenameContext(ctx context.Context, newName string) error 
 	if _, err := r.db.exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: rename database role %q to %q: %w", r.Name, newName, err)
 	}
-	r.Name = newName
+	setIfApplied(ctx, &r.Name, newName)
 	return nil
 }
 
@@ -128,7 +128,7 @@ func (r *DatabaseRole) ChangeOwnerContext(ctx context.Context, newOwner string) 
 	if _, err := r.db.exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: change database role %q owner to %q: %w", r.Name, newOwner, err)
 	}
-	r.Owner = newOwner
+	setIfApplied(ctx, &r.Owner, newOwner)
 	return nil
 }
 

@@ -247,7 +247,7 @@ func (a *Alert) RenameContext(ctx context.Context, newName string) error {
 	if err := a.server.execContext(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: rename alert %q to %q: %w", a.Name, newName, err)
 	}
-	a.Name = newName
+	setIfApplied(ctx, &a.Name, newName)
 	return nil
 }
 
@@ -268,7 +268,7 @@ func (a *Alert) setEnabled(ctx context.Context, on bool) error {
 	if err := a.server.execContext(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: set enabled=%v for alert %q: %w", on, a.Name, err)
 	}
-	a.Enabled = on
+	setIfApplied(ctx, &a.Enabled, on)
 	return nil
 }
 
@@ -302,7 +302,7 @@ func (a *Alert) SetDatabaseContext(ctx context.Context, dbName string) error {
 	if err := a.server.execContext(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: set database for alert %q: %w", a.Name, err)
 	}
-	a.DatabaseName = dbName
+	setIfApplied(ctx, &a.DatabaseName, dbName)
 	return nil
 }
 
@@ -316,7 +316,7 @@ func (a *Alert) SetDelayContext(ctx context.Context, d time.Duration) error {
 	if err := a.server.execContext(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: set delay for alert %q: %w", a.Name, err)
 	}
-	a.DelayBetweenResponses = d
+	setIfApplied(ctx, &a.DelayBetweenResponses, d)
 	return nil
 }
 
@@ -333,7 +333,7 @@ func (a *Alert) SetNotificationMessageContext(ctx context.Context, msg string) e
 	if err := a.server.execContext(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: set notification message for alert %q: %w", a.Name, err)
 	}
-	a.NotificationMessage = msg
+	setIfApplied(ctx, &a.NotificationMessage, msg)
 	return nil
 }
 
@@ -357,7 +357,7 @@ func (a *Alert) SetCategoryContext(ctx context.Context, category string) error {
 	if err := a.server.execContext(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: set category for alert %q: %w", a.Name, err)
 	}
-	a.Category = target
+	setIfApplied(ctx, &a.Category, target)
 	return nil
 }
 
@@ -379,7 +379,7 @@ func (a *Alert) SetJobResponseContext(ctx context.Context, jobName string) error
 	if err := a.server.execContext(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: set job response for alert %q: %w", a.Name, err)
 	}
-	a.JobName = jobName
+	setIfApplied(ctx, &a.JobName, jobName)
 	return nil
 }
 

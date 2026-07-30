@@ -148,7 +148,7 @@ func (o *Operator) RenameContext(ctx context.Context, newName string) error {
 	if err := o.server.execContext(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: rename operator %q to %q: %w", o.Name, newName, err)
 	}
-	o.Name = newName
+	setIfApplied(ctx, &o.Name, newName)
 	return nil
 }
 
@@ -169,7 +169,7 @@ func (o *Operator) setEnabled(ctx context.Context, on bool) error {
 	if err := o.server.execContext(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: set enabled=%v for operator %q: %w", on, o.Name, err)
 	}
-	o.Enabled = on
+	setIfApplied(ctx, &o.Enabled, on)
 	return nil
 }
 
@@ -185,7 +185,7 @@ func (o *Operator) SetEmailAddressContext(ctx context.Context, addr string) erro
 	if err := o.server.execContext(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: set email address for operator %q: %w", o.Name, err)
 	}
-	o.EmailAddress = addr
+	setIfApplied(ctx, &o.EmailAddress, addr)
 	return nil
 }
 
@@ -209,7 +209,7 @@ func (o *Operator) SetCategoryContext(ctx context.Context, category string) erro
 	if err := o.server.execContext(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: set category for operator %q: %w", o.Name, err)
 	}
-	o.Category = target
+	setIfApplied(ctx, &o.Category, target)
 	return nil
 }
 

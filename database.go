@@ -103,10 +103,17 @@ func (scriptResult) RowsAffected() (int64, error) { return 0, nil }
 
 func (d *Database) exec(ctx context.Context, q string, args ...any) (sql.Result, error) {
 	if c, ok := scriptFrom(ctx); ok {
+		// Parameters are substituted into the text, not dropped: a captured
+		// statement is run by hand in a query editor, where nothing binds
+		// @p1 — see bindScriptArgs.
+		bound, err := bindScriptArgs(q, args)
+		if err != nil {
+			return nil, err
+		}
 		// The real path below always runs q after a USE — captured
 		// statements need that made explicit, since the script may be
 		// handed to a session scoped to a different database (or none).
-		c.append("USE " + quoteIdent(d.name) + ";\n" + q)
+		c.append("USE " + quoteIdent(d.name) + ";\n" + bound)
 		return scriptResult{}, nil
 	}
 	var res sql.Result

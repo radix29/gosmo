@@ -15,6 +15,7 @@ func (idx *Index) Rebuild(t *Table, fillFactor int) error {
 	return idx.RebuildContext(context.Background(), t, fillFactor)
 }
 
+// RebuildContext is the context-aware variant of Rebuild.
 func (idx *Index) RebuildContext(ctx context.Context, t *Table, fillFactor int) error {
 	q := fmt.Sprintf("ALTER INDEX %s ON %s REBUILD", quoteIdent(idx.Name), t.FullName())
 	if fillFactor > 0 {
@@ -31,6 +32,7 @@ func (idx *Index) Reorganize(t *Table) error {
 	return idx.ReorganizeContext(context.Background(), t)
 }
 
+// ReorganizeContext is the context-aware variant of Reorganize.
 func (idx *Index) ReorganizeContext(ctx context.Context, t *Table) error {
 	q := fmt.Sprintf("ALTER INDEX %s ON %s REORGANIZE", quoteIdent(idx.Name), t.FullName())
 	if _, err := t.db.exec(ctx, q); err != nil {
@@ -44,12 +46,13 @@ func (idx *Index) Disable(t *Table) error {
 	return idx.DisableContext(context.Background(), t)
 }
 
+// DisableContext is the context-aware variant of Disable.
 func (idx *Index) DisableContext(ctx context.Context, t *Table) error {
 	q := fmt.Sprintf("ALTER INDEX %s ON %s DISABLE", quoteIdent(idx.Name), t.FullName())
 	if _, err := t.db.exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: disable index %q: %w", idx.Name, err)
 	}
-	idx.IsDisabled = true
+	setIfApplied(ctx, &idx.IsDisabled, true)
 	return nil
 }
 
@@ -68,6 +71,7 @@ func (idx *Index) Drop(t *Table) error {
 	return idx.DropContext(context.Background(), t)
 }
 
+// DropContext is the context-aware variant of Drop.
 func (idx *Index) DropContext(ctx context.Context, t *Table) error {
 	q := fmt.Sprintf("DROP INDEX %s ON %s", quoteIdent(idx.Name), t.FullName())
 	if _, err := t.db.exec(ctx, q); err != nil {
@@ -81,6 +85,7 @@ func (t *Table) RebuildAllIndexes(fillFactor int) error {
 	return t.RebuildAllIndexesContext(context.Background(), fillFactor)
 }
 
+// RebuildAllIndexesContext is the context-aware variant of RebuildAllIndexes.
 func (t *Table) RebuildAllIndexesContext(ctx context.Context, fillFactor int) error {
 	q := fmt.Sprintf("ALTER INDEX ALL ON %s REBUILD", t.FullName())
 	if fillFactor > 0 {
@@ -155,7 +160,7 @@ func (idx *Index) RenameContext(ctx context.Context, t *Table, newName string) e
 	); err != nil {
 		return fmt.Errorf("gosmo: rename index %q to %q: %w", idx.Name, newName, err)
 	}
-	idx.Name = newName
+	setIfApplied(ctx, &idx.Name, newName)
 	return nil
 }
 
@@ -430,6 +435,7 @@ func (t *Table) CreateIndex(req CreateIndexRequest) error {
 	return t.CreateIndexContext(context.Background(), req)
 }
 
+// CreateIndexContext is the context-aware variant of CreateIndex.
 func (t *Table) CreateIndexContext(ctx context.Context, req CreateIndexRequest) error {
 	if req.Name == "" {
 		return fmt.Errorf("gosmo: create index: name is required")
@@ -521,6 +527,7 @@ func (t *Table) FragmentationStats(mode string) ([]*IndexFragmentation, error) {
 	return t.FragmentationStatsContext(context.Background(), mode)
 }
 
+// FragmentationStatsContext is the context-aware variant of FragmentationStats.
 func (t *Table) FragmentationStatsContext(ctx context.Context, mode string) ([]*IndexFragmentation, error) {
 	if mode == "" {
 		mode = "LIMITED"

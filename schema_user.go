@@ -32,13 +32,14 @@ func (s *Schema) ChangeOwner(newOwner string) error {
 	return s.ChangeOwnerContext(context.Background(), newOwner)
 }
 
+// ChangeOwnerContext is the context-aware variant of ChangeOwner.
 func (s *Schema) ChangeOwnerContext(ctx context.Context, newOwner string) error {
 	q := fmt.Sprintf("ALTER AUTHORIZATION ON SCHEMA::%s TO %s",
 		quoteIdent(s.Name), quoteIdent(newOwner))
 	if _, err := s.db.exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: change schema %q owner to %q: %w", s.Name, newOwner, err)
 	}
-	s.Owner = newOwner
+	setIfApplied(ctx, &s.Owner, newOwner)
 	return nil
 }
 
@@ -107,7 +108,7 @@ func (u *User) RenameContext(ctx context.Context, newName string) error {
 	if _, err := u.db.exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: rename database user %q to %q: %w", u.Name, newName, err)
 	}
-	u.Name = newName
+	setIfApplied(ctx, &u.Name, newName)
 	return nil
 }
 
@@ -122,7 +123,7 @@ func (u *User) SetDefaultSchemaContext(ctx context.Context, schemaName string) e
 	if _, err := u.db.exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: set default schema for user %q to %q: %w", u.Name, schemaName, err)
 	}
-	u.DefaultSchema = schemaName
+	setIfApplied(ctx, &u.DefaultSchema, schemaName)
 	return nil
 }
 
@@ -137,7 +138,7 @@ func (u *User) SetLoginContext(ctx context.Context, loginName string) error {
 	if _, err := u.db.exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: map user %q to login %q: %w", u.Name, loginName, err)
 	}
-	u.LoginName = loginName
+	setIfApplied(ctx, &u.LoginName, loginName)
 	return nil
 }
 
@@ -166,6 +167,7 @@ func (u *User) Grant(permission ObjectPermission, objectSchema, objectName strin
 	return u.GrantContext(context.Background(), permission, objectSchema, objectName)
 }
 
+// GrantContext is the context-aware variant of Grant.
 func (u *User) GrantContext(ctx context.Context, permission ObjectPermission, objectSchema, objectName string) error {
 	if !validObjectPermission(permission) {
 		return fmt.Errorf("gosmo: grant permission: unrecognized permission %q", permission)
@@ -183,6 +185,7 @@ func (u *User) Deny(permission ObjectPermission, objectSchema, objectName string
 	return u.DenyContext(context.Background(), permission, objectSchema, objectName)
 }
 
+// DenyContext is the context-aware variant of Deny.
 func (u *User) DenyContext(ctx context.Context, permission ObjectPermission, objectSchema, objectName string) error {
 	if !validObjectPermission(permission) {
 		return fmt.Errorf("gosmo: deny permission: unrecognized permission %q", permission)
@@ -200,6 +203,7 @@ func (u *User) Revoke(permission ObjectPermission, objectSchema, objectName stri
 	return u.RevokeContext(context.Background(), permission, objectSchema, objectName)
 }
 
+// RevokeContext is the context-aware variant of Revoke.
 func (u *User) RevokeContext(ctx context.Context, permission ObjectPermission, objectSchema, objectName string) error {
 	if !validObjectPermission(permission) {
 		return fmt.Errorf("gosmo: revoke permission: unrecognized permission %q", permission)

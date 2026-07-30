@@ -350,3 +350,71 @@ WHERE  p.object_id = @p1`
 	info.FileGroup = fg.String
 	return info, nil
 }
+
+// TableSpaceUsedAll returns space usage for every user table in the
+// database, keyed by object_id — the same breakdown Table.SpaceUsed gives
+// for one table, for all of them in a single round trip.
+//
+// Use this over a loop of Table.SpaceUsed whenever the caller wants more
+// than a couple of tables: the per-table form costs one query (and one
+// pooled connection) each, so a grid listing a few hundred tables is a few
+// hundred round trips. The aggregate expressions and joins are the same, so
+// the numbers are identical either way.
+//
+// A table with no allocated pages at all has no row in sys.partitions to
+// aggregate and is therefore absent from the map, not present with zeroes —
+// callers should treat a missing key as "no space used".
+func (d *Database) TableSpaceUsedAll() (map[int]*TableSpaceInfo, error) {
+	return d.TableSpaceUsedAllContext(context.Background())
+}
+
+// TableSpaceUsedAllContext is the context-aware variant of
+// TableSpaceUsedAll.
+func (d *Database) TableSpaceUsedAllContext(ctx context.Context) (map[int]*TableSpaceInfo, error) {
+	// Same joins and aggregates as Table.SpaceUsedContext, grouped by object
+	// instead of filtered to one. The filegroup is a LEFT JOIN rather than
+	// that method's correlated subquery: sys.indexes has exactly one row per
+	// object with index_id IN (0,1), so it can't multiply the aggregate. It
+	// stays NULL for a partitioned table, whose base index sits on a
+	// partition scheme rather than a filegroup — the subquery form returns
+	// NULL there too.
+	const q = `
+SELECT
+    p.object_id,
+    SUM(a.total_pages) * 8 AS reserved_kb,
+    SUM(CASE WHEN i.index_id IN (0,1) AND a.type IN (1,3) THEN a.used_pages ELSE 0 END) * 8 AS data_kb,
+    SUM(CASE WHEN i.index_id > 1 THEN a.used_pages ELSE 0 END) * 8 AS index_kb,
+    SUM(CASE WHEN a.type = 2 THEN a.used_pages ELSE 0 END) * 8 AS lob_kb,
+    SUM(a.total_pages - a.used_pages) * 8 AS unused_kb,
+    MIN(fg.name) AS filegroup
+FROM   sys.partitions p
+JOIN   sys.tables t ON t.object_id = p.object_id
+JOIN   sys.allocation_units a ON a.container_id = p.partition_id
+JOIN   sys.indexes i ON i.object_id = p.object_id AND i.index_id = p.index_id
+LEFT   JOIN sys.indexes base ON base.object_id = p.object_id AND base.index_id IN (0,1)
+LEFT   JOIN sys.filegroups fg ON fg.data_space_id = base.data_space_id
+GROUP  BY p.object_id`
+
+	rows, err := d.query(ctx, q)
+	if err != nil {
+		return nil, fmt.Errorf("gosmo: table space used on %q: %w", d.name, err)
+	}
+	defer rows.Close()
+
+	out := make(map[int]*TableSpaceInfo)
+	for rows.Next() {
+		var objectID int
+		var fg sql.NullString
+		info := &TableSpaceInfo{}
+		if err := rows.Scan(&objectID, &info.ReservedKB, &info.DataKB,
+			&info.IndexKB, &info.LOBKB, &info.UnusedKB, &fg); err != nil {
+			return nil, fmt.Errorf("gosmo: table space used on %q: %w", d.name, err)
+		}
+		info.FileGroup = fg.String
+		out[objectID] = info
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("gosmo: table space used on %q: %w", d.name, err)
+	}
+	return out, nil
+}

@@ -26,11 +26,12 @@ func (l *Login) Disable() error {
 	return l.DisableContext(context.Background())
 }
 
+// DisableContext is the context-aware variant of Disable.
 func (l *Login) DisableContext(ctx context.Context) error {
 	if err := l.server.execContext(ctx, "ALTER LOGIN "+quoteIdent(l.Name)+" DISABLE"); err != nil {
 		return fmt.Errorf("gosmo: disable login %q: %w", l.Name, err)
 	}
-	l.IsDisabled = true
+	setIfApplied(ctx, &l.IsDisabled, true)
 	return nil
 }
 
@@ -39,11 +40,12 @@ func (l *Login) Enable() error {
 	return l.EnableContext(context.Background())
 }
 
+// EnableContext is the context-aware variant of Enable.
 func (l *Login) EnableContext(ctx context.Context) error {
 	if err := l.server.execContext(ctx, "ALTER LOGIN "+quoteIdent(l.Name)+" ENABLE"); err != nil {
 		return fmt.Errorf("gosmo: enable login %q: %w", l.Name, err)
 	}
-	l.IsDisabled = false
+	setIfApplied(ctx, &l.IsDisabled, false)
 	return nil
 }
 
@@ -81,6 +83,7 @@ func (l *Login) AddServerRoleMember(roleName string) error {
 	return l.AddServerRoleMemberContext(context.Background(), roleName)
 }
 
+// AddServerRoleMemberContext is the context-aware variant of AddServerRoleMember.
 func (l *Login) AddServerRoleMemberContext(ctx context.Context, roleName string) error {
 	return l.server.AddServerRoleMemberContext(ctx, roleName, l.Name)
 }
@@ -90,6 +93,7 @@ func (l *Login) RemoveServerRoleMember(roleName string) error {
 	return l.RemoveServerRoleMemberContext(context.Background(), roleName)
 }
 
+// RemoveServerRoleMemberContext is the context-aware variant of RemoveServerRoleMember.
 func (l *Login) RemoveServerRoleMemberContext(ctx context.Context, roleName string) error {
 	return l.server.RemoveServerRoleMemberContext(ctx, roleName, l.Name)
 }
@@ -189,7 +193,7 @@ func (l *Login) RenameContext(ctx context.Context, newName string) error {
 	if err := l.server.execContext(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: rename login %q to %q: %w", l.Name, newName, err)
 	}
-	l.Name = newName
+	setIfApplied(ctx, &l.Name, newName)
 	return nil
 }
 
@@ -204,7 +208,7 @@ func (l *Login) SetDefaultDatabaseContext(ctx context.Context, name string) erro
 	if err := l.server.execContext(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: set default database for login %q to %q: %w", l.Name, name, err)
 	}
-	l.DefaultDatabase = name
+	setIfApplied(ctx, &l.DefaultDatabase, name)
 	return nil
 }
 

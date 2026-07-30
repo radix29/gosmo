@@ -681,6 +681,51 @@ WHERE  p.object_id = @p1 AND p.index_id IN (0, 1)`, t.ObjectID); err != nil {
 	return n, nil
 }
 
+// TableRowCounts returns the row count of every user table in the database,
+// keyed by object_id — Table.RowCount for all tables in a single round trip.
+//
+// Use this over a loop of Table.RowCount whenever the caller wants more than
+// a couple of tables: the per-table form costs one query (and one pooled
+// connection) each. The filter and aggregate are the same, so the counts are
+// identical either way — metadata counts from sys.partitions, which is what
+// SSMS's object grids show, not a COUNT(*).
+//
+// A table with no row in sys.partitions is absent from the map rather than
+// present as 0; callers should treat a missing key as zero rows.
+func (d *Database) TableRowCounts() (map[int]int64, error) {
+	return d.TableRowCountsContext(context.Background())
+}
+
+// TableRowCountsContext is the context-aware variant of TableRowCounts.
+func (d *Database) TableRowCountsContext(ctx context.Context) (map[int]int64, error) {
+	const q = `
+SELECT p.object_id, SUM(p.rows)
+FROM   sys.partitions p
+JOIN   sys.tables t ON t.object_id = p.object_id
+WHERE  p.index_id IN (0, 1)
+GROUP  BY p.object_id`
+
+	rows, err := d.query(ctx, q)
+	if err != nil {
+		return nil, fmt.Errorf("gosmo: table row counts on %q: %w", d.name, err)
+	}
+	defer rows.Close()
+
+	out := make(map[int]int64)
+	for rows.Next() {
+		var objectID int
+		var n int64
+		if err := rows.Scan(&objectID, &n); err != nil {
+			return nil, fmt.Errorf("gosmo: table row counts on %q: %w", d.name, err)
+		}
+		out[objectID] = n
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("gosmo: table row counts on %q: %w", d.name, err)
+	}
+	return out, nil
+}
+
 // -- Predicate helpers -----------------------------------------------------
 
 // CountWhere returns the number of rows in the table matching a WHERE

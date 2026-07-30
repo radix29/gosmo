@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 
 	mssql "github.com/microsoft/go-mssqldb"
@@ -51,6 +52,49 @@ func (p ProcParam) arg() any {
 	return sql.Named(p.name, p.value)
 }
 
+// scriptExecProc renders an ExecProc call as the T-SQL EXEC statement that
+// would run it, for capture under WithScript — input values as literals,
+// output and in/out parameters as a declared variable followed by OUTPUT,
+// since a script run by hand has nowhere else to put the returned value.
+//
+// The variable names are the parameter names, which SQL Server guarantees are
+// unique within one call, so a DECLARE per output parameter can't collide
+// within the statement. Two scripted calls to the same procedure in one batch
+// would, which is why the DECLARE rides along with the statement it belongs
+// to rather than being hoisted.
+func scriptExecProc(proc string, params []ProcParam) (string, error) {
+	var decls, args []string
+	for _, p := range params {
+		v := "@" + p.name
+		switch {
+		case p.dest == nil:
+			lit, err := scriptLiteral(p.value)
+			if err != nil {
+				return "", fmt.Errorf("gosmo: script: parameter %q: %w", p.name, err)
+			}
+			args = append(args, v+" = "+lit)
+		case p.inOut:
+			lit, err := scriptLiteral(dereference(p.dest))
+			if err != nil {
+				return "", fmt.Errorf("gosmo: script: parameter %q: %w", p.name, err)
+			}
+			decls = append(decls, "DECLARE "+v+" "+scriptDeclType(p.dest)+" = "+lit+";")
+			args = append(args, v+" = "+v+" OUTPUT")
+		default:
+			decls = append(decls, "DECLARE "+v+" "+scriptDeclType(p.dest)+";")
+			args = append(args, v+" = "+v+" OUTPUT")
+		}
+	}
+	stmt := "EXEC " + proc
+	if len(args) > 0 {
+		stmt += " " + strings.Join(args, ", ")
+	}
+	if len(decls) > 0 {
+		stmt = strings.Join(decls, "\n") + "\n" + stmt
+	}
+	return stmt, nil
+}
+
 // ProcResult is what ExecProc reports beyond the values written to any output
 // parameters' pointers.
 type ProcResult struct {
@@ -77,6 +121,23 @@ func (d *Database) ExecProcContext(ctx context.Context, schema, name string, par
 		schema = "dbo"
 	}
 	proc := qualifiedName(schema, name)
+
+	// Scripting can't go through d.exec: the statement handed to the driver
+	// is the bare procedure name, with everything else carried as RPC
+	// arguments, so capturing that text alone yields a "statement" that is
+	// just an object name — no EXEC, no parameters. Build the T-SQL form
+	// here instead. The status is left at its zero value, as it is for every
+	// other write under WithScript, since nothing ran.
+	if Scripting(ctx) {
+		stmt, err := scriptExecProc(proc, params)
+		if err != nil {
+			return ProcResult{}, fmt.Errorf("gosmo: exec proc %s: %w", proc, err)
+		}
+		if _, err := d.exec(ctx, stmt); err != nil {
+			return ProcResult{}, fmt.Errorf("gosmo: exec proc %s: %w", proc, err)
+		}
+		return ProcResult{}, nil
+	}
 
 	// The driver runs a bare procedure name with named args as an RPC, which
 	// is what makes OUTPUT parameters and the return status available.

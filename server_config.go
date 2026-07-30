@@ -94,6 +94,7 @@ func (c *ConfigurationOption) SetValue(value int64) error {
 	return c.SetValueContext(context.Background(), value)
 }
 
+// SetValueContext is the context-aware variant of SetValue.
 func (c *ConfigurationOption) SetValueContext(ctx context.Context, value int64) error {
 	q := fmt.Sprintf("EXEC sp_configure N'%s', %d", escapeSingle(c.Name), value)
 	if err := c.server.execContext(ctx, q); err != nil {
@@ -109,6 +110,7 @@ func (s *Server) Reconfigure(override bool) error {
 	return s.ReconfigureContext(context.Background(), override)
 }
 
+// ReconfigureContext is the context-aware variant of Reconfigure.
 func (s *Server) ReconfigureContext(ctx context.Context, override bool) error {
 	q := "RECONFIGURE"
 	if override {
@@ -413,6 +415,7 @@ func (s *Server) KillSession(sessionID int) error {
 	return s.KillSessionContext(context.Background(), sessionID)
 }
 
+// KillSessionContext is the context-aware variant of KillSession.
 func (s *Server) KillSessionContext(ctx context.Context, sessionID int) error {
 	if err := s.execContext(ctx, fmt.Sprintf("KILL %d", sessionID)); err != nil {
 		return fmt.Errorf("gosmo: kill session %d: %w", sessionID, err)
@@ -437,6 +440,7 @@ func (s *Server) ReadErrorLog(logNumber int) ([]*ErrorLogEntry, error) {
 	return s.ReadErrorLogContext(context.Background(), logNumber)
 }
 
+// ReadErrorLogContext is the context-aware variant of ReadErrorLog.
 func (s *Server) ReadErrorLogContext(ctx context.Context, logNumber int) ([]*ErrorLogEntry, error) {
 	rows, err := s.query(ctx,
 		fmt.Sprintf("EXEC xp_readerrorlog %d, 1", logNumber))
@@ -462,6 +466,7 @@ func (s *Server) CycleErrorLog() error {
 	return s.CycleErrorLogContext(context.Background())
 }
 
+// CycleErrorLogContext is the context-aware variant of CycleErrorLog.
 func (s *Server) CycleErrorLogContext(ctx context.Context) error {
 	if err := s.execContext(ctx, "EXEC sp_cycle_errorlog"); err != nil {
 		return fmt.Errorf("gosmo: cycle error log: %w", err)
@@ -486,6 +491,7 @@ func (s *Server) MailProfiles() ([]*MailProfile, error) {
 	return s.MailProfilesContext(context.Background())
 }
 
+// MailProfilesContext is the context-aware variant of MailProfiles.
 func (s *Server) MailProfilesContext(ctx context.Context) ([]*MailProfile, error) {
 	const q = `
 SELECT p.profile_id, p.name, ISNULL(p.description,''),
@@ -517,6 +523,7 @@ func (s *Server) SendMail(profile, recipients, subject, body string) error {
 	return s.SendMailContext(context.Background(), profile, recipients, subject, body)
 }
 
+// SendMailContext is the context-aware variant of SendMail.
 func (s *Server) SendMailContext(ctx context.Context, profile, recipients, subject, body string) error {
 	q := fmt.Sprintf(
 		"EXEC msdb.dbo.sp_send_dbmail @profile_name = N'%s', @recipients = N'%s', "+

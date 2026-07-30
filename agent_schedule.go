@@ -245,7 +245,7 @@ func (sch *Schedule) RenameContext(ctx context.Context, newName string) error {
 	if err := sch.server.execContext(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: rename schedule %q to %q: %w", sch.Name, newName, err)
 	}
-	sch.Name = newName
+	setIfApplied(ctx, &sch.Name, newName)
 	return nil
 }
 
@@ -267,7 +267,7 @@ func (sch *Schedule) setEnabled(ctx context.Context, on bool) error {
 	if err := sch.server.execContext(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: set enabled=%v for schedule %q: %w", on, sch.Name, err)
 	}
-	sch.Enabled = on
+	setIfApplied(ctx, &sch.Enabled, on)
 	return nil
 }
 
@@ -347,7 +347,7 @@ func (sch *Schedule) SetOwnerContext(ctx context.Context, loginName string) erro
 	if err := sch.server.execContext(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: set owner for schedule %q: %w", sch.Name, err)
 	}
-	sch.OwnerLoginName = loginName
+	setIfApplied(ctx, &sch.OwnerLoginName, loginName)
 	return nil
 }
 

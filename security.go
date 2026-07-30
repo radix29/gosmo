@@ -259,7 +259,7 @@ func (p *SecurityPolicy) EnableContext(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("gosmo: enable security policy [%s]: %w", p.Name, err)
 	}
-	p.IsEnabled = true
+	setIfApplied(ctx, &p.IsEnabled, true)
 	return nil
 }
 
@@ -275,7 +275,7 @@ func (p *SecurityPolicy) DisableContext(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("gosmo: disable security policy [%s]: %w", p.Name, err)
 	}
-	p.IsEnabled = false
+	setIfApplied(ctx, &p.IsEnabled, false)
 	return nil
 }
 

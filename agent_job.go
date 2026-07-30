@@ -251,6 +251,7 @@ func (j *Job) Start(stepName string) error {
 	return j.StartContext(context.Background(), stepName)
 }
 
+// StartContext is the context-aware variant of Start.
 func (j *Job) StartContext(ctx context.Context, stepName string) error {
 	q := fmt.Sprintf("EXEC msdb.dbo.sp_start_job @job_name = N'%s'", escapeSingle(j.Name))
 	if stepName != "" {
@@ -267,6 +268,7 @@ func (j *Job) Stop() error {
 	return j.StopContext(context.Background())
 }
 
+// StopContext is the context-aware variant of Stop.
 func (j *Job) StopContext(ctx context.Context) error {
 	q := fmt.Sprintf("EXEC msdb.dbo.sp_stop_job @job_name = N'%s'", escapeSingle(j.Name))
 	if err := j.server.execContext(ctx, q); err != nil {
@@ -293,7 +295,7 @@ func (j *Job) setEnabled(ctx context.Context, on bool) error {
 	if err := j.server.execContext(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: set enabled=%v for job %q: %w", on, j.Name, err)
 	}
-	j.IsEnabled = on
+	setIfApplied(ctx, &j.IsEnabled, on)
 	return nil
 }
 
@@ -302,6 +304,7 @@ func (j *Job) Drop() error {
 	return j.DropContext(context.Background())
 }
 
+// DropContext is the context-aware variant of Drop.
 func (j *Job) DropContext(ctx context.Context) error {
 	q := fmt.Sprintf("EXEC msdb.dbo.sp_delete_job @job_name = N'%s'", escapeSingle(j.Name))
 	if err := j.server.execContext(ctx, q); err != nil {
@@ -320,7 +323,7 @@ func (j *Job) RenameContext(ctx context.Context, newName string) error {
 	if err := j.server.execContext(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: rename job %q to %q: %w", j.Name, newName, err)
 	}
-	j.Name = newName
+	setIfApplied(ctx, &j.Name, newName)
 	return nil
 }
 
@@ -336,7 +339,7 @@ func (j *Job) SetDescriptionContext(ctx context.Context, desc string) error {
 	if err := j.server.execContext(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: set description for job %q: %w", j.Name, err)
 	}
-	j.Description = desc
+	setIfApplied(ctx, &j.Description, desc)
 	return nil
 }
 
@@ -352,7 +355,7 @@ func (j *Job) SetCategoryContext(ctx context.Context, category string) error {
 	if err := j.server.execContext(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: set category for job %q: %w", j.Name, err)
 	}
-	j.Category = category
+	setIfApplied(ctx, &j.Category, category)
 	return nil
 }
 
@@ -368,7 +371,7 @@ func (j *Job) SetOwnerContext(ctx context.Context, loginName string) error {
 	if err := j.server.execContext(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: set owner for job %q: %w", j.Name, err)
 	}
-	j.OwnerLoginName = loginName
+	setIfApplied(ctx, &j.OwnerLoginName, loginName)
 	return nil
 }
 
@@ -384,7 +387,7 @@ func (j *Job) SetStartStepContext(ctx context.Context, stepID int) error {
 	if err := j.server.execContext(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: set start step for job %q: %w", j.Name, err)
 	}
-	j.StartStepID = stepID
+	setIfApplied(ctx, &j.StartStepID, stepID)
 	return nil
 }
 
@@ -407,7 +410,7 @@ func (j *Job) SetEmailNotifyContext(ctx context.Context, operatorName string, le
 	if err := j.server.execContext(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: set email notification for job %q: %w", j.Name, err)
 	}
-	j.NotifyLevelEmail = level
+	setIfApplied(ctx, &j.NotifyLevelEmail, level)
 	if operatorName != "" {
 		j.NotifyEmailOperatorName = operatorName
 	}
@@ -426,7 +429,7 @@ func (j *Job) SetDeleteLevelContext(ctx context.Context, level NotifyLevel) erro
 	if err := j.server.execContext(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: set delete level for job %q: %w", j.Name, err)
 	}
-	j.DeleteLevel = level
+	setIfApplied(ctx, &j.DeleteLevel, level)
 	return nil
 }
 
@@ -435,6 +438,7 @@ func (j *Job) Steps() ([]*JobStep, error) {
 	return j.StepsContext(context.Background())
 }
 
+// StepsContext is the context-aware variant of Steps.
 func (j *Job) StepsContext(ctx context.Context) ([]*JobStep, error) {
 	const q = `
 SELECT step_id, step_name, subsystem, command, ISNULL(database_name, ''),
@@ -474,6 +478,7 @@ func (j *Job) History(limit int) ([]*JobHistoryEntry, error) {
 	return j.HistoryContext(context.Background(), limit)
 }
 
+// HistoryContext is the context-aware variant of History.
 func (j *Job) HistoryContext(ctx context.Context, limit int) ([]*JobHistoryEntry, error) {
 	if limit <= 0 {
 		limit = 100
@@ -593,6 +598,7 @@ func (j *Job) AddStep(req JobStepRequest) error {
 	return j.AddStepContext(context.Background(), req)
 }
 
+// AddStepContext is the context-aware variant of AddStep.
 func (j *Job) AddStepContext(ctx context.Context, req JobStepRequest) error {
 	if req.Name == "" {
 		return fmt.Errorf("gosmo: add step: name is required")
@@ -628,6 +634,12 @@ func (s *JobStep) Update(req JobStepRequest) error {
 
 // UpdateContext is the context-aware variant of Update.
 func (s *JobStep) UpdateContext(ctx context.Context, req JobStepRequest) error {
+	// Same guard as Job.AddStepContext: sp_update_jobstep rejects an empty
+	// @step_name with a server-side error, and the local field writes at the
+	// end of this method would otherwise blank out s.Name on the way past.
+	if req.Name == "" {
+		return fmt.Errorf("gosmo: update step: name is required")
+	}
 	q := fmt.Sprintf(
 		"EXEC msdb.dbo.sp_update_jobstep @job_name = N'%s', @step_id = %d, "+
 			"@step_name = N'%s', @subsystem = N'%s', @command = N'%s', "+
@@ -649,11 +661,16 @@ func (s *JobStep) UpdateContext(ctx context.Context, req JobStepRequest) error {
 	if err := s.job.server.execContext(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: update step %q of job %q: %w", req.Name, s.job.Name, err)
 	}
-	s.Name, s.Subsystem, s.Command, s.Database = req.Name, req.Subsystem, req.Command, req.Database
-	s.OnSuccessAction, s.OnSuccessStepID = req.OnSuccessAction, req.OnSuccessStepID
-	s.OnFailAction, s.OnFailStepID = req.OnFailAction, req.OnFailStepID
-	s.RetryAttempts, s.RetryInterval = req.RetryAttempts, req.RetryInterval
-	s.OutputFileName = req.OutputFileName
+	// Not mirrored under WithScript — nothing reached the server, so the step
+	// must keep describing what is actually there. See setIfApplied, which is
+	// the single-field form of this guard.
+	if !Scripting(ctx) {
+		s.Name, s.Subsystem, s.Command, s.Database = req.Name, req.Subsystem, req.Command, req.Database
+		s.OnSuccessAction, s.OnSuccessStepID = req.OnSuccessAction, req.OnSuccessStepID
+		s.OnFailAction, s.OnFailStepID = req.OnFailAction, req.OnFailStepID
+		s.RetryAttempts, s.RetryInterval = req.RetryAttempts, req.RetryInterval
+		s.OutputFileName = req.OutputFileName
+	}
 	return nil
 }
 
@@ -677,6 +694,7 @@ func (j *Job) AddSchedule(req JobScheduleRequest) error {
 	return j.AddScheduleContext(context.Background(), req)
 }
 
+// AddScheduleContext is the context-aware variant of AddSchedule.
 func (j *Job) AddScheduleContext(ctx context.Context, req JobScheduleRequest) error {
 	q := fmt.Sprintf(
 		"EXEC msdb.dbo.sp_add_jobschedule @job_name = N'%s', @name = N'%s', "+

@@ -1143,7 +1143,7 @@ func (r *ServerRole) RenameContext(ctx context.Context, newName string) error {
 	if err := r.server.execContext(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: rename server role %q to %q: %w", r.Name, newName, err)
 	}
-	r.Name = newName
+	setIfApplied(ctx, &r.Name, newName)
 	return nil
 }
 
@@ -1158,7 +1158,7 @@ func (r *ServerRole) ChangeOwnerContext(ctx context.Context, newOwner string) er
 	if err := r.server.execContext(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: change server role %q owner to %q: %w", r.Name, newOwner, err)
 	}
-	r.Owner = newOwner
+	setIfApplied(ctx, &r.Owner, newOwner)
 	return nil
 }
 
