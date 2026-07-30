@@ -52,9 +52,10 @@ func TestSeqFromYieldsFetchError(t *testing.T) {
 	}
 }
 
-// Breaking out of the range loop must stop the iterator rather than run it
-// to completion — the property that makes ranging over a large collection
-// and stopping early actually cheap.
+// Breaking out of the range loop must stop the yields rather than run them
+// to completion. Note what this does NOT buy: the fetch has already run, so
+// the query cost and the memory for the whole collection are already paid —
+// see TestSeqFromBreakDoesNotAvoidTheFetch and iter.go's package comment.
 func TestSeqFromStopsOnBreak(t *testing.T) {
 	fetch := func(context.Context) ([]int, error) { return []int{1, 2, 3, 4, 5}, nil }
 
@@ -94,5 +95,52 @@ func TestSeqFromDefersFetchUntilRanged(t *testing.T) {
 	}
 	if calls != 1 {
 		t.Fatalf("fetch ran %d times, want 1", calls)
+	}
+}
+
+// Breaking early skips the remaining yields but cannot avoid the fetch: it
+// already ran, in full, before the first yield. This pins the "deferred, not
+// streaming" contract iter.go documents — a caller must not read an early
+// break as bounding either the query or the memory.
+func TestSeqFromBreakDoesNotAvoidTheFetch(t *testing.T) {
+	fetched := 0
+	fetch := func(context.Context) ([]int, error) {
+		fetched++
+		return []int{1, 2, 3, 4, 5}, nil
+	}
+
+	for range seqFrom(context.Background(), fetch) {
+		break // on the very first item
+	}
+	if fetched != 1 {
+		t.Fatalf("fetch ran %d times, want 1 — the whole collection is fetched before the first yield", fetched)
+	}
+}
+
+// fetch runs once per range, not once per iterator value, so the same
+// iterator ranged twice queries twice and may see different results. Callers
+// needing one snapshot for two passes must use the ...Context method.
+func TestSeqFromRefetchesOnEachRange(t *testing.T) {
+	calls := 0
+	fetch := func(context.Context) ([]int, error) {
+		calls++
+		return []int{calls}, nil
+	}
+
+	seq := seqFrom(context.Background(), fetch)
+
+	var first, second []int
+	for v := range seq {
+		first = append(first, v)
+	}
+	for v := range seq {
+		second = append(second, v)
+	}
+
+	if calls != 2 {
+		t.Fatalf("fetch ran %d times across two ranges, want 2", calls)
+	}
+	if len(first) != 1 || len(second) != 1 || first[0] == second[0] {
+		t.Fatalf("first = %v, second = %v — each range must run its own fetch", first, second)
 	}
 }

@@ -108,13 +108,24 @@ func validDataType(t DataType) bool { return dataTypeNames[t] }
 // IndexType represents the type of an index.
 type IndexType string
 
+// The values match sys.indexes.type_desc, except IndexTypeColumnStore,
+// which predates IndexTypeClusteredColumnStore and keeps its original
+// spelling. A type_desc with no constant here is carried through verbatim
+// (see Table.IndexesContext), so Type is never empty for an index that
+// exists.
 const (
-	IndexTypeClustered    IndexType = "CLUSTERED"
-	IndexTypeNonClustered IndexType = "NONCLUSTERED"
-	IndexTypeXML          IndexType = "XML"
-	IndexTypeSpatial      IndexType = "SPATIAL"
-	IndexTypeColumnStore  IndexType = "COLUMNSTORE"
+	IndexTypeClustered            IndexType = "CLUSTERED"
+	IndexTypeNonClustered         IndexType = "NONCLUSTERED"
+	IndexTypeXML                  IndexType = "XML"
+	IndexTypeSpatial              IndexType = "SPATIAL"
+	IndexTypeColumnStore          IndexType = "COLUMNSTORE"
+	IndexTypeClusteredColumnStore IndexType = "CLUSTERED COLUMNSTORE"
 )
+
+// IsColumnStore reports whether t is either columnstore index type.
+func (t IndexType) IsColumnStore() bool {
+	return t == IndexTypeColumnStore || t == IndexTypeClusteredColumnStore
+}
 
 // PermissionState represents GRANT / DENY / REVOKE.
 type PermissionState string

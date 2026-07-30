@@ -1,8 +1,8 @@
 package gosmo
 
-// iter.go exposes lazy iterators over the main SMO collections using the
-// iter.Seq / iter.Seq2 types from the standard library (stable since Go 1.23,
-// idiomatic in Go 1.26).  Callers can range over these directly:
+// iter.go exposes the main SMO collections as range-over-func iterators,
+// using the iter.Seq2 type from the standard library (stable since Go 1.23,
+// idiomatic in Go 1.26). Callers can range over these directly:
 //
 //	for t, err := range db.TableSeq(ctx) {
 //	    if err != nil { ... }
@@ -15,6 +15,33 @@ package gosmo
 // when the iterator is built; the fetch it governs doesn't run until the
 // iterator is ranged over, so a ctx already cancelled by then still stops
 // it, and an iterator built but never ranged over queries nothing.
+//
+// # These are deferred, not streaming
+//
+// Ranging over one of these runs the underlying ...Context method to
+// completion first and then yields from the slice it returned — the fetch is
+// deferred until the range begins, but it is not incremental. Two
+// consequences worth knowing before choosing an iterator over the slice
+// method:
+//
+//   - Breaking out early saves no query work and no memory. The whole
+//     collection was already fetched and is already resident. `for x := range
+//     db.TableSeq(ctx)` with a `break` on the first match costs exactly what
+//     `db.TablesContext(ctx)` costs.
+//   - The error arrives as a single (zero, err) yield in place of any items,
+//     never partway through a successful run, because there is no partway: the
+//     fetch either produced the whole slice or failed. A loop that checks err
+//     on the first iteration has checked it for good.
+//
+// So these exist for the call-site ergonomics of range-over-func, not to
+// bound memory or to let a caller stop the server mid-scan. Where either of
+// those matters, none of the collection methods in this package offer it
+// today — reach for the ...Context method and a bounded query (a WHERE, a
+// TOP) instead.
+//
+// If a genuinely streaming variant is ever added, it belongs alongside these
+// under new names, not as a change to what these do: a caller relying on
+// "one query, then yields that cannot fail" would break silently otherwise.
 
 import (
 	"context"
@@ -24,6 +51,15 @@ import (
 // seqFrom adapts a FooContext(ctx) ([]T, error)-shaped collection method
 // into an iter.Seq2[T, error]: a single (zero, err) if the fetch itself
 // fails, then one (item, nil) per element.
+//
+// fetch runs once per range, not once per iterator, so ranging the same
+// iterator value twice issues the query twice and can legitimately return
+// different results the second time. Assign the slice from the ...Context
+// method instead where one snapshot has to serve two passes.
+//
+// The yield loop stops on a false return (the caller's break), which skips
+// the remaining yields but cannot un-run fetch — see this file's package
+// comment on why these are deferred rather than streaming.
 func seqFrom[T any](ctx context.Context, fetch func(context.Context) ([]T, error)) iter.Seq2[T, error] {
 	return func(yield func(T, error) bool) {
 		items, err := fetch(ctx)

@@ -15,6 +15,11 @@ func quoteIdent(name string) string {
 // escapeSingle escapes single quotes in a string literal for use in T-SQL.
 // Prefer parameterised queries ($1 / ?) for values; use this only where
 // parameters are not accepted (e.g. DDL statements, stored procedure names).
+//
+// It escapes only — the surrounding quotes come from the caller's format
+// string. It does not bracket-quote: an identifier going into a literal needs
+// qualifiedName/quoteIdent first. See QuoteLiteral (quoting.go) for when to
+// reach for which.
 func escapeSingle(s string) string {
 	return strings.ReplaceAll(s, "'", "''")
 }

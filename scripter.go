@@ -80,8 +80,8 @@ func (sc *Scripter) ScriptTableContext(ctx context.Context, schema, name string)
 
 	if sc.opts.ScriptDrops {
 		if sc.opts.IncludeIfNotExists {
-			fmt.Fprintf(&sb, "IF OBJECT_ID(N'%s.%s', N'U') IS NOT NULL\n    ",
-				escapeSingle(schema), escapeSingle(name))
+			fmt.Fprintf(&sb, "IF OBJECT_ID(N'%s', N'U') IS NOT NULL\n    ",
+				escapeSingle(fullName))
 		}
 		fmt.Fprintf(&sb, "DROP TABLE %s;\nGO\n", fullName)
 		return sb.String(), nil
@@ -94,8 +94,8 @@ func (sc *Scripter) ScriptTableContext(ctx context.Context, schema, name string)
 		sb.WriteString("SET ANSI_PADDING ON;\nGO\n\n")
 	}
 	if sc.opts.IncludeIfNotExists {
-		fmt.Fprintf(&sb, "IF OBJECT_ID(N'%s.%s', N'U') IS NULL\nBEGIN\n",
-			escapeSingle(schema), escapeSingle(name))
+		fmt.Fprintf(&sb, "IF OBJECT_ID(N'%s', N'U') IS NULL\nBEGIN\n",
+			escapeSingle(fullName))
 	}
 
 	fmt.Fprintf(&sb, "CREATE TABLE %s (\n", fullName)

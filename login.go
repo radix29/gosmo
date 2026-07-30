@@ -335,7 +335,8 @@ type LoginUserMapping struct {
 // build a full "all databases, mapped or not" view. Databases that are
 // offline, or that the login can't currently reach, are skipped rather
 // than failing the whole scan (SSMS's own User Mapping page behaves the
-// same way).
+// same way). A cancelled context is not skipped — it ends the scan and is
+// returned.
 func (l *Login) UserMappings() ([]*LoginUserMapping, error) {
 	return l.UserMappingsContext(context.Background())
 }
@@ -364,6 +365,13 @@ WHERE  dp.sid = @p1`
 		}
 		rows, err := db.query(ctx, q, l.SID)
 		if err != nil {
+			// Skipping an unreachable database is the point of this loop, but
+			// a cancelled context is not one of those — every remaining
+			// database would fail the same way, so the scan stops instead of
+			// issuing a doomed query per database.
+			if ctx.Err() != nil {
+				return nil, ctx.Err()
+			}
 			continue
 		}
 		for rows.Next() {
@@ -381,6 +389,9 @@ WHERE  dp.sid = @p1`
 		err = rows.Err()
 		rows.Close()
 		if err != nil {
+			if ctx.Err() != nil {
+				return nil, ctx.Err()
+			}
 			continue
 		}
 	}

@@ -19,6 +19,27 @@ func QuoteName(name string) string {
 // single quotes and doubling any embedded quote — safe to embed in SQL text
 // where a parameter placeholder is not accepted (DDL, dynamic SQL). Prefer a
 // query parameter for ordinary values.
+//
+// Use QuoteLiteral where the whole literal is being produced. Where the
+// quotes are already part of a format string — the common shape in this
+// package, e.g. "@name = N'%s'" — use the unexported escapeSingle (helpers.go)
+// instead, which escapes without adding quotes of its own. QuoteLiteral also
+// does not emit the N prefix.
+//
+// Neither one quotes an *identifier*. An identifier that ends up inside a
+// string literal — the argument to OBJECT_ID, DBCC SHOW_STATISTICS,
+// fn_listextendedproperty, and similar — needs QuoteName/qualifiedName
+// applied first and escapeSingle on top of that:
+//
+//	escapeSingle(qualifiedName(schema, name))  // -> [dbo].[Sales.Archive]
+//	escapeSingle(t.FullName())                 // same, for a *Table
+//
+// Skipping the bracket-quoting is not cosmetic. A name containing '.' then
+// parses as a multi-part name and resolves to the wrong object or to NULL,
+// and a NULL object_id means "every object in the database" to
+// sys.dm_db_index_physical_stats — so the wrong form returns plausible stats
+// for the wrong tables instead of failing. See
+// identifier_quoting_test.go, which pins all of this.
 func QuoteLiteral(s string) string {
 	return mssql.TSQLQuoter{}.Value(s)
 }

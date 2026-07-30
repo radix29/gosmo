@@ -202,6 +202,13 @@ func (idx *Index) SetIncludedColumns(t *Table, columns []string) error {
 
 // SetIncludedColumnsContext is the context-aware variant of SetIncludedColumns.
 func (idx *Index) SetIncludedColumnsContext(ctx context.Context, t *Table, columns []string) error {
+	// A columnstore index has no INCLUDE list, and the CREATE below would
+	// recreate it as a rowstore index of whatever clustering IsClustered
+	// reports — silently replacing the index with a different kind.
+	if idx.Type.IsColumnStore() {
+		return fmt.Errorf("gosmo: set included columns on %q: not supported for a %s index",
+			idx.Name, idx.Type)
+	}
 	var sb strings.Builder
 	sb.WriteString("CREATE ")
 	if idx.IsUnique {
@@ -383,10 +390,10 @@ SELECT i.name, s.index_id,
        s.page_count,
        s.fragment_count,
        s.avg_page_space_used_in_percent
-FROM   sys.dm_db_index_physical_stats(DB_ID(), OBJECT_ID(N'%s.%s'), %d, NULL, N'%s') s
+FROM   sys.dm_db_index_physical_stats(DB_ID(), OBJECT_ID(N'%s'), %d, NULL, N'%s') s
 JOIN   sys.indexes i ON i.object_id = s.object_id AND i.index_id = s.index_id
 WHERE  s.index_level = 0`,
-		escapeSingle(t.Schema), escapeSingle(t.Name), idx.IndexID, mode)
+		escapeSingle(t.FullName()), idx.IndexID, mode)
 
 	f := &IndexFragmentation{}
 	var density sql.NullFloat64
@@ -441,6 +448,12 @@ func (t *Table) CreateIndexContext(ctx context.Context, req CreateIndexRequest) 
 		sb.WriteString("CLUSTERED ")
 	case IndexTypeColumnStore:
 		sb.WriteString("NONCLUSTERED COLUMNSTORE ")
+	case IndexTypeClusteredColumnStore:
+		// CREATE CLUSTERED COLUMNSTORE INDEX takes no column list at all,
+		// so it doesn't fit the statement built below. Rejected rather than
+		// quietly downgraded to a plain NONCLUSTERED index.
+		return fmt.Errorf("gosmo: create index %q: %s is not supported here (it takes no key columns)",
+			req.Name, IndexTypeClusteredColumnStore)
 	default:
 		sb.WriteString("NONCLUSTERED ")
 	}
@@ -525,11 +538,11 @@ SELECT i.name, s.index_id,
        s.avg_fragmentation_in_percent,
        s.page_count,
        s.fragment_count
-FROM   sys.dm_db_index_physical_stats(DB_ID(), OBJECT_ID(N'%s.%s'), NULL, NULL, N'%s') s
+FROM   sys.dm_db_index_physical_stats(DB_ID(), OBJECT_ID(N'%s'), NULL, NULL, N'%s') s
 JOIN   sys.indexes i ON i.object_id = s.object_id AND i.index_id = s.index_id
 WHERE  s.index_id > 0
 ORDER  BY s.avg_fragmentation_in_percent DESC`,
-		escapeSingle(t.Schema), escapeSingle(t.Name), mode)
+		escapeSingle(t.FullName()), mode)
 
 	rows, err := t.db.query(ctx, q)
 	if err != nil {

@@ -331,7 +331,7 @@ ORDER  BY i.index_id`
 			&idx.DataCompression); err != nil {
 			return nil, err
 		}
-		switch strings.TrimSpace(typeDesc.String) {
+		switch desc := strings.TrimSpace(typeDesc.String); desc {
 		case "CLUSTERED":
 			idx.Type = IndexTypeClustered
 			idx.IsClustered = true
@@ -341,8 +341,17 @@ ORDER  BY i.index_id`
 			idx.Type = IndexTypeXML
 		case "SPATIAL":
 			idx.Type = IndexTypeSpatial
-		case "CLUSTERED COLUMNSTORE", "NONCLUSTERED COLUMNSTORE":
+		case "CLUSTERED COLUMNSTORE":
+			idx.Type = IndexTypeClusteredColumnStore
+			idx.IsClustered = true
+		case "NONCLUSTERED COLUMNSTORE":
 			idx.Type = IndexTypeColumnStore
+		default:
+			// A type_desc with no constant — NONCLUSTERED HASH on a
+			// memory-optimized table, or a type a newer SQL Server adds —
+			// is carried through as the server's own text rather than left
+			// empty, so a caller displays the real type instead of nothing.
+			idx.Type = IndexType(desc)
 		}
 
 		cols, err := t.indexColumnsContext(ctx, idx.IndexID)
