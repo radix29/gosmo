@@ -250,3 +250,53 @@ func TestScriptLiteral(t *testing.T) {
 		}
 	}
 }
+
+// TestServerScopePermissionsScriptTheUsePrefix pins that a captured
+// server-scope grant carries "USE master" — the statement SQL Server needs
+// before it will accept one at all. See GrantServerPermissionContext on why
+// the prefix form is safe against the connection pool.
+func TestServerScopePermissionsScriptTheUsePrefix(t *testing.T) {
+	s := &Server{}
+	for _, c := range []struct {
+		name string
+		run  func(ctx context.Context) error
+		want string
+	}{
+		{"grant", func(ctx context.Context) error {
+			return s.GrantServerPermissionContext(ctx, "CONNECT SQL", "app_user")
+		}, "GRANT CONNECT SQL TO [app_user]"},
+		{"deny", func(ctx context.Context) error {
+			return s.DenyServerPermissionContext(ctx, "CONNECT SQL", "app_user")
+		}, "DENY CONNECT SQL TO [app_user]"},
+		{"revoke", func(ctx context.Context) error {
+			return s.RevokeServerPermissionContext(ctx, "CONNECT SQL", "app_user")
+		}, "REVOKE CONNECT SQL FROM [app_user]"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			ctx, script := WithScript(context.Background())
+			if err := c.run(ctx); err != nil {
+				t.Fatalf("%s under WithScript: %v", c.name, err)
+			}
+			if len(script.Statements) != 1 {
+				t.Fatalf("Statements = %d, want 1", len(script.Statements))
+			}
+			got := script.Statements[0]
+			if !strings.HasPrefix(got, "USE master; ") {
+				t.Errorf("Statements[0] = %q, want it to open with USE master", got)
+			}
+			if !strings.Contains(got, c.want) {
+				t.Errorf("Statements[0] = %q, want it to contain %q", got, c.want)
+			}
+		})
+	}
+}
+
+// TestServerPermissionRejectedBeforeConnecting pins that the allowlist runs
+// before anything touches the pool — validation must not depend on being
+// connected.
+func TestServerPermissionRejectedBeforeConnecting(t *testing.T) {
+	s := &Server{}
+	if err := s.GrantServerPermissionContext(context.Background(), "DROP TABLE x", "app_user"); err == nil {
+		t.Error("GrantServerPermissionContext accepted an unrecognized permission")
+	}
+}

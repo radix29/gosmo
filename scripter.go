@@ -14,9 +14,18 @@ import (
 
 // ScriptOptions controls how objects are scripted.
 type ScriptOptions struct {
-	// IncludeHeaders adds an informational header comment.
+	// IncludeHeaders adds an informational header comment. Applies to
+	// ScriptTable and ScriptDatabase only.
 	IncludeHeaders bool
-	// IncludeIfNotExists wraps DDL in an existence check.
+	// IncludeIfNotExists guards each generated statement with its own
+	// existence check. Applies to ScriptTable and ScriptDatabase only:
+	// ScriptView/StoredProcedure/Function return the module's definition
+	// verbatim from sys.sql_modules and don't synthesize DDL to guard.
+	//
+	// The guard is per statement, never a block spanning several. A BEGIN
+	// block containing GO separators is split across batches — GO is a
+	// client-side batch break — leaving an unclosed BEGIN in one batch and a
+	// bare END in another, which is a script that cannot parse.
 	IncludeIfNotExists bool
 	// ScriptDrops emits DROP statements instead of CREATE statements.
 	ScriptDrops bool
@@ -75,29 +84,42 @@ func (sc *Scripter) ScriptTableContext(ctx context.Context, schema, name string)
 		return "", err
 	}
 
+	return buildTableScript(schema, name, sc.db.name, cols, indexes, fks, sc.opts), nil
+}
+
+// buildTableScript assembles the CREATE (or DROP) TABLE script from metadata
+// already read. Split out of ScriptTableContext so the assembly — where every
+// bug this has had has lived — can be unit-tested without a server; the
+// method above is then only the four catalog reads that feed it.
+func buildTableScript(schema, name, dbName string, cols []*Column, indexes []*Index, fks []*ForeignKey, opts ScriptOptions) string {
 	fullName := qualifiedName(schema, name)
 	var sb strings.Builder
 
-	if sc.opts.ScriptDrops {
-		if sc.opts.IncludeIfNotExists {
+	if opts.ScriptDrops {
+		if opts.IncludeIfNotExists {
 			fmt.Fprintf(&sb, "IF OBJECT_ID(N'%s', N'U') IS NOT NULL\n    ",
 				escapeSingle(fullName))
 		}
 		fmt.Fprintf(&sb, "DROP TABLE %s;\nGO\n", fullName)
-		return sb.String(), nil
+		return sb.String()
 	}
 
-	if sc.opts.IncludeHeaders {
-		fmt.Fprintf(&sb, "/* Table: %s  Database: %s */\n", fullName, sc.db.name)
+	if opts.IncludeHeaders {
+		fmt.Fprintf(&sb, "/* Table: %s  Database: %s */\n", fullName, dbName)
 	}
-	if sc.opts.AnsiPadding {
+	if opts.AnsiPadding {
 		sb.WriteString("SET ANSI_PADDING ON;\nGO\n\n")
 	}
-	if sc.opts.IncludeIfNotExists {
-		fmt.Fprintf(&sb, "IF OBJECT_ID(N'%s', N'U') IS NULL\nBEGIN\n",
-			escapeSingle(fullName))
+	// The existence check guards only the CREATE TABLE, and closes before the
+	// batch does. Wrapping the indexes and foreign keys in it too — which is
+	// what this did — put GO separators inside a BEGIN block: GO is a
+	// client-side batch break, so the block was split across batches, leaving
+	// batch one with an unclosed BEGIN and the last batch a bare END. The
+	// whole script failed to parse. Each following statement gets its own
+	// guard instead, which is also what SSMS emits.
+	if opts.IncludeIfNotExists {
+		fmt.Fprintf(&sb, "IF OBJECT_ID(N'%s', N'U') IS NULL\n", escapeSingle(fullName))
 	}
-
 	fmt.Fprintf(&sb, "CREATE TABLE %s (\n", fullName)
 
 	// Find PK index once
@@ -135,58 +157,100 @@ func (sc *Scripter) ScriptTableContext(ctx context.Context, schema, name string)
 	}
 
 	if pkIdx != nil {
-		keyCols := make([]string, len(pkIdx.KeyColumns))
-		for i, kc := range pkIdx.KeyColumns {
-			dir := "ASC"
-			if kc.Descending {
-				dir = "DESC"
-			}
-			keyCols[i] = fmt.Sprintf("%s %s", quoteIdent(kc.Name), dir)
-		}
 		clust := "NONCLUSTERED"
 		if pkIdx.IsClustered {
 			clust = "CLUSTERED"
 		}
 		fmt.Fprintf(&sb, "    CONSTRAINT %s PRIMARY KEY %s (%s)\n",
-			quoteIdent(pkIdx.Name), clust, strings.Join(keyCols, ", "))
+			quoteIdent(pkIdx.Name), clust, indexColumnList(pkIdx.KeyColumns))
 	}
 
 	sb.WriteString(");\nGO\n\n")
 
-	// Non-PK indexes
+	// Non-PK indexes. A unique *constraint* is backed by an index in
+	// sys.indexes but is not created with CREATE INDEX — it belongs to the
+	// table, and scripting it as an index leaves the constraint missing.
 	for _, idx := range indexes {
-		if !idx.IsPrimaryKey {
-			sb.WriteString(sc.scriptIndex(idx, t))
+		if idx.IsPrimaryKey {
+			continue
 		}
+		if idx.IsUniqueConstraint {
+			sb.WriteString(scriptUniqueConstraint(idx, fullName, opts))
+			continue
+		}
+		sb.WriteString(scriptIndex(idx, fullName, opts))
 	}
 
 	// Foreign keys
 	for _, fk := range fks {
-		sb.WriteString(sc.scriptForeignKey(fk, t))
+		sb.WriteString(scriptForeignKey(fk, fullName, opts))
 	}
 
-	if sc.opts.IncludeIfNotExists {
-		sb.WriteString("END\nGO\n")
-	}
-	return sb.String(), nil
+	return sb.String()
 }
 
-func (sc *Scripter) scriptIndex(idx *Index, t *Table) string {
-	var sb strings.Builder
-	uniq := ""
-	if idx.IsUnique {
-		uniq = "UNIQUE "
-	}
-	keyCols := make([]string, len(idx.KeyColumns))
-	for i, kc := range idx.KeyColumns {
+// indexColumnList renders an index's key columns with their sort direction.
+func indexColumnList(cols []IndexColumn) string {
+	out := make([]string, len(cols))
+	for i, kc := range cols {
 		dir := "ASC"
 		if kc.Descending {
 			dir = "DESC"
 		}
-		keyCols[i] = fmt.Sprintf("%s %s", quoteIdent(kc.Name), dir)
+		out[i] = fmt.Sprintf("%s %s", quoteIdent(kc.Name), dir)
+	}
+	return strings.Join(out, ", ")
+}
+
+// scriptIndex renders one CREATE INDEX statement for a table-level index.
+//
+// The index type decides the grammar, not just a keyword: a clustered
+// columnstore index takes no column list at all, a nonclustered columnstore
+// takes columns but rejects ASC/DESC, and XML/spatial indexes have their own
+// syntax entirely (a USING/primary-XML-index clause, a bounding box). Pasting
+// the type_desc into the B-tree form — which is what this did — emits DDL SQL
+// Server rejects, so those cases are emitted as a comment naming what was
+// skipped rather than as a statement that cannot run.
+func scriptIndex(idx *Index, tableName string, opts ScriptOptions) string {
+	var sb strings.Builder
+	switch {
+	case idx.Type == IndexTypeClusteredColumnStore:
+		if opts.IncludeIfNotExists {
+			sb.WriteString(indexExistenceGuard(idx.Name, tableName))
+		}
+		fmt.Fprintf(&sb, "CREATE CLUSTERED COLUMNSTORE INDEX %s ON %s;\nGO\n\n",
+			quoteIdent(idx.Name), tableName)
+		return sb.String()
+	case idx.Type == IndexTypeColumnStore:
+		cols := make([]string, len(idx.KeyColumns))
+		for i, kc := range idx.KeyColumns {
+			cols[i] = quoteIdent(kc.Name)
+		}
+		if opts.IncludeIfNotExists {
+			sb.WriteString(indexExistenceGuard(idx.Name, tableName))
+		}
+		fmt.Fprintf(&sb, "CREATE NONCLUSTERED COLUMNSTORE INDEX %s\n    ON %s (%s);\nGO\n\n",
+			quoteIdent(idx.Name), tableName, strings.Join(cols, ", "))
+		return sb.String()
+	case idx.Type == IndexTypeXML || idx.Type == IndexTypeSpatial:
+		fmt.Fprintf(&sb, "-- %s index %s on %s is not scripted (its DDL has no generic form here).\n\n",
+			idx.Type, quoteIdent(idx.Name), tableName)
+		return sb.String()
+	}
+
+	if opts.IncludeIfNotExists {
+		sb.WriteString(indexExistenceGuard(idx.Name, tableName))
+	}
+	uniq := ""
+	if idx.IsUnique {
+		uniq = "UNIQUE "
+	}
+	clust := "NONCLUSTERED"
+	if idx.IsClustered {
+		clust = "CLUSTERED"
 	}
 	fmt.Fprintf(&sb, "CREATE %s%s INDEX %s\n    ON %s (%s)",
-		uniq, idx.Type, quoteIdent(idx.Name), t.FullName(), strings.Join(keyCols, ", "))
+		uniq, clust, quoteIdent(idx.Name), tableName, indexColumnList(idx.KeyColumns))
 	if len(idx.IncludedColumns) > 0 {
 		inc := make([]string, len(idx.IncludedColumns))
 		for i, c := range idx.IncludedColumns {
@@ -204,8 +268,49 @@ func (sc *Scripter) scriptIndex(idx *Index, t *Table) string {
 	return sb.String()
 }
 
-func (sc *Scripter) scriptForeignKey(fk *ForeignKey, t *Table) string {
+// indexExistenceGuard renders the one-line IF that skips a CREATE INDEX when
+// the index is already there. A single statement, so no BEGIN block — see
+// buildTableScript on why a block here would break the batch.
+func indexExistenceGuard(indexName, tableName string) string {
+	return fmt.Sprintf("IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'%s' AND object_id = OBJECT_ID(N'%s'))\n",
+		escapeSingle(indexName), escapeSingle(tableName))
+}
+
+// scriptUniqueConstraint renders a unique constraint backed by idx as the
+// ALTER TABLE ... ADD CONSTRAINT it really is.
+func scriptUniqueConstraint(idx *Index, tableName string, opts ScriptOptions) string {
 	var sb strings.Builder
+	if opts.IncludeIfNotExists {
+		sb.WriteString(constraintExistenceGuard(idx.Name, tableName))
+	}
+	clust := "NONCLUSTERED"
+	if idx.IsClustered {
+		clust = "CLUSTERED"
+	}
+	fmt.Fprintf(&sb, "ALTER TABLE %s\n    ADD CONSTRAINT %s UNIQUE %s (%s);\nGO\n\n",
+		tableName, quoteIdent(idx.Name), clust, indexColumnList(idx.KeyColumns))
+	return sb.String()
+}
+
+// constraintExistenceGuard renders the one-line IF that skips adding a
+// constraint that already exists on tableName.
+//
+// Scoped by parent_object_id, not by name alone: constraint names are only
+// unique per schema, so a bare name match would skip a genuinely missing
+// constraint because something unrelated elsewhere shares its name — and a
+// false positive here means silently omitting DDL, which is worse than
+// re-running it and getting an error. Both unique constraints and foreign
+// keys carry the table as their parent.
+func constraintExistenceGuard(name, tableName string) string {
+	return fmt.Sprintf("IF NOT EXISTS (SELECT 1 FROM sys.objects WHERE name = N'%s' AND parent_object_id = OBJECT_ID(N'%s'))\n",
+		escapeSingle(name), escapeSingle(tableName))
+}
+
+func scriptForeignKey(fk *ForeignKey, tableName string, opts ScriptOptions) string {
+	var sb strings.Builder
+	if opts.IncludeIfNotExists {
+		sb.WriteString(constraintExistenceGuard(fk.Name, tableName))
+	}
 	cols := make([]string, len(fk.Columns))
 	for i, c := range fk.Columns {
 		cols[i] = quoteIdent(c)
@@ -216,7 +321,7 @@ func (sc *Scripter) scriptForeignKey(fk *ForeignKey, t *Table) string {
 	}
 	fmt.Fprintf(&sb,
 		"ALTER TABLE %s\n    ADD CONSTRAINT %s\n    FOREIGN KEY (%s)\n    REFERENCES %s (%s)",
-		t.FullName(), quoteIdent(fk.Name),
+		tableName, quoteIdent(fk.Name),
 		strings.Join(cols, ", "),
 		qualifiedName(fk.ReferencedSchema, fk.ReferencedTable),
 		strings.Join(refCols, ", "),

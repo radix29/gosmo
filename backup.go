@@ -21,6 +21,13 @@ type BackupOptions struct {
 	Database string
 	// Action: DATABASE (default), LOG, or FILES.
 	Action BackupAction
+	// Files and FileGroups name the logical files / filegroups a
+	// BackupActionFiles backup covers. At least one of the two is required
+	// for that action and both are ignored for every other one — there is no
+	// "BACKUP FILES" verb in T-SQL; a file/filegroup backup is a BACKUP
+	// DATABASE carrying FILE = / FILEGROUP = clauses.
+	Files      []string
+	FileGroups []string
 	// Devices is one or more backup device paths, e.g. `C:\Backups\MyDB.bak`.
 	Devices []string
 	// BackupSetName is the NAME clause.
@@ -95,15 +102,26 @@ func BuildBackupStatement(opts BackupOptions) (string, error) {
 		return "", fmt.Errorf("gosmo: backup: unrecognized action %q", opts.Action)
 	}
 
-	// A differential backup is not its own BACKUP verb — it's a plain
-	// BACKUP DATABASE with a DIFFERENTIAL clause.
+	// Neither DIFFERENTIAL nor FILES is its own BACKUP verb: a differential is
+	// a BACKUP DATABASE with a DIFFERENTIAL clause, and a file/filegroup
+	// backup is a BACKUP DATABASE carrying FILE = / FILEGROUP = clauses.
+	// Emitting the action name literally produced "BACKUP FILES [db]", which
+	// SQL Server rejects outright.
 	action := opts.Action
-	if action == BackupActionDifferential {
+	if action == BackupActionDifferential || action == BackupActionFiles {
 		action = BackupActionDatabase
 	}
 
 	var sb strings.Builder
-	fmt.Fprintf(&sb, "BACKUP %s %s TO ", action, quoteIdent(opts.Database))
+	fmt.Fprintf(&sb, "BACKUP %s %s", action, quoteIdent(opts.Database))
+	if opts.Action == BackupActionFiles {
+		spec, err := backupFileSpec("backup", opts.Files, opts.FileGroups)
+		if err != nil {
+			return "", err
+		}
+		fmt.Fprintf(&sb, " %s", spec)
+	}
+	sb.WriteString(" TO ")
 
 	deviceList := make([]string, len(opts.Devices))
 	for i, d := range opts.Devices {
@@ -151,6 +169,27 @@ func BuildBackupStatement(opts BackupOptions) (string, error) {
 	}
 
 	return sb.String(), nil
+}
+
+// backupFileSpec renders the FILE = / FILEGROUP = clause list that a
+// file-or-filegroup BACKUP/RESTORE carries between the database name and the
+// TO/FROM keyword. verb names the operation for the error message.
+//
+// At least one file or filegroup is required: BackupActionFiles with neither
+// would otherwise render as a plain full BACKUP DATABASE, quietly doing far
+// more work than the caller asked for rather than failing.
+func backupFileSpec(verb string, files, fileGroups []string) (string, error) {
+	if len(files) == 0 && len(fileGroups) == 0 {
+		return "", fmt.Errorf("gosmo: %s: action %s needs at least one file or filegroup", verb, BackupActionFiles)
+	}
+	parts := make([]string, 0, len(files)+len(fileGroups))
+	for _, f := range files {
+		parts = append(parts, fmt.Sprintf("FILE = N'%s'", escapeSingle(f)))
+	}
+	for _, g := range fileGroups {
+		parts = append(parts, fmt.Sprintf("FILEGROUP = N'%s'", escapeSingle(g)))
+	}
+	return strings.Join(parts, ", "), nil
 }
 
 // execWithProgress runs sqlText on a dedicated connection, draining the
@@ -215,10 +254,21 @@ func parsePercent(text string) int {
 type RestoreOptions struct {
 	// Database is the target database name (required).
 	Database string
-	// Action: DATABASE (default) or LOG.
+	// Action: DATABASE (default), LOG, or FILES.
 	Action BackupAction
+	// Files and FileGroups name the logical files / filegroups a
+	// BackupActionFiles restore covers — see BackupOptions.Files for why
+	// these are clauses on a RESTORE DATABASE rather than a verb of their own.
+	Files      []string
+	FileGroups []string
 	// Devices is one or more backup file paths (required).
 	Devices []string
+	// FileNumber selects which backup set on the device to restore (RESTORE's
+	// WITH FILE = n, 1-based, as reported by BackupHeader.Position). Zero
+	// leaves the clause off, which SQL Server reads as the first set — so a
+	// device holding an appended differential or log needs this set
+	// explicitly, or the full backup at position 1 is restored instead.
+	FileNumber int
 	// RelocateFiles maps logical file names to new physical paths.
 	RelocateFiles []RelocateFile
 	// NoRecovery keeps the database in RESTORING state (for log shipping / tail-log).
@@ -294,8 +344,23 @@ func BuildRestoreStatement(opts RestoreOptions) (string, error) {
 		return "", fmt.Errorf("gosmo: restore: unrecognized action %q", opts.Action)
 	}
 
+	// FILES is not a RESTORE verb any more than it is a BACKUP one — see
+	// BuildBackupStatement.
+	action := opts.Action
+	if action == BackupActionDifferential || action == BackupActionFiles {
+		action = BackupActionDatabase
+	}
+
 	var sb strings.Builder
-	fmt.Fprintf(&sb, "RESTORE %s %s FROM ", opts.Action, quoteIdent(opts.Database))
+	fmt.Fprintf(&sb, "RESTORE %s %s", action, quoteIdent(opts.Database))
+	if opts.Action == BackupActionFiles {
+		spec, err := backupFileSpec("restore", opts.Files, opts.FileGroups)
+		if err != nil {
+			return "", err
+		}
+		fmt.Fprintf(&sb, " %s", spec)
+	}
+	sb.WriteString(" FROM ")
 
 	deviceList := make([]string, len(opts.Devices))
 	for i, d := range opts.Devices {
@@ -304,6 +369,9 @@ func BuildRestoreStatement(opts RestoreOptions) (string, error) {
 	sb.WriteString(strings.Join(deviceList, ", "))
 
 	var withs []string
+	if opts.FileNumber > 0 {
+		withs = append(withs, fmt.Sprintf("FILE = %d", opts.FileNumber))
+	}
 	for _, rf := range opts.RelocateFiles {
 		withs = append(withs, fmt.Sprintf("MOVE N'%s' TO N'%s'",
 			escapeSingle(rf.LogicalName), escapeSingle(rf.PhysicalName)))

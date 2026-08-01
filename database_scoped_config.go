@@ -56,6 +56,28 @@ ORDER  BY name`
 	return configs, rows.Err()
 }
 
+// buildScopedConfigStatement renders (and validates the inputs of) one
+// ALTER DATABASE SCOPED CONFIGURATION statement.
+//
+// FOR SECONDARY precedes SET: "ALTER DATABASE SCOPED CONFIGURATION FOR
+// SECONDARY SET MAXDOP = PRIMARY". Appending it after the assignment instead
+// is a syntax error, not a differently-ordered but valid clause — that made
+// forSecondary unusable outright. Split out from the method so the clause
+// order can be asserted without a server.
+func buildScopedConfigStatement(name, value string, forSecondary bool) (string, error) {
+	if !isSimpleIdentifier(name) {
+		return "", fmt.Errorf("gosmo: set database scoped configuration: invalid name %q", name)
+	}
+	if !isSimpleSetValue(value) {
+		return "", fmt.Errorf("gosmo: set database scoped configuration %s: invalid value %q", name, value)
+	}
+	scope := ""
+	if forSecondary {
+		scope = "FOR SECONDARY "
+	}
+	return fmt.Sprintf("ALTER DATABASE SCOPED CONFIGURATION %sSET %s = %s", scope, name, value), nil
+}
+
 // SetDatabaseScopedConfig changes one database scoped configuration option.
 // value is the keyword or literal that follows the option name verbatim,
 // e.g. "ON", "OFF", "4" — see ALTER DATABASE SCOPED CONFIGURATION's
@@ -72,15 +94,9 @@ func (d *Database) SetDatabaseScopedConfig(name, value string, forSecondary bool
 // scoped to whichever database is current, so this runs through d.exec
 // (USE first), not d.server.execContext.
 func (d *Database) SetDatabaseScopedConfigContext(ctx context.Context, name, value string, forSecondary bool) error {
-	if !isSimpleIdentifier(name) {
-		return fmt.Errorf("gosmo: set database scoped configuration: invalid name %q", name)
-	}
-	if !isSimpleSetValue(value) {
-		return fmt.Errorf("gosmo: set database scoped configuration %s: invalid value %q", name, value)
-	}
-	q := fmt.Sprintf("ALTER DATABASE SCOPED CONFIGURATION SET %s = %s", name, value)
-	if forSecondary {
-		q += " FOR SECONDARY"
+	q, err := buildScopedConfigStatement(name, value, forSecondary)
+	if err != nil {
+		return err
 	}
 	if _, err := d.exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: set database scoped configuration %s = %s on %q: %w", name, value, d.name, err)

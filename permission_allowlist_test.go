@@ -1,6 +1,9 @@
 package gosmo
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestValidServerPermission(t *testing.T) {
 	if !validServerPermission("CONTROL SERVER") {
@@ -269,5 +272,41 @@ func TestSplitAndMergeRangeRejectBadBoundary(t *testing.T) {
 	}
 	if err := pf.MergeRange("100); DROP TABLE Users; --"); err == nil {
 		t.Error("MergeRange accepted an invalid boundary literal, want an error")
+	}
+}
+
+// TestScopedConfigForSecondaryClauseOrder pins that FOR SECONDARY precedes
+// SET. Appending it after the assignment — "... SET MAXDOP = 4 FOR
+// SECONDARY" — is a syntax error, not a differently-ordered but valid form,
+// so that whole argument was unusable.
+func TestScopedConfigForSecondaryClauseOrder(t *testing.T) {
+	got, err := buildScopedConfigStatement("MAXDOP", "4", false)
+	if err != nil {
+		t.Fatalf("buildScopedConfigStatement: %v", err)
+	}
+	if want := "ALTER DATABASE SCOPED CONFIGURATION SET MAXDOP = 4"; got != want {
+		t.Errorf("primary: got %q, want %q", got, want)
+	}
+
+	got, err = buildScopedConfigStatement("MAXDOP", "PRIMARY", true)
+	if err != nil {
+		t.Fatalf("buildScopedConfigStatement: %v", err)
+	}
+	if want := "ALTER DATABASE SCOPED CONFIGURATION FOR SECONDARY SET MAXDOP = PRIMARY"; got != want {
+		t.Errorf("secondary: got %q, want %q", got, want)
+	}
+	if strings.HasSuffix(got, "FOR SECONDARY") {
+		t.Errorf("FOR SECONDARY appended after the assignment: %q", got)
+	}
+}
+
+// TestScopedConfigStatementRejectsInjection pins that the validation still
+// runs on the extracted builder, not just at the old call site.
+func TestScopedConfigStatementRejectsInjection(t *testing.T) {
+	if _, err := buildScopedConfigStatement("MAXDOP; DROP TABLE x --", "4", false); err == nil {
+		t.Error("buildScopedConfigStatement accepted an injected name")
+	}
+	if _, err := buildScopedConfigStatement("MAXDOP", "4; DROP TABLE x --", false); err == nil {
+		t.Error("buildScopedConfigStatement accepted an injected value")
 	}
 }

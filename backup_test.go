@@ -1,6 +1,7 @@
 package gosmo
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -247,5 +248,86 @@ func TestParseInt64(t *testing.T) {
 		if got := parseInt64(c.in); got != c.want {
 			t.Errorf("parseInt64(%q) = %d, want %d", c.in, got, c.want)
 		}
+	}
+}
+
+// TestBuildBackupStatementFiles pins that BackupActionFiles renders as a
+// BACKUP DATABASE carrying FILE = / FILEGROUP = clauses. There is no
+// "BACKUP FILES" verb: the action name used to be pasted in literally,
+// producing "BACKUP FILES [db] TO ..." — which the allowlist accepted and
+// SQL Server rejects.
+func TestBuildBackupStatementFiles(t *testing.T) {
+	got, err := BuildBackupStatement(BackupOptions{
+		Database:   "AppDB",
+		Action:     BackupActionFiles,
+		Files:      []string{"AppDB_dat2"},
+		FileGroups: []string{"FG_Archive"},
+		Devices:    []string{`C:\B\p.bak`},
+	})
+	if err != nil {
+		t.Fatalf("BuildBackupStatement: %v", err)
+	}
+	want := `BACKUP DATABASE [AppDB] FILE = N'AppDB_dat2', FILEGROUP = N'FG_Archive' TO DISK = N'C:\B\p.bak'`
+	if got != want {
+		t.Errorf("BuildBackupStatement()\n got %q\nwant %q", got, want)
+	}
+	if strings.Contains(got, "BACKUP FILES") {
+		t.Errorf("emitted the non-existent BACKUP FILES verb: %q", got)
+	}
+}
+
+// TestBuildBackupStatementFilesNeedsATarget pins that the FILES action fails
+// loudly with neither a file nor a filegroup, rather than degrading into a
+// full BACKUP DATABASE that does far more work than asked.
+func TestBuildBackupStatementFilesNeedsATarget(t *testing.T) {
+	_, err := BuildBackupStatement(BackupOptions{
+		Database: "AppDB", Action: BackupActionFiles, Devices: []string{"d.bak"},
+	})
+	if err == nil {
+		t.Fatal("BuildBackupStatement(FILES with no file/filegroup) = nil error, want one")
+	}
+}
+
+// TestBuildRestoreStatementFileNumber pins WITH FILE = n, without which a
+// device holding several backup sets always restores the first.
+func TestBuildRestoreStatementFileNumber(t *testing.T) {
+	got, err := BuildRestoreStatement(RestoreOptions{
+		Database: "AppDB", Devices: []string{"d.bak"}, FileNumber: 3, NoRecovery: true,
+	})
+	if err != nil {
+		t.Fatalf("BuildRestoreStatement: %v", err)
+	}
+	if !strings.Contains(got, "WITH FILE = 3, NORECOVERY") {
+		t.Errorf("BuildRestoreStatement() = %q, want it to carry WITH FILE = 3", got)
+	}
+
+	// Zero leaves the clause off entirely — SQL Server's own default is the
+	// first set, so emitting "FILE = 0" would be an error rather than a no-op.
+	got, err = BuildRestoreStatement(RestoreOptions{
+		Database: "AppDB", Devices: []string{"d.bak"}, Recovery: true,
+	})
+	if err != nil {
+		t.Fatalf("BuildRestoreStatement: %v", err)
+	}
+	if strings.Contains(got, "FILE =") {
+		t.Errorf("BuildRestoreStatement() = %q, want no FILE clause for FileNumber 0", got)
+	}
+}
+
+// TestBuildRestoreStatementFiles is the RESTORE counterpart of
+// TestBuildBackupStatementFiles.
+func TestBuildRestoreStatementFiles(t *testing.T) {
+	got, err := BuildRestoreStatement(RestoreOptions{
+		Database: "AppDB", Action: BackupActionFiles,
+		Files: []string{"AppDB_dat2"}, Devices: []string{"d.bak"},
+	})
+	if err != nil {
+		t.Fatalf("BuildRestoreStatement: %v", err)
+	}
+	if !strings.HasPrefix(got, `RESTORE DATABASE [AppDB] FILE = N'AppDB_dat2' FROM `) {
+		t.Errorf("BuildRestoreStatement() = %q", got)
+	}
+	if strings.Contains(got, "RESTORE FILES") {
+		t.Errorf("emitted the non-existent RESTORE FILES verb: %q", got)
 	}
 }

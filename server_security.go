@@ -158,12 +158,23 @@ func (s *Server) GrantServerPermission(permission, principal string) error {
 // session's current database is master ("Permissions at the server scope
 // can only be granted when the current database is master") — its own
 // restriction, not one gosmo imposes — so every statement here is prefixed
-// with USE master in the same batch. Sent
-// as one round trip, this doesn't leave the connection's database context
-// changed for whatever runs next: database/sql doesn't guarantee this
-// exact pooled connection is reused for the caller's next call, and even
-// if it is, that next call is a fresh statement/batch that sets its own
-// context if it needs to.
+// with USE master in the same batch.
+//
+// That USE does not leak into whatever borrows the connection next, and the
+// reason is the driver, not this package: USE is session state and would
+// otherwise survive the connection's return to the pool. database/sql calls
+// driver.SessionResetter.ResetSession before handing a pooled connection to
+// its next user, and go-mssqldb implements it by flagging the next TDS batch
+// as a connection reset (Conn.ResetSession -> sendSqlBatch72's resetSession),
+// which restores the session's database to the connection string's.
+//
+// Verified live 2026-08-01, A/B against a connection opened with
+// Database set: eight pooled connections all still reported that database
+// after a GRANT. Recorded because the shape of this code invites the
+// opposite conclusion — a review that session proposed replacing it with a
+// pinned connection that reads DB_NAME(), switches, and switches back, which
+// is three extra round trips per grant to re-solve what the driver already
+// handles.
 func (s *Server) GrantServerPermissionContext(ctx context.Context, permission, principal string) error {
 	if !validServerPermission(permission) {
 		return fmt.Errorf("gosmo: grant server permission: unrecognized permission %q", permission)
