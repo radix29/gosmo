@@ -175,6 +175,20 @@ func (s *Server) ScheduleByNameContext(ctx context.Context, name string) (*Sched
 	return sch, nil
 }
 
+// Schedule returns a lightweight handle for a shared schedule by name,
+// without querying msdb — the schedule-side counterpart of Server.Database.
+// ID, FreqType, ActiveStartDate and every other cached field stay at their
+// zero value; ScheduleByName is what populates them.
+//
+// Every write method on *Schedule that addresses the schedule by name
+// (Job.AttachSchedule/DetachSchedule take the name directly) works from
+// this handle, which makes it the only usable form under a WithScript
+// context: ScheduleByNameContext's lookup is a real read, so a schedule
+// whose sp_add_schedule was merely collected is not there to find.
+func (s *Server) Schedule(name string) *Schedule {
+	return &Schedule{server: s, Name: name}
+}
+
 // CreateScheduleRequest describes a new shared schedule.
 type CreateScheduleRequest struct {
 	Name                 string
@@ -229,6 +243,13 @@ func (s *Server) CreateScheduleContext(ctx context.Context, req CreateScheduleRe
 	}
 	if err := s.execContext(ctx, q); err != nil {
 		return nil, fmt.Errorf("gosmo: create schedule %q: %w", req.Name, err)
+	}
+	if Scripting(ctx) {
+		// The read-back is a real query and the EXEC above was only collected,
+		// so under WithScript it fails with "schedule not found" — turning a
+		// scripted create into an error and losing the statement the caller
+		// asked for. A name-only handle is what the caller can act on here.
+		return s.Schedule(req.Name), nil
 	}
 	return s.ScheduleByNameContext(ctx, req.Name)
 }

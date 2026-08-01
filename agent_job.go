@@ -186,6 +186,21 @@ ORDER  BY j.name`
 	return jobs, rows.Err()
 }
 
+// Job returns a lightweight handle for a job by name, without querying
+// msdb — the job-side counterpart of Server.Database. JobID, Category,
+// LastRunOutcome and every other cached field stay at their zero value;
+// JobByName is what populates them.
+//
+// Every write method on *Job builds its statement from Name alone
+// (AddStep, AttachSchedule, Start, Rename, ...), so this handle is enough
+// to keep operating on a job the caller already knows exists — and is the
+// only usable form under a WithScript context, where JobByNameContext's
+// lookup is a real read and a job whose sp_add_job was merely collected is
+// not there to find.
+func (s *Server) Job(name string) *Job {
+	return &Job{server: s, Name: name}
+}
+
 // JobByName returns a single job by name using a direct parameterised query.
 func (s *Server) JobByName(name string) (*Job, error) {
 	return s.JobByNameContext(context.Background(), name)
@@ -412,7 +427,7 @@ func (j *Job) SetEmailNotifyContext(ctx context.Context, operatorName string, le
 	}
 	setIfApplied(ctx, &j.NotifyLevelEmail, level)
 	if operatorName != "" {
-		j.NotifyEmailOperatorName = operatorName
+		setIfApplied(ctx, &j.NotifyEmailOperatorName, operatorName)
 	}
 	return nil
 }
@@ -589,6 +604,12 @@ func (s *Server) CreateJobContext(ctx context.Context, req CreateJobRequest) (*J
 	enlistQ := fmt.Sprintf("EXEC msdb.dbo.sp_add_jobserver @job_name = N'%s', @server_name = N'(local)'", escapeSingle(req.Name))
 	if err := s.execContext(ctx, enlistQ); err != nil {
 		return nil, fmt.Errorf("gosmo: enlist job %q on local server: %w", req.Name, err)
+	}
+	if Scripting(ctx) {
+		// See CreateScheduleContext: the read-back is a real query, and the
+		// two EXECs above were only collected, so it would fail with "job not
+		// found" rather than yielding the script that was asked for.
+		return s.Job(req.Name), nil
 	}
 	return s.JobByNameContext(ctx, req.Name)
 }

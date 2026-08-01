@@ -80,6 +80,20 @@ func (s *Server) OperatorsContext(ctx context.Context) ([]*Operator, error) {
 	return out, rows.Err()
 }
 
+// Operator returns a lightweight handle for an operator by name, without
+// querying msdb — the operator-side counterpart of Server.Database. ID,
+// EmailAddress, Category and every other cached field stay at their zero
+// value; OperatorByName is what populates them.
+//
+// Every write method on *Operator addresses the operator by name, so this
+// handle is enough to keep operating on an operator the caller already
+// knows exists — and is the only usable form under a WithScript context,
+// where OperatorByNameContext's lookup is a real read and an operator whose
+// sp_add_operator was merely collected is not there to find.
+func (s *Server) Operator(name string) *Operator {
+	return &Operator{server: s, Name: name}
+}
+
 // OperatorByName returns a single operator by name.
 func (s *Server) OperatorByName(name string) (*Operator, error) {
 	return s.OperatorByNameContext(context.Background(), name)
@@ -132,6 +146,10 @@ func (s *Server) CreateOperatorContext(ctx context.Context, req CreateOperatorRe
 	}
 	if err := s.execContext(ctx, q); err != nil {
 		return nil, fmt.Errorf("gosmo: create operator %q: %w", req.Name, err)
+	}
+	if Scripting(ctx) {
+		// See CreateScheduleContext.
+		return s.Operator(req.Name), nil
 	}
 	return s.OperatorByNameContext(ctx, req.Name)
 }

@@ -167,6 +167,21 @@ func (s *Server) EventAlertsContext(ctx context.Context) ([]*Alert, error) {
 	return out, nil
 }
 
+// Alert returns a lightweight handle for an alert by name, without
+// querying msdb — the alert-side counterpart of Server.Database. ID,
+// Severity, JobName and every other cached field stay at their zero value;
+// AlertByName is what populates them.
+//
+// Every write method on *Alert addresses the alert by name (Notify,
+// RemoveNotify, Update, ...), so this handle is enough to keep operating on
+// an alert the caller already knows exists — and is the only usable form
+// under a WithScript context, where AlertByNameContext's lookup is a real
+// read and an alert whose sp_add_alert was merely collected is not there to
+// find.
+func (s *Server) Alert(name string) *Alert {
+	return &Alert{server: s, Name: name}
+}
+
 // AlertByName returns a single alert by name.
 func (s *Server) AlertByName(name string) (*Alert, error) {
 	return s.AlertByNameContext(context.Background(), name)
@@ -233,6 +248,10 @@ func (s *Server) CreateAlertContext(ctx context.Context, req CreateAlertRequest)
 	}
 	if err := s.execContext(ctx, q); err != nil {
 		return nil, fmt.Errorf("gosmo: create alert %q: %w", req.Name, err)
+	}
+	if Scripting(ctx) {
+		// See CreateScheduleContext.
+		return s.Alert(req.Name), nil
 	}
 	return s.AlertByNameContext(ctx, req.Name)
 }

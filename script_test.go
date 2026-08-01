@@ -300,3 +300,85 @@ func TestServerPermissionRejectedBeforeConnecting(t *testing.T) {
 		t.Error("GrantServerPermissionContext accepted an unrecognized permission")
 	}
 }
+
+// The four Agent create methods end with a read-back that populates the
+// returned object's fields. That read is a real query, so under WithScript —
+// where the CREATE itself was only collected — it used to fail with
+// "not found", which is what broke Script Changes on every create dialog
+// whose later page acts on what an earlier page created (New Schedule's
+// Jobs page, New Job's Schedules page, New Alert's Response page). Each must
+// now come back with a name-only handle and no error.
+func TestScriptedAgentCreatesReturnNameOnlyHandles(t *testing.T) {
+	s := &Server{}
+
+	t.Run("schedule", func(t *testing.T) {
+		ctx, script := WithScript(context.Background())
+		sch, err := s.CreateScheduleContext(ctx, CreateScheduleRequest{Name: "Nightly", FreqType: FreqDaily})
+		if err != nil {
+			t.Fatalf("CreateScheduleContext under WithScript: %v", err)
+		}
+		if sch == nil || sch.Name != "Nightly" {
+			t.Fatalf("returned schedule = %+v, want a handle named \"Nightly\"", sch)
+		}
+		if len(script.Statements) != 1 || !strings.Contains(script.Statements[0], "sp_add_schedule") {
+			t.Errorf("Statements = %v, want one sp_add_schedule", script.Statements)
+		}
+		// The handle has to be usable for the dependent statement the next
+		// page scripts — that is the whole point of returning one.
+		if err := s.Job("nightly reindex").AttachScheduleContext(ctx, sch.Name); err != nil {
+			t.Fatalf("AttachScheduleContext under WithScript: %v", err)
+		}
+		if len(script.Statements) != 2 || !strings.Contains(script.Statements[1], "sp_attach_schedule") {
+			t.Errorf("Statements = %v, want sp_add_schedule then sp_attach_schedule", script.Statements)
+		}
+	})
+
+	t.Run("job", func(t *testing.T) {
+		ctx, script := WithScript(context.Background())
+		j, err := s.CreateJobContext(ctx, CreateJobRequest{Name: "nightly reindex"})
+		if err != nil {
+			t.Fatalf("CreateJobContext under WithScript: %v", err)
+		}
+		if j == nil || j.Name != "nightly reindex" {
+			t.Fatalf("returned job = %+v, want a handle named \"nightly reindex\"", j)
+		}
+		// sp_add_job and sp_add_jobserver, then the dependent step.
+		if err := j.AddStepContext(ctx, JobStepRequest{Name: "step 1", Subsystem: "TSQL", Command: "SELECT 1"}); err != nil {
+			t.Fatalf("AddStepContext under WithScript: %v", err)
+		}
+		if len(script.Statements) != 3 || !strings.Contains(script.Statements[2], "sp_add_jobstep") {
+			t.Errorf("Statements = %v, want sp_add_job, sp_add_jobserver, sp_add_jobstep", script.Statements)
+		}
+	})
+
+	t.Run("alert", func(t *testing.T) {
+		ctx, script := WithScript(context.Background())
+		a, err := s.CreateAlertContext(ctx, CreateAlertRequest{Name: "sev 19", Severity: 19})
+		if err != nil {
+			t.Fatalf("CreateAlertContext under WithScript: %v", err)
+		}
+		if a == nil || a.Name != "sev 19" {
+			t.Fatalf("returned alert = %+v, want a handle named \"sev 19\"", a)
+		}
+		if err := a.NotifyContext(ctx, "dba", NotifyMethodEmail); err != nil {
+			t.Fatalf("NotifyContext under WithScript: %v", err)
+		}
+		if len(script.Statements) != 2 || !strings.Contains(script.Statements[1], "sp_add_notification") {
+			t.Errorf("Statements = %v, want sp_add_alert then sp_add_notification", script.Statements)
+		}
+	})
+
+	t.Run("operator", func(t *testing.T) {
+		ctx, script := WithScript(context.Background())
+		o, err := s.CreateOperatorContext(ctx, CreateOperatorRequest{Name: "dba", Enabled: true})
+		if err != nil {
+			t.Fatalf("CreateOperatorContext under WithScript: %v", err)
+		}
+		if o == nil || o.Name != "dba" {
+			t.Fatalf("returned operator = %+v, want a handle named \"dba\"", o)
+		}
+		if len(script.Statements) != 1 || !strings.Contains(script.Statements[0], "sp_add_operator") {
+			t.Errorf("Statements = %v, want one sp_add_operator", script.Statements)
+		}
+	})
+}
