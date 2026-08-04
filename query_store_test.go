@@ -1,6 +1,10 @@
 package gosmo
 
-import "testing"
+import (
+	"context"
+	"strings"
+	"testing"
+)
 
 func TestQueryStoreOperationModeAllowlist(t *testing.T) {
 	if !queryStoreOperationModes["READ_WRITE"] {
@@ -94,5 +98,66 @@ func TestSetQueryStoreOptionsAcceptsLegitimateValues(t *testing.T) {
 		if !queryStoreWaitStatsModes[opts.WaitStatsCaptureMode] {
 			t.Errorf("WaitStatsCaptureMode %q rejected by allowlist, want accepted", opts.WaitStatsCaptureMode)
 		}
+	}
+}
+
+// TestSetQueryStoreOptionsStatement pins the generated ALTER DATABASE. The
+// allowlist tests above pass on a statement SQL Server won't parse: shipped
+// with STALE_QUERY_THRESHOLD_DAYS at the top level, every non-OFF call failed
+// with "Incorrect syntax near 'STALE_QUERY_THRESHOLD_DAYS'". It is only legal
+// inside CLEANUP_POLICY.
+func TestSetQueryStoreOptionsStatement(t *testing.T) {
+	d := &Database{server: &Server{}, name: "AppDB"}
+	ctx, script := WithScript(context.Background())
+
+	if err := d.SetQueryStoreOptionsContext(ctx, QueryStoreOptions{
+		DesiredState:         "READ_WRITE",
+		MaxStorageMB:         256,
+		CaptureMode:          "AUTO",
+		SizeCleanupMode:      "AUTO",
+		StaleThresholdDays:   7,
+		FlushIntervalSec:     900,
+		IntervalMinutes:      15,
+		MaxPlansPerQuery:     200,
+		WaitStatsCaptureMode: "ON",
+	}); err != nil {
+		t.Fatalf("SetQueryStoreOptionsContext under WithScript: %v", err)
+	}
+	if len(script.Statements) != 1 {
+		t.Fatalf("Statements = %d, want 1", len(script.Statements))
+	}
+	got := script.Statements[0]
+	for _, want := range []string{
+		"ALTER DATABASE [AppDB] SET QUERY_STORE = ON (",
+		"OPERATION_MODE = READ_WRITE",
+		"MAX_STORAGE_SIZE_MB = 256",
+		"CLEANUP_POLICY = (STALE_QUERY_THRESHOLD_DAYS = 7)",
+		"QUERY_CAPTURE_MODE = AUTO",
+		"WAIT_STATS_CAPTURE_MODE = ON",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("statement missing %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, ", STALE_QUERY_THRESHOLD_DAYS") {
+		t.Errorf("STALE_QUERY_THRESHOLD_DAYS emitted as a top-level option:\n%s", got)
+	}
+}
+
+// TestSetQueryStoreOptionsOffIgnoresTheRest pins that "OFF" turns Query Store
+// off with no option list, as QueryStoreOptions documents.
+func TestSetQueryStoreOptionsOffIgnoresTheRest(t *testing.T) {
+	d := &Database{server: &Server{}, name: "AppDB"}
+	ctx, script := WithScript(context.Background())
+
+	if err := d.SetQueryStoreOptionsContext(ctx, QueryStoreOptions{
+		DesiredState: "OFF",
+		MaxStorageMB: 512, // ignored
+	}); err != nil {
+		t.Fatalf("SetQueryStoreOptionsContext under WithScript: %v", err)
+	}
+	want := "ALTER DATABASE [AppDB] SET QUERY_STORE = OFF"
+	if len(script.Statements) != 1 || script.Statements[0] != want {
+		t.Errorf("Statements = %q, want [%q]", script.Statements, want)
 	}
 }

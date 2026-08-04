@@ -388,13 +388,12 @@ func (a *Alert) SetJobResponse(jobName string) error {
 
 // SetJobResponseContext is the context-aware variant of SetJobResponse.
 func (a *Alert) SetJobResponseContext(ctx context.Context, jobName string) error {
-	target := jobName
-	if target == "" {
-		// sp_update_alert's documented sentinel for "no job response".
-		target = "[UNSPECIFIED]"
-	}
+	// An empty @job_name is sp_update_alert's own sentinel for "no job
+	// response" — it maps N'' to a job_id of 0x00 before sp_verify_alert
+	// would otherwise reject the name for not matching a job. Anything else,
+	// including a placeholder like [UNSPECIFIED], fails as a missing job.
 	q := fmt.Sprintf("EXEC msdb.dbo.sp_update_alert @name = N'%s', @job_name = N'%s'",
-		escapeSingle(a.Name), escapeSingle(target))
+		escapeSingle(a.Name), escapeSingle(jobName))
 	if err := a.server.execContext(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: set job response for alert %q: %w", a.Name, err)
 	}

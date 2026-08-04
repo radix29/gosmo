@@ -6,9 +6,9 @@ This is a spare-time project — no deadlines, no sprints, no committed
 velocity. Work happens in whatever order priorities and available time
 allow; this document tracks *what's next*, not *when*.
 
-gosmo's main consumer is [goSSMS](https://github.com/radix29/gossms) (see
-that repo's own `PLAN.md`), and the two evolve together: gosmo needs to
-cover whatever goSSMS actually calls into.
+gosmo's main consumer is [goSSMS](https://github.com/radix29/gossms), and the
+two evolve together: gosmo needs to cover whatever goSSMS actually calls into.
+What goSSMS still has open is in that repo's `docs/open-threads.md`.
 
 ## Ongoing practices (no end date)
 
@@ -23,8 +23,8 @@ These continue for the life of the project, release or not:
   code as methods are added — it's the API surface consumers actually
   read. The class diagram in the same file (and its standalone
   `gosmo.mermaid` copy, kept byte-identical) needs the same treatment.
-- New work follows the conventions already documented in gossms's
-  `CLAUDE.md`: one file per SMO object family at the repo root, every
+- New work follows the conventions in this repo's own `CLAUDE.md`
+  § Conventions: one file per SMO object family at the repo root, every
   DB-hitting method as a `Foo`/`FooContext` pair, a matching `FooSeq` in
   `iter.go` for any new collection-returning method, and errors wrapped
   `"gosmo: <verb phrase>: %w"`.
@@ -40,7 +40,7 @@ These continue for the life of the project, release or not:
   incomplete, add capabilities that make gosmo genuinely easier to use
   than SMO, not just a port of it.
 - **Driven by goSSMS's needs** — when goSSMS's property-dialog and
-  execution-plan work (see its `PLAN.md`) needs a capability gosmo
+  execution-plan work needs a capability gosmo
   doesn't expose yet, add it here rather than working around the gap in
   the TUI layer; that's the intended way the two repos evolve together
   (`replace github.com/radix29/gosmo => ../gosmo` in gossms's `go.mod`

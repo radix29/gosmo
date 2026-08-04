@@ -1,5 +1,6 @@
 # gosmo
 
+SQLServer Management Objects Library
 A Go library that mimics **Microsoft SQL Server Management Objects (SMO)** — without WMI, COM, or Windows-only dependencies.
 
 ```
@@ -1472,10 +1473,10 @@ classDiagram
 
 ## Packages
 
-| Path        | Purpose                 |
-| ----------- | ----------------------- |
-| `/`         | All SMO types and logic |
-| `examples/` | Full end-to-end demo    |
+| Path        | Purpose                                                    |
+| ----------- | ---------------------------------------------------------- |
+| `/`         | All SMO types and logic                                    |
+| `examples/` | Nine runnable programs — see [`examples/README.md`](examples/README.md) |
 
 ---
 
@@ -1939,14 +1940,33 @@ gosmo's query helpers.
 
 ---
 
-## Running the example
+## Running the examples
 
 ```
 export MSSQL_SERVER="localhost:1433"
 export MSSQL_USER="sa"
 export MSSQL_PASSWORD="YourPassword"
-go run ./examples/main.go
+export MSSQL_TRUST_CERT="true"     # self-signed dev cert
+
+go run ./examples                  # guided tour of the whole library
 ```
+
+Eight more programs go deeper on one subject each:
+
+| Program | Covers |
+| --- | --- |
+| `go run ./examples/backup` | `BACKUP`/`RESTORE`, backup headers and history, progress callbacks, relocating files |
+| `go run ./examples/bulkcopy` | `BulkInsert` from a slice, a generator, and a streaming CSV |
+| `go run ./examples/diagnostic` | `AsSQLError`, `IsRetryable`, `ExecProc`, execution plans, search, dependencies, DMV reads |
+| `go run ./examples/iterators` | The `*Seq` API and what its deferred-fetch semantics do and don't buy you |
+| `go run ./examples/jobs` | SQL Server Agent jobs, steps, schedules, operators, alerts |
+| `go run ./examples/maintain` | Files, fragmentation, index rebuilds, statistics, Query Store, change tracking |
+| `go run ./examples/scripting` | The `Scripter`, and `WithScript`'s collect-instead-of-execute mode |
+| `go run ./examples/security` | Logins, users, roles, and permissions from both directions |
+
+Each creates its own throwaway database and drops it afterwards; nothing
+already on the instance is modified. Authentication and the full environment
+variable list are documented in [`examples/README.md`](examples/README.md).
 
 ---
 

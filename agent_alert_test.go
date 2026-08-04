@@ -1,6 +1,10 @@
 package gosmo
 
-import "testing"
+import (
+	"context"
+	"strings"
+	"testing"
+)
 
 func TestNotificationMethodString(t *testing.T) {
 	cases := []struct {
@@ -51,5 +55,44 @@ func TestParseSQLAgentDateOrZero(t *testing.T) {
 	got := parseSQLAgentDateOrZero(20260722, 143059)
 	if got.IsZero() {
 		t.Errorf("parseSQLAgentDateOrZero(20260722, 143059) should not be zero Time")
+	}
+}
+
+// TestAlertSetJobResponseClearsWithAnEmptyName pins the sentinel that clears
+// an alert's job response. sp_update_alert maps an empty @job_name to a
+// job_id of 0x00; any placeholder name — [UNSPECIFIED] was the one shipped
+// here — is looked up as a real job and fails with "The specified @job_name
+// does not exist".
+func TestAlertSetJobResponseClearsWithAnEmptyName(t *testing.T) {
+	a := &Alert{server: &Server{}, Name: "Disk full", JobName: "Nightly"}
+	ctx, script := WithScript(context.Background())
+
+	if err := a.SetJobResponseContext(ctx, ""); err != nil {
+		t.Fatalf("SetJobResponseContext under WithScript: %v", err)
+	}
+	if len(script.Statements) != 1 {
+		t.Fatalf("Statements = %d, want 1", len(script.Statements))
+	}
+	got := script.Statements[0]
+	want := "EXEC msdb.dbo.sp_update_alert @name = N'Disk full', @job_name = N''"
+	if got != want {
+		t.Errorf("statement = %q, want %q", got, want)
+	}
+	if strings.Contains(got, "UNSPECIFIED") {
+		t.Errorf("cleared job response still names a placeholder job:\n%s", got)
+	}
+}
+
+// TestAlertSetJobResponseNamesTheJob pins the ordinary case alongside it.
+func TestAlertSetJobResponseNamesTheJob(t *testing.T) {
+	a := &Alert{server: &Server{}, Name: "Disk full"}
+	ctx, script := WithScript(context.Background())
+
+	if err := a.SetJobResponseContext(ctx, "Nightly O'Brien"); err != nil {
+		t.Fatalf("SetJobResponseContext under WithScript: %v", err)
+	}
+	want := "EXEC msdb.dbo.sp_update_alert @name = N'Disk full', @job_name = N'Nightly O''Brien'"
+	if len(script.Statements) != 1 || script.Statements[0] != want {
+		t.Errorf("Statements = %q, want [%q]", script.Statements, want)
 	}
 }

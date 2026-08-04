@@ -737,7 +737,12 @@ func (s *Server) DatabasesContext(ctx context.Context) ([]*Database, error) {
 	return dbs, rows.Err()
 }
 
-// DatabaseByName returns a single database by name.
+// DatabaseByName returns a single database by name, querying sys.databases
+// so the returned handle is verified to exist and has State/RecoveryModel/
+// Collation/CompatibilityLevel/etc. populated. Use it when you need to read
+// those or to confirm the database is there; use Database when you only
+// need a handle to issue further ALTER-style calls against a database you
+// already know exists. The two are not interchangeable — see Database.
 func (s *Server) DatabaseByName(name string) (*Database, error) {
 	return s.DatabaseByNameContext(context.Background(), name)
 }

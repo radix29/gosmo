@@ -89,11 +89,10 @@ a gossms-side build only compiles the packages it imports.
   it — see gossms's `docs/open-threads.md` for the standing example
   (`AttachSchedule` resolving a schedule by name that `CreateSchedule` only
   collected).
-- `Server.Database(name)` returns a lightweight handle that queries nothing
-  (`State`/`RecoveryModel`/`Collation`/`CompatibilityLevel` stay
-  zero-valued); `Server.DatabaseByName(name)` queries `sys.databases` and
-  populates them. Both exist on purpose. The lightweight one is the only one
-  that works under a `WithScript`-derived context.
+- `Server.Database(name)` and `Server.DatabaseByName(name)` both exist on
+  purpose and are not interchangeable — the lightweight handle is the only
+  one that works under a `WithScript`-derived context. Their doc comments in
+  `server.go` are the authority; `go doc gosmo.Server.Database`.
 
 ## Release
 

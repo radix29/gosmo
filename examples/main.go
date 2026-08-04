@@ -1,6 +1,20 @@
-// Package main demonstrates every authentication method and major feature of
-// the gosmo library. Set the environment variables documented below before
-// running.
+// Command examples is a guided tour of gosmo: connect, inspect the instance,
+// build a throwaway database with schemas, tables, indexes, a sequence and a
+// procedure, script it, then drop it again.
+//
+// It is the "everything at a glance" example. The sibling directories go
+// deeper on one subject each:
+//
+//	./backup     BACKUP/RESTORE, backup headers, progress reporting
+//	./bulkcopy   loading rows with Database.BulkInsert
+//	./diagnostic execution plans, ExecProc, SQLError, DMV reads
+//	./iterators  the *Seq iterator API and context cancellation
+//	./jobs       SQL Server Agent: jobs, steps, schedules, operators, alerts
+//	./maintain   indexes, fragmentation, statistics, files, Query Store
+//	./scripting  the Scripter, and WithScript's "collect, don't execute" mode
+//	./security   logins, users, roles and permissions
+//
+// Every example reads the same environment variables — see package demo.
 //
 // Minimal (SQL auth):
 //
@@ -22,15 +36,17 @@ package main
 
 import (
 	"fmt"
-	"log"
-	"os"
 	"strings"
 
 	gosmo "github.com/radix29/gosmo"
+	"github.com/radix29/gosmo/examples/internal/demo"
 )
 
 func main() {
-	srv := mustConnect()
+	// First, so it runs after the cleanup deferred below it.
+	defer demo.Exit()
+
+	srv := demo.Connect()
 	defer srv.Close()
 
 	info := srv.Info()
@@ -38,46 +54,37 @@ func main() {
 	fmt.Printf("Edition       : %s\n", info.Edition)
 	fmt.Printf("Version       : %s (%d.%d.%d)\n",
 		info.ProductLevel, info.VersionMajor, info.VersionMinor, info.VersionBuild)
+	fmt.Printf("Platform      : %s\n", info.Platform)
 	fmt.Printf("Memory / CPUs : %d MB / %d\n", info.PhysicalMemoryMB, info.LogicalCPUCount)
+	fmt.Printf("Default paths : data=%s log=%s backup=%s\n",
+		info.DefaultDataPath, info.DefaultLogPath, info.DefaultBackupPath)
 
 	// -- List databases ---------------------------------------------------
-	fmt.Println("\n=== Databases ===")
-	dbs, err := srv.Databases()
-	must(err)
-	for _, d := range dbs {
+	demo.Section("Databases")
+	for _, d := range demo.Value(srv.Databases()) {
 		fmt.Printf("  %-30s state=%-10s recovery=%-12s compat=%d\n",
 			d.Name(), d.State(), d.RecoveryModel(), d.CompatibilityLevel())
 	}
 
 	// -- Create demo database ---------------------------------------------
-	const dbName = "GoSMODemo"
-	fmt.Printf("\n=== Creating database [%s] ===\n", dbName)
-	_ = srv.DropDatabase(dbName, true)
-	must(srv.CreateDatabase(dbName, &gosmo.CreateDatabaseOptions{
-		RecoveryModel: gosmo.RecoveryModelSimple,
-		CompatLevel:   gosmo.CompatLevel2019,
-	}))
-
-	db, err := srv.DatabaseByName(dbName)
-	must(err)
+	db, drop := demo.TempDatabase(srv, "GoSMODemo")
+	defer drop()
 
 	// -- Extended property ------------------------------------------------
-	must(db.AddExtendedProperty("MS_Description", "GoSMO demo database",
+	demo.Must(db.AddExtendedProperty("MS_Description", "GoSMO demo database",
 		gosmo.ExtendedPropertyLevel{}))
 
 	// -- Schemas ----------------------------------------------------------
-	fmt.Println("\n=== Schemas ===")
-	must(db.CreateSchema("Sales", "dbo"))
-	must(db.CreateSchema("HR", "dbo"))
-	schemas, err := db.Schemas()
-	must(err)
-	for _, s := range schemas {
+	demo.Section("Schemas")
+	demo.Must(db.CreateSchema("Sales", "dbo"))
+	demo.Must(db.CreateSchema("HR", "dbo"))
+	for _, s := range demo.Value(db.Schemas()) {
 		fmt.Printf("  [%s] owner=%s\n", s.Name, s.Owner)
 	}
 
 	// -- Tables -----------------------------------------------------------
-	fmt.Println("\n=== Tables ===")
-	must(db.CreateTable(gosmo.CreateTableRequest{
+	demo.Section("Tables")
+	demo.Must(db.CreateTable(gosmo.CreateTableRequest{
 		Schema: "dbo",
 		Name:   "Customers",
 		Columns: []gosmo.ColumnDefinition{
@@ -89,7 +96,7 @@ func main() {
 			{Name: "IsActive", DataType: gosmo.DataTypeBit, IsNullable: false, DefaultValue: "1"},
 		},
 	}))
-	must(db.CreateTable(gosmo.CreateTableRequest{
+	demo.Must(db.CreateTable(gosmo.CreateTableRequest{
 		Schema: "Sales",
 		Name:   "Orders",
 		Columns: []gosmo.ColumnDefinition{
@@ -100,39 +107,52 @@ func main() {
 			{Name: "Status", DataType: gosmo.DataTypeVarChar, MaxLength: 20, IsNullable: false, DefaultValue: "'PENDING'"},
 		},
 	}))
-	tables, err := db.Tables()
-	must(err)
-	for _, t := range tables {
+	for _, t := range demo.Value(db.Tables()) {
 		rc, _ := t.RowCount()
 		fmt.Printf("  %s  rows=%d\n", t.FullName(), rc)
 	}
 
+	// -- Columns ----------------------------------------------------------
+	demo.Section("Columns of dbo.Customers")
+	cust := demo.Value(db.TableByName("dbo", "Customers"))
+	for _, c := range demo.Value(cust.Columns()) {
+		null := "NOT NULL"
+		if c.IsNullable {
+			null = "NULL"
+		}
+		// ColumnTypeString renders the type the way SSMS does, resolving
+		// MaxLength/Precision/Scale into "nvarchar(100)", "decimal(18,2)", ...
+		fmt.Printf("  %-12s %-16s %s\n", c.Name, gosmo.ColumnTypeString(c), null)
+	}
+
 	// -- Index -----------------------------------------------------------
-	fmt.Println("\n=== Indexes ===")
-	cust, err := db.TableByName("dbo", "Customers")
-	must(err)
-	must(cust.CreateIndex(gosmo.CreateIndexRequest{
+	demo.Section("Indexes")
+	demo.Must(cust.CreateIndex(gosmo.CreateIndexRequest{
 		Name: "IX_Customers_LastName",
 		Type: gosmo.IndexTypeNonClustered,
 		KeyColumns: []gosmo.IndexColumnDef{
 			{Name: "LastName"},
 			{Name: "FirstName"},
 		},
-		FillFactor: 90,
+		IncludedColumns: []string{"Email"},
+		FillFactor:      90,
 	}))
-	must(cust.CreateIndex(gosmo.CreateIndexRequest{
+	demo.Must(cust.CreateIndex(gosmo.CreateIndexRequest{
 		Name:             "UIX_Customers_Email",
 		Type:             gosmo.IndexTypeNonClustered,
 		IsUnique:         true,
 		KeyColumns:       []gosmo.IndexColumnDef{{Name: "Email"}},
 		FilterDefinition: "Email IS NOT NULL",
 	}))
-	fmt.Println("  Indexes created")
+	for _, idx := range demo.Value(cust.Indexes()) {
+		fmt.Printf("  %-24s %-16s unique=%-5t keys=%d\n",
+			idx.Name, idx.Type, idx.IsUnique, len(idx.KeyColumns))
+	}
 
 	// -- Sequence --------------------------------------------------------
-	fmt.Println("\n=== Sequence ===")
+	demo.Section("Sequence")
 	noCache := 0
-	must(db.CreateSequence(gosmo.CreateSequenceRequest{
+	demo.Must(db.CreateSequence(gosmo.CreateSequenceRequest{
 		Schema:     "dbo",
 		Name:       "InvoiceSeq",
 		DataType:   gosmo.DataTypeBigInt,
@@ -140,32 +160,40 @@ func main() {
 		Increment:  1,
 		Cache:      &noCache,
 	}))
-	seqs, err := db.Sequences()
-	must(err)
-	for _, s := range seqs {
+	for _, s := range demo.Value(db.Sequences()) {
 		fmt.Printf("  [%s].[%s] start=%d incr=%d\n", s.Schema, s.Name, s.StartValue, s.Increment)
 	}
 
+	// -- Synonym ----------------------------------------------------------
+	demo.Section("Synonym")
+	demo.Must(db.CreateSynonym("dbo", "Cust", "dbo.Customers"))
+	for _, syn := range demo.Value(db.Synonyms()) {
+		fmt.Printf("  [%s].[%s] -> %s\n", syn.Schema, syn.Name, syn.BaseObject)
+	}
+
 	// -- Stored procedure ------------------------------------------------
-	fmt.Println("\n=== Stored Procedure ===")
-	must(db.CreateStoredProcedure("dbo", "GetCustomerOrders", `
-    @CustomerID INT
-AS
+	// The body is the T-SQL *after* AS — gosmo writes the CREATE OR ALTER
+	// PROCEDURE header itself.
+	demo.Section("Stored Procedure")
+	demo.Must(db.CreateStoredProcedure("dbo", "RecentOrders", `
 BEGIN
     SET NOCOUNT ON;
-    SELECT o.OrderID, o.OrderDate, o.TotalAmount, o.Status
+    SELECT TOP (100) o.OrderID, o.OrderDate, o.TotalAmount, o.Status
     FROM   Sales.Orders o
-    WHERE  o.CustomerID = @CustomerID
     ORDER  BY o.OrderDate DESC;
 END`))
-	fmt.Println("  [dbo].[GetCustomerOrders] created")
+	fmt.Println("  [dbo].[RecentOrders] created")
+
+	// -- Dependencies -----------------------------------------------------
+	demo.Section("Dependencies of dbo.RecentOrders")
+	for _, dep := range demo.Value(db.Dependencies("dbo", "RecentOrders")) {
+		fmt.Printf("  references [%s].[%s] (%s)\n", dep.Schema, dep.Name, dep.TypeDesc)
+	}
 
 	// -- Scripter --------------------------------------------------------
-	fmt.Println("\n=== DDL Script (first 15 lines of dbo.Customers) ===")
+	demo.Section("DDL Script (first 15 lines of dbo.Customers)")
 	sc := gosmo.NewScripter(db, gosmo.DefaultScriptOptions())
-	ddl, err := sc.ScriptTable("dbo", "Customers")
-	must(err)
-	for i, line := range strings.Split(ddl, "\n") {
+	for i, line := range strings.Split(demo.Value(sc.ScriptTable("dbo", "Customers")), "\n") {
 		if i >= 15 {
 			fmt.Println("  ...")
 			break
@@ -174,45 +202,44 @@ END`))
 	}
 
 	// -- Partition function ----------------------------------------------
-	fmt.Println("\n=== Partition Function ===")
-	must(db.CreatePartitionFunction(gosmo.CreatePartitionFunctionRequest{
+	demo.Section("Partition Function")
+	demo.Must(db.CreatePartitionFunction(gosmo.CreatePartitionFunctionRequest{
 		Name:       "pf_OrderDate",
 		InputType:  gosmo.DataTypeDate,
 		IsRight:    true,
 		Boundaries: []string{"'2023-01-01'", "'2024-01-01'", "'2025-01-01'"},
 	}))
-	pfs, err := db.PartitionFunctions()
-	must(err)
-	for _, pf := range pfs {
+	for _, pf := range demo.Value(db.PartitionFunctions()) {
 		fmt.Printf("  [%s] input=%s boundaries=%d\n", pf.Name, pf.InputType, pf.BoundaryCount)
 	}
 
+	// -- Space used -------------------------------------------------------
+	demo.Section("Space used")
+	space := demo.Value(db.SpaceUsed())
+	fmt.Printf("  total=%.2f MB  data=%.2f MB  log=%.2f MB  unallocated=%.2f MB\n",
+		space.TotalMB, space.DataMB, space.LogMB, space.UnallocatedMB)
+
 	// -- Server config ---------------------------------------------------
-	fmt.Println("\n=== Server configuration (selected) ===")
-	cfgs, err := srv.Configurations()
-	must(err)
+	demo.Section("Server configuration (selected)")
 	want := map[string]bool{
 		"max degree of parallelism":      true,
 		"max server memory (MB)":         true,
 		"optimize for ad hoc workloads":  true,
 		"cost threshold for parallelism": true,
 	}
-	for _, c := range cfgs {
+	for _, c := range demo.Value(srv.Configurations()) {
 		if want[c.Name] {
 			fmt.Printf("  %-40s value=%-8d in_use=%d\n", c.Name, c.Value, c.ValueInUse)
 		}
 	}
 
 	// -- Active sessions -------------------------------------------------
-	fmt.Println("\n=== Active sessions ===")
-	sessions, err := srv.ActiveSessions(false)
-	must(err)
-	fmt.Printf("  %d user session(s) active\n", len(sessions))
+	demo.Section("Active sessions")
+	fmt.Printf("  %d user session(s) active\n", len(demo.Value(srv.ActiveSessions(false))))
 
 	// -- Agent jobs (read-only) ------------------------------------------
-	fmt.Println("\n=== SQL Server Agent Jobs ===")
-	jobs, err := srv.Jobs()
-	must(err)
+	demo.Section("SQL Server Agent Jobs")
+	jobs := demo.Value(srv.Jobs())
 	if len(jobs) == 0 {
 		fmt.Println("  (no jobs defined)")
 	}
@@ -224,134 +251,5 @@ END`))
 		fmt.Printf("  %-40s %s\n", j.Name, state)
 	}
 
-	// -- Cleanup ---------------------------------------------------------
-	fmt.Printf("\n=== Cleanup ===\n")
-	must(srv.DropDatabase(dbName, true))
-	fmt.Printf("Dropped [%s]\n", dbName)
 	fmt.Println("\nDone.")
-}
-
-// -- Connection factory -------------------------------------------------------
-
-// mustConnect reads environment variables and calls gosmo.Connect.
-// Supported MSSQL_AUTH values:
-//
-//	""  / "sql"   - SQL Server auth (default)
-//	"windows"     - Windows/Kerberos auth (on-premises)
-//	"msi"         - Managed Identity (system-assigned)
-//	"msi-user"    - Managed Identity (user-assigned, needs AZURE_CLIENT_ID)
-//	"sp"          - Service Principal (needs AZURE_TENANT_ID, AZURE_CLIENT_ID,
-//	                  AZURE_CLIENT_SECRET)
-//	"sp-cert"     - Service Principal + certificate (needs AZURE_TENANT_ID,
-//	                  AZURE_CLIENT_ID, AZURE_CLIENT_CERT_PATH)
-//	"default"     - DefaultAzureCredential chain
-//	"azcli"       - Azure CLI credential
-//	"azd"         - Azure Developer CLI credential
-//	"password"    - Entra user + password
-//	"interactive" - Browser interactive sign-in
-//	"devicecode"  - Device-code flow
-func mustConnect() *gosmo.Server {
-	server := envOr("MSSQL_SERVER", "localhost:1433")
-	authStr := strings.ToLower(envOr("MSSQL_AUTH", "sql"))
-	database := envOr("MSSQL_DATABASE", "master")
-
-	opts := gosmo.ConnectionOptions{
-		Server:                 server,
-		Database:               database,
-		TrustServerCertificate: os.Getenv("MSSQL_TRUST_CERT") == "true",
-	}
-
-	switch authStr {
-	case "", "sql":
-		opts.Auth = gosmo.AuthSQLServer
-		opts.User = envOr("MSSQL_USER", "sa")
-		opts.Password = os.Getenv("MSSQL_PASSWORD")
-		fmt.Printf("Auth: SQL Server (%s)\n", opts.User)
-
-	case "windows":
-		opts.Auth = gosmo.AuthWindows
-		fmt.Println("Auth: Windows / Kerberos")
-
-	case "msi":
-		opts.Auth = gosmo.AuthEntraMSI
-		fmt.Println("Auth: Managed Identity (system-assigned)")
-
-	case "msi-user":
-		opts.Auth = gosmo.AuthEntraMSI
-		opts.ClientID = mustEnv("AZURE_CLIENT_ID")
-		fmt.Printf("Auth: Managed Identity (user-assigned: %s)\n", opts.ClientID)
-
-	case "sp":
-		opts.Auth = gosmo.AuthEntraServicePrincipal
-		opts.TenantID = mustEnv("AZURE_TENANT_ID")
-		opts.User = mustEnv("AZURE_CLIENT_ID")
-		opts.Password = mustEnv("AZURE_CLIENT_SECRET")
-		fmt.Printf("Auth: Service Principal (client %s)\n", opts.User)
-
-	case "sp-cert":
-		opts.Auth = gosmo.AuthEntraServicePrincipal
-		opts.TenantID = mustEnv("AZURE_TENANT_ID")
-		opts.User = mustEnv("AZURE_CLIENT_ID")
-		opts.ClientCertPath = mustEnv("AZURE_CLIENT_CERT_PATH")
-		opts.ClientCertPassword = os.Getenv("AZURE_CLIENT_CERT_PASSWORD")
-		fmt.Printf("Auth: Service Principal + certificate (client %s)\n", opts.User)
-
-	case "default":
-		opts.Auth = gosmo.AuthEntraDefault
-		fmt.Println("Auth: DefaultAzureCredential chain")
-
-	case "azcli":
-		opts.Auth = gosmo.AuthEntraAzCLI
-		fmt.Println("Auth: Azure CLI (az login)")
-
-	case "azd":
-		opts.Auth = gosmo.AuthEntraAzureDeveloperCLI
-		fmt.Println("Auth: Azure Developer CLI (azd auth login)")
-
-	case "password":
-		opts.Auth = gosmo.AuthEntraPassword
-		opts.User = mustEnv("AZURE_USER")
-		opts.Password = mustEnv("AZURE_PASSWORD")
-		fmt.Printf("Auth: Entra password (%s)\n", opts.User)
-
-	case "interactive":
-		opts.Auth = gosmo.AuthEntraInteractive
-		opts.ApplicationClientID = os.Getenv("AZURE_APPLICATION_CLIENT_ID")
-		fmt.Println("Auth: Entra interactive (browser)")
-
-	case "devicecode":
-		opts.Auth = gosmo.AuthEntraDeviceCode
-		opts.ApplicationClientID = os.Getenv("AZURE_APPLICATION_CLIENT_ID")
-		fmt.Println("Auth: Entra device code")
-
-	default:
-		log.Fatalf("unknown MSSQL_AUTH value: %q", authStr)
-	}
-
-	srv, err := gosmo.Connect(opts)
-	must(err)
-	return srv
-}
-
-// -- Helpers ------------------------------------------------------------------
-
-func must(err error) {
-	if err != nil {
-		log.Fatalf("ERROR: %v", err)
-	}
-}
-
-func envOr(key, fallback string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return fallback
-}
-
-func mustEnv(key string) string {
-	v := os.Getenv(key)
-	if v == "" {
-		log.Fatalf("required environment variable %s is not set", key)
-	}
-	return v
 }

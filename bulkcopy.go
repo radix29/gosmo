@@ -2,6 +2,7 @@ package gosmo
 
 import (
 	"context"
+	"database/sql/driver"
 	"fmt"
 	"iter"
 
@@ -133,16 +134,29 @@ func (d *Database) BulkInsertContext(ctx context.Context, bc BulkCopy, rows iter
 	}
 	defer stmt.Close()
 
+	// Abandoning the load without that final flush leaves the connection
+	// mid-bulk-copy: the server is still waiting for rows, so the next
+	// statement run on it fails with "Bulk load data was expected but not
+	// sent". Returning it to the pool hands that failure to an unrelated
+	// caller, so poison it instead — sql.Conn.Raw marks the connection bad
+	// when f returns driver.ErrBadConn, and the pool discards it.
+	discard := func() {
+		_ = conn.Raw(func(any) error { return driver.ErrBadConn })
+	}
+
 	var n int64
 	for row, rerr := range rows {
 		if rerr != nil {
+			discard()
 			return n, fmt.Errorf("gosmo: bulk insert into %s: reading row %d: %w", target, n, rerr)
 		}
 		if len(row) != len(bc.Columns) {
+			discard()
 			return n, fmt.Errorf("gosmo: bulk insert into %s: row %d has %d values, want %d",
 				target, n, len(row), len(bc.Columns))
 		}
 		if _, err := stmt.ExecContext(ctx, row...); err != nil {
+			discard()
 			return n, fmt.Errorf("gosmo: bulk insert into %s: row %d: %w", target, n, err)
 		}
 		n++
@@ -152,6 +166,7 @@ func (d *Database) BulkInsertContext(ctx context.Context, bc BulkCopy, rows iter
 	// authoritative server-side row count.
 	res, err := stmt.ExecContext(ctx)
 	if err != nil {
+		discard()
 		return n, fmt.Errorf("gosmo: bulk insert into %s: flush: %w", target, err)
 	}
 	if copied, err := res.RowsAffected(); err == nil {

@@ -151,7 +151,10 @@ func (d *Database) SetQueryStoreOptionsContext(ctx context.Context, opts QuerySt
 		fmt.Sprintf("MAX_PLANS_PER_QUERY = %d", opts.MaxPlansPerQuery),
 		"SIZE_BASED_CLEANUP_MODE = " + opts.SizeCleanupMode,
 		fmt.Sprintf("QUERY_CAPTURE_MODE = %s", opts.CaptureMode),
-		fmt.Sprintf("STALE_QUERY_THRESHOLD_DAYS = %d", opts.StaleThresholdDays),
+		// STALE_QUERY_THRESHOLD_DAYS is not a top-level option: SET
+		// QUERY_STORE only accepts it inside CLEANUP_POLICY, and rejects the
+		// whole statement with a syntax error otherwise.
+		fmt.Sprintf("CLEANUP_POLICY = (STALE_QUERY_THRESHOLD_DAYS = %d)", opts.StaleThresholdDays),
 		"WAIT_STATS_CAPTURE_MODE = " + opts.WaitStatsCaptureMode,
 	}
 	if opts.CaptureMode == "CUSTOM" {
