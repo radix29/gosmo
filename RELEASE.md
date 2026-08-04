@@ -4,18 +4,90 @@ High-level, release-to-release summary of what gosmo does at each tag —
 what changed in spirit, not the full diff. For the itemized, per-symbol
 detail behind each release from `v0.0.4` onward, see `CHANGELOG.md`.
 
-## v0.0.7 (unreleased)
+## v0.0.7
 
-A follow-up to `v0.0.6`'s context-everywhere work, finishing the one part
-of the public API it missed.
+Finishes `v0.0.6`'s context-everywhere work on the one part of the public
+API it missed — the iterators — and puts both scripting paths (`Scripter`
+and `WithScript`) through the scrutiny they hadn't had: between them they
+were producing scripts that couldn't parse, couldn't run, or silently
+recreated the wrong kind of object.
+
+### New
+
+- `Scripting(ctx)` reports whether a context came from `WithScript`, so a
+  caller mirroring writes into its own state can tell "recorded" from
+  "actually applied".
+- No-I/O handles for Agent objects — `srv.Alert/Job/Operator/Schedule(name)`
+  — matching the existing `srv.Database`/`srv.Login` ones. These are the
+  only usable form under `WithScript`, where a lookup by name would go to
+  the server for an object that was never created.
+- Whole-database space and row counts in one round trip:
+  `db.TableSpaceUsedAll()` and `db.TableRowCounts()`, keyed by object id,
+  instead of a query per table.
+- File and filegroup backups and restores (`Files`/`FileGroups`), and
+  restoring a specific backup set from a device (`FileNumber`).
+- Clustered columnstore indexes are a recognized index type, with
+  `IndexType.IsColumnStore()` covering both columnstore forms; an index
+  type gosmo has no constant for now reports the server's own text
+  instead of nothing.
+- Statistics sampling percentages are validated before they reach the
+  server.
+- Eight subject-specific runnable examples alongside the guided tour —
+  backup, bulk copy, diagnostics, iterators, Agent jobs, maintenance,
+  scripting, and security — each on its own throwaway database.
+
+### Fixes
+
+- **Scripted writes produced scripts that couldn't be run.** A
+  parameterised write was captured with the driver's `@p1` placeholders
+  still in it; `ExecProc` was captured as a bare procedure name with no
+  `EXEC` and no parameters. Both now render real, runnable T-SQL.
+- **`ScriptTable`, four ways.** Its `IF NOT EXISTS` wrapper opened a
+  `BEGIN` block spanning `GO` separators, so the script it produced could
+  not parse at all; unique constraints were scripted as `CREATE INDEX`,
+  leaving the constraint missing; columnstore, XML and spatial indexes
+  were pasted into the B-tree `CREATE INDEX` form, which SQL Server
+  rejects for all three; and its existence checks used an unquoted
+  two-part name.
+- **Fragmentation reads returned numbers for the wrong tables.** A table
+  name containing a `.` reached `OBJECT_ID` unquoted and resolved to
+  NULL — which `sys.dm_db_index_physical_stats` reads as "every object in
+  the database", so the call succeeded with plausible, wrong results.
+- **`SetDatabaseScopedConfig`'s `forSecondary` argument never worked** —
+  `FOR SECONDARY` precedes `SET`, and appending it after the assignment
+  is a syntax error.
+- **`SetQueryStoreOptions` was rejected outright**, taking every Query
+  Store option with it: `STALE_QUERY_THRESHOLD_DAYS` is only accepted
+  inside `CLEANUP_POLICY`, not as a top-level option.
+- **File/filegroup backups emitted `BACKUP FILES`**, which is not T-SQL —
+  there is no such verb, only `BACKUP DATABASE` with `FILE =`/`FILEGROUP
+  =` clauses.
+- `Table.CheckWhereSyntax` now wraps the error it exists to report, like
+  every other failure in the package.
+
+### Changes
 
 - **Breaking:** every `*Seq()` iterator now takes a `context.Context`
   (`db.TableSeq(ctx)`), running on the matching `FooContext` method.
   They previously used `context.Background()`, leaving the whole
   iterator API uncancellable.
-- Statistics sampling percentages are validated before they reach the
-  server, and `Table.CheckWhereSyntax` now wraps the error it reports
-  like every other failure in the package.
+- A write made under `WithScript` no longer mirrors its change back onto
+  the object it was called on — nothing ran, so the server still holds
+  the old value, and the next call built from that object targeted
+  something that doesn't exist.
+- An abandoned `BulkInsert` discards its connection instead of returning
+  it to the pool mid-load, where the next unrelated caller inherited the
+  failure.
+- `CreateIndex` refuses a clustered columnstore index (it takes no key
+  columns, so it doesn't fit that method's statement) and
+  `SetIncludedColumns` refuses either columnstore form, rather than each
+  quietly producing a rowstore index instead.
+- A cancelled context ends `Login.UserMappings`'s per-database scan
+  instead of being treated as one more unreachable database.
+- Documentation: `QuoteLiteral`/`escapeSingle` now say which to reach for
+  and that neither quotes an identifier; `ScriptOptions` says which
+  script methods its flags apply to; `DatabaseByName` says outright how
+  it differs from `Database`.
 
 ## v0.0.6
 

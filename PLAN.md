@@ -23,11 +23,18 @@ These continue for the life of the project, release or not:
   code as methods are added — it's the API surface consumers actually
   read. The class diagram in the same file (and its standalone
   `gosmo.mermaid` copy, kept byte-identical) needs the same treatment.
+- Keep the nine programs under `examples/` compiling and honest as the API
+  moves — they're the only place the library is exercised end to end, and
+  `examples/README.md` indexes what each one covers.
 - New work follows the conventions in this repo's own `CLAUDE.md`
   § Conventions: one file per SMO object family at the repo root, every
   DB-hitting method as a `Foo`/`FooContext` pair, a matching `FooSeq` in
-  `iter.go` for any new collection-returning method, and errors wrapped
-  `"gosmo: <verb phrase>: %w"`.
+  `iter.go` for any new collection-returning method (taking a
+  `context.Context`, since `v0.0.7`), and errors wrapped
+  `"gosmo: <verb phrase>: %w"`. A new write method that mirrors its change
+  onto the receiver goes through `setIfApplied`, and a new `Create*` returns
+  a name-only handle under `Scripting(ctx)` rather than reading its object
+  back.
 
 ## Next up
 

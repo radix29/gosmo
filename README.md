@@ -74,17 +74,21 @@ classDiagram
         +AgentInfo() *AgentStatus
         +Jobs() []*Job
         +JobByName(name) *Job
+        +Job(name) *Job
         +CreateJob(req) *Job
         +JobHistory(limit) []*JobHistoryEntry
         +Alerts() []*Alert
         +EventAlerts() []*Alert
         +AlertByName(name) *Alert
+        +Alert(name) *Alert
         +CreateAlert(req) *Alert
         +Operators() []*Operator
         +OperatorByName(name) *Operator
+        +Operator(name) *Operator
         +CreateOperator(req) *Operator
         +Schedules() []*Schedule
         +ScheduleByName(name) *Schedule
+        +Schedule(name) *Schedule
         +CreateSchedule(req) *Schedule
         +Categories(class) []*Category
         +CreateCategory(class, name) error
@@ -340,6 +344,8 @@ classDiagram
         +ColumnEncryptionKeys() []*ColumnEncryptionKey
         +SecurityPolicies() []*SecurityPolicy
         +SpaceUsed() SpaceInfo
+        +TableRowCounts() map~int,int64~
+        +TableSpaceUsedAll() map~int,TableSpaceInfo~
         +SetRecoveryModel(model) error
         +SetCompatibilityLevel(level) error
         +SetReadOnly(bool) error
@@ -491,11 +497,19 @@ classDiagram
         -mu sync.Mutex
         +Statements []string
         +WithScript(ctx) *ScriptCollector
+        +Scripting(ctx) bool
         Captures the exact statement(s) a set of
         pending write calls would run, without
         running them. Every write funnels through
         Server.execContext or Database.exec, the
         two chokepoints WithScript intercepts.
+        Bound parameters are substituted as
+        literals so a captured statement runs
+        standalone; ExecProc is captured as its
+        EXEC form. Scripting(ctx) reports whether
+        a context is one of these, so a caller
+        does not mirror a write the server never
+        saw into its own state.
         Statements is mutex-guarded: one collector
         may be shared across goroutines.
     }
@@ -796,6 +810,12 @@ classDiagram
         +StorageInfo(t) *IndexStorageInfo
         +Fragmentation(t, mode) *IndexFragmentation
         +Drop(t) error
+        +Type.IsColumnStore() bool
+        Type is a sys.indexes type_desc value; an
+        unrecognized one is carried through as the
+        server's own text. IsColumnStore covers
+        both columnstore forms, neither of which
+        SetIncludedColumns supports.
     }
 
     class IndexStorageInfo {
@@ -1052,7 +1072,9 @@ classDiagram
     class BackupOptions {
         +Database string
         +Devices []string
-        +BackupType BackupType
+        +Action BackupAction
+        +Files []string
+        +FileGroups []string
         +CopyOnly bool
         +Compression bool
         +Checksum bool
@@ -1074,7 +1096,9 @@ classDiagram
     class RestoreOptions {
         +Database string
         +Devices []string
-        +RestoreType RestoreType
+        +Action BackupAction
+        +Files []string
+        +FileGroups []string
         +RelocateFiles []RelocateFile
         +Recovery bool
         +Replace bool
@@ -1557,6 +1581,7 @@ fmt.Println(srv.Info().ProductVersion)
 | `Database.RecoveryModel`        | `db.SetRecoveryModel(model)`                |
 | `Database.CompatibilityLevel`   | `db.SetCompatibilityLevel(level)`           |
 | Space used                      | `db.SpaceUsed()`                            |
+| Every table's row count / space used, in one query | `db.TableRowCounts()` / `db.TableSpaceUsedAll()` (keyed by `object_id`) |
 | ALTER DATABASE SET options      | `db.Options()` / `db.SetDatabaseOption(opt, value)` |
 | Restrict access (single/multi/restricted user) | `db.SetUserAccess(mode)`     |
 | Take offline / bring online     | `db.SetOffline()` / `db.SetOnline()`        |
@@ -1583,11 +1608,11 @@ fmt.Println(srv.Info().ProductVersion)
 | `Table.Statistics`    | `t.Statistics()`                   |
 | `Table.Partitions`    | `t.Partitions()`                   |
 | `Table.Triggers`      | `t.Triggers()`                     |
-| `Table.RowCount`      | `t.RowCount()`                     |
+| `Table.RowCount`      | `t.RowCount()` (all tables at once: `db.TableRowCounts()`) |
 | Rows matching a filter predicate | `t.CountWhere(predicate)`  |
 | Validate a filter predicate | `t.CheckWhereSyntax(predicate)` |
 | Object details (lock escalation, ANSI_NULLS, CDC, temporal, ledger, ...) | `t.Detail()` |
-| Space used (`sp_spaceused`-style) | `t.SpaceUsed()`               |
+| Space used (`sp_spaceused`-style) | `t.SpaceUsed()` (all tables at once: `db.TableSpaceUsedAll()`) |
 | Truncate              | `t.TruncateTable()`                |
 | Fragmentation         | `t.FragmentationStats(mode)`       |
 | Rebuild all indexes   | `t.RebuildAllIndexes(fillFactor)`  |
@@ -1613,6 +1638,15 @@ fmt.Println(srv.Info().ProductVersion)
 | `idx.StorageInfo(t)` — filegroup, partitioning, allocation-unit space |
 | `idx.Fragmentation(t, mode)` — one index (`t.FragmentationStats(mode)` does all) |
 | `idx.Drop(t)`                       |
+
+`Index.Type` is a `sys.indexes.type_desc` value — `IndexTypeClustered`,
+`IndexTypeNonClustered`, `IndexTypeXML`, `IndexTypeSpatial`,
+`IndexTypeColumnStore`, `IndexTypeClusteredColumnStore`, or the server's own
+text for a type gosmo has no constant for (e.g. `NONCLUSTERED HASH`), so it
+is never empty for an index that exists. `idx.Type.IsColumnStore()` covers
+both columnstore forms — neither has an `INCLUDE` list, and a clustered
+columnstore index takes no key columns at all, so `SetIncludedColumns` and
+`CreateIndex` reject them rather than silently producing a rowstore index.
 
 ### Statistics
 
@@ -1670,6 +1704,44 @@ ddl, _ := sc.ScriptFunction("dbo", "MyFunc")
 ddl, _ := sc.ScriptDatabase()
 ```
 
+`ScriptOptions.IncludeHeaders` and `IncludeIfNotExists` apply to
+`ScriptTable` and `ScriptDatabase` only — the view/procedure/function
+methods return the module's definition verbatim from `sys.sql_modules` and
+synthesize no DDL to guard. The existence check is per statement, never a
+block spanning several: `GO` is a client-side batch break, so a `BEGIN`
+block containing one is split across batches and the script can't parse.
+`ScriptTable` emits a unique constraint as the `ALTER TABLE ... ADD
+CONSTRAINT` it really is rather than as a `CREATE INDEX`, and skips XML and
+spatial indexes with a comment naming what was left out, their DDL having no
+generic form here.
+
+### Iterators (`*Seq`)
+
+Every collection method has a `FooSeq(ctx, ...)` counterpart in `iter.go`
+returning an `iter.Seq2[T, error]`, for ranging over a collection without
+materializing the slice at the call site:
+
+```go
+for t, err := range db.TableSeq(ctx) {
+    if err != nil { return err }
+    fmt.Println(t.FullName())
+}
+```
+
+The fetch is deferred until the iterator is ranged over — an iterator built
+and never ranged queries nothing — but it is **not streaming**: the
+underlying `FooContext` method runs to completion first, and the loop then
+yields from the slice it returned. So `ctx` cancels the fetch, an error
+arrives as a single `(zero, err)` yield in place of any items rather than
+partway through, and breaking out early saves no query work and no memory.
+These exist for range-over-func ergonomics, not to bound memory or stop the
+server mid-scan; where that matters, use the `...Context` method with a
+bounded query.
+
+**Breaking, since `v0.0.7`:** these took no `context.Context` before — they
+wrapped the non-`Context` collection method, i.e. `context.Background()`.
+`db.TableSeq()` becomes `db.TableSeq(ctx)`, for all 75 of them.
+
 ### Scripting pending writes (`WithScript`)
 
 Distinct from the Scripter above (which generates CREATE DDL for objects
@@ -1696,6 +1768,24 @@ run the resulting script against a session scoped to a different database
 (or none) than the one that produced it. Read methods are unaffected —
 only the two exec chokepoints consult the collector.
 
+Bound parameters are substituted into the captured text as literals, since
+a script pasted into a query editor has nothing to bind `@p1` to, and
+`ExecProc` is captured as the `EXEC` form it would run — inputs as literals,
+`OUTPUT` parameters as a `DECLARE`d variable — rather than as the bare
+procedure name the driver sends over RPC.
+
+`gosmo.Scripting(ctx)` reports whether a context is one of these. It matters
+to any caller mirroring a write into its own state: under `WithScript` the
+write returns success without the server ever seeing it, so a rename
+followed by a re-read *by the new name* finds nothing. gosmo honours this
+for its own cached state too — a scripted `Rename`/`Enable`/`SetOwner`
+leaves the object it was called on unchanged. The lookup-free handles
+(`srv.Database(name)`, `srv.Login(name)`, `srv.Alert(name)`, `srv.Job(name)`,
+`srv.Operator(name)`, `srv.Schedule(name)`) exist for the same reason: an
+object whose `CREATE` was only collected can't be found by a `...ByName`
+query, and the `Create*` methods return one of these handles under
+`WithScript`.
+
 ### Backup & Restore
 
 ```go
@@ -1717,8 +1807,22 @@ srv.Restore(gosmo.RestoreOptions{
     },
     Recovery: true,
     Replace:  true,
+    // Optional: which backup set on the device to restore (WITH FILE = n,
+    // 1-based, as reported by BackupHeader.Position). Left at 0, SQL Server
+    // restores the first set — so an appended differential or log needs this.
+    FileNumber: 1,
     // Optional: same progress callback as Backup, above.
     Progress: func(pct int, message string) { fmt.Println(pct, message) },
+})
+
+// File / filegroup backup and restore. There is no BACKUP FILES verb in
+// T-SQL — these render as a BACKUP/RESTORE DATABASE carrying FILE = /
+// FILEGROUP = clauses — and at least one file or filegroup is required.
+srv.Backup(gosmo.BackupOptions{
+    Database:   "MyDB",
+    Action:     gosmo.BackupActionFiles,
+    FileGroups: []string{"FG_Archive"},
+    Devices:    []string{`C:\Backups\MyDB_FG.bak`},
 })
 
 // Inspect a backup device before restoring — SSMS's Restore Database
@@ -1741,6 +1845,15 @@ alerts are visible but not manageable — see
 status, _ := srv.AgentInfo()
 fmt.Println(status.Running, status.StatusText, status.LastStartupTime)
 ```
+
+`srv.Job(name)`, `srv.Alert(name)`, `srv.Operator(name)` and
+`srv.Schedule(name)` return a no-I/O handle carrying only the name — the
+Agent counterparts of `srv.Database`/`srv.Login`. Every write method on
+those types addresses its object by name, so a handle is enough to keep
+operating on one you already know exists; the `...ByName` form is what
+queries `msdb` and populates the cached fields. Under `WithScript` the
+handle is the only usable form, and is what `CreateJob`/`CreateAlert`/
+`CreateOperator`/`CreateSchedule` return there.
 
 #### Jobs and steps
 

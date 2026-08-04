@@ -85,13 +85,24 @@ a gossms-side build only compiles the packages it imports.
 - **One file per subject area** (`table.go`, `index.go`, `security.go`, …),
   with `helpers.go` for cross-file helpers and `types.go` for shared enums.
 - **Script mode.** `WithScript` collects statements instead of executing
-  them. A code path that *reads* to decide what to write does not work under
-  it — see gossms's `docs/open-threads.md` for the standing example
-  (`AttachSchedule` resolving a schedule by name that `CreateSchedule` only
-  collected).
+  them, and `Scripting(ctx)` reports whether a context is one. A code path
+  that *reads* to decide what to write does not work under it — the standing
+  shape is a `Create*` reading its own object back by name after an `EXEC`
+  that was only collected. Every such method returns a name-only handle
+  under `Scripting(ctx)` instead; a new one must do the same.
+  - A write that mirrors its change back onto the receiver (`Rename` setting
+    `.Name`, `Enable` setting `.IsEnabled`) must go through `setIfApplied`,
+    never a direct assignment. Under `WithScript` nothing ran, so a direct
+    assignment leaves the object claiming state the server doesn't have and
+    the next call built from it targets an object that doesn't exist.
+  - A statement captured with bound parameters is substituted to literals
+    (`bindScriptArgs`) — a captured statement is pasted into a query editor,
+    where nothing binds `@p1`.
 - `Server.Database(name)` and `Server.DatabaseByName(name)` both exist on
   purpose and are not interchangeable — the lightweight handle is the only
-  one that works under a `WithScript`-derived context. Their doc comments in
+  one that works under a `WithScript`-derived context. The same pairing
+  exists for logins and for all four Agent object families (`Server.Job` vs
+  `JobByName`, and Alert/Operator/Schedule alike). Their doc comments in
   `server.go` are the authority; `go doc gosmo.Server.Database`.
 
 ## Release

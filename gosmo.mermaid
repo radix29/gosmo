@@ -58,17 +58,21 @@ classDiagram
         +AgentInfo() *AgentStatus
         +Jobs() []*Job
         +JobByName(name) *Job
+        +Job(name) *Job
         +CreateJob(req) *Job
         +JobHistory(limit) []*JobHistoryEntry
         +Alerts() []*Alert
         +EventAlerts() []*Alert
         +AlertByName(name) *Alert
+        +Alert(name) *Alert
         +CreateAlert(req) *Alert
         +Operators() []*Operator
         +OperatorByName(name) *Operator
+        +Operator(name) *Operator
         +CreateOperator(req) *Operator
         +Schedules() []*Schedule
         +ScheduleByName(name) *Schedule
+        +Schedule(name) *Schedule
         +CreateSchedule(req) *Schedule
         +Categories(class) []*Category
         +CreateCategory(class, name) error
@@ -324,6 +328,8 @@ classDiagram
         +ColumnEncryptionKeys() []*ColumnEncryptionKey
         +SecurityPolicies() []*SecurityPolicy
         +SpaceUsed() SpaceInfo
+        +TableRowCounts() map~int,int64~
+        +TableSpaceUsedAll() map~int,TableSpaceInfo~
         +SetRecoveryModel(model) error
         +SetCompatibilityLevel(level) error
         +SetReadOnly(bool) error
@@ -475,11 +481,19 @@ classDiagram
         -mu sync.Mutex
         +Statements []string
         +WithScript(ctx) *ScriptCollector
+        +Scripting(ctx) bool
         Captures the exact statement(s) a set of
         pending write calls would run, without
         running them. Every write funnels through
         Server.execContext or Database.exec, the
         two chokepoints WithScript intercepts.
+        Bound parameters are substituted as
+        literals so a captured statement runs
+        standalone; ExecProc is captured as its
+        EXEC form. Scripting(ctx) reports whether
+        a context is one of these, so a caller
+        does not mirror a write the server never
+        saw into its own state.
         Statements is mutex-guarded: one collector
         may be shared across goroutines.
     }
@@ -780,6 +794,12 @@ classDiagram
         +StorageInfo(t) *IndexStorageInfo
         +Fragmentation(t, mode) *IndexFragmentation
         +Drop(t) error
+        +Type.IsColumnStore() bool
+        Type is a sys.indexes type_desc value; an
+        unrecognized one is carried through as the
+        server's own text. IsColumnStore covers
+        both columnstore forms, neither of which
+        SetIncludedColumns supports.
     }
 
     class IndexStorageInfo {
@@ -1036,7 +1056,9 @@ classDiagram
     class BackupOptions {
         +Database string
         +Devices []string
-        +BackupType BackupType
+        +Action BackupAction
+        +Files []string
+        +FileGroups []string
         +CopyOnly bool
         +Compression bool
         +Checksum bool
@@ -1058,7 +1080,9 @@ classDiagram
     class RestoreOptions {
         +Database string
         +Devices []string
-        +RestoreType RestoreType
+        +Action BackupAction
+        +Files []string
+        +FileGroups []string
         +RelocateFiles []RelocateFile
         +Recovery bool
         +Replace bool
