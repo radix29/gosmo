@@ -181,12 +181,9 @@ func TestValidDataType(t *testing.T) {
 	}
 }
 
-func TestAddAndAlterColumnRejectUnknownDataType(t *testing.T) {
+func TestAlterColumnRejectsUnknownDataType(t *testing.T) {
 	tbl := &Table{}
 	col := ColumnDefinition{Name: "Evil", DataType: DataType("int); DROP TABLE Users; --")}
-	if err := tbl.AddColumn(col); err == nil {
-		t.Error("AddColumn accepted an unrecognized data type, want an error")
-	}
 	if err := tbl.AlterColumn(col); err == nil {
 		t.Error("AlterColumn accepted an unrecognized data type, want an error")
 	}

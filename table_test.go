@@ -28,16 +28,9 @@ func TestColTypeSQL(t *testing.T) {
 	}
 }
 
-// TestAddColumnRequiresName and TestAlterColumnRequiresName pin the
-// early-return validation that runs before either method ever touches
-// t.db — the only part of the DDL flow testable without a live server.
-func TestAddColumnRequiresName(t *testing.T) {
-	tbl := &Table{Schema: "dbo", Name: "T"}
-	if err := tbl.AddColumn(ColumnDefinition{DataType: DataTypeInt}); err == nil {
-		t.Error("AddColumn with empty column name = nil error, want error")
-	}
-}
-
+// TestAlterColumnRequiresName pins the early-return validation that runs
+// before AlterColumn ever touches t.db — the only part of the DDL flow
+// testable without a live server.
 func TestAlterColumnRequiresName(t *testing.T) {
 	tbl := &Table{Schema: "dbo", Name: "T"}
 	if err := tbl.AlterColumn(ColumnDefinition{DataType: DataTypeInt}); err == nil {

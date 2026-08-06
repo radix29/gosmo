@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"sync"
 	"time"
+
+	mssql "github.com/microsoft/go-mssqldb"
 )
 
 type scriptCtxKey struct{}
@@ -108,9 +110,9 @@ var placeholderPat = regexp.MustCompile(`@p([0-9]+)`)
 // A captured statement is handed to a query editor and run by hand, where
 // nothing binds parameters — so recording the placeholder text alone produced
 // a script that fails with "Must declare the scalar variable '@p1'". That was
-// a real bug: Index.Rename, Database.RenameTable, Table.DropColumn and
+// a real bug: Index.Rename, Database.RenameTable and
 // Database.DropTable(cascade=true) are the parameterised write methods, and
-// all four are reachable from a Script Changes button.
+// all three are reachable from a Script Changes button.
 //
 // Declaring the parameters in a preamble instead would collide, not compose:
 // a collector's statements are concatenated into one batch, and a second
@@ -235,6 +237,29 @@ func dereference(p any) any {
 	return rv.Elem().Interface()
 }
 
+// declTypeByName maps the named destination types whose T-SQL type their Go
+// kind cannot give away. Checked ahead of scriptDeclType's kind switch,
+// which would otherwise send every one of them to SQL_VARIANT: the sql.Null*
+// family and NullUniqueIdentifier are structs, and UniqueIdentifier is a
+// [16]byte array. All of them are ordinary things to point an OUTPUT
+// parameter at — sql.Null* is *the* way to receive a nullable one — and all
+// of them were scripted as SQL_VARIANT, which SQL Server then refused:
+// "Implicit conversion from data type sql_variant to int is not allowed."
+// Verified live 2026-08-06 against every entry here.
+var declTypeByName = map[reflect.Type]string{
+	reflect.TypeOf(time.Time{}):                  "DATETIME2",
+	reflect.TypeOf(sql.NullTime{}):               "DATETIME2",
+	reflect.TypeOf(sql.NullBool{}):               "BIT",
+	reflect.TypeOf(sql.NullByte{}):               "TINYINT",
+	reflect.TypeOf(sql.NullInt16{}):              "SMALLINT",
+	reflect.TypeOf(sql.NullInt32{}):              "INT",
+	reflect.TypeOf(sql.NullInt64{}):              "BIGINT",
+	reflect.TypeOf(sql.NullFloat64{}):            "FLOAT",
+	reflect.TypeOf(sql.NullString{}):             "NVARCHAR(MAX)",
+	reflect.TypeOf(mssql.UniqueIdentifier{}):     "UNIQUEIDENTIFIER",
+	reflect.TypeOf(mssql.NullUniqueIdentifier{}): "UNIQUEIDENTIFIER",
+}
+
 // scriptDeclType names the T-SQL type to DECLARE for an output parameter
 // whose value will be written back into dest. The declared type has to be
 // assignment-compatible with the procedure's own parameter, so it is derived
@@ -247,6 +272,9 @@ func scriptDeclType(dest any) string {
 		return "SQL_VARIANT"
 	}
 	t := rv.Type().Elem()
+	if decl, ok := declTypeByName[t]; ok {
+		return decl
+	}
 	switch t.Kind() {
 	case reflect.Bool:
 		return "BIT"

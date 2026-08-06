@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	mssql "github.com/microsoft/go-mssqldb"
 )
 
 func TestWithScriptCapturesServerWriteWithoutExecuting(t *testing.T) {
@@ -114,13 +116,6 @@ func TestWithScriptBindsParametersIntoTheStatement(t *testing.T) {
 			want: []string{"EXEC sp_rename", "N'[dbo].[Orders].[IX_Old]'", "N'IX_New'", "N'INDEX'"},
 		},
 		{
-			name: "DropColumn",
-			write: func(ctx context.Context, d *Database) error {
-				return (&Table{db: d, Schema: "dbo", Name: "Orders", ObjectID: 1234}).DropColumnContext(ctx, "Notes")
-			},
-			want: []string{"dc.parent_object_id = 1234", "c.name = N'Notes'", "DROP COLUMN [Notes]"},
-		},
-		{
 			name:  "DropTable cascade",
 			write: func(ctx context.Context, d *Database) error { return d.DropTableContext(ctx, "dbo", "Orders", true) },
 			want:  []string{"OBJECT_ID(N'[dbo].[Orders]')", "DROP TABLE IF EXISTS [dbo].[Orders]"},
@@ -174,6 +169,69 @@ func TestWithScriptExecProcRendersAnExecStatement(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Errorf("captured statement missing %q:\n%s", want, got)
 		}
+	}
+}
+
+// The sql.Null* family, UniqueIdentifier and NullUniqueIdentifier are the
+// destination types whose Go *kind* cannot give their T-SQL type away —
+// sql.Null* and NullUniqueIdentifier are structs, UniqueIdentifier is a
+// [16]byte array — so scriptDeclType's kind switch sent every one of them to
+// SQL_VARIANT. SQL Server then refused the scripted EXEC outright ("Implicit
+// conversion from data type sql_variant to int is not allowed"), which meant
+// pointing an OUTPUT parameter at a nullable destination — the ordinary way
+// to receive one — produced a script the user could not run. Each mapping
+// here was checked against a real procedure with the matching parameter
+// type; see live_execproc_script_test.go.
+func TestScriptDeclTypeMapsNullableAndUUIDDestinations(t *testing.T) {
+	var (
+		ni  sql.NullInt64
+		n32 sql.NullInt32
+		n16 sql.NullInt16
+		nby sql.NullByte
+		ns  sql.NullString
+		nb  sql.NullBool
+		nf  sql.NullFloat64
+		nt  sql.NullTime
+		tt  time.Time
+		g   mssql.UniqueIdentifier
+		ng  mssql.NullUniqueIdentifier
+	)
+	for _, tc := range []struct {
+		name string
+		dest any
+		want string
+	}{
+		{"*sql.NullInt64", &ni, "BIGINT"},
+		{"*sql.NullInt32", &n32, "INT"},
+		{"*sql.NullInt16", &n16, "SMALLINT"},
+		{"*sql.NullByte", &nby, "TINYINT"},
+		{"*sql.NullString", &ns, "NVARCHAR(MAX)"},
+		{"*sql.NullBool", &nb, "BIT"},
+		{"*sql.NullFloat64", &nf, "FLOAT"},
+		{"*sql.NullTime", &nt, "DATETIME2"},
+		{"*time.Time", &tt, "DATETIME2"},
+		{"*mssql.UniqueIdentifier", &g, "UNIQUEIDENTIFIER"},
+		{"*mssql.NullUniqueIdentifier", &ng, "UNIQUEIDENTIFIER"},
+	} {
+		if got := scriptDeclType(tc.dest); got != tc.want {
+			t.Errorf("scriptDeclType(%s) = %s, want %s", tc.name, got, tc.want)
+		}
+	}
+}
+
+// SQL_VARIANT stays the fallthrough for a type with no mapping, and it is a
+// working one: a procedure whose parameter really is sql_variant takes a
+// DECLARE @v SQL_VARIANT without complaint (verified live). So the
+// fallthrough must not be turned into an error — that would break the case
+// it is correct for.
+func TestScriptDeclTypeKeepsSQLVariantForUnmappedDestinations(t *testing.T) {
+	var unmapped struct{ X int }
+	if got := scriptDeclType(&unmapped); got != "SQL_VARIANT" {
+		t.Errorf("scriptDeclType(*struct{X int}) = %s, want SQL_VARIANT", got)
+	}
+	// A non-pointer has nothing to read the value back into at all.
+	if got := scriptDeclType(42); got != "SQL_VARIANT" {
+		t.Errorf("scriptDeclType(non-pointer) = %s, want SQL_VARIANT", got)
 	}
 }
 

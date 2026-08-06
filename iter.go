@@ -391,6 +391,54 @@ func (d *Database) PermissionsForPrincipalSeq(ctx context.Context, principal str
 	})
 }
 
+// ColumnPermissionSeq returns an iterator over every column-level
+// GRANT/DENY entry recorded on schema.name.
+func (d *Database) ColumnPermissionSeq(ctx context.Context, schema, name string) iter.Seq2[*ColumnPermissionEntry, error] {
+	return seqFrom(ctx, func(ctx context.Context) ([]*ColumnPermissionEntry, error) {
+		return d.ColumnPermissionsContext(ctx, schema, name)
+	})
+}
+
+// ColumnPermissionsForPrincipalSeq returns an iterator over every
+// column-level GRANT/DENY entry principal holds anywhere in the database.
+func (d *Database) ColumnPermissionsForPrincipalSeq(ctx context.Context, principal string) iter.Seq2[*ColumnPermissionEntry, error] {
+	return seqFrom(ctx, func(ctx context.Context) ([]*ColumnPermissionEntry, error) {
+		return d.ColumnPermissionsForPrincipalContext(ctx, principal)
+	})
+}
+
+// EffectivePermissionSeq returns an iterator over every permission principal
+// effectively holds on the database itself.
+func (d *Database) EffectivePermissionSeq(ctx context.Context, principal string) iter.Seq2[*EffectivePermission, error] {
+	return seqFrom(ctx, func(ctx context.Context) ([]*EffectivePermission, error) {
+		return d.EffectivePermissionsContext(ctx, principal)
+	})
+}
+
+// EffectiveObjectPermissionSeq returns an iterator over every permission
+// principal effectively holds on the table or view schema.name.
+func (d *Database) EffectiveObjectPermissionSeq(ctx context.Context, schema, name, principal string) iter.Seq2[*EffectivePermission, error] {
+	return seqFrom(ctx, func(ctx context.Context) ([]*EffectivePermission, error) {
+		return d.EffectiveObjectPermissionsContext(ctx, schema, name, principal)
+	})
+}
+
+// EffectiveSchemaPermissionSeq returns an iterator over every permission
+// principal effectively holds on a schema.
+func (d *Database) EffectiveSchemaPermissionSeq(ctx context.Context, schemaName, principal string) iter.Seq2[*EffectivePermission, error] {
+	return seqFrom(ctx, func(ctx context.Context) ([]*EffectivePermission, error) {
+		return d.EffectiveSchemaPermissionsContext(ctx, schemaName, principal)
+	})
+}
+
+// EffectiveServerPermissionSeq returns an iterator over every server-level
+// permission login effectively holds.
+func (s *Server) EffectiveServerPermissionSeq(ctx context.Context, login string) iter.Seq2[*EffectivePermission, error] {
+	return seqFrom(ctx, func(ctx context.Context) ([]*EffectivePermission, error) {
+		return s.EffectiveServerPermissionsContext(ctx, login)
+	})
+}
+
 // SearchSeq returns an iterator over every table, view, stored procedure,
 // function, and trigger whose name contains pattern.
 func (d *Database) SearchSeq(ctx context.Context, pattern string) iter.Seq2[*SearchResult, error] {
@@ -412,6 +460,15 @@ func (l *Login) UserMappingSeq(ctx context.Context) iter.Seq2[*LoginUserMapping,
 // ColumnSeq returns an iterator over all columns in the table, in ordinal order.
 func (t *Table) ColumnSeq(ctx context.Context) iter.Seq2[*Column, error] {
 	return seqFrom(ctx, t.ColumnsContext)
+}
+
+// ObjectColumnSeq returns an iterator over the columns of the table or view
+// schema.name — the Database-scoped counterpart of Table.ColumnSeq, and the
+// only one of the two that reaches a view.
+func (d *Database) ObjectColumnSeq(ctx context.Context, schema, name string) iter.Seq2[*Column, error] {
+	return seqFrom(ctx, func(ctx context.Context) ([]*Column, error) {
+		return d.ObjectColumnsContext(ctx, schema, name)
+	})
 }
 
 // IndexSeq returns an iterator over all indexes on the table.

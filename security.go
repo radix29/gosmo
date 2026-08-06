@@ -469,15 +469,7 @@ func (d *Database) GrantPermission(schema, name string, permission ObjectPermiss
 
 // GrantPermissionContext is the context-aware variant of GrantPermission.
 func (d *Database) GrantPermissionContext(ctx context.Context, schema, name string, permission ObjectPermission, principal string) error {
-	if !validObjectPermission(permission) {
-		return fmt.Errorf("gosmo: grant permission: unrecognized permission %q", permission)
-	}
-	ref := qualifiedName(schema, name)
-	q := fmt.Sprintf("GRANT %s ON %s TO %s", permission, ref, quoteIdent(principal))
-	if _, err := d.exec(ctx, q); err != nil {
-		return fmt.Errorf("gosmo: grant %s on %s to %q: %w", permission, ref, principal, err)
-	}
-	return nil
+	return d.GrantPermissionWithOptionsContext(ctx, schema, name, permission, principal, PermissionOptions{})
 }
 
 // DenyPermission denies permission on schema.name to principal.
@@ -487,15 +479,7 @@ func (d *Database) DenyPermission(schema, name string, permission ObjectPermissi
 
 // DenyPermissionContext is the context-aware variant of DenyPermission.
 func (d *Database) DenyPermissionContext(ctx context.Context, schema, name string, permission ObjectPermission, principal string) error {
-	if !validObjectPermission(permission) {
-		return fmt.Errorf("gosmo: deny permission: unrecognized permission %q", permission)
-	}
-	ref := qualifiedName(schema, name)
-	q := fmt.Sprintf("DENY %s ON %s TO %s", permission, ref, quoteIdent(principal))
-	if _, err := d.exec(ctx, q); err != nil {
-		return fmt.Errorf("gosmo: deny %s on %s to %q: %w", permission, ref, principal, err)
-	}
-	return nil
+	return d.DenyPermissionWithOptionsContext(ctx, schema, name, permission, principal, PermissionOptions{})
 }
 
 // RevokePermission revokes permission on schema.name from principal.
@@ -505,15 +489,7 @@ func (d *Database) RevokePermission(schema, name string, permission ObjectPermis
 
 // RevokePermissionContext is the context-aware variant of RevokePermission.
 func (d *Database) RevokePermissionContext(ctx context.Context, schema, name string, permission ObjectPermission, principal string) error {
-	if !validObjectPermission(permission) {
-		return fmt.Errorf("gosmo: revoke permission: unrecognized permission %q", permission)
-	}
-	ref := qualifiedName(schema, name)
-	q := fmt.Sprintf("REVOKE %s ON %s FROM %s", permission, ref, quoteIdent(principal))
-	if _, err := d.exec(ctx, q); err != nil {
-		return fmt.Errorf("gosmo: revoke %s on %s from %q: %w", permission, ref, principal, err)
-	}
-	return nil
+	return d.RevokePermissionWithOptionsContext(ctx, schema, name, permission, principal, PermissionOptions{})
 }
 
 // ============================================================
@@ -595,14 +571,7 @@ func (d *Database) GrantSchemaPermission(schemaName string, permission ObjectPer
 
 // GrantSchemaPermissionContext is the context-aware variant of GrantSchemaPermission.
 func (d *Database) GrantSchemaPermissionContext(ctx context.Context, schemaName string, permission ObjectPermission, principal string) error {
-	if !validSchemaPermission(permission) {
-		return fmt.Errorf("gosmo: grant schema permission: unrecognized permission %q", permission)
-	}
-	q := fmt.Sprintf("GRANT %s ON SCHEMA::%s TO %s", permission, quoteIdent(schemaName), quoteIdent(principal))
-	if _, err := d.exec(ctx, q); err != nil {
-		return fmt.Errorf("gosmo: grant %s on schema %q to %q: %w", permission, schemaName, principal, err)
-	}
-	return nil
+	return d.GrantSchemaPermissionWithOptionsContext(ctx, schemaName, permission, principal, PermissionOptions{})
 }
 
 // DenySchemaPermission denies permission on a schema to principal.
@@ -612,14 +581,7 @@ func (d *Database) DenySchemaPermission(schemaName string, permission ObjectPerm
 
 // DenySchemaPermissionContext is the context-aware variant of DenySchemaPermission.
 func (d *Database) DenySchemaPermissionContext(ctx context.Context, schemaName string, permission ObjectPermission, principal string) error {
-	if !validSchemaPermission(permission) {
-		return fmt.Errorf("gosmo: deny schema permission: unrecognized permission %q", permission)
-	}
-	q := fmt.Sprintf("DENY %s ON SCHEMA::%s TO %s", permission, quoteIdent(schemaName), quoteIdent(principal))
-	if _, err := d.exec(ctx, q); err != nil {
-		return fmt.Errorf("gosmo: deny %s on schema %q to %q: %w", permission, schemaName, principal, err)
-	}
-	return nil
+	return d.DenySchemaPermissionWithOptionsContext(ctx, schemaName, permission, principal, PermissionOptions{})
 }
 
 // RevokeSchemaPermission revokes permission on a schema from principal.
@@ -629,14 +591,7 @@ func (d *Database) RevokeSchemaPermission(schemaName string, permission ObjectPe
 
 // RevokeSchemaPermissionContext is the context-aware variant of RevokeSchemaPermission.
 func (d *Database) RevokeSchemaPermissionContext(ctx context.Context, schemaName string, permission ObjectPermission, principal string) error {
-	if !validSchemaPermission(permission) {
-		return fmt.Errorf("gosmo: revoke schema permission: unrecognized permission %q", permission)
-	}
-	q := fmt.Sprintf("REVOKE %s ON SCHEMA::%s FROM %s", permission, quoteIdent(schemaName), quoteIdent(principal))
-	if _, err := d.exec(ctx, q); err != nil {
-		return fmt.Errorf("gosmo: revoke %s on schema %q from %q: %w", permission, schemaName, principal, err)
-	}
-	return nil
+	return d.RevokeSchemaPermissionWithOptionsContext(ctx, schemaName, permission, principal, PermissionOptions{})
 }
 
 // ============================================================
@@ -790,13 +745,7 @@ func (d *Database) GrantDatabasePermission(permission, principal string) error {
 
 // GrantDatabasePermissionContext is the context-aware variant of GrantDatabasePermission.
 func (d *Database) GrantDatabasePermissionContext(ctx context.Context, permission, principal string) error {
-	if !validDatabasePermission(permission) {
-		return fmt.Errorf("gosmo: grant database permission: unrecognized permission %q", permission)
-	}
-	if _, err := d.exec(ctx, fmt.Sprintf("GRANT %s TO %s", permission, quoteIdent(principal))); err != nil {
-		return fmt.Errorf("gosmo: grant %s to %q in %q: %w", permission, principal, d.name, err)
-	}
-	return nil
+	return d.GrantDatabasePermissionWithOptionsContext(ctx, permission, principal, PermissionOptions{})
 }
 
 // DenyDatabasePermission denies a database-level permission to principal.
@@ -806,13 +755,7 @@ func (d *Database) DenyDatabasePermission(permission, principal string) error {
 
 // DenyDatabasePermissionContext is the context-aware variant of DenyDatabasePermission.
 func (d *Database) DenyDatabasePermissionContext(ctx context.Context, permission, principal string) error {
-	if !validDatabasePermission(permission) {
-		return fmt.Errorf("gosmo: deny database permission: unrecognized permission %q", permission)
-	}
-	if _, err := d.exec(ctx, fmt.Sprintf("DENY %s TO %s", permission, quoteIdent(principal))); err != nil {
-		return fmt.Errorf("gosmo: deny %s to %q in %q: %w", permission, principal, d.name, err)
-	}
-	return nil
+	return d.DenyDatabasePermissionWithOptionsContext(ctx, permission, principal, PermissionOptions{})
 }
 
 // RevokeDatabasePermission revokes a database-level permission from principal.
@@ -822,11 +765,5 @@ func (d *Database) RevokeDatabasePermission(permission, principal string) error 
 
 // RevokeDatabasePermissionContext is the context-aware variant of RevokeDatabasePermission.
 func (d *Database) RevokeDatabasePermissionContext(ctx context.Context, permission, principal string) error {
-	if !validDatabasePermission(permission) {
-		return fmt.Errorf("gosmo: revoke database permission: unrecognized permission %q", permission)
-	}
-	if _, err := d.exec(ctx, fmt.Sprintf("REVOKE %s FROM %s", permission, quoteIdent(principal))); err != nil {
-		return fmt.Errorf("gosmo: revoke %s from %q in %q: %w", permission, principal, d.name, err)
-	}
-	return nil
+	return d.RevokeDatabasePermissionWithOptionsContext(ctx, permission, principal, PermissionOptions{})
 }

@@ -103,14 +103,10 @@ type Column struct {
 	IsPrimaryKey      bool
 }
 
-// Columns returns all columns for this table in ordinal order.
-func (t *Table) Columns() ([]*Column, error) {
-	return t.ColumnsContext(context.Background())
-}
-
-// ColumnsContext is the context-aware variant of Columns.
-func (t *Table) ColumnsContext(ctx context.Context) ([]*Column, error) {
-	const q = `
+// columnSelect is the SELECT and joins every column listing shares; each
+// caller appends its own WHERE, because a Table already holds an object_id
+// while Database.ObjectColumns has only a name to resolve.
+const columnSelect = `
 SELECT c.name, c.column_id,
        tp.name,
        c.max_length, c.precision, c.scale,
@@ -133,7 +129,16 @@ LEFT   JOIN (
        FROM   sys.index_columns ic2
        JOIN   sys.indexes i ON i.object_id = ic2.object_id AND i.index_id = ic2.index_id
        WHERE  i.is_primary_key = 1
-       ) pk ON pk.object_id = c.object_id AND pk.column_id = c.column_id
+       ) pk ON pk.object_id = c.object_id AND pk.column_id = c.column_id`
+
+// Columns returns all columns for this table in ordinal order.
+func (t *Table) Columns() ([]*Column, error) {
+	return t.ColumnsContext(context.Background())
+}
+
+// ColumnsContext is the context-aware variant of Columns.
+func (t *Table) ColumnsContext(ctx context.Context) ([]*Column, error) {
+	const q = columnSelect + `
 WHERE  c.object_id = @p1
 ORDER  BY c.column_id`
 
@@ -143,6 +148,51 @@ ORDER  BY c.column_id`
 	}
 	defer rows.Close()
 
+	return scanColumns(rows.Rows)
+}
+
+// ObjectColumns returns the columns of the table or view schema.name, in
+// ordinal order. Table.Columns covers tables only, and a view has no handle
+// type of its own that carries an object_id, so this is the way to reach a
+// view's columns — which do carry permissions, and so do turn up on a
+// Securables page.
+func (d *Database) ObjectColumns(schema, name string) ([]*Column, error) {
+	return d.ObjectColumnsContext(context.Background(), schema, name)
+}
+
+// ObjectColumnsContext is the context-aware variant of ObjectColumns.
+//
+// The columns a view does not have — identity, computed text, defaults,
+// primary key — come back at their zero values, because the joins that
+// supply them simply do not match for a view. Name, ordinal, type,
+// length/precision/scale, nullability and collation are all real.
+func (d *Database) ObjectColumnsContext(ctx context.Context, schema, name string) ([]*Column, error) {
+	const q = columnSelect + `
+WHERE  c.object_id = OBJECT_ID(@p1)
+ORDER  BY c.column_id`
+
+	ref := qualifiedName(schema, name)
+	rows, err := d.query(ctx, q, ref)
+	if err != nil {
+		return nil, fmt.Errorf("gosmo: list columns for %s in %q: %w", ref, d.name, err)
+	}
+	defer rows.Close()
+
+	cols, err := scanColumns(rows.Rows)
+	if err != nil {
+		return nil, err
+	}
+	// Every table and view has at least one column, so an empty result means
+	// OBJECT_ID found nothing — report that rather than an empty column list,
+	// which reads as "this object has no columns".
+	if len(cols) == 0 {
+		return nil, fmt.Errorf("gosmo: table or view %s not found in %q", ref, d.name)
+	}
+	return cols, nil
+}
+
+// scanColumns reads the column shape columnSelect returns.
+func scanColumns(rows *sql.Rows) ([]*Column, error) {
 	var cols []*Column
 	for rows.Next() {
 		col := &Column{}
@@ -171,44 +221,10 @@ ORDER  BY c.column_id`
 	return cols, rows.Err()
 }
 
-// AddColumn adds a new column to the table (ALTER TABLE ... ADD).
-func (t *Table) AddColumn(col ColumnDefinition) error {
-	return t.AddColumnContext(context.Background(), col)
-}
-
-// AddColumnContext is the context-aware variant of AddColumn.
-func (t *Table) AddColumnContext(ctx context.Context, col ColumnDefinition) error {
-	if col.Name == "" {
-		return fmt.Errorf("gosmo: add column: name is required")
-	}
-	if !validDataType(col.DataType) {
-		return fmt.Errorf("gosmo: add column %q: unrecognized data type %q", col.Name, col.DataType)
-	}
-
-	var sb strings.Builder
-	fmt.Fprintf(&sb, "ALTER TABLE %s ADD %s %s", t.FullName(), quoteIdent(col.Name), colTypeSQL(col))
-	if col.IsIdentity {
-		fmt.Fprintf(&sb, " IDENTITY(%d,%d)", col.IdentitySeed, col.IdentityIncr)
-	}
-	if col.IsNullable {
-		sb.WriteString(" NULL")
-	} else {
-		sb.WriteString(" NOT NULL")
-	}
-	if col.DefaultValue != "" {
-		fmt.Fprintf(&sb, " DEFAULT (%s)", col.DefaultValue)
-	}
-
-	if _, err := t.db.exec(ctx, sb.String()); err != nil {
-		return fmt.Errorf("gosmo: add column %q to %s: %w", col.Name, t.FullName(), err)
-	}
-	return nil
-}
-
 // AlterColumn changes an existing column's data type and/or nullability
 // (ALTER TABLE ... ALTER COLUMN). Identity and default are not settable this
-// way — SQL Server requires dropping and re-adding the column (identity) or
-// the default constraint (DropColumn/AddColumn) for those.
+// way — SQL Server requires dropping and re-adding the column, or its default
+// constraint, for those.
 func (t *Table) AlterColumn(col ColumnDefinition) error {
 	return t.AlterColumnContext(context.Background(), col)
 }
@@ -232,34 +248,6 @@ func (t *Table) AlterColumnContext(ctx context.Context, col ColumnDefinition) er
 
 	if _, err := t.db.exec(ctx, sb.String()); err != nil {
 		return fmt.Errorf("gosmo: alter column %q on %s: %w", col.Name, t.FullName(), err)
-	}
-	return nil
-}
-
-// DropColumn drops a column from the table (ALTER TABLE ... DROP COLUMN),
-// first dropping its default constraint, if it has one — SQL Server refuses
-// to drop a column that a default constraint still references.
-func (t *Table) DropColumn(name string) error {
-	return t.DropColumnContext(context.Background(), name)
-}
-
-// DropColumnContext is the context-aware variant of DropColumn.
-func (t *Table) DropColumnContext(ctx context.Context, name string) error {
-	const dropDefault = `
-DECLARE @sql NVARCHAR(MAX) = N'';
-SELECT @sql = N'ALTER TABLE ' + QUOTENAME(SCHEMA_NAME(tb.schema_id)) + N'.' + QUOTENAME(tb.name) +
-              N' DROP CONSTRAINT ' + QUOTENAME(dc.name)
-FROM   sys.default_constraints dc
-JOIN   sys.columns c  ON c.object_id = dc.parent_object_id AND c.column_id = dc.parent_column_id
-JOIN   sys.tables  tb ON tb.object_id = dc.parent_object_id
-WHERE  dc.parent_object_id = @p1 AND c.name = @p2;
-IF LEN(@sql) > 0 EXEC sp_executesql @sql;`
-
-	if _, err := t.db.exec(ctx, dropDefault, t.ObjectID, name); err != nil {
-		return fmt.Errorf("gosmo: drop default constraint on %s.%s: %w", t.FullName(), name, err)
-	}
-	if _, err := t.db.exec(ctx, fmt.Sprintf("ALTER TABLE %s DROP COLUMN %s", t.FullName(), quoteIdent(name))); err != nil {
-		return fmt.Errorf("gosmo: drop column %q from %s: %w", name, t.FullName(), err)
 	}
 	return nil
 }

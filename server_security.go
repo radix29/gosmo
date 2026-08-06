@@ -176,14 +176,7 @@ func (s *Server) GrantServerPermission(permission, principal string) error {
 // is three extra round trips per grant to re-solve what the driver already
 // handles.
 func (s *Server) GrantServerPermissionContext(ctx context.Context, permission, principal string) error {
-	if !validServerPermission(permission) {
-		return fmt.Errorf("gosmo: grant server permission: unrecognized permission %q", permission)
-	}
-	q := fmt.Sprintf("USE master; GRANT %s TO %s", permission, quoteIdent(principal))
-	if err := s.execContext(ctx, q); err != nil {
-		return fmt.Errorf("gosmo: grant %s to %q: %w", permission, principal, err)
-	}
-	return nil
+	return s.GrantServerPermissionWithOptionsContext(ctx, permission, principal, PermissionOptions{})
 }
 
 // DenyServerPermission denies a server-level permission to principal.
@@ -194,14 +187,7 @@ func (s *Server) DenyServerPermission(permission, principal string) error {
 // DenyServerPermissionContext is the context-aware variant of DenyServerPermission.
 // See GrantServerPermissionContext's doc comment for the USE master prefix.
 func (s *Server) DenyServerPermissionContext(ctx context.Context, permission, principal string) error {
-	if !validServerPermission(permission) {
-		return fmt.Errorf("gosmo: deny server permission: unrecognized permission %q", permission)
-	}
-	q := fmt.Sprintf("USE master; DENY %s TO %s", permission, quoteIdent(principal))
-	if err := s.execContext(ctx, q); err != nil {
-		return fmt.Errorf("gosmo: deny %s to %q: %w", permission, principal, err)
-	}
-	return nil
+	return s.DenyServerPermissionWithOptionsContext(ctx, permission, principal, PermissionOptions{})
 }
 
 // RevokeServerPermission revokes a server-level permission from principal.
@@ -212,14 +198,7 @@ func (s *Server) RevokeServerPermission(permission, principal string) error {
 // RevokeServerPermissionContext is the context-aware variant of RevokeServerPermission.
 // See GrantServerPermissionContext's doc comment for the USE master prefix.
 func (s *Server) RevokeServerPermissionContext(ctx context.Context, permission, principal string) error {
-	if !validServerPermission(permission) {
-		return fmt.Errorf("gosmo: revoke server permission: unrecognized permission %q", permission)
-	}
-	q := fmt.Sprintf("USE master; REVOKE %s FROM %s", permission, quoteIdent(principal))
-	if err := s.execContext(ctx, q); err != nil {
-		return fmt.Errorf("gosmo: revoke %s from %q: %w", permission, principal, err)
-	}
-	return nil
+	return s.RevokeServerPermissionWithOptionsContext(ctx, permission, principal, PermissionOptions{})
 }
 
 // -- Credentials -----------------------------------------------------------------

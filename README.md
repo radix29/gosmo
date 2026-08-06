@@ -105,6 +105,10 @@ classDiagram
         +BackupFileList(device) []*BackupFile
         +SecurityInfo() *ServerSecurityInfo
         +ServerPermissions() []*ServerPermissionEntry
+        +GrantServerPermissionWithOptions(perm, principal, opts) error
+        +DenyServerPermissionWithOptions(perm, principal, opts) error
+        +RevokeServerPermissionWithOptions(perm, principal, opts) error
+        +EffectiveServerPermissions(login) []*EffectivePermission
         +GrantServerPermission(perm, principal) error
         +DenyServerPermission(perm, principal) error
         +RevokeServerPermission(perm, principal) error
@@ -381,6 +385,17 @@ classDiagram
         +DenyPermission(schema, name, perm, principal) error
         +RevokePermission(schema, name, perm, principal) error
         +PermissionsForPrincipal(principal) []*PrincipalSecurable
+        +GrantPermissionWithOptions(schema, name, perm, principal, opts) error
+        +DenyPermissionWithOptions(schema, name, perm, principal, opts) error
+        +RevokePermissionWithOptions(schema, name, perm, principal, opts) error
+        +ColumnPermissions(schema, name) []*ColumnPermissionEntry
+        +ColumnPermissionsForPrincipal(principal) []*ColumnPermissionEntry
+        +GrantColumnPermission(schema, name, perm, cols, principal) error
+        +DenyColumnPermission(schema, name, perm, cols, principal) error
+        +RevokeColumnPermission(schema, name, perm, cols, principal) error
+        +EffectivePermissions(principal) []*EffectivePermission
+        +EffectiveObjectPermissions(schema, name, principal) []*EffectivePermission
+        +EffectiveSchemaPermissions(schema, principal) []*EffectivePermission
         +SchemaPermissions(schema) []*PermissionEntry
         +GrantSchemaPermission(schema, perm, principal) error
         +DenySchemaPermission(schema, perm, principal) error
@@ -692,6 +707,29 @@ classDiagram
         +State string
     }
 
+    class ColumnPermissionEntry {
+        +Principal string
+        +PrincipalType string
+        +Grantor string
+        +Schema string
+        +Object string
+        +Column string
+        +Permission ObjectPermission
+        +State PermissionState
+    }
+
+    class EffectivePermission {
+        +Entity string
+        +Subentity string
+        +Permission string
+    }
+
+    class PermissionOptions {
+        +WithGrantOption bool
+        +Cascade bool
+        +GrantOptionOnly bool
+    }
+
     %% =========================================================
     %% Bulk copy (fast import — bcp / SSMS "Import Data")
     %% =========================================================
@@ -756,9 +794,7 @@ classDiagram
         +UpdateAllStatistics(samplePct) error
         +CreateIndex(req) error
         +CreateStatistic(name, cols, pct) error
-        +AddColumn(col) error
         +AlterColumn(col) error
-        +DropColumn(name) error
     }
 
     class Column {
@@ -1421,6 +1457,8 @@ classDiagram
     Database "1" --> "*" PermissionEntry : grants
     Database "1" --> "*" DatabasePermissionEntry : grants
     Database "1" --> "*" PrincipalSecurable : PermissionsForPrincipal() returns
+    Database "1" --> "*" ColumnPermissionEntry : ColumnPermissions() returns
+    Database "1" --> "*" EffectivePermission : EffectivePermissions() returns
     Database --> Catalog : Catalog()/SystemCatalog() returns
     Catalog "1" --> "*" CatalogObject : contains
     CatalogObject "1" --> "*" CatalogColumn : has
@@ -1545,6 +1583,8 @@ fmt.Println(srv.Info().ProductVersion)
 | Create login (safe)     | `srv.CreateLogin(name, password, opts)`    |
 | Authentication mode     | `srv.SecurityInfo()`                       |
 | Server-level permissions | `srv.ServerPermissions()` / `srv.Grant\|Deny\|RevokeServerPermission(...)` / `srv.ServerPermissionNames()` |
+| Server permissions with modifiers | `srv.Grant\|Deny\|RevokeServerPermissionWithOptions(perm, principal, opts)` — `WITH GRANT OPTION`, `CASCADE`, `GRANT OPTION FOR` |
+| Effective server permissions | `srv.EffectiveServerPermissions(login)` (`EXECUTE AS LOGIN` + `fn_my_permissions`) |
 | Credentials              | `srv.Credentials()`                        |
 | Live memory stats        | `srv.MemoryStats()`                        |
 | Languages                | `srv.Languages()`                          |
@@ -1618,9 +1658,7 @@ fmt.Println(srv.Info().ProductVersion)
 | Rebuild all indexes   | `t.RebuildAllIndexes(fillFactor)`  |
 | Update all statistics | `t.UpdateAllStatistics(samplePct)` |
 | Create index          | `t.CreateIndex(req)`               |
-| Add column            | `t.AddColumn(col)`                 |
 | Alter column          | `t.AlterColumn(col)`               |
-| Drop column           | `t.DropColumn(name)`               |
 
 ### Index
 
@@ -1689,7 +1727,11 @@ columnstore index takes no key columns at all, so `SetIncludedColumns` and
 | Schema permissions            | `db.SchemaPermissions(schema)`                            |
 | Grant / deny / revoke (schema) | `db.GrantSchemaPermission(...)` / `db.DenySchemaPermission(...)` / `db.RevokeSchemaPermission(...)` |
 | Every securable one principal holds | `db.PermissionsForPrincipal(principal)`             |
-| Permission-name catalogs (for pickers) | `gosmo.ObjectPermissionNames()` / `SchemaPermissionNames()` / `DatabasePermissionNames()` / `ServerPermissionNames()` |
+| Permissions with modifiers   | `db.Grant\|Deny\|RevokePermissionWithOptions(...)` / `...SchemaPermissionWithOptions(...)` / `...DatabasePermissionWithOptions(...)` |
+| Column permissions           | `db.ColumnPermissions(schema, name)` / `db.ColumnPermissionsForPrincipal(principal)` |
+| Grant / deny / revoke (column) | `db.Grant\|Deny\|RevokeColumnPermission(schema, name, perm, cols, principal)` |
+| Effective permissions        | `db.EffectivePermissions(principal)` / `db.EffectiveObjectPermissions(schema, name, principal)` / `db.EffectiveSchemaPermissions(schema, principal)` |
+| Permission-name catalogs (for pickers) | `gosmo.ObjectPermissionNames()` / `SchemaPermissionNames()` / `DatabasePermissionNames()` / `ServerPermissionNames()` / `ColumnPermissionNames()` |
 | Estimated execution plan     | `db.EstimatedPlan(sql)` (`SET SHOWPLAN_XML`, statement not run) |
 | Actual execution plan        | `db.ActualPlan(sql)` (`SET STATISTICS XML`, statement runs)|
 
