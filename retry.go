@@ -34,8 +34,18 @@ const readRetryAttempts = 3
 // so. It is exported so callers that run their own statements (e.g. an
 // ad-hoc query runner) can decide whether a failure is worth another
 // attempt; note that only idempotent operations are safe to retry blindly.
+//
+// A context error is never retryable. context.DeadlineExceeded has to be
+// rejected explicitly because it implements net.Error, so the net.Error test
+// below would otherwise report a caller's own expired deadline as a
+// transient failure and have them wait out three attempts on a deadline that
+// has already passed. context.Canceled fails that test anyway and is named
+// alongside it so the two can't drift apart.
 func IsRetryable(err error) bool {
 	if err == nil {
+		return false
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return false
 	}
 	if _, ok := errors.AsType[mssql.RetryableError](err); ok {

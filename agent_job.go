@@ -458,7 +458,7 @@ func (j *Job) StepsContext(ctx context.Context) ([]*JobStep, error) {
 	const q = `
 SELECT step_id, step_name, subsystem, command, ISNULL(database_name, ''),
        on_success_action, on_success_step_id, on_fail_action, on_fail_step_id,
-       last_run_outcome, last_run_date, last_run_duration,
+       last_run_outcome, last_run_date, last_run_time, last_run_duration,
        retry_attempts, retry_interval, ISNULL(output_file_name, ''), flags
 FROM   msdb.dbo.sysjobsteps
 WHERE  job_id = @p1
@@ -473,15 +473,23 @@ ORDER  BY step_id`
 	var steps []*JobStep
 	for rows.Next() {
 		s := &JobStep{job: j}
-		var lastRun sql.NullInt64
+		var lastRunDate, lastRunTime sql.NullInt64
 		if err := rows.Scan(
 			&s.StepID, &s.Name, &s.Subsystem, &s.Command, &s.Database,
 			&s.OnSuccessAction, &s.OnSuccessStepID, &s.OnFailAction, &s.OnFailStepID,
-			&s.LastRunOutcome, &lastRun, &s.LastRunDuration,
+			&s.LastRunOutcome, &lastRunDate, &lastRunTime, &s.LastRunDuration,
 			&s.RetryAttempts, &s.RetryInterval, &s.OutputFileName, &s.Flags,
 		); err != nil {
 			return nil, err
 		}
+		// last_run_date is 0 for a step that has never run, which
+		// parseSQLAgentDate would turn into a year-zero date rather than a
+		// zero Time. Leave LastRunDate zero so IsZero() is the "never ran"
+		// test callers expect.
+		if lastRunDate.Valid && lastRunDate.Int64 != 0 {
+			s.LastRunDate = parseSQLAgentDate(int(lastRunDate.Int64), int(lastRunTime.Int64))
+		}
+		s.LastRunElapsed = parseSQLAgentDuration(s.LastRunDuration)
 		steps = append(steps, s)
 	}
 	return steps, rows.Err()
@@ -673,12 +681,22 @@ func (s *JobStep) UpdateContext(ctx context.Context, req JobStepRequest) error {
 		req.OnFailAction, req.OnFailStepID,
 		req.RetryAttempts, req.RetryInterval,
 	)
-	if req.Database != "" {
+	// sp_update_jobstep leaves a parameter it was not passed exactly as it
+	// was, so an omitted @database_name is "keep", not "clear". An empty
+	// req.Database therefore cannot be sent through: N'' is accepted without
+	// error and changes nothing (verified against SQL Server 2025), so the
+	// only honest reading of an empty value is "leave it alone" — and the
+	// local mirror below has to skip the field for the same reason, or the
+	// JobStep would report a database the server never stopped using.
+	sendDatabase := req.Database != ""
+	if sendDatabase {
 		q += fmt.Sprintf(", @database_name = N'%s'", escapeSingle(req.Database))
 	}
-	if req.OutputFileName != "" {
-		q += fmt.Sprintf(", @output_file_name = N'%s'", escapeSingle(req.OutputFileName))
-	}
+	// @output_file_name, unlike @database_name, does honour N'': it nulls the
+	// column. It is therefore always sent, so blanking the field in a caller's
+	// form actually clears the step's output file instead of silently keeping
+	// the old path while the JobStep claimed it was gone.
+	q += fmt.Sprintf(", @output_file_name = N'%s'", escapeSingle(req.OutputFileName))
 	if err := s.job.server.execContext(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: update step %q of job %q: %w", req.Name, s.job.Name, err)
 	}
@@ -686,7 +704,10 @@ func (s *JobStep) UpdateContext(ctx context.Context, req JobStepRequest) error {
 	// must keep describing what is actually there. See setIfApplied, which is
 	// the single-field form of this guard.
 	if !Scripting(ctx) {
-		s.Name, s.Subsystem, s.Command, s.Database = req.Name, req.Subsystem, req.Command, req.Database
+		s.Name, s.Subsystem, s.Command = req.Name, req.Subsystem, req.Command
+		if sendDatabase {
+			s.Database = req.Database
+		}
 		s.OnSuccessAction, s.OnSuccessStepID = req.OnSuccessAction, req.OnSuccessStepID
 		s.OnFailAction, s.OnFailStepID = req.OnFailAction, req.OnFailStepID
 		s.RetryAttempts, s.RetryInterval = req.RetryAttempts, req.RetryInterval
@@ -753,9 +774,17 @@ type JobStep struct {
 	OnFailAction    int
 	// OnFailStepID is the target step_id when OnFailAction is "go to
 	// step N" (4); otherwise unused.
-	OnFailStepID    int
-	LastRunOutcome  JobOutcome
+	OnFailStepID   int
+	LastRunOutcome JobOutcome
+	// LastRunDate is when the step last ran, from sysjobsteps'
+	// last_run_date/last_run_time integer pair. Zero when the step has never
+	// run — test it with IsZero(), not against a sentinel date.
+	LastRunDate time.Time
+	// LastRunDuration is sysjobsteps.last_run_duration verbatim: an HHMMSS
+	// integer, not a count of seconds (10230 is 1h 02m 30s). LastRunElapsed
+	// is the same value decoded, and is what display code should use.
 	LastRunDuration int
+	LastRunElapsed  time.Duration
 	RetryAttempts   int
 	RetryInterval   int
 	OutputFileName  string

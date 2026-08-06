@@ -28,6 +28,14 @@ func TestIsRetryable(t *testing.T) {
 		{"wrapped net error", fmt.Errorf("query: %w", &net.OpError{Op: "read", Err: errors.New("reset")}), true},
 		{"stream error", mssql.StreamError{InnerError: errors.New("corrupt")}, true},
 		{"server error", mssql.ServerError{}, true},
+		// context.DeadlineExceeded implements net.Error, so without an
+		// explicit rejection it reports as a transient failure and a caller
+		// driving its own retry loop waits out three attempts on a deadline
+		// that has already passed.
+		{"deadline exceeded", context.DeadlineExceeded, false},
+		{"wrapped deadline exceeded", fmt.Errorf("query: %w", context.DeadlineExceeded), false},
+		{"canceled", context.Canceled, false},
+		{"wrapped canceled", fmt.Errorf("query: %w", context.Canceled), false},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
