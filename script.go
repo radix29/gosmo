@@ -295,6 +295,12 @@ func scriptDeclType(dest any) string {
 			return "VARBINARY(MAX)"
 		}
 	case reflect.Struct:
+		// This arm is the kind-based fallback for a struct type that
+		// declTypeByName has no entry for. Its time.Time test cannot fire
+		// today — the map above is consulted first and answers for time.Time
+		// and every sql.Null* — and is kept as the fallback's own statement
+		// of what it would do, not as a live branch. Anything else struct-
+		// shaped falls through to SQL_VARIANT below.
 		if t == reflect.TypeOf(time.Time{}) {
 			return "DATETIME2"
 		}

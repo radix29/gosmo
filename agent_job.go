@@ -826,6 +826,14 @@ type JobStepRequest struct {
 	Subsystem string // "TSQL" is the most common value
 	Command   string
 	// Database is only used for TSQL steps.
+	//
+	// Empty means "leave the step's own database alone" on an update, not
+	// "clear it": sp_update_jobstep accepts N'' without error and changes
+	// nothing, so JobStep.UpdateContext omits @database_name entirely rather
+	// than sending a value that would be silently ignored. On AddStep an
+	// empty value likewise sends no @database_name, and the server applies
+	// its default. There is no way to null the column through this type,
+	// because msdb offers none.
 	Database string
 	// OnSuccessAction: 1=quit success, 2=quit fail, 3=go to next step, 4=go to step N.
 	OnSuccessAction int
@@ -836,7 +844,12 @@ type JobStepRequest struct {
 	OnFailStepID  int
 	RetryAttempts int
 	// RetryInterval is in minutes.
-	RetryInterval  int
+	RetryInterval int
+	// OutputFileName is sent on every update, empty or not — unlike
+	// Database, whose empty value means "keep". @output_file_name does
+	// honour N'': it nulls the column, so blanking this field is how a
+	// caller's form clears a step's output file. Two string fields of this
+	// struct therefore read an empty value differently, because msdb does.
 	OutputFileName string
 }
 
