@@ -507,7 +507,7 @@ func (d *Database) SetRecoveryModelContext(ctx context.Context, model RecoveryMo
 	); err != nil {
 		return fmt.Errorf("gosmo: set recovery model: %w", err)
 	}
-	d.recoveryModel = model
+	setIfApplied(ctx, &d.recoveryModel, model)
 	return nil
 }
 
@@ -523,7 +523,7 @@ func (d *Database) SetCompatibilityLevelContext(ctx context.Context, level Compa
 	); err != nil {
 		return fmt.Errorf("gosmo: set compatibility level: %w", err)
 	}
-	d.compatLevel = level
+	setIfApplied(ctx, &d.compatLevel, level)
 	return nil
 }
 
@@ -543,7 +543,7 @@ func (d *Database) SetReadOnlyContext(ctx context.Context, readOnly bool) error 
 	); err != nil {
 		return fmt.Errorf("gosmo: set read-only %v: %w", readOnly, err)
 	}
-	d.isReadOnly = readOnly
+	setIfApplied(ctx, &d.isReadOnly, readOnly)
 	return nil
 }
 
@@ -588,7 +588,7 @@ func (d *Database) SetOfflineContext(ctx context.Context) error {
 	); err != nil {
 		return fmt.Errorf("gosmo: set offline: %w", err)
 	}
-	d.state = "OFFLINE"
+	setIfApplied(ctx, &d.state, "OFFLINE")
 	return nil
 }
 
@@ -604,7 +604,7 @@ func (d *Database) SetOnlineContext(ctx context.Context) error {
 	); err != nil {
 		return fmt.Errorf("gosmo: set online: %w", err)
 	}
-	d.state = "ONLINE"
+	setIfApplied(ctx, &d.state, "ONLINE")
 	return nil
 }
 

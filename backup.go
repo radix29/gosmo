@@ -571,16 +571,50 @@ func backupTypeFromHeader(n int) BackupAction {
 	}
 }
 
-// BackupFileList reads the database files contained in the backup set on a
-// backup device (RESTORE FILELISTONLY).
+// backupFileListQuery builds the RESTORE FILELISTONLY statement reading the
+// file list of one backup set on device. fileNumber 0 leaves the WITH clause
+// off, which SQL Server reads as the first set.
+func backupFileListQuery(device string, fileNumber int) string {
+	q := fmt.Sprintf("RESTORE FILELISTONLY FROM DISK = N'%s'", escapeSingle(device))
+	if fileNumber > 0 {
+		q += fmt.Sprintf(" WITH FILE = %d", fileNumber)
+	}
+	return q
+}
+
+// BackupFileList reads the database files contained in the first backup set
+// on a backup device (RESTORE FILELISTONLY). Use BackupFileListForSet for a
+// device holding more than one set.
 func (s *Server) BackupFileList(device string) ([]*BackupFile, error) {
 	return s.BackupFileListContext(context.Background(), device)
 }
 
 // BackupFileListContext is the context-aware variant of BackupFileList.
 func (s *Server) BackupFileListContext(ctx context.Context, device string) ([]*BackupFile, error) {
-	q := fmt.Sprintf("RESTORE FILELISTONLY FROM DISK = N'%s'", escapeSingle(device))
-	rows, err := s.query(ctx, q)
+	return s.BackupFileListForSetContext(ctx, device, 0)
+}
+
+// BackupFileListForSet reads the database files contained in one particular
+// backup set on a device (RESTORE FILELISTONLY WITH FILE = n).
+//
+// fileNumber is 1-based, as reported by BackupHeader.Position, and matches
+// RestoreOptions.FileNumber — pass the same value to both or the file list
+// describes a different set from the one being restored. Zero leaves the
+// clause off, which SQL Server reads as the first set.
+//
+// A device that backups were appended to holds one set per backup, and their
+// file lists differ whenever the sets came from different databases or files
+// were added between them. Building RESTORE's MOVE clauses from the wrong
+// set names logical files the restored set does not contain, which SQL
+// Server rejects outright.
+func (s *Server) BackupFileListForSet(device string, fileNumber int) ([]*BackupFile, error) {
+	return s.BackupFileListForSetContext(context.Background(), device, fileNumber)
+}
+
+// BackupFileListForSetContext is the context-aware variant of
+// BackupFileListForSet.
+func (s *Server) BackupFileListForSetContext(ctx context.Context, device string, fileNumber int) ([]*BackupFile, error) {
+	rows, err := s.query(ctx, backupFileListQuery(device, fileNumber))
 	if err != nil {
 		return nil, fmt.Errorf("gosmo: read backup file list %q: %w", device, err)
 	}

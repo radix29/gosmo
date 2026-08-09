@@ -331,3 +331,28 @@ func TestBuildRestoreStatementFiles(t *testing.T) {
 		t.Errorf("emitted the non-existent RESTORE FILES verb: %q", got)
 	}
 }
+
+// The file list must name the same backup set the restore names, or the
+// MOVE clauses built from it describe files the restored set doesn't
+// contain. Position is 1-based; 0 means "no clause", which SQL Server reads
+// as the first set.
+func TestBackupFileListQuerySelectsTheSet(t *testing.T) {
+	cases := []struct {
+		device string
+		file   int
+		want   string
+	}{
+		{`C:\bk\db.bak`, 0, `RESTORE FILELISTONLY FROM DISK = N'C:\bk\db.bak'`},
+		{`C:\bk\db.bak`, 1, `RESTORE FILELISTONLY FROM DISK = N'C:\bk\db.bak' WITH FILE = 1`},
+		{`/var/opt/mssql/data/db.bak`, 3, `RESTORE FILELISTONLY FROM DISK = N'/var/opt/mssql/data/db.bak' WITH FILE = 3`},
+		// A negative number is not a set, so it must not reach the server.
+		{`/tmp/db.bak`, -2, `RESTORE FILELISTONLY FROM DISK = N'/tmp/db.bak'`},
+		// A device path carrying an apostrophe stays quoted.
+		{`/tmp/o'brien.bak`, 2, `RESTORE FILELISTONLY FROM DISK = N'/tmp/o''brien.bak' WITH FILE = 2`},
+	}
+	for _, c := range cases {
+		if got := backupFileListQuery(c.device, c.file); got != c.want {
+			t.Errorf("backupFileListQuery(%q, %d) =\n  %s\nwant\n  %s", c.device, c.file, got, c.want)
+		}
+	}
+}

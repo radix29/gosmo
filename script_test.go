@@ -440,3 +440,118 @@ func TestScriptedAgentCreatesReturnNameOnlyHandles(t *testing.T) {
 		}
 	})
 }
+
+// TestScriptedSetterDoesNotMirrorOntoTheReceiver pins the setIfApplied rule
+// for the six state-mirroring setters on Database and ConfigurationOption.
+//
+// Each one runs its statement and then updates the field it changed, so the
+// handle keeps describing what the server holds. Under WithScript nothing
+// ran, so mirroring there leaves the object claiming state the server does
+// not have — and gossms's "Script Changes" button drives exactly these
+// closures under WithScript (its property pages call Apply either way), so a
+// user who scripts a recovery-model change and then applies it for real is
+// building the second call from a handle that already believes the first
+// happened.
+//
+// Both halves are asserted deliberately: "the field did not change" passes
+// just as well on a setter that never mirrors at all, which is not the
+// behaviour being pinned.
+func TestScriptedSetterDoesNotMirrorOntoTheReceiver(t *testing.T) {
+	// server is the value the handle was loaded with; want is what the setter
+	// is asked to change it to.
+	cases := []struct {
+		name   string
+		set    func(ctx context.Context, d *Database, c *ConfigurationOption) error
+		got    func(d *Database, c *ConfigurationOption) any
+		server any
+		want   any
+	}{
+		{
+			name: "SetRecoveryModel",
+			set: func(ctx context.Context, d *Database, _ *ConfigurationOption) error {
+				return d.SetRecoveryModelContext(ctx, RecoveryModelSimple)
+			},
+			got:    func(d *Database, _ *ConfigurationOption) any { return d.RecoveryModel() },
+			server: RecoveryModelFull, want: RecoveryModelSimple,
+		},
+		{
+			name: "SetCompatibilityLevel",
+			set: func(ctx context.Context, d *Database, _ *ConfigurationOption) error {
+				return d.SetCompatibilityLevelContext(ctx, 160)
+			},
+			got:    func(d *Database, _ *ConfigurationOption) any { return d.CompatibilityLevel() },
+			server: CompatibilityLevel(150), want: CompatibilityLevel(160),
+		},
+		{
+			name: "SetReadOnly",
+			set: func(ctx context.Context, d *Database, _ *ConfigurationOption) error {
+				return d.SetReadOnlyContext(ctx, true)
+			},
+			got:    func(d *Database, _ *ConfigurationOption) any { return d.IsReadOnly() },
+			server: false, want: true,
+		},
+		{
+			name:   "SetOffline",
+			set:    func(ctx context.Context, d *Database, _ *ConfigurationOption) error { return d.SetOfflineContext(ctx) },
+			got:    func(d *Database, _ *ConfigurationOption) any { return d.State() },
+			server: "ONLINE", want: "OFFLINE",
+		},
+		{
+			name:   "SetOnline",
+			set:    func(ctx context.Context, d *Database, _ *ConfigurationOption) error { return d.SetOnlineContext(ctx) },
+			got:    func(d *Database, _ *ConfigurationOption) any { return d.State() },
+			server: "OFFLINE", want: "ONLINE",
+		},
+		{
+			name: "SetValue",
+			set: func(ctx context.Context, _ *Database, c *ConfigurationOption) error {
+				return c.SetValueContext(ctx, 4096)
+			},
+			got:    func(_ *Database, c *ConfigurationOption) any { return c.Value },
+			server: int64(2048), want: int64(4096),
+		},
+	}
+
+	// seed builds a handle pair carrying tc.server as the loaded state.
+	seed := func(srv *Server, tc int) (*Database, *ConfigurationOption) {
+		d := &Database{server: srv, name: "AppDB",
+			state: "ONLINE", recoveryModel: RecoveryModelFull, compatLevel: 150}
+		if cases[tc].name == "SetOnline" {
+			d.state = "OFFLINE"
+		}
+		return d, &ConfigurationOption{server: srv, Name: "max server memory (MB)", Value: 2048}
+	}
+
+	for i, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Applied for real: the field must follow the server.
+			db, err := sql.Open("capture", "")
+			if err != nil {
+				t.Fatalf("sql.Open: %v", err)
+			}
+			defer db.Close()
+			captured.reset()
+			d, c := seed(&Server{db: db}, i)
+			if err := tc.set(context.Background(), d, c); err != nil {
+				t.Fatalf("applied for real: %v", err)
+			}
+			if got := tc.got(d, c); got != tc.want {
+				t.Errorf("after a real apply the handle reports %v, want %v — the setter no longer mirrors at all", got, tc.want)
+			}
+
+			// Scripted: nothing ran, so the field must still report what the
+			// server holds.
+			ctx, script := WithScript(context.Background())
+			d, c = seed(&Server{}, i)
+			if err := tc.set(ctx, d, c); err != nil {
+				t.Fatalf("under WithScript: %v", err)
+			}
+			if len(script.Statements) != 1 {
+				t.Fatalf("Statements = %v, want exactly one captured statement", script.Statements)
+			}
+			if got := tc.got(d, c); got != tc.server {
+				t.Errorf("a scripted %s left the handle reporting %v; nothing ran, so it must still report the server's %v", tc.name, got, tc.server)
+			}
+		})
+	}
+}

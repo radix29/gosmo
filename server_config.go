@@ -100,7 +100,7 @@ func (c *ConfigurationOption) SetValueContext(ctx context.Context, value int64) 
 	if err := c.server.execContext(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: set configuration %q = %d: %w", c.Name, value, err)
 	}
-	c.Value = value
+	setIfApplied(ctx, &c.Value, value)
 	return nil
 }
 
