@@ -87,6 +87,7 @@ classDiagram
         +VerifyBackup(device) error
         +BackupHeaders(device) []*BackupHeader
         +BackupFileList(device) []*BackupFile
+        +BackupFileListForSet(device, fileNumber) []*BackupFile
         +SecurityInfo() *ServerSecurityInfo
         +ServerPermissions() []*ServerPermissionEntry
         +GrantServerPermissionWithOptions(perm, principal, opts) error
@@ -364,6 +365,8 @@ classDiagram
         +Dependencies(schema, name) []*Dependency
         +Dependents(schema, name) []*Dependency
         +Search(pattern) []*SearchResult
+        +FindSecurables(search) []SecurableRef
+        +ObjectColumns(schema, name) []*Column
         +Permissions(schema, name) []*PermissionEntry
         +GrantPermission(schema, name, perm, principal) error
         +DenyPermission(schema, name, perm, principal) error
@@ -377,6 +380,9 @@ classDiagram
         +GrantColumnPermission(schema, name, perm, cols, principal) error
         +DenyColumnPermission(schema, name, perm, cols, principal) error
         +RevokeColumnPermission(schema, name, perm, cols, principal) error
+        +GrantColumnPermissionWithOptions(schema, name, perm, cols, principal, opts) error
+        +DenyColumnPermissionWithOptions(schema, name, perm, cols, principal, opts) error
+        +RevokeColumnPermissionWithOptions(schema, name, perm, cols, principal, opts) error
         +EffectivePermissions(principal) []*EffectivePermission
         +EffectiveObjectPermissions(schema, name, principal) []*EffectivePermission
         +EffectiveSchemaPermissions(schema, principal) []*EffectivePermission
@@ -384,10 +390,16 @@ classDiagram
         +GrantSchemaPermission(schema, perm, principal) error
         +DenySchemaPermission(schema, perm, principal) error
         +RevokeSchemaPermission(schema, perm, principal) error
+        +GrantSchemaPermissionWithOptions(schema, perm, principal, opts) error
+        +DenySchemaPermissionWithOptions(schema, perm, principal, opts) error
+        +RevokeSchemaPermissionWithOptions(schema, perm, principal, opts) error
         +DatabasePermissions() []*DatabasePermissionEntry
         +GrantDatabasePermission(perm, principal) error
         +DenyDatabasePermission(perm, principal) error
         +RevokeDatabasePermission(perm, principal) error
+        +GrantDatabasePermissionWithOptions(perm, principal, opts) error
+        +DenyDatabasePermissionWithOptions(perm, principal, opts) error
+        +RevokeDatabasePermissionWithOptions(perm, principal, opts) error
         +EstimatedPlan(sql) *ExecutionPlan
         +ActualPlan(sql) *ExecutionPlan
         +ExecProc(schema, name, params) ProcResult
@@ -697,6 +709,7 @@ classDiagram
         +Grantor string
         +Schema string
         +Object string
+        +ObjectType string
         +Column string
         +Permission ObjectPermission
         +State PermissionState
@@ -712,6 +725,17 @@ classDiagram
         +WithGrantOption bool
         +Cascade bool
         +GrantOptionOnly bool
+    }
+
+    class SecurableSearch {
+        +Name string
+        +Limit int
+    }
+
+    class SecurableRef {
+        +Type string
+        +Schema string
+        +Name string
     }
 
     %% =========================================================
@@ -1214,7 +1238,9 @@ classDiagram
         +OnFailAction int
         +OnFailStepID int
         +LastRunOutcome JobOutcome
+        +LastRunDate time.Time
         +LastRunDuration int
+        +LastRunElapsed Duration
         +RetryAttempts int
         +RetryInterval int
         +OutputFileName string
@@ -1443,6 +1469,8 @@ classDiagram
     Database "1" --> "*" PrincipalSecurable : PermissionsForPrincipal() returns
     Database "1" --> "*" ColumnPermissionEntry : ColumnPermissions() returns
     Database "1" --> "*" EffectivePermission : EffectivePermissions() returns
+    Database "1" --> "*" SecurableRef : FindSecurables() returns
+    SecurableSearch ..> SecurableRef : narrows FindSecurables()
     Database --> Catalog : Catalog()/SystemCatalog() returns
     Catalog "1" --> "*" CatalogObject : contains
     CatalogObject "1" --> "*" CatalogColumn : has
@@ -1467,6 +1495,7 @@ classDiagram
     withRetry <.. IsRetryable : same failure test as
 
     Table "1" --> "*" Column : has
+    Database "1" --> "*" Column : ObjectColumns() returns (table or view)
     Table "1" --> "*" Index : has
     Table "1" --> "*" ForeignKey : has
     Table "1" --> "*" CheckConstraint : has

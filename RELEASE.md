@@ -4,6 +4,80 @@ High-level, release-to-release summary of what gosmo does at each tag —
 what changed in spirit, not the full diff. For the itemized, per-symbol
 detail behind each release from `v0.0.4` onward, see `CHANGELOG.md`.
 
+## v0.0.8
+
+A permissions release. gosmo could grant, deny and revoke, but only in the
+plainest form of each: no `WITH GRANT OPTION`, no `CASCADE`, nothing
+column-level, and no way to answer the question a permissions dialog is
+really for — *what can this principal actually do?* All of that is here,
+along with the securable search and view-column read a picker built on it
+needs. The rest of the release is msdb and scripting accuracy: a job step
+that couldn't report when it last ran or clear its output file, and a
+scripted `EXEC` whose output parameters were declared as a type SQL Server
+refuses to convert.
+
+### New
+
+- The full GRANT/DENY/REVOKE grammar, via a `PermissionOptions` and a
+  `...WithOptions` form of every permission method at every scope:
+  `WITH GRANT OPTION`, `CASCADE`, and `REVOKE GRANT OPTION FOR` — the
+  downgrade back to a plain grant. A modifier a verb has no form for is
+  refused, not silently dropped.
+- Column-level permissions: read them per object or per principal, and
+  grant, deny or revoke them across several columns in one statement.
+  `ColumnPermissionNames()` is the (short) catalog of what SQL Server
+  actually accepts on a column.
+- Effective permissions — SSMS's Effective tab — for a database, an object,
+  a schema, or the server, with role membership, ownership, inheritance
+  and `DENY` resolved by the server rather than re-derived here.
+- `db.FindSecurables(...)` searches schemas, tables and views in one query,
+  for a permissions picker on a database too big to list whole.
+- `db.ObjectColumns(schema, name)` reads the columns of a table *or a
+  view*; `Table.Columns` reaches tables only, and a view's columns carry
+  permissions of their own.
+- `srv.BackupFileListForSet(device, n)` reads the file list of one
+  particular backup set, for a device that backups were appended to.
+- `JobStep` reports when it last ran (`LastRunDate`) and how long that took
+  as a real duration (`LastRunElapsed`) — the raw field is msdb's `HHMMSS`
+  integer, which is not a count of seconds.
+- Seven new `*Seq` iterators, one per collection added here, and live
+  verification tests for scripted `EXEC` and for the scripted-write state
+  guard.
+
+### Fixes
+
+- **A scripted `EXEC` declared output parameters SQL Server refuses.**
+  Every `sql.Null*` destination and both `UniqueIdentifier` forms were
+  declared `SQL_VARIANT`, so running the generated script failed with
+  "Implicit conversion from data type sql_variant to int is not allowed" —
+  and `sql.Null*` is the ordinary way to receive a nullable output value.
+- **A retry waited out an expired deadline.** `context.DeadlineExceeded`
+  implements `net.Error`, so `IsRetryable` read a caller's own timeout as a
+  transient network failure and tried twice more.
+- **Blanking a job step's output file did nothing** while the `JobStep`
+  reported it as cleared: the parameter was omitted when empty, and msdb
+  reads an omitted parameter as "keep". Its database field is the opposite
+  case and is now treated as such.
+- **A job step never reported its last run date** — the time half of msdb's
+  date/time pair wasn't being read, so there was nothing to pair the date
+  with.
+
+### Changes
+
+- **Breaking:** `Table.AddColumn` and `Table.DropColumn` are removed.
+  `AlterColumn` remains.
+- The twelve plain grant/deny/revoke methods are now one-line delegations to
+  their `WithOptions` counterparts, so one renderer and one set of error
+  strings serve both. A test written against the pre-delegation code pins
+  the exact statement and error each of them produced, so this is a
+  refactor with no behaviour change by construction.
+- `Database`'s five state setters and `ConfigurationOption.SetValue` go
+  through `setIfApplied` — the last direct assignments `v0.0.7`'s sweep
+  missed, each of which left its object claiming state a scripted write
+  never applied.
+- `srv.BackupFileList` now says it reads the first set on the device, and
+  is the zero-`fileNumber` case of the new method.
+
 ## v0.0.7
 
 Finishes `v0.0.6`'s context-everywhere work on the one part of the public

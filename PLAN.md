@@ -34,7 +34,10 @@ These continue for the life of the project, release or not:
   `"gosmo: <verb phrase>: %w"`. A new write method that mirrors its change
   onto the receiver goes through `setIfApplied`, and a new `Create*` returns
   a name-only handle under `Scripting(ctx)` rather than reading its object
-  back.
+  back. A new GRANT/DENY/REVOKE method takes a `PermissionOptions` and
+  renders through `permissionStmt` (`permission_options.go`), with any plain
+  form of it delegating there rather than building a second statement of its
+  own.
 
 ## Next up
 
@@ -49,7 +52,10 @@ These continue for the life of the project, release or not:
 - **Driven by goSSMS's needs** — when goSSMS's property-dialog and
   execution-plan work needs a capability gosmo
   doesn't expose yet, add it here rather than working around the gap in
-  the TUI layer; that's the intended way the two repos evolve together
+  the TUI layer; that's the intended way the two repos evolve together.
+  `v0.0.8`'s permissions work (modifiers, column-level grants, effective
+  permissions, securable search) is the worked example: a Securables page
+  needed all four, and all four went in here
   (`replace github.com/radix29/gosmo => ../gosmo` in gossms's `go.mod`
   for local dev against unreleased changes, tag-and-bump once merged).
 

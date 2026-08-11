@@ -103,6 +103,7 @@ classDiagram
         +VerifyBackup(device) error
         +BackupHeaders(device) []*BackupHeader
         +BackupFileList(device) []*BackupFile
+        +BackupFileListForSet(device, fileNumber) []*BackupFile
         +SecurityInfo() *ServerSecurityInfo
         +ServerPermissions() []*ServerPermissionEntry
         +GrantServerPermissionWithOptions(perm, principal, opts) error
@@ -380,6 +381,8 @@ classDiagram
         +Dependencies(schema, name) []*Dependency
         +Dependents(schema, name) []*Dependency
         +Search(pattern) []*SearchResult
+        +FindSecurables(search) []SecurableRef
+        +ObjectColumns(schema, name) []*Column
         +Permissions(schema, name) []*PermissionEntry
         +GrantPermission(schema, name, perm, principal) error
         +DenyPermission(schema, name, perm, principal) error
@@ -393,6 +396,9 @@ classDiagram
         +GrantColumnPermission(schema, name, perm, cols, principal) error
         +DenyColumnPermission(schema, name, perm, cols, principal) error
         +RevokeColumnPermission(schema, name, perm, cols, principal) error
+        +GrantColumnPermissionWithOptions(schema, name, perm, cols, principal, opts) error
+        +DenyColumnPermissionWithOptions(schema, name, perm, cols, principal, opts) error
+        +RevokeColumnPermissionWithOptions(schema, name, perm, cols, principal, opts) error
         +EffectivePermissions(principal) []*EffectivePermission
         +EffectiveObjectPermissions(schema, name, principal) []*EffectivePermission
         +EffectiveSchemaPermissions(schema, principal) []*EffectivePermission
@@ -400,10 +406,16 @@ classDiagram
         +GrantSchemaPermission(schema, perm, principal) error
         +DenySchemaPermission(schema, perm, principal) error
         +RevokeSchemaPermission(schema, perm, principal) error
+        +GrantSchemaPermissionWithOptions(schema, perm, principal, opts) error
+        +DenySchemaPermissionWithOptions(schema, perm, principal, opts) error
+        +RevokeSchemaPermissionWithOptions(schema, perm, principal, opts) error
         +DatabasePermissions() []*DatabasePermissionEntry
         +GrantDatabasePermission(perm, principal) error
         +DenyDatabasePermission(perm, principal) error
         +RevokeDatabasePermission(perm, principal) error
+        +GrantDatabasePermissionWithOptions(perm, principal, opts) error
+        +DenyDatabasePermissionWithOptions(perm, principal, opts) error
+        +RevokeDatabasePermissionWithOptions(perm, principal, opts) error
         +EstimatedPlan(sql) *ExecutionPlan
         +ActualPlan(sql) *ExecutionPlan
         +ExecProc(schema, name, params) ProcResult
@@ -713,6 +725,7 @@ classDiagram
         +Grantor string
         +Schema string
         +Object string
+        +ObjectType string
         +Column string
         +Permission ObjectPermission
         +State PermissionState
@@ -728,6 +741,17 @@ classDiagram
         +WithGrantOption bool
         +Cascade bool
         +GrantOptionOnly bool
+    }
+
+    class SecurableSearch {
+        +Name string
+        +Limit int
+    }
+
+    class SecurableRef {
+        +Type string
+        +Schema string
+        +Name string
     }
 
     %% =========================================================
@@ -1230,7 +1254,9 @@ classDiagram
         +OnFailAction int
         +OnFailStepID int
         +LastRunOutcome JobOutcome
+        +LastRunDate time.Time
         +LastRunDuration int
+        +LastRunElapsed Duration
         +RetryAttempts int
         +RetryInterval int
         +OutputFileName string
@@ -1459,6 +1485,8 @@ classDiagram
     Database "1" --> "*" PrincipalSecurable : PermissionsForPrincipal() returns
     Database "1" --> "*" ColumnPermissionEntry : ColumnPermissions() returns
     Database "1" --> "*" EffectivePermission : EffectivePermissions() returns
+    Database "1" --> "*" SecurableRef : FindSecurables() returns
+    SecurableSearch ..> SecurableRef : narrows FindSecurables()
     Database --> Catalog : Catalog()/SystemCatalog() returns
     Catalog "1" --> "*" CatalogObject : contains
     CatalogObject "1" --> "*" CatalogColumn : has
@@ -1483,6 +1511,7 @@ classDiagram
     withRetry <.. IsRetryable : same failure test as
 
     Table "1" --> "*" Column : has
+    Database "1" --> "*" Column : ObjectColumns() returns (table or view)
     Table "1" --> "*" Index : has
     Table "1" --> "*" ForeignKey : has
     Table "1" --> "*" CheckConstraint : has
@@ -1659,6 +1688,7 @@ fmt.Println(srv.Info().ProductVersion)
 | Update all statistics | `t.UpdateAllStatistics(samplePct)` |
 | Create index          | `t.CreateIndex(req)`               |
 | Alter column          | `t.AlterColumn(col)`               |
+| Columns of a table *or view* | `db.ObjectColumns(schema, name)` — `Table.Columns` reaches tables only |
 
 ### Index
 
@@ -1722,6 +1752,7 @@ columnstore index takes no key columns at all, so `SetIncludedColumns` and
 | Object dependencies (uses)  | `db.Dependencies(schema, name)`                            |
 | Object dependencies (used by) | `db.Dependents(schema, name)`                            |
 | Object search                | `db.Search(pattern)`                                      |
+| Securable search (for a permissions picker) | `db.FindSecurables(gosmo.SecurableSearch{Name: ..., Limit: ...})` → `[]SecurableRef` (schemas, tables, views) |
 | Object permissions           | `db.Permissions(schema, name)`                            |
 | Grant / deny / revoke        | `db.GrantPermission(...)` / `db.DenyPermission(...)` / `db.RevokePermission(...)` |
 | Schema permissions            | `db.SchemaPermissions(schema)`                            |
@@ -1734,6 +1765,38 @@ columnstore index takes no key columns at all, so `SetIncludedColumns` and
 | Permission-name catalogs (for pickers) | `gosmo.ObjectPermissionNames()` / `SchemaPermissionNames()` / `DatabasePermissionNames()` / `ServerPermissionNames()` / `ColumnPermissionNames()` |
 | Estimated execution plan     | `db.EstimatedPlan(sql)` (`SET SHOWPLAN_XML`, statement not run) |
 | Actual execution plan        | `db.ActualPlan(sql)` (`SET STATISTICS XML`, statement runs)|
+
+Every `Grant|Deny|Revoke...` method has a `...WithOptions` counterpart taking
+a `PermissionOptions`, at all four scopes (object, column, schema, database,
+server). The zero value renders exactly the statement the plain method
+renders — the plain methods *are* one-line delegations to the `WithOptions`
+form, so there is one renderer and one set of error strings rather than two
+that have to be kept in step.
+
+```go
+// WITH GRANT OPTION, and the CASCADE that taking such a grant back requires.
+db.GrantPermissionWithOptions("dbo", "Orders", gosmo.PermSelect, "app_reader",
+    gosmo.PermissionOptions{WithGrantOption: true})
+db.RevokePermissionWithOptions("dbo", "Orders", gosmo.PermSelect, "app_reader",
+    gosmo.PermissionOptions{Cascade: true})
+
+// Downgrade WITH GRANT OPTION back to a plain GRANT (REVOKE GRANT OPTION FOR).
+db.RevokePermissionWithOptions("dbo", "Orders", gosmo.PermSelect, "app_reader",
+    gosmo.PermissionOptions{GrantOptionOnly: true})
+```
+
+A modifier the verb has no form for is rejected rather than quietly dropped —
+`WithGrantOption` on a `DENY`, `Cascade` on a `GRANT`. Column permissions are
+their own grants, separate from the object-level ones (`Permissions` reports
+those), and only `SELECT`, `UPDATE` and `REFERENCES` have a column-level form
+at all; `ColumnPermissionNames()` is that catalog.
+
+`Effective*Permissions` answers "what can this principal actually do", with
+role membership, inherited scopes, ownership and `DENY` already resolved —
+SSMS's Effective tab. It resolves by impersonating the principal, so the
+argument must be a database *user* (or, for `srv.EffectiveServerPermissions`,
+a login): SQL Server refuses to impersonate a role, and `fn_my_permissions`
+has no principal argument to use instead.
 
 ### Scripter
 
@@ -1870,8 +1933,14 @@ srv.Backup(gosmo.BackupOptions{
 // Inspect a backup device before restoring — SSMS's Restore Database
 // dialog's backup-set/file picker.
 headers, _ := srv.BackupHeaders(`C:\Backups\MyDB.bak`)
-files, _ := srv.BackupFileList(`C:\Backups\MyDB.bak`)
+files, _ := srv.BackupFileList(`C:\Backups\MyDB.bak`) // first set on the device
 err := srv.VerifyBackup(`C:\Backups\MyDB.bak`)
+
+// A device backups were appended to holds one set per backup, and their file
+// lists differ. Pass the same 1-based set number to the file list and to the
+// restore, or the MOVE clauses name logical files the restored set doesn't
+// contain and SQL Server rejects the statement.
+files, _ = srv.BackupFileListForSet(`C:\Backups\MyDB.bak`, headers[1].Position)
 ```
 
 ### SQL Server Agent
@@ -1921,6 +1990,17 @@ steps[0].Delete()
 entries, _ := job.History(50)
 recent, _ := srv.JobHistory(200)
 ```
+
+`JobStep.LastRunDate` is when the step last ran (zero — test with `IsZero()` —
+for a step that never has), and `LastRunElapsed` is `LastRunDuration` decoded:
+the raw field is msdb's `HHMMSS` integer, so `10230` is 1h 02m 30s, not 10230
+seconds. Display code should use `LastRunElapsed`.
+
+`JobStepRequest`'s two string fields read an empty value differently, because
+msdb does: an empty `Database` means "leave the step's database alone"
+(`sp_update_jobstep` accepts `N''` for `@database_name` and changes nothing),
+while an empty `OutputFileName` is sent and *does* clear the step's output
+file. There is no way to null the step's database through msdb at all.
 
 #### Shared schedules
 
