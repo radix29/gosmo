@@ -196,6 +196,30 @@ func (s *Server) ReadErrorLogSeq(ctx context.Context, logNumber int) iter.Seq2[*
 	})
 }
 
+// AvailabilityGroupSeq returns an iterator over every availability group this
+// instance participates in.
+func (s *Server) AvailabilityGroupSeq(ctx context.Context) iter.Seq2[*AvailabilityGroup, error] {
+	return seqFrom(ctx, s.AvailabilityGroupsContext)
+}
+
+// -- AvailabilityGroup ---------------------------------------------------------
+
+// ReplicaSeq returns an iterator over the availability group's replicas.
+func (ag *AvailabilityGroup) ReplicaSeq(ctx context.Context) iter.Seq2[*AvailabilityReplica, error] {
+	return seqFrom(ctx, ag.ReplicasContext)
+}
+
+// DatabaseSeq returns an iterator over the per-replica synchronization state
+// of every database in the availability group.
+func (ag *AvailabilityGroup) DatabaseSeq(ctx context.Context) iter.Seq2[*AvailabilityDatabase, error] {
+	return seqFrom(ctx, ag.DatabasesContext)
+}
+
+// ListenerSeq returns an iterator over the availability group's listeners.
+func (ag *AvailabilityGroup) ListenerSeq(ctx context.Context) iter.Seq2[*AvailabilityGroupListener, error] {
+	return seqFrom(ctx, ag.ListenersContext)
+}
+
 // -- Database ------------------------------------------------------------------
 
 // TableSeq returns an iterator over all user tables in the database.
@@ -270,6 +294,11 @@ func (d *Database) DatabaseExtendedPropertySeq(ctx context.Context) iter.Seq2[*E
 // ColumnMasterKeySeq returns an iterator over all column master keys in the database.
 func (d *Database) ColumnMasterKeySeq(ctx context.Context) iter.Seq2[*ColumnMasterKey, error] {
 	return seqFrom(ctx, d.ColumnMasterKeysContext)
+}
+
+// CertificateSeq returns an iterator over all certificates in the database.
+func (d *Database) CertificateSeq(ctx context.Context) iter.Seq2[*Certificate, error] {
+	return seqFrom(ctx, d.CertificatesContext)
 }
 
 // ColumnEncryptionKeySeq returns an iterator over all column encryption keys in the database.
