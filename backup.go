@@ -330,6 +330,15 @@ func (s *Server) RestoreContext(ctx context.Context, opts RestoreOptions) error 
 // without executing it — the RESTORE counterpart of BuildBackupStatement.
 // RestoreContext validates and builds the statement the same way, then runs
 // what this returns.
+//
+// The statement is laid out over several lines — the target, the devices,
+// then one WITH option per line — because a restore that relocates files
+// carries a MOVE clause per database file, each holding two full paths. On
+// one line that runs to several hundred columns, and a caller scripting it
+// for review (goSSMS's Restore dialog does) sees the RESTORE with every MOVE
+// off the right edge of the editor, which reads as the MOVE clauses being
+// missing entirely. Whitespace is not significant to SQL Server here, so the
+// executed statement is unchanged.
 func BuildRestoreStatement(opts RestoreOptions) (string, error) {
 	if opts.Database == "" {
 		return "", fmt.Errorf("gosmo: restore: database name is required")
@@ -360,7 +369,7 @@ func BuildRestoreStatement(opts RestoreOptions) (string, error) {
 		}
 		fmt.Fprintf(&sb, " %s", spec)
 	}
-	sb.WriteString(" FROM ")
+	sb.WriteString("\nFROM ")
 
 	deviceList := make([]string, len(opts.Devices))
 	for i, d := range opts.Devices {
@@ -397,7 +406,7 @@ func BuildRestoreStatement(opts RestoreOptions) (string, error) {
 		withs = append(withs, fmt.Sprintf("STOPAT = '%s'", opts.StopAt.Format("2006-01-02T15:04:05")))
 	}
 	if len(withs) > 0 {
-		fmt.Fprintf(&sb, " WITH %s", strings.Join(withs, ", "))
+		fmt.Fprintf(&sb, "\nWITH %s", strings.Join(withs, ",\n     "))
 	}
 	return sb.String(), nil
 }

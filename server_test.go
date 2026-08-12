@@ -696,3 +696,26 @@ func TestBuildCreateDatabaseStatement(t *testing.T) {
 		})
 	}
 }
+
+func TestPlatformFromVersionString(t *testing.T) {
+	cases := []struct {
+		version string
+		want    string
+	}{
+		{"Microsoft SQL Server 2025 - 17.0.1125.2 (X64)\n\tEnterprise Developer Edition (64-bit) on Windows 10 Pro 10.0 <X64>", "Windows"},
+		{"Microsoft SQL Server 2025 - 17.0.4065.4 (X64)\n\tEnterprise Developer Edition (64-bit) on Linux (Ubuntu 24.04.4 LTS) <X64>", "Linux"},
+		{"", ""},
+	}
+	for _, c := range cases {
+		if got := platformFromVersionString(c.version); got != c.want {
+			t.Errorf("platformFromVersionString(%q) = %q, want %q", firstLine(c.version), got, c.want)
+		}
+	}
+}
+
+func firstLine(s string) string {
+	if i := strings.IndexByte(s, '\n'); i >= 0 {
+		return s[:i]
+	}
+	return s
+}

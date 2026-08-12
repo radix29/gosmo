@@ -680,6 +680,7 @@ func (s *Server) loadInfo(ctx context.Context) error {
 	info.IsSingleUser = isSingleUser.Int64 == 1
 	info.EngineEdition = int(engineEdition.Int64)
 	info.OSVersion = osVer.String
+	info.Platform = platformFromVersionString(osVer.String)
 	info.PhysicalMemoryMB = memMB.Int64
 	info.LogicalCPUCount = int(cpuCount.Int64)
 	info.DefaultDataPath = dataPath.String
@@ -694,6 +695,19 @@ func (s *Server) loadInfo(ctx context.Context) error {
 	}
 	s.info = info
 	return nil
+}
+
+// platformFromVersionString extracts the host OS family from @@VERSION,
+// whose last line reads "... (64-bit) on Windows 10 Pro ..." or "...
+// (64-bit) on Linux (Ubuntu 24.04) ...".
+func platformFromVersionString(v string) string {
+	switch {
+	case strings.Contains(v, " on Windows"):
+		return "Windows"
+	case strings.Contains(v, " on Linux"):
+		return "Linux"
+	}
+	return ""
 }
 
 // -- Databases -----------------------------------------------------------------

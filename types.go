@@ -203,19 +203,22 @@ type DatabaseFile struct {
 
 // ServerInfo holds basic information about the connected SQL Server instance.
 type ServerInfo struct {
-	Name              string
-	Edition           string
-	ProductVersion    string
-	ProductLevel      string
-	VersionMajor      int
-	VersionMinor      int
-	VersionBuild      int
-	Collation         string
-	IsClustered       bool
-	IsHADREnabled     bool
-	IsSingleUser      bool
-	EngineEdition     int
-	OSVersion         string
+	Name           string
+	Edition        string
+	ProductVersion string
+	ProductLevel   string
+	VersionMajor   int
+	VersionMinor   int
+	VersionBuild   int
+	Collation      string
+	IsClustered    bool
+	IsHADREnabled  bool
+	IsSingleUser   bool
+	EngineEdition  int
+	OSVersion      string
+	// Platform is the host operating system family — "Windows" or "Linux" —
+	// derived from @@VERSION rather than sys.dm_os_host_info so it is
+	// populated on pre-2017 instances too. Empty if @@VERSION names neither.
 	Platform          string
 	MaxConnections    int
 	PhysicalMemoryMB  int64

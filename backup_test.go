@@ -164,8 +164,12 @@ func TestBuildRestoreStatement(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuildRestoreStatement: %v", err)
 	}
-	want := "RESTORE DATABASE [AW_Restore] FROM DISK = N'/var/backups/aw.bak'" +
-		" WITH MOVE N'AW_Data' TO N'/data/AW_Restore_Data.mdf', RECOVERY, REPLACE, STATS = 10"
+	want := "RESTORE DATABASE [AW_Restore]\n" +
+		"FROM DISK = N'/var/backups/aw.bak'\n" +
+		"WITH MOVE N'AW_Data' TO N'/data/AW_Restore_Data.mdf',\n" +
+		"     RECOVERY,\n" +
+		"     REPLACE,\n" +
+		"     STATS = 10"
 	if got != want {
 		t.Errorf("BuildRestoreStatement =\n%q\nwant\n%q", got, want)
 	}
@@ -182,7 +186,7 @@ func TestBuildRestoreStatementNoRecovery(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuildRestoreStatement: %v", err)
 	}
-	want := "RESTORE DATABASE [AW_Restore] FROM DISK = N'/var/backups/aw.bak' WITH NORECOVERY"
+	want := "RESTORE DATABASE [AW_Restore]\nFROM DISK = N'/var/backups/aw.bak'\nWITH NORECOVERY"
 	if got != want {
 		t.Errorf("BuildRestoreStatement =\n%q\nwant\n%q", got, want)
 	}
@@ -202,8 +206,11 @@ func TestBuildRestoreStatementStandbyChecksumStopAt(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuildRestoreStatement: %v", err)
 	}
-	want := "RESTORE DATABASE [AW_Restore] FROM DISK = N'/var/backups/aw.bak' WITH " +
-		"STANDBY = N'/var/backups/aw_undo.bak', CHECKSUM, STOPAT = '2026-07-18T12:30:00'"
+	want := "RESTORE DATABASE [AW_Restore]\n" +
+		"FROM DISK = N'/var/backups/aw.bak'\n" +
+		"WITH STANDBY = N'/var/backups/aw_undo.bak',\n" +
+		"     CHECKSUM,\n" +
+		"     STOPAT = '2026-07-18T12:30:00'"
 	if got != want {
 		t.Errorf("BuildRestoreStatement =\n%q\nwant\n%q", got, want)
 	}
@@ -219,7 +226,7 @@ func TestBuildRestoreStatementNoOptions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuildRestoreStatement: %v", err)
 	}
-	want := "RESTORE DATABASE [AW_Restore] FROM DISK = N'/var/backups/aw.bak'"
+	want := "RESTORE DATABASE [AW_Restore]\nFROM DISK = N'/var/backups/aw.bak'"
 	if got != want {
 		t.Errorf("BuildRestoreStatement =\n%q\nwant\n%q", got, want)
 	}
@@ -297,7 +304,7 @@ func TestBuildRestoreStatementFileNumber(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuildRestoreStatement: %v", err)
 	}
-	if !strings.Contains(got, "WITH FILE = 3, NORECOVERY") {
+	if !strings.Contains(got, "WITH FILE = 3,\n     NORECOVERY") {
 		t.Errorf("BuildRestoreStatement() = %q, want it to carry WITH FILE = 3", got)
 	}
 
@@ -324,7 +331,7 @@ func TestBuildRestoreStatementFiles(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuildRestoreStatement: %v", err)
 	}
-	if !strings.HasPrefix(got, `RESTORE DATABASE [AppDB] FILE = N'AppDB_dat2' FROM `) {
+	if !strings.HasPrefix(got, "RESTORE DATABASE [AppDB] FILE = N'AppDB_dat2'\nFROM ") {
 		t.Errorf("BuildRestoreStatement() = %q", got)
 	}
 	if strings.Contains(got, "RESTORE FILES") {
