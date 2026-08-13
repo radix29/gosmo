@@ -134,14 +134,17 @@ func (d *Database) scanColumnPermissions(ctx context.Context, q, what string, ar
 		var perm, state, objType string
 		if err := rows.Scan(&e.Principal, &e.PrincipalType, &e.Grantor,
 			&e.Schema, &e.Object, &objType, &e.Column, &perm, &state); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("gosmo: %s: %w", what, err)
 		}
 		e.ObjectType = securableObjectTypeNames[objType]
 		e.Permission = ObjectPermission(perm)
 		e.State = PermissionState(state)
 		entries = append(entries, e)
 	}
-	return entries, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("gosmo: %s: %w", what, err)
+	}
+	return entries, nil
 }
 
 // GrantColumnPermission grants permission on the named columns of

@@ -54,14 +54,17 @@ ORDER  BY r.name`
 		r := &DatabaseRole{db: d}
 		var members sql.NullString
 		if err := rows.Scan(&r.Name, &r.ID, &r.IsFixedRole, &r.Owner, &members); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("gosmo: list database roles in %q: %w", d.name, err)
 		}
 		if members.Valid && members.String != "" {
 			r.Members = strings.Split(members.String, ", ")
 		}
 		roles = append(roles, r)
 	}
-	return roles, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("gosmo: list database roles in %q: %w", d.name, err)
+	}
+	return roles, nil
 }
 
 // RoleByName returns a single database role by name, with its principal
@@ -165,11 +168,14 @@ ORDER  BY m.name`
 	for rows.Next() {
 		m := &RoleMember{}
 		if err := rows.Scan(&m.Name, &m.Type); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("gosmo: members of role %q in %q: %w", roleName, d.name, err)
 		}
 		members = append(members, m)
 	}
-	return members, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("gosmo: members of role %q in %q: %w", roleName, d.name, err)
+	}
+	return members, nil
 }
 
 // AddRoleMember adds a user to a database role.

@@ -67,14 +67,17 @@ ORDER  BY pf.name`
 		var boundaries sql.NullString
 		if err := rows.Scan(&pf.Name, &pf.FunctionID, &pf.BoundaryCount,
 			&pf.InputType, &pf.IsRight, &boundaries); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("gosmo: list partition functions: %w", err)
 		}
 		if boundaries.Valid && boundaries.String != "" {
 			pf.Boundaries = strings.Split(boundaries.String, ",")
 		}
 		funcs = append(funcs, pf)
 	}
-	return funcs, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("gosmo: list partition functions: %w", err)
+	}
+	return funcs, nil
 }
 
 // CreatePartitionFunctionRequest describes a partition function to create.
@@ -209,14 +212,17 @@ ORDER  BY ps.name`
 		ps := &PartitionScheme{db: d}
 		var fgs sql.NullString
 		if err := rows.Scan(&ps.Name, &ps.SchemeID, &ps.FunctionName, &fgs); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("gosmo: list partition schemes: %w", err)
 		}
 		if fgs.Valid && fgs.String != "" {
 			ps.FileGroups = strings.Split(fgs.String, ",")
 		}
 		schemes = append(schemes, ps)
 	}
-	return schemes, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("gosmo: list partition schemes: %w", err)
+	}
+	return schemes, nil
 }
 
 // CreatePartitionScheme creates a partition scheme backed by a partition function.
@@ -293,11 +299,14 @@ ORDER  BY p.partition_number`
 	for rows.Next() {
 		p := &PartitionInfo{}
 		if err := rows.Scan(&p.PartitionNumber, &p.Rows, &p.DataCompression); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("gosmo: partitions for %s: %w", t.FullName(), err)
 		}
 		parts = append(parts, p)
 	}
-	return parts, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("gosmo: partitions for %s: %w", t.FullName(), err)
+	}
+	return parts, nil
 }
 
 // -- Table space usage -----------------------------------------------------

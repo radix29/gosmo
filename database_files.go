@@ -57,12 +57,15 @@ ORDER  BY df.type_desc, df.file_id`
 		var maxSizePages, growthRaw int64
 		if err := rows.Scan(&f.FileID, &f.Name, &f.PhysicalName, &f.Type, &f.FileGroup, &f.State,
 			&f.SizeKB, &maxSizePages, &growthRaw, &f.IsPercentGrowth); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("gosmo: list files in %q: %w", d.name, err)
 		}
 		f.MaxSizeKB, f.GrowthKB, f.GrowthPercent = normalizeFileGrowth(maxSizePages, growthRaw, f.IsPercentGrowth)
 		files = append(files, f)
 	}
-	return files, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("gosmo: list files in %q: %w", d.name, err)
+	}
+	return files, nil
 }
 
 // DatabaseFileSpec describes a file to add via AddFile.
@@ -270,7 +273,7 @@ ORDER  BY fg.name, df.file_id`
 		if err := rows.Scan(&fgName, &fgDefault, &fgReadOnly,
 			&f.Name, &f.PhysicalName, &f.Size, &f.MaxSize, &f.Growth,
 			&isPctGrowth, &isPrimary); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("gosmo: list filegroups: %w", err)
 		}
 		if isPctGrowth {
 			f.GrowthType = "PERCENT"
@@ -289,7 +292,7 @@ ORDER  BY fg.name, df.file_id`
 		fg.Files = append(fg.Files, f)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("gosmo: list filegroups: %w", err)
 	}
 
 	fgs := make([]*FileGroup, 0, len(order))

@@ -150,9 +150,12 @@ ORDER  BY SCHEMA_NAME(t.schema_id), t.name`
 	for rows.Next() {
 		t := &TableChangeTracking{}
 		if err := rows.Scan(&t.Schema, &t.Name, &t.Enabled, &t.TrackColumnsUpdated); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("gosmo: table change tracking in %q: %w", d.name, err)
 		}
 		out = append(out, t)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("gosmo: table change tracking in %q: %w", d.name, err)
+	}
+	return out, nil
 }

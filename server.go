@@ -740,7 +740,7 @@ func (s *Server) DatabasesContext(ctx context.Context) ([]*Database, error) {
 			&d.name, &d.id, &state, &recovery,
 			&compatLevel, &collation, &d.isReadOnly, &d.createDate,
 		); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("gosmo: list databases: %w", err)
 		}
 		d.state = state.String
 		d.recoveryModel = RecoveryModel(recovery.String)
@@ -748,7 +748,10 @@ func (s *Server) DatabasesContext(ctx context.Context) ([]*Database, error) {
 		d.collation = collation.String
 		dbs = append(dbs, d)
 	}
-	return dbs, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("gosmo: list databases: %w", err)
+	}
+	return dbs, nil
 }
 
 // DatabaseByName returns a single database by name, querying sys.databases
@@ -979,12 +982,15 @@ func (s *Server) LoginsContext(ctx context.Context) ([]*Login, error) {
 		var defDB sql.NullString
 		if err := rows.Scan(&l.Name, &l.SID, &l.LoginType, &l.IsDisabled,
 			&defDB, &l.CreateDate, &l.ModifyDate); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("gosmo: list logins: %w", err)
 		}
 		l.DefaultDatabase = defDB.String
 		logins = append(logins, l)
 	}
-	return logins, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("gosmo: list logins: %w", err)
+	}
+	return logins, nil
 }
 
 // LoginByName returns a single server-level login by name.
@@ -1146,14 +1152,17 @@ func (s *Server) ServerRolesContext(ctx context.Context) ([]*ServerRole, error) 
 		r := &ServerRole{server: s}
 		var members sql.NullString
 		if err := rows.Scan(&r.Name, &r.ID, &r.IsFixedRole, &r.Owner, &members); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("gosmo: list server roles: %w", err)
 		}
 		if members.Valid && members.String != "" {
 			r.Members = strings.Split(members.String, ", ")
 		}
 		roles = append(roles, r)
 	}
-	return roles, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("gosmo: list server roles: %w", err)
+	}
+	return roles, nil
 }
 
 // ServerRoleByName returns a single server role by name, with its
@@ -1277,11 +1286,14 @@ ORDER  BY m.name`
 	for rows.Next() {
 		m := &RoleMember{}
 		if err := rows.Scan(&m.Name, &m.Type); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("gosmo: members of server role %q: %w", roleName, err)
 		}
 		members = append(members, m)
 	}
-	return members, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("gosmo: members of server role %q: %w", roleName, err)
+	}
+	return members, nil
 }
 
 // AddServerRoleMember adds member (a login or another server role, by
@@ -1348,10 +1360,13 @@ func (s *Server) LinkedServersContext(ctx context.Context) ([]*LinkedServer, err
 		l := &LinkedServer{}
 		var ds sql.NullString
 		if err := rows.Scan(&l.Name, &l.Product, &l.Provider, &ds, &l.IsRemote); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("gosmo: list linked servers: %w", err)
 		}
 		l.DataSource = ds.String
 		ls = append(ls, l)
 	}
-	return ls, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("gosmo: list linked servers: %w", err)
+	}
+	return ls, nil
 }

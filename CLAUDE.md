@@ -67,7 +67,15 @@ a gossms-side build only compiles the packages it imports.
 - **Errors** wrap with `%w` and are prefixed `gosmo: ` plus what was being
   attempted — `fmt.Errorf("gosmo: drop statistic %q: %w", st.Name, err)`.
 - **`rows.Err()` is always checked**, and every `query` is followed by
-  `defer rows.Close()`.
+  `defer rows.Close()`. Both it and every `rows.Scan` wrap with the *same*
+  message the function's query error uses — a failure mid-iteration is
+  otherwise indistinguishable from any other, and comes back to the caller as
+  a naked `context deadline exceeded` naming nothing. The rule is per exported
+  entry point, not per statement: the shared scan helpers (`scanColumns`,
+  `scanExtProps`, `scanEffectivePermissions`, `securityPredicates`,
+  `indexColumnsContext`, `execWithProgress`) return bare errors on purpose,
+  because only their callers know which operation to name, and each caller
+  wraps what they return.
 - **Quoting.** See `quoting.go`'s doc comments, which are the authority:
   `QuoteName`/`qualifiedName` bracket-quote an *identifier*; `QuoteLiteral`
   produces a whole string literal; the unexported `escapeSingle`

@@ -73,11 +73,14 @@ func (s *Server) OperatorsContext(ctx context.Context) ([]*Operator, error) {
 	for rows.Next() {
 		o, err := scanOperator(s, rows.Scan)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("gosmo: list operators: %w", err)
 		}
 		out = append(out, o)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("gosmo: list operators: %w", err)
+	}
+	return out, nil
 }
 
 // Operator returns a lightweight handle for an operator by name, without
@@ -274,12 +277,15 @@ ORDER  BY a.name`
 		r := &AlertNotificationRef{}
 		var method int
 		if err := rows.Scan(&r.AlertName, &method); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("gosmo: notifying alerts for operator %q: %w", o.Name, err)
 		}
 		r.Method = NotificationMethod(method)
 		out = append(out, r)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("gosmo: notifying alerts for operator %q: %w", o.Name, err)
+	}
+	return out, nil
 }
 
 // JobNotificationRef describes one job configured to email an operator on
@@ -315,10 +321,13 @@ ORDER  BY name`
 		r := &JobNotificationRef{}
 		var level int
 		if err := rows.Scan(&r.JobName, &level); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("gosmo: notifying jobs for operator %q: %w", o.Name, err)
 		}
 		r.Level = NotifyLevel(level)
 		out = append(out, r)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("gosmo: notifying jobs for operator %q: %w", o.Name, err)
+	}
+	return out, nil
 }

@@ -75,11 +75,14 @@ ORDER  BY name`
 	for rows.Next() {
 		c := &Category{Class: class}
 		if err := rows.Scan(&c.ID, &c.Name); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("gosmo: list %s categories: %w", class, err)
 		}
 		out = append(out, c)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("gosmo: list %s categories: %w", class, err)
+	}
+	return out, nil
 }
 
 // addCategoryType returns the @type sp_add_category requires for a class:

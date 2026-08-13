@@ -24,6 +24,26 @@ type Table struct {
 	IsMemoryOptimized    bool
 }
 
+// Table returns a lightweight handle to a table by name, without a query.
+// Nothing verifies that the table exists, and every field but Schema and Name
+// stays at its zero value — ObjectID included.
+//
+// That is the limit of what this handle is for: the methods it serves are the
+// name-only ones, which name the table in the statement text (DropConstraint,
+// Rename, the ALTER-style writes). Every method that queries by ObjectID —
+// Columns, Indexes, Statistics, Triggers, Partitions, the size and detail
+// reads — would find object 0 and return nothing, so those need a Table from
+// Tables/TableByName instead.
+//
+// Like Server.Database, this is also the only form that works under a
+// WithScript-derived context, where no lookup can run at all.
+func (d *Database) Table(schema, name string) *Table {
+	if schema == "" {
+		schema = "dbo"
+	}
+	return &Table{db: d, Schema: schema, Name: name}
+}
+
 // FullName returns [Schema].[Name].
 func (t *Table) FullName() string { return qualifiedName(t.Schema, t.Name) }
 
@@ -148,7 +168,11 @@ ORDER  BY c.column_id`
 	}
 	defer rows.Close()
 
-	return scanColumns(rows.Rows)
+	cols, err := scanColumns(rows.Rows)
+	if err != nil {
+		return nil, fmt.Errorf("gosmo: list columns for %s: %w", t.FullName(), err)
+	}
+	return cols, nil
 }
 
 // ObjectColumns returns the columns of the table or view schema.name, in
@@ -180,7 +204,7 @@ ORDER  BY c.column_id`
 
 	cols, err := scanColumns(rows.Rows)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("gosmo: list columns for %s in %q: %w", ref, d.name, err)
 	}
 	// Every table and view has at least one column, so an empty result means
 	// OBJECT_ID found nothing — report that rather than an empty column list,
@@ -317,7 +341,7 @@ ORDER  BY i.index_id`
 			&idx.IsDisabled, &idx.FillFactor, &idx.FilterDefinition,
 			&idx.IsPadded, &idx.IgnoreDupKey, &idx.AllowRowLocks, &idx.AllowPageLocks,
 			&idx.DataCompression); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("gosmo: list indexes for %s: %w", t.FullName(), err)
 		}
 		switch desc := strings.TrimSpace(typeDesc.String); desc {
 		case "CLUSTERED":
@@ -344,7 +368,7 @@ ORDER  BY i.index_id`
 
 		cols, err := t.indexColumnsContext(ctx, idx.IndexID)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("gosmo: columns of index %q on %s: %w", idx.Name, t.FullName(), err)
 		}
 		for _, c := range cols {
 			if c.IsIncluded {
@@ -355,7 +379,10 @@ ORDER  BY i.index_id`
 		}
 		indexes = append(indexes, idx)
 	}
-	return indexes, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("gosmo: list indexes for %s: %w", t.FullName(), err)
+	}
+	return indexes, nil
 }
 
 func (t *Table) indexColumnsContext(ctx context.Context, indexID int) ([]IndexColumn, error) {
@@ -440,7 +467,7 @@ ORDER  BY fk.name`
 			&fk.DeleteAction, &fk.UpdateAction,
 			&fk.ReferencedSchema, &fk.ReferencedTable,
 			&cols, &refCols); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("gosmo: list foreign keys for %s: %w", t.FullName(), err)
 		}
 		if cols.Valid {
 			fk.Columns = strings.Split(cols.String, ",")
@@ -450,7 +477,10 @@ ORDER  BY fk.name`
 		}
 		fks = append(fks, fk)
 	}
-	return fks, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("gosmo: list foreign keys for %s: %w", t.FullName(), err)
+	}
+	return fks, nil
 }
 
 // -- Check constraints ---------------------------------------------------------
@@ -489,11 +519,14 @@ ORDER  BY cc.name`
 	for rows.Next() {
 		cc := &CheckConstraint{}
 		if err := rows.Scan(&cc.Name, &cc.Definition, &cc.IsDisabled, &cc.Column); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("gosmo: list check constraints for %s: %w", t.FullName(), err)
 		}
 		ccs = append(ccs, cc)
 	}
-	return ccs, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("gosmo: list check constraints for %s: %w", t.FullName(), err)
+	}
+	return ccs, nil
 }
 
 // -- Triggers --------------------------------------------------------------------
@@ -598,6 +631,20 @@ func (d *Database) CreateTableContext(ctx context.Context, req CreateTableReques
 
 // DropTable drops a table.
 // When cascade=true it first drops all incoming foreign-key constraints.
+//
+// # Dropping something that isn't there is an error
+//
+// This and every other Drop* write method issue a bare DROP, so a name that
+// matches nothing comes back as the server's "Cannot drop ... because it does
+// not exist" rather than as success. Half of them used to carry IF EXISTS and
+// half did not, which made the same gesture in a caller's UI report two
+// different things about the same situation: a deleted view that was already
+// gone said "deleted", a deleted sequence said the server refused. Callers that
+// want the idempotent form should ignore the error, which is a decision they
+// can make and this package cannot make for them.
+//
+// The generated *scripts* keep IF EXISTS — Scripter's DROP-and-CREATE output
+// exists to be re-run, which is the opposite requirement.
 func (d *Database) DropTable(schema, name string, cascade bool) error {
 	return d.DropTableContext(context.Background(), schema, name, cascade)
 }
@@ -617,7 +664,7 @@ IF LEN(@sql) > 0 EXEC sp_executesql @sql;`
 			return fmt.Errorf("gosmo: drop incoming FKs for %s: %w", qualifiedName(schema, name), err)
 		}
 	}
-	if _, err := d.exec(ctx, "DROP TABLE IF EXISTS "+qualifiedName(schema, name)); err != nil {
+	if _, err := d.exec(ctx, "DROP TABLE "+qualifiedName(schema, name)); err != nil {
 		return fmt.Errorf("gosmo: drop table %s: %w", qualifiedName(schema, name), err)
 	}
 	return nil

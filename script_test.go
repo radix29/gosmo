@@ -118,7 +118,7 @@ func TestWithScriptBindsParametersIntoTheStatement(t *testing.T) {
 		{
 			name:  "DropTable cascade",
 			write: func(ctx context.Context, d *Database) error { return d.DropTableContext(ctx, "dbo", "Orders", true) },
-			want:  []string{"OBJECT_ID(N'[dbo].[Orders]')", "DROP TABLE IF EXISTS [dbo].[Orders]"},
+			want:  []string{"OBJECT_ID(N'[dbo].[Orders]')", "DROP TABLE [dbo].[Orders]"},
 		},
 	}
 

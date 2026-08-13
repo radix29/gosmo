@@ -44,11 +44,14 @@ ORDER  BY SCHEMA_NAME(v.schema_id), v.name`
 		v := &View{}
 		if err := rows.Scan(&v.ObjectID, &v.Schema, &v.Name,
 			&v.Definition, &v.CreateDate, &v.ModifyDate); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("gosmo: list views in %q: %w", d.name, err)
 		}
 		views = append(views, v)
 	}
-	return views, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("gosmo: list views in %q: %w", d.name, err)
+	}
+	return views, nil
 }
 
 // SystemViews returns every catalog view SQL Server ships in the "sys"
@@ -84,14 +87,18 @@ ORDER  BY o.name`
 		v := &View{}
 		if err := rows.Scan(&v.ObjectID, &v.Schema, &v.Name,
 			&v.Definition, &v.CreateDate, &v.ModifyDate); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("gosmo: list system views in %q: %w", d.name, err)
 		}
 		views = append(views, v)
 	}
-	return views, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("gosmo: list system views in %q: %w", d.name, err)
+	}
+	return views, nil
 }
 
-// DropView drops a view.
+// DropView drops a view. A view that isn't there is the server's error, not
+// a silent success — see the note on Database.DropTable.
 func (d *Database) DropView(schema, name string) error {
 	return d.DropViewContext(context.Background(), schema, name)
 }
@@ -101,7 +108,7 @@ func (d *Database) DropViewContext(ctx context.Context, schema, name string) err
 	if schema == "" {
 		schema = "dbo"
 	}
-	if _, err := d.exec(ctx, "DROP VIEW IF EXISTS "+qualifiedName(schema, name)); err != nil {
+	if _, err := d.exec(ctx, "DROP VIEW "+qualifiedName(schema, name)); err != nil {
 		return fmt.Errorf("gosmo: drop view [%s].[%s]: %w", schema, name, err)
 	}
 	return nil

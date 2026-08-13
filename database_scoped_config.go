@@ -49,11 +49,14 @@ ORDER  BY name`
 	for rows.Next() {
 		c := &DatabaseScopedConfig{}
 		if err := rows.Scan(&c.ID, &c.Name, &c.Value, &c.ValueForSecondary, &c.IsValueDefault); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("gosmo: database scoped configurations in %q: %w", d.name, err)
 		}
 		configs = append(configs, c)
 	}
-	return configs, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("gosmo: database scoped configurations in %q: %w", d.name, err)
+	}
+	return configs, nil
 }
 
 // buildScopedConfigStatement renders (and validates the inputs of) one

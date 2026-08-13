@@ -115,13 +115,13 @@ func (s *Server) EnumErrorLogsContext(ctx context.Context, logType ErrorLogType)
 	for rows.Next() {
 		f := &ErrorLogFile{}
 		if err := rows.Scan(&f.Number, &f.Date, &f.SizeBytes); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("gosmo: enumerate %s error logs: %w", logType, err)
 		}
 		f.LastWritten = parseErrorLogFileDate(f.Date)
 		files = append(files, f)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("gosmo: enumerate %s error logs: %w", logType, err)
 	}
 	slices.SortFunc(files, func(a, b *ErrorLogFile) int { return a.Number - b.Number })
 	return files, nil
@@ -179,15 +179,18 @@ func (s *Server) ReadLogContext(ctx context.Context, logType ErrorLogType, logNu
 		// the driver, so each family gets its own destination.
 		if logType == ErrorLogAgent {
 			if err := rows.Scan(&e.Date, &e.ErrorLevel, &e.Text); err != nil {
-				return nil, err
+				return nil, fmt.Errorf("gosmo: read %s error log %d: %w", logType, logNumber, err)
 			}
 		} else if err := rows.Scan(&e.Date, &e.Process, &e.Text); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("gosmo: read %s error log %d: %w", logType, logNumber, err)
 		}
 		e.LogDate = e.Date.Format(time.RFC3339Nano)
 		entries = append(entries, e)
 	}
-	return entries, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("gosmo: read %s error log %d: %w", logType, logNumber, err)
+	}
+	return entries, nil
 }
 
 // ReadErrorLog reads a SQL Server error log file.

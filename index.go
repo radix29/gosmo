@@ -358,12 +358,12 @@ ORDER  BY a.type_desc`
 	for rows.Next() {
 		var au IndexAllocationUnit
 		if err := rows.Scan(&au.Type, &au.Pages, &au.UsedKB); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("gosmo: storage info for index %q: %w", idx.Name, err)
 		}
 		info.Allocations = append(info.Allocations, au)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("gosmo: storage info for index %q: %w", idx.Name, err)
 	}
 	return info, nil
 }
@@ -562,9 +562,12 @@ ORDER  BY s.avg_fragmentation_in_percent DESC`,
 		f := &IndexFragmentation{}
 		if err := rows.Scan(&f.IndexName, &f.IndexID,
 			&f.AvgFragmentationPct, &f.PageCount, &f.FragmentCount); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("gosmo: fragmentation stats for %s: %w", t.FullName(), err)
 		}
 		results = append(results, f)
 	}
-	return results, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("gosmo: fragmentation stats for %s: %w", t.FullName(), err)
+	}
+	return results, nil
 }

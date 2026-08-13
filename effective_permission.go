@@ -127,7 +127,11 @@ REVERT;`, escapeSingle(principal), class)
 	}
 	defer rows.Close()
 
-	return scanEffectivePermissions(rows.Rows)
+	perms, err := scanEffectivePermissions(rows.Rows)
+	if err != nil {
+		return nil, fmt.Errorf("gosmo: %s: %w", what, err)
+	}
+	return perms, nil
 }
 
 // EffectiveServerPermissions returns every server-level permission login
@@ -170,7 +174,11 @@ REVERT;`, escapeSingle(login))
 	}
 	defer rows.Close()
 
-	return scanEffectivePermissions(rows)
+	perms, err := scanEffectivePermissions(rows)
+	if err != nil {
+		return nil, fmt.Errorf("gosmo: effective server permissions for %q: %w", login, err)
+	}
+	return perms, nil
 }
 
 // scanEffectivePermissions reads the three-column shape every

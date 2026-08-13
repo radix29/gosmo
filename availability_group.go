@@ -186,11 +186,14 @@ func (s *Server) AvailabilityGroupsContext(ctx context.Context) ([]*Availability
 	for rows.Next() {
 		ag, err := s.scanAvailabilityGroup(rows.Scan)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("gosmo: list availability groups: %w", err)
 		}
 		groups = append(groups, ag)
 	}
-	return groups, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("gosmo: list availability groups: %w", err)
+	}
+	return groups, nil
 }
 
 // AvailabilityGroup returns a lightweight handle to an availability group by
@@ -357,7 +360,7 @@ func (ag *AvailabilityGroup) ReplicasContext(ctx context.Context) ([]*Availabili
 			&r.RecoveryHealth, &r.SynchronizationHealth,
 			&r.LastConnectErrorNumber, &r.LastConnectErrorDescription, &lastErrTime,
 		); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("gosmo: list replicas of availability group %q: %w", ag.Name, err)
 		}
 		if created.Valid {
 			r.CreateDate = created.Time
@@ -370,7 +373,10 @@ func (ag *AvailabilityGroup) ReplicasContext(ctx context.Context) ([]*Availabili
 		}
 		replicas = append(replicas, r)
 	}
-	return replicas, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("gosmo: list replicas of availability group %q: %w", ag.Name, err)
+	}
+	return replicas, nil
 }
 
 // ReadOnlyRoutingList returns the read-only routing list this replica uses
@@ -406,7 +412,7 @@ func (r *AvailabilityReplica) ReadOnlyRoutingListContext(ctx context.Context) ([
 		var priority int
 		var name string
 		if err := rows.Scan(&priority, &name); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("gosmo: read read-only routing list of replica %q: %w", r.ReplicaServerName, err)
 		}
 		// Equal priorities are one load-balanced set, so a new group starts only
 		// when the priority changes — the rows are ordered by it above.
@@ -416,7 +422,10 @@ func (r *AvailabilityReplica) ReadOnlyRoutingListContext(ctx context.Context) ([
 		}
 		list[len(list)-1] = append(list[len(list)-1], name)
 	}
-	return list, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("gosmo: read read-only routing list of replica %q: %w", r.ReplicaServerName, err)
+	}
+	return list, nil
 }
 
 // -- Databases -----------------------------------------------------------------
@@ -531,7 +540,7 @@ func (ag *AvailabilityGroup) DatabasesContext(ctx context.Context) ([]*Availabil
 			&d.SecondaryLagSeconds,
 			&sent, &received, &hardened, &redone, &commit,
 		); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("gosmo: list databases of availability group %q: %w", ag.Name, err)
 		}
 		for _, f := range []struct {
 			src sql.NullTime
@@ -547,7 +556,10 @@ func (ag *AvailabilityGroup) DatabasesContext(ctx context.Context) ([]*Availabil
 		}
 		dbs = append(dbs, d)
 	}
-	return dbs, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("gosmo: list databases of availability group %q: %w", ag.Name, err)
+	}
+	return dbs, nil
 }
 
 // -- Listeners -----------------------------------------------------------------
@@ -613,13 +625,13 @@ func (ag *AvailabilityGroup) ListenersContext(ctx context.Context) ([]*Availabil
 			&l.GroupID, &l.ListenerID, &l.DNSName, &l.Port, &l.IsConformant,
 			&l.IPConfigurationString, &l.IsDistributedNetworkName,
 		); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("gosmo: list listeners of availability group %q: %w", ag.Name, err)
 		}
 		listeners = append(listeners, l)
 		byID[strings.ToLower(l.ListenerID)] = l
 	}
 	if err := rows.Err(); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("gosmo: list listeners of availability group %q: %w", ag.Name, err)
 	}
 	if len(listeners) == 0 {
 		return nil, nil
@@ -652,13 +664,16 @@ func (ag *AvailabilityGroup) attachListenerIPs(ctx context.Context, byID map[str
 		var listenerID string
 		var ip AvailabilityListenerIP
 		if err := rows.Scan(&listenerID, &ip.IPAddress, &ip.SubnetMask, &ip.IsDHCP, &ip.State); err != nil {
-			return err
+			return fmt.Errorf("gosmo: list listener addresses of availability group %q: %w", ag.Name, err)
 		}
 		if l := byID[strings.ToLower(listenerID)]; l != nil {
 			l.IPAddresses = append(l.IPAddresses, ip)
 		}
 	}
-	return rows.Err()
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("gosmo: list listener addresses of availability group %q: %w", ag.Name, err)
+	}
+	return nil
 }
 
 // -- Group settings --------------------------------------------------------

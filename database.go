@@ -262,11 +262,14 @@ ORDER  BY s.name`
 	for rows.Next() {
 		sc := &Schema{db: d}
 		if err := rows.Scan(&sc.Name, &sc.ID, &sc.Owner); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("gosmo: list schemas in %q: %w", d.name, err)
 		}
 		schemas = append(schemas, sc)
 	}
-	return schemas, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("gosmo: list schemas in %q: %w", d.name, err)
+	}
+	return schemas, nil
 }
 
 // CreateSchema creates a new schema in the database.
@@ -345,11 +348,14 @@ ORDER  BY SCHEMA_NAME(t.schema_id), t.name`
 		if err := rows.Scan(&t.ObjectID, &t.Schema, &t.Name,
 			&t.CreateDate, &t.ModifyDate,
 			&t.HasReplicationFilter, &t.IsMemoryOptimized); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("gosmo: list tables in %q: %w", d.name, err)
 		}
 		tables = append(tables, t)
 	}
-	return tables, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("gosmo: list tables in %q: %w", d.name, err)
+	}
+	return tables, nil
 }
 
 // TableByName returns a single table by schema and name using a direct query.
@@ -411,13 +417,16 @@ ORDER  BY name`
 		var defSchema, authType sql.NullString
 		if err := rows.Scan(&u.Name, &u.ID, &u.UserType, &defSchema,
 			&u.CreateDate, &u.ModifyDate, &authType); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("gosmo: list users in %q: %w", d.name, err)
 		}
 		u.DefaultSchema = defSchema.String
 		u.AuthType = authType.String
 		users = append(users, u)
 	}
-	return users, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("gosmo: list users in %q: %w", d.name, err)
+	}
+	return users, nil
 }
 
 // UserByName returns a single database user by name, with its SID and
@@ -657,7 +666,7 @@ ORDER  BY tr.name`
 		var isDisabled bool
 		if err := rows.Scan(&t.Name, &t.TableName, &t.Schema, &isDisabled,
 			&events, &t.Definition); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("gosmo: list triggers in %q: %w", d.name, err)
 		}
 		t.IsEnabled = !isDisabled
 		if events.Valid && events.String != "" {
@@ -665,11 +674,15 @@ ORDER  BY tr.name`
 		}
 		triggers = append(triggers, t)
 	}
-	return triggers, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("gosmo: list triggers in %q: %w", d.name, err)
+	}
+	return triggers, nil
 }
 
 // DropTrigger drops a DML trigger. schema is the trigger's own schema —
-// the schema of the table it is defined on.
+// the schema of the table it is defined on. A trigger that isn't there is the
+// server's error, not a silent success — see the note on Database.DropTable.
 func (d *Database) DropTrigger(schema, name string) error {
 	return d.DropTriggerContext(context.Background(), schema, name)
 }
@@ -679,7 +692,7 @@ func (d *Database) DropTriggerContext(ctx context.Context, schema, name string) 
 	if schema == "" {
 		schema = "dbo"
 	}
-	if _, err := d.exec(ctx, "DROP TRIGGER IF EXISTS "+qualifiedName(schema, name)); err != nil {
+	if _, err := d.exec(ctx, "DROP TRIGGER "+qualifiedName(schema, name)); err != nil {
 		return fmt.Errorf("gosmo: drop trigger [%s].[%s]: %w", schema, name, err)
 	}
 	return nil

@@ -341,6 +341,11 @@ type LoginUserMapping struct {
 // than failing the whole scan (SSMS's own User Mapping page behaves the
 // same way). A cancelled context is not skipped — it ends the scan and is
 // returned.
+//
+// The skip covers a database whose query never opened. Once its rows are
+// being read, a failure ends the scan with an error instead: those rows are
+// already in the result, so skipping would return a short list and call it
+// success.
 func (l *Login) UserMappings() ([]*LoginUserMapping, error) {
 	return l.UserMappingsContext(context.Background())
 }
@@ -383,7 +388,7 @@ WHERE  dp.sid = @p1`
 			var roles string
 			if err := rows.Scan(&m.User, &m.DefaultSchema, &roles); err != nil {
 				rows.Close()
-				return nil, err
+				return nil, fmt.Errorf("gosmo: user mappings for login %q in %q: %w", l.Name, db.Name(), err)
 			}
 			if roles != "" {
 				m.Roles = strings.Split(roles, ", ")
@@ -396,7 +401,12 @@ WHERE  dp.sid = @p1`
 			if ctx.Err() != nil {
 				return nil, ctx.Err()
 			}
-			continue
+			// Not skipped, unlike a failure to *open* the query above. By here
+			// this database's rows are already in out, so continuing would
+			// return a silently short list and report success — the same
+			// failure the Scan arm above aborts on, and the reason the skip
+			// stops at the query boundary rather than covering iteration too.
+			return nil, fmt.Errorf("gosmo: user mappings for login %q in %q: %w", l.Name, db.Name(), err)
 		}
 	}
 	return out, nil

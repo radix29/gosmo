@@ -144,11 +144,14 @@ func (s *Server) SchedulesContext(ctx context.Context) ([]*Schedule, error) {
 	for rows.Next() {
 		sch, err := scanSchedule(s, rows.Scan)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("gosmo: list schedules: %w", err)
 		}
 		out = append(out, sch)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("gosmo: list schedules: %w", err)
+	}
+	return out, nil
 }
 
 // ScheduleByName returns a single schedule by name.
@@ -411,11 +414,14 @@ ORDER  BY j.name`
 	for rows.Next() {
 		j := &Job{server: sch.server}
 		if err := rows.Scan(&j.JobID, &j.Name, &j.IsEnabled); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("gosmo: jobs for schedule %q: %w", sch.Name, err)
 		}
 		out = append(out, j)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("gosmo: jobs for schedule %q: %w", sch.Name, err)
+	}
+	return out, nil
 }
 
 // Schedules returns every schedule attached to the job.
@@ -438,11 +444,14 @@ ORDER  BY sch.name`
 	for rows.Next() {
 		sch, err := scanSchedule(j.server, rows.Scan)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("gosmo: schedules for job %q: %w", j.Name, err)
 		}
 		out = append(out, sch)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("gosmo: schedules for job %q: %w", j.Name, err)
+	}
+	return out, nil
 }
 
 // AttachSchedule attaches an existing shared schedule to the job — as

@@ -79,11 +79,14 @@ ORDER  BY pr.name, sp.permission_name`
 	for rows.Next() {
 		e := &ServerPermissionEntry{}
 		if err := rows.Scan(&e.Principal, &e.PrincipalType, &e.Grantor, &e.Permission, &e.State); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("gosmo: server permissions: %w", err)
 		}
 		perms = append(perms, e)
 	}
-	return perms, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("gosmo: server permissions: %w", err)
+	}
+	return perms, nil
 }
 
 // serverPermissionNames allowlists every server-scoped permission name
@@ -235,10 +238,13 @@ ORDER  BY name`
 		c := &Credential{}
 		var identity sql.NullString
 		if err := rows.Scan(&c.Name, &identity, &c.CreateDate, &c.ModifyDate); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("gosmo: list credentials: %w", err)
 		}
 		c.Identity = identity.String
 		creds = append(creds, c)
 	}
-	return creds, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("gosmo: list credentials: %w", err)
+	}
+	return creds, nil
 }

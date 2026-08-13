@@ -166,7 +166,7 @@ ORDER  BY j.name`
 			&j.DeleteLevel, &j.NotifyLevelEmail, &j.NotifyEmailOperatorName,
 			&lastRun, &lastOutcome, &lastDuration, &nextRun, &jobState,
 		); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("gosmo: list agent jobs: %w", err)
 		}
 		if lastRun.Valid {
 			j.LastRunDate = lastRun.Time
@@ -183,7 +183,10 @@ ORDER  BY j.name`
 			time.Duration(d%100)*time.Second
 		jobs = append(jobs, j)
 	}
-	return jobs, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("gosmo: list agent jobs: %w", err)
+	}
+	return jobs, nil
 }
 
 // Job returns a lightweight handle for a job by name, without querying
@@ -480,7 +483,7 @@ ORDER  BY step_id`
 			&s.LastRunOutcome, &lastRunDate, &lastRunTime, &s.LastRunDuration,
 			&s.RetryAttempts, &s.RetryInterval, &s.OutputFileName, &s.Flags,
 		); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("gosmo: steps for job %q: %w", j.Name, err)
 		}
 		// last_run_date is 0 for a step that has never run, which
 		// parseSQLAgentDate would turn into a year-zero date rather than a
@@ -492,7 +495,10 @@ ORDER  BY step_id`
 		s.LastRunElapsed = parseSQLAgentDuration(s.LastRunDuration)
 		steps = append(steps, s)
 	}
-	return steps, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("gosmo: steps for job %q: %w", j.Name, err)
+	}
+	return steps, nil
 }
 
 // History returns the execution history (most recent first).
@@ -526,13 +532,16 @@ ORDER  BY run_date DESC, run_time DESC`, limit)
 		var runDate, runTime, runDur int
 		if err := rows.Scan(&runDate, &runTime, &runDur,
 			&h.Outcome, &h.Message, &h.StepID, &h.StepName); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("gosmo: history for job %q: %w", j.Name, err)
 		}
 		h.RunDate = parseSQLAgentDate(runDate, runTime)
 		h.Duration = parseSQLAgentDuration(runDur)
 		history = append(history, h)
 	}
-	return history, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("gosmo: history for job %q: %w", j.Name, err)
+	}
+	return history, nil
 }
 
 // JobHistory returns the most recent job-level history entries (step_id =
@@ -569,13 +578,16 @@ ORDER  BY h.run_date DESC, h.run_time DESC`, limit)
 		var runDate, runTime, runDur int
 		if err := rows.Scan(&h.JobName, &runDate, &runTime, &runDur,
 			&h.Outcome, &h.Message, &h.StepID, &h.StepName); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("gosmo: job history: %w", err)
 		}
 		h.RunDate = parseSQLAgentDate(runDate, runTime)
 		h.Duration = parseSQLAgentDuration(runDur)
 		history = append(history, h)
 	}
-	return history, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("gosmo: job history: %w", err)
+	}
+	return history, nil
 }
 
 // CreateJob creates a new SQL Server Agent job.

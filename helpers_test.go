@@ -86,4 +86,9 @@ func TestQualifiedName(t *testing.T) {
 	if got := qualifiedName("my]schema", "tbl"); got != "[my]]schema].[tbl]" {
 		t.Errorf("qualifiedName(my]schema, tbl) = %q, want [my]]schema].[tbl]", got)
 	}
+	// An empty schema must not become "[].[name]" — OBJECT_ID resolves that to
+	// NULL, and the caller sees an empty result instead of a failure.
+	if got := qualifiedName("", "Users"); got != "[Users]" {
+		t.Errorf("qualifiedName(\"\", Users) = %q, want [Users]", got)
+	}
 }

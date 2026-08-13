@@ -65,11 +65,14 @@ ORDER  BY SCHEMA_NAME(s.schema_id), s.name`
 			&seq.IsCycling, &seq.IsCached, &seq.CacheSize,
 			&seq.CurrentValue,
 		); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("gosmo: list sequences: %w", err)
 		}
 		seqs = append(seqs, seq)
 	}
-	return seqs, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("gosmo: list sequences: %w", err)
+	}
+	return seqs, nil
 }
 
 // CreateSequenceRequest describes a new sequence.
@@ -244,12 +247,15 @@ ORDER  BY SCHEMA_NAME(schema_id), name`
 		s := &Synonym{db: d}
 		var baseObj sql.NullString
 		if err := rows.Scan(&s.Name, &s.Schema, &s.ObjectID, &baseObj); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("gosmo: list synonyms: %w", err)
 		}
 		s.BaseObject = baseObj.String
 		syns = append(syns, s)
 	}
-	return syns, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("gosmo: list synonyms: %w", err)
+	}
+	return syns, nil
 }
 
 // qualifiedObjectNamePart matches one part of a dot-separated multi-part
@@ -299,7 +305,8 @@ func (d *Database) CreateSynonymContext(ctx context.Context, schema, name, baseO
 
 // DropSynonym drops a synonym by name — the form for a caller that has the
 // name but not the object, as Synonyms() would have to be listed first to
-// get one.
+// get one. A synonym that isn't there is the server's error, not a silent
+// success — see the note on Database.DropTable.
 func (d *Database) DropSynonym(schema, name string) error {
 	return d.DropSynonymContext(context.Background(), schema, name)
 }
@@ -309,7 +316,7 @@ func (d *Database) DropSynonymContext(ctx context.Context, schema, name string) 
 	if schema == "" {
 		schema = "dbo"
 	}
-	_, err := d.exec(ctx, fmt.Sprintf("DROP SYNONYM IF EXISTS %s", qualifiedName(schema, name)))
+	_, err := d.exec(ctx, fmt.Sprintf("DROP SYNONYM %s", qualifiedName(schema, name)))
 	if err != nil {
 		return fmt.Errorf("gosmo: drop synonym [%s].[%s]: %w", schema, name, err)
 	}

@@ -19,7 +19,7 @@ func TestDropStatements(t *testing.T) {
 		{
 			name:  "DropView",
 			write: func(ctx context.Context, d *Database) error { return d.DropViewContext(ctx, "Sales", "vCustomer") },
-			want:  "DROP VIEW IF EXISTS [Sales].[vCustomer]",
+			want:  "DROP VIEW [Sales].[vCustomer]",
 		},
 		{
 			// An empty schema means dbo, not an unqualified name — an
@@ -27,17 +27,17 @@ func TestDropStatements(t *testing.T) {
 			// which is not necessarily the object's.
 			name:  "DropView defaults the schema",
 			write: func(ctx context.Context, d *Database) error { return d.DropViewContext(ctx, "", "vCustomer") },
-			want:  "DROP VIEW IF EXISTS [dbo].[vCustomer]",
+			want:  "DROP VIEW [dbo].[vCustomer]",
 		},
 		{
 			name:  "DropFunction",
 			write: func(ctx context.Context, d *Database) error { return d.DropFunctionContext(ctx, "dbo", "fnAge") },
-			want:  "DROP FUNCTION IF EXISTS [dbo].[fnAge]",
+			want:  "DROP FUNCTION [dbo].[fnAge]",
 		},
 		{
 			name:  "DropTrigger",
 			write: func(ctx context.Context, d *Database) error { return d.DropTriggerContext(ctx, "dbo", "trAudit") },
-			want:  "DROP TRIGGER IF EXISTS [dbo].[trAudit]",
+			want:  "DROP TRIGGER [dbo].[trAudit]",
 		},
 		{
 			name:  "DropDatabaseRole",
@@ -165,6 +165,50 @@ func TestServerLevelDropAndRenameStatements(t *testing.T) {
 				t.Errorf("captured script missing %q:\n%s", tc.want, all)
 			}
 		})
+	}
+}
+
+// No Drop* write method carries IF EXISTS: dropping something that isn't
+// there has to reach the caller as the server's error, or a UI built on this
+// reports "deleted" for an object it never touched. Half the family used to
+// carry it and half did not, so the same gesture answered two different ways
+// depending on the object type. See the note on Database.DropTable.
+//
+// Asserted over the statements themselves rather than by grepping the source,
+// so a new Drop* that reintroduces IF EXISTS is caught only if it is listed
+// here — which is the point: adding one to this list is how a new drop gets
+// its statement pinned at all.
+func TestDropStatementsAreNotIdempotent(t *testing.T) {
+	d := &Database{server: &Server{}, name: "AppDB"}
+	ctx, script := WithScript(context.Background())
+
+	drops := []struct {
+		name  string
+		write func() error
+	}{
+		{"view", func() error { return d.DropViewContext(ctx, "dbo", "v") }},
+		{"function", func() error { return d.DropFunctionContext(ctx, "dbo", "f") }},
+		{"procedure", func() error { return d.DropStoredProcedureContext(ctx, "dbo", "p") }},
+		{"trigger", func() error { return d.DropTriggerContext(ctx, "dbo", "tr") }},
+		{"synonym", func() error { return d.DropSynonymContext(ctx, "dbo", "syn") }},
+		{"sequence", func() error { return d.DropSequenceContext(ctx, "dbo", "seq") }},
+		{"table", func() error { return d.DropTableContext(ctx, "dbo", "t", false) }},
+		{"database role", func() error { return d.DropDatabaseRoleContext(ctx, "r") }},
+		{"schema", func() error { return d.DropSchemaContext(ctx, "s") }},
+		{"user", func() error { return d.DropUserContext(ctx, "u") }},
+	}
+	for _, dr := range drops {
+		if err := dr.write(); err != nil {
+			t.Fatalf("drop %s under WithScript: %v", dr.name, err)
+		}
+	}
+	for _, stmt := range script.Statements {
+		if strings.Contains(stmt, "IF EXISTS") {
+			t.Errorf("a Drop* write method emitted IF EXISTS:\n%s", stmt)
+		}
+	}
+	if len(script.Statements) != len(drops) {
+		t.Fatalf("captured %d statements, want one per drop (%d)", len(script.Statements), len(drops))
 	}
 }
 

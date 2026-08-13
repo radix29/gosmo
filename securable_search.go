@@ -88,9 +88,12 @@ ORDER  BY x.rank, x.qualified`
 		var r SecurableRef
 		var rank int
 		if err := rows.Scan(&r.Type, &rank, &r.Schema, &r.Name); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("gosmo: find securables in %q: %w", d.name, err)
 		}
 		refs = append(refs, r)
 	}
-	return refs, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("gosmo: find securables in %q: %w", d.name, err)
+	}
+	return refs, nil
 }

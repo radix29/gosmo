@@ -70,7 +70,7 @@ ORDER  BY s.name`
 			&steps, &unfiltered,
 			&st.NoRecompute, &st.IsIncremental, &modCounter,
 		); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("gosmo: statistics for %s: %w", t.FullName(), err)
 		}
 		st.ModificationCounter = modCounter.Int64
 		if lastUpdated.Valid {
@@ -82,7 +82,10 @@ ORDER  BY s.name`
 		st.UnfilteredRows = unfiltered.Int64
 		stats = append(stats, st)
 	}
-	return stats, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("gosmo: statistics for %s: %w", t.FullName(), err)
+	}
+	return stats, nil
 }
 
 // checkSamplePct rejects a sampling percentage outside the 0-100 range
@@ -216,11 +219,14 @@ ORDER  BY sc.stats_column_id`
 	for rows.Next() {
 		var name string
 		if err := rows.Scan(&name); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("gosmo: columns for statistic %q: %w", st.Name, err)
 		}
 		cols = append(cols, name)
 	}
-	return cols, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("gosmo: columns for statistic %q: %w", st.Name, err)
+	}
+	return cols, nil
 }
 
 // StatisticHeader mirrors the single result row of
@@ -308,11 +314,14 @@ func (st *Statistic) DensityVectorContext(ctx context.Context) ([]*StatisticDens
 	for rows.Next() {
 		d := &StatisticDensity{}
 		if err := rows.Scan(&d.AllDensity, &d.AverageLength, &d.Columns); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("gosmo: density vector for %q: %w", st.Name, err)
 		}
 		out = append(out, d)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("gosmo: density vector for %q: %w", st.Name, err)
+	}
+	return out, nil
 }
 
 // StatisticHistogramStep is one step of DBCC SHOW_STATISTICS ... WITH
@@ -348,12 +357,15 @@ func (st *Statistic) HistogramContext(ctx context.Context) ([]*StatisticHistogra
 		var rangeHiKey any
 		s := &StatisticHistogramStep{}
 		if err := rows.Scan(&rangeHiKey, &s.RangeRows, &s.EqRows, &s.DistinctRangeRows, &s.AvgRangeRows); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("gosmo: histogram for %q: %w", st.Name, err)
 		}
 		s.RangeHighKey = formatHistogramKey(rangeHiKey)
 		out = append(out, s)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("gosmo: histogram for %q: %w", st.Name, err)
+	}
+	return out, nil
 }
 
 // formatHistogramKey renders a RANGE_HI_KEY value as text. A NULL key (the

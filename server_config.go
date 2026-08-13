@@ -52,12 +52,15 @@ ORDER  BY name`
 			&c.ConfigID, &c.Name, &c.Value, &c.ValueInUse,
 			&c.Minimum, &c.Maximum, &c.IsDynamic, &c.IsAdvanced, &desc,
 		); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("gosmo: list configurations: %w", err)
 		}
 		c.Description = desc.String
 		opts = append(opts, c)
 	}
-	return opts, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("gosmo: list configurations: %w", err)
+	}
+	return opts, nil
 }
 
 // ConfigurationByName returns a single option using a direct parameterised query.
@@ -210,7 +213,7 @@ ORDER  BY cpu_id`
 	for rows.Next() {
 		var cpu, node int
 		if err := rows.Scan(&cpu, &node); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("gosmo: processor info: %w", err)
 		}
 		cpuNode[cpu] = node
 		nodes[node] = true
@@ -219,7 +222,7 @@ ORDER  BY cpu_id`
 		}
 	}
 	if err := rows.Err(); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("gosmo: processor info: %w", err)
 	}
 
 	info.CPUNUMANode = make([]int, maxCPU+1)
@@ -325,11 +328,14 @@ func (s *Server) LanguagesContext(ctx context.Context) ([]*Language, error) {
 	for rows.Next() {
 		l := &Language{}
 		if err := rows.Scan(&l.LangID, &l.Name, &l.Alias); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("gosmo: list languages: %w", err)
 		}
 		langs = append(langs, l)
 	}
-	return langs, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("gosmo: list languages: %w", err)
+	}
+	return langs, nil
 }
 
 // ============================================================
@@ -398,7 +404,7 @@ ORDER  BY s.session_id`, sysFilter)
 			&lastReq, &cmd,
 			&as.BlockingSessionID, &waitType, &as.WaitTimeMS,
 		); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("gosmo: active sessions: %w", err)
 		}
 		as.DatabaseName = dbName.String
 		as.Status = status.String
@@ -407,7 +413,10 @@ ORDER  BY s.session_id`, sysFilter)
 		as.WaitType = waitType.String
 		sessions = append(sessions, as)
 	}
-	return sessions, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("gosmo: active sessions: %w", err)
+	}
+	return sessions, nil
 }
 
 // KillSession terminates a session by session ID.
@@ -460,11 +469,14 @@ ORDER  BY p.name`
 	for rows.Next() {
 		p := &MailProfile{}
 		if err := rows.Scan(&p.ProfileID, &p.Name, &p.Description, &p.IsDefault); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("gosmo: list mail profiles: %w", err)
 		}
 		profiles = append(profiles, p)
 	}
-	return profiles, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("gosmo: list mail profiles: %w", err)
+	}
+	return profiles, nil
 }
 
 // SendMail sends an email via Database Mail (sp_send_dbmail).

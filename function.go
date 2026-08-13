@@ -46,12 +46,15 @@ ORDER  BY SCHEMA_NAME(o.schema_id), o.name`
 		f := &UserDefinedFunction{}
 		if err := rows.Scan(&f.ObjectID, &f.Schema, &f.Name, &f.FuncType,
 			&f.Definition, &f.CreateDate, &f.ModifyDate); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("gosmo: list UDFs in %q: %w", d.name, err)
 		}
 		f.FuncType = strings.TrimSpace(f.FuncType)
 		funcs = append(funcs, f)
 	}
-	return funcs, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("gosmo: list UDFs in %q: %w", d.name, err)
+	}
+	return funcs, nil
 }
 
 // SystemFunctions returns every system function SQL Server ships in the
@@ -89,17 +92,21 @@ ORDER  BY o.name`
 		f := &UserDefinedFunction{}
 		if err := rows.Scan(&f.ObjectID, &f.Schema, &f.Name, &f.FuncType,
 			&f.Definition, &f.CreateDate, &f.ModifyDate); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("gosmo: list system UDFs in %q: %w", d.name, err)
 		}
 		f.FuncType = strings.TrimSpace(f.FuncType)
 		funcs = append(funcs, f)
 	}
-	return funcs, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("gosmo: list system UDFs in %q: %w", d.name, err)
+	}
+	return funcs, nil
 }
 
 // DropFunction drops a user-defined function — scalar, inline
 // table-valued, or multi-statement table-valued alike, all of which DROP
-// FUNCTION removes.
+// FUNCTION removes. A function that isn't there is the server's error, not a
+// silent success — see the note on Database.DropTable.
 func (d *Database) DropFunction(schema, name string) error {
 	return d.DropFunctionContext(context.Background(), schema, name)
 }
@@ -109,7 +116,7 @@ func (d *Database) DropFunctionContext(ctx context.Context, schema, name string)
 	if schema == "" {
 		schema = "dbo"
 	}
-	if _, err := d.exec(ctx, "DROP FUNCTION IF EXISTS "+qualifiedName(schema, name)); err != nil {
+	if _, err := d.exec(ctx, "DROP FUNCTION "+qualifiedName(schema, name)); err != nil {
 		return fmt.Errorf("gosmo: drop function [%s].[%s]: %w", schema, name, err)
 	}
 	return nil

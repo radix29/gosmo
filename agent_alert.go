@@ -139,11 +139,14 @@ func (s *Server) AlertsContext(ctx context.Context) ([]*Alert, error) {
 	for rows.Next() {
 		a, err := scanAlert(s, rows.Scan)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("gosmo: list alerts: %w", err)
 		}
 		out = append(out, a)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("gosmo: list alerts: %w", err)
+	}
+	return out, nil
 }
 
 // EventAlerts returns only plain SQL Server event alerts — the SQL-only
@@ -474,12 +477,15 @@ ORDER  BY o.name`
 		n := &AlertNotification{}
 		var method int
 		if err := rows.Scan(&n.OperatorName, &method); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("gosmo: notifications for alert %q: %w", a.Name, err)
 		}
 		n.Method = NotificationMethod(method)
 		out = append(out, n)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("gosmo: notifications for alert %q: %w", a.Name, err)
+	}
+	return out, nil
 }
 
 // parseSQLAgentDateOrZero is parseSQLAgentDate, but treats a 0 date (msdb's

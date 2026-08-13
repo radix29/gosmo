@@ -43,7 +43,11 @@ ORDER  BY name`
 		return nil, fmt.Errorf("gosmo: database extended properties: %w", err)
 	}
 	defer rows.Close()
-	return scanExtProps(rows)
+	props, err := scanExtProps(rows)
+	if err != nil {
+		return nil, fmt.Errorf("gosmo: database extended properties: %w", err)
+	}
+	return props, nil
 }
 
 // ExtendedProperties returns the extended properties for a specific object.
@@ -73,7 +77,11 @@ ORDER  BY name`,
 		return nil, fmt.Errorf("gosmo: extended properties: %w", err)
 	}
 	defer rows.Close()
-	return scanExtProps(rows)
+	props, err := scanExtProps(rows)
+	if err != nil {
+		return nil, fmt.Errorf("gosmo: extended properties: %w", err)
+	}
+	return props, nil
 }
 
 // AddExtendedProperty adds a new extended property on an object. Fails if

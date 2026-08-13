@@ -445,7 +445,7 @@ ORDER  BY bs.backup_finish_date DESC`
 			&b.DeviceName, &b.UserName, &b.ServerName,
 			&b.DatabaseVersion, &b.CompatibilityLevel,
 		); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("gosmo: backup history for %q: %w", databaseName, err)
 		}
 		b.Description = desc.String
 		switch bType {
@@ -460,7 +460,10 @@ ORDER  BY bs.backup_finish_date DESC`
 		}
 		history = append(history, b)
 	}
-	return history, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("gosmo: backup history for %q: %w", databaseName, err)
+	}
+	return history, nil
 }
 
 // ============================================================

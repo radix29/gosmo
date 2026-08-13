@@ -47,11 +47,14 @@ ORDER  BY name`
 		if err := rows.Scan(&k.Name, &k.ID,
 			&k.KeyStoreProviderName, &k.KeyPath,
 			&k.AllowEnclaveComputations); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("gosmo: list column master keys: %w", err)
 		}
 		keys = append(keys, k)
 	}
-	return keys, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("gosmo: list column master keys: %w", err)
+	}
+	return keys, nil
 }
 
 // CreateColumnMasterKey creates a column master key metadata entry.
@@ -133,12 +136,15 @@ ORDER  BY cek.name`
 		k := &ColumnEncryptionKey{db: d}
 		var algo sql.NullString
 		if err := rows.Scan(&k.Name, &k.ID, &k.MasterKeyName, &algo); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("gosmo: list column encryption keys: %w", err)
 		}
 		k.EncryptionAlgorithm = algo.String
 		keys = append(keys, k)
 	}
-	return keys, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("gosmo: list column encryption keys: %w", err)
+	}
+	return keys, nil
 }
 
 // Drop drops the column encryption key.
@@ -204,18 +210,21 @@ ORDER  BY sp.name`
 		p := &SecurityPolicy{db: d}
 		if err := rows.Scan(&p.Name, &p.Schema, &p.ObjectID,
 			&p.IsEnabled, &p.IsNotForReplication); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("gosmo: list security policies: %w", err)
 		}
 
 		// Load predicates
 		preds, err := d.securityPredicates(ctx, p.ObjectID)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("gosmo: predicates of security policy %q in %q: %w", p.Name, d.name, err)
 		}
 		p.Predicates = preds
 		policies = append(policies, p)
 	}
-	return policies, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("gosmo: list security policies: %w", err)
+	}
+	return policies, nil
 }
 
 func (d *Database) securityPredicates(ctx context.Context, policyObjectID int) ([]*SecurityPredicate, error) {
@@ -279,7 +288,8 @@ func (p *SecurityPolicy) DisableContext(ctx context.Context) error {
 	return nil
 }
 
-// Drop drops the security policy.
+// Drop drops the security policy. A policy that isn't there is the server's
+// error, not a silent success — see the note on Database.DropTable.
 func (p *SecurityPolicy) Drop() error {
 	return p.DropContext(context.Background())
 }
@@ -287,7 +297,7 @@ func (p *SecurityPolicy) Drop() error {
 // DropContext is the context-aware variant of Drop.
 func (p *SecurityPolicy) DropContext(ctx context.Context) error {
 	_, err := p.db.exec(ctx,
-		fmt.Sprintf("DROP SECURITY POLICY IF EXISTS %s", qualifiedName(p.Schema, p.Name)))
+		fmt.Sprintf("DROP SECURITY POLICY %s", qualifiedName(p.Schema, p.Name)))
 	if err != nil {
 		return fmt.Errorf("gosmo: drop security policy [%s]: %w", p.Name, err)
 	}
@@ -337,13 +347,16 @@ ORDER  BY pr.name, dp.permission_name`
 		g := &PermissionEntry{}
 		var perm, state string
 		if err := rows.Scan(&g.Principal, &g.PrincipalType, &g.Grantor, &perm, &state); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("gosmo: permissions for %s: %w", ref, err)
 		}
 		g.Permission = ObjectPermission(perm)
 		g.State = PermissionState(state)
 		grants = append(grants, g)
 	}
-	return grants, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("gosmo: permissions for %s: %w", ref, err)
+	}
+	return grants, nil
 }
 
 // PrincipalSecurable is one GRANT/DENY entry for a securable that a
@@ -407,7 +420,7 @@ ORDER  BY dp.class_desc, schema_name, object_name, dp.permission_name`
 		e := &PrincipalSecurable{}
 		var class, objType string
 		if err := rows.Scan(&class, &e.Permission, &e.State, &e.Schema, &e.Name, &objType); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("gosmo: permissions for principal %q in %q: %w", principal, d.name, err)
 		}
 		switch class {
 		case "DATABASE":
@@ -429,7 +442,10 @@ ORDER  BY dp.class_desc, schema_name, object_name, dp.permission_name`
 		}
 		entries = append(entries, e)
 	}
-	return entries, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("gosmo: permissions for principal %q in %q: %w", principal, d.name, err)
+	}
+	return entries, nil
 }
 
 // objectPermissionNames allowlists every object-scoped permission name SQL
@@ -555,13 +571,16 @@ ORDER  BY pr.name, dp.permission_name`
 		g := &PermissionEntry{}
 		var perm, state string
 		if err := rows.Scan(&g.Principal, &g.PrincipalType, &g.Grantor, &perm, &state); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("gosmo: schema permissions for %q in %q: %w", schemaName, d.name, err)
 		}
 		g.Permission = ObjectPermission(perm)
 		g.State = PermissionState(state)
 		grants = append(grants, g)
 	}
-	return grants, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("gosmo: schema permissions for %q in %q: %w", schemaName, d.name, err)
+	}
+	return grants, nil
 }
 
 // GrantSchemaPermission grants permission on a schema to principal.
@@ -638,11 +657,14 @@ ORDER  BY pr.name, dp.permission_name`
 	for rows.Next() {
 		e := &DatabasePermissionEntry{}
 		if err := rows.Scan(&e.Principal, &e.PrincipalType, &e.Grantor, &e.Permission, &e.State); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("gosmo: database permissions in %q: %w", d.name, err)
 		}
 		perms = append(perms, e)
 	}
-	return perms, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("gosmo: database permissions in %q: %w", d.name, err)
+	}
+	return perms, nil
 }
 
 // databasePermissionNames allowlists every database-scoped permission name

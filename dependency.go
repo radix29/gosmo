@@ -65,9 +65,12 @@ func (d *Database) dependencyEdges(ctx context.Context, q, schema, name string) 
 	for rows.Next() {
 		dep := &Dependency{}
 		if err := rows.Scan(&dep.Schema, &dep.Name, &dep.TypeDesc, &dep.IsSchemaBound); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("gosmo: dependencies for %s: %w", ref, err)
 		}
 		deps = append(deps, dep)
 	}
-	return deps, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("gosmo: dependencies for %s: %w", ref, err)
+	}
+	return deps, nil
 }

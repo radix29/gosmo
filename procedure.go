@@ -192,11 +192,14 @@ ORDER  BY SCHEMA_NAME(p.schema_id), p.name`
 		p := &StoredProcedure{}
 		if err := rows.Scan(&p.ObjectID, &p.Schema, &p.Name,
 			&p.Definition, &p.CreateDate, &p.ModifyDate); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("gosmo: list stored procs in %q: %w", d.name, err)
 		}
 		procs = append(procs, p)
 	}
-	return procs, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("gosmo: list stored procs in %q: %w", d.name, err)
+	}
+	return procs, nil
 }
 
 // CreateStoredProcedure creates (or replaces) a stored procedure.
@@ -220,7 +223,9 @@ func (d *Database) CreateStoredProcedureContext(ctx context.Context, schema, nam
 	return nil
 }
 
-// DropStoredProcedure drops a stored procedure.
+// DropStoredProcedure drops a stored procedure. A procedure that isn't there
+// is the server's error, not a silent success — see the note on
+// Database.DropTable.
 func (d *Database) DropStoredProcedure(schema, name string) error {
 	return d.DropStoredProcedureContext(context.Background(), schema, name)
 }
@@ -230,7 +235,7 @@ func (d *Database) DropStoredProcedureContext(ctx context.Context, schema, name 
 	if schema == "" {
 		schema = "dbo"
 	}
-	if _, err := d.exec(ctx, "DROP PROCEDURE IF EXISTS "+qualifiedName(schema, name)); err != nil {
+	if _, err := d.exec(ctx, "DROP PROCEDURE "+qualifiedName(schema, name)); err != nil {
 		return fmt.Errorf("gosmo: drop stored procedure [%s].[%s]: %w", schema, name, err)
 	}
 	return nil
@@ -272,9 +277,12 @@ ORDER  BY o.name`
 		p := &StoredProcedure{}
 		if err := rows.Scan(&p.ObjectID, &p.Schema, &p.Name,
 			&p.Definition, &p.CreateDate, &p.ModifyDate); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("gosmo: list system stored procs in %q: %w", d.name, err)
 		}
 		procs = append(procs, p)
 	}
-	return procs, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("gosmo: list system stored procs in %q: %w", d.name, err)
+	}
+	return procs, nil
 }

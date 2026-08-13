@@ -109,14 +109,20 @@ func (s *Server) DatabaseMirroringEndpointContext(ctx context.Context) (*Databas
 	defer rows.Close()
 
 	if !rows.Next() {
-		return nil, rows.Err()
+		if err := rows.Err(); err != nil {
+			return nil, fmt.Errorf("gosmo: read database mirroring endpoint on %q: %w", s.Name(), err)
+		}
+		return nil, nil
 	}
 	e := &DatabaseMirroringEndpoint{server: s}
 	if err := rows.Scan(&e.Name, &e.Port, &e.State, &e.Role, &e.IsEncryptionEnabled,
 		&e.EncryptionAlgorithm, &e.ConnectionAuth, &e.Owner); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("gosmo: read database mirroring endpoint on %q: %w", s.Name(), err)
 	}
-	return e, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("gosmo: read database mirroring endpoint on %q: %w", s.Name(), err)
+	}
+	return e, nil
 }
 
 // EndpointSpec describes a database mirroring endpoint to create.

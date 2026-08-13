@@ -42,9 +42,12 @@ ORDER  BY o.type_desc, SCHEMA_NAME(o.schema_id), o.name`
 	for rows.Next() {
 		r := &SearchResult{}
 		if err := rows.Scan(&r.Schema, &r.Name, &r.TypeDesc); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("gosmo: search objects matching %q: %w", pattern, err)
 		}
 		results = append(results, r)
 	}
-	return results, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("gosmo: search objects matching %q: %w", pattern, err)
+	}
+	return results, nil
 }
