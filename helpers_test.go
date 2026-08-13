@@ -68,6 +68,9 @@ func TestLikeEscape(t *testing.T) {
 		{"a_b", `a\_b`},
 		{"[abc]", `\[abc]`},
 		{`back\slash`, `back\\slash`},
+		// Every metacharacter at once, from the securable-search test this
+		// one absorbed when escapeLikePattern turned out to be a duplicate.
+		{`_%[\`, `\_\%\[\\`},
 	}
 	for _, c := range cases {
 		if got := likeEscape(c.in); got != c.want {

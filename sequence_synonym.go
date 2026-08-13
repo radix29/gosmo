@@ -135,6 +135,25 @@ func (d *Database) CreateSequenceContext(ctx context.Context, req CreateSequence
 	return nil
 }
 
+// DropSequence drops a sequence by name — the form for a caller that has
+// the name but not the object, as Sequences() would have to be listed
+// first to get one.
+func (d *Database) DropSequence(schema, name string) error {
+	return d.DropSequenceContext(context.Background(), schema, name)
+}
+
+// DropSequenceContext is the context-aware variant of DropSequence.
+func (d *Database) DropSequenceContext(ctx context.Context, schema, name string) error {
+	if schema == "" {
+		schema = "dbo"
+	}
+	_, err := d.exec(ctx, fmt.Sprintf("DROP SEQUENCE %s", qualifiedName(schema, name)))
+	if err != nil {
+		return fmt.Errorf("gosmo: drop sequence [%s].[%s]: %w", schema, name, err)
+	}
+	return nil
+}
+
 // Drop drops the sequence.
 func (seq *Sequence) Drop() error {
 	return seq.DropContext(context.Background())
@@ -142,12 +161,7 @@ func (seq *Sequence) Drop() error {
 
 // DropContext is the context-aware variant of Drop.
 func (seq *Sequence) DropContext(ctx context.Context) error {
-	_, err := seq.db.exec(ctx,
-		fmt.Sprintf("DROP SEQUENCE %s", qualifiedName(seq.Schema, seq.Name)))
-	if err != nil {
-		return fmt.Errorf("gosmo: drop sequence [%s].[%s]: %w", seq.Schema, seq.Name, err)
-	}
-	return nil
+	return seq.db.DropSequenceContext(ctx, seq.Schema, seq.Name)
 }
 
 // Restart restarts the sequence at the given value.
@@ -283,6 +297,25 @@ func (d *Database) CreateSynonymContext(ctx context.Context, schema, name, baseO
 	return nil
 }
 
+// DropSynonym drops a synonym by name — the form for a caller that has the
+// name but not the object, as Synonyms() would have to be listed first to
+// get one.
+func (d *Database) DropSynonym(schema, name string) error {
+	return d.DropSynonymContext(context.Background(), schema, name)
+}
+
+// DropSynonymContext is the context-aware variant of DropSynonym.
+func (d *Database) DropSynonymContext(ctx context.Context, schema, name string) error {
+	if schema == "" {
+		schema = "dbo"
+	}
+	_, err := d.exec(ctx, fmt.Sprintf("DROP SYNONYM IF EXISTS %s", qualifiedName(schema, name)))
+	if err != nil {
+		return fmt.Errorf("gosmo: drop synonym [%s].[%s]: %w", schema, name, err)
+	}
+	return nil
+}
+
 // Drop drops the synonym.
 func (syn *Synonym) Drop() error {
 	return syn.DropContext(context.Background())
@@ -290,10 +323,5 @@ func (syn *Synonym) Drop() error {
 
 // DropContext is the context-aware variant of Drop.
 func (syn *Synonym) DropContext(ctx context.Context) error {
-	_, err := syn.db.exec(ctx,
-		fmt.Sprintf("DROP SYNONYM IF EXISTS %s", qualifiedName(syn.Schema, syn.Name)))
-	if err != nil {
-		return fmt.Errorf("gosmo: drop synonym [%s].[%s]: %w", syn.Schema, syn.Name, err)
-	}
-	return nil
+	return syn.db.DropSynonymContext(ctx, syn.Schema, syn.Name)
 }

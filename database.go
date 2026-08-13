@@ -376,7 +376,7 @@ WHERE  t.is_ms_shipped = 0
 	}, q, schema, name)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return nil, fmt.Errorf("gosmo: table [%s].[%s] not found in %q", schema, name, d.name)
+			return nil, notFoundf("gosmo: table [%s].[%s] not found in %q", schema, name, d.name)
 		}
 		return nil, err
 	}
@@ -446,7 +446,7 @@ WHERE  dp.type IN ('S','U','G') AND dp.name = @p1`
 	}, q, name)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return nil, fmt.Errorf("gosmo: database user %q not found in %q", name, d.name)
+			return nil, notFoundf("gosmo: database user %q not found in %q", name, d.name)
 		}
 		return nil, fmt.Errorf("gosmo: find database user %q in %q: %w", name, d.name, err)
 	}
@@ -666,4 +666,47 @@ ORDER  BY tr.name`
 		triggers = append(triggers, t)
 	}
 	return triggers, rows.Err()
+}
+
+// DropTrigger drops a DML trigger. schema is the trigger's own schema —
+// the schema of the table it is defined on.
+func (d *Database) DropTrigger(schema, name string) error {
+	return d.DropTriggerContext(context.Background(), schema, name)
+}
+
+// DropTriggerContext is the context-aware variant of DropTrigger.
+func (d *Database) DropTriggerContext(ctx context.Context, schema, name string) error {
+	if schema == "" {
+		schema = "dbo"
+	}
+	if _, err := d.exec(ctx, "DROP TRIGGER IF EXISTS "+qualifiedName(schema, name)); err != nil {
+		return fmt.Errorf("gosmo: drop trigger [%s].[%s]: %w", schema, name, err)
+	}
+	return nil
+}
+
+// RenameObject renames any schema-scoped object sp_rename's default
+// 'OBJECT' type covers — a view, procedure, function, sequence, synonym, or
+// trigger. A table is the same statement with its own wording; see
+// RenameTable. An index, statistic, or column each needs its own @objtype
+// and has its own method.
+//
+// newName is a bare name: sp_rename refuses a qualified one, and renaming
+// does not move the object between schemas (ALTER SCHEMA ... TRANSFER does).
+func (d *Database) RenameObject(schema, oldName, newName string) error {
+	return d.RenameObjectContext(context.Background(), schema, oldName, newName)
+}
+
+// RenameObjectContext is the context-aware variant of RenameObject.
+func (d *Database) RenameObjectContext(ctx context.Context, schema, oldName, newName string) error {
+	if schema == "" {
+		schema = "dbo"
+	}
+	if _, err := d.exec(ctx,
+		"EXEC sp_rename @objname = @p1, @newname = @p2, @objtype = N'OBJECT'",
+		qualifiedName(schema, oldName), newName,
+	); err != nil {
+		return fmt.Errorf("gosmo: rename %s -> %q: %w", qualifiedName(schema, oldName), newName, err)
+	}
+	return nil
 }

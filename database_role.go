@@ -92,7 +92,7 @@ WHERE  r.type = 'R' AND r.name = @p1`
 	}, q, name)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return nil, fmt.Errorf("gosmo: database role %q not found in %q", name, d.name)
+			return nil, notFoundf("gosmo: database role %q not found in %q", name, d.name)
 		}
 		return nil, fmt.Errorf("gosmo: find database role %q in %q: %w", name, d.name, err)
 	}
@@ -200,4 +200,26 @@ func (d *Database) RemoveRoleMemberContext(ctx context.Context, roleName, member
 		return fmt.Errorf("gosmo: remove %q from role %q: %w", memberName, roleName, err)
 	}
 	return nil
+}
+
+// DropDatabaseRole drops a database role. A role that still owns a schema
+// or has members is refused by the server, not here.
+func (d *Database) DropDatabaseRole(name string) error {
+	return d.DropDatabaseRoleContext(context.Background(), name)
+}
+
+// DropDatabaseRoleContext is the context-aware variant of DropDatabaseRole.
+func (d *Database) DropDatabaseRoleContext(ctx context.Context, name string) error {
+	if _, err := d.exec(ctx, "DROP ROLE "+quoteIdent(name)); err != nil {
+		return fmt.Errorf("gosmo: drop database role %q: %w", name, err)
+	}
+	return nil
+}
+
+// Drop drops this database role.
+func (r *DatabaseRole) Drop() error { return r.DropContext(context.Background()) }
+
+// DropContext is the context-aware variant of Drop.
+func (r *DatabaseRole) DropContext(ctx context.Context) error {
+	return r.db.DropDatabaseRoleContext(ctx, r.Name)
 }

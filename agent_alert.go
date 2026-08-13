@@ -199,7 +199,7 @@ func (s *Server) AlertByNameContext(ctx context.Context, name string) (*Alert, e
 	}, q, name)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return nil, fmt.Errorf("gosmo: alert %q not found", name)
+			return nil, notFoundf("gosmo: alert %q not found", name)
 		}
 		return nil, fmt.Errorf("gosmo: alert by name: %w", err)
 	}

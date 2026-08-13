@@ -80,7 +80,7 @@ WHERE  name = @p1`
 		&c.Minimum, &c.Maximum, &c.IsDynamic, &c.IsAdvanced, &desc,
 	); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return nil, fmt.Errorf("gosmo: configuration option %q not found", name)
+			return nil, notFoundf("gosmo: configuration option %q not found", name)
 		}
 		return nil, fmt.Errorf("gosmo: configuration by name: %w", err)
 	}
@@ -419,57 +419,6 @@ func (s *Server) KillSession(sessionID int) error {
 func (s *Server) KillSessionContext(ctx context.Context, sessionID int) error {
 	if err := s.execContext(ctx, fmt.Sprintf("KILL %d", sessionID)); err != nil {
 		return fmt.Errorf("gosmo: kill session %d: %w", sessionID, err)
-	}
-	return nil
-}
-
-// ============================================================
-// Error Log
-// ============================================================
-
-// ErrorLogEntry represents one row returned by xp_readerrorlog.
-type ErrorLogEntry struct {
-	LogDate string
-	Process string
-	Text    string
-}
-
-// ReadErrorLog reads a SQL Server error log file.
-// Pass logNumber=0 for the current log, 1 for the first archived log, etc.
-func (s *Server) ReadErrorLog(logNumber int) ([]*ErrorLogEntry, error) {
-	return s.ReadErrorLogContext(context.Background(), logNumber)
-}
-
-// ReadErrorLogContext is the context-aware variant of ReadErrorLog.
-func (s *Server) ReadErrorLogContext(ctx context.Context, logNumber int) ([]*ErrorLogEntry, error) {
-	rows, err := s.query(ctx,
-		fmt.Sprintf("EXEC xp_readerrorlog %d, 1", logNumber))
-	if err != nil {
-		return nil, fmt.Errorf("gosmo: read error log: %w", err)
-	}
-	defer rows.Close()
-
-	var entries []*ErrorLogEntry
-	for rows.Next() {
-		e := &ErrorLogEntry{}
-		if err := rows.Scan(&e.LogDate, &e.Process, &e.Text); err != nil {
-			return nil, err
-		}
-		entries = append(entries, e)
-	}
-	return entries, rows.Err()
-}
-
-// CycleErrorLog closes the current error log and opens a new one.
-// Equivalent to sp_cycle_errorlog.
-func (s *Server) CycleErrorLog() error {
-	return s.CycleErrorLogContext(context.Background())
-}
-
-// CycleErrorLogContext is the context-aware variant of CycleErrorLog.
-func (s *Server) CycleErrorLogContext(ctx context.Context) error {
-	if err := s.execContext(ctx, "EXEC sp_cycle_errorlog"); err != nil {
-		return fmt.Errorf("gosmo: cycle error log: %w", err)
 	}
 	return nil
 }

@@ -45,7 +45,7 @@ WHERE  sd.name = @p1`
 	}, q, d.name)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return nil, fmt.Errorf("gosmo: database %q not found", d.name)
+			return nil, notFoundf("gosmo: database %q not found", d.name)
 		}
 		return nil, fmt.Errorf("gosmo: change tracking for %q: %w", d.name, err)
 	}

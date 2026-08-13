@@ -1,6 +1,7 @@
 package gosmo
 
 import (
+	"database/sql"
 	"errors"
 	"fmt"
 	"testing"
@@ -90,5 +91,47 @@ func TestAsSQLErrorNonSQL(t *testing.T) {
 	}
 	if _, ok := AsSQLError(nil); ok {
 		t.Error("AsSQLError returned ok=true for nil")
+	}
+}
+
+func TestNotFoundWrapsSentinel(t *testing.T) {
+	err := notFoundf("gosmo: login %q not found", "sa")
+	if !errors.Is(err, ErrNotFound) {
+		t.Error("notFoundf should satisfy errors.Is(err, ErrNotFound)")
+	}
+	// The sentinel reaches errors.Is through Unwrap without appearing in the
+	// text, which is what let ErrNotFound be added without rewording any of
+	// the 18 existing messages.
+	if got, want := err.Error(), `gosmo: login "sa" not found`; got != want {
+		t.Errorf("Error() = %q, want %q", got, want)
+	}
+}
+
+func TestNotFoundAlsoKeepsSecondSentinel(t *testing.T) {
+	// AvailabilityGroupByName documented sql.ErrNoRows before ErrNotFound
+	// existed; both must keep matching or a library consumer's check breaks.
+	err := notFoundfAlso(sql.ErrNoRows, "gosmo: availability group %q not found", "AAG1")
+	if !errors.Is(err, ErrNotFound) {
+		t.Error("should satisfy ErrNotFound")
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		t.Error("should still satisfy sql.ErrNoRows")
+	}
+}
+
+func TestNotFoundDoesNotMatchOtherErrors(t *testing.T) {
+	// The point of the sentinel is telling absence from failure, so a
+	// permission or connection error must not read as "not found".
+	permissionDenied := fmt.Errorf("gosmo: find login %q: %w", "sa",
+		mssql.Error{Number: 229, Class: 14, Message: "The SELECT permission was denied"})
+	if errors.Is(permissionDenied, ErrNotFound) {
+		t.Error("an unrelated error must not satisfy ErrNotFound")
+	}
+	// Only the lookups that opted in report absence. A raw ErrNoRows escaping
+	// from somewhere that never classified it must not read as ErrNotFound,
+	// or the sentinel would mean "some query returned no rows" instead.
+	rawNoRows := fmt.Errorf("gosmo: read something: %w", sql.ErrNoRows)
+	if errors.Is(rawNoRows, ErrNotFound) {
+		t.Error("an unclassified sql.ErrNoRows must not satisfy ErrNotFound")
 	}
 }

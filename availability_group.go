@@ -17,6 +17,7 @@ package gosmo
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -208,8 +209,11 @@ func (s *Server) AvailabilityGroup(name string) *AvailabilityGroup {
 	return &AvailabilityGroup{server: s, Name: name}
 }
 
-// AvailabilityGroupByName returns one availability group by name, or
-// sql.ErrNoRows if this instance knows no group by that name.
+// AvailabilityGroupByName returns one availability group by name, or an error
+// wrapping ErrNotFound if this instance knows no group by that name. That
+// error also satisfies errors.Is(err, sql.ErrNoRows), which this method
+// promised before ErrNotFound existed. Note that neither sentinel was ever
+// returned bare — both have always needed errors.Is rather than ==.
 func (s *Server) AvailabilityGroupByName(name string) (*AvailabilityGroup, error) {
 	return s.AvailabilityGroupByNameContext(context.Background(), name)
 }
@@ -230,6 +234,9 @@ func (s *Server) AvailabilityGroupByNameContext(ctx context.Context, name string
 		return scanErr
 	}, q, name)
 	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, notFoundfAlso(sql.ErrNoRows, "gosmo: availability group %q not found", name)
+		}
 		return nil, fmt.Errorf("gosmo: availability group %q: %w", name, err)
 	}
 	return ag, nil

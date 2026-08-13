@@ -358,7 +358,7 @@ JOIN   sys.sql_modules m ON m.object_id = v.object_id
 WHERE  SCHEMA_NAME(v.schema_id) = @p1 AND v.name = @p2`, schema, name)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return "", fmt.Errorf("gosmo: view %s not found", qualifiedName(schema, name))
+			return "", notFoundf("gosmo: view %s not found", qualifiedName(schema, name))
 		}
 		return "", err
 	}
@@ -387,7 +387,7 @@ JOIN   sys.sql_modules m ON m.object_id = p.object_id
 WHERE  SCHEMA_NAME(p.schema_id) = @p1 AND p.name = @p2`, schema, name)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return "", fmt.Errorf("gosmo: stored procedure %s not found", qualifiedName(schema, name))
+			return "", notFoundf("gosmo: stored procedure %s not found", qualifiedName(schema, name))
 		}
 		return "", err
 	}
@@ -417,7 +417,7 @@ WHERE  SCHEMA_NAME(o.schema_id) = @p1 AND o.name = @p2
   AND  o.type IN ('FN','TF','IF')`, schema, name)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return "", fmt.Errorf("gosmo: function %s not found", qualifiedName(schema, name))
+			return "", notFoundf("gosmo: function %s not found", qualifiedName(schema, name))
 		}
 		return "", err
 	}

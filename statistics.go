@@ -370,3 +370,21 @@ func formatHistogramKey(v any) string {
 		return fmt.Sprintf("%v", k)
 	}
 }
+
+// Rename renames the statistic using sp_rename.
+func (st *Statistic) Rename(newName string) error {
+	return st.RenameContext(context.Background(), newName)
+}
+
+// RenameContext is the context-aware variant of Rename.
+func (st *Statistic) RenameContext(ctx context.Context, newName string) error {
+	objName := st.table.FullName() + "." + quoteIdent(st.Name)
+	if _, err := st.table.db.exec(ctx,
+		"EXEC sp_rename @objname = @p1, @newname = @p2, @objtype = N'STATISTICS'",
+		objName, newName,
+	); err != nil {
+		return fmt.Errorf("gosmo: rename statistic %q to %q: %w", st.Name, newName, err)
+	}
+	setIfApplied(ctx, &st.Name, newName)
+	return nil
+}

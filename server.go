@@ -778,7 +778,7 @@ func (s *Server) DatabaseByNameContext(ctx context.Context, name string) (*Datab
 		&compatLevel, &collation, &d.isReadOnly, &d.createDate,
 	); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return nil, fmt.Errorf("gosmo: database %q not found", name)
+			return nil, notFoundf("gosmo: database %q not found", name)
 		}
 		return nil, fmt.Errorf("gosmo: database by name: %w", err)
 	}
@@ -908,6 +908,49 @@ func (s *Server) DropDatabaseContext(ctx context.Context, name string, force boo
 	return nil
 }
 
+// RenameDatabase renames a database (ALTER DATABASE ... MODIFY NAME). The
+// server needs exclusive access to it, so any other connection to the
+// database fails the statement outright rather than waiting.
+//
+// When force is true the database is put into SINGLE_USER WITH ROLLBACK
+// IMMEDIATE first — terminating those connections and rolling back their
+// transactions — and back to MULTI_USER afterwards, including when the
+// rename itself fails, so a refused rename never leaves the database
+// single-user.
+func (s *Server) RenameDatabase(oldName, newName string, force bool) error {
+	return s.RenameDatabaseContext(context.Background(), oldName, newName, force)
+}
+
+// RenameDatabaseContext is the context-aware variant of RenameDatabase.
+func (s *Server) RenameDatabaseContext(ctx context.Context, oldName, newName string, force bool) error {
+	if oldName == "" || newName == "" {
+		return fmt.Errorf("gosmo: rename database: both names are required")
+	}
+	if force {
+		if err := s.execContext(ctx,
+			fmt.Sprintf("ALTER DATABASE %s SET SINGLE_USER WITH ROLLBACK IMMEDIATE", quoteIdent(oldName)),
+		); err != nil {
+			return fmt.Errorf("gosmo: set single user on %q: %w", oldName, err)
+		}
+	}
+	q := fmt.Sprintf("ALTER DATABASE %s MODIFY NAME = %s", quoteIdent(oldName), quoteIdent(newName))
+	err := s.execContext(ctx, q)
+	if force {
+		// The name to release is whichever one the database now has.
+		name := newName
+		if err != nil {
+			name = oldName
+		}
+		if mu := s.execContext(ctx, fmt.Sprintf("ALTER DATABASE %s SET MULTI_USER", quoteIdent(name))); mu != nil && err == nil {
+			return fmt.Errorf("gosmo: set multi user on %q: %w", name, mu)
+		}
+	}
+	if err != nil {
+		return fmt.Errorf("gosmo: rename database %q to %q: %w", oldName, newName, err)
+	}
+	return nil
+}
+
 // -- Logins --------------------------------------------------------------------
 
 // Logins returns all server-level logins.
@@ -964,7 +1007,7 @@ func (s *Server) LoginByNameContext(ctx context.Context, name string) (*Login, e
 		&l.Name, &l.SID, &l.LoginType, &l.IsDisabled, &defDB, &l.CreateDate, &l.ModifyDate,
 	); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return nil, fmt.Errorf("gosmo: login %q not found", name)
+			return nil, notFoundf("gosmo: login %q not found", name)
 		}
 		return nil, fmt.Errorf("gosmo: find login %q: %w", name, err)
 	}
@@ -1141,7 +1184,7 @@ func (s *Server) ServerRoleByNameContext(ctx context.Context, name string) (*Ser
 		&r.ID, &r.IsFixedRole, &r.Owner, &r.SID, &r.CreateDate, &r.ModifyDate, &members,
 	); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return nil, fmt.Errorf("gosmo: server role %q not found", name)
+			return nil, notFoundf("gosmo: server role %q not found", name)
 		}
 		return nil, fmt.Errorf("gosmo: find server role %q: %w", name, err)
 	}
@@ -1149,6 +1192,31 @@ func (s *Server) ServerRoleByNameContext(ctx context.Context, name string) (*Ser
 		r.Members = strings.Split(members.String, ", ")
 	}
 	return r, nil
+}
+
+// DropServerRole drops a user-defined server role. A fixed role, or one
+// that still owns another role, is refused by the server, not here.
+func (s *Server) DropServerRole(name string) error {
+	return s.DropServerRoleContext(context.Background(), name)
+}
+
+// DropServerRoleContext is the context-aware variant of DropServerRole.
+func (s *Server) DropServerRoleContext(ctx context.Context, name string) error {
+	if name == "" {
+		return fmt.Errorf("gosmo: drop server role: name is required")
+	}
+	if err := s.execContext(ctx, "DROP SERVER ROLE "+quoteIdent(name)); err != nil {
+		return fmt.Errorf("gosmo: drop server role %q: %w", name, err)
+	}
+	return nil
+}
+
+// Drop drops this server role.
+func (r *ServerRole) Drop() error { return r.DropContext(context.Background()) }
+
+// DropContext is the context-aware variant of Drop.
+func (r *ServerRole) DropContext(ctx context.Context) error {
+	return r.server.DropServerRoleContext(ctx, r.Name)
 }
 
 // Rename changes the server role's name.

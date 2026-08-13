@@ -96,3 +96,21 @@ ORDER  BY o.name`
 	}
 	return funcs, rows.Err()
 }
+
+// DropFunction drops a user-defined function — scalar, inline
+// table-valued, or multi-statement table-valued alike, all of which DROP
+// FUNCTION removes.
+func (d *Database) DropFunction(schema, name string) error {
+	return d.DropFunctionContext(context.Background(), schema, name)
+}
+
+// DropFunctionContext is the context-aware variant of DropFunction.
+func (d *Database) DropFunctionContext(ctx context.Context, schema, name string) error {
+	if schema == "" {
+		schema = "dbo"
+	}
+	if _, err := d.exec(ctx, "DROP FUNCTION IF EXISTS "+qualifiedName(schema, name)); err != nil {
+		return fmt.Errorf("gosmo: drop function [%s].[%s]: %w", schema, name, err)
+	}
+	return nil
+}

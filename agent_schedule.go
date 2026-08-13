@@ -168,7 +168,7 @@ func (s *Server) ScheduleByNameContext(ctx context.Context, name string) (*Sched
 	}, q, name)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return nil, fmt.Errorf("gosmo: schedule %q not found", name)
+			return nil, notFoundf("gosmo: schedule %q not found", name)
 		}
 		return nil, fmt.Errorf("gosmo: schedule by name: %w", err)
 	}

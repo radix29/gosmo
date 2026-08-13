@@ -55,7 +55,13 @@ func qualifiedName(schema, name string) string {
 
 // likeEscape escapes T-SQL LIKE wildcard characters (%, _, [) in s so it can
 // be embedded in a pattern (e.g. '%' + @p1 + '%') and matched literally.
-// Pair with an ESCAPE '\' clause on the LIKE itself.
+// Pair with an ESCAPE '\' clause on the LIKE itself — without the clause the
+// backslashes this adds are matched as themselves.
+//
+// The escaping is not cosmetic. _ and % are both legal in an identifier, so a
+// user searching for one gets a wildcard match instead of the name they typed;
+// and a name containing [ turns the pattern into a character class that
+// silently matches nothing, so the search comes up empty with no explanation.
 func likeEscape(s string) string {
 	r := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`, `[`, `\[`)
 	return r.Replace(s)

@@ -72,7 +72,7 @@ FROM (
 WHERE  x.qualified LIKE @p1 ESCAPE '\'
 ORDER  BY x.rank, x.qualified`
 
-	args := []any{"%" + escapeLikePattern(strings.ToLower(search.Name)) + "%"}
+	args := []any{"%" + likeEscape(strings.ToLower(search.Name)) + "%"}
 	if search.Limit > 0 {
 		args = append(args, search.Limit)
 	}
@@ -93,18 +93,4 @@ ORDER  BY x.rank, x.qualified`
 		refs = append(refs, r)
 	}
 	return refs, rows.Err()
-}
-
-// escapeLikePattern makes s match literally inside a LIKE pattern that
-// declares ESCAPE '\'. Without it a user searching for an object whose name
-// contains _ or % — both legal in an identifier — gets a wildcard match
-// instead, and a name containing [ makes the pattern a character class that
-// silently matches nothing.
-func escapeLikePattern(s string) string {
-	return strings.NewReplacer(
-		`\`, `\\`,
-		`%`, `\%`,
-		`_`, `\_`,
-		`[`, `\[`,
-	).Replace(s)
 }

@@ -90,3 +90,19 @@ ORDER  BY o.name`
 	}
 	return views, rows.Err()
 }
+
+// DropView drops a view.
+func (d *Database) DropView(schema, name string) error {
+	return d.DropViewContext(context.Background(), schema, name)
+}
+
+// DropViewContext is the context-aware variant of DropView.
+func (d *Database) DropViewContext(ctx context.Context, schema, name string) error {
+	if schema == "" {
+		schema = "dbo"
+	}
+	if _, err := d.exec(ctx, "DROP VIEW IF EXISTS "+qualifiedName(schema, name)); err != nil {
+		return fmt.Errorf("gosmo: drop view [%s].[%s]: %w", schema, name, err)
+	}
+	return nil
+}

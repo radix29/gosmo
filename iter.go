@@ -196,6 +196,22 @@ func (s *Server) ReadErrorLogSeq(ctx context.Context, logNumber int) iter.Seq2[*
 	})
 }
 
+// ReadLogSeq returns an iterator over the lines of the given log file of
+// the given family (0 = current, 1 = the first archive, …).
+func (s *Server) ReadLogSeq(ctx context.Context, logType ErrorLogType, logNumber int) iter.Seq2[*ErrorLogEntry, error] {
+	return seqFrom(ctx, func(ctx context.Context) ([]*ErrorLogEntry, error) {
+		return s.ReadLogContext(ctx, logType, logNumber)
+	})
+}
+
+// EnumErrorLogSeq returns an iterator over the available log files of the
+// given family.
+func (s *Server) EnumErrorLogSeq(ctx context.Context, logType ErrorLogType) iter.Seq2[*ErrorLogFile, error] {
+	return seqFrom(ctx, func(ctx context.Context) ([]*ErrorLogFile, error) {
+		return s.EnumErrorLogsContext(ctx, logType)
+	})
+}
+
 // AvailabilityGroupSeq returns an iterator over every availability group this
 // instance participates in.
 func (s *Server) AvailabilityGroupSeq(ctx context.Context) iter.Seq2[*AvailabilityGroup, error] {

@@ -169,7 +169,7 @@ WHERE  sp.name = @p1`
 	}, q, l.Name)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return nil, fmt.Errorf("gosmo: login %q not found", l.Name)
+			return nil, notFoundf("gosmo: login %q not found", l.Name)
 		}
 		return nil, fmt.Errorf("gosmo: login details for %q: %w", l.Name, err)
 	}

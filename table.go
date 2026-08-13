@@ -186,7 +186,7 @@ ORDER  BY c.column_id`
 	// OBJECT_ID found nothing — report that rather than an empty column list,
 	// which reads as "this object has no columns".
 	if len(cols) == 0 {
-		return nil, fmt.Errorf("gosmo: table or view %s not found in %q", ref, d.name)
+		return nil, notFoundf("gosmo: table or view %s not found in %q", ref, d.name)
 	}
 	return cols, nil
 }
@@ -785,4 +785,22 @@ func colTypeSQL(col ColumnDefinition) string {
 		}
 	}
 	return string(col.DataType)
+}
+
+// DropConstraint drops a named table constraint — a PRIMARY KEY, UNIQUE
+// constraint, FOREIGN KEY, or CHECK constraint. All four share one
+// per-table name space and are all removed by ALTER TABLE ... DROP
+// CONSTRAINT; an index that is not backing a key constraint is not a
+// constraint and needs Index.Drop instead.
+func (t *Table) DropConstraint(name string) error {
+	return t.DropConstraintContext(context.Background(), name)
+}
+
+// DropConstraintContext is the context-aware variant of DropConstraint.
+func (t *Table) DropConstraintContext(ctx context.Context, name string) error {
+	q := fmt.Sprintf("ALTER TABLE %s DROP CONSTRAINT %s", t.FullName(), quoteIdent(name))
+	if _, err := t.db.exec(ctx, q); err != nil {
+		return fmt.Errorf("gosmo: drop constraint %q on %s: %w", name, t.FullName(), err)
+	}
+	return nil
 }

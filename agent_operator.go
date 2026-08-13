@@ -111,7 +111,7 @@ func (s *Server) OperatorByNameContext(ctx context.Context, name string) (*Opera
 	}, q, name)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return nil, fmt.Errorf("gosmo: operator %q not found", name)
+			return nil, notFoundf("gosmo: operator %q not found", name)
 		}
 		return nil, fmt.Errorf("gosmo: operator by name: %w", err)
 	}

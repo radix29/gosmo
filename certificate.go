@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -109,7 +110,14 @@ func (d *Database) CertificateByNameContext(ctx context.Context, name string) (*
 		return err
 	}, certificateSelect+`
 WHERE  name = @p1`, name)
-	if err == sql.ErrNoRows {
+	// errors.Is, not ==, and it matters here more than at the twenty sites that
+	// already use it: this is the one lookup whose not-found answer is
+	// (nil, nil). Database.queryRow already wraps some of its failures
+	// (fmt.Errorf on the USE), so a bare comparison that stopped matching
+	// would silently turn "no such certificate" into an error and send
+	// callers that branch on cert == nil down the wrong path — the endpoint
+	// pipeline creates a certificate on exactly that branch.
+	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {

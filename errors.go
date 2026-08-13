@@ -9,6 +9,66 @@ import (
 )
 
 // ============================================================
+// Not found
+// ============================================================
+
+// ErrNotFound is the sentinel every by-name lookup that reports absence as an
+// error wraps, so a caller can tell "this object does not exist" from "the
+// lookup itself failed" with errors.Is(err, gosmo.ErrNotFound) instead of
+// matching on message text.
+//
+// Making that distinction matters: a caller that treats any error as absence
+// will go on to create an object it never established was missing, and report
+// the creation's failure instead of the permission or connection error that
+// actually stopped it.
+//
+// Three not-found conventions exist across the package, and the difference is
+// deliberate rather than an oversight:
+//
+//   - Most by-name lookups — LoginByName, DatabaseByName, TableByName,
+//     UserByName, RoleByName, AgentJobByName, AlertByName, OperatorByName,
+//     ScheduleByName, ServerRoleByName, ConfigurationByName,
+//     AvailabilityGroupByName and the scripter's view/procedure/function
+//     lookups — return an error wrapping ErrNotFound.
+//   - CertificateByName returns (nil, nil), because its callers branch on
+//     absence as the ordinary case rather than the exceptional one.
+//   - AgentStatus reports an unreachable Agent as a populated value
+//     (StatusText "Unknown"), not an error.
+//
+// AvailabilityGroupByName's not-found error additionally still satisfies
+// errors.Is(err, sql.ErrNoRows), which it promised before ErrNotFound existed.
+var ErrNotFound = errors.New("not found")
+
+// notFoundError carries a caller-facing message that reads naturally on its
+// own while still reaching ErrNotFound through the error chain — so adding the
+// sentinel changed no existing message text.
+type notFoundError struct {
+	msg  string
+	also error // an extra error kept reachable, e.g. sql.ErrNoRows
+}
+
+func (e *notFoundError) Error() string { return e.msg }
+
+func (e *notFoundError) Unwrap() []error {
+	if e.also == nil {
+		return []error{ErrNotFound}
+	}
+	return []error{ErrNotFound, e.also}
+}
+
+// notFoundf builds a not-found error whose message is exactly format/args.
+func notFoundf(format string, args ...any) error {
+	return &notFoundError{msg: fmt.Sprintf(format, args...)}
+}
+
+// notFoundfAlso is notFoundf keeping a second error reachable through
+// errors.Is — for a lookup that documented a different sentinel before
+// ErrNotFound existed and must go on satisfying it.
+func notFoundfAlso(also error, format string, args ...any) error {
+	return &notFoundError{msg: fmt.Sprintf(format, args...), also: also}
+}
+
+// ============================================================
 // SQL Server errors
 // ============================================================
 

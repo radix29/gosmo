@@ -242,7 +242,7 @@ WHERE  j.name = @p1`
 		&lastRun, &lastOutcome, &lastDuration, &nextRun, &jobState,
 	); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return nil, fmt.Errorf("gosmo: agent job %q not found", name)
+			return nil, notFoundf("gosmo: agent job %q not found", name)
 		}
 		return nil, fmt.Errorf("gosmo: job by name: %w", err)
 	}

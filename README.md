@@ -59,6 +59,7 @@ classDiagram
         +Database(name) *Database
         +CreateDatabase(name, opts) error
         +DropDatabase(name, force) error
+        +RenameDatabase(oldName, newName, force) error
         +Logins() []*Login
         +LoginByName(name) *Login
         +Login(name) *Login
@@ -66,6 +67,7 @@ classDiagram
         +DropLogin(name) error
         +ServerRoles() []*ServerRole
         +ServerRoleByName(name) *ServerRole
+        +DropServerRole(name) error
         +ServerRoleMembers(role) []*RoleMember
         +AddServerRoleMember(role, member) error
         +RemoveServerRoleMember(role, member) error
@@ -313,13 +315,17 @@ classDiagram
         +TableByName(schema, name) *Table
         +CreateTable(req) error
         +DropTable(schema, name, cascade) error
+        +RenameTable(schema, oldName, newName) error
+        +RenameObject(schema, oldName, newName) error
         +Catalog() *Catalog
         +SystemCatalog() *Catalog
         +Views() []*View
+        +DropView(schema, name) error
         +StoredProcedures() []*StoredProcedure
         +CreateStoredProcedure(schema, name, body) error
         +DropStoredProcedure(schema, name) error
         +UserDefinedFunctions() []*UserDefinedFunction
+        +DropFunction(schema, name) error
         +SystemViews() []*View
         +SystemStoredProcedures() []*StoredProcedure
         +SystemFunctions() []*UserDefinedFunction
@@ -332,13 +338,17 @@ classDiagram
         +DropUser(name) error
         +DatabaseRoles() []*DatabaseRole
         +RoleByName(name) *DatabaseRole
+        +DropDatabaseRole(name) error
         +RoleMembers(role) []*RoleMember
         +AddRoleMember(role, member) error
         +RemoveRoleMember(role, member) error
         +FileGroups() []*FileGroup
         +Triggers() []*Trigger
+        +DropTrigger(schema, name) error
         +Sequences() []*Sequence
+        +DropSequence(schema, name) error
         +Synonyms() []*Synonym
+        +DropSynonym(schema, name) error
         +PartitionFunctions() []*PartitionFunction
         +PartitionSchemes() []*PartitionScheme
         +ExtendedProperties(level) []*ExtendedProperty
@@ -819,6 +829,7 @@ classDiagram
         +CreateIndex(req) error
         +CreateStatistic(name, cols, pct) error
         +AlterColumn(col) error
+        +DropConstraint(name) error
     }
 
     class Column {
@@ -943,6 +954,7 @@ classDiagram
         +Histogram() []*StatisticHistogramStep
         +Update(samplePct) error
         +Drop() error
+        +Rename(newName) error
     }
 
     class StatisticHeader {
@@ -1081,6 +1093,7 @@ classDiagram
         +CreateDate time.Time
         +ModifyDate time.Time
         +Rename(newName) error
+        +Drop() error
         +ChangeOwner(newOwner) error
     }
 
@@ -1115,6 +1128,7 @@ classDiagram
         +ModifyDate time.Time
         +Members []string
         +Rename(newName) error
+        +Drop() error
         +ChangeOwner(newOwner) error
     }
 
