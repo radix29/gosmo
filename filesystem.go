@@ -43,16 +43,26 @@ func (s *Server) EnumFileSystem(path string) ([]*FileSystemEntry, error) {
 // EnumFileSystemContext is the context-aware variant of EnumFileSystem.
 //
 // On SQL Server 2017 and later this reads sys.dm_os_enumerate_filesystem,
-// which reports sizes and timestamps; older instances fall back to
-// xp_dirtree, which reports names and the file/directory flag only.
+// which reports sizes and timestamps; anything else uses xp_dirtree, which
+// reports names and the file/directory flag only.
+//
+// The version gate is deliberately positive — the DMV is used only when the
+// instance is *known* to be 2017 or later, and an unknown version (no
+// ServerInfo loaded, or a major of 0) takes xp_dirtree. xp_dirtree exists on
+// every version this library talks to and the DMV does not, so guessing
+// toward the DMV turns an unknown pre-2017 instance into a hard failure,
+// while guessing toward xp_dirtree costs a known-modern one only its Size
+// and LastModified fields. A caller browsing for a path needs the names and
+// the directory flag; it can live without the other two. Degrade, don't
+// fail.
 func (s *Server) EnumFileSystemContext(ctx context.Context, path string) ([]*FileSystemEntry, error) {
 	if strings.TrimSpace(path) == "" {
 		return nil, fmt.Errorf("gosmo: enumerate filesystem: empty path")
 	}
-	if s.info != nil && s.info.VersionMajor > 0 && s.info.VersionMajor < 14 {
-		return s.enumFileSystemDirTree(ctx, path)
+	if s.info != nil && s.info.VersionMajor >= 14 {
+		return s.enumFileSystemDMF(ctx, path)
 	}
-	return s.enumFileSystemDMF(ctx, path)
+	return s.enumFileSystemDirTree(ctx, path)
 }
 
 func (s *Server) enumFileSystemDMF(ctx context.Context, path string) ([]*FileSystemEntry, error) {

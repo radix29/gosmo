@@ -41,8 +41,8 @@ func (c *captureConn) QueryContext(ctx context.Context, query string, args []dri
 // gosmo would otherwise bail out before reaching the SQL under test.
 type captureRows struct {
 	cols []string
-	row  []driver.Value
-	done bool
+	rows [][]driver.Value
+	next int
 }
 
 func (r *captureRows) Columns() []string {
@@ -53,20 +53,30 @@ func (r *captureRows) Columns() []string {
 }
 func (r *captureRows) Close() error { return nil }
 func (r *captureRows) Next(dest []driver.Value) error {
-	if r.row == nil || r.done {
+	if r.next >= len(r.rows) {
 		return io.EOF
 	}
-	r.done = true
-	copy(dest, r.row)
+	copy(dest, r.rows[r.next])
+	r.next++
 	return nil
 }
 
 // cannedRow is a reply the capture driver hands back for any statement
-// containing match.
+// containing match. Set row for a single reply row, rows for several — a
+// test that cares about ordering or grouping across rows needs the latter.
 type cannedRow struct {
 	match string
 	cols  []string
 	row   []driver.Value
+	rows  [][]driver.Value
+}
+
+func (c cannedRow) reply() *captureRows {
+	rows := c.rows
+	if rows == nil && c.row != nil {
+		rows = [][]driver.Value{c.row}
+	}
+	return &captureRows{cols: c.cols, rows: rows}
 }
 
 // tableMetadataRow satisfies Database.TableByNameContext's sys.tables lookup,
@@ -98,7 +108,7 @@ func (l *captureLog) replyFor(q string) *captureRows {
 	defer l.mu.Unlock()
 	for _, c := range l.canned {
 		if strings.Contains(q, c.match) {
-			return &captureRows{cols: c.cols, row: c.row}
+			return c.reply()
 		}
 	}
 	return &captureRows{}
@@ -121,6 +131,19 @@ func (l *captureLog) find(needle string) string {
 		}
 	}
 	return ""
+}
+
+// count returns how many captured statements contain needle.
+func (l *captureLog) count(needle string) int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	n := 0
+	for _, q := range l.qs {
+		if strings.Contains(q, needle) {
+			n++
+		}
+	}
+	return n
 }
 
 var captured captureLog

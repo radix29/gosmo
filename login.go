@@ -367,47 +367,63 @@ SELECT dp.name, ISNULL(dp.default_schema_name, ''),
 FROM   sys.database_principals dp
 WHERE  dp.sid = @p1`
 
+	// One query per database, serially. Fanning these across a worker pool
+	// was tried and measured slower against a 46-database instance
+	// (2026-08-14): Database.query pins a pooled connection of its own, and
+	// on a pool with nothing idle each worker pays a full TCP+TLS+login
+	// handshake, which costs far more than the query latency it overlaps.
 	var out []*LoginUserMapping
 	for _, db := range dbs {
 		if db.State() != "ONLINE" {
 			continue
 		}
-		rows, err := db.query(ctx, q, l.SID)
+		ms, err := l.userMappingsIn(ctx, db, q)
 		if err != nil {
-			// Skipping an unreachable database is the point of this loop, but
-			// a cancelled context is not one of those — every remaining
-			// database would fail the same way, so the scan stops instead of
-			// issuing a doomed query per database.
-			if ctx.Err() != nil {
-				return nil, ctx.Err()
-			}
-			continue
+			return nil, err
 		}
-		for rows.Next() {
-			m := &LoginUserMapping{Database: db.Name()}
-			var roles string
-			if err := rows.Scan(&m.User, &m.DefaultSchema, &roles); err != nil {
-				rows.Close()
-				return nil, fmt.Errorf("gosmo: user mappings for login %q in %q: %w", l.Name, db.Name(), err)
-			}
-			if roles != "" {
-				m.Roles = strings.Split(roles, ", ")
-			}
-			out = append(out, m)
+		out = append(out, ms...)
+	}
+	return out, nil
+}
+
+// userMappingsIn reads one database's mapping for l, or (nil, nil) if that
+// database's query would not open — the skip UserMappings documents.
+func (l *Login) userMappingsIn(ctx context.Context, db *Database, q string) ([]*LoginUserMapping, error) {
+	rows, err := db.query(ctx, q, l.SID)
+	if err != nil {
+		// Skipping an unreachable database is the point of this scan, but a
+		// cancelled context is not one of those — every remaining database
+		// would fail the same way, so the scan stops instead of issuing a
+		// doomed query per database.
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
 		}
-		err = rows.Err()
-		rows.Close()
-		if err != nil {
-			if ctx.Err() != nil {
-				return nil, ctx.Err()
-			}
-			// Not skipped, unlike a failure to *open* the query above. By here
-			// this database's rows are already in out, so continuing would
-			// return a silently short list and report success — the same
-			// failure the Scan arm above aborts on, and the reason the skip
-			// stops at the query boundary rather than covering iteration too.
+		return nil, nil
+	}
+	defer rows.Close()
+
+	var out []*LoginUserMapping
+	for rows.Next() {
+		m := &LoginUserMapping{Database: db.Name()}
+		var roles string
+		if err := rows.Scan(&m.User, &m.DefaultSchema, &roles); err != nil {
 			return nil, fmt.Errorf("gosmo: user mappings for login %q in %q: %w", l.Name, db.Name(), err)
 		}
+		if roles != "" {
+			m.Roles = strings.Split(roles, ", ")
+		}
+		out = append(out, m)
+	}
+	if err := rows.Err(); err != nil {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		// Not skipped, unlike a failure to *open* the query above. By here
+		// this database's rows are already built, so continuing would return a
+		// silently short list and report success — the same failure the Scan
+		// arm above aborts on, and the reason the skip stops at the query
+		// boundary rather than covering iteration too.
+		return nil, fmt.Errorf("gosmo: user mappings for login %q in %q: %w", l.Name, db.Name(), err)
 	}
 	return out, nil
 }

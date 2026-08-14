@@ -5,6 +5,16 @@ starts tracking detail from `v0.0.4` onward; `RELEASE.md` covers the
 high-level shape of every release, including the ones before this file
 existed.
 
+## Unreleased
+
+### Changed
+
+- **`EnumFileSystemContext`'s version gate now fails toward `xp_dirtree`** (`filesystem.go`). It gated negatively — `xp_dirtree` only on a *known* pre-2017 instance, so an unknown version (no `ServerInfo` loaded, or a major of 0) fell through to `sys.dm_os_enumerate_filesystem`. The DMV does not exist before SQL Server 2017 and `xp_dirtree` exists everywhere, so the guess was aimed at the branch that can fail outright. The gate is now positive: the DMV only on a known 2017-or-later instance, everything else on `xp_dirtree`. **Visible to callers only in the unknown-version case**, which now returns entries with `Size` zero and `LastModified` zero rather than an error — a caller browsing for a path needs the names and the directory flag and can live without the other two. Every known version is unchanged. The premise that the fallback describes the *same* directory (rather than a different answer) is pinned live by `live_filesystem_test.go`: on one connection, an unknown-version `Server` and a major-17 one return identical entries with identical directory flags, and only the DMV reports sizes and timestamps.
+
+### Added
+
+- **`live_filesystem_test.go`** (`-tags livedb`): read-only live coverage of the version gate above — that a known-modern instance takes the DMV and comes back with the sizes and timestamps only the DMV has, and that the `xp_dirtree` fallback agrees with it entry for entry.
+
 ## v0.0.8
 
 ### Added

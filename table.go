@@ -312,7 +312,43 @@ func (t *Table) Indexes() ([]*Index, error) {
 }
 
 // IndexesContext is the context-aware variant of Indexes.
+//
+// Two queries, whatever the index count: one for the indexes, one for every
+// index column on the object at once. Fetching each index's columns inside
+// the loop over the indexes cost a query per index, and Database.query pins
+// its own pooled connection and issues its own USE, so a table with 20
+// indexes ran 42 round trips across 21 connections — with the outer one held
+// throughout, which is the shape that exhausts a pool rather than merely
+// being slow.
 func (t *Table) IndexesContext(ctx context.Context) ([]*Index, error) {
+	indexes, err := t.indexListContext(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("gosmo: list indexes for %s: %w", t.FullName(), err)
+	}
+	if len(indexes) == 0 {
+		return nil, nil
+	}
+
+	cols, err := t.indexColumnsContext(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("gosmo: columns of indexes on %s: %w", t.FullName(), err)
+	}
+	for _, idx := range indexes {
+		for _, c := range cols[idx.IndexID] {
+			if c.IsIncluded {
+				idx.IncludedColumns = append(idx.IncludedColumns, c)
+			} else {
+				idx.KeyColumns = append(idx.KeyColumns, c)
+			}
+		}
+	}
+	return indexes, nil
+}
+
+// indexListContext returns the table's indexes with no columns attached.
+// Its rows are drained and closed before IndexesContext asks for the columns,
+// so the two queries never hold two pooled connections at once.
+func (t *Table) indexListContext(ctx context.Context) ([]*Index, error) {
 	const q = `
 SELECT i.name, i.index_id, i.type_desc, i.is_unique, i.is_primary_key,
        i.is_unique_constraint, i.is_disabled, i.fill_factor,
@@ -328,7 +364,7 @@ ORDER  BY i.index_id`
 
 	rows, err := t.db.query(ctx, q, t.ObjectID)
 	if err != nil {
-		return nil, fmt.Errorf("gosmo: list indexes for %s: %w", t.FullName(), err)
+		return nil, err
 	}
 	defer rows.Close()
 
@@ -341,7 +377,7 @@ ORDER  BY i.index_id`
 			&idx.IsDisabled, &idx.FillFactor, &idx.FilterDefinition,
 			&idx.IsPadded, &idx.IgnoreDupKey, &idx.AllowRowLocks, &idx.AllowPageLocks,
 			&idx.DataCompression); err != nil {
-			return nil, fmt.Errorf("gosmo: list indexes for %s: %w", t.FullName(), err)
+			return nil, err
 		}
 		switch desc := strings.TrimSpace(typeDesc.String); desc {
 		case "CLUSTERED":
@@ -365,47 +401,39 @@ ORDER  BY i.index_id`
 			// empty, so a caller displays the real type instead of nothing.
 			idx.Type = IndexType(desc)
 		}
-
-		cols, err := t.indexColumnsContext(ctx, idx.IndexID)
-		if err != nil {
-			return nil, fmt.Errorf("gosmo: columns of index %q on %s: %w", idx.Name, t.FullName(), err)
-		}
-		for _, c := range cols {
-			if c.IsIncluded {
-				idx.IncludedColumns = append(idx.IncludedColumns, c)
-			} else {
-				idx.KeyColumns = append(idx.KeyColumns, c)
-			}
-		}
 		indexes = append(indexes, idx)
 	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("gosmo: list indexes for %s: %w", t.FullName(), err)
-	}
-	return indexes, nil
+	return indexes, rows.Err()
 }
 
-func (t *Table) indexColumnsContext(ctx context.Context, indexID int) ([]IndexColumn, error) {
+// indexColumnsContext returns every index column on the table, keyed by
+// index_id and in each index's own key order.
+//
+// The rows for index_id 0 — the heap's, which no index in the list claims —
+// come back too, and are simply never looked up: excluding them would cost a
+// predicate to save nothing, since a heap has at most one such row.
+func (t *Table) indexColumnsContext(ctx context.Context) (map[int][]IndexColumn, error) {
 	const q = `
-SELECT c.name, ic.is_descending_key, ic.is_included_column
+SELECT ic.index_id, c.name, ic.is_descending_key, ic.is_included_column
 FROM   sys.index_columns ic
 JOIN   sys.columns c ON c.object_id = ic.object_id AND c.column_id = ic.column_id
-WHERE  ic.object_id = @p1 AND ic.index_id = @p2
-ORDER  BY ic.key_ordinal, ic.index_column_id`
+WHERE  ic.object_id = @p1
+ORDER  BY ic.index_id, ic.key_ordinal, ic.index_column_id`
 
-	rows, err := t.db.query(ctx, q, t.ObjectID, indexID)
+	rows, err := t.db.query(ctx, q, t.ObjectID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	var cols []IndexColumn
+	cols := make(map[int][]IndexColumn)
 	for rows.Next() {
+		var indexID int
 		c := IndexColumn{}
-		if err := rows.Scan(&c.Name, &c.Descending, &c.IsIncluded); err != nil {
+		if err := rows.Scan(&indexID, &c.Name, &c.Descending, &c.IsIncluded); err != nil {
 			return nil, err
 		}
-		cols = append(cols, c)
+		cols[indexID] = append(cols[indexID], c)
 	}
 	return cols, rows.Err()
 }
