@@ -52,6 +52,12 @@ the instance is modified; a program that fails partway still runs its cleanup,
 because `demo.Must` panics rather than exiting and every `main` defers
 `demo.Exit()` first.
 
+Not covered by any program: Always On availability groups, database
+mirroring endpoints, and the certificate exchange between them. All three
+need a multi-instance cluster rather than the single throwaway database
+these build, so they are exercised by `live_availability_group_test.go`
+(`-tags livedb`) instead.
+
 Two things they cannot clean up: `backup/` leaves its `.bak` file behind (SQL
 Server has no "delete file" verb), and `jobs/` needs SQL Server Agent running
 for the run/history section — it says so and skips it otherwise.

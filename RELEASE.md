@@ -4,6 +4,115 @@ High-level, release-to-release summary of what gosmo does at each tag —
 what changed in spirit, not the full diff. For the itemized, per-symbol
 detail behind each release from `v0.0.4` onward, see `CHANGELOG.md`.
 
+## v0.0.9
+
+An Always On release, and a sweep over how failures are reported. gosmo
+could see everything about a SQL Server instance except its high-availability
+configuration; availability groups, their replicas, databases and listeners
+are now readable and writable, along with the two things setting one up
+needs and gosmo also lacked — certificates that can move between instances
+without touching either host's filesystem, and the database mirroring
+endpoint replicas ship log through. Alongside that: the error log is
+readable, the server's own filesystem is browsable, absence is now a
+sentinel a caller can test for rather than a message to match on, and the
+`Drop`/`Rename` gaps across the object families are filled in.
+
+### New
+
+- **Always On availability groups**, end to end. Read the group, its
+  replicas, the per-database synchronization state (queue sizes, rates,
+  secondary lag, last sent/received/hardened/redone/commit times) and the
+  listeners with their IP configurations; write every group and replica
+  setting SSMS exposes, add and remove replicas, databases and listeners,
+  create and drop a group, join a replica to one, and fail over — planned or
+  forced with data loss. A cluster-wide catalog view and a `sys.dm_hadr_*`
+  DMV do not say the same thing: the catalog agrees on every replica, the
+  DMVs describe only what the local instance can see, so a secondary reports
+  nothing about databases it does not host. `PrimaryReplicaServerName` and
+  `IsLocalPrimary` are there so a caller can tell where it is and follow the
+  primary.
+- **Certificates and the database master key**, including the pair that
+  moves a certificate between instances with **no filesystem access on
+  either host** — `Certificate.Encoded` and `CreateCertificate`'s
+  `FromBinary`. The documented route is `BACKUP CERTIFICATE` to a file,
+  which a client library cannot do. Only the public certificate crosses the
+  wire, which is what makes it safe over an ordinary connection and enough
+  for mirroring endpoints.
+- **The database mirroring endpoint** — read, create, start, stop, drop, and
+  grant `CONNECT` on it. It is Always On's transport, and an instance can
+  have at most one however many groups use it, so a second group over the
+  same pair of instances reuses the first one's.
+- **The error log**, both families: enumerate the archived files with their
+  sizes and last-written times, and read one. `ErrorLogType` is the argument
+  `xp_readerrorlog` itself takes, so the Agent log goes through the same two
+  methods rather than a second pair. Cycling the log is here too.
+- **The server's own filesystem** — directory listing, fixed drives, and an
+  existence check. Every path is interpreted by the *server*, which is
+  routinely a different machine with different path conventions from the
+  process calling gosmo; that is why these exist rather than a caller using
+  `os.ReadDir`.
+- **`ErrNotFound`.** Every by-name lookup that reports absence as an error
+  now wraps it, so "this object does not exist" is `errors.Is`-testable
+  rather than a message to match on — the distinction a caller needs before
+  it creates an object it never established was missing. No message text
+  changed. The two lookups that report absence differently on purpose are
+  named in the sentinel's own doc comment.
+- **`Drop` and `Rename`, filled in** where an object family had one but not
+  the other: views, functions, triggers, sequences, synonyms, database and
+  server roles, table constraints, statistics, and renaming a database or
+  any `sp_rename`-able schema-scoped object.
+- A lightweight `db.Table(schema, name)` handle, matching the ones
+  `Database`, `Login` and the Agent families already had — the form that
+  works under `WithScript`.
+- `ServerInfo.Platform` ("Windows" or "Linux"), read from `@@VERSION` so it
+  is populated on pre-2017 instances too.
+- Seven new `*Seq` iterators, one per collection added here; live suites for
+  Always On, for the not-found classification and for the filesystem
+  fallback; and statement-pinning suites that assert the *whole* T-SQL every
+  write emits, each case feeding a quote-hostile name through every
+  parameter that reaches the statement text.
+
+### Fixes
+
+- **`Table.Indexes` could exhaust a connection pool.** It fetched each
+  index's columns inside the loop over the indexes, and every one of those
+  queries pins a pooled connection of its own — a table with 20 indexes cost
+  42 round trips across 21 connections, with the outer one held throughout.
+  Now 2.
+- **An empty schema addressed the wrong object.** `[].[name]` is what the
+  naive form emits, and `OBJECT_ID` resolves it to NULL, so the caller got
+  an empty result set rather than an error.
+- **`Login.UserMappings` reported a short list as success.** Its skip exists
+  to pass over a database it cannot read, but it also swallowed a failure
+  that struck partway through one whose rows were already in the result.
+- `CreateUser` refuses an empty login name rather than emitting
+  `FOR LOGIN []`, which the server rejects naming a login the caller never
+  typed.
+
+### Changes
+
+- **A `DROP` method no longer emits `IF EXISTS`.** Half of them carried it
+  and half did not, so the same gesture in a caller's UI reported two
+  different things about the same situation. Dropping something that isn't
+  there is now uniformly the server's own error; a caller wanting the
+  idempotent form ignores it, which is a decision this package cannot make
+  for it. The generated *scripts* keep `IF EXISTS` — they exist to be
+  re-run.
+- **Errors say what was being attempted, everywhere.** `rows.Err()` and
+  every `rows.Scan` now wrap with the same message their function's query
+  error uses, across some 35 files. A failure mid-iteration used to reach
+  the caller as a naked `context deadline exceeded` naming nothing.
+- **A restore statement is laid out over several lines.** One that relocates
+  files carries a `MOVE` clause per database file, each holding two full
+  paths; on one line, a caller scripting it for review sees every `MOVE` off
+  the right edge of the editor, which reads as the clauses being missing.
+- **The filesystem enumeration's version gate now fails toward
+  `xp_dirtree`**, which exists everywhere, instead of toward the DMV, which
+  does not exist before SQL Server 2017. Visible only on an instance whose
+  version is unknown, which now gets entries without sizes or timestamps
+  rather than an error.
+- `v0.0.8`'s second, identical LIKE escaper is gone; there is one again.
+
 ## v0.0.8
 
 A permissions release. gosmo could grant, deny and revoke, but only in the

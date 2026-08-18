@@ -27,7 +27,7 @@ published, general-purpose library with users beyond gossms.
   "No callers in gossms" is not evidence of dead code. This covers whole
   files, exported methods, exported types and their fields, and struct
   fields only some paths populate. The `*Seq` iterators in `iter.go` are the
-  standing example: 75 exported methods, zero gossms callers, all
+  standing example: 89 exported methods, zero gossms callers, all
   deliberately kept.
 - When an audit turns up something unused, the allowed moves are: make it
   faster, make its doc comment accurate about what it actually does, or add

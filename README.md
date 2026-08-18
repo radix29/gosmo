@@ -13,6 +13,21 @@ go get github.com/radix29/gosmo
 
 ## Architecture
 
+The class map is split across five diagrams, one per area. It is one map,
+not five — a single Mermaid diagram stops rendering above 50,000 characters
+and the whole thing is well past that, so an edge that crosses areas is drawn
+in the diagram of the area it points *into* (`Server --> AvailabilityGroup`
+is in the high-availability one, where `Server` shows up as a bare box).
+`gosmo.mermaid` holds the same five diagrams, concatenated in order, and is
+kept byte-identical to what is below.
+
+### Connecting, the server, and logins
+
+The entry point, authentication, server-level security and the login
+object — plus the internal connection helpers every read and write goes
+through, and the `WithScript` collector that can capture a write instead of
+running it.
+
 ```mermaid
 classDiagram
     %% =========================================================
@@ -97,7 +112,13 @@ classDiagram
         +DeleteCategory(class, name) error
         +ActiveSessions(sys) []*Session
         +KillSession(id) error
+        +EnumErrorLogs(logType) []*ErrorLogFile
+        +ReadLog(logType, n) []*ErrorLogEntry
         +ReadErrorLog(n) []*ErrorLogEntry
+        +CycleErrorLog() error
+        +EnumFileSystem(path) []*FileSystemEntry
+        +FixedDrives() []*FixedDrive
+        +FileSystemExists(path) bool
         +MailProfiles() []*MailProfile
         +SendMail(opts) error
         +Backup(opts) error
@@ -121,6 +142,12 @@ classDiagram
         +Languages() []*Language
         +ProcessorInfo() *ProcessorInfo
         +DiskVolumes() []DiskVolumeInfo
+        +AvailabilityGroups() []*AvailabilityGroup
+        +AvailabilityGroupByName(name) *AvailabilityGroup
+        +AvailabilityGroup(name) *AvailabilityGroup
+        +CreateAvailabilityGroup(req) *AvailabilityGroup
+        +DatabaseMirroringEndpoint() *DatabaseMirroringEndpoint
+        +CreateDatabaseMirroringEndpoint(spec) *DatabaseMirroringEndpoint
     }
 
     class ServerInfo {
@@ -134,6 +161,7 @@ classDiagram
         +IsSingleUser bool
         +EngineEdition int
         +OSVersion string
+        +Platform string
         +PhysicalMemoryMB int64
         +LogicalCPUCount int
         +DefaultDataPath string
@@ -313,6 +341,7 @@ classDiagram
         +Tables() []*Table
         +TablesBySchema(schema) []*Table
         +TableByName(schema, name) *Table
+        +Table(schema, name) *Table
         +CreateTable(req) error
         +DropTable(schema, name, cascade) error
         +RenameTable(schema, oldName, newName) error
@@ -355,6 +384,11 @@ classDiagram
         +AddExtendedProperty(name, value, level) error
         +SetExtendedProperty(name, value, level) error
         +DropExtendedProperty(name, level) error
+        +Certificates() []*Certificate
+        +CertificateByName(name) *Certificate
+        +CreateCertificate(spec) error
+        +HasMasterKey() bool
+        +CreateMasterKey(password) error
         +ColumnMasterKeys() []*ColumnMasterKey
         +ColumnEncryptionKeys() []*ColumnEncryptionKey
         +SecurityPolicies() []*SecurityPolicy
@@ -512,6 +546,17 @@ classDiagram
     %% =========================================================
     %% Errors
     %% =========================================================
+    class ErrNotFound {
+        <<sentinel>>
+        The error every by-name lookup that
+        reports absence wraps, so errors.Is
+        separates "does not exist" from
+        "the lookup itself failed".
+        CertificateByName returns (nil, nil)
+        instead, and AgentStatus reports an
+        unreachable Agent as a value.
+    }
+
     class SQLError {
         +Number int32
         +State uint8
@@ -551,6 +596,56 @@ classDiagram
         may be shared across goroutines.
     }
 
+    %% =========================================================
+    %% Relationships
+    %% =========================================================
+    ConnectionOptions --> AuthMethod : uses
+    ConnectionOptions --> KerberosOptions : configures AuthWindows via
+    Server --> ConnectionOptions : created from
+    Server --> ServerInfo : has
+    Server "1" --> "*" Database : owns
+    Server "1" --> "*" Login : owns
+    Server "1" --> "*" ServerRole : owns
+    Server "1" --> "*" RoleMember : ServerRoleMembers() returns
+    Server "1" --> "*" LinkedServer : owns
+    Server --> ServerSecurityInfo : has
+    Server "1" --> "*" ServerPermissionEntry : grants
+    Server "1" --> "*" Credential : owns
+    Server --> ServerMemoryStats : has
+    Server "1" --> "*" Language : lists
+    Server --> ProcessorInfo : has
+    Server "1" --> "*" DiskVolumeInfo : lists
+
+    Login ..> nStringLiteral : password quoted by
+    Login --> LoginDetails : has
+    Login "1" --> "*" LoginUserMapping : mapped via
+
+    Database ..> withConn : writes run via
+    Database ..> dbRows : query() returns
+    Database ..> DatabaseQueryRow : single-row reads via
+    Database ..> withRetry : reads retried via
+    Server ..> ServerQuery : reads run via
+    Server ..> withRetry : reads retried via
+
+    withRetry <.. withConn : acquire+USE retried by
+    withRetry <.. dbRows : acquire+USE+query retried by
+    withRetry <.. DatabaseQueryRow : whole scan retried by
+    withRetry <.. ServerQuery : whole scan retried by
+    withRetry <.. IsRetryable : same failure test as
+
+    ScriptCollector ..> Server : captures writes from
+    ScriptCollector ..> Database : captures writes from
+```
+
+### A database: files, options, catalog, and permissions
+
+What `Database` exposes about itself — its files and filegroups, its
+`ALTER DATABASE` options, change tracking, the bulk catalog snapshot, Query
+Store, dependencies and search, and the whole permissions surface, including
+column-level and effective permissions.
+
+```mermaid
+classDiagram
     %% =========================================================
     %% Database files, filegroups, and options
     %% =========================================================
@@ -798,6 +893,42 @@ classDiagram
         +ReturnStatus int32
     }
 
+    %% =========================================================
+    %% Relationships
+    %% =========================================================
+    Database "1" --> "*" DatabaseFileInfo : contains
+    Database "1" --> "*" FileGroup : contains
+    Database --> DatabaseOptions : has
+    Database --> ChangeTrackingInfo : has
+    Database "1" --> "*" TableChangeTracking : tracks
+    Database --> Catalog : Catalog()/SystemCatalog() returns
+    Catalog "1" --> "*" CatalogObject : contains
+    CatalogObject "1" --> "*" CatalogColumn : has
+    Database --> QueryStoreInfo : has
+    Database "1" --> "*" DatabaseScopedConfig : lists
+    Database "1" --> "*" Dependency : dependencies of
+    Database "1" --> "*" SearchResult : search() returns
+    Database --> ExecutionPlan : produces
+    Database "1" --> "*" PermissionEntry : grants
+    Database "1" --> "*" DatabasePermissionEntry : grants
+    Database "1" --> "*" PrincipalSecurable : PermissionsForPrincipal() returns
+    Database "1" --> "*" ColumnPermissionEntry : ColumnPermissions() returns
+    Database "1" --> "*" EffectivePermission : EffectivePermissions() returns
+    Database "1" --> "*" SecurableRef : FindSecurables() returns
+    SecurableSearch ..> SecurableRef : narrows FindSecurables()
+    Database ..> BulkCopy : bulk-loads via
+    Database ..> ProcParam : executes procs with
+    Database --> ProcResult : returns
+```
+
+### Tables, their children, and the object families
+
+`Table` and everything hanging off it (columns, indexes, foreign keys,
+constraints, statistics, partitions), the other object families a database
+contains, and the `Scripter` that generates CREATE DDL for any of them.
+
+```mermaid
+classDiagram
     %% =========================================================
     %% Table and its children
     %% =========================================================
@@ -1141,6 +1272,50 @@ classDiagram
     }
 
     %% =========================================================
+    %% Relationships
+    %% =========================================================
+    Database "1" --> "*" Table : contains
+    Database "1" --> "*" View : contains
+    Database "1" --> "*" StoredProcedure : contains
+    Database "1" --> "*" UserDefinedFunction : contains
+    Database "1" --> "*" Schema : contains
+    Database "1" --> "*" User : contains
+    Database "1" --> "*" DatabaseRole : contains
+    Database "1" --> "*" Trigger : contains
+    Database "1" --> "*" RoleMember : RoleMembers() returns
+    Database "1" --> "*" Column : ObjectColumns() returns (table or view)
+
+    Table "1" --> "*" Column : has
+    Table "1" --> "*" Index : has
+    Table "1" --> "*" ForeignKey : has
+    Table "1" --> "*" CheckConstraint : has
+    Table "1" --> "*" Statistic : has
+    Table "1" --> "*" Trigger : has
+    Table --> TableDetail : has
+    Table --> TableSpaceInfo : has
+    Table "1" --> "*" IndexFragmentation : FragmentationStats() returns
+
+    Index --> IndexStorageInfo : StorageInfo() returns
+    IndexStorageInfo "1" --> "*" IndexAllocationUnit : breaks down into
+    Index --> IndexFragmentation : Fragmentation() returns
+
+    Statistic --> StatisticHeader : Header() returns
+    Statistic "1" --> "*" StatisticDensity : DensityVector() returns
+    Statistic "1" --> "*" StatisticHistogramStep : Histogram() returns
+
+    Scripter --> Database : scripts objects from
+    Scripter --> ScriptOptions : configured by
+```
+
+### Backup, restore, and SQL Server Agent
+
+Backup and restore options and the metadata read back off a device, and
+the whole Agent node — jobs and their steps and history, alerts, operators,
+shared schedules, and categories.
+
+```mermaid
+classDiagram
+    %% =========================================================
     %% Backup / Restore
     %% =========================================================
     class BackupOptions {
@@ -1446,15 +1621,11 @@ classDiagram
     %% =========================================================
     %% Relationships
     %% =========================================================
-    ConnectionOptions --> AuthMethod : uses
-    ConnectionOptions --> KerberosOptions : configures AuthWindows via
-    Server --> ConnectionOptions : created from
-    Server --> ServerInfo : has
-    Server "1" --> "*" Database : owns
-    Server "1" --> "*" Login : owns
-    Server "1" --> "*" ServerRole : owns
-    Server "1" --> "*" RoleMember : ServerRoleMembers() returns
-    Server "1" --> "*" LinkedServer : owns
+    Server --> BackupOptions : accepts
+    Server --> RestoreOptions : accepts
+    Server "1" --> "*" BackupHeader : BackupHeaders() returns
+    Server "1" --> "*" BackupFile : BackupFileList() returns
+
     Server --> AgentStatus : AgentInfo() returns
     Server "1" --> "*" Job : owns
     Server "1" --> "*" Alert : owns
@@ -1462,86 +1633,6 @@ classDiagram
     Server "1" --> "*" Schedule : owns
     Server "1" --> "*" Category : owns
     Server "1" --> "*" JobHistoryEntry : JobHistory() returns
-    Server --> BackupOptions : accepts
-    Server --> RestoreOptions : accepts
-    Server --> ServerSecurityInfo : has
-    Server "1" --> "*" ServerPermissionEntry : grants
-    Server "1" --> "*" Credential : owns
-    Server --> ServerMemoryStats : has
-    Server "1" --> "*" Language : lists
-    Server --> ProcessorInfo : has
-    Server "1" --> "*" DiskVolumeInfo : lists
-    Server "1" --> "*" BackupHeader : BackupHeaders() returns
-    Server "1" --> "*" BackupFile : BackupFileList() returns
-
-    Login ..> nStringLiteral : password quoted by
-    Login --> LoginDetails : has
-    Login "1" --> "*" LoginUserMapping : mapped via
-
-    Database "1" --> "*" Table : contains
-    Database "1" --> "*" View : contains
-    Database "1" --> "*" StoredProcedure : contains
-    Database "1" --> "*" UserDefinedFunction : contains
-    Database "1" --> "*" Schema : contains
-    Database "1" --> "*" User : contains
-    Database "1" --> "*" DatabaseRole : contains
-    Database "1" --> "*" FileGroup : contains
-    Database "1" --> "*" Trigger : contains
-    Database "1" --> "*" DatabaseFileInfo : contains
-    Database --> DatabaseOptions : has
-    Database --> ChangeTrackingInfo : has
-    Database "1" --> "*" TableChangeTracking : tracks
-    Database "1" --> "*" Dependency : dependencies of
-    Database "1" --> "*" SearchResult : search() returns
-    Database --> ExecutionPlan : produces
-    Database "1" --> "*" PermissionEntry : grants
-    Database "1" --> "*" DatabasePermissionEntry : grants
-    Database "1" --> "*" PrincipalSecurable : PermissionsForPrincipal() returns
-    Database "1" --> "*" ColumnPermissionEntry : ColumnPermissions() returns
-    Database "1" --> "*" EffectivePermission : EffectivePermissions() returns
-    Database "1" --> "*" SecurableRef : FindSecurables() returns
-    SecurableSearch ..> SecurableRef : narrows FindSecurables()
-    Database --> Catalog : Catalog()/SystemCatalog() returns
-    Catalog "1" --> "*" CatalogObject : contains
-    CatalogObject "1" --> "*" CatalogColumn : has
-    Database --> QueryStoreInfo : has
-    Database "1" --> "*" DatabaseScopedConfig : lists
-    Database "1" --> "*" RoleMember : RoleMembers() returns
-    Database ..> BulkCopy : bulk-loads via
-    Database ..> ProcParam : executes procs with
-    Database --> ProcResult : returns
-
-    Database ..> withConn : writes run via
-    Database ..> dbRows : query() returns
-    Database ..> DatabaseQueryRow : single-row reads via
-    Database ..> withRetry : reads retried via
-    Server ..> ServerQuery : reads run via
-    Server ..> withRetry : reads retried via
-
-    withRetry <.. withConn : acquire+USE retried by
-    withRetry <.. dbRows : acquire+USE+query retried by
-    withRetry <.. DatabaseQueryRow : whole scan retried by
-    withRetry <.. ServerQuery : whole scan retried by
-    withRetry <.. IsRetryable : same failure test as
-
-    Table "1" --> "*" Column : has
-    Database "1" --> "*" Column : ObjectColumns() returns (table or view)
-    Table "1" --> "*" Index : has
-    Table "1" --> "*" ForeignKey : has
-    Table "1" --> "*" CheckConstraint : has
-    Table "1" --> "*" Statistic : has
-    Table "1" --> "*" Trigger : has
-    Table --> TableDetail : has
-    Table --> TableSpaceInfo : has
-    Table "1" --> "*" IndexFragmentation : FragmentationStats() returns
-
-    Index --> IndexStorageInfo : StorageInfo() returns
-    IndexStorageInfo "1" --> "*" IndexAllocationUnit : breaks down into
-    Index --> IndexFragmentation : Fragmentation() returns
-
-    Statistic --> StatisticHeader : Header() returns
-    Statistic "1" --> "*" StatisticDensity : DensityVector() returns
-    Statistic "1" --> "*" StatisticHistogramStep : Histogram() returns
 
     Job "1" --> "*" JobStep : has
     Job "1" --> "*" Schedule : attached to
@@ -1556,12 +1647,318 @@ classDiagram
     Operator "1" --> "*" JobNotificationRef : emailed by
     AlertNotification --> NotificationMethod : delivered by
     Category --> CategoryClass : classified by
+```
 
-    Scripter --> Database : scripts objects from
-    Scripter --> ScriptOptions : configured by
+### High availability and instance-level services
 
-    ScriptCollector ..> Server : captures writes from
-    ScriptCollector ..> Database : captures writes from
+Always On availability groups with their replicas, databases and listeners;
+the database mirroring endpoint they ship log through; the certificates that
+authenticate it; and the two host-facing reads — the error log and the
+server's own filesystem.
+
+```mermaid
+classDiagram
+    %% =========================================================
+    %% Always On availability groups
+    %% =========================================================
+    class AvailabilityGroup {
+        -server *Server
+        +ID string
+        +Name string
+        +ResourceID string
+        +ResourceGroupID string
+        +ClusterType string
+        +AutomatedBackupPreference string
+        +FailureConditionLevel int
+        +HealthCheckTimeout int
+        +Version int
+        +BasicFeatures bool
+        +DTCSupport bool
+        +DBFailover bool
+        +IsDistributed bool
+        +IsContained bool
+        +RequiredSynchronizedSecondariesToCommit int
+        +PrimaryReplicaServerName string
+        +PrimaryRecoveryHealth string
+        +SynchronizationHealth string
+        +Server() *Server
+        +IsLocalPrimary() bool
+        +Replicas() []*AvailabilityReplica
+        +Databases() []*AvailabilityDatabase
+        +Listeners() []*AvailabilityGroupListener
+        +SetAutomatedBackupPreference(pref) error
+        +SetFailureConditionLevel(level) error
+        +SetHealthCheckTimeout(ms) error
+        +SetDBFailover(on) error
+        +SetDTCSupport(perDB) error
+        +SetRequiredSynchronizedSecondariesToCommit(n) error
+        +AddDatabase(name) error
+        +RemoveDatabase(name) error
+        +JoinDatabase(name) error
+        +UnjoinDatabase(name) error
+        +SuspendDatabase(name) error
+        +ResumeDatabase(name) error
+        +AddReplica(spec) error
+        +RemoveReplica(serverName) error
+        +AddListener(spec) error
+        +AddListenerIP(dnsName, ip) error
+        +SetListenerPort(dnsName, port) error
+        +RemoveListener(dnsName) error
+        +Join(clusterType) error
+        +GrantCreateAnyDatabase() error
+        +DenyCreateAnyDatabase() error
+        +Failover() error
+        +ForceFailoverAllowDataLoss() error
+        +Drop() error
+    }
+
+    class AvailabilityReplica {
+        +GroupID string
+        +GroupName string
+        +ReplicaID string
+        +ReplicaServerName string
+        +EndpointURL string
+        +AvailabilityMode string
+        +FailoverMode string
+        +SeedingMode string
+        +SessionTimeout int
+        +PrimaryRoleAllowConnections string
+        +SecondaryRoleAllowConnections string
+        +BackupPriority int
+        +ReadOnlyRoutingURL string
+        +IsLocal bool
+        +Role string
+        +OperationalState string
+        +ConnectedState string
+        +RecoveryHealth string
+        +SynchronizationHealth string
+        +LastConnectErrorNumber int
+        +LastConnectErrorDescription string
+        +LastConnectErrorTimestamp time.Time
+        +CreateDate time.Time
+        +ModifyDate time.Time
+        +ReadOnlyRoutingList() [][]string
+        +SetAvailabilityMode(mode) error
+        +SetFailoverMode(mode) error
+        +SetSeedingMode(mode) error
+        +SetPrimaryRoleAllowConnections(mode) error
+        +SetSecondaryRoleAllowConnections(mode) error
+        +SetSessionTimeout(seconds) error
+        +SetBackupPriority(priority) error
+        +SetReadOnlyRoutingURL(url) error
+        +SetReadOnlyRoutingList(list) error
+        +Drop() error
+    }
+
+    class AvailabilityDatabase {
+        +GroupID string
+        +ReplicaID string
+        +ReplicaServerName string
+        +DatabaseName string
+        +GroupDatabaseID string
+        +IsLocal bool
+        +IsPrimaryReplica bool
+        +SynchronizationState string
+        +SynchronizationHealth string
+        +DatabaseState string
+        +IsSuspended bool
+        +SuspendReason string
+        +LogSendQueueKB int64
+        +LogSendRateKBps int64
+        +RedoQueueKB int64
+        +RedoRateKBps int64
+        +SecondaryLagSeconds int64
+        +LastSentTime time.Time
+        +LastReceivedTime time.Time
+        +LastHardenedTime time.Time
+        +LastRedoneTime time.Time
+        +LastCommitTime time.Time
+    }
+
+    class AvailabilityGroupListener {
+        +GroupID string
+        +ListenerID string
+        +DNSName string
+        +Port int
+        +IsConformant bool
+        +IPConfigurationString string
+        +IsDistributedNetworkName bool
+        +IPAddresses []AvailabilityListenerIP
+    }
+
+    class AvailabilityListenerIP {
+        +IPAddress string
+        +SubnetMask string
+        +IsDHCP bool
+        +State string
+    }
+
+    class CreateAvailabilityGroupRequest {
+        +Name string
+        +ClusterType string
+        +AutomatedBackupPreference string
+        +FailureConditionLevel int
+        +HealthCheckTimeout int
+        +DBFailover bool
+        +DTCSupport bool
+        +RequiredSynchronizedSecondariesToCommit int
+        +Databases []string
+        +Replicas []AvailabilityReplicaSpec
+        +Listener *AvailabilityListenerSpec
+    }
+
+    class AvailabilityReplicaSpec {
+        +ServerName string
+        +EndpointURL string
+        +AvailabilityMode string
+        +FailoverMode string
+        +SeedingMode string
+        +SessionTimeout int
+        +BackupPriority int
+        +PrimaryRoleAllowConnections string
+        +SecondaryRoleAllowConnections string
+        +ReadOnlyRoutingURL string
+    }
+
+    class AvailabilityListenerSpec {
+        +DNSName string
+        +Port int
+        +DHCP bool
+        +DHCPSubnet string
+        +IPAddresses []AvailabilityListenerIPSpec
+    }
+
+    class AvailabilityListenerIPSpec {
+        +IPAddress string
+        +SubnetMask string
+    }
+
+    %% =========================================================
+    %% Database mirroring endpoint (Always On's transport)
+    %% =========================================================
+    class DatabaseMirroringEndpoint {
+        -server *Server
+        +Name string
+        +Port int
+        +State string
+        +Role string
+        +IsEncryptionEnabled bool
+        +EncryptionAlgorithm string
+        +ConnectionAuth string
+        +Owner string
+        +Server() *Server
+        +URL() string
+        +Start() error
+        +Stop() error
+        +Drop() error
+        +GrantConnect(login) error
+    }
+
+    class EndpointSpec {
+        +Name string
+        +Port int
+        +Role string
+        +Authentication string
+        +Encryption string
+        +EncryptionAlgorithm string
+    }
+
+    %% =========================================================
+    %% Certificates and the database master key
+    %% =========================================================
+    class Certificate {
+        -db *Database
+        +Name string
+        +CertificateID int
+        +PrincipalID int
+        +Subject string
+        +PvtKeyEncryptionType string
+        +StartDate time.Time
+        +ExpiryDate time.Time
+        +Thumbprint []byte
+        +HasPrivateKey() bool
+        +Encoded() []byte
+        +Drop() error
+    }
+
+    class CertificateSpec {
+        +Name string
+        +Authorization string
+        +Subject string
+        +StartDate time.Time
+        +ExpiryDate time.Time
+        +EncryptionPassword string
+        +FromBinary []byte
+    }
+
+    %% =========================================================
+    %% Error log
+    %% =========================================================
+    class ErrorLogType {
+        <<enumeration>>
+        ErrorLogSQLServer
+        ErrorLogAgent
+    }
+
+    class ErrorLogFile {
+        +Number int
+        +Date string
+        +LastWritten time.Time
+        +SizeBytes int64
+    }
+
+    class ErrorLogEntry {
+        +LogDate string
+        +Process string
+        +Text string
+        +Date time.Time
+        +ErrorLevel int
+        +Source() string
+    }
+
+    %% =========================================================
+    %% Server filesystem (paths the SERVER resolves, not the client)
+    %% =========================================================
+    class FileSystemEntry {
+        +Name string
+        +FullPath string
+        +IsDirectory bool
+        +Size int64
+        +LastModified time.Time
+    }
+
+    class FixedDrive {
+        +Name string
+        +Type string
+        +FreeSpaceBytes int64
+    }
+
+    %% =========================================================
+    %% Relationships
+    %% =========================================================
+    Server "1" --> "*" AvailabilityGroup : AvailabilityGroups() returns
+    Server --> CreateAvailabilityGroupRequest : accepts
+    Server "1" --> "1" DatabaseMirroringEndpoint : has at most one
+    Server --> EndpointSpec : accepts
+    Server "1" --> "*" ErrorLogFile : EnumErrorLogs() returns
+    Server "1" --> "*" ErrorLogEntry : ReadLog() returns
+    Server "1" --> "*" FileSystemEntry : EnumFileSystem() returns
+    Server "1" --> "*" FixedDrive : FixedDrives() returns
+    Server ..> ErrorLogType : selects log family with
+
+    AvailabilityGroup "1" --> "*" AvailabilityReplica : has
+    AvailabilityGroup "1" --> "*" AvailabilityDatabase : has
+    AvailabilityGroup "1" --> "*" AvailabilityGroupListener : has
+    AvailabilityGroup --> AvailabilityReplicaSpec : AddReplica() accepts
+    AvailabilityGroup --> AvailabilityListenerSpec : AddListener() accepts
+    AvailabilityGroupListener "1" --> "*" AvailabilityListenerIP : has
+    AvailabilityListenerSpec "1" --> "*" AvailabilityListenerIPSpec : has
+    CreateAvailabilityGroupRequest "1" --> "*" AvailabilityReplicaSpec : has
+    CreateAvailabilityGroupRequest --> AvailabilityListenerSpec : may have
+    AvailabilityReplica ..> DatabaseMirroringEndpoint : ships log through
+
+    Database "1" --> "*" Certificate : contains
+    Database --> CertificateSpec : CreateCertificate() accepts
 ```
 
 ---
@@ -1616,12 +2013,14 @@ fmt.Println(srv.Info().ProductVersion)
 | `Server.Logins`         | `srv.Logins()` / `srv.LoginByName(name)` / `srv.Login(name)` (no-I/O handle) |
 | `Server.Roles`          | `srv.ServerRoles()` / `srv.ServerRoleByName(name)` / `srv.ServerRoleMembers(role)` |
 | Server role administration | `role.Rename(newName)` / `role.ChangeOwner(owner)` / `srv.Add\|RemoveServerRoleMember(role, member)` |
+| Drop a server role      | `srv.DropServerRole(name)` / `role.Drop()`  |
+| Rename a database       | `srv.RenameDatabase(old, new, force)` — `force` puts it in single-user mode first |
 | `Server.LinkedServers`  | `srv.LinkedServers()`                      |
 | `Server.Configuration`  | `srv.Configurations()`                     |
 | `Server.JobServer` (Agent) | see [SQL Server Agent](#sql-server-agent) below |
 | Active sessions         | `srv.ActiveSessions(includeSystem)`        |
 | Kill session            | `srv.KillSession(id)`                      |
-| Error log               | `srv.ReadErrorLog(n)`                      |
+| Error log               | `srv.ReadLog(logType, n)` / `srv.EnumErrorLogs(logType)` / `srv.ReadErrorLog(n)` / `srv.CycleErrorLog()` — see [Error log](#error-log) |
 | Database Mail           | `srv.MailProfiles()` / `srv.SendMail(...)` |
 | Create login (safe)     | `srv.CreateLogin(name, password, opts)`    |
 | Authentication mode     | `srv.SecurityInfo()`                       |
@@ -1633,6 +2032,10 @@ fmt.Println(srv.Info().ProductVersion)
 | Languages                | `srv.Languages()`                          |
 | Processors / NUMA topology | `srv.ProcessorInfo()`                    |
 | Disk volumes              | `srv.DiskVolumes()`                        |
+| `Server.EnumDirectories` / `EnumFiles` | `srv.EnumFileSystem(path)` / `srv.FixedDrives()` / `srv.FileSystemExists(path)` — see [Server filesystem](#server-filesystem) |
+| Host OS family            | `srv.Info().Platform` (`"Windows"` / `"Linux"`, from `@@VERSION`) |
+| `Server.AvailabilityGroups` | `srv.AvailabilityGroups()` / `srv.AvailabilityGroup(name)` (no-I/O handle) / `srv.AvailabilityGroupByName(name)` — see [Always On](#always-on-availability-groups) |
+| Database mirroring endpoint | `srv.DatabaseMirroringEndpoint()` / `srv.CreateDatabaseMirroringEndpoint(spec)` |
 | Verify / inspect a backup device | `srv.VerifyBackup(device)` / `srv.BackupHeaders(device)` / `srv.BackupFileList(device)` |
 
 ### Database
@@ -1642,22 +2045,25 @@ fmt.Println(srv.Info().ProductVersion)
 | Is a system database             | `db.IsSystem()`                             |
 | `Database.Tables`               | `db.Tables()` / `db.TablesBySchema(schema)` |
 | Bulk table/view + column snapshot | `db.Catalog()` (user objects) / `db.SystemCatalog()` (`sys` schema) |
-| `Database.Views`                | `db.Views()`                                |
+| `Database.Views`                | `db.Views()` / `db.DropView(schema, name)`  |
 | `Database.StoredProcedures`     | `db.StoredProcedures()`                     |
-| `Database.UserDefinedFunctions` | `db.UserDefinedFunctions()`                 |
+| `Database.UserDefinedFunctions` | `db.UserDefinedFunctions()` / `db.DropFunction(schema, name)` |
 | System Views/Procedures/Functions | `db.SystemViews()` / `db.SystemStoredProcedures()` / `db.SystemFunctions()` |
 | `Database.Schemas`              | `db.Schemas()` / `schema.ObjectCount()`     |
 | `Database.Users`                | `db.Users()` / `db.UserByName(name)`        |
 | Database user administration    | `user.Rename(newName)` / `user.SetDefaultSchema(schemaName)` / `user.SetLogin(loginName)` |
 | `Database.Roles`                | `db.DatabaseRoles()` / `db.RoleByName(name)` / `db.RoleMembers(roleName)` |
-| Database role administration    | `role.Rename(newName)` / `role.ChangeOwner(newOwner)` |
+| Database role administration    | `role.Rename(newName)` / `role.ChangeOwner(newOwner)` / `role.Drop()` / `db.DropDatabaseRole(name)` |
 | `Database.FileGroups`           | `db.FileGroups()`                           |
-| `Database.Triggers`             | `db.Triggers()`                             |
-| `Database.Sequences`            | `db.Sequences()`                            |
-| `Database.Synonyms`             | `db.Synonyms()`                             |
+| `Database.Triggers`             | `db.Triggers()` / `db.DropTrigger(schema, name)` |
+| `Database.Sequences`            | `db.Sequences()` / `db.DropSequence(schema, name)` |
+| `Database.Synonyms`             | `db.Synonyms()` / `db.DropSynonym(schema, name)` |
+| Rename any `sp_rename`-able object | `db.RenameObject(schema, oldName, newName)` — view, procedure, function, sequence, synonym, trigger |
 | Partition functions             | `db.PartitionFunctions()`                   |
 | Partition schemes               | `db.PartitionSchemes()`                     |
 | Extended properties             | `db.ExtendedProperties(level)` / `db.AddExtendedProperty(...)` / `db.SetExtendedProperty(...)` / `db.DropExtendedProperty(...)` |
+| `Database.Certificates`         | `db.Certificates()` / `db.CertificateByName(name)` / `db.CreateCertificate(spec)` / `cert.Drop()` — see [Certificates](#certificates-and-the-database-master-key) |
+| Database master key             | `db.HasMasterKey()` / `db.CreateMasterKey(password)` |
 | Column master keys              | `db.ColumnMasterKeys()`                     |
 | Column encryption keys          | `db.ColumnEncryptionKeys()`                 |
 | Security policies (RLS)         | `db.SecurityPolicies()`                     |
@@ -1684,6 +2090,7 @@ fmt.Println(srv.Info().ProductVersion)
 
 | SMO equivalent        | gosmo                              |
 | --------------------- | ---------------------------------- |
+| `Database.Tables` (no-I/O handle) | `db.Table(schema, name)` — works under `WithScript`, where `TableByName`'s catalog read has nothing to find |
 | `Table.Columns`       | `t.Columns()`                      |
 | `Table.Indexes`       | `t.Indexes()`                      |
 | `Table.ForeignKeys`   | `t.ForeignKeys()`                  |
@@ -1702,6 +2109,7 @@ fmt.Println(srv.Info().ProductVersion)
 | Update all statistics | `t.UpdateAllStatistics(samplePct)` |
 | Create index          | `t.CreateIndex(req)`               |
 | Alter column          | `t.AlterColumn(col)`               |
+| Drop a constraint     | `t.DropConstraint(name)`           |
 | Columns of a table *or view* | `db.ObjectColumns(schema, name)` — `Table.Columns` reaches tables only |
 
 ### Index
@@ -1740,6 +2148,7 @@ columnstore index takes no key columns at all, so `SetIncludedColumns` and
 | ... density vector             | `st.DensityVector()` → `[]*StatisticDensity` |
 | ... histogram                  | `st.Histogram()` → `[]*StatisticHistogramStep` |
 | Update / drop                  | `st.Update(samplePct)` / `st.Drop()`      |
+| Rename                         | `st.Rename(newName)`                      |
 
 ### Login
 
@@ -1859,7 +2268,8 @@ bounded query.
 
 **Breaking, since `v0.0.7`:** these took no `context.Context` before — they
 wrapped the non-`Context` collection method, i.e. `context.Background()`.
-`db.TableSeq()` becomes `db.TableSeq(ctx)`, for all 75 of them.
+`db.TableSeq()` becomes `db.TableSeq(ctx)`, for all 75 that existed then
+(89 now).
 
 ### Scripting pending writes (`WithScript`)
 
@@ -2075,6 +2485,122 @@ srv.CreateCategory(gosmo.CategoryClassAlert, "Storage")
 srv.DeleteCategory(gosmo.CategoryClassAlert, "Storage")
 ```
 
+### Always On availability groups
+
+The whole SSMS Always On node — the group, its replicas, the per-database
+synchronization state, and the listeners clients connect through.
+
+| SSMS equivalent                   | gosmo                                                        |
+| --------------------------------- | ------------------------------------------------------------ |
+| Availability Groups node          | `srv.AvailabilityGroups()` / `srv.AvailabilityGroup(name)` (no-I/O handle) / `srv.AvailabilityGroupByName(name)` |
+| Availability Replicas node        | `ag.Replicas()` → `[]*AvailabilityReplica`                    |
+| Availability Databases node       | `ag.Databases()` → `[]*AvailabilityDatabase` (queue sizes, rates, `SecondaryLagSeconds`, last sent/received/hardened/redone/commit times) |
+| Availability Group Listeners node | `ag.Listeners()` → `[]*AvailabilityGroupListener` (with their IP configurations) |
+| Group properties                  | `ag.SetAutomatedBackupPreference(p)` / `SetFailureConditionLevel(n)` / `SetHealthCheckTimeout(ms)` / `SetDBFailover(on)` / `SetDTCSupport(perDB)` / `SetRequiredSynchronizedSecondariesToCommit(n)` |
+| Replica properties                | `r.SetAvailabilityMode(m)` / `SetFailoverMode(m)` / `SetSeedingMode(m)` / `SetSessionTimeout(s)` / `SetBackupPriority(n)` / `SetPrimaryRoleAllowConnections(m)` / `SetSecondaryRoleAllowConnections(m)` |
+| Read-only routing                 | `r.SetReadOnlyRoutingURL(url)` / `r.SetReadOnlyRoutingList(list)` / `r.ReadOnlyRoutingList()` |
+| Add / remove a replica            | `ag.AddReplica(spec)` / `ag.RemoveReplica(serverName)` / `r.Drop()` |
+| Add / remove a database           | `ag.AddDatabase(name)` / `ag.RemoveDatabase(name)`            |
+| Join / unjoin on a secondary      | `ag.JoinDatabase(name)` / `ag.UnjoinDatabase(name)`           |
+| Suspend / resume data movement    | `ag.SuspendDatabase(name)` / `ag.ResumeDatabase(name)`        |
+| Listeners                         | `ag.AddListener(spec)` / `ag.AddListenerIP(dns, ip)` / `ag.SetListenerPort(dns, port)` / `ag.RemoveListener(dns)` |
+| New Availability Group wizard     | `srv.CreateAvailabilityGroup(req)` / `ag.Join(clusterType)` / `ag.GrantCreateAnyDatabase()` / `ag.DenyCreateAnyDatabase()` |
+| Failover / forced failover        | `ag.Failover()` / `ag.ForceFailoverAllowDataLoss()`           |
+| Drop                              | `ag.Drop()`                                                   |
+
+**Read from the primary when the answer has to be complete.**
+`sys.availability_groups` and `sys.availability_replicas` are cluster-wide
+metadata and agree on every replica, but the `sys.dm_hadr_*` DMVs describe
+only what *this* instance can currently see — most visibly, per-database
+queue sizes and commit times are populated only for databases the local
+instance actually hosts. `ag.PrimaryReplicaServerName` and
+`ag.IsLocalPrimary()` are there so a caller can tell where it is and follow
+the primary; an empty `PrimaryReplicaServerName` means "unknown from here",
+not "no primary exists".
+
+Setting a group up needs two things below it, both also new here: every
+instance must have a **database mirroring endpoint** started with `CONNECT`
+granted to the other instances' service accounts, and — for certificate
+authentication — each instance needs the others' public **certificates**.
+
+### Certificates and the database master key
+
+| SSMS equivalent                  | gosmo                                                    |
+| -------------------------------- | -------------------------------------------------------- |
+| Security → Certificates          | `db.Certificates()` / `db.CertificateByName(name)`        |
+| New / drop certificate           | `db.CreateCertificate(gosmo.CertificateSpec{...})` / `cert.Drop()` |
+| Database master key              | `db.HasMasterKey()` / `db.CreateMasterKey(password)`      |
+| Export the public certificate    | `cert.Encoded()` → `[]byte` (`CERTENCODED`)               |
+| Import it on another instance    | `CertificateSpec.FromBinary` (`CREATE CERTIFICATE ... FROM BINARY`, SQL Server 2022+) |
+
+`Encoded` and `FromBinary` are the pair that moves a certificate between
+instances **without filesystem access on either host**. The documented route
+is `BACKUP CERTIFICATE` to a file, copy the file, `CREATE CERTIFICATE FROM
+FILE` — which a client library cannot do. Only the ASN.1-encoded *public*
+certificate crosses the wire, which is what makes this safe over an ordinary
+connection, and it is enough for database mirroring endpoints, where each
+instance keeps its own key pair and holds only its peers' public
+certificates.
+
+`CertificateByName` reports a certificate that isn't there as `(nil, nil)`,
+not an error — its callers branch on absence as the ordinary case. See
+[Errors](#errors) for the package's three not-found conventions.
+
+### Database mirroring endpoints
+
+| SSMS equivalent                | gosmo                                                     |
+| ------------------------------ | --------------------------------------------------------- |
+| Server Objects → Endpoints     | `srv.DatabaseMirroringEndpoint()` → `*DatabaseMirroringEndpoint` |
+| New endpoint                   | `srv.CreateDatabaseMirroringEndpoint(gosmo.EndpointSpec{...})` |
+| Start / stop / drop            | `e.Start()` / `e.Stop()` / `e.Drop()`                      |
+| Grant CONNECT to a peer's login | `e.GrantConnect(login)`                                   |
+| The `TCP://host:port` form     | `e.URL()`                                                  |
+
+An instance can have **at most one** database mirroring endpoint, whatever
+it is called and however many availability groups use it — a server rule,
+not a convention. A second availability group over the same pair of
+instances reuses the first one's endpoint and port, so code that sets a
+group up should read the endpoint before considering creating one. An
+endpoint left `STOPPED` is the usual reason a replica that looks correctly
+configured never synchronizes.
+
+### Error log
+
+| SSMS equivalent                  | gosmo                                        |
+| -------------------------------- | -------------------------------------------- |
+| Management → SQL Server Logs     | `srv.EnumErrorLogs(gosmo.ErrorLogSQLServer)` → `[]*ErrorLogFile` |
+| Agent → Error Logs               | `srv.EnumErrorLogs(gosmo.ErrorLogAgent)`      |
+| Open a log                       | `srv.ReadLog(logType, n)` → `[]*ErrorLogEntry` |
+| ... the SQL Server log, shorthand | `srv.ReadErrorLog(n)`                        |
+| Recycle the log                  | `srv.CycleErrorLog()`                         |
+
+`ErrorLogType` is the log-type argument `xp_readerrorlog` and
+`sp_enumerrorlogs` themselves take, so it passes straight through — which is
+why the Agent log is readable through the same two methods rather than a
+second pair of them. Log number 0 is the current log, 1 the most recent
+archive, and so on.
+
+### Server filesystem
+
+SMO's `Server.EnumDirectories`/`EnumFiles`, and the fixed-drive list behind
+SSMS's file-browse dialogs.
+
+| SSMS equivalent               | gosmo                                       |
+| ----------------------------- | ------------------------------------------- |
+| Browse a server-side folder   | `srv.EnumFileSystem(path)` → `[]*FileSystemEntry` |
+| Drive list in a browse dialog | `srv.FixedDrives()` → `[]*FixedDrive`        |
+| Does this path exist?         | `srv.FileSystemExists(path)` → `(exists, isDirectory bool, err error)` |
+
+Every path here is interpreted by the **server**, not by the process calling
+gosmo — routinely two different machines with different path conventions,
+which is the whole reason these exist rather than a caller using
+`os.ReadDir`. Each reads `sys.dm_os_enumerate_filesystem` /
+`sys.dm_os_enumerate_fixed_drives` on SQL Server 2017 and later, and falls
+back to `xp_dirtree` / `xp_fixeddrives` otherwise. The fallback reports no
+`Size` and no `LastModified`; an instance whose version gosmo has not
+established takes it, since `xp_dirtree` exists everywhere and the DMV does
+not.
+
 ### Bulk copy
 
 Streams rows into a table over the TDS bulk-copy protocol — the same fast
@@ -2107,6 +2633,11 @@ fmt.Println(result.ReturnStatus, rowsAffected)
 
 ## Errors
 
+Every error is wrapped `gosmo: <what was being attempted>: %w`, including
+the ones raised partway through reading a result set — so a cancellation
+mid-scan names the operation it interrupted rather than arriving as a bare
+`context deadline exceeded`.
+
 `AsSQLError` unwraps a driver error into a structured `SQLError` — number,
 severity class, state, originating procedure/line, and (for a batch that
 raised more than one) the full `All` list — without callers needing to
@@ -2119,6 +2650,50 @@ if _, err := db.CreateTable(req); err != nil {
     }
 }
 ```
+
+### `ErrNotFound`
+
+Every by-name lookup that reports absence as an error wraps `ErrNotFound`,
+so "this object does not exist" is testable without matching on message
+text:
+
+```go
+db, err := srv.DatabaseByName("Sales")
+switch {
+case errors.Is(err, gosmo.ErrNotFound):
+    // create it
+case err != nil:
+    return err // permission, connection, timeout — not absence
+}
+```
+
+The distinction matters: a caller that reads *any* error as absence goes on
+to create an object it never established was missing, and then reports the
+creation's failure instead of the permission or connection error that
+actually stopped it.
+
+Three conventions coexist, deliberately:
+
+- Most by-name lookups — `LoginByName`, `DatabaseByName`, `TableByName`,
+  `UserByName`, `RoleByName`, `AgentJobByName`, `AlertByName`,
+  `OperatorByName`, `ScheduleByName`, `ServerRoleByName`,
+  `ConfigurationByName`, `AvailabilityGroupByName`, and the Scripter's
+  view/procedure/function lookups — return an error wrapping `ErrNotFound`.
+- `CertificateByName` returns `(nil, nil)`, because its callers branch on
+  absence as the ordinary case rather than the exceptional one.
+- `AgentStatus` reports an unreachable Agent as a populated value
+  (`StatusText` "Unknown"), not an error.
+
+`AvailabilityGroupByName`'s not-found error additionally still satisfies
+`errors.Is(err, sql.ErrNoRows)`, which it promised before `ErrNotFound`
+existed.
+
+A `Drop` method does **not** use `IF EXISTS`: dropping something that isn't
+there comes back as the server's own "Cannot drop ... because it does not
+exist", uniformly across every object family. A caller that wants the
+idempotent form ignores the error — a decision it can make and this package
+cannot make for it. The DDL that `Scripter` *generates* does keep
+`IF EXISTS`, since that output exists to be re-run.
 
 ---
 

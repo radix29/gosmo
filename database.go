@@ -476,6 +476,13 @@ func (d *Database) CreateUserContext(ctx context.Context, userName, loginName, d
 	if userName == "" {
 		return fmt.Errorf("gosmo: create user: user name is required")
 	}
+	// Without this, quoteIdent("") turns an empty login into "FOR LOGIN []" —
+	// a statement the server rejects with a message naming an empty login the
+	// caller never typed. A user with no login is CREATE USER ... WITHOUT
+	// LOGIN, a different statement, so this refuses rather than picking one.
+	if loginName == "" {
+		return fmt.Errorf("gosmo: create user %q: login name is required", userName)
+	}
 	q := fmt.Sprintf("CREATE USER %s FOR LOGIN %s", quoteIdent(userName), quoteIdent(loginName))
 	if defaultSchema != "" {
 		q += " WITH DEFAULT_SCHEMA = " + quoteIdent(defaultSchema)

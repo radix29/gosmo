@@ -764,3 +764,42 @@ func TestSetListenerPortRejectsAnOutOfRangePort(t *testing.T) {
 		}
 	}
 }
+
+// TestAddListenerIPScriptsTheWholeStatement pins the statement AddListenerIP
+// assembles, not just the two halves TestModifyListenerStatements and
+// TestListenerIPLiteralMatchesTheAddAndModifyForms already pin. This is the
+// only place the ALTER prefix, the group's bracket-quoted name and the
+// listener's literal-quoted one appear together — three quoting rules in one
+// statement, and the method has no live coverage (adding an address to the
+// test cluster's listener would change a group in use).
+func TestAddListenerIPScriptsTheWholeStatement(t *testing.T) {
+	ag := &AvailabilityGroup{server: &Server{}, Name: "AAG]1"}
+	ctx, script := WithScript(context.Background())
+
+	err := ag.AddListenerIPContext(ctx, "o'brien",
+		AvailabilityListenerIPSpec{IPAddress: "10.1.0.9", SubnetMask: "255.255.255.0"})
+	if err != nil {
+		t.Fatalf("AddListenerIPContext under WithScript: %v", err)
+	}
+
+	want := "ALTER AVAILABILITY GROUP [AAG]]1] MODIFY LISTENER N'o''brien' (ADD IP (N'10.1.0.9', N'255.255.255.0'))"
+	if len(script.Statements) != 1 || script.Statements[0] != want {
+		t.Errorf("Statements = %q, want [%q]", script.Statements, want)
+	}
+}
+
+// TestAddListenerIPRejectsAnEmptyAddress pins that a spec with no address
+// fails before any statement is built — "ADD IP ()" is a syntax error, and a
+// listener half-modified by a rejected statement is worse than one not
+// touched.
+func TestAddListenerIPRejectsAnEmptyAddress(t *testing.T) {
+	ag := &AvailabilityGroup{server: &Server{}, Name: "AAG1"}
+	ctx, script := WithScript(context.Background())
+
+	if err := ag.AddListenerIPContext(ctx, "ubuaag", AvailabilityListenerIPSpec{}); err == nil {
+		t.Error("AddListenerIPContext with an empty spec = nil, want an error")
+	}
+	if len(script.Statements) != 0 {
+		t.Errorf("Statements = %q, want none", script.Statements)
+	}
+}

@@ -19,10 +19,19 @@ These continue for the life of the project, release or not:
   land.
 - Keep the `README.md` feature map (`Server`, `Database`, `Table`,
   `Index`, Statistics, `Login`, dependencies/search/permissions/execution
-  plans, `Scripter`, Backup & Restore, SQL Server Agent) in sync with the
+  plans, `Scripter`, Backup & Restore, SQL Server Agent, Always On,
+  certificates, endpoints, error log, server filesystem) in sync with the
   code as methods are added — it's the API surface consumers actually
-  read. The class diagram in the same file (and its standalone
-  `gosmo.mermaid` copy, kept byte-identical) needs the same treatment.
+  read. The class diagrams in the same file need the same treatment, and
+  `gosmo.mermaid` is those diagrams concatenated in order, kept
+  byte-identical to them.
+  - **The class map is five diagrams, not one, and has to stay that way.**
+    Mermaid refuses to render a diagram whose text (comments stripped)
+    exceeds 50,000 characters — it draws an error box in place of the whole
+    thing, on GitHub included. The single diagram reached 52,533 during
+    `v0.0.9` and had to be split. When a new area is added, give it its own
+    diagram rather than growing one past ~45,000; an edge that crosses areas
+    is drawn in the diagram of the area it points *into*.
 - Keep the nine programs under `examples/` compiling and honest as the API
   moves — they're the only place the library is exercised end to end, and
   `examples/README.md` indexes what each one covers.
@@ -53,9 +62,11 @@ These continue for the life of the project, release or not:
   execution-plan work needs a capability gosmo
   doesn't expose yet, add it here rather than working around the gap in
   the TUI layer; that's the intended way the two repos evolve together.
-  `v0.0.8`'s permissions work (modifiers, column-level grants, effective
-  permissions, securable search) is the worked example: a Securables page
-  needed all four, and all four went in here
+  `v0.0.9`'s Always On work is the worked example, and the largest so far:
+  goSSMS wanted an Always On node, which needed the availability-group
+  layer, the mirroring endpoint underneath it and the certificate exchange
+  that authenticates that — three subject areas, all added here rather than
+  assembled out of raw queries in the TUI
   (`replace github.com/radix29/gosmo => ../gosmo` in gossms's `go.mod`
   for local dev against unreleased changes, tag-and-bump once merged).
 

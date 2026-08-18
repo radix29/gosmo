@@ -43,6 +43,7 @@ classDiagram
         +Database(name) *Database
         +CreateDatabase(name, opts) error
         +DropDatabase(name, force) error
+        +RenameDatabase(oldName, newName, force) error
         +Logins() []*Login
         +LoginByName(name) *Login
         +Login(name) *Login
@@ -50,6 +51,7 @@ classDiagram
         +DropLogin(name) error
         +ServerRoles() []*ServerRole
         +ServerRoleByName(name) *ServerRole
+        +DropServerRole(name) error
         +ServerRoleMembers(role) []*RoleMember
         +AddServerRoleMember(role, member) error
         +RemoveServerRoleMember(role, member) error
@@ -79,7 +81,13 @@ classDiagram
         +DeleteCategory(class, name) error
         +ActiveSessions(sys) []*Session
         +KillSession(id) error
+        +EnumErrorLogs(logType) []*ErrorLogFile
+        +ReadLog(logType, n) []*ErrorLogEntry
         +ReadErrorLog(n) []*ErrorLogEntry
+        +CycleErrorLog() error
+        +EnumFileSystem(path) []*FileSystemEntry
+        +FixedDrives() []*FixedDrive
+        +FileSystemExists(path) bool
         +MailProfiles() []*MailProfile
         +SendMail(opts) error
         +Backup(opts) error
@@ -103,6 +111,12 @@ classDiagram
         +Languages() []*Language
         +ProcessorInfo() *ProcessorInfo
         +DiskVolumes() []DiskVolumeInfo
+        +AvailabilityGroups() []*AvailabilityGroup
+        +AvailabilityGroupByName(name) *AvailabilityGroup
+        +AvailabilityGroup(name) *AvailabilityGroup
+        +CreateAvailabilityGroup(req) *AvailabilityGroup
+        +DatabaseMirroringEndpoint() *DatabaseMirroringEndpoint
+        +CreateDatabaseMirroringEndpoint(spec) *DatabaseMirroringEndpoint
     }
 
     class ServerInfo {
@@ -116,6 +130,7 @@ classDiagram
         +IsSingleUser bool
         +EngineEdition int
         +OSVersion string
+        +Platform string
         +PhysicalMemoryMB int64
         +LogicalCPUCount int
         +DefaultDataPath string
@@ -295,15 +310,20 @@ classDiagram
         +Tables() []*Table
         +TablesBySchema(schema) []*Table
         +TableByName(schema, name) *Table
+        +Table(schema, name) *Table
         +CreateTable(req) error
         +DropTable(schema, name, cascade) error
+        +RenameTable(schema, oldName, newName) error
+        +RenameObject(schema, oldName, newName) error
         +Catalog() *Catalog
         +SystemCatalog() *Catalog
         +Views() []*View
+        +DropView(schema, name) error
         +StoredProcedures() []*StoredProcedure
         +CreateStoredProcedure(schema, name, body) error
         +DropStoredProcedure(schema, name) error
         +UserDefinedFunctions() []*UserDefinedFunction
+        +DropFunction(schema, name) error
         +SystemViews() []*View
         +SystemStoredProcedures() []*StoredProcedure
         +SystemFunctions() []*UserDefinedFunction
@@ -316,19 +336,28 @@ classDiagram
         +DropUser(name) error
         +DatabaseRoles() []*DatabaseRole
         +RoleByName(name) *DatabaseRole
+        +DropDatabaseRole(name) error
         +RoleMembers(role) []*RoleMember
         +AddRoleMember(role, member) error
         +RemoveRoleMember(role, member) error
         +FileGroups() []*FileGroup
         +Triggers() []*Trigger
+        +DropTrigger(schema, name) error
         +Sequences() []*Sequence
+        +DropSequence(schema, name) error
         +Synonyms() []*Synonym
+        +DropSynonym(schema, name) error
         +PartitionFunctions() []*PartitionFunction
         +PartitionSchemes() []*PartitionScheme
         +ExtendedProperties(level) []*ExtendedProperty
         +AddExtendedProperty(name, value, level) error
         +SetExtendedProperty(name, value, level) error
         +DropExtendedProperty(name, level) error
+        +Certificates() []*Certificate
+        +CertificateByName(name) *Certificate
+        +CreateCertificate(spec) error
+        +HasMasterKey() bool
+        +CreateMasterKey(password) error
         +ColumnMasterKeys() []*ColumnMasterKey
         +ColumnEncryptionKeys() []*ColumnEncryptionKey
         +SecurityPolicies() []*SecurityPolicy
@@ -486,6 +515,17 @@ classDiagram
     %% =========================================================
     %% Errors
     %% =========================================================
+    class ErrNotFound {
+        <<sentinel>>
+        The error every by-name lookup that
+        reports absence wraps, so errors.Is
+        separates "does not exist" from
+        "the lookup itself failed".
+        CertificateByName returns (nil, nil)
+        instead, and AgentStatus reports an
+        unreachable Agent as a value.
+    }
+
     class SQLError {
         +Number int32
         +State uint8
@@ -525,6 +565,47 @@ classDiagram
         may be shared across goroutines.
     }
 
+    %% =========================================================
+    %% Relationships
+    %% =========================================================
+    ConnectionOptions --> AuthMethod : uses
+    ConnectionOptions --> KerberosOptions : configures AuthWindows via
+    Server --> ConnectionOptions : created from
+    Server --> ServerInfo : has
+    Server "1" --> "*" Database : owns
+    Server "1" --> "*" Login : owns
+    Server "1" --> "*" ServerRole : owns
+    Server "1" --> "*" RoleMember : ServerRoleMembers() returns
+    Server "1" --> "*" LinkedServer : owns
+    Server --> ServerSecurityInfo : has
+    Server "1" --> "*" ServerPermissionEntry : grants
+    Server "1" --> "*" Credential : owns
+    Server --> ServerMemoryStats : has
+    Server "1" --> "*" Language : lists
+    Server --> ProcessorInfo : has
+    Server "1" --> "*" DiskVolumeInfo : lists
+
+    Login ..> nStringLiteral : password quoted by
+    Login --> LoginDetails : has
+    Login "1" --> "*" LoginUserMapping : mapped via
+
+    Database ..> withConn : writes run via
+    Database ..> dbRows : query() returns
+    Database ..> DatabaseQueryRow : single-row reads via
+    Database ..> withRetry : reads retried via
+    Server ..> ServerQuery : reads run via
+    Server ..> withRetry : reads retried via
+
+    withRetry <.. withConn : acquire+USE retried by
+    withRetry <.. dbRows : acquire+USE+query retried by
+    withRetry <.. DatabaseQueryRow : whole scan retried by
+    withRetry <.. ServerQuery : whole scan retried by
+    withRetry <.. IsRetryable : same failure test as
+
+    ScriptCollector ..> Server : captures writes from
+    ScriptCollector ..> Database : captures writes from
+
+classDiagram
     %% =========================================================
     %% Database files, filegroups, and options
     %% =========================================================
@@ -773,6 +854,34 @@ classDiagram
     }
 
     %% =========================================================
+    %% Relationships
+    %% =========================================================
+    Database "1" --> "*" DatabaseFileInfo : contains
+    Database "1" --> "*" FileGroup : contains
+    Database --> DatabaseOptions : has
+    Database --> ChangeTrackingInfo : has
+    Database "1" --> "*" TableChangeTracking : tracks
+    Database --> Catalog : Catalog()/SystemCatalog() returns
+    Catalog "1" --> "*" CatalogObject : contains
+    CatalogObject "1" --> "*" CatalogColumn : has
+    Database --> QueryStoreInfo : has
+    Database "1" --> "*" DatabaseScopedConfig : lists
+    Database "1" --> "*" Dependency : dependencies of
+    Database "1" --> "*" SearchResult : search() returns
+    Database --> ExecutionPlan : produces
+    Database "1" --> "*" PermissionEntry : grants
+    Database "1" --> "*" DatabasePermissionEntry : grants
+    Database "1" --> "*" PrincipalSecurable : PermissionsForPrincipal() returns
+    Database "1" --> "*" ColumnPermissionEntry : ColumnPermissions() returns
+    Database "1" --> "*" EffectivePermission : EffectivePermissions() returns
+    Database "1" --> "*" SecurableRef : FindSecurables() returns
+    SecurableSearch ..> SecurableRef : narrows FindSecurables()
+    Database ..> BulkCopy : bulk-loads via
+    Database ..> ProcParam : executes procs with
+    Database --> ProcResult : returns
+
+classDiagram
+    %% =========================================================
     %% Table and its children
     %% =========================================================
     class Table {
@@ -803,6 +912,7 @@ classDiagram
         +CreateIndex(req) error
         +CreateStatistic(name, cols, pct) error
         +AlterColumn(col) error
+        +DropConstraint(name) error
     }
 
     class Column {
@@ -927,6 +1037,7 @@ classDiagram
         +Histogram() []*StatisticHistogramStep
         +Update(samplePct) error
         +Drop() error
+        +Rename(newName) error
     }
 
     class StatisticHeader {
@@ -1065,6 +1176,7 @@ classDiagram
         +CreateDate time.Time
         +ModifyDate time.Time
         +Rename(newName) error
+        +Drop() error
         +ChangeOwner(newOwner) error
     }
 
@@ -1099,6 +1211,7 @@ classDiagram
         +ModifyDate time.Time
         +Members []string
         +Rename(newName) error
+        +Drop() error
         +ChangeOwner(newOwner) error
     }
 
@@ -1110,6 +1223,42 @@ classDiagram
         +IsRemote bool
     }
 
+    %% =========================================================
+    %% Relationships
+    %% =========================================================
+    Database "1" --> "*" Table : contains
+    Database "1" --> "*" View : contains
+    Database "1" --> "*" StoredProcedure : contains
+    Database "1" --> "*" UserDefinedFunction : contains
+    Database "1" --> "*" Schema : contains
+    Database "1" --> "*" User : contains
+    Database "1" --> "*" DatabaseRole : contains
+    Database "1" --> "*" Trigger : contains
+    Database "1" --> "*" RoleMember : RoleMembers() returns
+    Database "1" --> "*" Column : ObjectColumns() returns (table or view)
+
+    Table "1" --> "*" Column : has
+    Table "1" --> "*" Index : has
+    Table "1" --> "*" ForeignKey : has
+    Table "1" --> "*" CheckConstraint : has
+    Table "1" --> "*" Statistic : has
+    Table "1" --> "*" Trigger : has
+    Table --> TableDetail : has
+    Table --> TableSpaceInfo : has
+    Table "1" --> "*" IndexFragmentation : FragmentationStats() returns
+
+    Index --> IndexStorageInfo : StorageInfo() returns
+    IndexStorageInfo "1" --> "*" IndexAllocationUnit : breaks down into
+    Index --> IndexFragmentation : Fragmentation() returns
+
+    Statistic --> StatisticHeader : Header() returns
+    Statistic "1" --> "*" StatisticDensity : DensityVector() returns
+    Statistic "1" --> "*" StatisticHistogramStep : Histogram() returns
+
+    Scripter --> Database : scripts objects from
+    Scripter --> ScriptOptions : configured by
+
+classDiagram
     %% =========================================================
     %% Backup / Restore
     %% =========================================================
@@ -1416,15 +1565,11 @@ classDiagram
     %% =========================================================
     %% Relationships
     %% =========================================================
-    ConnectionOptions --> AuthMethod : uses
-    ConnectionOptions --> KerberosOptions : configures AuthWindows via
-    Server --> ConnectionOptions : created from
-    Server --> ServerInfo : has
-    Server "1" --> "*" Database : owns
-    Server "1" --> "*" Login : owns
-    Server "1" --> "*" ServerRole : owns
-    Server "1" --> "*" RoleMember : ServerRoleMembers() returns
-    Server "1" --> "*" LinkedServer : owns
+    Server --> BackupOptions : accepts
+    Server --> RestoreOptions : accepts
+    Server "1" --> "*" BackupHeader : BackupHeaders() returns
+    Server "1" --> "*" BackupFile : BackupFileList() returns
+
     Server --> AgentStatus : AgentInfo() returns
     Server "1" --> "*" Job : owns
     Server "1" --> "*" Alert : owns
@@ -1432,86 +1577,6 @@ classDiagram
     Server "1" --> "*" Schedule : owns
     Server "1" --> "*" Category : owns
     Server "1" --> "*" JobHistoryEntry : JobHistory() returns
-    Server --> BackupOptions : accepts
-    Server --> RestoreOptions : accepts
-    Server --> ServerSecurityInfo : has
-    Server "1" --> "*" ServerPermissionEntry : grants
-    Server "1" --> "*" Credential : owns
-    Server --> ServerMemoryStats : has
-    Server "1" --> "*" Language : lists
-    Server --> ProcessorInfo : has
-    Server "1" --> "*" DiskVolumeInfo : lists
-    Server "1" --> "*" BackupHeader : BackupHeaders() returns
-    Server "1" --> "*" BackupFile : BackupFileList() returns
-
-    Login ..> nStringLiteral : password quoted by
-    Login --> LoginDetails : has
-    Login "1" --> "*" LoginUserMapping : mapped via
-
-    Database "1" --> "*" Table : contains
-    Database "1" --> "*" View : contains
-    Database "1" --> "*" StoredProcedure : contains
-    Database "1" --> "*" UserDefinedFunction : contains
-    Database "1" --> "*" Schema : contains
-    Database "1" --> "*" User : contains
-    Database "1" --> "*" DatabaseRole : contains
-    Database "1" --> "*" FileGroup : contains
-    Database "1" --> "*" Trigger : contains
-    Database "1" --> "*" DatabaseFileInfo : contains
-    Database --> DatabaseOptions : has
-    Database --> ChangeTrackingInfo : has
-    Database "1" --> "*" TableChangeTracking : tracks
-    Database "1" --> "*" Dependency : dependencies of
-    Database "1" --> "*" SearchResult : search() returns
-    Database --> ExecutionPlan : produces
-    Database "1" --> "*" PermissionEntry : grants
-    Database "1" --> "*" DatabasePermissionEntry : grants
-    Database "1" --> "*" PrincipalSecurable : PermissionsForPrincipal() returns
-    Database "1" --> "*" ColumnPermissionEntry : ColumnPermissions() returns
-    Database "1" --> "*" EffectivePermission : EffectivePermissions() returns
-    Database "1" --> "*" SecurableRef : FindSecurables() returns
-    SecurableSearch ..> SecurableRef : narrows FindSecurables()
-    Database --> Catalog : Catalog()/SystemCatalog() returns
-    Catalog "1" --> "*" CatalogObject : contains
-    CatalogObject "1" --> "*" CatalogColumn : has
-    Database --> QueryStoreInfo : has
-    Database "1" --> "*" DatabaseScopedConfig : lists
-    Database "1" --> "*" RoleMember : RoleMembers() returns
-    Database ..> BulkCopy : bulk-loads via
-    Database ..> ProcParam : executes procs with
-    Database --> ProcResult : returns
-
-    Database ..> withConn : writes run via
-    Database ..> dbRows : query() returns
-    Database ..> DatabaseQueryRow : single-row reads via
-    Database ..> withRetry : reads retried via
-    Server ..> ServerQuery : reads run via
-    Server ..> withRetry : reads retried via
-
-    withRetry <.. withConn : acquire+USE retried by
-    withRetry <.. dbRows : acquire+USE+query retried by
-    withRetry <.. DatabaseQueryRow : whole scan retried by
-    withRetry <.. ServerQuery : whole scan retried by
-    withRetry <.. IsRetryable : same failure test as
-
-    Table "1" --> "*" Column : has
-    Database "1" --> "*" Column : ObjectColumns() returns (table or view)
-    Table "1" --> "*" Index : has
-    Table "1" --> "*" ForeignKey : has
-    Table "1" --> "*" CheckConstraint : has
-    Table "1" --> "*" Statistic : has
-    Table "1" --> "*" Trigger : has
-    Table --> TableDetail : has
-    Table --> TableSpaceInfo : has
-    Table "1" --> "*" IndexFragmentation : FragmentationStats() returns
-
-    Index --> IndexStorageInfo : StorageInfo() returns
-    IndexStorageInfo "1" --> "*" IndexAllocationUnit : breaks down into
-    Index --> IndexFragmentation : Fragmentation() returns
-
-    Statistic --> StatisticHeader : Header() returns
-    Statistic "1" --> "*" StatisticDensity : DensityVector() returns
-    Statistic "1" --> "*" StatisticHistogramStep : Histogram() returns
 
     Job "1" --> "*" JobStep : has
     Job "1" --> "*" Schedule : attached to
@@ -1527,8 +1592,305 @@ classDiagram
     AlertNotification --> NotificationMethod : delivered by
     Category --> CategoryClass : classified by
 
-    Scripter --> Database : scripts objects from
-    Scripter --> ScriptOptions : configured by
+classDiagram
+    %% =========================================================
+    %% Always On availability groups
+    %% =========================================================
+    class AvailabilityGroup {
+        -server *Server
+        +ID string
+        +Name string
+        +ResourceID string
+        +ResourceGroupID string
+        +ClusterType string
+        +AutomatedBackupPreference string
+        +FailureConditionLevel int
+        +HealthCheckTimeout int
+        +Version int
+        +BasicFeatures bool
+        +DTCSupport bool
+        +DBFailover bool
+        +IsDistributed bool
+        +IsContained bool
+        +RequiredSynchronizedSecondariesToCommit int
+        +PrimaryReplicaServerName string
+        +PrimaryRecoveryHealth string
+        +SynchronizationHealth string
+        +Server() *Server
+        +IsLocalPrimary() bool
+        +Replicas() []*AvailabilityReplica
+        +Databases() []*AvailabilityDatabase
+        +Listeners() []*AvailabilityGroupListener
+        +SetAutomatedBackupPreference(pref) error
+        +SetFailureConditionLevel(level) error
+        +SetHealthCheckTimeout(ms) error
+        +SetDBFailover(on) error
+        +SetDTCSupport(perDB) error
+        +SetRequiredSynchronizedSecondariesToCommit(n) error
+        +AddDatabase(name) error
+        +RemoveDatabase(name) error
+        +JoinDatabase(name) error
+        +UnjoinDatabase(name) error
+        +SuspendDatabase(name) error
+        +ResumeDatabase(name) error
+        +AddReplica(spec) error
+        +RemoveReplica(serverName) error
+        +AddListener(spec) error
+        +AddListenerIP(dnsName, ip) error
+        +SetListenerPort(dnsName, port) error
+        +RemoveListener(dnsName) error
+        +Join(clusterType) error
+        +GrantCreateAnyDatabase() error
+        +DenyCreateAnyDatabase() error
+        +Failover() error
+        +ForceFailoverAllowDataLoss() error
+        +Drop() error
+    }
 
-    ScriptCollector ..> Server : captures writes from
-    ScriptCollector ..> Database : captures writes from
+    class AvailabilityReplica {
+        +GroupID string
+        +GroupName string
+        +ReplicaID string
+        +ReplicaServerName string
+        +EndpointURL string
+        +AvailabilityMode string
+        +FailoverMode string
+        +SeedingMode string
+        +SessionTimeout int
+        +PrimaryRoleAllowConnections string
+        +SecondaryRoleAllowConnections string
+        +BackupPriority int
+        +ReadOnlyRoutingURL string
+        +IsLocal bool
+        +Role string
+        +OperationalState string
+        +ConnectedState string
+        +RecoveryHealth string
+        +SynchronizationHealth string
+        +LastConnectErrorNumber int
+        +LastConnectErrorDescription string
+        +LastConnectErrorTimestamp time.Time
+        +CreateDate time.Time
+        +ModifyDate time.Time
+        +ReadOnlyRoutingList() [][]string
+        +SetAvailabilityMode(mode) error
+        +SetFailoverMode(mode) error
+        +SetSeedingMode(mode) error
+        +SetPrimaryRoleAllowConnections(mode) error
+        +SetSecondaryRoleAllowConnections(mode) error
+        +SetSessionTimeout(seconds) error
+        +SetBackupPriority(priority) error
+        +SetReadOnlyRoutingURL(url) error
+        +SetReadOnlyRoutingList(list) error
+        +Drop() error
+    }
+
+    class AvailabilityDatabase {
+        +GroupID string
+        +ReplicaID string
+        +ReplicaServerName string
+        +DatabaseName string
+        +GroupDatabaseID string
+        +IsLocal bool
+        +IsPrimaryReplica bool
+        +SynchronizationState string
+        +SynchronizationHealth string
+        +DatabaseState string
+        +IsSuspended bool
+        +SuspendReason string
+        +LogSendQueueKB int64
+        +LogSendRateKBps int64
+        +RedoQueueKB int64
+        +RedoRateKBps int64
+        +SecondaryLagSeconds int64
+        +LastSentTime time.Time
+        +LastReceivedTime time.Time
+        +LastHardenedTime time.Time
+        +LastRedoneTime time.Time
+        +LastCommitTime time.Time
+    }
+
+    class AvailabilityGroupListener {
+        +GroupID string
+        +ListenerID string
+        +DNSName string
+        +Port int
+        +IsConformant bool
+        +IPConfigurationString string
+        +IsDistributedNetworkName bool
+        +IPAddresses []AvailabilityListenerIP
+    }
+
+    class AvailabilityListenerIP {
+        +IPAddress string
+        +SubnetMask string
+        +IsDHCP bool
+        +State string
+    }
+
+    class CreateAvailabilityGroupRequest {
+        +Name string
+        +ClusterType string
+        +AutomatedBackupPreference string
+        +FailureConditionLevel int
+        +HealthCheckTimeout int
+        +DBFailover bool
+        +DTCSupport bool
+        +RequiredSynchronizedSecondariesToCommit int
+        +Databases []string
+        +Replicas []AvailabilityReplicaSpec
+        +Listener *AvailabilityListenerSpec
+    }
+
+    class AvailabilityReplicaSpec {
+        +ServerName string
+        +EndpointURL string
+        +AvailabilityMode string
+        +FailoverMode string
+        +SeedingMode string
+        +SessionTimeout int
+        +BackupPriority int
+        +PrimaryRoleAllowConnections string
+        +SecondaryRoleAllowConnections string
+        +ReadOnlyRoutingURL string
+    }
+
+    class AvailabilityListenerSpec {
+        +DNSName string
+        +Port int
+        +DHCP bool
+        +DHCPSubnet string
+        +IPAddresses []AvailabilityListenerIPSpec
+    }
+
+    class AvailabilityListenerIPSpec {
+        +IPAddress string
+        +SubnetMask string
+    }
+
+    %% =========================================================
+    %% Database mirroring endpoint (Always On's transport)
+    %% =========================================================
+    class DatabaseMirroringEndpoint {
+        -server *Server
+        +Name string
+        +Port int
+        +State string
+        +Role string
+        +IsEncryptionEnabled bool
+        +EncryptionAlgorithm string
+        +ConnectionAuth string
+        +Owner string
+        +Server() *Server
+        +URL() string
+        +Start() error
+        +Stop() error
+        +Drop() error
+        +GrantConnect(login) error
+    }
+
+    class EndpointSpec {
+        +Name string
+        +Port int
+        +Role string
+        +Authentication string
+        +Encryption string
+        +EncryptionAlgorithm string
+    }
+
+    %% =========================================================
+    %% Certificates and the database master key
+    %% =========================================================
+    class Certificate {
+        -db *Database
+        +Name string
+        +CertificateID int
+        +PrincipalID int
+        +Subject string
+        +PvtKeyEncryptionType string
+        +StartDate time.Time
+        +ExpiryDate time.Time
+        +Thumbprint []byte
+        +HasPrivateKey() bool
+        +Encoded() []byte
+        +Drop() error
+    }
+
+    class CertificateSpec {
+        +Name string
+        +Authorization string
+        +Subject string
+        +StartDate time.Time
+        +ExpiryDate time.Time
+        +EncryptionPassword string
+        +FromBinary []byte
+    }
+
+    %% =========================================================
+    %% Error log
+    %% =========================================================
+    class ErrorLogType {
+        <<enumeration>>
+        ErrorLogSQLServer
+        ErrorLogAgent
+    }
+
+    class ErrorLogFile {
+        +Number int
+        +Date string
+        +LastWritten time.Time
+        +SizeBytes int64
+    }
+
+    class ErrorLogEntry {
+        +LogDate string
+        +Process string
+        +Text string
+        +Date time.Time
+        +ErrorLevel int
+        +Source() string
+    }
+
+    %% =========================================================
+    %% Server filesystem (paths the SERVER resolves, not the client)
+    %% =========================================================
+    class FileSystemEntry {
+        +Name string
+        +FullPath string
+        +IsDirectory bool
+        +Size int64
+        +LastModified time.Time
+    }
+
+    class FixedDrive {
+        +Name string
+        +Type string
+        +FreeSpaceBytes int64
+    }
+
+    %% =========================================================
+    %% Relationships
+    %% =========================================================
+    Server "1" --> "*" AvailabilityGroup : AvailabilityGroups() returns
+    Server --> CreateAvailabilityGroupRequest : accepts
+    Server "1" --> "1" DatabaseMirroringEndpoint : has at most one
+    Server --> EndpointSpec : accepts
+    Server "1" --> "*" ErrorLogFile : EnumErrorLogs() returns
+    Server "1" --> "*" ErrorLogEntry : ReadLog() returns
+    Server "1" --> "*" FileSystemEntry : EnumFileSystem() returns
+    Server "1" --> "*" FixedDrive : FixedDrives() returns
+    Server ..> ErrorLogType : selects log family with
+
+    AvailabilityGroup "1" --> "*" AvailabilityReplica : has
+    AvailabilityGroup "1" --> "*" AvailabilityDatabase : has
+    AvailabilityGroup "1" --> "*" AvailabilityGroupListener : has
+    AvailabilityGroup --> AvailabilityReplicaSpec : AddReplica() accepts
+    AvailabilityGroup --> AvailabilityListenerSpec : AddListener() accepts
+    AvailabilityGroupListener "1" --> "*" AvailabilityListenerIP : has
+    AvailabilityListenerSpec "1" --> "*" AvailabilityListenerIPSpec : has
+    CreateAvailabilityGroupRequest "1" --> "*" AvailabilityReplicaSpec : has
+    CreateAvailabilityGroupRequest --> AvailabilityListenerSpec : may have
+    AvailabilityReplica ..> DatabaseMirroringEndpoint : ships log through
+
+    Database "1" --> "*" Certificate : contains
+    Database --> CertificateSpec : CreateCertificate() accepts
