@@ -633,6 +633,7 @@ classDiagram
     withRetry <.. ServerQuery : whole scan retried by
     withRetry <.. IsRetryable : same failure test as
 
+    ServerScripter ..> Server : scripts logins and server roles of
     ScriptCollector ..> Server : captures writes from
     ScriptCollector ..> Database : captures writes from
 ```
@@ -1149,10 +1150,39 @@ classDiagram
         +ScriptView(schema, name) string
         +ScriptStoredProcedure(schema, name) string
         +ScriptFunction(schema, name) string
+        +ScriptTrigger(schema, name) string
+        +ScriptIndex(schema, table, name) string
+        +ScriptCheckConstraint(schema, table, name) string
+        +ScriptForeignKey(schema, table, name) string
+        +ScriptSequence(schema, name) string
+        +ScriptSynonym(schema, name) string
+        +ScriptSchema(name) string
+        +ScriptUser(name) string
+        +ScriptDatabaseRole(name) string
+        +ScriptPartitionFunction(name) string
+        +ScriptPartitionScheme(name) string
+        +ScriptSecurityPolicy(schema, name) string
+        +ScriptColumnMasterKey(name) string
+        +ScriptColumnEncryptionKey(name) string
         +ScriptDatabase() string
+        +ScriptSelect(schema, name) string
+        +ScriptInsert(schema, name) string
+        +ScriptUpdate(schema, name) string
+        +ScriptDelete(schema, name) string
+        +ScriptExecute(schema, name) string
+        +ScriptFunctionCall(schema, name, funcType) string
+    }
+
+    class ServerScripter {
+        -server *Server
+        -opts ScriptOptions
+        +NewServerScripter(server, opts) *ServerScripter
+        +ScriptLogin(name) string
+        +ScriptServerRole(name) string
     }
 
     class ScriptOptions {
+        +Verb ScriptVerb
         +IncludeHeaders bool
         +IncludeIfNotExists bool
         +ScriptDrops bool
@@ -2229,11 +2259,48 @@ ddl, _ := sc.ScriptTable("dbo", "MyTable")
 ddl, _ := sc.ScriptView("dbo", "MyView")
 ddl, _ := sc.ScriptStoredProcedure("dbo", "MyProc")
 ddl, _ := sc.ScriptFunction("dbo", "MyFunc")
+ddl, _ := sc.ScriptTrigger("dbo", "MyTrigger")
+ddl, _ := sc.ScriptIndex("dbo", "MyTable", "IX_MyTable_a")
+ddl, _ := sc.ScriptCheckConstraint("dbo", "MyTable", "CK_MyTable_a")
+ddl, _ := sc.ScriptForeignKey("dbo", "MyTable", "FK_MyTable_Other")
+ddl, _ := sc.ScriptSequence("dbo", "MySeq")
+ddl, _ := sc.ScriptSynonym("dbo", "MySyn")
+ddl, _ := sc.ScriptSchema("sales")
+ddl, _ := sc.ScriptUser("app_user")
+ddl, _ := sc.ScriptDatabaseRole("app_rw")
+ddl, _ := sc.ScriptPartitionFunction("pfMonthly")
+ddl, _ := sc.ScriptPartitionScheme("psMonthly")
+ddl, _ := sc.ScriptSecurityPolicy("sec", "TenantFilter")
+ddl, _ := sc.ScriptColumnMasterKey("CMK1")
+ddl, _ := sc.ScriptColumnEncryptionKey("CEK1")
 ddl, _ := sc.ScriptDatabase()
+
+// Logins and server roles belong to no database, so they have their own
+// scripter.
+ssc := gosmo.NewServerScripter(srv, gosmo.DefaultScriptOptions())
+ddl, _ := ssc.ScriptLogin("app_login")
+ddl, _ := ssc.ScriptServerRole("ops")
 ```
 
+`ScriptOptions.Verb` selects the statement form: `ScriptCreate` (the
+default), `ScriptDrop`, `ScriptDropAndCreate` — the DROP and the CREATE, in
+that order and in separate batches — or `ScriptAlter`, which applies to
+module objects (view, procedure, function, trigger) and rewrites the leading
+`CREATE` of the stored definition, leaving a `CREATE OR ALTER` definition
+alone. The older `ScriptDrops bool` is still honoured, and means
+`Verb = ScriptDrop` while `Verb` is left at its zero value.
+
+There are also DML templates, in the shape SSMS's "SELECT To"/"INSERT To"
+produce — `ScriptSelect`, `ScriptInsert`, `ScriptUpdate`, `ScriptDelete`,
+`ScriptExecute` and `ScriptFunctionCall`. They carry `<name, type,>`
+placeholders wherever the operator has to supply a value and are
+deliberately not runnable as they stand; `ScriptInsert`/`ScriptUpdate` leave
+out identity and computed columns, which reject an explicit value. The
+parameter metadata behind `ScriptExecute` is `Database.Parameters(schema,
+name)`, which reads `sys.parameters` for a procedure or function.
+
 `ScriptOptions.IncludeHeaders` and `IncludeIfNotExists` apply to
-`ScriptTable` and `ScriptDatabase` only — the view/procedure/function
+`ScriptTable` and `ScriptDatabase` only — the view/procedure/function/trigger
 methods return the module's definition verbatim from `sys.sql_modules` and
 synthesize no DDL to guard. The existence check is per statement, never a
 block spanning several: `GO` is a client-side batch break, so a `BEGIN`

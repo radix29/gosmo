@@ -291,6 +291,14 @@ func (d *Database) SynonymSeq(ctx context.Context) iter.Seq2[*Synonym, error] {
 	return seqFrom(ctx, d.SynonymsContext)
 }
 
+// ParameterSeq returns an iterator over the parameters of one stored
+// procedure or function.
+func (d *Database) ParameterSeq(ctx context.Context, schema, name string) iter.Seq2[*Parameter, error] {
+	return seqFrom(ctx, func(ctx context.Context) ([]*Parameter, error) {
+		return d.ParametersContext(ctx, schema, name)
+	})
+}
+
 // PartitionFunctionSeq returns an iterator over all partition functions in the database.
 func (d *Database) PartitionFunctionSeq(ctx context.Context) iter.Seq2[*PartitionFunction, error] {
 	return seqFrom(ctx, d.PartitionFunctionsContext)

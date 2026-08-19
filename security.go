@@ -3,6 +3,7 @@ package gosmo
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"slices"
 )
@@ -19,7 +20,21 @@ type ColumnMasterKey struct {
 	KeyStoreProviderName     string
 	KeyPath                  string
 	AllowEnclaveComputations bool
+	// Signature is the digital signature over the key's metadata, required
+	// verbatim by CREATE COLUMN MASTER KEY's ENCLAVE_COMPUTATIONS clause —
+	// it can't be recomputed from the other fields, so a key that allows
+	// enclave computations cannot be scripted without it. Empty for a key
+	// that doesn't.
+	Signature []byte
 }
+
+// columnMasterKeySelect is the column list every column master key read
+// shares; the listing adds ORDER BY, the by-name lookup a WHERE.
+const columnMasterKeySelect = `
+SELECT name, column_master_key_id,
+       key_store_provider_name, key_path,
+       allow_enclave_computations, signature
+FROM   sys.column_master_keys`
 
 // ColumnMasterKeys returns all column master keys in the database.
 func (d *Database) ColumnMasterKeys() ([]*ColumnMasterKey, error) {
@@ -28,14 +43,8 @@ func (d *Database) ColumnMasterKeys() ([]*ColumnMasterKey, error) {
 
 // ColumnMasterKeysContext is the context-aware variant of ColumnMasterKeys.
 func (d *Database) ColumnMasterKeysContext(ctx context.Context) ([]*ColumnMasterKey, error) {
-	const q = `
-SELECT name, column_master_key_id,
-       key_store_provider_name, key_path,
-       allow_enclave_computations
-FROM   sys.column_master_keys
-ORDER  BY name`
-
-	rows, err := d.query(ctx, q)
+	rows, err := d.query(ctx, columnMasterKeySelect+`
+ORDER  BY name`)
 	if err != nil {
 		return nil, fmt.Errorf("gosmo: list column master keys: %w", err)
 	}
@@ -43,10 +52,8 @@ ORDER  BY name`
 
 	var keys []*ColumnMasterKey
 	for rows.Next() {
-		k := &ColumnMasterKey{db: d}
-		if err := rows.Scan(&k.Name, &k.ID,
-			&k.KeyStoreProviderName, &k.KeyPath,
-			&k.AllowEnclaveComputations); err != nil {
+		k, err := scanColumnMasterKey(d, rows.Scan)
+		if err != nil {
 			return nil, fmt.Errorf("gosmo: list column master keys: %w", err)
 		}
 		keys = append(keys, k)
@@ -55,6 +62,40 @@ ORDER  BY name`
 		return nil, fmt.Errorf("gosmo: list column master keys: %w", err)
 	}
 	return keys, nil
+}
+
+// ColumnMasterKeyByName returns one column master key by name.
+func (d *Database) ColumnMasterKeyByName(name string) (*ColumnMasterKey, error) {
+	return d.ColumnMasterKeyByNameContext(context.Background(), name)
+}
+
+// ColumnMasterKeyByNameContext is the context-aware variant of
+// ColumnMasterKeyByName.
+func (d *Database) ColumnMasterKeyByNameContext(ctx context.Context, name string) (*ColumnMasterKey, error) {
+	var k *ColumnMasterKey
+	err := d.queryRow(ctx, func(row *sql.Row) error {
+		var err error
+		k, err = scanColumnMasterKey(d, row.Scan)
+		return err
+	}, columnMasterKeySelect+`
+WHERE  name = @p1`, name)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, notFoundf("gosmo: column master key %q not found in %q", name, d.name)
+		}
+		return nil, fmt.Errorf("gosmo: find column master key %q in %q: %w", name, d.name, err)
+	}
+	return k, nil
+}
+
+func scanColumnMasterKey(d *Database, scan func(...any) error) (*ColumnMasterKey, error) {
+	k := &ColumnMasterKey{db: d}
+	if err := scan(&k.Name, &k.ID,
+		&k.KeyStoreProviderName, &k.KeyPath,
+		&k.AllowEnclaveComputations, &k.Signature); err != nil {
+		return nil, err
+	}
+	return k, nil
 }
 
 // CreateColumnMasterKey creates a column master key metadata entry.
@@ -102,12 +143,40 @@ func (cmk *ColumnMasterKey) DropContext(ctx context.Context) error {
 
 // ColumnEncryptionKey mirrors sys.column_encryption_keys.
 type ColumnEncryptionKey struct {
-	db                  *Database
-	Name                string
-	ID                  int
+	db   *Database
+	Name string
+	ID   int
+	// MasterKeyName and EncryptionAlgorithm describe the key's first
+	// encrypted value — the common case, where a key has exactly one.
 	MasterKeyName       string
 	EncryptionAlgorithm string
+	// Values holds every encrypted value of the key, one per column master
+	// key it is encrypted under. A key has two while its master key is being
+	// rotated, and CREATE COLUMN ENCRYPTION KEY has to restate all of them.
+	Values []*ColumnEncryptionKeyValue
 }
+
+// ColumnEncryptionKeyValue is one encrypted value of a column encryption
+// key, from sys.column_encryption_key_values.
+type ColumnEncryptionKeyValue struct {
+	MasterKeyName       string
+	EncryptionAlgorithm string
+	// EncryptedValue is the key material encrypted under the master key.
+	// Scripting the key means reproducing these bytes exactly; nothing can
+	// regenerate them.
+	EncryptedValue []byte
+}
+
+// columnEncryptionKeySelect is the column list and joins every column
+// encryption key read shares. It returns one row per encrypted value, so
+// every caller folds the rows with scanColumnEncryptionKeys.
+const columnEncryptionKeySelect = `
+SELECT cek.name, cek.column_encryption_key_id,
+       cmk.name AS master_key_name,
+       cekv.encryption_algorithm_name, cekv.encrypted_value
+FROM   sys.column_encryption_keys cek
+JOIN   sys.column_encryption_key_values cekv ON cekv.column_encryption_key_id = cek.column_encryption_key_id
+JOIN   sys.column_master_keys cmk ON cmk.column_master_key_id = cekv.column_master_key_id`
 
 // ColumnEncryptionKeys returns all column encryption keys in the database.
 func (d *Database) ColumnEncryptionKeys() ([]*ColumnEncryptionKey, error) {
@@ -116,35 +185,78 @@ func (d *Database) ColumnEncryptionKeys() ([]*ColumnEncryptionKey, error) {
 
 // ColumnEncryptionKeysContext is the context-aware variant of ColumnEncryptionKeys.
 func (d *Database) ColumnEncryptionKeysContext(ctx context.Context) ([]*ColumnEncryptionKey, error) {
-	const q = `
-SELECT cek.name, cek.column_encryption_key_id,
-       cmk.name AS master_key_name,
-       cekv.encryption_algorithm_name
-FROM   sys.column_encryption_keys cek
-JOIN   sys.column_encryption_key_values cekv ON cekv.column_encryption_key_id = cek.column_encryption_key_id
-JOIN   sys.column_master_keys cmk ON cmk.column_master_key_id = cekv.column_master_key_id
-ORDER  BY cek.name`
-
-	rows, err := d.query(ctx, q)
+	rows, err := d.query(ctx, columnEncryptionKeySelect+`
+ORDER  BY cek.name, cekv.column_master_key_id`)
 	if err != nil {
 		return nil, fmt.Errorf("gosmo: list column encryption keys: %w", err)
 	}
 	defer rows.Close()
 
-	var keys []*ColumnEncryptionKey
-	for rows.Next() {
-		k := &ColumnEncryptionKey{db: d}
-		var algo sql.NullString
-		if err := rows.Scan(&k.Name, &k.ID, &k.MasterKeyName, &algo); err != nil {
-			return nil, fmt.Errorf("gosmo: list column encryption keys: %w", err)
-		}
-		k.EncryptionAlgorithm = algo.String
-		keys = append(keys, k)
-	}
-	if err := rows.Err(); err != nil {
+	keys, err := scanColumnEncryptionKeys(d, rows)
+	if err != nil {
 		return nil, fmt.Errorf("gosmo: list column encryption keys: %w", err)
 	}
 	return keys, nil
+}
+
+// ColumnEncryptionKeyByName returns one column encryption key by name.
+func (d *Database) ColumnEncryptionKeyByName(name string) (*ColumnEncryptionKey, error) {
+	return d.ColumnEncryptionKeyByNameContext(context.Background(), name)
+}
+
+// ColumnEncryptionKeyByNameContext is the context-aware variant of
+// ColumnEncryptionKeyByName.
+func (d *Database) ColumnEncryptionKeyByNameContext(ctx context.Context, name string) (*ColumnEncryptionKey, error) {
+	// query, not queryRow: a key encrypted under two master keys is two rows
+	// and both have to be read, so the not-found answer is an empty fold
+	// rather than sql.ErrNoRows.
+	rows, err := d.query(ctx, columnEncryptionKeySelect+`
+WHERE  cek.name = @p1
+ORDER  BY cekv.column_master_key_id`, name)
+	if err != nil {
+		return nil, fmt.Errorf("gosmo: find column encryption key %q in %q: %w", name, d.name, err)
+	}
+	defer rows.Close()
+
+	keys, err := scanColumnEncryptionKeys(d, rows)
+	if err != nil {
+		return nil, fmt.Errorf("gosmo: find column encryption key %q in %q: %w", name, d.name, err)
+	}
+	if len(keys) == 0 {
+		return nil, notFoundf("gosmo: column encryption key %q not found in %q", name, d.name)
+	}
+	return keys[0], nil
+}
+
+// scanColumnEncryptionKeys folds the one-row-per-encrypted-value result into
+// one key per column_encryption_key_id. A key encrypted under two master
+// keys — what a master-key rotation leaves behind — arrives as two rows of
+// the same key, and CREATE COLUMN ENCRYPTION KEY has to restate both.
+func scanColumnEncryptionKeys(d *Database, rows *dbRows) ([]*ColumnEncryptionKey, error) {
+	var keys []*ColumnEncryptionKey
+	byID := map[int]*ColumnEncryptionKey{}
+	for rows.Next() {
+		var name, masterKey string
+		var id int
+		var algo sql.NullString
+		var encrypted []byte
+		if err := rows.Scan(&name, &id, &masterKey, &algo, &encrypted); err != nil {
+			return nil, err
+		}
+		k := byID[id]
+		if k == nil {
+			k = &ColumnEncryptionKey{db: d, Name: name, ID: id,
+				MasterKeyName: masterKey, EncryptionAlgorithm: algo.String}
+			byID[id] = k
+			keys = append(keys, k)
+		}
+		k.Values = append(k.Values, &ColumnEncryptionKeyValue{
+			MasterKeyName:       masterKey,
+			EncryptionAlgorithm: algo.String,
+			EncryptedValue:      encrypted,
+		})
+	}
+	return keys, rows.Err()
 }
 
 // Drop drops the column encryption key.
@@ -174,7 +286,12 @@ type SecurityPolicy struct {
 	ObjectID            int
 	IsEnabled           bool
 	IsNotForReplication bool
-	Predicates          []*SecurityPredicate
+	// IsSchemaBound reports whether the policy binds the schema of the
+	// tables and predicate functions it names, which blocks any change to
+	// them while it exists. Part of the CREATE statement, so scripting a
+	// policy without it produces one that behaves differently.
+	IsSchemaBound bool
+	Predicates    []*SecurityPredicate
 }
 
 // SecurityPredicate represents one predicate in a security policy.
@@ -186,6 +303,13 @@ type SecurityPredicate struct {
 	Operation           string // for BLOCK: AFTER INSERT, AFTER UPDATE, etc.
 }
 
+// securityPolicySelect is the column list every security policy read
+// shares; the listing adds ORDER BY, the by-name lookup a WHERE.
+const securityPolicySelect = `
+SELECT sp.name, SCHEMA_NAME(sp.schema_id), sp.object_id,
+       sp.is_enabled, sp.is_not_for_replication, sp.is_schema_bound
+FROM   sys.security_policies sp`
+
 // SecurityPolicies returns all security policies in the database.
 func (d *Database) SecurityPolicies() ([]*SecurityPolicy, error) {
 	return d.SecurityPoliciesContext(context.Background())
@@ -193,13 +317,8 @@ func (d *Database) SecurityPolicies() ([]*SecurityPolicy, error) {
 
 // SecurityPoliciesContext is the context-aware variant of SecurityPolicies.
 func (d *Database) SecurityPoliciesContext(ctx context.Context) ([]*SecurityPolicy, error) {
-	const q = `
-SELECT sp.name, SCHEMA_NAME(sp.schema_id), sp.object_id,
-       sp.is_enabled, sp.is_not_for_replication
-FROM   sys.security_policies sp
-ORDER  BY sp.name`
-
-	rows, err := d.query(ctx, q)
+	rows, err := d.query(ctx, securityPolicySelect+`
+ORDER  BY sp.name`)
 	if err != nil {
 		return nil, fmt.Errorf("gosmo: list security policies: %w", err)
 	}
@@ -207,24 +326,70 @@ ORDER  BY sp.name`
 
 	var policies []*SecurityPolicy
 	for rows.Next() {
-		p := &SecurityPolicy{db: d}
-		if err := rows.Scan(&p.Name, &p.Schema, &p.ObjectID,
-			&p.IsEnabled, &p.IsNotForReplication); err != nil {
+		p, err := scanSecurityPolicy(d, rows.Scan)
+		if err != nil {
 			return nil, fmt.Errorf("gosmo: list security policies: %w", err)
 		}
-
-		// Load predicates
-		preds, err := d.securityPredicates(ctx, p.ObjectID)
-		if err != nil {
-			return nil, fmt.Errorf("gosmo: predicates of security policy %q in %q: %w", p.Name, d.name, err)
-		}
-		p.Predicates = preds
 		policies = append(policies, p)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("gosmo: list security policies: %w", err)
 	}
+	// The predicates are loaded after the row scan, not inside it: each
+	// policy needs its own query, and running one while the outer rows are
+	// still open would hold two statements on the same connection.
+	for _, p := range policies {
+		if err := d.loadSecurityPredicates(ctx, p); err != nil {
+			return nil, err
+		}
+	}
 	return policies, nil
+}
+
+// SecurityPolicyByName returns one security policy by schema-qualified name.
+func (d *Database) SecurityPolicyByName(schema, name string) (*SecurityPolicy, error) {
+	return d.SecurityPolicyByNameContext(context.Background(), schema, name)
+}
+
+// SecurityPolicyByNameContext is the context-aware variant of
+// SecurityPolicyByName.
+func (d *Database) SecurityPolicyByNameContext(ctx context.Context, schema, name string) (*SecurityPolicy, error) {
+	var p *SecurityPolicy
+	err := d.queryRow(ctx, func(row *sql.Row) error {
+		var err error
+		p, err = scanSecurityPolicy(d, row.Scan)
+		return err
+	}, securityPolicySelect+`
+WHERE  SCHEMA_NAME(sp.schema_id) = @p1
+  AND  sp.name                   = @p2`, schema, name)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, notFoundf("gosmo: security policy [%s].[%s] not found in %q", schema, name, d.name)
+		}
+		return nil, fmt.Errorf("gosmo: find security policy [%s].[%s] in %q: %w", schema, name, d.name, err)
+	}
+	if err := d.loadSecurityPredicates(ctx, p); err != nil {
+		return nil, err
+	}
+	return p, nil
+}
+
+func scanSecurityPolicy(d *Database, scan func(...any) error) (*SecurityPolicy, error) {
+	p := &SecurityPolicy{db: d}
+	if err := scan(&p.Name, &p.Schema, &p.ObjectID,
+		&p.IsEnabled, &p.IsNotForReplication, &p.IsSchemaBound); err != nil {
+		return nil, err
+	}
+	return p, nil
+}
+
+func (d *Database) loadSecurityPredicates(ctx context.Context, p *SecurityPolicy) error {
+	preds, err := d.securityPredicates(ctx, p.ObjectID)
+	if err != nil {
+		return fmt.Errorf("gosmo: predicates of security policy %q in %q: %w", p.Name, d.name, err)
+	}
+	p.Predicates = preds
+	return nil
 }
 
 func (d *Database) securityPredicates(ctx context.Context, policyObjectID int) ([]*SecurityPredicate, error) {

@@ -286,3 +286,70 @@ ORDER  BY o.name`
 	}
 	return procs, nil
 }
+
+// -- Parameters ----------------------------------------------------------------
+
+// Parameter mirrors one row of sys.parameters: a parameter of a stored
+// procedure or a function. The return value of a scalar function, which the
+// catalog also stores there as parameter_id 0, is not a parameter and is not
+// returned.
+type Parameter struct {
+	Name       string // including the leading @
+	Ordinal    int
+	DataType   DataType
+	MaxLength  int // -1 = MAX
+	Precision  int
+	Scale      int
+	IsOutput   bool
+	HasDefault bool
+}
+
+// TypeString returns the T-SQL data-type fragment for the parameter, in the
+// same form ColumnTypeString gives a column.
+func (p *Parameter) TypeString() string {
+	return sqlTypeString(p.DataType, p.MaxLength, p.Precision, p.Scale)
+}
+
+// Parameters returns the parameters of one stored procedure or function, in
+// declaration order.
+func (d *Database) Parameters(schema, name string) ([]*Parameter, error) {
+	return d.ParametersContext(context.Background(), schema, name)
+}
+
+// ParametersContext is the context-aware variant of Parameters.
+func (d *Database) ParametersContext(ctx context.Context, schema, name string) ([]*Parameter, error) {
+	const q = `
+SELECT p.name, p.parameter_id, tp.name,
+       p.max_length, p.precision, p.scale,
+       p.is_output, p.has_default_value
+FROM   sys.parameters p
+JOIN   sys.types tp ON tp.user_type_id = p.user_type_id
+WHERE  p.object_id = OBJECT_ID(QUOTENAME(@p1) + N'.' + QUOTENAME(@p2))
+  AND  p.parameter_id > 0
+ORDER  BY p.parameter_id`
+
+	if schema == "" {
+		schema = "dbo"
+	}
+	rows, err := d.query(ctx, q, schema, name)
+	if err != nil {
+		return nil, fmt.Errorf("gosmo: list parameters of %s: %w", qualifiedName(schema, name), err)
+	}
+	defer rows.Close()
+
+	var params []*Parameter
+	for rows.Next() {
+		p := &Parameter{}
+		var typeName string
+		if err := rows.Scan(&p.Name, &p.Ordinal, &typeName,
+			&p.MaxLength, &p.Precision, &p.Scale, &p.IsOutput, &p.HasDefault); err != nil {
+			return nil, fmt.Errorf("gosmo: list parameters of %s: %w", qualifiedName(schema, name), err)
+		}
+		p.DataType = DataType(typeName)
+		params = append(params, p)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("gosmo: list parameters of %s: %w", qualifiedName(schema, name), err)
+	}
+	return params, nil
+}

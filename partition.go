@@ -3,6 +3,7 @@ package gosmo
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"regexp"
 	"strings"
@@ -36,6 +37,24 @@ type PartitionFunction struct {
 	Boundaries    []string
 }
 
+// partitionFunctionSelect is the column list and joins every partition
+// function read shares; the listing adds ORDER BY, the by-name lookup a
+// WHERE.
+const partitionFunctionSelect = `
+SELECT pf.name, pf.function_id, pf.fanout - 1,
+       tp.name AS input_type, pf.boundary_value_on_right,
+       -- Style 126 (ISO 8601) matters for a date/time boundary: the default
+       -- conversion yields "Jan  1 2026", which loses any time part and has
+       -- to be reparsed by whoever reads it. It is ignored for every other
+       -- type, so it costs nothing there.
+       (SELECT STRING_AGG(CONVERT(NVARCHAR(256), prv.value, 126), ',')
+        WITHIN GROUP (ORDER BY prv.boundary_id)
+        FROM sys.partition_range_values prv
+        WHERE prv.function_id = pf.function_id) AS boundaries
+FROM   sys.partition_functions pf
+JOIN   sys.partition_parameters pp ON pp.function_id = pf.function_id
+JOIN   sys.types tp ON tp.user_type_id = pp.user_type_id`
+
 // PartitionFunctions returns all partition functions in the database.
 func (d *Database) PartitionFunctions() ([]*PartitionFunction, error) {
 	return d.PartitionFunctionsContext(context.Background())
@@ -43,19 +62,8 @@ func (d *Database) PartitionFunctions() ([]*PartitionFunction, error) {
 
 // PartitionFunctionsContext is the context-aware variant of PartitionFunctions.
 func (d *Database) PartitionFunctionsContext(ctx context.Context) ([]*PartitionFunction, error) {
-	const q = `
-SELECT pf.name, pf.function_id, pf.fanout - 1,
-       tp.name AS input_type, pf.boundary_value_on_right,
-       (SELECT STRING_AGG(CAST(prv.value AS NVARCHAR(256)), ',')
-        WITHIN GROUP (ORDER BY prv.boundary_id)
-        FROM sys.partition_range_values prv
-        WHERE prv.function_id = pf.function_id) AS boundaries
-FROM   sys.partition_functions pf
-JOIN   sys.partition_parameters pp ON pp.function_id = pf.function_id
-JOIN   sys.types tp ON tp.user_type_id = pp.user_type_id
-ORDER  BY pf.name`
-
-	rows, err := d.query(ctx, q)
+	rows, err := d.query(ctx, partitionFunctionSelect+`
+ORDER  BY pf.name`)
 	if err != nil {
 		return nil, fmt.Errorf("gosmo: list partition functions: %w", err)
 	}
@@ -63,14 +71,9 @@ ORDER  BY pf.name`
 
 	var funcs []*PartitionFunction
 	for rows.Next() {
-		pf := &PartitionFunction{db: d}
-		var boundaries sql.NullString
-		if err := rows.Scan(&pf.Name, &pf.FunctionID, &pf.BoundaryCount,
-			&pf.InputType, &pf.IsRight, &boundaries); err != nil {
+		pf, err := scanPartitionFunction(d, rows.Scan)
+		if err != nil {
 			return nil, fmt.Errorf("gosmo: list partition functions: %w", err)
-		}
-		if boundaries.Valid && boundaries.String != "" {
-			pf.Boundaries = strings.Split(boundaries.String, ",")
 		}
 		funcs = append(funcs, pf)
 	}
@@ -78,6 +81,43 @@ ORDER  BY pf.name`
 		return nil, fmt.Errorf("gosmo: list partition functions: %w", err)
 	}
 	return funcs, nil
+}
+
+// PartitionFunctionByName returns one partition function by name.
+func (d *Database) PartitionFunctionByName(name string) (*PartitionFunction, error) {
+	return d.PartitionFunctionByNameContext(context.Background(), name)
+}
+
+// PartitionFunctionByNameContext is the context-aware variant of
+// PartitionFunctionByName.
+func (d *Database) PartitionFunctionByNameContext(ctx context.Context, name string) (*PartitionFunction, error) {
+	var pf *PartitionFunction
+	err := d.queryRow(ctx, func(row *sql.Row) error {
+		var err error
+		pf, err = scanPartitionFunction(d, row.Scan)
+		return err
+	}, partitionFunctionSelect+`
+WHERE  pf.name = @p1`, name)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, notFoundf("gosmo: partition function %q not found in %q", name, d.name)
+		}
+		return nil, fmt.Errorf("gosmo: find partition function %q in %q: %w", name, d.name, err)
+	}
+	return pf, nil
+}
+
+func scanPartitionFunction(d *Database, scan func(...any) error) (*PartitionFunction, error) {
+	pf := &PartitionFunction{db: d}
+	var boundaries sql.NullString
+	if err := scan(&pf.Name, &pf.FunctionID, &pf.BoundaryCount,
+		&pf.InputType, &pf.IsRight, &boundaries); err != nil {
+		return nil, err
+	}
+	if boundaries.Valid && boundaries.String != "" {
+		pf.Boundaries = strings.Split(boundaries.String, ",")
+	}
+	return pf, nil
 }
 
 // CreatePartitionFunctionRequest describes a partition function to create.
@@ -184,6 +224,17 @@ type PartitionScheme struct {
 	FileGroups   []string
 }
 
+// partitionSchemeSelect is the column list and joins every partition
+// scheme read shares; the listing adds ORDER BY, the by-name lookup a WHERE.
+const partitionSchemeSelect = `
+SELECT ps.name, ps.data_space_id, pf.name AS func_name,
+       (SELECT STRING_AGG(fg.name, ',') WITHIN GROUP (ORDER BY dds.destination_id)
+        FROM sys.destination_data_spaces dds
+        JOIN sys.filegroups fg ON fg.data_space_id = dds.data_space_id
+        WHERE dds.partition_scheme_id = ps.data_space_id) AS filegroups
+FROM   sys.partition_schemes ps
+JOIN   sys.partition_functions pf ON pf.function_id = ps.function_id`
+
 // PartitionSchemes returns all partition schemes in the database.
 func (d *Database) PartitionSchemes() ([]*PartitionScheme, error) {
 	return d.PartitionSchemesContext(context.Background())
@@ -191,17 +242,8 @@ func (d *Database) PartitionSchemes() ([]*PartitionScheme, error) {
 
 // PartitionSchemesContext is the context-aware variant of PartitionSchemes.
 func (d *Database) PartitionSchemesContext(ctx context.Context) ([]*PartitionScheme, error) {
-	const q = `
-SELECT ps.name, ps.data_space_id, pf.name AS func_name,
-       (SELECT STRING_AGG(fg.name, ',') WITHIN GROUP (ORDER BY dds.destination_id)
-        FROM sys.destination_data_spaces dds
-        JOIN sys.filegroups fg ON fg.data_space_id = dds.data_space_id
-        WHERE dds.partition_scheme_id = ps.data_space_id) AS filegroups
-FROM   sys.partition_schemes ps
-JOIN   sys.partition_functions pf ON pf.function_id = ps.function_id
-ORDER  BY ps.name`
-
-	rows, err := d.query(ctx, q)
+	rows, err := d.query(ctx, partitionSchemeSelect+`
+ORDER  BY ps.name`)
 	if err != nil {
 		return nil, fmt.Errorf("gosmo: list partition schemes: %w", err)
 	}
@@ -209,13 +251,9 @@ ORDER  BY ps.name`
 
 	var schemes []*PartitionScheme
 	for rows.Next() {
-		ps := &PartitionScheme{db: d}
-		var fgs sql.NullString
-		if err := rows.Scan(&ps.Name, &ps.SchemeID, &ps.FunctionName, &fgs); err != nil {
+		ps, err := scanPartitionScheme(d, rows.Scan)
+		if err != nil {
 			return nil, fmt.Errorf("gosmo: list partition schemes: %w", err)
-		}
-		if fgs.Valid && fgs.String != "" {
-			ps.FileGroups = strings.Split(fgs.String, ",")
 		}
 		schemes = append(schemes, ps)
 	}
@@ -223,6 +261,42 @@ ORDER  BY ps.name`
 		return nil, fmt.Errorf("gosmo: list partition schemes: %w", err)
 	}
 	return schemes, nil
+}
+
+// PartitionSchemeByName returns one partition scheme by name.
+func (d *Database) PartitionSchemeByName(name string) (*PartitionScheme, error) {
+	return d.PartitionSchemeByNameContext(context.Background(), name)
+}
+
+// PartitionSchemeByNameContext is the context-aware variant of
+// PartitionSchemeByName.
+func (d *Database) PartitionSchemeByNameContext(ctx context.Context, name string) (*PartitionScheme, error) {
+	var ps *PartitionScheme
+	err := d.queryRow(ctx, func(row *sql.Row) error {
+		var err error
+		ps, err = scanPartitionScheme(d, row.Scan)
+		return err
+	}, partitionSchemeSelect+`
+WHERE  ps.name = @p1`, name)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, notFoundf("gosmo: partition scheme %q not found in %q", name, d.name)
+		}
+		return nil, fmt.Errorf("gosmo: find partition scheme %q in %q: %w", name, d.name, err)
+	}
+	return ps, nil
+}
+
+func scanPartitionScheme(d *Database, scan func(...any) error) (*PartitionScheme, error) {
+	ps := &PartitionScheme{db: d}
+	var fgs sql.NullString
+	if err := scan(&ps.Name, &ps.SchemeID, &ps.FunctionName, &fgs); err != nil {
+		return nil, err
+	}
+	if fgs.Valid && fgs.String != "" {
+		ps.FileGroups = strings.Split(fgs.String, ",")
+	}
+	return ps, nil
 }
 
 // CreatePartitionScheme creates a partition scheme backed by a partition function.

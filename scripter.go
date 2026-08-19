@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 )
 
@@ -12,8 +13,27 @@ import (
 // Scripter  (mirrors Microsoft.SqlServer.Management.Smo.Scripter)
 // ============================================================
 
+// ScriptVerb selects which statement form a Scripter emits.
+type ScriptVerb int
+
+const (
+	// ScriptCreate emits the object's CREATE statement (the zero value).
+	ScriptCreate ScriptVerb = iota
+	// ScriptDrop emits its DROP statement.
+	ScriptDrop
+	// ScriptDropAndCreate emits the DROP followed by the CREATE, in that
+	// order and in separate batches — the re-runnable form.
+	ScriptDropAndCreate
+	// ScriptAlter emits ALTER instead of CREATE. Only module objects
+	// (views, stored procedures, functions, triggers) have an ALTER form
+	// that restates the whole object; everything else falls back to CREATE.
+	ScriptAlter
+)
+
 // ScriptOptions controls how objects are scripted.
 type ScriptOptions struct {
+	// Verb selects CREATE (the default), DROP, DROP-and-CREATE, or ALTER.
+	Verb ScriptVerb
 	// IncludeHeaders adds an informational header comment. Applies to
 	// ScriptTable and ScriptDatabase only.
 	IncludeHeaders bool
@@ -27,7 +47,9 @@ type ScriptOptions struct {
 	// client-side batch break — leaving an unclosed BEGIN in one batch and a
 	// bare END in another, which is a script that cannot parse.
 	IncludeIfNotExists bool
-	// ScriptDrops emits DROP statements instead of CREATE statements.
+	// ScriptDrops is the older, narrower spelling of Verb = ScriptDrop, and
+	// still honoured: it applies only while Verb is left at its zero value.
+	// New code should set Verb.
 	ScriptDrops bool
 	// SchemaQualify prefixes object names with their schema.
 	SchemaQualify bool
@@ -43,6 +65,17 @@ func DefaultScriptOptions() ScriptOptions {
 		IncludeIfNotExists: true,
 		AnsiPadding:        true,
 	}
+}
+
+// verb resolves which statement form to emit, folding the older
+// ScriptDrops bool into the Verb it stands for. Verb wins whenever it is set
+// to anything but its zero value, so a caller that sets both is not silently
+// given the drop.
+func (o ScriptOptions) verb() ScriptVerb {
+	if o.Verb == ScriptCreate && o.ScriptDrops {
+		return ScriptDrop
+	}
+	return o.Verb
 }
 
 // Scripter generates T-SQL DDL scripts for objects in a database.
@@ -95,13 +128,16 @@ func buildTableScript(schema, name, dbName string, cols []*Column, indexes []*In
 	fullName := qualifiedName(schema, name)
 	var sb strings.Builder
 
-	if opts.ScriptDrops {
+	if v := opts.verb(); v == ScriptDrop || v == ScriptDropAndCreate {
 		if opts.IncludeIfNotExists {
 			fmt.Fprintf(&sb, "IF OBJECT_ID(N'%s', N'U') IS NOT NULL\n    ",
 				escapeSingle(fullName))
 		}
 		fmt.Fprintf(&sb, "DROP TABLE %s;\nGO\n", fullName)
-		return sb.String()
+		if v == ScriptDrop {
+			return sb.String()
+		}
+		sb.WriteString("\n")
 	}
 
 	if opts.IncludeHeaders {
@@ -337,6 +373,95 @@ func scriptForeignKey(fk *ForeignKey, tableName string, opts ScriptOptions) stri
 }
 
 // ============================================================
+// Modules (view, stored procedure, function, trigger)
+// ============================================================
+
+// moduleKind describes one family of sys.sql_modules-backed objects: the DDL
+// keyword its DROP uses, the noun a not-found error names it by, and the
+// catalog query that finds its definition by schema and name.
+type moduleKind struct {
+	keyword string
+	noun    string
+	query   string
+}
+
+var (
+	moduleView = moduleKind{"VIEW", "view", `
+SELECT m.definition
+FROM   sys.views v
+JOIN   sys.sql_modules m ON m.object_id = v.object_id
+WHERE  SCHEMA_NAME(v.schema_id) = @p1 AND v.name = @p2`}
+
+	moduleProcedure = moduleKind{"PROCEDURE", "stored procedure", `
+SELECT m.definition
+FROM   sys.procedures p
+JOIN   sys.sql_modules m ON m.object_id = p.object_id
+WHERE  SCHEMA_NAME(p.schema_id) = @p1 AND p.name = @p2`}
+
+	moduleFunction = moduleKind{"FUNCTION", "function", `
+SELECT m.definition
+FROM   sys.objects o
+JOIN   sys.sql_modules m ON m.object_id = o.object_id
+WHERE  SCHEMA_NAME(o.schema_id) = @p1 AND o.name = @p2
+  AND  o.type IN ('FN','TF','IF')`}
+
+	// A trigger's own schema is its parent table's — sys.triggers has no
+	// schema_id of its own.
+	moduleTrigger = moduleKind{"TRIGGER", "trigger", `
+SELECT m.definition
+FROM   sys.triggers tr
+JOIN   sys.objects o     ON o.object_id = tr.parent_id
+JOIN   sys.sql_modules m ON m.object_id = tr.object_id
+WHERE  SCHEMA_NAME(o.schema_id) = @p1 AND tr.name = @p2`}
+)
+
+// scriptModule renders one sys.sql_modules-backed object. CREATE and ALTER
+// are the stored definition itself (rewritten for ALTER), never synthesized,
+// so nothing about the original text is lost.
+func (sc *Scripter) scriptModule(ctx context.Context, k moduleKind, schema, name string) (string, error) {
+	v := sc.opts.verb()
+	var sb strings.Builder
+	if v == ScriptDrop || v == ScriptDropAndCreate {
+		fmt.Fprintf(&sb, "DROP %s IF EXISTS %s;\nGO\n", k.keyword, qualifiedName(schema, name))
+		if v == ScriptDrop {
+			return sb.String(), nil
+		}
+		sb.WriteString("\n")
+	}
+	var def string
+	err := sc.db.queryRow(ctx, func(row *sql.Row) error { return row.Scan(&def) }, k.query, schema, name)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", notFoundf("gosmo: %s %s not found", k.noun, qualifiedName(schema, name))
+		}
+		return "", err
+	}
+	if v == ScriptAlter {
+		def = alterModuleDefinition(def)
+	}
+	sb.WriteString(def + "\nGO\n")
+	return sb.String(), nil
+}
+
+// createKeyword matches the CREATE that opens a module definition, after any
+// leading whitespace and line or block comments — the only CREATE that may be
+// rewritten to ALTER. A CREATE elsewhere in the body (a temp table, say) must
+// be left exactly as the author wrote it.
+var createKeyword = regexp.MustCompile(`(?is)^((?:\s|--[^\n]*\n|/\*.*?\*/)*)CREATE(\s+OR\s+ALTER)?(\s)`)
+
+// alterModuleDefinition rewrites a module's stored CREATE into an ALTER,
+// leaving a definition it can't recognize untouched — an unrecognized one
+// still runs, as the CREATE it already was, which beats emitting mangled DDL.
+// A CREATE OR ALTER definition is already re-runnable and is returned as is.
+func alterModuleDefinition(def string) string {
+	m := createKeyword.FindStringSubmatch(def)
+	if m == nil || m[2] != "" {
+		return def
+	}
+	return m[1] + "ALTER" + m[3] + def[len(m[0]):]
+}
+
+// ============================================================
 // View
 // ============================================================
 
@@ -347,22 +472,7 @@ func (sc *Scripter) ScriptView(schema, name string) (string, error) {
 
 // ScriptViewContext is the context-aware variant of ScriptView.
 func (sc *Scripter) ScriptViewContext(ctx context.Context, schema, name string) (string, error) {
-	if sc.opts.ScriptDrops {
-		return fmt.Sprintf("DROP VIEW IF EXISTS %s;\nGO\n", qualifiedName(schema, name)), nil
-	}
-	var def string
-	err := sc.db.queryRow(ctx, func(row *sql.Row) error { return row.Scan(&def) }, `
-SELECT m.definition
-FROM   sys.views v
-JOIN   sys.sql_modules m ON m.object_id = v.object_id
-WHERE  SCHEMA_NAME(v.schema_id) = @p1 AND v.name = @p2`, schema, name)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return "", notFoundf("gosmo: view %s not found", qualifiedName(schema, name))
-		}
-		return "", err
-	}
-	return def + "\nGO\n", nil
+	return sc.scriptModule(ctx, moduleView, schema, name)
 }
 
 // ============================================================
@@ -376,22 +486,7 @@ func (sc *Scripter) ScriptStoredProcedure(schema, name string) (string, error) {
 
 // ScriptStoredProcedureContext is the context-aware variant.
 func (sc *Scripter) ScriptStoredProcedureContext(ctx context.Context, schema, name string) (string, error) {
-	if sc.opts.ScriptDrops {
-		return fmt.Sprintf("DROP PROCEDURE IF EXISTS %s;\nGO\n", qualifiedName(schema, name)), nil
-	}
-	var def string
-	err := sc.db.queryRow(ctx, func(row *sql.Row) error { return row.Scan(&def) }, `
-SELECT m.definition
-FROM   sys.procedures p
-JOIN   sys.sql_modules m ON m.object_id = p.object_id
-WHERE  SCHEMA_NAME(p.schema_id) = @p1 AND p.name = @p2`, schema, name)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return "", notFoundf("gosmo: stored procedure %s not found", qualifiedName(schema, name))
-		}
-		return "", err
-	}
-	return def + "\nGO\n", nil
+	return sc.scriptModule(ctx, moduleProcedure, schema, name)
 }
 
 // ============================================================
@@ -405,23 +500,22 @@ func (sc *Scripter) ScriptFunction(schema, name string) (string, error) {
 
 // ScriptFunctionContext is the context-aware variant.
 func (sc *Scripter) ScriptFunctionContext(ctx context.Context, schema, name string) (string, error) {
-	if sc.opts.ScriptDrops {
-		return fmt.Sprintf("DROP FUNCTION IF EXISTS %s;\nGO\n", qualifiedName(schema, name)), nil
-	}
-	var def string
-	err := sc.db.queryRow(ctx, func(row *sql.Row) error { return row.Scan(&def) }, `
-SELECT m.definition
-FROM   sys.objects o
-JOIN   sys.sql_modules m ON m.object_id = o.object_id
-WHERE  SCHEMA_NAME(o.schema_id) = @p1 AND o.name = @p2
-  AND  o.type IN ('FN','TF','IF')`, schema, name)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return "", notFoundf("gosmo: function %s not found", qualifiedName(schema, name))
-		}
-		return "", err
-	}
-	return def + "\nGO\n", nil
+	return sc.scriptModule(ctx, moduleFunction, schema, name)
+}
+
+// ============================================================
+// Trigger
+// ============================================================
+
+// ScriptTrigger returns the CREATE TRIGGER definition. schema is the
+// trigger's own schema, i.e. its parent table's.
+func (sc *Scripter) ScriptTrigger(schema, name string) (string, error) {
+	return sc.ScriptTriggerContext(context.Background(), schema, name)
+}
+
+// ScriptTriggerContext is the context-aware variant of ScriptTrigger.
+func (sc *Scripter) ScriptTriggerContext(ctx context.Context, schema, name string) (string, error) {
+	return sc.scriptModule(ctx, moduleTrigger, schema, name)
 }
 
 // ============================================================
@@ -462,32 +556,40 @@ func (sc *Scripter) ScriptDatabase() (string, error) {
 // ============================================================
 
 // ColumnTypeString returns the T-SQL data-type fragment for a Column read from
-// sys.columns. nchar/nvarchar store max_length in bytes (2 per character).
+// sys.columns.
 func ColumnTypeString(col *Column) string {
-	switch col.DataType {
+	return sqlTypeString(col.DataType, col.MaxLength, col.Precision, col.Scale)
+}
+
+// sqlTypeString renders a catalog data type with whatever length, precision
+// or scale that type actually carries — shared by ColumnTypeString and
+// Parameter.TypeString, which read the same columns out of sys.columns and
+// sys.parameters. nchar/nvarchar store max_length in bytes (2 per
+// character); -1 is MAX.
+func sqlTypeString(dt DataType, maxLength, precision, scale int) string {
+	switch dt {
 	case DataTypeVarChar, DataTypeChar, DataTypeBinary, DataTypeVarBinary:
-		if col.MaxLength == -1 {
-			return fmt.Sprintf("%s(MAX)", col.DataType)
+		if maxLength == -1 {
+			return fmt.Sprintf("%s(MAX)", dt)
 		}
-		if col.MaxLength > 0 {
-			return fmt.Sprintf("%s(%d)", col.DataType, col.MaxLength)
+		if maxLength > 0 {
+			return fmt.Sprintf("%s(%d)", dt, maxLength)
 		}
 	case DataTypeNVarChar, DataTypeNChar:
-		if col.MaxLength == -1 {
-			return fmt.Sprintf("%s(MAX)", col.DataType)
+		if maxLength == -1 {
+			return fmt.Sprintf("%s(MAX)", dt)
 		}
-		if col.MaxLength > 0 {
-			// SQL Server stores nchar/nvarchar max_length in bytes (2 per char).
-			return fmt.Sprintf("%s(%d)", col.DataType, col.MaxLength/2)
+		if maxLength > 0 {
+			return fmt.Sprintf("%s(%d)", dt, maxLength/2)
 		}
 	case DataTypeDecimal, DataTypeNumeric:
-		if col.Precision > 0 {
-			return fmt.Sprintf("%s(%d,%d)", col.DataType, col.Precision, col.Scale)
+		if precision > 0 {
+			return fmt.Sprintf("%s(%d,%d)", dt, precision, scale)
 		}
 	case DataTypeDatetime2, DataTypeTime, DataTypeDatetimeOffset:
-		if col.Scale > 0 {
-			return fmt.Sprintf("%s(%d)", col.DataType, col.Scale)
+		if scale > 0 {
+			return fmt.Sprintf("%s(%d)", dt, scale)
 		}
 	}
-	return string(col.DataType)
+	return string(dt)
 }
