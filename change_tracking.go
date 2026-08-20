@@ -128,19 +128,22 @@ func (d *Database) TableChangeTracking() ([]*TableChangeTracking, error) {
 	return d.TableChangeTrackingContext(context.Background())
 }
 
-// TableChangeTrackingContext is the context-aware variant of
-// TableChangeTracking.
-func (d *Database) TableChangeTrackingContext(ctx context.Context) ([]*TableChangeTracking, error) {
-	const q = `
+// tableChangeTrackingSelect is shared by TableChangeTrackingContext and
+// TableChangeTrackingForContext. The LEFT JOIN is what makes a table with
+// tracking switched off still produce a row.
+const tableChangeTrackingSelect = `
 SELECT SCHEMA_NAME(t.schema_id), t.name,
        CASE WHEN ctt.object_id IS NOT NULL THEN 1 ELSE 0 END,
        ISNULL(ctt.is_track_columns_updated_on, 0)
 FROM   sys.tables t
 LEFT   JOIN sys.change_tracking_tables ctt ON ctt.object_id = t.object_id
-WHERE  t.is_ms_shipped = 0
-ORDER  BY SCHEMA_NAME(t.schema_id), t.name`
+WHERE  t.is_ms_shipped = 0`
 
-	rows, err := d.query(ctx, q)
+// TableChangeTrackingContext is the context-aware variant of
+// TableChangeTracking.
+func (d *Database) TableChangeTrackingContext(ctx context.Context) ([]*TableChangeTracking, error) {
+	rows, err := d.query(ctx, tableChangeTrackingSelect+`
+ORDER  BY SCHEMA_NAME(t.schema_id), t.name`)
 	if err != nil {
 		return nil, fmt.Errorf("gosmo: table change tracking in %q: %w", d.name, err)
 	}
@@ -158,4 +161,28 @@ ORDER  BY SCHEMA_NAME(t.schema_id), t.name`
 		return nil, fmt.Errorf("gosmo: table change tracking in %q: %w", d.name, err)
 	}
 	return out, nil
+}
+
+// TableChangeTrackingFor returns change tracking state for one user table.
+func (d *Database) TableChangeTrackingFor(schema, name string) (*TableChangeTracking, error) {
+	return d.TableChangeTrackingForContext(context.Background(), schema, name)
+}
+
+// TableChangeTrackingForContext is the context-aware variant of
+// TableChangeTrackingFor. A table that exists but has tracking switched off
+// is not an error — it comes back with Enabled false. The error satisfies
+// errors.Is(err, ErrNotFound) only when the database has no such user table.
+func (d *Database) TableChangeTrackingForContext(ctx context.Context, schema, name string) (*TableChangeTracking, error) {
+	t := &TableChangeTracking{}
+	err := d.queryRow(ctx, func(row *sql.Row) error {
+		return row.Scan(&t.Schema, &t.Name, &t.Enabled, &t.TrackColumnsUpdated)
+	}, tableChangeTrackingSelect+`
+       AND SCHEMA_NAME(t.schema_id) = @p1 AND t.name = @p2`, schema, name)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, notFoundf("gosmo: table %s.%s not found in %q", schema, name, d.name)
+		}
+		return nil, fmt.Errorf("gosmo: change tracking for %s.%s in %q: %w", schema, name, d.name, err)
+	}
+	return t, nil
 }

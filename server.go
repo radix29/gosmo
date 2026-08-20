@@ -257,6 +257,31 @@ func ConnectContext(ctx context.Context, opts ConnectionOptions) (*Server, error
 	return s, nil
 }
 
+// NewServer wraps an already-open *sql.DB as a Server, loading the same
+// server metadata ConnectContext loads. Use it when the pool is not gosmo's
+// to open: a connection shared with the rest of an application, a driver
+// wrapped for tracing or retries, or a fake driver in a test.
+//
+// db must be a SQL Server pool — gosmo builds T-SQL and reads system views,
+// and nothing here checks the dialect. Ownership passes to the returned
+// Server: Close closes db, as it does for a pool Connect opened.
+//
+// This is the inverse of DB(), and the seam that makes gosmo's read and
+// write paths reachable from a caller's tests. Without it a Server can only
+// come from a real network connection, so any code that takes one — an
+// application's whole database layer — is testable only against a live
+// instance.
+func NewServer(ctx context.Context, db *sql.DB) (*Server, error) {
+	if db == nil {
+		return nil, fmt.Errorf("gosmo: new server: db is nil")
+	}
+	s := &Server{db: db}
+	if err := s.loadInfo(ctx); err != nil {
+		return nil, err
+	}
+	return s, nil
+}
+
 // applyDefaults fills zero-value fields with sensible defaults.
 func applyDefaults(opts *ConnectionOptions) {
 	if opts.ConnectTimeout == 0 {

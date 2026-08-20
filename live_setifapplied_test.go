@@ -206,3 +206,100 @@ func TestLiveScriptedSetterMirroring(t *testing.T) {
 		t.Errorf("scripted SetValue moved the SERVER to %d, want %d", reloadedC.Value, cbefore)
 	}
 }
+
+// Sequence.RestartContext is the same rule on a different object, and worth a
+// live check of its own because "current value" is the one field a caller
+// reads back immediately: a scripted restart that mirrored anyway left the
+// handle claiming a value NEXT VALUE FOR would not produce for a long time.
+//
+// Creates and drops its own throwaway database, same as above.
+func TestLiveScriptedSequenceRestartMirroring(t *testing.T) {
+	db, ctx, done := liveDB(t)
+	defer done()
+	srv := &Server{db: db}
+
+	const name = "gosmo_seq_restart_probe"
+	_ = srv.DropDatabaseContext(ctx, name, true)
+	if err := srv.CreateDatabaseContext(ctx, name, nil); err != nil {
+		t.Fatalf("create %s: %v", name, err)
+	}
+	defer func() {
+		if err := srv.DropDatabaseContext(ctx, name, true); err != nil {
+			t.Errorf("drop %s: %v", name, err)
+		}
+	}()
+
+	d, err := srv.DatabaseByNameContext(ctx, name)
+	if err != nil {
+		t.Fatalf("open %s: %v", name, err)
+	}
+	if err := d.CreateSequenceContext(ctx, CreateSequenceRequest{
+		Schema: "dbo", Name: "probe_seq", StartValue: 1, Increment: 1,
+	}); err != nil {
+		t.Fatalf("create sequence: %v", err)
+	}
+
+	// reload reads current_value back off sys.sequences — the server's own
+	// answer, never the handle's memory.
+	reload := func() *Sequence {
+		t.Helper()
+		seqs, err := d.SequencesContext(ctx)
+		if err != nil {
+			t.Fatalf("list sequences: %v", err)
+		}
+		for _, s := range seqs {
+			if s.Name == "probe_seq" {
+				return s
+			}
+		}
+		t.Fatal("probe_seq is gone")
+		return nil
+	}
+
+	seq := reload()
+	before := seq.CurrentValue
+	t.Logf("created at current_value=%d", before)
+
+	// 1. Scripted: neither the handle nor the server may move.
+	sctx, script := WithScript(ctx)
+	if err := seq.RestartContext(sctx, before+5000); err != nil {
+		t.Fatalf("scripted restart: %v", err)
+	}
+	if len(script.Statements) != 1 {
+		t.Fatalf("Statements = %v, want one", script.Statements)
+	}
+	t.Logf("scripted statement: %s", script.Statements[0])
+	if seq.CurrentValue != before {
+		t.Errorf("scripted restart moved the handle to %d, want it left at %d", seq.CurrentValue, before)
+	}
+	if got := reload().CurrentValue; got != before {
+		t.Errorf("scripted restart moved the SERVER to %d, want it left at %d", got, before)
+	}
+
+	// 2. The captured statement, run for real, must produce the change — the
+	// handle being left alone is only correct if the script is what applies it.
+	if _, err := d.exec(ctx, script.Statements[0]); err != nil {
+		t.Fatalf("running the captured statement: %v", err)
+	}
+	if got := reload().CurrentValue; got != before+5000 {
+		t.Errorf("after running the captured statement the server reports %d, want %d", got, before+5000)
+	}
+
+	// 3. Applied for real: handle and server must agree, and the next value
+	// the server actually hands out has to come from there — the whole point
+	// of the field is predicting that.
+	seq = reload()
+	if err := seq.RestartContext(ctx, 7777); err != nil {
+		t.Fatalf("restart: %v", err)
+	}
+	if got, srvGot := seq.CurrentValue, reload().CurrentValue; got != 7777 || srvGot != 7777 {
+		t.Errorf("restart: handle=%d server=%d, want both 7777", got, srvGot)
+	}
+	next, err := seq.NextValueContext(ctx)
+	if err != nil {
+		t.Fatalf("next value: %v", err)
+	}
+	if next != 7777 {
+		t.Errorf("NEXT VALUE FOR returned %d, want 7777 — the restart the handle claims is not the one the server did", next)
+	}
+}

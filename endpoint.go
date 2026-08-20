@@ -165,36 +165,73 @@ var (
 	endpointEncryption = map[string]bool{"REQUIRED": true, "SUPPORTED": true, "DISABLED": true}
 )
 
+// normalized returns the spec with its defaults filled in and its
+// keyword-valued parts validated and upper-cased. Authentication is left as
+// written: the clause is a small grammar rather than one keyword.
+//
+// createEndpointStatement and the handle a scripted create hands back are both
+// built from this, so the statement and the handle cannot disagree about what
+// was asked for.
+func (spec EndpointSpec) normalized() (EndpointSpec, error) {
+	if strings.TrimSpace(spec.Name) == "" {
+		return spec, fmt.Errorf("endpoint has no name")
+	}
+	if spec.Port == 0 {
+		spec.Port = 5022
+	}
+	if spec.Port < 1 || spec.Port > 65535 {
+		return spec, fmt.Errorf("endpoint port %d out of range 1-65535", spec.Port)
+	}
+	spec.Role = strings.ToUpper(orElse(spec.Role, "ALL"))
+	if !endpointRoles[spec.Role] {
+		return spec, fmt.Errorf("unrecognized endpoint role %q", spec.Role)
+	}
+	spec.Encryption = strings.ToUpper(orElse(spec.Encryption, "REQUIRED"))
+	if !endpointEncryption[spec.Encryption] {
+		return spec, fmt.Errorf("unrecognized endpoint encryption %q", spec.Encryption)
+	}
+	spec.EncryptionAlgorithm = strings.ToUpper(spec.EncryptionAlgorithm)
+	spec.Authentication = orElse(spec.Authentication, "WINDOWS NEGOTIATE")
+	return spec, nil
+}
+
 // createEndpointStatement builds the CREATE ENDPOINT statement, validating the
 // keyword-valued parts of the spec.
 func (spec EndpointSpec) createEndpointStatement() (string, error) {
-	if strings.TrimSpace(spec.Name) == "" {
-		return "", fmt.Errorf("endpoint has no name")
+	n, err := spec.normalized()
+	if err != nil {
+		return "", err
 	}
-	port := spec.Port
-	if port == 0 {
-		port = 5022
-	}
-	if port < 1 || port > 65535 {
-		return "", fmt.Errorf("endpoint port %d out of range 1-65535", spec.Port)
-	}
-	role := strings.ToUpper(orElse(spec.Role, "ALL"))
-	if !endpointRoles[role] {
-		return "", fmt.Errorf("unrecognized endpoint role %q", spec.Role)
-	}
-	encryption := strings.ToUpper(orElse(spec.Encryption, "REQUIRED"))
-	if !endpointEncryption[encryption] {
-		return "", fmt.Errorf("unrecognized endpoint encryption %q", spec.Encryption)
-	}
-	if spec.EncryptionAlgorithm != "" {
-		encryption += " ALGORITHM " + strings.ToUpper(spec.EncryptionAlgorithm)
+	encryption := n.Encryption
+	if n.EncryptionAlgorithm != "" {
+		encryption += " ALGORITHM " + n.EncryptionAlgorithm
 	}
 
 	return fmt.Sprintf(
 		"CREATE ENDPOINT %s STATE = STARTED AS TCP (LISTENER_PORT = %d, LISTENER_IP = ALL) "+
 			"FOR DATABASE_MIRRORING (AUTHENTICATION = %s, ENCRYPTION = %s, ROLE = %s)",
-		quoteIdent(spec.Name), port,
-		orElse(spec.Authentication, "WINDOWS NEGOTIATE"), encryption, role), nil
+		quoteIdent(n.Name), n.Port,
+		n.Authentication, encryption, n.Role), nil
+}
+
+// handle builds the endpoint this spec describes without reading it back, for
+// a scripted create where there is nothing on the server to read.
+//
+// State is STARTED because the CREATE statement says so. ConnectionAuth and
+// Owner are left empty: the first is a server-side *_desc keyword rather than
+// the spec's clause text, and the second is decided by the connection that
+// runs the script, which is not necessarily this one.
+func (spec EndpointSpec) handle(s *Server) *DatabaseMirroringEndpoint {
+	n, _ := spec.normalized() // already validated by createEndpointStatement
+	return &DatabaseMirroringEndpoint{
+		server:              s,
+		Name:                n.Name,
+		Port:                n.Port,
+		State:               "STARTED",
+		Role:                n.Role,
+		IsEncryptionEnabled: n.Encryption != "DISABLED",
+		EncryptionAlgorithm: n.EncryptionAlgorithm,
+	}
 }
 
 // CreateDatabaseMirroringEndpoint creates the instance's database mirroring
@@ -218,7 +255,13 @@ func (s *Server) CreateDatabaseMirroringEndpointContext(ctx context.Context, spe
 		return nil, fmt.Errorf("gosmo: create database mirroring endpoint %q on %q: %w", spec.Name, s.Name(), err)
 	}
 	if Scripting(ctx) {
-		return nil, nil
+		// The read-back is a real query and the CREATE above was only
+		// collected, so it would find no endpoint and return (nil, nil) —
+		// indistinguishable from a failed create, and leaving the caller
+		// nothing to script the GRANT CONNECTs and the ALTERs against. Hand
+		// out a handle built from the spec, as every other scripted create
+		// does (see CreateScheduleContext).
+		return spec.handle(s), nil
 	}
 	return s.DatabaseMirroringEndpointContext(ctx)
 }

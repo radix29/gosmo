@@ -244,15 +244,17 @@ func (d *Database) Schemas() ([]*Schema, error) {
 	return d.SchemasContext(context.Background())
 }
 
-// SchemasContext is the context-aware variant of Schemas.
-func (d *Database) SchemasContext(ctx context.Context) ([]*Schema, error) {
-	const q = `
+// schemaSelect is shared by SchemasContext and SchemaByNameContext so a
+// schema carries the same fields however it was fetched.
+const schemaSelect = `
 SELECT s.name, s.schema_id, p.name AS owner
 FROM   sys.schemas s
-JOIN   sys.database_principals p ON p.principal_id = s.principal_id
-ORDER  BY s.name`
+JOIN   sys.database_principals p ON p.principal_id = s.principal_id`
 
-	rows, err := d.query(ctx, q)
+// SchemasContext is the context-aware variant of Schemas.
+func (d *Database) SchemasContext(ctx context.Context) ([]*Schema, error) {
+	rows, err := d.query(ctx, schemaSelect+`
+ORDER  BY s.name`)
 	if err != nil {
 		return nil, fmt.Errorf("gosmo: list schemas in %q: %w", d.name, err)
 	}
@@ -260,8 +262,8 @@ ORDER  BY s.name`
 
 	var schemas []*Schema
 	for rows.Next() {
-		sc := &Schema{db: d}
-		if err := rows.Scan(&sc.Name, &sc.ID, &sc.Owner); err != nil {
+		sc, err := scanSchema(d, rows.Scan)
+		if err != nil {
 			return nil, fmt.Errorf("gosmo: list schemas in %q: %w", d.name, err)
 		}
 		schemas = append(schemas, sc)
@@ -270,6 +272,39 @@ ORDER  BY s.name`
 		return nil, fmt.Errorf("gosmo: list schemas in %q: %w", d.name, err)
 	}
 	return schemas, nil
+}
+
+// SchemaByName returns one schema by name.
+func (d *Database) SchemaByName(name string) (*Schema, error) {
+	return d.SchemaByNameContext(context.Background(), name)
+}
+
+// SchemaByNameContext is the context-aware variant of SchemaByName. It
+// returns an error satisfying errors.Is(err, ErrNotFound) when the database
+// has no such schema.
+func (d *Database) SchemaByNameContext(ctx context.Context, name string) (*Schema, error) {
+	var sc *Schema
+	err := d.queryRow(ctx, func(row *sql.Row) error {
+		var err error
+		sc, err = scanSchema(d, row.Scan)
+		return err
+	}, schemaSelect+`
+WHERE  s.name = @p1`, name)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, notFoundf("gosmo: schema %q not found in %q", name, d.name)
+		}
+		return nil, fmt.Errorf("gosmo: find schema %q in %q: %w", name, d.name, err)
+	}
+	return sc, nil
+}
+
+func scanSchema(d *Database, scan func(...any) error) (*Schema, error) {
+	sc := &Schema{db: d}
+	if err := scan(&sc.Name, &sc.ID, &sc.Owner); err != nil {
+		return nil, err
+	}
+	return sc, nil
 }
 
 // CreateSchema creates a new schema in the database.

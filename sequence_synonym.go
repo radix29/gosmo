@@ -180,7 +180,7 @@ func (seq *Sequence) RestartContext(ctx context.Context, value int64) error {
 	if err != nil {
 		return fmt.Errorf("gosmo: restart sequence [%s].[%s]: %w", seq.Schema, seq.Name, err)
 	}
-	seq.CurrentValue = value
+	setIfApplied(ctx, &seq.CurrentValue, value)
 	return nil
 }
 
@@ -207,6 +207,8 @@ func (seq *Sequence) NextValueContext(ctx context.Context) (int64, error) {
 	if err != nil {
 		return 0, fmt.Errorf("gosmo: next value for [%s].[%s]: %w", seq.Schema, seq.Name, err)
 	}
+	// Assigned directly, not via setIfApplied: this is the value the server
+	// just returned, and reads run against the server under WithScript too.
 	seq.CurrentValue = val
 	return val, nil
 }

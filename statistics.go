@@ -3,6 +3,7 @@ package gosmo
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -36,9 +37,9 @@ func (t *Table) Statistics() ([]*Statistic, error) {
 	return t.StatisticsContext(context.Background())
 }
 
-// StatisticsContext is the context-aware variant of Statistics.
-func (t *Table) StatisticsContext(ctx context.Context) ([]*Statistic, error) {
-	const q = `
+// statisticSelect is shared by StatisticsContext and StatisticByNameContext
+// so a statistic carries the same fields however it was fetched.
+const statisticSelect = `
 SELECT s.name, s.stats_id,
        s.auto_created, s.user_created,
        s.has_filter, ISNULL(s.filter_definition, ''),
@@ -47,10 +48,12 @@ SELECT s.name, s.stats_id,
        s.no_recompute, s.is_incremental, sp.modification_counter
 FROM   sys.stats s
 CROSS  APPLY sys.dm_db_stats_properties(s.object_id, s.stats_id) sp
-WHERE  s.object_id = @p1
-ORDER  BY s.name`
+WHERE  s.object_id = @p1`
 
-	rows, err := t.db.query(ctx, q, t.ObjectID)
+// StatisticsContext is the context-aware variant of Statistics.
+func (t *Table) StatisticsContext(ctx context.Context) ([]*Statistic, error) {
+	rows, err := t.db.query(ctx, statisticSelect+`
+ORDER  BY s.name`, t.ObjectID)
 	if err != nil {
 		return nil, fmt.Errorf("gosmo: statistics for %s: %w", t.FullName(), err)
 	}
@@ -58,34 +61,67 @@ ORDER  BY s.name`
 
 	var stats []*Statistic
 	for rows.Next() {
-		st := &Statistic{table: t}
-		var lastUpdated sql.NullTime
-		var rowsSampled, totalRows, unfiltered, modCounter sql.NullInt64
-		var steps sql.NullInt32
-		if err := rows.Scan(
-			&st.Name, &st.StatID,
-			&st.IsAutoCreated, &st.IsUserCreated,
-			&st.HasFilter, &st.FilterDef,
-			&lastUpdated, &rowsSampled, &totalRows,
-			&steps, &unfiltered,
-			&st.NoRecompute, &st.IsIncremental, &modCounter,
-		); err != nil {
+		st, err := scanStatistic(t, rows.Scan)
+		if err != nil {
 			return nil, fmt.Errorf("gosmo: statistics for %s: %w", t.FullName(), err)
 		}
-		st.ModificationCounter = modCounter.Int64
-		if lastUpdated.Valid {
-			st.LastUpdated = lastUpdated.Time
-		}
-		st.RowsSampled = rowsSampled.Int64
-		st.TotalRows = totalRows.Int64
-		st.Steps = int(steps.Int32)
-		st.UnfilteredRows = unfiltered.Int64
 		stats = append(stats, st)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("gosmo: statistics for %s: %w", t.FullName(), err)
 	}
 	return stats, nil
+}
+
+// StatisticByName returns one statistics object on the table by name.
+func (t *Table) StatisticByName(name string) (*Statistic, error) {
+	return t.StatisticByNameContext(context.Background(), name)
+}
+
+// StatisticByNameContext is the context-aware variant of StatisticByName. It
+// returns an error satisfying errors.Is(err, ErrNotFound) when the table has
+// no such statistic.
+func (t *Table) StatisticByNameContext(ctx context.Context, name string) (*Statistic, error) {
+	var st *Statistic
+	err := t.db.queryRow(ctx, func(row *sql.Row) error {
+		var err error
+		st, err = scanStatistic(t, row.Scan)
+		return err
+	}, statisticSelect+`
+       AND s.name = @p2`, t.ObjectID, name)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, notFoundf("gosmo: statistic %q not found on %s", name, t.FullName())
+		}
+		return nil, fmt.Errorf("gosmo: find statistic %q on %s: %w", name, t.FullName(), err)
+	}
+	return st, nil
+}
+
+func scanStatistic(t *Table, scan func(...any) error) (*Statistic, error) {
+	st := &Statistic{table: t}
+	var lastUpdated sql.NullTime
+	var rowsSampled, totalRows, unfiltered, modCounter sql.NullInt64
+	var steps sql.NullInt32
+	if err := scan(
+		&st.Name, &st.StatID,
+		&st.IsAutoCreated, &st.IsUserCreated,
+		&st.HasFilter, &st.FilterDef,
+		&lastUpdated, &rowsSampled, &totalRows,
+		&steps, &unfiltered,
+		&st.NoRecompute, &st.IsIncremental, &modCounter,
+	); err != nil {
+		return nil, err
+	}
+	st.ModificationCounter = modCounter.Int64
+	if lastUpdated.Valid {
+		st.LastUpdated = lastUpdated.Time
+	}
+	st.RowsSampled = rowsSampled.Int64
+	st.TotalRows = totalRows.Int64
+	st.Steps = int(steps.Int32)
+	st.UnfilteredRows = unfiltered.Int64
+	return st, nil
 }
 
 // checkSamplePct rejects a sampling percentage outside the 0-100 range

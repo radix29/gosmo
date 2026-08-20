@@ -141,20 +141,77 @@ func TestScriptServerLevelWrites(t *testing.T) {
 	})
 }
 
-// TestScriptedEndpointCreateReturnsNoHandle pins what a scripted create hands
+// TestScriptedEndpointCreateReturnsAHandle pins what a scripted create hands
 // back. The real path re-reads the endpoint it just made; under WithScript
-// nothing was created, so there is nothing to read — returning a zero-valued
-// handle would have the caller address an endpoint the server does not have.
-func TestScriptedEndpointCreateReturnsNoHandle(t *testing.T) {
+// nothing was created, so there is nothing to read.
+//
+// It used to answer (nil, nil) there, on the grounds that a handle would have
+// the caller address an endpoint the server does not have — which is exactly
+// what a scripted caller is for: the GRANT CONNECTs and ALTERs that follow the
+// CREATE have to be collected too, and a nil handle leaves nothing to collect
+// them against. goSSMS's New Endpoint wizard bailed out on the nil and emitted
+// its CREATEs without a single GRANT. Every other scripted create in this
+// library hands back a name-only handle (see CreateScheduleContext); this one
+// was the outlier.
+//
+// The handle carries what the CREATE statement itself determines and nothing
+// else — no ConnectionAuth, no Owner.
+func TestScriptedEndpointCreateReturnsAHandle(t *testing.T) {
 	ctx, script := WithScript(context.Background())
-	ep, err := (&Server{}).CreateDatabaseMirroringEndpointContext(ctx, EndpointSpec{Name: "Hadr_Endpoint"})
+	srv := &Server{}
+	ep, err := srv.CreateDatabaseMirroringEndpointContext(ctx, EndpointSpec{
+		Name:                "Hadr_Endpoint",
+		EncryptionAlgorithm: "aes",
+	})
 	if err != nil {
 		t.Fatalf("CreateDatabaseMirroringEndpointContext under WithScript: %v", err)
 	}
-	if ep != nil {
-		t.Errorf("endpoint = %+v, want nil under WithScript", ep)
+	if ep == nil {
+		t.Fatal("endpoint = nil under WithScript, want a handle to script the next step against")
+	}
+	if ep.Server() != srv {
+		t.Error("the handle does not carry the server it was created on")
+	}
+	want := DatabaseMirroringEndpoint{
+		Name: "Hadr_Endpoint", Port: 5022, State: "STARTED", Role: "ALL",
+		IsEncryptionEnabled: true, EncryptionAlgorithm: "AES",
+	}
+	got := *ep
+	got.server = nil
+	if got != want {
+		t.Errorf("handle = %+v\nwant       %+v", got, want)
 	}
 	if len(script.Statements) != 1 {
-		t.Errorf("Statements = %d, want 1", len(script.Statements))
+		t.Fatalf("Statements = %d, want 1", len(script.Statements))
+	}
+
+	// The point of the handle: the next step scripts against it instead of
+	// being skipped.
+	if err := ep.GrantConnectContext(ctx, "ubusql2_login"); err != nil {
+		t.Fatalf("GrantConnectContext under WithScript: %v", err)
+	}
+	if len(script.Statements) != 2 {
+		t.Fatalf("Statements = %d after the grant, want 2", len(script.Statements))
+	}
+	if want := "GRANT CONNECT ON ENDPOINT::[Hadr_Endpoint] TO [ubusql2_login]"; script.Statements[1] != want {
+		t.Errorf("grant = %q, want %q", script.Statements[1], want)
+	}
+}
+
+// A DISABLED spec is the one case where the endpoint is not encrypted, and the
+// handle has to say so rather than inheriting the REQUIRED default's answer.
+func TestScriptedEndpointHandleReflectsDisabledEncryption(t *testing.T) {
+	ctx, _ := WithScript(context.Background())
+	ep, err := (&Server{}).CreateDatabaseMirroringEndpointContext(ctx, EndpointSpec{
+		Name: "EP", Port: 7022, Role: "partner", Encryption: "disabled",
+	})
+	if err != nil {
+		t.Fatalf("under WithScript: %v", err)
+	}
+	if ep.IsEncryptionEnabled {
+		t.Error("IsEncryptionEnabled = true for ENCRYPTION = DISABLED")
+	}
+	if ep.Port != 7022 || ep.Role != "PARTNER" {
+		t.Errorf("handle = %+v, want port 7022 and role PARTNER", *ep)
 	}
 }

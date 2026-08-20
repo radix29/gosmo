@@ -524,8 +524,36 @@ func (sc *Scripter) ScriptTriggerContext(ctx context.Context, schema, name strin
 
 // ScriptDatabase generates a CREATE DATABASE script for the attached database.
 func (sc *Scripter) ScriptDatabase() (string, error) {
-	var sb strings.Builder
+	return sc.ScriptDatabaseContext(context.Background())
+}
+
+// ScriptDatabaseContext is the context-aware variant of ScriptDatabase.
+//
+// The context is not decoration. Alone among the Script* methods this one
+// renders from the Database's own cached metadata rather than querying, and a
+// Database from Server.Database(name) carries none — it is a bare handle by
+// design. Rendering that handle emitted "SET RECOVERY ;" and
+// "COMPATIBILITY_LEVEL = 0", neither of which is valid T-SQL, so a handle
+// with no recovery model is refilled from sys.databases first. Each line is
+// still guarded on its own value: a refresh that cannot run leaves the script
+// short a setting, which is recoverable, rather than syntactically broken,
+// which is not.
+func (sc *Scripter) ScriptDatabaseContext(ctx context.Context) (string, error) {
 	d := sc.db
+	if d.recoveryModel == "" || d.compatLevel == 0 {
+		full, err := d.server.DatabaseByNameContext(ctx, d.name)
+		if err != nil {
+			return "", fmt.Errorf("gosmo: script database %q: %w", d.name, err)
+		}
+		d = full
+	}
+	return sc.scriptDatabaseFrom(d)
+}
+
+// scriptDatabaseFrom renders the script from d's metadata, with no reads of
+// its own.
+func (sc *Scripter) scriptDatabaseFrom(d *Database) (string, error) {
+	var sb strings.Builder
 	if sc.opts.IncludeHeaders {
 		fmt.Fprintf(&sb, "/* Database: %s  Version: %s */\n\n",
 			d.name, d.server.info.ProductVersion)
@@ -543,10 +571,14 @@ func (sc *Scripter) ScriptDatabase() (string, error) {
 	} else {
 		sb.WriteString("GO\n\n")
 	}
-	fmt.Fprintf(&sb, "ALTER DATABASE %s SET RECOVERY %s;\nGO\n",
-		quoteIdent(d.name), d.recoveryModel)
-	fmt.Fprintf(&sb, "ALTER DATABASE %s SET COMPATIBILITY_LEVEL = %d;\nGO\n",
-		quoteIdent(d.name), d.compatLevel)
+	if d.recoveryModel != "" {
+		fmt.Fprintf(&sb, "ALTER DATABASE %s SET RECOVERY %s;\nGO\n",
+			quoteIdent(d.name), d.recoveryModel)
+	}
+	if d.compatLevel != 0 {
+		fmt.Fprintf(&sb, "ALTER DATABASE %s SET COMPATIBILITY_LEVEL = %d;\nGO\n",
+			quoteIdent(d.name), d.compatLevel)
+	}
 	return sb.String(), nil
 }
 

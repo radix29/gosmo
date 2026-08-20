@@ -62,6 +62,66 @@ func (s *Schema) ObjectCountContext(ctx context.Context) (int, error) {
 	return count, nil
 }
 
+// SchemaObjectCounts is a per-category breakdown of what a schema contains,
+// as Schema Properties' Object summary shows it.
+type SchemaObjectCounts struct {
+	Tables           int
+	Views            int
+	StoredProcedures int
+	Functions        int
+	Synonyms         int
+	Sequences        int
+}
+
+// ObjectCountsByType returns the schema's contents broken down by category —
+// ObjectCount's total, itemized. It is a separate method rather than a
+// widening of ObjectCount because the two do not agree: ObjectCount is one
+// COUNT over sys.objects, while each count here reproduces the predicate of
+// the listing it stands in for, down to the sys.sql_modules join that keeps
+// a CLR or extended procedure out of the stored-procedure count.
+func (s *Schema) ObjectCountsByType() (SchemaObjectCounts, error) {
+	return s.ObjectCountsByTypeContext(context.Background())
+}
+
+// ObjectCountsByTypeContext is the context-aware variant of
+// ObjectCountsByType.
+//
+// One round trip of six scalar subqueries rather than a single GROUP BY over
+// sys.objects: the counts have to match what ViewsContext,
+// StoredProceduresContext, UserDefinedFunctionsContext, SynonymsContext,
+// SequencesContext and TablesBySchemaContext would each have returned, and
+// those differ in more than the type code — three join sys.sql_modules, two
+// do not filter is_ms_shipped, and synonyms and sequences have catalog views
+// of their own. A schema that does not exist yields zeros, not an error,
+// because SCHEMA_ID returns NULL for it.
+func (s *Schema) ObjectCountsByTypeContext(ctx context.Context) (SchemaObjectCounts, error) {
+	const q = `
+DECLARE @sid INT = SCHEMA_ID(@p1);
+SELECT
+  (SELECT COUNT(*) FROM sys.tables t
+   WHERE  t.schema_id = @sid AND t.is_ms_shipped = 0),
+  (SELECT COUNT(*) FROM sys.views v
+   JOIN   sys.sql_modules m ON m.object_id = v.object_id
+   WHERE  v.schema_id = @sid AND v.is_ms_shipped = 0),
+  (SELECT COUNT(*) FROM sys.procedures p
+   JOIN   sys.sql_modules m ON m.object_id = p.object_id
+   WHERE  p.schema_id = @sid AND p.is_ms_shipped = 0),
+  (SELECT COUNT(*) FROM sys.objects o
+   JOIN   sys.sql_modules m ON m.object_id = o.object_id
+   WHERE  o.schema_id = @sid AND o.type IN ('FN','TF','IF') AND o.is_ms_shipped = 0),
+  (SELECT COUNT(*) FROM sys.synonyms sy WHERE sy.schema_id = @sid),
+  (SELECT COUNT(*) FROM sys.sequences sq WHERE sq.schema_id = @sid)`
+
+	var c SchemaObjectCounts
+	if err := s.db.queryRow(ctx, func(row *sql.Row) error {
+		return row.Scan(&c.Tables, &c.Views, &c.StoredProcedures,
+			&c.Functions, &c.Synonyms, &c.Sequences)
+	}, q, s.Name); err != nil {
+		return SchemaObjectCounts{}, fmt.Errorf("gosmo: object counts for schema %q: %w", s.Name, err)
+	}
+	return c, nil
+}
+
 // ============================================================
 // User
 // ============================================================

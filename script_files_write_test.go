@@ -47,10 +47,10 @@ func TestScriptFileAndFileGroupWrites(t *testing.T) {
 		}, "ALTER DATABASE [App'DB] MODIFY FILEGROUP [FG]]2] DEFAULT"},
 		{"SetFileGroupReadOnly", func(c context.Context) error {
 			return scriptTestDB().SetFileGroupReadOnlyContext(c, "FG]2", true)
-		}, "ALTER DATABASE [App'DB] MODIFY FILEGROUP [FG]]2] READONLY"},
-		{"SetFileGroupReadOnly false is READWRITE", func(c context.Context) error {
+		}, "ALTER DATABASE [App'DB] MODIFY FILEGROUP [FG]]2] READ_ONLY"},
+		{"SetFileGroupReadOnly false is READ_WRITE", func(c context.Context) error {
 			return scriptTestDB().SetFileGroupReadOnlyContext(c, "FG]2", false)
-		}, "ALTER DATABASE [App'DB] MODIFY FILEGROUP [FG]]2] READWRITE"},
+		}, "ALTER DATABASE [App'DB] MODIFY FILEGROUP [FG]]2] READ_WRITE"},
 	})
 }
 

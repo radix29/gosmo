@@ -1,6 +1,9 @@
 package gosmo
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestBuildAddFileStatement(t *testing.T) {
 	cases := []struct {
@@ -80,6 +83,16 @@ func TestBuildAlterFileStatement(t *testing.T) {
 			m:    FileModify{GrowthKB: 4096},
 			want: "ALTER DATABASE [appdb] MODIFY FILE (NAME = [appdb], FILEGROWTH = 4096KB)",
 		},
+		{
+			name: "autogrowth off",
+			m:    FileModify{DisableGrowth: true},
+			want: "ALTER DATABASE [appdb] MODIFY FILE (NAME = [appdb], FILEGROWTH = 0)",
+		},
+		{
+			name: "autogrowth off beats a growth amount left set",
+			m:    FileModify{DisableGrowth: true, GrowthKB: 4096, GrowthPercent: 10},
+			want: "ALTER DATABASE [appdb] MODIFY FILE (NAME = [appdb], FILEGROWTH = 0)",
+		},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -107,5 +120,41 @@ func TestBuildAlterFileStatementNoOpWhenNothingChanges(t *testing.T) {
 func TestBuildAlterFileStatementRequiresName(t *testing.T) {
 	if _, err := buildAlterFileStatement("appdb", "", FileModify{SizeKB: 1}); err == nil {
 		t.Error("missing name: want an error, got nil")
+	}
+}
+
+// TestDisableGrowthIsNotTheZeroValue pins the distinction the DisableGrowth
+// field exists for: a zero GrowthKB means "don't touch FILEGROWTH", and only
+// DisableGrowth means "set it to 0". Collapsing the two — by emitting
+// FILEGROWTH = 0 whenever growth is zero — would write autogrowth off on
+// every ALTER that only meant to resize.
+func TestDisableGrowthIsNotTheZeroValue(t *testing.T) {
+	resize, err := buildAlterFileStatement("appdb", "appdb", FileModify{SizeKB: 65536})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if strings.Contains(resize, "FILEGROWTH") {
+		t.Errorf("a zero GrowthKB emitted a FILEGROWTH clause: %q", resize)
+	}
+	off, err := buildAlterFileStatement("appdb", "appdb", FileModify{DisableGrowth: true})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(off, "FILEGROWTH = 0") {
+		t.Errorf("DisableGrowth did not emit FILEGROWTH = 0: %q", off)
+	}
+}
+
+// TestDisableGrowthOnANewFile covers the ADD FILE half. writeFileSizeClauses
+// is shared with CREATE DATABASE's file definitions, so this pins both.
+func TestDisableGrowthOnANewFile(t *testing.T) {
+	got, err := buildAddFileStatement("appdb", DatabaseFileSpec{
+		Name: "appdb_2", Path: `C:\data\appdb_2.ndf`, SizeKB: 8192, DisableGrowth: true,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(got, "FILEGROWTH = 0") {
+		t.Errorf("DisableGrowth did not reach ADD FILE: %q", got)
 	}
 }

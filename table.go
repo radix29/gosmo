@@ -3,6 +3,7 @@ package gosmo
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -321,17 +322,48 @@ func (t *Table) Indexes() ([]*Index, error) {
 // throughout, which is the shape that exhausts a pool rather than merely
 // being slow.
 func (t *Table) IndexesContext(ctx context.Context) ([]*Index, error) {
-	indexes, err := t.indexListContext(ctx)
+	indexes, err := t.indexListContext(ctx, "")
 	if err != nil {
 		return nil, fmt.Errorf("gosmo: list indexes for %s: %w", t.FullName(), err)
 	}
 	if len(indexes) == 0 {
 		return nil, nil
 	}
+	if err := t.attachIndexColumns(ctx, indexes, ""); err != nil {
+		return nil, err
+	}
+	return indexes, nil
+}
 
-	cols, err := t.indexColumnsContext(ctx)
+// IndexByName returns one index on the table by name, with its columns.
+func (t *Table) IndexByName(name string) (*Index, error) {
+	return t.IndexByNameContext(context.Background(), name)
+}
+
+// IndexByNameContext is the context-aware variant of IndexByName. It returns
+// an error satisfying errors.Is(err, ErrNotFound) when the table has no such
+// index. Two queries, the same shape as IndexesContext — see its comment for
+// why the columns are not fetched inside the index scan.
+func (t *Table) IndexByNameContext(ctx context.Context, name string) (*Index, error) {
+	indexes, err := t.indexListContext(ctx, " AND i.name = @p2", name)
 	if err != nil {
-		return nil, fmt.Errorf("gosmo: columns of indexes on %s: %w", t.FullName(), err)
+		return nil, fmt.Errorf("gosmo: find index %q on %s: %w", name, t.FullName(), err)
+	}
+	if len(indexes) == 0 {
+		return nil, notFoundf("gosmo: index %q not found on %s", name, t.FullName())
+	}
+	if err := t.attachIndexColumns(ctx, indexes, " AND ic.index_id = @p2", indexes[0].IndexID); err != nil {
+		return nil, err
+	}
+	return indexes[0], nil
+}
+
+// attachIndexColumns fetches the object's index columns in one query and
+// distributes them over indexes by index ID.
+func (t *Table) attachIndexColumns(ctx context.Context, indexes []*Index, extra string, args ...any) error {
+	cols, err := t.indexColumnsContext(ctx, extra, args...)
+	if err != nil {
+		return fmt.Errorf("gosmo: columns of indexes on %s: %w", t.FullName(), err)
 	}
 	for _, idx := range indexes {
 		for _, c := range cols[idx.IndexID] {
@@ -342,14 +374,16 @@ func (t *Table) IndexesContext(ctx context.Context) ([]*Index, error) {
 			}
 		}
 	}
-	return indexes, nil
+	return nil
 }
 
-// indexListContext returns the table's indexes with no columns attached.
-// Its rows are drained and closed before IndexesContext asks for the columns,
-// so the two queries never hold two pooled connections at once.
-func (t *Table) indexListContext(ctx context.Context) ([]*Index, error) {
-	const q = `
+// indexListContext returns the table's indexes with no columns attached,
+// narrowed by extra — an additional predicate ANDed onto the object filter,
+// with its parameters starting at @p2. Its rows are drained and closed before
+// the caller asks for the columns, so the two queries never hold two pooled
+// connections at once.
+func (t *Table) indexListContext(ctx context.Context, extra string, args ...any) ([]*Index, error) {
+	q := `
 SELECT i.name, i.index_id, i.type_desc, i.is_unique, i.is_primary_key,
        i.is_unique_constraint, i.is_disabled, i.fill_factor,
        ISNULL(i.filter_definition, ''),
@@ -359,10 +393,10 @@ FROM   sys.indexes i
 OUTER  APPLY (SELECT TOP 1 pp.data_compression_desc FROM sys.partitions pp
               WHERE pp.object_id = i.object_id AND pp.index_id = i.index_id
               ORDER BY pp.partition_number) p
-WHERE  i.object_id = @p1 AND i.type > 0
+WHERE  i.object_id = @p1 AND i.type > 0` + extra + `
 ORDER  BY i.index_id`
 
-	rows, err := t.db.query(ctx, q, t.ObjectID)
+	rows, err := t.db.query(ctx, q, append([]any{t.ObjectID}, args...)...)
 	if err != nil {
 		return nil, err
 	}
@@ -412,15 +446,18 @@ ORDER  BY i.index_id`
 // The rows for index_id 0 — the heap's, which no index in the list claims —
 // come back too, and are simply never looked up: excluding them would cost a
 // predicate to save nothing, since a heap has at most one such row.
-func (t *Table) indexColumnsContext(ctx context.Context) (map[int][]IndexColumn, error) {
-	const q = `
+//
+// extra is an additional predicate ANDed onto the object filter, with its
+// parameters starting at @p2 — the same contract as indexListContext.
+func (t *Table) indexColumnsContext(ctx context.Context, extra string, args ...any) (map[int][]IndexColumn, error) {
+	q := `
 SELECT ic.index_id, c.name, ic.is_descending_key, ic.is_included_column
 FROM   sys.index_columns ic
 JOIN   sys.columns c ON c.object_id = ic.object_id AND c.column_id = ic.column_id
-WHERE  ic.object_id = @p1
+WHERE  ic.object_id = @p1` + extra + `
 ORDER  BY ic.index_id, ic.key_ordinal, ic.index_column_id`
 
-	rows, err := t.db.query(ctx, q, t.ObjectID)
+	rows, err := t.db.query(ctx, q, append([]any{t.ObjectID}, args...)...)
 	if err != nil {
 		return nil, err
 	}
@@ -458,9 +495,10 @@ func (t *Table) ForeignKeys() ([]*ForeignKey, error) {
 	return t.ForeignKeysContext(context.Background())
 }
 
-// ForeignKeysContext is the context-aware variant of ForeignKeys.
-func (t *Table) ForeignKeysContext(ctx context.Context) ([]*ForeignKey, error) {
-	const q = `
+// foreignKeySelect is shared by ForeignKeysContext and
+// ForeignKeyByNameContext so a foreign key carries the same fields however
+// it was fetched.
+const foreignKeySelect = `
 SELECT fk.name, fk.is_disabled, fk.is_not_for_replication,
        fk.delete_referential_action_desc, fk.update_referential_action_desc,
        SCHEMA_NAME(rt.schema_id), rt.name,
@@ -478,10 +516,12 @@ SELECT fk.name, fk.is_disabled, fk.is_not_for_replication,
         WHERE  fkc.constraint_object_id = fk.object_id)
 FROM   sys.foreign_keys fk
 JOIN   sys.tables rt ON rt.object_id = fk.referenced_object_id
-WHERE  fk.parent_object_id = @p1
-ORDER  BY fk.name`
+WHERE  fk.parent_object_id = @p1`
 
-	rows, err := t.db.query(ctx, q, t.ObjectID)
+// ForeignKeysContext is the context-aware variant of ForeignKeys.
+func (t *Table) ForeignKeysContext(ctx context.Context) ([]*ForeignKey, error) {
+	rows, err := t.db.query(ctx, foreignKeySelect+`
+ORDER  BY fk.name`, t.ObjectID)
 	if err != nil {
 		return nil, fmt.Errorf("gosmo: list foreign keys for %s: %w", t.FullName(), err)
 	}
@@ -489,19 +529,9 @@ ORDER  BY fk.name`
 
 	var fks []*ForeignKey
 	for rows.Next() {
-		fk := &ForeignKey{}
-		var cols, refCols sql.NullString
-		if err := rows.Scan(&fk.Name, &fk.IsDisabled, &fk.IsNotForReplication,
-			&fk.DeleteAction, &fk.UpdateAction,
-			&fk.ReferencedSchema, &fk.ReferencedTable,
-			&cols, &refCols); err != nil {
+		fk, err := scanForeignKey(rows.Scan)
+		if err != nil {
 			return nil, fmt.Errorf("gosmo: list foreign keys for %s: %w", t.FullName(), err)
-		}
-		if cols.Valid {
-			fk.Columns = strings.Split(cols.String, ",")
-		}
-		if refCols.Valid {
-			fk.ReferencedColumns = strings.Split(refCols.String, ",")
 		}
 		fks = append(fks, fk)
 	}
@@ -509,6 +539,49 @@ ORDER  BY fk.name`
 		return nil, fmt.Errorf("gosmo: list foreign keys for %s: %w", t.FullName(), err)
 	}
 	return fks, nil
+}
+
+// ForeignKeyByName returns one foreign key on the table by name.
+func (t *Table) ForeignKeyByName(name string) (*ForeignKey, error) {
+	return t.ForeignKeyByNameContext(context.Background(), name)
+}
+
+// ForeignKeyByNameContext is the context-aware variant of ForeignKeyByName.
+// It returns an error satisfying errors.Is(err, ErrNotFound) when the table
+// has no such foreign key.
+func (t *Table) ForeignKeyByNameContext(ctx context.Context, name string) (*ForeignKey, error) {
+	var fk *ForeignKey
+	err := t.db.queryRow(ctx, func(row *sql.Row) error {
+		var err error
+		fk, err = scanForeignKey(row.Scan)
+		return err
+	}, foreignKeySelect+`
+       AND fk.name = @p2`, t.ObjectID, name)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, notFoundf("gosmo: foreign key %q not found on %s", name, t.FullName())
+		}
+		return nil, fmt.Errorf("gosmo: find foreign key %q on %s: %w", name, t.FullName(), err)
+	}
+	return fk, nil
+}
+
+func scanForeignKey(scan func(...any) error) (*ForeignKey, error) {
+	fk := &ForeignKey{}
+	var cols, refCols sql.NullString
+	if err := scan(&fk.Name, &fk.IsDisabled, &fk.IsNotForReplication,
+		&fk.DeleteAction, &fk.UpdateAction,
+		&fk.ReferencedSchema, &fk.ReferencedTable,
+		&cols, &refCols); err != nil {
+		return nil, err
+	}
+	if cols.Valid {
+		fk.Columns = strings.Split(cols.String, ",")
+	}
+	if refCols.Valid {
+		fk.ReferencedColumns = strings.Split(refCols.String, ",")
+	}
+	return fk, nil
 }
 
 // -- Check constraints ---------------------------------------------------------

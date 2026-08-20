@@ -80,6 +80,12 @@ type DatabaseFileSpec struct {
 	// default).
 	GrowthKB      int64
 	GrowthPercent int
+	// DisableGrowth creates the file with autogrowth off (FILEGROWTH = 0),
+	// and takes precedence over GrowthKB/GrowthPercent. It exists because
+	// zero cannot say it: leaving both growth fields at zero means "omit
+	// FILEGROWTH, take the server default", which is the opposite of
+	// switching growth off.
+	DisableGrowth bool
 	// MaxSizeKB: 0 omits MAXSIZE (server default), -1 means UNLIMITED,
 	// >0 is the cap in KB.
 	MaxSizeKB int64
@@ -120,6 +126,8 @@ func writeFileSizeClauses(sb *strings.Builder, spec DatabaseFileSpec) {
 		fmt.Fprintf(sb, ", MAXSIZE = %dKB", spec.MaxSizeKB)
 	}
 	switch {
+	case spec.DisableGrowth:
+		sb.WriteString(", FILEGROWTH = 0")
 	case spec.GrowthPercent > 0:
 		fmt.Fprintf(sb, ", FILEGROWTH = %d%%", spec.GrowthPercent)
 	case spec.GrowthKB > 0:
@@ -171,6 +179,18 @@ type FileModify struct {
 	SizeKB        int64
 	GrowthKB      int64
 	GrowthPercent int
+	// DisableGrowth turns autogrowth off (FILEGROWTH = 0), and takes
+	// precedence over GrowthKB/GrowthPercent.
+	//
+	// It is a separate field because this struct's zero value means "leave
+	// this property alone", so GrowthKB = 0 cannot ask for FILEGROWTH = 0 —
+	// the one that omits the clause and the one that disables growth are
+	// the same value. Without it a UI whose growth control bottoms out at
+	// zero produces an ALTER with no FILEGROWTH clause, and if nothing else
+	// on the file changed, buildAlterFileStatement returns "" and
+	// AlterFileContext returns nil: an Apply that reports success and did
+	// nothing.
+	DisableGrowth bool
 	MaxSizeKB     int64 // -1 = UNLIMITED
 }
 
@@ -214,6 +234,8 @@ func buildAlterFileStatement(dbName, name string, m FileModify) (string, error) 
 		props = append(props, fmt.Sprintf("MAXSIZE = %dKB", m.MaxSizeKB))
 	}
 	switch {
+	case m.DisableGrowth:
+		props = append(props, "FILEGROWTH = 0")
 	case m.GrowthPercent > 0:
 		props = append(props, fmt.Sprintf("FILEGROWTH = %d%%", m.GrowthPercent))
 	case m.GrowthKB > 0:
@@ -351,10 +373,15 @@ func (d *Database) SetFileGroupReadOnly(name string, readOnly bool) error {
 }
 
 // SetFileGroupReadOnlyContext is the context-aware variant of SetFileGroupReadOnly.
+//
+// The keywords are the underscored spellings on purpose. ALTER DATABASE also
+// accepts READONLY/READWRITE, but only for backward compatibility — SQL Server
+// documents that pair as deprecated and slated for removal, and it is the
+// spelling this used to emit.
 func (d *Database) SetFileGroupReadOnlyContext(ctx context.Context, name string, readOnly bool) error {
-	mode := "READWRITE"
+	mode := "READ_WRITE"
 	if readOnly {
-		mode = "READONLY"
+		mode = "READ_ONLY"
 	}
 	q := fmt.Sprintf("ALTER DATABASE %s MODIFY FILEGROUP %s %s", quoteIdent(d.name), quoteIdent(name), mode)
 	if err := d.server.execContext(ctx, q); err != nil {
