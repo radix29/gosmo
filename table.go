@@ -298,7 +298,50 @@ type Index struct {
 	KeyColumns         []IndexColumn
 	IncludedColumns    []IndexColumn
 	FilterDefinition   string
+	DataSpace          DataSpace
 }
+
+// DataSpace names where a table or index keeps its rows — the ON clause of
+// CREATE TABLE and CREATE INDEX. It is either a filegroup or a partition
+// scheme, and for a partition scheme the partitioning column is part of the
+// clause, so it is carried here too: `ON [scheme]([column])`.
+//
+// Name is empty for an index with no data space of its own in sys.indexes —
+// a memory-optimized table's, whose rows are not on a filegroup at all.
+type DataSpace struct {
+	Name              string
+	IsPartitionScheme bool
+	// IsDefaultFileGroup is true for the database's default filegroup, the
+	// one an object with no ON clause lands on. A scripter uses it to leave
+	// the clause off where it would say nothing.
+	IsDefaultFileGroup bool
+	// PartitionColumn is the column the scheme partitions by; set only when
+	// IsPartitionScheme.
+	PartitionColumn string
+}
+
+// dataSpaceColumns and dataSpaceJoins read an index's ON clause out of
+// sys.indexes: the data space's name and kind, whether it is the default
+// filegroup, and — for a partition scheme — the partitioning column, which
+// sys.index_columns marks with partition_ordinal 1.
+//
+// Every join is a LEFT/OUTER one and every column is wrapped in ISNULL: an
+// index can have no data space at all (a memory-optimized table's), and a
+// filegroup row exists only for ds.type 'FG'. The partitioning column's
+// join is aliased pic, not ic: the index-column query these sit beside is
+// told apart from this one by its `sys.index_columns ic`, and two of its
+// tests count round trips that way.
+const dataSpaceColumns = `ISNULL(ds.name, ''), CASE WHEN ds.type = 'PS' THEN 1 ELSE 0 END,
+       ISNULL(fg.is_default, 0), ISNULL(pc.name, '')`
+
+const dataSpaceJoins = `LEFT   JOIN sys.data_spaces ds ON ds.data_space_id = i.data_space_id
+LEFT   JOIN sys.filegroups fg ON fg.data_space_id = ds.data_space_id
+OUTER  APPLY (SELECT TOP 1 c.name
+              FROM   sys.index_columns pic
+              JOIN   sys.columns c ON c.object_id = pic.object_id AND c.column_id = pic.column_id
+              WHERE  pic.object_id = i.object_id AND pic.index_id = i.index_id
+                AND  pic.partition_ordinal > 0
+              ORDER  BY pic.partition_ordinal) pc`
 
 // IndexColumn represents one column in an index.
 type IndexColumn struct {
@@ -388,11 +431,13 @@ SELECT i.name, i.index_id, i.type_desc, i.is_unique, i.is_primary_key,
        i.is_unique_constraint, i.is_disabled, i.fill_factor,
        ISNULL(i.filter_definition, ''),
        i.is_padded, i.ignore_dup_key, i.allow_row_locks, i.allow_page_locks,
-       ISNULL(p.data_compression_desc, 'NONE')
+       ISNULL(p.data_compression_desc, 'NONE'),
+       ` + dataSpaceColumns + `
 FROM   sys.indexes i
 OUTER  APPLY (SELECT TOP 1 pp.data_compression_desc FROM sys.partitions pp
               WHERE pp.object_id = i.object_id AND pp.index_id = i.index_id
               ORDER BY pp.partition_number) p
+` + dataSpaceJoins + `
 WHERE  i.object_id = @p1 AND i.type > 0` + extra + `
 ORDER  BY i.index_id`
 
@@ -410,7 +455,9 @@ ORDER  BY i.index_id`
 			&idx.IsUnique, &idx.IsPrimaryKey, &idx.IsUniqueConstraint,
 			&idx.IsDisabled, &idx.FillFactor, &idx.FilterDefinition,
 			&idx.IsPadded, &idx.IgnoreDupKey, &idx.AllowRowLocks, &idx.AllowPageLocks,
-			&idx.DataCompression); err != nil {
+			&idx.DataCompression,
+			&idx.DataSpace.Name, &idx.DataSpace.IsPartitionScheme,
+			&idx.DataSpace.IsDefaultFileGroup, &idx.DataSpace.PartitionColumn); err != nil {
 			return nil, err
 		}
 		switch desc := strings.TrimSpace(typeDesc.String); desc {
@@ -438,6 +485,42 @@ ORDER  BY i.index_id`
 		indexes = append(indexes, idx)
 	}
 	return indexes, rows.Err()
+}
+
+// DataSpace returns where the table itself stores its rows — the filegroup
+// or partition scheme its heap or clustered index is on, which is CREATE
+// TABLE's ON clause.
+func (t *Table) DataSpace() (DataSpace, error) {
+	return t.DataSpaceContext(context.Background())
+}
+
+// DataSpaceContext is the context-aware variant of DataSpace.
+//
+// Read from index_id 0 or 1, so it answers for a heap as well as a clustered
+// table — which is why it is a query of its own rather than a field of the
+// index list, whose `i.type > 0` filter has no heap in it.
+//
+// A table with no row there at all — a Database.Table handle, whose ObjectID
+// is zero, or a memory-optimized table — reads as the zero DataSpace and no
+// error: absence means "no filegroup to name", not a failure.
+func (t *Table) DataSpaceContext(ctx context.Context) (DataSpace, error) {
+	q := `
+SELECT ` + dataSpaceColumns + `
+FROM   sys.indexes i
+` + dataSpaceJoins + `
+WHERE  i.object_id = @p1 AND i.index_id IN (0, 1)`
+
+	var ds DataSpace
+	err := t.db.queryRow(ctx, func(row *sql.Row) error {
+		return row.Scan(&ds.Name, &ds.IsPartitionScheme, &ds.IsDefaultFileGroup, &ds.PartitionColumn)
+	}, q, t.ObjectID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return DataSpace{}, nil
+		}
+		return DataSpace{}, fmt.Errorf("gosmo: data space of %s: %w", t.FullName(), err)
+	}
+	return ds, nil
 }
 
 // indexColumnsContext returns every index column on the table, keyed by

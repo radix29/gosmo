@@ -64,11 +64,12 @@ func TestIndexesUsesOneQueryForEveryIndexColumn(t *testing.T) {
 			cols: []string{"name", "index_id", "type_desc", "is_unique", "is_primary_key",
 				"is_unique_constraint", "is_disabled", "fill_factor", "filter_definition",
 				"is_padded", "ignore_dup_key", "allow_row_locks", "allow_page_locks",
-				"data_compression_desc"},
+				"data_compression_desc",
+				"data_space", "is_partition_scheme", "is_default_filegroup", "partition_column"},
 			rows: [][]driver.Value{
-				{"PK_T", int64(1), "CLUSTERED", true, true, false, false, int64(0), "", false, false, true, true, "NONE"},
-				{"IX_covering", int64(2), "NONCLUSTERED", false, false, false, false, int64(0), "", false, false, true, true, "NONE"},
-				{"IX_empty", int64(3), "NONCLUSTERED", false, false, false, false, int64(0), "", false, false, true, true, "NONE"},
+				{"PK_T", int64(1), "CLUSTERED", true, true, false, false, int64(0), "", false, false, true, true, "NONE", "PRIMARY", false, true, ""},
+				{"IX_covering", int64(2), "NONCLUSTERED", false, false, false, false, int64(0), "", false, false, true, true, "NONE", "ps_year", true, false, "created"},
+				{"IX_empty", int64(3), "NONCLUSTERED", false, false, false, false, int64(0), "", false, false, true, true, "NONE", "FG_archive", false, false, ""},
 			},
 		},
 		cannedRow{
@@ -90,7 +91,7 @@ func TestIndexesUsesOneQueryForEveryIndexColumn(t *testing.T) {
 		t.Fatalf("IndexesContext: %v", err)
 	}
 
-	if n := captured.count("sys.index_columns"); n != 1 {
+	if n := captured.count("sys.index_columns ic"); n != 1 {
 		t.Errorf("sys.index_columns queried %d times for 3 indexes, want 1", n)
 	}
 	if n := captured.count("sys.indexes i"); n != 1 {
@@ -139,7 +140,97 @@ func TestIndexesSkipsTheColumnQueryWhenThereAreNoIndexes(t *testing.T) {
 	if len(indexes) != 0 {
 		t.Errorf("got %d indexes, want none", len(indexes))
 	}
-	if n := captured.count("sys.index_columns"); n != 0 {
+	if n := captured.count("sys.index_columns ic"); n != 0 {
 		t.Errorf("sys.index_columns queried %d times for a table with no indexes, want 0", n)
+	}
+}
+
+// TestIndexListReadsEachIndexDataSpace pins the ON clause onto the index it
+// belongs to: an index can be on a different filegroup, or a different
+// partition scheme, from the table and from every other index, so reading one
+// data space for the whole object would be wrong on exactly the tables this
+// exists for. The scheme's partitioning column comes with it — the clause is
+// ON [scheme]([column]) and half of it is not a clause.
+func TestIndexListReadsEachIndexDataSpace(t *testing.T) {
+	tbl := captureTable(t)
+	captured.reset(
+		cannedRow{
+			match: "FROM   sys.indexes i",
+			cols: []string{"name", "index_id", "type_desc", "is_unique", "is_primary_key",
+				"is_unique_constraint", "is_disabled", "fill_factor", "filter_definition",
+				"is_padded", "ignore_dup_key", "allow_row_locks", "allow_page_locks",
+				"data_compression_desc",
+				"data_space", "is_partition_scheme", "is_default_filegroup", "partition_column"},
+			rows: [][]driver.Value{
+				{"PK_T", int64(1), "CLUSTERED", true, true, false, false, int64(0), "", false, false, true, true, "NONE", "ps_year", true, false, "Created"},
+				{"IX_archive", int64(2), "NONCLUSTERED", false, false, false, false, int64(0), "", false, false, true, true, "NONE", "FG_Archive", false, false, ""},
+				{"IX_default", int64(3), "NONCLUSTERED", false, false, false, false, int64(0), "", false, false, true, true, "NONE", "PRIMARY", false, true, ""},
+			},
+		},
+		cannedRow{
+			match: "FROM   sys.index_columns ic",
+			cols:  []string{"index_id", "name", "is_descending_key", "is_included_column"},
+			rows:  [][]driver.Value{{int64(1), "id", false, false}},
+		},
+	)
+
+	indexes, err := tbl.IndexesContext(context.Background())
+	if err != nil {
+		t.Fatalf("IndexesContext: %v", err)
+	}
+	want := []DataSpace{
+		{Name: "ps_year", IsPartitionScheme: true, PartitionColumn: "Created"},
+		{Name: "FG_Archive"},
+		{Name: "PRIMARY", IsDefaultFileGroup: true},
+	}
+	if len(indexes) != len(want) {
+		t.Fatalf("got %d indexes, want %d", len(indexes), len(want))
+	}
+	for i, w := range want {
+		if indexes[i].DataSpace != w {
+			t.Errorf("%s data space = %+v, want %+v", indexes[i].Name, indexes[i].DataSpace, w)
+		}
+	}
+}
+
+// TestTableDataSpaceReadsTheHeapOrClusteredIndex pins the table's own ON
+// clause to index_id 0 or 1. A heap has no row the index list would return —
+// it filters on i.type > 0 — so a partitioned heap's scheme is only reachable
+// through this query, and it is the ordinary case for a staging table.
+func TestTableDataSpaceReadsTheHeapOrClusteredIndex(t *testing.T) {
+	tbl := captureTable(t)
+	captured.reset(cannedRow{
+		match: "FROM   sys.indexes i",
+		cols:  []string{"data_space", "is_partition_scheme", "is_default_filegroup", "partition_column"},
+		row:   []driver.Value{"ps_year", true, false, "Created"},
+	})
+
+	ds, err := tbl.DataSpaceContext(context.Background())
+	if err != nil {
+		t.Fatalf("DataSpaceContext: %v", err)
+	}
+	want := DataSpace{Name: "ps_year", IsPartitionScheme: true, PartitionColumn: "Created"}
+	if ds != want {
+		t.Errorf("DataSpaceContext = %+v, want %+v", ds, want)
+	}
+	if n := captured.count("i.index_id IN (0, 1)"); n != 1 {
+		t.Errorf("index_id IN (0, 1) appeared in %d queries, want 1 — a heap is only reachable that way", n)
+	}
+}
+
+// A table with no row in sys.indexes at all — a Database.Table handle, whose
+// ObjectID is zero — must read as "no data space", not as an error: the
+// scripter asks for it on every table and an error here would fail the whole
+// script over a clause that has nothing to say.
+func TestTableDataSpaceIsEmptyWhenThereIsNoRow(t *testing.T) {
+	tbl := captureTable(t)
+	captured.reset()
+
+	ds, err := tbl.DataSpaceContext(context.Background())
+	if err != nil {
+		t.Fatalf("DataSpaceContext: %v", err)
+	}
+	if (ds != DataSpace{}) {
+		t.Errorf("DataSpaceContext = %+v, want the zero DataSpace", ds)
 	}
 }

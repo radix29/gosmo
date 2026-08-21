@@ -116,15 +116,21 @@ func (sc *Scripter) ScriptTableContext(ctx context.Context, schema, name string)
 	if err != nil {
 		return "", err
 	}
+	// The table's own ON clause comes from its heap or clustered index, and
+	// a heap is not in the index list at all — see Table.DataSpaceContext.
+	ds, err := t.DataSpaceContext(ctx)
+	if err != nil {
+		return "", err
+	}
 
-	return buildTableScript(schema, name, sc.db.name, cols, indexes, fks, sc.opts), nil
+	return buildTableScript(schema, name, sc.db.name, cols, indexes, fks, ds, sc.opts), nil
 }
 
 // buildTableScript assembles the CREATE (or DROP) TABLE script from metadata
 // already read. Split out of ScriptTableContext so the assembly — where every
 // bug this has had has lived — can be unit-tested without a server; the
 // method above is then only the four catalog reads that feed it.
-func buildTableScript(schema, name, dbName string, cols []*Column, indexes []*Index, fks []*ForeignKey, opts ScriptOptions) string {
+func buildTableScript(schema, name, dbName string, cols []*Column, indexes []*Index, fks []*ForeignKey, ds DataSpace, opts ScriptOptions) string {
 	fullName := qualifiedName(schema, name)
 	var sb strings.Builder
 
@@ -197,11 +203,12 @@ func buildTableScript(schema, name, dbName string, cols []*Column, indexes []*In
 		if pkIdx.IsClustered {
 			clust = "CLUSTERED"
 		}
-		fmt.Fprintf(&sb, "    CONSTRAINT %s PRIMARY KEY %s (%s)\n",
-			quoteIdent(pkIdx.Name), clust, indexColumnList(pkIdx.KeyColumns))
+		fmt.Fprintf(&sb, "    CONSTRAINT %s PRIMARY KEY %s (%s)%s\n",
+			quoteIdent(pkIdx.Name), clust, indexColumnList(pkIdx.KeyColumns),
+			dataSpaceClause(pkIdx.DataSpace))
 	}
 
-	sb.WriteString(");\nGO\n\n")
+	fmt.Fprintf(&sb, ")%s;\nGO\n\n", dataSpaceClause(ds))
 
 	// Non-PK indexes. A unique *constraint* is backed by an index in
 	// sys.indexes but is not created with CREATE INDEX — it belongs to the
@@ -254,8 +261,8 @@ func scriptIndex(idx *Index, tableName string, opts ScriptOptions) string {
 		if opts.IncludeIfNotExists {
 			sb.WriteString(indexExistenceGuard(idx.Name, tableName))
 		}
-		fmt.Fprintf(&sb, "CREATE CLUSTERED COLUMNSTORE INDEX %s ON %s;\nGO\n\n",
-			quoteIdent(idx.Name), tableName)
+		fmt.Fprintf(&sb, "CREATE CLUSTERED COLUMNSTORE INDEX %s ON %s%s;\nGO\n\n",
+			quoteIdent(idx.Name), tableName, dataSpaceClause(idx.DataSpace))
 		return sb.String()
 	case idx.Type == IndexTypeColumnStore:
 		cols := make([]string, len(idx.KeyColumns))
@@ -265,8 +272,8 @@ func scriptIndex(idx *Index, tableName string, opts ScriptOptions) string {
 		if opts.IncludeIfNotExists {
 			sb.WriteString(indexExistenceGuard(idx.Name, tableName))
 		}
-		fmt.Fprintf(&sb, "CREATE NONCLUSTERED COLUMNSTORE INDEX %s\n    ON %s (%s);\nGO\n\n",
-			quoteIdent(idx.Name), tableName, strings.Join(cols, ", "))
+		fmt.Fprintf(&sb, "CREATE NONCLUSTERED COLUMNSTORE INDEX %s\n    ON %s (%s)%s;\nGO\n\n",
+			quoteIdent(idx.Name), tableName, strings.Join(cols, ", "), dataSpaceClause(idx.DataSpace))
 		return sb.String()
 	case idx.Type == IndexTypeXML || idx.Type == IndexTypeSpatial:
 		fmt.Fprintf(&sb, "-- %s index %s on %s is not scripted (its DDL has no generic form here).\n\n",
@@ -300,8 +307,32 @@ func scriptIndex(idx *Index, tableName string, opts ScriptOptions) string {
 	if idx.FillFactor > 0 {
 		fmt.Fprintf(&sb, "\n    WITH (FILLFACTOR = %d)", idx.FillFactor)
 	}
+	sb.WriteString(dataSpaceClause(idx.DataSpace))
 	sb.WriteString(";\nGO\n\n")
 	return sb.String()
+}
+
+// dataSpaceClause renders the ON clause naming where an object's rows go, or
+// "" where it would say nothing.
+//
+// A partition scheme is always emitted, and this is the whole point: without
+// it a partitioned table or index is recreated on the default filegroup —
+// silently unpartitioned, which no error anywhere reports. A filegroup is
+// emitted only when it is not the default one, since ON [PRIMARY] is what
+// the server does anyway and naming a filegroup the target database may not
+// have turns a script that would have worked into one that fails.
+func dataSpaceClause(ds DataSpace) string {
+	switch {
+	case ds.IsPartitionScheme && ds.PartitionColumn != "":
+		return fmt.Sprintf(" ON %s(%s)", quoteIdent(ds.Name), quoteIdent(ds.PartitionColumn))
+	case ds.Name == "" || ds.IsDefaultFileGroup || ds.IsPartitionScheme:
+		// A partition scheme with no partitioning column is not a clause
+		// anything can be written from: emit nothing rather than DDL that
+		// cannot parse.
+		return ""
+	default:
+		return fmt.Sprintf(" ON %s", quoteIdent(ds.Name))
+	}
 }
 
 // indexExistenceGuard renders the one-line IF that skips a CREATE INDEX when
@@ -323,8 +354,9 @@ func scriptUniqueConstraint(idx *Index, tableName string, opts ScriptOptions) st
 	if idx.IsClustered {
 		clust = "CLUSTERED"
 	}
-	fmt.Fprintf(&sb, "ALTER TABLE %s\n    ADD CONSTRAINT %s UNIQUE %s (%s);\nGO\n\n",
-		tableName, quoteIdent(idx.Name), clust, indexColumnList(idx.KeyColumns))
+	fmt.Fprintf(&sb, "ALTER TABLE %s\n    ADD CONSTRAINT %s UNIQUE %s (%s)%s;\nGO\n\n",
+		tableName, quoteIdent(idx.Name), clust, indexColumnList(idx.KeyColumns),
+		dataSpaceClause(idx.DataSpace))
 	return sb.String()
 }
 

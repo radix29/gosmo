@@ -90,7 +90,7 @@ func splitBatches(script string) []string {
 // parse. Every batch must balance its own BEGIN/END.
 func TestBuildTableScriptKeepsBlocksInsideOneBatch(t *testing.T) {
 	cols, indexes, fks := scriptTestTable()
-	script := buildTableScript("dbo", "Widget", "AppDB", cols, indexes, fks, DefaultScriptOptions())
+	script := buildTableScript("dbo", "Widget", "AppDB", cols, indexes, fks, DataSpace{Name: "PRIMARY", IsDefaultFileGroup: true}, DefaultScriptOptions())
 
 	for i, batch := range splitBatches(script) {
 		begins, ends := 0, 0
@@ -116,7 +116,7 @@ func TestBuildTableScriptKeepsBlocksInsideOneBatch(t *testing.T) {
 // shape that replaced the single BEGIN block.
 func TestBuildTableScriptGuardsEachStatementSeparately(t *testing.T) {
 	cols, indexes, fks := scriptTestTable()
-	script := buildTableScript("dbo", "Widget", "AppDB", cols, indexes, fks, DefaultScriptOptions())
+	script := buildTableScript("dbo", "Widget", "AppDB", cols, indexes, fks, DataSpace{Name: "PRIMARY", IsDefaultFileGroup: true}, DefaultScriptOptions())
 
 	for _, want := range []string{
 		"IF OBJECT_ID(N'[dbo].[Widget]', N'U') IS NULL\nCREATE TABLE [dbo].[Widget] (",
@@ -204,9 +204,79 @@ func TestBuildTableScriptDrops(t *testing.T) {
 	cols, indexes, fks := scriptTestTable()
 	opts := DefaultScriptOptions()
 	opts.ScriptDrops = true
-	got := buildTableScript("dbo", "Widget", "AppDB", cols, indexes, fks, opts)
+	got := buildTableScript("dbo", "Widget", "AppDB", cols, indexes, fks, DataSpace{Name: "PRIMARY", IsDefaultFileGroup: true}, opts)
 	want := "IF OBJECT_ID(N'[dbo].[Widget]', N'U') IS NOT NULL\n    DROP TABLE [dbo].[Widget];\nGO\n"
 	if got != want {
 		t.Errorf("buildTableScript(drop) = %q, want %q", got, want)
+	}
+}
+
+// TestBuildTableScriptEmitsThePartitionScheme is the regression test for a
+// partitioned table scripting as an unpartitioned one: with no ON clause the
+// script recreates the table on the target database's default filegroup, and
+// nothing — not the server, not the script — says so. Every object that has a
+// partition scheme must name it, and name the partitioning column with it.
+func TestBuildTableScriptEmitsThePartitionScheme(t *testing.T) {
+	ps := DataSpace{Name: "ps_year", IsPartitionScheme: true, PartitionColumn: "Created"}
+	cols, indexes, fks := scriptTestTable()
+	for _, idx := range indexes {
+		idx.DataSpace = ps
+	}
+	script := buildTableScript("dbo", "Widget", "AppDB", cols, indexes, fks, ps, DefaultScriptOptions())
+
+	for _, want := range []string{
+		") ON [ps_year]([Created]);",
+		"CONSTRAINT [PK_Widget] PRIMARY KEY CLUSTERED ([ID] ASC) ON [ps_year]([Created])",
+		"ADD CONSTRAINT [UQ_Widget_Code] UNIQUE NONCLUSTERED ([Code] ASC) ON [ps_year]([Created]);",
+		"WHERE ([OwnerID] IS NOT NULL) ON [ps_year]([Created]);",
+	} {
+		if !strings.Contains(script, want) {
+			t.Errorf("script is missing %q:\n%s", want, script)
+		}
+	}
+}
+
+// TestBuildTableScriptEmitsANonDefaultFileGroup: a table on a filegroup other
+// than the default one is the same silent relocation as the partition case,
+// and the default filegroup is left unsaid because ON [PRIMARY] is what the
+// server does anyway — naming a filegroup the target database may not have
+// would break a script that otherwise runs.
+func TestBuildTableScriptEmitsANonDefaultFileGroup(t *testing.T) {
+	cols, indexes, fks := scriptTestTable()
+	archive := DataSpace{Name: "FG_Archive"}
+	script := buildTableScript("dbo", "Widget", "AppDB", cols, indexes, fks, archive, DefaultScriptOptions())
+	if !strings.Contains(script, ") ON [FG_Archive];") {
+		t.Errorf("script does not put the table on its filegroup:\n%s", script)
+	}
+
+	primary := DataSpace{Name: "PRIMARY", IsDefaultFileGroup: true}
+	script = buildTableScript("dbo", "Widget", "AppDB", cols, indexes, fks, primary, DefaultScriptOptions())
+	if strings.Contains(script, "ON [PRIMARY]") {
+		t.Errorf("script names the default filegroup, which says nothing:\n%s", script)
+	}
+}
+
+// TestDataSpaceClause covers what the two tests above do not reach: an index
+// with no data space at all (a memory-optimized table's), and a partition
+// scheme whose partitioning column did not come back — neither of which can
+// be written as a clause, so neither may produce half of one.
+func TestDataSpaceClause(t *testing.T) {
+	cases := []struct {
+		name string
+		ds   DataSpace
+		want string
+	}{
+		{"scheme", DataSpace{Name: "ps", IsPartitionScheme: true, PartitionColumn: "d"}, " ON [ps]([d])"},
+		{"non-default filegroup", DataSpace{Name: "FG2"}, " ON [FG2]"},
+		{"default filegroup", DataSpace{Name: "PRIMARY", IsDefaultFileGroup: true}, ""},
+		{"no data space", DataSpace{}, ""},
+		{"scheme with no column", DataSpace{Name: "ps", IsPartitionScheme: true}, ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := dataSpaceClause(c.ds); got != c.want {
+				t.Errorf("dataSpaceClause(%+v) = %q, want %q", c.ds, got, c.want)
+			}
+		})
 	}
 }

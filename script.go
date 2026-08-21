@@ -247,17 +247,17 @@ func dereference(p any) any {
 // "Implicit conversion from data type sql_variant to int is not allowed."
 // Verified live 2026-08-06 against every entry here.
 var declTypeByName = map[reflect.Type]string{
-	reflect.TypeOf(time.Time{}):                  "DATETIME2",
-	reflect.TypeOf(sql.NullTime{}):               "DATETIME2",
-	reflect.TypeOf(sql.NullBool{}):               "BIT",
-	reflect.TypeOf(sql.NullByte{}):               "TINYINT",
-	reflect.TypeOf(sql.NullInt16{}):              "SMALLINT",
-	reflect.TypeOf(sql.NullInt32{}):              "INT",
-	reflect.TypeOf(sql.NullInt64{}):              "BIGINT",
-	reflect.TypeOf(sql.NullFloat64{}):            "FLOAT",
-	reflect.TypeOf(sql.NullString{}):             "NVARCHAR(MAX)",
-	reflect.TypeOf(mssql.UniqueIdentifier{}):     "UNIQUEIDENTIFIER",
-	reflect.TypeOf(mssql.NullUniqueIdentifier{}): "UNIQUEIDENTIFIER",
+	reflect.TypeFor[time.Time]():                  "DATETIME2",
+	reflect.TypeFor[sql.NullTime]():               "DATETIME2",
+	reflect.TypeFor[sql.NullBool]():               "BIT",
+	reflect.TypeFor[sql.NullByte]():               "TINYINT",
+	reflect.TypeFor[sql.NullInt16]():              "SMALLINT",
+	reflect.TypeFor[sql.NullInt32]():              "INT",
+	reflect.TypeFor[sql.NullInt64]():              "BIGINT",
+	reflect.TypeFor[sql.NullFloat64]():            "FLOAT",
+	reflect.TypeFor[sql.NullString]():             "NVARCHAR(MAX)",
+	reflect.TypeFor[mssql.UniqueIdentifier]():     "UNIQUEIDENTIFIER",
+	reflect.TypeFor[mssql.NullUniqueIdentifier](): "UNIQUEIDENTIFIER",
 }
 
 // scriptDeclType names the T-SQL type to DECLARE for an output parameter
@@ -301,7 +301,7 @@ func scriptDeclType(dest any) string {
 		// and every sql.Null* — and is kept as the fallback's own statement
 		// of what it would do, not as a live branch. Anything else struct-
 		// shaped falls through to SQL_VARIANT below.
-		if t == reflect.TypeOf(time.Time{}) {
+		if t == reflect.TypeFor[time.Time]() {
 			return "DATETIME2"
 		}
 	}

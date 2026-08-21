@@ -49,7 +49,7 @@ func TestBuildTableScriptDropAndCreateEmitsBoth(t *testing.T) {
 	cols := []*Column{{Name: "id", DataType: DataTypeInt, OrdinalPosition: 1}}
 	opts := DefaultScriptOptions()
 	opts.Verb = ScriptDropAndCreate
-	got := buildTableScript("dbo", "T", "db", cols, nil, nil, opts)
+	got := buildTableScript("dbo", "T", "db", cols, nil, nil, DataSpace{Name: "PRIMARY", IsDefaultFileGroup: true}, opts)
 
 	drop := strings.Index(got, "DROP TABLE")
 	create := strings.Index(got, "CREATE TABLE")
