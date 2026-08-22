@@ -11,11 +11,23 @@ import (
 // Execution plans
 // ============================================================
 
-// ExecutionPlan holds one captured execution plan.
+// ExecutionPlan holds the execution plans captured for one batch.
+//
+// A batch of several statements yields several plan documents, not one: under
+// SET SHOWPLAN_XML the server returns one row per statement, and under SET
+// STATISTICS XML one extra result set per statement. All holds every one of
+// them, in the order the server produced them; XML is the *last*, which is
+// what this type returned when it held a single string and is kept for
+// callers written against that. A caller that means "the plan for the batch"
+// wants All.
 type ExecutionPlan struct {
-	// XML is the plan in SQL Server's "Showplan XML" format — the same
-	// document SSMS parses to draw its graphical plan.
+	// XML is the last plan in All, in SQL Server's "Showplan XML" format —
+	// the same document SSMS parses to draw its graphical plan.
 	XML string
+
+	// All holds every captured plan document, one per statement, in the
+	// order the server returned them. Never empty on a successful capture.
+	All []string
 }
 
 // showplanColumn is the fixed column name SQL Server has used for showplan
@@ -45,12 +57,16 @@ func (d *Database) ActualPlanContext(ctx context.Context, sqlText string) (*Exec
 	return d.capturePlan(ctx, "STATISTICS XML", sqlText)
 }
 
-// capturePlan runs sqlText with the given SET option on, then scans every
-// result set for the one holding the plan: both SHOWPLAN_XML (the only
-// result set, since the statement never runs) and STATISTICS XML (an extra
-// result set appended after the statement's own) name it showplanColumn.
+// capturePlan runs sqlText with the given SET option on, then collects every
+// plan document it finds: both SHOWPLAN_XML (whose result sets are the only
+// ones, since no statement runs) and STATISTICS XML (an extra result set
+// appended after each statement's own) name the plan column showplanColumn.
+//
+// Every row of every such set is kept, not just the last: SHOWPLAN_XML
+// returns one row per statement in a single result set, so a multi-statement
+// batch loses all but one plan if the scan overwrites.
 func (d *Database) capturePlan(ctx context.Context, setOpt, sqlText string) (*ExecutionPlan, error) {
-	var plan string
+	var plans []string
 	err := d.withConn(ctx, func(conn *sql.Conn) error {
 		if _, err := conn.ExecContext(ctx, "SET "+setOpt+" ON"); err != nil {
 			return fmt.Errorf("gosmo: enable %s: %w", setOpt, err)
@@ -81,8 +97,12 @@ func (d *Database) capturePlan(ctx context.Context, setOpt, sqlText string) (*Ex
 			isPlan := len(cols) == 1 && cols[0] == showplanColumn
 			for rows.Next() {
 				if isPlan {
+					var plan string
 					if err := rows.Scan(&plan); err != nil {
 						return err
+					}
+					if plan != "" {
+						plans = append(plans, plan)
 					}
 				}
 			}
@@ -98,8 +118,8 @@ func (d *Database) capturePlan(ctx context.Context, setOpt, sqlText string) (*Ex
 	if err != nil {
 		return nil, fmt.Errorf("gosmo: capture execution plan: %w", err)
 	}
-	if plan == "" {
+	if len(plans) == 0 {
 		return nil, fmt.Errorf("gosmo: capture execution plan: no plan was returned")
 	}
-	return &ExecutionPlan{XML: plan}, nil
+	return &ExecutionPlan{XML: plans[len(plans)-1], All: plans}, nil
 }

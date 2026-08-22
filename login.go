@@ -11,14 +11,55 @@ import (
 
 // Login represents a SQL Server server-level login.
 type Login struct {
-	server          *Server
-	Name            string
-	SID             []byte
-	LoginType       string // "SQL_LOGIN", "WINDOWS_LOGIN", "WINDOWS_GROUP"
+	server *Server
+	Name   string
+	SID    []byte
+	// LoginType is the login's type_desc: "SQL_LOGIN", "WINDOWS_LOGIN",
+	// "WINDOWS_GROUP", "EXTERNAL_LOGIN", "EXTERNAL_GROUP",
+	// "CERTIFICATE_MAPPED_LOGIN" or "ASYMMETRIC_KEY_MAPPED_LOGIN".
+	LoginType       string
 	IsDisabled      bool
 	DefaultDatabase string
 	CreateDate      time.Time
 	ModifyDate      time.Time
+
+	// MappedObject is the master certificate or asymmetric key a
+	// CERTIFICATE_MAPPED_LOGIN / ASYMMETRIC_KEY_MAPPED_LOGIN maps to. It is
+	// not read with the login — the name lives in master, not in
+	// sys.server_principals — so it is empty until ResolveMapping fills it.
+	MappedObject string
+}
+
+// ResolveMapping looks up the certificate or asymmetric key this login maps
+// to and stores its name in MappedObject.
+func (l *Login) ResolveMapping() error {
+	return l.ResolveMappingContext(context.Background())
+}
+
+// ResolveMappingContext is the context-aware variant of ResolveMapping.
+//
+// It is a no-op for every login type but CERTIFICATE_MAPPED_LOGIN and
+// ASYMMETRIC_KEY_MAPPED_LOGIN. The lookup is by SID against master, where a
+// login-mapped certificate or asymmetric key must live, and names master
+// explicitly because the connection may be in any database. MappedObject is
+// left empty, without an error, when nothing matches — the mapped object can
+// have been dropped out from under the login.
+func (l *Login) ResolveMappingContext(ctx context.Context) error {
+	switch l.LoginType {
+	case "CERTIFICATE_MAPPED_LOGIN", "ASYMMETRIC_KEY_MAPPED_LOGIN":
+	default:
+		return nil
+	}
+	const q = `
+SELECT ISNULL((SELECT TOP 1 name FROM master.sys.certificates    WHERE sid = @p1),
+       ISNULL((SELECT TOP 1 name FROM master.sys.asymmetric_keys WHERE sid = @p1), ''))`
+
+	var name string
+	if err := l.server.queryRowScan(ctx, q, []any{l.SID}, &name); err != nil {
+		return fmt.Errorf("gosmo: resolve mapping for login %q: %w", l.Name, err)
+	}
+	l.MappedObject = name
+	return nil
 }
 
 // Disable disables the login.

@@ -987,12 +987,17 @@ func (s *Server) Logins() ([]*Login, error) {
 }
 
 // LoginsContext is the context-aware variant of Logins.
+//
+// Every server-level login is listed, not just the SQL/Windows ones: the
+// type filter also admits Entra ('E','X') and the certificate- and
+// asymmetric-key-mapped logins ('C','K') that hold permissions for signed
+// code, which is what SSMS's Logins folder shows.
 func (s *Server) LoginsContext(ctx context.Context) ([]*Login, error) {
 	const q = `
 	SELECT name, sid, type_desc, is_disabled, default_database_name,
 	       create_date, modify_date
 	FROM sys.server_principals
-	WHERE type IN ('S','U','G')
+	WHERE type IN ('S','U','G','E','X','C','K')
 	ORDER BY name`
 
 	rows, err := s.query(ctx, q)
@@ -1029,7 +1034,7 @@ func (s *Server) LoginByNameContext(ctx context.Context, name string) (*Login, e
 	SELECT name, sid, type_desc, is_disabled, default_database_name,
 	       create_date, modify_date
 	FROM sys.server_principals
-	WHERE type IN ('S','U','G') AND name = @p1`
+	WHERE type IN ('S','U','G','E','X','C','K') AND name = @p1`
 
 	l := &Login{server: s}
 	var defDB sql.NullString
@@ -1060,8 +1065,9 @@ func (s *Server) Login(name string) *Login {
 	return &Login{server: s, Name: name}
 }
 
-// CreateLogin creates a SQL Server or Windows login.
-// Pass an empty password to create a Windows login (FROM WINDOWS).
+// CreateLogin creates a login. With no CreateLoginOptions.Source, an empty
+// password means a Windows login (FROM WINDOWS) and a non-empty one a SQL
+// login; set Source to create any of the other kinds.
 func (s *Server) CreateLogin(name, password string, opts *CreateLoginOptions) error {
 	return s.CreateLoginContext(context.Background(), name, password, opts)
 }
@@ -1076,6 +1082,14 @@ func (s *Server) CreateLogin(name, password string, opts *CreateLoginOptions) er
 // so passing an arbitrary hex encoding of the cleartext under HASHED
 // either fails outright or creates a login nothing can ever authenticate
 // as.
+//
+// DefaultDatabase reaches an external-provider login through a following
+// ALTER LOGIN, since FROM EXTERNAL PROVIDER takes no WITH option list. A
+// certificate- or asymmetric-key-mapped login cannot have one at all —
+// SQL Server rejects DEFAULT_DATABASE for those in both CREATE and ALTER
+// ("Cannot use the parameter DEFAULT_DATABASE for a certificate or
+// asymmetric key login", verified live) — so asking for one is an error
+// rather than a statement the server will refuse.
 func (s *Server) CreateLoginContext(ctx context.Context, name, password string, opts *CreateLoginOptions) error {
 	if name == "" {
 		return fmt.Errorf("gosmo: create login: name is required")
@@ -1084,10 +1098,57 @@ func (s *Server) CreateLoginContext(ctx context.Context, name, password string, 
 		opts = &CreateLoginOptions{}
 	}
 
-	var sb strings.Builder
+	src := opts.Source
+	if src == LoginSourceAuto {
+		if password == "" {
+			src = LoginSourceWindows
+		} else {
+			src = LoginSourceSQL
+		}
+	}
+	stmt, alterDefaultDB, err := createLoginStatement(name, password, src, opts)
+	if err != nil {
+		return fmt.Errorf("gosmo: create login %q: %w", name, err)
+	}
+	if err := s.execContext(ctx, stmt); err != nil {
+		return fmt.Errorf("gosmo: create login %q: %w", name, err)
+	}
+	if alterDefaultDB {
+		q := fmt.Sprintf("ALTER LOGIN %s WITH DEFAULT_DATABASE = %s",
+			quoteIdent(name), quoteIdent(opts.DefaultDatabase))
+		if err := s.execContext(ctx, q); err != nil {
+			return fmt.Errorf("gosmo: create login %q: set default database: %w", name, err)
+		}
+	}
+	return nil
+}
 
-	if password != "" {
-		fmt.Fprintf(&sb, "CREATE LOGIN %s WITH PASSWORD = %s", quoteIdent(name), nStringLiteral(password))
+// createLoginStatement builds the CREATE LOGIN statement for one resolved
+// source, and reports whether DefaultDatabase still has to be applied by a
+// following ALTER LOGIN — CERTIFICATE, ASYMMETRIC KEY and EXTERNAL PROVIDER
+// take no WITH option list in CREATE LOGIN, so naming DEFAULT_DATABASE there
+// is a syntax error. A mapped login has no default database at all; see
+// CreateLoginContext.
+func createLoginStatement(name, password string, src LoginSource, opts *CreateLoginOptions) (string, bool, error) {
+	if src != LoginSourceSQL && password != "" {
+		return "", false, fmt.Errorf("a %s login takes no password", src)
+	}
+	if opts.MustChange && src != LoginSourceSQL {
+		return "", false, fmt.Errorf("MustChange applies to a SQL login only, not a %s login", src)
+	}
+	if opts.DefaultDatabase != "" && (src == LoginSourceCertificate || src == LoginSourceAsymmetricKey) {
+		return "", false, fmt.Errorf("a %s login cannot have a default database", src)
+	}
+
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "CREATE LOGIN %s", quoteIdent(name))
+
+	switch src {
+	case LoginSourceSQL:
+		if password == "" {
+			return "", false, fmt.Errorf("a SQL login requires a password")
+		}
+		fmt.Fprintf(&sb, " WITH PASSWORD = %s", nStringLiteral(password))
 		if opts.MustChange {
 			// MUST_CHANGE requires CHECK_EXPIRATION = ON (and CHECK_POLICY =
 			// ON, already the server default) — SQL Server rejects
@@ -1097,23 +1158,97 @@ func (s *Server) CreateLoginContext(ctx context.Context, name, password string, 
 		if opts.DefaultDatabase != "" {
 			fmt.Fprintf(&sb, ", DEFAULT_DATABASE = %s", quoteIdent(opts.DefaultDatabase))
 		}
-	} else {
-		fmt.Fprintf(&sb, "CREATE LOGIN %s FROM WINDOWS", quoteIdent(name))
+	case LoginSourceWindows:
+		sb.WriteString(" FROM WINDOWS")
 		if opts.DefaultDatabase != "" {
 			fmt.Fprintf(&sb, " WITH DEFAULT_DATABASE = %s", quoteIdent(opts.DefaultDatabase))
 		}
+	case LoginSourceExternalProvider:
+		sb.WriteString(" FROM EXTERNAL PROVIDER")
+		return sb.String(), opts.DefaultDatabase != "", nil
+	case LoginSourceCertificate:
+		if opts.CertificateName == "" {
+			return "", false, fmt.Errorf("a certificate login requires CertificateName")
+		}
+		fmt.Fprintf(&sb, " FROM CERTIFICATE %s", quoteIdent(opts.CertificateName))
+		return sb.String(), false, nil
+	case LoginSourceAsymmetricKey:
+		if opts.AsymmetricKeyName == "" {
+			return "", false, fmt.Errorf("an asymmetric key login requires AsymmetricKeyName")
+		}
+		fmt.Fprintf(&sb, " FROM ASYMMETRIC KEY %s", quoteIdent(opts.AsymmetricKeyName))
+		return sb.String(), false, nil
+	default:
+		return "", false, fmt.Errorf("unknown login source %d", int(src))
 	}
+	return sb.String(), false, nil
+}
 
-	if err := s.execContext(ctx, sb.String()); err != nil {
-		return fmt.Errorf("gosmo: create login %q: %w", name, err)
+// LoginSource names what a new login authenticates from — the FROM clause of
+// CREATE LOGIN, or WITH PASSWORD for a SQL login.
+type LoginSource int
+
+const (
+	// LoginSourceAuto resolves from the password CreateLogin is given: empty
+	// means a Windows login, non-empty a SQL login. It is the zero value, so
+	// a CreateLoginOptions written before LoginSource existed behaves exactly
+	// as it did.
+	LoginSourceAuto LoginSource = iota
+	// LoginSourceSQL is a SQL Server login (WITH PASSWORD).
+	LoginSourceSQL
+	// LoginSourceWindows is a Windows user or group login (FROM WINDOWS).
+	LoginSourceWindows
+	// LoginSourceExternalProvider is a Microsoft Entra ID (Azure AD) login
+	// (FROM EXTERNAL PROVIDER) — SQL Server 2022 and later, Azure SQL
+	// Managed Instance, and Azure SQL Database.
+	LoginSourceExternalProvider
+	// LoginSourceCertificate maps the login to a certificate in master
+	// (FROM CERTIFICATE). Nothing authenticates as such a login; it exists
+	// to hold permissions for code signed by the certificate.
+	LoginSourceCertificate
+	// LoginSourceAsymmetricKey maps the login to an asymmetric key in master
+	// (FROM ASYMMETRIC KEY), the asymmetric-key counterpart of
+	// LoginSourceCertificate.
+	LoginSourceAsymmetricKey
+)
+
+// String renders the source as the words used in error messages.
+func (src LoginSource) String() string {
+	switch src {
+	case LoginSourceAuto:
+		return "auto"
+	case LoginSourceSQL:
+		return "SQL"
+	case LoginSourceWindows:
+		return "Windows"
+	case LoginSourceExternalProvider:
+		return "external provider"
+	case LoginSourceCertificate:
+		return "certificate"
+	case LoginSourceAsymmetricKey:
+		return "asymmetric key"
 	}
-	return nil
+	return fmt.Sprintf("LoginSource(%d)", int(src))
 }
 
 // CreateLoginOptions holds optional parameters for CreateLogin.
 type CreateLoginOptions struct {
 	DefaultDatabase string
 	MustChange      bool
+
+	// Source selects what the login authenticates from. The zero value
+	// (LoginSourceAuto) keeps CreateLogin's original behaviour: a SQL login
+	// when a password is given, a Windows login when it is empty.
+	Source LoginSource
+
+	// CertificateName is the master certificate a LoginSourceCertificate
+	// login maps to; required for that source and ignored otherwise.
+	CertificateName string
+
+	// AsymmetricKeyName is the master asymmetric key a
+	// LoginSourceAsymmetricKey login maps to; required for that source and
+	// ignored otherwise.
+	AsymmetricKeyName string
 }
 
 // DropLogin drops a server login.

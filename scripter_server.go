@@ -29,9 +29,16 @@ func (sc *ServerScripter) ScriptLogin(name string) (string, error) {
 }
 
 // ScriptLoginContext is the context-aware variant of ScriptLogin.
+//
+// A certificate- or asymmetric-key-mapped login needs one more read than the
+// others: the object it maps to is named in master, not in the login's own
+// row. ResolveMappingContext is a no-op for every other type.
 func (sc *ServerScripter) ScriptLoginContext(ctx context.Context, name string) (string, error) {
 	l, err := sc.server.LoginByNameContext(ctx, name)
 	if err != nil {
+		return "", err
+	}
+	if err := l.ResolveMappingContext(ctx); err != nil {
 		return "", err
 	}
 	return buildLoginScript(l, sc.opts), nil
@@ -39,10 +46,25 @@ func (sc *ServerScripter) ScriptLoginContext(ctx context.Context, name string) (
 
 // buildLoginScript assembles one login's script.
 //
+// Only a SQL or Windows login can carry DEFAULT_DATABASE in CREATE LOGIN;
+// FROM EXTERNAL PROVIDER takes no WITH option list, so an external login's
+// goes out as a following ALTER LOGIN. A certificate- or asymmetric-key-
+// mapped login gets neither: SQL Server refuses DEFAULT_DATABASE for those in
+// CREATE *and* ALTER ("Cannot use the parameter DEFAULT_DATABASE for a
+// certificate or asymmetric key login", verified live), while still reporting
+// one in sys.server_principals — so scripting the value back is a script that
+// fails on the login it came from.
+//
 // A SQL login's password is stored only as a hash and is not scripted, so the
-// statement carries a placeholder for the operator to fill in. Note DROP
-// LOGIN has no IF EXISTS form — unlike DROP USER or DROP ROLE — so the drop
-// is guarded by SUSER_ID instead.
+// statement carries a placeholder for the operator to fill in. Its SID is,
+// and that is not decoration: a login recreated on another server with a
+// fresh SID leaves every database user that was mapped to it orphaned, which
+// is the main reason to script a login at all. SID is a SQL-login clause
+// only — a Windows or external login's SID comes from the directory, and
+// naming one is a syntax error.
+//
+// Note DROP LOGIN has no IF EXISTS form — unlike DROP USER or DROP ROLE — so
+// the drop is guarded by SUSER_ID instead.
 func buildLoginScript(l *Login, opts ScriptOptions) string {
 	var sb strings.Builder
 	if v := opts.verb(); v == ScriptDrop || v == ScriptDropAndCreate {
@@ -57,26 +79,71 @@ func buildLoginScript(l *Login, opts ScriptOptions) string {
 		fmt.Fprintf(&sb, "IF SUSER_ID(N'%s') IS NULL\n", escapeSingle(l.Name))
 	}
 	stmt := "CREATE LOGIN " + quoteIdent(l.Name)
+
+	// withOpen tracks whether the WITH keyword has already been emitted, so
+	// the next clause knows to continue the list with a comma. Read from the
+	// branch taken, never sniffed back out of stmt with strings.Contains: a
+	// login legitimately named [svc WITH rights] made a Windows login's
+	// DEFAULT_DATABASE continue a WITH list that was never opened.
+	withOpen := false
+	// takesWithOptions is the other half of the same rule: CREATE LOGIN's
+	// WITH list exists for SQL and Windows logins only, so DEFAULT_DATABASE
+	// goes out as an ALTER for the rest rather than as a clause that does
+	// not parse.
+	takesWithOptions := true
+	// alterDefaultDB is the third state: the login takes a default database,
+	// but only through a separate ALTER LOGIN.
+	alterDefaultDB := false
 	switch {
 	case strings.HasPrefix(l.LoginType, "WINDOWS"):
 		stmt += " FROM WINDOWS"
 	case strings.HasPrefix(l.LoginType, "EXTERNAL"):
 		stmt += " FROM EXTERNAL PROVIDER"
+		takesWithOptions = false
+		alterDefaultDB = true
+	case l.LoginType == "CERTIFICATE_MAPPED_LOGIN":
+		stmt += " FROM CERTIFICATE " + mappedObjectName(l, "certificate")
+		takesWithOptions = false
+	case l.LoginType == "ASYMMETRIC_KEY_MAPPED_LOGIN":
+		stmt += " FROM ASYMMETRIC KEY " + mappedObjectName(l, "asymmetric key")
+		takesWithOptions = false
 	default:
 		stmt += " WITH PASSWORD = N'<password, sysname, >'"
-	}
-	if l.DefaultDatabase != "" {
-		if strings.Contains(stmt, " WITH ") {
-			stmt += ", DEFAULT_DATABASE = " + quoteIdent(l.DefaultDatabase)
-		} else {
-			stmt += " WITH DEFAULT_DATABASE = " + quoteIdent(l.DefaultDatabase)
+		withOpen = true
+		if len(l.SID) > 0 {
+			stmt += ", SID = " + hexLiteral(l.SID)
 		}
 	}
+	if l.DefaultDatabase != "" && takesWithOptions {
+		if withOpen {
+			stmt += ", "
+		} else {
+			stmt += " WITH "
+			withOpen = true
+		}
+		stmt += "DEFAULT_DATABASE = " + quoteIdent(l.DefaultDatabase)
+	}
 	fmt.Fprintf(&sb, "%s;\nGO\n", stmt)
+	if l.DefaultDatabase != "" && alterDefaultDB {
+		fmt.Fprintf(&sb, "ALTER LOGIN %s WITH DEFAULT_DATABASE = %s;\nGO\n",
+			quoteIdent(l.Name), quoteIdent(l.DefaultDatabase))
+	}
 	if l.IsDisabled {
 		fmt.Fprintf(&sb, "ALTER LOGIN %s DISABLE;\nGO\n", quoteIdent(l.Name))
 	}
 	return sb.String()
+}
+
+// mappedObjectName renders the certificate or asymmetric key a mapped login
+// points at. ResolveMapping leaves MappedObject empty when the object has
+// been dropped or the caller never resolved it, and a script that silently
+// named nothing would not parse — an SSMS-style placeholder says what the
+// operator has to fill in.
+func mappedObjectName(l *Login, kind string) string {
+	if l.MappedObject == "" {
+		return fmt.Sprintf("[<%s name, sysname, >]", kind)
+	}
+	return quoteIdent(l.MappedObject)
 }
 
 // ScriptServerRole generates the CREATE (or DROP) script for one server role,
