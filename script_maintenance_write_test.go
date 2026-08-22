@@ -48,6 +48,21 @@ func TestScriptIndexAndStatisticsWrites(t *testing.T) {
 		{"Table CreateStatistic without a sample", func(c context.Context) error {
 			return table().CreateStatisticContext(c, "st1", []string{"ab"}, 0)
 		}, scriptUsePrefix + "CREATE STATISTICS [st1] ON [dbo].[Sales.Archive] ([ab])"},
+		{"Table CreateStatisticWithOptions", func(c context.Context) error {
+			return table().CreateStatisticWithOptionsContext(c, CreateStatisticRequest{
+				Name:             "st]1",
+				Columns:          []string{"a]b", "c'd"},
+				FullScan:         true,
+				FilterDefinition: "[a]]b] IS NOT NULL",
+				NoRecompute:      true,
+				Incremental:      true,
+			})
+		}, scriptUsePrefix + "CREATE STATISTICS [st]]1] ON [dbo].[Sales.Archive] ([a]]b], [c'd]) WHERE [a]]b] IS NOT NULL WITH FULLSCAN, NORECOMPUTE, INCREMENTAL = ON"},
+		{"Table CreateStatisticWithOptions, sampled", func(c context.Context) error {
+			return table().CreateStatisticWithOptionsContext(c, CreateStatisticRequest{
+				Name: "st1", Columns: []string{"ab"}, SamplePercent: 25,
+			})
+		}, scriptUsePrefix + "CREATE STATISTICS [st1] ON [dbo].[Sales.Archive] ([ab]) WITH SAMPLE 25 PERCENT"},
 		{"Table UpdateAllStatistics", func(c context.Context) error {
 			return table().UpdateAllStatisticsContext(c, 25)
 		}, scriptUsePrefix + "UPDATE STATISTICS [dbo].[Sales.Archive] WITH SAMPLE 25 PERCENT"},
@@ -79,5 +94,25 @@ func TestCreateStatisticRefusesAnEmptySpec(t *testing.T) {
 		if len(script.Statements) != 0 {
 			t.Errorf("CreateStatisticContext(%s) scripted %q, want nothing", c.name, script.Statements)
 		}
+	}
+}
+
+// A full scan and a sample percentage describe two different reads of the
+// table, and CREATE STATISTICS takes one WITH clause — a request carrying
+// both is refused rather than silently resolved to one of them.
+func TestCreateStatisticRefusesAFullScanAndASample(t *testing.T) {
+	ctx, script := WithScript(context.Background())
+	table := &Table{db: scriptTestDB(), Schema: "dbo", Name: "Sales.Archive"}
+	err := table.CreateStatisticWithOptionsContext(ctx, CreateStatisticRequest{
+		Name: "st1", Columns: []string{"a"}, FullScan: true, SamplePercent: 50,
+	})
+	if err == nil {
+		t.Fatal("CreateStatisticWithOptions returned nil, want an error")
+	}
+	if !strings.Contains(err.Error(), "alternatives") {
+		t.Errorf("error = %v, want it to say the two are alternatives", err)
+	}
+	if len(script.Statements) != 0 {
+		t.Errorf("refused but still scripted %q", script.Statements)
 	}
 }

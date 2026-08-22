@@ -352,6 +352,27 @@ func (d *Database) TablesContext(ctx context.Context) ([]*Table, error) {
 	return d.tablesWhere(ctx, "", nil)
 }
 
+// TablesFiltered returns the user tables an ObjectFilter matches, narrowed by
+// the server rather than by the caller. An empty filter is TablesContext.
+func (d *Database) TablesFiltered(filter ObjectFilter) ([]*Table, error) {
+	return d.TablesFilteredContext(context.Background(), filter)
+}
+
+// TablesFilteredContext is the context-aware variant of TablesFiltered.
+func (d *Database) TablesFilteredContext(ctx context.Context, filter ObjectFilter) ([]*Table, error) {
+	where, args := filter.clause(tableFilterColumns, 1)
+	return d.tablesWhere(ctx, where, args)
+}
+
+// tableFilterColumns maps an ObjectFilter onto sys.tables as tablesWhere
+// aliases it.
+var tableFilterColumns = filterColumns{
+	name:            "t.name",
+	schema:          "SCHEMA_NAME(t.schema_id)",
+	created:         "t.create_date",
+	memoryOptimized: "t.is_memory_optimized",
+}
+
 // TablesBySchema returns all tables in a specific schema.
 func (d *Database) TablesBySchema(schema string) ([]*Table, error) {
 	return d.TablesBySchemaContext(context.Background(), schema)
@@ -736,6 +757,40 @@ func (d *Database) DropTriggerContext(ctx context.Context, schema, name string) 
 	}
 	if _, err := d.exec(ctx, "DROP TRIGGER "+qualifiedName(schema, name)); err != nil {
 		return fmt.Errorf("gosmo: drop trigger [%s].[%s]: %w", schema, name, err)
+	}
+	return nil
+}
+
+// TransferObject moves a schema-scoped object into another schema
+// (ALTER SCHEMA ... TRANSFER), which is the operation sp_rename cannot do —
+// a rename takes a bare name and never crosses schemas.
+//
+// The object keeps its name and its object_id; permissions granted on it
+// directly are dropped by the server, which is the documented behaviour of
+// ALTER SCHEMA TRANSFER and the reason it is not a cosmetic change. An empty
+// schema means dbo, as everywhere else here.
+//
+// This is sp_rename's default 'OBJECT' class: tables, views, procedures,
+// functions, sequences and synonyms. A type or an XML schema collection needs
+// TRANSFER's own class prefix and is not covered.
+func (d *Database) TransferObject(targetSchema, schema, name string) error {
+	return d.TransferObjectContext(context.Background(), targetSchema, schema, name)
+}
+
+// TransferObjectContext is the context-aware variant of TransferObject.
+func (d *Database) TransferObjectContext(ctx context.Context, targetSchema, schema, name string) error {
+	if targetSchema == "" {
+		return fmt.Errorf("gosmo: transfer %s: target schema is required", qualifiedName(schema, name))
+	}
+	if schema == "" {
+		schema = "dbo"
+	}
+	if strings.EqualFold(targetSchema, schema) {
+		return fmt.Errorf("gosmo: transfer %s: it is already in schema [%s]", qualifiedName(schema, name), schema)
+	}
+	if _, err := d.exec(ctx, fmt.Sprintf("ALTER SCHEMA %s TRANSFER %s",
+		quoteIdent(targetSchema), qualifiedName(schema, name))); err != nil {
+		return fmt.Errorf("gosmo: transfer %s to schema [%s]: %w", qualifiedName(schema, name), targetSchema, err)
 	}
 	return nil
 }

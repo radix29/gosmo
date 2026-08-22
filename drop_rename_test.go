@@ -52,6 +52,13 @@ func TestDropStatements(t *testing.T) {
 			want: "ALTER TABLE [dbo].[Orders] DROP CONSTRAINT [PK_Orders]",
 		},
 		{
+			name: "Table.DropColumn",
+			write: func(ctx context.Context, d *Database) error {
+				return (&Table{db: d, Schema: "sa]les", Name: "Or'ders"}).DropColumnContext(ctx, "a]b")
+			},
+			want: "ALTER TABLE [sa]]les].[Or'ders] DROP COLUMN [a]]b]",
+		},
+		{
 			name: "DatabaseRole.Drop delegates to the database",
 			write: func(ctx context.Context, d *Database) error {
 				return (&DatabaseRole{db: d, Name: "app_reader"}).DropContext(ctx)
@@ -86,6 +93,22 @@ func TestRenameStatements(t *testing.T) {
 				return d.RenameObjectContext(ctx, "Sales", "vOld", "vNew")
 			},
 			want: []string{"EXEC sp_rename", "N'[Sales].[vOld]'", "N'vNew'", "N'OBJECT'"},
+		},
+		{
+			// The counterpart to a rename: sp_rename cannot cross schemas, so
+			// the move is its own statement and its own method.
+			name: "TransferObject",
+			write: func(ctx context.Context, d *Database) error {
+				return d.TransferObjectContext(ctx, "arch]ive", "sa]les", "Or'ders")
+			},
+			want: []string{"ALTER SCHEMA [arch]]ive] TRANSFER [sa]]les].[Or'ders]"},
+		},
+		{
+			name: "TransferObject defaults the source schema",
+			write: func(ctx context.Context, d *Database) error {
+				return d.TransferObjectContext(ctx, "archive", "", "Orders")
+			},
+			want: []string{"ALTER SCHEMA [archive] TRANSFER [dbo].[Orders]"},
 		},
 		{
 			name: "Statistic.Rename",
@@ -229,5 +252,54 @@ func TestDropRenameQuotesAwkwardNames(t *testing.T) {
 		if !strings.Contains(all, want) {
 			t.Errorf("captured script missing %q:\n%s", want, all)
 		}
+	}
+}
+
+// TestTransferObjectRefusals pins the two cases where no statement should
+// reach the server. A same-schema transfer is not a no-op at the server — it
+// still drops the permissions granted directly on the object — so it is
+// refused rather than sent, and an empty target would quote into
+// "ALTER SCHEMA [] TRANSFER", which fails naming a schema the caller never
+// typed.
+func TestTransferObjectRefusals(t *testing.T) {
+	for _, c := range []struct {
+		name           string
+		target, schema string
+		want           string
+	}{
+		{"empty target", "", "sales", "target schema is required"},
+		{"same schema", "sales", "sales", "already in schema"},
+		{"same schema, different case", "SALES", "sales", "already in schema"},
+		{"same schema by default", "dbo", "", "already in schema"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			d := &Database{server: &Server{}, name: "AppDB"}
+			ctx, script := WithScript(context.Background())
+			err := d.TransferObjectContext(ctx, c.target, c.schema, "Orders")
+			if err == nil {
+				t.Fatalf("no error; statements: %v", script.Statements)
+			}
+			if !strings.Contains(err.Error(), c.want) {
+				t.Errorf("error = %v, want it to mention %q", err, c.want)
+			}
+			if len(script.Statements) != 0 {
+				t.Errorf("emitted %q, want nothing", script.Statements)
+			}
+		})
+	}
+}
+
+// TestDropColumnRefusesAnEmptyName is the same guard DropColumn needs:
+// quoteIdent("") is "[]", which the server rejects naming a column the caller
+// never asked for.
+func TestDropColumnRefusesAnEmptyName(t *testing.T) {
+	d := &Database{server: &Server{}, name: "AppDB"}
+	ctx, script := WithScript(context.Background())
+	err := (&Table{db: d, Schema: "dbo", Name: "Orders"}).DropColumnContext(ctx, "")
+	if err == nil || !strings.Contains(err.Error(), "name is required") {
+		t.Errorf("error = %v, want it to name the missing column", err)
+	}
+	if len(script.Statements) != 0 {
+		t.Errorf("emitted %q, want nothing", script.Statements)
 	}
 }

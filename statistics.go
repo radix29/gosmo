@@ -199,34 +199,108 @@ func (t *Table) UpdateAllStatisticsContext(ctx context.Context, samplePct int) e
 }
 
 // CreateStatistic creates a user-defined statistic on one or more columns.
+// Pass samplePct=0 to let the server choose its own sample; see
+// CreateStatisticWithOptions for a filter, FULLSCAN, or NORECOMPUTE.
 func (t *Table) CreateStatistic(name string, columns []string, samplePct int) error {
 	return t.CreateStatisticContext(context.Background(), name, columns, samplePct)
 }
 
 // CreateStatisticContext is the context-aware variant of CreateStatistic.
 func (t *Table) CreateStatisticContext(ctx context.Context, name string, columns []string, samplePct int) error {
-	if name == "" {
-		return fmt.Errorf("gosmo: create statistic: name is required")
-	}
-	if len(columns) == 0 {
-		return fmt.Errorf("gosmo: create statistic: at least one column required")
-	}
-	if err := checkSamplePct("create statistic "+name, samplePct); err != nil {
+	return t.CreateStatisticWithOptionsContext(ctx, CreateStatisticRequest{
+		Name:          name,
+		Columns:       columns,
+		SamplePercent: samplePct,
+	})
+}
+
+// CreateStatisticRequest describes a user-defined statistic to create.
+// Columns is ordered: the leading column is the one the histogram is built
+// on, and every column contributes to the density vector.
+type CreateStatisticRequest struct {
+	Name    string
+	Columns []string
+	// SamplePercent scans that percentage of the rows (SAMPLE n PERCENT).
+	// Zero lets the server pick its own sample, unless FullScan is set.
+	SamplePercent int
+	// FullScan reads every row (WITH FULLSCAN). An alternative to
+	// SamplePercent, not a companion to it.
+	FullScan bool
+	// FilterDefinition is a filtered statistic's predicate, without the
+	// WHERE.
+	FilterDefinition string
+	// NoRecompute stops the server refreshing this statistic automatically
+	// (WITH NORECOMPUTE) — it then only changes when UPDATE STATISTICS runs.
+	NoRecompute bool
+	// Incremental builds the statistic per partition (WITH INCREMENTAL = ON),
+	// which requires a partitioned table.
+	Incremental bool
+}
+
+// CreateStatisticWithOptions creates a user-defined statistic from a full
+// request — the form that reaches the sampling, filter and recompute options
+// CreateStatistic leaves at their defaults.
+func (t *Table) CreateStatisticWithOptions(req CreateStatisticRequest) error {
+	return t.CreateStatisticWithOptionsContext(context.Background(), req)
+}
+
+// CreateStatisticWithOptionsContext is the context-aware variant of
+// CreateStatisticWithOptions.
+func (t *Table) CreateStatisticWithOptionsContext(ctx context.Context, req CreateStatisticRequest) error {
+	q, err := buildCreateStatisticStatement(t.FullName(), req)
+	if err != nil {
 		return err
 	}
-	quotedCols := make([]string, len(columns))
-	for i, c := range columns {
+	if _, err := t.db.exec(ctx, q); err != nil {
+		return fmt.Errorf("gosmo: create statistic %q: %w", req.Name, err)
+	}
+	return nil
+}
+
+// buildCreateStatisticStatement renders one CREATE STATISTICS statement, or
+// reports why the request cannot be one. Separated from the write so the
+// statement can be pinned without a server.
+func buildCreateStatisticStatement(tableName string, req CreateStatisticRequest) (string, error) {
+	if req.Name == "" {
+		return "", fmt.Errorf("gosmo: create statistic: name is required")
+	}
+	if len(req.Columns) == 0 {
+		return "", fmt.Errorf("gosmo: create statistic: at least one column required")
+	}
+	if err := checkSamplePct("create statistic "+req.Name, req.SamplePercent); err != nil {
+		return "", err
+	}
+	if req.FullScan && req.SamplePercent > 0 {
+		return "", fmt.Errorf("gosmo: create statistic %q: a full scan and a sample percentage are alternatives", req.Name)
+	}
+
+	quotedCols := make([]string, len(req.Columns))
+	for i, c := range req.Columns {
 		quotedCols[i] = quoteIdent(c)
 	}
 	q := fmt.Sprintf("CREATE STATISTICS %s ON %s (%s)",
-		quoteIdent(name), t.FullName(), strings.Join(quotedCols, ", "))
-	if samplePct > 0 {
-		q += fmt.Sprintf(" WITH SAMPLE %d PERCENT", samplePct)
+		quoteIdent(req.Name), tableName, strings.Join(quotedCols, ", "))
+	if req.FilterDefinition != "" {
+		q += " WHERE " + req.FilterDefinition
 	}
-	if _, err := t.db.exec(ctx, q); err != nil {
-		return fmt.Errorf("gosmo: create statistic %q: %w", name, err)
+
+	var withs []string
+	switch {
+	case req.FullScan:
+		withs = append(withs, "FULLSCAN")
+	case req.SamplePercent > 0:
+		withs = append(withs, fmt.Sprintf("SAMPLE %d PERCENT", req.SamplePercent))
 	}
-	return nil
+	if req.NoRecompute {
+		withs = append(withs, "NORECOMPUTE")
+	}
+	if req.Incremental {
+		withs = append(withs, "INCREMENTAL = ON")
+	}
+	if len(withs) > 0 {
+		q += " WITH " + strings.Join(withs, ", ")
+	}
+	return q, nil
 }
 
 // Columns returns this statistic's columns, in stat-column order. The

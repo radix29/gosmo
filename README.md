@@ -960,6 +960,7 @@ classDiagram
         +UpdateAllStatistics(samplePct) error
         +CreateIndex(req) error
         +CreateStatistic(name, cols, pct) error
+        +CreateStatisticWithOptions(req) error
         +AlterColumn(col) error
         +DropConstraint(name) error
     }
@@ -2137,7 +2138,7 @@ fmt.Println(srv.Info().ProductVersion)
 | Fragmentation         | `t.FragmentationStats(mode)`       |
 | Rebuild all indexes   | `t.RebuildAllIndexes(fillFactor)`  |
 | Update all statistics | `t.UpdateAllStatistics(samplePct)` |
-| Create index          | `t.CreateIndex(req)`               |
+| Create index          | `t.CreateIndex(req)` — every index type, see below |
 | Alter column          | `t.AlterColumn(col)`               |
 | Drop a constraint     | `t.DropConstraint(name)`           |
 | Columns of a table *or view* | `db.ObjectColumns(schema, name)` — `Table.Columns` reaches tables only |
@@ -2164,15 +2165,33 @@ fmt.Println(srv.Info().ProductVersion)
 `IndexTypeColumnStore`, `IndexTypeClusteredColumnStore`, or the server's own
 text for a type gosmo has no constant for (e.g. `NONCLUSTERED HASH`), so it
 is never empty for an index that exists. `idx.Type.IsColumnStore()` covers
-both columnstore forms — neither has an `INCLUDE` list, and a clustered
-columnstore index takes no key columns at all, so `SetIncludedColumns` and
-`CreateIndex` reject them rather than silently producing a rowstore index.
+both columnstore forms — neither has an `INCLUDE` list, so
+`SetIncludedColumns` rejects them rather than silently producing a rowstore
+index.
+
+`CreateIndexRequest` creates any of them, and which of its fields apply
+depends on `Type`:
+
+| Type                          | Statement                                    | Its own fields |
+| ----------------------------- | -------------------------------------------- | -------------- |
+| `IndexTypeClustered` / `IndexTypeNonClustered` (and the zero value) | `CREATE [UNIQUE] CLUSTERED\|NONCLUSTERED INDEX` | `IsUnique`, `IncludedColumns` and `FilterDefinition` (nonclustered only) |
+| `IndexTypeColumnStore`        | `CREATE NONCLUSTERED COLUMNSTORE INDEX`      | `FilterDefinition`, `CompressionDelay` |
+| `IndexTypeClusteredColumnStore` | `CREATE CLUSTERED COLUMNSTORE INDEX`       | takes no key columns at all — it covers every column |
+| `IndexTypeXML`                | `CREATE [PRIMARY] XML INDEX`                 | `IsPrimaryXML`, or `PrimaryXMLIndex` + `SecondaryXMLType` |
+| `IndexTypeSpatial`            | `CREATE SPATIAL INDEX ... USING`             | `Tessellation`, `BoundingBox` (the `GEOMETRY_` schemes), `GridLevels`, `CellsPerObject` |
+
+A combination the server would reject is refused before anything is
+executed — a unique columnstore index, an ordered columnstore column list, a
+fill factor on a columnstore index, a geography index with a bounding box, a
+secondary XML index naming no primary — with an error naming the field
+rather than a parse error naming a column number.
 
 ### Statistics
 
 | SSMS equivalent                | gosmo                                     |
 | ------------------------------ | ----------------------------------------- |
 | Statistics of a table          | `t.Statistics()` / `t.CreateStatistic(name, cols, pct)` |
+| ... with a filter, `FULLSCAN`, `NORECOMPUTE`, `INCREMENTAL` | `t.CreateStatisticWithOptions(req)` |
 | Statistic's key columns        | `st.Columns()`                            |
 | `DBCC SHOW_STATISTICS` header  | `st.Header()` → `*StatisticHeader`        |
 | ... density vector             | `st.DensityVector()` → `[]*StatisticDensity` |

@@ -2,6 +2,8 @@ package gosmo
 
 import (
 	"context"
+	"database/sql"
+	"reflect"
 	"testing"
 	"time"
 )
@@ -73,5 +75,143 @@ func TestParseErrorLogFileDate(t *testing.T) {
 		if got := parseErrorLogFileDate(in); !got.IsZero() {
 			t.Errorf("parseErrorLogFileDate(%q) = %v, want the zero time", in, got)
 		}
+	}
+}
+
+// TestCycleLogStatements pins each log family to the exact procedure it
+// cycles with. The two are looked up from one shared table, so a test that
+// only round-tripped "cycle then check it cycled" would pass with the entries
+// swapped — cycling the Agent log when the user asked for the SQL Server one,
+// and vice versa. Naming both here is what catches that.
+func TestCycleLogStatements(t *testing.T) {
+	cases := []struct {
+		lt   ErrorLogType
+		want string
+	}{
+		{ErrorLogSQLServer, "EXEC sp_cycle_errorlog"},
+		{ErrorLogAgent, "EXEC msdb.dbo.sp_cycle_agent_errorlog"},
+	}
+	if len(cases) != len(cycleLogStatements) {
+		t.Fatalf("cycleLogStatements has %d entries, this test names %d — a log family was added without pinning its statement",
+			len(cycleLogStatements), len(cases))
+	}
+	for _, c := range cases {
+		ctx, script := WithScript(context.Background())
+		s := &Server{}
+		if err := s.CycleLogContext(ctx, c.lt); err != nil {
+			t.Fatalf("CycleLogContext(%s): %v", c.lt, err)
+		}
+		if len(script.Statements) != 1 {
+			t.Fatalf("CycleLogContext(%s) recorded %d statements, want 1: %q", c.lt, len(script.Statements), script.Statements)
+		}
+		if got := script.Statements[0]; got != c.want {
+			t.Errorf("CycleLogContext(%s) ran %q, want %q", c.lt, got, c.want)
+		}
+	}
+}
+
+// TestCycleErrorLogIsTheSQLServerFamily pins the older fixed-family method to
+// the SQL Server log, so the delegation cannot be pointed at the Agent's
+// procedure without a failure.
+func TestCycleErrorLogIsTheSQLServerFamily(t *testing.T) {
+	ctx, script := WithScript(context.Background())
+	s := &Server{}
+	if err := s.CycleErrorLogContext(ctx); err != nil {
+		t.Fatalf("CycleErrorLogContext: %v", err)
+	}
+	want := []string{"EXEC sp_cycle_errorlog"}
+	if len(script.Statements) != 1 || script.Statements[0] != want[0] {
+		t.Errorf("CycleErrorLogContext ran %q, want %q", script.Statements, want)
+	}
+}
+
+// TestCycleLogRejectsUnknownType pins the argument check, matching
+// ReadLogContext's: an out-of-range type must fail before anything is run.
+func TestCycleLogRejectsUnknownType(t *testing.T) {
+	ctx, script := WithScript(context.Background())
+	s := &Server{}
+	if err := s.CycleLogContext(ctx, ErrorLogType(7)); err == nil {
+		t.Fatal("CycleLogContext with log type 7 returned no error")
+	}
+	if len(script.Statements) != 0 {
+		t.Errorf("a rejected log type still recorded %q", script.Statements)
+	}
+}
+
+// TestReadErrorLogCall pins the EXEC and its arguments. xp_readerrorlog takes
+// its search strings and date range positionally as arguments 3-6, so an
+// argument that is not set but sits *before* one that is has to be a typed
+// NULL and not be dropped — dropping it shifts every argument after it and
+// silently searches for the wrong thing, or filters on a date the caller
+// passed as text.
+func TestReadErrorLogCall(t *testing.T) {
+	from := time.Date(2026, 8, 20, 0, 0, 0, 0, time.UTC)
+	to := time.Date(2026, 8, 21, 0, 0, 0, 0, time.UTC)
+
+	for _, c := range []struct {
+		name     string
+		search   LogSearch
+		wantCall string
+		wantArgs []any
+	}{
+		{
+			name:     "no search reads the whole file",
+			wantCall: "EXEC xp_readerrorlog 0, 1",
+		},
+		{
+			name:     "one search string",
+			search:   LogSearch{Text1: "login failed"},
+			wantCall: "EXEC xp_readerrorlog 0, 1, @p1, @p2",
+			wantArgs: []any{
+				sql.NullString{String: "login failed", Valid: true},
+				sql.NullString{},
+			},
+		},
+		{
+			name:     "both search strings are AND-ed by the server",
+			search:   LogSearch{Text1: "login", Text2: "failed"},
+			wantCall: "EXEC xp_readerrorlog 0, 1, @p1, @p2",
+			wantArgs: []any{
+				sql.NullString{String: "login", Valid: true},
+				sql.NullString{String: "failed", Valid: true},
+			},
+		},
+		{
+			// The case the typed NULLs exist for: a date range with no text.
+			name:     "dates only still pass both text arguments",
+			search:   LogSearch{From: from, To: to},
+			wantCall: "EXEC xp_readerrorlog 0, 1, @p1, @p2, @p3, @p4",
+			wantArgs: []any{
+				sql.NullString{}, sql.NullString{},
+				sql.NullString{String: "2026-08-20 00:00:00", Valid: true},
+				sql.NullString{String: "2026-08-21 00:00:00", Valid: true},
+			},
+		},
+		{
+			name:     "an open-ended range leaves the other end NULL",
+			search:   LogSearch{Text1: "x", From: from},
+			wantCall: "EXEC xp_readerrorlog 0, 1, @p1, @p2, @p3, @p4",
+			wantArgs: []any{
+				sql.NullString{String: "x", Valid: true},
+				sql.NullString{},
+				sql.NullString{String: "2026-08-20 00:00:00", Valid: true},
+				sql.NullString{},
+			},
+		},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			call, args := readErrorLogCall(ErrorLogSQLServer, 0, c.search)
+			if call != c.wantCall {
+				t.Errorf("call = %q, want %q", call, c.wantCall)
+			}
+			if !reflect.DeepEqual(args, c.wantArgs) {
+				t.Errorf("args = %#v, want %#v", args, c.wantArgs)
+			}
+		})
+	}
+
+	// The log number and family reach the statement as themselves.
+	if call, _ := readErrorLogCall(ErrorLogAgent, 3, LogSearch{}); call != "EXEC xp_readerrorlog 3, 2" {
+		t.Errorf("agent archive call = %q", call)
 	}
 }

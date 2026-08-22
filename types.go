@@ -127,6 +127,56 @@ func (t IndexType) IsColumnStore() bool {
 	return t == IndexTypeColumnStore || t == IndexTypeClusteredColumnStore
 }
 
+// XMLSecondaryIndexType selects which secondary XML index CREATE XML INDEX
+// builds — the FOR clause. A secondary index is always built over an
+// existing primary XML index (see CreateIndexRequest).
+type XMLSecondaryIndexType string
+
+const (
+	// XMLSecondaryPath indexes path/value pairs, for predicates on a path.
+	XMLSecondaryPath XMLSecondaryIndexType = "PATH"
+	// XMLSecondaryValue indexes value/path pairs, for predicates whose path
+	// is a wildcard or a descendant axis.
+	XMLSecondaryValue XMLSecondaryIndexType = "VALUE"
+	// XMLSecondaryProperty indexes primary-key/path/value triples, for
+	// property-bag retrieval of one row's values.
+	XMLSecondaryProperty XMLSecondaryIndexType = "PROPERTY"
+)
+
+// SpatialTessellation is a spatial index's tessellation scheme — the USING
+// clause of CREATE SPATIAL INDEX. The GEOMETRY_ schemes apply to a geometry
+// column and the GEOGRAPHY_ ones to a geography column; the server rejects
+// the mismatch.
+type SpatialTessellation string
+
+const (
+	SpatialGeometryGrid      SpatialTessellation = "GEOMETRY_GRID"
+	SpatialGeometryAutoGrid  SpatialTessellation = "GEOMETRY_AUTO_GRID"
+	SpatialGeographyGrid     SpatialTessellation = "GEOGRAPHY_GRID"
+	SpatialGeographyAutoGrid SpatialTessellation = "GEOGRAPHY_AUTO_GRID"
+)
+
+// IsGeometry reports whether s tessellates a geometry column, the two
+// schemes that take a bounding box.
+func (s SpatialTessellation) IsGeometry() bool {
+	return s == SpatialGeometryGrid || s == SpatialGeometryAutoGrid
+}
+
+// IsAutoGrid reports whether s is one of the automatic schemes, which pick
+// their own grid densities and so take no GRIDS clause.
+func (s SpatialTessellation) IsAutoGrid() bool {
+	return s == SpatialGeometryAutoGrid || s == SpatialGeographyAutoGrid
+}
+
+// SpatialGridDensity is one grid level's density in a GRIDS clause.
+type SpatialGridDensity string
+
+const (
+	SpatialGridLow    SpatialGridDensity = "LOW"
+	SpatialGridMedium SpatialGridDensity = "MEDIUM"
+	SpatialGridHigh   SpatialGridDensity = "HIGH"
+)
+
 // PermissionState represents GRANT / DENY / REVOKE.
 type PermissionState string
 

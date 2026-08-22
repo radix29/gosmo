@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 )
 
 // ============================================================
@@ -100,22 +101,61 @@ func scanColumnMasterKey(d *Database, scan func(...any) error) (*ColumnMasterKey
 
 // CreateColumnMasterKey creates a column master key metadata entry.
 // Note: the actual key must already exist in the key store.
+//
+// enclaveComputations can only be false here. The ENCLAVE_COMPUTATIONS clause
+// takes a signature over the key's metadata — CREATE COLUMN MASTER KEY spells
+// it ENCLAVE_COMPUTATIONS (SIGNATURE = 0x...) and has no boolean form — and
+// that signature is computed by the client from the master key's private key,
+// so nothing here can supply it. Passing true returns an error naming
+// CreateColumnMasterKeyWithSignature rather than emitting a statement the
+// server will reject.
 func (d *Database) CreateColumnMasterKey(name, keyStoreProvider, keyPath string, enclaveComputations bool) error {
 	return d.CreateColumnMasterKeyContext(context.Background(), name, keyStoreProvider, keyPath, enclaveComputations)
 }
 
 // CreateColumnMasterKeyContext is the context-aware variant of CreateColumnMasterKey.
 func (d *Database) CreateColumnMasterKeyContext(ctx context.Context, name, keyStoreProvider, keyPath string, enclaveComputations bool) error {
-	enclave := "YES"
-	if !enclaveComputations {
-		enclave = "NO"
+	if enclaveComputations {
+		return fmt.Errorf("gosmo: create column master key [%s]: enclave computations need the key's signature, which only the client can compute: use CreateColumnMasterKeyWithSignature", name)
+	}
+	return d.createColumnMasterKey(ctx, name, keyStoreProvider, keyPath, nil)
+}
+
+// CreateColumnMasterKeyWithSignature creates a column master key that allows
+// enclave computations. signature is the digital signature over the key's
+// metadata, the same value ColumnMasterKey.Signature reads back and the
+// scripter writes out verbatim; it is produced client-side by whatever holds
+// the master key's private key (SSMS and the SqlColumnMasterKey PowerShell
+// cmdlets both do), and the server verifies it against the rest of the
+// metadata, so an empty or wrong one is rejected. Use CreateColumnMasterKey
+// for a key that does not allow enclave computations.
+func (d *Database) CreateColumnMasterKeyWithSignature(name, keyStoreProvider, keyPath string, signature []byte) error {
+	return d.CreateColumnMasterKeyWithSignatureContext(context.Background(), name, keyStoreProvider, keyPath, signature)
+}
+
+// CreateColumnMasterKeyWithSignatureContext is the context-aware variant of
+// CreateColumnMasterKeyWithSignature.
+func (d *Database) CreateColumnMasterKeyWithSignatureContext(ctx context.Context, name, keyStoreProvider, keyPath string, signature []byte) error {
+	if len(signature) == 0 {
+		return fmt.Errorf("gosmo: create column master key [%s]: signature is empty", name)
+	}
+	return d.createColumnMasterKey(ctx, name, keyStoreProvider, keyPath, signature)
+}
+
+// createColumnMasterKey emits the CREATE, with the ENCLAVE_COMPUTATIONS clause
+// only when a signature was given. The clause is written the way the scripter
+// writes it (buildColumnMasterKeyScript), so a key created here and one scripted
+// from the server read back the same.
+func (d *Database) createColumnMasterKey(ctx context.Context, name, keyStoreProvider, keyPath string, signature []byte) error {
+	enclave := ""
+	if len(signature) > 0 {
+		enclave = fmt.Sprintf(",\n    ENCLAVE_COMPUTATIONS (SIGNATURE = %s)", hexLiteral(signature))
 	}
 	q := fmt.Sprintf(`
 CREATE COLUMN MASTER KEY %s
 WITH (
     KEY_STORE_PROVIDER_NAME = N'%s',
-    KEY_PATH = N'%s',
-    ENCLAVE_COMPUTATIONS = %s
+    KEY_PATH = N'%s'%s
 )`, quoteIdent(name), escapeSingle(keyStoreProvider), escapeSingle(keyPath), enclave)
 	_, err := d.exec(ctx, q)
 	if err != nil {
@@ -257,6 +297,57 @@ func scanColumnEncryptionKeys(d *Database, rows *dbRows) ([]*ColumnEncryptionKey
 		})
 	}
 	return keys, rows.Err()
+}
+
+// CreateColumnEncryptionKey creates a column encryption key from one or more
+// already-encrypted values.
+//
+// Each value's key material is the CEK encrypted under a column master key,
+// which is done client-side by whatever can reach that master key's private
+// key (SSMS and the SqlColumnEncryptionKey PowerShell cmdlets both do) —
+// nothing here can generate or verify it, and the server rejects a value it
+// cannot decrypt on first use. Pass two values only to reproduce a key
+// mid-rotation; one is the ordinary case.
+func (d *Database) CreateColumnEncryptionKey(name string, values []ColumnEncryptionKeyValue) error {
+	return d.CreateColumnEncryptionKeyContext(context.Background(), name, values)
+}
+
+// CreateColumnEncryptionKeyContext is the context-aware variant of
+// CreateColumnEncryptionKey. The statement is written the way the scripter
+// writes it (buildColumnEncryptionKeyScript), so a key created here and one
+// scripted from the server read back the same.
+func (d *Database) CreateColumnEncryptionKeyContext(ctx context.Context, name string, values []ColumnEncryptionKeyValue) error {
+	if name == "" {
+		return fmt.Errorf("gosmo: create column encryption key: name is required")
+	}
+	if len(values) == 0 {
+		return fmt.Errorf("gosmo: create column encryption key [%s]: at least one encrypted value is required", name)
+	}
+	for i, v := range values {
+		if v.MasterKeyName == "" {
+			return fmt.Errorf("gosmo: create column encryption key [%s]: value %d has no column master key", name, i+1)
+		}
+		if v.EncryptionAlgorithm == "" {
+			return fmt.Errorf("gosmo: create column encryption key [%s]: value %d has no encryption algorithm", name, i+1)
+		}
+		if len(v.EncryptedValue) == 0 {
+			return fmt.Errorf("gosmo: create column encryption key [%s]: value %d has no encrypted value, which only the client holding the master key can produce", name, i+1)
+		}
+	}
+
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "CREATE COLUMN ENCRYPTION KEY %s\nWITH VALUES", quoteIdent(name))
+	for i, v := range values {
+		if i > 0 {
+			sb.WriteString(",")
+		}
+		fmt.Fprintf(&sb, "\n(\n    COLUMN_MASTER_KEY = %s,\n    ALGORITHM = '%s',\n    ENCRYPTED_VALUE = %s\n)",
+			quoteIdent(v.MasterKeyName), escapeSingle(v.EncryptionAlgorithm), hexLiteral(v.EncryptedValue))
+	}
+	if _, err := d.exec(ctx, sb.String()); err != nil {
+		return fmt.Errorf("gosmo: create column encryption key [%s]: %w", name, err)
+	}
+	return nil
 }
 
 // Drop drops the column encryption key.

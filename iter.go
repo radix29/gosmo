@@ -529,6 +529,11 @@ func (t *Table) IndexSeq(ctx context.Context) iter.Seq2[*Index, error] {
 	return seqFrom(ctx, t.IndexesContext)
 }
 
+// XMLIndexSeq returns an iterator over all XML indexes on the table.
+func (t *Table) XMLIndexSeq(ctx context.Context) iter.Seq2[*XMLIndex, error] {
+	return seqFrom(ctx, t.XMLIndexesContext)
+}
+
 // ForeignKeySeq returns an iterator over all foreign keys on the table.
 func (t *Table) ForeignKeySeq(ctx context.Context) iter.Seq2[*ForeignKey, error] {
 	return seqFrom(ctx, t.ForeignKeysContext)

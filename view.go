@@ -25,15 +25,39 @@ func (d *Database) Views() ([]*View, error) {
 
 // ViewsContext is the context-aware variant of Views.
 func (d *Database) ViewsContext(ctx context.Context) ([]*View, error) {
-	const q = `
+	return d.viewsWhere(ctx, "", nil)
+}
+
+// ViewsFiltered returns the views an ObjectFilter matches, narrowed by the
+// server rather than by the caller. An empty filter is ViewsContext.
+func (d *Database) ViewsFiltered(filter ObjectFilter) ([]*View, error) {
+	return d.ViewsFilteredContext(context.Background(), filter)
+}
+
+// ViewsFilteredContext is the context-aware variant of ViewsFiltered.
+func (d *Database) ViewsFilteredContext(ctx context.Context, filter ObjectFilter) ([]*View, error) {
+	where, args := filter.clause(viewFilterColumns, 1)
+	return d.viewsWhere(ctx, where, args)
+}
+
+// viewFilterColumns maps an ObjectFilter onto sys.views as viewsWhere aliases
+// it. There is no memory-optimized column outside sys.tables.
+var viewFilterColumns = filterColumns{
+	name:    "v.name",
+	schema:  "SCHEMA_NAME(v.schema_id)",
+	created: "v.create_date",
+}
+
+func (d *Database) viewsWhere(ctx context.Context, where string, args []any) ([]*View, error) {
+	q := `
 SELECT v.object_id, SCHEMA_NAME(v.schema_id), v.name,
        ISNULL(m.definition,''), v.create_date, v.modify_date
 FROM   sys.views v
 JOIN   sys.sql_modules m ON m.object_id = v.object_id
-WHERE  v.is_ms_shipped = 0
+WHERE  v.is_ms_shipped = 0 ` + where + `
 ORDER  BY SCHEMA_NAME(v.schema_id), v.name`
 
-	rows, err := d.query(ctx, q)
+	rows, err := d.query(ctx, q, args...)
 	if err != nil {
 		return nil, fmt.Errorf("gosmo: list views in %q: %w", d.name, err)
 	}
@@ -68,15 +92,32 @@ func (d *Database) SystemViews() ([]*View, error) {
 // catalog views are defined identically in every database on a server, so
 // a caller only needs to load this once per connection.
 func (d *Database) SystemViewsContext(ctx context.Context) ([]*View, error) {
-	const q = `
+	return d.systemViewsWhere(ctx, "", nil)
+}
+
+// SystemViewsFiltered returns the system views an ObjectFilter matches,
+// narrowed by the server. An empty filter is SystemViewsContext.
+func (d *Database) SystemViewsFiltered(filter ObjectFilter) ([]*View, error) {
+	return d.SystemViewsFilteredContext(context.Background(), filter)
+}
+
+// SystemViewsFilteredContext is the context-aware variant of
+// SystemViewsFiltered.
+func (d *Database) SystemViewsFilteredContext(ctx context.Context, filter ObjectFilter) ([]*View, error) {
+	where, args := filter.clause(allObjectsFilterColumns, 1)
+	return d.systemViewsWhere(ctx, where, args)
+}
+
+func (d *Database) systemViewsWhere(ctx context.Context, where string, args []any) ([]*View, error) {
+	q := `
 SELECT o.object_id, SCHEMA_NAME(o.schema_id), o.name,
        ISNULL(m.definition,''), o.create_date, o.modify_date
 FROM   sys.all_objects o
 LEFT JOIN sys.all_sql_modules m ON m.object_id = o.object_id
-WHERE  o.type = 'V' AND o.is_ms_shipped = 1 AND SCHEMA_NAME(o.schema_id) = 'sys'
+WHERE  o.type = 'V' AND o.is_ms_shipped = 1 AND SCHEMA_NAME(o.schema_id) = 'sys' ` + where + `
 ORDER  BY o.name`
 
-	rows, err := d.query(ctx, q)
+	rows, err := d.query(ctx, q, args...)
 	if err != nil {
 		return nil, fmt.Errorf("gosmo: list system views in %q: %w", d.name, err)
 	}
@@ -95,6 +136,14 @@ ORDER  BY o.name`
 		return nil, fmt.Errorf("gosmo: list system views in %q: %w", d.name, err)
 	}
 	return views, nil
+}
+
+// allObjectsFilterColumns maps an ObjectFilter onto the sys.all_objects
+// listings the three System* families share.
+var allObjectsFilterColumns = filterColumns{
+	name:    "o.name",
+	schema:  "SCHEMA_NAME(o.schema_id)",
+	created: "o.create_date",
 }
 
 // DropView drops a view. A view that isn't there is the server's error, not

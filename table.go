@@ -277,6 +277,29 @@ func (t *Table) AlterColumnContext(ctx context.Context, col ColumnDefinition) er
 	return nil
 }
 
+// DropColumn removes a column from the table (ALTER TABLE ... DROP COLUMN).
+//
+// Bare, like every other Drop in this package: SQL Server refuses a column a
+// default constraint, index, check constraint or statistic depends on, and
+// that refusal is the answer — dropping the dependencies first is a decision
+// the caller makes, not one a library can make for them. The data in the
+// column goes with it and is not recoverable.
+func (t *Table) DropColumn(name string) error {
+	return t.DropColumnContext(context.Background(), name)
+}
+
+// DropColumnContext is the context-aware variant of DropColumn.
+func (t *Table) DropColumnContext(ctx context.Context, name string) error {
+	if name == "" {
+		return fmt.Errorf("gosmo: drop column on %s: name is required", t.FullName())
+	}
+	if _, err := t.db.exec(ctx,
+		fmt.Sprintf("ALTER TABLE %s DROP COLUMN %s", t.FullName(), quoteIdent(name))); err != nil {
+		return fmt.Errorf("gosmo: drop column %q on %s: %w", name, t.FullName(), err)
+	}
+	return nil
+}
+
 // -- Indexes -------------------------------------------------------------------
 
 // Index mirrors Microsoft.SqlServer.Management.Smo.Index.

@@ -95,23 +95,52 @@ func TestScriptSecurityWrites(t *testing.T) {
 		{"CreateMasterKey", func(c context.Context) error {
 			return scriptTestDB().CreateMasterKeyContext(c, "p'wd")
 		}, scriptUsePrefix + "CREATE MASTER KEY ENCRYPTION BY PASSWORD = N'p''wd'"},
-		{"CreateColumnMasterKey", func(c context.Context) error {
-			return scriptTestDB().CreateColumnMasterKeyContext(c, "CMK]1", "MSSQL_CERTIFICATE_STORE", "CurrentUser/my/a'b", true)
+		{"CreateColumnMasterKeyWithSignature", func(c context.Context) error {
+			return scriptTestDB().CreateColumnMasterKeyWithSignatureContext(c, "CMK]1", "MSSQL_CERTIFICATE_STORE", "CurrentUser/my/a'b", []byte{0x0a, 0xff})
 		}, scriptUsePrefix + `
 CREATE COLUMN MASTER KEY [CMK]]1]
 WITH (
     KEY_STORE_PROVIDER_NAME = N'MSSQL_CERTIFICATE_STORE',
     KEY_PATH = N'CurrentUser/my/a''b',
-    ENCLAVE_COMPUTATIONS = YES
+    ENCLAVE_COMPUTATIONS (SIGNATURE = 0x0AFF)
 )`},
 		{"CreateColumnMasterKey without enclave computations", func(c context.Context) error {
-			return scriptTestDB().CreateColumnMasterKeyContext(c, "CMK1", "MSSQL_CERTIFICATE_STORE", "CurrentUser/my/ab", false)
+			return scriptTestDB().CreateColumnMasterKeyContext(c, "CMK]1", "MSSQL_CERTIFICATE_STORE", "CurrentUser/my/a'b", false)
 		}, scriptUsePrefix + `
-CREATE COLUMN MASTER KEY [CMK1]
+CREATE COLUMN MASTER KEY [CMK]]1]
 WITH (
     KEY_STORE_PROVIDER_NAME = N'MSSQL_CERTIFICATE_STORE',
-    KEY_PATH = N'CurrentUser/my/ab',
-    ENCLAVE_COMPUTATIONS = NO
+    KEY_PATH = N'CurrentUser/my/a''b'
+)`},
+		{"CreateColumnEncryptionKey", func(c context.Context) error {
+			return scriptTestDB().CreateColumnEncryptionKeyContext(c, "CEK]1", []ColumnEncryptionKeyValue{
+				{MasterKeyName: "CMK]1", EncryptionAlgorithm: "RSA_OAEP", EncryptedValue: []byte{0x0a, 0xff}},
+			})
+		}, scriptUsePrefix + `CREATE COLUMN ENCRYPTION KEY [CEK]]1]
+WITH VALUES
+(
+    COLUMN_MASTER_KEY = [CMK]]1],
+    ALGORITHM = 'RSA_OAEP',
+    ENCRYPTED_VALUE = 0x0AFF
+)`},
+		// A key mid-rotation is encrypted under two master keys and CREATE has
+		// to restate both — one comma, and every value repeated in full.
+		{"CreateColumnEncryptionKey mid-rotation", func(c context.Context) error {
+			return scriptTestDB().CreateColumnEncryptionKeyContext(c, "CEK1", []ColumnEncryptionKeyValue{
+				{MasterKeyName: "CMK1", EncryptionAlgorithm: "RSA_OAEP", EncryptedValue: []byte{0x01}},
+				{MasterKeyName: "CMK2", EncryptionAlgorithm: "RSA_OAEP", EncryptedValue: []byte{0x02}},
+			})
+		}, scriptUsePrefix + `CREATE COLUMN ENCRYPTION KEY [CEK1]
+WITH VALUES
+(
+    COLUMN_MASTER_KEY = [CMK1],
+    ALGORITHM = 'RSA_OAEP',
+    ENCRYPTED_VALUE = 0x01
+),
+(
+    COLUMN_MASTER_KEY = [CMK2],
+    ALGORITHM = 'RSA_OAEP',
+    ENCRYPTED_VALUE = 0x02
 )`},
 	})
 }
@@ -172,5 +201,80 @@ func TestCreateUserRefusesAnEmptyLogin(t *testing.T) {
 	}
 	if len(script.Statements) != 0 {
 		t.Errorf("Statements = %q, want none", script.Statements)
+	}
+}
+
+// TestCreateColumnMasterKeyRefusesEnclaveComputationsWithoutASignature pins the
+// two refusals rather than the statements. ENCLAVE_COMPUTATIONS takes a
+// signature the client computes from the master key's private key — the boolean
+// spelling this package emitted until 2026-08-21 (ENCLAVE_COMPUTATIONS = YES)
+// is not syntax SQL Server accepts, so a caller asking for one has to be sent
+// to CreateColumnMasterKeyWithSignature instead of shipped a statement that
+// fails at the server.
+func TestCreateColumnMasterKeyRefusesEnclaveComputationsWithoutASignature(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		call func(context.Context) error
+		want string
+	}{
+		{"bool form asking for enclave computations", func(c context.Context) error {
+			return scriptTestDB().CreateColumnMasterKeyContext(c, "CMK1", "MSSQL_CERTIFICATE_STORE", "CurrentUser/my/ab", true)
+		}, "CreateColumnMasterKeyWithSignature"},
+		{"signature form with an empty signature", func(c context.Context) error {
+			return scriptTestDB().CreateColumnMasterKeyWithSignatureContext(c, "CMK1", "MSSQL_CERTIFICATE_STORE", "CurrentUser/my/ab", nil)
+		}, "signature is empty"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			ctx, script := WithScript(context.Background())
+			err := c.call(ctx)
+			if err == nil {
+				t.Fatalf("no error; statements: %v", script.Statements)
+			}
+			if !strings.Contains(err.Error(), c.want) {
+				t.Errorf("error = %v, want it to mention %q", err, c.want)
+			}
+			if len(script.Statements) != 0 {
+				t.Errorf("emitted %d statement(s), want none:\n%s",
+					len(script.Statements), strings.Join(script.Statements, "\n---\n"))
+			}
+		})
+	}
+}
+
+// TestCreateColumnEncryptionKeyRefusesAnIncompleteValue pins the guards rather
+// than a statement. Every part of a WITH VALUES entry is required by the
+// server, and an empty one quotes into syntax it rejects only when the key is
+// first used to decrypt a column — long after the create appeared to succeed.
+func TestCreateColumnEncryptionKeyRefusesAnIncompleteValue(t *testing.T) {
+	good := ColumnEncryptionKeyValue{MasterKeyName: "CMK1", EncryptionAlgorithm: "RSA_OAEP", EncryptedValue: []byte{0x01}}
+	blank := func(edit func(*ColumnEncryptionKeyValue)) []ColumnEncryptionKeyValue {
+		v := good
+		edit(&v)
+		return []ColumnEncryptionKeyValue{v}
+	}
+	for _, c := range []struct {
+		name   string
+		values []ColumnEncryptionKeyValue
+		want   string
+	}{
+		{"no values at all", nil, "at least one encrypted value"},
+		{"no master key", blank(func(v *ColumnEncryptionKeyValue) { v.MasterKeyName = "" }), "no column master key"},
+		{"no algorithm", blank(func(v *ColumnEncryptionKeyValue) { v.EncryptionAlgorithm = "" }), "no encryption algorithm"},
+		{"no encrypted value", blank(func(v *ColumnEncryptionKeyValue) { v.EncryptedValue = nil }), "no encrypted value"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			ctx, script := WithScript(context.Background())
+			err := scriptTestDB().CreateColumnEncryptionKeyContext(ctx, "CEK1", c.values)
+			if err == nil {
+				t.Fatalf("no error; statements: %v", script.Statements)
+			}
+			if !strings.Contains(err.Error(), c.want) {
+				t.Errorf("error = %v, want it to mention %q", err, c.want)
+			}
+			if len(script.Statements) != 0 {
+				t.Errorf("emitted %d statement(s), want none:\n%s",
+					len(script.Statements), strings.Join(script.Statements, "\n---\n"))
+			}
+		})
 	}
 }

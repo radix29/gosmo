@@ -173,15 +173,41 @@ func (d *Database) StoredProcedures() ([]*StoredProcedure, error) {
 
 // StoredProceduresContext is the context-aware variant of StoredProcedures.
 func (d *Database) StoredProceduresContext(ctx context.Context) ([]*StoredProcedure, error) {
-	const q = `
+	return d.storedProceduresWhere(ctx, "", nil)
+}
+
+// StoredProceduresFiltered returns the stored procedures an ObjectFilter
+// matches, narrowed by the server. An empty filter is
+// StoredProceduresContext.
+func (d *Database) StoredProceduresFiltered(filter ObjectFilter) ([]*StoredProcedure, error) {
+	return d.StoredProceduresFilteredContext(context.Background(), filter)
+}
+
+// StoredProceduresFilteredContext is the context-aware variant of
+// StoredProceduresFiltered.
+func (d *Database) StoredProceduresFilteredContext(ctx context.Context, filter ObjectFilter) ([]*StoredProcedure, error) {
+	where, args := filter.clause(procedureFilterColumns, 1)
+	return d.storedProceduresWhere(ctx, where, args)
+}
+
+// procedureFilterColumns maps an ObjectFilter onto sys.procedures as
+// storedProceduresWhere aliases it.
+var procedureFilterColumns = filterColumns{
+	name:    "p.name",
+	schema:  "SCHEMA_NAME(p.schema_id)",
+	created: "p.create_date",
+}
+
+func (d *Database) storedProceduresWhere(ctx context.Context, where string, args []any) ([]*StoredProcedure, error) {
+	q := `
 SELECT p.object_id, SCHEMA_NAME(p.schema_id), p.name,
        ISNULL(m.definition,''), p.create_date, p.modify_date
 FROM   sys.procedures p
 JOIN   sys.sql_modules m ON m.object_id = p.object_id
-WHERE  p.is_ms_shipped = 0
+WHERE  p.is_ms_shipped = 0 ` + where + `
 ORDER  BY SCHEMA_NAME(p.schema_id), p.name`
 
-	rows, err := d.query(ctx, q)
+	rows, err := d.query(ctx, q, args...)
 	if err != nil {
 		return nil, fmt.Errorf("gosmo: list stored procs in %q: %w", d.name, err)
 	}
@@ -258,15 +284,33 @@ func (d *Database) SystemStoredProcedures() ([]*StoredProcedure, error) {
 // schema is identical in every database on a server, so this only needs
 // loading once per connection.
 func (d *Database) SystemStoredProceduresContext(ctx context.Context) ([]*StoredProcedure, error) {
-	const q = `
+	return d.systemStoredProceduresWhere(ctx, "", nil)
+}
+
+// SystemStoredProceduresFiltered returns the system stored procedures an
+// ObjectFilter matches, narrowed by the server. An empty filter is
+// SystemStoredProceduresContext.
+func (d *Database) SystemStoredProceduresFiltered(filter ObjectFilter) ([]*StoredProcedure, error) {
+	return d.SystemStoredProceduresFilteredContext(context.Background(), filter)
+}
+
+// SystemStoredProceduresFilteredContext is the context-aware variant of
+// SystemStoredProceduresFiltered.
+func (d *Database) SystemStoredProceduresFilteredContext(ctx context.Context, filter ObjectFilter) ([]*StoredProcedure, error) {
+	where, args := filter.clause(allObjectsFilterColumns, 1)
+	return d.systemStoredProceduresWhere(ctx, where, args)
+}
+
+func (d *Database) systemStoredProceduresWhere(ctx context.Context, where string, args []any) ([]*StoredProcedure, error) {
+	q := `
 SELECT o.object_id, SCHEMA_NAME(o.schema_id), o.name,
        ISNULL(m.definition,''), o.create_date, o.modify_date
 FROM   sys.all_objects o
 LEFT JOIN sys.all_sql_modules m ON m.object_id = o.object_id
-WHERE  o.type IN ('P','PC') AND o.is_ms_shipped = 1 AND SCHEMA_NAME(o.schema_id) = 'sys'
+WHERE  o.type IN ('P','PC') AND o.is_ms_shipped = 1 AND SCHEMA_NAME(o.schema_id) = 'sys' ` + where + `
 ORDER  BY o.name`
 
-	rows, err := d.query(ctx, q)
+	rows, err := d.query(ctx, q, args...)
 	if err != nil {
 		return nil, fmt.Errorf("gosmo: list system stored procs in %q: %w", d.name, err)
 	}

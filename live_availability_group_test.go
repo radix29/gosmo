@@ -949,6 +949,85 @@ func TestLiveAvailabilityGroupCreate(t *testing.T) {
 		time.Sleep(2 * time.Second)
 	}
 
+	// AVAILABILITY_MODE and FAILOVER_MODE are the two replica settings
+	// TestLiveAvailabilityGroupWrite deliberately skips: on the standing
+	// EXTERNAL group, dropping the last synchronous replica leaves Pacemaker
+	// unable to promote anything, recoverable only by recreating the group.
+	// This throwaway group is where they can be exercised for real — it is
+	// CLUSTER_TYPE = NONE, no cluster manager watches it, and it is dropped
+	// a few lines below however this subtest ends.
+	t.Run("availability and failover modes", func(t *testing.T) {
+		rereadReplica := func(name string) *AvailabilityReplica {
+			t.Helper()
+			rs, err := ag.ReplicasContext(ctx)
+			if err != nil {
+				t.Fatalf("re-read replicas: %v", err)
+			}
+			for _, r := range rs {
+				if strings.EqualFold(r.ReplicaServerName, name) {
+					return r
+				}
+			}
+			t.Fatalf("replica %q vanished", name)
+			return nil
+		}
+
+		target := rereadReplica(peer.Name())
+		if !strings.EqualFold(target.AvailabilityMode, "SYNCHRONOUS_COMMIT") {
+			t.Fatalf("secondary starts at AvailabilityMode %q, want SYNCHRONOUS_COMMIT", target.AvailabilityMode)
+		}
+
+		if err := target.SetAvailabilityModeContext(ctx, "ASYNCHRONOUS_COMMIT"); err != nil {
+			t.Fatalf("SetAvailabilityMode ASYNCHRONOUS_COMMIT: %v", err)
+		}
+		if got := rereadReplica(peer.Name()).AvailabilityMode; !strings.EqualFold(got, "ASYNCHRONOUS_COMMIT") {
+			t.Errorf("AvailabilityMode = %q, want ASYNCHRONOUS_COMMIT", got)
+		}
+		if err := target.SetAvailabilityModeContext(ctx, "SYNCHRONOUS_COMMIT"); err != nil {
+			t.Fatalf("restore AvailabilityMode: %v", err)
+		}
+		if got := rereadReplica(peer.Name()).AvailabilityMode; !strings.EqualFold(got, "SYNCHRONOUS_COMMIT") {
+			t.Errorf("restored AvailabilityMode = %q, want SYNCHRONOUS_COMMIT", got)
+		}
+
+		// FAILOVER_MODE cannot be round-tripped anywhere available here: a
+		// CLUSTER_TYPE = NONE group accepts MANUAL and nothing else, and the
+		// two it refuses need infrastructure this cluster does not have —
+		// AUTOMATIC a WSFC, EXTERNAL a group created as EXTERNAL, which is
+		// AAG1, the one group that must not be touched. So what is pinned is
+		// the mode that applies plus the server's own refusal of the other
+		// two: both come back "The cluster type of availability group '...'
+		// only supports MANUAL failover mode", which is a semantic refusal —
+		// a malformed statement would be Msg 102 instead, so this still
+		// proves the statement reaches the server well-formed.
+		if err := target.SetFailoverModeContext(ctx, "MANUAL"); err != nil {
+			t.Fatalf("SetFailoverMode MANUAL: %v", err)
+		}
+		if got := rereadReplica(peer.Name()).FailoverMode; !strings.EqualFold(got, "MANUAL") {
+			t.Errorf("FailoverMode = %q, want MANUAL", got)
+		}
+		for _, mode := range []string{"AUTOMATIC", "EXTERNAL"} {
+			err := target.SetFailoverModeContext(ctx, mode)
+			if err == nil {
+				t.Errorf("SetFailoverMode %s on a NONE group succeeded; it should be refused", mode)
+				continue
+			}
+			if !strings.Contains(err.Error(), "only supports MANUAL failover mode") {
+				t.Errorf("SetFailoverMode %s: err = %v, want the cluster-type refusal", mode, err)
+			}
+			// A refused write must not move the in-memory field: setIfApplied
+			// runs only after modifyReplica returns nil, and a caller that
+			// mirrored optimistically would show the mode as changed.
+			if !strings.EqualFold(target.FailoverMode, "MANUAL") {
+				t.Errorf("after a refused SetFailoverMode %s, the replica reports FailoverMode %q, want MANUAL",
+					mode, target.FailoverMode)
+			}
+			if got := rereadReplica(peer.Name()).FailoverMode; !strings.EqualFold(got, "MANUAL") {
+				t.Errorf("after a refused SetFailoverMode %s, the server reports %q, want MANUAL", mode, got)
+			}
+		}
+	})
+
 	// The stale-row behaviour the teardown depends on: dropping on the primary
 	// leaves the secondary still listing the group.
 	if err := ag.DropContext(ctx); err != nil {

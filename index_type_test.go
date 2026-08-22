@@ -61,10 +61,11 @@ func TestSetIncludedColumnsRejectsColumnStore(t *testing.T) {
 	}
 }
 
-// CREATE CLUSTERED COLUMNSTORE INDEX takes no key columns, so it doesn't fit
-// the statement CreateIndex builds. It must be refused, not quietly turned
-// into a plain NONCLUSTERED index — the behavior before the type existed.
-func TestCreateIndexRejectsClusteredColumnStore(t *testing.T) {
+// CREATE CLUSTERED COLUMNSTORE INDEX takes no key columns — it covers every
+// column of the table. A request that names some is refused rather than
+// quietly turned into a plain NONCLUSTERED index, the behavior before the
+// type existed.
+func TestCreateIndexRejectsKeyColumnsOnClusteredColumnStore(t *testing.T) {
 	tbl := captureTable(t)
 	err := tbl.CreateIndex(CreateIndexRequest{
 		Name:       "cci",
@@ -72,7 +73,7 @@ func TestCreateIndexRejectsClusteredColumnStore(t *testing.T) {
 		KeyColumns: []IndexColumnDef{{Name: "a"}},
 	})
 	if err == nil {
-		t.Fatal("CreateIndex returned nil for a clustered columnstore index, want an error")
+		t.Fatal("CreateIndex returned nil for a clustered columnstore index with key columns, want an error")
 	}
 	if q := captured.find("CREATE"); q != "" {
 		t.Errorf("refused but still executed: %s", q)
