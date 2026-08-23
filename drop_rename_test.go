@@ -111,6 +111,18 @@ func TestRenameStatements(t *testing.T) {
 			want: []string{"ALTER SCHEMA [archive] TRANSFER [dbo].[Orders]"},
 		},
 		{
+			// sp_rename's COLUMN class takes the three-part table.column form
+			// in @objname and a bare @newname. A quoted identifier in either
+			// half is escaped, since the parameter is a string, not an
+			// identifier the parser sees.
+			name: "Table.RenameColumn",
+			write: func(ctx context.Context, d *Database) error {
+				t := &Table{db: d, Schema: "dbo", Name: "Or]ders"}
+				return t.RenameColumnContext(ctx, "no'te", "note")
+			},
+			want: []string{"EXEC sp_rename", "N'[dbo].[Or]]ders].[no''te]'", "N'note'", "N'COLUMN'"},
+		},
+		{
 			name: "Statistic.Rename",
 			write: func(ctx context.Context, d *Database) error {
 				st := &Statistic{table: &Table{db: d, Schema: "dbo", Name: "Orders"}, Name: "st_old"}

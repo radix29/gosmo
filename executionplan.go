@@ -62,9 +62,14 @@ func (d *Database) ActualPlanContext(ctx context.Context, sqlText string) (*Exec
 // ones, since no statement runs) and STATISTICS XML (an extra result set
 // appended after each statement's own) name the plan column showplanColumn.
 //
-// Every row of every such set is kept, not just the last: SHOWPLAN_XML
-// returns one row per statement in a single result set, so a multi-statement
-// batch loses all but one plan if the scan overwrites.
+// Every row of every such set is kept, not just the last. That is a
+// tolerance, not a shape any server has been seen to produce: probed against
+// SQL Server 17 over multi-statement batches, EXEC of a (nested) procedure,
+// control flow, cursors and dynamic SQL, every showplan set held exactly one
+// row — SHOWPLAN_XML one combined document per batch, STATISTICS XML one
+// document per executed statement in a set of its own. A server that ever
+// split a set across rows would lose all but one plan to an overwriting
+// scan, so the loop stays.
 func (d *Database) capturePlan(ctx context.Context, setOpt, sqlText string) (*ExecutionPlan, error) {
 	var plans []string
 	err := d.withConn(ctx, func(conn *sql.Conn) error {

@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 )
@@ -458,14 +459,21 @@ func (j *Job) Steps() ([]*JobStep, error) {
 
 // StepsContext is the context-aware variant of Steps.
 func (j *Job) StepsContext(ctx context.Context) ([]*JobStep, error) {
+	// The proxy is joined by name rather than reported as an id: an id means
+	// nothing to a caller, and a move that re-adds a step has to pass
+	// @proxy_name back.
 	const q = `
-SELECT step_id, step_name, subsystem, command, ISNULL(database_name, ''),
-       on_success_action, on_success_step_id, on_fail_action, on_fail_step_id,
-       last_run_outcome, last_run_date, last_run_time, last_run_duration,
-       retry_attempts, retry_interval, ISNULL(output_file_name, ''), flags
-FROM   msdb.dbo.sysjobsteps
-WHERE  job_id = @p1
-ORDER  BY step_id`
+SELECT s.step_id, s.step_name, s.subsystem, s.command, ISNULL(s.database_name, ''),
+       s.on_success_action, s.on_success_step_id, s.on_fail_action, s.on_fail_step_id,
+       s.last_run_outcome, s.last_run_date, s.last_run_time, s.last_run_duration,
+       s.retry_attempts, s.retry_interval, ISNULL(s.output_file_name, ''), s.flags,
+       ISNULL(p.name, ''), ISNULL(s.additional_parameters, ''),
+       ISNULL(s.cmdexec_success_code, 0), ISNULL(s.server, ''),
+       ISNULL(s.database_user_name, ''), ISNULL(s.os_run_priority, 0)
+FROM   msdb.dbo.sysjobsteps s
+LEFT   JOIN msdb.dbo.sysproxies p ON p.proxy_id = s.proxy_id
+WHERE  s.job_id = @p1
+ORDER  BY s.step_id`
 
 	rows, err := j.server.query(ctx, q, j.JobID)
 	if err != nil {
@@ -482,6 +490,8 @@ ORDER  BY step_id`
 			&s.OnSuccessAction, &s.OnSuccessStepID, &s.OnFailAction, &s.OnFailStepID,
 			&s.LastRunOutcome, &lastRunDate, &lastRunTime, &s.LastRunDuration,
 			&s.RetryAttempts, &s.RetryInterval, &s.OutputFileName, &s.Flags,
+			&s.ProxyName, &s.AdditionalParameters, &s.CmdExecSuccessCode,
+			&s.Server, &s.DatabaseUserName, &s.OSRunPriority,
 		); err != nil {
 			return nil, fmt.Errorf("gosmo: steps for job %q: %w", j.Name, err)
 		}
@@ -641,6 +651,51 @@ func (j *Job) AddStep(req JobStepRequest) error {
 
 // AddStepContext is the context-aware variant of AddStep.
 func (j *Job) AddStepContext(ctx context.Context, req JobStepRequest) error {
+	return j.addStepAt(ctx, req, 0)
+}
+
+// InsertStep adds a step at position stepID, renumbering the steps at and
+// after it, rather than appending.
+//
+// The renumbering is msdb's, and it carries every other step's "go to step N"
+// reference with it — verified against SQL Server 2025. sp_delete_jobstep is
+// not symmetrical about this: it clears a reference to a step at or after the
+// one deleted instead of following it, which is why ReorderSteps repairs
+// references itself.
+func (j *Job) InsertStep(req JobStepRequest, stepID int) error {
+	return j.InsertStepContext(context.Background(), req, stepID)
+}
+
+// InsertStepContext is the context-aware variant of InsertStep.
+func (j *Job) InsertStepContext(ctx context.Context, req JobStepRequest, stepID int) error {
+	if stepID < 1 {
+		return fmt.Errorf("gosmo: insert step %q into job %q: step id must be 1 or more", req.Name, j.Name)
+	}
+	return j.addStepAt(ctx, req, stepID)
+}
+
+// stepExtraArgs renders the parameters both sp_add_jobstep and
+// sp_update_jobstep take and that a plain edit leaves alone: the ones a move
+// has to carry so a re-added step is the step it was.
+func stepExtraArgs(req JobStepRequest) string {
+	q := fmt.Sprintf(", @flags = %d, @cmdexec_success_code = %d, @os_run_priority = %d",
+		req.Flags, req.CmdExecSuccessCode, req.OSRunPriority)
+	if req.ProxyName != "" {
+		q += fmt.Sprintf(", @proxy_name = N'%s'", escapeSingle(req.ProxyName))
+	}
+	if req.AdditionalParameters != "" {
+		q += fmt.Sprintf(", @additional_parameters = N'%s'", escapeSingle(req.AdditionalParameters))
+	}
+	if req.Server != "" {
+		q += fmt.Sprintf(", @server = N'%s'", escapeSingle(req.Server))
+	}
+	if req.DatabaseUserName != "" {
+		q += fmt.Sprintf(", @database_user_name = N'%s'", escapeSingle(req.DatabaseUserName))
+	}
+	return q
+}
+
+func (j *Job) addStepAt(ctx context.Context, req JobStepRequest, stepID int) error {
 	if req.Name == "" {
 		return fmt.Errorf("gosmo: add step: name is required")
 	}
@@ -661,6 +716,14 @@ func (j *Job) AddStepContext(ctx context.Context, req JobStepRequest) error {
 	}
 	if req.OutputFileName != "" {
 		q += fmt.Sprintf(", @output_file_name = N'%s'", escapeSingle(req.OutputFileName))
+	}
+	q += stepExtraArgs(req)
+	if stepID > 0 {
+		// Insertion, not append: sp_add_jobstep renumbers every later step
+		// and follows their "go to step N" references, which is what makes a
+		// move possible at all. Appending is @step_id omitted, not 0 — msdb
+		// rejects a zero.
+		q += fmt.Sprintf(", @step_id = %d", stepID)
 	}
 	if err := j.server.execContext(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: add step %q to job %q: %w", req.Name, j.Name, err)
@@ -743,6 +806,18 @@ func (s *JobStep) DeleteContext(ctx context.Context) error {
 	return nil
 }
 
+// deleteStepAt removes the step currently numbered stepID, without needing a
+// *JobStep for it — the step ids a reorder works with move as it goes, so the
+// number is the only handle that stays meaningful.
+func (j *Job) deleteStepAt(ctx context.Context, stepID int) error {
+	q := fmt.Sprintf("EXEC msdb.dbo.sp_delete_jobstep @job_name = N'%s', @step_id = %d",
+		escapeSingle(j.Name), stepID)
+	if err := j.server.execContext(ctx, q); err != nil {
+		return fmt.Errorf("gosmo: delete step %d of job %q: %w", stepID, j.Name, err)
+	}
+	return nil
+}
+
 // AddSchedule attaches a schedule to the job.
 func (j *Job) AddSchedule(req JobScheduleRequest) error {
 	return j.AddScheduleContext(context.Background(), req)
@@ -805,6 +880,23 @@ type JobStep struct {
 	// sp_add_jobstep documentation for bit meanings; gosmo round-trips it
 	// as-is rather than decoding it into named booleans.
 	Flags int
+	// ProxyName is the proxy account the step runs under, or "" for none
+	// (the Agent service account). Resolved from sysjobsteps.proxy_id.
+	ProxyName string
+	// AdditionalParameters is sysjobsteps.additional_parameters, used by
+	// some subsystems and left empty by TSQL steps.
+	AdditionalParameters string
+	// CmdExecSuccessCode is the process exit code a CmdExec step treats as
+	// success. Zero for every other subsystem, and also the CmdExec default.
+	CmdExecSuccessCode int
+	// Server is sysjobsteps.server, the target server for a replication or
+	// analysis-services step; "" for the common case.
+	Server string
+	// DatabaseUserName is the user a TSQL step impersonates, or "" to run as
+	// the job owner's mapping.
+	DatabaseUserName string
+	// OSRunPriority is the process priority for a CmdExec step.
+	OSRunPriority int
 }
 
 // JobHistoryEntry represents one row from msdb.dbo.sysjobhistory.
@@ -819,6 +911,180 @@ type JobHistoryEntry struct {
 	Message  string
 	StepID   int
 	StepName string
+}
+
+// SetFlow changes only the step's control flow — what happens after it
+// succeeds or fails — leaving its command, proxy, flags and everything else
+// untouched.
+//
+// Every other parameter is omitted, which sp_update_jobstep reads as "leave
+// alone". That is what makes this usable for repairing references after a
+// reorder, where rewriting the whole definition would be both wasteful and a
+// chance to lose a column the request does not model.
+func (s *JobStep) SetFlow(onSuccessAction, onSuccessStepID, onFailAction, onFailStepID int) error {
+	return s.SetFlowContext(context.Background(), onSuccessAction, onSuccessStepID, onFailAction, onFailStepID)
+}
+
+// SetFlowContext is the context-aware variant of SetFlow.
+func (s *JobStep) SetFlowContext(ctx context.Context, onSuccessAction, onSuccessStepID, onFailAction, onFailStepID int) error {
+	q := fmt.Sprintf(
+		"EXEC msdb.dbo.sp_update_jobstep @job_name = N'%s', @step_id = %d, "+
+			"@on_success_action = %d, @on_success_step_id = %d, "+
+			"@on_fail_action = %d, @on_fail_step_id = %d",
+		escapeSingle(s.job.Name), s.StepID,
+		onSuccessAction, onSuccessStepID, onFailAction, onFailStepID,
+	)
+	if err := s.job.server.execContext(ctx, q); err != nil {
+		return fmt.Errorf("gosmo: set flow of step %q of job %q: %w", s.Name, s.job.Name, err)
+	}
+	if !Scripting(ctx) {
+		s.OnSuccessAction, s.OnSuccessStepID = onSuccessAction, onSuccessStepID
+		s.OnFailAction, s.OnFailStepID = onFailAction, onFailStepID
+	}
+	return nil
+}
+
+// goToStepAction is on_success_action / on_fail_action's "go to step N".
+// Every other value ignores the accompanying step id.
+const goToStepAction = 4
+
+// MoveStep moves the step at position stepID to position newStepID,
+// renumbering the steps in between. See MoveStepContext.
+func (j *Job) MoveStep(stepID, newStepID int) error {
+	return j.MoveStepContext(context.Background(), stepID, newStepID)
+}
+
+// MoveStepContext moves one step to another position, which is what "move up"
+// and "move down" in a job's step list amount to.
+//
+// msdb has no procedure that renumbers a step in place, so the move is a
+// delete followed by an insert at the target position — which is why the
+// step's whole definition has to survive the round trip, and why JobStep and
+// JobStepRequest model every sysjobsteps column that sp_add_jobstep can set
+// rather than the handful a step form edits.
+//
+// "Go to step N" references follow the steps they name. sp_add_jobstep
+// remaps them on insert, but sp_delete_jobstep does not — it resets a
+// reference to a step at or after the deleted one to "quit with success",
+// silently (verified against SQL Server 2025). So every reference is written
+// back afterwards from the pre-move reading, mapped through the move. A
+// reference that pointed at the moved step still points at it; one that
+// pointed at a step the move shifted follows that step.
+func (j *Job) MoveStepContext(ctx context.Context, stepID, newStepID int) error {
+	return j.ReorderStepsContext(ctx, moveOrder(stepID, newStepID))
+}
+
+// moveOrder expresses a single move as the reorder ReorderSteps takes: the
+// current step ids in the order they should end up in. It is written against
+// a step count it does not know, so it returns a function of it.
+func moveOrder(stepID, newStepID int) func(n int) []int {
+	return func(n int) []int {
+		order := make([]int, 0, n)
+		for id := 1; id <= n; id++ {
+			if id != stepID {
+				order = append(order, id)
+			}
+		}
+		at := min(max(newStepID-1, 0), len(order))
+		return slices.Insert(order, at, stepID)
+	}
+}
+
+// ReorderSteps puts the job's steps into the given order. See
+// ReorderStepsContext.
+func (j *Job) ReorderSteps(order func(n int) []int) error {
+	return j.ReorderStepsContext(context.Background(), order)
+}
+
+// ReorderStepsContext rewrites the job's step order. order is given the
+// current number of steps and returns the current step ids in the sequence
+// they should end up in — every id exactly once.
+//
+// The reorder is realised as delete-and-insert per step that has to move,
+// fewest first, and every "go to step N" reference is rewritten afterwards
+// through the composed mapping. See MoveStepContext for why both halves are
+// necessary.
+//
+// The job must have been read with JobByName: the step listing is by job_id,
+// which a bare Server.Job handle does not carry.
+func (j *Job) ReorderStepsContext(ctx context.Context, order func(n int) []int) error {
+	steps, err := j.StepsContext(ctx)
+	if err != nil {
+		return err
+	}
+	want := order(len(steps))
+	if err := checkReorder(want, len(steps)); err != nil {
+		return fmt.Errorf("gosmo: reorder steps of job %q: %w", j.Name, err)
+	}
+
+	byID := make(map[int]*JobStep, len(steps))
+	for _, s := range steps {
+		byID[s.StepID] = s
+	}
+	// current holds the original step ids in their present order, and is kept
+	// in step with the server as each move is applied.
+	current := make([]int, len(steps))
+	for i, s := range steps {
+		current[i] = s.StepID
+	}
+
+	for target := 0; target < len(want); target++ {
+		if current[target] == want[target] {
+			continue
+		}
+		from := slices.Index(current, want[target])
+		s := byID[want[target]]
+		if err := j.deleteStepAt(ctx, from+1); err != nil {
+			return err
+		}
+		current = slices.Delete(current, from, from+1)
+		// References are repaired in one pass at the end, so the step goes
+		// back with the flow it had; only its position is being decided here.
+		if err := j.InsertStepContext(ctx, stepRequestFrom(s, s.OnSuccessStepID, s.OnFailStepID), target+1); err != nil {
+			return err
+		}
+		current = slices.Insert(current, target, want[target])
+	}
+
+	// position[originalID] is where that step ended up, which is what a
+	// reference naming the original id has to become.
+	position := make(map[int]int, len(current))
+	for i, id := range current {
+		position[id] = i + 1
+	}
+	for _, id := range current {
+		s := byID[id]
+		if s.OnSuccessAction != goToStepAction && s.OnFailAction != goToStepAction {
+			continue
+		}
+		moved := &JobStep{job: j, Name: s.Name, StepID: position[id]}
+		if err := moved.SetFlowContext(ctx,
+			s.OnSuccessAction, position[s.OnSuccessStepID],
+			s.OnFailAction, position[s.OnFailStepID],
+		); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// checkReorder insists the requested order is a permutation of 1..n. A
+// duplicate or a missing id would delete a step and never put it back.
+func checkReorder(want []int, n int) error {
+	if len(want) != n {
+		return fmt.Errorf("order has %d steps, the job has %d", len(want), n)
+	}
+	seen := make(map[int]bool, n)
+	for _, id := range want {
+		if id < 1 || id > n {
+			return fmt.Errorf("step id %d is outside 1..%d", id, n)
+		}
+		if seen[id] {
+			return fmt.Errorf("step id %d appears twice", id)
+		}
+		seen[id] = true
+	}
+	return nil
 }
 
 // CreateJobRequest describes a new SQL Server Agent job.
@@ -863,6 +1129,44 @@ type JobStepRequest struct {
 	// caller's form clears a step's output file. Two string fields of this
 	// struct therefore read an empty value differently, because msdb does.
 	OutputFileName string
+	// Flags is the raw sysjobsteps.flags bitmask.
+	//
+	// This field and the six below it are sent by AddStep and InsertStep,
+	// which create a row and so decide every column of it. UpdateContext
+	// deliberately does not send them: an omitted sp_update_jobstep
+	// parameter means "leave alone", which is what an edit of the fields a
+	// step form owns should do to a step's proxy, flags and run-as user.
+	Flags int
+	// ProxyName, AdditionalParameters, Server and DatabaseUserName are sent
+	// only when non-empty: msdb reads an omitted parameter as "leave alone"
+	// on an update and "use the default" on an add, while N'' for a proxy or
+	// a user name is an error rather than a clear.
+	ProxyName            string
+	AdditionalParameters string
+	Server               string
+	DatabaseUserName     string
+	// CmdExecSuccessCode and OSRunPriority are sent verbatim, zero included:
+	// zero is msdb's own default for both, so it cannot be told from unset
+	// and there is nothing to lose by sending it.
+	CmdExecSuccessCode int
+	OSRunPriority      int
+}
+
+// stepRequestFrom builds the request that recreates s exactly, which is what
+// a move has to pass to sp_add_jobstep: every column msdb would otherwise
+// default away. onSuccessStepID and onFailStepID are given rather than taken
+// from s, because a move renumbers what a "go to step N" reference means.
+func stepRequestFrom(s *JobStep, onSuccessStepID, onFailStepID int) JobStepRequest {
+	return JobStepRequest{
+		Name: s.Name, Subsystem: s.Subsystem, Command: s.Command, Database: s.Database,
+		OnSuccessAction: s.OnSuccessAction, OnSuccessStepID: onSuccessStepID,
+		OnFailAction: s.OnFailAction, OnFailStepID: onFailStepID,
+		RetryAttempts: s.RetryAttempts, RetryInterval: s.RetryInterval,
+		OutputFileName: s.OutputFileName, Flags: s.Flags,
+		ProxyName: s.ProxyName, AdditionalParameters: s.AdditionalParameters,
+		Server: s.Server, DatabaseUserName: s.DatabaseUserName,
+		CmdExecSuccessCode: s.CmdExecSuccessCode, OSRunPriority: s.OSRunPriority,
+	}
 }
 
 // JobScheduleRequest describes a schedule to attach to a job.

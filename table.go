@@ -300,6 +300,36 @@ func (t *Table) DropColumnContext(ctx context.Context, name string) error {
 	return nil
 }
 
+// RenameColumn renames a column using sp_rename's 'COLUMN' class.
+//
+// Bare, like the rest of this family: sp_rename does not update anything that
+// names the column. Views, procedures, functions, computed columns, indexes
+// with a filter predicate and check constraints keep the old name in their
+// definitions and break at their next use, and SQL Server reports nothing at
+// rename time beyond its standing caution. Deciding whether that is
+// acceptable is the caller's.
+//
+// newName is a bare name: sp_rename refuses a qualified one for the new name,
+// while @objname must be the three-part table.column form, which this builds.
+func (t *Table) RenameColumn(name, newName string) error {
+	return t.RenameColumnContext(context.Background(), name, newName)
+}
+
+// RenameColumnContext is the context-aware variant of RenameColumn.
+func (t *Table) RenameColumnContext(ctx context.Context, name, newName string) error {
+	if name == "" || newName == "" {
+		return fmt.Errorf("gosmo: rename column on %s: both names are required", t.FullName())
+	}
+	objName := t.FullName() + "." + quoteIdent(name)
+	if _, err := t.db.exec(ctx,
+		"EXEC sp_rename @objname = @p1, @newname = @p2, @objtype = N'COLUMN'",
+		objName, newName,
+	); err != nil {
+		return fmt.Errorf("gosmo: rename column %q to %q on %s: %w", name, newName, t.FullName(), err)
+	}
+	return nil
+}
+
 // -- Indexes -------------------------------------------------------------------
 
 // Index mirrors Microsoft.SqlServer.Management.Smo.Index.

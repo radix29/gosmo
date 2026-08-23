@@ -467,6 +467,99 @@ ORDER  BY bs.backup_finish_date DESC`
 }
 
 // ============================================================
+// Log backup chain
+// ============================================================
+
+// DatabaseRecoveryStatus reports a database's place in its log backup chain,
+// from sys.database_recovery_status.
+//
+// The distinction it carries is not "has a backup" — it is whether the log
+// backup chain has been started at all, which is what SQL Server tests before
+// it will let a database join an availability group or a mirroring session.
+// A database in the FULL recovery model that has never had a full backup is
+// running in the so-called pseudo-simple model: no log chain exists, and
+// ALTER AVAILABILITY GROUP ... ADD DATABASE fails with Msg 1475 ("might
+// contain bulk logged changes that have not been backed up"). Switching a
+// database to SIMPLE and back to FULL breaks the chain again.
+type DatabaseRecoveryStatus struct {
+	// DatabaseName is the database this row describes.
+	DatabaseName string
+
+	// LastLogBackupLSN is the log sequence number of the last log backup, in
+	// the decimal form SQL Server stores it (numeric(25,0)), or "" when the
+	// column is NULL — which is the pseudo-simple state above.
+	LastLogBackupLSN string
+
+	// LogBackupChainStarted is LastLogBackupLSN != "", named for the question
+	// callers actually ask.
+	LogBackupChainStarted bool
+}
+
+// DatabaseRecoveryStatuses returns the log backup chain state of every
+// database on the server.
+func (s *Server) DatabaseRecoveryStatuses() ([]*DatabaseRecoveryStatus, error) {
+	return s.DatabaseRecoveryStatusesContext(context.Background())
+}
+
+// DatabaseRecoveryStatusesContext is the context-aware variant of
+// DatabaseRecoveryStatuses.
+//
+// One read for the whole server: the state is wanted per database, but a
+// caller deciding which databases qualify for something needs them all, and
+// sys.database_recovery_status is a server-scoped view.
+func (s *Server) DatabaseRecoveryStatusesContext(ctx context.Context) ([]*DatabaseRecoveryStatus, error) {
+	const q = `
+SELECT d.name, ISNULL(CONVERT(varchar(40), rs.last_log_backup_lsn), '')
+FROM   sys.database_recovery_status rs
+JOIN   sys.databases d ON d.database_id = rs.database_id
+ORDER  BY d.name`
+
+	rows, err := s.query(ctx, q)
+	if err != nil {
+		return nil, fmt.Errorf("gosmo: database recovery statuses: %w", err)
+	}
+	defer rows.Close()
+
+	var out []*DatabaseRecoveryStatus
+	for rows.Next() {
+		st := &DatabaseRecoveryStatus{}
+		if err := rows.Scan(&st.DatabaseName, &st.LastLogBackupLSN); err != nil {
+			return nil, fmt.Errorf("gosmo: database recovery statuses: %w", err)
+		}
+		st.LogBackupChainStarted = st.LastLogBackupLSN != ""
+		out = append(out, st)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("gosmo: database recovery statuses: %w", err)
+	}
+	return out, nil
+}
+
+// RecoveryStatus returns this database's place in its log backup chain.
+func (d *Database) RecoveryStatus() (*DatabaseRecoveryStatus, error) {
+	return d.RecoveryStatusContext(context.Background())
+}
+
+// RecoveryStatusContext is the context-aware variant of RecoveryStatus.
+func (d *Database) RecoveryStatusContext(ctx context.Context) (*DatabaseRecoveryStatus, error) {
+	const q = `
+SELECT d.name, ISNULL(CONVERT(varchar(40), rs.last_log_backup_lsn), '')
+FROM   sys.database_recovery_status rs
+JOIN   sys.databases d ON d.database_id = rs.database_id
+WHERE  d.name = @p1`
+
+	st := &DatabaseRecoveryStatus{}
+	err := d.server.queryRow(ctx, func(r *sql.Row) error {
+		return r.Scan(&st.DatabaseName, &st.LastLogBackupLSN)
+	}, q, d.name)
+	if err != nil {
+		return nil, fmt.Errorf("gosmo: recovery status for %q: %w", d.name, err)
+	}
+	st.LogBackupChainStarted = st.LastLogBackupLSN != ""
+	return st, nil
+}
+
+// ============================================================
 // Backup device inspection
 // ============================================================
 
