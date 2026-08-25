@@ -266,6 +266,55 @@ func TestDatabaseCapabilitiesStopAtAnInaccessibleDatabase(t *testing.T) {
 	}
 }
 
+// TestPermitsFoldsAccessibilityIntoTheWithholdingTest.
+//
+// Allows answers only the question it is asked, and an inaccessible database
+// was never asked anything: every permission in it is CapabilityUnknown, which
+// fails open. A caller following Capabilities.Allows's "gate withholding on
+// Allows" would therefore offer Back Up and Delete on exactly the databases the
+// login cannot so much as connect to. Permits is the test that does not.
+func TestPermitsFoldsAccessibilityIntoTheWithholdingTest(t *testing.T) {
+	locked, err := capServer(t, &capScript{dbAccess: int64(0)}).
+		Database("locked").CapabilitiesContext(context.Background())
+	if err != nil {
+		t.Fatalf("CapabilitiesContext: %v", err)
+	}
+
+	// The trap, stated as an assertion so it cannot be "fixed" by narrowing
+	// Allows: Allows says yes here, and that is correct for what it answers.
+	if !locked.Allows("BACKUP DATABASE") {
+		t.Fatal("Allows = false for an unknown permission; the premise of this test is gone")
+	}
+	if locked.Permits("BACKUP DATABASE") {
+		t.Error("Permits = true for a database the login cannot open")
+	}
+
+	// An accessible database is unchanged: Permits is Allows there.
+	open, err := capServer(t, &capScript{
+		dbAccess: int64(1),
+		dbRows: [][]driver.Value{
+			{"P", "SELECT", int64(1)},
+			{"P", "ALTER", int64(0)},
+		},
+	}).Database("HealthClinic").CapabilitiesContext(context.Background())
+	if err != nil {
+		t.Fatalf("CapabilitiesContext: %v", err)
+	}
+	for _, name := range []string{"SELECT", "ALTER", "BACKUP DATABASE"} {
+		if got, want := open.Permits(name), open.Allows(name); got != want {
+			t.Errorf("Permits(%q) = %v, Allows(%q) = %v: they must agree on a database that opens",
+				name, got, name, want)
+		}
+	}
+
+	// nil is "nothing known" and fails open, the same as every other accessor
+	// on this type — a probe that could not run must not lock the user out.
+	var none *DatabaseCapabilities
+	if !none.Permits("BACKUP DATABASE") {
+		t.Error("nil Permits = false: a failed probe would withhold everything")
+	}
+}
+
 // A NULL HAS_DBACCESS — the database does not exist, or is not visible to this
 // login — must read as inaccessible rather than panic or pass.
 func TestDatabaseCapabilitiesTreatNullAccessAsInaccessible(t *testing.T) {

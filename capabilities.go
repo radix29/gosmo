@@ -293,11 +293,44 @@ func (c *DatabaseCapabilities) Has(name string) bool {
 	return c.Permission(name) == CapabilityGranted
 }
 
-// Allows reports that the permission is not known to be denied — the test for
-// withholding something. See Capabilities.Allows, which explains why the two
-// are not opposites.
+// Allows reports that the permission is not known to be denied. See
+// Capabilities.Allows, which explains why it and Has are not opposites.
+//
+// At database scope this is *not* the whole test for withholding something —
+// use Permits. Allows answers only the question it is asked, and an
+// inaccessible database was never asked anything.
 func (c *DatabaseCapabilities) Allows(name string) bool {
 	return c.Permission(name) != CapabilityDenied
+}
+
+// Permits is the test for withholding something at database scope: Allows,
+// plus the accessibility the permission answer takes for granted.
+//
+// A database the login cannot open answers CapabilityUnknown to every
+// permission, because there was nothing inside it to ask — Accessible false is
+// the only thing the server said. Unknown fails open, so Allows alone reports
+// "not known to be denied" for a database the login cannot so much as connect
+// to, and a caller following Capabilities.Allows's advice would offer Back Up
+// and Delete on exactly the databases it has no business writing to.
+//
+// The fail-open direction is kept where it belongs: a probe that could not run
+// at all leaves Accessible true (see Database.CapabilitiesContext), so Permits
+// still says yes there. Only a measured "cannot open this" withholds.
+//
+// Capabilities has no counterpart because there is no server-scope equivalent
+// of an inaccessible database: a login that cannot reach the instance has no
+// Capabilities to ask.
+//
+// One shape to know: a nil *DatabaseCapabilities is "nothing known" and fails
+// open, but the *zero value* is not — its Accessible is false, which reads as a
+// measured "cannot open this" and withholds. Anything hand-building one to
+// stand in for a probe that could not run must set Accessible true, the way
+// CapabilitiesContext does for every database it reached.
+func (c *DatabaseCapabilities) Permits(name string) bool {
+	if c == nil {
+		return true
+	}
+	return c.Accessible && c.Allows(name)
 }
 
 // Capabilities reports what the connected login may do inside d.
