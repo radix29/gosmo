@@ -269,10 +269,23 @@ type ServerInfo struct {
 	// Platform is the host operating system family — "Windows" or "Linux" —
 	// derived from @@VERSION rather than sys.dm_os_host_info so it is
 	// populated on pre-2017 instances too. Empty if @@VERSION names neither.
-	Platform          string
-	MaxConnections    int
-	PhysicalMemoryMB  int64
-	LogicalCPUCount   int
+	Platform       string
+	MaxConnections int
+
+	// PhysicalMemoryMB and LogicalCPUCount come from sys.dm_os_sys_info and
+	// are zero when SysInfoUnavailable is set. Read that flag before showing
+	// either: zero there means "not readable", not "none".
+	PhysicalMemoryMB int64
+	LogicalCPUCount  int
+
+	// SysInfoUnavailable reports that sys.dm_os_sys_info could not be read,
+	// leaving PhysicalMemoryMB and LogicalCPUCount at zero. The usual cause
+	// is a login without VIEW SERVER STATE (VIEW SERVER PERFORMANCE STATE on
+	// SQL Server 2022 and later), which every other field here survives — a
+	// db_owner with no server-level rights connects fine and gets everything
+	// but these two.
+	SysInfoUnavailable bool
+
 	DefaultDataPath   string
 	DefaultLogPath    string
 	DefaultBackupPath string

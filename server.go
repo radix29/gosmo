@@ -667,6 +667,17 @@ func (s *Server) queryRowScan(ctx context.Context, q string, args []any, dest ..
 	return s.queryRow(ctx, func(row *sql.Row) error { return row.Scan(dest...) }, q, args...)
 }
 
+// loadInfo populates s.info. It runs two statements rather than one, and the
+// split is load-bearing: every value in the first is a SERVERPROPERTY or
+// @@VERSION call that any login can make, while the second reads
+// sys.dm_os_sys_info, which needs VIEW SERVER STATE (VIEW SERVER PERFORMANCE
+// STATE on SQL Server 2022 and later). Joined into one statement — as this was
+// until 2026-08-25 — the DMV's permission check fails the whole SELECT, and
+// since Connect calls loadInfo, a db_owner with no server-level rights could
+// not open a connection at all.
+//
+// Only the first statement's failure is fatal. The second degrades to
+// SysInfoUnavailable so the connection still succeeds.
 func (s *Server) loadInfo(ctx context.Context) error {
 	const q = `
 	SELECT
@@ -680,24 +691,29 @@ func (s *Server) loadInfo(ctx context.Context) error {
 		CAST(SERVERPROPERTY('IsSingleUser') AS INT),
 		CAST(SERVERPROPERTY('EngineEdition') AS INT),
 		@@VERSION,
-		osi.physical_memory_kb / 1024,
-		osi.cpu_count,
 		SERVERPROPERTY('InstanceDefaultDataPath'),
 		SERVERPROPERTY('InstanceDefaultLogPath'),
-		SERVERPROPERTY('InstanceDefaultBackupPath')
-	FROM sys.dm_os_sys_info osi`
+		SERVERPROPERTY('InstanceDefaultBackupPath')`
 
 	info := &ServerInfo{}
 	var isClustered, isHADR, isSingleUser, engineEdition sql.NullInt64
 	var osVer, dataPath, logPath, backupPath sql.NullString
-	var memMB, cpuCount sql.NullInt64
 
 	if err := s.queryRowScan(ctx, q, nil,
 		&info.Name, &info.Edition, &info.ProductVersion, &info.ProductLevel,
 		&info.Collation, &isClustered, &isHADR, &isSingleUser, &engineEdition, &osVer,
-		&memMB, &cpuCount, &dataPath, &logPath, &backupPath,
+		&dataPath, &logPath, &backupPath,
 	); err != nil {
 		return fmt.Errorf("gosmo: load server info: %w", err)
+	}
+
+	const sysInfoQuery = `
+	SELECT osi.physical_memory_kb / 1024, osi.cpu_count
+	FROM   sys.dm_os_sys_info osi`
+
+	var memMB, cpuCount sql.NullInt64
+	if err := s.queryRowScan(ctx, sysInfoQuery, nil, &memMB, &cpuCount); err != nil {
+		info.SysInfoUnavailable = true
 	}
 
 	info.IsClustered = isClustered.Int64 == 1

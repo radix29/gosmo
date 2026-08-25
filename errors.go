@@ -169,3 +169,57 @@ func newSQLErrorFrom(me mssql.Error) *SQLError {
 		LineNo:     me.LineNo,
 	}
 }
+
+// ============================================================
+// Multi-message batches
+// ============================================================
+
+// multiMessageError renders every error message a failed batch produced,
+// not just the last one. It wraps the driver error unchanged, so AsSQLError,
+// errors.Is and errors.As all still reach it.
+type multiMessageError struct {
+	err  error
+	text string
+}
+
+func (e *multiMessageError) Error() string { return e.text }
+func (e *multiMessageError) Unwrap() error { return e.err }
+
+// withAllMessages rewrites a driver error whose batch produced more than one
+// error message so its text carries all of them, first to last.
+//
+// SQL Server routinely explains a failure in one message and reports it in
+// another, and database/sql surfaces only the last — which is the useless
+// half. Refusing an ALTER DATABASE for want of permission sends both:
+//
+//	Msg 5011 — User does not have permission to alter database 'X', ...
+//	Msg 5069 — ALTER DATABASE statement failed.
+//
+// and until 2026-08-25 a caller saw nothing but "ALTER DATABASE statement
+// failed", with no way to tell a permissions problem from a state one. The
+// detail was never lost — mssql.Error.All has carried it all along, and
+// AsSQLError exposes it — but nothing that merely prints the error saw it.
+//
+// Informational messages (severity below 11) are dropped: a batch that runs
+// USE first collects a class-0 "Changed database context" that is not part of
+// the failure. An error with a single message is returned untouched, which is
+// the overwhelmingly common case.
+func withAllMessages(err error) error {
+	if err == nil {
+		return nil
+	}
+	me, ok := errors.AsType[mssql.Error](err)
+	if !ok || len(me.All) < 2 {
+		return err
+	}
+	var parts []string
+	for _, m := range me.All {
+		if m.Class >= 11 && m.Message != "" {
+			parts = append(parts, m.Message)
+		}
+	}
+	if len(parts) < 2 {
+		return err
+	}
+	return &multiMessageError{err: err, text: "mssql: " + strings.Join(parts, " ")}
+}

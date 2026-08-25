@@ -38,10 +38,10 @@ func (c *fakePlanConn) ExecContext(context.Context, string, []driver.NamedValue)
 }
 
 func (c *fakePlanConn) QueryContext(_ context.Context, q string, _ []driver.NamedValue) (driver.Rows, error) {
-	// loadInfo's query runs once when NewServer builds the *Server; only the
-	// batch under test gets the scripted plan sets.
-	if strings.Contains(q, "SERVERPROPERTY") {
-		return &fakeInfoRows{}, nil
+	// loadInfo's two queries run once when NewServer builds the *Server;
+	// only the batch under test gets the scripted plan sets.
+	if strings.Contains(q, "SERVERPROPERTY") || strings.Contains(q, "dm_os_sys_info") {
+		return fakeInfoAnswer(q, nil)
 	}
 	return &fakePlanRows{sets: fakePlanScript}, nil
 }

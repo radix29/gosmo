@@ -95,7 +95,7 @@ func (s *Server) execContext(ctx context.Context, stmt string) error {
 		return nil
 	}
 	_, err := s.db.ExecContext(ctx, stmt)
-	return err
+	return withAllMessages(err)
 }
 
 // placeholderPat matches the driver's positional parameter placeholders

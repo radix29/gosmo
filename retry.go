@@ -81,7 +81,7 @@ func withRetry[T any](ctx context.Context, fn func() (T, error)) (T, error) {
 	for attempt := 1; ; attempt++ {
 		v, err = fn()
 		if err == nil || attempt >= readRetryAttempts || !IsRetryable(err) {
-			return v, err
+			return v, withAllMessages(err)
 		}
 		select {
 		case <-ctx.Done():

@@ -88,7 +88,7 @@ func (d *Database) withConn(ctx context.Context, fn func(*sql.Conn) error) error
 		return err
 	}
 	defer conn.Close()
-	return fn(conn)
+	return withAllMessages(fn(conn))
 }
 
 // scriptResult is the sql.Result stand-in returned to callers of exec when

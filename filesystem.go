@@ -59,10 +59,23 @@ func (s *Server) EnumFileSystemContext(ctx context.Context, path string) ([]*Fil
 	if strings.TrimSpace(path) == "" {
 		return nil, fmt.Errorf("gosmo: enumerate filesystem: empty path")
 	}
-	if s.info != nil && s.info.VersionMajor >= 14 {
+	if !s.EnumFileSystemIsLegacy() {
 		return s.enumFileSystemDMF(ctx, path)
 	}
 	return s.enumFileSystemDirTree(ctx, path)
+}
+
+// EnumFileSystemIsLegacy reports whether EnumFileSystem will take the
+// xp_dirtree path rather than sys.dm_os_enumerate_filesystem — the same
+// positive version gate EnumFileSystemContext applies, exposed so a caller can
+// reason about what it is about to get.
+//
+// Two things differ on that path and a caller may need to say so: entries carry
+// no Size or LastModified, and xp_dirtree returns *no rows and no error* to a
+// login that is not sysadmin, which is indistinguishable from an empty
+// directory unless the caller knows which path ran.
+func (s *Server) EnumFileSystemIsLegacy() bool {
+	return s.info == nil || s.info.VersionMajor < 14
 }
 
 func (s *Server) enumFileSystemDMF(ctx context.Context, path string) ([]*FileSystemEntry, error) {
