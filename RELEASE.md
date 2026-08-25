@@ -4,6 +4,152 @@ High-level, release-to-release summary of what gosmo does at each tag —
 what changed in spirit, not the full diff. For the itemized, per-symbol
 detail behind each release from `v0.0.4` onward, see `CHANGELOG.md`.
 
+## v0.0.10
+
+A scripting release, and a pass over what a *restricted* login sees. gosmo
+could script five kinds of object; it now covers the whole SSMS
+`Script <object> as` menu, including logins and server roles, the DML
+templates, and DROP/DROP-and-CREATE/ALTER as a choice rather than a
+boolean. Alongside that: the connected login's own capabilities are
+readable in one round trip, so a caller can gate its UI instead of
+discovering permissions from failures; catalog listings can be filtered at
+the server; `CREATE INDEX` covers every index type SQL Server has; job steps
+can be reordered; and `NewServer` makes the whole package reachable from a
+caller's own tests. The release also fixes an outright connection failure
+for a login without `VIEW SERVER STATE`.
+
+### New
+
+- **Scripting, completed.** `Scripter` gained triggers, indexes, check
+  constraints, foreign keys, sequences, synonyms, schemas, users, database
+  roles, partition functions and schemes, security policies and the two
+  Always Encrypted key kinds. Logins and server roles belong to no database,
+  so they have their own `ServerScripter`. `ScriptOptions.Verb` selects
+  CREATE, DROP, DROP-and-CREATE (in separate batches, the re-runnable form)
+  or ALTER, which rewrites a module's stored definition; the older
+  `ScriptDrops` boolean still works and means DROP. The scripting suites feed
+  their output back to a real server and assert it is accepted — the only
+  check that a generated script is a script.
+- **DML templates** in SSMS's "SELECT To"/"INSERT To" shape — `ScriptSelect`,
+  `ScriptInsert`, `ScriptUpdate`, `ScriptDelete`, `ScriptExecute` and
+  `ScriptFunctionCall`. They carry `<name, type,>` placeholders where the
+  operator supplies a value and are deliberately not runnable as they stand;
+  the insert and update forms leave out identity and computed columns, which
+  reject an explicit value. `Database.Parameters` reads the procedure and
+  function metadata behind the two call templates.
+- **What the connected login may actually do**, at server scope and inside
+  one database, in one round trip each — fixed-role memberships and
+  permission states over a working subset of names. The answer is
+  deliberately three-way: `HAS_PERMS_BY_NAME` returns NULL without raising
+  for a permission the instance does not define, so a permission introduced
+  in a later version reads as *unknown* on an older one rather than as
+  denied. `Has` ("known to be held") is the test for offering something and
+  `Allows`/`Permits` ("not known to be denied") the test for withholding it;
+  the asymmetry is the point, since withholding must fail open — the server
+  remains the authority, and gating a menu on the wrong one hides the whole
+  application from a login that may well be a sysadmin. A database the login
+  cannot open answers unknown to everything, which is why `Permits` folds
+  `HAS_DBACCESS` in.
+- **Filtered catalog listings.** An `ObjectFilter` narrows tables, views,
+  procedures and functions — user and system — by name, schema, creation
+  date and memory-optimized, with every criterion AND-ed and a zero filter
+  narrowing nothing. Two details in the clause it builds are not
+  simplifiable: the comparison lowercases both sides, because a bare `LIKE`
+  follows the database collation and drops rows on a case-sensitive
+  instance; and the pattern is escaped, because `%`, `_` and `[` are legal in
+  an identifier, and unescaped, a filter for `pct_1` also matches `pct1100`.
+- **`NewServer(ctx, db)`** wraps a `*sql.DB` a caller already has — a pool
+  shared with the rest of an application, a driver wrapped for tracing, or a
+  fake driver in a test. It is the inverse of `DB()`, and the seam that makes
+  gosmo's read and write paths reachable from a caller's own tests; without
+  it a `Server` could only come from a real network connection, so anything
+  taking one was testable only against a live instance.
+- **Every index type `CREATE INDEX` has** — filtered, XML (primary and each
+  secondary form), spatial (both tessellation families, bounding box, grid
+  levels, cells per object), clustered columnstore, `DROP_EXISTING`, and
+  explicit filegroup or partition scheme placement. A combination the server
+  would reject is refused before anything runs, with an error naming the
+  field rather than a parse error naming a column number. The XML index
+  metadata `sys.indexes` cannot express — primary versus secondary, which
+  form, over which primary — is readable too.
+- **Job steps can be reordered**: insert at a position, move one step, or
+  reorder the lot. msdb has no procedure that renumbers a step in place, so a
+  move is a delete and a re-insert, which is why a step's whole definition
+  now round-trips. `sp_add_jobstep` follows every other step's "go to step N"
+  reference when it renumbers, but `sp_delete_jobstep` clears one instead of
+  following it, so the reorder repairs the references itself.
+- **Log reading and cycling, finished.** A log read can be filtered at the
+  server by two substrings and a time range — which is what makes the current
+  log usable on a busy instance, where it runs to tens of thousands of
+  entries — and cycling now covers the Agent log as well as the SQL Server
+  one.
+- **Login kinds beyond SQL and Windows**: create a login from an external
+  provider, a certificate or an asymmetric key, and resolve the certificate
+  or key a mapped login authenticates through. The default behaviour is
+  unchanged for every existing caller.
+- Smaller additions: statistics with a filter, `FULLSCAN`, `NORECOMPUTE` or
+  `INCREMENTAL`; a table's or index's data space (the `ON` clause), and a
+  drop-column, rename-column and move-object-between-schemas trio; the log
+  backup chain state that decides whether a database may join an availability
+  group; a schema's object counts broken down by category; `FILEGROWTH = 0`
+  as something a caller can actually ask for; ten new by-name finders
+  completing the collection/handle/by-name convention; and two new `*Seq`
+  iterators, bringing the total to 91.
+
+### Fixes
+
+- **A login without `VIEW SERVER STATE` could not connect at all.** The
+  server metadata read on every connect took its `SERVERPROPERTY` values and
+  `sys.dm_os_sys_info` in one statement, so the DMV's permission check failed
+  the whole `SELECT` — and a `db_owner` with no server-level rights was
+  refused a connection rather than losing two fields. It is two statements
+  now, and the second degrades to a flag on `ServerInfo` instead of failing.
+- **Scripting a database from a lightweight handle produced T-SQL that
+  cannot parse.** Alone among the script methods that one renders from cached
+  metadata rather than querying, and a bare handle carries none, so it
+  emitted `SET RECOVERY ;` and `COMPATIBILITY_LEVEL = 0`. The handle is
+  refilled first, and each line is still guarded on its own value.
+- **`CreateLogin` built statements SQL Server rejects** for every login kind
+  but the two it knew: `FROM CERTIFICATE`, `FROM ASYMMETRIC KEY` and `FROM
+  EXTERNAL PROVIDER` take no `WITH` option list, so naming a default database
+  there is a syntax error. Each kind now gets the form it accepts, and the
+  combinations that have no form at all are refused by name.
+- **A scripted login left out its SID**, so re-running the script on another
+  instance produced a login whose database users all orphaned.
+- **A scripted mirroring-endpoint create returned nothing.** The read-back is
+  a real query and the create had only been collected, so the caller was left
+  with nothing to script the `GRANT CONNECT`s and `ALTER`s against — and a
+  nil return was indistinguishable from a failure.
+- **A file whose only edit was "autogrowth off" wrote nothing** and reported
+  success: zero already meant "leave the clause out", so there was no way to
+  ask for `FILEGROWTH = 0`.
+- `Sequence.Restart` mirrored its change onto the object under `WithScript`,
+  where nothing ran — the last direct assignment `v0.0.7`'s sweep missed.
+
+### Changes
+
+- **Every server principal is listed, not just the SQL and Windows ones.**
+  The logins listing now admits Entra logins and the certificate- and
+  asymmetric-key-mapped ones that hold permissions for signed code, which is
+  what SSMS's Logins folder shows. A caller enumerating logins on an
+  Entra-enabled instance saw a short list with no indication anything was
+  missing.
+- **A captured execution plan keeps every document the batch produced.** A
+  batch of several statements yields several plans, not one, and only the
+  last was kept. It still is, under the same field name; the full list is
+  alongside it.
+- **A scripted table carries its `ON` clause** — a partitioned table used to
+  script as unpartitioned, on the default filegroup — and its primary key and
+  unique constraints script as `ALTER TABLE ... ADD CONSTRAINT` rather than
+  as indexes.
+- **A filegroup is set read-only with the underscored keywords.** `ALTER
+  DATABASE` accepts the unspaced pair only for backward compatibility, and
+  SQL Server documents it as deprecated and slated for removal.
+- **An error carrying several server messages reports all of them**, instead
+  of only the top one — which for a DDL failure is routinely the generic
+  "could not complete" over the specific reason underneath it.
+- The module is built with Go 1.27.
+
 ## v0.0.9
 
 An Always On release, and a sweep over how failures are reported. gosmo

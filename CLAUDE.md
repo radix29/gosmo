@@ -10,7 +10,7 @@ CGO, and talks to SQL Server through `github.com/microsoft/go-mssqldb`.
 
 - Module: `github.com/radix29/gosmo` — https://github.com/radix29/gosmo
 - `README.md` carries the full API map (as Mermaid class diagrams).
-- Requires Go 1.26.
+- Requires Go 1.27.
 
 ## This is a library, not gossms's back end
 
@@ -27,7 +27,7 @@ published, general-purpose library with users beyond gossms.
   "No callers in gossms" is not evidence of dead code. This covers whole
   files, exported methods, exported types and their fields, and struct
   fields only some paths populate. The `*Seq` iterators in `iter.go` are the
-  standing example: 89 exported methods, zero gossms callers, all
+  standing example: 91 exported methods, zero gossms callers, all
   deliberately kept.
 - When an audit turns up something unused, the allowed moves are: make it
   faster, make its doc comment accurate about what it actually does, or add

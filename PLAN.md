@@ -18,8 +18,9 @@ These continue for the life of the project, release or not:
 - Triage incoming issues and re-prioritize implementation work as they
   land.
 - Keep the `README.md` feature map (`Server`, `Database`, `Table`,
-  `Index`, Statistics, `Login`, dependencies/search/permissions/execution
-  plans, `Scripter`, Backup & Restore, SQL Server Agent, Always On,
+  `Index`, Statistics, `Login`, login capabilities, object filters,
+  dependencies/search/permissions/execution plans, `Scripter`/
+  `ServerScripter`, Backup & Restore, SQL Server Agent, Always On,
   certificates, endpoints, error log, server filesystem) in sync with the
   code as methods are added — it's the API surface consumers actually
   read. The class diagrams in the same file need the same treatment, and
@@ -31,7 +32,13 @@ These continue for the life of the project, release or not:
     thing, on GitHub included. The single diagram reached 52,533 during
     `v0.0.9` and had to be split. When a new area is added, give it its own
     diagram rather than growing one past ~45,000; an edge that crosses areas
-    is drawn in the diagram of the area it points *into*.
+    is drawn in the diagram of the area it points *into*. As of `v0.0.10`
+    the five sit at roughly 23k, 9k, 15k, 9k and 9k characters with comments
+    stripped, so there is room — check before folding a sixth area into one.
+  - **Free text inside a class body is parsed as a member.** The diagrams
+    use prose lines inside a class to carry a caveat, which Mermaid accepts
+    — but a prose line that *starts* with `(` is read as a malformed method
+    and fails the whole diagram. Reword rather than reflow.
 - Keep the nine programs under `examples/` compiling and honest as the API
   moves — they're the only place the library is exercised end to end, and
   `examples/README.md` indexes what each one covers.
@@ -66,7 +73,12 @@ These continue for the life of the project, release or not:
   goSSMS wanted an Always On node, which needed the availability-group
   layer, the mirroring endpoint underneath it and the certificate exchange
   that authenticates that — three subject areas, all added here rather than
-  assembled out of raw queries in the TUI
+  assembled out of raw queries in the TUI. `v0.0.10` is the same shape three
+  more times: goSSMS's "Script <object> as" menu drove the scripting layer
+  and the DML templates, its Object Explorer filter dialog drove
+  `ObjectFilter`, and greying out actions a login cannot perform drove
+  `Capabilities`/`DatabaseCapabilities` — each designed as a library feature
+  rather than a TUI shim
   (`replace github.com/radix29/gosmo => ../gosmo` in gossms's `go.mod`
   for local dev against unreleased changes, tag-and-bump once merged).
 

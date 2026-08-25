@@ -7,7 +7,7 @@ A Go library that mimics **Microsoft SQL Server Management Objects (SMO)** — w
 go get github.com/radix29/gosmo
 ```
 
-> **Go version note:** The module requires Go 1.26
+> **Go version note:** The module requires Go 1.27
 
 ---
 
@@ -62,6 +62,7 @@ classDiagram
         -info *ServerInfo
         +Connect(opts) *Server
         +ConnectContext(ctx, opts) *Server
+        +NewServer(ctx, db) *Server
         +ParseServerAddress(server) string
         +Close() error
         +DB() *sql.DB
@@ -114,9 +115,12 @@ classDiagram
         +KillSession(id) error
         +EnumErrorLogs(logType) []*ErrorLogFile
         +ReadLog(logType, n) []*ErrorLogEntry
+        +ReadLogFiltered(logType, n, search) []*ErrorLogEntry
         +ReadErrorLog(n) []*ErrorLogEntry
+        +CycleLog(logType) error
         +CycleErrorLog() error
         +EnumFileSystem(path) []*FileSystemEntry
+        +EnumFileSystemIsLegacy() bool
         +FixedDrives() []*FixedDrive
         +FileSystemExists(path) bool
         +MailProfiles() []*MailProfile
@@ -127,6 +131,8 @@ classDiagram
         +BackupHeaders(device) []*BackupHeader
         +BackupFileList(device) []*BackupFile
         +BackupFileListForSet(device, fileNumber) []*BackupFile
+        +DatabaseRecoveryStatuses() []*DatabaseRecoveryStatus
+        +Capabilities() *Capabilities
         +SecurityInfo() *ServerSecurityInfo
         +ServerPermissions() []*ServerPermissionEntry
         +GrantServerPermissionWithOptions(perm, principal, opts) error
@@ -164,6 +170,7 @@ classDiagram
         +Platform string
         +PhysicalMemoryMB int64
         +LogicalCPUCount int
+        +SysInfoUnavailable bool
         +DefaultDataPath string
         +DefaultLogPath string
         +DefaultBackupPath string
@@ -266,6 +273,8 @@ classDiagram
         +DefaultDatabase string
         +CreateDate time.Time
         +ModifyDate time.Time
+        +MappedObject string
+        +ResolveMapping() error
         +Enable() error
         +Disable() error
         +ChangePassword(newPassword) error
@@ -348,17 +357,27 @@ classDiagram
         +RenameObject(schema, oldName, newName) error
         +Catalog() *Catalog
         +SystemCatalog() *Catalog
+        +TablesFiltered(filter) []*Table
+        +TransferObject(targetSchema, schema, name) error
         +Views() []*View
+        +ViewsFiltered(filter) []*View
         +DropView(schema, name) error
         +StoredProcedures() []*StoredProcedure
+        +StoredProceduresFiltered(filter) []*StoredProcedure
         +CreateStoredProcedure(schema, name, body) error
         +DropStoredProcedure(schema, name) error
         +UserDefinedFunctions() []*UserDefinedFunction
+        +UserDefinedFunctionsFiltered(filter) []*UserDefinedFunction
         +DropFunction(schema, name) error
+        +Parameters(schema, name) []*Parameter
         +SystemViews() []*View
+        +SystemViewsFiltered(filter) []*View
         +SystemStoredProcedures() []*StoredProcedure
+        +SystemStoredProceduresFiltered(filter) []*StoredProcedure
         +SystemFunctions() []*UserDefinedFunction
+        +SystemFunctionsFiltered(filter) []*UserDefinedFunction
         +Schemas() []*Schema
+        +SchemaByName(name) *Schema
         +CreateSchema(name, owner) error
         +DropSchema(name) error
         +Users() []*User
@@ -379,7 +398,9 @@ classDiagram
         +Synonyms() []*Synonym
         +DropSynonym(schema, name) error
         +PartitionFunctions() []*PartitionFunction
+        +PartitionFunctionByName(name) *PartitionFunction
         +PartitionSchemes() []*PartitionScheme
+        +PartitionSchemeByName(name) *PartitionScheme
         +ExtendedProperties(level) []*ExtendedProperty
         +AddExtendedProperty(name, value, level) error
         +SetExtendedProperty(name, value, level) error
@@ -390,8 +411,15 @@ classDiagram
         +HasMasterKey() bool
         +CreateMasterKey(password) error
         +ColumnMasterKeys() []*ColumnMasterKey
+        +ColumnMasterKeyByName(name) *ColumnMasterKey
+        +CreateColumnMasterKeyWithSignature(name, provider, path, sig) error
         +ColumnEncryptionKeys() []*ColumnEncryptionKey
+        +ColumnEncryptionKeyByName(name) *ColumnEncryptionKey
+        +CreateColumnEncryptionKey(name, values) error
         +SecurityPolicies() []*SecurityPolicy
+        +SecurityPolicyByName(schema, name) *SecurityPolicy
+        +Capabilities() *DatabaseCapabilities
+        +RecoveryStatus() *DatabaseRecoveryStatus
         +SpaceUsed() SpaceInfo
         +TableRowCounts() map~int,int64~
         +TableSpaceUsedAll() map~int,TableSpaceInfo~
@@ -421,6 +449,7 @@ classDiagram
         +ChangeTracking() *ChangeTrackingInfo
         +SetChangeTracking(info) error
         +TableChangeTracking() []*TableChangeTracking
+        +TableChangeTrackingFor(schema, name) *TableChangeTracking
         +SetTableChangeTracking(schema, name, enable, cols) error
         +Dependencies(schema, name) []*Dependency
         +Dependents(schema, name) []*Dependency
@@ -573,6 +602,46 @@ classDiagram
     }
 
     %% =========================================================
+    %% What the connected login may do
+    %% =========================================================
+    class Capabilities {
+        +ServerRoles map~string,bool~
+        +ServerPermissions map~string,CapabilityState~
+        +Has(name) bool
+        +Allows(name) bool
+        +Permission(name) CapabilityState
+        +InServerRole(name) bool
+        +IsSysadmin() bool
+        +Probed() bool
+        Has is the test for offering something,
+        Allows the test for withholding it —
+        deliberately not opposites, because
+        withholding must fail open. Every
+        method is nil-safe.
+    }
+
+    class CapabilityState {
+        <<enumeration>>
+        CapabilityUnknown
+        CapabilityGranted
+        CapabilityDenied
+        HAS_PERMS_BY_NAME returns NULL without
+        raising for a permission the instance
+        does not define, so Unknown is not a
+        denial.
+    }
+
+    class LoginSource {
+        <<enumeration>>
+        LoginSourceAuto
+        LoginSourceSQL
+        LoginSourceWindows
+        LoginSourceExternalProvider
+        LoginSourceCertificate
+        LoginSourceAsymmetricKey
+    }
+
+    %% =========================================================
     %% Scripting pending writes (dry-run)
     %% =========================================================
     class ScriptCollector {
@@ -615,10 +684,14 @@ classDiagram
     Server "1" --> "*" Language : lists
     Server --> ProcessorInfo : has
     Server "1" --> "*" DiskVolumeInfo : lists
+    Server --> Capabilities : Capabilities() returns
+    Capabilities --> CapabilityState : answers with
+    DatabaseCapabilities --> CapabilityState : answers with
 
     Login ..> nStringLiteral : password quoted by
     Login --> LoginDetails : has
     Login "1" --> "*" LoginUserMapping : mapped via
+    Login ..> LoginSource : created from
 
     Database ..> withConn : writes run via
     Database ..> dbRows : query() returns
@@ -672,6 +745,7 @@ classDiagram
         +SizeKB int64
         +GrowthKB int64
         +GrowthPercent int
+        +DisableGrowth bool
         +MaxSizeKB int64
     }
 
@@ -680,7 +754,11 @@ classDiagram
         +SizeKB int64
         +GrowthKB int64
         +GrowthPercent int
+        +DisableGrowth bool
         +MaxSizeKB int64
+        DisableGrowth is FILEGROWTH = 0. Zero
+        cannot say it: GrowthKB = 0 means
+        "leave this property alone".
     }
 
     class DatabaseOptions {
@@ -792,10 +870,105 @@ classDiagram
     }
 
     %% =========================================================
+    %% Narrowing a listing at the server
+    %% =========================================================
+    class ObjectFilter {
+        +Name []TextCriterion
+        +Schema []TextCriterion
+        +Created []DateCriterion
+        +MemoryOptimized *bool
+        +Empty() bool
+        Criteria are AND-ed; a zero filter
+        narrows nothing. Matching lowercases
+        both sides, because a bare LIKE follows
+        the database collation, and the pattern
+        is escaped, because %, _ and [ are legal
+        in an identifier.
+    }
+
+    class TextCriterion {
+        +Op TextOp
+        +Value string
+    }
+
+    class DateCriterion {
+        +Op DateOp
+        +Day time.Time
+    }
+
+    class TextOp {
+        <<enumeration>>
+        TextContains
+        TextNotContains
+        TextEquals
+        TextNotEquals
+    }
+
+    class DateOp {
+        <<enumeration>>
+        DateOn
+        DateBefore
+        DateAfter
+        All three compare whole calendar days.
+    }
+
+    %% =========================================================
+    %% Procedure and function parameters
+    %% =========================================================
+    class Parameter {
+        +Name string
+        +Ordinal int
+        +DataType DataType
+        +MaxLength int
+        +Precision int
+        +Scale int
+        +IsOutput bool
+        +HasDefault bool
+        +TypeString() string
+        sys.parameters for one procedure or
+        function. A scalar function's return
+        value, stored there as parameter_id 0,
+        is not a parameter and is not returned.
+    }
+
+    %% =========================================================
+    %% What the connected login may do here
+    %% =========================================================
+    class DatabaseCapabilities {
+        +Accessible bool
+        +Roles map~string,bool~
+        +Permissions map~string,CapabilityState~
+        +Has(name) bool
+        +Allows(name) bool
+        +Permits(name) bool
+        +Permission(name) CapabilityState
+        +InRole(name) bool
+        Accessible is HAS_DBACCESS: check it
+        before expanding a database at all.
+        Permits is Allows plus that, since an
+        inaccessible database answers Unknown
+        to every permission.
+    }
+
+    class DatabaseRecoveryStatus {
+        +DatabaseName string
+        +LastLogBackupLSN string
+        +LogBackupChainStarted bool
+        Whether the log backup chain has been
+        started at all — what SQL Server tests
+        before a database may join an
+        availability group.
+    }
+
+    %% =========================================================
     %% Execution plans
     %% =========================================================
     class ExecutionPlan {
         +XML string
+        +All []string
+        A batch of several statements yields
+        several plan documents. XML is the last
+        of them; All holds every one.
     }
 
     %% =========================================================
@@ -909,6 +1082,14 @@ classDiagram
     Database "1" --> "*" DatabaseScopedConfig : lists
     Database "1" --> "*" Dependency : dependencies of
     Database "1" --> "*" SearchResult : search() returns
+    Database "1" --> "*" Parameter : Parameters() returns
+    Database --> DatabaseRecoveryStatus : RecoveryStatus() returns
+    Database --> DatabaseCapabilities : Capabilities() returns
+    Database ..> ObjectFilter : ...Filtered() listings narrowed by
+    ObjectFilter --> TextCriterion : matches names and schemas with
+    ObjectFilter --> DateCriterion : matches creation dates with
+    TextCriterion --> TextOp : uses
+    DateCriterion --> DateOp : uses
     Database --> ExecutionPlan : produces
     Database "1" --> "*" PermissionEntry : grants
     Database "1" --> "*" DatabasePermissionEntry : grants
@@ -944,11 +1125,16 @@ classDiagram
         +FullName() string
         +Columns() []*Column
         +Indexes() []*Index
+        +IndexByName(name) *Index
+        +XMLIndexes() []*XMLIndex
         +ForeignKeys() []*ForeignKey
+        +ForeignKeyByName(name) *ForeignKey
         +CheckConstraints() []*CheckConstraint
         +Statistics() []*Statistic
+        +StatisticByName(name) *Statistic
         +Partitions() []*Partition
         +Triggers() []*Trigger
+        +DataSpace() DataSpace
         +RowCount() int64
         +CountWhere(predicate) int64
         +CheckWhereSyntax(predicate) error
@@ -962,6 +1148,8 @@ classDiagram
         +CreateStatistic(name, cols, pct) error
         +CreateStatisticWithOptions(req) error
         +AlterColumn(col) error
+        +DropColumn(name) error
+        +RenameColumn(name, newName) error
         +DropConstraint(name) error
     }
 
@@ -1001,6 +1189,7 @@ classDiagram
         +KeyColumns []IndexColumn
         +IncludedColumns []IndexColumn
         +FilterDefinition string
+        +DataSpace DataSpace
         +Rebuild(t, fillFactor) error
         +RebuildWithOptions(t, fillFactor, padIndex, compression) error
         +Reorganize(t) error
@@ -1048,6 +1237,98 @@ classDiagram
         +AvgPageSpaceUsedPct float64
     }
 
+    class CreateIndexRequest {
+        +Name string
+        +Type IndexType
+        +IsUnique bool
+        +KeyColumns []IndexColumnDef
+        +IncludedColumns []string
+        +FilterDefinition string
+        +FillFactor int
+        +PadIndex bool
+        +Online bool
+        +SortInTempDB bool
+        +DropExisting bool
+        +DataCompression string
+        +CompressionDelay int
+        +FileGroup string
+        +PartitionScheme string
+        +PartitionColumns []string
+        +IsPrimaryXML bool
+        +PrimaryXMLIndex string
+        +SecondaryXMLType XMLSecondaryIndexType
+        +Tessellation SpatialTessellation
+        +BoundingBox *SpatialBoundingBox
+        +GridLevels SpatialGridLevels
+        +CellsPerObject int
+        Which fields apply depends on Type.
+        A combination the server would reject
+        is refused before anything runs, with
+        an error naming the field.
+    }
+
+    class XMLIndex {
+        +Name string
+        +IndexID int
+        +IsPrimary bool
+        +SecondaryType XMLSecondaryIndexType
+        +ColumnName string
+        +PrimaryIndexName string
+        What sys.indexes cannot say: primary or
+        secondary, which form, and over which
+        primary index it is built.
+    }
+
+    class XMLSecondaryIndexType {
+        <<enumeration>>
+        XMLSecondaryPath
+        XMLSecondaryValue
+        XMLSecondaryProperty
+    }
+
+    class SpatialTessellation {
+        <<enumeration>>
+        SpatialGeometryGrid
+        SpatialGeometryAutoGrid
+        SpatialGeographyGrid
+        SpatialGeographyAutoGrid
+        +IsGeometry() bool
+        +IsAutoGrid() bool
+    }
+
+    class SpatialBoundingBox {
+        +XMin float64
+        +YMin float64
+        +XMax float64
+        +YMax float64
+        Belongs around the data, not around the
+        coordinate system: anything outside it
+        lands in the single top-level cell.
+    }
+
+    class SpatialGridLevels {
+        +Level1 SpatialGridDensity
+        +Level2 SpatialGridDensity
+        +Level3 SpatialGridDensity
+        +Level4 SpatialGridDensity
+    }
+
+    class SpatialGridDensity {
+        <<enumeration>>
+        SpatialGridLow
+        SpatialGridMedium
+        SpatialGridHigh
+    }
+
+    class DataSpace {
+        +Name string
+        +IsPartitionScheme bool
+        +IsDefaultFileGroup bool
+        +PartitionColumn string
+        Where a table or index keeps its rows —
+        CREATE TABLE / CREATE INDEX's ON clause.
+    }
+
     class ForeignKey {
         +Name string
         +Columns []string
@@ -1088,6 +1369,16 @@ classDiagram
         +Update(samplePct) error
         +Drop() error
         +Rename(newName) error
+    }
+
+    class CreateStatisticRequest {
+        +Name string
+        +Columns []string
+        +SamplePercent int
+        +FullScan bool
+        +FilterDefinition string
+        +NoRecompute bool
+        +Incremental bool
     }
 
     class StatisticHeader {
@@ -1182,6 +1473,17 @@ classDiagram
         +ScriptServerRole(name) string
     }
 
+    class ScriptVerb {
+        <<enumeration>>
+        ScriptCreate
+        ScriptDrop
+        ScriptDropAndCreate
+        ScriptAlter
+        ScriptAlter applies to module objects —
+        view, procedure, function, trigger —
+        and everything else falls back to CREATE.
+    }
+
     class ScriptOptions {
         +Verb ScriptVerb
         +IncludeHeaders bool
@@ -1199,6 +1501,22 @@ classDiagram
         +ID int
         +Owner string
         +ObjectCount() int
+        +ObjectCountsByType() SchemaObjectCounts
+        +ChangeOwner(newOwner) error
+        +Drop() error
+    }
+
+    class SchemaObjectCounts {
+        +Tables int
+        +Views int
+        +StoredProcedures int
+        +Functions int
+        +Synonyms int
+        +Sequences int
+        Each count reproduces the predicate of
+        the listing it stands in for, which is
+        why it does not add up to ObjectCount's
+        single COUNT over sys.objects.
     }
 
     class View {
@@ -1325,10 +1643,24 @@ classDiagram
     Table --> TableDetail : has
     Table --> TableSpaceInfo : has
     Table "1" --> "*" IndexFragmentation : FragmentationStats() returns
+    Table "1" --> "*" XMLIndex : XMLIndexes() returns
+    Table --> DataSpace : DataSpace() returns
+    Table ..> CreateIndexRequest : CreateIndex() takes
+    Table ..> CreateStatisticRequest : CreateStatisticWithOptions() takes
 
     Index --> IndexStorageInfo : StorageInfo() returns
     IndexStorageInfo "1" --> "*" IndexAllocationUnit : breaks down into
     Index --> IndexFragmentation : Fragmentation() returns
+    Index --> DataSpace : read with the index
+
+    CreateIndexRequest --> XMLSecondaryIndexType : XML form selected by
+    CreateIndexRequest --> SpatialTessellation : spatial scheme selected by
+    CreateIndexRequest --> SpatialBoundingBox : geometry schemes bounded by
+    CreateIndexRequest --> SpatialGridLevels : grid density set by
+    SpatialGridLevels --> SpatialGridDensity : per level
+    XMLIndex --> XMLSecondaryIndexType : secondary form
+
+    Schema --> SchemaObjectCounts : ObjectCountsByType() returns
 
     Statistic --> StatisticHeader : Header() returns
     Statistic "1" --> "*" StatisticDensity : DensityVector() returns
@@ -1336,6 +1668,8 @@ classDiagram
 
     Scripter --> Database : scripts objects from
     Scripter --> ScriptOptions : configured by
+    ServerScripter --> ScriptOptions : configured by
+    ScriptOptions --> ScriptVerb : statement form selected by
 ```
 
 ### Backup, restore, and SQL Server Agent
@@ -1444,6 +1778,9 @@ classDiagram
         +CurrentState JobState
         +Steps() []*JobStep
         +AddStep(req) error
+        +InsertStep(req, stepID) error
+        +MoveStep(stepID, newStepID) error
+        +ReorderSteps(order) error
         +Schedules() []*Schedule
         +AddSchedule(req) error
         +AttachSchedule(name) error
@@ -1481,8 +1818,19 @@ classDiagram
         +RetryInterval int
         +OutputFileName string
         +Flags int
+        +ProxyName string
+        +AdditionalParameters string
+        +Server string
+        +DatabaseUserName string
+        +CmdExecSuccessCode int
+        +OSRunPriority int
         +Update(req) error
+        +SetFlow(onSuccess, successStep, onFail, failStep) error
         +Delete() error
+        The whole definition is carried because
+        a move is a delete and a re-insert —
+        msdb has no procedure that renumbers a
+        step in place.
     }
 
     class JobHistoryEntry {
@@ -1947,6 +2295,20 @@ classDiagram
         +Source() string
     }
 
+    class LogSearch {
+        +Text1 string
+        +Text2 string
+        +From time.Time
+        +To time.Time
+        xp_readerrorlog's own arguments 3-6:
+        Text1 and Text2 are case-insensitive
+        substrings AND-ed together, not two
+        alternatives. A zero LogSearch reads
+        the whole file. Filtering at the server
+        is what makes the current log usable on
+        a busy instance.
+    }
+
     %% =========================================================
     %% Server filesystem (paths the SERVER resolves, not the client)
     %% =========================================================
@@ -1976,6 +2338,7 @@ classDiagram
     Server "1" --> "*" FileSystemEntry : EnumFileSystem() returns
     Server "1" --> "*" FixedDrive : FixedDrives() returns
     Server ..> ErrorLogType : selects log family with
+    Server ..> LogSearch : ReadLogFiltered() narrowed by
 
     AvailabilityGroup "1" --> "*" AvailabilityReplica : has
     AvailabilityGroup "1" --> "*" AvailabilityDatabase : has
@@ -2030,6 +2393,13 @@ defer srv.Close()
 fmt.Println(srv.Info().ProductVersion)
 ```
 
+`Connect` opens the pool itself. Where the pool is not gosmo's to open — one
+shared with the rest of an application, a driver wrapped for tracing or
+retries, or a fake driver in a test — `gosmo.NewServer(ctx, db)` wraps an
+existing `*sql.DB` and loads the same metadata. It is the inverse of
+`srv.DB()`, and ownership passes to the `Server`, whose `Close` closes the
+pool.
+
 ---
 
 ## Feature map
@@ -2051,9 +2421,9 @@ fmt.Println(srv.Info().ProductVersion)
 | `Server.JobServer` (Agent) | see [SQL Server Agent](#sql-server-agent) below |
 | Active sessions         | `srv.ActiveSessions(includeSystem)`        |
 | Kill session            | `srv.KillSession(id)`                      |
-| Error log               | `srv.ReadLog(logType, n)` / `srv.EnumErrorLogs(logType)` / `srv.ReadErrorLog(n)` / `srv.CycleErrorLog()` — see [Error log](#error-log) |
+| Error log               | `srv.ReadLog(logType, n)` / `srv.ReadLogFiltered(logType, n, search)` / `srv.EnumErrorLogs(logType)` / `srv.CycleLog(logType)` — see [Error log](#error-log) |
 | Database Mail           | `srv.MailProfiles()` / `srv.SendMail(...)` |
-| Create login (safe)     | `srv.CreateLogin(name, password, opts)`    |
+| Create login (safe)     | `srv.CreateLogin(name, password, opts)` — SQL, Windows, external provider, certificate or asymmetric key |
 | Authentication mode     | `srv.SecurityInfo()`                       |
 | Server-level permissions | `srv.ServerPermissions()` / `srv.Grant\|Deny\|RevokeServerPermission(...)` / `srv.ServerPermissionNames()` |
 | Server permissions with modifiers | `srv.Grant\|Deny\|RevokeServerPermissionWithOptions(perm, principal, opts)` — `WITH GRANT OPTION`, `CASCADE`, `GRANT OPTION FOR` |
@@ -2068,6 +2438,9 @@ fmt.Println(srv.Info().ProductVersion)
 | `Server.AvailabilityGroups` | `srv.AvailabilityGroups()` / `srv.AvailabilityGroup(name)` (no-I/O handle) / `srv.AvailabilityGroupByName(name)` — see [Always On](#always-on-availability-groups) |
 | Database mirroring endpoint | `srv.DatabaseMirroringEndpoint()` / `srv.CreateDatabaseMirroringEndpoint(spec)` |
 | Verify / inspect a backup device | `srv.VerifyBackup(device)` / `srv.BackupHeaders(device)` / `srv.BackupFileList(device)` |
+| Log backup chain state    | `srv.DatabaseRecoveryStatuses()` / `db.RecoveryStatus()` → `*DatabaseRecoveryStatus` |
+| What may this login do?   | `srv.Capabilities()` → `*Capabilities` — see [Capabilities](#capabilities-of-the-connected-login) |
+| Wrap a `*sql.DB` you already have | `gosmo.NewServer(ctx, db)` — the inverse of `srv.DB()` |
 
 ### Database
 
@@ -2080,7 +2453,7 @@ fmt.Println(srv.Info().ProductVersion)
 | `Database.StoredProcedures`     | `db.StoredProcedures()`                     |
 | `Database.UserDefinedFunctions` | `db.UserDefinedFunctions()` / `db.DropFunction(schema, name)` |
 | System Views/Procedures/Functions | `db.SystemViews()` / `db.SystemStoredProcedures()` / `db.SystemFunctions()` |
-| `Database.Schemas`              | `db.Schemas()` / `schema.ObjectCount()`     |
+| `Database.Schemas`              | `db.Schemas()` / `db.SchemaByName(name)` / `schema.ObjectCount()` / `schema.ObjectCountsByType()` |
 | `Database.Users`                | `db.Users()` / `db.UserByName(name)`        |
 | Database user administration    | `user.Rename(newName)` / `user.SetDefaultSchema(schemaName)` / `user.SetLogin(loginName)` |
 | `Database.Roles`                | `db.DatabaseRoles()` / `db.RoleByName(name)` / `db.RoleMembers(roleName)` |
@@ -2090,14 +2463,18 @@ fmt.Println(srv.Info().ProductVersion)
 | `Database.Sequences`            | `db.Sequences()` / `db.DropSequence(schema, name)` |
 | `Database.Synonyms`             | `db.Synonyms()` / `db.DropSynonym(schema, name)` |
 | Rename any `sp_rename`-able object | `db.RenameObject(schema, oldName, newName)` — view, procedure, function, sequence, synonym, trigger |
-| Partition functions             | `db.PartitionFunctions()`                   |
-| Partition schemes               | `db.PartitionSchemes()`                     |
+| Move an object to another schema | `db.TransferObject(targetSchema, schema, name)` — `ALTER SCHEMA ... TRANSFER`, which `sp_rename` cannot do |
+| Parameters of a procedure or function | `db.Parameters(schema, name)` → `[]*Parameter` |
+| Filtered listings                | `db.TablesFiltered(f)` / `ViewsFiltered` / `StoredProceduresFiltered` / `UserDefinedFunctionsFiltered` (and the `System...` forms) — see [Filtering a listing](#filtering-a-listing) |
+| What may this login do here?     | `db.Capabilities()` → `*DatabaseCapabilities` |
+| Partition functions             | `db.PartitionFunctions()` / `db.PartitionFunctionByName(name)` |
+| Partition schemes               | `db.PartitionSchemes()` / `db.PartitionSchemeByName(name)` |
 | Extended properties             | `db.ExtendedProperties(level)` / `db.AddExtendedProperty(...)` / `db.SetExtendedProperty(...)` / `db.DropExtendedProperty(...)` |
 | `Database.Certificates`         | `db.Certificates()` / `db.CertificateByName(name)` / `db.CreateCertificate(spec)` / `cert.Drop()` — see [Certificates](#certificates-and-the-database-master-key) |
 | Database master key             | `db.HasMasterKey()` / `db.CreateMasterKey(password)` |
-| Column master keys              | `db.ColumnMasterKeys()`                     |
-| Column encryption keys          | `db.ColumnEncryptionKeys()`                 |
-| Security policies (RLS)         | `db.SecurityPolicies()`                     |
+| Column master keys              | `db.ColumnMasterKeys()` / `db.ColumnMasterKeyByName(name)` / `db.CreateColumnMasterKey(...)` / `...WithSignature(...)` |
+| Column encryption keys          | `db.ColumnEncryptionKeys()` / `db.ColumnEncryptionKeyByName(name)` / `db.CreateColumnEncryptionKey(name, values)` |
+| Security policies (RLS)         | `db.SecurityPolicies()` / `db.SecurityPolicyByName(schema, name)` |
 | `Database.RecoveryModel`        | `db.SetRecoveryModel(model)`                |
 | `Database.CompatibilityLevel`   | `db.SetCompatibilityLevel(level)`           |
 | Space used                      | `db.SpaceUsed()`                            |
@@ -2114,7 +2491,7 @@ fmt.Println(srv.Info().ProductVersion)
 | Filegroup default / read-only   | `db.SetDefaultFileGroup(name)` / `db.SetFileGroupReadOnly(name, ro)` |
 | CREATE DATABASE file placement  | `CreateDatabaseOptions.PrimaryFile` / `.LogFile` (`*DatabaseFileSpec`) |
 | Change tracking                 | `db.ChangeTracking()` / `db.SetChangeTracking(info)` |
-| Table change tracking           | `db.TableChangeTracking()` / `db.SetTableChangeTracking(...)` |
+| Table change tracking           | `db.TableChangeTracking()` / `db.TableChangeTrackingFor(schema, name)` / `db.SetTableChangeTracking(...)` |
 | Database-level permissions      | `db.DatabasePermissions()` / `db.Grant\|Deny\|RevokeDatabasePermission(...)` |
 
 ### Table
@@ -2123,10 +2500,11 @@ fmt.Println(srv.Info().ProductVersion)
 | --------------------- | ---------------------------------- |
 | `Database.Tables` (no-I/O handle) | `db.Table(schema, name)` — works under `WithScript`, where `TableByName`'s catalog read has nothing to find |
 | `Table.Columns`       | `t.Columns()`                      |
-| `Table.Indexes`       | `t.Indexes()`                      |
-| `Table.ForeignKeys`   | `t.ForeignKeys()`                  |
+| `Table.Indexes`       | `t.Indexes()` / `t.IndexByName(name)` |
+| XML indexes           | `t.XMLIndexes()` → `[]*XMLIndex` (primary/secondary, and which primary) |
+| `Table.ForeignKeys`   | `t.ForeignKeys()` / `t.ForeignKeyByName(name)` |
 | `Table.Checks`        | `t.CheckConstraints()`             |
-| `Table.Statistics`    | `t.Statistics()`                   |
+| `Table.Statistics`    | `t.Statistics()` / `t.StatisticByName(name)` |
 | `Table.Partitions`    | `t.Partitions()`                   |
 | `Table.Triggers`      | `t.Triggers()`                     |
 | `Table.RowCount`      | `t.RowCount()` (all tables at once: `db.TableRowCounts()`) |
@@ -2140,7 +2518,9 @@ fmt.Println(srv.Info().ProductVersion)
 | Update all statistics | `t.UpdateAllStatistics(samplePct)` |
 | Create index          | `t.CreateIndex(req)` — every index type, see below |
 | Alter column          | `t.AlterColumn(col)`               |
+| Drop / rename a column | `t.DropColumn(name)` / `t.RenameColumn(name, newName)` |
 | Drop a constraint     | `t.DropConstraint(name)`           |
+| Where the rows live (`ON` clause) | `t.DataSpace()` → `DataSpace` (filegroup or partition scheme) |
 | Columns of a table *or view* | `db.ObjectColumns(schema, name)` — `Table.Columns` reaches tables only |
 
 ### Index
@@ -2158,6 +2538,7 @@ fmt.Println(srv.Info().ProductVersion)
 | `idx.UpdateStatistics(t)`           |
 | `idx.StorageInfo(t)` — filegroup, partitioning, allocation-unit space |
 | `idx.Fragmentation(t, mode)` — one index (`t.FragmentationStats(mode)` does all) |
+| `idx.DataSpace` — the filegroup or partition scheme it is on, read with the index |
 | `idx.Drop(t)`                       |
 
 `Index.Type` is a `sys.indexes.type_desc` value — `IndexTypeClustered`,
@@ -2196,6 +2577,7 @@ rather than a parse error naming a column number.
 | `DBCC SHOW_STATISTICS` header  | `st.Header()` → `*StatisticHeader`        |
 | ... density vector             | `st.DensityVector()` → `[]*StatisticDensity` |
 | ... histogram                  | `st.Histogram()` → `[]*StatisticHistogramStep` |
+| One statistic by name          | `t.StatisticByName(name)`                 |
 | Update / drop                  | `st.Update(samplePct)` / `st.Drop()`      |
 | Rename                         | `st.Rename(newName)`                      |
 
@@ -2215,7 +2597,99 @@ rather than a parse error naming a column number.
 | `login.ChangePasswordWithOptions(pw, mustChange, unlock)` |
 | `login.MapCredential(name)` / `login.UnmapCredential(name)` |
 | `login.Details()` — locked/expired/policy/last-login status |
+| `login.ResolveMapping()` — fills `login.MappedObject` for a certificate- or asymmetric-key-mapped login |
 | `login.UserMappings()` / `login.MapToDatabase(...)` / `login.UnmapFromDatabase(db)` |
+
+### Capabilities of the connected login
+
+What the login on this connection may actually do — its fixed-role
+memberships and its permission states — in one round trip per scope, so a
+caller can gate its UI up front instead of discovering permissions from
+failed calls.
+
+```go
+caps, _ := srv.Capabilities()
+if caps.Has("ALTER ANY LOGIN") { /* offer New Login */ }
+if !caps.Allows("SHUTDOWN")    { /* grey out Shutdown */ }
+
+dcaps, _ := db.Capabilities()
+if !dcaps.Accessible            { /* don't expand this database at all */ }
+if dcaps.Permits("BACKUP DATABASE") { /* offer Back Up */ }
+```
+
+`ProbedServerRoles`, `ProbedServerPermissions`, `ProbedDatabaseRoles` and
+`ProbedDatabasePermissions` are the names that get asked about — a working
+subset chosen for what an application actually gates on, not the grantable
+catalogs `ServerPermissionNames()`/`DatabasePermissionNames()` return.
+
+**The answer is three-way, and that is the point.** `HAS_PERMS_BY_NAME`
+returns NULL *without raising* for a permission the instance does not define,
+so a permission introduced in a later version reads as `CapabilityUnknown` on
+an older one rather than as denied, and a caller that folds unknown into
+denied hides a feature on every instance that names it differently.
+
+| Question                       | Method                                       |
+| ------------------------------ | -------------------------------------------- |
+| Should I *offer* this?         | `Has(name)` — known to be held                |
+| Should I *withhold* this?      | `Allows(name)` (server) / `Permits(name)` (database) — not known to be denied |
+| Exact state                    | `Permission(name)` → `CapabilityGranted` / `CapabilityDenied` / `CapabilityUnknown` |
+| Role membership                | `InServerRole(name)` / `InRole(name)`, `IsSysadmin()` |
+| Did the probe run at all?      | `Probed()`                                   |
+
+`Has` and `Allows` are deliberately not opposites: withholding must **fail
+open**, because the server remains the authority and refusing something a
+sysadmin may well be allowed to do is the worse error. `sysadmin` is not
+folded into `InServerRole` because SQL Server does not fold it in either —
+`IS_SRVROLEMEMBER('SQLAgentUserRole')` is 0 for `sa` — and a role test cannot
+fail open on its own, which is what `Probed()` is for: `InServerRole` answers
+false for a role never asked about exactly as for one the login is not in.
+
+At database scope, `Accessible` is `HAS_DBACCESS` and is the one field to
+check before expanding a database or opening its properties, since every
+folder under an inaccessible one fails separately and identically. A database
+the login cannot open answers unknown to every permission — there was nothing
+inside it to ask — so `Allows` alone would report "not known to be denied"
+for exactly the databases the login has no business writing to. `Permits` is
+`Allows` plus that accessibility, and is the database-scope test for
+withholding. Every method is nil-safe; a nil `*DatabaseCapabilities` is
+"nothing known" and fails open, but the **zero value** is not — its
+`Accessible` is false, which reads as a measured "cannot open this".
+
+### Filtering a listing
+
+An `ObjectFilter` narrows a catalog listing at the server rather than in the
+caller — the SSMS Object Explorer "Filter Settings" dialog.
+
+```go
+tables, _ := db.TablesFiltered(gosmo.ObjectFilter{
+    Name:    []gosmo.TextCriterion{{Op: gosmo.TextContains, Value: "order"}},
+    Schema:  []gosmo.TextCriterion{{Op: gosmo.TextNotEquals, Value: "staging"}},
+    Created: []gosmo.DateCriterion{{Op: gosmo.DateAfter, Day: cutoff}},
+})
+```
+
+| Family                 | Method                                    |
+| ---------------------- | ----------------------------------------- |
+| Tables                 | `db.TablesFiltered(f)`                    |
+| Views                  | `db.ViewsFiltered(f)` / `db.SystemViewsFiltered(f)` |
+| Stored procedures      | `db.StoredProceduresFiltered(f)` / `db.SystemStoredProceduresFiltered(f)` |
+| Functions              | `db.UserDefinedFunctionsFiltered(f)` / `db.SystemFunctionsFiltered(f)` |
+
+Criteria are AND-ed, never OR-ed, and a zero `ObjectFilter` narrows nothing —
+the unfiltered listing is the same call with an empty one (`f.Empty()`
+reports which). `TextOp` is `TextContains`, `TextNotContains`, `TextEquals`
+or `TextNotEquals`; `DateOp` is `DateOn`, `DateBefore` or `DateAfter`, all
+over whole calendar days, since a creation date is a timestamp and "created
+on the 20th" means the day. `MemoryOptimized` applies only to the table
+listing, whose catalog view is the only one with such a column; elsewhere it
+is ignored rather than failing, because a filter describes what the caller
+wants and not every family can express all of it.
+
+Matching is case-insensitive **regardless of the database's collation** — the
+comparison lowercases both sides, because a bare `LIKE` follows the collation
+and would drop rows on a case-sensitive instance. The pattern is escaped with
+an `ESCAPE` clause, because `%`, `_` and `[` are legal in an identifier and
+an unescaped filter for `pct_1` also matches `pct1100`.
 
 ### Dependencies, search, permissions, and execution plans
 
@@ -2237,6 +2711,7 @@ rather than a parse error naming a column number.
 | Permission-name catalogs (for pickers) | `gosmo.ObjectPermissionNames()` / `SchemaPermissionNames()` / `DatabasePermissionNames()` / `ServerPermissionNames()` / `ColumnPermissionNames()` |
 | Estimated execution plan     | `db.EstimatedPlan(sql)` (`SET SHOWPLAN_XML`, statement not run) |
 | Actual execution plan        | `db.ActualPlan(sql)` (`SET STATISTICS XML`, statement runs)|
+| Every plan a multi-statement batch produced | `plan.All` (`plan.XML` is the last of them) |
 
 Every `Grant|Deny|Revoke...` method has a `...WithOptions` counterpart taking
 a `PermissionOptions`, at all four scopes (object, column, schema, database,
@@ -2355,7 +2830,7 @@ bounded query.
 **Breaking, since `v0.0.7`:** these took no `context.Context` before — they
 wrapped the non-`Context` collection method, i.e. `context.Background()`.
 `db.TableSeq()` becomes `db.TableSeq(ctx)`, for all 75 that existed then
-(89 now).
+(91 now).
 
 ### Scripting pending writes (`WithScript`)
 
@@ -2496,6 +2971,11 @@ steps, _ := job.Steps()
 steps[0].Update(gosmo.JobStepRequest{ /* ... */ })
 steps[0].Delete()
 
+// Reorder them: insert at a position, move one step, or reorder the lot.
+job.InsertStep(gosmo.JobStepRequest{ /* ... */ }, 2)
+job.MoveStep(3, 1)
+job.ReorderSteps(func(n int) []int { return []int{3, 1, 2} })
+
 // History, per job or across every job at once.
 entries, _ := job.History(50)
 recent, _ := srv.JobHistory(200)
@@ -2505,6 +2985,17 @@ recent, _ := srv.JobHistory(200)
 for a step that never has), and `LastRunElapsed` is `LastRunDuration` decoded:
 the raw field is msdb's `HHMMSS` integer, so `10230` is 1h 02m 30s, not 10230
 seconds. Display code should use `LastRunElapsed`.
+
+msdb has no procedure that renumbers a step in place, so a move is a delete
+followed by an insert at the target position — which is why `JobStep` carries
+the step's whole definition (proxy, additional parameters, CmdExec success
+code, target server, run-as user, OS priority) and not just the fields a UI
+shows: all of it has to survive the round trip. `sp_add_jobstep` renumbers
+every later step *and* follows their "go to step N" references, but
+`sp_delete_jobstep` clears such a reference instead of following it, so
+`ReorderSteps` rewrites every reference itself afterwards, through
+`JobStep.SetFlow`. `ReorderSteps` needs a job read with `JobByName` — the step
+listing is by `job_id`, which a bare `srv.Job(name)` handle does not carry.
 
 `JobStepRequest`'s two string fields read an empty value differently, because
 msdb does: an empty `Database` means "leave the step's database alone"
@@ -2657,14 +3148,22 @@ configured never synchronizes.
 | Management → SQL Server Logs     | `srv.EnumErrorLogs(gosmo.ErrorLogSQLServer)` → `[]*ErrorLogFile` |
 | Agent → Error Logs               | `srv.EnumErrorLogs(gosmo.ErrorLogAgent)`      |
 | Open a log                       | `srv.ReadLog(logType, n)` → `[]*ErrorLogEntry` |
+| ... filtered at the server        | `srv.ReadLogFiltered(logType, n, gosmo.LogSearch{Text1: ..., From: ..., To: ...})` |
 | ... the SQL Server log, shorthand | `srv.ReadErrorLog(n)`                        |
-| Recycle the log                  | `srv.CycleErrorLog()`                         |
+| Recycle the log                  | `srv.CycleLog(logType)` (`srv.CycleErrorLog()` is the SQL Server-log shorthand) |
 
 `ErrorLogType` is the log-type argument `xp_readerrorlog` and
 `sp_enumerrorlogs` themselves take, so it passes straight through — which is
 why the Agent log is readable through the same two methods rather than a
 second pair of them. Log number 0 is the current log, 1 the most recent
 archive, and so on.
+
+`LogSearch` is `xp_readerrorlog`'s own arguments 3-6, with its semantics:
+`Text1` and `Text2` are case-insensitive substrings **AND-ed together**, not
+two alternatives, and `From`/`To` bound the entry timestamp. Filtering at the
+server rather than in the caller is what makes the current log usable on a
+busy instance, where it runs to tens of thousands of entries. A zero
+`LogSearch` reads the whole file, which is what `ReadLog` does.
 
 ### Server filesystem
 
