@@ -111,6 +111,68 @@ func TestCreateLoginExternalProvider(t *testing.T) {
 	}
 }
 
+// OBJECT_ID names the Entra principal explicitly, for a display name the
+// directory cannot resolve on its own. SQL Server 2022 and later.
+func TestCreateLoginExternalProviderWithObjectID(t *testing.T) {
+	stmt, alter := createLoginStatementFor(t, "sales team", "", &CreateLoginOptions{
+		Source:   LoginSourceExternalProvider,
+		ObjectID: "3f2504e0-4f89-11d3-9a0c-0305e82c3301",
+	})
+	want := "CREATE LOGIN [sales team] FROM EXTERNAL PROVIDER WITH OBJECT_ID = " +
+		nStringLiteral("3f2504e0-4f89-11d3-9a0c-0305e82c3301")
+	if stmt != want {
+		t.Errorf("got:\n%s\nwant:\n%s", stmt, want)
+	}
+	if alter {
+		t.Error("no DefaultDatabase was asked for, so no ALTER should follow")
+	}
+}
+
+// The object id is a string literal, so it is escaped like every other one
+// rather than concatenated raw.
+func TestCreateLoginObjectIDIsQuotedAsALiteral(t *testing.T) {
+	stmt, _ := createLoginStatementFor(t, "x", "", &CreateLoginOptions{
+		Source:   LoginSourceExternalProvider,
+		ObjectID: "a'b",
+	})
+	if !strings.Contains(stmt, nStringLiteral("a'b")) {
+		t.Errorf("object id was not quoted as a literal: %s", stmt)
+	}
+}
+
+// DEFAULT_DATABASE still cannot ride along with OBJECT_ID — it is not part of
+// the option list FROM EXTERNAL PROVIDER accepts, and stays on the ALTER.
+func TestCreateLoginObjectIDDoesNotPullDefaultDatabaseIntoTheCreate(t *testing.T) {
+	stmt, alter := createLoginStatementFor(t, "x", "", &CreateLoginOptions{
+		Source:          LoginSourceExternalProvider,
+		ObjectID:        "3f2504e0-4f89-11d3-9a0c-0305e82c3301",
+		DefaultDatabase: "sales",
+	})
+	if strings.Contains(stmt, "DEFAULT_DATABASE") {
+		t.Errorf("CREATE LOGIN cannot carry DEFAULT_DATABASE here: %s", stmt)
+	}
+	if !alter {
+		t.Error("DefaultDatabase was dropped instead of moved to an ALTER LOGIN")
+	}
+}
+
+// A misplaced ObjectID is refused rather than silently ignored: a caller that
+// sets it on a SQL or Windows login has asked for a login the server would
+// create as something else entirely.
+func TestCreateLoginObjectIDOnAnotherSourceIsRefused(t *testing.T) {
+	for _, src := range []LoginSource{LoginSourceSQL, LoginSourceWindows, LoginSourceCertificate, LoginSourceAsymmetricKey} {
+		opts := CreateLoginOptions{Source: src, ObjectID: "3f2504e0-4f89-11d3-9a0c-0305e82c3301",
+			CertificateName: "c", AsymmetricKeyName: "k"}
+		password := ""
+		if src == LoginSourceSQL {
+			password = "hunter2"
+		}
+		if _, _, err := createLoginStatement("x", password, src, &opts); err == nil {
+			t.Errorf("%s login: want an error for a stray ObjectID, got none", src)
+		}
+	}
+}
+
 // FROM EXTERNAL PROVIDER takes no WITH option list, so DEFAULT_DATABASE has
 // to be applied by a following ALTER LOGIN rather than named in the CREATE,
 // which would not parse.

@@ -1100,7 +1100,8 @@ func (s *Server) CreateLogin(name, password string, opts *CreateLoginOptions) er
 // as.
 //
 // DefaultDatabase reaches an external-provider login through a following
-// ALTER LOGIN, since FROM EXTERNAL PROVIDER takes no WITH option list. A
+// ALTER LOGIN: OBJECT_ID is the only WITH option FROM EXTERNAL PROVIDER
+// accepts, and DEFAULT_DATABASE alongside it does not parse. A
 // certificate- or asymmetric-key-mapped login cannot have one at all —
 // SQL Server rejects DEFAULT_DATABASE for those in both CREATE and ALTER
 // ("Cannot use the parameter DEFAULT_DATABASE for a certificate or
@@ -1141,9 +1142,9 @@ func (s *Server) CreateLoginContext(ctx context.Context, name, password string, 
 
 // createLoginStatement builds the CREATE LOGIN statement for one resolved
 // source, and reports whether DefaultDatabase still has to be applied by a
-// following ALTER LOGIN — CERTIFICATE, ASYMMETRIC KEY and EXTERNAL PROVIDER
-// take no WITH option list in CREATE LOGIN, so naming DEFAULT_DATABASE there
-// is a syntax error. A mapped login has no default database at all; see
+// following ALTER LOGIN — CERTIFICATE and ASYMMETRIC KEY take no WITH option
+// list in CREATE LOGIN and EXTERNAL PROVIDER takes only OBJECT_ID, so naming
+// DEFAULT_DATABASE there is a syntax error. A mapped login has no default database at all; see
 // CreateLoginContext.
 func createLoginStatement(name, password string, src LoginSource, opts *CreateLoginOptions) (string, bool, error) {
 	if src != LoginSourceSQL && password != "" {
@@ -1154,6 +1155,9 @@ func createLoginStatement(name, password string, src LoginSource, opts *CreateLo
 	}
 	if opts.DefaultDatabase != "" && (src == LoginSourceCertificate || src == LoginSourceAsymmetricKey) {
 		return "", false, fmt.Errorf("a %s login cannot have a default database", src)
+	}
+	if opts.ObjectID != "" && src != LoginSourceExternalProvider {
+		return "", false, fmt.Errorf("ObjectID applies to an external provider login only, not a %s login", src)
 	}
 
 	var sb strings.Builder
@@ -1181,6 +1185,13 @@ func createLoginStatement(name, password string, src LoginSource, opts *CreateLo
 		}
 	case LoginSourceExternalProvider:
 		sb.WriteString(" FROM EXTERNAL PROVIDER")
+		if opts.ObjectID != "" {
+			// The one WITH option FROM EXTERNAL PROVIDER does take, and it is
+			// not part of the general option list: OBJECT_ID names the Entra
+			// principal directly, so DEFAULT_DATABASE still cannot join it
+			// here and stays on the following ALTER LOGIN.
+			fmt.Fprintf(&sb, " WITH OBJECT_ID = %s", nStringLiteral(opts.ObjectID))
+		}
 		return sb.String(), opts.DefaultDatabase != "", nil
 	case LoginSourceCertificate:
 		if opts.CertificateName == "" {
@@ -1265,6 +1276,15 @@ type CreateLoginOptions struct {
 	// LoginSourceAsymmetricKey login maps to; required for that source and
 	// ignored otherwise.
 	AsymmetricKeyName string
+
+	// ObjectID is the Microsoft Entra ID object id (a GUID) a
+	// LoginSourceExternalProvider login names explicitly, emitted as
+	// CREATE LOGIN ... FROM EXTERNAL PROVIDER WITH OBJECT_ID = '...'.
+	// SQL Server 2022 and later. It resolves a display name that is
+	// ambiguous in the directory — with no object id the server looks the
+	// login name up itself, which is the ordinary case. Naming it for any
+	// other source is an error rather than a silently ignored field.
+	ObjectID string
 }
 
 // DropLogin drops a server login.

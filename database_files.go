@@ -68,6 +68,54 @@ ORDER  BY df.type_desc, df.file_id`
 	return files, nil
 }
 
+// DatabaseFiles returns one database's files read from the server-wide
+// catalog, so it answers for a database in any state.
+func (s *Server) DatabaseFiles(database string) ([]*DatabaseFileInfo, error) {
+	return s.DatabaseFilesContext(context.Background(), database)
+}
+
+// DatabaseFilesContext is the context-aware variant of DatabaseFiles.
+//
+// It reads sys.master_files rather than sys.database_files, which is the
+// whole point of it: Database.FilesContext runs its read through a USE, and a
+// database that is OFFLINE, RECOVERY_PENDING or SUSPECT refuses the USE — so
+// the paths become unreadable in exactly the states someone needs them in,
+// such as on the way to a detach. FileGroup is always "" here: sys.filegroups
+// is database-scoped and cannot be joined from the server catalog.
+//
+// A database the login cannot see reads as no rows rather than an error, the
+// way metadata visibility answers everywhere else.
+func (s *Server) DatabaseFilesContext(ctx context.Context, database string) ([]*DatabaseFileInfo, error) {
+	const q = `
+SELECT mf.file_id, mf.name, mf.physical_name, mf.type_desc, mf.state_desc,
+       mf.size * 8, mf.max_size, mf.growth, mf.is_percent_growth
+FROM   sys.master_files mf
+WHERE  mf.database_id = DB_ID(@p1)
+ORDER  BY mf.type_desc, mf.file_id`
+
+	rows, err := s.query(ctx, q, database)
+	if err != nil {
+		return nil, fmt.Errorf("gosmo: list files in %q: %w", database, err)
+	}
+	defer rows.Close()
+
+	var files []*DatabaseFileInfo
+	for rows.Next() {
+		f := &DatabaseFileInfo{}
+		var maxSizePages, growthRaw int64
+		if err := rows.Scan(&f.FileID, &f.Name, &f.PhysicalName, &f.Type, &f.State,
+			&f.SizeKB, &maxSizePages, &growthRaw, &f.IsPercentGrowth); err != nil {
+			return nil, fmt.Errorf("gosmo: list files in %q: %w", database, err)
+		}
+		f.MaxSizeKB, f.GrowthKB, f.GrowthPercent = normalizeFileGrowth(maxSizePages, growthRaw, f.IsPercentGrowth)
+		files = append(files, f)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("gosmo: list files in %q: %w", database, err)
+	}
+	return files, nil
+}
+
 // DatabaseFileSpec describes a file to add via AddFile.
 type DatabaseFileSpec struct {
 	Name      string

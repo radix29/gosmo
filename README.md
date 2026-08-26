@@ -76,6 +76,9 @@ classDiagram
         +CreateDatabase(name, opts) error
         +DropDatabase(name, force) error
         +RenameDatabase(oldName, newName, force) error
+        +DetachDatabase(name, opts) error
+        +AttachDatabase(spec) error
+        +DetachedDatabaseInfo(primaryFilePath) *DetachedDatabase
         +Logins() []*Login
         +LoginByName(name) *Login
         +Login(name) *Login
@@ -408,6 +411,8 @@ classDiagram
         +Certificates() []*Certificate
         +CertificateByName(name) *Certificate
         +CreateCertificate(spec) error
+        +AsymmetricKeys() []*AsymmetricKey
+        +AsymmetricKeyByName(name) *AsymmetricKey
         +HasMasterKey() bool
         +CreateMasterKey(password) error
         +ColumnMasterKeys() []*ColumnMasterKey
@@ -438,6 +443,18 @@ classDiagram
         +SetQueryStoreOptions(opts) error
         +FlushQueryStore() error
         +ClearQueryStore() error
+        +QueryStoreTopResourceQueries(opts) []*QSQueryStat
+        +QueryStoreRegressedQueries(opts) []*QSQueryStat
+        +QueryStoreHighVariationQueries(opts) []*QSQueryStat
+        +QueryStoreForcedPlanQueries(opts) []*QSQueryStat
+        +QueryStoreOverallConsumption(opts) []*QSIntervalStat
+        +QueryStoreTrackedQuery(queryID, opts) []*QSPlanIntervalStat
+        +QueryStoreWaitCategories(opts) []*QSWaitStat
+        +QueryStoreWaitingQueries(category, opts) []*QSQueryStat
+        +QueryStorePlans(queryID, opts) []*QSPlan
+        +QueryStoreQueryText(queryID) (string, string)
+        +QueryStoreForcePlan(queryID, planID) error
+        +QueryStoreUnforcePlan(queryID, planID) error
         +Files() []*DatabaseFileInfo
         +AddFile(spec) error
         +AlterFile(name, m) error
@@ -845,6 +862,100 @@ classDiagram
         +WaitStatsCaptureMode string
     }
 
+    class QueryStoreReportOptions {
+        +Metric QSMetric
+        +Statistic QSStatistic
+        +From time.Time
+        +To time.Time
+        +BaselineFrom time.Time
+        +BaselineTo time.Time
+        +Top int
+        +MinExecCount int64
+        +IncludeInternal bool
+    }
+
+    class QSQueryStat {
+        +QueryID int64
+        +QueryText string
+        +ObjectName string
+        +ExecCount int64
+        +PlanCount int
+        +ForcedPlanID int64
+        +LastExecutionTime time.Time
+        +Value float64
+        +BaselineValue float64
+        +Regression float64
+        +Variation float64
+    }
+
+    class QSPlan {
+        +PlanID int64
+        +QueryID int64
+        +IsForced bool
+        +ForceFailureCount int64
+        +LastForceFailureReason string
+        +QueryPlanXML string
+        +ExecCount int64
+        +Value float64
+    }
+
+    class QSIntervalStat {
+        +StartTime time.Time
+        +EndTime time.Time
+        +ExecCount int64
+        +Value float64
+    }
+
+    class QSPlanIntervalStat {
+        +PlanID int64
+        +StartTime time.Time
+        +EndTime time.Time
+        +ExecCount int64
+        +Value float64
+    }
+
+    class QSWaitStat {
+        +Category string
+        +ExecCount int64
+        +Value float64
+    }
+
+    %% =========================================================
+    %% Detach / Attach
+    %% =========================================================
+    class DetachOptions {
+        +DropConnections bool
+        +UpdateStatistics bool
+        +DropFullTextIndexFile bool
+        Named for what they do, not for
+        sp_detach_db's parameters, whose two
+        flags are the inverse of the question
+        a user is asked.
+    }
+
+    class AttachSpec {
+        +Name string
+        +Files []string
+        +Owner string
+        +RebuildLog bool
+    }
+
+    class DetachedDatabase {
+        +Name string
+        +Version string
+        +Collation string
+        +Files []*DetachedFile
+        +DataFiles() []*DetachedFile
+        +LogFiles() []*DetachedFile
+    }
+
+    class DetachedFile {
+        +FileID int
+        +Name string
+        +PhysicalName string
+        +IsLog bool
+    }
+
     class DatabaseScopedConfig {
         +ID int
         +Name string
@@ -1079,6 +1190,15 @@ classDiagram
     Catalog "1" --> "*" CatalogObject : contains
     CatalogObject "1" --> "*" CatalogColumn : has
     Database --> QueryStoreInfo : has
+    Database --> QSQueryStat : reports
+    Database --> QSPlan : reports
+    Database --> QSIntervalStat : reports
+    Database --> QSPlanIntervalStat : reports
+    Database --> QSWaitStat : reports
+    Server --> DetachOptions : DetachDatabase() takes
+    Server --> AttachSpec : AttachDatabase() takes
+    Server --> DetachedDatabase : DetachedDatabaseInfo() returns
+    DetachedDatabase "1" --> "*" DetachedFile : contains
     Database "1" --> "*" DatabaseScopedConfig : lists
     Database "1" --> "*" Dependency : dependencies of
     Database "1" --> "*" SearchResult : search() returns
@@ -2245,6 +2365,17 @@ classDiagram
     %% =========================================================
     %% Certificates and the database master key
     %% =========================================================
+    class AsymmetricKey {
+        +Name string
+        +KeyID int
+        +PrincipalID int
+        +Algorithm string
+        +KeyLength int
+        +PvtKeyEncryptionType string
+        +Thumbprint []byte
+        +HasPrivateKey() bool
+    }
+
     class Certificate {
         -db *Database
         +Name string
@@ -2352,6 +2483,7 @@ classDiagram
     AvailabilityReplica ..> DatabaseMirroringEndpoint : ships log through
 
     Database "1" --> "*" Certificate : contains
+    Database "1" --> "*" AsymmetricKey : contains
     Database --> CertificateSpec : CreateCertificate() accepts
 ```
 
@@ -2416,6 +2548,9 @@ pool.
 | Server role administration | `role.Rename(newName)` / `role.ChangeOwner(owner)` / `srv.Add\|RemoveServerRoleMember(role, member)` |
 | Drop a server role      | `srv.DropServerRole(name)` / `role.Drop()`  |
 | Rename a database       | `srv.RenameDatabase(old, new, force)` — `force` puts it in single-user mode first |
+| Detach a database       | `srv.DetachDatabase(name, gosmo.DetachOptions{...})` — leaves the files on disk; a detach that fails after `DropConnections` is put back to MULTI_USER |
+| Attach a database       | `srv.AttachDatabase(gosmo.AttachSpec{Name, Files, Owner, RebuildLog})` — the name need not be the one it was detached under |
+| Read a detached file    | `srv.DetachedDatabaseInfo(primaryFilePath)` → `*DetachedDatabase` (`.Name`, `.Files`, `.DataFiles()`, `.LogFiles()`) — the only way to learn a detached database's other files |
 | `Server.LinkedServers`  | `srv.LinkedServers()`                      |
 | `Server.Configuration`  | `srv.Configurations()`                     |
 | `Server.JobServer` (Agent) | see [SQL Server Agent](#sql-server-agent) below |
@@ -2471,6 +2606,7 @@ pool.
 | Partition schemes               | `db.PartitionSchemes()` / `db.PartitionSchemeByName(name)` |
 | Extended properties             | `db.ExtendedProperties(level)` / `db.AddExtendedProperty(...)` / `db.SetExtendedProperty(...)` / `db.DropExtendedProperty(...)` |
 | `Database.Certificates`         | `db.Certificates()` / `db.CertificateByName(name)` / `db.CreateCertificate(spec)` / `cert.Drop()` — see [Certificates](#certificates-and-the-database-master-key) |
+| `Database.AsymmetricKeys`       | `db.AsymmetricKeys()` / `db.AsymmetricKeyByName(name)` — read only; CREATE ASYMMETRIC KEY imports from the server's own filesystem |
 | Database master key             | `db.HasMasterKey()` / `db.CreateMasterKey(password)` |
 | Column master keys              | `db.ColumnMasterKeys()` / `db.ColumnMasterKeyByName(name)` / `db.CreateColumnMasterKey(...)` / `...WithSignature(...)` |
 | Column encryption keys          | `db.ColumnEncryptionKeys()` / `db.ColumnEncryptionKeyByName(name)` / `db.CreateColumnEncryptionKey(name, values)` |
@@ -2485,6 +2621,10 @@ pool.
 | Change ownership                | `db.SetOwner(principal)`                    |
 | Database Scoped Configuration   | `db.DatabaseScopedConfigs()` / `db.SetDatabaseScopedConfig(name, value, forSecondary)` |
 | Query Store                     | `db.QueryStore()` / `db.SetQueryStoreOptions(opts)` / `db.FlushQueryStore()` / `db.ClearQueryStore()` |
+| Query Store reports (SSMS's seven views) | `db.QueryStoreTopResourceQueries(opts)` / `.QueryStoreRegressedQueries(opts)` / `.QueryStoreHighVariationQueries(opts)` / `.QueryStoreForcedPlanQueries(opts)` / `.QueryStoreOverallConsumption(opts)` / `.QueryStoreTrackedQuery(queryID, opts)` / `.QueryStoreWaitCategories(opts)` + `.QueryStoreWaitingQueries(category, opts)` |
+| Query Store plans and plan XML  | `db.QueryStorePlans(queryID, opts)` / `db.QueryStoreQueryText(queryID)` |
+| Force / unforce a plan          | `db.QueryStoreForcePlan(queryID, planID)` / `db.QueryStoreUnforcePlan(queryID, planID)` |
+| What a report can rank by       | `db.QueryStoreMetrics()` / `gosmo.QSStatistics()` / `gosmo.QSMetricUnit(m)` — metrics are version-gated, and `db.QueryStoreWaitStatsSupported()` gates the two wait reports (2017+) |
 | Every file, incl. log           | `db.Files()`                                |
 | Add / alter / remove file       | `db.AddFile(spec)` / `db.AlterFile(name, m)` / `db.RemoveFile(name)` |
 | Add / remove filegroup          | `db.AddFileGroup(name)` / `db.RemoveFileGroup(name)` |
@@ -3105,6 +3245,7 @@ authentication — each instance needs the others' public **certificates**.
 | SSMS equivalent                  | gosmo                                                    |
 | -------------------------------- | -------------------------------------------------------- |
 | Security → Certificates          | `db.Certificates()` / `db.CertificateByName(name)`        |
+| Security → Asymmetric Keys       | `db.AsymmetricKeys()` / `db.AsymmetricKeyByName(name)`    |
 | New / drop certificate           | `db.CreateCertificate(gosmo.CertificateSpec{...})` / `cert.Drop()` |
 | Database master key              | `db.HasMasterKey()` / `db.CreateMasterKey(password)`      |
 | Export the public certificate    | `cert.Encoded()` → `[]byte` (`CERTENCODED`)               |
