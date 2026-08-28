@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"database/sql/driver"
+	"fmt"
 	"io"
 	"slices"
 	"strings"
@@ -50,6 +51,7 @@ func TestProbedNameListsAreWellFormed(t *testing.T) {
 		{"ProbedDatabasePermissions", ProbedDatabasePermissions, true},
 		{"ProbedServerRoles", ProbedServerRoles, false},
 		{"ProbedDatabaseRoles", ProbedDatabaseRoles, false},
+		{"ProbedSchemaPermissions", ProbedSchemaPermissions, true},
 	} {
 		seen := map[string]bool{}
 		for _, n := range list.names {
@@ -131,6 +133,12 @@ type capScript struct {
 	serverRows [][]driver.Value
 	dbRows     [][]driver.Value
 	uses       []string
+
+	// dbQuery and dbArgs are the database probe as it reached the server —
+	// the only place the schema block's own text is observable, since the
+	// answers below are scripted whatever it asks.
+	dbQuery string
+	dbArgs  []driver.NamedValue
 }
 
 var capCurrent *capScript
@@ -152,13 +160,14 @@ func (c *capConn) ExecContext(_ context.Context, q string, _ []driver.NamedValue
 	return driver.ResultNoRows, nil
 }
 
-func (c *capConn) QueryContext(_ context.Context, q string, _ []driver.NamedValue) (driver.Rows, error) {
+func (c *capConn) QueryContext(_ context.Context, q string, args []driver.NamedValue) (driver.Rows, error) {
 	switch {
 	case strings.Contains(q, "HAS_DBACCESS"):
 		return &capRows{cols: 1, rows: [][]driver.Value{{capCurrent.dbAccess}}}, nil
 	case strings.Contains(q, "IS_SRVROLEMEMBER"):
 		return &capRows{cols: 3, rows: capCurrent.serverRows}, nil
 	case strings.Contains(q, "IS_ROLEMEMBER"):
+		capCurrent.dbQuery, capCurrent.dbArgs = q, args
 		return &capRows{cols: 3, rows: capCurrent.dbRows}, nil
 	}
 	return fakeInfoAnswer(q, nil)
@@ -403,5 +412,251 @@ func TestEnumFileSystemIsLegacyMatchesTheGateItReports(t *testing.T) {
 	}
 	if !(&Server{}).EnumFileSystemIsLegacy() {
 		t.Error("an instance of unknown version did not report the legacy path")
+	}
+}
+
+// TestDatabaseCapabilitiesReadSchemaPermissions. A principal granted ALTER on
+// one schema holds no database-wide permission at all, so the database-scope
+// map cannot answer for it: without this block a caller gating a rename or a
+// drop withholds it from exactly the principal SQL Server would let through.
+//
+// The schema travels in the *name* column and the permission in the kind, so
+// the case that matters here is a schema named like a database-scope
+// permission — "ALTER" below — which the other way round would be read back as
+// a database permission answer and overwrite a real one.
+func TestDatabaseCapabilitiesReadSchemaPermissions(t *testing.T) {
+	srv := capServer(t, &capScript{
+		dbAccess: int64(1),
+		dbRows: [][]driver.Value{
+			{"P", "ALTER", int64(0)},
+			{"S:ALTER", "Sales", int64(1)},
+			{"S:ALTER", "dbo", int64(0)},
+			// NULL: the permission does not apply here, which is not a denial.
+			{"S:ALTER", "guest", nil},
+			{"S:ALTER", "ALTER", int64(1)},
+		},
+	})
+
+	c, err := srv.Database("HealthClinic").CapabilitiesContext(context.Background())
+	if err != nil {
+		t.Fatalf("CapabilitiesContext: %v", err)
+	}
+	if !c.HasOnSchema("Sales", "ALTER") {
+		t.Error("a granted schema permission did not read back")
+	}
+	if c.AllowsOnSchema("dbo", "ALTER") || c.PermitsOnSchema("dbo", "ALTER") {
+		t.Error("a denied schema permission read as allowed")
+	}
+	if !c.AllowsOnSchema("guest", "ALTER") {
+		t.Error("a NULL schema answer read as a denial")
+	}
+	if !c.HasOnSchema("ALTER", "ALTER") {
+		t.Error("a schema named like a permission did not read back")
+	}
+	// And the database-scope answer for the same word is untouched.
+	if c.Allows("ALTER") {
+		t.Error("a schema row overwrote the database-scope permission of the same name")
+	}
+	// A schema nobody asked about is unknown, and unknown fails open.
+	if c.HasOnSchema("Archive", "ALTER") || !c.PermitsOnSchema("Archive", "ALTER") {
+		t.Error("an unprobed schema did not fail open")
+	}
+}
+
+// TestSchemaPermissionsFoldInAccessibilityAndNil. The two fail-open shapes
+// PermitsOnSchema has to keep apart: nothing was ever probed (fail open) and
+// the database was measured inaccessible (withhold) — Permits's rule, applied
+// at the scope below it.
+func TestSchemaPermissionsFoldInAccessibilityAndNil(t *testing.T) {
+	var never *DatabaseCapabilities
+	if !never.PermitsOnSchema("Sales", "ALTER") || never.HasOnSchema("Sales", "ALTER") {
+		t.Error("a nil capability set did not fail open on a schema")
+	}
+
+	shut := &DatabaseCapabilities{SchemaPermissions: map[string]map[string]CapabilityState{
+		"Sales": {"ALTER": CapabilityGranted},
+	}}
+	if shut.PermitsOnSchema("Sales", "ALTER") {
+		t.Error("an inaccessible database still permitted a schema-scoped action")
+	}
+}
+
+// TestSchemaCapabilityQueryNumbersItsPlaceholdersAfterTheOthers. The schema
+// block is appended to a query that has already bound every role and
+// permission name, so its first placeholder is the next free number — off by
+// one and the probe reads a role name as a permission with no error.
+func TestSchemaCapabilityQueryNumbersItsPlaceholdersAfterTheOthers(t *testing.T) {
+	q, args := schemaCapabilityQuery(4, []string{"ALTER", "CONTROL"})
+
+	if !strings.Contains(q, "(VALUES (@p4),(@p5))") {
+		t.Errorf("query = %s, want placeholders starting at @p4", q)
+	}
+	if !slices.Equal(args, []any{"ALTER", "CONTROL"}) {
+		t.Errorf("args = %v, want the permission names in order", args)
+	}
+	for _, n := range []string{"'ALTER'", "'CONTROL'"} {
+		if strings.Contains(q, n) {
+			t.Errorf("query interpolates %s instead of binding it:\n%s", n, q)
+		}
+	}
+	// QUOTENAME, not the bare name: a schema whose name needs quoting is
+	// otherwise asked about as a different securable, and HAS_PERMS_BY_NAME
+	// answers NULL for one that does not exist.
+	if !strings.Contains(q, "QUOTENAME(s.name)") {
+		t.Errorf("query = %s, want the schema name quoted", q)
+	}
+}
+
+// TestTheDatabaseProbeAsksAboutEverySchemaInOnePass. The schema block is
+// appended to a query that has already bound every role and permission name,
+// and the answers a test scripts say nothing about what was asked — so the
+// query text is the only place its shape is observable. Two mutations survive
+// everything else: numbering its placeholders from 1 instead of the next free
+// one, and swapping the two string columns so schemas are read back as
+// database-scope permissions.
+func TestTheDatabaseProbeAsksAboutEverySchemaInOnePass(t *testing.T) {
+	script := &capScript{dbAccess: int64(1)}
+	srv := capServer(t, script)
+	if _, err := srv.Database("HealthClinic").CapabilitiesContext(context.Background()); err != nil {
+		t.Fatalf("CapabilitiesContext: %v", err)
+	}
+
+	q := script.dbQuery
+	if !strings.Contains(q, "FROM sys.schemas") {
+		t.Fatalf("the database probe never asked about schemas:\n%s", q)
+	}
+	// One pass, not one query per schema: the schemas come from the catalog,
+	// so nothing is bound per schema.
+	want := len(ProbedDatabaseRoles) + len(ProbedDatabasePermissions) +
+		len(ProbedSchemaPermissions) + len(ProbedObjectPermissions)
+	if len(script.dbArgs) != want {
+		t.Errorf("the probe bound %d names, want %d", len(script.dbArgs), want)
+	}
+	first := len(ProbedDatabaseRoles) + len(ProbedDatabasePermissions) + 1
+	if !strings.Contains(q, fmt.Sprintf("CROSS JOIN (VALUES (@p%d)", first)) {
+		t.Errorf("the schema block does not start at @p%d:\n%s", first, q)
+	}
+	// The permission in the kind column, the schema in the name column.
+	if !strings.Contains(q, "SELECT CONCAT('S:', n.v), s.name,") {
+		t.Errorf("the schema block's columns are the wrong way round:\n%s", q)
+	}
+}
+
+// TestDatabaseProbedSeparatesNotAMemberFromNeverAsked is
+// TestProbedSeparatesNotAMemberFromNeverAsked at database scope. It matters
+// most for the three SQLAgent* roles: they are the only thing that permits
+// SQL Agent's New Job / New Schedule / New Alert / New Operator, and a caller
+// withholding those on "not a member" would withhold them from every
+// connection whose msdb probe had not landed yet.
+//
+// An inaccessible database is deliberately probed: the probe ran and reported
+// that nothing inside could be asked, which is an answer, not a gap.
+func TestDatabaseProbedSeparatesNotAMemberFromNeverAsked(t *testing.T) {
+	var never *DatabaseCapabilities
+	if never.Probed() {
+		t.Error("a nil capability set reported itself probed")
+	}
+	if (&DatabaseCapabilities{}).Probed() {
+		t.Error("the zero value reported itself probed")
+	}
+
+	answered := &DatabaseCapabilities{
+		Accessible: true,
+		Roles:      map[string]bool{"SQLAgentUserRole": false},
+	}
+	if !answered.Probed() {
+		t.Error("a set the server answered did not report itself probed")
+	}
+	if answered.InRole("SQLAgentUserRole") {
+		t.Error("InRole = true for a role the server said the login is not in")
+	}
+
+	inaccessible := &DatabaseCapabilities{Roles: map[string]bool{}}
+	if !inaccessible.Probed() {
+		t.Error("an inaccessible database reported itself never asked")
+	}
+}
+
+// TestTheObjectProbeAsksAboutEveryObjectInOnePass. The OBJECT scope went
+// unprobed because HAS_PERMS_BY_NAME answers for one securable per call, which
+// is a query per object. Reading the catalog instead costs one pass, and this
+// pins the four parts of that read whose absence each produces a wrong answer
+// rather than an error.
+func TestTheObjectProbeAsksAboutEveryObjectInOnePass(t *testing.T) {
+	q, args := objectCapabilityQuery(1, ProbedObjectPermissions)
+
+	if len(args) != len(ProbedObjectPermissions) {
+		t.Errorf("the object block bound %d names, want %d — it must not bind per object",
+			len(args), len(ProbedObjectPermissions))
+	}
+	for _, want := range []struct{ frag, why string }{
+		{"FROM sys.objects", "ownership is invisible to the permission catalog: an owner holds implicit CONTROL with no permission row"},
+		{"FROM sys.database_permissions", "explicit grants come from the permission catalog"},
+		{"p.minor_id = 0", "column-level grants share class 1 and would report as grants on the table"},
+		{"p.permission_name IN (n.v, 'CONTROL')", "CONTROL implies the permission asked about, and public's catalog grants must stay out"},
+		{"OBJECT_NAME(p.major_id) IS NOT NULL", "an object hidden by metadata visibility would key on a bare dot"},
+	} {
+		if !strings.Contains(q, want.frag) {
+			t.Errorf("the object block is missing %q — %s:\n%s", want.frag, want.why, q)
+		}
+	}
+	// The permission in the kind column, the object in the name column, as
+	// scanCapabilityRows reads them.
+	if !strings.Contains(q, "SELECT CONCAT('O:', n.v), CONCAT(SCHEMA_NAME(o.schema_id), '.', o.name)") {
+		t.Errorf("the object block's columns are the wrong way round:\n%s", q)
+	}
+	if !strings.Contains(capabilityPrincipalCTE, "JOIN cap_me ON rm.member_principal_id = cap_me.id") {
+		t.Error("the principal set does not recurse; a permission granted to a nested role would be missed")
+	}
+}
+
+// TestAnObjectPermissionIsAdditiveNotAWithholdingTest. ObjectPermissions is
+// the one sparse map: an object nobody granted anything on has no row at all.
+// Reading it the way the other three are read — "not denied means allowed" —
+// would report every object in the database as permitted, so HasOnObject is
+// the only accessor, and a missing object must answer false.
+func TestAnObjectPermissionIsAdditiveNotAWithholdingTest(t *testing.T) {
+	c := &DatabaseCapabilities{
+		Accessible: true,
+		ObjectPermissions: map[string]map[string]CapabilityState{
+			"dbo.Granted": {"ALTER": CapabilityGranted},
+			"dbo.Denied":  {"ALTER": CapabilityDenied},
+		},
+	}
+	if !c.HasOnObject("dbo", "Granted", "ALTER") {
+		t.Error("an explicitly granted object did not report the permission")
+	}
+	if c.HasOnObject("dbo", "Denied", "ALTER") {
+		t.Error("an explicitly denied object reported the permission held")
+	}
+	if c.HasOnObject("dbo", "NeverMentioned", "ALTER") {
+		t.Error("an object with no row reported the permission held — the map is sparse, not exhaustive")
+	}
+	var nilCaps *DatabaseCapabilities
+	if nilCaps.HasOnObject("dbo", "Granted", "ALTER") {
+		t.Error("a nil capability set reported a permission held")
+	}
+}
+
+// TestADenyOnAnObjectSurvivesAGrant. SQL Server resolves DENY over GRANT, and
+// the object block can produce both rows for one object — a grant to a role
+// the login is in, a deny to the login itself — in either order.
+func TestADenyOnAnObjectSurvivesAGrant(t *testing.T) {
+	for _, order := range [][]int64{{1, 0}, {0, 1}} {
+		objects := map[string]map[string]CapabilityState{}
+		for _, answer := range order {
+			st, _ := capabilityStateOf(sql.NullInt64{Int64: answer, Valid: true})
+			if objects["dbo.T"] == nil {
+				objects["dbo.T"] = map[string]CapabilityState{}
+			}
+			if objects["dbo.T"]["ALTER"] == CapabilityDenied {
+				continue
+			}
+			objects["dbo.T"]["ALTER"] = st
+		}
+		c := &DatabaseCapabilities{Accessible: true, ObjectPermissions: objects}
+		if c.HasOnObject("dbo", "T", "ALTER") {
+			t.Errorf("a deny was overwritten by a grant, rows arriving as %v", order)
+		}
 	}
 }

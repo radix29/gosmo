@@ -6,9 +6,12 @@ import (
 	"testing"
 )
 
-// seqFrom is the single implementation behind all 75 *Seq() iterators, so
-// these cover the three behaviors every one of them inherits: the happy
-// path, a failed fetch, and an early break out of the range loop.
+// seqFrom is the single implementation behind all 91 *Seq() iterators, so
+// these cover the behaviors every one of them inherits: the happy path, a
+// failed fetch, an early break out of the range loop, and when the fetch
+// runs. What they cannot cover is whether a given iterator names the right
+// collection method — a wrong one passes all of these. That is
+// iter_wiring_test.go.
 
 func TestSeqFromYieldsEveryItem(t *testing.T) {
 	want := []int{1, 2, 3}

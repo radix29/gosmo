@@ -8,6 +8,7 @@ import (
 	"reflect"
 	"regexp"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -96,6 +97,47 @@ func (s *Server) execContext(ctx context.Context, stmt string) error {
 	}
 	_, err := s.db.ExecContext(ctx, stmt)
 	return withAllMessages(err)
+}
+
+// atomicBatch renders stmts as one batch that applies all of them or none.
+// It is for a multi-statement write with no single procedure behind it, whose
+// half-done state is one nobody asked for. Job step reordering is the case it
+// was written for: msdb cannot renumber a step in place, so a move is a
+// delete followed by an insert, and a failure between the two loses the step
+// outright — the delete has already committed and the step's definition only
+// ever existed in gosmo's memory.
+//
+// Three choices here are load-bearing, each of which a plausible
+// simplification removes:
+//
+// TRY/CATCH rather than checked return codes. msdb's job procedures raise
+// before they return non-zero, so the CATCH sees the failure either way — and
+// the checked form needs a batch-scoped DECLARE, which collides with itself
+// as soon as a ScriptCollector concatenates two of these into one batch. That
+// is the same collision bindScriptArgs describes for a second DECLARE @p1.
+//
+// SET XACT_ABORT ON is what rolls the transaction back when the *client* goes
+// away rather than the server failing. A cancelled context sends an attention,
+// which aborts the running statement and, with XACT_ABORT off, leaves the
+// transaction open — and a write here runs on a deadline (see
+// objectWriteTimeout on the gossms side), so that is not a remote case. It
+// does not leak onto the next user of the pooled connection: go-mssqldb sets
+// the TDS reset-connection bit on the first packet after database/sql hands
+// the connection back out, which restores every SET option to its login
+// default and rolls back anything still open.
+//
+// THROW, not a RAISERROR of our own, so the caller is given msdb's message
+// about what actually went wrong instead of a generic one.
+func atomicBatch(stmts []string) string {
+	var b strings.Builder
+	b.WriteString("SET XACT_ABORT ON;\nBEGIN TRY\nBEGIN TRANSACTION;\n")
+	for _, stmt := range stmts {
+		b.WriteString(stmt)
+		b.WriteString(";\n")
+	}
+	b.WriteString("COMMIT TRANSACTION;\nEND TRY\nBEGIN CATCH\n" +
+		"IF @@TRANCOUNT > 0 ROLLBACK TRANSACTION;\nTHROW;\nEND CATCH;")
+	return b.String()
 }
 
 // placeholderPat matches the driver's positional parameter placeholders

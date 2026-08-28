@@ -627,6 +627,32 @@ func (s *Server) CurrentLoginContext(ctx context.Context) (string, error) {
 
 // -- Internal helpers ----------------------------------------------------------
 
+// multiUserRepairTimeout bounds restoreMultiUser's statement. Short on
+// purpose: the caller still holds the single-user slot, so the ALTER has
+// nothing to wait for, and a repair that hangs is worse than one that gives up.
+const multiUserRepairTimeout = 10 * time.Second
+
+// restoreMultiUser puts a database this package set to SINGLE_USER back to
+// MULTI_USER — the release after a rename, and the repair after a detach or a
+// drop that failed with the database still there.
+//
+// The context is derived with context.WithoutCancel because the case this
+// exists for is the one where ctx is already dead. SET SINGLE_USER WITH
+// ROLLBACK IMMEDIATE waits out the rollback of whatever it killed, so the
+// statement before this one is precisely the one likely to have exhausted the
+// caller's deadline — and a repair issued on the expired context fails without
+// reaching the server, leaving the database locked to a single login for a
+// reason nobody asked for. Same shape, and the same reason, as capturePlan's
+// deferred SET ... OFF (executionplan.go).
+//
+// WithoutCancel keeps ctx's values, so a caller under WithScript still captures
+// the statement rather than running it.
+func (s *Server) restoreMultiUser(ctx context.Context, name string) error {
+	rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), multiUserRepairTimeout)
+	defer cancel()
+	return s.execContext(rctx, fmt.Sprintf("ALTER DATABASE %s SET MULTI_USER", quoteIdent(name)))
+}
+
 // query runs a server-scoped, rows-returning read against the pool,
 // retrying once on a transient connection failure (a dropped pooled
 // connection, etc.) — the Server-level counterpart of Database.query. A
@@ -947,6 +973,20 @@ func (s *Server) DropDatabaseContext(ctx context.Context, name string, force boo
 		}
 	}
 	if err := s.execContext(ctx, fmt.Sprintf("DROP DATABASE %s", quoteIdent(name))); err != nil {
+		// A failed DROP leaves the database in place — and, with force, still
+		// in the SINGLE_USER this method put it in, unreachable by every other
+		// login until someone notices. The drop can genuinely fail after the
+		// alter succeeded: another session takes the single-user slot, the
+		// database belongs to an availability group, the login may set state
+		// but not drop. Best effort, and the drop's own error is what the
+		// caller is told about.
+		//
+		// Only under force: without it nothing here set the access mode, and
+		// a MULTI_USER on the way out would silently undo a RESTRICTED_USER or
+		// SINGLE_USER the database was deliberately left in.
+		if force {
+			_ = s.restoreMultiUser(ctx, name)
+		}
 		return fmt.Errorf("gosmo: drop database %q: %w", name, err)
 	}
 	return nil
@@ -985,7 +1025,7 @@ func (s *Server) RenameDatabaseContext(ctx context.Context, oldName, newName str
 		if err != nil {
 			name = oldName
 		}
-		if mu := s.execContext(ctx, fmt.Sprintf("ALTER DATABASE %s SET MULTI_USER", quoteIdent(name))); mu != nil && err == nil {
+		if mu := s.restoreMultiUser(ctx, name); mu != nil && err == nil {
 			return fmt.Errorf("gosmo: set multi user on %q: %w", name, mu)
 		}
 	}

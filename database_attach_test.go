@@ -27,8 +27,13 @@ func (c *detConn) Prepare(string) (driver.Stmt, error) { return nil, driver.ErrS
 func (c *detConn) Close() error                        { return nil }
 func (c *detConn) Begin() (driver.Tx, error)           { return nil, driver.ErrSkip }
 
-func (c *detConn) ExecContext(_ context.Context, q string, _ []driver.NamedValue) (driver.Result, error) {
+func (c *detConn) ExecContext(ctx context.Context, q string, _ []driver.NamedValue) (driver.Result, error) {
 	detLog.add(q)
+	// Before failOn: a statement that exhausts the caller's deadline reports
+	// the context's own error, not a server one.
+	if detLog.cancelIfMatched(q) {
+		return nil, ctx.Err()
+	}
 	if detLog.failOn != "" && strings.Contains(q, detLog.failOn) {
 		return nil, errors.New("scripted failure")
 	}
@@ -44,6 +49,15 @@ type detRecorder struct {
 	mu     sync.Mutex
 	calls  []string
 	failOn string
+
+	// cancelOn stands in for the caller's deadline expiring *during* a
+	// statement — the failure mode the MULTI_USER repair exists for, and the
+	// one that cannot be reproduced by cancelling before the call: the
+	// statement that put the database into SINGLE_USER has to have succeeded
+	// first, or there is nothing to repair. The first statement containing it
+	// cancels cancel and then fails with the context's error.
+	cancelOn string
+	cancel   context.CancelFunc
 	// props and files answer DBCC CHECKPRIMARYFILE's option 2 and option 3.
 	props [][]driver.Value
 	files [][]driver.Value
@@ -53,6 +67,21 @@ func (l *detRecorder) add(q string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.calls = append(l.calls, q)
+}
+
+// cancelIfMatched cancels the operation's context if q is the statement the
+// test nominated, and reports whether it did. It fires once: the repair that
+// follows must be seen to run despite the cancellation, not be cancelled by a
+// second match of its own.
+func (l *detRecorder) cancelIfMatched(q string) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.cancelOn == "" || !strings.Contains(q, l.cancelOn) {
+		return false
+	}
+	l.cancelOn = ""
+	l.cancel()
+	return true
 }
 
 func (l *detRecorder) reply(q string) *detRows {
@@ -118,8 +147,21 @@ func detServer(t *testing.T) *Server {
 	t.Cleanup(func() { pool.Close() })
 	detLog.mu.Lock()
 	detLog.calls, detLog.failOn, detLog.props, detLog.files = nil, "", nil, nil
+	detLog.cancelOn, detLog.cancel = "", nil
 	detLog.mu.Unlock()
 	return &Server{db: pool}
+}
+
+// detCancelOn arms the recorder to cancel ctx when the statement containing
+// needle runs, and returns the context the operation under test should use.
+func detCancelOn(t *testing.T, needle string) context.Context {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	detLog.mu.Lock()
+	detLog.cancelOn, detLog.cancel = needle, cancel
+	detLog.mu.Unlock()
+	return ctx
 }
 
 // -- detach ------------------------------------------------------------------
@@ -204,6 +246,28 @@ func TestAFailedDetachIsPutBackToMultiUser(t *testing.T) {
 	last := stmts[len(stmts)-1]
 	if !strings.Contains(last, "SET MULTI_USER") {
 		t.Errorf("last statement after a failed detach is %q, want the database put back to MULTI_USER: %v", last, stmts)
+	}
+}
+
+// TestAFailedDetachIsPutBackToMultiUserEvenWhenTheContextIsGone. The repair
+// above is unreachable if it runs on the caller's own context, because the
+// dominant way a detach fails is the deadline expiring during it: SET
+// SINGLE_USER WITH ROLLBACK IMMEDIATE waits out the rollback of every
+// transaction it killed, and the caller's budget is spent by the time
+// sp_detach_db returns. Issued on the dead context, the repair never reaches
+// the server and the database stays locked to one login.
+func TestAFailedDetachIsPutBackToMultiUserEvenWhenTheContextIsGone(t *testing.T) {
+	s := detServer(t)
+	ctx := detCancelOn(t, "sp_detach_db")
+
+	err := s.DetachDatabaseContext(ctx, "appdb", DetachOptions{DropConnections: true})
+	if err == nil {
+		t.Fatal("a detach whose context expired returned no error")
+	}
+	stmts := detLog.statements()
+	last := stmts[len(stmts)-1]
+	if !strings.Contains(last, "SET MULTI_USER") {
+		t.Errorf("last statement after a cancelled detach is %q, want the database put back to MULTI_USER: %v", last, stmts)
 	}
 }
 

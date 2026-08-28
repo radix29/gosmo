@@ -260,6 +260,30 @@ type QueryStoreReportOptions struct {
 	// execution has no meaningful average. Zero keeps everything.
 	MinExecCount int64
 
+	// QueryIDs restricts a per-query report to these queries, in place of
+	// ranking the whole database — what the Tracked Queries view reads, where
+	// the caller already knows which queries it is following. Empty means
+	// every query. Honoured by the four per-query reports; ignored by the
+	// reports whose rows are not queries (QueryStoreOverallConsumptionContext,
+	// QueryStoreWaitCategoriesContext) and by QueryStorePlansContext, which
+	// names the one query it is about.
+	//
+	// Top still applies: a caller asking for more ids than Top gets the
+	// costliest of them, so pass Top alongside a long list.
+	QueryIDs []int64
+
+	// MinRegressionPct drops queries whose metric has grown by less than this
+	// percentage of its baseline value — the threshold SSMS's Regressed
+	// Queries view offers, and ignored by every other report. Zero keeps
+	// everything.
+	//
+	// A percentage rather than an absolute amount, because the same report is
+	// read under eleven metrics measured in four different units: a threshold
+	// of "100" would mean 100 microseconds under Duration and 100 8-KB pages
+	// under Logical reads. A query whose baseline value is zero is dropped
+	// when a threshold is set — growth from nothing has no percentage.
+	MinRegressionPct float64
+
 	// IncludeInternal keeps queries Query Store flags as internal (statistics
 	// updates and the like). They are excluded by default, as SSMS excludes
 	// them.
@@ -352,12 +376,46 @@ func (sp qsReportSpec) window(a *qsArgs, from, to time.Time) string {
 	return w
 }
 
+// queryFilter renders the Options.QueryIDs restriction as further predicates
+// for the window's WHERE, or nothing when there is no list. Appended by the
+// per-query reports only: QueryStorePlansContext names its own query, and
+// adding a second id predicate there would answer nothing for any query the
+// caller had not also listed.
+func (sp qsReportSpec) queryFilter(a *qsArgs) string {
+	if len(sp.opts.QueryIDs) == 0 {
+		return ""
+	}
+	ids := make([]string, len(sp.opts.QueryIDs))
+	for i, id := range sp.opts.QueryIDs {
+		// Bound, not interpolated: these ids reach the library from wherever
+		// the caller persisted them, and a report is not the place to find out
+		// that the file was editable.
+		ids[i] = a.add(id)
+	}
+	return "\n  AND q.query_id IN (" + strings.Join(ids, ", ") + ")"
+}
+
 // having renders the execution-count floor, or nothing when there is none.
 func (sp qsReportSpec) having(a *qsArgs) string {
 	if sp.opts.MinExecCount <= 0 {
 		return ""
 	}
 	return "\nHAVING SUM(rs.count_executions) >= " + a.add(sp.opts.MinExecCount)
+}
+
+// regressionFloor renders the regression threshold as a WHERE clause over the
+// two windows the Regressed Queries report joins, or nothing when there is no
+// threshold.
+//
+// The comparison is written as a multiplication rather than a division so a
+// zero baseline cannot divide: b.value > 0 already excludes it, but SQL Server
+// is free to evaluate the two predicates in either order.
+func (sp qsReportSpec) regressionFloor(a *qsArgs) string {
+	if sp.opts.MinRegressionPct <= 0 {
+		return ""
+	}
+	return "\nWHERE  b.value > 0 AND (r.value - b.value) >= b.value * " +
+		a.add(sp.opts.MinRegressionPct) + " / 100"
 }
 
 // QSQueryStat is one query's line in a Query Store report.
@@ -502,7 +560,7 @@ func (d *Database) QueryStoreTopResourceQueriesContext(ctx context.Context, opts
 	var a qsArgs
 	top := a.add(sp.opts.Top)
 	q := "SELECT TOP (" + top + ") " + qsQueryColumns(sp.value("rs"), "CAST(0 AS float)") +
-		qsRuntimeFrom + "\n" + sp.window(&a, sp.opts.From, sp.opts.To) + "\n" + qsQueryGroupBy + sp.having(&a) +
+		qsRuntimeFrom + "\n" + sp.window(&a, sp.opts.From, sp.opts.To) + sp.queryFilter(&a) + "\n" + qsQueryGroupBy + sp.having(&a) +
 		"\nORDER BY value DESC"
 
 	rows, err := d.query(ctx, q, a.args...)
@@ -544,7 +602,7 @@ func (d *Database) QueryStoreForcedPlanQueriesContext(ctx context.Context, opts 
 		having += "\n   AND MAX(CAST(p.is_forced_plan AS int)) = 1"
 	}
 	q := "SELECT TOP (" + top + ") " + qsQueryColumns(sp.value("rs"), "CAST(0 AS float)") +
-		qsRuntimeFrom + "\n" + sp.window(&a, sp.opts.From, sp.opts.To) + "\n" + qsQueryGroupBy + having +
+		qsRuntimeFrom + "\n" + sp.window(&a, sp.opts.From, sp.opts.To) + sp.queryFilter(&a) + "\n" + qsQueryGroupBy + having +
 		"\nORDER BY value DESC"
 
 	rows, err := d.query(ctx, q, a.args...)
@@ -585,7 +643,7 @@ func (d *Database) QueryStoreHighVariationQueriesContext(ctx context.Context, op
 	var a qsArgs
 	top := a.add(sp.opts.Top)
 	q := "SELECT TOP (" + top + ") " + qsQueryColumns(sp.value("rs"), variation) +
-		qsRuntimeFrom + "\n" + sp.window(&a, sp.opts.From, sp.opts.To) + "\n" + qsQueryGroupBy + sp.having(&a) +
+		qsRuntimeFrom + "\n" + sp.window(&a, sp.opts.From, sp.opts.To) + sp.queryFilter(&a) + "\n" + qsQueryGroupBy + sp.having(&a) +
 		"\nORDER BY variation DESC"
 
 	rows, err := d.query(ctx, q, a.args...)
@@ -638,7 +696,7 @@ func (d *Database) QueryStoreRegressedQueriesContext(ctx context.Context, opts Q
     %s
     %s%s
 )`, name, qsObjectName, sp.value("rs"), strings.TrimPrefix(qsRuntimeFrom, "\n"),
-			sp.window(&a, from, to), qsQueryGroupBy, sp.having(&a))
+			sp.window(&a, from, to)+sp.queryFilter(&a), qsQueryGroupBy, sp.having(&a))
 	}
 
 	// The CTEs are rendered in parameter order — recent first, then baseline —
@@ -662,8 +720,8 @@ SELECT TOP (%s)
        r.value - b.value      AS regression,
        CAST(0 AS float)       AS variation
 FROM   recent   AS r
-JOIN   baseline AS b ON b.query_id = r.query_id
-ORDER BY regression DESC`, recent, baseline, top)
+JOIN   baseline AS b ON b.query_id = r.query_id%s
+ORDER BY regression DESC`, recent, baseline, top, sp.regressionFloor(&a))
 
 	rows, err := d.query(ctx, q, a.args...)
 	if err != nil {

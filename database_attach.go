@@ -72,7 +72,7 @@ func (s *Server) DetachDatabaseContext(ctx context.Context, name string, opts De
 		// Only on failure: a detach that succeeded has no database left to
 		// set anything on, and the ALTER would fail with "not found".
 		if opts.DropConnections {
-			_ = s.execContext(ctx, fmt.Sprintf("ALTER DATABASE %s SET MULTI_USER", quoteIdent(name)))
+			_ = s.restoreMultiUser(ctx, name)
 		}
 		return fmt.Errorf("gosmo: detach database %q: %w", name, err)
 	}

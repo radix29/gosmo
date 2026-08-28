@@ -827,3 +827,185 @@ func TestQueryStoreReportsExcludeInternalQueriesUnlessAsked(t *testing.T) {
 		t.Error("IncludeInternal still filtered internal queries out")
 	}
 }
+
+// TestQueryStoreRegressionThresholdIsBoundAndOnlyAppliedWhenAsked. The
+// threshold is a percentage of the baseline, so it lands in the outer SELECT
+// where both windows' values are in scope — a HAVING inside either CTE would
+// compare a window against itself.
+func TestQueryStoreRegressionThresholdIsBoundAndOnlyAppliedWhenAsked(t *testing.T) {
+	baseTo := qsFrom
+	baseFrom := baseTo.Add(-2 * time.Hour)
+	opts := QueryStoreReportOptions{
+		Metric: QSMetricCPUTime, From: qsFrom, To: qsTo,
+		BaselineFrom: baseFrom, BaselineTo: baseTo, Top: 10,
+	}
+
+	d := qsRecDB(t, 17, nil, nil)
+	if _, err := d.QueryStoreRegressedQueriesContext(context.Background(), opts); err != nil {
+		t.Fatalf("regressed queries: %v", err)
+	}
+	if sql := qsRec.last(t).sql; strings.Contains(sql, "b.value > 0") {
+		t.Errorf("a report with no threshold still filtered by one:\n%s", sql)
+	}
+
+	opts.MinRegressionPct = 25
+	d = qsRecDB(t, 17, nil, nil)
+	if _, err := d.QueryStoreRegressedQueriesContext(context.Background(), opts); err != nil {
+		t.Fatalf("regressed queries: %v", err)
+	}
+	call := qsRec.last(t)
+	want := []any{int64(10), qsFrom, qsTo, baseFrom, baseTo, float64(25)}
+	if len(call.args) != len(want) {
+		t.Fatalf("bound %d parameters (%v), want %d", len(call.args), call.args, len(want))
+	}
+	for i := range want {
+		if call.args[i] != want[i] {
+			t.Errorf("@p%d = %v, want %v", i+1, call.args[i], want[i])
+		}
+	}
+	// The threshold multiplies rather than divides: a baseline of zero is
+	// excluded by the first predicate, but nothing orders the two.
+	if frag := "WHERE  b.value > 0 AND (r.value - b.value) >= b.value * @p6 / 100"; !strings.Contains(call.sql, frag) {
+		t.Errorf("statement is missing %q:\n%s", frag, call.sql)
+	}
+	// After the JOIN and before the ORDER BY — anywhere else is a syntax error
+	// the fake driver would never notice.
+	join := strings.Index(call.sql, "JOIN   baseline")
+	where := strings.Index(call.sql, "WHERE  b.value > 0")
+	order := strings.Index(call.sql, "ORDER BY regression")
+	if !(join < where && where < order) {
+		t.Errorf("the threshold clause is out of place:\n%s", call.sql)
+	}
+}
+
+// TestQueryStoreRegressionThresholdIsIgnoredByTheOtherReports: a percentage
+// growth needs two windows, and the other five reports read one.
+func TestQueryStoreRegressionThresholdIsIgnoredByTheOtherReports(t *testing.T) {
+	opts := QueryStoreReportOptions{From: qsFrom, To: qsTo, MinRegressionPct: 25}
+	for name, run := range map[string]func(*Database) error{
+		"top resource": func(d *Database) error {
+			_, err := d.QueryStoreTopResourceQueriesContext(context.Background(), opts)
+			return err
+		},
+		"high variation": func(d *Database) error {
+			_, err := d.QueryStoreHighVariationQueriesContext(context.Background(), opts)
+			return err
+		},
+		"forced plans": func(d *Database) error {
+			_, err := d.QueryStoreForcedPlanQueriesContext(context.Background(), opts)
+			return err
+		},
+	} {
+		d := qsRecDB(t, 17, nil, nil)
+		if err := run(d); err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if sql := qsRec.last(t).sql; strings.Contains(sql, "b.value") {
+			t.Errorf("%s applied the regression threshold:\n%s", name, sql)
+		}
+	}
+}
+
+// TestQueryStoreQueryIDsAreBoundInWindowOrder: the id list lands in the same
+// WHERE the interval range does, and its parameters are numbered after that
+// range's — the Regressed report renders that WHERE twice, once per window,
+// and a list numbered ahead of the range would bind a query id to a time.
+func TestQueryStoreQueryIDsAreBoundInWindowOrder(t *testing.T) {
+	d := qsRecDB(t, 17, nil, nil)
+	if _, err := d.QueryStoreTopResourceQueriesContext(context.Background(),
+		QueryStoreReportOptions{From: qsFrom, To: qsTo, Top: 10, QueryIDs: []int64{7, 9}}); err != nil {
+		t.Fatalf("top resource queries: %v", err)
+	}
+	call := qsRec.last(t)
+	want := []any{int64(10), qsFrom, qsTo, int64(7), int64(9)}
+	if len(call.args) != len(want) {
+		t.Fatalf("bound %d parameters (%v), want %d", len(call.args), call.args, len(want))
+	}
+	for i := range want {
+		if call.args[i] != want[i] {
+			t.Errorf("@p%d = %v, want %v", i+1, call.args[i], want[i])
+		}
+	}
+	if frag := "q.query_id IN (@p4, @p5)"; !strings.Contains(call.sql, frag) {
+		t.Errorf("statement is missing %q:\n%s", frag, call.sql)
+	}
+
+	// No ids: no predicate at all, rather than an empty IN () that no server
+	// parses.
+	d = qsRecDB(t, 17, nil, nil)
+	if _, err := d.QueryStoreTopResourceQueriesContext(context.Background(),
+		QueryStoreReportOptions{From: qsFrom, To: qsTo}); err != nil {
+		t.Fatalf("top resource queries: %v", err)
+	}
+	if strings.Contains(qsRec.last(t).sql, "query_id IN") {
+		t.Error("an empty QueryIDs still filtered by query id")
+	}
+}
+
+// TestQueryStoreRegressedQueriesBindsTheIDListPerWindow, because the two CTEs
+// share one qsArgs: each window renders its own copy of the list, and a
+// second copy that reused the first's parameter numbers would silently point
+// at the reported window's range.
+func TestQueryStoreRegressedQueriesBindsTheIDListPerWindow(t *testing.T) {
+	baseTo := qsFrom
+	baseFrom := baseTo.Add(-2 * time.Hour)
+	d := qsRecDB(t, 17, nil, nil)
+	if _, err := d.QueryStoreRegressedQueriesContext(context.Background(), QueryStoreReportOptions{
+		From: qsFrom, To: qsTo, BaselineFrom: baseFrom, BaselineTo: baseTo, Top: 10,
+		QueryIDs: []int64{7},
+	}); err != nil {
+		t.Fatalf("regressed queries: %v", err)
+	}
+	call := qsRec.last(t)
+	want := []any{int64(10), qsFrom, qsTo, int64(7), baseFrom, baseTo, int64(7)}
+	if len(call.args) != len(want) {
+		t.Fatalf("bound %d parameters (%v), want %d", len(call.args), call.args, len(want))
+	}
+	for i := range want {
+		if call.args[i] != want[i] {
+			t.Errorf("@p%d = %v, want %v", i+1, call.args[i], want[i])
+		}
+	}
+	for _, frag := range []string{"q.query_id IN (@p4)", "q.query_id IN (@p7)"} {
+		if !strings.Contains(call.sql, frag) {
+			t.Errorf("statement is missing %q:\n%s", frag, call.sql)
+		}
+	}
+}
+
+// TestTheSingleQueryReadsIgnoreTheQueryIDList. Both read with the same options
+// the report was read with, so a Tracked Queries report's id list reaches
+// them — and a second id predicate beside the one query they already name
+// would answer nothing for any query the list did not happen to contain.
+func TestTheSingleQueryReadsIgnoreTheQueryIDList(t *testing.T) {
+	opts := QueryStoreReportOptions{From: qsFrom, To: qsTo, QueryIDs: []int64{7, 9}}
+	for name, run := range map[string]func(*Database) error{
+		"plans": func(d *Database) error {
+			_, err := d.QueryStorePlansContext(context.Background(), 42, opts)
+			return err
+		},
+		"tracked query": func(d *Database) error {
+			_, err := d.QueryStoreTrackedQueryContext(context.Background(), 42, opts)
+			return err
+		},
+	} {
+		checkNoIDList(t, name, run)
+	}
+}
+
+func checkNoIDList(t *testing.T, name string, run func(*Database) error) {
+	t.Helper()
+	d := qsRecDB(t, 17, nil, nil)
+	if err := run(d); err != nil {
+		t.Fatalf("%s: %v", name, err)
+	}
+	call := qsRec.last(t)
+	if strings.Contains(call.sql, "query_id IN") {
+		t.Errorf("the %s read applied the id list:\n%s", name, call.sql)
+	}
+	for _, arg := range call.args {
+		if arg == int64(7) || arg == int64(9) {
+			t.Errorf("the %s read bound an id from the list: %v", name, call.args)
+		}
+	}
+}

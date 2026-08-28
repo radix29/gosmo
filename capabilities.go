@@ -138,12 +138,39 @@ var ProbedDatabasePermissions = []string{
 	"ALTER ANY ROLE",
 	"ALTER ANY SCHEMA",
 	"ALTER ANY DATASPACE",
+	"ALTER ANY COLUMN MASTER KEY",
+	"ALTER ANY COLUMN ENCRYPTION KEY",
+	"ALTER ANY SECURITY POLICY",
 	"SELECT",
 	"INSERT",
 	"UPDATE",
 	"DELETE",
 	"EXECUTE",
 	"SHOWPLAN",
+}
+
+// ProbedSchemaPermissions are the SCHEMA-scope permissions
+// DatabaseCapabilities probes, once per schema in the database.
+//
+// One name is enough: HAS_PERMS_BY_NAME folds in the permissions that imply
+// the one it is asked about, so a principal holding CONTROL on the schema, or
+// ALTER ANY SCHEMA, or db_owner, answers 1 for ALTER without any of them being
+// asked separately.
+var ProbedSchemaPermissions = []string{
+	"ALTER",
+}
+
+// ProbedObjectPermissions are the OBJECT-scope permissions
+// DatabaseCapabilities probes, for every object the login has been granted one
+// on or owns outright.
+//
+// This block is read out of the catalog rather than asked with
+// HAS_PERMS_BY_NAME, which answers for one securable per call and so would
+// cost a query per object. The consequence is that it reports only what is
+// *explicit*: an object carrying no grant and no distinct owner has no row at
+// all, which is why the answer is additive — see HasOnObject.
+var ProbedObjectPermissions = []string{
+	"ALTER",
 }
 
 // Capabilities is what the connected login may do at the server scope: its
@@ -242,7 +269,7 @@ func (s *Server) CapabilitiesContext(ctx context.Context) (*Capabilities, error)
 		ServerRoles:       map[string]bool{},
 		ServerPermissions: map[string]CapabilityState{},
 	}
-	if err := scanCapabilityRows(rows, c.ServerRoles, c.ServerPermissions); err != nil {
+	if err := scanCapabilityRows(rows, c.ServerRoles, c.ServerPermissions, nil, nil); err != nil {
 		return nil, fmt.Errorf("gosmo: read server capabilities: %w", err)
 	}
 	return c, nil
@@ -266,6 +293,102 @@ type DatabaseCapabilities struct {
 
 	// Permissions maps each name in ProbedDatabasePermissions to its state.
 	Permissions map[string]CapabilityState
+
+	// SchemaPermissions maps each schema in the database to the state of each
+	// name in ProbedSchemaPermissions on it. Read it through
+	// SchemaPermission/PermitsOnSchema rather than directly.
+	//
+	// It exists because the database-scope map cannot answer for a schema: a
+	// principal granted ALTER on one schema and nothing else holds no
+	// database-wide permission at all, and a caller gating a rename or a drop
+	// on the database-scope answer withholds it from exactly the principal
+	// SQL Server would let through.
+	SchemaPermissions map[string]map[string]CapabilityState
+
+	// ObjectPermissions maps "schema.object" to the state of each name in
+	// ProbedObjectPermissions on it. Read it through HasOnObject.
+	//
+	// Unlike the other three maps this one is *sparse*: it holds a row only
+	// for an object the login was granted a permission on, was denied one on,
+	// or owns. A missing entry means "no explicit grant", never "not probed",
+	// so an Allows/Permits-style reading of it would report every object in
+	// the database as permitted. HasOnObject is the only safe test.
+	ObjectPermissions map[string]map[string]CapabilityState
+}
+
+// SchemaPermission returns the state of one SCHEMA-scope permission on the
+// named schema. A schema that does not exist, or a name that was never probed,
+// is CapabilityUnknown — as is every schema of a database that was not probed
+// at all.
+func (c *DatabaseCapabilities) SchemaPermission(schema, name string) CapabilityState {
+	if c == nil {
+		return CapabilityUnknown
+	}
+	return c.SchemaPermissions[schema][name]
+}
+
+// HasOnSchema reports that the permission is known to be held on the schema —
+// the test for offering something extra. See Capabilities.Has.
+func (c *DatabaseCapabilities) HasOnSchema(schema, name string) bool {
+	return c.SchemaPermission(schema, name) == CapabilityGranted
+}
+
+// AllowsOnSchema reports that the permission is not known to be denied on the
+// schema. See Capabilities.Allows.
+func (c *DatabaseCapabilities) AllowsOnSchema(schema, name string) bool {
+	return c.SchemaPermission(schema, name) != CapabilityDenied
+}
+
+// PermitsOnSchema is the test for withholding something scoped to one schema:
+// AllowsOnSchema, plus the accessibility every answer inside the database
+// takes for granted. Permits's counterpart — see it for why accessibility
+// belongs in the withholding test.
+func (c *DatabaseCapabilities) PermitsOnSchema(schema, name string) bool {
+	if c == nil {
+		return true
+	}
+	return c.Accessible && c.AllowsOnSchema(schema, name)
+}
+
+// Probed reports whether these capabilities came from a database that
+// answered. Capabilities.Probed's counterpart, and needed for the same reason:
+// InRole answers false for a role that was never asked about exactly as it
+// does for one the login is not in, so a caller that would withhold something
+// on "not a member" must check this first.
+//
+// It reads Roles rather than Accessible because an inaccessible database is a
+// real answer — the probe ran and reported that nothing inside could be asked.
+func (c *DatabaseCapabilities) Probed() bool { return c != nil && c.Roles != nil }
+
+// ObjectKey is the key ObjectPermissions is indexed by: the schema and object
+// name joined with a dot, unquoted, exactly as the probe records them.
+func ObjectKey(schema, object string) string { return schema + "." + object }
+
+// ObjectPermission returns the state of one OBJECT-scope permission on the
+// named object. An object with no explicit grant, deny or distinct owner is
+// CapabilityUnknown — which here means "nothing was recorded for it", not
+// "the probe did not run".
+func (c *DatabaseCapabilities) ObjectPermission(schema, object, name string) CapabilityState {
+	if c == nil {
+		return CapabilityUnknown
+	}
+	return c.ObjectPermissions[ObjectKey(schema, object)][name]
+}
+
+// HasOnObject reports that the permission is known to be held on the object.
+//
+// This is the only sound test against ObjectPermissions, and the reason is the
+// map's sparseness rather than the usual offer-versus-withhold distinction: an
+// object nobody granted anything on has no row, so "not denied" is true of
+// every object in the database and an AllowsOnObject would gate nothing.
+//
+// Use it as an *additional* reason to permit something, alongside the
+// database- and schema-scope answers — never as the reason to withhold it.
+// A principal granted ALTER on one table holds no permission at either wider
+// scope, so those answer 0 and a caller reading only them withholds a write
+// SQL Server would have allowed.
+func (c *DatabaseCapabilities) HasOnObject(schema, object, name string) bool {
+	return c.ObjectPermission(schema, object, name) == CapabilityGranted
 }
 
 // InRole reports whether the login's user in this database is a member of the
@@ -354,8 +477,10 @@ func (d *Database) CapabilitiesContext(ctx context.Context) (*DatabaseCapabiliti
 	// there is nothing inside it to ask about.
 	if !access.Valid || !access.Bool {
 		return &DatabaseCapabilities{
-			Roles:       map[string]bool{},
-			Permissions: map[string]CapabilityState{},
+			Roles:             map[string]bool{},
+			Permissions:       map[string]CapabilityState{},
+			SchemaPermissions: map[string]map[string]CapabilityState{},
+			ObjectPermissions: map[string]map[string]CapabilityState{},
 		}, nil
 	}
 
@@ -363,6 +488,13 @@ func (d *Database) CapabilitiesContext(ctx context.Context) (*DatabaseCapabiliti
 		"SELECT 'R', n.v, IS_ROLEMEMBER(n.v)", ProbedDatabaseRoles,
 		"SELECT 'P', n.v, HAS_PERMS_BY_NAME(DB_NAME(), 'DATABASE', n.v)", ProbedDatabasePermissions,
 	)
+	sq, sargs := schemaCapabilityQuery(len(args)+1, ProbedSchemaPermissions)
+	q += "\nUNION ALL\n" + sq
+	args = append(args, sargs...)
+
+	oq, oargs := objectCapabilityQuery(len(args)+1, ProbedObjectPermissions)
+	q = capabilityPrincipalCTE + q + "\nUNION ALL\n" + oq
+	args = append(args, oargs...)
 
 	rows, err := d.query(ctx, q, args...)
 	if err != nil {
@@ -371,11 +503,13 @@ func (d *Database) CapabilitiesContext(ctx context.Context) (*DatabaseCapabiliti
 	defer rows.Close()
 
 	c := &DatabaseCapabilities{
-		Accessible:  true,
-		Roles:       map[string]bool{},
-		Permissions: map[string]CapabilityState{},
+		Accessible:        true,
+		Roles:             map[string]bool{},
+		Permissions:       map[string]CapabilityState{},
+		SchemaPermissions: map[string]map[string]CapabilityState{},
+		ObjectPermissions: map[string]map[string]CapabilityState{},
 	}
-	if err := scanCapabilityRows(rows.Rows, c.Roles, c.Permissions); err != nil {
+	if err := scanCapabilityRows(rows.Rows, c.Roles, c.Permissions, c.SchemaPermissions, c.ObjectPermissions); err != nil {
 		return nil, fmt.Errorf("gosmo: read capabilities for database %q: %w", d.name, err)
 	}
 	return c, nil
@@ -406,17 +540,98 @@ func capabilityQuery(roleSelect string, roles []string, permSelect string, perms
 	return b.String(), args
 }
 
-// valuesClause renders " FROM (VALUES (@pN),(@pN+1),...) AS n(v)" for count
-// parameters starting at first.
-func valuesClause(first, count int) string {
+// schemaCapabilityQuery builds the third block of the database probe: one row
+// per schema per probed permission, asked of every schema in the database in
+// one pass rather than a query per schema.
+//
+// The permission travels in the *kind* column and the schema in the name
+// column, not the other way round: a permission name is ours and fixed, a
+// schema name is user data, and a schema called "P" would otherwise be read
+// back as a database-scope permission answer.
+func schemaCapabilityQuery(first int, perms []string) (string, []any) {
+	args := make([]any, len(perms))
+	for i, n := range perms {
+		args[i] = n
+	}
+	return "SELECT CONCAT('S:', n.v), s.name, HAS_PERMS_BY_NAME(QUOTENAME(s.name), 'SCHEMA', n.v)" +
+		" FROM sys.schemas AS s CROSS JOIN (VALUES " + valuesList(first, len(perms)) + ") AS n(v)", args
+}
+
+// objectCapabilityQuery builds the OBJECT-scope block: one row per object the
+// login has an explicit permission on or owns, tagged "O:<permission>" with
+// the object as "schema.object" and 1 for held, 0 for denied.
+//
+// It is a catalog read rather than a HAS_PERMS_BY_NAME probe because that
+// function answers for one securable per call — a query per object, which is
+// what kept this scope unprobed. Four details are load-bearing, each of them a
+// wrong answer if dropped:
+//
+//   - The recursive CTE walks role membership. A permission granted to a role
+//     the login reaches only through another role is held just as fully as one
+//     granted directly, and stopping at the first level misses it.
+//   - public is in the principal set, so the permission_name filter has to
+//     stay: without it every catalog view's SELECT grant to public comes back,
+//     235 rows on a stock database against the 3 that matter.
+//   - minor_id = 0 keeps column-level grants out. They share class 1 with the
+//     object-level ones and would otherwise report a column grant as a grant
+//     on the table.
+//   - The sys.objects half is not redundant with the permissions half: an
+//     object's owner holds implicit CONTROL and has *no* permission row at
+//     all, so ownership is invisible to the catalog's permission list.
+//
+// An object the login can see nothing of comes back with a NULL name — a DENY
+// leaves no permission behind, and metadata visibility then hides the object —
+// and is dropped. Such an object is equally invisible in any listing built
+// from the same catalog, so there is nothing for the answer to gate.
+func objectCapabilityQuery(first int, perms []string) (string, []any) {
+	args := make([]any, len(perms))
+	for i, n := range perms {
+		args[i] = n
+	}
+	return `SELECT CONCAT('O:', n.v), CONCAT(SCHEMA_NAME(o.schema_id), '.', o.name), 1
+	FROM sys.objects AS o CROSS JOIN (VALUES ` + valuesList(first, len(perms)) + `) AS n(v)
+	WHERE o.principal_id IN (SELECT id FROM cap_me)
+UNION ALL
+	SELECT CONCAT('O:', n.v), CONCAT(OBJECT_SCHEMA_NAME(p.major_id), '.', OBJECT_NAME(p.major_id)),
+	       CASE WHEN p.state IN ('D') THEN 0 ELSE 1 END
+	FROM sys.database_permissions AS p CROSS JOIN (VALUES ` + valuesList(first, len(perms)) + `) AS n(v)
+	WHERE p.class = 1 AND p.minor_id = 0
+	  AND p.grantee_principal_id IN (SELECT id FROM cap_me)
+	  AND p.permission_name IN (n.v, 'CONTROL')
+	  AND OBJECT_NAME(p.major_id) IS NOT NULL`, args
+}
+
+// capabilityPrincipalCTE is the "every principal the login's permissions can
+// arrive through" set the object block selects from: the user itself, public,
+// and every role reachable through role membership at any depth.
+const capabilityPrincipalCTE = `WITH cap_me AS (
+	SELECT DATABASE_PRINCIPAL_ID() AS id
+	UNION ALL SELECT DATABASE_PRINCIPAL_ID('public')
+	UNION ALL
+	SELECT rm.role_principal_id FROM sys.database_role_members AS rm
+	JOIN cap_me ON rm.member_principal_id = cap_me.id
+)
+`
+
+// valuesList renders "(@pN),(@pN+1),..." for count parameters starting at
+// first — the placeholder list both probe blocks bind their names through.
+func valuesList(first, count int) string {
 	var b strings.Builder
-	b.WriteString(" FROM (VALUES ")
 	for i := range count {
 		if i > 0 {
 			b.WriteString(",")
 		}
 		fmt.Fprintf(&b, "(@p%d)", first+i)
 	}
+	return b.String()
+}
+
+// valuesClause renders " FROM (VALUES (@pN),(@pN+1),...) AS n(v)" for count
+// parameters starting at first.
+func valuesClause(first, count int) string {
+	var b strings.Builder
+	b.WriteString(" FROM (VALUES ")
+	b.WriteString(valuesList(first, count))
 	b.WriteString(") AS n(v)")
 	return b.String()
 }
@@ -424,26 +639,64 @@ func valuesClause(first, count int) string {
 // scanCapabilityRows fills roles and perms from the probe's (kind, name,
 // answer) rows. A NULL answer is left out of the map entirely, which is what
 // makes it read back as CapabilityUnknown / false.
-func scanCapabilityRows(rows *sql.Rows, roles map[string]bool, perms map[string]CapabilityState) error {
+func scanCapabilityRows(rows *sql.Rows, roles map[string]bool, perms map[string]CapabilityState, schemas, objects map[string]map[string]CapabilityState) error {
 	for rows.Next() {
 		var kind, name string
 		var answer sql.NullInt64
 		if err := rows.Scan(&kind, &name, &answer); err != nil {
 			return err
 		}
-		switch kind {
-		case "R":
+		switch {
+		case kind == "R":
 			roles[name] = answer.Valid && answer.Int64 == 1
-		case "P":
-			if !answer.Valid {
+		case kind == "P":
+			if st, ok := capabilityStateOf(answer); ok {
+				perms[name] = st
+			}
+		case strings.HasPrefix(kind, "S:"):
+			// name is the schema here, and the permission rides in kind — see
+			// schemaCapabilityQuery. A server probe passes a nil map and drops
+			// these rows, which it never asks for.
+			st, ok := capabilityStateOf(answer)
+			if !ok || schemas == nil {
 				continue
 			}
-			if answer.Int64 == 1 {
-				perms[name] = CapabilityGranted
-			} else {
-				perms[name] = CapabilityDenied
+			if schemas[name] == nil {
+				schemas[name] = map[string]CapabilityState{}
 			}
+			schemas[name][strings.TrimPrefix(kind, "S:")] = st
+		case strings.HasPrefix(kind, "O:"):
+			// As with "S:", name is the securable and the permission rides in
+			// kind. A denial wins over a grant however the two rows are
+			// ordered: SQL Server resolves DENY over GRANT, and the object
+			// block can produce both for one object — a grant on a role and a
+			// deny on the user.
+			st, ok := capabilityStateOf(answer)
+			if !ok || objects == nil {
+				continue
+			}
+			perm := strings.TrimPrefix(kind, "O:")
+			if objects[name] == nil {
+				objects[name] = map[string]CapabilityState{}
+			}
+			if objects[name][perm] == CapabilityDenied {
+				continue
+			}
+			objects[name][perm] = st
 		}
 	}
 	return rows.Err()
+}
+
+// capabilityStateOf maps one HAS_PERMS_BY_NAME answer to a state. NULL is not
+// a state: the permission does not apply to the securable on this instance,
+// and recording it as denied would withhold whatever it gates.
+func capabilityStateOf(answer sql.NullInt64) (CapabilityState, bool) {
+	if !answer.Valid {
+		return CapabilityUnknown, false
+	}
+	if answer.Int64 == 1 {
+		return CapabilityGranted, true
+	}
+	return CapabilityDenied, true
 }

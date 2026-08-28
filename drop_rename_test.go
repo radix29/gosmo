@@ -315,3 +315,104 @@ func TestDropColumnRefusesAnEmptyName(t *testing.T) {
 		t.Errorf("emitted %q, want nothing", script.Statements)
 	}
 }
+
+// -- SINGLE_USER is never left behind ----------------------------------------
+//
+// Every write below opens by taking exclusive access with SET SINGLE_USER WITH
+// ROLLBACK IMMEDIATE, which locks the database to one login. If the write that
+// follows fails, nothing else puts it back — so the repair is part of the
+// method's contract, and these pin it. See Server.restoreMultiUser.
+
+// TestAFailedForcedDropIsPutBackToMultiUser. A DROP can genuinely fail after
+// the alter succeeded — another session takes the single-user slot, the
+// database is in an availability group, the login may set state but not drop —
+// and leaving it there locks everyone else out of a database that still exists.
+func TestAFailedForcedDropIsPutBackToMultiUser(t *testing.T) {
+	s := detServer(t)
+	detLog.mu.Lock()
+	detLog.failOn = "DROP DATABASE"
+	detLog.mu.Unlock()
+
+	if err := s.DropDatabaseContext(context.Background(), "appdb", true); err == nil {
+		t.Fatal("a failing drop returned no error")
+	}
+	stmts := detLog.statements()
+	last := stmts[len(stmts)-1]
+	if !strings.Contains(last, "[appdb] SET MULTI_USER") {
+		t.Errorf("last statement after a failed forced drop is %q, want the database put back to MULTI_USER: %v", last, stmts)
+	}
+}
+
+// TestAFailedForcedDropIsPutBackToMultiUserEvenWhenTheContextIsGone. The
+// repair has to outlive the caller's context, because the deadline expiring
+// during the drop is one of the ways the drop fails — and the one where a
+// repair on the same context cannot reach the server at all.
+func TestAFailedForcedDropIsPutBackToMultiUserEvenWhenTheContextIsGone(t *testing.T) {
+	s := detServer(t)
+	ctx := detCancelOn(t, "DROP DATABASE")
+
+	if err := s.DropDatabaseContext(ctx, "appdb", true); err == nil {
+		t.Fatal("a drop whose context expired returned no error")
+	}
+	stmts := detLog.statements()
+	last := stmts[len(stmts)-1]
+	if !strings.Contains(last, "[appdb] SET MULTI_USER") {
+		t.Errorf("last statement after a cancelled forced drop is %q, want the database put back to MULTI_USER: %v", last, stmts)
+	}
+}
+
+// TestAFailedDropWithoutForceLeavesTheAccessModeAlone. Without force nothing
+// here set the access mode, so a MULTI_USER on the way out would silently undo
+// a RESTRICTED_USER or SINGLE_USER the database was deliberately left in.
+func TestAFailedDropWithoutForceLeavesTheAccessModeAlone(t *testing.T) {
+	s := detServer(t)
+	detLog.mu.Lock()
+	detLog.failOn = "DROP DATABASE"
+	detLog.mu.Unlock()
+
+	if err := s.DropDatabaseContext(context.Background(), "appdb", false); err == nil {
+		t.Fatal("a failing drop returned no error")
+	}
+	for _, stmt := range detLog.statements() {
+		if strings.Contains(stmt, "MULTI_USER") {
+			t.Errorf("an unforced drop issued %q, changing an access mode it never set", stmt)
+		}
+	}
+}
+
+// TestASuccessfulDropDoesNotTryToAlterTheDatabaseAfterwards. The database is
+// gone by then, so the alter would fail with "not found" — and the repair is
+// best-effort, so that failure would be swallowed rather than reported, which
+// is worse than not issuing it.
+func TestASuccessfulDropDoesNotTryToAlterTheDatabaseAfterwards(t *testing.T) {
+	s := detServer(t)
+	if err := s.DropDatabaseContext(context.Background(), "appdb", true); err != nil {
+		t.Fatalf("DropDatabaseContext: %v", err)
+	}
+	for _, stmt := range detLog.statements() {
+		if strings.Contains(stmt, "MULTI_USER") {
+			t.Errorf("a successful drop issued %q against a database that no longer exists", stmt)
+		}
+	}
+}
+
+// TestAForcedRenameReleasesMultiUserEvenWhenTheContextIsGone. Unlike the drop
+// and the detach, the rename's release runs on success too — but only the
+// failure path is at risk, and it is the one where the database still exists
+// to be stranded. MODIFY NAME needs exclusive access and waits for it, so the
+// deadline expiring there is the expected failure, not an exotic one.
+func TestAForcedRenameReleasesMultiUserEvenWhenTheContextIsGone(t *testing.T) {
+	s := detServer(t)
+	ctx := detCancelOn(t, "MODIFY NAME")
+
+	if err := s.RenameDatabaseContext(ctx, "AppDB", "AppDB2", true); err == nil {
+		t.Fatal("a rename whose context expired returned no error")
+	}
+	stmts := detLog.statements()
+	last := stmts[len(stmts)-1]
+	// The old name: the rename did not happen, so that is what the database
+	// is still called.
+	if !strings.Contains(last, "[AppDB] SET MULTI_USER") {
+		t.Errorf("last statement after a cancelled rename is %q, want [AppDB] put back to MULTI_USER: %v", last, stmts)
+	}
+}

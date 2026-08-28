@@ -699,13 +699,24 @@ func (j *Job) addStepAt(ctx context.Context, req JobStepRequest, stepID int) err
 	if req.Name == "" {
 		return fmt.Errorf("gosmo: add step: name is required")
 	}
+	if err := j.server.execContext(ctx, addStepStmt(j.Name, req, stepID)); err != nil {
+		return fmt.Errorf("gosmo: add step %q to job %q: %w", req.Name, j.Name, err)
+	}
+	return nil
+}
+
+// addStepStmt renders the sp_add_jobstep call. stepID > 0 inserts at that
+// position; 0 appends. Split out from addStepAt so ReorderStepsContext can
+// collect the statement into its transactional batch instead of issuing it —
+// see atomicBatch.
+func addStepStmt(jobName string, req JobStepRequest, stepID int) string {
 	q := fmt.Sprintf(
 		"EXEC msdb.dbo.sp_add_jobstep @job_name = N'%s', @step_name = N'%s', "+
 			"@subsystem = N'%s', @command = N'%s', "+
 			"@on_success_action = %d, @on_success_step_id = %d, "+
 			"@on_fail_action = %d, @on_fail_step_id = %d, "+
 			"@retry_attempts = %d, @retry_interval = %d",
-		escapeSingle(j.Name), escapeSingle(req.Name),
+		escapeSingle(jobName), escapeSingle(req.Name),
 		escapeSingle(req.Subsystem), escapeSingle(req.Command),
 		req.OnSuccessAction, req.OnSuccessStepID,
 		req.OnFailAction, req.OnFailStepID,
@@ -725,10 +736,7 @@ func (j *Job) addStepAt(ctx context.Context, req JobStepRequest, stepID int) err
 		// rejects a zero.
 		q += fmt.Sprintf(", @step_id = %d", stepID)
 	}
-	if err := j.server.execContext(ctx, q); err != nil {
-		return fmt.Errorf("gosmo: add step %q to job %q: %w", req.Name, j.Name, err)
-	}
-	return nil
+	return q
 }
 
 // Update replaces the step's definition via sp_update_jobstep.
@@ -807,15 +815,24 @@ func (s *JobStep) DeleteContext(ctx context.Context) error {
 }
 
 // deleteStepAt removes the step currently numbered stepID, without needing a
-// *JobStep for it — the step ids a reorder works with move as it goes, so the
-// number is the only handle that stays meaningful.
+// *JobStep for it, for a caller holding a step number rather than the step.
+//
+// Uncalled since ReorderStepsContext became one transactional batch and began
+// collecting deleteStepStmt directly — it is kept rather than removed, and
+// this note is here so the next reader does not take its emptiness for a
+// mistake.
 func (j *Job) deleteStepAt(ctx context.Context, stepID int) error {
-	q := fmt.Sprintf("EXEC msdb.dbo.sp_delete_jobstep @job_name = N'%s', @step_id = %d",
-		escapeSingle(j.Name), stepID)
-	if err := j.server.execContext(ctx, q); err != nil {
+	if err := j.server.execContext(ctx, deleteStepStmt(j.Name, stepID)); err != nil {
 		return fmt.Errorf("gosmo: delete step %d of job %q: %w", stepID, j.Name, err)
 	}
 	return nil
+}
+
+// deleteStepStmt renders the sp_delete_jobstep call. See addStepStmt for why
+// it is separable from the method that issues it.
+func deleteStepStmt(jobName string, stepID int) string {
+	return fmt.Sprintf("EXEC msdb.dbo.sp_delete_jobstep @job_name = N'%s', @step_id = %d",
+		escapeSingle(jobName), stepID)
 }
 
 // AddSchedule attaches a schedule to the job.
@@ -927,13 +944,7 @@ func (s *JobStep) SetFlow(onSuccessAction, onSuccessStepID, onFailAction, onFail
 
 // SetFlowContext is the context-aware variant of SetFlow.
 func (s *JobStep) SetFlowContext(ctx context.Context, onSuccessAction, onSuccessStepID, onFailAction, onFailStepID int) error {
-	q := fmt.Sprintf(
-		"EXEC msdb.dbo.sp_update_jobstep @job_name = N'%s', @step_id = %d, "+
-			"@on_success_action = %d, @on_success_step_id = %d, "+
-			"@on_fail_action = %d, @on_fail_step_id = %d",
-		escapeSingle(s.job.Name), s.StepID,
-		onSuccessAction, onSuccessStepID, onFailAction, onFailStepID,
-	)
+	q := setFlowStmt(s.job.Name, s.StepID, onSuccessAction, onSuccessStepID, onFailAction, onFailStepID)
 	if err := s.job.server.execContext(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: set flow of step %q of job %q: %w", s.Name, s.job.Name, err)
 	}
@@ -942,6 +953,19 @@ func (s *JobStep) SetFlowContext(ctx context.Context, onSuccessAction, onSuccess
 		s.OnFailAction, s.OnFailStepID = onFailAction, onFailStepID
 	}
 	return nil
+}
+
+// setFlowStmt renders the sp_update_jobstep call SetFlow issues. Every other
+// parameter is omitted, which sp_update_jobstep reads as "leave alone". See
+// addStepStmt for why it is separable from the method that issues it.
+func setFlowStmt(jobName string, stepID, onSuccessAction, onSuccessStepID, onFailAction, onFailStepID int) string {
+	return fmt.Sprintf(
+		"EXEC msdb.dbo.sp_update_jobstep @job_name = N'%s', @step_id = %d, "+
+			"@on_success_action = %d, @on_success_step_id = %d, "+
+			"@on_fail_action = %d, @on_fail_step_id = %d",
+		escapeSingle(jobName), stepID,
+		onSuccessAction, onSuccessStepID, onFailAction, onFailStepID,
+	)
 }
 
 // goToStepAction is on_success_action / on_fail_action's "go to step N".
@@ -962,6 +986,10 @@ func (j *Job) MoveStep(stepID, newStepID int) error {
 // step's whole definition has to survive the round trip, and why JobStep and
 // JobStepRequest model every sysjobsteps column that sp_add_jobstep can set
 // rather than the handful a step form edits.
+//
+// The delete and the insert are one transactional batch, because a failure
+// between them would leave the step deleted and its definition nowhere but in
+// gosmo's memory. See atomicBatch.
 //
 // "Go to step N" references follow the steps they name. sp_add_jobstep
 // remaps them on insert, but sp_delete_jobstep does not — it resets a
@@ -1005,6 +1033,15 @@ func (j *Job) ReorderSteps(order func(n int) []int) error {
 // through the composed mapping. See MoveStepContext for why both halves are
 // necessary.
 //
+// All of it goes to the server as a single transactional batch, so the job is
+// either in the requested order or in the order it started in, and never in
+// the state between a step's delete and its re-insert — where the step exists
+// nowhere but in this function. See atomicBatch.
+//
+// The step listing that decides all this is read outside the transaction, so
+// a concurrent edit of the same job is still last-writer-wins; the batch
+// makes the reorder atomic, not serializable.
+//
 // The job must have been read with JobByName: the step listing is by job_id,
 // which a bare Server.Job handle does not carry.
 func (j *Job) ReorderStepsContext(ctx context.Context, order func(n int) []int) error {
@@ -1028,21 +1065,26 @@ func (j *Job) ReorderStepsContext(ctx context.Context, order func(n int) []int) 
 		current[i] = s.StepID
 	}
 
+	// Every statement is built first and issued as one transactional batch.
+	// Nothing here may be applied on its own: a move is a delete and an insert,
+	// and between them the step exists only in this function's memory, so a
+	// failure there loses it for good. The reference-repair pass below is just
+	// as unskippable — sp_delete_jobstep resets a reference to the step it
+	// deleted, so a reorder that stops before the repair leaves the job's
+	// control flow silently rewritten to "quit with success". See atomicBatch.
+	var stmts []string
+
 	for target := 0; target < len(want); target++ {
 		if current[target] == want[target] {
 			continue
 		}
 		from := slices.Index(current, want[target])
 		s := byID[want[target]]
-		if err := j.deleteStepAt(ctx, from+1); err != nil {
-			return err
-		}
+		stmts = append(stmts, deleteStepStmt(j.Name, from+1))
 		current = slices.Delete(current, from, from+1)
 		// References are repaired in one pass at the end, so the step goes
 		// back with the flow it had; only its position is being decided here.
-		if err := j.InsertStepContext(ctx, stepRequestFrom(s, s.OnSuccessStepID, s.OnFailStepID), target+1); err != nil {
-			return err
-		}
+		stmts = append(stmts, addStepStmt(j.Name, stepRequestFrom(s, s.OnSuccessStepID, s.OnFailStepID), target+1))
 		current = slices.Insert(current, target, want[target])
 	}
 
@@ -1057,13 +1099,16 @@ func (j *Job) ReorderStepsContext(ctx context.Context, order func(n int) []int) 
 		if s.OnSuccessAction != goToStepAction && s.OnFailAction != goToStepAction {
 			continue
 		}
-		moved := &JobStep{job: j, Name: s.Name, StepID: position[id]}
-		if err := moved.SetFlowContext(ctx,
+		stmts = append(stmts, setFlowStmt(j.Name, position[id],
 			s.OnSuccessAction, position[s.OnSuccessStepID],
-			s.OnFailAction, position[s.OnFailStepID],
-		); err != nil {
-			return err
-		}
+			s.OnFailAction, position[s.OnFailStepID]))
+	}
+
+	if len(stmts) == 0 {
+		return nil
+	}
+	if err := j.server.execContext(ctx, atomicBatch(stmts)); err != nil {
+		return fmt.Errorf("gosmo: reorder steps of job %q: %w", j.Name, err)
 	}
 	return nil
 }
