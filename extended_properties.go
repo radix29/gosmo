@@ -56,19 +56,28 @@ func (d *Database) ExtendedProperties(level ExtendedPropertyLevel) ([]*ExtendedP
 }
 
 // ExtendedPropertiesContext is the context-aware variant of ExtendedProperties.
+//
+// Every level goes through nullableStr, level 0 included. Hard-coded quotes
+// there instead send an empty N-literal for a level the caller left empty, and
+// fn_listextendedproperty reads that as a level named by the empty string
+// rather than as an absent one — so a zero ExtendedPropertyLevel, which
+// AddExtendedProperty and its siblings write as @level0type = NULL, came back
+// from this read as no rows at all. The read and the three writes have to name
+// the same object.
 func (d *Database) ExtendedPropertiesContext(ctx context.Context, level ExtendedPropertyLevel) ([]*ExtendedProperty, error) {
 	q := fmt.Sprintf(`
 SELECT name, CAST(value AS NVARCHAR(4000))
 FROM   fn_listextendedproperty(
            NULL,
-           N'%s', N'%s',
+           %s,
+           %s,
            %s,
            %s,
            %s,
            %s
        )
 ORDER  BY name`,
-		escapeSingle(level.Level0Type), escapeSingle(level.Level0Name),
+		nullableStr(level.Level0Type), nullableStr(level.Level0Name),
 		nullableStr(level.Level1Type), nullableStr(level.Level1Name),
 		nullableStr(level.Level2Type), nullableStr(level.Level2Name),
 	)

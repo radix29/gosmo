@@ -805,22 +805,17 @@ func (s *JobStep) Delete() error {
 }
 
 // DeleteContext is the context-aware variant of Delete.
+//
+// The step is addressed by its number, which is what sp_delete_jobstep takes:
+// a *JobStep is a snapshot, and its StepID is only current until something
+// renumbers the job.
 func (s *JobStep) DeleteContext(ctx context.Context) error {
-	q := fmt.Sprintf("EXEC msdb.dbo.sp_delete_jobstep @job_name = N'%s', @step_id = %d",
-		escapeSingle(s.job.Name), s.StepID)
-	if err := s.job.server.execContext(ctx, q); err != nil {
-		return fmt.Errorf("gosmo: delete step %d of job %q: %w", s.StepID, s.job.Name, err)
-	}
-	return nil
+	return s.job.deleteStepAt(ctx, s.StepID)
 }
 
 // deleteStepAt removes the step currently numbered stepID, without needing a
 // *JobStep for it, for a caller holding a step number rather than the step.
-//
-// Uncalled since ReorderStepsContext became one transactional batch and began
-// collecting deleteStepStmt directly — it is kept rather than removed, and
-// this note is here so the next reader does not take its emptiness for a
-// mistake.
+// JobStep.DeleteContext is this with the number taken off the step.
 func (j *Job) deleteStepAt(ctx context.Context, stepID int) error {
 	if err := j.server.execContext(ctx, deleteStepStmt(j.Name, stepID)); err != nil {
 		return fmt.Errorf("gosmo: delete step %d of job %q: %w", stepID, j.Name, err)

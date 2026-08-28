@@ -1,6 +1,7 @@
 package gosmo
 
 import (
+	"database/sql"
 	"strings"
 	"testing"
 	"time"
@@ -83,5 +84,81 @@ func TestJobStepUpdateLeavesFieldsAloneOnRejection(t *testing.T) {
 	}
 	if s.Name != "Load staging" || s.Subsystem != "TSQL" || s.Command != "EXEC dbo.Load" {
 		t.Errorf("after a rejected update, step = %+v, want its original field values", s)
+	}
+}
+
+// captureStepJob is a job wired to the capture driver, holding one step at
+// stepID. No canned rows: deleting a step reads nothing.
+func captureStepJob(t *testing.T, jobName string, stepID int) *JobStep {
+	t.Helper()
+	db, err := sql.Open("capture", "")
+	if err != nil {
+		t.Fatalf("sql.Open: %v", err)
+	}
+	t.Cleanup(func() { db.Close() })
+	captured.reset()
+	j := &Job{server: &Server{db: db}, JobID: "job-id", Name: jobName}
+	return &JobStep{job: j, StepID: stepID, Name: "Load staging"}
+}
+
+// TestDeleteStepAddressesTheStepItWasCalledOn. sp_delete_jobstep takes a
+// number, and msdb renumbers the steps after it — so a delete that sent the
+// wrong number removes a step the caller never named, and succeeds while doing
+// it. There is no error to notice and no second statement to compare against.
+func TestDeleteStepAddressesTheStepItWasCalledOn(t *testing.T) {
+	// The third step, not the first: a delete that ignored StepID and sent 1
+	// would pass against a job whose step is step 1.
+	s := captureStepJob(t, "nightly", 3)
+
+	if err := s.DeleteContext(t.Context()); err != nil {
+		t.Fatalf("DeleteContext: %v", err)
+	}
+
+	got := captured.find("sp_delete_jobstep")
+	want := "EXEC msdb.dbo.sp_delete_jobstep @job_name = N'nightly', @step_id = 3"
+	if got != want {
+		t.Errorf("statement =\n%s\nwant\n%s", got, want)
+	}
+}
+
+// A job name carrying an apostrophe is escaped, not concatenated. Job names are
+// user text and reach this statement as a literal.
+func TestDeleteStepEscapesTheJobName(t *testing.T) {
+	s := captureStepJob(t, "Bob's nightly", 1)
+
+	if err := s.DeleteContext(t.Context()); err != nil {
+		t.Fatalf("DeleteContext: %v", err)
+	}
+
+	if got, want := captured.find("sp_delete_jobstep"),
+		"EXEC msdb.dbo.sp_delete_jobstep @job_name = N'Bob''s nightly', @step_id = 1"; got != want {
+		t.Errorf("statement =\n%s\nwant\n%s", got, want)
+	}
+}
+
+// JobStep.DeleteContext and Job.deleteStepAt are one call now, the step's
+// number being the only difference between them, and ReorderStepsContext
+// collects the same text into its batch through deleteStepStmt. The three
+// agreeing is what makes a fix to the statement reach every path that deletes a
+// step; they were two renderings of the same procedure call before.
+func TestEveryStepDeleteRendersTheSameCall(t *testing.T) {
+	s := captureStepJob(t, "nightly", 2)
+
+	if err := s.DeleteContext(t.Context()); err != nil {
+		t.Fatalf("DeleteContext: %v", err)
+	}
+	viaStep := captured.find("sp_delete_jobstep")
+
+	captured.reset()
+	if err := s.job.deleteStepAt(t.Context(), 2); err != nil {
+		t.Fatalf("deleteStepAt: %v", err)
+	}
+	viaNumber := captured.find("sp_delete_jobstep")
+
+	if viaStep != viaNumber {
+		t.Errorf("JobStep.DeleteContext sends\n%s\nand Job.deleteStepAt sends\n%s", viaStep, viaNumber)
+	}
+	if got := deleteStepStmt("nightly", 2); got != viaStep {
+		t.Errorf("the reorder batch collects\n%s\nand a delete sends\n%s", got, viaStep)
 	}
 }
