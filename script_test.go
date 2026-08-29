@@ -555,3 +555,73 @@ func TestScriptedSetterDoesNotMirrorOntoTheReceiver(t *testing.T) {
 		})
 	}
 }
+
+// TestBindScriptArgsSkipsLiteralsAndComments. Substitution used to run over the
+// whole statement, which was correct for every statement this package binds
+// today and silently wrong for the first one to both interpolate a name and
+// bind a parameter. An object named "@p1" reaches such a statement inside an
+// escapeSingle'd literal, and rewriting it there changes which object the DDL
+// names — in a script the user is handed to run by hand, which is exactly the
+// failure scriptLiteral refuses to risk for a literal it cannot render.
+//
+// The cases below are each a place the server does not interpret @pN: a string
+// literal, a bracket-quoted identifier, a double-quoted identifier, a line
+// comment and a nested block comment. A live placeholder in the same statement
+// pins that the skipping does not swallow real ones on the way.
+func TestBindScriptArgsSkipsLiteralsAndComments(t *testing.T) {
+	cases := []struct {
+		name string
+		q    string
+		want string
+	}{
+		{"string literal",
+			"EXEC sp_rename N'@p2', @p1, @p2",
+			"EXEC sp_rename N'@p2', N'new', N'other'"},
+		{"doubled quote inside a literal",
+			"SELECT N'it''s @p2', @p1, @p2",
+			"SELECT N'it''s @p2', N'new', N'other'"},
+		{"bracket identifier",
+			"SELECT [@p2] FROM t WHERE a = @p1 AND b = @p2",
+			"SELECT [@p2] FROM t WHERE a = N'new' AND b = N'other'"},
+		{"double-quoted identifier",
+			`SELECT "@p2" FROM t WHERE a = @p1 AND b = @p2`,
+			`SELECT "@p2" FROM t WHERE a = N'new' AND b = N'other'`},
+		{"line comment",
+			"SELECT @p1, @p2 -- not @p2\n",
+			"SELECT N'new', N'other' -- not @p2\n"},
+		// The placeholder sits after the inner close, so a scanner that ends
+		// the comment at the first */ rather than counting depth treats it as
+		// code and substitutes into the comment.
+		{"nested block comment",
+			"/* outer /* inner */ @p2 */ SELECT @p1, @p2",
+			"/* outer /* inner */ @p2 */ SELECT N'new', N'other'"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Every case uses @p2 twice: once inside the skipped text, which
+			// must survive verbatim, and once as a live placeholder, which must
+			// still be substituted. One without the other passes for a scan
+			// that skips nothing, or for one that swallows the statement whole.
+			got, err := bindScriptArgs(tc.q, []any{"new", "other"})
+			if err != nil {
+				t.Fatalf("bindScriptArgs: %v", err)
+			}
+			if got != tc.want {
+				t.Errorf("bindScriptArgs = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestBindScriptArgsRefusesAPlaceholderOnlyInsideALiteral. Skipping a literal
+// is right when the statement also uses the placeholder for real; when it does
+// not, the two readings — the text really says "@p1", or the scan mis-parsed
+// and swallowed a live placeholder — are indistinguishable, and the second
+// yields a captured script that keeps "@p1" and fails by hand with "Must
+// declare the scalar variable". That was the original bug, so this is an error
+// rather than a statement that looks fine until it is run.
+func TestBindScriptArgsRefusesAPlaceholderOnlyInsideALiteral(t *testing.T) {
+	if _, err := bindScriptArgs("EXEC sp_rename N'@p1'", []any{"new"}); err == nil {
+		t.Error("bindScriptArgs accepted a statement whose only @p1 is inside a literal, want an error")
+	}
+}
