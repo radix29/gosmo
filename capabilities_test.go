@@ -660,3 +660,38 @@ func TestADenyOnAnObjectSurvivesAGrant(t *testing.T) {
 		}
 	}
 }
+
+// TestDeniedOnObjectReportsOnlyAnExplicitDeny. DeniedOnObject is the sparse
+// map's withholding test, and it is sound only because it asks for the state
+// that was recorded: an object nobody mentioned reads unknown, which is not a
+// denial, and a caller that withheld on it would withhold on every object in
+// the database.
+func TestDeniedOnObjectReportsOnlyAnExplicitDeny(t *testing.T) {
+	c := &DatabaseCapabilities{
+		Accessible: true,
+		ObjectPermissions: map[string]map[string]CapabilityState{
+			"dbo.Granted": {"ALTER": CapabilityGranted},
+			"dbo.Denied":  {"ALTER": CapabilityDenied},
+		},
+	}
+	if !c.DeniedOnObject("dbo", "Denied", "ALTER") {
+		t.Error("an explicitly denied object did not report the denial")
+	}
+	if c.DeniedOnObject("dbo", "Granted", "ALTER") {
+		t.Error("an explicitly granted object reported a denial")
+	}
+	if c.DeniedOnObject("dbo", "NeverMentioned", "ALTER") {
+		t.Error("an object with no row reported a denial — the map is sparse, so silence is not a deny")
+	}
+	if c.DeniedOnObject("dbo", "Denied", "SELECT") {
+		t.Error("a permission that was never probed reported a denial")
+	}
+	var nilCaps *DatabaseCapabilities
+	if nilCaps.DeniedOnObject("dbo", "Denied", "ALTER") {
+		t.Error("a nil capability set reported a denial")
+	}
+	unprobed := &DatabaseCapabilities{Accessible: true}
+	if unprobed.DeniedOnObject("dbo", "Denied", "ALTER") {
+		t.Error("a database that was never probed reported a denial")
+	}
+}

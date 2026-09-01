@@ -391,6 +391,33 @@ func (c *DatabaseCapabilities) HasOnObject(schema, object, name string) bool {
 	return c.ObjectPermission(schema, object, name) == CapabilityGranted
 }
 
+// DeniedOnObject reports that the permission is explicitly denied on the
+// object — the one thing this map may be read for in order to *withhold*
+// something, and the counterpart to HasOnObject.
+//
+// It is sound where an AllowsOnObject would not be, because it asks for the
+// state that was actually recorded rather than for the absence of one: an
+// object nobody mentioned has no row and reads CapabilityUnknown, which is not
+// a denial. Only a DENY reaching the login — directly, through a role, or
+// through public — puts CapabilityDenied here.
+//
+// A caller may withhold on it because SQL Server resolves an object-scope DENY
+// over every wider grant: a principal holding database-wide ALTER, or db_owner,
+// reads HAS_PERMS_BY_NAME 0 on a table denied ALTER and its rename fails
+// Msg 297 (verified live 2026-09-01). Two exceptions belong to the caller, not
+// here: a member of sysadmin bypasses the check entirely and must be asked
+// about first, and a database that was never probed records nothing, which
+// reads as no denial and so withholds nothing.
+//
+// Ownership needs no such care. A DENY cannot be made to the owner of the
+// securable — SQL Server refuses it — and transferring ownership to a denied
+// principal *deletes* the DENY row, so an owner never carries one (both
+// verified live 2026-09-01). An owner denied through public is genuinely
+// refused by the server, which is what this then reports.
+func (c *DatabaseCapabilities) DeniedOnObject(schema, object, name string) bool {
+	return c.ObjectPermission(schema, object, name) == CapabilityDenied
+}
+
 // InRole reports whether the login's user in this database is a member of the
 // named fixed database role. As with Capabilities.InServerRole, membership in
 // db_owner (or in sysadmin) is not folded in.
