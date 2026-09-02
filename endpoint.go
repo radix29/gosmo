@@ -17,6 +17,8 @@ package gosmo
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 )
@@ -327,4 +329,302 @@ func orElse(s, def string) string {
 		return def
 	}
 	return s
+}
+
+// ============================================================
+// Endpoints, generally
+// ============================================================
+//
+// Everything above models the *database mirroring* endpoint specifically, for
+// Always On. What follows is the general catalog view of sys.endpoints — every
+// endpoint of every protocol and payload — for listing, inspecting, and
+// starting/stopping/dropping one. The two are deliberately separate: a caller
+// setting up an availability group wants the mirroring endpoint's role,
+// encryption and connection auth, and a caller browsing the server wants the
+// whole list; folding them together would make the first pay for the second.
+
+// ErrSystemEndpoint is returned by Endpoint.SetState and Endpoint.Drop for one
+// of the built-in endpoints (endpoint_id < 65536): the Dedicated Admin
+// Connection, TSQL Local Machine, TSQL Named Pipes, TSQL Default TCP and TSQL
+// Default VIA. SQL Server refuses those writes with a message that names
+// neither the endpoint nor the reason, so the refusal happens here instead,
+// where a caller can present it.
+var ErrSystemEndpoint = errors.New("endpoint is a built-in system endpoint")
+
+// firstUserEndpointID is the lowest endpoint_id SQL Server assigns to an
+// endpoint someone created. Everything below it is built in and cannot be
+// altered or dropped.
+//
+// This is why Endpoint has no lightweight Server.Endpoint(name) handle the way
+// the other server-level families do: IsSystem is derived here from a scanned
+// id, so a name-only handle would carry EndpointID 0, compute IsSystem true,
+// and have refuseSystem reject every write on it. Adding such a handle means
+// making IsSystem a tri-state or re-reading the endpoint first.
+const firstUserEndpointID = 65536
+
+// Endpoint mirrors a row of sys.endpoints — one server endpoint of any
+// protocol and payload.
+//
+// Type-specific detail is not on this struct: MirroringDetail and
+// ServiceBrokerDetail read it when it is wanted, so listing every endpoint
+// costs one query rather than three.
+type Endpoint struct {
+	server *Server
+
+	EndpointID int
+	Name       string
+
+	// Owner is the login that owns the endpoint, empty when this login cannot
+	// resolve the principal.
+	Owner string
+
+	// Protocol is TCP, HTTP, SHARED_MEMORY, NAMED_PIPES or VIA.
+	Protocol string
+
+	// Type is the payload: TSQL, SERVICE_BROKER, DATABASE_MIRRORING or SOAP.
+	Type string
+
+	// State is STARTED, STOPPED or DISABLED. Only a STARTED endpoint accepts
+	// connections.
+	State string
+
+	// IsAdmin marks the Dedicated Admin Connection.
+	IsAdmin bool
+
+	// Port is the TCP port, 0 for an endpoint on another protocol and for the
+	// built-in TCP ones, which report 0 rather than the instance's real port.
+	Port int
+
+	// IsSystem marks one of the built-in endpoints, which cannot be altered or
+	// dropped — see ErrSystemEndpoint.
+	IsSystem bool
+}
+
+const endpointSelect = `
+SELECT e.endpoint_id, e.name, ISNULL(SUSER_NAME(e.principal_id),''),
+       ISNULL(e.protocol_desc,''), ISNULL(e.type_desc,''),
+       ISNULL(e.state_desc,''), e.is_admin_endpoint, ISNULL(t.port, 0)
+FROM   sys.endpoints e
+LEFT   JOIN sys.tcp_endpoints t ON t.endpoint_id = e.endpoint_id`
+
+// Endpoints returns every endpoint on the server, built-in ones included.
+func (s *Server) Endpoints() ([]*Endpoint, error) {
+	return s.EndpointsContext(context.Background())
+}
+
+// EndpointsContext is the context-aware variant of Endpoints.
+func (s *Server) EndpointsContext(ctx context.Context) ([]*Endpoint, error) {
+	rows, err := s.query(ctx, endpointSelect+`
+ORDER  BY e.name`)
+	if err != nil {
+		return nil, fmt.Errorf("gosmo: list endpoints: %w", err)
+	}
+	defer rows.Close()
+
+	var endpoints []*Endpoint
+	for rows.Next() {
+		e, err := scanEndpoint(s, rows.Scan)
+		if err != nil {
+			return nil, fmt.Errorf("gosmo: list endpoints: %w", err)
+		}
+		endpoints = append(endpoints, e)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("gosmo: list endpoints: %w", err)
+	}
+	return endpoints, nil
+}
+
+// EndpointByName returns one endpoint, or a not-found error (errors.Is
+// ErrNotFound) when the server has none by that name.
+func (s *Server) EndpointByName(name string) (*Endpoint, error) {
+	return s.EndpointByNameContext(context.Background(), name)
+}
+
+// EndpointByNameContext is the context-aware variant of EndpointByName.
+func (s *Server) EndpointByNameContext(ctx context.Context, name string) (*Endpoint, error) {
+	var e *Endpoint
+	err := s.queryRow(ctx, func(row *sql.Row) error {
+		var err error
+		e, err = scanEndpoint(s, row.Scan)
+		return err
+	}, endpointSelect+`
+WHERE  e.name = @p1`, name)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, notFoundf("gosmo: endpoint %q not found", name)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("gosmo: read endpoint %q: %w", name, err)
+	}
+	return e, nil
+}
+
+func scanEndpoint(s *Server, scan func(...any) error) (*Endpoint, error) {
+	e := &Endpoint{server: s}
+	if err := scan(&e.EndpointID, &e.Name, &e.Owner, &e.Protocol, &e.Type,
+		&e.State, &e.IsAdmin, &e.Port); err != nil {
+		return nil, err
+	}
+	e.IsSystem = e.EndpointID < firstUserEndpointID
+	return e, nil
+}
+
+// EndpointState is the state an endpoint can be put into.
+type EndpointState string
+
+const (
+	// EndpointStarted accepts connections.
+	EndpointStarted EndpointState = "STARTED"
+	// EndpointStopped refuses connections but still listens, answering with
+	// an error rather than nothing.
+	EndpointStopped EndpointState = "STOPPED"
+	// EndpointDisabled does not listen at all.
+	EndpointDisabled EndpointState = "DISABLED"
+)
+
+// SetState starts, stops or disables the endpoint.
+func (e *Endpoint) SetState(state EndpointState) error {
+	return e.SetStateContext(context.Background(), state)
+}
+
+// SetStateContext is the context-aware variant of SetState. A built-in
+// endpoint is refused with ErrSystemEndpoint before any statement is built.
+func (e *Endpoint) SetStateContext(ctx context.Context, state EndpointState) error {
+	if err := e.refuseSystem("set the state of"); err != nil {
+		return err
+	}
+	switch state {
+	case EndpointStarted, EndpointStopped, EndpointDisabled:
+	default:
+		return fmt.Errorf("gosmo: set state of endpoint %q: unknown state %q", e.Name, state)
+	}
+	stmt := fmt.Sprintf("ALTER ENDPOINT %s STATE = %s", quoteIdent(e.Name), state)
+	if err := e.server.execContext(ctx, stmt); err != nil {
+		return fmt.Errorf("gosmo: set state of endpoint %q: %w", e.Name, err)
+	}
+	setIfApplied(ctx, &e.State, string(state))
+	return nil
+}
+
+// Drop removes the endpoint.
+func (e *Endpoint) Drop() error { return e.DropContext(context.Background()) }
+
+// DropContext is the context-aware variant of Drop. A built-in endpoint is
+// refused with ErrSystemEndpoint before any statement is built.
+func (e *Endpoint) DropContext(ctx context.Context) error {
+	if err := e.refuseSystem("drop"); err != nil {
+		return err
+	}
+	if err := e.server.execContext(ctx, "DROP ENDPOINT "+quoteIdent(e.Name)); err != nil {
+		return fmt.Errorf("gosmo: drop endpoint %q: %w", e.Name, err)
+	}
+	return nil
+}
+
+// refuseSystem is the guard both writes open with. It is checked here rather
+// than left to the server because SQL Server's own refusal names neither the
+// endpoint nor the reason.
+func (e *Endpoint) refuseSystem(verb string) error {
+	if e.IsSystem {
+		return fmt.Errorf("gosmo: %s endpoint %q: %w", verb, e.Name, ErrSystemEndpoint)
+	}
+	return nil
+}
+
+// MirroringDetail reads the database mirroring settings of a
+// DATABASE_MIRRORING endpoint — role, encryption and connection auth.
+func (e *Endpoint) MirroringDetail() (*DatabaseMirroringEndpoint, error) {
+	return e.MirroringDetailContext(context.Background())
+}
+
+// MirroringDetailContext is the context-aware variant of MirroringDetail.
+//
+// It returns (nil, nil) for an endpoint that is not a mirroring one, matching
+// DatabaseMirroringEndpointContext's convention: a caller asking every
+// endpoint for its mirroring detail branches on absence as the ordinary case.
+// An instance has at most one mirroring endpoint, so the read needs no name.
+func (e *Endpoint) MirroringDetailContext(ctx context.Context) (*DatabaseMirroringEndpoint, error) {
+	if e.Type != "DATABASE_MIRRORING" {
+		return nil, nil
+	}
+	return e.server.DatabaseMirroringEndpointContext(ctx)
+}
+
+// ServiceBrokerEndpointDetail is the SERVICE_BROKER-specific half of an
+// endpoint, from sys.service_broker_endpoints.
+type ServiceBrokerEndpointDetail struct {
+	// IsMessageForwardingEnabled reports whether the endpoint forwards
+	// messages it is not the destination for.
+	IsMessageForwardingEnabled bool
+
+	// MessageForwardingSize is the megabytes of storage the endpoint may use
+	// for forwarded messages.
+	MessageForwardingSize int
+
+	// ConnectionAuth is NTLM, KERBEROS, NEGOTIATE, CERTIFICATE, or one of the
+	// combined forms.
+	ConnectionAuth string
+
+	// EncryptionAlgorithm is AES, RC4, one of the mixed forms, or NONE.
+	EncryptionAlgorithm string
+
+	// CertificateName is the certificate the endpoint authenticates with,
+	// empty when it authenticates by Windows credentials alone. The catalog
+	// records only the id, and the name is what a script needs.
+	CertificateName string
+}
+
+// ServiceBrokerDetail reads the Service Broker settings of a SERVICE_BROKER
+// endpoint.
+func (e *Endpoint) ServiceBrokerDetail() (*ServiceBrokerEndpointDetail, error) {
+	return e.ServiceBrokerDetailContext(context.Background())
+}
+
+// ServiceBrokerDetailContext is the context-aware variant of
+// ServiceBrokerDetail. It returns (nil, nil) for an endpoint that is not a
+// Service Broker one, the same convention MirroringDetailContext follows.
+func (e *Endpoint) ServiceBrokerDetailContext(ctx context.Context) (*ServiceBrokerEndpointDetail, error) {
+	if e.Type != "SERVICE_BROKER" {
+		return nil, nil
+	}
+	d := &ServiceBrokerEndpointDetail{}
+	err := e.server.queryRowScan(ctx, `
+SELECT sbe.is_message_forwarding_enabled, sbe.message_forwarding_size,
+       ISNULL(sbe.connection_auth_desc,''), ISNULL(sbe.encryption_algorithm_desc,''),
+       ISNULL(c.name,'')
+FROM   sys.service_broker_endpoints sbe
+LEFT   JOIN master.sys.certificates c ON c.certificate_id = sbe.certificate_id
+WHERE  sbe.endpoint_id = @p1`, []any{e.EndpointID},
+		&d.IsMessageForwardingEnabled, &d.MessageForwardingSize,
+		&d.ConnectionAuth, &d.EncryptionAlgorithm, &d.CertificateName)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, notFoundf("gosmo: service broker detail for endpoint %q not found", e.Name)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("gosmo: read service broker detail for endpoint %q: %w", e.Name, err)
+	}
+	return d, nil
+}
+
+// mirroringCertificateName resolves the certificate a DATABASE_MIRRORING
+// endpoint authenticates with, empty when it authenticates by Windows
+// credentials alone.
+//
+// It is a read of its own rather than a field on DatabaseMirroringEndpoint
+// because Always On reads that struct on every replica check and does not need
+// the certificate's name; only a generated script does.
+func (e *Endpoint) mirroringCertificateName(ctx context.Context) (string, error) {
+	var name string
+	err := e.server.queryRowScan(ctx, `
+SELECT ISNULL(c.name,'')
+FROM   sys.database_mirroring_endpoints dme
+LEFT   JOIN master.sys.certificates c ON c.certificate_id = dme.certificate_id
+WHERE  dme.endpoint_id = @p1`, []any{e.EndpointID}, &name)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("gosmo: read certificate of endpoint %q: %w", e.Name, err)
+	}
+	return name, nil
 }

@@ -596,30 +596,86 @@ type BackupFile struct {
 	MaxSize       int64 // bytes
 }
 
+// BackupTarget names where a RESTORE-side read finds a backup: either a
+// physical path or a logical backup device from sys.backup_devices. The two
+// are addressed differently and are not interchangeable — a logical device is
+// named bare, as FROM [devicename], and passing its name as a path produces
+// FROM DISK = N'devicename', which SQL Server reads as a file of that name in
+// the server's default backup directory.
+//
+// Build one with DiskTarget or DeviceTarget.
+type BackupTarget struct {
+	name    string
+	logical bool
+}
+
+// DiskTarget names a backup by its path on the server's filesystem.
+func DiskTarget(path string) BackupTarget { return BackupTarget{name: path} }
+
+// DeviceTarget names a backup by the logical backup device holding it —
+// a row of sys.backup_devices, see Server.BackupDevices.
+func DeviceTarget(name string) BackupTarget { return BackupTarget{name: name, logical: true} }
+
+// clause renders the target as the FROM operand of a RESTORE statement.
+func (t BackupTarget) clause() string {
+	if t.logical {
+		return quoteIdent(t.name)
+	}
+	return fmt.Sprintf("DISK = N'%s'", escapeSingle(t.name))
+}
+
+// String returns the target's name, for error messages and display.
+func (t BackupTarget) String() string { return t.name }
+
 // VerifyBackup checks that the backup set on device is complete and
-// readable (RESTORE VERIFYONLY), without restoring it.
+// readable (RESTORE VERIFYONLY), without restoring it. device is a path on
+// the server's filesystem; VerifyBackupFrom takes a logical backup device.
 func (s *Server) VerifyBackup(device string) error {
 	return s.VerifyBackupContext(context.Background(), device)
 }
 
 // VerifyBackupContext is the context-aware variant of VerifyBackup.
 func (s *Server) VerifyBackupContext(ctx context.Context, device string) error {
-	stmt := fmt.Sprintf("RESTORE VERIFYONLY FROM DISK = N'%s'", escapeSingle(device))
+	return s.VerifyBackupFromContext(ctx, DiskTarget(device))
+}
+
+// VerifyBackupFrom is VerifyBackup for any BackupTarget — a path or a
+// logical backup device.
+func (s *Server) VerifyBackupFrom(target BackupTarget) error {
+	return s.VerifyBackupFromContext(context.Background(), target)
+}
+
+// VerifyBackupFromContext is the context-aware variant of VerifyBackupFrom.
+func (s *Server) VerifyBackupFromContext(ctx context.Context, target BackupTarget) error {
+	stmt := "RESTORE VERIFYONLY FROM " + target.clause()
 	if err := s.execContext(ctx, stmt); err != nil {
-		return fmt.Errorf("gosmo: verify backup %q: %w", device, err)
+		return fmt.Errorf("gosmo: verify backup %q: %w", target.name, err)
 	}
 	return nil
 }
 
 // BackupHeaders reads the backup sets on a backup device (RESTORE
-// HEADERONLY) — one BackupHeader per set, in position order.
+// HEADERONLY) — one BackupHeader per set, in position order. device is a path
+// on the server's filesystem; BackupHeadersFrom takes a logical backup device.
 func (s *Server) BackupHeaders(device string) ([]*BackupHeader, error) {
 	return s.BackupHeadersContext(context.Background(), device)
 }
 
 // BackupHeadersContext is the context-aware variant of BackupHeaders.
 func (s *Server) BackupHeadersContext(ctx context.Context, device string) ([]*BackupHeader, error) {
-	q := fmt.Sprintf("RESTORE HEADERONLY FROM DISK = N'%s'", escapeSingle(device))
+	return s.BackupHeadersFromContext(ctx, DiskTarget(device))
+}
+
+// BackupHeadersFrom is BackupHeaders for any BackupTarget — a path or a
+// logical backup device.
+func (s *Server) BackupHeadersFrom(target BackupTarget) ([]*BackupHeader, error) {
+	return s.BackupHeadersFromContext(context.Background(), target)
+}
+
+// BackupHeadersFromContext is the context-aware variant of BackupHeadersFrom.
+func (s *Server) BackupHeadersFromContext(ctx context.Context, target BackupTarget) ([]*BackupHeader, error) {
+	device := target.name
+	q := "RESTORE HEADERONLY FROM " + target.clause()
 	rows, err := s.query(ctx, q)
 	if err != nil {
 		return nil, fmt.Errorf("gosmo: read backup header %q: %w", device, err)
@@ -677,10 +733,10 @@ func backupTypeFromHeader(n int) BackupAction {
 }
 
 // backupFileListQuery builds the RESTORE FILELISTONLY statement reading the
-// file list of one backup set on device. fileNumber 0 leaves the WITH clause
+// file list of one backup set on target. fileNumber 0 leaves the WITH clause
 // off, which SQL Server reads as the first set.
-func backupFileListQuery(device string, fileNumber int) string {
-	q := fmt.Sprintf("RESTORE FILELISTONLY FROM DISK = N'%s'", escapeSingle(device))
+func backupFileListQuery(target BackupTarget, fileNumber int) string {
+	q := "RESTORE FILELISTONLY FROM " + target.clause()
 	if fileNumber > 0 {
 		q += fmt.Sprintf(" WITH FILE = %d", fileNumber)
 	}
@@ -719,7 +775,20 @@ func (s *Server) BackupFileListForSet(device string, fileNumber int) ([]*BackupF
 // BackupFileListForSetContext is the context-aware variant of
 // BackupFileListForSet.
 func (s *Server) BackupFileListForSetContext(ctx context.Context, device string, fileNumber int) ([]*BackupFile, error) {
-	rows, err := s.query(ctx, backupFileListQuery(device, fileNumber))
+	return s.BackupFileListForSetFromContext(ctx, DiskTarget(device), fileNumber)
+}
+
+// BackupFileListForSetFrom is BackupFileListForSet for any BackupTarget — a
+// path or a logical backup device.
+func (s *Server) BackupFileListForSetFrom(target BackupTarget, fileNumber int) ([]*BackupFile, error) {
+	return s.BackupFileListForSetFromContext(context.Background(), target, fileNumber)
+}
+
+// BackupFileListForSetFromContext is the context-aware variant of
+// BackupFileListForSetFrom.
+func (s *Server) BackupFileListForSetFromContext(ctx context.Context, target BackupTarget, fileNumber int) ([]*BackupFile, error) {
+	device := target.name
+	rows, err := s.query(ctx, backupFileListQuery(target, fileNumber))
 	if err != nil {
 		return nil, fmt.Errorf("gosmo: read backup file list %q: %w", device, err)
 	}

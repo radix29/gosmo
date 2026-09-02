@@ -2,15 +2,12 @@ package gosmo
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"slices"
-	"time"
 )
 
 // ============================================================
-// Server security  (authentication mode, server-level GRANT/DENY,
-// credentials)
+// Server security  (authentication mode, server-level GRANT/DENY)
 // ============================================================
 
 // ServerSecurityInfo holds server-wide authentication settings — SSMS's
@@ -202,49 +199,4 @@ func (s *Server) RevokeServerPermission(permission, principal string) error {
 // See GrantServerPermissionContext's doc comment for the USE master prefix.
 func (s *Server) RevokeServerPermissionContext(ctx context.Context, permission, principal string) error {
 	return s.RevokeServerPermissionWithOptionsContext(ctx, permission, principal, PermissionOptions{})
-}
-
-// -- Credentials -----------------------------------------------------------------
-
-// Credential mirrors a row from sys.credentials — used to populate a
-// Login's "Map to credential" dropdown.
-type Credential struct {
-	Name       string
-	Identity   string
-	CreateDate time.Time
-	ModifyDate time.Time
-}
-
-// Credentials returns every server-level credential.
-func (s *Server) Credentials() ([]*Credential, error) {
-	return s.CredentialsContext(context.Background())
-}
-
-// CredentialsContext is the context-aware variant of Credentials.
-func (s *Server) CredentialsContext(ctx context.Context) ([]*Credential, error) {
-	const q = `
-SELECT name, credential_identity, create_date, modify_date
-FROM   sys.credentials
-ORDER  BY name`
-
-	rows, err := s.query(ctx, q)
-	if err != nil {
-		return nil, fmt.Errorf("gosmo: list credentials: %w", err)
-	}
-	defer rows.Close()
-
-	var creds []*Credential
-	for rows.Next() {
-		c := &Credential{}
-		var identity sql.NullString
-		if err := rows.Scan(&c.Name, &identity, &c.CreateDate, &c.ModifyDate); err != nil {
-			return nil, fmt.Errorf("gosmo: list credentials: %w", err)
-		}
-		c.Identity = identity.String
-		creds = append(creds, c)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("gosmo: list credentials: %w", err)
-	}
-	return creds, nil
 }

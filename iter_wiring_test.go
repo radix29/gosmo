@@ -516,6 +516,36 @@ func iterWirings(t *testing.T) []seqWiring {
 				}
 			},
 			func(ctx context.Context) { _, _ = srv.CategoriesContext(ctx, argCategoryClass) }},
+		{"Server.BackupDeviceSeq",
+			func(ctx context.Context) {
+				for range srv.BackupDeviceSeq(ctx) {
+				}
+			},
+			func(ctx context.Context) { _, _ = srv.BackupDevicesContext(ctx) }},
+		{"Server.ServerTriggerSeq",
+			func(ctx context.Context) {
+				for range srv.ServerTriggerSeq(ctx) {
+				}
+			},
+			func(ctx context.Context) { _, _ = srv.ServerTriggersContext(ctx) }},
+		{"Server.EndpointSeq",
+			func(ctx context.Context) {
+				for range srv.EndpointSeq(ctx) {
+				}
+			},
+			func(ctx context.Context) { _, _ = srv.EndpointsContext(ctx) }},
+		{"Server.ServerAuditSeq",
+			func(ctx context.Context) {
+				for range srv.ServerAuditSeq(ctx) {
+				}
+			},
+			func(ctx context.Context) { _, _ = srv.ServerAuditsContext(ctx) }},
+		{"Server.ServerAuditSpecificationSeq",
+			func(ctx context.Context) {
+				for range srv.ServerAuditSpecificationSeq(ctx) {
+				}
+			},
+			func(ctx context.Context) { _, _ = srv.ServerAuditSpecificationsContext(ctx) }},
 		{"Server.ConfigurationSeq",
 			func(ctx context.Context) {
 				for range srv.ConfigurationSeq(ctx) {

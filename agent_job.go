@@ -58,19 +58,115 @@ WHERE  servicename LIKE N'SQL Server Agent%'`
 // SQL Server Agent -- Jobs
 // ============================================================
 
-// JobState mirrors the current_execution_status values in msdb.dbo.sysjobactivity.
+// JobState is SQL Server Agent's job_state encoding for a job — the value
+// xp_sqlagent_enum_jobs reports, which sp_help_job passes through as
+// current_execution_status and SSMS's Job Activity Monitor displays.
+//
+// Agent keeps this in memory for the jobs it runs itself; msdb has no column
+// for it. Jobs and JobByName read it through jobStates and fall back to a
+// start/stop_execution_date derivation over msdb.dbo.sysjobactivity when that
+// read fails — Agent stopped, or a login with neither sysadmin nor
+// SQLAgentReaderRole — in which case only JobStateExecuting and JobStateIdle
+// can be told apart. JobStateUnknown is what a multi-server job Agent does
+// not run itself reports.
 type JobState int
 
 const (
-	JobStateIdle                        JobState = 1
-	JobStateSuspended                   JobState = 2
-	JobStateExecuting                   JobState = 4
-	JobStateWaitingForWorker            JobState = 5
-	JobStateBetweenRetries              JobState = 6
-	JobStateCancelling                  JobState = 7
-	JobStatePerformingCompletionActions JobState = 8
-	JobStateRunning                     JobState = 10
+	JobStateUnknown                     JobState = 0
+	JobStateExecuting                   JobState = 1
+	JobStateWaitingForWorker            JobState = 2
+	JobStateBetweenRetries              JobState = 3
+	JobStateIdle                        JobState = 4
+	JobStateSuspended                   JobState = 5
+	JobStateWaitingForStepToFinish      JobState = 6
+	JobStatePerformingCompletionActions JobState = 7
 )
+
+// JobStateCancelling and JobStateRunning name states Agent's encoding does
+// not have, and no read in this package returns either. They carry negative
+// values so a switch over the real encoding cannot reach them by accident;
+// they are kept only so existing callers still compile.
+const (
+	// Deprecated: Agent has no "cancelling" state. A job being stopped
+	// reports JobStatePerformingCompletionActions.
+	JobStateCancelling JobState = -1
+	// Deprecated: use JobStateExecuting.
+	JobStateRunning JobState = -2
+)
+
+// jobStateColumns is the result set of master.dbo.xp_sqlagent_enum_jobs, as
+// a table-variable declaration. INSERT ... EXECUTE requires the shape to
+// match the procedure's exactly, so this is copied from
+// msdb.dbo.sp_get_composite_job_info, which is the only documentation of it.
+const jobStateColumns = `(job_id                UNIQUEIDENTIFIER NOT NULL,
+                          last_run_date         INT              NOT NULL,
+                          last_run_time         INT              NOT NULL,
+                          next_run_date         INT              NOT NULL,
+                          next_run_time         INT              NOT NULL,
+                          next_run_schedule_id  INT              NOT NULL,
+                          requested_to_run      INT              NOT NULL,
+                          request_source        INT              NOT NULL,
+                          request_source_id     sysname          NULL,
+                          running               INT              NOT NULL,
+                          current_step          INT              NOT NULL,
+                          current_retry_attempt INT              NOT NULL,
+                          job_state             INT              NOT NULL)`
+
+// jobStates returns each job's live execution state keyed by lower-cased
+// job_id, in one read for the whole instance.
+//
+// The two arguments are the ones sp_get_composite_job_info passes: whether
+// the caller may see every job's state — sysadmin or SQLAgentReaderRole;
+// anyone else is shown only the jobs they own — and the login to judge that
+// ownership by. Callers treat an error as "no states available" and keep the
+// derived fallback rather than failing the listing: the extended procedure is
+// unavailable whenever Agent is not running, which is not a reason to stop
+// listing jobs.
+func (s *Server) jobStates(ctx context.Context) (map[string]JobState, error) {
+	q := `
+SET NOCOUNT ON;
+DECLARE @states TABLE ` + jobStateColumns + `;
+DECLARE @all INT = ISNULL(IS_SRVROLEMEMBER(N'sysadmin'), 0);
+IF (@all = 0) SET @all = ISNULL(IS_MEMBER(N'SQLAgentReaderRole'), 0);
+DECLARE @owner sysname = SUSER_SNAME();
+INSERT INTO @states EXECUTE master.dbo.xp_sqlagent_enum_jobs @all, @owner;
+SELECT LOWER(CONVERT(varchar(36), job_id)), job_state FROM @states`
+
+	rows, err := s.query(ctx, q)
+	if err != nil {
+		return nil, fmt.Errorf("gosmo: agent job states: %w", err)
+	}
+	defer rows.Close()
+
+	states := make(map[string]JobState)
+	for rows.Next() {
+		var id string
+		var state int
+		if err := rows.Scan(&id, &state); err != nil {
+			return nil, fmt.Errorf("gosmo: agent job states: %w", err)
+		}
+		states[id] = JobState(state)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("gosmo: agent job states: %w", err)
+	}
+	return states, nil
+}
+
+// applyJobStates overlays Agent's live state onto jobs read from msdb,
+// leaving the sysjobactivity-derived value in place for any job the read
+// did not cover.
+func (s *Server) applyJobStates(ctx context.Context, jobs ...*Job) {
+	states, err := s.jobStates(ctx)
+	if err != nil {
+		return
+	}
+	for _, j := range jobs {
+		if state, ok := states[strings.ToLower(j.JobID)]; ok {
+			j.CurrentState = state
+		}
+	}
+}
 
 // JobOutcome represents the last run outcome for a job or step.
 type JobOutcome int
@@ -136,7 +232,7 @@ SELECT CONVERT(varchar(36), j.job_id), j.name, ISNULL(j.description,''),
        ISNULL(js.last_run_duration, 0),
        ja.next_scheduled_run_date,
        CASE WHEN ja.start_execution_date IS NOT NULL AND ja.stop_execution_date IS NULL
-            THEN 4 ELSE 1 END
+            THEN 1 ELSE 4 END
 FROM   msdb.dbo.sysjobs j
 LEFT   JOIN msdb.dbo.syscategories c ON c.category_id = j.category_id
 LEFT   JOIN master.sys.server_principals l ON l.sid = j.owner_sid
@@ -187,6 +283,7 @@ ORDER  BY j.name`
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("gosmo: list agent jobs: %w", err)
 	}
+	s.applyJobStates(ctx, jobs...)
 	return jobs, nil
 }
 
@@ -222,7 +319,7 @@ SELECT CONVERT(varchar(36), j.job_id), j.name, ISNULL(j.description,''),
        ISNULL(js.last_run_duration, 0),
        ja.next_scheduled_run_date,
        CASE WHEN ja.start_execution_date IS NOT NULL AND ja.stop_execution_date IS NULL
-            THEN 4 ELSE 1 END
+            THEN 1 ELSE 4 END
 FROM   msdb.dbo.sysjobs j
 LEFT   JOIN msdb.dbo.syscategories c ON c.category_id = j.category_id
 LEFT   JOIN master.sys.server_principals l ON l.sid = j.owner_sid
@@ -262,6 +359,7 @@ WHERE  j.name = @p1`
 	j.LastRunDuration = time.Duration(d/10000)*time.Hour +
 		time.Duration((d%10000)/100)*time.Minute +
 		time.Duration(d%100)*time.Second
+	s.applyJobStates(ctx, j)
 	return j, nil
 }
 

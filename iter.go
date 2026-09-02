@@ -104,6 +104,33 @@ func (s *Server) CredentialSeq(ctx context.Context) iter.Seq2[*Credential, error
 	return seqFrom(ctx, s.CredentialsContext)
 }
 
+// BackupDeviceSeq returns an iterator over all logical backup devices.
+func (s *Server) BackupDeviceSeq(ctx context.Context) iter.Seq2[*BackupDevice, error] {
+	return seqFrom(ctx, s.BackupDevicesContext)
+}
+
+// ServerTriggerSeq returns an iterator over all server-scope DDL and logon
+// triggers.
+func (s *Server) ServerTriggerSeq(ctx context.Context) iter.Seq2[*ServerTrigger, error] {
+	return seqFrom(ctx, s.ServerTriggersContext)
+}
+
+// EndpointSeq returns an iterator over every endpoint on the server.
+func (s *Server) EndpointSeq(ctx context.Context) iter.Seq2[*Endpoint, error] {
+	return seqFrom(ctx, s.EndpointsContext)
+}
+
+// ServerAuditSeq returns an iterator over every server audit.
+func (s *Server) ServerAuditSeq(ctx context.Context) iter.Seq2[*ServerAudit, error] {
+	return seqFrom(ctx, s.ServerAuditsContext)
+}
+
+// ServerAuditSpecificationSeq returns an iterator over every server audit
+// specification.
+func (s *Server) ServerAuditSpecificationSeq(ctx context.Context) iter.Seq2[*ServerAuditSpecification, error] {
+	return seqFrom(ctx, s.ServerAuditSpecificationsContext)
+}
+
 // LanguageSeq returns an iterator over all languages installed on the server.
 func (s *Server) LanguageSeq(ctx context.Context) iter.Seq2[*Language, error] {
 	return seqFrom(ctx, s.LanguagesContext)

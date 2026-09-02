@@ -345,17 +345,21 @@ func TestBuildRestoreStatementFiles(t *testing.T) {
 // as the first set.
 func TestBackupFileListQuerySelectsTheSet(t *testing.T) {
 	cases := []struct {
-		device string
+		device BackupTarget
 		file   int
 		want   string
 	}{
-		{`C:\bk\db.bak`, 0, `RESTORE FILELISTONLY FROM DISK = N'C:\bk\db.bak'`},
-		{`C:\bk\db.bak`, 1, `RESTORE FILELISTONLY FROM DISK = N'C:\bk\db.bak' WITH FILE = 1`},
-		{`/var/opt/mssql/data/db.bak`, 3, `RESTORE FILELISTONLY FROM DISK = N'/var/opt/mssql/data/db.bak' WITH FILE = 3`},
+		{DiskTarget(`C:\bk\db.bak`), 0, `RESTORE FILELISTONLY FROM DISK = N'C:\bk\db.bak'`},
+		{DiskTarget(`C:\bk\db.bak`), 1, `RESTORE FILELISTONLY FROM DISK = N'C:\bk\db.bak' WITH FILE = 1`},
+		{DiskTarget(`/var/opt/mssql/data/db.bak`), 3, `RESTORE FILELISTONLY FROM DISK = N'/var/opt/mssql/data/db.bak' WITH FILE = 3`},
 		// A negative number is not a set, so it must not reach the server.
-		{`/tmp/db.bak`, -2, `RESTORE FILELISTONLY FROM DISK = N'/tmp/db.bak'`},
+		{DiskTarget(`/tmp/db.bak`), -2, `RESTORE FILELISTONLY FROM DISK = N'/tmp/db.bak'`},
 		// A device path carrying an apostrophe stays quoted.
-		{`/tmp/o'brien.bak`, 2, `RESTORE FILELISTONLY FROM DISK = N'/tmp/o''brien.bak' WITH FILE = 2`},
+		{DiskTarget(`/tmp/o'brien.bak`), 2, `RESTORE FILELISTONLY FROM DISK = N'/tmp/o''brien.bak' WITH FILE = 2`},
+		// A logical backup device is named bare, never as DISK = N'name' —
+		// that reads the name as a file path in the default backup directory.
+		{DeviceTarget("NightlyDev"), 0, `RESTORE FILELISTONLY FROM [NightlyDev]`},
+		{DeviceTarget("Nightly]Dev"), 2, `RESTORE FILELISTONLY FROM [Nightly]]Dev] WITH FILE = 2`},
 	}
 	for _, c := range cases {
 		if got := backupFileListQuery(c.device, c.file); got != c.want {
