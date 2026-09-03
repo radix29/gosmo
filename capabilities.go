@@ -170,6 +170,11 @@ var ProbedSchemaPermissions = []string{
 // cost a query per object. The consequence is that it reports only what is
 // *explicit*: an object carrying no grant and no distinct owner has no row at
 // all, which is why the answer is additive — see HasOnObject.
+//
+// Each name is probed at column scope as well, into ColumnPermissions. Only a
+// column-grantable permission can produce a row there — ALTER and CONTROL are
+// not among them — so the block is empty for this list as it stands, and
+// correct the moment SELECT, UPDATE or REFERENCES joins it.
 var ProbedObjectPermissions = []string{
 	"ALTER",
 }
@@ -270,7 +275,7 @@ func (s *Server) CapabilitiesContext(ctx context.Context) (*Capabilities, error)
 		ServerRoles:       map[string]bool{},
 		ServerPermissions: map[string]CapabilityState{},
 	}
-	if err := scanCapabilityRows(rows, c.ServerRoles, c.ServerPermissions, nil, nil); err != nil {
+	if err := scanCapabilityRows(rows, c.ServerRoles, c.ServerPermissions, nil, nil, nil); err != nil {
 		return nil, fmt.Errorf("gosmo: read server capabilities: %w", err)
 	}
 	return c, nil
@@ -315,6 +320,17 @@ type DatabaseCapabilities struct {
 	// so an Allows/Permits-style reading of it would report every object in
 	// the database as permitted. HasOnObject is the only safe test.
 	ObjectPermissions map[string]map[string]CapabilityState
+
+	// ColumnPermissions maps "schema.object.column" to the state of each name
+	// in ProbedObjectPermissions that was granted or denied on that column.
+	// Read it through HasOnColumn/DeniedOnColumn/DeniedOnAnyColumn.
+	//
+	// It is separate from ObjectPermissions rather than folded into it because
+	// a column-scope row answers for the column alone: recorded on the table
+	// it would report a DENY on one column as a DENY on the whole table, and a
+	// GRANT on one column as a grant on all of them. Sparse for
+	// ObjectPermissions' reason, and read the same way.
+	ColumnPermissions map[string]map[string]CapabilityState
 }
 
 // SchemaPermission returns the state of one SCHEMA-scope permission on the
@@ -419,6 +435,69 @@ func (c *DatabaseCapabilities) DeniedOnObject(schema, object, name string) bool 
 	return c.ObjectPermission(schema, object, name) == CapabilityDenied
 }
 
+// ColumnKey is the key ColumnPermissions is indexed by: the schema, object and
+// column joined with dots, unquoted, exactly as the probe records them.
+func ColumnKey(schema, object, column string) string {
+	return schema + "." + object + "." + column
+}
+
+// ColumnPermission returns the state of one OBJECT-scope permission recorded
+// on a single column. A column with no explicit grant or deny is
+// CapabilityUnknown, which here means "nothing was recorded for it".
+func (c *DatabaseCapabilities) ColumnPermission(schema, object, column, name string) CapabilityState {
+	if c == nil {
+		return CapabilityUnknown
+	}
+	return c.ColumnPermissions[ColumnKey(schema, object, column)][name]
+}
+
+// HasOnColumn reports that the permission is known to be held on the column.
+// HasOnObject's counterpart, and additive for the same reason: a column
+// carrying no row of its own is covered by whatever the table and the wider
+// scopes grant.
+func (c *DatabaseCapabilities) HasOnColumn(schema, object, column, name string) bool {
+	return c.ColumnPermission(schema, object, column, name) == CapabilityGranted
+}
+
+// DeniedOnColumn reports that the permission is explicitly denied on the
+// column. DeniedOnObject's counterpart and sound for its reason — it asks for
+// a recorded state rather than for the absence of one — with the same two
+// exceptions belonging to the caller: sysadmin bypasses the check, and a
+// database that was never probed records nothing.
+func (c *DatabaseCapabilities) DeniedOnColumn(schema, object, column, name string) bool {
+	return c.ColumnPermission(schema, object, column, name) == CapabilityDenied
+}
+
+// DeniedOnAnyColumn reports that the permission is denied on at least one
+// column of the object, and names one such column.
+//
+// This is what a caller gating a *table-wide* action asks. SQL Server resolves
+// a column-scope DENY over every wider grant exactly as it does an
+// object-scope one, so a statement touching all the columns fails Msg 230 for
+// a principal that holds the permission on the table itself — and asking
+// DeniedOnObject alone lets the wider grant answer for a column it does not
+// cover. An action scoped to named columns should ask DeniedOnColumn per
+// column instead.
+func (c *DatabaseCapabilities) DeniedOnAnyColumn(schema, object, name string) (string, bool) {
+	if c == nil {
+		return "", false
+	}
+	prefix := ObjectKey(schema, object) + "."
+	// The lowest name rather than the first the map yields: a caller that puts
+	// the column in a message would otherwise show a different one each time
+	// two of them are denied.
+	found := ""
+	for key, states := range c.ColumnPermissions {
+		if !strings.HasPrefix(key, prefix) || states[name] != CapabilityDenied {
+			continue
+		}
+		if col := strings.TrimPrefix(key, prefix); found == "" || col < found {
+			found = col
+		}
+	}
+	return found, found != ""
+}
+
 // InRole reports whether the login's user in this database is a member of the
 // named fixed database role. As with Capabilities.InServerRole, membership in
 // db_owner (or in sysadmin) is not folded in.
@@ -509,6 +588,7 @@ func (d *Database) CapabilitiesContext(ctx context.Context) (*DatabaseCapabiliti
 			Permissions:       map[string]CapabilityState{},
 			SchemaPermissions: map[string]map[string]CapabilityState{},
 			ObjectPermissions: map[string]map[string]CapabilityState{},
+			ColumnPermissions: map[string]map[string]CapabilityState{},
 		}, nil
 	}
 
@@ -536,8 +616,9 @@ func (d *Database) CapabilitiesContext(ctx context.Context) (*DatabaseCapabiliti
 		Permissions:       map[string]CapabilityState{},
 		SchemaPermissions: map[string]map[string]CapabilityState{},
 		ObjectPermissions: map[string]map[string]CapabilityState{},
+		ColumnPermissions: map[string]map[string]CapabilityState{},
 	}
-	if err := scanCapabilityRows(rows.Rows, c.Roles, c.Permissions, c.SchemaPermissions, c.ObjectPermissions); err != nil {
+	if err := scanCapabilityRows(rows.Rows, c.Roles, c.Permissions, c.SchemaPermissions, c.ObjectPermissions, c.ColumnPermissions); err != nil {
 		return nil, fmt.Errorf("gosmo: read capabilities for database %q: %w", d.name, err)
 	}
 	return c, nil
@@ -600,9 +681,13 @@ func schemaCapabilityQuery(first int, perms []string) (string, []any) {
 //   - public is in the principal set, so the permission_name filter has to
 //     stay: without it every catalog view's SELECT grant to public comes back,
 //     235 rows on a stock database against the 3 that matter.
-//   - minor_id = 0 keeps column-level grants out. They share class 1 with the
-//     object-level ones and would otherwise report a column grant as a grant
-//     on the table.
+//   - minor_id splits the two scopes rather than filtering one away. A
+//     column-scope row shares class 1 with the object-level ones, so folding
+//     it in reports a grant on one column as a grant on the table and a DENY
+//     on one column as a DENY on all of them; dropping it instead leaves the
+//     wider grant to answer for a column SQL Server refuses. Column rows are
+//     tagged "C:" and keyed "schema.object.column" — see
+//     DatabaseCapabilities.ColumnPermissions.
 //   - The sys.objects half is not redundant with the permissions half: an
 //     object's owner holds implicit CONTROL and has *no* permission row at
 //     all, so ownership is invisible to the catalog's permission list.
@@ -626,7 +711,17 @@ UNION ALL
 	WHERE p.class = 1 AND p.minor_id = 0
 	  AND p.grantee_principal_id IN (SELECT id FROM cap_me)
 	  AND p.permission_name IN (n.v, 'CONTROL')
-	  AND OBJECT_NAME(p.major_id) IS NOT NULL`, args
+	  AND OBJECT_NAME(p.major_id) IS NOT NULL
+UNION ALL
+	SELECT CONCAT('C:', n.v), CONCAT(OBJECT_SCHEMA_NAME(p.major_id), '.', OBJECT_NAME(p.major_id),
+	                                 '.', COL_NAME(p.major_id, p.minor_id)),
+	       CASE WHEN p.state IN ('D') THEN 0 ELSE 1 END
+	FROM sys.database_permissions AS p CROSS JOIN (VALUES ` + valuesList(first, len(perms)) + `) AS n(v)
+	WHERE p.class = 1 AND p.minor_id > 0
+	  AND p.grantee_principal_id IN (SELECT id FROM cap_me)
+	  AND p.permission_name IN (n.v, 'CONTROL')
+	  AND OBJECT_NAME(p.major_id) IS NOT NULL
+	  AND COL_NAME(p.major_id, p.minor_id) IS NOT NULL`, args
 }
 
 // capabilityPrincipalCTE is the "every principal the login's permissions can
@@ -667,7 +762,7 @@ func valuesClause(first, count int) string {
 // scanCapabilityRows fills roles and perms from the probe's (kind, name,
 // answer) rows. A NULL answer is left out of the map entirely, which is what
 // makes it read back as CapabilityUnknown / false.
-func scanCapabilityRows(rows *sql.Rows, roles map[string]bool, perms map[string]CapabilityState, schemas, objects map[string]map[string]CapabilityState) error {
+func scanCapabilityRows(rows *sql.Rows, roles map[string]bool, perms map[string]CapabilityState, schemas, objects, columns map[string]map[string]CapabilityState) error {
 	for rows.Next() {
 		var kind, name string
 		var answer sql.NullInt64
@@ -695,25 +790,40 @@ func scanCapabilityRows(rows *sql.Rows, roles map[string]bool, perms map[string]
 			schemas[name][strings.TrimPrefix(kind, "S:")] = st
 		case strings.HasPrefix(kind, "O:"):
 			// As with "S:", name is the securable and the permission rides in
-			// kind. A denial wins over a grant however the two rows are
-			// ordered: SQL Server resolves DENY over GRANT, and the object
-			// block can produce both for one object — a grant on a role and a
-			// deny on the user.
-			st, ok := capabilityStateOf(answer)
-			if !ok || objects == nil {
-				continue
+			// kind.
+			if st, ok := capabilityStateOf(answer); ok {
+				recordSecurableState(objects, name, strings.TrimPrefix(kind, "O:"), st)
 			}
-			perm := strings.TrimPrefix(kind, "O:")
-			if objects[name] == nil {
-				objects[name] = map[string]CapabilityState{}
+		case strings.HasPrefix(kind, "C:"):
+			// The column block, keyed "schema.object.column". It is kept apart
+			// from the object map because a column row answers for the column
+			// alone — see DatabaseCapabilities.ColumnPermissions.
+			if st, ok := capabilityStateOf(answer); ok {
+				recordSecurableState(columns, name, strings.TrimPrefix(kind, "C:"), st)
 			}
-			if objects[name][perm] == CapabilityDenied {
-				continue
-			}
-			objects[name][perm] = st
 		}
 	}
 	return rows.Err()
+}
+
+// recordSecurableState files one object- or column-scope answer under its
+// securable, into a map a server probe passes as nil and so drops.
+//
+// A denial wins over a grant however the two rows are ordered: SQL Server
+// resolves DENY over GRANT, and the catalog block can produce both rows for
+// one securable — a grant to a role the login is in, a deny to the login
+// itself.
+func recordSecurableState(m map[string]map[string]CapabilityState, key, perm string, st CapabilityState) {
+	if m == nil {
+		return
+	}
+	if m[key] == nil {
+		m[key] = map[string]CapabilityState{}
+	}
+	if m[key][perm] == CapabilityDenied {
+		return
+	}
+	m[key][perm] = st
 }
 
 // capabilityStateOf maps one HAS_PERMS_BY_NAME answer to a state. NULL is not

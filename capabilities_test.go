@@ -695,3 +695,126 @@ func TestDeniedOnObjectReportsOnlyAnExplicitDeny(t *testing.T) {
 		t.Error("a database that was never probed reported a denial")
 	}
 }
+
+// TestTheObjectProbeKeepsColumnScopeApart. A column-scope permission row
+// shares class 1 with the object-level ones and differs only in minor_id, so
+// the block that reads them is the only thing keeping the two scopes from
+// answering for each other. Two mutations this catches and nothing else does:
+// dropping the column block (a DENY on one column becomes invisible and the
+// table's grant answers for it) and folding it into the object block (the same
+// DENY becomes a denial of the whole table).
+func TestTheObjectProbeKeepsColumnScopeApart(t *testing.T) {
+	q, args := objectCapabilityQuery(1, ProbedObjectPermissions)
+
+	if len(args) != len(ProbedObjectPermissions) {
+		t.Errorf("the object block bound %d names, want %d — the column block reuses the same placeholders",
+			len(args), len(ProbedObjectPermissions))
+	}
+	for _, want := range []struct{ frag, why string }{
+		{"p.minor_id > 0", "the column-scope rows are the ones minor_id > 0 selects"},
+		{"COL_NAME(p.major_id, p.minor_id)", "the column name is what makes the row addressable"},
+		{"CONCAT('C:', n.v)", "column rows must be tagged apart from the object ones"},
+		{"COL_NAME(p.major_id, p.minor_id) IS NOT NULL", "a dropped column would key on a trailing dot"},
+	} {
+		if !strings.Contains(q, want.frag) {
+			t.Errorf("the column block is missing %q — %s:\n%s", want.frag, want.why, q)
+		}
+	}
+	// And the object block still excludes them, or every column row is read
+	// twice — once correctly and once as the table.
+	if !strings.Contains(q, "p.class = 1 AND p.minor_id = 0") {
+		t.Errorf("the object block no longer excludes column rows:\n%s", q)
+	}
+}
+
+// TestDatabaseCapabilitiesReadColumnPermissionsApartFromTheirTable. The
+// end-to-end shape: a table granted ALTER with one of its columns denied it
+// must read as granted on the table, denied on that column, and denied on
+// "any" column — the last being what a caller gating a table-wide action asks.
+func TestDatabaseCapabilitiesReadColumnPermissionsApartFromTheirTable(t *testing.T) {
+	srv := capServer(t, &capScript{
+		dbAccess: int64(1),
+		dbRows: [][]driver.Value{
+			{"O:ALTER", "dbo.Patients", int64(1)},
+			{"C:ALTER", "dbo.Patients.SSN", int64(0)},
+			{"C:ALTER", "dbo.Patients.Notes", int64(1)},
+		},
+	})
+
+	c, err := srv.Database("HealthClinic").CapabilitiesContext(context.Background())
+	if err != nil {
+		t.Fatalf("CapabilitiesContext: %v", err)
+	}
+	if !c.HasOnObject("dbo", "Patients", "ALTER") {
+		t.Error("the table's own grant did not read back")
+	}
+	if c.DeniedOnObject("dbo", "Patients", "ALTER") {
+		t.Error("a column denial was recorded as a denial on the table")
+	}
+	if !c.DeniedOnColumn("dbo", "Patients", "SSN", "ALTER") {
+		t.Error("a denied column did not read back as denied")
+	}
+	if c.DeniedOnColumn("dbo", "Patients", "Notes", "ALTER") {
+		t.Error("a granted column read as denied")
+	}
+	if !c.HasOnColumn("dbo", "Patients", "Notes", "ALTER") {
+		t.Error("a granted column did not read back as held")
+	}
+	if col, denied := c.DeniedOnAnyColumn("dbo", "Patients", "ALTER"); !denied || col != "SSN" {
+		t.Errorf("DeniedOnAnyColumn = %q, %v; want \"SSN\", true", col, denied)
+	}
+	// A column nobody mentioned is unknown, and the map is sparse exactly as
+	// the object map is: unknown is not a denial.
+	if c.HasOnColumn("dbo", "Patients", "Name", "ALTER") ||
+		c.DeniedOnColumn("dbo", "Patients", "Name", "ALTER") {
+		t.Error("a column with no row did not read as unknown")
+	}
+	if _, denied := c.DeniedOnAnyColumn("dbo", "Visits", "ALTER"); denied {
+		t.Error("a table with no column rows reported a column denial")
+	}
+	var nilCaps *DatabaseCapabilities
+	if nilCaps.HasOnColumn("dbo", "Patients", "SSN", "ALTER") ||
+		nilCaps.DeniedOnColumn("dbo", "Patients", "SSN", "ALTER") {
+		t.Error("a nil capability set answered about a column")
+	}
+	if _, denied := nilCaps.DeniedOnAnyColumn("dbo", "Patients", "ALTER"); denied {
+		t.Error("a nil capability set reported a column denial")
+	}
+}
+
+// TestADenyOnAColumnSurvivesAGrantAndIsNamedStably. The column map takes the
+// object map's deny-wins rule — both rows can arrive for one column, in either
+// order — and DeniedOnAnyColumn must name the same column every call, which
+// map iteration alone does not give.
+func TestADenyOnAColumnSurvivesAGrantAndIsNamedStably(t *testing.T) {
+	for _, order := range [][]driver.Value{{int64(1), int64(0)}, {int64(0), int64(1)}} {
+		srv := capServer(t, &capScript{
+			dbAccess: int64(1),
+			dbRows: [][]driver.Value{
+				{"C:ALTER", "dbo.Patients.SSN", order[0]},
+				{"C:ALTER", "dbo.Patients.SSN", order[1]},
+			},
+		})
+		c, err := srv.Database("HealthClinic").CapabilitiesContext(context.Background())
+		if err != nil {
+			t.Fatalf("CapabilitiesContext: %v", err)
+		}
+		if !c.DeniedOnColumn("dbo", "Patients", "SSN", "ALTER") {
+			t.Errorf("a deny was overwritten by a grant, rows arriving as %v", order)
+		}
+	}
+
+	c := &DatabaseCapabilities{
+		Accessible: true,
+		ColumnPermissions: map[string]map[string]CapabilityState{
+			"dbo.Patients.SSN":    {"ALTER": CapabilityDenied},
+			"dbo.Patients.Notes":  {"ALTER": CapabilityDenied},
+			"dbo.Patients.Amount": {"ALTER": CapabilityGranted},
+		},
+	}
+	for range 20 {
+		if col, _ := c.DeniedOnAnyColumn("dbo", "Patients", "ALTER"); col != "Notes" {
+			t.Fatalf("DeniedOnAnyColumn = %q, want the lowest denied name \"Notes\"", col)
+		}
+	}
+}

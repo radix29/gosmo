@@ -142,6 +142,26 @@ WITH VALUES
     ALGORITHM = 'RSA_OAEP',
     ENCRYPTED_VALUE = 0x02
 )`},
+		// Rotation: the second value is added by ALTER, and the retired one
+		// dropped by naming its master key alone — the ciphertext is not
+		// restated on the way out.
+		{"ColumnEncryptionKey.AddValue", func(c context.Context) error {
+			return scriptTestCEK().AddValueContext(c, ColumnEncryptionKeyValue{
+				MasterKeyName: "CMK]2", EncryptionAlgorithm: "RSA_OAEP", EncryptedValue: []byte{0x0a, 0xff}})
+		}, scriptUsePrefix + `ALTER COLUMN ENCRYPTION KEY [CEK]]1]
+ADD VALUE
+(
+    COLUMN_MASTER_KEY = [CMK]]2],
+    ALGORITHM = 'RSA_OAEP',
+    ENCRYPTED_VALUE = 0x0AFF
+)`},
+		{"ColumnEncryptionKey.DropValue", func(c context.Context) error {
+			return scriptTestCEK().DropValueContext(c, "CMK]1")
+		}, scriptUsePrefix + `ALTER COLUMN ENCRYPTION KEY [CEK]]1]
+DROP VALUE
+(
+    COLUMN_MASTER_KEY = [CMK]]1]
+)`},
 	})
 }
 
@@ -276,5 +296,74 @@ func TestCreateColumnEncryptionKeyRefusesAnIncompleteValue(t *testing.T) {
 					len(script.Statements), strings.Join(script.Statements, "\n---\n"))
 			}
 		})
+	}
+}
+
+// scriptTestCEK is a column encryption key handle bound to scriptTestDB, for
+// the two ALTER cases. Its name carries a bracket for the same reason every
+// other name in these files does.
+func scriptTestCEK() *ColumnEncryptionKey {
+	return &ColumnEncryptionKey{db: scriptTestDB(), Name: "CEK]1",
+		Values: []*ColumnEncryptionKeyValue{
+			{MasterKeyName: "CMK]1", EncryptionAlgorithm: "RSA_OAEP", EncryptedValue: []byte{0x01}},
+		}}
+}
+
+// TestColumnEncryptionKeyValueGuards pins the same completeness check on the
+// ALTER path that CREATE has, plus DropValue's, and that neither emits a
+// statement when it refuses.
+func TestColumnEncryptionKeyValueGuards(t *testing.T) {
+	good := ColumnEncryptionKeyValue{MasterKeyName: "CMK2", EncryptionAlgorithm: "RSA_OAEP", EncryptedValue: []byte{0x02}}
+	add := func(edit func(*ColumnEncryptionKeyValue)) func(context.Context) error {
+		v := good
+		edit(&v)
+		return func(c context.Context) error { return scriptTestCEK().AddValueContext(c, v) }
+	}
+	for _, c := range []struct {
+		name string
+		call func(context.Context) error
+		want string
+	}{
+		{"add with no master key", add(func(v *ColumnEncryptionKeyValue) { v.MasterKeyName = "" }), "no column master key"},
+		{"add with no algorithm", add(func(v *ColumnEncryptionKeyValue) { v.EncryptionAlgorithm = "" }), "no encryption algorithm"},
+		{"add with no encrypted value", add(func(v *ColumnEncryptionKeyValue) { v.EncryptedValue = nil }), "no encrypted value"},
+		{"drop with no master key", func(c context.Context) error { return scriptTestCEK().DropValueContext(c, "") },
+			"column master key name is required"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			ctx, script := WithScript(context.Background())
+			err := c.call(ctx)
+			if err == nil {
+				t.Fatalf("no error; statements: %v", script.Statements)
+			}
+			if !strings.Contains(err.Error(), c.want) {
+				t.Errorf("error = %v, want it to mention %q", err, c.want)
+			}
+			if len(script.Statements) != 0 {
+				t.Errorf("emitted %d statement(s), want none:\n%s",
+					len(script.Statements), strings.Join(script.Statements, "\n---\n"))
+			}
+		})
+	}
+}
+
+// TestColumnEncryptionKeyValuesTrackTheAlter pins that the in-memory Values
+// slice follows the statement, so a caller that adds then drops sees the
+// rotation's end state without re-reading the catalog.
+func TestColumnEncryptionKeyValuesTrackTheAlter(t *testing.T) {
+	ctx, _ := WithScript(context.Background())
+	cek := scriptTestCEK()
+	if err := cek.AddValueContext(ctx, ColumnEncryptionKeyValue{
+		MasterKeyName: "CMK]2", EncryptionAlgorithm: "RSA_OAEP", EncryptedValue: []byte{0x02}}); err != nil {
+		t.Fatalf("AddValue: %v", err)
+	}
+	if len(cek.Values) != 2 {
+		t.Fatalf("after AddValue, Values = %d, want 2", len(cek.Values))
+	}
+	if err := cek.DropValueContext(ctx, "cmk]1"); err != nil { // case-insensitive, as SQL Server matches it
+		t.Fatalf("DropValue: %v", err)
+	}
+	if len(cek.Values) != 1 || cek.Values[0].MasterKeyName != "CMK]2" {
+		t.Fatalf("after DropValue, Values = %+v, want only CMK]2", cek.Values)
 	}
 }

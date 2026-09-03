@@ -207,6 +207,29 @@ type ColumnEncryptionKeyValue struct {
 	EncryptedValue []byte
 }
 
+// missing names the first required part this value has not been given, or
+// "" when it is complete. The parts are the same for CREATE and for ALTER ...
+// ADD VALUE, and the server's own error for an omitted one is a syntax error
+// pointing at the closing paren.
+func (v ColumnEncryptionKeyValue) missing() string {
+	switch {
+	case v.MasterKeyName == "":
+		return "no column master key"
+	case v.EncryptionAlgorithm == "":
+		return "no encryption algorithm"
+	case len(v.EncryptedValue) == 0:
+		return "no encrypted value, which only the client holding the master key can produce"
+	}
+	return ""
+}
+
+// valueClause renders the parenthesised value block CREATE COLUMN ENCRYPTION
+// KEY and ALTER ... ADD VALUE both take.
+func (v ColumnEncryptionKeyValue) valueClause() string {
+	return fmt.Sprintf("(\n    COLUMN_MASTER_KEY = %s,\n    ALGORITHM = '%s',\n    ENCRYPTED_VALUE = %s\n)",
+		quoteIdent(v.MasterKeyName), escapeSingle(v.EncryptionAlgorithm), hexLiteral(v.EncryptedValue))
+}
+
 // columnEncryptionKeySelect is the column list and joins every column
 // encryption key read shares. It returns one row per encrypted value, so
 // every caller folds the rows with scanColumnEncryptionKeys.
@@ -324,14 +347,8 @@ func (d *Database) CreateColumnEncryptionKeyContext(ctx context.Context, name st
 		return fmt.Errorf("gosmo: create column encryption key [%s]: at least one encrypted value is required", name)
 	}
 	for i, v := range values {
-		if v.MasterKeyName == "" {
-			return fmt.Errorf("gosmo: create column encryption key [%s]: value %d has no column master key", name, i+1)
-		}
-		if v.EncryptionAlgorithm == "" {
-			return fmt.Errorf("gosmo: create column encryption key [%s]: value %d has no encryption algorithm", name, i+1)
-		}
-		if len(v.EncryptedValue) == 0 {
-			return fmt.Errorf("gosmo: create column encryption key [%s]: value %d has no encrypted value, which only the client holding the master key can produce", name, i+1)
+		if missing := v.missing(); missing != "" {
+			return fmt.Errorf("gosmo: create column encryption key [%s]: value %d has %s", name, i+1, missing)
 		}
 	}
 
@@ -341,12 +358,64 @@ func (d *Database) CreateColumnEncryptionKeyContext(ctx context.Context, name st
 		if i > 0 {
 			sb.WriteString(",")
 		}
-		fmt.Fprintf(&sb, "\n(\n    COLUMN_MASTER_KEY = %s,\n    ALGORITHM = '%s',\n    ENCRYPTED_VALUE = %s\n)",
-			quoteIdent(v.MasterKeyName), escapeSingle(v.EncryptionAlgorithm), hexLiteral(v.EncryptedValue))
+		fmt.Fprintf(&sb, "\n%s", v.valueClause())
 	}
 	if _, err := d.exec(ctx, sb.String()); err != nil {
 		return fmt.Errorf("gosmo: create column encryption key [%s]: %w", name, err)
 	}
+	return nil
+}
+
+// AddValue encrypts the key under one more column master key, the first half
+// of a master-key rotation: both values coexist so clients holding either
+// master key can still decrypt, and the old one is dropped with DropValue
+// once every client has the new master key.
+//
+// As with CreateColumnEncryptionKey, the encrypted value is produced
+// client-side by something that can reach the new master key — nothing here
+// can generate it, and the server stores it without checking it.
+func (cek *ColumnEncryptionKey) AddValue(value ColumnEncryptionKeyValue) error {
+	return cek.AddValueContext(context.Background(), value)
+}
+
+// AddValueContext is the context-aware variant of AddValue.
+func (cek *ColumnEncryptionKey) AddValueContext(ctx context.Context, value ColumnEncryptionKeyValue) error {
+	if missing := value.missing(); missing != "" {
+		return fmt.Errorf("gosmo: add value to column encryption key [%s]: the value has %s", cek.Name, missing)
+	}
+	stmt := fmt.Sprintf("ALTER COLUMN ENCRYPTION KEY %s\nADD VALUE\n%s",
+		quoteIdent(cek.Name), value.valueClause())
+	if _, err := cek.db.exec(ctx, stmt); err != nil {
+		return fmt.Errorf("gosmo: add value to column encryption key [%s]: %w", cek.Name, err)
+	}
+	cek.Values = append(cek.Values, &value)
+	return nil
+}
+
+// DropValue removes the value encrypted under one column master key — the
+// second half of a rotation.
+//
+// The data encrypted with this key becomes unreadable to any client that can
+// reach only the dropped master key, so the new value must be in place and
+// distributed first. DROP VALUE names the master key alone; the ciphertext is
+// not restated.
+func (cek *ColumnEncryptionKey) DropValue(masterKeyName string) error {
+	return cek.DropValueContext(context.Background(), masterKeyName)
+}
+
+// DropValueContext is the context-aware variant of DropValue.
+func (cek *ColumnEncryptionKey) DropValueContext(ctx context.Context, masterKeyName string) error {
+	if masterKeyName == "" {
+		return fmt.Errorf("gosmo: drop value from column encryption key [%s]: the column master key name is required", cek.Name)
+	}
+	stmt := fmt.Sprintf("ALTER COLUMN ENCRYPTION KEY %s\nDROP VALUE\n(\n    COLUMN_MASTER_KEY = %s\n)",
+		quoteIdent(cek.Name), quoteIdent(masterKeyName))
+	if _, err := cek.db.exec(ctx, stmt); err != nil {
+		return fmt.Errorf("gosmo: drop value from column encryption key [%s]: %w", cek.Name, err)
+	}
+	cek.Values = slices.DeleteFunc(cek.Values, func(v *ColumnEncryptionKeyValue) bool {
+		return strings.EqualFold(v.MasterKeyName, masterKeyName)
+	})
 	return nil
 }
 
