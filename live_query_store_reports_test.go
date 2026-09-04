@@ -47,16 +47,23 @@ func qsLiveSetup(t *testing.T, db *sql.DB, ctx context.Context) (*Server, *Datab
 	}
 	drop()
 	exec("CREATE DATABASE [" + qsLiveDBName + "]")
-	exec("ALTER DATABASE [" + qsLiveDBName + "] SET QUERY_STORE = ON " +
-		"(OPERATION_MODE = READ_WRITE, QUERY_CAPTURE_MODE = ALL, " +
-		"INTERVAL_LENGTH_MINUTES = 1, DATA_FLUSH_INTERVAL_SECONDS = 60, " +
-		"WAIT_STATS_CAPTURE_MODE = ON)")
 
 	srv, err := NewServer(ctx, db)
 	if err != nil {
 		drop()
 		t.Fatalf("NewServer: %v", err)
 	}
+	// WAIT_STATS_CAPTURE_MODE is SQL Server 2017 syntax, and an option the
+	// parser does not know fails the whole ALTER — so on 2016 the setup asks
+	// for everything but it, rather than not running at all.
+	waitStats := ", WAIT_STATS_CAPTURE_MODE = ON"
+	if !hasColumnSince(srv.serverMajorVersion(), SQLServer2017) {
+		waitStats = ""
+	}
+	exec("ALTER DATABASE [" + qsLiveDBName + "] SET QUERY_STORE = ON " +
+		"(OPERATION_MODE = READ_WRITE, QUERY_CAPTURE_MODE = ALL, " +
+		"INTERVAL_LENGTH_MINUTES = 1, DATA_FLUSH_INTERVAL_SECONDS = 60" +
+		waitStats + ")")
 	d := srv.Database(qsLiveDBName)
 
 	// A workload: a table, a procedure over it, and enough executions with

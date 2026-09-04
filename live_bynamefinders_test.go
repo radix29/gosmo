@@ -26,6 +26,13 @@ import (
 
 // liveScratchDB creates a throwaway database and returns a *Database for it
 // plus a dropper.
+//
+// NewServer, not &Server{db: db}: a hand-built Server has no info, and
+// serverMajorVersion's "0 means newest" convention then makes every version
+// gate answer as though the instance were the newest one. A live test against
+// SQL Server 2017 would sail past a 2019-only refusal and fail at the server
+// instead of exercising the gate — which is the whole point of running it
+// there.
 func liveScratchDB(t *testing.T, db *sql.DB, ctx context.Context, name string) (*Database, func()) {
 	t.Helper()
 	if _, err := db.ExecContext(ctx, "IF DB_ID('"+name+"') IS NOT NULL ALTER DATABASE ["+name+"] SET SINGLE_USER WITH ROLLBACK IMMEDIATE"); err != nil {
@@ -37,7 +44,10 @@ func liveScratchDB(t *testing.T, db *sql.DB, ctx context.Context, name string) (
 	if _, err := db.ExecContext(ctx, "CREATE DATABASE ["+name+"]"); err != nil {
 		t.Fatalf("create database %s: %v", name, err)
 	}
-	srv := &Server{db: db}
+	srv, err := NewServer(ctx, db)
+	if err != nil {
+		t.Fatalf("NewServer: %v", err)
+	}
 	d, err := srv.DatabaseByNameContext(ctx, name)
 	if err != nil {
 		t.Fatalf("DatabaseByNameContext %s: %v", name, err)
@@ -365,7 +375,7 @@ func TestLiveSchemaAndTableChildFindersMatchTheirListings(t *testing.T) {
 			got.IsDisabled != want.IsDisabled {
 			t.Errorf("by name = %+v, listing = %+v", got, want)
 		}
-		// Both column lists are STRING_AGG subqueries; an empty one scripts
+		// Both column lists are commaList subqueries; an empty one scripts
 		// a FOREIGN KEY with no columns.
 		if len(got.Columns) != 1 || got.Columns[0] != "parent_id" {
 			t.Errorf("columns = %v, want [parent_id]", got.Columns)

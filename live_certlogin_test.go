@@ -30,6 +30,8 @@ func TestLiveCertificateLoginCreateReadScript(t *testing.T) {
 		t.Fatalf("NewServer: %v", err)
 	}
 	master := s.Database("master")
+	// CREATE CERTIFICATE encrypts the private key with master's DMK.
+	defer ensureMasterKey(t, s, ctx)()
 
 	const certName = "gosmo_live_cert"
 	const loginName = "gosmo_live_certlogin"
@@ -112,6 +114,8 @@ func TestLiveCertificateLoginRejectsADefaultDatabase(t *testing.T) {
 		t.Fatalf("NewServer: %v", err)
 	}
 	master := s.Database("master")
+	// CREATE CERTIFICATE encrypts the private key with master's DMK.
+	defer ensureMasterKey(t, s, ctx)()
 
 	const certName = "gosmo_live_cert_dd"
 	const loginName = "gosmo_live_certlogin_dd"

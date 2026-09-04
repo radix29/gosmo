@@ -5,6 +5,20 @@ starts tracking detail from `v0.0.4` onward; `RELEASE.md` covers the
 high-level shape of every release, including the ones before this file
 existed.
 
+## Unreleased
+
+### Scheduled for the next breaking tag
+
+- **Remove `JobStateCancelling` and `JobStateRunning`** (`agent_job.go`). They
+  name states Agent's `job_state` encoding does not have, no read in this
+  package returns either, and their negative values exist only so a switch over
+  the real encoding cannot reach them by accident. They are kept solely so
+  existing callers compile, which is why removing them waits for a tag that can
+  carry a break; deleting them in a patch release is not allowed. Callers of
+  `JobStateRunning` want `JobStateExecuting`; a job being stopped reports
+  `JobStatePerformingCompletionActions`, which is what `JobStateCancelling` was
+  reaching for.
+
 ## v0.0.10
 
 ### Added

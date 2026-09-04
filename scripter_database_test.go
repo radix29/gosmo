@@ -78,3 +78,31 @@ func TestScriptDatabaseIfNotExistsWrapsTheCreate(t *testing.T) {
 		t.Errorf("CREATE not bracket-quoted:\n%s", got)
 	}
 }
+
+// A Server built as &Server{db: db} — anything but NewServer — has no
+// ServerInfo, and the header read it unguarded.
+func TestScriptDatabaseHeaderSurvivesAServerWithNoInfo(t *testing.T) {
+	sc := scripterOverDatabase("Sales")
+	sc.opts.IncludeHeaders = true
+	got, err := sc.ScriptDatabase()
+	if err != nil {
+		t.Fatalf("ScriptDatabase: %v", err)
+	}
+	if !strings.Contains(got, "/* Database: Sales  Version:  */") {
+		t.Errorf("header missing or malformed with a nil ServerInfo:\n%s", got)
+	}
+}
+
+// With a ServerInfo present the header still names the version.
+func TestScriptDatabaseHeaderNamesTheVersion(t *testing.T) {
+	sc := scripterOverDatabase("Sales")
+	sc.db.server.info = &ServerInfo{ProductVersion: "14.0.3480.0"}
+	sc.opts.IncludeHeaders = true
+	got, err := sc.ScriptDatabase()
+	if err != nil {
+		t.Fatalf("ScriptDatabase: %v", err)
+	}
+	if !strings.Contains(got, "Version: 14.0.3480.0") {
+		t.Errorf("header lost the product version:\n%s", got)
+	}
+}

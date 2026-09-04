@@ -19,7 +19,24 @@ const (
 	SQLServer2017 ServerVersion = 14
 	SQLServer2019 ServerVersion = 15
 	SQLServer2022 ServerVersion = 16
+	SQLServer2025 ServerVersion = 17
 )
+
+// MinimumServerVersion is the oldest instance gosmo supports: SQL Server 2016
+// SP1 (13.0.4001), the build that introduced CREATE OR ALTER.
+//
+// Exactly one statement gosmo builds needs SP1 —
+// Database.CreateStoredProcedureContext's CREATE OR ALTER PROCEDURE
+// (procedure.go). Every catalog read would run on 2016 RTM, so this one
+// statement is the whole of the gap; supporting RTM means rewriting it as
+// IF EXISTS ... ALTER ... ELSE CREATE, which is a decision to take rather
+// than an oversight to fix. TestOnlyKnownSitesEmitCreateOrAlter fails if a
+// second such statement appears without one.
+//
+// scripter.go is not a second site, though it names the keywords:
+// alterModuleDefinition recognises a CREATE OR ALTER the server's own stored
+// definition already contains and returns it unchanged.
+const MinimumServerVersion = SQLServer2016
 
 // RecoveryModel mirrors SQL Server recovery model options.
 type RecoveryModel string

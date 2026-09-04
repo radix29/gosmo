@@ -528,7 +528,8 @@ func TestTheDatabaseProbeAsksAboutEverySchemaInOnePass(t *testing.T) {
 	// One pass, not one query per schema: the schemas come from the catalog,
 	// so nothing is bound per schema.
 	want := len(ProbedDatabaseRoles) + len(ProbedDatabasePermissions) +
-		len(ProbedSchemaPermissions) + len(ProbedObjectPermissions)
+		len(ProbedSchemaPermissions) + len(ProbedObjectPermissions) +
+		len(ProbedSchemaPermissions) // the schema catalog block binds them again
 	if len(script.dbArgs) != want {
 		t.Errorf("the probe bound %d names, want %d", len(script.dbArgs), want)
 	}
@@ -815,6 +816,132 @@ func TestADenyOnAColumnSurvivesAGrantAndIsNamedStably(t *testing.T) {
 	for range 20 {
 		if col, _ := c.DeniedOnAnyColumn("dbo", "Patients", "ALTER"); col != "Notes" {
 			t.Fatalf("DeniedOnAnyColumn = %q, want the lowest denied name \"Notes\"", col)
+		}
+	}
+}
+
+// TestTheSchemaCatalogBlockAsksForExplicitRowsOnly. The schema scope is probed
+// twice, and the two blocks are not interchangeable: HAS_PERMS_BY_NAME answers
+// 0 both for a permission denied on the schema and for one never granted, so
+// only a catalog read can report a DENY. This pins the parts of that read whose
+// absence produces a wrong answer rather than an error.
+func TestTheSchemaCatalogBlockAsksForExplicitRowsOnly(t *testing.T) {
+	q, args := explicitSchemaCapabilityQuery(7, ProbedSchemaPermissions)
+
+	if len(args) != len(ProbedSchemaPermissions) {
+		t.Errorf("the schema catalog block bound %d names, want %d — it must not bind per schema",
+			len(args), len(ProbedSchemaPermissions))
+	}
+	if !strings.Contains(q, "(VALUES (@p7)") {
+		t.Errorf("query = %s, want placeholders starting at @p7", q)
+	}
+	for _, want := range []struct{ frag, why string }{
+		{"p.class = 3", "class 3 is SCHEMA; any other class answers for a different securable"},
+		{"SCHEMA_NAME(p.major_id)", "major_id is the schema_id, and the name is what the map is keyed by"},
+		{"p.grantee_principal_id IN (SELECT id FROM cap_me)", "a permission reaching the login through a nested role is held just as fully"},
+		{"p.permission_name IN (n.v, 'CONTROL')", "CONTROL implies the permission asked about, and public's grants must stay out"},
+		{"SCHEMA_NAME(p.major_id) IS NOT NULL", "a schema hidden by metadata visibility would key on an empty name"},
+	} {
+		if !strings.Contains(q, want.frag) {
+			t.Errorf("the schema catalog block is missing %q — %s:\n%s", want.frag, want.why, q)
+		}
+	}
+	// The permission in the kind column, the schema in the name column, as
+	// scanCapabilityRows reads them — and tagged apart from the "S:" rows.
+	if !strings.Contains(q, "SELECT CONCAT('E:', n.v), SCHEMA_NAME(p.major_id),") {
+		t.Errorf("the schema catalog block's columns are the wrong way round:\n%s", q)
+	}
+}
+
+// TestDeniedOnSchemaReportsOnlyAnExplicitDeny. ExplicitSchemaPermissions is
+// sparse like ObjectPermissions, so silence is not a denial; and it is separate
+// from SchemaPermissions precisely because that map's CapabilityDenied means
+// "HAS_PERMS_BY_NAME said 0", which a permission that was simply never granted
+// also produces.
+func TestDeniedOnSchemaReportsOnlyAnExplicitDeny(t *testing.T) {
+	c := &DatabaseCapabilities{
+		Accessible: true,
+		// Never granted at schema scope, which is not a denial.
+		SchemaPermissions: map[string]map[string]CapabilityState{
+			"Reporting": {"ALTER": CapabilityDenied},
+		},
+		ExplicitSchemaPermissions: map[string]map[string]CapabilityState{
+			"Sales": {"ALTER": CapabilityDenied},
+			"HR":    {"ALTER": CapabilityGranted},
+		},
+	}
+	if !c.DeniedOnSchema("Sales", "ALTER") {
+		t.Error("an explicitly denied schema did not report the denial")
+	}
+	if c.DeniedOnSchema("HR", "ALTER") {
+		t.Error("an explicitly granted schema reported a denial")
+	}
+	if c.DeniedOnSchema("Reporting", "ALTER") {
+		t.Error("a schema HAS_PERMS_BY_NAME answered 0 for reported an explicit denial")
+	}
+	if c.DeniedOnSchema("dbo", "ALTER") {
+		t.Error("a schema with no row reported a denial — the map is sparse, so silence is not a deny")
+	}
+	if c.DeniedOnSchema("Sales", "SELECT") {
+		t.Error("a permission that was never probed reported a denial")
+	}
+	var nilCaps *DatabaseCapabilities
+	if nilCaps.DeniedOnSchema("Sales", "ALTER") {
+		t.Error("a nil capability set reported a denial")
+	}
+}
+
+// TestDatabaseCapabilitiesReadSchemaDenialsApartFromTheProbe. The end-to-end
+// shape: the two schema blocks land in two maps, and a DENY recorded on the
+// schema must not be readable as anything the HAS_PERMS_BY_NAME half said.
+func TestDatabaseCapabilitiesReadSchemaDenialsApartFromTheProbe(t *testing.T) {
+	srv := capServer(t, &capScript{
+		dbAccess: int64(1),
+		dbRows: [][]driver.Value{
+			{"P", "ALTER", int64(1)},
+			{"S:ALTER", "Sales", int64(0)},
+			{"E:ALTER", "Sales", int64(0)},
+			{"S:ALTER", "HR", int64(1)},
+		},
+	})
+
+	c, err := srv.Database("HealthClinic").CapabilitiesContext(context.Background())
+	if err != nil {
+		t.Fatalf("CapabilitiesContext: %v", err)
+	}
+	if !c.DeniedOnSchema("Sales", "ALTER") {
+		t.Error("the schema's DENY row did not read back")
+	}
+	if c.DeniedOnSchema("HR", "ALTER") {
+		t.Error("a schema with no catalog row read as denied")
+	}
+	if c.PermitsOnSchema("Sales", "ALTER") {
+		t.Error("the HAS_PERMS_BY_NAME half stopped answering once the catalog half arrived")
+	}
+	if !c.HasOnSchema("HR", "ALTER") {
+		t.Error("a schema granted ALTER did not read back as held")
+	}
+}
+
+// TestADenyOnASchemaSurvivesAGrant. The catalog block can produce both rows for
+// one schema — a grant to a role the login is in, a deny to the login itself —
+// in either order, and SQL Server resolves DENY over GRANT whichever arrives
+// first.
+func TestADenyOnASchemaSurvivesAGrant(t *testing.T) {
+	for _, order := range [][]int64{{1, 0}, {0, 1}} {
+		srv := capServer(t, &capScript{
+			dbAccess: int64(1),
+			dbRows: [][]driver.Value{
+				{"E:ALTER", "Sales", order[0]},
+				{"E:ALTER", "Sales", order[1]},
+			},
+		})
+		c, err := srv.Database("HealthClinic").CapabilitiesContext(context.Background())
+		if err != nil {
+			t.Fatalf("CapabilitiesContext: %v", err)
+		}
+		if !c.DeniedOnSchema("Sales", "ALTER") {
+			t.Errorf("a deny was overwritten by a grant, rows arriving as %v", order)
 		}
 	}
 }

@@ -113,7 +113,18 @@ func TestLiveEnumFileSystemFallbackAgreesWithDMV(t *testing.T) {
 		t.Fatalf("unknown-version enumerate %q must degrade, not fail: %v", *livePath, err)
 	}
 
-	// The same server with a version known to be modern takes the DMV.
+	// The same server with a version known to be modern takes the DMV — but
+	// only where the instance actually has it. sys.dm_os_enumerate_filesystem
+	// is SQL Server 2017, so on 2016 there is no DMV half to agree with and
+	// the fallback is the only answer there is.
+	real, err := NewServer(ctx, db)
+	if err != nil {
+		t.Fatalf("NewServer: %v", err)
+	}
+	if !hasColumnSince(real.serverMajorVersion(), SQLServer2017) {
+		t.Skipf("major %d has no sys.dm_os_enumerate_filesystem; xp_dirtree read %d entries under %q",
+			real.serverMajorVersion(), len(names(viaDirTree)), *livePath)
+	}
 	known := &Server{db: db, info: &ServerInfo{VersionMajor: 17}}
 	viaDMV, err := known.EnumFileSystemContext(ctx, *livePath)
 	if err != nil {

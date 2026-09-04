@@ -15,22 +15,50 @@ import (
 // QueryStoreInfo mirrors the single row of sys.database_query_store_options
 // every database has, whether or not Query Store is actually turned on.
 type QueryStoreInfo struct {
-	DesiredState              string // "OFF", "READ_ONLY", "READ_WRITE"
-	ActualState               string
-	ReadOnlyReason            int
-	CurrentStorageMB          int64
-	MaxStorageMB              int64
-	FlushIntervalSec          int
-	IntervalMinutes           int
-	MaxPlansPerQuery          int
-	CaptureMode               string // "NONE", "AUTO", "ALL", "CUSTOM"
-	SizeCleanupMode           string // "OFF", "AUTO"
-	StaleThresholdDays        int
-	WaitStatsCaptureMode      string // "OFF", "ON"
+	DesiredState       string // "OFF", "READ_ONLY", "READ_WRITE"
+	ActualState        string
+	ReadOnlyReason     int
+	CurrentStorageMB   int64
+	MaxStorageMB       int64
+	FlushIntervalSec   int
+	IntervalMinutes    int
+	MaxPlansPerQuery   int
+	CaptureMode        string // "NONE", "AUTO", "ALL", "CUSTOM"
+	SizeCleanupMode    string // "OFF", "AUTO"
+	StaleThresholdDays int
+	// WaitStatsCaptureMode is "OFF" or "ON", and empty on SQL Server 2016,
+	// which has no such setting.
+	WaitStatsCaptureMode string
+	// The custom capture policy is SQL Server 2019 and later; these four are
+	// zero on anything older, as they are on any instance whose capture mode
+	// isn't CUSTOM.
 	CapturePolicyExecCount    int
 	CapturePolicyCompileCPUMs int64
 	CapturePolicyExecCPUMs    int64
 	CapturePolicyStaleHours   int
+}
+
+// Two sets of columns postdate the view, and naming one the instance
+// lacks fails the whole read — Database Properties > Query Store then
+// renders an error in place of the page. Dated from the column table of
+// https://learn.microsoft.com/sql/relational-databases/system-catalog-views/sys-database-query-store-options-transact-sql:
+// wait_stats_capture_mode_desc is "SQL Server 2017 (14.x) and later
+// versions", the four capture_policy_* columns (the CUSTOM query capture
+// policy) "SQL Server 2019 (15.x) and later versions".
+func (d *Database) queryStoreOptionsSelect() string {
+	major := d.serverMajorVersion()
+	return `
+SELECT desired_state_desc, actual_state_desc, readonly_reason,
+       current_storage_size_mb, max_storage_size_mb,
+       flush_interval_seconds, interval_length_minutes, max_plans_per_query,
+       query_capture_mode_desc, size_based_cleanup_mode_desc,
+       stale_query_threshold_days,
+       ` + colSince(major, SQLServer2017, "wait_stats_capture_mode_desc", "CAST('' AS nvarchar(60))") + `,
+       ` + colSince(major, SQLServer2019, "capture_policy_execution_count", "CAST(NULL AS int)") + `,
+       ` + colSince(major, SQLServer2019, "capture_policy_total_compile_cpu_time_ms", "CAST(NULL AS bigint)") + `,
+       ` + colSince(major, SQLServer2019, "capture_policy_total_execution_cpu_time_ms", "CAST(NULL AS bigint)") + `,
+       ` + colSince(major, SQLServer2019, "capture_policy_stale_threshold_hours", "CAST(NULL AS int)") + `
+FROM   sys.database_query_store_options`
 }
 
 // QueryStore returns the database's Query Store configuration and state.
@@ -40,15 +68,7 @@ func (d *Database) QueryStore() (*QueryStoreInfo, error) {
 
 // QueryStoreContext is the context-aware variant of QueryStore.
 func (d *Database) QueryStoreContext(ctx context.Context) (*QueryStoreInfo, error) {
-	const q = `
-SELECT desired_state_desc, actual_state_desc, readonly_reason,
-       current_storage_size_mb, max_storage_size_mb,
-       flush_interval_seconds, interval_length_minutes, max_plans_per_query,
-       query_capture_mode_desc, size_based_cleanup_mode_desc,
-       stale_query_threshold_days, wait_stats_capture_mode_desc,
-       capture_policy_execution_count, capture_policy_total_compile_cpu_time_ms,
-       capture_policy_total_execution_cpu_time_ms, capture_policy_stale_threshold_hours
-FROM   sys.database_query_store_options`
+	q := d.queryStoreOptionsSelect()
 
 	// The four capture_policy_* columns are NULL whenever query capture
 	// mode isn't CUSTOM, which is the common case.
@@ -79,15 +99,18 @@ FROM   sys.database_query_store_options`
 // ALTER DATABASE ... SET QUERY_STORE = ON (...). DesiredState of "OFF"
 // turns Query Store off and ignores every other field.
 type QueryStoreOptions struct {
-	DesiredState         string // "OFF", "READ_ONLY", "READ_WRITE"
-	MaxStorageMB         int64
-	CaptureMode          string // "NONE", "AUTO", "ALL", "CUSTOM"
-	SizeCleanupMode      string // "OFF", "AUTO"
-	StaleThresholdDays   int
-	FlushIntervalSec     int
-	IntervalMinutes      int
-	MaxPlansPerQuery     int
-	WaitStatsCaptureMode string // "OFF", "ON"
+	DesiredState       string // "OFF", "READ_ONLY", "READ_WRITE"
+	MaxStorageMB       int64
+	CaptureMode        string // "NONE", "AUTO", "ALL", "CUSTOM"
+	SizeCleanupMode    string // "OFF", "AUTO"
+	StaleThresholdDays int
+	FlushIntervalSec   int
+	IntervalMinutes    int
+	MaxPlansPerQuery   int
+	// WaitStatsCaptureMode is "OFF" or "ON". It is ignored on SQL Server 2016,
+	// which has no such setting — the clause is left out of the statement
+	// rather than sent and rejected.
+	WaitStatsCaptureMode string
 	// Custom capture policy thresholds, used only when CaptureMode is
 	// "CUSTOM".
 	CapturePolicyExecCount    int
@@ -139,7 +162,11 @@ func (d *Database) SetQueryStoreOptionsContext(ctx context.Context, opts QuerySt
 	if !queryStoreCleanupModes[opts.SizeCleanupMode] {
 		return fmt.Errorf("gosmo: set query store options on %q: unrecognized size cleanup mode %q", d.name, opts.SizeCleanupMode)
 	}
-	if !queryStoreWaitStatsModes[opts.WaitStatsCaptureMode] {
+	// WAIT_STATS_CAPTURE_MODE is SQL Server 2017 and later. Below it the
+	// setting does not exist — the read has no column to report and returns
+	// "" — so the clause is omitted rather than sent and rejected.
+	waitStats := d.serverMajorVersion() == 0 || d.serverMajorVersion() >= int(SQLServer2017)
+	if waitStats && !queryStoreWaitStatsModes[opts.WaitStatsCaptureMode] {
 		return fmt.Errorf("gosmo: set query store options on %q: unrecognized wait stats capture mode %q", d.name, opts.WaitStatsCaptureMode)
 	}
 
@@ -155,7 +182,9 @@ func (d *Database) SetQueryStoreOptionsContext(ctx context.Context, opts QuerySt
 		// QUERY_STORE only accepts it inside CLEANUP_POLICY, and rejects the
 		// whole statement with a syntax error otherwise.
 		fmt.Sprintf("CLEANUP_POLICY = (STALE_QUERY_THRESHOLD_DAYS = %d)", opts.StaleThresholdDays),
-		"WAIT_STATS_CAPTURE_MODE = " + opts.WaitStatsCaptureMode,
+	}
+	if waitStats {
+		withs = append(withs, "WAIT_STATS_CAPTURE_MODE = "+opts.WaitStatsCaptureMode)
 	}
 	if opts.CaptureMode == "CUSTOM" {
 		withs = append(withs, fmt.Sprintf(

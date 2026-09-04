@@ -202,6 +202,19 @@ type ConnectionOptions struct {
 	// when zero.
 	ConnMaxIdleTime time.Duration
 
+	// Dialer, when set, is used for every network operation the driver
+	// performs — the TDS connection itself and the SQL Server Browser probe
+	// that resolves a named instance's port. Use it to route connections
+	// through a proxy or an SSH tunnel, or to control address selection.
+	// A dialer that also implements mssql.HostDialer has DNS resolved on its
+	// own network.
+	//
+	// Leave it nil for the default, which is the driver's own dialer except
+	// when Server names an instance with no port: that case needs a Browser
+	// probe, and gosmo substitutes a dialer that sends it to every resolved
+	// address rather than only the first (see dialer.go).
+	Dialer mssql.Dialer
+
 	// SessionInitSQL is T-SQL executed on every pooled connection right
 	// after it is reset, before the first query runs on it. Use it to apply
 	// SET options that must hold for the whole session (the equivalent of
@@ -576,6 +589,7 @@ func buildConnector(opts ConnectionOptions) (*mssql.Connector, error) {
 	}
 
 	connector.SessionInitSQL = opts.SessionInitSQL
+	connector.Dialer = dialerFor(opts)
 	return connector, nil
 }
 
@@ -760,8 +774,43 @@ func (s *Server) loadInfo(ctx context.Context) error {
 		info.VersionMinor, _ = strconv.Atoi(parts[1])
 		info.VersionBuild, _ = strconv.Atoi(parts[2])
 	}
+	if info.DefaultBackupPath == "" {
+		info.DefaultBackupPath = s.backupPathFromRegistry(ctx, info.Platform)
+	}
 	s.info = info
 	return nil
+}
+
+// backupPathFromRegistry reads the instance's configured backup directory out
+// of the registry. SERVERPROPERTY('InstanceDefaultBackupPath') is SQL Server
+// 2019 (15.x) and later and returns NULL before it, while the Data and Log
+// properties are populated on every version — so without this, everything that
+// defaults a backup location (Server Properties' default locations, Back Up
+// Database, the destination browser, New Backup Device, New Audit) comes up
+// blank on 2017 and older.
+//
+// Windows only: there is no registry on Linux, and every caller already copes
+// with an empty path, so a failure here — no registry key, or a login without
+// the rights to run xp_instance_regread — returns "" rather than failing the
+// connection loadInfo is part of.
+//
+// xp_instance_regread rewrites MSSQLServer to the instance's own key, so this
+// is right for a named instance without composing the path by hand.
+func (s *Server) backupPathFromRegistry(ctx context.Context, platform string) string {
+	if platform != "Windows" {
+		return ""
+	}
+	const q = `
+DECLARE @path nvarchar(4000);
+EXEC master.dbo.xp_instance_regread N'HKEY_LOCAL_MACHINE',
+     N'Software\Microsoft\MSSQLServer\MSSQLServer', N'BackupDirectory', @path OUTPUT;
+SELECT @path`
+
+	var path sql.NullString
+	if err := s.queryRowScan(ctx, q, nil, &path); err != nil {
+		return ""
+	}
+	return path.String
 }
 
 // platformFromVersionString extracts the host OS family from @@VERSION,

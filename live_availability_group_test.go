@@ -557,12 +557,11 @@ func TestLiveAvailabilityGroupWrite(t *testing.T) {
 //	go test -tags livedb . -run TestLiveAvailabilityGroupOperations -v \
 //	  -liveag ubusql1 -liveag-user sa -liveag-pass PASS -liveag-ops
 //
-// Deliberately not covered against a real group: RemoveReplica and Drop. Both
-// were verified by building a throwaway CLUSTER_TYPE = NONE group across the
-// same two instances and tearing it down again, which is what proved that a
-// removed replica keeps a stale sys.availability_groups row (see
-// AvailabilityGroup.RemoveReplica) — running them here would destroy the group
-// under test.
+// Deliberately not covered against the standing group: RemoveReplica and Drop,
+// which would destroy the group under test. Both are covered instead by
+// TestLiveAvailabilityGroupCreate, on the CLUSTER_TYPE = NONE group that test
+// builds and tears down — including the stale sys.availability_groups row a
+// removed replica keeps (see AvailabilityGroup.RemoveReplica).
 var (
 	liveAGOps       = flag.Bool("liveag-ops", false, "also run the Always On operation tests, which add and remove a database")
 	liveAGBackupDir = flag.String("liveag-backupdir", "/var/opt/mssql/data", "server-side directory the -liveag-ops test writes its seeding backups to")
@@ -819,7 +818,8 @@ func liveDropDatabase(t *testing.T, srv *Server, dbName string) {
 
 // TestLiveAvailabilityGroupCreate stands up a real availability group across
 // two instances and tears it down again — CREATE, JOIN on the secondary, GRANT
-// CREATE ANY DATABASE, then DROP on both. Guarded by -liveag-create.
+// CREATE ANY DATABASE, the replica-mode round trip, REMOVE REPLICA, then DROP
+// on both. Guarded by -liveag-create.
 //
 //	go test -tags livedb . -run TestLiveAvailabilityGroupCreate -v \
 //	  -liveag ubusql1 -liveag-user sa -liveag-pass PASS -liveag-create
@@ -1028,6 +1028,47 @@ func TestLiveAvailabilityGroupCreate(t *testing.T) {
 		}
 	})
 
+	// RemoveReplica, the other operation TestLiveAvailabilityGroupOperations
+	// cannot run: on the standing EXTERNAL group it would take a replica out
+	// from under Pacemaker. Here it is the last thing done to a group that is
+	// dropped a few lines below however this ends.
+	t.Run("remove replica", func(t *testing.T) {
+		// The secondary's refusal first, while the replica is still there: a
+		// secondary cannot remove itself, which is the one direction
+		// RemoveReplica's doc comment warns about. A malformed statement would
+		// come back Msg 102, so the numbered refusal also proves the clause
+		// reaches the server well-formed.
+		err := peerAG.RemoveReplicaContext(ctx, peer.Name())
+		if err == nil {
+			t.Errorf("%s removed itself from the group; a secondary is supposed to refuse with 41190", secondaryName)
+		} else if !strings.Contains(err.Error(), "41190") {
+			t.Errorf("removing a replica from the secondary: err = %v, want the 41190 refusal", err)
+		}
+
+		if err := ag.RemoveReplicaContext(ctx, peer.Name()); err != nil {
+			t.Fatalf("RemoveReplica(%s) on the primary: %v", peer.Name(), err)
+		}
+		rs, err := ag.ReplicasContext(ctx)
+		if err != nil {
+			t.Fatalf("re-read replicas after RemoveReplica: %v", err)
+		}
+		if len(rs) != 1 {
+			t.Errorf("the group has %d replicas after RemoveReplica, want 1", len(rs))
+		}
+		for _, r := range rs {
+			if strings.EqualFold(r.ReplicaServerName, peer.Name()) {
+				t.Errorf("%s is still a replica after RemoveReplica", r.ReplicaServerName)
+			}
+		}
+		// The removed instance keeps its own stale row — the claim the doc
+		// comment makes and the cleanup below depends on.
+		if orphan, err := peer.AvailabilityGroupByNameContext(ctx, name); err != nil || orphan == nil {
+			t.Errorf("%s no longer lists the group after being removed (%v) — "+
+				"if the removal now cleans up the removed instance, RemoveReplica's doc comment is out of date",
+				secondaryName, err)
+		}
+	})
+
 	// The stale-row behaviour the teardown depends on: dropping on the primary
 	// leaves the secondary still listing the group.
 	if err := ag.DropContext(ctx); err != nil {
@@ -1088,12 +1129,27 @@ func liveEndpoint(t *testing.T, ctx context.Context, srv *Server) *DatabaseMirro
 
 // liveDropGroupEverywhere drops name on every given instance, best effort.
 // Both halves are needed: see the stale-row assertion above.
+//
+// It refuses outright to drop a group that is not CLUSTER_TYPE = NONE. This
+// runs *before* the create as well as after it, to clear what a crashed run
+// left behind, so -liveag-create-name is a flag that reaches DROP AVAILABILITY
+// GROUP on a live cluster: named at AAG1 by a typo or a copied command line, an
+// unguarded version destroys the standing group and the Pacemaker resource
+// watching it. A throwaway group built here is always NONE, and the one group
+// that must survive is EXTERNAL, so the cluster type is the property that tells
+// "mine" from "not mine" — and it is fatal rather than skipped, because a name
+// collision means the flag is wrong, not that there is nothing to do.
 func liveDropGroupEverywhere(t *testing.T, ctx context.Context, name string, servers ...*Server) {
 	t.Helper()
 	for _, srv := range servers {
 		ag, err := srv.AvailabilityGroupByNameContext(ctx, name)
 		if err != nil || ag == nil {
 			continue
+		}
+		if !strings.EqualFold(ag.ClusterType, "NONE") {
+			t.Fatalf("refusing to drop availability group %q on %s: its cluster type is %q, not NONE — "+
+				"this test only ever drops the throwaway group it creates, and -liveag-create-name names a real one",
+				name, srv.Name(), ag.ClusterType)
 		}
 		if err := ag.DropContext(ctx); err != nil {
 			t.Logf("dropping %s on %s: %v", name, srv.Name(), err)

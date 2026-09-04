@@ -29,7 +29,20 @@ func TestLiveEveryProbedPermissionNameIsOneTheServerDefines(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CapabilitiesContext: %v", err)
 	}
+	// VIEW SERVER PERFORMANCE STATE and VIEW SERVER SECURITY STATE are the
+	// two rights SQL Server 2022 split VIEW SERVER STATE into; an older
+	// instance does not define them, which is not a typo in the list. They are
+	// probed as alternatives to the wide right, which exists everywhere.
+	since2022 := map[string]bool{
+		"VIEW SERVER PERFORMANCE STATE": true,
+		"VIEW SERVER SECURITY STATE":    true,
+	}
+	major := srv.serverMajorVersion()
 	for _, name := range ProbedServerPermissions {
+		if since2022[name] && !hasColumnSince(major, SQLServer2022) {
+			t.Logf("server permission %q is 2022-only; major %d does not define it", name, major)
+			continue
+		}
 		if got := caps.Permission(name); got == CapabilityUnknown {
 			t.Errorf("server permission %q reads %v — the instance does not define that name, "+
 				"so it gates nothing", name, got)

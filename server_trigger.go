@@ -48,11 +48,11 @@ type ServerTrigger struct {
 // (type 'TA') has no row there — an inner join silently drops it from the
 // folder. is_ms_shipped = 0 matches what SSMS lists and what
 // Database.triggersWhere does.
-const serverTriggerSelect = `
+var serverTriggerSelect = `
 SELECT tr.name, tr.is_disabled, tr.create_date, tr.modify_date,
-       (SELECT STRING_AGG(te.type_desc, ',')
+       ` + commaList("te.type_desc", `
         FROM   sys.server_trigger_events te
-        WHERE  te.object_id = tr.object_id) AS events,
+        WHERE  te.object_id = tr.object_id`, "") + ` AS events,
        m.definition
 FROM   sys.server_triggers tr
 LEFT   JOIN sys.server_sql_modules m ON m.object_id = tr.object_id

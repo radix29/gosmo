@@ -706,9 +706,9 @@ func (d *Database) triggersWhere(ctx context.Context, where string, args []any) 
 	q := `
 SELECT tr.name, OBJECT_NAME(tr.parent_id), SCHEMA_NAME(o.schema_id),
        tr.is_disabled,
-       (SELECT STRING_AGG(te.type_desc, ',')
+       ` + commaList("te.type_desc", `
         FROM   sys.trigger_events te
-        WHERE  te.object_id = tr.object_id) AS events,
+        WHERE  te.object_id = tr.object_id`, "") + ` AS events,
        m.definition
 FROM   sys.triggers tr
 JOIN   sys.objects o   ON o.object_id  = tr.parent_id

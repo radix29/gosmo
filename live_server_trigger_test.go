@@ -6,7 +6,7 @@
 // that a generated script recreates the trigger.
 //
 // The unit tests pin the statement text; only a live run settles the catalog
-// shape — the LEFT JOIN onto sys.server_sql_modules and the STRING_AGG over
+// shape — the LEFT JOIN onto sys.server_sql_modules and the commaList aggregate over
 // sys.server_trigger_events in particular.
 //
 //	go test -tags livedb . -run TestLiveServerTrigger -v \

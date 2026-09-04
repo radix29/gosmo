@@ -64,11 +64,11 @@ WHERE  servicename LIKE N'SQL Server Agent%'`
 //
 // Agent keeps this in memory for the jobs it runs itself; msdb has no column
 // for it. Jobs and JobByName read it through jobStates and fall back to a
-// start/stop_execution_date derivation over msdb.dbo.sysjobactivity when that
-// read fails — Agent stopped, or a login with neither sysadmin nor
-// SQLAgentReaderRole — in which case only JobStateExecuting and JobStateIdle
-// can be told apart. JobStateUnknown is what a multi-server job Agent does
-// not run itself reports.
+// start/stop_execution_date derivation over msdb.dbo.sysjobactivity for every
+// job that read does not cover — Agent stopped, or a login with neither
+// sysadmin nor SQLAgentReaderRole — in which case only JobStateExecuting and
+// JobStateIdle can be told apart. JobStateUnknown is what a multi-server job
+// Agent does not run itself reports.
 type JobState int
 
 const (
@@ -85,7 +85,10 @@ const (
 // JobStateCancelling and JobStateRunning name states Agent's encoding does
 // not have, and no read in this package returns either. They carry negative
 // values so a switch over the real encoding cannot reach them by accident;
-// they are kept only so existing callers still compile.
+// they are kept only so existing callers still compile. Their removal is
+// scheduled for the next breaking tag — see CHANGELOG.md § Unreleased — so
+// this is neither dead code to delete in a patch release nor surface to keep
+// forever.
 const (
 	// Deprecated: Agent has no "cancelling" state. A job being stopped
 	// reports JobStatePerformingCompletionActions.
@@ -119,9 +122,14 @@ const jobStateColumns = `(job_id                UNIQUEIDENTIFIER NOT NULL,
 // the caller may see every job's state — sysadmin or SQLAgentReaderRole;
 // anyone else is shown only the jobs they own — and the login to judge that
 // ownership by. Callers treat an error as "no states available" and keep the
-// derived fallback rather than failing the listing: the extended procedure is
-// unavailable whenever Agent is not running, which is not a reason to stop
-// listing jobs.
+// derived fallback rather than failing the listing: a job listing must survive
+// an Agent outage.
+//
+// With Agent stopped the extended procedure does not fail — it runs and
+// returns no rows, so this returns an empty map and no error, and
+// applyJobStates overlays nothing (measured on SQL Server 2025 for Linux,
+// 2026-09-03, by live_jobstate_test.go). The error return is for the other
+// case, a caller the procedure refuses.
 func (s *Server) jobStates(ctx context.Context) (map[string]JobState, error) {
 	q := `
 SET NOCOUNT ON;

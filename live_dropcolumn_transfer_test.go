@@ -69,8 +69,14 @@ func TestLiveDropColumnAndTransferObject(t *testing.T) {
 	if !strings.Contains(err.Error(), "one or more objects access this column") {
 		t.Errorf("refusal = %v, want the server's dependency refusal", err)
 	}
+	// Whether the message names the constraint is the server's choice and it
+	// varies by version: SQL Server 2016 names DF_Orders_flagged, 2017 and 2025
+	// do not. gossms's warning therefore cannot promise one either way, which
+	// is the point being recorded here rather than asserted.
 	if strings.Contains(err.Error(), "DF_Orders_flagged") {
-		t.Errorf("the server now names the blocking constraint (%v) — gossms's warning can say so", err)
+		t.Logf("this server names the blocking constraint: %v", err)
+	} else {
+		t.Logf("this server does not name the blocking constraint: %v", err)
 	}
 	if err := tbl.DropConstraintContext(ctx, "DF_Orders_flagged"); err != nil {
 		t.Fatalf("DropConstraintContext: %v", err)

@@ -275,7 +275,7 @@ func (s *Server) CapabilitiesContext(ctx context.Context) (*Capabilities, error)
 		ServerRoles:       map[string]bool{},
 		ServerPermissions: map[string]CapabilityState{},
 	}
-	if err := scanCapabilityRows(rows, c.ServerRoles, c.ServerPermissions, nil, nil, nil); err != nil {
+	if err := scanCapabilityRows(rows, c.ServerRoles, c.ServerPermissions, nil, nil, nil, nil); err != nil {
 		return nil, fmt.Errorf("gosmo: read server capabilities: %w", err)
 	}
 	return c, nil
@@ -310,6 +310,25 @@ type DatabaseCapabilities struct {
 	// on the database-scope answer withholds it from exactly the principal
 	// SQL Server would let through.
 	SchemaPermissions map[string]map[string]CapabilityState
+
+	// ExplicitSchemaPermissions maps a schema name to the state each name in
+	// ProbedSchemaPermissions is *explicitly* recorded in for the login, read
+	// out of sys.database_permissions rather than asked with
+	// HAS_PERMS_BY_NAME. Read it through DeniedOnSchema.
+	//
+	// It exists because SchemaPermissions cannot answer "is this denied?":
+	// HAS_PERMS_BY_NAME returns 0 both for a permission explicitly denied on
+	// the schema and for one simply never granted, so its CapabilityDenied
+	// means "the server said no to this question", not "a DENY row exists".
+	// The difference decides whether a wider grant may answer for the schema —
+	// it may for the second, and must not for the first, because SQL Server
+	// resolves a schema-scope DENY over a database-wide GRANT.
+	//
+	// Sparse in ObjectPermissions' sense: a schema nobody granted or denied
+	// anything on has no row. Ownership is deliberately not folded in — an
+	// owner never carries a DENY, so it cannot change the one answer this map
+	// is read for.
+	ExplicitSchemaPermissions map[string]map[string]CapabilityState
 
 	// ObjectPermissions maps "schema.object" to the state of each name in
 	// ProbedObjectPermissions on it. Read it through HasOnObject.
@@ -365,6 +384,28 @@ func (c *DatabaseCapabilities) PermitsOnSchema(schema, name string) bool {
 		return true
 	}
 	return c.Accessible && c.AllowsOnSchema(schema, name)
+}
+
+// DeniedOnSchema reports that the permission is explicitly denied on the
+// schema — SchemaPermissions' withholding counterpart, and the only sound read
+// of ExplicitSchemaPermissions.
+//
+// It is sound where an AllowsOnSchema-style read of the sparse map would not
+// be, for DeniedOnObject's reason: it asks for a state that was recorded
+// rather than for the absence of one, so a schema nobody mentioned reads
+// unknown, which is not a denial.
+//
+// A caller may withhold on it because SQL Server resolves DENY over GRANT
+// across scopes: a principal holding database-wide ALTER whose schema carries
+// DENY ALTER cannot rename, move or drop anything in it, and the write fails
+// Msg 297. The same two exceptions belong to the caller as for DeniedOnObject:
+// a member of sysadmin bypasses the check and must be asked about first, and a
+// database that was never probed records nothing.
+func (c *DatabaseCapabilities) DeniedOnSchema(schema, name string) bool {
+	if c == nil {
+		return false
+	}
+	return c.ExplicitSchemaPermissions[schema][name] == CapabilityDenied
 }
 
 // Probed reports whether these capabilities came from a database that
@@ -584,11 +625,12 @@ func (d *Database) CapabilitiesContext(ctx context.Context) (*DatabaseCapabiliti
 	// there is nothing inside it to ask about.
 	if !access.Valid || !access.Bool {
 		return &DatabaseCapabilities{
-			Roles:             map[string]bool{},
-			Permissions:       map[string]CapabilityState{},
-			SchemaPermissions: map[string]map[string]CapabilityState{},
-			ObjectPermissions: map[string]map[string]CapabilityState{},
-			ColumnPermissions: map[string]map[string]CapabilityState{},
+			Roles:                     map[string]bool{},
+			Permissions:               map[string]CapabilityState{},
+			SchemaPermissions:         map[string]map[string]CapabilityState{},
+			ExplicitSchemaPermissions: map[string]map[string]CapabilityState{},
+			ObjectPermissions:         map[string]map[string]CapabilityState{},
+			ColumnPermissions:         map[string]map[string]CapabilityState{},
 		}, nil
 	}
 
@@ -604,6 +646,10 @@ func (d *Database) CapabilitiesContext(ctx context.Context) (*DatabaseCapabiliti
 	q = capabilityPrincipalCTE + q + "\nUNION ALL\n" + oq
 	args = append(args, oargs...)
 
+	dq, dargs := explicitSchemaCapabilityQuery(len(args)+1, ProbedSchemaPermissions)
+	q += "\nUNION ALL\n" + dq
+	args = append(args, dargs...)
+
 	rows, err := d.query(ctx, q, args...)
 	if err != nil {
 		return nil, fmt.Errorf("gosmo: read capabilities for database %q: %w", d.name, err)
@@ -611,14 +657,15 @@ func (d *Database) CapabilitiesContext(ctx context.Context) (*DatabaseCapabiliti
 	defer rows.Close()
 
 	c := &DatabaseCapabilities{
-		Accessible:        true,
-		Roles:             map[string]bool{},
-		Permissions:       map[string]CapabilityState{},
-		SchemaPermissions: map[string]map[string]CapabilityState{},
-		ObjectPermissions: map[string]map[string]CapabilityState{},
-		ColumnPermissions: map[string]map[string]CapabilityState{},
+		Accessible:                true,
+		Roles:                     map[string]bool{},
+		Permissions:               map[string]CapabilityState{},
+		SchemaPermissions:         map[string]map[string]CapabilityState{},
+		ExplicitSchemaPermissions: map[string]map[string]CapabilityState{},
+		ObjectPermissions:         map[string]map[string]CapabilityState{},
+		ColumnPermissions:         map[string]map[string]CapabilityState{},
 	}
-	if err := scanCapabilityRows(rows.Rows, c.Roles, c.Permissions, c.SchemaPermissions, c.ObjectPermissions, c.ColumnPermissions); err != nil {
+	if err := scanCapabilityRows(rows.Rows, c.Roles, c.Permissions, c.SchemaPermissions, c.ExplicitSchemaPermissions, c.ObjectPermissions, c.ColumnPermissions); err != nil {
 		return nil, fmt.Errorf("gosmo: read capabilities for database %q: %w", d.name, err)
 	}
 	return c, nil
@@ -724,6 +771,36 @@ UNION ALL
 	  AND COL_NAME(p.major_id, p.minor_id) IS NOT NULL`, args
 }
 
+// explicitSchemaCapabilityQuery builds the SCHEMA-scope catalog block: one row
+// per schema the login has an explicit permission recorded on, tagged
+// "E:<permission>" with the schema as the name and 1 for held, 0 for denied.
+//
+// It is a catalog read beside the HAS_PERMS_BY_NAME block schemaCapabilityQuery
+// already asks, not a replacement for it, and the two answer different
+// questions: HAS_PERMS_BY_NAME returns 0 for a permission never granted just as
+// it does for one explicitly denied, so only the catalog can say a DENY row
+// exists. That distinction is the whole reason for this block — a schema-scope
+// DENY overrides a database-wide GRANT, so a gate reading the wider grant alone
+// offers a write the server then refuses with Msg 297.
+//
+// class 3 is SCHEMA, and major_id is the schema_id. As in the object block the
+// principal set is the recursive cap_me CTE, CONTROL is matched alongside the
+// permission asked about because it implies it, and a schema hidden by
+// metadata visibility comes back with a NULL name and is dropped.
+func explicitSchemaCapabilityQuery(first int, perms []string) (string, []any) {
+	args := make([]any, len(perms))
+	for i, n := range perms {
+		args[i] = n
+	}
+	return `SELECT CONCAT('E:', n.v), SCHEMA_NAME(p.major_id),
+	       CASE WHEN p.state IN ('D') THEN 0 ELSE 1 END
+	FROM sys.database_permissions AS p CROSS JOIN (VALUES ` + valuesList(first, len(perms)) + `) AS n(v)
+	WHERE p.class = 3
+	  AND p.grantee_principal_id IN (SELECT id FROM cap_me)
+	  AND p.permission_name IN (n.v, 'CONTROL')
+	  AND SCHEMA_NAME(p.major_id) IS NOT NULL`, args
+}
+
 // capabilityPrincipalCTE is the "every principal the login's permissions can
 // arrive through" set the object block selects from: the user itself, public,
 // and every role reachable through role membership at any depth.
@@ -762,7 +839,7 @@ func valuesClause(first, count int) string {
 // scanCapabilityRows fills roles and perms from the probe's (kind, name,
 // answer) rows. A NULL answer is left out of the map entirely, which is what
 // makes it read back as CapabilityUnknown / false.
-func scanCapabilityRows(rows *sql.Rows, roles map[string]bool, perms map[string]CapabilityState, schemas, objects, columns map[string]map[string]CapabilityState) error {
+func scanCapabilityRows(rows *sql.Rows, roles map[string]bool, perms map[string]CapabilityState, schemas, explicitSchemas, objects, columns map[string]map[string]CapabilityState) error {
 	for rows.Next() {
 		var kind, name string
 		var answer sql.NullInt64
@@ -788,6 +865,14 @@ func scanCapabilityRows(rows *sql.Rows, roles map[string]bool, perms map[string]
 				schemas[name] = map[string]CapabilityState{}
 			}
 			schemas[name][strings.TrimPrefix(kind, "S:")] = st
+		case strings.HasPrefix(kind, "E:"):
+			// The schema catalog block, keyed by schema name. Kept apart from
+			// the "S:" rows because those answer HAS_PERMS_BY_NAME, whose 0
+			// cannot tell a DENY from a permission never granted — see
+			// DatabaseCapabilities.ExplicitSchemaPermissions.
+			if st, ok := capabilityStateOf(answer); ok {
+				recordSecurableState(explicitSchemas, name, strings.TrimPrefix(kind, "E:"), st)
+			}
 		case strings.HasPrefix(kind, "O:"):
 			// As with "S:", name is the securable and the permission rides in
 			// kind.

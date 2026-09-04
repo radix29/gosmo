@@ -370,15 +370,56 @@ func (st *Statistic) HeaderContext(ctx context.Context) (*StatisticHeader, error
 	q := fmt.Sprintf("DBCC SHOW_STATISTICS (N'%s', N'%s') WITH STAT_HEADER, NO_INFOMSGS",
 		escapeSingle(st.table.FullName()), escapeSingle(st.Name))
 
-	var name string
+	// DBCC's result shape is not a documented contract and has changed: the
+	// header is 10 columns before SQL Server 2019 and 11 from it (Persisted
+	// Sample Percent), so a fixed destination list fails every statistic on an
+	// older instance with "expected 10 destination arguments in Scan, not 11".
+	// Bind by column name instead — a column the instance does not return
+	// leaves its field zero, and one it grows next is discarded rather than
+	// breaking the read.
 	var updated, stringIndex, filterExpr sql.NullString
 	var rowsN, rowsSampled, unfiltered sql.NullInt64
 	var steps sql.NullInt16
 	var density, avgKeyLen, samplePct sql.NullFloat64
-	if err := st.table.db.queryRow(ctx, func(row *sql.Row) error {
-		return row.Scan(&name, &updated, &rowsN, &rowsSampled, &steps, &density,
-			&avgKeyLen, &stringIndex, &filterExpr, &unfiltered, &samplePct)
-	}, q); err != nil {
+	byName := map[string]any{
+		"Updated":                  &updated,
+		"Rows":                     &rowsN,
+		"Rows Sampled":             &rowsSampled,
+		"Steps":                    &steps,
+		"Density":                  &density,
+		"Average key length":       &avgKeyLen,
+		"String Index":             &stringIndex,
+		"Filter Expression":        &filterExpr,
+		"Unfiltered Rows":          &unfiltered,
+		"Persisted Sample Percent": &samplePct,
+	}
+
+	rows, err := st.table.db.query(ctx, q)
+	if err != nil {
+		return nil, fmt.Errorf("gosmo: statistics header for %q: %w", st.Name, err)
+	}
+	defer rows.Close()
+
+	cols, err := rows.Columns()
+	if err != nil {
+		return nil, fmt.Errorf("gosmo: statistics header for %q: %w", st.Name, err)
+	}
+	dest := make([]any, len(cols))
+	for i, c := range cols {
+		if d, ok := byName[c]; ok {
+			dest[i] = d
+			continue
+		}
+		dest[i] = new(any)
+	}
+	if !rows.Next() {
+		err := rows.Err()
+		if err == nil {
+			err = sql.ErrNoRows
+		}
+		return nil, fmt.Errorf("gosmo: statistics header for %q: %w", st.Name, err)
+	}
+	if err := rows.Scan(dest...); err != nil {
 		return nil, fmt.Errorf("gosmo: statistics header for %q: %w", st.Name, err)
 	}
 	return &StatisticHeader{

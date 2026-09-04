@@ -829,6 +829,52 @@ ORDER BY p.plan_id, rsi.start_time`,
 	return out, nil
 }
 
+// queryStorePlansQuery renders the plan-list query. Split out from
+// QueryStorePlansContext so the version gate below can be asserted at every
+// major without a server.
+func (d *Database) queryStorePlansQuery(valueExpr, from, to, id string) string {
+	// plan_forcing_type_desc is "SQL Server 2017 (14.x) and later versions" in
+	// the column table of
+	// https://learn.microsoft.com/sql/relational-databases/system-catalog-views/sys-query-store-plan-transact-sql
+	// — naming it on 2016 fails the whole plan list, which is what Force Plan
+	// picks from. The GROUP BY term has to go with it: a constant there is a
+	// SQL Server error, not a no-op.
+	major := d.serverMajorVersion()
+	forcingType := colSince(major, SQLServer2017, "COALESCE(p.plan_forcing_type_desc, '')", "CAST('' AS nvarchar(60))")
+	forcingGroupBy := ""
+	if hasColumnSince(major, SQLServer2017) {
+		forcingGroupBy = " p.plan_forcing_type_desc,"
+	}
+
+	return fmt.Sprintf(`SELECT p.plan_id,
+       p.query_id,
+       p.is_forced_plan,
+       %s,
+       p.force_failure_count,
+       COALESCE(p.last_force_failure_reason_desc, ''),
+       p.compatibility_level,
+       p.is_trivial_plan,
+       p.is_parallel_plan,
+       p.last_compile_start_time,
+       p.last_execution_time,
+       COALESCE(p.query_plan, ''),
+       COALESCE(SUM(rs.count_executions), 0) AS exec_count,
+       %s AS value
+FROM   sys.query_store_plan AS p
+LEFT JOIN sys.query_store_runtime_stats AS rs
+       ON rs.plan_id = p.plan_id
+LEFT JOIN sys.query_store_runtime_stats_interval AS rsi
+       ON rsi.runtime_stats_interval_id = rs.runtime_stats_interval_id
+      AND rsi.start_time >= %s AND rsi.start_time < %s
+WHERE  p.query_id = %s
+GROUP BY p.plan_id, p.query_id, p.is_forced_plan,%s
+         p.force_failure_count, p.last_force_failure_reason_desc,
+         p.compatibility_level, p.is_trivial_plan, p.is_parallel_plan,
+         p.last_compile_start_time, p.last_execution_time, p.query_plan
+ORDER BY p.plan_id`,
+		forcingType, valueExpr, from, to, id, forcingGroupBy)
+}
+
 // QueryStorePlans returns every plan Query Store holds for one query, with
 // its cost over the report's window — the plan list under SSMS's Query Store
 // views, and what Force Plan picks from.
@@ -848,33 +894,7 @@ func (d *Database) QueryStorePlansContext(ctx context.Context, queryID int64, op
 		return nil, err
 	}
 	var a qsArgs
-	q := fmt.Sprintf(`SELECT p.plan_id,
-       p.query_id,
-       p.is_forced_plan,
-       COALESCE(p.plan_forcing_type_desc, ''),
-       p.force_failure_count,
-       COALESCE(p.last_force_failure_reason_desc, ''),
-       p.compatibility_level,
-       p.is_trivial_plan,
-       p.is_parallel_plan,
-       p.last_compile_start_time,
-       p.last_execution_time,
-       COALESCE(p.query_plan, ''),
-       COALESCE(SUM(rs.count_executions), 0) AS exec_count,
-       %s AS value
-FROM   sys.query_store_plan AS p
-LEFT JOIN sys.query_store_runtime_stats AS rs
-       ON rs.plan_id = p.plan_id
-LEFT JOIN sys.query_store_runtime_stats_interval AS rsi
-       ON rsi.runtime_stats_interval_id = rs.runtime_stats_interval_id
-      AND rsi.start_time >= %s AND rsi.start_time < %s
-WHERE  p.query_id = %s
-GROUP BY p.plan_id, p.query_id, p.is_forced_plan, p.plan_forcing_type_desc,
-         p.force_failure_count, p.last_force_failure_reason_desc,
-         p.compatibility_level, p.is_trivial_plan, p.is_parallel_plan,
-         p.last_compile_start_time, p.last_execution_time, p.query_plan
-ORDER BY p.plan_id`,
-		sp.value("rs"), a.add(sp.opts.From), a.add(sp.opts.To), a.add(queryID))
+	q := d.queryStorePlansQuery(sp.value("rs"), a.add(sp.opts.From), a.add(sp.opts.To), a.add(queryID))
 
 	rows, err := d.query(ctx, q, a.args...)
 	if err != nil {
@@ -947,7 +967,7 @@ func (d *Database) QueryStoreWaitStatsSupported() bool {
 // errWaitStatsUnsupported explains the version gate in the terms a caller can
 // show a user.
 func (d *Database) errWaitStatsUnsupported() error {
-	return fmt.Errorf("gosmo: query store wait statistics in %q: requires SQL Server 2017 or later", d.name)
+	return unsupportedVersionf("gosmo: query store wait statistics in %q: requires SQL Server 2017 or later", d.name)
 }
 
 // qsWaitFrom is the join both wait reports read. The runtime-stats join is

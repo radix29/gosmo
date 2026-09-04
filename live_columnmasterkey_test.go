@@ -34,7 +34,18 @@ func TestLiveColumnMasterKeyWrites(t *testing.T) {
 	if err := d.CreateColumnMasterKeyContext(ctx, "gosmo_cmk_plain", provider, keyPath, false); err != nil {
 		t.Fatalf("CreateColumnMasterKeyContext: %v", err)
 	}
-	if err := d.CreateColumnMasterKeyWithSignatureContext(ctx, "gosmo_cmk_enclave", provider, keyPath, signature); err != nil {
+	// B2: ENCLAVE_COMPUTATIONS is 2019 syntax — below that the parser rejects
+	// the whole CREATE ("Incorrect syntax near ','"), so gosmo refuses before
+	// sending and there is no enclave key to read back.
+	if !d.EnclaveComputationsSupported() {
+		err := d.CreateColumnMasterKeyWithSignatureContext(ctx, "gosmo_cmk_enclave", provider, keyPath, signature)
+		if err == nil || !strings.Contains(err.Error(), "SQL Server 2019 or later") {
+			t.Errorf("enclave create below 2019: err = %v, want a refusal naming the version requirement", err)
+		}
+		if _, err := d.ColumnMasterKeyByNameContext(ctx, "gosmo_cmk_enclave"); err == nil {
+			t.Errorf("gosmo_cmk_enclave exists; the refusal still wrote something")
+		}
+	} else if err := d.CreateColumnMasterKeyWithSignatureContext(ctx, "gosmo_cmk_enclave", provider, keyPath, signature); err != nil {
 		t.Fatalf("CreateColumnMasterKeyWithSignatureContext: %v", err)
 	}
 
@@ -47,15 +58,19 @@ func TestLiveColumnMasterKeyWrites(t *testing.T) {
 			plain.AllowEnclaveComputations, plain.Signature)
 	}
 
-	enclave, err := d.ColumnMasterKeyByNameContext(ctx, "gosmo_cmk_enclave")
-	if err != nil {
-		t.Fatalf("read back gosmo_cmk_enclave: %v", err)
-	}
-	if !enclave.AllowEnclaveComputations {
-		t.Errorf("enclave key: allow_enclave_computations = false, want true")
-	}
-	if !bytes.Equal(enclave.Signature, signature) {
-		t.Errorf("enclave key: signature = %x, want %x", enclave.Signature, signature)
+	created := []*ColumnMasterKey{plain}
+	if d.EnclaveComputationsSupported() {
+		enclave, err := d.ColumnMasterKeyByNameContext(ctx, "gosmo_cmk_enclave")
+		if err != nil {
+			t.Fatalf("read back gosmo_cmk_enclave: %v", err)
+		}
+		if !enclave.AllowEnclaveComputations {
+			t.Errorf("enclave key: allow_enclave_computations = false, want true")
+		}
+		if !bytes.Equal(enclave.Signature, signature) {
+			t.Errorf("enclave key: signature = %x, want %x", enclave.Signature, signature)
+		}
+		created = append(created, enclave)
 	}
 
 	// The bool form cannot produce the clause and must say so instead of
@@ -68,7 +83,7 @@ func TestLiveColumnMasterKeyWrites(t *testing.T) {
 		t.Errorf("gosmo_cmk_refused exists; the refusal still wrote something")
 	}
 
-	for _, k := range []*ColumnMasterKey{plain, enclave} {
+	for _, k := range created {
 		if err := k.DropContext(ctx); err != nil {
 			t.Errorf("drop %s: %v", k.Name, err)
 		}

@@ -2,6 +2,7 @@ package gosmo
 
 import (
 	"context"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -160,4 +161,63 @@ func TestSetQueryStoreOptionsOffIgnoresTheRest(t *testing.T) {
 	if len(script.Statements) != 1 || script.Statements[0] != want {
 		t.Errorf("Statements = %q, want [%q]", script.Statements, want)
 	}
+}
+
+// A7: WAIT_STATS_CAPTURE_MODE is SQL Server 2017 and later. Sent to 2016 it
+// fails the whole statement, so every Apply on the Query Store properties page
+// failed there — and the read has no column to fill the value from either, so
+// what would be sent is whatever the caller's zero value maps to.
+func TestSetQueryStoreOptionsOmitsWaitStatsBefore2017(t *testing.T) {
+	opts := QueryStoreOptions{
+		DesiredState:    "READ_WRITE",
+		MaxStorageMB:    256,
+		CaptureMode:     "AUTO",
+		SizeCleanupMode: "AUTO",
+	}
+
+	t.Run("2016 omits the clause and does not validate it", func(t *testing.T) {
+		d := &Database{server: &Server{info: &ServerInfo{VersionMajor: 13}}, name: "AppDB"}
+		ctx, script := WithScript(context.Background())
+
+		// The 2016 read returns "" for a column that does not exist; that must
+		// not be rejected as an unrecognized mode.
+		if err := d.SetQueryStoreOptionsContext(ctx, opts); err != nil {
+			t.Fatalf("SetQueryStoreOptionsContext: %v", err)
+		}
+		if len(script.Statements) != 1 {
+			t.Fatalf("Statements = %d, want 1", len(script.Statements))
+		}
+		if strings.Contains(script.Statements[0], "WAIT_STATS_CAPTURE_MODE") {
+			t.Errorf("2016 statement names WAIT_STATS_CAPTURE_MODE:\n%s", script.Statements[0])
+		}
+	})
+
+	for _, major := range []int{14, 15, 16, 17, 0} {
+		t.Run("major "+strconv.Itoa(major)+" still emits it", func(t *testing.T) {
+			d := &Database{server: &Server{info: &ServerInfo{VersionMajor: major}}, name: "AppDB"}
+			ctx, script := WithScript(context.Background())
+
+			o := opts
+			o.WaitStatsCaptureMode = "ON"
+			if err := d.SetQueryStoreOptionsContext(ctx, o); err != nil {
+				t.Fatalf("SetQueryStoreOptionsContext: %v", err)
+			}
+			if !strings.Contains(script.Statements[0], "WAIT_STATS_CAPTURE_MODE = ON") {
+				t.Errorf("major %d dropped WAIT_STATS_CAPTURE_MODE:\n%s", major, script.Statements[0])
+			}
+		})
+	}
+
+	// The allowlist still guards the versions that have the setting — dropping
+	// the check along with the clause would let anything through there too.
+	t.Run("2017 still rejects an unrecognized mode", func(t *testing.T) {
+		d := &Database{server: &Server{info: &ServerInfo{VersionMajor: 14}}, name: "AppDB"}
+		ctx, _ := WithScript(context.Background())
+
+		o := opts
+		o.WaitStatsCaptureMode = "ON) --"
+		if err := d.SetQueryStoreOptionsContext(ctx, o); err == nil {
+			t.Error("2017 accepted an unrecognized wait stats capture mode, want an error")
+		}
+	})
 }

@@ -22,7 +22,13 @@ import (
 func TestLiveScriptedSetterMirroring(t *testing.T) {
 	db, ctx, done := liveDB(t)
 	defer done()
-	srv := &Server{db: db}
+	// NewServer, not &Server{db: db}: without info the version helpers answer
+	// "newest", and the compatibility level below would be one no old instance
+	// accepts.
+	srv, err := NewServer(ctx, db)
+	if err != nil {
+		t.Fatalf("NewServer: %v", err)
+	}
 
 	const name = "gosmo_setifapplied_probe"
 	_ = srv.DropDatabaseContext(ctx, name, true)
@@ -68,7 +74,7 @@ func TestLiveScriptedSetterMirroring(t *testing.T) {
 		run  func() error
 	}{
 		{"SetRecoveryModel", func() error { return d.SetRecoveryModelContext(sctx, RecoveryModelSimple) }},
-		{"SetCompatibilityLevel", func() error { return d.SetCompatibilityLevelContext(sctx, 150) }},
+		{"SetCompatibilityLevel", func() error { return d.SetCompatibilityLevelContext(sctx, belowNativeCompatLevel(srv)) }},
 		{"SetReadOnly", func() error { return d.SetReadOnlyContext(sctx, true) }},
 		{"SetOffline", func() error { return d.SetOfflineContext(sctx) }},
 		{"SetOnline", func() error { return d.SetOnlineContext(sctx) }},
@@ -155,11 +161,15 @@ func TestLiveScriptedSetterMirroring(t *testing.T) {
 	if got, srvGot := d.RecoveryModel(), reload().RecoveryModel(); got != RecoveryModelFull || srvGot != RecoveryModelFull {
 		t.Errorf("recovery: handle=%s server=%s, want both FULL", got, srvGot)
 	}
-	if err := d.SetCompatibilityLevelContext(ctx, 160); err != nil {
-		t.Fatalf("SetCompatibilityLevel: %v", err)
+	// Not a literal: an instance rejects any level above its own native one
+	// (Msg 15048), so 160 fails on everything before 2022 and the test would
+	// be pinning the version of whichever server it last ran against.
+	wantCompat := belowNativeCompatLevel(srv)
+	if err := d.SetCompatibilityLevelContext(ctx, wantCompat); err != nil {
+		t.Fatalf("SetCompatibilityLevel(%d): %v", wantCompat, err)
 	}
-	if got, srvGot := d.CompatibilityLevel(), reload().CompatibilityLevel(); got != 160 || srvGot != 160 {
-		t.Errorf("compat: handle=%d server=%d, want both 160", got, srvGot)
+	if got, srvGot := d.CompatibilityLevel(), reload().CompatibilityLevel(); got != wantCompat || srvGot != wantCompat {
+		t.Errorf("compat: handle=%d server=%d, want both %d", got, srvGot, wantCompat)
 	}
 	if err := d.SetReadOnlyContext(ctx, true); err != nil {
 		t.Fatalf("SetReadOnly: %v", err)
@@ -216,7 +226,13 @@ func TestLiveScriptedSetterMirroring(t *testing.T) {
 func TestLiveScriptedSequenceRestartMirroring(t *testing.T) {
 	db, ctx, done := liveDB(t)
 	defer done()
-	srv := &Server{db: db}
+	// NewServer, not &Server{db: db}: without info the version helpers answer
+	// "newest", and the compatibility level below would be one no old instance
+	// accepts.
+	srv, err := NewServer(ctx, db)
+	if err != nil {
+		t.Fatalf("NewServer: %v", err)
+	}
 
 	const name = "gosmo_seq_restart_probe"
 	_ = srv.DropDatabaseContext(ctx, name, true)
@@ -301,5 +317,29 @@ func TestLiveScriptedSequenceRestartMirroring(t *testing.T) {
 	}
 	if next != 7777 {
 		t.Errorf("NEXT VALUE FOR returned %d, want 7777 — the restart the handle claims is not the one the server did", next)
+	}
+}
+
+// belowNativeCompatLevel is one level below the highest the connected instance
+// accepts. Higher than its own major is Msg 15048, and the level the probe
+// database already holds — its major's — would let a setter that writes
+// nothing pass either check, so the test asks for the one below it.
+func belowNativeCompatLevel(srv *Server) CompatibilityLevel {
+	return instanceCompatLevel(srv) - 10
+}
+
+// instanceCompatLevel is the connected instance's own major's level.
+func instanceCompatLevel(srv *Server) CompatibilityLevel {
+	switch srv.serverMajorVersion() {
+	case 13:
+		return CompatLevel2016
+	case 14:
+		return CompatLevel2017
+	case 15:
+		return CompatLevel2019
+	case 16:
+		return CompatLevel2022
+	default:
+		return CompatLevel2025
 	}
 }

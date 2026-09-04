@@ -40,17 +40,16 @@ type PartitionFunction struct {
 // partitionFunctionSelect is the column list and joins every partition
 // function read shares; the listing adds ORDER BY, the by-name lookup a
 // WHERE.
-const partitionFunctionSelect = `
+var partitionFunctionSelect = `
 SELECT pf.name, pf.function_id, pf.fanout - 1,
        tp.name AS input_type, pf.boundary_value_on_right,
        -- Style 126 (ISO 8601) matters for a date/time boundary: the default
        -- conversion yields "Jan  1 2026", which loses any time part and has
        -- to be reparsed by whoever reads it. It is ignored for every other
        -- type, so it costs nothing there.
-       (SELECT STRING_AGG(CONVERT(NVARCHAR(256), prv.value, 126), ',')
-        WITHIN GROUP (ORDER BY prv.boundary_id)
+       ` + commaList("CONVERT(NVARCHAR(256), prv.value, 126)", `
         FROM sys.partition_range_values prv
-        WHERE prv.function_id = pf.function_id) AS boundaries
+        WHERE prv.function_id = pf.function_id`, "prv.boundary_id") + ` AS boundaries
 FROM   sys.partition_functions pf
 JOIN   sys.partition_parameters pp ON pp.function_id = pf.function_id
 JOIN   sys.types tp ON tp.user_type_id = pp.user_type_id`
@@ -226,12 +225,12 @@ type PartitionScheme struct {
 
 // partitionSchemeSelect is the column list and joins every partition
 // scheme read shares; the listing adds ORDER BY, the by-name lookup a WHERE.
-const partitionSchemeSelect = `
+var partitionSchemeSelect = `
 SELECT ps.name, ps.data_space_id, pf.name AS func_name,
-       (SELECT STRING_AGG(fg.name, ',') WITHIN GROUP (ORDER BY dds.destination_id)
+       ` + commaList("fg.name", `
         FROM sys.destination_data_spaces dds
         JOIN sys.filegroups fg ON fg.data_space_id = dds.data_space_id
-        WHERE dds.partition_scheme_id = ps.data_space_id) AS filegroups
+        WHERE dds.partition_scheme_id = ps.data_space_id`, "dds.destination_id") + ` AS filegroups
 FROM   sys.partition_schemes ps
 JOIN   sys.partition_functions pf ON pf.function_id = ps.function_id`
 

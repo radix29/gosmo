@@ -23,6 +23,8 @@ func TestLiveAsymmetricKeysListingAndFinderAgree(t *testing.T) {
 		t.Fatalf("NewServer: %v", err)
 	}
 	master := s.Database("master")
+	// CREATE ASYMMETRIC KEY encrypts the private key with master's DMK.
+	defer ensureMasterKey(t, s, ctx)()
 
 	const keyName = "gosmo_live_asymkey"
 	drop := func() {

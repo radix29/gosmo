@@ -31,11 +31,21 @@ type ColumnMasterKey struct {
 
 // columnMasterKeySelect is the column list every column master key read
 // shares; the listing adds ORDER BY, the by-name lookup a WHERE.
-const columnMasterKeySelect = `
+//
+// allow_enclave_computations and signature are the metadata of Always
+// Encrypted with secure enclaves, which is "SQL Server 2019 (15.x) and later
+// versions on Windows" — sys.column_master_keys has neither column before
+// then, and naming one fails the whole read rather than the field.
+// https://learn.microsoft.com/sql/relational-databases/security/encryption/always-encrypted-enclaves
+func (d *Database) columnMasterKeySelect() string {
+	major := d.serverMajorVersion()
+	return `
 SELECT name, column_master_key_id,
        key_store_provider_name, key_path,
-       allow_enclave_computations, signature
+       ` + colSince(major, SQLServer2019, "allow_enclave_computations", "CAST(0 AS bit)") + `,
+       ` + colSince(major, SQLServer2019, "signature", "CAST(NULL AS varbinary(max))") + `
 FROM   sys.column_master_keys`
+}
 
 // ColumnMasterKeys returns all column master keys in the database.
 func (d *Database) ColumnMasterKeys() ([]*ColumnMasterKey, error) {
@@ -44,7 +54,7 @@ func (d *Database) ColumnMasterKeys() ([]*ColumnMasterKey, error) {
 
 // ColumnMasterKeysContext is the context-aware variant of ColumnMasterKeys.
 func (d *Database) ColumnMasterKeysContext(ctx context.Context) ([]*ColumnMasterKey, error) {
-	rows, err := d.query(ctx, columnMasterKeySelect+`
+	rows, err := d.query(ctx, d.columnMasterKeySelect()+`
 ORDER  BY name`)
 	if err != nil {
 		return nil, fmt.Errorf("gosmo: list column master keys: %w", err)
@@ -78,7 +88,7 @@ func (d *Database) ColumnMasterKeyByNameContext(ctx context.Context, name string
 		var err error
 		k, err = scanColumnMasterKey(d, row.Scan)
 		return err
-	}, columnMasterKeySelect+`
+	}, d.columnMasterKeySelect()+`
 WHERE  name = @p1`, name)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -129,6 +139,10 @@ func (d *Database) CreateColumnMasterKeyContext(ctx context.Context, name, keySt
 // cmdlets both do), and the server verifies it against the rest of the
 // metadata, so an empty or wrong one is rejected. Use CreateColumnMasterKey
 // for a key that does not allow enclave computations.
+//
+// The ENCLAVE_COMPUTATIONS clause is SQL Server 2019 syntax; below that this
+// refuses rather than sending a statement the parser rejects. Ask
+// EnclaveComputationsSupported first.
 func (d *Database) CreateColumnMasterKeyWithSignature(name, keyStoreProvider, keyPath string, signature []byte) error {
 	return d.CreateColumnMasterKeyWithSignatureContext(context.Background(), name, keyStoreProvider, keyPath, signature)
 }
@@ -139,7 +153,23 @@ func (d *Database) CreateColumnMasterKeyWithSignatureContext(ctx context.Context
 	if len(signature) == 0 {
 		return fmt.Errorf("gosmo: create column master key [%s]: signature is empty", name)
 	}
+	if !d.EnclaveComputationsSupported() {
+		return unsupportedVersionf("gosmo: create column master key [%s]: enclave computations require SQL Server 2019 or later", name)
+	}
 	return d.createColumnMasterKey(ctx, name, keyStoreProvider, keyPath, signature)
+}
+
+// EnclaveComputationsSupported reports whether this instance understands
+// CREATE COLUMN MASTER KEY's ENCLAVE_COMPUTATIONS clause, which SQL Server
+// 2019 added. Below it the clause is not "ignored" — the parser rejects the
+// whole statement with "Incorrect syntax near ','", so a caller offering an
+// enclave option should hide it rather than let it fail on submit.
+//
+// An unread version (0) is treated as supported, the convention every version
+// gate here follows.
+func (d *Database) EnclaveComputationsSupported() bool {
+	major := d.serverMajorVersion()
+	return major == 0 || major >= int(SQLServer2019)
 }
 
 // createColumnMasterKey emits the CREATE, with the ENCLAVE_COMPUTATIONS clause

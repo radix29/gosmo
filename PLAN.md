@@ -82,6 +82,11 @@ These continue for the life of the project, release or not:
   (`replace github.com/radix29/gosmo => ../gosmo` in gossms's `go.mod`
   for local dev against unreleased changes, tag-and-bump once merged).
 
+- **Scheduled breaking change: drop `JobStateCancelling` and
+  `JobStateRunning`** (`agent_job.go`). Both name states Agent's encoding does
+  not have and are kept only for source compatibility; the next tag that can
+  carry a break removes them. Recorded in `CHANGELOG.md` § Unreleased.
+
 ## Non-goals
 
 Carried from `README.md`'s "Features intentionally excluded" section —

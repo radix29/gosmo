@@ -587,8 +587,13 @@ func (sc *Scripter) ScriptDatabaseContext(ctx context.Context) (string, error) {
 func (sc *Scripter) scriptDatabaseFrom(d *Database) (string, error) {
 	var sb strings.Builder
 	if sc.opts.IncludeHeaders {
-		fmt.Fprintf(&sb, "/* Database: %s  Version: %s */\n\n",
-			d.name, d.server.info.ProductVersion)
+		// info is nil on a Server built without NewServer; the header reports
+		// no version rather than panicking.
+		version := ""
+		if d.server != nil && d.server.info != nil {
+			version = d.server.info.ProductVersion
+		}
+		fmt.Fprintf(&sb, "/* Database: %s  Version: %s */\n\n", d.name, version)
 	}
 	if sc.opts.IncludeIfNotExists {
 		fmt.Fprintf(&sb, "IF DB_ID(N'%s') IS NULL\nBEGIN\n    ", escapeSingle(d.name))

@@ -97,16 +97,13 @@ func (ag *AvailabilityGroup) Server() *Server { return ag.server }
 // callers get a zero value instead of a "column not found" error on an older
 // instance.
 func (s *Server) agColumns() string {
-	major := 0
-	if info := s.Info(); info != nil {
-		major = info.VersionMajor
-	}
+	major := s.serverMajorVersion()
 
 	// 2016 added the basic/DTC/failover/distributed flags.
-	basicFeatures, dtcSupport, dbFailover, isDistributed := "ag.basic_features", "ag.dtc_support", "ag.db_failover", "ag.is_distributed"
-	if major < int(SQLServer2016) {
-		basicFeatures, dtcSupport, dbFailover, isDistributed = "CAST(0 AS bit)", "CAST(0 AS bit)", "CAST(0 AS bit)", "CAST(0 AS bit)"
-	}
+	basicFeatures := colSince(major, SQLServer2016, "ag.basic_features", "CAST(0 AS bit)")
+	dtcSupport := colSince(major, SQLServer2016, "ag.dtc_support", "CAST(0 AS bit)")
+	dbFailover := colSince(major, SQLServer2016, "ag.db_failover", "CAST(0 AS bit)")
+	isDistributed := colSince(major, SQLServer2016, "ag.is_distributed", "CAST(0 AS bit)")
 
 	// 2017 added the external-cluster support this whole type keys off.
 	//
@@ -116,16 +113,11 @@ func (s *Server) agColumns() string {
 	// case. Without it the values documented on these fields are not the values
 	// they hold, and the obvious ClusterType == "EXTERNAL" test silently never
 	// fires. Verified against SQL Server 2025.
-	clusterType, requiredSync := "UPPER(ISNULL(ag.cluster_type_desc,''))", "ag.required_synchronized_secondaries_to_commit"
-	if major < int(SQLServer2017) {
-		clusterType, requiredSync = "CAST('' AS nvarchar(60))", "CAST(0 AS int)"
-	}
+	clusterType := colSince(major, SQLServer2017, "UPPER(ISNULL(ag.cluster_type_desc,''))", "CAST('' AS nvarchar(60))")
+	requiredSync := colSince(major, SQLServer2017, "ag.required_synchronized_secondaries_to_commit", "CAST(0 AS int)")
 
 	// 2022 added contained availability groups.
-	isContained := "ag.is_contained"
-	if major < int(SQLServer2022) {
-		isContained = "CAST(0 AS bit)"
-	}
+	isContained := colSince(major, SQLServer2022, "ag.is_contained", "CAST(0 AS bit)")
 
 	return strings.Join([]string{
 		"CONVERT(varchar(36), ag.group_id)",
@@ -598,20 +590,29 @@ func (ag *AvailabilityGroup) Listeners() ([]*AvailabilityGroupListener, error) {
 	return ag.ListenersContext(context.Background())
 }
 
+// listenerSelect builds the sys.availability_group_listeners read for the
+// connected server's version. is_distributed_network_name arrived in SQL
+// Server 2019, and ISNULL does not save a name the parser cannot resolve: on
+// 2016 or 2017 the unguarded column fails every listener read with "Invalid
+// column name". Dated from
+// https://learn.microsoft.com/sql/relational-databases/system-catalog-views/sys-availability-group-listeners-transact-sql.
+func (s *Server) listenerSelect() string {
+	major := s.serverMajorVersion()
+	return `
+	SELECT CONVERT(varchar(36), l.group_id), CONVERT(varchar(36), l.listener_id),
+	       ISNULL(l.dns_name,''), ISNULL(l.port, 0), ISNULL(l.is_conformant, 0),
+	       ISNULL(l.ip_configuration_string_from_cluster,''),
+	       ` + colSince(major, SQLServer2019, "ISNULL(l.is_distributed_network_name, 0)", "CAST(0 AS bit)") + `
+	FROM sys.availability_group_listeners l
+	WHERE l.group_id = @p1
+	ORDER BY l.dns_name`
+}
+
 // ListenersContext is the context-aware variant of Listeners.
 func (ag *AvailabilityGroup) ListenersContext(ctx context.Context) ([]*AvailabilityGroupListener, error) {
 	s := ag.server
 
-	const q = `
-	SELECT CONVERT(varchar(36), l.group_id), CONVERT(varchar(36), l.listener_id),
-	       ISNULL(l.dns_name,''), ISNULL(l.port, 0), ISNULL(l.is_conformant, 0),
-	       ISNULL(l.ip_configuration_string_from_cluster,''),
-	       ISNULL(l.is_distributed_network_name, 0)
-	FROM sys.availability_group_listeners l
-	WHERE l.group_id = @p1
-	ORDER BY l.dns_name`
-
-	rows, err := s.query(ctx, q, ag.ID)
+	rows, err := s.query(ctx, s.listenerSelect(), ag.ID)
 	if err != nil {
 		return nil, fmt.Errorf("gosmo: list listeners of availability group %q: %w", ag.Name, err)
 	}

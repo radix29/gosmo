@@ -68,6 +68,31 @@ func notFoundfAlso(also error, format string, args ...any) error {
 	return &notFoundError{msg: fmt.Sprintf(format, args...), also: also}
 }
 
+// ErrUnsupportedVersion reports a call gosmo refused because the connected
+// instance is older than the feature it names — a refusal decided here, before
+// any statement is sent, because the server's own answer would be a parse
+// error naming syntax the caller never wrote.
+//
+// Every such refusal wraps it, so a caller (or a sweep across an old instance)
+// can tell "this server is too old for this feature" from "this read is
+// broken". The message text is unchanged by the sentinel.
+var ErrUnsupportedVersion = errors.New("unsupported server version")
+
+// unsupportedVersionError carries its own message and reaches
+// ErrUnsupportedVersion through the chain, the way notFoundError does for
+// ErrNotFound.
+type unsupportedVersionError struct{ msg string }
+
+func (e *unsupportedVersionError) Error() string { return e.msg }
+
+func (e *unsupportedVersionError) Unwrap() error { return ErrUnsupportedVersion }
+
+// unsupportedVersionf builds a version refusal whose message is exactly
+// format/args.
+func unsupportedVersionf(format string, args ...any) error {
+	return &unsupportedVersionError{msg: fmt.Sprintf(format, args...)}
+}
+
 // ============================================================
 // SQL Server errors
 // ============================================================

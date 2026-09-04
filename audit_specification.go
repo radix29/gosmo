@@ -46,12 +46,13 @@ type ServerAuditSpecification struct {
 	ActionGroups []string
 }
 
-const serverAuditSpecificationSelect = `
+var serverAuditSpecificationSelect = `
 SELECT s.server_specification_id, s.name, CONVERT(varchar(36), s.audit_guid),
        a.name, s.is_state_enabled, s.create_date, s.modify_date,
-       (SELECT STRING_AGG(d.audit_action_name, ',') WITHIN GROUP (ORDER BY d.audit_action_name)
+       ` + commaList("d.audit_action_name", `
         FROM   sys.server_audit_specification_details d
-        WHERE  d.server_specification_id = s.server_specification_id) AS action_groups
+        WHERE  d.server_specification_id = s.server_specification_id`,
+	"d.audit_action_name") + ` AS action_groups
 FROM   sys.server_audit_specifications s
 LEFT   JOIN sys.server_audits a ON a.audit_guid = s.audit_guid`
 

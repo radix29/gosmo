@@ -9,6 +9,32 @@ go get github.com/radix29/gosmo
 
 > **Go version note:** The module requires Go 1.27
 
+## Supported SQL Server versions
+
+**SQL Server 2016 SP1 (13.0.4001) and later**, on Windows and on Linux.
+`gosmo.MinimumServerVersion` states the floor in code.
+
+The floor is SP1 rather than 2016 RTM for one reason: `CREATE OR ALTER`
+arrived in 13.0.4001, and `Database.CreateStoredProcedure` emits it
+unconditionally (`procedure.go`) — the only statement gosmo builds that
+2016 RTM cannot parse. Every catalog read gosmo makes would run on RTM.
+Supporting it means rewriting that one statement as
+`IF EXISTS … ALTER … ELSE CREATE`; that is a deliberate decision, not an
+oversight, and `TestOnlyKnownSitesEmitCreateOrAlter` fails if a second
+such statement appears without one.
+
+`Scripter`'s module scripting is not a second site: `alterModuleDefinition`
+recognises a `CREATE OR ALTER` that the *server's own* stored definition
+already contains and passes it through unchanged. That text is the
+author's, not gosmo's.
+
+Columns and syntax added after the floor are gated rather than assumed —
+`colSince` substitutes a typed literal for a column the instance lacks, so
+a caller gets a zero value instead of a failed read, and a statement an
+older parser rejects is refused before it is sent (see
+`Database.EnclaveComputationsSupported`, `Database.QueryStoreWaitStatsSupported`).
+An instance whose version was never read is treated as newest.
+
 ---
 
 ## Architecture
@@ -53,6 +79,7 @@ classDiagram
         +ConnMaxLifetime Duration
         +ConnMaxIdleTime Duration
         +SessionInitSQL string
+        +Dialer mssql.Dialer
         +TrustServerCertificate bool
         +Encrypt string
     }
@@ -3457,6 +3484,18 @@ over both `AccessToken` and `Auth`.
 `ConnectionOptions.SessionInitSQL` runs on every pooled connection right
 after it is reset, before the first query — the equivalent of SSMS's
 Query Execution `SET` options (e.g. `"SET ARITHABORT ON; SET ANSI_NULLS ON"`).
+
+`ConnectionOptions.Dialer` replaces the dialer used for every network
+operation — the TDS connection and the SQL Server Browser probe alike —
+for routing through a proxy or an SSH tunnel, or for controlling address
+selection. Left nil, gosmo uses the driver's own dialer, except when
+`Server` names an instance with no port: that connection needs a Browser
+probe (a single UDP datagram to port 1434), and gosmo substitutes a
+dialer that sends it to *every* resolved address and takes the first
+reply. On a dual-stack host whose Browser answers on only one family, the
+driver's own dialer probes whichever address the resolver returned first
+and, half the time, reports the timeout as `no instance matching
+'<name>'` — a network fault that reads like a misspelled instance.
 
 `gosmo.ParseServerAddress(server)` parses any address form SSMS's own
 "Server name" field accepts — `host`, `host:port`, `host,port`,

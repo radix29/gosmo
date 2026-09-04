@@ -75,10 +75,32 @@ func (t *Table) Detail() (*TableDetail, error) {
 
 // DetailContext is the context-aware variant of Detail.
 func (t *Table) DetailContext(ctx context.Context) (*TableDetail, error) {
-	const q = `
+	d := &TableDetail{}
+	if err := t.db.queryRow(ctx, func(row *sql.Row) error {
+		return row.Scan(
+			&d.SchemaOwner, &d.LockEscalation, &d.UsesAnsiNulls,
+			&d.IsReplicated, &d.IsTrackedByCDC, &d.TemporalType,
+			&d.Durability, &d.LedgerType, &d.PrimaryKeyName, &d.DataSpace,
+		)
+	}, t.detailSelect(), t.ObjectID); err != nil {
+		return nil, fmt.Errorf("gosmo: table detail for %s: %w", t.FullName(), err)
+	}
+	return d, nil
+}
+
+// detailSelect is DetailContext's query, version-gated.
+func (t *Table) detailSelect() string {
+	// ledger_type_desc is a ledger column, and ledger tables are SQL Server
+	// 2022 (16.x) and later; sys.tables has no such column before then, and
+	// naming it fails the whole read rather than the one field. Every table on
+	// an older instance is a non-ledger table, so that is the honest
+	// substitute.
+	// https://learn.microsoft.com/sql/relational-databases/security/ledger/ledger-overview
+	return `
 SELECT owner.name, t.lock_escalation_desc, t.uses_ansi_nulls,
        t.is_replicated, t.is_tracked_by_cdc, t.temporal_type_desc,
-       t.durability_desc, t.ledger_type_desc,
+       t.durability_desc,
+       ` + colSince(t.db.serverMajorVersion(), SQLServer2022, "t.ledger_type_desc", "CAST('NON_LEDGER_TABLE' AS nvarchar(60))") + `,
        ISNULL((SELECT TOP 1 i.name FROM sys.indexes i
                WHERE i.object_id = t.object_id AND i.is_primary_key = 1), ''),
        ISNULL((SELECT TOP 1 ds.name FROM sys.indexes i
@@ -88,18 +110,6 @@ FROM   sys.tables t
 JOIN   sys.schemas s ON s.schema_id = t.schema_id
 JOIN   sys.database_principals owner ON owner.principal_id = s.principal_id
 WHERE  t.object_id = @p1`
-
-	d := &TableDetail{}
-	if err := t.db.queryRow(ctx, func(row *sql.Row) error {
-		return row.Scan(
-			&d.SchemaOwner, &d.LockEscalation, &d.UsesAnsiNulls,
-			&d.IsReplicated, &d.IsTrackedByCDC, &d.TemporalType,
-			&d.Durability, &d.LedgerType, &d.PrimaryKeyName, &d.DataSpace,
-		)
-	}, q, t.ObjectID); err != nil {
-		return nil, fmt.Errorf("gosmo: table detail for %s: %w", t.FullName(), err)
-	}
-	return d, nil
 }
 
 // -- Columns -------------------------------------------------------------------
@@ -634,22 +644,24 @@ func (t *Table) ForeignKeys() ([]*ForeignKey, error) {
 // foreignKeySelect is shared by ForeignKeysContext and
 // ForeignKeyByNameContext so a foreign key carries the same fields however
 // it was fetched.
-const foreignKeySelect = `
+var foreignKeySelect = `
 SELECT fk.name, fk.is_disabled, fk.is_not_for_replication,
        fk.delete_referential_action_desc, fk.update_referential_action_desc,
        SCHEMA_NAME(rt.schema_id), rt.name,
-       (SELECT STRING_AGG(c.name, ',') WITHIN GROUP (ORDER BY fkc.constraint_column_id)
+       ` + commaList("c.name", `
         FROM   sys.foreign_key_columns fkc
         JOIN   sys.columns c
                ON  c.object_id = fkc.parent_object_id
                AND c.column_id = fkc.parent_column_id
-        WHERE  fkc.constraint_object_id = fk.object_id),
-       (SELECT STRING_AGG(c.name, ',') WITHIN GROUP (ORDER BY fkc.constraint_column_id)
+        WHERE  fkc.constraint_object_id = fk.object_id`,
+	"fkc.constraint_column_id") + `,
+       ` + commaList("c.name", `
         FROM   sys.foreign_key_columns fkc
         JOIN   sys.columns c
                ON  c.object_id = fkc.referenced_object_id
                AND c.column_id = fkc.referenced_column_id
-        WHERE  fkc.constraint_object_id = fk.object_id)
+        WHERE  fkc.constraint_object_id = fk.object_id`,
+	"fkc.constraint_column_id") + `
 FROM   sys.foreign_keys fk
 JOIN   sys.tables rt ON rt.object_id = fk.referenced_object_id
 WHERE  fk.parent_object_id = @p1`

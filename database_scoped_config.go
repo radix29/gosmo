@@ -22,7 +22,27 @@ type DatabaseScopedConfig struct {
 	Name              string
 	Value             string
 	ValueForSecondary string
-	IsValueDefault    bool
+	// IsValueDefault is false on SQL Server 2016, whose
+	// sys.database_scoped_configurations has no is_value_default column —
+	// see scopedConfigSelect.
+	IsValueDefault bool
+}
+
+// scopedConfigSelect renders the read. Split out from
+// DatabaseScopedConfigsContext so the version gate can be asserted at every
+// major without a server.
+func (d *Database) scopedConfigSelect() string {
+	// is_value_default was "Added in SQL Server 2017" — the column table of
+	// https://learn.microsoft.com/sql/relational-databases/system-catalog-views/sys-database-scoped-configurations-transact-sql
+	// — while the view itself is 2016. Naming it on 2016 fails the whole read,
+	// so it is substituted there and IsValueDefault reads false for every
+	// option, which is what a caller that cannot ask must assume.
+	return `
+SELECT configuration_id, name, CAST(value AS NVARCHAR(256)),
+       CAST(ISNULL(value_for_secondary, '') AS NVARCHAR(256)),
+       ` + colSince(d.serverMajorVersion(), SQLServer2017, "is_value_default", "CAST(0 AS bit)") + `
+FROM   sys.database_scoped_configurations
+ORDER  BY name`
 }
 
 // DatabaseScopedConfigs returns every database scoped configuration option.
@@ -33,11 +53,7 @@ func (d *Database) DatabaseScopedConfigs() ([]*DatabaseScopedConfig, error) {
 // DatabaseScopedConfigsContext is the context-aware variant of
 // DatabaseScopedConfigs.
 func (d *Database) DatabaseScopedConfigsContext(ctx context.Context) ([]*DatabaseScopedConfig, error) {
-	const q = `
-SELECT configuration_id, name, CAST(value AS NVARCHAR(256)),
-       CAST(ISNULL(value_for_secondary, '') AS NVARCHAR(256)), is_value_default
-FROM   sys.database_scoped_configurations
-ORDER  BY name`
+	q := d.scopedConfigSelect()
 
 	rows, err := d.query(ctx, q)
 	if err != nil {
