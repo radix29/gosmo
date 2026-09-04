@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net"
+	"runtime"
 	"testing"
 	"time"
 )
@@ -143,6 +144,104 @@ func TestFanOutConnFailsWhenNoAddressAnswers(t *testing.T) {
 		}
 	case <-time.After(3 * time.Second):
 		t.Fatal("Read hung past the deadline set on every socket")
+	}
+}
+
+// A second Read must not hang. Read counts the sockets that have failed, and
+// consumes those events off the channel; without the count latched on the conn
+// a later Read starts from zero and waits on channels whose senders have all
+// exited. go-mssqldb's own probe reads exactly once, so nothing else pins this.
+func TestFanOutConnReadAfterEveryAddressFailedReturns(t *testing.T) {
+	var conns []net.Conn
+	for range 2 {
+		mine, peer := net.Pipe()
+		peer.Close() // fail the socket without waiting on a real timeout
+		conns = append(conns, mine)
+	}
+	fc := newFanOutConn(conns)
+	defer fc.Close()
+
+	if _, err := fc.Read(make([]byte, 16)); err == nil {
+		t.Fatal("first Read succeeded over closed pipes, want an error")
+	}
+	done := make(chan error, 1)
+	go func() { _, err := fc.Read(make([]byte, 16)); done <- err }()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Error("second Read succeeded, want the failure the first reported")
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("second Read hung: the terminal state is not latched on the conn")
+	}
+}
+
+// A host that answers more than once must not leak the reader goroutine: the
+// replies buffer holds one datagram per socket, and a blocking send past that
+// parks the goroutine for good — Close closes the socket but cannot unblock a
+// goroutine already past its Read, and nothing drains replies afterwards.
+func TestFanOutConnDropsSurplusRepliesRatherThanBlocking(t *testing.T) {
+	want := []byte("ServerName;WIN10CLI;InstanceName;SQL2017;tcp;55253;;")
+	pc, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Skipf("listen udp: %v", err)
+	}
+	defer pc.Close()
+	go func() {
+		buf := make([]byte, 4096)
+		for {
+			_, from, err := pc.ReadFrom(buf)
+			if err != nil {
+				return
+			}
+			for range 8 { // far past the buffer's capacity
+				if _, err := pc.WriteTo(want, from); err != nil {
+					return
+				}
+			}
+		}
+	}()
+
+	// Let goroutines other tests left mid-exit settle, so the baseline counts
+	// only what is still running when this test's own sockets open.
+	before := runtime.NumGoroutine()
+	for deadline := time.Now().Add(time.Second); time.Now().Before(deadline); {
+		time.Sleep(20 * time.Millisecond)
+		if n := runtime.NumGoroutine(); n == before {
+			break
+		} else {
+			before = n
+		}
+	}
+	var conns []net.Conn
+	for range 2 {
+		c, err := net.Dial("udp", pc.LocalAddr().String())
+		if err != nil {
+			t.Fatalf("dial: %v", err)
+		}
+		conns = append(conns, c)
+	}
+	fc := newFanOutConn(conns)
+	fc.SetDeadline(time.Now().Add(3 * time.Second))
+	if _, err := fc.Write([]byte{3}); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	buf := make([]byte, 4096)
+	n, err := fc.Read(buf)
+	if err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+	if got := string(buf[:n]); got != string(want) {
+		t.Errorf("read %q, want %q", got, want)
+	}
+	fc.Close()
+
+	deadline := time.Now().Add(3 * time.Second)
+	for runtime.NumGoroutine() > before && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if got := runtime.NumGoroutine(); got > before {
+		t.Errorf("%d goroutines after Close, want back to %d: a reader is parked on a surplus reply", got, before)
 	}
 }
 

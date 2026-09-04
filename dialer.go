@@ -35,7 +35,14 @@ const maxBrowserProbes = 8
 //
 // TCP dials pass straight through to a stock net.Dialer: only the browser probe
 // is dual-stack, and changing how the instance itself is reached is not this
-// type's business.
+// type's business. That is also where the fan-out's one assumption lives: it
+// takes the port from whichever address answers first and lets go-mssqldb pick
+// an address for the TCP dial independently, which is correct for a dual-stack
+// host — the case this exists for — and wrong for round-robin DNS naming
+// distinct machines, where the instance could be dialled on another machine's
+// port. Accepted: the stock single-socket path probes one address and connects
+// to a possibly different one too. Pinning the dial to the address that
+// answered needs mssql.HostDialer rather than mssql.Dialer.
 type browserDialer struct{}
 
 // DialContext implements mssql.Dialer.
@@ -85,12 +92,22 @@ func (browserDialer) DialContext(ctx context.Context, network, addr string) (net
 type fanOutConn struct {
 	conns []net.Conn
 
-	// replies carries one datagram per successful read from any socket, and
-	// errs one error per socket that has stopped reading. Both are buffered to
-	// len(conns) so a reader goroutine never blocks on a caller that has moved
-	// on, which is what lets Close return without waiting for them.
+	// replies carries datagrams read off any socket and errs one error per
+	// socket that has stopped reading. Both are buffered to len(conns), which
+	// bounds errs exactly; replies is not bounded by it — one socket can answer
+	// several times — so readLoop drops what does not fit rather than blocking.
+	// Between the two, a reader goroutine never blocks on a caller that has
+	// moved on, which is what lets Close return without waiting for them.
 	replies chan []byte
 	errs    chan error
+
+	// failed counts the sockets that have reported an error and firstErr holds
+	// the first, both latched across calls: Read consumes those events off errs
+	// and the goroutines that sent them have exited, so a later Read counting
+	// from zero again would block on channels nothing will ever feed. Read is
+	// the sole reader of them; this conn is not for concurrent Reads.
+	failed   int
+	firstErr error
 
 	closeOnce sync.Once
 }
@@ -109,6 +126,13 @@ func newFanOutConn(conns []net.Conn) *fanOutConn {
 
 // readLoop pumps one socket until it fails — a read deadline, or Close closing
 // it out from under the goroutine, which is how these are stopped.
+//
+// The send is non-blocking because a socket can answer more than once (a
+// duplicate or a retransmitted Browser reply) and replies only holds len(conns)
+// of them: a blocking send past that capacity parks this goroutine forever,
+// since Close closes the socket without unblocking a goroutine already past its
+// Read and nothing drains replies once the exchange is over. A request/response
+// probe wants the first datagram, so the surplus is dropped.
 func (c *fanOutConn) readLoop(conn net.Conn) {
 	for {
 		buf := make([]byte, 64*1024)
@@ -117,7 +141,10 @@ func (c *fanOutConn) readLoop(conn net.Conn) {
 			c.errs <- err
 			return
 		}
-		c.replies <- buf[:n]
+		select {
+		case c.replies <- buf[:n]:
+		default: // already queued more than anyone will read
+		}
 	}
 }
 
@@ -148,20 +175,18 @@ func (c *fanOutConn) Write(b []byte) (int, error) {
 
 // Read returns the first datagram to arrive on any socket. It fails only once
 // every socket has failed — one address timing out is the expected case here,
-// not an error to report.
+// not an error to report — and every Read after that reports the same failure
+// immediately, off the latched state, rather than waiting on sockets whose
+// reader goroutines have already exited.
 func (c *fanOutConn) Read(b []byte) (int, error) {
-	var (
-		firstErr error
-		failed   int
-	)
-	for failed < len(c.conns) {
+	for c.failed < len(c.conns) {
 		select {
 		case reply := <-c.replies:
 			return copy(b, reply), nil
 		case err := <-c.errs:
-			failed++
-			if firstErr == nil {
-				firstErr = err
+			c.failed++
+			if c.firstErr == nil {
+				c.firstErr = err
 			}
 		}
 	}
@@ -171,7 +196,7 @@ func (c *fanOutConn) Read(b []byte) (int, error) {
 		return copy(b, reply), nil
 	default:
 	}
-	return 0, firstErr
+	return 0, c.firstErr
 }
 
 // Close closes every socket, which is also what unblocks the reader goroutines.

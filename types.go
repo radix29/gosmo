@@ -282,7 +282,13 @@ type ServerInfo struct {
 	IsHADREnabled  bool
 	IsSingleUser   bool
 	EngineEdition  int
-	OSVersion      string
+	// OSVersion is @@VERSION verbatim: the multi-line SQL Server product
+	// banner, whose last line names the host OS. Despite the name it is not
+	// an OS version string, and it is unfit for a fixed-width label/value row
+	// — the first line alone is longer than most. Platform is the parsed OS
+	// family. A real OS string would be a new field, never a change of
+	// meaning here.
+	OSVersion string
 	// Platform is the host operating system family — "Windows" or "Linux" —
 	// derived from @@VERSION rather than sys.dm_os_host_info so it is
 	// populated on pre-2017 instances too. Empty if @@VERSION names neither.

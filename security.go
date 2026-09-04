@@ -216,8 +216,11 @@ type ColumnEncryptionKey struct {
 	db   *Database
 	Name string
 	ID   int
-	// MasterKeyName and EncryptionAlgorithm describe the key's first
-	// encrypted value — the common case, where a key has exactly one.
+	// MasterKeyName and EncryptionAlgorithm mirror Values[0] — the key's first
+	// encrypted value, which is the whole of it in the common case where a key
+	// has exactly one. AddValue and DropValue re-seat them, so a caller
+	// rendering a summary from the handle it already holds never names a
+	// master key the rotation has dropped. Both are empty when Values is.
 	MasterKeyName       string
 	EncryptionAlgorithm string
 	// Values holds every encrypted value of the key, one per column master
@@ -419,6 +422,7 @@ func (cek *ColumnEncryptionKey) AddValueContext(ctx context.Context, value Colum
 		return fmt.Errorf("gosmo: add value to column encryption key [%s]: %w", cek.Name, err)
 	}
 	cek.Values = append(cek.Values, &value)
+	cek.reseatSummary()
 	return nil
 }
 
@@ -446,7 +450,20 @@ func (cek *ColumnEncryptionKey) DropValueContext(ctx context.Context, masterKeyN
 	cek.Values = slices.DeleteFunc(cek.Values, func(v *ColumnEncryptionKeyValue) bool {
 		return strings.EqualFold(v.MasterKeyName, masterKeyName)
 	})
+	cek.reseatSummary()
 	return nil
+}
+
+// reseatSummary points MasterKeyName and EncryptionAlgorithm back at Values[0]
+// after the slice has changed. Dropping the first value otherwise leaves the
+// key naming the master key that no longer encrypts it.
+func (cek *ColumnEncryptionKey) reseatSummary() {
+	if len(cek.Values) == 0 {
+		cek.MasterKeyName, cek.EncryptionAlgorithm = "", ""
+		return
+	}
+	cek.MasterKeyName = cek.Values[0].MasterKeyName
+	cek.EncryptionAlgorithm = cek.Values[0].EncryptionAlgorithm
 }
 
 // Drop drops the column encryption key.
