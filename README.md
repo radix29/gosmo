@@ -32,8 +32,17 @@ Columns and syntax added after the floor are gated rather than assumed —
 `colSince` substitutes a typed literal for a column the instance lacks, so
 a caller gets a zero value instead of a failed read, and a statement an
 older parser rejects is refused before it is sent (see
-`Database.EnclaveComputationsSupported`, `Database.QueryStoreWaitStatsSupported`).
-An instance whose version was never read is treated as newest.
+`Database.EnclaveComputationsSupported`, `Database.QueryStoreWaitStatsSupported`),
+wrapping `ErrUnsupportedVersion`. An instance whose version was never read
+is treated as newest.
+
+Every gate is pinned three ways, because a wrong one is invisible on the
+instance it was written against: `testdata/version_gates/*.sql` holds each
+gated `SELECT` list rendered at majors 13 through 17 (regenerate with
+`go test -run TestGatedQueries -updategolden`, then read the diff — regenerating is
+not review), a hand-written inventory is kept in step with the call sites,
+and the live-instance sweep asks a real server whether each gate decided
+correctly for its own major.
 
 ---
 
@@ -161,6 +170,14 @@ classDiagram
         +BackupHeaders(device) []*BackupHeader
         +BackupFileList(device) []*BackupFile
         +BackupFileListForSet(device, fileNumber) []*BackupFile
+        +VerifyBackupFrom(target) error
+        +BackupHeadersFrom(target) []*BackupHeader
+        +BackupFileListForSetFrom(target, fileNumber) []*BackupFile
+        +BackupDevices() []*BackupDevice
+        +BackupDeviceByName(name) *BackupDevice
+        +BackupDevice(name) *BackupDevice
+        +CreateBackupDevice(name, devType, physicalName) *BackupDevice
+        +DatabaseFiles(database) []*DatabaseFileInfo
         +DatabaseRecoveryStatuses() []*DatabaseRecoveryStatus
         +Capabilities() *Capabilities
         +SecurityInfo() *ServerSecurityInfo
@@ -174,6 +191,24 @@ classDiagram
         +RevokeServerPermission(perm, principal) error
         +ServerPermissionNames() []string
         +Credentials() []*Credential
+        +CredentialByName(name) *Credential
+        +Credential(name) *Credential
+        +CreateCredential(spec) *Credential
+        +CryptographicProviders() []*CryptographicProvider
+        +ServerAudits() []*ServerAudit
+        +ServerAuditByName(name) *ServerAudit
+        +ServerAudit(name) *ServerAudit
+        +CreateServerAudit(spec) *ServerAudit
+        +ServerAuditSpecifications() []*ServerAuditSpecification
+        +ServerAuditSpecificationByName(name) *ServerAuditSpecification
+        +ServerAuditSpecification(name) *ServerAuditSpecification
+        +CreateServerAuditSpecification(spec) *ServerAuditSpecification
+        +AuditActionGroups() []string
+        +ServerTriggers() []*ServerTrigger
+        +ServerTriggerByName(name) *ServerTrigger
+        +ServerTrigger(name) *ServerTrigger
+        +Endpoints() []*Endpoint
+        +EndpointByName(name) *Endpoint
         +MemoryStats() *ServerMemoryStats
         +Languages() []*Language
         +ProcessorInfo() *ProcessorInfo
@@ -258,10 +293,35 @@ classDiagram
     }
 
     class Credential {
+        -server *Server
+        +CredentialID int
         +Name string
         +Identity string
+        +TargetType string
+        +CryptographicProvider string
         +CreateDate time.Time
         +ModifyDate time.Time
+        +Alter(identity, secret) error
+        +Drop() error
+        The secret is write-only: sys.credentials
+        never exposes it, so Alter takes a *string
+        and nil leaves it alone.
+    }
+
+    class CredentialSpec {
+        +Name string
+        +Identity string
+        +Secret string
+        +CryptographicProvider string
+    }
+
+    class CryptographicProvider {
+        +ProviderID int
+        +Name string
+        +GUID string
+        +Version string
+        +DLLPath string
+        +IsEnabled bool
     }
 
     class ServerMemoryStats {
@@ -724,6 +784,9 @@ classDiagram
     Server --> ServerSecurityInfo : has
     Server "1" --> "*" ServerPermissionEntry : grants
     Server "1" --> "*" Credential : owns
+    Server --> CredentialSpec : CreateCredential() takes
+    Server "1" --> "*" CryptographicProvider : lists
+    Credential ..> CryptographicProvider : may be bound to
     Server --> ServerMemoryStats : has
     Server "1" --> "*" Language : lists
     Server --> ProcessorInfo : has
@@ -898,7 +961,44 @@ classDiagram
         +BaselineTo time.Time
         +Top int
         +MinExecCount int64
+        +QueryIDs []int64
+        +MinRegressionPct float64
         +IncludeInternal bool
+    }
+
+    class QSMetric {
+        <<enumeration>>
+        QSMetricDuration
+        QSMetricCPUTime
+        QSMetricLogicalReads
+        QSMetricLogicalWrites
+        QSMetricPhysicalReads
+        QSMetricCLRTime
+        QSMetricDOP
+        QSMetricMemory
+        QSMetricRowCount
+        QSMetricLogMemory
+        QSMetricTempDBMemory
+    }
+
+    class QSStatistic {
+        <<enumeration>>
+        QSStatAvg
+        QSStatMin
+        QSStatMax
+        QSStatTotal
+        QSStatStdDev
+    }
+
+    class QSUnit {
+        <<enumeration>>
+        QSUnitCount
+        QSUnitMicroseconds
+        QSUnitPages
+        QSUnitBytes
+        QSUnitMilliseconds
+        Query Store stores raw engine units.
+        QSMetricUnit(m) reports which.
     }
 
     class QSQueryStat {
@@ -1081,11 +1181,35 @@ classDiagram
         +Permits(name) bool
         +Permission(name) CapabilityState
         +InRole(name) bool
+        +Probed() bool
+        +SchemaPermissions map~string,map~
+        +ExplicitSchemaPermissions map~string,map~
+        +ObjectPermissions map~string,map~
+        +ColumnPermissions map~string,map~
+        +SchemaPermission(schema, name) CapabilityState
+        +HasOnSchema(schema, name) bool
+        +AllowsOnSchema(schema, name) bool
+        +PermitsOnSchema(schema, name) bool
+        +DeniedOnSchema(schema, name) bool
+        +ObjectPermission(schema, object, name) CapabilityState
+        +HasOnObject(schema, object, name) bool
+        +DeniedOnObject(schema, object, name) bool
+        +ColumnPermission(schema, object, column, name) CapabilityState
+        +HasOnColumn(schema, object, column, name) bool
+        +DeniedOnColumn(schema, object, column, name) bool
+        +DeniedOnAnyColumn(schema, object, name) bool
         Accessible is HAS_DBACCESS: check it
         before expanding a database at all.
         Permits is Allows plus that, since an
         inaccessible database answers Unknown
         to every permission.
+        Schema scope is probed with
+        HAS_PERMS_BY_NAME and answers three ways.
+        Object and column scope are read from
+        sys.database_permissions and record only
+        explicit grants and denials, so HasOn*
+        adds permission and only DeniedOn*
+        withholds it.
     }
 
     class DatabaseRecoveryStatus {
@@ -1222,6 +1346,9 @@ classDiagram
     Database --> QSIntervalStat : reports
     Database --> QSPlanIntervalStat : reports
     Database --> QSWaitStat : reports
+    QueryStoreReportOptions --> QSMetric : ranks by
+    QueryStoreReportOptions --> QSStatistic : aggregated with
+    QSMetric ..> QSUnit : measured in
     Server --> DetachOptions : DetachDatabase() takes
     Server --> AttachSpec : AttachDatabase() takes
     Server --> DetachedDatabase : DetachedDatabaseInfo() returns
@@ -1618,6 +1745,15 @@ classDiagram
         +NewServerScripter(server, opts) *ServerScripter
         +ScriptLogin(name) string
         +ScriptServerRole(name) string
+        +ScriptEndpoint(name) string
+        +ScriptCredential(name) string
+        +ScriptBackupDevice(name) string
+        +ScriptServerAudit(name) string
+        +ScriptServerAuditSpecification(name) string
+        +ScriptServerTrigger(name) string
+        A scripted credential carries an
+        "insert secret here" placeholder: the
+        secret is not readable from the catalog.
     }
 
     class ScriptVerb {
@@ -1896,6 +2032,38 @@ classDiagram
         +MaxSize int64
     }
 
+    class BackupTarget {
+        -name string
+        -logical bool
+        +DiskTarget(path) BackupTarget
+        +DeviceTarget(name) BackupTarget
+        +String() string
+        A logical device is named bare, a path
+        as DISK = N'...'. Passing a device name
+        as a path reads a file of that name in
+        the default backup directory instead.
+    }
+
+    class BackupDevice {
+        -server *Server
+        +Name string
+        +Type string
+        +PhysicalName string
+        +Drop(deleteFile) error
+        +Headers() []*BackupHeader
+        +Target() BackupTarget
+        No Alter: sp_addumpdevice and
+        sp_dropdevice are the whole write
+        surface, so name, type and path are
+        fixed at creation.
+    }
+
+    class BackupDeviceType {
+        <<enumeration>>
+        BackupDeviceDisk
+        BackupDeviceTape
+    }
+
     %% =========================================================
     %% SQL Server Agent
     %% =========================================================
@@ -2102,6 +2270,25 @@ classDiagram
         +Name string
     }
 
+    class JobState {
+        <<enumeration>>
+        JobStateUnknown
+        JobStateExecuting
+        JobStateWaitingForWorker
+        JobStateBetweenRetries
+        JobStateIdle
+        JobStateSuspended
+        JobStateWaitingForStepToFinish
+        JobStatePerformingCompletionActions
+        Agent's own job_state encoding, read
+        from xp_sqlagent_enum_jobs. With Agent
+        stopped only Executing and Idle can be
+        told apart.
+        JobStateCancelling and JobStateRunning
+        are deprecated: the encoding has no
+        such states.
+    }
+
     class ScheduleFreqType {
         <<enumeration>>
         FreqOnce
@@ -2151,6 +2338,10 @@ classDiagram
     Server --> RestoreOptions : accepts
     Server "1" --> "*" BackupHeader : BackupHeaders() returns
     Server "1" --> "*" BackupFile : BackupFileList() returns
+    Server "1" --> "*" BackupDevice : owns
+    Server --> BackupTarget : the ...From() reads take
+    BackupDevice --> BackupTarget : Target() returns
+    BackupDevice --> BackupDeviceType : created as
 
     Server --> AgentStatus : AgentInfo() returns
     Server "1" --> "*" Job : owns
@@ -2163,6 +2354,7 @@ classDiagram
     Job "1" --> "*" JobStep : has
     Job "1" --> "*" Schedule : attached to
     Job "1" --> "*" JobHistoryEntry : History() returns
+    Job --> JobState : CurrentState is
     Job --> NotifyLevel : notified per
     Schedule --> ScheduleFrequency : SetFrequency() accepts
     Schedule --> ScheduleFreqType : recurs per
@@ -2389,6 +2581,136 @@ classDiagram
         +EncryptionAlgorithm string
     }
 
+    class Endpoint {
+        -server *Server
+        +EndpointID int
+        +Name string
+        +Owner string
+        +Protocol string
+        +Type string
+        +State string
+        +IsAdmin bool
+        +Port int
+        +IsSystem bool
+        +SetState(state) error
+        +Drop() error
+        +MirroringDetail() *DatabaseMirroringEndpoint
+        +ServiceBrokerDetail() *ServiceBrokerEndpointDetail
+        Type-specific detail is read on demand,
+        so listing every endpoint costs one
+        query. The five built-in endpoints
+        refuse writes with ErrSystemEndpoint.
+    }
+
+    class EndpointState {
+        <<enumeration>>
+        EndpointStarted
+        EndpointStopped
+        EndpointDisabled
+    }
+
+    class ServiceBrokerEndpointDetail {
+        +IsMessageForwardingEnabled bool
+        +MessageForwardingSize int
+        +ConnectionAuth string
+        +EncryptionAlgorithm string
+        +CertificateName string
+    }
+
+    %% =========================================================
+    %% Server audits, audit specifications, server triggers
+    %% =========================================================
+    class ServerAudit {
+        -server *Server
+        +AuditID int
+        +Name string
+        +GUID string
+        +Type string
+        +OnFailure string
+        +QueueDelay int
+        +Predicate string
+        +IsEnabled bool
+        +LogFilePath string
+        +LogFileName string
+        +MaxFileSize int64
+        +MaxRolloverFiles int
+        +MaxFiles int
+        +ReserveDiskSpace bool
+        +Alter(spec) error
+        +Rename(newName) error
+        +SetState(on) error
+        +Drop() error
+        +Status() *ServerAuditStatus
+        +WithDisabled(ctx, fn) error
+        Every write but SetState needs the audit
+        disabled; each one disables, applies and
+        re-enables, and only if it disabled.
+        MaxFileSize uses 0 for UNLIMITED,
+        MaxRolloverFiles uses AuditUnlimited.
+    }
+
+    class ServerAuditSpec {
+        +Name string
+        +Type string
+        +QueueDelay int
+        +OnFailure string
+        +Predicate string
+        +FilePath string
+        +MaxFileSize int64
+        +MaxRolloverFiles int
+        +MaxFiles int
+        +ReserveDiskSpace bool
+    }
+
+    class ServerAuditStatus {
+        +Status string
+        +StatusTime time.Time
+        +AuditFilePath string
+        +AuditFileSize int64
+    }
+
+    class ServerAuditSpecification {
+        -server *Server
+        +SpecificationID int
+        +Name string
+        +AuditGUID string
+        +AuditName string
+        +IsEnabled bool
+        +ActionGroups []string
+        +AddActionGroups(groups) error
+        +DropActionGroups(groups) error
+        +SetAudit(auditName) error
+        +SetState(on) error
+        +Drop() error
+        +WithDisabled(ctx, fn) error
+        AuditName is empty for an orphaned
+        specification: dropping the audit it
+        references succeeds and leaves the
+        audit_guid pointing at nothing.
+    }
+
+    class ServerAuditSpecificationSpec {
+        +Name string
+        +AuditName string
+        +ActionGroups []string
+        +Enabled bool
+    }
+
+    class ServerTrigger {
+        -server *Server
+        +Name string
+        +IsEnabled bool
+        +CreateDate time.Time
+        +ModifyDate time.Time
+        +Events []string
+        +Definition string
+        +Enable() error
+        +Disable() error
+        +Drop() error
+        A different family from Database.Triggers,
+        which reads DML triggers on a table.
+    }
+
     %% =========================================================
     %% Certificates and the database master key
     %% =========================================================
@@ -2491,6 +2813,17 @@ classDiagram
     Server --> CreateAvailabilityGroupRequest : accepts
     Server "1" --> "1" DatabaseMirroringEndpoint : has at most one
     Server --> EndpointSpec : accepts
+    Server "1" --> "*" Endpoint : Endpoints() returns
+    Endpoint --> EndpointState : SetState() takes
+    Endpoint ..> DatabaseMirroringEndpoint : MirroringDetail() returns
+    Endpoint ..> ServiceBrokerEndpointDetail : ServiceBrokerDetail() returns
+    Server "1" --> "*" ServerAudit : owns
+    Server --> ServerAuditSpec : CreateServerAudit() takes
+    ServerAudit --> ServerAuditStatus : Status() returns
+    Server "1" --> "*" ServerAuditSpecification : owns
+    Server --> ServerAuditSpecificationSpec : CreateServerAuditSpecification() takes
+    ServerAuditSpecification "*" --> "1" ServerAudit : writes to
+    Server "1" --> "*" ServerTrigger : owns
     Server "1" --> "*" ErrorLogFile : EnumErrorLogs() returns
     Server "1" --> "*" ErrorLogEntry : ReadLog() returns
     Server "1" --> "*" FileSystemEntry : EnumFileSystem() returns
@@ -2590,7 +2923,15 @@ pool.
 | Server-level permissions | `srv.ServerPermissions()` / `srv.Grant\|Deny\|RevokeServerPermission(...)` / `srv.ServerPermissionNames()` |
 | Server permissions with modifiers | `srv.Grant\|Deny\|RevokeServerPermissionWithOptions(perm, principal, opts)` — `WITH GRANT OPTION`, `CASCADE`, `GRANT OPTION FOR` |
 | Effective server permissions | `srv.EffectiveServerPermissions(login)` (`EXECUTE AS LOGIN` + `fn_my_permissions`) |
-| Credentials              | `srv.Credentials()`                        |
+| Credentials              | `srv.Credentials()` / `srv.CredentialByName(name)` / `srv.Credential(name)` (no-I/O handle) / `srv.CreateCredential(spec)` / `cred.Alter(identity, secret)` / `cred.Drop()` — see [Credentials](#credentials) |
+| Cryptographic providers  | `srv.CryptographicProviders()`             |
+| Server audits            | `srv.ServerAudits()` / `srv.ServerAuditByName(name)` / `srv.ServerAudit(name)` (no-I/O handle) / `srv.CreateServerAudit(spec)` — see [Audits](#audits-and-audit-specifications) |
+| Server audit specifications | `srv.ServerAuditSpecifications()` / `...ByName(name)` / `srv.ServerAuditSpecification(name)` (no-I/O handle) / `srv.CreateServerAuditSpecification(spec)` |
+| Audit action groups      | `srv.AuditActionGroups()`                  |
+| Backup devices           | `srv.BackupDevices()` / `srv.BackupDeviceByName(name)` / `srv.BackupDevice(name)` (no-I/O handle) / `srv.CreateBackupDevice(name, type, physicalName)` / `dev.Drop(deleteFile)` / `dev.Headers()` |
+| Endpoints (all protocols) | `srv.Endpoints()` / `srv.EndpointByName(name)` / `ep.SetState(state)` / `ep.Drop()` / `ep.MirroringDetail()` / `ep.ServiceBrokerDetail()` — see [Endpoints](#endpoints) |
+| Server DDL / logon triggers | `srv.ServerTriggers()` / `srv.ServerTriggerByName(name)` / `srv.ServerTrigger(name)` (no-I/O handle) / `tr.Enable()` / `tr.Disable()` / `tr.Drop()` |
+| Files of one database, in any state | `srv.DatabaseFiles(name)` — reads `sys.master_files`, so it answers for an OFFLINE / RECOVERY_PENDING / SUSPECT database that `db.Files()` cannot `USE` |
 | Live memory stats        | `srv.MemoryStats()`                        |
 | Languages                | `srv.Languages()`                          |
 | Processors / NUMA topology | `srv.ProcessorInfo()`                    |
@@ -2599,7 +2940,8 @@ pool.
 | Host OS family            | `srv.Info().Platform` (`"Windows"` / `"Linux"`, from `@@VERSION`) |
 | `Server.AvailabilityGroups` | `srv.AvailabilityGroups()` / `srv.AvailabilityGroup(name)` (no-I/O handle) / `srv.AvailabilityGroupByName(name)` — see [Always On](#always-on-availability-groups) |
 | Database mirroring endpoint | `srv.DatabaseMirroringEndpoint()` / `srv.CreateDatabaseMirroringEndpoint(spec)` |
-| Verify / inspect a backup device | `srv.VerifyBackup(device)` / `srv.BackupHeaders(device)` / `srv.BackupFileList(device)` |
+| Verify / inspect a backup device | `srv.VerifyBackup(path)` / `srv.BackupHeaders(path)` / `srv.BackupFileList(path)` |
+| ... from a path or a logical device | `srv.VerifyBackupFrom(t)` / `srv.BackupHeadersFrom(t)` / `srv.BackupFileListForSetFrom(t, n)`, with `t` = `gosmo.DiskTarget(path)` or `gosmo.DeviceTarget(name)` |
 | Log backup chain state    | `srv.DatabaseRecoveryStatuses()` / `db.RecoveryStatus()` → `*DatabaseRecoveryStatus` |
 | What may this login do?   | `srv.Capabilities()` → `*Capabilities` — see [Capabilities](#capabilities-of-the-connected-login) |
 | Wrap a `*sql.DB` you already have | `gosmo.NewServer(ctx, db)` — the inverse of `srv.DB()` |
@@ -2822,6 +3164,50 @@ withholding. Every method is nil-safe; a nil `*DatabaseCapabilities` is
 "nothing known" and fails open, but the **zero value** is not — its
 `Accessible` is false, which reads as a measured "cannot open this".
 
+#### Schema, object and column scope
+
+A database probe also answers for the securables inside it, so an action can
+be gated on the thing it actually touches rather than on database-wide
+permission.
+
+| Scope  | Offer                          | Withhold                                        |
+| ------ | ------------------------------ | ----------------------------------------------- |
+| Schema | `HasOnSchema(schema, name)`    | `AllowsOnSchema` / `PermitsOnSchema` / `DeniedOnSchema` |
+| Object | `HasOnObject(schema, obj, name)` | `DeniedOnObject(schema, obj, name)`           |
+| Column | `HasOnColumn(schema, obj, col, name)` | `DeniedOnColumn(...)` / `DeniedOnAnyColumn(schema, obj, name)` |
+
+`ProbedSchemaPermissions` and `ProbedObjectPermissions` name what is asked
+about; `ObjectKey(schema, object)` and `ColumnKey(schema, object, column)`
+build the map keys of the raw `SchemaPermissions`, `ObjectPermissions` and
+`ColumnPermissions` blocks. `SchemaPermission`, `ObjectPermission` and
+`ColumnPermission` return the exact `CapabilityState`.
+
+**Schema scope works like database scope; object and column scope do not.**
+The schema block is asked with `HAS_PERMS_BY_NAME`, once per schema, so it
+answers three ways and folds in whatever implies the permission — a principal
+holding `CONTROL` on the schema, or `ALTER ANY SCHEMA`, or `db_owner`,
+answers granted for `ALTER` without any of those being asked separately. The
+object and column blocks are read straight out of `sys.database_permissions`
+instead, one query for the whole database rather than one per object, and so
+report only what is **explicit**: an object with no grant, no deny and no
+distinct owner has no row at all. That makes `HasOnObject` an *additional*
+reason to permit something — alongside the database- and schema-scope answers
+— and never a reason to withhold it. The withholding reads are the `Denied*`
+ones, which ask for a state that was recorded rather than for the absence of
+one, and a principal denied on the object cannot write it however wide its
+other grants are: SQL Server resolves DENY over GRANT across scopes.
+
+Two exceptions belong to the caller. A member of `sysadmin` bypasses the
+check entirely and must be asked about first — the probe reads permissions
+through `public`, and a DENY to `public` is recorded for the one login the
+server never applies it to. And a database that was never probed records
+nothing, which `Probed()` reports.
+
+`DeniedOnAnyColumn` is a separate question from `DeniedOnObject` because
+column rows live in their own block: an action that touches the whole object
+is withheld by a denial on any single column, but recording that denial on
+the table would make it a denial of every column.
+
 ### Filtering a listing
 
 An `ObjectFilter` narrows a catalog listing at the server rather than in the
@@ -2912,6 +3298,74 @@ argument must be a database *user* (or, for `srv.EffectiveServerPermissions`,
 a login): SQL Server refuses to impersonate a role, and `fn_my_permissions`
 has no principal argument to use instead.
 
+### Query Store reports
+
+SSMS's seven Query Store views, plus the plan list and the forcing behind
+Force/Unforce Plan.
+
+```go
+opts := gosmo.QueryStoreReportOptions{
+    Metric:    gosmo.QSMetricDuration,
+    Statistic: gosmo.QSStatAvg,
+    From:      time.Now().Add(-24 * time.Hour),
+    Top:       25,
+}
+rows, _ := db.QueryStoreTopResourceQueries(opts)
+plans, _ := db.QueryStorePlans(rows[0].QueryID, opts)
+db.QueryStoreForcePlan(rows[0].QueryID, plans[0].PlanID)
+```
+
+| SSMS view                    | gosmo                                              |
+| ---------------------------- | -------------------------------------------------- |
+| Top Resource Consuming Queries | `db.QueryStoreTopResourceQueries(opts)` → `[]*QSQueryStat` |
+| Regressed Queries            | `db.QueryStoreRegressedQueries(opts)`               |
+| Queries With High Variation  | `db.QueryStoreHighVariationQueries(opts)`           |
+| Queries With Forced Plans    | `db.QueryStoreForcedPlanQueries(opts)`              |
+| Overall Resource Consumption | `db.QueryStoreOverallConsumption(opts)` → `[]*QSIntervalStat` |
+| Tracked Queries              | `db.QueryStoreTrackedQuery(queryID, opts)` → `[]*QSPlanIntervalStat` |
+| Query Wait Statistics        | `db.QueryStoreWaitCategories(opts)` → `[]*QSWaitStat`, then `db.QueryStoreWaitingQueries(category, opts)` |
+| The plans of one query       | `db.QueryStorePlans(queryID, opts)` → `[]*QSPlan` (`.QueryPlanXML`) |
+| The statement behind a row   | `db.QueryStoreQueryText(queryID)`                   |
+| Force / unforce a plan       | `db.QueryStoreForcePlan(queryID, planID)` / `db.QueryStoreUnforcePlan(queryID, planID)` |
+
+`Metric` and `Statistic` pick what rows are ranked by; empty means average
+duration. `From`/`To` bound the window half-open, a zero `To` meaning now and
+a zero `From` an hour before it. `BaselineFrom`/`BaselineTo` and
+`MinRegressionPct` apply to the Regressed Queries report alone, `QueryIDs` to
+the four per-query reports, and `Top` caps every one of them.
+
+**Query Store stores raw engine units, not display ones** — durations in
+microseconds, I/O and memory in 8-KB pages, waits in milliseconds — so
+`gosmo.QSMetricUnit(m)` reports which, and a caller formatting a value has to
+ask. `db.QueryStoreMetrics()` returns the metrics the connected instance
+supports and `db.QueryStoreWaitStatsSupported()` gates the two wait reports,
+which need SQL Server 2017. A database with Query Store turned off is not an
+error: the catalog views exist and are empty, so every report returns no
+rows.
+
+### Detach and attach
+
+| SSMS equivalent                    | gosmo                                              |
+| ---------------------------------- | -------------------------------------------------- |
+| Tasks → Detach                     | `srv.DetachDatabase(name, gosmo.DetachOptions{...})` |
+| Databases → Attach                 | `srv.AttachDatabase(gosmo.AttachSpec{Name, Files, Owner, RebuildLog})` |
+| The Attach dialog's file list      | `srv.DetachedDatabaseInfo(primaryFilePath)` → `*DetachedDatabase` |
+| The paths to detach from           | `srv.DatabaseFiles(name)` — reads `sys.master_files`, so it answers for a database `db.Files()` cannot `USE` |
+
+`DetachOptions`' three fields are named for what they **do**, not for
+`sp_detach_db`'s parameters, whose senses are inverted — so the zero value
+skips the statistics update and keeps the full-text index files, which is
+both what SSMS offers unchecked and what a large database wants.
+`DropConnections` rolls back and disconnects everything using the database
+first; a detach that then fails puts it back to `MULTI_USER`, so a refusal
+never leaves the database single-user.
+
+`DetachedDatabaseInfo` reads the file list held *inside* a detached primary
+data file (the undocumented `DBCC CHECKPRIMARYFILE` that SMO — and so SSMS —
+uses). It is the only way to learn a detached database's other files, and so
+the only way an Attach dialog can be built: `.DataFiles()` and `.LogFiles()`
+split what it returns.
+
 ### Scripter
 
 ```go
@@ -2941,7 +3395,18 @@ ddl, _ := sc.ScriptDatabase()
 ssc := gosmo.NewServerScripter(srv, gosmo.DefaultScriptOptions())
 ddl, _ := ssc.ScriptLogin("app_login")
 ddl, _ := ssc.ScriptServerRole("ops")
+ddl, _ := ssc.ScriptEndpoint("Hadr_endpoint")
+ddl, _ := ssc.ScriptCredential("AzureBlob")
+ddl, _ := ssc.ScriptBackupDevice("NightlyFull")
+ddl, _ := ssc.ScriptServerAudit("Audit-Logins")
+ddl, _ := ssc.ScriptServerAuditSpecification("Spec-Logins")
+ddl, _ := ssc.ScriptServerTrigger("trg_ddl_guard")
 ```
+
+A scripted credential carries a `<insert secret here>` placeholder: the
+secret is not readable from the catalog, and emitting nothing there would
+produce a statement that runs and creates a credential that cannot
+authenticate.
 
 `ScriptOptions.Verb` selects the statement form: `ScriptCreate` (the
 default), `ScriptDrop`, `ScriptDropAndCreate` — the DROP and the CREATE, in
@@ -3095,6 +3560,38 @@ err := srv.VerifyBackup(`C:\Backups\MyDB.bak`)
 files, _ = srv.BackupFileListForSet(`C:\Backups\MyDB.bak`, headers[1].Position)
 ```
 
+#### Logical backup devices
+
+A backup device is a named alias for a physical location — SSMS's Server
+Objects → Backup Devices — usable anywhere `BACKUP` or `RESTORE` takes one.
+
+| SSMS equivalent               | gosmo                                                    |
+| ----------------------------- | -------------------------------------------------------- |
+| Server Objects → Backup Devices | `srv.BackupDevices()` / `srv.BackupDeviceByName(name)` / `srv.BackupDevice(name)` (no-I/O handle) |
+| New backup device             | `srv.CreateBackupDevice(name, gosmo.BackupDeviceDisk, path)` |
+| Delete (optionally the file)  | `dev.Drop(deleteFile)`                                    |
+| Contents                      | `dev.Headers()` → `[]*BackupHeader`                       |
+
+There is no `Alter`, deliberately: `sp_addumpdevice` and `sp_dropdevice` are
+the whole write surface, and a device's name, type and physical path are
+fixed at creation.
+
+The three RESTORE-side reads take a `BackupTarget` in their `…From` form, so
+they can read a device as well as a path:
+
+```go
+t := gosmo.DeviceTarget("NightlyFull")     // or gosmo.DiskTarget(path)
+headers, _ := srv.BackupHeadersFrom(t)
+files, _   := srv.BackupFileListForSetFrom(t, headers[0].Position)
+err := srv.VerifyBackupFrom(t)
+```
+
+The two forms are not interchangeable, which is why they are separate
+constructors rather than one string: a logical device is named bare (`FROM
+[NightlyFull]`), and passing its name as a path yields `FROM DISK =
+N'NightlyFull'`, which SQL Server reads as a *file* of that name in the
+server's default backup directory.
+
 ### SQL Server Agent
 
 Everything under SSMS's SQL Server Agent node that a SQL-only client can
@@ -3163,6 +3660,23 @@ every later step *and* follows their "go to step N" references, but
 `ReorderSteps` rewrites every reference itself afterwards, through
 `JobStep.SetFlow`. `ReorderSteps` needs a job read with `JobByName` — the step
 listing is by `job_id`, which a bare `srv.Job(name)` handle does not carry.
+
+The whole reorder goes to the server as **one transactional batch**, so a job
+is either in the requested order or in the order it started in, and never in
+the state between a step's delete and its re-insert — where the step exists
+nowhere but in gosmo's memory. The step listing that decides the order is
+read outside that transaction, so a concurrent edit of the same job is still
+last-writer-wins: the batch makes the reorder atomic, not serializable.
+
+`Job.CurrentState` is Agent's own `job_state`, read from
+`xp_sqlagent_enum_jobs` — the value SSMS's Job Activity Monitor displays.
+Agent keeps it in memory and msdb has no column for it, so a job the read
+does not cover falls back to a `sysjobactivity`-derived value where only
+`JobStateExecuting` and `JobStateIdle` can be told apart. That happens with
+Agent stopped, and for a login with neither `sysadmin` nor
+`SQLAgentReaderRole`; a job listing has to survive both rather than fail.
+`JobStateUnknown` is what a multi-server job Agent does not run itself
+reports.
 
 `JobStepRequest`'s two string fields read an empty value differently, because
 msdb does: an empty `Database` means "leave the step's database alone"
@@ -3309,6 +3823,104 @@ group up should read the endpoint before considering creating one. An
 endpoint left `STOPPED` is the usual reason a replica that looks correctly
 configured never synchronizes.
 
+### Endpoints
+
+`DatabaseMirroringEndpoint` above is one endpoint of one kind. `Endpoint` is
+any row of `sys.endpoints`, whatever its protocol and payload — SSMS's Server
+Objects → Endpoints folder in full.
+
+| SSMS equivalent                 | gosmo                                                     |
+| ------------------------------- | --------------------------------------------------------- |
+| Server Objects → Endpoints      | `srv.Endpoints()` / `srv.EndpointByName(name)` / `srv.EndpointSeq(ctx)` |
+| Start / stop / disable          | `ep.SetState(gosmo.EndpointStarted \| gosmo.EndpointStopped \| gosmo.EndpointDisabled)` |
+| Drop                            | `ep.Drop()`                                                |
+| Mirroring detail                | `ep.MirroringDetail()` → `*DatabaseMirroringEndpoint`      |
+| Service Broker detail           | `ep.ServiceBrokerDetail()` → `*ServiceBrokerEndpointDetail` |
+
+Type-specific detail is read on demand rather than in the listing, so
+enumerating every endpoint costs one query rather than three.
+
+The five built-in endpoints — the Dedicated Admin Connection, TSQL Local
+Machine, TSQL Named Pipes, TSQL Default TCP and TSQL Default VIA, all with
+`endpoint_id` below 65536 — cannot be altered or dropped. `SetState` and
+`Drop` return `ErrSystemEndpoint` for them, because SQL Server's own refusal
+names neither the endpoint nor the reason. There is deliberately no
+`srv.Endpoint(name)` no-I/O handle for this family: `IsSystem` is derived
+from the scanned id, so such a handle would carry id 0 and refuse every write
+on itself.
+
+### Audits and audit specifications
+
+SSMS's Security → Audits and Security → Server Audit Specifications. An audit
+is the destination — a file, the Windows Application log or the Security log
+— and a specification names the action groups written to it.
+
+| SSMS equivalent                | gosmo                                                      |
+| ------------------------------ | ---------------------------------------------------------- |
+| Security → Audits              | `srv.ServerAudits()` / `srv.ServerAuditByName(name)` / `srv.ServerAudit(name)` (no-I/O handle) |
+| New audit                      | `srv.CreateServerAudit(gosmo.ServerAuditSpec{...})`         |
+| Alter / rename / drop          | `a.Alter(spec)` / `a.Rename(newName)` / `a.Drop()`          |
+| Enable / disable               | `a.SetState(true \| false)`                                 |
+| Is it running, and to which file | `a.Status()` → `*ServerAuditStatus`                       |
+| Security → Server Audit Specifications | `srv.ServerAuditSpecifications()` / `...ByName(name)` / `srv.ServerAuditSpecification(name)` |
+| New specification              | `srv.CreateServerAuditSpecification(gosmo.ServerAuditSpecificationSpec{...})` |
+| Add / drop action groups       | `spec.AddActionGroups(g...)` / `spec.DropActionGroups(g...)` |
+| Point it at another audit      | `spec.SetAudit(auditName)`                                  |
+| Enable / disable / drop        | `spec.SetState(on)` / `spec.Drop()`                         |
+| What can be audited            | `srv.AuditActionGroups()`                                   |
+
+**Every write but the state toggle needs the object disabled**, and both
+types handle that themselves: SQL Server refuses `ALTER` and `DROP` on an
+enabled audit ("This command requires audit to be disabled") and on an
+enabled specification. Each write disables, applies, re-enables — and only if
+it was the one that disabled — and restores the state on the failure path
+too. `a.WithDisabled(ctx, fn)` and `spec.WithDisabled(ctx, fn)` expose that
+for a caller making several changes at once.
+
+Two details do not follow from the catalog. The constants
+(`AuditToApplicationLog`, `AuditFailureShutdown`, …) are `type_desc` values,
+not T-SQL keywords — `APPLICATION LOG` is written `TO APPLICATION_LOG` and
+`SHUTDOWN SERVER INSTANCE` as `ON_FAILURE = SHUTDOWN` — so never build a
+statement out of one. And the two size limits disagree on their sentinel:
+`MaxFileSize` uses 0 for UNLIMITED, `MaxRolloverFiles` uses
+`gosmo.AuditUnlimited`.
+
+`ServerAuditSpecification.AuditName` is empty for an orphaned specification:
+dropping an audit a specification still references succeeds and leaves the
+`audit_guid` pointing at nothing.
+
+### Credentials
+
+SSMS's Security → Credentials, and the identity a login can be mapped to.
+
+| SSMS equivalent           | gosmo                                                |
+| ------------------------- | ---------------------------------------------------- |
+| Security → Credentials    | `srv.Credentials()` / `srv.CredentialByName(name)` / `srv.Credential(name)` (no-I/O handle) |
+| New credential            | `srv.CreateCredential(gosmo.CredentialSpec{Name, Identity, Secret, CryptographicProvider})` |
+| Change identity or secret | `cred.Alter(identity, secret)` — `secret` is a `*string`: nil leaves it alone |
+| Drop                      | `cred.Drop()`                                        |
+| Cryptographic providers   | `srv.CryptographicProviders()`                       |
+
+**The secret is write-only.** `sys.credentials` never exposes it and there is
+no read that does, which is why `Alter` takes a pointer rather than a string
+and why a scripted credential carries a `<insert secret here>` placeholder
+instead of a value it cannot know.
+
+### Server triggers
+
+Server-scope DDL and LOGON triggers — SSMS's Server Objects → Triggers.
+
+| SSMS equivalent            | gosmo                                              |
+| -------------------------- | -------------------------------------------------- |
+| Server Objects → Triggers  | `srv.ServerTriggers()` / `srv.ServerTriggerByName(name)` / `srv.ServerTrigger(name)` |
+| Enable / disable / drop    | `tr.Enable()` / `tr.Disable()` / `tr.Drop()`        |
+
+A different family from `db.Triggers()`, which reads DML triggers on a table.
+A trigger declared `FOR` a whole event group lists that group's individual
+events in `Events`, which is what the catalog records. `Definition` is empty
+for an encrypted trigger and for a CLR one, which has no row in
+`sys.server_sql_modules` at all.
+
 ### Error log
 
 | SSMS equivalent                  | gosmo                                        |
@@ -3448,6 +4060,19 @@ idempotent form ignores the error — a decision it can make and this package
 cannot make for it. The DDL that `Scripter` *generates* does keep
 `IF EXISTS`, since that output exists to be re-run.
 
+### `ErrUnsupportedVersion`
+
+A call gosmo refuses because the connected instance is older than the
+feature it names wraps `ErrUnsupportedVersion` — decided here, before any
+statement is sent, because the server's own answer would be a parse error
+naming syntax the caller never wrote
+(`CreateColumnMasterKeyWithSignature` below SQL Server 2019 is the standing
+case). It is only for that: a missing *column* is gated instead, so the read
+returns a zero value rather than an error. Where a caller can ask in
+advance, it should — `db.EnclaveComputationsSupported()`,
+`db.QueryStoreWaitStatsSupported()`, `db.QueryStoreMetrics()` — and hide the
+option rather than let it fail on submit.
+
 ---
 
 ## Authentication
@@ -3564,9 +4189,15 @@ variable list are documented in [`examples/README.md`](examples/README.md).
 - Hardware enumeration (disk, NIC, CPU details beyond what `sys.dm_os_sys_info` provides)
 - SQL Server service start/stop/restart
 - Performance counters via Windows PDH
-- SQL Server Browser service interaction
+- SQL Server Browser service interaction — enumerating instances, reading
+  its configuration. The dual-stack Browser *dialer* is not an exception: it
+  fixes how the driver's own port lookup reaches the service, and asks it
+  nothing gosmo does not already need in order to connect.
 - Windows Event Log reading
-- Registry reads for SQL Server configuration outside `sys.configurations`
+- Registry reads through a Windows API. `xp_instance_regread`, which the
+  server itself runs, is not one — it is how `Info().DefaultBackupPath` is
+  recovered on instances where `SERVERPROPERTY` does not report it — but
+  nothing here opens a registry from the client side.
 - WMI and performance-condition SQL Server Agent alerts — these are listed
   by `srv.Alerts()` but not creatable or editable, since they depend on a
   WMI provider or Windows performance counters. `Alert.IsEventAlert()` and

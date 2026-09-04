@@ -20,9 +20,11 @@ These continue for the life of the project, release or not:
 - Keep the `README.md` feature map (`Server`, `Database`, `Table`,
   `Index`, Statistics, `Login`, login capabilities, object filters,
   dependencies/search/permissions/execution plans, `Scripter`/
-  `ServerScripter`, Backup & Restore, SQL Server Agent, Always On,
-  certificates, endpoints, error log, server filesystem) in sync with the
-  code as methods are added — it's the API surface consumers actually
+  `ServerScripter`, Query Store reports, detach/attach, Backup & Restore
+  and backup devices, SQL Server Agent, Always On, certificates and
+  asymmetric keys, endpoints, audits and audit specifications,
+  credentials, server triggers, error log, server filesystem) in sync with
+  the code as methods are added — it's the API surface consumers actually
   read. The class diagrams in the same file need the same treatment, and
   `gosmo.mermaid` is those diagrams concatenated in order, kept
   byte-identical to them.
@@ -32,9 +34,12 @@ These continue for the life of the project, release or not:
     thing, on GitHub included. The single diagram reached 52,533 during
     `v0.0.9` and had to be split. When a new area is added, give it its own
     diagram rather than growing one past ~45,000; an edge that crosses areas
-    is drawn in the diagram of the area it points *into*. As of `v0.0.10`
-    the five sit at roughly 23k, 9k, 15k, 9k and 9k characters with comments
-    stripped, so there is room — check before folding a sixth area into one.
+    is drawn in the diagram of the area it points *into*. As of `v0.0.11`
+    the five sit at roughly 26k, 14k, 16k, 11k and 13k characters with
+    comments stripped, so there is room — check before folding a sixth area
+    into one. `node` with the `mermaid` package parses a diagram without a
+    browser (`mermaid.parse` under a `jsdom` global), which is the cheap way
+    to check an edit before pushing it.
   - **Free text inside a class body is parsed as a member.** The diagrams
     use prose lines inside a class to carry a caveat, which Mermaid accepts
     — but a prose line that *starts* with `(` is read as a malformed method
@@ -81,6 +86,10 @@ These continue for the life of the project, release or not:
   rather than a TUI shim
   (`replace github.com/radix29/gosmo => ../gosmo` in gossms's `go.mod`
   for local dev against unreleased changes, tag-and-bump once merged).
+  `v0.0.11` is the same shape again: goSSMS's Server Objects and Security
+  folders drove the audit, audit specification, backup device, credential,
+  endpoint and server trigger families, its Query Store panel drove the
+  seven report views, and its Attach/Detach dialogs drove `database_attach.go`.
 
 - **Scheduled breaking change: drop `JobStateCancelling` and
   `JobStateRunning`** (`agent_job.go`). Both name states Agent's encoding does
@@ -97,10 +106,15 @@ for a cross-platform, pure-Go library:
   `sys.dm_os_sys_info`).
 - SQL Server service start/stop/restart.
 - Performance counters via Windows PDH.
-- SQL Server Browser service interaction.
+- SQL Server Browser service interaction — enumerating instances, reading
+  its configuration. The dual-stack Browser *dialer* (`dialer.go`) is not an
+  exception: it fixes how the driver's own port lookup reaches the service,
+  and asks it nothing gosmo does not already need to connect.
 - Windows Event Log reading.
-- Registry reads for SQL Server configuration outside
-  `sys.configurations`.
+- Registry reads through a Windows API. `xp_instance_regread`, which the
+  server itself runs, is not one — `Server.loadInfo` uses it to recover the
+  default backup path on instances where `SERVERPROPERTY` does not report it
+  — but nothing here opens a registry from the client side.
 - Creating or editing WMI and performance-condition SQL Server Agent
   alerts (they're still listed; `Alert.IsEventAlert` marks the subset
   gosmo can manage).

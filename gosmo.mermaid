@@ -22,6 +22,7 @@ classDiagram
         +ConnMaxLifetime Duration
         +ConnMaxIdleTime Duration
         +SessionInitSQL string
+        +Dialer mssql.Dialer
         +TrustServerCertificate bool
         +Encrypt string
     }
@@ -45,6 +46,9 @@ classDiagram
         +CreateDatabase(name, opts) error
         +DropDatabase(name, force) error
         +RenameDatabase(oldName, newName, force) error
+        +DetachDatabase(name, opts) error
+        +AttachDatabase(spec) error
+        +DetachedDatabaseInfo(primaryFilePath) *DetachedDatabase
         +Logins() []*Login
         +LoginByName(name) *Login
         +Login(name) *Login
@@ -100,6 +104,14 @@ classDiagram
         +BackupHeaders(device) []*BackupHeader
         +BackupFileList(device) []*BackupFile
         +BackupFileListForSet(device, fileNumber) []*BackupFile
+        +VerifyBackupFrom(target) error
+        +BackupHeadersFrom(target) []*BackupHeader
+        +BackupFileListForSetFrom(target, fileNumber) []*BackupFile
+        +BackupDevices() []*BackupDevice
+        +BackupDeviceByName(name) *BackupDevice
+        +BackupDevice(name) *BackupDevice
+        +CreateBackupDevice(name, devType, physicalName) *BackupDevice
+        +DatabaseFiles(database) []*DatabaseFileInfo
         +DatabaseRecoveryStatuses() []*DatabaseRecoveryStatus
         +Capabilities() *Capabilities
         +SecurityInfo() *ServerSecurityInfo
@@ -113,6 +125,24 @@ classDiagram
         +RevokeServerPermission(perm, principal) error
         +ServerPermissionNames() []string
         +Credentials() []*Credential
+        +CredentialByName(name) *Credential
+        +Credential(name) *Credential
+        +CreateCredential(spec) *Credential
+        +CryptographicProviders() []*CryptographicProvider
+        +ServerAudits() []*ServerAudit
+        +ServerAuditByName(name) *ServerAudit
+        +ServerAudit(name) *ServerAudit
+        +CreateServerAudit(spec) *ServerAudit
+        +ServerAuditSpecifications() []*ServerAuditSpecification
+        +ServerAuditSpecificationByName(name) *ServerAuditSpecification
+        +ServerAuditSpecification(name) *ServerAuditSpecification
+        +CreateServerAuditSpecification(spec) *ServerAuditSpecification
+        +AuditActionGroups() []string
+        +ServerTriggers() []*ServerTrigger
+        +ServerTriggerByName(name) *ServerTrigger
+        +ServerTrigger(name) *ServerTrigger
+        +Endpoints() []*Endpoint
+        +EndpointByName(name) *Endpoint
         +MemoryStats() *ServerMemoryStats
         +Languages() []*Language
         +ProcessorInfo() *ProcessorInfo
@@ -197,10 +227,35 @@ classDiagram
     }
 
     class Credential {
+        -server *Server
+        +CredentialID int
         +Name string
         +Identity string
+        +TargetType string
+        +CryptographicProvider string
         +CreateDate time.Time
         +ModifyDate time.Time
+        +Alter(identity, secret) error
+        +Drop() error
+        The secret is write-only: sys.credentials
+        never exposes it, so Alter takes a *string
+        and nil leaves it alone.
+    }
+
+    class CredentialSpec {
+        +Name string
+        +Identity string
+        +Secret string
+        +CryptographicProvider string
+    }
+
+    class CryptographicProvider {
+        +ProviderID int
+        +Name string
+        +GUID string
+        +Version string
+        +DLLPath string
+        +IsEnabled bool
     }
 
     class ServerMemoryStats {
@@ -377,6 +432,8 @@ classDiagram
         +Certificates() []*Certificate
         +CertificateByName(name) *Certificate
         +CreateCertificate(spec) error
+        +AsymmetricKeys() []*AsymmetricKey
+        +AsymmetricKeyByName(name) *AsymmetricKey
         +HasMasterKey() bool
         +CreateMasterKey(password) error
         +ColumnMasterKeys() []*ColumnMasterKey
@@ -407,6 +464,18 @@ classDiagram
         +SetQueryStoreOptions(opts) error
         +FlushQueryStore() error
         +ClearQueryStore() error
+        +QueryStoreTopResourceQueries(opts) []*QSQueryStat
+        +QueryStoreRegressedQueries(opts) []*QSQueryStat
+        +QueryStoreHighVariationQueries(opts) []*QSQueryStat
+        +QueryStoreForcedPlanQueries(opts) []*QSQueryStat
+        +QueryStoreOverallConsumption(opts) []*QSIntervalStat
+        +QueryStoreTrackedQuery(queryID, opts) []*QSPlanIntervalStat
+        +QueryStoreWaitCategories(opts) []*QSWaitStat
+        +QueryStoreWaitingQueries(category, opts) []*QSQueryStat
+        +QueryStorePlans(queryID, opts) []*QSPlan
+        +QueryStoreQueryText(queryID) (string, string)
+        +QueryStoreForcePlan(queryID, planID) error
+        +QueryStoreUnforcePlan(queryID, planID) error
         +Files() []*DatabaseFileInfo
         +AddFile(spec) error
         +AlterFile(name, m) error
@@ -649,6 +718,9 @@ classDiagram
     Server --> ServerSecurityInfo : has
     Server "1" --> "*" ServerPermissionEntry : grants
     Server "1" --> "*" Credential : owns
+    Server --> CredentialSpec : CreateCredential() takes
+    Server "1" --> "*" CryptographicProvider : lists
+    Credential ..> CryptographicProvider : may be bound to
     Server --> ServerMemoryStats : has
     Server "1" --> "*" Language : lists
     Server --> ProcessorInfo : has
@@ -805,6 +877,137 @@ classDiagram
         +WaitStatsCaptureMode string
     }
 
+    class QueryStoreReportOptions {
+        +Metric QSMetric
+        +Statistic QSStatistic
+        +From time.Time
+        +To time.Time
+        +BaselineFrom time.Time
+        +BaselineTo time.Time
+        +Top int
+        +MinExecCount int64
+        +QueryIDs []int64
+        +MinRegressionPct float64
+        +IncludeInternal bool
+    }
+
+    class QSMetric {
+        <<enumeration>>
+        QSMetricDuration
+        QSMetricCPUTime
+        QSMetricLogicalReads
+        QSMetricLogicalWrites
+        QSMetricPhysicalReads
+        QSMetricCLRTime
+        QSMetricDOP
+        QSMetricMemory
+        QSMetricRowCount
+        QSMetricLogMemory
+        QSMetricTempDBMemory
+    }
+
+    class QSStatistic {
+        <<enumeration>>
+        QSStatAvg
+        QSStatMin
+        QSStatMax
+        QSStatTotal
+        QSStatStdDev
+    }
+
+    class QSUnit {
+        <<enumeration>>
+        QSUnitCount
+        QSUnitMicroseconds
+        QSUnitPages
+        QSUnitBytes
+        QSUnitMilliseconds
+        Query Store stores raw engine units.
+        QSMetricUnit(m) reports which.
+    }
+
+    class QSQueryStat {
+        +QueryID int64
+        +QueryText string
+        +ObjectName string
+        +ExecCount int64
+        +PlanCount int
+        +ForcedPlanID int64
+        +LastExecutionTime time.Time
+        +Value float64
+        +BaselineValue float64
+        +Regression float64
+        +Variation float64
+    }
+
+    class QSPlan {
+        +PlanID int64
+        +QueryID int64
+        +IsForced bool
+        +ForceFailureCount int64
+        +LastForceFailureReason string
+        +QueryPlanXML string
+        +ExecCount int64
+        +Value float64
+    }
+
+    class QSIntervalStat {
+        +StartTime time.Time
+        +EndTime time.Time
+        +ExecCount int64
+        +Value float64
+    }
+
+    class QSPlanIntervalStat {
+        +PlanID int64
+        +StartTime time.Time
+        +EndTime time.Time
+        +ExecCount int64
+        +Value float64
+    }
+
+    class QSWaitStat {
+        +Category string
+        +ExecCount int64
+        +Value float64
+    }
+
+    %% =========================================================
+    %% Detach / Attach
+    %% =========================================================
+    class DetachOptions {
+        +DropConnections bool
+        +UpdateStatistics bool
+        +DropFullTextIndexFile bool
+        Named for what they do, not for
+        sp_detach_db's parameters, whose two
+        flags are the inverse of the question
+        a user is asked.
+    }
+
+    class AttachSpec {
+        +Name string
+        +Files []string
+        +Owner string
+        +RebuildLog bool
+    }
+
+    class DetachedDatabase {
+        +Name string
+        +Version string
+        +Collation string
+        +Files []*DetachedFile
+        +DataFiles() []*DetachedFile
+        +LogFiles() []*DetachedFile
+    }
+
+    class DetachedFile {
+        +FileID int
+        +Name string
+        +PhysicalName string
+        +IsLog bool
+    }
+
     class DatabaseScopedConfig {
         +ID int
         +Name string
@@ -903,11 +1106,35 @@ classDiagram
         +Permits(name) bool
         +Permission(name) CapabilityState
         +InRole(name) bool
+        +Probed() bool
+        +SchemaPermissions map~string,map~
+        +ExplicitSchemaPermissions map~string,map~
+        +ObjectPermissions map~string,map~
+        +ColumnPermissions map~string,map~
+        +SchemaPermission(schema, name) CapabilityState
+        +HasOnSchema(schema, name) bool
+        +AllowsOnSchema(schema, name) bool
+        +PermitsOnSchema(schema, name) bool
+        +DeniedOnSchema(schema, name) bool
+        +ObjectPermission(schema, object, name) CapabilityState
+        +HasOnObject(schema, object, name) bool
+        +DeniedOnObject(schema, object, name) bool
+        +ColumnPermission(schema, object, column, name) CapabilityState
+        +HasOnColumn(schema, object, column, name) bool
+        +DeniedOnColumn(schema, object, column, name) bool
+        +DeniedOnAnyColumn(schema, object, name) bool
         Accessible is HAS_DBACCESS: check it
         before expanding a database at all.
         Permits is Allows plus that, since an
         inaccessible database answers Unknown
         to every permission.
+        Schema scope is probed with
+        HAS_PERMS_BY_NAME and answers three ways.
+        Object and column scope are read from
+        sys.database_permissions and record only
+        explicit grants and denials, so HasOn*
+        adds permission and only DeniedOn*
+        withholds it.
     }
 
     class DatabaseRecoveryStatus {
@@ -1039,6 +1266,18 @@ classDiagram
     Catalog "1" --> "*" CatalogObject : contains
     CatalogObject "1" --> "*" CatalogColumn : has
     Database --> QueryStoreInfo : has
+    Database --> QSQueryStat : reports
+    Database --> QSPlan : reports
+    Database --> QSIntervalStat : reports
+    Database --> QSPlanIntervalStat : reports
+    Database --> QSWaitStat : reports
+    QueryStoreReportOptions --> QSMetric : ranks by
+    QueryStoreReportOptions --> QSStatistic : aggregated with
+    QSMetric ..> QSUnit : measured in
+    Server --> DetachOptions : DetachDatabase() takes
+    Server --> AttachSpec : AttachDatabase() takes
+    Server --> DetachedDatabase : DetachedDatabaseInfo() returns
+    DetachedDatabase "1" --> "*" DetachedFile : contains
     Database "1" --> "*" DatabaseScopedConfig : lists
     Database "1" --> "*" Dependency : dependencies of
     Database "1" --> "*" SearchResult : search() returns
@@ -1423,6 +1662,15 @@ classDiagram
         +NewServerScripter(server, opts) *ServerScripter
         +ScriptLogin(name) string
         +ScriptServerRole(name) string
+        +ScriptEndpoint(name) string
+        +ScriptCredential(name) string
+        +ScriptBackupDevice(name) string
+        +ScriptServerAudit(name) string
+        +ScriptServerAuditSpecification(name) string
+        +ScriptServerTrigger(name) string
+        A scripted credential carries an
+        "insert secret here" placeholder: the
+        secret is not readable from the catalog.
     }
 
     class ScriptVerb {
@@ -1693,6 +1941,38 @@ classDiagram
         +MaxSize int64
     }
 
+    class BackupTarget {
+        -name string
+        -logical bool
+        +DiskTarget(path) BackupTarget
+        +DeviceTarget(name) BackupTarget
+        +String() string
+        A logical device is named bare, a path
+        as DISK = N'...'. Passing a device name
+        as a path reads a file of that name in
+        the default backup directory instead.
+    }
+
+    class BackupDevice {
+        -server *Server
+        +Name string
+        +Type string
+        +PhysicalName string
+        +Drop(deleteFile) error
+        +Headers() []*BackupHeader
+        +Target() BackupTarget
+        No Alter: sp_addumpdevice and
+        sp_dropdevice are the whole write
+        surface, so name, type and path are
+        fixed at creation.
+    }
+
+    class BackupDeviceType {
+        <<enumeration>>
+        BackupDeviceDisk
+        BackupDeviceTape
+    }
+
     %% =========================================================
     %% SQL Server Agent
     %% =========================================================
@@ -1899,6 +2179,25 @@ classDiagram
         +Name string
     }
 
+    class JobState {
+        <<enumeration>>
+        JobStateUnknown
+        JobStateExecuting
+        JobStateWaitingForWorker
+        JobStateBetweenRetries
+        JobStateIdle
+        JobStateSuspended
+        JobStateWaitingForStepToFinish
+        JobStatePerformingCompletionActions
+        Agent's own job_state encoding, read
+        from xp_sqlagent_enum_jobs. With Agent
+        stopped only Executing and Idle can be
+        told apart.
+        JobStateCancelling and JobStateRunning
+        are deprecated: the encoding has no
+        such states.
+    }
+
     class ScheduleFreqType {
         <<enumeration>>
         FreqOnce
@@ -1948,6 +2247,10 @@ classDiagram
     Server --> RestoreOptions : accepts
     Server "1" --> "*" BackupHeader : BackupHeaders() returns
     Server "1" --> "*" BackupFile : BackupFileList() returns
+    Server "1" --> "*" BackupDevice : owns
+    Server --> BackupTarget : the ...From() reads take
+    BackupDevice --> BackupTarget : Target() returns
+    BackupDevice --> BackupDeviceType : created as
 
     Server --> AgentStatus : AgentInfo() returns
     Server "1" --> "*" Job : owns
@@ -1960,6 +2263,7 @@ classDiagram
     Job "1" --> "*" JobStep : has
     Job "1" --> "*" Schedule : attached to
     Job "1" --> "*" JobHistoryEntry : History() returns
+    Job --> JobState : CurrentState is
     Job --> NotifyLevel : notified per
     Schedule --> ScheduleFrequency : SetFrequency() accepts
     Schedule --> ScheduleFreqType : recurs per
@@ -2177,9 +2481,150 @@ classDiagram
         +EncryptionAlgorithm string
     }
 
+    class Endpoint {
+        -server *Server
+        +EndpointID int
+        +Name string
+        +Owner string
+        +Protocol string
+        +Type string
+        +State string
+        +IsAdmin bool
+        +Port int
+        +IsSystem bool
+        +SetState(state) error
+        +Drop() error
+        +MirroringDetail() *DatabaseMirroringEndpoint
+        +ServiceBrokerDetail() *ServiceBrokerEndpointDetail
+        Type-specific detail is read on demand,
+        so listing every endpoint costs one
+        query. The five built-in endpoints
+        refuse writes with ErrSystemEndpoint.
+    }
+
+    class EndpointState {
+        <<enumeration>>
+        EndpointStarted
+        EndpointStopped
+        EndpointDisabled
+    }
+
+    class ServiceBrokerEndpointDetail {
+        +IsMessageForwardingEnabled bool
+        +MessageForwardingSize int
+        +ConnectionAuth string
+        +EncryptionAlgorithm string
+        +CertificateName string
+    }
+
+    %% =========================================================
+    %% Server audits, audit specifications, server triggers
+    %% =========================================================
+    class ServerAudit {
+        -server *Server
+        +AuditID int
+        +Name string
+        +GUID string
+        +Type string
+        +OnFailure string
+        +QueueDelay int
+        +Predicate string
+        +IsEnabled bool
+        +LogFilePath string
+        +LogFileName string
+        +MaxFileSize int64
+        +MaxRolloverFiles int
+        +MaxFiles int
+        +ReserveDiskSpace bool
+        +Alter(spec) error
+        +Rename(newName) error
+        +SetState(on) error
+        +Drop() error
+        +Status() *ServerAuditStatus
+        +WithDisabled(ctx, fn) error
+        Every write but SetState needs the audit
+        disabled; each one disables, applies and
+        re-enables, and only if it disabled.
+        MaxFileSize uses 0 for UNLIMITED,
+        MaxRolloverFiles uses AuditUnlimited.
+    }
+
+    class ServerAuditSpec {
+        +Name string
+        +Type string
+        +QueueDelay int
+        +OnFailure string
+        +Predicate string
+        +FilePath string
+        +MaxFileSize int64
+        +MaxRolloverFiles int
+        +MaxFiles int
+        +ReserveDiskSpace bool
+    }
+
+    class ServerAuditStatus {
+        +Status string
+        +StatusTime time.Time
+        +AuditFilePath string
+        +AuditFileSize int64
+    }
+
+    class ServerAuditSpecification {
+        -server *Server
+        +SpecificationID int
+        +Name string
+        +AuditGUID string
+        +AuditName string
+        +IsEnabled bool
+        +ActionGroups []string
+        +AddActionGroups(groups) error
+        +DropActionGroups(groups) error
+        +SetAudit(auditName) error
+        +SetState(on) error
+        +Drop() error
+        +WithDisabled(ctx, fn) error
+        AuditName is empty for an orphaned
+        specification: dropping the audit it
+        references succeeds and leaves the
+        audit_guid pointing at nothing.
+    }
+
+    class ServerAuditSpecificationSpec {
+        +Name string
+        +AuditName string
+        +ActionGroups []string
+        +Enabled bool
+    }
+
+    class ServerTrigger {
+        -server *Server
+        +Name string
+        +IsEnabled bool
+        +CreateDate time.Time
+        +ModifyDate time.Time
+        +Events []string
+        +Definition string
+        +Enable() error
+        +Disable() error
+        +Drop() error
+        A different family from Database.Triggers,
+        which reads DML triggers on a table.
+    }
+
     %% =========================================================
     %% Certificates and the database master key
     %% =========================================================
+    class AsymmetricKey {
+        +Name string
+        +KeyID int
+        +PrincipalID int
+        +Algorithm string
+        +KeyLength int
+        +PvtKeyEncryptionType string
+        +Thumbprint []byte
+        +HasPrivateKey() bool
+    }
+
     class Certificate {
         -db *Database
         +Name string
@@ -2268,6 +2713,17 @@ classDiagram
     Server --> CreateAvailabilityGroupRequest : accepts
     Server "1" --> "1" DatabaseMirroringEndpoint : has at most one
     Server --> EndpointSpec : accepts
+    Server "1" --> "*" Endpoint : Endpoints() returns
+    Endpoint --> EndpointState : SetState() takes
+    Endpoint ..> DatabaseMirroringEndpoint : MirroringDetail() returns
+    Endpoint ..> ServiceBrokerEndpointDetail : ServiceBrokerDetail() returns
+    Server "1" --> "*" ServerAudit : owns
+    Server --> ServerAuditSpec : CreateServerAudit() takes
+    ServerAudit --> ServerAuditStatus : Status() returns
+    Server "1" --> "*" ServerAuditSpecification : owns
+    Server --> ServerAuditSpecificationSpec : CreateServerAuditSpecification() takes
+    ServerAuditSpecification "*" --> "1" ServerAudit : writes to
+    Server "1" --> "*" ServerTrigger : owns
     Server "1" --> "*" ErrorLogFile : EnumErrorLogs() returns
     Server "1" --> "*" ErrorLogEntry : ReadLog() returns
     Server "1" --> "*" FileSystemEntry : EnumFileSystem() returns
@@ -2287,4 +2743,5 @@ classDiagram
     AvailabilityReplica ..> DatabaseMirroringEndpoint : ships log through
 
     Database "1" --> "*" Certificate : contains
+    Database "1" --> "*" AsymmetricKey : contains
     Database --> CertificateSpec : CreateCertificate() accepts
