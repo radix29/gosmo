@@ -2,7 +2,7 @@ module github.com/radix29/gosmo
 
 go 1.27
 
-toolchain go1.27.0
+toolchain go1.27.1
 
 require (
 	github.com/golang-sql/sqlexp v0.1.0

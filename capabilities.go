@@ -179,6 +179,29 @@ var ProbedObjectPermissions = []string{
 	"ALTER",
 }
 
+// ProbedPrincipalPermissions are the DATABASE_PRINCIPAL-scope (class 4)
+// permissions DatabaseCapabilities probes, for every user or database role the
+// login has one explicitly recorded on.
+//
+// Only the DENY direction is worth reading here, and that is a fact about SQL
+// Server rather than a choice — verified live on majors 13, 14 and 17
+// (2026-09-04, identical on all three):
+//
+//   - GRANT ALTER ON USER::x answers HAS_PERMS_BY_NAME 1 on the user and still
+//     permits nothing: both ALTER USER ... WITH NAME and DROP USER are refused.
+//     Those statements require ALTER ANY USER at database scope, so unlike an
+//     object- or schema-scope grant there is no narrow grant for a wider map to
+//     miss.
+//   - DENY ALTER ON USER::x *does* withhold both, over a database-wide
+//     ALTER ANY USER, so only the catalog can say what a gate needs to know.
+//
+// One name is enough for the same reason it is at schema scope, and CONTROL is
+// matched alongside it in the query: DENY CONTROL ON USER::x withholds the
+// same two statements and is recorded under its own permission_name.
+var ProbedPrincipalPermissions = []string{
+	"ALTER",
+}
+
 // Capabilities is what the connected login may do at the server scope: its
 // fixed-server-role memberships and the state of each permission in
 // ProbedServerPermissions.
@@ -275,7 +298,7 @@ func (s *Server) CapabilitiesContext(ctx context.Context) (*Capabilities, error)
 		ServerRoles:       map[string]bool{},
 		ServerPermissions: map[string]CapabilityState{},
 	}
-	if err := scanCapabilityRows(rows, c.ServerRoles, c.ServerPermissions, nil, nil, nil, nil); err != nil {
+	if err := scanCapabilityRows(rows, capabilityDest{roles: c.ServerRoles, perms: c.ServerPermissions}); err != nil {
 		return nil, fmt.Errorf("gosmo: read server capabilities: %w", err)
 	}
 	return c, nil
@@ -329,6 +352,60 @@ type DatabaseCapabilities struct {
 	// owner never carries a DENY, so it cannot change the one answer this map
 	// is read for.
 	ExplicitSchemaPermissions map[string]map[string]CapabilityState
+
+	// ExplicitDatabasePermissions maps each name in ProbedDatabasePermissions
+	// to the state it is *explicitly* recorded in for the login at DATABASE
+	// scope (class 0), read out of sys.database_permissions rather than asked
+	// with HAS_PERMS_BY_NAME. Read it through DeniedOnDatabase.
+	//
+	// It is ExplicitSchemaPermissions' database-scope twin and exists for the
+	// same reason: Permissions cannot answer "is this denied?", because
+	// HAS_PERMS_BY_NAME returns 0 both for a permission explicitly denied and
+	// for one simply never granted. The difference decides whether a
+	// *narrower* grant may answer for the database — it may for the second,
+	// and must not for the first, because SQL Server resolves a database-scope
+	// DENY over an object- or schema-scope GRANT.
+	//
+	// Sparse in ObjectPermissions' sense: a permission with no explicit row
+	// has no entry.
+	//
+	// Only DENY rows are read. The grant direction is already answered, and
+	// answered better, by HAS_PERMS_BY_NAME in Permissions, which folds in
+	// role membership and covering permissions. CONTROL is deliberately not
+	// matched alongside the permission asked about the way the schema block
+	// matches it: DENY CONTROL at database scope denies CONNECT with it, so
+	// the login cannot open the database at all and Accessible false is what
+	// reports that — verified live 2026-09-04, Msg 916.
+	ExplicitDatabasePermissions map[string]CapabilityState
+
+	// ExplicitPrincipalPermissions maps a database principal's name — a user
+	// or a database role — to the state each name in
+	// ProbedPrincipalPermissions is *explicitly* recorded in for the login at
+	// DATABASE_PRINCIPAL scope (class 4), read out of sys.database_permissions.
+	// Read it through DeniedOnPrincipal.
+	//
+	// It is ExplicitSchemaPermissions' class-4 twin and exists for the same
+	// reason: a class-4 DENY overrides the database-wide ALTER ANY USER a gate
+	// would otherwise read as permission, and HAS_PERMS_BY_NAME cannot tell
+	// that DENY from a permission never granted.
+	//
+	// Sparse in ObjectPermissions' sense: a principal nobody denied anything
+	// on has no row.
+	//
+	// Only DENY rows are read, for ExplicitDatabasePermissions' reason and one
+	// of its own: at this class there is no grant direction to miss at all.
+	// GRANT ALTER ON USER::x permits neither the rename nor the drop — see
+	// ProbedPrincipalPermissions, where the live result is recorded.
+	//
+	// **Roles are recorded but answer differently, and a caller must not treat
+	// the two alike.** Verified live on majors 13, 14 and 17: a class-4 DENY on
+	// a *role* withholds nothing — DROP ROLE and ALTER ROLE ... WITH NAME check
+	// ALTER ANY ROLE at database scope and are permitted with the DENY in
+	// place, even though HAS_PERMS_BY_NAME reports 0 for ALTER on the role.
+	// The rows are kept because they are what the catalog says and a caller may
+	// have a use for them, but a gate over role rename or drop that reads this
+	// map withholds an action the server allows.
+	ExplicitPrincipalPermissions map[string]map[string]CapabilityState
 
 	// ObjectPermissions maps "schema.object" to the state of each name in
 	// ProbedObjectPermissions on it. Read it through HasOnObject.
@@ -408,6 +485,35 @@ func (c *DatabaseCapabilities) DeniedOnSchema(schema, name string) bool {
 	return c.ExplicitSchemaPermissions[schema][name] == CapabilityDenied
 }
 
+// DeniedOnDatabase reports that the permission is explicitly denied at
+// DATABASE scope — Permissions' withholding counterpart, and the only sound
+// read of ExplicitDatabasePermissions.
+//
+// It is DeniedOnSchema one scope wider, and sound for the same reason: it asks
+// for a state that was recorded rather than for the absence of one, so a
+// permission nobody denied reads unknown, which is not a denial. Permits
+// cannot stand in for it — HAS_PERMS_BY_NAME answers 0 for a permission never
+// granted, which is the ordinary case for a principal working through an
+// object- or schema-scope grant, and withholding on that would take the write
+// away from exactly the principal it was granted to.
+//
+// A caller may withhold on it because SQL Server resolves DENY over GRANT
+// across scopes in *both* directions: a principal granted ALTER on one table,
+// in a database that denies it ALTER, reads
+// HAS_PERMS_BY_NAME('dbo.t1','OBJECT','ALTER') = 0 and its ALTER TABLE fails —
+// verified live 2026-09-04. The narrower grant does not survive the wider
+// DENY; only a *column* grant overrides an object DENY, which is the one
+// documented exception and runs the other way. The same two exceptions belong
+// to the caller as for DeniedOnSchema: a member of sysadmin bypasses the check
+// and must be asked about first, and a database that was never probed records
+// nothing.
+func (c *DatabaseCapabilities) DeniedOnDatabase(name string) bool {
+	if c == nil {
+		return false
+	}
+	return c.ExplicitDatabasePermissions[name] == CapabilityDenied
+}
+
 // Probed reports whether these capabilities came from a database that
 // answered. Capabilities.Probed's counterpart, and needed for the same reason:
 // InRole answers false for a role that was never asked about exactly as it
@@ -417,6 +523,43 @@ func (c *DatabaseCapabilities) DeniedOnSchema(schema, name string) bool {
 // It reads Roles rather than Accessible because an inaccessible database is a
 // real answer — the probe ran and reported that nothing inside could be asked.
 func (c *DatabaseCapabilities) Probed() bool { return c != nil && c.Roles != nil }
+
+// DeniedOnPrincipal reports that the permission is explicitly denied on the
+// database principal — the only sound read of ExplicitPrincipalPermissions,
+// for DeniedOnSchema's reason: it asks for a state that was recorded rather
+// than for the absence of one, so a principal nobody denied reads unknown,
+// which is not a denial.
+//
+// A caller may withhold on it because SQL Server resolves a class-4 DENY over
+// the database-wide ALTER ANY USER that would otherwise permit the write:
+// verified live on majors 13, 14 and 17, DENY ALTER ON USER::x (or DENY
+// CONTROL) refuses both ALTER USER ... WITH NAME and DROP USER for a principal
+// holding ALTER ANY USER. The same two exceptions belong to the caller as for
+// DeniedOnSchema — a member of sysadmin bypasses the check and must be asked
+// about first, and a database that was never probed records nothing.
+//
+// **For a database role, the answer is actionable per action, not per role.**
+// The map records users and roles alike, because both are class 4 and the
+// catalog does not distinguish them here, but a class-4 DENY on a *role* does
+// not withhold everything a DENY on a user does. Verified live on majors 13, 14
+// and 17, with HAS_PERMS_BY_NAME reporting 0 for ALTER on the role throughout:
+//
+//   - DROP ROLE and ALTER ROLE ... WITH NAME check ALTER ANY ROLE at database
+//     scope and go through with the DENY in place. A gate that withholds a role
+//     rename or drop on this answer withholds an action the server allows.
+//   - ALTER ROLE ... ADD MEMBER / DROP MEMBER is refused (Msg 15151). A gate
+//     that offers a membership edit on this answer offers one the server
+//     refuses (probed 2026-09-04 on majors 13 and 17).
+//
+// Membership also checks ALTER on the *member*: adding a user carrying a
+// class-4 DENY to a role nobody denied is refused too, so a membership gate has
+// to ask about both principals.
+func (c *DatabaseCapabilities) DeniedOnPrincipal(principal, name string) bool {
+	if c == nil {
+		return false
+	}
+	return c.ExplicitPrincipalPermissions[principal][name] == CapabilityDenied
+}
 
 // ObjectKey is the key ObjectPermissions is indexed by: the schema and object
 // name joined with a dot, unquoted, exactly as the probe records them.
@@ -625,12 +768,14 @@ func (d *Database) CapabilitiesContext(ctx context.Context) (*DatabaseCapabiliti
 	// there is nothing inside it to ask about.
 	if !access.Valid || !access.Bool {
 		return &DatabaseCapabilities{
-			Roles:                     map[string]bool{},
-			Permissions:               map[string]CapabilityState{},
-			SchemaPermissions:         map[string]map[string]CapabilityState{},
-			ExplicitSchemaPermissions: map[string]map[string]CapabilityState{},
-			ObjectPermissions:         map[string]map[string]CapabilityState{},
-			ColumnPermissions:         map[string]map[string]CapabilityState{},
+			Roles:                        map[string]bool{},
+			Permissions:                  map[string]CapabilityState{},
+			SchemaPermissions:            map[string]map[string]CapabilityState{},
+			ExplicitSchemaPermissions:    map[string]map[string]CapabilityState{},
+			ExplicitDatabasePermissions:  map[string]CapabilityState{},
+			ExplicitPrincipalPermissions: map[string]map[string]CapabilityState{},
+			ObjectPermissions:            map[string]map[string]CapabilityState{},
+			ColumnPermissions:            map[string]map[string]CapabilityState{},
 		}, nil
 	}
 
@@ -650,6 +795,14 @@ func (d *Database) CapabilitiesContext(ctx context.Context) (*DatabaseCapabiliti
 	q += "\nUNION ALL\n" + dq
 	args = append(args, dargs...)
 
+	bq, bargs := explicitDatabaseCapabilityQuery(len(args)+1, ProbedDatabasePermissions)
+	q += "\nUNION ALL\n" + bq
+	args = append(args, bargs...)
+
+	pq, pargs := explicitPrincipalCapabilityQuery(len(args)+1, ProbedPrincipalPermissions)
+	q += "\nUNION ALL\n" + pq
+	args = append(args, pargs...)
+
 	rows, err := d.query(ctx, q, args...)
 	if err != nil {
 		return nil, fmt.Errorf("gosmo: read capabilities for database %q: %w", d.name, err)
@@ -657,15 +810,26 @@ func (d *Database) CapabilitiesContext(ctx context.Context) (*DatabaseCapabiliti
 	defer rows.Close()
 
 	c := &DatabaseCapabilities{
-		Accessible:                true,
-		Roles:                     map[string]bool{},
-		Permissions:               map[string]CapabilityState{},
-		SchemaPermissions:         map[string]map[string]CapabilityState{},
-		ExplicitSchemaPermissions: map[string]map[string]CapabilityState{},
-		ObjectPermissions:         map[string]map[string]CapabilityState{},
-		ColumnPermissions:         map[string]map[string]CapabilityState{},
+		Accessible:                   true,
+		Roles:                        map[string]bool{},
+		Permissions:                  map[string]CapabilityState{},
+		SchemaPermissions:            map[string]map[string]CapabilityState{},
+		ExplicitSchemaPermissions:    map[string]map[string]CapabilityState{},
+		ExplicitDatabasePermissions:  map[string]CapabilityState{},
+		ExplicitPrincipalPermissions: map[string]map[string]CapabilityState{},
+		ObjectPermissions:            map[string]map[string]CapabilityState{},
+		ColumnPermissions:            map[string]map[string]CapabilityState{},
 	}
-	if err := scanCapabilityRows(rows.Rows, c.Roles, c.Permissions, c.SchemaPermissions, c.ExplicitSchemaPermissions, c.ObjectPermissions, c.ColumnPermissions); err != nil {
+	if err := scanCapabilityRows(rows.Rows, capabilityDest{
+		roles:              c.Roles,
+		perms:              c.Permissions,
+		schemas:            c.SchemaPermissions,
+		explicitSchemas:    c.ExplicitSchemaPermissions,
+		explicitDB:         c.ExplicitDatabasePermissions,
+		explicitPrincipals: c.ExplicitPrincipalPermissions,
+		objects:            c.ObjectPermissions,
+		columns:            c.ColumnPermissions,
+	}); err != nil {
 		return nil, fmt.Errorf("gosmo: read capabilities for database %q: %w", d.name, err)
 	}
 	return c, nil
@@ -801,6 +965,75 @@ func explicitSchemaCapabilityQuery(first int, perms []string) (string, []any) {
 	  AND SCHEMA_NAME(p.major_id) IS NOT NULL`, args
 }
 
+// explicitDatabaseCapabilityQuery builds the DATABASE-scope catalog block: one
+// row per probed permission the login has an explicit DENY recorded for at
+// class 0, tagged "D:<permission>" with the database as the name and 0 for
+// denied.
+//
+// Only DENY rows are selected, which is what separates it from the schema
+// block it is otherwise modelled on. The grant direction is already answered
+// by the HAS_PERMS_BY_NAME block, which folds in role membership and covering
+// permissions; the catalog can add nothing there. What only the catalog can
+// say is that a DENY row exists, and a database-scope DENY overrides an
+// object- or schema-scope GRANT — see
+// DatabaseCapabilities.ExplicitDatabasePermissions.
+//
+// class 0 is DATABASE, where major_id is 0 and names nothing, so DB_NAME()
+// stands in as the securable. CONTROL is deliberately not matched alongside
+// the permission: DENY CONTROL at this scope denies CONNECT with it, so the
+// login cannot open the database and never reaches this map.
+func explicitDatabaseCapabilityQuery(first int, perms []string) (string, []any) {
+	args := make([]any, len(perms))
+	for i, n := range perms {
+		args[i] = n
+	}
+	return `SELECT CONCAT('D:', n.v), DB_NAME(), 0
+	FROM sys.database_permissions AS p CROSS JOIN (VALUES ` + valuesList(first, len(perms)) + `) AS n(v)
+	WHERE p.class = 0
+	  AND p.state = 'D'
+	  AND p.grantee_principal_id IN (SELECT id FROM cap_me)
+	  AND p.permission_name = n.v`, args
+}
+
+// explicitPrincipalCapabilityQuery builds the DATABASE_PRINCIPAL-scope (class 4)
+// catalog block: one row per principal the login has an explicit DENY recorded
+// on, tagged "N:<permission>" with the principal's name and 0 for denied.
+//
+// Only DENY rows are selected, as in the database block, and here the grant
+// direction does not merely add nothing — it exists nowhere. GRANT ALTER ON
+// USER::x reads HAS_PERMS_BY_NAME 1 and still permits neither the rename nor
+// the drop, because both statements require ALTER ANY USER at database scope;
+// see ProbedPrincipalPermissions for the live result.
+//
+// class 4 is DATABASE_PRINCIPAL and major_id is the principal_id. USER_NAME
+// resolves it for a database role as well as for a user — verified live on
+// majors 13, 14 and 17 — so both kinds land in one map, which is what
+// DatabaseCapabilities.ExplicitPrincipalPermissions warns its callers about.
+//
+// CONTROL *is* matched alongside the permission asked about, unlike the
+// database block: DENY CONTROL ON USER::x is recorded under its own
+// permission_name and withholds the same two statements, and denying CONTROL
+// on one principal does not lock the login out of the database the way DENY
+// CONTROL at class 0 does.
+//
+// A principal hidden by metadata visibility would come back with a NULL name
+// and is dropped, as in the schema and object blocks. Class 4 does not in fact
+// suppress visibility — a user carrying a DENY stays listed, verified live —
+// but the guard costs nothing and the block should not depend on that.
+func explicitPrincipalCapabilityQuery(first int, perms []string) (string, []any) {
+	args := make([]any, len(perms))
+	for i, n := range perms {
+		args[i] = n
+	}
+	return `SELECT CONCAT('N:', n.v), USER_NAME(p.major_id), 0
+	FROM sys.database_permissions AS p CROSS JOIN (VALUES ` + valuesList(first, len(perms)) + `) AS n(v)
+	WHERE p.class = 4
+	  AND p.state = 'D'
+	  AND p.grantee_principal_id IN (SELECT id FROM cap_me)
+	  AND p.permission_name IN (n.v, 'CONTROL')
+	  AND USER_NAME(p.major_id) IS NOT NULL`, args
+}
+
 // capabilityPrincipalCTE is the "every principal the login's permissions can
 // arrive through" set the object block selects from: the user itself, public,
 // and every role reachable through role membership at any depth.
@@ -836,10 +1069,29 @@ func valuesClause(first, count int) string {
 	return b.String()
 }
 
-// scanCapabilityRows fills roles and perms from the probe's (kind, name,
-// answer) rows. A NULL answer is left out of the map entirely, which is what
-// makes it read back as CapabilityUnknown / false.
-func scanCapabilityRows(rows *sql.Rows, roles map[string]bool, perms map[string]CapabilityState, schemas, explicitSchemas, objects, columns map[string]map[string]CapabilityState) error {
+// capabilityDest is the set of maps scanCapabilityRows fills, one per block the
+// probe can send.
+//
+// It is a struct rather than eight parameters because the server probe shares
+// the scanner and asks for two of the blocks: it passed six nils in a row, and
+// a seventh added in the wrong position would have been silently accepted. A
+// nil field still means "this probe did not ask for that block", and its rows
+// are dropped.
+type capabilityDest struct {
+	roles              map[string]bool
+	perms              map[string]CapabilityState
+	schemas            map[string]map[string]CapabilityState
+	explicitSchemas    map[string]map[string]CapabilityState
+	explicitDB         map[string]CapabilityState
+	explicitPrincipals map[string]map[string]CapabilityState
+	objects            map[string]map[string]CapabilityState
+	columns            map[string]map[string]CapabilityState
+}
+
+// scanCapabilityRows fills into from the probe's (kind, name, answer) rows. A
+// NULL answer is left out of the map entirely, which is what makes it read back
+// as CapabilityUnknown / false.
+func scanCapabilityRows(rows *sql.Rows, into capabilityDest) error {
 	for rows.Next() {
 		var kind, name string
 		var answer sql.NullInt64
@@ -848,43 +1100,75 @@ func scanCapabilityRows(rows *sql.Rows, roles map[string]bool, perms map[string]
 		}
 		switch {
 		case kind == "R":
-			roles[name] = answer.Valid && answer.Int64 == 1
+			if into.roles != nil {
+				into.roles[name] = answer.Valid && answer.Int64 == 1
+			}
 		case kind == "P":
-			if st, ok := capabilityStateOf(answer); ok {
-				perms[name] = st
+			if st, ok := capabilityStateOf(answer); ok && into.perms != nil {
+				into.perms[name] = st
 			}
 		case strings.HasPrefix(kind, "S:"):
 			// name is the schema here, and the permission rides in kind — see
 			// schemaCapabilityQuery. A server probe passes a nil map and drops
 			// these rows, which it never asks for.
 			st, ok := capabilityStateOf(answer)
-			if !ok || schemas == nil {
+			if !ok || into.schemas == nil {
 				continue
 			}
-			if schemas[name] == nil {
-				schemas[name] = map[string]CapabilityState{}
+			if into.schemas[name] == nil {
+				into.schemas[name] = map[string]CapabilityState{}
 			}
-			schemas[name][strings.TrimPrefix(kind, "S:")] = st
+			into.schemas[name][strings.TrimPrefix(kind, "S:")] = st
 		case strings.HasPrefix(kind, "E:"):
 			// The schema catalog block, keyed by schema name. Kept apart from
 			// the "S:" rows because those answer HAS_PERMS_BY_NAME, whose 0
 			// cannot tell a DENY from a permission never granted — see
 			// DatabaseCapabilities.ExplicitSchemaPermissions.
 			if st, ok := capabilityStateOf(answer); ok {
-				recordSecurableState(explicitSchemas, name, strings.TrimPrefix(kind, "E:"), st)
+				recordSecurableState(into.explicitSchemas, name, strings.TrimPrefix(kind, "E:"), st)
+			}
+		case strings.HasPrefix(kind, "D:"):
+			// The database catalog block. name is DB_NAME() and is not read —
+			// there is one database per probe — while the permission rides in
+			// kind, as in every other catalog block. A server probe passes a
+			// nil map and drops these rows, which it never asks for. Only DENY
+			// rows are selected, so the state is always CapabilityDenied; it
+			// is read back through capabilityStateOf anyway so a query change
+			// that starts selecting grants is recorded rather than mislabelled.
+			st, ok := capabilityStateOf(answer)
+			if !ok || into.explicitDB == nil {
+				continue
+			}
+			// A denial wins however the rows are ordered — recordSecurableState's
+			// reasoning, one map shallower: the block can produce a row through
+			// the login and another through a role it is in.
+			perm := strings.TrimPrefix(kind, "D:")
+			if into.explicitDB[perm] != CapabilityDenied {
+				into.explicitDB[perm] = st
+			}
+		case strings.HasPrefix(kind, "N:"):
+			// The class-4 catalog block, keyed by the principal's name. It is
+			// "N:" rather than "P:" because "P" alone already tags the
+			// HAS_PERMS_BY_NAME database-scope rows. Only DENY rows are
+			// selected — see DatabaseCapabilities.ExplicitPrincipalPermissions
+			// — and they are read back through capabilityStateOf anyway so a
+			// query change that starts selecting grants is recorded rather
+			// than mislabelled.
+			if st, ok := capabilityStateOf(answer); ok {
+				recordSecurableState(into.explicitPrincipals, name, strings.TrimPrefix(kind, "N:"), st)
 			}
 		case strings.HasPrefix(kind, "O:"):
 			// As with "S:", name is the securable and the permission rides in
 			// kind.
 			if st, ok := capabilityStateOf(answer); ok {
-				recordSecurableState(objects, name, strings.TrimPrefix(kind, "O:"), st)
+				recordSecurableState(into.objects, name, strings.TrimPrefix(kind, "O:"), st)
 			}
 		case strings.HasPrefix(kind, "C:"):
 			// The column block, keyed "schema.object.column". It is kept apart
 			// from the object map because a column row answers for the column
 			// alone — see DatabaseCapabilities.ColumnPermissions.
 			if st, ok := capabilityStateOf(answer); ok {
-				recordSecurableState(columns, name, strings.TrimPrefix(kind, "C:"), st)
+				recordSecurableState(into.columns, name, strings.TrimPrefix(kind, "C:"), st)
 			}
 		}
 	}

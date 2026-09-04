@@ -529,7 +529,9 @@ func TestTheDatabaseProbeAsksAboutEverySchemaInOnePass(t *testing.T) {
 	// so nothing is bound per schema.
 	want := len(ProbedDatabaseRoles) + len(ProbedDatabasePermissions) +
 		len(ProbedSchemaPermissions) + len(ProbedObjectPermissions) +
-		len(ProbedSchemaPermissions) // the schema catalog block binds them again
+		len(ProbedSchemaPermissions) + // the schema catalog block binds them again
+		len(ProbedDatabasePermissions) + // and the database catalog block binds those again
+		len(ProbedPrincipalPermissions) // and the class-4 catalog block binds its own
 	if len(script.dbArgs) != want {
 		t.Errorf("the probe bound %d names, want %d", len(script.dbArgs), want)
 	}
@@ -943,5 +945,227 @@ func TestADenyOnASchemaSurvivesAGrant(t *testing.T) {
 		if !c.DeniedOnSchema("Sales", "ALTER") {
 			t.Errorf("a deny was overwritten by a grant, rows arriving as %v", order)
 		}
+	}
+}
+
+// TestDeniedOnDatabaseReportsOnlyAnExplicitDeny. ExplicitDatabasePermissions
+// is sparse, so silence is not a denial; and it is separate from Permissions
+// precisely because that map's CapabilityDenied means "HAS_PERMS_BY_NAME said
+// 0", which a permission simply never granted also produces — the ordinary
+// state of a principal working through an object- or schema-scope grant.
+func TestDeniedOnDatabaseReportsOnlyAnExplicitDeny(t *testing.T) {
+	c := &DatabaseCapabilities{
+		Accessible: true,
+		// Never granted at database scope, which is not a denial. This is the
+		// case the whole map exists to tell apart: read as a denial it would
+		// withhold every write from a principal granted ALTER on one table.
+		Permissions: map[string]CapabilityState{"CONTROL": CapabilityDenied},
+		ExplicitDatabasePermissions: map[string]CapabilityState{
+			"ALTER": CapabilityDenied,
+		},
+	}
+	if !c.DeniedOnDatabase("ALTER") {
+		t.Error("an explicitly denied permission did not report the denial")
+	}
+	if c.DeniedOnDatabase("CONTROL") {
+		t.Error("a permission HAS_PERMS_BY_NAME answered 0 for reported an explicit denial")
+	}
+	if c.DeniedOnDatabase("BACKUP DATABASE") {
+		t.Error("a permission with no row reported a denial — the map is sparse, so silence is not a deny")
+	}
+	var nilCaps *DatabaseCapabilities
+	if nilCaps.DeniedOnDatabase("ALTER") {
+		t.Error("a nil capability set reported a denial")
+	}
+}
+
+// TestDatabaseCapabilitiesReadDatabaseDenialsApartFromTheProbe is
+// TestDatabaseCapabilitiesReadSchemaDenialsApartFromTheProbe one scope wider:
+// the "P" and "D:" blocks land in two maps, and a DENY recorded at database
+// scope must not be readable as anything the HAS_PERMS_BY_NAME half said.
+func TestDatabaseCapabilitiesReadDatabaseDenialsApartFromTheProbe(t *testing.T) {
+	srv := capServer(t, &capScript{
+		dbAccess: int64(1),
+		dbRows: [][]driver.Value{
+			{"P", "ALTER", int64(0)},
+			{"P", "CONTROL", int64(0)},
+			{"D:ALTER", "HealthClinic", int64(0)},
+			{"O:ALTER", "dbo.Patient", int64(1)},
+		},
+	})
+
+	c, err := srv.Database("HealthClinic").CapabilitiesContext(context.Background())
+	if err != nil {
+		t.Fatalf("CapabilitiesContext: %v", err)
+	}
+	if !c.DeniedOnDatabase("ALTER") {
+		t.Error("the database's DENY row did not read back")
+	}
+	// CONTROL reads 0 from HAS_PERMS_BY_NAME and has no catalog row. Reading
+	// that as a denial is the bug this map prevents.
+	if c.DeniedOnDatabase("CONTROL") {
+		t.Error("a permission with no catalog row read as denied")
+	}
+	// The object grant is untouched by the wider denial at this layer — it is
+	// the *caller's* job to resolve one over the other, and it can only do
+	// that while both answers survive the probe.
+	if !c.HasOnObject("dbo", "Patient", "ALTER") {
+		t.Error("the object grant stopped reading back once the database denial arrived")
+	}
+}
+
+// TestADenyOnTheDatabaseSurvivesAGrant. The catalog block can produce two rows
+// for one permission — through the login and through a role it is in — and a
+// denial must win whichever arrives first. The block selects only DENY rows
+// today, so this pins the recording rule rather than the query: a later change
+// that starts selecting grants must not let one overwrite a denial.
+func TestADenyOnTheDatabaseSurvivesAGrant(t *testing.T) {
+	for _, order := range [][]int64{{1, 0}, {0, 1}} {
+		srv := capServer(t, &capScript{
+			dbAccess: int64(1),
+			dbRows: [][]driver.Value{
+				{"D:ALTER", "HealthClinic", order[0]},
+				{"D:ALTER", "HealthClinic", order[1]},
+			},
+		})
+		c, err := srv.Database("HealthClinic").CapabilitiesContext(context.Background())
+		if err != nil {
+			t.Fatalf("CapabilitiesContext: %v", err)
+		}
+		if !c.DeniedOnDatabase("ALTER") {
+			t.Errorf("rows in order %v lost the denial", order)
+		}
+	}
+}
+
+// TestTheDatabaseProbeAsksForExplicitDatabaseDenials. The block's text is the
+// only place its shape is observable, since the answers are scripted whatever
+// it asks. Three mutations survive every other test: dropping the state filter
+// (so every grant row reads back as a denial), matching CONTROL alongside the
+// permission the way the schema block does (a DENY CONTROL denies CONNECT with
+// it, so the login never reaches this map — but a *grant* row for CONTROL
+// would arrive and, without the state filter, read as a denial of ALTER), and
+// numbering the placeholders from 1 instead of the next free one.
+func TestTheDatabaseProbeAsksForExplicitDatabaseDenials(t *testing.T) {
+	script := &capScript{dbAccess: int64(1)}
+	srv := capServer(t, script)
+	if _, err := srv.Database("HealthClinic").CapabilitiesContext(context.Background()); err != nil {
+		t.Fatalf("CapabilitiesContext: %v", err)
+	}
+	q := script.dbQuery
+	if !strings.Contains(q, "SELECT CONCAT('D:', n.v), DB_NAME(), 0") {
+		t.Errorf("the database catalog block is missing or its columns are the wrong way round:\n%s", q)
+	}
+	if !strings.Contains(q, "WHERE p.class = 0") {
+		t.Errorf("the database catalog block does not restrict to class 0 (DATABASE):\n%s", q)
+	}
+	if !strings.Contains(q, "AND p.state = 'D'") {
+		t.Errorf("the database catalog block does not restrict to DENY rows — every grant would read as a denial:\n%s", q)
+	}
+	if !strings.Contains(q, "AND p.permission_name = n.v") {
+		t.Errorf("the database catalog block does not match the permission exactly:\n%s", q)
+	}
+	if strings.Contains(q, "p.permission_name IN (n.v, 'CONTROL')\n\t  AND p.class = 0") {
+		t.Errorf("the database catalog block matches CONTROL alongside the permission:\n%s", q)
+	}
+	// Its placeholders start after the five blocks appended before it. The
+	// class-4 block follows it, so this is no longer the last offset in the
+	// query — see TestTheDatabaseProbeAsksForExplicitPrincipalDenials.
+	first := len(ProbedDatabaseRoles) + len(ProbedDatabasePermissions) +
+		len(ProbedSchemaPermissions) + len(ProbedObjectPermissions) +
+		len(ProbedSchemaPermissions) + 1
+	if !strings.Contains(q, fmt.Sprintf("CROSS JOIN (VALUES (@p%d)", first)) {
+		t.Errorf("the database catalog block does not start at @p%d:\n%s", first, q)
+	}
+}
+
+// TestDeniedOnPrincipalReportsOnlyAnExplicitDeny is
+// TestDeniedOnDatabaseReportsOnlyAnExplicitDeny at class 4: the map is sparse,
+// so a principal nobody denied anything on is not a denial, and the
+// database-scope Permissions map cannot stand in — its CapabilityDenied means
+// "HAS_PERMS_BY_NAME said 0", the ordinary reading for a principal that simply
+// was never granted ALTER ANY USER.
+func TestDeniedOnPrincipalReportsOnlyAnExplicitDeny(t *testing.T) {
+	c := &DatabaseCapabilities{
+		Accessible:  true,
+		Permissions: map[string]CapabilityState{"ALTER ANY USER": CapabilityDenied},
+		ExplicitPrincipalPermissions: map[string]map[string]CapabilityState{
+			"bob": {"ALTER": CapabilityDenied},
+		},
+	}
+	if !c.DeniedOnPrincipal("bob", "ALTER") {
+		t.Error("an explicitly denied principal did not report the denial")
+	}
+	if c.DeniedOnPrincipal("carol", "ALTER") {
+		t.Error("a principal with no row reported a denial — the map is sparse, so silence is not a deny")
+	}
+	if c.DeniedOnPrincipal("bob", "CONTROL") {
+		t.Error("a permission with no row on a denied principal reported a denial")
+	}
+	var nilCaps *DatabaseCapabilities
+	if nilCaps.DeniedOnPrincipal("bob", "ALTER") {
+		t.Error("a nil capability set reported a denial")
+	}
+}
+
+// TestDatabaseCapabilitiesReadPrincipalDenialsApartFromTheProbe. The "P" and
+// "N:" blocks land in two maps, and neither may be read as the other: a
+// database-scope ALTER ANY USER that HAS_PERMS_BY_NAME answered 1 for must
+// survive a class-4 denial on one principal, because resolving the two is the
+// caller's job and it can only do that while both answers reach it.
+func TestDatabaseCapabilitiesReadPrincipalDenialsApartFromTheProbe(t *testing.T) {
+	srv := capServer(t, &capScript{
+		dbAccess: int64(1),
+		dbRows: [][]driver.Value{
+			{"P", "ALTER ANY USER", int64(1)},
+			{"N:ALTER", "bob", int64(0)},
+		},
+	})
+	c, err := srv.Database("HealthClinic").CapabilitiesContext(context.Background())
+	if err != nil {
+		t.Fatalf("CapabilitiesContext: %v", err)
+	}
+	if !c.DeniedOnPrincipal("bob", "ALTER") {
+		t.Error("the principal's DENY row did not read back")
+	}
+	if c.DeniedOnPrincipal("carol", "ALTER") {
+		t.Error("a principal with no catalog row read as denied")
+	}
+	if !c.Permits("ALTER ANY USER") {
+		t.Error("the database-scope grant stopped reading back once the principal denial arrived")
+	}
+}
+
+// TestTheDatabaseProbeAsksForExplicitPrincipalDenials. The block's text is the
+// only place its shape is observable, since the answers are scripted whatever
+// it asks. Four mutations survive every other test: dropping the state filter
+// (so every grant row reads back as a denial — and at this class a *grant* row
+// is the common one, since GRANT ALTER ON USER::x is legal and permits
+// nothing); dropping the class filter, which would fold class-1 object rows in
+// under OBJECT_NAME-shaped names; matching the permission exactly and so
+// losing DENY CONTROL, which withholds the same statements; and numbering the
+// placeholders from 1 instead of the next free one.
+func TestTheDatabaseProbeAsksForExplicitPrincipalDenials(t *testing.T) {
+	script := &capScript{dbAccess: int64(1)}
+	srv := capServer(t, script)
+	if _, err := srv.Database("HealthClinic").CapabilitiesContext(context.Background()); err != nil {
+		t.Fatalf("CapabilitiesContext: %v", err)
+	}
+	q := script.dbQuery
+	if !strings.Contains(q, "SELECT CONCAT('N:', n.v), USER_NAME(p.major_id), 0") {
+		t.Errorf("the class-4 catalog block is missing or its columns are the wrong way round:\n%s", q)
+	}
+	if !strings.Contains(q, "WHERE p.class = 4") {
+		t.Errorf("the class-4 catalog block does not restrict to class 4 (DATABASE_PRINCIPAL):\n%s", q)
+	}
+	if !strings.Contains(q, "AND p.state = 'D'\n\t  AND p.grantee_principal_id IN (SELECT id FROM cap_me)\n\t  AND p.permission_name IN (n.v, 'CONTROL')") {
+		t.Errorf("the class-4 catalog block does not select DENY rows matching the permission or CONTROL:\n%s", q)
+	}
+	// It is appended last, so its placeholders start after every other block's.
+	first := len(ProbedDatabaseRoles) + len(ProbedDatabasePermissions) +
+		len(ProbedSchemaPermissions) + len(ProbedObjectPermissions) +
+		len(ProbedSchemaPermissions) + len(ProbedDatabasePermissions) + 1
+	if !strings.Contains(q, fmt.Sprintf("CROSS JOIN (VALUES (@p%d)", first)) {
+		t.Errorf("the class-4 catalog block does not start at @p%d:\n%s", first, q)
 	}
 }

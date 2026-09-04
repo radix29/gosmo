@@ -12,6 +12,10 @@ CGO, and talks to SQL Server through `github.com/microsoft/go-mssqldb`.
 - `README.md` carries the full API map (as Mermaid class diagrams).
 - Requires Go 1.27.
 
+Read what the task touches: `README.md` for the API map, `quoting.go`'s doc
+comments for anything that builds an identifier or literal, `server.go`'s doc
+comments for the handle-vs-lookup method pairs. A one-file fix needs none of it.
+
 ## This is a library, not gossms's back end
 
 The author also writes **goSSMS** (https://github.com/radix29/gossms), a
@@ -34,8 +38,7 @@ published, general-purpose library with users beyond gossms.
   a test that pins it. Removal, or replacing a general form with the narrow
   one gossms happens to need, is not one of them — raise it instead.
 - Optimisation must be behaviour-preserving at the API surface: same
-  signature, same results, same errors. A faster implementation that changes
-  what a caller observes is a breaking change wearing a performance hat.
+  signature, same results, same errors.
 - Adding capability for gossms is encouraged — that's the intended
   direction. Design it as a library feature, not as a gossms shim.
 

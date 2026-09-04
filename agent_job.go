@@ -82,21 +82,6 @@ const (
 	JobStatePerformingCompletionActions JobState = 7
 )
 
-// JobStateCancelling and JobStateRunning name states Agent's encoding does
-// not have, and no read in this package returns either. They carry negative
-// values so a switch over the real encoding cannot reach them by accident;
-// they are kept only so existing callers still compile. Their removal is
-// scheduled for the next breaking tag — see CHANGELOG.md § Unreleased — so
-// this is neither dead code to delete in a patch release nor surface to keep
-// forever.
-const (
-	// Deprecated: Agent has no "cancelling" state. A job being stopped
-	// reports JobStatePerformingCompletionActions.
-	JobStateCancelling JobState = -1
-	// Deprecated: use JobStateExecuting.
-	JobStateRunning JobState = -2
-)
-
 // jobStateColumns is the result set of master.dbo.xp_sqlagent_enum_jobs, as
 // a table-variable declaration. INSERT ... EXECUTE requires the shape to
 // match the procedure's exactly, so this is copied from

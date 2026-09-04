@@ -91,10 +91,6 @@ These continue for the life of the project, release or not:
   endpoint and server trigger families, its Query Store panel drove the
   seven report views, and its Attach/Detach dialogs drove `database_attach.go`.
 
-- **Scheduled breaking change: drop `JobStateCancelling` and
-  `JobStateRunning`** (`agent_job.go`). Both name states Agent's encoding does
-  not have and are kept only for source compatibility; the next tag that can
-  carry a break removes them. Recorded in `CHANGELOG.md` § Unreleased.
 
 ## Non-goals
 

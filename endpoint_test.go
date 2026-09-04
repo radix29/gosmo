@@ -27,6 +27,11 @@ func TestCreateEndpointStatement(t *testing.T) {
 		},
 			"CREATE ENDPOINT [AGEP] STATE = STARTED AS TCP (LISTENER_PORT = 5023, LISTENER_IP = ALL) " +
 				"FOR DATABASE_MIRRORING (AUTHENTICATION = CERTIFICATE dbm_certificate, ENCRYPTION = REQUIRED ALGORITHM AES, ROLE = ALL)"},
+		// The two-word form of the ALGORITHM sub-clause, lower-cased: both
+		// words are one allowlisted value, not two to be checked apart.
+		{"algorithm pair", EndpointSpec{Name: "p", EncryptionAlgorithm: "aes rc4"},
+			"CREATE ENDPOINT [p] STATE = STARTED AS TCP (LISTENER_PORT = 5022, LISTENER_IP = ALL) " +
+				"FOR DATABASE_MIRRORING (AUTHENTICATION = WINDOWS NEGOTIATE, ENCRYPTION = REQUIRED ALGORITHM AES RC4, ROLE = ALL)"},
 		{"witness", EndpointSpec{Name: "w", Role: "witness", Encryption: "disabled"},
 			"CREATE ENDPOINT [w] STATE = STARTED AS TCP (LISTENER_PORT = 5022, LISTENER_IP = ALL) " +
 				"FOR DATABASE_MIRRORING (AUTHENTICATION = WINDOWS NEGOTIATE, ENCRYPTION = DISABLED, ROLE = WITNESS)"},
@@ -50,6 +55,7 @@ func TestCreateEndpointStatementRejects(t *testing.T) {
 		"bad port":        {Name: "e", Port: 70000},
 		"unknown role":    {Name: "e", Role: "PRIMARY"},
 		"bad encryption":  {Name: "e", Encryption: "MAYBE"},
+		"bad algorithm":   {Name: "e", EncryptionAlgorithm: "AES RC5"},
 		"blank name only": {Name: "   "},
 	} {
 		t.Run(name, func(t *testing.T) {

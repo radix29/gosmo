@@ -421,8 +421,13 @@ func (cek *ColumnEncryptionKey) AddValueContext(ctx context.Context, value Colum
 	if _, err := cek.db.exec(ctx, stmt); err != nil {
 		return fmt.Errorf("gosmo: add value to column encryption key [%s]: %w", cek.Name, err)
 	}
-	cek.Values = append(cek.Values, &value)
-	cek.reseatSummary()
+	// Not mirrored under WithScript — nothing reached the server, so the
+	// handle must keep describing what is actually there. See setIfApplied,
+	// which is the single-field form of this guard.
+	if !Scripting(ctx) {
+		cek.Values = append(cek.Values, &value)
+		cek.reseatSummary()
+	}
 	return nil
 }
 
@@ -447,10 +452,13 @@ func (cek *ColumnEncryptionKey) DropValueContext(ctx context.Context, masterKeyN
 	if _, err := cek.db.exec(ctx, stmt); err != nil {
 		return fmt.Errorf("gosmo: drop value from column encryption key [%s]: %w", cek.Name, err)
 	}
-	cek.Values = slices.DeleteFunc(cek.Values, func(v *ColumnEncryptionKeyValue) bool {
-		return strings.EqualFold(v.MasterKeyName, masterKeyName)
-	})
-	cek.reseatSummary()
+	// Not mirrored under WithScript, as in AddValueContext above.
+	if !Scripting(ctx) {
+		cek.Values = slices.DeleteFunc(cek.Values, func(v *ColumnEncryptionKeyValue) bool {
+			return strings.EqualFold(v.MasterKeyName, masterKeyName)
+		})
+		cek.reseatSummary()
+	}
 	return nil
 }
 

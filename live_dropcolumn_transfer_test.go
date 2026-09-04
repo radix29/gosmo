@@ -56,12 +56,13 @@ func TestLiveDropColumnAndTransferObject(t *testing.T) {
 	// column with a default constraint on it cannot be dropped until that
 	// constraint is.
 	//
-	// The server's message does *not* name the constraint — verified here on
-	// SQL Server 17: "ALTER TABLE DROP COLUMN flagged failed because one or
-	// more objects access this column." A UI cannot pass the error through and
-	// expect the user to know what to drop first, which is why gossms's own
-	// warning says what the classes of blocker are rather than promising the
-	// server will name one.
+	// The refusal arrives as *two* server messages — Msg 5074 naming the
+	// dependent object, then Msg 4922 saying the ALTER failed — which the
+	// driver concatenates into one error. Both halves are asserted: gossms's
+	// Delete Column warning tells the user the server will name the blocker
+	// (internal/tui/explorer_object_ops.go, NodeColumn.warning), so if Msg 5074
+	// ever stopped reaching the caller that warning would be a lie. Verified on
+	// majors 13, 14 and 17.
 	err = tbl.DropColumnContext(ctx, "flagged")
 	if err == nil {
 		t.Fatal("dropping a column with a default constraint succeeded; expected the server to refuse")
@@ -69,14 +70,8 @@ func TestLiveDropColumnAndTransferObject(t *testing.T) {
 	if !strings.Contains(err.Error(), "one or more objects access this column") {
 		t.Errorf("refusal = %v, want the server's dependency refusal", err)
 	}
-	// Whether the message names the constraint is the server's choice and it
-	// varies by version: SQL Server 2016 names DF_Orders_flagged, 2017 and 2025
-	// do not. gossms's warning therefore cannot promise one either way, which
-	// is the point being recorded here rather than asserted.
-	if strings.Contains(err.Error(), "DF_Orders_flagged") {
-		t.Logf("this server names the blocking constraint: %v", err)
-	} else {
-		t.Logf("this server does not name the blocking constraint: %v", err)
+	if !strings.Contains(err.Error(), "DF_Orders_flagged") {
+		t.Errorf("refusal = %v, want it to name the blocking constraint DF_Orders_flagged", err)
 	}
 	if err := tbl.DropConstraintContext(ctx, "DF_Orders_flagged"); err != nil {
 		t.Fatalf("DropConstraintContext: %v", err)

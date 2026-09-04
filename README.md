@@ -2284,9 +2284,6 @@ classDiagram
         from xp_sqlagent_enum_jobs. With Agent
         stopped only Executing and Idle can be
         told apart.
-        JobStateCancelling and JobStateRunning
-        are deprecated: the encoding has no
-        such states.
     }
 
     class ScheduleFreqType {

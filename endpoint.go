@@ -165,6 +165,10 @@ type EndpointSpec struct {
 var (
 	endpointRoles      = map[string]bool{"ALL": true, "PARTNER": true, "WITNESS": true}
 	endpointEncryption = map[string]bool{"REQUIRED": true, "SUPPORTED": true, "DISABLED": true}
+	// The ALGORITHM sub-clause's whole grammar. The two-word forms name a
+	// preference and a fallback, in that order, for a peer that offers only
+	// the other.
+	endpointAlgorithms = map[string]bool{"RC4": true, "AES": true, "AES RC4": true, "RC4 AES": true}
 )
 
 // normalized returns the spec with its defaults filled in and its
@@ -193,6 +197,11 @@ func (spec EndpointSpec) normalized() (EndpointSpec, error) {
 		return spec, fmt.Errorf("unrecognized endpoint encryption %q", spec.Encryption)
 	}
 	spec.EncryptionAlgorithm = strings.ToUpper(spec.EncryptionAlgorithm)
+	// Empty still means "omit the sub-clause"; anything else is checked, like
+	// Role and Encryption above.
+	if spec.EncryptionAlgorithm != "" && !endpointAlgorithms[spec.EncryptionAlgorithm] {
+		return spec, fmt.Errorf("unrecognized endpoint encryption algorithm %q", spec.EncryptionAlgorithm)
+	}
 	spec.Authentication = orElse(spec.Authentication, "WINDOWS NEGOTIATE")
 	return spec, nil
 }

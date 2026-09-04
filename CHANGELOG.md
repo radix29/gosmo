@@ -6,17 +6,41 @@ release only, as a short summary of the entry below it.
 
 ## Unreleased
 
-### Scheduled for the next breaking tag
+### Changed
 
-- **Remove `JobStateCancelling` and `JobStateRunning`** (`agent_job.go`). They
-  name states Agent's `job_state` encoding does not have, no read in this
-  package returns either, and their negative values exist only so a switch over
-  the real encoding cannot reach them by accident. They are kept solely so
-  existing callers compile, which is why removing them waits for a tag that can
-  carry a break; deleting them in a patch release is not allowed. Callers of
-  `JobStateRunning` want `JobStateExecuting`; a job being stopped reports
+- **`EndpointSpec.EncryptionAlgorithm` is validated** (`endpoint.go`) — like
+  `Role` and `Encryption` beside it, it is now checked against the sub-clause's
+  whole grammar (`RC4`, `AES`, `AES RC4`, `RC4 AES`; empty still omits the
+  clause) instead of being upper-cased and interpolated. `normalized()`'s doc
+  claimed every keyword-valued part was validated and this was the one that was
+  not. **Migrating:** a value the server would have rejected now fails
+  client-side, with `unrecognized endpoint encryption algorithm`.
+
+### Fixed
+
+- **A scripted column encryption key rotation no longer mutates the handle**
+  (`security.go`) — `AddValueContext` and `DropValueContext` mirrored the
+  change onto `Values` and the `MasterKeyName`/`EncryptionAlgorithm` summary
+  unconditionally, so under `WithScript` — where nothing reaches the server —
+  the handle came back describing a rotation that had not happened. They now
+  mirror only when `!Scripting(ctx)`, as `JobStep.UpdateContext` already did.
+  The consequence was a caller's own pre-flight check reading the wrong count:
+  scripting an ADD VALUE and then a DROP VALUE let the drop past a guard that
+  exists to refuse leaving the key with no value at all.
+
+### Removed
+
+- **`JobStateCancelling` and `JobStateRunning`** (`agent_job.go`), deprecated
+  since `v0.0.11`. They named states Agent's `job_state` encoding does not
+  have, no read in this package returned either, and their negative values
+  existed only so a switch over the real encoding could not reach them by
+  accident. **Migrating:** callers of `JobStateRunning` want
+  `JobStateExecuting`; a job being stopped reports
   `JobStatePerformingCompletionActions`, which is what `JobStateCancelling` was
-  reaching for.
+  reaching for. Agent's real encoding, from `xp_sqlagent_enum_jobs`: 1
+  Executing, 2 WaitingForWorker, 3 BetweenRetries, 4 Idle, 5 Suspended, 6
+  WaitingForStepToFinish, 7 PerformingCompletionActions, 0 a job Agent does not
+  run itself.
 
 ## v0.0.11
 
