@@ -250,11 +250,34 @@ type ColumnDefault struct {
 
 // FileGroup represents a SQL Server filegroup.
 type FileGroup struct {
-	Name       string
+	Name string
+
+	// Type is sys.filegroups.type_desc: "ROWS_FILEGROUP",
+	// "FILESTREAM_DATA_FILEGROUP" or "MEMORY_OPTIMIZED_DATA_FILEGROUP". It
+	// decides what a file added to the group becomes — ALTER DATABASE ADD FILE
+	// has no file-type keyword, so the same clause makes a FILESTREAM file in a
+	// FILESTREAM filegroup and an ordinary data file in a ROWS one.
+	Type string
+
+	// IsDefault is per filegroup *type*, not per database: a database with a
+	// FILESTREAM filegroup reports one default ROWS filegroup and one default
+	// FILESTREAM filegroup, both true.
 	IsDefault  bool
 	IsReadOnly bool
 	Files      []DatabaseFile
 }
+
+// Filegroup type_desc values, as sys.filegroups reports them.
+const (
+	RowsFileGroup            = "ROWS_FILEGROUP"
+	FileStreamFileGroup      = "FILESTREAM_DATA_FILEGROUP"
+	MemoryOptimizedFileGroup = "MEMORY_OPTIMIZED_DATA_FILEGROUP"
+)
+
+// IsFileStream reports whether files added to this filegroup are FILESTREAM
+// data files, which take neither SIZE nor FILEGROWTH (SQL Server error 5509)
+// and whose FILENAME is a directory rather than a file.
+func (fg *FileGroup) IsFileStream() bool { return fg.Type == FileStreamFileGroup }
 
 // DatabaseFile represents a single data or log file.
 type DatabaseFile struct {

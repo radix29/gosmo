@@ -139,6 +139,11 @@ type capScript struct {
 	// answers below are scripted whatever it asks.
 	dbQuery string
 	dbArgs  []driver.NamedValue
+
+	// srvQuery and srvArgs are the same for the *server* probe, which grew a
+	// catalog block of its own — see explicitServerCapabilityQuery.
+	srvQuery string
+	srvArgs  []driver.NamedValue
 }
 
 var capCurrent *capScript
@@ -165,6 +170,7 @@ func (c *capConn) QueryContext(_ context.Context, q string, args []driver.NamedV
 	case strings.Contains(q, "HAS_DBACCESS"):
 		return &capRows{cols: 1, rows: [][]driver.Value{{capCurrent.dbAccess}}}, nil
 	case strings.Contains(q, "IS_SRVROLEMEMBER"):
+		capCurrent.srvQuery, capCurrent.srvArgs = q, args
 		return &capRows{cols: 3, rows: capCurrent.serverRows}, nil
 	case strings.Contains(q, "IS_ROLEMEMBER"):
 		capCurrent.dbQuery, capCurrent.dbArgs = q, args
@@ -1167,5 +1173,255 @@ func TestTheDatabaseProbeAsksForExplicitPrincipalDenials(t *testing.T) {
 		len(ProbedSchemaPermissions) + len(ProbedDatabasePermissions) + 1
 	if !strings.Contains(q, fmt.Sprintf("CROSS JOIN (VALUES (@p%d)", first)) {
 		t.Errorf("the class-4 catalog block does not start at @p%d:\n%s", first, q)
+	}
+}
+
+// TestDeniedOnServerSecurableReportsOnlyAnExplicitDeny is
+// TestDeniedOnPrincipalReportsOnlyAnExplicitDeny at server scope: the map is
+// sparse, so a securable nobody denied anything on is not a denial, and the
+// server-scope ServerPermissions map cannot stand in — its CapabilityDenied
+// means "HAS_PERMS_BY_NAME said 0", the ordinary reading for a login that
+// simply was never granted ALTER ANY LOGIN.
+func TestDeniedOnServerSecurableReportsOnlyAnExplicitDeny(t *testing.T) {
+	c := &Capabilities{
+		ServerPermissions: map[string]CapabilityState{"ALTER ANY LOGIN": CapabilityDenied},
+		ExplicitServerPermissions: map[string]map[string]CapabilityState{
+			ServerSecurableKey(ServerSecurableLogin, "bob"):          {"ALTER": CapabilityDenied},
+			ServerSecurableKey(ServerSecurableServerRole, "ops"):     {"ALTER": CapabilityDenied},
+			ServerSecurableKey(ServerSecurableEndpoint, "Mirroring"): {"ALTER": CapabilityDenied},
+		},
+	}
+	if !c.DeniedOnLogin("bob", "ALTER") {
+		t.Error("an explicitly denied login did not report the denial")
+	}
+	if !c.DeniedOnServerRole("ops", "ALTER") {
+		t.Error("an explicitly denied server role did not report the denial")
+	}
+	if !c.DeniedOnEndpoint("Mirroring", "ALTER") {
+		t.Error("an explicitly denied endpoint did not report the denial")
+	}
+	if c.DeniedOnLogin("carol", "ALTER") {
+		t.Error("a login with no row reported a denial — the map is sparse, so silence is not a deny")
+	}
+	if c.DeniedOnLogin("bob", "CONTROL") {
+		t.Error("a permission with no row on a denied login reported a denial")
+	}
+	var nilCaps *Capabilities
+	if nilCaps.DeniedOnLogin("bob", "ALTER") {
+		t.Error("a nil capability set reported a denial")
+	}
+}
+
+// TestServerSecurableKindsDoNotAnswerForEachOther. The three kinds share one
+// map and one class — logins and server roles are both class 101 — so the kind
+// is part of the key, and it has to be: a class-101 DENY withholds everything
+// on a login and only the membership edits on a server role, so a caller
+// reaching a login's answer while asking about a server role of the same name
+// would withhold a rename the server allows.
+func TestServerSecurableKindsDoNotAnswerForEachOther(t *testing.T) {
+	c := &Capabilities{
+		ExplicitServerPermissions: map[string]map[string]CapabilityState{
+			ServerSecurableKey(ServerSecurableLogin, "shared"): {"ALTER": CapabilityDenied},
+		},
+	}
+	if !c.DeniedOnLogin("shared", "ALTER") {
+		t.Fatal("the login's own denial did not read back")
+	}
+	if c.DeniedOnServerRole("shared", "ALTER") {
+		t.Error("a login's DENY answered for a server role of the same name")
+	}
+	if c.DeniedOnEndpoint("shared", "ALTER") {
+		t.Error("a login's DENY answered for an endpoint of the same name")
+	}
+}
+
+// TestTheServerCatalogBlockAsksForExplicitRowsOnly pins the parts of the
+// server-scope catalog read whose absence produces a wrong answer rather than
+// an error — TestTheSchemaCatalogBlockAsksForExplicitRowsOnly's server twin.
+func TestTheServerCatalogBlockAsksForExplicitRowsOnly(t *testing.T) {
+	q, args := explicitServerCapabilityQuery(7, ProbedServerSecurablePermissions)
+
+	if len(args) != len(ProbedServerSecurablePermissions) {
+		t.Errorf("the server catalog block bound %d names, want %d — it must not bind per securable",
+			len(args), len(ProbedServerSecurablePermissions))
+	}
+	if !strings.Contains(q, "(VALUES (@p7)") {
+		t.Errorf("query = %s, want placeholders starting at @p7", q)
+	}
+	for _, want := range []struct{ frag, why string }{
+		{"p.class = 101", "class 101 is SERVER_PRINCIPAL, which covers logins and server roles alike"},
+		{"p.class = 105", "class 105 is ENDPOINT; there is no class 110, and a role probed at one finds nothing"},
+		{"sp.principal_id = p.major_id", "major_id is the principal_id at class 101"},
+		{"e.endpoint_id = p.major_id", "major_id is the endpoint_id at class 105, not the principal_id"},
+		{"sp.type_desc WHEN 'SERVER_ROLE'", "the two class-101 kinds are told apart by type_desc and by nothing else"},
+		{"p.state = 'D'", "only DENY rows are read; a GRANT read back as a denial withholds a write the login holds"},
+		{"p.grantee_principal_id IN (SELECT id FROM cap_srv_me)", "a permission reaching the login through a nested server role is held just as fully"},
+		{"p.permission_name IN (n.v, 'CONTROL')", "CONTROL implies the permission asked about"},
+	} {
+		if !strings.Contains(q, want.frag) {
+			t.Errorf("the server catalog block is missing %q — %s:\n%s", want.frag, want.why, q)
+		}
+	}
+	// The permission in the kind column and the "<kind>::<name>" securable in
+	// the name column, as scanCapabilityRows and ServerSecurableKey read them.
+	if !strings.Contains(q, "SELECT CONCAT('V:', n.v)") {
+		t.Errorf("the server catalog block's rows are not tagged \"V:\":\n%s", q)
+	}
+	if !strings.Contains(q, "CONCAT('ENDPOINT::', e.name)") {
+		t.Errorf("the endpoint half does not key on ServerSecurableKey's form:\n%s", q)
+	}
+}
+
+// TestTheServerProbeAsksForExplicitServerDenials. The block rides on the same
+// round trip as the role and permission probes, so what pins it is the query
+// the server actually received: a block appended without its CTE, or with its
+// placeholders overlapping the blocks before it, binds the wrong names and
+// reports denials that were never made.
+func TestTheServerProbeAsksForExplicitServerDenials(t *testing.T) {
+	script := &capScript{serverRows: [][]driver.Value{{"R", "sysadmin", int64(0)}}}
+	srv := capServer(t, script)
+	if _, err := srv.CapabilitiesContext(context.Background()); err != nil {
+		t.Fatalf("CapabilitiesContext: %v", err)
+	}
+	q := script.srvQuery
+	if !strings.HasPrefix(q, capabilityServerPrincipalCTE) {
+		t.Errorf("the server probe does not open with the principal CTE its catalog block selects from:\n%s", q)
+	}
+	if !strings.Contains(q, "sys.server_permissions") {
+		t.Error("the server probe never reads sys.server_permissions, so every server-class DENY is invisible")
+	}
+	// The catalog block's placeholders start after the roles and the
+	// permissions, and nothing but a count check catches an overlap: the
+	// driver binds happily either way and the answers come back scripted.
+	first := len(ProbedServerRoles) + len(ProbedServerPermissions) + 1
+	if !strings.Contains(q, fmt.Sprintf("(VALUES (@p%d)", first)) {
+		t.Errorf("the server catalog block does not start at @p%d:\n%s", first, q)
+	}
+	want := len(ProbedServerRoles) + len(ProbedServerPermissions) +
+		len(ProbedServerSecurablePermissions) + len(ProbedAvailabilityGroupPermissions)
+	if len(script.srvArgs) != want {
+		t.Errorf("the server probe bound %d names, want %d", len(script.srvArgs), want)
+	}
+}
+
+// TestServerCapabilitiesReadSecurableDenialsApartFromTheProbe. The "P" and
+// "V:" blocks land in two maps, and neither may be read as the other: a
+// server-scope ALTER ANY LOGIN that HAS_PERMS_BY_NAME answered 1 for must
+// survive a class-101 denial on one login, because resolving the two is the
+// caller's job and it can only do that while both answers reach it.
+func TestServerCapabilitiesReadSecurableDenialsApartFromTheProbe(t *testing.T) {
+	srv := capServer(t, &capScript{serverRows: [][]driver.Value{
+		{"P", "ALTER ANY LOGIN", int64(1)},
+		{"V:ALTER", "LOGIN::bob", int64(0)},
+		{"V:ALTER", "SERVER ROLE::ops", int64(0)},
+		{"V:ALTER", "ENDPOINT::Mirroring", int64(0)},
+	}})
+	c, err := srv.CapabilitiesContext(context.Background())
+	if err != nil {
+		t.Fatalf("CapabilitiesContext: %v", err)
+	}
+	if !c.DeniedOnLogin("bob", "ALTER") {
+		t.Error("the login's DENY row did not read back")
+	}
+	if !c.DeniedOnServerRole("ops", "ALTER") {
+		t.Error("the server role's DENY row did not read back")
+	}
+	if !c.DeniedOnEndpoint("Mirroring", "ALTER") {
+		t.Error("the endpoint's DENY row did not read back")
+	}
+	if c.DeniedOnLogin("carol", "ALTER") {
+		t.Error("a login with no catalog row read as denied")
+	}
+	if !c.Allows("ALTER ANY LOGIN") {
+		t.Error("the server-scope grant stopped reading back once the securable denial arrived")
+	}
+}
+
+// TestPermitsOnAvailabilityGroupReadsTheProbe. Class 108 is the one server
+// scope answered by HAS_PERMS_BY_NAME rather than by a catalog read — see
+// ProbedAvailabilityGroupPermissions — so unlike the sparse maps beside it,
+// this one may be read in the withholding direction: a probed instance has a
+// row per group, and unknown still permits.
+func TestPermitsOnAvailabilityGroupReadsTheProbe(t *testing.T) {
+	c := &Capabilities{
+		ServerPermissions: map[string]CapabilityState{"ALTER ANY AVAILABILITY GROUP": CapabilityGranted},
+		AvailabilityGroupPermissions: map[string]map[string]CapabilityState{
+			"AAG1": {"ALTER": CapabilityDenied},
+			"AAG2": {"ALTER": CapabilityGranted},
+		},
+	}
+	if c.PermitsOnAvailabilityGroup("AAG1", "ALTER") {
+		t.Error("a denied availability group read as permitted")
+	}
+	if !c.PermitsOnAvailabilityGroup("AAG2", "ALTER") {
+		t.Error("an undenied availability group read as denied")
+	}
+	if !c.HasOnAvailabilityGroup("AAG2", "ALTER") {
+		t.Error("a granted availability group did not read back as held")
+	}
+	if c.HasOnAvailabilityGroup("AAG1", "ALTER") {
+		t.Error("a denied availability group read as held")
+	}
+	// Unknown permits, which is the rule the whole layer is built on: a group
+	// the probe never reached must not lose its menu items.
+	if !c.PermitsOnAvailabilityGroup("AAG3", "ALTER") {
+		t.Error("a group with no row read as denied; unknown must fail open")
+	}
+	var nilCaps *Capabilities
+	if !nilCaps.PermitsOnAvailabilityGroup("AAG1", "ALTER") {
+		t.Error("a nil capability set withheld an availability group")
+	}
+	// The server-wide answer is separate and must survive a per-group denial,
+	// because resolving the two is the caller's job.
+	if !c.Allows("ALTER ANY AVAILABILITY GROUP") {
+		t.Error("the server-wide grant stopped reading back once the group denial arrived")
+	}
+}
+
+// TestTheAvailabilityGroupBlockAsksPerGroup pins the block's shape. The
+// permission has to ride in the kind column and the group in the name column,
+// scanCapabilityRows' arrangement — reversed, a group named "P" is read back as
+// a server-scope permission answer.
+func TestTheAvailabilityGroupBlockAsksPerGroup(t *testing.T) {
+	q, args := availabilityGroupCapabilityQuery(7, ProbedAvailabilityGroupPermissions)
+
+	if len(args) != len(ProbedAvailabilityGroupPermissions) {
+		t.Errorf("the availability-group block bound %d names, want %d — it must not bind per group",
+			len(args), len(ProbedAvailabilityGroupPermissions))
+	}
+	for _, want := range []struct{ frag, why string }{
+		{"SELECT CONCAT('G:', n.v), ag.name,", "the permission rides in kind and the group in name"},
+		{"HAS_PERMS_BY_NAME(QUOTENAME(ag.name), 'AVAILABILITY GROUP', n.v)", "class 108 has no catalog read; the name must be quoted"},
+		{"FROM sys.availability_groups AS ag", "every group on the instance is asked in one pass"},
+	} {
+		if !strings.Contains(q, want.frag) {
+			t.Errorf("the availability-group block is missing %q — %s:\n%s", want.frag, want.why, q)
+		}
+	}
+}
+
+// TestServerCapabilitiesReadGroupAnswersApartFromTheProbe. The "P" and "G:"
+// blocks land in two maps, and neither may be read as the other: the
+// server-wide ALTER ANY AVAILABILITY GROUP reads 1 on an instance where one
+// group carries DENY ALTER, and that is precisely the case the per-group map
+// exists to report.
+func TestServerCapabilitiesReadGroupAnswersApartFromTheProbe(t *testing.T) {
+	srv := capServer(t, &capScript{serverRows: [][]driver.Value{
+		{"P", "ALTER ANY AVAILABILITY GROUP", int64(1)},
+		{"G:ALTER", "AAG1", int64(0)},
+		{"G:ALTER", "AAG2", int64(1)},
+	}})
+	c, err := srv.CapabilitiesContext(context.Background())
+	if err != nil {
+		t.Fatalf("CapabilitiesContext: %v", err)
+	}
+	if c.PermitsOnAvailabilityGroup("AAG1", "ALTER") {
+		t.Error("the group's denial did not read back")
+	}
+	if !c.PermitsOnAvailabilityGroup("AAG2", "ALTER") {
+		t.Error("an undenied group read as denied")
+	}
+	if !c.Allows("ALTER ANY AVAILABILITY GROUP") {
+		t.Error("the server-wide grant stopped reading back once the group denial arrived")
 	}
 }

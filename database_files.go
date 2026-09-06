@@ -320,7 +320,7 @@ func (d *Database) FileGroups() ([]*FileGroup, error) {
 // FileGroupsContext is the context-aware variant of FileGroups.
 func (d *Database) FileGroupsContext(ctx context.Context) ([]*FileGroup, error) {
 	const q = `
-SELECT fg.name, fg.is_default, fg.is_read_only,
+SELECT fg.name, fg.type_desc, fg.is_default, fg.is_read_only,
        df.name, df.physical_name, df.size * 8, df.max_size, df.growth,
        df.is_percent_growth,
        CASE WHEN df.file_id = 1 THEN 1 ELSE 0 END AS is_primary
@@ -337,10 +337,10 @@ ORDER  BY fg.name, df.file_id`
 	fgMap := make(map[string]*FileGroup)
 	var order []string
 	for rows.Next() {
-		var fgName string
+		var fgName, fgType string
 		var fgDefault, fgReadOnly, isPctGrowth, isPrimary bool
 		f := DatabaseFile{}
-		if err := rows.Scan(&fgName, &fgDefault, &fgReadOnly,
+		if err := rows.Scan(&fgName, &fgType, &fgDefault, &fgReadOnly,
 			&f.Name, &f.PhysicalName, &f.Size, &f.MaxSize, &f.Growth,
 			&isPctGrowth, &isPrimary); err != nil {
 			return nil, fmt.Errorf("gosmo: list filegroups: %w", err)
@@ -355,7 +355,7 @@ ORDER  BY fg.name, df.file_id`
 
 		fg, ok := fgMap[fgName]
 		if !ok {
-			fg = &FileGroup{Name: fgName, IsDefault: fgDefault, IsReadOnly: fgReadOnly}
+			fg = &FileGroup{Name: fgName, Type: fgType, IsDefault: fgDefault, IsReadOnly: fgReadOnly}
 			fgMap[fgName] = fg
 			order = append(order, fgName)
 		}
