@@ -3,69 +3,52 @@
 The current release, in brief. Detail and history are in
 [CHANGELOG.md](CHANGELOG.md).
 
-## v0.0.11
+## v0.0.12
 
-Six server-object families arrive whole, plus detach/attach, the Query
-Store report views, and permissions answered per securable. Underneath:
-every catalog column added after the SQL Server 2016 SP1 floor is now
-version-gated instead of assumed.
+Azure SQL Managed Instance is supported properly rather than incidentally,
+and the database half of `v0.0.11`'s Security folder work arrives: DDL
+triggers, audit specifications and scoped credentials, all at database
+scope. Capabilities can now withhold on a recorded DENY.
 
 ### New
 
-- Server audits and audit specifications — create, alter, enable/disable,
-  drop, running status.
-- Logical backup devices, and a `BackupTarget` so the RESTORE-side reads
-  take a device as well as a path.
-- Credentials as a full family, with cryptographic providers. The secret
-  is write-only.
-- Endpoints of every protocol, with state changes and on-demand mirroring
-  or Service Broker detail.
-- Server-scope DDL and logon triggers.
-- Asymmetric keys (read only).
-- Detach and attach, including the file list read out of a detached
-  primary data file.
-- Query Store reports: SSMS's seven views, plan list and plan XML,
-  force/unforce.
-- Column master key rotation for a column encryption key.
-- Permission answers at schema, object and column scope.
-- `ConnectionOptions.Dialer`, for a proxy or an SSH tunnel.
-- `Server.DatabaseFiles(name)` — paths for a database in any state, from
-  the server catalog.
-- Six more scripting verbs, five more `*Seq` iterators.
-- A stated version floor, `MinimumServerVersion`, and the gating layer
-  behind it.
+- Database-scope DDL triggers — list, enable, disable, drop, script.
+- Database audit specifications, including per-securable actions.
+- Database-scoped credentials. The secret is write-only.
+- `Database.ObjectTriggers(schema, name)` — a view's INSTEAD OF triggers,
+  which nothing could read before.
+- Azure instance resources: the 15-second resource history, the resource
+  governor's fixed limits, and the engine's OS job object.
+- `EngineEdition` constants, with `ServerInfo.IsAzure()`.
+- Backup and restore to Azure Storage: `TO URL`/`FROM URL` chosen per
+  device, `URLTarget`, `IsBackupURL`, and a `Credential` option.
+- Explicit-DENY capability blocks: `DeniedOnLogin`, `DeniedOnServerRole`,
+  `DeniedOnEndpoint`, `DeniedOnDatabase`, `DeniedOnPrincipal`.
+- Availability-group scope capabilities.
+- `FileGroup.Type` and `IsFileStream()`, which decide what a file added to
+  the group becomes.
+- Three more scripting verbs, two more `*Seq` iterators (98 now).
 
 ### Fixes
 
-- A running Agent job reported idle, and an idle one running.
-- Six catalog reads failed outright on an older instance, each naming a
-  column it does not have: AG listeners, Query Store options, table
-  detail, column master keys, scoped configurations, statistics header.
-- Five more used `STRING_AGG`, which is 2017, and so failed on the 2016
-  floor.
-- A named instance with no port often failed to connect on a dual-stack
-  host, reported as "no instance matching".
-- Extended properties came back empty for a level the caller left unset.
-- A failed forced drop left a database in single-user mode.
-- A failed job step reorder could lose a step.
-- `Search` missed rows on a case-sensitive collation.
-- The default backup path was empty on 2017 and older.
-- Scripting a database panicked on a `Server` built without `NewServer`.
+- A NULL in msdb's backup history killed the whole read — the entire
+  Database Properties General page on a Managed Instance.
+- A scripted column encryption key rotation mutated the handle, so a
+  pre-flight check read the wrong value count.
+- The server filesystem reads took the pre-2017 path on Azure, losing
+  size and modification time for no reason.
 
 ### Changes
 
-- **`JobState`'s values are Agent's real encoding** — the constants are
-  renumbered, so code comparing against a literal now compares against the
-  wrong thing. `JobStateCancelling` and `JobStateRunning` are deprecated
-  and go at the next breaking tag.
-- `Credential` moved to its own file and carries a server reference; a
-  struct literal panics on `Alter` or `Drop`.
-- Scripted parameter substitution skips string literals, quoted
-  identifiers and comments.
-- Job step reordering is one transactional batch.
-- The single-user repair after a rename, drop or detach runs on its own
-  context.
-- `ServerInfo.OSVersion` is documented as `@@VERSION` verbatim, not an OS
-  version string.
-- Dependencies: `go-mssqldb` v1.11.0, and the Azure identity chain and
-  `golang.org/x/crypto` with it.
+- **An Azure engine edition is gated as newest, not as the version it
+  reports.** A Managed Instance says 12.0.2000.8 while running an 18.x
+  engine, which put it below every version gate — silently, returning
+  nothing for columns it has. `ServerInfo.VersionMajor` is unchanged.
+- `Server.AgentInfo` answers on Azure, where `sys.dm_server_services` is
+  empty, from Agent's own sessions and `msdb.dbo.syssessions`.
+- `EndpointSpec.EncryptionAlgorithm` is validated against the sub-clause's
+  grammar; a value the server would reject now fails client-side.
+- **Removed:** `JobStateCancelling` and `JobStateRunning`, deprecated in
+  `v0.0.11`. Use `JobStateExecuting` and
+  `JobStatePerformingCompletionActions`.
+- Dependencies: the `golang.org/x` chain; toolchain go1.27.1.

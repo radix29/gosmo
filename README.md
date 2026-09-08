@@ -28,6 +28,13 @@ recognises a `CREATE OR ALTER` that the *server's own* stored definition
 already contains and passes it through unchanged. That text is the
 author's, not gosmo's.
 
+Azure SQL Managed Instance is supported and is version-gated separately.
+It reports a frozen `ProductVersion` — 12.0.2000.8, SQL Server 2014 — while
+running an 18.x engine that has every catalog column gosmo gates on 2016
+through 2022, so `ServerInfo.IsAzure()` routes it past `VersionMajor` and
+into the "treat as newest" branch below. `Info().VersionMajor` keeps the 12
+the server actually said, for callers that display a version.
+
 Columns and syntax added after the floor are gated rather than assumed —
 `colSince` substitutes a typed literal for a column the instance lacks, so
 a caller gets a zero value instead of a failed read, and a statement an
@@ -204,6 +211,12 @@ classDiagram
         +ServerAuditSpecification(name) *ServerAuditSpecification
         +CreateServerAuditSpecification(spec) *ServerAuditSpecification
         +AuditActionGroups() []string
+        +DatabaseAuditActionGroups() []string
+        +DatabaseAuditActions() []string
+        +ServerResourceStats(max) []*ServerResourceStat
+        +LatestServerResourceStats() *ServerResourceStat
+        +InstanceResourceGovernance() *InstanceResourceGovernance
+        +OSJobObject() *OSJobObject
         +ServerTriggers() []*ServerTrigger
         +ServerTriggerByName(name) *ServerTrigger
         +ServerTrigger(name) *ServerTrigger
@@ -242,6 +255,26 @@ classDiagram
         +VersionMajor int
         +VersionMinor int
         +VersionBuild int
+        +IsAzure() bool
+        EngineEdition is SERVERPROPERTY('EngineEdition');
+        IsAzure folds the five Azure-hosted ones.
+        ProductVersion is frozen on Azure — a Managed
+        Instance answers 12.0.2000.8 while running an
+        18.x engine, so no version gate may believe it.
+    }
+
+    class EngineEdition {
+        <<enumeration>>
+        EnginePersonal
+        EngineStandard
+        EngineEnterprise
+        EngineExpress
+        EngineAzureSQLDatabase
+        EngineAzureSynapse
+        EngineAzureManagedInst
+        EngineAzureSQLEdge
+        EngineAzureSynapseSrvls
+        +IsAzure() bool
     }
 
     %% =========================================================
@@ -507,7 +540,11 @@ classDiagram
         +RemoveRoleMember(role, member) error
         +FileGroups() []*FileGroup
         +Triggers() []*Trigger
+        +ObjectTriggers(schema, name) []*Trigger
         +DropTrigger(schema, name) error
+        +DatabaseTriggers() []*DatabaseTrigger
+        +DatabaseTriggerByName(name) *DatabaseTrigger
+        +DatabaseTrigger(name) *DatabaseTrigger
         +Sequences() []*Sequence
         +DropSequence(schema, name) error
         +Synonyms() []*Synonym
@@ -740,17 +777,38 @@ classDiagram
     class Capabilities {
         +ServerRoles map~string,bool~
         +ServerPermissions map~string,CapabilityState~
+        +ExplicitServerPermissions map~string,map~
+        +AvailabilityGroupPermissions map~string,map~
         +Has(name) bool
         +Allows(name) bool
         +Permission(name) CapabilityState
         +InServerRole(name) bool
         +IsSysadmin() bool
         +Probed() bool
+        +DeniedOnServerSecurable(kind, name, permission) bool
+        +DeniedOnLogin(name, permission) bool
+        +DeniedOnServerRole(name, permission) bool
+        +DeniedOnEndpoint(name, permission) bool
+        +AvailabilityGroupPermission(group, name) CapabilityState
+        +HasOnAvailabilityGroup(group, name) bool
+        +PermitsOnAvailabilityGroup(group, name) bool
         Has is the test for offering something,
         Allows the test for withholding it —
         deliberately not opposites, because
         withholding must fail open. Every
         method is nil-safe.
+        ExplicitServerPermissions is a
+        sys.server_permissions read of DENY rows
+        only, keyed by ServerSecurableKey, so
+        DeniedOn* is its one sound question.
+    }
+
+    class ServerSecurableKind {
+        <<enumeration>>
+        ServerSecurableLogin
+        ServerSecurableServerRole
+        ServerSecurableEndpoint
+        +ServerSecurableKey(kind, name) string
     }
 
     class CapabilityState {
@@ -805,6 +863,7 @@ classDiagram
     ConnectionOptions --> KerberosOptions : configures AuthWindows via
     Server --> ConnectionOptions : created from
     Server --> ServerInfo : has
+    ServerInfo ..> EngineEdition : EngineEdition is one of
     Server "1" --> "*" Database : owns
     Server "1" --> "*" Login : owns
     Server "1" --> "*" ServerRole : owns
@@ -823,6 +882,7 @@ classDiagram
     Server --> ProcessorInfo : has
     Server "1" --> "*" DiskVolumeInfo : lists
     Server --> Capabilities : Capabilities() returns
+    Capabilities ..> ServerSecurableKind : ExplicitServerPermissions keyed by
     Capabilities --> CapabilityState : answers with
     DatabaseCapabilities --> CapabilityState : answers with
 
@@ -1207,9 +1267,13 @@ classDiagram
         +Accessible bool
         +Roles map~string,bool~
         +Permissions map~string,CapabilityState~
+        +ExplicitDatabasePermissions map~string,CapabilityState~
+        +ExplicitPrincipalPermissions map~string,map~
         +Has(name) bool
         +Allows(name) bool
         +Permits(name) bool
+        +DeniedOnDatabase(name) bool
+        +DeniedOnPrincipal(principal, name) bool
         +Permission(name) CapabilityState
         +InRole(name) bool
         +Probed() bool
@@ -1241,6 +1305,9 @@ classDiagram
         explicit grants and denials, so HasOn*
         adds permission and only DeniedOn*
         withholds it.
+        DeniedOnDatabase and DeniedOnPrincipal
+        read recorded DENY rows, which a
+        HAS_PERMS_BY_NAME grant cannot reveal.
     }
 
     class DatabaseRecoveryStatus {
@@ -1758,6 +1825,7 @@ classDiagram
         +ScriptDatabaseRole(name) string
         +ScriptDatabaseAuditSpecification(name) string
         +ScriptDatabaseScopedCredential(name) string
+        +ScriptDatabaseTrigger(name) string
         +ScriptPartitionFunction(name) string
         +ScriptPartitionScheme(name) string
         +ScriptSecurityPolicy(schema, name) string
@@ -1900,9 +1968,17 @@ classDiagram
 
     class FileGroup {
         +Name string
+        +Type string
         +IsDefault bool
         +IsReadOnly bool
         +Files []DatabaseFile
+        +IsFileStream() bool
+        Type is sys.filegroups.type_desc —
+        ROWS_FILEGROUP, FILESTREAM_DATA_FILEGROUP or
+        MEMORY_OPTIMIZED_DATA_FILEGROUP. ADD FILE has
+        no file-type keyword, so the group decides what
+        a file added to it becomes. IsDefault is per
+        type, not per database.
     }
 
     class Trigger {
@@ -2111,6 +2187,10 @@ classDiagram
         +Running bool
         +StatusText string
         +LastStartupTime time.Time
+        Read from sys.dm_server_services, which
+        returns no rows on an Azure edition —
+        there Agent's own sessions and
+        msdb.dbo.syssessions stand in.
     }
 
     class Job {
@@ -2783,7 +2863,26 @@ classDiagram
         +Disable() error
         +Drop() error
         A different family from Database.Triggers,
-        which reads DML triggers on a table.
+        which reads DML triggers on a table, and from
+        DatabaseTrigger below, which reads DDL triggers
+        scoped to one database.
+    }
+
+    class DatabaseTrigger {
+        -db *Database
+        +Name string
+        +IsEnabled bool
+        +CreateDate time.Time
+        +ModifyDate time.Time
+        +Events []string
+        +Definition string
+        +Database() *Database
+        +Enable() error
+        +Disable() error
+        +Drop() error
+        The parent_class = 0 family: DDL triggers on
+        the database itself. DISABLE TRIGGER takes
+        ON DATABASE here, not ON ALL SERVER.
     }
 
     %% =========================================================
@@ -2903,6 +3002,7 @@ classDiagram
     DatabaseAuditSpecification "1" --> "*" DatabaseAuditAction : records
     DatabaseAuditSpecification "*" --> "1" ServerAudit : writes to
     Server "1" --> "*" ServerTrigger : owns
+    Database "1" --> "*" DatabaseTrigger : owns
     Server "1" --> "*" ErrorLogFile : EnumErrorLogs() returns
     Server "1" --> "*" ErrorLogEntry : ReadLog() returns
     Server "1" --> "*" FileSystemEntry : EnumFileSystem() returns
@@ -3076,6 +3176,9 @@ pool.
 | Backup devices           | `srv.BackupDevices()` / `srv.BackupDeviceByName(name)` / `srv.BackupDevice(name)` (no-I/O handle) / `srv.CreateBackupDevice(name, type, physicalName)` / `dev.Drop(deleteFile)` / `dev.Headers()` |
 | Endpoints (all protocols) | `srv.Endpoints()` / `srv.EndpointByName(name)` / `ep.SetState(state)` / `ep.Drop()` / `ep.MirroringDetail()` / `ep.ServiceBrokerDetail()` — see [Endpoints](#endpoints) |
 | Server DDL / logon triggers | `srv.ServerTriggers()` / `srv.ServerTriggerByName(name)` / `srv.ServerTrigger(name)` (no-I/O handle) / `tr.Enable()` / `tr.Disable()` / `tr.Drop()` |
+| Azure engine edition             | `srv.Info().IsAzure()` — the test every version gate asks before it believes `VersionMajor`, which Azure freezes |
+| Azure resource history           | `srv.ServerResourceStats(max)` / `srv.LatestServerResourceStats()` — `sys.server_resource_stats`, one row per 15-second window |
+| Azure resource limits            | `srv.InstanceResourceGovernance()` / `srv.OSJobObject()` — see [Azure instance resources](#azure-instance-resources) |
 | Files of one database, in any state | `srv.DatabaseFiles(name)` — reads `sys.master_files`, so it answers for an OFFLINE / RECOVERY_PENDING / SUSPECT database that `db.Files()` cannot `USE` |
 | Live memory stats        | `srv.MemoryStats()`                        |
 | Languages                | `srv.Languages()`                          |
@@ -3086,7 +3189,8 @@ pool.
 | `Server.AvailabilityGroups` | `srv.AvailabilityGroups()` / `srv.AvailabilityGroup(name)` (no-I/O handle) / `srv.AvailabilityGroupByName(name)` — see [Always On](#always-on-availability-groups) |
 | Database mirroring endpoint | `srv.DatabaseMirroringEndpoint()` / `srv.CreateDatabaseMirroringEndpoint(spec)` |
 | Verify / inspect a backup device | `srv.VerifyBackup(path)` / `srv.BackupHeaders(path)` / `srv.BackupFileList(path)` |
-| ... from a path or a logical device | `srv.VerifyBackupFrom(t)` / `srv.BackupHeadersFrom(t)` / `srv.BackupFileListForSetFrom(t, n)`, with `t` = `gosmo.DiskTarget(path)` or `gosmo.DeviceTarget(name)` |
+| ... from a path, a blob URL or a logical device | `srv.VerifyBackupFrom(t)` / `srv.BackupHeadersFrom(t)` / `srv.BackupFileListForSetFrom(t, n)`, with `t` = `gosmo.DiskTarget(path)`, `gosmo.URLTarget(url)` or `gosmo.DeviceTarget(name)` |
+| Is this device a blob?    | `gosmo.IsBackupURL(device)` — decides `TO URL` vs `TO DISK`; a Managed Instance refuses DISK outright |
 | Log backup chain state    | `srv.DatabaseRecoveryStatuses()` / `db.RecoveryStatus()` → `*DatabaseRecoveryStatus` |
 | What may this login do?   | `srv.Capabilities()` → `*Capabilities` — see [Capabilities](#capabilities-of-the-connected-login) |
 | Wrap a `*sql.DB` you already have | `gosmo.NewServer(ctx, db)` — the inverse of `srv.DB()` |
@@ -3108,8 +3212,9 @@ pool.
 | `Database.AuditSpecifications`  | `db.DatabaseAuditSpecifications()` / `...ByName(name)` / `db.DatabaseAuditSpecification(name)` (no-I/O handle) / `db.CreateDatabaseAuditSpecification(spec)` |
 | `Database.Roles`                | `db.DatabaseRoles()` / `db.RoleByName(name)` / `db.RoleMembers(roleName)` |
 | Database role administration    | `role.Rename(newName)` / `role.ChangeOwner(newOwner)` / `role.Drop()` / `db.DropDatabaseRole(name)` |
-| `Database.FileGroups`           | `db.FileGroups()`                           |
-| `Database.Triggers`             | `db.Triggers()` / `db.DropTrigger(schema, name)` |
+| `Database.FileGroups`           | `db.FileGroups()` — `fg.Type` is the `type_desc` (ROWS / FILESTREAM / MEMORY_OPTIMIZED), `fg.IsFileStream()` the common test |
+| `Database.Triggers`             | `db.Triggers()` / `db.ObjectTriggers(schema, name)` (one table or view, by name) / `db.DropTrigger(schema, name)` |
+| Database-scope DDL triggers     | `db.DatabaseTriggers()` / `db.DatabaseTriggerByName(name)` / `db.DatabaseTrigger(name)` (no-I/O handle) / `tr.Enable()` / `tr.Disable()` / `tr.Drop()` — see [Database DDL triggers](#database-ddl-triggers) |
 | `Database.Sequences`            | `db.Sequences()` / `db.DropSequence(schema, name)` |
 | `Database.Synonyms`             | `db.Synonyms()` / `db.DropSynonym(schema, name)` |
 | Rename any `sp_rename`-able object | `db.RenameObject(schema, oldName, newName)` — view, procedure, function, sequence, synonym, trigger |
@@ -3354,6 +3459,35 @@ nothing, which `Probed()` reports.
 column rows live in their own block: an action that touches the whole object
 is withheld by a denial on any single column, but recording that denial on
 the table would make it a denial of every column.
+
+#### Explicit denials, and per-securable server scope
+
+`HAS_PERMS_BY_NAME` answers what the login *effectively* has, which is why a
+DENY it does not currently lose to is invisible in it. The `Explicit*` blocks
+are catalog reads of the recorded DENY rows beside it, so an action can be
+withheld on the grounds the server will actually refuse it:
+
+| Scope                             | Withhold                                     |
+| --------------------------------- | -------------------------------------------- |
+| A named database (server scope)   | `caps.DeniedOnDatabase(name)`                 |
+| A login, server role or endpoint  | `caps.DeniedOnLogin` / `DeniedOnServerRole` / `DeniedOnEndpoint`, or `DeniedOnServerSecurable(kind, name, permission)` |
+| A database user or role           | `dcaps.DeniedOnPrincipal(principal, name)`    |
+| An availability group             | `caps.AvailabilityGroupPermission(group, name)` / `HasOnAvailabilityGroup` / `PermitsOnAvailabilityGroup` |
+
+`ExplicitServerPermissions` is keyed by `ServerSecurableKey(kind, name)`, so
+a login, a server role and an endpoint of the same name stay apart;
+`ServerSecurableKind` is `ServerSecurableLogin`, `ServerSecurableServerRole`
+or `ServerSecurableEndpoint`. `ProbedServerSecurablePermissions` and
+`ProbedAvailabilityGroupPermissions` name what is asked about.
+
+Availability-group scope is the exception in this group: it is a
+`HAS_PERMS_BY_NAME` probe like schema scope, not a catalog read, so it answers
+three ways and has both an offering and a withholding form. Everything else
+here reads DENY rows only, and so answers exactly one question — is this
+recorded as denied — never "is it granted".
+
+The same two caveats as above still belong to the caller: `sysadmin` bypasses
+every check, and an unprobed scope records nothing.
 
 ### Filtering a listing
 
@@ -3609,7 +3743,7 @@ bounded query.
 **Breaking, since `v0.0.7`:** these took no `context.Context` before — they
 wrapped the non-`Context` collection method, i.e. `context.Background()`.
 `db.TableSeq()` becomes `db.TableSeq(ctx)`, for all 75 that existed then
-(91 now).
+(98 now).
 
 ### Scripting pending writes (`WithScript`)
 
@@ -3707,6 +3841,28 @@ err := srv.VerifyBackup(`C:\Backups\MyDB.bak`)
 files, _ = srv.BackupFileListForSet(`C:\Backups\MyDB.bak`, headers[1].Position)
 ```
 
+#### Backing up to Azure Storage
+
+A device that is an `http`/`https` URL is a blob, and renders as `TO URL` /
+`FROM URL` rather than `TO DISK`. `BackupOptions.Devices` and
+`RestoreOptions.Devices` are plain strings, so the shape decides it —
+`gosmo.IsBackupURL(device)` is the same test a caller can ask itself, and
+`gosmo.URLTarget(url)` states it outright on the RESTORE-side reads.
+
+It is not a cosmetic difference on Azure SQL Managed Instance, which refuses
+every `DISK` device with *"SQL Database Managed Instance supports database
+restore from URI backup device only"* — and whose
+`SERVERPROPERTY('InstanceDefaultBackupPath')` is itself a container URL, so a
+caller building a default destination out of it arrives holding a URL without
+having decided to.
+
+`BackupOptions.Credential` / `RestoreOptions.Credential` name the SQL Server
+credential the statement authenticates with (`WITH CREDENTIAL = N'...'`), the
+storage-account-key form. Leave it empty for the shared access signature
+form, which is what Managed Instance uses: there the credential's *name* is
+the container URL and SQL Server finds it itself, so naming it is not merely
+unnecessary but wrong.
+
 #### Logical backup devices
 
 A backup device is a named alias for a physical location — SSMS's Server
@@ -3752,6 +3908,14 @@ alerts are visible but not manageable — see
 status, _ := srv.AgentInfo()
 fmt.Println(status.Running, status.StatusText, status.LastStartupTime)
 ```
+
+On an Azure engine edition there is no Windows service to report and
+`sys.dm_server_services` is empty, so the read falls back to two SQL-visible
+facts that keep the no-WMI contract: a session under `program_name LIKE
+N'SQLAgent%'` means Agent is up right now, and `msdb.dbo.syssessions`'
+newest `agent_start_date` is its last startup. A login without `VIEW SERVER
+STATE` sees no sessions and reads as stopped, which is why the startup time
+is still reported alongside.
 
 `srv.Job(name)`, `srv.Alert(name)`, `srv.Operator(name)` and
 `srv.Schedule(name)` return a no-I/O handle carrying only the name — the
@@ -4094,6 +4258,30 @@ A trigger declared `FOR` a whole event group lists that group's individual
 events in `Events`, which is what the catalog records. `Definition` is empty
 for an encrypted trigger and for a CLR one, which has no row in
 `sys.server_sql_modules` at all.
+
+### Database DDL triggers
+
+The database-scope half of the same family — SSMS's *db* → Programmability →
+Database Triggers. A third family from the two above: `db.Triggers()` reads
+DML triggers on a table (`parent_class = 1`), `srv.ServerTriggers()` reads the
+server-scope ones (`parent_class = 100`), and these are `parent_class = 0`.
+
+| SSMS equivalent                        | gosmo                                        |
+| -------------------------------------- | -------------------------------------------- |
+| *db* → Programmability → Database Triggers | `db.DatabaseTriggers()` / `db.DatabaseTriggerByName(name)` / `db.DatabaseTrigger(name)` (no-I/O handle) |
+| Enable / disable / drop                | `tr.Enable()` / `tr.Disable()` / `tr.Drop()` |
+| Script one                             | `sc.ScriptDatabaseTrigger(name)`             |
+
+The scope keyword differs from the server family's and is not
+interchangeable: `ENABLE`/`DISABLE`/`DROP TRIGGER ... ON DATABASE`, not `ON
+ALL SERVER`. `Events` lists a declared event group's individual events, as the
+catalog records them, and `Definition` is empty for an encrypted or CLR
+trigger.
+
+`db.ObjectTriggers(schema, name)` belongs to the DML family rather than this
+one: it is `Table.Triggers` addressed by name, and the reader a view's INSTEAD
+OF triggers previously had none of, `View` being a plain row struct with no
+back-pointer to its database.
 
 ### Error log
 

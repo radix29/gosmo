@@ -138,6 +138,12 @@ classDiagram
         +ServerAuditSpecification(name) *ServerAuditSpecification
         +CreateServerAuditSpecification(spec) *ServerAuditSpecification
         +AuditActionGroups() []string
+        +DatabaseAuditActionGroups() []string
+        +DatabaseAuditActions() []string
+        +ServerResourceStats(max) []*ServerResourceStat
+        +LatestServerResourceStats() *ServerResourceStat
+        +InstanceResourceGovernance() *InstanceResourceGovernance
+        +OSJobObject() *OSJobObject
         +ServerTriggers() []*ServerTrigger
         +ServerTriggerByName(name) *ServerTrigger
         +ServerTrigger(name) *ServerTrigger
@@ -176,6 +182,26 @@ classDiagram
         +VersionMajor int
         +VersionMinor int
         +VersionBuild int
+        +IsAzure() bool
+        EngineEdition is SERVERPROPERTY('EngineEdition');
+        IsAzure folds the five Azure-hosted ones.
+        ProductVersion is frozen on Azure — a Managed
+        Instance answers 12.0.2000.8 while running an
+        18.x engine, so no version gate may believe it.
+    }
+
+    class EngineEdition {
+        <<enumeration>>
+        EnginePersonal
+        EngineStandard
+        EngineEnterprise
+        EngineExpress
+        EngineAzureSQLDatabase
+        EngineAzureSynapse
+        EngineAzureManagedInst
+        EngineAzureSQLEdge
+        EngineAzureSynapseSrvls
+        +IsAzure() bool
     }
 
     %% =========================================================
@@ -238,8 +264,9 @@ classDiagram
         +Alter(identity, secret) error
         +Drop() error
         The secret is write-only: sys.credentials
-        never exposes it, so Alter takes a *string
-        and nil leaves it alone.
+        never exposes it, so Alter takes a *string —
+        and nil clears the stored secret, because
+        ALTER CREDENTIAL resets both halves.
     }
 
     class CredentialSpec {
@@ -247,6 +274,26 @@ classDiagram
         +Identity string
         +Secret string
         +CryptographicProvider string
+    }
+
+    class DatabaseScopedCredential {
+        -db *Database
+        +CredentialID int
+        +Name string
+        +Identity string
+        +CreateDate time.Time
+        +ModifyDate time.Time
+        +Alter(identity, secret) error
+        +Drop() error
+        The database-scope family, a separate
+        securable with its own DDL. The secret
+        is write-only here for the same reason.
+    }
+
+    class DatabaseScopedCredentialSpec {
+        +Name string
+        +Identity string
+        +Secret string
     }
 
     class CryptographicProvider {
@@ -408,6 +455,10 @@ classDiagram
         +UserByName(name) *User
         +CreateUser(user, login, schema) error
         +DropUser(name) error
+        +DatabaseAuditSpecifications() []*DatabaseAuditSpecification
+        +DatabaseAuditSpecificationByName(name) *DatabaseAuditSpecification
+        +DatabaseAuditSpecification(name) *DatabaseAuditSpecification
+        +CreateDatabaseAuditSpecification(spec) *DatabaseAuditSpecification
         +DatabaseRoles() []*DatabaseRole
         +RoleByName(name) *DatabaseRole
         +DropDatabaseRole(name) error
@@ -416,7 +467,11 @@ classDiagram
         +RemoveRoleMember(role, member) error
         +FileGroups() []*FileGroup
         +Triggers() []*Trigger
+        +ObjectTriggers(schema, name) []*Trigger
         +DropTrigger(schema, name) error
+        +DatabaseTriggers() []*DatabaseTrigger
+        +DatabaseTriggerByName(name) *DatabaseTrigger
+        +DatabaseTrigger(name) *DatabaseTrigger
         +Sequences() []*Sequence
         +DropSequence(schema, name) error
         +Synonyms() []*Synonym
@@ -444,6 +499,10 @@ classDiagram
         +CreateColumnEncryptionKey(name, values) error
         +SecurityPolicies() []*SecurityPolicy
         +SecurityPolicyByName(schema, name) *SecurityPolicy
+        +DatabaseScopedCredentials() []*DatabaseScopedCredential
+        +DatabaseScopedCredentialByName(name) *DatabaseScopedCredential
+        +DatabaseScopedCredential(name) *DatabaseScopedCredential
+        +CreateDatabaseScopedCredential(spec) *DatabaseScopedCredential
         +Capabilities() *DatabaseCapabilities
         +RecoveryStatus() *DatabaseRecoveryStatus
         +SpaceUsed() SpaceInfo
@@ -645,17 +704,38 @@ classDiagram
     class Capabilities {
         +ServerRoles map~string,bool~
         +ServerPermissions map~string,CapabilityState~
+        +ExplicitServerPermissions map~string,map~
+        +AvailabilityGroupPermissions map~string,map~
         +Has(name) bool
         +Allows(name) bool
         +Permission(name) CapabilityState
         +InServerRole(name) bool
         +IsSysadmin() bool
         +Probed() bool
+        +DeniedOnServerSecurable(kind, name, permission) bool
+        +DeniedOnLogin(name, permission) bool
+        +DeniedOnServerRole(name, permission) bool
+        +DeniedOnEndpoint(name, permission) bool
+        +AvailabilityGroupPermission(group, name) CapabilityState
+        +HasOnAvailabilityGroup(group, name) bool
+        +PermitsOnAvailabilityGroup(group, name) bool
         Has is the test for offering something,
         Allows the test for withholding it —
         deliberately not opposites, because
         withholding must fail open. Every
         method is nil-safe.
+        ExplicitServerPermissions is a
+        sys.server_permissions read of DENY rows
+        only, keyed by ServerSecurableKey, so
+        DeniedOn* is its one sound question.
+    }
+
+    class ServerSecurableKind {
+        <<enumeration>>
+        ServerSecurableLogin
+        ServerSecurableServerRole
+        ServerSecurableEndpoint
+        +ServerSecurableKey(kind, name) string
     }
 
     class CapabilityState {
@@ -710,6 +790,7 @@ classDiagram
     ConnectionOptions --> KerberosOptions : configures AuthWindows via
     Server --> ConnectionOptions : created from
     Server --> ServerInfo : has
+    ServerInfo ..> EngineEdition : EngineEdition is one of
     Server "1" --> "*" Database : owns
     Server "1" --> "*" Login : owns
     Server "1" --> "*" ServerRole : owns
@@ -721,11 +802,14 @@ classDiagram
     Server --> CredentialSpec : CreateCredential() takes
     Server "1" --> "*" CryptographicProvider : lists
     Credential ..> CryptographicProvider : may be bound to
+    Database "1" --> "*" DatabaseScopedCredential : owns
+    Database --> DatabaseScopedCredentialSpec : CreateDatabaseScopedCredential() takes
     Server --> ServerMemoryStats : has
     Server "1" --> "*" Language : lists
     Server --> ProcessorInfo : has
     Server "1" --> "*" DiskVolumeInfo : lists
     Server --> Capabilities : Capabilities() returns
+    Capabilities ..> ServerSecurableKind : ExplicitServerPermissions keyed by
     Capabilities --> CapabilityState : answers with
     DatabaseCapabilities --> CapabilityState : answers with
 
@@ -750,7 +834,6 @@ classDiagram
     ServerScripter ..> Server : scripts logins and server roles of
     ScriptCollector ..> Server : captures writes from
     ScriptCollector ..> Database : captures writes from
-
 classDiagram
     %% =========================================================
     %% Database files, filegroups, and options
@@ -1101,9 +1184,13 @@ classDiagram
         +Accessible bool
         +Roles map~string,bool~
         +Permissions map~string,CapabilityState~
+        +ExplicitDatabasePermissions map~string,CapabilityState~
+        +ExplicitPrincipalPermissions map~string,map~
         +Has(name) bool
         +Allows(name) bool
         +Permits(name) bool
+        +DeniedOnDatabase(name) bool
+        +DeniedOnPrincipal(principal, name) bool
         +Permission(name) CapabilityState
         +InRole(name) bool
         +Probed() bool
@@ -1135,6 +1222,9 @@ classDiagram
         explicit grants and denials, so HasOn*
         adds permission and only DeniedOn*
         withholds it.
+        DeniedOnDatabase and DeniedOnPrincipal
+        read recorded DENY rows, which a
+        HAS_PERMS_BY_NAME grant cannot reveal.
     }
 
     class DatabaseRecoveryStatus {
@@ -1300,7 +1390,6 @@ classDiagram
     Database ..> BulkCopy : bulk-loads via
     Database ..> ProcParam : executes procs with
     Database --> ProcResult : returns
-
 classDiagram
     %% =========================================================
     %% Table and its children
@@ -1642,6 +1731,9 @@ classDiagram
         +ScriptSchema(name) string
         +ScriptUser(name) string
         +ScriptDatabaseRole(name) string
+        +ScriptDatabaseAuditSpecification(name) string
+        +ScriptDatabaseScopedCredential(name) string
+        +ScriptDatabaseTrigger(name) string
         +ScriptPartitionFunction(name) string
         +ScriptPartitionScheme(name) string
         +ScriptSecurityPolicy(schema, name) string
@@ -1784,9 +1876,17 @@ classDiagram
 
     class FileGroup {
         +Name string
+        +Type string
         +IsDefault bool
         +IsReadOnly bool
         +Files []DatabaseFile
+        +IsFileStream() bool
+        Type is sys.filegroups.type_desc —
+        ROWS_FILEGROUP, FILESTREAM_DATA_FILEGROUP or
+        MEMORY_OPTIMIZED_DATA_FILEGROUP. ADD FILE has
+        no file-type keyword, so the group decides what
+        a file added to it becomes. IsDefault is per
+        type, not per database.
     }
 
     class Trigger {
@@ -1870,7 +1970,6 @@ classDiagram
     Scripter --> ScriptOptions : configured by
     ServerScripter --> ScriptOptions : configured by
     ScriptOptions --> ScriptVerb : statement form selected by
-
 classDiagram
     %% =========================================================
     %% Backup / Restore
@@ -1895,6 +1994,7 @@ classDiagram
         +Stats int
         +Init bool
         +Format bool
+        +Credential string
         +Progress func
         +BuildBackupStatement(opts) string
     }
@@ -1913,6 +2013,7 @@ classDiagram
         +StopAt time.Time
         +StopAtMarkName string
         +FileNumber int
+        +Credential string
         +Progress func
         +BuildRestoreStatement(opts) string
     }
@@ -1944,13 +2045,18 @@ classDiagram
     class BackupTarget {
         -name string
         -logical bool
+        -url bool
         +DiskTarget(path) BackupTarget
+        +URLTarget(url) BackupTarget
         +DeviceTarget(name) BackupTarget
+        +IsBackupURL(device) bool
         +String() string
         A logical device is named bare, a path
         as DISK = N'...'. Passing a device name
         as a path reads a file of that name in
         the default backup directory instead.
+        An http/https device is URL = N'...' —
+        Managed Instance refuses DISK outright.
     }
 
     class BackupDevice {
@@ -1980,6 +2086,10 @@ classDiagram
         +Running bool
         +StatusText string
         +LastStartupTime time.Time
+        Read from sys.dm_server_services, which
+        returns no rows on an Azure edition —
+        there Agent's own sessions and
+        msdb.dbo.syssessions stand in.
     }
 
     class Job {
@@ -2193,9 +2303,6 @@ classDiagram
         from xp_sqlagent_enum_jobs. With Agent
         stopped only Executing and Idle can be
         told apart.
-        JobStateCancelling and JobStateRunning
-        are deprecated: the encoding has no
-        such states.
     }
 
     class ScheduleFreqType {
@@ -2274,7 +2381,6 @@ classDiagram
     Operator "1" --> "*" JobNotificationRef : emailed by
     AlertNotification --> NotificationMethod : delivered by
     Category --> CategoryClass : classified by
-
 classDiagram
     %% =========================================================
     %% Always On availability groups
@@ -2596,6 +2702,44 @@ classDiagram
         +Enabled bool
     }
 
+    class DatabaseAuditSpecification {
+        -db *Database
+        +SpecificationID int
+        +Name string
+        +AuditGUID string
+        +AuditName string
+        +IsEnabled bool
+        +ActionGroups []string
+        +Actions []DatabaseAuditAction
+        +AddActions(groups, actions) error
+        +DropActions(groups, actions) error
+        +SetAudit(auditName) error
+        +SetState(on) error
+        +Drop() error
+        +WithDisabled(ctx, fn) error
+        Unlike the server half it also records
+        individual actions on securables, not
+        action groups alone.
+    }
+
+    class DatabaseAuditAction {
+        +ActionName string
+        +ClassDesc string
+        +SchemaName string
+        +ObjectName string
+        +Principal string
+        +AuditedResult string
+        +FullName() string
+    }
+
+    class DatabaseAuditSpecificationSpec {
+        +Name string
+        +AuditName string
+        +ActionGroups []string
+        +Actions []DatabaseAuditAction
+        +Enabled bool
+    }
+
     class ServerTrigger {
         -server *Server
         +Name string
@@ -2608,7 +2752,26 @@ classDiagram
         +Disable() error
         +Drop() error
         A different family from Database.Triggers,
-        which reads DML triggers on a table.
+        which reads DML triggers on a table, and from
+        DatabaseTrigger below, which reads DDL triggers
+        scoped to one database.
+    }
+
+    class DatabaseTrigger {
+        -db *Database
+        +Name string
+        +IsEnabled bool
+        +CreateDate time.Time
+        +ModifyDate time.Time
+        +Events []string
+        +Definition string
+        +Database() *Database
+        +Enable() error
+        +Disable() error
+        +Drop() error
+        The parent_class = 0 family: DDL triggers on
+        the database itself. DISABLE TRIGGER takes
+        ON DATABASE here, not ON ALL SERVER.
     }
 
     %% =========================================================
@@ -2723,7 +2886,12 @@ classDiagram
     Server "1" --> "*" ServerAuditSpecification : owns
     Server --> ServerAuditSpecificationSpec : CreateServerAuditSpecification() takes
     ServerAuditSpecification "*" --> "1" ServerAudit : writes to
+    Database "1" --> "*" DatabaseAuditSpecification : owns
+    Database --> DatabaseAuditSpecificationSpec : CreateDatabaseAuditSpecification() takes
+    DatabaseAuditSpecification "1" --> "*" DatabaseAuditAction : records
+    DatabaseAuditSpecification "*" --> "1" ServerAudit : writes to
     Server "1" --> "*" ServerTrigger : owns
+    Database "1" --> "*" DatabaseTrigger : owns
     Server "1" --> "*" ErrorLogFile : EnumErrorLogs() returns
     Server "1" --> "*" ErrorLogEntry : ReadLog() returns
     Server "1" --> "*" FileSystemEntry : EnumFileSystem() returns
@@ -2745,3 +2913,58 @@ classDiagram
     Database "1" --> "*" Certificate : contains
     Database "1" --> "*" AsymmetricKey : contains
     Database --> CertificateSpec : CreateCertificate() accepts
+classDiagram
+    class ServerResourceStat {
+        +StartTime time.Time
+        +EndTime time.Time
+        +ResourceType string
+        +ResourceName string
+        +SKU string
+        +HardwareGeneration string
+        +VirtualCoreCount int
+        +AvgCPUPercent float64
+        +ReservedStorageMB int64
+        +StorageSpaceUsedMB float64
+        +IORequests int64
+        +IOBytesRead int64
+        +IOBytesWritten int64
+        One row per 15-second window, ~14 days
+        retained. Pre-aggregated: plot it, never
+        run it through a per-second delta.
+    }
+
+    class InstanceResourceGovernance {
+        +ServerName string
+        +CapCPU int
+        +MaxLogRate int64
+        +MaxWorkerThreads int
+        +LocalIOPS int
+        +ManagedXStoreIOPS int
+        +ExternalXStoreIOPS int
+        +LocalMaxOutstandingIO int
+        +TempDBLogFileNumber int
+        +DataDirectoryQuotaMB int
+        +DataDirectoryUsageMB int
+        +BufferPoolExtensionSizeGB int
+        Fixed ceilings, not readings — the scale a
+        ServerResourceStat history is read against.
+    }
+
+    class OSJobObject {
+        +CPURate int
+        +CPUAffinityMask int64
+        +MemoryLimitMB int64
+        +ProcessMemoryLimitMB int64
+        +WorkingSetLimitMB int64
+        +PeakJobMemoryUsedMB int64
+        +TotalUserTime int64
+        +TotalKernelTime int64
+        +ReadOperationCount int64
+        +WriteOperationCount int64
+        The host's limits on SQL Server, below the
+        governor's limits on itself.
+    }
+
+    Server --> ServerResourceStat : ServerResourceStats() / LatestServerResourceStats()
+    Server --> InstanceResourceGovernance : InstanceResourceGovernance()
+    Server --> OSJobObject : OSJobObject()

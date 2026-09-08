@@ -22,8 +22,10 @@ These continue for the life of the project, release or not:
   dependencies/search/permissions/execution plans, `Scripter`/
   `ServerScripter`, Query Store reports, detach/attach, Backup & Restore
   and backup devices, SQL Server Agent, Always On, certificates and
-  asymmetric keys, endpoints, audits and audit specifications,
-  credentials, server triggers, error log, server filesystem) in sync with
+  asymmetric keys, endpoints, audits and audit specifications (server and
+  database), credentials (server and database scoped), server triggers,
+  database DDL triggers, error log, server filesystem, Azure instance
+  resources) in sync with
   the code as methods are added — it's the API surface consumers actually
   read. The class diagrams in the same file need the same treatment, and
   `gosmo.mermaid` is those diagrams concatenated in order, kept
@@ -34,10 +36,11 @@ These continue for the life of the project, release or not:
     thing, on GitHub included. The single diagram reached 52,533 during
     `v0.0.9` and had to be split. When a new area is added, give it its own
     diagram rather than growing one past ~45,000; an edge that crosses areas
-    is drawn in the diagram of the area it points *into*. As of `v0.0.11`
-    the five sit at roughly 26k, 14k, 16k, 11k and 13k characters with
-    comments stripped, so there is room — check before folding a sixth area
-    into one. `node` with the `mermaid` package parses a diagram without a
+    is drawn in the diagram of the area it points *into*. `v0.0.12` did
+    exactly that for the Azure instance-resource views, so the map is now
+    **six** diagrams, at roughly 29k, 14k, 16k, 11k, 15k and 2k characters
+    with comments stripped — still room, but check before folding a new area
+    into an existing one. `node` with the `mermaid` package parses a diagram without a
     browser (`mermaid.parse` under a `jsdom` global), which is the cheap way
     to check an edit before pushing it.
   - **Free text inside a class body is parsed as a member.** The diagrams
@@ -90,6 +93,13 @@ These continue for the life of the project, release or not:
   folders drove the audit, audit specification, backup device, credential,
   endpoint and server trigger families, its Query Store panel drove the
   seven report views, and its Attach/Detach dialogs drove `database_attach.go`.
+  `v0.0.12` continues that Security folder work at database scope — DDL
+  triggers, audit specifications and scoped credentials — and adds the first
+  release driven by a *platform* rather than a dialog: goSSMS connecting to an
+  Azure SQL Managed Instance turned up a frozen `ProductVersion` that defeated
+  every version gate, an empty `sys.dm_server_services`, NULLs throughout
+  msdb's backup history and a server that refuses `TO DISK`. All four were
+  fixed here rather than special-cased in the TUI.
 
 
 ## Non-goals
