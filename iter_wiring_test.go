@@ -196,6 +196,12 @@ func iterWirings(t *testing.T) []seqWiring {
 				}
 			},
 			func(ctx context.Context) { _, _ = dbo.ColumnEncryptionKeysContext(ctx) }},
+		{"Database.DatabaseScopedCredentialSeq",
+			func(ctx context.Context) {
+				for range dbo.DatabaseScopedCredentialSeq(ctx) {
+				}
+			},
+			func(ctx context.Context) { _, _ = dbo.DatabaseScopedCredentialsContext(ctx) }},
 		{"Database.ColumnMasterKeySeq",
 			func(ctx context.Context) {
 				for range dbo.ColumnMasterKeySeq(ctx) {
@@ -238,6 +244,12 @@ func iterWirings(t *testing.T) []seqWiring {
 				}
 			},
 			func(ctx context.Context) { _, _ = dbo.DatabaseScopedConfigsContext(ctx) }},
+		{"Database.DatabaseTriggerSeq",
+			func(ctx context.Context) {
+				for range dbo.DatabaseTriggerSeq(ctx) {
+				}
+			},
+			func(ctx context.Context) { _, _ = dbo.DatabaseTriggersContext(ctx) }},
 		{"Database.DependencySeq",
 			func(ctx context.Context) {
 				for range dbo.DependencySeq(ctx, argSchema, argName) {

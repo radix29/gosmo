@@ -347,6 +347,13 @@ func (d *Database) ColumnMasterKeySeq(ctx context.Context) iter.Seq2[*ColumnMast
 	return seqFrom(ctx, d.ColumnMasterKeysContext)
 }
 
+// DatabaseScopedCredentialSeq returns an iterator over all database-scoped
+// credentials in the database (as opposed to Server.CredentialSeq's
+// server-level scope).
+func (d *Database) DatabaseScopedCredentialSeq(ctx context.Context) iter.Seq2[*DatabaseScopedCredential, error] {
+	return seqFrom(ctx, d.DatabaseScopedCredentialsContext)
+}
+
 // CertificateSeq returns an iterator over all certificates in the database.
 func (d *Database) CertificateSeq(ctx context.Context) iter.Seq2[*Certificate, error] {
 	return seqFrom(ctx, d.CertificatesContext)
@@ -382,6 +389,12 @@ func (d *Database) TableChangeTrackingSeq(ctx context.Context) iter.Seq2[*TableC
 // (as opposed to Table.TriggerSeq's single-table scope).
 func (d *Database) TriggerSeq(ctx context.Context) iter.Seq2[*Trigger, error] {
 	return seqFrom(ctx, d.TriggersContext)
+}
+
+// DatabaseTriggerSeq returns an iterator over every database-scope DDL
+// trigger — the parent_class = 0 family, which TriggerSeq does not list.
+func (d *Database) DatabaseTriggerSeq(ctx context.Context) iter.Seq2[*DatabaseTrigger, error] {
+	return seqFrom(ctx, d.DatabaseTriggersContext)
 }
 
 // DatabaseRoleSeq returns an iterator over all database-level roles.

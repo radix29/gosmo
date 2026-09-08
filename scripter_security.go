@@ -160,6 +160,108 @@ func buildDatabaseRoleScript(r *DatabaseRole, opts ScriptOptions) string {
 	return sb.String()
 }
 
+// ScriptDatabaseAuditSpecification generates the CREATE (or DROP) script for
+// one database audit specification.
+func (sc *Scripter) ScriptDatabaseAuditSpecification(name string) (string, error) {
+	return sc.ScriptDatabaseAuditSpecificationContext(context.Background(), name)
+}
+
+// ScriptDatabaseAuditSpecificationContext is the context-aware variant.
+func (sc *Scripter) ScriptDatabaseAuditSpecificationContext(ctx context.Context, name string) (string, error) {
+	spec, err := sc.db.DatabaseAuditSpecificationByNameContext(ctx, name)
+	if err != nil {
+		return "", err
+	}
+	return buildDatabaseAuditSpecificationScript(spec, sc.opts)
+}
+
+// buildDatabaseAuditSpecificationScript assembles one specification's script.
+//
+// An orphaned specification — one whose audit has been dropped out from under
+// it, which SQL Server allows — is refused rather than scripted with an empty
+// FOR SERVER AUDIT clause, which would not parse. Same as the server half.
+func buildDatabaseAuditSpecificationScript(s *DatabaseAuditSpecification, opts ScriptOptions) (string, error) {
+	var sb strings.Builder
+	if v := opts.verb(); v == ScriptDrop || v == ScriptDropAndCreate {
+		fmt.Fprintf(&sb, "IF EXISTS (SELECT 1 FROM sys.database_audit_specifications WHERE name = N'%s')\nBEGIN\n"+
+			"    ALTER DATABASE AUDIT SPECIFICATION %s WITH ( STATE = OFF );\n"+
+			"    DROP DATABASE AUDIT SPECIFICATION %s;\nEND\nGO\n",
+			escapeSingle(s.Name), quoteIdent(s.Name), quoteIdent(s.Name))
+		if v == ScriptDrop {
+			return sb.String(), nil
+		}
+		sb.WriteString("\n")
+	}
+
+	if s.AuditName == "" {
+		return "", fmt.Errorf("gosmo: script database audit specification %q: it names no audit", s.Name)
+	}
+	create, err := DatabaseAuditSpecificationSpec{
+		Name:         s.Name,
+		AuditName:    s.AuditName,
+		ActionGroups: s.ActionGroups,
+		Actions:      s.Actions,
+		Enabled:      s.IsEnabled,
+	}.createStatement()
+	if err != nil {
+		return "", fmt.Errorf("gosmo: script database audit specification %q: %w", s.Name, err)
+	}
+
+	if opts.IncludeIfNotExists {
+		fmt.Fprintf(&sb, "IF NOT EXISTS (SELECT 1 FROM sys.database_audit_specifications WHERE name = N'%s')\nBEGIN\n%s\nEND\nGO\n",
+			escapeSingle(s.Name), create)
+	} else {
+		sb.WriteString(create + "\nGO\n")
+	}
+	return sb.String(), nil
+}
+
+// ScriptDatabaseScopedCredential generates the CREATE (or DROP) script for
+// one database-scoped credential.
+func (sc *Scripter) ScriptDatabaseScopedCredential(name string) (string, error) {
+	return sc.ScriptDatabaseScopedCredentialContext(context.Background(), name)
+}
+
+// ScriptDatabaseScopedCredentialContext is the context-aware variant.
+func (sc *Scripter) ScriptDatabaseScopedCredentialContext(ctx context.Context, name string) (string, error) {
+	c, err := sc.db.DatabaseScopedCredentialByNameContext(ctx, name)
+	if err != nil {
+		return "", err
+	}
+	return buildDatabaseScopedCredentialScript(c, sc.opts), nil
+}
+
+// buildDatabaseScopedCredentialScript assembles one database-scoped
+// credential's script.
+//
+// The secret is not readable through any catalog view, so the script carries
+// credentialSecretPlaceholder and says so — the same treatment, and for the
+// same reason, as buildCredentialScript's. Emitting no SECRET clause at all
+// would produce a script that silently creates the credential without one.
+// DROP DATABASE SCOPED CREDENTIAL has no IF EXISTS form, so the drop is
+// guarded with a sys.database_scoped_credentials lookup.
+func buildDatabaseScopedCredentialScript(c *DatabaseScopedCredential, opts ScriptOptions) string {
+	var sb strings.Builder
+	if v := opts.verb(); v == ScriptDrop || v == ScriptDropAndCreate {
+		fmt.Fprintf(&sb, "IF EXISTS (SELECT 1 FROM sys.database_scoped_credentials WHERE name = N'%s')\n"+
+			"    DROP DATABASE SCOPED CREDENTIAL %s;\nGO\n",
+			escapeSingle(c.Name), quoteIdent(c.Name))
+		if v == ScriptDrop {
+			return sb.String()
+		}
+		sb.WriteString("\n")
+	}
+	sb.WriteString("/* The credential's secret cannot be read from the server. Replace the\n" +
+		"   placeholder below, or remove the SECRET clause if it has none. */\n")
+	if opts.IncludeIfNotExists {
+		fmt.Fprintf(&sb, "IF NOT EXISTS (SELECT 1 FROM sys.database_scoped_credentials WHERE name = N'%s')\n",
+			escapeSingle(c.Name))
+	}
+	fmt.Fprintf(&sb, "CREATE DATABASE SCOPED CREDENTIAL %s WITH IDENTITY = N'%s', SECRET = N'%s';\nGO\n",
+		quoteIdent(c.Name), escapeSingle(c.Identity), credentialSecretPlaceholder)
+	return sb.String()
+}
+
 // ============================================================
 // Scripter — row-level security and Always Encrypted keys
 // ============================================================

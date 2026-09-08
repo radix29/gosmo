@@ -551,6 +551,62 @@ func (sc *Scripter) ScriptTriggerContext(ctx context.Context, schema, name strin
 }
 
 // ============================================================
+// Database Trigger
+// ============================================================
+
+// ScriptDatabaseTrigger generates the CREATE (or DROP) script for one
+// database-scope DDL trigger.
+func (sc *Scripter) ScriptDatabaseTrigger(name string) (string, error) {
+	return sc.ScriptDatabaseTriggerContext(context.Background(), name)
+}
+
+// ScriptDatabaseTriggerContext is the context-aware variant of
+// ScriptDatabaseTrigger.
+//
+// scriptModule is not reusable here: it addresses a module by schema and
+// name, and a DDL trigger has no schema.
+func (sc *Scripter) ScriptDatabaseTriggerContext(ctx context.Context, name string) (string, error) {
+	t, err := sc.db.DatabaseTriggerByNameContext(ctx, name)
+	if err != nil {
+		return "", err
+	}
+	return buildDatabaseTriggerScript(t, sc.opts)
+}
+
+// buildDatabaseTriggerScript assembles one database trigger's script from the
+// definition sys.sql_modules stores.
+//
+// A trigger with no readable definition — encrypted, or CLR, which has no row
+// in that view at all — is an error rather than an empty CREATE half: emitting
+// nothing produces a script that drops the trigger and does not put it back.
+// IncludeIfNotExists is not honoured because CREATE TRIGGER must be the first
+// statement in its batch, the same reason scriptModule ignores it. Both are
+// buildServerTriggerScript's reasoning, unchanged; only the scope clause
+// differs.
+func buildDatabaseTriggerScript(t *DatabaseTrigger, opts ScriptOptions) (string, error) {
+	var sb strings.Builder
+	if v := opts.verb(); v == ScriptDrop || v == ScriptDropAndCreate {
+		fmt.Fprintf(&sb, "DROP TRIGGER IF EXISTS %s ON DATABASE;\nGO\n", quoteIdent(t.Name))
+		if v == ScriptDrop {
+			return sb.String(), nil
+		}
+		sb.WriteString("\n")
+	}
+	if strings.TrimSpace(t.Definition) == "" {
+		return "", fmt.Errorf("gosmo: script database trigger %q: definition is not readable (encrypted or CLR)", t.Name)
+	}
+	def := t.Definition
+	if opts.verb() == ScriptAlter {
+		def = alterModuleDefinition(def)
+	}
+	sb.WriteString(def + "\nGO\n")
+	if !t.IsEnabled {
+		fmt.Fprintf(&sb, "DISABLE TRIGGER %s ON DATABASE;\nGO\n", quoteIdent(t.Name))
+	}
+	return sb.String(), nil
+}
+
+// ============================================================
 // Database
 // ============================================================
 

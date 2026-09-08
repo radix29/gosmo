@@ -304,8 +304,9 @@ classDiagram
         +Alter(identity, secret) error
         +Drop() error
         The secret is write-only: sys.credentials
-        never exposes it, so Alter takes a *string
-        and nil leaves it alone.
+        never exposes it, so Alter takes a *string —
+        and nil clears the stored secret, because
+        ALTER CREDENTIAL resets both halves.
     }
 
     class CredentialSpec {
@@ -313,6 +314,26 @@ classDiagram
         +Identity string
         +Secret string
         +CryptographicProvider string
+    }
+
+    class DatabaseScopedCredential {
+        -db *Database
+        +CredentialID int
+        +Name string
+        +Identity string
+        +CreateDate time.Time
+        +ModifyDate time.Time
+        +Alter(identity, secret) error
+        +Drop() error
+        The database-scope family, a separate
+        securable with its own DDL. The secret
+        is write-only here for the same reason.
+    }
+
+    class DatabaseScopedCredentialSpec {
+        +Name string
+        +Identity string
+        +Secret string
     }
 
     class CryptographicProvider {
@@ -474,6 +495,10 @@ classDiagram
         +UserByName(name) *User
         +CreateUser(user, login, schema) error
         +DropUser(name) error
+        +DatabaseAuditSpecifications() []*DatabaseAuditSpecification
+        +DatabaseAuditSpecificationByName(name) *DatabaseAuditSpecification
+        +DatabaseAuditSpecification(name) *DatabaseAuditSpecification
+        +CreateDatabaseAuditSpecification(spec) *DatabaseAuditSpecification
         +DatabaseRoles() []*DatabaseRole
         +RoleByName(name) *DatabaseRole
         +DropDatabaseRole(name) error
@@ -510,6 +535,10 @@ classDiagram
         +CreateColumnEncryptionKey(name, values) error
         +SecurityPolicies() []*SecurityPolicy
         +SecurityPolicyByName(schema, name) *SecurityPolicy
+        +DatabaseScopedCredentials() []*DatabaseScopedCredential
+        +DatabaseScopedCredentialByName(name) *DatabaseScopedCredential
+        +DatabaseScopedCredential(name) *DatabaseScopedCredential
+        +CreateDatabaseScopedCredential(spec) *DatabaseScopedCredential
         +Capabilities() *DatabaseCapabilities
         +RecoveryStatus() *DatabaseRecoveryStatus
         +SpaceUsed() SpaceInfo
@@ -787,6 +816,8 @@ classDiagram
     Server --> CredentialSpec : CreateCredential() takes
     Server "1" --> "*" CryptographicProvider : lists
     Credential ..> CryptographicProvider : may be bound to
+    Database "1" --> "*" DatabaseScopedCredential : owns
+    Database --> DatabaseScopedCredentialSpec : CreateDatabaseScopedCredential() takes
     Server --> ServerMemoryStats : has
     Server "1" --> "*" Language : lists
     Server --> ProcessorInfo : has
@@ -1725,6 +1756,8 @@ classDiagram
         +ScriptSchema(name) string
         +ScriptUser(name) string
         +ScriptDatabaseRole(name) string
+        +ScriptDatabaseAuditSpecification(name) string
+        +ScriptDatabaseScopedCredential(name) string
         +ScriptPartitionFunction(name) string
         +ScriptPartitionScheme(name) string
         +ScriptSecurityPolicy(schema, name) string
@@ -2693,6 +2726,44 @@ classDiagram
         +Enabled bool
     }
 
+    class DatabaseAuditSpecification {
+        -db *Database
+        +SpecificationID int
+        +Name string
+        +AuditGUID string
+        +AuditName string
+        +IsEnabled bool
+        +ActionGroups []string
+        +Actions []DatabaseAuditAction
+        +AddActions(groups, actions) error
+        +DropActions(groups, actions) error
+        +SetAudit(auditName) error
+        +SetState(on) error
+        +Drop() error
+        +WithDisabled(ctx, fn) error
+        Unlike the server half it also records
+        individual actions on securables, not
+        action groups alone.
+    }
+
+    class DatabaseAuditAction {
+        +ActionName string
+        +ClassDesc string
+        +SchemaName string
+        +ObjectName string
+        +Principal string
+        +AuditedResult string
+        +FullName() string
+    }
+
+    class DatabaseAuditSpecificationSpec {
+        +Name string
+        +AuditName string
+        +ActionGroups []string
+        +Actions []DatabaseAuditAction
+        +Enabled bool
+    }
+
     class ServerTrigger {
         -server *Server
         +Name string
@@ -2820,6 +2891,10 @@ classDiagram
     Server "1" --> "*" ServerAuditSpecification : owns
     Server --> ServerAuditSpecificationSpec : CreateServerAuditSpecification() takes
     ServerAuditSpecification "*" --> "1" ServerAudit : writes to
+    Database "1" --> "*" DatabaseAuditSpecification : owns
+    Database --> DatabaseAuditSpecificationSpec : CreateDatabaseAuditSpecification() takes
+    DatabaseAuditSpecification "1" --> "*" DatabaseAuditAction : records
+    DatabaseAuditSpecification "*" --> "1" ServerAudit : writes to
     Server "1" --> "*" ServerTrigger : owns
     Server "1" --> "*" ErrorLogFile : EnumErrorLogs() returns
     Server "1" --> "*" ErrorLogEntry : ReadLog() returns
@@ -2924,7 +2999,7 @@ pool.
 | Cryptographic providers  | `srv.CryptographicProviders()`             |
 | Server audits            | `srv.ServerAudits()` / `srv.ServerAuditByName(name)` / `srv.ServerAudit(name)` (no-I/O handle) / `srv.CreateServerAudit(spec)` — see [Audits](#audits-and-audit-specifications) |
 | Server audit specifications | `srv.ServerAuditSpecifications()` / `...ByName(name)` / `srv.ServerAuditSpecification(name)` (no-I/O handle) / `srv.CreateServerAuditSpecification(spec)` |
-| Audit action groups      | `srv.AuditActionGroups()`                  |
+| Audit action groups      | `srv.AuditActionGroups()` / `srv.DatabaseAuditActionGroups()` / `srv.DatabaseAuditActions()` |
 | Backup devices           | `srv.BackupDevices()` / `srv.BackupDeviceByName(name)` / `srv.BackupDevice(name)` (no-I/O handle) / `srv.CreateBackupDevice(name, type, physicalName)` / `dev.Drop(deleteFile)` / `dev.Headers()` |
 | Endpoints (all protocols) | `srv.Endpoints()` / `srv.EndpointByName(name)` / `ep.SetState(state)` / `ep.Drop()` / `ep.MirroringDetail()` / `ep.ServiceBrokerDetail()` — see [Endpoints](#endpoints) |
 | Server DDL / logon triggers | `srv.ServerTriggers()` / `srv.ServerTriggerByName(name)` / `srv.ServerTrigger(name)` (no-I/O handle) / `tr.Enable()` / `tr.Disable()` / `tr.Drop()` |
@@ -2957,6 +3032,7 @@ pool.
 | `Database.Schemas`              | `db.Schemas()` / `db.SchemaByName(name)` / `schema.ObjectCount()` / `schema.ObjectCountsByType()` |
 | `Database.Users`                | `db.Users()` / `db.UserByName(name)`        |
 | Database user administration    | `user.Rename(newName)` / `user.SetDefaultSchema(schemaName)` / `user.SetLogin(loginName)` |
+| `Database.AuditSpecifications`  | `db.DatabaseAuditSpecifications()` / `...ByName(name)` / `db.DatabaseAuditSpecification(name)` (no-I/O handle) / `db.CreateDatabaseAuditSpecification(spec)` |
 | `Database.Roles`                | `db.DatabaseRoles()` / `db.RoleByName(name)` / `db.RoleMembers(roleName)` |
 | Database role administration    | `role.Rename(newName)` / `role.ChangeOwner(newOwner)` / `role.Drop()` / `db.DropDatabaseRole(name)` |
 | `Database.FileGroups`           | `db.FileGroups()`                           |
@@ -2977,6 +3053,7 @@ pool.
 | Column master keys              | `db.ColumnMasterKeys()` / `db.ColumnMasterKeyByName(name)` / `db.CreateColumnMasterKey(...)` / `...WithSignature(...)` |
 | Column encryption keys          | `db.ColumnEncryptionKeys()` / `db.ColumnEncryptionKeyByName(name)` / `db.CreateColumnEncryptionKey(name, values)` / `cek.AddValue(value)` / `cek.DropValue(masterKeyName)` — the two halves of a master-key rotation |
 | Security policies (RLS)         | `db.SecurityPolicies()` / `db.SecurityPolicyByName(schema, name)` |
+| Database scoped credentials     | `db.DatabaseScopedCredentials()` / `db.DatabaseScopedCredentialByName(name)` / `db.DatabaseScopedCredential(name)` (no-I/O handle) / `db.CreateDatabaseScopedCredential(spec)` — see [Credentials](#credentials) |
 | `Database.RecoveryModel`        | `db.SetRecoveryModel(model)`                |
 | `Database.CompatibilityLevel`   | `db.SetCompatibilityLevel(level)`           |
 | Space used                      | `db.SpaceUsed()`                            |
@@ -3865,6 +3942,10 @@ is the destination — a file, the Windows Application log or the Security log
 | Point it at another audit      | `spec.SetAudit(auditName)`                                  |
 | Enable / disable / drop        | `spec.SetState(on)` / `spec.Drop()`                         |
 | What can be audited            | `srv.AuditActionGroups()`                                   |
+| Database → Security → Database Audit Specifications | `db.DatabaseAuditSpecifications()` / `...ByName(name)` / `db.DatabaseAuditSpecification(name)` |
+| New database specification     | `db.CreateDatabaseAuditSpecification(gosmo.DatabaseAuditSpecificationSpec{...})` |
+| Add / drop groups and actions  | `spec.AddActions(groups, actions)` / `spec.DropActions(groups, actions)` |
+| What can be audited in a database | `srv.DatabaseAuditActionGroups()` / `srv.DatabaseAuditActions()` |
 
 **Every write but the state toggle needs the object disabled**, and both
 types handle that themselves: SQL Server refuses `ALTER` and `DROP` on an
@@ -3884,7 +3965,18 @@ statement out of one. And the two size limits disagree on their sentinel:
 
 `ServerAuditSpecification.AuditName` is empty for an orphaned specification:
 dropping an audit a specification still references succeeds and leaves the
-`audit_guid` pointing at nothing.
+`audit_guid` pointing at nothing. The same holds for
+`DatabaseAuditSpecification.AuditName`.
+
+A **database** audit specification is not the server one with a different
+keyword. It records individual actions on securables as well as action
+groups, so a clause is either `ADD (SCHEMA_OBJECT_ACCESS_GROUP)` or
+`ADD (SELECT ON OBJECT::[dbo].[T] BY [public])` — hence
+`DatabaseAuditAction` and the paired `AddActions`/`DropActions` in place of
+the server half's group-only `AddActionGroups`/`DropActionGroups`. The two
+halves of an action clause quote in opposite ways: the action name and the
+securable class are keywords and are charset-checked, the securable and the
+principal are identifiers and are bracket-quoted.
 
 ### Credentials
 
@@ -3894,7 +3986,7 @@ SSMS's Security → Credentials, and the identity a login can be mapped to.
 | ------------------------- | ---------------------------------------------------- |
 | Security → Credentials    | `srv.Credentials()` / `srv.CredentialByName(name)` / `srv.Credential(name)` (no-I/O handle) |
 | New credential            | `srv.CreateCredential(gosmo.CredentialSpec{Name, Identity, Secret, CryptographicProvider})` |
-| Change identity or secret | `cred.Alter(identity, secret)` — `secret` is a `*string`: nil leaves it alone |
+| Change identity or secret | `cred.Alter(identity, secret)` — `secret` is a `*string`, and nil **clears** the stored secret: `ALTER CREDENTIAL` resets both halves, so there is no form that changes the identity and keeps the secret |
 | Drop                      | `cred.Drop()`                                        |
 | Cryptographic providers   | `srv.CryptographicProviders()`                       |
 
@@ -3902,6 +3994,18 @@ SSMS's Security → Credentials, and the identity a login can be mapped to.
 no read that does, which is why `Alter` takes a pointer rather than a string
 and why a scripted credential carries a `<insert secret here>` placeholder
 instead of a value it cannot know.
+
+Database-scoped credentials are a separate securable with their own DDL, and
+live on `*Database` rather than `*Server` — SSMS's *database* → Security →
+Database Scoped Credentials. There is no `FOR CRYPTOGRAPHIC PROVIDER` form of
+one, so `DatabaseScopedCredentialSpec` has no provider field.
+
+| SSMS equivalent                       | gosmo                                          |
+| ------------------------------------- | ---------------------------------------------- |
+| *db* → Security → Database Scoped Credentials | `db.DatabaseScopedCredentials()` / `db.DatabaseScopedCredentialByName(name)` / `db.DatabaseScopedCredential(name)` (no-I/O handle) |
+| New database scoped credential        | `db.CreateDatabaseScopedCredential(gosmo.DatabaseScopedCredentialSpec{Name, Identity, Secret})` |
+| Change identity or secret             | `dsc.Alter(identity, secret)` — same `*string`, same meaning |
+| Drop                                  | `dsc.Drop()`                                   |
 
 ### Server triggers
 

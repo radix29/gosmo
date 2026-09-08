@@ -162,3 +162,24 @@ func (d *Database) DropViewContext(ctx context.Context, schema, name string) err
 	}
 	return nil
 }
+
+// ObjectTriggers returns the DML triggers defined on one table or view —
+// AFTER and INSTEAD OF triggers, the parent_class = 1 family, for a single
+// parent named rather than handed over as a *Table.
+//
+// It is Table.Triggers' by-name counterpart, and it exists because View is a
+// plain row struct with no back-pointer to its database, so a view's INSTEAD
+// OF triggers had no reader at all. The parent is resolved by OBJECT_ID, which
+// does not care which of the two it is.
+func (d *Database) ObjectTriggers(schema, name string) ([]*Trigger, error) {
+	return d.ObjectTriggersContext(context.Background(), schema, name)
+}
+
+// ObjectTriggersContext is the context-aware variant of ObjectTriggers.
+func (d *Database) ObjectTriggersContext(ctx context.Context, schema, name string) ([]*Trigger, error) {
+	if schema == "" {
+		schema = "dbo"
+	}
+	return d.triggersWhere(ctx, "AND tr.parent_id = OBJECT_ID(@p1)",
+		[]any{qualifiedName(schema, name)})
+}
