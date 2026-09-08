@@ -816,12 +816,20 @@ SELECT @path`
 // platformFromVersionString extracts the host OS family from @@VERSION,
 // whose last line reads "... (64-bit) on Windows 10 Pro ..." or "...
 // (64-bit) on Linux (Ubuntu 24.04) ...".
+//
+// Azure names no host at all — a Managed Instance's banner is "Microsoft SQL
+// Azure (RTM) - 12.0.2000.8 ..." with neither suffix — so without the third
+// case every Azure edition reports its platform as unknown. "Azure" is the
+// truthful answer there: the host OS is not the caller's to see, and the
+// hosting model is what a caller displaying this actually wants to know.
 func platformFromVersionString(v string) string {
 	switch {
 	case strings.Contains(v, " on Windows"):
 		return "Windows"
 	case strings.Contains(v, " on Linux"):
 		return "Linux"
+	case strings.Contains(v, "Microsoft SQL Azure"):
+		return "Azure"
 	}
 	return ""
 }

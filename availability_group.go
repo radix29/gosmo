@@ -299,10 +299,7 @@ func (ag *AvailabilityGroup) Replicas() ([]*AvailabilityReplica, error) {
 func (ag *AvailabilityGroup) ReplicasContext(ctx context.Context) ([]*AvailabilityReplica, error) {
 	s := ag.server
 
-	major := 0
-	if info := s.Info(); info != nil {
-		major = info.VersionMajor
-	}
+	major := s.serverMajorVersion()
 	seedingMode := "ISNULL(ar.seeding_mode_desc,'')"
 	if major < int(SQLServer2016) {
 		seedingMode = "CAST('' AS nvarchar(60))"
@@ -477,10 +474,7 @@ func (ag *AvailabilityGroup) Databases() ([]*AvailabilityDatabase, error) {
 func (ag *AvailabilityGroup) DatabasesContext(ctx context.Context) ([]*AvailabilityDatabase, error) {
 	s := ag.server
 
-	major := 0
-	if info := s.Info(); info != nil {
-		major = info.VersionMajor
-	}
+	major := s.serverMajorVersion()
 	lag := "ISNULL(drs.secondary_lag_seconds, 0)"
 	if major < int(SQLServer2016) {
 		lag = "CAST(0 AS bigint)"

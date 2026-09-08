@@ -75,7 +75,16 @@ func (s *Server) EnumFileSystemContext(ctx context.Context, path string) ([]*Fil
 // login that is not sysadmin, which is indistinguishable from an empty
 // directory unless the caller knows which path ran.
 func (s *Server) EnumFileSystemIsLegacy() bool {
-	return s.info == nil || s.info.VersionMajor < 14
+	if s.info == nil {
+		return true
+	}
+	// An Azure edition reports 12 and has the DMF regardless; taking the
+	// legacy path there loses Size and LastModified for no reason. See
+	// serverMajorVersion (version_gate.go).
+	if s.info.IsAzure() {
+		return false
+	}
+	return s.info.VersionMajor < 14
 }
 
 func (s *Server) enumFileSystemDMF(ctx context.Context, path string) ([]*FileSystemEntry, error) {
@@ -168,7 +177,9 @@ func (s *Server) FixedDrives() ([]*FixedDrive, error) {
 // "/"-separated paths never do (PosixPathRules.Parent("/") == "/"). Do not
 // "fix" it by synthesizing a "/" entry; there is no caller that would see it.
 func (s *Server) FixedDrivesContext(ctx context.Context) ([]*FixedDrive, error) {
-	if s.info != nil && s.info.VersionMajor > 0 && s.info.VersionMajor < 15 {
+	// serverMajorVersion, not info.VersionMajor: it is 0 on an Azure edition,
+	// which has sys.dm_os_enumerate_fixed_drives despite reporting 12.
+	if major := s.serverMajorVersion(); major > 0 && major < 15 {
 		return s.fixedDrivesXP(ctx)
 	}
 

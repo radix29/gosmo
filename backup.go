@@ -50,6 +50,14 @@ type BackupOptions struct {
 	// If Progress is set and Stats is left at 0, it defaults to 10 so
 	// percent-complete messages actually get emitted.
 	Stats int
+	// Credential names the SQL Server credential a BACKUP ... TO URL
+	// authenticates to Azure Storage with (WITH CREDENTIAL = N'name'), the
+	// storage-account-key form. Leave it empty for the shared access
+	// signature form, which is what Managed Instance uses: there the
+	// credential's *name* is the container URL and SQL Server finds it
+	// itself, so naming it here is not merely unnecessary but wrong.
+	// Ignored for a DISK device, which authenticates as the service account.
+	Credential string
 	// Progress, if set, is called for every message SQL Server emits while
 	// the backup runs, including the "N percent processed" notices STATS
 	// produces — pct is -1 for a message that doesn't carry a percentage.
@@ -125,7 +133,7 @@ func BuildBackupStatement(opts BackupOptions) (string, error) {
 
 	deviceList := make([]string, len(opts.Devices))
 	for i, d := range opts.Devices {
-		deviceList[i] = fmt.Sprintf("DISK = N'%s'", escapeSingle(d))
+		deviceList[i] = backupDeviceClause(d)
 	}
 	sb.WriteString(strings.Join(deviceList, ", "))
 
@@ -141,6 +149,9 @@ func BuildBackupStatement(opts BackupOptions) (string, error) {
 	}
 	if opts.MediaDescription != "" {
 		withs = append(withs, fmt.Sprintf("MEDIADESCRIPTION = N'%s'", escapeSingle(opts.MediaDescription)))
+	}
+	if opts.Credential != "" {
+		withs = append(withs, fmt.Sprintf("CREDENTIAL = N'%s'", escapeSingle(opts.Credential)))
 	}
 	if opts.CopyOnly {
 		withs = append(withs, "COPY_ONLY")
@@ -285,6 +296,10 @@ type RestoreOptions struct {
 	// If Progress is set and Stats is left at 0, it defaults to 10 so
 	// percent-complete messages actually get emitted.
 	Stats int
+	// Credential names the SQL Server credential a RESTORE ... FROM URL
+	// authenticates to Azure Storage with — see BackupOptions.Credential,
+	// including why the shared access signature form leaves it empty.
+	Credential string
 	// StopAt performs a point-in-time restore.
 	StopAt *time.Time
 	// Progress, if set, is called for every message SQL Server emits while
@@ -373,7 +388,7 @@ func BuildRestoreStatement(opts RestoreOptions) (string, error) {
 
 	deviceList := make([]string, len(opts.Devices))
 	for i, d := range opts.Devices {
-		deviceList[i] = fmt.Sprintf("DISK = N'%s'", escapeSingle(d))
+		deviceList[i] = backupDeviceClause(d)
 	}
 	sb.WriteString(strings.Join(deviceList, ", "))
 
@@ -399,6 +414,9 @@ func BuildRestoreStatement(opts RestoreOptions) (string, error) {
 	if opts.Checksum {
 		withs = append(withs, "CHECKSUM")
 	}
+	if opts.Credential != "" {
+		withs = append(withs, fmt.Sprintf("CREDENTIAL = N'%s'", escapeSingle(opts.Credential)))
+	}
 	if opts.Stats > 0 {
 		withs = append(withs, fmt.Sprintf("STATS = %d", opts.Stats))
 	}
@@ -411,24 +429,44 @@ func BuildRestoreStatement(opts RestoreOptions) (string, error) {
 	return sb.String(), nil
 }
 
+// backupHistorySelect is the msdb read behind BackupHistoryContext, at package
+// scope so TestBackupHistoryQueryWrapsEveryNullableColumn can check that every
+// nullable column is still wrapped.
+const backupHistorySelect = `
+SELECT ISNULL(bs.database_name,''), ISNULL(bs.name,''), ISNULL(bs.description,''),
+       ISNULL(bs.type,''),
+       bs.backup_start_date, bs.backup_finish_date, ISNULL(bs.backup_size,0),
+       ISNULL(bmf.physical_device_name,''), ISNULL(bs.user_name,''),
+       ISNULL(bs.server_name,''),
+       ISNULL(bs.database_version,0), ISNULL(bs.compatibility_level,0)
+FROM   msdb.dbo.backupset bs
+JOIN   msdb.dbo.backupmediafamily bmf ON bmf.media_set_id = bs.media_set_id
+WHERE  bs.database_name = @p1
+ORDER  BY bs.backup_finish_date DESC`
+
 // BackupHistory returns the backup history for a database from msdb.
 func (s *Server) BackupHistory(databaseName string) ([]*BackupInfo, error) {
 	return s.BackupHistoryContext(context.Background(), databaseName)
 }
 
 // BackupHistoryContext is the context-aware variant of BackupHistory.
+//
+// Every column read here is nullable in msdb, and a NULL in any of them used
+// to kill the whole read — which took Database Properties' General page, the
+// Backup History viewer and Restore's backup-history source down with it. On
+// an on-prem instance the columns happen to be populated by whatever ran the
+// backup, so this never showed; Azure SQL Managed Instance's automated backups
+// leave physical_device_name, user_name and server_name NULL, and
+//
+//	sql: Scan error on column index 7, name "physical_device_name"
+//
+// was the entire General page. A NULL means "not recorded", so every column is
+// ISNULL'd in the query *and* scanned through a sql.Null* destination: the
+// ISNULL is what the server sends, the Null destination is what survives a
+// column this list forgets to wrap. Do not narrow either half back because a
+// particular server populates the columns.
 func (s *Server) BackupHistoryContext(ctx context.Context, databaseName string) ([]*BackupInfo, error) {
-	const q = `
-SELECT bs.database_name, ISNULL(bs.name,''), ISNULL(bs.description,''), bs.type,
-       bs.backup_start_date, bs.backup_finish_date, bs.backup_size,
-       bmf.physical_device_name, bs.user_name, bs.server_name,
-       bs.database_version, bs.compatibility_level
-FROM   msdb.dbo.backupset bs
-JOIN   msdb.dbo.backupmediafamily bmf ON bmf.media_set_id = bs.media_set_id
-WHERE  bs.database_name = @p1
-ORDER  BY bs.backup_finish_date DESC`
-
-	rows, err := s.query(ctx, q, databaseName)
+	rows, err := s.query(ctx, backupHistorySelect, databaseName)
 	if err != nil {
 		return nil, fmt.Errorf("gosmo: backup history for %q: %w", databaseName, err)
 	}
@@ -437,18 +475,24 @@ ORDER  BY bs.backup_finish_date DESC`
 	var history []*BackupInfo
 	for rows.Next() {
 		b := &BackupInfo{}
-		var bType string
-		var desc sql.NullString
+		var dbName, setName, desc, bType, device, user, server sql.NullString
+		var start, finish sql.NullTime
+		var size, dbVersion, compat sql.NullInt64
 		if err := rows.Scan(
-			&b.DatabaseName, &b.BackupSetName, &desc, &bType,
-			&b.BackupStart, &b.BackupFinish, &b.BackupSize,
-			&b.DeviceName, &b.UserName, &b.ServerName,
-			&b.DatabaseVersion, &b.CompatibilityLevel,
+			&dbName, &setName, &desc, &bType,
+			&start, &finish, &size,
+			&device, &user, &server,
+			&dbVersion, &compat,
 		); err != nil {
 			return nil, fmt.Errorf("gosmo: backup history for %q: %w", databaseName, err)
 		}
-		b.Description = desc.String
-		switch bType {
+		b.DatabaseName, b.BackupSetName, b.Description = dbName.String, setName.String, desc.String
+		b.BackupStart, b.BackupFinish = start.Time, finish.Time
+		b.BackupSize = size.Int64
+		b.DeviceName, b.UserName, b.ServerName = device.String, user.String, server.String
+		b.DatabaseVersion = int(dbVersion.Int64)
+		b.CompatibilityLevel = CompatibilityLevel(compat.Int64)
+		switch bType.String {
 		case "D":
 			b.BackupType = BackupActionDatabase
 		case "I":
@@ -596,21 +640,75 @@ type BackupFile struct {
 	MaxSize       int64 // bytes
 }
 
-// BackupTarget names where a RESTORE-side read finds a backup: either a
-// physical path or a logical backup device from sys.backup_devices. The two
-// are addressed differently and are not interchangeable — a logical device is
-// named bare, as FROM [devicename], and passing its name as a path produces
-// FROM DISK = N'devicename', which SQL Server reads as a file of that name in
-// the server's default backup directory.
+// IsBackupURL reports whether device names a backup blob in Azure Storage
+// rather than a path on the server's filesystem — an http:// or https:// URL.
 //
-// Build one with DiskTarget or DeviceTarget.
+// The distinction decides the device keyword: a blob is BACKUP ... TO URL /
+// RESTORE ... FROM URL, and a filesystem path is TO DISK / FROM DISK. It is
+// not cosmetic on Azure SQL Managed Instance, which answers any TO DISK or
+// FROM DISK with
+//
+//	Msg 41902 ... SQL Database Managed Instance supports database restore
+//	from URI backup device only.
+//
+// and whose SERVERPROPERTY('InstanceDefaultBackupPath') is itself a blob
+// container URL, so a caller that builds a default destination out of it
+// arrives here holding a URL without ever having decided to.
+//
+// The test is the scheme alone. A UNC path (\\host\share\db.bak) and a
+// drive-letter path are both DISK devices, and neither has one.
+func IsBackupURL(device string) bool {
+	// ToLower rather than a length check plus EqualFold on a slice: the
+	// obvious spelling of that reads d[:len("https://")] before it knows the
+	// string is that long, and panics on the input that is exactly "http://".
+	d := strings.ToLower(strings.TrimSpace(device))
+	return strings.HasPrefix(d, "https://") || strings.HasPrefix(d, "http://")
+}
+
+// deviceClause renders one BACKUP/RESTORE device operand.
+func deviceClause(name string, isURL bool) string {
+	kw := "DISK"
+	if isURL {
+		kw = "URL"
+	}
+	return fmt.Sprintf("%s = N'%s'", kw, escapeSingle(name))
+}
+
+// backupDeviceClause renders one device from BackupOptions.Devices /
+// RestoreOptions.Devices, choosing DISK or URL by the device's own shape —
+// those two fields are plain strings, so the shape is all there is to go on,
+// and IsBackupURL is what a caller should use to reach the same verdict.
+func backupDeviceClause(device string) string {
+	return deviceClause(device, IsBackupURL(device))
+}
+
+// BackupTarget names where a RESTORE-side read finds a backup: a physical
+// path, a blob URL, or a logical backup device from sys.backup_devices. The
+// three are addressed differently and are not interchangeable — a logical
+// device is named bare, as FROM [devicename], and passing its name as a path
+// produces FROM DISK = N'devicename', which SQL Server reads as a file of that
+// name in the server's default backup directory.
+//
+// Build one with DiskTarget, URLTarget or DeviceTarget.
 type BackupTarget struct {
 	name    string
 	logical bool
+	url     bool
 }
 
-// DiskTarget names a backup by its path on the server's filesystem.
-func DiskTarget(path string) BackupTarget { return BackupTarget{name: path} }
+// DiskTarget names a backup by its location on the server: a filesystem path,
+// or — when path is an http/https URL, per IsBackupURL — the blob holding it.
+// The URL case is classified here rather than left to the caller because every
+// RESTORE-side read (VerifyBackup, BackupHeaders, BackupFileList) funnels
+// through this constructor, and a Managed Instance refuses all three as DISK.
+// URLTarget states the same thing outright.
+func DiskTarget(path string) BackupTarget {
+	return BackupTarget{name: path, url: IsBackupURL(path)}
+}
+
+// URLTarget names a backup by its Azure Storage blob URL, whatever its
+// spelling — DiskTarget already recognises the usual http/https one.
+func URLTarget(url string) BackupTarget { return BackupTarget{name: url, url: true} }
 
 // DeviceTarget names a backup by the logical backup device holding it —
 // a row of sys.backup_devices, see Server.BackupDevices.
@@ -621,7 +719,7 @@ func (t BackupTarget) clause() string {
 	if t.logical {
 		return quoteIdent(t.name)
 	}
-	return fmt.Sprintf("DISK = N'%s'", escapeSingle(t.name))
+	return deviceClause(t.name, t.url)
 }
 
 // String returns the target's name, for error messages and display.

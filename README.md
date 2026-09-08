@@ -2019,6 +2019,7 @@ classDiagram
         +Stats int
         +Init bool
         +Format bool
+        +Credential string
         +Progress func
         +BuildBackupStatement(opts) string
     }
@@ -2037,6 +2038,7 @@ classDiagram
         +StopAt time.Time
         +StopAtMarkName string
         +FileNumber int
+        +Credential string
         +Progress func
         +BuildRestoreStatement(opts) string
     }
@@ -2068,13 +2070,18 @@ classDiagram
     class BackupTarget {
         -name string
         -logical bool
+        -url bool
         +DiskTarget(path) BackupTarget
+        +URLTarget(url) BackupTarget
         +DeviceTarget(name) BackupTarget
+        +IsBackupURL(device) bool
         +String() string
         A logical device is named bare, a path
         as DISK = N'...'. Passing a device name
         as a path reads a file of that name in
         the default backup directory instead.
+        An http/https device is URL = N'...' —
+        Managed Instance refuses DISK outright.
     }
 
     class BackupDevice {
@@ -2917,6 +2924,72 @@ classDiagram
     Database "1" --> "*" Certificate : contains
     Database "1" --> "*" AsymmetricKey : contains
     Database --> CertificateSpec : CreateCertificate() accepts
+```
+
+### Azure instance resources
+
+The three instance-scoped views an Azure SQL Managed Instance exposes and an
+on-premises instance has no analogue for: its own 15-second resource history,
+the resource governor's fixed limits, and the Windows job object the engine
+process runs inside. All three refuse with `ErrUnsupportedVersion` on a
+non-Azure engine edition — see `azure_resources.go`.
+
+```mermaid
+classDiagram
+    class ServerResourceStat {
+        +StartTime time.Time
+        +EndTime time.Time
+        +ResourceType string
+        +ResourceName string
+        +SKU string
+        +HardwareGeneration string
+        +VirtualCoreCount int
+        +AvgCPUPercent float64
+        +ReservedStorageMB int64
+        +StorageSpaceUsedMB float64
+        +IORequests int64
+        +IOBytesRead int64
+        +IOBytesWritten int64
+        One row per 15-second window, ~14 days
+        retained. Pre-aggregated: plot it, never
+        run it through a per-second delta.
+    }
+
+    class InstanceResourceGovernance {
+        +ServerName string
+        +CapCPU int
+        +MaxLogRate int64
+        +MaxWorkerThreads int
+        +LocalIOPS int
+        +ManagedXStoreIOPS int
+        +ExternalXStoreIOPS int
+        +LocalMaxOutstandingIO int
+        +TempDBLogFileNumber int
+        +DataDirectoryQuotaMB int
+        +DataDirectoryUsageMB int
+        +BufferPoolExtensionSizeGB int
+        Fixed ceilings, not readings — the scale a
+        ServerResourceStat history is read against.
+    }
+
+    class OSJobObject {
+        +CPURate int
+        +CPUAffinityMask int64
+        +MemoryLimitMB int64
+        +ProcessMemoryLimitMB int64
+        +WorkingSetLimitMB int64
+        +PeakJobMemoryUsedMB int64
+        +TotalUserTime int64
+        +TotalKernelTime int64
+        +ReadOperationCount int64
+        +WriteOperationCount int64
+        The host's limits on SQL Server, below the
+        governor's limits on itself.
+    }
+
+    Server --> ServerResourceStat : ServerResourceStats() / LatestServerResourceStats()
+    Server --> InstanceResourceGovernance : InstanceResourceGovernance()
+    Server --> OSJobObject : OSJobObject()
 ```
 
 ---

@@ -38,6 +38,38 @@ const (
 // definition already contains and returns it unchanged.
 const MinimumServerVersion = SQLServer2016
 
+// EngineEdition values as returned by SERVERPROPERTY('EngineEdition') and
+// carried in ServerInfo.EngineEdition. 7 is unassigned and 10 was never
+// shipped publicly, so the list is deliberately not contiguous.
+type EngineEdition int
+
+const (
+	EnginePersonal          EngineEdition = 1
+	EngineStandard          EngineEdition = 2
+	EngineEnterprise        EngineEdition = 3
+	EngineExpress           EngineEdition = 4
+	EngineAzureSQLDatabase  EngineEdition = 5
+	EngineAzureSynapse      EngineEdition = 6
+	EngineAzureManagedInst  EngineEdition = 8
+	EngineAzureSQLEdge      EngineEdition = 9
+	EngineAzureSynapseSrvls EngineEdition = 11
+)
+
+// IsAzure reports whether e is one of the Azure-hosted engine editions, whose
+// ProductVersion is a fixed compatibility fiction rather than a feature level:
+// a Managed Instance answers 12.0.2000.8 (SQL Server 2014) while running an
+// 18.x engine with every catalog column 2016 through 2022 added. Every version
+// gate here has to ask this before it believes VersionMajor — see
+// serverMajorVersion in version_gate.go.
+func (e EngineEdition) IsAzure() bool {
+	switch e {
+	case EngineAzureSQLDatabase, EngineAzureSynapse, EngineAzureManagedInst,
+		EngineAzureSQLEdge, EngineAzureSynapseSrvls:
+		return true
+	}
+	return false
+}
+
 // RecoveryModel mirrors SQL Server recovery model options.
 type RecoveryModel string
 
@@ -304,7 +336,11 @@ type ServerInfo struct {
 	IsClustered    bool
 	IsHADREnabled  bool
 	IsSingleUser   bool
-	EngineEdition  int
+	// EngineEdition is SERVERPROPERTY('EngineEdition'). Compare it against
+	// the Engine* constants; ServerInfo.IsAzure is the test every version
+	// gate wants, since an Azure edition's ProductVersion says nothing about
+	// what the instance can do.
+	EngineEdition int
 	// OSVersion is @@VERSION verbatim: the multi-line SQL Server product
 	// banner, whose last line names the host OS. Despite the name it is not
 	// an OS version string, and it is unfit for a fixed-width label/value row
@@ -312,9 +348,11 @@ type ServerInfo struct {
 	// family. A real OS string would be a new field, never a change of
 	// meaning here.
 	OSVersion string
-	// Platform is the host operating system family — "Windows" or "Linux" —
-	// derived from @@VERSION rather than sys.dm_os_host_info so it is
-	// populated on pre-2017 instances too. Empty if @@VERSION names neither.
+	// Platform is the host operating system family — "Windows" or "Linux",
+	// or "Azure" for an Azure edition, whose banner names no host OS and
+	// whose host is not the caller's to see. Derived from @@VERSION rather
+	// than sys.dm_os_host_info so it is populated on pre-2017 instances too.
+	// Empty if @@VERSION names none of the three.
 	Platform       string
 	MaxConnections int
 
@@ -335,6 +373,14 @@ type ServerInfo struct {
 	DefaultDataPath   string
 	DefaultLogPath    string
 	DefaultBackupPath string
+}
+
+// IsAzure reports whether the connected instance is one of the Azure-hosted
+// engine editions — SQL Database, Managed Instance, Synapse, SQL Edge. On
+// those, VersionMajor is a fixed number Azure returns for compatibility (12 on
+// a Managed Instance) and is not the feature level; read it for display only.
+func (i *ServerInfo) IsAzure() bool {
+	return i != nil && EngineEdition(i.EngineEdition).IsAzure()
 }
 
 // BackupInfo holds metadata about a specific database backup.

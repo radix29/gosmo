@@ -321,3 +321,82 @@ func TestScopedConfigSelectGatesTheIsValueDefaultColumn(t *testing.T) {
 		}
 	}
 }
+
+// azureMI is the ServerInfo a live General Purpose Gen5 Managed Instance
+// returns: engine edition 8 with SQL Server 2014's version number, while the
+// engine is an 18.x build carrying every catalog column gosmo gates on.
+func azureMI() *ServerInfo {
+	return &ServerInfo{EngineEdition: int(EngineAzureManagedInst), VersionMajor: 12,
+		ProductVersion: "12.0.2000.8", Edition: "SQL Azure"}
+}
+
+func TestIsAzureCoversEveryAzureEngineEdition(t *testing.T) {
+	for _, c := range []struct {
+		edition EngineEdition
+		want    bool
+	}{
+		{EnginePersonal, false}, {EngineStandard, false}, {EngineEnterprise, false},
+		{EngineExpress, false}, {EngineAzureSQLDatabase, true}, {EngineAzureSynapse, true},
+		{7, false}, {EngineAzureManagedInst, true}, {EngineAzureSQLEdge, true},
+		{10, false}, {EngineAzureSynapseSrvls, true}, {12, false}, {0, false},
+	} {
+		if got := c.edition.IsAzure(); got != c.want {
+			t.Errorf("EngineEdition(%d).IsAzure() = %v, want %v", c.edition, got, c.want)
+		}
+		info := &ServerInfo{EngineEdition: int(c.edition)}
+		if got := info.IsAzure(); got != c.want {
+			t.Errorf("ServerInfo{EngineEdition: %d}.IsAzure() = %v, want %v", c.edition, got, c.want)
+		}
+	}
+	if (*ServerInfo)(nil).IsAzure() {
+		t.Error("nil ServerInfo.IsAzure() = true, want false")
+	}
+}
+
+// The whole point of item 2 of the Azure plan: an MI's 12 must not put it
+// below every gate here. VersionMajor itself keeps the 12, for display.
+func TestAzureMajorIsZeroSoEveryGateTreatsItAsNewest(t *testing.T) {
+	s := &Server{info: azureMI()}
+	if got := s.serverMajorVersion(); got != 0 {
+		t.Errorf("Server.serverMajorVersion() on MI = %d, want 0", got)
+	}
+	if got := (&Database{server: s}).serverMajorVersion(); got != 0 {
+		t.Errorf("Database.serverMajorVersion() on MI = %d, want 0", got)
+	}
+	if got := s.Info().VersionMajor; got != 12 {
+		t.Errorf("Info().VersionMajor = %d, want 12 — the displayed version is unchanged", got)
+	}
+
+	d := &Database{name: "GoTest01", server: s}
+	if !d.QueryStoreWaitStatsSupported() {
+		t.Error("QueryStoreWaitStatsSupported() = false on MI, which has sys.query_store_wait_stats")
+	}
+	for _, c := range []struct {
+		what string
+		q    string
+		col  string
+	}{
+		{"scoped configs", d.scopedConfigSelect(), "is_value_default"},
+		{"column master keys", d.columnMasterKeySelect(), "allow_enclave_computations"},
+	} {
+		if !strings.Contains(c.q, c.col) {
+			t.Errorf("%s on MI omits %s, which the instance has", c.what, c.col)
+		}
+	}
+}
+
+// Both filesystem gates fall back to an extended procedure below their
+// version. Those work on MI, so nothing errors — it just silently loses
+// columns, which is why this is pinned rather than left to a live run.
+func TestAzureTakesTheModernFilesystemPaths(t *testing.T) {
+	s := &Server{info: azureMI()}
+	if s.EnumFileSystemIsLegacy() {
+		t.Error("EnumFileSystemIsLegacy() = true on MI, which has sys.dm_os_enumerate_filesystem")
+	}
+	if !(&Server{}).EnumFileSystemIsLegacy() {
+		t.Error("EnumFileSystemIsLegacy() = false with no info, want the xp_dirtree path")
+	}
+	if s.serverMajorVersion() >= 15 {
+		t.Error("FixedDrivesContext would take the xp_fixeddrives path on MI")
+	}
+}

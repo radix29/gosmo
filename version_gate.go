@@ -5,9 +5,24 @@ package gosmo
 // to ask the server's version first.
 
 // serverMajorVersion is the instance's major version, or 0 when it was never
-// read — a Server built without NewServer, which skips loadInfo.
+// read — a Server built without NewServer, which skips loadInfo — and also 0
+// on an Azure engine edition, where the version that was read is not a feature
+// level at all.
+//
+// Azure returns a frozen ProductVersion: a Managed Instance says 12.0.2000.8,
+// SQL Server 2014, while running an 18.x engine that has every catalog column
+// gosmo gates on 2016, 2017, 2019 and 2022 and creates databases at
+// compatibility level 170. Believing that 12 puts an MI below every gate here,
+// and the failure is silent — colSince substitutes a zero literal, so the read
+// succeeds and simply returns nothing for columns the instance has. 0 routes
+// it through the "never read ⇒ treat as newest" convention colSince documents,
+// which is the right answer for Azure for the same reason: the query is a
+// better authority than a version number that was never about features.
+//
+// info.VersionMajor keeps its 12 — callers that display a version want what
+// the server says.
 func (s *Server) serverMajorVersion() int {
-	if s == nil || s.info == nil {
+	if s == nil || s.info == nil || s.info.IsAzure() {
 		return 0
 	}
 	return s.info.VersionMajor

@@ -1128,10 +1128,12 @@ func (d *Database) QueryStoreUnforcePlanContext(ctx context.Context, queryID, pl
 }
 
 // serverMajorVersion is the instance's major version, or 0 when it was never
-// read — a Database built from a Server that skipped loadInfo.
+// read — a Database built from a Server that skipped loadInfo — or when the
+// instance is an Azure edition. Server.serverMajorVersion documents why Azure
+// is 0; this is the same rule for the database-scoped gates.
 func (d *Database) serverMajorVersion() int {
-	if d.server == nil || d.server.info == nil {
+	if d.server == nil {
 		return 0
 	}
-	return d.server.info.VersionMajor
+	return d.server.serverMajorVersion()
 }

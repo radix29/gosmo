@@ -704,6 +704,9 @@ func TestPlatformFromVersionString(t *testing.T) {
 	}{
 		{"Microsoft SQL Server 2025 - 17.0.1125.2 (X64)\n\tEnterprise Developer Edition (64-bit) on Windows 10 Pro 10.0 <X64>", "Windows"},
 		{"Microsoft SQL Server 2025 - 17.0.4065.4 (X64)\n\tEnterprise Developer Edition (64-bit) on Linux (Ubuntu 24.04.4 LTS) <X64>", "Linux"},
+		// A Managed Instance's banner names no host OS at all, verified
+		// live 2026-09-09 against t-qmi-01.
+		{"Microsoft SQL Azure (RTM) - 12.0.2000.8 \n\tJul 31 2026 11:07:27 \n\tCopyright (C) 2026 Microsoft Corporation", "Azure"},
 		{"", ""},
 	}
 	for _, c := range cases {
