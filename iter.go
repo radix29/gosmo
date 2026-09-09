@@ -689,3 +689,13 @@ func (o *Operator) NotifyingAlertSeq(ctx context.Context) iter.Seq2[*AlertNotifi
 func (o *Operator) NotifyingJobSeq(ctx context.Context) iter.Seq2[*JobNotificationRef, error] {
 	return seqFrom(ctx, o.NotifyingJobsContext)
 }
+
+// UserDBResourceGovernanceSeq returns an iterator over the resource-governor
+// limits for every database on an Azure instance, one row per database.
+//
+// There is deliberately no iterator for ServerResourceStats or
+// Database.ResourceStats: both take a row cap, which an iterator built from
+// ctx alone has nowhere to carry.
+func (s *Server) UserDBResourceGovernanceSeq(ctx context.Context) iter.Seq2[*UserDBResourceGovernance, error] {
+	return seqFrom(ctx, s.UserDBResourceGovernanceContext)
+}

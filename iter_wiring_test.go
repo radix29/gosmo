@@ -149,6 +149,11 @@ func iterWirings(t *testing.T) []seqWiring {
 	t.Cleanup(func() { sdb.Close() })
 
 	srv := &Server{db: sdb, info: &ServerInfo{VersionMajor: 16}}
+	// The Azure-only reads refuse outright off an Azure engine edition, so
+	// they need a server that reports one — otherwise the iterator issues no
+	// statement at all and the wiring comparison below passes vacuously.
+	azureSrv := &Server{db: sdb, info: &ServerInfo{
+		VersionMajor: 12, EngineEdition: int(EngineAzureManagedInst)}}
 	dbo := &Database{server: srv, name: argDatabase, id: 7}
 	tbl := &Table{db: dbo, ObjectID: 42, Schema: argSchema, Name: argName}
 	stat := &Statistic{table: tbl, Name: "IX_stat", StatID: 3}
@@ -642,6 +647,12 @@ func iterWirings(t *testing.T) []seqWiring {
 				}
 			},
 			func(ctx context.Context) { _, _ = srv.OperatorsContext(ctx) }},
+		{"Server.UserDBResourceGovernanceSeq",
+			func(ctx context.Context) {
+				for range azureSrv.UserDBResourceGovernanceSeq(ctx) {
+				}
+			},
+			func(ctx context.Context) { _, _ = azureSrv.UserDBResourceGovernanceContext(ctx) }},
 		{"Server.ReadErrorLogSeq",
 			func(ctx context.Context) {
 				for range srv.ReadErrorLogSeq(ctx, argLogNumber) {

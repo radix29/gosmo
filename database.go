@@ -237,6 +237,107 @@ FROM sys.database_files`
 	return si, nil
 }
 
+// DiskUsage is a database's disk-usage breakdown — the numbers behind
+// SSMS's "Disk Usage" report, in MB.
+//
+// The two halves are read separately, one per file kind, and each is a
+// composition of the space its files hold:
+//
+//	data files: DataMB + IndexMB + UnusedMB + UnallocatedMB
+//	log files:  LogUsedMB + LogUnusedMB
+//
+// UnallocatedMB and LogUnusedMB are file space not yet handed to any
+// object, the same free-space measure SpaceInfo reports; UnusedMB is space
+// already allocated to an object in extents whose pages it has not filled
+// yet, so shrinking a file reclaims the former and rebuilding an index the
+// latter.
+//
+// The data-file parts are counted from allocated pages and the file totals
+// from the files themselves, so the four data parts sum to slightly less
+// than DataFilesMB: the difference is the database's own internal pages
+// (IAM, boot page, allocation bitmaps), which belong to no allocation unit.
+// Read the parts against each other, not against DataFilesMB — that is how
+// the SSMS report presents them too.
+type DiskUsage struct {
+	// DataFilesMB and LogFilesMB are the on-disk sizes of the ROWS and LOG
+	// files respectively — DataFilesMB + LogFilesMB is the database's
+	// footprint.
+	DataFilesMB float64
+	LogFilesMB  float64
+
+	// DataMB is row data in heaps and clustered indexes, IndexMB is row
+	// data in every other index, and both include the LOB and row-overflow
+	// pages belonging to them, so no used page is counted twice or missed.
+	DataMB  float64
+	IndexMB float64
+	// UnusedMB is reserved-but-unused space inside extents already
+	// allocated to an object.
+	UnusedMB float64
+	// UnallocatedMB is data-file space not yet allocated to anything.
+	UnallocatedMB float64
+
+	// LogUsedMB and LogUnusedMB split the log files the same way — the
+	// active portion against what a shrink could give back.
+	LogUsedMB   float64
+	LogUnusedMB float64
+}
+
+// DiskUsage returns the database's disk-usage breakdown.
+func (d *Database) DiskUsage() (DiskUsage, error) {
+	return d.DiskUsageContext(context.Background())
+}
+
+// DiskUsageContext is the context-aware variant of DiskUsage.
+//
+// It is one round trip: the file figures and the allocation figures are
+// unrelated aggregates over unrelated tables, so they are cross-joined
+// rather than queried one after the other.
+func (d *Database) DiskUsageContext(ctx context.Context) (DiskUsage, error) {
+	// The allocation half deliberately spans every object, system tables
+	// included: this describes the file, not the user's schema, and pages
+	// left out of the sum would show up as unallocated space that a shrink
+	// cannot reclaim. index_id 0/1 is the heap or clustered index, so its
+	// LOB and row-overflow units (type 2 and 3) are the table's own data;
+	// everything above is a nonclustered index.
+	const q = `
+SELECT
+    f.data_files_mb, f.log_files_mb, f.unallocated_mb, f.avail_log_mb,
+    a.data_mb, a.index_mb, a.unused_mb
+FROM (
+    SELECT
+        SUM(CASE WHEN type_desc <> 'LOG' THEN size ELSE 0 END) * 8.0 / 1024 AS data_files_mb,
+        SUM(CASE WHEN type_desc =  'LOG' THEN size ELSE 0 END) * 8.0 / 1024 AS log_files_mb,
+        SUM(CASE WHEN type_desc <> 'LOG'
+                 THEN size - CAST(FILEPROPERTY(name, 'SpaceUsed') AS INT)
+                 ELSE 0 END) * 8.0 / 1024                                   AS unallocated_mb,
+        SUM(CASE WHEN type_desc = 'LOG'
+                 THEN size - CAST(FILEPROPERTY(name, 'SpaceUsed') AS INT)
+                 ELSE 0 END) * 8.0 / 1024                                   AS avail_log_mb
+    FROM sys.database_files
+) f
+CROSS JOIN (
+    SELECT
+        ISNULL(SUM(CASE WHEN i.index_id IN (0,1) THEN a.used_pages ELSE 0 END), 0) * 8.0 / 1024 AS data_mb,
+        ISNULL(SUM(CASE WHEN i.index_id  > 1     THEN a.used_pages ELSE 0 END), 0) * 8.0 / 1024 AS index_mb,
+        ISNULL(SUM(a.total_pages - a.used_pages), 0) * 8.0 / 1024                               AS unused_mb
+    FROM sys.partitions p
+    JOIN sys.allocation_units a ON a.container_id = CASE WHEN a.type = 2
+                                                        THEN p.partition_id
+                                                        ELSE p.hobt_id END
+    JOIN sys.indexes i ON i.object_id = p.object_id AND i.index_id = p.index_id
+) a`
+
+	var du DiskUsage
+	if err := d.queryRow(ctx, func(row *sql.Row) error {
+		return row.Scan(&du.DataFilesMB, &du.LogFilesMB, &du.UnallocatedMB, &du.LogUnusedMB,
+			&du.DataMB, &du.IndexMB, &du.UnusedMB)
+	}, q); err != nil {
+		return DiskUsage{}, fmt.Errorf("gosmo: disk usage: %w", err)
+	}
+	du.LogUsedMB = du.LogFilesMB - du.LogUnusedMB
+	return du, nil
+}
+
 // -- Schemas -------------------------------------------------------------------
 
 // Schemas returns all schemas in the database.
