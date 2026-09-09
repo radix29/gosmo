@@ -84,6 +84,12 @@ func (s *Server) DatabaseSeq(ctx context.Context) iter.Seq2[*Database, error] {
 	return seqFrom(ctx, s.DatabasesContext)
 }
 
+// DatabaseSnapshotSeq returns an iterator over every database snapshot on the
+// server.
+func (s *Server) DatabaseSnapshotSeq(ctx context.Context) iter.Seq2[*DatabaseSnapshot, error] {
+	return seqFrom(ctx, s.DatabaseSnapshotsContext)
+}
+
 // LoginSeq returns an iterator over all logins on the server.
 func (s *Server) LoginSeq(ctx context.Context) iter.Seq2[*Login, error] {
 	return seqFrom(ctx, s.LoginsContext)
@@ -316,6 +322,77 @@ func (d *Database) SequenceSeq(ctx context.Context) iter.Seq2[*Sequence, error] 
 // SynonymSeq returns an iterator over all synonyms in the database.
 func (d *Database) SynonymSeq(ctx context.Context) iter.Seq2[*Synonym, error] {
 	return seqFrom(ctx, d.SynonymsContext)
+}
+
+// UserDefinedDataTypeSeq returns an iterator over all alias types in the
+// database.
+func (d *Database) UserDefinedDataTypeSeq(ctx context.Context) iter.Seq2[*UserDefinedDataType, error] {
+	return seqFrom(ctx, d.UserDefinedDataTypesContext)
+}
+
+// UserDefinedTableTypeSeq returns an iterator over all table types in the
+// database.
+func (d *Database) UserDefinedTableTypeSeq(ctx context.Context) iter.Seq2[*UserDefinedTableType, error] {
+	return seqFrom(ctx, d.UserDefinedTableTypesContext)
+}
+
+// ClrTypeSeq returns an iterator over all CLR user-defined types in the
+// database.
+func (d *Database) ClrTypeSeq(ctx context.Context) iter.Seq2[*ClrType, error] {
+	return seqFrom(ctx, d.ClrTypesContext)
+}
+
+// SystemDataTypeSeq returns an iterator over the built-in data types the
+// instance ships.
+func (d *Database) SystemDataTypeSeq(ctx context.Context) iter.Seq2[*SystemDataType, error] {
+	return seqFrom(ctx, d.SystemDataTypesContext)
+}
+
+// XmlSchemaCollectionSeq returns an iterator over all XML schema collections
+// in the database.
+func (d *Database) XmlSchemaCollectionSeq(ctx context.Context) iter.Seq2[*XmlSchemaCollection, error] {
+	return seqFrom(ctx, d.XmlSchemaCollectionsContext)
+}
+
+// AssemblySeq returns an iterator over all CLR assemblies registered in the
+// database.
+func (d *Database) AssemblySeq(ctx context.Context) iter.Seq2[*Assembly, error] {
+	return seqFrom(ctx, d.AssembliesContext)
+}
+
+// RuleSeq returns an iterator over all standalone rules in the database.
+func (d *Database) RuleSeq(ctx context.Context) iter.Seq2[*Rule, error] {
+	return seqFrom(ctx, d.RulesContext)
+}
+
+// DefaultSeq returns an iterator over all standalone defaults in the
+// database.
+func (d *Database) DefaultSeq(ctx context.Context) iter.Seq2[*Default, error] {
+	return seqFrom(ctx, d.DefaultsContext)
+}
+
+// PlanGuideSeq returns an iterator over all plan guides in the database.
+func (d *Database) PlanGuideSeq(ctx context.Context) iter.Seq2[*PlanGuide, error] {
+	return seqFrom(ctx, d.PlanGuidesContext)
+}
+
+// ExternalDataSourceSeq returns an iterator over all external data sources in
+// the database.
+func (d *Database) ExternalDataSourceSeq(ctx context.Context) iter.Seq2[*ExternalDataSource, error] {
+	return seqFrom(ctx, d.ExternalDataSourcesContext)
+}
+
+// ExternalFileFormatSeq returns an iterator over all external file formats in
+// the database.
+func (d *Database) ExternalFileFormatSeq(ctx context.Context) iter.Seq2[*ExternalFileFormat, error] {
+	return seqFrom(ctx, d.ExternalFileFormatsContext)
+}
+
+// ExternalLibrarySeq returns an iterator over all external libraries in the
+// database. It yields a single (nil, ErrUnsupportedVersion) before SQL
+// Server 2017, where the catalog view does not exist.
+func (d *Database) ExternalLibrarySeq(ctx context.Context) iter.Seq2[*ExternalLibrary, error] {
+	return seqFrom(ctx, d.ExternalLibrariesContext)
 }
 
 // ParameterSeq returns an iterator over the parameters of one stored

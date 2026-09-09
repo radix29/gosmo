@@ -85,8 +85,10 @@ func (c cannedRow) reply() *captureRows {
 func tableMetadataRow(schema, name string) cannedRow {
 	return cannedRow{
 		match: "FROM   sys.tables t",
-		cols:  []string{"object_id", "schema", "name", "create_date", "modify_date", "repl", "memopt"},
-		row:   []driver.Value{int64(1), schema, name, time.Time{}, time.Time{}, false, false},
+		cols: []string{"object_id", "schema", "name", "create_date", "modify_date", "repl", "memopt",
+			"ms_shipped", "filetable", "external", "node", "edge"},
+		row: []driver.Value{int64(1), schema, name, time.Time{}, time.Time{}, false, false,
+			false, false, false, false, false},
 	}
 }
 

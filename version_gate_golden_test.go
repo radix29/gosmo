@@ -27,32 +27,63 @@ var goldenMajors = []int{13, 14, 15, 16, 17}
 // inventory rather than only against itself: a golden file regenerated from a
 // builder whose `since` is wrong would otherwise pin the bug forever.
 type goldenQuery struct {
-	name   string
-	views  []string
+	name  string
+	views []string
+
+	// columns narrows which gated columns of those views this query is
+	// expected to name. A view read by more than one gated query needs it:
+	// sys.tables is read by the table listing (is_node, is_edge) and by the
+	// per-table detail read (ledger_type_desc), and neither names the
+	// other's columns, so an unnarrowed pairing would demand each name the
+	// column it has no business selecting. Empty means every gated column of
+	// the views listed.
+	columns []string
+
 	render func(major int) string
 }
 
+// covers reports whether g is one of the gates this query is expected to
+// render.
+func (q goldenQuery) covers(g gatedColumn) bool {
+	if !containsString(q.views, g.view) {
+		return false
+	}
+	return len(q.columns) == 0 || containsString(q.columns, g.column)
+}
+
 var goldenQueries = []goldenQuery{
-	{"agcolumns", []string{"availability_groups"}, func(m int) string {
+	{"agcolumns", []string{"availability_groups"}, nil, func(m int) string {
 		return (&Server{info: &ServerInfo{VersionMajor: m}}).agColumns()
 	}},
-	{"listeners", []string{"availability_group_listeners"}, func(m int) string {
+	{"listeners", []string{"availability_group_listeners"}, nil, func(m int) string {
 		return (&Server{info: &ServerInfo{VersionMajor: m}}).listenerSelect()
 	}},
-	{"column_master_keys", []string{"column_master_keys"}, func(m int) string {
+	{"column_master_keys", []string{"column_master_keys"}, nil, func(m int) string {
 		return dbAtMajor(m).columnMasterKeySelect()
 	}},
-	{"query_store_options", []string{"database_query_store_options"}, func(m int) string {
+	{"query_store_options", []string{"database_query_store_options"}, nil, func(m int) string {
 		return dbAtMajor(m).queryStoreOptionsSelect()
 	}},
-	{"query_store_plans", []string{"query_store_plan"}, func(m int) string {
+	{"query_store_plans", []string{"query_store_plan"}, nil, func(m int) string {
 		return dbAtMajor(m).queryStorePlansQuery("CAST(0 AS float)", "@p1", "@p2", "@p3")
 	}},
-	{"scoped_config", []string{"database_scoped_configurations"}, func(m int) string {
+	{"scoped_config", []string{"database_scoped_configurations"}, nil, func(m int) string {
 		return dbAtMajor(m).scopedConfigSelect()
 	}},
-	{"table_detail", []string{"tables"}, func(m int) string {
+	{"table_detail", []string{"tables"}, []string{"ledger_type_desc"}, func(m int) string {
 		return (&Table{db: dbAtMajor(m)}).detailSelect()
+	}},
+	{"table_list", []string{"tables"}, []string{"is_node", "is_edge"}, func(m int) string {
+		return dbAtMajor(m).tableSelect()
+	}},
+	{"table_kinds", []string{"tables"}, []string{"is_node", "is_edge"}, func(m int) string {
+		return kindClause(m, TableKindUser) + "\n" + kindClause(m, TableKindGraph)
+	}},
+	{"external_data_sources", []string{"external_data_sources"}, nil, func(m int) string {
+		return dbAtMajor(m).externalDataSourceSelect()
+	}},
+	{"external_file_formats", []string{"external_file_formats"}, nil, func(m int) string {
+		return dbAtMajor(m).externalFileFormatSelect()
 	}},
 }
 
@@ -103,7 +134,7 @@ func TestGoldenRenderingsAgreeWithTheGateInventory(t *testing.T) {
 	for _, q := range goldenQueries {
 		gates := 0
 		for _, g := range gatedColumns {
-			if !containsString(q.views, g.view) {
+			if !q.covers(g) {
 				continue
 			}
 			gates++
@@ -128,7 +159,7 @@ func TestEveryGatedColumnHasAGoldenQuery(t *testing.T) {
 	for _, g := range gatedColumns {
 		covered := false
 		for _, q := range goldenQueries {
-			if containsString(q.views, g.view) {
+			if q.covers(g) {
 				covered = true
 			}
 		}

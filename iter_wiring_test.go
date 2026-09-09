@@ -389,6 +389,78 @@ func iterWirings(t *testing.T) []seqWiring {
 				}
 			},
 			func(ctx context.Context) { _, _ = dbo.SynonymsContext(ctx) }},
+		{"Database.UserDefinedDataTypeSeq",
+			func(ctx context.Context) {
+				for range dbo.UserDefinedDataTypeSeq(ctx) {
+				}
+			},
+			func(ctx context.Context) { _, _ = dbo.UserDefinedDataTypesContext(ctx) }},
+		{"Database.UserDefinedTableTypeSeq",
+			func(ctx context.Context) {
+				for range dbo.UserDefinedTableTypeSeq(ctx) {
+				}
+			},
+			func(ctx context.Context) { _, _ = dbo.UserDefinedTableTypesContext(ctx) }},
+		{"Database.ClrTypeSeq",
+			func(ctx context.Context) {
+				for range dbo.ClrTypeSeq(ctx) {
+				}
+			},
+			func(ctx context.Context) { _, _ = dbo.ClrTypesContext(ctx) }},
+		{"Database.SystemDataTypeSeq",
+			func(ctx context.Context) {
+				for range dbo.SystemDataTypeSeq(ctx) {
+				}
+			},
+			func(ctx context.Context) { _, _ = dbo.SystemDataTypesContext(ctx) }},
+		{"Database.XmlSchemaCollectionSeq",
+			func(ctx context.Context) {
+				for range dbo.XmlSchemaCollectionSeq(ctx) {
+				}
+			},
+			func(ctx context.Context) { _, _ = dbo.XmlSchemaCollectionsContext(ctx) }},
+		{"Database.AssemblySeq",
+			func(ctx context.Context) {
+				for range dbo.AssemblySeq(ctx) {
+				}
+			},
+			func(ctx context.Context) { _, _ = dbo.AssembliesContext(ctx) }},
+		{"Database.RuleSeq",
+			func(ctx context.Context) {
+				for range dbo.RuleSeq(ctx) {
+				}
+			},
+			func(ctx context.Context) { _, _ = dbo.RulesContext(ctx) }},
+		{"Database.DefaultSeq",
+			func(ctx context.Context) {
+				for range dbo.DefaultSeq(ctx) {
+				}
+			},
+			func(ctx context.Context) { _, _ = dbo.DefaultsContext(ctx) }},
+		{"Database.PlanGuideSeq",
+			func(ctx context.Context) {
+				for range dbo.PlanGuideSeq(ctx) {
+				}
+			},
+			func(ctx context.Context) { _, _ = dbo.PlanGuidesContext(ctx) }},
+		{"Database.ExternalDataSourceSeq",
+			func(ctx context.Context) {
+				for range dbo.ExternalDataSourceSeq(ctx) {
+				}
+			},
+			func(ctx context.Context) { _, _ = dbo.ExternalDataSourcesContext(ctx) }},
+		{"Database.ExternalFileFormatSeq",
+			func(ctx context.Context) {
+				for range dbo.ExternalFileFormatSeq(ctx) {
+				}
+			},
+			func(ctx context.Context) { _, _ = dbo.ExternalFileFormatsContext(ctx) }},
+		{"Database.ExternalLibrarySeq",
+			func(ctx context.Context) {
+				for range dbo.ExternalLibrarySeq(ctx) {
+				}
+			},
+			func(ctx context.Context) { _, _ = dbo.ExternalLibrariesContext(ctx) }},
 		{"Database.SystemFunctionSeq",
 			func(ctx context.Context) {
 				for range dbo.SystemFunctionSeq(ctx) {
@@ -581,6 +653,12 @@ func iterWirings(t *testing.T) []seqWiring {
 				}
 			},
 			func(ctx context.Context) { _, _ = srv.DatabasesContext(ctx) }},
+		{"Server.DatabaseSnapshotSeq",
+			func(ctx context.Context) {
+				for range srv.DatabaseSnapshotSeq(ctx) {
+				}
+			},
+			func(ctx context.Context) { _, _ = srv.DatabaseSnapshotsContext(ctx) }},
 		{"Server.DiskVolumeSeq",
 			func(ctx context.Context) {
 				for range srv.DiskVolumeSeq(ctx) {

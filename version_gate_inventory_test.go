@@ -69,6 +69,35 @@ var gatedColumns = []gatedColumn{
 
 	// sys.tables — ledger tables, 2022.
 	{"tables", "ledger_type_desc", "t.ledger_type_desc", SQLServer2022, false, ""},
+
+	// sys.tables — the graph columns, 2017. Two entries each because each
+	// column has two call sites: the listing's SELECT list (tableSelect) and
+	// the "is this a graph table" predicate (graphPredicate), which the kind
+	// clauses and the kind-presence read share. The counts here and the call
+	// sites in the source are compared, so a single entry would read as a
+	// stale inventory rather than as a shared gate.
+	//
+	// Confirmed on the catalog, not from documentation: 13.0.6500.1 has
+	// neither column in sys.tables, 14.0.2130.4 has both.
+	{"tables", "is_node", "t.is_node", SQLServer2017, false, ""},
+	{"tables", "is_node", "t.is_node", SQLServer2017, false, ""},
+	{"tables", "is_edge", "t.is_edge", SQLServer2017, false, ""},
+	{"tables", "is_edge", "t.is_edge", SQLServer2017, false, ""},
+
+	// sys.external_data_sources — the PolyBase v2 columns, 2019.
+	{"external_data_sources", "connection_options", "s.connection_options", SQLServer2019, false, ""},
+	{"external_data_sources", "pushdown", "s.pushdown", SQLServer2019, false, ""},
+
+	// sys.external_file_formats — first_row and parser_version.
+	//
+	// Microsoft documents first_row as SQL Server 2017 and later. It is not
+	// there: a 14.0.2130.4 instance has neither column, and 17.0.1135.8 has
+	// both, so the gate sits at 2019 — the release where the column actually
+	// appears on a box product. Gating it at 2017 as documented would kill
+	// the whole read on every 2017 instance, which is exactly the defect
+	// class this inventory exists for.
+	{"external_file_formats", "first_row", "f.first_row", SQLServer2019, false, ""},
+	{"external_file_formats", "parser_version", "f.parser_version", SQLServer2019, false, ""},
 }
 
 // colSinceCall matches a colSince call site's version argument and its col

@@ -845,7 +845,8 @@ func (s *Server) Databases() ([]*Database, error) {
 func (s *Server) DatabasesContext(ctx context.Context) ([]*Database, error) {
 	const q = `
 	SELECT name, database_id, state_desc, recovery_model_desc,
-	       compatibility_level, collation_name, is_read_only, create_date
+	       compatibility_level, collation_name, is_read_only, create_date,
+	       ISNULL(source_database_id, 0)
 	FROM sys.databases
 	ORDER BY name`
 
@@ -863,6 +864,7 @@ func (s *Server) DatabasesContext(ctx context.Context) ([]*Database, error) {
 		if err := rows.Scan(
 			&d.name, &d.id, &state, &recovery,
 			&compatLevel, &collation, &d.isReadOnly, &d.createDate,
+			&d.sourceDatabaseID,
 		); err != nil {
 			return nil, fmt.Errorf("gosmo: list databases: %w", err)
 		}
@@ -892,7 +894,8 @@ func (s *Server) DatabaseByName(name string) (*Database, error) {
 func (s *Server) DatabaseByNameContext(ctx context.Context, name string) (*Database, error) {
 	const q = `
 	SELECT name, database_id, state_desc, recovery_model_desc,
-	       compatibility_level, collation_name, is_read_only, create_date
+	       compatibility_level, collation_name, is_read_only, create_date,
+	       ISNULL(source_database_id, 0)
 	FROM sys.databases
 	WHERE name = @p1`
 
@@ -903,6 +906,7 @@ func (s *Server) DatabaseByNameContext(ctx context.Context, name string) (*Datab
 	if err := s.queryRowScan(ctx, q, []any{name},
 		&d.name, &d.id, &state, &recovery,
 		&compatLevel, &collation, &d.isReadOnly, &d.createDate,
+		&d.sourceDatabaseID,
 	); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, notFoundf("gosmo: database %q not found", name)

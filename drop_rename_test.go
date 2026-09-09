@@ -104,6 +104,32 @@ func TestRenameStatements(t *testing.T) {
 			want: []string{"ALTER SCHEMA [arch]]ive] TRANSFER [sa]]les].[Or'ders]"},
 		},
 		{
+			// sp_rename's USERDATATYPE class is the only one that reaches
+			// sys.types, and it reaches alias types only.
+			name: "RenameUserDefinedDataType",
+			write: func(ctx context.Context, d *Database) error {
+				return d.RenameUserDefinedDataTypeContext(ctx, "", "Phone", "PhoneNo")
+			},
+			want: []string{"EXEC sp_rename", "N'[dbo].[Phone]'", "N'PhoneNo'", "N'USERDATATYPE'"},
+		},
+		{
+			// A type is not in sys.objects, so TRANSFER needs its class
+			// prefix; without it the server refuses the transfer naming an
+			// object that does not exist.
+			name: "TransferType",
+			write: func(ctx context.Context, d *Database) error {
+				return d.TransferTypeContext(ctx, "archive", "sales", "Phone")
+			},
+			want: []string{"ALTER SCHEMA [archive] TRANSFER TYPE::[sales].[Phone]"},
+		},
+		{
+			name: "TransferXmlSchemaCollection",
+			write: func(ctx context.Context, d *Database) error {
+				return d.TransferXmlSchemaCollectionContext(ctx, "archive", "", "OrderSchema")
+			},
+			want: []string{"ALTER SCHEMA [archive] TRANSFER XML SCHEMA COLLECTION::[dbo].[OrderSchema]"},
+		},
+		{
 			name: "TransferObject defaults the source schema",
 			write: func(ctx context.Context, d *Database) error {
 				return d.TransferObjectContext(ctx, "archive", "", "Orders")

@@ -20,6 +20,13 @@ type Database struct {
 	collation     string
 	isReadOnly    bool
 	createDate    time.Time
+
+	// sourceDatabaseID is sys.databases.source_database_id: the database a
+	// snapshot was taken of, and 0 on every database that is not one. It
+	// backs IsSnapshot, which is how a caller building a tree keeps a
+	// snapshot out of the user-database list — Server.Databases returns it
+	// like any other row, because the catalog does.
+	sourceDatabaseID int
 }
 
 // systemDatabaseMaxID is the highest database_id SQL Server permanently
@@ -37,6 +44,13 @@ func (d *Database) ID() int { return d.id }
 // system databases (master, tempdb, model, msdb), identified by their
 // permanently reserved database_id (1-4) rather than by name.
 func (d *Database) IsSystem() bool { return d.id > 0 && d.id <= systemDatabaseMaxID }
+
+// IsSnapshot reports whether this database is a database snapshot.
+func (d *Database) IsSnapshot() bool { return d.sourceDatabaseID != 0 }
+
+// SourceDatabaseID returns the database_id of the database a snapshot was
+// taken of, and 0 on a database that is not a snapshot.
+func (d *Database) SourceDatabaseID() int { return d.sourceDatabaseID }
 
 // State returns the state_desc (ONLINE, OFFLINE, RESTORING ...).
 func (d *Database) State() string { return d.state }
@@ -450,8 +464,13 @@ func (d *Database) Tables() ([]*Table, error) {
 
 // TablesContext is the context-aware variant of Tables.
 func (d *Database) TablesContext(ctx context.Context) ([]*Table, error) {
-	return d.tablesWhere(ctx, "", nil)
+	return d.tablesWhere(ctx, userTablesClause, nil)
 }
+
+// userTablesClause is the "not SQL Server's own" test every listing that is
+// not asked for a specific TableKind applies. The kind listings supply their
+// own is_ms_shipped test instead — see kindClause.
+const userTablesClause = "AND t.is_ms_shipped = 0"
 
 // TablesFiltered returns the user tables an ObjectFilter matches, narrowed by
 // the server rather than by the caller. An empty filter is TablesContext.
@@ -462,7 +481,7 @@ func (d *Database) TablesFiltered(filter ObjectFilter) ([]*Table, error) {
 // TablesFilteredContext is the context-aware variant of TablesFiltered.
 func (d *Database) TablesFilteredContext(ctx context.Context, filter ObjectFilter) ([]*Table, error) {
 	where, args := filter.clause(tableFilterColumns, 1)
-	return d.tablesWhere(ctx, where, args)
+	return d.tablesWhere(ctx, userTablesClause+" "+where, args)
 }
 
 // tableFilterColumns maps an ObjectFilter onto sys.tables as tablesWhere
@@ -481,16 +500,40 @@ func (d *Database) TablesBySchema(schema string) ([]*Table, error) {
 
 // TablesBySchemaContext is the context-aware variant of TablesBySchema.
 func (d *Database) TablesBySchemaContext(ctx context.Context, schema string) ([]*Table, error) {
-	return d.tablesWhere(ctx, "AND SCHEMA_NAME(t.schema_id) = @p1", []any{schema})
+	return d.tablesWhere(ctx, userTablesClause+" AND SCHEMA_NAME(t.schema_id) = @p1", []any{schema})
+}
+
+// tableSelect is the SELECT list every Table listing shares, version-gated:
+// is_node and is_edge are 2017 columns (see graphPredicate), substituted with
+// a zero bit below that so the scan destinations stay the same at every
+// major.
+func (d *Database) tableSelect() string {
+	major := d.serverMajorVersion()
+	return `
+SELECT t.object_id, SCHEMA_NAME(t.schema_id), t.name,
+       t.create_date, t.modify_date,
+       t.has_replication_filter, t.is_memory_optimized,
+       t.is_ms_shipped, t.is_filetable, t.is_external,
+       ` + colSince(major, SQLServer2017, "t.is_node", "CAST(0 AS bit)") + `,
+       ` + colSince(major, SQLServer2017, "t.is_edge", "CAST(0 AS bit)") + `
+FROM   sys.tables t`
+}
+
+// scanTable reads one row of tableSelect.
+func scanTable(d *Database, scan func(...any) error) (*Table, error) {
+	t := &Table{db: d}
+	if err := scan(&t.ObjectID, &t.Schema, &t.Name,
+		&t.CreateDate, &t.ModifyDate,
+		&t.HasReplicationFilter, &t.IsMemoryOptimized,
+		&t.IsSystem, &t.IsFileTable, &t.IsExternal, &t.IsNode, &t.IsEdge); err != nil {
+		return nil, err
+	}
+	return t, nil
 }
 
 func (d *Database) tablesWhere(ctx context.Context, where string, args []any) ([]*Table, error) {
-	q := `
-SELECT t.object_id, SCHEMA_NAME(t.schema_id), t.name,
-       t.create_date, t.modify_date,
-       t.has_replication_filter, t.is_memory_optimized
-FROM   sys.tables t
-WHERE  t.is_ms_shipped = 0 ` + where + `
+	q := d.tableSelect() + `
+WHERE  1 = 1 ` + where + `
 ORDER  BY SCHEMA_NAME(t.schema_id), t.name`
 
 	rows, err := d.query(ctx, q, args...)
@@ -501,10 +544,8 @@ ORDER  BY SCHEMA_NAME(t.schema_id), t.name`
 
 	var tables []*Table
 	for rows.Next() {
-		t := &Table{db: d}
-		if err := rows.Scan(&t.ObjectID, &t.Schema, &t.Name,
-			&t.CreateDate, &t.ModifyDate,
-			&t.HasReplicationFilter, &t.IsMemoryOptimized); err != nil {
+		t, err := scanTable(d, rows.Scan)
+		if err != nil {
 			return nil, fmt.Errorf("gosmo: list tables in %q: %w", d.name, err)
 		}
 		tables = append(tables, t)
@@ -516,26 +557,27 @@ ORDER  BY SCHEMA_NAME(t.schema_id), t.name`
 }
 
 // TableByName returns a single table by schema and name using a direct query.
+//
+// It finds a system table (is_ms_shipped = 1) as readily as a user one: the
+// caller asked for a table by name, and msdb's own tables — which is most of
+// what msdb has — are the ones a by-name lookup would otherwise never reach.
+// Tables() still lists only the user tables; the predicate belongs to the
+// listing, not to the lookup.
 func (d *Database) TableByName(schema, name string) (*Table, error) {
 	return d.TableByNameContext(context.Background(), schema, name)
 }
 
 // TableByNameContext is the context-aware variant of TableByName.
 func (d *Database) TableByNameContext(ctx context.Context, schema, name string) (*Table, error) {
-	const q = `
-SELECT t.object_id, SCHEMA_NAME(t.schema_id), t.name,
-       t.create_date, t.modify_date,
-       t.has_replication_filter, t.is_memory_optimized
-FROM   sys.tables t
-WHERE  t.is_ms_shipped = 0
-  AND  SCHEMA_NAME(t.schema_id) = @p1
+	q := d.tableSelect() + `
+WHERE  SCHEMA_NAME(t.schema_id) = @p1
   AND  t.name                   = @p2`
 
-	t := &Table{db: d}
+	var t *Table
 	err := d.queryRow(ctx, func(row *sql.Row) error {
-		return row.Scan(&t.ObjectID, &t.Schema, &t.Name,
-			&t.CreateDate, &t.ModifyDate,
-			&t.HasReplicationFilter, &t.IsMemoryOptimized)
+		var err error
+		t, err = scanTable(d, row.Scan)
+		return err
 	}, q, schema, name)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {

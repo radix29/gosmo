@@ -67,13 +67,18 @@ type sweep struct {
 	ctx     context.Context
 	calls   int
 	failed  []string
-	refused []string // gosmo's own version refusals; expected, not failures
+	refused []string        // gosmo's own version refusals; expected, not failures
+	called  map[string]bool // every label reached, for the coverage check below
 }
 
 // call runs one read and records its outcome. A panic is recorded like an
 // error: the sweep's value is in reaching the end of the list.
 func (sw *sweep) call(label string, fn func() error) {
 	sw.calls++
+	if sw.called == nil {
+		sw.called = map[string]bool{}
+	}
+	sw.called[label] = true
 	err := func() (err error) {
 		defer func() {
 			if r := recover(); r != nil {
@@ -155,6 +160,105 @@ func checkSkipList(t *testing.T) {
 	}
 }
 
+// sweepMustCall names the reads that Phase 3's eight new object families
+// added. Every one is listed by hand, because the thing this guards against
+// is precisely the read that quietly stops being swept: the reflective half
+// covers a listing only for as long as it stays an exported
+// XxxContext(ctx) (…, error) on a type reflectSweep is pointed at, and a
+// listing given a filter argument, moved to another receiver or renamed
+// leaves no trace when it drops out. A sweep that reports "0 failures"
+// because it made the call and a sweep that reports it because it never made
+// the call read identically otherwise.
+//
+// Names are matched against the labels sw.call recorded, allowing for the
+// two decorations the labels carry: the reflective half appends
+// " [<instance>]" and the hand-driven half sometimes appends "(<arg>)".
+var sweepMustCall = []string{
+	// Types (Stage A/B): five listings, four by-name finders.
+	"Database.SystemDataTypesContext",
+	"Database.UserDefinedDataTypesContext",
+	"Database.UserDefinedTableTypesContext",
+	"Database.ClrTypesContext",
+	"Database.XmlSchemaCollectionsContext",
+	"Database.UserDefinedDataTypeByNameContext",
+	"Database.ClrTypeByNameContext",
+	"Database.XmlSchemaCollectionByNameContext",
+	"UserDefinedTableType.ColumnsContext",
+	"XmlSchemaCollection.DefinitionContext",
+
+	// Assemblies.
+	"Database.AssembliesContext",
+	"Database.AssemblyByNameContext",
+	"Assembly.FilesContext/ModulesContext",
+
+	// Rules and defaults.
+	"Database.RulesContext",
+	"Database.RuleByNameContext",
+	"Database.DefaultsContext",
+	"Database.DefaultByNameContext",
+
+	// Plan guides.
+	"Database.PlanGuidesContext",
+	"Database.PlanGuideByNameContext",
+
+	// External resources.
+	"Database.ExternalDataSourcesContext",
+	"Database.ExternalDataSourceByNameContext",
+	"Database.ExternalFileFormatsContext",
+	"Database.ExternalFileFormatByNameContext",
+	"Database.ExternalLibrariesContext",
+	"Database.ExternalLibraryByNameContext",
+
+	// Tables sub-folders (Stage E).
+	"Database.TableKindsPresentContext",
+	"Database.TablesOfKindContext(user)",
+	"Database.TablesOfKindContext(system)",
+	"Database.TablesOfKindContext(filetable)",
+	"Database.TablesOfKindContext(external)",
+	"Database.TablesOfKindContext(graph)",
+
+	// Database snapshots (Stage E).
+	"Server.DatabaseSnapshotsContext",
+	"Server.SnapshotsOfContext",
+	"Server.SnapshotFileDefaultsContext",
+
+	// The eleven scripters the new families added. Each opens with a by-name
+	// catalog read, so each carries the same version exposure as a listing.
+	"Scripter.ScriptUserDefinedDataTypeContext",
+	"Scripter.ScriptUserDefinedTableTypeContext",
+	"Scripter.ScriptClrTypeContext",
+	"Scripter.ScriptXmlSchemaCollectionContext",
+	"Scripter.ScriptRuleContext",
+	"Scripter.ScriptDefaultContext",
+	"Scripter.ScriptAssemblyContext",
+	"Scripter.ScriptPlanGuideContext",
+	"Scripter.ScriptExternalDataSourceContext",
+	"Scripter.ScriptExternalFileFormatContext",
+	"Scripter.ScriptExternalLibraryContext",
+}
+
+// checkCoverage fails on any sweepMustCall entry no label matched. It runs
+// after the sweep rather than instead of it: a read can be both called and
+// broken, and both answers are wanted.
+func (sw *sweep) checkCoverage() {
+	sw.t.Helper()
+	for _, want := range sweepMustCall {
+		found := false
+		for label := range sw.called {
+			if label == want ||
+				strings.HasPrefix(label, want+" [") ||
+				strings.HasPrefix(label, want+"(") {
+				found = true
+				break
+			}
+		}
+		if !found {
+			sw.t.Errorf("sweep never called %s — it is in sweepMustCall but no label matched, "+
+				"so this instance's answer for it is unknown, not clean", want)
+		}
+	}
+}
+
 // sweepSchema is one of every object kind the sweep knows how to make. Each
 // statement exists to give some read a row to return: a read that finds
 // nothing can succeed on a version its query cannot even run on.
@@ -177,6 +281,25 @@ var sweepSchema = []string{
 	`CREATE TRIGGER trg_sweep_child ON dbo.sweep_child AFTER INSERT AS SET NOCOUNT ON`,
 	`CREATE TRIGGER trg_sweep_ddl ON DATABASE FOR CREATE_TABLE AS SET NOCOUNT ON`,
 	`CREATE SEQUENCE dbo.sweep_seq AS INT START WITH 1 INCREMENT BY 1`,
+	// Types, rules, defaults and a plan guide: one member each so the
+	// Programmability reads have a row to return rather than only proving
+	// their statement parses.
+	//
+	// CREATE RULE and CREATE DEFAULT must be the first statement in their
+	// batch — the server rejects them outright otherwise, with a parse error
+	// naming the statement rather than anything about the object. Each entry
+	// here goes through its own Database.exec, which is its own batch, so
+	// that holds; a caller batching them together would fail on every major.
+	`CREATE TYPE dbo.sweep_alias FROM VARCHAR(20) NOT NULL`,
+	`CREATE TYPE dbo.sweep_tabletype AS TABLE (id INT NOT NULL PRIMARY KEY, note NVARCHAR(50) NULL)`,
+	`CREATE XML SCHEMA COLLECTION dbo.sweep_xsd AS N'<xsd:schema xmlns:xsd="http://www.w3.org/2001/XMLSchema"><xsd:element name="sweep" type="xsd:string"/></xsd:schema>'`,
+	`CREATE RULE dbo.sweep_rule AS @value > 0`,
+	`CREATE DEFAULT dbo.sweep_default AS 0`,
+	`EXEC sp_create_plan_guide @name = N'sweep_pg',
+	   @stmt = N'SELECT COUNT(*) FROM dbo.sweep_parent WHERE name = @name',
+	   @type = N'SQL', @module_or_batch = NULL,
+	   @params = N'@name nvarchar(100)',
+	   @hints = N'OPTION (OPTIMIZE FOR (@name = N''one''))'`,
 	`CREATE SYNONYM dbo.sweep_syn FOR dbo.sweep_parent`,
 	`CREATE PARTITION FUNCTION sweep_pf (INT) AS RANGE RIGHT FOR VALUES (100, 200)`,
 	`CREATE PARTITION SCHEME sweep_ps AS PARTITION sweep_pf ALL TO ([PRIMARY])`,
@@ -290,9 +413,13 @@ func TestLiveVersionSweep(t *testing.T) {
 		sw.reflectSweep("Job", j.Name, j)
 	}
 
+	sweepTableKinds(sw, d)
+	sweepProgrammability(sw, d)
 	sweepQueryStoreReports(sw, d)
 	sweepScripter(sw, d)
 	sweepServerCalls(sw, srv, info)
+
+	sw.checkCoverage()
 
 	sort.Strings(sw.failed)
 	sort.Strings(sw.refused)
@@ -303,6 +430,147 @@ func TestLiveVersionSweep(t *testing.T) {
 	for _, f := range sw.failed {
 		t.Errorf("%s", f)
 	}
+}
+
+// sweepTableKinds drives the five table-family listings. Each takes a
+// TableKind argument, so the reflective half cannot reach any of them — and
+// the graph one is the only read in the sweep that names a column absent from
+// the 2016 floor, which is what its refusal there proves.
+func sweepTableKinds(sw *sweep, d *Database) {
+	for _, kind := range []TableKind{
+		TableKindUser, TableKindSystem, TableKindFileTable,
+		TableKindExternal, TableKindGraph,
+	} {
+		sw.call("Database.TablesOfKindContext("+kind.String()+")", func() error {
+			_, err := d.TablesOfKindContext(sw.ctx, kind)
+			return err
+		})
+	}
+}
+
+// sweepProgrammability drives the reads the reflective half cannot reach:
+// the by-name finders, which take a name, and the per-object reads that hang
+// off an object the listing returned.
+//
+// The fixture objects sweepSchema creates are named here rather than looked
+// up, so a listing that silently returned nothing cannot make the finders
+// pass by never being called with anything.
+//
+// Assemblies, external data sources, external file formats and external
+// libraries get their listings from the reflective half and no fixture: each
+// needs a facility the sweep cannot turn on from a connection — CLR enabled
+// plus a signed binary, or PolyBase, or Machine Learning Services. The
+// listings still run, which is what the version exposure is about; only the
+// by-name finders below go unexercised against a real row.
+func sweepProgrammability(sw *sweep, d *Database) {
+	sw.call("Database.UserDefinedDataTypeByNameContext", func() error {
+		_, err := d.UserDefinedDataTypeByNameContext(sw.ctx, "dbo", "sweep_alias")
+		return err
+	})
+	sw.call("Database.ClrTypeByNameContext", func() error {
+		// No CLR type exists here, so a not-found is the right answer and
+		// not a failure: what is being swept is whether the query runs.
+		_, err := d.ClrTypeByNameContext(sw.ctx, "dbo", "sweep_clr_absent")
+		if errors.Is(err, ErrNotFound) {
+			return nil
+		}
+		return err
+	})
+	sw.call("Database.XmlSchemaCollectionByNameContext", func() error {
+		_, err := d.XmlSchemaCollectionByNameContext(sw.ctx, "dbo", "sweep_xsd")
+		return err
+	})
+	sw.call("Database.RuleByNameContext", func() error {
+		_, err := d.RuleByNameContext(sw.ctx, "dbo", "sweep_rule")
+		return err
+	})
+	sw.call("Database.DefaultByNameContext", func() error {
+		_, err := d.DefaultByNameContext(sw.ctx, "dbo", "sweep_default")
+		return err
+	})
+	sw.call("Database.PlanGuideByNameContext", func() error {
+		_, err := d.PlanGuideByNameContext(sw.ctx, "sweep_pg")
+		return err
+	})
+	sw.call("Database.AssemblyByNameContext", func() error {
+		_, err := d.AssemblyByNameContext(sw.ctx, "sweep_assembly_absent")
+		if errors.Is(err, ErrNotFound) {
+			return nil
+		}
+		return err
+	})
+	sw.call("Database.ExternalDataSourceByNameContext", func() error {
+		_, err := d.ExternalDataSourceByNameContext(sw.ctx, "sweep_eds_absent")
+		if errors.Is(err, ErrNotFound) {
+			return nil
+		}
+		return err
+	})
+	sw.call("Database.ExternalFileFormatByNameContext", func() error {
+		_, err := d.ExternalFileFormatByNameContext(sw.ctx, "sweep_eff_absent")
+		if errors.Is(err, ErrNotFound) {
+			return nil
+		}
+		return err
+	})
+	sw.call("Database.ExternalLibraryByNameContext", func() error {
+		_, err := d.ExternalLibraryByNameContext(sw.ctx, "sweep_lib_absent")
+		if errors.Is(err, ErrNotFound) {
+			return nil
+		}
+		return err
+	})
+
+	// The table type's columns come off the internal table sys.table_types
+	// points at, which is the read most likely to be wrong and the one a
+	// listing alone would never exercise.
+	sw.call("UserDefinedTableType.ColumnsContext", func() error {
+		tt, err := d.UserDefinedTableTypeByNameContext(sw.ctx, "dbo", "sweep_tabletype")
+		if err != nil {
+			return err
+		}
+		cols, err := tt.ColumnsContext(sw.ctx)
+		if err != nil {
+			return err
+		}
+		if len(cols) != 2 {
+			return fmt.Errorf("table type has %d columns, want 2 — the internal-table lookup found the wrong object", len(cols))
+		}
+		return nil
+	})
+
+	sw.call("XmlSchemaCollection.DefinitionContext", func() error {
+		c, err := d.XmlSchemaCollectionByNameContext(sw.ctx, "dbo", "sweep_xsd")
+		if err != nil {
+			return err
+		}
+		def, err := c.DefinitionContext(sw.ctx)
+		if err != nil {
+			return err
+		}
+		if def == "" {
+			return errors.New("XML_SCHEMA_NAMESPACE returned nothing for a collection that exists")
+		}
+		return nil
+	})
+
+	// Assembly's own reads, against whatever the instance already has —
+	// Microsoft.SqlServer.Types is registered in every database, so this
+	// reaches a real row without the sweep creating one.
+	sw.call("Assembly.FilesContext/ModulesContext", func() error {
+		asms, err := d.AssembliesContext(sw.ctx)
+		if err != nil {
+			return err
+		}
+		if len(asms) == 0 {
+			return nil
+		}
+		if _, err := asms[0].FilesContext(sw.ctx); err != nil {
+			return err
+		}
+		_, err = asms[0].ModulesContext(sw.ctx)
+		return err
+	})
 }
 
 // sweepQueryStoreReports drives the ten report methods, which take options
@@ -417,6 +685,55 @@ func sweepScripter(sw *sweep, d *Database) {
 	str("ScriptPartitionSchemeContext", func() (string, error) {
 		return sc.ScriptPartitionSchemeContext(sw.ctx, "sweep_ps")
 	})
+
+	// The new families' scripters. Each opens with a by-name catalog read, so
+	// each is version-exposed exactly like a listing is, and none of them was
+	// reachable from the sweep before Stage F.
+	str("ScriptUserDefinedDataTypeContext", func() (string, error) {
+		return sc.ScriptUserDefinedDataTypeContext(sw.ctx, "dbo", "sweep_alias")
+	})
+	str("ScriptUserDefinedTableTypeContext", func() (string, error) {
+		return sc.ScriptUserDefinedTableTypeContext(sw.ctx, "dbo", "sweep_tabletype")
+	})
+	str("ScriptXmlSchemaCollectionContext", func() (string, error) {
+		return sc.ScriptXmlSchemaCollectionContext(sw.ctx, "dbo", "sweep_xsd")
+	})
+	str("ScriptRuleContext", func() (string, error) { return sc.ScriptRuleContext(sw.ctx, "dbo", "sweep_rule") })
+	str("ScriptDefaultContext", func() (string, error) {
+		return sc.ScriptDefaultContext(sw.ctx, "dbo", "sweep_default")
+	})
+	str("ScriptPlanGuideContext", func() (string, error) { return sc.ScriptPlanGuideContext(sw.ctx, "sweep_pg") })
+
+	// The remaining five script objects the sweep cannot create — a CLR type
+	// and an assembly need CLR enabled and a signed binary, the three
+	// external ones PolyBase or Machine Learning Services. A not-found is
+	// therefore the right answer and not a failure: what is being swept is
+	// whether the by-name read underneath runs on this version at all, which
+	// is the half that touches the catalog.
+	absent := func(label string, fn func() (string, error)) {
+		sw.call("Scripter."+label, func() error {
+			_, err := fn()
+			if errors.Is(err, ErrNotFound) {
+				return nil
+			}
+			return err
+		})
+	}
+	absent("ScriptClrTypeContext", func() (string, error) {
+		return sc.ScriptClrTypeContext(sw.ctx, "dbo", "sweep_clr_absent")
+	})
+	absent("ScriptAssemblyContext", func() (string, error) {
+		return sc.ScriptAssemblyContext(sw.ctx, "sweep_assembly_absent")
+	})
+	absent("ScriptExternalDataSourceContext", func() (string, error) {
+		return sc.ScriptExternalDataSourceContext(sw.ctx, "sweep_eds_absent")
+	})
+	absent("ScriptExternalFileFormatContext", func() (string, error) {
+		return sc.ScriptExternalFileFormatContext(sw.ctx, "sweep_eff_absent")
+	})
+	absent("ScriptExternalLibraryContext", func() (string, error) {
+		return sc.ScriptExternalLibraryContext(sw.ctx, "sweep_lib_absent")
+	})
 }
 
 // sweepServerCalls drives the server reads that take arguments: the error log
@@ -452,5 +769,26 @@ func sweepServerCalls(sw *sweep, srv *Server, info *ServerInfo) {
 	sw.call("Server.FileSystemExistsContext", func() error {
 		_, _, err := srv.FileSystemExistsContext(sw.ctx, path)
 		return err
+	})
+
+	// Database snapshots. The listing is reflective; these two take a name.
+	// SnapshotFileDefaultsContext is a read, not the create: it only asks
+	// sys.master_files what the source's data files are, which is where a
+	// snapshot statement most often goes wrong.
+	sw.call("Server.SnapshotsOfContext", func() error {
+		_, err := srv.SnapshotsOfContext(sw.ctx, "master")
+		return err
+	})
+	sw.call("Server.SnapshotFileDefaultsContext", func() error {
+		specs, err := srv.SnapshotFileDefaultsContext(sw.ctx, "master", "sweep_snap")
+		if err != nil {
+			return err
+		}
+		for _, sp := range specs {
+			if strings.HasSuffix(strings.ToLower(sp.FileName), ".ldf") {
+				return fmt.Errorf("snapshot file defaults include the log file %q — CREATE DATABASE ... AS SNAPSHOT OF rejects that", sp.FileName)
+			}
+		}
+		return nil
 	})
 }

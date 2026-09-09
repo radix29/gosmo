@@ -23,6 +23,16 @@ type Table struct {
 	ModifyDate           time.Time
 	HasReplicationFilter bool
 	IsMemoryOptimized    bool
+
+	// The four flags that decide which family a table belongs to — see
+	// TableKind, which is how a caller asks for one family at a time.
+	// IsSystem is sys.tables.is_ms_shipped: a table SQL Server itself
+	// created, msdb's own hundred and forty-odd included.
+	IsSystem    bool
+	IsFileTable bool
+	IsExternal  bool
+	IsNode      bool
+	IsEdge      bool
 }
 
 // Table returns a lightweight handle to a table by name, without a query.
