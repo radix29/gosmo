@@ -30,7 +30,7 @@ These continue for the life of the project, release or not:
   read. The class diagrams in the same file need the same treatment, and
   `gosmo.mermaid` is those diagrams concatenated in order, kept
   byte-identical to them.
-  - **The class map is five diagrams, not one, and has to stay that way.**
+  - **The class map is several diagrams, not one, and has to stay that way.**
     Mermaid refuses to render a diagram whose text (comments stripped)
     exceeds 50,000 characters — it draws an error box in place of the whole
     thing, on GitHub included. The single diagram reached 52,533 during

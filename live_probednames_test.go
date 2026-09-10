@@ -59,7 +59,13 @@ func TestLiveEveryProbedPermissionNameIsOneTheServerDefines(t *testing.T) {
 	if !dcaps.Accessible {
 		t.Fatalf("scratch database %s reads inaccessible", d.Name())
 	}
+	// External libraries arrived with Machine Learning Services in 2017.
+	since2017 := map[string]bool{"ALTER ANY EXTERNAL LIBRARY": true}
 	for _, name := range ProbedDatabasePermissions {
+		if since2017[name] && !hasColumnSince(major, SQLServer2017) {
+			t.Logf("database permission %q is 2017+; major %d does not define it", name, major)
+			continue
+		}
 		if got := dcaps.Permission(name); got == CapabilityUnknown {
 			t.Errorf("database permission %q reads %v — the instance does not define that name, "+
 				"so it gates nothing", name, got)

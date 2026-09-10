@@ -143,9 +143,9 @@ type ConnectionOptions struct {
 
 	// Encrypt controls the encryption mode.
 	// "" - driver default (true for Azure endpoints, false otherwise)
-	// "true" - always encrypt
-	// "false" - no encryption
-	// "disable" - no encryption (legacy alias)
+	// "true" / "mandatory" - always encrypt
+	// "false" / "optional" - encrypt the login packet only
+	// "disable" - no encryption at all, not even the login
 	// "strict" - TDS 8.0 strict encryption
 	Encrypt string
 
@@ -212,7 +212,9 @@ type ConnectionOptions struct {
 	// Leave it nil for the default, which is the driver's own dialer except
 	// when Server names an instance with no port: that case needs a Browser
 	// probe, and gosmo substitutes a dialer that sends it to every resolved
-	// address rather than only the first (see dialer.go).
+	// address rather than only the first, and reuses a reply for up to two
+	// minutes rather than probing for every new pooled connection — any
+	// failed connection attempt discards it (see dialer.go).
 	Dialer mssql.Dialer
 
 	// SessionInitSQL is T-SQL executed on every pooled connection right
@@ -221,6 +223,25 @@ type ConnectionOptions struct {
 	// SSMS's Query Execution options), e.g. "SET ARITHABORT ON; SET
 	// ANSI_NULLS ON". Leave empty for driver defaults.
 	SessionInitSQL string
+
+	// -- Driver pass-through -------------------------------------------------------
+
+	// ExtraParams carries go-mssqldb connection-string parameters that have
+	// no ConnectionOptions field — "packet size", "ApplicationIntent",
+	// "MultiSubnetFailover", "dial timeout", "keepalive" and the like. Keys are
+	// case-insensitive, as the driver reads them; each key takes exactly one
+	// value.
+	//
+	// A parameter that a ConnectionOptions field controls is refused, never
+	// merged: server, port, database, user id and password, app name,
+	// connection timeout, the TLS settings, and every authentication
+	// parameter (fedauth, authenticator, the krb5-* family, tenant, client and
+	// certificate settings), along with their ADO.NET synonyms ("initial
+	// catalog", "uid", "trust server certificate", …). Otherwise one of the
+	// two would silently override the other, and which one won would depend
+	// on the driver's parsing order rather than on anything the caller wrote.
+	// A refused key fails Connect and ConnectionString with an error naming it.
+	ExtraParams url.Values
 }
 
 // Connect opens a connection to a SQL Server instance and returns a Server.
@@ -245,7 +266,7 @@ func ConnectContext(ctx context.Context, opts ConnectionOptions) (*Server, error
 	if err != nil {
 		return nil, err
 	}
-	pool := sql.OpenDB(connector)
+	pool := sql.OpenDB(poolConnector(connector, opts))
 
 	// Pool tuning
 	if opts.MaxOpenConns > 0 {
@@ -321,6 +342,13 @@ func applyDefaults(opts *ConnectionOptions) {
 //	host                    host:port                host,port
 //	host\instance           host\instance,port
 //
+// An IPv6 literal is accepted bare (fe80::1), bracketed ([fe80::1]), or
+// with a port as [fe80::1]:1433 or fe80::1,1433. A colon is read as a port
+// separator only when what precedes it is a host that can carry one — a
+// name, an IPv4 address or a bracketed literal — so the last group of a bare
+// literal is never mistaken for a port ("2001:db8::5" is a host, not
+// "2001:db8:" on port 5). A bracketed host is returned with its brackets.
+//
 // Exported so callers (e.g. a UI layer building its own address/DSN
 // preview, or resolving a separate "port" field against a Server string
 // that may already carry its own) can reuse the same parsing buildDSN
@@ -345,6 +373,15 @@ func ParseServerAddress(server string) (host, instance string, port int) {
 	sep := strings.LastIndexByte(server, ',')
 	if sep < 0 {
 		sep = strings.LastIndexByte(server, ':')
+		// Only a host with no colon of its own, or a bracketed IPv6 literal,
+		// can be followed by ":port"; in a bare literal every colon is part of
+		// the address.
+		if sep >= 0 {
+			if h := server[:sep]; strings.ContainsRune(h, ':') &&
+				!(strings.HasPrefix(h, "[") && strings.HasSuffix(h, "]")) {
+				sep = -1
+			}
+		}
 	}
 	if sep < 0 {
 		return server, "", 0
@@ -368,10 +405,9 @@ func buildDSN(opts ConnectionOptions) (dsn, driverName string, err error) {
 	// literal backslash gets percent-escaped and go-mssqldb's own URL-DSN
 	// convention (see its splitConnectionStringURL) expects the instance
 	// name as a URL path segment instead: sqlserver://host:port/instance.
-	host, instance, port := ParseServerAddress(opts.Server)
-	dialHost := host
-	if port > 0 {
-		dialHost = fmt.Sprintf("%s:%d", host, port)
+	dialHost, instance, err := dsnHost(opts.Server)
+	if err != nil {
+		return "", "", err
 	}
 
 	q := commonDSNValues(opts)
@@ -445,6 +481,9 @@ func buildDSN(opts ConnectionOptions) (dsn, driverName string, err error) {
 			// Some flows need the tenant in the URL query too
 			q.Set("tenantid", opts.TenantID)
 		}
+		if err := mergeExtraParams(q, opts.ExtraParams); err != nil {
+			return "", "", err
+		}
 
 		u := &url.URL{
 			Scheme:   "sqlserver",
@@ -497,6 +536,9 @@ func buildDSN(opts ConnectionOptions) (dsn, driverName string, err error) {
 		}
 	}
 
+	if err := mergeExtraParams(q, opts.ExtraParams); err != nil {
+		return "", "", err
+	}
 	u.RawQuery = q.Encode()
 	return u.String(), driverName, nil
 }
@@ -530,20 +572,127 @@ func baseDSN(opts ConnectionOptions) (string, error) {
 	if opts.Server == "" {
 		return "", fmt.Errorf("gosmo: ConnectionOptions.Server is required")
 	}
-	host, instance, port := ParseServerAddress(opts.Server)
-	dialHost := host
-	if port > 0 {
-		dialHost = fmt.Sprintf("%s:%d", host, port)
+	dialHost, instance, err := dsnHost(opts.Server)
+	if err != nil {
+		return "", err
+	}
+	q := commonDSNValues(opts)
+	if err := mergeExtraParams(q, opts.ExtraParams); err != nil {
+		return "", err
 	}
 	u := &url.URL{
 		Scheme:   "sqlserver",
 		Host:     dialHost,
-		RawQuery: commonDSNValues(opts).Encode(),
+		RawQuery: q.Encode(),
 	}
 	if instance != "" {
 		u.Path = "/" + instance
 	}
 	return u.String(), nil
+}
+
+// dsnHost renders a ConnectionOptions.Server address as the Host of a
+// sqlserver:// URL, plus the instance name that travels as its path.
+//
+// An IPv6 literal is bracketed there: unbracketed, url.Parse takes its last
+// group for a port, or rejects it outright when that group is not numeric.
+// The driver removes the brackets again only when a port follows them (it
+// splits with net.SplitHostPort), so a literal with no port is given the
+// default 1433 explicitly — the port the driver would have dialled anyway.
+// A literal with a named instance and no port has no URL form the driver
+// reads back correctly: it would carry the brackets into the SQL Browser
+// probe's address. That is an error naming the fix, not a dial that fails
+// somewhere less obvious.
+func dsnHost(server string) (host, instance string, err error) {
+	host, instance, port := ParseServerAddress(server)
+	if strings.ContainsRune(host, ':') {
+		if !strings.HasPrefix(host, "[") {
+			host = "[" + host + "]"
+		}
+		if port == 0 {
+			if instance != "" {
+				return "", "", fmt.Errorf("gosmo: server %q: an IPv6 address with a named instance needs "+
+					"an explicit port (%s\\%s,<port>)", server, strings.Trim(host, "[]"), instance)
+			}
+			port = 1433
+		}
+	}
+	if port > 0 {
+		host = fmt.Sprintf("%s:%d", host, port)
+	}
+	return host, instance, nil
+}
+
+// reservedDSNKeys are the driver parameters a ConnectionOptions field
+// controls, lower-cased as the driver compares them — see
+// ConnectionOptions.ExtraParams, which may not set any of them. The ADO.NET
+// synonyms go-mssqldb maps onto these keys are listed too: the URL form does
+// not translate them, so "initial catalog" beside "database" would be an
+// unknown key silently ignored rather than an override, which is no better.
+// Every key buildDSN, baseDSN and KerberosOptions.applyDSN writes must be
+// here; TestReservedDSNKeysCoverEveryKeyGosmoWrites pins it.
+var reservedDSNKeys = map[string]bool{
+	"server": true, "port": true, "database": true, "user id": true, "password": true,
+	"app name": true, "connection timeout": true,
+	"encrypt": true, "trustservercertificate": true, "hostnameincertificate": true,
+	"fedauth": true, "authenticator": true, "serverspn": true, "tenantid": true,
+	"applicationclientid": true, "clientcertpath": true, "tokenfilepath": true,
+	"sendcertificatechain": true, "disableinstancediscovery": true,
+
+	// ADO.NET synonyms of the above.
+	"data source": true, "address": true, "network address": true, "addr": true,
+	"initial catalog": true, "user": true, "uid": true, "pwd": true,
+	"app": true, "application name": true, "connect timeout": true, "timeout": true,
+	"trust server certificate": true, "host name in certificate": true, "server spn": true,
+}
+
+// ExtraParamError is the error Connect and ConnectionString return for a
+// ConnectionOptions.ExtraParams entry they refuse. Key is the name as the
+// caller gave it.
+type ExtraParamError struct {
+	Key string
+	// Reserved reports that a ConnectionOptions field controls Key — the
+	// caller should set that field instead. When false the entry itself is
+	// malformed: an empty name, more than one value, or the same key twice in
+	// different case.
+	Reserved bool
+	reason   string
+}
+
+func (e *ExtraParamError) Error() string {
+	return fmt.Sprintf("gosmo: extra connection parameter %q %s", e.Key, e.reason)
+}
+
+// mergeExtraParams adds ConnectionOptions.ExtraParams to the DSN query q,
+// refusing a key a ConnectionOptions field controls (reservedDSNKeys, plus the
+// krb5-* family), a key q already carries, and a key given more than one
+// value or given twice in different case — the driver itself rejects the
+// last two with a message that does not say where the duplicate came from.
+// Every refusal is an *ExtraParamError.
+func mergeExtraParams(q, extra url.Values) error {
+	const reserved = "is set through a ConnectionOptions field, not ExtraParams"
+	seen := make(map[string]bool, len(extra))
+	for k, vs := range extra {
+		key := strings.ToLower(strings.TrimSpace(k))
+		switch {
+		case key == "":
+			return &ExtraParamError{Key: k, reason: "has an empty name"}
+		case reservedDSNKeys[key] || strings.HasPrefix(key, "krb5-"):
+			return &ExtraParamError{Key: k, Reserved: true, reason: reserved}
+		case seen[key]:
+			return &ExtraParamError{Key: k, reason: "is given more than once"}
+		case len(vs) != 1:
+			return &ExtraParamError{Key: k, reason: fmt.Sprintf("needs exactly one value, has %d", len(vs))}
+		}
+		for existing := range q {
+			if strings.EqualFold(existing, key) {
+				return &ExtraParamError{Key: k, Reserved: true, reason: reserved}
+			}
+		}
+		seen[key] = true
+		q.Set(key, vs[0])
+	}
+	return nil
 }
 
 // buildConnector builds the driver connector ConnectContext opens the pool
@@ -591,6 +740,57 @@ func buildConnector(opts ConnectionOptions) (*mssql.Connector, error) {
 	connector.SessionInitSQL = opts.SessionInitSQL
 	connector.Dialer = dialerFor(opts)
 	return connector, nil
+}
+
+// maskedSecret stands in for every secret in a masked ConnectionString. A
+// fixed placeholder rather than a run of '*' as long as the secret, so the
+// masked form does not leak the secret's length.
+const maskedSecret = "XXXXX"
+
+// ConnectionString renders the go-mssqldb connection string Connect would
+// dial for o: the same builder, after the same defaults, so the result
+// carries "database=master", the application name and the connect timeout
+// exactly as they are sent, and fails with the error Connect would fail with
+// for the same options. Use it to show a user what is being dialled, to log
+// it, or to hand it to another go-mssqldb client.
+//
+// With maskSecrets, every password, client secret, certificate password and
+// access token in it is replaced by a fixed placeholder, so the result is safe
+// to display — and no longer connects. Unmasked, it is a live credential. The
+// tokens an AccessTokenProvider mints never appear either way: they are
+// fetched per connection and are not part of the string.
+func (o ConnectionOptions) ConnectionString(maskSecrets bool) (string, error) {
+	applyDefaults(&o)
+	var (
+		dsn string
+		err error
+	)
+	if o.AccessTokenProvider != nil {
+		dsn, err = baseDSN(o)
+	} else {
+		dsn, _, err = buildDSN(o)
+	}
+	if err != nil || !maskSecrets {
+		return dsn, err
+	}
+
+	u, err := url.Parse(dsn)
+	if err != nil {
+		// Never include dsn or the parse error: both carry the secrets this
+		// call was asked to hide.
+		return "", fmt.Errorf("gosmo: connection string: cannot mask an unparseable DSN")
+	}
+	if u.User != nil {
+		if p, ok := u.User.Password(); ok && p != "" {
+			u.User = url.UserPassword(u.User.Username(), maskedSecret)
+		}
+	}
+	q := u.Query()
+	if q.Get("password") != "" {
+		q.Set("password", maskedSecret)
+		u.RawQuery = q.Encode()
+	}
+	return u.String(), nil
 }
 
 // Close releases all resources held by the server connection pool.

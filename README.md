@@ -98,6 +98,9 @@ classDiagram
         +Dialer mssql.Dialer
         +TrustServerCertificate bool
         +Encrypt string
+        +HostNameInCertificate string
+        +ExtraParams url.Values
+        +ConnectionString(maskSecrets) string
     }
 
     class Server {

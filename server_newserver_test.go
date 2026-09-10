@@ -134,7 +134,7 @@ func (c *denySysInfoConn) Close() error                        { return nil }
 func (c *denySysInfoConn) Begin() (driver.Tx, error)           { return nil, driver.ErrSkip }
 
 // errNoServerState stands in for SQL Server's Msg 297/300 refusal.
-var errNoServerState = errors.New("mssql: The user does not have permission to perform this action.")
+var errNoServerState = errors.New("mssql: The user does not have permission to perform this action")
 
 func (c *denySysInfoConn) QueryContext(_ context.Context, q string, _ []driver.NamedValue) (driver.Rows, error) {
 	return fakeInfoAnswer(q, errNoServerState)

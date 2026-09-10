@@ -95,6 +95,11 @@ func (sw *sweep) call(label string, fn func() error) {
 		// oldest instance available. Counted separately so an old major can
 		// still be 0 failures.
 		sw.refused = append(sw.refused, fmt.Sprintf("%s: %v", label, err))
+	case strings.HasPrefix(label, "Database.LatestResourceStatsContext") && errors.Is(err, ErrNotFound):
+		// sys.dm_db_resource_stats gains its first row a few seconds after a
+		// database is created (3 s on a Managed Instance, 2026-09-10), and the
+		// sweep's database is seconds old, so an empty view is a race rather
+		// than a defect. The query ran, which is what is being swept.
 	default:
 		sw.failed = append(sw.failed, fmt.Sprintf("%s: %v", label, err))
 	}

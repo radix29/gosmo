@@ -166,6 +166,10 @@ func (c *capConn) ExecContext(_ context.Context, q string, _ []driver.NamedValue
 }
 
 func (c *capConn) QueryContext(_ context.Context, q string, args []driver.NamedValue) (driver.Rows, error) {
+	if use, rest, ok := splitUseBatch(q); ok {
+		capCurrent.uses = append(capCurrent.uses, use)
+		q = rest
+	}
 	switch {
 	case strings.Contains(q, "HAS_DBACCESS"):
 		return &capRows{cols: 1, rows: [][]driver.Value{{capCurrent.dbAccess}}}, nil

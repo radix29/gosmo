@@ -109,6 +109,15 @@ func TestParseServerAddress(t *testing.T) {
 		{"myserver,1434", "myserver", "", 1434},
 		{`myserver\SQLEXPRESS`, "myserver", "SQLEXPRESS", 0},
 		{`myserver\SQLEXPRESS,1434`, "myserver", "SQLEXPRESS", 1434},
+		{"10.0.0.5:1500", "10.0.0.5", "", 1500},
+		// A bare IPv6 literal: no colon in it is a port separator.
+		{"fe80::1", "fe80::1", "", 0},
+		{"2001:db8::5", "2001:db8::5", "", 0},
+		{"::1", "::1", "", 0},
+		{"[fe80::1]", "[fe80::1]", "", 0},
+		{"[fe80::1]:1500", "[fe80::1]", "", 1500},
+		{"fe80::1,1500", "fe80::1", "", 1500},
+		{`fe80::1\SQLEXPRESS,1500`, "fe80::1", "SQLEXPRESS", 1500},
 	}
 	for _, c := range cases {
 		host, instance, port := ParseServerAddress(c.server)

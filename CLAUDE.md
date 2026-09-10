@@ -94,9 +94,10 @@ a gossms-side build only compiles the packages it imports.
   pins it. Prefer a query parameter over any of this where the server
   accepts one.
 - **Never query inside a `rows.Next()` loop.** `Database.query` pins its own
-  pooled connection and issues its own `USE`, so a per-row lookup costs two
-  round trips and an acquisition per row *while the outer connection is still
-  held* — the shape that exhausts a pool, not merely a slow one. Fetch the
+  pooled connection and issues its own `USE` (batched with the query — see
+  `Database.useBatch`), so a per-row lookup costs a round trip and an
+  acquisition per row *while the outer connection is still held* — the shape
+  that exhausts a pool, not merely a slow one. Fetch the
   child rows for the whole object in one query with no parent-id predicate,
   ordered by the parent id first, and group them in Go.
   `Table.IndexesContext` is the worked example (2026-08-14: 42 round trips

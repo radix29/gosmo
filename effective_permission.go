@@ -3,6 +3,7 @@ package gosmo
 import (
 	"context"
 	"database/sql"
+	"database/sql/driver"
 	"fmt"
 )
 
@@ -102,12 +103,11 @@ func (d *Database) EffectiveSchemaPermissionsContext(ctx context.Context, schema
 // connection for the rows it returns, so EXECUTE AS, the SELECT, and REVERT
 // all land on that connection in order.
 //
-// The REVERT is belt-and-braces rather than load-bearing: an impersonated
-// context ends with the batch, and go-mssqldb resets session state before a
-// pooled connection is handed to its next user (see
-// Server.GrantServerPermissionContext for that mechanism, verified live).
-// It is written anyway so the statement reads correctly if it is ever
-// scripted or run by hand.
+// The REVERT is load-bearing, and so is reaching it: an ad hoc EXECUTE AS
+// outlives its batch, and a pooled session still impersonating cannot be
+// reset — the server kills it, and the next caller handed that connection
+// fails with Msg 596 ("the session is in the kill state"). See
+// readImpersonated for how a read cut short is kept from doing that.
 //
 // EXECUTE AS takes a literal, not a parameter, so the principal name is
 // escaped into the batch text; the securable name a parameter can carry.
@@ -125,9 +125,7 @@ REVERT;`, escapeSingle(principal), class)
 	if err != nil {
 		return nil, fmt.Errorf("gosmo: %s: %w", what, err)
 	}
-	defer rows.Close()
-
-	perms, err := scanEffectivePermissions(rows.Rows)
+	perms, err := readImpersonated(rows)
 	if err != nil {
 		return nil, fmt.Errorf("gosmo: %s: %w", what, err)
 	}
@@ -168,15 +166,55 @@ FROM   fn_my_permissions(NULL, 'SERVER')
 ORDER  BY permission_name;
 REVERT;`, escapeSingle(login))
 
-	rows, err := s.query(ctx, q)
+	// Pinned rather than read off the pool, so readImpersonated can discard
+	// the one connection the impersonation ran on.
+	rows, err := withRetry(ctx, func() (*dbRows, error) {
+		conn, err := s.db.Conn(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("gosmo: acquire connection: %w", err)
+		}
+		rows, err := conn.QueryContext(ctx, q)
+		if err != nil {
+			conn.Close()
+			return nil, err
+		}
+		return &dbRows{Rows: rows, conn: conn}, nil
+	})
 	if err != nil {
 		return nil, fmt.Errorf("gosmo: effective server permissions for %q: %w", login, err)
 	}
-	defer rows.Close()
-
-	perms, err := scanEffectivePermissions(rows)
+	perms, err := readImpersonated(rows)
 	if err != nil {
 		return nil, fmt.Errorf("gosmo: effective server permissions for %q: %w", login, err)
+	}
+	return perms, nil
+}
+
+// readImpersonated scans an EXECUTE AS … SELECT … REVERT batch and closes
+// rows, discarding its pinned connection if the scan stopped short.
+//
+// A complete scan is safe: go-mssqldb's Rows.Next reads on to the end of the
+// response before it reports the last set finished, so the REVERT has run by
+// then. A scan that stops early is not — a context cancelled mid-read, or a
+// scan error that closes the rows, both reach the server as an attention
+// (Rows.Close cancels first), the batch is aborted before its REVERT, and the
+// session stays impersonated. Verified live on 2016, 2017 and 2025 with a
+// WAITFOR widening the gap before the REVERT; without one the gap is well
+// under a millisecond, and 280 cancelled reads through this package did not
+// hit it.
+//
+// A stopped scan cannot say whether the REVERT ran, so the connection goes
+// (sql.Conn.Raw returning driver.ErrBadConn, as BulkCopy does) rather than
+// back to the pool for an unrelated caller to trip over. A cancel before the
+// first row needs none of this — go-mssqldb drops that connection itself —
+// but cannot be told apart here, and discarding it again is harmless.
+func readImpersonated(rows *dbRows) ([]*EffectivePermission, error) {
+	defer rows.Close()
+	perms, err := scanEffectivePermissions(rows.Rows)
+	if err != nil {
+		rows.Rows.Close()
+		_ = rows.conn.Raw(func(any) error { return driver.ErrBadConn })
+		return nil, err
 	}
 	return perms, nil
 }

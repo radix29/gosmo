@@ -181,8 +181,9 @@ func TestLiveTreeFamiliesPlanGuideEnableDisable(t *testing.T) {
 	if !strings.Contains(g.Hints, "OPTIMIZE FOR") {
 		t.Errorf("hints = %q, want the OPTION clause", g.Hints)
 	}
-	if g.ScopeObject != "" {
-		t.Errorf("scope object = %q, want empty on a SQL-scoped guide", g.ScopeObject)
+	if g.ScopeObject != "" || g.ScopeSchema != "" || g.ScopeName != "" {
+		t.Errorf("scope object = %q (%q/%q), want empty on a SQL-scoped guide",
+			g.ScopeObject, g.ScopeSchema, g.ScopeName)
 	}
 
 	if err := g.DisableContext(ctx); err != nil {
@@ -215,6 +216,40 @@ func TestLiveTreeFamiliesPlanGuideEnableDisable(t *testing.T) {
 	}
 	if _, err := d.PlanGuideByNameContext(ctx, "pg_live"); !errors.Is(err, ErrNotFound) {
 		t.Errorf("after Drop: err = %v, want ErrNotFound", err)
+	}
+}
+
+// An OBJECT-scoped guide's routine comes back both ways: quoted for the
+// scripter, unquoted for a permission check. The schema carries a dot, which
+// is what would split a parse of the quoted form in the wrong place.
+func TestLiveTreeFamiliesPlanGuideObjectScope(t *testing.T) {
+	db, ctx, done := liveDB(t)
+	defer done()
+
+	d, drop := liveScratchDB(t, db, ctx, "gosmo_planguide_obj_live")
+	defer drop()
+
+	liveExecIn(t, d, ctx,
+		`CREATE SCHEMA [pg.s]`,
+		`CREATE PROCEDURE [pg.s].[pg_proc] AS SELECT name FROM sys.objects WHERE object_id = 1`,
+		`EXEC sp_create_plan_guide @name = N'pg_obj',
+		   @stmt = N'SELECT name FROM sys.objects WHERE object_id = 1',
+		   @type = N'OBJECT', @module_or_batch = N'[pg.s].[pg_proc]',
+		   @params = NULL, @hints = N'OPTION (MAXDOP 1)'`,
+	)
+
+	g, err := d.PlanGuideByNameContext(ctx, "pg_obj")
+	if err != nil {
+		t.Fatalf("PlanGuideByNameContext: %v", err)
+	}
+	if g.Scope != PlanGuideScopeObject {
+		t.Errorf("scope = %q, want OBJECT", g.Scope)
+	}
+	if g.ScopeObject != "[pg.s].[pg_proc]" {
+		t.Errorf("scope object = %q, want [pg.s].[pg_proc]", g.ScopeObject)
+	}
+	if g.ScopeSchema != "pg.s" || g.ScopeName != "pg_proc" {
+		t.Errorf("scope schema/name = %q/%q, want pg.s/pg_proc", g.ScopeSchema, g.ScopeName)
 	}
 }
 

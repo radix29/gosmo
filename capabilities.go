@@ -224,6 +224,13 @@ var ProbedDatabasePermissions = []string{
 	"ALTER ANY SECURITY POLICY",
 	"ALTER ANY DATABASE AUDIT",
 	"ALTER ANY DATABASE DDL TRIGGER",
+	"ALTER ANY ASSEMBLY",
+	"ALTER ANY EXTERNAL DATA SOURCE",
+	"ALTER ANY EXTERNAL FILE FORMAT",
+	// 2017 and later. On 2016 HAS_PERMS_BY_NAME answers NULL for a name it
+	// does not know, which reads as CapabilityUnknown — there is no external
+	// library on that version to be gated anyway.
+	"ALTER ANY EXTERNAL LIBRARY",
 	"SELECT",
 	"INSERT",
 	"UPDATE",

@@ -273,7 +273,10 @@ func TestBrowserDialerPassesTCPThrough(t *testing.T) {
 }
 
 // A single-address host keeps the stock behaviour — one socket, no fan-out.
+// The socket is opened by the probe's Write (see browserProbeConn), so that is
+// where to look for it.
 func TestBrowserDialerSingleAddressIsNotFannedOut(t *testing.T) {
+	isolateBrowserReplies(t)
 	s := newUDPResponder(t, "127.0.0.1", []byte("ok"))
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
@@ -282,7 +285,17 @@ func TestBrowserDialerSingleAddressIsNotFannedOut(t *testing.T) {
 		t.Fatalf("DialContext(udp): %v", err)
 	}
 	defer conn.Close()
-	if _, ok := conn.(*fanOutConn); ok {
-		t.Error("a single-address host returned a fanOutConn, want the plain net.Conn")
+	pc, ok := conn.(*browserProbeConn)
+	if !ok {
+		t.Fatalf("a UDP dial returned %T, want a *browserProbeConn", conn)
+	}
+	if _, err := conn.Write([]byte{3}); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	if pc.inner == nil {
+		t.Fatal("the probe was written but no socket was opened for it")
+	}
+	if _, ok := pc.inner.(*fanOutConn); ok {
+		t.Error("a single-address host opened a fanOutConn, want the plain net.Conn")
 	}
 }

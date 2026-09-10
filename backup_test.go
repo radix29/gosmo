@@ -211,9 +211,38 @@ func TestBuildRestoreStatementStandbyChecksumStopAt(t *testing.T) {
 		"FROM DISK = N'/var/backups/aw.bak'\n" +
 		"WITH STANDBY = N'/var/backups/aw_undo.bak',\n" +
 		"     CHECKSUM,\n" +
-		"     STOPAT = '2026-07-18T12:30:00'"
+		"     STOPAT = '2026-07-18T12:30:00.000'"
 	if got != want {
 		t.Errorf("BuildRestoreStatement =\n%q\nwant\n%q", got, want)
+	}
+}
+
+// STOPAT is read as server-local time and takes milliseconds. The rendering
+// keeps them — a log restore stopped a second early can miss the very
+// transaction the point-in-time restore was for — and makes no zone
+// conversion: the wall-clock fields go out as written whatever Location the
+// time carries, which is what a caller passing server-local times relies on.
+func TestBuildRestoreStatementStopAtKeepsMillisecondsAndWallClock(t *testing.T) {
+	east := time.FixedZone("UTC+3", 3*60*60)
+	for _, c := range []struct {
+		name string
+		at   time.Time
+		want string
+	}{
+		{"milliseconds", time.Date(2026, 7, 18, 12, 30, 5, 123_456_789, time.UTC), "STOPAT = '2026-07-18T12:30:05.123'"},
+		{"non-UTC zone, no conversion", time.Date(2026, 7, 18, 12, 30, 5, 7_000_000, east), "STOPAT = '2026-07-18T12:30:05.007'"},
+	} {
+		got, err := BuildRestoreStatement(RestoreOptions{
+			Database: "AW_Restore",
+			Devices:  []string{`/var/backups/aw.bak`},
+			StopAt:   &c.at,
+		})
+		if err != nil {
+			t.Fatalf("%s: BuildRestoreStatement: %v", c.name, err)
+		}
+		if !strings.HasSuffix(got, c.want) {
+			t.Errorf("%s: statement = %q, want it to end %q", c.name, got, c.want)
+		}
 	}
 }
 

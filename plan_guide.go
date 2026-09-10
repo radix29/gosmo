@@ -53,6 +53,12 @@ type PlanGuide struct {
 	Scope       PlanGuideScope
 	ScopeObject string
 
+	// ScopeSchema and ScopeName are ScopeObject's two halves, unquoted — the
+	// routine as a securable, for a caller that asks about its permissions
+	// rather than scripting it. Empty for the SQL and TEMPLATE scopes.
+	ScopeSchema string
+	ScopeName   string
+
 	// ScopeBatch is the batch text a SQL-scoped guide is bound to, empty
 	// when the guide matches the statement in any batch.
 	ScopeBatch string
@@ -84,6 +90,8 @@ SELECT g.plan_guide_id, g.name, g.is_disabled,
        ISNULL(g.scope_type_desc, ''),
        ISNULL(QUOTENAME(OBJECT_SCHEMA_NAME(g.scope_object_id)) + '.' +
               QUOTENAME(OBJECT_NAME(g.scope_object_id)), ''),
+       ISNULL(OBJECT_SCHEMA_NAME(g.scope_object_id), ''),
+       ISNULL(OBJECT_NAME(g.scope_object_id), ''),
        ISNULL(g.scope_batch, ''), ISNULL(g.parameters, ''),
        ISNULL(g.hints, ''),
        g.create_date, g.modify_date
@@ -93,7 +101,7 @@ func scanPlanGuide(d *Database, scan func(...any) error) (*PlanGuide, error) {
 	g := &PlanGuide{db: d}
 	var scope string
 	if err := scan(&g.PlanGuideID, &g.Name, &g.IsDisabled,
-		&g.QueryText, &scope, &g.ScopeObject,
+		&g.QueryText, &scope, &g.ScopeObject, &g.ScopeSchema, &g.ScopeName,
 		&g.ScopeBatch, &g.Parameters, &g.Hints,
 		&g.CreateDate, &g.ModifyDate); err != nil {
 		return nil, err

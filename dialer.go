@@ -2,8 +2,12 @@ package gosmo
 
 import (
 	"context"
+	"database/sql/driver"
 	"errors"
 	"net"
+	"os"
+	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -46,12 +50,26 @@ const maxBrowserProbes = 8
 type browserDialer struct{}
 
 // DialContext implements mssql.Dialer.
+//
+// A UDP dial — the Browser probe — returns a browserProbeConn, which answers
+// from browserReplies when the same host was asked the same question recently
+// and only opens sockets on a miss. See browserReplyCache.
 func (browserDialer) DialContext(ctx context.Context, network, addr string) (net.Conn, error) {
-	nd := &net.Dialer{KeepAlive: browserKeepAlive}
 	if network != "udp" && network != "udp4" && network != "udp6" {
+		nd := &net.Dialer{KeepAlive: browserKeepAlive}
 		return nd.DialContext(ctx, network, addr)
 	}
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		return dialBrowserProbe(ctx, network, addr)
+	}
+	return &browserProbeConn{ctx: ctx, network: network, addr: addr, host: host}, nil
+}
 
+// dialBrowserProbe opens the sockets for one Browser probe: one per resolved
+// address, up to maxBrowserProbes, fanned out when there is more than one.
+func dialBrowserProbe(ctx context.Context, network, addr string) (net.Conn, error) {
+	nd := &net.Dialer{KeepAlive: browserKeepAlive}
 	host, port, err := net.SplitHostPort(addr)
 	if err != nil {
 		return nd.DialContext(ctx, network, addr)
@@ -80,6 +98,230 @@ func (browserDialer) DialContext(ctx context.Context, network, addr string) (net
 		return conns[0], nil
 	}
 	return newFanOutConn(conns), nil
+}
+
+// browserReplyTTL is how long a Browser reply is reused. The reply maps an
+// instance name to its TCP port, which changes only when the instance restarts
+// on a dynamic port; a failed connection attempt evicts the entry sooner (see
+// evictingConnector), so the TTL only bounds how long an entry nobody has
+// failed on is trusted.
+const browserReplyTTL = 2 * time.Minute
+
+// browserReplies is the process-wide Browser reply cache. Process-wide rather
+// than per pool because every pool to a host asks the same question — an
+// application holding several connections to one instance (a browser, a query
+// window, a monitor) would otherwise re-probe once per pool.
+var browserReplies = &browserReplyCache{entries: map[string]browserReply{}}
+
+// browserReplyCache remembers SQL Server Browser replies per host and request.
+//
+// go-mssqldb runs the Browser probe for every new physical connection to
+// host\instance, not once per pool: a pool growing by eight connections sends
+// eight datagrams and waits for eight replies, measured at a third of the time
+// the growth takes on a LAN. Each of those probes is also a fresh chance for
+// Browser to stay silent, and a silent probe fails that connection with "no
+// instance matching", however many succeeded a moment earlier.
+//
+// The key is the host and the request datagram itself, so an all-instances
+// request and a DAC request for one instance are never confused, and every
+// instance on a host shares the one all-instances reply, which lists them all.
+type browserReplyCache struct {
+	mu      sync.Mutex
+	entries map[string]browserReply
+}
+
+type browserReply struct {
+	data    []byte
+	expires time.Time
+}
+
+func browserReplyKey(host string, request []byte) string {
+	return strings.ToLower(host) + "\x00" + string(request)
+}
+
+func (c *browserReplyCache) get(key string, now time.Time) ([]byte, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	r, ok := c.entries[key]
+	if !ok || !now.Before(r.expires) {
+		return nil, false
+	}
+	return r.data, true
+}
+
+func (c *browserReplyCache) put(key string, data []byte, now time.Time) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	// Pruned on insert: the map holds one entry per host and request kind, so
+	// the sweep is short, and nothing else would ever remove an entry for a
+	// host the process stopped talking to.
+	for k, r := range c.entries {
+		if !now.Before(r.expires) {
+			delete(c.entries, k)
+		}
+	}
+	c.entries[key] = browserReply{data: slices.Clone(data), expires: now.Add(browserReplyTTL)}
+}
+
+// evictHost drops every reply cached for host, whatever was asked.
+func (c *browserReplyCache) evictHost(host string) {
+	prefix := strings.ToLower(host) + "\x00"
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for k := range c.entries {
+		if strings.HasPrefix(k, prefix) {
+			delete(c.entries, k)
+		}
+	}
+}
+
+// browserProbeConn is the conn browserDialer returns for a Browser probe. It
+// dials nothing until the request is written, because only the request says
+// what is being asked: a cached answer to it is returned by the next Read
+// without a socket, a DNS lookup or a datagram; otherwise the probe is sent
+// for real, through dialBrowserProbe, and its first reply is cached.
+//
+// It is built for go-mssqldb's exchange — SetDeadline, one Write, one Read —
+// and nothing more. It keeps the dial's ctx because the deferred dial must
+// still honour it; the driver writes the request within that same call.
+type browserProbeConn struct {
+	ctx           context.Context
+	network, addr string
+	host          string
+
+	key    string
+	cached []byte // the reply to return, on a hit; nil after it is read
+	inner  net.Conn
+
+	// The driver sets its deadline before writing, when nothing is dialled
+	// yet, so the deadlines are held here and applied once something is.
+	deadline, readDeadline, writeDeadline time.Time
+}
+
+func (c *browserProbeConn) Write(b []byte) (int, error) {
+	if c.inner != nil {
+		return c.inner.Write(b)
+	}
+	c.key = browserReplyKey(c.host, b)
+	if reply, ok := browserReplies.get(c.key, time.Now()); ok {
+		c.cached = reply
+		return len(b), nil
+	}
+	inner, err := dialBrowserProbe(c.ctx, c.network, c.addr)
+	if err != nil {
+		return 0, err
+	}
+	c.inner = inner
+	if !c.deadline.IsZero() {
+		inner.SetDeadline(c.deadline)
+	}
+	if !c.readDeadline.IsZero() {
+		inner.SetReadDeadline(c.readDeadline)
+	}
+	if !c.writeDeadline.IsZero() {
+		inner.SetWriteDeadline(c.writeDeadline)
+	}
+	return inner.Write(b)
+}
+
+func (c *browserProbeConn) Read(b []byte) (int, error) {
+	if c.cached != nil {
+		n := copy(b, c.cached)
+		c.cached = nil
+		return n, nil
+	}
+	if c.inner == nil {
+		// Nothing was asked, or the one cached answer was already read: a
+		// socket with no datagram coming would time out, so say that.
+		return 0, os.ErrDeadlineExceeded
+	}
+	n, err := c.inner.Read(b)
+	if err == nil && n > 0 && c.key != "" {
+		browserReplies.put(c.key, b[:n], time.Now())
+	}
+	return n, err
+}
+
+func (c *browserProbeConn) Close() error {
+	if c.inner == nil {
+		return nil
+	}
+	return c.inner.Close()
+}
+
+// LocalAddr and RemoteAddr report the socket's once one is open; on a cache
+// hit there is none. Nothing in the Browser exchange consults either.
+func (c *browserProbeConn) LocalAddr() net.Addr {
+	if c.inner == nil {
+		return &net.UDPAddr{}
+	}
+	return c.inner.LocalAddr()
+}
+
+func (c *browserProbeConn) RemoteAddr() net.Addr {
+	if c.inner == nil {
+		return &net.UDPAddr{}
+	}
+	return c.inner.RemoteAddr()
+}
+
+func (c *browserProbeConn) SetDeadline(t time.Time) error {
+	c.deadline = t
+	if c.inner != nil {
+		return c.inner.SetDeadline(t)
+	}
+	return nil
+}
+
+func (c *browserProbeConn) SetReadDeadline(t time.Time) error {
+	c.readDeadline = t
+	if c.inner != nil {
+		return c.inner.SetReadDeadline(t)
+	}
+	return nil
+}
+
+func (c *browserProbeConn) SetWriteDeadline(t time.Time) error {
+	c.writeDeadline = t
+	if c.inner != nil {
+		return c.inner.SetWriteDeadline(t)
+	}
+	return nil
+}
+
+// evictingConnector is the connector a pool gets when its dialer is
+// browserDialer: any failed connection attempt evicts the host's cached
+// Browser replies, so the next attempt asks Browser again.
+//
+// That is what makes caching the reply safe. An instance restarted on a new
+// dynamic port leaves the cached port closed; the attempt dialling it fails,
+// the entry goes, and the retry (gosmo's own, for a read) learns the new
+// port. The eviction is deliberately indiscriminate — a wrong password evicts
+// too — because it costs only one re-probe, where telling a stale port apart
+// from every other failure would mean second-guessing the driver's errors.
+type evictingConnector struct {
+	*mssql.Connector
+	host string
+}
+
+func (c evictingConnector) Connect(ctx context.Context) (driver.Conn, error) {
+	conn, err := c.Connector.Connect(ctx)
+	if err != nil {
+		browserReplies.evictHost(c.host)
+	}
+	return conn, err
+}
+
+// poolConnector is what sql.OpenDB is given for connector: evictingConnector
+// when connector probes Browser through browserDialer, connector itself
+// otherwise. host is the one ParseServerAddress reads out of opts.Server,
+// which is the host the driver sends the probe to.
+func poolConnector(connector *mssql.Connector, opts ConnectionOptions) driver.Connector {
+	if _, ok := connector.Dialer.(browserDialer); !ok {
+		return connector
+	}
+	host, _, _ := ParseServerAddress(opts.Server)
+	return evictingConnector{Connector: connector, host: host}
 }
 
 // fanOutConn is a net.Conn over several UDP sockets aimed at the same host on

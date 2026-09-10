@@ -57,8 +57,11 @@ func (l *qsRecLog) add(q string, args []driver.NamedValue) {
 	defer l.mu.Unlock()
 	// The USE that Database.query issues to reach the database is plumbing,
 	// not a statement under test, and recording it would offset every index a
-	// test asserts on.
-	if strings.HasPrefix(q, "USE ") {
+	// test asserts on. It usually arrives as the prefix of the query itself
+	// (useBatch), and on its own only on the fallback path.
+	if _, rest, ok := splitUseBatch(q); ok {
+		q = rest
+	} else if strings.HasPrefix(q, "USE ") {
 		return
 	}
 	vals := make([]any, len(args))

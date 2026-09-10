@@ -300,7 +300,14 @@ type RestoreOptions struct {
 	// authenticates to Azure Storage with — see BackupOptions.Credential,
 	// including why the shared access signature form leaves it empty.
 	Credential string
-	// StopAt performs a point-in-time restore.
+	// StopAt performs a point-in-time restore, to this moment read as the
+	// *server's* local wall-clock time. Its date and time-of-day fields are
+	// sent as written, to the millisecond, and its Location is ignored: no
+	// zone conversion is made, because RESTORE reads STOPAT in the server's
+	// time zone and a caller already passing server-local times must keep
+	// getting the point they asked for. A time taken in UTC or the client's
+	// zone restores to the wrong point unless the zones agree — convert it
+	// with In first. SQL Server rounds the milliseconds to datetime's 1/300 s.
 	StopAt *time.Time
 	// Progress, if set, is called for every message SQL Server emits while
 	// the restore runs, including the "N percent processed" notices STATS
@@ -421,7 +428,7 @@ func BuildRestoreStatement(opts RestoreOptions) (string, error) {
 		withs = append(withs, fmt.Sprintf("STATS = %d", opts.Stats))
 	}
 	if opts.StopAt != nil {
-		withs = append(withs, fmt.Sprintf("STOPAT = '%s'", opts.StopAt.Format("2006-01-02T15:04:05")))
+		withs = append(withs, fmt.Sprintf("STOPAT = '%s'", opts.StopAt.Format("2006-01-02T15:04:05.000")))
 	}
 	if len(withs) > 0 {
 		fmt.Fprintf(&sb, "\nWITH %s", strings.Join(withs, ",\n     "))
