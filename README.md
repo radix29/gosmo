@@ -86,6 +86,9 @@ classDiagram
         +ClientCertPath string
         +AccessToken string
         +AccessTokenProvider func
+        +ApplicationClientID string
+        +EntraCache *EntraCache
+        +DeviceCodePrompt func
         +ServerSPN string
         +Kerberos KerberosOptions
         +ConnectTimeout Duration
@@ -287,16 +290,34 @@ classDiagram
         <<enumeration>>
         AuthSQLServer
         AuthWindows
+        AuthEntraDefault
+        AuthEntraPassword
         AuthEntraMSI
         AuthEntraServicePrincipal
-        AuthEntraPassword
+        AuthEntraServicePrincipalAccessToken
+        AuthEntraIntegrated
         AuthEntraInteractive
         AuthEntraDeviceCode
-        AuthEntraDefault
         AuthEntraAzCLI
+        AuthEntraAzureDeveloperCLI
         AuthEntraAzurePipelines
-        AuthEntraServicePrincipalAccessToken
         AuthEntraOnBehalfOf
+        +String() string
+    }
+
+    class EntraCache {
+        +NewEntraCache() *EntraCache
+        +Warm(ctx, opts) error
+        +Clear()
+        One sign-in per identity, shared by
+        every connection and Server given it.
+        In memory only; never keyed by server.
+    }
+
+    class DeviceCodeMessage {
+        +UserCode string
+        +VerificationURL string
+        +Message string
     }
 
     class KerberosOptions {
@@ -864,6 +885,8 @@ classDiagram
     %% =========================================================
     ConnectionOptions --> AuthMethod : uses
     ConnectionOptions --> KerberosOptions : configures AuthWindows via
+    ConnectionOptions --> EntraCache : shares Entra sign-ins through
+    ConnectionOptions ..> DeviceCodeMessage : DeviceCodePrompt receives
     Server --> ConnectionOptions : created from
     Server --> ServerInfo : has
     ServerInfo ..> EngineEdition : EngineEdition is one of
@@ -4444,18 +4467,70 @@ option rather than let it fail on submit.
 
 `ConnectionOptions.Auth` selects the authentication method:
 
-| Constant                           | When to use                                       |
-| ---------------------------------- | ------------------------------------------------- |
-| `AuthSQLServer` (default)          | SQL Server login + password                       |
-| `AuthWindows`                      | Windows / Kerberos (domain-joined host)           |
-| `AuthEntraMSI`                     | Azure Managed Identity (system- or user-assigned) |
-| `AuthEntraServicePrincipal`        | Service principal with secret or certificate      |
-| `AuthEntraPassword`                | Entra ID user + password (non-interactive)        |
-| `AuthEntraInteractive`             | Browser-based interactive login                   |
-| `AuthEntraDeviceCode`              | Device code flow                                  |
-| `AuthEntraDefault`                 | Default credential chain (env → MSI → AzCLI)     |
-| `AuthEntraAzCLI`                   | `az login` credential                             |
-| `AuthEntraAzurePipelines`          | Azure DevOps pipeline OIDC                        |
+| Constant                               | When to use                                        | Fields / notes |
+| -------------------------------------- | -------------------------------------------------- | -------------- |
+| `AuthSQLServer` (default)              | SQL Server login + password                        | `User`, `Password` |
+| `AuthWindows`                          | Windows / Kerberos (domain-joined host)            | see below |
+| `AuthEntraMSI`                         | Azure Managed Identity (system- or user-assigned)  | `ClientID` for user-assigned |
+| `AuthEntraServicePrincipal`            | Service principal with secret or certificate       | `User` = client ID, `TenantID`, `Password` or `ClientCertPath` |
+| `AuthEntraServicePrincipalAccessToken` | A bearer token you already hold                    | `AccessToken`; prefer `AccessTokenProvider` |
+| `AuthEntraPassword`                    | Entra ID user + password (non-interactive)         | `User`, `Password`, optional `ApplicationClientID`. No MFA; deprecated by azidentity |
+| `AuthEntraInteractive`                 | Browser-based interactive login                    | optional `User` (login hint), `ApplicationClientID` |
+| `AuthEntraDeviceCode`                  | Device code flow                                   | optional `ApplicationClientID`; the code goes to `DeviceCodePrompt`, else stdout |
+| `AuthEntraDefault`                     | Default credential chain (env → MSI → AzCLI)       | — |
+| `AuthEntraIntegrated`                  | Same chain as `AuthEntraDefault`                   | not Windows SSO: go-mssqldb has no such credential |
+| `AuthEntraAzCLI`                       | `az login` credential                              | — |
+| `AuthEntraAzureDeveloperCLI`           | `azd auth login` credential                        | — |
+| `AuthEntraAzurePipelines`              | Azure DevOps pipeline OIDC                         | `User` = client ID, `TenantID` (or `AZURESUBSCRIPTION_*` env); `serviceconnectionid` / `systemtoken` via `ExtraParams` or env |
+| `AuthEntraOnBehalfOf`                  | Middle-tier on-behalf-of exchange                  | `User` = client ID, `AccessToken` = user assertion, `Password` or `ClientCertPath` |
+
+Required fields are checked before anything is dialled, and the error names
+the gosmo field (`gosmo: AuthEntraServicePrincipal requires User (the
+application's client ID)`); `AuthMethod.String()` gives the constant's name. `TenantID` is
+honoured by every Entra method except `AuthEntraMSI` and
+`AuthEntraServicePrincipalAccessToken`. Left empty, service principal,
+password, on-behalf-of, Azure Pipelines, interactive and device code sign in
+to the tenant the server announces at login, as SSMS does — not
+azidentity's `organizations` default, which refuses a personal Microsoft
+account that is a member of the server's tenant.
+
+gosmo builds the Entra credential itself rather than leaving it to
+go-mssqldb, which would construct a new one for every physical connection —
+a browser sign-in, or a new device code, per pooled connection. Each
+credential lives in an `EntraCache` keyed by identity (method, tenant,
+client and application IDs, user or login hint, certificate path,
+authority, and a digest of the secrets — never the server), and its tokens
+are reused until five minutes before they expire, so a pool opening twenty
+connections at once signs in once. Nothing is written to disk.
+
+- **`ConnectionOptions.EntraCache`** — share one `NewEntraCache()` across
+  every `Connect` that should share a sign-in, typically one per process.
+  Nil gives each `Server` a private cache: its own connections share a
+  sign-in, other `Server`s' do not. `Clear()` forgets every credential and
+  token, for switching accounts.
+- **`EntraCache.Warm(ctx, opts)`** signs in before dialling, so a human
+  sign-in runs under a context of the caller's choosing (long, cancellable)
+  instead of the connect timeout inside the TDS login handshake. The scope,
+  authority and tenant are the server's to announce, part-way through a
+  login, so `Warm` first opens one and abandons it as soon as the server has
+  named them — before any token is sent — and the cache remembers the answer
+  per server. The probe is bounded by `ConnectTimeout`, and its failure (an
+  unreachable server, one without Entra support) is `Warm`'s error. Azure
+  SQL logs each probe as Error 33155. `Warm` is a no-op for non-Entra
+  methods, `AccessTokenProvider` and `AuthEntraServicePrincipalAccessToken`.
+- **`ConnectionOptions.DeviceCodePrompt`** receives a `DeviceCodeMessage`
+  (code, URL and Microsoft's one-line instruction) in place of azidentity's
+  default of printing to stdout, which a terminal UI, GUI or service cannot
+  show. A credential shared through an `EntraCache` uses the prompt of the
+  most recent connection that set one, so pass one process-wide prompt.
+
+Every Entra method is checked against go-mssqldb's own parser in the test
+suite. Verified end to end against Azure SQL Managed Instance, with
+`TenantID` blank: `AuthEntraInteractive`, `AuthEntraDeviceCode`,
+`AuthEntraPassword`, `AuthEntraServicePrincipal` (client secret),
+`AuthEntraAzCLI` and `AuthEntraDefault` (reaching the Azure CLI) — each
+signing in once for many pooled connections. The other methods have not yet
+been driven against a live tenant.
 
 `AuthWindows` uses native SSPI on Windows. On every other platform it
 authenticates via Kerberos instead — run `kinit` first for ambient

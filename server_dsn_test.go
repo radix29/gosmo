@@ -220,6 +220,12 @@ func TestConnectionStringMasksEverySecret(t *testing.T) {
 		{"cert password", ConnectionOptions{Server: "s", Auth: AuthEntraServicePrincipal, User: "app",
 			ClientCertPath: "/c.pfx", ClientCertPassword: "hunter2"}, "hunter2"},
 		{"access token", ConnectionOptions{Server: "s", Auth: AuthEntraServicePrincipalAccessToken, AccessToken: "hunter2"}, "hunter2"},
+		{"obo user assertion", ConnectionOptions{Server: "s", Auth: AuthEntraOnBehalfOf, User: "app",
+			AccessToken: "hunter2", ClientCertPath: "/c.pfx"}, "hunter2"},
+		{"pipelines system token", ConnectionOptions{Server: "s", Auth: AuthEntraAzurePipelines, User: "app",
+			ExtraParams: url.Values{"SystemToken": {"hunter2"}}}, "hunter2"},
+		{"obo client assertion", ConnectionOptions{Server: "s", Auth: AuthEntraOnBehalfOf, User: "app",
+			AccessToken: "a", ExtraParams: url.Values{"clientassertion": {"hunter2"}}}, "hunter2"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

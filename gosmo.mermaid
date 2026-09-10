@@ -13,6 +13,9 @@ classDiagram
         +ClientCertPath string
         +AccessToken string
         +AccessTokenProvider func
+        +ApplicationClientID string
+        +EntraCache *EntraCache
+        +DeviceCodePrompt func
         +ServerSPN string
         +Kerberos KerberosOptions
         +ConnectTimeout Duration
@@ -25,6 +28,9 @@ classDiagram
         +Dialer mssql.Dialer
         +TrustServerCertificate bool
         +Encrypt string
+        +HostNameInCertificate string
+        +ExtraParams url.Values
+        +ConnectionString(maskSecrets) string
     }
 
     class Server {
@@ -211,16 +217,34 @@ classDiagram
         <<enumeration>>
         AuthSQLServer
         AuthWindows
+        AuthEntraDefault
+        AuthEntraPassword
         AuthEntraMSI
         AuthEntraServicePrincipal
-        AuthEntraPassword
+        AuthEntraServicePrincipalAccessToken
+        AuthEntraIntegrated
         AuthEntraInteractive
         AuthEntraDeviceCode
-        AuthEntraDefault
         AuthEntraAzCLI
+        AuthEntraAzureDeveloperCLI
         AuthEntraAzurePipelines
-        AuthEntraServicePrincipalAccessToken
         AuthEntraOnBehalfOf
+        +String() string
+    }
+
+    class EntraCache {
+        +NewEntraCache() *EntraCache
+        +Warm(ctx, opts) error
+        +Clear()
+        One sign-in per identity, shared by
+        every connection and Server given it.
+        In memory only; never keyed by server.
+    }
+
+    class DeviceCodeMessage {
+        +UserCode string
+        +VerificationURL string
+        +Message string
     }
 
     class KerberosOptions {
@@ -788,6 +812,8 @@ classDiagram
     %% =========================================================
     ConnectionOptions --> AuthMethod : uses
     ConnectionOptions --> KerberosOptions : configures AuthWindows via
+    ConnectionOptions --> EntraCache : shares Entra sign-ins through
+    ConnectionOptions ..> DeviceCodeMessage : DeviceCodePrompt receives
     Server --> ConnectionOptions : created from
     Server --> ServerInfo : has
     ServerInfo ..> EngineEdition : EngineEdition is one of

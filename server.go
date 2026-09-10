@@ -1,6 +1,7 @@
 package gosmo
 
 import (
+	"cmp"
 	"context"
 	"database/sql"
 	"errors"
@@ -12,7 +13,6 @@ import (
 	"time"
 
 	mssql "github.com/microsoft/go-mssqldb"
-	"github.com/microsoft/go-mssqldb/azuread"
 )
 
 // goos is runtime.GOOS, indirected so tests can exercise the platform-
@@ -57,8 +57,10 @@ type Server struct {
 // Service Principal (client secret):
 //
 //	Auth: AuthEntraServicePrincipal
-//	User: "<app-client-id>[@<tenant-id>]", Password: "<client-secret>"
-//	TenantID: "<tenant-id>"
+//	User: "<app-client-id>", TenantID: "<tenant-id>", Password: "<client-secret>"
+//
+// (or User: "<app-client-id>@<tenant-id>" with no TenantID — not both, unless
+// they name the same tenant).
 //
 // Service Principal (certificate):
 //
@@ -87,18 +89,30 @@ type ConnectionOptions struct {
 	// Auth selects the authentication strategy. Defaults to AuthSQLServer.
 	Auth AuthMethod
 
-	// User is the SQL Server login, Windows UPN, or Entra app client ID,
-	// depending on the Auth method chosen.
+	// User is the SQL Server login, Windows UPN, Entra user UPN (the sign-in
+	// name for AuthEntraPassword, a login hint for AuthEntraInteractive), or
+	// Entra application client ID (service principal, on-behalf-of, Azure
+	// Pipelines), depending on the Auth method chosen.
 	User string
 
 	// Password is the SQL Server password, Entra user password, or client secret.
 	Password string
 
-	// TenantID is the Entra tenant (directory) ID. Required for service principal
-	// methods when the tenant differs from the server tenant.
+	// TenantID is the Entra tenant (directory) ID to sign in to, for every
+	// Entra method whose credential takes one — all but AuthEntraMSI and
+	// AuthEntraServicePrincipalAccessToken, which ignore it. Left empty,
+	// AuthEntraServicePrincipal, AuthEntraOnBehalfOf, AuthEntraAzurePipelines,
+	// AuthEntraPassword, AuthEntraInteractive and AuthEntraDeviceCode sign in
+	// to the tenant the server names at login, as SSMS does; the rest use
+	// their credential's own default (the CLI's signed-in tenant, or the
+	// environment's). For the first three it also travels in the DSN as the
+	// "@tenant" suffix of the client ID.
 	TenantID string
 
 	// ClientID selects a user-assigned Managed Identity when Auth=AuthEntraMSI.
+	// It is not the application client ID of the other Entra methods: that is
+	// User for service principal, on-behalf-of and Azure Pipelines, and
+	// ApplicationClientID for the public-client (human) flows.
 	ClientID string
 
 	// ClientCertPath is the path to a PEM/PFX certificate for
@@ -109,9 +123,10 @@ type ConnectionOptions struct {
 	ClientCertPassword string
 
 	// AccessToken is a pre-acquired bearer token for
-	// Auth=AuthEntraServicePrincipalAccessToken or AuthEntraOnBehalfOf.
-	// It is embedded once at connect time; prefer AccessTokenProvider when
-	// the token can expire during the connection's lifetime.
+	// Auth=AuthEntraServicePrincipalAccessToken, or the inbound user assertion
+	// for AuthEntraOnBehalfOf. The former is embedded once at connect time;
+	// prefer AccessTokenProvider when the token can expire during the
+	// connection's lifetime.
 	AccessToken string
 
 	// AccessTokenProvider, when set, is called to obtain a bearer token for
@@ -123,8 +138,12 @@ type ConnectionOptions struct {
 	// its own tokens. The error it returns aborts the connection attempt.
 	AccessTokenProvider func(ctx context.Context) (string, error)
 
-	// ApplicationClientID is the AAD enterprise application client ID registered
-	// by the tenant admin to allow interactive / device-code flows.
+	// ApplicationClientID is the client ID of the public client application
+	// the human sign-in flows go through: AuthEntraPassword,
+	// AuthEntraInteractive and AuthEntraDeviceCode. Set it when the tenant
+	// requires its own app registration; empty uses the public client
+	// azidentity defaults to (04b07795-8ddb-461a-bbee-02f9e1bf7b46). Ignored
+	// by every other method.
 	ApplicationClientID string
 
 	// ServerSPN overrides the Kerberos service principal name of the target
@@ -167,9 +186,30 @@ type ConnectionOptions struct {
 	// in token requests (needed for Subject Name/Issuer SNI auth).
 	SendCertificateChain bool
 
-	// TokenFilePath is the path to the Kubernetes service account token file
-	// for Auth=AuthEntraMSI (Workload Identity).
+	// TokenFilePath is the path to a Kubernetes service account token file
+	// for Workload Identity. go-mssqldb reads it only for its
+	// ActiveDirectoryWorkloadIdentity workflow, which no AuthMethod selects
+	// yet: it is written to the DSN for AuthEntraMSI, and has no effect there.
 	TokenFilePath string
+
+	// EntraCache holds the Entra credentials and tokens connections share, so
+	// that an Entra method signs in once per identity rather than once per
+	// physical connection — the difference between one browser sign-in and one
+	// per pooled connection for AuthEntraInteractive. Share one across every
+	// Connect that should share a sign-in, and call its Warm first to sign in
+	// under a context of your choosing. Nil gives the Server a private cache of
+	// its own: its connections share a sign-in, other Servers' do not.
+	EntraCache *EntraCache
+
+	// DeviceCodePrompt, when set, is called with the code and URL the user must
+	// visit for AuthEntraDeviceCode, in place of azidentity's default of
+	// printing them to standard output — which a terminal UI, a GUI or a
+	// service cannot show. It runs on the goroutine that is connecting (or
+	// warming the cache) and should return promptly; sign-in completes, or
+	// times out with that goroutine's context, after it returns. A credential
+	// an EntraCache shares uses the prompt of the most recent connection
+	// through it that set one.
+	DeviceCodePrompt func(ctx context.Context, m DeviceCodeMessage) error
 
 	// -- Connection pool ---------------------------------------------------------
 
@@ -422,7 +462,13 @@ func buildDSN(opts ConnectionOptions) (dsn, driverName string, err error) {
 		}
 		q.Set("fedauth", fv)
 
-		// Per-method extra parameters
+		if err := checkEntraFields(opts); err != nil {
+			return "", "", err
+		}
+
+		// Per-method extra parameters. Every key here is one go-mssqldb's
+		// azuread driver reads for that workflow (azuread/configuration.go,
+		// validateParameters); auth_test.go runs each through it.
 		switch opts.Auth {
 		case AuthEntraMSI:
 			if opts.ClientID != "" {
@@ -434,43 +480,53 @@ func buildDSN(opts ConnectionOptions) (dsn, driverName string, err error) {
 			}
 
 		case AuthEntraServicePrincipal:
-			// user id = <clientID>[@<tenantID>]
-			if opts.TenantID != "" {
-				q.Set("user id", opts.User+"@"+opts.TenantID)
-			} else {
-				q.Set("user id", opts.User)
+			userID, err := entraClientAtTenant(opts)
+			if err != nil {
+				return "", "", err
 			}
-			if opts.ClientCertPath != "" {
-				q.Set("clientcertpath", opts.ClientCertPath)
-				if opts.ClientCertPassword != "" {
-					q.Set("password", opts.ClientCertPassword)
-				}
-			} else {
-				q.Set("password", opts.Password)
-			}
-			if opts.SendCertificateChain {
-				q.Set("sendcertificatechain", "true")
-			}
+			q.Set("user id", userID)
+			setEntraAppCredential(q, opts)
 
-		case AuthEntraServicePrincipalAccessToken, AuthEntraOnBehalfOf:
-			if opts.AccessToken == "" {
-				return "", "", fmt.Errorf("gosmo: AccessToken is required for %d", opts.Auth)
-			}
+		case AuthEntraServicePrincipalAccessToken:
 			q.Set("password", opts.AccessToken)
+
+		case AuthEntraOnBehalfOf:
+			userID, err := entraClientAtTenant(opts)
+			if err != nil {
+				return "", "", err
+			}
+			q.Set("user id", userID)
+			q.Set("userassertion", opts.AccessToken)
+			setEntraAppCredential(q, opts)
 
 		case AuthEntraPassword:
 			q.Set("user id", opts.User)
 			q.Set("password", opts.Password)
+			q.Set("applicationclientid", cmp.Or(opts.ApplicationClientID, defaultPublicClientID))
 
-		case AuthEntraInteractive, AuthEntraDeviceCode:
+		case AuthEntraInteractive:
+			q.Set("applicationclientid", cmp.Or(opts.ApplicationClientID, defaultPublicClientID))
+			if opts.User != "" {
+				q.Set("user id", opts.User) // login hint
+			}
+
+		case AuthEntraDeviceCode:
 			if opts.ApplicationClientID != "" {
 				q.Set("applicationclientid", opts.ApplicationClientID)
 			}
 
 		case AuthEntraAzurePipelines:
-			// Reads SYSTEM_ACCESSTOKEN / SYSTEM_OIDCREQUESTURI from env
-			if opts.ApplicationClientID != "" {
-				q.Set("applicationclientid", opts.ApplicationClientID)
+			// With no User the driver takes the client and tenant from
+			// AZURESUBSCRIPTION_CLIENT_ID / _TENANT_ID. "serviceconnectionid"
+			// and "systemtoken" are deliberately left to ExtraParams (or the
+			// environment) and not reserved: that is the one route by which
+			// this method has always connected.
+			if opts.User != "" {
+				userID, err := entraClientAtTenant(opts)
+				if err != nil {
+					return "", "", err
+				}
+				q.Set("user id", userID)
 			}
 		}
 
@@ -478,7 +534,10 @@ func buildDSN(opts ConnectionOptions) (dsn, driverName string, err error) {
 			q.Set("disableinstancediscovery", "true")
 		}
 		if opts.TenantID != "" {
-			// Some flows need the tenant in the URL query too
+			// go-mssqldb's own azuread connector never reads this key (its
+			// credential gets a tenant only from "user id"); gosmo's credential
+			// does (parseEntraConfig), which is how TenantID reaches the
+			// methods with no "user id" to carry it.
 			q.Set("tenantid", opts.TenantID)
 		}
 		if err := mergeExtraParams(q, opts.ExtraParams); err != nil {
@@ -541,6 +600,106 @@ func buildDSN(opts ConnectionOptions) (dsn, driverName string, err error) {
 	}
 	u.RawQuery = q.Encode()
 	return u.String(), driverName, nil
+}
+
+// checkEntraFields refuses, in ConnectionOptions vocabulary, options an Entra
+// method cannot connect with. Left to the driver, the same mistakes come back
+// worded in DSN keys the caller never wrote ("Must provide 'client id[@tenant
+// id]' as username parameter").
+func checkEntraFields(opts ConnectionOptions) error {
+	const appClientID = "User (the application's client ID)"
+	var missing string
+	switch opts.Auth {
+	case AuthEntraPassword:
+		switch {
+		case opts.User == "":
+			missing = "User (the user's UPN)"
+		case opts.Password == "":
+			missing = "Password"
+		}
+	case AuthEntraServicePrincipal:
+		switch {
+		case opts.User == "":
+			missing = appClientID
+		case opts.Password == "" && opts.ClientCertPath == "":
+			missing = "Password (a client secret) or ClientCertPath"
+		}
+	case AuthEntraServicePrincipalAccessToken:
+		if opts.AccessToken == "" {
+			missing = "AccessToken"
+		}
+	case AuthEntraOnBehalfOf:
+		switch {
+		case opts.User == "":
+			missing = appClientID
+		case opts.AccessToken == "":
+			missing = "AccessToken (the inbound user assertion)"
+		case opts.Password == "" && opts.ClientCertPath == "" && !hasExtraParam(opts.ExtraParams, "clientassertion"):
+			missing = `Password (a client secret), ClientCertPath, or a "clientassertion" ExtraParams entry`
+		}
+	case AuthEntraAzurePipelines:
+		// The client ID may come from the environment instead, but a TenantID
+		// with no User has nowhere to go: the driver reads a tenant only as
+		// the "@tenant" suffix of "user id".
+		if opts.User == "" && opts.TenantID != "" {
+			missing = appClientID + " when TenantID is set"
+		}
+	}
+	if missing != "" {
+		return fmt.Errorf("gosmo: %s requires %s", opts.Auth, missing)
+	}
+	return nil
+}
+
+// hasExtraParam reports whether extra carries a non-empty key, matched as the
+// driver matches it (case-insensitively).
+func hasExtraParam(extra url.Values, key string) bool {
+	for k, vs := range extra {
+		if strings.EqualFold(strings.TrimSpace(k), key) && len(vs) > 0 && vs[0] != "" {
+			return true
+		}
+	}
+	return false
+}
+
+// entraClientAtTenant renders the driver's "user id" for the methods that
+// read it as "<client id>[@<tenant id>]" (service principal, on-behalf-of,
+// Azure Pipelines). The driver splits it at the first '@' — when that is
+// neither the first nor the last character — so a User that already carries
+// a tenant must not have TenantID appended again ("app@T@T" signs in to
+// tenant "T@T"), and one naming a different tenant from TenantID is refused
+// rather than silently preferring either.
+func entraClientAtTenant(opts ConnectionOptions) (string, error) {
+	if at := strings.IndexByte(opts.User, '@'); at >= 1 && at < len(opts.User)-1 {
+		if tenant := opts.User[at+1:]; opts.TenantID != "" && !strings.EqualFold(tenant, opts.TenantID) {
+			return "", fmt.Errorf("gosmo: %s: User %q names tenant %q, but TenantID is %q",
+				opts.Auth, opts.User, tenant, opts.TenantID)
+		}
+		return opts.User, nil
+	}
+	if opts.TenantID != "" {
+		return opts.User + "@" + opts.TenantID, nil
+	}
+	return opts.User, nil
+}
+
+// setEntraAppCredential writes an application's own credential — a
+// certificate (whose private-key password travels as "password") or else a
+// client secret — for the service principal and on-behalf-of workflows,
+// which read the same keys for it, including "sendcertificatechain".
+func setEntraAppCredential(q url.Values, opts ConnectionOptions) {
+	switch {
+	case opts.ClientCertPath != "":
+		q.Set("clientcertpath", opts.ClientCertPath)
+		if opts.ClientCertPassword != "" {
+			q.Set("password", opts.ClientCertPassword)
+		}
+	case opts.Password != "":
+		q.Set("password", opts.Password)
+	}
+	if opts.SendCertificateChain {
+		q.Set("sendcertificatechain", "true")
+	}
 }
 
 // commonDSNValues builds the query parameters shared by every DSN,
@@ -637,7 +796,7 @@ var reservedDSNKeys = map[string]bool{
 	"encrypt": true, "trustservercertificate": true, "hostnameincertificate": true,
 	"fedauth": true, "authenticator": true, "serverspn": true, "tenantid": true,
 	"applicationclientid": true, "clientcertpath": true, "tokenfilepath": true,
-	"sendcertificatechain": true, "disableinstancediscovery": true,
+	"sendcertificatechain": true, "disableinstancediscovery": true, "userassertion": true,
 
 	// ADO.NET synonyms of the above.
 	"data source": true, "address": true, "network address": true, "addr": true,
@@ -705,8 +864,9 @@ func mergeExtraParams(q, extra url.Values) error {
 //     tokens itself, so the token is presented straight to SQL Server via a
 //     security-token connector, bypassing the fedauth DSN machinery. This
 //     wins over Auth and AccessToken.
-//   - an Entra Auth method: the azuread connector, which reads the fedauth
-//     parameters from the DSN.
+//   - an Entra Auth method: a token connector whose credential comes from
+//     opts.EntraCache (see entra.go), after the azuread parser has validated
+//     the DSN.
 //   - otherwise: the base sqlserver connector.
 func buildConnector(opts ConnectionOptions) (*mssql.Connector, error) {
 	var (
@@ -728,7 +888,11 @@ func buildConnector(opts ConnectionOptions) (*mssql.Connector, error) {
 			return nil, err
 		}
 		if driverName == "azuresql" {
-			connector, err = azuread.NewConnector(dsn)
+			cache := opts.EntraCache
+			if cache == nil {
+				cache = NewEntraCache()
+			}
+			connector, err = newEntraConnector(dsn, cache, opts.DeviceCodePrompt)
 		} else {
 			connector, err = mssql.NewConnector(dsn)
 		}
@@ -754,8 +918,8 @@ const maskedSecret = "XXXXX"
 // for the same options. Use it to show a user what is being dialled, to log
 // it, or to hand it to another go-mssqldb client.
 //
-// With maskSecrets, every password, client secret, certificate password and
-// access token in it is replaced by a fixed placeholder, so the result is safe
+// With maskSecrets, every password, client secret, certificate password,
+// access token and user assertion in it is replaced by a fixed placeholder, so the result is safe
 // to display — and no longer connects. Unmasked, it is a live credential. The
 // tokens an AccessTokenProvider mints never appear either way: they are
 // fetched per connection and are not part of the string.
@@ -786,12 +950,25 @@ func (o ConnectionOptions) ConnectionString(maskSecrets bool) (string, error) {
 		}
 	}
 	q := u.Query()
-	if q.Get("password") != "" {
-		q.Set("password", maskedSecret)
+	masked := false
+	for _, k := range secretDSNKeys {
+		if q.Get(k) != "" {
+			q.Set(k, maskedSecret)
+			masked = true
+		}
+	}
+	if masked {
 		u.RawQuery = q.Encode()
 	}
 	return u.String(), nil
 }
+
+// secretDSNKeys are the query parameters a masked ConnectionString hides:
+// "password" (every password, client secret, certificate password and access
+// token gosmo writes), the on-behalf-of user assertion, and the two Entra
+// secrets only ExtraParams can carry (mergeExtraParams lower-cases keys, so
+// these match however the caller spelled them).
+var secretDSNKeys = []string{"password", "userassertion", "systemtoken", "clientassertion"}
 
 // Close releases all resources held by the server connection pool.
 func (s *Server) Close() error { return s.db.Close() }

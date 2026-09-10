@@ -44,9 +44,11 @@ import (
 //	"default"     - DefaultAzureCredential chain
 //	"azcli"       - Azure CLI credential
 //	"azd"         - Azure Developer CLI credential
-//	"password"    - Entra user + password
-//	"interactive" - Browser interactive sign-in
-//	"devicecode"  - Device-code flow
+//	"password"    - Entra user + password, no MFA (needs AZURE_USER,
+//	                  AZURE_PASSWORD; optional AZURE_APPLICATION_CLIENT_ID)
+//	"interactive" - Browser interactive sign-in (optional AZURE_USER as a
+//	                  login hint, optional AZURE_APPLICATION_CLIENT_ID)
+//	"devicecode"  - Device-code flow (optional AZURE_APPLICATION_CLIENT_ID)
 func Connect() *gosmo.Server {
 	authStr := strings.ToLower(EnvOr("MSSQL_AUTH", "sql"))
 
@@ -123,10 +125,12 @@ func Connect() *gosmo.Server {
 		opts.Auth = gosmo.AuthEntraPassword
 		opts.User = MustEnv("AZURE_USER")
 		opts.Password = MustEnv("AZURE_PASSWORD")
+		opts.ApplicationClientID = os.Getenv("AZURE_APPLICATION_CLIENT_ID")
 		fmt.Printf("Auth: Entra password (%s)\n", opts.User)
 
 	case "interactive":
 		opts.Auth = gosmo.AuthEntraInteractive
+		opts.User = os.Getenv("AZURE_USER")
 		opts.ApplicationClientID = os.Getenv("AZURE_APPLICATION_CLIENT_ID")
 		fmt.Println("Auth: Entra interactive (browser)")
 

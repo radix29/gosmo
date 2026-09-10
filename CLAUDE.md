@@ -58,6 +58,14 @@ details are deliberately not in the repo; ask for them. Create throwaway
 databases/logins, exercise the write path, drop them; never mutate
 pre-existing objects.
 
+**A DSN test asserts what the driver parses, not only what gosmo writes.**
+Four Entra methods shipped unable to connect because every test checked the
+query string `buildDSN` produced and none ran it through go-mssqldb. Go
+through `buildConnector` (for Entra it runs the azuread parser and validator
+without dialling) and assert on `msdsn.Parse(dsn).Parameters`;
+`auth_test.go`'s `driverParams` does both. A known, unfixed bug is pinned
+there with a `knownBroken` marker, which fails once the fix lands.
+
 Build and test **inside this repo** before relying on a change from gossms —
 a gossms-side build only compiles the packages it imports.
 
