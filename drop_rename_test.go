@@ -444,3 +444,61 @@ func TestAForcedRenameReleasesMultiUserEvenWhenTheContextIsGone(t *testing.T) {
 		t.Errorf("last statement after a cancelled rename is %q, want [AppDB] put back to MULTI_USER: %v", last, stmts)
 	}
 }
+
+// TestAForcedDropOnAManagedInstanceKillsSessionsInsteadOfSingleUser. A Managed
+// Instance refuses SET SINGLE_USER (Msg 5008), and a forced drop that led with
+// it failed before reaching the DROP — so there the connections are closed by
+// KILL, and no access-mode statement is issued on either path.
+func TestAForcedDropOnAManagedInstanceKillsSessionsInsteadOfSingleUser(t *testing.T) {
+	for _, fail := range []bool{false, true} {
+		s := detServer(t)
+		s.info = &ServerInfo{EngineEdition: int(EngineAzureManagedInst)}
+		if fail {
+			detLog.mu.Lock()
+			detLog.failOn = "DROP DATABASE"
+			detLog.mu.Unlock()
+		}
+		err := s.DropDatabaseContext(context.Background(), "appdb", true)
+		if (err != nil) != fail {
+			t.Fatalf("fail=%v: DropDatabaseContext returned %v", fail, err)
+		}
+		stmts := detLog.statements()
+		if len(stmts) != 2 || !strings.Contains(stmts[0], "KILL") || !strings.Contains(stmts[0], "DB_ID(N'appdb')") ||
+			!strings.Contains(stmts[1], "DROP DATABASE [appdb]") {
+			t.Errorf("fail=%v: statements %v, want the session KILL batch then DROP DATABASE", fail, stmts)
+		}
+		for _, stmt := range stmts {
+			if strings.Contains(stmt, "SINGLE_USER") || strings.Contains(stmt, "MULTI_USER") {
+				t.Errorf("fail=%v: a Managed Instance drop issued %q, which it refuses", fail, stmt)
+			}
+		}
+	}
+}
+
+// TestAForcedRenameOnAManagedInstanceKillsSessionsInsteadOfSingleUser — the
+// rename's half of the same refusal.
+func TestAForcedRenameOnAManagedInstanceKillsSessionsInsteadOfSingleUser(t *testing.T) {
+	s := detServer(t)
+	s.info = &ServerInfo{EngineEdition: int(EngineAzureManagedInst)}
+	if err := s.RenameDatabaseContext(context.Background(), "AppDB", "AppDB2", true); err != nil {
+		t.Fatalf("RenameDatabaseContext: %v", err)
+	}
+	stmts := detLog.statements()
+	if len(stmts) != 2 || !strings.Contains(stmts[0], "KILL") || !strings.Contains(stmts[1], "MODIFY NAME = [AppDB2]") {
+		t.Errorf("statements %v, want the session KILL batch then MODIFY NAME", stmts)
+	}
+}
+
+// TestAForcedDropOnPremStillUsesSingleUser: the Managed Instance path is keyed
+// on the edition, and every other one keeps ROLLBACK IMMEDIATE.
+func TestAForcedDropOnPremStillUsesSingleUser(t *testing.T) {
+	s := detServer(t)
+	s.info = &ServerInfo{EngineEdition: int(EngineEnterprise)}
+	if err := s.DropDatabaseContext(context.Background(), "appdb", true); err != nil {
+		t.Fatalf("DropDatabaseContext: %v", err)
+	}
+	stmts := detLog.statements()
+	if len(stmts) != 2 || !strings.Contains(stmts[0], "SET SINGLE_USER WITH ROLLBACK IMMEDIATE") {
+		t.Errorf("statements %v, want SET SINGLE_USER then DROP DATABASE", stmts)
+	}
+}

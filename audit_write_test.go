@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"database/sql/driver"
 	"errors"
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
@@ -18,8 +19,9 @@ import (
 // a connection behind the Server, however small.
 
 type auditScript struct {
-	enabled bool // what is_state_enabled answers
-	missing bool // the audit / specification is not there at all
+	enabled bool     // what is_state_enabled answers
+	missing bool     // the audit / specification is not there at all
+	execs   []string // every statement that reached the driver
 }
 
 var auditCurrent *auditScript
@@ -34,7 +36,8 @@ func (*auditConn) Prepare(string) (driver.Stmt, error) { return nil, driver.ErrS
 func (*auditConn) Close() error                        { return nil }
 func (*auditConn) Begin() (driver.Tx, error)           { return nil, driver.ErrSkip }
 
-func (*auditConn) ExecContext(context.Context, string, []driver.NamedValue) (driver.Result, error) {
+func (*auditConn) ExecContext(_ context.Context, q string, _ []driver.NamedValue) (driver.Result, error) {
+	auditCurrent.execs = append(auditCurrent.execs, q)
 	return driver.ResultNoRows, nil
 }
 
@@ -317,6 +320,50 @@ func TestAuditWithDisabledOpensOneWindow(t *testing.T) {
 	last := col.Statements[len(col.Statements)-1]
 	if last != "ALTER SERVER AUDIT [new] WITH ( STATE = ON )" {
 		t.Errorf("restore = %q, want it under the new name", last)
+	}
+}
+
+// A disable window re-enables even when the context it was opened on is
+// cancelled inside it — a user stopping a slow Apply — on the failure path and
+// the success path alike. On the cancelled context the re-enable failed without
+// reaching the server, leaving auditing off: exactly what the window is for.
+// Real execution, not WithScript: the collector ignores cancellation.
+func TestDisableWindowsRestoreAfterACancel(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		window func(*auditScript, context.Context, func(context.Context) error) error
+		enable string
+	}{
+		{"server audit", func(s *auditScript, ctx context.Context, fn func(context.Context) error) error {
+			return auditServer(t, s).ServerAudit("a").WithDisabled(ctx, fn)
+		}, "ALTER SERVER AUDIT [a] WITH ( STATE = ON )"},
+		{"server audit specification", func(s *auditScript, ctx context.Context, fn func(context.Context) error) error {
+			return auditServer(t, s).ServerAuditSpecification("s").WithDisabled(ctx, fn)
+		}, "ALTER SERVER AUDIT SPECIFICATION [s] WITH ( STATE = ON )"},
+		{"database audit specification", func(s *auditScript, ctx context.Context, fn func(context.Context) error) error {
+			return auditDatabase(t, s).DatabaseAuditSpecification("s").WithDisabled(ctx, fn)
+		}, "ALTER DATABASE AUDIT SPECIFICATION [s] WITH ( STATE = ON )"},
+	} {
+		for _, failed := range []bool{true, false} {
+			t.Run(fmt.Sprintf("%s/failed=%v", tc.name, failed), func(t *testing.T) {
+				s := &auditScript{enabled: true}
+				ctx, cancel := context.WithCancel(context.Background())
+				defer cancel()
+				err := tc.window(s, ctx, func(ctx context.Context) error {
+					cancel()
+					if failed {
+						return ctx.Err()
+					}
+					return nil
+				})
+				if failed != (err != nil) {
+					t.Errorf("WithDisabled = %v, want failed=%v", err, failed)
+				}
+				if len(s.execs) == 0 || s.execs[len(s.execs)-1] != tc.enable {
+					t.Errorf("statements = %q, want the last to be %q", s.execs, tc.enable)
+				}
+			})
+		}
 	}
 }
 

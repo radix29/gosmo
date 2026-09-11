@@ -706,6 +706,46 @@ func TestBuildCreateDatabaseStatement(t *testing.T) {
 	}
 }
 
+// A log file on its own is a valid request — "the default data file, this
+// log" — but SQL Server refuses LOG ON without an ON clause, so the default
+// data file has to be named for it. Scripted, so no server is needed: the
+// default path comes from the cached ServerInfo, not a read.
+func TestCreateDatabaseWithOnlyALogFileNamesTheDefaultDataFile(t *testing.T) {
+	for _, tc := range []struct {
+		dataPath, wantFile string
+	}{
+		{`C:\Program Files\MSSQL\DATA\`, `C:\Program Files\MSSQL\DATA\Sales'DW.mdf`},
+		{`/var/opt/mssql/data/`, `/var/opt/mssql/data/Sales'DW.mdf`},
+		{`D:\SQLData`, `D:\SQLData\Sales'DW.mdf`},
+		{`/data`, `/data/Sales'DW.mdf`},
+	} {
+		srv := &Server{info: &ServerInfo{DefaultDataPath: tc.dataPath}}
+		ctx, col := WithScript(context.Background())
+		opts := &CreateDatabaseOptions{LogFile: &DatabaseFileSpec{
+			Name: "Sales'DW_log", Path: `L:\Sales'DW_log.ldf`, SizeKB: 12000 * 1024,
+		}}
+		if err := srv.CreateDatabaseContext(ctx, "Sales'DW", opts); err != nil {
+			t.Fatalf("%s: CreateDatabaseContext: %v", tc.dataPath, err)
+		}
+		want := "CREATE DATABASE [Sales'DW] ON PRIMARY \n" +
+			"( NAME = [Sales'DW], FILENAME = " + QuoteLiteral(tc.wantFile) + " ) \n" +
+			"LOG ON \n( NAME = [Sales'DW_log], FILENAME = 'L:\\Sales''DW_log.ldf', SIZE = 12288000KB )"
+		if len(col.Statements) != 1 || col.Statements[0] != want {
+			t.Errorf("%s: statements =\n%q\nwant\n%q", tc.dataPath, col.Statements, want)
+		}
+		if opts.PrimaryFile != nil {
+			t.Errorf("%s: the caller's options were modified", tc.dataPath)
+		}
+	}
+
+	srv := &Server{info: &ServerInfo{}}
+	ctx, col := WithScript(context.Background())
+	err := srv.CreateDatabaseContext(ctx, "x", &CreateDatabaseOptions{LogFile: &DatabaseFileSpec{Name: "x_log", Path: "/l/x_log.ldf"}})
+	if err == nil || len(col.Statements) != 0 {
+		t.Errorf("no default data path: err=%v statements=%q, want an error and nothing sent", err, col.Statements)
+	}
+}
+
 func TestPlatformFromVersionString(t *testing.T) {
 	cases := []struct {
 		version string

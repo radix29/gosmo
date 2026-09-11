@@ -448,12 +448,36 @@ func (a *ServerAudit) withAuditDisabled(ctx context.Context, fn func(context.Con
 	if err := a.SetStateContext(ctx, false); err != nil {
 		return err
 	}
+	enable := func(ctx context.Context) error { return a.setStateNamedContext(ctx, name, true) }
 	if err := fn(inner); err != nil {
 		// Best effort: report the original failure, not the restore's.
-		_ = a.setStateNamedContext(ctx, name, true)
+		_ = restoreWindow(ctx, enable)
 		return err
 	}
-	return a.setStateNamedContext(ctx, name, true)
+	return restoreWindow(ctx, enable)
+}
+
+// windowRestoreTimeout bounds a disable window's closing re-enable. Short for
+// the same reason as multiUserRepairTimeout: the statement has nothing to wait
+// for, and one that hangs is worse than one that gives up.
+const windowRestoreTimeout = 10 * time.Second
+
+// restoreWindow runs a disable window's closing re-enable — every
+// WithDisabled, server and database scope alike — under ctx's values but not
+// its cancellation.
+//
+// The window exists so that a write failing part-way cannot leave auditing off,
+// and a cancelled context is the likeliest way for one to fail part-way: a user
+// cancelling a slow Apply, or the caller's deadline running out inside fn.
+// Re-enabling on that same context fails without reaching the server, so the
+// audit stayed switched off exactly when the window promised it would not. Same
+// shape as restoreMultiUser (server.go). The values are kept, so under WithScript
+// the re-enable is still captured rather than run, and a rename inside the
+// window still restores under its new name.
+func restoreWindow(ctx context.Context, enable func(context.Context) error) error {
+	rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), windowRestoreTimeout)
+	defer cancel()
+	return enable(rctx)
 }
 
 // alterServerAuditStatements builds the statements ALTER needs for the spec.

@@ -1018,6 +1018,49 @@ func (s *Server) CurrentLoginContext(ctx context.Context) (string, error) {
 
 // -- Internal helpers ----------------------------------------------------------
 
+// refusesSingleUser reports whether the instance rejects ALTER DATABASE ... SET
+// SINGLE_USER, the statement a forced drop or rename uses to clear a database
+// of other connections. A Managed Instance does, with Msg 5008 "This ALTER
+// DATABASE statement is not supported" (verified live, 2026-09-11) — and a
+// forced drop that led with it failed before reaching the DROP at all.
+func (s *Server) refusesSingleUser() bool {
+	return s.info != nil && EngineEdition(s.info.EngineEdition) == EngineAzureManagedInst
+}
+
+// killDatabaseSessions KILLs every other user session in the database name —
+// the Managed Instance stand-in for SET SINGLE_USER WITH ROLLBACK IMMEDIATE —
+// and waits, bounded, for them to leave, so the statement after it finds the
+// database free.
+//
+// A session counts when the database is its current one or when it holds a
+// database lock there: the second catches a request running in the database
+// from a session whose context is elsewhere, which DB_ID alone misses. Each
+// KILL is in its own TRY because a session can end between the SELECT and
+// its KILL, and the "not an active process ID" that raises is not a failure.
+// The wait matters because a KILL returns before the session's rollback
+// finishes, and until it does the database is still in use and the DROP
+// fails with Msg 3702; ROLLBACK IMMEDIATE waits out the same rollback itself.
+//
+// One batch, so a caller under WithScript gets it as one statement.
+func (s *Server) killDatabaseSessions(ctx context.Context, name string) error {
+	lit := "N" + QuoteLiteral(name) // N: a database name can be any Unicode
+	return s.execContext(ctx, fmt.Sprintf(`DECLARE @db int = DB_ID(%[1]s), @kill nvarchar(max) = N'', @waits int = 0;
+SELECT @kill += N'BEGIN TRY KILL ' + CAST(s.session_id AS nvarchar(10)) + N'; END TRY BEGIN CATCH END CATCH; '
+FROM sys.dm_exec_sessions AS s
+WHERE s.is_user_process = 1 AND s.session_id <> @@SPID
+  AND (s.database_id = @db OR s.session_id IN (
+    SELECT l.request_session_id FROM sys.dm_tran_locks AS l
+    WHERE l.resource_type = N'DATABASE' AND l.resource_database_id = @db));
+EXEC (@kill);
+WHILE @waits < 150 AND EXISTS (
+    SELECT 1 FROM sys.dm_exec_sessions AS s
+    WHERE s.is_user_process = 1 AND s.session_id <> @@SPID AND s.database_id = @db)
+BEGIN
+    WAITFOR DELAY '00:00:00.200';
+    SET @waits += 1;
+END`, lit))
+}
+
 // multiUserRepairTimeout bounds restoreMultiUser's statement. Short on
 // purpose: the caller still holds the single-user slot, so the ALTER has
 // nothing to wait for, and a repair that hangs is worse than one that gives up.
@@ -1335,6 +1378,16 @@ func (s *Server) CreateDatabaseContext(ctx context.Context, name string, opts *C
 		return fmt.Errorf("gosmo: create database %q: invalid collation %q", name, opts.Collation)
 	}
 
+	if opts.LogFile != nil && opts.PrimaryFile == nil {
+		primary, err := defaultPrimaryFile(name, s.info)
+		if err != nil {
+			return fmt.Errorf("gosmo: create database %q: %w", name, err)
+		}
+		withPrimary := *opts
+		withPrimary.PrimaryFile = primary
+		opts = &withPrimary
+	}
+
 	if err := s.execContext(ctx, buildCreateDatabaseStatement(name, opts)); err != nil {
 		return fmt.Errorf("gosmo: create database %q: %w", name, err)
 	}
@@ -1354,6 +1407,37 @@ func (s *Server) CreateDatabaseContext(ctx context.Context, name string, opts *C
 		}
 	}
 	return nil
+}
+
+// defaultPrimaryFile is the data file CREATE DATABASE would have made on its
+// own — logical name name, file name.mdf in the instance's default data
+// directory, every size and growth left to model — spelled out because the
+// caller has asked for a log file.
+//
+// SQL Server takes a LOG ON clause only after an ON clause naming at least one
+// data file: "Cannot specify a log file in a CREATE DATABASE statement without
+// also specifying at least one data file" (verified live). Omitting the data
+// file is how a caller says "the server's default", so a request to customise
+// only the log would otherwise fail outright.
+func defaultPrimaryFile(name string, info *ServerInfo) (*DatabaseFileSpec, error) {
+	if info == nil || info.DefaultDataPath == "" {
+		return nil, fmt.Errorf("a log file needs a data file beside it, and the instance reports no default data path to place one in")
+	}
+	return &DatabaseFileSpec{Name: name, Path: joinServerPath(info.DefaultDataPath, name+".mdf")}, nil
+}
+
+// joinServerPath appends file to dir, a directory on the server's own file
+// system — so the separator is the one dir already uses, not the client's.
+// SERVERPROPERTY('InstanceDefaultDataPath') ends in one, but a caller-supplied
+// directory may not.
+func joinServerPath(dir, file string) string {
+	if strings.HasSuffix(dir, `\`) || strings.HasSuffix(dir, "/") {
+		return dir + file
+	}
+	if strings.Contains(dir, `\`) {
+		return dir + `\` + file
+	}
+	return dir + "/" + file
 }
 
 // buildCreateDatabaseStatement builds the CREATE DATABASE statement for
@@ -1384,7 +1468,10 @@ type CreateDatabaseOptions struct {
 	// log file (name, path, size, growth, max size) via CREATE DATABASE's
 	// ON PRIMARY/LOG ON clauses. Leaving either nil lets the server place
 	// that file at its own default path/size, exactly like CreateDatabase
-	// with a zero-valued CreateDatabaseOptions always has. FileGroup is
+	// with a zero-valued CreateDatabaseOptions always has — for a nil
+	// PrimaryFile beside a LogFile, by naming that default file explicitly,
+	// since SQL Server refuses LOG ON without a data file (see
+	// defaultPrimaryFile). FileGroup is
 	// ignored on both (PrimaryFile is always PRIMARY; LogFile has none) —
 	// additional filegroups and files are added after creation via
 	// AddFileGroupContext/AddFileContext, not here.
@@ -1393,7 +1480,9 @@ type CreateDatabaseOptions struct {
 }
 
 // DropDatabase drops the named database.
-// When force is true, active connections are terminated first.
+// When force is true, active connections are terminated first — by SET
+// SINGLE_USER WITH ROLLBACK IMMEDIATE, or on a Managed Instance, which refuses
+// that statement, by killing the database's sessions (see killDatabaseSessions).
 func (s *Server) DropDatabase(name string, force bool) error {
 	return s.DropDatabaseContext(context.Background(), name, force)
 }
@@ -1402,6 +1491,15 @@ func (s *Server) DropDatabase(name string, force bool) error {
 func (s *Server) DropDatabaseContext(ctx context.Context, name string, force bool) error {
 	if name == "" {
 		return fmt.Errorf("gosmo: drop database: name is required")
+	}
+	if force && s.refusesSingleUser() {
+		if err := s.killDatabaseSessions(ctx, name); err != nil {
+			return fmt.Errorf("gosmo: close connections to %q: %w", name, err)
+		}
+		if err := s.execContext(ctx, fmt.Sprintf("DROP DATABASE %s", quoteIdent(name))); err != nil {
+			return fmt.Errorf("gosmo: drop database %q: %w", name, err)
+		}
+		return nil
 	}
 	if force {
 		if err := s.execContext(ctx,
@@ -1438,7 +1536,8 @@ func (s *Server) DropDatabaseContext(ctx context.Context, name string, force boo
 // IMMEDIATE first — terminating those connections and rolling back their
 // transactions — and back to MULTI_USER afterwards, including when the
 // rename itself fails, so a refused rename never leaves the database
-// single-user.
+// single-user. A Managed Instance refuses SET SINGLE_USER, so there force
+// kills the database's sessions instead and changes no access mode.
 func (s *Server) RenameDatabase(oldName, newName string, force bool) error {
 	return s.RenameDatabaseContext(context.Background(), oldName, newName, force)
 }
@@ -1448,6 +1547,17 @@ func (s *Server) RenameDatabaseContext(ctx context.Context, oldName, newName str
 	if oldName == "" || newName == "" {
 		return fmt.Errorf("gosmo: rename database: both names are required")
 	}
+	q := fmt.Sprintf("ALTER DATABASE %s MODIFY NAME = %s", quoteIdent(oldName), quoteIdent(newName))
+	if force && s.refusesSingleUser() {
+		// Nothing to release afterwards: no access mode was changed.
+		if err := s.killDatabaseSessions(ctx, oldName); err != nil {
+			return fmt.Errorf("gosmo: close connections to %q: %w", oldName, err)
+		}
+		if err := s.execContext(ctx, q); err != nil {
+			return fmt.Errorf("gosmo: rename database %q to %q: %w", oldName, newName, err)
+		}
+		return nil
+	}
 	if force {
 		if err := s.execContext(ctx,
 			fmt.Sprintf("ALTER DATABASE %s SET SINGLE_USER WITH ROLLBACK IMMEDIATE", quoteIdent(oldName)),
@@ -1455,7 +1565,6 @@ func (s *Server) RenameDatabaseContext(ctx context.Context, oldName, newName str
 			return fmt.Errorf("gosmo: set single user on %q: %w", oldName, err)
 		}
 	}
-	q := fmt.Sprintf("ALTER DATABASE %s MODIFY NAME = %s", quoteIdent(oldName), quoteIdent(newName))
 	err := s.execContext(ctx, q)
 	if force {
 		// The name to release is whichever one the database now has.

@@ -349,12 +349,13 @@ func (spec *ServerAuditSpecification) withSpecificationDisabled(ctx context.Cont
 	if err := spec.SetStateContext(ctx, false); err != nil {
 		return err
 	}
+	enable := func(ctx context.Context) error { return spec.SetStateContext(ctx, true) }
 	if err := fn(inner); err != nil {
 		// Best effort: report the original failure, not the restore's.
-		_ = spec.SetStateContext(ctx, true)
+		_ = restoreWindow(ctx, enable)
 		return err
 	}
-	return spec.SetStateContext(ctx, true)
+	return restoreWindow(ctx, enable)
 }
 
 // AddActionGroups adds audit action groups to the specification.
