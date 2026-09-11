@@ -3,7 +3,6 @@ package gosmo
 import (
 	"context"
 	"database/sql"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"strings"
@@ -209,9 +208,7 @@ func (spec CertificateSpec) createCertificateStatement() (string, error) {
 		if spec.EncryptionPassword != "" || !spec.StartDate.IsZero() || !spec.ExpiryDate.IsZero() {
 			return "", fmt.Errorf("certificate %q is imported, so it takes no password or validity dates of its own", spec.Name)
 		}
-		// Uppercase hex with the 0x prefix, which is the only literal form
-		// T-SQL accepts for varbinary.
-		return stmt + " FROM BINARY = 0x" + strings.ToUpper(hex.EncodeToString(spec.FromBinary)), nil
+		return stmt + " FROM BINARY = " + binaryLiteral(spec.FromBinary), nil
 	}
 
 	if spec.EncryptionPassword != "" {

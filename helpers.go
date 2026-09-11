@@ -1,6 +1,7 @@
 package gosmo
 
 import (
+	"encoding/hex"
 	"fmt"
 	"strings"
 )
@@ -38,6 +39,14 @@ func nullableStr(s string) string {
 // NULL is never the intended result.
 func nStringLiteral(s string) string {
 	return fmt.Sprintf("N'%s'", escapeSingle(s))
+}
+
+// binaryLiteral renders b as a T-SQL 0x… binary literal in uppercase hex.
+// Empty (or nil) b renders as 0x, the empty binary string — DATALENGTH(0x)
+// is 0, where 0x00 would be one zero byte. A caller for which nil means NULL
+// checks for it first.
+func binaryLiteral(b []byte) string {
+	return "0x" + strings.ToUpper(hex.EncodeToString(b))
 }
 
 // boolToInt converts a bool to 0/1 for T-SQL BIT parameters.

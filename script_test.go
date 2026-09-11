@@ -293,8 +293,11 @@ func TestScriptLiteral(t *testing.T) {
 		{int64(-7), "-7"},
 		{1.5, "1.5"},
 		{[]byte{0xDE, 0xAD}, "0xDEAD"},
-		// "0x" alone is not a valid T-SQL binary literal.
-		{[]byte{}, "0x00"},
+		// "0x" is the empty binary string (DATALENGTH(0x) = 0); 0x00 would
+		// be one zero byte, a different value.
+		{[]byte{}, "0x"},
+		// go-mssqldb sends a nil slice as NULL, not as an empty value.
+		{[]byte(nil), "NULL"},
 		{time.Date(2026, 7, 30, 14, 5, 6, 0, time.UTC), "'2026-07-30T14:05:06'"},
 	}
 	for _, tc := range cases {
@@ -306,6 +309,18 @@ func TestScriptLiteral(t *testing.T) {
 		if got != tc.want {
 			t.Errorf("scriptLiteral(%#v) = %q, want %q", tc.in, got, tc.want)
 		}
+	}
+}
+
+// TestBindScriptArgsScriptsAnEmptyBinaryAsTheEmptyLiteral pins that a bound
+// empty varbinary scripts as 0x, the zero-length value it was, not 0x00.
+func TestBindScriptArgsScriptsAnEmptyBinaryAsTheEmptyLiteral(t *testing.T) {
+	got, err := bindScriptArgs("UPDATE t SET b = @p1, c = @p2", []any{[]byte{}, []byte{0x00}})
+	if err != nil {
+		t.Fatalf("bindScriptArgs: %v", err)
+	}
+	if want := "UPDATE t SET b = 0x, c = 0x00"; got != want {
+		t.Errorf("bindScriptArgs = %q, want %q", got, want)
 	}
 }
 

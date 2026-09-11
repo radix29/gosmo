@@ -98,7 +98,7 @@ func TestLiveScriptLoginRoundTripsTheSID(t *testing.T) {
 	if !bytes.Equal(before.SID, after.SID) {
 		t.Errorf("SID changed across a script round trip: was %s, now %s\n"+
 			"a login recreated with a fresh SID orphans every database user mapped to it",
-			hexLiteral(before.SID), hexLiteral(after.SID))
+			binaryLiteral(before.SID), binaryLiteral(after.SID))
 	}
 	if after.DefaultDatabase != "master" {
 		t.Errorf("default database = %q after the round trip, want master "+

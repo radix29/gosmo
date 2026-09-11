@@ -252,3 +252,43 @@ END`)
 		t.Errorf("SQL Server refused SQL_VARIANT against a sql_variant parameter: %v\n%s", err, stmt)
 	}
 }
+
+// A nil, an empty and a one-zero-byte []byte are three different varbinary
+// values on the wire — NULL, the zero-length value, 0x00 — and the scripted
+// EXEC must reproduce each. It once scripted the empty one as 0x00, a byte
+// the bound call never sent.
+func TestLiveExecProcScriptBinaryMatchesTheBoundCall(t *testing.T) {
+	db, ctx, done := liveDB(t)
+	defer done()
+
+	drop := liveProc(t, db, ctx, "gosmo_live_binary", `
+	@a varbinary(10), @b varbinary(10), @c varbinary(10)
+AS
+	SELECT ISNULL(DATALENGTH(@a), -1), ISNULL(DATALENGTH(@b), -1), ISNULL(DATALENGTH(@c), -1);`)
+	defer drop()
+
+	in := []any{[]byte(nil), []byte{}, []byte{0x00}}
+	lengths := func(row *sql.Row) [3]int64 {
+		t.Helper()
+		var got [3]int64
+		if err := row.Scan(&got[0], &got[1], &got[2]); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		return got
+	}
+
+	bound := lengths(db.QueryRowContext(ctx, "EXEC dbo.gosmo_live_binary @a = @p1, @b = @p2, @c = @p3", in...))
+	if want := [3]int64{-1, 0, 1}; bound != want {
+		t.Fatalf("bound call lengths = %v, want %v — the driver's own encoding changed", bound, want)
+	}
+
+	stmt, err := scriptExecProc("[dbo].[gosmo_live_binary]",
+		[]ProcParam{In("a", in[0]), In("b", in[1]), In("c", in[2])})
+	if err != nil {
+		t.Fatalf("scriptExecProc: %v", err)
+	}
+	t.Logf("scripted:\n%s", stmt)
+	if scripted := lengths(db.QueryRowContext(ctx, stmt)); scripted != bound {
+		t.Errorf("scripted EXEC lengths = %v, bound call = %v\n%s", scripted, bound, stmt)
+	}
+}

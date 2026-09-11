@@ -2,7 +2,6 @@ package gosmo
 
 import (
 	"context"
-	"encoding/hex"
 	"fmt"
 	"strings"
 )
@@ -370,7 +369,7 @@ func buildColumnMasterKeyScript(k *ColumnMasterKey, opts ScriptOptions) string {
 	fmt.Fprintf(&sb, "CREATE COLUMN MASTER KEY %s\nWITH (\n    KEY_STORE_PROVIDER_NAME = N'%s',\n    KEY_PATH = N'%s'",
 		quoteIdent(k.Name), escapeSingle(k.KeyStoreProviderName), escapeSingle(k.KeyPath))
 	if k.AllowEnclaveComputations {
-		fmt.Fprintf(&sb, ",\n    ENCLAVE_COMPUTATIONS (SIGNATURE = %s)", hexLiteral(k.Signature))
+		fmt.Fprintf(&sb, ",\n    ENCLAVE_COMPUTATIONS (SIGNATURE = %s)", binaryLiteral(k.Signature))
 	}
 	sb.WriteString("\n);\nGO\n")
 	return sb.String()
@@ -422,7 +421,7 @@ func buildColumnEncryptionKeyScript(k *ColumnEncryptionKey, opts ScriptOptions) 
 			sb.WriteString(",")
 		}
 		fmt.Fprintf(&sb, "\n(\n    COLUMN_MASTER_KEY = %s,\n    ALGORITHM = '%s',\n    ENCRYPTED_VALUE = %s\n)",
-			quoteIdent(v.MasterKeyName), escapeSingle(v.EncryptionAlgorithm), hexLiteral(v.EncryptedValue))
+			quoteIdent(v.MasterKeyName), escapeSingle(v.EncryptionAlgorithm), binaryLiteral(v.EncryptedValue))
 	}
 	sb.WriteString(";\nGO\n")
 	return sb.String()
@@ -461,12 +460,4 @@ func onOff(v bool) string {
 		return "ON"
 	}
 	return "OFF"
-}
-
-// hexLiteral renders bytes as the 0x… binary literal T-SQL takes.
-func hexLiteral(b []byte) string {
-	if len(b) == 0 {
-		return "0x"
-	}
-	return "0x" + strings.ToUpper(hex.EncodeToString(b))
 }

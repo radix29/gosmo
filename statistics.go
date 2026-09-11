@@ -528,7 +528,7 @@ func formatHistogramKey(v any) string {
 	case nil:
 		return "NULL"
 	case []byte:
-		return fmt.Sprintf("0x%X", k)
+		return binaryLiteral(k)
 	default:
 		return fmt.Sprintf("%v", k)
 	}

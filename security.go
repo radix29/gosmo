@@ -179,7 +179,7 @@ func (d *Database) EnclaveComputationsSupported() bool {
 func (d *Database) createColumnMasterKey(ctx context.Context, name, keyStoreProvider, keyPath string, signature []byte) error {
 	enclave := ""
 	if len(signature) > 0 {
-		enclave = fmt.Sprintf(",\n    ENCLAVE_COMPUTATIONS (SIGNATURE = %s)", hexLiteral(signature))
+		enclave = fmt.Sprintf(",\n    ENCLAVE_COMPUTATIONS (SIGNATURE = %s)", binaryLiteral(signature))
 	}
 	q := fmt.Sprintf(`
 CREATE COLUMN MASTER KEY %s
@@ -260,7 +260,7 @@ func (v ColumnEncryptionKeyValue) missing() string {
 // KEY and ALTER ... ADD VALUE both take.
 func (v ColumnEncryptionKeyValue) valueClause() string {
 	return fmt.Sprintf("(\n    COLUMN_MASTER_KEY = %s,\n    ALGORITHM = '%s',\n    ENCRYPTED_VALUE = %s\n)",
-		quoteIdent(v.MasterKeyName), escapeSingle(v.EncryptionAlgorithm), hexLiteral(v.EncryptedValue))
+		quoteIdent(v.MasterKeyName), escapeSingle(v.EncryptionAlgorithm), binaryLiteral(v.EncryptedValue))
 }
 
 // columnEncryptionKeySelect is the column list and joins every column

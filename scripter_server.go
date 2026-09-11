@@ -111,7 +111,7 @@ func buildLoginScript(l *Login, opts ScriptOptions) string {
 		stmt += " WITH PASSWORD = N'<password, sysname, >'"
 		withOpen = true
 		if len(l.SID) > 0 {
-			stmt += ", SID = " + hexLiteral(l.SID)
+			stmt += ", SID = " + binaryLiteral(l.SID)
 		}
 	}
 	if l.DefaultDatabase != "" && takesWithOptions {

@@ -313,12 +313,12 @@ func scriptLiteral(v any) (string, error) {
 	case string:
 		return nStringLiteral(x), nil
 	case []byte:
-		// A bare "0x" is not a valid T-SQL binary literal, so an empty slice
-		// scripts as the zero-length one, 0x00.
-		if len(x) == 0 {
-			return "0x00", nil
+		// go-mssqldb sends a nil slice as NULL and an empty non-nil one as
+		// the zero-length value, so the two script differently.
+		if x == nil {
+			return "NULL", nil
 		}
-		return fmt.Sprintf("0x%X", x), nil
+		return binaryLiteral(x), nil
 	case bool:
 		return strconv.Itoa(boolToInt(x)), nil
 	case int:
