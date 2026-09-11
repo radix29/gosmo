@@ -191,6 +191,11 @@ var sweepMustCall = []string{
 	"UserDefinedTableType.ColumnsContext",
 	"XmlSchemaCollection.DefinitionContext",
 
+	// The capability probe, which grew a class 5/6/10 block reading
+	// sys.assemblies, sys.types and sys.xml_schema_collections — the same
+	// version exposure as the listings above.
+	"Database.CapabilitiesContext",
+
 	// Assemblies.
 	"Database.AssembliesContext",
 	"Database.AssemblyByNameContext",

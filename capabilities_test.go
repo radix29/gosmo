@@ -52,6 +52,7 @@ func TestProbedNameListsAreWellFormed(t *testing.T) {
 		{"ProbedServerRoles", ProbedServerRoles, false},
 		{"ProbedDatabaseRoles", ProbedDatabaseRoles, false},
 		{"ProbedSchemaPermissions", ProbedSchemaPermissions, true},
+		{"ProbedSecurablePermissions", ProbedSecurablePermissions, true},
 	} {
 		seen := map[string]bool{}
 		for _, n := range list.names {
@@ -541,7 +542,8 @@ func TestTheDatabaseProbeAsksAboutEverySchemaInOnePass(t *testing.T) {
 		len(ProbedSchemaPermissions) + len(ProbedObjectPermissions) +
 		len(ProbedSchemaPermissions) + // the schema catalog block binds them again
 		len(ProbedDatabasePermissions) + // and the database catalog block binds those again
-		len(ProbedPrincipalPermissions) // and the class-4 catalog block binds its own
+		len(ProbedPrincipalPermissions) + // and the class-4 catalog block binds its own
+		len(ProbedSecurablePermissions) // and so does the class 5/6/10 block
 	if len(script.dbArgs) != want {
 		t.Errorf("the probe bound %d names, want %d", len(script.dbArgs), want)
 	}
@@ -1427,5 +1429,116 @@ func TestServerCapabilitiesReadGroupAnswersApartFromTheProbe(t *testing.T) {
 	}
 	if !c.Allows("ALTER ANY AVAILABILITY GROUP") {
 		t.Error("the server-wide grant stopped reading back once the group denial arrived")
+	}
+}
+
+// TestTheSecurableBlockAsksPerSecurable pins the class 5/6/10 block's shape,
+// the parts no scripted answer can observe. Each fragment is a wrong answer if
+// lost: the class word asked of a type decides whether HAS_PERMS_BY_NAME
+// answers at all, and an unquoted name asks about a different securable.
+func TestTheSecurableBlockAsksPerSecurable(t *testing.T) {
+	q, args := securableCapabilityQuery(9, ProbedSecurablePermissions)
+
+	if len(args) != len(ProbedSecurablePermissions) {
+		t.Errorf("the securable block bound %d names, want %d — it must not bind per securable",
+			len(args), len(ProbedSecurablePermissions))
+	}
+	if !strings.Contains(q, "(VALUES (@p9)) AS n(v)") {
+		t.Errorf("the securable block does not number its placeholders from @p9:\n%s", q)
+	}
+	for _, want := range []struct{ frag, why string }{
+		{"SELECT CONCAT('K:', n.v), CONCAT('ASSEMBLY::', a.name),", "the permission rides in kind and the key in name"},
+		{"HAS_PERMS_BY_NAME(QUOTENAME(a.name), 'ASSEMBLY', n.v)", "an assembly is asked as class ASSEMBLY, quoted"},
+		{"CONCAT('TYPE::', SCHEMA_NAME(t.schema_id), '.', t.name)", "a type is keyed as DatabaseSecurableKey spells it"},
+		{"HAS_PERMS_BY_NAME(QUOTENAME(SCHEMA_NAME(t.schema_id)) + '.' + QUOTENAME(t.name), 'TYPE', n.v)", "a type is asked as class TYPE, each part quoted"},
+		{"CONCAT('XML SCHEMA COLLECTION::', SCHEMA_NAME(x.schema_id), '.', x.name)", "a collection is keyed as DatabaseSecurableKey spells it"},
+		{"'XML SCHEMA COLLECTION', n.v)", "a collection is asked as its own class"},
+		{"WHERE t.is_user_defined = 1", "the built-in types are not asked about"},
+		{"WHERE a.is_user_defined = 1", "the system assembly is not asked about"},
+	} {
+		if !strings.Contains(q, want.frag) {
+			t.Errorf("the securable block is missing %q — %s:\n%s", want.frag, want.why, q)
+		}
+	}
+	// And the keys the block builds are the keys the accessor reads.
+	for _, tc := range []struct {
+		kind         DatabaseSecurableKind
+		schema, name string
+		want         string
+	}{
+		{DatabaseSecurableAssembly, "", "a1", "ASSEMBLY::a1"},
+		{DatabaseSecurableType, "dbo", "Phone", "TYPE::dbo.Phone"},
+		{DatabaseSecurableXmlSchemaCollection, "Sales", "Doc", "XML SCHEMA COLLECTION::Sales.Doc"},
+	} {
+		if got := DatabaseSecurableKey(tc.kind, tc.schema, tc.name); got != tc.want {
+			t.Errorf("DatabaseSecurableKey(%s, %q, %q) = %q, want %q", tc.kind, tc.schema, tc.name, got, tc.want)
+		}
+	}
+}
+
+// TestDatabaseCapabilitiesReadSecurableAnswersByKind. The "K:" rows land in
+// their own map, keyed by kind: a type and an XML schema collection may share
+// dbo.x — they live in separate namespaces — and one's answer must not be
+// readable through the other. The database-scope CONTROL beside them is a
+// different question and must survive untouched.
+func TestDatabaseCapabilitiesReadSecurableAnswersByKind(t *testing.T) {
+	srv := capServer(t, &capScript{
+		dbAccess: int64(1),
+		dbRows: [][]driver.Value{
+			{"P", "CONTROL", int64(0)},
+			{"K:CONTROL", "TYPE::dbo.x", int64(1)},
+			{"K:CONTROL", "XML SCHEMA COLLECTION::dbo.x", int64(0)},
+			{"K:CONTROL", "ASSEMBLY::a1", int64(1)},
+			// NULL: not a state, and so not a denial.
+			{"K:CONTROL", "ASSEMBLY::a2", nil},
+		},
+	})
+	c, err := srv.Database("HealthClinic").CapabilitiesContext(context.Background())
+	if err != nil {
+		t.Fatalf("CapabilitiesContext: %v", err)
+	}
+	if !c.HasOnSecurable(DatabaseSecurableType, "dbo", "x", "CONTROL") {
+		t.Error("the type's CONTROL did not read back")
+	}
+	if c.HasOnSecurable(DatabaseSecurableXmlSchemaCollection, "dbo", "x", "CONTROL") ||
+		c.PermitsOnSecurable(DatabaseSecurableXmlSchemaCollection, "dbo", "x", "CONTROL") {
+		t.Error("the collection read the same-named type's answer")
+	}
+	if !c.HasOnSecurable(DatabaseSecurableAssembly, "", "a1", "CONTROL") {
+		t.Error("the assembly's CONTROL did not read back")
+	}
+	if c.HasOnSecurable(DatabaseSecurableAssembly, "", "a2", "CONTROL") ||
+		!c.PermitsOnSecurable(DatabaseSecurableAssembly, "", "a2", "CONTROL") {
+		t.Error("a NULL answer read as held or as denied")
+	}
+	if c.Allows("CONTROL") {
+		t.Error("a securable row overwrote the database-scope CONTROL")
+	}
+}
+
+// TestPermitsOnSecurableFailsOpenOnlyWhereNothingWasMeasured. The three
+// shapes PermitsOnSchema keeps apart, one scope down: a securable the probe
+// never reached and a nil capability set permit; a measured 0 and a database
+// measured inaccessible withhold.
+func TestPermitsOnSecurableFailsOpenOnlyWhereNothingWasMeasured(t *testing.T) {
+	var never *DatabaseCapabilities
+	if !never.PermitsOnSecurable(DatabaseSecurableType, "dbo", "x", "CONTROL") ||
+		never.HasOnSecurable(DatabaseSecurableType, "dbo", "x", "CONTROL") {
+		t.Error("a nil capability set did not fail open on a securable")
+	}
+	c := &DatabaseCapabilities{Accessible: true, SecurablePermissions: map[string]map[string]CapabilityState{
+		"TYPE::dbo.x": {"CONTROL": CapabilityDenied},
+	}}
+	if c.PermitsOnSecurable(DatabaseSecurableType, "dbo", "x", "CONTROL") {
+		t.Error("a measured 0 permitted")
+	}
+	if !c.PermitsOnSecurable(DatabaseSecurableType, "dbo", "created_since", "CONTROL") {
+		t.Error("a securable with no row withheld; unknown must fail open")
+	}
+	shut := &DatabaseCapabilities{SecurablePermissions: map[string]map[string]CapabilityState{
+		"TYPE::dbo.x": {"CONTROL": CapabilityGranted},
+	}}
+	if shut.PermitsOnSecurable(DatabaseSecurableType, "dbo", "x", "CONTROL") {
+		t.Error("an inaccessible database still permitted a securable-scoped action")
 	}
 }

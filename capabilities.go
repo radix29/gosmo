@@ -291,6 +291,79 @@ var ProbedPrincipalPermissions = []string{
 	"ALTER",
 }
 
+// ProbedSecurablePermissions are the permissions DatabaseCapabilities probes on
+// every assembly (class 5), user-defined type (class 6) and XML schema
+// collection (class 10) in the database, once per securable.
+//
+// This block is asked with HAS_PERMS_BY_NAME, as class 108 is, rather than
+// read out of the catalog, and the answer it gives is the one no catalog row
+// can: the *effective* permission, folding in ownership of the securable,
+// ownership of or CONTROL on its schema, and CONTROL on the database. These
+// families hold a handful of rows each, so one call per securable costs
+// little.
+//
+// CONTROL is the one name worth asking, and what it answers was probed live on
+// majors 13, 14 and 17 (2026-09-11, identical on all three) with a
+// WITHOUT LOGIN user per case:
+//
+//   - ALTER SCHEMA ... TRANSFER of a type or a collection goes through exactly
+//     when CONTROL reads 1 — under CONTROL on the securable, its ownership,
+//     CONTROL on or ownership of the source schema, or CONTROL on the
+//     database. ALTER on the database, ALTER ANY SCHEMA, db_ddladmin and ALTER
+//     on the source schema all read 0 and are all refused (Msg 15151), with
+//     ALTER on the target schema held throughout.
+//   - DROP goes through when CONTROL reads 1, *and* under the wider rights
+//     that read 0 here: ALTER ANY ASSEMBLY for an assembly, ALTER on the
+//     schema for a type or a collection, ALTER on the database for all three.
+//     So for a drop this is an additional reason to permit, never the whole
+//     test.
+//   - ALTER is not worth asking. GRANT ALTER on the securable alone reads 1
+//     for ALTER and permits neither statement, and DENY ALTER reads 0 while
+//     the drop goes through.
+//
+// There is no catalog block for the DENY direction, and that is SQL Server's
+// doing rather than an omission: DENY CONTROL on any of the three — to the
+// user or to public — withholds VIEW DEFINITION with it, and the securable
+// disappears from sys.assemblies, sys.types and sys.xml_schema_collections for
+// that principal (verified on the same three majors). A listing built from
+// those views never shows it, so there is nothing for a gate to withhold.
+var ProbedSecurablePermissions = []string{
+	"CONTROL",
+}
+
+// DatabaseSecurableKind is the kind of database securable
+// DatabaseCapabilities.SecurablePermissions is keyed by — ServerSecurableKind's
+// database-scope twin. Its values are the class words SQL Server itself uses,
+// in HAS_PERMS_BY_NAME and in GRANT ... ON <kind>::<name>.
+type DatabaseSecurableKind string
+
+const (
+	// DatabaseSecurableAssembly is an assembly — class 5, schemaless.
+	DatabaseSecurableAssembly DatabaseSecurableKind = "ASSEMBLY"
+
+	// DatabaseSecurableType is a user-defined type — class 6, covering alias,
+	// table and CLR types alike.
+	DatabaseSecurableType DatabaseSecurableKind = "TYPE"
+
+	// DatabaseSecurableXmlSchemaCollection is an XML schema collection —
+	// class 10.
+	DatabaseSecurableXmlSchemaCollection DatabaseSecurableKind = "XML SCHEMA COLLECTION"
+)
+
+// DatabaseSecurableKey is the key SecurablePermissions is indexed by: the kind
+// and the securable joined with "::", the securable being "schema.name" for a
+// type or a collection and the bare name for an assembly, whose schema is "".
+//
+// The kind is part of the key for ServerSecurableKey's reason: types and XML
+// schema collections live in separate namespaces, so dbo.x can be both, and
+// the two answers must not be reachable through each other.
+func DatabaseSecurableKey(kind DatabaseSecurableKind, schema, name string) string {
+	if schema == "" {
+		return string(kind) + "::" + name
+	}
+	return string(kind) + "::" + schema + "." + name
+}
+
 // Capabilities is what the connected login may do at the server scope: its
 // fixed-server-role memberships and the state of each permission in
 // ProbedServerPermissions.
@@ -675,6 +748,25 @@ type DatabaseCapabilities struct {
 	// GRANT on one column as a grant on all of them. Sparse for
 	// ObjectPermissions' reason, and read the same way.
 	ColumnPermissions map[string]map[string]CapabilityState
+
+	// SecurablePermissions maps each assembly, user-defined type and XML
+	// schema collection in the database — keyed by DatabaseSecurableKey — to
+	// the state of each name in ProbedSecurablePermissions on it. Read it
+	// through HasOnSecurable or PermitsOnSecurable.
+	//
+	// It exists because none of the maps above can answer for these three
+	// classes: ObjectPermissions is class 1 only, and a principal granted
+	// CONTROL on one assembly, or owning it, holds no database- or
+	// schema-scope permission at all. A caller gating the drop on those alone
+	// withholds it from exactly the principal SQL Server lets through.
+	//
+	// Like AvailabilityGroupPermissions this is a HAS_PERMS_BY_NAME answer, so
+	// it is *not* sparse: every securable the login can see has a row, and a
+	// missing one means it was created after the probe or was never asked.
+	// Which statements its answer decides is recorded, with the live result,
+	// on ProbedSecurablePermissions — a transfer entirely, a drop only in the
+	// permitting direction.
+	SecurablePermissions map[string]map[string]CapabilityState
 }
 
 // SchemaPermission returns the state of one SCHEMA-scope permission on the
@@ -930,6 +1022,40 @@ func (c *DatabaseCapabilities) DeniedOnAnyColumn(schema, object, name string) (s
 	return found, found != ""
 }
 
+// SecurablePermission returns the state of one permission on an assembly, a
+// user-defined type or an XML schema collection; schema is "" for an assembly.
+// A securable the probe did not reach, a name that was never probed, and every
+// securable of a database that was not probed at all are CapabilityUnknown.
+func (c *DatabaseCapabilities) SecurablePermission(kind DatabaseSecurableKind, schema, name, perm string) CapabilityState {
+	if c == nil {
+		return CapabilityUnknown
+	}
+	return c.SecurablePermissions[DatabaseSecurableKey(kind, schema, name)][perm]
+}
+
+// HasOnSecurable reports that the permission is known to be held on the
+// securable — the test for offering something extra, such as a drop the wider
+// rights beside it do not permit. See Capabilities.Has.
+func (c *DatabaseCapabilities) HasOnSecurable(kind DatabaseSecurableKind, schema, name, perm string) bool {
+	return c.SecurablePermission(kind, schema, name, perm) == CapabilityGranted
+}
+
+// PermitsOnSecurable is the test for withholding something the securable's own
+// permission decides alone — ALTER SCHEMA ... TRANSFER of a type or a
+// collection, which nothing narrower or wider than CONTROL permits. It is
+// PermitsOnSchema one scope down: not known to be denied, plus the
+// accessibility every answer inside the database takes for granted.
+//
+// It is sound in the withholding direction because the map is not sparse, for
+// Capabilities.PermitsOnAvailabilityGroup's reason: a 0 here is the server's
+// answer about this securable, not a silence.
+func (c *DatabaseCapabilities) PermitsOnSecurable(kind DatabaseSecurableKind, schema, name, perm string) bool {
+	if c == nil {
+		return true
+	}
+	return c.Accessible && c.SecurablePermission(kind, schema, name, perm) != CapabilityDenied
+}
+
 // InRole reports whether the login's user in this database is a member of the
 // named fixed database role. As with Capabilities.InServerRole, membership in
 // db_owner (or in sysadmin) is not folded in.
@@ -1024,6 +1150,7 @@ func (d *Database) CapabilitiesContext(ctx context.Context) (*DatabaseCapabiliti
 			ExplicitPrincipalPermissions: map[string]map[string]CapabilityState{},
 			ObjectPermissions:            map[string]map[string]CapabilityState{},
 			ColumnPermissions:            map[string]map[string]CapabilityState{},
+			SecurablePermissions:         map[string]map[string]CapabilityState{},
 		}, nil
 	}
 
@@ -1051,6 +1178,10 @@ func (d *Database) CapabilitiesContext(ctx context.Context) (*DatabaseCapabiliti
 	q += "\nUNION ALL\n" + pq
 	args = append(args, pargs...)
 
+	kq, kargs := securableCapabilityQuery(len(args)+1, ProbedSecurablePermissions)
+	q += "\nUNION ALL\n" + kq
+	args = append(args, kargs...)
+
 	rows, err := d.query(ctx, q, args...)
 	if err != nil {
 		return nil, fmt.Errorf("gosmo: read capabilities for database %q: %w", d.name, err)
@@ -1067,6 +1198,7 @@ func (d *Database) CapabilitiesContext(ctx context.Context) (*DatabaseCapabiliti
 		ExplicitPrincipalPermissions: map[string]map[string]CapabilityState{},
 		ObjectPermissions:            map[string]map[string]CapabilityState{},
 		ColumnPermissions:            map[string]map[string]CapabilityState{},
+		SecurablePermissions:         map[string]map[string]CapabilityState{},
 	}
 	if err := scanCapabilityRows(rows.Rows, capabilityDest{
 		roles:              c.Roles,
@@ -1077,6 +1209,7 @@ func (d *Database) CapabilitiesContext(ctx context.Context) (*DatabaseCapabiliti
 		explicitPrincipals: c.ExplicitPrincipalPermissions,
 		objects:            c.ObjectPermissions,
 		columns:            c.ColumnPermissions,
+		securables:         c.SecurablePermissions,
 	}); err != nil {
 		return nil, fmt.Errorf("gosmo: read capabilities for database %q: %w", d.name, err)
 	}
@@ -1282,6 +1415,50 @@ func explicitPrincipalCapabilityQuery(first int, perms []string) (string, []any)
 	  AND USER_NAME(p.major_id) IS NOT NULL`, args
 }
 
+// securableCapabilityQuery builds the class 5/6/10 block: one row per
+// assembly, user-defined type and XML schema collection per probed permission,
+// tagged "K:<permission>" with the securable as DatabaseSecurableKey spells it.
+//
+// It asks HAS_PERMS_BY_NAME where the object block reads the catalog, and has
+// to — see ProbedSecurablePermissions: the answer that matters is the
+// effective one, which folds in schema ownership and CONTROL on the database,
+// and no permission row records either. The permission rides in the kind
+// column and the securable in the name column, schemaCapabilityQuery's
+// arrangement and for its reason.
+//
+// Three details are load-bearing:
+//
+//   - The HAS_PERMS_BY_NAME class word is the kind itself. A type asked about
+//     as 'OBJECT' reads NULL — it is not in sys.objects — and NULL is
+//     unknown, which gates nothing.
+//   - The name is QUOTENAMEd part by part. "[s].[t]" is what HAS_PERMS_BY_NAME
+//     parses; a dot or a bracket inside a bare name asks about a different
+//     securable, or none.
+//   - System rows are skipped: the built-in types, Microsoft.SqlServer.Types
+//     and the sys schema's collection offer nothing to gate, and there are
+//     thirty-odd built-in types per database.
+func securableCapabilityQuery(first int, perms []string) (string, []any) {
+	args := make([]any, len(perms))
+	for i, n := range perms {
+		args[i] = n
+	}
+	vals := valuesList(first, len(perms))
+	return `SELECT CONCAT('K:', n.v), CONCAT('ASSEMBLY::', a.name),
+	       HAS_PERMS_BY_NAME(QUOTENAME(a.name), 'ASSEMBLY', n.v)
+	FROM sys.assemblies AS a CROSS JOIN (VALUES ` + vals + `) AS n(v)
+	WHERE a.is_user_defined = 1
+UNION ALL
+	SELECT CONCAT('K:', n.v), CONCAT('TYPE::', SCHEMA_NAME(t.schema_id), '.', t.name),
+	       HAS_PERMS_BY_NAME(QUOTENAME(SCHEMA_NAME(t.schema_id)) + '.' + QUOTENAME(t.name), 'TYPE', n.v)
+	FROM sys.types AS t CROSS JOIN (VALUES ` + vals + `) AS n(v)
+	WHERE t.is_user_defined = 1
+UNION ALL
+	SELECT CONCAT('K:', n.v), CONCAT('XML SCHEMA COLLECTION::', SCHEMA_NAME(x.schema_id), '.', x.name),
+	       HAS_PERMS_BY_NAME(QUOTENAME(SCHEMA_NAME(x.schema_id)) + '.' + QUOTENAME(x.name), 'XML SCHEMA COLLECTION', n.v)
+	FROM sys.xml_schema_collections AS x CROSS JOIN (VALUES ` + vals + `) AS n(v)
+	WHERE x.schema_id <> SCHEMA_ID('sys')`, args
+}
+
 // explicitServerCapabilityQuery builds the server-scope catalog block: one row
 // per server securable the login has an explicit DENY recorded on, tagged
 // "V:<permission>" with the securable as "<kind>::<name>" and 0 for denied.
@@ -1435,6 +1612,7 @@ type capabilityDest struct {
 	explicitPrincipals map[string]map[string]CapabilityState
 	objects            map[string]map[string]CapabilityState
 	columns            map[string]map[string]CapabilityState
+	securables         map[string]map[string]CapabilityState
 }
 
 // scanCapabilityRows fills into from the probe's (kind, name, answer) rows. A
@@ -1521,6 +1699,19 @@ func scanCapabilityRows(rows *sql.Rows, into capabilityDest) error {
 				into.availabilityGroups[name] = map[string]CapabilityState{}
 			}
 			into.availabilityGroups[name][strings.TrimPrefix(kind, "G:")] = st
+		case strings.HasPrefix(kind, "K:"):
+			// The class 5/6/10 block, keyed by DatabaseSecurableKey. A
+			// HAS_PERMS_BY_NAME answer like "G:", so a NULL is skipped rather
+			// than recorded as a denial — and like "G:" there is one row per
+			// securable, so nothing needs a denial to win over a grant.
+			st, ok := capabilityStateOf(answer)
+			if !ok || into.securables == nil {
+				continue
+			}
+			if into.securables[name] == nil {
+				into.securables[name] = map[string]CapabilityState{}
+			}
+			into.securables[name][strings.TrimPrefix(kind, "K:")] = st
 		case strings.HasPrefix(kind, "V:"):
 			// The server-scope catalog block, keyed "<kind>::<name>" — see
 			// ServerSecurableKey. It is the one catalog block the *server*

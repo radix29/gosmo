@@ -39,7 +39,8 @@ type Assembly struct {
 
 	// ClrName is the full .NET strong name — "name, version=…, culture=…,
 	// publickeytoken=…, processorarchitecture=…". Empty on an assembly the
-	// server could not read one from.
+	// server could not read one from, and on one the caller lacks VIEW
+	// DEFINITION on.
 	ClrName string
 
 	// PermissionSet is the host policy, as permission_set_desc reports it.
@@ -67,10 +68,23 @@ func (a *Assembly) Database() *Database { return a.db }
 // the database has, and a caller wanting only the user's own filters on the
 // IsUserDefined field rather than getting a listing that silently omits rows
 // the catalog shows.
+//
+// clr_name is guarded by HAS_PERMS_BY_NAME: reading it raises Msg 300 (VIEW
+// DEFINITION denied) on any assembly the caller can see but not read the
+// definition of, and one such row fails the whole statement. db_ddladmin is
+// such a principal — ALTER ANY ASSEMBLY carries no VIEW DEFINITION — so
+// without the guard it could not list the assemblies it is allowed to drop.
+// The column comes back empty for those rows instead. The shipped assemblies
+// are exempt: their clr_name reads for any principal, even public alone, while
+// HAS_PERMS_BY_NAME answers 0 on them, so the guard would blank a name the
+// caller can plainly see.
 const assemblySelect = `
 SELECT a.name, a.assembly_id,
        ISNULL(USER_NAME(a.principal_id), ''),
-       ISNULL(a.clr_name, ''),
+       ISNULL(CASE WHEN a.is_user_defined = 0
+                     OR HAS_PERMS_BY_NAME(QUOTENAME(a.name), 'ASSEMBLY',
+                                          'VIEW DEFINITION') = 1
+                   THEN a.clr_name END, ''),
        ISNULL(a.permission_set_desc, ''),
        a.is_visible, ISNULL(a.is_user_defined, 0),
        a.create_date, a.modify_date

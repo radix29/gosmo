@@ -128,6 +128,13 @@ classDiagram
         +DetachDatabase(name, opts) error
         +AttachDatabase(spec) error
         +DetachedDatabaseInfo(primaryFilePath) *DetachedDatabase
+        +DatabaseSnapshots() []*DatabaseSnapshot
+        +DatabaseSnapshotByName(name) *DatabaseSnapshot
+        +DatabaseSnapshot(name) *DatabaseSnapshot
+        +SnapshotsOf(database) []*DatabaseSnapshot
+        +SnapshotFileDefaults(source, snapshotName) []SnapshotFileSpec
+        +CreateDatabaseSnapshot(req) *DatabaseSnapshot
+        +RestoreFromSnapshot(database, snapshot) error
         +Logins() []*Login
         +LoginByName(name) *Login
         +Login(name) *Login
@@ -513,6 +520,8 @@ classDiagram
         +ID() int
         +State() string
         +IsSystem() bool
+        +IsSnapshot() bool
+        +SourceDatabaseID() int
         +RecoveryModel() RecoveryModel
         +CompatibilityLevel() CompatibilityLevel
         +Tables() []*Table
@@ -526,6 +535,9 @@ classDiagram
         +Catalog() *Catalog
         +SystemCatalog() *Catalog
         +TablesFiltered(filter) []*Table
+        +TablesOfKind(kind) []*Table
+        +TablesOfKindFiltered(kind, filter) []*Table
+        +TableKindsPresent() TableKindPresence
         +TransferObject(targetSchema, schema, name) error
         +Views() []*View
         +ViewsFiltered(filter) []*View
@@ -573,6 +585,42 @@ classDiagram
         +DropSequence(schema, name) error
         +Synonyms() []*Synonym
         +DropSynonym(schema, name) error
+        +Rules() []*Rule
+        +RuleByName(schema, name) *Rule
+        +DropRule(schema, name) error
+        +Defaults() []*Default
+        +DefaultByName(schema, name) *Default
+        +DropDefault(schema, name) error
+        +UserDefinedDataTypes() []*UserDefinedDataType
+        +UserDefinedDataTypeByName(schema, name) *UserDefinedDataType
+        +RenameUserDefinedDataType(schema, oldName, newName) error
+        +UserDefinedTableTypes() []*UserDefinedTableType
+        +UserDefinedTableTypeByName(schema, name) *UserDefinedTableType
+        +ClrTypes() []*ClrType
+        +ClrTypeByName(schema, name) *ClrType
+        +SystemDataTypes() []*SystemDataType
+        +DropType(schema, name) error
+        +TransferType(targetSchema, schema, name) error
+        +XmlSchemaCollections() []*XmlSchemaCollection
+        +XmlSchemaCollectionByName(schema, name) *XmlSchemaCollection
+        +DropXmlSchemaCollection(schema, name) error
+        +TransferXmlSchemaCollection(targetSchema, schema, name) error
+        +Assemblies() []*Assembly
+        +AssemblyByName(name) *Assembly
+        +DropAssembly(name) error
+        +ExternalDataSources() []*ExternalDataSource
+        +ExternalDataSourceByName(name) *ExternalDataSource
+        +DropExternalDataSource(name) error
+        +ExternalFileFormats() []*ExternalFileFormat
+        +ExternalFileFormatByName(name) *ExternalFileFormat
+        +DropExternalFileFormat(name) error
+        +ExternalLibraries() []*ExternalLibrary
+        +ExternalLibraryByName(name) *ExternalLibrary
+        +DropExternalLibrary(name) error
+        +PlanGuides() []*PlanGuide
+        +PlanGuideByName(name) *PlanGuide
+        +PlanGuide(name) *PlanGuide
+        +DropPlanGuide(name) error
         +PartitionFunctions() []*PartitionFunction
         +PartitionFunctionByName(name) *PartitionFunction
         +PartitionSchemes() []*PartitionScheme
@@ -880,6 +928,34 @@ classDiagram
         may be shared across goroutines.
     }
 
+    class DatabaseSnapshot {
+        -server *Server
+        +Name string
+        +DatabaseID int
+        +SourceDatabase string
+        +SourceDatabaseID int
+        +State string
+        +CreateDate time.Time
+        +Server() *Server
+        +Database() *Database
+        +Restore() error
+        +Drop() error
+        Also a row of Server.Databases, where
+        Database.IsSnapshot() tells it apart.
+    }
+
+    class CreateDatabaseSnapshotRequest {
+        +Name string
+        +SourceDatabase string
+        +Files []SnapshotFileSpec
+        nil Files = SnapshotFileDefaults
+    }
+
+    class SnapshotFileSpec {
+        +LogicalName string
+        +FileName string
+    }
+
     %% =========================================================
     %% Relationships
     %% =========================================================
@@ -891,6 +967,10 @@ classDiagram
     Server --> ServerInfo : has
     ServerInfo ..> EngineEdition : EngineEdition is one of
     Server "1" --> "*" Database : owns
+    Server "1" --> "*" DatabaseSnapshot : owns
+    Server ..> CreateDatabaseSnapshotRequest : CreateDatabaseSnapshot() takes
+    CreateDatabaseSnapshotRequest "1" --> "*" SnapshotFileSpec : one per ROWS file
+    DatabaseSnapshot --> Database : Database() opens
     Server "1" --> "*" Login : owns
     Server "1" --> "*" ServerRole : owns
     Server "1" --> "*" RoleMember : ServerRoleMembers() returns
@@ -1829,6 +1909,238 @@ classDiagram
     }
 
     %% =========================================================
+    %% Table kinds — the sub-folders of Tables
+    %% =========================================================
+    class TableKind {
+        <<enumeration>>
+        TableKindUser
+        TableKindSystem
+        TableKindFileTable
+        TableKindExternal
+        TableKindGraph
+        +String() string
+    }
+
+    class TableKindPresence {
+        +System bool
+        +FileTable bool
+        +External bool
+        +Graph bool
+        Graph is always false below 2017.
+    }
+
+    %% =========================================================
+    %% Programmability: types, rules, defaults, assemblies,
+    %% plan guides — read, script, drop; no create
+    %% =========================================================
+    class UserDefinedDataType {
+        -db *Database
+        +Name string
+        +Schema string
+        +UserTypeID int
+        +BaseType string
+        +MaxLength int
+        +Precision int
+        +Scale int
+        +Collation string
+        +IsNullable bool
+        +Rule string
+        +Default string
+        +FullName() string
+        +Drop() error
+        An alias type: CREATE TYPE ... FROM.
+    }
+
+    class UserDefinedTableType {
+        -db *Database
+        +Name string
+        +Schema string
+        +UserTypeID int
+        +TypeTableObjectID int
+        +IsMemoryOptimized bool
+        +FullName() string
+        +Columns() []*Column
+        +Drop() error
+    }
+
+    class ClrType {
+        -db *Database
+        +Name string
+        +Schema string
+        +UserTypeID int
+        +MaxLength int
+        +Precision int
+        +Scale int
+        +IsNullable bool
+        +Assembly string
+        +AssemblyClass string
+        +FullName() string
+        +Drop() error
+    }
+
+    class SystemDataType {
+        +Name string
+        +SystemType int
+        +MaxLength int
+        +Precision int
+        +Scale int
+        +IsNullable bool
+        Read from the instance's own sys.types.
+    }
+
+    class XmlSchemaCollection {
+        -db *Database
+        +Name string
+        +Schema string
+        +CollectionID int
+        +CreateDate time.Time
+        +ModifyDate time.Time
+        +FullName() string
+        +Definition() string
+        +Drop() error
+    }
+
+    class Rule {
+        -db *Database
+        +Name string
+        +Schema string
+        +ObjectID int
+        +Definition string
+        +CreateDate time.Time
+        +ModifyDate time.Time
+        +FullName() string
+        +Drop() error
+    }
+
+    class Default {
+        -db *Database
+        +Name string
+        +Schema string
+        +ObjectID int
+        +Definition string
+        +CreateDate time.Time
+        +ModifyDate time.Time
+        +FullName() string
+        +Drop() error
+        Standalone CREATE DEFAULT objects only,
+        never a table's DF_ constraint.
+    }
+
+    class Assembly {
+        -db *Database
+        +Name string
+        +AssemblyID int
+        +Owner string
+        +ClrName string
+        +PermissionSet AssemblyPermissionSet
+        +IsVisible bool
+        +IsUserDefined bool
+        +CreateDate time.Time
+        +ModifyDate time.Time
+        +Files() []*AssemblyFile
+        +FileContent(fileID) []byte
+        +Modules() []*AssemblyModule
+        +Drop() error
+    }
+
+    class AssemblyPermissionSet {
+        <<enumeration>>
+        AssemblySafe
+        AssemblyExternalAccess
+        AssemblyUnsafe
+    }
+
+    class AssemblyFile {
+        +Name string
+        +FileID int
+        +ContentLength int64
+    }
+
+    class AssemblyModule {
+        +ObjectID int
+        +Schema string
+        +Name string
+        +Type string
+        +AssemblyClass string
+        +AssemblyMethod string
+        +FullName() string
+    }
+
+    class PlanGuide {
+        -db *Database
+        +Name string
+        +PlanGuideID int
+        +IsDisabled bool
+        +QueryText string
+        +Scope PlanGuideScope
+        +ScopeObject string
+        +ScopeSchema string
+        +ScopeName string
+        +ScopeBatch string
+        +Parameters string
+        +Hints string
+        +CreateDate time.Time
+        +ModifyDate time.Time
+        +Enable() error
+        +Disable() error
+        +Drop() error
+    }
+
+    class PlanGuideScope {
+        <<enumeration>>
+        PlanGuideScopeObject
+        PlanGuideScopeSQL
+        PlanGuideScopeTemplate
+    }
+
+    %% =========================================================
+    %% External resources (PolyBase, elastic query, ML Services)
+    %% =========================================================
+    class ExternalDataSource {
+        -db *Database
+        +Name string
+        +DataSourceID int
+        +Location string
+        +Type string
+        +ResourceManagerLocation string
+        +Credential string
+        +DatabaseName string
+        +ShardMapName string
+        +ConnectionOptions string
+        +PushdownEnabled bool
+        +Drop() error
+    }
+
+    class ExternalFileFormat {
+        -db *Database
+        +Name string
+        +FileFormatID int
+        +FormatType string
+        +FieldTerminator string
+        +StringDelimiter string
+        +DateFormat string
+        +UseTypeDefault bool
+        +SerDeMethod string
+        +RowTerminator string
+        +Encoding string
+        +DataCompression string
+        +FirstRow int
+        +ParserVersion string
+        +Drop() error
+    }
+
+    class ExternalLibrary {
+        -db *Database
+        +Name string
+        +LibraryID int
+        +Owner string
+        +Language string
+        +Scope string
+        +Drop() error
+        SQL Server 2017 and later.
+    }
+
+    %% =========================================================
     %% Scripter (generates CREATE DDL for existing objects — distinct
     %% from ScriptCollector, which captures pending write statements)
     %% =========================================================
@@ -1857,6 +2169,17 @@ classDiagram
         +ScriptSecurityPolicy(schema, name) string
         +ScriptColumnMasterKey(name) string
         +ScriptColumnEncryptionKey(name) string
+        +ScriptUserDefinedDataType(schema, name) string
+        +ScriptUserDefinedTableType(schema, name) string
+        +ScriptClrType(schema, name) string
+        +ScriptXmlSchemaCollection(schema, name) string
+        +ScriptRule(schema, name) string
+        +ScriptDefault(schema, name) string
+        +ScriptAssembly(name) string
+        +ScriptPlanGuide(name) string
+        +ScriptExternalDataSource(name) string
+        +ScriptExternalFileFormat(name) string
+        +ScriptExternalLibrary(name) string
         +ScriptDatabase() string
         +ScriptSelect(schema, name) string
         +ScriptInsert(schema, name) string
@@ -2051,6 +2374,26 @@ classDiagram
     Database "1" --> "*" Trigger : contains
     Database "1" --> "*" RoleMember : RoleMembers() returns
     Database "1" --> "*" Column : ObjectColumns() returns (table or view)
+    Database ..> TableKind : TablesOfKind() takes
+    Database --> TableKindPresence : TableKindsPresent() returns
+    Database "1" --> "*" UserDefinedDataType : contains
+    Database "1" --> "*" UserDefinedTableType : contains
+    Database "1" --> "*" ClrType : contains
+    Database "1" --> "*" SystemDataType : SystemDataTypes() returns
+    Database "1" --> "*" XmlSchemaCollection : contains
+    Database "1" --> "*" Rule : contains
+    Database "1" --> "*" Default : contains
+    Database "1" --> "*" Assembly : contains
+    Database "1" --> "*" PlanGuide : contains
+    Database "1" --> "*" ExternalDataSource : contains
+    Database "1" --> "*" ExternalFileFormat : contains
+    Database "1" --> "*" ExternalLibrary : contains
+    UserDefinedTableType "1" --> "*" Column : Columns() returns
+    ClrType --> Assembly : implemented by
+    Assembly --> AssemblyPermissionSet : runs under
+    Assembly "1" --> "*" AssemblyFile : Files() returns
+    Assembly "1" --> "*" AssemblyModule : Modules() returns
+    PlanGuide --> PlanGuideScope : scoped by
 
     Table "1" --> "*" Column : has
     Table "1" --> "*" Index : has
@@ -3182,6 +3525,7 @@ pool.
 | Detach a database       | `srv.DetachDatabase(name, gosmo.DetachOptions{...})` — leaves the files on disk; a detach that fails after `DropConnections` is put back to MULTI_USER |
 | Attach a database       | `srv.AttachDatabase(gosmo.AttachSpec{Name, Files, Owner, RebuildLog})` — the name need not be the one it was detached under |
 | Read a detached file    | `srv.DetachedDatabaseInfo(primaryFilePath)` → `*DetachedDatabase` (`.Name`, `.Files`, `.DataFiles()`, `.LogFiles()`) — the only way to learn a detached database's other files |
+| Database snapshots      | `srv.DatabaseSnapshots()` / `srv.DatabaseSnapshotByName(name)` / `srv.DatabaseSnapshot(name)` (no-I/O handle) / `srv.SnapshotsOf(database)` / `srv.CreateDatabaseSnapshot(req)` / `srv.RestoreFromSnapshot(database, snapshot)` — see [Database snapshots](#database-snapshots) |
 | `Server.LinkedServers`  | `srv.LinkedServers()`                      |
 | `Server.Configuration`  | `srv.Configurations()`                     |
 | `Server.JobServer` (Agent) | see [SQL Server Agent](#sql-server-agent) below |
@@ -3226,7 +3570,9 @@ pool.
 | SMO equivalent                  | gosmo                                       |
 | ------------------------------- | ------------------------------------------- |
 | Is a system database             | `db.IsSystem()`                             |
+| Is a database snapshot           | `db.IsSnapshot()` / `db.SourceDatabaseID()` — see [Database snapshots](#database-snapshots) |
 | `Database.Tables`               | `db.Tables()` / `db.TablesBySchema(schema)` |
+| One family of tables (System, FileTables, External, Graph) | `db.TablesOfKind(kind)` / `db.TablesOfKindFiltered(kind, f)` / `db.TableKindsPresent()` — see [Table kinds](#table-kinds) |
 | Bulk table/view + column snapshot | `db.Catalog()` (user objects) / `db.SystemCatalog()` (`sys` schema) |
 | `Database.Views`                | `db.Views()` / `db.DropView(schema, name)`  |
 | `Database.StoredProcedures`     | `db.StoredProcedures()`                     |
@@ -3243,6 +3589,12 @@ pool.
 | Database-scope DDL triggers     | `db.DatabaseTriggers()` / `db.DatabaseTriggerByName(name)` / `db.DatabaseTrigger(name)` (no-I/O handle) / `tr.Enable()` / `tr.Disable()` / `tr.Drop()` — see [Database DDL triggers](#database-ddl-triggers) |
 | `Database.Sequences`            | `db.Sequences()` / `db.DropSequence(schema, name)` |
 | `Database.Synonyms`             | `db.Synonyms()` / `db.DropSynonym(schema, name)` |
+| `Database.UserDefinedDataTypes` / `...TableTypes` / `...Types` (CLR) | `db.UserDefinedDataTypes()` / `db.UserDefinedTableTypes()` / `db.ClrTypes()` (each with `...ByName(schema, name)`) / `db.SystemDataTypes()` — see [Types, rules and defaults](#types-rules-and-defaults) |
+| `Database.XmlSchemaCollections` | `db.XmlSchemaCollections()` / `db.XmlSchemaCollectionByName(schema, name)` / `c.Definition()` |
+| `Database.Rules` / `Database.Defaults` | `db.Rules()` / `db.Defaults()` (each with `...ByName(schema, name)` and `db.Drop...`) — read-only, deprecated families |
+| `Database.Assemblies`           | `db.Assemblies()` / `db.AssemblyByName(name)` / `a.Files()` / `a.Modules()` — see [Assemblies](#assemblies) |
+| `Database.PlanGuides`           | `db.PlanGuides()` / `db.PlanGuideByName(name)` / `db.PlanGuide(name)` (no-I/O handle) / `g.Enable()` / `g.Disable()` / `g.Drop()` — see [Plan guides](#plan-guides) |
+| External data sources / file formats / libraries | `db.ExternalDataSources()` / `db.ExternalFileFormats()` / `db.ExternalLibraries()` (each with `...ByName(name)` and `db.Drop...`) — see [External resources](#external-resources) |
 | Rename any `sp_rename`-able object | `db.RenameObject(schema, oldName, newName)` — view, procedure, function, sequence, synonym, trigger |
 | Move an object to another schema | `db.TransferObject(targetSchema, schema, name)` — `ALTER SCHEMA ... TRANSFER`, which `sp_rename` cannot do |
 | Parameters of a procedure or function | `db.Parameters(schema, name)` → `[]*Parameter` |
@@ -3309,6 +3661,38 @@ pool.
 | Drop a constraint     | `t.DropConstraint(name)`           |
 | Where the rows live (`ON` clause) | `t.DataSpace()` → `DataSpace` (filegroup or partition scheme) |
 | Columns of a table *or view* | `db.ObjectColumns(schema, name)` — `Table.Columns` reaches tables only |
+
+### Table kinds
+
+SSMS files four families of tables into their own folders under Tables —
+System Tables, FileTables, External Tables and Graph Tables — and lists the
+rest directly under Tables. Every one of them is an ordinary `sys.tables`
+row distinguished by a flag, so `db.Tables()` and `db.TablesFiltered(f)`
+keep returning all of them: a listing that silently omitted one would
+disagree with the catalog. `TablesOfKind` is what a caller building a *tree*
+asks instead, so each table appears exactly once, under its own folder.
+
+| `TableKind`          | Selects                                              |
+| -------------------- | ---------------------------------------------------- |
+| `TableKindUser`      | the residue — not ms-shipped, and none of the other four |
+| `TableKindSystem`    | `is_ms_shipped = 1`                                  |
+| `TableKindFileTable` | `is_filetable = 1`                                   |
+| `TableKindExternal`  | `is_external = 1`                                    |
+| `TableKindGraph`     | `is_node = 1 OR is_edge = 1`                         |
+
+```go
+user, _ := db.TablesOfKind(gosmo.TableKindUser)
+graph, err := db.TablesOfKindFiltered(gosmo.TableKindGraph, gosmo.ObjectFilter{...})
+
+p, _ := db.TableKindsPresent() // which sub-folders to show, in one query
+if p.FileTable { /* ... */ }
+```
+
+`is_node`/`is_edge` are SQL Server 2017 columns. Below 2017 the graph
+predicate is a constant false — so `TableKindUser` still works and
+`TableKindsPresent().Graph` is false — but `TablesOfKind(TableKindGraph)` is
+refused with `ErrUnsupportedVersion` rather than answered with an empty list
+that would read as "this database has none".
 
 ### Index
 
@@ -3673,6 +4057,139 @@ uses). It is the only way to learn a detached database's other files, and so
 the only way an Attach dialog can be built: `.DataFiles()` and `.LogFiles()`
 split what it returns.
 
+### Database snapshots
+
+| SSMS equivalent                        | gosmo                                              |
+| -------------------------------------- | -------------------------------------------------- |
+| Databases → Database Snapshots         | `srv.DatabaseSnapshots()` / `srv.DatabaseSnapshotByName(name)` / `srv.DatabaseSnapshot(name)` (no-I/O handle) |
+| The snapshots of one database          | `srv.SnapshotsOf(database)`                        |
+| New Database Snapshot                  | `srv.CreateDatabaseSnapshot(gosmo.CreateDatabaseSnapshotRequest{Name, SourceDatabase, Files})` |
+| Its default sparse-file paths          | `srv.SnapshotFileDefaults(source, snapshotName)` → `[]SnapshotFileSpec` |
+| Restore Database from Snapshot         | `srv.RestoreFromSnapshot(database, snapshot)` / `snap.Restore()` |
+| Delete                                 | `snap.Drop()` — deletes the sparse files; the source is untouched |
+| Browse a snapshot's contents           | `snap.Database()` → the snapshot as a `*Database` |
+
+A snapshot is an ordinary `sys.databases` row with `source_database_id`
+set, so `srv.Databases()` returns it too — deliberately, since the catalog
+shows it. `db.IsSnapshot()` is what a caller building a tree filters on, so
+the snapshot appears once, in its own folder beside System Databases rather
+than under its source.
+
+Leave `Files` nil and one sparse file is placed beside each of the source's
+`ROWS` files, named `<stem>_<snapshot>.ss`. Only `ROWS` files are ever named:
+a snapshot has no log and no FILESTREAM container, and naming either is the
+usual way a hand-built `CREATE DATABASE ... AS SNAPSHOT OF` fails. The paths
+belong to the *server's* filesystem and are split on both separators, so a
+Linux client builds a correct Windows path.
+
+`RestoreFromSnapshot` reverts the source; the server refuses it unless that
+snapshot is the source's only one and nobody else is connected to either
+database, and gosmo reports the server's error rather than pre-empting a
+check that could change before the statement runs. The no-I/O handle leaves
+`SourceDatabase` empty, so `snap.Restore()` refuses on it — use
+`srv.RestoreFromSnapshot` with both names. Under `WithScript`,
+`CreateDatabaseSnapshot` returns a name-only handle.
+
+### Types, rules and defaults
+
+SSMS's *db* → Programmability → Types, Rules and Defaults. These families
+are read, scripted and dropped; there is deliberately no create or alter —
+`CREATE TYPE` has no `ALTER`, and rules and defaults have been deprecated
+since SQL Server 2008 in favour of `CHECK` and `DEFAULT` constraints.
+
+| SSMS folder                   | gosmo                                              |
+| ----------------------------- | -------------------------------------------------- |
+| User-Defined Data Types (alias types) | `db.UserDefinedDataTypes()` / `db.UserDefinedDataTypeByName(schema, name)` → `*UserDefinedDataType` |
+| User-Defined Table Types      | `db.UserDefinedTableTypes()` / `...ByName(schema, name)` / `tt.Columns()` |
+| User-Defined Types (CLR)      | `db.ClrTypes()` / `db.ClrTypeByName(schema, name)` — `.Assembly` / `.AssemblyClass` name the implementation |
+| System Data Types             | `db.SystemDataTypes()` — the connected instance's own list, not a hard-coded one |
+| XML Schema Collections        | `db.XmlSchemaCollections()` / `...ByName(schema, name)` / `c.Definition()` (`XML_SCHEMA_NAMESPACE`) |
+| Rules                         | `db.Rules()` / `db.RuleByName(schema, name)` → `*Rule` (`.Definition`) |
+| Defaults                      | `db.Defaults()` / `db.DefaultByName(schema, name)` → `*Default` (`.Definition`) |
+
+| Operation        | Alias type | Table / CLR type | XML schema collection | Rule / default |
+| ---------------- | ---------- | ---------------- | --------------------- | -------------- |
+| Drop             | `db.DropType` / `t.Drop()` | `db.DropType` / `t.Drop()` | `db.DropXmlSchemaCollection` / `c.Drop()` | `db.DropRule` / `db.DropDefault` / `.Drop()` |
+| Rename           | `db.RenameUserDefinedDataType` | — (`sp_rename` has no class for them) | — | `db.RenameObject` |
+| Move to a schema | `db.TransferType` | `db.TransferType` | `db.TransferXmlSchemaCollection` | `db.TransferObject` |
+
+All four type families live in `sys.types`, separated only by flags; a
+table type is `is_user_defined` too, so the alias-type reads exclude it
+explicitly rather than trusting that flag alone. `ALTER SCHEMA ... TRANSFER`
+needs the `TYPE::` or `XML SCHEMA COLLECTION::` class prefix, which is why
+`TransferObject` (the default `OBJECT` class) does not serve them.
+`RenameUserDefinedDataType` is alias types only: passing it a table or CLR
+type renames nothing and reports success. Rules and defaults *are*
+`sys.objects` rows, so the general `RenameObject`/`TransferObject` do.
+
+`Defaults()` returns standalone `CREATE DEFAULT` objects only.
+`sys.objects` type `D` also covers every `DF_…` default constraint on every
+table; the `parent_object_id = 0` predicate is what keeps those out.
+
+A drop of any of these is refused by the server while something is still
+bound to it — a column, parameter or variable typed on the type or
+collection, a column or type bound to the rule or default (`sp_unbindrule`
+/ `sp_unbindefault` release it) — and the server's error names the blocker.
+
+### Assemblies
+
+| SSMS equivalent                   | gosmo                                          |
+| --------------------------------- | ---------------------------------------------- |
+| *db* → Programmability → Assemblies | `db.Assemblies()` / `db.AssemblyByName(name)` → `*Assembly` |
+| Its files                         | `a.Files()` → `[]*AssemblyFile` (name, id, byte length) / `a.FileContent(fileID)` (the bytes) |
+| The routines and types it implements | `a.Modules()` → `[]*AssemblyModule` (object, class, method) |
+| Delete                            | `a.Drop()` / `db.DropAssembly(name)`           |
+
+`PermissionSet` is an `AssemblyPermissionSet` — `AssemblySafe`,
+`AssemblyExternalAccess` or `AssemblyUnsafe`. There is no create or alter:
+both need the compiled binary. `ScriptAssembly` therefore emits a template,
+not a runnable script — the payload is a placeholder that says so, because
+the bytes run to megabytes. `PERMISSION_SET` is always written out, and an
+assembly registered with `is_visible = 0` gets its `ALTER ASSEMBLY ... WITH
+VISIBILITY = OFF` back, so a re-created dependency stays hidden from
+`CREATE PROCEDURE`.
+
+### Plan guides
+
+| SSMS equivalent                   | gosmo                                          |
+| --------------------------------- | ---------------------------------------------- |
+| *db* → Programmability → Plan Guides | `db.PlanGuides()` / `db.PlanGuideByName(name)` / `db.PlanGuide(name)` (no-I/O handle) |
+| Enable / Disable                  | `g.Enable()` / `g.Disable()` — `sp_control_plan_guide` |
+| Delete                            | `g.Drop()` / `db.DropPlanGuide(name)`          |
+| Script                            | `sc.ScriptPlanGuide(name)` — the `sp_create_plan_guide` call, every argument named |
+
+`Scope` is a `PlanGuideScope` (`PlanGuideScopeObject`, `...SQL`,
+`...Template`); `ScopeObject`/`ScopeSchema`/`ScopeName` name the routine of
+an OBJECT guide and `ScopeBatch` holds the batch text of a SQL one.
+Enable/Disable is the one write: a disabled guide is invisible from the
+query side, so it is the operation that makes the folder worth having.
+There is no create — its arguments *are* the statement, matched character
+for character. Enable and Disable address the guide by name, so the no-I/O
+handle is enough, and is the only form under `WithScript`.
+
+### External resources
+
+SSMS's *db* → External Resources: the PolyBase and elastic-query objects,
+and Machine Learning Services' external libraries.
+
+| SSMS folder              | gosmo                                              |
+| ------------------------ | -------------------------------------------------- |
+| External Data Sources    | `db.ExternalDataSources()` / `db.ExternalDataSourceByName(name)` / `s.Drop()` / `db.DropExternalDataSource(name)` |
+| External File Formats    | `db.ExternalFileFormats()` / `db.ExternalFileFormatByName(name)` / `f.Drop()` / `db.DropExternalFileFormat(name)` |
+| External Libraries       | `db.ExternalLibraries()` / `db.ExternalLibraryByName(name)` / `l.Drop()` / `db.DropExternalLibrary(name)` |
+
+Read, script and drop only: data sources and file formats have no `ALTER`
+that restates them, and `ALTER EXTERNAL LIBRARY` replaces the package
+binary. Version exposure differs per family. Data sources and file formats
+exist on every supported major, with their later columns gated one by one
+(`ExternalFileFormat.FirstRow` is documented as 2017 but first appears in
+2019, and is gated there). `sys.external_libraries` is missing entirely before 2017, so the
+external-library reads are refused there with `ErrUnsupportedVersion` before
+a statement is sent. The scripts carry catalog values the `CREATE` has no
+clause for — a file format's row terminator, a library's scope — as
+comments, and guard each `DROP` with a catalog lookup, since none of the
+three `DROP`s takes `IF EXISTS`.
+
 ### Scripter
 
 ```go
@@ -3695,6 +4212,17 @@ ddl, _ := sc.ScriptPartitionScheme("psMonthly")
 ddl, _ := sc.ScriptSecurityPolicy("sec", "TenantFilter")
 ddl, _ := sc.ScriptColumnMasterKey("CMK1")
 ddl, _ := sc.ScriptColumnEncryptionKey("CEK1")
+ddl, _ := sc.ScriptUserDefinedDataType("dbo", "PhoneNumber")
+ddl, _ := sc.ScriptUserDefinedTableType("dbo", "OrderLines")
+ddl, _ := sc.ScriptClrType("dbo", "Point")
+ddl, _ := sc.ScriptXmlSchemaCollection("dbo", "InvoiceSchema")
+ddl, _ := sc.ScriptRule("dbo", "PositiveRule")
+ddl, _ := sc.ScriptDefault("dbo", "ZeroDefault")
+ddl, _ := sc.ScriptAssembly("MyClrLib")   // a template: the binary is a placeholder
+ddl, _ := sc.ScriptPlanGuide("PG_OrderLookup")
+ddl, _ := sc.ScriptExternalDataSource("HadoopCluster")
+ddl, _ := sc.ScriptExternalFileFormat("CsvFormat")
+ddl, _ := sc.ScriptExternalLibrary("randomForest")
 ddl, _ := sc.ScriptDatabase()
 
 // Logins and server roles belong to no database, so they have their own
