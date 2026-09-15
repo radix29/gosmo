@@ -26,13 +26,14 @@ import (
 // deliberate rather than an oversight:
 //
 //   - Most by-name lookups — LoginByName, DatabaseByName, TableByName,
-//     UserByName, RoleByName, AgentJobByName, AlertByName, OperatorByName,
+//     UserByName, RoleByName, JobByName, AlertByName, OperatorByName,
 //     ScheduleByName, ServerRoleByName, ConfigurationByName,
 //     AvailabilityGroupByName and the scripter's view/procedure/function
 //     lookups — return an error wrapping ErrNotFound.
-//   - CertificateByName returns (nil, nil), because its callers branch on
-//     absence as the ordinary case rather than the exceptional one.
-//   - AgentStatus reports an unreachable Agent as a populated value
+//   - CertificateByName and AsymmetricKeyByName return (nil, nil), because
+//     their callers branch on absence as the ordinary case rather than the
+//     exceptional one.
+//   - AgentInfo reports an unreachable Agent as a populated value
 //     (StatusText "Unknown"), not an error.
 //
 // AvailabilityGroupByName's not-found error additionally still satisfies

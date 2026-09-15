@@ -157,6 +157,17 @@ classDiagram
         of them; All holds every one.
     }
 
+    class ShowplanColumn {
+        <<constant>>
+        The fixed column name SQL Server has
+        used for showplan output since 2005. A
+        one-column result set with this name is
+        a plan document, not data. Exported so a
+        caller running its own SHOWPLAN_XML or
+        STATISTICS XML batch can tell the two
+        apart as capturePlan does.
+    }
+
     %% =========================================================
     %% Object and database-scoped permissions
     %% =========================================================
@@ -269,6 +280,7 @@ classDiagram
     TextCriterion --> TextOp : uses
     DateCriterion --> DateOp : uses
     Database --> ExecutionPlan : produces
+    ExecutionPlan ..> ShowplanColumn : plan sets identified by
     Database "1" --> "*" PermissionEntry : grants
     Database "1" --> "*" DatabasePermissionEntry : grants
     Database "1" --> "*" PrincipalSecurable : PermissionsForPrincipal() returns

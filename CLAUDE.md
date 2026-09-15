@@ -16,10 +16,10 @@ CGO, and talks to SQL Server through `github.com/microsoft/go-mssqldb`.
 
 Read what the task touches: `ARCHITECTURE.md` for the API map and the feature
 map, `quoting.go`'s doc comments for anything that builds an identifier or
-literal, `server.go`'s doc comments for the handle-vs-lookup method pairs. A
-one-file fix needs none of it. `ARCHITECTURE.md` § Maintaining this document
-is the authority on editing the class map — read it before touching a
-diagram. The diagrams themselves are `diagram/*.mmd`; `ARCHITECTURE.md`
+literal, `server.go`/`login.go`'s doc comments for the handle-vs-lookup
+method pairs. A one-file fix needs none of it. `ARCHITECTURE.md` § Maintaining
+this document is the authority on editing the class map — read it before
+touching a diagram. The diagrams themselves are `diagram/*.mmd`; `ARCHITECTURE.md`
 inlines only `diagram/00-map.mmd` and links the rest.
 
 ## This is a library, not gossms's back end
@@ -137,7 +137,7 @@ a gossms-side build only compiles the packages it imports.
   one that works under a `WithScript`-derived context. The same pairing
   exists for logins and for all four Agent object families (`Server.Job` vs
   `JobByName`, and Alert/Operator/Schedule alike). Their doc comments in
-  `server.go` are the authority; `go doc gosmo.Server.Database`.
+  `server.go` and `login.go` are the authority; `go doc gosmo.Server.Database`.
 
 ## Release
 

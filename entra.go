@@ -435,6 +435,10 @@ func (cfg *entraConfig) credentialSpec(authority, serverTenant string) entraCred
 		}
 	case azuread.ActiveDirectoryPassword:
 		s.kind, s.clientID, s.user, s.password = credUsernamePassword, cfg.appClientID, cfg.user, cfg.password
+		//lint:ignore SA1019 azidentity deprecates ROPC for lacking MFA, but
+		// AuthEntraPassword is a supported gosmo auth mode, verified on Managed
+		// Instance. Tracked in gossms docs/open-threads.md § gosmo against
+		// azidentity removing the type.
 		s.options = &azidentity.UsernamePasswordCredentialOptions{AdditionallyAllowedTenants: allowed,
 			DisableInstanceDiscovery: noDiscovery}
 	case azuread.ActiveDirectoryManagedIdentity:
@@ -503,9 +507,14 @@ func buildEntraCredential(s entraCredSpec) (azcore.TokenCredential, error) {
 		return azidentity.NewClientCertificateCredential(s.tenant, s.clientID, certs, key,
 			s.options.(*azidentity.ClientCertificateCredentialOptions))
 	case credUsernamePassword:
-		// Deprecated upstream (no MFA); AuthEntraPassword documents it and is kept.
-		return azidentity.NewUsernamePasswordCredential(s.tenant, s.clientID, s.user, s.password,
-			s.options.(*azidentity.UsernamePasswordCredentialOptions))
+		// The assertion is hoisted so the directive sits directly above the
+		// deprecated type, which is the node SA1019 flags.
+		//lint:ignore SA1019 azidentity deprecates ROPC for lacking MFA, but
+		// AuthEntraPassword is a supported gosmo auth mode, verified on Managed
+		// Instance. Tracked in gossms docs/open-threads.md § gosmo against
+		// azidentity removing the type.
+		opts := s.options.(*azidentity.UsernamePasswordCredentialOptions)
+		return azidentity.NewUsernamePasswordCredential(s.tenant, s.clientID, s.user, s.password, opts)
 	case credManagedIdentity:
 		return azidentity.NewManagedIdentityCredential(s.options.(*azidentity.ManagedIdentityCredentialOptions))
 	case credInteractiveBrowser:

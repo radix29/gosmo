@@ -30,9 +30,13 @@ type ExecutionPlan struct {
 	All []string
 }
 
-// showplanColumn is the fixed column name SQL Server has used for showplan
-// output since SQL Server 2005; it doesn't change with the server version.
-const showplanColumn = "Microsoft SQL Server 2005 XML Showplan"
+// ShowplanColumn is the fixed column name SQL Server has used for showplan
+// output since SQL Server 2005; it doesn't change with the server version. A
+// result set of exactly one column with this name is a plan document, not
+// data — capturePlan uses it to tell the two apart, and it is exported so a
+// caller running its own SET SHOWPLAN_XML / SET STATISTICS XML batch can make
+// the same distinction.
+const ShowplanColumn = "Microsoft SQL Server 2005 XML Showplan"
 
 // EstimatedPlan captures sql's estimated execution plan without running it
 // (SET SHOWPLAN_XML ON) — SSMS's "Display Estimated Execution Plan".
@@ -60,7 +64,7 @@ func (d *Database) ActualPlanContext(ctx context.Context, sqlText string) (*Exec
 // capturePlan runs sqlText with the given SET option on, then collects every
 // plan document it finds: both SHOWPLAN_XML (whose result sets are the only
 // ones, since no statement runs) and STATISTICS XML (an extra result set
-// appended after each statement's own) name the plan column showplanColumn.
+// appended after each statement's own) name the plan column ShowplanColumn.
 //
 // Every row of every such set is kept, not just the last. That is a
 // tolerance, not a shape any server has been seen to produce: probed against
@@ -99,7 +103,7 @@ func (d *Database) capturePlan(ctx context.Context, setOpt, sqlText string) (*Ex
 			if err != nil {
 				return err
 			}
-			isPlan := len(cols) == 1 && cols[0] == showplanColumn
+			isPlan := len(cols) == 1 && cols[0] == ShowplanColumn
 			for rows.Next() {
 				if isPlan {
 					var plan string

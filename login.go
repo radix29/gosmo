@@ -506,3 +506,311 @@ func (l *Login) UnmapFromDatabaseContext(ctx context.Context, dbName string) err
 	}
 	return fmt.Errorf("gosmo: login %q is not mapped to database %q", l.Name, dbName)
 }
+
+// -- Logins --------------------------------------------------------------------
+
+// Logins returns all server-level logins.
+func (s *Server) Logins() ([]*Login, error) {
+	return s.LoginsContext(context.Background())
+}
+
+// LoginsContext is the context-aware variant of Logins.
+//
+// Every server-level login is listed, not just the SQL/Windows ones: the
+// type filter also admits Entra ('E','X') and the certificate- and
+// asymmetric-key-mapped logins ('C','K') that hold permissions for signed
+// code, which is what SSMS's Logins folder shows.
+func (s *Server) LoginsContext(ctx context.Context) ([]*Login, error) {
+	const q = `
+	SELECT name, sid, type_desc, is_disabled, default_database_name,
+	       create_date, modify_date
+	FROM sys.server_principals
+	WHERE type IN ('S','U','G','E','X','C','K')
+	ORDER BY name`
+
+	rows, err := s.query(ctx, q)
+	if err != nil {
+		return nil, fmt.Errorf("gosmo: list logins: %w", err)
+	}
+	defer rows.Close()
+
+	var logins []*Login
+	for rows.Next() {
+		l := &Login{server: s}
+		var defDB sql.NullString
+		if err := rows.Scan(&l.Name, &l.SID, &l.LoginType, &l.IsDisabled,
+			&defDB, &l.CreateDate, &l.ModifyDate); err != nil {
+			return nil, fmt.Errorf("gosmo: list logins: %w", err)
+		}
+		l.DefaultDatabase = defDB.String
+		logins = append(logins, l)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("gosmo: list logins: %w", err)
+	}
+	return logins, nil
+}
+
+// LoginByName returns a single server-level login by name.
+func (s *Server) LoginByName(name string) (*Login, error) {
+	return s.LoginByNameContext(context.Background(), name)
+}
+
+// LoginByNameContext is the context-aware variant of LoginByName.
+func (s *Server) LoginByNameContext(ctx context.Context, name string) (*Login, error) {
+	const q = `
+	SELECT name, sid, type_desc, is_disabled, default_database_name,
+	       create_date, modify_date
+	FROM sys.server_principals
+	WHERE type IN ('S','U','G','E','X','C','K') AND name = @p1`
+
+	l := &Login{server: s}
+	var defDB sql.NullString
+
+	if err := s.queryRowScan(ctx, q, []any{name},
+		&l.Name, &l.SID, &l.LoginType, &l.IsDisabled, &defDB, &l.CreateDate, &l.ModifyDate,
+	); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, notFoundf("gosmo: login %q not found", name)
+		}
+		return nil, fmt.Errorf("gosmo: find login %q: %w", name, err)
+	}
+	l.DefaultDatabase = defDB.String
+	return l, nil
+}
+
+// Login returns a lightweight handle for name without querying the server
+// at all — unlike LoginByName/LoginByNameContext, it doesn't verify the
+// login exists or populate SID/LoginType/IsDisabled/etc. (they stay at
+// their zero value). Every write method on *Login (AddServerRoleMemberContext,
+// DisableContext, ChangePasswordContext, ...) only ever needs the login's
+// name, never those cached fields, so this is sufficient for issuing
+// further ALTER-style calls against a login the caller already knows
+// exists — most commonly one it just created in the same operation. See
+// Server.Database's doc comment for why this also matters under a
+// WithScript-derived context.
+func (s *Server) Login(name string) *Login {
+	return &Login{server: s, Name: name}
+}
+
+// CreateLogin creates a login. With no CreateLoginOptions.Source, an empty
+// password means a Windows login (FROM WINDOWS) and a non-empty one a SQL
+// login; set Source to create any of the other kinds.
+func (s *Server) CreateLogin(name, password string, opts *CreateLoginOptions) error {
+	return s.CreateLoginContext(context.Background(), name, password, opts)
+}
+
+// CreateLoginContext is the context-aware variant of CreateLogin.
+//
+// Security: the password is never string-concatenated raw into the SQL
+// text — it's quoted via nStringLiteral (N'...', doubling any embedded
+// quote), the same escaping every other literal in this package uses.
+// HASHED is deliberately not used here: it tells SQL Server the value is
+// already one of its own password-hash formats, not a cleartext password,
+// so passing an arbitrary hex encoding of the cleartext under HASHED
+// either fails outright or creates a login nothing can ever authenticate
+// as.
+//
+// DefaultDatabase reaches an external-provider login through a following
+// ALTER LOGIN: OBJECT_ID is the only WITH option FROM EXTERNAL PROVIDER
+// accepts, and DEFAULT_DATABASE alongside it does not parse. A
+// certificate- or asymmetric-key-mapped login cannot have one at all —
+// SQL Server rejects DEFAULT_DATABASE for those in both CREATE and ALTER
+// ("Cannot use the parameter DEFAULT_DATABASE for a certificate or
+// asymmetric key login", verified live) — so asking for one is an error
+// rather than a statement the server will refuse.
+func (s *Server) CreateLoginContext(ctx context.Context, name, password string, opts *CreateLoginOptions) error {
+	if name == "" {
+		return fmt.Errorf("gosmo: create login: name is required")
+	}
+	if opts == nil {
+		opts = &CreateLoginOptions{}
+	}
+
+	src := opts.Source
+	if src == LoginSourceAuto {
+		if password == "" {
+			src = LoginSourceWindows
+		} else {
+			src = LoginSourceSQL
+		}
+	}
+	stmt, alterDefaultDB, err := createLoginStatement(name, password, src, opts)
+	if err != nil {
+		return fmt.Errorf("gosmo: create login %q: %w", name, err)
+	}
+	if err := s.execContext(ctx, stmt); err != nil {
+		return fmt.Errorf("gosmo: create login %q: %w", name, err)
+	}
+	if alterDefaultDB {
+		q := fmt.Sprintf("ALTER LOGIN %s WITH DEFAULT_DATABASE = %s",
+			quoteIdent(name), quoteIdent(opts.DefaultDatabase))
+		if err := s.execContext(ctx, q); err != nil {
+			return fmt.Errorf("gosmo: create login %q: set default database: %w", name, err)
+		}
+	}
+	return nil
+}
+
+// createLoginStatement builds the CREATE LOGIN statement for one resolved
+// source, and reports whether DefaultDatabase still has to be applied by a
+// following ALTER LOGIN — CERTIFICATE and ASYMMETRIC KEY take no WITH option
+// list in CREATE LOGIN and EXTERNAL PROVIDER takes only OBJECT_ID, so naming
+// DEFAULT_DATABASE there is a syntax error. A mapped login has no default database at all; see
+// CreateLoginContext.
+func createLoginStatement(name, password string, src LoginSource, opts *CreateLoginOptions) (string, bool, error) {
+	if src != LoginSourceSQL && password != "" {
+		return "", false, fmt.Errorf("a %s login takes no password", src)
+	}
+	if opts.MustChange && src != LoginSourceSQL {
+		return "", false, fmt.Errorf("MustChange applies to a SQL login only, not a %s login", src)
+	}
+	if opts.DefaultDatabase != "" && (src == LoginSourceCertificate || src == LoginSourceAsymmetricKey) {
+		return "", false, fmt.Errorf("a %s login cannot have a default database", src)
+	}
+	if opts.ObjectID != "" && src != LoginSourceExternalProvider {
+		return "", false, fmt.Errorf("ObjectID applies to an external provider login only, not a %s login", src)
+	}
+
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "CREATE LOGIN %s", quoteIdent(name))
+
+	switch src {
+	case LoginSourceSQL:
+		if password == "" {
+			return "", false, fmt.Errorf("a SQL login requires a password")
+		}
+		fmt.Fprintf(&sb, " WITH PASSWORD = %s", nStringLiteral(password))
+		if opts.MustChange {
+			// MUST_CHANGE requires CHECK_EXPIRATION = ON (and CHECK_POLICY =
+			// ON, already the server default) — SQL Server rejects
+			// MUST_CHANGE otherwise.
+			sb.WriteString(" MUST_CHANGE, CHECK_EXPIRATION = ON")
+		}
+		if opts.DefaultDatabase != "" {
+			fmt.Fprintf(&sb, ", DEFAULT_DATABASE = %s", quoteIdent(opts.DefaultDatabase))
+		}
+	case LoginSourceWindows:
+		sb.WriteString(" FROM WINDOWS")
+		if opts.DefaultDatabase != "" {
+			fmt.Fprintf(&sb, " WITH DEFAULT_DATABASE = %s", quoteIdent(opts.DefaultDatabase))
+		}
+	case LoginSourceExternalProvider:
+		sb.WriteString(" FROM EXTERNAL PROVIDER")
+		if opts.ObjectID != "" {
+			// The one WITH option FROM EXTERNAL PROVIDER does take, and it is
+			// not part of the general option list: OBJECT_ID names the Entra
+			// principal directly, so DEFAULT_DATABASE still cannot join it
+			// here and stays on the following ALTER LOGIN.
+			fmt.Fprintf(&sb, " WITH OBJECT_ID = %s", nStringLiteral(opts.ObjectID))
+		}
+		return sb.String(), opts.DefaultDatabase != "", nil
+	case LoginSourceCertificate:
+		if opts.CertificateName == "" {
+			return "", false, fmt.Errorf("a certificate login requires CertificateName")
+		}
+		fmt.Fprintf(&sb, " FROM CERTIFICATE %s", quoteIdent(opts.CertificateName))
+		return sb.String(), false, nil
+	case LoginSourceAsymmetricKey:
+		if opts.AsymmetricKeyName == "" {
+			return "", false, fmt.Errorf("an asymmetric key login requires AsymmetricKeyName")
+		}
+		fmt.Fprintf(&sb, " FROM ASYMMETRIC KEY %s", quoteIdent(opts.AsymmetricKeyName))
+		return sb.String(), false, nil
+	default:
+		return "", false, fmt.Errorf("unknown login source %d", int(src))
+	}
+	return sb.String(), false, nil
+}
+
+// LoginSource names what a new login authenticates from — the FROM clause of
+// CREATE LOGIN, or WITH PASSWORD for a SQL login.
+type LoginSource int
+
+const (
+	// LoginSourceAuto resolves from the password CreateLogin is given: empty
+	// means a Windows login, non-empty a SQL login. It is the zero value, so
+	// a CreateLoginOptions written before LoginSource existed behaves exactly
+	// as it did.
+	LoginSourceAuto LoginSource = iota
+	// LoginSourceSQL is a SQL Server login (WITH PASSWORD).
+	LoginSourceSQL
+	// LoginSourceWindows is a Windows user or group login (FROM WINDOWS).
+	LoginSourceWindows
+	// LoginSourceExternalProvider is a Microsoft Entra ID (Azure AD) login
+	// (FROM EXTERNAL PROVIDER) — SQL Server 2022 and later, Azure SQL
+	// Managed Instance, and Azure SQL Database.
+	LoginSourceExternalProvider
+	// LoginSourceCertificate maps the login to a certificate in master
+	// (FROM CERTIFICATE). Nothing authenticates as such a login; it exists
+	// to hold permissions for code signed by the certificate.
+	LoginSourceCertificate
+	// LoginSourceAsymmetricKey maps the login to an asymmetric key in master
+	// (FROM ASYMMETRIC KEY), the asymmetric-key counterpart of
+	// LoginSourceCertificate.
+	LoginSourceAsymmetricKey
+)
+
+// String renders the source as the words used in error messages.
+func (src LoginSource) String() string {
+	switch src {
+	case LoginSourceAuto:
+		return "auto"
+	case LoginSourceSQL:
+		return "SQL"
+	case LoginSourceWindows:
+		return "Windows"
+	case LoginSourceExternalProvider:
+		return "external provider"
+	case LoginSourceCertificate:
+		return "certificate"
+	case LoginSourceAsymmetricKey:
+		return "asymmetric key"
+	}
+	return fmt.Sprintf("LoginSource(%d)", int(src))
+}
+
+// CreateLoginOptions holds optional parameters for CreateLogin.
+type CreateLoginOptions struct {
+	DefaultDatabase string
+	MustChange      bool
+
+	// Source selects what the login authenticates from. The zero value
+	// (LoginSourceAuto) keeps CreateLogin's original behaviour: a SQL login
+	// when a password is given, a Windows login when it is empty.
+	Source LoginSource
+
+	// CertificateName is the master certificate a LoginSourceCertificate
+	// login maps to; required for that source and ignored otherwise.
+	CertificateName string
+
+	// AsymmetricKeyName is the master asymmetric key a
+	// LoginSourceAsymmetricKey login maps to; required for that source and
+	// ignored otherwise.
+	AsymmetricKeyName string
+
+	// ObjectID is the Microsoft Entra ID object id (a GUID) a
+	// LoginSourceExternalProvider login names explicitly, emitted as
+	// CREATE LOGIN ... FROM EXTERNAL PROVIDER WITH OBJECT_ID = '...'.
+	// SQL Server 2022 and later. It resolves a display name that is
+	// ambiguous in the directory — with no object id the server looks the
+	// login name up itself, which is the ordinary case. Naming it for any
+	// other source is an error rather than a silently ignored field.
+	ObjectID string
+}
+
+// DropLogin drops a server login.
+func (s *Server) DropLogin(name string) error {
+	return s.DropLoginContext(context.Background(), name)
+}
+
+// DropLoginContext is the context-aware variant of DropLogin.
+func (s *Server) DropLoginContext(ctx context.Context, name string) error {
+	if name == "" {
+		return fmt.Errorf("gosmo: drop login: name is required")
+	}
+	if err := s.execContext(ctx, fmt.Sprintf("DROP LOGIN %s", quoteIdent(name))); err != nil {
+		return fmt.Errorf("gosmo: drop login %q: %w", name, err)
+	}
+	return nil
+}

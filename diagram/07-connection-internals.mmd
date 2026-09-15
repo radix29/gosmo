@@ -65,6 +65,18 @@ classDiagram
         make the same retry decision.
     }
 
+    class AcquireConn {
+        <<package function>>
+        +AcquireConn(ctx, db, database) *sql.Conn
+        Pins a conn, runs USE or SELECT 1, and
+        retries on a fresh conn when the pool
+        returns a dead one. Same 3-attempt
+        budget as withRetry. For callers running
+        a whole script or session on one conn,
+        which database/sql does not retry. Only
+        the prologue is retried.
+    }
+
     %% =========================================================
     %% Quoting (shared identifier / literal escaping)
     %% =========================================================
@@ -215,3 +227,5 @@ classDiagram
     withRetry <.. DatabaseQueryRow : whole scan retried by
     withRetry <.. ServerQuery : whole scan retried by
     withRetry <.. IsRetryable : same failure test as
+    AcquireConn ..> IsRetryable : retries only on
+    AcquireConn ..> Quoting : USE quoted by

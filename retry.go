@@ -2,8 +2,10 @@ package gosmo
 
 import (
 	"context"
+	"database/sql"
 	"database/sql/driver"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"time"
@@ -89,5 +91,57 @@ func withRetry[T any](ctx context.Context, fn func() (T, error)) (T, error) {
 			return zero, ctx.Err()
 		case <-time.After(readRetryDelay(attempt)):
 		}
+	}
+}
+
+// ============================================================
+// Pinned connections for callers running their own statements
+// ============================================================
+
+// AcquireConn returns a live pinned *sql.Conn from db, switched to database
+// (USE) if non-empty, retrying on a fresh connection when the pool hands back
+// a dead one. It is for callers that run a whole script or session on one
+// connection: database/sql's own bad-connection retry covers only *sql.DB
+// calls, not a pinned *sql.Conn, so a connection dropped while idle (NAT
+// timeout, killed session, failover) fails the next statement the caller
+// issues. gosmo's own reads get the same treatment through withRetry.
+//
+// Only the USE/SELECT-1 prologue is retried, never anything the caller goes
+// on to run — the retry is safe precisely because the prologue is idempotent.
+// A dead connection is closed rather than returned to the pool, which evicts
+// it via driver.Validator.IsValid. Retries follow readRetryAttempts and
+// readRetryDelay, the same budget as gosmo's read helpers, and stop early on
+// a non-retryable error (see IsRetryable) or a cancelled ctx.
+func AcquireConn(ctx context.Context, db *sql.DB, database string) (*sql.Conn, error) {
+	prologue := "SELECT 1"
+	if database != "" {
+		prologue = "USE " + QuoteName(database)
+	}
+	wrapErr := func(err error) error {
+		if database != "" {
+			return fmt.Errorf("gosmo: switch to database %s: %w", database, withAllMessages(err))
+		}
+		return withAllMessages(err)
+	}
+
+	// Bounded by the >= check below (== would spin forever at 0).
+	for attempt := 1; ; attempt++ {
+		conn, err := db.Conn(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("gosmo: acquire connection: %w", err)
+		}
+		if _, err := conn.ExecContext(ctx, prologue); err != nil {
+			conn.Close() // dead — evicted from the pool via driver.Validator.IsValid
+			if ctx.Err() != nil || attempt >= readRetryAttempts || !IsRetryable(err) {
+				return nil, wrapErr(err)
+			}
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(readRetryDelay(attempt)):
+			}
+			continue
+		}
+		return conn, nil
 	}
 }

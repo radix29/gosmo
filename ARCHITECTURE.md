@@ -719,6 +719,7 @@ an unescaped filter for `pct_1` also matches `pct1100`.
 | Estimated execution plan     | `db.EstimatedPlan(sql)` (`SET SHOWPLAN_XML`, statement not run) |
 | Actual execution plan        | `db.ActualPlan(sql)` (`SET STATISTICS XML`, statement runs)|
 | Every plan a multi-statement batch produced | `plan.All` (`plan.XML` is the last of them) |
+| Recognising a plan result set in a caller's own batch | `gosmo.ShowplanColumn` (a one-column set with this name is a plan, not data) |
 
 Every `Grant|Deny|Revoke...` method has a `...WithOptions` counterpart taking
 a `PermissionOptions`, at all four scopes (object, column, schema, database,
@@ -1910,6 +1911,14 @@ straight to the pool.
 `gosmo.IsRetryable(err)` exposes the same transient-failure test
 `withRetry` uses, for callers running their own statements outside
 gosmo's query helpers.
+
+`gosmo.AcquireConn(ctx, db, database)` is the pinned-connection
+counterpart, for a caller that runs a whole script or session on one
+`*sql.Conn` of its own: it acquires, runs the `USE`/`SELECT 1` prologue,
+and retries on a fresh connection under the same budget when the pool
+hands back a dead one — the protection `Database.withConn` gives gosmo's
+own reads, which `database/sql` does not extend to a pinned conn. Only
+the prologue is retried; whatever the caller goes on to run is not.
 
 ---
 

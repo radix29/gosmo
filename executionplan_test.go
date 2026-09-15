@@ -94,7 +94,7 @@ func planTestServer(t *testing.T, script []fakePlanSet) *Server {
 	return s
 }
 
-const planCol = showplanColumn
+const planCol = ShowplanColumn
 
 // TestCapturePlanKeepsEveryRowOfOneShowplanSet pins the SHOWPLAN_XML shape: a
 // three-statement batch comes back as three rows of one result set, and every
