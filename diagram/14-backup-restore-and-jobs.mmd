@@ -1,0 +1,227 @@
+classDiagram
+
+    %% =========================================================
+    %% Backup / Restore
+    %% =========================================================
+
+    class BackupOptions {
+        +Database string
+        +Devices []string
+        +Action BackupAction
+        +Files []string
+        +FileGroups []string
+        +CopyOnly bool
+        +Compression bool
+        +Checksum bool
+        +Description string
+        +Name string
+        +MediaName string
+        +Expiry time.Time
+        +RetainDays int
+        +BlockSize int
+        +BufferCount int
+        +MaxTransferSize int
+        +Stats int
+        +Init bool
+        +Format bool
+        +Credential string
+        +Progress func
+        +BuildBackupStatement(opts) string
+    }
+
+    class RestoreOptions {
+        +Database string
+        +Devices []string
+        +Action BackupAction
+        +Files []string
+        +FileGroups []string
+        +RelocateFiles []RelocateFile
+        +Recovery bool
+        +Replace bool
+        +Checksum bool
+        +Stats int
+        +StopAt time.Time
+        +StopAtMarkName string
+        +FileNumber int
+        +Credential string
+        +Progress func
+        +BuildRestoreStatement(opts) string
+    }
+
+    class BackupHeader {
+        +BackupName string
+        +Description string
+        +BackupType BackupAction
+        +Position int
+        +DatabaseName string
+        +BackupStart time.Time
+        +BackupFinish time.Time
+        +BackupSize int64
+        +Compressed bool
+        +HasChecksums bool
+        +IsCopyOnly bool
+        +RecoveryModel string
+    }
+
+    class BackupFile {
+        +LogicalName string
+        +PhysicalName string
+        +Type string
+        +FileGroupName string
+        +Size int64
+        +MaxSize int64
+    }
+
+    class BackupTarget {
+        -name string
+        -logical bool
+        -url bool
+        +DiskTarget(path) BackupTarget
+        +URLTarget(url) BackupTarget
+        +DeviceTarget(name) BackupTarget
+        +IsBackupURL(device) bool
+        +String() string
+        A logical device is named bare, a path
+        as DISK = N'...'. Passing a device name
+        as a path reads a file of that name in
+        the default backup directory instead.
+        An http/https device is URL = N'...' —
+        Managed Instance refuses DISK outright.
+    }
+
+    class BackupDevice {
+        -server *Server
+        +Name string
+        +Type string
+        +PhysicalName string
+        +Drop(deleteFile) error
+        +Headers() []*BackupHeader
+        +Target() BackupTarget
+        No Alter: sp_addumpdevice and
+        sp_dropdevice are the whole write
+        surface, so name, type and path are
+        fixed at creation.
+    }
+
+    class BackupDeviceType {
+        <<enumeration>>
+        BackupDeviceDisk
+        BackupDeviceTape
+    }
+
+    %% =========================================================
+    %% SQL Server Agent
+    %% =========================================================
+
+    class AgentStatus {
+        +Running bool
+        +StatusText string
+        +LastStartupTime time.Time
+        Read from sys.dm_server_services, which
+        returns no rows on an Azure edition —
+        there Agent's own sessions and
+        msdb.dbo.syssessions stand in.
+    }
+
+    class Job {
+        +JobID string
+        +Name string
+        +Description string
+        +IsEnabled bool
+        +Category string
+        +OwnerLoginName string
+        +DateCreated time.Time
+        +DateModified time.Time
+        +StartStepID int
+        +DeleteLevel NotifyLevel
+        +NotifyLevelEmail NotifyLevel
+        +NotifyEmailOperatorName string
+        +LastRunDate time.Time
+        +LastRunOutcome JobOutcome
+        +LastRunDuration Duration
+        +NextRunDate time.Time
+        +CurrentState JobState
+        +Steps() []*JobStep
+        +AddStep(req) error
+        +InsertStep(req, stepID) error
+        +MoveStep(stepID, newStepID) error
+        +ReorderSteps(order) error
+        +Schedules() []*Schedule
+        +AddSchedule(req) error
+        +AttachSchedule(name) error
+        +DetachSchedule(name) error
+        +History(limit) []*JobHistoryEntry
+        +Start(stepName) error
+        +Stop() error
+        +Enable() error
+        +Disable() error
+        +Rename(newName) error
+        +SetDescription(desc) error
+        +SetCategory(category) error
+        +SetOwner(login) error
+        +SetStartStep(stepID) error
+        +SetDeleteLevel(level) error
+        +SetEmailNotify(operator, level) error
+        +Drop() error
+    }
+
+    class JobStep {
+        +StepID int
+        +Name string
+        +Subsystem string
+        +Command string
+        +Database string
+        +OnSuccessAction int
+        +OnSuccessStepID int
+        +OnFailAction int
+        +OnFailStepID int
+        +LastRunOutcome JobOutcome
+        +LastRunDate time.Time
+        +LastRunDuration int
+        +LastRunElapsed Duration
+        +RetryAttempts int
+        +RetryInterval int
+        +OutputFileName string
+        +Flags int
+        +ProxyName string
+        +AdditionalParameters string
+        +Server string
+        +DatabaseUserName string
+        +CmdExecSuccessCode int
+        +OSRunPriority int
+        +Update(req) error
+        +SetFlow(onSuccess, successStep, onFail, failStep) error
+        +Delete() error
+        The whole definition is carried because
+        a move is a delete and a re-insert —
+        msdb has no procedure that renumbers a
+        step in place.
+    }
+
+    class JobHistoryEntry {
+        +JobName string
+        +RunDate time.Time
+        +Duration Duration
+        +Outcome JobOutcome
+        +Message string
+        +StepID int
+        +StepName string
+    }
+
+    %% =========================================================
+    %% Relationships
+    %% =========================================================
+    Server --> BackupOptions : accepts
+    Server --> RestoreOptions : accepts
+    Server "1" --> "*" BackupHeader : BackupHeaders() returns
+    Server "1" --> "*" BackupFile : BackupFileList() returns
+    Server "1" --> "*" BackupDevice : owns
+    Server --> BackupTarget : the ...From() reads take
+    BackupDevice --> BackupTarget : Target() returns
+    BackupDevice --> BackupDeviceType : created as
+    Server --> AgentStatus : AgentInfo() returns
+    Server "1" --> "*" Job : owns
+    Server "1" --> "*" JobHistoryEntry : JobHistory() returns
+    Job "1" --> "*" JobStep : has
+    Job "1" --> "*" JobHistoryEntry : History() returns
+    Alert --> Job : responds by running

@@ -1,0 +1,153 @@
+classDiagram
+
+    %% =========================================================
+    %% Top-level entry point
+    %% =========================================================
+
+    class Server {
+        -db *sql.DB
+        -info *ServerInfo
+        +Connect(opts) *Server
+        +ConnectContext(ctx, opts) *Server
+        +NewServer(ctx, db) *Server
+        +ParseServerAddress(server) string
+        +Close() error
+        +DB() *sql.DB
+        +Info() *ServerInfo
+        +Name() string
+        +CurrentDatabase() string
+        +CurrentLogin() string
+        +Databases() []*Database
+        +DatabaseByName(name) *Database
+        +Database(name) *Database
+        +CreateDatabase(name, opts) error
+        +DropDatabase(name, force) error
+        +RenameDatabase(oldName, newName, force) error
+        +DetachDatabase(name, opts) error
+        +AttachDatabase(spec) error
+        +DetachedDatabaseInfo(primaryFilePath) *DetachedDatabase
+        +DatabaseSnapshots() []*DatabaseSnapshot
+        +DatabaseSnapshotByName(name) *DatabaseSnapshot
+        +DatabaseSnapshot(name) *DatabaseSnapshot
+        +SnapshotsOf(database) []*DatabaseSnapshot
+        +SnapshotFileDefaults(source, snapshotName) []SnapshotFileSpec
+        +CreateDatabaseSnapshot(req) *DatabaseSnapshot
+        +RestoreFromSnapshot(database, snapshot) error
+        +Logins() []*Login
+        +LoginByName(name) *Login
+        +Login(name) *Login
+        +CreateLogin(name, password, opts) error
+        +DropLogin(name) error
+        +ServerRoles() []*ServerRole
+        +ServerRoleByName(name) *ServerRole
+        +DropServerRole(name) error
+        +ServerRoleMembers(role) []*RoleMember
+        +AddServerRoleMember(role, member) error
+        +RemoveServerRoleMember(role, member) error
+        +LinkedServers() []*LinkedServer
+        +Configurations() []*Configuration
+        +AgentInfo() *AgentStatus
+        +Jobs() []*Job
+        +JobByName(name) *Job
+        +Job(name) *Job
+        +CreateJob(req) *Job
+        +JobHistory(limit) []*JobHistoryEntry
+        +Alerts() []*Alert
+        +EventAlerts() []*Alert
+        +AlertByName(name) *Alert
+        +Alert(name) *Alert
+        +CreateAlert(req) *Alert
+        +Operators() []*Operator
+        +OperatorByName(name) *Operator
+        +Operator(name) *Operator
+        +CreateOperator(req) *Operator
+        +Schedules() []*Schedule
+        +ScheduleByName(name) *Schedule
+        +Schedule(name) *Schedule
+        +CreateSchedule(req) *Schedule
+        +Categories(class) []*Category
+        +CreateCategory(class, name) error
+        +DeleteCategory(class, name) error
+        +ActiveSessions(sys) []*Session
+        +KillSession(id) error
+        +EnumErrorLogs(logType) []*ErrorLogFile
+        +ReadLog(logType, n) []*ErrorLogEntry
+        +ReadLogFiltered(logType, n, search) []*ErrorLogEntry
+        +ReadErrorLog(n) []*ErrorLogEntry
+        +CycleLog(logType) error
+        +CycleErrorLog() error
+        +EnumFileSystem(path) []*FileSystemEntry
+        +EnumFileSystemIsLegacy() bool
+        +FixedDrives() []*FixedDrive
+        +FileSystemExists(path) bool
+        +MailProfiles() []*MailProfile
+        +SendMail(opts) error
+        +Backup(opts) error
+        +Restore(opts) error
+        +VerifyBackup(device) error
+        +BackupHeaders(device) []*BackupHeader
+        +BackupFileList(device) []*BackupFile
+        +BackupFileListForSet(device, fileNumber) []*BackupFile
+        +VerifyBackupFrom(target) error
+        +BackupHeadersFrom(target) []*BackupHeader
+        +BackupFileListForSetFrom(target, fileNumber) []*BackupFile
+        +BackupDevices() []*BackupDevice
+        +BackupDeviceByName(name) *BackupDevice
+        +BackupDevice(name) *BackupDevice
+        +CreateBackupDevice(name, devType, physicalName) *BackupDevice
+        +DatabaseFiles(database) []*DatabaseFileInfo
+        +DatabaseRecoveryStatuses() []*DatabaseRecoveryStatus
+        +Capabilities() *Capabilities
+        +SecurityInfo() *ServerSecurityInfo
+        +ServerPermissions() []*ServerPermissionEntry
+        +GrantServerPermissionWithOptions(perm, principal, opts) error
+        +DenyServerPermissionWithOptions(perm, principal, opts) error
+        +RevokeServerPermissionWithOptions(perm, principal, opts) error
+        +EffectiveServerPermissions(login) []*EffectivePermission
+        +GrantServerPermission(perm, principal) error
+        +DenyServerPermission(perm, principal) error
+        +RevokeServerPermission(perm, principal) error
+        +ServerPermissionNames() []string
+        +Credentials() []*Credential
+        +CredentialByName(name) *Credential
+        +Credential(name) *Credential
+        +CreateCredential(spec) *Credential
+        +CryptographicProviders() []*CryptographicProvider
+        +ServerAudits() []*ServerAudit
+        +ServerAuditByName(name) *ServerAudit
+        +ServerAudit(name) *ServerAudit
+        +CreateServerAudit(spec) *ServerAudit
+        +ServerAuditSpecifications() []*ServerAuditSpecification
+        +ServerAuditSpecificationByName(name) *ServerAuditSpecification
+        +ServerAuditSpecification(name) *ServerAuditSpecification
+        +CreateServerAuditSpecification(spec) *ServerAuditSpecification
+        +AuditActionGroups() []string
+        +DatabaseAuditActionGroups() []string
+        +DatabaseAuditActions() []string
+        +ServerResourceStats(max) []*ServerResourceStat
+        +LatestServerResourceStats() *ServerResourceStat
+        +InstanceResourceGovernance() *InstanceResourceGovernance
+        +UserDBResourceGovernance() []*UserDBResourceGovernance
+        +OSJobObject() *OSJobObject
+        +ServerTriggers() []*ServerTrigger
+        +ServerTriggerByName(name) *ServerTrigger
+        +ServerTrigger(name) *ServerTrigger
+        +Endpoints() []*Endpoint
+        +EndpointByName(name) *Endpoint
+        +MemoryStats() *ServerMemoryStats
+        +Languages() []*Language
+        +ProcessorInfo() *ProcessorInfo
+        +DiskVolumes() []DiskVolumeInfo
+        +AvailabilityGroups() []*AvailabilityGroup
+        +AvailabilityGroupByName(name) *AvailabilityGroup
+        +AvailabilityGroup(name) *AvailabilityGroup
+        +CreateAvailabilityGroup(req) *AvailabilityGroup
+        +DatabaseMirroringEndpoint() *DatabaseMirroringEndpoint
+        +CreateDatabaseMirroringEndpoint(spec) *DatabaseMirroringEndpoint
+    }
+
+    %% =========================================================
+    %% Relationships
+    %% =========================================================
+    ServerScripter ..> Server : scripts logins and server roles of
+    ScriptCollector ..> Server : captures writes from

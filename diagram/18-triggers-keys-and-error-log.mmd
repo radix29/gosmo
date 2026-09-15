@@ -1,0 +1,134 @@
+classDiagram
+
+    %% =========================================================
+    %% Server audits, audit specifications, server triggers
+    %% =========================================================
+
+    class DatabaseTrigger {
+        -db *Database
+        +Name string
+        +IsEnabled bool
+        +CreateDate time.Time
+        +ModifyDate time.Time
+        +Events []string
+        +Definition string
+        +Database() *Database
+        +Enable() error
+        +Disable() error
+        +Drop() error
+        The parent_class = 0 family: DDL triggers on
+        the database itself. DISABLE TRIGGER takes
+        ON DATABASE here, not ON ALL SERVER.
+    }
+
+    %% =========================================================
+    %% Certificates and the database master key
+    %% =========================================================
+
+    class AsymmetricKey {
+        +Name string
+        +KeyID int
+        +PrincipalID int
+        +Algorithm string
+        +KeyLength int
+        +PvtKeyEncryptionType string
+        +Thumbprint []byte
+        +HasPrivateKey() bool
+    }
+
+    class Certificate {
+        -db *Database
+        +Name string
+        +CertificateID int
+        +PrincipalID int
+        +Subject string
+        +PvtKeyEncryptionType string
+        +StartDate time.Time
+        +ExpiryDate time.Time
+        +Thumbprint []byte
+        +HasPrivateKey() bool
+        +Encoded() []byte
+        +Drop() error
+    }
+
+    class CertificateSpec {
+        +Name string
+        +Authorization string
+        +Subject string
+        +StartDate time.Time
+        +ExpiryDate time.Time
+        +EncryptionPassword string
+        +FromBinary []byte
+    }
+
+    %% =========================================================
+    %% Error log
+    %% =========================================================
+
+    class ErrorLogType {
+        <<enumeration>>
+        ErrorLogSQLServer
+        ErrorLogAgent
+    }
+
+    class ErrorLogFile {
+        +Number int
+        +Date string
+        +LastWritten time.Time
+        +SizeBytes int64
+    }
+
+    class ErrorLogEntry {
+        +LogDate string
+        +Process string
+        +Text string
+        +Date time.Time
+        +ErrorLevel int
+        +Source() string
+    }
+
+    class LogSearch {
+        +Text1 string
+        +Text2 string
+        +From time.Time
+        +To time.Time
+        xp_readerrorlog's own arguments 3-6:
+        Text1 and Text2 are case-insensitive
+        substrings AND-ed together, not two
+        alternatives. A zero LogSearch reads
+        the whole file. Filtering at the server
+        is what makes the current log usable on
+        a busy instance.
+    }
+
+    %% =========================================================
+    %% Server filesystem (paths the SERVER resolves, not the client)
+    %% =========================================================
+
+    class FileSystemEntry {
+        +Name string
+        +FullPath string
+        +IsDirectory bool
+        +Size int64
+        +LastModified time.Time
+    }
+
+    class FixedDrive {
+        +Name string
+        +Type string
+        +FreeSpaceBytes int64
+    }
+
+    %% =========================================================
+    %% Relationships
+    %% =========================================================
+    Database "1" --> "*" DatabaseTrigger : owns
+    Server "1" --> "*" ErrorLogFile : EnumErrorLogs() returns
+    Server "1" --> "*" ErrorLogEntry : ReadLog() returns
+    Server "1" --> "*" FileSystemEntry : EnumFileSystem() returns
+    Server "1" --> "*" FixedDrive : FixedDrives() returns
+    Server ..> ErrorLogType : selects log family with
+    Server ..> LogSearch : ReadLogFiltered() narrowed by
+    Database "1" --> "*" Certificate : contains
+    Database "1" --> "*" AsymmetricKey : contains
+    Database --> CertificateSpec : CreateCertificate() accepts

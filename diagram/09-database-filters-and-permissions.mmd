@@ -1,0 +1,281 @@
+classDiagram
+
+    %% =========================================================
+    %% Narrowing a listing at the server
+    %% =========================================================
+
+    class ObjectFilter {
+        +Name []TextCriterion
+        +Schema []TextCriterion
+        +Created []DateCriterion
+        +MemoryOptimized *bool
+        +Empty() bool
+        Criteria are AND-ed; a zero filter
+        narrows nothing. Matching lowercases
+        both sides, because a bare LIKE follows
+        the database collation, and the pattern
+        is escaped, because %, _ and [ are legal
+        in an identifier.
+    }
+
+    class TextCriterion {
+        +Op TextOp
+        +Value string
+    }
+
+    class DateCriterion {
+        +Op DateOp
+        +Day time.Time
+    }
+
+    class TextOp {
+        <<enumeration>>
+        TextContains
+        TextNotContains
+        TextEquals
+        TextNotEquals
+    }
+
+    class DateOp {
+        <<enumeration>>
+        DateOn
+        DateBefore
+        DateAfter
+        All three compare whole calendar days.
+    }
+
+    %% =========================================================
+    %% Procedure and function parameters
+    %% =========================================================
+
+    class Parameter {
+        +Name string
+        +Ordinal int
+        +DataType DataType
+        +MaxLength int
+        +Precision int
+        +Scale int
+        +IsOutput bool
+        +HasDefault bool
+        +TypeString() string
+        sys.parameters for one procedure or
+        function. A scalar function's return
+        value, stored there as parameter_id 0,
+        is not a parameter and is not returned.
+    }
+
+    %% =========================================================
+    %% What the connected login may do here
+    %% =========================================================
+
+    class DatabaseCapabilities {
+        +Accessible bool
+        +Roles map~string,bool~
+        +Permissions map~string,CapabilityState~
+        +ExplicitDatabasePermissions map~string,CapabilityState~
+        +ExplicitPrincipalPermissions map~string,map~
+        +Has(name) bool
+        +Allows(name) bool
+        +Permits(name) bool
+        +DeniedOnDatabase(name) bool
+        +DeniedOnPrincipal(principal, name) bool
+        +Permission(name) CapabilityState
+        +InRole(name) bool
+        +Probed() bool
+        +SchemaPermissions map~string,map~
+        +ExplicitSchemaPermissions map~string,map~
+        +ObjectPermissions map~string,map~
+        +ColumnPermissions map~string,map~
+        +SchemaPermission(schema, name) CapabilityState
+        +HasOnSchema(schema, name) bool
+        +AllowsOnSchema(schema, name) bool
+        +PermitsOnSchema(schema, name) bool
+        +DeniedOnSchema(schema, name) bool
+        +ObjectPermission(schema, object, name) CapabilityState
+        +HasOnObject(schema, object, name) bool
+        +DeniedOnObject(schema, object, name) bool
+        +ColumnPermission(schema, object, column, name) CapabilityState
+        +HasOnColumn(schema, object, column, name) bool
+        +DeniedOnColumn(schema, object, column, name) bool
+        +DeniedOnAnyColumn(schema, object, name) bool
+        Accessible is HAS_DBACCESS: check it
+        before expanding a database at all.
+        Permits is Allows plus that, since an
+        inaccessible database answers Unknown
+        to every permission.
+        Schema scope is probed with
+        HAS_PERMS_BY_NAME and answers three ways.
+        Object and column scope are read from
+        sys.database_permissions and record only
+        explicit grants and denials, so HasOn*
+        adds permission and only DeniedOn*
+        withholds it.
+        DeniedOnDatabase and DeniedOnPrincipal
+        read recorded DENY rows, which a
+        HAS_PERMS_BY_NAME grant cannot reveal.
+    }
+
+    class DatabaseRecoveryStatus {
+        +DatabaseName string
+        +LastLogBackupLSN string
+        +LogBackupChainStarted bool
+        Whether the log backup chain has been
+        started at all — what SQL Server tests
+        before a database may join an
+        availability group.
+    }
+
+    %% =========================================================
+    %% Disk usage
+    %% =========================================================
+
+    class DiskUsage {
+        +DataFilesMB float64
+        +LogFilesMB float64
+        +DataMB float64
+        +IndexMB float64
+        +UnusedMB float64
+        +UnallocatedMB float64
+        +LogUsedMB float64
+        +LogUnusedMB float64
+        The numbers behind SSMS's Disk Usage
+        report, in MB. The four data parts sum to
+        slightly less than DataFilesMB — internal
+        pages belong to no allocation unit — so
+        read the parts against each other.
+    }
+
+    %% =========================================================
+    %% Execution plans
+    %% =========================================================
+
+    class ExecutionPlan {
+        +XML string
+        +All []string
+        A batch of several statements yields
+        several plan documents. XML is the last
+        of them; All holds every one.
+    }
+
+    %% =========================================================
+    %% Object and database-scoped permissions
+    %% =========================================================
+
+    class PermissionEntry {
+        +Principal string
+        +PrincipalType string
+        +Grantor string
+        +Permission ObjectPermission
+        +State PermissionState
+    }
+
+    class DatabasePermissionEntry {
+        +Principal string
+        +PrincipalType string
+        +Grantor string
+        +Permission string
+        +State string
+    }
+
+    class PrincipalSecurable {
+        +SecurableType string
+        +Schema string
+        +Name string
+        +Permission string
+        +State string
+    }
+
+    class ColumnPermissionEntry {
+        +Principal string
+        +PrincipalType string
+        +Grantor string
+        +Schema string
+        +Object string
+        +ObjectType string
+        +Column string
+        +Permission ObjectPermission
+        +State PermissionState
+    }
+
+    class EffectivePermission {
+        +Entity string
+        +Subentity string
+        +Permission string
+    }
+
+    class PermissionOptions {
+        +WithGrantOption bool
+        +Cascade bool
+        +GrantOptionOnly bool
+    }
+
+    class SecurableSearch {
+        +Name string
+        +Limit int
+    }
+
+    class SecurableRef {
+        +Type string
+        +Schema string
+        +Name string
+    }
+
+    %% =========================================================
+    %% Bulk copy (fast import — bcp / SSMS "Import Data")
+    %% =========================================================
+
+    class BulkCopy {
+        +Schema string
+        +Table string
+        +Columns []string
+        +Options BulkOptions
+        +SliceRows(rows) iter.Seq2
+    }
+
+    class BulkOptions {
+        +CheckConstraints bool
+        +FireTriggers bool
+        +KeepNulls bool
+        +TableLock bool
+        +RowsPerBatch int
+        +KilobytesPerBatch int
+        +Order []string
+    }
+
+    %% =========================================================
+    %% Stored-procedure execution
+    %% =========================================================
+
+    class ProcParam {
+        +In(name, value) ProcParam
+        +Out(name, dest) ProcParam
+        +InOut(name, dest) ProcParam
+    }
+
+    class ProcResult {
+        +ReturnStatus int32
+    }
+
+    %% =========================================================
+    %% Relationships
+    %% =========================================================
+    Database "1" --> "*" Parameter : Parameters() returns
+    Database --> DatabaseRecoveryStatus : RecoveryStatus() returns
+    Database --> DiskUsage : DiskUsage() returns
+    Database --> DatabaseCapabilities : Capabilities() returns
+    Database ..> ObjectFilter : ...Filtered() listings narrowed by
+    ObjectFilter --> TextCriterion : matches names and schemas with
+    ObjectFilter --> DateCriterion : matches creation dates with
+    TextCriterion --> TextOp : uses
+    DateCriterion --> DateOp : uses
+    Database --> ExecutionPlan : produces
+    Database "1" --> "*" PermissionEntry : grants
+    Database "1" --> "*" DatabasePermissionEntry : grants
+    Database "1" --> "*" PrincipalSecurable : PermissionsForPrincipal() returns
+    Database "1" --> "*" ColumnPermissionEntry : ColumnPermissions() returns
+    Database "1" --> "*" EffectivePermission : EffectivePermissions() returns
+    Database "1" --> "*" SecurableRef : FindSecurables() returns
+    SecurableSearch ..> SecurableRef : narrows FindSecurables()
+    Database ..> BulkCopy : bulk-loads via
+    Database ..> ProcParam : executes procs with
+    Database --> ProcResult : returns

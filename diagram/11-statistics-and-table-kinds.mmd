@@ -1,0 +1,271 @@
+classDiagram
+
+    %% =========================================================
+    %% Table and its children
+    %% =========================================================
+
+    class SpatialBoundingBox {
+        +XMin float64
+        +YMin float64
+        +XMax float64
+        +YMax float64
+        Belongs around the data, not around the
+        coordinate system: anything outside it
+        lands in the single top-level cell.
+    }
+
+    class SpatialGridLevels {
+        +Level1 SpatialGridDensity
+        +Level2 SpatialGridDensity
+        +Level3 SpatialGridDensity
+        +Level4 SpatialGridDensity
+    }
+
+    class SpatialGridDensity {
+        <<enumeration>>
+        SpatialGridLow
+        SpatialGridMedium
+        SpatialGridHigh
+    }
+
+    class DataSpace {
+        +Name string
+        +IsPartitionScheme bool
+        +IsDefaultFileGroup bool
+        +PartitionColumn string
+        Where a table or index keeps its rows —
+        CREATE TABLE / CREATE INDEX's ON clause.
+    }
+
+    class ForeignKey {
+        +Name string
+        +Columns []string
+        +ReferencedTable string
+        +ReferencedSchema string
+        +ReferencedColumns []string
+        +DeleteAction string
+        +UpdateAction string
+        +IsDisabled bool
+    }
+
+    class CheckConstraint {
+        +Name string
+        +Definition string
+        +IsDisabled bool
+        +Column string
+    }
+
+    class Statistic {
+        +Name string
+        +StatID int
+        +IsAutoCreated bool
+        +IsUserCreated bool
+        +HasFilter bool
+        +FilterDef string
+        +LastUpdated time.Time
+        +RowsSampled int64
+        +TotalRows int64
+        +Steps int
+        +UnfilteredRows int64
+        +NoRecompute bool
+        +IsIncremental bool
+        +ModificationCounter int64
+        +Columns() []string
+        +Header() *StatisticHeader
+        +DensityVector() []*StatisticDensity
+        +Histogram() []*StatisticHistogramStep
+        +Update(samplePct) error
+        +Drop() error
+        +Rename(newName) error
+    }
+
+    class CreateStatisticRequest {
+        +Name string
+        +Columns []string
+        +SamplePercent int
+        +FullScan bool
+        +FilterDefinition string
+        +NoRecompute bool
+        +Incremental bool
+    }
+
+    class StatisticHeader {
+        +Updated string
+        +Rows int64
+        +RowsSampled int64
+        +Steps int
+        +Density float64
+        +AverageKeyLength float64
+        +StringIndex string
+        +FilterExpression string
+        +UnfilteredRows int64
+        +PersistedSamplePercent float64
+    }
+
+    class StatisticDensity {
+        +AllDensity float64
+        +AverageLength float64
+        +Columns string
+    }
+
+    class StatisticHistogramStep {
+        +RangeHighKey string
+        +RangeRows float64
+        +EqRows float64
+        +DistinctRangeRows int64
+        +AvgRangeRows float64
+    }
+
+    class TableDetail {
+        +SchemaOwner string
+        +LockEscalation string
+        +UsesAnsiNulls bool
+        +IsReplicated bool
+        +IsTrackedByCDC bool
+        +TemporalType string
+        +Durability string
+        +LedgerType string
+        +PrimaryKeyName string
+        +DataSpace string
+    }
+
+    class TableSpaceInfo {
+        +ReservedKB int64
+        +DataKB int64
+        +IndexKB int64
+        +LOBKB int64
+        +UnusedKB int64
+        +FileGroup string
+    }
+
+    %% =========================================================
+    %% Table kinds — the sub-folders of Tables
+    %% =========================================================
+
+    class TableKind {
+        <<enumeration>>
+        TableKindUser
+        TableKindSystem
+        TableKindFileTable
+        TableKindExternal
+        TableKindGraph
+        +String() string
+    }
+
+    class TableKindPresence {
+        +System bool
+        +FileTable bool
+        +External bool
+        +Graph bool
+        Graph is always false below 2017.
+    }
+
+    %% =========================================================
+    %% Programmability: types, rules, defaults, assemblies, plan guides —
+    %% read, script, drop; no create
+    %% =========================================================
+
+    class UserDefinedDataType {
+        -db *Database
+        +Name string
+        +Schema string
+        +UserTypeID int
+        +BaseType string
+        +MaxLength int
+        +Precision int
+        +Scale int
+        +Collation string
+        +IsNullable bool
+        +Rule string
+        +Default string
+        +FullName() string
+        +Drop() error
+        An alias type: CREATE TYPE ... FROM.
+    }
+
+    class UserDefinedTableType {
+        -db *Database
+        +Name string
+        +Schema string
+        +UserTypeID int
+        +TypeTableObjectID int
+        +IsMemoryOptimized bool
+        +FullName() string
+        +Columns() []*Column
+        +Drop() error
+    }
+
+    class ClrType {
+        -db *Database
+        +Name string
+        +Schema string
+        +UserTypeID int
+        +MaxLength int
+        +Precision int
+        +Scale int
+        +IsNullable bool
+        +Assembly string
+        +AssemblyClass string
+        +FullName() string
+        +Drop() error
+    }
+
+    class SystemDataType {
+        +Name string
+        +SystemType int
+        +MaxLength int
+        +Precision int
+        +Scale int
+        +IsNullable bool
+        Read from the instance's own sys.types.
+    }
+
+    class XmlSchemaCollection {
+        -db *Database
+        +Name string
+        +Schema string
+        +CollectionID int
+        +CreateDate time.Time
+        +ModifyDate time.Time
+        +FullName() string
+        +Definition() string
+        +Drop() error
+    }
+
+    class Rule {
+        -db *Database
+        +Name string
+        +Schema string
+        +ObjectID int
+        +Definition string
+        +CreateDate time.Time
+        +ModifyDate time.Time
+        +FullName() string
+        +Drop() error
+    }
+
+    %% =========================================================
+    %% Relationships
+    %% =========================================================
+    Database ..> TableKind : TablesOfKind() takes
+    Database --> TableKindPresence : TableKindsPresent() returns
+    Database "1" --> "*" UserDefinedDataType : contains
+    Database "1" --> "*" UserDefinedTableType : contains
+    Database "1" --> "*" ClrType : contains
+    Database "1" --> "*" SystemDataType : SystemDataTypes() returns
+    Database "1" --> "*" XmlSchemaCollection : contains
+    Database "1" --> "*" Rule : contains
+    Table "1" --> "*" ForeignKey : has
+    Table "1" --> "*" CheckConstraint : has
+    Table "1" --> "*" Statistic : has
+    Table --> TableDetail : has
+    Table --> TableSpaceInfo : has
+    Table --> DataSpace : DataSpace() returns
+    Table ..> CreateStatisticRequest : CreateStatisticWithOptions() takes
+    Index --> DataSpace : read with the index
+    CreateIndexRequest --> SpatialBoundingBox : geometry schemes bounded by
+    CreateIndexRequest --> SpatialGridLevels : grid density set by
+    SpatialGridLevels --> SpatialGridDensity : per level
+    Statistic --> StatisticHeader : Header() returns
+    Statistic "1" --> "*" StatisticDensity : DensityVector() returns
+    Statistic "1" --> "*" StatisticHistogramStep : Histogram() returns

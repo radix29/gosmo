@@ -1,0 +1,194 @@
+classDiagram
+
+    %% =========================================================
+    %% SQL Server Agent
+    %% =========================================================
+
+    class Alert {
+        +ID int
+        +Name string
+        +Enabled bool
+        +EventSource string
+        +ErrorNumber int
+        +Severity int
+        +DatabaseName string
+        +DelayBetweenResponses Duration
+        +NotificationMessage string
+        +IncludeEventDescriptionIn int
+        +Category string
+        +JobName string
+        +PerformanceCondition string
+        +OccurrenceCount int
+        +LastOccurrence time.Time
+        +LastResponse time.Time
+        +IsEventAlert() bool
+        +Enable() error
+        +Disable() error
+        +Rename(newName) error
+        +SetTrigger(errorNumber, severity) error
+        +SetDatabase(dbName) error
+        +SetDelay(d) error
+        +SetNotificationMessage(msg) error
+        +SetJobResponse(jobName) error
+        +SetCategory(category) error
+        +Notifications() []*AlertNotification
+        +Notify(operator, method) error
+        +RemoveNotify(operator) error
+        +Drop() error
+    }
+
+    class AlertNotification {
+        +OperatorName string
+        +Method NotificationMethod
+    }
+
+    class Operator {
+        +ID int
+        +Name string
+        +Enabled bool
+        +EmailAddress string
+        +PagerAddress string
+        +NetSendAddress string
+        +Category string
+        +LastEmailDate time.Time
+        +LastPagerDate time.Time
+        +LastNetSendDate time.Time
+        +Enable() error
+        +Disable() error
+        +Rename(newName) error
+        +SetEmailAddress(addr) error
+        +SetCategory(category) error
+        +NotifyingAlerts() []*AlertNotificationRef
+        +NotifyingJobs() []*JobNotificationRef
+        +Drop() error
+    }
+
+    class AlertNotificationRef {
+        +AlertName string
+        +Method NotificationMethod
+    }
+
+    class JobNotificationRef {
+        +JobName string
+        +Level NotifyLevel
+    }
+
+    class Schedule {
+        +ID int
+        +Name string
+        +Enabled bool
+        +FreqType ScheduleFreqType
+        +FreqInterval int
+        +FreqSubdayType ScheduleSubdayType
+        +FreqSubdayInterval int
+        +FreqRelativeInterval int
+        +FreqRecurrenceFactor int
+        +ActiveStartDate time.Time
+        +ActiveEndDate time.Time
+        +ActiveStartTime int
+        +ActiveEndTime int
+        +OwnerLoginName string
+        +CreateDate time.Time
+        +ModifyDate time.Time
+        +Description() string
+        +Enable() error
+        +Disable() error
+        +Rename(newName) error
+        +SetOwner(login) error
+        +SetFrequency(f) error
+        +SetActiveRange(startDate, endDate, startTime, endTime) error
+        +Jobs() []*Job
+        +Drop() error
+    }
+
+    class ScheduleFrequency {
+        +FreqType ScheduleFreqType
+        +FreqInterval int
+        +FreqSubdayType ScheduleSubdayType
+        +FreqSubdayInterval int
+        +FreqRelativeInterval int
+        +FreqRecurrenceFactor int
+    }
+
+    class Category {
+        +ID int
+        +Class CategoryClass
+        +Name string
+    }
+
+    class JobState {
+        <<enumeration>>
+        JobStateUnknown
+        JobStateExecuting
+        JobStateWaitingForWorker
+        JobStateBetweenRetries
+        JobStateIdle
+        JobStateSuspended
+        JobStateWaitingForStepToFinish
+        JobStatePerformingCompletionActions
+        Agent's own job_state encoding, read
+        from xp_sqlagent_enum_jobs. With Agent
+        stopped only Executing and Idle can be
+        told apart.
+    }
+
+    class ScheduleFreqType {
+        <<enumeration>>
+        FreqOnce
+        FreqDaily
+        FreqWeekly
+        FreqMonthly
+        FreqMonthlyRelative
+        FreqAutoStart
+        FreqOnIdle
+    }
+
+    class ScheduleSubdayType {
+        <<enumeration>>
+        SubdayOnce
+        SubdaySeconds
+        SubdayMinutes
+        SubdayHours
+    }
+
+    class NotificationMethod {
+        <<enumeration>>
+        NotifyMethodEmail
+        NotifyMethodPager
+        NotifyMethodNetSend
+        +String() string
+    }
+
+    class NotifyLevel {
+        <<enumeration>>
+        NotifyNever
+        NotifyOnSuccess
+        NotifyOnFailure
+        NotifyOnComplete
+    }
+
+    class CategoryClass {
+        <<enumeration>>
+        CategoryClassJob
+        CategoryClassAlert
+        CategoryClassOperator
+    }
+
+    %% =========================================================
+    %% Relationships
+    %% =========================================================
+    Server "1" --> "*" Alert : owns
+    Server "1" --> "*" Operator : owns
+    Server "1" --> "*" Schedule : owns
+    Server "1" --> "*" Category : owns
+    Job "1" --> "*" Schedule : attached to
+    Job --> JobState : CurrentState is
+    Job --> NotifyLevel : notified per
+    Schedule --> ScheduleFrequency : SetFrequency() accepts
+    Schedule --> ScheduleFreqType : recurs per
+    Schedule --> ScheduleSubdayType : repeats per
+    Alert "1" --> "*" AlertNotification : notifies via
+    Operator "1" --> "*" AlertNotificationRef : notified by
+    Operator "1" --> "*" JobNotificationRef : emailed by
+    AlertNotification --> NotificationMethod : delivered by
+    Category --> CategoryClass : classified by

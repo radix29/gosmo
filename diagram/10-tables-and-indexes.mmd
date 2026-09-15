@@ -1,0 +1,205 @@
+classDiagram
+
+    %% =========================================================
+    %% Table and its children
+    %% =========================================================
+
+    class Table {
+        +ObjectID int
+        +Schema string
+        +Name string
+        +CreateDate time.Time
+        +ModifyDate time.Time
+        +HasReplicationFilter bool
+        +IsMemoryOptimized bool
+        +FullName() string
+        +Columns() []*Column
+        +Indexes() []*Index
+        +IndexByName(name) *Index
+        +XMLIndexes() []*XMLIndex
+        +ForeignKeys() []*ForeignKey
+        +ForeignKeyByName(name) *ForeignKey
+        +CheckConstraints() []*CheckConstraint
+        +Statistics() []*Statistic
+        +StatisticByName(name) *Statistic
+        +Partitions() []*Partition
+        +Triggers() []*Trigger
+        +DataSpace() DataSpace
+        +RowCount() int64
+        +CountWhere(predicate) int64
+        +CheckWhereSyntax(predicate) error
+        +Detail() *TableDetail
+        +SpaceUsed() *TableSpaceInfo
+        +TruncateTable() error
+        +FragmentationStats(mode) []*IndexFragmentation
+        +RebuildAllIndexes(fillFactor) error
+        +UpdateAllStatistics(samplePct) error
+        +CreateIndex(req) error
+        +CreateStatistic(name, cols, pct) error
+        +CreateStatisticWithOptions(req) error
+        +AlterColumn(col) error
+        +DropColumn(name) error
+        +RenameColumn(name, newName) error
+        +DropConstraint(name) error
+    }
+
+    class Column {
+        +Name string
+        +OrdinalPosition int
+        +DataType DataType
+        +MaxLength int
+        +Precision int
+        +Scale int
+        +IsNullable bool
+        +IsIdentity bool
+        +IdentitySeed int64
+        +IdentityIncrement int64
+        +IsComputed bool
+        +ComputedText string
+        +DefaultValue *ColumnDefault
+        +IsRowGUID bool
+        +IsPrimaryKey bool
+        +Collation string
+    }
+
+    class Index {
+        +Name string
+        +IndexID int
+        +Type IndexType
+        +IsClustered bool
+        +IsUnique bool
+        +IsPrimaryKey bool
+        +IsDisabled bool
+        +FillFactor int
+        +IsPadded bool
+        +IgnoreDupKey bool
+        +AllowRowLocks bool
+        +AllowPageLocks bool
+        +DataCompression string
+        +KeyColumns []IndexColumn
+        +IncludedColumns []IndexColumn
+        +FilterDefinition string
+        +DataSpace DataSpace
+        +Rebuild(t, fillFactor) error
+        +RebuildWithOptions(t, fillFactor, padIndex, compression) error
+        +Reorganize(t) error
+        +Disable(t) error
+        +Enable(t) error
+        +Rename(t, newName) error
+        +SetOptions(t, ignoreDupKey, rowLocks, pageLocks) error
+        +SetLockOptions(t, rowLocks, pageLocks) error
+        +SetIncludedColumns(t, columns) error
+        +UpdateStatistics(t) error
+        +StorageInfo(t) *IndexStorageInfo
+        +Fragmentation(t, mode) *IndexFragmentation
+        +Drop(t) error
+        +Type.IsColumnStore() bool
+        Type is a sys.indexes type_desc value; an
+        unrecognized one is carried through as the
+        server's own text. IsColumnStore covers
+        both columnstore forms, neither of which
+        SetIncludedColumns supports.
+    }
+
+    class IndexStorageInfo {
+        +FileGroup string
+        +PartitionScheme string
+        +PartitionColumn string
+        +RowCount int64
+        +UsedKB int64
+        +ReservedKB int64
+        +AvgRecordSize float64
+        +Allocations []IndexAllocationUnit
+    }
+
+    class IndexAllocationUnit {
+        +Type string
+        +Pages int64
+        +UsedKB int64
+    }
+
+    class IndexFragmentation {
+        +IndexName string
+        +IndexID int
+        +AvgFragmentationPct float64
+        +PageCount int64
+        +FragmentCount int64
+        +AvgPageSpaceUsedPct float64
+    }
+
+    class CreateIndexRequest {
+        +Name string
+        +Type IndexType
+        +IsUnique bool
+        +KeyColumns []IndexColumnDef
+        +IncludedColumns []string
+        +FilterDefinition string
+        +FillFactor int
+        +PadIndex bool
+        +Online bool
+        +SortInTempDB bool
+        +DropExisting bool
+        +DataCompression string
+        +CompressionDelay int
+        +FileGroup string
+        +PartitionScheme string
+        +PartitionColumns []string
+        +IsPrimaryXML bool
+        +PrimaryXMLIndex string
+        +SecondaryXMLType XMLSecondaryIndexType
+        +Tessellation SpatialTessellation
+        +BoundingBox *SpatialBoundingBox
+        +GridLevels SpatialGridLevels
+        +CellsPerObject int
+        Which fields apply depends on Type.
+        A combination the server would reject
+        is refused before anything runs, with
+        an error naming the field.
+    }
+
+    class XMLIndex {
+        +Name string
+        +IndexID int
+        +IsPrimary bool
+        +SecondaryType XMLSecondaryIndexType
+        +ColumnName string
+        +PrimaryIndexName string
+        What sys.indexes cannot say: primary or
+        secondary, which form, and over which
+        primary index it is built.
+    }
+
+    class XMLSecondaryIndexType {
+        <<enumeration>>
+        XMLSecondaryPath
+        XMLSecondaryValue
+        XMLSecondaryProperty
+    }
+
+    class SpatialTessellation {
+        <<enumeration>>
+        SpatialGeometryGrid
+        SpatialGeometryAutoGrid
+        SpatialGeographyGrid
+        SpatialGeographyAutoGrid
+        +IsGeometry() bool
+        +IsAutoGrid() bool
+    }
+
+    %% =========================================================
+    %% Relationships
+    %% =========================================================
+    Database "1" --> "*" Table : contains
+    Database "1" --> "*" Column : ObjectColumns() returns (table or view)
+    UserDefinedTableType "1" --> "*" Column : Columns() returns
+    Table "1" --> "*" Column : has
+    Table "1" --> "*" Index : has
+    Table "1" --> "*" IndexFragmentation : FragmentationStats() returns
+    Table "1" --> "*" XMLIndex : XMLIndexes() returns
+    Table ..> CreateIndexRequest : CreateIndex() takes
+    Index --> IndexStorageInfo : StorageInfo() returns
+    IndexStorageInfo "1" --> "*" IndexAllocationUnit : breaks down into
+    Index --> IndexFragmentation : Fragmentation() returns
+    CreateIndexRequest --> XMLSecondaryIndexType : XML form selected by
+    CreateIndexRequest --> SpatialTessellation : spatial scheme selected by
+    XMLIndex --> XMLSecondaryIndexType : secondary form

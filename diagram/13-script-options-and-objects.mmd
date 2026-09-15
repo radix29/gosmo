@@ -1,0 +1,183 @@
+classDiagram
+
+    %% =========================================================
+    %% Scripter (generates CREATE DDL for existing objects — distinct
+    %% from ScriptCollector, which captures pending write statements)
+    %% =========================================================
+
+    class ScriptVerb {
+        <<enumeration>>
+        ScriptCreate
+        ScriptDrop
+        ScriptDropAndCreate
+        ScriptAlter
+        ScriptAlter applies to module objects —
+        view, procedure, function, trigger —
+        and everything else falls back to CREATE.
+    }
+
+    class ScriptOptions {
+        +Verb ScriptVerb
+        +IncludeHeaders bool
+        +IncludeIfNotExists bool
+        +ScriptDrops bool
+        +SchemaQualify bool
+        +AnsiPadding bool
+    }
+
+    %% =========================================================
+    %% Database objects
+    %% =========================================================
+
+    class Schema {
+        +Name string
+        +ID int
+        +Owner string
+        +ObjectCount() int
+        +ObjectCountsByType() SchemaObjectCounts
+        +ChangeOwner(newOwner) error
+        +Drop() error
+    }
+
+    class SchemaObjectCounts {
+        +Tables int
+        +Views int
+        +StoredProcedures int
+        +Functions int
+        +Synonyms int
+        +Sequences int
+        Each count reproduces the predicate of
+        the listing it stands in for, which is
+        why it does not add up to ObjectCount's
+        single COUNT over sys.objects.
+    }
+
+    class View {
+        +ObjectID int
+        +Schema string
+        +Name string
+        +Definition string
+        +CreateDate time.Time
+        +ModifyDate time.Time
+    }
+
+    class StoredProcedure {
+        +ObjectID int
+        +Schema string
+        +Name string
+        +Definition string
+        +CreateDate time.Time
+        +ModifyDate time.Time
+    }
+
+    class UserDefinedFunction {
+        +ObjectID int
+        +Schema string
+        +Name string
+        +FuncType string
+        +Definition string
+        +CreateDate time.Time
+        +ModifyDate time.Time
+    }
+
+    class User {
+        +Name string
+        +ID int
+        +UserType string
+        +DefaultSchema string
+        +AuthType string
+        +CreateDate time.Time
+        +ModifyDate time.Time
+        +SID []byte
+        +LoginName string
+        +LoginDisabled bool
+        +Rename(newName) error
+        +SetDefaultSchema(schemaName) error
+        +SetLogin(loginName) error
+    }
+
+    class DatabaseRole {
+        +Name string
+        +ID int
+        +IsFixedRole bool
+        +Owner string
+        +Members []string
+        +SID []byte
+        +CreateDate time.Time
+        +ModifyDate time.Time
+        +Rename(newName) error
+        +Drop() error
+        +ChangeOwner(newOwner) error
+    }
+
+    class RoleMember {
+        +Name string
+        +Type string
+    }
+
+    class FileGroup {
+        +Name string
+        +Type string
+        +IsDefault bool
+        +IsReadOnly bool
+        +Files []DatabaseFile
+        +IsFileStream() bool
+        Type is sys.filegroups.type_desc —
+        ROWS_FILEGROUP, FILESTREAM_DATA_FILEGROUP or
+        MEMORY_OPTIMIZED_DATA_FILEGROUP. ADD FILE has
+        no file-type keyword, so the group decides what
+        a file added to it becomes. IsDefault is per
+        type, not per database.
+    }
+
+    class Trigger {
+        +Name string
+        +TableName string
+        +Schema string
+        +IsEnabled bool
+        +Events []string
+        +Definition string
+    }
+
+    class ServerRole {
+        +ID int
+        +Name string
+        +IsFixedRole bool
+        +Owner string
+        +SID []byte
+        +CreateDate time.Time
+        +ModifyDate time.Time
+        +Members []string
+        +Rename(newName) error
+        +Drop() error
+        +ChangeOwner(newOwner) error
+    }
+
+    class LinkedServer {
+        +Name string
+        +Product string
+        +Provider string
+        +DataSource string
+        +IsRemote bool
+    }
+
+    %% =========================================================
+    %% Relationships
+    %% =========================================================
+    Server "1" --> "*" ServerRole : owns
+    Server "1" --> "*" RoleMember : ServerRoleMembers() returns
+    Server "1" --> "*" LinkedServer : owns
+    Database "1" --> "*" FileGroup : contains
+    Database "1" --> "*" View : contains
+    Database "1" --> "*" StoredProcedure : contains
+    Database "1" --> "*" UserDefinedFunction : contains
+    Database "1" --> "*" Schema : contains
+    Database "1" --> "*" User : contains
+    Database "1" --> "*" DatabaseRole : contains
+    Database "1" --> "*" Trigger : contains
+    Database "1" --> "*" RoleMember : RoleMembers() returns
+    Table "1" --> "*" Trigger : has
+    Schema --> SchemaObjectCounts : ObjectCountsByType() returns
+    Scripter --> ScriptOptions : configured by
+    ServerScripter --> ScriptOptions : configured by
+    ScriptOptions --> ScriptVerb : statement form selected by

@@ -1,0 +1,314 @@
+classDiagram
+
+    %% =========================================================
+    %% Database files, filegroups, and options
+    %% =========================================================
+
+    class DatabaseFileInfo {
+        +FileID int
+        +Name string
+        +PhysicalName string
+        +Type string
+        +FileGroup string
+        +State string
+        +SizeKB int64
+        +MaxSizeKB int64
+        +GrowthKB int64
+        +GrowthPercent int
+        +IsPercentGrowth bool
+    }
+
+    class DatabaseFileSpec {
+        +Name string
+        +FileGroup string
+        +Type string
+        +Path string
+        +SizeKB int64
+        +GrowthKB int64
+        +GrowthPercent int
+        +DisableGrowth bool
+        +MaxSizeKB int64
+    }
+
+    class FileModify {
+        +NewName string
+        +SizeKB int64
+        +GrowthKB int64
+        +GrowthPercent int
+        +DisableGrowth bool
+        +MaxSizeKB int64
+        DisableGrowth is FILEGROWTH = 0. Zero
+        cannot say it: GrowthKB = 0 means
+        "leave this property alone".
+    }
+
+    class DatabaseOptions {
+        +Owner string
+        +PageVerify string
+        +UserAccess string
+        +Containment string
+        +DefaultCursor string
+        +SnapshotIsolation string
+        +AutoClose bool
+        +AutoShrink bool
+        +AutoCreateStats bool
+        +AutoUpdateStats bool
+        +AutoUpdateStatsAsync bool
+        +ANSINullDefault bool
+        +ANSINulls bool
+        +ANSIPadding bool
+        +ANSIWarnings bool
+        +ArithAbort bool
+        +ConcatNullYieldsNull bool
+        +NumericRoundAbort bool
+        +QuotedIdentifier bool
+        +RecursiveTriggers bool
+        +CursorCloseOnCommit bool
+        +ReadCommittedSnapshot bool
+        +IsTrustworthy bool
+        +IsBrokerEnabled bool
+    }
+
+    %% =========================================================
+    %% Change tracking
+    %% =========================================================
+
+    class ChangeTrackingInfo {
+        +Enabled bool
+        +AutoCleanup bool
+        +RetentionPeriod int
+        +RetentionUnit string
+    }
+
+    class TableChangeTracking {
+        +Schema string
+        +Name string
+        +Enabled bool
+        +TrackColumnsUpdated bool
+    }
+
+    %% =========================================================
+    %% Catalog snapshot (bulk table/view + column inventory)
+    %% =========================================================
+
+    class Catalog {
+        +Schemas []string
+        +Objects []CatalogObject
+    }
+
+    class CatalogObject {
+        +ObjectID int
+        +Schema string
+        +Name string
+        +Type CatalogObjectType
+        +Columns []CatalogColumn
+    }
+
+    class CatalogColumn {
+        +Name string
+        +DataType DataType
+        +MaxLength int
+        +Precision int
+        +Scale int
+        +IsNullable bool
+    }
+
+    %% =========================================================
+    %% Query Store and Database Scoped Configuration
+    %% =========================================================
+
+    class QueryStoreInfo {
+        +DesiredState string
+        +ActualState string
+        +ReadOnlyReason int
+        +CurrentStorageMB int64
+        +MaxStorageMB int64
+        +CaptureMode string
+        +SizeCleanupMode string
+        +StaleThresholdDays int
+        +WaitStatsCaptureMode string
+    }
+
+    class QueryStoreReportOptions {
+        +Metric QSMetric
+        +Statistic QSStatistic
+        +From time.Time
+        +To time.Time
+        +BaselineFrom time.Time
+        +BaselineTo time.Time
+        +Top int
+        +MinExecCount int64
+        +QueryIDs []int64
+        +MinRegressionPct float64
+        +IncludeInternal bool
+    }
+
+    class QSMetric {
+        <<enumeration>>
+        QSMetricDuration
+        QSMetricCPUTime
+        QSMetricLogicalReads
+        QSMetricLogicalWrites
+        QSMetricPhysicalReads
+        QSMetricCLRTime
+        QSMetricDOP
+        QSMetricMemory
+        QSMetricRowCount
+        QSMetricLogMemory
+        QSMetricTempDBMemory
+    }
+
+    class QSStatistic {
+        <<enumeration>>
+        QSStatAvg
+        QSStatMin
+        QSStatMax
+        QSStatTotal
+        QSStatStdDev
+    }
+
+    class QSUnit {
+        <<enumeration>>
+        QSUnitCount
+        QSUnitMicroseconds
+        QSUnitPages
+        QSUnitBytes
+        QSUnitMilliseconds
+        Query Store stores raw engine units.
+        QSMetricUnit(m) reports which.
+    }
+
+    class QSQueryStat {
+        +QueryID int64
+        +QueryText string
+        +ObjectName string
+        +ExecCount int64
+        +PlanCount int
+        +ForcedPlanID int64
+        +LastExecutionTime time.Time
+        +Value float64
+        +BaselineValue float64
+        +Regression float64
+        +Variation float64
+    }
+
+    class QSPlan {
+        +PlanID int64
+        +QueryID int64
+        +IsForced bool
+        +ForceFailureCount int64
+        +LastForceFailureReason string
+        +QueryPlanXML string
+        +ExecCount int64
+        +Value float64
+    }
+
+    class QSIntervalStat {
+        +StartTime time.Time
+        +EndTime time.Time
+        +ExecCount int64
+        +Value float64
+    }
+
+    class QSPlanIntervalStat {
+        +PlanID int64
+        +StartTime time.Time
+        +EndTime time.Time
+        +ExecCount int64
+        +Value float64
+    }
+
+    class QSWaitStat {
+        +Category string
+        +ExecCount int64
+        +Value float64
+    }
+
+    %% =========================================================
+    %% Detach / Attach
+    %% =========================================================
+
+    class DetachOptions {
+        +DropConnections bool
+        +UpdateStatistics bool
+        +DropFullTextIndexFile bool
+        Named for what they do, not for
+        sp_detach_db's parameters, whose two
+        flags are the inverse of the question
+        a user is asked.
+    }
+
+    class AttachSpec {
+        +Name string
+        +Files []string
+        +Owner string
+        +RebuildLog bool
+    }
+
+    class DetachedDatabase {
+        +Name string
+        +Version string
+        +Collation string
+        +Files []*DetachedFile
+        +DataFiles() []*DetachedFile
+        +LogFiles() []*DetachedFile
+    }
+
+    class DetachedFile {
+        +FileID int
+        +Name string
+        +PhysicalName string
+        +IsLog bool
+    }
+
+    class DatabaseScopedConfig {
+        +ID int
+        +Name string
+        +Value string
+        +ValueForSecondary string
+        +IsValueDefault bool
+    }
+
+    %% =========================================================
+    %% Dependencies and object search
+    %% =========================================================
+
+    class Dependency {
+        +Schema string
+        +Name string
+        +TypeDesc string
+        +IsSchemaBound bool
+    }
+
+    class SearchResult {
+        +Schema string
+        +Name string
+        +TypeDesc string
+    }
+
+    %% =========================================================
+    %% Relationships
+    %% =========================================================
+    Database "1" --> "*" DatabaseFileInfo : contains
+    Database --> DatabaseOptions : has
+    Database --> ChangeTrackingInfo : has
+    Database "1" --> "*" TableChangeTracking : tracks
+    Database --> Catalog : Catalog()/SystemCatalog() returns
+    Catalog "1" --> "*" CatalogObject : contains
+    CatalogObject "1" --> "*" CatalogColumn : has
+    Database --> QueryStoreInfo : has
+    Database --> QSQueryStat : reports
+    Database --> QSPlan : reports
+    Database --> QSIntervalStat : reports
+    Database --> QSPlanIntervalStat : reports
+    Database --> QSWaitStat : reports
+    QueryStoreReportOptions --> QSMetric : ranks by
+    QueryStoreReportOptions --> QSStatistic : aggregated with
+    QSMetric ..> QSUnit : measured in
+    Server --> DetachOptions : DetachDatabase() takes
+    Server --> AttachSpec : AttachDatabase() takes
+    Server --> DetachedDatabase : DetachedDatabaseInfo() returns
+    DetachedDatabase "1" --> "*" DetachedFile : contains
+    Database "1" --> "*" DatabaseScopedConfig : lists
+    Database "1" --> "*" Dependency : dependencies of
+    Database "1" --> "*" SearchResult : search() returns

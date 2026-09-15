@@ -1,0 +1,217 @@
+classDiagram
+
+    %% =========================================================
+    %% Connection helpers (internal)
+    %% =========================================================
+
+    class withConn {
+        <<internal helper>>
+        Acquires *sql.Conn from pool.
+        Executes USE db, retried on a
+        transient failure. Runs callback
+        fn(*sql.Conn) — NOT retried, since
+        fn is the caller's actual write.
+        Releases conn via defer.
+        Used by Database.exec.
+    }
+
+    class dbRows {
+        <<internal type>>
+        -Rows *sql.Rows
+        -conn *sql.Conn
+        +Close() error
+        Closes Rows then the conn pinned
+        for them. *sql.Rows.Close alone
+        leaves the conn checked out of the
+        pool forever. Returned by
+        Database.query().
+    }
+
+    class DatabaseQueryRow {
+        <<internal helper>>
+        Database.queryRow(ctx, scan, q, args)
+        Acquires conn, runs USE, hands the row
+        to scan — all inside one retry unit.
+        scan must run inside it: QueryRowContext
+        never errors, only Scan does.
+    }
+
+    class ServerQuery {
+        <<internal helpers>>
+        Server.query(ctx, q, args)
+        Server.queryRow(ctx, scan, q, args)
+        Server.queryRowScan(ctx, q, args, dest)
+        Server-scoped counterparts, with no USE
+        to redo. queryRowScan is the bare-Scan
+        convenience over queryRow.
+    }
+
+    class withRetry {
+        <<internal helper>>
+        Generic retry wrapper for idempotent
+        reads only. 3 attempts, linear backoff
+        of attempt times 50ms. Used by every
+        query/queryRow helper above.
+    }
+
+    class IsRetryable {
+        <<package function>>
+        True for the driver's RetryableError, a
+        dropped pooled connection (ErrBadConn),
+        a net.Error, a corrupted TDS stream, a
+        connection-severing ServerError, or EOF
+        — including wrapped errors. Exported so
+        callers running their own statements can
+        make the same retry decision.
+    }
+
+    %% =========================================================
+    %% Quoting (shared identifier / literal escaping)
+    %% =========================================================
+
+    class Quoting {
+        <<package functions>>
+        +QuoteName(name) string
+        +QuoteLiteral(s) string
+        Backed by the driver's own TSQLQuoter,
+        so gosmo, its callers, and gossms share
+        one quoting implementation. The internal
+        quoteIdent helper delegates to QuoteName.
+    }
+
+    %% =========================================================
+    %% Errors
+    %% =========================================================
+
+    class ErrNotFound {
+        <<sentinel>>
+        The error every by-name lookup that
+        reports absence wraps, so errors.Is
+        separates "does not exist" from
+        "the lookup itself failed".
+        CertificateByName returns (nil, nil)
+        instead, and AgentStatus reports an
+        unreachable Agent as a value.
+    }
+
+    class SQLError {
+        +Number int32
+        +State uint8
+        +Class uint8
+        +Message string
+        +ServerName string
+        +ProcName string
+        +LineNo int32
+        +All []SQLError
+        +AsSQLError(err) *SQLError
+        +Header() string
+        +Error() string
+        +IsError() bool
+    }
+
+    %% =========================================================
+    %% What the connected login may do
+    %% =========================================================
+
+    class Capabilities {
+        +ServerRoles map~string,bool~
+        +ServerPermissions map~string,CapabilityState~
+        +ExplicitServerPermissions map~string,map~
+        +AvailabilityGroupPermissions map~string,map~
+        +Has(name) bool
+        +Allows(name) bool
+        +Permission(name) CapabilityState
+        +InServerRole(name) bool
+        +IsSysadmin() bool
+        +Probed() bool
+        +DeniedOnServerSecurable(kind, name, permission) bool
+        +DeniedOnLogin(name, permission) bool
+        +DeniedOnServerRole(name, permission) bool
+        +DeniedOnEndpoint(name, permission) bool
+        +AvailabilityGroupPermission(group, name) CapabilityState
+        +HasOnAvailabilityGroup(group, name) bool
+        +PermitsOnAvailabilityGroup(group, name) bool
+        Has is the test for offering something,
+        Allows the test for withholding it —
+        deliberately not opposites, because
+        withholding must fail open. Every
+        method is nil-safe.
+        ExplicitServerPermissions is a
+        sys.server_permissions read of DENY rows
+        only, keyed by ServerSecurableKey, so
+        DeniedOn* is its one sound question.
+    }
+
+    class ServerSecurableKind {
+        <<enumeration>>
+        ServerSecurableLogin
+        ServerSecurableServerRole
+        ServerSecurableEndpoint
+        +ServerSecurableKey(kind, name) string
+    }
+
+    class CapabilityState {
+        <<enumeration>>
+        CapabilityUnknown
+        CapabilityGranted
+        CapabilityDenied
+        HAS_PERMS_BY_NAME returns NULL without
+        raising for a permission the instance
+        does not define, so Unknown is not a
+        denial.
+    }
+
+    class LoginSource {
+        <<enumeration>>
+        LoginSourceAuto
+        LoginSourceSQL
+        LoginSourceWindows
+        LoginSourceExternalProvider
+        LoginSourceCertificate
+        LoginSourceAsymmetricKey
+    }
+
+    %% =========================================================
+    %% Scripting pending writes (dry-run)
+    %% =========================================================
+
+    class ScriptCollector {
+        -mu sync.Mutex
+        +Statements []string
+        +WithScript(ctx) *ScriptCollector
+        +Scripting(ctx) bool
+        Captures the exact statement(s) a set of
+        pending write calls would run, without
+        running them. Every write funnels through
+        Server.execContext or Database.exec, the
+        two chokepoints WithScript intercepts.
+        Bound parameters are substituted as
+        literals so a captured statement runs
+        standalone; ExecProc is captured as its
+        EXEC form. Scripting(ctx) reports whether
+        a context is one of these, so a caller
+        does not mirror a write the server never
+        saw into its own state.
+        Statements is mutex-guarded: one collector
+        may be shared across goroutines.
+    }
+
+    %% =========================================================
+    %% Relationships
+    %% =========================================================
+    Server --> Capabilities : Capabilities() returns
+    Capabilities ..> ServerSecurableKind : ExplicitServerPermissions keyed by
+    Capabilities --> CapabilityState : answers with
+    DatabaseCapabilities --> CapabilityState : answers with
+    Login ..> LoginSource : created from
+    Database ..> withConn : writes run via
+    Database ..> dbRows : query() returns
+    Database ..> DatabaseQueryRow : single-row reads via
+    Database ..> withRetry : reads retried via
+    Server ..> ServerQuery : reads run via
+    Server ..> withRetry : reads retried via
+    withRetry <.. withConn : acquire+USE retried by
+    withRetry <.. dbRows : acquire+USE+query retried by
+    withRetry <.. DatabaseQueryRow : whole scan retried by
+    withRetry <.. ServerQuery : whole scan retried by
+    withRetry <.. IsRetryable : same failure test as

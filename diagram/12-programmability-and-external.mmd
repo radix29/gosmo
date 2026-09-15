@@ -1,0 +1,217 @@
+classDiagram
+
+    %% =========================================================
+    %% Programmability: types, rules, defaults, assemblies, plan guides —
+    %% read, script, drop; no create
+    %% =========================================================
+
+    class Default {
+        -db *Database
+        +Name string
+        +Schema string
+        +ObjectID int
+        +Definition string
+        +CreateDate time.Time
+        +ModifyDate time.Time
+        +FullName() string
+        +Drop() error
+        Standalone CREATE DEFAULT objects only,
+        never a table's DF_ constraint.
+    }
+
+    class Assembly {
+        -db *Database
+        +Name string
+        +AssemblyID int
+        +Owner string
+        +ClrName string
+        +PermissionSet AssemblyPermissionSet
+        +IsVisible bool
+        +IsUserDefined bool
+        +CreateDate time.Time
+        +ModifyDate time.Time
+        +Files() []*AssemblyFile
+        +FileContent(fileID) []byte
+        +Modules() []*AssemblyModule
+        +Drop() error
+    }
+
+    class AssemblyPermissionSet {
+        <<enumeration>>
+        AssemblySafe
+        AssemblyExternalAccess
+        AssemblyUnsafe
+    }
+
+    class AssemblyFile {
+        +Name string
+        +FileID int
+        +ContentLength int64
+    }
+
+    class AssemblyModule {
+        +ObjectID int
+        +Schema string
+        +Name string
+        +Type string
+        +AssemblyClass string
+        +AssemblyMethod string
+        +FullName() string
+    }
+
+    class PlanGuide {
+        -db *Database
+        +Name string
+        +PlanGuideID int
+        +IsDisabled bool
+        +QueryText string
+        +Scope PlanGuideScope
+        +ScopeObject string
+        +ScopeSchema string
+        +ScopeName string
+        +ScopeBatch string
+        +Parameters string
+        +Hints string
+        +CreateDate time.Time
+        +ModifyDate time.Time
+        +Enable() error
+        +Disable() error
+        +Drop() error
+    }
+
+    class PlanGuideScope {
+        <<enumeration>>
+        PlanGuideScopeObject
+        PlanGuideScopeSQL
+        PlanGuideScopeTemplate
+    }
+
+    %% =========================================================
+    %% External resources (PolyBase, elastic query, ML Services)
+    %% =========================================================
+
+    class ExternalDataSource {
+        -db *Database
+        +Name string
+        +DataSourceID int
+        +Location string
+        +Type string
+        +ResourceManagerLocation string
+        +Credential string
+        +DatabaseName string
+        +ShardMapName string
+        +ConnectionOptions string
+        +PushdownEnabled bool
+        +Drop() error
+    }
+
+    class ExternalFileFormat {
+        -db *Database
+        +Name string
+        +FileFormatID int
+        +FormatType string
+        +FieldTerminator string
+        +StringDelimiter string
+        +DateFormat string
+        +UseTypeDefault bool
+        +SerDeMethod string
+        +RowTerminator string
+        +Encoding string
+        +DataCompression string
+        +FirstRow int
+        +ParserVersion string
+        +Drop() error
+    }
+
+    class ExternalLibrary {
+        -db *Database
+        +Name string
+        +LibraryID int
+        +Owner string
+        +Language string
+        +Scope string
+        +Drop() error
+        SQL Server 2017 and later.
+    }
+
+    %% =========================================================
+    %% Scripter (generates CREATE DDL for existing objects — distinct
+    %% from ScriptCollector, which captures pending write statements)
+    %% =========================================================
+
+    class Scripter {
+        -db *Database
+        -opts ScriptOptions
+        +NewScripter(db, opts) *Scripter
+        +ScriptTable(schema, name) string
+        +ScriptView(schema, name) string
+        +ScriptStoredProcedure(schema, name) string
+        +ScriptFunction(schema, name) string
+        +ScriptTrigger(schema, name) string
+        +ScriptIndex(schema, table, name) string
+        +ScriptCheckConstraint(schema, table, name) string
+        +ScriptForeignKey(schema, table, name) string
+        +ScriptSequence(schema, name) string
+        +ScriptSynonym(schema, name) string
+        +ScriptSchema(name) string
+        +ScriptUser(name) string
+        +ScriptDatabaseRole(name) string
+        +ScriptDatabaseAuditSpecification(name) string
+        +ScriptDatabaseScopedCredential(name) string
+        +ScriptDatabaseTrigger(name) string
+        +ScriptPartitionFunction(name) string
+        +ScriptPartitionScheme(name) string
+        +ScriptSecurityPolicy(schema, name) string
+        +ScriptColumnMasterKey(name) string
+        +ScriptColumnEncryptionKey(name) string
+        +ScriptUserDefinedDataType(schema, name) string
+        +ScriptUserDefinedTableType(schema, name) string
+        +ScriptClrType(schema, name) string
+        +ScriptXmlSchemaCollection(schema, name) string
+        +ScriptRule(schema, name) string
+        +ScriptDefault(schema, name) string
+        +ScriptAssembly(name) string
+        +ScriptPlanGuide(name) string
+        +ScriptExternalDataSource(name) string
+        +ScriptExternalFileFormat(name) string
+        +ScriptExternalLibrary(name) string
+        +ScriptDatabase() string
+        +ScriptSelect(schema, name) string
+        +ScriptInsert(schema, name) string
+        +ScriptUpdate(schema, name) string
+        +ScriptDelete(schema, name) string
+        +ScriptExecute(schema, name) string
+        +ScriptFunctionCall(schema, name, funcType) string
+    }
+
+    class ServerScripter {
+        -server *Server
+        -opts ScriptOptions
+        +NewServerScripter(server, opts) *ServerScripter
+        +ScriptLogin(name) string
+        +ScriptServerRole(name) string
+        +ScriptEndpoint(name) string
+        +ScriptCredential(name) string
+        +ScriptBackupDevice(name) string
+        +ScriptServerAudit(name) string
+        +ScriptServerAuditSpecification(name) string
+        +ScriptServerTrigger(name) string
+        A scripted credential carries an
+        "insert secret here" placeholder: the
+        secret is not readable from the catalog.
+    }
+
+    %% =========================================================
+    %% Relationships
+    %% =========================================================
+    Database "1" --> "*" Default : contains
+    Database "1" --> "*" Assembly : contains
+    Database "1" --> "*" PlanGuide : contains
+    Database "1" --> "*" ExternalDataSource : contains
+    Database "1" --> "*" ExternalFileFormat : contains
+    Database "1" --> "*" ExternalLibrary : contains
+    ClrType --> Assembly : implemented by
+    Assembly --> AssemblyPermissionSet : runs under
+    Assembly "1" --> "*" AssemblyFile : Files() returns
+    Assembly "1" --> "*" AssemblyModule : Modules() returns
+    PlanGuide --> PlanGuideScope : scoped by

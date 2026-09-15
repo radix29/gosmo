@@ -3,52 +3,70 @@
 The current release, in brief. Detail and history are in
 [CHANGELOG.md](CHANGELOG.md).
 
-## v0.0.12
+## v0.0.13
 
-Azure SQL Managed Instance is supported properly rather than incidentally,
-and the database half of `v0.0.11`'s Security folder work arrives: DDL
-triggers, audit specifications and scoped credentials, all at database
-scope. Capabilities can now withhold on a recorded DENY.
+The Programmability and External Resources folders arrive whole — types,
+rules, defaults, assemblies, plan guides, external data sources, file formats
+and libraries — along with database snapshots and the table sub-folders.
+Underneath them, Entra sign-in and the Browser probe stopped repeating
+themselves once per connection, and a `Database` read costs one round trip
+instead of two.
 
 ### New
 
-- Database-scope DDL triggers — list, enable, disable, drop, script.
-- Database audit specifications, including per-securable actions.
-- Database-scoped credentials. The secret is write-only.
-- `Database.ObjectTriggers(schema, name)` — a view's INSTEAD OF triggers,
-  which nothing could read before.
-- Azure instance resources: the 15-second resource history, the resource
-  governor's fixed limits, and the engine's OS job object.
-- `EngineEdition` constants, with `ServerInfo.IsAzure()`.
-- Backup and restore to Azure Storage: `TO URL`/`FROM URL` chosen per
-  device, `URLTarget`, `IsBackupURL`, and a `Credential` option.
-- Explicit-DENY capability blocks: `DeniedOnLogin`, `DeniedOnServerRole`,
-  `DeniedOnEndpoint`, `DeniedOnDatabase`, `DeniedOnPrincipal`.
-- Availability-group scope capabilities.
-- `FileGroup.Type` and `IsFileStream()`, which decide what a file added to
-  the group becomes.
-- Three more scripting verbs, two more `*Seq` iterators (98 now).
+- Types: alias, table, CLR and system, plus XML schema collections — read,
+  drop, transfer, rename.
+- Rules and defaults — the two deprecated families, read-only.
+- CLR assemblies, with their files and modules.
+- Plan guides — read, enable, disable, drop.
+- External data sources, external file formats and external libraries.
+- Database snapshots at server scope: create, restore, drop, and every
+  snapshot of a given source.
+- Table kinds — System, FileTable, External and Graph as their own listings,
+  with `TableKindsPresent()` to say which exist at all.
+- `Database.DiskUsage()` — the SSMS Disk Usage report's numbers.
+- Azure per-database resource stats and governance limits, the database-scoped
+  twins of `v0.0.12`'s instance ones.
+- Per-securable database capabilities for assemblies, types and XML schema
+  collections.
+- Eleven more scripting verbs, covering every new family above.
+- `ConnectionOptions.ExtraParams` — driver parameters with no field of their
+  own; one a field controls is refused, never merged.
+- `ConnectionOptions.ConnectionString(maskSecrets)` — the DSN, without
+  dialling.
+- Fourteen more `*Seq` iterators (112 now), and `AuthMethod.String()`.
 
 ### Fixes
 
-- A NULL in msdb's backup history killed the whole read — the entire
-  Database Properties General page on a Managed Instance.
-- A scripted column encryption key rotation mutated the handle, so a
-  pre-flight check read the wrong value count.
-- The server filesystem reads took the pre-2017 path on Azure, losing
-  size and modification time for no reason.
+- `CreateDatabase` failed outright when given a log file and no data file.
+- A cancelled or failed write left auditing switched off, the one thing the
+  disable window exists to prevent.
+- An interrupted `EXECUTE AS` read left a pooled connection impersonating, so
+  the next caller to get it failed with Msg 596.
+- A forced drop or rename could not work on a Managed Instance, which rejects
+  `SET SINGLE_USER`.
+- `ParseServerAddress` misread IPv6 literals, taking the last group for a port.
+- An Entra `User` already carrying a tenant had `TenantID` appended again.
+- `StopAt` silently discarded sub-second precision from a point-in-time
+  restore.
 
 ### Changes
 
-- **An Azure engine edition is gated as newest, not as the version it
-  reports.** A Managed Instance says 12.0.2000.8 while running an 18.x
-  engine, which put it below every version gate — silently, returning
-  nothing for columns it has. `ServerInfo.VersionMajor` is unchanged.
-- `Server.AgentInfo` answers on Azure, where `sys.dm_server_services` is
-  empty, from Agent's own sessions and `msdb.dbo.syssessions`.
-- `EndpointSpec.EncryptionAlgorithm` is validated against the sub-clause's
-  grammar; a value the server would reject now fails client-side.
-- **Removed:** `JobStateCancelling` and `JobStateRunning`, deprecated in
-  `v0.0.11`. Use `JobStateExecuting` and
-  `JobStatePerformingCompletionActions`.
-- Dependencies: the `golang.org/x` chain; toolchain go1.27.1.
+- **Entra credentials are built by gosmo, once per identity, not once per
+  connection** — one browser sign-in or device code for a whole pool. Share
+  one via `ConnectionOptions.EntraCache`, warm it with `Warm`, and put the
+  device code where a user can see it with `DeviceCodePrompt`.
+- **A `Database` read is one round trip**, the `USE` batched with the query —
+  41 ms per read against a Managed Instance.
+- **A Browser reply is cached for two minutes**, rather than re-probed for
+  every new pooled connection; a failed connection evicts it.
+- Under `WithScript`, a nil `[]byte` scripts as `NULL` and an empty one as
+  `0x`; both were `0x00`.
+- `AuthEntraIntegrated` is documented as what it is — the
+  `AuthEntraDefault` chain, not Windows SSO — and `AuthEntraPassword` as
+  unable to satisfy MFA.
+- Four new version gates, checked against real instances: the graph columns at
+  2017, the PolyBase v2 and file-format columns at 2019.
+- `azcore` and `azidentity` are direct dependencies now.
+- Docs split: `README.md` is a short summary, the API map and reference moved
+  to `ARCHITECTURE.md`, and `PLAN.md` is gone.

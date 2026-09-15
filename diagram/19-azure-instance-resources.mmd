@@ -1,0 +1,116 @@
+classDiagram
+
+    %% =========================================================
+    %% Azure instance resources
+    %% =========================================================
+
+    class ServerResourceStat {
+        +StartTime time.Time
+        +EndTime time.Time
+        +ResourceType string
+        +ResourceName string
+        +SKU string
+        +HardwareGeneration string
+        +VirtualCoreCount int
+        +AvgCPUPercent float64
+        +ReservedStorageMB int64
+        +StorageSpaceUsedMB float64
+        +IORequests int64
+        +IOBytesRead int64
+        +IOBytesWritten int64
+        One row per 15-second window, ~14 days
+        retained. Pre-aggregated: plot it, never
+        run it through a per-second delta.
+    }
+
+    class InstanceResourceGovernance {
+        +ServerName string
+        +CapCPU int
+        +MaxLogRate int64
+        +MaxWorkerThreads int
+        +LocalIOPS int
+        +ManagedXStoreIOPS int
+        +ExternalXStoreIOPS int
+        +LocalMaxOutstandingIO int
+        +TempDBLogFileNumber int
+        +DataDirectoryQuotaMB int
+        +DataDirectoryUsageMB int
+        +BufferPoolExtensionSizeGB int
+        Fixed ceilings, not readings — the scale a
+        ServerResourceStat history is read against.
+    }
+
+    class OSJobObject {
+        +CPURate int
+        +CPUAffinityMask int64
+        +MemoryLimitMB int64
+        +ProcessMemoryLimitMB int64
+        +WorkingSetLimitMB int64
+        +PeakJobMemoryUsedMB int64
+        +TotalUserTime int64
+        +TotalKernelTime int64
+        +ReadOperationCount int64
+        +WriteOperationCount int64
+        The host's limits on SQL Server, below the
+        governor's limits on itself.
+    }
+
+    class DatabaseResourceStat {
+        +EndTime time.Time
+        +AvgCPUPercent float64
+        +AvgDataIOPercent float64
+        +AvgLogWritePercent float64
+        +AvgMemoryUsagePercent float64
+        +XTPStoragePercent float64
+        +MaxWorkerPercent float64
+        +MaxSessionPercent float64
+        +AvgLoginRatePercent float64
+        +AvgInstanceCPUPercent float64
+        +AvgInstanceMemoryPercent float64
+        +DTULimit int
+        +CPULimit float64
+        +UsedStorageMB int64
+        +AllocatedStorageMB int64
+        +ReplicaRole int
+        One row per 15-second window, about an
+        hour retained — the database-scoped twin
+        of ServerResourceStat. Percentages are of
+        the database's own governed limit; the
+        two AvgInstance ones are instance-wide.
+    }
+
+    class UserDBResourceGovernance {
+        +DatabaseID int
+        +DatabaseName string
+        +SLOName string
+        +CPULimit int
+        +MinCPU int
+        +MaxCPU int
+        +CapCPU int
+        +MaxDOP int
+        +MaxSessions int
+        +MaxDBMaxSizeMB int64
+        +DBFileGrowthMB int64
+        +InitialDBFileSizeMB int64
+        +LogSizeMB int64
+        +InstanceCapCPU int
+        +LastUpdatedUTC time.Time
+        Roughly forty-five fields in all; these
+        are the ones a caller reads first.
+        Ceilings, not readings — the scale a
+        DatabaseResourceStat history is read
+        against, and what withholds New
+        Database's file fields on Azure. The view
+        returns every database on the instance
+        from wherever the connection is.
+    }
+
+    %% =========================================================
+    %% Relationships
+    %% =========================================================
+    Server --> ServerResourceStat : ServerResourceStats() / LatestServerResourceStats()
+    Server --> InstanceResourceGovernance : InstanceResourceGovernance()
+    Server --> OSJobObject : OSJobObject()
+    Server "1" --> "*" UserDBResourceGovernance : UserDBResourceGovernance()
+    Database --> DatabaseResourceStat : ResourceStats() / LatestResourceStats()
+    Database --> UserDBResourceGovernance : ResourceGovernance()

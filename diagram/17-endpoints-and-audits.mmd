@@ -1,0 +1,225 @@
+classDiagram
+
+    %% =========================================================
+    %% Database mirroring endpoint (Always On's transport)
+    %% =========================================================
+
+    class DatabaseMirroringEndpoint {
+        -server *Server
+        +Name string
+        +Port int
+        +State string
+        +Role string
+        +IsEncryptionEnabled bool
+        +EncryptionAlgorithm string
+        +ConnectionAuth string
+        +Owner string
+        +Server() *Server
+        +URL() string
+        +Start() error
+        +Stop() error
+        +Drop() error
+        +GrantConnect(login) error
+    }
+
+    class EndpointSpec {
+        +Name string
+        +Port int
+        +Role string
+        +Authentication string
+        +Encryption string
+        +EncryptionAlgorithm string
+    }
+
+    class Endpoint {
+        -server *Server
+        +EndpointID int
+        +Name string
+        +Owner string
+        +Protocol string
+        +Type string
+        +State string
+        +IsAdmin bool
+        +Port int
+        +IsSystem bool
+        +SetState(state) error
+        +Drop() error
+        +MirroringDetail() *DatabaseMirroringEndpoint
+        +ServiceBrokerDetail() *ServiceBrokerEndpointDetail
+        Type-specific detail is read on demand,
+        so listing every endpoint costs one
+        query. The five built-in endpoints
+        refuse writes with ErrSystemEndpoint.
+    }
+
+    class EndpointState {
+        <<enumeration>>
+        EndpointStarted
+        EndpointStopped
+        EndpointDisabled
+    }
+
+    class ServiceBrokerEndpointDetail {
+        +IsMessageForwardingEnabled bool
+        +MessageForwardingSize int
+        +ConnectionAuth string
+        +EncryptionAlgorithm string
+        +CertificateName string
+    }
+
+    %% =========================================================
+    %% Server audits, audit specifications, server triggers
+    %% =========================================================
+
+    class ServerAudit {
+        -server *Server
+        +AuditID int
+        +Name string
+        +GUID string
+        +Type string
+        +OnFailure string
+        +QueueDelay int
+        +Predicate string
+        +IsEnabled bool
+        +LogFilePath string
+        +LogFileName string
+        +MaxFileSize int64
+        +MaxRolloverFiles int
+        +MaxFiles int
+        +ReserveDiskSpace bool
+        +Alter(spec) error
+        +Rename(newName) error
+        +SetState(on) error
+        +Drop() error
+        +Status() *ServerAuditStatus
+        +WithDisabled(ctx, fn) error
+        Every write but SetState needs the audit
+        disabled; each one disables, applies and
+        re-enables, and only if it disabled.
+        MaxFileSize uses 0 for UNLIMITED,
+        MaxRolloverFiles uses AuditUnlimited.
+    }
+
+    class ServerAuditSpec {
+        +Name string
+        +Type string
+        +QueueDelay int
+        +OnFailure string
+        +Predicate string
+        +FilePath string
+        +MaxFileSize int64
+        +MaxRolloverFiles int
+        +MaxFiles int
+        +ReserveDiskSpace bool
+    }
+
+    class ServerAuditStatus {
+        +Status string
+        +StatusTime time.Time
+        +AuditFilePath string
+        +AuditFileSize int64
+    }
+
+    class ServerAuditSpecification {
+        -server *Server
+        +SpecificationID int
+        +Name string
+        +AuditGUID string
+        +AuditName string
+        +IsEnabled bool
+        +ActionGroups []string
+        +AddActionGroups(groups) error
+        +DropActionGroups(groups) error
+        +SetAudit(auditName) error
+        +SetState(on) error
+        +Drop() error
+        +WithDisabled(ctx, fn) error
+        AuditName is empty for an orphaned
+        specification: dropping the audit it
+        references succeeds and leaves the
+        audit_guid pointing at nothing.
+    }
+
+    class ServerAuditSpecificationSpec {
+        +Name string
+        +AuditName string
+        +ActionGroups []string
+        +Enabled bool
+    }
+
+    class DatabaseAuditSpecification {
+        -db *Database
+        +SpecificationID int
+        +Name string
+        +AuditGUID string
+        +AuditName string
+        +IsEnabled bool
+        +ActionGroups []string
+        +Actions []DatabaseAuditAction
+        +AddActions(groups, actions) error
+        +DropActions(groups, actions) error
+        +SetAudit(auditName) error
+        +SetState(on) error
+        +Drop() error
+        +WithDisabled(ctx, fn) error
+        Unlike the server half it also records
+        individual actions on securables, not
+        action groups alone.
+    }
+
+    class DatabaseAuditAction {
+        +ActionName string
+        +ClassDesc string
+        +SchemaName string
+        +ObjectName string
+        +Principal string
+        +AuditedResult string
+        +FullName() string
+    }
+
+    class DatabaseAuditSpecificationSpec {
+        +Name string
+        +AuditName string
+        +ActionGroups []string
+        +Actions []DatabaseAuditAction
+        +Enabled bool
+    }
+
+    class ServerTrigger {
+        -server *Server
+        +Name string
+        +IsEnabled bool
+        +CreateDate time.Time
+        +ModifyDate time.Time
+        +Events []string
+        +Definition string
+        +Enable() error
+        +Disable() error
+        +Drop() error
+        A different family from Database.Triggers,
+        which reads DML triggers on a table, and from
+        DatabaseTrigger below, which reads DDL triggers
+        scoped to one database.
+    }
+
+    %% =========================================================
+    %% Relationships
+    %% =========================================================
+    Server "1" --> "1" DatabaseMirroringEndpoint : has at most one
+    Server --> EndpointSpec : accepts
+    Server "1" --> "*" Endpoint : Endpoints() returns
+    Endpoint --> EndpointState : SetState() takes
+    Endpoint ..> DatabaseMirroringEndpoint : MirroringDetail() returns
+    Endpoint ..> ServiceBrokerEndpointDetail : ServiceBrokerDetail() returns
+    Server "1" --> "*" ServerAudit : owns
+    Server --> ServerAuditSpec : CreateServerAudit() takes
+    ServerAudit --> ServerAuditStatus : Status() returns
+    Server "1" --> "*" ServerAuditSpecification : owns
+    Server --> ServerAuditSpecificationSpec : CreateServerAuditSpecification() takes
+    ServerAuditSpecification "*" --> "1" ServerAudit : writes to
+    Database "1" --> "*" DatabaseAuditSpecification : owns
+    Database --> DatabaseAuditSpecificationSpec : CreateDatabaseAuditSpecification() takes
+    DatabaseAuditSpecification "1" --> "*" DatabaseAuditAction : records
+    DatabaseAuditSpecification "*" --> "1" ServerAudit : writes to
+    Server "1" --> "*" ServerTrigger : owns
+    AvailabilityReplica ..> DatabaseMirroringEndpoint : ships log through

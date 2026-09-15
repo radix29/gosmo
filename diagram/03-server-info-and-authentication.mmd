@@ -1,0 +1,110 @@
+classDiagram
+
+    %% =========================================================
+    %% Top-level entry point
+    %% =========================================================
+
+    class ServerInfo {
+        +Name string
+        +Edition string
+        +ProductVersion string
+        +ProductLevel string
+        +Collation string
+        +IsClustered bool
+        +IsHADREnabled bool
+        +IsSingleUser bool
+        +EngineEdition int
+        +OSVersion string
+        +Platform string
+        +PhysicalMemoryMB int64
+        +LogicalCPUCount int
+        +SysInfoUnavailable bool
+        +DefaultDataPath string
+        +DefaultLogPath string
+        +DefaultBackupPath string
+        +VersionMajor int
+        +VersionMinor int
+        +VersionBuild int
+        +IsAzure() bool
+        EngineEdition is SERVERPROPERTY('EngineEdition');
+        IsAzure folds the five Azure-hosted ones.
+        ProductVersion is frozen on Azure — a Managed
+        Instance answers 12.0.2000.8 while running an
+        18.x engine, so no version gate may believe it.
+    }
+
+    class EngineEdition {
+        <<enumeration>>
+        EnginePersonal
+        EngineStandard
+        EngineEnterprise
+        EngineExpress
+        EngineAzureSQLDatabase
+        EngineAzureSynapse
+        EngineAzureManagedInst
+        EngineAzureSQLEdge
+        EngineAzureSynapseSrvls
+        +IsAzure() bool
+    }
+
+    %% =========================================================
+    %% Authentication
+    %% =========================================================
+
+    class AuthMethod {
+        <<enumeration>>
+        AuthSQLServer
+        AuthWindows
+        AuthEntraDefault
+        AuthEntraPassword
+        AuthEntraMSI
+        AuthEntraServicePrincipal
+        AuthEntraServicePrincipalAccessToken
+        AuthEntraIntegrated
+        AuthEntraInteractive
+        AuthEntraDeviceCode
+        AuthEntraAzCLI
+        AuthEntraAzureDeveloperCLI
+        AuthEntraAzurePipelines
+        AuthEntraOnBehalfOf
+        +String() string
+    }
+
+    class EntraCache {
+        +NewEntraCache() *EntraCache
+        +Warm(ctx, opts) error
+        +Clear()
+        One sign-in per identity, shared by
+        every connection and Server given it.
+        In memory only; never keyed by server.
+    }
+
+    class DeviceCodeMessage {
+        +UserCode string
+        +VerificationURL string
+        +Message string
+    }
+
+    class KerberosOptions {
+        +ConfigFile string
+        +CredCacheFile string
+        +KeytabFile string
+        +Realm string
+        +DNSLookupKDC *bool
+        +UDPPreferenceLimit int
+        Native SSPI on Windows, unless set.
+        Every other platform authenticates
+        AuthWindows via Kerberos, using this or
+        the ambient kinit cache when it is the
+        zero value.
+    }
+
+    %% =========================================================
+    %% Relationships
+    %% =========================================================
+    ConnectionOptions --> AuthMethod : uses
+    ConnectionOptions --> KerberosOptions : configures AuthWindows via
+    ConnectionOptions --> EntraCache : shares Entra sign-ins through
+    ConnectionOptions ..> DeviceCodeMessage : DeviceCodePrompt receives
+    Server --> ServerInfo : has
+    ServerInfo ..> EngineEdition : EngineEdition is one of

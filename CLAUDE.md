@@ -9,12 +9,18 @@ gosmo is a Go library that mimics Microsoft SQL Server Management Objects
 CGO, and talks to SQL Server through `github.com/microsoft/go-mssqldb`.
 
 - Module: `github.com/radix29/gosmo` — https://github.com/radix29/gosmo
-- `README.md` carries the full API map (as Mermaid class diagrams).
+- `ARCHITECTURE.md` carries the full API map (as Mermaid class diagrams), the
+  feature map, the error and authentication reference, and the connection
+  internals. `README.md` is a short summary and points there.
 - Requires Go 1.27.
 
-Read what the task touches: `README.md` for the API map, `quoting.go`'s doc
-comments for anything that builds an identifier or literal, `server.go`'s doc
-comments for the handle-vs-lookup method pairs. A one-file fix needs none of it.
+Read what the task touches: `ARCHITECTURE.md` for the API map and the feature
+map, `quoting.go`'s doc comments for anything that builds an identifier or
+literal, `server.go`'s doc comments for the handle-vs-lookup method pairs. A
+one-file fix needs none of it. `ARCHITECTURE.md` § Maintaining this document
+is the authority on editing the class map — read it before touching a
+diagram. The diagrams themselves are `diagram/*.mmd`; `ARCHITECTURE.md`
+inlines only `diagram/00-map.mmd` and links the rest.
 
 ## This is a library, not gossms's back end
 
@@ -31,7 +37,7 @@ published, general-purpose library with users beyond gossms.
   "No callers in gossms" is not evidence of dead code. This covers whole
   files, exported methods, exported types and their fields, and struct
   fields only some paths populate. The `*Seq` iterators in `iter.go` are the
-  standing example: 91 exported methods, zero gossms callers, all
+  standing example: 112 exported methods, zero gossms callers, all
   deliberately kept.
 - When an audit turns up something unused, the allowed moves are: make it
   faster, make its doc comment accurate about what it actually does, or add
@@ -135,6 +141,6 @@ a gossms-side build only compiles the packages it imports.
 
 ## Release
 
-`RELEASE.md` and `CHANGELOG.md` cover the release process; don't edit either
-as part of a feature or fix unless asked. Note that gossms cannot cut a
+`RELEASE.md` carries the current release and `CHANGELOG.md` the history;
+don't edit either as part of a feature or fix unless asked. Note that gossms cannot cut a
 release while gosmo's `HEAD` is untagged — tag and push here first.

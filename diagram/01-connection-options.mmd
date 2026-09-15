@@ -1,0 +1,41 @@
+classDiagram
+
+    %% =========================================================
+    %% Top-level entry point
+    %% =========================================================
+
+    class ConnectionOptions {
+        +Server string
+        +Database string
+        +Auth AuthMethod
+        +User string
+        +Password string
+        +TenantID string
+        +ClientID string
+        +ClientCertPath string
+        +AccessToken string
+        +AccessTokenProvider func
+        +ApplicationClientID string
+        +EntraCache *EntraCache
+        +DeviceCodePrompt func
+        +ServerSPN string
+        +Kerberos KerberosOptions
+        +ConnectTimeout Duration
+        +ApplicationName string
+        +MaxOpenConns int
+        +MaxIdleConns int
+        +ConnMaxLifetime Duration
+        +ConnMaxIdleTime Duration
+        +SessionInitSQL string
+        +Dialer mssql.Dialer
+        +TrustServerCertificate bool
+        +Encrypt string
+        +HostNameInCertificate string
+        +ExtraParams url.Values
+        +ConnectionString(maskSecrets) string
+    }
+
+    %% =========================================================
+    %% Relationships
+    %% =========================================================
+    Server --> ConnectionOptions : created from

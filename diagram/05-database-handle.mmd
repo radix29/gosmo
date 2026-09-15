@@ -1,0 +1,248 @@
+classDiagram
+
+    %% =========================================================
+    %% Database
+    %% =========================================================
+
+    class Database {
+        -server *Server
+        -name string
+        -id int
+        -state string
+        -recoveryModel RecoveryModel
+        -compatLevel CompatibilityLevel
+        -collation string
+        -isReadOnly bool
+        -createDate time.Time
+        +Name() string
+        +ID() int
+        +State() string
+        +IsSystem() bool
+        +IsSnapshot() bool
+        +SourceDatabaseID() int
+        +RecoveryModel() RecoveryModel
+        +CompatibilityLevel() CompatibilityLevel
+        +Tables() []*Table
+        +TablesBySchema(schema) []*Table
+        +TableByName(schema, name) *Table
+        +Table(schema, name) *Table
+        +CreateTable(req) error
+        +DropTable(schema, name, cascade) error
+        +RenameTable(schema, oldName, newName) error
+        +RenameObject(schema, oldName, newName) error
+        +Catalog() *Catalog
+        +SystemCatalog() *Catalog
+        +TablesFiltered(filter) []*Table
+        +TablesOfKind(kind) []*Table
+        +TablesOfKindFiltered(kind, filter) []*Table
+        +TableKindsPresent() TableKindPresence
+        +TransferObject(targetSchema, schema, name) error
+        +Views() []*View
+        +ViewsFiltered(filter) []*View
+        +DropView(schema, name) error
+        +StoredProcedures() []*StoredProcedure
+        +StoredProceduresFiltered(filter) []*StoredProcedure
+        +CreateStoredProcedure(schema, name, body) error
+        +DropStoredProcedure(schema, name) error
+        +UserDefinedFunctions() []*UserDefinedFunction
+        +UserDefinedFunctionsFiltered(filter) []*UserDefinedFunction
+        +DropFunction(schema, name) error
+        +Parameters(schema, name) []*Parameter
+        +SystemViews() []*View
+        +SystemViewsFiltered(filter) []*View
+        +SystemStoredProcedures() []*StoredProcedure
+        +SystemStoredProceduresFiltered(filter) []*StoredProcedure
+        +SystemFunctions() []*UserDefinedFunction
+        +SystemFunctionsFiltered(filter) []*UserDefinedFunction
+        +Schemas() []*Schema
+        +SchemaByName(name) *Schema
+        +CreateSchema(name, owner) error
+        +DropSchema(name) error
+        +Users() []*User
+        +UserByName(name) *User
+        +CreateUser(user, login, schema) error
+        +DropUser(name) error
+        +DatabaseAuditSpecifications() []*DatabaseAuditSpecification
+        +DatabaseAuditSpecificationByName(name) *DatabaseAuditSpecification
+        +DatabaseAuditSpecification(name) *DatabaseAuditSpecification
+        +CreateDatabaseAuditSpecification(spec) *DatabaseAuditSpecification
+        +DatabaseRoles() []*DatabaseRole
+        +RoleByName(name) *DatabaseRole
+        +DropDatabaseRole(name) error
+        +RoleMembers(role) []*RoleMember
+        +AddRoleMember(role, member) error
+        +RemoveRoleMember(role, member) error
+        +FileGroups() []*FileGroup
+        +Triggers() []*Trigger
+        +ObjectTriggers(schema, name) []*Trigger
+        +DropTrigger(schema, name) error
+        +DatabaseTriggers() []*DatabaseTrigger
+        +DatabaseTriggerByName(name) *DatabaseTrigger
+        +DatabaseTrigger(name) *DatabaseTrigger
+        +Sequences() []*Sequence
+        +DropSequence(schema, name) error
+        +Synonyms() []*Synonym
+        +DropSynonym(schema, name) error
+        +Rules() []*Rule
+        +RuleByName(schema, name) *Rule
+        +DropRule(schema, name) error
+        +Defaults() []*Default
+        +DefaultByName(schema, name) *Default
+        +DropDefault(schema, name) error
+        +UserDefinedDataTypes() []*UserDefinedDataType
+        +UserDefinedDataTypeByName(schema, name) *UserDefinedDataType
+        +RenameUserDefinedDataType(schema, oldName, newName) error
+        +UserDefinedTableTypes() []*UserDefinedTableType
+        +UserDefinedTableTypeByName(schema, name) *UserDefinedTableType
+        +ClrTypes() []*ClrType
+        +ClrTypeByName(schema, name) *ClrType
+        +SystemDataTypes() []*SystemDataType
+        +DropType(schema, name) error
+        +TransferType(targetSchema, schema, name) error
+        +XmlSchemaCollections() []*XmlSchemaCollection
+        +XmlSchemaCollectionByName(schema, name) *XmlSchemaCollection
+        +DropXmlSchemaCollection(schema, name) error
+        +TransferXmlSchemaCollection(targetSchema, schema, name) error
+        +Assemblies() []*Assembly
+        +AssemblyByName(name) *Assembly
+        +DropAssembly(name) error
+        +ExternalDataSources() []*ExternalDataSource
+        +ExternalDataSourceByName(name) *ExternalDataSource
+        +DropExternalDataSource(name) error
+        +ExternalFileFormats() []*ExternalFileFormat
+        +ExternalFileFormatByName(name) *ExternalFileFormat
+        +DropExternalFileFormat(name) error
+        +ExternalLibraries() []*ExternalLibrary
+        +ExternalLibraryByName(name) *ExternalLibrary
+        +DropExternalLibrary(name) error
+        +PlanGuides() []*PlanGuide
+        +PlanGuideByName(name) *PlanGuide
+        +PlanGuide(name) *PlanGuide
+        +DropPlanGuide(name) error
+        +PartitionFunctions() []*PartitionFunction
+        +PartitionFunctionByName(name) *PartitionFunction
+        +PartitionSchemes() []*PartitionScheme
+        +PartitionSchemeByName(name) *PartitionScheme
+        +ExtendedProperties(level) []*ExtendedProperty
+        +AddExtendedProperty(name, value, level) error
+        +SetExtendedProperty(name, value, level) error
+        +DropExtendedProperty(name, level) error
+        +Certificates() []*Certificate
+        +CertificateByName(name) *Certificate
+        +CreateCertificate(spec) error
+        +AsymmetricKeys() []*AsymmetricKey
+        +AsymmetricKeyByName(name) *AsymmetricKey
+        +HasMasterKey() bool
+        +CreateMasterKey(password) error
+        +ColumnMasterKeys() []*ColumnMasterKey
+        +ColumnMasterKeyByName(name) *ColumnMasterKey
+        +CreateColumnMasterKeyWithSignature(name, provider, path, sig) error
+        +ColumnEncryptionKeys() []*ColumnEncryptionKey
+        +ColumnEncryptionKeyByName(name) *ColumnEncryptionKey
+        +CreateColumnEncryptionKey(name, values) error
+        +SecurityPolicies() []*SecurityPolicy
+        +SecurityPolicyByName(schema, name) *SecurityPolicy
+        +DatabaseScopedCredentials() []*DatabaseScopedCredential
+        +DatabaseScopedCredentialByName(name) *DatabaseScopedCredential
+        +DatabaseScopedCredential(name) *DatabaseScopedCredential
+        +CreateDatabaseScopedCredential(spec) *DatabaseScopedCredential
+        +Capabilities() *DatabaseCapabilities
+        +RecoveryStatus() *DatabaseRecoveryStatus
+        +SpaceUsed() SpaceInfo
+        +DiskUsage() DiskUsage
+        +ResourceStats(max) []*DatabaseResourceStat
+        +LatestResourceStats() *DatabaseResourceStat
+        +ResourceGovernance() *UserDBResourceGovernance
+        +TableRowCounts() map~int,int64~
+        +TableSpaceUsedAll() map~int,TableSpaceInfo~
+        +SetRecoveryModel(model) error
+        +SetCompatibilityLevel(level) error
+        +SetReadOnly(bool) error
+        +SetUserAccess(mode) error
+        +SetOffline() error
+        +SetOnline() error
+        +Options() *DatabaseOptions
+        +SetDatabaseOption(opt, value) error
+        +SetOwner(principal) error
+        +DatabaseScopedConfigs() []*DatabaseScopedConfig
+        +SetDatabaseScopedConfig(name, value, forSecondary) error
+        +QueryStore() *QueryStoreInfo
+        +SetQueryStoreOptions(opts) error
+        +FlushQueryStore() error
+        +ClearQueryStore() error
+        +QueryStoreTopResourceQueries(opts) []*QSQueryStat
+        +QueryStoreRegressedQueries(opts) []*QSQueryStat
+        +QueryStoreHighVariationQueries(opts) []*QSQueryStat
+        +QueryStoreForcedPlanQueries(opts) []*QSQueryStat
+        +QueryStoreOverallConsumption(opts) []*QSIntervalStat
+        +QueryStoreTrackedQuery(queryID, opts) []*QSPlanIntervalStat
+        +QueryStoreWaitCategories(opts) []*QSWaitStat
+        +QueryStoreWaitingQueries(category, opts) []*QSQueryStat
+        +QueryStorePlans(queryID, opts) []*QSPlan
+        +QueryStoreQueryText(queryID) (string, string)
+        +QueryStoreForcePlan(queryID, planID) error
+        +QueryStoreUnforcePlan(queryID, planID) error
+        +Files() []*DatabaseFileInfo
+        +AddFile(spec) error
+        +AlterFile(name, m) error
+        +RemoveFile(name) error
+        +AddFileGroup(name) error
+        +RemoveFileGroup(name) error
+        +SetDefaultFileGroup(name) error
+        +SetFileGroupReadOnly(name, ro) error
+        +ChangeTracking() *ChangeTrackingInfo
+        +SetChangeTracking(info) error
+        +TableChangeTracking() []*TableChangeTracking
+        +TableChangeTrackingFor(schema, name) *TableChangeTracking
+        +SetTableChangeTracking(schema, name, enable, cols) error
+        +Dependencies(schema, name) []*Dependency
+        +Dependents(schema, name) []*Dependency
+        +Search(pattern) []*SearchResult
+        +FindSecurables(search) []SecurableRef
+        +ObjectColumns(schema, name) []*Column
+        +Permissions(schema, name) []*PermissionEntry
+        +GrantPermission(schema, name, perm, principal) error
+        +DenyPermission(schema, name, perm, principal) error
+        +RevokePermission(schema, name, perm, principal) error
+        +PermissionsForPrincipal(principal) []*PrincipalSecurable
+        +GrantPermissionWithOptions(schema, name, perm, principal, opts) error
+        +DenyPermissionWithOptions(schema, name, perm, principal, opts) error
+        +RevokePermissionWithOptions(schema, name, perm, principal, opts) error
+        +ColumnPermissions(schema, name) []*ColumnPermissionEntry
+        +ColumnPermissionsForPrincipal(principal) []*ColumnPermissionEntry
+        +GrantColumnPermission(schema, name, perm, cols, principal) error
+        +DenyColumnPermission(schema, name, perm, cols, principal) error
+        +RevokeColumnPermission(schema, name, perm, cols, principal) error
+        +GrantColumnPermissionWithOptions(schema, name, perm, cols, principal, opts) error
+        +DenyColumnPermissionWithOptions(schema, name, perm, cols, principal, opts) error
+        +RevokeColumnPermissionWithOptions(schema, name, perm, cols, principal, opts) error
+        +EffectivePermissions(principal) []*EffectivePermission
+        +EffectiveObjectPermissions(schema, name, principal) []*EffectivePermission
+        +EffectiveSchemaPermissions(schema, principal) []*EffectivePermission
+        +SchemaPermissions(schema) []*PermissionEntry
+        +GrantSchemaPermission(schema, perm, principal) error
+        +DenySchemaPermission(schema, perm, principal) error
+        +RevokeSchemaPermission(schema, perm, principal) error
+        +GrantSchemaPermissionWithOptions(schema, perm, principal, opts) error
+        +DenySchemaPermissionWithOptions(schema, perm, principal, opts) error
+        +RevokeSchemaPermissionWithOptions(schema, perm, principal, opts) error
+        +DatabasePermissions() []*DatabasePermissionEntry
+        +GrantDatabasePermission(perm, principal) error
+        +DenyDatabasePermission(perm, principal) error
+        +RevokeDatabasePermission(perm, principal) error
+        +GrantDatabasePermissionWithOptions(perm, principal, opts) error
+        +DenyDatabasePermissionWithOptions(perm, principal, opts) error
+        +RevokeDatabasePermissionWithOptions(perm, principal, opts) error
+        +EstimatedPlan(sql) *ExecutionPlan
+        +ActualPlan(sql) *ExecutionPlan
+        +ExecProc(schema, name, params) ProcResult
+        +BulkInsert(bc, rows) int64
+    }
+
+    %% =========================================================
+    %% Relationships
+    %% =========================================================
+    Server "1" --> "*" Database : owns
+    DatabaseSnapshot --> Database : Database() opens
+    ScriptCollector ..> Database : captures writes from
+    Scripter --> Database : scripts objects from

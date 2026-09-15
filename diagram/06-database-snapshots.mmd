@@ -1,0 +1,40 @@
+classDiagram
+
+    %% =========================================================
+    %% Database
+    %% =========================================================
+
+    class DatabaseSnapshot {
+        -server *Server
+        +Name string
+        +DatabaseID int
+        +SourceDatabase string
+        +SourceDatabaseID int
+        +State string
+        +CreateDate time.Time
+        +Server() *Server
+        +Database() *Database
+        +Restore() error
+        +Drop() error
+        Also a row of Server.Databases, where
+        Database.IsSnapshot() tells it apart.
+    }
+
+    class CreateDatabaseSnapshotRequest {
+        +Name string
+        +SourceDatabase string
+        +Files []SnapshotFileSpec
+        nil Files = SnapshotFileDefaults
+    }
+
+    class SnapshotFileSpec {
+        +LogicalName string
+        +FileName string
+    }
+
+    %% =========================================================
+    %% Relationships
+    %% =========================================================
+    Server "1" --> "*" DatabaseSnapshot : owns
+    Server ..> CreateDatabaseSnapshotRequest : CreateDatabaseSnapshot() takes
+    CreateDatabaseSnapshotRequest "1" --> "*" SnapshotFileSpec : one per ROWS file
