@@ -443,6 +443,57 @@ func iterWirings(t *testing.T) []seqWiring {
 				}
 			},
 			func(ctx context.Context) { _, _ = dbo.PlanGuidesContext(ctx) }},
+		// Service Broker. The contract and service iterators fetch their
+		// child rows in a second query, which the recording below covers
+		// too — a half wired to the wrong listing differs in both statements.
+		{"Database.MessageTypeSeq",
+			func(ctx context.Context) {
+				for range dbo.MessageTypeSeq(ctx) {
+				}
+			},
+			func(ctx context.Context) { _, _ = dbo.MessageTypesContext(ctx) }},
+		{"Database.ContractSeq",
+			func(ctx context.Context) {
+				for range dbo.ContractSeq(ctx) {
+				}
+			},
+			func(ctx context.Context) { _, _ = dbo.ContractsContext(ctx) }},
+		{"Database.BrokerServiceSeq",
+			func(ctx context.Context) {
+				for range dbo.BrokerServiceSeq(ctx) {
+				}
+			},
+			func(ctx context.Context) { _, _ = dbo.BrokerServicesContext(ctx) }},
+		{"Database.BrokerQueueSeq",
+			func(ctx context.Context) {
+				for range dbo.BrokerQueueSeq(ctx) {
+				}
+			},
+			func(ctx context.Context) { _, _ = dbo.BrokerQueuesContext(ctx) }},
+		{"Database.RouteSeq",
+			func(ctx context.Context) {
+				for range dbo.RouteSeq(ctx) {
+				}
+			},
+			func(ctx context.Context) { _, _ = dbo.RoutesContext(ctx) }},
+		{"Database.RemoteServiceBindingSeq",
+			func(ctx context.Context) {
+				for range dbo.RemoteServiceBindingSeq(ctx) {
+				}
+			},
+			func(ctx context.Context) { _, _ = dbo.RemoteServiceBindingsContext(ctx) }},
+		{"Database.BrokerPrioritySeq",
+			func(ctx context.Context) {
+				for range dbo.BrokerPrioritySeq(ctx) {
+				}
+			},
+			func(ctx context.Context) { _, _ = dbo.BrokerPrioritiesContext(ctx) }},
+		{"Database.QueueMonitorSeq",
+			func(ctx context.Context) {
+				for range dbo.QueueMonitorSeq(ctx) {
+				}
+			},
+			func(ctx context.Context) { _, _ = dbo.QueueMonitorsContext(ctx) }},
 		{"Database.ExternalDataSourceSeq",
 			func(ctx context.Context) {
 				for range dbo.ExternalDataSourceSeq(ctx) {

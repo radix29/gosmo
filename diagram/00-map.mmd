@@ -29,6 +29,7 @@ flowchart TB
         N11["11 · Keys, statistics, table kinds, and types"]
         N12["12 · Programmability, external resources, and the scripters"]
         N13["13 · Script options and the database object families"]
+        N20["20 · Service Broker"]
     end
     subgraph A6["Backup, restore, and SQL Server Agent"]
         direction TB
@@ -58,6 +59,7 @@ flowchart TB
     N05 -- "filters listings and answers permissions" --> N09
     N05 -- "contains tables and indexes" --> N10
     N05 -- "contains the object families" --> N13
+    N05 -- "owns the Service Broker families" --> N20
     N05 -- "owns database audit specifications" --> N17
     N05 -- "exposes its own Azure resource views" --> N19
     click N01 href "diagram/01-connection-options.mmd"
@@ -79,3 +81,4 @@ flowchart TB
     click N17 href "diagram/17-endpoints-and-audits.mmd"
     click N18 href "diagram/18-triggers-keys-and-error-log.mmd"
     click N19 href "diagram/19-azure-instance-resources.mmd"
+    click N20 href "diagram/20-service-broker.mmd"

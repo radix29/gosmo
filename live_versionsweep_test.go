@@ -211,6 +211,28 @@ var sweepMustCall = []string{
 	"Database.PlanGuidesContext",
 	"Database.PlanGuideByNameContext",
 
+	// Service Broker: seven listings, seven by-name finders, and the two
+	// DMV-backed reads, which are the ones a caller without VIEW DATABASE
+	// STATE loses — they are separate calls precisely so that losing them
+	// does not cost the queue listing as well.
+	"Database.MessageTypesContext",
+	"Database.MessageTypeByNameContext",
+	"Database.ContractsContext",
+	"Database.ContractByNameContext",
+	"Database.BrokerQueuesContext",
+	"Database.BrokerQueueByNameContext",
+	"Database.BrokerServicesContext",
+	"Database.BrokerServiceByNameContext",
+	"Database.RoutesContext",
+	"Database.RouteByNameContext",
+	"Database.RemoteServiceBindingsContext",
+	"Database.RemoteServiceBindingByNameContext",
+	"Database.BrokerPrioritiesContext",
+	"Database.BrokerPriorityByNameContext",
+	"Database.QueueMessageCountsContext",
+	"Database.QueueMonitorsContext",
+	"BrokerQueue.MessageCountContext",
+
 	// External resources.
 	"Database.ExternalDataSourcesContext",
 	"Database.ExternalDataSourceByNameContext",
@@ -242,6 +264,16 @@ var sweepMustCall = []string{
 	"Scripter.ScriptDefaultContext",
 	"Scripter.ScriptAssemblyContext",
 	"Scripter.ScriptPlanGuideContext",
+
+	// The seven Service Broker scripters, each of which opens with the
+	// family's by-name read.
+	"Scripter.ScriptMessageTypeContext",
+	"Scripter.ScriptContractContext",
+	"Scripter.ScriptBrokerQueueContext",
+	"Scripter.ScriptBrokerServiceContext",
+	"Scripter.ScriptRouteContext",
+	"Scripter.ScriptRemoteServiceBindingContext",
+	"Scripter.ScriptBrokerPriorityContext",
 	"Scripter.ScriptExternalDataSourceContext",
 	"Scripter.ScriptExternalFileFormatContext",
 	"Scripter.ScriptExternalLibraryContext",
@@ -310,6 +342,29 @@ var sweepSchema = []string{
 	   @type = N'SQL', @module_or_batch = NULL,
 	   @params = N'@name nvarchar(100)',
 	   @hints = N'OPTION (OPTIMIZE FOR (@name = N''one''))'`,
+	// Service Broker: one object of each family, in dependency order — a
+	// contract needs its message types, a service its queue and contract, a
+	// broker priority both. The activation procedure takes no parameters
+	// because an activated one is called with none.
+	//
+	// The remote service binding is missing from this list on purpose: it is
+	// the one statement Azure SQL Managed Instance refuses (Msg 41906, at
+	// compile time, which would take the rest of its batch with it), so
+	// sweepServiceBroker creates it where the refusal can be tolerated.
+	`CREATE MESSAGE TYPE [//gosmo/sweep/mt] VALIDATION = VALID_XML WITH SCHEMA COLLECTION dbo.sweep_xsd`,
+	`CREATE CONTRACT [//gosmo/sweep/contract] ([//gosmo/sweep/mt] SENT BY ANY)`,
+	`CREATE PROCEDURE dbo.usp_sweep_activate AS SET NOCOUNT ON`,
+	`CREATE QUEUE dbo.sweep_queue WITH STATUS = ON, RETENTION = OFF,
+	   ACTIVATION (STATUS = ON, PROCEDURE_NAME = dbo.usp_sweep_activate,
+	               MAX_QUEUE_READERS = 2, EXECUTE AS OWNER),
+	   POISON_MESSAGE_HANDLING (STATUS = ON) ON [PRIMARY]`,
+	`CREATE SERVICE [//gosmo/sweep/service] ON QUEUE dbo.sweep_queue ([//gosmo/sweep/contract])`,
+	`CREATE ROUTE sweep_route WITH SERVICE_NAME = N'//gosmo/sweep/service',
+	   LIFETIME = 6000, ADDRESS = N'TCP://sweep.invalid:4022'`,
+	`CREATE BROKER PRIORITY sweep_priority FOR CONVERSATION
+	   SET (CONTRACT_NAME = [//gosmo/sweep/contract],
+	        LOCAL_SERVICE_NAME = [//gosmo/sweep/service],
+	        REMOTE_SERVICE_NAME = N'//gosmo/sweep/remote', PRIORITY_LEVEL = 7)`,
 	`CREATE SYNONYM dbo.sweep_syn FOR dbo.sweep_parent`,
 	`CREATE PARTITION FUNCTION sweep_pf (INT) AS RANGE RIGHT FOR VALUES (100, 200)`,
 	`CREATE PARTITION SCHEME sweep_ps AS PARTITION sweep_pf ALL TO ([PRIMARY])`,
@@ -425,6 +480,7 @@ func TestLiveVersionSweep(t *testing.T) {
 
 	sweepTableKinds(sw, d)
 	sweepProgrammability(sw, d)
+	sweepServiceBroker(sw, d)
 	sweepQueryStoreReports(sw, d)
 	sweepScripter(sw, d)
 	sweepServerCalls(sw, srv, info)
@@ -456,6 +512,100 @@ func sweepTableKinds(sw *sweep, d *Database) {
 			return err
 		})
 	}
+}
+
+// sweepServiceBroker drives the Service Broker by-name finders and the two
+// DMV-backed reads, all of which the reflective half cannot reach: the
+// finders take a name, and BrokerQueue.MessageCountContext hangs off a queue
+// the listing returned.
+//
+// The seven listings themselves come from the reflective half, against the
+// fixture objects sweepSchema created — except the remote service binding,
+// which is created here because Azure SQL Managed Instance refuses the
+// statement (Msg 41906) and the listing must still be swept there, with no
+// row and no failure.
+func sweepServiceBroker(sw *sweep, d *Database) {
+	bindingCreated := true
+	if _, err := d.exec(sw.ctx, `CREATE REMOTE SERVICE BINDING sweep_rsb
+	   TO SERVICE N'//gosmo/sweep/remote' WITH USER = sweep_user, ANONYMOUS = OFF`); err != nil {
+		bindingCreated = false
+		sw.t.Logf("CREATE REMOTE SERVICE BINDING refused (expected on Managed Instance, "+
+			"Msg 41906): %v", err)
+	}
+
+	sw.call("Database.MessageTypeByNameContext", func() error {
+		_, err := d.MessageTypeByNameContext(sw.ctx, "//gosmo/sweep/mt")
+		return err
+	})
+	sw.call("Database.ContractByNameContext", func() error {
+		c, err := d.ContractByNameContext(sw.ctx, "//gosmo/sweep/contract")
+		if err != nil {
+			return err
+		}
+		// The second query, which a listing that returned a bare contract
+		// would pass without: the fixture contract carries one message type.
+		if len(c.Messages) != 1 {
+			return fmt.Errorf("contract has %d messages, want 1 — the usage read found nothing",
+				len(c.Messages))
+		}
+		return nil
+	})
+	sw.call("Database.BrokerQueueByNameContext", func() error {
+		q, err := d.BrokerQueueByNameContext(sw.ctx, "dbo", "sweep_queue")
+		if err != nil {
+			return err
+		}
+		// The OUTER APPLY onto the queue's internal table — the part of the
+		// read most likely to answer differently on another major.
+		if q.FileGroup == "" {
+			return errors.New("the queue's filegroup came back empty; the internal-table lookup found nothing")
+		}
+		return nil
+	})
+	sw.call("BrokerQueue.MessageCountContext", func() error {
+		q, err := d.BrokerQueueByNameContext(sw.ctx, "dbo", "sweep_queue")
+		if err != nil {
+			return err
+		}
+		_, err = q.MessageCountContext(sw.ctx)
+		return err
+	})
+	sw.call("Database.BrokerServiceByNameContext", func() error {
+		s, err := d.BrokerServiceByNameContext(sw.ctx, "//gosmo/sweep/service")
+		if err != nil {
+			return err
+		}
+		if len(s.Contracts) != 1 {
+			return fmt.Errorf("service has %d contracts, want 1 — the usage read found nothing",
+				len(s.Contracts))
+		}
+		return nil
+	})
+	sw.call("Database.RouteByNameContext", func() error {
+		_, err := d.RouteByNameContext(sw.ctx, "sweep_route")
+		return err
+	})
+	sw.call("Database.RemoteServiceBindingByNameContext", func() error {
+		_, err := d.RemoteServiceBindingByNameContext(sw.ctx, "sweep_rsb")
+		if !bindingCreated && errors.Is(err, ErrNotFound) {
+			return nil
+		}
+		return err
+	})
+	sw.call("Database.BrokerPriorityByNameContext", func() error {
+		_, err := d.BrokerPriorityByNameContext(sw.ctx, "sweep_priority")
+		return err
+	})
+	sw.call("Database.QueueMessageCountsContext", func() error {
+		counts, err := d.QueueMessageCountsContext(sw.ctx)
+		if err != nil {
+			return err
+		}
+		if len(counts) == 0 {
+			return errors.New("no queue reported a message count; the sys.internal_tables join found nothing")
+		}
+		return nil
+	})
 }
 
 // sweepProgrammability drives the reads the reflective half cannot reach:
@@ -714,6 +864,25 @@ func sweepScripter(sw *sweep, d *Database) {
 	})
 	str("ScriptPlanGuideContext", func() (string, error) { return sc.ScriptPlanGuideContext(sw.ctx, "sweep_pg") })
 
+	// The seven Service Broker scripters. Each opens with its family's
+	// by-name read, so each is version-exposed exactly like a listing.
+	str("ScriptMessageTypeContext", func() (string, error) {
+		return sc.ScriptMessageTypeContext(sw.ctx, "//gosmo/sweep/mt")
+	})
+	str("ScriptContractContext", func() (string, error) {
+		return sc.ScriptContractContext(sw.ctx, "//gosmo/sweep/contract")
+	})
+	str("ScriptBrokerQueueContext", func() (string, error) {
+		return sc.ScriptBrokerQueueContext(sw.ctx, "dbo", "sweep_queue")
+	})
+	str("ScriptBrokerServiceContext", func() (string, error) {
+		return sc.ScriptBrokerServiceContext(sw.ctx, "//gosmo/sweep/service")
+	})
+	str("ScriptRouteContext", func() (string, error) { return sc.ScriptRouteContext(sw.ctx, "sweep_route") })
+	str("ScriptBrokerPriorityContext", func() (string, error) {
+		return sc.ScriptBrokerPriorityContext(sw.ctx, "sweep_priority")
+	})
+
 	// The remaining five script objects the sweep cannot create — a CLR type
 	// and an assembly need CLR enabled and a signed binary, the three
 	// external ones PolyBase or Machine Learning Services. A not-found is
@@ -729,6 +898,12 @@ func sweepScripter(sw *sweep, d *Database) {
 			return err
 		})
 	}
+	// The remote service binding's scripter goes with them: the binding
+	// exists on every box product and on none of Managed Instance, where
+	// CREATE REMOTE SERVICE BINDING is refused outright.
+	absent("ScriptRemoteServiceBindingContext", func() (string, error) {
+		return sc.ScriptRemoteServiceBindingContext(sw.ctx, "sweep_rsb")
+	})
 	absent("ScriptClrTypeContext", func() (string, error) {
 		return sc.ScriptClrTypeContext(sw.ctx, "dbo", "sweep_clr_absent")
 	})

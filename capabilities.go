@@ -227,6 +227,19 @@ var ProbedDatabasePermissions = []string{
 	"ALTER ANY ASSEMBLY",
 	"ALTER ANY EXTERNAL DATA SOURCE",
 	"ALTER ANY EXTERNAL FILE FORMAT",
+	// Service Broker. Each of these five is enough on its own to ALTER and
+	// DROP its family — probed with WITHOUT LOGIN users on majors 13, 14 and
+	// 17, which answered identically — so none of them is paired with ALTER
+	// on the database. There is deliberately no broker-priority name here:
+	// SQL Server enforces a CREATE/ALTER BROKER PRIORITY permission but does
+	// not publish one, so HAS_PERMS_BY_NAME answers NULL for every spelling
+	// of it and the entry would read CapabilityUnknown forever. A broker
+	// priority is gated on ALTER on the database instead.
+	"ALTER ANY MESSAGE TYPE",
+	"ALTER ANY CONTRACT",
+	"ALTER ANY SERVICE",
+	"ALTER ANY ROUTE",
+	"ALTER ANY REMOTE SERVICE BINDING",
 	// 2017 and later. On 2016 HAS_PERMS_BY_NAME answers NULL for a name it
 	// does not know, which reads as CapabilityUnknown — there is no external
 	// library on that version to be gated anyway.

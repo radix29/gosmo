@@ -1,0 +1,214 @@
+classDiagram
+
+    %% =========================================================
+    %% Service Broker: message types, contracts, queues, services,
+    %% routes, remote service bindings, conversation priorities —
+    %% read, script, drop; no create. Queues and routes also alter.
+    %% =========================================================
+
+    class MessageType {
+        -db *Database
+        +Name string
+        +MessageTypeID int
+        +Owner string
+        +Validation MessageTypeValidation
+        +SchemaCollectionSchema string
+        +SchemaCollectionName string
+        +IsSystemObject bool
+        +FullName() string
+        +SchemaCollection() string
+        +Drop() error
+        IsSystemObject is id under 65536.
+    }
+
+    class MessageTypeValidation {
+        <<enumeration>>
+        NONE
+        EMPTY
+        WELL_FORMED_XML
+        VALID_XML_WITH_SCHEMA_COLLECTION
+        validation_desc says XML for the last two;
+        only xml_collection_id separates them.
+    }
+
+    class ServiceContract {
+        -db *Database
+        +Name string
+        +ContractID int
+        +Owner string
+        +Messages []ContractMessage
+        +IsSystemObject bool
+        +FullName() string
+        +Drop() error
+    }
+
+    class ContractMessage {
+        +MessageType string
+        +SentBy ContractSender
+    }
+
+    class ContractSender {
+        <<enumeration>>
+        INITIATOR
+        TARGET
+        ANY
+        ANY is both catalog bits set.
+    }
+
+    class BrokerService {
+        -db *Database
+        +Name string
+        +ServiceID int
+        +Owner string
+        +QueueSchema string
+        +QueueName string
+        +Contracts []string
+        +IsSystemObject bool
+        +FullName() string
+        +Queue() string
+        +Drop() error
+        Named BrokerService, not Service:
+        a bare Service beside Server reads
+        as the Windows service.
+    }
+
+    class BrokerQueue {
+        -db *Database
+        +Name string
+        +Schema string
+        +ObjectID int
+        +Owner string
+        +IsEnqueueEnabled bool
+        +IsReceiveEnabled bool
+        +IsRetentionEnabled bool
+        +IsPoisonMessageHandlingEnabled bool
+        +IsActivationEnabled bool
+        +ActivationProcedure string
+        +ActivationProcedureSchema string
+        +ActivationProcedureName string
+        +MaxReaders int
+        +ActivationExecuteAs string
+        +FileGroup string
+        +IsSystemObject bool
+        +CreateDate time.Time
+        +ModifyDate time.Time
+        +FullName() string
+        +MessageCount() int64
+        +Alter(QueueSettings) error
+        +Drop() error
+        The one schema-scoped family, and the
+        one marked from is_ms_shipped.
+    }
+
+    class QueueSettings {
+        +Status *bool
+        +Retention *bool
+        +PoisonMessageHandling *bool
+        +Activation *QueueActivation
+        +DropActivation bool
+        A nil field leaves that setting alone.
+    }
+
+    class QueueActivation {
+        +Enabled bool
+        +ProcedureSchema string
+        +ProcedureName string
+        +MaxQueueReaders int
+        +ExecuteAs string
+        Restated in full: the server refuses a
+        partial block on a queue that has none.
+    }
+
+    class RouteSettings {
+        +RemoteService *string
+        +BrokerInstance *string
+        +LifetimeSeconds *int
+        +Address *string
+        +MirrorAddress *string
+        A nil field leaves that setting alone.
+        No setting can be cleared by an ALTER.
+    }
+
+    class QueueMonitor {
+        +QueueID int
+        +State string
+        +TasksWaiting int
+        +LastActivatedTime time.Time
+        +LastEmptyRowsetTime time.Time
+        No row for a queue the broker has
+        never monitored; that is normal.
+    }
+
+    class Route {
+        -db *Database
+        +Name string
+        +RouteID int
+        +Owner string
+        +RemoteService string
+        +BrokerInstance string
+        +Address string
+        +MirrorAddress string
+        +Expires time.Time
+        +FullName() string
+        +LifetimeSeconds() int
+        +Alter(RouteSettings) error
+        +Drop() error
+        Nothing is marked a system object:
+        AutoCreatedLocal sits at 65536.
+    }
+
+    class RemoteServiceBinding {
+        -db *Database
+        +Name string
+        +BindingID int
+        +Owner string
+        +RemoteService string
+        +User string
+        +IsAnonymous bool
+        +Contract string
+        +FullName() string
+        +Drop() error
+        CREATE is refused on Managed
+        Instance; ALTER and DROP are not.
+    }
+
+    class BrokerPriority {
+        -db *Database
+        +Name string
+        +PriorityID int
+        +Contract string
+        +LocalService string
+        +RemoteService string
+        +Level int
+        +FullName() string
+        +Drop() error
+        An empty criterion means ANY.
+    }
+
+    class Database {
+    }
+
+    class Scripter {
+    }
+
+    Database --> MessageType : MessageTypes / MessageTypeByName
+    Database --> ServiceContract : Contracts / ContractByName
+    Database --> BrokerService : BrokerServices / BrokerServiceByName
+    Database --> BrokerQueue : BrokerQueues / BrokerQueueByName
+    Database --> QueueMonitor : QueueMonitors
+    Database --> Route : Routes / RouteByName
+    Database --> RemoteServiceBinding : RemoteServiceBindings / ByName
+    Database --> BrokerPriority : BrokerPriorities / BrokerPriorityByName
+    BrokerQueue --> QueueSettings : Alter
+    QueueSettings --> QueueActivation
+    Route --> RouteSettings : Alter
+    MessageType --> MessageTypeValidation
+    ServiceContract --> ContractMessage
+    ContractMessage --> ContractSender
+    Scripter --> MessageType : ScriptMessageType
+    Scripter --> ServiceContract : ScriptContract
+    Scripter --> BrokerQueue : ScriptBrokerQueue
+    Scripter --> BrokerService : ScriptBrokerService
+    Scripter --> Route : ScriptRoute
+    Scripter --> RemoteServiceBinding : ScriptRemoteServiceBinding
+    Scripter --> BrokerPriority : ScriptBrokerPriority

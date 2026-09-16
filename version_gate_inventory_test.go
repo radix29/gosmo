@@ -98,6 +98,39 @@ var gatedColumns = []gatedColumn{
 	// class this inventory exists for.
 	{"external_file_formats", "first_row", "f.first_row", SQLServer2019, false, ""},
 	{"external_file_formats", "parser_version", "f.parser_version", SQLServer2019, false, ""},
+
+	// Service Broker has no entry here, deliberately — see
+	// TestServiceBrokerReadsNeedNoVersionGate below.
+}
+
+// The seven Service Broker catalog views are the same shape on gosmo's floor
+// as on the newest major: the full column list of sys.service_message_types,
+// service_contracts, service_contract_message_usages, services,
+// service_queues, routes, remote_service_bindings, conversation_priorities
+// and dm_broker_queue_monitors was compared on 13.0.6500.1 and 17.0.1135.8 on
+// 2026-09-16 and is identical, column for column. Nothing in the set is newer
+// than the floor: is_poison_message_handling_enabled arrived in 2012 and
+// conversation priorities in 2008 R2.
+//
+// This says so as a test rather than as a comment because a family absent
+// from the inventory and a family that needs nothing in it read identically —
+// and because serverMajorVersion() answers 0 on Azure by design, so a gate
+// added here later would silently withhold columns there. A real gate is
+// still allowed; it just has to be put in the inventory and this expectation
+// updated with it.
+func TestServiceBrokerReadsNeedNoVersionGate(t *testing.T) {
+	for _, path := range []string{"service_broker.go", "service_broker_routing.go"} {
+		src, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read %s: %v", path, err)
+		}
+		if text := string(src); strings.Contains(text, "colSince(") ||
+			strings.Contains(text, "hasColumnSince(") {
+			t.Errorf("%s gates a column by version, but no Service Broker column "+
+				"needs one on gosmo's major-13 floor — add it to gatedColumns and "+
+				"update this test if the catalog has genuinely changed", path)
+		}
+	}
 }
 
 // colSinceCall matches a colSince call site's version argument and its col

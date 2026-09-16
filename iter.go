@@ -376,6 +376,54 @@ func (d *Database) PlanGuideSeq(ctx context.Context) iter.Seq2[*PlanGuide, error
 	return seqFrom(ctx, d.PlanGuidesContext)
 }
 
+// MessageTypeSeq returns an iterator over all Service Broker message types
+// in the database, the ones SQL Server ships included.
+func (d *Database) MessageTypeSeq(ctx context.Context) iter.Seq2[*MessageType, error] {
+	return seqFrom(ctx, d.MessageTypesContext)
+}
+
+// ContractSeq returns an iterator over all Service Broker contracts in the
+// database, each with its message types.
+func (d *Database) ContractSeq(ctx context.Context) iter.Seq2[*ServiceContract, error] {
+	return seqFrom(ctx, d.ContractsContext)
+}
+
+// BrokerServiceSeq returns an iterator over all Service Broker services in
+// the database, each with its contracts.
+func (d *Database) BrokerServiceSeq(ctx context.Context) iter.Seq2[*BrokerService, error] {
+	return seqFrom(ctx, d.BrokerServicesContext)
+}
+
+// BrokerQueueSeq returns an iterator over all Service Broker queues in the
+// database, the ones SQL Server ships included.
+func (d *Database) BrokerQueueSeq(ctx context.Context) iter.Seq2[*BrokerQueue, error] {
+	return seqFrom(ctx, d.BrokerQueuesContext)
+}
+
+// RouteSeq returns an iterator over all Service Broker routes in the
+// database, AutoCreatedLocal included.
+func (d *Database) RouteSeq(ctx context.Context) iter.Seq2[*Route, error] {
+	return seqFrom(ctx, d.RoutesContext)
+}
+
+// RemoteServiceBindingSeq returns an iterator over all remote service
+// bindings in the database.
+func (d *Database) RemoteServiceBindingSeq(ctx context.Context) iter.Seq2[*RemoteServiceBinding, error] {
+	return seqFrom(ctx, d.RemoteServiceBindingsContext)
+}
+
+// BrokerPrioritySeq returns an iterator over all conversation priorities in
+// the database.
+func (d *Database) BrokerPrioritySeq(ctx context.Context) iter.Seq2[*BrokerPriority, error] {
+	return seqFrom(ctx, d.BrokerPrioritiesContext)
+}
+
+// QueueMonitorSeq returns an iterator over the broker's activation state for
+// the queues it is monitoring in the database.
+func (d *Database) QueueMonitorSeq(ctx context.Context) iter.Seq2[*QueueMonitor, error] {
+	return seqFrom(ctx, d.QueueMonitorsContext)
+}
+
 // ExternalDataSourceSeq returns an iterator over all external data sources in
 // the database.
 func (d *Database) ExternalDataSourceSeq(ctx context.Context) iter.Seq2[*ExternalDataSource, error] {

@@ -13,7 +13,7 @@ release and `CHANGELOG.md` the history.
 
 - [Version gating](#version-gating) — how a column or statement newer than the
   floor is handled, and how each gate is pinned.
-- [Architecture](#architecture) — the master map, and the nineteen Mermaid
+- [Architecture](#architecture) — the master map, and the twenty Mermaid
   class diagrams in [`diagram/`](diagram/) that cover every type gosmo
   exports.
 - [Feature map](#feature-map) — SMO's names against gosmo's, family by family,
@@ -56,9 +56,9 @@ correctly for its own major.
 
 ## Architecture
 
-The class map is **twenty Mermaid diagrams in [`diagram/`](diagram/)** — the
-master map below, and nineteen class diagrams, one per group of types. It is
-one map, not twenty: an edge that crosses files is drawn in the file that
+The class map is **twenty-one Mermaid diagrams in [`diagram/`](diagram/)** — the
+master map below, and twenty class diagrams, one per group of types. It is
+one map, not twenty-one: an edge that crosses files is drawn in the file that
 defines the class it points *into*, where the other end shows up as a bare
 box (`Server --> AvailabilityGroup` lives in
 [`16-availability-groups.mmd`](diagram/16-availability-groups.mmd)).
@@ -107,6 +107,7 @@ flowchart TB
         N11["11 · Keys, statistics, table kinds, and types"]
         N12["12 · Programmability, external resources, and the scripters"]
         N13["13 · Script options and the database object families"]
+        N20["20 · Service Broker"]
     end
     subgraph A6["Backup, restore, and SQL Server Agent"]
         direction TB
@@ -136,6 +137,7 @@ flowchart TB
     N05 -- "filters listings and answers permissions" --> N09
     N05 -- "contains tables and indexes" --> N10
     N05 -- "contains the object families" --> N13
+    N05 -- "owns the Service Broker families" --> N20
     N05 -- "owns database audit specifications" --> N17
     N05 -- "exposes its own Azure resource views" --> N19
     click N01 href "diagram/01-connection-options.mmd"
@@ -157,6 +159,7 @@ flowchart TB
     click N17 href "diagram/17-endpoints-and-audits.mmd"
     click N18 href "diagram/18-triggers-keys-and-error-log.mmd"
     click N19 href "diagram/19-azure-instance-resources.mmd"
+    click N20 href "diagram/20-service-broker.mmd"
 ```
 
 ### Connecting and the `Server` object
@@ -223,6 +226,7 @@ contains, and the `Scripter` that generates CREATE DDL for any of them.
 | [`11-statistics-and-table-kinds.mmd`](diagram/11-statistics-and-table-kinds.mmd) | Spatial tessellation, data spaces, foreign keys and check constraints, statistics and their histograms, table details and kinds, and the user-defined types. |
 | [`12-programmability-and-external.mmd`](diagram/12-programmability-and-external.mmd) | Rules and defaults, assemblies, plan guides, PolyBase and elastic-query resources, `Scripter` and `ServerScripter`. |
 | [`13-script-options-and-objects.mmd`](diagram/13-script-options-and-objects.mmd) | `ScriptVerb`/`ScriptOptions`, and schemas, views, procedures, functions, users, roles, filegroups, triggers, server roles and linked servers. |
+| [`20-service-broker.mmd`](diagram/20-service-broker.mmd) | Message types and their validation, contracts and their messages, services, queues and queue monitors, routes, remote service bindings and conversation priorities. |
 
 ### Backup, restore, and SQL Server Agent
 
@@ -953,6 +957,94 @@ a statement is sent. The scripts carry catalog values the `CREATE` has no
 clause for — a file format's row terminator, a library's scope — as
 comments, and guard each `DROP` with a catalog lookup, since none of the
 three `DROP`s takes `IF EXISTS`.
+
+### Service Broker
+
+SSMS's *db* → Service Broker: the seven families under it. All seven are read,
+script and drop; there is no create anywhere, and the *scripts* never emit an
+`ALTER` even for the six families that have one. Two families additionally
+have a real write — `ALTER QUEUE` and `ALTER ROUTE` — because their settings
+are the ones that change in operation rather than at design time.
+
+| SSMS folder              | gosmo                                              |
+| ------------------------ | -------------------------------------------------- |
+| Message Types            | `db.MessageTypes()` / `db.MessageTypeByName(name)` / `mt.Drop()` / `db.DropMessageType(name)` |
+| Contracts                | `db.Contracts()` / `db.ContractByName(name)` / `c.Drop()` / `db.DropContract(name)` |
+| Queues                   | `db.BrokerQueues()` / `db.BrokerQueueByName(schema, name)` / `q.Drop()` / `db.DropBrokerQueue(schema, name)` |
+| Services                 | `db.BrokerServices()` / `db.BrokerServiceByName(name)` / `s.Drop()` / `db.DropBrokerService(name)` |
+| Routes                   | `db.Routes()` / `db.RouteByName(name)` / `r.Drop()` / `db.DropRoute(name)` |
+| Remote Service Bindings  | `db.RemoteServiceBindings()` / `db.RemoteServiceBindingByName(name)` / `b.Drop()` / `db.DropRemoteServiceBinding(name)` |
+| Broker Priorities        | `db.BrokerPriorities()` / `db.BrokerPriorityByName(name)` / `p.Drop()` / `db.DropBrokerPriority(name)` |
+| Queue Properties (write)  | `q.Alter(QueueSettings{…})` / `db.AlterBrokerQueue(schema, name, s)` |
+| Route Properties (write)  | `r.Alter(RouteSettings{…})` / `db.AlterRoute(name, s)` |
+| A queue's message counts | `db.QueueMessageCounts()` → `map[objectID]int64`, or `q.MessageCount()` |
+| A queue's activation state | `db.QueueMonitors()` → `[]*QueueMonitor` |
+
+Nothing here is gated on the broker being enabled: `ENABLE_BROKER` decides
+whether messages are delivered, not whether these objects can be read or
+dropped. Nothing is gated on the version either — the catalog views are the
+same shape on the 2016 floor as on 17.
+
+**Queues are the one schema-scoped family.** The other six have an owner
+(`principal_id`) and no schema at all, which is why their names are single
+identifiers and their permissions are database-scoped where a queue's are
+object-scoped.
+
+**System membership is read three different ways, and they do not agree.**
+Message types, contracts and services use id `< 65536`; queues use
+`is_ms_shipped`, because their object ids are ordinary ones; routes mark
+nothing, because `AutoCreatedLocal` sits at 65536 — inside the user range —
+and `sys.routes` has no system flag. In `msdb`, Database Mail's queues are
+therefore system objects while the same feature's services and message types
+are user objects. That asymmetry is SQL Server's and is pinned by a test.
+
+Two reads are separate calls on purpose. `QueueMessageCounts` and
+`QueueMonitors` both need `VIEW DATABASE STATE`, so a caller without it loses
+them and still gets a complete queue listing; the counts come from
+`sys.internal_tables` joined to `sys.dm_db_partition_stats`, never from
+`SELECT COUNT(*)` on the queue, which needs `RECEIVE` and takes locks on a
+live queue.
+
+`MessageType.Validation` is a `MessageTypeValidation`, and the value is
+decoded rather than taken from the catalog: `validation_desc` reports `XML`
+for both `WELL_FORMED_XML` and `VALID_XML WITH SCHEMA COLLECTION`, and only
+`xml_collection_id` tells them apart. `ContractMessage.SentBy` decodes two
+bits, not one column — both set is `SENT BY ANY`.
+
+**The two writes take a nil field to mean "leave this alone"**, so a page
+sends only what changed. `QueueSettings` is `Status`, `Retention`,
+`PoisonMessageHandling`, `Activation` and `DropActivation`; one `STATUS` moves
+the enqueue and receive halves together, because the server moves both.
+`QueueActivation` is restated in full rather than field by field: enabling
+activation on a queue that has none is refused unless the procedure, the
+reader count and the principal are all given, and a queue that was read has
+all four to hand (`ActivationProcedureSchema`/`Name` are resolved through
+`OBJECT_ID` for exactly this). `EXECUTE AS SELF` never round-trips — the
+server resolves it to the principal running the statement — so the receiver
+keeps the principal it had and only a re-read can say which it became.
+
+`RouteSettings` **cannot clear anything**: `= NULL` is a parse error on every
+clause, an empty `BROKER_INSTANCE` or `MIRROR_ADDRESS` is refused, and
+`LIFETIME` must be 1 or more. gosmo refuses those up front rather than
+sending a statement the server will reject; a route that has to lose a
+setting is dropped and created again. `LifetimeSeconds` is counted from when
+the statement runs.
+
+The rights the two writes need are not the same shape. `ALTER ANY ROUTE`
+alone covers both altering and dropping a route. A queue's do not pair:
+`ALTER ON OBJECT::<queue>` drives the alter but is refused for the drop,
+which needs `CONTROL` on the queue or `ALTER` on its schema — measured on
+majors 13, 14 and 17, which answered identically.
+
+The scripts are `ScriptMessageType`, `ScriptContract`, `ScriptBrokerQueue`,
+`ScriptBrokerService`, `ScriptRoute`, `ScriptRemoteServiceBinding` and
+`ScriptBrokerPriority`. Each `DROP` is guarded with a catalog lookup, because
+none of the seven statements accepts `IF EXISTS` (Msg 156 on every one). A
+route scripts with the lifetime it has *left*: `sys.routes` keeps the expiry
+instant, not the `LIFETIME` seconds it was given. On Azure SQL Managed
+Instance `CREATE REMOTE SERVICE BINDING` is refused (Msg 41906) at compile
+time, which aborts its whole batch — so that one `CREATE` belongs in a batch
+of its own; `ALTER` and `DROP` are accepted there normally.
 
 ### Scripter
 
@@ -1944,7 +2036,7 @@ and audit specifications (server and database), credentials (server and
 database scoped), server triggers, database DDL triggers, error log, server
 filesystem, Azure instance and per-database resources, database snapshots,
 table kinds, the Programmability families (types, rules, defaults, assemblies,
-plan guides) and external resources.
+plan guides), external resources and the Service Broker families.
 
 The class diagrams need the same treatment. They live in `diagram/`, one
 `.mmd` file per group of types, and § Architecture above links every one of
