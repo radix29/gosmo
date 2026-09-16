@@ -55,16 +55,28 @@ var serviceBrokerObjects = []string{
 	               MAX_QUEUE_READERS = 3, EXECUTE AS OWNER),
 	   POISON_MESSAGE_HANDLING (STATUS = OFF) ON [PRIMARY]`,
 	`CREATE SERVICE [//gosmo/live/service] ON QUEUE dbo.sb_live_queue ([//gosmo/live/contract])`,
-	// MIRROR_ADDRESS needs BROKER_INSTANCE with it: without one the server
-	// refuses the route outright, Msg 9661.
-	`CREATE ROUTE sb_live_route WITH SERVICE_NAME = N'//gosmo/live/service',
-	   BROKER_INSTANCE = N'AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE', LIFETIME = 6000,
-	   ADDRESS = N'TCP://sb.invalid:4022', MIRROR_ADDRESS = N'TCP://sb2.invalid:4022'`,
 	`CREATE BROKER PRIORITY sb_live_priority FOR CONVERSATION
 	   SET (CONTRACT_NAME = [//gosmo/live/contract],
 	        LOCAL_SERVICE_NAME = [//gosmo/live/service],
 	        REMOTE_SERVICE_NAME = N'//gosmo/live/remote', PRIORITY_LEVEL = 7)`,
 }
+
+// The route is created apart from the rest because Managed Instance refuses a
+// MIRROR_ADDRESS (and ADDRESS = 'TRANSPORT') with Msg 41943, "does not support
+// creating route with TRANSPORT or MIRROR address" — an ordinary TCP address
+// is accepted there. Unlike the binding's 41906, 41943 is a *runtime* refusal:
+// probed on t-qmi-01 on 2026-09-17, a CREATE TABLE before it in the same batch
+// ran and an INSERT after it did not, so it aborts the remainder of the batch
+// rather than the whole of it.
+//
+// MIRROR_ADDRESS needs BROKER_INSTANCE with it: without one the server refuses
+// the route outright, Msg 9661.
+const serviceBrokerRouteMirrored = `CREATE ROUTE sb_live_route WITH SERVICE_NAME = N'//gosmo/live/service',
+	   BROKER_INSTANCE = N'AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE', LIFETIME = 6000,
+	   ADDRESS = N'TCP://sb.invalid:4022', MIRROR_ADDRESS = N'TCP://sb2.invalid:4022'`
+
+const serviceBrokerRoutePlain = `CREATE ROUTE sb_live_route WITH SERVICE_NAME = N'//gosmo/live/service',
+	   LIFETIME = 6000, ADDRESS = N'TCP://sb.invalid:4022'`
 
 func TestLiveServiceBrokerFamiliesRoundTrip(t *testing.T) {
 	db, ctx, done := liveDB(t)
@@ -81,6 +93,16 @@ func TestLiveServiceBrokerFamiliesRoundTrip(t *testing.T) {
 	// not create: the schema collection, the activation procedure and the
 	// binding's user.
 	liveExecIn(t, dst, ctx, serviceBrokerFixture...)
+
+	// The route is created separately so its MIRROR_ADDRESS can be dropped
+	// where the edition refuses one (Msg 41943, Managed Instance); everything
+	// else about the route is the same either way.
+	mirroredRoute := true
+	if _, err := src.exec(ctx, serviceBrokerRouteMirrored); err != nil {
+		mirroredRoute = false
+		t.Logf("CREATE ROUTE with MIRROR_ADDRESS refused (expected on Managed Instance): %v", err)
+		liveExecIn(t, src, ctx, serviceBrokerRoutePlain)
+	}
 
 	// The remote service binding is created separately: Managed Instance
 	// refuses CREATE REMOTE SERVICE BINDING with Msg 41906 at compile time,
@@ -268,8 +290,13 @@ func TestLiveServiceBrokerFamiliesRoundTrip(t *testing.T) {
 		if err != nil {
 			t.Fatalf("RouteByNameContext: %v", err)
 		}
-		if before.Address != "TCP://sb.invalid:4022" || before.MirrorAddress != "TCP://sb2.invalid:4022" {
-			t.Errorf("addresses read back as %q / %q", before.Address, before.MirrorAddress)
+		wantMirror := ""
+		if mirroredRoute {
+			wantMirror = "TCP://sb2.invalid:4022"
+		}
+		if before.Address != "TCP://sb.invalid:4022" || before.MirrorAddress != wantMirror {
+			t.Errorf("addresses read back as %q / %q, want %q / %q",
+				before.Address, before.MirrorAddress, "TCP://sb.invalid:4022", wantMirror)
 		}
 		// sys.routes keeps the expiry instant in UTC, so a lifetime read as
 		// local time is off by the server's offset — hours, not seconds.

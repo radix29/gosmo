@@ -277,8 +277,22 @@ var ProbedSchemaPermissions = []string{
 // column-grantable permission can produce a row there — ALTER and CONTROL are
 // not among them — so the block is empty for this list as it stands, and
 // correct the moment SELECT, UPDATE or REFERENCES joins it.
+// CONTROL is asked for as well as folded into ALTER, and the two answer
+// different questions. The query matches CONTROL alongside whatever name it
+// is given, so "ALTER" already reads 1 for a principal holding either — which
+// is right for a rename or a drop, both of which ALTER alone permits. A
+// transfer is the statement where they part: ALTER SCHEMA ... TRANSFER needs
+// CONTROL on the object and is refused to ALTER. Probed live 2026-09-16 on
+// major 17 with a WITHOUT LOGIN user per right, transferring a service queue
+// between schemas with ALTER on the target schema held throughout: CONTROL on
+// the object, its ownership, CONTROL on the source schema and CONTROL on the
+// database went through, while ALTER on the object, ALTER on the source
+// schema, ALTER ANY SCHEMA, db_ddladmin and ALTER on the database were all
+// refused Msg 15151. Only the first two of the four leave a row in this block,
+// which is what makes it the one scope that can tell them apart.
 var ProbedObjectPermissions = []string{
 	"ALTER",
+	"CONTROL",
 }
 
 // ProbedPrincipalPermissions are the DATABASE_PRINCIPAL-scope (class 4)
