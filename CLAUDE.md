@@ -116,6 +116,16 @@ a gossms-side build only compiles the packages it imports.
   ordered by the parent id first, and group them in Go.
   `Table.IndexesContext` is the worked example (2026-08-14: 42 round trips
   across 21 connections for a 20-index table, now 2).
+- **A zoneless server clock is stamped `time.UTC`, never `time.Local`.**
+  go-mssqldb already hands `datetime` columns back in UTC, so a value decoded
+  by hand (msdb's YYYYMMDD/HHMMSS integer pairs in `parseSQLAgentDate`, an
+  error-log line) must match. `time.Local` renders the same digits and so
+  looks right, but is off by the client's UTC offset the moment it is
+  compared with or subtracted from a `datetime`-derived value beside it.
+- **Over ~900 lines is the prompt to split** a file, along the lines its own
+  section banners already draw — a prompt to look, not a defect on its own.
+  Extract by exact line range, diff the extracted text byte-for-byte against
+  the original, and only then delete the source.
 - **One file per subject area** (`table.go`, `index.go`, `security.go`, …),
   with `helpers.go` for cross-file helpers and `types.go` for shared enums.
 - **Script mode.** `WithScript` collects statements instead of executing

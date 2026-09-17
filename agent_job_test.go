@@ -9,7 +9,7 @@ import (
 
 func TestParseSQLAgentDate(t *testing.T) {
 	got := parseSQLAgentDate(20240315, 143059)
-	want := time.Date(2024, time.March, 15, 14, 30, 59, 0, time.Local)
+	want := time.Date(2024, time.March, 15, 14, 30, 59, 0, time.UTC)
 	if !got.Equal(want) {
 		t.Errorf("parseSQLAgentDate(20240315, 143059) = %v, want %v", got, want)
 	}
@@ -17,9 +17,28 @@ func TestParseSQLAgentDate(t *testing.T) {
 
 func TestParseSQLAgentDateMidnight(t *testing.T) {
 	got := parseSQLAgentDate(20200101, 0)
-	want := time.Date(2020, time.January, 1, 0, 0, 0, 0, time.Local)
+	want := time.Date(2020, time.January, 1, 0, 0, 0, 0, time.UTC)
 	if !got.Equal(want) {
 		t.Errorf("parseSQLAgentDate(20200101, 0) = %v, want %v", got, want)
+	}
+}
+
+// A decoded msdb integer pair and the same instant read from a real datetime
+// column must land on the same time.Time. go-mssqldb hands a datetime back in
+// UTC, so parseSQLAgentDate has to as well — otherwise Job.LastRunDate (from
+// ja.last_executed_step_date, a datetime) and JobStep.LastRunDate (from the
+// integer columns) differ by the client's UTC offset while showing the same
+// digits.
+func TestParseSQLAgentDateMatchesDatetimeColumn(t *testing.T) {
+	// What the driver produces for datetime '2024-03-15 14:30:59'.
+	fromDatetime := time.Date(2024, time.March, 15, 14, 30, 59, 0, time.UTC)
+	fromIntegers := parseSQLAgentDate(20240315, 143059)
+	if !fromIntegers.Equal(fromDatetime) {
+		t.Errorf("parseSQLAgentDate(20240315, 143059) = %v, datetime column = %v; the two must be the same instant",
+			fromIntegers, fromDatetime)
+	}
+	if loc := fromIntegers.Location(); loc != time.UTC {
+		t.Errorf("parseSQLAgentDate location = %v, want UTC", loc)
 	}
 }
 

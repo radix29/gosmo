@@ -33,7 +33,7 @@ The gates, recorded because the next audit will otherwise re-derive them:
 | Column or construct | Held by |
 |---|---|
 | `STRING_AGG` (2017) — partition functions and schemes, server and database triggers, foreign keys, audit specifications | `sql_agg.go` `commaList` renders the `FOR XML PATH`/`STUFF` form, valid from 2008. No raw `STRING_AGG` in non-test source. |
-| Column Master Keys: `allow_enclave_computations`, `signature` (2019) | `security.go`, `colSince(major, SQLServer2019, …)` |
+| Column Master Keys: `allow_enclave_computations`, `signature` (2019) | `always_encrypted.go`, `colSince(major, SQLServer2019, …)` |
 | Query Store options: the 2017 and 2019 columns | `query_store.go`, `colSince` per column |
 | `Table.Detail`'s `ledger_type_desc` (2022) | `table.go`, `colSince(…, SQLServer2022, …)` |
 | `Statistic.Header`: DBCC returns 10 columns before 2019, 11 after | `statistics.go` binds **by column name**, with the failure named in the comment |
@@ -64,7 +64,10 @@ The library-side question to settle when one does: **`WITH INIT` on a URL
 device.** Block-blob backup to URL overwrites through `WITH FORMAT`, not
 `INIT`, so a server may refuse the statement `backup.go` builds from
 `BackupOptions.Init`. It has not been changed blind, because `INIT` is right
-for every disk and tape device and a change would alter those too.
+for every disk and tape device and a change would alter those too. gossms has
+settled its own side the same way — it keeps `Init: true` on a URL device
+rather than special-casing one device kind — so a change here waits on a real
+execution, not on a preference.
 
 Restore's URL-side cases, and the dialog behaviour around backup history, are
-gossms's: `docs/open-threads.md` § Azure SQL Managed Instance.
+gossms's: `docs/decisions.md` § Azure SQL Managed Instance.

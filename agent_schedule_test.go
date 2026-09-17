@@ -7,7 +7,7 @@ import (
 
 func TestYYYYMMDDToTime(t *testing.T) {
 	got := yyyymmddToTime(20260115)
-	want := time.Date(2026, time.January, 15, 0, 0, 0, 0, time.Local)
+	want := time.Date(2026, time.January, 15, 0, 0, 0, 0, time.UTC)
 	if !got.Equal(want) {
 		t.Errorf("yyyymmddToTime(20260115) = %v, want %v", got, want)
 	}
@@ -33,7 +33,7 @@ func TestScheduleEndDate(t *testing.T) {
 	if !scheduleEndDate(noEndDateYYYYMMDD).IsZero() {
 		t.Errorf("scheduleEndDate(99991231) should be zero Time")
 	}
-	want := time.Date(2026, time.December, 31, 0, 0, 0, 0, time.Local)
+	want := time.Date(2026, time.December, 31, 0, 0, 0, 0, time.UTC)
 	if got := scheduleEndDate(20261231); !got.Equal(want) {
 		t.Errorf("scheduleEndDate(20261231) = %v, want %v", got, want)
 	}
