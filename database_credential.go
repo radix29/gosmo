@@ -109,8 +109,8 @@ WHERE  c.name = @p1`, name)
 	return c, nil
 }
 
-// DatabaseScopedCredential returns a lightweight handle for a credential by
-// name, without querying the catalog — the counterpart of Server.Database.
+// DatabaseScopedCredentialRef returns a lightweight handle for a credential by
+// name, without querying the catalog — the counterpart of Server.DatabaseRef.
 // Identity, CredentialID and every other cached field stay at their zero
 // value; DatabaseScopedCredentialByName is what populates them.
 //
@@ -119,7 +119,7 @@ WHERE  c.name = @p1`, name)
 // knows exists — and is the only usable form under a WithScript-derived
 // context, where DatabaseScopedCredentialByNameContext's lookup is a real read
 // and a credential whose CREATE was merely collected is not there to find.
-func (d *Database) DatabaseScopedCredential(name string) *DatabaseScopedCredential {
+func (d *Database) DatabaseScopedCredentialRef(name string) *DatabaseScopedCredential {
 	return &DatabaseScopedCredential{db: d, Name: name}
 }
 
@@ -190,7 +190,7 @@ func (d *Database) CreateDatabaseScopedCredentialContext(ctx context.Context, sp
 	}
 	if Scripting(ctx) {
 		// The CREATE was only collected, so there is nothing to read back.
-		return d.DatabaseScopedCredential(spec.Name), nil
+		return d.DatabaseScopedCredentialRef(spec.Name), nil
 	}
 	return d.DatabaseScopedCredentialByNameContext(ctx, spec.Name)
 }

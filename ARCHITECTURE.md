@@ -278,10 +278,10 @@ The instance and database halves pair up: `ServerResourceStat` and
 
 | SMO equivalent          | gosmo                                      |
 | ----------------------- | ------------------------------------------ |
-| `Server.Databases`      | `srv.Databases()` / `srv.Database(name)` (no-I/O handle) |
+| `Server.Databases`      | `srv.Databases()` / `srv.DatabaseRef(name)` (no-I/O handle) |
 | Current database         | `srv.CurrentDatabase()`                    |
 | Current login (`SUSER_NAME()`) | `srv.CurrentLogin()`                 |
-| `Server.Logins`         | `srv.Logins()` / `srv.LoginByName(name)` / `srv.Login(name)` (no-I/O handle) |
+| `Server.Logins`         | `srv.Logins()` / `srv.LoginByName(name)` / `srv.LoginRef(name)` (no-I/O handle) |
 | `Server.Roles`          | `srv.ServerRoles()` / `srv.ServerRoleByName(name)` / `srv.ServerRoleMembers(role)` |
 | Server role administration | `role.Rename(newName)` / `role.ChangeOwner(owner)` / `srv.Add\|RemoveServerRoleMember(role, member)` |
 | Drop a server role      | `srv.DropServerRole(name)` / `role.Drop()`  |
@@ -289,7 +289,7 @@ The instance and database halves pair up: `ServerResourceStat` and
 | Detach a database       | `srv.DetachDatabase(name, gosmo.DetachOptions{...})` — leaves the files on disk; a detach that fails after `DropConnections` is put back to MULTI_USER |
 | Attach a database       | `srv.AttachDatabase(gosmo.AttachSpec{Name, Files, Owner, RebuildLog})` — the name need not be the one it was detached under |
 | Read a detached file    | `srv.DetachedDatabaseInfo(primaryFilePath)` → `*DetachedDatabase` (`.Name`, `.Files`, `.DataFiles()`, `.LogFiles()`) — the only way to learn a detached database's other files |
-| Database snapshots      | `srv.DatabaseSnapshots()` / `srv.DatabaseSnapshotByName(name)` / `srv.DatabaseSnapshot(name)` (no-I/O handle) / `srv.SnapshotsOf(database)` / `srv.CreateDatabaseSnapshot(req)` / `srv.RestoreFromSnapshot(database, snapshot)` — see [Database snapshots](#database-snapshots) |
+| Database snapshots      | `srv.DatabaseSnapshots()` / `srv.DatabaseSnapshotByName(name)` / `srv.DatabaseSnapshotRef(name)` (no-I/O handle) / `srv.SnapshotsOf(database)` / `srv.CreateDatabaseSnapshot(req)` / `srv.RestoreFromSnapshot(database, snapshot)` — see [Database snapshots](#database-snapshots) |
 | `Server.LinkedServers`  | `srv.LinkedServers()`                      |
 | `Server.Configuration`  | `srv.Configurations()`                     |
 | `Server.JobServer` (Agent) | see [SQL Server Agent](#sql-server-agent) below |
@@ -302,14 +302,14 @@ The instance and database halves pair up: `ServerResourceStat` and
 | Server-level permissions | `srv.ServerPermissions()` / `srv.Grant\|Deny\|RevokeServerPermission(...)` / `srv.ServerPermissionNames()` |
 | Server permissions with modifiers | `srv.Grant\|Deny\|RevokeServerPermissionWithOptions(perm, principal, opts)` — `WITH GRANT OPTION`, `CASCADE`, `GRANT OPTION FOR` |
 | Effective server permissions | `srv.EffectiveServerPermissions(login)` (`EXECUTE AS LOGIN` + `fn_my_permissions`) |
-| Credentials              | `srv.Credentials()` / `srv.CredentialByName(name)` / `srv.Credential(name)` (no-I/O handle) / `srv.CreateCredential(spec)` / `cred.Alter(identity, secret)` / `cred.Drop()` — see [Credentials](#credentials) |
+| Credentials              | `srv.Credentials()` / `srv.CredentialByName(name)` / `srv.CredentialRef(name)` (no-I/O handle) / `srv.CreateCredential(spec)` / `cred.Alter(identity, secret)` / `cred.Drop()` — see [Credentials](#credentials) |
 | Cryptographic providers  | `srv.CryptographicProviders()`             |
-| Server audits            | `srv.ServerAudits()` / `srv.ServerAuditByName(name)` / `srv.ServerAudit(name)` (no-I/O handle) / `srv.CreateServerAudit(spec)` — see [Audits](#audits-and-audit-specifications) |
-| Server audit specifications | `srv.ServerAuditSpecifications()` / `...ByName(name)` / `srv.ServerAuditSpecification(name)` (no-I/O handle) / `srv.CreateServerAuditSpecification(spec)` |
+| Server audits            | `srv.ServerAudits()` / `srv.ServerAuditByName(name)` / `srv.ServerAuditRef(name)` (no-I/O handle) / `srv.CreateServerAudit(spec)` — see [Audits](#audits-and-audit-specifications) |
+| Server audit specifications | `srv.ServerAuditSpecifications()` / `...ByName(name)` / `srv.ServerAuditSpecificationRef(name)` (no-I/O handle) / `srv.CreateServerAuditSpecification(spec)` |
 | Audit action groups      | `srv.AuditActionGroups()` / `srv.DatabaseAuditActionGroups()` / `srv.DatabaseAuditActions()` |
-| Backup devices           | `srv.BackupDevices()` / `srv.BackupDeviceByName(name)` / `srv.BackupDevice(name)` (no-I/O handle) / `srv.CreateBackupDevice(name, type, physicalName)` / `dev.Drop(deleteFile)` / `dev.Headers()` |
+| Backup devices           | `srv.BackupDevices()` / `srv.BackupDeviceByName(name)` / `srv.BackupDeviceRef(name)` (no-I/O handle) / `srv.CreateBackupDevice(name, type, physicalName)` / `dev.Drop(deleteFile)` / `dev.Headers()` |
 | Endpoints (all protocols) | `srv.Endpoints()` / `srv.EndpointByName(name)` / `ep.SetState(state)` / `ep.Drop()` / `ep.MirroringDetail()` / `ep.ServiceBrokerDetail()` — see [Endpoints](#endpoints) |
-| Server DDL / logon triggers | `srv.ServerTriggers()` / `srv.ServerTriggerByName(name)` / `srv.ServerTrigger(name)` (no-I/O handle) / `tr.Enable()` / `tr.Disable()` / `tr.Drop()` |
+| Server DDL / logon triggers | `srv.ServerTriggers()` / `srv.ServerTriggerByName(name)` / `srv.ServerTriggerRef(name)` (no-I/O handle) / `tr.Enable()` / `tr.Disable()` / `tr.Drop()` |
 | Azure engine edition             | `srv.Info().IsAzure()` — the test every version gate asks before it believes `VersionMajor`, which Azure freezes |
 | Azure resource history           | `srv.ServerResourceStats(max)` / `srv.LatestServerResourceStats()` — `sys.server_resource_stats`, one row per 15-second window |
 | Azure resource limits            | `srv.InstanceResourceGovernance()` / `srv.OSJobObject()` — see [Azure instance resources](#azure-instance-resources) |
@@ -321,7 +321,7 @@ The instance and database halves pair up: `ServerResourceStat` and
 | Disk volumes              | `srv.DiskVolumes()`                        |
 | `Server.EnumDirectories` / `EnumFiles` | `srv.EnumFileSystem(path)` / `srv.FixedDrives()` / `srv.FileSystemExists(path)` — see [Server filesystem](#server-filesystem) |
 | Host OS family            | `srv.Info().Platform` (`"Windows"` / `"Linux"`, from `@@VERSION`) |
-| `Server.AvailabilityGroups` | `srv.AvailabilityGroups()` / `srv.AvailabilityGroup(name)` (no-I/O handle) / `srv.AvailabilityGroupByName(name)` — see [Always On](#always-on-availability-groups) |
+| `Server.AvailabilityGroups` | `srv.AvailabilityGroups()` / `srv.AvailabilityGroupRef(name)` (no-I/O handle) / `srv.AvailabilityGroupByName(name)` — see [Always On](#always-on-availability-groups) |
 | Database mirroring endpoint | `srv.DatabaseMirroringEndpoint()` / `srv.CreateDatabaseMirroringEndpoint(spec)` |
 | Verify / inspect a backup device | `srv.VerifyBackup(path)` / `srv.BackupHeaders(path)` / `srv.BackupFileList(path)` |
 | ... from a path, a blob URL or a logical device | `srv.VerifyBackupFrom(t)` / `srv.BackupHeadersFrom(t)` / `srv.BackupFileListForSetFrom(t, n)`, with `t` = `gosmo.DiskTarget(path)`, `gosmo.URLTarget(url)` or `gosmo.DeviceTarget(name)` |
@@ -346,19 +346,19 @@ The instance and database halves pair up: `ServerResourceStat` and
 | `Database.Schemas`              | `db.Schemas()` / `db.SchemaByName(name)` / `schema.ObjectCount()` / `schema.ObjectCountsByType()` |
 | `Database.Users`                | `db.Users()` / `db.UserByName(name)`        |
 | Database user administration    | `user.Rename(newName)` / `user.SetDefaultSchema(schemaName)` / `user.SetLogin(loginName)` |
-| `Database.AuditSpecifications`  | `db.DatabaseAuditSpecifications()` / `...ByName(name)` / `db.DatabaseAuditSpecification(name)` (no-I/O handle) / `db.CreateDatabaseAuditSpecification(spec)` |
+| `Database.AuditSpecifications`  | `db.DatabaseAuditSpecifications()` / `...ByName(name)` / `db.DatabaseAuditSpecificationRef(name)` (no-I/O handle) / `db.CreateDatabaseAuditSpecification(spec)` |
 | `Database.Roles`                | `db.DatabaseRoles()` / `db.RoleByName(name)` / `db.RoleMembers(roleName)` |
 | Database role administration    | `role.Rename(newName)` / `role.ChangeOwner(newOwner)` / `role.Drop()` / `db.DropDatabaseRole(name)` |
 | `Database.FileGroups`           | `db.FileGroups()` — `fg.Type` is the `type_desc` (ROWS / FILESTREAM / MEMORY_OPTIMIZED), `fg.IsFileStream()` the common test |
 | `Database.Triggers`             | `db.Triggers()` / `db.ObjectTriggers(schema, name)` (one table or view, by name) / `db.DropTrigger(schema, name)` |
-| Database-scope DDL triggers     | `db.DatabaseTriggers()` / `db.DatabaseTriggerByName(name)` / `db.DatabaseTrigger(name)` (no-I/O handle) / `tr.Enable()` / `tr.Disable()` / `tr.Drop()` — see [Database DDL triggers](#database-ddl-triggers) |
+| Database-scope DDL triggers     | `db.DatabaseTriggers()` / `db.DatabaseTriggerByName(name)` / `db.DatabaseTriggerRef(name)` (no-I/O handle) / `tr.Enable()` / `tr.Disable()` / `tr.Drop()` — see [Database DDL triggers](#database-ddl-triggers) |
 | `Database.Sequences`            | `db.Sequences()` / `db.DropSequence(schema, name)` |
 | `Database.Synonyms`             | `db.Synonyms()` / `db.DropSynonym(schema, name)` |
 | `Database.UserDefinedDataTypes` / `...TableTypes` / `...Types` (CLR) | `db.UserDefinedDataTypes()` / `db.UserDefinedTableTypes()` / `db.ClrTypes()` (each with `...ByName(schema, name)`) / `db.SystemDataTypes()` — see [Types, rules and defaults](#types-rules-and-defaults) |
 | `Database.XmlSchemaCollections` | `db.XmlSchemaCollections()` / `db.XmlSchemaCollectionByName(schema, name)` / `c.Definition()` |
 | `Database.Rules` / `Database.Defaults` | `db.Rules()` / `db.Defaults()` (each with `...ByName(schema, name)` and `db.Drop...`) — read-only, deprecated families |
 | `Database.Assemblies`           | `db.Assemblies()` / `db.AssemblyByName(name)` / `a.Files()` / `a.Modules()` — see [Assemblies](#assemblies) |
-| `Database.PlanGuides`           | `db.PlanGuides()` / `db.PlanGuideByName(name)` / `db.PlanGuide(name)` (no-I/O handle) / `g.Enable()` / `g.Disable()` / `g.Drop()` — see [Plan guides](#plan-guides) |
+| `Database.PlanGuides`           | `db.PlanGuides()` / `db.PlanGuideByName(name)` / `db.PlanGuideRef(name)` (no-I/O handle) / `g.Enable()` / `g.Disable()` / `g.Drop()` — see [Plan guides](#plan-guides) |
 | External data sources / file formats / libraries | `db.ExternalDataSources()` / `db.ExternalFileFormats()` / `db.ExternalLibraries()` (each with `...ByName(name)` and `db.Drop...`) — see [External resources](#external-resources) |
 | Rename any `sp_rename`-able object | `db.RenameObject(schema, oldName, newName)` — view, procedure, function, sequence, synonym, trigger |
 | Move an object to another schema | `db.TransferObject(targetSchema, schema, name)` — `ALTER SCHEMA ... TRANSFER`, which `sp_rename` cannot do |
@@ -374,7 +374,7 @@ The instance and database halves pair up: `ServerResourceStat` and
 | Column master keys              | `db.ColumnMasterKeys()` / `db.ColumnMasterKeyByName(name)` / `db.CreateColumnMasterKey(...)` / `...WithSignature(...)` |
 | Column encryption keys          | `db.ColumnEncryptionKeys()` / `db.ColumnEncryptionKeyByName(name)` / `db.CreateColumnEncryptionKey(name, values)` / `cek.AddValue(value)` / `cek.DropValue(masterKeyName)` — the two halves of a master-key rotation |
 | Security policies (RLS)         | `db.SecurityPolicies()` / `db.SecurityPolicyByName(schema, name)` |
-| Database scoped credentials     | `db.DatabaseScopedCredentials()` / `db.DatabaseScopedCredentialByName(name)` / `db.DatabaseScopedCredential(name)` (no-I/O handle) / `db.CreateDatabaseScopedCredential(spec)` — see [Credentials](#credentials) |
+| Database scoped credentials     | `db.DatabaseScopedCredentials()` / `db.DatabaseScopedCredentialByName(name)` / `db.DatabaseScopedCredentialRef(name)` (no-I/O handle) / `db.CreateDatabaseScopedCredential(spec)` — see [Credentials](#credentials) |
 | `Database.RecoveryModel`        | `db.SetRecoveryModel(model)`                |
 | `Database.CompatibilityLevel`   | `db.SetCompatibilityLevel(level)`           |
 | Space used                      | `db.SpaceUsed()`                            |
@@ -404,7 +404,7 @@ The instance and database halves pair up: `ServerResourceStat` and
 
 | SMO equivalent        | gosmo                              |
 | --------------------- | ---------------------------------- |
-| `Database.Tables` (no-I/O handle) | `db.Table(schema, name)` — works under `WithScript`, where `TableByName`'s catalog read has nothing to find |
+| `Database.Tables` (no-I/O handle) | `db.TableRef(schema, name)` — works under `WithScript`, where `TableByName`'s catalog read has nothing to find |
 | `Table.Columns`       | `t.Columns()`                      |
 | `Table.Indexes`       | `t.Indexes()` / `t.IndexByName(name)` |
 | XML indexes           | `t.XMLIndexes()` → `[]*XMLIndex` (primary/secondary, and which primary) |
@@ -829,7 +829,7 @@ split what it returns.
 
 | SSMS equivalent                        | gosmo                                              |
 | -------------------------------------- | -------------------------------------------------- |
-| Databases → Database Snapshots         | `srv.DatabaseSnapshots()` / `srv.DatabaseSnapshotByName(name)` / `srv.DatabaseSnapshot(name)` (no-I/O handle) |
+| Databases → Database Snapshots         | `srv.DatabaseSnapshots()` / `srv.DatabaseSnapshotByName(name)` / `srv.DatabaseSnapshotRef(name)` (no-I/O handle) |
 | The snapshots of one database          | `srv.SnapshotsOf(database)`                        |
 | New Database Snapshot                  | `srv.CreateDatabaseSnapshot(gosmo.CreateDatabaseSnapshotRequest{Name, SourceDatabase, Files})` |
 | Its default sparse-file paths          | `srv.SnapshotFileDefaults(source, snapshotName)` → `[]SnapshotFileSpec` |
@@ -921,7 +921,7 @@ VISIBILITY = OFF` back, so a re-created dependency stays hidden from
 
 | SSMS equivalent                   | gosmo                                          |
 | --------------------------------- | ---------------------------------------------- |
-| *db* → Programmability → Plan Guides | `db.PlanGuides()` / `db.PlanGuideByName(name)` / `db.PlanGuide(name)` (no-I/O handle) |
+| *db* → Programmability → Plan Guides | `db.PlanGuides()` / `db.PlanGuideByName(name)` / `db.PlanGuideRef(name)` (no-I/O handle) |
 | Enable / Disable                  | `g.Enable()` / `g.Disable()` — `sp_control_plan_guide` |
 | Delete                            | `g.Drop()` / `db.DropPlanGuide(name)`          |
 | Script                            | `sc.ScriptPlanGuide(name)` — the `sp_create_plan_guide` call, every argument named |
@@ -1193,8 +1193,8 @@ write returns success without the server ever seeing it, so a rename
 followed by a re-read *by the new name* finds nothing. gosmo honours this
 for its own cached state too — a scripted `Rename`/`Enable`/`SetOwner`
 leaves the object it was called on unchanged. The lookup-free handles
-(`srv.Database(name)`, `srv.Login(name)`, `srv.Alert(name)`, `srv.Job(name)`,
-`srv.Operator(name)`, `srv.Schedule(name)`) exist for the same reason: an
+(`srv.DatabaseRef(name)`, `srv.LoginRef(name)`, `srv.AlertRef(name)`, `srv.JobRef(name)`,
+`srv.OperatorRef(name)`, `srv.ScheduleRef(name)`) exist for the same reason: an
 object whose `CREATE` was only collected can't be found by a `...ByName`
 query, and the `Create*` methods return one of these handles under
 `WithScript`.
@@ -1280,7 +1280,7 @@ Objects → Backup Devices — usable anywhere `BACKUP` or `RESTORE` takes one.
 
 | SSMS equivalent               | gosmo                                                    |
 | ----------------------------- | -------------------------------------------------------- |
-| Server Objects → Backup Devices | `srv.BackupDevices()` / `srv.BackupDeviceByName(name)` / `srv.BackupDevice(name)` (no-I/O handle) |
+| Server Objects → Backup Devices | `srv.BackupDevices()` / `srv.BackupDeviceByName(name)` / `srv.BackupDeviceRef(name)` (no-I/O handle) |
 | New backup device             | `srv.CreateBackupDevice(name, gosmo.BackupDeviceDisk, path)` |
 | Delete (optionally the file)  | `dev.Drop(deleteFile)`                                    |
 | Contents                      | `dev.Headers()` → `[]*BackupHeader`                       |
@@ -1327,14 +1327,55 @@ newest `agent_start_date` is its last startup. A login without `VIEW SERVER
 STATE` sees no sessions and reads as stopped, which is why the startup time
 is still reported alongside.
 
-`srv.Job(name)`, `srv.Alert(name)`, `srv.Operator(name)` and
-`srv.Schedule(name)` return a no-I/O handle carrying only the name — the
-Agent counterparts of `srv.Database`/`srv.Login`. Every write method on
+`srv.JobRef(name)`, `srv.AlertRef(name)`, `srv.OperatorRef(name)` and
+`srv.ScheduleRef(name)` return a no-I/O handle carrying only the name — the
+Agent counterparts of `srv.DatabaseRef`/`srv.LoginRef`. Every write method on
 those types addresses its object by name, so a handle is enough to keep
 operating on one you already know exists; the `...ByName` form is what
 queries `msdb` and populates the cached fields. Under `WithScript` the
 handle is the only usable form, and is what `CreateJob`/`CreateAlert`/
 `CreateOperator`/`CreateSchedule` return there.
+
+#### Applying several properties at once
+
+Each `Set*` method is its own `sp_update_*` round trip, which is the right
+shape for a single change. A properties page applying five edits wants the
+other shape, and msdb offers it: `sp_update_job` and its siblings take every
+updatable parameter in one call. `Alter` is that call, for each of the four
+families.
+
+```go
+job.Alter(gosmo.JobChanges{
+    Description: gosmo.Ptr("Runs the nightly full backup"),
+    Category:    gosmo.Ptr("Database Maintenance"),
+    OwnerLogin:  gosmo.Ptr("sa"),
+    Enabled:     gosmo.Ptr(true),
+})   // one statement, not four
+
+sched.Alter(gosmo.ScheduleChanges{
+    Frequency: &gosmo.ScheduleFrequency{ /* ... */ },
+    Range:     &gosmo.ScheduleActiveRange{StartTime: 20000},
+})
+```
+
+`AlertChanges`, `OperatorChanges`, `JobChanges` and `ScheduleChanges` carry
+**pointer** fields because a nil is the only way to say "leave this alone":
+`0`, `""` and `false` are all values these parameters accept, and an alert's
+job response is in fact cleared by sending `N''`. A field left nil is absent
+from the statement and is not mirrored back onto the receiver either. An
+empty `Changes` emits nothing at all, rather than a parameterless
+`sp_update_*` that msdb rejects.
+
+`ScheduleChanges` takes its frequency and its active range as whole units,
+for the reason `ScheduleFrequency` already states: `freq_interval`'s meaning
+depends on `freq_type`, so half a frequency is not one. It is also the one
+family whose batched form is addressable from a `Ref` — the per-property
+setters key on `@schedule_id`, which a no-I/O handle does not carry, while
+`Alter` falls back to `@name` when the receiver has no ID.
+
+The per-property setters are unchanged and are not deprecated;
+`Enable()`/`Disable()`/`Rename()` read better than a struct literal for a
+single edit.
 
 #### Jobs and steps
 
@@ -1380,7 +1421,7 @@ every later step *and* follows their "go to step N" references, but
 `sp_delete_jobstep` clears such a reference instead of following it, so
 `ReorderSteps` rewrites every reference itself afterwards, through
 `JobStep.SetFlow`. `ReorderSteps` needs a job read with `JobByName` — the step
-listing is by `job_id`, which a bare `srv.Job(name)` handle does not carry.
+listing is by `job_id`, which a bare `srv.JobRef(name)` handle does not carry.
 
 The whole reorder goes to the server as **one transactional batch**, so a job
 is either in the requested order or in the order it started in, and never in
@@ -1471,7 +1512,7 @@ synchronization state, and the listeners clients connect through.
 
 | SSMS equivalent                   | gosmo                                                        |
 | --------------------------------- | ------------------------------------------------------------ |
-| Availability Groups node          | `srv.AvailabilityGroups()` / `srv.AvailabilityGroup(name)` (no-I/O handle) / `srv.AvailabilityGroupByName(name)` |
+| Availability Groups node          | `srv.AvailabilityGroups()` / `srv.AvailabilityGroupRef(name)` (no-I/O handle) / `srv.AvailabilityGroupByName(name)` |
 | Availability Replicas node        | `ag.Replicas()` → `[]*AvailabilityReplica`                    |
 | Availability Databases node       | `ag.Databases()` → `[]*AvailabilityDatabase` (queue sizes, rates, `SecondaryLagSeconds`, last sent/received/hardened/redone/commit times) |
 | Availability Group Listeners node | `ag.Listeners()` → `[]*AvailabilityGroupListener` (with their IP configurations) |
@@ -1566,7 +1607,7 @@ Machine, TSQL Named Pipes, TSQL Default TCP and TSQL Default VIA, all with
 `endpoint_id` below 65536 — cannot be altered or dropped. `SetState` and
 `Drop` return `ErrSystemEndpoint` for them, because SQL Server's own refusal
 names neither the endpoint nor the reason. There is deliberately no
-`srv.Endpoint(name)` no-I/O handle for this family: `IsSystem` is derived
+`srv.EndpointRef(name)` no-I/O handle for this family: `IsSystem` is derived
 from the scanned id, so such a handle would carry id 0 and refuse every write
 on itself.
 
@@ -1578,18 +1619,18 @@ is the destination — a file, the Windows Application log or the Security log
 
 | SSMS equivalent                | gosmo                                                      |
 | ------------------------------ | ---------------------------------------------------------- |
-| Security → Audits              | `srv.ServerAudits()` / `srv.ServerAuditByName(name)` / `srv.ServerAudit(name)` (no-I/O handle) |
+| Security → Audits              | `srv.ServerAudits()` / `srv.ServerAuditByName(name)` / `srv.ServerAuditRef(name)` (no-I/O handle) |
 | New audit                      | `srv.CreateServerAudit(gosmo.ServerAuditSpec{...})`         |
 | Alter / rename / drop          | `a.Alter(spec)` / `a.Rename(newName)` / `a.Drop()`          |
 | Enable / disable               | `a.SetState(true \| false)`                                 |
 | Is it running, and to which file | `a.Status()` → `*ServerAuditStatus`                       |
-| Security → Server Audit Specifications | `srv.ServerAuditSpecifications()` / `...ByName(name)` / `srv.ServerAuditSpecification(name)` |
+| Security → Server Audit Specifications | `srv.ServerAuditSpecifications()` / `...ByName(name)` / `srv.ServerAuditSpecificationRef(name)` |
 | New specification              | `srv.CreateServerAuditSpecification(gosmo.ServerAuditSpecificationSpec{...})` |
 | Add / drop action groups       | `spec.AddActionGroups(g...)` / `spec.DropActionGroups(g...)` |
 | Point it at another audit      | `spec.SetAudit(auditName)`                                  |
 | Enable / disable / drop        | `spec.SetState(on)` / `spec.Drop()`                         |
 | What can be audited            | `srv.AuditActionGroups()`                                   |
-| Database → Security → Database Audit Specifications | `db.DatabaseAuditSpecifications()` / `...ByName(name)` / `db.DatabaseAuditSpecification(name)` |
+| Database → Security → Database Audit Specifications | `db.DatabaseAuditSpecifications()` / `...ByName(name)` / `db.DatabaseAuditSpecificationRef(name)` |
 | New database specification     | `db.CreateDatabaseAuditSpecification(gosmo.DatabaseAuditSpecificationSpec{...})` |
 | Add / drop groups and actions  | `spec.AddActions(groups, actions)` / `spec.DropActions(groups, actions)` |
 | What can be audited in a database | `srv.DatabaseAuditActionGroups()` / `srv.DatabaseAuditActions()` |
@@ -1631,7 +1672,7 @@ SSMS's Security → Credentials, and the identity a login can be mapped to.
 
 | SSMS equivalent           | gosmo                                                |
 | ------------------------- | ---------------------------------------------------- |
-| Security → Credentials    | `srv.Credentials()` / `srv.CredentialByName(name)` / `srv.Credential(name)` (no-I/O handle) |
+| Security → Credentials    | `srv.Credentials()` / `srv.CredentialByName(name)` / `srv.CredentialRef(name)` (no-I/O handle) |
 | New credential            | `srv.CreateCredential(gosmo.CredentialSpec{Name, Identity, Secret, CryptographicProvider})` |
 | Change identity or secret | `cred.Alter(identity, secret)` — `secret` is a `*string`, and nil **clears** the stored secret: `ALTER CREDENTIAL` resets both halves, so there is no form that changes the identity and keeps the secret |
 | Drop                      | `cred.Drop()`                                        |
@@ -1649,7 +1690,7 @@ one, so `DatabaseScopedCredentialSpec` has no provider field.
 
 | SSMS equivalent                       | gosmo                                          |
 | ------------------------------------- | ---------------------------------------------- |
-| *db* → Security → Database Scoped Credentials | `db.DatabaseScopedCredentials()` / `db.DatabaseScopedCredentialByName(name)` / `db.DatabaseScopedCredential(name)` (no-I/O handle) |
+| *db* → Security → Database Scoped Credentials | `db.DatabaseScopedCredentials()` / `db.DatabaseScopedCredentialByName(name)` / `db.DatabaseScopedCredentialRef(name)` (no-I/O handle) |
 | New database scoped credential        | `db.CreateDatabaseScopedCredential(gosmo.DatabaseScopedCredentialSpec{Name, Identity, Secret})` |
 | Change identity or secret             | `dsc.Alter(identity, secret)` — same `*string`, same meaning |
 | Drop                                  | `dsc.Drop()`                                   |
@@ -1660,7 +1701,7 @@ Server-scope DDL and LOGON triggers — SSMS's Server Objects → Triggers.
 
 | SSMS equivalent            | gosmo                                              |
 | -------------------------- | -------------------------------------------------- |
-| Server Objects → Triggers  | `srv.ServerTriggers()` / `srv.ServerTriggerByName(name)` / `srv.ServerTrigger(name)` |
+| Server Objects → Triggers  | `srv.ServerTriggers()` / `srv.ServerTriggerByName(name)` / `srv.ServerTriggerRef(name)` |
 | Enable / disable / drop    | `tr.Enable()` / `tr.Disable()` / `tr.Drop()`        |
 
 A different family from `db.Triggers()`, which reads DML triggers on a table.
@@ -1678,7 +1719,7 @@ server-scope ones (`parent_class = 100`), and these are `parent_class = 0`.
 
 | SSMS equivalent                        | gosmo                                        |
 | -------------------------------------- | -------------------------------------------- |
-| *db* → Programmability → Database Triggers | `db.DatabaseTriggers()` / `db.DatabaseTriggerByName(name)` / `db.DatabaseTrigger(name)` (no-I/O handle) |
+| *db* → Programmability → Database Triggers | `db.DatabaseTriggers()` / `db.DatabaseTriggerByName(name)` / `db.DatabaseTriggerRef(name)` (no-I/O handle) |
 | Enable / disable / drop                | `tr.Enable()` / `tr.Disable()` / `tr.Drop()` |
 | Script one                             | `sc.ScriptDatabaseTrigger(name)`             |
 

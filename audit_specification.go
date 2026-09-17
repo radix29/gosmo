@@ -110,11 +110,11 @@ WHERE  s.name = @p1`, name)
 	return spec, nil
 }
 
-// ServerAuditSpecification returns a lightweight handle by name, without
-// querying the catalog — the counterpart of Server.Database. Every cached
+// ServerAuditSpecificationRef returns a lightweight handle by name, without
+// querying the catalog — the counterpart of Server.DatabaseRef. Every cached
 // field stays at its zero value; ServerAuditSpecificationByName populates
 // them.
-func (s *Server) ServerAuditSpecification(name string) *ServerAuditSpecification {
+func (s *Server) ServerAuditSpecificationRef(name string) *ServerAuditSpecification {
 	return &ServerAuditSpecification{server: s, Name: name}
 }
 
@@ -263,7 +263,7 @@ func (s *Server) CreateServerAuditSpecificationContext(ctx context.Context, spec
 	}
 	if Scripting(ctx) {
 		// The CREATE was only collected, so there is nothing to read back.
-		return s.ServerAuditSpecification(spec.Name), nil
+		return s.ServerAuditSpecificationRef(spec.Name), nil
 	}
 	return s.ServerAuditSpecificationByNameContext(ctx, spec.Name)
 }

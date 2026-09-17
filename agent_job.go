@@ -236,8 +236,8 @@ ORDER  BY j.name`
 	return jobs, nil
 }
 
-// Job returns a lightweight handle for a job by name, without querying
-// msdb — the job-side counterpart of Server.Database. JobID, Category,
+// JobRef returns a lightweight handle for a job by name, without querying
+// msdb — the job-side counterpart of Server.DatabaseRef. JobID, Category,
 // LastRunOutcome and every other cached field stay at their zero value;
 // JobByName is what populates them.
 //
@@ -247,7 +247,7 @@ ORDER  BY j.name`
 // only usable form under a WithScript context, where JobByNameContext's
 // lookup is a real read and a job whose sp_add_job was merely collected is
 // not there to find.
-func (s *Server) Job(name string) *Job {
+func (s *Server) JobRef(name string) *Job {
 	return &Job{server: s, Name: name}
 }
 
@@ -462,6 +462,11 @@ func (j *Job) SetStartStepContext(ctx context.Context, stepID int) error {
 // operator unchanged (SQL Server has no documented "clear to none" value
 // for sp_update_job's @notify_email_operator_name; pair with
 // NotifyNever to stop emailing without needing to clear it).
+//
+// A level set on a job with no operator does not stick: msdb stores
+// notify_level_email as 0 and reports no error, since a level with nobody to
+// mail is meaningless to it. Verified on SQL Server 17.0.1135.8, 2026-09-17,
+// and the batched Job.Alter behaves the same way.
 func (j *Job) SetEmailNotify(operatorName string, level NotifyLevel) error {
 	return j.SetEmailNotifyContext(context.Background(), operatorName, level)
 }
@@ -538,7 +543,7 @@ func (s *Server) CreateJobContext(ctx context.Context, req CreateJobRequest) (*J
 		// See CreateScheduleContext: the read-back is a real query, and the
 		// two EXECs above were only collected, so it would fail with "job not
 		// found" rather than yielding the script that was asked for.
-		return s.Job(req.Name), nil
+		return s.JobRef(req.Name), nil
 	}
 	return s.JobByNameContext(ctx, req.Name)
 }

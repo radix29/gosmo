@@ -162,7 +162,23 @@ classDiagram
         +SetStartStep(stepID) error
         +SetDeleteLevel(level) error
         +SetEmailNotify(operator, level) error
+        +Alter(ch JobChanges) error
         +Drop() error
+    }
+
+    class JobChanges {
+        +Name *string
+        +Description *string
+        +Category *string
+        +OwnerLogin *string
+        +Enabled *bool
+        +StartStepID *int
+        +NotifyLevelEmail *NotifyLevel
+        +NotifyEmailOperatorName *string
+        +DeleteLevel *NotifyLevel
+        Every field is a pointer: nil means
+        "leave alone", which 0/""/false cannot,
+        since msdb accepts all three as values.
     }
 
     class JobStep {
@@ -222,6 +238,7 @@ classDiagram
     Server --> AgentStatus : AgentInfo() returns
     Server "1" --> "*" Job : owns
     Server "1" --> "*" JobHistoryEntry : JobHistory() returns
+    Job --> JobChanges : Alter() accepts
     Job "1" --> "*" JobStep : has
     Job "1" --> "*" JobHistoryEntry : History() returns
     Alert --> Job : responds by running

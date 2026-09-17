@@ -1,7 +1,7 @@
 //go:build livedb
 
 // Live verification that ScriptDatabaseContext produces a real script from a
-// bare Server.Database(name) handle.
+// bare Server.DatabaseRef(name) handle.
 //
 // The handle carries no metadata by design, and ScriptDatabase used to render
 // it anyway — "SET RECOVERY ;" and "COMPATIBILITY_LEVEL = 0", neither of them

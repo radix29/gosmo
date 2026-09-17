@@ -80,6 +80,15 @@ func setIfApplied[T any](ctx context.Context, dst *T, v T) {
 	}
 }
 
+// setPtrIfApplied is setIfApplied for the batched *Changes structs, where a
+// nil field means "not part of this change" and so must not be mirrored
+// back onto the receiver at all.
+func setPtrIfApplied[T any](ctx context.Context, dst *T, v *T) {
+	if v != nil {
+		setIfApplied(ctx, dst, *v)
+	}
+}
+
 func scriptFrom(ctx context.Context) (*ScriptCollector, bool) {
 	c, ok := ctx.Value(scriptCtxKey{}).(*ScriptCollector)
 	return c, ok

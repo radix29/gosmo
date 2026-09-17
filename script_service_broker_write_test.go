@@ -240,3 +240,104 @@ func TestQueueAlterDoesNotMirrorExecuteAsSelf(t *testing.T) {
 		t.Errorf("ActivationProcedure = %q, want the schema-qualified name", q.ActivationProcedure)
 	}
 }
+
+// The Service Broker drops. Each is one statement whose whole behaviour is
+// the identifier it brackets, and the families reach it two ways: the
+// database-level Drop*ByName form and the handle's Drop, which delegates to
+// it. Both are pinned, because a handle that passed the wrong field — a
+// queue's name where its schema belongs — would produce a statement that
+// still parses.
+func TestScriptedServiceBrokerDrops(t *testing.T) {
+	db := scriptTestDB()
+	runScriptCases(t, []scriptCase{
+		{"DropMessageType", func(ctx context.Context) error {
+			return db.DropMessageTypeContext(ctx, "//app/o'brien/a]b")
+		}, scriptUsePrefix + "DROP MESSAGE TYPE [//app/o'brien/a]]b]"},
+		{"MessageType.Drop", func(ctx context.Context) error {
+			return (&MessageType{db: db, Name: "//app/o'brien"}).DropContext(ctx)
+		}, scriptUsePrefix + "DROP MESSAGE TYPE [//app/o'brien]"},
+
+		{"DropContract", func(ctx context.Context) error {
+			return db.DropContractContext(ctx, "//app/o'brien/a]b")
+		}, scriptUsePrefix + "DROP CONTRACT [//app/o'brien/a]]b]"},
+		{"ServiceContract.Drop", func(ctx context.Context) error {
+			return (&ServiceContract{db: db, Name: "//app/o'brien"}).DropContext(ctx)
+		}, scriptUsePrefix + "DROP CONTRACT [//app/o'brien]"},
+
+		{"DropBrokerService", func(ctx context.Context) error {
+			return db.DropBrokerServiceContext(ctx, "//app/o'brien/a]b")
+		}, scriptUsePrefix + "DROP SERVICE [//app/o'brien/a]]b]"},
+		{"BrokerService.Drop", func(ctx context.Context) error {
+			return (&BrokerService{db: db, Name: "//app/o'brien"}).DropContext(ctx)
+		}, scriptUsePrefix + "DROP SERVICE [//app/o'brien]"},
+
+		// A queue is the one Service Broker object that is schema-qualified,
+		// so it carries the same dbo default the type drops do: an
+		// unqualified DROP resolves against the caller's default schema, not
+		// the queue's.
+		{"DropBrokerQueue", func(ctx context.Context) error {
+			return db.DropBrokerQueueContext(ctx, "Sales.Archive", "o'brien")
+		}, scriptUsePrefix + "DROP QUEUE [Sales.Archive].[o'brien]"},
+		{"DropBrokerQueue defaults the schema", func(ctx context.Context) error {
+			return db.DropBrokerQueueContext(ctx, "", "a]b")
+		}, scriptUsePrefix + "DROP QUEUE [dbo].[a]]b]"},
+		{"BrokerQueue.Drop", func(ctx context.Context) error {
+			return (&BrokerQueue{db: db, Schema: "Sales.Archive", Name: "o'brien"}).DropContext(ctx)
+		}, scriptUsePrefix + "DROP QUEUE [Sales.Archive].[o'brien]"},
+		{"BrokerQueue.Drop defaults the schema", func(ctx context.Context) error {
+			return (&BrokerQueue{db: db, Name: "a]b"}).DropContext(ctx)
+		}, scriptUsePrefix + "DROP QUEUE [dbo].[a]]b]"},
+
+		{"DropRoute", func(ctx context.Context) error {
+			return db.DropRouteContext(ctx, "o'brien/a]b")
+		}, scriptUsePrefix + "DROP ROUTE [o'brien/a]]b]"},
+		{"Route.Drop", func(ctx context.Context) error {
+			return (&Route{db: db, Name: "o'brien"}).DropContext(ctx)
+		}, scriptUsePrefix + "DROP ROUTE [o'brien]"},
+
+		{"DropRemoteServiceBinding", func(ctx context.Context) error {
+			return db.DropRemoteServiceBindingContext(ctx, "o'brien/a]b")
+		}, scriptUsePrefix + "DROP REMOTE SERVICE BINDING [o'brien/a]]b]"},
+		{"RemoteServiceBinding.Drop", func(ctx context.Context) error {
+			return (&RemoteServiceBinding{db: db, Name: "o'brien"}).DropContext(ctx)
+		}, scriptUsePrefix + "DROP REMOTE SERVICE BINDING [o'brien]"},
+
+		{"DropBrokerPriority", func(ctx context.Context) error {
+			return db.DropBrokerPriorityContext(ctx, "o'brien/a]b")
+		}, scriptUsePrefix + "DROP BROKER PRIORITY [o'brien/a]]b]"},
+		{"BrokerPriority.Drop", func(ctx context.Context) error {
+			return (&BrokerPriority{db: db, Name: "o'brien"}).DropContext(ctx)
+		}, scriptUsePrefix + "DROP BROKER PRIORITY [o'brien]"},
+
+		// The handle's Alter, as distinct from the database-level one pinned
+		// above: it must address the route by its own name.
+		{"Route.Alter", func(ctx context.Context) error {
+			return (&Route{db: db, Name: "a]b"}).AlterContext(ctx,
+				RouteSettings{Address: strPtr("TCP://host:4022")})
+		}, scriptUsePrefix + "ALTER ROUTE [a]]b]\n    WITH ADDRESS = N'TCP://host:4022'"},
+	})
+}
+
+// A scripted Route.Alter must not move the receiver's state — the queue case
+// beside it pins the same rule, and Route.AlterContext mirrors five fields
+// where the queue mirrors its two status halves.
+func TestScriptedRouteAlterDoesNotMirrorOntoTheReceiver(t *testing.T) {
+	r := &Route{db: scriptTestDB(), Name: "r", Address: "TCP://old:4022", RemoteService: "//app/old"}
+
+	ctx, script := WithScript(context.Background())
+	err := r.AlterContext(ctx, RouteSettings{
+		Address:       strPtr("TCP://new:4022"),
+		RemoteService: strPtr("//app/new"),
+	})
+	if err != nil {
+		t.Fatalf("scripted alter: %v", err)
+	}
+	if r.Address != "TCP://old:4022" || r.RemoteService != "//app/old" {
+		t.Errorf("a scripted alter moved the receiver to address=%q service=%q; the "+
+			"statement was only captured, so the server's route is unchanged",
+			r.Address, r.RemoteService)
+	}
+	if len(script.Statements) != 1 {
+		t.Fatalf("captured %q, want one statement", script.Statements)
+	}
+}

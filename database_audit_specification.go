@@ -172,11 +172,11 @@ WHERE  s.name = @p1`, name)
 	return spec, nil
 }
 
-// DatabaseAuditSpecification returns a lightweight handle by name, without
-// querying the catalog — the counterpart of Server.Database. Every cached
+// DatabaseAuditSpecificationRef returns a lightweight handle by name, without
+// querying the catalog — the counterpart of Server.DatabaseRef. Every cached
 // field stays at its zero value; DatabaseAuditSpecificationByName populates
 // them. This is the only form usable under a WithScript-derived context.
-func (d *Database) DatabaseAuditSpecification(name string) *DatabaseAuditSpecification {
+func (d *Database) DatabaseAuditSpecificationRef(name string) *DatabaseAuditSpecification {
 	return &DatabaseAuditSpecification{db: d, Name: name}
 }
 
@@ -457,7 +457,7 @@ func (d *Database) CreateDatabaseAuditSpecificationContext(ctx context.Context, 
 	}
 	if Scripting(ctx) {
 		// The CREATE was only collected, so there is nothing to read back.
-		return d.DatabaseAuditSpecification(spec.Name), nil
+		return d.DatabaseAuditSpecificationRef(spec.Name), nil
 	}
 	return d.DatabaseAuditSpecificationByNameContext(ctx, spec.Name)
 }

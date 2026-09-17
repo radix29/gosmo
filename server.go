@@ -392,7 +392,7 @@ func (s *Server) DatabaseByNameContext(ctx context.Context, name string) (*Datab
 	return d, nil
 }
 
-// Database returns a lightweight handle for name without querying the
+// DatabaseRef returns a lightweight handle for name without querying the
 // server at all — unlike DatabaseByName/DatabaseByNameContext, it doesn't
 // verify the database exists or populate State/RecoveryModel/Collation/
 // CompatibilityLevel/etc. (they stay at their zero value). Every write
@@ -406,7 +406,7 @@ func (s *Server) DatabaseByNameContext(ctx context.Context, name string) (*Datab
 // ScriptCollector and would fail outright (or return stale data) for a
 // database whose CREATE DATABASE was itself only scripted, not actually
 // run.
-func (s *Server) Database(name string) *Database {
+func (s *Server) DatabaseRef(name string) *Database {
 	return &Database{server: s, name: name}
 }
 

@@ -11,7 +11,7 @@ import (
 // Database.exec prefixes each collected statement with its own USE, so the
 // wanted text below carries it too — asserting on the statement without it
 // would not notice a write that landed in the wrong database.
-func scriptDB() *Database { return (&Server{}).Database("AppDB") }
+func scriptDB() *Database { return (&Server{}).DatabaseRef("AppDB") }
 
 const useAppDB = "USE [AppDB];\n"
 
@@ -88,7 +88,7 @@ func TestAlterDatabaseScopedCredentialSecretClause(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx, col := WithScript(context.Background())
-			c := scriptDB().DatabaseScopedCredential("app_cred")
+			c := scriptDB().DatabaseScopedCredentialRef("app_cred")
 			if err := c.AlterContext(ctx, "Managed Identity", tc.secret); err != nil {
 				t.Fatalf("AlterContext: %v", err)
 			}
@@ -104,7 +104,7 @@ func TestAlterDatabaseScopedCredentialSecretClause(t *testing.T) {
 
 func TestAlterDatabaseScopedCredentialRequiresIdentity(t *testing.T) {
 	ctx, col := WithScript(context.Background())
-	if err := scriptDB().DatabaseScopedCredential("app_cred").AlterContext(ctx, "", nil); err == nil {
+	if err := scriptDB().DatabaseScopedCredentialRef("app_cred").AlterContext(ctx, "", nil); err == nil {
 		t.Error("an empty identity was accepted")
 	}
 	if len(col.Statements) != 0 {
@@ -136,7 +136,7 @@ func TestCreateDatabaseScopedCredentialUnderScriptReturnsAHandle(t *testing.T) {
 
 func TestDropDatabaseScopedCredentialStatement(t *testing.T) {
 	ctx, col := WithScript(context.Background())
-	if err := scriptDB().DatabaseScopedCredential("app_cred").DropContext(ctx); err != nil {
+	if err := scriptDB().DatabaseScopedCredentialRef("app_cred").DropContext(ctx); err != nil {
 		t.Fatalf("DropContext: %v", err)
 	}
 	want := useAppDB + "DROP DATABASE SCOPED CREDENTIAL [app_cred]"
@@ -154,7 +154,7 @@ func TestDropDatabaseScopedCredentialStatement(t *testing.T) {
 // so under WithScript, where the server still holds the old one.
 func TestAlterDatabaseScopedCredentialDoesNotMirrorUnderScript(t *testing.T) {
 	ctx, _ := WithScript(context.Background())
-	c := scriptDB().DatabaseScopedCredential("app_cred")
+	c := scriptDB().DatabaseScopedCredentialRef("app_cred")
 	c.Identity = "old"
 	if err := c.AlterContext(ctx, "new", nil); err != nil {
 		t.Fatalf("AlterContext: %v", err)

@@ -170,8 +170,8 @@ func (s *Server) EventAlertsContext(ctx context.Context) ([]*Alert, error) {
 	return out, nil
 }
 
-// Alert returns a lightweight handle for an alert by name, without
-// querying msdb — the alert-side counterpart of Server.Database. ID,
+// AlertRef returns a lightweight handle for an alert by name, without
+// querying msdb — the alert-side counterpart of Server.DatabaseRef. ID,
 // Severity, JobName and every other cached field stay at their zero value;
 // AlertByName is what populates them.
 //
@@ -181,7 +181,7 @@ func (s *Server) EventAlertsContext(ctx context.Context) ([]*Alert, error) {
 // under a WithScript context, where AlertByNameContext's lookup is a real
 // read and an alert whose sp_add_alert was merely collected is not there to
 // find.
-func (s *Server) Alert(name string) *Alert {
+func (s *Server) AlertRef(name string) *Alert {
 	return &Alert{server: s, Name: name}
 }
 
@@ -254,7 +254,7 @@ func (s *Server) CreateAlertContext(ctx context.Context, req CreateAlertRequest)
 	}
 	if Scripting(ctx) {
 		// See CreateScheduleContext.
-		return s.Alert(req.Name), nil
+		return s.AlertRef(req.Name), nil
 	}
 	return s.AlertByNameContext(ctx, req.Name)
 }
@@ -308,7 +308,8 @@ func (a *Alert) SetTriggerContext(ctx context.Context, errorNumber, severity int
 	if err := a.server.execContext(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: set trigger for alert %q: %w", a.Name, err)
 	}
-	a.ErrorNumber, a.Severity = errorNumber, severity
+	setIfApplied(ctx, &a.ErrorNumber, errorNumber)
+	setIfApplied(ctx, &a.Severity, severity)
 	return nil
 }
 
@@ -370,10 +371,7 @@ func (a *Alert) SetCategory(category string) error {
 
 // SetCategoryContext is the context-aware variant of SetCategory.
 func (a *Alert) SetCategoryContext(ctx context.Context, category string) error {
-	target := category
-	if target == "" {
-		target = "[Uncategorized]"
-	}
+	target := agentCategoryTarget(category)
 	q := fmt.Sprintf("EXEC msdb.dbo.sp_update_alert @name = N'%s', @category_name = N'%s'",
 		escapeSingle(a.Name), escapeSingle(target))
 	if err := a.server.execContext(ctx, q); err != nil {

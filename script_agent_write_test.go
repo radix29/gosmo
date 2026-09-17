@@ -21,6 +21,24 @@ func TestScriptAgentWrites(t *testing.T) {
 
 	runScriptCases(t, []scriptCase{
 		// --- Job
+		{"Job Rename", func(c context.Context) error {
+			return job().RenameContext(c, "Nightly'Run 2")
+		}, "EXEC msdb.dbo.sp_update_job @job_name = N'Nightly''Run', @new_name = N'Nightly''Run 2'"},
+		{"Job Enable", func(c context.Context) error {
+			return job().EnableContext(c)
+		}, "EXEC msdb.dbo.sp_update_job @job_name = N'Nightly''Run', @enabled = 1"},
+		{"Job Disable", func(c context.Context) error {
+			return job().DisableContext(c)
+		}, "EXEC msdb.dbo.sp_update_job @job_name = N'Nightly''Run', @enabled = 0"},
+		{"Job SetCategory", func(c context.Context) error {
+			return job().SetCategoryContext(c, "Data'Loads")
+		}, "EXEC msdb.dbo.sp_update_job @job_name = N'Nightly''Run', @category_name = N'Data''Loads'"},
+		{"Job SetOwner", func(c context.Context) error {
+			return job().SetOwnerContext(c, "CONTOSO\\o'brien")
+		}, "EXEC msdb.dbo.sp_update_job @job_name = N'Nightly''Run', @owner_login_name = N'CONTOSO\\o''brien'"},
+		{"Job Drop", func(c context.Context) error {
+			return job().DropContext(c)
+		}, "EXEC msdb.dbo.sp_delete_job @job_name = N'Nightly''Run'"},
 		{"Job SetDescription", func(c context.Context) error {
 			return job().SetDescriptionContext(c, "runs at 2'am")
 		}, "EXEC msdb.dbo.sp_update_job @job_name = N'Nightly''Run', @description = N'runs at 2''am'"},
@@ -43,11 +61,32 @@ func TestScriptAgentWrites(t *testing.T) {
 		{"Job DetachSchedule", func(c context.Context) error {
 			return job().DetachScheduleContext(c, "Daily'2am")
 		}, "EXEC msdb.dbo.sp_detach_schedule @job_name = N'Nightly''Run', @schedule_name = N'Daily''2am'"},
+		{
+			// sp_update_jobstep names only the four flow parameters; every
+			// other one omitted is "leave alone", which is what makes this a
+			// flow change rather than a rewrite of the step.
+			"JobStep SetFlow", func(c context.Context) error {
+				return (&JobStep{job: job(), StepID: 3, Name: "Load"}).SetFlowContext(c, 4, 2, 2, 0)
+			}, "EXEC msdb.dbo.sp_update_jobstep @job_name = N'Nightly''Run', @step_id = 3, " +
+				"@on_success_action = 4, @on_success_step_id = 2, " +
+				"@on_fail_action = 2, @on_fail_step_id = 0"},
 		{"JobStep Delete", func(c context.Context) error {
 			return (&JobStep{job: job(), StepID: 3}).DeleteContext(c)
 		}, "EXEC msdb.dbo.sp_delete_jobstep @job_name = N'Nightly''Run', @step_id = 3"},
 
 		// --- Alert
+		{"Alert Rename", func(c context.Context) error {
+			return alert().RenameContext(c, "Disk'Full 2")
+		}, "EXEC msdb.dbo.sp_update_alert @name = N'Disk''Full', @new_name = N'Disk''Full 2'"},
+		{"Alert Enable", func(c context.Context) error {
+			return alert().EnableContext(c)
+		}, "EXEC msdb.dbo.sp_update_alert @name = N'Disk''Full', @enabled = 1"},
+		{"Alert Disable", func(c context.Context) error {
+			return alert().DisableContext(c)
+		}, "EXEC msdb.dbo.sp_update_alert @name = N'Disk''Full', @enabled = 0"},
+		{"Alert Drop", func(c context.Context) error {
+			return alert().DropContext(c)
+		}, "EXEC msdb.dbo.sp_delete_alert @name = N'Disk''Full'"},
 		{"Alert SetTrigger on an error number", func(c context.Context) error {
 			return alert().SetTriggerContext(c, 823, 0)
 		}, "EXEC msdb.dbo.sp_update_alert @name = N'Disk''Full', @message_id = 823, @severity = 0"},
@@ -71,6 +110,28 @@ func TestScriptAgentWrites(t *testing.T) {
 		}, "EXEC msdb.dbo.sp_delete_notification @alert_name = N'Disk''Full', @operator_name = N'On''Call'"},
 
 		// --- Operator
+		{"Operator Rename", func(c context.Context) error {
+			return operator().RenameContext(c, "On'Call 2")
+		}, "EXEC msdb.dbo.sp_update_operator @name = N'On''Call', @new_name = N'On''Call 2'"},
+		{"Operator Enable", func(c context.Context) error {
+			return operator().EnableContext(c)
+		}, "EXEC msdb.dbo.sp_update_operator @name = N'On''Call', @enabled = 1"},
+		{"Operator Disable", func(c context.Context) error {
+			return operator().DisableContext(c)
+		}, "EXEC msdb.dbo.sp_update_operator @name = N'On''Call', @enabled = 0"},
+		{"Operator SetCategory", func(c context.Context) error {
+			return operator().SetCategoryContext(c, "Cat'1")
+		}, "EXEC msdb.dbo.sp_update_operator @name = N'On''Call', @category_name = N'Cat''1'"},
+		{
+			// An empty category is not an omitted parameter: sp_update_operator
+			// refuses N'', so the library sends msdb's own default category
+			// name instead.
+			"Operator SetCategory sends the default category for an empty one", func(c context.Context) error {
+				return operator().SetCategoryContext(c, "")
+			}, "EXEC msdb.dbo.sp_update_operator @name = N'On''Call', @category_name = N'[Uncategorized]'"},
+		{"Operator Drop", func(c context.Context) error {
+			return operator().DropContext(c)
+		}, "EXEC msdb.dbo.sp_delete_operator @name = N'On''Call'"},
 		{"Operator SetEmailAddress", func(c context.Context) error {
 			return operator().SetEmailAddressContext(c, "o'brien@example.com")
 		}, "EXEC msdb.dbo.sp_update_operator @name = N'On''Call', @email_address = N'o''brien@example.com'"},
@@ -78,6 +139,21 @@ func TestScriptAgentWrites(t *testing.T) {
 		// --- Schedule. Addressed by schedule_id, not by name: msdb allows two
 		// schedules to share a name, and sp_update_schedule then refuses a
 		// @name that matches more than one.
+		{"Schedule Rename", func(c context.Context) error {
+			return schedule().RenameContext(c, "Daily'3am")
+		}, "EXEC msdb.dbo.sp_update_schedule @schedule_id = 7, @new_name = N'Daily''3am'"},
+		{"Schedule Enable", func(c context.Context) error {
+			return schedule().EnableContext(c)
+		}, "EXEC msdb.dbo.sp_update_schedule @schedule_id = 7, @enabled = 1"},
+		{"Schedule Disable", func(c context.Context) error {
+			return schedule().DisableContext(c)
+		}, "EXEC msdb.dbo.sp_update_schedule @schedule_id = 7, @enabled = 0"},
+		{"Schedule SetOwner", func(c context.Context) error {
+			return schedule().SetOwnerContext(c, "CONTOSO\\o'brien")
+		}, "EXEC msdb.dbo.sp_update_schedule @schedule_id = 7, @owner_login_name = N'CONTOSO\\o''brien'"},
+		{"Schedule Drop", func(c context.Context) error {
+			return schedule().DropContext(c)
+		}, "EXEC msdb.dbo.sp_delete_schedule @schedule_id = 7"},
 		{"Schedule SetFrequency", func(c context.Context) error {
 			return schedule().SetFrequencyContext(c, ScheduleFrequency{
 				FreqType: 8, FreqInterval: 2, FreqSubdayType: 4,

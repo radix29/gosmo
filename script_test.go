@@ -398,7 +398,7 @@ func TestScriptedAgentCreatesReturnNameOnlyHandles(t *testing.T) {
 		}
 		// The handle has to be usable for the dependent statement the next
 		// page scripts — that is the whole point of returning one.
-		if err := s.Job("nightly reindex").AttachScheduleContext(ctx, sch.Name); err != nil {
+		if err := s.JobRef("nightly reindex").AttachScheduleContext(ctx, sch.Name); err != nil {
 			t.Fatalf("AttachScheduleContext under WithScript: %v", err)
 		}
 		if len(script.Statements) != 2 || !strings.Contains(script.Statements[1], "sp_attach_schedule") {

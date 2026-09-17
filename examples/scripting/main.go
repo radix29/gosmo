@@ -115,7 +115,7 @@ END`))
 	ctx, script := gosmo.WithScript(context.Background())
 	fmt.Printf("  gosmo.Scripting(ctx) = %t\n\n", gosmo.Scripting(ctx))
 
-	pending := srv.Database(dbName)
+	pending := srv.DatabaseRef(dbName)
 	demo.Must(pending.CreateSchemaContext(ctx, "Archive", "dbo"))
 	demo.Must(pending.CreateTableContext(ctx, gosmo.CreateTableRequest{
 		Schema: "Archive",

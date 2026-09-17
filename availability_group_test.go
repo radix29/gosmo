@@ -645,7 +645,7 @@ func TestJoinRepeatsTheClusterType(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(orEmpty(tt.clusterType), func(t *testing.T) {
-			ag := (&Server{}).AvailabilityGroup("AAG1")
+			ag := (&Server{}).AvailabilityGroupRef("AAG1")
 			ctx, script := WithScript(context.Background())
 			if err := ag.JoinContext(ctx, tt.clusterType); err != nil {
 				t.Fatalf("under WithScript: %v", err)

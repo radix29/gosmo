@@ -71,3 +71,25 @@ execution, not on a preference.
 
 Restore's URL-side cases, and the dialog behaviour around backup history, are
 gossms's: `docs/decisions.md` § Azure SQL Managed Instance.
+
+## Two login writes have no offline test, and cannot have one
+
+Every write path in the library now has a `WithScript` test pinning the exact
+statement it emits — the 2026-09-17 sweep took the zero-coverage count from 86
+to 0 — with two exceptions, both in `login.go`:
+`Login.MapToDatabaseContext` and `Login.UnmapFromDatabaseContext`. Each reads
+the catalog before it writes (`DatabaseByNameContext`, and for the unmap
+`UserMappingsContext` on top), and a read is exactly what `WithScript` cannot
+serve: nothing ran, so there is nothing to read back. They stay live-only, and
+`live_*` is where a regression in them will show.
+
+This is the shape `CLAUDE.md` § Script mode already names — a path that reads
+to decide what to write does not work under a scripting context. The two here
+are not broken by it, because they are not scripted paths; they are simply the
+two writes whose statement a test cannot see without a server.
+
+When adding a write, add its case to the matching `script_*_write_test.go`
+table (or `drop_rename_test.go` for a one-statement drop) in the same change,
+and mutation-check it: swap a parameter name or drop a `dbo` default in the
+source and confirm the new case fails. A case built from the same constant the
+code uses proves nothing.

@@ -12,6 +12,10 @@ import (
 func TestScriptSecurityWrites(t *testing.T) {
 	user := func() *User { return &User{db: scriptTestDB(), Name: "o'brien"} }
 	login := func() *Login { return &Login{server: &Server{}, Name: "o'brien"} }
+	serverRole := func() *ServerRole { return &ServerRole{server: &Server{}, Name: "ro'le"} }
+	securityPolicy := func() *SecurityPolicy {
+		return &SecurityPolicy{db: scriptTestDB(), Schema: "Se]c", Name: "sp'1"}
+	}
 
 	runScriptCases(t, []scriptCase{
 		// --- database principals
@@ -61,6 +65,18 @@ func TestScriptSecurityWrites(t *testing.T) {
 		}, scriptUsePrefix + "REVOKE SELECT ON [dbo].[Sales.Archive] FROM [o'brien]"},
 
 		// --- Login
+		{"Schema Drop", func(c context.Context) error {
+			return (&Schema{db: scriptTestDB(), Name: "sa]les"}).DropContext(c)
+		}, scriptUsePrefix + "DROP SCHEMA [sa]]les]"},
+		{"Schema ChangeOwner", func(c context.Context) error {
+			return (&Schema{db: scriptTestDB(), Name: "sa]les", Owner: "dbo"}).ChangeOwnerContext(c, "o'brien")
+		}, scriptUsePrefix + "ALTER AUTHORIZATION ON SCHEMA::[sa]]les] TO [o'brien]"},
+		{"User Drop", func(c context.Context) error {
+			return user().DropContext(c)
+		}, scriptUsePrefix + "DROP USER [o'brien]"},
+		{"User Rename", func(c context.Context) error {
+			return user().RenameContext(c, "o]b")
+		}, scriptUsePrefix + "ALTER USER [o'brien] WITH NAME = [o]]b]"},
 		{"Login Enable", func(c context.Context) error {
 			return login().EnableContext(c)
 		}, "ALTER LOGIN [o'brien] ENABLE"},
@@ -82,6 +98,49 @@ func TestScriptSecurityWrites(t *testing.T) {
 		{"Login SetPasswordPolicy", func(c context.Context) error {
 			return login().SetPasswordPolicyContext(c, true, false)
 		}, "ALTER LOGIN [o'brien] WITH CHECK_POLICY = ON, CHECK_EXPIRATION = OFF"},
+		{"Login Rename", func(c context.Context) error {
+			return login().RenameContext(c, "o]b")
+		}, "ALTER LOGIN [o'brien] WITH NAME = [o]]b]"},
+		{
+			// The password is a literal, not an identifier: an apostrophe in
+			// it must double, and HASHED is deliberately never emitted — it
+			// would tell the server the value is one of its own hash formats
+			// rather than cleartext.
+			"Login ChangePassword", func(c context.Context) error {
+				return login().ChangePasswordContext(c, "p'wd")
+			}, "ALTER LOGIN [o'brien] WITH PASSWORD = N'p''wd'"},
+		{
+			// MUST_CHANGE and UNLOCK follow the password space-separated —
+			// they are password-clause modifiers, not comma-separated set
+			// options — and MUST_CHANGE drags CHECK_EXPIRATION = ON in after
+			// the comma.
+			"Login ChangePasswordWithOptions", func(c context.Context) error {
+				return login().ChangePasswordWithOptionsContext(c, "p'wd", true, true)
+			}, "ALTER LOGIN [o'brien] WITH PASSWORD = N'p''wd' MUST_CHANGE UNLOCK, CHECK_EXPIRATION = ON"},
+		{"Login MapCredential", func(c context.Context) error {
+			return login().MapCredentialContext(c, "cred]1")
+		}, "ALTER LOGIN [o'brien] ADD CREDENTIAL [cred]]1]"},
+		{"Login UnmapCredential", func(c context.Context) error {
+			return login().UnmapCredentialContext(c, "cred]1")
+		}, "ALTER LOGIN [o'brien] DROP CREDENTIAL [cred]]1]"},
+		{"Login Drop", func(c context.Context) error {
+			return login().DropContext(c)
+		}, "DROP LOGIN [o'brien]"},
+		{"ServerRole Rename", func(c context.Context) error {
+			return serverRole().RenameContext(c, "r]2")
+		}, "ALTER SERVER ROLE [ro'le] WITH NAME = [r]]2]"},
+		{"ServerRole ChangeOwner", func(c context.Context) error {
+			return serverRole().ChangeOwnerContext(c, "o'brien")
+		}, "ALTER AUTHORIZATION ON SERVER ROLE::[ro'le] TO [o'brien]"},
+		{"ServerRole Drop", func(c context.Context) error {
+			return serverRole().DropContext(c)
+		}, "DROP SERVER ROLE [ro'le]"},
+		{"SecurityPolicy Enable", func(c context.Context) error {
+			return securityPolicy().EnableContext(c)
+		}, scriptUsePrefix + "ALTER SECURITY POLICY [Se]]c].[sp'1] WITH (STATE = ON)"},
+		{"SecurityPolicy Disable", func(c context.Context) error {
+			return securityPolicy().DisableContext(c)
+		}, scriptUsePrefix + "ALTER SECURITY POLICY [Se]]c].[sp'1] WITH (STATE = OFF)"},
 		{"Server DropLogin", func(c context.Context) error {
 			return (&Server{}).DropLoginContext(c, "o'brien")
 		}, "DROP LOGIN [o'brien]"},

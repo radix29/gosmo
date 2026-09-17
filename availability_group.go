@@ -191,7 +191,7 @@ func (s *Server) AvailabilityGroupsContext(ctx context.Context) ([]*Availability
 	return groups, nil
 }
 
-// AvailabilityGroup returns a lightweight handle to an availability group by
+// AvailabilityGroupRef returns a lightweight handle to an availability group by
 // name, with no query and no metadata: every field but Name is zero, so
 // ClusterType, PrimaryReplicaServerName and IsLocalPrimary all read as
 // "unknown" rather than as fact. Use AvailabilityGroupByName to get a group
@@ -201,9 +201,9 @@ func (s *Server) AvailabilityGroupsContext(ctx context.Context) ([]*Availability
 // an EXTERNAL- or NONE-cluster group has no row for it until Join succeeds, so
 // the join has to be issued against a handle built from the name alone. It is
 // also what works under a WithScript-derived context, where nothing has been
-// created yet to read back. The same split as Server.Database vs
+// created yet to read back. The same split as Server.DatabaseRef vs
 // Server.DatabaseByName.
-func (s *Server) AvailabilityGroup(name string) *AvailabilityGroup {
+func (s *Server) AvailabilityGroupRef(name string) *AvailabilityGroup {
 	return &AvailabilityGroup{server: s, Name: name}
 }
 

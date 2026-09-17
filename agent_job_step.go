@@ -424,7 +424,7 @@ func (j *Job) ReorderSteps(order func(n int) []int) error {
 // makes the reorder atomic, not serializable.
 //
 // The job must have been read with JobByName: the step listing is by job_id,
-// which a bare Server.Job handle does not carry.
+// which a bare Server.JobRef handle does not carry.
 func (j *Job) ReorderStepsContext(ctx context.Context, order func(n int) []int) error {
 	steps, err := j.StepsContext(ctx)
 	if err != nil {

@@ -165,8 +165,8 @@ WHERE  g.name = @p1`, name)
 	return g, nil
 }
 
-// PlanGuide returns a lightweight handle for a plan guide by name, without
-// querying sys.plan_guides — the counterpart of Server.Database and
+// PlanGuideRef returns a lightweight handle for a plan guide by name, without
+// querying sys.plan_guides — the counterpart of Server.DatabaseRef and
 // Database.DatabaseTrigger.
 //
 // Every other field stays at its zero value; PlanGuideByName is what
@@ -174,7 +174,7 @@ WHERE  g.name = @p1`, name)
 // this handle is enough to act on one the caller already knows exists, and is
 // the only usable form under a WithScript context, where
 // PlanGuideByNameContext's lookup is a real read.
-func (d *Database) PlanGuide(name string) *PlanGuide {
+func (d *Database) PlanGuideRef(name string) *PlanGuide {
 	return &PlanGuide{db: d, Name: name}
 }
 
@@ -236,5 +236,5 @@ func (d *Database) DropPlanGuide(name string) error {
 
 // DropPlanGuideContext is the context-aware variant of DropPlanGuide.
 func (d *Database) DropPlanGuideContext(ctx context.Context, name string) error {
-	return d.PlanGuide(name).DropContext(ctx)
+	return d.PlanGuideRef(name).DropContext(ctx)
 }

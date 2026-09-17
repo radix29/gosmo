@@ -31,10 +31,24 @@ classDiagram
         +SetNotificationMessage(msg) error
         +SetJobResponse(jobName) error
         +SetCategory(category) error
+        +Alter(ch AlertChanges) error
         +Notifications() []*AlertNotification
         +Notify(operator, method) error
         +RemoveNotify(operator) error
         +Drop() error
+    }
+
+    class AlertChanges {
+        +Name *string
+        +Enabled *bool
+        +ErrorNumber *int
+        +Severity *int
+        +DatabaseName *string
+        +DelayBetweenResponses *Duration
+        +NotificationMessage *string
+        +IncludeEventDescriptionIn *int
+        +Category *string
+        +JobName *string
     }
 
     class AlertNotification {
@@ -58,9 +72,19 @@ classDiagram
         +Rename(newName) error
         +SetEmailAddress(addr) error
         +SetCategory(category) error
+        +Alter(ch OperatorChanges) error
         +NotifyingAlerts() []*AlertNotificationRef
         +NotifyingJobs() []*JobNotificationRef
         +Drop() error
+    }
+
+    class OperatorChanges {
+        +Name *string
+        +Enabled *bool
+        +EmailAddress *string
+        +PagerAddress *string
+        +NetSendAddress *string
+        +Category *string
     }
 
     class AlertNotificationRef {
@@ -97,6 +121,7 @@ classDiagram
         +SetOwner(login) error
         +SetFrequency(f) error
         +SetActiveRange(startDate, endDate, startTime, endTime) error
+        +Alter(ch ScheduleChanges) error
         +Jobs() []*Job
         +Drop() error
     }
@@ -108,6 +133,25 @@ classDiagram
         +FreqSubdayInterval int
         +FreqRelativeInterval int
         +FreqRecurrenceFactor int
+    }
+
+    class ScheduleChanges {
+        +Name *string
+        +Enabled *bool
+        +Frequency *ScheduleFrequency
+        +Range *ScheduleActiveRange
+        +OwnerLogin *string
+        Addressed by @name when the receiver
+        has no ID, so it works from ScheduleRef
+        where the per-property setters, keyed
+        on @schedule_id, do not.
+    }
+
+    class ScheduleActiveRange {
+        +StartDate time.Time
+        +EndDate time.Time
+        +StartTime int
+        +EndTime int
     }
 
     class Category {
@@ -185,6 +229,10 @@ classDiagram
     Job --> JobState : CurrentState is
     Job --> NotifyLevel : notified per
     Schedule --> ScheduleFrequency : SetFrequency() accepts
+    Alert --> AlertChanges : Alter() accepts
+    Operator --> OperatorChanges : Alter() accepts
+    Schedule --> ScheduleChanges : Alter() accepts
+    ScheduleChanges --> ScheduleActiveRange : Range is
     Schedule --> ScheduleFreqType : recurs per
     Schedule --> ScheduleSubdayType : repeats per
     Alert "1" --> "*" AlertNotification : notifies via

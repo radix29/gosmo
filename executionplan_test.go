@@ -103,7 +103,7 @@ func TestCapturePlanKeepsEveryRowOfOneShowplanSet(t *testing.T) {
 	s := planTestServer(t, []fakePlanSet{
 		{cols: []string{planCol}, rows: []string{"<p1/>", "<p2/>", "<p3/>"}},
 	})
-	plan, err := s.Database("tempdb").EstimatedPlanContext(context.Background(), "batch")
+	plan, err := s.DatabaseRef("tempdb").EstimatedPlanContext(context.Background(), "batch")
 	if err != nil {
 		t.Fatalf("EstimatedPlanContext: %v", err)
 	}
@@ -130,7 +130,7 @@ func TestCapturePlanKeepsEveryShowplanResultSet(t *testing.T) {
 		{cols: []string{"id"}, rows: []string{"row"}},
 		{cols: []string{planCol}, rows: []string{"<p2/>"}},
 	})
-	plan, err := s.Database("tempdb").ActualPlanContext(context.Background(), "batch")
+	plan, err := s.DatabaseRef("tempdb").ActualPlanContext(context.Background(), "batch")
 	if err != nil {
 		t.Fatalf("ActualPlanContext: %v", err)
 	}
@@ -150,7 +150,7 @@ func TestCapturePlanIgnoresNonPlanResultSets(t *testing.T) {
 		{cols: []string{"name"}, rows: []string{"not a plan"}},
 		{cols: []string{planCol}, rows: []string{"<p1/>"}},
 	})
-	plan, err := s.Database("tempdb").ActualPlanContext(context.Background(), "batch")
+	plan, err := s.DatabaseRef("tempdb").ActualPlanContext(context.Background(), "batch")
 	if err != nil {
 		t.Fatalf("ActualPlanContext: %v", err)
 	}
@@ -165,7 +165,7 @@ func TestCapturePlanErrorsWhenNoPlanCameBack(t *testing.T) {
 	s := planTestServer(t, []fakePlanSet{
 		{cols: []string{"name"}, rows: []string{"not a plan"}},
 	})
-	if _, err := s.Database("tempdb").EstimatedPlanContext(context.Background(), "batch"); err == nil {
+	if _, err := s.DatabaseRef("tempdb").EstimatedPlanContext(context.Background(), "batch"); err == nil {
 		t.Fatal("want an error when no showplan set came back, got nil")
 	}
 }

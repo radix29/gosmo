@@ -59,6 +59,252 @@ func TestDropStatements(t *testing.T) {
 			want: "ALTER TABLE [sa]]les].[Or'ders] DROP COLUMN [a]]b]",
 		},
 		{
+			// All three type families funnel into DROP TYPE — nothing in the
+			// statement distinguishes an alias, table or CLR type.
+			name: "UserDefinedDataType.Drop",
+			write: func(ctx context.Context, d *Database) error {
+				return (&UserDefinedDataType{db: d, Schema: "sa]les", Name: "Pho'ne"}).DropContext(ctx)
+			},
+			want: "DROP TYPE [sa]]les].[Pho'ne]",
+		},
+		{
+			name: "UserDefinedTableType.Drop",
+			write: func(ctx context.Context, d *Database) error {
+				return (&UserDefinedTableType{db: d, Schema: "Sales", Name: "OrderLines"}).DropContext(ctx)
+			},
+			want: "DROP TYPE [Sales].[OrderLines]",
+		},
+		{
+			name: "ClrType.Drop",
+			write: func(ctx context.Context, d *Database) error {
+				return (&ClrType{db: d, Schema: "Sales", Name: "Geo"}).DropContext(ctx)
+			},
+			want: "DROP TYPE [Sales].[Geo]",
+		},
+		{
+			// The same dbo default as DropView, reached through the handle:
+			// an unqualified DROP TYPE resolves against the caller's default
+			// schema, not the type's.
+			name: "UserDefinedDataType.Drop defaults the schema",
+			write: func(ctx context.Context, d *Database) error {
+				return (&UserDefinedDataType{db: d, Name: "Phone"}).DropContext(ctx)
+			},
+			want: "DROP TYPE [dbo].[Phone]",
+		},
+		{
+			name:  "DropType",
+			write: func(ctx context.Context, d *Database) error { return d.DropTypeContext(ctx, "Sales", "Phone") },
+			want:  "DROP TYPE [Sales].[Phone]",
+		},
+		{
+			name:  "DropType defaults the schema",
+			write: func(ctx context.Context, d *Database) error { return d.DropTypeContext(ctx, "", "Phone") },
+			want:  "DROP TYPE [dbo].[Phone]",
+		},
+		{
+			name: "XmlSchemaCollection.Drop",
+			write: func(ctx context.Context, d *Database) error {
+				return (&XmlSchemaCollection{db: d, Schema: "arch]ive", Name: "Order'Schema"}).DropContext(ctx)
+			},
+			want: "DROP XML SCHEMA COLLECTION [arch]]ive].[Order'Schema]",
+		},
+		{
+			name: "XmlSchemaCollection.Drop defaults the schema",
+			write: func(ctx context.Context, d *Database) error {
+				return (&XmlSchemaCollection{db: d, Name: "OrderSchema"}).DropContext(ctx)
+			},
+			want: "DROP XML SCHEMA COLLECTION [dbo].[OrderSchema]",
+		},
+		{
+			name: "DropXmlSchemaCollection",
+			write: func(ctx context.Context, d *Database) error {
+				return d.DropXmlSchemaCollectionContext(ctx, "archive", "OrderSchema")
+			},
+			want: "DROP XML SCHEMA COLLECTION [archive].[OrderSchema]",
+		},
+		{
+			name: "DropXmlSchemaCollection defaults the schema",
+			write: func(ctx context.Context, d *Database) error {
+				return d.DropXmlSchemaCollectionContext(ctx, "", "OrderSchema")
+			},
+			want: "DROP XML SCHEMA COLLECTION [dbo].[OrderSchema]",
+		},
+		{
+			name:  "DropRule",
+			write: func(ctx context.Context, d *Database) error { return d.DropRuleContext(ctx, "Sales", "ru'le") },
+			want:  "DROP RULE [Sales].[ru'le]",
+		},
+		{
+			name: "Rule.Drop defaults the schema",
+			write: func(ctx context.Context, d *Database) error {
+				return (&Rule{db: d, Name: "ru]le"}).DropContext(ctx)
+			},
+			want: "DROP RULE [dbo].[ru]]le]",
+		},
+		{
+			name: "DropDefault",
+			write: func(ctx context.Context, d *Database) error {
+				return d.DropDefaultContext(ctx, "Sales", "df'1")
+			},
+			want: "DROP DEFAULT [Sales].[df'1]",
+		},
+		{
+			name: "Default.Drop defaults the schema",
+			write: func(ctx context.Context, d *Database) error {
+				return (&Default{db: d, Name: "df]1"}).DropContext(ctx)
+			},
+			want: "DROP DEFAULT [dbo].[df]]1]",
+		},
+		{
+			name: "Sequence.Drop",
+			write: func(ctx context.Context, d *Database) error {
+				return (&Sequence{db: d, Schema: "Sales", Name: "seq'1"}).DropContext(ctx)
+			},
+			want: "DROP SEQUENCE [Sales].[seq'1]",
+		},
+		{
+			name: "Sequence.Drop defaults the schema",
+			write: func(ctx context.Context, d *Database) error {
+				return (&Sequence{db: d, Name: "seq]1"}).DropContext(ctx)
+			},
+			want: "DROP SEQUENCE [dbo].[seq]]1]",
+		},
+		{
+			name: "Synonym.Drop",
+			write: func(ctx context.Context, d *Database) error {
+				return (&Synonym{db: d, Schema: "Sales", Name: "syn'1"}).DropContext(ctx)
+			},
+			want: "DROP SYNONYM [Sales].[syn'1]",
+		},
+		{
+			name: "Synonym.Drop defaults the schema",
+			write: func(ctx context.Context, d *Database) error {
+				return (&Synonym{db: d, Name: "syn]1"}).DropContext(ctx)
+			},
+			want: "DROP SYNONYM [dbo].[syn]]1]",
+		},
+		{
+			// A partition function and scheme are database-scoped and have no
+			// schema of their own, so there is no default to pin here.
+			name: "PartitionFunction.Drop",
+			write: func(ctx context.Context, d *Database) error {
+				return (&PartitionFunction{db: d, Name: "pf]1"}).DropContext(ctx)
+			},
+			want: "DROP PARTITION FUNCTION [pf]]1]",
+		},
+		{
+			name: "PartitionScheme.Drop",
+			write: func(ctx context.Context, d *Database) error {
+				return (&PartitionScheme{db: d, Name: "ps'1"}).DropContext(ctx)
+			},
+			want: "DROP PARTITION SCHEME [ps'1]",
+		},
+		{
+			name: "DropExternalDataSource",
+			write: func(ctx context.Context, d *Database) error {
+				return d.DropExternalDataSourceContext(ctx, "eds]1")
+			},
+			want: "DROP EXTERNAL DATA SOURCE [eds]]1]",
+		},
+		{
+			name: "ExternalDataSource.Drop",
+			write: func(ctx context.Context, d *Database) error {
+				return (&ExternalDataSource{db: d, Name: "eds'1"}).DropContext(ctx)
+			},
+			want: "DROP EXTERNAL DATA SOURCE [eds'1]",
+		},
+		{
+			name: "ExternalFileFormat.Drop",
+			write: func(ctx context.Context, d *Database) error {
+				return (&ExternalFileFormat{db: d, Name: "eff'1"}).DropContext(ctx)
+			},
+			want: "DROP EXTERNAL FILE FORMAT [eff'1]",
+		},
+		{
+			// The version gate in front of this one answers "supported" for a
+			// server whose version is unknown, which is what a scripted
+			// database has — the statement still has to be the right one.
+			name: "ExternalLibrary.Drop",
+			write: func(ctx context.Context, d *Database) error {
+				return (&ExternalLibrary{db: d, Name: "lib]1"}).DropContext(ctx)
+			},
+			want: "DROP EXTERNAL LIBRARY [lib]]1]",
+		},
+		{
+			name: "Schema.Drop",
+			write: func(ctx context.Context, d *Database) error {
+				return (&Schema{db: d, Name: "sa]les"}).DropContext(ctx)
+			},
+			want: "DROP SCHEMA [sa]]les]",
+		},
+		{
+			name: "User.Drop",
+			write: func(ctx context.Context, d *Database) error {
+				return (&User{db: d, Name: "o'brien"}).DropContext(ctx)
+			},
+			want: "DROP USER [o'brien]",
+		},
+		{
+			name: "SecurityPolicy.Drop",
+			write: func(ctx context.Context, d *Database) error {
+				return (&SecurityPolicy{db: d, Schema: "Sec", Name: "sp'1"}).DropContext(ctx)
+			},
+			want: "DROP SECURITY POLICY [Sec].[sp'1]",
+		},
+		{
+			name: "DropAssembly",
+			write: func(ctx context.Context, d *Database) error {
+				return d.DropAssemblyContext(ctx, "asm]1")
+			},
+			want: "DROP ASSEMBLY [asm]]1]",
+		},
+		{
+			name: "Assembly.Drop",
+			write: func(ctx context.Context, d *Database) error {
+				return (&Assembly{db: d, Name: "asm'1"}).DropContext(ctx)
+			},
+			want: "DROP ASSEMBLY [asm'1]",
+		},
+		{
+			name: "Certificate.Drop",
+			write: func(ctx context.Context, d *Database) error {
+				return (&Certificate{db: d, Name: "cert'1"}).DropContext(ctx)
+			},
+			want: "DROP CERTIFICATE [cert'1]",
+		},
+		{
+			name: "ColumnMasterKey.Drop",
+			write: func(ctx context.Context, d *Database) error {
+				return (&ColumnMasterKey{db: d, Name: "CMK]1"}).DropContext(ctx)
+			},
+			want: "DROP COLUMN MASTER KEY [CMK]]1]",
+		},
+		{
+			name: "ColumnEncryptionKey.Drop",
+			write: func(ctx context.Context, d *Database) error {
+				return (&ColumnEncryptionKey{db: d, Name: "CEK'1"}).DropContext(ctx)
+			},
+			want: "DROP COLUMN ENCRYPTION KEY [CEK'1]",
+		},
+		{
+			// DROP STATISTICS takes a three-part name whose parts are quoted
+			// separately — the whole thing is not one identifier, so a
+			// FullName() here would produce a name the parser reads as two
+			// parts and one dotted string.
+			name: "Statistic.Drop",
+			write: func(ctx context.Context, d *Database) error {
+				return (&Statistic{table: &Table{db: d, Schema: "sa]les", Name: "Or'ders"}, Name: "st]1"}).DropContext(ctx)
+			},
+			want: "DROP STATISTICS [sa]]les].[Or'ders].[st]]1]",
+		},
+		{
+			name: "DatabaseSnapshot.Drop is a DROP DATABASE",
+			write: func(ctx context.Context, d *Database) error {
+				return (&DatabaseSnapshot{server: d.server, Name: "AppDB_snap]1"}).DropContext(ctx)
+			},
+			want: "DROP DATABASE [AppDB_snap]]1]",
+		},
+		{
 			name: "DatabaseRole.Drop delegates to the database",
 			write: func(ctx context.Context, d *Database) error {
 				return (&DatabaseRole{db: d, Name: "app_reader"}).DropContext(ctx)
@@ -102,6 +348,13 @@ func TestRenameStatements(t *testing.T) {
 				return d.TransferObjectContext(ctx, "arch]ive", "sa]les", "Or'ders")
 			},
 			want: []string{"ALTER SCHEMA [arch]]ive] TRANSFER [sa]]les].[Or'ders]"},
+		},
+		{
+			name: "DatabaseRole.Rename",
+			write: func(ctx context.Context, d *Database) error {
+				return (&DatabaseRole{db: d, Name: "app]reader"}).RenameContext(ctx, "app'reader")
+			},
+			want: []string{"ALTER ROLE [app]]reader] WITH NAME = [app'reader]"},
 		},
 		{
 			// sp_rename's USERDATATYPE class is the only one that reaches
@@ -251,11 +504,11 @@ func TestDropStatementsAreNotIdempotent(t *testing.T) {
 		{"function", func() error { return d.DropFunctionContext(ctx, "dbo", "f") }},
 		{"procedure", func() error { return d.DropStoredProcedureContext(ctx, "dbo", "p") }},
 		{"trigger", func() error { return d.DropTriggerContext(ctx, "dbo", "tr") }},
-		{"database trigger", func() error { return d.DatabaseTrigger("ddl_tr").DropContext(ctx) }},
+		{"database trigger", func() error { return d.DatabaseTriggerRef("ddl_tr").DropContext(ctx) }},
 		{"synonym", func() error { return d.DropSynonymContext(ctx, "dbo", "syn") }},
 		{"sequence", func() error { return d.DropSequenceContext(ctx, "dbo", "seq") }},
 		{"table", func() error { return d.DropTableContext(ctx, "dbo", "t", false) }},
-		{"database scoped credential", func() error { return d.DatabaseScopedCredential("cred").DropContext(ctx) }},
+		{"database scoped credential", func() error { return d.DatabaseScopedCredentialRef("cred").DropContext(ctx) }},
 		{"database role", func() error { return d.DropDatabaseRoleContext(ctx, "r") }},
 		{"schema", func() error { return d.DropSchemaContext(ctx, "s") }},
 		{"user", func() error { return d.DropUserContext(ctx, "u") }},

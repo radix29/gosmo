@@ -42,16 +42,16 @@ type DatabaseSnapshot struct {
 	CreateDate time.Time
 }
 
-// DatabaseSnapshot returns a lightweight handle to a snapshot by name,
+// DatabaseSnapshotRef returns a lightweight handle to a snapshot by name,
 // without a query. Nothing verifies that it exists and every field but Name
 // stays zero — SourceDatabase included, so Restore refuses on it and the
 // caller must go through Server.RestoreFromSnapshot with both names.
 //
-// Like Server.Database, it is the form the name-only operations take — Drop,
+// Like Server.DatabaseRef, it is the form the name-only operations take — Drop,
 // which names the snapshot in the statement and reads nothing else — and the
 // only one that works under a WithScript-derived context, where no lookup can
 // run at all.
-func (s *Server) DatabaseSnapshot(name string) *DatabaseSnapshot {
+func (s *Server) DatabaseSnapshotRef(name string) *DatabaseSnapshot {
 	return &DatabaseSnapshot{server: s, Name: name}
 }
 
@@ -60,7 +60,7 @@ func (s *DatabaseSnapshot) Server() *Server { return s.server }
 
 // Database returns a lightweight handle for the snapshot database itself, for
 // reading its (read-only) contents.
-func (s *DatabaseSnapshot) Database() *Database { return s.server.Database(s.Name) }
+func (s *DatabaseSnapshot) Database() *Database { return s.server.DatabaseRef(s.Name) }
 
 const databaseSnapshotSelect = `
 SELECT d.name, d.database_id,

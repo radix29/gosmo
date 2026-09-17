@@ -271,7 +271,7 @@ func TestDatabaseCapabilitiesStopAtAnInaccessibleDatabase(t *testing.T) {
 	script := &capScript{dbAccess: int64(0)}
 	srv := capServer(t, script)
 
-	c, err := srv.Database("locked").CapabilitiesContext(context.Background())
+	c, err := srv.DatabaseRef("locked").CapabilitiesContext(context.Background())
 	if err != nil {
 		t.Fatalf("CapabilitiesContext: %v", err)
 	}
@@ -295,7 +295,7 @@ func TestDatabaseCapabilitiesStopAtAnInaccessibleDatabase(t *testing.T) {
 // login cannot so much as connect to. Permits is the test that does not.
 func TestPermitsFoldsAccessibilityIntoTheWithholdingTest(t *testing.T) {
 	locked, err := capServer(t, &capScript{dbAccess: int64(0)}).
-		Database("locked").CapabilitiesContext(context.Background())
+		DatabaseRef("locked").CapabilitiesContext(context.Background())
 	if err != nil {
 		t.Fatalf("CapabilitiesContext: %v", err)
 	}
@@ -316,7 +316,7 @@ func TestPermitsFoldsAccessibilityIntoTheWithholdingTest(t *testing.T) {
 			{"P", "SELECT", int64(1)},
 			{"P", "ALTER", int64(0)},
 		},
-	}).Database("HealthClinic").CapabilitiesContext(context.Background())
+	}).DatabaseRef("HealthClinic").CapabilitiesContext(context.Background())
 	if err != nil {
 		t.Fatalf("CapabilitiesContext: %v", err)
 	}
@@ -340,7 +340,7 @@ func TestPermitsFoldsAccessibilityIntoTheWithholdingTest(t *testing.T) {
 func TestDatabaseCapabilitiesTreatNullAccessAsInaccessible(t *testing.T) {
 	srv := capServer(t, &capScript{dbAccess: nil})
 
-	c, err := srv.Database("ghost").CapabilitiesContext(context.Background())
+	c, err := srv.DatabaseRef("ghost").CapabilitiesContext(context.Background())
 	if err != nil {
 		t.Fatalf("CapabilitiesContext: %v", err)
 	}
@@ -363,7 +363,7 @@ func TestDatabaseCapabilitiesReadRolesAndPermissions(t *testing.T) {
 	}
 	srv := capServer(t, script)
 
-	c, err := srv.Database("HealthClinic").CapabilitiesContext(context.Background())
+	c, err := srv.DatabaseRef("HealthClinic").CapabilitiesContext(context.Background())
 	if err != nil {
 		t.Fatalf("CapabilitiesContext: %v", err)
 	}
@@ -448,7 +448,7 @@ func TestDatabaseCapabilitiesReadSchemaPermissions(t *testing.T) {
 		},
 	})
 
-	c, err := srv.Database("HealthClinic").CapabilitiesContext(context.Background())
+	c, err := srv.DatabaseRef("HealthClinic").CapabilitiesContext(context.Background())
 	if err != nil {
 		t.Fatalf("CapabilitiesContext: %v", err)
 	}
@@ -528,7 +528,7 @@ func TestSchemaCapabilityQueryNumbersItsPlaceholdersAfterTheOthers(t *testing.T)
 func TestTheDatabaseProbeAsksAboutEverySchemaInOnePass(t *testing.T) {
 	script := &capScript{dbAccess: int64(1)}
 	srv := capServer(t, script)
-	if _, err := srv.Database("HealthClinic").CapabilitiesContext(context.Background()); err != nil {
+	if _, err := srv.DatabaseRef("HealthClinic").CapabilitiesContext(context.Background()); err != nil {
 		t.Fatalf("CapabilitiesContext: %v", err)
 	}
 
@@ -756,7 +756,7 @@ func TestDatabaseCapabilitiesReadColumnPermissionsApartFromTheirTable(t *testing
 		},
 	})
 
-	c, err := srv.Database("HealthClinic").CapabilitiesContext(context.Background())
+	c, err := srv.DatabaseRef("HealthClinic").CapabilitiesContext(context.Background())
 	if err != nil {
 		t.Fatalf("CapabilitiesContext: %v", err)
 	}
@@ -810,7 +810,7 @@ func TestADenyOnAColumnSurvivesAGrantAndIsNamedStably(t *testing.T) {
 				{"C:ALTER", "dbo.Patients.SSN", order[1]},
 			},
 		})
-		c, err := srv.Database("HealthClinic").CapabilitiesContext(context.Background())
+		c, err := srv.DatabaseRef("HealthClinic").CapabilitiesContext(context.Background())
 		if err != nil {
 			t.Fatalf("CapabilitiesContext: %v", err)
 		}
@@ -919,7 +919,7 @@ func TestDatabaseCapabilitiesReadSchemaDenialsApartFromTheProbe(t *testing.T) {
 		},
 	})
 
-	c, err := srv.Database("HealthClinic").CapabilitiesContext(context.Background())
+	c, err := srv.DatabaseRef("HealthClinic").CapabilitiesContext(context.Background())
 	if err != nil {
 		t.Fatalf("CapabilitiesContext: %v", err)
 	}
@@ -950,7 +950,7 @@ func TestADenyOnASchemaSurvivesAGrant(t *testing.T) {
 				{"E:ALTER", "Sales", order[1]},
 			},
 		})
-		c, err := srv.Database("HealthClinic").CapabilitiesContext(context.Background())
+		c, err := srv.DatabaseRef("HealthClinic").CapabilitiesContext(context.Background())
 		if err != nil {
 			t.Fatalf("CapabilitiesContext: %v", err)
 		}
@@ -1006,7 +1006,7 @@ func TestDatabaseCapabilitiesReadDatabaseDenialsApartFromTheProbe(t *testing.T) 
 		},
 	})
 
-	c, err := srv.Database("HealthClinic").CapabilitiesContext(context.Background())
+	c, err := srv.DatabaseRef("HealthClinic").CapabilitiesContext(context.Background())
 	if err != nil {
 		t.Fatalf("CapabilitiesContext: %v", err)
 	}
@@ -1040,7 +1040,7 @@ func TestADenyOnTheDatabaseSurvivesAGrant(t *testing.T) {
 				{"D:ALTER", "HealthClinic", order[1]},
 			},
 		})
-		c, err := srv.Database("HealthClinic").CapabilitiesContext(context.Background())
+		c, err := srv.DatabaseRef("HealthClinic").CapabilitiesContext(context.Background())
 		if err != nil {
 			t.Fatalf("CapabilitiesContext: %v", err)
 		}
@@ -1061,7 +1061,7 @@ func TestADenyOnTheDatabaseSurvivesAGrant(t *testing.T) {
 func TestTheDatabaseProbeAsksForExplicitDatabaseDenials(t *testing.T) {
 	script := &capScript{dbAccess: int64(1)}
 	srv := capServer(t, script)
-	if _, err := srv.Database("HealthClinic").CapabilitiesContext(context.Background()); err != nil {
+	if _, err := srv.DatabaseRef("HealthClinic").CapabilitiesContext(context.Background()); err != nil {
 		t.Fatalf("CapabilitiesContext: %v", err)
 	}
 	q := script.dbQuery
@@ -1133,7 +1133,7 @@ func TestDatabaseCapabilitiesReadPrincipalDenialsApartFromTheProbe(t *testing.T)
 			{"N:ALTER", "bob", int64(0)},
 		},
 	})
-	c, err := srv.Database("HealthClinic").CapabilitiesContext(context.Background())
+	c, err := srv.DatabaseRef("HealthClinic").CapabilitiesContext(context.Background())
 	if err != nil {
 		t.Fatalf("CapabilitiesContext: %v", err)
 	}
@@ -1160,7 +1160,7 @@ func TestDatabaseCapabilitiesReadPrincipalDenialsApartFromTheProbe(t *testing.T)
 func TestTheDatabaseProbeAsksForExplicitPrincipalDenials(t *testing.T) {
 	script := &capScript{dbAccess: int64(1)}
 	srv := capServer(t, script)
-	if _, err := srv.Database("HealthClinic").CapabilitiesContext(context.Background()); err != nil {
+	if _, err := srv.DatabaseRef("HealthClinic").CapabilitiesContext(context.Background()); err != nil {
 		t.Fatalf("CapabilitiesContext: %v", err)
 	}
 	q := script.dbQuery
@@ -1493,7 +1493,7 @@ func TestDatabaseCapabilitiesReadSecurableAnswersByKind(t *testing.T) {
 			{"K:CONTROL", "ASSEMBLY::a2", nil},
 		},
 	})
-	c, err := srv.Database("HealthClinic").CapabilitiesContext(context.Background())
+	c, err := srv.DatabaseRef("HealthClinic").CapabilitiesContext(context.Background())
 	if err != nil {
 		t.Fatalf("CapabilitiesContext: %v", err)
 	}

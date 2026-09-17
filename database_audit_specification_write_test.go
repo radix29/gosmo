@@ -154,7 +154,7 @@ func TestChangingADatabaseSpecificationTurnsItOffAndBackOn(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			db := auditDatabase(t, &auditScript{enabled: tc.enabled})
 			ctx, col := WithScript(context.Background())
-			if err := tc.act(db.DatabaseAuditSpecification("s"), ctx); err != nil {
+			if err := tc.act(db.DatabaseAuditSpecificationRef("s"), ctx); err != nil {
 				t.Fatalf("act: %v", err)
 			}
 			if !slices.Equal(col.Statements, tc.want) {
@@ -169,7 +169,7 @@ func TestChangingADatabaseSpecificationTurnsItOffAndBackOn(t *testing.T) {
 func TestWithDisabledSharesOneWindow(t *testing.T) {
 	db := auditDatabase(t, &auditScript{enabled: true})
 	ctx, col := WithScript(context.Background())
-	spec := db.DatabaseAuditSpecification("s")
+	spec := db.DatabaseAuditSpecificationRef("s")
 	err := spec.WithDisabled(ctx, func(ctx context.Context) error {
 		if err := spec.AddActionsContext(ctx, []string{"SCHEMA_OBJECT_ACCESS_GROUP"}, nil); err != nil {
 			return err
@@ -195,7 +195,7 @@ func TestWithDisabledSharesOneWindow(t *testing.T) {
 func TestADatabaseWindowDoesNotMatchAServerWindow(t *testing.T) {
 	db := auditDatabase(t, &auditScript{enabled: true})
 	ctx := context.WithValue(context.Background(), specificationDisabledKey{}, "s")
-	if db.DatabaseAuditSpecification("s").inSpecificationWindow(ctx) {
+	if db.DatabaseAuditSpecificationRef("s").inSpecificationWindow(ctx) {
 		t.Error("a server specification's window was taken for a database one's")
 	}
 }
@@ -203,7 +203,7 @@ func TestADatabaseWindowDoesNotMatchAServerWindow(t *testing.T) {
 func TestDroppingAnEnabledDatabaseSpecificationDisablesItFirst(t *testing.T) {
 	db := auditDatabase(t, &auditScript{enabled: true})
 	ctx, col := WithScript(context.Background())
-	if err := db.DatabaseAuditSpecification("s").DropContext(ctx); err != nil {
+	if err := db.DatabaseAuditSpecificationRef("s").DropContext(ctx); err != nil {
 		t.Fatalf("DropContext: %v", err)
 	}
 	want := []string{
@@ -218,7 +218,7 @@ func TestDroppingAnEnabledDatabaseSpecificationDisablesItFirst(t *testing.T) {
 func TestChangingAMissingDatabaseSpecificationIsNotFound(t *testing.T) {
 	db := auditDatabase(t, &auditScript{missing: true})
 	ctx, col := WithScript(context.Background())
-	err := db.DatabaseAuditSpecification("gone").AddActionsContext(ctx, []string{"SCHEMA_OBJECT_ACCESS_GROUP"}, nil)
+	err := db.DatabaseAuditSpecificationRef("gone").AddActionsContext(ctx, []string{"SCHEMA_OBJECT_ACCESS_GROUP"}, nil)
 	if !errors.Is(err, ErrNotFound) {
 		t.Fatalf("got %v, want a not-found error", err)
 	}
@@ -232,7 +232,7 @@ func TestChangingAMissingDatabaseSpecificationIsNotFound(t *testing.T) {
 func TestChangingNoDatabaseActionsWritesNothing(t *testing.T) {
 	db := auditDatabase(t, &auditScript{enabled: true})
 	ctx, col := WithScript(context.Background())
-	if err := db.DatabaseAuditSpecification("s").AddActionsContext(ctx, nil, nil); err != nil {
+	if err := db.DatabaseAuditSpecificationRef("s").AddActionsContext(ctx, nil, nil); err != nil {
 		t.Fatalf("AddActionsContext: %v", err)
 	}
 	if len(col.Statements) != 0 {

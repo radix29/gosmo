@@ -142,12 +142,20 @@ a gossms-side build only compiles the packages it imports.
   - A statement captured with bound parameters is substituted to literals
     (`bindScriptArgs`) — a captured statement is pasted into a query editor,
     where nothing binds `@p1`.
-- `Server.Database(name)` and `Server.DatabaseByName(name)` both exist on
-  purpose and are not interchangeable — the lightweight handle is the only
-  one that works under a `WithScript`-derived context. The same pairing
-  exists for logins and for all four Agent object families (`Server.Job` vs
-  `JobByName`, and Alert/Operator/Schedule alike). Their doc comments in
-  `server.go` and `login.go` are the authority; `go doc gosmo.Server.Database`.
+- **The `Ref` suffix marks a lookup-free handle.** `Server.DatabaseRef(name)`
+  returns a `*Database` carrying only its name — no query, every other field
+  at its zero value — while `Server.DatabaseByName(name)` reads the catalog.
+  They are not interchangeable: the handle is the only form that works under
+  a `WithScript`-derived context, and the populated one is the only form
+  whose accessors answer anything. Eighteen families pair this way
+  (`DatabaseRef`, `LoginRef`, `TableRef`, the four Agent ones, and the
+  audit/credential/trigger/snapshot/plan-guide/backup-device/AG families);
+  every other by-name lookup in the library is `*ByName` with no handle
+  beside it. **A new handle method takes the `Ref` suffix** — the suffix is
+  what stops `s.Database("x").State()` from compiling into a silent zero
+  value, which is what the un-suffixed name allowed. Their doc
+  comments in `server.go` and `login.go` are the authority;
+  `go doc gosmo.Server.DatabaseRef`.
 
 ## Open threads
 

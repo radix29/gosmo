@@ -36,6 +36,20 @@ func TestScriptIndexAndStatisticsWrites(t *testing.T) {
 		{"Index UpdateStatistics", func(c context.Context) error {
 			return index().UpdateStatisticsContext(c, table())
 		}, scriptUsePrefix + "UPDATE STATISTICS [dbo].[Sales.Archive] ([IX_A]]B])"},
+		{"Index Disable", func(c context.Context) error {
+			return index().DisableContext(c, table())
+		}, scriptUsePrefix + "ALTER INDEX [IX_A]]B] ON [dbo].[Sales.Archive] DISABLE"},
+		{
+			// A disabled index is re-enabled by rebuilding it; there is no
+			// ALTER INDEX ... ENABLE. The rebuild carries no FILLFACTOR,
+			// which would otherwise change the index's stored setting as a
+			// side effect of turning it back on.
+			"Index Enable rebuilds", func(c context.Context) error {
+				return index().EnableContext(c, table())
+			}, scriptUsePrefix + "ALTER INDEX [IX_A]]B] ON [dbo].[Sales.Archive] REBUILD"},
+		{"Index Drop", func(c context.Context) error {
+			return index().DropContext(c, table())
+		}, scriptUsePrefix + "DROP INDEX [IX_A]]B] ON [dbo].[Sales.Archive]"},
 		{"Table RebuildAllIndexes", func(c context.Context) error {
 			return table().RebuildAllIndexesContext(c, 70)
 		}, scriptUsePrefix + "ALTER INDEX ALL ON [dbo].[Sales.Archive] REBUILD WITH (FILLFACTOR = 70)"},
@@ -114,5 +128,46 @@ func TestCreateStatisticRefusesAFullScanAndASample(t *testing.T) {
 	}
 	if len(script.Statements) != 0 {
 		t.Errorf("refused but still scripted %q", script.Statements)
+	}
+}
+
+// The plan guide controls. All three are the same sp_control_plan_guide call
+// with a different @operation, and they reach it through bound parameters —
+// so what a captured statement shows is the substituted form bindScriptArgs
+// produces, not @p1/@p2.
+func TestScriptPlanGuideControls(t *testing.T) {
+	guide := func() *PlanGuide { return &PlanGuide{db: scriptTestDB(), Name: "PG_o'brien"} }
+
+	runScriptCases(t, []scriptCase{
+		{"PlanGuide Enable", func(c context.Context) error {
+			return guide().EnableContext(c)
+		}, scriptUsePrefix + "EXEC sp_control_plan_guide @operation = N'ENABLE', @name = N'PG_o''brien'"},
+		{"PlanGuide Disable", func(c context.Context) error {
+			return guide().DisableContext(c)
+		}, scriptUsePrefix + "EXEC sp_control_plan_guide @operation = N'DISABLE', @name = N'PG_o''brien'"},
+		{"PlanGuide Drop", func(c context.Context) error {
+			return guide().DropContext(c)
+		}, scriptUsePrefix + "EXEC sp_control_plan_guide @operation = N'DROP', @name = N'PG_o''brien'"},
+		{"DropPlanGuide by name", func(c context.Context) error {
+			return scriptTestDB().DropPlanGuideContext(c, "PG_o'brien")
+		}, scriptUsePrefix + "EXEC sp_control_plan_guide @operation = N'DROP', @name = N'PG_o''brien'"},
+	})
+}
+
+// A scripted enable or disable must not move the receiver's IsDisabled:
+// nothing ran, so the guide on the server still has the state it had.
+func TestScriptedPlanGuideControlDoesNotMirrorOntoTheReceiver(t *testing.T) {
+	g := &PlanGuide{db: scriptTestDB(), Name: "PG", IsDisabled: true}
+
+	ctx, script := WithScript(context.Background())
+	if err := g.EnableContext(ctx); err != nil {
+		t.Fatalf("scripted enable: %v", err)
+	}
+	if !g.IsDisabled {
+		t.Error("a scripted enable cleared IsDisabled on the receiver; the statement " +
+			"was only captured, so the server's guide is still disabled")
+	}
+	if len(script.Statements) != 1 {
+		t.Fatalf("captured %q, want one statement", script.Statements)
 	}
 }

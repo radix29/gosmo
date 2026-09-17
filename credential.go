@@ -25,7 +25,7 @@ import (
 // listed under Security > Credentials and offered in a Login's "Map to
 // credential" dropdown.
 //
-// Get one from Server.Credential(name) or one of the reads below. A Credential
+// Get one from Server.CredentialRef(name) or one of the reads below. A Credential
 // built as a struct literal has no server behind it and will panic on Alter or
 // Drop.
 type Credential struct {
@@ -110,9 +110,9 @@ WHERE  c.name = @p1`, name)
 	return c, nil
 }
 
-// Credential returns a lightweight handle for a credential by name, without
+// CredentialRef returns a lightweight handle for a credential by name, without
 // querying sys.credentials — the credential-side counterpart of
-// Server.Database. Identity, CredentialID and every other cached field stay
+// Server.DatabaseRef. Identity, CredentialID and every other cached field stay
 // at their zero value; CredentialByName is what populates them.
 //
 // Every write method on *Credential addresses the credential by name, so this
@@ -120,7 +120,7 @@ WHERE  c.name = @p1`, name)
 // and is the only usable form under a WithScript context, where
 // CredentialByNameContext's lookup is a real read and a credential whose
 // CREATE CREDENTIAL was merely collected is not there to find.
-func (s *Server) Credential(name string) *Credential {
+func (s *Server) CredentialRef(name string) *Credential {
 	return &Credential{server: s, Name: name}
 }
 
@@ -195,7 +195,7 @@ func (s *Server) CreateCredentialContext(ctx context.Context, spec CredentialSpe
 	}
 	if Scripting(ctx) {
 		// The CREATE was only collected, so there is nothing to read back.
-		return s.Credential(spec.Name), nil
+		return s.CredentialRef(spec.Name), nil
 	}
 	return s.CredentialByNameContext(ctx, spec.Name)
 }

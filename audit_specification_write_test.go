@@ -111,7 +111,7 @@ func TestChangingASpecificationTurnsItOffAndBackOn(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			srv := auditServer(t, &auditScript{enabled: tc.enabled})
 			ctx, col := WithScript(context.Background())
-			if err := tc.act(srv.ServerAuditSpecification("s"), ctx); err != nil {
+			if err := tc.act(srv.ServerAuditSpecificationRef("s"), ctx); err != nil {
 				t.Fatalf("act: %v", err)
 			}
 			if !slices.Equal(col.Statements, tc.want) {
@@ -124,7 +124,7 @@ func TestChangingASpecificationTurnsItOffAndBackOn(t *testing.T) {
 func TestDroppingAnEnabledSpecificationDisablesItFirst(t *testing.T) {
 	srv := auditServer(t, &auditScript{enabled: true})
 	ctx, col := WithScript(context.Background())
-	if err := srv.ServerAuditSpecification("s").DropContext(ctx); err != nil {
+	if err := srv.ServerAuditSpecificationRef("s").DropContext(ctx); err != nil {
 		t.Fatalf("DropContext: %v", err)
 	}
 	want := []string{
@@ -139,7 +139,7 @@ func TestDroppingAnEnabledSpecificationDisablesItFirst(t *testing.T) {
 func TestChangingAMissingSpecificationIsNotFound(t *testing.T) {
 	srv := auditServer(t, &auditScript{missing: true})
 	ctx, col := WithScript(context.Background())
-	err := srv.ServerAuditSpecification("gone").AddActionGroupsContext(ctx, "BACKUP_RESTORE_GROUP")
+	err := srv.ServerAuditSpecificationRef("gone").AddActionGroupsContext(ctx, "BACKUP_RESTORE_GROUP")
 	if !errors.Is(err, ErrNotFound) {
 		t.Fatalf("got %v, want a not-found error", err)
 	}
@@ -153,7 +153,7 @@ func TestChangingAMissingSpecificationIsNotFound(t *testing.T) {
 func TestChangingNoActionGroupsWritesNothing(t *testing.T) {
 	srv := auditServer(t, &auditScript{enabled: true})
 	ctx, col := WithScript(context.Background())
-	if err := srv.ServerAuditSpecification("s").AddActionGroupsContext(ctx); err != nil {
+	if err := srv.ServerAuditSpecificationRef("s").AddActionGroupsContext(ctx); err != nil {
 		t.Fatalf("AddActionGroupsContext: %v", err)
 	}
 	if len(col.Statements) != 0 {

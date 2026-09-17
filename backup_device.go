@@ -106,9 +106,9 @@ WHERE  name = @p1`, name)
 	return d, nil
 }
 
-// BackupDevice returns a lightweight handle for a backup device by name,
+// BackupDeviceRef returns a lightweight handle for a backup device by name,
 // without querying sys.backup_devices — the device-side counterpart of
-// Server.Database. Type and PhysicalName stay at their zero value;
+// Server.DatabaseRef. Type and PhysicalName stay at their zero value;
 // BackupDeviceByName is what populates them.
 //
 // DropContext addresses the device by name, so this handle is enough to drop
@@ -116,7 +116,7 @@ WHERE  name = @p1`, name)
 // WithScript context, where BackupDeviceByNameContext's lookup is a real read
 // and a device whose sp_addumpdevice was merely collected is not there to
 // find.
-func (s *Server) BackupDevice(name string) *BackupDevice {
+func (s *Server) BackupDeviceRef(name string) *BackupDevice {
 	return &BackupDevice{server: s, Name: name}
 }
 
@@ -168,7 +168,7 @@ func (s *Server) CreateBackupDeviceContext(ctx context.Context, name string, dev
 	}
 	if Scripting(ctx) {
 		// The EXEC was only collected, so there is nothing to read back.
-		return s.BackupDevice(name), nil
+		return s.BackupDeviceRef(name), nil
 	}
 	return s.BackupDeviceByNameContext(ctx, name)
 }

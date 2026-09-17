@@ -102,7 +102,7 @@ func TestDropBackupDeviceDelFile(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx, col := WithScript(context.Background())
-			if err := (&Server{}).BackupDevice("NightlyDev").DropContext(ctx, tc.deleteFile); err != nil {
+			if err := (&Server{}).BackupDeviceRef("NightlyDev").DropContext(ctx, tc.deleteFile); err != nil {
 				t.Fatalf("DropContext: %v", err)
 			}
 			if len(col.Statements) != 1 || col.Statements[0] != tc.want {

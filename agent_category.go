@@ -24,6 +24,19 @@ var categoryClassNames = map[CategoryClass]bool{
 	CategoryClassJob: true, CategoryClassAlert: true, CategoryClassOperator: true,
 }
 
+// agentCategoryTarget maps an empty category name to the real
+// [Uncategorized] category. sp_verify_category — which sp_update_alert and
+// sp_update_operator both go through — rejects an empty name outright ("The
+// specified @category_name (”) does not exist"), and [Uncategorized] is
+// what an alert or operator created with no category actually holds in
+// msdb.dbo.syscategories.
+func agentCategoryTarget(category string) string {
+	if category == "" {
+		return "[Uncategorized]"
+	}
+	return category
+}
+
 // validCategoryClass reports whether c is a recognized category class.
 func validCategoryClass(c CategoryClass) bool { return categoryClassNames[c] }
 

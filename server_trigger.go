@@ -112,8 +112,8 @@ func (s *Server) ServerTriggerByNameContext(ctx context.Context, name string) (*
 	return t, nil
 }
 
-// ServerTrigger returns a lightweight handle for a server trigger by name,
-// without querying sys.server_triggers — the counterpart of Server.Database.
+// ServerTriggerRef returns a lightweight handle for a server trigger by name,
+// without querying sys.server_triggers — the counterpart of Server.DatabaseRef.
 // Every other field stays at its zero value; ServerTriggerByName is what
 // populates them.
 //
@@ -121,7 +121,7 @@ func (s *Server) ServerTriggerByNameContext(ctx context.Context, name string) (*
 // so this handle is enough to act on one the caller already knows exists, and
 // is the only usable form under a WithScript context, where
 // ServerTriggerByNameContext's lookup is a real read.
-func (s *Server) ServerTrigger(name string) *ServerTrigger {
+func (s *Server) ServerTriggerRef(name string) *ServerTrigger {
 	return &ServerTrigger{server: s, Name: name}
 }
 

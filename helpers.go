@@ -49,6 +49,15 @@ func binaryLiteral(b []byte) string {
 	return "0x" + strings.ToUpper(hex.EncodeToString(b))
 }
 
+// Ptr returns a pointer to v. It exists for the batched *Changes structs
+// (JobChanges, AlertChanges, OperatorChanges, ScheduleChanges), whose fields
+// are pointers so that nil can mean "leave this property alone" — a
+// distinction 0, "" and false cannot make, since msdb accepts all three as
+// real values. Go has no way to take the address of a literal inside a
+// struct literal, so without this every call site needs a named variable per
+// field.
+func Ptr[T any](v T) *T { return &v }
+
 // boolToInt converts a bool to 0/1 for T-SQL BIT parameters.
 func boolToInt(b bool) int {
 	if b {

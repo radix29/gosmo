@@ -178,8 +178,8 @@ func (s *Server) ScheduleByNameContext(ctx context.Context, name string) (*Sched
 	return sch, nil
 }
 
-// Schedule returns a lightweight handle for a shared schedule by name,
-// without querying msdb — the schedule-side counterpart of Server.Database.
+// ScheduleRef returns a lightweight handle for a shared schedule by name,
+// without querying msdb — the schedule-side counterpart of Server.DatabaseRef.
 // ID, FreqType, ActiveStartDate and every other cached field stay at their
 // zero value; ScheduleByName is what populates them.
 //
@@ -188,7 +188,7 @@ func (s *Server) ScheduleByNameContext(ctx context.Context, name string) (*Sched
 // this handle, which makes it the only usable form under a WithScript
 // context: ScheduleByNameContext's lookup is a real read, so a schedule
 // whose sp_add_schedule was merely collected is not there to find.
-func (s *Server) Schedule(name string) *Schedule {
+func (s *Server) ScheduleRef(name string) *Schedule {
 	return &Schedule{server: s, Name: name}
 }
 
@@ -252,7 +252,7 @@ func (s *Server) CreateScheduleContext(ctx context.Context, req CreateScheduleRe
 		// so under WithScript it fails with "schedule not found" — turning a
 		// scripted create into an error and losing the statement the caller
 		// asked for. A name-only handle is what the caller can act on here.
-		return s.Schedule(req.Name), nil
+		return s.ScheduleRef(req.Name), nil
 	}
 	return s.ScheduleByNameContext(ctx, req.Name)
 }
@@ -328,9 +328,12 @@ func (sch *Schedule) SetFrequencyContext(ctx context.Context, f ScheduleFrequenc
 	if err := sch.server.execContext(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: set frequency for schedule %q: %w", sch.Name, err)
 	}
-	sch.FreqType, sch.FreqInterval = f.FreqType, f.FreqInterval
-	sch.FreqSubdayType, sch.FreqSubdayInterval = f.FreqSubdayType, f.FreqSubdayInterval
-	sch.FreqRelativeInterval, sch.FreqRecurrenceFactor = f.FreqRelativeInterval, f.FreqRecurrenceFactor
+	setIfApplied(ctx, &sch.FreqType, f.FreqType)
+	setIfApplied(ctx, &sch.FreqInterval, f.FreqInterval)
+	setIfApplied(ctx, &sch.FreqSubdayType, f.FreqSubdayType)
+	setIfApplied(ctx, &sch.FreqSubdayInterval, f.FreqSubdayInterval)
+	setIfApplied(ctx, &sch.FreqRelativeInterval, f.FreqRelativeInterval)
+	setIfApplied(ctx, &sch.FreqRecurrenceFactor, f.FreqRecurrenceFactor)
 	return nil
 }
 
@@ -354,8 +357,10 @@ func (sch *Schedule) SetActiveRangeContext(ctx context.Context, startDate, endDa
 	if err := sch.server.execContext(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: set active range for schedule %q: %w", sch.Name, err)
 	}
-	sch.ActiveStartDate, sch.ActiveEndDate = startDate, endDate
-	sch.ActiveStartTime, sch.ActiveEndTime = startTime, endTime
+	setIfApplied(ctx, &sch.ActiveStartDate, startDate)
+	setIfApplied(ctx, &sch.ActiveEndDate, endDate)
+	setIfApplied(ctx, &sch.ActiveStartTime, startTime)
+	setIfApplied(ctx, &sch.ActiveEndTime, endTime)
 	return nil
 }
 

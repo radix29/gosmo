@@ -25,7 +25,7 @@ classDiagram
         +Tables() []*Table
         +TablesBySchema(schema) []*Table
         +TableByName(schema, name) *Table
-        +Table(schema, name) *Table
+        +TableRef(schema, name) *Table
         +CreateTable(req) error
         +DropTable(schema, name, cascade) error
         +RenameTable(schema, oldName, newName) error
@@ -64,7 +64,7 @@ classDiagram
         +DropUser(name) error
         +DatabaseAuditSpecifications() []*DatabaseAuditSpecification
         +DatabaseAuditSpecificationByName(name) *DatabaseAuditSpecification
-        +DatabaseAuditSpecification(name) *DatabaseAuditSpecification
+        +DatabaseAuditSpecificationRef(name) *DatabaseAuditSpecification
         +CreateDatabaseAuditSpecification(spec) *DatabaseAuditSpecification
         +DatabaseRoles() []*DatabaseRole
         +RoleByName(name) *DatabaseRole
@@ -78,7 +78,7 @@ classDiagram
         +DropTrigger(schema, name) error
         +DatabaseTriggers() []*DatabaseTrigger
         +DatabaseTriggerByName(name) *DatabaseTrigger
-        +DatabaseTrigger(name) *DatabaseTrigger
+        +DatabaseTriggerRef(name) *DatabaseTrigger
         +Sequences() []*Sequence
         +DropSequence(schema, name) error
         +Synonyms() []*Synonym
@@ -117,7 +117,7 @@ classDiagram
         +DropExternalLibrary(name) error
         +PlanGuides() []*PlanGuide
         +PlanGuideByName(name) *PlanGuide
-        +PlanGuide(name) *PlanGuide
+        +PlanGuideRef(name) *PlanGuide
         +DropPlanGuide(name) error
         +PartitionFunctions() []*PartitionFunction
         +PartitionFunctionByName(name) *PartitionFunction
@@ -144,7 +144,7 @@ classDiagram
         +SecurityPolicyByName(schema, name) *SecurityPolicy
         +DatabaseScopedCredentials() []*DatabaseScopedCredential
         +DatabaseScopedCredentialByName(name) *DatabaseScopedCredential
-        +DatabaseScopedCredential(name) *DatabaseScopedCredential
+        +DatabaseScopedCredentialRef(name) *DatabaseScopedCredential
         +CreateDatabaseScopedCredential(spec) *DatabaseScopedCredential
         +Capabilities() *DatabaseCapabilities
         +RecoveryStatus() *DatabaseRecoveryStatus

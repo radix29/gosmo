@@ -35,7 +35,7 @@ type Table struct {
 	IsEdge      bool
 }
 
-// Table returns a lightweight handle to a table by name, without a query.
+// TableRef returns a lightweight handle to a table by name, without a query.
 // Nothing verifies that the table exists, and every field but Schema and Name
 // stays at its zero value — ObjectID included.
 //
@@ -46,9 +46,9 @@ type Table struct {
 // reads — would find object 0 and return nothing, so those need a Table from
 // Tables/TableByName instead.
 //
-// Like Server.Database, this is also the only form that works under a
+// Like Server.DatabaseRef, this is also the only form that works under a
 // WithScript-derived context, where no lookup can run at all.
-func (d *Database) Table(schema, name string) *Table {
+func (d *Database) TableRef(schema, name string) *Table {
 	if schema == "" {
 		schema = "dbo"
 	}
@@ -573,7 +573,7 @@ func (t *Table) DataSpace() (DataSpace, error) {
 // table — which is why it is a query of its own rather than a field of the
 // index list, whose `i.type > 0` filter has no heap in it.
 //
-// A table with no row there at all — a Database.Table handle, whose ObjectID
+// A table with no row there at all — a Database.TableRef handle, whose ObjectID
 // is zero, or a memory-optimized table — reads as the zero DataSpace and no
 // error: absence means "no filegroup to name", not a failure.
 func (t *Table) DataSpaceContext(ctx context.Context) (DataSpace, error) {

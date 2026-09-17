@@ -22,7 +22,7 @@ func TestServerTriggerWriteStatements(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx, col := WithScript(context.Background())
-			tr := (&Server{}).ServerTrigger("ddl_audit")
+			tr := (&Server{}).ServerTriggerRef("ddl_audit")
 			if err := tc.act(tr, ctx); err != nil {
 				t.Fatalf("%s: %v", tc.name, err)
 			}
@@ -40,7 +40,7 @@ func TestServerTriggerWriteStatements(t *testing.T) {
 // statement addresses a different (or no) trigger.
 func TestServerTriggerNameIsQuoted(t *testing.T) {
 	ctx, col := WithScript(context.Background())
-	if err := (&Server{}).ServerTrigger("odd]name").DropContext(ctx); err != nil {
+	if err := (&Server{}).ServerTriggerRef("odd]name").DropContext(ctx); err != nil {
 		t.Fatalf("DropContext: %v", err)
 	}
 	if want := "DROP TRIGGER [odd]]name] ON ALL SERVER"; col.Statements[0] != want {
@@ -51,7 +51,7 @@ func TestServerTriggerNameIsQuoted(t *testing.T) {
 // Under WithScript nothing ran, so the receiver must not be updated to claim
 // a state the server was never told about.
 func TestServerTriggerEnabledFlagIsNotSetWhileScripting(t *testing.T) {
-	tr := (&Server{}).ServerTrigger("ddl_audit")
+	tr := (&Server{}).ServerTriggerRef("ddl_audit")
 	ctx, _ := WithScript(context.Background())
 	if err := tr.EnableContext(ctx); err != nil {
 		t.Fatalf("EnableContext: %v", err)

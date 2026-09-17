@@ -141,14 +141,14 @@ WHERE  a.name = @p1`, name)
 	return a, nil
 }
 
-// ServerAudit returns a lightweight handle for a server audit by name, without
-// querying sys.server_audits — the audit-side counterpart of Server.Database.
+// ServerAuditRef returns a lightweight handle for a server audit by name, without
+// querying sys.server_audits — the audit-side counterpart of Server.DatabaseRef.
 // Every cached field stays at its zero value; ServerAuditByName is what
 // populates them.
 //
 // Every write method addresses the audit by name, so this handle is enough to
 // go on operating on one the caller already knows exists.
-func (s *Server) ServerAudit(name string) *ServerAudit {
+func (s *Server) ServerAuditRef(name string) *ServerAudit {
 	return &ServerAudit{server: s, Name: name}
 }
 
@@ -346,7 +346,7 @@ func (s *Server) CreateServerAuditContext(ctx context.Context, spec ServerAuditS
 	}
 	if Scripting(ctx) {
 		// The CREATE was only collected, so there is nothing to read back.
-		return s.ServerAudit(spec.Name), nil
+		return s.ServerAuditRef(spec.Name), nil
 	}
 	return s.ServerAuditByNameContext(ctx, spec.Name)
 }

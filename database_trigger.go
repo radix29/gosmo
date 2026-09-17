@@ -113,16 +113,16 @@ func (d *Database) DatabaseTriggerByNameContext(ctx context.Context, name string
 	return t, nil
 }
 
-// DatabaseTrigger returns a lightweight handle for a database-scope DDL
+// DatabaseTriggerRef returns a lightweight handle for a database-scope DDL
 // trigger by name, without querying sys.triggers — the counterpart of
-// Server.Database and Server.ServerTrigger.
+// Server.DatabaseRef and Server.ServerTriggerRef.
 //
 // Every other field stays at its zero value; DatabaseTriggerByName is what
 // populates them. EnableContext, DisableContext and DropContext address the
 // trigger by name, so this handle is enough to act on one the caller already
 // knows exists, and is the only usable form under a WithScript context, where
 // DatabaseTriggerByNameContext's lookup is a real read.
-func (d *Database) DatabaseTrigger(name string) *DatabaseTrigger {
+func (d *Database) DatabaseTriggerRef(name string) *DatabaseTrigger {
 	return &DatabaseTrigger{db: d, Name: name}
 }
 

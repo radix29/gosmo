@@ -619,7 +619,7 @@ func (sc *Scripter) ScriptDatabase() (string, error) {
 //
 // The context is not decoration. Alone among the Script* methods this one
 // renders from the Database's own cached metadata rather than querying, and a
-// Database from Server.Database(name) carries none — it is a bare handle by
+// Database from Server.DatabaseRef(name) carries none — it is a bare handle by
 // design. Rendering that handle emitted "SET RECOVERY ;" and
 // "COMPATIBILITY_LEVEL = 0", neither of which is valid T-SQL, so a handle
 // with no recovery model is refilled from sys.databases first. Each line is

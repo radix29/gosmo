@@ -9,7 +9,7 @@ import (
 // dbTriggerFor builds a handle over a database named the same as the audit
 // tests' one, so the `use` prefix const applies here unchanged.
 func dbTriggerFor(name string) *DatabaseTrigger {
-	return (&Database{name: "app]db"}).DatabaseTrigger(name)
+	return (&Database{name: "app]db"}).DatabaseTriggerRef(name)
 }
 
 func TestDatabaseTriggerWriteStatements(t *testing.T) {

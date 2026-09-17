@@ -177,7 +177,7 @@ func TestAlteringAnAuditTurnsItOffAndBackOn(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			srv := auditServer(t, &auditScript{enabled: tc.enabled})
 			ctx, col := WithScript(context.Background())
-			a := srv.ServerAudit("a")
+			a := srv.ServerAuditRef("a")
 			if err := a.AlterContext(ctx, ServerAuditSpec{Name: "a", QueueDelay: 2000}); err != nil {
 				t.Fatalf("AlterContext: %v", err)
 			}
@@ -211,7 +211,7 @@ func TestDroppingAnEnabledAuditDisablesItFirst(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			srv := auditServer(t, &auditScript{enabled: tc.enabled})
 			ctx, col := WithScript(context.Background())
-			if err := srv.ServerAudit("a").DropContext(ctx); err != nil {
+			if err := srv.ServerAuditRef("a").DropContext(ctx); err != nil {
 				t.Fatalf("DropContext: %v", err)
 			}
 			if !slices.Equal(col.Statements, tc.want) {
@@ -226,7 +226,7 @@ func TestDroppingAnEnabledAuditDisablesItFirst(t *testing.T) {
 func TestAlteringAMissingAuditIsNotFound(t *testing.T) {
 	srv := auditServer(t, &auditScript{missing: true})
 	ctx, col := WithScript(context.Background())
-	err := srv.ServerAudit("gone").AlterContext(ctx, ServerAuditSpec{Name: "gone"})
+	err := srv.ServerAuditRef("gone").AlterContext(ctx, ServerAuditSpec{Name: "gone"})
 	if !errors.Is(err, ErrNotFound) {
 		t.Fatalf("got %v, want a not-found error", err)
 	}
@@ -259,7 +259,7 @@ func TestClearingAPredicateIsItsOwnStatement(t *testing.T) {
 func TestRenamingAnAuditUsesModifyName(t *testing.T) {
 	srv := auditServer(t, &auditScript{enabled: false})
 	ctx, col := WithScript(context.Background())
-	a := srv.ServerAudit("old")
+	a := srv.ServerAuditRef("old")
 	if err := a.RenameContext(ctx, "new]er"); err != nil {
 		t.Fatalf("RenameContext: %v", err)
 	}
@@ -279,7 +279,7 @@ func TestRenamingAnAuditUsesModifyName(t *testing.T) {
 func TestRenamingAnEnabledAuditReEnablesUnderTheNewName(t *testing.T) {
 	srv := auditServer(t, &auditScript{enabled: true})
 	ctx, col := WithScript(context.Background())
-	if err := srv.ServerAudit("old").RenameContext(ctx, "new"); err != nil {
+	if err := srv.ServerAuditRef("old").RenameContext(ctx, "new"); err != nil {
 		t.Fatalf("RenameContext: %v", err)
 	}
 	want := []string{
@@ -298,7 +298,7 @@ func TestRenamingAnEnabledAuditReEnablesUnderTheNewName(t *testing.T) {
 func TestAuditWithDisabledOpensOneWindow(t *testing.T) {
 	srv := auditServer(t, &auditScript{enabled: true})
 	ctx, col := WithScript(context.Background())
-	a := srv.ServerAudit("old")
+	a := srv.ServerAuditRef("old")
 	err := a.WithDisabled(ctx, func(ctx context.Context) error {
 		if err := a.AlterContext(ctx, ServerAuditSpec{
 			Name: "old", Type: AuditToApplicationLog, QueueDelay: 1000,
@@ -335,13 +335,13 @@ func TestDisableWindowsRestoreAfterACancel(t *testing.T) {
 		enable string
 	}{
 		{"server audit", func(s *auditScript, ctx context.Context, fn func(context.Context) error) error {
-			return auditServer(t, s).ServerAudit("a").WithDisabled(ctx, fn)
+			return auditServer(t, s).ServerAuditRef("a").WithDisabled(ctx, fn)
 		}, "ALTER SERVER AUDIT [a] WITH ( STATE = ON )"},
 		{"server audit specification", func(s *auditScript, ctx context.Context, fn func(context.Context) error) error {
-			return auditServer(t, s).ServerAuditSpecification("s").WithDisabled(ctx, fn)
+			return auditServer(t, s).ServerAuditSpecificationRef("s").WithDisabled(ctx, fn)
 		}, "ALTER SERVER AUDIT SPECIFICATION [s] WITH ( STATE = ON )"},
 		{"database audit specification", func(s *auditScript, ctx context.Context, fn func(context.Context) error) error {
-			return auditDatabase(t, s).DatabaseAuditSpecification("s").WithDisabled(ctx, fn)
+			return auditDatabase(t, s).DatabaseAuditSpecificationRef("s").WithDisabled(ctx, fn)
 		}, "ALTER DATABASE AUDIT SPECIFICATION [s] WITH ( STATE = ON )"},
 	} {
 		for _, failed := range []bool{true, false} {

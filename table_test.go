@@ -218,7 +218,7 @@ func TestTableDataSpaceReadsTheHeapOrClusteredIndex(t *testing.T) {
 	}
 }
 
-// A table with no row in sys.indexes at all — a Database.Table handle, whose
+// A table with no row in sys.indexes at all — a Database.TableRef handle, whose
 // ObjectID is zero — must read as "no data space", not as an error: the
 // scripter asks for it on every table and an error here would fail the whole
 // script over a clause that has nothing to say.

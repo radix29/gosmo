@@ -83,8 +83,8 @@ func (s *Server) OperatorsContext(ctx context.Context) ([]*Operator, error) {
 	return out, nil
 }
 
-// Operator returns a lightweight handle for an operator by name, without
-// querying msdb — the operator-side counterpart of Server.Database. ID,
+// OperatorRef returns a lightweight handle for an operator by name, without
+// querying msdb — the operator-side counterpart of Server.DatabaseRef. ID,
 // EmailAddress, Category and every other cached field stay at their zero
 // value; OperatorByName is what populates them.
 //
@@ -93,7 +93,7 @@ func (s *Server) OperatorsContext(ctx context.Context) ([]*Operator, error) {
 // knows exists — and is the only usable form under a WithScript context,
 // where OperatorByNameContext's lookup is a real read and an operator whose
 // sp_add_operator was merely collected is not there to find.
-func (s *Server) Operator(name string) *Operator {
+func (s *Server) OperatorRef(name string) *Operator {
 	return &Operator{server: s, Name: name}
 }
 
@@ -152,7 +152,7 @@ func (s *Server) CreateOperatorContext(ctx context.Context, req CreateOperatorRe
 	}
 	if Scripting(ctx) {
 		// See CreateScheduleContext.
-		return s.Operator(req.Name), nil
+		return s.OperatorRef(req.Name), nil
 	}
 	return s.OperatorByNameContext(ctx, req.Name)
 }
@@ -221,10 +221,7 @@ func (o *Operator) SetCategory(category string) error {
 
 // SetCategoryContext is the context-aware variant of SetCategory.
 func (o *Operator) SetCategoryContext(ctx context.Context, category string) error {
-	target := category
-	if target == "" {
-		target = "[Uncategorized]"
-	}
+	target := agentCategoryTarget(category)
 	q := fmt.Sprintf("EXEC msdb.dbo.sp_update_operator @name = N'%s', @category_name = N'%s'",
 		escapeSingle(o.Name), escapeSingle(target))
 	if err := o.server.execContext(ctx, q); err != nil {

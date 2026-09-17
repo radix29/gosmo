@@ -579,7 +579,7 @@ func (s *Server) LoginByNameContext(ctx context.Context, name string) (*Login, e
 	return l, nil
 }
 
-// Login returns a lightweight handle for name without querying the server
+// LoginRef returns a lightweight handle for name without querying the server
 // at all — unlike LoginByName/LoginByNameContext, it doesn't verify the
 // login exists or populate SID/LoginType/IsDisabled/etc. (they stay at
 // their zero value). Every write method on *Login (AddServerRoleMemberContext,
@@ -587,9 +587,9 @@ func (s *Server) LoginByNameContext(ctx context.Context, name string) (*Login, e
 // name, never those cached fields, so this is sufficient for issuing
 // further ALTER-style calls against a login the caller already knows
 // exists — most commonly one it just created in the same operation. See
-// Server.Database's doc comment for why this also matters under a
+// Server.DatabaseRef's doc comment for why this also matters under a
 // WithScript-derived context.
-func (s *Server) Login(name string) *Login {
+func (s *Server) LoginRef(name string) *Login {
 	return &Login{server: s, Name: name}
 }
 

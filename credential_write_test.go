@@ -89,7 +89,7 @@ func TestAlterCredentialSecretClause(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx, col := WithScript(context.Background())
-			c := (&Server{}).Credential("app_cred")
+			c := (&Server{}).CredentialRef("app_cred")
 			if err := c.AlterContext(ctx, `DOMAIN\svc`, tc.secret); err != nil {
 				t.Fatalf("AlterContext: %v", err)
 			}
@@ -105,7 +105,7 @@ func TestAlterCredentialSecretClause(t *testing.T) {
 
 func TestAlterCredentialRequiresIdentity(t *testing.T) {
 	ctx, col := WithScript(context.Background())
-	if err := (&Server{}).Credential("app_cred").AlterContext(ctx, "", nil); err == nil {
+	if err := (&Server{}).CredentialRef("app_cred").AlterContext(ctx, "", nil); err == nil {
 		t.Error("an empty identity was accepted")
 	}
 	if len(col.Statements) != 0 {
@@ -135,7 +135,7 @@ func TestCreateCredentialUnderScriptReturnsAHandle(t *testing.T) {
 
 func TestDropCredentialStatement(t *testing.T) {
 	ctx, col := WithScript(context.Background())
-	if err := (&Server{}).Credential("app_cred").DropContext(ctx); err != nil {
+	if err := (&Server{}).CredentialRef("app_cred").DropContext(ctx); err != nil {
 		t.Fatalf("DropContext: %v", err)
 	}
 	want := "DROP CREDENTIAL [app_cred]"
@@ -152,7 +152,7 @@ func TestDropCredentialStatement(t *testing.T) {
 // so under WithScript, where the server still holds the old one.
 func TestAlterCredentialDoesNotMirrorUnderScript(t *testing.T) {
 	ctx, _ := WithScript(context.Background())
-	c := (&Server{}).Credential("app_cred")
+	c := (&Server{}).CredentialRef("app_cred")
 	c.Identity = "old"
 	if err := c.AlterContext(ctx, "new", nil); err != nil {
 		t.Fatalf("AlterContext: %v", err)

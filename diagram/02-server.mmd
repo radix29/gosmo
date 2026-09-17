@@ -19,7 +19,7 @@ classDiagram
         +CurrentLogin() string
         +Databases() []*Database
         +DatabaseByName(name) *Database
-        +Database(name) *Database
+        +DatabaseRef(name) *Database
         +CreateDatabase(name, opts) error
         +DropDatabase(name, force) error
         +RenameDatabase(oldName, newName, force) error
@@ -28,14 +28,14 @@ classDiagram
         +DetachedDatabaseInfo(primaryFilePath) *DetachedDatabase
         +DatabaseSnapshots() []*DatabaseSnapshot
         +DatabaseSnapshotByName(name) *DatabaseSnapshot
-        +DatabaseSnapshot(name) *DatabaseSnapshot
+        +DatabaseSnapshotRef(name) *DatabaseSnapshot
         +SnapshotsOf(database) []*DatabaseSnapshot
         +SnapshotFileDefaults(source, snapshotName) []SnapshotFileSpec
         +CreateDatabaseSnapshot(req) *DatabaseSnapshot
         +RestoreFromSnapshot(database, snapshot) error
         +Logins() []*Login
         +LoginByName(name) *Login
-        +Login(name) *Login
+        +LoginRef(name) *Login
         +CreateLogin(name, password, opts) error
         +DropLogin(name) error
         +ServerRoles() []*ServerRole
@@ -49,21 +49,21 @@ classDiagram
         +AgentInfo() *AgentStatus
         +Jobs() []*Job
         +JobByName(name) *Job
-        +Job(name) *Job
+        +JobRef(name) *Job
         +CreateJob(req) *Job
         +JobHistory(limit) []*JobHistoryEntry
         +Alerts() []*Alert
         +EventAlerts() []*Alert
         +AlertByName(name) *Alert
-        +Alert(name) *Alert
+        +AlertRef(name) *Alert
         +CreateAlert(req) *Alert
         +Operators() []*Operator
         +OperatorByName(name) *Operator
-        +Operator(name) *Operator
+        +OperatorRef(name) *Operator
         +CreateOperator(req) *Operator
         +Schedules() []*Schedule
         +ScheduleByName(name) *Schedule
-        +Schedule(name) *Schedule
+        +ScheduleRef(name) *Schedule
         +CreateSchedule(req) *Schedule
         +Categories(class) []*Category
         +CreateCategory(class, name) error
@@ -93,7 +93,7 @@ classDiagram
         +BackupFileListForSetFrom(target, fileNumber) []*BackupFile
         +BackupDevices() []*BackupDevice
         +BackupDeviceByName(name) *BackupDevice
-        +BackupDevice(name) *BackupDevice
+        +BackupDeviceRef(name) *BackupDevice
         +CreateBackupDevice(name, devType, physicalName) *BackupDevice
         +DatabaseFiles(database) []*DatabaseFileInfo
         +DatabaseRecoveryStatuses() []*DatabaseRecoveryStatus
@@ -110,16 +110,16 @@ classDiagram
         +ServerPermissionNames() []string
         +Credentials() []*Credential
         +CredentialByName(name) *Credential
-        +Credential(name) *Credential
+        +CredentialRef(name) *Credential
         +CreateCredential(spec) *Credential
         +CryptographicProviders() []*CryptographicProvider
         +ServerAudits() []*ServerAudit
         +ServerAuditByName(name) *ServerAudit
-        +ServerAudit(name) *ServerAudit
+        +ServerAuditRef(name) *ServerAudit
         +CreateServerAudit(spec) *ServerAudit
         +ServerAuditSpecifications() []*ServerAuditSpecification
         +ServerAuditSpecificationByName(name) *ServerAuditSpecification
-        +ServerAuditSpecification(name) *ServerAuditSpecification
+        +ServerAuditSpecificationRef(name) *ServerAuditSpecification
         +CreateServerAuditSpecification(spec) *ServerAuditSpecification
         +AuditActionGroups() []string
         +DatabaseAuditActionGroups() []string
@@ -131,7 +131,7 @@ classDiagram
         +OSJobObject() *OSJobObject
         +ServerTriggers() []*ServerTrigger
         +ServerTriggerByName(name) *ServerTrigger
-        +ServerTrigger(name) *ServerTrigger
+        +ServerTriggerRef(name) *ServerTrigger
         +Endpoints() []*Endpoint
         +EndpointByName(name) *Endpoint
         +MemoryStats() *ServerMemoryStats
@@ -140,7 +140,7 @@ classDiagram
         +DiskVolumes() []DiskVolumeInfo
         +AvailabilityGroups() []*AvailabilityGroup
         +AvailabilityGroupByName(name) *AvailabilityGroup
-        +AvailabilityGroup(name) *AvailabilityGroup
+        +AvailabilityGroupRef(name) *AvailabilityGroup
         +CreateAvailabilityGroup(req) *AvailabilityGroup
         +DatabaseMirroringEndpoint() *DatabaseMirroringEndpoint
         +CreateDatabaseMirroringEndpoint(spec) *DatabaseMirroringEndpoint
