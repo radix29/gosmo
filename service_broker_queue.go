@@ -497,7 +497,7 @@ func (d *Database) AlterBrokerQueueContext(ctx context.Context, schema, name str
 // generated SQL.
 func queueSettingClauses(s QueueSettings) ([]string, error) {
 	if s.Activation != nil && s.DropActivation {
-		return nil, errors.New("Activation and DropActivation are mutually exclusive; " +
+		return nil, errors.New("the Activation and DropActivation settings are mutually exclusive; " +
 			"one statement cannot both restate and drop the ACTIVATION block")
 	}
 	var clauses []string

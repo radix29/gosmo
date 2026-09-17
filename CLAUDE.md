@@ -139,6 +139,14 @@ a gossms-side build only compiles the packages it imports.
   `JobByName`, and Alert/Operator/Schedule alike). Their doc comments in
   `server.go` and `login.go` are the authority; `go doc gosmo.Server.Database`.
 
+## Open threads
+
+`OPEN-THREADS.md` holds open work and settled decisions — what is knowingly
+left undone, and what must be watched (azidentity's deprecated ROPC credential,
+the version-support gate table, backup `TO URL`). Anything knowingly deferred,
+or any rule learned from a mistake that does not belong in this file or
+`ARCHITECTURE.md`, goes there rather than into a commit message.
+
 ## Release
 
 `RELEASE.md` carries the current release and `CHANGELOG.md` the history;
