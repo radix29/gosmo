@@ -167,14 +167,13 @@ type Job struct {
 // Server returns the server the job belongs to.
 func (j *Job) Server() *Server { return j.server }
 
-// Jobs returns all SQL Server Agent jobs from msdb.
-func (s *Server) Jobs() ([]*Job, error) {
-	return s.JobsContext(context.Background())
-}
-
-// JobsContext is the context-aware variant of Jobs.
-func (s *Server) JobsContext(ctx context.Context) ([]*Job, error) {
-	const q = `
+// jobSelect is the 17-column select list and the five joins both job reads
+// share; each caller appends its own ORDER BY or WHERE. Written once because
+// the select list *is* what makes a *Job complete — a column added, or an
+// ISNULL corrected, in one copy and not the other made Jobs and JobByName
+// return differently-populated jobs for the same job, and the two copies had
+// already started to drift.
+const jobSelect = `
 SELECT CONVERT(varchar(36), j.job_id), j.name, ISNULL(j.description,''),
        j.enabled, ISNULL(c.name,''), ISNULL(l.name,''),
        j.date_created, j.date_modified, j.start_step_id,
@@ -194,7 +193,49 @@ LEFT   JOIN msdb.dbo.sysjobactivity ja
        AND ja.session_id = (SELECT MAX(session_id) FROM msdb.dbo.sysjobactivity)
 LEFT   JOIN msdb.dbo.sysjobservers js
        ON  js.job_id = j.job_id
-       AND js.server_id = 0
+       AND js.server_id = 0`
+
+// scanJob scans one row shaped like jobSelect into a new Job, decoding the
+// nullable activity columns the outer joins may not supply. CurrentState is
+// the sysjobactivity-derived fallback; applyJobStates overlays Agent's live
+// value on top where it has one.
+func scanJob(s *Server, scan func(dest ...any) error) (*Job, error) {
+	j := &Job{server: s}
+	var lastRun, nextRun sql.NullTime
+	var lastOutcome, jobState, lastDuration sql.NullInt64
+	if err := scan(
+		&j.JobID, &j.Name, &j.Description,
+		&j.IsEnabled, &j.Category, &j.OwnerLoginName,
+		&j.DateCreated, &j.DateModified, &j.StartStepID,
+		&j.DeleteLevel, &j.NotifyLevelEmail, &j.NotifyEmailOperatorName,
+		&lastRun, &lastOutcome, &lastDuration, &nextRun, &jobState,
+	); err != nil {
+		return nil, err
+	}
+	if lastRun.Valid {
+		j.LastRunDate = lastRun.Time
+	}
+	if nextRun.Valid {
+		j.NextRunDate = nextRun.Time
+	}
+	j.LastRunOutcome = JobOutcome(lastOutcome.Int64)
+	j.CurrentState = JobState(jobState.Int64)
+	// Duration is encoded as HHMMSS integer, e.g. 10230 = 1h 2m 30s.
+	d := lastDuration.Int64
+	j.LastRunDuration = time.Duration(d/10000)*time.Hour +
+		time.Duration((d%10000)/100)*time.Minute +
+		time.Duration(d%100)*time.Second
+	return j, nil
+}
+
+// Jobs returns all SQL Server Agent jobs from msdb.
+func (s *Server) Jobs() ([]*Job, error) {
+	return s.JobsContext(context.Background())
+}
+
+// JobsContext is the context-aware variant of Jobs.
+func (s *Server) JobsContext(ctx context.Context) ([]*Job, error) {
+	const q = jobSelect + `
 ORDER  BY j.name`
 
 	rows, err := s.query(ctx, q)
@@ -205,31 +246,10 @@ ORDER  BY j.name`
 
 	var jobs []*Job
 	for rows.Next() {
-		j := &Job{server: s}
-		var lastRun, nextRun sql.NullTime
-		var lastOutcome, jobState, lastDuration sql.NullInt64
-		if err := rows.Scan(
-			&j.JobID, &j.Name, &j.Description,
-			&j.IsEnabled, &j.Category, &j.OwnerLoginName,
-			&j.DateCreated, &j.DateModified, &j.StartStepID,
-			&j.DeleteLevel, &j.NotifyLevelEmail, &j.NotifyEmailOperatorName,
-			&lastRun, &lastOutcome, &lastDuration, &nextRun, &jobState,
-		); err != nil {
+		j, err := scanJob(s, rows.Scan)
+		if err != nil {
 			return nil, fmt.Errorf("gosmo: list agent jobs: %w", err)
 		}
-		if lastRun.Valid {
-			j.LastRunDate = lastRun.Time
-		}
-		if nextRun.Valid {
-			j.NextRunDate = nextRun.Time
-		}
-		j.LastRunOutcome = JobOutcome(lastOutcome.Int64)
-		j.CurrentState = JobState(jobState.Int64)
-		// Duration is encoded as HHMMSS integer, e.g. 10230 = 1h 2m 30s.
-		d := lastDuration.Int64
-		j.LastRunDuration = time.Duration(d/10000)*time.Hour +
-			time.Duration((d%10000)/100)*time.Minute +
-			time.Duration(d%100)*time.Second
 		jobs = append(jobs, j)
 	}
 	if err := rows.Err(); err != nil {
@@ -261,56 +281,21 @@ func (s *Server) JobByName(name string) (*Job, error) {
 
 // JobByNameContext is the context-aware variant of JobByName.
 func (s *Server) JobByNameContext(ctx context.Context, name string) (*Job, error) {
-	const q = `
-SELECT CONVERT(varchar(36), j.job_id), j.name, ISNULL(j.description,''),
-       j.enabled, ISNULL(c.name,''), ISNULL(l.name,''),
-       j.date_created, j.date_modified, j.start_step_id,
-       j.delete_level, j.notify_level_email, ISNULL(no.name,''),
-       ja.last_executed_step_date,
-       ISNULL(js.last_run_outcome, 5),
-       ISNULL(js.last_run_duration, 0),
-       ja.next_scheduled_run_date,
-       CASE WHEN ja.start_execution_date IS NOT NULL AND ja.stop_execution_date IS NULL
-            THEN 1 ELSE 4 END
-FROM   msdb.dbo.sysjobs j
-LEFT   JOIN msdb.dbo.syscategories c ON c.category_id = j.category_id
-LEFT   JOIN master.sys.server_principals l ON l.sid = j.owner_sid
-LEFT   JOIN msdb.dbo.sysoperators no ON no.id = j.notify_email_operator_id
-LEFT   JOIN msdb.dbo.sysjobactivity ja
-       ON  ja.job_id = j.job_id
-       AND ja.session_id = (SELECT MAX(session_id) FROM msdb.dbo.sysjobactivity)
-LEFT   JOIN msdb.dbo.sysjobservers js
-       ON  js.job_id = j.job_id
-       AND js.server_id = 0
+	const q = jobSelect + `
 WHERE  j.name = @p1`
 
-	j := &Job{server: s}
-	var lastRun, nextRun sql.NullTime
-	var lastOutcome, jobState, lastDuration sql.NullInt64
-	if err := s.queryRowScan(ctx, q, []any{name},
-		&j.JobID, &j.Name, &j.Description,
-		&j.IsEnabled, &j.Category, &j.OwnerLoginName,
-		&j.DateCreated, &j.DateModified, &j.StartStepID,
-		&j.DeleteLevel, &j.NotifyLevelEmail, &j.NotifyEmailOperatorName,
-		&lastRun, &lastOutcome, &lastDuration, &nextRun, &jobState,
-	); err != nil {
+	var j *Job
+	err := s.queryRow(ctx, func(row *sql.Row) error {
+		var err error
+		j, err = scanJob(s, row.Scan)
+		return err
+	}, q, name)
+	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, notFoundf("gosmo: agent job %q not found", name)
 		}
 		return nil, fmt.Errorf("gosmo: job by name: %w", err)
 	}
-	if lastRun.Valid {
-		j.LastRunDate = lastRun.Time
-	}
-	if nextRun.Valid {
-		j.NextRunDate = nextRun.Time
-	}
-	j.LastRunOutcome = JobOutcome(lastOutcome.Int64)
-	j.CurrentState = JobState(jobState.Int64)
-	d := lastDuration.Int64
-	j.LastRunDuration = time.Duration(d/10000)*time.Hour +
-		time.Duration((d%10000)/100)*time.Minute +
-		time.Duration(d%100)*time.Second
 	s.applyJobStates(ctx, j)
 	return j, nil
 }

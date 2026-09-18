@@ -184,12 +184,12 @@ var sweepMustCall = []string{
 	"Database.UserDefinedDataTypesContext",
 	"Database.UserDefinedTableTypesContext",
 	"Database.ClrTypesContext",
-	"Database.XmlSchemaCollectionsContext",
+	"Database.XMLSchemaCollectionsContext",
 	"Database.UserDefinedDataTypeByNameContext",
 	"Database.ClrTypeByNameContext",
-	"Database.XmlSchemaCollectionByNameContext",
+	"Database.XMLSchemaCollectionByNameContext",
 	"UserDefinedTableType.ColumnsContext",
-	"XmlSchemaCollection.DefinitionContext",
+	"XMLSchemaCollection.DefinitionContext",
 
 	// The capability probe, which grew a class 5/6/10 block reading
 	// sys.assemblies, sys.types and sys.xml_schema_collections — the same
@@ -259,7 +259,7 @@ var sweepMustCall = []string{
 	"Scripter.ScriptUserDefinedDataTypeContext",
 	"Scripter.ScriptUserDefinedTableTypeContext",
 	"Scripter.ScriptClrTypeContext",
-	"Scripter.ScriptXmlSchemaCollectionContext",
+	"Scripter.ScriptXMLSchemaCollectionContext",
 	"Scripter.ScriptRuleContext",
 	"Scripter.ScriptDefaultContext",
 	"Scripter.ScriptAssemblyContext",
@@ -636,8 +636,8 @@ func sweepProgrammability(sw *sweep, d *Database) {
 		}
 		return err
 	})
-	sw.call("Database.XmlSchemaCollectionByNameContext", func() error {
-		_, err := d.XmlSchemaCollectionByNameContext(sw.ctx, "dbo", "sweep_xsd")
+	sw.call("Database.XMLSchemaCollectionByNameContext", func() error {
+		_, err := d.XMLSchemaCollectionByNameContext(sw.ctx, "dbo", "sweep_xsd")
 		return err
 	})
 	sw.call("Database.RuleByNameContext", func() error {
@@ -699,8 +699,8 @@ func sweepProgrammability(sw *sweep, d *Database) {
 		return nil
 	})
 
-	sw.call("XmlSchemaCollection.DefinitionContext", func() error {
-		c, err := d.XmlSchemaCollectionByNameContext(sw.ctx, "dbo", "sweep_xsd")
+	sw.call("XMLSchemaCollection.DefinitionContext", func() error {
+		c, err := d.XMLSchemaCollectionByNameContext(sw.ctx, "dbo", "sweep_xsd")
 		if err != nil {
 			return err
 		}
@@ -855,8 +855,8 @@ func sweepScripter(sw *sweep, d *Database) {
 	str("ScriptUserDefinedTableTypeContext", func() (string, error) {
 		return sc.ScriptUserDefinedTableTypeContext(sw.ctx, "dbo", "sweep_tabletype")
 	})
-	str("ScriptXmlSchemaCollectionContext", func() (string, error) {
-		return sc.ScriptXmlSchemaCollectionContext(sw.ctx, "dbo", "sweep_xsd")
+	str("ScriptXMLSchemaCollectionContext", func() (string, error) {
+		return sc.ScriptXMLSchemaCollectionContext(sw.ctx, "dbo", "sweep_xsd")
 	})
 	str("ScriptRuleContext", func() (string, error) { return sc.ScriptRuleContext(sw.ctx, "dbo", "sweep_rule") })
 	str("ScriptDefaultContext", func() (string, error) {

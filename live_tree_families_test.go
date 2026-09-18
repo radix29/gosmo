@@ -97,9 +97,9 @@ func TestLiveTreeFamiliesReadTheirCatalog(t *testing.T) {
 	})
 
 	t.Run("XML schema collection excludes the sys collection", func(t *testing.T) {
-		cols, err := d.XmlSchemaCollectionsContext(ctx)
+		cols, err := d.XMLSchemaCollectionsContext(ctx)
 		if err != nil {
-			t.Fatalf("XmlSchemaCollectionsContext: %v", err)
+			t.Fatalf("XMLSchemaCollectionsContext: %v", err)
 		}
 		if len(cols) != 1 || cols[0].Name != "fam_xsd" {
 			t.Fatalf("collections = %+v, want exactly fam_xsd", cols)

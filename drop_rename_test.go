@@ -102,30 +102,30 @@ func TestDropStatements(t *testing.T) {
 			want:  "DROP TYPE [dbo].[Phone]",
 		},
 		{
-			name: "XmlSchemaCollection.Drop",
+			name: "XMLSchemaCollection.Drop",
 			write: func(ctx context.Context, d *Database) error {
-				return (&XmlSchemaCollection{db: d, Schema: "arch]ive", Name: "Order'Schema"}).DropContext(ctx)
+				return (&XMLSchemaCollection{db: d, Schema: "arch]ive", Name: "Order'Schema"}).DropContext(ctx)
 			},
 			want: "DROP XML SCHEMA COLLECTION [arch]]ive].[Order'Schema]",
 		},
 		{
-			name: "XmlSchemaCollection.Drop defaults the schema",
+			name: "XMLSchemaCollection.Drop defaults the schema",
 			write: func(ctx context.Context, d *Database) error {
-				return (&XmlSchemaCollection{db: d, Name: "OrderSchema"}).DropContext(ctx)
+				return (&XMLSchemaCollection{db: d, Name: "OrderSchema"}).DropContext(ctx)
 			},
 			want: "DROP XML SCHEMA COLLECTION [dbo].[OrderSchema]",
 		},
 		{
-			name: "DropXmlSchemaCollection",
+			name: "DropXMLSchemaCollection",
 			write: func(ctx context.Context, d *Database) error {
-				return d.DropXmlSchemaCollectionContext(ctx, "archive", "OrderSchema")
+				return d.DropXMLSchemaCollectionContext(ctx, "archive", "OrderSchema")
 			},
 			want: "DROP XML SCHEMA COLLECTION [archive].[OrderSchema]",
 		},
 		{
-			name: "DropXmlSchemaCollection defaults the schema",
+			name: "DropXMLSchemaCollection defaults the schema",
 			write: func(ctx context.Context, d *Database) error {
-				return d.DropXmlSchemaCollectionContext(ctx, "", "OrderSchema")
+				return d.DropXMLSchemaCollectionContext(ctx, "", "OrderSchema")
 			},
 			want: "DROP XML SCHEMA COLLECTION [dbo].[OrderSchema]",
 		},
@@ -376,9 +376,9 @@ func TestRenameStatements(t *testing.T) {
 			want: []string{"ALTER SCHEMA [archive] TRANSFER TYPE::[sales].[Phone]"},
 		},
 		{
-			name: "TransferXmlSchemaCollection",
+			name: "TransferXMLSchemaCollection",
 			write: func(ctx context.Context, d *Database) error {
-				return d.TransferXmlSchemaCollectionContext(ctx, "archive", "", "OrderSchema")
+				return d.TransferXMLSchemaCollectionContext(ctx, "archive", "", "OrderSchema")
 			},
 			want: []string{"ALTER SCHEMA [archive] TRANSFER XML SCHEMA COLLECTION::[dbo].[OrderSchema]"},
 		},

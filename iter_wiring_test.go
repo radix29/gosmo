@@ -448,12 +448,12 @@ func iterWirings(t *testing.T) []seqWiring {
 				}
 			},
 			func(ctx context.Context) { _, _ = dbo.SystemDataTypesContext(ctx) }},
-		{"Database.XmlSchemaCollectionSeq",
+		{"Database.XMLSchemaCollectionSeq",
 			func(ctx context.Context) {
-				for range dbo.XmlSchemaCollectionSeq(ctx) {
+				for range dbo.XMLSchemaCollectionSeq(ctx) {
 				}
 			},
-			func(ctx context.Context) { _, _ = dbo.XmlSchemaCollectionsContext(ctx) }},
+			func(ctx context.Context) { _, _ = dbo.XMLSchemaCollectionsContext(ctx) }},
 		{"Database.AssemblySeq",
 			func(ctx context.Context) {
 				for range dbo.AssemblySeq(ctx) {

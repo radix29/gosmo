@@ -62,15 +62,11 @@ func ColumnPermissionNames() []string {
 	return names
 }
 
-// ColumnPermissions returns every column-level GRANT/DENY entry recorded on
-// schema.name, for all principals and all columns.
-func (d *Database) ColumnPermissions(schema, name string) ([]*ColumnPermissionEntry, error) {
-	return d.ColumnPermissionsContext(context.Background(), schema, name)
-}
-
-// ColumnPermissionsContext is the context-aware variant of ColumnPermissions.
-func (d *Database) ColumnPermissionsContext(ctx context.Context, schema, name string) ([]*ColumnPermissionEntry, error) {
-	const q = `
+// columnPermissionSelect is the select list, the five joins and the
+// class/minor_id predicate both column-permission reads share; each caller
+// appends its own AND plus ORDER BY. A column entry is an OBJECT_OR_COLUMN
+// row with a non-zero minor_id, which is the part neither caller varies.
+const columnPermissionSelect = `
 SELECT pr.name, pr.type_desc, grantor.name, sch.name, obj.name, obj.type_desc,
        col.name, dp.permission_name, dp.state_desc
 FROM   sys.database_permissions dp
@@ -80,7 +76,17 @@ JOIN   sys.columns col                 ON col.object_id = dp.major_id
                                       AND col.column_id = dp.minor_id
 JOIN   sys.database_principals pr      ON pr.principal_id      = dp.grantee_principal_id
 JOIN   sys.database_principals grantor ON grantor.principal_id = dp.grantor_principal_id
-WHERE  dp.class_desc = 'OBJECT_OR_COLUMN' AND dp.minor_id > 0
+WHERE  dp.class_desc = 'OBJECT_OR_COLUMN' AND dp.minor_id > 0`
+
+// ColumnPermissions returns every column-level GRANT/DENY entry recorded on
+// schema.name, for all principals and all columns.
+func (d *Database) ColumnPermissions(schema, name string) ([]*ColumnPermissionEntry, error) {
+	return d.ColumnPermissionsContext(context.Background(), schema, name)
+}
+
+// ColumnPermissionsContext is the context-aware variant of ColumnPermissions.
+func (d *Database) ColumnPermissionsContext(ctx context.Context, schema, name string) ([]*ColumnPermissionEntry, error) {
+	const q = columnPermissionSelect + `
 AND    dp.major_id = OBJECT_ID(@p1)
 ORDER  BY pr.name, col.name, dp.permission_name`
 
@@ -101,17 +107,7 @@ func (d *Database) ColumnPermissionsForPrincipal(principal string) ([]*ColumnPer
 // ColumnPermissionsForPrincipalContext is the context-aware variant of
 // ColumnPermissionsForPrincipal.
 func (d *Database) ColumnPermissionsForPrincipalContext(ctx context.Context, principal string) ([]*ColumnPermissionEntry, error) {
-	const q = `
-SELECT pr.name, pr.type_desc, grantor.name, sch.name, obj.name, obj.type_desc,
-       col.name, dp.permission_name, dp.state_desc
-FROM   sys.database_permissions dp
-JOIN   sys.objects obj                 ON obj.object_id = dp.major_id
-JOIN   sys.schemas sch                 ON sch.schema_id = obj.schema_id
-JOIN   sys.columns col                 ON col.object_id = dp.major_id
-                                      AND col.column_id = dp.minor_id
-JOIN   sys.database_principals pr      ON pr.principal_id      = dp.grantee_principal_id
-JOIN   sys.database_principals grantor ON grantor.principal_id = dp.grantor_principal_id
-WHERE  dp.class_desc = 'OBJECT_OR_COLUMN' AND dp.minor_id > 0
+	const q = columnPermissionSelect + `
 AND    pr.name = @p1
 ORDER  BY sch.name, obj.name, col.name, dp.permission_name`
 

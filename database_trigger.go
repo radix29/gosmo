@@ -129,6 +129,16 @@ func (d *Database) DatabaseTriggerRef(name string) *DatabaseTrigger {
 // Database returns the database the trigger is defined on.
 func (t *DatabaseTrigger) Database() *Database { return t.db }
 
+// scanDatabaseTrigger decodes one sys.triggers row into a DatabaseTrigger.
+//
+// Twin of scanServerTrigger in server_trigger.go. That file and this one are
+// deliberately near-identical: this function, and the Enable/Disable/setEnabled
+// block below it, differ only in the receiver type and in the scope the
+// statement targets (ON DATABASE here, ON ALL SERVER there). Unifying them
+// needs either generics over two receivers with different db/server fields or
+// a shared struct both embed, and the second changes two exported types'
+// shapes for no caller's benefit — so the duplication stays. Change one, look
+// at the other.
 func scanDatabaseTrigger(d *Database, scan func(...any) error) (*DatabaseTrigger, error) {
 	t := &DatabaseTrigger{db: d}
 	var isDisabled bool

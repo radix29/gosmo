@@ -90,7 +90,7 @@ func TestLiveSecurableCapabilitiesMatchWhatTheServerEnforces(t *testing.T) {
 	}{
 		{DatabaseSecurableType, "s1", "t_ctl", CapabilityGranted, "GRANT CONTROL on the type"},
 		{DatabaseSecurableType, "s1", "t.dot", CapabilityGranted, "GRANT CONTROL on a type whose name needs quoting"},
-		{DatabaseSecurableXmlSchemaCollection, "s1", "x_own", CapabilityGranted, "ownership of the collection"},
+		{DatabaseSecurableXMLSchemaCollection, "s1", "x_own", CapabilityGranted, "ownership of the collection"},
 		{DatabaseSecurableType, "s1", "t_none", CapabilityDenied, "db_ddladmin alone"},
 		{DatabaseSecurableType, "s1", "t_hidden", CapabilityUnknown, "DENY CONTROL, which hides the type"},
 	} {

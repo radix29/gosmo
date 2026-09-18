@@ -371,9 +371,9 @@ const (
 	// table and CLR types alike.
 	DatabaseSecurableType DatabaseSecurableKind = "TYPE"
 
-	// DatabaseSecurableXmlSchemaCollection is an XML schema collection —
+	// DatabaseSecurableXMLSchemaCollection is an XML schema collection —
 	// class 10.
-	DatabaseSecurableXmlSchemaCollection DatabaseSecurableKind = "XML SCHEMA COLLECTION"
+	DatabaseSecurableXMLSchemaCollection DatabaseSecurableKind = "XML SCHEMA COLLECTION"
 )
 
 // DatabaseSecurableKey is the key SecurablePermissions is indexed by: the kind

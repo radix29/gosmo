@@ -8,6 +8,7 @@ package gosmo
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"slices"
 )
@@ -27,6 +28,39 @@ type PermissionEntry struct {
 	State         PermissionState
 }
 
+// permissionEntrySelect is the select list and the two grantee/grantor joins
+// every sys.database_permissions read in this file shares; each caller
+// appends its own WHERE and ORDER BY, because the three scopes identify their
+// securable differently — OBJECT_ID for an object, SCHEMA_ID for a schema,
+// and nothing at all for the database itself.
+const permissionEntrySelect = `
+SELECT pr.name, pr.type_desc, grantor.name, dp.permission_name, dp.state_desc
+FROM   sys.database_permissions dp
+JOIN   sys.database_principals pr      ON pr.principal_id      = dp.grantee_principal_id
+JOIN   sys.database_principals grantor ON grantor.principal_id = dp.grantor_principal_id`
+
+// scanPermissionEntries reads the rows permissionEntrySelect returns into
+// PermissionEntry values. It returns bare errors; the caller names the scope
+// it was reading. DatabasePermissionsContext does its own scan because its
+// DatabasePermissionEntry keeps permission and state as plain strings.
+func scanPermissionEntries(rows *sql.Rows) ([]*PermissionEntry, error) {
+	var grants []*PermissionEntry
+	for rows.Next() {
+		g := &PermissionEntry{}
+		var perm, state string
+		if err := rows.Scan(&g.Principal, &g.PrincipalType, &g.Grantor, &perm, &state); err != nil {
+			return nil, err
+		}
+		g.Permission = ObjectPermission(perm)
+		g.State = PermissionState(state)
+		grants = append(grants, g)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return grants, nil
+}
+
 // Permissions returns the GRANT/DENY entries recorded for schema.name —
 // SSMS's object Properties > Permissions page.
 func (d *Database) Permissions(schema, name string) ([]*PermissionEntry, error) {
@@ -35,11 +69,7 @@ func (d *Database) Permissions(schema, name string) ([]*PermissionEntry, error) 
 
 // PermissionsContext is the context-aware variant of Permissions.
 func (d *Database) PermissionsContext(ctx context.Context, schema, name string) ([]*PermissionEntry, error) {
-	const q = `
-SELECT pr.name, pr.type_desc, grantor.name, dp.permission_name, dp.state_desc
-FROM   sys.database_permissions dp
-JOIN   sys.database_principals pr ON pr.principal_id = dp.grantee_principal_id
-JOIN   sys.database_principals grantor ON grantor.principal_id = dp.grantor_principal_id
+	const q = permissionEntrySelect + `
 WHERE  dp.major_id = OBJECT_ID(@p1) AND dp.minor_id = 0
 ORDER  BY pr.name, dp.permission_name`
 
@@ -50,18 +80,8 @@ ORDER  BY pr.name, dp.permission_name`
 	}
 	defer rows.Close()
 
-	var grants []*PermissionEntry
-	for rows.Next() {
-		g := &PermissionEntry{}
-		var perm, state string
-		if err := rows.Scan(&g.Principal, &g.PrincipalType, &g.Grantor, &perm, &state); err != nil {
-			return nil, fmt.Errorf("gosmo: permissions for %s: %w", ref, err)
-		}
-		g.Permission = ObjectPermission(perm)
-		g.State = PermissionState(state)
-		grants = append(grants, g)
-	}
-	if err := rows.Err(); err != nil {
+	grants, err := scanPermissionEntries(rows.Rows)
+	if err != nil {
 		return nil, fmt.Errorf("gosmo: permissions for %s: %w", ref, err)
 	}
 	return grants, nil
@@ -260,11 +280,7 @@ func (d *Database) SchemaPermissions(schemaName string) ([]*PermissionEntry, err
 
 // SchemaPermissionsContext is the context-aware variant of SchemaPermissions.
 func (d *Database) SchemaPermissionsContext(ctx context.Context, schemaName string) ([]*PermissionEntry, error) {
-	const q = `
-SELECT pr.name, pr.type_desc, grantor.name, dp.permission_name, dp.state_desc
-FROM   sys.database_permissions dp
-JOIN   sys.database_principals pr      ON pr.principal_id = dp.grantee_principal_id
-JOIN   sys.database_principals grantor ON grantor.principal_id = dp.grantor_principal_id
+	const q = permissionEntrySelect + `
 WHERE  dp.class_desc = 'SCHEMA' AND dp.major_id = SCHEMA_ID(@p1)
 ORDER  BY pr.name, dp.permission_name`
 
@@ -274,18 +290,8 @@ ORDER  BY pr.name, dp.permission_name`
 	}
 	defer rows.Close()
 
-	var grants []*PermissionEntry
-	for rows.Next() {
-		g := &PermissionEntry{}
-		var perm, state string
-		if err := rows.Scan(&g.Principal, &g.PrincipalType, &g.Grantor, &perm, &state); err != nil {
-			return nil, fmt.Errorf("gosmo: schema permissions for %q in %q: %w", schemaName, d.Name, err)
-		}
-		g.Permission = ObjectPermission(perm)
-		g.State = PermissionState(state)
-		grants = append(grants, g)
-	}
-	if err := rows.Err(); err != nil {
+	grants, err := scanPermissionEntries(rows.Rows)
+	if err != nil {
 		return nil, fmt.Errorf("gosmo: schema permissions for %q in %q: %w", schemaName, d.Name, err)
 	}
 	return grants, nil
@@ -347,11 +353,7 @@ func (d *Database) DatabasePermissions() ([]*DatabasePermissionEntry, error) {
 // DatabasePermissionsContext is the context-aware variant of
 // DatabasePermissions.
 func (d *Database) DatabasePermissionsContext(ctx context.Context) ([]*DatabasePermissionEntry, error) {
-	const q = `
-SELECT pr.name, pr.type_desc, grantor.name, dp.permission_name, dp.state_desc
-FROM   sys.database_permissions dp
-JOIN   sys.database_principals pr      ON pr.principal_id      = dp.grantee_principal_id
-JOIN   sys.database_principals grantor ON grantor.principal_id = dp.grantor_principal_id
+	const q = permissionEntrySelect + `
 WHERE  dp.class_desc = 'DATABASE'
 ORDER  BY pr.name, dp.permission_name`
 

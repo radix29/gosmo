@@ -162,13 +162,13 @@ func TestLiveScriptedFamiliesRecreateTheirObjects(t *testing.T) {
 	})
 
 	t.Run("XML schema collection keeps its documents", func(t *testing.T) {
-		script, err := sc.ScriptXmlSchemaCollectionContext(ctx, "dbo", "scr_xsd")
+		script, err := sc.ScriptXMLSchemaCollectionContext(ctx, "dbo", "scr_xsd")
 		if err != nil {
-			t.Fatalf("ScriptXmlSchemaCollection: %v", err)
+			t.Fatalf("ScriptXMLSchemaCollection: %v", err)
 		}
 		liveRunScript(t, dst, ctx, script)
 
-		after, err := dst.XmlSchemaCollectionByNameContext(ctx, "dbo", "scr_xsd")
+		after, err := dst.XMLSchemaCollectionByNameContext(ctx, "dbo", "scr_xsd")
 		if err != nil {
 			t.Fatalf("the scripted collection is not there: %v", err)
 		}
@@ -226,8 +226,8 @@ func TestLiveScriptedFamiliesRecreateTheirObjects(t *testing.T) {
 				func() (string, error) { return dropper.ScriptPlanGuideContext(ctx, "scr_pg") },
 				func() error { _, err := dst.PlanGuideByNameContext(ctx, "scr_pg"); return err }},
 			{"XML schema collection",
-				func() (string, error) { return dropper.ScriptXmlSchemaCollectionContext(ctx, "dbo", "scr_xsd") },
-				func() error { _, err := dst.XmlSchemaCollectionByNameContext(ctx, "dbo", "scr_xsd"); return err }},
+				func() (string, error) { return dropper.ScriptXMLSchemaCollectionContext(ctx, "dbo", "scr_xsd") },
+				func() error { _, err := dst.XMLSchemaCollectionByNameContext(ctx, "dbo", "scr_xsd"); return err }},
 			{"table type",
 				func() (string, error) {
 					return dropper.ScriptUserDefinedTableTypeContext(ctx, "dbo", "scr_tabletype")

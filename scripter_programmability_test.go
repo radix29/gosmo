@@ -82,11 +82,11 @@ func TestBuildClrTypeScriptNamesTheAssemblyAndClass(t *testing.T) {
 	}
 }
 
-func TestBuildXmlSchemaCollectionScriptGuardsTheDropAndCarriesTheDefinition(t *testing.T) {
-	c := &XmlSchemaCollection{Schema: "dbo", Name: "OrderSchema"}
+func TestBuildXMLSchemaCollectionScriptGuardsTheDropAndCarriesTheDefinition(t *testing.T) {
+	c := &XMLSchemaCollection{Schema: "dbo", Name: "OrderSchema"}
 	def := `<xsd:schema xmlns:xsd="http://www.w3.org/2001/XMLSchema" id="it's" />`
 
-	got := buildXmlSchemaCollectionScript(c, def, DefaultScriptOptions())
+	got := buildXMLSchemaCollectionScript(c, def, DefaultScriptOptions())
 	if !strings.Contains(got, "CREATE XML SCHEMA COLLECTION [dbo].[OrderSchema] AS N'") {
 		t.Errorf("collection not scripted:\n%s", got)
 	}
@@ -98,7 +98,7 @@ func TestBuildXmlSchemaCollectionScriptGuardsTheDropAndCarriesTheDefinition(t *t
 
 	opts := DefaultScriptOptions()
 	opts.Verb = ScriptDrop
-	drop := buildXmlSchemaCollectionScript(c, "", opts)
+	drop := buildXMLSchemaCollectionScript(c, "", opts)
 	// DROP XML SCHEMA COLLECTION has no IF EXISTS form.
 	if !strings.Contains(drop, "IF EXISTS (SELECT 1 FROM sys.xml_schema_collections") ||
 		!strings.Contains(drop, "DROP XML SCHEMA COLLECTION [dbo].[OrderSchema];") {

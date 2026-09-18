@@ -233,20 +233,20 @@ func buildClrTypeScript(t *ClrType, opts ScriptOptions) string {
 // XML schema collections
 // ============================================================
 
-// ScriptXmlSchemaCollection generates the CREATE (or DROP) script for one XML
+// ScriptXMLSchemaCollection generates the CREATE (or DROP) script for one XML
 // schema collection.
-func (sc *Scripter) ScriptXmlSchemaCollection(schema, name string) (string, error) {
-	return sc.ScriptXmlSchemaCollectionContext(context.Background(), schema, name)
+func (sc *Scripter) ScriptXMLSchemaCollection(schema, name string) (string, error) {
+	return sc.ScriptXMLSchemaCollectionContext(context.Background(), schema, name)
 }
 
-// ScriptXmlSchemaCollectionContext is the context-aware variant of
-// ScriptXmlSchemaCollection.
+// ScriptXMLSchemaCollectionContext is the context-aware variant of
+// ScriptXMLSchemaCollection.
 //
 // The schema documents are read only for a verb that emits a CREATE:
 // XML_SCHEMA_NAMESPACE reassembles the whole collection, which a drop does
 // not need.
-func (sc *Scripter) ScriptXmlSchemaCollectionContext(ctx context.Context, schema, name string) (string, error) {
-	c, err := sc.db.XmlSchemaCollectionByNameContext(ctx, schema, name)
+func (sc *Scripter) ScriptXMLSchemaCollectionContext(ctx context.Context, schema, name string) (string, error) {
+	c, err := sc.db.XMLSchemaCollectionByNameContext(ctx, schema, name)
 	if err != nil {
 		return "", err
 	}
@@ -256,15 +256,15 @@ func (sc *Scripter) ScriptXmlSchemaCollectionContext(ctx context.Context, schema
 			return "", err
 		}
 	}
-	return buildXmlSchemaCollectionScript(c, def, sc.opts), nil
+	return buildXMLSchemaCollectionScript(c, def, sc.opts), nil
 }
 
-// buildXmlSchemaCollectionScript assembles one collection's script.
+// buildXMLSchemaCollectionScript assembles one collection's script.
 //
 // DROP XML SCHEMA COLLECTION has no IF EXISTS form, so the drop is guarded
 // with a sys.xml_schema_collections lookup — the schema is matched too,
 // since two schemas can hold collections of the same name.
-func buildXmlSchemaCollectionScript(c *XmlSchemaCollection, def string, opts ScriptOptions) string {
+func buildXMLSchemaCollectionScript(c *XMLSchemaCollection, def string, opts ScriptOptions) string {
 	fullName := qualifiedName(c.Schema, c.Name)
 	var sb strings.Builder
 	if v := opts.verb(); v == ScriptDrop || v == ScriptDropAndCreate {
@@ -287,7 +287,7 @@ func buildXmlSchemaCollectionScript(c *XmlSchemaCollection, def string, opts Scr
 
 // xmlSchemaCollectionGuard is the existence check both verbs use, in the
 // sense the caller asks for.
-func xmlSchemaCollectionGuard(c *XmlSchemaCollection, sense string) string {
+func xmlSchemaCollectionGuard(c *XMLSchemaCollection, sense string) string {
 	return fmt.Sprintf("%s (SELECT 1 FROM sys.xml_schema_collections x\n"+
 		"    WHERE x.name = N'%s' AND SCHEMA_NAME(x.schema_id) = N'%s')\n",
 		sense, escapeSingle(c.Name), escapeSingle(c.Schema))

@@ -357,7 +357,7 @@ The instance and database halves pair up: `ServerResourceStat` and
 | `Database.Sequences`            | `db.Sequences()` / `db.DropSequence(schema, name)` |
 | `Database.Synonyms`             | `db.Synonyms()` / `db.DropSynonym(schema, name)` |
 | `Database.UserDefinedDataTypes` / `...TableTypes` / `...Types` (CLR) | `db.UserDefinedDataTypes()` / `db.UserDefinedTableTypes()` / `db.ClrTypes()` (each with `...ByName(schema, name)`) / `db.SystemDataTypes()` — see [Types, rules and defaults](#types-rules-and-defaults) |
-| `Database.XmlSchemaCollections` | `db.XmlSchemaCollections()` / `db.XmlSchemaCollectionByName(schema, name)` / `c.Definition()` |
+| `Database.XMLSchemaCollections` | `db.XMLSchemaCollections()` / `db.XMLSchemaCollectionByName(schema, name)` / `c.Definition()` |
 | `Database.Rules` / `Database.Defaults` | `db.Rules()` / `db.Defaults()` (each with `...ByName(schema, name)` and `db.Drop...`) — read-only, deprecated families |
 | `Database.Assemblies`           | `db.Assemblies()` / `db.AssemblyByName(name)` / `a.Files()` / `a.Modules()` — see [Assemblies](#assemblies) |
 | `Database.PlanGuides`           | `db.PlanGuides()` / `db.PlanGuideByName(name)` / `db.PlanGuideRef(name)` (no-I/O handle) / `g.Enable()` / `g.Disable()` / `g.Drop()` — see [Plan guides](#plan-guides) |
@@ -873,15 +873,15 @@ since SQL Server 2008 in favour of `CHECK` and `DEFAULT` constraints.
 | User-Defined Table Types      | `db.UserDefinedTableTypes()` / `...ByName(schema, name)` / `tt.Columns()` |
 | User-Defined Types (CLR)      | `db.ClrTypes()` / `db.ClrTypeByName(schema, name)` — `.Assembly` / `.AssemblyClass` name the implementation |
 | System Data Types             | `db.SystemDataTypes()` — the connected instance's own list, not a hard-coded one |
-| XML Schema Collections        | `db.XmlSchemaCollections()` / `...ByName(schema, name)` / `c.Definition()` (`XML_SCHEMA_NAMESPACE`) |
+| XML Schema Collections        | `db.XMLSchemaCollections()` / `...ByName(schema, name)` / `c.Definition()` (`XML_SCHEMA_NAMESPACE`) |
 | Rules                         | `db.Rules()` / `db.RuleByName(schema, name)` → `*Rule` (`.Definition`) |
 | Defaults                      | `db.Defaults()` / `db.DefaultByName(schema, name)` → `*Default` (`.Definition`) |
 
 | Operation        | Alias type | Table / CLR type | XML schema collection | Rule / default |
 | ---------------- | ---------- | ---------------- | --------------------- | -------------- |
-| Drop             | `db.DropType` / `t.Drop()` | `db.DropType` / `t.Drop()` | `db.DropXmlSchemaCollection` / `c.Drop()` | `db.DropRule` / `db.DropDefault` / `.Drop()` |
+| Drop             | `db.DropType` / `t.Drop()` | `db.DropType` / `t.Drop()` | `db.DropXMLSchemaCollection` / `c.Drop()` | `db.DropRule` / `db.DropDefault` / `.Drop()` |
 | Rename           | `db.RenameUserDefinedDataType` | — (`sp_rename` has no class for them) | — | `db.RenameObject` |
-| Move to a schema | `db.TransferType` | `db.TransferType` | `db.TransferXmlSchemaCollection` | `db.TransferObject` |
+| Move to a schema | `db.TransferType` | `db.TransferType` | `db.TransferXMLSchemaCollection` | `db.TransferObject` |
 
 All four type families live in `sys.types`, separated only by flags; a
 table type is `is_user_defined` too, so the alias-type reads exclude it
@@ -1073,7 +1073,7 @@ ddl, _ := sc.ScriptColumnEncryptionKey("CEK1")
 ddl, _ := sc.ScriptUserDefinedDataType("dbo", "PhoneNumber")
 ddl, _ := sc.ScriptUserDefinedTableType("dbo", "OrderLines")
 ddl, _ := sc.ScriptClrType("dbo", "Point")
-ddl, _ := sc.ScriptXmlSchemaCollection("dbo", "InvoiceSchema")
+ddl, _ := sc.ScriptXMLSchemaCollection("dbo", "InvoiceSchema")
 ddl, _ := sc.ScriptRule("dbo", "PositiveRule")
 ddl, _ := sc.ScriptDefault("dbo", "ZeroDefault")
 ddl, _ := sc.ScriptAssembly("MyClrLib")   // a template: the binary is a placeholder

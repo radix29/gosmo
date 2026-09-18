@@ -1468,7 +1468,7 @@ func TestTheSecurableBlockAsksPerSecurable(t *testing.T) {
 	}{
 		{DatabaseSecurableAssembly, "", "a1", "ASSEMBLY::a1"},
 		{DatabaseSecurableType, "dbo", "Phone", "TYPE::dbo.Phone"},
-		{DatabaseSecurableXmlSchemaCollection, "Sales", "Doc", "XML SCHEMA COLLECTION::Sales.Doc"},
+		{DatabaseSecurableXMLSchemaCollection, "Sales", "Doc", "XML SCHEMA COLLECTION::Sales.Doc"},
 	} {
 		if got := DatabaseSecurableKey(tc.kind, tc.schema, tc.name); got != tc.want {
 			t.Errorf("DatabaseSecurableKey(%s, %q, %q) = %q, want %q", tc.kind, tc.schema, tc.name, got, tc.want)
@@ -1500,8 +1500,8 @@ func TestDatabaseCapabilitiesReadSecurableAnswersByKind(t *testing.T) {
 	if !c.HasOnSecurable(DatabaseSecurableType, "dbo", "x", "CONTROL") {
 		t.Error("the type's CONTROL did not read back")
 	}
-	if c.HasOnSecurable(DatabaseSecurableXmlSchemaCollection, "dbo", "x", "CONTROL") ||
-		c.PermitsOnSecurable(DatabaseSecurableXmlSchemaCollection, "dbo", "x", "CONTROL") {
+	if c.HasOnSecurable(DatabaseSecurableXMLSchemaCollection, "dbo", "x", "CONTROL") ||
+		c.PermitsOnSecurable(DatabaseSecurableXMLSchemaCollection, "dbo", "x", "CONTROL") {
 		t.Error("the collection read the same-named type's answer")
 	}
 	if !c.HasOnSecurable(DatabaseSecurableAssembly, "", "a1", "CONTROL") {

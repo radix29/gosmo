@@ -95,10 +95,10 @@ classDiagram
         +SystemDataTypes() []*SystemDataType
         +DropType(schema, name) error
         +TransferType(targetSchema, schema, name) error
-        +XmlSchemaCollections() []*XmlSchemaCollection
-        +XmlSchemaCollectionByName(schema, name) *XmlSchemaCollection
-        +DropXmlSchemaCollection(schema, name) error
-        +TransferXmlSchemaCollection(targetSchema, schema, name) error
+        +XMLSchemaCollections() []*XMLSchemaCollection
+        +XMLSchemaCollectionByName(schema, name) *XMLSchemaCollection
+        +DropXMLSchemaCollection(schema, name) error
+        +TransferXMLSchemaCollection(targetSchema, schema, name) error
         +Assemblies() []*Assembly
         +AssemblyByName(name) *Assembly
         +DropAssembly(name) error

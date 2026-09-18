@@ -495,8 +495,8 @@ ORDER  BY t.name`
 // XML schema collections
 // ============================================================
 
-// XmlSchemaCollection mirrors a sys.xml_schema_collections row.
-type XmlSchemaCollection struct {
+// XMLSchemaCollection mirrors a sys.xml_schema_collections row.
+type XMLSchemaCollection struct {
 	db *Database
 
 	Name         string
@@ -507,10 +507,10 @@ type XmlSchemaCollection struct {
 }
 
 // FullName returns the schema-qualified, bracket-quoted name.
-func (c *XmlSchemaCollection) FullName() string { return qualifiedName(c.Schema, c.Name) }
+func (c *XMLSchemaCollection) FullName() string { return qualifiedName(c.Schema, c.Name) }
 
 // Database returns the database the collection belongs to.
-func (c *XmlSchemaCollection) Database() *Database { return c.db }
+func (c *XMLSchemaCollection) Database() *Database { return c.db }
 
 // xmlSchemaCollectionSelect excludes the sys schema, which holds the
 // server's own sys.sys collection in every database and is not the user's.
@@ -520,8 +520,8 @@ SELECT x.name, SCHEMA_NAME(x.schema_id), x.xml_collection_id,
 FROM   sys.xml_schema_collections x
 WHERE  SCHEMA_NAME(x.schema_id) <> 'sys'`
 
-func scanXmlSchemaCollection(d *Database, scan func(...any) error) (*XmlSchemaCollection, error) {
-	c := &XmlSchemaCollection{db: d}
+func scanXMLSchemaCollection(d *Database, scan func(...any) error) (*XMLSchemaCollection, error) {
+	c := &XMLSchemaCollection{db: d}
 	if err := scan(&c.Name, &c.Schema, &c.CollectionID,
 		&c.CreateDate, &c.ModifyDate); err != nil {
 		return nil, err
@@ -529,14 +529,14 @@ func scanXmlSchemaCollection(d *Database, scan func(...any) error) (*XmlSchemaCo
 	return c, nil
 }
 
-// XmlSchemaCollections returns the XML schema collections in the database.
-func (d *Database) XmlSchemaCollections() ([]*XmlSchemaCollection, error) {
-	return d.XmlSchemaCollectionsContext(context.Background())
+// XMLSchemaCollections returns the XML schema collections in the database.
+func (d *Database) XMLSchemaCollections() ([]*XMLSchemaCollection, error) {
+	return d.XMLSchemaCollectionsContext(context.Background())
 }
 
-// XmlSchemaCollectionsContext is the context-aware variant of
-// XmlSchemaCollections.
-func (d *Database) XmlSchemaCollectionsContext(ctx context.Context) ([]*XmlSchemaCollection, error) {
+// XMLSchemaCollectionsContext is the context-aware variant of
+// XMLSchemaCollections.
+func (d *Database) XMLSchemaCollectionsContext(ctx context.Context) ([]*XMLSchemaCollection, error) {
 	const q = xmlSchemaCollectionSelect + `
 ORDER  BY SCHEMA_NAME(x.schema_id), x.name`
 
@@ -546,9 +546,9 @@ ORDER  BY SCHEMA_NAME(x.schema_id), x.name`
 	}
 	defer rows.Close()
 
-	var cols []*XmlSchemaCollection
+	var cols []*XMLSchemaCollection
 	for rows.Next() {
-		c, err := scanXmlSchemaCollection(d, rows.Scan)
+		c, err := scanXMLSchemaCollection(d, rows.Scan)
 		if err != nil {
 			return nil, fmt.Errorf("gosmo: list XML schema collections in %q: %w", d.Name, err)
 		}
@@ -560,23 +560,23 @@ ORDER  BY SCHEMA_NAME(x.schema_id), x.name`
 	return cols, nil
 }
 
-// XmlSchemaCollectionByName returns one XML schema collection, or a
+// XMLSchemaCollectionByName returns one XML schema collection, or a
 // not-found error (errors.Is ErrNotFound) when the database has none by that
 // name.
-func (d *Database) XmlSchemaCollectionByName(schema, name string) (*XmlSchemaCollection, error) {
-	return d.XmlSchemaCollectionByNameContext(context.Background(), schema, name)
+func (d *Database) XMLSchemaCollectionByName(schema, name string) (*XMLSchemaCollection, error) {
+	return d.XMLSchemaCollectionByNameContext(context.Background(), schema, name)
 }
 
-// XmlSchemaCollectionByNameContext is the context-aware variant of
-// XmlSchemaCollectionByName.
-func (d *Database) XmlSchemaCollectionByNameContext(ctx context.Context, schema, name string) (*XmlSchemaCollection, error) {
+// XMLSchemaCollectionByNameContext is the context-aware variant of
+// XMLSchemaCollectionByName.
+func (d *Database) XMLSchemaCollectionByNameContext(ctx context.Context, schema, name string) (*XMLSchemaCollection, error) {
 	if schema == "" {
 		schema = "dbo"
 	}
-	var c *XmlSchemaCollection
+	var c *XMLSchemaCollection
 	err := d.queryRow(ctx, func(row *sql.Row) error {
 		var err error
-		c, err = scanXmlSchemaCollection(d, row.Scan)
+		c, err = scanXMLSchemaCollection(d, row.Scan)
 		return err
 	}, xmlSchemaCollectionSelect+`
    AND SCHEMA_NAME(x.schema_id) = @p1 AND x.name = @p2`, schema, name)
@@ -591,7 +591,7 @@ func (d *Database) XmlSchemaCollectionByNameContext(ctx context.Context, schema,
 
 // Definition returns the collection's schema documents as one XML string —
 // what CREATE XML SCHEMA COLLECTION was given, as the server reassembles it.
-func (c *XmlSchemaCollection) Definition() (string, error) {
+func (c *XMLSchemaCollection) Definition() (string, error) {
 	return c.DefinitionContext(context.Background())
 }
 
@@ -600,7 +600,7 @@ func (c *XmlSchemaCollection) Definition() (string, error) {
 // XML_SCHEMA_NAMESPACE takes the schema and collection name as *string
 // literals*, not identifiers, so both are passed as parameters rather than
 // bracket-quoted into the statement.
-func (c *XmlSchemaCollection) DefinitionContext(ctx context.Context) (string, error) {
+func (c *XMLSchemaCollection) DefinitionContext(ctx context.Context) (string, error) {
 	const q = `SELECT CAST(XML_SCHEMA_NAMESPACE(@p1, @p2) AS NVARCHAR(MAX))`
 
 	var def sql.NullString
@@ -617,11 +617,11 @@ func (c *XmlSchemaCollection) DefinitionContext(ctx context.Context) (string, er
 }
 
 // Drop drops the XML schema collection.
-func (c *XmlSchemaCollection) Drop() error { return c.DropContext(context.Background()) }
+func (c *XMLSchemaCollection) Drop() error { return c.DropContext(context.Background()) }
 
 // DropContext is the context-aware variant of Drop.
-func (c *XmlSchemaCollection) DropContext(ctx context.Context) error {
-	return c.db.DropXmlSchemaCollectionContext(ctx, c.Schema, c.Name)
+func (c *XMLSchemaCollection) DropContext(ctx context.Context) error {
+	return c.db.DropXMLSchemaCollectionContext(ctx, c.Schema, c.Name)
 }
 
 // ============================================================
@@ -647,14 +647,14 @@ func (d *Database) DropTypeContext(ctx context.Context, schema, name string) err
 	return nil
 }
 
-// DropXmlSchemaCollection drops an XML schema collection.
-func (d *Database) DropXmlSchemaCollection(schema, name string) error {
-	return d.DropXmlSchemaCollectionContext(context.Background(), schema, name)
+// DropXMLSchemaCollection drops an XML schema collection.
+func (d *Database) DropXMLSchemaCollection(schema, name string) error {
+	return d.DropXMLSchemaCollectionContext(context.Background(), schema, name)
 }
 
-// DropXmlSchemaCollectionContext is the context-aware variant of
-// DropXmlSchemaCollection.
-func (d *Database) DropXmlSchemaCollectionContext(ctx context.Context, schema, name string) error {
+// DropXMLSchemaCollectionContext is the context-aware variant of
+// DropXMLSchemaCollection.
+func (d *Database) DropXMLSchemaCollectionContext(ctx context.Context, schema, name string) error {
 	if schema == "" {
 		schema = "dbo"
 	}
@@ -684,16 +684,16 @@ func (d *Database) TransferTypeContext(ctx context.Context, targetSchema, schema
 	return d.transferWithClass(ctx, "TYPE", targetSchema, schema, name)
 }
 
-// TransferXmlSchemaCollection moves an XML schema collection into another
+// TransferXMLSchemaCollection moves an XML schema collection into another
 // schema. Its class prefix is the whole three-word noun, not an abbreviation
 // of it.
-func (d *Database) TransferXmlSchemaCollection(targetSchema, schema, name string) error {
-	return d.TransferXmlSchemaCollectionContext(context.Background(), targetSchema, schema, name)
+func (d *Database) TransferXMLSchemaCollection(targetSchema, schema, name string) error {
+	return d.TransferXMLSchemaCollectionContext(context.Background(), targetSchema, schema, name)
 }
 
-// TransferXmlSchemaCollectionContext is the context-aware variant of
-// TransferXmlSchemaCollection.
-func (d *Database) TransferXmlSchemaCollectionContext(ctx context.Context, targetSchema, schema, name string) error {
+// TransferXMLSchemaCollectionContext is the context-aware variant of
+// TransferXMLSchemaCollection.
+func (d *Database) TransferXMLSchemaCollectionContext(ctx context.Context, targetSchema, schema, name string) error {
 	return d.transferWithClass(ctx, "XML SCHEMA COLLECTION", targetSchema, schema, name)
 }
 

@@ -220,7 +220,7 @@ classDiagram
         Read from the instance's own sys.types.
     }
 
-    class XmlSchemaCollection {
+    class XMLSchemaCollection {
         -db *Database
         +Name string
         +Schema string
@@ -253,7 +253,7 @@ classDiagram
     Database "1" --> "*" UserDefinedTableType : contains
     Database "1" --> "*" ClrType : contains
     Database "1" --> "*" SystemDataType : SystemDataTypes() returns
-    Database "1" --> "*" XmlSchemaCollection : contains
+    Database "1" --> "*" XMLSchemaCollection : contains
     Database "1" --> "*" Rule : contains
     Table "1" --> "*" ForeignKey : has
     Table "1" --> "*" CheckConstraint : has

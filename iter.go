@@ -360,10 +360,10 @@ func (d *Database) SystemDataTypeSeq(ctx context.Context) iter.Seq2[*SystemDataT
 	return seqFrom(ctx, d.SystemDataTypesContext)
 }
 
-// XmlSchemaCollectionSeq returns an iterator over all XML schema collections
+// XMLSchemaCollectionSeq returns an iterator over all XML schema collections
 // in the database.
-func (d *Database) XmlSchemaCollectionSeq(ctx context.Context) iter.Seq2[*XmlSchemaCollection, error] {
-	return seqFrom(ctx, d.XmlSchemaCollectionsContext)
+func (d *Database) XMLSchemaCollectionSeq(ctx context.Context) iter.Seq2[*XMLSchemaCollection, error] {
+	return seqFrom(ctx, d.XMLSchemaCollectionsContext)
 }
 
 // AssemblySeq returns an iterator over all CLR assemblies registered in the

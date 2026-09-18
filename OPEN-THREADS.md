@@ -93,3 +93,23 @@ table (or `drop_rename_test.go` for a one-statement drop) in the same change,
 and mutation-check it: swap a parameter name or drop a `dbo` default in the
 source and confirm the new case fails. A case built from the same constant the
 code uses proves nothing.
+
+## The two DDL-trigger files stay near-identical — settled, do not re-raise
+
+`database_trigger.go` and `server_trigger.go` duplicate roughly thirty lines:
+`scanDatabaseTrigger`/`scanServerTrigger` are twelve identical lines apart from
+the receiver, and the `Enable`/`EnableContext`/`Disable`/`DisableContext`/
+`setEnabled` block below each differs only in the scope the statement targets
+(`ON DATABASE` versus `ON ALL SERVER`) and in which exec helper it reaches
+(`db.exec` versus `server.execContext`).
+
+Reviewed 2026-09-18 and **deliberately left duplicated.** Unifying it needs
+either generics over two receivers with different `db`/`server` fields, or a
+shared struct both embed — and the second changes the shape of two exported
+types for no caller's benefit. Neither pays for itself against thirty lines
+that have not drifted.
+
+What was done instead: each `scanX` now carries a comment naming the other as
+its twin, so a change to one prompts a look at the other. Keep those two
+comments in step if either file moves. A future duplicate-code scan will find
+this pair again; this entry is the answer.
