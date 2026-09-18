@@ -168,9 +168,17 @@ rename, and before a tag.
 - **The `Ref` suffix marks a lookup-free handle.** `Server.DatabaseRef(name)`
   returns a `*Database` carrying only its name — no query, every other field
   at its zero value — while `Server.DatabaseByName(name)` reads the catalog.
-  They are not interchangeable: the handle is the only form that works under
-  a `WithScript`-derived context, and the populated one is the only form
-  whose accessors answer anything. Twenty-two families pair this way
+  They are not interchangeable: the populated one is the only form whose
+  fields answer anything, and the handle is the only form that works when
+  there is nothing to read — no live connection at all, or an object the
+  script is about to *create* and the catalog therefore does not have yet
+  (a New-X dialog's Script Changes). `WithScript` on its own is not that
+  case: it intercepts writes only, so a by-name read under a
+  `WithScript`-derived context goes to the real server and succeeds, and a
+  scripted DROP of an object that exists works either way. This bullet is
+  the authority on that rule; `gossms/CLAUDE.md`, `gossms/docs/decisions.md`
+  and `dbOf` in `gossms/internal/tui/explorer_object_ops.go` point here
+  rather than restate it. Twenty-two families pair this way
   (`DatabaseRef`, `LoginRef`, `TableRef`, the four Agent ones, the
   audit/credential/trigger/snapshot/plan-guide/backup-device/AG families, and
   `ServerRoleRef`, `UserRef`, `StatisticRef`, `ConfigurationRef`); every
