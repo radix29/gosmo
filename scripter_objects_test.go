@@ -84,6 +84,25 @@ func TestBuildSequenceScriptStartsAtTheCurrentValue(t *testing.T) {
 	}
 }
 
+func TestBuildSequenceScriptQualifiesAnAliasDataType(t *testing.T) {
+	// A sequence over a user-defined alias type scripts the type's name
+	// alone unless its schema is carried too — and an unqualified alias
+	// resolves against whoever runs the script, not whoever owns it.
+	seq := &Sequence{Schema: "dbo", Name: "S", DataType: "bigid", DataTypeSchema: "app",
+		StartValue: 1, CurrentValue: 1, Increment: 1, MinValue: 1, MaxValue: 9999}
+	got := buildSequenceScript(seq, DefaultScriptOptions())
+	if !strings.Contains(got, "AS [app].[bigid]") {
+		t.Errorf("alias data type not schema-qualified:\n%s", got)
+	}
+
+	builtin := &Sequence{Schema: "dbo", Name: "S", DataType: DataTypeBigInt, DataTypeSchema: "sys",
+		StartValue: 1, CurrentValue: 1, Increment: 1, MinValue: 1, MaxValue: 9999}
+	got = buildSequenceScript(builtin, DefaultScriptOptions())
+	if !strings.Contains(got, "AS [bigint]") || strings.Contains(got, "[sys].[bigint]") {
+		t.Errorf("built-in data type must stay unqualified:\n%s", got)
+	}
+}
+
 func TestBuildSynonymScript(t *testing.T) {
 	syn := &Synonym{Schema: "dbo", Name: "S", BaseObject: "[other].[dbo].[T]"}
 	got := buildSynonymScript(syn, DefaultScriptOptions())

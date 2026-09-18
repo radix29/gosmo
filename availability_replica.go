@@ -67,6 +67,9 @@ type AvailabilityReplica struct {
 	LastConnectErrorTimestamp   time.Time
 }
 
+// Server returns the server the replica belongs to.
+func (r *AvailabilityReplica) Server() *Server { return r.server }
+
 // Replicas returns every replica in the group, ordered by server name.
 func (ag *AvailabilityGroup) Replicas() ([]*AvailabilityReplica, error) {
 	return ag.ReplicasContext(context.Background())

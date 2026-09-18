@@ -51,6 +51,9 @@ type Certificate struct {
 	Thumbprint []byte
 }
 
+// Database returns the database the certificate belongs to.
+func (c *Certificate) Database() *Database { return c.db }
+
 // HasPrivateKey reports whether this instance holds the certificate's private
 // key, i.e. can present it rather than only verify against it.
 func (c *Certificate) HasPrivateKey() bool {

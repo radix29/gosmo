@@ -24,6 +24,9 @@ type DatabaseRole struct {
 	ModifyDate  time.Time
 }
 
+// Database returns the database the role belongs to.
+func (r *DatabaseRole) Database() *Database { return r.db }
+
 // DatabaseRoles returns all roles defined in the database.
 func (d *Database) DatabaseRoles() ([]*DatabaseRole, error) {
 	return d.DatabaseRolesContext(context.Background())

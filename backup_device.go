@@ -37,6 +37,9 @@ type BackupDevice struct {
 	PhysicalName string
 }
 
+// Server returns the server the backup device belongs to.
+func (d *BackupDevice) Server() *Server { return d.server }
+
 // BackupDeviceType is the device kind sp_addumpdevice takes.
 type BackupDeviceType string
 

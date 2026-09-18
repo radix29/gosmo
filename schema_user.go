@@ -19,6 +19,9 @@ type Schema struct {
 	Owner string
 }
 
+// Database returns the database the schema belongs to.
+func (s *Schema) Database() *Database { return s.db }
+
 // Drop drops the schema.
 func (s *Schema) Drop() error { return s.DropContext(context.Background()) }
 
@@ -148,6 +151,9 @@ type User struct {
 	// LoginDisabled is only meaningful when LoginName is non-empty.
 	LoginDisabled bool
 }
+
+// Database returns the database the user belongs to.
+func (u *User) Database() *Database { return u.db }
 
 // Drop drops the database user.
 func (u *User) Drop() error { return u.DropContext(context.Background()) }

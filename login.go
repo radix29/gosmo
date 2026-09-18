@@ -30,6 +30,9 @@ type Login struct {
 	MappedObject string
 }
 
+// Server returns the server the login belongs to.
+func (l *Login) Server() *Server { return l.server }
+
 // ResolveMapping looks up the certificate or asymmetric key this login maps
 // to and stores its name in MappedObject.
 func (l *Login) ResolveMapping() error {

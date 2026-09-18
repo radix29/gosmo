@@ -24,6 +24,9 @@ type ServerRole struct {
 	ModifyDate  time.Time
 }
 
+// Server returns the server the role belongs to.
+func (r *ServerRole) Server() *Server { return r.server }
+
 // ServerRoles returns all fixed and user-defined server roles.
 func (s *Server) ServerRoles() ([]*ServerRole, error) {
 	return s.ServerRolesContext(context.Background())

@@ -72,6 +72,9 @@ type Alert struct {
 	LastResponse         time.Time
 }
 
+// Server returns the server the alert belongs to.
+func (a *Alert) Server() *Server { return a.server }
+
 // IsEventAlert reports whether this is a plain SQL Server event alert (an
 // error-number-or-severity trigger) rather than a WMI alert or a
 // performance-condition alert — the SQL-only-implementable subset of SQL

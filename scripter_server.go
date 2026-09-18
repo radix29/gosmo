@@ -18,6 +18,9 @@ type ServerScripter struct {
 	opts   ScriptOptions
 }
 
+// Server returns the server the scripter scripts.
+func (sc *ServerScripter) Server() *Server { return sc.server }
+
 // NewServerScripter creates a ServerScripter for the given server.
 func NewServerScripter(s *Server, opts ScriptOptions) *ServerScripter {
 	return &ServerScripter{server: s, opts: opts}

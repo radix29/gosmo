@@ -409,6 +409,9 @@ type Endpoint struct {
 	IsSystem bool
 }
 
+// Server returns the server the endpoint belongs to.
+func (e *Endpoint) Server() *Server { return e.server }
+
 const endpointSelect = `
 SELECT e.endpoint_id, e.name, ISNULL(SUSER_NAME(e.principal_id),''),
        ISNULL(e.protocol_desc,''), ISNULL(e.type_desc,''),

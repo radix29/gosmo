@@ -1152,10 +1152,18 @@ These exist for range-over-func ergonomics, not to bound memory or stop the
 server mid-scan; where that matters, use the `...Context` method with a
 bounded query.
 
+`TestEveryCollectionMethodHasASeq` keeps "every" honest — a new
+`FooContext(ctx) ([]T, error)` fails it until an iterator is added or the
+method is listed in `seqCoverageExceptions` with a reason. The exceptions
+today are the three fixed audit-action vocabularies, `Server.FixedDrives`,
+`Certificate.Encoded` (a DER blob, not a collection) and
+`AvailabilityReplica.ReadOnlyRoutingList` (`[][]string`, where the outer
+slice *is* the priority order).
+
 **Breaking, since `v0.0.7`:** these took no `context.Context` before — they
 wrapped the non-`Context` collection method, i.e. `context.Background()`.
 `db.TableSeq()` becomes `db.TableSeq(ctx)`, for all 75 that existed then
-(112 now).
+(128 now).
 
 ### Scripting pending writes (`WithScript`)
 

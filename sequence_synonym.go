@@ -13,20 +13,32 @@ import (
 
 // Sequence mirrors sys.sequences.
 type Sequence struct {
-	db           *Database
-	Name         string
-	Schema       string
-	ObjectID     int
-	DataType     DataType
-	StartValue   int64
-	Increment    int64
-	MinValue     int64
-	MaxValue     int64
-	IsCycling    bool
-	IsCached     bool
-	CacheSize    int
-	CurrentValue int64
+	db       *Database
+	Name     string
+	Schema   string
+	ObjectID int
+	// DataType is the sequence's underlying type name, unqualified. A
+	// sequence declared over a user-defined alias type carries that type's
+	// name here, which is outside the DataType vocabulary CreateSequence
+	// accepts; DataTypeSchema is the half that disambiguates it.
+	DataType DataType
+	// DataTypeSchema is the schema DataType lives in — "sys" for the
+	// built-in types, the owning schema for an alias type. Scripting has to
+	// qualify with it, or a re-run resolves the alias against the executing
+	// principal's default schema instead.
+	DataTypeSchema string
+	StartValue     int64
+	Increment      int64
+	MinValue       int64
+	MaxValue       int64
+	IsCycling      bool
+	IsCached       bool
+	CacheSize      int
+	CurrentValue   int64
 }
+
+// Database returns the database the sequence belongs to.
+func (seq *Sequence) Database() *Database { return seq.db }
 
 // Sequences returns all sequences in the database.
 func (d *Database) Sequences() ([]*Sequence, error) {
@@ -37,7 +49,7 @@ func (d *Database) Sequences() ([]*Sequence, error) {
 func (d *Database) SequencesContext(ctx context.Context) ([]*Sequence, error) {
 	const q = `
 SELECT s.name, SCHEMA_NAME(s.schema_id), s.object_id,
-       tp.name,
+       tp.name, SCHEMA_NAME(tp.schema_id),
        CAST(s.start_value AS BIGINT),
        CAST(s.increment AS BIGINT),
        CAST(s.minimum_value AS BIGINT),
@@ -59,7 +71,7 @@ ORDER  BY SCHEMA_NAME(s.schema_id), s.name`
 		seq := &Sequence{db: d}
 		if err := rows.Scan(
 			&seq.Name, &seq.Schema, &seq.ObjectID,
-			&seq.DataType,
+			&seq.DataType, &seq.DataTypeSchema,
 			&seq.StartValue, &seq.Increment,
 			&seq.MinValue, &seq.MaxValue,
 			&seq.IsCycling, &seq.IsCached, &seq.CacheSize,
@@ -225,6 +237,9 @@ type Synonym struct {
 	ObjectID   int
 	BaseObject string // fully qualified base object name
 }
+
+// Database returns the database the synonym belongs to.
+func (syn *Synonym) Database() *Database { return syn.db }
 
 // Synonyms returns all synonyms in the database.
 func (d *Database) Synonyms() ([]*Synonym, error) {

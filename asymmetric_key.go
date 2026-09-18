@@ -37,6 +37,9 @@ type AsymmetricKey struct {
 	Thumbprint []byte
 }
 
+// Database returns the database the asymmetric key belongs to.
+func (k *AsymmetricKey) Database() *Database { return k.db }
+
 // HasPrivateKey reports whether this instance holds the key's private half,
 // i.e. can sign with it rather than only verify against it.
 func (k *AsymmetricKey) HasPrivateKey() bool {

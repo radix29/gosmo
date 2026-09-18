@@ -73,6 +73,9 @@ type ServerAudit struct {
 	ReserveDiskSpace bool
 }
 
+// Server returns the server the audit belongs to.
+func (a *ServerAudit) Server() *Server { return a.server }
+
 // serverAuditSelect reads sys.server_audits.
 //
 // The join onto sys.server_file_audits is a LEFT JOIN because an audit

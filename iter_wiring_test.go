@@ -8,6 +8,7 @@ import (
 	"go/parser"
 	"go/token"
 	"io"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -163,6 +164,10 @@ func iterWirings(t *testing.T) []seqWiring {
 	sch := &Schedule{server: srv, ID: 9, Name: "nightly-sched"}
 	lg := &Login{server: srv, Name: argLogin}
 	al := &Alert{server: srv, ID: 4, Name: "sev17"}
+	asm := &Assembly{db: dbo, AssemblyID: 11, Name: "clrlib"}
+	udtt := &UserDefinedTableType{db: dbo, Name: "TT", Schema: argSchema,
+		UserTypeID: 257, TypeTableObjectID: 43}
+	bdev := &BackupDevice{server: srv, Name: "bdev", Type: "DISK", PhysicalName: argDevice}
 
 	return []seqWiring{
 		{"Alert.NotificationSeq",
@@ -189,6 +194,36 @@ func iterWirings(t *testing.T) []seqWiring {
 				}
 			},
 			func(ctx context.Context) { _, _ = ag.ReplicasContext(ctx) }},
+		{"Assembly.FileSeq",
+			func(ctx context.Context) {
+				for range asm.FileSeq(ctx) {
+				}
+			},
+			func(ctx context.Context) { _, _ = asm.FilesContext(ctx) }},
+		{"Assembly.ModuleSeq",
+			func(ctx context.Context) {
+				for range asm.ModuleSeq(ctx) {
+				}
+			},
+			func(ctx context.Context) { _, _ = asm.ModulesContext(ctx) }},
+		{"BackupDevice.HeaderSeq",
+			func(ctx context.Context) {
+				for range bdev.HeaderSeq(ctx) {
+				}
+			},
+			func(ctx context.Context) { _, _ = bdev.HeadersContext(ctx) }},
+		{"Database.AsymmetricKeySeq",
+			func(ctx context.Context) {
+				for range dbo.AsymmetricKeySeq(ctx) {
+				}
+			},
+			func(ctx context.Context) { _, _ = dbo.AsymmetricKeysContext(ctx) }},
+		{"Database.DatabaseAuditSpecificationSeq",
+			func(ctx context.Context) {
+				for range dbo.DatabaseAuditSpecificationSeq(ctx) {
+				}
+			},
+			func(ctx context.Context) { _, _ = dbo.DatabaseAuditSpecificationsContext(ctx) }},
 		{"Database.CertificateSeq",
 			func(ctx context.Context) {
 				for range dbo.CertificateSeq(ctx) {
@@ -692,6 +727,18 @@ func iterWirings(t *testing.T) []seqWiring {
 				}
 			},
 			func(ctx context.Context) { _, _ = srv.ConfigurationsContext(ctx) }},
+		{"Server.CryptographicProviderSeq",
+			func(ctx context.Context) {
+				for range srv.CryptographicProviderSeq(ctx) {
+				}
+			},
+			func(ctx context.Context) { _, _ = srv.CryptographicProvidersContext(ctx) }},
+		{"Server.DatabaseRecoveryStatusSeq",
+			func(ctx context.Context) {
+				for range srv.DatabaseRecoveryStatusSeq(ctx) {
+				}
+			},
+			func(ctx context.Context) { _, _ = srv.DatabaseRecoveryStatusesContext(ctx) }},
 		{"Server.CredentialSeq",
 			func(ctx context.Context) {
 				for range srv.CredentialSeq(ctx) {
@@ -884,6 +931,12 @@ func iterWirings(t *testing.T) []seqWiring {
 				}
 			},
 			func(ctx context.Context) { _, _ = tbl.TriggersContext(ctx) }},
+		{"UserDefinedTableType.ColumnSeq",
+			func(ctx context.Context) {
+				for range udtt.ColumnSeq(ctx) {
+				}
+			},
+			func(ctx context.Context) { _, _ = udtt.ColumnsContext(ctx) }},
 		{"Table.XMLIndexSeq",
 			func(ctx context.Context) {
 				for range tbl.XMLIndexSeq(ctx) {
@@ -961,4 +1014,147 @@ func TestEverySeqInIterGoIsPinned(t *testing.T) {
 			t.Errorf("%s is pinned by the table above but no longer declared in iter.go", name)
 		}
 	}
+}
+
+// seqCoverageExceptions lists collection methods that deliberately have no
+// *Seq, with the reason — the shape delegateExceptions and gossms's
+// exemptSource use. An entry here is a claim that ranging the collection buys
+// a caller nothing over the slice.
+var seqCoverageExceptions = map[string]string{
+	"Server.AuditActionGroupsContext":                "a fixed server-defined vocabulary of action-group names, not a catalog collection",
+	"Server.DatabaseAuditActionsContext":             "a fixed vocabulary, as above",
+	"Server.DatabaseAuditActionGroupsContext":        "a fixed vocabulary, as above",
+	"Server.FixedDrivesContext":                      "a handful of volumes read in one xp_fixeddrives call; the slice is the natural form",
+	"Certificate.EncodedContext":                     "not a collection — the certificate's DER bytes, returned as []byte",
+	"AvailabilityReplica.ReadOnlyRoutingListContext": "[][]string: the outer slice is the priority order and the inner one the replicas sharing a priority, so yielding []string a tier at a time loses the ordering the type carries",
+}
+
+// TestEveryCollectionMethodHasASeq is TestEverySeqInIterGoIsPinned's missing
+// half. That test stops a declared *Seq going unexercised; this one stops a
+// new collection method quietly joining without an iterator at all, which is
+// how eight of them (Assembly.Files/Modules, BackupDevice.Headers,
+// Database.AsymmetricKeys/DatabaseAuditSpecifications,
+// Server.CryptographicProviders/DatabaseRecoveryStatuses,
+// UserDefinedTableType.Columns) accumulated before 2026-09-18.
+//
+// The shape checked is the one seqFrom adapts with no wrapper: an exported
+// FooContext(ctx) ([]T, error) taking nothing but the context. Methods that
+// take arguments are out of scope — their iterators need a closure and are
+// added case by case.
+func TestEveryCollectionMethodHasASeq(t *testing.T) {
+	fset := token.NewFileSet()
+	files, err := filepath.Glob("*.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	type collection struct{ recv, name string }
+	var collections []collection
+	seqs := map[string]bool{}
+
+	for _, file := range files {
+		if strings.HasSuffix(file, "_test.go") {
+			continue
+		}
+		f, err := parser.ParseFile(fset, file, nil, 0)
+		if err != nil {
+			t.Fatalf("parsing %s: %v", file, err)
+		}
+		for _, d := range f.Decls {
+			fn, ok := d.(*ast.FuncDecl)
+			if !ok || fn.Recv == nil || len(fn.Recv.List) == 0 {
+				continue
+			}
+			star, ok := fn.Recv.List[0].Type.(*ast.StarExpr)
+			if !ok {
+				continue
+			}
+			recv, ok := star.X.(*ast.Ident)
+			if !ok || !ast.IsExported(fn.Name.Name) {
+				continue
+			}
+			if strings.HasSuffix(fn.Name.Name, "Seq") {
+				seqs[recv.Name+"."+fn.Name.Name] = true
+				continue
+			}
+			if !strings.HasSuffix(fn.Name.Name, "Context") {
+				continue
+			}
+			if countParams(fn.Type.Params) != 1 {
+				continue
+			}
+			if fn.Type.Results == nil || len(fn.Type.Results.List) != 2 {
+				continue
+			}
+			if _, ok := fn.Type.Results.List[0].Type.(*ast.ArrayType); !ok {
+				continue
+			}
+			collections = append(collections, collection{recv.Name, fn.Name.Name})
+		}
+	}
+
+	if len(collections) == 0 {
+		t.Fatal("no collection methods found — the scan below would pass vacuously")
+	}
+
+	used := map[string]bool{}
+	for _, c := range collections {
+		key := c.recv + "." + c.name
+		if reason, ok := seqCoverageExceptions[key]; ok {
+			if reason == "" {
+				t.Errorf("%s is in seqCoverageExceptions with no reason", key)
+			}
+			used[key] = true
+			continue
+		}
+		if !hasSeqFor(seqs, c.recv, strings.TrimSuffix(c.name, "Context")) {
+			t.Errorf("%s has no *Seq on %s and no seqCoverageExceptions entry", key, c.recv)
+		}
+	}
+	for key := range seqCoverageExceptions {
+		if !used[key] {
+			t.Errorf("seqCoverageExceptions lists %s, which is no longer a collection method", key)
+		}
+	}
+}
+
+// countParams counts declared parameters, not parameter groups: (a, b string)
+// is two.
+func countParams(list *ast.FieldList) int {
+	if list == nil {
+		return 0
+	}
+	n := 0
+	for _, p := range list.List {
+		if len(p.Names) == 0 {
+			n++
+			continue
+		}
+		n += len(p.Names)
+	}
+	return n
+}
+
+// hasSeqFor answers whether recv declares a *Seq for the collection named
+// base ("Tables", "Categories", "Indexes"). The iterator is named for one
+// element, so the plural is undone the four ways this package spells it —
+// and the bare form too, for a collection whose name is already singular
+// (HistoryContext/HistorySeq).
+func hasSeqFor(seqs map[string]bool, recv, base string) bool {
+	singulars := []string{base}
+	if s, ok := strings.CutSuffix(base, "ies"); ok {
+		singulars = append(singulars, s+"y")
+	}
+	if s, ok := strings.CutSuffix(base, "es"); ok {
+		singulars = append(singulars, s)
+	}
+	if s, ok := strings.CutSuffix(base, "s"); ok {
+		singulars = append(singulars, s)
+	}
+	for _, s := range singulars {
+		if seqs[recv+"."+s+"Seq"] {
+			return true
+		}
+	}
+	return false
 }

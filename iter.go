@@ -197,6 +197,18 @@ func (s *Server) ConfigurationSeq(ctx context.Context) iter.Seq2[*ConfigurationO
 	return seqFrom(ctx, s.ConfigurationsContext)
 }
 
+// CryptographicProviderSeq returns an iterator over every registered
+// Extensible Key Management cryptographic provider.
+func (s *Server) CryptographicProviderSeq(ctx context.Context) iter.Seq2[*CryptographicProvider, error] {
+	return seqFrom(ctx, s.CryptographicProvidersContext)
+}
+
+// DatabaseRecoveryStatusSeq returns an iterator over the restore/recovery
+// state of every database on the server.
+func (s *Server) DatabaseRecoveryStatusSeq(ctx context.Context) iter.Seq2[*DatabaseRecoveryStatus, error] {
+	return seqFrom(ctx, s.DatabaseRecoveryStatusesContext)
+}
+
 // CategorySeq returns an iterator over every category of the given class
 // (job or alert categories).
 func (s *Server) CategorySeq(ctx context.Context, class CategoryClass) iter.Seq2[*Category, error] {
@@ -484,6 +496,12 @@ func (d *Database) CertificateSeq(ctx context.Context) iter.Seq2[*Certificate, e
 	return seqFrom(ctx, d.CertificatesContext)
 }
 
+// AsymmetricKeySeq returns an iterator over all asymmetric keys in the
+// database.
+func (d *Database) AsymmetricKeySeq(ctx context.Context) iter.Seq2[*AsymmetricKey, error] {
+	return seqFrom(ctx, d.AsymmetricKeysContext)
+}
+
 // ColumnEncryptionKeySeq returns an iterator over all column encryption keys in the database.
 func (d *Database) ColumnEncryptionKeySeq(ctx context.Context) iter.Seq2[*ColumnEncryptionKey, error] {
 	return seqFrom(ctx, d.ColumnEncryptionKeysContext)
@@ -520,6 +538,12 @@ func (d *Database) TriggerSeq(ctx context.Context) iter.Seq2[*Trigger, error] {
 // trigger — the parent_class = 0 family, which TriggerSeq does not list.
 func (d *Database) DatabaseTriggerSeq(ctx context.Context) iter.Seq2[*DatabaseTrigger, error] {
 	return seqFrom(ctx, d.DatabaseTriggersContext)
+}
+
+// DatabaseAuditSpecificationSeq returns an iterator over every
+// database-scope audit specification.
+func (d *Database) DatabaseAuditSpecificationSeq(ctx context.Context) iter.Seq2[*DatabaseAuditSpecification, error] {
+	return seqFrom(ctx, d.DatabaseAuditSpecificationsContext)
 }
 
 // DatabaseRoleSeq returns an iterator over all database-level roles.
@@ -663,6 +687,36 @@ func (d *Database) SearchSeq(ctx context.Context, pattern string) iter.Seq2[*Sea
 	return seqFrom(ctx, func(ctx context.Context) ([]*SearchResult, error) {
 		return d.SearchContext(ctx, pattern)
 	})
+}
+
+// -- Assembly ------------------------------------------------------------------
+
+// FileSeq returns an iterator over the assembly's files — the assembly
+// binary itself and any debug or source files loaded beside it.
+func (a *Assembly) FileSeq(ctx context.Context) iter.Seq2[*AssemblyFile, error] {
+	return seqFrom(ctx, a.FilesContext)
+}
+
+// ModuleSeq returns an iterator over the CLR entry points the assembly
+// exposes.
+func (a *Assembly) ModuleSeq(ctx context.Context) iter.Seq2[*AssemblyModule, error] {
+	return seqFrom(ctx, a.ModulesContext)
+}
+
+// -- UserDefinedTableType ------------------------------------------------------
+
+// ColumnSeq returns an iterator over the table type's columns, in ordinal
+// order.
+func (t *UserDefinedTableType) ColumnSeq(ctx context.Context) iter.Seq2[*Column, error] {
+	return seqFrom(ctx, t.ColumnsContext)
+}
+
+// -- BackupDevice --------------------------------------------------------------
+
+// HeaderSeq returns an iterator over the backup sets on the device, as
+// RESTORE HEADERONLY reports them.
+func (d *BackupDevice) HeaderSeq(ctx context.Context) iter.Seq2[*BackupHeader, error] {
+	return seqFrom(ctx, d.HeadersContext)
 }
 
 // -- Login ---------------------------------------------------------------------

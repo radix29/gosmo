@@ -28,6 +28,9 @@ type Operator struct {
 	LastNetSendDate time.Time
 }
 
+// Server returns the server the operator belongs to.
+func (o *Operator) Server() *Server { return o.server }
+
 const operatorColumns = `o.id, o.name, o.enabled,
        ISNULL(o.email_address,''), ISNULL(o.pager_address,''), ISNULL(o.netsend_address,''),
        ISNULL(c.name,''),

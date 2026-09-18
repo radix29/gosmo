@@ -54,7 +54,7 @@ func (d *Database) IsSystem() bool { return d.ID > 0 && d.ID <= systemDatabaseMa
 func (d *Database) IsSnapshot() bool { return d.SourceDatabaseID != 0 }
 
 // Server returns the parent Server. It is a back-pointer, not catalog state,
-// so it stays a method — as Table.DB does.
+// so it stays a method — as Table.Database does.
 func (d *Database) Server() *Server { return d.server }
 
 // -- Connection helpers --------------------------------------------------------

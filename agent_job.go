@@ -164,6 +164,9 @@ type Job struct {
 	CurrentState            JobState
 }
 
+// Server returns the server the job belongs to.
+func (j *Job) Server() *Server { return j.server }
+
 // Jobs returns all SQL Server Agent jobs from msdb.
 func (s *Server) Jobs() ([]*Job, error) {
 	return s.JobsContext(context.Background())

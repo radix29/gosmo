@@ -46,6 +46,9 @@ type ServerAuditSpecification struct {
 	ActionGroups []string
 }
 
+// Server returns the server the audit specification belongs to.
+func (spec *ServerAuditSpecification) Server() *Server { return spec.server }
+
 var serverAuditSpecificationSelect = `
 SELECT s.server_specification_id, s.name, CONVERT(varchar(36), s.audit_guid),
        a.name, s.is_state_enabled, s.create_date, s.modify_date,

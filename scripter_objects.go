@@ -204,8 +204,16 @@ func buildSequenceScript(seq *Sequence, opts ScriptOptions) string {
 	if opts.IncludeIfNotExists {
 		fmt.Fprintf(&sb, "IF OBJECT_ID(N'%s', N'SO') IS NULL\n", escapeSingle(fullName))
 	}
+	// A sequence may be declared over a user-defined alias type, whose name
+	// alone resolves against the executing principal's default schema when
+	// the script is re-run — a different type, or none. Qualify anything
+	// that is not a built-in.
+	dataType := quoteIdent(string(seq.DataType))
+	if s := seq.DataTypeSchema; s != "" && !strings.EqualFold(s, "sys") {
+		dataType = qualifiedName(s, string(seq.DataType))
+	}
 	fmt.Fprintf(&sb, "CREATE SEQUENCE %s\n    AS %s\n    START WITH %d\n    INCREMENT BY %d\n    MINVALUE %d\n    MAXVALUE %d\n",
-		fullName, quoteIdent(string(seq.DataType)), seq.CurrentValue, seq.Increment, seq.MinValue, seq.MaxValue)
+		fullName, dataType, seq.CurrentValue, seq.Increment, seq.MinValue, seq.MaxValue)
 	if seq.IsCycling {
 		sb.WriteString("    CYCLE\n")
 	} else {

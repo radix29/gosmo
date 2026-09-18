@@ -42,6 +42,9 @@ type ServerTrigger struct {
 	Definition string
 }
 
+// Server returns the server the trigger belongs to.
+func (t *ServerTrigger) Server() *Server { return t.server }
+
 // serverTriggerSelect reads sys.server_triggers.
 //
 // The join onto sys.server_sql_modules is a LEFT JOIN because a CLR trigger

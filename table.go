@@ -58,8 +58,8 @@ func (d *Database) TableRef(schema, name string) *Table {
 // FullName returns [Schema].[Name].
 func (t *Table) FullName() string { return qualifiedName(t.Schema, t.Name) }
 
-// DB returns the parent Database.
-func (t *Table) DB() *Database { return t.db }
+// Database returns the database the table belongs to.
+func (t *Table) Database() *Database { return t.db }
 
 // TableDetail holds the sys.tables columns and related lookups Table itself
 // doesn't carry (Table is also used to populate the Object Explorer tree

@@ -25,6 +25,9 @@ type ConfigurationOption struct {
 	Description string
 }
 
+// Server returns the server the configuration option belongs to.
+func (c *ConfigurationOption) Server() *Server { return c.server }
+
 // Configurations returns all server configuration options.
 func (s *Server) Configurations() ([]*ConfigurationOption, error) {
 	return s.ConfigurationsContext(context.Background())

@@ -31,6 +31,9 @@ type ColumnMasterKey struct {
 	Signature []byte
 }
 
+// Database returns the database the column master key belongs to.
+func (cmk *ColumnMasterKey) Database() *Database { return cmk.db }
+
 // columnMasterKeySelect is the column list every column master key read
 // shares; the listing adds ORDER BY, the by-name lookup a WHERE.
 //
@@ -230,6 +233,9 @@ type ColumnEncryptionKey struct {
 	// rotated, and CREATE COLUMN ENCRYPTION KEY has to restate all of them.
 	Values []*ColumnEncryptionKeyValue
 }
+
+// Database returns the database the column encryption key belongs to.
+func (cek *ColumnEncryptionKey) Database() *Database { return cek.db }
 
 // ColumnEncryptionKeyValue is one encrypted value of a column encryption
 // key, from sys.column_encryption_key_values.

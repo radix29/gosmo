@@ -100,6 +100,9 @@ type Schedule struct {
 	ModifyDate      time.Time
 }
 
+// Server returns the server the schedule belongs to.
+func (sch *Schedule) Server() *Server { return sch.server }
+
 const scheduleColumns = `sch.schedule_id, sch.name, sch.enabled, sch.freq_type, sch.freq_interval,
        sch.freq_subday_type, sch.freq_subday_interval, sch.freq_relative_interval,
        sch.freq_recurrence_factor, sch.active_start_date, sch.active_end_date,

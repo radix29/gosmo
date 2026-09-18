@@ -50,6 +50,9 @@ type Credential struct {
 	CryptographicProvider string
 }
 
+// Server returns the server the credential belongs to.
+func (c *Credential) Server() *Server { return c.server }
+
 const credentialSelect = `
 SELECT c.credential_id, c.name, c.credential_identity, c.create_date, c.modify_date,
        c.target_type, p.name

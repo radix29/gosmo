@@ -27,6 +27,9 @@ type SecurityPolicy struct {
 	Predicates    []*SecurityPredicate
 }
 
+// Database returns the database the security policy belongs to.
+func (p *SecurityPolicy) Database() *Database { return p.db }
+
 // SecurityPredicate represents one predicate in a security policy.
 type SecurityPredicate struct {
 	PredicateType       string // "FILTER" or "BLOCK"

@@ -37,6 +37,9 @@ type PartitionFunction struct {
 	Boundaries    []string
 }
 
+// Database returns the database the partition function belongs to.
+func (pf *PartitionFunction) Database() *Database { return pf.db }
+
 // partitionFunctionSelect is the column list and joins every partition
 // function read shares; the listing adds ORDER BY, the by-name lookup a
 // WHERE.
@@ -222,6 +225,9 @@ type PartitionScheme struct {
 	FunctionName string
 	FileGroups   []string
 }
+
+// Database returns the database the partition scheme belongs to.
+func (ps *PartitionScheme) Database() *Database { return ps.db }
 
 // partitionSchemeSelect is the column list and joins every partition
 // scheme read shares; the listing adds ORDER BY, the by-name lookup a WHERE.

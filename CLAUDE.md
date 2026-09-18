@@ -163,8 +163,20 @@ rename, and before a tag.
   `DatabaseRef("master").IsSystem()` compiling to `false` was the trap it
   produced. Only a *derivation* stays a method (`Database.IsSystem`,
   `Database.IsSnapshot`, computed from `ID`/`SourceDatabaseID`), as does a
-  back-pointer (`Database.Server`, `Table.DB`). Adding an accessor over a
-  scanned field re-creates the holdout.
+  back-pointer (`Database.Server`, `Table.Database`). Adding an accessor over
+  a scanned field re-creates the holdout.
+- **The parent back-pointer is exposed by every type that holds one**, as
+  `Database() *Database` or `Server() *Server` — one line, no context, never
+  named anything else. It was 26 types out of 54 until 2026-09-18, which is
+  close enough to a coin flip that no caller could guess: a `*Rule` could
+  reach its database, a `*Login` could not and had to be threaded alongside a
+  `*Server`. `Table.DB` was the sole outlier on the *name*, and the name it
+  took was already spoken for — `Server.DB()` returns the `*sql.DB` pool —
+  so it was renamed to `Table.Database` in the same pass.
+  `parent_accessor_wiring_test.go` reads the source and fails on a type with
+  a `db`/`server` field and no accessor, or on a `DB()` returning
+  `*Database`; a deliberate omission goes in its `parentAccessorExceptions`
+  with a reason.
 - **The `Ref` suffix marks a lookup-free handle.** `Server.DatabaseRef(name)`
   returns a `*Database` carrying only its name — no query, every other field
   at its zero value — while `Server.DatabaseByName(name)` reads the catalog.

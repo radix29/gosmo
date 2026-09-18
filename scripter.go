@@ -84,6 +84,9 @@ type Scripter struct {
 	opts ScriptOptions
 }
 
+// Database returns the database the scripter scripts.
+func (sc *Scripter) Database() *Database { return sc.db }
+
 // NewScripter creates a Scripter for the given database.
 func NewScripter(db *Database, opts ScriptOptions) *Scripter {
 	return &Scripter{db: db, opts: opts}
