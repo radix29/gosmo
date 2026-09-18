@@ -57,7 +57,7 @@ func (d *Database) DatabaseScopedConfigsContext(ctx context.Context) ([]*Databas
 
 	rows, err := d.query(ctx, q)
 	if err != nil {
-		return nil, fmt.Errorf("gosmo: database scoped configurations in %q: %w", d.name, err)
+		return nil, fmt.Errorf("gosmo: database scoped configurations in %q: %w", d.Name, err)
 	}
 	defer rows.Close()
 
@@ -65,12 +65,12 @@ func (d *Database) DatabaseScopedConfigsContext(ctx context.Context) ([]*Databas
 	for rows.Next() {
 		c := &DatabaseScopedConfig{}
 		if err := rows.Scan(&c.ID, &c.Name, &c.Value, &c.ValueForSecondary, &c.IsValueDefault); err != nil {
-			return nil, fmt.Errorf("gosmo: database scoped configurations in %q: %w", d.name, err)
+			return nil, fmt.Errorf("gosmo: database scoped configurations in %q: %w", d.Name, err)
 		}
 		configs = append(configs, c)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("gosmo: database scoped configurations in %q: %w", d.name, err)
+		return nil, fmt.Errorf("gosmo: database scoped configurations in %q: %w", d.Name, err)
 	}
 	return configs, nil
 }
@@ -118,7 +118,7 @@ func (d *Database) SetDatabaseScopedConfigContext(ctx context.Context, name, val
 		return err
 	}
 	if _, err := d.exec(ctx, q); err != nil {
-		return fmt.Errorf("gosmo: set database scoped configuration %s = %s on %q: %w", name, value, d.name, err)
+		return fmt.Errorf("gosmo: set database scoped configuration %s = %s on %q: %w", name, value, d.Name, err)
 	}
 	return nil
 }

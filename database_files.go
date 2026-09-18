@@ -47,7 +47,7 @@ ORDER  BY df.type_desc, df.file_id`
 
 	rows, err := d.query(ctx, q)
 	if err != nil {
-		return nil, fmt.Errorf("gosmo: list files in %q: %w", d.name, err)
+		return nil, fmt.Errorf("gosmo: list files in %q: %w", d.Name, err)
 	}
 	defer rows.Close()
 
@@ -57,13 +57,13 @@ ORDER  BY df.type_desc, df.file_id`
 		var maxSizePages, growthRaw int64
 		if err := rows.Scan(&f.FileID, &f.Name, &f.PhysicalName, &f.Type, &f.FileGroup, &f.State,
 			&f.SizeKB, &maxSizePages, &growthRaw, &f.IsPercentGrowth); err != nil {
-			return nil, fmt.Errorf("gosmo: list files in %q: %w", d.name, err)
+			return nil, fmt.Errorf("gosmo: list files in %q: %w", d.Name, err)
 		}
 		f.MaxSizeKB, f.GrowthKB, f.GrowthPercent = normalizeFileGrowth(maxSizePages, growthRaw, f.IsPercentGrowth)
 		files = append(files, f)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("gosmo: list files in %q: %w", d.name, err)
+		return nil, fmt.Errorf("gosmo: list files in %q: %w", d.Name, err)
 	}
 	return files, nil
 }
@@ -146,12 +146,12 @@ func (d *Database) AddFile(spec DatabaseFileSpec) error {
 
 // AddFileContext is the context-aware variant of AddFile.
 func (d *Database) AddFileContext(ctx context.Context, spec DatabaseFileSpec) error {
-	stmt, err := buildAddFileStatement(d.name, spec)
+	stmt, err := buildAddFileStatement(d.Name, spec)
 	if err != nil {
 		return err
 	}
 	if err := d.server.execContext(ctx, stmt); err != nil {
-		return fmt.Errorf("gosmo: add file %q to %q: %w", spec.Name, d.name, err)
+		return fmt.Errorf("gosmo: add file %q to %q: %w", spec.Name, d.Name, err)
 	}
 	return nil
 }
@@ -249,7 +249,7 @@ func (d *Database) AlterFile(name string, m FileModify) error {
 
 // AlterFileContext is the context-aware variant of AlterFile.
 func (d *Database) AlterFileContext(ctx context.Context, name string, m FileModify) error {
-	stmt, err := buildAlterFileStatement(d.name, name, m)
+	stmt, err := buildAlterFileStatement(d.Name, name, m)
 	if err != nil {
 		return err
 	}
@@ -257,7 +257,7 @@ func (d *Database) AlterFileContext(ctx context.Context, name string, m FileModi
 		return nil
 	}
 	if err := d.server.execContext(ctx, stmt); err != nil {
-		return fmt.Errorf("gosmo: alter file %q in %q: %w", name, d.name, err)
+		return fmt.Errorf("gosmo: alter file %q in %q: %w", name, d.Name, err)
 	}
 	return nil
 }
@@ -303,9 +303,9 @@ func (d *Database) RemoveFile(name string) error {
 
 // RemoveFileContext is the context-aware variant of RemoveFile.
 func (d *Database) RemoveFileContext(ctx context.Context, name string) error {
-	q := fmt.Sprintf("ALTER DATABASE %s REMOVE FILE %s", quoteIdent(d.name), quoteIdent(name))
+	q := fmt.Sprintf("ALTER DATABASE %s REMOVE FILE %s", quoteIdent(d.Name), quoteIdent(name))
 	if err := d.server.execContext(ctx, q); err != nil {
-		return fmt.Errorf("gosmo: remove file %q from %q: %w", name, d.name, err)
+		return fmt.Errorf("gosmo: remove file %q from %q: %w", name, d.Name, err)
 	}
 	return nil
 }
@@ -379,9 +379,9 @@ func (d *Database) AddFileGroup(name string) error {
 
 // AddFileGroupContext is the context-aware variant of AddFileGroup.
 func (d *Database) AddFileGroupContext(ctx context.Context, name string) error {
-	q := fmt.Sprintf("ALTER DATABASE %s ADD FILEGROUP %s", quoteIdent(d.name), quoteIdent(name))
+	q := fmt.Sprintf("ALTER DATABASE %s ADD FILEGROUP %s", quoteIdent(d.Name), quoteIdent(name))
 	if err := d.server.execContext(ctx, q); err != nil {
-		return fmt.Errorf("gosmo: add filegroup %q to %q: %w", name, d.name, err)
+		return fmt.Errorf("gosmo: add filegroup %q to %q: %w", name, d.Name, err)
 	}
 	return nil
 }
@@ -394,9 +394,9 @@ func (d *Database) RemoveFileGroup(name string) error {
 
 // RemoveFileGroupContext is the context-aware variant of RemoveFileGroup.
 func (d *Database) RemoveFileGroupContext(ctx context.Context, name string) error {
-	q := fmt.Sprintf("ALTER DATABASE %s REMOVE FILEGROUP %s", quoteIdent(d.name), quoteIdent(name))
+	q := fmt.Sprintf("ALTER DATABASE %s REMOVE FILEGROUP %s", quoteIdent(d.Name), quoteIdent(name))
 	if err := d.server.execContext(ctx, q); err != nil {
-		return fmt.Errorf("gosmo: remove filegroup %q from %q: %w", name, d.name, err)
+		return fmt.Errorf("gosmo: remove filegroup %q from %q: %w", name, d.Name, err)
 	}
 	return nil
 }
@@ -408,9 +408,9 @@ func (d *Database) SetDefaultFileGroup(name string) error {
 
 // SetDefaultFileGroupContext is the context-aware variant of SetDefaultFileGroup.
 func (d *Database) SetDefaultFileGroupContext(ctx context.Context, name string) error {
-	q := fmt.Sprintf("ALTER DATABASE %s MODIFY FILEGROUP %s DEFAULT", quoteIdent(d.name), quoteIdent(name))
+	q := fmt.Sprintf("ALTER DATABASE %s MODIFY FILEGROUP %s DEFAULT", quoteIdent(d.Name), quoteIdent(name))
 	if err := d.server.execContext(ctx, q); err != nil {
-		return fmt.Errorf("gosmo: set default filegroup %q on %q: %w", name, d.name, err)
+		return fmt.Errorf("gosmo: set default filegroup %q on %q: %w", name, d.Name, err)
 	}
 	return nil
 }
@@ -431,9 +431,9 @@ func (d *Database) SetFileGroupReadOnlyContext(ctx context.Context, name string,
 	if readOnly {
 		mode = "READ_ONLY"
 	}
-	q := fmt.Sprintf("ALTER DATABASE %s MODIFY FILEGROUP %s %s", quoteIdent(d.name), quoteIdent(name), mode)
+	q := fmt.Sprintf("ALTER DATABASE %s MODIFY FILEGROUP %s %s", quoteIdent(d.Name), quoteIdent(name), mode)
 	if err := d.server.execContext(ctx, q); err != nil {
-		return fmt.Errorf("gosmo: set filegroup %q read-only=%v on %q: %w", name, readOnly, d.name, err)
+		return fmt.Errorf("gosmo: set filegroup %q read-only=%v on %q: %w", name, readOnly, d.Name, err)
 	}
 	return nil
 }

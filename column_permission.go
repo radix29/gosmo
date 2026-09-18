@@ -85,7 +85,7 @@ AND    dp.major_id = OBJECT_ID(@p1)
 ORDER  BY pr.name, col.name, dp.permission_name`
 
 	ref := qualifiedName(schema, name)
-	return d.scanColumnPermissions(ctx, q, fmt.Sprintf("column permissions on %s in %q", ref, d.name), ref)
+	return d.scanColumnPermissions(ctx, q, fmt.Sprintf("column permissions on %s in %q", ref, d.Name), ref)
 }
 
 // ColumnPermissionsForPrincipal returns every column-level GRANT/DENY entry
@@ -116,7 +116,7 @@ AND    pr.name = @p1
 ORDER  BY sch.name, obj.name, col.name, dp.permission_name`
 
 	return d.scanColumnPermissions(ctx, q,
-		fmt.Sprintf("column permissions for principal %q in %q", principal, d.name), principal)
+		fmt.Sprintf("column permissions for principal %q in %q", principal, d.Name), principal)
 }
 
 // scanColumnPermissions runs one of the two column-permission queries above,

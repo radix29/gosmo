@@ -209,7 +209,7 @@ ORDER  BY SCHEMA_NAME(p.schema_id), p.name`
 
 	rows, err := d.query(ctx, q, args...)
 	if err != nil {
-		return nil, fmt.Errorf("gosmo: list stored procs in %q: %w", d.name, err)
+		return nil, fmt.Errorf("gosmo: list stored procs in %q: %w", d.Name, err)
 	}
 	defer rows.Close()
 
@@ -218,12 +218,12 @@ ORDER  BY SCHEMA_NAME(p.schema_id), p.name`
 		p := &StoredProcedure{}
 		if err := rows.Scan(&p.ObjectID, &p.Schema, &p.Name,
 			&p.Definition, &p.CreateDate, &p.ModifyDate); err != nil {
-			return nil, fmt.Errorf("gosmo: list stored procs in %q: %w", d.name, err)
+			return nil, fmt.Errorf("gosmo: list stored procs in %q: %w", d.Name, err)
 		}
 		procs = append(procs, p)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("gosmo: list stored procs in %q: %w", d.name, err)
+		return nil, fmt.Errorf("gosmo: list stored procs in %q: %w", d.Name, err)
 	}
 	return procs, nil
 }
@@ -312,7 +312,7 @@ ORDER  BY o.name`
 
 	rows, err := d.query(ctx, q, args...)
 	if err != nil {
-		return nil, fmt.Errorf("gosmo: list system stored procs in %q: %w", d.name, err)
+		return nil, fmt.Errorf("gosmo: list system stored procs in %q: %w", d.Name, err)
 	}
 	defer rows.Close()
 
@@ -321,12 +321,12 @@ ORDER  BY o.name`
 		p := &StoredProcedure{}
 		if err := rows.Scan(&p.ObjectID, &p.Schema, &p.Name,
 			&p.Definition, &p.CreateDate, &p.ModifyDate); err != nil {
-			return nil, fmt.Errorf("gosmo: list system stored procs in %q: %w", d.name, err)
+			return nil, fmt.Errorf("gosmo: list system stored procs in %q: %w", d.Name, err)
 		}
 		procs = append(procs, p)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("gosmo: list system stored procs in %q: %w", d.name, err)
+		return nil, fmt.Errorf("gosmo: list system stored procs in %q: %w", d.Name, err)
 	}
 	return procs, nil
 }

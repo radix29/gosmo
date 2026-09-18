@@ -40,12 +40,14 @@ classDiagram
         +DropLogin(name) error
         +ServerRoles() []*ServerRole
         +ServerRoleByName(name) *ServerRole
+        +ServerRoleRef(name) *ServerRole
         +DropServerRole(name) error
         +ServerRoleMembers(role) []*RoleMember
         +AddServerRoleMember(role, member) error
         +RemoveServerRoleMember(role, member) error
         +LinkedServers() []*LinkedServer
-        +Configurations() []*Configuration
+        +Configurations() []*ConfigurationOption
+        +ConfigurationRef(name) *ConfigurationOption
         +AgentInfo() *AgentStatus
         +Jobs() []*Job
         +JobByName(name) *Job

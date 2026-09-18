@@ -63,7 +63,7 @@ func main() {
 	demo.Section("Databases")
 	for _, d := range demo.Value(srv.Databases()) {
 		fmt.Printf("  %-30s state=%-10s recovery=%-12s compat=%d\n",
-			d.Name(), d.State(), d.RecoveryModel(), d.CompatibilityLevel())
+			d.Name, d.State, d.RecoveryModel, d.CompatibilityLevel)
 	}
 
 	// -- Create demo database ---------------------------------------------

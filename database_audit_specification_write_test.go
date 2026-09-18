@@ -12,7 +12,7 @@ import (
 // QueryContext answers the is_state_enabled probe the disable window makes.
 func auditDatabase(t *testing.T, s *auditScript) *Database {
 	t.Helper()
-	return &Database{name: "app]db", server: auditServer(t, s)}
+	return &Database{Name: "app]db", server: auditServer(t, s)}
 }
 
 // use is the prefix Database.exec puts in front of every captured statement,
@@ -28,7 +28,7 @@ func TestDatabaseAuditSpecificationStateStatements(t *testing.T) {
 		{false, use + "ALTER DATABASE AUDIT SPECIFICATION [odd]]name] WITH ( STATE = OFF )"},
 	} {
 		ctx, col := WithScript(context.Background())
-		spec := &DatabaseAuditSpecification{db: &Database{name: "app]db"}, Name: "odd]name"}
+		spec := &DatabaseAuditSpecification{db: &Database{Name: "app]db"}, Name: "odd]name"}
 		if err := spec.SetStateContext(ctx, tc.on); err != nil {
 			t.Fatalf("SetStateContext: %v", err)
 		}

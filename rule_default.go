@@ -102,7 +102,7 @@ ORDER  BY SCHEMA_NAME(o.schema_id), o.name`
 
 	rows, err := d.query(ctx, q)
 	if err != nil {
-		return nil, fmt.Errorf("gosmo: list rules in %q: %w", d.name, err)
+		return nil, fmt.Errorf("gosmo: list rules in %q: %w", d.Name, err)
 	}
 	defer rows.Close()
 
@@ -111,12 +111,12 @@ ORDER  BY SCHEMA_NAME(o.schema_id), o.name`
 		r := &Rule{db: d}
 		if err := rows.Scan(&r.Name, &r.Schema, &r.ObjectID,
 			&r.Definition, &r.CreateDate, &r.ModifyDate); err != nil {
-			return nil, fmt.Errorf("gosmo: list rules in %q: %w", d.name, err)
+			return nil, fmt.Errorf("gosmo: list rules in %q: %w", d.Name, err)
 		}
 		rules = append(rules, r)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("gosmo: list rules in %q: %w", d.name, err)
+		return nil, fmt.Errorf("gosmo: list rules in %q: %w", d.Name, err)
 	}
 	return rules, nil
 }
@@ -139,10 +139,10 @@ func (d *Database) RuleByNameContext(ctx context.Context, schema, name string) (
 	}, ruleSelect+`
    AND SCHEMA_NAME(o.schema_id) = @p1 AND o.name = @p2`, schema, name)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, notFoundf("gosmo: rule [%s].[%s] not found in %q", schema, name, d.name)
+		return nil, notFoundf("gosmo: rule [%s].[%s] not found in %q", schema, name, d.Name)
 	}
 	if err != nil {
-		return nil, fmt.Errorf("gosmo: read rule [%s].[%s] in %q: %w", schema, name, d.name, err)
+		return nil, fmt.Errorf("gosmo: read rule [%s].[%s] in %q: %w", schema, name, d.Name, err)
 	}
 	return r, nil
 }
@@ -189,7 +189,7 @@ ORDER  BY SCHEMA_NAME(o.schema_id), o.name`
 
 	rows, err := d.query(ctx, q)
 	if err != nil {
-		return nil, fmt.Errorf("gosmo: list defaults in %q: %w", d.name, err)
+		return nil, fmt.Errorf("gosmo: list defaults in %q: %w", d.Name, err)
 	}
 	defer rows.Close()
 
@@ -198,12 +198,12 @@ ORDER  BY SCHEMA_NAME(o.schema_id), o.name`
 		df := &Default{db: d}
 		if err := rows.Scan(&df.Name, &df.Schema, &df.ObjectID,
 			&df.Definition, &df.CreateDate, &df.ModifyDate); err != nil {
-			return nil, fmt.Errorf("gosmo: list defaults in %q: %w", d.name, err)
+			return nil, fmt.Errorf("gosmo: list defaults in %q: %w", d.Name, err)
 		}
 		defs = append(defs, df)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("gosmo: list defaults in %q: %w", d.name, err)
+		return nil, fmt.Errorf("gosmo: list defaults in %q: %w", d.Name, err)
 	}
 	return defs, nil
 }
@@ -226,10 +226,10 @@ func (d *Database) DefaultByNameContext(ctx context.Context, schema, name string
 	}, defaultSelect+`
    AND SCHEMA_NAME(o.schema_id) = @p1 AND o.name = @p2`, schema, name)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, notFoundf("gosmo: default [%s].[%s] not found in %q", schema, name, d.name)
+		return nil, notFoundf("gosmo: default [%s].[%s] not found in %q", schema, name, d.Name)
 	}
 	if err != nil {
-		return nil, fmt.Errorf("gosmo: read default [%s].[%s] in %q: %w", schema, name, d.name, err)
+		return nil, fmt.Errorf("gosmo: read default [%s].[%s] in %q: %w", schema, name, d.Name, err)
 	}
 	return df, nil
 }

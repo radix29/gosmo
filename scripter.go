@@ -123,7 +123,7 @@ func (sc *Scripter) ScriptTableContext(ctx context.Context, schema, name string)
 		return "", err
 	}
 
-	return buildTableScript(schema, name, sc.db.name, cols, indexes, fks, ds, sc.opts), nil
+	return buildTableScript(schema, name, sc.db.Name, cols, indexes, fks, ds, sc.opts), nil
 }
 
 // buildTableScript assembles the CREATE (or DROP) TABLE script from metadata
@@ -471,7 +471,8 @@ func (sc *Scripter) scriptModule(ctx context.Context, k moduleKind, schema, name
 	if v == ScriptAlter {
 		def = alterModuleDefinition(def)
 	}
-	sb.WriteString(def + "\nGO\n")
+	sb.WriteString(def)
+	sb.WriteString("\nGO\n")
 	return sb.String(), nil
 }
 
@@ -599,7 +600,8 @@ func buildDatabaseTriggerScript(t *DatabaseTrigger, opts ScriptOptions) (string,
 	if opts.verb() == ScriptAlter {
 		def = alterModuleDefinition(def)
 	}
-	sb.WriteString(def + "\nGO\n")
+	sb.WriteString(def)
+	sb.WriteString("\nGO\n")
 	if !t.IsEnabled {
 		fmt.Fprintf(&sb, "DISABLE TRIGGER %s ON DATABASE;\nGO\n", quoteIdent(t.Name))
 	}
@@ -628,10 +630,10 @@ func (sc *Scripter) ScriptDatabase() (string, error) {
 // which is not.
 func (sc *Scripter) ScriptDatabaseContext(ctx context.Context) (string, error) {
 	d := sc.db
-	if d.recoveryModel == "" || d.compatLevel == 0 {
-		full, err := d.server.DatabaseByNameContext(ctx, d.name)
+	if d.RecoveryModel == "" || d.CompatibilityLevel == 0 {
+		full, err := d.server.DatabaseByNameContext(ctx, d.Name)
 		if err != nil {
-			return "", fmt.Errorf("gosmo: script database %q: %w", d.name, err)
+			return "", fmt.Errorf("gosmo: script database %q: %w", d.Name, err)
 		}
 		d = full
 	}
@@ -649,14 +651,14 @@ func (sc *Scripter) scriptDatabaseFrom(d *Database) (string, error) {
 		if d.server != nil && d.server.info != nil {
 			version = d.server.info.ProductVersion
 		}
-		fmt.Fprintf(&sb, "/* Database: %s  Version: %s */\n\n", d.name, version)
+		fmt.Fprintf(&sb, "/* Database: %s  Version: %s */\n\n", d.Name, version)
 	}
 	if sc.opts.IncludeIfNotExists {
-		fmt.Fprintf(&sb, "IF DB_ID(N'%s') IS NULL\nBEGIN\n    ", escapeSingle(d.name))
+		fmt.Fprintf(&sb, "IF DB_ID(N'%s') IS NULL\nBEGIN\n    ", escapeSingle(d.Name))
 	}
-	fmt.Fprintf(&sb, "CREATE DATABASE %s", quoteIdent(d.name))
-	if d.collation != "" {
-		fmt.Fprintf(&sb, " COLLATE %s", d.collation)
+	fmt.Fprintf(&sb, "CREATE DATABASE %s", quoteIdent(d.Name))
+	if d.Collation != "" {
+		fmt.Fprintf(&sb, " COLLATE %s", d.Collation)
 	}
 	sb.WriteString(";\n")
 	if sc.opts.IncludeIfNotExists {
@@ -664,13 +666,13 @@ func (sc *Scripter) scriptDatabaseFrom(d *Database) (string, error) {
 	} else {
 		sb.WriteString("GO\n\n")
 	}
-	if d.recoveryModel != "" {
+	if d.RecoveryModel != "" {
 		fmt.Fprintf(&sb, "ALTER DATABASE %s SET RECOVERY %s;\nGO\n",
-			quoteIdent(d.name), d.recoveryModel)
+			quoteIdent(d.Name), d.RecoveryModel)
 	}
-	if d.compatLevel != 0 {
+	if d.CompatibilityLevel != 0 {
 		fmt.Fprintf(&sb, "ALTER DATABASE %s SET COMPATIBILITY_LEVEL = %d;\nGO\n",
-			quoteIdent(d.name), d.compatLevel)
+			quoteIdent(d.Name), d.CompatibilityLevel)
 	}
 	return sb.String(), nil
 }

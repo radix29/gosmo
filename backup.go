@@ -602,9 +602,9 @@ WHERE  d.name = @p1`
 	st := &DatabaseRecoveryStatus{}
 	err := d.server.queryRow(ctx, func(r *sql.Row) error {
 		return r.Scan(&st.DatabaseName, &st.LastLogBackupLSN)
-	}, q, d.name)
+	}, q, d.Name)
 	if err != nil {
-		return nil, fmt.Errorf("gosmo: recovery status for %q: %w", d.name, err)
+		return nil, fmt.Errorf("gosmo: recovery status for %q: %w", d.Name, err)
 	}
 	st.LogBackupChainStarted = st.LastLogBackupLSN != ""
 	return st, nil

@@ -180,7 +180,7 @@ func main() {
 	}))
 
 	restored := demo.Value(srv.DatabaseByName(dbName))
-	fmt.Printf("  [%s] is %s again; files now:\n", restored.Name(), restored.State())
+	fmt.Printf("  [%s] is %s again; files now:\n", restored.Name, restored.State)
 	for _, f := range demo.Value(restored.Files()) {
 		fmt.Printf("    %-16s %s\n", f.Name, f.PhysicalName)
 	}

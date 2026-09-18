@@ -54,10 +54,10 @@ func TestLiveEveryProbedPermissionNameIsOneTheServerDefines(t *testing.T) {
 
 	dcaps, err := d.CapabilitiesContext(ctx)
 	if err != nil {
-		t.Fatalf("CapabilitiesContext for %s: %v", d.Name(), err)
+		t.Fatalf("CapabilitiesContext for %s: %v", d.Name, err)
 	}
 	if !dcaps.Accessible {
-		t.Fatalf("scratch database %s reads inaccessible", d.Name())
+		t.Fatalf("scratch database %s reads inaccessible", d.Name)
 	}
 	// External libraries arrived with Machine Learning Services in 2017.
 	since2017 := map[string]bool{"ALTER ANY EXTERNAL LIBRARY": true}

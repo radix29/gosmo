@@ -62,7 +62,7 @@ func (d *Database) AsymmetricKeysContext(ctx context.Context) ([]*AsymmetricKey,
 WHERE  name NOT LIKE '##%'
 ORDER  BY name`)
 	if err != nil {
-		return nil, fmt.Errorf("gosmo: list asymmetric keys in %q: %w", d.name, err)
+		return nil, fmt.Errorf("gosmo: list asymmetric keys in %q: %w", d.Name, err)
 	}
 	defer rows.Close()
 
@@ -70,12 +70,12 @@ ORDER  BY name`)
 	for rows.Next() {
 		k, err := scanAsymmetricKey(d, rows.Scan)
 		if err != nil {
-			return nil, fmt.Errorf("gosmo: list asymmetric keys in %q: %w", d.name, err)
+			return nil, fmt.Errorf("gosmo: list asymmetric keys in %q: %w", d.Name, err)
 		}
 		out = append(out, k)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("gosmo: list asymmetric keys in %q: %w", d.name, err)
+		return nil, fmt.Errorf("gosmo: list asymmetric keys in %q: %w", d.Name, err)
 	}
 	return out, nil
 }
@@ -105,7 +105,7 @@ WHERE  name = @p1`, name)
 		return nil, nil
 	}
 	if err != nil {
-		return nil, fmt.Errorf("gosmo: read asymmetric key %q in %q: %w", name, d.name, err)
+		return nil, fmt.Errorf("gosmo: read asymmetric key %q in %q: %w", name, d.Name, err)
 	}
 	return k, nil
 }

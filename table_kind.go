@@ -163,7 +163,7 @@ FROM   sys.tables t`
 		return nil
 	}, q)
 	if err != nil {
-		return TableKindPresence{}, fmt.Errorf("gosmo: read table kinds in %q: %w", d.name, err)
+		return TableKindPresence{}, fmt.Errorf("gosmo: read table kinds in %q: %w", d.Name, err)
 	}
 	return p, nil
 }

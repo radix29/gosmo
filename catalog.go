@@ -129,7 +129,7 @@ ORDER  BY SCHEMA_NAME(o.schema_id), o.name`, objectsView, where)
 
 	rows, err := d.query(ctx, q)
 	if err != nil {
-		return nil, fmt.Errorf("gosmo: load catalog for %q: %w", d.name, err)
+		return nil, fmt.Errorf("gosmo: load catalog for %q: %w", d.Name, err)
 	}
 	defer rows.Close()
 
@@ -138,7 +138,7 @@ ORDER  BY SCHEMA_NAME(o.schema_id), o.name`, objectsView, where)
 		var o CatalogObject
 		var typeCode string
 		if err := rows.Scan(&o.ObjectID, &o.Schema, &o.Name, &typeCode); err != nil {
-			return nil, fmt.Errorf("gosmo: load catalog for %q: %w", d.name, err)
+			return nil, fmt.Errorf("gosmo: load catalog for %q: %w", d.Name, err)
 		}
 		// sys.objects.type is CHAR(2): 'U'/'V' come back space-padded
 		// ("U ", "V "), so this must trim before comparing.
@@ -146,7 +146,7 @@ ORDER  BY SCHEMA_NAME(o.schema_id), o.name`, objectsView, where)
 		objects = append(objects, o)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("gosmo: load catalog for %q: %w", d.name, err)
+		return nil, fmt.Errorf("gosmo: load catalog for %q: %w", d.Name, err)
 	}
 	return objects, nil
 }
@@ -171,7 +171,7 @@ ORDER  BY c.object_id, c.column_id`, columnsView, objectsView, where)
 
 	rows, err := d.query(ctx, q)
 	if err != nil {
-		return fmt.Errorf("gosmo: load catalog columns for %q: %w", d.name, err)
+		return fmt.Errorf("gosmo: load catalog columns for %q: %w", d.Name, err)
 	}
 	defer rows.Close()
 
@@ -180,14 +180,14 @@ ORDER  BY c.object_id, c.column_id`, columnsView, objectsView, where)
 		var col CatalogColumn
 		if err := rows.Scan(&objectID, &col.Name, &col.DataType,
 			&col.MaxLength, &col.Precision, &col.Scale, &col.IsNullable); err != nil {
-			return fmt.Errorf("gosmo: load catalog columns for %q: %w", d.name, err)
+			return fmt.Errorf("gosmo: load catalog columns for %q: %w", d.Name, err)
 		}
 		if o, ok := byID[objectID]; ok {
 			o.Columns = append(o.Columns, col)
 		}
 	}
 	if err := rows.Err(); err != nil {
-		return fmt.Errorf("gosmo: load catalog columns for %q: %w", d.name, err)
+		return fmt.Errorf("gosmo: load catalog columns for %q: %w", d.Name, err)
 	}
 	return nil
 }

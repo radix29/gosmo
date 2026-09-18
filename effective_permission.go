@@ -56,7 +56,7 @@ func (d *Database) EffectivePermissions(principal string) ([]*EffectivePermissio
 // EffectivePermissions.
 func (d *Database) EffectivePermissionsContext(ctx context.Context, principal string) ([]*EffectivePermission, error) {
 	return d.effectivePermissions(ctx, principal, nil, "DATABASE",
-		fmt.Sprintf("effective database permissions for %q in %q", principal, d.name))
+		fmt.Sprintf("effective database permissions for %q in %q", principal, d.Name))
 }
 
 // EffectiveObjectPermissions returns every permission principal effectively
@@ -75,7 +75,7 @@ func (d *Database) EffectiveObjectPermissionsContext(ctx context.Context, schema
 	// or a schema or table containing a dot resolves to something else.
 	ref := qualifiedName(schema, name)
 	return d.effectivePermissions(ctx, principal, ref, "OBJECT",
-		fmt.Sprintf("effective permissions on %s for %q in %q", ref, principal, d.name))
+		fmt.Sprintf("effective permissions on %s for %q in %q", ref, principal, d.Name))
 }
 
 // EffectiveSchemaPermissions returns every permission principal effectively
@@ -90,7 +90,7 @@ func (d *Database) EffectiveSchemaPermissions(schemaName, principal string) ([]*
 func (d *Database) EffectiveSchemaPermissionsContext(ctx context.Context, schemaName, principal string) ([]*EffectivePermission, error) {
 	ref := quoteIdent(schemaName)
 	return d.effectivePermissions(ctx, principal, ref, "SCHEMA",
-		fmt.Sprintf("effective permissions on schema %q for %q in %q", schemaName, principal, d.name))
+		fmt.Sprintf("effective permissions on schema %q for %q in %q", schemaName, principal, d.Name))
 }
 
 // effectivePermissions impersonates a database principal for the length of

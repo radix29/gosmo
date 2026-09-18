@@ -98,6 +98,22 @@ func (t *Table) StatisticByNameContext(ctx context.Context, name string) (*Stati
 	return st, nil
 }
 
+// StatisticRef returns a lightweight handle for name on the table without
+// querying the server at all — unlike StatisticByName/StatisticByNameContext,
+// it doesn't verify the statistic exists or populate StatID/IsAutoCreated/
+// LastUpdated/Steps/etc. (they stay at their zero value). Every write method
+// on *Statistic (UpdateContext, DropContext, RenameContext) only ever needs
+// the statistic's name and its table's, never those cached fields, so this is
+// sufficient for issuing further calls against a statistic the caller already
+// knows exists — most commonly one it just created in the same operation. The
+// read methods (ColumnsContext, HeaderContext, DensityVectorContext,
+// HistogramContext) work from the same two names and so are usable from a
+// handle too. See Server.DatabaseRef's doc comment for why this also matters
+// under a WithScript-derived context.
+func (t *Table) StatisticRef(name string) *Statistic {
+	return &Statistic{table: t, Name: name}
+}
+
 func scanStatistic(t *Table, scan func(...any) error) (*Statistic, error) {
 	st := &Statistic{table: t}
 	var lastUpdated sql.NullTime

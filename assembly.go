@@ -114,7 +114,7 @@ ORDER  BY a.name`
 
 	rows, err := d.query(ctx, q)
 	if err != nil {
-		return nil, fmt.Errorf("gosmo: list assemblies in %q: %w", d.name, err)
+		return nil, fmt.Errorf("gosmo: list assemblies in %q: %w", d.Name, err)
 	}
 	defer rows.Close()
 
@@ -122,12 +122,12 @@ ORDER  BY a.name`
 	for rows.Next() {
 		a, err := scanAssembly(d, rows.Scan)
 		if err != nil {
-			return nil, fmt.Errorf("gosmo: list assemblies in %q: %w", d.name, err)
+			return nil, fmt.Errorf("gosmo: list assemblies in %q: %w", d.Name, err)
 		}
 		asms = append(asms, a)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("gosmo: list assemblies in %q: %w", d.name, err)
+		return nil, fmt.Errorf("gosmo: list assemblies in %q: %w", d.Name, err)
 	}
 	return asms, nil
 }
@@ -148,10 +148,10 @@ func (d *Database) AssemblyByNameContext(ctx context.Context, name string) (*Ass
 	}, assemblySelect+`
 WHERE  a.name = @p1`, name)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, notFoundf("gosmo: assembly %q not found in %q", name, d.name)
+		return nil, notFoundf("gosmo: assembly %q not found in %q", name, d.Name)
 	}
 	if err != nil {
-		return nil, fmt.Errorf("gosmo: read assembly %q in %q: %w", name, d.name, err)
+		return nil, fmt.Errorf("gosmo: read assembly %q in %q: %w", name, d.Name, err)
 	}
 	return a, nil
 }
@@ -194,7 +194,7 @@ ORDER  BY f.file_id`
 
 	rows, err := a.db.query(ctx, q, a.AssemblyID)
 	if err != nil {
-		return nil, fmt.Errorf("gosmo: list files of assembly %q in %q: %w", a.Name, a.db.name, err)
+		return nil, fmt.Errorf("gosmo: list files of assembly %q in %q: %w", a.Name, a.db.Name, err)
 	}
 	defer rows.Close()
 
@@ -202,12 +202,12 @@ ORDER  BY f.file_id`
 	for rows.Next() {
 		f := &AssemblyFile{}
 		if err := rows.Scan(&f.Name, &f.FileID, &f.ContentLength); err != nil {
-			return nil, fmt.Errorf("gosmo: list files of assembly %q in %q: %w", a.Name, a.db.name, err)
+			return nil, fmt.Errorf("gosmo: list files of assembly %q in %q: %w", a.Name, a.db.Name, err)
 		}
 		files = append(files, f)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("gosmo: list files of assembly %q in %q: %w", a.Name, a.db.name, err)
+		return nil, fmt.Errorf("gosmo: list files of assembly %q in %q: %w", a.Name, a.db.Name, err)
 	}
 	return files, nil
 }
@@ -230,10 +230,10 @@ WHERE  f.assembly_id = @p1 AND f.file_id = @p2`
 		return row.Scan(&content)
 	}, q, a.AssemblyID, fileID)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, notFoundf("gosmo: assembly %q in %q has no file %d", a.Name, a.db.name, fileID)
+		return nil, notFoundf("gosmo: assembly %q in %q has no file %d", a.Name, a.db.Name, fileID)
 	}
 	if err != nil {
-		return nil, fmt.Errorf("gosmo: read file %d of assembly %q in %q: %w", fileID, a.Name, a.db.name, err)
+		return nil, fmt.Errorf("gosmo: read file %d of assembly %q in %q: %w", fileID, a.Name, a.db.Name, err)
 	}
 	return content, nil
 }
@@ -283,7 +283,7 @@ ORDER  BY SCHEMA_NAME(o.schema_id), o.name`
 
 	rows, err := a.db.query(ctx, q, a.AssemblyID)
 	if err != nil {
-		return nil, fmt.Errorf("gosmo: list modules of assembly %q in %q: %w", a.Name, a.db.name, err)
+		return nil, fmt.Errorf("gosmo: list modules of assembly %q in %q: %w", a.Name, a.db.Name, err)
 	}
 	defer rows.Close()
 
@@ -292,12 +292,12 @@ ORDER  BY SCHEMA_NAME(o.schema_id), o.name`
 		m := &AssemblyModule{}
 		if err := rows.Scan(&m.ObjectID, &m.Schema, &m.Name, &m.Type,
 			&m.AssemblyClass, &m.AssemblyMethod); err != nil {
-			return nil, fmt.Errorf("gosmo: list modules of assembly %q in %q: %w", a.Name, a.db.name, err)
+			return nil, fmt.Errorf("gosmo: list modules of assembly %q in %q: %w", a.Name, a.db.Name, err)
 		}
 		mods = append(mods, m)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("gosmo: list modules of assembly %q in %q: %w", a.Name, a.db.name, err)
+		return nil, fmt.Errorf("gosmo: list modules of assembly %q in %q: %w", a.Name, a.db.Name, err)
 	}
 	return mods, nil
 }
@@ -316,7 +316,7 @@ func (d *Database) DropAssembly(name string) error {
 // DropAssemblyContext is the context-aware variant of DropAssembly.
 func (d *Database) DropAssemblyContext(ctx context.Context, name string) error {
 	if _, err := d.exec(ctx, "DROP ASSEMBLY "+QuoteName(name)); err != nil {
-		return fmt.Errorf("gosmo: drop assembly %q in %q: %w", name, d.name, err)
+		return fmt.Errorf("gosmo: drop assembly %q in %q: %w", name, d.Name, err)
 	}
 	return nil
 }

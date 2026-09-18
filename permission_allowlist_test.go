@@ -51,7 +51,7 @@ func TestValidDatabasePermission(t *testing.T) {
 }
 
 func TestGrantDatabasePermissionRejectsUnknownPermission(t *testing.T) {
-	d := &Database{name: "appdb", server: &Server{}}
+	d := &Database{Name: "appdb", server: &Server{}}
 	err := d.GrantDatabasePermission("CONTROL; DROP TABLE Users; --", "attacker")
 	if err == nil {
 		t.Fatal("GrantDatabasePermission accepted an unrecognized permission name, want an error")
@@ -89,7 +89,7 @@ func TestIsSimpleSetValue(t *testing.T) {
 }
 
 func TestSetDatabaseOptionRejectsUnknownOptionAndUnsafeValue(t *testing.T) {
-	d := &Database{name: "appdb", server: &Server{}}
+	d := &Database{Name: "appdb", server: &Server{}}
 	if err := d.SetDatabaseOption(DatabaseOption("EVIL_OPTION"), "ON"); err == nil {
 		t.Error("SetDatabaseOption accepted an unrecognized option, want an error")
 	}
@@ -127,7 +127,7 @@ func TestValidRecoveryModel(t *testing.T) {
 }
 
 func TestSetRecoveryModelRejectsUnknownModel(t *testing.T) {
-	d := &Database{name: "appdb", server: &Server{}}
+	d := &Database{Name: "appdb", server: &Server{}}
 	if err := d.SetRecoveryModel(RecoveryModel("FULL; DROP DATABASE appdb; --")); err == nil {
 		t.Error("SetRecoveryModel accepted an unrecognized recovery model, want an error")
 	}
@@ -190,7 +190,7 @@ func TestAlterColumnRejectsUnknownDataType(t *testing.T) {
 }
 
 func TestCreateTableRejectsUnknownDataType(t *testing.T) {
-	d := &Database{name: "appdb", server: &Server{}}
+	d := &Database{Name: "appdb", server: &Server{}}
 	req := CreateTableRequest{
 		Name: "Evil",
 		Columns: []ColumnDefinition{
@@ -203,7 +203,7 @@ func TestCreateTableRejectsUnknownDataType(t *testing.T) {
 }
 
 func TestCreateSequenceRejectsUnknownDataType(t *testing.T) {
-	d := &Database{name: "appdb", server: &Server{}}
+	d := &Database{Name: "appdb", server: &Server{}}
 	req := CreateSequenceRequest{
 		Name:     "EvilSeq",
 		DataType: DataType("int); DROP TABLE Users; --"),
@@ -245,7 +245,7 @@ func TestValidPartitionBoundary(t *testing.T) {
 }
 
 func TestCreatePartitionFunctionRejectsUnknownDataTypeAndBadBoundary(t *testing.T) {
-	d := &Database{name: "appdb", server: &Server{}}
+	d := &Database{Name: "appdb", server: &Server{}}
 	if err := d.CreatePartitionFunction(CreatePartitionFunctionRequest{
 		Name:       "pf1",
 		InputType:  DataType("int); DROP TABLE Users; --"),
@@ -263,7 +263,7 @@ func TestCreatePartitionFunctionRejectsUnknownDataTypeAndBadBoundary(t *testing.
 }
 
 func TestSplitAndMergeRangeRejectBadBoundary(t *testing.T) {
-	pf := &PartitionFunction{db: &Database{name: "appdb", server: &Server{}}, Name: "pf1"}
+	pf := &PartitionFunction{db: &Database{Name: "appdb", server: &Server{}}, Name: "pf1"}
 	if err := pf.SplitRange("100); DROP TABLE Users; --"); err == nil {
 		t.Error("SplitRange accepted an invalid boundary literal, want an error")
 	}

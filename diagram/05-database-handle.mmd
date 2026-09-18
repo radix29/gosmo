@@ -6,22 +6,17 @@ classDiagram
 
     class Database {
         -server *Server
-        -name string
-        -id int
-        -state string
-        -recoveryModel RecoveryModel
-        -compatLevel CompatibilityLevel
-        -collation string
-        -isReadOnly bool
-        -createDate time.Time
-        +Name() string
-        +ID() int
-        +State() string
+        +Name string
+        +ID int
+        +State string
+        +RecoveryModel RecoveryModel
+        +CompatibilityLevel CompatibilityLevel
+        +Collation string
+        +IsReadOnly bool
+        +CreateDate time.Time
+        +SourceDatabaseID int
         +IsSystem() bool
         +IsSnapshot() bool
-        +SourceDatabaseID() int
-        +RecoveryModel() RecoveryModel
-        +CompatibilityLevel() CompatibilityLevel
         +Tables() []*Table
         +TablesBySchema(schema) []*Table
         +TableByName(schema, name) *Table
@@ -60,6 +55,7 @@ classDiagram
         +DropSchema(name) error
         +Users() []*User
         +UserByName(name) *User
+        +UserRef(name) *User
         +CreateUser(user, login, schema) error
         +DropUser(name) error
         +DatabaseAuditSpecifications() []*DatabaseAuditSpecification

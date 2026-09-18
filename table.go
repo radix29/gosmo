@@ -219,19 +219,19 @@ ORDER  BY c.column_id`
 	ref := qualifiedName(schema, name)
 	rows, err := d.query(ctx, q, ref)
 	if err != nil {
-		return nil, fmt.Errorf("gosmo: list columns for %s in %q: %w", ref, d.name, err)
+		return nil, fmt.Errorf("gosmo: list columns for %s in %q: %w", ref, d.Name, err)
 	}
 	defer rows.Close()
 
 	cols, err := scanColumns(rows.Rows)
 	if err != nil {
-		return nil, fmt.Errorf("gosmo: list columns for %s in %q: %w", ref, d.name, err)
+		return nil, fmt.Errorf("gosmo: list columns for %s in %q: %w", ref, d.Name, err)
 	}
 	// Every table and view has at least one column, so an empty result means
 	// OBJECT_ID found nothing — report that rather than an empty column list,
 	// which reads as "this object has no columns".
 	if len(cols) == 0 {
-		return nil, notFoundf("gosmo: table or view %s not found in %q", ref, d.name)
+		return nil, notFoundf("gosmo: table or view %s not found in %q", ref, d.Name)
 	}
 	return cols, nil
 }
@@ -1001,7 +1001,7 @@ GROUP  BY p.object_id`
 
 	rows, err := d.query(ctx, q)
 	if err != nil {
-		return nil, fmt.Errorf("gosmo: table row counts on %q: %w", d.name, err)
+		return nil, fmt.Errorf("gosmo: table row counts on %q: %w", d.Name, err)
 	}
 	defer rows.Close()
 
@@ -1010,12 +1010,12 @@ GROUP  BY p.object_id`
 		var objectID int
 		var n int64
 		if err := rows.Scan(&objectID, &n); err != nil {
-			return nil, fmt.Errorf("gosmo: table row counts on %q: %w", d.name, err)
+			return nil, fmt.Errorf("gosmo: table row counts on %q: %w", d.Name, err)
 		}
 		out[objectID] = n
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("gosmo: table row counts on %q: %w", d.name, err)
+		return nil, fmt.Errorf("gosmo: table row counts on %q: %w", d.Name, err)
 	}
 	return out, nil
 }

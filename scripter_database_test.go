@@ -10,11 +10,11 @@ import (
 // renders without needing to refresh.
 func scripterOverDatabase(name string) *Scripter {
 	d := &Database{
-		server:        &Server{},
-		name:          name,
-		recoveryModel: RecoveryModelFull,
-		compatLevel:   CompatLevel2022,
-		collation:     "SQL_Latin1_General_CP1_CI_AS",
+		server:             &Server{},
+		Name:               name,
+		RecoveryModel:      RecoveryModelFull,
+		CompatibilityLevel: CompatLevel2022,
+		Collation:          "SQL_Latin1_General_CP1_CI_AS",
 	}
 	opts := DefaultScriptOptions()
 	opts.IncludeHeaders = false
@@ -43,8 +43,8 @@ func TestScriptDatabaseRendersFromCachedMetadata(t *testing.T) {
 // "SET RECOVERY ;" and "COMPATIBILITY_LEVEL = 0", which are not valid T-SQL.
 func TestScriptDatabaseOmitsSettingsItDoesNotKnow(t *testing.T) {
 	sc := scripterOverDatabase("Offline")
-	sc.db.recoveryModel = ""
-	sc.db.compatLevel = 0
+	sc.db.RecoveryModel = ""
+	sc.db.CompatibilityLevel = 0
 	// Rendered directly: ScriptDatabaseContext would try to refresh these
 	// from the server first, and there is no server here.
 	got, err := sc.scriptDatabaseFrom(sc.db)

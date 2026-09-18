@@ -531,7 +531,7 @@ func (d *Database) LatestResourceStatsContext(ctx context.Context) (*DatabaseRes
 		return nil, err
 	}
 	if len(stats) == 0 {
-		return nil, notFoundf("gosmo: database resource stats: sys.dm_db_resource_stats is empty for %s", d.name)
+		return nil, notFoundf("gosmo: database resource stats: sys.dm_db_resource_stats is empty for %s", d.Name)
 	}
 	return stats[0], nil
 }
@@ -750,7 +750,7 @@ func (d *Database) ResourceGovernanceContext(ctx context.Context) (*UserDBResour
 	}
 	// The view ignores the connection's database, so this filters by name
 	// rather than relying on Database.query's USE.
-	rows, err := d.query(ctx, userDBResourceGovernanceRowQuery, d.name)
+	rows, err := d.query(ctx, userDBResourceGovernanceRowQuery, d.Name)
 	if err != nil {
 		return nil, fmt.Errorf("gosmo: database resource governance: %w", err)
 	}
@@ -760,7 +760,7 @@ func (d *Database) ResourceGovernanceContext(ctx context.Context) (*UserDBResour
 		if err := rows.Err(); err != nil {
 			return nil, fmt.Errorf("gosmo: database resource governance: %w", err)
 		}
-		return nil, notFoundf("gosmo: database resource governance: no row for %s", d.name)
+		return nil, notFoundf("gosmo: database resource governance: no row for %s", d.Name)
 	}
 	g, err := scanUserDBResourceGovernance(rows)
 	if err != nil {

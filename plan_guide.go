@@ -122,7 +122,7 @@ ORDER  BY g.name`
 
 	rows, err := d.query(ctx, q)
 	if err != nil {
-		return nil, fmt.Errorf("gosmo: list plan guides in %q: %w", d.name, err)
+		return nil, fmt.Errorf("gosmo: list plan guides in %q: %w", d.Name, err)
 	}
 	defer rows.Close()
 
@@ -130,12 +130,12 @@ ORDER  BY g.name`
 	for rows.Next() {
 		g, err := scanPlanGuide(d, rows.Scan)
 		if err != nil {
-			return nil, fmt.Errorf("gosmo: list plan guides in %q: %w", d.name, err)
+			return nil, fmt.Errorf("gosmo: list plan guides in %q: %w", d.Name, err)
 		}
 		guides = append(guides, g)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("gosmo: list plan guides in %q: %w", d.name, err)
+		return nil, fmt.Errorf("gosmo: list plan guides in %q: %w", d.Name, err)
 	}
 	return guides, nil
 }
@@ -157,10 +157,10 @@ func (d *Database) PlanGuideByNameContext(ctx context.Context, name string) (*Pl
 	}, planGuideSelect+`
 WHERE  g.name = @p1`, name)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, notFoundf("gosmo: plan guide %q not found in %q", name, d.name)
+		return nil, notFoundf("gosmo: plan guide %q not found in %q", name, d.Name)
 	}
 	if err != nil {
-		return nil, fmt.Errorf("gosmo: read plan guide %q in %q: %w", name, d.name, err)
+		return nil, fmt.Errorf("gosmo: read plan guide %q in %q: %w", name, d.Name, err)
 	}
 	return g, nil
 }
@@ -190,7 +190,7 @@ func (g *PlanGuide) controlPlanGuide(ctx context.Context, operation, verb string
 		"EXEC sp_control_plan_guide @operation = @p1, @name = @p2",
 		operation, g.Name)
 	if err != nil {
-		return fmt.Errorf("gosmo: %s plan guide %q in %q: %w", verb, g.Name, g.db.name, err)
+		return fmt.Errorf("gosmo: %s plan guide %q in %q: %w", verb, g.Name, g.db.Name, err)
 	}
 	return nil
 }

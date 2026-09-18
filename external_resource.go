@@ -114,7 +114,7 @@ ORDER  BY s.name`
 
 	rows, err := d.query(ctx, q)
 	if err != nil {
-		return nil, fmt.Errorf("gosmo: list external data sources in %q: %w", d.name, err)
+		return nil, fmt.Errorf("gosmo: list external data sources in %q: %w", d.Name, err)
 	}
 	defer rows.Close()
 
@@ -122,12 +122,12 @@ ORDER  BY s.name`
 	for rows.Next() {
 		s, err := scanExternalDataSource(d, rows.Scan)
 		if err != nil {
-			return nil, fmt.Errorf("gosmo: list external data sources in %q: %w", d.name, err)
+			return nil, fmt.Errorf("gosmo: list external data sources in %q: %w", d.Name, err)
 		}
 		sources = append(sources, s)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("gosmo: list external data sources in %q: %w", d.name, err)
+		return nil, fmt.Errorf("gosmo: list external data sources in %q: %w", d.Name, err)
 	}
 	return sources, nil
 }
@@ -149,10 +149,10 @@ func (d *Database) ExternalDataSourceByNameContext(ctx context.Context, name str
 	}, d.externalDataSourceSelect()+`
 WHERE  s.name = @p1`, name)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, notFoundf("gosmo: external data source %q not found in %q", name, d.name)
+		return nil, notFoundf("gosmo: external data source %q not found in %q", name, d.Name)
 	}
 	if err != nil {
-		return nil, fmt.Errorf("gosmo: read external data source %q in %q: %w", name, d.name, err)
+		return nil, fmt.Errorf("gosmo: read external data source %q in %q: %w", name, d.Name, err)
 	}
 	return s, nil
 }
@@ -167,7 +167,7 @@ func (d *Database) DropExternalDataSource(name string) error {
 // DropExternalDataSource.
 func (d *Database) DropExternalDataSourceContext(ctx context.Context, name string) error {
 	if _, err := d.exec(ctx, "DROP EXTERNAL DATA SOURCE "+QuoteName(name)); err != nil {
-		return fmt.Errorf("gosmo: drop external data source %q in %q: %w", name, d.name, err)
+		return fmt.Errorf("gosmo: drop external data source %q in %q: %w", name, d.Name, err)
 	}
 	return nil
 }
@@ -256,7 +256,7 @@ ORDER  BY f.name`
 
 	rows, err := d.query(ctx, q)
 	if err != nil {
-		return nil, fmt.Errorf("gosmo: list external file formats in %q: %w", d.name, err)
+		return nil, fmt.Errorf("gosmo: list external file formats in %q: %w", d.Name, err)
 	}
 	defer rows.Close()
 
@@ -264,12 +264,12 @@ ORDER  BY f.name`
 	for rows.Next() {
 		f, err := scanExternalFileFormat(d, rows.Scan)
 		if err != nil {
-			return nil, fmt.Errorf("gosmo: list external file formats in %q: %w", d.name, err)
+			return nil, fmt.Errorf("gosmo: list external file formats in %q: %w", d.Name, err)
 		}
 		formats = append(formats, f)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("gosmo: list external file formats in %q: %w", d.name, err)
+		return nil, fmt.Errorf("gosmo: list external file formats in %q: %w", d.Name, err)
 	}
 	return formats, nil
 }
@@ -291,10 +291,10 @@ func (d *Database) ExternalFileFormatByNameContext(ctx context.Context, name str
 	}, d.externalFileFormatSelect()+`
 WHERE  f.name = @p1`, name)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, notFoundf("gosmo: external file format %q not found in %q", name, d.name)
+		return nil, notFoundf("gosmo: external file format %q not found in %q", name, d.Name)
 	}
 	if err != nil {
-		return nil, fmt.Errorf("gosmo: read external file format %q in %q: %w", name, d.name, err)
+		return nil, fmt.Errorf("gosmo: read external file format %q in %q: %w", name, d.Name, err)
 	}
 	return f, nil
 }
@@ -309,7 +309,7 @@ func (d *Database) DropExternalFileFormat(name string) error {
 // DropExternalFileFormat.
 func (d *Database) DropExternalFileFormatContext(ctx context.Context, name string) error {
 	if _, err := d.exec(ctx, "DROP EXTERNAL FILE FORMAT "+QuoteName(name)); err != nil {
-		return fmt.Errorf("gosmo: drop external file format %q in %q: %w", name, d.name, err)
+		return fmt.Errorf("gosmo: drop external file format %q in %q: %w", name, d.Name, err)
 	}
 	return nil
 }
@@ -396,7 +396,7 @@ ORDER  BY l.name`
 
 	rows, err := d.query(ctx, q)
 	if err != nil {
-		return nil, fmt.Errorf("gosmo: list external libraries in %q: %w", d.name, err)
+		return nil, fmt.Errorf("gosmo: list external libraries in %q: %w", d.Name, err)
 	}
 	defer rows.Close()
 
@@ -404,12 +404,12 @@ ORDER  BY l.name`
 	for rows.Next() {
 		l, err := scanExternalLibrary(d, rows.Scan)
 		if err != nil {
-			return nil, fmt.Errorf("gosmo: list external libraries in %q: %w", d.name, err)
+			return nil, fmt.Errorf("gosmo: list external libraries in %q: %w", d.Name, err)
 		}
 		libs = append(libs, l)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("gosmo: list external libraries in %q: %w", d.name, err)
+		return nil, fmt.Errorf("gosmo: list external libraries in %q: %w", d.Name, err)
 	}
 	return libs, nil
 }
@@ -435,10 +435,10 @@ func (d *Database) ExternalLibraryByNameContext(ctx context.Context, name string
 	}, externalLibrarySelect+`
 WHERE  l.name = @p1`, name)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, notFoundf("gosmo: external library %q not found in %q", name, d.name)
+		return nil, notFoundf("gosmo: external library %q not found in %q", name, d.Name)
 	}
 	if err != nil {
-		return nil, fmt.Errorf("gosmo: read external library %q in %q: %w", name, d.name, err)
+		return nil, fmt.Errorf("gosmo: read external library %q in %q: %w", name, d.Name, err)
 	}
 	return l, nil
 }
@@ -455,7 +455,7 @@ func (d *Database) DropExternalLibraryContext(ctx context.Context, name string) 
 		return err
 	}
 	if _, err := d.exec(ctx, "DROP EXTERNAL LIBRARY "+QuoteName(name)); err != nil {
-		return fmt.Errorf("gosmo: drop external library %q in %q: %w", name, d.name, err)
+		return fmt.Errorf("gosmo: drop external library %q in %q: %w", name, d.Name, err)
 	}
 	return nil
 }

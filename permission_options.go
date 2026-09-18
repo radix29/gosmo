@@ -290,7 +290,7 @@ func (d *Database) databasePermission(ctx context.Context, verb, permission, pri
 		return err
 	}
 	if _, err := d.exec(ctx, q); err != nil {
-		return fmt.Errorf("gosmo: %s %s %s %q in %q: %w", lower, permission, fromOrTo(verb), principal, d.name, err)
+		return fmt.Errorf("gosmo: %s %s %s %q in %q: %w", lower, permission, fromOrTo(verb), principal, d.Name, err)
 	}
 	return nil
 }

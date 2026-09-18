@@ -69,7 +69,7 @@ func (d *Database) DatabaseTriggersContext(ctx context.Context) ([]*DatabaseTrig
 	rows, err := d.query(ctx, databaseTriggerSelect+`
 ORDER  BY tr.name`)
 	if err != nil {
-		return nil, fmt.Errorf("gosmo: list database triggers in %q: %w", d.name, err)
+		return nil, fmt.Errorf("gosmo: list database triggers in %q: %w", d.Name, err)
 	}
 	defer rows.Close()
 
@@ -77,12 +77,12 @@ ORDER  BY tr.name`)
 	for rows.Next() {
 		t, err := scanDatabaseTrigger(d, rows.Scan)
 		if err != nil {
-			return nil, fmt.Errorf("gosmo: list database triggers in %q: %w", d.name, err)
+			return nil, fmt.Errorf("gosmo: list database triggers in %q: %w", d.Name, err)
 		}
 		triggers = append(triggers, t)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("gosmo: list database triggers in %q: %w", d.name, err)
+		return nil, fmt.Errorf("gosmo: list database triggers in %q: %w", d.Name, err)
 	}
 	return triggers, nil
 }
@@ -105,10 +105,10 @@ func (d *Database) DatabaseTriggerByNameContext(ctx context.Context, name string
 	}, databaseTriggerSelect+`
    AND tr.name = @p1`, name)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, notFoundf("gosmo: database trigger %q not found in %q", name, d.name)
+		return nil, notFoundf("gosmo: database trigger %q not found in %q", name, d.Name)
 	}
 	if err != nil {
-		return nil, fmt.Errorf("gosmo: read database trigger %q in %q: %w", name, d.name, err)
+		return nil, fmt.Errorf("gosmo: read database trigger %q in %q: %w", name, d.Name, err)
 	}
 	return t, nil
 }

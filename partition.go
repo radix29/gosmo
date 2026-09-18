@@ -99,9 +99,9 @@ func (d *Database) PartitionFunctionByNameContext(ctx context.Context, name stri
 WHERE  pf.name = @p1`, name)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return nil, notFoundf("gosmo: partition function %q not found in %q", name, d.name)
+			return nil, notFoundf("gosmo: partition function %q not found in %q", name, d.Name)
 		}
-		return nil, fmt.Errorf("gosmo: find partition function %q in %q: %w", name, d.name, err)
+		return nil, fmt.Errorf("gosmo: find partition function %q in %q: %w", name, d.Name, err)
 	}
 	return pf, nil
 }
@@ -279,9 +279,9 @@ func (d *Database) PartitionSchemeByNameContext(ctx context.Context, name string
 WHERE  ps.name = @p1`, name)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return nil, notFoundf("gosmo: partition scheme %q not found in %q", name, d.name)
+			return nil, notFoundf("gosmo: partition scheme %q not found in %q", name, d.Name)
 		}
-		return nil, fmt.Errorf("gosmo: find partition scheme %q in %q: %w", name, d.name, err)
+		return nil, fmt.Errorf("gosmo: find partition scheme %q in %q: %w", name, d.Name, err)
 	}
 	return ps, nil
 }
@@ -479,7 +479,7 @@ GROUP  BY p.object_id`
 
 	rows, err := d.query(ctx, q)
 	if err != nil {
-		return nil, fmt.Errorf("gosmo: table space used on %q: %w", d.name, err)
+		return nil, fmt.Errorf("gosmo: table space used on %q: %w", d.Name, err)
 	}
 	defer rows.Close()
 
@@ -490,13 +490,13 @@ GROUP  BY p.object_id`
 		info := &TableSpaceInfo{}
 		if err := rows.Scan(&objectID, &info.ReservedKB, &info.DataKB,
 			&info.IndexKB, &info.LOBKB, &info.UnusedKB, &fg); err != nil {
-			return nil, fmt.Errorf("gosmo: table space used on %q: %w", d.name, err)
+			return nil, fmt.Errorf("gosmo: table space used on %q: %w", d.Name, err)
 		}
 		info.FileGroup = fg.String
 		out[objectID] = info
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("gosmo: table space used on %q: %w", d.name, err)
+		return nil, fmt.Errorf("gosmo: table space used on %q: %w", d.Name, err)
 	}
 	return out, nil
 }

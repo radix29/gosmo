@@ -919,7 +919,7 @@ func TestLiveAvailabilityGroupCreate(t *testing.T) {
 		t.Errorf("%s already knows the group before joining — only a WSFC cluster propagates that, "+
 			"and AvailabilityGroup.Join's doc comment says otherwise", secondaryName)
 	}
-	peerAG := peer.AvailabilityGroup(name)
+	peerAG := peer.AvailabilityGroupRef(name)
 	if err := peerAG.JoinContext(ctx, "NONE"); err != nil {
 		t.Fatalf("Join on %s: %v", secondaryName, err)
 	}

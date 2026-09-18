@@ -282,7 +282,7 @@ The instance and database halves pair up: `ServerResourceStat` and
 | Current database         | `srv.CurrentDatabase()`                    |
 | Current login (`SUSER_NAME()`) | `srv.CurrentLogin()`                 |
 | `Server.Logins`         | `srv.Logins()` / `srv.LoginByName(name)` / `srv.LoginRef(name)` (no-I/O handle) |
-| `Server.Roles`          | `srv.ServerRoles()` / `srv.ServerRoleByName(name)` / `srv.ServerRoleMembers(role)` |
+| `Server.Roles`          | `srv.ServerRoles()` / `srv.ServerRoleByName(name)` / `srv.ServerRoleRef(name)` (no-I/O handle) / `srv.ServerRoleMembers(role)` |
 | Server role administration | `role.Rename(newName)` / `role.ChangeOwner(owner)` / `srv.Add\|RemoveServerRoleMember(role, member)` |
 | Drop a server role      | `srv.DropServerRole(name)` / `role.Drop()`  |
 | Rename a database       | `srv.RenameDatabase(old, new, force)` — `force` puts it in single-user mode first |
@@ -291,7 +291,7 @@ The instance and database halves pair up: `ServerResourceStat` and
 | Read a detached file    | `srv.DetachedDatabaseInfo(primaryFilePath)` → `*DetachedDatabase` (`.Name`, `.Files`, `.DataFiles()`, `.LogFiles()`) — the only way to learn a detached database's other files |
 | Database snapshots      | `srv.DatabaseSnapshots()` / `srv.DatabaseSnapshotByName(name)` / `srv.DatabaseSnapshotRef(name)` (no-I/O handle) / `srv.SnapshotsOf(database)` / `srv.CreateDatabaseSnapshot(req)` / `srv.RestoreFromSnapshot(database, snapshot)` — see [Database snapshots](#database-snapshots) |
 | `Server.LinkedServers`  | `srv.LinkedServers()`                      |
-| `Server.Configuration`  | `srv.Configurations()`                     |
+| `Server.Configuration`  | `srv.Configurations()` / `srv.ConfigurationByName(name)` / `srv.ConfigurationRef(name)` (no-I/O handle) |
 | `Server.JobServer` (Agent) | see [SQL Server Agent](#sql-server-agent) below |
 | Active sessions         | `srv.ActiveSessions(includeSystem)`        |
 | Kill session            | `srv.KillSession(id)`                      |
@@ -334,8 +334,10 @@ The instance and database halves pair up: `ServerResourceStat` and
 
 | SMO equivalent                  | gosmo                                       |
 | ------------------------------- | ------------------------------------------- |
-| Is a system database             | `db.IsSystem()`                             |
-| Is a database snapshot           | `db.IsSnapshot()` / `db.SourceDatabaseID()` — see [Database snapshots](#database-snapshots) |
+| Catalog row fields               | `db.Name` / `db.ID` / `db.State` / `db.RecoveryModel` / `db.CompatibilityLevel` / `db.Collation` / `db.IsReadOnly` / `db.CreateDate` / `db.SourceDatabaseID` — exported fields, like every other type's; a `DatabaseRef` handle carries only `Name` |
+| Is a system database             | `db.IsSystem()` — derived from `db.ID`, so false on a `DatabaseRef` handle, `master` included |
+| Is a database snapshot           | `db.IsSnapshot()` — derived from `db.SourceDatabaseID`; see [Database snapshots](#database-snapshots) |
+| Parent server                    | `db.Server()` — a back-pointer, so still a method |
 | `Database.Tables`               | `db.Tables()` / `db.TablesBySchema(schema)` |
 | One family of tables (System, FileTables, External, Graph) | `db.TablesOfKind(kind)` / `db.TablesOfKindFiltered(kind, f)` / `db.TableKindsPresent()` — see [Table kinds](#table-kinds) |
 | Bulk table/view + column snapshot | `db.Catalog()` (user objects) / `db.SystemCatalog()` (`sys` schema) |
@@ -344,7 +346,7 @@ The instance and database halves pair up: `ServerResourceStat` and
 | `Database.UserDefinedFunctions` | `db.UserDefinedFunctions()` / `db.DropFunction(schema, name)` |
 | System Views/Procedures/Functions | `db.SystemViews()` / `db.SystemStoredProcedures()` / `db.SystemFunctions()` |
 | `Database.Schemas`              | `db.Schemas()` / `db.SchemaByName(name)` / `schema.ObjectCount()` / `schema.ObjectCountsByType()` |
-| `Database.Users`                | `db.Users()` / `db.UserByName(name)`        |
+| `Database.Users`                | `db.Users()` / `db.UserByName(name)` / `db.UserRef(name)` (no-I/O handle) |
 | Database user administration    | `user.Rename(newName)` / `user.SetDefaultSchema(schemaName)` / `user.SetLogin(loginName)` |
 | `Database.AuditSpecifications`  | `db.DatabaseAuditSpecifications()` / `...ByName(name)` / `db.DatabaseAuditSpecificationRef(name)` (no-I/O handle) / `db.CreateDatabaseAuditSpecification(spec)` |
 | `Database.Roles`                | `db.DatabaseRoles()` / `db.RoleByName(name)` / `db.RoleMembers(roleName)` |
@@ -410,7 +412,7 @@ The instance and database halves pair up: `ServerResourceStat` and
 | XML indexes           | `t.XMLIndexes()` → `[]*XMLIndex` (primary/secondary, and which primary) |
 | `Table.ForeignKeys`   | `t.ForeignKeys()` / `t.ForeignKeyByName(name)` |
 | `Table.Checks`        | `t.CheckConstraints()`             |
-| `Table.Statistics`    | `t.Statistics()` / `t.StatisticByName(name)` |
+| `Table.Statistics`    | `t.Statistics()` / `t.StatisticByName(name)` / `t.StatisticRef(name)` (no-I/O handle) |
 | `Table.Partitions`    | `t.Partitions()`                   |
 | `Table.Triggers`      | `t.Triggers()`                     |
 | `Table.RowCount`      | `t.RowCount()` (all tables at once: `db.TableRowCounts()`) |
@@ -515,7 +517,7 @@ rather than a parse error naming a column number.
 | `DBCC SHOW_STATISTICS` header  | `st.Header()` → `*StatisticHeader`        |
 | ... density vector             | `st.DensityVector()` → `[]*StatisticDensity` |
 | ... histogram                  | `st.Histogram()` → `[]*StatisticHistogramStep` |
-| One statistic by name          | `t.StatisticByName(name)`                 |
+| One statistic by name          | `t.StatisticByName(name)` / `t.StatisticRef(name)` (no-I/O handle) |
 | Update / drop                  | `st.Update(samplePct)` / `st.Drop()`      |
 | Rename                         | `st.Rename(newName)`                      |
 
@@ -1194,7 +1196,8 @@ followed by a re-read *by the new name* finds nothing. gosmo honours this
 for its own cached state too — a scripted `Rename`/`Enable`/`SetOwner`
 leaves the object it was called on unchanged. The lookup-free handles
 (`srv.DatabaseRef(name)`, `srv.LoginRef(name)`, `srv.AlertRef(name)`, `srv.JobRef(name)`,
-`srv.OperatorRef(name)`, `srv.ScheduleRef(name)`) exist for the same reason: an
+`srv.OperatorRef(name)`, `srv.ScheduleRef(name)`, `srv.ServerRoleRef(name)`,
+`srv.ConfigurationRef(name)`, `db.UserRef(name)`, `t.StatisticRef(name)`) exist for the same reason: an
 object whose `CREATE` was only collected can't be found by a `...ByName`
 query, and the `Create*` methods return one of these handles under
 `WithScript`.

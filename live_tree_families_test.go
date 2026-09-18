@@ -276,7 +276,7 @@ func TestLiveDatabaseSnapshotLifecycle(t *testing.T) {
 	// every later run of this test at liveScratchDB rather than here.
 	db.ExecContext(ctx, "IF DB_ID('"+snapName+"') IS NOT NULL DROP DATABASE ["+snapName+"]")
 
-	specs, err := srv.SnapshotFileDefaultsContext(ctx, source.Name(), snapName)
+	specs, err := srv.SnapshotFileDefaultsContext(ctx, source.Name, snapName)
 	if err != nil {
 		t.Fatalf("SnapshotFileDefaultsContext: %v", err)
 	}
@@ -289,7 +289,7 @@ func TestLiveDatabaseSnapshotLifecycle(t *testing.T) {
 
 	snap, err := srv.CreateDatabaseSnapshotContext(ctx, CreateDatabaseSnapshotRequest{
 		Name:           snapName,
-		SourceDatabase: source.Name(),
+		SourceDatabase: source.Name,
 	})
 	if err != nil {
 		t.Fatalf("CreateDatabaseSnapshotContext: %v", err)
@@ -299,8 +299,8 @@ func TestLiveDatabaseSnapshotLifecycle(t *testing.T) {
 		db.ExecContext(c, "IF DB_ID('"+snapName+"') IS NOT NULL DROP DATABASE ["+snapName+"]")
 	}()
 
-	if snap.SourceDatabase != source.Name() {
-		t.Errorf("snapshot source = %q, want %q", snap.SourceDatabase, source.Name())
+	if snap.SourceDatabase != source.Name {
+		t.Errorf("snapshot source = %q, want %q", snap.SourceDatabase, source.Name)
 	}
 
 	// A snapshot is an ordinary sys.databases row, so Databases returns it.
@@ -312,32 +312,32 @@ func TestLiveDatabaseSnapshotLifecycle(t *testing.T) {
 	}
 	var found bool
 	for _, cand := range dbs {
-		if cand.Name() != snapName {
+		if cand.Name != snapName {
 			continue
 		}
 		found = true
 		if !cand.IsSnapshot() {
 			t.Error("the snapshot's Database row does not report IsSnapshot")
 		}
-		if cand.SourceDatabaseID() != source.ID() {
-			t.Errorf("source database id = %d, want %d", cand.SourceDatabaseID(), source.ID())
+		if cand.SourceDatabaseID != source.ID {
+			t.Errorf("source database id = %d, want %d", cand.SourceDatabaseID, source.ID)
 		}
 	}
 	if !found {
 		t.Fatalf("%q is not in the databases listing", snapName)
 	}
 	for _, cand := range dbs {
-		if cand.Name() == source.Name() && cand.IsSnapshot() {
+		if cand.Name == source.Name && cand.IsSnapshot() {
 			t.Error("the source database reports IsSnapshot")
 		}
 	}
 
-	of, err := srv.SnapshotsOfContext(ctx, source.Name())
+	of, err := srv.SnapshotsOfContext(ctx, source.Name)
 	if err != nil {
 		t.Fatalf("SnapshotsOfContext: %v", err)
 	}
 	if len(of) != 1 || of[0].Name != snapName {
-		t.Fatalf("SnapshotsOf(%q) = %+v, want the one snapshot", source.Name(), of)
+		t.Fatalf("SnapshotsOf(%q) = %+v, want the one snapshot", source.Name, of)
 	}
 
 	// Revert: delete a row, restore, and check it is back. This is the whole

@@ -75,12 +75,25 @@ there with a `knownBroken` marker, which fails once the fix lands.
 Build and test **inside this repo** before relying on a change from gossms —
 a gossms-side build only compiles the packages it imports.
 
+**A plain `go vet ./...` does not compile the `livedb` tests.** An API rename
+can leave every one of them uncompilable and nothing says so: the 2026-09-17
+`Ref` rename did exactly that to 17 files, found only when the next breaking
+change swept the same call sites. Run `go vet -tags livedb ./...` too after any
+rename, and before a tag.
+
 ## Conventions
 
 - **Method pairs.** Every method that touches the database comes in two
   forms: `Foo(...)` delegating to `FooContext(ctx, ...)`. Accessors that
   only read already-fetched struct state, and the `*Seq` iterators (which
   take a `ctx` directly), are the exceptions.
+  `method_pair_wiring_test.go` pins the 676 delegates by reading the source:
+  each must call its *own* `Foo`+`Context` with `context.Background()` and the
+  declared parameters in order. Nothing executes them otherwise — their
+  coverage is 0.0% — and a delegate wired to a same-signature sibling
+  (`AddRoleMember`/`RemoveRoleMember`) compiles and passes every other test.
+  A deliberate non-delegate goes in that file's `delegateExceptions` with a
+  reason.
 - **Errors** wrap with `%w` and are prefixed `gosmo: ` plus what was being
   attempted — `fmt.Errorf("gosmo: drop statistic %q: %w", st.Name, err)`.
 - **`rows.Err()` is always checked**, and every `query` is followed by
@@ -142,18 +155,32 @@ a gossms-side build only compiles the packages it imports.
   - A statement captured with bound parameters is substituted to literals
     (`bindScriptArgs`) — a captured statement is pasted into a query editor,
     where nothing binds `@p1`.
+- **Catalog state is an exported field, not an accessor.** A type scanned
+  from a catalog row exposes what it scanned as exported fields — `Login.SID`,
+  `Table.Name`, `Job.IsEnabled`. `Database` was the last holdout, hiding nine
+  behind `Name()`/`State()`/… until 2026-09-18, and the shape was unguessable:
+  a caller could not tell from the type which form it would get, and
+  `DatabaseRef("master").IsSystem()` compiling to `false` was the trap it
+  produced. Only a *derivation* stays a method (`Database.IsSystem`,
+  `Database.IsSnapshot`, computed from `ID`/`SourceDatabaseID`), as does a
+  back-pointer (`Database.Server`, `Table.DB`). Adding an accessor over a
+  scanned field re-creates the holdout.
 - **The `Ref` suffix marks a lookup-free handle.** `Server.DatabaseRef(name)`
   returns a `*Database` carrying only its name — no query, every other field
   at its zero value — while `Server.DatabaseByName(name)` reads the catalog.
   They are not interchangeable: the handle is the only form that works under
   a `WithScript`-derived context, and the populated one is the only form
-  whose accessors answer anything. Eighteen families pair this way
-  (`DatabaseRef`, `LoginRef`, `TableRef`, the four Agent ones, and the
-  audit/credential/trigger/snapshot/plan-guide/backup-device/AG families);
-  every other by-name lookup in the library is `*ByName` with no handle
-  beside it. **A new handle method takes the `Ref` suffix** — the suffix is
-  what stops `s.Database("x").State()` from compiling into a silent zero
-  value, which is what the un-suffixed name allowed. Their doc
+  whose accessors answer anything. Twenty-two families pair this way
+  (`DatabaseRef`, `LoginRef`, `TableRef`, the four Agent ones, the
+  audit/credential/trigger/snapshot/plan-guide/backup-device/AG families, and
+  `ServerRoleRef`, `UserRef`, `StatisticRef`, `ConfigurationRef`); every
+  other by-name lookup in the library is `*ByName` with no handle beside it.
+  `Endpoint` is the one family deliberately left without one — `IsSystem` is
+  derived from a scanned id, so a name-only handle would carry id 0 and
+  refuse every write on itself; see `endpoint.go`'s comment above
+  `ErrSystemEndpoint`. **A new handle method takes the `Ref` suffix** — the
+  suffix is what stops `s.Database("x").State()` from compiling into a silent
+  zero value, which is what the un-suffixed name allowed. Their doc
   comments in `server.go` and `login.go` are the authority;
   `go doc gosmo.Server.DatabaseRef`.
 

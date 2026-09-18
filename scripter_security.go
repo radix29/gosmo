@@ -210,7 +210,8 @@ func buildDatabaseAuditSpecificationScript(s *DatabaseAuditSpecification, opts S
 		fmt.Fprintf(&sb, "IF NOT EXISTS (SELECT 1 FROM sys.database_audit_specifications WHERE name = N'%s')\nBEGIN\n%s\nEND\nGO\n",
 			escapeSingle(s.Name), create)
 	} else {
-		sb.WriteString(create + "\nGO\n")
+		sb.WriteString(create)
+		sb.WriteString("\nGO\n")
 	}
 	return sb.String(), nil
 }

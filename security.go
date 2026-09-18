@@ -119,7 +119,7 @@ ORDER  BY dp.class_desc, schema_name, object_name, dp.permission_name`
 
 	rows, err := d.query(ctx, q, principal)
 	if err != nil {
-		return nil, fmt.Errorf("gosmo: permissions for principal %q in %q: %w", principal, d.name, err)
+		return nil, fmt.Errorf("gosmo: permissions for principal %q in %q: %w", principal, d.Name, err)
 	}
 	defer rows.Close()
 
@@ -128,7 +128,7 @@ ORDER  BY dp.class_desc, schema_name, object_name, dp.permission_name`
 		e := &PrincipalSecurable{}
 		var class, objType string
 		if err := rows.Scan(&class, &e.Permission, &e.State, &e.Schema, &e.Name, &objType); err != nil {
-			return nil, fmt.Errorf("gosmo: permissions for principal %q in %q: %w", principal, d.name, err)
+			return nil, fmt.Errorf("gosmo: permissions for principal %q in %q: %w", principal, d.Name, err)
 		}
 		switch class {
 		case "DATABASE":
@@ -151,7 +151,7 @@ ORDER  BY dp.class_desc, schema_name, object_name, dp.permission_name`
 		entries = append(entries, e)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("gosmo: permissions for principal %q in %q: %w", principal, d.name, err)
+		return nil, fmt.Errorf("gosmo: permissions for principal %q in %q: %w", principal, d.Name, err)
 	}
 	return entries, nil
 }
@@ -270,7 +270,7 @@ ORDER  BY pr.name, dp.permission_name`
 
 	rows, err := d.query(ctx, q, schemaName)
 	if err != nil {
-		return nil, fmt.Errorf("gosmo: schema permissions for %q in %q: %w", schemaName, d.name, err)
+		return nil, fmt.Errorf("gosmo: schema permissions for %q in %q: %w", schemaName, d.Name, err)
 	}
 	defer rows.Close()
 
@@ -279,14 +279,14 @@ ORDER  BY pr.name, dp.permission_name`
 		g := &PermissionEntry{}
 		var perm, state string
 		if err := rows.Scan(&g.Principal, &g.PrincipalType, &g.Grantor, &perm, &state); err != nil {
-			return nil, fmt.Errorf("gosmo: schema permissions for %q in %q: %w", schemaName, d.name, err)
+			return nil, fmt.Errorf("gosmo: schema permissions for %q in %q: %w", schemaName, d.Name, err)
 		}
 		g.Permission = ObjectPermission(perm)
 		g.State = PermissionState(state)
 		grants = append(grants, g)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("gosmo: schema permissions for %q in %q: %w", schemaName, d.name, err)
+		return nil, fmt.Errorf("gosmo: schema permissions for %q in %q: %w", schemaName, d.Name, err)
 	}
 	return grants, nil
 }
@@ -357,7 +357,7 @@ ORDER  BY pr.name, dp.permission_name`
 
 	rows, err := d.query(ctx, q)
 	if err != nil {
-		return nil, fmt.Errorf("gosmo: database permissions in %q: %w", d.name, err)
+		return nil, fmt.Errorf("gosmo: database permissions in %q: %w", d.Name, err)
 	}
 	defer rows.Close()
 
@@ -365,12 +365,12 @@ ORDER  BY pr.name, dp.permission_name`
 	for rows.Next() {
 		e := &DatabasePermissionEntry{}
 		if err := rows.Scan(&e.Principal, &e.PrincipalType, &e.Grantor, &e.Permission, &e.State); err != nil {
-			return nil, fmt.Errorf("gosmo: database permissions in %q: %w", d.name, err)
+			return nil, fmt.Errorf("gosmo: database permissions in %q: %w", d.Name, err)
 		}
 		perms = append(perms, e)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("gosmo: database permissions in %q: %w", d.name, err)
+		return nil, fmt.Errorf("gosmo: database permissions in %q: %w", d.Name, err)
 	}
 	return perms, nil
 }

@@ -154,7 +154,7 @@ func iterWirings(t *testing.T) []seqWiring {
 	// statement at all and the wiring comparison below passes vacuously.
 	azureSrv := &Server{db: sdb, info: &ServerInfo{
 		VersionMajor: 12, EngineEdition: int(EngineAzureManagedInst)}}
-	dbo := &Database{server: srv, name: argDatabase, id: 7}
+	dbo := &Database{server: srv, Name: argDatabase, ID: 7}
 	tbl := &Table{db: dbo, ObjectID: 42, Schema: argSchema, Name: argName}
 	stat := &Statistic{table: tbl, Name: "IX_stat", StatID: 3}
 	job := &Job{server: srv, JobID: "8A2C4E1F-0000-0000-0000-000000000001", Name: "nightly"}

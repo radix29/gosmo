@@ -37,16 +37,16 @@ func liveBackupDevice(t *testing.T, db *sql.DB, ctx context.Context, dir string,
 	// repeatable rather than passing once.
 	for _, d := range []*Database{first, second} {
 		if _, err := db.ExecContext(ctx,
-			`EXEC msdb.dbo.sp_delete_database_backuphistory @database_name = @p1`, d.name); err != nil {
-			t.Fatalf("clear backup history for %s: %v", d.name, err)
+			`EXEC msdb.dbo.sp_delete_database_backuphistory @database_name = @p1`, d.Name); err != nil {
+			t.Fatalf("clear backup history for %s: %v", d.Name, err)
 		}
 	}
 	// INIT on the first write, so a device left behind by an earlier run is
 	// overwritten rather than appended to and counted twice.
 	for i, stmt := range []string{
-		`BACKUP DATABASE [` + first.name + `] TO DISK = N'` + device + `' WITH INIT, NAME = N'set one'`,
-		`BACKUP DATABASE [` + second.name + `] TO DISK = N'` + device + `' WITH NOINIT, NAME = N'set two'`,
-		`BACKUP LOG [` + first.name + `] TO DISK = N'` + device + `' WITH NOINIT, NAME = N'set three'`,
+		`BACKUP DATABASE [` + first.Name + `] TO DISK = N'` + device + `' WITH INIT, NAME = N'set one'`,
+		`BACKUP DATABASE [` + second.Name + `] TO DISK = N'` + device + `' WITH NOINIT, NAME = N'set two'`,
+		`BACKUP LOG [` + first.Name + `] TO DISK = N'` + device + `' WITH NOINIT, NAME = N'set three'`,
 	} {
 		if _, err := db.ExecContext(ctx, stmt); err != nil {
 			t.Fatalf("backup %d: %v", i+1, err)
@@ -61,7 +61,7 @@ func liveBackupDevice(t *testing.T, db *sql.DB, ctx context.Context, dir string,
 		// And take this run's rows back out of msdb, so the server is left
 		// as it was found.
 		for _, d := range []*Database{first, second} {
-			db.ExecContext(c, `EXEC msdb.dbo.sp_delete_database_backuphistory @database_name = @p1`, d.name)
+			db.ExecContext(c, `EXEC msdb.dbo.sp_delete_database_backuphistory @database_name = @p1`, d.Name)
 		}
 	}
 }
@@ -78,7 +78,7 @@ func TestLiveBackupReads(t *testing.T) {
 	// A full backup needs a recovery model that has one; the scratch
 	// databases inherit model's, which is usually SIMPLE — the log backup
 	// below needs FULL.
-	if _, err := db.ExecContext(ctx, `ALTER DATABASE [`+first.name+`] SET RECOVERY FULL`); err != nil {
+	if _, err := db.ExecContext(ctx, `ALTER DATABASE [`+first.Name+`] SET RECOVERY FULL`); err != nil {
 		t.Fatalf("set recovery full: %v", err)
 	}
 	device, remove := liveBackupDevice(t, db, ctx, liveDatabaseFileDir(t, first, ctx), first, second)
@@ -99,9 +99,9 @@ func TestLiveBackupReads(t *testing.T) {
 			database string
 			action   BackupAction
 		}{
-			{"set one", first.name, BackupActionDatabase},
-			{"set two", second.name, BackupActionDatabase},
-			{"set three", first.name, BackupActionLog},
+			{"set one", first.Name, BackupActionDatabase},
+			{"set two", second.Name, BackupActionDatabase},
+			{"set three", first.Name, BackupActionLog},
 		} {
 			h := headers[i]
 			if h.Position != i+1 {
@@ -131,7 +131,7 @@ func TestLiveBackupReads(t *testing.T) {
 		if err != nil {
 			t.Fatalf("BackupFileListContext: %v", err)
 		}
-		assertBackupFileList(t, files, first.name)
+		assertBackupFileList(t, files, first.Name)
 	})
 
 	// The set the caller asks for, not the first one on the device: with no
@@ -142,17 +142,17 @@ func TestLiveBackupReads(t *testing.T) {
 		if err != nil {
 			t.Fatalf("BackupFileListForSetContext: %v", err)
 		}
-		assertBackupFileList(t, files, second.name)
+		assertBackupFileList(t, files, second.Name)
 	})
 
 	t.Run("history", func(t *testing.T) {
-		history, err := srv.BackupHistoryContext(ctx, first.name)
+		history, err := srv.BackupHistoryContext(ctx, first.Name)
 		if err != nil {
 			t.Fatalf("BackupHistoryContext: %v", err)
 		}
 		if len(history) != 2 {
 			t.Fatalf("got %d history rows for %s, want 2 (the other database's must not be here)",
-				len(history), first.name)
+				len(history), first.Name)
 		}
 		// Newest first, and the log backup was taken last.
 		if history[0].BackupType != BackupActionLog || history[1].BackupType != BackupActionDatabase {
@@ -163,8 +163,8 @@ func TestLiveBackupReads(t *testing.T) {
 			t.Errorf("history is oldest-first: %v then %v", history[0].BackupFinish, history[1].BackupFinish)
 		}
 		for _, b := range history {
-			if b.DatabaseName != first.name {
-				t.Errorf("history row for %q, want %q", b.DatabaseName, first.name)
+			if b.DatabaseName != first.Name {
+				t.Errorf("history row for %q, want %q", b.DatabaseName, first.Name)
 			}
 			if b.DeviceName != device {
 				t.Errorf("history DeviceName = %q, want %q", b.DeviceName, device)

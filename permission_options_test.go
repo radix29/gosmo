@@ -11,7 +11,7 @@ import (
 func scriptedDB(t *testing.T) (*Database, context.Context, *ScriptCollector) {
 	t.Helper()
 	ctx, script := WithScript(context.Background())
-	return &Database{name: "appdb", server: &Server{}}, ctx, script
+	return &Database{Name: "appdb", server: &Server{}}, ctx, script
 }
 
 // onlyStatement returns the single statement collected, with the USE prefix

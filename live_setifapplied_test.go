@@ -54,8 +54,8 @@ func TestLiveScriptedSetterMirroring(t *testing.T) {
 	}
 
 	t.Logf("created with recovery=%s readonly=%v compat=%d state=%s",
-		reload().RecoveryModel(), reload().IsReadOnly(),
-		reload().CompatibilityLevel(), reload().State())
+		reload().RecoveryModel, reload().IsReadOnly,
+		reload().CompatibilityLevel, reload().State)
 
 	// 1. Scripted: for every setter, neither the handle nor the server may
 	// move. All five run under one collector, each asking for a value the
@@ -66,7 +66,7 @@ func TestLiveScriptedSetterMirroring(t *testing.T) {
 		compat   CompatibilityLevel
 		readOnly bool
 		state    string
-	}{d.RecoveryModel(), d.CompatibilityLevel(), d.IsReadOnly(), d.State()}
+	}{d.RecoveryModel, d.CompatibilityLevel, d.IsReadOnly, d.State}
 
 	sctx, script := WithScript(ctx)
 	for _, step := range []struct {
@@ -86,7 +86,7 @@ func TestLiveScriptedSetterMirroring(t *testing.T) {
 		// write the same field in opposite directions, so a pair that both
 		// mirror wrongly lands back on the starting value and a single
 		// end-of-loop assertion passes on the bug.
-		if got := d.State(); got != was.state {
+		if got := d.State; got != was.state {
 			t.Errorf("scripted %s moved the handle's state to %s, want it left at %s", step.name, got, was.state)
 		}
 	}
@@ -103,10 +103,10 @@ func TestLiveScriptedSetterMirroring(t *testing.T) {
 		server any
 		want   any
 	}{
-		{"recovery model", d.RecoveryModel(), srvNow.RecoveryModel(), was.recovery},
-		{"compatibility level", d.CompatibilityLevel(), srvNow.CompatibilityLevel(), was.compat},
-		{"read-only", d.IsReadOnly(), srvNow.IsReadOnly(), was.readOnly},
-		{"state", d.State(), srvNow.State(), was.state},
+		{"recovery model", d.RecoveryModel, srvNow.RecoveryModel, was.recovery},
+		{"compatibility level", d.CompatibilityLevel, srvNow.CompatibilityLevel, was.compat},
+		{"read-only", d.IsReadOnly, srvNow.IsReadOnly, was.readOnly},
+		{"state", d.State, srvNow.State, was.state},
 	} {
 		if c.handle != c.want {
 			t.Errorf("scripted setters moved the handle's %s to %v, want it left at %v", c.what, c.handle, c.want)
@@ -124,8 +124,8 @@ func TestLiveScriptedSetterMirroring(t *testing.T) {
 		t.Fatalf("SetOffline (to set up the scripted SetOnline): %v", err)
 	}
 	off := reload()
-	if off.State() != "OFFLINE" {
-		t.Fatalf("setup: server reports %s, want OFFLINE", off.State())
+	if off.State != "OFFLINE" {
+		t.Fatalf("setup: server reports %s, want OFFLINE", off.State)
 	}
 	octx, oscript := WithScript(ctx)
 	if err := off.SetOnlineContext(octx); err != nil {
@@ -134,10 +134,10 @@ func TestLiveScriptedSetterMirroring(t *testing.T) {
 	if len(oscript.Statements) != 1 {
 		t.Fatalf("Statements = %v, want one", oscript.Statements)
 	}
-	if got := off.State(); got != "OFFLINE" {
+	if got := off.State; got != "OFFLINE" {
 		t.Errorf("scripted SetOnline moved the handle's state to %s, want it left at OFFLINE", got)
 	}
-	if got := reload().State(); got != "OFFLINE" {
+	if got := reload().State; got != "OFFLINE" {
 		t.Errorf("scripted SetOnline moved the SERVER to %s, want it left at OFFLINE", got)
 	}
 	if err := reload().SetOnlineContext(ctx); err != nil {
@@ -149,7 +149,7 @@ func TestLiveScriptedSetterMirroring(t *testing.T) {
 	if err := srv.execContext(ctx, script.Statements[0]); err != nil {
 		t.Fatalf("running the captured statement: %v", err)
 	}
-	if got := reload().RecoveryModel(); got != RecoveryModelSimple {
+	if got := reload().RecoveryModel; got != RecoveryModelSimple {
 		t.Errorf("after running the captured statement the server reports %s, want SIMPLE", got)
 	}
 
@@ -158,7 +158,7 @@ func TestLiveScriptedSetterMirroring(t *testing.T) {
 	if err := d.SetRecoveryModelContext(ctx, RecoveryModelFull); err != nil {
 		t.Fatalf("SetRecoveryModel: %v", err)
 	}
-	if got, srvGot := d.RecoveryModel(), reload().RecoveryModel(); got != RecoveryModelFull || srvGot != RecoveryModelFull {
+	if got, srvGot := d.RecoveryModel, reload().RecoveryModel; got != RecoveryModelFull || srvGot != RecoveryModelFull {
 		t.Errorf("recovery: handle=%s server=%s, want both FULL", got, srvGot)
 	}
 	// Not a literal: an instance rejects any level above its own native one
@@ -168,13 +168,13 @@ func TestLiveScriptedSetterMirroring(t *testing.T) {
 	if err := d.SetCompatibilityLevelContext(ctx, wantCompat); err != nil {
 		t.Fatalf("SetCompatibilityLevel(%d): %v", wantCompat, err)
 	}
-	if got, srvGot := d.CompatibilityLevel(), reload().CompatibilityLevel(); got != wantCompat || srvGot != wantCompat {
+	if got, srvGot := d.CompatibilityLevel, reload().CompatibilityLevel; got != wantCompat || srvGot != wantCompat {
 		t.Errorf("compat: handle=%d server=%d, want both %d", got, srvGot, wantCompat)
 	}
 	if err := d.SetReadOnlyContext(ctx, true); err != nil {
 		t.Fatalf("SetReadOnly: %v", err)
 	}
-	if got, srvGot := d.IsReadOnly(), reload().IsReadOnly(); !got || !srvGot {
+	if got, srvGot := d.IsReadOnly, reload().IsReadOnly; !got || !srvGot {
 		t.Errorf("readonly: handle=%v server=%v, want both true", got, srvGot)
 	}
 	if err := d.SetReadOnlyContext(ctx, false); err != nil {
@@ -183,13 +183,13 @@ func TestLiveScriptedSetterMirroring(t *testing.T) {
 	if err := d.SetOfflineContext(ctx); err != nil {
 		t.Fatalf("SetOffline: %v", err)
 	}
-	if got, srvGot := d.State(), reload().State(); got != "OFFLINE" || srvGot != "OFFLINE" {
+	if got, srvGot := d.State, reload().State; got != "OFFLINE" || srvGot != "OFFLINE" {
 		t.Errorf("offline: handle=%s server=%s, want both OFFLINE", got, srvGot)
 	}
 	if err := d.SetOnlineContext(ctx); err != nil {
 		t.Fatalf("SetOnline: %v", err)
 	}
-	if got, srvGot := d.State(), reload().State(); got != "ONLINE" || srvGot != "ONLINE" {
+	if got, srvGot := d.State, reload().State; got != "ONLINE" || srvGot != "ONLINE" {
 		t.Errorf("online: handle=%s server=%s, want both ONLINE", got, srvGot)
 	}
 

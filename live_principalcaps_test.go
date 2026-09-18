@@ -89,7 +89,7 @@ func TestLivePrincipalCapabilitiesMatchWhatTheServerEnforces(t *testing.T) {
 	// Not NewServer, for live_schemacaps_test.go's reason: loadInfo reads
 	// server-scope DMVs this login has no rights to.
 	restricted := &Server{db: pool}
-	caps, err := restricted.Database(d.Name()).CapabilitiesContext(ctx)
+	caps, err := restricted.DatabaseRef(d.Name).CapabilitiesContext(ctx)
 	if err != nil {
 		t.Fatalf("CapabilitiesContext as %s: %v", login, err)
 	}
@@ -127,7 +127,7 @@ func TestLivePrincipalCapabilitiesMatchWhatTheServerEnforces(t *testing.T) {
 	// that agreed with itself and not with the server would pass everything
 	// above.
 	exec := func(stmt string) error {
-		_, err := pool.ExecContext(ctx, "USE ["+d.Name()+"]; "+stmt)
+		_, err := pool.ExecContext(ctx, "USE ["+d.Name+"]; "+stmt)
 		return err
 	}
 	if err := exec("DROP USER denied_user"); err == nil {
@@ -156,7 +156,7 @@ func TestLivePrincipalCapabilitiesMatchWhatTheServerEnforces(t *testing.T) {
 		t.Fatalf("open as %s: %v", grantee, err)
 	}
 	defer gpool.Close()
-	gcaps, err := (&Server{db: gpool}).Database(d.Name()).CapabilitiesContext(ctx)
+	gcaps, err := (&Server{db: gpool}).DatabaseRef(d.Name).CapabilitiesContext(ctx)
 	if err != nil {
 		t.Fatalf("CapabilitiesContext as %s: %v", grantee, err)
 	}
@@ -173,7 +173,7 @@ func TestLivePrincipalCapabilitiesMatchWhatTheServerEnforces(t *testing.T) {
 		t.Error("a GRANT row read back as a denial — the block's state filter is gone")
 	}
 	gexec := func(stmt string) error {
-		_, err := gpool.ExecContext(ctx, "USE ["+d.Name()+"]; "+stmt)
+		_, err := gpool.ExecContext(ctx, "USE ["+d.Name+"]; "+stmt)
 		return err
 	}
 	if err := gexec("ALTER USER granted_only WITH NAME = granted_only_x"); err == nil {

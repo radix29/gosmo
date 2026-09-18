@@ -173,7 +173,7 @@ ORDER  BY SCHEMA_NAME(q.schema_id), q.name`
 
 	rows, err := d.query(ctx, q)
 	if err != nil {
-		return nil, fmt.Errorf("gosmo: list queues in %q: %w", d.name, err)
+		return nil, fmt.Errorf("gosmo: list queues in %q: %w", d.Name, err)
 	}
 	defer rows.Close()
 
@@ -181,12 +181,12 @@ ORDER  BY SCHEMA_NAME(q.schema_id), q.name`
 	for rows.Next() {
 		bq, err := scanBrokerQueue(d, rows.Scan)
 		if err != nil {
-			return nil, fmt.Errorf("gosmo: list queues in %q: %w", d.name, err)
+			return nil, fmt.Errorf("gosmo: list queues in %q: %w", d.Name, err)
 		}
 		out = append(out, bq)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("gosmo: list queues in %q: %w", d.name, err)
+		return nil, fmt.Errorf("gosmo: list queues in %q: %w", d.Name, err)
 	}
 	return out, nil
 }
@@ -211,10 +211,10 @@ func (d *Database) BrokerQueueByNameContext(ctx context.Context, schema, name st
 	}, queueSelect+`
 WHERE  SCHEMA_NAME(q.schema_id) = @p1 AND q.name = @p2`, schema, name)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, notFoundf("gosmo: queue [%s].[%s] not found in %q", schema, name, d.name)
+		return nil, notFoundf("gosmo: queue [%s].[%s] not found in %q", schema, name, d.Name)
 	}
 	if err != nil {
-		return nil, fmt.Errorf("gosmo: read queue [%s].[%s] in %q: %w", schema, name, d.name, err)
+		return nil, fmt.Errorf("gosmo: read queue [%s].[%s] in %q: %w", schema, name, d.Name, err)
 	}
 	return bq, nil
 }
@@ -275,7 +275,7 @@ func (d *Database) QueueMessageCounts() (map[int]int64, error) {
 func (d *Database) QueueMessageCountsContext(ctx context.Context) (map[int]int64, error) {
 	rows, err := d.query(ctx, queueMessageCountSelect)
 	if err != nil {
-		return nil, fmt.Errorf("gosmo: read queue message counts in %q: %w", d.name, err)
+		return nil, fmt.Errorf("gosmo: read queue message counts in %q: %w", d.Name, err)
 	}
 	defer rows.Close()
 
@@ -284,14 +284,14 @@ func (d *Database) QueueMessageCountsContext(ctx context.Context) (map[int]int64
 		var id int
 		var count sql.NullInt64
 		if err := rows.Scan(&id, &count); err != nil {
-			return nil, fmt.Errorf("gosmo: read queue message counts in %q: %w", d.name, err)
+			return nil, fmt.Errorf("gosmo: read queue message counts in %q: %w", d.Name, err)
 		}
 		if count.Valid {
 			out[id] = count.Int64
 		}
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("gosmo: read queue message counts in %q: %w", d.name, err)
+		return nil, fmt.Errorf("gosmo: read queue message counts in %q: %w", d.Name, err)
 	}
 	return out, nil
 }
@@ -319,7 +319,7 @@ WHERE  it.parent_object_id = @p1`, q.ObjectID)
 	}
 	if err != nil {
 		return 0, fmt.Errorf("gosmo: read message count of queue %s in %q: %w",
-			q.FullName(), q.db.name, err)
+			q.FullName(), q.db.Name, err)
 	}
 	return count.Int64, nil
 }
@@ -364,7 +364,7 @@ WHERE  m.database_id = DB_ID()`
 
 	rows, err := d.query(ctx, q)
 	if err != nil {
-		return nil, fmt.Errorf("gosmo: list queue monitors in %q: %w", d.name, err)
+		return nil, fmt.Errorf("gosmo: list queue monitors in %q: %w", d.Name, err)
 	}
 	defer rows.Close()
 
@@ -373,14 +373,14 @@ WHERE  m.database_id = DB_ID()`
 		m := &QueueMonitor{}
 		var activated, empty sql.NullTime
 		if err := rows.Scan(&m.QueueID, &m.State, &m.TasksWaiting, &activated, &empty); err != nil {
-			return nil, fmt.Errorf("gosmo: list queue monitors in %q: %w", d.name, err)
+			return nil, fmt.Errorf("gosmo: list queue monitors in %q: %w", d.Name, err)
 		}
 		m.LastActivatedTime = activated.Time
 		m.LastEmptyRowsetTime = empty.Time
 		out = append(out, m)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("gosmo: list queue monitors in %q: %w", d.name, err)
+		return nil, fmt.Errorf("gosmo: list queue monitors in %q: %w", d.Name, err)
 	}
 	return out, nil
 }

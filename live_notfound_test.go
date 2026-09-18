@@ -184,7 +184,7 @@ func TestLiveCertificateNotFoundIsNilNil(t *testing.T) {
 	db, ctx, done := liveDB(t)
 	defer done()
 
-	master := (&Server{db: db}).Database("master")
+	master := (&Server{db: db}).DatabaseRef("master")
 
 	cert, err := master.CertificateByNameContext(ctx, "zz_gossms_no_such_certificate")
 	if err != nil {

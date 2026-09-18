@@ -58,7 +58,7 @@ func TestDiskUsageScansEveryColumnIntoTheRightField(t *testing.T) {
 	}
 	defer db.Close()
 
-	d := &Database{server: &Server{db: db}, name: "test"}
+	d := &Database{server: &Server{db: db}, Name: "test"}
 	got, err := d.DiskUsageContext(context.Background())
 	if err != nil {
 		t.Fatalf("DiskUsageContext: %v", err)

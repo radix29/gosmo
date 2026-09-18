@@ -90,7 +90,7 @@ func TestTableKindsPresentOnADatabaseWithNoTables(t *testing.T) {
 		row:   []driver.Value{nil, nil, nil, nil},
 	})
 
-	d := &Database{server: &Server{db: db}, name: "testdb"}
+	d := &Database{server: &Server{db: db}, Name: "testdb"}
 	got, err := d.TableKindsPresentContext(context.Background())
 	if err != nil {
 		t.Fatalf("TableKindsPresentContext: %v", err)

@@ -105,6 +105,20 @@ func (s *Server) ServerRoleByNameContext(ctx context.Context, name string) (*Ser
 	return r, nil
 }
 
+// ServerRoleRef returns a lightweight handle for name without querying the
+// server at all — unlike ServerRoleByName/ServerRoleByNameContext, it doesn't
+// verify the role exists or populate ID/IsFixedRole/Owner/Members/SID/
+// CreateDate/ModifyDate (they stay at their zero value). Every write method
+// on *ServerRole (DropContext, RenameContext, ChangeOwnerContext) only ever
+// needs the role's name, never those cached fields, so this is sufficient for
+// issuing further ALTER-style calls against a role the caller already knows
+// exists — most commonly one it just created in the same operation. See
+// Server.DatabaseRef's doc comment for why this also matters under a
+// WithScript-derived context.
+func (s *Server) ServerRoleRef(name string) *ServerRole {
+	return &ServerRole{server: s, Name: name}
+}
+
 // DropServerRole drops a user-defined server role. A fixed role, or one
 // that still owns another role, is refused by the server, not here.
 func (s *Server) DropServerRole(name string) error {

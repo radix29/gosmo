@@ -69,7 +69,7 @@ func statHeaderFor(t *testing.T, cols []string, vals []driver.Value) *StatisticH
 
 	st := &Statistic{
 		Name:  "IX_t",
-		table: &Table{db: &Database{server: &Server{db: db}, name: "d"}, Schema: "dbo", Name: "t"},
+		table: &Table{db: &Database{server: &Server{db: db}, Name: "d"}, Schema: "dbo", Name: "t"},
 	}
 	h, err := st.HeaderContext(context.Background())
 	if err != nil {

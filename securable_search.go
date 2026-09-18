@@ -79,7 +79,7 @@ ORDER  BY x.rank, x.qualified`
 
 	rows, err := d.query(ctx, q, args...)
 	if err != nil {
-		return nil, fmt.Errorf("gosmo: find securables in %q: %w", d.name, err)
+		return nil, fmt.Errorf("gosmo: find securables in %q: %w", d.Name, err)
 	}
 	defer rows.Close()
 
@@ -88,12 +88,12 @@ ORDER  BY x.rank, x.qualified`
 		var r SecurableRef
 		var rank int
 		if err := rows.Scan(&r.Type, &rank, &r.Schema, &r.Name); err != nil {
-			return nil, fmt.Errorf("gosmo: find securables in %q: %w", d.name, err)
+			return nil, fmt.Errorf("gosmo: find securables in %q: %w", d.Name, err)
 		}
 		refs = append(refs, r)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("gosmo: find securables in %q: %w", d.name, err)
+		return nil, fmt.Errorf("gosmo: find securables in %q: %w", d.Name, err)
 	}
 	return refs, nil
 }

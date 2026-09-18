@@ -46,7 +46,7 @@ func main() {
 	demo.Section("Databases")
 	for db, err := range srv.DatabaseSeq(ctx) {
 		demo.Must(err)
-		fmt.Printf("  %-30s %-10s compat=%d\n", db.Name(), db.State(), db.CompatibilityLevel())
+		fmt.Printf("  %-30s %-10s compat=%d\n", db.Name, db.State, db.CompatibilityLevel)
 	}
 
 	// -- Breaking out ------------------------------------------------------
@@ -68,7 +68,7 @@ func main() {
 		fmt.Println("  no user database on this instance; nothing further to show")
 		return
 	}
-	fmt.Printf("  %s\n", target.Name())
+	fmt.Printf("  %s\n", target.Name)
 
 	// -- Deferred, and re-run per range ------------------------------------
 	//
@@ -119,7 +119,7 @@ func main() {
 			fmt.Printf("  fetch failed as one unit: %v\n", err)
 			break
 		}
-		fmt.Printf("  unexpected row: %s\n", db.Name())
+		fmt.Printf("  unexpected row: %s\n", db.Name)
 	}
 
 	demo.Section("A deadline too short for the fetch")

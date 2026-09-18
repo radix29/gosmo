@@ -164,7 +164,7 @@ func captureTable(t *testing.T) *Table {
 	t.Cleanup(func() { db.Close() })
 	captured.reset()
 	srv := &Server{db: db}
-	return &Table{db: &Database{server: srv, name: "testdb"}, Schema: "my.schema", Name: "Sales.Archive"}
+	return &Table{db: &Database{server: srv, Name: "testdb"}, Schema: "my.schema", Name: "Sales.Archive"}
 }
 
 // A qualified name embedded in a T-SQL string literal must be bracket-quoted
@@ -230,7 +230,7 @@ func TestFragmentationQueryEscapesQuoteInObjectName(t *testing.T) {
 	defer db.Close()
 	captured.reset()
 
-	tbl := &Table{db: &Database{server: &Server{db: db}, name: "testdb"}, Schema: "dbo", Name: "O'Brien.Log"}
+	tbl := &Table{db: &Database{server: &Server{db: db}, Name: "testdb"}, Schema: "dbo", Name: "O'Brien.Log"}
 	_, _ = tbl.FragmentationStatsContext(context.Background(), "LIMITED")
 
 	q := captured.find("dm_db_index_physical_stats")
@@ -267,7 +267,7 @@ func TestScripterExistenceGuardsBracketQuoteTheObjectName(t *testing.T) {
 		t.Cleanup(func() { db.Close() })
 		captured.reset(tableMetadataRow(schema, name))
 
-		d := &Database{server: &Server{db: db}, name: "testdb"}
+		d := &Database{server: &Server{db: db}, Name: "testdb"}
 		out, err := NewScripter(d, opts).ScriptTableContext(context.Background(), schema, name)
 		if err != nil {
 			t.Fatalf("ScriptTableContext: %v", err)

@@ -36,7 +36,7 @@ func TestLiveDropColumnAndTransferObject(t *testing.T) {
 	exec("CREATE SCHEMA [arch]")
 	exec("CREATE TABLE [dbo].[Orders] (id INT NOT NULL, spare NVARCHAR(50) NULL, flagged BIT NOT NULL CONSTRAINT [DF_Orders_flagged] DEFAULT (0))")
 
-	tbl := d.Table("dbo", "Orders")
+	tbl := d.TableRef("dbo", "Orders")
 
 	// The plain case: a column nothing depends on goes.
 	if err := tbl.DropColumnContext(ctx, "spare"); err != nil {

@@ -65,7 +65,7 @@ func (d *Database) DatabaseScopedCredentialsContext(ctx context.Context) ([]*Dat
 	rows, err := d.query(ctx, databaseScopedCredentialSelect+`
 ORDER  BY c.name`)
 	if err != nil {
-		return nil, fmt.Errorf("gosmo: list database scoped credentials in %q: %w", d.name, err)
+		return nil, fmt.Errorf("gosmo: list database scoped credentials in %q: %w", d.Name, err)
 	}
 	defer rows.Close()
 
@@ -73,12 +73,12 @@ ORDER  BY c.name`)
 	for rows.Next() {
 		c, err := scanDatabaseScopedCredential(d, rows.Scan)
 		if err != nil {
-			return nil, fmt.Errorf("gosmo: list database scoped credentials in %q: %w", d.name, err)
+			return nil, fmt.Errorf("gosmo: list database scoped credentials in %q: %w", d.Name, err)
 		}
 		creds = append(creds, c)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("gosmo: list database scoped credentials in %q: %w", d.name, err)
+		return nil, fmt.Errorf("gosmo: list database scoped credentials in %q: %w", d.Name, err)
 	}
 	return creds, nil
 }
@@ -101,10 +101,10 @@ func (d *Database) DatabaseScopedCredentialByNameContext(ctx context.Context, na
 	}, databaseScopedCredentialSelect+`
 WHERE  c.name = @p1`, name)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, notFoundf("gosmo: database scoped credential %q not found in %q", name, d.name)
+		return nil, notFoundf("gosmo: database scoped credential %q not found in %q", name, d.Name)
 	}
 	if err != nil {
-		return nil, fmt.Errorf("gosmo: read database scoped credential %q in %q: %w", name, d.name, err)
+		return nil, fmt.Errorf("gosmo: read database scoped credential %q in %q: %w", name, d.Name, err)
 	}
 	return c, nil
 }
@@ -186,7 +186,7 @@ func (d *Database) CreateDatabaseScopedCredentialContext(ctx context.Context, sp
 		return nil, fmt.Errorf("gosmo: create database scoped credential: %w", err)
 	}
 	if _, err := d.exec(ctx, stmt); err != nil {
-		return nil, fmt.Errorf("gosmo: create database scoped credential %q in %q: %w", spec.Name, d.name, err)
+		return nil, fmt.Errorf("gosmo: create database scoped credential %q in %q: %w", spec.Name, d.Name, err)
 	}
 	if Scripting(ctx) {
 		// The CREATE was only collected, so there is nothing to read back.
@@ -220,7 +220,7 @@ func (c *DatabaseScopedCredential) AlterContext(ctx context.Context, identity st
 		stmt += fmt.Sprintf(", SECRET = N'%s'", escapeSingle(*secret))
 	}
 	if _, err := c.db.exec(ctx, stmt); err != nil {
-		return fmt.Errorf("gosmo: alter database scoped credential %q in %q: %w", c.Name, c.db.name, err)
+		return fmt.Errorf("gosmo: alter database scoped credential %q in %q: %w", c.Name, c.db.Name, err)
 	}
 	setIfApplied(ctx, &c.Identity, identity)
 	return nil
@@ -234,7 +234,7 @@ func (c *DatabaseScopedCredential) Drop() error { return c.DropContext(context.B
 // other Drop* in this package does.
 func (c *DatabaseScopedCredential) DropContext(ctx context.Context) error {
 	if _, err := c.db.exec(ctx, "DROP DATABASE SCOPED CREDENTIAL "+quoteIdent(c.Name)); err != nil {
-		return fmt.Errorf("gosmo: drop database scoped credential %q in %q: %w", c.Name, c.db.name, err)
+		return fmt.Errorf("gosmo: drop database scoped credential %q in %q: %w", c.Name, c.db.Name, err)
 	}
 	return nil
 }

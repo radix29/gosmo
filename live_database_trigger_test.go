@@ -95,7 +95,7 @@ AS
 		t.Errorf("ObjectTriggers(dbo.V) = %+v, want just tr_V", viewTrigs)
 	}
 
-	if err := d.DatabaseTrigger(ddlName).DisableContext(ctx); err != nil {
+	if err := d.DatabaseTriggerRef(ddlName).DisableContext(ctx); err != nil {
 		t.Fatalf("DisableContext: %v", err)
 	}
 	after, err := d.DatabaseTriggerByNameContext(ctx, ddlName)
@@ -122,14 +122,14 @@ AS
 		}
 	}
 
-	if err := d.DatabaseTrigger(ddlName).EnableContext(ctx); err != nil {
+	if err := d.DatabaseTriggerRef(ddlName).EnableContext(ctx); err != nil {
 		t.Fatalf("EnableContext: %v", err)
 	}
 	if back, err := d.DatabaseTriggerByNameContext(ctx, ddlName); err != nil || !back.IsEnabled {
 		t.Fatalf("re-read after enable: %v (enabled=%v)", err, back != nil && back.IsEnabled)
 	}
 
-	if err := d.DatabaseTrigger(ddlName).DropContext(ctx); err != nil {
+	if err := d.DatabaseTriggerRef(ddlName).DropContext(ctx); err != nil {
 		t.Fatalf("DropContext: %v", err)
 	}
 	if _, err := d.DatabaseTriggerByNameContext(ctx, ddlName); !errors.Is(err, ErrNotFound) {

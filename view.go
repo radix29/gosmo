@@ -59,7 +59,7 @@ ORDER  BY SCHEMA_NAME(v.schema_id), v.name`
 
 	rows, err := d.query(ctx, q, args...)
 	if err != nil {
-		return nil, fmt.Errorf("gosmo: list views in %q: %w", d.name, err)
+		return nil, fmt.Errorf("gosmo: list views in %q: %w", d.Name, err)
 	}
 	defer rows.Close()
 
@@ -68,12 +68,12 @@ ORDER  BY SCHEMA_NAME(v.schema_id), v.name`
 		v := &View{}
 		if err := rows.Scan(&v.ObjectID, &v.Schema, &v.Name,
 			&v.Definition, &v.CreateDate, &v.ModifyDate); err != nil {
-			return nil, fmt.Errorf("gosmo: list views in %q: %w", d.name, err)
+			return nil, fmt.Errorf("gosmo: list views in %q: %w", d.Name, err)
 		}
 		views = append(views, v)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("gosmo: list views in %q: %w", d.name, err)
+		return nil, fmt.Errorf("gosmo: list views in %q: %w", d.Name, err)
 	}
 	return views, nil
 }
@@ -119,7 +119,7 @@ ORDER  BY o.name`
 
 	rows, err := d.query(ctx, q, args...)
 	if err != nil {
-		return nil, fmt.Errorf("gosmo: list system views in %q: %w", d.name, err)
+		return nil, fmt.Errorf("gosmo: list system views in %q: %w", d.Name, err)
 	}
 	defer rows.Close()
 
@@ -128,12 +128,12 @@ ORDER  BY o.name`
 		v := &View{}
 		if err := rows.Scan(&v.ObjectID, &v.Schema, &v.Name,
 			&v.Definition, &v.CreateDate, &v.ModifyDate); err != nil {
-			return nil, fmt.Errorf("gosmo: list system views in %q: %w", d.name, err)
+			return nil, fmt.Errorf("gosmo: list system views in %q: %w", d.Name, err)
 		}
 		views = append(views, v)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("gosmo: list system views in %q: %w", d.name, err)
+		return nil, fmt.Errorf("gosmo: list system views in %q: %w", d.Name, err)
 	}
 	return views, nil
 }

@@ -64,7 +64,7 @@ func qsLiveSetup(t *testing.T, db *sql.DB, ctx context.Context) (*Server, *Datab
 		"(OPERATION_MODE = READ_WRITE, QUERY_CAPTURE_MODE = ALL, " +
 		"INTERVAL_LENGTH_MINUTES = 1, DATA_FLUSH_INTERVAL_SECONDS = 60" +
 		waitStats + ")")
-	d := srv.Database(qsLiveDBName)
+	d := srv.DatabaseRef(qsLiveDBName)
 
 	// A workload: a table, a procedure over it, and enough executions with
 	// different plans that every report has something to rank. The index is

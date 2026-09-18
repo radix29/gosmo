@@ -94,9 +94,9 @@ func (d *Database) ColumnMasterKeyByNameContext(ctx context.Context, name string
 WHERE  name = @p1`, name)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return nil, notFoundf("gosmo: column master key %q not found in %q", name, d.name)
+			return nil, notFoundf("gosmo: column master key %q not found in %q", name, d.Name)
 		}
-		return nil, fmt.Errorf("gosmo: find column master key %q in %q: %w", name, d.name, err)
+		return nil, fmt.Errorf("gosmo: find column master key %q in %q: %w", name, d.Name, err)
 	}
 	return k, nil
 }
@@ -312,16 +312,16 @@ func (d *Database) ColumnEncryptionKeyByNameContext(ctx context.Context, name st
 WHERE  cek.name = @p1
 ORDER  BY cekv.column_master_key_id`, name)
 	if err != nil {
-		return nil, fmt.Errorf("gosmo: find column encryption key %q in %q: %w", name, d.name, err)
+		return nil, fmt.Errorf("gosmo: find column encryption key %q in %q: %w", name, d.Name, err)
 	}
 	defer rows.Close()
 
 	keys, err := scanColumnEncryptionKeys(d, rows)
 	if err != nil {
-		return nil, fmt.Errorf("gosmo: find column encryption key %q in %q: %w", name, d.name, err)
+		return nil, fmt.Errorf("gosmo: find column encryption key %q in %q: %w", name, d.Name, err)
 	}
 	if len(keys) == 0 {
-		return nil, notFoundf("gosmo: column encryption key %q not found in %q", name, d.name)
+		return nil, notFoundf("gosmo: column encryption key %q not found in %q", name, d.Name)
 	}
 	return keys[0], nil
 }

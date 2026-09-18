@@ -91,6 +91,20 @@ WHERE  name = @p1`
 	return c, nil
 }
 
+// ConfigurationRef returns a lightweight handle for name without querying the
+// server at all — unlike ConfigurationByName/ConfigurationByNameContext, it
+// doesn't verify the option exists or populate ConfigID/Value/ValueInUse/
+// Minimum/Maximum/IsDynamic/IsAdvanced/Description (they stay at their zero
+// value). SetValueContext only ever needs the option's name, never those
+// cached fields, so this is sufficient for setting an option whose name the
+// caller already knows. Note that IsDynamic stays false on a handle, so the
+// caller decides on its own whether Server.Reconfigure is needed. See
+// Server.DatabaseRef's doc comment for why this also matters under a
+// WithScript-derived context.
+func (s *Server) ConfigurationRef(name string) *ConfigurationOption {
+	return &ConfigurationOption{server: s, Name: name}
+}
+
 // SetValue changes the option value using sp_configure.
 // For non-dynamic options, call Server.Reconfigure() afterwards.
 func (c *ConfigurationOption) SetValue(value int64) error {

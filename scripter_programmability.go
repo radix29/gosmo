@@ -150,7 +150,8 @@ func buildUserDefinedTableTypeScript(t *UserDefinedTableType, cols []*Column, op
 	}
 	fmt.Fprintf(&sb, "CREATE TYPE %s AS TABLE (\n", fullName)
 	for i, col := range cols {
-		sb.WriteString("    " + tableTypeColumn(col))
+		sb.WriteString("    ")
+		sb.WriteString(tableTypeColumn(col))
 		if i != len(cols)-1 {
 			sb.WriteString(",")
 		}
@@ -267,8 +268,10 @@ func buildXmlSchemaCollectionScript(c *XmlSchemaCollection, def string, opts Scr
 	fullName := qualifiedName(c.Schema, c.Name)
 	var sb strings.Builder
 	if v := opts.verb(); v == ScriptDrop || v == ScriptDropAndCreate {
-		sb.WriteString(xmlSchemaCollectionGuard(c, "IF EXISTS") +
-			"    DROP XML SCHEMA COLLECTION " + fullName + ";\nGO\n")
+		sb.WriteString(xmlSchemaCollectionGuard(c, "IF EXISTS"))
+		sb.WriteString("    DROP XML SCHEMA COLLECTION ")
+		sb.WriteString(fullName)
+		sb.WriteString(";\nGO\n")
 		if v == ScriptDrop {
 			return sb.String()
 		}
@@ -347,7 +350,8 @@ func buildBoundObjectScript(keyword, schema, name, definition string, opts Scrip
 			strings.ToLower(keyword), fullName)
 		return sb.String()
 	}
-	sb.WriteString(strings.TrimRight(definition, "\r\n") + "\nGO\n")
+	sb.WriteString(strings.TrimRight(definition, "\r\n"))
+	sb.WriteString("\nGO\n")
 	return sb.String()
 }
 

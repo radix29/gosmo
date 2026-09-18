@@ -522,8 +522,8 @@ func (d *Database) Capabilities() (*DatabaseCapabilities, error) {
 // for a login that cannot connect there.
 func (d *Database) CapabilitiesContext(ctx context.Context) (*DatabaseCapabilities, error) {
 	var access sql.NullBool
-	if err := d.server.queryRowScan(ctx, "SELECT HAS_DBACCESS(@p1)", []any{d.name}, &access); err != nil {
-		return nil, fmt.Errorf("gosmo: read capabilities for database %q: %w", d.name, err)
+	if err := d.server.queryRowScan(ctx, "SELECT HAS_DBACCESS(@p1)", []any{d.Name}, &access); err != nil {
+		return nil, fmt.Errorf("gosmo: read capabilities for database %q: %w", d.Name, err)
 	}
 	// NULL means the database does not exist or is not visible; either way
 	// there is nothing inside it to ask about.
@@ -571,7 +571,7 @@ func (d *Database) CapabilitiesContext(ctx context.Context) (*DatabaseCapabiliti
 
 	rows, err := d.query(ctx, q, args...)
 	if err != nil {
-		return nil, fmt.Errorf("gosmo: read capabilities for database %q: %w", d.name, err)
+		return nil, fmt.Errorf("gosmo: read capabilities for database %q: %w", d.Name, err)
 	}
 	defer rows.Close()
 
@@ -598,7 +598,7 @@ func (d *Database) CapabilitiesContext(ctx context.Context) (*DatabaseCapabiliti
 		columns:            c.ColumnPermissions,
 		securables:         c.SecurablePermissions,
 	}); err != nil {
-		return nil, fmt.Errorf("gosmo: read capabilities for database %q: %w", d.name, err)
+		return nil, fmt.Errorf("gosmo: read capabilities for database %q: %w", d.Name, err)
 	}
 	return c, nil
 }

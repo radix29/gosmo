@@ -334,16 +334,16 @@ func (s *Server) DatabasesContext(ctx context.Context) ([]*Database, error) {
 		var state, recovery, collation sql.NullString
 		var compatLevel sql.NullInt64
 		if err := rows.Scan(
-			&d.name, &d.id, &state, &recovery,
-			&compatLevel, &collation, &d.isReadOnly, &d.createDate,
-			&d.sourceDatabaseID,
+			&d.Name, &d.ID, &state, &recovery,
+			&compatLevel, &collation, &d.IsReadOnly, &d.CreateDate,
+			&d.SourceDatabaseID,
 		); err != nil {
 			return nil, fmt.Errorf("gosmo: list databases: %w", err)
 		}
-		d.state = state.String
-		d.recoveryModel = RecoveryModel(recovery.String)
-		d.compatLevel = CompatibilityLevel(compatLevel.Int64)
-		d.collation = collation.String
+		d.State = state.String
+		d.RecoveryModel = RecoveryModel(recovery.String)
+		d.CompatibilityLevel = CompatibilityLevel(compatLevel.Int64)
+		d.Collation = collation.String
 		dbs = append(dbs, d)
 	}
 	if err := rows.Err(); err != nil {
@@ -376,19 +376,19 @@ func (s *Server) DatabaseByNameContext(ctx context.Context, name string) (*Datab
 	var compatLevel sql.NullInt64
 
 	if err := s.queryRowScan(ctx, q, []any{name},
-		&d.name, &d.id, &state, &recovery,
-		&compatLevel, &collation, &d.isReadOnly, &d.createDate,
-		&d.sourceDatabaseID,
+		&d.Name, &d.ID, &state, &recovery,
+		&compatLevel, &collation, &d.IsReadOnly, &d.CreateDate,
+		&d.SourceDatabaseID,
 	); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, notFoundf("gosmo: database %q not found", name)
 		}
 		return nil, fmt.Errorf("gosmo: database by name: %w", err)
 	}
-	d.state = state.String
-	d.recoveryModel = RecoveryModel(recovery.String)
-	d.compatLevel = CompatibilityLevel(compatLevel.Int64)
-	d.collation = collation.String
+	d.State = state.String
+	d.RecoveryModel = RecoveryModel(recovery.String)
+	d.CompatibilityLevel = CompatibilityLevel(compatLevel.Int64)
+	d.Collation = collation.String
 	return d, nil
 }
 
@@ -406,8 +406,12 @@ func (s *Server) DatabaseByNameContext(ctx context.Context, name string) (*Datab
 // ScriptCollector and would fail outright (or return stale data) for a
 // database whose CREATE DATABASE was itself only scripted, not actually
 // run.
+//
+// IsSystem and IsSnapshot are derived from ID and SourceDatabaseID, so both
+// answer false on a handle — DatabaseRef("master").IsSystem() is false. A
+// caller that needs either answer needs DatabaseByName.
 func (s *Server) DatabaseRef(name string) *Database {
-	return &Database{server: s, name: name}
+	return &Database{server: s, Name: name}
 }
 
 // CreateDatabase creates a new database with the given name and optional options.

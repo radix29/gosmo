@@ -28,7 +28,7 @@ func captureDatabase(t *testing.T) *Database {
 	}
 	t.Cleanup(func() { db.Close() })
 	captured.reset()
-	return &Database{server: &Server{db: db}, name: "testdb"}
+	return &Database{server: &Server{db: db}, Name: "testdb"}
 }
 
 func TestExtendedPropertiesReadNullsAnUnusedLevel(t *testing.T) {

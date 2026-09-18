@@ -115,7 +115,7 @@ func (d *Database) DatabaseAuditSpecificationsContext(ctx context.Context) ([]*D
 	rows, err := d.query(ctx, databaseAuditSpecificationSelect+`
 ORDER  BY s.name`)
 	if err != nil {
-		return nil, fmt.Errorf("gosmo: list database audit specifications in %q: %w", d.name, err)
+		return nil, fmt.Errorf("gosmo: list database audit specifications in %q: %w", d.Name, err)
 	}
 	defer rows.Close()
 
@@ -124,13 +124,13 @@ ORDER  BY s.name`)
 	for rows.Next() {
 		spec, err := scanDatabaseAuditSpecification(d, rows.Scan)
 		if err != nil {
-			return nil, fmt.Errorf("gosmo: list database audit specifications in %q: %w", d.name, err)
+			return nil, fmt.Errorf("gosmo: list database audit specifications in %q: %w", d.Name, err)
 		}
 		byID[spec.SpecificationID] = spec
 		out = append(out, spec)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("gosmo: list database audit specifications in %q: %w", d.name, err)
+		return nil, fmt.Errorf("gosmo: list database audit specifications in %q: %w", d.Name, err)
 	}
 	if len(out) == 0 {
 		return out, nil
@@ -138,7 +138,7 @@ ORDER  BY s.name`)
 	// One details query for every specification, grouped in Go — never one
 	// per row inside the loop above.
 	if err := d.loadAuditSpecificationDetails(ctx, byID, 0); err != nil {
-		return nil, fmt.Errorf("gosmo: list database audit specifications in %q: %w", d.name, err)
+		return nil, fmt.Errorf("gosmo: list database audit specifications in %q: %w", d.Name, err)
 	}
 	return out, nil
 }
@@ -160,14 +160,14 @@ func (d *Database) DatabaseAuditSpecificationByNameContext(ctx context.Context, 
 	}, databaseAuditSpecificationSelect+`
 WHERE  s.name = @p1`, name)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, notFoundf("gosmo: database audit specification %q not found in %q", name, d.name)
+		return nil, notFoundf("gosmo: database audit specification %q not found in %q", name, d.Name)
 	}
 	if err != nil {
-		return nil, fmt.Errorf("gosmo: read database audit specification %q in %q: %w", name, d.name, err)
+		return nil, fmt.Errorf("gosmo: read database audit specification %q in %q: %w", name, d.Name, err)
 	}
 	byID := map[int]*DatabaseAuditSpecification{spec.SpecificationID: spec}
 	if err := d.loadAuditSpecificationDetails(ctx, byID, spec.SpecificationID); err != nil {
-		return nil, fmt.Errorf("gosmo: read database audit specification %q in %q: %w", name, d.name, err)
+		return nil, fmt.Errorf("gosmo: read database audit specification %q in %q: %w", name, d.Name, err)
 	}
 	return spec, nil
 }
@@ -453,7 +453,7 @@ func (d *Database) CreateDatabaseAuditSpecificationContext(ctx context.Context, 
 		return nil, fmt.Errorf("gosmo: create database audit specification: %w", err)
 	}
 	if _, err := d.exec(ctx, stmt); err != nil {
-		return nil, fmt.Errorf("gosmo: create database audit specification %q in %q: %w", spec.Name, d.name, err)
+		return nil, fmt.Errorf("gosmo: create database audit specification %q in %q: %w", spec.Name, d.Name, err)
 	}
 	if Scripting(ctx) {
 		// The CREATE was only collected, so there is nothing to read back.
@@ -491,7 +491,7 @@ func (spec *DatabaseAuditSpecification) isEnabledContext(ctx context.Context) (b
 		return row.Scan(&enabled)
 	}, "SELECT is_state_enabled FROM sys.database_audit_specifications WHERE name = @p1", spec.Name)
 	if errors.Is(err, sql.ErrNoRows) {
-		return false, notFoundf("gosmo: database audit specification %q not found in %q", spec.Name, spec.db.name)
+		return false, notFoundf("gosmo: database audit specification %q not found in %q", spec.Name, spec.db.Name)
 	}
 	if err != nil {
 		return false, err
@@ -504,7 +504,7 @@ func (spec *DatabaseAuditSpecification) isEnabledContext(ctx context.Context) (b
 // cannot confuse a database specification with a server one, or with a
 // same-named specification in another database.
 func (spec *DatabaseAuditSpecification) windowKey() string {
-	return spec.db.name + "." + spec.Name
+	return spec.db.Name + "." + spec.Name
 }
 
 // inSpecificationWindow reports whether an enclosing WithDisabled window

@@ -3,7 +3,7 @@ package gosmo
 import "testing"
 
 func TestSetChangeTrackingRejectsUnknownRetentionUnit(t *testing.T) {
-	d := &Database{name: "appdb", server: &Server{}}
+	d := &Database{Name: "appdb", server: &Server{}}
 	err := d.SetChangeTracking(ChangeTrackingInfo{
 		Enabled: true, RetentionPeriod: 2, RetentionUnit: "FORTNIGHTS",
 	})

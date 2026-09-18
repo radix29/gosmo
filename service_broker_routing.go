@@ -132,7 +132,7 @@ ORDER  BY r.name`
 
 	rows, err := d.query(ctx, q)
 	if err != nil {
-		return nil, fmt.Errorf("gosmo: list routes in %q: %w", d.name, err)
+		return nil, fmt.Errorf("gosmo: list routes in %q: %w", d.Name, err)
 	}
 	defer rows.Close()
 
@@ -140,12 +140,12 @@ ORDER  BY r.name`
 	for rows.Next() {
 		r, err := scanRoute(d, rows.Scan)
 		if err != nil {
-			return nil, fmt.Errorf("gosmo: list routes in %q: %w", d.name, err)
+			return nil, fmt.Errorf("gosmo: list routes in %q: %w", d.Name, err)
 		}
 		out = append(out, r)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("gosmo: list routes in %q: %w", d.name, err)
+		return nil, fmt.Errorf("gosmo: list routes in %q: %w", d.Name, err)
 	}
 	return out, nil
 }
@@ -166,10 +166,10 @@ func (d *Database) RouteByNameContext(ctx context.Context, name string) (*Route,
 	}, routeSelect+`
 WHERE  r.name = @p1`, name)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, notFoundf("gosmo: route %q not found in %q", name, d.name)
+		return nil, notFoundf("gosmo: route %q not found in %q", name, d.Name)
 	}
 	if err != nil {
-		return nil, fmt.Errorf("gosmo: read route %q in %q: %w", name, d.name, err)
+		return nil, fmt.Errorf("gosmo: read route %q in %q: %w", name, d.Name, err)
 	}
 	return r, nil
 }
@@ -402,7 +402,7 @@ ORDER  BY b.name`
 
 	rows, err := d.query(ctx, q)
 	if err != nil {
-		return nil, fmt.Errorf("gosmo: list remote service bindings in %q: %w", d.name, err)
+		return nil, fmt.Errorf("gosmo: list remote service bindings in %q: %w", d.Name, err)
 	}
 	defer rows.Close()
 
@@ -410,12 +410,12 @@ ORDER  BY b.name`
 	for rows.Next() {
 		b, err := scanRemoteServiceBinding(d, rows.Scan)
 		if err != nil {
-			return nil, fmt.Errorf("gosmo: list remote service bindings in %q: %w", d.name, err)
+			return nil, fmt.Errorf("gosmo: list remote service bindings in %q: %w", d.Name, err)
 		}
 		out = append(out, b)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("gosmo: list remote service bindings in %q: %w", d.name, err)
+		return nil, fmt.Errorf("gosmo: list remote service bindings in %q: %w", d.Name, err)
 	}
 	return out, nil
 }
@@ -438,10 +438,10 @@ func (d *Database) RemoteServiceBindingByNameContext(ctx context.Context, name s
 	}, remoteServiceBindingSelect+`
 WHERE  b.name = @p1`, name)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, notFoundf("gosmo: remote service binding %q not found in %q", name, d.name)
+		return nil, notFoundf("gosmo: remote service binding %q not found in %q", name, d.Name)
 	}
 	if err != nil {
-		return nil, fmt.Errorf("gosmo: read remote service binding %q in %q: %w", name, d.name, err)
+		return nil, fmt.Errorf("gosmo: read remote service binding %q in %q: %w", name, d.Name, err)
 	}
 	return b, nil
 }
@@ -547,7 +547,7 @@ ORDER  BY p.name`
 
 	rows, err := d.query(ctx, q)
 	if err != nil {
-		return nil, fmt.Errorf("gosmo: list broker priorities in %q: %w", d.name, err)
+		return nil, fmt.Errorf("gosmo: list broker priorities in %q: %w", d.Name, err)
 	}
 	defer rows.Close()
 
@@ -555,12 +555,12 @@ ORDER  BY p.name`
 	for rows.Next() {
 		p, err := scanBrokerPriority(d, rows.Scan)
 		if err != nil {
-			return nil, fmt.Errorf("gosmo: list broker priorities in %q: %w", d.name, err)
+			return nil, fmt.Errorf("gosmo: list broker priorities in %q: %w", d.Name, err)
 		}
 		out = append(out, p)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("gosmo: list broker priorities in %q: %w", d.name, err)
+		return nil, fmt.Errorf("gosmo: list broker priorities in %q: %w", d.Name, err)
 	}
 	return out, nil
 }
@@ -582,10 +582,10 @@ func (d *Database) BrokerPriorityByNameContext(ctx context.Context, name string)
 	}, brokerPrioritySelect+`
 WHERE  p.name = @p1`, name)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, notFoundf("gosmo: broker priority %q not found in %q", name, d.name)
+		return nil, notFoundf("gosmo: broker priority %q not found in %q", name, d.Name)
 	}
 	if err != nil {
-		return nil, fmt.Errorf("gosmo: read broker priority %q in %q: %w", name, d.name, err)
+		return nil, fmt.Errorf("gosmo: read broker priority %q in %q: %w", name, d.Name, err)
 	}
 	return p, nil
 }

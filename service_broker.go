@@ -167,7 +167,7 @@ ORDER  BY mt.name`
 
 	rows, err := d.query(ctx, q)
 	if err != nil {
-		return nil, fmt.Errorf("gosmo: list message types in %q: %w", d.name, err)
+		return nil, fmt.Errorf("gosmo: list message types in %q: %w", d.Name, err)
 	}
 	defer rows.Close()
 
@@ -175,12 +175,12 @@ ORDER  BY mt.name`
 	for rows.Next() {
 		mt, err := scanMessageType(d, rows.Scan)
 		if err != nil {
-			return nil, fmt.Errorf("gosmo: list message types in %q: %w", d.name, err)
+			return nil, fmt.Errorf("gosmo: list message types in %q: %w", d.Name, err)
 		}
 		out = append(out, mt)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("gosmo: list message types in %q: %w", d.name, err)
+		return nil, fmt.Errorf("gosmo: list message types in %q: %w", d.Name, err)
 	}
 	return out, nil
 }
@@ -201,10 +201,10 @@ func (d *Database) MessageTypeByNameContext(ctx context.Context, name string) (*
 	}, messageTypeSelect+`
 WHERE  mt.name = @p1`, name)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, notFoundf("gosmo: message type %q not found in %q", name, d.name)
+		return nil, notFoundf("gosmo: message type %q not found in %q", name, d.Name)
 	}
 	if err != nil {
-		return nil, fmt.Errorf("gosmo: read message type %q in %q: %w", name, d.name, err)
+		return nil, fmt.Errorf("gosmo: read message type %q in %q: %w", name, d.Name, err)
 	}
 	return mt, nil
 }
@@ -394,14 +394,14 @@ func (d *Database) Contracts() ([]*ServiceContract, error) {
 func (d *Database) ContractsContext(ctx context.Context) ([]*ServiceContract, error) {
 	out, err := d.contractListContext(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("gosmo: list contracts in %q: %w", d.name, err)
+		return nil, fmt.Errorf("gosmo: list contracts in %q: %w", d.Name, err)
 	}
 	if len(out) == 0 {
 		return nil, nil
 	}
 	byID, err := d.contractMessagesContext(ctx, 0)
 	if err != nil {
-		return nil, fmt.Errorf("gosmo: list contracts in %q: %w", d.name, err)
+		return nil, fmt.Errorf("gosmo: list contracts in %q: %w", d.Name, err)
 	}
 	for _, c := range out {
 		c.Messages = byID[c.ContractID]
@@ -424,16 +424,16 @@ func (d *Database) ContractByNameContext(ctx context.Context, name string) (*Ser
 	}, contractSelect+`
 WHERE  c.name = @p1`, name)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, notFoundf("gosmo: contract %q not found in %q", name, d.name)
+		return nil, notFoundf("gosmo: contract %q not found in %q", name, d.Name)
 	}
 	if err != nil {
-		return nil, fmt.Errorf("gosmo: read contract %q in %q: %w", name, d.name, err)
+		return nil, fmt.Errorf("gosmo: read contract %q in %q: %w", name, d.Name, err)
 	}
 	c.IsSystemObject = c.ContractID < firstUserBrokerID
 
 	byID, err := d.contractMessagesContext(ctx, c.ContractID)
 	if err != nil {
-		return nil, fmt.Errorf("gosmo: read contract %q in %q: %w", name, d.name, err)
+		return nil, fmt.Errorf("gosmo: read contract %q in %q: %w", name, d.Name, err)
 	}
 	c.Messages = byID[c.ContractID]
 	return c, nil
@@ -596,14 +596,14 @@ func (d *Database) BrokerServices() ([]*BrokerService, error) {
 func (d *Database) BrokerServicesContext(ctx context.Context) ([]*BrokerService, error) {
 	out, err := d.brokerServiceListContext(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("gosmo: list services in %q: %w", d.name, err)
+		return nil, fmt.Errorf("gosmo: list services in %q: %w", d.Name, err)
 	}
 	if len(out) == 0 {
 		return nil, nil
 	}
 	byID, err := d.serviceContractsContext(ctx, 0)
 	if err != nil {
-		return nil, fmt.Errorf("gosmo: list services in %q: %w", d.name, err)
+		return nil, fmt.Errorf("gosmo: list services in %q: %w", d.Name, err)
 	}
 	for _, s := range out {
 		s.Contracts = byID[s.ServiceID]
@@ -626,16 +626,16 @@ func (d *Database) BrokerServiceByNameContext(ctx context.Context, name string) 
 	}, serviceSelect+`
 WHERE  s.name = @p1`, name)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, notFoundf("gosmo: service %q not found in %q", name, d.name)
+		return nil, notFoundf("gosmo: service %q not found in %q", name, d.Name)
 	}
 	if err != nil {
-		return nil, fmt.Errorf("gosmo: read service %q in %q: %w", name, d.name, err)
+		return nil, fmt.Errorf("gosmo: read service %q in %q: %w", name, d.Name, err)
 	}
 	s.IsSystemObject = s.ServiceID < firstUserBrokerID
 
 	byID, err := d.serviceContractsContext(ctx, s.ServiceID)
 	if err != nil {
-		return nil, fmt.Errorf("gosmo: read service %q in %q: %w", name, d.name, err)
+		return nil, fmt.Errorf("gosmo: read service %q in %q: %w", name, d.Name, err)
 	}
 	s.Contracts = byID[s.ServiceID]
 	return s, nil

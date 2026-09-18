@@ -86,7 +86,7 @@ func (d *Database) QueryStoreContext(ctx context.Context) (*QueryStoreInfo, erro
 			&execCount, &compileCPU, &execCPU, &staleHours,
 		)
 	}, q); err != nil {
-		return nil, fmt.Errorf("gosmo: query store options for %q: %w", d.name, err)
+		return nil, fmt.Errorf("gosmo: query store options for %q: %w", d.Name, err)
 	}
 	info.CapturePolicyExecCount = int(execCount.Int64)
 	info.CapturePolicyCompileCPUMs = compileCPU.Int64
@@ -146,28 +146,28 @@ var queryStoreWaitStatsModes = map[string]bool{"OFF": true, "ON": true}
 func (d *Database) SetQueryStoreOptionsContext(ctx context.Context, opts QueryStoreOptions) error {
 	if opts.DesiredState == "OFF" {
 		if err := d.server.execContext(ctx,
-			fmt.Sprintf("ALTER DATABASE %s SET QUERY_STORE = OFF", quoteIdent(d.name)),
+			fmt.Sprintf("ALTER DATABASE %s SET QUERY_STORE = OFF", quoteIdent(d.Name)),
 		); err != nil {
-			return fmt.Errorf("gosmo: disable query store on %q: %w", d.name, err)
+			return fmt.Errorf("gosmo: disable query store on %q: %w", d.Name, err)
 		}
 		return nil
 	}
 
 	if !queryStoreOperationModes[opts.DesiredState] {
-		return fmt.Errorf("gosmo: set query store options on %q: unrecognized operation mode %q", d.name, opts.DesiredState)
+		return fmt.Errorf("gosmo: set query store options on %q: unrecognized operation mode %q", d.Name, opts.DesiredState)
 	}
 	if !queryStoreCaptureModes[opts.CaptureMode] {
-		return fmt.Errorf("gosmo: set query store options on %q: unrecognized capture mode %q", d.name, opts.CaptureMode)
+		return fmt.Errorf("gosmo: set query store options on %q: unrecognized capture mode %q", d.Name, opts.CaptureMode)
 	}
 	if !queryStoreCleanupModes[opts.SizeCleanupMode] {
-		return fmt.Errorf("gosmo: set query store options on %q: unrecognized size cleanup mode %q", d.name, opts.SizeCleanupMode)
+		return fmt.Errorf("gosmo: set query store options on %q: unrecognized size cleanup mode %q", d.Name, opts.SizeCleanupMode)
 	}
 	// WAIT_STATS_CAPTURE_MODE is SQL Server 2017 and later. Below it the
 	// setting does not exist — the read has no column to report and returns
 	// "" — so the clause is omitted rather than sent and rejected.
 	waitStats := d.serverMajorVersion() == 0 || d.serverMajorVersion() >= int(SQLServer2017)
 	if waitStats && !queryStoreWaitStatsModes[opts.WaitStatsCaptureMode] {
-		return fmt.Errorf("gosmo: set query store options on %q: unrecognized wait stats capture mode %q", d.name, opts.WaitStatsCaptureMode)
+		return fmt.Errorf("gosmo: set query store options on %q: unrecognized wait stats capture mode %q", d.Name, opts.WaitStatsCaptureMode)
 	}
 
 	withs := []string{
@@ -193,9 +193,9 @@ func (d *Database) SetQueryStoreOptionsContext(ctx context.Context, opts QuerySt
 		))
 	}
 
-	q := fmt.Sprintf("ALTER DATABASE %s SET QUERY_STORE = ON (%s)", quoteIdent(d.name), strings.Join(withs, ", "))
+	q := fmt.Sprintf("ALTER DATABASE %s SET QUERY_STORE = ON (%s)", quoteIdent(d.Name), strings.Join(withs, ", "))
 	if err := d.server.execContext(ctx, q); err != nil {
-		return fmt.Errorf("gosmo: set query store options on %q: %w", d.name, err)
+		return fmt.Errorf("gosmo: set query store options on %q: %w", d.Name, err)
 	}
 	return nil
 }
@@ -209,7 +209,7 @@ func (d *Database) FlushQueryStore() error {
 // FlushQueryStoreContext is the context-aware variant of FlushQueryStore.
 func (d *Database) FlushQueryStoreContext(ctx context.Context) error {
 	if _, err := d.exec(ctx, "EXEC sys.sp_query_store_flush_db"); err != nil {
-		return fmt.Errorf("gosmo: flush query store on %q: %w", d.name, err)
+		return fmt.Errorf("gosmo: flush query store on %q: %w", d.Name, err)
 	}
 	return nil
 }
@@ -223,9 +223,9 @@ func (d *Database) ClearQueryStore() error {
 // ClearQueryStoreContext is the context-aware variant of ClearQueryStore.
 func (d *Database) ClearQueryStoreContext(ctx context.Context) error {
 	if err := d.server.execContext(ctx,
-		fmt.Sprintf("ALTER DATABASE %s SET QUERY_STORE CLEAR", quoteIdent(d.name)),
+		fmt.Sprintf("ALTER DATABASE %s SET QUERY_STORE CLEAR", quoteIdent(d.Name)),
 	); err != nil {
-		return fmt.Errorf("gosmo: clear query store on %q: %w", d.name, err)
+		return fmt.Errorf("gosmo: clear query store on %q: %w", d.Name, err)
 	}
 	return nil
 }

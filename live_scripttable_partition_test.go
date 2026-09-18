@@ -38,7 +38,7 @@ WHERE  i.object_id = OBJECT_ID(@p1) AND i.index_id IN (0, 1)`
 	if err := d.queryRow(ctx, func(row *sql.Row) error {
 		return row.Scan(&dsName, &dsType)
 	}, q, schema+"."+name); err != nil {
-		t.Fatalf("storage of %s.%s in %s: %v", schema, name, d.name, err)
+		t.Fatalf("storage of %s.%s in %s: %v", schema, name, d.Name, err)
 	}
 	return dsName, strings.TrimSpace(dsType)
 }
@@ -49,9 +49,9 @@ WHERE  i.object_id = OBJECT_ID(@p1) AND i.index_id IN (0, 1)`
 func livePartitionSetup(t *testing.T, d *Database, ctx context.Context) {
 	t.Helper()
 	liveExecIn(t, d, ctx,
-		`ALTER DATABASE [`+d.name+`] ADD FILEGROUP FG_Archive`,
-		`ALTER DATABASE [`+d.name+`] ADD FILE (NAME = N'`+d.name+`_arch', FILENAME = N'`+
-			liveDatabaseFileDir(t, d, ctx)+d.name+`_arch.ndf', SIZE = 8MB) TO FILEGROUP FG_Archive`,
+		`ALTER DATABASE [`+d.Name+`] ADD FILEGROUP FG_Archive`,
+		`ALTER DATABASE [`+d.Name+`] ADD FILE (NAME = N'`+d.Name+`_arch', FILENAME = N'`+
+			liveDatabaseFileDir(t, d, ctx)+d.Name+`_arch.ndf', SIZE = 8MB) TO FILEGROUP FG_Archive`,
 		`CREATE PARTITION FUNCTION pf_year (INT) AS RANGE RIGHT FOR VALUES (2000, 2010)`,
 		`CREATE PARTITION SCHEME ps_year AS PARTITION pf_year ALL TO ([PRIMARY])`,
 	)
@@ -66,7 +66,7 @@ func liveDatabaseFileDir(t *testing.T, d *Database, ctx context.Context) string 
 	if err := d.queryRow(ctx, func(row *sql.Row) error {
 		return row.Scan(&path)
 	}, `SELECT TOP 1 physical_name FROM sys.database_files WHERE type = 0`); err != nil {
-		t.Fatalf("primary file path of %s: %v", d.name, err)
+		t.Fatalf("primary file path of %s: %v", d.Name, err)
 	}
 	sep := "\\"
 	if !strings.Contains(path, sep) {
@@ -124,7 +124,7 @@ func TestLiveScriptTablePartitionSurvivesTheRoundTrip(t *testing.T) {
 				}
 				if _, err := dst.exec(ctx, batch); err != nil {
 					t.Fatalf("replaying into %s: %v\n--- batch ---\n%s\n--- whole script ---\n%s",
-						dst.name, err, batch, script)
+						dst.Name, err, batch, script)
 				}
 			}
 			gotName, gotType := liveStorage(t, dst, ctx, "dbo", c.table)

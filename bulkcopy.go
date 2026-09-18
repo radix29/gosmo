@@ -121,8 +121,8 @@ func (d *Database) BulkInsertContext(ctx context.Context, bc BulkCopy, rows iter
 		return 0, fmt.Errorf("gosmo: acquire connection: %w", err)
 	}
 	defer conn.Close()
-	if _, err := conn.ExecContext(ctx, "USE "+quoteIdent(d.name)); err != nil {
-		return 0, fmt.Errorf("gosmo: USE %s: %w", d.name, err)
+	if _, err := conn.ExecContext(ctx, "USE "+quoteIdent(d.Name)); err != nil {
+		return 0, fmt.Errorf("gosmo: USE %s: %w", d.Name, err)
 	}
 
 	// mssql.CopyIn encodes the target and options into an "INSERTBULK ..."

@@ -58,7 +58,7 @@ func runScriptCases(t *testing.T, cases []scriptCase) {
 // too — a name that is bracket-quoted needs no escaping there, and a build
 // that starts doubling the apostrophe as well would name a different
 // database.
-func scriptTestDB() *Database { return &Database{server: &Server{}, name: "App'DB"} }
+func scriptTestDB() *Database { return &Database{server: &Server{}, Name: "App'DB"} }
 
 // scriptUsePrefix is what Database.exec prepends to every captured statement.
 const scriptUsePrefix = "USE [App'DB];\n"

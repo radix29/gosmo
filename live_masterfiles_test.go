@@ -74,7 +74,7 @@ func TestLiveDatabaseFilesAnswersForAnOfflineDatabase(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DatabaseByNameContext: %v", err)
 	}
-	if got := dbase.State(); got != "OFFLINE" {
+	if got := dbase.State; got != "OFFLINE" {
 		t.Fatalf("state = %q, want OFFLINE", got)
 	}
 	if _, err := dbase.FilesContext(ctx); err == nil {

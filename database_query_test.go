@@ -65,7 +65,7 @@ func TestDatabaseQueryReleasesConnection(t *testing.T) {
 	db.SetMaxOpenConns(2)
 
 	srv := &Server{db: db}
-	d := &Database{server: srv, name: "test"}
+	d := &Database{server: srv, Name: "test"}
 
 	ctx := context.Background()
 	for i := range 5 {
@@ -160,7 +160,7 @@ func useTestDB(t *testing.T) *Database {
 		t.Fatalf("sql.Open: %v", err)
 	}
 	t.Cleanup(func() { db.Close() })
-	return &Database{server: &Server{db: db}, name: "App]DB"}
+	return &Database{server: &Server{db: db}, Name: "App]DB"}
 }
 
 // readBoth runs one read through query and one through queryRow, returning

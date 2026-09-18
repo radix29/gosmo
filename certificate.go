@@ -75,7 +75,7 @@ func (d *Database) CertificatesContext(ctx context.Context) ([]*Certificate, err
 WHERE  name NOT LIKE '##%'
 ORDER  BY name`)
 	if err != nil {
-		return nil, fmt.Errorf("gosmo: list certificates in %q: %w", d.name, err)
+		return nil, fmt.Errorf("gosmo: list certificates in %q: %w", d.Name, err)
 	}
 	defer rows.Close()
 
@@ -83,12 +83,12 @@ ORDER  BY name`)
 	for rows.Next() {
 		c, err := scanCertificate(d, rows.Scan)
 		if err != nil {
-			return nil, fmt.Errorf("gosmo: list certificates in %q: %w", d.name, err)
+			return nil, fmt.Errorf("gosmo: list certificates in %q: %w", d.Name, err)
 		}
 		out = append(out, c)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("gosmo: list certificates in %q: %w", d.name, err)
+		return nil, fmt.Errorf("gosmo: list certificates in %q: %w", d.Name, err)
 	}
 	return out, nil
 }
@@ -120,7 +120,7 @@ WHERE  name = @p1`, name)
 		return nil, nil
 	}
 	if err != nil {
-		return nil, fmt.Errorf("gosmo: read certificate %q in %q: %w", name, d.name, err)
+		return nil, fmt.Errorf("gosmo: read certificate %q in %q: %w", name, d.Name, err)
 	}
 	return c, nil
 }
@@ -149,10 +149,10 @@ func (c *Certificate) EncodedContext(ctx context.Context) ([]byte, error) {
 		return row.Scan(&raw)
 	}, "SELECT CERTENCODED(CERT_ID(@p1))", c.Name)
 	if err != nil {
-		return nil, fmt.Errorf("gosmo: encode certificate %q in %q: %w", c.Name, c.db.name, err)
+		return nil, fmt.Errorf("gosmo: encode certificate %q in %q: %w", c.Name, c.db.Name, err)
 	}
 	if len(raw) == 0 {
-		return nil, fmt.Errorf("gosmo: encode certificate %q in %q: CERTENCODED returned nothing", c.Name, c.db.name)
+		return nil, fmt.Errorf("gosmo: encode certificate %q in %q: CERTENCODED returned nothing", c.Name, c.db.Name)
 	}
 	return raw, nil
 }
@@ -233,10 +233,10 @@ func (d *Database) CreateCertificate(spec CertificateSpec) error {
 func (d *Database) CreateCertificateContext(ctx context.Context, spec CertificateSpec) error {
 	stmt, err := spec.createCertificateStatement()
 	if err != nil {
-		return fmt.Errorf("gosmo: create certificate in %q: %w", d.name, err)
+		return fmt.Errorf("gosmo: create certificate in %q: %w", d.Name, err)
 	}
 	if _, err := d.exec(ctx, stmt); err != nil {
-		return fmt.Errorf("gosmo: create certificate %q in %q: %w", spec.Name, d.name, err)
+		return fmt.Errorf("gosmo: create certificate %q in %q: %w", spec.Name, d.Name, err)
 	}
 	return nil
 }
@@ -247,7 +247,7 @@ func (c *Certificate) Drop() error { return c.DropContext(context.Background()) 
 // DropContext is the context-aware variant of Drop.
 func (c *Certificate) DropContext(ctx context.Context) error {
 	if _, err := c.db.exec(ctx, "DROP CERTIFICATE "+quoteIdent(c.Name)); err != nil {
-		return fmt.Errorf("gosmo: drop certificate %q in %q: %w", c.Name, c.db.name, err)
+		return fmt.Errorf("gosmo: drop certificate %q in %q: %w", c.Name, c.db.Name, err)
 	}
 	return nil
 }
@@ -267,7 +267,7 @@ func (d *Database) HasMasterKeyContext(ctx context.Context) (bool, error) {
 		return row.Scan(&n)
 	}, "SELECT COUNT(*) FROM sys.symmetric_keys WHERE name = '##MS_DatabaseMasterKey##'")
 	if err != nil {
-		return false, fmt.Errorf("gosmo: check for a master key in %q: %w", d.name, err)
+		return false, fmt.Errorf("gosmo: check for a master key in %q: %w", d.Name, err)
 	}
 	return n > 0, nil
 }
@@ -285,10 +285,10 @@ func (d *Database) CreateMasterKey(password string) error {
 // CreateMasterKeyContext is the context-aware variant of CreateMasterKey.
 func (d *Database) CreateMasterKeyContext(ctx context.Context, password string) error {
 	if password == "" {
-		return fmt.Errorf("gosmo: create master key in %q: empty password", d.name)
+		return fmt.Errorf("gosmo: create master key in %q: empty password", d.Name)
 	}
 	if _, err := d.exec(ctx, "CREATE MASTER KEY ENCRYPTION BY PASSWORD = "+nStringLiteral(password)); err != nil {
-		return fmt.Errorf("gosmo: create master key in %q: %w", d.name, err)
+		return fmt.Errorf("gosmo: create master key in %q: %w", d.Name, err)
 	}
 	return nil
 }

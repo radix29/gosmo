@@ -81,12 +81,12 @@ WHERE  name = @p1`
 			&o.CursorCloseOnCommit, &o.ReadCommittedSnapshot,
 			&o.IsTrustworthy, &o.IsBrokerEnabled, &o.IsEncrypted,
 		)
-	}, q, d.name)
+	}, q, d.Name)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return nil, notFoundf("gosmo: database %q not found", d.name)
+			return nil, notFoundf("gosmo: database %q not found", d.Name)
 		}
-		return nil, fmt.Errorf("gosmo: database options for %q: %w", d.name, err)
+		return nil, fmt.Errorf("gosmo: database options for %q: %w", d.Name, err)
 	}
 	o.Owner = owner.String
 	if isLocalCursor {
@@ -199,9 +199,9 @@ func (d *Database) SetDatabaseOptionContext(ctx context.Context, opt DatabaseOpt
 	if !isSimpleSetValue(value) {
 		return fmt.Errorf("gosmo: set database option %s: invalid value %q", opt, value)
 	}
-	q := fmt.Sprintf("ALTER DATABASE %s SET %s %s", quoteIdent(d.name), opt, value)
+	q := fmt.Sprintf("ALTER DATABASE %s SET %s %s", quoteIdent(d.Name), opt, value)
 	if err := d.server.execContext(ctx, q); err != nil {
-		return fmt.Errorf("gosmo: set %s %s on %q: %w", opt, value, d.name, err)
+		return fmt.Errorf("gosmo: set %s %s on %q: %w", opt, value, d.Name, err)
 	}
 	return nil
 }
@@ -213,9 +213,9 @@ func (d *Database) SetOwner(principal string) error {
 
 // SetOwnerContext is the context-aware variant of SetOwner.
 func (d *Database) SetOwnerContext(ctx context.Context, principal string) error {
-	q := fmt.Sprintf("ALTER AUTHORIZATION ON DATABASE::%s TO %s", quoteIdent(d.name), quoteIdent(principal))
+	q := fmt.Sprintf("ALTER AUTHORIZATION ON DATABASE::%s TO %s", quoteIdent(d.Name), quoteIdent(principal))
 	if err := d.server.execContext(ctx, q); err != nil {
-		return fmt.Errorf("gosmo: set owner of %q to %q: %w", d.name, principal, err)
+		return fmt.Errorf("gosmo: set owner of %q to %q: %w", d.Name, principal, err)
 	}
 	return nil
 }

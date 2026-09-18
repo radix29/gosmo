@@ -59,10 +59,10 @@ func TestLiveUseBatch(t *testing.T) {
 	srv := liveServer(t, pool, ctx)
 
 	t.Run("missing database", func(t *testing.T) {
-		d := srv.Database("zz_gosmo_usebatch_absent")
+		d := srv.DatabaseRef("zz_gosmo_usebatch_absent")
 		q, r := liveReadErrors(ctx, d)
-		assertUseError(t, "query", q, d.name, 911)
-		assertUseError(t, "queryRow", r, d.name, 911)
+		assertUseError(t, "query", q, d.Name, 911)
+		assertUseError(t, "queryRow", r, d.Name, 911)
 	})
 
 	a, dropA := liveScratchDB(t, pool, ctx, "gosmo_usebatch_a")
@@ -119,8 +119,8 @@ func TestLiveUseBatch(t *testing.T) {
 		}
 		defer pool.ExecContext(context.Background(), "ALTER DATABASE [gosmo_usebatch_offline] SET ONLINE")
 		q, r := liveReadErrors(ctx, off)
-		assertUseError(t, "query", q, off.name, 942)
-		assertUseError(t, "queryRow", r, off.name, 942)
+		assertUseError(t, "query", q, off.Name, 942)
+		assertUseError(t, "queryRow", r, off.Name, 942)
 	})
 	t.Run("no access", func(t *testing.T) {
 		pool.ExecContext(ctx, "IF SUSER_ID('gosmo_usebatch_noaccess') IS NOT NULL DROP LOGIN gosmo_usebatch_noaccess")
@@ -133,9 +133,9 @@ func TestLiveUseBatch(t *testing.T) {
 			t.Fatalf("openAs: %v", err)
 		}
 		defer lp.Close()
-		d := (&Server{db: lp}).Database("gosmo_usebatch_b")
+		d := (&Server{db: lp}).DatabaseRef("gosmo_usebatch_b")
 		q, r := liveReadErrors(ctx, d)
-		assertUseError(t, "query", q, d.name, 916)
-		assertUseError(t, "queryRow", r, d.name, 916)
+		assertUseError(t, "query", q, d.Name, 916)
+		assertUseError(t, "queryRow", r, d.Name, 916)
 	})
 }

@@ -414,9 +414,9 @@ func TestLiveVersionSweep(t *testing.T) {
 	// liveScratchDB's own Server carries no ServerInfo, and a read gated on
 	// the version behaves differently — or, in ScriptDatabaseContext's case,
 	// panics — against one that has none.
-	d, err := srv.DatabaseByNameContext(ctx, scratch.Name())
+	d, err := srv.DatabaseByNameContext(ctx, scratch.Name)
 	if err != nil {
-		t.Fatalf("DatabaseByNameContext %s: %v", scratch.Name(), err)
+		t.Fatalf("DatabaseByNameContext %s: %v", scratch.Name, err)
 	}
 	for _, stmt := range sweepSchema {
 		if _, err := d.exec(ctx, stmt); err != nil {
@@ -429,7 +429,7 @@ func TestLiveVersionSweep(t *testing.T) {
 	sw := &sweep{t: t, ctx: ctx}
 
 	sw.reflectSweep("Server", srv.Name(), srv)
-	sw.reflectSweep("Database", d.Name(), d)
+	sw.reflectSweep("Database", d.Name, d)
 
 	// Tables, and everything reached through one. Both scratch tables are
 	// swept rather than the first: a read that ignores the object it was

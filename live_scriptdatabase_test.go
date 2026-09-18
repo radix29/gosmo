@@ -48,7 +48,7 @@ func TestLiveScriptDatabaseFromABareHandle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("script from a fetched database: %v", err)
 	}
-	bare, err := NewScripter(srv.Database(name), opts).ScriptDatabaseContext(ctx)
+	bare, err := NewScripter(srv.DatabaseRef(name), opts).ScriptDatabaseContext(ctx)
 	if err != nil {
 		t.Fatalf("script from a bare handle: %v", err)
 	}
@@ -91,7 +91,7 @@ func TestLiveScriptDatabaseFromABareHandle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("database after replay: %v", err)
 	}
-	if replayed.RecoveryModel() != RecoveryModelBulkLogged {
-		t.Errorf("replayed recovery model = %q, want BULK_LOGGED", replayed.RecoveryModel())
+	if replayed.RecoveryModel != RecoveryModelBulkLogged {
+		t.Errorf("replayed recovery model = %q, want BULK_LOGGED", replayed.RecoveryModel)
 	}
 }

@@ -29,7 +29,7 @@ func TestLiveCertificateLoginCreateReadScript(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewServer: %v", err)
 	}
-	master := s.Database("master")
+	master := s.DatabaseRef("master")
 	// CREATE CERTIFICATE encrypts the private key with master's DMK.
 	defer ensureMasterKey(t, s, ctx)()
 
@@ -113,7 +113,7 @@ func TestLiveCertificateLoginRejectsADefaultDatabase(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewServer: %v", err)
 	}
-	master := s.Database("master")
+	master := s.DatabaseRef("master")
 	// CREATE CERTIFICATE encrypts the private key with master's DMK.
 	defer ensureMasterKey(t, s, ctx)()
 

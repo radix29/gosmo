@@ -367,7 +367,7 @@ func TestAzureMajorIsZeroSoEveryGateTreatsItAsNewest(t *testing.T) {
 		t.Errorf("Info().VersionMajor = %d, want 12 — the displayed version is unchanged", got)
 	}
 
-	d := &Database{name: "GoTest01", server: s}
+	d := &Database{Name: "GoTest01", server: s}
 	if !d.QueryStoreWaitStatsSupported() {
 		t.Error("QueryStoreWaitStatsSupported() = false on MI, which has sys.query_store_wait_stats")
 	}

@@ -66,7 +66,7 @@ func TestLiveSchemaCapabilitiesSeeAGrantTheDatabaseScopeCannot(t *testing.T) {
 	// Not NewServer: loadInfo reads server-scope DMVs this login has no rights
 	// to, and the probe is what is under test.
 	restricted := &Server{db: pool}
-	caps, err := restricted.Database(d.Name()).CapabilitiesContext(ctx)
+	caps, err := restricted.DatabaseRef(d.Name).CapabilitiesContext(ctx)
 	if err != nil {
 		t.Fatalf("CapabilitiesContext as %s: %v", login, err)
 	}
@@ -91,10 +91,10 @@ func TestLiveSchemaCapabilitiesSeeAGrantTheDatabaseScopeCannot(t *testing.T) {
 	// The oracle: what the server actually accepts from this login. A probe
 	// that agreed with itself and not with the server would pass everything
 	// above.
-	if _, err := pool.ExecContext(ctx, "USE ["+d.Name()+"]; EXEC sp_rename 'app.t1', 't1x'"); err != nil {
+	if _, err := pool.ExecContext(ctx, "USE ["+d.Name+"]; EXEC sp_rename 'app.t1', 't1x'"); err != nil {
 		t.Errorf("the server refused a rename inside the granted schema: %v", err)
 	}
-	if _, err := pool.ExecContext(ctx, "USE ["+d.Name()+"]; EXEC sp_rename 'other.t3', 't3x'"); err == nil {
+	if _, err := pool.ExecContext(ctx, "USE ["+d.Name+"]; EXEC sp_rename 'other.t3', 't3x'"); err == nil {
 		t.Error("the server accepted a rename inside a schema the login has no ALTER on")
 	}
 }

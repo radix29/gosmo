@@ -42,12 +42,12 @@ WHERE  sd.name = @p1`
 	info := &ChangeTrackingInfo{}
 	err := d.server.queryRow(ctx, func(row *sql.Row) error {
 		return row.Scan(&info.Enabled, &info.AutoCleanup, &info.RetentionPeriod, &info.RetentionUnit)
-	}, q, d.name)
+	}, q, d.Name)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return nil, notFoundf("gosmo: database %q not found", d.name)
+			return nil, notFoundf("gosmo: database %q not found", d.Name)
 		}
-		return nil, fmt.Errorf("gosmo: change tracking for %q: %w", d.name, err)
+		return nil, fmt.Errorf("gosmo: change tracking for %q: %w", d.Name, err)
 	}
 	return info, nil
 }
@@ -67,7 +67,7 @@ func (d *Database) SetChangeTracking(info ChangeTrackingInfo) error {
 func (d *Database) SetChangeTrackingContext(ctx context.Context, info ChangeTrackingInfo) error {
 	var q string
 	if !info.Enabled {
-		q = fmt.Sprintf("ALTER DATABASE %s SET CHANGE_TRACKING = OFF", quoteIdent(d.name))
+		q = fmt.Sprintf("ALTER DATABASE %s SET CHANGE_TRACKING = OFF", quoteIdent(d.Name))
 	} else {
 		unit := info.RetentionUnit
 		if unit == "" {
@@ -81,10 +81,10 @@ func (d *Database) SetChangeTrackingContext(ctx context.Context, info ChangeTrac
 			autoCleanup = "ON"
 		}
 		q = fmt.Sprintf("ALTER DATABASE %s SET CHANGE_TRACKING = ON (CHANGE_RETENTION = %d %s, AUTO_CLEANUP = %s)",
-			quoteIdent(d.name), info.RetentionPeriod, unit, autoCleanup)
+			quoteIdent(d.Name), info.RetentionPeriod, unit, autoCleanup)
 	}
 	if err := d.server.execContext(ctx, q); err != nil {
-		return fmt.Errorf("gosmo: set change tracking on %q: %w", d.name, err)
+		return fmt.Errorf("gosmo: set change tracking on %q: %w", d.Name, err)
 	}
 	return nil
 }
@@ -145,7 +145,7 @@ func (d *Database) TableChangeTrackingContext(ctx context.Context) ([]*TableChan
 	rows, err := d.query(ctx, tableChangeTrackingSelect+`
 ORDER  BY SCHEMA_NAME(t.schema_id), t.name`)
 	if err != nil {
-		return nil, fmt.Errorf("gosmo: table change tracking in %q: %w", d.name, err)
+		return nil, fmt.Errorf("gosmo: table change tracking in %q: %w", d.Name, err)
 	}
 	defer rows.Close()
 
@@ -153,12 +153,12 @@ ORDER  BY SCHEMA_NAME(t.schema_id), t.name`)
 	for rows.Next() {
 		t := &TableChangeTracking{}
 		if err := rows.Scan(&t.Schema, &t.Name, &t.Enabled, &t.TrackColumnsUpdated); err != nil {
-			return nil, fmt.Errorf("gosmo: table change tracking in %q: %w", d.name, err)
+			return nil, fmt.Errorf("gosmo: table change tracking in %q: %w", d.Name, err)
 		}
 		out = append(out, t)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("gosmo: table change tracking in %q: %w", d.name, err)
+		return nil, fmt.Errorf("gosmo: table change tracking in %q: %w", d.Name, err)
 	}
 	return out, nil
 }
@@ -180,9 +180,9 @@ func (d *Database) TableChangeTrackingForContext(ctx context.Context, schema, na
        AND SCHEMA_NAME(t.schema_id) = @p1 AND t.name = @p2`, schema, name)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return nil, notFoundf("gosmo: table %s.%s not found in %q", schema, name, d.name)
+			return nil, notFoundf("gosmo: table %s.%s not found in %q", schema, name, d.Name)
 		}
-		return nil, fmt.Errorf("gosmo: change tracking for %s.%s in %q: %w", schema, name, d.name, err)
+		return nil, fmt.Errorf("gosmo: change tracking for %s.%s in %q: %w", schema, name, d.Name, err)
 	}
 	return t, nil
 }

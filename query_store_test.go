@@ -68,7 +68,7 @@ func TestSetQueryStoreOptionsRejectsUnknownValues(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			d := &Database{name: "appdb", server: &Server{}}
+			d := &Database{Name: "appdb", server: &Server{}}
 			if err := d.SetQueryStoreOptions(tt.opts); err == nil {
 				t.Errorf("SetQueryStoreOptions accepted an injection payload in %s, want an error", tt.name)
 			}
@@ -108,7 +108,7 @@ func TestSetQueryStoreOptionsAcceptsLegitimateValues(t *testing.T) {
 // with "Incorrect syntax near 'STALE_QUERY_THRESHOLD_DAYS'". It is only legal
 // inside CLEANUP_POLICY.
 func TestSetQueryStoreOptionsStatement(t *testing.T) {
-	d := &Database{server: &Server{}, name: "AppDB"}
+	d := &Database{server: &Server{}, Name: "AppDB"}
 	ctx, script := WithScript(context.Background())
 
 	if err := d.SetQueryStoreOptionsContext(ctx, QueryStoreOptions{
@@ -148,7 +148,7 @@ func TestSetQueryStoreOptionsStatement(t *testing.T) {
 // TestSetQueryStoreOptionsOffIgnoresTheRest pins that "OFF" turns Query Store
 // off with no option list, as QueryStoreOptions documents.
 func TestSetQueryStoreOptionsOffIgnoresTheRest(t *testing.T) {
-	d := &Database{server: &Server{}, name: "AppDB"}
+	d := &Database{server: &Server{}, Name: "AppDB"}
 	ctx, script := WithScript(context.Background())
 
 	if err := d.SetQueryStoreOptionsContext(ctx, QueryStoreOptions{
@@ -176,7 +176,7 @@ func TestSetQueryStoreOptionsOmitsWaitStatsBefore2017(t *testing.T) {
 	}
 
 	t.Run("2016 omits the clause and does not validate it", func(t *testing.T) {
-		d := &Database{server: &Server{info: &ServerInfo{VersionMajor: 13}}, name: "AppDB"}
+		d := &Database{server: &Server{info: &ServerInfo{VersionMajor: 13}}, Name: "AppDB"}
 		ctx, script := WithScript(context.Background())
 
 		// The 2016 read returns "" for a column that does not exist; that must
@@ -194,7 +194,7 @@ func TestSetQueryStoreOptionsOmitsWaitStatsBefore2017(t *testing.T) {
 
 	for _, major := range []int{14, 15, 16, 17, 0} {
 		t.Run("major "+strconv.Itoa(major)+" still emits it", func(t *testing.T) {
-			d := &Database{server: &Server{info: &ServerInfo{VersionMajor: major}}, name: "AppDB"}
+			d := &Database{server: &Server{info: &ServerInfo{VersionMajor: major}}, Name: "AppDB"}
 			ctx, script := WithScript(context.Background())
 
 			o := opts
@@ -211,7 +211,7 @@ func TestSetQueryStoreOptionsOmitsWaitStatsBefore2017(t *testing.T) {
 	// The allowlist still guards the versions that have the setting — dropping
 	// the check along with the clause would let anything through there too.
 	t.Run("2017 still rejects an unrecognized mode", func(t *testing.T) {
-		d := &Database{server: &Server{info: &ServerInfo{VersionMajor: 14}}, name: "AppDB"}
+		d := &Database{server: &Server{info: &ServerInfo{VersionMajor: 14}}, Name: "AppDB"}
 		ctx, _ := WithScript(context.Background())
 
 		o := opts

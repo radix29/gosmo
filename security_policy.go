@@ -97,9 +97,9 @@ WHERE  SCHEMA_NAME(sp.schema_id) = @p1
   AND  sp.name                   = @p2`, schema, name)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return nil, notFoundf("gosmo: security policy [%s].[%s] not found in %q", schema, name, d.name)
+			return nil, notFoundf("gosmo: security policy [%s].[%s] not found in %q", schema, name, d.Name)
 		}
-		return nil, fmt.Errorf("gosmo: find security policy [%s].[%s] in %q: %w", schema, name, d.name, err)
+		return nil, fmt.Errorf("gosmo: find security policy [%s].[%s] in %q: %w", schema, name, d.Name, err)
 	}
 	if err := d.loadSecurityPredicates(ctx, p); err != nil {
 		return nil, err
@@ -119,7 +119,7 @@ func scanSecurityPolicy(d *Database, scan func(...any) error) (*SecurityPolicy, 
 func (d *Database) loadSecurityPredicates(ctx context.Context, p *SecurityPolicy) error {
 	preds, err := d.securityPredicates(ctx, p.ObjectID)
 	if err != nil {
-		return fmt.Errorf("gosmo: predicates of security policy %q in %q: %w", p.Name, d.name, err)
+		return fmt.Errorf("gosmo: predicates of security policy %q in %q: %w", p.Name, d.Name, err)
 	}
 	p.Predicates = preds
 	return nil

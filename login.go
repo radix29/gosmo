@@ -415,7 +415,7 @@ WHERE  dp.sid = @p1`
 	// handshake, which costs far more than the query latency it overlaps.
 	var out []*LoginUserMapping
 	for _, db := range dbs {
-		if db.State() != "ONLINE" {
+		if db.State != "ONLINE" {
 			continue
 		}
 		ms, err := l.userMappingsIn(ctx, db, q)
@@ -445,10 +445,10 @@ func (l *Login) userMappingsIn(ctx context.Context, db *Database, q string) ([]*
 
 	var out []*LoginUserMapping
 	for rows.Next() {
-		m := &LoginUserMapping{Database: db.Name()}
+		m := &LoginUserMapping{Database: db.Name}
 		var roles string
 		if err := rows.Scan(&m.User, &m.DefaultSchema, &roles); err != nil {
-			return nil, fmt.Errorf("gosmo: user mappings for login %q in %q: %w", l.Name, db.Name(), err)
+			return nil, fmt.Errorf("gosmo: user mappings for login %q in %q: %w", l.Name, db.Name, err)
 		}
 		if roles != "" {
 			m.Roles = strings.Split(roles, ", ")
@@ -464,7 +464,7 @@ func (l *Login) userMappingsIn(ctx context.Context, db *Database, q string) ([]*
 		// silently short list and report success — the same failure the Scan
 		// arm above aborts on, and the reason the skip stops at the query
 		// boundary rather than covering iteration too.
-		return nil, fmt.Errorf("gosmo: user mappings for login %q in %q: %w", l.Name, db.Name(), err)
+		return nil, fmt.Errorf("gosmo: user mappings for login %q in %q: %w", l.Name, db.Name, err)
 	}
 	return out, nil
 }

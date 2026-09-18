@@ -42,7 +42,7 @@ func liveImpersonation(t *testing.T) (*sql.DB, context.Context, *Database) {
 			t.Errorf("drop user %s in tempdb: %v — drop it by hand", liveImpUser, err)
 		}
 	})
-	return db, ctx, liveServer(t, db, ctx).Database("tempdb")
+	return db, ctx, liveServer(t, db, ctx).DatabaseRef("tempdb")
 }
 
 // sessionIdentity is who the pool's next caller runs as, and on which

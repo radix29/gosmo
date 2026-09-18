@@ -565,12 +565,12 @@ func (d *Database) QueryStoreTopResourceQueriesContext(ctx context.Context, opts
 
 	rows, err := d.query(ctx, q, a.args...)
 	if err != nil {
-		return nil, fmt.Errorf("gosmo: top resource queries in %q: %w", d.name, err)
+		return nil, fmt.Errorf("gosmo: top resource queries in %q: %w", d.Name, err)
 	}
 	defer rows.Close()
 	stats, err := scanQueryStats(rows)
 	if err != nil {
-		return nil, fmt.Errorf("gosmo: top resource queries in %q: %w", d.name, err)
+		return nil, fmt.Errorf("gosmo: top resource queries in %q: %w", d.Name, err)
 	}
 	return stats, nil
 }
@@ -607,12 +607,12 @@ func (d *Database) QueryStoreForcedPlanQueriesContext(ctx context.Context, opts 
 
 	rows, err := d.query(ctx, q, a.args...)
 	if err != nil {
-		return nil, fmt.Errorf("gosmo: queries with forced plans in %q: %w", d.name, err)
+		return nil, fmt.Errorf("gosmo: queries with forced plans in %q: %w", d.Name, err)
 	}
 	defer rows.Close()
 	stats, err := scanQueryStats(rows)
 	if err != nil {
-		return nil, fmt.Errorf("gosmo: queries with forced plans in %q: %w", d.name, err)
+		return nil, fmt.Errorf("gosmo: queries with forced plans in %q: %w", d.Name, err)
 	}
 	return stats, nil
 }
@@ -648,12 +648,12 @@ func (d *Database) QueryStoreHighVariationQueriesContext(ctx context.Context, op
 
 	rows, err := d.query(ctx, q, a.args...)
 	if err != nil {
-		return nil, fmt.Errorf("gosmo: high variation queries in %q: %w", d.name, err)
+		return nil, fmt.Errorf("gosmo: high variation queries in %q: %w", d.Name, err)
 	}
 	defer rows.Close()
 	stats, err := scanQueryStats(rows)
 	if err != nil {
-		return nil, fmt.Errorf("gosmo: high variation queries in %q: %w", d.name, err)
+		return nil, fmt.Errorf("gosmo: high variation queries in %q: %w", d.Name, err)
 	}
 	return stats, nil
 }
@@ -725,12 +725,12 @@ ORDER BY regression DESC`, recent, baseline, top, sp.regressionFloor(&a))
 
 	rows, err := d.query(ctx, q, a.args...)
 	if err != nil {
-		return nil, fmt.Errorf("gosmo: regressed queries in %q: %w", d.name, err)
+		return nil, fmt.Errorf("gosmo: regressed queries in %q: %w", d.Name, err)
 	}
 	defer rows.Close()
 	stats, err := scanQueryStats(rows)
 	if err != nil {
-		return nil, fmt.Errorf("gosmo: regressed queries in %q: %w", d.name, err)
+		return nil, fmt.Errorf("gosmo: regressed queries in %q: %w", d.Name, err)
 	}
 	return stats, nil
 }
@@ -762,7 +762,7 @@ ORDER BY rsi.start_time`, sp.value("rs"), qsRuntimeFrom, sp.window(&a, sp.opts.F
 
 	rows, err := d.query(ctx, q, a.args...)
 	if err != nil {
-		return nil, fmt.Errorf("gosmo: overall resource consumption in %q: %w", d.name, err)
+		return nil, fmt.Errorf("gosmo: overall resource consumption in %q: %w", d.Name, err)
 	}
 	defer rows.Close()
 	var out []*QSIntervalStat
@@ -770,13 +770,13 @@ ORDER BY rsi.start_time`, sp.value("rs"), qsRuntimeFrom, sp.window(&a, sp.opts.F
 		st := &QSIntervalStat{}
 		var value sql.NullFloat64
 		if err := rows.Scan(&st.StartTime, &st.EndTime, &st.ExecCount, &value); err != nil {
-			return nil, fmt.Errorf("gosmo: overall resource consumption in %q: %w", d.name, err)
+			return nil, fmt.Errorf("gosmo: overall resource consumption in %q: %w", d.Name, err)
 		}
 		st.Value = value.Float64
 		out = append(out, st)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("gosmo: overall resource consumption in %q: %w", d.name, err)
+		return nil, fmt.Errorf("gosmo: overall resource consumption in %q: %w", d.Name, err)
 	}
 	return out, nil
 }
@@ -810,7 +810,7 @@ ORDER BY p.plan_id, rsi.start_time`,
 
 	rows, err := d.query(ctx, q, a.args...)
 	if err != nil {
-		return nil, fmt.Errorf("gosmo: tracked query %d in %q: %w", queryID, d.name, err)
+		return nil, fmt.Errorf("gosmo: tracked query %d in %q: %w", queryID, d.Name, err)
 	}
 	defer rows.Close()
 	var out []*QSPlanIntervalStat
@@ -818,13 +818,13 @@ ORDER BY p.plan_id, rsi.start_time`,
 		st := &QSPlanIntervalStat{}
 		var value sql.NullFloat64
 		if err := rows.Scan(&st.PlanID, &st.StartTime, &st.EndTime, &st.ExecCount, &value); err != nil {
-			return nil, fmt.Errorf("gosmo: tracked query %d in %q: %w", queryID, d.name, err)
+			return nil, fmt.Errorf("gosmo: tracked query %d in %q: %w", queryID, d.Name, err)
 		}
 		st.Value = value.Float64
 		out = append(out, st)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("gosmo: tracked query %d in %q: %w", queryID, d.name, err)
+		return nil, fmt.Errorf("gosmo: tracked query %d in %q: %w", queryID, d.Name, err)
 	}
 	return out, nil
 }
@@ -898,7 +898,7 @@ func (d *Database) QueryStorePlansContext(ctx context.Context, queryID int64, op
 
 	rows, err := d.query(ctx, q, a.args...)
 	if err != nil {
-		return nil, fmt.Errorf("gosmo: query store plans for query %d in %q: %w", queryID, d.name, err)
+		return nil, fmt.Errorf("gosmo: query store plans for query %d in %q: %w", queryID, d.Name, err)
 	}
 	defer rows.Close()
 	var out []*QSPlan
@@ -910,7 +910,7 @@ func (d *Database) QueryStorePlansContext(ctx context.Context, queryID int64, op
 			&pl.ForceFailureCount, &pl.LastForceFailureReason, &pl.CompatibilityLevel,
 			&pl.IsTrivialPlan, &pl.IsParallelPlan, &compiled, &executed,
 			&pl.QueryPlanXML, &pl.ExecCount, &value); err != nil {
-			return nil, fmt.Errorf("gosmo: query store plans for query %d in %q: %w", queryID, d.name, err)
+			return nil, fmt.Errorf("gosmo: query store plans for query %d in %q: %w", queryID, d.Name, err)
 		}
 		pl.LastCompileStartTime = compiled.Time
 		pl.LastExecutionTime = executed.Time
@@ -918,7 +918,7 @@ func (d *Database) QueryStorePlansContext(ctx context.Context, queryID int64, op
 		out = append(out, pl)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("gosmo: query store plans for query %d in %q: %w", queryID, d.name, err)
+		return nil, fmt.Errorf("gosmo: query store plans for query %d in %q: %w", queryID, d.Name, err)
 	}
 	return out, nil
 }
@@ -942,10 +942,10 @@ WHERE  q.query_id = @p1`, qsObjectName)
 		return row.Scan(&text, &objectName)
 	}, q, queryID)
 	if errors.Is(err, sql.ErrNoRows) {
-		return "", "", notFoundf("gosmo: query store query %d in %q: not found", queryID, d.name)
+		return "", "", notFoundf("gosmo: query store query %d in %q: not found", queryID, d.Name)
 	}
 	if err != nil {
-		return "", "", fmt.Errorf("gosmo: query store query %d in %q: %w", queryID, d.name, err)
+		return "", "", fmt.Errorf("gosmo: query store query %d in %q: %w", queryID, d.Name, err)
 	}
 	return text, objectName, nil
 }
@@ -967,7 +967,7 @@ func (d *Database) QueryStoreWaitStatsSupported() bool {
 // errWaitStatsUnsupported explains the version gate in the terms a caller can
 // show a user.
 func (d *Database) errWaitStatsUnsupported() error {
-	return unsupportedVersionf("gosmo: query store wait statistics in %q: requires SQL Server 2017 or later", d.name)
+	return unsupportedVersionf("gosmo: query store wait statistics in %q: requires SQL Server 2017 or later", d.Name)
 }
 
 // qsWaitFrom is the join both wait reports read. The runtime-stats join is
@@ -1015,7 +1015,7 @@ ORDER BY value DESC`, top, sp.stat.wait("ws", "rs"), qsWaitFrom, sp.window(&a, s
 
 	rows, err := d.query(ctx, q, a.args...)
 	if err != nil {
-		return nil, fmt.Errorf("gosmo: query store wait categories in %q: %w", d.name, err)
+		return nil, fmt.Errorf("gosmo: query store wait categories in %q: %w", d.Name, err)
 	}
 	defer rows.Close()
 	var out []*QSWaitStat
@@ -1023,13 +1023,13 @@ ORDER BY value DESC`, top, sp.stat.wait("ws", "rs"), qsWaitFrom, sp.window(&a, s
 		st := &QSWaitStat{}
 		var value sql.NullFloat64
 		if err := rows.Scan(&st.Category, &st.ExecCount, &value); err != nil {
-			return nil, fmt.Errorf("gosmo: query store wait categories in %q: %w", d.name, err)
+			return nil, fmt.Errorf("gosmo: query store wait categories in %q: %w", d.Name, err)
 		}
 		st.Value = value.Float64
 		out = append(out, st)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("gosmo: query store wait categories in %q: %w", d.name, err)
+		return nil, fmt.Errorf("gosmo: query store wait categories in %q: %w", d.Name, err)
 	}
 	return out, nil
 }
@@ -1078,12 +1078,12 @@ ORDER BY value DESC`, top, qsObjectName, sp.stat.wait("ws", "rs"), qsWaitFrom, w
 
 	rows, err := d.query(ctx, q, a.args...)
 	if err != nil {
-		return nil, fmt.Errorf("gosmo: query store waiting queries in %q: %w", d.name, err)
+		return nil, fmt.Errorf("gosmo: query store waiting queries in %q: %w", d.Name, err)
 	}
 	defer rows.Close()
 	stats, err := scanQueryStats(rows)
 	if err != nil {
-		return nil, fmt.Errorf("gosmo: query store waiting queries in %q: %w", d.name, err)
+		return nil, fmt.Errorf("gosmo: query store waiting queries in %q: %w", d.Name, err)
 	}
 	return stats, nil
 }
@@ -1106,7 +1106,7 @@ func (d *Database) QueryStoreForcePlan(queryID, planID int64) error {
 func (d *Database) QueryStoreForcePlanContext(ctx context.Context, queryID, planID int64) error {
 	const q = `EXEC sys.sp_query_store_force_plan @query_id = @p1, @plan_id = @p2`
 	if _, err := d.exec(ctx, q, queryID, planID); err != nil {
-		return fmt.Errorf("gosmo: force plan %d for query %d in %q: %w", planID, queryID, d.name, err)
+		return fmt.Errorf("gosmo: force plan %d for query %d in %q: %w", planID, queryID, d.Name, err)
 	}
 	return nil
 }
@@ -1122,7 +1122,7 @@ func (d *Database) QueryStoreUnforcePlan(queryID, planID int64) error {
 func (d *Database) QueryStoreUnforcePlanContext(ctx context.Context, queryID, planID int64) error {
 	const q = `EXEC sys.sp_query_store_unforce_plan @query_id = @p1, @plan_id = @p2`
 	if _, err := d.exec(ctx, q, queryID, planID); err != nil {
-		return fmt.Errorf("gosmo: unforce plan %d for query %d in %q: %w", planID, queryID, d.name, err)
+		return fmt.Errorf("gosmo: unforce plan %d for query %d in %q: %w", planID, queryID, d.Name, err)
 	}
 	return nil
 }

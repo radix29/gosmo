@@ -132,7 +132,7 @@ func qsRecDB(t *testing.T, major int, cols []string, rows [][]driver.Value) *Dat
 	}
 	t.Cleanup(func() { pool.Close() })
 	qsRec.reset(cols, rows)
-	return &Database{name: "appdb", server: &Server{db: pool, info: &ServerInfo{VersionMajor: major}}}
+	return &Database{Name: "appdb", server: &Server{db: pool, info: &ServerInfo{VersionMajor: major}}}
 }
 
 // -- the two lookup tables -----------------------------------------------------
@@ -368,7 +368,7 @@ func TestQueryStoreMetricsOmitsMetricsTheInstanceLacks(t *testing.T) {
 		return false
 	}
 
-	d2016 := &Database{name: "appdb", server: &Server{info: &ServerInfo{VersionMajor: int(SQLServer2016)}}}
+	d2016 := &Database{Name: "appdb", server: &Server{info: &ServerInfo{VersionMajor: int(SQLServer2016)}}}
 	got := d2016.QueryStoreMetrics()
 	if has(got, QSMetricLogMemory) || has(got, QSMetricTempDBMemory) {
 		t.Errorf("a 2016 instance was offered a 2017-only metric: %v", got)
@@ -377,14 +377,14 @@ func TestQueryStoreMetricsOmitsMetricsTheInstanceLacks(t *testing.T) {
 		t.Errorf("a 2016 instance was not offered Duration: %v", got)
 	}
 
-	d2017 := &Database{name: "appdb", server: &Server{info: &ServerInfo{VersionMajor: int(SQLServer2017)}}}
+	d2017 := &Database{Name: "appdb", server: &Server{info: &ServerInfo{VersionMajor: int(SQLServer2017)}}}
 	if got := d2017.QueryStoreMetrics(); !has(got, QSMetricLogMemory) {
 		t.Errorf("a 2017 instance was not offered Log memory used: %v", got)
 	}
 
 	// A Server whose version was never read must not be narrowed to nothing:
 	// the query is a better authority than a version we do not have.
-	unknown := &Database{name: "appdb", server: &Server{}}
+	unknown := &Database{Name: "appdb", server: &Server{}}
 	if got := unknown.QueryStoreMetrics(); len(got) != len(qsMetricDefs) {
 		t.Errorf("an instance of unknown version was offered %d of %d metrics", len(got), len(qsMetricDefs))
 	}
@@ -447,7 +447,7 @@ func TestQueryStoreReportOptionsResolveFillsDefaults(t *testing.T) {
 // statement is built — the same end-to-end check
 // TestSetQueryStoreOptionsRejectsUnknownValues makes for the writer.
 func TestQueryStoreReportRejectsUnknownMetricOrStatistic(t *testing.T) {
-	d := &Database{name: "appdb", server: &Server{}}
+	d := &Database{Name: "appdb", server: &Server{}}
 	inject := "cpu_time) FROM sys.query_store_query; DROP TABLE dbo.Secrets; --"
 
 	if _, err := d.QueryStoreTopResourceQueries(QueryStoreReportOptions{Metric: QSMetric(inject)}); err == nil {
@@ -732,7 +732,7 @@ func TestQueryStoreForcePlanScriptsTheProcedureAndItsArguments(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			d := &Database{name: "app db", server: &Server{}}
+			d := &Database{Name: "app db", server: &Server{}}
 			ctx, script := WithScript(context.Background())
 			if err := tt.call(d, ctx); err != nil {
 				t.Fatalf("%s: %v", tt.name, err)

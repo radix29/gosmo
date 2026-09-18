@@ -27,7 +27,7 @@ func TestWithScriptCapturesServerWriteWithoutExecuting(t *testing.T) {
 }
 
 func TestWithScriptCapturesDatabaseWriteWithoutExecuting(t *testing.T) {
-	d := &Database{server: &Server{}, name: "AppDB"}
+	d := &Database{server: &Server{}, Name: "AppDB"}
 	ctx, script := WithScript(context.Background())
 
 	if err := d.GrantDatabasePermissionContext(ctx, "SELECT", "app_user"); err != nil {
@@ -124,7 +124,7 @@ func TestWithScriptBindsParametersIntoTheStatement(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			d := &Database{server: &Server{}, name: "AppDB"}
+			d := &Database{server: &Server{}, Name: "AppDB"}
 			ctx, script := WithScript(context.Background())
 			if err := tc.write(ctx, d); err != nil {
 				t.Fatalf("%s under WithScript: %v", tc.name, err)
@@ -147,7 +147,7 @@ func TestWithScriptBindsParametersIntoTheStatement(t *testing.T) {
 // the bare procedure name, so capturing it verbatim recorded an object name
 // with no EXEC and no parameters at all.
 func TestWithScriptExecProcRendersAnExecStatement(t *testing.T) {
-	d := &Database{server: &Server{}, name: "AppDB"}
+	d := &Database{server: &Server{}, Name: "AppDB"}
 	ctx, script := WithScript(context.Background())
 
 	var out int64
@@ -486,7 +486,7 @@ func TestScriptedSetterDoesNotMirrorOntoTheReceiver(t *testing.T) {
 			set: func(ctx context.Context, d *Database, _ *ConfigurationOption) error {
 				return d.SetRecoveryModelContext(ctx, RecoveryModelSimple)
 			},
-			got:    func(d *Database, _ *ConfigurationOption) any { return d.RecoveryModel() },
+			got:    func(d *Database, _ *ConfigurationOption) any { return d.RecoveryModel },
 			server: RecoveryModelFull, want: RecoveryModelSimple,
 		},
 		{
@@ -494,7 +494,7 @@ func TestScriptedSetterDoesNotMirrorOntoTheReceiver(t *testing.T) {
 			set: func(ctx context.Context, d *Database, _ *ConfigurationOption) error {
 				return d.SetCompatibilityLevelContext(ctx, 160)
 			},
-			got:    func(d *Database, _ *ConfigurationOption) any { return d.CompatibilityLevel() },
+			got:    func(d *Database, _ *ConfigurationOption) any { return d.CompatibilityLevel },
 			server: CompatibilityLevel(150), want: CompatibilityLevel(160),
 		},
 		{
@@ -502,19 +502,19 @@ func TestScriptedSetterDoesNotMirrorOntoTheReceiver(t *testing.T) {
 			set: func(ctx context.Context, d *Database, _ *ConfigurationOption) error {
 				return d.SetReadOnlyContext(ctx, true)
 			},
-			got:    func(d *Database, _ *ConfigurationOption) any { return d.IsReadOnly() },
+			got:    func(d *Database, _ *ConfigurationOption) any { return d.IsReadOnly },
 			server: false, want: true,
 		},
 		{
 			name:   "SetOffline",
 			set:    func(ctx context.Context, d *Database, _ *ConfigurationOption) error { return d.SetOfflineContext(ctx) },
-			got:    func(d *Database, _ *ConfigurationOption) any { return d.State() },
+			got:    func(d *Database, _ *ConfigurationOption) any { return d.State },
 			server: "ONLINE", want: "OFFLINE",
 		},
 		{
 			name:   "SetOnline",
 			set:    func(ctx context.Context, d *Database, _ *ConfigurationOption) error { return d.SetOnlineContext(ctx) },
-			got:    func(d *Database, _ *ConfigurationOption) any { return d.State() },
+			got:    func(d *Database, _ *ConfigurationOption) any { return d.State },
 			server: "OFFLINE", want: "ONLINE",
 		},
 		{
@@ -529,10 +529,10 @@ func TestScriptedSetterDoesNotMirrorOntoTheReceiver(t *testing.T) {
 
 	// seed builds a handle pair carrying tc.server as the loaded state.
 	seed := func(srv *Server, tc int) (*Database, *ConfigurationOption) {
-		d := &Database{server: srv, name: "AppDB",
-			state: "ONLINE", recoveryModel: RecoveryModelFull, compatLevel: 150}
+		d := &Database{server: srv, Name: "AppDB",
+			State: "ONLINE", RecoveryModel: RecoveryModelFull, CompatibilityLevel: 150}
 		if cases[tc].name == "SetOnline" {
-			d.state = "OFFLINE"
+			d.State = "OFFLINE"
 		}
 		return d, &ConfigurationOption{server: srv, Name: "max server memory (MB)", Value: 2048}
 	}

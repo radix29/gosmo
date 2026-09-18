@@ -16,7 +16,7 @@ func TestDatabaseIsSystem(t *testing.T) {
 		{100, false},
 	}
 	for _, c := range cases {
-		d := &Database{id: c.id}
+		d := &Database{ID: c.id}
 		if got := d.IsSystem(); got != c.want {
 			t.Errorf("Database{id: %d}.IsSystem() = %v, want %v", c.id, got, c.want)
 		}

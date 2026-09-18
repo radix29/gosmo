@@ -284,7 +284,8 @@ func buildServerTriggerScript(t *ServerTrigger, opts ScriptOptions) (string, err
 	if opts.verb() == ScriptAlter {
 		def = alterModuleDefinition(def)
 	}
-	sb.WriteString(def + "\nGO\n")
+	sb.WriteString(def)
+	sb.WriteString("\nGO\n")
 	if !t.IsEnabled {
 		fmt.Fprintf(&sb, "DISABLE TRIGGER %s ON ALL SERVER;\nGO\n", quoteIdent(t.Name))
 	}
@@ -535,7 +536,8 @@ func buildServerAuditScript(a *ServerAudit, opts ScriptOptions) string {
 		fmt.Fprintf(&sb, "IF NOT EXISTS (SELECT 1 FROM sys.server_audits WHERE name = N'%s')\nBEGIN\n%s\nEND\nGO\n",
 			escapeSingle(a.Name), create)
 	} else {
-		sb.WriteString(create + "\nGO\n")
+		sb.WriteString(create)
+		sb.WriteString("\nGO\n")
 	}
 	if a.IsEnabled {
 		fmt.Fprintf(&sb, "\nALTER SERVER AUDIT %s WITH ( STATE = ON );\nGO\n", quoteIdent(a.Name))
@@ -594,7 +596,8 @@ func buildServerAuditSpecificationScript(s *ServerAuditSpecification, opts Scrip
 		fmt.Fprintf(&sb, "IF NOT EXISTS (SELECT 1 FROM sys.server_audit_specifications WHERE name = N'%s')\nBEGIN\n%s\nEND\nGO\n",
 			escapeSingle(s.Name), create)
 	} else {
-		sb.WriteString(create + "\nGO\n")
+		sb.WriteString(create)
+		sb.WriteString("\nGO\n")
 	}
 	return sb.String(), nil
 }

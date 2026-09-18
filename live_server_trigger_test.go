@@ -108,7 +108,7 @@ AS
 		t.Errorf("trigger did not come back enabled: %v %+v", err, back)
 	}
 
-	if err := s.ServerTrigger(liveServerTriggerName).DropContext(ctx); err != nil {
+	if err := s.ServerTriggerRef(liveServerTriggerName).DropContext(ctx); err != nil {
 		t.Fatalf("DropContext: %v", err)
 	}
 	if _, err := s.ServerTriggerByNameContext(ctx, liveServerTriggerName); !errors.Is(err, ErrNotFound) {

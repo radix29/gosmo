@@ -21,7 +21,7 @@ func captureCEK(t *testing.T) *ColumnEncryptionKey {
 	t.Cleanup(func() { db.Close() })
 	captured.reset()
 	return &ColumnEncryptionKey{
-		db:            &Database{server: &Server{db: db}, name: "App'DB"},
+		db:            &Database{server: &Server{db: db}, Name: "App'DB"},
 		Name:          "CEK]1",
 		MasterKeyName: "CMK]1", EncryptionAlgorithm: "RSA_OAEP",
 		Values: []*ColumnEncryptionKeyValue{

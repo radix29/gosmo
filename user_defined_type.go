@@ -111,7 +111,7 @@ ORDER  BY SCHEMA_NAME(t.schema_id), t.name`
 
 	rows, err := d.query(ctx, q)
 	if err != nil {
-		return nil, fmt.Errorf("gosmo: list user-defined data types in %q: %w", d.name, err)
+		return nil, fmt.Errorf("gosmo: list user-defined data types in %q: %w", d.Name, err)
 	}
 	defer rows.Close()
 
@@ -119,12 +119,12 @@ ORDER  BY SCHEMA_NAME(t.schema_id), t.name`
 	for rows.Next() {
 		t, err := scanUserDefinedDataType(d, rows.Scan)
 		if err != nil {
-			return nil, fmt.Errorf("gosmo: list user-defined data types in %q: %w", d.name, err)
+			return nil, fmt.Errorf("gosmo: list user-defined data types in %q: %w", d.Name, err)
 		}
 		types = append(types, t)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("gosmo: list user-defined data types in %q: %w", d.name, err)
+		return nil, fmt.Errorf("gosmo: list user-defined data types in %q: %w", d.Name, err)
 	}
 	return types, nil
 }
@@ -149,10 +149,10 @@ func (d *Database) UserDefinedDataTypeByNameContext(ctx context.Context, schema,
 	}, userDefinedDataTypeSelect+`
    AND SCHEMA_NAME(t.schema_id) = @p1 AND t.name = @p2`, schema, name)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, notFoundf("gosmo: user-defined data type [%s].[%s] not found in %q", schema, name, d.name)
+		return nil, notFoundf("gosmo: user-defined data type [%s].[%s] not found in %q", schema, name, d.Name)
 	}
 	if err != nil {
-		return nil, fmt.Errorf("gosmo: read user-defined data type [%s].[%s] in %q: %w", schema, name, d.name, err)
+		return nil, fmt.Errorf("gosmo: read user-defined data type [%s].[%s] in %q: %w", schema, name, d.Name, err)
 	}
 	return t, nil
 }
@@ -222,7 +222,7 @@ ORDER  BY SCHEMA_NAME(tt.schema_id), tt.name`
 
 	rows, err := d.query(ctx, q)
 	if err != nil {
-		return nil, fmt.Errorf("gosmo: list user-defined table types in %q: %w", d.name, err)
+		return nil, fmt.Errorf("gosmo: list user-defined table types in %q: %w", d.Name, err)
 	}
 	defer rows.Close()
 
@@ -230,12 +230,12 @@ ORDER  BY SCHEMA_NAME(tt.schema_id), tt.name`
 	for rows.Next() {
 		t, err := scanUserDefinedTableType(d, rows.Scan)
 		if err != nil {
-			return nil, fmt.Errorf("gosmo: list user-defined table types in %q: %w", d.name, err)
+			return nil, fmt.Errorf("gosmo: list user-defined table types in %q: %w", d.Name, err)
 		}
 		types = append(types, t)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("gosmo: list user-defined table types in %q: %w", d.name, err)
+		return nil, fmt.Errorf("gosmo: list user-defined table types in %q: %w", d.Name, err)
 	}
 	return types, nil
 }
@@ -260,10 +260,10 @@ func (d *Database) UserDefinedTableTypeByNameContext(ctx context.Context, schema
 	}, userDefinedTableTypeSelect+`
    AND SCHEMA_NAME(tt.schema_id) = @p1 AND tt.name = @p2`, schema, name)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, notFoundf("gosmo: user-defined table type [%s].[%s] not found in %q", schema, name, d.name)
+		return nil, notFoundf("gosmo: user-defined table type [%s].[%s] not found in %q", schema, name, d.Name)
 	}
 	if err != nil {
-		return nil, fmt.Errorf("gosmo: read user-defined table type [%s].[%s] in %q: %w", schema, name, d.name, err)
+		return nil, fmt.Errorf("gosmo: read user-defined table type [%s].[%s] in %q: %w", schema, name, d.Name, err)
 	}
 	return t, nil
 }
@@ -284,7 +284,7 @@ func (t *UserDefinedTableType) Columns() ([]*Column, error) {
 func (t *UserDefinedTableType) ColumnsContext(ctx context.Context) ([]*Column, error) {
 	if t.TypeTableObjectID == 0 {
 		return nil, notFoundf("gosmo: user-defined table type %s in %q has no internal table id — read it with UserDefinedTableTypeByName",
-			t.FullName(), t.db.name)
+			t.FullName(), t.db.Name)
 	}
 	const q = columnSelect + `
 WHERE  c.object_id = @p1
@@ -292,13 +292,13 @@ ORDER  BY c.column_id`
 
 	rows, err := t.db.query(ctx, q, t.TypeTableObjectID)
 	if err != nil {
-		return nil, fmt.Errorf("gosmo: list columns for table type %s in %q: %w", t.FullName(), t.db.name, err)
+		return nil, fmt.Errorf("gosmo: list columns for table type %s in %q: %w", t.FullName(), t.db.Name, err)
 	}
 	defer rows.Close()
 
 	cols, err := scanColumns(rows.Rows)
 	if err != nil {
-		return nil, fmt.Errorf("gosmo: list columns for table type %s in %q: %w", t.FullName(), t.db.name, err)
+		return nil, fmt.Errorf("gosmo: list columns for table type %s in %q: %w", t.FullName(), t.db.Name, err)
 	}
 	return cols, nil
 }
@@ -379,7 +379,7 @@ ORDER  BY SCHEMA_NAME(t.schema_id), t.name`
 
 	rows, err := d.query(ctx, q)
 	if err != nil {
-		return nil, fmt.Errorf("gosmo: list CLR types in %q: %w", d.name, err)
+		return nil, fmt.Errorf("gosmo: list CLR types in %q: %w", d.Name, err)
 	}
 	defer rows.Close()
 
@@ -387,12 +387,12 @@ ORDER  BY SCHEMA_NAME(t.schema_id), t.name`
 	for rows.Next() {
 		t, err := scanClrType(d, rows.Scan)
 		if err != nil {
-			return nil, fmt.Errorf("gosmo: list CLR types in %q: %w", d.name, err)
+			return nil, fmt.Errorf("gosmo: list CLR types in %q: %w", d.Name, err)
 		}
 		types = append(types, t)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("gosmo: list CLR types in %q: %w", d.name, err)
+		return nil, fmt.Errorf("gosmo: list CLR types in %q: %w", d.Name, err)
 	}
 	return types, nil
 }
@@ -416,10 +416,10 @@ func (d *Database) ClrTypeByNameContext(ctx context.Context, schema, name string
 	}, clrTypeSelect+`
    AND SCHEMA_NAME(t.schema_id) = @p1 AND t.name = @p2`, schema, name)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, notFoundf("gosmo: CLR type [%s].[%s] not found in %q", schema, name, d.name)
+		return nil, notFoundf("gosmo: CLR type [%s].[%s] not found in %q", schema, name, d.Name)
 	}
 	if err != nil {
-		return nil, fmt.Errorf("gosmo: read CLR type [%s].[%s] in %q: %w", schema, name, d.name, err)
+		return nil, fmt.Errorf("gosmo: read CLR type [%s].[%s] in %q: %w", schema, name, d.Name, err)
 	}
 	return t, nil
 }
@@ -472,7 +472,7 @@ ORDER  BY t.name`
 
 	rows, err := d.query(ctx, q)
 	if err != nil {
-		return nil, fmt.Errorf("gosmo: list system data types in %q: %w", d.name, err)
+		return nil, fmt.Errorf("gosmo: list system data types in %q: %w", d.Name, err)
 	}
 	defer rows.Close()
 
@@ -481,12 +481,12 @@ ORDER  BY t.name`
 		t := &SystemDataType{}
 		if err := rows.Scan(&t.Name, &t.SystemType, &t.MaxLength,
 			&t.Precision, &t.Scale, &t.IsNullable); err != nil {
-			return nil, fmt.Errorf("gosmo: list system data types in %q: %w", d.name, err)
+			return nil, fmt.Errorf("gosmo: list system data types in %q: %w", d.Name, err)
 		}
 		types = append(types, t)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("gosmo: list system data types in %q: %w", d.name, err)
+		return nil, fmt.Errorf("gosmo: list system data types in %q: %w", d.Name, err)
 	}
 	return types, nil
 }
@@ -542,7 +542,7 @@ ORDER  BY SCHEMA_NAME(x.schema_id), x.name`
 
 	rows, err := d.query(ctx, q)
 	if err != nil {
-		return nil, fmt.Errorf("gosmo: list XML schema collections in %q: %w", d.name, err)
+		return nil, fmt.Errorf("gosmo: list XML schema collections in %q: %w", d.Name, err)
 	}
 	defer rows.Close()
 
@@ -550,12 +550,12 @@ ORDER  BY SCHEMA_NAME(x.schema_id), x.name`
 	for rows.Next() {
 		c, err := scanXmlSchemaCollection(d, rows.Scan)
 		if err != nil {
-			return nil, fmt.Errorf("gosmo: list XML schema collections in %q: %w", d.name, err)
+			return nil, fmt.Errorf("gosmo: list XML schema collections in %q: %w", d.Name, err)
 		}
 		cols = append(cols, c)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("gosmo: list XML schema collections in %q: %w", d.name, err)
+		return nil, fmt.Errorf("gosmo: list XML schema collections in %q: %w", d.Name, err)
 	}
 	return cols, nil
 }
@@ -581,10 +581,10 @@ func (d *Database) XmlSchemaCollectionByNameContext(ctx context.Context, schema,
 	}, xmlSchemaCollectionSelect+`
    AND SCHEMA_NAME(x.schema_id) = @p1 AND x.name = @p2`, schema, name)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, notFoundf("gosmo: XML schema collection [%s].[%s] not found in %q", schema, name, d.name)
+		return nil, notFoundf("gosmo: XML schema collection [%s].[%s] not found in %q", schema, name, d.Name)
 	}
 	if err != nil {
-		return nil, fmt.Errorf("gosmo: read XML schema collection [%s].[%s] in %q: %w", schema, name, d.name, err)
+		return nil, fmt.Errorf("gosmo: read XML schema collection [%s].[%s] in %q: %w", schema, name, d.Name, err)
 	}
 	return c, nil
 }
@@ -608,10 +608,10 @@ func (c *XmlSchemaCollection) DefinitionContext(ctx context.Context) (string, er
 		return row.Scan(&def)
 	}, q, c.Schema, c.Name)
 	if errors.Is(err, sql.ErrNoRows) {
-		return "", notFoundf("gosmo: XML schema collection %s not found in %q", c.FullName(), c.db.name)
+		return "", notFoundf("gosmo: XML schema collection %s not found in %q", c.FullName(), c.db.Name)
 	}
 	if err != nil {
-		return "", fmt.Errorf("gosmo: read XML schema collection %s in %q: %w", c.FullName(), c.db.name, err)
+		return "", fmt.Errorf("gosmo: read XML schema collection %s in %q: %w", c.FullName(), c.db.Name, err)
 	}
 	return def.String, nil
 }

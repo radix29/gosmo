@@ -54,7 +54,7 @@ ORDER  BY SCHEMA_NAME(o.schema_id), o.name`
 
 	rows, err := d.query(ctx, q, args...)
 	if err != nil {
-		return nil, fmt.Errorf("gosmo: list UDFs in %q: %w", d.name, err)
+		return nil, fmt.Errorf("gosmo: list UDFs in %q: %w", d.Name, err)
 	}
 	defer rows.Close()
 
@@ -63,13 +63,13 @@ ORDER  BY SCHEMA_NAME(o.schema_id), o.name`
 		f := &UserDefinedFunction{}
 		if err := rows.Scan(&f.ObjectID, &f.Schema, &f.Name, &f.FuncType,
 			&f.Definition, &f.CreateDate, &f.ModifyDate); err != nil {
-			return nil, fmt.Errorf("gosmo: list UDFs in %q: %w", d.name, err)
+			return nil, fmt.Errorf("gosmo: list UDFs in %q: %w", d.Name, err)
 		}
 		f.FuncType = strings.TrimSpace(f.FuncType)
 		funcs = append(funcs, f)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("gosmo: list UDFs in %q: %w", d.name, err)
+		return nil, fmt.Errorf("gosmo: list UDFs in %q: %w", d.Name, err)
 	}
 	return funcs, nil
 }
@@ -117,7 +117,7 @@ ORDER  BY o.name`
 
 	rows, err := d.query(ctx, q, args...)
 	if err != nil {
-		return nil, fmt.Errorf("gosmo: list system UDFs in %q: %w", d.name, err)
+		return nil, fmt.Errorf("gosmo: list system UDFs in %q: %w", d.Name, err)
 	}
 	defer rows.Close()
 
@@ -126,13 +126,13 @@ ORDER  BY o.name`
 		f := &UserDefinedFunction{}
 		if err := rows.Scan(&f.ObjectID, &f.Schema, &f.Name, &f.FuncType,
 			&f.Definition, &f.CreateDate, &f.ModifyDate); err != nil {
-			return nil, fmt.Errorf("gosmo: list system UDFs in %q: %w", d.name, err)
+			return nil, fmt.Errorf("gosmo: list system UDFs in %q: %w", d.Name, err)
 		}
 		f.FuncType = strings.TrimSpace(f.FuncType)
 		funcs = append(funcs, f)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("gosmo: list system UDFs in %q: %w", d.name, err)
+		return nil, fmt.Errorf("gosmo: list system UDFs in %q: %w", d.Name, err)
 	}
 	return funcs, nil
 }

@@ -314,7 +314,7 @@ func TestDropStatements(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			d := &Database{server: &Server{}, name: "AppDB"}
+			d := &Database{server: &Server{}, Name: "AppDB"}
 			ctx, script := WithScript(context.Background())
 			if err := tc.write(ctx, d); err != nil {
 				t.Fatalf("%s under WithScript: %v", tc.name, err)
@@ -412,7 +412,7 @@ func TestRenameStatements(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			d := &Database{server: &Server{}, name: "AppDB"}
+			d := &Database{server: &Server{}, Name: "AppDB"}
 			ctx, script := WithScript(context.Background())
 			if err := tc.write(ctx, d); err != nil {
 				t.Fatalf("%s under WithScript: %v", tc.name, err)
@@ -493,7 +493,7 @@ func TestServerLevelDropAndRenameStatements(t *testing.T) {
 // here — which is the point: adding one to this list is how a new drop gets
 // its statement pinned at all.
 func TestDropStatementsAreNotIdempotent(t *testing.T) {
-	d := &Database{server: &Server{}, name: "AppDB"}
+	d := &Database{server: &Server{}, Name: "AppDB"}
 	ctx, script := WithScript(context.Background())
 
 	drops := []struct {
@@ -532,7 +532,7 @@ func TestDropStatementsAreNotIdempotent(t *testing.T) {
 // family — a name that isn't would either fail to parse or, worse, resolve
 // to a different object.
 func TestDropRenameQuotesAwkwardNames(t *testing.T) {
-	d := &Database{server: &Server{}, name: "AppDB"}
+	d := &Database{server: &Server{}, Name: "AppDB"}
 	ctx, script := WithScript(context.Background())
 	if err := d.DropViewContext(ctx, "we]ird", "v]iew"); err != nil {
 		t.Fatalf("DropViewContext: %v", err)
@@ -566,7 +566,7 @@ func TestTransferObjectRefusals(t *testing.T) {
 		{"same schema by default", "dbo", "", "already in schema"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
-			d := &Database{server: &Server{}, name: "AppDB"}
+			d := &Database{server: &Server{}, Name: "AppDB"}
 			ctx, script := WithScript(context.Background())
 			err := d.TransferObjectContext(ctx, c.target, c.schema, "Orders")
 			if err == nil {
@@ -586,7 +586,7 @@ func TestTransferObjectRefusals(t *testing.T) {
 // quoteIdent("") is "[]", which the server rejects naming a column the caller
 // never asked for.
 func TestDropColumnRefusesAnEmptyName(t *testing.T) {
-	d := &Database{server: &Server{}, name: "AppDB"}
+	d := &Database{server: &Server{}, Name: "AppDB"}
 	ctx, script := WithScript(context.Background())
 	err := (&Table{db: d, Schema: "dbo", Name: "Orders"}).DropColumnContext(ctx, "")
 	if err == nil || !strings.Contains(err.Error(), "name is required") {
