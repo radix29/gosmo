@@ -188,9 +188,10 @@ func (s *Server) ScheduleByNameContext(ctx context.Context, name string) (*Sched
 //
 // Every write method on *Schedule that addresses the schedule by name
 // (Job.AttachSchedule/DetachSchedule take the name directly) works from
-// this handle, which makes it the only usable form under a WithScript
-// context: ScheduleByNameContext's lookup is a real read, so a schedule
-// whose sp_add_schedule was merely collected is not there to find.
+// this handle. It is also the form to use when there is nothing to read
+// yet: under a WithScript-derived context, ScheduleByNameContext's lookup is
+// a real read, so a schedule whose sp_add_schedule was merely collected is
+// not there to find.
 func (s *Server) ScheduleRef(name string) *Schedule {
 	return &Schedule{server: s, Name: name}
 }

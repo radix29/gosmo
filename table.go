@@ -46,8 +46,9 @@ type Table struct {
 // reads — would find object 0 and return nothing, so those need a Table from
 // Tables/TableByName instead.
 //
-// Like Server.DatabaseRef, this is also the only form that works under a
-// WithScript-derived context, where no lookup can run at all.
+// Like Server.DatabaseRef, it is also the only form that works before the
+// table exists — a CREATE TABLE a WithScript context merely collected is not
+// in the catalog to find.
 func (d *Database) TableRef(schema, name string) *Table {
 	if schema == "" {
 		schema = "dbo"

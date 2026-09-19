@@ -49,8 +49,9 @@ type DatabaseSnapshot struct {
 //
 // Like Server.DatabaseRef, it is the form the name-only operations take — Drop,
 // which names the snapshot in the statement and reads nothing else — and the
-// only one that works under a WithScript-derived context, where no lookup can
-// run at all.
+// only one that works before the snapshot exists: a CREATE DATABASE ... AS
+// SNAPSHOT OF that a WithScript context merely collected leaves nothing to
+// look up.
 func (s *Server) DatabaseSnapshotRef(name string) *DatabaseSnapshot {
 	return &DatabaseSnapshot{server: s, Name: name}
 }

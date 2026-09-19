@@ -200,9 +200,9 @@ func (s *Server) AvailabilityGroupsContext(ctx context.Context) ([]*Availability
 // This exists for the one case where the group cannot be read: a secondary of
 // an EXTERNAL- or NONE-cluster group has no row for it until Join succeeds, so
 // the join has to be issued against a handle built from the name alone. It is
-// also what works under a WithScript-derived context, where nothing has been
-// created yet to read back. The same split as Server.DatabaseRef vs
-// Server.DatabaseByName.
+// also what a WithScript-derived context needs when the group has only been
+// scripted, not created — there is then no row to read back. The same split as
+// Server.DatabaseRef vs Server.DatabaseByName.
 func (s *Server) AvailabilityGroupRef(name string) *AvailabilityGroup {
 	return &AvailabilityGroup{server: s, Name: name}
 }

@@ -175,7 +175,9 @@ WHERE  s.name = @p1`, name)
 // DatabaseAuditSpecificationRef returns a lightweight handle by name, without
 // querying the catalog — the counterpart of Server.DatabaseRef. Every cached
 // field stays at its zero value; DatabaseAuditSpecificationByName populates
-// them. This is the only form usable under a WithScript-derived context.
+// them. It is also the only form that works before the specification exists,
+// such as one a WithScript-derived context has only scripted. The same split
+// as Server.DatabaseRef vs Server.DatabaseByName.
 func (d *Database) DatabaseAuditSpecificationRef(name string) *DatabaseAuditSpecification {
 	return &DatabaseAuditSpecification{db: d, Name: name}
 }

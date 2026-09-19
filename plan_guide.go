@@ -172,8 +172,9 @@ WHERE  g.name = @p1`, name)
 // Every other field stays at its zero value; PlanGuideByName is what
 // populates them. Enable, Disable and Drop address the guide by name, so
 // this handle is enough to act on one the caller already knows exists, and is
-// the only usable form under a WithScript context, where
-// PlanGuideByNameContext's lookup is a real read.
+// the form to use when there is nothing to read yet — under a
+// WithScript-derived context, PlanGuideByNameContext's lookup is a real read
+// and therefore finds nothing for a guide whose CREATE was merely collected.
 func (d *Database) PlanGuideRef(name string) *PlanGuide {
 	return &PlanGuide{db: d, Name: name}
 }

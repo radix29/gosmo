@@ -120,8 +120,10 @@ func (d *Database) DatabaseTriggerByNameContext(ctx context.Context, name string
 // Every other field stays at its zero value; DatabaseTriggerByName is what
 // populates them. EnableContext, DisableContext and DropContext address the
 // trigger by name, so this handle is enough to act on one the caller already
-// knows exists, and is the only usable form under a WithScript context, where
-// DatabaseTriggerByNameContext's lookup is a real read.
+// knows exists, and is the form to use when there is nothing to read yet —
+// under a WithScript-derived context, DatabaseTriggerByNameContext's lookup is
+// a real read and therefore finds nothing for a trigger whose CREATE was
+// merely collected.
 func (d *Database) DatabaseTriggerRef(name string) *DatabaseTrigger {
 	return &DatabaseTrigger{db: d, Name: name}
 }

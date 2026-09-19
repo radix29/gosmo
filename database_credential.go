@@ -116,9 +116,10 @@ WHERE  c.name = @p1`, name)
 //
 // Every write method on *DatabaseScopedCredential addresses the credential by
 // name, so this handle is enough to go on operating on one the caller already
-// knows exists — and is the only usable form under a WithScript-derived
-// context, where DatabaseScopedCredentialByNameContext's lookup is a real read
-// and a credential whose CREATE was merely collected is not there to find.
+// knows exists — and is the form to use when there is nothing to read yet:
+// under a WithScript-derived context, DatabaseScopedCredentialByNameContext's
+// lookup is a real read and a credential whose CREATE was merely collected is
+// not there to find.
 func (d *Database) DatabaseScopedCredentialRef(name string) *DatabaseScopedCredential {
 	return &DatabaseScopedCredential{db: d, Name: name}
 }

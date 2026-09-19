@@ -115,10 +115,10 @@ WHERE  name = @p1`, name)
 // BackupDeviceByName is what populates them.
 //
 // DropContext addresses the device by name, so this handle is enough to drop
-// one the caller already knows exists — and is the only usable form under a
-// WithScript context, where BackupDeviceByNameContext's lookup is a real read
-// and a device whose sp_addumpdevice was merely collected is not there to
-// find.
+// one the caller already knows exists — and is the form to use when there is
+// nothing to read yet: under a WithScript-derived context,
+// BackupDeviceByNameContext's lookup is a real read and a device whose
+// sp_addumpdevice was merely collected is not there to find.
 func (s *Server) BackupDeviceRef(name string) *BackupDevice {
 	return &BackupDevice{server: s, Name: name}
 }

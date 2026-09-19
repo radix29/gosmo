@@ -180,10 +180,10 @@ func (s *Server) EventAlertsContext(ctx context.Context) ([]*Alert, error) {
 //
 // Every write method on *Alert addresses the alert by name (Notify,
 // RemoveNotify, Update, ...), so this handle is enough to keep operating on
-// an alert the caller already knows exists — and is the only usable form
-// under a WithScript context, where AlertByNameContext's lookup is a real
-// read and an alert whose sp_add_alert was merely collected is not there to
-// find.
+// an alert the caller already knows exists — and is the form to use when
+// there is nothing to read yet: under a WithScript-derived context,
+// AlertByNameContext's lookup is a real read and an alert whose sp_add_alert
+// was merely collected is not there to find.
 func (s *Server) AlertRef(name string) *Alert {
 	return &Alert{server: s, Name: name}
 }

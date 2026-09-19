@@ -267,9 +267,9 @@ ORDER  BY j.name`
 // Every write method on *Job builds its statement from Name alone
 // (AddStep, AttachSchedule, Start, Rename, ...), so this handle is enough
 // to keep operating on a job the caller already knows exists — and is the
-// only usable form under a WithScript context, where JobByNameContext's
-// lookup is a real read and a job whose sp_add_job was merely collected is
-// not there to find.
+// form to use when there is nothing to read yet: under a WithScript-derived
+// context, JobByNameContext's lookup is a real read and a job whose
+// sp_add_job was merely collected is not there to find.
 func (s *Server) JobRef(name string) *Job {
 	return &Job{server: s, Name: name}
 }

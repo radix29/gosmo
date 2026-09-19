@@ -93,9 +93,10 @@ func (s *Server) OperatorsContext(ctx context.Context) ([]*Operator, error) {
 //
 // Every write method on *Operator addresses the operator by name, so this
 // handle is enough to keep operating on an operator the caller already
-// knows exists — and is the only usable form under a WithScript context,
-// where OperatorByNameContext's lookup is a real read and an operator whose
-// sp_add_operator was merely collected is not there to find.
+// knows exists — and is the form to use when there is nothing to read yet:
+// under a WithScript-derived context, OperatorByNameContext's lookup is a
+// real read and an operator whose sp_add_operator was merely collected is
+// not there to find.
 func (s *Server) OperatorRef(name string) *Operator {
 	return &Operator{server: s, Name: name}
 }
