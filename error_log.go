@@ -95,14 +95,10 @@ type ErrorLogFile struct {
 }
 
 // EnumErrorLogs lists the available log files of the given family.
-func (s *Server) EnumErrorLogs(logType ErrorLogType) ([]*ErrorLogFile, error) {
-	return s.EnumErrorLogsContext(context.Background(), logType)
-}
-
-// EnumErrorLogsContext is the context-aware variant of EnumErrorLogs.
+//
 // Results are ordered by Number, current log first — sp_enumerrorlogs
 // returns the Agent family's current log last, not first.
-func (s *Server) EnumErrorLogsContext(ctx context.Context, logType ErrorLogType) ([]*ErrorLogFile, error) {
+func (s *Server) EnumErrorLogs(ctx context.Context, logType ErrorLogType) ([]*ErrorLogFile, error) {
 	if !logType.valid() {
 		return nil, fmt.Errorf("gosmo: enumerate error logs: unknown log type %d", int(logType))
 	}
@@ -154,15 +150,11 @@ func parseErrorLogFileDate(s string) time.Time {
 
 // ReadLog reads one log file of the given family.
 // Pass logNumber=0 for the current log, 1 for the first archived log, etc.
-func (s *Server) ReadLog(logType ErrorLogType, logNumber int) ([]*ErrorLogEntry, error) {
-	return s.ReadLogContext(context.Background(), logType, logNumber)
-}
-
-// ReadLogContext is the context-aware variant of ReadLog. Which of an
-// entry's Process and ErrorLevel is populated follows logType — see
-// ErrorLogEntry.
-func (s *Server) ReadLogContext(ctx context.Context, logType ErrorLogType, logNumber int) ([]*ErrorLogEntry, error) {
-	return s.ReadLogFilteredContext(ctx, logType, logNumber, LogSearch{})
+//
+// Which of an entry's Process and ErrorLevel is populated follows logType —
+// see ErrorLogEntry.
+func (s *Server) ReadLog(ctx context.Context, logType ErrorLogType, logNumber int) ([]*ErrorLogEntry, error) {
+	return s.ReadLogFiltered(ctx, logType, logNumber, LogSearch{})
 }
 
 // LogSearch narrows a log read at the server. Every field is optional, and a
@@ -183,45 +175,30 @@ func (f LogSearch) empty() bool {
 	return f.Text1 == "" && f.Text2 == "" && f.From.IsZero() && f.To.IsZero()
 }
 
-// ReadLogFiltered reads one log file of the given family, keeping only the
-// entries the search matches.
-func (s *Server) ReadLogFiltered(logType ErrorLogType, logNumber int, search LogSearch) ([]*ErrorLogEntry, error) {
-	return s.ReadLogFilteredContext(context.Background(), logType, logNumber, search)
-}
-
-// ReadLogFilteredContext is the context-aware variant of ReadLogFiltered, and
-// carries the read every other method here delegates to.
-func (s *Server) ReadLogFilteredContext(ctx context.Context, logType ErrorLogType, logNumber int, search LogSearch) ([]*ErrorLogEntry, error) {
+// ReadLogFiltered reads one log file of the given family, keeping only
+// the entries the search matches. It carries the read every other method here
+// delegates to.
+func (s *Server) ReadLogFiltered(ctx context.Context, logType ErrorLogType, logNumber int, search LogSearch) ([]*ErrorLogEntry, error) {
 	if !logType.valid() {
 		return nil, fmt.Errorf("gosmo: read error log: unknown log type %d", int(logType))
 	}
 	q, args := readErrorLogCall(logType, logNumber, search)
 	rows, err := s.query(ctx, q, args...)
-	if err != nil {
-		return nil, fmt.Errorf("gosmo: read %s error log %d: %w", logType, logNumber, err)
-	}
-	defer rows.Close()
-
-	var entries []*ErrorLogEntry
-	for rows.Next() {
+	return scanRows(rows, err, fmt.Sprintf("read %s error log %d", logType, logNumber), func(scan func(...any) error) (*ErrorLogEntry, error) {
 		e := &ErrorLogEntry{}
 		// The middle column is a ProcessInfo string on the SQL Server log and
 		// an int severity on the Agent log; scanning the wrong one fails in
 		// the driver, so each family gets its own destination.
 		if logType == ErrorLogAgent {
-			if err := rows.Scan(&e.Date, &e.ErrorLevel, &e.Text); err != nil {
-				return nil, fmt.Errorf("gosmo: read %s error log %d: %w", logType, logNumber, err)
+			if err := scan(&e.Date, &e.ErrorLevel, &e.Text); err != nil {
+				return nil, err
 			}
-		} else if err := rows.Scan(&e.Date, &e.Process, &e.Text); err != nil {
-			return nil, fmt.Errorf("gosmo: read %s error log %d: %w", logType, logNumber, err)
+		} else if err := scan(&e.Date, &e.Process, &e.Text); err != nil {
+			return nil, err
 		}
 		e.LogDate = e.Date.Format(time.RFC3339Nano)
-		entries = append(entries, e)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("gosmo: read %s error log %d: %w", logType, logNumber, err)
-	}
-	return entries, nil
+		return e, nil
+	})
 }
 
 // logSearchDateLayout is the format xp_readerrorlog parses a date filter in.
@@ -266,14 +243,10 @@ func readErrorLogCall(logType ErrorLogType, logNumber int, search LogSearch) (st
 
 // ReadErrorLog reads a SQL Server error log file.
 // Pass logNumber=0 for the current log, 1 for the first archived log, etc.
-func (s *Server) ReadErrorLog(logNumber int) ([]*ErrorLogEntry, error) {
-	return s.ReadErrorLogContext(context.Background(), logNumber)
-}
-
-// ReadErrorLogContext is the context-aware variant of ReadErrorLog. It is
-// ReadLogContext fixed to the SQL Server log family.
-func (s *Server) ReadErrorLogContext(ctx context.Context, logNumber int) ([]*ErrorLogEntry, error) {
-	return s.ReadLogContext(ctx, ErrorLogSQLServer, logNumber)
+//
+// It is ReadLog fixed to the SQL Server log family.
+func (s *Server) ReadErrorLog(ctx context.Context, logNumber int) ([]*ErrorLogEntry, error) {
+	return s.ReadLog(ctx, ErrorLogSQLServer, logNumber)
 }
 
 // cycleLogStatements is the procedure each log family cycles with. The
@@ -288,18 +261,14 @@ var cycleLogStatements = map[ErrorLogType]string{
 // CycleLog closes the current log of the given family and opens a new one,
 // renumbering the archives and deleting the oldest if the instance is already
 // holding as many as it is configured to keep.
-func (s *Server) CycleLog(logType ErrorLogType) error {
-	return s.CycleLogContext(context.Background(), logType)
-}
-
-// CycleLogContext is the context-aware variant of CycleLog. Cycling the Agent
-// log requires SQL Server Agent to be running.
-func (s *Server) CycleLogContext(ctx context.Context, logType ErrorLogType) error {
+//
+// Cycling the Agent log requires SQL Server Agent to be running.
+func (s *Server) CycleLog(ctx context.Context, logType ErrorLogType) error {
 	stmt, ok := cycleLogStatements[logType]
 	if !ok {
 		return fmt.Errorf("gosmo: cycle error log: unknown log type %d", int(logType))
 	}
-	if err := s.execContext(ctx, stmt); err != nil {
+	if err := s.exec(ctx, stmt); err != nil {
 		return fmt.Errorf("gosmo: cycle %s error log: %w", logType, err)
 	}
 	return nil
@@ -308,11 +277,6 @@ func (s *Server) CycleLogContext(ctx context.Context, logType ErrorLogType) erro
 // CycleErrorLog closes the current error log and opens a new one.
 // Equivalent to sp_cycle_errorlog. It is CycleLog fixed to the SQL Server
 // log family.
-func (s *Server) CycleErrorLog() error {
-	return s.CycleErrorLogContext(context.Background())
-}
-
-// CycleErrorLogContext is the context-aware variant of CycleErrorLog.
-func (s *Server) CycleErrorLogContext(ctx context.Context) error {
-	return s.CycleLogContext(ctx, ErrorLogSQLServer)
+func (s *Server) CycleErrorLog(ctx context.Context) error {
+	return s.CycleLog(ctx, ErrorLogSQLServer)
 }

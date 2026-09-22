@@ -192,8 +192,8 @@ func TestDetachFlagsAreTheInverseOfTheProceduresParameters(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			s := detServer(t)
-			if err := s.DetachDatabaseContext(context.Background(), "appdb", c.opts); err != nil {
-				t.Fatalf("DetachDatabaseContext: %v", err)
+			if err := s.DetachDatabase(context.Background(), "appdb", c.opts); err != nil {
+				t.Fatalf("DetachDatabase: %v", err)
 			}
 			stmt := detLog.only(t, "sp_detach_db")
 			for _, want := range c.want {
@@ -213,8 +213,8 @@ func TestDetachFlagsAreTheInverseOfTheProceduresParameters(t *testing.T) {
 // procedure — after it, there is no database left to alter.
 func TestDetachDropConnectionsSetsSingleUserFirst(t *testing.T) {
 	s := detServer(t)
-	if err := s.DetachDatabaseContext(context.Background(), "appdb", DetachOptions{DropConnections: true}); err != nil {
-		t.Fatalf("DetachDatabaseContext: %v", err)
+	if err := s.DetachDatabase(context.Background(), "appdb", DetachOptions{DropConnections: true}); err != nil {
+		t.Fatalf("DetachDatabase: %v", err)
 	}
 	stmts := detLog.statements()
 	if len(stmts) != 2 {
@@ -231,14 +231,14 @@ func TestDetachDropConnectionsSetsSingleUserFirst(t *testing.T) {
 // TestAFailedDetachIsPutBackToMultiUser. SINGLE_USER blocks every other
 // login, so a detach that dropped the connections and then failed would leave
 // the database unusable by anyone but the caller — for a reason the caller
-// never asked for. Same contract as RenameDatabaseContext's force.
+// never asked for. Same contract as RenameDatabase's force.
 func TestAFailedDetachIsPutBackToMultiUser(t *testing.T) {
 	s := detServer(t)
 	detLog.mu.Lock()
 	detLog.failOn = "sp_detach_db"
 	detLog.mu.Unlock()
 
-	err := s.DetachDatabaseContext(context.Background(), "appdb", DetachOptions{DropConnections: true})
+	err := s.DetachDatabase(context.Background(), "appdb", DetachOptions{DropConnections: true})
 	if err == nil {
 		t.Fatal("a failing detach returned no error")
 	}
@@ -260,7 +260,7 @@ func TestAFailedDetachIsPutBackToMultiUserEvenWhenTheContextIsGone(t *testing.T)
 	s := detServer(t)
 	ctx := detCancelOn(t, "sp_detach_db")
 
-	err := s.DetachDatabaseContext(ctx, "appdb", DetachOptions{DropConnections: true})
+	err := s.DetachDatabase(ctx, "appdb", DetachOptions{DropConnections: true})
 	if err == nil {
 		t.Fatal("a detach whose context expired returned no error")
 	}
@@ -276,8 +276,8 @@ func TestAFailedDetachIsPutBackToMultiUserEvenWhenTheContextIsGone(t *testing.T)
 // "not found" — turning a detach that worked into a reported failure.
 func TestASuccessfulDetachDoesNotTryToAlterTheDatabaseAfterwards(t *testing.T) {
 	s := detServer(t)
-	if err := s.DetachDatabaseContext(context.Background(), "appdb", DetachOptions{DropConnections: true}); err != nil {
-		t.Fatalf("DetachDatabaseContext: %v", err)
+	if err := s.DetachDatabase(context.Background(), "appdb", DetachOptions{DropConnections: true}); err != nil {
+		t.Fatalf("DetachDatabase: %v", err)
 	}
 	for _, stmt := range detLog.statements() {
 		if strings.Contains(stmt, "SET MULTI_USER") {
@@ -288,7 +288,7 @@ func TestASuccessfulDetachDoesNotTryToAlterTheDatabaseAfterwards(t *testing.T) {
 
 func TestDetachRequiresAName(t *testing.T) {
 	s := detServer(t)
-	if err := s.DetachDatabaseContext(context.Background(), "", DetachOptions{}); err == nil {
+	if err := s.DetachDatabase(context.Background(), "", DetachOptions{}); err == nil {
 		t.Error("detaching a database with no name returned no error")
 	}
 	if n := len(detLog.statements()); n != 0 {
@@ -349,11 +349,11 @@ func TestBuildAttachStatement(t *testing.T) {
 // database that is not attached yet, so the order is not cosmetic.
 func TestAttachSetsTheOwnerAfterCreating(t *testing.T) {
 	s := detServer(t)
-	err := s.AttachDatabaseContext(context.Background(), AttachSpec{
+	err := s.AttachDatabase(context.Background(), AttachSpec{
 		Name: "appdb", Files: []string{`C:\Data\appdb.mdf`}, Owner: "sa",
 	})
 	if err != nil {
-		t.Fatalf("AttachDatabaseContext: %v", err)
+		t.Fatalf("AttachDatabase: %v", err)
 	}
 	stmts := detLog.statements()
 	if len(stmts) != 2 {
@@ -372,10 +372,10 @@ func TestAttachSetsTheOwnerAfterCreating(t *testing.T) {
 // AUTHORIZATION would fail for a login that may not transfer ownership.
 func TestAttachWithNoOwnerLeavesOwnershipAlone(t *testing.T) {
 	s := detServer(t)
-	if err := s.AttachDatabaseContext(context.Background(), AttachSpec{
+	if err := s.AttachDatabase(context.Background(), AttachSpec{
 		Name: "appdb", Files: []string{`C:\Data\appdb.mdf`},
 	}); err != nil {
-		t.Fatalf("AttachDatabaseContext: %v", err)
+		t.Fatalf("AttachDatabase: %v", err)
 	}
 	for _, stmt := range detLog.statements() {
 		if strings.Contains(stmt, "ALTER AUTHORIZATION") {
@@ -386,10 +386,10 @@ func TestAttachWithNoOwnerLeavesOwnershipAlone(t *testing.T) {
 
 func TestAttachRequiresANameAndAtLeastOneFile(t *testing.T) {
 	s := detServer(t)
-	if err := s.AttachDatabaseContext(context.Background(), AttachSpec{Files: []string{"a.mdf"}}); err == nil {
+	if err := s.AttachDatabase(context.Background(), AttachSpec{Files: []string{"a.mdf"}}); err == nil {
 		t.Error("attaching with no name returned no error")
 	}
-	if err := s.AttachDatabaseContext(context.Background(), AttachSpec{Name: "appdb"}); err == nil {
+	if err := s.AttachDatabase(context.Background(), AttachSpec{Name: "appdb"}); err == nil {
 		t.Error("attaching with no files returned no error")
 	}
 	if n := len(detLog.statements()); n != 0 {
@@ -406,10 +406,10 @@ func TestDetachAndAttachAreScriptable(t *testing.T) {
 	s := detServer(t)
 	ctx, script := WithScript(context.Background())
 
-	if err := s.DetachDatabaseContext(ctx, "appdb", DetachOptions{DropConnections: true, UpdateStatistics: true}); err != nil {
+	if err := s.DetachDatabase(ctx, "appdb", DetachOptions{DropConnections: true, UpdateStatistics: true}); err != nil {
 		t.Fatalf("scripted detach: %v", err)
 	}
-	if err := s.AttachDatabaseContext(ctx, AttachSpec{
+	if err := s.AttachDatabase(ctx, AttachSpec{
 		Name: "appdb2", Files: []string{`C:\Data\appdb.mdf`}, Owner: "sa",
 	}); err != nil {
 		t.Fatalf("scripted attach: %v", err)
@@ -417,7 +417,7 @@ func TestDetachAndAttachAreScriptable(t *testing.T) {
 	if n := len(detLog.statements()); n != 0 {
 		t.Fatalf("%d statements reached the server under WithScript, want none: %v", n, detLog.statements())
 	}
-	joined := strings.Join(script.Statements, "\n")
+	joined := strings.Join(script.Statements(), "\n")
 	for _, want := range []string{
 		"SET SINGLE_USER WITH ROLLBACK IMMEDIATE",
 		"sp_detach_db",
@@ -458,9 +458,9 @@ func TestDetachedDatabaseInfoReadsTheNameAndEveryFile(t *testing.T) {
 	}
 	detLog.mu.Unlock()
 
-	d, err := s.DetachedDatabaseInfoContext(context.Background(), `C:\Data\appdb.mdf`)
+	d, err := s.DetachedDatabaseInfo(context.Background(), `C:\Data\appdb.mdf`)
 	if err != nil {
-		t.Fatalf("DetachedDatabaseInfoContext: %v", err)
+		t.Fatalf("DetachedDatabaseInfo: %v", err)
 	}
 	if d.Name != "appdb" {
 		t.Errorf("Name = %q, want appdb", d.Name)
@@ -505,9 +505,9 @@ func TestDetachedFilesFallBackToTheExtension(t *testing.T) {
 	}
 	detLog.mu.Unlock()
 
-	d, err := s.DetachedDatabaseInfoContext(context.Background(), `C:\Data\appdb.mdf`)
+	d, err := s.DetachedDatabaseInfo(context.Background(), `C:\Data\appdb.mdf`)
 	if err != nil {
-		t.Fatalf("DetachedDatabaseInfoContext: %v", err)
+		t.Fatalf("DetachedDatabaseInfo: %v", err)
 	}
 	if len(d.LogFiles()) != 1 || d.LogFiles()[0].Name != "appdb_log" {
 		t.Errorf("log files = %v, want the .LDF recognised by its extension", d.LogFiles())
@@ -533,7 +533,7 @@ func TestTheExtensionFallbackDoesNotOverrideTheStatusBit(t *testing.T) {
 
 func TestDetachedDatabaseInfoRequiresAPath(t *testing.T) {
 	s := detServer(t)
-	if _, err := s.DetachedDatabaseInfoContext(context.Background(), "   "); err == nil {
+	if _, err := s.DetachedDatabaseInfo(context.Background(), "   "); err == nil {
 		t.Error("an empty primary file path returned no error")
 	}
 	if n := len(detLog.statements()); n != 0 {

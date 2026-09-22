@@ -33,14 +33,14 @@ func ensureMasterKey(t *testing.T, s *Server, ctx context.Context) func() {
 	if n > 0 {
 		return func() {}
 	}
-	if err := s.execContext(ctx, "USE [master]; CREATE MASTER KEY ENCRYPTION BY PASSWORD = '"+masterKeyPassword+"'"); err != nil {
+	if err := s.exec(ctx, "USE [master]; CREATE MASTER KEY ENCRYPTION BY PASSWORD = '"+masterKeyPassword+"'"); err != nil {
 		t.Fatalf("create master key in master: %v", err)
 	}
 	t.Logf("master had no database master key; created a throwaway one for this test")
 	return func() {
 		// Background context: the test's may already be cancelled, and the
 		// key must not outlive the run whatever happened to it.
-		if err := s.execContext(context.Background(), "USE [master]; DROP MASTER KEY"); err != nil {
+		if err := s.exec(context.Background(), "USE [master]; DROP MASTER KEY"); err != nil {
 			t.Errorf("dropping the throwaway master key in master: %v — drop it by hand", err)
 		}
 	}

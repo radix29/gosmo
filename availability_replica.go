@@ -32,25 +32,25 @@ type AvailabilityReplica struct {
 
 	// GroupName is the owning group's name. ALTER AVAILABILITY GROUP addresses
 	// a replica as "<group> MODIFY REPLICA ON '<replica>'", so every setter on
-	// this type needs it; it is filled in by ReplicasContext.
+	// this type needs it; it is filled in by Replicas.
 	GroupName string
 
 	ReplicaID         string
 	ReplicaServerName string
 	EndpointURL       string
 
-	AvailabilityMode string
-	FailoverMode     string
+	AvailabilityMode AvailabilityMode
+	FailoverMode     FailoverMode
 	SessionTimeout   int
 
-	PrimaryRoleAllowConnections   string
-	SecondaryRoleAllowConnections string
+	PrimaryRoleAllowConnections   AllowConnections
+	SecondaryRoleAllowConnections AllowConnections
 
 	BackupPriority     int
 	ReadOnlyRoutingURL string
 
-	// SeedingMode is AUTOMATIC or MANUAL. SQL Server 2016+; empty on older.
-	SeedingMode string
+	// SeedingMode is SQL Server 2016+; empty on older.
+	SeedingMode SeedingMode
 
 	CreateDate time.Time
 	ModifyDate time.Time
@@ -71,12 +71,7 @@ type AvailabilityReplica struct {
 func (r *AvailabilityReplica) Server() *Server { return r.server }
 
 // Replicas returns every replica in the group, ordered by server name.
-func (ag *AvailabilityGroup) Replicas() ([]*AvailabilityReplica, error) {
-	return ag.ReplicasContext(context.Background())
-}
-
-// ReplicasContext is the context-aware variant of Replicas.
-func (ag *AvailabilityGroup) ReplicasContext(ctx context.Context) ([]*AvailabilityReplica, error) {
+func (ag *AvailabilityGroup) Replicas(ctx context.Context) ([]*AvailabilityReplica, error) {
 	s := ag.server
 
 	major := s.serverMajorVersion()
@@ -108,18 +103,12 @@ func (ag *AvailabilityGroup) ReplicasContext(ctx context.Context) ([]*Availabili
 	ORDER BY ar.replica_server_name`
 
 	rows, err := s.query(ctx, q, ag.ID)
-	if err != nil {
-		return nil, fmt.Errorf("gosmo: list replicas of availability group %q: %w", ag.Name, err)
-	}
-	defer rows.Close()
-
-	var replicas []*AvailabilityReplica
-	for rows.Next() {
+	return scanRows(rows, err, fmt.Sprintf("list replicas of availability group %q", ag.Name), func(scan func(...any) error) (*AvailabilityReplica, error) {
 		r := &AvailabilityReplica{server: s, GroupName: ag.Name}
 		// create_date/modify_date are NULL on a replica this instance holds
 		// only as cluster metadata — every row on a secondary, in practice.
 		var created, modified, lastErrTime sql.NullTime
-		if err := rows.Scan(
+		if err := scan(
 			&r.GroupID, &r.ReplicaID, &r.ReplicaServerName, &r.EndpointURL,
 			&r.AvailabilityMode, &r.FailoverMode, &r.SessionTimeout,
 			&r.PrimaryRoleAllowConnections, &r.SecondaryRoleAllowConnections,
@@ -129,7 +118,7 @@ func (ag *AvailabilityGroup) ReplicasContext(ctx context.Context) ([]*Availabili
 			&r.RecoveryHealth, &r.SynchronizationHealth,
 			&r.LastConnectErrorNumber, &r.LastConnectErrorDescription, &lastErrTime,
 		); err != nil {
-			return nil, fmt.Errorf("gosmo: list replicas of availability group %q: %w", ag.Name, err)
+			return nil, err
 		}
 		if created.Valid {
 			r.CreateDate = created.Time
@@ -140,12 +129,8 @@ func (ag *AvailabilityGroup) ReplicasContext(ctx context.Context) ([]*Availabili
 		if lastErrTime.Valid {
 			r.LastConnectErrorTimestamp = lastErrTime.Time
 		}
-		replicas = append(replicas, r)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("gosmo: list replicas of availability group %q: %w", ag.Name, err)
-	}
-	return replicas, nil
+		return r, nil
+	})
 }
 
 // ReadOnlyRoutingList returns the read-only routing list this replica uses
@@ -155,13 +140,7 @@ func (ag *AvailabilityGroup) ReplicasContext(ctx context.Context) ([]*Availabili
 // The outer slice is the priority order; each inner slice holds the replicas
 // sharing one priority, which SQL Server load-balances between (2016+). A
 // replica with no routing list configured returns nil, not an error.
-func (r *AvailabilityReplica) ReadOnlyRoutingList() ([][]string, error) {
-	return r.ReadOnlyRoutingListContext(context.Background())
-}
-
-// ReadOnlyRoutingListContext is the context-aware variant of
-// ReadOnlyRoutingList.
-func (r *AvailabilityReplica) ReadOnlyRoutingListContext(ctx context.Context) ([][]string, error) {
+func (r *AvailabilityReplica) ReadOnlyRoutingList(ctx context.Context) ([][]string, error) {
 	const q = `
 	SELECT rl.routing_priority, tgt.replica_server_name
 	FROM sys.availability_read_only_routing_lists rl
@@ -203,20 +182,68 @@ func (r *AvailabilityReplica) ReadOnlyRoutingListContext(ctx context.Context) ([
 // GROUP ... MODIFY REPLICA statement against the primary — including when the
 // replica being modified is a secondary.
 
-// Closed sets of the keywords ALTER MODIFY REPLICA accepts, spelled as the
-// matching *_desc column reports them so a value read off a replica can be
-// handed straight back.
+// The keywords ALTER MODIFY REPLICA and CREATE AVAILABILITY GROUP accept,
+// spelled as the matching *_desc column reports them so a value read off a
+// replica can be handed straight back.
+
+// AvailabilityMode is a replica's AVAILABILITY_MODE.
+type AvailabilityMode string
+
+const (
+	AvailabilitySynchronousCommit  AvailabilityMode = "SYNCHRONOUS_COMMIT"
+	AvailabilityAsynchronousCommit AvailabilityMode = "ASYNCHRONOUS_COMMIT"
+	AvailabilityConfigurationOnly  AvailabilityMode = "CONFIGURATION_ONLY"
+)
+
+// FailoverMode is a replica's FAILOVER_MODE.
+type FailoverMode string
+
+const (
+	FailoverAutomatic FailoverMode = "AUTOMATIC"
+	FailoverManual    FailoverMode = "MANUAL"
+	// FailoverExternal is the only mode a group with ClusterTypeExternal
+	// accepts, since the cluster manager owns failover there.
+	FailoverExternal FailoverMode = "EXTERNAL"
+)
+
+// SeedingMode is a replica's SEEDING_MODE (SQL Server 2016+).
+type SeedingMode string
+
+const (
+	SeedingAutomatic SeedingMode = "AUTOMATIC" // direct seeding
+	SeedingManual    SeedingMode = "MANUAL"    // backup and restore
+)
+
+// AllowConnections is a replica role's ALLOW_CONNECTIONS. The primary role
+// takes ReadWrite or All; the secondary role takes No, ReadOnly or All.
+type AllowConnections string
+
+const (
+	AllowConnectionsAll       AllowConnections = "ALL"
+	AllowConnectionsReadWrite AllowConnections = "READ_WRITE"
+	AllowConnectionsReadOnly  AllowConnections = "READ_ONLY"
+	AllowConnectionsNo        AllowConnections = "NO"
+)
+
+// The types' validity checks. The keywords are spliced into DDL, so a value
+// outside the constants — a conversion from an arbitrary string — is refused.
 var (
-	availabilityModes = map[string]bool{
-		"SYNCHRONOUS_COMMIT": true, "ASYNCHRONOUS_COMMIT": true, "CONFIGURATION_ONLY": true,
+	availabilityModes = map[AvailabilityMode]bool{
+		AvailabilitySynchronousCommit: true, AvailabilityAsynchronousCommit: true, AvailabilityConfigurationOnly: true,
 	}
-	failoverModes = map[string]bool{"AUTOMATIC": true, "MANUAL": true, "EXTERNAL": true}
-	seedingModes  = map[string]bool{"AUTOMATIC": true, "MANUAL": true}
+	failoverModes = map[FailoverMode]bool{FailoverAutomatic: true, FailoverManual: true, FailoverExternal: true}
+	seedingModes  = map[SeedingMode]bool{SeedingAutomatic: true, SeedingManual: true}
 	// The primary role has no NO: a primary that accepts no connections would
 	// be unusable.
-	primaryRoleConnections   = map[string]bool{"READ_WRITE": true, "ALL": true}
-	secondaryRoleConnections = map[string]bool{"NO": true, "READ_ONLY": true, "ALL": true}
+	primaryRoleConnections   = map[AllowConnections]bool{AllowConnectionsReadWrite: true, AllowConnectionsAll: true}
+	secondaryRoleConnections = map[AllowConnections]bool{
+		AllowConnectionsNo: true, AllowConnectionsReadOnly: true, AllowConnectionsAll: true,
+	}
 )
+
+// upperKeyword upper-cases a keyword value, so a lower-case spelling converted
+// from a string is accepted as it always was.
+func upperKeyword[K ~string](v K) K { return K(strings.ToUpper(string(v))) }
 
 // modifyReplica runs one ALTER AVAILABILITY GROUP ... MODIFY REPLICA ON ...
 // WITH (<with>) statement.
@@ -227,19 +254,19 @@ func (r *AvailabilityReplica) modifyReplica(ctx context.Context, with string) er
 	if r.server == nil || r.GroupName == "" {
 		return fmt.Errorf("gosmo: modify replica %q: replica did not come from AvailabilityGroup.Replicas", r.ReplicaServerName)
 	}
-	return r.server.execContext(ctx, fmt.Sprintf(
+	return r.server.exec(ctx, fmt.Sprintf(
 		"ALTER AVAILABILITY GROUP %s MODIFY REPLICA ON N'%s' WITH (%s)",
 		quoteIdent(r.GroupName), escapeSingle(r.ReplicaServerName), with))
 }
 
 // setReplicaKeyword is the shared body of the keyword-valued replica setters:
 // validate against a closed set, run the ALTER, mirror the new value back.
-func setReplicaKeyword(ctx context.Context, r *AvailabilityReplica, what, option, value string, allowed map[string]bool, dst *string) error {
-	value = strings.ToUpper(value)
+func setReplicaKeyword[K ~string](ctx context.Context, r *AvailabilityReplica, what, option string, value K, allowed map[K]bool, dst *K) error {
+	value = upperKeyword(value)
 	if !allowed[value] {
 		return fmt.Errorf("gosmo: set %s: unrecognized value %q", what, value)
 	}
-	if err := r.modifyReplica(ctx, option+" = "+value); err != nil {
+	if err := r.modifyReplica(ctx, option+" = "+string(value)); err != nil {
 		return fmt.Errorf("gosmo: set %s of replica %q: %w", what, r.ReplicaServerName, err)
 	}
 	setIfApplied(ctx, dst, value)
@@ -251,54 +278,32 @@ func setReplicaKeyword(ctx context.Context, r *AvailabilityReplica, what, option
 //
 // Only a synchronous-commit replica can be an automatic failover target, so
 // dropping one to asynchronous also silently removes it as a candidate.
-func (r *AvailabilityReplica) SetAvailabilityMode(mode string) error {
-	return r.SetAvailabilityModeContext(context.Background(), mode)
-}
-
-// SetAvailabilityModeContext is the context-aware variant of
-// SetAvailabilityMode.
-func (r *AvailabilityReplica) SetAvailabilityModeContext(ctx context.Context, mode string) error {
+func (r *AvailabilityReplica) SetAvailabilityMode(ctx context.Context, mode AvailabilityMode) error {
 	return setReplicaKeyword(ctx, r, "availability mode", "AVAILABILITY_MODE", mode, availabilityModes, &r.AvailabilityMode)
 }
 
 // SetFailoverMode switches the replica between AUTOMATIC, MANUAL and EXTERNAL
 // failover. EXTERNAL is the only mode a group with ClusterType EXTERNAL
 // accepts, since the cluster manager owns failover there.
-func (r *AvailabilityReplica) SetFailoverMode(mode string) error {
-	return r.SetFailoverModeContext(context.Background(), mode)
-}
-
-// SetFailoverModeContext is the context-aware variant of SetFailoverMode.
-func (r *AvailabilityReplica) SetFailoverModeContext(ctx context.Context, mode string) error {
+func (r *AvailabilityReplica) SetFailoverMode(ctx context.Context, mode FailoverMode) error {
 	return setReplicaKeyword(ctx, r, "failover mode", "FAILOVER_MODE", mode, failoverModes, &r.FailoverMode)
 }
 
 // SetSeedingMode switches the replica between AUTOMATIC (direct seeding) and
 // MANUAL (backup and restore) database seeding. SQL Server 2016+.
-func (r *AvailabilityReplica) SetSeedingMode(mode string) error {
-	return r.SetSeedingModeContext(context.Background(), mode)
-}
-
-// SetSeedingModeContext is the context-aware variant of SetSeedingMode.
-func (r *AvailabilityReplica) SetSeedingModeContext(ctx context.Context, mode string) error {
+func (r *AvailabilityReplica) SetSeedingMode(ctx context.Context, mode SeedingMode) error {
 	return setReplicaKeyword(ctx, r, "seeding mode", "SEEDING_MODE", mode, seedingModes, &r.SeedingMode)
 }
 
 // SetPrimaryRoleAllowConnections sets which connections the replica accepts
 // while it is the primary: ALL, or READ_WRITE (which turns away connections
 // asking for ApplicationIntent=ReadOnly).
-func (r *AvailabilityReplica) SetPrimaryRoleAllowConnections(mode string) error {
-	return r.SetPrimaryRoleAllowConnectionsContext(context.Background(), mode)
-}
-
-// SetPrimaryRoleAllowConnectionsContext is the context-aware variant of
-// SetPrimaryRoleAllowConnections.
-func (r *AvailabilityReplica) SetPrimaryRoleAllowConnectionsContext(ctx context.Context, mode string) error {
-	mode = strings.ToUpper(mode)
+func (r *AvailabilityReplica) SetPrimaryRoleAllowConnections(ctx context.Context, mode AllowConnections) error {
+	mode = upperKeyword(mode)
 	if !primaryRoleConnections[mode] {
 		return fmt.Errorf("gosmo: set primary role connections: unrecognized value %q", mode)
 	}
-	if err := r.modifyReplica(ctx, "PRIMARY_ROLE (ALLOW_CONNECTIONS = "+mode+")"); err != nil {
+	if err := r.modifyReplica(ctx, "PRIMARY_ROLE (ALLOW_CONNECTIONS = "+string(mode)+")"); err != nil {
 		return fmt.Errorf("gosmo: set primary role connections of replica %q: %w", r.ReplicaServerName, err)
 	}
 	setIfApplied(ctx, &r.PrimaryRoleAllowConnections, mode)
@@ -307,18 +312,12 @@ func (r *AvailabilityReplica) SetPrimaryRoleAllowConnectionsContext(ctx context.
 
 // SetSecondaryRoleAllowConnections sets whether the replica is readable while
 // it is a secondary: NO, READ_ONLY (read-intent connections only) or ALL.
-func (r *AvailabilityReplica) SetSecondaryRoleAllowConnections(mode string) error {
-	return r.SetSecondaryRoleAllowConnectionsContext(context.Background(), mode)
-}
-
-// SetSecondaryRoleAllowConnectionsContext is the context-aware variant of
-// SetSecondaryRoleAllowConnections.
-func (r *AvailabilityReplica) SetSecondaryRoleAllowConnectionsContext(ctx context.Context, mode string) error {
-	mode = strings.ToUpper(mode)
+func (r *AvailabilityReplica) SetSecondaryRoleAllowConnections(ctx context.Context, mode AllowConnections) error {
+	mode = upperKeyword(mode)
 	if !secondaryRoleConnections[mode] {
 		return fmt.Errorf("gosmo: set secondary role connections: unrecognized value %q", mode)
 	}
-	if err := r.modifyReplica(ctx, "SECONDARY_ROLE (ALLOW_CONNECTIONS = "+mode+")"); err != nil {
+	if err := r.modifyReplica(ctx, "SECONDARY_ROLE (ALLOW_CONNECTIONS = "+string(mode)+")"); err != nil {
 		return fmt.Errorf("gosmo: set secondary role connections of replica %q: %w", r.ReplicaServerName, err)
 	}
 	setIfApplied(ctx, &r.SecondaryRoleAllowConnections, mode)
@@ -328,12 +327,7 @@ func (r *AvailabilityReplica) SetSecondaryRoleAllowConnectionsContext(ctx contex
 // SetSessionTimeout sets how many seconds a replica waits for a message from
 // its partner before reporting the connection down. SQL Server enforces a
 // 5-second floor; below about 10 seconds a busy system reports false failures.
-func (r *AvailabilityReplica) SetSessionTimeout(seconds int) error {
-	return r.SetSessionTimeoutContext(context.Background(), seconds)
-}
-
-// SetSessionTimeoutContext is the context-aware variant of SetSessionTimeout.
-func (r *AvailabilityReplica) SetSessionTimeoutContext(ctx context.Context, seconds int) error {
+func (r *AvailabilityReplica) SetSessionTimeout(ctx context.Context, seconds int) error {
 	if seconds < 5 {
 		return fmt.Errorf("gosmo: set session timeout: %d s is below the 5 s minimum", seconds)
 	}
@@ -347,12 +341,7 @@ func (r *AvailabilityReplica) SetSessionTimeoutContext(ctx context.Context, seco
 // SetBackupPriority sets this replica's automated-backup priority, 1 (lowest)
 // to 100 (highest). 0 excludes the replica from automated backups altogether —
 // the value behind SSMS's "Exclude Replica" checkbox.
-func (r *AvailabilityReplica) SetBackupPriority(priority int) error {
-	return r.SetBackupPriorityContext(context.Background(), priority)
-}
-
-// SetBackupPriorityContext is the context-aware variant of SetBackupPriority.
-func (r *AvailabilityReplica) SetBackupPriorityContext(ctx context.Context, priority int) error {
+func (r *AvailabilityReplica) SetBackupPriority(ctx context.Context, priority int) error {
 	if priority < 0 || priority > 100 {
 		return fmt.Errorf("gosmo: set backup priority: %d out of range 0-100", priority)
 	}
@@ -375,13 +364,7 @@ func (r *AvailabilityReplica) SetBackupPriorityContext(ctx context.Context, prio
 // NULL nor an empty string works: NULL is a syntax error and N” is rejected
 // as "Invalid usage of the option READ_ONLY_ROUTING_URL" — both verified
 // against SQL Server 2025.
-func (r *AvailabilityReplica) SetReadOnlyRoutingURL(url string) error {
-	return r.SetReadOnlyRoutingURLContext(context.Background(), url)
-}
-
-// SetReadOnlyRoutingURLContext is the context-aware variant of
-// SetReadOnlyRoutingURL.
-func (r *AvailabilityReplica) SetReadOnlyRoutingURLContext(ctx context.Context, url string) error {
+func (r *AvailabilityReplica) SetReadOnlyRoutingURL(ctx context.Context, url string) error {
 	value := "NONE"
 	if url != "" {
 		value = nStringLiteral(url)
@@ -394,17 +377,11 @@ func (r *AvailabilityReplica) SetReadOnlyRoutingURLContext(ctx context.Context, 
 }
 
 // SetReadOnlyRoutingList sets the routing list this replica uses while it holds
-// the primary role, in the shape ReadOnlyRoutingListContext returns: the outer
+// the primary role, in the shape ReadOnlyRoutingList returns: the outer
 // slice is priority order, and replicas sharing an inner slice are
 // load-balanced between (SQL Server 2016+). An empty list clears the routing
 // list.
-func (r *AvailabilityReplica) SetReadOnlyRoutingList(list [][]string) error {
-	return r.SetReadOnlyRoutingListContext(context.Background(), list)
-}
-
-// SetReadOnlyRoutingListContext is the context-aware variant of
-// SetReadOnlyRoutingList.
-func (r *AvailabilityReplica) SetReadOnlyRoutingListContext(ctx context.Context, list [][]string) error {
+func (r *AvailabilityReplica) SetReadOnlyRoutingList(ctx context.Context, list [][]string) error {
 	value, err := formatRoutingList(list)
 	if err != nil {
 		return fmt.Errorf("gosmo: set read-only routing list of replica %q: %w", r.ReplicaServerName, err)
@@ -471,12 +448,7 @@ func addReplicaClause(spec AvailabilityReplicaSpec) (string, error) {
 // The replica must already have a started database mirroring endpoint that the
 // other replicas can reach, and its FailoverMode has to match what the group's
 // cluster type permits — EXTERNAL requires EXTERNAL, NONE requires MANUAL.
-func (ag *AvailabilityGroup) AddReplica(spec AvailabilityReplicaSpec) error {
-	return ag.AddReplicaContext(context.Background(), spec)
-}
-
-// AddReplicaContext is the context-aware variant of AddReplica.
-func (ag *AvailabilityGroup) AddReplicaContext(ctx context.Context, spec AvailabilityReplicaSpec) error {
+func (ag *AvailabilityGroup) AddReplica(ctx context.Context, spec AvailabilityReplicaSpec) error {
 	clause, err := addReplicaClause(spec)
 	if err != nil {
 		return fmt.Errorf("gosmo: add replica to availability group %q: %w", ag.Name, err)
@@ -505,12 +477,7 @@ func removeReplicaClause(serverName string) string {
 // clears. Removing a replica and then dropping the group on the primary
 // therefore still leaves the group listed on the instance that was removed —
 // verified against SQL Server 2025.
-func (ag *AvailabilityGroup) RemoveReplica(serverName string) error {
-	return ag.RemoveReplicaContext(context.Background(), serverName)
-}
-
-// RemoveReplicaContext is the context-aware variant of RemoveReplica.
-func (ag *AvailabilityGroup) RemoveReplicaContext(ctx context.Context, serverName string) error {
+func (ag *AvailabilityGroup) RemoveReplica(ctx context.Context, serverName string) error {
 	if strings.TrimSpace(serverName) == "" {
 		return fmt.Errorf("gosmo: remove replica from availability group %q: empty replica name", ag.Name)
 	}
@@ -523,16 +490,11 @@ func (ag *AvailabilityGroup) RemoveReplicaContext(ctx context.Context, serverNam
 // Drop removes this replica from its availability group — the same statement
 // AvailabilityGroup.RemoveReplica issues, addressed from the replica instead.
 // Run against the primary.
-func (r *AvailabilityReplica) Drop() error {
-	return r.DropContext(context.Background())
-}
-
-// DropContext is the context-aware variant of Drop.
-func (r *AvailabilityReplica) DropContext(ctx context.Context) error {
+func (r *AvailabilityReplica) Drop(ctx context.Context) error {
 	if r.server == nil || r.GroupName == "" {
 		return fmt.Errorf("gosmo: drop replica %q: replica did not come from AvailabilityGroup.Replicas", r.ReplicaServerName)
 	}
-	if err := r.server.execContext(ctx, fmt.Sprintf("ALTER AVAILABILITY GROUP %s %s",
+	if err := r.server.exec(ctx, fmt.Sprintf("ALTER AVAILABILITY GROUP %s %s",
 		quoteIdent(r.GroupName), removeReplicaClause(r.ReplicaServerName))); err != nil {
 		return fmt.Errorf("gosmo: remove replica %q from availability group %q: %w", r.ReplicaServerName, r.GroupName, err)
 	}

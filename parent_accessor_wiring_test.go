@@ -30,8 +30,7 @@ import (
 // not a back-pointer, so neither is checked here.
 
 // parentAccessorExceptions lists types that deliberately do not expose their
-// back-pointer, with the reason — the shape delegateExceptions and
-// seqCoverageExceptions use. It is empty: every type with the field exposes
+// back-pointer, with the reason. It is empty: every type with the field exposes
 // it, and an entry here is a claim that a caller holding the child must not
 // be able to reach its parent.
 var parentAccessorExceptions = map[string]string{}
@@ -194,6 +193,19 @@ func backPointerKind(st *ast.StructType) string {
 				return "Server"
 			}
 		}
+	}
+	return ""
+}
+
+// receiverType names fn's receiver type without the star, or "" when it is
+// not a plain named type.
+func receiverType(fn *ast.FuncDecl) string {
+	t := fn.Recv.List[0].Type
+	if star, ok := t.(*ast.StarExpr); ok {
+		t = star.X
+	}
+	if id, ok := t.(*ast.Ident); ok {
+		return id.Name
 	}
 	return ""
 }

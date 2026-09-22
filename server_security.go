@@ -22,12 +22,7 @@ type ServerSecurityInfo struct {
 }
 
 // SecurityInfo returns server-wide authentication settings.
-func (s *Server) SecurityInfo() (*ServerSecurityInfo, error) {
-	return s.SecurityInfoContext(context.Background())
-}
-
-// SecurityInfoContext is the context-aware variant of SecurityInfo.
-func (s *Server) SecurityInfoContext(ctx context.Context) (*ServerSecurityInfo, error) {
+func (s *Server) SecurityInfo(ctx context.Context) (*ServerSecurityInfo, error) {
 	const q = `SELECT CASE CAST(SERVERPROPERTY('IsIntegratedSecurityOnly') AS INT)
 	                   WHEN 1 THEN 'WINDOWS' ELSE 'MIXED' END`
 
@@ -52,12 +47,7 @@ type ServerPermissionEntry struct {
 }
 
 // ServerPermissions returns every server-level GRANT/DENY entry.
-func (s *Server) ServerPermissions() ([]*ServerPermissionEntry, error) {
-	return s.ServerPermissionsContext(context.Background())
-}
-
-// ServerPermissionsContext is the context-aware variant of ServerPermissions.
-func (s *Server) ServerPermissionsContext(ctx context.Context) ([]*ServerPermissionEntry, error) {
+func (s *Server) ServerPermissions(ctx context.Context) ([]*ServerPermissionEntry, error) {
 	const q = `
 SELECT pr.name, pr.type_desc, grantor.name, sp.permission_name, sp.state_desc
 FROM   sys.server_permissions sp
@@ -67,23 +57,13 @@ WHERE  sp.class_desc = 'SERVER'
 ORDER  BY pr.name, sp.permission_name`
 
 	rows, err := s.query(ctx, q)
-	if err != nil {
-		return nil, fmt.Errorf("gosmo: server permissions: %w", err)
-	}
-	defer rows.Close()
-
-	var perms []*ServerPermissionEntry
-	for rows.Next() {
+	return scanRows(rows, err, "server permissions", func(scan func(...any) error) (*ServerPermissionEntry, error) {
 		e := &ServerPermissionEntry{}
-		if err := rows.Scan(&e.Principal, &e.PrincipalType, &e.Grantor, &e.Permission, &e.State); err != nil {
-			return nil, fmt.Errorf("gosmo: server permissions: %w", err)
+		if err := scan(&e.Principal, &e.PrincipalType, &e.Grantor, &e.Permission, &e.State); err != nil {
+			return nil, err
 		}
-		perms = append(perms, e)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("gosmo: server permissions: %w", err)
-	}
-	return perms, nil
+		return e, nil
+	})
 }
 
 // serverPermissionNames allowlists every server-scoped permission name
@@ -148,15 +128,10 @@ func ServerPermissionNames() []string {
 }
 
 // GrantServerPermission grants a server-level permission to principal.
-func (s *Server) GrantServerPermission(permission, principal string) error {
-	return s.GrantServerPermissionContext(context.Background(), permission, principal)
-}
-
-// GrantServerPermissionContext is the context-aware variant of GrantServerPermission.
 //
 // SQL Server rejects GRANT/DENY/REVOKE at server scope outright unless the
-// session's current database is master ("Permissions at the server scope
-// can only be granted when the current database is master") — its own
+// session's current database is master ("Permissions at the server scope can
+// only be granted when the current database is master") — its own
 // restriction, not one gosmo imposes — so every statement here is prefixed
 // with USE master in the same batch.
 //
@@ -175,28 +150,20 @@ func (s *Server) GrantServerPermission(permission, principal string) error {
 // pinned connection that reads DB_NAME(), switches, and switches back, which
 // is three extra round trips per grant to re-solve what the driver already
 // handles.
-func (s *Server) GrantServerPermissionContext(ctx context.Context, permission, principal string) error {
-	return s.GrantServerPermissionWithOptionsContext(ctx, permission, principal, PermissionOptions{})
+func (s *Server) GrantServerPermission(ctx context.Context, permission, principal string) error {
+	return s.GrantServerPermissionWithOptions(ctx, permission, principal, PermissionOptions{})
 }
 
 // DenyServerPermission denies a server-level permission to principal.
-func (s *Server) DenyServerPermission(permission, principal string) error {
-	return s.DenyServerPermissionContext(context.Background(), permission, principal)
-}
-
-// DenyServerPermissionContext is the context-aware variant of DenyServerPermission.
-// See GrantServerPermissionContext's doc comment for the USE master prefix.
-func (s *Server) DenyServerPermissionContext(ctx context.Context, permission, principal string) error {
-	return s.DenyServerPermissionWithOptionsContext(ctx, permission, principal, PermissionOptions{})
+//
+// See GrantServerPermission's doc comment for the USE master prefix.
+func (s *Server) DenyServerPermission(ctx context.Context, permission, principal string) error {
+	return s.DenyServerPermissionWithOptions(ctx, permission, principal, PermissionOptions{})
 }
 
 // RevokeServerPermission revokes a server-level permission from principal.
-func (s *Server) RevokeServerPermission(permission, principal string) error {
-	return s.RevokeServerPermissionContext(context.Background(), permission, principal)
-}
-
-// RevokeServerPermissionContext is the context-aware variant of RevokeServerPermission.
-// See GrantServerPermissionContext's doc comment for the USE master prefix.
-func (s *Server) RevokeServerPermissionContext(ctx context.Context, permission, principal string) error {
-	return s.RevokeServerPermissionWithOptionsContext(ctx, permission, principal, PermissionOptions{})
+//
+// See GrantServerPermission's doc comment for the USE master prefix.
+func (s *Server) RevokeServerPermission(ctx context.Context, permission, principal string) error {
+	return s.RevokeServerPermissionWithOptions(ctx, permission, principal, PermissionOptions{})
 }

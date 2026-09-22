@@ -18,7 +18,7 @@ func TestDropStatements(t *testing.T) {
 	}{
 		{
 			name:  "DropView",
-			write: func(ctx context.Context, d *Database) error { return d.DropViewContext(ctx, "Sales", "vCustomer") },
+			write: func(ctx context.Context, d *Database) error { return d.DropView(ctx, "Sales", "vCustomer") },
 			want:  "DROP VIEW [Sales].[vCustomer]",
 		},
 		{
@@ -26,35 +26,35 @@ func TestDropStatements(t *testing.T) {
 			// unqualified DROP resolves against the caller's default schema,
 			// which is not necessarily the object's.
 			name:  "DropView defaults the schema",
-			write: func(ctx context.Context, d *Database) error { return d.DropViewContext(ctx, "", "vCustomer") },
+			write: func(ctx context.Context, d *Database) error { return d.DropView(ctx, "", "vCustomer") },
 			want:  "DROP VIEW [dbo].[vCustomer]",
 		},
 		{
 			name:  "DropFunction",
-			write: func(ctx context.Context, d *Database) error { return d.DropFunctionContext(ctx, "dbo", "fnAge") },
+			write: func(ctx context.Context, d *Database) error { return d.DropFunction(ctx, "dbo", "fnAge") },
 			want:  "DROP FUNCTION [dbo].[fnAge]",
 		},
 		{
 			name:  "DropTrigger",
-			write: func(ctx context.Context, d *Database) error { return d.DropTriggerContext(ctx, "dbo", "trAudit") },
+			write: func(ctx context.Context, d *Database) error { return d.DropTrigger(ctx, "dbo", "trAudit") },
 			want:  "DROP TRIGGER [dbo].[trAudit]",
 		},
 		{
 			name:  "DropDatabaseRole",
-			write: func(ctx context.Context, d *Database) error { return d.DropDatabaseRoleContext(ctx, "app_reader") },
+			write: func(ctx context.Context, d *Database) error { return d.DropDatabaseRole(ctx, "app_reader") },
 			want:  "DROP ROLE [app_reader]",
 		},
 		{
 			name: "Table.DropConstraint",
 			write: func(ctx context.Context, d *Database) error {
-				return (&Table{db: d, Schema: "dbo", Name: "Orders"}).DropConstraintContext(ctx, "PK_Orders")
+				return (&Table{db: d, Schema: "dbo", Name: "Orders"}).DropConstraint(ctx, "PK_Orders")
 			},
 			want: "ALTER TABLE [dbo].[Orders] DROP CONSTRAINT [PK_Orders]",
 		},
 		{
 			name: "Table.DropColumn",
 			write: func(ctx context.Context, d *Database) error {
-				return (&Table{db: d, Schema: "sa]les", Name: "Or'ders"}).DropColumnContext(ctx, "a]b")
+				return (&Table{db: d, Schema: "sa]les", Name: "Or'ders"}).DropColumn(ctx, "a]b")
 			},
 			want: "ALTER TABLE [sa]]les].[Or'ders] DROP COLUMN [a]]b]",
 		},
@@ -63,21 +63,21 @@ func TestDropStatements(t *testing.T) {
 			// statement distinguishes an alias, table or CLR type.
 			name: "UserDefinedDataType.Drop",
 			write: func(ctx context.Context, d *Database) error {
-				return (&UserDefinedDataType{db: d, Schema: "sa]les", Name: "Pho'ne"}).DropContext(ctx)
+				return (&UserDefinedDataType{db: d, Schema: "sa]les", Name: "Pho'ne"}).Drop(ctx)
 			},
 			want: "DROP TYPE [sa]]les].[Pho'ne]",
 		},
 		{
 			name: "UserDefinedTableType.Drop",
 			write: func(ctx context.Context, d *Database) error {
-				return (&UserDefinedTableType{db: d, Schema: "Sales", Name: "OrderLines"}).DropContext(ctx)
+				return (&UserDefinedTableType{db: d, Schema: "Sales", Name: "OrderLines"}).Drop(ctx)
 			},
 			want: "DROP TYPE [Sales].[OrderLines]",
 		},
 		{
 			name: "ClrType.Drop",
 			write: func(ctx context.Context, d *Database) error {
-				return (&ClrType{db: d, Schema: "Sales", Name: "Geo"}).DropContext(ctx)
+				return (&ClrType{db: d, Schema: "Sales", Name: "Geo"}).Drop(ctx)
 			},
 			want: "DROP TYPE [Sales].[Geo]",
 		},
@@ -87,99 +87,99 @@ func TestDropStatements(t *testing.T) {
 			// schema, not the type's.
 			name: "UserDefinedDataType.Drop defaults the schema",
 			write: func(ctx context.Context, d *Database) error {
-				return (&UserDefinedDataType{db: d, Name: "Phone"}).DropContext(ctx)
+				return (&UserDefinedDataType{db: d, Name: "Phone"}).Drop(ctx)
 			},
 			want: "DROP TYPE [dbo].[Phone]",
 		},
 		{
 			name:  "DropType",
-			write: func(ctx context.Context, d *Database) error { return d.DropTypeContext(ctx, "Sales", "Phone") },
+			write: func(ctx context.Context, d *Database) error { return d.DropType(ctx, "Sales", "Phone") },
 			want:  "DROP TYPE [Sales].[Phone]",
 		},
 		{
 			name:  "DropType defaults the schema",
-			write: func(ctx context.Context, d *Database) error { return d.DropTypeContext(ctx, "", "Phone") },
+			write: func(ctx context.Context, d *Database) error { return d.DropType(ctx, "", "Phone") },
 			want:  "DROP TYPE [dbo].[Phone]",
 		},
 		{
 			name: "XMLSchemaCollection.Drop",
 			write: func(ctx context.Context, d *Database) error {
-				return (&XMLSchemaCollection{db: d, Schema: "arch]ive", Name: "Order'Schema"}).DropContext(ctx)
+				return (&XMLSchemaCollection{db: d, Schema: "arch]ive", Name: "Order'Schema"}).Drop(ctx)
 			},
 			want: "DROP XML SCHEMA COLLECTION [arch]]ive].[Order'Schema]",
 		},
 		{
 			name: "XMLSchemaCollection.Drop defaults the schema",
 			write: func(ctx context.Context, d *Database) error {
-				return (&XMLSchemaCollection{db: d, Name: "OrderSchema"}).DropContext(ctx)
+				return (&XMLSchemaCollection{db: d, Name: "OrderSchema"}).Drop(ctx)
 			},
 			want: "DROP XML SCHEMA COLLECTION [dbo].[OrderSchema]",
 		},
 		{
 			name: "DropXMLSchemaCollection",
 			write: func(ctx context.Context, d *Database) error {
-				return d.DropXMLSchemaCollectionContext(ctx, "archive", "OrderSchema")
+				return d.DropXMLSchemaCollection(ctx, "archive", "OrderSchema")
 			},
 			want: "DROP XML SCHEMA COLLECTION [archive].[OrderSchema]",
 		},
 		{
 			name: "DropXMLSchemaCollection defaults the schema",
 			write: func(ctx context.Context, d *Database) error {
-				return d.DropXMLSchemaCollectionContext(ctx, "", "OrderSchema")
+				return d.DropXMLSchemaCollection(ctx, "", "OrderSchema")
 			},
 			want: "DROP XML SCHEMA COLLECTION [dbo].[OrderSchema]",
 		},
 		{
 			name:  "DropRule",
-			write: func(ctx context.Context, d *Database) error { return d.DropRuleContext(ctx, "Sales", "ru'le") },
+			write: func(ctx context.Context, d *Database) error { return d.DropRule(ctx, "Sales", "ru'le") },
 			want:  "DROP RULE [Sales].[ru'le]",
 		},
 		{
 			name: "Rule.Drop defaults the schema",
 			write: func(ctx context.Context, d *Database) error {
-				return (&Rule{db: d, Name: "ru]le"}).DropContext(ctx)
+				return (&Rule{db: d, Name: "ru]le"}).Drop(ctx)
 			},
 			want: "DROP RULE [dbo].[ru]]le]",
 		},
 		{
 			name: "DropDefault",
 			write: func(ctx context.Context, d *Database) error {
-				return d.DropDefaultContext(ctx, "Sales", "df'1")
+				return d.DropDefault(ctx, "Sales", "df'1")
 			},
 			want: "DROP DEFAULT [Sales].[df'1]",
 		},
 		{
 			name: "Default.Drop defaults the schema",
 			write: func(ctx context.Context, d *Database) error {
-				return (&Default{db: d, Name: "df]1"}).DropContext(ctx)
+				return (&Default{db: d, Name: "df]1"}).Drop(ctx)
 			},
 			want: "DROP DEFAULT [dbo].[df]]1]",
 		},
 		{
 			name: "Sequence.Drop",
 			write: func(ctx context.Context, d *Database) error {
-				return (&Sequence{db: d, Schema: "Sales", Name: "seq'1"}).DropContext(ctx)
+				return (&Sequence{db: d, Schema: "Sales", Name: "seq'1"}).Drop(ctx)
 			},
 			want: "DROP SEQUENCE [Sales].[seq'1]",
 		},
 		{
 			name: "Sequence.Drop defaults the schema",
 			write: func(ctx context.Context, d *Database) error {
-				return (&Sequence{db: d, Name: "seq]1"}).DropContext(ctx)
+				return (&Sequence{db: d, Name: "seq]1"}).Drop(ctx)
 			},
 			want: "DROP SEQUENCE [dbo].[seq]]1]",
 		},
 		{
 			name: "Synonym.Drop",
 			write: func(ctx context.Context, d *Database) error {
-				return (&Synonym{db: d, Schema: "Sales", Name: "syn'1"}).DropContext(ctx)
+				return (&Synonym{db: d, Schema: "Sales", Name: "syn'1"}).Drop(ctx)
 			},
 			want: "DROP SYNONYM [Sales].[syn'1]",
 		},
 		{
 			name: "Synonym.Drop defaults the schema",
 			write: func(ctx context.Context, d *Database) error {
-				return (&Synonym{db: d, Name: "syn]1"}).DropContext(ctx)
+				return (&Synonym{db: d, Name: "syn]1"}).Drop(ctx)
 			},
 			want: "DROP SYNONYM [dbo].[syn]]1]",
 		},
@@ -188,35 +188,35 @@ func TestDropStatements(t *testing.T) {
 			// schema of their own, so there is no default to pin here.
 			name: "PartitionFunction.Drop",
 			write: func(ctx context.Context, d *Database) error {
-				return (&PartitionFunction{db: d, Name: "pf]1"}).DropContext(ctx)
+				return (&PartitionFunction{db: d, Name: "pf]1"}).Drop(ctx)
 			},
 			want: "DROP PARTITION FUNCTION [pf]]1]",
 		},
 		{
 			name: "PartitionScheme.Drop",
 			write: func(ctx context.Context, d *Database) error {
-				return (&PartitionScheme{db: d, Name: "ps'1"}).DropContext(ctx)
+				return (&PartitionScheme{db: d, Name: "ps'1"}).Drop(ctx)
 			},
 			want: "DROP PARTITION SCHEME [ps'1]",
 		},
 		{
 			name: "DropExternalDataSource",
 			write: func(ctx context.Context, d *Database) error {
-				return d.DropExternalDataSourceContext(ctx, "eds]1")
+				return d.DropExternalDataSource(ctx, "eds]1")
 			},
 			want: "DROP EXTERNAL DATA SOURCE [eds]]1]",
 		},
 		{
 			name: "ExternalDataSource.Drop",
 			write: func(ctx context.Context, d *Database) error {
-				return (&ExternalDataSource{db: d, Name: "eds'1"}).DropContext(ctx)
+				return (&ExternalDataSource{db: d, Name: "eds'1"}).Drop(ctx)
 			},
 			want: "DROP EXTERNAL DATA SOURCE [eds'1]",
 		},
 		{
 			name: "ExternalFileFormat.Drop",
 			write: func(ctx context.Context, d *Database) error {
-				return (&ExternalFileFormat{db: d, Name: "eff'1"}).DropContext(ctx)
+				return (&ExternalFileFormat{db: d, Name: "eff'1"}).Drop(ctx)
 			},
 			want: "DROP EXTERNAL FILE FORMAT [eff'1]",
 		},
@@ -226,63 +226,63 @@ func TestDropStatements(t *testing.T) {
 			// database has — the statement still has to be the right one.
 			name: "ExternalLibrary.Drop",
 			write: func(ctx context.Context, d *Database) error {
-				return (&ExternalLibrary{db: d, Name: "lib]1"}).DropContext(ctx)
+				return (&ExternalLibrary{db: d, Name: "lib]1"}).Drop(ctx)
 			},
 			want: "DROP EXTERNAL LIBRARY [lib]]1]",
 		},
 		{
 			name: "Schema.Drop",
 			write: func(ctx context.Context, d *Database) error {
-				return (&Schema{db: d, Name: "sa]les"}).DropContext(ctx)
+				return (&Schema{db: d, Name: "sa]les"}).Drop(ctx)
 			},
 			want: "DROP SCHEMA [sa]]les]",
 		},
 		{
 			name: "User.Drop",
 			write: func(ctx context.Context, d *Database) error {
-				return (&User{db: d, Name: "o'brien"}).DropContext(ctx)
+				return (&User{db: d, Name: "o'brien"}).Drop(ctx)
 			},
 			want: "DROP USER [o'brien]",
 		},
 		{
 			name: "SecurityPolicy.Drop",
 			write: func(ctx context.Context, d *Database) error {
-				return (&SecurityPolicy{db: d, Schema: "Sec", Name: "sp'1"}).DropContext(ctx)
+				return (&SecurityPolicy{db: d, Schema: "Sec", Name: "sp'1"}).Drop(ctx)
 			},
 			want: "DROP SECURITY POLICY [Sec].[sp'1]",
 		},
 		{
 			name: "DropAssembly",
 			write: func(ctx context.Context, d *Database) error {
-				return d.DropAssemblyContext(ctx, "asm]1")
+				return d.DropAssembly(ctx, "asm]1")
 			},
 			want: "DROP ASSEMBLY [asm]]1]",
 		},
 		{
 			name: "Assembly.Drop",
 			write: func(ctx context.Context, d *Database) error {
-				return (&Assembly{db: d, Name: "asm'1"}).DropContext(ctx)
+				return (&Assembly{db: d, Name: "asm'1"}).Drop(ctx)
 			},
 			want: "DROP ASSEMBLY [asm'1]",
 		},
 		{
 			name: "Certificate.Drop",
 			write: func(ctx context.Context, d *Database) error {
-				return (&Certificate{db: d, Name: "cert'1"}).DropContext(ctx)
+				return (&Certificate{db: d, Name: "cert'1"}).Drop(ctx)
 			},
 			want: "DROP CERTIFICATE [cert'1]",
 		},
 		{
 			name: "ColumnMasterKey.Drop",
 			write: func(ctx context.Context, d *Database) error {
-				return (&ColumnMasterKey{db: d, Name: "CMK]1"}).DropContext(ctx)
+				return (&ColumnMasterKey{db: d, Name: "CMK]1"}).Drop(ctx)
 			},
 			want: "DROP COLUMN MASTER KEY [CMK]]1]",
 		},
 		{
 			name: "ColumnEncryptionKey.Drop",
 			write: func(ctx context.Context, d *Database) error {
-				return (&ColumnEncryptionKey{db: d, Name: "CEK'1"}).DropContext(ctx)
+				return (&ColumnEncryptionKey{db: d, Name: "CEK'1"}).Drop(ctx)
 			},
 			want: "DROP COLUMN ENCRYPTION KEY [CEK'1]",
 		},
@@ -293,21 +293,21 @@ func TestDropStatements(t *testing.T) {
 			// parts and one dotted string.
 			name: "Statistic.Drop",
 			write: func(ctx context.Context, d *Database) error {
-				return (&Statistic{table: &Table{db: d, Schema: "sa]les", Name: "Or'ders"}, Name: "st]1"}).DropContext(ctx)
+				return (&Statistic{table: &Table{db: d, Schema: "sa]les", Name: "Or'ders"}, Name: "st]1"}).Drop(ctx)
 			},
 			want: "DROP STATISTICS [sa]]les].[Or'ders].[st]]1]",
 		},
 		{
 			name: "DatabaseSnapshot.Drop is a DROP DATABASE",
 			write: func(ctx context.Context, d *Database) error {
-				return (&DatabaseSnapshot{server: d.server, Name: "AppDB_snap]1"}).DropContext(ctx)
+				return (&DatabaseSnapshot{server: d.server, Name: "AppDB_snap]1"}).Drop(ctx)
 			},
 			want: "DROP DATABASE [AppDB_snap]]1]",
 		},
 		{
 			name: "DatabaseRole.Drop delegates to the database",
 			write: func(ctx context.Context, d *Database) error {
-				return (&DatabaseRole{db: d, Name: "app_reader"}).DropContext(ctx)
+				return (&DatabaseRole{db: d, Name: "app_reader"}).Drop(ctx)
 			},
 			want: "DROP ROLE [app_reader]",
 		},
@@ -319,7 +319,7 @@ func TestDropStatements(t *testing.T) {
 			if err := tc.write(ctx, d); err != nil {
 				t.Fatalf("%s under WithScript: %v", tc.name, err)
 			}
-			all := strings.Join(script.Statements, "\n")
+			all := strings.Join(script.Statements(), "\n")
 			if !strings.Contains(all, tc.want) {
 				t.Errorf("captured script missing %q:\n%s", tc.want, all)
 			}
@@ -336,7 +336,7 @@ func TestRenameStatements(t *testing.T) {
 		{
 			name: "RenameObject",
 			write: func(ctx context.Context, d *Database) error {
-				return d.RenameObjectContext(ctx, "Sales", "vOld", "vNew")
+				return d.RenameObject(ctx, "Sales", "vOld", "vNew")
 			},
 			want: []string{"EXEC sp_rename", "N'[Sales].[vOld]'", "N'vNew'", "N'OBJECT'"},
 		},
@@ -345,14 +345,14 @@ func TestRenameStatements(t *testing.T) {
 			// the move is its own statement and its own method.
 			name: "TransferObject",
 			write: func(ctx context.Context, d *Database) error {
-				return d.TransferObjectContext(ctx, "arch]ive", "sa]les", "Or'ders")
+				return d.TransferObject(ctx, "arch]ive", "sa]les", "Or'ders")
 			},
 			want: []string{"ALTER SCHEMA [arch]]ive] TRANSFER [sa]]les].[Or'ders]"},
 		},
 		{
 			name: "DatabaseRole.Rename",
 			write: func(ctx context.Context, d *Database) error {
-				return (&DatabaseRole{db: d, Name: "app]reader"}).RenameContext(ctx, "app'reader")
+				return (&DatabaseRole{db: d, Name: "app]reader"}).Rename(ctx, "app'reader")
 			},
 			want: []string{"ALTER ROLE [app]]reader] WITH NAME = [app'reader]"},
 		},
@@ -361,7 +361,7 @@ func TestRenameStatements(t *testing.T) {
 			// sys.types, and it reaches alias types only.
 			name: "RenameUserDefinedDataType",
 			write: func(ctx context.Context, d *Database) error {
-				return d.RenameUserDefinedDataTypeContext(ctx, "", "Phone", "PhoneNo")
+				return d.RenameUserDefinedDataType(ctx, "", "Phone", "PhoneNo")
 			},
 			want: []string{"EXEC sp_rename", "N'[dbo].[Phone]'", "N'PhoneNo'", "N'USERDATATYPE'"},
 		},
@@ -371,21 +371,21 @@ func TestRenameStatements(t *testing.T) {
 			// object that does not exist.
 			name: "TransferType",
 			write: func(ctx context.Context, d *Database) error {
-				return d.TransferTypeContext(ctx, "archive", "sales", "Phone")
+				return d.TransferType(ctx, "archive", "sales", "Phone")
 			},
 			want: []string{"ALTER SCHEMA [archive] TRANSFER TYPE::[sales].[Phone]"},
 		},
 		{
 			name: "TransferXMLSchemaCollection",
 			write: func(ctx context.Context, d *Database) error {
-				return d.TransferXMLSchemaCollectionContext(ctx, "archive", "", "OrderSchema")
+				return d.TransferXMLSchemaCollection(ctx, "archive", "", "OrderSchema")
 			},
 			want: []string{"ALTER SCHEMA [archive] TRANSFER XML SCHEMA COLLECTION::[dbo].[OrderSchema]"},
 		},
 		{
 			name: "TransferObject defaults the source schema",
 			write: func(ctx context.Context, d *Database) error {
-				return d.TransferObjectContext(ctx, "archive", "", "Orders")
+				return d.TransferObject(ctx, "archive", "", "Orders")
 			},
 			want: []string{"ALTER SCHEMA [archive] TRANSFER [dbo].[Orders]"},
 		},
@@ -397,7 +397,7 @@ func TestRenameStatements(t *testing.T) {
 			name: "Table.RenameColumn",
 			write: func(ctx context.Context, d *Database) error {
 				t := &Table{db: d, Schema: "dbo", Name: "Or]ders"}
-				return t.RenameColumnContext(ctx, "no'te", "note")
+				return t.RenameColumn(ctx, "no'te", "note")
 			},
 			want: []string{"EXEC sp_rename", "N'[dbo].[Or]]ders].[no''te]'", "N'note'", "N'COLUMN'"},
 		},
@@ -405,7 +405,7 @@ func TestRenameStatements(t *testing.T) {
 			name: "Statistic.Rename",
 			write: func(ctx context.Context, d *Database) error {
 				st := &Statistic{table: &Table{db: d, Schema: "dbo", Name: "Orders"}, Name: "st_old"}
-				return st.RenameContext(ctx, "st_new")
+				return st.Rename(ctx, "st_new")
 			},
 			want: []string{"EXEC sp_rename", "N'[dbo].[Orders].[st_old]'", "N'st_new'", "N'STATISTICS'"},
 		},
@@ -417,7 +417,7 @@ func TestRenameStatements(t *testing.T) {
 			if err := tc.write(ctx, d); err != nil {
 				t.Fatalf("%s under WithScript: %v", tc.name, err)
 			}
-			all := strings.Join(script.Statements, "\n")
+			all := strings.Join(script.Statements(), "\n")
 			for _, want := range tc.want {
 				if !strings.Contains(all, want) {
 					t.Errorf("captured script missing %q:\n%s", want, all)
@@ -431,7 +431,7 @@ func TestRenameStatements(t *testing.T) {
 }
 
 // The two server-level writes take no Database, so they capture through
-// Server.execContext rather than Database.exec.
+// Server.exec rather than Database.exec.
 func TestServerLevelDropAndRenameStatements(t *testing.T) {
 	cases := []struct {
 		name  string
@@ -440,13 +440,13 @@ func TestServerLevelDropAndRenameStatements(t *testing.T) {
 	}{
 		{
 			name:  "DropServerRole",
-			write: func(ctx context.Context, s *Server) error { return s.DropServerRoleContext(ctx, "auditors") },
+			write: func(ctx context.Context, s *Server) error { return s.DropServerRole(ctx, "auditors") },
 			want:  "DROP SERVER ROLE [auditors]",
 		},
 		{
 			name: "RenameDatabase",
 			write: func(ctx context.Context, s *Server) error {
-				return s.RenameDatabaseContext(ctx, "AppDB", "AppDB2", false)
+				return s.RenameDatabase(ctx, "AppDB", "AppDB2", false)
 			},
 			want: "ALTER DATABASE [AppDB] MODIFY NAME = [AppDB2]",
 		},
@@ -455,14 +455,14 @@ func TestServerLevelDropAndRenameStatements(t *testing.T) {
 			// names the database by whatever it is called by then.
 			name: "RenameDatabase force",
 			write: func(ctx context.Context, s *Server) error {
-				return s.RenameDatabaseContext(ctx, "AppDB", "AppDB2", true)
+				return s.RenameDatabase(ctx, "AppDB", "AppDB2", true)
 			},
 			want: "ALTER DATABASE [AppDB] SET SINGLE_USER WITH ROLLBACK IMMEDIATE",
 		},
 		{
 			name: "RenameDatabase force releases under the new name",
 			write: func(ctx context.Context, s *Server) error {
-				return s.RenameDatabaseContext(ctx, "AppDB", "AppDB2", true)
+				return s.RenameDatabase(ctx, "AppDB", "AppDB2", true)
 			},
 			want: "ALTER DATABASE [AppDB2] SET MULTI_USER",
 		},
@@ -474,7 +474,7 @@ func TestServerLevelDropAndRenameStatements(t *testing.T) {
 			if err := tc.write(ctx, s); err != nil {
 				t.Fatalf("%s under WithScript: %v", tc.name, err)
 			}
-			all := strings.Join(script.Statements, "\n")
+			all := strings.Join(script.Statements(), "\n")
 			if !strings.Contains(all, tc.want) {
 				t.Errorf("captured script missing %q:\n%s", tc.want, all)
 			}
@@ -500,34 +500,34 @@ func TestDropStatementsAreNotIdempotent(t *testing.T) {
 		name  string
 		write func() error
 	}{
-		{"view", func() error { return d.DropViewContext(ctx, "dbo", "v") }},
-		{"function", func() error { return d.DropFunctionContext(ctx, "dbo", "f") }},
-		{"procedure", func() error { return d.DropStoredProcedureContext(ctx, "dbo", "p") }},
-		{"trigger", func() error { return d.DropTriggerContext(ctx, "dbo", "tr") }},
-		{"database trigger", func() error { return d.DatabaseTriggerRef("ddl_tr").DropContext(ctx) }},
-		{"synonym", func() error { return d.DropSynonymContext(ctx, "dbo", "syn") }},
-		{"sequence", func() error { return d.DropSequenceContext(ctx, "dbo", "seq") }},
-		{"table", func() error { return d.DropTableContext(ctx, "dbo", "t", false) }},
-		{"database scoped credential", func() error { return d.DatabaseScopedCredentialRef("cred").DropContext(ctx) }},
-		{"certificate", func() error { return d.CertificateRef("cert").DropContext(ctx) }},
-		{"asymmetric key", func() error { return d.AsymmetricKeyRef("key").DropContext(ctx) }},
-		{"symmetric key", func() error { return d.SymmetricKeyRef("key").DropContext(ctx) }},
-		{"database role", func() error { return d.DropDatabaseRoleContext(ctx, "r") }},
-		{"schema", func() error { return d.DropSchemaContext(ctx, "s") }},
-		{"user", func() error { return d.DropUserContext(ctx, "u") }},
+		{"view", func() error { return d.DropView(ctx, "dbo", "v") }},
+		{"function", func() error { return d.DropFunction(ctx, "dbo", "f") }},
+		{"procedure", func() error { return d.DropStoredProcedure(ctx, "dbo", "p") }},
+		{"trigger", func() error { return d.DropTrigger(ctx, "dbo", "tr") }},
+		{"database trigger", func() error { return d.DatabaseTriggerRef("ddl_tr").Drop(ctx) }},
+		{"synonym", func() error { return d.DropSynonym(ctx, "dbo", "syn") }},
+		{"sequence", func() error { return d.DropSequence(ctx, "dbo", "seq") }},
+		{"table", func() error { return d.DropTable(ctx, "dbo", "t", false) }},
+		{"database scoped credential", func() error { return d.DatabaseScopedCredentialRef("cred").Drop(ctx) }},
+		{"certificate", func() error { return d.CertificateRef("cert").Drop(ctx) }},
+		{"asymmetric key", func() error { return d.AsymmetricKeyRef("key").Drop(ctx) }},
+		{"symmetric key", func() error { return d.SymmetricKeyRef("key").Drop(ctx) }},
+		{"database role", func() error { return d.DropDatabaseRole(ctx, "r") }},
+		{"schema", func() error { return d.DropSchema(ctx, "s") }},
+		{"user", func() error { return d.DropUser(ctx, "u") }},
 	}
 	for _, dr := range drops {
 		if err := dr.write(); err != nil {
 			t.Fatalf("drop %s under WithScript: %v", dr.name, err)
 		}
 	}
-	for _, stmt := range script.Statements {
+	for _, stmt := range script.Statements() {
 		if strings.Contains(stmt, "IF EXISTS") {
 			t.Errorf("a Drop* write method emitted IF EXISTS:\n%s", stmt)
 		}
 	}
-	if len(script.Statements) != len(drops) {
-		t.Fatalf("captured %d statements, want one per drop (%d)", len(script.Statements), len(drops))
+	if len(script.Statements()) != len(drops) {
+		t.Fatalf("captured %d statements, want one per drop (%d)", len(script.Statements()), len(drops))
 	}
 }
 
@@ -537,13 +537,13 @@ func TestDropStatementsAreNotIdempotent(t *testing.T) {
 func TestDropRenameQuotesAwkwardNames(t *testing.T) {
 	d := &Database{server: &Server{}, Name: "AppDB"}
 	ctx, script := WithScript(context.Background())
-	if err := d.DropViewContext(ctx, "we]ird", "v]iew"); err != nil {
-		t.Fatalf("DropViewContext: %v", err)
+	if err := d.DropView(ctx, "we]ird", "v]iew"); err != nil {
+		t.Fatalf("DropView: %v", err)
 	}
-	if err := (&Table{db: d, Schema: "dbo", Name: "Ord]ers"}).DropConstraintContext(ctx, "CK]1"); err != nil {
-		t.Fatalf("DropConstraintContext: %v", err)
+	if err := (&Table{db: d, Schema: "dbo", Name: "Ord]ers"}).DropConstraint(ctx, "CK]1"); err != nil {
+		t.Fatalf("DropConstraint: %v", err)
 	}
-	all := strings.Join(script.Statements, "\n")
+	all := strings.Join(script.Statements(), "\n")
 	for _, want := range []string{"[we]]ird].[v]]iew]", "[dbo].[Ord]]ers] DROP CONSTRAINT [CK]]1]"} {
 		if !strings.Contains(all, want) {
 			t.Errorf("captured script missing %q:\n%s", want, all)
@@ -571,15 +571,15 @@ func TestTransferObjectRefusals(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			d := &Database{server: &Server{}, Name: "AppDB"}
 			ctx, script := WithScript(context.Background())
-			err := d.TransferObjectContext(ctx, c.target, c.schema, "Orders")
+			err := d.TransferObject(ctx, c.target, c.schema, "Orders")
 			if err == nil {
-				t.Fatalf("no error; statements: %v", script.Statements)
+				t.Fatalf("no error; statements: %v", script.Statements())
 			}
 			if !strings.Contains(err.Error(), c.want) {
 				t.Errorf("error = %v, want it to mention %q", err, c.want)
 			}
-			if len(script.Statements) != 0 {
-				t.Errorf("emitted %q, want nothing", script.Statements)
+			if len(script.Statements()) != 0 {
+				t.Errorf("emitted %q, want nothing", script.Statements())
 			}
 		})
 	}
@@ -591,12 +591,12 @@ func TestTransferObjectRefusals(t *testing.T) {
 func TestDropColumnRefusesAnEmptyName(t *testing.T) {
 	d := &Database{server: &Server{}, Name: "AppDB"}
 	ctx, script := WithScript(context.Background())
-	err := (&Table{db: d, Schema: "dbo", Name: "Orders"}).DropColumnContext(ctx, "")
+	err := (&Table{db: d, Schema: "dbo", Name: "Orders"}).DropColumn(ctx, "")
 	if err == nil || !strings.Contains(err.Error(), "name is required") {
 		t.Errorf("error = %v, want it to name the missing column", err)
 	}
-	if len(script.Statements) != 0 {
-		t.Errorf("emitted %q, want nothing", script.Statements)
+	if len(script.Statements()) != 0 {
+		t.Errorf("emitted %q, want nothing", script.Statements())
 	}
 }
 
@@ -617,7 +617,7 @@ func TestAFailedForcedDropIsPutBackToMultiUser(t *testing.T) {
 	detLog.failOn = "DROP DATABASE"
 	detLog.mu.Unlock()
 
-	if err := s.DropDatabaseContext(context.Background(), "appdb", true); err == nil {
+	if err := s.DropDatabase(context.Background(), "appdb", true); err == nil {
 		t.Fatal("a failing drop returned no error")
 	}
 	stmts := detLog.statements()
@@ -635,7 +635,7 @@ func TestAFailedForcedDropIsPutBackToMultiUserEvenWhenTheContextIsGone(t *testin
 	s := detServer(t)
 	ctx := detCancelOn(t, "DROP DATABASE")
 
-	if err := s.DropDatabaseContext(ctx, "appdb", true); err == nil {
+	if err := s.DropDatabase(ctx, "appdb", true); err == nil {
 		t.Fatal("a drop whose context expired returned no error")
 	}
 	stmts := detLog.statements()
@@ -654,7 +654,7 @@ func TestAFailedDropWithoutForceLeavesTheAccessModeAlone(t *testing.T) {
 	detLog.failOn = "DROP DATABASE"
 	detLog.mu.Unlock()
 
-	if err := s.DropDatabaseContext(context.Background(), "appdb", false); err == nil {
+	if err := s.DropDatabase(context.Background(), "appdb", false); err == nil {
 		t.Fatal("a failing drop returned no error")
 	}
 	for _, stmt := range detLog.statements() {
@@ -670,8 +670,8 @@ func TestAFailedDropWithoutForceLeavesTheAccessModeAlone(t *testing.T) {
 // is worse than not issuing it.
 func TestASuccessfulDropDoesNotTryToAlterTheDatabaseAfterwards(t *testing.T) {
 	s := detServer(t)
-	if err := s.DropDatabaseContext(context.Background(), "appdb", true); err != nil {
-		t.Fatalf("DropDatabaseContext: %v", err)
+	if err := s.DropDatabase(context.Background(), "appdb", true); err != nil {
+		t.Fatalf("DropDatabase: %v", err)
 	}
 	for _, stmt := range detLog.statements() {
 		if strings.Contains(stmt, "MULTI_USER") {
@@ -689,7 +689,7 @@ func TestAForcedRenameReleasesMultiUserEvenWhenTheContextIsGone(t *testing.T) {
 	s := detServer(t)
 	ctx := detCancelOn(t, "MODIFY NAME")
 
-	if err := s.RenameDatabaseContext(ctx, "AppDB", "AppDB2", true); err == nil {
+	if err := s.RenameDatabase(ctx, "AppDB", "AppDB2", true); err == nil {
 		t.Fatal("a rename whose context expired returned no error")
 	}
 	stmts := detLog.statements()
@@ -714,9 +714,9 @@ func TestAForcedDropOnAManagedInstanceKillsSessionsInsteadOfSingleUser(t *testin
 			detLog.failOn = "DROP DATABASE"
 			detLog.mu.Unlock()
 		}
-		err := s.DropDatabaseContext(context.Background(), "appdb", true)
+		err := s.DropDatabase(context.Background(), "appdb", true)
 		if (err != nil) != fail {
-			t.Fatalf("fail=%v: DropDatabaseContext returned %v", fail, err)
+			t.Fatalf("fail=%v: DropDatabase returned %v", fail, err)
 		}
 		stmts := detLog.statements()
 		if len(stmts) != 2 || !strings.Contains(stmts[0], "KILL") || !strings.Contains(stmts[0], "DB_ID(N'appdb')") ||
@@ -736,8 +736,8 @@ func TestAForcedDropOnAManagedInstanceKillsSessionsInsteadOfSingleUser(t *testin
 func TestAForcedRenameOnAManagedInstanceKillsSessionsInsteadOfSingleUser(t *testing.T) {
 	s := detServer(t)
 	s.info = &ServerInfo{EngineEdition: int(EngineAzureManagedInst)}
-	if err := s.RenameDatabaseContext(context.Background(), "AppDB", "AppDB2", true); err != nil {
-		t.Fatalf("RenameDatabaseContext: %v", err)
+	if err := s.RenameDatabase(context.Background(), "AppDB", "AppDB2", true); err != nil {
+		t.Fatalf("RenameDatabase: %v", err)
 	}
 	stmts := detLog.statements()
 	if len(stmts) != 2 || !strings.Contains(stmts[0], "KILL") || !strings.Contains(stmts[1], "MODIFY NAME = [AppDB2]") {
@@ -750,8 +750,8 @@ func TestAForcedRenameOnAManagedInstanceKillsSessionsInsteadOfSingleUser(t *test
 func TestAForcedDropOnPremStillUsesSingleUser(t *testing.T) {
 	s := detServer(t)
 	s.info = &ServerInfo{EngineEdition: int(EngineEnterprise)}
-	if err := s.DropDatabaseContext(context.Background(), "appdb", true); err != nil {
-		t.Fatalf("DropDatabaseContext: %v", err)
+	if err := s.DropDatabase(context.Background(), "appdb", true); err != nil {
+		t.Fatalf("DropDatabase: %v", err)
 	}
 	stmts := detLog.statements()
 	if len(stmts) != 2 || !strings.Contains(stmts[0], "SET SINGLE_USER WITH ROLLBACK IMMEDIATE") {

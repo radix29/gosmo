@@ -93,7 +93,7 @@ func TestLiveScriptTablePartitionSurvivesTheRoundTrip(t *testing.T) {
 		 ON ps_year(Yr)`,
 		`CREATE NONCLUSTERED INDEX IX_Parted_Note ON dbo.Parted (Note) ON ps_year(Yr)`,
 		// A heap: it has no row in the index list at all, so its scheme is
-		// only reachable through Table.DataSpaceContext.
+		// only reachable through Table.DataSpace.
 		`CREATE TABLE dbo.PartedHeap (ID INT NOT NULL, Yr INT NOT NULL) ON ps_year(Yr)`,
 		`CREATE TABLE dbo.OnArchive (ID INT NOT NULL) ON FG_Archive`,
 	)
@@ -114,9 +114,9 @@ func TestLiveScriptTablePartitionSurvivesTheRoundTrip(t *testing.T) {
 
 	for _, c := range cases {
 		t.Run(c.table, func(t *testing.T) {
-			script, err := sc.ScriptTableContext(ctx, "dbo", c.table)
+			script, err := sc.ScriptTable(ctx, "dbo", c.table)
 			if err != nil {
-				t.Fatalf("ScriptTableContext: %v", err)
+				t.Fatalf("ScriptTable: %v", err)
 			}
 			for _, batch := range splitBatches(script) {
 				if strings.TrimSpace(batch) == "" {

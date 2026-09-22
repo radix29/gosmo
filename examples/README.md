@@ -18,7 +18,6 @@ go run ./examples/backup     # one subject at a time
 | [`backup/`](backup/main.go) | `BACKUP`/`RESTORE`, full + differential + log to one device, progress callbacks, `RESTORE HEADERONLY`/`FILELISTONLY`/`VERIFYONLY`, msdb backup history, relocating files on restore |
 | [`bulkcopy/`](bulkcopy/main.go) | `Database.BulkInsert` from a slice, a generator, and a streaming CSV; `SliceRows`; batch/lock/order options; what happens when the source fails mid-load |
 | [`diagnostic/`](diagnostic/main.go) | `AsSQLError`, `IsRetryable`, `ExecProc` with In/Out/InOut parameters and the return status, estimated vs actual execution plans, object search, dependency graphs, the bulk catalog snapshot, memory/CPU/session/error-log reads |
-| [`iterators/`](iterators/main.go) | The `*Seq` API — what it does (deferred fetch, whole-collection) and what it does not (streaming), plus cancellation behaviour |
 | [`jobs/`](jobs/main.go) | SQL Server Agent: categories, operators, a job with branching steps, job-owned and shared schedules, running it, job history, event alerts |
 | [`maintain/`](maintain/main.go) | Files and filegroups, index fragmentation, rebuild/reorganize, statistics with header/histogram/density vector, space usage, database options and scoped configurations, change tracking, Query Store |
 | [`scripting/`](scripting/main.go) | `Scripter` and its options; `WithScript`, which collects the statements a set of writes *would* run instead of executing them |

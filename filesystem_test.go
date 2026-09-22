@@ -25,7 +25,7 @@ func captureServer(t *testing.T, versionMajor int) *Server {
 // sending it there fails the listing outright rather than degrading.
 func TestEnumFileSystemPicksSourceByVersion(t *testing.T) {
 	s := captureServer(t, 17)
-	if _, err := s.EnumFileSystem(`C:\Backup`); err != nil {
+	if _, err := s.EnumFileSystem(t.Context(), `C:\Backup`); err != nil {
 		t.Fatalf("EnumFileSystem (2025): %v", err)
 	}
 	if captured.find("sys.dm_os_enumerate_filesystem") == "" {
@@ -33,7 +33,7 @@ func TestEnumFileSystemPicksSourceByVersion(t *testing.T) {
 	}
 
 	s = captureServer(t, 13)
-	if _, err := s.EnumFileSystem(`C:\Backup`); err != nil {
+	if _, err := s.EnumFileSystem(t.Context(), `C:\Backup`); err != nil {
 		t.Fatalf("EnumFileSystem (2016): %v", err)
 	}
 	if captured.find("xp_dirtree") == "" {
@@ -47,7 +47,7 @@ func TestEnumFileSystemPicksSourceByVersion(t *testing.T) {
 // Same split for the drive list: sys.dm_os_enumerate_fixed_drives is 2019+.
 func TestFixedDrivesPicksSourceByVersion(t *testing.T) {
 	s := captureServer(t, 15)
-	if _, err := s.FixedDrives(); err != nil {
+	if _, err := s.FixedDrives(t.Context()); err != nil {
 		t.Fatalf("FixedDrives (2019): %v", err)
 	}
 	if captured.find("sys.dm_os_enumerate_fixed_drives") == "" {
@@ -55,7 +55,7 @@ func TestFixedDrivesPicksSourceByVersion(t *testing.T) {
 	}
 
 	s = captureServer(t, 14)
-	if _, err := s.FixedDrives(); err != nil {
+	if _, err := s.FixedDrives(t.Context()); err != nil {
 		t.Fatalf("FixedDrives (2017): %v", err)
 	}
 	if captured.find("xp_fixeddrives") == "" {
@@ -80,7 +80,7 @@ func TestFileSystemExistsTreatsDirectoryAsExisting(t *testing.T) {
 	})
 	s := &Server{db: db, info: &ServerInfo{VersionMajor: 17}}
 
-	exists, isDir, err := s.FileSystemExists(`C:\Backup`)
+	exists, isDir, err := s.FileSystemExists(t.Context(), `C:\Backup`)
 	if err != nil {
 		t.Fatalf("FileSystemExists: %v", err)
 	}
@@ -93,7 +93,7 @@ func TestFileSystemExistsTreatsDirectoryAsExisting(t *testing.T) {
 // dialog asks about every candidate destination, most of which are new.
 func TestFileSystemExistsMissingPathIsNotAnError(t *testing.T) {
 	s := captureServer(t, 17) // capture driver replies with no rows
-	exists, isDir, err := s.FileSystemExists(`C:\nope.bak`)
+	exists, isDir, err := s.FileSystemExists(t.Context(), `C:\nope.bak`)
 	if err != nil {
 		t.Fatalf("FileSystemExists: %v", err)
 	}

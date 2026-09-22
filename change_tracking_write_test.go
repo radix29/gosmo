@@ -4,7 +4,7 @@ import "testing"
 
 func TestSetChangeTrackingRejectsUnknownRetentionUnit(t *testing.T) {
 	d := &Database{Name: "appdb", server: &Server{}}
-	err := d.SetChangeTracking(ChangeTrackingInfo{
+	err := d.SetChangeTracking(t.Context(), ChangeTrackingInfo{
 		Enabled: true, RetentionPeriod: 2, RetentionUnit: "FORTNIGHTS",
 	})
 	if err == nil {
@@ -14,7 +14,7 @@ func TestSetChangeTrackingRejectsUnknownRetentionUnit(t *testing.T) {
 
 func TestChangeTrackingRetentionUnitsAllowlist(t *testing.T) {
 	for _, unit := range []string{"DAYS", "HOURS", "MINUTES"} {
-		if !changeTrackingRetentionUnits[unit] {
+		if !changeTrackingRetentionUnits[ChangeTrackingUnit(unit)] {
 			t.Errorf("%q should be a recognized retention unit", unit)
 		}
 	}

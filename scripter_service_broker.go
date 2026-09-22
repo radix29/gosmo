@@ -65,13 +65,8 @@ func authorizationClause(owner string) string {
 
 // ScriptMessageType generates the CREATE (or DROP) script for one message
 // type.
-func (sc *Scripter) ScriptMessageType(name string) (string, error) {
-	return sc.ScriptMessageTypeContext(context.Background(), name)
-}
-
-// ScriptMessageTypeContext is the context-aware variant of ScriptMessageType.
-func (sc *Scripter) ScriptMessageTypeContext(ctx context.Context, name string) (string, error) {
-	mt, err := sc.db.MessageTypeByNameContext(ctx, name)
+func (sc *Scripter) ScriptMessageType(ctx context.Context, name string) (string, error) {
+	mt, err := sc.db.MessageTypeByName(ctx, name)
 	if err != nil {
 		return "", err
 	}
@@ -117,13 +112,8 @@ func messageTypeValidationClause(mt *MessageType) string {
 
 // ScriptContract generates the CREATE (or DROP) script for one service
 // contract.
-func (sc *Scripter) ScriptContract(name string) (string, error) {
-	return sc.ScriptContractContext(context.Background(), name)
-}
-
-// ScriptContractContext is the context-aware variant of ScriptContract.
-func (sc *Scripter) ScriptContractContext(ctx context.Context, name string) (string, error) {
-	c, err := sc.db.ContractByNameContext(ctx, name)
+func (sc *Scripter) ScriptContract(ctx context.Context, name string) (string, error) {
+	c, err := sc.db.ContractByName(ctx, name)
 	if err != nil {
 		return "", err
 	}
@@ -172,13 +162,8 @@ func buildContractScript(c *ServiceContract, opts ScriptOptions) string {
 // ============================================================
 
 // ScriptBrokerQueue generates the CREATE (or DROP) script for one queue.
-func (sc *Scripter) ScriptBrokerQueue(schema, name string) (string, error) {
-	return sc.ScriptBrokerQueueContext(context.Background(), schema, name)
-}
-
-// ScriptBrokerQueueContext is the context-aware variant of ScriptBrokerQueue.
-func (sc *Scripter) ScriptBrokerQueueContext(ctx context.Context, schema, name string) (string, error) {
-	q, err := sc.db.BrokerQueueByNameContext(ctx, schema, name)
+func (sc *Scripter) ScriptBrokerQueue(ctx context.Context, schema, name string) (string, error) {
+	q, err := sc.db.BrokerQueueByName(ctx, schema, name)
 	if err != nil {
 		return "", err
 	}
@@ -242,14 +227,8 @@ func queueExecuteAsClause(q *BrokerQueue) string {
 // ============================================================
 
 // ScriptBrokerService generates the CREATE (or DROP) script for one service.
-func (sc *Scripter) ScriptBrokerService(name string) (string, error) {
-	return sc.ScriptBrokerServiceContext(context.Background(), name)
-}
-
-// ScriptBrokerServiceContext is the context-aware variant of
-// ScriptBrokerService.
-func (sc *Scripter) ScriptBrokerServiceContext(ctx context.Context, name string) (string, error) {
-	s, err := sc.db.BrokerServiceByNameContext(ctx, name)
+func (sc *Scripter) ScriptBrokerService(ctx context.Context, name string) (string, error) {
+	s, err := sc.db.BrokerServiceByName(ctx, name)
 	if err != nil {
 		return "", err
 	}
@@ -296,13 +275,8 @@ func buildBrokerServiceScript(s *BrokerService, opts ScriptOptions) string {
 // ============================================================
 
 // ScriptRoute generates the CREATE (or DROP) script for one route.
-func (sc *Scripter) ScriptRoute(name string) (string, error) {
-	return sc.ScriptRouteContext(context.Background(), name)
-}
-
-// ScriptRouteContext is the context-aware variant of ScriptRoute.
-func (sc *Scripter) ScriptRouteContext(ctx context.Context, name string) (string, error) {
-	r, err := sc.db.RouteByNameContext(ctx, name)
+func (sc *Scripter) ScriptRoute(ctx context.Context, name string) (string, error) {
+	r, err := sc.db.RouteByName(ctx, name)
 	if err != nil {
 		return "", err
 	}
@@ -353,19 +327,13 @@ func buildRouteScript(r *Route, opts ScriptOptions) string {
 
 // ScriptRemoteServiceBinding generates the CREATE (or DROP) script for one
 // remote service binding.
-func (sc *Scripter) ScriptRemoteServiceBinding(name string) (string, error) {
-	return sc.ScriptRemoteServiceBindingContext(context.Background(), name)
-}
-
-// ScriptRemoteServiceBindingContext is the context-aware variant of
-// ScriptRemoteServiceBinding.
 //
 // The CREATE it emits is the one statement in this file an Azure SQL Managed
-// Instance refuses — Msg 41906, at compile time, which aborts the whole batch
-// before anything in it runs. A caller that emits scripts into a batch with
-// other statements keeps this one in a batch of its own.
-func (sc *Scripter) ScriptRemoteServiceBindingContext(ctx context.Context, name string) (string, error) {
-	b, err := sc.db.RemoteServiceBindingByNameContext(ctx, name)
+// Instance refuses — Msg 41906, at compile time, which aborts the whole
+// batch before anything in it runs. A caller that emits scripts into a batch
+// with other statements keeps this one in a batch of its own.
+func (sc *Scripter) ScriptRemoteServiceBinding(ctx context.Context, name string) (string, error) {
+	b, err := sc.db.RemoteServiceBindingByName(ctx, name)
 	if err != nil {
 		return "", err
 	}
@@ -399,14 +367,8 @@ func buildRemoteServiceBindingScript(b *RemoteServiceBinding, opts ScriptOptions
 
 // ScriptBrokerPriority generates the CREATE (or DROP) script for one
 // conversation priority.
-func (sc *Scripter) ScriptBrokerPriority(name string) (string, error) {
-	return sc.ScriptBrokerPriorityContext(context.Background(), name)
-}
-
-// ScriptBrokerPriorityContext is the context-aware variant of
-// ScriptBrokerPriority.
-func (sc *Scripter) ScriptBrokerPriorityContext(ctx context.Context, name string) (string, error) {
-	p, err := sc.db.BrokerPriorityByNameContext(ctx, name)
+func (sc *Scripter) ScriptBrokerPriority(ctx context.Context, name string) (string, error) {
+	p, err := sc.db.BrokerPriorityByName(ctx, name)
 	if err != nil {
 		return "", err
 	}

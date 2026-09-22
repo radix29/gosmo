@@ -50,9 +50,9 @@ func TestLiveSymmetricKeyWrites(t *testing.T) {
 
 	kinds := func(name string) string {
 		t.Helper()
-		k, err := d.SymmetricKeyByNameContext(ctx, name)
+		k, err := d.SymmetricKeyByName(ctx, name)
 		if err != nil {
-			t.Fatalf("SymmetricKeyByNameContext(%q): %v", name, err)
+			t.Fatalf("SymmetricKeyByName(%q): %v", name, err)
 		}
 		var s []string
 		for _, e := range k.Encryptions {
@@ -77,11 +77,11 @@ func TestLiveSymmetricKeyWrites(t *testing.T) {
 				{Kind: SymmetricKeyBySymmetricKey, Name: "parent", Open: parentOpen},
 			}},
 	} {
-		if err := d.CreateSymmetricKeyContext(ctx, spec); err != nil {
-			t.Fatalf("CreateSymmetricKeyContext(%s): %v", spec.Name, err)
+		if err := d.CreateSymmetricKey(ctx, spec); err != nil {
+			t.Fatalf("CreateSymmetricKey(%s): %v", spec.Name, err)
 		}
 	}
-	k, err := d.SymmetricKeyByNameContext(ctx, "k'ey")
+	k, err := d.SymmetricKeyByName(ctx, "k'ey")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -107,8 +107,8 @@ func TestLiveSymmetricKeyWrites(t *testing.T) {
 			SymmetricKeyDecryptor{Kind: SymmetricKeyByAsymmetricKey, Name: "sk_asym", Password: asymPass}},
 	}
 	for _, a := range adds {
-		if err := k.AddEncryptionContext(ctx, a.enc, a.dec); err != nil {
-			t.Fatalf("AddEncryptionContext(%+v, %+v): %v", a.enc, a.dec, err)
+		if err := k.AddEncryption(ctx, a.enc, a.dec); err != nil {
+			t.Fatalf("AddEncryption(%+v, %+v): %v", a.enc, a.dec, err)
 		}
 	}
 	if got, want := kinds("k'ey"), "CERTIFICATE dmk_cert; CERTIFICATE pw_cert; PASSWORD; PASSWORD; SYMMETRIC KEY parent; ASYMMETRIC KEY sk_asym"; got != want {
@@ -117,7 +117,7 @@ func TestLiveSymmetricKeyWrites(t *testing.T) {
 
 	// A password-protected certificate opened without its password: Msg
 	// 15334, reported as itself rather than as a CLOSE's 15315.
-	err = k.AddEncryptionContext(ctx, SymmetricKeyEncryptor{Kind: SymmetricKeyByPassword, Password: "Never!Added5"},
+	err = k.AddEncryption(ctx, SymmetricKeyEncryptor{Kind: SymmetricKeyByPassword, Password: "Never!Added5"},
 		SymmetricKeyDecryptor{Kind: SymmetricKeyByCertificate, Name: "pw_cert"})
 	if liveMsg(err) != 15334 {
 		t.Errorf("open by pw_cert without its password: %v, want Msg 15334", err)
@@ -139,8 +139,8 @@ func TestLiveSymmetricKeyWrites(t *testing.T) {
 			SymmetricKeyDecryptor{Kind: SymmetricKeyByCertificate, Name: "dmk_cert"}},
 	}
 	for _, dr := range drops {
-		if err := k.DropEncryptionContext(ctx, dr.enc, dr.dec); err != nil {
-			t.Fatalf("DropEncryptionContext(%+v, %+v): %v", dr.enc, dr.dec, err)
+		if err := k.DropEncryption(ctx, dr.enc, dr.dec); err != nil {
+			t.Fatalf("DropEncryption(%+v, %+v): %v", dr.enc, dr.dec, err)
 		}
 	}
 	if got, want := kinds("k'ey"), "CERTIFICATE dmk_cert"; got != want {
@@ -188,12 +188,12 @@ func TestLiveSymmetricKeyWrites(t *testing.T) {
 		KeySource: "gosmo key source", IdentityValue: "gosmo identity",
 		Encryptions: []SymmetricKeyEncryptor{{Kind: SymmetricKeyByPassword, Password: pass}}}
 	for _, x := range []*Database{d, d2} {
-		if err := x.CreateSymmetricKeyContext(ctx, same); err != nil {
+		if err := x.CreateSymmetricKey(ctx, same); err != nil {
 			t.Fatalf("create shared in %s: %v", x.Name, err)
 		}
 	}
-	g1, err1 := d.SymmetricKeyByNameContext(ctx, "shared")
-	g2, err2 := d2.SymmetricKeyByNameContext(ctx, "shared")
+	g1, err1 := d.SymmetricKeyByName(ctx, "shared")
+	g2, err2 := d2.SymmetricKeyByName(ctx, "shared")
 	if err1 != nil || err2 != nil || g1.KeyGUID != g2.KeyGUID {
 		t.Errorf("shared key GUIDs %v / %v (%v, %v), want equal", g1, g2, err1, err2)
 	}
@@ -214,11 +214,11 @@ func TestLiveSymmetricKeyWrites(t *testing.T) {
 	}
 
 	for _, n := range []string{"k'ey", "parent", "shared"} {
-		if err := d.SymmetricKeyRef(n).DropContext(ctx); err != nil {
-			t.Fatalf("DropContext(%s): %v", n, err)
+		if err := d.SymmetricKeyRef(n).Drop(ctx); err != nil {
+			t.Fatalf("Drop(%s): %v", n, err)
 		}
 	}
-	if keys, err := d.SymmetricKeysContext(ctx); err != nil || len(keys) != 0 {
+	if keys, err := d.SymmetricKeys(ctx); err != nil || len(keys) != 0 {
 		t.Errorf("after drops: %v, %v", keys, err)
 	}
 }
@@ -238,7 +238,7 @@ func TestLiveSymmetricKeyAlterUnderLoad(t *testing.T) {
 
 	const writers, readers, rounds = 8, 4, 6
 	for i := range writers {
-		if err := d.CreateSymmetricKeyContext(ctx, SymmetricKeySpec{Name: fmt.Sprintf("k%d", i), Algorithm: SymmetricKeyAES256,
+		if err := d.CreateSymmetricKey(ctx, SymmetricKeySpec{Name: fmt.Sprintf("k%d", i), Algorithm: SymmetricKeyAES256,
 			Encryptions: []SymmetricKeyEncryptor{{Kind: SymmetricKeyByPassword, Password: "Base!Pass1"}}}); err != nil {
 			t.Fatal(err)
 		}
@@ -259,7 +259,7 @@ func TestLiveSymmetricKeyAlterUnderLoad(t *testing.T) {
 	for i := range readers {
 		wg.Go(func() {
 			for loadCtx.Err() == nil {
-				if _, err := d.SymmetricKeysContext(loadCtx); err != nil && loadCtx.Err() == nil {
+				if _, err := d.SymmetricKeys(loadCtx); err != nil && loadCtx.Err() == nil {
 					fail(fmt.Errorf("reader %d: %w", i, err))
 					return
 				}
@@ -273,11 +273,11 @@ func TestLiveSymmetricKeyAlterUnderLoad(t *testing.T) {
 			dec := SymmetricKeyDecryptor{Kind: SymmetricKeyByPassword, Password: "Base!Pass1"}
 			for r := range rounds {
 				enc := SymmetricKeyEncryptor{Kind: SymmetricKeyByPassword, Password: fmt.Sprintf("Round!%d#%d", i, r)}
-				if err := k.AddEncryptionContext(ctx, enc, dec); err != nil {
+				if err := k.AddEncryption(ctx, enc, dec); err != nil {
 					fail(fmt.Errorf("writer %d round %d add: %w", i, r, err))
 					return
 				}
-				if err := k.DropEncryptionContext(ctx, enc, dec); err != nil {
+				if err := k.DropEncryption(ctx, enc, dec); err != nil {
 					fail(fmt.Errorf("writer %d round %d drop: %w", i, r, err))
 					return
 				}
@@ -291,7 +291,7 @@ func TestLiveSymmetricKeyAlterUnderLoad(t *testing.T) {
 		t.Error(err)
 	}
 
-	keys, err := d.SymmetricKeysContext(ctx)
+	keys, err := d.SymmetricKeys(ctx)
 	if err != nil || len(keys) != writers {
 		t.Fatalf("after load: %d keys, %v", len(keys), err)
 	}

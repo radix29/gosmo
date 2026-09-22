@@ -6,7 +6,7 @@ import (
 )
 
 // scripterOverDatabase builds a Scripter over a Database with the metadata
-// DatabaseByNameContext would have filled in, so ScriptDatabaseContext
+// DatabaseByName would have filled in, so ScriptDatabase
 // renders without needing to refresh.
 func scripterOverDatabase(name string) *Scripter {
 	d := &Database{
@@ -22,7 +22,7 @@ func scripterOverDatabase(name string) *Scripter {
 }
 
 func TestScriptDatabaseRendersFromCachedMetadata(t *testing.T) {
-	got, err := scripterOverDatabase("Sales").ScriptDatabase()
+	got, err := scripterOverDatabase("Sales").ScriptDatabase(t.Context())
 	if err != nil {
 		t.Fatalf("ScriptDatabase: %v", err)
 	}
@@ -45,7 +45,7 @@ func TestScriptDatabaseOmitsSettingsItDoesNotKnow(t *testing.T) {
 	sc := scripterOverDatabase("Offline")
 	sc.db.RecoveryModel = ""
 	sc.db.CompatibilityLevel = 0
-	// Rendered directly: ScriptDatabaseContext would try to refresh these
+	// Rendered directly: ScriptDatabase would try to refresh these
 	// from the server first, and there is no server here.
 	got, err := sc.scriptDatabaseFrom(sc.db)
 	if err != nil {
@@ -65,7 +65,7 @@ func TestScriptDatabaseOmitsSettingsItDoesNotKnow(t *testing.T) {
 func TestScriptDatabaseIfNotExistsWrapsTheCreate(t *testing.T) {
 	sc := scripterOverDatabase("O'Brien")
 	sc.opts.IncludeIfNotExists = true
-	got, err := sc.ScriptDatabase()
+	got, err := sc.ScriptDatabase(t.Context())
 	if err != nil {
 		t.Fatalf("ScriptDatabase: %v", err)
 	}
@@ -84,7 +84,7 @@ func TestScriptDatabaseIfNotExistsWrapsTheCreate(t *testing.T) {
 func TestScriptDatabaseHeaderSurvivesAServerWithNoInfo(t *testing.T) {
 	sc := scripterOverDatabase("Sales")
 	sc.opts.IncludeHeaders = true
-	got, err := sc.ScriptDatabase()
+	got, err := sc.ScriptDatabase(t.Context())
 	if err != nil {
 		t.Fatalf("ScriptDatabase: %v", err)
 	}
@@ -98,7 +98,7 @@ func TestScriptDatabaseHeaderNamesTheVersion(t *testing.T) {
 	sc := scripterOverDatabase("Sales")
 	sc.db.server.info = &ServerInfo{ProductVersion: "14.0.3480.0"}
 	sc.opts.IncludeHeaders = true
-	got, err := sc.ScriptDatabase()
+	got, err := sc.ScriptDatabase(t.Context())
 	if err != nil {
 		t.Fatalf("ScriptDatabase: %v", err)
 	}

@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-// -- fake driver: replays msdb rows for BackupHistoryContext, NULLs included,
+// -- fake driver: replays msdb rows for BackupHistory, NULLs included,
 // without applying the query's own ISNULLs -------------------------------
 
 type histDriver struct{ rows [][]driver.Value }
@@ -69,9 +69,9 @@ func TestBackupHistoryScansNullColumns(t *testing.T) {
 	}
 	defer db.Close()
 
-	hist, err := (&Server{db: db}).BackupHistoryContext(context.Background(), "GoTest01")
+	hist, err := (&Server{db: db}).BackupHistory(context.Background(), "GoTest01")
 	if err != nil {
-		t.Fatalf("BackupHistoryContext: %v", err)
+		t.Fatalf("BackupHistory: %v", err)
 	}
 	if len(hist) != 2 {
 		t.Fatalf("got %d rows, want 2", len(hist))
@@ -103,7 +103,7 @@ func TestBackupHistoryScansNullColumns(t *testing.T) {
 
 // The Go-side Null destinations are only half the fix; the query wraps the
 // same columns so the server never sends a NULL in the first place. Both
-// halves are load-bearing — see BackupHistoryContext's doc comment.
+// halves are load-bearing — see BackupHistory's doc comment.
 func TestBackupHistoryQueryWrapsEveryNullableColumn(t *testing.T) {
 	list := selectList(t, backupHistorySelect)
 	exprs := selectExprs(t, list)

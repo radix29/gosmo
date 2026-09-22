@@ -27,21 +27,16 @@ func NewServerScripter(s *Server, opts ScriptOptions) *ServerScripter {
 }
 
 // ScriptLogin generates the CREATE (or DROP) script for one login.
-func (sc *ServerScripter) ScriptLogin(name string) (string, error) {
-	return sc.ScriptLoginContext(context.Background(), name)
-}
-
-// ScriptLoginContext is the context-aware variant of ScriptLogin.
 //
 // A certificate- or asymmetric-key-mapped login needs one more read than the
 // others: the object it maps to is named in master, not in the login's own
-// row. ResolveMappingContext is a no-op for every other type.
-func (sc *ServerScripter) ScriptLoginContext(ctx context.Context, name string) (string, error) {
-	l, err := sc.server.LoginByNameContext(ctx, name)
+// row. ResolveMapping is a no-op for every other type.
+func (sc *ServerScripter) ScriptLogin(ctx context.Context, name string) (string, error) {
+	l, err := sc.server.LoginByName(ctx, name)
 	if err != nil {
 		return "", err
 	}
-	if err := l.ResolveMappingContext(ctx); err != nil {
+	if err := l.ResolveMapping(ctx); err != nil {
 		return "", err
 	}
 	return buildLoginScript(l, sc.opts), nil
@@ -151,13 +146,8 @@ func mappedObjectName(l *Login, kind string) string {
 
 // ScriptServerRole generates the CREATE (or DROP) script for one server role,
 // including the ALTER SERVER ROLE statements that restore its membership.
-func (sc *ServerScripter) ScriptServerRole(name string) (string, error) {
-	return sc.ScriptServerRoleContext(context.Background(), name)
-}
-
-// ScriptServerRoleContext is the context-aware variant of ScriptServerRole.
-func (sc *ServerScripter) ScriptServerRoleContext(ctx context.Context, name string) (string, error) {
-	r, err := sc.server.ServerRoleByNameContext(ctx, name)
+func (sc *ServerScripter) ScriptServerRole(ctx context.Context, name string) (string, error) {
+	r, err := sc.server.ServerRoleByName(ctx, name)
 	if err != nil {
 		return "", err
 	}
@@ -192,13 +182,8 @@ func buildServerRoleScript(r *ServerRole, opts ScriptOptions) string {
 
 // ScriptCredential generates the CREATE (or DROP) script for one server-level
 // credential.
-func (sc *ServerScripter) ScriptCredential(name string) (string, error) {
-	return sc.ScriptCredentialContext(context.Background(), name)
-}
-
-// ScriptCredentialContext is the context-aware variant of ScriptCredential.
-func (sc *ServerScripter) ScriptCredentialContext(ctx context.Context, name string) (string, error) {
-	c, err := sc.server.CredentialByNameContext(ctx, name)
+func (sc *ServerScripter) ScriptCredential(ctx context.Context, name string) (string, error) {
+	c, err := sc.server.CredentialByName(ctx, name)
 	if err != nil {
 		return "", err
 	}
@@ -207,14 +192,8 @@ func (sc *ServerScripter) ScriptCredentialContext(ctx context.Context, name stri
 
 // ScriptBackupDevice generates the CREATE (or DROP) script for one logical
 // backup device.
-func (sc *ServerScripter) ScriptBackupDevice(name string) (string, error) {
-	return sc.ScriptBackupDeviceContext(context.Background(), name)
-}
-
-// ScriptBackupDeviceContext is the context-aware variant of
-// ScriptBackupDevice.
-func (sc *ServerScripter) ScriptBackupDeviceContext(ctx context.Context, name string) (string, error) {
-	d, err := sc.server.BackupDeviceByNameContext(ctx, name)
+func (sc *ServerScripter) ScriptBackupDevice(ctx context.Context, name string) (string, error) {
+	d, err := sc.server.BackupDeviceByName(ctx, name)
 	if err != nil {
 		return "", err
 	}
@@ -249,14 +228,8 @@ func buildBackupDeviceScript(d *BackupDevice, opts ScriptOptions) string {
 
 // ScriptServerTrigger generates the CREATE (or DROP) script for one
 // server-scope DDL or logon trigger.
-func (sc *ServerScripter) ScriptServerTrigger(name string) (string, error) {
-	return sc.ScriptServerTriggerContext(context.Background(), name)
-}
-
-// ScriptServerTriggerContext is the context-aware variant of
-// ScriptServerTrigger.
-func (sc *ServerScripter) ScriptServerTriggerContext(ctx context.Context, name string) (string, error) {
-	t, err := sc.server.ServerTriggerByNameContext(ctx, name)
+func (sc *ServerScripter) ScriptServerTrigger(ctx context.Context, name string) (string, error) {
+	t, err := sc.server.ServerTriggerByName(ctx, name)
 	if err != nil {
 		return "", err
 	}
@@ -296,16 +269,11 @@ func buildServerTriggerScript(t *ServerTrigger, opts ScriptOptions) (string, err
 }
 
 // ScriptEndpoint generates the CREATE (or DROP) script for one endpoint.
-func (sc *ServerScripter) ScriptEndpoint(name string) (string, error) {
-	return sc.ScriptEndpointContext(context.Background(), name)
-}
-
-// ScriptEndpointContext is the context-aware variant of ScriptEndpoint.
 //
 // A built-in endpoint is refused with ErrSystemEndpoint: neither half of its
 // script would run, since it can be neither dropped nor created.
-func (sc *ServerScripter) ScriptEndpointContext(ctx context.Context, name string) (string, error) {
-	e, err := sc.server.EndpointByNameContext(ctx, name)
+func (sc *ServerScripter) ScriptEndpoint(ctx context.Context, name string) (string, error) {
+	e, err := sc.server.EndpointByName(ctx, name)
 	if err != nil {
 		return "", err
 	}
@@ -358,7 +326,7 @@ func (sc *ServerScripter) endpointPayloadClause(ctx context.Context, e *Endpoint
 		return "TSQL ()", nil
 
 	case "DATABASE_MIRRORING":
-		d, err := e.MirroringDetailContext(ctx)
+		d, err := e.MirroringDetail(ctx)
 		if err != nil {
 			return "", err
 		}
@@ -375,7 +343,7 @@ func (sc *ServerScripter) endpointPayloadClause(ctx context.Context, e *Endpoint
 			orElse(d.Role, "ALL")), nil
 
 	case "SERVICE_BROKER":
-		d, err := e.ServiceBrokerDetailContext(ctx)
+		d, err := e.ServiceBrokerDetail(ctx)
 		if err != nil {
 			return "", err
 		}
@@ -486,13 +454,8 @@ func buildCredentialScript(c *Credential, opts ScriptOptions) string {
 }
 
 // ScriptServerAudit generates the CREATE (or DROP) script for one server audit.
-func (sc *ServerScripter) ScriptServerAudit(name string) (string, error) {
-	return sc.ScriptServerAuditContext(context.Background(), name)
-}
-
-// ScriptServerAuditContext is the context-aware variant of ScriptServerAudit.
-func (sc *ServerScripter) ScriptServerAuditContext(ctx context.Context, name string) (string, error) {
-	a, err := sc.server.ServerAuditByNameContext(ctx, name)
+func (sc *ServerScripter) ScriptServerAudit(ctx context.Context, name string) (string, error) {
+	a, err := sc.server.ServerAuditByName(ctx, name)
 	if err != nil {
 		return "", err
 	}
@@ -550,14 +513,8 @@ func buildServerAuditScript(a *ServerAudit, opts ScriptOptions) string {
 
 // ScriptServerAuditSpecification generates the CREATE (or DROP) script for one
 // server audit specification.
-func (sc *ServerScripter) ScriptServerAuditSpecification(name string) (string, error) {
-	return sc.ScriptServerAuditSpecificationContext(context.Background(), name)
-}
-
-// ScriptServerAuditSpecificationContext is the context-aware variant of
-// ScriptServerAuditSpecification.
-func (sc *ServerScripter) ScriptServerAuditSpecificationContext(ctx context.Context, name string) (string, error) {
-	spec, err := sc.server.ServerAuditSpecificationByNameContext(ctx, name)
+func (sc *ServerScripter) ScriptServerAuditSpecification(ctx context.Context, name string) (string, error) {
+	spec, err := sc.server.ServerAuditSpecificationByName(ctx, name)
 	if err != nil {
 		return "", err
 	}

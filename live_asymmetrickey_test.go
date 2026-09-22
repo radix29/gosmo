@@ -12,6 +12,7 @@ package gosmo
 
 import (
 	"bytes"
+	"errors"
 	"testing"
 )
 
@@ -28,8 +29,8 @@ func TestLiveAsymmetricKeysListingAndFinderAgree(t *testing.T) {
 
 	const keyName = "gosmo_live_asymkey"
 	drop := func() {
-		if k, err := master.AsymmetricKeyByNameContext(ctx, keyName); err == nil && k != nil {
-			if err := s.execContext(ctx, "USE [master]; DROP ASYMMETRIC KEY "+quoteIdent(keyName)); err != nil {
+		if k, err := master.AsymmetricKeyByName(ctx, keyName); err == nil && k != nil {
+			if err := s.exec(ctx, "USE [master]; DROP ASYMMETRIC KEY "+quoteIdent(keyName)); err != nil {
 				t.Logf("cleanup of asymmetric key %q: %v", keyName, err)
 			}
 		}
@@ -39,11 +40,11 @@ func TestLiveAsymmetricKeysListingAndFinderAgree(t *testing.T) {
 
 	// Generated rather than imported: CREATE ASYMMETRIC KEY's import forms all
 	// read the server's filesystem, which is why CreateAsymmetricKey has none.
-	if err := master.CreateAsymmetricKeyContext(ctx, AsymmetricKeySpec{Name: keyName, Algorithm: AsymmetricKeyRSA2048}); err != nil {
+	if err := master.CreateAsymmetricKey(ctx, AsymmetricKeySpec{Name: keyName, Algorithm: AsymmetricKeyRSA2048}); err != nil {
 		t.Fatalf("create asymmetric key: %v", err)
 	}
 
-	keys, err := master.AsymmetricKeysContext(ctx)
+	keys, err := master.AsymmetricKeys(ctx)
 	if err != nil {
 		t.Fatalf("list asymmetric keys: %v", err)
 	}
@@ -60,7 +61,7 @@ func TestLiveAsymmetricKeysListingAndFinderAgree(t *testing.T) {
 		t.Fatalf("the key just created is not in the listing of %d", len(keys))
 	}
 
-	found, err := master.AsymmetricKeyByNameContext(ctx, keyName)
+	found, err := master.AsymmetricKeyByName(ctx, keyName)
 	if err != nil {
 		t.Fatalf("read asymmetric key by name: %v", err)
 	}
@@ -83,8 +84,8 @@ func TestLiveAsymmetricKeysListingAndFinderAgree(t *testing.T) {
 		t.Errorf("a generated key reported no private key (pvt_key_encryption_type_desc = %q)", found.PvtKeyEncryptionType)
 	}
 
-	absent, err := master.AsymmetricKeyByNameContext(ctx, "gosmo_live_no_such_key")
-	if err != nil || absent != nil {
-		t.Errorf("absent key: got (%v, %v), want (nil, nil)", absent, err)
+	absent, err := master.AsymmetricKeyByName(ctx, "gosmo_live_no_such_key")
+	if !errors.Is(err, ErrNotFound) || absent != nil {
+		t.Errorf("absent key: got (%v, %v), want (nil, ErrNotFound)", absent, err)
 	}
 }

@@ -3,7 +3,6 @@ package gosmo
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -60,43 +59,18 @@ LEFT   JOIN sys.sql_modules m ON m.object_id = tr.object_id
 WHERE  tr.is_ms_shipped = 0 AND tr.parent_class = 0`
 
 // DatabaseTriggers returns every database-scope DDL trigger.
-func (d *Database) DatabaseTriggers() ([]*DatabaseTrigger, error) {
-	return d.DatabaseTriggersContext(context.Background())
-}
-
-// DatabaseTriggersContext is the context-aware variant of DatabaseTriggers.
-func (d *Database) DatabaseTriggersContext(ctx context.Context) ([]*DatabaseTrigger, error) {
+func (d *Database) DatabaseTriggers(ctx context.Context) ([]*DatabaseTrigger, error) {
 	rows, err := d.query(ctx, databaseTriggerSelect+`
 ORDER  BY tr.name`)
-	if err != nil {
-		return nil, fmt.Errorf("gosmo: list database triggers in %q: %w", d.Name, err)
-	}
-	defer rows.Close()
-
-	var triggers []*DatabaseTrigger
-	for rows.Next() {
-		t, err := scanDatabaseTrigger(d, rows.Scan)
-		if err != nil {
-			return nil, fmt.Errorf("gosmo: list database triggers in %q: %w", d.Name, err)
-		}
-		triggers = append(triggers, t)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("gosmo: list database triggers in %q: %w", d.Name, err)
-	}
-	return triggers, nil
+	return scanRows(rows, err, fmt.Sprintf("list database triggers in %q", d.Name), func(scan func(...any) error) (*DatabaseTrigger, error) {
+		return scanDatabaseTrigger(d, scan)
+	})
 }
 
 // DatabaseTriggerByName returns one database-scope DDL trigger with every
 // field populated, or a not-found error (errors.Is ErrNotFound) when the
 // database has none by that name.
-func (d *Database) DatabaseTriggerByName(name string) (*DatabaseTrigger, error) {
-	return d.DatabaseTriggerByNameContext(context.Background(), name)
-}
-
-// DatabaseTriggerByNameContext is the context-aware variant of
-// DatabaseTriggerByName.
-func (d *Database) DatabaseTriggerByNameContext(ctx context.Context, name string) (*DatabaseTrigger, error) {
+func (d *Database) DatabaseTriggerByName(ctx context.Context, name string) (*DatabaseTrigger, error) {
 	var t *DatabaseTrigger
 	err := d.queryRow(ctx, func(row *sql.Row) error {
 		var err error
@@ -104,13 +78,7 @@ func (d *Database) DatabaseTriggerByNameContext(ctx context.Context, name string
 		return err
 	}, databaseTriggerSelect+`
    AND tr.name = @p1`, name)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, notFoundf("gosmo: database trigger %q not found in %q", name, d.Name)
-	}
-	if err != nil {
-		return nil, fmt.Errorf("gosmo: read database trigger %q in %q: %w", name, d.Name, err)
-	}
-	return t, nil
+	return foundRow(t, err, notFoundf("gosmo: database trigger %q not found in %q", name, d.Name), fmt.Sprintf("read database trigger %q in %q", name, d.Name))
 }
 
 // DatabaseTriggerRef returns a lightweight handle for a database-scope DDL
@@ -118,10 +86,10 @@ func (d *Database) DatabaseTriggerByNameContext(ctx context.Context, name string
 // Server.DatabaseRef and Server.ServerTriggerRef.
 //
 // Every other field stays at its zero value; DatabaseTriggerByName is what
-// populates them. EnableContext, DisableContext and DropContext address the
+// populates them. Enable, Disable and Drop address the
 // trigger by name, so this handle is enough to act on one the caller already
 // knows exists, and is the form to use when there is nothing to read yet —
-// under a WithScript-derived context, DatabaseTriggerByNameContext's lookup is
+// under a WithScript-derived context, DatabaseTriggerByName's lookup is
 // a real read and therefore finds nothing for a trigger whose CREATE was
 // merely collected.
 func (d *Database) DatabaseTriggerRef(name string) *DatabaseTrigger {
@@ -159,18 +127,12 @@ func scanDatabaseTrigger(d *Database, scan func(...any) error) (*DatabaseTrigger
 // -- Writes ----------------------------------------------------------------------
 
 // Enable enables the trigger.
-func (t *DatabaseTrigger) Enable() error { return t.EnableContext(context.Background()) }
-
-// EnableContext is the context-aware variant of Enable.
-func (t *DatabaseTrigger) EnableContext(ctx context.Context) error {
+func (t *DatabaseTrigger) Enable(ctx context.Context) error {
 	return t.setEnabled(ctx, true)
 }
 
 // Disable disables the trigger, leaving its definition in place.
-func (t *DatabaseTrigger) Disable() error { return t.DisableContext(context.Background()) }
-
-// DisableContext is the context-aware variant of Disable.
-func (t *DatabaseTrigger) DisableContext(ctx context.Context) error {
+func (t *DatabaseTrigger) Disable(ctx context.Context) error {
 	return t.setEnabled(ctx, false)
 }
 
@@ -193,10 +155,7 @@ func (t *DatabaseTrigger) setEnabled(ctx context.Context, enabled bool) error {
 // This is not Database.DropTrigger: that one schema-qualifies the name, which
 // a DDL trigger has no schema for, and omits the ON DATABASE clause the
 // server requires here.
-func (t *DatabaseTrigger) Drop() error { return t.DropContext(context.Background()) }
-
-// DropContext is the context-aware variant of Drop.
-func (t *DatabaseTrigger) DropContext(ctx context.Context) error {
+func (t *DatabaseTrigger) Drop(ctx context.Context) error {
 	stmt := fmt.Sprintf("DROP TRIGGER %s ON DATABASE", quoteIdent(t.Name))
 	if _, err := t.db.exec(ctx, stmt); err != nil {
 		return fmt.Errorf("gosmo: drop database trigger %q: %w", t.Name, err)

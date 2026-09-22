@@ -59,9 +59,9 @@ func TestDiskUsageScansEveryColumnIntoTheRightField(t *testing.T) {
 	defer db.Close()
 
 	d := &Database{server: &Server{db: db}, Name: "test"}
-	got, err := d.DiskUsageContext(context.Background())
+	got, err := d.DiskUsage(context.Background())
 	if err != nil {
-		t.Fatalf("DiskUsageContext: %v", err)
+		t.Fatalf("DiskUsage: %v", err)
 	}
 
 	// LogUsedMB is the one derived field: the log files less what a shrink

@@ -7,7 +7,7 @@ import (
 
 func TestBuildIndexScriptConstraintBackedIndexIsAConstraint(t *testing.T) {
 	opts := DefaultScriptOptions()
-	pk := &Index{Name: "PK_T", IsPrimaryKey: true, IsUnique: true, IsClustered: true,
+	pk := &Index{AllowRowLocks: true, AllowPageLocks: true, Name: "PK_T", IsPrimaryKey: true, IsUnique: true, IsClustered: true,
 		KeyColumns: []IndexColumn{{Name: "id"}}}
 
 	got := buildIndexScript(pk, "[dbo].[T]", opts)
@@ -25,7 +25,7 @@ func TestBuildIndexScriptConstraintBackedIndexIsAConstraint(t *testing.T) {
 }
 
 func TestBuildIndexScriptOrdinaryIndex(t *testing.T) {
-	idx := &Index{Name: "IX_T_a", KeyColumns: []IndexColumn{{Name: "a"}}}
+	idx := &Index{AllowRowLocks: true, AllowPageLocks: true, Name: "IX_T_a", KeyColumns: []IndexColumn{{Name: "a"}}}
 	opts := DefaultScriptOptions()
 
 	got := buildIndexScript(idx, "[dbo].[T]", opts)
@@ -114,5 +114,30 @@ func TestBuildSynonymScript(t *testing.T) {
 	opts.Verb = ScriptDrop
 	if got := buildSynonymScript(syn, opts); !strings.Contains(got, "DROP SYNONYM IF EXISTS [dbo].[S]") {
 		t.Errorf("synonym drop wrong:\n%s", got)
+	}
+}
+
+func TestBuildStatisticScriptKeepsFilterAndOptions(t *testing.T) {
+	st := &Statistic{Name: "st_a", IsUserCreated: true, HasFilter: true, FilterDef: "([a]>(0))",
+		NoRecompute: true, IsIncremental: true}
+	opts := ScriptOptions{Verb: ScriptDropAndCreate}
+	got, err := buildStatisticScript(st, []string{"a", "b"}, "[dbo].[T]", opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "IF EXISTS (SELECT 1 FROM sys.stats WHERE name = N'st_a' AND object_id = OBJECT_ID(N'[dbo].[T]'))\n" +
+		"    DROP STATISTICS [dbo].[T].[st_a];\nGO\n\n" +
+		"CREATE STATISTICS [st_a] ON [dbo].[T] ([a], [b]) WHERE ([a]>(0)) WITH NORECOMPUTE, INCREMENTAL = ON;\nGO\n"
+	if got != want {
+		t.Errorf("buildStatisticScript =\n%s\nwant\n%s", got, want)
+	}
+
+	opts = ScriptOptions{Verb: ScriptDrop}
+	got, err = buildStatisticScript(st, nil, "[dbo].[T]", opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(got, "CREATE") {
+		t.Errorf("DROP script carries a CREATE:\n%s", got)
 	}
 }

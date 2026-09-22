@@ -57,7 +57,7 @@ func TestProcParamInOut(t *testing.T) {
 // The name guard runs before any connection is acquired.
 func TestExecProcRejectsEmptyName(t *testing.T) {
 	d := &Database{}
-	if _, err := d.ExecProc("dbo", ""); err == nil {
+	if _, err := d.ExecProc(t.Context(), "dbo", ""); err == nil {
 		t.Fatal("want error when procedure name is empty, got nil")
 	}
 }

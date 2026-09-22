@@ -1,6 +1,6 @@
 //go:build livedb
 
-// Live verification that Schema.ObjectCountsByTypeContext agrees with the six
+// Live verification that Schema.ObjectCountsByType agrees with the six
 // listings it replaced in gossms's Schema Properties > General page.
 //
 // The page used to fetch every view, procedure, function, synonym and
@@ -55,12 +55,12 @@ func TestLiveSchemaObjectCountsMatchTheListings(t *testing.T) {
 	countsFromListings := func(t *testing.T, schema string) SchemaObjectCounts {
 		t.Helper()
 		var c SchemaObjectCounts
-		tables, err := d.TablesBySchemaContext(ctx, schema)
+		tables, err := d.TablesBySchema(ctx, schema)
 		if err != nil {
 			t.Fatalf("tables: %v", err)
 		}
 		c.Tables = len(tables)
-		views, err := d.ViewsContext(ctx)
+		views, err := d.Views(ctx)
 		if err != nil {
 			t.Fatalf("views: %v", err)
 		}
@@ -69,7 +69,7 @@ func TestLiveSchemaObjectCountsMatchTheListings(t *testing.T) {
 				c.Views++
 			}
 		}
-		procs, err := d.StoredProceduresContext(ctx)
+		procs, err := d.StoredProcedures(ctx)
 		if err != nil {
 			t.Fatalf("procedures: %v", err)
 		}
@@ -78,7 +78,7 @@ func TestLiveSchemaObjectCountsMatchTheListings(t *testing.T) {
 				c.StoredProcedures++
 			}
 		}
-		funcs, err := d.UserDefinedFunctionsContext(ctx)
+		funcs, err := d.UserDefinedFunctions(ctx)
 		if err != nil {
 			t.Fatalf("functions: %v", err)
 		}
@@ -87,7 +87,7 @@ func TestLiveSchemaObjectCountsMatchTheListings(t *testing.T) {
 				c.Functions++
 			}
 		}
-		syns, err := d.SynonymsContext(ctx)
+		syns, err := d.Synonyms(ctx)
 		if err != nil {
 			t.Fatalf("synonyms: %v", err)
 		}
@@ -96,7 +96,7 @@ func TestLiveSchemaObjectCountsMatchTheListings(t *testing.T) {
 				c.Synonyms++
 			}
 		}
-		seqs, err := d.SequencesContext(ctx)
+		seqs, err := d.Sequences(ctx)
 		if err != nil {
 			t.Fatalf("sequences: %v", err)
 		}
@@ -110,13 +110,13 @@ func TestLiveSchemaObjectCountsMatchTheListings(t *testing.T) {
 
 	for _, schema := range []string{"app", "other", "dbo"} {
 		t.Run(schema, func(t *testing.T) {
-			sc, err := d.SchemaByNameContext(ctx, schema)
+			sc, err := d.SchemaByName(ctx, schema)
 			if err != nil {
-				t.Fatalf("SchemaByNameContext %s: %v", schema, err)
+				t.Fatalf("SchemaByName %s: %v", schema, err)
 			}
-			got, err := sc.ObjectCountsByTypeContext(ctx)
+			got, err := sc.ObjectCountsByType(ctx)
 			if err != nil {
-				t.Fatalf("ObjectCountsByTypeContext: %v", err)
+				t.Fatalf("ObjectCountsByType: %v", err)
 			}
 			if want := countsFromListings(t, schema); got != want {
 				t.Errorf("counts = %+v, listings = %+v", got, want)
@@ -128,13 +128,13 @@ func TestLiveSchemaObjectCountsMatchTheListings(t *testing.T) {
 	// still fails. app has an encrypted procedure — sys.sql_modules keeps a
 	// row for it, so it counts, and the listing returns it too.
 	t.Run("expected", func(t *testing.T) {
-		sc, err := d.SchemaByNameContext(ctx, "app")
+		sc, err := d.SchemaByName(ctx, "app")
 		if err != nil {
-			t.Fatalf("SchemaByNameContext: %v", err)
+			t.Fatalf("SchemaByName: %v", err)
 		}
-		got, err := sc.ObjectCountsByTypeContext(ctx)
+		got, err := sc.ObjectCountsByType(ctx)
 		if err != nil {
-			t.Fatalf("ObjectCountsByTypeContext: %v", err)
+			t.Fatalf("ObjectCountsByType: %v", err)
 		}
 		want := SchemaObjectCounts{
 			Tables: 2, Views: 1, StoredProcedures: 2,
@@ -150,13 +150,13 @@ func TestLiveSchemaObjectCountsMatchTheListings(t *testing.T) {
 	// in sys.objects, but so are constraints and the tables' primary keys —
 	// and the two methods staying independent is the point.
 	t.Run("ObjectCountIsUnaffected", func(t *testing.T) {
-		sc, err := d.SchemaByNameContext(ctx, "app")
+		sc, err := d.SchemaByName(ctx, "app")
 		if err != nil {
-			t.Fatalf("SchemaByNameContext: %v", err)
+			t.Fatalf("SchemaByName: %v", err)
 		}
-		n, err := sc.ObjectCountContext(ctx)
+		n, err := sc.ObjectCount(ctx)
 		if err != nil {
-			t.Fatalf("ObjectCountContext: %v", err)
+			t.Fatalf("ObjectCount: %v", err)
 		}
 		if n == 0 {
 			t.Error("ObjectCount = 0 for a schema with ten objects")
@@ -167,7 +167,7 @@ func TestLiveSchemaObjectCountsMatchTheListings(t *testing.T) {
 	// SCHEMA_ID returns NULL and every subquery counts nothing.
 	t.Run("MissingSchema", func(t *testing.T) {
 		missing := &Schema{db: d, Name: "nope"}
-		got, err := missing.ObjectCountsByTypeContext(context.Background())
+		got, err := missing.ObjectCountsByType(context.Background())
 		if err != nil {
 			t.Fatalf("missing schema: %v", err)
 		}

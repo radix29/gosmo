@@ -76,9 +76,9 @@ func TestLiveAvailabilityGroupCapabilitiesMatchWhatTheServerEnforces(t *testing.
 	defer pool.Close()
 
 	// Not NewServer, for live_schemacaps_test.go's reason.
-	caps, err := (&Server{db: pool}).CapabilitiesContext(ctx)
+	caps, err := (&Server{db: pool}).Capabilities(ctx)
 	if err != nil {
-		t.Fatalf("CapabilitiesContext as %s: %v", login, err)
+		t.Fatalf("Capabilities as %s: %v", login, err)
 	}
 	// The server-wide grant is intact throughout — the fixture is worthless
 	// without this, since a denial that only agreed with a right the login had

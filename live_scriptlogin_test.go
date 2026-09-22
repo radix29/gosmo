@@ -63,10 +63,10 @@ func TestLiveScriptLoginRoundTripsTheSID(t *testing.T) {
 	dropLoginIfPresent(t, s, name)
 	defer dropLoginIfPresent(t, s, name)
 
-	if err := s.CreateLoginContext(ctx, name, "Sc0pe!Test#2026", &CreateLoginOptions{DefaultDatabase: "master"}); err != nil {
+	if err := s.CreateLogin(ctx, name, "Sc0pe!Test#2026", &CreateLoginOptions{DefaultDatabase: "master"}); err != nil {
 		t.Fatalf("create the login to be scripted: %v", err)
 	}
-	before, err := s.LoginByNameContext(ctx, name)
+	before, err := s.LoginByName(ctx, name)
 	if err != nil {
 		t.Fatalf("read the login back: %v", err)
 	}
@@ -91,7 +91,7 @@ func TestLiveScriptLoginRoundTripsTheSID(t *testing.T) {
 	}
 	runScript(t, s, script)
 
-	after, err := s.LoginByNameContext(ctx, name)
+	after, err := s.LoginByName(ctx, name)
 	if err != nil {
 		t.Fatalf("read the recreated login: %v", err)
 	}
@@ -123,7 +123,7 @@ func TestLiveScriptedLoginKeepsAUserMapped(t *testing.T) {
 	dropLoginIfPresent(t, s, login)
 	defer dropLoginIfPresent(t, s, login)
 
-	if err := s.CreateLoginContext(ctx, login, "Sc0pe!Test#2026", nil); err != nil {
+	if err := s.CreateLogin(ctx, login, "Sc0pe!Test#2026", nil); err != nil {
 		t.Fatalf("create login: %v", err)
 	}
 	_, drop := liveScratchDB(t, db, ctx, dbName)
@@ -147,7 +147,7 @@ func TestLiveScriptedLoginKeepsAUserMapped(t *testing.T) {
 		t.Fatal("the user was orphaned before anything was dropped; the fixture is wrong")
 	}
 
-	l, err := s.LoginByNameContext(ctx, login)
+	l, err := s.LoginByName(ctx, login)
 	if err != nil {
 		t.Fatalf("read login: %v", err)
 	}

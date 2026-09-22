@@ -32,13 +32,13 @@ import (
 func liveSingleUserDB(t *testing.T, srv *Server, ctx context.Context, name string) func() {
 	t.Helper()
 	drop := func() {
-		srv.execContext(context.Background(),
+		srv.exec(context.Background(),
 			"IF DB_ID('"+name+"') IS NOT NULL BEGIN "+
 				"ALTER DATABASE "+quoteIdent(name)+" SET MULTI_USER; "+
 				"DROP DATABASE "+quoteIdent(name)+"; END")
 	}
 	drop()
-	if err := srv.execContext(ctx, "CREATE DATABASE "+quoteIdent(name)); err != nil {
+	if err := srv.exec(ctx, "CREATE DATABASE "+quoteIdent(name)); err != nil {
 		t.Fatalf("create %s: %v", name, err)
 	}
 	return drop
@@ -62,7 +62,7 @@ func userAccess(t *testing.T, srv *Server, ctx context.Context, name string) str
 
 // TestLiveSingleUserForcedDropThatFailsLeavesTheDatabaseUsable.
 //
-// DropDatabaseContext(force) sets SINGLE_USER WITH ROLLBACK IMMEDIATE and then
+// DropDatabase(force) sets SINGLE_USER WITH ROLLBACK IMMEDIATE and then
 // drops. The drop can genuinely fail after the alter succeeded, and it used to
 // return that failure with the database still there and still single-user.
 //
@@ -78,7 +78,7 @@ func TestLiveSingleUserForcedDropThatFailsLeavesTheDatabaseUsable(t *testing.T) 
 
 	const name, snap = "gossms_live_su_drop", "gossms_live_su_drop_snap"
 	dropSnap := func() {
-		srv.execContext(context.Background(), "IF DB_ID('"+snap+"') IS NOT NULL DROP DATABASE "+quoteIdent(snap))
+		srv.exec(context.Background(), "IF DB_ID('"+snap+"') IS NOT NULL DROP DATABASE "+quoteIdent(snap))
 	}
 	dropSnap()
 	drop := liveSingleUserDB(t, srv, ctx, name)
@@ -91,12 +91,12 @@ func TestLiveSingleUserForcedDropThatFailsLeavesTheDatabaseUsable(t *testing.T) 
 			"WHERE database_id = DB_ID(@p1) AND type = 0", name).Scan(&file); err != nil {
 		t.Fatalf("locate the data file: %v", err)
 	}
-	if err := srv.execContext(ctx, "CREATE DATABASE "+quoteIdent(snap)+
+	if err := srv.exec(ctx, "CREATE DATABASE "+quoteIdent(snap)+
 		" ON (NAME = "+quoteIdent(name)+", FILENAME = '"+escapeSingle(file)+"') AS SNAPSHOT OF "+quoteIdent(name)); err != nil {
 		t.Fatalf("create snapshot: %v", err)
 	}
 
-	err := srv.DropDatabaseContext(ctx, name, true)
+	err := srv.DropDatabase(ctx, name, true)
 	if err == nil {
 		t.Fatal("the drop succeeded; the snapshot was supposed to make it fail")
 	}
@@ -129,7 +129,7 @@ func TestLiveSingleUserRepairSurvivesAnExpiredContext(t *testing.T) {
 	defer drop()
 
 	setSingle := func() {
-		if err := srv.execContext(ctx, "ALTER DATABASE "+quoteIdent(name)+
+		if err := srv.exec(ctx, "ALTER DATABASE "+quoteIdent(name)+
 			" SET SINGLE_USER WITH ROLLBACK IMMEDIATE"); err != nil {
 			t.Fatalf("set single user: %v", err)
 		}
@@ -144,7 +144,7 @@ func TestLiveSingleUserRepairSurvivesAnExpiredContext(t *testing.T) {
 	// First the pre-fix form, to show the context really is dead and that this
 	// is what used to strand the database.
 	setSingle()
-	if err := srv.execContext(dead, "ALTER DATABASE "+quoteIdent(name)+" SET MULTI_USER"); err == nil {
+	if err := srv.exec(dead, "ALTER DATABASE "+quoteIdent(name)+" SET MULTI_USER"); err == nil {
 		t.Fatal("the ALTER on a cancelled context succeeded; the A/B below proves nothing")
 	}
 	if got := userAccess(t, srv, ctx, name); got != "SINGLE_USER" {
@@ -171,7 +171,7 @@ func TestLiveSingleUserForcedRenameReleasesTheDatabase(t *testing.T) {
 
 	const name, renamed = "gossms_live_su_rename", "gossms_live_su_renamed"
 	dropRenamed := func() {
-		srv.execContext(context.Background(),
+		srv.exec(context.Background(),
 			"IF DB_ID('"+renamed+"') IS NOT NULL BEGIN "+
 				"ALTER DATABASE "+quoteIdent(renamed)+" SET MULTI_USER; "+
 				"DROP DATABASE "+quoteIdent(renamed)+"; END")
@@ -194,7 +194,7 @@ func TestLiveSingleUserForcedRenameReleasesTheDatabase(t *testing.T) {
 	defer holder.Close()
 
 	start := time.Now()
-	if err := srv.RenameDatabaseContext(ctx, name, renamed, true); err != nil {
+	if err := srv.RenameDatabase(ctx, name, renamed, true); err != nil {
 		t.Fatalf("forced rename: %v", err)
 	}
 	t.Logf("forced rename took %v", time.Since(start))

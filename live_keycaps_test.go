@@ -92,9 +92,9 @@ func TestLiveKeyCapabilitiesMatchWhatTheServerEnforces(t *testing.T) {
 	// server-scope DMVs this login has no rights to.
 	probe := func() *DatabaseCapabilities {
 		t.Helper()
-		caps, err := (&Server{db: pool}).DatabaseRef(d.Name).CapabilitiesContext(ctx)
+		caps, err := (&Server{db: pool}).DatabaseRef(d.Name).Capabilities(ctx)
 		if err != nil {
-			t.Fatalf("CapabilitiesContext as %s: %v", login, err)
+			t.Fatalf("Capabilities as %s: %v", login, err)
 		}
 		return caps
 	}

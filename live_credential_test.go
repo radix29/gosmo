@@ -2,7 +2,7 @@
 
 // Live verification of the credential read/write path: that CREATE, ALTER and
 // DROP CREDENTIAL as gosmo builds them are accepted, that the row reads back
-// through both CredentialsContext and CredentialByNameContext with the same
+// through both Credentials and CredentialByName with the same
 // values, and that a generated script recreates the same credential.
 //
 // The unit tests pin the statement text; only a live run settles what SQL
@@ -32,8 +32,8 @@ func TestLiveCredentialCreateAlterReadDrop(t *testing.T) {
 	}
 
 	cleanup := func() {
-		if c, err := s.CredentialByNameContext(ctx, liveCredentialName); err == nil {
-			if err := c.DropContext(ctx); err != nil {
+		if c, err := s.CredentialByName(ctx, liveCredentialName); err == nil {
+			if err := c.Drop(ctx); err != nil {
 				t.Logf("cleanup of credential %q: %v", liveCredentialName, err)
 			}
 		}
@@ -41,13 +41,13 @@ func TestLiveCredentialCreateAlterReadDrop(t *testing.T) {
 	cleanup()
 	defer cleanup()
 
-	c, err := s.CreateCredentialContext(ctx, CredentialSpec{
+	c, err := s.CreateCredential(ctx, CredentialSpec{
 		Name:     liveCredentialName,
 		Identity: `GOSMO\svc_account`,
 		Secret:   "gosmo-live-secret-1",
 	})
 	if err != nil {
-		t.Fatalf("CreateCredentialContext: %v", err)
+		t.Fatalf("CreateCredential: %v", err)
 	}
 	if c.Identity != `GOSMO\svc_account` {
 		t.Errorf("created credential reads back identity %q, want %q", c.Identity, `GOSMO\svc_account`)
@@ -62,9 +62,9 @@ func TestLiveCredentialCreateAlterReadDrop(t *testing.T) {
 	// The listing and the by-name read must agree; the by-name read is what
 	// every Properties page opens with.
 	var listed *Credential
-	all, err := s.CredentialsContext(ctx)
+	all, err := s.Credentials(ctx)
 	if err != nil {
-		t.Fatalf("CredentialsContext: %v", err)
+		t.Fatalf("Credentials: %v", err)
 	}
 	for _, got := range all {
 		if got.Name == liveCredentialName {
@@ -72,7 +72,7 @@ func TestLiveCredentialCreateAlterReadDrop(t *testing.T) {
 		}
 	}
 	if listed == nil {
-		t.Fatalf("the new credential is not in CredentialsContext's %d rows", len(all))
+		t.Fatalf("the new credential is not in Credentials's %d rows", len(all))
 	}
 	if listed.Identity != c.Identity || listed.CredentialID != c.CredentialID {
 		t.Errorf("listing has %+v, by-name read has %+v", listed, c)
@@ -82,28 +82,28 @@ func TestLiveCredentialCreateAlterReadDrop(t *testing.T) {
 	// the second clears the stored secret, which is why the API takes a
 	// pointer rather than a string.
 	newSecret := "gosmo-live-secret-2"
-	if err := c.AlterContext(ctx, `GOSMO\other_account`, &newSecret); err != nil {
-		t.Fatalf("AlterContext with a secret: %v", err)
+	if err := c.Alter(ctx, `GOSMO\other_account`, &newSecret); err != nil {
+		t.Fatalf("Alter with a secret: %v", err)
 	}
 	if c.Identity != `GOSMO\other_account` {
-		t.Errorf("AlterContext did not mirror the identity: %q", c.Identity)
+		t.Errorf("Alter did not mirror the identity: %q", c.Identity)
 	}
-	after, err := s.CredentialByNameContext(ctx, liveCredentialName)
+	after, err := s.CredentialByName(ctx, liveCredentialName)
 	if err != nil {
 		t.Fatalf("re-read after alter: %v", err)
 	}
 	if after.Identity != `GOSMO\other_account` {
 		t.Errorf("server has identity %q after the alter, want %q", after.Identity, `GOSMO\other_account`)
 	}
-	if err := c.AlterContext(ctx, `GOSMO\third_account`, nil); err != nil {
-		t.Fatalf("AlterContext without a secret: %v", err)
+	if err := c.Alter(ctx, `GOSMO\third_account`, nil); err != nil {
+		t.Fatalf("Alter without a secret: %v", err)
 	}
 
 	// The script must carry an obvious placeholder, not a silently absent
 	// SECRET clause.
-	script, err := NewServerScripter(s, ScriptOptions{}).ScriptCredentialContext(ctx, liveCredentialName)
+	script, err := NewServerScripter(s, ScriptOptions{}).ScriptCredential(ctx, liveCredentialName)
 	if err != nil {
-		t.Fatalf("ScriptCredentialContext: %v", err)
+		t.Fatalf("ScriptCredential: %v", err)
 	}
 	if !strings.Contains(script, credentialSecretPlaceholder) {
 		t.Errorf("script carries no secret placeholder:\n%s", script)
@@ -112,10 +112,10 @@ func TestLiveCredentialCreateAlterReadDrop(t *testing.T) {
 		t.Errorf("script does not carry the current identity:\n%s", script)
 	}
 
-	if err := c.DropContext(ctx); err != nil {
-		t.Fatalf("DropContext: %v", err)
+	if err := c.Drop(ctx); err != nil {
+		t.Fatalf("Drop: %v", err)
 	}
-	if _, err := s.CredentialByNameContext(ctx, liveCredentialName); !errors.Is(err, ErrNotFound) {
+	if _, err := s.CredentialByName(ctx, liveCredentialName); !errors.Is(err, ErrNotFound) {
 		t.Errorf("after the drop, the by-name read returned %v, want ErrNotFound", err)
 	}
 }
@@ -132,20 +132,20 @@ func TestLiveCredentialScriptRunsAsGenerated(t *testing.T) {
 
 	const name = liveCredentialName + "_script"
 	drop := func() {
-		if c, err := s.CredentialByNameContext(ctx, name); err == nil {
-			c.DropContext(ctx)
+		if c, err := s.CredentialByName(ctx, name); err == nil {
+			c.Drop(ctx)
 		}
 	}
 	drop()
 	defer drop()
 
-	src, err := s.CreateCredentialContext(ctx, CredentialSpec{Name: name, Identity: "scripted_identity"})
+	src, err := s.CreateCredential(ctx, CredentialSpec{Name: name, Identity: "scripted_identity"})
 	if err != nil {
-		t.Fatalf("CreateCredentialContext: %v", err)
+		t.Fatalf("CreateCredential: %v", err)
 	}
 	script := buildCredentialScript(src, ScriptOptions{})
-	if err := src.DropContext(ctx); err != nil {
-		t.Fatalf("DropContext before replay: %v", err)
+	if err := src.Drop(ctx); err != nil {
+		t.Fatalf("Drop before replay: %v", err)
 	}
 
 	for _, batch := range strings.Split(script, "\nGO\n") {
@@ -156,7 +156,7 @@ func TestLiveCredentialScriptRunsAsGenerated(t *testing.T) {
 			t.Fatalf("replaying the generated script failed: %v\n%s", err, batch)
 		}
 	}
-	back, err := s.CredentialByNameContext(ctx, name)
+	back, err := s.CredentialByName(ctx, name)
 	if err != nil {
 		t.Fatalf("read back the scripted credential: %v", err)
 	}

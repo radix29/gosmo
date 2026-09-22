@@ -121,9 +121,9 @@ func TestLiveServerCapabilitiesMatchWhatTheServerEnforces(t *testing.T) {
 	// Not NewServer, for live_schemacaps_test.go's reason: loadInfo reads
 	// server-scope DMVs this login has no rights to.
 	restricted := &Server{db: pool}
-	caps, err := restricted.CapabilitiesContext(ctx)
+	caps, err := restricted.Capabilities(ctx)
 	if err != nil {
-		t.Fatalf("CapabilitiesContext as %s: %v", login, err)
+		t.Fatalf("Capabilities as %s: %v", login, err)
 	}
 
 	// The server-wide grants are intact throughout — the fixture is worthless

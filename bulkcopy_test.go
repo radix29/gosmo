@@ -71,14 +71,14 @@ func TestSliceRowsEarlyStop(t *testing.T) {
 
 func TestBulkInsertRejectsEmptyTable(t *testing.T) {
 	d := &Database{}
-	if _, err := d.BulkInsert(BulkCopy{Columns: []string{"a"}}, SliceRows(nil)); err == nil {
+	if _, err := d.BulkInsert(t.Context(), BulkCopy{Columns: []string{"a"}}, SliceRows(nil)); err == nil {
 		t.Fatal("want error when Table is empty, got nil")
 	}
 }
 
 func TestBulkInsertRejectsNoColumns(t *testing.T) {
 	d := &Database{}
-	if _, err := d.BulkInsert(BulkCopy{Table: "t"}, SliceRows(nil)); err == nil {
+	if _, err := d.BulkInsert(t.Context(), BulkCopy{Table: "t"}, SliceRows(nil)); err == nil {
 		t.Fatal("want error when Columns is empty, got nil")
 	}
 }

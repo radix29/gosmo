@@ -21,24 +21,13 @@ type UserDefinedFunction struct {
 }
 
 // UserDefinedFunctions returns all UDFs in the database.
-func (d *Database) UserDefinedFunctions() ([]*UserDefinedFunction, error) {
-	return d.UserDefinedFunctionsContext(context.Background())
-}
-
-// UserDefinedFunctionsContext is the context-aware variant.
-func (d *Database) UserDefinedFunctionsContext(ctx context.Context) ([]*UserDefinedFunction, error) {
+func (d *Database) UserDefinedFunctions(ctx context.Context) ([]*UserDefinedFunction, error) {
 	return d.userDefinedFunctionsWhere(ctx, "", nil)
 }
 
 // UserDefinedFunctionsFiltered returns the UDFs an ObjectFilter matches,
-// narrowed by the server. An empty filter is UserDefinedFunctionsContext.
-func (d *Database) UserDefinedFunctionsFiltered(filter ObjectFilter) ([]*UserDefinedFunction, error) {
-	return d.UserDefinedFunctionsFilteredContext(context.Background(), filter)
-}
-
-// UserDefinedFunctionsFilteredContext is the context-aware variant of
-// UserDefinedFunctionsFiltered.
-func (d *Database) UserDefinedFunctionsFilteredContext(ctx context.Context, filter ObjectFilter) ([]*UserDefinedFunction, error) {
+// narrowed by the server. An empty filter is UserDefinedFunctions.
+func (d *Database) UserDefinedFunctionsFiltered(ctx context.Context, filter ObjectFilter) ([]*UserDefinedFunction, error) {
 	where, args := filter.clause(allObjectsFilterColumns, 1)
 	return d.userDefinedFunctionsWhere(ctx, where, args)
 }
@@ -53,55 +42,35 @@ WHERE  o.type IN ('FN','TF','IF') AND o.is_ms_shipped = 0 ` + where + `
 ORDER  BY SCHEMA_NAME(o.schema_id), o.name`
 
 	rows, err := d.query(ctx, q, args...)
-	if err != nil {
-		return nil, fmt.Errorf("gosmo: list UDFs in %q: %w", d.Name, err)
-	}
-	defer rows.Close()
-
-	var funcs []*UserDefinedFunction
-	for rows.Next() {
+	return scanRows(rows, err, fmt.Sprintf("list UDFs in %q", d.Name), func(scan func(...any) error) (*UserDefinedFunction, error) {
 		f := &UserDefinedFunction{}
-		if err := rows.Scan(&f.ObjectID, &f.Schema, &f.Name, &f.FuncType,
+		if err := scan(&f.ObjectID, &f.Schema, &f.Name, &f.FuncType,
 			&f.Definition, &f.CreateDate, &f.ModifyDate); err != nil {
-			return nil, fmt.Errorf("gosmo: list UDFs in %q: %w", d.Name, err)
+			return nil, err
 		}
 		f.FuncType = strings.TrimSpace(f.FuncType)
-		funcs = append(funcs, f)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("gosmo: list UDFs in %q: %w", d.Name, err)
-	}
-	return funcs, nil
+		return f, nil
+	})
 }
 
 // SystemFunctions returns every system function SQL Server ships in the
 // "sys" schema (sys.fn_listextendedproperty, ...) — see
-// SystemFunctionsContext.
-func (d *Database) SystemFunctions() ([]*UserDefinedFunction, error) {
-	return d.SystemFunctionsContext(context.Background())
-}
-
-// SystemFunctionsContext is the context-aware variant of SystemFunctions.
+// SystemFunctions.
+//
 // Reads sys.all_objects rather than sys.objects for the same reason
-// SystemViewsContext reads sys.all_objects instead of sys.views: shipped
-// objects are invisible through the non-"all_" catalog views. Restricted
-// to the same type set as UserDefinedFunctionsContext ('FN'/'TF'/'IF') —
-// aggregate ('AF') and CLR scalar ('FS') functions are excluded, matching
-// that same scope. The "sys" schema is identical in every database on a
-// server, so this only needs loading once per connection.
-func (d *Database) SystemFunctionsContext(ctx context.Context) ([]*UserDefinedFunction, error) {
+// SystemViews reads sys.all_objects instead of sys.views: shipped
+// objects are invisible through the non-"all_" catalog views. Restricted to
+// the same type set as UserDefinedFunctions ('FN'/'TF'/'IF') —
+// aggregate ('AF') and CLR scalar ('FS') functions are excluded, matching that
+// same scope. The "sys" schema is identical in every database on a server, so
+// this only needs loading once per connection.
+func (d *Database) SystemFunctions(ctx context.Context) ([]*UserDefinedFunction, error) {
 	return d.systemFunctionsWhere(ctx, "", nil)
 }
 
 // SystemFunctionsFiltered returns the system functions an ObjectFilter
-// matches, narrowed by the server. An empty filter is SystemFunctionsContext.
-func (d *Database) SystemFunctionsFiltered(filter ObjectFilter) ([]*UserDefinedFunction, error) {
-	return d.SystemFunctionsFilteredContext(context.Background(), filter)
-}
-
-// SystemFunctionsFilteredContext is the context-aware variant of
-// SystemFunctionsFiltered.
-func (d *Database) SystemFunctionsFilteredContext(ctx context.Context, filter ObjectFilter) ([]*UserDefinedFunction, error) {
+// matches, narrowed by the server. An empty filter is SystemFunctions.
+func (d *Database) SystemFunctionsFiltered(ctx context.Context, filter ObjectFilter) ([]*UserDefinedFunction, error) {
 	where, args := filter.clause(allObjectsFilterColumns, 1)
 	return d.systemFunctionsWhere(ctx, where, args)
 }
@@ -116,37 +85,22 @@ WHERE  o.type IN ('FN','TF','IF') AND o.is_ms_shipped = 1 AND SCHEMA_NAME(o.sche
 ORDER  BY o.name`
 
 	rows, err := d.query(ctx, q, args...)
-	if err != nil {
-		return nil, fmt.Errorf("gosmo: list system UDFs in %q: %w", d.Name, err)
-	}
-	defer rows.Close()
-
-	var funcs []*UserDefinedFunction
-	for rows.Next() {
+	return scanRows(rows, err, fmt.Sprintf("list system UDFs in %q", d.Name), func(scan func(...any) error) (*UserDefinedFunction, error) {
 		f := &UserDefinedFunction{}
-		if err := rows.Scan(&f.ObjectID, &f.Schema, &f.Name, &f.FuncType,
+		if err := scan(&f.ObjectID, &f.Schema, &f.Name, &f.FuncType,
 			&f.Definition, &f.CreateDate, &f.ModifyDate); err != nil {
-			return nil, fmt.Errorf("gosmo: list system UDFs in %q: %w", d.Name, err)
+			return nil, err
 		}
 		f.FuncType = strings.TrimSpace(f.FuncType)
-		funcs = append(funcs, f)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("gosmo: list system UDFs in %q: %w", d.Name, err)
-	}
-	return funcs, nil
+		return f, nil
+	})
 }
 
 // DropFunction drops a user-defined function — scalar, inline
 // table-valued, or multi-statement table-valued alike, all of which DROP
 // FUNCTION removes. A function that isn't there is the server's error, not a
 // silent success — see the note on Database.DropTable.
-func (d *Database) DropFunction(schema, name string) error {
-	return d.DropFunctionContext(context.Background(), schema, name)
-}
-
-// DropFunctionContext is the context-aware variant of DropFunction.
-func (d *Database) DropFunctionContext(ctx context.Context, schema, name string) error {
+func (d *Database) DropFunction(ctx context.Context, schema, name string) error {
 	if schema == "" {
 		schema = "dbo"
 	}

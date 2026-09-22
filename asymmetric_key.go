@@ -3,7 +3,6 @@ package gosmo
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"fmt"
 	"strings"
 )
@@ -74,44 +73,19 @@ LEFT   JOIN sys.database_principals p ON p.principal_id = k.principal_id`
 // AsymmetricKeys returns the database's asymmetric keys, excluding the
 // internal ones SQL Server creates for itself (named ##...##) — the same
 // exclusion Certificates makes.
-func (d *Database) AsymmetricKeys() ([]*AsymmetricKey, error) {
-	return d.AsymmetricKeysContext(context.Background())
-}
-
-// AsymmetricKeysContext is the context-aware variant of AsymmetricKeys.
-func (d *Database) AsymmetricKeysContext(ctx context.Context) ([]*AsymmetricKey, error) {
+func (d *Database) AsymmetricKeys(ctx context.Context) ([]*AsymmetricKey, error) {
 	rows, err := d.query(ctx, asymmetricKeySelect+`
 WHERE  k.name NOT LIKE '##%'
 ORDER  BY k.name`)
-	if err != nil {
-		return nil, fmt.Errorf("gosmo: list asymmetric keys in %q: %w", d.Name, err)
-	}
-	defer rows.Close()
-
-	var out []*AsymmetricKey
-	for rows.Next() {
-		k, err := scanAsymmetricKey(d, rows.Scan)
-		if err != nil {
-			return nil, fmt.Errorf("gosmo: list asymmetric keys in %q: %w", d.Name, err)
-		}
-		out = append(out, k)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("gosmo: list asymmetric keys in %q: %w", d.Name, err)
-	}
-	return out, nil
+	return scanRows(rows, err, fmt.Sprintf("list asymmetric keys in %q", d.Name), func(scan func(...any) error) (*AsymmetricKey, error) {
+		return scanAsymmetricKey(d, scan)
+	})
 }
 
-// AsymmetricKeyByName returns one asymmetric key, or (nil, nil) when the
-// database has none by that name — matching CertificateByName, whose absent
-// answer this family's callers already branch on.
-func (d *Database) AsymmetricKeyByName(name string) (*AsymmetricKey, error) {
-	return d.AsymmetricKeyByNameContext(context.Background(), name)
-}
-
-// AsymmetricKeyByNameContext is the context-aware variant of
-// AsymmetricKeyByName.
-func (d *Database) AsymmetricKeyByNameContext(ctx context.Context, name string) (*AsymmetricKey, error) {
+// AsymmetricKeyByName returns one asymmetric key, or an error wrapping
+// ErrNotFound when the database has none by that name. Until 2026-09-22 it
+// answered absence with (nil, nil), as CertificateByName did.
+func (d *Database) AsymmetricKeyByName(ctx context.Context, name string) (*AsymmetricKey, error) {
 	var k *AsymmetricKey
 	err := d.queryRow(ctx, func(row *sql.Row) error {
 		var err error
@@ -119,17 +93,8 @@ func (d *Database) AsymmetricKeyByNameContext(ctx context.Context, name string) 
 		return err
 	}, asymmetricKeySelect+`
 WHERE  k.name = @p1`, name)
-	// errors.Is rather than ==, for the reason spelled out on
-	// CertificateByNameContext: Database.queryRow wraps some of its failures,
-	// and a bare comparison that stopped matching would turn "no such key"
-	// into an error for callers that branch on k == nil.
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, fmt.Errorf("gosmo: read asymmetric key %q in %q: %w", name, d.Name, err)
-	}
-	return k, nil
+	return foundRow(k, err, notFoundf("gosmo: asymmetric key %s not found in %q", quoteIdent(name), d.Name),
+		fmt.Sprintf("read asymmetric key %q in %q", name, d.Name))
 }
 
 func scanAsymmetricKey(d *Database, scan func(...any) error) (*AsymmetricKey, error) {
@@ -244,13 +209,7 @@ func (spec AsymmetricKeySpec) createAsymmetricKeyStatement() (string, error) {
 
 // CreateAsymmetricKey has SQL Server generate a new asymmetric key pair in
 // the database.
-func (d *Database) CreateAsymmetricKey(spec AsymmetricKeySpec) error {
-	return d.CreateAsymmetricKeyContext(context.Background(), spec)
-}
-
-// CreateAsymmetricKeyContext is the context-aware variant of
-// CreateAsymmetricKey.
-func (d *Database) CreateAsymmetricKeyContext(ctx context.Context, spec AsymmetricKeySpec) error {
+func (d *Database) CreateAsymmetricKey(ctx context.Context, spec AsymmetricKeySpec) error {
 	stmt, err := spec.createAsymmetricKeyStatement()
 	if err != nil {
 		return fmt.Errorf("gosmo: create asymmetric key in %q: %w", d.Name, err)
@@ -263,10 +222,7 @@ func (d *Database) CreateAsymmetricKeyContext(ctx context.Context, spec Asymmetr
 
 // Drop deletes the asymmetric key. SQL Server refuses (Msg 15559) while a
 // login or user is mapped to it.
-func (k *AsymmetricKey) Drop() error { return k.DropContext(context.Background()) }
-
-// DropContext is the context-aware variant of Drop.
-func (k *AsymmetricKey) DropContext(ctx context.Context) error {
+func (k *AsymmetricKey) Drop(ctx context.Context) error {
 	if _, err := k.db.exec(ctx, "DROP ASYMMETRIC KEY "+quoteIdent(k.Name)); err != nil {
 		return fmt.Errorf("gosmo: drop asymmetric key %q in %q: %w", k.Name, k.db.Name, err)
 	}
@@ -277,12 +233,7 @@ func (k *AsymmetricKey) DropContext(ctx context.Context) error {
 // ALTER ASYMMETRIC KEY ... REMOVE PRIVATE KEY. It cannot be undone: SQL
 // Server has no BACKUP ASYMMETRIC KEY (a syntax error on 17), so unlike a
 // certificate's the private key cannot have been exported first.
-func (k *AsymmetricKey) RemovePrivateKey() error {
-	return k.RemovePrivateKeyContext(context.Background())
-}
-
-// RemovePrivateKeyContext is the context-aware variant of RemovePrivateKey.
-func (k *AsymmetricKey) RemovePrivateKeyContext(ctx context.Context) error {
+func (k *AsymmetricKey) RemovePrivateKey(ctx context.Context) error {
 	if _, err := k.db.exec(ctx, "ALTER ASYMMETRIC KEY "+quoteIdent(k.Name)+" REMOVE PRIVATE KEY"); err != nil {
 		return fmt.Errorf("gosmo: remove private key of asymmetric key %q in %q: %w", k.Name, k.db.Name, err)
 	}
@@ -293,12 +244,7 @@ func (k *AsymmetricKey) RemovePrivateKeyContext(ctx context.Context) error {
 // ChangeOwner transfers the key to another database principal with ALTER
 // AUTHORIZATION. SQL Server drops every explicit permission on the key as it
 // does so.
-func (k *AsymmetricKey) ChangeOwner(newOwner string) error {
-	return k.ChangeOwnerContext(context.Background(), newOwner)
-}
-
-// ChangeOwnerContext is the context-aware variant of ChangeOwner.
-func (k *AsymmetricKey) ChangeOwnerContext(ctx context.Context, newOwner string) error {
+func (k *AsymmetricKey) ChangeOwner(ctx context.Context, newOwner string) error {
 	q := "ALTER AUTHORIZATION ON ASYMMETRIC KEY::" + quoteIdent(k.Name) + " TO " + quoteIdent(newOwner)
 	if _, err := k.db.exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: change asymmetric key %q owner to %q in %q: %w", k.Name, newOwner, k.db.Name, err)

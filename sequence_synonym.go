@@ -41,12 +41,7 @@ type Sequence struct {
 func (seq *Sequence) Database() *Database { return seq.db }
 
 // Sequences returns all sequences in the database.
-func (d *Database) Sequences() ([]*Sequence, error) {
-	return d.SequencesContext(context.Background())
-}
-
-// SequencesContext is the context-aware variant of Sequences.
-func (d *Database) SequencesContext(ctx context.Context) ([]*Sequence, error) {
+func (d *Database) Sequences(ctx context.Context) ([]*Sequence, error) {
 	const q = `
 SELECT s.name, SCHEMA_NAME(s.schema_id), s.object_id,
        tp.name, SCHEMA_NAME(tp.schema_id),
@@ -61,15 +56,9 @@ JOIN   sys.types tp ON tp.user_type_id = s.user_type_id
 ORDER  BY SCHEMA_NAME(s.schema_id), s.name`
 
 	rows, err := d.query(ctx, q)
-	if err != nil {
-		return nil, fmt.Errorf("gosmo: list sequences: %w", err)
-	}
-	defer rows.Close()
-
-	var seqs []*Sequence
-	for rows.Next() {
+	return scanRows(rows, err, "list sequences", func(scan func(...any) error) (*Sequence, error) {
 		seq := &Sequence{db: d}
-		if err := rows.Scan(
+		if err := scan(
 			&seq.Name, &seq.Schema, &seq.ObjectID,
 			&seq.DataType, &seq.DataTypeSchema,
 			&seq.StartValue, &seq.Increment,
@@ -77,14 +66,10 @@ ORDER  BY SCHEMA_NAME(s.schema_id), s.name`
 			&seq.IsCycling, &seq.IsCached, &seq.CacheSize,
 			&seq.CurrentValue,
 		); err != nil {
-			return nil, fmt.Errorf("gosmo: list sequences: %w", err)
+			return nil, err
 		}
-		seqs = append(seqs, seq)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("gosmo: list sequences: %w", err)
-	}
-	return seqs, nil
+		return seq, nil
+	})
 }
 
 // CreateSequenceRequest describes a new sequence.
@@ -101,12 +86,7 @@ type CreateSequenceRequest struct {
 }
 
 // CreateSequence creates a new sequence in the database.
-func (d *Database) CreateSequence(req CreateSequenceRequest) error {
-	return d.CreateSequenceContext(context.Background(), req)
-}
-
-// CreateSequenceContext is the context-aware variant of CreateSequence.
-func (d *Database) CreateSequenceContext(ctx context.Context, req CreateSequenceRequest) error {
+func (d *Database) CreateSequence(ctx context.Context, req CreateSequenceRequest) error {
 	if req.DataType == "" {
 		req.DataType = DataTypeBigInt
 	}
@@ -153,12 +133,7 @@ func (d *Database) CreateSequenceContext(ctx context.Context, req CreateSequence
 // DropSequence drops a sequence by name — the form for a caller that has
 // the name but not the object, as Sequences() would have to be listed
 // first to get one.
-func (d *Database) DropSequence(schema, name string) error {
-	return d.DropSequenceContext(context.Background(), schema, name)
-}
-
-// DropSequenceContext is the context-aware variant of DropSequence.
-func (d *Database) DropSequenceContext(ctx context.Context, schema, name string) error {
+func (d *Database) DropSequence(ctx context.Context, schema, name string) error {
 	if schema == "" {
 		schema = "dbo"
 	}
@@ -170,22 +145,12 @@ func (d *Database) DropSequenceContext(ctx context.Context, schema, name string)
 }
 
 // Drop drops the sequence.
-func (seq *Sequence) Drop() error {
-	return seq.DropContext(context.Background())
-}
-
-// DropContext is the context-aware variant of Drop.
-func (seq *Sequence) DropContext(ctx context.Context) error {
-	return seq.db.DropSequenceContext(ctx, seq.Schema, seq.Name)
+func (seq *Sequence) Drop(ctx context.Context) error {
+	return seq.db.DropSequence(ctx, seq.Schema, seq.Name)
 }
 
 // Restart restarts the sequence at the given value.
-func (seq *Sequence) Restart(value int64) error {
-	return seq.RestartContext(context.Background(), value)
-}
-
-// RestartContext is the context-aware variant of Restart.
-func (seq *Sequence) RestartContext(ctx context.Context, value int64) error {
+func (seq *Sequence) Restart(ctx context.Context, value int64) error {
 	_, err := seq.db.exec(ctx,
 		fmt.Sprintf("ALTER SEQUENCE %s RESTART WITH %d",
 			qualifiedName(seq.Schema, seq.Name), value))
@@ -197,19 +162,14 @@ func (seq *Sequence) RestartContext(ctx context.Context, value int64) error {
 }
 
 // NextValue retrieves the next value from the sequence.
-func (seq *Sequence) NextValue() (int64, error) {
-	return seq.NextValueContext(context.Background())
-}
-
-// NextValueContext is the context-aware variant of NextValue.
 //
-// This deliberately uses withConn, not queryRow: "NEXT VALUE FOR" advances
-// the sequence as a side effect of being read, so it isn't safe to retry —
-// unlike every other queryRow caller in this package, re-running it on a
-// fresh connection after a transient failure could silently skip a value.
-// withConn still retries the acquire+USE step (safe, nothing server-side
-// has happened yet), just not the query itself.
-func (seq *Sequence) NextValueContext(ctx context.Context) (int64, error) {
+// This deliberately uses withConn, not queryRow: "NEXT VALUE FOR" advances the
+// sequence as a side effect of being read, so it isn't safe to retry —
+// unlike every other queryRow caller in this package, re-running it on a fresh
+// connection after a transient failure could silently skip a value. withConn
+// still retries the acquire+USE step (safe, nothing server-side has happened
+// yet), just not the query itself.
+func (seq *Sequence) NextValue(ctx context.Context) (int64, error) {
 	var val int64
 	err := seq.db.withConn(ctx, func(conn *sql.Conn) error {
 		return conn.QueryRowContext(ctx,
@@ -242,37 +202,22 @@ type Synonym struct {
 func (syn *Synonym) Database() *Database { return syn.db }
 
 // Synonyms returns all synonyms in the database.
-func (d *Database) Synonyms() ([]*Synonym, error) {
-	return d.SynonymsContext(context.Background())
-}
-
-// SynonymsContext is the context-aware variant of Synonyms.
-func (d *Database) SynonymsContext(ctx context.Context) ([]*Synonym, error) {
+func (d *Database) Synonyms(ctx context.Context) ([]*Synonym, error) {
 	const q = `
 SELECT name, SCHEMA_NAME(schema_id), object_id, base_object_name
 FROM   sys.synonyms
 ORDER  BY SCHEMA_NAME(schema_id), name`
 
 	rows, err := d.query(ctx, q)
-	if err != nil {
-		return nil, fmt.Errorf("gosmo: list synonyms: %w", err)
-	}
-	defer rows.Close()
-
-	var syns []*Synonym
-	for rows.Next() {
+	return scanRows(rows, err, "list synonyms", func(scan func(...any) error) (*Synonym, error) {
 		s := &Synonym{db: d}
 		var baseObj sql.NullString
-		if err := rows.Scan(&s.Name, &s.Schema, &s.ObjectID, &baseObj); err != nil {
-			return nil, fmt.Errorf("gosmo: list synonyms: %w", err)
+		if err := scan(&s.Name, &s.Schema, &s.ObjectID, &baseObj); err != nil {
+			return nil, err
 		}
 		s.BaseObject = baseObj.String
-		syns = append(syns, s)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("gosmo: list synonyms: %w", err)
-	}
-	return syns, nil
+		return s, nil
+	})
 }
 
 // qualifiedObjectNamePart matches one part of a dot-separated multi-part
@@ -283,7 +228,7 @@ const qualifiedObjectNamePart = `(?:\[(?:[^\]]|\]\])+\]|[A-Za-z_][A-Za-z0-9_]*)`
 
 // qualifiedObjectNamePattern matches a one- to four-part T-SQL object name
 // (linked_server.database.schema.object, or any suffix of it) end to end —
-// the shape CreateSynonymContext's baseObject documents callers must
+// the shape CreateSynonym's baseObject documents callers must
 // already have built, e.g. "[OtherDB].[dbo].[MyTable]".
 var qualifiedObjectNamePattern = regexp.MustCompile(`^` + qualifiedObjectNamePart + `(?:\.` + qualifiedObjectNamePart + `){0,3}$`)
 
@@ -292,7 +237,7 @@ var qualifiedObjectNamePattern = regexp.MustCompile(`^` + qualifiedObjectNamePar
 // ...) outside of dot-separated, individually-quoted-or-bare parts.
 // baseObject can span server/database/schema/object, so it can't be quoted
 // as a single identifier the way qualifiedName's schema+name pair is —
-// this validation is CreateSynonymContext's injection defense in its
+// this validation is CreateSynonym's injection defense in its
 // place.
 func validQualifiedObjectName(s string) bool {
 	return qualifiedObjectNamePattern.MatchString(s)
@@ -300,12 +245,7 @@ func validQualifiedObjectName(s string) bool {
 
 // CreateSynonym creates a synonym for a base object.
 // baseObject should be the fully qualified name, e.g. "[OtherDB].[dbo].[MyTable]".
-func (d *Database) CreateSynonym(schema, name, baseObject string) error {
-	return d.CreateSynonymContext(context.Background(), schema, name, baseObject)
-}
-
-// CreateSynonymContext is the context-aware variant of CreateSynonym.
-func (d *Database) CreateSynonymContext(ctx context.Context, schema, name, baseObject string) error {
+func (d *Database) CreateSynonym(ctx context.Context, schema, name, baseObject string) error {
 	if schema == "" {
 		schema = "dbo"
 	}
@@ -324,12 +264,7 @@ func (d *Database) CreateSynonymContext(ctx context.Context, schema, name, baseO
 // name but not the object, as Synonyms() would have to be listed first to
 // get one. A synonym that isn't there is the server's error, not a silent
 // success — see the note on Database.DropTable.
-func (d *Database) DropSynonym(schema, name string) error {
-	return d.DropSynonymContext(context.Background(), schema, name)
-}
-
-// DropSynonymContext is the context-aware variant of DropSynonym.
-func (d *Database) DropSynonymContext(ctx context.Context, schema, name string) error {
+func (d *Database) DropSynonym(ctx context.Context, schema, name string) error {
 	if schema == "" {
 		schema = "dbo"
 	}
@@ -341,11 +276,6 @@ func (d *Database) DropSynonymContext(ctx context.Context, schema, name string) 
 }
 
 // Drop drops the synonym.
-func (syn *Synonym) Drop() error {
-	return syn.DropContext(context.Background())
-}
-
-// DropContext is the context-aware variant of Drop.
-func (syn *Synonym) DropContext(ctx context.Context) error {
-	return syn.db.DropSynonymContext(ctx, syn.Schema, syn.Name)
+func (syn *Synonym) Drop(ctx context.Context) error {
+	return syn.db.DropSynonym(ctx, syn.Schema, syn.Name)
 }

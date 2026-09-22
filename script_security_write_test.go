@@ -20,86 +20,86 @@ func TestScriptSecurityWrites(t *testing.T) {
 	runScriptCases(t, []scriptCase{
 		// --- database principals
 		{"CreateSchema", func(c context.Context) error {
-			return scriptTestDB().CreateSchemaContext(c, "sa]les", "o'brien")
+			return scriptTestDB().CreateSchema(c, "sa]les", "o'brien")
 		}, scriptUsePrefix + "CREATE SCHEMA [sa]]les] AUTHORIZATION [o'brien]"},
 		{"CreateSchema without an owner", func(c context.Context) error {
-			return scriptTestDB().CreateSchemaContext(c, "sa]les", "")
+			return scriptTestDB().CreateSchema(c, "sa]les", "")
 		}, scriptUsePrefix + "CREATE SCHEMA [sa]]les]"},
 		{"CreateUser", func(c context.Context) error {
-			return scriptTestDB().CreateUserContext(c, "o'brien", `DOM\o]b`, "sa]les")
+			return scriptTestDB().CreateUser(c, "o'brien", `DOM\o]b`, "sa]les")
 		}, scriptUsePrefix + `CREATE USER [o'brien] FOR LOGIN [DOM\o]]b] WITH DEFAULT_SCHEMA = [sa]]les]`},
 		{"CreateUser without a default schema", func(c context.Context) error {
-			return scriptTestDB().CreateUserContext(c, "o'brien", "app_login", "")
+			return scriptTestDB().CreateUser(c, "o'brien", "app_login", "")
 		}, scriptUsePrefix + "CREATE USER [o'brien] FOR LOGIN [app_login]"},
 		{"AddRoleMember", func(c context.Context) error {
-			return scriptTestDB().AddRoleMemberContext(c, "db_own]er", "o'brien")
+			return scriptTestDB().AddRoleMember(c, "db_own]er", "o'brien")
 		}, scriptUsePrefix + "ALTER ROLE [db_own]]er] ADD MEMBER [o'brien]"},
 		{"RemoveRoleMember", func(c context.Context) error {
-			return scriptTestDB().RemoveRoleMemberContext(c, "db_own]er", "o'brien")
+			return scriptTestDB().RemoveRoleMember(c, "db_own]er", "o'brien")
 		}, scriptUsePrefix + "ALTER ROLE [db_own]]er] DROP MEMBER [o'brien]"},
 		{"SetOwner", func(c context.Context) error {
-			return scriptTestDB().SetOwnerContext(c, "o'brien")
+			return scriptTestDB().SetOwner(c, "o'brien")
 		}, "ALTER AUTHORIZATION ON DATABASE::[App'DB] TO [o'brien]"},
 
 		// --- User
 		{"User AddToRole", func(c context.Context) error {
-			return user().AddToRoleContext(c, "db_datar]eader")
+			return user().AddToRole(c, "db_datar]eader")
 		}, scriptUsePrefix + "ALTER ROLE [db_datar]]eader] ADD MEMBER [o'brien]"},
 		{"User RemoveFromRole", func(c context.Context) error {
-			return user().RemoveFromRoleContext(c, "db_datar]eader")
+			return user().RemoveFromRole(c, "db_datar]eader")
 		}, scriptUsePrefix + "ALTER ROLE [db_datar]]eader] DROP MEMBER [o'brien]"},
 		{"User SetDefaultSchema", func(c context.Context) error {
-			return user().SetDefaultSchemaContext(c, "sa]les")
+			return user().SetDefaultSchema(c, "sa]les")
 		}, scriptUsePrefix + "ALTER USER [o'brien] WITH DEFAULT_SCHEMA = [sa]]les]"},
 		{"User SetLogin", func(c context.Context) error {
-			return user().SetLoginContext(c, `DOM\o]b`)
+			return user().SetLogin(c, `DOM\o]b`)
 		}, scriptUsePrefix + `ALTER USER [o'brien] WITH LOGIN = [DOM\o]]b]`},
 		{"User Grant", func(c context.Context) error {
-			return user().GrantContext(c, PermSelect, "dbo", "Sales.Archive")
+			return user().Grant(c, PermSelect, "dbo", "Sales.Archive")
 		}, scriptUsePrefix + "GRANT SELECT ON [dbo].[Sales.Archive] TO [o'brien]"},
 		{"User Deny", func(c context.Context) error {
-			return user().DenyContext(c, PermSelect, "dbo", "Sales.Archive")
+			return user().Deny(c, PermSelect, "dbo", "Sales.Archive")
 		}, scriptUsePrefix + "DENY SELECT ON [dbo].[Sales.Archive] TO [o'brien]"},
 		{"User Revoke", func(c context.Context) error {
-			return user().RevokeContext(c, PermSelect, "dbo", "Sales.Archive")
+			return user().Revoke(c, PermSelect, "dbo", "Sales.Archive")
 		}, scriptUsePrefix + "REVOKE SELECT ON [dbo].[Sales.Archive] FROM [o'brien]"},
 
 		// --- Login
 		{"Schema Drop", func(c context.Context) error {
-			return (&Schema{db: scriptTestDB(), Name: "sa]les"}).DropContext(c)
+			return (&Schema{db: scriptTestDB(), Name: "sa]les"}).Drop(c)
 		}, scriptUsePrefix + "DROP SCHEMA [sa]]les]"},
 		{"Schema ChangeOwner", func(c context.Context) error {
-			return (&Schema{db: scriptTestDB(), Name: "sa]les", Owner: "dbo"}).ChangeOwnerContext(c, "o'brien")
+			return (&Schema{db: scriptTestDB(), Name: "sa]les", Owner: "dbo"}).ChangeOwner(c, "o'brien")
 		}, scriptUsePrefix + "ALTER AUTHORIZATION ON SCHEMA::[sa]]les] TO [o'brien]"},
 		{"User Drop", func(c context.Context) error {
-			return user().DropContext(c)
+			return user().Drop(c)
 		}, scriptUsePrefix + "DROP USER [o'brien]"},
 		{"User Rename", func(c context.Context) error {
-			return user().RenameContext(c, "o]b")
+			return user().Rename(c, "o]b")
 		}, scriptUsePrefix + "ALTER USER [o'brien] WITH NAME = [o]]b]"},
 		{"Login Enable", func(c context.Context) error {
-			return login().EnableContext(c)
+			return login().Enable(c)
 		}, "ALTER LOGIN [o'brien] ENABLE"},
 		{"Login Disable", func(c context.Context) error {
-			return login().DisableContext(c)
+			return login().Disable(c)
 		}, "ALTER LOGIN [o'brien] DISABLE"},
 		{"Login AddServerRoleMember", func(c context.Context) error {
-			return login().AddServerRoleMemberContext(c, "sys]admin")
+			return login().AddServerRoleMember(c, "sys]admin")
 		}, "ALTER SERVER ROLE [sys]]admin] ADD MEMBER [o'brien]"},
 		{"Login RemoveServerRoleMember", func(c context.Context) error {
-			return login().RemoveServerRoleMemberContext(c, "sys]admin")
+			return login().RemoveServerRoleMember(c, "sys]admin")
 		}, "ALTER SERVER ROLE [sys]]admin] DROP MEMBER [o'brien]"},
 		{"Login SetDefaultDatabase", func(c context.Context) error {
-			return login().SetDefaultDatabaseContext(c, "App'DB")
+			return login().SetDefaultDatabase(c, "App'DB")
 		}, "ALTER LOGIN [o'brien] WITH DEFAULT_DATABASE = [App'DB]"},
 		{"Login SetDefaultLanguage", func(c context.Context) error {
-			return login().SetDefaultLanguageContext(c, "us_english")
+			return login().SetDefaultLanguage(c, "us_english")
 		}, "ALTER LOGIN [o'brien] WITH DEFAULT_LANGUAGE = [us_english]"},
 		{"Login SetPasswordPolicy", func(c context.Context) error {
-			return login().SetPasswordPolicyContext(c, true, false)
+			return login().SetPasswordPolicy(c, true, false)
 		}, "ALTER LOGIN [o'brien] WITH CHECK_POLICY = ON, CHECK_EXPIRATION = OFF"},
 		{"Login Rename", func(c context.Context) error {
-			return login().RenameContext(c, "o]b")
+			return login().Rename(c, "o]b")
 		}, "ALTER LOGIN [o'brien] WITH NAME = [o]]b]"},
 		{
 			// The password is a literal, not an identifier: an apostrophe in
@@ -107,7 +107,7 @@ func TestScriptSecurityWrites(t *testing.T) {
 			// would tell the server the value is one of its own hash formats
 			// rather than cleartext.
 			"Login ChangePassword", func(c context.Context) error {
-				return login().ChangePasswordContext(c, "p'wd")
+				return login().ChangePassword(c, "p'wd")
 			}, "ALTER LOGIN [o'brien] WITH PASSWORD = N'p''wd'"},
 		{
 			// MUST_CHANGE and UNLOCK follow the password space-separated —
@@ -115,47 +115,47 @@ func TestScriptSecurityWrites(t *testing.T) {
 			// options — and MUST_CHANGE drags CHECK_EXPIRATION = ON in after
 			// the comma.
 			"Login ChangePasswordWithOptions", func(c context.Context) error {
-				return login().ChangePasswordWithOptionsContext(c, "p'wd", true, true)
+				return login().ChangePasswordWithOptions(c, "p'wd", true, true)
 			}, "ALTER LOGIN [o'brien] WITH PASSWORD = N'p''wd' MUST_CHANGE UNLOCK, CHECK_EXPIRATION = ON"},
 		{"Login MapCredential", func(c context.Context) error {
-			return login().MapCredentialContext(c, "cred]1")
+			return login().MapCredential(c, "cred]1")
 		}, "ALTER LOGIN [o'brien] ADD CREDENTIAL [cred]]1]"},
 		{"Login UnmapCredential", func(c context.Context) error {
-			return login().UnmapCredentialContext(c, "cred]1")
+			return login().UnmapCredential(c, "cred]1")
 		}, "ALTER LOGIN [o'brien] DROP CREDENTIAL [cred]]1]"},
 		{"Login Drop", func(c context.Context) error {
-			return login().DropContext(c)
+			return login().Drop(c)
 		}, "DROP LOGIN [o'brien]"},
 		{"ServerRole Rename", func(c context.Context) error {
-			return serverRole().RenameContext(c, "r]2")
+			return serverRole().Rename(c, "r]2")
 		}, "ALTER SERVER ROLE [ro'le] WITH NAME = [r]]2]"},
 		{"ServerRole ChangeOwner", func(c context.Context) error {
-			return serverRole().ChangeOwnerContext(c, "o'brien")
+			return serverRole().ChangeOwner(c, "o'brien")
 		}, "ALTER AUTHORIZATION ON SERVER ROLE::[ro'le] TO [o'brien]"},
 		{"ServerRole Drop", func(c context.Context) error {
-			return serverRole().DropContext(c)
+			return serverRole().Drop(c)
 		}, "DROP SERVER ROLE [ro'le]"},
 		{"SecurityPolicy Enable", func(c context.Context) error {
-			return securityPolicy().EnableContext(c)
+			return securityPolicy().Enable(c)
 		}, scriptUsePrefix + "ALTER SECURITY POLICY [Se]]c].[sp'1] WITH (STATE = ON)"},
 		{"SecurityPolicy Disable", func(c context.Context) error {
-			return securityPolicy().DisableContext(c)
+			return securityPolicy().Disable(c)
 		}, scriptUsePrefix + "ALTER SECURITY POLICY [Se]]c].[sp'1] WITH (STATE = OFF)"},
 		{"Server DropLogin", func(c context.Context) error {
-			return (&Server{}).DropLoginContext(c, "o'brien")
+			return (&Server{}).DropLogin(c, "o'brien")
 		}, "DROP LOGIN [o'brien]"},
 
 		// --- keys and certificates
 		{"CreateCertificate", func(c context.Context) error {
-			return scriptTestDB().CreateCertificateContext(c, CertificateSpec{
+			return scriptTestDB().CreateCertificate(c, CertificateSpec{
 				Name: "Cert]1", Authorization: "o'brien", Subject: "gossms o'brien",
 			})
 		}, scriptUsePrefix + "CREATE CERTIFICATE [Cert]]1] AUTHORIZATION [o'brien] WITH SUBJECT = N'gossms o''brien'"},
 		{"CreateMasterKey", func(c context.Context) error {
-			return scriptTestDB().CreateMasterKeyContext(c, "p'wd")
+			return scriptTestDB().CreateMasterKey(c, "p'wd")
 		}, scriptUsePrefix + "CREATE MASTER KEY ENCRYPTION BY PASSWORD = N'p''wd'"},
 		{"CreateColumnMasterKeyWithSignature", func(c context.Context) error {
-			return scriptTestDB().CreateColumnMasterKeyWithSignatureContext(c, "CMK]1", "MSSQL_CERTIFICATE_STORE", "CurrentUser/my/a'b", []byte{0x0a, 0xff})
+			return scriptTestDB().CreateColumnMasterKeyWithSignature(c, "CMK]1", "MSSQL_CERTIFICATE_STORE", "CurrentUser/my/a'b", []byte{0x0a, 0xff})
 		}, scriptUsePrefix + `
 CREATE COLUMN MASTER KEY [CMK]]1]
 WITH (
@@ -164,7 +164,7 @@ WITH (
     ENCLAVE_COMPUTATIONS (SIGNATURE = 0x0AFF)
 )`},
 		{"CreateColumnMasterKey without enclave computations", func(c context.Context) error {
-			return scriptTestDB().CreateColumnMasterKeyContext(c, "CMK]1", "MSSQL_CERTIFICATE_STORE", "CurrentUser/my/a'b", false)
+			return scriptTestDB().CreateColumnMasterKey(c, "CMK]1", "MSSQL_CERTIFICATE_STORE", "CurrentUser/my/a'b", false)
 		}, scriptUsePrefix + `
 CREATE COLUMN MASTER KEY [CMK]]1]
 WITH (
@@ -172,7 +172,7 @@ WITH (
     KEY_PATH = N'CurrentUser/my/a''b'
 )`},
 		{"CreateColumnEncryptionKey", func(c context.Context) error {
-			return scriptTestDB().CreateColumnEncryptionKeyContext(c, "CEK]1", []ColumnEncryptionKeyValue{
+			return scriptTestDB().CreateColumnEncryptionKey(c, "CEK]1", []ColumnEncryptionKeyValue{
 				{MasterKeyName: "CMK]1", EncryptionAlgorithm: "RSA_OAEP", EncryptedValue: []byte{0x0a, 0xff}},
 			})
 		}, scriptUsePrefix + `CREATE COLUMN ENCRYPTION KEY [CEK]]1]
@@ -185,7 +185,7 @@ WITH VALUES
 		// A key mid-rotation is encrypted under two master keys and CREATE has
 		// to restate both — one comma, and every value repeated in full.
 		{"CreateColumnEncryptionKey mid-rotation", func(c context.Context) error {
-			return scriptTestDB().CreateColumnEncryptionKeyContext(c, "CEK1", []ColumnEncryptionKeyValue{
+			return scriptTestDB().CreateColumnEncryptionKey(c, "CEK1", []ColumnEncryptionKeyValue{
 				{MasterKeyName: "CMK1", EncryptionAlgorithm: "RSA_OAEP", EncryptedValue: []byte{0x01}},
 				{MasterKeyName: "CMK2", EncryptionAlgorithm: "RSA_OAEP", EncryptedValue: []byte{0x02}},
 			})
@@ -205,7 +205,7 @@ WITH VALUES
 		// dropped by naming its master key alone — the ciphertext is not
 		// restated on the way out.
 		{"ColumnEncryptionKey.AddValue", func(c context.Context) error {
-			return scriptTestCEK().AddValueContext(c, ColumnEncryptionKeyValue{
+			return scriptTestCEK().AddValue(c, ColumnEncryptionKeyValue{
 				MasterKeyName: "CMK]2", EncryptionAlgorithm: "RSA_OAEP", EncryptedValue: []byte{0x0a, 0xff}})
 		}, scriptUsePrefix + `ALTER COLUMN ENCRYPTION KEY [CEK]]1]
 ADD VALUE
@@ -215,7 +215,7 @@ ADD VALUE
     ENCRYPTED_VALUE = 0x0AFF
 )`},
 		{"ColumnEncryptionKey.DropValue", func(c context.Context) error {
-			return scriptTestCEK().DropValueContext(c, "CMK]1")
+			return scriptTestCEK().DropValue(c, "CMK]1")
 		}, scriptUsePrefix + `ALTER COLUMN ENCRYPTION KEY [CEK]]1]
 DROP VALUE
 (
@@ -236,34 +236,34 @@ func TestScriptPermissionOptionWrites(t *testing.T) {
 
 	runScriptCases(t, []scriptCase{
 		{"GrantSchemaPermissionWithOptions", func(c context.Context) error {
-			return scriptTestDB().GrantSchemaPermissionWithOptionsContext(c, "sa]les", PermSelect, "o'brien", withGrant)
+			return scriptTestDB().GrantSchemaPermissionWithOptions(c, "sa]les", PermSelect, "o'brien", withGrant)
 		}, scriptUsePrefix + "GRANT SELECT ON SCHEMA::[sa]]les] TO [o'brien] WITH GRANT OPTION"},
 		{"RevokeSchemaPermissionWithOptions", func(c context.Context) error {
-			return scriptTestDB().RevokeSchemaPermissionWithOptionsContext(c, "sa]les", PermSelect, "o'brien", revokeGrantOption)
+			return scriptTestDB().RevokeSchemaPermissionWithOptions(c, "sa]les", PermSelect, "o'brien", revokeGrantOption)
 		}, scriptUsePrefix + "REVOKE GRANT OPTION FOR SELECT ON SCHEMA::[sa]]les] FROM [o'brien] CASCADE"},
 		{"DenyDatabasePermissionWithOptions", func(c context.Context) error {
-			return scriptTestDB().DenyDatabasePermissionWithOptionsContext(c, "CREATE TABLE", "o'brien", cascadeOnly)
+			return scriptTestDB().DenyDatabasePermissionWithOptions(c, "CREATE TABLE", "o'brien", cascadeOnly)
 		}, scriptUsePrefix + "DENY CREATE TABLE TO [o'brien] CASCADE"},
 		{"RevokeDatabasePermissionWithOptions", func(c context.Context) error {
-			return scriptTestDB().RevokeDatabasePermissionWithOptionsContext(c, "CREATE TABLE", "o'brien", revokeGrantOption)
+			return scriptTestDB().RevokeDatabasePermissionWithOptions(c, "CREATE TABLE", "o'brien", revokeGrantOption)
 		}, scriptUsePrefix + "REVOKE GRANT OPTION FOR CREATE TABLE FROM [o'brien] CASCADE"},
 		{"DenyServerPermissionWithOptions", func(c context.Context) error {
-			return (&Server{}).DenyServerPermissionWithOptionsContext(c, "VIEW SERVER STATE", "o'brien", cascadeOnly)
+			return (&Server{}).DenyServerPermissionWithOptions(c, "VIEW SERVER STATE", "o'brien", cascadeOnly)
 		}, "USE master; DENY VIEW SERVER STATE TO [o'brien] CASCADE"},
 		{"DenyColumnPermission", func(c context.Context) error {
-			return scriptTestDB().DenyColumnPermissionContext(c, "dbo", "Sales.Archive", PermSelect, []string{"a]b", "c'd"}, "o'brien")
+			return scriptTestDB().DenyColumnPermission(c, "dbo", "Sales.Archive", PermSelect, []string{"a]b", "c'd"}, "o'brien")
 		}, scriptUsePrefix + "DENY SELECT ([a]]b], [c'd]) ON [dbo].[Sales.Archive] TO [o'brien]"},
 		{"DenyColumnPermissionWithOptions", func(c context.Context) error {
-			return scriptTestDB().DenyColumnPermissionWithOptionsContext(c, "dbo", "Sales.Archive", PermSelect, []string{"a]b"}, "o'brien", cascadeOnly)
+			return scriptTestDB().DenyColumnPermissionWithOptions(c, "dbo", "Sales.Archive", PermSelect, []string{"a]b"}, "o'brien", cascadeOnly)
 		}, scriptUsePrefix + "DENY SELECT ([a]]b]) ON [dbo].[Sales.Archive] TO [o'brien] CASCADE"},
 		{"RevokeColumnPermissionWithOptions", func(c context.Context) error {
-			return scriptTestDB().RevokeColumnPermissionWithOptionsContext(c, "dbo", "Sales.Archive", PermSelect, []string{"a]b"}, "o'brien", revokeGrantOption)
+			return scriptTestDB().RevokeColumnPermissionWithOptions(c, "dbo", "Sales.Archive", PermSelect, []string{"a]b"}, "o'brien", revokeGrantOption)
 		}, scriptUsePrefix + "REVOKE GRANT OPTION FOR SELECT ([a]]b]) ON [dbo].[Sales.Archive] FROM [o'brien] CASCADE"},
 	})
 }
 
 // TestCreateUserRefusesAnEmptyLogin pins the guard on the one parameter
-// CreateUserContext cannot quote its way out of. quoteIdent("") is "[]", so
+// CreateUser cannot quote its way out of. quoteIdent("") is "[]", so
 // an empty login produced "CREATE USER [x] FOR LOGIN []" — syntactically
 // valid to gosmo and rejected by the server with a message naming an empty
 // login the caller never typed. A user with no login is CREATE USER ...
@@ -271,15 +271,15 @@ func TestScriptPermissionOptionWrites(t *testing.T) {
 // which was meant keeps that an explicit choice.
 func TestCreateUserRefusesAnEmptyLogin(t *testing.T) {
 	ctx, script := WithScript(context.Background())
-	err := scriptTestDB().CreateUserContext(ctx, "o'brien", "", "dbo")
+	err := scriptTestDB().CreateUser(ctx, "o'brien", "", "dbo")
 	if err == nil {
-		t.Fatalf("CreateUserContext with an empty login returned nil, want an error")
+		t.Fatalf("CreateUser with an empty login returned nil, want an error")
 	}
 	if !strings.Contains(err.Error(), "login name") {
 		t.Errorf("error = %v, want it to name the missing login", err)
 	}
-	if len(script.Statements) != 0 {
-		t.Errorf("Statements = %q, want none", script.Statements)
+	if len(script.Statements()) != 0 {
+		t.Errorf("Statements = %q, want none", script.Statements())
 	}
 }
 
@@ -297,24 +297,24 @@ func TestCreateColumnMasterKeyRefusesEnclaveComputationsWithoutASignature(t *tes
 		want string
 	}{
 		{"bool form asking for enclave computations", func(c context.Context) error {
-			return scriptTestDB().CreateColumnMasterKeyContext(c, "CMK1", "MSSQL_CERTIFICATE_STORE", "CurrentUser/my/ab", true)
+			return scriptTestDB().CreateColumnMasterKey(c, "CMK1", "MSSQL_CERTIFICATE_STORE", "CurrentUser/my/ab", true)
 		}, "CreateColumnMasterKeyWithSignature"},
 		{"signature form with an empty signature", func(c context.Context) error {
-			return scriptTestDB().CreateColumnMasterKeyWithSignatureContext(c, "CMK1", "MSSQL_CERTIFICATE_STORE", "CurrentUser/my/ab", nil)
+			return scriptTestDB().CreateColumnMasterKeyWithSignature(c, "CMK1", "MSSQL_CERTIFICATE_STORE", "CurrentUser/my/ab", nil)
 		}, "signature is empty"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			ctx, script := WithScript(context.Background())
 			err := c.call(ctx)
 			if err == nil {
-				t.Fatalf("no error; statements: %v", script.Statements)
+				t.Fatalf("no error; statements: %v", script.Statements())
 			}
 			if !strings.Contains(err.Error(), c.want) {
 				t.Errorf("error = %v, want it to mention %q", err, c.want)
 			}
-			if len(script.Statements) != 0 {
+			if len(script.Statements()) != 0 {
 				t.Errorf("emitted %d statement(s), want none:\n%s",
-					len(script.Statements), strings.Join(script.Statements, "\n---\n"))
+					len(script.Statements()), strings.Join(script.Statements(), "\n---\n"))
 			}
 		})
 	}
@@ -343,16 +343,16 @@ func TestCreateColumnEncryptionKeyRefusesAnIncompleteValue(t *testing.T) {
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			ctx, script := WithScript(context.Background())
-			err := scriptTestDB().CreateColumnEncryptionKeyContext(ctx, "CEK1", c.values)
+			err := scriptTestDB().CreateColumnEncryptionKey(ctx, "CEK1", c.values)
 			if err == nil {
-				t.Fatalf("no error; statements: %v", script.Statements)
+				t.Fatalf("no error; statements: %v", script.Statements())
 			}
 			if !strings.Contains(err.Error(), c.want) {
 				t.Errorf("error = %v, want it to mention %q", err, c.want)
 			}
-			if len(script.Statements) != 0 {
+			if len(script.Statements()) != 0 {
 				t.Errorf("emitted %d statement(s), want none:\n%s",
-					len(script.Statements), strings.Join(script.Statements, "\n---\n"))
+					len(script.Statements()), strings.Join(script.Statements(), "\n---\n"))
 			}
 		})
 	}
@@ -377,7 +377,7 @@ func TestColumnEncryptionKeyValueGuards(t *testing.T) {
 	add := func(edit func(*ColumnEncryptionKeyValue)) func(context.Context) error {
 		v := good
 		edit(&v)
-		return func(c context.Context) error { return scriptTestCEK().AddValueContext(c, v) }
+		return func(c context.Context) error { return scriptTestCEK().AddValue(c, v) }
 	}
 	for _, c := range []struct {
 		name string
@@ -387,21 +387,21 @@ func TestColumnEncryptionKeyValueGuards(t *testing.T) {
 		{"add with no master key", add(func(v *ColumnEncryptionKeyValue) { v.MasterKeyName = "" }), "no column master key"},
 		{"add with no algorithm", add(func(v *ColumnEncryptionKeyValue) { v.EncryptionAlgorithm = "" }), "no encryption algorithm"},
 		{"add with no encrypted value", add(func(v *ColumnEncryptionKeyValue) { v.EncryptedValue = nil }), "no encrypted value"},
-		{"drop with no master key", func(c context.Context) error { return scriptTestCEK().DropValueContext(c, "") },
+		{"drop with no master key", func(c context.Context) error { return scriptTestCEK().DropValue(c, "") },
 			"column master key name is required"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			ctx, script := WithScript(context.Background())
 			err := c.call(ctx)
 			if err == nil {
-				t.Fatalf("no error; statements: %v", script.Statements)
+				t.Fatalf("no error; statements: %v", script.Statements())
 			}
 			if !strings.Contains(err.Error(), c.want) {
 				t.Errorf("error = %v, want it to mention %q", err, c.want)
 			}
-			if len(script.Statements) != 0 {
+			if len(script.Statements()) != 0 {
 				t.Errorf("emitted %d statement(s), want none:\n%s",
-					len(script.Statements), strings.Join(script.Statements, "\n---\n"))
+					len(script.Statements()), strings.Join(script.Statements(), "\n---\n"))
 			}
 		})
 	}
@@ -417,15 +417,15 @@ func TestColumnEncryptionKeyScriptingLeavesTheHandle(t *testing.T) {
 	ctx, script := WithScript(context.Background())
 	cek := scriptTestCEK()
 
-	if err := cek.AddValueContext(ctx, ColumnEncryptionKeyValue{
+	if err := cek.AddValue(ctx, ColumnEncryptionKeyValue{
 		MasterKeyName: "CMK]2", EncryptionAlgorithm: "RSA_OAEP_256", EncryptedValue: []byte{0x02}}); err != nil {
 		t.Fatalf("AddValue: %v", err)
 	}
-	if err := cek.DropValueContext(ctx, "CMK]1"); err != nil {
+	if err := cek.DropValue(ctx, "CMK]1"); err != nil {
 		t.Fatalf("DropValue: %v", err)
 	}
-	if len(script.Statements) != 2 {
-		t.Fatalf("captured %d statement(s), want 2", len(script.Statements))
+	if len(script.Statements()) != 2 {
+		t.Fatalf("captured %d statement(s), want 2", len(script.Statements()))
 	}
 	if len(cek.Values) != 1 || cek.Values[0].MasterKeyName != "CMK]1" {
 		t.Errorf("Values = %+v, want the unchanged CMK]1 alone", cek.Values)

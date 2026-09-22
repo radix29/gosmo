@@ -28,12 +28,7 @@ type AgentStatus struct {
 }
 
 // AgentInfo reports SQL Server Agent's current run state.
-func (s *Server) AgentInfo() (*AgentStatus, error) {
-	return s.AgentInfoContext(context.Background())
-}
-
-// AgentInfoContext is the context-aware variant of AgentInfo.
-func (s *Server) AgentInfoContext(ctx context.Context) (*AgentStatus, error) {
+func (s *Server) AgentInfo(ctx context.Context) (*AgentStatus, error) {
 	if s.info.IsAzure() {
 		return s.agentInfoAzure(ctx)
 	}
@@ -58,7 +53,7 @@ WHERE  servicename LIKE N'SQL Server Agent%'`
 	return st, nil
 }
 
-// agentInfoAzure answers AgentInfoContext on an Azure engine edition, where
+// agentInfoAzure answers AgentInfo on an Azure engine edition, where
 // sys.dm_server_services returns no rows at all — there is no Windows service
 // to report, and xp_servicecontrol fails with "The specified service does not
 // exist as an installed service" — so the on-prem read falls to its "Unknown"

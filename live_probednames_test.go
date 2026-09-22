@@ -25,9 +25,9 @@ func TestLiveEveryProbedPermissionNameIsOneTheServerDefines(t *testing.T) {
 		t.Fatalf("NewServer: %v", err)
 	}
 
-	caps, err := srv.CapabilitiesContext(ctx)
+	caps, err := srv.Capabilities(ctx)
 	if err != nil {
-		t.Fatalf("CapabilitiesContext: %v", err)
+		t.Fatalf("Capabilities: %v", err)
 	}
 	// VIEW SERVER PERFORMANCE STATE and VIEW SERVER SECURITY STATE are the
 	// two rights SQL Server 2022 split VIEW SERVER STATE into; an older
@@ -52,9 +52,9 @@ func TestLiveEveryProbedPermissionNameIsOneTheServerDefines(t *testing.T) {
 	d, drop := liveScratchDB(t, db, ctx, "gosmo_probednames_live")
 	defer drop()
 
-	dcaps, err := d.CapabilitiesContext(ctx)
+	dcaps, err := d.Capabilities(ctx)
 	if err != nil {
-		t.Fatalf("CapabilitiesContext for %s: %v", d.Name, err)
+		t.Fatalf("Capabilities for %s: %v", d.Name, err)
 	}
 	if !dcaps.Accessible {
 		t.Fatalf("scratch database %s reads inaccessible", d.Name)

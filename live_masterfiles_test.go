@@ -1,8 +1,8 @@
 //go:build livedb
 
-// Live verification of Server.DatabaseFilesContext, the server-scoped file
+// Live verification of Server.DatabaseFiles, the server-scoped file
 // read. Its reason for existing is a state a unit test cannot produce: an
-// OFFLINE database, whose files Database.FilesContext cannot see at all
+// OFFLINE database, whose files Database.Files cannot see at all
 // because its read goes through a USE.
 //
 //	go test -tags livedb . -run TestLiveDatabaseFiles -v \
@@ -26,17 +26,17 @@ func TestLiveDatabaseFilesAgreesWithTheDatabaseScopedRead(t *testing.T) {
 	srv, _, drop := detLiveSetup(t, db, ctx)
 	defer drop()
 
-	dbase, err := srv.DatabaseByNameContext(ctx, detLiveName)
+	dbase, err := srv.DatabaseByName(ctx, detLiveName)
 	if err != nil {
-		t.Fatalf("DatabaseByNameContext: %v", err)
+		t.Fatalf("DatabaseByName: %v", err)
 	}
-	want, err := dbase.FilesContext(ctx)
+	want, err := dbase.Files(ctx)
 	if err != nil {
-		t.Fatalf("FilesContext: %v", err)
+		t.Fatalf("Files: %v", err)
 	}
-	got, err := srv.DatabaseFilesContext(ctx, detLiveName)
+	got, err := srv.DatabaseFiles(ctx, detLiveName)
 	if err != nil {
-		t.Fatalf("DatabaseFilesContext: %v", err)
+		t.Fatalf("DatabaseFiles: %v", err)
 	}
 	if len(got) != len(want) {
 		t.Fatalf("got %d files, want %d", len(got), len(want))
@@ -70,20 +70,20 @@ func TestLiveDatabaseFilesAnswersForAnOfflineDatabase(t *testing.T) {
 	}
 	defer db.ExecContext(ctx, "ALTER DATABASE ["+detLiveName+"] SET ONLINE")
 
-	dbase, err := srv.DatabaseByNameContext(ctx, detLiveName)
+	dbase, err := srv.DatabaseByName(ctx, detLiveName)
 	if err != nil {
-		t.Fatalf("DatabaseByNameContext: %v", err)
+		t.Fatalf("DatabaseByName: %v", err)
 	}
 	if got := dbase.State; got != "OFFLINE" {
 		t.Fatalf("state = %q, want OFFLINE", got)
 	}
-	if _, err := dbase.FilesContext(ctx); err == nil {
-		t.Error("FilesContext succeeded on an OFFLINE database — if the USE ever stops being required, this method has no reason to exist")
+	if _, err := dbase.Files(ctx); err == nil {
+		t.Error("Files succeeded on an OFFLINE database — if the USE ever stops being required, this method has no reason to exist")
 	}
 
-	got, err := srv.DatabaseFilesContext(ctx, detLiveName)
+	got, err := srv.DatabaseFiles(ctx, detLiveName)
 	if err != nil {
-		t.Fatalf("DatabaseFilesContext on an OFFLINE database: %v", err)
+		t.Fatalf("DatabaseFiles on an OFFLINE database: %v", err)
 	}
 	if len(got) != len(files) {
 		t.Fatalf("got %d files, want %d", len(got), len(files))
@@ -110,9 +110,9 @@ func TestLiveDatabaseFilesForAnUnknownDatabaseIsEmpty(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewServer: %v", err)
 	}
-	got, err := srv.DatabaseFilesContext(ctx, "zz_gossms_no_such_database")
+	got, err := srv.DatabaseFiles(ctx, "zz_gossms_no_such_database")
 	if err != nil {
-		t.Fatalf("DatabaseFilesContext: %v", err)
+		t.Fatalf("DatabaseFiles: %v", err)
 	}
 	if len(got) != 0 {
 		t.Errorf("got %d files for a database that does not exist: %+v", len(got), got)

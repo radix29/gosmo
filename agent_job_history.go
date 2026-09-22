@@ -12,12 +12,7 @@ import (
 
 // History returns the execution history (most recent first).
 // Pass limit=0 to use the default of 100 rows.
-func (j *Job) History(limit int) ([]*JobHistoryEntry, error) {
-	return j.HistoryContext(context.Background(), limit)
-}
-
-// HistoryContext is the context-aware variant of History.
-func (j *Job) HistoryContext(ctx context.Context, limit int) ([]*JobHistoryEntry, error) {
+func (j *Job) History(ctx context.Context, limit int) ([]*JobHistoryEntry, error) {
 	if limit <= 0 {
 		limit = 100
 	}
@@ -30,39 +25,24 @@ WHERE  job_id = @p1
 ORDER  BY run_date DESC, run_time DESC`, limit)
 
 	rows, err := j.server.query(ctx, q, j.JobID)
-	if err != nil {
-		return nil, fmt.Errorf("gosmo: history for job %q: %w", j.Name, err)
-	}
-	defer rows.Close()
-
-	var history []*JobHistoryEntry
-	for rows.Next() {
+	return scanRows(rows, err, fmt.Sprintf("history for job %q", j.Name), func(scan func(...any) error) (*JobHistoryEntry, error) {
 		h := &JobHistoryEntry{}
 		var runDate, runTime, runDur int
-		if err := rows.Scan(&runDate, &runTime, &runDur,
+		if err := scan(&runDate, &runTime, &runDur,
 			&h.Outcome, &h.Message, &h.StepID, &h.StepName); err != nil {
-			return nil, fmt.Errorf("gosmo: history for job %q: %w", j.Name, err)
+			return nil, err
 		}
 		h.RunDate = parseSQLAgentDate(runDate, runTime)
 		h.Duration = parseSQLAgentDuration(runDur)
-		history = append(history, h)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("gosmo: history for job %q: %w", j.Name, err)
-	}
-	return history, nil
+		return h, nil
+	})
 }
 
 // JobHistory returns the most recent job-level history entries (step_id =
 // 0, i.e. the overall outcome of each run rather than a single step's)
 // across every job, most recent first. Pass limit=0 for the default of 100
 // rows.
-func (s *Server) JobHistory(limit int) ([]*JobHistoryEntry, error) {
-	return s.JobHistoryContext(context.Background(), limit)
-}
-
-// JobHistoryContext is the context-aware variant of JobHistory.
-func (s *Server) JobHistoryContext(ctx context.Context, limit int) ([]*JobHistoryEntry, error) {
+func (s *Server) JobHistory(ctx context.Context, limit int) ([]*JobHistoryEntry, error) {
 	if limit <= 0 {
 		limit = 100
 	}
@@ -76,27 +56,17 @@ WHERE  h.step_id = 0
 ORDER  BY h.run_date DESC, h.run_time DESC`, limit)
 
 	rows, err := s.query(ctx, q)
-	if err != nil {
-		return nil, fmt.Errorf("gosmo: job history: %w", err)
-	}
-	defer rows.Close()
-
-	var history []*JobHistoryEntry
-	for rows.Next() {
+	return scanRows(rows, err, "job history", func(scan func(...any) error) (*JobHistoryEntry, error) {
 		h := &JobHistoryEntry{}
 		var runDate, runTime, runDur int
-		if err := rows.Scan(&h.JobName, &runDate, &runTime, &runDur,
+		if err := scan(&h.JobName, &runDate, &runTime, &runDur,
 			&h.Outcome, &h.Message, &h.StepID, &h.StepName); err != nil {
-			return nil, fmt.Errorf("gosmo: job history: %w", err)
+			return nil, err
 		}
 		h.RunDate = parseSQLAgentDate(runDate, runTime)
 		h.Duration = parseSQLAgentDuration(runDur)
-		history = append(history, h)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("gosmo: job history: %w", err)
-	}
-	return history, nil
+		return h, nil
+	})
 }
 
 // JobHistoryEntry represents one row from msdb.dbo.sysjobhistory.

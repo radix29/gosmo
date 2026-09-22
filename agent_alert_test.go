@@ -67,13 +67,13 @@ func TestAlertSetJobResponseClearsWithAnEmptyName(t *testing.T) {
 	a := &Alert{server: &Server{}, Name: "Disk full", JobName: "Nightly"}
 	ctx, script := WithScript(context.Background())
 
-	if err := a.SetJobResponseContext(ctx, ""); err != nil {
-		t.Fatalf("SetJobResponseContext under WithScript: %v", err)
+	if err := a.SetJobResponse(ctx, ""); err != nil {
+		t.Fatalf("SetJobResponse under WithScript: %v", err)
 	}
-	if len(script.Statements) != 1 {
-		t.Fatalf("Statements = %d, want 1", len(script.Statements))
+	if len(script.Statements()) != 1 {
+		t.Fatalf("Statements = %d, want 1", len(script.Statements()))
 	}
-	got := script.Statements[0]
+	got := script.Statements()[0]
 	want := "EXEC msdb.dbo.sp_update_alert @name = N'Disk full', @job_name = N''"
 	if got != want {
 		t.Errorf("statement = %q, want %q", got, want)
@@ -88,11 +88,11 @@ func TestAlertSetJobResponseNamesTheJob(t *testing.T) {
 	a := &Alert{server: &Server{}, Name: "Disk full"}
 	ctx, script := WithScript(context.Background())
 
-	if err := a.SetJobResponseContext(ctx, "Nightly O'Brien"); err != nil {
-		t.Fatalf("SetJobResponseContext under WithScript: %v", err)
+	if err := a.SetJobResponse(ctx, "Nightly O'Brien"); err != nil {
+		t.Fatalf("SetJobResponse under WithScript: %v", err)
 	}
 	want := "EXEC msdb.dbo.sp_update_alert @name = N'Disk full', @job_name = N'Nightly O''Brien'"
-	if len(script.Statements) != 1 || script.Statements[0] != want {
-		t.Errorf("Statements = %q, want [%q]", script.Statements, want)
+	if len(script.Statements()) != 1 || script.Statements()[0] != want {
+		t.Errorf("Statements = %q, want [%q]", script.Statements(), want)
 	}
 }

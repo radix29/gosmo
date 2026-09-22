@@ -22,19 +22,16 @@ import (
 // the creation's failure instead of the permission or connection error that
 // actually stopped it.
 //
-// Three not-found conventions exist across the package, and the difference is
+// Two not-found conventions exist across the package, and the difference is
 // deliberate rather than an oversight:
 //
-//   - Most by-name lookups — LoginByName, DatabaseByName, TableByName,
+//   - Every by-name lookup — LoginByName, DatabaseByName, TableByName,
 //     UserByName, RoleByName, JobByName, AlertByName, OperatorByName,
 //     ScheduleByName, ServerRoleByName, ConfigurationByName,
-//     AvailabilityGroupByName, SymmetricKeyByName and the scripter's
-//     view/procedure/function lookups — return an error wrapping ErrNotFound.
-//   - CertificateByName and AsymmetricKeyByName return (nil, nil), because
-//     their callers branch on absence as the ordinary case rather than the
-//     exceptional one. The contract is kept because it is published, and
-//     goes no further: SymmetricKeyByName, the third key family's finder,
-//     follows the rule above.
+//     AvailabilityGroupByName, CertificateByName, AsymmetricKeyByName,
+//     SymmetricKeyByName and the scripter's lookups among them — returns an
+//     error wrapping ErrNotFound. CertificateByName and AsymmetricKeyByName
+//     answered (nil, nil) instead until 2026-09-22.
 //   - AgentInfo reports an unreachable Agent as a populated value
 //     (StatusText "Unknown"), not an error.
 //

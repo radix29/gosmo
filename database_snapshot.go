@@ -13,7 +13,6 @@ package gosmo
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -80,46 +79,21 @@ func scanDatabaseSnapshot(srv *Server, scan func(...any) error) (*DatabaseSnapsh
 }
 
 // DatabaseSnapshots returns every database snapshot on the server.
-func (s *Server) DatabaseSnapshots() ([]*DatabaseSnapshot, error) {
-	return s.DatabaseSnapshotsContext(context.Background())
-}
-
-// DatabaseSnapshotsContext is the context-aware variant of DatabaseSnapshots.
-func (s *Server) DatabaseSnapshotsContext(ctx context.Context) ([]*DatabaseSnapshot, error) {
+func (s *Server) DatabaseSnapshots(ctx context.Context) ([]*DatabaseSnapshot, error) {
 	const q = databaseSnapshotSelect + `
 ORDER  BY d.name`
 
 	rows, err := s.query(ctx, q)
-	if err != nil {
-		return nil, fmt.Errorf("gosmo: list database snapshots: %w", err)
-	}
-	defer rows.Close()
-
-	var snaps []*DatabaseSnapshot
-	for rows.Next() {
-		snap, err := scanDatabaseSnapshot(s, rows.Scan)
-		if err != nil {
-			return nil, fmt.Errorf("gosmo: list database snapshots: %w", err)
-		}
-		snaps = append(snaps, snap)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("gosmo: list database snapshots: %w", err)
-	}
-	return snaps, nil
+	return scanRows(rows, err, "list database snapshots", func(scan func(...any) error) (*DatabaseSnapshot, error) {
+		return scanDatabaseSnapshot(s, scan)
+	})
 }
 
 // DatabaseSnapshotByName returns one snapshot, or a not-found error
 // (errors.Is ErrNotFound) when the server has no snapshot by that name. A
 // database that exists but is not a snapshot is not found either — the
 // predicate is part of what is being asked.
-func (s *Server) DatabaseSnapshotByName(name string) (*DatabaseSnapshot, error) {
-	return s.DatabaseSnapshotByNameContext(context.Background(), name)
-}
-
-// DatabaseSnapshotByNameContext is the context-aware variant of
-// DatabaseSnapshotByName.
-func (s *Server) DatabaseSnapshotByNameContext(ctx context.Context, name string) (*DatabaseSnapshot, error) {
+func (s *Server) DatabaseSnapshotByName(ctx context.Context, name string) (*DatabaseSnapshot, error) {
 	var snap *DatabaseSnapshot
 	err := s.queryRow(ctx, func(row *sql.Row) error {
 		var err error
@@ -127,44 +101,19 @@ func (s *Server) DatabaseSnapshotByNameContext(ctx context.Context, name string)
 		return err
 	}, databaseSnapshotSelect+`
    AND d.name = @p1`, name)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, notFoundf("gosmo: database snapshot %q not found", name)
-	}
-	if err != nil {
-		return nil, fmt.Errorf("gosmo: read database snapshot %q: %w", name, err)
-	}
-	return snap, nil
+	return foundRow(snap, err, notFoundf("gosmo: database snapshot %q not found", name), fmt.Sprintf("read database snapshot %q", name))
 }
 
 // SnapshotsOf returns the snapshots taken of one source database.
-func (s *Server) SnapshotsOf(database string) ([]*DatabaseSnapshot, error) {
-	return s.SnapshotsOfContext(context.Background(), database)
-}
-
-// SnapshotsOfContext is the context-aware variant of SnapshotsOf.
-func (s *Server) SnapshotsOfContext(ctx context.Context, database string) ([]*DatabaseSnapshot, error) {
+func (s *Server) SnapshotsOf(ctx context.Context, database string) ([]*DatabaseSnapshot, error) {
 	const q = databaseSnapshotSelect + `
    AND d.source_database_id = DB_ID(@p1)
 ORDER  BY d.name`
 
 	rows, err := s.query(ctx, q, database)
-	if err != nil {
-		return nil, fmt.Errorf("gosmo: list snapshots of %q: %w", database, err)
-	}
-	defer rows.Close()
-
-	var snaps []*DatabaseSnapshot
-	for rows.Next() {
-		snap, err := scanDatabaseSnapshot(s, rows.Scan)
-		if err != nil {
-			return nil, fmt.Errorf("gosmo: list snapshots of %q: %w", database, err)
-		}
-		snaps = append(snaps, snap)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("gosmo: list snapshots of %q: %w", database, err)
-	}
-	return snaps, nil
+	return scanRows(rows, err, fmt.Sprintf("list snapshots of %q", database), func(scan func(...any) error) (*DatabaseSnapshot, error) {
+		return scanDatabaseSnapshot(s, scan)
+	})
 }
 
 // ============================================================
@@ -196,26 +145,20 @@ type CreateDatabaseSnapshotRequest struct {
 
 	// Files is one entry per ROWS file in the source. Leave it nil to have
 	// the paths defaulted from the source's own files — see
-	// SnapshotFileDefaultsContext, which is what the nil case calls.
+	// SnapshotFileDefaults, which is what the nil case calls.
 	Files []SnapshotFileSpec
 }
 
 // SnapshotFileDefaults returns one SnapshotFileSpec per data file of the
 // source database, with each sparse file placed beside the source file it
 // shadows and suffixed with the snapshot name.
-func (s *Server) SnapshotFileDefaults(source, snapshotName string) ([]SnapshotFileSpec, error) {
-	return s.SnapshotFileDefaultsContext(context.Background(), source, snapshotName)
-}
-
-// SnapshotFileDefaultsContext is the context-aware variant of
-// SnapshotFileDefaults.
 //
 // Only ROWS files are returned. A snapshot has no transaction log and no
 // FILESTREAM container, and naming either in the CREATE DATABASE is an error
-// — "the file … cannot be added to a database snapshot" — which is the usual
-// way a hand-built snapshot statement fails.
-func (s *Server) SnapshotFileDefaultsContext(ctx context.Context, source, snapshotName string) ([]SnapshotFileSpec, error) {
-	files, err := s.DatabaseFilesContext(ctx, source)
+// — "the file … cannot be added to a database snapshot" — which is the
+// usual way a hand-built snapshot statement fails.
+func (s *Server) SnapshotFileDefaults(ctx context.Context, source, snapshotName string) ([]SnapshotFileSpec, error) {
+	files, err := s.DatabaseFiles(ctx, source)
 	if err != nil {
 		return nil, err
 	}
@@ -255,18 +198,11 @@ func snapshotFilePath(physical, snapshotName string) string {
 }
 
 // CreateDatabaseSnapshot creates a database snapshot.
-func (s *Server) CreateDatabaseSnapshot(req CreateDatabaseSnapshotRequest) (*DatabaseSnapshot, error) {
-	return s.CreateDatabaseSnapshotContext(context.Background(), req)
-}
-
-// CreateDatabaseSnapshotContext is the context-aware variant of
-// CreateDatabaseSnapshot.
 //
-// Under a WithScript context it returns a name-only handle rather than
-// reading the snapshot back: nothing ran, so there is nothing to read, and
-// the by-name lookup would be a real query against a database that does not
-// exist.
-func (s *Server) CreateDatabaseSnapshotContext(ctx context.Context, req CreateDatabaseSnapshotRequest) (*DatabaseSnapshot, error) {
+// Under a WithScript context it returns a name-only handle rather than reading
+// the snapshot back: nothing ran, so there is nothing to read, and the by-name
+// lookup would be a real query against a database that does not exist.
+func (s *Server) CreateDatabaseSnapshot(ctx context.Context, req CreateDatabaseSnapshotRequest) (*DatabaseSnapshot, error) {
 	if req.Name == "" {
 		return nil, fmt.Errorf("gosmo: create database snapshot: name is required")
 	}
@@ -277,7 +213,7 @@ func (s *Server) CreateDatabaseSnapshotContext(ctx context.Context, req CreateDa
 	files := req.Files
 	if len(files) == 0 {
 		var err error
-		files, err = s.SnapshotFileDefaultsContext(ctx, req.SourceDatabase, req.Name)
+		files, err = s.SnapshotFileDefaults(ctx, req.SourceDatabase, req.Name)
 		if err != nil {
 			return nil, fmt.Errorf("gosmo: create database snapshot %q: %w", req.Name, err)
 		}
@@ -297,13 +233,13 @@ func (s *Server) CreateDatabaseSnapshotContext(ctx context.Context, req CreateDa
 	}
 	fmt.Fprintf(&sb, "\nAS SNAPSHOT OF %s", QuoteName(req.SourceDatabase))
 
-	if err := s.execContext(ctx, sb.String()); err != nil {
+	if err := s.exec(ctx, sb.String()); err != nil {
 		return nil, fmt.Errorf("gosmo: create database snapshot %q of %q: %w", req.Name, req.SourceDatabase, err)
 	}
 	if Scripting(ctx) {
 		return &DatabaseSnapshot{server: s, Name: req.Name, SourceDatabase: req.SourceDatabase}, nil
 	}
-	return s.DatabaseSnapshotByNameContext(ctx, req.Name)
+	return s.DatabaseSnapshotByName(ctx, req.Name)
 }
 
 // ============================================================
@@ -311,12 +247,6 @@ func (s *Server) CreateDatabaseSnapshotContext(ctx context.Context, req CreateDa
 // ============================================================
 
 // RestoreFromSnapshot reverts a database to one of its snapshots.
-func (s *Server) RestoreFromSnapshot(database, snapshot string) error {
-	return s.RestoreFromSnapshotContext(context.Background(), database, snapshot)
-}
-
-// RestoreFromSnapshotContext is the context-aware variant of
-// RestoreFromSnapshot.
 //
 // The server refuses the revert unless the source has exactly one snapshot —
 // every other snapshot of the same database has to be dropped first — and
@@ -326,33 +256,27 @@ func (s *Server) RestoreFromSnapshot(database, snapshot string) error {
 //
 // The snapshot is named as a *string literal*, not an identifier: the
 // FROM DATABASE_SNAPSHOT clause takes a name, not a bracketed reference.
-func (s *Server) RestoreFromSnapshotContext(ctx context.Context, database, snapshot string) error {
+func (s *Server) RestoreFromSnapshot(ctx context.Context, database, snapshot string) error {
 	stmt := fmt.Sprintf("RESTORE DATABASE %s FROM DATABASE_SNAPSHOT = %s",
 		QuoteName(database), QuoteLiteral(snapshot))
-	if err := s.execContext(ctx, stmt); err != nil {
+	if err := s.exec(ctx, stmt); err != nil {
 		return fmt.Errorf("gosmo: restore %q from snapshot %q: %w", database, snapshot, err)
 	}
 	return nil
 }
 
 // Restore reverts the snapshot's source database to it.
-func (s *DatabaseSnapshot) Restore() error { return s.RestoreContext(context.Background()) }
-
-// RestoreContext is the context-aware variant of Restore.
-func (s *DatabaseSnapshot) RestoreContext(ctx context.Context) error {
+func (s *DatabaseSnapshot) Restore(ctx context.Context) error {
 	if s.SourceDatabase == "" {
 		return fmt.Errorf("gosmo: restore from snapshot %q: its source database is gone", s.Name)
 	}
-	return s.server.RestoreFromSnapshotContext(ctx, s.SourceDatabase, s.Name)
+	return s.server.RestoreFromSnapshot(ctx, s.SourceDatabase, s.Name)
 }
 
 // Drop drops the snapshot. Dropping a snapshot deletes its sparse files and
 // leaves the source database untouched.
-func (s *DatabaseSnapshot) Drop() error { return s.DropContext(context.Background()) }
-
-// DropContext is the context-aware variant of Drop.
-func (s *DatabaseSnapshot) DropContext(ctx context.Context) error {
-	if err := s.server.execContext(ctx, "DROP DATABASE "+QuoteName(s.Name)); err != nil {
+func (s *DatabaseSnapshot) Drop(ctx context.Context) error {
+	if err := s.server.exec(ctx, "DROP DATABASE "+QuoteName(s.Name)); err != nil {
 		return fmt.Errorf("gosmo: drop database snapshot %q: %w", s.Name, err)
 	}
 	return nil

@@ -12,11 +12,11 @@ func TestServerTriggerWriteStatements(t *testing.T) {
 		act  func(*ServerTrigger, context.Context) error
 		want string
 	}{
-		{"enable", func(tr *ServerTrigger, ctx context.Context) error { return tr.EnableContext(ctx) },
+		{"enable", func(tr *ServerTrigger, ctx context.Context) error { return tr.Enable(ctx) },
 			"ENABLE TRIGGER [ddl_audit] ON ALL SERVER"},
-		{"disable", func(tr *ServerTrigger, ctx context.Context) error { return tr.DisableContext(ctx) },
+		{"disable", func(tr *ServerTrigger, ctx context.Context) error { return tr.Disable(ctx) },
 			"DISABLE TRIGGER [ddl_audit] ON ALL SERVER"},
-		{"drop", func(tr *ServerTrigger, ctx context.Context) error { return tr.DropContext(ctx) },
+		{"drop", func(tr *ServerTrigger, ctx context.Context) error { return tr.Drop(ctx) },
 			"DROP TRIGGER [ddl_audit] ON ALL SERVER"},
 	}
 	for _, tc := range cases {
@@ -26,11 +26,11 @@ func TestServerTriggerWriteStatements(t *testing.T) {
 			if err := tc.act(tr, ctx); err != nil {
 				t.Fatalf("%s: %v", tc.name, err)
 			}
-			if len(col.Statements) != 1 {
-				t.Fatalf("got %d statements, want 1: %v", len(col.Statements), col.Statements)
+			if len(col.Statements()) != 1 {
+				t.Fatalf("got %d statements, want 1: %v", len(col.Statements()), col.Statements())
 			}
-			if col.Statements[0] != tc.want {
-				t.Errorf("got:\n%s\nwant:\n%s", col.Statements[0], tc.want)
+			if col.Statements()[0] != tc.want {
+				t.Errorf("got:\n%s\nwant:\n%s", col.Statements()[0], tc.want)
 			}
 		})
 	}
@@ -40,11 +40,11 @@ func TestServerTriggerWriteStatements(t *testing.T) {
 // statement addresses a different (or no) trigger.
 func TestServerTriggerNameIsQuoted(t *testing.T) {
 	ctx, col := WithScript(context.Background())
-	if err := (&Server{}).ServerTriggerRef("odd]name").DropContext(ctx); err != nil {
-		t.Fatalf("DropContext: %v", err)
+	if err := (&Server{}).ServerTriggerRef("odd]name").Drop(ctx); err != nil {
+		t.Fatalf("Drop: %v", err)
 	}
-	if want := "DROP TRIGGER [odd]]name] ON ALL SERVER"; col.Statements[0] != want {
-		t.Errorf("got %q, want %q", col.Statements[0], want)
+	if want := "DROP TRIGGER [odd]]name] ON ALL SERVER"; col.Statements()[0] != want {
+		t.Errorf("got %q, want %q", col.Statements()[0], want)
 	}
 }
 
@@ -53,8 +53,8 @@ func TestServerTriggerNameIsQuoted(t *testing.T) {
 func TestServerTriggerEnabledFlagIsNotSetWhileScripting(t *testing.T) {
 	tr := (&Server{}).ServerTriggerRef("ddl_audit")
 	ctx, _ := WithScript(context.Background())
-	if err := tr.EnableContext(ctx); err != nil {
-		t.Fatalf("EnableContext: %v", err)
+	if err := tr.Enable(ctx); err != nil {
+		t.Fatalf("Enable: %v", err)
 	}
 	if tr.IsEnabled {
 		t.Error("IsEnabled was set from a scripted (not executed) ENABLE")

@@ -23,9 +23,9 @@ func TestLiveReadLogFiltered(t *testing.T) {
 	defer done()
 	s := &Server{db: db}
 
-	all, err := s.ReadLogContext(ctx, ErrorLogSQLServer, 0)
+	all, err := s.ReadLog(ctx, ErrorLogSQLServer, 0)
 	if err != nil {
-		t.Fatalf("ReadLogContext: %v", err)
+		t.Fatalf("ReadLog: %v", err)
 	}
 	if len(all) == 0 {
 		t.Skip("the current error log is empty")
@@ -44,9 +44,9 @@ func TestLiveReadLogFiltered(t *testing.T) {
 		t.Skipf("%q matches %d of %d entries — no narrowing to observe", needle, wantCount, len(all))
 	}
 
-	got, err := s.ReadLogFilteredContext(ctx, ErrorLogSQLServer, 0, LogSearch{Text1: needle})
+	got, err := s.ReadLogFiltered(ctx, ErrorLogSQLServer, 0, LogSearch{Text1: needle})
 	if err != nil {
-		t.Fatalf("ReadLogFilteredContext (text): %v", err)
+		t.Fatalf("ReadLogFiltered (text): %v", err)
 	}
 	if len(got) != wantCount {
 		t.Errorf("filtered read returned %d entries, want the %d that match %q locally",
@@ -68,9 +68,9 @@ func TestLiveReadLogFiltered(t *testing.T) {
 		}
 	}
 	from := newest.Add(-time.Hour)
-	byDate, err := s.ReadLogFilteredContext(ctx, ErrorLogSQLServer, 0, LogSearch{From: from})
+	byDate, err := s.ReadLogFiltered(ctx, ErrorLogSQLServer, 0, LogSearch{From: from})
 	if err != nil {
-		t.Fatalf("ReadLogFilteredContext (dates): %v", err)
+		t.Fatalf("ReadLogFiltered (dates): %v", err)
 	}
 	for _, e := range byDate {
 		if e.Date.Before(from) {
@@ -84,10 +84,10 @@ func TestLiveReadLogFiltered(t *testing.T) {
 
 	// Both strings together are AND, not OR: a second string that cannot
 	// co-occur must narrow to nothing rather than widening the result.
-	andRead, err := s.ReadLogFilteredContext(ctx, ErrorLogSQLServer, 0,
+	andRead, err := s.ReadLogFiltered(ctx, ErrorLogSQLServer, 0,
 		LogSearch{Text1: needle, Text2: "zzz_no_such_text_zzz"})
 	if err != nil {
-		t.Fatalf("ReadLogFilteredContext (two strings): %v", err)
+		t.Fatalf("ReadLogFiltered (two strings): %v", err)
 	}
 	if len(andRead) != 0 {
 		t.Errorf("two search strings returned %d entries; they are AND-ed, so an impossible pair matches nothing", len(andRead))

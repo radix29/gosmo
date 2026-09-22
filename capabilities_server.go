@@ -226,16 +226,11 @@ func (c *Capabilities) PermitsOnAvailabilityGroup(group, name string) bool {
 }
 
 // Capabilities reports what the connected login may do at the server scope.
-func (s *Server) Capabilities() (*Capabilities, error) {
-	return s.CapabilitiesContext(context.Background())
-}
-
-// CapabilitiesContext is the context-aware variant of Capabilities.
 //
 // One round trip: role membership and permission states come back as one
 // result set of (kind, name, answer) rows, read by name rather than by column
 // position, so adding a name to either list cannot shift the answers after it.
-func (s *Server) CapabilitiesContext(ctx context.Context) (*Capabilities, error) {
+func (s *Server) Capabilities(ctx context.Context) (*Capabilities, error) {
 	q, args := capabilityQuery(
 		"SELECT 'R', n.v, IS_SRVROLEMEMBER(n.v)", ProbedServerRoles,
 		"SELECT 'P', n.v, HAS_PERMS_BY_NAME(NULL, NULL, n.v)", ProbedServerPermissions,

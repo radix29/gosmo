@@ -77,9 +77,9 @@ func TestLiveSecurableCapabilitiesMatchWhatTheServerEnforces(t *testing.T) {
 	defer pool.Close()
 	// Not NewServer, for live_schemacaps_test.go's reason: loadInfo reads
 	// server-scope DMVs this login has no rights to.
-	caps, err := (&Server{db: pool}).DatabaseRef(d.Name).CapabilitiesContext(ctx)
+	caps, err := (&Server{db: pool}).DatabaseRef(d.Name).Capabilities(ctx)
 	if err != nil {
-		t.Fatalf("CapabilitiesContext as %s: %v", login, err)
+		t.Fatalf("Capabilities as %s: %v", login, err)
 	}
 
 	for _, tc := range []struct {

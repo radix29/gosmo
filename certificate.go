@@ -3,7 +3,6 @@ package gosmo
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -102,43 +101,20 @@ LEFT   JOIN sys.database_principals p ON p.principal_id = c.principal_id`
 
 // Certificates returns the database's certificates, excluding the internal
 // ones SQL Server creates for itself (named ##...##).
-func (d *Database) Certificates() ([]*Certificate, error) {
-	return d.CertificatesContext(context.Background())
-}
-
-// CertificatesContext is the context-aware variant of Certificates.
-func (d *Database) CertificatesContext(ctx context.Context) ([]*Certificate, error) {
+func (d *Database) Certificates(ctx context.Context) ([]*Certificate, error) {
 	rows, err := d.query(ctx, certificateSelect+`
 WHERE  c.name NOT LIKE '##%'
 ORDER  BY c.name`)
-	if err != nil {
-		return nil, fmt.Errorf("gosmo: list certificates in %q: %w", d.Name, err)
-	}
-	defer rows.Close()
-
-	var out []*Certificate
-	for rows.Next() {
-		c, err := scanCertificate(d, rows.Scan)
-		if err != nil {
-			return nil, fmt.Errorf("gosmo: list certificates in %q: %w", d.Name, err)
-		}
-		out = append(out, c)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("gosmo: list certificates in %q: %w", d.Name, err)
-	}
-	return out, nil
+	return scanRows(rows, err, fmt.Sprintf("list certificates in %q", d.Name), func(scan func(...any) error) (*Certificate, error) {
+		return scanCertificate(d, scan)
+	})
 }
 
-// CertificateByName returns one certificate, or (nil, nil) when the database
-// has none by that name — an absent certificate is the ordinary case for a
-// caller about to create one, not an error.
-func (d *Database) CertificateByName(name string) (*Certificate, error) {
-	return d.CertificateByNameContext(context.Background(), name)
-}
-
-// CertificateByNameContext is the context-aware variant of CertificateByName.
-func (d *Database) CertificateByNameContext(ctx context.Context, name string) (*Certificate, error) {
+// CertificateByName returns one certificate, or an error wrapping
+// ErrNotFound when the database has none by that name. Until 2026-09-22 it
+// answered absence with (nil, nil); a caller about to create a certificate
+// branches on errors.Is(err, ErrNotFound) instead.
+func (d *Database) CertificateByName(ctx context.Context, name string) (*Certificate, error) {
 	var c *Certificate
 	err := d.queryRow(ctx, func(row *sql.Row) error {
 		var err error
@@ -146,20 +122,8 @@ func (d *Database) CertificateByNameContext(ctx context.Context, name string) (*
 		return err
 	}, certificateSelect+`
 WHERE  c.name = @p1`, name)
-	// errors.Is, not ==, and it matters here more than at the twenty sites that
-	// already use it: this is the one lookup whose not-found answer is
-	// (nil, nil). Database.queryRow already wraps some of its failures
-	// (fmt.Errorf on the USE), so a bare comparison that stopped matching
-	// would silently turn "no such certificate" into an error and send
-	// callers that branch on cert == nil down the wrong path — the endpoint
-	// pipeline creates a certificate on exactly that branch.
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, fmt.Errorf("gosmo: read certificate %q in %q: %w", name, d.Name, err)
-	}
-	return c, nil
+	return foundRow(c, err, notFoundf("gosmo: certificate %s not found in %q", quoteIdent(name), d.Name),
+		fmt.Sprintf("read certificate %q in %q", name, d.Name))
 }
 
 func scanCertificate(d *Database, scan func(...any) error) (*Certificate, error) {
@@ -194,12 +158,7 @@ func (d *Database) CertificateRef(name string) *Certificate {
 // CreateCertificate's FromBinary takes, and the whole of what one instance
 // needs to give another to authenticate it. The private key is not included
 // and cannot be obtained this way.
-func (c *Certificate) Encoded() ([]byte, error) {
-	return c.EncodedContext(context.Background())
-}
-
-// EncodedContext is the context-aware variant of Encoded.
-func (c *Certificate) EncodedContext(ctx context.Context) ([]byte, error) {
+func (c *Certificate) Encoded(ctx context.Context) ([]byte, error) {
 	var raw []byte
 	err := c.db.queryRow(ctx, func(row *sql.Row) error {
 		return row.Scan(&raw)
@@ -281,12 +240,7 @@ func (spec CertificateSpec) createCertificateStatement() (string, error) {
 }
 
 // CreateCertificate creates a certificate in the database.
-func (d *Database) CreateCertificate(spec CertificateSpec) error {
-	return d.CreateCertificateContext(context.Background(), spec)
-}
-
-// CreateCertificateContext is the context-aware variant of CreateCertificate.
-func (d *Database) CreateCertificateContext(ctx context.Context, spec CertificateSpec) error {
+func (d *Database) CreateCertificate(ctx context.Context, spec CertificateSpec) error {
 	stmt, err := spec.createCertificateStatement()
 	if err != nil {
 		return fmt.Errorf("gosmo: create certificate in %q: %w", d.Name, err)
@@ -298,10 +252,7 @@ func (d *Database) CreateCertificateContext(ctx context.Context, spec Certificat
 }
 
 // Drop deletes the certificate.
-func (c *Certificate) Drop() error { return c.DropContext(context.Background()) }
-
-// DropContext is the context-aware variant of Drop.
-func (c *Certificate) DropContext(ctx context.Context) error {
+func (c *Certificate) Drop(ctx context.Context) error {
 	if _, err := c.db.exec(ctx, "DROP CERTIFICATE "+quoteIdent(c.Name)); err != nil {
 		return fmt.Errorf("gosmo: drop certificate %q in %q: %w", c.Name, c.db.Name, err)
 	}
@@ -351,12 +302,7 @@ func (c *Certificate) backupStatement(spec CertificateBackupSpec) (string, error
 // the server with BACKUP CERTIFICATE. The files it writes are readable only
 // by its own service account. A private-key backup sets PvtKeyLastBackupDate; the
 // receiver is not updated.
-func (c *Certificate) Backup(spec CertificateBackupSpec) error {
-	return c.BackupContext(context.Background(), spec)
-}
-
-// BackupContext is the context-aware variant of Backup.
-func (c *Certificate) BackupContext(ctx context.Context, spec CertificateBackupSpec) error {
+func (c *Certificate) Backup(ctx context.Context, spec CertificateBackupSpec) error {
 	stmt, err := c.backupStatement(spec)
 	if err != nil {
 		return fmt.Errorf("gosmo: back up certificate %q in %q: %w", c.Name, c.db.Name, err)
@@ -371,12 +317,7 @@ func (c *Certificate) BackupContext(ctx context.Context, spec CertificateBackupS
 // certificate — ALTER CERTIFICATE ... REMOVE PRIVATE KEY. It cannot be undone
 // short of re-importing the key from a backup: nothing the certificate signed
 // or encrypts can be signed or decrypted by it afterwards.
-func (c *Certificate) RemovePrivateKey() error {
-	return c.RemovePrivateKeyContext(context.Background())
-}
-
-// RemovePrivateKeyContext is the context-aware variant of RemovePrivateKey.
-func (c *Certificate) RemovePrivateKeyContext(ctx context.Context) error {
+func (c *Certificate) RemovePrivateKey(ctx context.Context) error {
 	if _, err := c.db.exec(ctx, "ALTER CERTIFICATE "+quoteIdent(c.Name)+" REMOVE PRIVATE KEY"); err != nil {
 		return fmt.Errorf("gosmo: remove private key of certificate %q in %q: %w", c.Name, c.db.Name, err)
 	}
@@ -387,12 +328,7 @@ func (c *Certificate) RemovePrivateKeyContext(ctx context.Context) error {
 // ChangeOwner transfers the certificate to another database principal with
 // ALTER AUTHORIZATION. SQL Server drops every explicit permission on the
 // certificate as it does so (verified 2026-09-22 on 13 and 17).
-func (c *Certificate) ChangeOwner(newOwner string) error {
-	return c.ChangeOwnerContext(context.Background(), newOwner)
-}
-
-// ChangeOwnerContext is the context-aware variant of ChangeOwner.
-func (c *Certificate) ChangeOwnerContext(ctx context.Context, newOwner string) error {
+func (c *Certificate) ChangeOwner(ctx context.Context, newOwner string) error {
 	q := "ALTER AUTHORIZATION ON CERTIFICATE::" + quoteIdent(c.Name) + " TO " + quoteIdent(newOwner)
 	if _, err := c.db.exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: change certificate %q owner to %q in %q: %w", c.Name, newOwner, c.db.Name, err)
@@ -415,12 +351,7 @@ func (c *Certificate) ChangeOwnerContext(ctx context.Context, newOwner string) e
 // which SQL Server encrypts by the service master key on creation. What stays
 // invisible to such a principal is a master key whose service-master-key
 // encryption was dropped; that one still reads false.
-func (d *Database) HasMasterKey() (bool, error) {
-	return d.HasMasterKeyContext(context.Background())
-}
-
-// HasMasterKeyContext is the context-aware variant of HasMasterKey.
-func (d *Database) HasMasterKeyContext(ctx context.Context) (bool, error) {
+func (d *Database) HasMasterKey(ctx context.Context) (bool, error) {
 	var n int
 	err := d.queryRow(ctx, func(row *sql.Row) error {
 		return row.Scan(&n)
@@ -439,12 +370,7 @@ func (d *Database) HasMasterKeyContext(ctx context.Context) (bool, error) {
 // what lets SQL Server open it without the password at startup. Losing that —
 // a restore onto another instance, or a service master key that no longer
 // decrypts — leaves the password as the only way in, so it is worth keeping.
-func (d *Database) CreateMasterKey(password string) error {
-	return d.CreateMasterKeyContext(context.Background(), password)
-}
-
-// CreateMasterKeyContext is the context-aware variant of CreateMasterKey.
-func (d *Database) CreateMasterKeyContext(ctx context.Context, password string) error {
+func (d *Database) CreateMasterKey(ctx context.Context, password string) error {
 	if password == "" {
 		return fmt.Errorf("gosmo: create master key in %q: empty password", d.Name)
 	}

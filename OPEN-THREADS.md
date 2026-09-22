@@ -72,6 +72,45 @@ execution, not on a preference.
 Restore's URL-side cases, and the dialog behaviour around backup history, are
 gossms's: `docs/decisions.md` § Azure SQL Managed Instance.
 
+## Closing connections leaves a STANDBY database's readers alone
+
+`RestoreOptions.CloseExistingConnections` sets SINGLE_USER only on a database
+that is online and not in standby: a STANDBY database refuses the ALTER, and a
+refusal in the batch would abort the RESTORE behind it (a RESTORING one refuses
+it too, Msg 5052, verified live 2026-09-22). So a log restore over a STANDBY
+database with readers connected still fails with "Exclusive access could not
+be obtained" — the log-shipping secondary case. `killDatabaseSessionsBatch`
+would close them, and is what a Managed Instance already gets; it was not
+switched on for standby here without a live run with a parked reader. The
+MI KILL form itself has not executed either, since a Managed Instance restores
+`FROM URL` only (see above).
+
+## Scripter fidelity: what `ScriptTable` still does not recreate
+
+The 2026-09-22 pass (gossms review plan Q2) made `ScriptTable` keep every
+feature listed in `ARCHITECTURE.md` § Scripter. Knowingly still missing, each
+of which recreates a *different* table rather than failing:
+
+- **Always Encrypted columns** — no `ENCRYPTED WITH (…)`; the column is
+  recreated in plaintext.
+- **FILESTREAM** — no `FILESTREAM` column attribute and no `FILESTREAM_ON`;
+  `TEXTIMAGE_ON` is not emitted either.
+- **Ledger tables** (2022+) and the `generated_always_type` values above 2
+  (transaction-id / sequence-number columns): not emitted; `LEDGER = ON` is
+  not read.
+- **Memory-optimized tables**: no `MEMORY_OPTIMIZED`/`DURABILITY`, and hash
+  indexes script as B-trees.
+- **Per-partition compression**: an index's compression is its first
+  partition's.
+- **XML and spatial indexes** — skipped with a comment, as before.
+- A disabled **clustered** index is recreated and then disabled, as the
+  source is — which takes the replayed table offline, faithfully.
+
+`Parameter.TypeString` shares the `datetime2(0)` fix but not the alias-type
+qualification: `sys.parameters`' type is still rendered unqualified.
+`PartitionFunction.Boundaries` is split on `,`, so a string boundary
+containing one is mis-read.
+
 ## Keys `FROM PROVIDER` have never executed
 
 `AsymmetricKeySpec.FromProvider` and `SymmetricKeySpec.FromProvider`
@@ -91,9 +130,9 @@ until seen.
 Every write path in the library now has a `WithScript` test pinning the exact
 statement it emits — the 2026-09-17 sweep took the zero-coverage count from 86
 to 0 — with two exceptions, both in `login.go`:
-`Login.MapToDatabaseContext` and `Login.UnmapFromDatabaseContext`. Each reads
-the catalog before it writes (`DatabaseByNameContext`, and for the unmap
-`UserMappingsContext` on top), and a read is exactly what `WithScript` cannot
+`Login.MapToDatabase` and `Login.UnmapFromDatabase`. Each reads
+the catalog before it writes (`DatabaseByName`, and for the unmap
+`UserMappings` on top), and a read is exactly what `WithScript` cannot
 serve: nothing ran, so there is nothing to read back. They stay live-only, and
 `live_*` is where a regression in them will show.
 
@@ -112,10 +151,10 @@ code uses proves nothing.
 
 `database_trigger.go` and `server_trigger.go` duplicate roughly thirty lines:
 `scanDatabaseTrigger`/`scanServerTrigger` are twelve identical lines apart from
-the receiver, and the `Enable`/`EnableContext`/`Disable`/`DisableContext`/
+the receiver, and the `Enable`/`Disable`/
 `setEnabled` block below each differs only in the scope the statement targets
 (`ON DATABASE` versus `ON ALL SERVER`) and in which exec helper it reaches
-(`db.exec` versus `server.execContext`).
+(`db.exec` versus `server.exec`).
 
 Reviewed 2026-09-18 and **deliberately left duplicated.** Unifying it needs
 either generics over two receivers with different `db`/`server` fields, or a

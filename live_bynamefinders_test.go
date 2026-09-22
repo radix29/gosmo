@@ -1,11 +1,11 @@
 //go:build livedb
 
 // Live verification of the by-name finders added alongside the bulk
-// listings, in two batches: PartitionFunctionByNameContext,
-// PartitionSchemeByNameContext, SecurityPolicyByNameContext,
-// ColumnMasterKeyByNameContext and ColumnEncryptionKeyByNameContext, then
-// SchemaByNameContext, IndexByNameContext, StatisticByNameContext,
-// ForeignKeyByNameContext and TableChangeTrackingForContext.
+// listings, in two batches: PartitionFunctionByName,
+// PartitionSchemeByName, SecurityPolicyByName,
+// ColumnMasterKeyByName and ColumnEncryptionKeyByName, then
+// SchemaByName, IndexByName, StatisticByName,
+// ForeignKeyByName and TableChangeTrackingFor.
 //
 // Only the server can say whether these queries run at all, and whether each
 // returns the same object its listing does — the point of adding them was to
@@ -48,9 +48,9 @@ func liveScratchDB(t *testing.T, db *sql.DB, ctx context.Context, name string) (
 	if err != nil {
 		t.Fatalf("NewServer: %v", err)
 	}
-	d, err := srv.DatabaseByNameContext(ctx, name)
+	d, err := srv.DatabaseByName(ctx, name)
 	if err != nil {
-		t.Fatalf("DatabaseByNameContext %s: %v", name, err)
+		t.Fatalf("DatabaseByName %s: %v", name, err)
 	}
 	return d, func() {
 		c := context.Background()
@@ -90,14 +90,14 @@ func TestLiveByNameFindersMatchTheirListings(t *testing.T) {
 	)
 
 	t.Run("PartitionFunction", func(t *testing.T) {
-		list, err := d.PartitionFunctionsContext(ctx)
+		list, err := d.PartitionFunctions(ctx)
 		if err != nil {
 			t.Fatalf("list: %v", err)
 		}
 		if len(list) != 1 {
 			t.Fatalf("listing returned %d partition functions, want 1", len(list))
 		}
-		got, err := d.PartitionFunctionByNameContext(ctx, "gosmo_pf")
+		got, err := d.PartitionFunctionByName(ctx, "gosmo_pf")
 		if err != nil {
 			t.Fatalf("by name: %v", err)
 		}
@@ -113,14 +113,14 @@ func TestLiveByNameFindersMatchTheirListings(t *testing.T) {
 	})
 
 	t.Run("PartitionScheme", func(t *testing.T) {
-		list, err := d.PartitionSchemesContext(ctx)
+		list, err := d.PartitionSchemes(ctx)
 		if err != nil {
 			t.Fatalf("list: %v", err)
 		}
 		if len(list) != 1 {
 			t.Fatalf("listing returned %d partition schemes, want 1", len(list))
 		}
-		got, err := d.PartitionSchemeByNameContext(ctx, "gosmo_ps")
+		got, err := d.PartitionSchemeByName(ctx, "gosmo_ps")
 		if err != nil {
 			t.Fatalf("by name: %v", err)
 		}
@@ -134,14 +134,14 @@ func TestLiveByNameFindersMatchTheirListings(t *testing.T) {
 	})
 
 	t.Run("ColumnMasterKey", func(t *testing.T) {
-		list, err := d.ColumnMasterKeysContext(ctx)
+		list, err := d.ColumnMasterKeys(ctx)
 		if err != nil {
 			t.Fatalf("list: %v", err)
 		}
 		if len(list) != 1 {
 			t.Fatalf("listing returned %d column master keys, want 1", len(list))
 		}
-		got, err := d.ColumnMasterKeyByNameContext(ctx, "gosmo_cmk")
+		got, err := d.ColumnMasterKeyByName(ctx, "gosmo_cmk")
 		if err != nil {
 			t.Fatalf("by name: %v", err)
 		}
@@ -154,14 +154,14 @@ func TestLiveByNameFindersMatchTheirListings(t *testing.T) {
 	})
 
 	t.Run("ColumnEncryptionKey", func(t *testing.T) {
-		list, err := d.ColumnEncryptionKeysContext(ctx)
+		list, err := d.ColumnEncryptionKeys(ctx)
 		if err != nil {
 			t.Fatalf("list: %v", err)
 		}
 		if len(list) != 1 {
 			t.Fatalf("listing returned %d column encryption keys, want 1", len(list))
 		}
-		got, err := d.ColumnEncryptionKeyByNameContext(ctx, "gosmo_cek")
+		got, err := d.ColumnEncryptionKeyByName(ctx, "gosmo_cek")
 		if err != nil {
 			t.Fatalf("by name: %v", err)
 		}
@@ -183,14 +183,14 @@ func TestLiveByNameFindersMatchTheirListings(t *testing.T) {
 	})
 
 	t.Run("SecurityPolicy", func(t *testing.T) {
-		list, err := d.SecurityPoliciesContext(ctx)
+		list, err := d.SecurityPolicies(ctx)
 		if err != nil {
 			t.Fatalf("list: %v", err)
 		}
 		if len(list) != 1 {
 			t.Fatalf("listing returned %d security policies, want 1", len(list))
 		}
-		got, err := d.SecurityPolicyByNameContext(ctx, "rls", "gosmo_policy")
+		got, err := d.SecurityPolicyByName(ctx, "rls", "gosmo_policy")
 		if err != nil {
 			t.Fatalf("by name: %v", err)
 		}
@@ -215,23 +215,23 @@ func TestLiveByNameFindersMatchTheirListings(t *testing.T) {
 	t.Run("NotFound", func(t *testing.T) {
 		cases := map[string]func() error{
 			"PartitionFunction": func() error {
-				_, err := d.PartitionFunctionByNameContext(ctx, "nope")
+				_, err := d.PartitionFunctionByName(ctx, "nope")
 				return err
 			},
 			"PartitionScheme": func() error {
-				_, err := d.PartitionSchemeByNameContext(ctx, "nope")
+				_, err := d.PartitionSchemeByName(ctx, "nope")
 				return err
 			},
 			"ColumnMasterKey": func() error {
-				_, err := d.ColumnMasterKeyByNameContext(ctx, "nope")
+				_, err := d.ColumnMasterKeyByName(ctx, "nope")
 				return err
 			},
 			"ColumnEncryptionKey": func() error {
-				_, err := d.ColumnEncryptionKeyByNameContext(ctx, "nope")
+				_, err := d.ColumnEncryptionKeyByName(ctx, "nope")
 				return err
 			},
 			"SecurityPolicy": func() error {
-				_, err := d.SecurityPolicyByNameContext(ctx, "rls", "nope")
+				_, err := d.SecurityPolicyByName(ctx, "rls", "nope")
 				return err
 			},
 		}
@@ -267,13 +267,13 @@ func TestLiveSchemaAndTableChildFindersMatchTheirListings(t *testing.T) {
 		`ALTER TABLE app.child ENABLE CHANGE_TRACKING WITH (TRACK_COLUMNS_UPDATED = ON)`,
 	)
 
-	child, err := d.TableByNameContext(ctx, "app", "child")
+	child, err := d.TableByName(ctx, "app", "child")
 	if err != nil {
-		t.Fatalf("TableByNameContext app.child: %v", err)
+		t.Fatalf("TableByName app.child: %v", err)
 	}
 
 	t.Run("Schema", func(t *testing.T) {
-		list, err := d.SchemasContext(ctx)
+		list, err := d.Schemas(ctx)
 		if err != nil {
 			t.Fatalf("list: %v", err)
 		}
@@ -286,7 +286,7 @@ func TestLiveSchemaAndTableChildFindersMatchTheirListings(t *testing.T) {
 		if want == nil {
 			t.Fatal("listing did not include schema app")
 		}
-		got, err := d.SchemaByNameContext(ctx, "app")
+		got, err := d.SchemaByName(ctx, "app")
 		if err != nil {
 			t.Fatalf("by name: %v", err)
 		}
@@ -296,7 +296,7 @@ func TestLiveSchemaAndTableChildFindersMatchTheirListings(t *testing.T) {
 	})
 
 	t.Run("Index", func(t *testing.T) {
-		list, err := child.IndexesContext(ctx)
+		list, err := child.Indexes(ctx)
 		if err != nil {
 			t.Fatalf("list: %v", err)
 		}
@@ -309,7 +309,7 @@ func TestLiveSchemaAndTableChildFindersMatchTheirListings(t *testing.T) {
 		if want == nil {
 			t.Fatal("listing did not include ix_child_note")
 		}
-		got, err := child.IndexByNameContext(ctx, "ix_child_note")
+		got, err := child.IndexByName(ctx, "ix_child_note")
 		if err != nil {
 			t.Fatalf("by name: %v", err)
 		}
@@ -331,7 +331,7 @@ func TestLiveSchemaAndTableChildFindersMatchTheirListings(t *testing.T) {
 	})
 
 	t.Run("Statistic", func(t *testing.T) {
-		list, err := child.StatisticsContext(ctx)
+		list, err := child.Statistics(ctx)
 		if err != nil {
 			t.Fatalf("list: %v", err)
 		}
@@ -344,7 +344,7 @@ func TestLiveSchemaAndTableChildFindersMatchTheirListings(t *testing.T) {
 		if want == nil {
 			t.Fatal("listing did not include st_child_note")
 		}
-		got, err := child.StatisticByNameContext(ctx, "st_child_note")
+		got, err := child.StatisticByName(ctx, "st_child_note")
 		if err != nil {
 			t.Fatalf("by name: %v", err)
 		}
@@ -357,14 +357,14 @@ func TestLiveSchemaAndTableChildFindersMatchTheirListings(t *testing.T) {
 	})
 
 	t.Run("ForeignKey", func(t *testing.T) {
-		list, err := child.ForeignKeysContext(ctx)
+		list, err := child.ForeignKeys(ctx)
 		if err != nil {
 			t.Fatalf("list: %v", err)
 		}
 		if len(list) != 1 {
 			t.Fatalf("listing returned %d foreign keys, want 1", len(list))
 		}
-		got, err := child.ForeignKeyByNameContext(ctx, "fk_child_parent")
+		got, err := child.ForeignKeyByName(ctx, "fk_child_parent")
 		if err != nil {
 			t.Fatalf("by name: %v", err)
 		}
@@ -386,7 +386,7 @@ func TestLiveSchemaAndTableChildFindersMatchTheirListings(t *testing.T) {
 	})
 
 	t.Run("TableChangeTracking", func(t *testing.T) {
-		list, err := d.TableChangeTrackingContext(ctx)
+		list, err := d.TableChangeTracking(ctx)
 		if err != nil {
 			t.Fatalf("list: %v", err)
 		}
@@ -399,7 +399,7 @@ func TestLiveSchemaAndTableChildFindersMatchTheirListings(t *testing.T) {
 			if want == nil {
 				t.Fatalf("listing did not include app.%s", name)
 			}
-			got, err := d.TableChangeTrackingForContext(ctx, "app", name)
+			got, err := d.TableChangeTrackingFor(ctx, "app", name)
 			if err != nil {
 				t.Fatalf("by name app.%s: %v", name, err)
 			}
@@ -420,23 +420,23 @@ func TestLiveSchemaAndTableChildFindersMatchTheirListings(t *testing.T) {
 	t.Run("NotFound", func(t *testing.T) {
 		cases := map[string]func() error{
 			"Schema": func() error {
-				_, err := d.SchemaByNameContext(ctx, "nope")
+				_, err := d.SchemaByName(ctx, "nope")
 				return err
 			},
 			"Index": func() error {
-				_, err := child.IndexByNameContext(ctx, "nope")
+				_, err := child.IndexByName(ctx, "nope")
 				return err
 			},
 			"Statistic": func() error {
-				_, err := child.StatisticByNameContext(ctx, "nope")
+				_, err := child.StatisticByName(ctx, "nope")
 				return err
 			},
 			"ForeignKey": func() error {
-				_, err := child.ForeignKeyByNameContext(ctx, "nope")
+				_, err := child.ForeignKeyByName(ctx, "nope")
 				return err
 			},
 			"TableChangeTracking": func() error {
-				_, err := d.TableChangeTrackingForContext(ctx, "app", "nope")
+				_, err := d.TableChangeTrackingFor(ctx, "app", "nope")
 				return err
 			},
 		}

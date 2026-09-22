@@ -35,11 +35,6 @@ func (l *Login) Server() *Server { return l.server }
 
 // ResolveMapping looks up the certificate or asymmetric key this login maps
 // to and stores its name in MappedObject.
-func (l *Login) ResolveMapping() error {
-	return l.ResolveMappingContext(context.Background())
-}
-
-// ResolveMappingContext is the context-aware variant of ResolveMapping.
 //
 // It is a no-op for every login type but CERTIFICATE_MAPPED_LOGIN and
 // ASYMMETRIC_KEY_MAPPED_LOGIN. The lookup is by SID against master, where a
@@ -47,7 +42,7 @@ func (l *Login) ResolveMapping() error {
 // explicitly because the connection may be in any database. MappedObject is
 // left empty, without an error, when nothing matches — the mapped object can
 // have been dropped out from under the login.
-func (l *Login) ResolveMappingContext(ctx context.Context) error {
+func (l *Login) ResolveMapping(ctx context.Context) error {
 	switch l.LoginType {
 	case "CERTIFICATE_MAPPED_LOGIN", "ASYMMETRIC_KEY_MAPPED_LOGIN":
 	default:
@@ -66,13 +61,8 @@ SELECT ISNULL((SELECT TOP 1 name FROM master.sys.certificates    WHERE sid = @p1
 }
 
 // Disable disables the login.
-func (l *Login) Disable() error {
-	return l.DisableContext(context.Background())
-}
-
-// DisableContext is the context-aware variant of Disable.
-func (l *Login) DisableContext(ctx context.Context) error {
-	if err := l.server.execContext(ctx, "ALTER LOGIN "+quoteIdent(l.Name)+" DISABLE"); err != nil {
+func (l *Login) Disable(ctx context.Context) error {
+	if err := l.server.exec(ctx, "ALTER LOGIN "+quoteIdent(l.Name)+" DISABLE"); err != nil {
 		return fmt.Errorf("gosmo: disable login %q: %w", l.Name, err)
 	}
 	setIfApplied(ctx, &l.IsDisabled, true)
@@ -80,13 +70,8 @@ func (l *Login) DisableContext(ctx context.Context) error {
 }
 
 // Enable enables the login.
-func (l *Login) Enable() error {
-	return l.EnableContext(context.Background())
-}
-
-// EnableContext is the context-aware variant of Enable.
-func (l *Login) EnableContext(ctx context.Context) error {
-	if err := l.server.execContext(ctx, "ALTER LOGIN "+quoteIdent(l.Name)+" ENABLE"); err != nil {
+func (l *Login) Enable(ctx context.Context) error {
+	if err := l.server.exec(ctx, "ALTER LOGIN "+quoteIdent(l.Name)+" ENABLE"); err != nil {
 		return fmt.Errorf("gosmo: enable login %q: %w", l.Name, err)
 	}
 	setIfApplied(ctx, &l.IsDisabled, false)
@@ -94,11 +79,6 @@ func (l *Login) EnableContext(ctx context.Context) error {
 }
 
 // ChangePassword changes the login's password.
-func (l *Login) ChangePassword(newPassword string) error {
-	return l.ChangePasswordContext(context.Background(), newPassword)
-}
-
-// ChangePasswordContext changes the login's password.
 //
 // Security: the password is quoted via nStringLiteral (N'...', doubling
 // any embedded quote) rather than interpolated raw. HASHED is
@@ -106,40 +86,27 @@ func (l *Login) ChangePassword(newPassword string) error {
 // its own password-hash formats, not cleartext, so passing a hex encoding
 // of the cleartext under HASHED either fails outright or creates a login
 // nothing can ever authenticate as.
-func (l *Login) ChangePasswordContext(ctx context.Context, newPassword string) error {
+func (l *Login) ChangePassword(ctx context.Context, newPassword string) error {
 	q := fmt.Sprintf("ALTER LOGIN %s WITH PASSWORD = %s", quoteIdent(l.Name), nStringLiteral(newPassword))
-	if err := l.server.execContext(ctx, q); err != nil {
+	if err := l.server.exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: change password for login %q: %w", l.Name, err)
 	}
 	return nil
 }
 
 // Drop drops the login from the server.
-func (l *Login) Drop() error { return l.DropContext(context.Background()) }
-
-// DropContext is the context-aware variant of Drop.
-func (l *Login) DropContext(ctx context.Context) error {
-	return l.server.DropLoginContext(ctx, l.Name)
+func (l *Login) Drop(ctx context.Context) error {
+	return l.server.DropLogin(ctx, l.Name)
 }
 
 // AddServerRoleMember adds this login to a server role.
-func (l *Login) AddServerRoleMember(roleName string) error {
-	return l.AddServerRoleMemberContext(context.Background(), roleName)
-}
-
-// AddServerRoleMemberContext is the context-aware variant of AddServerRoleMember.
-func (l *Login) AddServerRoleMemberContext(ctx context.Context, roleName string) error {
-	return l.server.AddServerRoleMemberContext(ctx, roleName, l.Name)
+func (l *Login) AddServerRoleMember(ctx context.Context, roleName string) error {
+	return l.server.AddServerRoleMember(ctx, roleName, l.Name)
 }
 
 // RemoveServerRoleMember removes this login from a server role.
-func (l *Login) RemoveServerRoleMember(roleName string) error {
-	return l.RemoveServerRoleMemberContext(context.Background(), roleName)
-}
-
-// RemoveServerRoleMemberContext is the context-aware variant of RemoveServerRoleMember.
-func (l *Login) RemoveServerRoleMemberContext(ctx context.Context, roleName string) error {
-	return l.server.RemoveServerRoleMemberContext(ctx, roleName, l.Name)
+func (l *Login) RemoveServerRoleMember(ctx context.Context, roleName string) error {
+	return l.server.RemoveServerRoleMember(ctx, roleName, l.Name)
 }
 
 // -- Status / details --------------------------------------------------------
@@ -173,12 +140,7 @@ type LoginDetails struct {
 }
 
 // Details returns the login's password-policy and status information.
-func (l *Login) Details() (*LoginDetails, error) {
-	return l.DetailsContext(context.Background())
-}
-
-// DetailsContext is the context-aware variant of Details.
-func (l *Login) DetailsContext(ctx context.Context) (*LoginDetails, error) {
+func (l *Login) Details(ctx context.Context) (*LoginDetails, error) {
 	const q = `
 SELECT
     ISNULL(CAST(LOGINPROPERTY(@p1, 'IsLocked')     AS INT), 0),
@@ -227,14 +189,9 @@ WHERE  sp.name = @p1`
 }
 
 // Rename changes the login's name.
-func (l *Login) Rename(newName string) error {
-	return l.RenameContext(context.Background(), newName)
-}
-
-// RenameContext is the context-aware variant of Rename.
-func (l *Login) RenameContext(ctx context.Context, newName string) error {
+func (l *Login) Rename(ctx context.Context, newName string) error {
 	q := fmt.Sprintf("ALTER LOGIN %s WITH NAME = %s", quoteIdent(l.Name), quoteIdent(newName))
-	if err := l.server.execContext(ctx, q); err != nil {
+	if err := l.server.exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: rename login %q to %q: %w", l.Name, newName, err)
 	}
 	setIfApplied(ctx, &l.Name, newName)
@@ -242,14 +199,9 @@ func (l *Login) RenameContext(ctx context.Context, newName string) error {
 }
 
 // SetDefaultDatabase changes the login's default database.
-func (l *Login) SetDefaultDatabase(name string) error {
-	return l.SetDefaultDatabaseContext(context.Background(), name)
-}
-
-// SetDefaultDatabaseContext is the context-aware variant of SetDefaultDatabase.
-func (l *Login) SetDefaultDatabaseContext(ctx context.Context, name string) error {
+func (l *Login) SetDefaultDatabase(ctx context.Context, name string) error {
 	q := fmt.Sprintf("ALTER LOGIN %s WITH DEFAULT_DATABASE = %s", quoteIdent(l.Name), quoteIdent(name))
-	if err := l.server.execContext(ctx, q); err != nil {
+	if err := l.server.exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: set default database for login %q to %q: %w", l.Name, name, err)
 	}
 	setIfApplied(ctx, &l.DefaultDatabase, name)
@@ -257,14 +209,9 @@ func (l *Login) SetDefaultDatabaseContext(ctx context.Context, name string) erro
 }
 
 // SetDefaultLanguage changes the login's default language.
-func (l *Login) SetDefaultLanguage(lang string) error {
-	return l.SetDefaultLanguageContext(context.Background(), lang)
-}
-
-// SetDefaultLanguageContext is the context-aware variant of SetDefaultLanguage.
-func (l *Login) SetDefaultLanguageContext(ctx context.Context, lang string) error {
+func (l *Login) SetDefaultLanguage(ctx context.Context, lang string) error {
 	q := fmt.Sprintf("ALTER LOGIN %s WITH DEFAULT_LANGUAGE = %s", quoteIdent(l.Name), quoteIdent(lang))
-	if err := l.server.execContext(ctx, q); err != nil {
+	if err := l.server.exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: set default language for login %q to %q: %w", l.Name, lang, err)
 	}
 	return nil
@@ -273,12 +220,7 @@ func (l *Login) SetDefaultLanguageContext(ctx context.Context, lang string) erro
 // SetPasswordPolicy sets the login's CHECK_POLICY and CHECK_EXPIRATION
 // flags. SQL Server rejects checkExpiration=true with checkPolicy=false —
 // surfaced as the returned error, not pre-validated here.
-func (l *Login) SetPasswordPolicy(checkPolicy, checkExpiration bool) error {
-	return l.SetPasswordPolicyContext(context.Background(), checkPolicy, checkExpiration)
-}
-
-// SetPasswordPolicyContext is the context-aware variant of SetPasswordPolicy.
-func (l *Login) SetPasswordPolicyContext(ctx context.Context, checkPolicy, checkExpiration bool) error {
+func (l *Login) SetPasswordPolicy(ctx context.Context, checkPolicy, checkExpiration bool) error {
 	policy, expiration := "OFF", "OFF"
 	if checkPolicy {
 		policy = "ON"
@@ -288,7 +230,7 @@ func (l *Login) SetPasswordPolicyContext(ctx context.Context, checkPolicy, check
 	}
 	q := fmt.Sprintf("ALTER LOGIN %s WITH CHECK_POLICY = %s, CHECK_EXPIRATION = %s",
 		quoteIdent(l.Name), policy, expiration)
-	if err := l.server.execContext(ctx, q); err != nil {
+	if err := l.server.exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: set password policy for login %q: %w", l.Name, err)
 	}
 	return nil
@@ -297,15 +239,9 @@ func (l *Login) SetPasswordPolicyContext(ctx context.Context, checkPolicy, check
 // ChangePasswordWithOptions changes the login's password with the same
 // quoted-literal encoding ChangePassword uses, plus MUST_CHANGE (force a
 // password change at next login) and UNLOCK (clear a lockout).
-func (l *Login) ChangePasswordWithOptions(newPassword string, mustChange, unlock bool) error {
-	return l.ChangePasswordWithOptionsContext(context.Background(), newPassword, mustChange, unlock)
-}
-
-// ChangePasswordWithOptionsContext is the context-aware variant of
-// ChangePasswordWithOptions.
-func (l *Login) ChangePasswordWithOptionsContext(ctx context.Context, newPassword string, mustChange, unlock bool) error {
+func (l *Login) ChangePasswordWithOptions(ctx context.Context, newPassword string, mustChange, unlock bool) error {
 	stmt := buildChangePasswordStatement(l.Name, newPassword, mustChange, unlock)
-	if err := l.server.execContext(ctx, stmt); err != nil {
+	if err := l.server.exec(ctx, stmt); err != nil {
 		return fmt.Errorf("gosmo: change password (with options) for login %q: %w", l.Name, err)
 	}
 	return nil
@@ -340,28 +276,18 @@ func buildChangePasswordStatement(loginName, newPassword string, mustChange, unl
 }
 
 // MapCredential maps a server credential to the login.
-func (l *Login) MapCredential(credential string) error {
-	return l.MapCredentialContext(context.Background(), credential)
-}
-
-// MapCredentialContext is the context-aware variant of MapCredential.
-func (l *Login) MapCredentialContext(ctx context.Context, credential string) error {
+func (l *Login) MapCredential(ctx context.Context, credential string) error {
 	q := fmt.Sprintf("ALTER LOGIN %s ADD CREDENTIAL %s", quoteIdent(l.Name), quoteIdent(credential))
-	if err := l.server.execContext(ctx, q); err != nil {
+	if err := l.server.exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: map credential %q to login %q: %w", credential, l.Name, err)
 	}
 	return nil
 }
 
 // UnmapCredential removes a credential mapping from the login.
-func (l *Login) UnmapCredential(credential string) error {
-	return l.UnmapCredentialContext(context.Background(), credential)
-}
-
-// UnmapCredentialContext is the context-aware variant of UnmapCredential.
-func (l *Login) UnmapCredentialContext(ctx context.Context, credential string) error {
+func (l *Login) UnmapCredential(ctx context.Context, credential string) error {
 	q := fmt.Sprintf("ALTER LOGIN %s DROP CREDENTIAL %s", quoteIdent(l.Name), quoteIdent(credential))
-	if err := l.server.execContext(ctx, q); err != nil {
+	if err := l.server.exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: unmap credential %q from login %q: %w", credential, l.Name, err)
 	}
 	return nil
@@ -390,13 +316,8 @@ type LoginUserMapping struct {
 // being read, a failure ends the scan with an error instead: those rows are
 // already in the result, so skipping would return a short list and call it
 // success.
-func (l *Login) UserMappings() ([]*LoginUserMapping, error) {
-	return l.UserMappingsContext(context.Background())
-}
-
-// UserMappingsContext is the context-aware variant of UserMappings.
-func (l *Login) UserMappingsContext(ctx context.Context) ([]*LoginUserMapping, error) {
-	dbs, err := l.server.DatabasesContext(ctx)
+func (l *Login) UserMappings(ctx context.Context) ([]*LoginUserMapping, error) {
+	dbs, err := l.server.Databases(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -474,37 +395,27 @@ func (l *Login) userMappingsIn(ctx context.Context, db *Database, q string) ([]*
 
 // MapToDatabase creates a user for this login in the named database
 // (CREATE USER ... FOR LOGIN).
-func (l *Login) MapToDatabase(dbName, userName, defaultSchema string) error {
-	return l.MapToDatabaseContext(context.Background(), dbName, userName, defaultSchema)
-}
-
-// MapToDatabaseContext is the context-aware variant of MapToDatabase.
-func (l *Login) MapToDatabaseContext(ctx context.Context, dbName, userName, defaultSchema string) error {
-	d, err := l.server.DatabaseByNameContext(ctx, dbName)
+func (l *Login) MapToDatabase(ctx context.Context, dbName, userName, defaultSchema string) error {
+	d, err := l.server.DatabaseByName(ctx, dbName)
 	if err != nil {
 		return err
 	}
-	return d.CreateUserContext(ctx, userName, l.Name, defaultSchema)
+	return d.CreateUser(ctx, userName, l.Name, defaultSchema)
 }
 
 // UnmapFromDatabase drops this login's mapped user in the named database.
-func (l *Login) UnmapFromDatabase(dbName string) error {
-	return l.UnmapFromDatabaseContext(context.Background(), dbName)
-}
-
-// UnmapFromDatabaseContext is the context-aware variant of UnmapFromDatabase.
-func (l *Login) UnmapFromDatabaseContext(ctx context.Context, dbName string) error {
-	d, err := l.server.DatabaseByNameContext(ctx, dbName)
+func (l *Login) UnmapFromDatabase(ctx context.Context, dbName string) error {
+	d, err := l.server.DatabaseByName(ctx, dbName)
 	if err != nil {
 		return err
 	}
-	mappings, err := l.UserMappingsContext(ctx)
+	mappings, err := l.UserMappings(ctx)
 	if err != nil {
 		return err
 	}
 	for _, m := range mappings {
 		if m.Database == dbName {
-			return d.DropUserContext(ctx, m.User)
+			return d.DropUser(ctx, m.User)
 		}
 	}
 	return fmt.Errorf("gosmo: login %q is not mapped to database %q", l.Name, dbName)
@@ -513,17 +424,12 @@ func (l *Login) UnmapFromDatabaseContext(ctx context.Context, dbName string) err
 // -- Logins --------------------------------------------------------------------
 
 // Logins returns all server-level logins.
-func (s *Server) Logins() ([]*Login, error) {
-	return s.LoginsContext(context.Background())
-}
-
-// LoginsContext is the context-aware variant of Logins.
 //
-// Every server-level login is listed, not just the SQL/Windows ones: the
-// type filter also admits Entra ('E','X') and the certificate- and
+// Every server-level login is listed, not just the SQL/Windows ones: the type
+// filter also admits Entra ('E','X') and the certificate- and
 // asymmetric-key-mapped logins ('C','K') that hold permissions for signed
 // code, which is what SSMS's Logins folder shows.
-func (s *Server) LoginsContext(ctx context.Context) ([]*Login, error) {
+func (s *Server) Logins(ctx context.Context) ([]*Login, error) {
 	const q = `
 	SELECT name, sid, type_desc, is_disabled, default_database_name,
 	       create_date, modify_date
@@ -532,35 +438,20 @@ func (s *Server) LoginsContext(ctx context.Context) ([]*Login, error) {
 	ORDER BY name`
 
 	rows, err := s.query(ctx, q)
-	if err != nil {
-		return nil, fmt.Errorf("gosmo: list logins: %w", err)
-	}
-	defer rows.Close()
-
-	var logins []*Login
-	for rows.Next() {
+	return scanRows(rows, err, "list logins", func(scan func(...any) error) (*Login, error) {
 		l := &Login{server: s}
 		var defDB sql.NullString
-		if err := rows.Scan(&l.Name, &l.SID, &l.LoginType, &l.IsDisabled,
+		if err := scan(&l.Name, &l.SID, &l.LoginType, &l.IsDisabled,
 			&defDB, &l.CreateDate, &l.ModifyDate); err != nil {
-			return nil, fmt.Errorf("gosmo: list logins: %w", err)
+			return nil, err
 		}
 		l.DefaultDatabase = defDB.String
-		logins = append(logins, l)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("gosmo: list logins: %w", err)
-	}
-	return logins, nil
+		return l, nil
+	})
 }
 
 // LoginByName returns a single server-level login by name.
-func (s *Server) LoginByName(name string) (*Login, error) {
-	return s.LoginByNameContext(context.Background(), name)
-}
-
-// LoginByNameContext is the context-aware variant of LoginByName.
-func (s *Server) LoginByNameContext(ctx context.Context, name string) (*Login, error) {
+func (s *Server) LoginByName(ctx context.Context, name string) (*Login, error) {
 	const q = `
 	SELECT name, sid, type_desc, is_disabled, default_database_name,
 	       create_date, modify_date
@@ -583,10 +474,10 @@ func (s *Server) LoginByNameContext(ctx context.Context, name string) (*Login, e
 }
 
 // LoginRef returns a lightweight handle for name without querying the server
-// at all — unlike LoginByName/LoginByNameContext, it doesn't verify the
+// at all — unlike LoginByName, it doesn't verify the
 // login exists or populate SID/LoginType/IsDisabled/etc. (they stay at
-// their zero value). Every write method on *Login (AddServerRoleMemberContext,
-// DisableContext, ChangePasswordContext, ...) only ever needs the login's
+// their zero value). Every write method on *Login (AddServerRoleMember,
+// Disable, ChangePassword, ...) only ever needs the login's
 // name, never those cached fields, so this is sufficient for issuing
 // further ALTER-style calls against a login the caller already knows
 // exists — most commonly one it just created in the same operation. See
@@ -599,20 +490,14 @@ func (s *Server) LoginRef(name string) *Login {
 // CreateLogin creates a login. With no CreateLoginOptions.Source, an empty
 // password means a Windows login (FROM WINDOWS) and a non-empty one a SQL
 // login; set Source to create any of the other kinds.
-func (s *Server) CreateLogin(name, password string, opts *CreateLoginOptions) error {
-	return s.CreateLoginContext(context.Background(), name, password, opts)
-}
-
-// CreateLoginContext is the context-aware variant of CreateLogin.
 //
-// Security: the password is never string-concatenated raw into the SQL
-// text — it's quoted via nStringLiteral (N'...', doubling any embedded
-// quote), the same escaping every other literal in this package uses.
-// HASHED is deliberately not used here: it tells SQL Server the value is
-// already one of its own password-hash formats, not a cleartext password,
-// so passing an arbitrary hex encoding of the cleartext under HASHED
-// either fails outright or creates a login nothing can ever authenticate
-// as.
+// Security: the password is never string-concatenated raw into the SQL text
+// — it's quoted via nStringLiteral (N'...', doubling any embedded quote),
+// the same escaping every other literal in this package uses. HASHED is
+// deliberately not used here: it tells SQL Server the value is already one of
+// its own password-hash formats, not a cleartext password, so passing an
+// arbitrary hex encoding of the cleartext under HASHED either fails outright
+// or creates a login nothing can ever authenticate as.
 //
 // DefaultDatabase reaches an external-provider login through a following
 // ALTER LOGIN: OBJECT_ID is the only WITH option FROM EXTERNAL PROVIDER
@@ -622,7 +507,7 @@ func (s *Server) CreateLogin(name, password string, opts *CreateLoginOptions) er
 // ("Cannot use the parameter DEFAULT_DATABASE for a certificate or
 // asymmetric key login", verified live) — so asking for one is an error
 // rather than a statement the server will refuse.
-func (s *Server) CreateLoginContext(ctx context.Context, name, password string, opts *CreateLoginOptions) error {
+func (s *Server) CreateLogin(ctx context.Context, name, password string, opts *CreateLoginOptions) error {
 	if name == "" {
 		return fmt.Errorf("gosmo: create login: name is required")
 	}
@@ -642,13 +527,13 @@ func (s *Server) CreateLoginContext(ctx context.Context, name, password string, 
 	if err != nil {
 		return fmt.Errorf("gosmo: create login %q: %w", name, err)
 	}
-	if err := s.execContext(ctx, stmt); err != nil {
+	if err := s.exec(ctx, stmt); err != nil {
 		return fmt.Errorf("gosmo: create login %q: %w", name, err)
 	}
 	if alterDefaultDB {
 		q := fmt.Sprintf("ALTER LOGIN %s WITH DEFAULT_DATABASE = %s",
 			quoteIdent(name), quoteIdent(opts.DefaultDatabase))
-		if err := s.execContext(ctx, q); err != nil {
+		if err := s.exec(ctx, q); err != nil {
 			return fmt.Errorf("gosmo: create login %q: set default database: %w", name, err)
 		}
 	}
@@ -660,7 +545,7 @@ func (s *Server) CreateLoginContext(ctx context.Context, name, password string, 
 // following ALTER LOGIN — CERTIFICATE and ASYMMETRIC KEY take no WITH option
 // list in CREATE LOGIN and EXTERNAL PROVIDER takes only OBJECT_ID, so naming
 // DEFAULT_DATABASE there is a syntax error. A mapped login has no default database at all; see
-// CreateLoginContext.
+// CreateLogin.
 func createLoginStatement(name, password string, src LoginSource, opts *CreateLoginOptions) (string, bool, error) {
 	if src != LoginSourceSQL && password != "" {
 		return "", false, fmt.Errorf("a %s login takes no password", src)
@@ -803,16 +688,11 @@ type CreateLoginOptions struct {
 }
 
 // DropLogin drops a server login.
-func (s *Server) DropLogin(name string) error {
-	return s.DropLoginContext(context.Background(), name)
-}
-
-// DropLoginContext is the context-aware variant of DropLogin.
-func (s *Server) DropLoginContext(ctx context.Context, name string) error {
+func (s *Server) DropLogin(ctx context.Context, name string) error {
 	if name == "" {
 		return fmt.Errorf("gosmo: drop login: name is required")
 	}
-	if err := s.execContext(ctx, fmt.Sprintf("DROP LOGIN %s", quoteIdent(name))); err != nil {
+	if err := s.exec(ctx, fmt.Sprintf("DROP LOGIN %s", quoteIdent(name))); err != nil {
 		return fmt.Errorf("gosmo: drop login %q: %w", name, err)
 	}
 	return nil

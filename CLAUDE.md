@@ -36,9 +36,10 @@ published, general-purpose library with users beyond gossms.
 - **Never remove or narrow a capability because gossms doesn't call it.**
   "No callers in gossms" is not evidence of dead code. This covers whole
   files, exported methods, exported types and their fields, and struct
-  fields only some paths populate. The `*Seq` iterators in `iter.go` are the
-  standing example: 112 exported methods, zero gossms callers, all
-  deliberately kept.
+  fields only some paths populate. The 2026-09-22 removals — the
+  context-free `Foo` delegates and the `*Seq` iterators — were made under an
+  explicit, one-off compatibility waiver from the author, not under this rule,
+  and are not a precedent for it.
 - When an audit turns up something unused, the allowed moves are: make it
   faster, make its doc comment accurate about what it actually does, or add
   a test that pins it. Removal, or replacing a general form with the narrow
@@ -83,27 +84,29 @@ rename, and before a tag.
 
 ## Conventions
 
-- **Method pairs.** Every method that touches the database comes in two
-  forms: `Foo(...)` delegating to `FooContext(ctx, ...)`. Accessors that
-  only read already-fetched struct state, and the `*Seq` iterators (which
-  take a `ctx` directly), are the exceptions.
-  `method_pair_wiring_test.go` pins the 676 delegates by reading the source:
-  each must call its *own* `Foo`+`Context` with `context.Background()` and the
-  declared parameters in order. Nothing executes them otherwise — their
-  coverage is 0.0% — and a delegate wired to a same-signature sibling
-  (`AddRoleMember`/`RemoveRoleMember`) compiles and passes every other test.
-  A deliberate non-delegate goes in that file's `delegateExceptions` with a
-  reason.
+- **One form, context first.** Every method that touches the database takes
+  `ctx context.Context` as its first parameter and has no other form — no
+  `Foo`/`FooContext` pair, no `…Context` suffix. Accessors that only read
+  already-fetched struct state take no context. Until 2026-09-22 every such
+  method came as a pair, `Foo(...)` delegating to `FooContext(ctx, ...)`:
+  707 one-line delegates at 0.0% coverage, pinned only by a source-reading
+  wiring test because a delegate wired to a same-signature sibling
+  (`AddRoleMember`/`RemoveRoleMember`) compiled and passed everything else.
+  Do not reintroduce a context-free convenience form.
 - **Errors** wrap with `%w` and are prefixed `gosmo: ` plus what was being
   attempted — `fmt.Errorf("gosmo: drop statistic %q: %w", st.Name, err)`.
 - **`rows.Err()` is always checked**, and every `query` is followed by
   `defer rows.Close()`. Both it and every `rows.Scan` wrap with the *same*
   message the function's query error uses — a failure mid-iteration is
   otherwise indistinguishable from any other, and comes back to the caller as
-  a naked `context deadline exceeded` naming nothing. The rule is per exported
+  a naked `context deadline exceeded` naming nothing. A list read goes through
+  `scanRows` (`helpers.go`), which does all three by construction; a by-name
+  read ends in `foundRow`, which maps `sql.ErrNoRows` to the `notFoundf`
+  error. Hand-roll the loop only for a shape they do not fit — grouping into a
+  map, a single-row aggregate. The rule is per exported
   entry point, not per statement: the shared scan helpers (`scanColumns`,
   `scanExtProps`, `scanEffectivePermissions`, `securityPredicates`,
-  `indexColumnsContext`, `execWithProgress`) return bare errors on purpose,
+  `indexColumns`, `execWithProgress`) return bare errors on purpose,
   because only their callers know which operation to name, and each caller
   wraps what they return.
 - **Quoting.** See `quoting.go`'s doc comments, which are the authority:
@@ -127,7 +130,7 @@ rename, and before a tag.
   that exhausts a pool, not merely a slow one. Fetch the
   child rows for the whole object in one query with no parent-id predicate,
   ordered by the parent id first, and group them in Go.
-  `Table.IndexesContext` is the worked example (2026-08-14: 42 round trips
+  `Table.Indexes` is the worked example (2026-08-14: 42 round trips
   across 21 connections for a 20-index table, now 2).
 - **A zoneless server clock is stamped `time.UTC`, never `time.Local`.**
   go-mssqldb already hands `datetime` columns back in UTC, so a value decoded

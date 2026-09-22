@@ -19,7 +19,7 @@ type DetachOptions struct {
 	// database first (SET SINGLE_USER WITH ROLLBACK IMMEDIATE). Without it a
 	// database with any other connection open refuses to detach. A detach
 	// that then fails is put back to MULTI_USER, so a refusal never leaves
-	// the database single-user — same contract as RenameDatabaseContext.
+	// the database single-user — same contract as RenameDatabase.
 	DropConnections bool
 
 	// UpdateStatistics runs UPDATE STATISTICS across the database before
@@ -42,27 +42,22 @@ type DetachOptions struct {
 
 // DetachDatabase detaches the named database from the instance, leaving its
 // files on disk.
-func (s *Server) DetachDatabase(name string, opts DetachOptions) error {
-	return s.DetachDatabaseContext(context.Background(), name, opts)
-}
-
-// DetachDatabaseContext is the context-aware variant of DetachDatabase.
 //
 // The database's files are left where they are — this is not a delete, and
-// AttachDatabaseContext brings the same files back, under this name or
-// another one.
-func (s *Server) DetachDatabaseContext(ctx context.Context, name string, opts DetachOptions) error {
+// AttachDatabase brings the same files back, under this name or another
+// one.
+func (s *Server) DetachDatabase(ctx context.Context, name string, opts DetachOptions) error {
 	if name == "" {
 		return fmt.Errorf("gosmo: detach database: name is required")
 	}
 	if opts.DropConnections {
-		if err := s.execContext(ctx,
+		if err := s.exec(ctx,
 			fmt.Sprintf("ALTER DATABASE %s SET SINGLE_USER WITH ROLLBACK IMMEDIATE", quoteIdent(name)),
 		); err != nil {
 			return fmt.Errorf("gosmo: set single user on %q: %w", name, err)
 		}
 	}
-	err := s.execContext(ctx, fmt.Sprintf(
+	err := s.exec(ctx, fmt.Sprintf(
 		"EXEC master.dbo.sp_detach_db @dbname = %s, @skipchecks = %s, @keepfulltextindexfile = %s",
 		nStringLiteral(name),
 		sqlTextBool(!opts.UpdateStatistics),
@@ -116,23 +111,18 @@ type AttachSpec struct {
 }
 
 // AttachDatabase attaches a set of database files to the instance.
-func (s *Server) AttachDatabase(spec AttachSpec) error {
-	return s.AttachDatabaseContext(context.Background(), spec)
-}
-
-// AttachDatabaseContext is the context-aware variant of AttachDatabase.
-func (s *Server) AttachDatabaseContext(ctx context.Context, spec AttachSpec) error {
+func (s *Server) AttachDatabase(ctx context.Context, spec AttachSpec) error {
 	if spec.Name == "" {
 		return fmt.Errorf("gosmo: attach database: name is required")
 	}
 	if len(spec.Files) == 0 {
 		return fmt.Errorf("gosmo: attach database %q: at least one file is required", spec.Name)
 	}
-	if err := s.execContext(ctx, buildAttachStatement(spec)); err != nil {
+	if err := s.exec(ctx, buildAttachStatement(spec)); err != nil {
 		return fmt.Errorf("gosmo: attach database %q: %w", spec.Name, err)
 	}
 	if spec.Owner != "" {
-		if err := s.execContext(ctx, fmt.Sprintf("ALTER AUTHORIZATION ON DATABASE::%s TO %s",
+		if err := s.exec(ctx, fmt.Sprintf("ALTER AUTHORIZATION ON DATABASE::%s TO %s",
 			quoteIdent(spec.Name), quoteIdent(spec.Owner))); err != nil {
 			return fmt.Errorf("gosmo: set owner of attached database %q: %w", spec.Name, err)
 		}
@@ -219,13 +209,8 @@ func (d *DetachedDatabase) filesWhere(isLog bool) []*DetachedFile {
 
 // DetachedDatabaseInfo reads a detached database's name and file list out of
 // its primary data file.
-func (s *Server) DetachedDatabaseInfo(primaryFilePath string) (*DetachedDatabase, error) {
-	return s.DetachedDatabaseInfoContext(context.Background(), primaryFilePath)
-}
-
-// DetachedDatabaseInfoContext is the context-aware variant of
-// DetachedDatabaseInfo. primaryFilePath is a path on the *server's* host, not
-// the caller's.
+//
+// primaryFilePath is a path on the *server's* host, not the caller's.
 //
 // This is what makes an Attach dialog more than a list of paths typed by
 // hand: a database's secondary and log files are named only inside its
@@ -233,7 +218,7 @@ func (s *Server) DetachedDatabaseInfo(primaryFilePath string) (*DetachedDatabase
 // undocumented DBCC CHECKPRIMARYFILE is what SMO — and therefore SSMS —
 // uses, and it needs the rights DBCC needs. A caller that cannot run it can
 // still attach: AttachSpec takes the paths directly.
-func (s *Server) DetachedDatabaseInfoContext(ctx context.Context, primaryFilePath string) (*DetachedDatabase, error) {
+func (s *Server) DetachedDatabaseInfo(ctx context.Context, primaryFilePath string) (*DetachedDatabase, error) {
 	if strings.TrimSpace(primaryFilePath) == "" {
 		return nil, fmt.Errorf("gosmo: detached database info: a primary file path is required")
 	}

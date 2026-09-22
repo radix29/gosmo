@@ -48,13 +48,7 @@ type EffectivePermission struct {
 // 2026-08-05 against a role that plainly did exist. There is no principal
 // argument to fn_my_permissions to use instead; it always answers for the
 // current execution context.
-func (d *Database) EffectivePermissions(principal string) ([]*EffectivePermission, error) {
-	return d.EffectivePermissionsContext(context.Background(), principal)
-}
-
-// EffectivePermissionsContext is the context-aware variant of
-// EffectivePermissions.
-func (d *Database) EffectivePermissionsContext(ctx context.Context, principal string) ([]*EffectivePermission, error) {
+func (d *Database) EffectivePermissions(ctx context.Context, principal string) ([]*EffectivePermission, error) {
 	return d.effectivePermissions(ctx, principal, nil, "DATABASE",
 		fmt.Sprintf("effective database permissions for %q in %q", principal, d.Name))
 }
@@ -63,13 +57,7 @@ func (d *Database) EffectivePermissionsContext(ctx context.Context, principal st
 // holds on the table or view schema.name, column-level entries included (see
 // EffectivePermission.Subentity). principal must be a database user — see
 // EffectivePermissions for why a role cannot be one.
-func (d *Database) EffectiveObjectPermissions(schema, name, principal string) ([]*EffectivePermission, error) {
-	return d.EffectiveObjectPermissionsContext(context.Background(), schema, name, principal)
-}
-
-// EffectiveObjectPermissionsContext is the context-aware variant of
-// EffectiveObjectPermissions.
-func (d *Database) EffectiveObjectPermissionsContext(ctx context.Context, schema, name, principal string) ([]*EffectivePermission, error) {
+func (d *Database) EffectiveObjectPermissions(ctx context.Context, schema, name, principal string) ([]*EffectivePermission, error) {
 	// fn_my_permissions parses its first argument as a securable *name*, so
 	// this is an identifier inside a string value — bracket-quote it first,
 	// or a schema or table containing a dot resolves to something else.
@@ -81,13 +69,7 @@ func (d *Database) EffectiveObjectPermissionsContext(ctx context.Context, schema
 // EffectiveSchemaPermissions returns every permission principal effectively
 // holds on a schema. principal must be a database user — see
 // EffectivePermissions for why a role cannot be one.
-func (d *Database) EffectiveSchemaPermissions(schemaName, principal string) ([]*EffectivePermission, error) {
-	return d.EffectiveSchemaPermissionsContext(context.Background(), schemaName, principal)
-}
-
-// EffectiveSchemaPermissionsContext is the context-aware variant of
-// EffectiveSchemaPermissions.
-func (d *Database) EffectiveSchemaPermissionsContext(ctx context.Context, schemaName, principal string) ([]*EffectivePermission, error) {
+func (d *Database) EffectiveSchemaPermissions(ctx context.Context, schemaName, principal string) ([]*EffectivePermission, error) {
 	ref := quoteIdent(schemaName)
 	return d.effectivePermissions(ctx, principal, ref, "SCHEMA",
 		fmt.Sprintf("effective permissions on schema %q for %q in %q", schemaName, principal, d.Name))
@@ -142,13 +124,7 @@ REVERT;`, escapeSingle(principal), class)
 // of the same error. The impersonation is EXECUTE AS LOGIN rather than
 // EXECUTE AS USER, and it needs IMPERSONATE on that login (CONTROL SERVER
 // covers it).
-func (s *Server) EffectiveServerPermissions(login string) ([]*EffectivePermission, error) {
-	return s.EffectiveServerPermissionsContext(context.Background(), login)
-}
-
-// EffectiveServerPermissionsContext is the context-aware variant of
-// EffectiveServerPermissions.
-func (s *Server) EffectiveServerPermissionsContext(ctx context.Context, login string) ([]*EffectivePermission, error) {
+func (s *Server) EffectiveServerPermissions(ctx context.Context, login string) ([]*EffectivePermission, error) {
 	// The USE master is load-bearing, not tidiness. EXECUTE AS LOGIN keeps
 	// the session's current database, so it fails outright — "The server
 	// principal %q is not able to access the database %q under the current
@@ -157,7 +133,7 @@ func (s *Server) EffectiveServerPermissionsContext(ctx context.Context, login st
 	// case for the restricted logins this call is most useful on. Verified
 	// live 2026-08-05: identical statement, master vs. such a database,
 	// succeeds and fails respectively. Same prefix and same reasoning as
-	// Server.GrantServerPermissionContext.
+	// Server.GrantServerPermission.
 	q := fmt.Sprintf(`
 USE master;
 EXECUTE AS LOGIN = N'%s';

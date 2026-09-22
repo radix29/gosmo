@@ -8,7 +8,6 @@
 //	./backup     BACKUP/RESTORE, backup headers, progress reporting
 //	./bulkcopy   loading rows with Database.BulkInsert
 //	./diagnostic execution plans, ExecProc, SQLError, DMV reads
-//	./iterators  the *Seq iterator API and context cancellation
 //	./jobs       SQL Server Agent: jobs, steps, schedules, operators, alerts
 //	./maintain   indexes, fragmentation, statistics, files, Query Store
 //	./scripting  the Scripter, and WithScript's "collect, don't execute" mode
@@ -35,6 +34,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -43,6 +43,7 @@ import (
 )
 
 func main() {
+	ctx := context.Background()
 	// First, so it runs after the cleanup deferred below it.
 	defer demo.Exit()
 
@@ -61,7 +62,7 @@ func main() {
 
 	// -- List databases ---------------------------------------------------
 	demo.Section("Databases")
-	for _, d := range demo.Value(srv.Databases()) {
+	for _, d := range demo.Value(srv.Databases(ctx)) {
 		fmt.Printf("  %-30s state=%-10s recovery=%-12s compat=%d\n",
 			d.Name, d.State, d.RecoveryModel, d.CompatibilityLevel)
 	}
@@ -71,20 +72,20 @@ func main() {
 	defer drop()
 
 	// -- Extended property ------------------------------------------------
-	demo.Must(db.AddExtendedProperty("MS_Description", "GoSMO demo database",
+	demo.Must(db.AddExtendedProperty(ctx, "MS_Description", "GoSMO demo database",
 		gosmo.ExtendedPropertyLevel{}))
 
 	// -- Schemas ----------------------------------------------------------
 	demo.Section("Schemas")
-	demo.Must(db.CreateSchema("Sales", "dbo"))
-	demo.Must(db.CreateSchema("HR", "dbo"))
-	for _, s := range demo.Value(db.Schemas()) {
+	demo.Must(db.CreateSchema(ctx, "Sales", "dbo"))
+	demo.Must(db.CreateSchema(ctx, "HR", "dbo"))
+	for _, s := range demo.Value(db.Schemas(ctx)) {
 		fmt.Printf("  [%s] owner=%s\n", s.Name, s.Owner)
 	}
 
 	// -- Tables -----------------------------------------------------------
 	demo.Section("Tables")
-	demo.Must(db.CreateTable(gosmo.CreateTableRequest{
+	demo.Must(db.CreateTable(ctx, gosmo.CreateTableRequest{
 		Schema: "dbo",
 		Name:   "Customers",
 		Columns: []gosmo.ColumnDefinition{
@@ -96,7 +97,7 @@ func main() {
 			{Name: "IsActive", DataType: gosmo.DataTypeBit, IsNullable: false, DefaultValue: "1"},
 		},
 	}))
-	demo.Must(db.CreateTable(gosmo.CreateTableRequest{
+	demo.Must(db.CreateTable(ctx, gosmo.CreateTableRequest{
 		Schema: "Sales",
 		Name:   "Orders",
 		Columns: []gosmo.ColumnDefinition{
@@ -107,15 +108,15 @@ func main() {
 			{Name: "Status", DataType: gosmo.DataTypeVarChar, MaxLength: 20, IsNullable: false, DefaultValue: "'PENDING'"},
 		},
 	}))
-	for _, t := range demo.Value(db.Tables()) {
-		rc, _ := t.RowCount()
+	for _, t := range demo.Value(db.Tables(ctx)) {
+		rc, _ := t.RowCount(ctx)
 		fmt.Printf("  %s  rows=%d\n", t.FullName(), rc)
 	}
 
 	// -- Columns ----------------------------------------------------------
 	demo.Section("Columns of dbo.Customers")
-	cust := demo.Value(db.TableByName("dbo", "Customers"))
-	for _, c := range demo.Value(cust.Columns()) {
+	cust := demo.Value(db.TableByName(ctx, "dbo", "Customers"))
+	for _, c := range demo.Value(cust.Columns(ctx)) {
 		null := "NOT NULL"
 		if c.IsNullable {
 			null = "NULL"
@@ -127,7 +128,7 @@ func main() {
 
 	// -- Index -----------------------------------------------------------
 	demo.Section("Indexes")
-	demo.Must(cust.CreateIndex(gosmo.CreateIndexRequest{
+	demo.Must(cust.CreateIndex(ctx, gosmo.CreateIndexRequest{
 		Name: "IX_Customers_LastName",
 		Type: gosmo.IndexTypeNonClustered,
 		KeyColumns: []gosmo.IndexColumnDef{
@@ -137,14 +138,14 @@ func main() {
 		IncludedColumns: []string{"Email"},
 		FillFactor:      90,
 	}))
-	demo.Must(cust.CreateIndex(gosmo.CreateIndexRequest{
+	demo.Must(cust.CreateIndex(ctx, gosmo.CreateIndexRequest{
 		Name:             "UIX_Customers_Email",
 		Type:             gosmo.IndexTypeNonClustered,
 		IsUnique:         true,
 		KeyColumns:       []gosmo.IndexColumnDef{{Name: "Email"}},
 		FilterDefinition: "Email IS NOT NULL",
 	}))
-	for _, idx := range demo.Value(cust.Indexes()) {
+	for _, idx := range demo.Value(cust.Indexes(ctx)) {
 		fmt.Printf("  %-24s %-16s unique=%-5t keys=%d\n",
 			idx.Name, idx.Type, idx.IsUnique, len(idx.KeyColumns))
 	}
@@ -152,7 +153,7 @@ func main() {
 	// -- Sequence --------------------------------------------------------
 	demo.Section("Sequence")
 	noCache := 0
-	demo.Must(db.CreateSequence(gosmo.CreateSequenceRequest{
+	demo.Must(db.CreateSequence(ctx, gosmo.CreateSequenceRequest{
 		Schema:     "dbo",
 		Name:       "InvoiceSeq",
 		DataType:   gosmo.DataTypeBigInt,
@@ -160,14 +161,14 @@ func main() {
 		Increment:  1,
 		Cache:      &noCache,
 	}))
-	for _, s := range demo.Value(db.Sequences()) {
+	for _, s := range demo.Value(db.Sequences(ctx)) {
 		fmt.Printf("  [%s].[%s] start=%d incr=%d\n", s.Schema, s.Name, s.StartValue, s.Increment)
 	}
 
 	// -- Synonym ----------------------------------------------------------
 	demo.Section("Synonym")
-	demo.Must(db.CreateSynonym("dbo", "Cust", "dbo.Customers"))
-	for _, syn := range demo.Value(db.Synonyms()) {
+	demo.Must(db.CreateSynonym(ctx, "dbo", "Cust", "dbo.Customers"))
+	for _, syn := range demo.Value(db.Synonyms(ctx)) {
 		fmt.Printf("  [%s].[%s] -> %s\n", syn.Schema, syn.Name, syn.BaseObject)
 	}
 
@@ -175,7 +176,7 @@ func main() {
 	// The body is the T-SQL *after* AS — gosmo writes the CREATE OR ALTER
 	// PROCEDURE header itself.
 	demo.Section("Stored Procedure")
-	demo.Must(db.CreateStoredProcedure("dbo", "RecentOrders", `
+	demo.Must(db.CreateStoredProcedure(ctx, "dbo", "RecentOrders", `
 BEGIN
     SET NOCOUNT ON;
     SELECT TOP (100) o.OrderID, o.OrderDate, o.TotalAmount, o.Status
@@ -186,14 +187,14 @@ END`))
 
 	// -- Dependencies -----------------------------------------------------
 	demo.Section("Dependencies of dbo.RecentOrders")
-	for _, dep := range demo.Value(db.Dependencies("dbo", "RecentOrders")) {
+	for _, dep := range demo.Value(db.Dependencies(ctx, "dbo", "RecentOrders")) {
 		fmt.Printf("  references [%s].[%s] (%s)\n", dep.Schema, dep.Name, dep.TypeDesc)
 	}
 
 	// -- Scripter --------------------------------------------------------
 	demo.Section("DDL Script (first 15 lines of dbo.Customers)")
 	sc := gosmo.NewScripter(db, gosmo.DefaultScriptOptions())
-	for i, line := range strings.Split(demo.Value(sc.ScriptTable("dbo", "Customers")), "\n") {
+	for i, line := range strings.Split(demo.Value(sc.ScriptTable(ctx, "dbo", "Customers")), "\n") {
 		if i >= 15 {
 			fmt.Println("  ...")
 			break
@@ -203,19 +204,19 @@ END`))
 
 	// -- Partition function ----------------------------------------------
 	demo.Section("Partition Function")
-	demo.Must(db.CreatePartitionFunction(gosmo.CreatePartitionFunctionRequest{
+	demo.Must(db.CreatePartitionFunction(ctx, gosmo.CreatePartitionFunctionRequest{
 		Name:       "pf_OrderDate",
 		InputType:  gosmo.DataTypeDate,
 		IsRight:    true,
 		Boundaries: []string{"'2023-01-01'", "'2024-01-01'", "'2025-01-01'"},
 	}))
-	for _, pf := range demo.Value(db.PartitionFunctions()) {
+	for _, pf := range demo.Value(db.PartitionFunctions(ctx)) {
 		fmt.Printf("  [%s] input=%s boundaries=%d\n", pf.Name, pf.InputType, pf.BoundaryCount)
 	}
 
 	// -- Space used -------------------------------------------------------
 	demo.Section("Space used")
-	space := demo.Value(db.SpaceUsed())
+	space := demo.Value(db.SpaceUsed(ctx))
 	fmt.Printf("  total=%.2f MB  data=%.2f MB  log=%.2f MB  unallocated=%.2f MB\n",
 		space.TotalMB, space.DataMB, space.LogMB, space.UnallocatedMB)
 
@@ -227,7 +228,7 @@ END`))
 		"optimize for ad hoc workloads":  true,
 		"cost threshold for parallelism": true,
 	}
-	for _, c := range demo.Value(srv.Configurations()) {
+	for _, c := range demo.Value(srv.Configurations(ctx)) {
 		if want[c.Name] {
 			fmt.Printf("  %-40s value=%-8d in_use=%d\n", c.Name, c.Value, c.ValueInUse)
 		}
@@ -235,11 +236,11 @@ END`))
 
 	// -- Active sessions -------------------------------------------------
 	demo.Section("Active sessions")
-	fmt.Printf("  %d user session(s) active\n", len(demo.Value(srv.ActiveSessions(false))))
+	fmt.Printf("  %d user session(s) active\n", len(demo.Value(srv.ActiveSessions(ctx, false))))
 
 	// -- Agent jobs (read-only) ------------------------------------------
 	demo.Section("SQL Server Agent Jobs")
-	jobs := demo.Value(srv.Jobs())
+	jobs := demo.Value(srv.Jobs(ctx))
 	if len(jobs) == 0 {
 		fmt.Println("  (no jobs defined)")
 	}

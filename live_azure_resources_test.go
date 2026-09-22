@@ -45,7 +45,7 @@ func TestLiveAzureServerResourceStats(t *testing.T) {
 	srv, azure := liveAzureServer(t)
 	ctx := t.Context()
 
-	stats, err := srv.ServerResourceStatsContext(ctx, 20)
+	stats, err := srv.ServerResourceStats(ctx, 20)
 	if !azure {
 		if !errors.Is(err, ErrUnsupportedVersion) {
 			t.Fatalf("on a non-Azure instance: err = %v, want ErrUnsupportedVersion", err)
@@ -53,7 +53,7 @@ func TestLiveAzureServerResourceStats(t *testing.T) {
 		return
 	}
 	if err != nil {
-		t.Fatalf("ServerResourceStatsContext: %v", err)
+		t.Fatalf("ServerResourceStats: %v", err)
 	}
 	if len(stats) == 0 {
 		t.Fatal("no rows — sys.server_resource_stats retains ~14 days, so an instance up for one window has some")
@@ -81,9 +81,9 @@ func TestLiveAzureServerResourceStats(t *testing.T) {
 			newest.StorageSpaceUsedMB, newest.ReservedStorageMB)
 	}
 
-	latest, err := srv.LatestServerResourceStatsContext(ctx)
+	latest, err := srv.LatestServerResourceStats(ctx)
 	if err != nil {
-		t.Fatalf("LatestServerResourceStatsContext: %v", err)
+		t.Fatalf("LatestServerResourceStats: %v", err)
 	}
 	if !latest.EndTime.Equal(newest.EndTime) {
 		t.Errorf("Latest ends at %v, the history's newest at %v", latest.EndTime, newest.EndTime)
@@ -93,7 +93,7 @@ func TestLiveAzureServerResourceStats(t *testing.T) {
 func TestLiveAzureInstanceResourceGovernance(t *testing.T) {
 	srv, azure := liveAzureServer(t)
 
-	g, err := srv.InstanceResourceGovernanceContext(t.Context())
+	g, err := srv.InstanceResourceGovernance(t.Context())
 	if !azure {
 		if !errors.Is(err, ErrUnsupportedVersion) {
 			t.Fatalf("on a non-Azure instance: err = %v, want ErrUnsupportedVersion", err)
@@ -101,7 +101,7 @@ func TestLiveAzureInstanceResourceGovernance(t *testing.T) {
 		return
 	}
 	if err != nil {
-		t.Fatalf("InstanceResourceGovernanceContext: %v", err)
+		t.Fatalf("InstanceResourceGovernance: %v", err)
 	}
 	// The four the Instance tab reads as ceilings. Each is a limit the
 	// governor always has a value for, so a zero here means the column name
@@ -131,7 +131,7 @@ func TestLiveAzureInstanceResourceGovernance(t *testing.T) {
 func TestLiveAzureOSJobObject(t *testing.T) {
 	srv, azure := liveAzureServer(t)
 
-	j, err := srv.OSJobObjectContext(t.Context())
+	j, err := srv.OSJobObject(t.Context())
 	if !azure {
 		if !errors.Is(err, ErrUnsupportedVersion) {
 			t.Fatalf("on a non-Azure instance: err = %v, want ErrUnsupportedVersion", err)
@@ -139,7 +139,7 @@ func TestLiveAzureOSJobObject(t *testing.T) {
 		return
 	}
 	if err != nil {
-		t.Fatalf("OSJobObjectContext: %v", err)
+		t.Fatalf("OSJobObject: %v", err)
 	}
 	if j.CPURate <= 0 {
 		t.Errorf("CPURate = %d, want the job object's CPU allocation", j.CPURate)
@@ -164,9 +164,9 @@ func TestLiveAzureOSJobObject(t *testing.T) {
 func liveAzureDatabase(t *testing.T, name string) (*Database, bool) {
 	t.Helper()
 	srv, azure := liveAzureServer(t)
-	d, err := srv.DatabaseByNameContext(t.Context(), name)
+	d, err := srv.DatabaseByName(t.Context(), name)
 	if err != nil {
-		t.Fatalf("DatabaseByNameContext %s: %v", name, err)
+		t.Fatalf("DatabaseByName %s: %v", name, err)
 	}
 	return d, azure
 }
@@ -174,7 +174,7 @@ func liveAzureDatabase(t *testing.T, name string) (*Database, bool) {
 func TestLiveAzureDatabaseResourceStats(t *testing.T) {
 	d, azure := liveAzureDatabase(t, *liveAzureDB)
 
-	stats, err := d.ResourceStatsContext(t.Context(), 0)
+	stats, err := d.ResourceStats(t.Context(), 0)
 	if !azure {
 		if !errors.Is(err, ErrUnsupportedVersion) {
 			t.Fatalf("on a non-Azure instance: err = %v, want ErrUnsupportedVersion", err)
@@ -182,7 +182,7 @@ func TestLiveAzureDatabaseResourceStats(t *testing.T) {
 		return
 	}
 	if err != nil {
-		t.Fatalf("ResourceStatsContext: %v", err)
+		t.Fatalf("ResourceStats: %v", err)
 	}
 	if len(stats) == 0 {
 		t.Skip("sys.dm_db_resource_stats is empty — the database has been idle since the instance restarted")
@@ -229,9 +229,9 @@ func TestLiveAzureDatabaseResourceStats(t *testing.T) {
 	}
 
 	// The Latest variant must agree with the last row of the history.
-	latest, err := d.LatestResourceStatsContext(t.Context())
+	latest, err := d.LatestResourceStats(t.Context())
 	if err != nil {
-		t.Fatalf("LatestResourceStatsContext: %v", err)
+		t.Fatalf("LatestResourceStats: %v", err)
 	}
 	if latest.EndTime.Before(last.EndTime) {
 		t.Errorf("latest ends %s, before the history's last row at %s", latest.EndTime, last.EndTime)
@@ -245,7 +245,7 @@ const sharedSLO = "Shared"
 func TestLiveAzureUserDBResourceGovernance(t *testing.T) {
 	srv, azure := liveAzureServer(t)
 
-	all, err := srv.UserDBResourceGovernanceContext(t.Context())
+	all, err := srv.UserDBResourceGovernance(t.Context())
 	if !azure {
 		if !errors.Is(err, ErrUnsupportedVersion) {
 			t.Fatalf("on a non-Azure instance: err = %v, want ErrUnsupportedVersion", err)
@@ -253,7 +253,7 @@ func TestLiveAzureUserDBResourceGovernance(t *testing.T) {
 		return
 	}
 	if err != nil {
-		t.Fatalf("UserDBResourceGovernanceContext: %v", err)
+		t.Fatalf("UserDBResourceGovernance: %v", err)
 	}
 	if len(all) == 0 {
 		t.Fatal("no rows — the instance governs at least its own system databases")
@@ -309,9 +309,9 @@ func TestLiveAzureUserDBResourceGovernance(t *testing.T) {
 	}
 
 	d, _ := liveAzureDatabase(t, *liveAzureDB)
-	one, err := d.ResourceGovernanceContext(t.Context())
+	one, err := d.ResourceGovernance(t.Context())
 	if err != nil {
-		t.Fatalf("ResourceGovernanceContext: %v", err)
+		t.Fatalf("ResourceGovernance: %v", err)
 	}
 	if one.DatabaseName != *liveAzureDB {
 		t.Errorf("ResourceGovernance returned %q, want %q — the view ignores the connection's database, so the WHERE is the only thing selecting it",

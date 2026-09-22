@@ -3,7 +3,6 @@ package gosmo
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -16,7 +15,7 @@ import (
 //
 // sys.credentials never exposes the stored secret, and there is no read that
 // does. A caller can set one and can clear one; it can never read one back,
-// which is what shapes both AlterContext's signature and what a generated
+// which is what shapes both Alter's signature and what a generated
 // script can honestly emit.
 
 // -- Credentials -----------------------------------------------------------------
@@ -61,42 +60,18 @@ LEFT   JOIN sys.cryptographic_providers p
        ON  c.target_type = 'CRYPTOGRAPHIC PROVIDER' AND p.provider_id = c.target_id`
 
 // Credentials returns every server-level credential.
-func (s *Server) Credentials() ([]*Credential, error) {
-	return s.CredentialsContext(context.Background())
-}
-
-// CredentialsContext is the context-aware variant of Credentials.
-func (s *Server) CredentialsContext(ctx context.Context) ([]*Credential, error) {
+func (s *Server) Credentials(ctx context.Context) ([]*Credential, error) {
 	rows, err := s.query(ctx, credentialSelect+`
 ORDER  BY c.name`)
-	if err != nil {
-		return nil, fmt.Errorf("gosmo: list credentials: %w", err)
-	}
-	defer rows.Close()
-
-	var creds []*Credential
-	for rows.Next() {
-		c, err := scanCredential(s, rows.Scan)
-		if err != nil {
-			return nil, fmt.Errorf("gosmo: list credentials: %w", err)
-		}
-		creds = append(creds, c)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("gosmo: list credentials: %w", err)
-	}
-	return creds, nil
+	return scanRows(rows, err, "list credentials", func(scan func(...any) error) (*Credential, error) {
+		return scanCredential(s, scan)
+	})
 }
 
 // CredentialByName returns one credential with every field populated, or a
 // not-found error (errors.Is ErrNotFound) when the server has none by that
 // name.
-func (s *Server) CredentialByName(name string) (*Credential, error) {
-	return s.CredentialByNameContext(context.Background(), name)
-}
-
-// CredentialByNameContext is the context-aware variant of CredentialByName.
-func (s *Server) CredentialByNameContext(ctx context.Context, name string) (*Credential, error) {
+func (s *Server) CredentialByName(ctx context.Context, name string) (*Credential, error) {
 	var c *Credential
 	err := s.queryRow(ctx, func(row *sql.Row) error {
 		var err error
@@ -104,13 +79,7 @@ func (s *Server) CredentialByNameContext(ctx context.Context, name string) (*Cre
 		return err
 	}, credentialSelect+`
 WHERE  c.name = @p1`, name)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, notFoundf("gosmo: credential %q not found", name)
-	}
-	if err != nil {
-		return nil, fmt.Errorf("gosmo: read credential %q: %w", name, err)
-	}
-	return c, nil
+	return foundRow(c, err, notFoundf("gosmo: credential %q not found", name), fmt.Sprintf("read credential %q", name))
 }
 
 // CredentialRef returns a lightweight handle for a credential by name, without
@@ -121,7 +90,7 @@ WHERE  c.name = @p1`, name)
 // Every write method on *Credential addresses the credential by name, so this
 // handle is enough to go on operating on one the caller already knows exists —
 // and is the form to use when there is nothing to read yet: under a
-// WithScript-derived context, CredentialByNameContext's lookup is a real read
+// WithScript-derived context, CredentialByName's lookup is a real read
 // and a credential whose CREATE CREDENTIAL was merely collected is not there
 // to find.
 func (s *Server) CredentialRef(name string) *Credential {
@@ -184,41 +153,31 @@ func (spec CredentialSpec) createCredentialStatement() (string, error) {
 }
 
 // CreateCredential creates a server-level credential.
-func (s *Server) CreateCredential(spec CredentialSpec) (*Credential, error) {
-	return s.CreateCredentialContext(context.Background(), spec)
-}
-
-// CreateCredentialContext is the context-aware variant of CreateCredential.
-func (s *Server) CreateCredentialContext(ctx context.Context, spec CredentialSpec) (*Credential, error) {
+func (s *Server) CreateCredential(ctx context.Context, spec CredentialSpec) (*Credential, error) {
 	stmt, err := spec.createCredentialStatement()
 	if err != nil {
 		return nil, fmt.Errorf("gosmo: create credential: %w", err)
 	}
-	if err := s.execContext(ctx, stmt); err != nil {
+	if err := s.exec(ctx, stmt); err != nil {
 		return nil, fmt.Errorf("gosmo: create credential %q: %w", spec.Name, err)
 	}
 	if Scripting(ctx) {
 		// The CREATE was only collected, so there is nothing to read back.
 		return s.CredentialRef(spec.Name), nil
 	}
-	return s.CredentialByNameContext(ctx, spec.Name)
+	return s.CredentialByName(ctx, spec.Name)
 }
 
 // Alter changes the credential's identity, and its secret.
-func (c *Credential) Alter(identity string, secret *string) error {
-	return c.AlterContext(context.Background(), identity, secret)
-}
-
-// AlterContext is the context-aware variant of Alter.
 //
-// A nil secret does not leave the stored secret alone — it clears it.
-// ALTER CREDENTIAL resets both halves every time, and SQL Server documents
-// omitting SECRET as setting the stored secret to NULL; there is no T-SQL
-// form that changes the identity while keeping the secret. Since the secret
-// can never be read back, a caller that wants to keep one has to ask the user
-// for it again and pass it here. Both branches are deliberate: pass a pointer
-// to the new secret to set it, and nil only when clearing it is the intent.
-func (c *Credential) AlterContext(ctx context.Context, identity string, secret *string) error {
+// A nil secret does not leave the stored secret alone — it clears it. ALTER
+// CREDENTIAL resets both halves every time, and SQL Server documents omitting
+// SECRET as setting the stored secret to NULL; there is no T-SQL form that
+// changes the identity while keeping the secret. Since the secret can never be
+// read back, a caller that wants to keep one has to ask the user for it again
+// and pass it here. Both branches are deliberate: pass a pointer to the new
+// secret to set it, and nil only when clearing it is the intent.
+func (c *Credential) Alter(ctx context.Context, identity string, secret *string) error {
 	if identity == "" {
 		return fmt.Errorf("gosmo: alter credential %q: identity is required", c.Name)
 	}
@@ -227,7 +186,7 @@ func (c *Credential) AlterContext(ctx context.Context, identity string, secret *
 	if secret != nil {
 		stmt += fmt.Sprintf(", SECRET = N'%s'", escapeSingle(*secret))
 	}
-	if err := c.server.execContext(ctx, stmt); err != nil {
+	if err := c.server.exec(ctx, stmt); err != nil {
 		return fmt.Errorf("gosmo: alter credential %q: %w", c.Name, err)
 	}
 	setIfApplied(ctx, &c.Identity, identity)
@@ -235,11 +194,8 @@ func (c *Credential) AlterContext(ctx context.Context, identity string, secret *
 }
 
 // Drop deletes the credential.
-func (c *Credential) Drop() error { return c.DropContext(context.Background()) }
-
-// DropContext is the context-aware variant of Drop.
-func (c *Credential) DropContext(ctx context.Context) error {
-	if err := c.server.execContext(ctx, "DROP CREDENTIAL "+quoteIdent(c.Name)); err != nil {
+func (c *Credential) Drop(ctx context.Context) error {
+	if err := c.server.exec(ctx, "DROP CREDENTIAL "+quoteIdent(c.Name)); err != nil {
 		return fmt.Errorf("gosmo: drop credential %q: %w", c.Name, err)
 	}
 	return nil
@@ -262,14 +218,10 @@ type CryptographicProvider struct {
 }
 
 // CryptographicProviders returns every registered EKM provider.
-func (s *Server) CryptographicProviders() ([]*CryptographicProvider, error) {
-	return s.CryptographicProvidersContext(context.Background())
-}
-
-// CryptographicProvidersContext is the context-aware variant of
-// CryptographicProviders. A server with no provider registered — the ordinary
-// case — returns no rows, not an error.
-func (s *Server) CryptographicProvidersContext(ctx context.Context) ([]*CryptographicProvider, error) {
+//
+// A server with no provider registered — the ordinary case — returns no
+// rows, not an error.
+func (s *Server) CryptographicProviders(ctx context.Context) ([]*CryptographicProvider, error) {
 	const q = `
 SELECT provider_id, name,
        -- A uniqueidentifier reaches the driver as 16 raw bytes; converted here
@@ -280,23 +232,13 @@ FROM   sys.cryptographic_providers
 ORDER  BY name`
 
 	rows, err := s.query(ctx, q)
-	if err != nil {
-		return nil, fmt.Errorf("gosmo: list cryptographic providers: %w", err)
-	}
-	defer rows.Close()
-
-	var out []*CryptographicProvider
-	for rows.Next() {
+	return scanRows(rows, err, "list cryptographic providers", func(scan func(...any) error) (*CryptographicProvider, error) {
 		p := &CryptographicProvider{}
 		var guid, version, dllPath sql.NullString
-		if err := rows.Scan(&p.ProviderID, &p.Name, &guid, &version, &dllPath, &p.IsEnabled); err != nil {
-			return nil, fmt.Errorf("gosmo: list cryptographic providers: %w", err)
+		if err := scan(&p.ProviderID, &p.Name, &guid, &version, &dllPath, &p.IsEnabled); err != nil {
+			return nil, err
 		}
 		p.GUID, p.Version, p.DLLPath = guid.String, version.String, dllPath.String
-		out = append(out, p)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("gosmo: list cryptographic providers: %w", err)
-	}
-	return out, nil
+		return p, nil
+	})
 }

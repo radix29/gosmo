@@ -31,15 +31,15 @@ const reorderJobName = "gossms_live_reorder"
 func liveReorderJob(t *testing.T, srv *Server, ctx context.Context) (*Job, func()) {
 	t.Helper()
 	drop := func() {
-		srv.execContext(context.Background(),
+		srv.exec(context.Background(),
 			"IF EXISTS (SELECT 1 FROM msdb.dbo.sysjobs WHERE name = N'"+reorderJobName+"') "+
 				"EXEC msdb.dbo.sp_delete_job @job_name = N'"+reorderJobName+"'")
 	}
 	drop()
-	if _, err := srv.CreateJobContext(ctx, CreateJobRequest{Name: reorderJobName, Enabled: false}); err != nil {
+	if _, err := srv.CreateJob(ctx, CreateJobRequest{Name: reorderJobName, Enabled: false}); err != nil {
 		t.Fatalf("create job: %v", err)
 	}
-	j, err := srv.JobByNameContext(ctx, reorderJobName)
+	j, err := srv.JobByName(ctx, reorderJobName)
 	if err != nil {
 		drop()
 		t.Fatalf("job by name: %v", err)
@@ -54,7 +54,7 @@ func liveReorderJob(t *testing.T, srv *Server, ctx context.Context) (*Job, func(
 		{Name: "four", Subsystem: "TSQL", Command: "SELECT 4", OnSuccessAction: 1, OnFailAction: 2},
 	}
 	for _, req := range steps {
-		if err := j.AddStepContext(ctx, req); err != nil {
+		if err := j.AddStep(ctx, req); err != nil {
 			drop()
 			t.Fatalf("add step %q: %v", req.Name, err)
 		}
@@ -96,10 +96,10 @@ func TestLiveJobReorderMovesTheStepAndKeepsItsDefinition(t *testing.T) {
 	// definition dropped (found by deleting Flags from stepRequestFrom,
 	// 2026-08-23).
 	// one, two, three, four -> two, one, three, four.
-	if err := j.MoveStepContext(ctx, 2, 1); err != nil {
+	if err := j.MoveStep(ctx, 2, 1); err != nil {
 		t.Fatalf("move step 2 to 1: %v", err)
 	}
-	steps, err := j.StepsContext(ctx)
+	steps, err := j.Steps(ctx)
 	if err != nil {
 		t.Fatalf("steps: %v", err)
 	}
@@ -144,10 +144,10 @@ func TestLiveJobReorderFollowsGoToStepReferences(t *testing.T) {
 	defer drop()
 
 	// one, two, three, four -> one, three, four, two
-	if err := j.MoveStepContext(ctx, 2, 4); err != nil {
+	if err := j.MoveStep(ctx, 2, 4); err != nil {
 		t.Fatalf("move step 2 to 4: %v", err)
 	}
-	steps, err := j.StepsContext(ctx)
+	steps, err := j.Steps(ctx)
 	if err != nil {
 		t.Fatalf("steps: %v", err)
 	}

@@ -31,25 +31,25 @@ func TestLiveColumnMasterKeyWrites(t *testing.T) {
 	const keyPath = "CurrentUser/my/DEADBEEF"
 	signature := []byte{0x0a, 0xff, 0x10}
 
-	if err := d.CreateColumnMasterKeyContext(ctx, "gosmo_cmk_plain", provider, keyPath, false); err != nil {
-		t.Fatalf("CreateColumnMasterKeyContext: %v", err)
+	if err := d.CreateColumnMasterKey(ctx, "gosmo_cmk_plain", provider, keyPath, false); err != nil {
+		t.Fatalf("CreateColumnMasterKey: %v", err)
 	}
 	// B2: ENCLAVE_COMPUTATIONS is 2019 syntax — below that the parser rejects
 	// the whole CREATE ("Incorrect syntax near ','"), so gosmo refuses before
 	// sending and there is no enclave key to read back.
 	if !d.EnclaveComputationsSupported() {
-		err := d.CreateColumnMasterKeyWithSignatureContext(ctx, "gosmo_cmk_enclave", provider, keyPath, signature)
+		err := d.CreateColumnMasterKeyWithSignature(ctx, "gosmo_cmk_enclave", provider, keyPath, signature)
 		if err == nil || !strings.Contains(err.Error(), "SQL Server 2019 or later") {
 			t.Errorf("enclave create below 2019: err = %v, want a refusal naming the version requirement", err)
 		}
-		if _, err := d.ColumnMasterKeyByNameContext(ctx, "gosmo_cmk_enclave"); err == nil {
+		if _, err := d.ColumnMasterKeyByName(ctx, "gosmo_cmk_enclave"); err == nil {
 			t.Errorf("gosmo_cmk_enclave exists; the refusal still wrote something")
 		}
-	} else if err := d.CreateColumnMasterKeyWithSignatureContext(ctx, "gosmo_cmk_enclave", provider, keyPath, signature); err != nil {
-		t.Fatalf("CreateColumnMasterKeyWithSignatureContext: %v", err)
+	} else if err := d.CreateColumnMasterKeyWithSignature(ctx, "gosmo_cmk_enclave", provider, keyPath, signature); err != nil {
+		t.Fatalf("CreateColumnMasterKeyWithSignature: %v", err)
 	}
 
-	plain, err := d.ColumnMasterKeyByNameContext(ctx, "gosmo_cmk_plain")
+	plain, err := d.ColumnMasterKeyByName(ctx, "gosmo_cmk_plain")
 	if err != nil {
 		t.Fatalf("read back gosmo_cmk_plain: %v", err)
 	}
@@ -60,7 +60,7 @@ func TestLiveColumnMasterKeyWrites(t *testing.T) {
 
 	created := []*ColumnMasterKey{plain}
 	if d.EnclaveComputationsSupported() {
-		enclave, err := d.ColumnMasterKeyByNameContext(ctx, "gosmo_cmk_enclave")
+		enclave, err := d.ColumnMasterKeyByName(ctx, "gosmo_cmk_enclave")
 		if err != nil {
 			t.Fatalf("read back gosmo_cmk_enclave: %v", err)
 		}
@@ -75,16 +75,16 @@ func TestLiveColumnMasterKeyWrites(t *testing.T) {
 
 	// The bool form cannot produce the clause and must say so instead of
 	// reaching the server at all.
-	err = d.CreateColumnMasterKeyContext(ctx, "gosmo_cmk_refused", provider, keyPath, true)
+	err = d.CreateColumnMasterKey(ctx, "gosmo_cmk_refused", provider, keyPath, true)
 	if err == nil || !strings.Contains(err.Error(), "CreateColumnMasterKeyWithSignature") {
 		t.Errorf("enclave via the bool form: err = %v, want a refusal naming CreateColumnMasterKeyWithSignature", err)
 	}
-	if _, err := d.ColumnMasterKeyByNameContext(ctx, "gosmo_cmk_refused"); err == nil {
+	if _, err := d.ColumnMasterKeyByName(ctx, "gosmo_cmk_refused"); err == nil {
 		t.Errorf("gosmo_cmk_refused exists; the refusal still wrote something")
 	}
 
 	for _, k := range created {
-		if err := k.DropContext(ctx); err != nil {
+		if err := k.Drop(ctx); err != nil {
 			t.Errorf("drop %s: %v", k.Name, err)
 		}
 	}
@@ -105,8 +105,8 @@ func TestLiveColumnEncryptionKeyWrites(t *testing.T) {
 
 	const provider = "MSSQL_CERTIFICATE_STORE"
 	for _, name := range []string{"gosmo_cek_cmk1", "gosmo_cek_cmk2"} {
-		if err := d.CreateColumnMasterKeyContext(ctx, name, provider, "CurrentUser/my/DEADBEEF", false); err != nil {
-			t.Fatalf("CreateColumnMasterKeyContext %s: %v", name, err)
+		if err := d.CreateColumnMasterKey(ctx, name, provider, "CurrentUser/my/DEADBEEF", false); err != nil {
+			t.Fatalf("CreateColumnMasterKey %s: %v", name, err)
 		}
 	}
 
@@ -115,19 +115,19 @@ func TestLiveColumnEncryptionKeyWrites(t *testing.T) {
 	value1 := bytes.Repeat([]byte{0x01, 0x02}, 8)
 	value2 := bytes.Repeat([]byte{0x03, 0x04}, 8)
 
-	if err := d.CreateColumnEncryptionKeyContext(ctx, "gosmo_cek_one", []ColumnEncryptionKeyValue{
+	if err := d.CreateColumnEncryptionKey(ctx, "gosmo_cek_one", []ColumnEncryptionKeyValue{
 		{MasterKeyName: "gosmo_cek_cmk1", EncryptionAlgorithm: "RSA_OAEP", EncryptedValue: value1},
 	}); err != nil {
-		t.Fatalf("CreateColumnEncryptionKeyContext (one value): %v", err)
+		t.Fatalf("CreateColumnEncryptionKey (one value): %v", err)
 	}
-	if err := d.CreateColumnEncryptionKeyContext(ctx, "gosmo_cek_two", []ColumnEncryptionKeyValue{
+	if err := d.CreateColumnEncryptionKey(ctx, "gosmo_cek_two", []ColumnEncryptionKeyValue{
 		{MasterKeyName: "gosmo_cek_cmk1", EncryptionAlgorithm: "RSA_OAEP", EncryptedValue: value1},
 		{MasterKeyName: "gosmo_cek_cmk2", EncryptionAlgorithm: "RSA_OAEP", EncryptedValue: value2},
 	}); err != nil {
-		t.Fatalf("CreateColumnEncryptionKeyContext (two values): %v", err)
+		t.Fatalf("CreateColumnEncryptionKey (two values): %v", err)
 	}
 
-	one, err := d.ColumnEncryptionKeyByNameContext(ctx, "gosmo_cek_one")
+	one, err := d.ColumnEncryptionKeyByName(ctx, "gosmo_cek_one")
 	if err != nil {
 		t.Fatalf("read back gosmo_cek_one: %v", err)
 	}
@@ -144,7 +144,7 @@ func TestLiveColumnEncryptionKeyWrites(t *testing.T) {
 		t.Errorf("gosmo_cek_one: encrypted value = %x, want %x", one.Values[0].EncryptedValue, value1)
 	}
 
-	two, err := d.ColumnEncryptionKeyByNameContext(ctx, "gosmo_cek_two")
+	two, err := d.ColumnEncryptionKeyByName(ctx, "gosmo_cek_two")
 	if err != nil {
 		t.Fatalf("read back gosmo_cek_two: %v", err)
 	}
@@ -168,7 +168,7 @@ func TestLiveColumnEncryptionKeyWrites(t *testing.T) {
 	}
 
 	for _, k := range []*ColumnEncryptionKey{one, two} {
-		if err := k.DropContext(ctx); err != nil {
+		if err := k.Drop(ctx); err != nil {
 			t.Errorf("drop %s: %v", k.Name, err)
 		}
 	}

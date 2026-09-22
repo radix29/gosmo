@@ -53,47 +53,38 @@ type Catalog struct {
 
 // Catalog returns a bulk snapshot of every user table and view in the
 // database, each with its columns, sorted by schema then name.
-func (d *Database) Catalog() (*Catalog, error) {
-	return d.CatalogContext(context.Background())
-}
-
-// CatalogContext is the context-aware variant of Catalog.
-func (d *Database) CatalogContext(ctx context.Context) (*Catalog, error) {
-	return d.catalogContext(ctx, "sys.objects", "sys.columns", "o.type IN ('U','V') AND o.is_ms_shipped = 0")
+func (d *Database) Catalog(ctx context.Context) (*Catalog, error) {
+	return d.catalog(ctx, "sys.objects", "sys.columns", "o.type IN ('U','V') AND o.is_ms_shipped = 0")
 }
 
 // SystemCatalog returns a bulk snapshot of every catalog view in the "sys"
 // schema (sys.tables, sys.columns, sys.objects, ...) — see
-// SystemCatalogContext.
-func (d *Database) SystemCatalog() (*Catalog, error) {
-	return d.SystemCatalogContext(context.Background())
-}
-
-// SystemCatalogContext is the context-aware variant of SystemCatalog. The
-// "sys" schema's catalog views are defined identically in every database on
-// a server, so a caller only needs to load this once per connection — any
+// SystemCatalog.
+//
+// The "sys" schema's catalog views are defined identically in every database
+// on a server, so a caller only needs to load this once per connection — any
 // database works equally well as the query target, not just master.
 //
-// Unlike CatalogContext, this queries sys.all_objects/sys.all_columns
+// Unlike Catalog, this queries sys.all_objects/sys.all_columns
 // rather than sys.objects/sys.columns: the latter two, despite the generic
 // names, only ever surface user-created objects (is_ms_shipped=1 rows are
 // invisible through them) — sys.tables, sys.columns, sys.objects itself,
 // and every other built-in catalog view only show up through the "all_"
 // variants.
-func (d *Database) SystemCatalogContext(ctx context.Context) (*Catalog, error) {
-	return d.catalogContext(ctx, "sys.all_objects", "sys.all_columns", "o.type = 'V' AND SCHEMA_NAME(o.schema_id) = 'sys'")
+func (d *Database) SystemCatalog(ctx context.Context) (*Catalog, error) {
+	return d.catalog(ctx, "sys.all_objects", "sys.all_columns", "o.type = 'V' AND SCHEMA_NAME(o.schema_id) = 'sys'")
 }
 
-// catalogContext is the shared implementation behind CatalogContext and
-// SystemCatalogContext — they differ only in which objects/columns views
+// catalog is the shared implementation behind Catalog and
+// SystemCatalog — they differ only in which objects/columns views
 // and where clause (fixed, package-internal constants — never
 // caller-supplied) select the rows.
-func (d *Database) catalogContext(ctx context.Context, objectsView, columnsView, where string) (*Catalog, error) {
-	objects, err := d.catalogObjectsContext(ctx, objectsView, where)
+func (d *Database) catalog(ctx context.Context, objectsView, columnsView, where string) (*Catalog, error) {
+	objects, err := d.catalogObjects(ctx, objectsView, where)
 	if err != nil {
 		return nil, err
 	}
-	if err := d.catalogColumnsContext(ctx, objects, objectsView, columnsView, where); err != nil {
+	if err := d.catalogColumns(ctx, objects, objectsView, columnsView, where); err != nil {
 		return nil, err
 	}
 
@@ -118,9 +109,9 @@ func catalogObjectType(typeCode string) CatalogObjectType {
 	return CatalogTable
 }
 
-// catalogObjectsContext loads every object matching where (no columns yet),
+// catalogObjects loads every object matching where (no columns yet),
 // sorted by schema then name.
-func (d *Database) catalogObjectsContext(ctx context.Context, objectsView, where string) ([]CatalogObject, error) {
+func (d *Database) catalogObjects(ctx context.Context, objectsView, where string) ([]CatalogObject, error) {
 	q := fmt.Sprintf(`
 SELECT o.object_id, SCHEMA_NAME(o.schema_id), o.name, o.type
 FROM   %s o
@@ -128,33 +119,23 @@ WHERE  %s
 ORDER  BY SCHEMA_NAME(o.schema_id), o.name`, objectsView, where)
 
 	rows, err := d.query(ctx, q)
-	if err != nil {
-		return nil, fmt.Errorf("gosmo: load catalog for %q: %w", d.Name, err)
-	}
-	defer rows.Close()
-
-	var objects []CatalogObject
-	for rows.Next() {
+	return scanRows(rows, err, fmt.Sprintf("load catalog for %q", d.Name), func(scan func(...any) error) (CatalogObject, error) {
 		var o CatalogObject
 		var typeCode string
-		if err := rows.Scan(&o.ObjectID, &o.Schema, &o.Name, &typeCode); err != nil {
-			return nil, fmt.Errorf("gosmo: load catalog for %q: %w", d.Name, err)
+		if err := scan(&o.ObjectID, &o.Schema, &o.Name, &typeCode); err != nil {
+			return CatalogObject{}, err
 		}
 		// sys.objects.type is CHAR(2): 'U'/'V' come back space-padded
 		// ("U ", "V "), so this must trim before comparing.
 		o.Type = catalogObjectType(strings.TrimSpace(typeCode))
-		objects = append(objects, o)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("gosmo: load catalog for %q: %w", d.Name, err)
-	}
-	return objects, nil
+		return o, nil
+	})
 }
 
-// catalogColumnsContext loads every column of every object matching where in
+// catalogColumns loads every column of every object matching where in
 // one query and distributes them into the matching CatalogObject by
 // object_id.
-func (d *Database) catalogColumnsContext(ctx context.Context, objects []CatalogObject, objectsView, columnsView, where string) error {
+func (d *Database) catalogColumns(ctx context.Context, objects []CatalogObject, objectsView, columnsView, where string) error {
 	byID := make(map[int]*CatalogObject, len(objects))
 	for i := range objects {
 		byID[objects[i].ObjectID] = &objects[i]

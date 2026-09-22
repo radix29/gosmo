@@ -80,12 +80,7 @@ type TableDetail struct {
 }
 
 // Detail returns TableDetail for the table.
-func (t *Table) Detail() (*TableDetail, error) {
-	return t.DetailContext(context.Background())
-}
-
-// DetailContext is the context-aware variant of Detail.
-func (t *Table) DetailContext(ctx context.Context) (*TableDetail, error) {
+func (t *Table) Detail(ctx context.Context) (*TableDetail, error) {
 	d := &TableDetail{}
 	if err := t.db.queryRow(ctx, func(row *sql.Row) error {
 		return row.Scan(
@@ -99,7 +94,7 @@ func (t *Table) DetailContext(ctx context.Context) (*TableDetail, error) {
 	return d, nil
 }
 
-// detailSelect is DetailContext's query, version-gated.
+// detailSelect is Detail's query, version-gated.
 func (t *Table) detailSelect() string {
 	// ledger_type_desc is a ledger column, and ledger tables are SQL Server
 	// 2022 (16.x) and later; sys.tables has no such column before then, and
@@ -143,6 +138,31 @@ type Column struct {
 	IsRowGUID         bool
 	Collation         string
 	IsPrimaryKey      bool
+
+	// TypeSchema is the schema DataType belongs to — "sys" for a built-in
+	// type — and IsUserDefinedType is sys.types.is_user_defined. An alias or
+	// CLR type's name resolves against the executing user's default schema
+	// when it is not qualified, so ColumnTypeString qualifies it.
+	TypeSchema        string
+	IsUserDefinedType bool
+	// IsPersisted is sys.computed_columns.is_persisted; false for a column
+	// that is not computed.
+	IsPersisted bool
+	// IdentityNotForReplication is IDENTITY … NOT FOR REPLICATION.
+	IdentityNotForReplication bool
+	IsSparse                  bool
+	// IsColumnSet is an XML column set FOR ALL_SPARSE_COLUMNS.
+	IsColumnSet bool
+	// MaskingFunction is the dynamic data masking function, e.g. "default()"
+	// or `partial(1,"XXX",0)`; "" when the column is not masked.
+	MaskingFunction string
+	// GeneratedAlwaysType is sys.columns.generated_always_type: 0 for an
+	// ordinary column, 1 for a system-versioned table's AS ROW START
+	// column, 2 for its AS ROW END; 2022's ledger and transaction-id kinds
+	// use the values above that.
+	GeneratedAlwaysType int
+	// IsHidden is a period column declared HIDDEN.
+	IsHidden bool
 }
 
 // columnSelect is the SELECT and joins every column listing shares; each
@@ -157,9 +177,16 @@ SELECT c.name, c.column_id,
        ISNULL(dc.name, ''), ISNULL(dc.definition, ''),
        c.is_rowguidcol, ISNULL(c.collation_name, ''),
        ISNULL(ic.seed_value, 0), ISNULL(ic.increment_value, 0),
-       CAST(CASE WHEN pk.column_id IS NOT NULL THEN 1 ELSE 0 END AS BIT)
+       CAST(CASE WHEN pk.column_id IS NOT NULL THEN 1 ELSE 0 END AS BIT),
+       SCHEMA_NAME(tp.schema_id), tp.is_user_defined,
+       ISNULL(cc.is_persisted, 0), ISNULL(ic.is_not_for_replication, 0),
+       c.is_sparse, c.is_column_set,
+       ISNULL(mc.masking_function, ''),
+       c.generated_always_type, c.is_hidden
 FROM   sys.columns c
 JOIN   sys.types tp ON tp.user_type_id = c.user_type_id
+LEFT   JOIN sys.masked_columns mc
+       ON  mc.object_id  = c.object_id AND mc.column_id = c.column_id AND mc.is_masked = 1
 LEFT   JOIN sys.computed_columns cc
        ON  cc.object_id  = c.object_id AND cc.column_id = c.column_id
 LEFT   JOIN sys.default_constraints dc
@@ -174,12 +201,7 @@ LEFT   JOIN (
        ) pk ON pk.object_id = c.object_id AND pk.column_id = c.column_id`
 
 // Columns returns all columns for this table in ordinal order.
-func (t *Table) Columns() ([]*Column, error) {
-	return t.ColumnsContext(context.Background())
-}
-
-// ColumnsContext is the context-aware variant of Columns.
-func (t *Table) ColumnsContext(ctx context.Context) ([]*Column, error) {
+func (t *Table) Columns(ctx context.Context) ([]*Column, error) {
 	const q = columnSelect + `
 WHERE  c.object_id = @p1
 ORDER  BY c.column_id`
@@ -202,17 +224,12 @@ ORDER  BY c.column_id`
 // type of its own that carries an object_id, so this is the way to reach a
 // view's columns — which do carry permissions, and so do turn up on a
 // Securables page.
-func (d *Database) ObjectColumns(schema, name string) ([]*Column, error) {
-	return d.ObjectColumnsContext(context.Background(), schema, name)
-}
-
-// ObjectColumnsContext is the context-aware variant of ObjectColumns.
 //
 // The columns a view does not have — identity, computed text, defaults,
 // primary key — come back at their zero values, because the joins that
 // supply them simply do not match for a view. Name, ordinal, type,
 // length/precision/scale, nullability and collation are all real.
-func (d *Database) ObjectColumnsContext(ctx context.Context, schema, name string) ([]*Column, error) {
+func (d *Database) ObjectColumns(ctx context.Context, schema, name string) ([]*Column, error) {
 	const q = columnSelect + `
 WHERE  c.object_id = OBJECT_ID(@p1)
 ORDER  BY c.column_id`
@@ -242,7 +259,7 @@ func scanColumns(rows *sql.Rows) ([]*Column, error) {
 	var cols []*Column
 	for rows.Next() {
 		col := &Column{}
-		var compText, dcName, dcDef, collation sql.NullString
+		var compText, dcName, dcDef, collation, typeSchema sql.NullString
 		var seed, increment sql.NullInt64
 		if err := rows.Scan(
 			&col.Name, &col.OrdinalPosition,
@@ -252,11 +269,17 @@ func scanColumns(rows *sql.Rows) ([]*Column, error) {
 			&col.IsRowGUID, &collation,
 			&seed, &increment,
 			&col.IsPrimaryKey,
+			&typeSchema, &col.IsUserDefinedType,
+			&col.IsPersisted, &col.IdentityNotForReplication,
+			&col.IsSparse, &col.IsColumnSet,
+			&col.MaskingFunction,
+			&col.GeneratedAlwaysType, &col.IsHidden,
 		); err != nil {
 			return nil, err
 		}
 		col.ComputedText = compText.String
 		col.Collation = collation.String
+		col.TypeSchema = typeSchema.String
 		if dcName.String != "" {
 			col.DefaultValue = &ColumnDefault{Name: dcName.String, Definition: dcDef.String}
 		}
@@ -271,12 +294,7 @@ func scanColumns(rows *sql.Rows) ([]*Column, error) {
 // (ALTER TABLE ... ALTER COLUMN). Identity and default are not settable this
 // way — SQL Server requires dropping and re-adding the column, or its default
 // constraint, for those.
-func (t *Table) AlterColumn(col ColumnDefinition) error {
-	return t.AlterColumnContext(context.Background(), col)
-}
-
-// AlterColumnContext is the context-aware variant of AlterColumn.
-func (t *Table) AlterColumnContext(ctx context.Context, col ColumnDefinition) error {
+func (t *Table) AlterColumn(ctx context.Context, col ColumnDefinition) error {
 	if col.Name == "" {
 		return fmt.Errorf("gosmo: alter column: name is required")
 	}
@@ -305,12 +323,7 @@ func (t *Table) AlterColumnContext(ctx context.Context, col ColumnDefinition) er
 // that refusal is the answer — dropping the dependencies first is a decision
 // the caller makes, not one a library can make for them. The data in the
 // column goes with it and is not recoverable.
-func (t *Table) DropColumn(name string) error {
-	return t.DropColumnContext(context.Background(), name)
-}
-
-// DropColumnContext is the context-aware variant of DropColumn.
-func (t *Table) DropColumnContext(ctx context.Context, name string) error {
+func (t *Table) DropColumn(ctx context.Context, name string) error {
 	if name == "" {
 		return fmt.Errorf("gosmo: drop column on %s: name is required", t.FullName())
 	}
@@ -332,12 +345,7 @@ func (t *Table) DropColumnContext(ctx context.Context, name string) error {
 //
 // newName is a bare name: sp_rename refuses a qualified one for the new name,
 // while @objname must be the three-part table.column form, which this builds.
-func (t *Table) RenameColumn(name, newName string) error {
-	return t.RenameColumnContext(context.Background(), name, newName)
-}
-
-// RenameColumnContext is the context-aware variant of RenameColumn.
-func (t *Table) RenameColumnContext(ctx context.Context, name, newName string) error {
+func (t *Table) RenameColumn(ctx context.Context, name, newName string) error {
 	if name == "" || newName == "" {
 		return fmt.Errorf("gosmo: rename column on %s: both names are required", t.FullName())
 	}
@@ -425,21 +433,15 @@ type IndexColumn struct {
 }
 
 // Indexes returns all indexes on the table.
-func (t *Table) Indexes() ([]*Index, error) {
-	return t.IndexesContext(context.Background())
-}
-
-// IndexesContext is the context-aware variant of Indexes.
 //
 // Two queries, whatever the index count: one for the indexes, one for every
-// index column on the object at once. Fetching each index's columns inside
-// the loop over the indexes cost a query per index, and Database.query pins
-// its own pooled connection and issues its own USE, so a table with 20
-// indexes ran 42 round trips across 21 connections — with the outer one held
-// throughout, which is the shape that exhausts a pool rather than merely
-// being slow.
-func (t *Table) IndexesContext(ctx context.Context) ([]*Index, error) {
-	indexes, err := t.indexListContext(ctx, "")
+// index column on the object at once. Fetching each index's columns inside the
+// loop over the indexes cost a query per index, and Database.query pins its
+// own pooled connection and issues its own USE, so a table with 20 indexes ran
+// 42 round trips across 21 connections — with the outer one held throughout,
+// which is the shape that exhausts a pool rather than merely being slow.
+func (t *Table) Indexes(ctx context.Context) ([]*Index, error) {
+	indexes, err := t.indexList(ctx, "")
 	if err != nil {
 		return nil, fmt.Errorf("gosmo: list indexes for %s: %w", t.FullName(), err)
 	}
@@ -453,16 +455,12 @@ func (t *Table) IndexesContext(ctx context.Context) ([]*Index, error) {
 }
 
 // IndexByName returns one index on the table by name, with its columns.
-func (t *Table) IndexByName(name string) (*Index, error) {
-	return t.IndexByNameContext(context.Background(), name)
-}
-
-// IndexByNameContext is the context-aware variant of IndexByName. It returns
-// an error satisfying errors.Is(err, ErrNotFound) when the table has no such
-// index. Two queries, the same shape as IndexesContext — see its comment for
-// why the columns are not fetched inside the index scan.
-func (t *Table) IndexByNameContext(ctx context.Context, name string) (*Index, error) {
-	indexes, err := t.indexListContext(ctx, " AND i.name = @p2", name)
+//
+// It returns an error satisfying errors.Is(err, ErrNotFound) when the table
+// has no such index. Two queries, the same shape as Indexes — see its
+// comment for why the columns are not fetched inside the index scan.
+func (t *Table) IndexByName(ctx context.Context, name string) (*Index, error) {
+	indexes, err := t.indexList(ctx, " AND i.name = @p2", name)
 	if err != nil {
 		return nil, fmt.Errorf("gosmo: find index %q on %s: %w", name, t.FullName(), err)
 	}
@@ -478,7 +476,7 @@ func (t *Table) IndexByNameContext(ctx context.Context, name string) (*Index, er
 // attachIndexColumns fetches the object's index columns in one query and
 // distributes them over indexes by index ID.
 func (t *Table) attachIndexColumns(ctx context.Context, indexes []*Index, extra string, args ...any) error {
-	cols, err := t.indexColumnsContext(ctx, extra, args...)
+	cols, err := t.indexColumns(ctx, extra, args...)
 	if err != nil {
 		return fmt.Errorf("gosmo: columns of indexes on %s: %w", t.FullName(), err)
 	}
@@ -494,12 +492,12 @@ func (t *Table) attachIndexColumns(ctx context.Context, indexes []*Index, extra 
 	return nil
 }
 
-// indexListContext returns the table's indexes with no columns attached,
+// indexList returns the table's indexes with no columns attached,
 // narrowed by extra — an additional predicate ANDed onto the object filter,
 // with its parameters starting at @p2. Its rows are drained and closed before
 // the caller asks for the columns, so the two queries never hold two pooled
 // connections at once.
-func (t *Table) indexListContext(ctx context.Context, extra string, args ...any) ([]*Index, error) {
+func (t *Table) indexList(ctx context.Context, extra string, args ...any) ([]*Index, error) {
 	q := `
 SELECT i.name, i.index_id, i.type_desc, i.is_unique, i.is_primary_key,
        i.is_unique_constraint, i.is_disabled, i.fill_factor,
@@ -564,11 +562,6 @@ ORDER  BY i.index_id`
 // DataSpace returns where the table itself stores its rows — the filegroup
 // or partition scheme its heap or clustered index is on, which is CREATE
 // TABLE's ON clause.
-func (t *Table) DataSpace() (DataSpace, error) {
-	return t.DataSpaceContext(context.Background())
-}
-
-// DataSpaceContext is the context-aware variant of DataSpace.
 //
 // Read from index_id 0 or 1, so it answers for a heap as well as a clustered
 // table — which is why it is a query of its own rather than a field of the
@@ -577,7 +570,7 @@ func (t *Table) DataSpace() (DataSpace, error) {
 // A table with no row there at all — a Database.TableRef handle, whose ObjectID
 // is zero, or a memory-optimized table — reads as the zero DataSpace and no
 // error: absence means "no filegroup to name", not a failure.
-func (t *Table) DataSpaceContext(ctx context.Context) (DataSpace, error) {
+func (t *Table) DataSpace(ctx context.Context) (DataSpace, error) {
 	q := `
 SELECT ` + dataSpaceColumns + `
 FROM   sys.indexes i
@@ -597,7 +590,7 @@ WHERE  i.object_id = @p1 AND i.index_id IN (0, 1)`
 	return ds, nil
 }
 
-// indexColumnsContext returns every index column on the table, keyed by
+// indexColumns returns every index column on the table, keyed by
 // index_id and in each index's own key order.
 //
 // The rows for index_id 0 — the heap's, which no index in the list claims —
@@ -605,8 +598,8 @@ WHERE  i.object_id = @p1 AND i.index_id IN (0, 1)`
 // predicate to save nothing, since a heap has at most one such row.
 //
 // extra is an additional predicate ANDed onto the object filter, with its
-// parameters starting at @p2 — the same contract as indexListContext.
-func (t *Table) indexColumnsContext(ctx context.Context, extra string, args ...any) (map[int][]IndexColumn, error) {
+// parameters starting at @p2 — the same contract as indexList.
+func (t *Table) indexColumns(ctx context.Context, extra string, args ...any) (map[int][]IndexColumn, error) {
 	q := `
 SELECT ic.index_id, c.name, ic.is_descending_key, ic.is_included_column
 FROM   sys.index_columns ic
@@ -647,13 +640,8 @@ type ForeignKey struct {
 	IsNotForReplication bool
 }
 
-// ForeignKeys returns all foreign keys on the table.
-func (t *Table) ForeignKeys() ([]*ForeignKey, error) {
-	return t.ForeignKeysContext(context.Background())
-}
-
-// foreignKeySelect is shared by ForeignKeysContext and
-// ForeignKeyByNameContext so a foreign key carries the same fields however
+// foreignKeySelect is shared by ForeignKeys and
+// ForeignKeyByName so a foreign key carries the same fields however
 // it was fetched.
 var foreignKeySelect = `
 SELECT fk.name, fk.is_disabled, fk.is_not_for_replication,
@@ -677,38 +665,20 @@ FROM   sys.foreign_keys fk
 JOIN   sys.tables rt ON rt.object_id = fk.referenced_object_id
 WHERE  fk.parent_object_id = @p1`
 
-// ForeignKeysContext is the context-aware variant of ForeignKeys.
-func (t *Table) ForeignKeysContext(ctx context.Context) ([]*ForeignKey, error) {
+// ForeignKeys returns all foreign keys on the table.
+func (t *Table) ForeignKeys(ctx context.Context) ([]*ForeignKey, error) {
 	rows, err := t.db.query(ctx, foreignKeySelect+`
 ORDER  BY fk.name`, t.ObjectID)
-	if err != nil {
-		return nil, fmt.Errorf("gosmo: list foreign keys for %s: %w", t.FullName(), err)
-	}
-	defer rows.Close()
-
-	var fks []*ForeignKey
-	for rows.Next() {
-		fk, err := scanForeignKey(rows.Scan)
-		if err != nil {
-			return nil, fmt.Errorf("gosmo: list foreign keys for %s: %w", t.FullName(), err)
-		}
-		fks = append(fks, fk)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("gosmo: list foreign keys for %s: %w", t.FullName(), err)
-	}
-	return fks, nil
+	return scanRows(rows, err, fmt.Sprintf("list foreign keys for %s", t.FullName()), func(scan func(...any) error) (*ForeignKey, error) {
+		return scanForeignKey(scan)
+	})
 }
 
 // ForeignKeyByName returns one foreign key on the table by name.
-func (t *Table) ForeignKeyByName(name string) (*ForeignKey, error) {
-	return t.ForeignKeyByNameContext(context.Background(), name)
-}
-
-// ForeignKeyByNameContext is the context-aware variant of ForeignKeyByName.
+//
 // It returns an error satisfying errors.Is(err, ErrNotFound) when the table
 // has no such foreign key.
-func (t *Table) ForeignKeyByNameContext(ctx context.Context, name string) (*ForeignKey, error) {
+func (t *Table) ForeignKeyByName(ctx context.Context, name string) (*ForeignKey, error) {
 	var fk *ForeignKey
 	err := t.db.queryRow(ctx, func(row *sql.Row) error {
 		var err error
@@ -716,13 +686,7 @@ func (t *Table) ForeignKeyByNameContext(ctx context.Context, name string) (*Fore
 		return err
 	}, foreignKeySelect+`
        AND fk.name = @p2`, t.ObjectID, name)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, notFoundf("gosmo: foreign key %q not found on %s", name, t.FullName())
-		}
-		return nil, fmt.Errorf("gosmo: find foreign key %q on %s: %w", name, t.FullName(), err)
-	}
-	return fk, nil
+	return foundRow(fk, err, notFoundf("gosmo: foreign key %q not found on %s", name, t.FullName()), fmt.Sprintf("find foreign key %q on %s", name, t.FullName()))
 }
 
 func scanForeignKey(scan func(...any) error) (*ForeignKey, error) {
@@ -751,17 +715,18 @@ type CheckConstraint struct {
 	Definition string
 	IsDisabled bool
 	Column     string // empty for table-level checks
+	// IsNotTrusted is set when the server has not verified the constraint
+	// against every existing row — always for a disabled one, and for one
+	// enabled or added WITH NOCHECK.
+	IsNotTrusted        bool
+	IsNotForReplication bool
 }
 
 // CheckConstraints returns all CHECK constraints on the table.
-func (t *Table) CheckConstraints() ([]*CheckConstraint, error) {
-	return t.CheckConstraintsContext(context.Background())
-}
-
-// CheckConstraintsContext is the context-aware variant of CheckConstraints.
-func (t *Table) CheckConstraintsContext(ctx context.Context) ([]*CheckConstraint, error) {
+func (t *Table) CheckConstraints(ctx context.Context) ([]*CheckConstraint, error) {
 	const q = `
-SELECT cc.name, cc.definition, cc.is_disabled, ISNULL(c.name, '')
+SELECT cc.name, cc.definition, cc.is_disabled, ISNULL(c.name, ''),
+       cc.is_not_trusted, cc.is_not_for_replication
 FROM   sys.check_constraints cc
 LEFT   JOIN sys.columns c
        ON  c.object_id  = cc.parent_object_id
@@ -770,34 +735,20 @@ WHERE  cc.parent_object_id = @p1
 ORDER  BY cc.name`
 
 	rows, err := t.db.query(ctx, q, t.ObjectID)
-	if err != nil {
-		return nil, fmt.Errorf("gosmo: list check constraints for %s: %w", t.FullName(), err)
-	}
-	defer rows.Close()
-
-	var ccs []*CheckConstraint
-	for rows.Next() {
+	return scanRows(rows, err, fmt.Sprintf("list check constraints for %s", t.FullName()), func(scan func(...any) error) (*CheckConstraint, error) {
 		cc := &CheckConstraint{}
-		if err := rows.Scan(&cc.Name, &cc.Definition, &cc.IsDisabled, &cc.Column); err != nil {
-			return nil, fmt.Errorf("gosmo: list check constraints for %s: %w", t.FullName(), err)
+		if err := scan(&cc.Name, &cc.Definition, &cc.IsDisabled, &cc.Column,
+			&cc.IsNotTrusted, &cc.IsNotForReplication); err != nil {
+			return nil, err
 		}
-		ccs = append(ccs, cc)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("gosmo: list check constraints for %s: %w", t.FullName(), err)
-	}
-	return ccs, nil
+		return cc, nil
+	})
 }
 
 // -- Triggers --------------------------------------------------------------------
 
 // Triggers returns all DML triggers attached to this table.
-func (t *Table) Triggers() ([]*Trigger, error) {
-	return t.TriggersContext(context.Background())
-}
-
-// TriggersContext is the context-aware variant of Triggers.
-func (t *Table) TriggersContext(ctx context.Context) ([]*Trigger, error) {
+func (t *Table) Triggers(ctx context.Context) ([]*Trigger, error) {
 	return t.db.triggersWhere(ctx, "AND tr.parent_id = @p1", []any{t.ObjectID})
 }
 
@@ -826,12 +777,7 @@ type ColumnDefinition struct {
 }
 
 // CreateTable creates a table from a CreateTableRequest.
-func (d *Database) CreateTable(req CreateTableRequest) error {
-	return d.CreateTableContext(context.Background(), req)
-}
-
-// CreateTableContext is the context-aware variant of CreateTable.
-func (d *Database) CreateTableContext(ctx context.Context, req CreateTableRequest) error {
+func (d *Database) CreateTable(ctx context.Context, req CreateTableRequest) error {
 	if req.Schema == "" {
 		req.Schema = "dbo"
 	}
@@ -905,12 +851,7 @@ func (d *Database) CreateTableContext(ctx context.Context, req CreateTableReques
 //
 // The generated *scripts* keep IF EXISTS — Scripter's DROP-and-CREATE output
 // exists to be re-run, which is the opposite requirement.
-func (d *Database) DropTable(schema, name string, cascade bool) error {
-	return d.DropTableContext(context.Background(), schema, name, cascade)
-}
-
-// DropTableContext is the context-aware variant of DropTable.
-func (d *Database) DropTableContext(ctx context.Context, schema, name string, cascade bool) error {
+func (d *Database) DropTable(ctx context.Context, schema, name string, cascade bool) error {
 	if cascade {
 		const dropFKs = `
 DECLARE @sql NVARCHAR(MAX) = N'';
@@ -931,12 +872,7 @@ IF LEN(@sql) > 0 EXEC sp_executesql @sql;`
 }
 
 // RenameTable renames a table using sp_rename.
-func (d *Database) RenameTable(schema, oldName, newName string) error {
-	return d.RenameTableContext(context.Background(), schema, oldName, newName)
-}
-
-// RenameTableContext is the context-aware variant of RenameTable.
-func (d *Database) RenameTableContext(ctx context.Context, schema, oldName, newName string) error {
+func (d *Database) RenameTable(ctx context.Context, schema, oldName, newName string) error {
 	if _, err := d.exec(ctx,
 		"EXEC sp_rename @objname = @p1, @newname = @p2, @objtype = N'OBJECT'",
 		qualifiedName(schema, oldName), newName,
@@ -947,12 +883,7 @@ func (d *Database) RenameTableContext(ctx context.Context, schema, oldName, newN
 }
 
 // TruncateTable truncates a table.
-func (t *Table) TruncateTable() error {
-	return t.TruncateTableContext(context.Background())
-}
-
-// TruncateTableContext is the context-aware variant of TruncateTable.
-func (t *Table) TruncateTableContext(ctx context.Context) error {
+func (t *Table) TruncateTable(ctx context.Context) error {
 	if _, err := t.db.exec(ctx, "TRUNCATE TABLE "+t.FullName()); err != nil {
 		return fmt.Errorf("gosmo: truncate %s: %w", t.FullName(), err)
 	}
@@ -960,12 +891,7 @@ func (t *Table) TruncateTableContext(ctx context.Context) error {
 }
 
 // RowCount returns the approximate row count using partition statistics.
-func (t *Table) RowCount() (int64, error) {
-	return t.RowCountContext(context.Background())
-}
-
-// RowCountContext is the context-aware variant of RowCount.
-func (t *Table) RowCountContext(ctx context.Context) (int64, error) {
+func (t *Table) RowCount(ctx context.Context) (int64, error) {
 	var n int64
 	if err := t.db.queryRow(ctx, func(row *sql.Row) error { return row.Scan(&n) }, `
 SELECT SUM(p.rows)
@@ -987,12 +913,7 @@ WHERE  p.object_id = @p1 AND p.index_id IN (0, 1)`, t.ObjectID); err != nil {
 //
 // A table with no row in sys.partitions is absent from the map rather than
 // present as 0; callers should treat a missing key as zero rows.
-func (d *Database) TableRowCounts() (map[int]int64, error) {
-	return d.TableRowCountsContext(context.Background())
-}
-
-// TableRowCountsContext is the context-aware variant of TableRowCounts.
-func (d *Database) TableRowCountsContext(ctx context.Context) (map[int]int64, error) {
+func (d *Database) TableRowCounts(ctx context.Context) (map[int]int64, error) {
 	const q = `
 SELECT p.object_id, SUM(p.rows)
 FROM   sys.partitions p
@@ -1026,15 +947,11 @@ GROUP  BY p.object_id`
 // CountWhere returns the number of rows in the table matching a WHERE
 // predicate — used to estimate qualifying rows for a filtered index or
 // filtered statistic's predicate (SSMS's "Estimate Rows" action).
-func (t *Table) CountWhere(predicate string) (int64, error) {
-	return t.CountWhereContext(context.Background(), predicate)
-}
-
-// CountWhereContext is the context-aware variant of CountWhere. predicate is
-// interpolated as-is after WHERE; callers pass a filter expression already
-// captured from the server (e.g. an index or statistic's own
-// FilterDefinition), not raw user input.
-func (t *Table) CountWhereContext(ctx context.Context, predicate string) (int64, error) {
+//
+// predicate is interpolated as-is after WHERE; callers pass a filter
+// expression already captured from the server (e.g. an index or statistic's
+// own FilterDefinition), not raw user input.
+func (t *Table) CountWhere(ctx context.Context, predicate string) (int64, error) {
 	q := fmt.Sprintf("SELECT COUNT_BIG(*) FROM %s WHERE %s", t.FullName(), predicate)
 	var n int64
 	if err := t.db.queryRow(ctx, func(row *sql.Row) error { return row.Scan(&n) }, q); err != nil {
@@ -1046,12 +963,7 @@ func (t *Table) CountWhereContext(ctx context.Context, predicate string) (int64,
 // CheckWhereSyntax validates a WHERE predicate against the table without
 // scanning any data (SSMS's "Check Syntax" action for a filtered index or
 // statistic's predicate).
-func (t *Table) CheckWhereSyntax(predicate string) error {
-	return t.CheckWhereSyntaxContext(context.Background(), predicate)
-}
-
-// CheckWhereSyntaxContext is the context-aware variant of CheckWhereSyntax.
-func (t *Table) CheckWhereSyntaxContext(ctx context.Context, predicate string) error {
+func (t *Table) CheckWhereSyntax(ctx context.Context, predicate string) error {
 	q := fmt.Sprintf("SELECT TOP (0) 1 AS ok FROM %s WHERE %s", t.FullName(), predicate)
 	rows, err := t.db.query(ctx, q)
 	if err != nil {
@@ -1099,12 +1011,7 @@ func colTypeSQL(col ColumnDefinition) string {
 // per-table name space and are all removed by ALTER TABLE ... DROP
 // CONSTRAINT; an index that is not backing a key constraint is not a
 // constraint and needs Index.Drop instead.
-func (t *Table) DropConstraint(name string) error {
-	return t.DropConstraintContext(context.Background(), name)
-}
-
-// DropConstraintContext is the context-aware variant of DropConstraint.
-func (t *Table) DropConstraintContext(ctx context.Context, name string) error {
+func (t *Table) DropConstraint(ctx context.Context, name string) error {
 	q := fmt.Sprintf("ALTER TABLE %s DROP CONSTRAINT %s", t.FullName(), quoteIdent(name))
 	if _, err := t.db.exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: drop constraint %q on %s: %w", name, t.FullName(), err)

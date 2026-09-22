@@ -19,23 +19,13 @@ type View struct {
 }
 
 // Views returns all views in the database.
-func (d *Database) Views() ([]*View, error) {
-	return d.ViewsContext(context.Background())
-}
-
-// ViewsContext is the context-aware variant of Views.
-func (d *Database) ViewsContext(ctx context.Context) ([]*View, error) {
+func (d *Database) Views(ctx context.Context) ([]*View, error) {
 	return d.viewsWhere(ctx, "", nil)
 }
 
 // ViewsFiltered returns the views an ObjectFilter matches, narrowed by the
-// server rather than by the caller. An empty filter is ViewsContext.
-func (d *Database) ViewsFiltered(filter ObjectFilter) ([]*View, error) {
-	return d.ViewsFilteredContext(context.Background(), filter)
-}
-
-// ViewsFilteredContext is the context-aware variant of ViewsFiltered.
-func (d *Database) ViewsFilteredContext(ctx context.Context, filter ObjectFilter) ([]*View, error) {
+// server rather than by the caller. An empty filter is Views.
+func (d *Database) ViewsFiltered(ctx context.Context, filter ObjectFilter) ([]*View, error) {
 	where, args := filter.clause(viewFilterColumns, 1)
 	return d.viewsWhere(ctx, where, args)
 }
@@ -58,52 +48,32 @@ WHERE  v.is_ms_shipped = 0 ` + where + `
 ORDER  BY SCHEMA_NAME(v.schema_id), v.name`
 
 	rows, err := d.query(ctx, q, args...)
-	if err != nil {
-		return nil, fmt.Errorf("gosmo: list views in %q: %w", d.Name, err)
-	}
-	defer rows.Close()
-
-	var views []*View
-	for rows.Next() {
+	return scanRows(rows, err, fmt.Sprintf("list views in %q", d.Name), func(scan func(...any) error) (*View, error) {
 		v := &View{}
-		if err := rows.Scan(&v.ObjectID, &v.Schema, &v.Name,
+		if err := scan(&v.ObjectID, &v.Schema, &v.Name,
 			&v.Definition, &v.CreateDate, &v.ModifyDate); err != nil {
-			return nil, fmt.Errorf("gosmo: list views in %q: %w", d.Name, err)
+			return nil, err
 		}
-		views = append(views, v)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("gosmo: list views in %q: %w", d.Name, err)
-	}
-	return views, nil
+		return v, nil
+	})
 }
 
 // SystemViews returns every catalog view SQL Server ships in the "sys"
-// schema (sys.tables, sys.columns, sys.objects, ...) — see SystemViewsContext.
-func (d *Database) SystemViews() ([]*View, error) {
-	return d.SystemViewsContext(context.Background())
-}
-
-// SystemViewsContext is the context-aware variant of SystemViews. Unlike
-// Views, this reads sys.all_objects/sys.all_sql_modules rather than
-// sys.views/sys.sql_modules: the "sys." schema's own views are shipped
-// objects (is_ms_shipped=1), invisible through the non-"all_" catalog
-// views — same reasoning as SystemCatalogContext. The "sys" schema's
-// catalog views are defined identically in every database on a server, so
-// a caller only needs to load this once per connection.
-func (d *Database) SystemViewsContext(ctx context.Context) ([]*View, error) {
+// schema (sys.tables, sys.columns, sys.objects, ...) — see SystemViews.
+//
+// Unlike Views, this reads sys.all_objects/sys.all_sql_modules rather than
+// sys.views/sys.sql_modules: the "sys." schema's own views are shipped objects
+// (is_ms_shipped=1), invisible through the non-"all_" catalog views — same
+// reasoning as SystemCatalog. The "sys" schema's catalog views are
+// defined identically in every database on a server, so a caller only needs to
+// load this once per connection.
+func (d *Database) SystemViews(ctx context.Context) ([]*View, error) {
 	return d.systemViewsWhere(ctx, "", nil)
 }
 
 // SystemViewsFiltered returns the system views an ObjectFilter matches,
-// narrowed by the server. An empty filter is SystemViewsContext.
-func (d *Database) SystemViewsFiltered(filter ObjectFilter) ([]*View, error) {
-	return d.SystemViewsFilteredContext(context.Background(), filter)
-}
-
-// SystemViewsFilteredContext is the context-aware variant of
-// SystemViewsFiltered.
-func (d *Database) SystemViewsFilteredContext(ctx context.Context, filter ObjectFilter) ([]*View, error) {
+// narrowed by the server. An empty filter is SystemViews.
+func (d *Database) SystemViewsFiltered(ctx context.Context, filter ObjectFilter) ([]*View, error) {
 	where, args := filter.clause(allObjectsFilterColumns, 1)
 	return d.systemViewsWhere(ctx, where, args)
 }
@@ -118,24 +88,14 @@ WHERE  o.type = 'V' AND o.is_ms_shipped = 1 AND SCHEMA_NAME(o.schema_id) = 'sys'
 ORDER  BY o.name`
 
 	rows, err := d.query(ctx, q, args...)
-	if err != nil {
-		return nil, fmt.Errorf("gosmo: list system views in %q: %w", d.Name, err)
-	}
-	defer rows.Close()
-
-	var views []*View
-	for rows.Next() {
+	return scanRows(rows, err, fmt.Sprintf("list system views in %q", d.Name), func(scan func(...any) error) (*View, error) {
 		v := &View{}
-		if err := rows.Scan(&v.ObjectID, &v.Schema, &v.Name,
+		if err := scan(&v.ObjectID, &v.Schema, &v.Name,
 			&v.Definition, &v.CreateDate, &v.ModifyDate); err != nil {
-			return nil, fmt.Errorf("gosmo: list system views in %q: %w", d.Name, err)
+			return nil, err
 		}
-		views = append(views, v)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("gosmo: list system views in %q: %w", d.Name, err)
-	}
-	return views, nil
+		return v, nil
+	})
 }
 
 // allObjectsFilterColumns maps an ObjectFilter onto the sys.all_objects
@@ -148,12 +108,7 @@ var allObjectsFilterColumns = filterColumns{
 
 // DropView drops a view. A view that isn't there is the server's error, not
 // a silent success — see the note on Database.DropTable.
-func (d *Database) DropView(schema, name string) error {
-	return d.DropViewContext(context.Background(), schema, name)
-}
-
-// DropViewContext is the context-aware variant of DropView.
-func (d *Database) DropViewContext(ctx context.Context, schema, name string) error {
+func (d *Database) DropView(ctx context.Context, schema, name string) error {
 	if schema == "" {
 		schema = "dbo"
 	}
@@ -171,12 +126,7 @@ func (d *Database) DropViewContext(ctx context.Context, schema, name string) err
 // plain row struct with no back-pointer to its database, so a view's INSTEAD
 // OF triggers had no reader at all. The parent is resolved by OBJECT_ID, which
 // does not care which of the two it is.
-func (d *Database) ObjectTriggers(schema, name string) ([]*Trigger, error) {
-	return d.ObjectTriggersContext(context.Background(), schema, name)
-}
-
-// ObjectTriggersContext is the context-aware variant of ObjectTriggers.
-func (d *Database) ObjectTriggersContext(ctx context.Context, schema, name string) ([]*Trigger, error) {
+func (d *Database) ObjectTriggers(ctx context.Context, schema, name string) ([]*Trigger, error) {
 	if schema == "" {
 		schema = "dbo"
 	}

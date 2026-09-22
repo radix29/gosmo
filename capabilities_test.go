@@ -231,9 +231,9 @@ func TestServerCapabilitiesReadsAnswersByName(t *testing.T) {
 		{"P", "ALTER ANY AVAILABILITY GROUP", nil},
 	}})
 
-	c, err := srv.CapabilitiesContext(context.Background())
+	c, err := srv.Capabilities(context.Background())
 	if err != nil {
-		t.Fatalf("CapabilitiesContext: %v", err)
+		t.Fatalf("Capabilities: %v", err)
 	}
 	if !c.Has("VIEW SERVER STATE") {
 		t.Error("VIEW SERVER STATE not granted")
@@ -263,7 +263,7 @@ func TestServerCapabilitiesReadsAnswersByName(t *testing.T) {
 }
 
 // TestDatabaseCapabilitiesStopAtAnInaccessibleDatabase pins the ordering in
-// CapabilitiesContext. The role probe runs inside the database and so opens
+// Capabilities. The role probe runs inside the database and so opens
 // with a USE — the very statement that fails for a login that cannot connect
 // there — so accessibility has to be settled at the server scope first, and an
 // inaccessible database is not an error.
@@ -271,9 +271,9 @@ func TestDatabaseCapabilitiesStopAtAnInaccessibleDatabase(t *testing.T) {
 	script := &capScript{dbAccess: int64(0)}
 	srv := capServer(t, script)
 
-	c, err := srv.DatabaseRef("locked").CapabilitiesContext(context.Background())
+	c, err := srv.DatabaseRef("locked").Capabilities(context.Background())
 	if err != nil {
-		t.Fatalf("CapabilitiesContext: %v", err)
+		t.Fatalf("Capabilities: %v", err)
 	}
 	if c.Accessible {
 		t.Error("Accessible = true for HAS_DBACCESS 0")
@@ -295,9 +295,9 @@ func TestDatabaseCapabilitiesStopAtAnInaccessibleDatabase(t *testing.T) {
 // login cannot so much as connect to. Permits is the test that does not.
 func TestPermitsFoldsAccessibilityIntoTheWithholdingTest(t *testing.T) {
 	locked, err := capServer(t, &capScript{dbAccess: int64(0)}).
-		DatabaseRef("locked").CapabilitiesContext(context.Background())
+		DatabaseRef("locked").Capabilities(context.Background())
 	if err != nil {
-		t.Fatalf("CapabilitiesContext: %v", err)
+		t.Fatalf("Capabilities: %v", err)
 	}
 
 	// The trap, stated as an assertion so it cannot be "fixed" by narrowing
@@ -316,9 +316,9 @@ func TestPermitsFoldsAccessibilityIntoTheWithholdingTest(t *testing.T) {
 			{"P", "SELECT", int64(1)},
 			{"P", "ALTER", int64(0)},
 		},
-	}).DatabaseRef("HealthClinic").CapabilitiesContext(context.Background())
+	}).DatabaseRef("HealthClinic").Capabilities(context.Background())
 	if err != nil {
-		t.Fatalf("CapabilitiesContext: %v", err)
+		t.Fatalf("Capabilities: %v", err)
 	}
 	for _, name := range []string{"SELECT", "ALTER", "BACKUP DATABASE"} {
 		if got, want := open.Permits(name), open.Allows(name); got != want {
@@ -340,9 +340,9 @@ func TestPermitsFoldsAccessibilityIntoTheWithholdingTest(t *testing.T) {
 func TestDatabaseCapabilitiesTreatNullAccessAsInaccessible(t *testing.T) {
 	srv := capServer(t, &capScript{dbAccess: nil})
 
-	c, err := srv.DatabaseRef("ghost").CapabilitiesContext(context.Background())
+	c, err := srv.DatabaseRef("ghost").Capabilities(context.Background())
 	if err != nil {
-		t.Fatalf("CapabilitiesContext: %v", err)
+		t.Fatalf("Capabilities: %v", err)
 	}
 	if c.Accessible {
 		t.Error("Accessible = true for a NULL HAS_DBACCESS")
@@ -363,9 +363,9 @@ func TestDatabaseCapabilitiesReadRolesAndPermissions(t *testing.T) {
 	}
 	srv := capServer(t, script)
 
-	c, err := srv.DatabaseRef("HealthClinic").CapabilitiesContext(context.Background())
+	c, err := srv.DatabaseRef("HealthClinic").Capabilities(context.Background())
 	if err != nil {
-		t.Fatalf("CapabilitiesContext: %v", err)
+		t.Fatalf("Capabilities: %v", err)
 	}
 	if !c.Accessible {
 		t.Fatal("Accessible = false")
@@ -448,9 +448,9 @@ func TestDatabaseCapabilitiesReadSchemaPermissions(t *testing.T) {
 		},
 	})
 
-	c, err := srv.DatabaseRef("HealthClinic").CapabilitiesContext(context.Background())
+	c, err := srv.DatabaseRef("HealthClinic").Capabilities(context.Background())
 	if err != nil {
-		t.Fatalf("CapabilitiesContext: %v", err)
+		t.Fatalf("Capabilities: %v", err)
 	}
 	if !c.HasOnSchema("Sales", "ALTER") {
 		t.Error("a granted schema permission did not read back")
@@ -528,8 +528,8 @@ func TestSchemaCapabilityQueryNumbersItsPlaceholdersAfterTheOthers(t *testing.T)
 func TestTheDatabaseProbeAsksAboutEverySchemaInOnePass(t *testing.T) {
 	script := &capScript{dbAccess: int64(1)}
 	srv := capServer(t, script)
-	if _, err := srv.DatabaseRef("HealthClinic").CapabilitiesContext(context.Background()); err != nil {
-		t.Fatalf("CapabilitiesContext: %v", err)
+	if _, err := srv.DatabaseRef("HealthClinic").Capabilities(context.Background()); err != nil {
+		t.Fatalf("Capabilities: %v", err)
 	}
 
 	q := script.dbQuery
@@ -756,9 +756,9 @@ func TestDatabaseCapabilitiesReadColumnPermissionsApartFromTheirTable(t *testing
 		},
 	})
 
-	c, err := srv.DatabaseRef("HealthClinic").CapabilitiesContext(context.Background())
+	c, err := srv.DatabaseRef("HealthClinic").Capabilities(context.Background())
 	if err != nil {
-		t.Fatalf("CapabilitiesContext: %v", err)
+		t.Fatalf("Capabilities: %v", err)
 	}
 	if !c.HasOnObject("dbo", "Patients", "ALTER") {
 		t.Error("the table's own grant did not read back")
@@ -810,9 +810,9 @@ func TestADenyOnAColumnSurvivesAGrantAndIsNamedStably(t *testing.T) {
 				{"C:ALTER", "dbo.Patients.SSN", order[1]},
 			},
 		})
-		c, err := srv.DatabaseRef("HealthClinic").CapabilitiesContext(context.Background())
+		c, err := srv.DatabaseRef("HealthClinic").Capabilities(context.Background())
 		if err != nil {
-			t.Fatalf("CapabilitiesContext: %v", err)
+			t.Fatalf("Capabilities: %v", err)
 		}
 		if !c.DeniedOnColumn("dbo", "Patients", "SSN", "ALTER") {
 			t.Errorf("a deny was overwritten by a grant, rows arriving as %v", order)
@@ -919,9 +919,9 @@ func TestDatabaseCapabilitiesReadSchemaDenialsApartFromTheProbe(t *testing.T) {
 		},
 	})
 
-	c, err := srv.DatabaseRef("HealthClinic").CapabilitiesContext(context.Background())
+	c, err := srv.DatabaseRef("HealthClinic").Capabilities(context.Background())
 	if err != nil {
-		t.Fatalf("CapabilitiesContext: %v", err)
+		t.Fatalf("Capabilities: %v", err)
 	}
 	if !c.DeniedOnSchema("Sales", "ALTER") {
 		t.Error("the schema's DENY row did not read back")
@@ -950,9 +950,9 @@ func TestADenyOnASchemaSurvivesAGrant(t *testing.T) {
 				{"E:ALTER", "Sales", order[1]},
 			},
 		})
-		c, err := srv.DatabaseRef("HealthClinic").CapabilitiesContext(context.Background())
+		c, err := srv.DatabaseRef("HealthClinic").Capabilities(context.Background())
 		if err != nil {
-			t.Fatalf("CapabilitiesContext: %v", err)
+			t.Fatalf("Capabilities: %v", err)
 		}
 		if !c.DeniedOnSchema("Sales", "ALTER") {
 			t.Errorf("a deny was overwritten by a grant, rows arriving as %v", order)
@@ -1006,9 +1006,9 @@ func TestDatabaseCapabilitiesReadDatabaseDenialsApartFromTheProbe(t *testing.T) 
 		},
 	})
 
-	c, err := srv.DatabaseRef("HealthClinic").CapabilitiesContext(context.Background())
+	c, err := srv.DatabaseRef("HealthClinic").Capabilities(context.Background())
 	if err != nil {
-		t.Fatalf("CapabilitiesContext: %v", err)
+		t.Fatalf("Capabilities: %v", err)
 	}
 	if !c.DeniedOnDatabase("ALTER") {
 		t.Error("the database's DENY row did not read back")
@@ -1040,9 +1040,9 @@ func TestADenyOnTheDatabaseSurvivesAGrant(t *testing.T) {
 				{"D:ALTER", "HealthClinic", order[1]},
 			},
 		})
-		c, err := srv.DatabaseRef("HealthClinic").CapabilitiesContext(context.Background())
+		c, err := srv.DatabaseRef("HealthClinic").Capabilities(context.Background())
 		if err != nil {
-			t.Fatalf("CapabilitiesContext: %v", err)
+			t.Fatalf("Capabilities: %v", err)
 		}
 		if !c.DeniedOnDatabase("ALTER") {
 			t.Errorf("rows in order %v lost the denial", order)
@@ -1061,8 +1061,8 @@ func TestADenyOnTheDatabaseSurvivesAGrant(t *testing.T) {
 func TestTheDatabaseProbeAsksForExplicitDatabaseDenials(t *testing.T) {
 	script := &capScript{dbAccess: int64(1)}
 	srv := capServer(t, script)
-	if _, err := srv.DatabaseRef("HealthClinic").CapabilitiesContext(context.Background()); err != nil {
-		t.Fatalf("CapabilitiesContext: %v", err)
+	if _, err := srv.DatabaseRef("HealthClinic").Capabilities(context.Background()); err != nil {
+		t.Fatalf("Capabilities: %v", err)
 	}
 	q := script.dbQuery
 	if !strings.Contains(q, "SELECT CONCAT('D:', n.v), DB_NAME(), 0") {
@@ -1133,9 +1133,9 @@ func TestDatabaseCapabilitiesReadPrincipalDenialsApartFromTheProbe(t *testing.T)
 			{"N:ALTER", "bob", int64(0)},
 		},
 	})
-	c, err := srv.DatabaseRef("HealthClinic").CapabilitiesContext(context.Background())
+	c, err := srv.DatabaseRef("HealthClinic").Capabilities(context.Background())
 	if err != nil {
-		t.Fatalf("CapabilitiesContext: %v", err)
+		t.Fatalf("Capabilities: %v", err)
 	}
 	if !c.DeniedOnPrincipal("bob", "ALTER") {
 		t.Error("the principal's DENY row did not read back")
@@ -1160,8 +1160,8 @@ func TestDatabaseCapabilitiesReadPrincipalDenialsApartFromTheProbe(t *testing.T)
 func TestTheDatabaseProbeAsksForExplicitPrincipalDenials(t *testing.T) {
 	script := &capScript{dbAccess: int64(1)}
 	srv := capServer(t, script)
-	if _, err := srv.DatabaseRef("HealthClinic").CapabilitiesContext(context.Background()); err != nil {
-		t.Fatalf("CapabilitiesContext: %v", err)
+	if _, err := srv.DatabaseRef("HealthClinic").Capabilities(context.Background()); err != nil {
+		t.Fatalf("Capabilities: %v", err)
 	}
 	q := script.dbQuery
 	if !strings.Contains(q, "SELECT CONCAT('N:', n.v), USER_NAME(p.major_id), 0") {
@@ -1286,8 +1286,8 @@ func TestTheServerCatalogBlockAsksForExplicitRowsOnly(t *testing.T) {
 func TestTheServerProbeAsksForExplicitServerDenials(t *testing.T) {
 	script := &capScript{serverRows: [][]driver.Value{{"R", "sysadmin", int64(0)}}}
 	srv := capServer(t, script)
-	if _, err := srv.CapabilitiesContext(context.Background()); err != nil {
-		t.Fatalf("CapabilitiesContext: %v", err)
+	if _, err := srv.Capabilities(context.Background()); err != nil {
+		t.Fatalf("Capabilities: %v", err)
 	}
 	q := script.srvQuery
 	if !strings.HasPrefix(q, capabilityServerPrincipalCTE) {
@@ -1322,9 +1322,9 @@ func TestServerCapabilitiesReadSecurableDenialsApartFromTheProbe(t *testing.T) {
 		{"V:ALTER", "SERVER ROLE::ops", int64(0)},
 		{"V:ALTER", "ENDPOINT::Mirroring", int64(0)},
 	}})
-	c, err := srv.CapabilitiesContext(context.Background())
+	c, err := srv.Capabilities(context.Background())
 	if err != nil {
-		t.Fatalf("CapabilitiesContext: %v", err)
+		t.Fatalf("Capabilities: %v", err)
 	}
 	if !c.DeniedOnLogin("bob", "ALTER") {
 		t.Error("the login's DENY row did not read back")
@@ -1417,9 +1417,9 @@ func TestServerCapabilitiesReadGroupAnswersApartFromTheProbe(t *testing.T) {
 		{"G:ALTER", "AAG1", int64(0)},
 		{"G:ALTER", "AAG2", int64(1)},
 	}})
-	c, err := srv.CapabilitiesContext(context.Background())
+	c, err := srv.Capabilities(context.Background())
 	if err != nil {
-		t.Fatalf("CapabilitiesContext: %v", err)
+		t.Fatalf("Capabilities: %v", err)
 	}
 	if c.PermitsOnAvailabilityGroup("AAG1", "ALTER") {
 		t.Error("the group's denial did not read back")
@@ -1510,9 +1510,9 @@ func TestDatabaseCapabilitiesReadSecurableAnswersByKind(t *testing.T) {
 			{"K:CONTROL", "SYMMETRIC KEY::k", int64(1)},
 		},
 	})
-	c, err := srv.DatabaseRef("HealthClinic").CapabilitiesContext(context.Background())
+	c, err := srv.DatabaseRef("HealthClinic").Capabilities(context.Background())
 	if err != nil {
-		t.Fatalf("CapabilitiesContext: %v", err)
+		t.Fatalf("Capabilities: %v", err)
 	}
 	if !c.HasOnSecurable(DatabaseSecurableType, "dbo", "x", "CONTROL") {
 		t.Error("the type's CONTROL did not read back")

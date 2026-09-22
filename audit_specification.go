@@ -60,43 +60,17 @@ FROM   sys.server_audit_specifications s
 LEFT   JOIN sys.server_audits a ON a.audit_guid = s.audit_guid`
 
 // ServerAuditSpecifications returns every server audit specification.
-func (s *Server) ServerAuditSpecifications() ([]*ServerAuditSpecification, error) {
-	return s.ServerAuditSpecificationsContext(context.Background())
-}
-
-// ServerAuditSpecificationsContext is the context-aware variant of
-// ServerAuditSpecifications.
-func (s *Server) ServerAuditSpecificationsContext(ctx context.Context) ([]*ServerAuditSpecification, error) {
+func (s *Server) ServerAuditSpecifications(ctx context.Context) ([]*ServerAuditSpecification, error) {
 	rows, err := s.query(ctx, serverAuditSpecificationSelect+`
 ORDER  BY s.name`)
-	if err != nil {
-		return nil, fmt.Errorf("gosmo: list server audit specifications: %w", err)
-	}
-	defer rows.Close()
-
-	var out []*ServerAuditSpecification
-	for rows.Next() {
-		spec, err := scanServerAuditSpecification(s, rows.Scan)
-		if err != nil {
-			return nil, fmt.Errorf("gosmo: list server audit specifications: %w", err)
-		}
-		out = append(out, spec)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("gosmo: list server audit specifications: %w", err)
-	}
-	return out, nil
+	return scanRows(rows, err, "list server audit specifications", func(scan func(...any) error) (*ServerAuditSpecification, error) {
+		return scanServerAuditSpecification(s, scan)
+	})
 }
 
 // ServerAuditSpecificationByName returns one specification with every field
 // populated, or a not-found error (errors.Is ErrNotFound).
-func (s *Server) ServerAuditSpecificationByName(name string) (*ServerAuditSpecification, error) {
-	return s.ServerAuditSpecificationByNameContext(context.Background(), name)
-}
-
-// ServerAuditSpecificationByNameContext is the context-aware variant of
-// ServerAuditSpecificationByName.
-func (s *Server) ServerAuditSpecificationByNameContext(ctx context.Context, name string) (*ServerAuditSpecification, error) {
+func (s *Server) ServerAuditSpecificationByName(ctx context.Context, name string) (*ServerAuditSpecification, error) {
 	var spec *ServerAuditSpecification
 	err := s.queryRow(ctx, func(row *sql.Row) error {
 		var err error
@@ -104,13 +78,7 @@ func (s *Server) ServerAuditSpecificationByNameContext(ctx context.Context, name
 		return err
 	}, serverAuditSpecificationSelect+`
 WHERE  s.name = @p1`, name)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, notFoundf("gosmo: server audit specification %q not found", name)
-	}
-	if err != nil {
-		return nil, fmt.Errorf("gosmo: read server audit specification %q: %w", name, err)
-	}
-	return spec, nil
+	return foundRow(spec, err, notFoundf("gosmo: server audit specification %q not found", name), fmt.Sprintf("read server audit specification %q", name))
 }
 
 // ServerAuditSpecificationRef returns a lightweight handle by name, without
@@ -141,16 +109,11 @@ func scanServerAuditSpecification(s *Server, scan func(...any) error) (*ServerAu
 
 // AuditActionGroups returns every server-scope audit action group the instance
 // knows about.
-func (s *Server) AuditActionGroups() ([]string, error) {
-	return s.AuditActionGroupsContext(context.Background())
-}
-
-// AuditActionGroupsContext is the context-aware variant of AuditActionGroups.
 //
-// The list is read from sys.dm_audit_actions rather than hard-coded so it stays
-// right across versions: each release adds groups, and a fixed table would
-// quietly hide the new ones from anything building a pick list.
-func (s *Server) AuditActionGroupsContext(ctx context.Context) ([]string, error) {
+// The list is read from sys.dm_audit_actions rather than hard-coded so it
+// stays right across versions: each release adds groups, and a fixed table
+// would quietly hide the new ones from anything building a pick list.
+func (s *Server) AuditActionGroups(ctx context.Context) ([]string, error) {
 	const q = `
 SELECT name
 FROM   sys.dm_audit_actions
@@ -158,23 +121,13 @@ WHERE  class_desc = 'SERVER' AND configuration_level = 'Group'
 ORDER  BY name`
 
 	rows, err := s.query(ctx, q)
-	if err != nil {
-		return nil, fmt.Errorf("gosmo: list audit action groups: %w", err)
-	}
-	defer rows.Close()
-
-	var out []string
-	for rows.Next() {
+	return scanRows(rows, err, "list audit action groups", func(scan func(...any) error) (string, error) {
 		var name string
-		if err := rows.Scan(&name); err != nil {
-			return nil, fmt.Errorf("gosmo: list audit action groups: %w", err)
+		if err := scan(&name); err != nil {
+			return "", err
 		}
-		out = append(out, name)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("gosmo: list audit action groups: %w", err)
-	}
-	return out, nil
+		return name, nil
+	})
 }
 
 // -- Writes ----------------------------------------------------------------------
@@ -250,51 +203,41 @@ func (spec ServerAuditSpecificationSpec) createStatement() (string, error) {
 }
 
 // CreateServerAuditSpecification creates a server audit specification.
-func (s *Server) CreateServerAuditSpecification(spec ServerAuditSpecificationSpec) (*ServerAuditSpecification, error) {
-	return s.CreateServerAuditSpecificationContext(context.Background(), spec)
-}
-
-// CreateServerAuditSpecificationContext is the context-aware variant of
-// CreateServerAuditSpecification.
-func (s *Server) CreateServerAuditSpecificationContext(ctx context.Context, spec ServerAuditSpecificationSpec) (*ServerAuditSpecification, error) {
+func (s *Server) CreateServerAuditSpecification(ctx context.Context, spec ServerAuditSpecificationSpec) (*ServerAuditSpecification, error) {
 	stmt, err := spec.createStatement()
 	if err != nil {
 		return nil, fmt.Errorf("gosmo: create server audit specification: %w", err)
 	}
-	if err := s.execContext(ctx, stmt); err != nil {
+	if err := s.exec(ctx, stmt); err != nil {
 		return nil, fmt.Errorf("gosmo: create server audit specification %q: %w", spec.Name, err)
 	}
 	if Scripting(ctx) {
 		// The CREATE was only collected, so there is nothing to read back.
 		return s.ServerAuditSpecificationRef(spec.Name), nil
 	}
-	return s.ServerAuditSpecificationByNameContext(ctx, spec.Name)
+	return s.ServerAuditSpecificationByName(ctx, spec.Name)
 }
 
 // SetState enables or disables the specification.
-func (spec *ServerAuditSpecification) SetState(on bool) error {
-	return spec.SetStateContext(context.Background(), on)
-}
-
-// SetStateContext is the context-aware variant of SetState. This is the one
-// ALTER form the server accepts on an enabled specification.
-func (spec *ServerAuditSpecification) SetStateContext(ctx context.Context, on bool) error {
+//
+// This is the one ALTER form the server accepts on an enabled specification.
+func (spec *ServerAuditSpecification) SetState(ctx context.Context, on bool) error {
 	state := "OFF"
 	if on {
 		state = "ON"
 	}
 	stmt := fmt.Sprintf("ALTER SERVER AUDIT SPECIFICATION %s WITH ( STATE = %s )",
 		quoteIdent(spec.Name), state)
-	if err := spec.server.execContext(ctx, stmt); err != nil {
+	if err := spec.server.exec(ctx, stmt); err != nil {
 		return fmt.Errorf("gosmo: set server audit specification %q state: %w", spec.Name, err)
 	}
 	setIfApplied(ctx, &spec.IsEnabled, on)
 	return nil
 }
 
-// isEnabledContext reads the specification's current state from the catalog
+// isEnabled reads the specification's current state from the catalog
 // rather than trusting the receiver, which may be a name-only handle.
-func (spec *ServerAuditSpecification) isEnabledContext(ctx context.Context) (bool, error) {
+func (spec *ServerAuditSpecification) isEnabled(ctx context.Context) (bool, error) {
 	var enabled sql.NullBool
 	err := spec.server.queryRow(ctx, func(row *sql.Row) error {
 		return row.Scan(&enabled)
@@ -341,7 +284,7 @@ func (spec *ServerAuditSpecification) withSpecificationDisabled(ctx context.Cont
 	if spec.inSpecificationWindow(ctx) {
 		return fn(ctx)
 	}
-	enabled, err := spec.isEnabledContext(ctx)
+	enabled, err := spec.isEnabled(ctx)
 	if err != nil {
 		return err
 	}
@@ -349,10 +292,10 @@ func (spec *ServerAuditSpecification) withSpecificationDisabled(ctx context.Cont
 	if !enabled {
 		return fn(inner)
 	}
-	if err := spec.SetStateContext(ctx, false); err != nil {
+	if err := spec.SetState(ctx, false); err != nil {
 		return err
 	}
-	enable := func(ctx context.Context) error { return spec.SetStateContext(ctx, true) }
+	enable := func(ctx context.Context) error { return spec.SetState(ctx, true) }
 	if err := fn(inner); err != nil {
 		// Best effort: report the original failure, not the restore's.
 		_ = restoreWindow(ctx, enable)
@@ -362,27 +305,18 @@ func (spec *ServerAuditSpecification) withSpecificationDisabled(ctx context.Cont
 }
 
 // AddActionGroups adds audit action groups to the specification.
-func (spec *ServerAuditSpecification) AddActionGroups(groups ...string) error {
-	return spec.AddActionGroupsContext(context.Background(), groups...)
-}
-
-// AddActionGroupsContext is the context-aware variant of AddActionGroups. The
-// specification is disabled for the duration and restored afterwards.
-func (spec *ServerAuditSpecification) AddActionGroupsContext(ctx context.Context, groups ...string) error {
-	return spec.alterActionGroupsContext(ctx, "ADD", groups)
+//
+// The specification is disabled for the duration and restored afterwards.
+func (spec *ServerAuditSpecification) AddActionGroups(ctx context.Context, groups ...string) error {
+	return spec.alterActionGroups(ctx, "ADD", groups)
 }
 
 // DropActionGroups removes audit action groups from the specification.
-func (spec *ServerAuditSpecification) DropActionGroups(groups ...string) error {
-	return spec.DropActionGroupsContext(context.Background(), groups...)
+func (spec *ServerAuditSpecification) DropActionGroups(ctx context.Context, groups ...string) error {
+	return spec.alterActionGroups(ctx, "DROP", groups)
 }
 
-// DropActionGroupsContext is the context-aware variant of DropActionGroups.
-func (spec *ServerAuditSpecification) DropActionGroupsContext(ctx context.Context, groups ...string) error {
-	return spec.alterActionGroupsContext(ctx, "DROP", groups)
-}
-
-func (spec *ServerAuditSpecification) alterActionGroupsContext(ctx context.Context, verb string, groups []string) error {
+func (spec *ServerAuditSpecification) alterActionGroups(ctx context.Context, verb string, groups []string) error {
 	if len(groups) == 0 {
 		return nil
 	}
@@ -392,7 +326,7 @@ func (spec *ServerAuditSpecification) alterActionGroupsContext(ctx context.Conte
 	}
 	stmt := fmt.Sprintf("ALTER SERVER AUDIT SPECIFICATION %s\n    %s", quoteIdent(spec.Name), clauses)
 	return spec.withSpecificationDisabled(ctx, func(ctx context.Context) error {
-		if err := spec.server.execContext(ctx, stmt); err != nil {
+		if err := spec.server.exec(ctx, stmt); err != nil {
 			return fmt.Errorf("gosmo: alter server audit specification %q: %w", spec.Name, err)
 		}
 		return nil
@@ -400,20 +334,16 @@ func (spec *ServerAuditSpecification) alterActionGroupsContext(ctx context.Conte
 }
 
 // SetAudit rebinds the specification to a different server audit.
-func (spec *ServerAuditSpecification) SetAudit(auditName string) error {
-	return spec.SetAuditContext(context.Background(), auditName)
-}
-
-// SetAuditContext is the context-aware variant of SetAudit. The specification
-// is disabled for the duration and restored afterwards.
-func (spec *ServerAuditSpecification) SetAuditContext(ctx context.Context, auditName string) error {
+//
+// The specification is disabled for the duration and restored afterwards.
+func (spec *ServerAuditSpecification) SetAudit(ctx context.Context, auditName string) error {
 	if strings.TrimSpace(auditName) == "" {
 		return fmt.Errorf("gosmo: alter server audit specification %q: audit name is empty", spec.Name)
 	}
 	stmt := fmt.Sprintf("ALTER SERVER AUDIT SPECIFICATION %s\nFOR SERVER AUDIT %s",
 		quoteIdent(spec.Name), quoteIdent(auditName))
 	err := spec.withSpecificationDisabled(ctx, func(ctx context.Context) error {
-		if err := spec.server.execContext(ctx, stmt); err != nil {
+		if err := spec.server.exec(ctx, stmt); err != nil {
 			return fmt.Errorf("gosmo: alter server audit specification %q: %w", spec.Name, err)
 		}
 		return nil
@@ -426,24 +356,21 @@ func (spec *ServerAuditSpecification) SetAuditContext(ctx context.Context, audit
 }
 
 // Drop deletes the specification.
-func (spec *ServerAuditSpecification) Drop() error {
-	return spec.DropContext(context.Background())
-}
-
-// DropContext is the context-aware variant of Drop. An enabled specification
-// is disabled first; there is nothing to restore afterwards.
-func (spec *ServerAuditSpecification) DropContext(ctx context.Context) error {
-	enabled, err := spec.isEnabledContext(ctx)
+//
+// An enabled specification is disabled first; there is nothing to restore
+// afterwards.
+func (spec *ServerAuditSpecification) Drop(ctx context.Context) error {
+	enabled, err := spec.isEnabled(ctx)
 	if err != nil {
 		return err
 	}
 	if enabled {
-		if err := spec.SetStateContext(ctx, false); err != nil {
+		if err := spec.SetState(ctx, false); err != nil {
 			return err
 		}
 	}
 	stmt := "DROP SERVER AUDIT SPECIFICATION " + quoteIdent(spec.Name)
-	if err := spec.server.execContext(ctx, stmt); err != nil {
+	if err := spec.server.exec(ctx, stmt); err != nil {
 		return fmt.Errorf("gosmo: drop server audit specification %q: %w", spec.Name, err)
 	}
 	return nil

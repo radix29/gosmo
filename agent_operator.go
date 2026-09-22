@@ -3,7 +3,6 @@ package gosmo
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"fmt"
 	"time"
 )
@@ -60,30 +59,13 @@ func scanOperator(s *Server, scan func(dest ...any) error) (*Operator, error) {
 }
 
 // Operators returns every SQL Server Agent operator defined on the server.
-func (s *Server) Operators() ([]*Operator, error) { return s.OperatorsContext(context.Background()) }
-
-// OperatorsContext is the context-aware variant of Operators.
-func (s *Server) OperatorsContext(ctx context.Context) ([]*Operator, error) {
+func (s *Server) Operators(ctx context.Context) ([]*Operator, error) {
 	q := "SELECT " + operatorColumns + " " + operatorFrom + " ORDER BY o.name"
 
 	rows, err := s.query(ctx, q)
-	if err != nil {
-		return nil, fmt.Errorf("gosmo: list operators: %w", err)
-	}
-	defer rows.Close()
-
-	var out []*Operator
-	for rows.Next() {
-		o, err := scanOperator(s, rows.Scan)
-		if err != nil {
-			return nil, fmt.Errorf("gosmo: list operators: %w", err)
-		}
-		out = append(out, o)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("gosmo: list operators: %w", err)
-	}
-	return out, nil
+	return scanRows(rows, err, "list operators", func(scan func(...any) error) (*Operator, error) {
+		return scanOperator(s, scan)
+	})
 }
 
 // OperatorRef returns a lightweight handle for an operator by name, without
@@ -94,7 +76,7 @@ func (s *Server) OperatorsContext(ctx context.Context) ([]*Operator, error) {
 // Every write method on *Operator addresses the operator by name, so this
 // handle is enough to keep operating on an operator the caller already
 // knows exists — and is the form to use when there is nothing to read yet:
-// under a WithScript-derived context, OperatorByNameContext's lookup is a
+// under a WithScript-derived context, OperatorByName's lookup is a
 // real read and an operator whose sp_add_operator was merely collected is
 // not there to find.
 func (s *Server) OperatorRef(name string) *Operator {
@@ -102,12 +84,7 @@ func (s *Server) OperatorRef(name string) *Operator {
 }
 
 // OperatorByName returns a single operator by name.
-func (s *Server) OperatorByName(name string) (*Operator, error) {
-	return s.OperatorByNameContext(context.Background(), name)
-}
-
-// OperatorByNameContext is the context-aware variant of OperatorByName.
-func (s *Server) OperatorByNameContext(ctx context.Context, name string) (*Operator, error) {
+func (s *Server) OperatorByName(ctx context.Context, name string) (*Operator, error) {
 	q := "SELECT " + operatorColumns + " " + operatorFrom + " WHERE o.name = @p1"
 
 	var o *Operator
@@ -116,13 +93,7 @@ func (s *Server) OperatorByNameContext(ctx context.Context, name string) (*Opera
 		o, scanErr = scanOperator(s, row.Scan)
 		return scanErr
 	}, q, name)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, notFoundf("gosmo: operator %q not found", name)
-		}
-		return nil, fmt.Errorf("gosmo: operator by name: %w", err)
-	}
-	return o, nil
+	return foundRow(o, err, notFoundf("gosmo: operator %q not found", name), "operator by name")
 }
 
 // CreateOperatorRequest describes a new SQL Server Agent operator.
@@ -134,12 +105,7 @@ type CreateOperatorRequest struct {
 }
 
 // CreateOperator creates a new operator via sp_add_operator.
-func (s *Server) CreateOperator(req CreateOperatorRequest) (*Operator, error) {
-	return s.CreateOperatorContext(context.Background(), req)
-}
-
-// CreateOperatorContext is the context-aware variant of CreateOperator.
-func (s *Server) CreateOperatorContext(ctx context.Context, req CreateOperatorRequest) (*Operator, error) {
+func (s *Server) CreateOperator(ctx context.Context, req CreateOperatorRequest) (*Operator, error) {
 	if req.Name == "" {
 		return nil, fmt.Errorf("gosmo: create operator: name is required")
 	}
@@ -151,26 +117,21 @@ func (s *Server) CreateOperatorContext(ctx context.Context, req CreateOperatorRe
 	if req.Category != "" {
 		q += fmt.Sprintf(", @category_name = N'%s'", escapeSingle(req.Category))
 	}
-	if err := s.execContext(ctx, q); err != nil {
+	if err := s.exec(ctx, q); err != nil {
 		return nil, fmt.Errorf("gosmo: create operator %q: %w", req.Name, err)
 	}
 	if Scripting(ctx) {
-		// See CreateScheduleContext.
+		// See CreateSchedule.
 		return s.OperatorRef(req.Name), nil
 	}
-	return s.OperatorByNameContext(ctx, req.Name)
+	return s.OperatorByName(ctx, req.Name)
 }
 
 // Rename changes the operator's name.
-func (o *Operator) Rename(newName string) error {
-	return o.RenameContext(context.Background(), newName)
-}
-
-// RenameContext is the context-aware variant of Rename.
-func (o *Operator) RenameContext(ctx context.Context, newName string) error {
+func (o *Operator) Rename(ctx context.Context, newName string) error {
 	q := fmt.Sprintf("EXEC msdb.dbo.sp_update_operator @name = N'%s', @new_name = N'%s'",
 		escapeSingle(o.Name), escapeSingle(newName))
-	if err := o.server.execContext(ctx, q); err != nil {
+	if err := o.server.exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: rename operator %q to %q: %w", o.Name, newName, err)
 	}
 	setIfApplied(ctx, &o.Name, newName)
@@ -178,20 +139,14 @@ func (o *Operator) RenameContext(ctx context.Context, newName string) error {
 }
 
 // Enable enables the operator.
-func (o *Operator) Enable() error { return o.EnableContext(context.Background()) }
-
-// EnableContext is the context-aware variant of Enable.
-func (o *Operator) EnableContext(ctx context.Context) error { return o.setEnabled(ctx, true) }
+func (o *Operator) Enable(ctx context.Context) error { return o.setEnabled(ctx, true) }
 
 // Disable disables the operator.
-func (o *Operator) Disable() error { return o.DisableContext(context.Background()) }
-
-// DisableContext is the context-aware variant of Disable.
-func (o *Operator) DisableContext(ctx context.Context) error { return o.setEnabled(ctx, false) }
+func (o *Operator) Disable(ctx context.Context) error { return o.setEnabled(ctx, false) }
 
 func (o *Operator) setEnabled(ctx context.Context, on bool) error {
 	q := fmt.Sprintf("EXEC msdb.dbo.sp_update_operator @name = N'%s', @enabled = %d", escapeSingle(o.Name), boolToInt(on))
-	if err := o.server.execContext(ctx, q); err != nil {
+	if err := o.server.exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: set enabled=%v for operator %q: %w", on, o.Name, err)
 	}
 	setIfApplied(ctx, &o.Enabled, on)
@@ -199,15 +154,10 @@ func (o *Operator) setEnabled(ctx context.Context, on bool) error {
 }
 
 // SetEmailAddress changes the operator's email address.
-func (o *Operator) SetEmailAddress(addr string) error {
-	return o.SetEmailAddressContext(context.Background(), addr)
-}
-
-// SetEmailAddressContext is the context-aware variant of SetEmailAddress.
-func (o *Operator) SetEmailAddressContext(ctx context.Context, addr string) error {
+func (o *Operator) SetEmailAddress(ctx context.Context, addr string) error {
 	q := fmt.Sprintf("EXEC msdb.dbo.sp_update_operator @name = N'%s', @email_address = N'%s'",
 		escapeSingle(o.Name), escapeSingle(addr))
-	if err := o.server.execContext(ctx, q); err != nil {
+	if err := o.server.exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: set email address for operator %q: %w", o.Name, err)
 	}
 	setIfApplied(ctx, &o.EmailAddress, addr)
@@ -219,16 +169,11 @@ func (o *Operator) SetEmailAddressContext(ctx context.Context, addr string) erro
 // Alert.SetCategory does: sp_update_operator's category check
 // (sp_verify_category, shared with sp_update_alert) rejects an empty name
 // outright.
-func (o *Operator) SetCategory(category string) error {
-	return o.SetCategoryContext(context.Background(), category)
-}
-
-// SetCategoryContext is the context-aware variant of SetCategory.
-func (o *Operator) SetCategoryContext(ctx context.Context, category string) error {
+func (o *Operator) SetCategory(ctx context.Context, category string) error {
 	target := agentCategoryTarget(category)
 	q := fmt.Sprintf("EXEC msdb.dbo.sp_update_operator @name = N'%s', @category_name = N'%s'",
 		escapeSingle(o.Name), escapeSingle(target))
-	if err := o.server.execContext(ctx, q); err != nil {
+	if err := o.server.exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: set category for operator %q: %w", o.Name, err)
 	}
 	setIfApplied(ctx, &o.Category, target)
@@ -236,12 +181,9 @@ func (o *Operator) SetCategoryContext(ctx context.Context, category string) erro
 }
 
 // Drop deletes the operator via sp_delete_operator.
-func (o *Operator) Drop() error { return o.DropContext(context.Background()) }
-
-// DropContext is the context-aware variant of Drop.
-func (o *Operator) DropContext(ctx context.Context) error {
+func (o *Operator) Drop(ctx context.Context) error {
 	q := fmt.Sprintf("EXEC msdb.dbo.sp_delete_operator @name = N'%s'", escapeSingle(o.Name))
-	if err := o.server.execContext(ctx, q); err != nil {
+	if err := o.server.exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: drop operator %q: %w", o.Name, err)
 	}
 	return nil
@@ -254,12 +196,7 @@ type AlertNotificationRef struct {
 }
 
 // NotifyingAlerts returns every alert configured to notify this operator.
-func (o *Operator) NotifyingAlerts() ([]*AlertNotificationRef, error) {
-	return o.NotifyingAlertsContext(context.Background())
-}
-
-// NotifyingAlertsContext is the context-aware variant of NotifyingAlerts.
-func (o *Operator) NotifyingAlertsContext(ctx context.Context) ([]*AlertNotificationRef, error) {
+func (o *Operator) NotifyingAlerts(ctx context.Context) ([]*AlertNotificationRef, error) {
 	const q = `
 SELECT a.name, n.notification_method
 FROM   msdb.dbo.sysnotifications n
@@ -268,25 +205,15 @@ WHERE  n.operator_id = @p1
 ORDER  BY a.name`
 
 	rows, err := o.server.query(ctx, q, o.ID)
-	if err != nil {
-		return nil, fmt.Errorf("gosmo: notifying alerts for operator %q: %w", o.Name, err)
-	}
-	defer rows.Close()
-
-	var out []*AlertNotificationRef
-	for rows.Next() {
+	return scanRows(rows, err, fmt.Sprintf("notifying alerts for operator %q", o.Name), func(scan func(...any) error) (*AlertNotificationRef, error) {
 		r := &AlertNotificationRef{}
 		var method int
-		if err := rows.Scan(&r.AlertName, &method); err != nil {
-			return nil, fmt.Errorf("gosmo: notifying alerts for operator %q: %w", o.Name, err)
+		if err := scan(&r.AlertName, &method); err != nil {
+			return nil, err
 		}
 		r.Method = NotificationMethod(method)
-		out = append(out, r)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("gosmo: notifying alerts for operator %q: %w", o.Name, err)
-	}
-	return out, nil
+		return r, nil
+	})
 }
 
 // JobNotificationRef describes one job configured to email an operator on
@@ -299,12 +226,7 @@ type JobNotificationRef struct {
 // NotifyingJobs returns every job configured to email this operator on
 // completion (sysjobs.notify_email_operator_id) — distinct from
 // NotifyingAlerts, which covers alert-triggered notifications.
-func (o *Operator) NotifyingJobs() ([]*JobNotificationRef, error) {
-	return o.NotifyingJobsContext(context.Background())
-}
-
-// NotifyingJobsContext is the context-aware variant of NotifyingJobs.
-func (o *Operator) NotifyingJobsContext(ctx context.Context) ([]*JobNotificationRef, error) {
+func (o *Operator) NotifyingJobs(ctx context.Context) ([]*JobNotificationRef, error) {
 	const q = `
 SELECT name, notify_level_email
 FROM   msdb.dbo.sysjobs
@@ -312,23 +234,13 @@ WHERE  notify_email_operator_id = @p1
 ORDER  BY name`
 
 	rows, err := o.server.query(ctx, q, o.ID)
-	if err != nil {
-		return nil, fmt.Errorf("gosmo: notifying jobs for operator %q: %w", o.Name, err)
-	}
-	defer rows.Close()
-
-	var out []*JobNotificationRef
-	for rows.Next() {
+	return scanRows(rows, err, fmt.Sprintf("notifying jobs for operator %q", o.Name), func(scan func(...any) error) (*JobNotificationRef, error) {
 		r := &JobNotificationRef{}
 		var level int
-		if err := rows.Scan(&r.JobName, &level); err != nil {
-			return nil, fmt.Errorf("gosmo: notifying jobs for operator %q: %w", o.Name, err)
+		if err := scan(&r.JobName, &level); err != nil {
+			return nil, err
 		}
 		r.Level = NotifyLevel(level)
-		out = append(out, r)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("gosmo: notifying jobs for operator %q: %w", o.Name, err)
-	}
-	return out, nil
+		return r, nil
+	})
 }

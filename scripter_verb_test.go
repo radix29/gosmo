@@ -35,6 +35,12 @@ func TestAlterModuleDefinition(t *testing.T) {
 		// Only the CREATE that opens the definition may be rewritten.
 		{"create in body untouched", "CREATE PROCEDURE dbo.p AS CREATE TABLE #t (a int)", "ALTER PROCEDURE dbo.p AS CREATE TABLE #t (a int)"},
 		{"unrecognized left alone", "SELECT 1", "SELECT 1"},
+		// T-SQL block comments nest; a lazy regex stopped at the first */.
+		{"nested leading comment", "/* a /* b */ c */\nCREATE PROCEDURE dbo.p AS SELECT 1", "/* a /* b */ c */\nALTER PROCEDURE dbo.p AS SELECT 1"},
+		{"comments mixed", "-- x /*\n/* y */ -- z\n  CREATE VIEW v AS SELECT 1", "-- x /*\n/* y */ -- z\n  ALTER VIEW v AS SELECT 1"},
+		{"create inside the comment is not the keyword", "/* CREATE /* x */ */ CREATE VIEW v AS SELECT 1", "/* CREATE /* x */ */ ALTER VIEW v AS SELECT 1"},
+		{"unterminated comment left alone", "/* CREATE VIEW v AS SELECT 1", "/* CREATE VIEW v AS SELECT 1"},
+		{"quoted text first left alone", "[CREATE] VIEW v", "[CREATE] VIEW v"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -49,7 +55,7 @@ func TestBuildTableScriptDropAndCreateEmitsBoth(t *testing.T) {
 	cols := []*Column{{Name: "id", DataType: DataTypeInt, OrdinalPosition: 1}}
 	opts := DefaultScriptOptions()
 	opts.Verb = ScriptDropAndCreate
-	got := buildTableScript("dbo", "T", "db", cols, nil, nil, DataSpace{Name: "PRIMARY", IsDefaultFileGroup: true}, opts)
+	got := buildTableScript("dbo", "T", "db", tableScriptParts{cols: cols, indexes: nil, fks: nil, ds: DataSpace{Name: "PRIMARY", IsDefaultFileGroup: true}}, opts)
 
 	drop := strings.Index(got, "DROP TABLE")
 	create := strings.Index(got, "CREATE TABLE")

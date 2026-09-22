@@ -91,27 +91,16 @@ func (d *Database) requireGraphTables() error {
 }
 
 // TablesOfKind returns the tables of one kind.
-func (d *Database) TablesOfKind(kind TableKind) ([]*Table, error) {
-	return d.TablesOfKindContext(context.Background(), kind)
-}
-
-// TablesOfKindContext is the context-aware variant of TablesOfKind.
-func (d *Database) TablesOfKindContext(ctx context.Context, kind TableKind) ([]*Table, error) {
-	return d.TablesOfKindFilteredContext(ctx, kind, ObjectFilter{})
+func (d *Database) TablesOfKind(ctx context.Context, kind TableKind) ([]*Table, error) {
+	return d.TablesOfKindFiltered(ctx, kind, ObjectFilter{})
 }
 
 // TablesOfKindFiltered returns the tables of one kind an ObjectFilter
 // matches, narrowed by the server. An empty filter is TablesOfKind.
-func (d *Database) TablesOfKindFiltered(kind TableKind, filter ObjectFilter) ([]*Table, error) {
-	return d.TablesOfKindFilteredContext(context.Background(), kind, filter)
-}
-
-// TablesOfKindFilteredContext is the context-aware variant of
-// TablesOfKindFiltered.
 //
 // TableKindGraph is refused below SQL Server 2017 (errors.Is
 // ErrUnsupportedVersion) rather than answered with an empty list.
-func (d *Database) TablesOfKindFilteredContext(ctx context.Context, kind TableKind, filter ObjectFilter) ([]*Table, error) {
+func (d *Database) TablesOfKindFiltered(ctx context.Context, kind TableKind, filter ObjectFilter) ([]*Table, error) {
 	if kind == TableKindGraph {
 		if err := d.requireGraphTables(); err != nil {
 			return nil, err
@@ -136,13 +125,7 @@ type TableKindPresence struct {
 }
 
 // TableKindsPresent reports which table families the database has.
-func (d *Database) TableKindsPresent() (TableKindPresence, error) {
-	return d.TableKindsPresentContext(context.Background())
-}
-
-// TableKindsPresentContext is the context-aware variant of
-// TableKindsPresent.
-func (d *Database) TableKindsPresentContext(ctx context.Context) (TableKindPresence, error) {
+func (d *Database) TableKindsPresent(ctx context.Context) (TableKindPresence, error) {
 	q := `
 SELECT CAST(MAX(CASE WHEN t.is_ms_shipped = 1 THEN 1 ELSE 0 END) AS bit),
        CAST(MAX(CASE WHEN t.is_ms_shipped = 0 AND t.is_filetable = 1 THEN 1 ELSE 0 END) AS bit),

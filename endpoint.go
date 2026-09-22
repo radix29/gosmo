@@ -84,17 +84,11 @@ func endpointURL(host string, port int) string {
 
 // DatabaseMirroringEndpoint returns the instance's database mirroring
 // endpoint, or nil when it has none.
-func (s *Server) DatabaseMirroringEndpoint() (*DatabaseMirroringEndpoint, error) {
-	return s.DatabaseMirroringEndpointContext(context.Background())
-}
-
-// DatabaseMirroringEndpointContext is the context-aware variant of
-// DatabaseMirroringEndpoint.
 //
 // Returns (nil, nil) when the instance has no such endpoint — a normal state
 // on an instance that has never been put in an availability group, and not an
 // error.
-func (s *Server) DatabaseMirroringEndpointContext(ctx context.Context) (*DatabaseMirroringEndpoint, error) {
+func (s *Server) DatabaseMirroringEndpoint(ctx context.Context) (*DatabaseMirroringEndpoint, error) {
 	const q = `
 	SELECT e.name, ISNULL(t.port, 0), ISNULL(e.state_desc,''),
 	       ISNULL(dme.role_desc,''), ISNULL(dme.is_encryption_enabled, 0),
@@ -251,18 +245,12 @@ func (spec EndpointSpec) handle(s *Server) *DatabaseMirroringEndpoint {
 // Fails if the instance already has one, whatever it is named — see this
 // file's doc comment. Read DatabaseMirroringEndpoint first and reuse what is
 // there rather than treating "no endpoint of my name" as "no endpoint".
-func (s *Server) CreateDatabaseMirroringEndpoint(spec EndpointSpec) (*DatabaseMirroringEndpoint, error) {
-	return s.CreateDatabaseMirroringEndpointContext(context.Background(), spec)
-}
-
-// CreateDatabaseMirroringEndpointContext is the context-aware variant of
-// CreateDatabaseMirroringEndpoint.
-func (s *Server) CreateDatabaseMirroringEndpointContext(ctx context.Context, spec EndpointSpec) (*DatabaseMirroringEndpoint, error) {
+func (s *Server) CreateDatabaseMirroringEndpoint(ctx context.Context, spec EndpointSpec) (*DatabaseMirroringEndpoint, error) {
 	stmt, err := spec.createEndpointStatement()
 	if err != nil {
 		return nil, fmt.Errorf("gosmo: create database mirroring endpoint on %q: %w", s.Name(), err)
 	}
-	if err := s.execContext(ctx, stmt); err != nil {
+	if err := s.exec(ctx, stmt); err != nil {
 		return nil, fmt.Errorf("gosmo: create database mirroring endpoint %q on %q: %w", spec.Name, s.Name(), err)
 	}
 	if Scripting(ctx) {
@@ -271,31 +259,25 @@ func (s *Server) CreateDatabaseMirroringEndpointContext(ctx context.Context, spe
 		// indistinguishable from a failed create, and leaving the caller
 		// nothing to script the GRANT CONNECTs and the ALTERs against. Hand
 		// out a handle built from the spec, as every other scripted create
-		// does (see CreateScheduleContext).
+		// does (see CreateSchedule).
 		return spec.handle(s), nil
 	}
-	return s.DatabaseMirroringEndpointContext(ctx)
+	return s.DatabaseMirroringEndpoint(ctx)
 }
 
 // Start starts a stopped endpoint. An endpoint that is not STARTED accepts no
 // connections, so a replica behind one never synchronizes.
-func (e *DatabaseMirroringEndpoint) Start() error { return e.StartContext(context.Background()) }
-
-// StartContext is the context-aware variant of Start.
-func (e *DatabaseMirroringEndpoint) StartContext(ctx context.Context) error {
+func (e *DatabaseMirroringEndpoint) Start(ctx context.Context) error {
 	return e.setState(ctx, "STARTED")
 }
 
 // Stop stops the endpoint, breaking every replica connection through it.
-func (e *DatabaseMirroringEndpoint) Stop() error { return e.StopContext(context.Background()) }
-
-// StopContext is the context-aware variant of Stop.
-func (e *DatabaseMirroringEndpoint) StopContext(ctx context.Context) error {
+func (e *DatabaseMirroringEndpoint) Stop(ctx context.Context) error {
 	return e.setState(ctx, "STOPPED")
 }
 
 func (e *DatabaseMirroringEndpoint) setState(ctx context.Context, state string) error {
-	if err := e.server.execContext(ctx,
+	if err := e.server.exec(ctx,
 		fmt.Sprintf("ALTER ENDPOINT %s STATE = %s", quoteIdent(e.Name), state)); err != nil {
 		return fmt.Errorf("gosmo: set endpoint %q state to %s: %w", e.Name, state, err)
 	}
@@ -304,11 +286,8 @@ func (e *DatabaseMirroringEndpoint) setState(ctx context.Context, state string) 
 }
 
 // Drop deletes the endpoint.
-func (e *DatabaseMirroringEndpoint) Drop() error { return e.DropContext(context.Background()) }
-
-// DropContext is the context-aware variant of Drop.
-func (e *DatabaseMirroringEndpoint) DropContext(ctx context.Context) error {
-	if err := e.server.execContext(ctx, "DROP ENDPOINT "+quoteIdent(e.Name)); err != nil {
+func (e *DatabaseMirroringEndpoint) Drop(ctx context.Context) error {
+	if err := e.server.exec(ctx, "DROP ENDPOINT "+quoteIdent(e.Name)); err != nil {
 		return fmt.Errorf("gosmo: drop endpoint %q: %w", e.Name, err)
 	}
 	return nil
@@ -316,16 +295,11 @@ func (e *DatabaseMirroringEndpoint) DropContext(ctx context.Context) error {
 
 // GrantConnect grants a login CONNECT on the endpoint — what lets the other
 // replicas' service accounts open a connection to it.
-func (e *DatabaseMirroringEndpoint) GrantConnect(login string) error {
-	return e.GrantConnectContext(context.Background(), login)
-}
-
-// GrantConnectContext is the context-aware variant of GrantConnect.
-func (e *DatabaseMirroringEndpoint) GrantConnectContext(ctx context.Context, login string) error {
+func (e *DatabaseMirroringEndpoint) GrantConnect(ctx context.Context, login string) error {
 	if strings.TrimSpace(login) == "" {
 		return fmt.Errorf("gosmo: grant connect on endpoint %q: empty login", e.Name)
 	}
-	if err := e.server.execContext(ctx, fmt.Sprintf("GRANT CONNECT ON ENDPOINT::%s TO %s",
+	if err := e.server.exec(ctx, fmt.Sprintf("GRANT CONNECT ON ENDPOINT::%s TO %s",
 		quoteIdent(e.Name), quoteIdent(login))); err != nil {
 		return fmt.Errorf("gosmo: grant connect on endpoint %q to %q: %w", e.Name, login, err)
 	}
@@ -420,41 +394,17 @@ FROM   sys.endpoints e
 LEFT   JOIN sys.tcp_endpoints t ON t.endpoint_id = e.endpoint_id`
 
 // Endpoints returns every endpoint on the server, built-in ones included.
-func (s *Server) Endpoints() ([]*Endpoint, error) {
-	return s.EndpointsContext(context.Background())
-}
-
-// EndpointsContext is the context-aware variant of Endpoints.
-func (s *Server) EndpointsContext(ctx context.Context) ([]*Endpoint, error) {
+func (s *Server) Endpoints(ctx context.Context) ([]*Endpoint, error) {
 	rows, err := s.query(ctx, endpointSelect+`
 ORDER  BY e.name`)
-	if err != nil {
-		return nil, fmt.Errorf("gosmo: list endpoints: %w", err)
-	}
-	defer rows.Close()
-
-	var endpoints []*Endpoint
-	for rows.Next() {
-		e, err := scanEndpoint(s, rows.Scan)
-		if err != nil {
-			return nil, fmt.Errorf("gosmo: list endpoints: %w", err)
-		}
-		endpoints = append(endpoints, e)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("gosmo: list endpoints: %w", err)
-	}
-	return endpoints, nil
+	return scanRows(rows, err, "list endpoints", func(scan func(...any) error) (*Endpoint, error) {
+		return scanEndpoint(s, scan)
+	})
 }
 
 // EndpointByName returns one endpoint, or a not-found error (errors.Is
 // ErrNotFound) when the server has none by that name.
-func (s *Server) EndpointByName(name string) (*Endpoint, error) {
-	return s.EndpointByNameContext(context.Background(), name)
-}
-
-// EndpointByNameContext is the context-aware variant of EndpointByName.
-func (s *Server) EndpointByNameContext(ctx context.Context, name string) (*Endpoint, error) {
+func (s *Server) EndpointByName(ctx context.Context, name string) (*Endpoint, error) {
 	var e *Endpoint
 	err := s.queryRow(ctx, func(row *sql.Row) error {
 		var err error
@@ -462,13 +412,7 @@ func (s *Server) EndpointByNameContext(ctx context.Context, name string) (*Endpo
 		return err
 	}, endpointSelect+`
 WHERE  e.name = @p1`, name)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, notFoundf("gosmo: endpoint %q not found", name)
-	}
-	if err != nil {
-		return nil, fmt.Errorf("gosmo: read endpoint %q: %w", name, err)
-	}
-	return e, nil
+	return foundRow(e, err, notFoundf("gosmo: endpoint %q not found", name), fmt.Sprintf("read endpoint %q", name))
 }
 
 func scanEndpoint(s *Server, scan func(...any) error) (*Endpoint, error) {
@@ -495,13 +439,10 @@ const (
 )
 
 // SetState starts, stops or disables the endpoint.
-func (e *Endpoint) SetState(state EndpointState) error {
-	return e.SetStateContext(context.Background(), state)
-}
-
-// SetStateContext is the context-aware variant of SetState. A built-in
-// endpoint is refused with ErrSystemEndpoint before any statement is built.
-func (e *Endpoint) SetStateContext(ctx context.Context, state EndpointState) error {
+//
+// A built-in endpoint is refused with ErrSystemEndpoint before any statement
+// is built.
+func (e *Endpoint) SetState(ctx context.Context, state EndpointState) error {
 	if err := e.refuseSystem("set the state of"); err != nil {
 		return err
 	}
@@ -511,7 +452,7 @@ func (e *Endpoint) SetStateContext(ctx context.Context, state EndpointState) err
 		return fmt.Errorf("gosmo: set state of endpoint %q: unknown state %q", e.Name, state)
 	}
 	stmt := fmt.Sprintf("ALTER ENDPOINT %s STATE = %s", quoteIdent(e.Name), state)
-	if err := e.server.execContext(ctx, stmt); err != nil {
+	if err := e.server.exec(ctx, stmt); err != nil {
 		return fmt.Errorf("gosmo: set state of endpoint %q: %w", e.Name, err)
 	}
 	setIfApplied(ctx, &e.State, string(state))
@@ -519,15 +460,14 @@ func (e *Endpoint) SetStateContext(ctx context.Context, state EndpointState) err
 }
 
 // Drop removes the endpoint.
-func (e *Endpoint) Drop() error { return e.DropContext(context.Background()) }
-
-// DropContext is the context-aware variant of Drop. A built-in endpoint is
-// refused with ErrSystemEndpoint before any statement is built.
-func (e *Endpoint) DropContext(ctx context.Context) error {
+//
+// A built-in endpoint is refused with ErrSystemEndpoint before any statement
+// is built.
+func (e *Endpoint) Drop(ctx context.Context) error {
 	if err := e.refuseSystem("drop"); err != nil {
 		return err
 	}
-	if err := e.server.execContext(ctx, "DROP ENDPOINT "+quoteIdent(e.Name)); err != nil {
+	if err := e.server.exec(ctx, "DROP ENDPOINT "+quoteIdent(e.Name)); err != nil {
 		return fmt.Errorf("gosmo: drop endpoint %q: %w", e.Name, err)
 	}
 	return nil
@@ -545,21 +485,16 @@ func (e *Endpoint) refuseSystem(verb string) error {
 
 // MirroringDetail reads the database mirroring settings of a
 // DATABASE_MIRRORING endpoint — role, encryption and connection auth.
-func (e *Endpoint) MirroringDetail() (*DatabaseMirroringEndpoint, error) {
-	return e.MirroringDetailContext(context.Background())
-}
-
-// MirroringDetailContext is the context-aware variant of MirroringDetail.
 //
 // It returns (nil, nil) for an endpoint that is not a mirroring one, matching
-// DatabaseMirroringEndpointContext's convention: a caller asking every
+// DatabaseMirroringEndpoint's convention: a caller asking every
 // endpoint for its mirroring detail branches on absence as the ordinary case.
 // An instance has at most one mirroring endpoint, so the read needs no name.
-func (e *Endpoint) MirroringDetailContext(ctx context.Context) (*DatabaseMirroringEndpoint, error) {
+func (e *Endpoint) MirroringDetail(ctx context.Context) (*DatabaseMirroringEndpoint, error) {
 	if e.Type != "DATABASE_MIRRORING" {
 		return nil, nil
 	}
-	return e.server.DatabaseMirroringEndpointContext(ctx)
+	return e.server.DatabaseMirroringEndpoint(ctx)
 }
 
 // ServiceBrokerEndpointDetail is the SERVICE_BROKER-specific half of an
@@ -588,14 +523,10 @@ type ServiceBrokerEndpointDetail struct {
 
 // ServiceBrokerDetail reads the Service Broker settings of a SERVICE_BROKER
 // endpoint.
-func (e *Endpoint) ServiceBrokerDetail() (*ServiceBrokerEndpointDetail, error) {
-	return e.ServiceBrokerDetailContext(context.Background())
-}
-
-// ServiceBrokerDetailContext is the context-aware variant of
-// ServiceBrokerDetail. It returns (nil, nil) for an endpoint that is not a
-// Service Broker one, the same convention MirroringDetailContext follows.
-func (e *Endpoint) ServiceBrokerDetailContext(ctx context.Context) (*ServiceBrokerEndpointDetail, error) {
+//
+// It returns (nil, nil) for an endpoint that is not a Service Broker one, the
+// same convention MirroringDetail follows.
+func (e *Endpoint) ServiceBrokerDetail(ctx context.Context) (*ServiceBrokerEndpointDetail, error) {
 	if e.Type != "SERVICE_BROKER" {
 		return nil, nil
 	}
@@ -609,13 +540,7 @@ LEFT   JOIN master.sys.certificates c ON c.certificate_id = sbe.certificate_id
 WHERE  sbe.endpoint_id = @p1`, []any{e.EndpointID},
 		&d.IsMessageForwardingEnabled, &d.MessageForwardingSize,
 		&d.ConnectionAuth, &d.EncryptionAlgorithm, &d.CertificateName)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, notFoundf("gosmo: service broker detail for endpoint %q not found", e.Name)
-	}
-	if err != nil {
-		return nil, fmt.Errorf("gosmo: read service broker detail for endpoint %q: %w", e.Name, err)
-	}
-	return d, nil
+	return foundRow(d, err, notFoundf("gosmo: service broker detail for endpoint %q not found", e.Name), fmt.Sprintf("read service broker detail for endpoint %q", e.Name))
 }
 
 // mirroringCertificateName resolves the certificate a DATABASE_MIRRORING

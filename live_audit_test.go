@@ -58,14 +58,14 @@ func TestLiveServerAuditLifecycle(t *testing.T) {
 	dropAudit(t, db, ctx, name, specName)
 	defer dropAudit(t, db, ctx, name, specName)
 
-	a, err := s.CreateServerAuditContext(ctx, ServerAuditSpec{
+	a, err := s.CreateServerAudit(ctx, ServerAuditSpec{
 		Name: name, Type: AuditToFile, FilePath: auditDir,
 		MaxFileSize: 10, MaxRolloverFiles: 3, QueueDelay: 1000,
 		OnFailure: AuditFailureContinue,
 		Predicate: "server_principal_name <> N'nobody'",
 	})
 	if err != nil {
-		t.Fatalf("CreateServerAuditContext: %v", err)
+		t.Fatalf("CreateServerAudit: %v", err)
 	}
 	if a.Type != AuditToFile || a.MaxFileSize != 10 || a.MaxRolloverFiles != 3 {
 		t.Errorf("read back %+v", a)
@@ -80,31 +80,31 @@ func TestLiveServerAuditLifecycle(t *testing.T) {
 		t.Error("a new audit is created disabled")
 	}
 
-	if err := a.SetStateContext(ctx, true); err != nil {
-		t.Fatalf("SetStateContext(on): %v", err)
+	if err := a.SetState(ctx, true); err != nil {
+		t.Fatalf("SetState(on): %v", err)
 	}
-	st, err := a.StatusContext(ctx)
+	st, err := a.Status(ctx)
 	if err != nil {
-		t.Fatalf("StatusContext: %v", err)
+		t.Fatalf("Status: %v", err)
 	}
 	if st.Status != "STARTED" || st.AuditFilePath == "" {
 		t.Errorf("status = %+v", st)
 	}
 
 	// The point of the whole exercise: an ALTER on an enabled audit is
-	// refused by the server, so AlterContext has to disable it and put it
+	// refused by the server, so Alter has to disable it and put it
 	// back. Doing it on the enabled audit is what proves the dance.
-	if err := a.AlterContext(ctx, ServerAuditSpec{
+	if err := a.Alter(ctx, ServerAuditSpec{
 		Name: name, Type: AuditToFile, FilePath: auditDir,
 		MaxFileSize: 20, MaxRolloverFiles: 5, QueueDelay: 2000,
 		OnFailure: AuditFailureContinue,
 		Predicate: "server_principal_name <> N'nobody'",
 	}); err != nil {
-		t.Fatalf("AlterContext on an enabled audit: %v", err)
+		t.Fatalf("Alter on an enabled audit: %v", err)
 	}
-	again, err := s.ServerAuditByNameContext(ctx, name)
+	again, err := s.ServerAuditByName(ctx, name)
 	if err != nil {
-		t.Fatalf("ServerAuditByNameContext: %v", err)
+		t.Fatalf("ServerAuditByName: %v", err)
 	}
 	if again.QueueDelay != 2000 || again.MaxFileSize != 20 || again.MaxRolloverFiles != 5 {
 		t.Errorf("alter did not land: %+v", again)
@@ -117,15 +117,15 @@ func TestLiveServerAuditLifecycle(t *testing.T) {
 	// WHERE combined with WITH(...) is a syntax error the server only reports
 	// at execution, and every statement-shape test passed while a Properties
 	// page Apply failed on it.
-	if err := again.AlterContext(ctx, ServerAuditSpec{
+	if err := again.Alter(ctx, ServerAuditSpec{
 		Name: name, Type: AuditToFile, FilePath: auditDir, QueueDelay: 2000,
 		OnFailure: AuditFailureContinue,
 	}); err != nil {
-		t.Fatalf("AlterContext clearing the predicate: %v", err)
+		t.Fatalf("Alter clearing the predicate: %v", err)
 	}
-	cleared, err := s.ServerAuditByNameContext(ctx, name)
+	cleared, err := s.ServerAuditByName(ctx, name)
 	if err != nil {
-		t.Fatalf("ServerAuditByNameContext: %v", err)
+		t.Fatalf("ServerAuditByName: %v", err)
 	}
 	if cleared.Predicate != "" {
 		t.Errorf("the predicate survived REMOVE WHERE: %q", cleared.Predicate)
@@ -135,13 +135,13 @@ func TestLiveServerAuditLifecycle(t *testing.T) {
 	}
 
 	// The specification half, on the enabled audit.
-	spec, err := s.CreateServerAuditSpecificationContext(ctx, ServerAuditSpecificationSpec{
+	spec, err := s.CreateServerAuditSpecification(ctx, ServerAuditSpecificationSpec{
 		Name: specName, AuditName: name,
 		ActionGroups: []string{"BACKUP_RESTORE_GROUP", "LOGIN_CHANGE_PASSWORD_GROUP"},
 		Enabled:      true,
 	})
 	if err != nil {
-		t.Fatalf("CreateServerAuditSpecificationContext: %v", err)
+		t.Fatalf("CreateServerAuditSpecification: %v", err)
 	}
 	if spec.AuditName != name || !spec.IsEnabled {
 		t.Errorf("specification read back %+v", spec)
@@ -153,15 +153,15 @@ func TestLiveServerAuditLifecycle(t *testing.T) {
 
 	// Same dance, on the specification: the server refuses this while it is
 	// enabled.
-	if err := spec.AddActionGroupsContext(ctx, "DATABASE_CHANGE_GROUP"); err != nil {
-		t.Fatalf("AddActionGroupsContext on an enabled specification: %v", err)
+	if err := spec.AddActionGroups(ctx, "DATABASE_CHANGE_GROUP"); err != nil {
+		t.Fatalf("AddActionGroups on an enabled specification: %v", err)
 	}
-	if err := spec.DropActionGroupsContext(ctx, "BACKUP_RESTORE_GROUP"); err != nil {
-		t.Fatalf("DropActionGroupsContext: %v", err)
+	if err := spec.DropActionGroups(ctx, "BACKUP_RESTORE_GROUP"); err != nil {
+		t.Fatalf("DropActionGroups: %v", err)
 	}
-	spec, err = s.ServerAuditSpecificationByNameContext(ctx, specName)
+	spec, err = s.ServerAuditSpecificationByName(ctx, specName)
 	if err != nil {
-		t.Fatalf("ServerAuditSpecificationByNameContext: %v", err)
+		t.Fatalf("ServerAuditSpecificationByName: %v", err)
 	}
 	want = []string{"DATABASE_CHANGE_GROUP", "LOGIN_CHANGE_PASSWORD_GROUP"}
 	if !slices.Equal(spec.ActionGroups, want) {
@@ -172,9 +172,9 @@ func TestLiveServerAuditLifecycle(t *testing.T) {
 	}
 
 	// The action-group pick list must contain what was just used.
-	groups, err := s.AuditActionGroupsContext(ctx)
+	groups, err := s.AuditActionGroups(ctx)
 	if err != nil {
-		t.Fatalf("AuditActionGroupsContext: %v", err)
+		t.Fatalf("AuditActionGroups: %v", err)
 	}
 	for _, g := range want {
 		if !slices.Contains(groups, g) {
@@ -183,13 +183,13 @@ func TestLiveServerAuditLifecycle(t *testing.T) {
 	}
 
 	// Both drops must work on enabled objects.
-	if err := spec.DropContext(ctx); err != nil {
-		t.Fatalf("DropContext(specification): %v", err)
+	if err := spec.Drop(ctx); err != nil {
+		t.Fatalf("Drop(specification): %v", err)
 	}
-	if err := again.DropContext(ctx); err != nil {
-		t.Fatalf("DropContext(audit): %v", err)
+	if err := again.Drop(ctx); err != nil {
+		t.Fatalf("Drop(audit): %v", err)
 	}
-	if _, err := s.ServerAuditByNameContext(ctx, name); err == nil {
+	if _, err := s.ServerAuditByName(ctx, name); err == nil {
 		t.Error("the audit survived its drop")
 	}
 }
@@ -209,31 +209,31 @@ func TestLiveAuditScriptsRunAsGenerated(t *testing.T) {
 	dropAudit(t, db, ctx, name, specName)
 	defer dropAudit(t, db, ctx, name, specName)
 
-	a, err := s.CreateServerAuditContext(ctx, ServerAuditSpec{
+	a, err := s.CreateServerAudit(ctx, ServerAuditSpec{
 		Name: name, Type: AuditToFile, FilePath: auditDir, QueueDelay: 1000,
 		OnFailure: AuditFailureContinue, Predicate: "server_principal_name <> N'nobody'",
 	})
 	if err != nil {
-		t.Fatalf("CreateServerAuditContext: %v", err)
+		t.Fatalf("CreateServerAudit: %v", err)
 	}
-	if err := a.SetStateContext(ctx, true); err != nil {
-		t.Fatalf("SetStateContext: %v", err)
+	if err := a.SetState(ctx, true); err != nil {
+		t.Fatalf("SetState: %v", err)
 	}
-	if _, err := s.CreateServerAuditSpecificationContext(ctx, ServerAuditSpecificationSpec{
+	if _, err := s.CreateServerAuditSpecification(ctx, ServerAuditSpecificationSpec{
 		Name: specName, AuditName: name,
 		ActionGroups: []string{"BACKUP_RESTORE_GROUP"}, Enabled: true,
 	}); err != nil {
-		t.Fatalf("CreateServerAuditSpecificationContext: %v", err)
+		t.Fatalf("CreateServerAuditSpecification: %v", err)
 	}
 
 	sc := NewServerScripter(s, ScriptOptions{Verb: ScriptDropAndCreate})
-	specScript, err := sc.ScriptServerAuditSpecificationContext(ctx, specName)
+	specScript, err := sc.ScriptServerAuditSpecification(ctx, specName)
 	if err != nil {
-		t.Fatalf("ScriptServerAuditSpecificationContext: %v", err)
+		t.Fatalf("ScriptServerAuditSpecification: %v", err)
 	}
-	auditScriptText, err := sc.ScriptServerAuditContext(ctx, name)
+	auditScriptText, err := sc.ScriptServerAudit(ctx, name)
 	if err != nil {
-		t.Fatalf("ScriptServerAuditContext: %v", err)
+		t.Fatalf("ScriptServerAudit: %v", err)
 	}
 
 	// The specification is dropped and recreated first, then the audit — an
@@ -250,7 +250,7 @@ func TestLiveAuditScriptsRunAsGenerated(t *testing.T) {
 		}
 	}
 
-	back, err := s.ServerAuditByNameContext(ctx, name)
+	back, err := s.ServerAuditByName(ctx, name)
 	if err != nil {
 		t.Fatalf("the scripted audit is not there: %v", err)
 	}
@@ -260,7 +260,7 @@ func TestLiveAuditScriptsRunAsGenerated(t *testing.T) {
 	if back.Predicate == "" {
 		t.Error("the script dropped the predicate")
 	}
-	backSpec, err := s.ServerAuditSpecificationByNameContext(ctx, specName)
+	backSpec, err := s.ServerAuditSpecificationByName(ctx, specName)
 	if err != nil {
 		t.Fatalf("the scripted specification is not there: %v", err)
 	}
@@ -272,7 +272,7 @@ func TestLiveAuditScriptsRunAsGenerated(t *testing.T) {
 // TestLiveRenamingAnEnabledAudit is the acceptance for the 2026-09-02 review's
 // §1. The restore ran under the receiver's name, which MODIFY NAME had just
 // invalidated: the rename committed, the re-enable failed against a name the
-// server no longer had, and RenameContext returned an error with auditing left
+// server no longer had, and Rename returned an error with auditing left
 // switched off — the exact failure the disable/restore dance exists to prevent.
 //
 // The application log target is used rather than a file so the test needs no
@@ -294,32 +294,32 @@ func TestLiveRenamingAnEnabledAudit(t *testing.T) {
 	cleanup()
 	defer cleanup()
 
-	a, err := s.CreateServerAuditContext(ctx, ServerAuditSpec{
+	a, err := s.CreateServerAudit(ctx, ServerAuditSpec{
 		Name: from, Type: AuditToApplicationLog,
 		QueueDelay: 1000, OnFailure: AuditFailureContinue,
 	})
 	if err != nil {
-		t.Fatalf("CreateServerAuditContext: %v", err)
+		t.Fatalf("CreateServerAudit: %v", err)
 	}
-	if err := a.SetStateContext(ctx, true); err != nil {
-		t.Fatalf("SetStateContext(on): %v", err)
+	if err := a.SetState(ctx, true); err != nil {
+		t.Fatalf("SetState(on): %v", err)
 	}
 
-	if err := a.RenameContext(ctx, to); err != nil {
-		t.Fatalf("RenameContext on an enabled audit: %v", err)
+	if err := a.Rename(ctx, to); err != nil {
+		t.Fatalf("Rename on an enabled audit: %v", err)
 	}
 	if a.Name != to {
 		t.Errorf("receiver name = %q, want %q", a.Name, to)
 	}
 
-	renamed, err := s.ServerAuditByNameContext(ctx, to)
+	renamed, err := s.ServerAuditByName(ctx, to)
 	if err != nil {
-		t.Fatalf("ServerAuditByNameContext(%q): %v", to, err)
+		t.Fatalf("ServerAuditByName(%q): %v", to, err)
 	}
 	if !renamed.IsEnabled {
 		t.Error("the audit was left disabled after the rename")
 	}
-	if _, err := s.ServerAuditByNameContext(ctx, from); err == nil {
+	if _, err := s.ServerAuditByName(ctx, from); err == nil {
 		t.Errorf("the old name %q still resolves", from)
 	}
 }

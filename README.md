@@ -46,7 +46,7 @@ every gate is pinned three ways — see
 ```go
 import "github.com/radix29/gosmo"
 
-srv, err := gosmo.Connect(gosmo.ConnectionOptions{
+srv, err := gosmo.Connect(ctx, gosmo.ConnectionOptions{
     Server:                 "localhost:1433",
     User:                   "sa",
     Password:               "YourPassword",
@@ -105,8 +105,8 @@ Every object family SSMS shows, read and — where it makes sense — written:
   of the above, and `WithScript`, which collects the statements a write
   *would* run instead of running them.
 
-Every collection method has a `FooSeq(ctx)` iterator beside it, and every
-method that touches the database comes as a `Foo`/`FooContext` pair.
+Every method that touches the database takes a `context.Context` first, and
+has that one form.
 `FooByName` reads an object from the catalog; `FooRef` is a lookup-free
 handle carrying only the name. Catalog state is exported fields, and every
 object reaches its parent through `Server()` or `Database()`.
@@ -177,14 +177,13 @@ export MSSQL_TRUST_CERT="true"     # self-signed dev cert
 go run ./examples                  # guided tour of the whole library
 ```
 
-Eight more programs go deeper on one subject each:
+Seven more programs go deeper on one subject each:
 
 | Program | Covers |
 | --- | --- |
 | `go run ./examples/backup` | `BACKUP`/`RESTORE`, backup headers and history, progress callbacks, relocating files |
 | `go run ./examples/bulkcopy` | `BulkInsert` from a slice, a generator, and a streaming CSV |
 | `go run ./examples/diagnostic` | `AsSQLError`, `IsRetryable`, `ExecProc`, execution plans, search, dependencies, DMV reads |
-| `go run ./examples/iterators` | The `*Seq` API and what its deferred-fetch semantics do and don't buy you |
 | `go run ./examples/jobs` | SQL Server Agent jobs, steps, schedules, operators, alerts |
 | `go run ./examples/maintain` | Files, fragmentation, index rebuilds, statistics, Query Store, change tracking |
 | `go run ./examples/scripting` | The `Scripter`, and `WithScript`'s collect-instead-of-execute mode |
@@ -211,9 +210,9 @@ variable list are documented in [`examples/README.md`](examples/README.md).
   recovered on instances where `SERVERPROPERTY` does not report it — but
   nothing here opens a registry from the client side.
 - WMI and performance-condition SQL Server Agent alerts — these are listed
-  by `srv.Alerts()` but not creatable or editable, since they depend on a
+  by `srv.Alerts(ctx)` but not creatable or editable, since they depend on a
   WMI provider or Windows performance counters. `Alert.IsEventAlert()` and
-  `srv.EventAlerts()` identify the manageable subset.
+  `srv.EventAlerts(ctx)` identify the manageable subset.
 - Multi-server Agent administration (master/target servers) — jobs are
   created as `LOCAL`, enlisted on `(local)`
 

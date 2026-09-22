@@ -26,12 +26,7 @@ type ExtendedPropertyLevel struct {
 }
 
 // DatabaseExtendedProperties returns all extended properties at database level.
-func (d *Database) DatabaseExtendedProperties() ([]*ExtendedProperty, error) {
-	return d.DatabaseExtendedPropertiesContext(context.Background())
-}
-
-// DatabaseExtendedPropertiesContext is the context-aware variant of DatabaseExtendedProperties.
-func (d *Database) DatabaseExtendedPropertiesContext(ctx context.Context) ([]*ExtendedProperty, error) {
+func (d *Database) DatabaseExtendedProperties(ctx context.Context) ([]*ExtendedProperty, error) {
 	const q = `
 SELECT name, CAST(value AS NVARCHAR(4000))
 FROM   sys.extended_properties
@@ -51,11 +46,6 @@ ORDER  BY name`
 }
 
 // ExtendedProperties returns the extended properties for a specific object.
-func (d *Database) ExtendedProperties(level ExtendedPropertyLevel) ([]*ExtendedProperty, error) {
-	return d.ExtendedPropertiesContext(context.Background(), level)
-}
-
-// ExtendedPropertiesContext is the context-aware variant of ExtendedProperties.
 //
 // Every level goes through nullableStr, level 0 included. Hard-coded quotes
 // there instead send an empty N-literal for a level the caller left empty, and
@@ -64,7 +54,7 @@ func (d *Database) ExtendedProperties(level ExtendedPropertyLevel) ([]*ExtendedP
 // AddExtendedProperty and its siblings write as @level0type = NULL, came back
 // from this read as no rows at all. The read and the three writes have to name
 // the same object.
-func (d *Database) ExtendedPropertiesContext(ctx context.Context, level ExtendedPropertyLevel) ([]*ExtendedProperty, error) {
+func (d *Database) ExtendedProperties(ctx context.Context, level ExtendedPropertyLevel) ([]*ExtendedProperty, error) {
 	q := fmt.Sprintf(`
 SELECT name, CAST(value AS NVARCHAR(4000))
 FROM   fn_listextendedproperty(
@@ -96,12 +86,7 @@ ORDER  BY name`,
 // AddExtendedProperty adds a new extended property on an object. Fails if
 // a property with this name already exists at this level — see
 // SetExtendedProperty to update one.
-func (d *Database) AddExtendedProperty(name, value string, level ExtendedPropertyLevel) error {
-	return d.AddExtendedPropertyContext(context.Background(), name, value, level)
-}
-
-// AddExtendedPropertyContext is the context-aware variant of AddExtendedProperty.
-func (d *Database) AddExtendedPropertyContext(ctx context.Context, name, value string, level ExtendedPropertyLevel) error {
+func (d *Database) AddExtendedProperty(ctx context.Context, name, value string, level ExtendedPropertyLevel) error {
 	q := fmt.Sprintf(`
 EXEC sp_addextendedproperty
     @name = N'%s', @value = N'%s',
@@ -122,12 +107,7 @@ EXEC sp_addextendedproperty
 // SetExtendedProperty updates the value of an existing extended property.
 // Fails if no property with this name exists at this level — see
 // AddExtendedProperty to create one.
-func (d *Database) SetExtendedProperty(name, value string, level ExtendedPropertyLevel) error {
-	return d.SetExtendedPropertyContext(context.Background(), name, value, level)
-}
-
-// SetExtendedPropertyContext is the context-aware variant of SetExtendedProperty.
-func (d *Database) SetExtendedPropertyContext(ctx context.Context, name, value string, level ExtendedPropertyLevel) error {
+func (d *Database) SetExtendedProperty(ctx context.Context, name, value string, level ExtendedPropertyLevel) error {
 	q := fmt.Sprintf(`
 EXEC sp_updateextendedproperty
     @name = N'%s', @value = N'%s',
@@ -146,12 +126,7 @@ EXEC sp_updateextendedproperty
 }
 
 // DropExtendedProperty drops an extended property from an object.
-func (d *Database) DropExtendedProperty(name string, level ExtendedPropertyLevel) error {
-	return d.DropExtendedPropertyContext(context.Background(), name, level)
-}
-
-// DropExtendedPropertyContext is the context-aware variant of DropExtendedProperty.
-func (d *Database) DropExtendedPropertyContext(ctx context.Context, name string, level ExtendedPropertyLevel) error {
+func (d *Database) DropExtendedProperty(ctx context.Context, name string, level ExtendedPropertyLevel) error {
 	q := fmt.Sprintf(`
 EXEC sp_dropextendedproperty
     @name = N'%s',

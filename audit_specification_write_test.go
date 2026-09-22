@@ -18,11 +18,11 @@ func TestServerAuditSpecificationStateStatements(t *testing.T) {
 	} {
 		ctx, col := WithScript(context.Background())
 		spec := &ServerAuditSpecification{server: &Server{}, Name: "odd]name"}
-		if err := spec.SetStateContext(ctx, tc.on); err != nil {
-			t.Fatalf("SetStateContext: %v", err)
+		if err := spec.SetState(ctx, tc.on); err != nil {
+			t.Fatalf("SetState: %v", err)
 		}
-		if len(col.Statements) != 1 || col.Statements[0] != tc.want {
-			t.Errorf("got %v, want [%s]", col.Statements, tc.want)
+		if len(col.Statements()) != 1 || col.Statements()[0] != tc.want {
+			t.Errorf("got %v, want [%s]", col.Statements(), tc.want)
 		}
 		if spec.IsEnabled {
 			t.Error("IsEnabled mirrored while scripting")
@@ -86,7 +86,7 @@ func TestChangingASpecificationTurnsItOffAndBackOn(t *testing.T) {
 	}{
 		{"add groups while enabled", true,
 			func(s *ServerAuditSpecification, ctx context.Context) error {
-				return s.AddActionGroupsContext(ctx, "BACKUP_RESTORE_GROUP")
+				return s.AddActionGroups(ctx, "BACKUP_RESTORE_GROUP")
 			},
 			[]string{
 				"ALTER SERVER AUDIT SPECIFICATION [s] WITH ( STATE = OFF )",
@@ -95,12 +95,12 @@ func TestChangingASpecificationTurnsItOffAndBackOn(t *testing.T) {
 			}},
 		{"drop groups while disabled", false,
 			func(s *ServerAuditSpecification, ctx context.Context) error {
-				return s.DropActionGroupsContext(ctx, "BACKUP_RESTORE_GROUP", "DATABASE_CHANGE_GROUP")
+				return s.DropActionGroups(ctx, "BACKUP_RESTORE_GROUP", "DATABASE_CHANGE_GROUP")
 			},
 			[]string{"ALTER SERVER AUDIT SPECIFICATION [s]\n    DROP (BACKUP_RESTORE_GROUP),\n    DROP (DATABASE_CHANGE_GROUP)"}},
 		{"reparent while enabled", true,
 			func(s *ServerAuditSpecification, ctx context.Context) error {
-				return s.SetAuditContext(ctx, "other")
+				return s.SetAudit(ctx, "other")
 			},
 			[]string{
 				"ALTER SERVER AUDIT SPECIFICATION [s] WITH ( STATE = OFF )",
@@ -114,8 +114,8 @@ func TestChangingASpecificationTurnsItOffAndBackOn(t *testing.T) {
 			if err := tc.act(srv.ServerAuditSpecificationRef("s"), ctx); err != nil {
 				t.Fatalf("act: %v", err)
 			}
-			if !slices.Equal(col.Statements, tc.want) {
-				t.Errorf("statements =\n%#v\nwant\n%#v", col.Statements, tc.want)
+			if !slices.Equal(col.Statements(), tc.want) {
+				t.Errorf("statements =\n%#v\nwant\n%#v", col.Statements(), tc.want)
 			}
 		})
 	}
@@ -124,27 +124,27 @@ func TestChangingASpecificationTurnsItOffAndBackOn(t *testing.T) {
 func TestDroppingAnEnabledSpecificationDisablesItFirst(t *testing.T) {
 	srv := auditServer(t, &auditScript{enabled: true})
 	ctx, col := WithScript(context.Background())
-	if err := srv.ServerAuditSpecificationRef("s").DropContext(ctx); err != nil {
-		t.Fatalf("DropContext: %v", err)
+	if err := srv.ServerAuditSpecificationRef("s").Drop(ctx); err != nil {
+		t.Fatalf("Drop: %v", err)
 	}
 	want := []string{
 		"ALTER SERVER AUDIT SPECIFICATION [s] WITH ( STATE = OFF )",
 		"DROP SERVER AUDIT SPECIFICATION [s]",
 	}
-	if !slices.Equal(col.Statements, want) {
-		t.Errorf("statements = %v, want %v", col.Statements, want)
+	if !slices.Equal(col.Statements(), want) {
+		t.Errorf("statements = %v, want %v", col.Statements(), want)
 	}
 }
 
 func TestChangingAMissingSpecificationIsNotFound(t *testing.T) {
 	srv := auditServer(t, &auditScript{missing: true})
 	ctx, col := WithScript(context.Background())
-	err := srv.ServerAuditSpecificationRef("gone").AddActionGroupsContext(ctx, "BACKUP_RESTORE_GROUP")
+	err := srv.ServerAuditSpecificationRef("gone").AddActionGroups(ctx, "BACKUP_RESTORE_GROUP")
 	if !errors.Is(err, ErrNotFound) {
 		t.Fatalf("got %v, want a not-found error", err)
 	}
-	if len(col.Statements) != 0 {
-		t.Errorf("a refused change still built %v", col.Statements)
+	if len(col.Statements()) != 0 {
+		t.Errorf("a refused change still built %v", col.Statements())
 	}
 }
 
@@ -153,11 +153,11 @@ func TestChangingAMissingSpecificationIsNotFound(t *testing.T) {
 func TestChangingNoActionGroupsWritesNothing(t *testing.T) {
 	srv := auditServer(t, &auditScript{enabled: true})
 	ctx, col := WithScript(context.Background())
-	if err := srv.ServerAuditSpecificationRef("s").AddActionGroupsContext(ctx); err != nil {
-		t.Fatalf("AddActionGroupsContext: %v", err)
+	if err := srv.ServerAuditSpecificationRef("s").AddActionGroups(ctx); err != nil {
+		t.Fatalf("AddActionGroups: %v", err)
 	}
-	if len(col.Statements) != 0 {
-		t.Errorf("an empty change wrote %v", col.Statements)
+	if len(col.Statements()) != 0 {
+		t.Errorf("an empty change wrote %v", col.Statements())
 	}
 }
 

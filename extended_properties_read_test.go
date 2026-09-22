@@ -9,7 +9,7 @@ import (
 
 // The read side of extended properties, which the WithScript tests in
 // script_extended_properties_write_test.go cannot reach: WithScript intercepts
-// writes only, so ExtendedPropertiesContext's SQL is captured off the driver.
+// writes only, so ExtendedProperties's SQL is captured off the driver.
 //
 // The rule under test is the one the writes already follow — an unused level
 // argument is the NULL keyword, not an empty string literal. The read spelled
@@ -68,8 +68,8 @@ func TestExtendedPropertiesReadNullsAnUnusedLevel(t *testing.T) {
 			d := captureDatabase(t)
 			// The capture driver returns no rows; the statement generated on
 			// the way is what is under test.
-			if _, err := d.ExtendedPropertiesContext(context.Background(), tc.level); err != nil {
-				t.Fatalf("ExtendedPropertiesContext: %v", err)
+			if _, err := d.ExtendedProperties(context.Background(), tc.level); err != nil {
+				t.Fatalf("ExtendedProperties: %v", err)
 			}
 			q := captured.find("fn_listextendedproperty")
 			if q == "" {

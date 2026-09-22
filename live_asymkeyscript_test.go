@@ -33,12 +33,12 @@ func TestLiveAsymmetricKeyCreateScriptDrop(t *testing.T) {
 	}
 
 	const name, pass = "round'trip", "R0und!Trip#Pass"
-	if err := src.CreateAsymmetricKeyContext(ctx, AsymmetricKeySpec{
+	if err := src.CreateAsymmetricKey(ctx, AsymmetricKeySpec{
 		Name: name, Authorization: "key_owner", Algorithm: AsymmetricKeyRSA4096, EncryptionPassword: pass,
 	}); err != nil {
-		t.Fatalf("CreateAsymmetricKeyContext: %v", err)
+		t.Fatalf("CreateAsymmetricKey: %v", err)
 	}
-	orig, err := src.AsymmetricKeyByNameContext(ctx, name)
+	orig, err := src.AsymmetricKeyByName(ctx, name)
 	if err != nil || orig == nil {
 		t.Fatalf("read source key: %v, %v", orig, err)
 	}
@@ -49,13 +49,13 @@ func TestLiveAsymmetricKeyCreateScriptDrop(t *testing.T) {
 
 	// No master key in a scratch database: a key with no password must fail
 	// there (Msg 15581), which is the precondition a New dialog checks for.
-	if err := src.CreateAsymmetricKeyContext(ctx, AsymmetricKeySpec{Name: "no_dmk", Algorithm: AsymmetricKeyRSA2048}); err == nil {
+	if err := src.CreateAsymmetricKey(ctx, AsymmetricKeySpec{Name: "no_dmk", Algorithm: AsymmetricKeyRSA2048}); err == nil {
 		t.Error("a master-key-protected key was created in a database with no master key")
 	}
 
-	script, err := NewScripter(src, ScriptOptions{Verb: ScriptCreate}).ScriptAsymmetricKeyContext(ctx, name)
+	script, err := NewScripter(src, ScriptOptions{Verb: ScriptCreate}).ScriptAsymmetricKey(ctx, name)
 	if err != nil {
-		t.Fatalf("ScriptAsymmetricKeyContext: %v", err)
+		t.Fatalf("ScriptAsymmetricKey: %v", err)
 	}
 	t.Logf("script:\n%s", script)
 	if !strings.Contains(script, "NEW key pair") || !strings.Contains(script, keyPasswordPlaceholder) {
@@ -68,7 +68,7 @@ func TestLiveAsymmetricKeyCreateScriptDrop(t *testing.T) {
 		}
 	}
 
-	got, err := dst.AsymmetricKeyByNameContext(ctx, name)
+	got, err := dst.AsymmetricKeyByName(ctx, name)
 	if err != nil || got == nil {
 		t.Fatalf("read recreated key: %v, %v", got, err)
 	}
@@ -81,10 +81,10 @@ func TestLiveAsymmetricKeyCreateScriptDrop(t *testing.T) {
 	}
 
 	// DROP from a name-only handle, and the not-found scripter answer.
-	if err := dst.AsymmetricKeyRef(name).DropContext(ctx); err != nil {
+	if err := dst.AsymmetricKeyRef(name).Drop(ctx); err != nil {
 		t.Fatalf("drop through AsymmetricKeyRef: %v", err)
 	}
-	if _, err := NewScripter(dst, ScriptOptions{}).ScriptAsymmetricKeyContext(ctx, name); !errors.Is(err, ErrNotFound) {
+	if _, err := NewScripter(dst, ScriptOptions{}).ScriptAsymmetricKey(ctx, name); !errors.Is(err, ErrNotFound) {
 		t.Errorf("scripting a dropped key: %v, want a not-found error", err)
 	}
 }

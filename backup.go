@@ -65,12 +65,7 @@ type BackupOptions struct {
 }
 
 // Backup performs a BACKUP DATABASE (or LOG) operation.
-func (s *Server) Backup(opts BackupOptions) error {
-	return s.BackupContext(context.Background(), opts)
-}
-
-// BackupContext is the context-aware variant of Backup.
-func (s *Server) BackupContext(ctx context.Context, opts BackupOptions) error {
+func (s *Server) Backup(ctx context.Context, opts BackupOptions) error {
 	if opts.Progress != nil && opts.Stats == 0 {
 		opts.Stats = 10
 	}
@@ -80,7 +75,7 @@ func (s *Server) BackupContext(ctx context.Context, opts BackupOptions) error {
 	}
 
 	if opts.Progress == nil {
-		if err := s.execContext(ctx, sqlText); err != nil {
+		if err := s.exec(ctx, sqlText); err != nil {
 			return fmt.Errorf("gosmo: backup %q: %w", opts.Database, err)
 		}
 		return nil
@@ -94,7 +89,7 @@ func (s *Server) BackupContext(ctx context.Context, opts BackupOptions) error {
 // BuildBackupStatement returns the T-SQL BACKUP statement opts describes,
 // without executing it — for callers that want to show or hand off the
 // script (e.g. an editor pane) rather than run it immediately.
-// BackupContext validates and builds the statement the same way, then runs
+// Backup validates and builds the statement the same way, then runs
 // what this returns.
 func BuildBackupStatement(opts BackupOptions) (string, error) {
 	if opts.Database == "" {
@@ -282,12 +277,31 @@ type RestoreOptions struct {
 	FileNumber int
 	// RelocateFiles maps logical file names to new physical paths.
 	RelocateFiles []RelocateFile
-	// NoRecovery keeps the database in RESTORING state (for log shipping / tail-log).
-	NoRecovery bool
-	// Recovery transitions the database to ONLINE (default when neither flag is set).
-	Recovery bool
-	// StandBy sets standby mode; provide the undo-file path.
-	StandBy string
+	// Recovery is the state the restore leaves the database in; the zero
+	// value writes no clause, which SQL Server reads as RECOVERY.
+	Recovery RestoreRecovery
+	// StandByFile is the undo file RestoreWithStandBy writes to, required by
+	// it and refused with any other Recovery.
+	StandByFile string
+	// CloseExistingConnections clears the database of other connections
+	// before the RESTORE, in the same batch — SSMS's "Close existing
+	// connections to destination database". Run as a separate statement
+	// first, the single-user slot it frees is open to anyone until the
+	// RESTORE arrives, and a reconnecting application takes it and fails the
+	// restore with "Exclusive access could not be obtained".
+	//
+	// An online database is set SINGLE_USER WITH ROLLBACK IMMEDIATE and put
+	// back to MULTI_USER after the RESTORE whenever it is still online and
+	// read-write — which also repairs it when the RESTORE fails; Restore
+	// repairs it again, off the caller's cancellation, if the batch itself
+	// was cut short. A database that does not exist yet or is RESTORING has
+	// nobody to close and is left alone, and so is one in STANDBY, which
+	// refuses the ALTER. A Managed Instance refuses SET SINGLE_USER, so
+	// Server.BuildRestoreStatement and Restore kill the database's
+	// sessions there instead and change no access mode; the package-level
+	// BuildRestoreStatement, having no server to ask, always writes the
+	// SINGLE_USER form.
+	CloseExistingConnections bool
 	// Replace forces restoration over an existing database.
 	Replace bool
 	// Checksum verifies backup checksums.
@@ -322,35 +336,46 @@ type RelocateFile struct {
 }
 
 // Restore performs a RESTORE DATABASE (or LOG) operation.
-func (s *Server) Restore(opts RestoreOptions) error {
-	return s.RestoreContext(context.Background(), opts)
-}
-
-// RestoreContext is the context-aware variant of Restore.
-func (s *Server) RestoreContext(ctx context.Context, opts RestoreOptions) error {
+func (s *Server) Restore(ctx context.Context, opts RestoreOptions) error {
 	if opts.Progress != nil && opts.Stats == 0 {
 		opts.Stats = 10
 	}
-	sqlText, err := BuildRestoreStatement(opts)
+	sqlText, err := s.BuildRestoreStatement(opts)
 	if err != nil {
 		return err
 	}
 
 	if opts.Progress == nil {
-		if err := s.execContext(ctx, sqlText); err != nil {
-			return fmt.Errorf("gosmo: restore %q: %w", opts.Database, err)
-		}
-		return nil
+		err = s.exec(ctx, sqlText)
+	} else {
+		err = execWithProgress(ctx, s.db, sqlText, opts.Progress)
 	}
-	if err := execWithProgress(ctx, s.db, sqlText, opts.Progress); err != nil {
+	if err != nil {
+		// The batch's own MULTI_USER does not run when the batch is cut
+		// short — a cancel or an expired deadline, the likeliest ways for a
+		// long restore to fail. Best effort: a database left RESTORING, or
+		// never created, refuses it, and the restore's error is what the
+		// caller is told about.
+		if opts.CloseExistingConnections && !s.refusesSingleUser() {
+			_ = s.restoreMultiUser(ctx, opts.Database)
+		}
 		return fmt.Errorf("gosmo: restore %q: %w", opts.Database, err)
 	}
 	return nil
 }
 
+// BuildRestoreStatement is the package-level BuildRestoreStatement for this
+// instance: the same statement, but with CloseExistingConnections written in
+// the form the instance accepts — killing the database's sessions on a Managed
+// Instance, which refuses SET SINGLE_USER. Restore runs what this
+// returns.
+func (s *Server) BuildRestoreStatement(opts RestoreOptions) (string, error) {
+	return buildRestoreStatement(opts, s.refusesSingleUser())
+}
+
 // BuildRestoreStatement returns the T-SQL RESTORE statement opts describes,
 // without executing it — the RESTORE counterpart of BuildBackupStatement.
-// RestoreContext validates and builds the statement the same way, then runs
+// Restore validates and builds the statement the same way, then runs
 // what this returns.
 //
 // The statement is laid out over several lines — the target, the devices,
@@ -361,7 +386,17 @@ func (s *Server) RestoreContext(ctx context.Context, opts RestoreOptions) error 
 // off the right edge of the editor, which reads as the MOVE clauses being
 // missing entirely. Whitespace is not significant to SQL Server here, so the
 // executed statement is unchanged.
+//
+// With CloseExistingConnections the result is a batch — see that field — in
+// the SINGLE_USER form; Server.BuildRestoreStatement picks the form the
+// connected instance accepts.
 func BuildRestoreStatement(opts RestoreOptions) (string, error) {
+	return buildRestoreStatement(opts, false)
+}
+
+// buildRestoreStatement is BuildRestoreStatement, closing existing connections
+// by killing sessions rather than by SET SINGLE_USER when killSessions is set.
+func buildRestoreStatement(opts RestoreOptions, killSessions bool) (string, error) {
 	if opts.Database == "" {
 		return "", fmt.Errorf("gosmo: restore: database name is required")
 	}
@@ -373,6 +408,12 @@ func BuildRestoreStatement(opts RestoreOptions) (string, error) {
 	}
 	if !validBackupAction(opts.Action) {
 		return "", fmt.Errorf("gosmo: restore: unrecognized action %q", opts.Action)
+	}
+	if !restoreRecoveryNames[opts.Recovery] {
+		return "", fmt.Errorf("gosmo: restore: unrecognized recovery %q", opts.Recovery)
+	}
+	if (opts.Recovery == RestoreWithStandBy) != (opts.StandByFile != "") {
+		return "", fmt.Errorf("gosmo: restore: a standby file goes with, and only with, RestoreWithStandBy")
 	}
 
 	// FILES is not a RESTORE verb any more than it is a BACKUP one — see
@@ -407,13 +448,11 @@ func BuildRestoreStatement(opts RestoreOptions) (string, error) {
 		withs = append(withs, fmt.Sprintf("MOVE N'%s' TO N'%s'",
 			escapeSingle(rf.LogicalName), escapeSingle(rf.PhysicalName)))
 	}
-	if opts.NoRecovery {
-		withs = append(withs, "NORECOVERY")
-	} else if opts.Recovery {
-		withs = append(withs, "RECOVERY")
-	}
-	if opts.StandBy != "" {
-		withs = append(withs, fmt.Sprintf("STANDBY = N'%s'", escapeSingle(opts.StandBy)))
+	switch opts.Recovery {
+	case RestoreWithRecovery, RestoreWithNoRecovery:
+		withs = append(withs, string(opts.Recovery))
+	case RestoreWithStandBy:
+		withs = append(withs, fmt.Sprintf("STANDBY = N'%s'", escapeSingle(opts.StandByFile)))
 	}
 	if opts.Replace {
 		withs = append(withs, "REPLACE")
@@ -433,10 +472,29 @@ func BuildRestoreStatement(opts RestoreOptions) (string, error) {
 	if len(withs) > 0 {
 		fmt.Fprintf(&sb, "\nWITH %s", strings.Join(withs, ",\n     "))
 	}
-	return sb.String(), nil
+	if !opts.CloseExistingConnections {
+		return sb.String(), nil
+	}
+	if killSessions {
+		return killDatabaseSessionsBatch(opts.Database) + ";\n" + sb.String() + ";", nil
+	}
+	// Online and read-write: a database that does not exist yet or is RESTORING
+	// has no connections to close, and one in STANDBY refuses the ALTER.
+	online := fmt.Sprintf("EXISTS (SELECT 1 FROM sys.databases WHERE name = N%s AND state = 0 AND is_in_standby = 0)",
+		QuoteLiteral(opts.Database))
+	db := quoteIdent(opts.Database)
+	return fmt.Sprintf(`DECLARE @closed bit = 0;
+IF %[1]s
+BEGIN
+    ALTER DATABASE %[2]s SET SINGLE_USER WITH ROLLBACK IMMEDIATE;
+    SET @closed = 1;
+END;
+%[3]s;
+IF @closed = 1 AND %[1]s
+    ALTER DATABASE %[2]s SET MULTI_USER;`, online, db, sb.String()), nil
 }
 
-// backupHistorySelect is the msdb read behind BackupHistoryContext, at package
+// backupHistorySelect is the msdb read behind BackupHistory, at package
 // scope so TestBackupHistoryQueryWrapsEveryNullableColumn can check that every
 // nullable column is still wrapped.
 const backupHistorySelect = `
@@ -452,11 +510,6 @@ WHERE  bs.database_name = @p1
 ORDER  BY bs.backup_finish_date DESC`
 
 // BackupHistory returns the backup history for a database from msdb.
-func (s *Server) BackupHistory(databaseName string) ([]*BackupInfo, error) {
-	return s.BackupHistoryContext(context.Background(), databaseName)
-}
-
-// BackupHistoryContext is the context-aware variant of BackupHistory.
 //
 // Every column read here is nullable in msdb, and a NULL in any of them used
 // to kill the whole read — which took Database Properties' General page, the
@@ -472,26 +525,20 @@ func (s *Server) BackupHistory(databaseName string) ([]*BackupInfo, error) {
 // ISNULL is what the server sends, the Null destination is what survives a
 // column this list forgets to wrap. Do not narrow either half back because a
 // particular server populates the columns.
-func (s *Server) BackupHistoryContext(ctx context.Context, databaseName string) ([]*BackupInfo, error) {
+func (s *Server) BackupHistory(ctx context.Context, databaseName string) ([]*BackupInfo, error) {
 	rows, err := s.query(ctx, backupHistorySelect, databaseName)
-	if err != nil {
-		return nil, fmt.Errorf("gosmo: backup history for %q: %w", databaseName, err)
-	}
-	defer rows.Close()
-
-	var history []*BackupInfo
-	for rows.Next() {
+	return scanRows(rows, err, fmt.Sprintf("backup history for %q", databaseName), func(scan func(...any) error) (*BackupInfo, error) {
 		b := &BackupInfo{}
 		var dbName, setName, desc, bType, device, user, server sql.NullString
 		var start, finish sql.NullTime
 		var size, dbVersion, compat sql.NullInt64
-		if err := rows.Scan(
+		if err := scan(
 			&dbName, &setName, &desc, &bType,
 			&start, &finish, &size,
 			&device, &user, &server,
 			&dbVersion, &compat,
 		); err != nil {
-			return nil, fmt.Errorf("gosmo: backup history for %q: %w", databaseName, err)
+			return nil, err
 		}
 		b.DatabaseName, b.BackupSetName, b.Description = dbName.String, setName.String, desc.String
 		b.BackupStart, b.BackupFinish = start.Time, finish.Time
@@ -509,12 +556,8 @@ func (s *Server) BackupHistoryContext(ctx context.Context, databaseName string) 
 		case "F":
 			b.BackupType = BackupActionFiles
 		}
-		history = append(history, b)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("gosmo: backup history for %q: %w", databaseName, err)
-	}
-	return history, nil
+		return b, nil
+	})
 }
 
 // ============================================================
@@ -548,17 +591,11 @@ type DatabaseRecoveryStatus struct {
 
 // DatabaseRecoveryStatuses returns the log backup chain state of every
 // database on the server.
-func (s *Server) DatabaseRecoveryStatuses() ([]*DatabaseRecoveryStatus, error) {
-	return s.DatabaseRecoveryStatusesContext(context.Background())
-}
-
-// DatabaseRecoveryStatusesContext is the context-aware variant of
-// DatabaseRecoveryStatuses.
 //
 // One read for the whole server: the state is wanted per database, but a
 // caller deciding which databases qualify for something needs them all, and
 // sys.database_recovery_status is a server-scoped view.
-func (s *Server) DatabaseRecoveryStatusesContext(ctx context.Context) ([]*DatabaseRecoveryStatus, error) {
+func (s *Server) DatabaseRecoveryStatuses(ctx context.Context) ([]*DatabaseRecoveryStatus, error) {
 	const q = `
 SELECT d.name, ISNULL(CONVERT(varchar(40), rs.last_log_backup_lsn), '')
 FROM   sys.database_recovery_status rs
@@ -566,33 +603,18 @@ JOIN   sys.databases d ON d.database_id = rs.database_id
 ORDER  BY d.name`
 
 	rows, err := s.query(ctx, q)
-	if err != nil {
-		return nil, fmt.Errorf("gosmo: database recovery statuses: %w", err)
-	}
-	defer rows.Close()
-
-	var out []*DatabaseRecoveryStatus
-	for rows.Next() {
+	return scanRows(rows, err, "database recovery statuses", func(scan func(...any) error) (*DatabaseRecoveryStatus, error) {
 		st := &DatabaseRecoveryStatus{}
-		if err := rows.Scan(&st.DatabaseName, &st.LastLogBackupLSN); err != nil {
-			return nil, fmt.Errorf("gosmo: database recovery statuses: %w", err)
+		if err := scan(&st.DatabaseName, &st.LastLogBackupLSN); err != nil {
+			return nil, err
 		}
 		st.LogBackupChainStarted = st.LastLogBackupLSN != ""
-		out = append(out, st)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("gosmo: database recovery statuses: %w", err)
-	}
-	return out, nil
+		return st, nil
+	})
 }
 
 // RecoveryStatus returns this database's place in its log backup chain.
-func (d *Database) RecoveryStatus() (*DatabaseRecoveryStatus, error) {
-	return d.RecoveryStatusContext(context.Background())
-}
-
-// RecoveryStatusContext is the context-aware variant of RecoveryStatus.
-func (d *Database) RecoveryStatusContext(ctx context.Context) (*DatabaseRecoveryStatus, error) {
+func (d *Database) RecoveryStatus(ctx context.Context) (*DatabaseRecoveryStatus, error) {
 	const q = `
 SELECT d.name, ISNULL(CONVERT(varchar(40), rs.last_log_backup_lsn), '')
 FROM   sys.database_recovery_status rs
@@ -735,25 +757,15 @@ func (t BackupTarget) String() string { return t.name }
 // VerifyBackup checks that the backup set on device is complete and
 // readable (RESTORE VERIFYONLY), without restoring it. device is a path on
 // the server's filesystem; VerifyBackupFrom takes a logical backup device.
-func (s *Server) VerifyBackup(device string) error {
-	return s.VerifyBackupContext(context.Background(), device)
-}
-
-// VerifyBackupContext is the context-aware variant of VerifyBackup.
-func (s *Server) VerifyBackupContext(ctx context.Context, device string) error {
-	return s.VerifyBackupFromContext(ctx, DiskTarget(device))
+func (s *Server) VerifyBackup(ctx context.Context, device string) error {
+	return s.VerifyBackupFrom(ctx, DiskTarget(device))
 }
 
 // VerifyBackupFrom is VerifyBackup for any BackupTarget — a path or a
 // logical backup device.
-func (s *Server) VerifyBackupFrom(target BackupTarget) error {
-	return s.VerifyBackupFromContext(context.Background(), target)
-}
-
-// VerifyBackupFromContext is the context-aware variant of VerifyBackupFrom.
-func (s *Server) VerifyBackupFromContext(ctx context.Context, target BackupTarget) error {
+func (s *Server) VerifyBackupFrom(ctx context.Context, target BackupTarget) error {
 	stmt := "RESTORE VERIFYONLY FROM " + target.clause()
-	if err := s.execContext(ctx, stmt); err != nil {
+	if err := s.exec(ctx, stmt); err != nil {
 		return fmt.Errorf("gosmo: verify backup %q: %w", target.name, err)
 	}
 	return nil
@@ -762,23 +774,13 @@ func (s *Server) VerifyBackupFromContext(ctx context.Context, target BackupTarge
 // BackupHeaders reads the backup sets on a backup device (RESTORE
 // HEADERONLY) — one BackupHeader per set, in position order. device is a path
 // on the server's filesystem; BackupHeadersFrom takes a logical backup device.
-func (s *Server) BackupHeaders(device string) ([]*BackupHeader, error) {
-	return s.BackupHeadersContext(context.Background(), device)
-}
-
-// BackupHeadersContext is the context-aware variant of BackupHeaders.
-func (s *Server) BackupHeadersContext(ctx context.Context, device string) ([]*BackupHeader, error) {
-	return s.BackupHeadersFromContext(ctx, DiskTarget(device))
+func (s *Server) BackupHeaders(ctx context.Context, device string) ([]*BackupHeader, error) {
+	return s.BackupHeadersFrom(ctx, DiskTarget(device))
 }
 
 // BackupHeadersFrom is BackupHeaders for any BackupTarget — a path or a
 // logical backup device.
-func (s *Server) BackupHeadersFrom(target BackupTarget) ([]*BackupHeader, error) {
-	return s.BackupHeadersFromContext(context.Background(), target)
-}
-
-// BackupHeadersFromContext is the context-aware variant of BackupHeadersFrom.
-func (s *Server) BackupHeadersFromContext(ctx context.Context, target BackupTarget) ([]*BackupHeader, error) {
+func (s *Server) BackupHeadersFrom(ctx context.Context, target BackupTarget) ([]*BackupHeader, error) {
 	device := target.name
 	q := "RESTORE HEADERONLY FROM " + target.clause()
 	rows, err := s.query(ctx, q)
@@ -851,13 +853,8 @@ func backupFileListQuery(target BackupTarget, fileNumber int) string {
 // BackupFileList reads the database files contained in the first backup set
 // on a backup device (RESTORE FILELISTONLY). Use BackupFileListForSet for a
 // device holding more than one set.
-func (s *Server) BackupFileList(device string) ([]*BackupFile, error) {
-	return s.BackupFileListContext(context.Background(), device)
-}
-
-// BackupFileListContext is the context-aware variant of BackupFileList.
-func (s *Server) BackupFileListContext(ctx context.Context, device string) ([]*BackupFile, error) {
-	return s.BackupFileListForSetContext(ctx, device, 0)
+func (s *Server) BackupFileList(ctx context.Context, device string) ([]*BackupFile, error) {
+	return s.BackupFileListForSet(ctx, device, 0)
 }
 
 // BackupFileListForSet reads the database files contained in one particular
@@ -873,25 +870,13 @@ func (s *Server) BackupFileListContext(ctx context.Context, device string) ([]*B
 // were added between them. Building RESTORE's MOVE clauses from the wrong
 // set names logical files the restored set does not contain, which SQL
 // Server rejects outright.
-func (s *Server) BackupFileListForSet(device string, fileNumber int) ([]*BackupFile, error) {
-	return s.BackupFileListForSetContext(context.Background(), device, fileNumber)
-}
-
-// BackupFileListForSetContext is the context-aware variant of
-// BackupFileListForSet.
-func (s *Server) BackupFileListForSetContext(ctx context.Context, device string, fileNumber int) ([]*BackupFile, error) {
-	return s.BackupFileListForSetFromContext(ctx, DiskTarget(device), fileNumber)
+func (s *Server) BackupFileListForSet(ctx context.Context, device string, fileNumber int) ([]*BackupFile, error) {
+	return s.BackupFileListForSetFrom(ctx, DiskTarget(device), fileNumber)
 }
 
 // BackupFileListForSetFrom is BackupFileListForSet for any BackupTarget — a
 // path or a logical backup device.
-func (s *Server) BackupFileListForSetFrom(target BackupTarget, fileNumber int) ([]*BackupFile, error) {
-	return s.BackupFileListForSetFromContext(context.Background(), target, fileNumber)
-}
-
-// BackupFileListForSetFromContext is the context-aware variant of
-// BackupFileListForSetFrom.
-func (s *Server) BackupFileListForSetFromContext(ctx context.Context, target BackupTarget, fileNumber int) ([]*BackupFile, error) {
+func (s *Server) BackupFileListForSetFrom(ctx context.Context, target BackupTarget, fileNumber int) ([]*BackupFile, error) {
 	device := target.name
 	rows, err := s.query(ctx, backupFileListQuery(target, fileNumber))
 	if err != nil {

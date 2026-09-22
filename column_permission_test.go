@@ -4,7 +4,7 @@ import "testing"
 
 func TestGrantColumnPermissionRendersOneStatementForAllColumns(t *testing.T) {
 	d, ctx, script := scriptedDB(t)
-	err := d.GrantColumnPermissionContext(ctx, "dbo", "Employees", PermSelect,
+	err := d.GrantColumnPermission(ctx, "dbo", "Employees", PermSelect,
 		[]string{"FirstName", "LastName"}, "app_reader")
 	if err != nil {
 		t.Fatalf("grant: %v", err)
@@ -17,7 +17,7 @@ func TestGrantColumnPermissionRendersOneStatementForAllColumns(t *testing.T) {
 
 func TestColumnPermissionWithGrantOption(t *testing.T) {
 	d, ctx, script := scriptedDB(t)
-	err := d.GrantColumnPermissionWithOptionsContext(ctx, "dbo", "Employees", PermUpdate,
+	err := d.GrantColumnPermissionWithOptions(ctx, "dbo", "Employees", PermUpdate,
 		[]string{"Salary"}, "hr_role", PermissionOptions{WithGrantOption: true})
 	if err != nil {
 		t.Fatalf("grant: %v", err)
@@ -30,7 +30,7 @@ func TestColumnPermissionWithGrantOption(t *testing.T) {
 
 func TestRevokeColumnPermissionUsesFrom(t *testing.T) {
 	d, ctx, script := scriptedDB(t)
-	err := d.RevokeColumnPermissionContext(ctx, "dbo", "Employees", PermSelect,
+	err := d.RevokeColumnPermission(ctx, "dbo", "Employees", PermSelect,
 		[]string{"Salary"}, "app_reader")
 	if err != nil {
 		t.Fatalf("revoke: %v", err)
@@ -46,7 +46,7 @@ func TestRevokeColumnPermissionUsesFrom(t *testing.T) {
 // identifier in this package.
 func TestColumnPermissionQuotesColumnNames(t *testing.T) {
 	d, ctx, script := scriptedDB(t)
-	err := d.GrantColumnPermissionContext(ctx, "dbo", "T", PermSelect,
+	err := d.GrantColumnPermission(ctx, "dbo", "T", PermSelect,
 		[]string{"od]d name"}, "app_reader")
 	if err != nil {
 		t.Fatalf("grant: %v", err)
@@ -61,30 +61,30 @@ func TestColumnPermissionQuotesColumnNames(t *testing.T) {
 // must be refused here rather than by SQL Server's syntax error.
 func TestColumnPermissionRejectsNonColumnPermission(t *testing.T) {
 	d, ctx, script := scriptedDB(t)
-	if err := d.GrantColumnPermissionContext(ctx, "dbo", "T", PermDelete,
+	if err := d.GrantColumnPermission(ctx, "dbo", "T", PermDelete,
 		[]string{"c"}, "app_reader"); err == nil {
 		t.Error("DELETE was accepted as a column permission, want an error")
 	}
-	if err := d.GrantColumnPermissionContext(ctx, "dbo", "T", PermControl,
+	if err := d.GrantColumnPermission(ctx, "dbo", "T", PermControl,
 		[]string{"c"}, "app_reader"); err == nil {
 		t.Error("CONTROL was accepted as a column permission, want an error")
 	}
-	if len(script.Statements) != 0 {
-		t.Errorf("a rejected statement was still collected: %v", script.Statements)
+	if len(script.Statements()) != 0 {
+		t.Errorf("a rejected statement was still collected: %v", script.Statements())
 	}
 }
 
 // An empty column list must not quietly widen into an object-level grant.
 func TestColumnPermissionRejectsEmptyColumnList(t *testing.T) {
 	d, ctx, script := scriptedDB(t)
-	if err := d.GrantColumnPermissionContext(ctx, "dbo", "T", PermSelect, nil, "app_reader"); err == nil {
+	if err := d.GrantColumnPermission(ctx, "dbo", "T", PermSelect, nil, "app_reader"); err == nil {
 		t.Error("an empty column list was accepted, want an error")
 	}
-	if err := d.RevokeColumnPermissionContext(ctx, "dbo", "T", PermSelect, []string{}, "app_reader"); err == nil {
+	if err := d.RevokeColumnPermission(ctx, "dbo", "T", PermSelect, []string{}, "app_reader"); err == nil {
 		t.Error("an empty column list was accepted on revoke, want an error")
 	}
-	if len(script.Statements) != 0 {
-		t.Errorf("an empty column list produced a statement: %v", script.Statements)
+	if len(script.Statements()) != 0 {
+		t.Errorf("an empty column list produced a statement: %v", script.Statements())
 	}
 }
 
@@ -106,7 +106,7 @@ func TestColumnPermissionNames(t *testing.T) {
 // acquires a column list by accident.
 func TestObjectPermissionHasNoColumnList(t *testing.T) {
 	d, ctx, script := scriptedDB(t)
-	if err := d.GrantPermissionContext(ctx, "dbo", "Employees", PermSelect, "app_reader"); err != nil {
+	if err := d.GrantPermission(ctx, "dbo", "Employees", PermSelect, "app_reader"); err != nil {
 		t.Fatalf("grant: %v", err)
 	}
 	want := "GRANT SELECT ON [dbo].[Employees] TO [app_reader]"

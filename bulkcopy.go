@@ -96,14 +96,10 @@ func SliceRows(rows [][]any) iter.Seq2[[]any, error] {
 // nil element becomes SQL NULL. Yielding a non-nil error aborts the load and
 // that error is returned (wrapped), so a streaming source such as a CSV
 // reader can surface a read failure. Use SliceRows for an in-memory slice.
-func (d *Database) BulkInsert(bc BulkCopy, rows iter.Seq2[[]any, error]) (int64, error) {
-	return d.BulkInsertContext(context.Background(), bc, rows)
-}
-
-// BulkInsertContext is the context-aware variant of BulkInsert. Cancelling
-// ctx stops the load; the count of rows copied before cancellation is
-// returned alongside the error.
-func (d *Database) BulkInsertContext(ctx context.Context, bc BulkCopy, rows iter.Seq2[[]any, error]) (int64, error) {
+//
+// Cancelling ctx stops the load; the count of rows copied before cancellation
+// is returned alongside the error.
+func (d *Database) BulkInsert(ctx context.Context, bc BulkCopy, rows iter.Seq2[[]any, error]) (int64, error) {
 	if bc.Table == "" {
 		return 0, fmt.Errorf("gosmo: bulk insert: no destination table")
 	}

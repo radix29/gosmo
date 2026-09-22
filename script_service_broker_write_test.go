@@ -26,7 +26,7 @@ func TestScriptedQueueAndRouteAlters(t *testing.T) {
 		{
 			name: "queue status alone",
 			call: func(ctx context.Context) error {
-				return db.AlterBrokerQueueContext(ctx, "Sales.Archive", "o'brien",
+				return db.AlterBrokerQueue(ctx, "Sales.Archive", "o'brien",
 					QueueSettings{Status: boolPtr(false)})
 			},
 			want: scriptUsePrefix + "ALTER QUEUE [Sales.Archive].[o'brien]\n    WITH STATUS = OFF",
@@ -34,7 +34,7 @@ func TestScriptedQueueAndRouteAlters(t *testing.T) {
 		{
 			name: "queue every setting at once",
 			call: func(ctx context.Context) error {
-				return db.AlterBrokerQueueContext(ctx, "dbo", "a]b", QueueSettings{
+				return db.AlterBrokerQueue(ctx, "dbo", "a]b", QueueSettings{
 					Status:                boolPtr(true),
 					Retention:             boolPtr(true),
 					PoisonMessageHandling: boolPtr(false),
@@ -59,7 +59,7 @@ func TestScriptedQueueAndRouteAlters(t *testing.T) {
 			// address a user by those names, or fail.
 			name: "queue execute as OWNER is a keyword",
 			call: func(ctx context.Context) error {
-				return db.AlterBrokerQueueContext(ctx, "", "q", QueueSettings{
+				return db.AlterBrokerQueue(ctx, "", "q", QueueSettings{
 					Activation: &QueueActivation{Enabled: true, ProcedureName: "p",
 						MaxQueueReaders: 1, ExecuteAs: QueueExecuteAsOwner},
 				})
@@ -71,7 +71,7 @@ func TestScriptedQueueAndRouteAlters(t *testing.T) {
 		{
 			name: "queue execute as SELF is a keyword",
 			call: func(ctx context.Context) error {
-				return db.AlterBrokerQueueContext(ctx, "", "q", QueueSettings{
+				return db.AlterBrokerQueue(ctx, "", "q", QueueSettings{
 					Activation: &QueueActivation{Enabled: false, ProcedureName: "p",
 						MaxQueueReaders: 0, ExecuteAs: QueueExecuteAsSelf},
 				})
@@ -83,7 +83,7 @@ func TestScriptedQueueAndRouteAlters(t *testing.T) {
 		{
 			name: "queue activation dropped",
 			call: func(ctx context.Context) error {
-				return db.AlterBrokerQueueContext(ctx, "", "q",
+				return db.AlterBrokerQueue(ctx, "", "q",
 					QueueSettings{DropActivation: true})
 			},
 			want: scriptUsePrefix + "ALTER QUEUE [dbo].[q]\n    WITH ACTIVATION (DROP)",
@@ -91,7 +91,7 @@ func TestScriptedQueueAndRouteAlters(t *testing.T) {
 		{
 			name: "route address alone",
 			call: func(ctx context.Context) error {
-				return db.AlterRouteContext(ctx, "o'brien",
+				return db.AlterRoute(ctx, "o'brien",
 					RouteSettings{Address: strPtr("TCP://host:4022")})
 			},
 			want: scriptUsePrefix + "ALTER ROUTE [o'brien]\n    WITH ADDRESS = N'TCP://host:4022'",
@@ -99,7 +99,7 @@ func TestScriptedQueueAndRouteAlters(t *testing.T) {
 		{
 			name: "route every setting at once",
 			call: func(ctx context.Context) error {
-				return db.AlterRouteContext(ctx, "a]b", RouteSettings{
+				return db.AlterRoute(ctx, "a]b", RouteSettings{
 					RemoteService:   strPtr("//app/o'brien"),
 					BrokerInstance:  strPtr("AAAA-BBBB"),
 					LifetimeSeconds: intPtr(600),
@@ -128,45 +128,45 @@ func TestQueueAndRouteAltersRefuseWhatTheServerWould(t *testing.T) {
 	}{
 		{"queue with no setting",
 			func(ctx context.Context) error {
-				return scriptTestDB().AlterBrokerQueueContext(ctx, "", "q", QueueSettings{})
+				return scriptTestDB().AlterBrokerQueue(ctx, "", "q", QueueSettings{})
 			}, "no setting was given"},
 		{"queue activation and drop together",
 			func(ctx context.Context) error {
-				return scriptTestDB().AlterBrokerQueueContext(ctx, "", "q", QueueSettings{
+				return scriptTestDB().AlterBrokerQueue(ctx, "", "q", QueueSettings{
 					DropActivation: true,
 					Activation:     &QueueActivation{ProcedureName: "p"},
 				})
 			}, "mutually exclusive"},
 		{"queue activation with no procedure",
 			func(ctx context.Context) error {
-				return scriptTestDB().AlterBrokerQueueContext(ctx, "", "q", QueueSettings{
+				return scriptTestDB().AlterBrokerQueue(ctx, "", "q", QueueSettings{
 					Activation: &QueueActivation{Enabled: true, MaxQueueReaders: 1},
 				})
 			}, "ProcedureName is empty"},
 		{"queue readers out of range",
 			func(ctx context.Context) error {
-				return scriptTestDB().AlterBrokerQueueContext(ctx, "", "q", QueueSettings{
+				return scriptTestDB().AlterBrokerQueue(ctx, "", "q", QueueSettings{
 					Activation: &QueueActivation{ProcedureName: "p", MaxQueueReaders: 40000},
 				})
 			}, "0 to 32767"},
 		{"route with no setting",
 			func(ctx context.Context) error {
-				return scriptTestDB().AlterRouteContext(ctx, "r", RouteSettings{})
+				return scriptTestDB().AlterRoute(ctx, "r", RouteSettings{})
 			}, "no setting was given"},
 		// The server cannot clear any of these, and NULL does not even parse,
 		// so an empty string must not be sent as one.
 		{"route address cleared",
 			func(ctx context.Context) error {
-				return scriptTestDB().AlterRouteContext(ctx, "r", RouteSettings{Address: strPtr("")})
+				return scriptTestDB().AlterRoute(ctx, "r", RouteSettings{Address: strPtr("")})
 			}, "ADDRESS is empty"},
 		{"route broker instance cleared",
 			func(ctx context.Context) error {
-				return scriptTestDB().AlterRouteContext(ctx, "r",
+				return scriptTestDB().AlterRoute(ctx, "r",
 					RouteSettings{BrokerInstance: strPtr("")})
 			}, "BROKER_INSTANCE is empty"},
 		{"route lifetime cleared",
 			func(ctx context.Context) error {
-				return scriptTestDB().AlterRouteContext(ctx, "r",
+				return scriptTestDB().AlterRoute(ctx, "r",
 					RouteSettings{LifetimeSeconds: intPtr(0)})
 			}, "LIFETIME must be 1 or more"},
 	}
@@ -175,13 +175,13 @@ func TestQueueAndRouteAltersRefuseWhatTheServerWould(t *testing.T) {
 			ctx, script := WithScript(context.Background())
 			err := c.call(ctx)
 			if err == nil {
-				t.Fatalf("no error; the statement captured was %q", script.Statements)
+				t.Fatalf("no error; the statement captured was %q", script.Statements())
 			}
 			if !contains(err.Error(), c.want) {
 				t.Errorf("error %q does not explain the refusal (%q)", err, c.want)
 			}
-			if len(script.Statements) != 0 {
-				t.Errorf("a refused call still emitted %q", script.Statements)
+			if len(script.Statements()) != 0 {
+				t.Errorf("a refused call still emitted %q", script.Statements())
 			}
 		})
 	}
@@ -195,15 +195,15 @@ func TestScriptedQueueAlterDoesNotMirrorOntoTheReceiver(t *testing.T) {
 		ActivationExecuteAs: "dbo"}
 
 	ctx, script := WithScript(context.Background())
-	if err := q.AlterContext(ctx, QueueSettings{Status: boolPtr(false)}); err != nil {
+	if err := q.Alter(ctx, QueueSettings{Status: boolPtr(false)}); err != nil {
 		t.Fatalf("scripted alter: %v", err)
 	}
 	if !q.IsReceiveEnabled || !q.IsEnqueueEnabled {
 		t.Error("a scripted alter disabled the queue on the receiver; the statement " +
 			"was only captured, so the server's queue is still enabled")
 	}
-	if len(script.Statements) != 1 {
-		t.Fatalf("captured %q, want one statement", script.Statements)
+	if len(script.Statements()) != 1 {
+		t.Fatalf("captured %q, want one statement", script.Statements())
 	}
 }
 
@@ -251,24 +251,24 @@ func TestScriptedServiceBrokerDrops(t *testing.T) {
 	db := scriptTestDB()
 	runScriptCases(t, []scriptCase{
 		{"DropMessageType", func(ctx context.Context) error {
-			return db.DropMessageTypeContext(ctx, "//app/o'brien/a]b")
+			return db.DropMessageType(ctx, "//app/o'brien/a]b")
 		}, scriptUsePrefix + "DROP MESSAGE TYPE [//app/o'brien/a]]b]"},
 		{"MessageType.Drop", func(ctx context.Context) error {
-			return (&MessageType{db: db, Name: "//app/o'brien"}).DropContext(ctx)
+			return (&MessageType{db: db, Name: "//app/o'brien"}).Drop(ctx)
 		}, scriptUsePrefix + "DROP MESSAGE TYPE [//app/o'brien]"},
 
 		{"DropContract", func(ctx context.Context) error {
-			return db.DropContractContext(ctx, "//app/o'brien/a]b")
+			return db.DropContract(ctx, "//app/o'brien/a]b")
 		}, scriptUsePrefix + "DROP CONTRACT [//app/o'brien/a]]b]"},
 		{"ServiceContract.Drop", func(ctx context.Context) error {
-			return (&ServiceContract{db: db, Name: "//app/o'brien"}).DropContext(ctx)
+			return (&ServiceContract{db: db, Name: "//app/o'brien"}).Drop(ctx)
 		}, scriptUsePrefix + "DROP CONTRACT [//app/o'brien]"},
 
 		{"DropBrokerService", func(ctx context.Context) error {
-			return db.DropBrokerServiceContext(ctx, "//app/o'brien/a]b")
+			return db.DropBrokerService(ctx, "//app/o'brien/a]b")
 		}, scriptUsePrefix + "DROP SERVICE [//app/o'brien/a]]b]"},
 		{"BrokerService.Drop", func(ctx context.Context) error {
-			return (&BrokerService{db: db, Name: "//app/o'brien"}).DropContext(ctx)
+			return (&BrokerService{db: db, Name: "//app/o'brien"}).Drop(ctx)
 		}, scriptUsePrefix + "DROP SERVICE [//app/o'brien]"},
 
 		// A queue is the one Service Broker object that is schema-qualified,
@@ -276,56 +276,56 @@ func TestScriptedServiceBrokerDrops(t *testing.T) {
 		// unqualified DROP resolves against the caller's default schema, not
 		// the queue's.
 		{"DropBrokerQueue", func(ctx context.Context) error {
-			return db.DropBrokerQueueContext(ctx, "Sales.Archive", "o'brien")
+			return db.DropBrokerQueue(ctx, "Sales.Archive", "o'brien")
 		}, scriptUsePrefix + "DROP QUEUE [Sales.Archive].[o'brien]"},
 		{"DropBrokerQueue defaults the schema", func(ctx context.Context) error {
-			return db.DropBrokerQueueContext(ctx, "", "a]b")
+			return db.DropBrokerQueue(ctx, "", "a]b")
 		}, scriptUsePrefix + "DROP QUEUE [dbo].[a]]b]"},
 		{"BrokerQueue.Drop", func(ctx context.Context) error {
-			return (&BrokerQueue{db: db, Schema: "Sales.Archive", Name: "o'brien"}).DropContext(ctx)
+			return (&BrokerQueue{db: db, Schema: "Sales.Archive", Name: "o'brien"}).Drop(ctx)
 		}, scriptUsePrefix + "DROP QUEUE [Sales.Archive].[o'brien]"},
 		{"BrokerQueue.Drop defaults the schema", func(ctx context.Context) error {
-			return (&BrokerQueue{db: db, Name: "a]b"}).DropContext(ctx)
+			return (&BrokerQueue{db: db, Name: "a]b"}).Drop(ctx)
 		}, scriptUsePrefix + "DROP QUEUE [dbo].[a]]b]"},
 
 		{"DropRoute", func(ctx context.Context) error {
-			return db.DropRouteContext(ctx, "o'brien/a]b")
+			return db.DropRoute(ctx, "o'brien/a]b")
 		}, scriptUsePrefix + "DROP ROUTE [o'brien/a]]b]"},
 		{"Route.Drop", func(ctx context.Context) error {
-			return (&Route{db: db, Name: "o'brien"}).DropContext(ctx)
+			return (&Route{db: db, Name: "o'brien"}).Drop(ctx)
 		}, scriptUsePrefix + "DROP ROUTE [o'brien]"},
 
 		{"DropRemoteServiceBinding", func(ctx context.Context) error {
-			return db.DropRemoteServiceBindingContext(ctx, "o'brien/a]b")
+			return db.DropRemoteServiceBinding(ctx, "o'brien/a]b")
 		}, scriptUsePrefix + "DROP REMOTE SERVICE BINDING [o'brien/a]]b]"},
 		{"RemoteServiceBinding.Drop", func(ctx context.Context) error {
-			return (&RemoteServiceBinding{db: db, Name: "o'brien"}).DropContext(ctx)
+			return (&RemoteServiceBinding{db: db, Name: "o'brien"}).Drop(ctx)
 		}, scriptUsePrefix + "DROP REMOTE SERVICE BINDING [o'brien]"},
 
 		{"DropBrokerPriority", func(ctx context.Context) error {
-			return db.DropBrokerPriorityContext(ctx, "o'brien/a]b")
+			return db.DropBrokerPriority(ctx, "o'brien/a]b")
 		}, scriptUsePrefix + "DROP BROKER PRIORITY [o'brien/a]]b]"},
 		{"BrokerPriority.Drop", func(ctx context.Context) error {
-			return (&BrokerPriority{db: db, Name: "o'brien"}).DropContext(ctx)
+			return (&BrokerPriority{db: db, Name: "o'brien"}).Drop(ctx)
 		}, scriptUsePrefix + "DROP BROKER PRIORITY [o'brien]"},
 
 		// The handle's Alter, as distinct from the database-level one pinned
 		// above: it must address the route by its own name.
 		{"Route.Alter", func(ctx context.Context) error {
-			return (&Route{db: db, Name: "a]b"}).AlterContext(ctx,
+			return (&Route{db: db, Name: "a]b"}).Alter(ctx,
 				RouteSettings{Address: strPtr("TCP://host:4022")})
 		}, scriptUsePrefix + "ALTER ROUTE [a]]b]\n    WITH ADDRESS = N'TCP://host:4022'"},
 	})
 }
 
 // A scripted Route.Alter must not move the receiver's state — the queue case
-// beside it pins the same rule, and Route.AlterContext mirrors five fields
+// beside it pins the same rule, and Route.Alter mirrors five fields
 // where the queue mirrors its two status halves.
 func TestScriptedRouteAlterDoesNotMirrorOntoTheReceiver(t *testing.T) {
 	r := &Route{db: scriptTestDB(), Name: "r", Address: "TCP://old:4022", RemoteService: "//app/old"}
 
 	ctx, script := WithScript(context.Background())
-	err := r.AlterContext(ctx, RouteSettings{
+	err := r.Alter(ctx, RouteSettings{
 		Address:       strPtr("TCP://new:4022"),
 		RemoteService: strPtr("//app/new"),
 	})
@@ -337,7 +337,7 @@ func TestScriptedRouteAlterDoesNotMirrorOntoTheReceiver(t *testing.T) {
 			"statement was only captured, so the server's route is unchanged",
 			r.Address, r.RemoteService)
 	}
-	if len(script.Statements) != 1 {
-		t.Fatalf("captured %q, want one statement", script.Statements)
+	if len(script.Statements()) != 1 {
+		t.Fatalf("captured %q, want one statement", script.Statements())
 	}
 }

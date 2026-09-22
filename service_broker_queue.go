@@ -115,7 +115,7 @@ func (q *BrokerQueue) FullName() string { return qualifiedName(q.Schema, q.Name)
 // still lists, with an empty FileGroup. The message count is deliberately not
 // here: it needs sys.dm_db_partition_stats and VIEW DATABASE STATE with it,
 // and a caller without that right must still get the listing — see
-// Database.QueueMessageCountsContext.
+// Database.QueueMessageCounts.
 //
 // The activation procedure is read twice: once as the catalog's own
 // bracketed text and once resolved through OBJECT_ID into its two unquoted
@@ -162,44 +162,20 @@ func scanBrokerQueue(d *Database, scan func(...any) error) (*BrokerQueue, error)
 
 // BrokerQueues returns the queues defined in the database, the ones SQL
 // Server ships included (marked IsSystemObject).
-func (d *Database) BrokerQueues() ([]*BrokerQueue, error) {
-	return d.BrokerQueuesContext(context.Background())
-}
-
-// BrokerQueuesContext is the context-aware variant of BrokerQueues.
-func (d *Database) BrokerQueuesContext(ctx context.Context) ([]*BrokerQueue, error) {
+func (d *Database) BrokerQueues(ctx context.Context) ([]*BrokerQueue, error) {
 	const q = queueSelect + `
 ORDER  BY SCHEMA_NAME(q.schema_id), q.name`
 
 	rows, err := d.query(ctx, q)
-	if err != nil {
-		return nil, fmt.Errorf("gosmo: list queues in %q: %w", d.Name, err)
-	}
-	defer rows.Close()
-
-	var out []*BrokerQueue
-	for rows.Next() {
-		bq, err := scanBrokerQueue(d, rows.Scan)
-		if err != nil {
-			return nil, fmt.Errorf("gosmo: list queues in %q: %w", d.Name, err)
-		}
-		out = append(out, bq)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("gosmo: list queues in %q: %w", d.Name, err)
-	}
-	return out, nil
+	return scanRows(rows, err, fmt.Sprintf("list queues in %q", d.Name), func(scan func(...any) error) (*BrokerQueue, error) {
+		return scanBrokerQueue(d, scan)
+	})
 }
 
 // BrokerQueueByName returns one queue, or a not-found error (errors.Is
 // ErrNotFound) when the database has none by that name. An empty schema
 // means dbo.
-func (d *Database) BrokerQueueByName(schema, name string) (*BrokerQueue, error) {
-	return d.BrokerQueueByNameContext(context.Background(), schema, name)
-}
-
-// BrokerQueueByNameContext is the context-aware variant of BrokerQueueByName.
-func (d *Database) BrokerQueueByNameContext(ctx context.Context, schema, name string) (*BrokerQueue, error) {
+func (d *Database) BrokerQueueByName(ctx context.Context, schema, name string) (*BrokerQueue, error) {
 	if schema == "" {
 		schema = "dbo"
 	}
@@ -210,23 +186,12 @@ func (d *Database) BrokerQueueByNameContext(ctx context.Context, schema, name st
 		return err
 	}, queueSelect+`
 WHERE  SCHEMA_NAME(q.schema_id) = @p1 AND q.name = @p2`, schema, name)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, notFoundf("gosmo: queue [%s].[%s] not found in %q", schema, name, d.Name)
-	}
-	if err != nil {
-		return nil, fmt.Errorf("gosmo: read queue [%s].[%s] in %q: %w", schema, name, d.Name, err)
-	}
-	return bq, nil
+	return foundRow(bq, err, notFoundf("gosmo: queue [%s].[%s] not found in %q", schema, name, d.Name), fmt.Sprintf("read queue [%s].[%s] in %q", schema, name, d.Name))
 }
 
 // DropBrokerQueue drops a queue by name. A queue a service still receives on
 // is refused by the server until the service goes. An empty schema means dbo.
-func (d *Database) DropBrokerQueue(schema, name string) error {
-	return d.DropBrokerQueueContext(context.Background(), schema, name)
-}
-
-// DropBrokerQueueContext is the context-aware variant of DropBrokerQueue.
-func (d *Database) DropBrokerQueueContext(ctx context.Context, schema, name string) error {
+func (d *Database) DropBrokerQueue(ctx context.Context, schema, name string) error {
 	if schema == "" {
 		schema = "dbo"
 	}
@@ -237,11 +202,8 @@ func (d *Database) DropBrokerQueueContext(ctx context.Context, schema, name stri
 }
 
 // Drop drops the queue.
-func (q *BrokerQueue) Drop() error { return q.DropContext(context.Background()) }
-
-// DropContext is the context-aware variant of Drop.
-func (q *BrokerQueue) DropContext(ctx context.Context) error {
-	return q.db.DropBrokerQueueContext(ctx, q.Schema, q.Name)
+func (q *BrokerQueue) Drop(ctx context.Context) error {
+	return q.db.DropBrokerQueue(ctx, q.Schema, q.Name)
 }
 
 // queueMessageCountSelect counts the rows in each queue's internal table.
@@ -259,20 +221,14 @@ GROUP  BY it.parent_object_id`
 
 // QueueMessageCounts returns the number of messages currently in each queue,
 // keyed by the queue's ObjectID.
-func (d *Database) QueueMessageCounts() (map[int]int64, error) {
-	return d.QueueMessageCountsContext(context.Background())
-}
-
-// QueueMessageCountsContext is the context-aware variant of
-// QueueMessageCounts.
 //
-// It is a separate call rather than a column on BrokerQueue because it reads
-// a DMV: a caller without VIEW DATABASE STATE gets an error here and a
-// complete queue listing anyway, where one query for both would lose the
-// listing too. A caller displaying the count treats a failure, and a queue
-// missing from the map, as "unknown" rather than as zero — a queue whose
-// internal table has not been materialised has no row here.
-func (d *Database) QueueMessageCountsContext(ctx context.Context) (map[int]int64, error) {
+// It is a separate call rather than a column on BrokerQueue because it reads a
+// DMV: a caller without VIEW DATABASE STATE gets an error here and a complete
+// queue listing anyway, where one query for both would lose the listing too. A
+// caller displaying the count treats a failure, and a queue missing from the
+// map, as "unknown" rather than as zero — a queue whose internal table has
+// not been materialised has no row here.
+func (d *Database) QueueMessageCounts(ctx context.Context) (map[int]int64, error) {
 	rows, err := d.query(ctx, queueMessageCountSelect)
 	if err != nil {
 		return nil, fmt.Errorf("gosmo: read queue message counts in %q: %w", d.Name, err)
@@ -297,14 +253,10 @@ func (d *Database) QueueMessageCountsContext(ctx context.Context) (map[int]int64
 }
 
 // MessageCount returns the number of messages currently in the queue.
-func (q *BrokerQueue) MessageCount() (int64, error) {
-	return q.MessageCountContext(context.Background())
-}
-
-// MessageCountContext is the context-aware variant of MessageCount. It needs
-// VIEW DATABASE STATE, and returns 0 with no error for a queue whose
+//
+// It needs VIEW DATABASE STATE, and returns 0 with no error for a queue whose
 // internal table has no statistics row yet.
-func (q *BrokerQueue) MessageCountContext(ctx context.Context) (int64, error) {
+func (q *BrokerQueue) MessageCount(ctx context.Context) (int64, error) {
 	var count sql.NullInt64
 	err := q.db.queryRow(ctx, func(row *sql.Row) error {
 		return row.Scan(&count)
@@ -345,17 +297,12 @@ type QueueMonitor struct {
 
 // QueueMonitors returns the broker's activation state for the queues it is
 // monitoring in the database.
-func (d *Database) QueueMonitors() ([]*QueueMonitor, error) {
-	return d.QueueMonitorsContext(context.Background())
-}
-
-// QueueMonitorsContext is the context-aware variant of QueueMonitors.
 //
 // A queue with no row here is the normal case, not an error: the broker
 // creates a monitor when it first has reason to look at the queue. Callers
-// index the result by QueueID and treat a missing queue as "never
-// activated". It needs VIEW DATABASE STATE, the same as the message counts.
-func (d *Database) QueueMonitorsContext(ctx context.Context) ([]*QueueMonitor, error) {
+// index the result by QueueID and treat a missing queue as "never activated".
+// It needs VIEW DATABASE STATE, the same as the message counts.
+func (d *Database) QueueMonitors(ctx context.Context) ([]*QueueMonitor, error) {
 	const q = `
 SELECT m.queue_id, ISNULL(m.state, ''), ISNULL(m.tasks_waiting, 0),
        m.last_activated_time, m.last_empty_rowset_time
@@ -363,26 +310,16 @@ FROM   sys.dm_broker_queue_monitors m
 WHERE  m.database_id = DB_ID()`
 
 	rows, err := d.query(ctx, q)
-	if err != nil {
-		return nil, fmt.Errorf("gosmo: list queue monitors in %q: %w", d.Name, err)
-	}
-	defer rows.Close()
-
-	var out []*QueueMonitor
-	for rows.Next() {
+	return scanRows(rows, err, fmt.Sprintf("list queue monitors in %q", d.Name), func(scan func(...any) error) (*QueueMonitor, error) {
 		m := &QueueMonitor{}
 		var activated, empty sql.NullTime
-		if err := rows.Scan(&m.QueueID, &m.State, &m.TasksWaiting, &activated, &empty); err != nil {
-			return nil, fmt.Errorf("gosmo: list queue monitors in %q: %w", d.Name, err)
+		if err := scan(&m.QueueID, &m.State, &m.TasksWaiting, &activated, &empty); err != nil {
+			return nil, err
 		}
 		m.LastActivatedTime = activated.Time
 		m.LastEmptyRowsetTime = empty.Time
-		out = append(out, m)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("gosmo: list queue monitors in %q: %w", d.Name, err)
-	}
-	return out, nil
+		return m, nil
+	})
 }
 
 // ============================================================
@@ -463,11 +400,6 @@ type QueueSettings struct {
 }
 
 // AlterBrokerQueue changes a queue's settings. An empty schema means dbo.
-func (d *Database) AlterBrokerQueue(schema, name string, s QueueSettings) error {
-	return d.AlterBrokerQueueContext(context.Background(), schema, name, s)
-}
-
-// AlterBrokerQueueContext is the context-aware variant of AlterBrokerQueue.
 //
 // It needs ALTER on the queue itself (ALTER ON OBJECT::<queue>), CONTROL on
 // it, or ALTER on its schema or the database — measured on majors 13, 14 and
@@ -475,7 +407,7 @@ func (d *Database) AlterBrokerQueue(schema, name string, s QueueSettings) error 
 // drop the same queue, which needs CONTROL on it or ALTER on its schema: the
 // two verbs take different rights, and a caller gating them shares no entry
 // between them.
-func (d *Database) AlterBrokerQueueContext(ctx context.Context, schema, name string, s QueueSettings) error {
+func (d *Database) AlterBrokerQueue(ctx context.Context, schema, name string, s QueueSettings) error {
 	if schema == "" {
 		schema = "dbo"
 	}
@@ -554,17 +486,11 @@ func queueExecuteAsValue(executeAs string) string {
 }
 
 // Alter changes the queue's settings and mirrors them onto the receiver.
-func (q *BrokerQueue) Alter(s QueueSettings) error {
-	return q.AlterContext(context.Background(), s)
-}
-
-// AlterContext is the context-aware variant of Alter.
 //
 // The fields it changed are mirrored onto the receiver — see
-// mirrorQueueSettings, which is also where EXECUTE AS SELF's one exception
-// is.
-func (q *BrokerQueue) AlterContext(ctx context.Context, s QueueSettings) error {
-	if err := q.db.AlterBrokerQueueContext(ctx, q.Schema, q.Name, s); err != nil {
+// mirrorQueueSettings, which is also where EXECUTE AS SELF's one exception is.
+func (q *BrokerQueue) Alter(ctx context.Context, s QueueSettings) error {
+	if err := q.db.AlterBrokerQueue(ctx, q.Schema, q.Name, s); err != nil {
 		return err
 	}
 	mirrorQueueSettings(ctx, q, s)

@@ -121,43 +121,19 @@ func scanRoute(d *Database, scan func(...any) error) (*Route, error) {
 
 // Routes returns the routes defined in the database, AutoCreatedLocal
 // included.
-func (d *Database) Routes() ([]*Route, error) {
-	return d.RoutesContext(context.Background())
-}
-
-// RoutesContext is the context-aware variant of Routes.
-func (d *Database) RoutesContext(ctx context.Context) ([]*Route, error) {
+func (d *Database) Routes(ctx context.Context) ([]*Route, error) {
 	const q = routeSelect + `
 ORDER  BY r.name`
 
 	rows, err := d.query(ctx, q)
-	if err != nil {
-		return nil, fmt.Errorf("gosmo: list routes in %q: %w", d.Name, err)
-	}
-	defer rows.Close()
-
-	var out []*Route
-	for rows.Next() {
-		r, err := scanRoute(d, rows.Scan)
-		if err != nil {
-			return nil, fmt.Errorf("gosmo: list routes in %q: %w", d.Name, err)
-		}
-		out = append(out, r)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("gosmo: list routes in %q: %w", d.Name, err)
-	}
-	return out, nil
+	return scanRows(rows, err, fmt.Sprintf("list routes in %q", d.Name), func(scan func(...any) error) (*Route, error) {
+		return scanRoute(d, scan)
+	})
 }
 
 // RouteByName returns one route, or a not-found error (errors.Is
 // ErrNotFound) when the database has none by that name.
-func (d *Database) RouteByName(name string) (*Route, error) {
-	return d.RouteByNameContext(context.Background(), name)
-}
-
-// RouteByNameContext is the context-aware variant of RouteByName.
-func (d *Database) RouteByNameContext(ctx context.Context, name string) (*Route, error) {
+func (d *Database) RouteByName(ctx context.Context, name string) (*Route, error) {
 	var r *Route
 	err := d.queryRow(ctx, func(row *sql.Row) error {
 		var err error
@@ -165,13 +141,7 @@ func (d *Database) RouteByNameContext(ctx context.Context, name string) (*Route,
 		return err
 	}, routeSelect+`
 WHERE  r.name = @p1`, name)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, notFoundf("gosmo: route %q not found in %q", name, d.Name)
-	}
-	if err != nil {
-		return nil, fmt.Errorf("gosmo: read route %q in %q: %w", name, d.Name, err)
-	}
-	return r, nil
+	return foundRow(r, err, notFoundf("gosmo: route %q not found in %q", name, d.Name), fmt.Sprintf("read route %q in %q", name, d.Name))
 }
 
 // RouteSettings is what ALTER ROUTE can change. A nil field leaves that
@@ -206,17 +176,12 @@ type RouteSettings struct {
 }
 
 // AlterRoute changes a route's settings.
-func (d *Database) AlterRoute(name string, s RouteSettings) error {
-	return d.AlterRouteContext(context.Background(), name, s)
-}
-
-// AlterRouteContext is the context-aware variant of AlterRoute.
 //
-// It needs ALTER ANY ROUTE, or ALTER on the database — measured on majors 13,
-// 14 and 17, which answered identically. ALTER ANY ROUTE alone is enough for
-// both this and the drop, so the two verbs share a right here, unlike a
+// It needs ALTER ANY ROUTE, or ALTER on the database — measured on majors
+// 13, 14 and 17, which answered identically. ALTER ANY ROUTE alone is enough
+// for both this and the drop, so the two verbs share a right here, unlike a
 // queue's.
-func (d *Database) AlterRouteContext(ctx context.Context, name string, s RouteSettings) error {
+func (d *Database) AlterRoute(ctx context.Context, name string, s RouteSettings) error {
 	clauses, err := routeSettingClauses(s)
 	if err != nil {
 		return fmt.Errorf("gosmo: alter route %q: %w", name, err)
@@ -270,18 +235,13 @@ func routeSettingClauses(s RouteSettings) ([]string, error) {
 }
 
 // Alter changes the route's settings and mirrors them onto the receiver.
-func (r *Route) Alter(s RouteSettings) error {
-	return r.AlterContext(context.Background(), s)
-}
-
-// AlterContext is the context-aware variant of Alter.
 //
 // The fields it changed are mirrored onto the receiver through setIfApplied,
-// so under WithScript — where nothing ran — the route does not start claiming
-// state the server does not have. Expires is mirrored as "now plus the
-// lifetime", which is what the server computes, to within the round trip.
-func (r *Route) AlterContext(ctx context.Context, s RouteSettings) error {
-	if err := r.db.AlterRouteContext(ctx, r.Name, s); err != nil {
+// so under WithScript — where nothing ran — the route does not start
+// claiming state the server does not have. Expires is mirrored as "now plus
+// the lifetime", which is what the server computes, to within the round trip.
+func (r *Route) Alter(ctx context.Context, s RouteSettings) error {
+	if err := r.db.AlterRoute(ctx, r.Name, s); err != nil {
 		return err
 	}
 	if s.RemoteService != nil {
@@ -304,12 +264,7 @@ func (r *Route) AlterContext(ctx context.Context, s RouteSettings) error {
 }
 
 // DropRoute drops a route by name.
-func (d *Database) DropRoute(name string) error {
-	return d.DropRouteContext(context.Background(), name)
-}
-
-// DropRouteContext is the context-aware variant of DropRoute.
-func (d *Database) DropRouteContext(ctx context.Context, name string) error {
+func (d *Database) DropRoute(ctx context.Context, name string) error {
 	if _, err := d.exec(ctx, "DROP ROUTE "+quoteIdent(name)); err != nil {
 		return fmt.Errorf("gosmo: drop route %q: %w", name, err)
 	}
@@ -317,11 +272,8 @@ func (d *Database) DropRouteContext(ctx context.Context, name string) error {
 }
 
 // Drop drops the route.
-func (r *Route) Drop() error { return r.DropContext(context.Background()) }
-
-// DropContext is the context-aware variant of Drop.
-func (r *Route) DropContext(ctx context.Context) error {
-	return r.db.DropRouteContext(ctx, r.Name)
+func (r *Route) Drop(ctx context.Context) error {
+	return r.db.DropRoute(ctx, r.Name)
 }
 
 // ============================================================
@@ -390,46 +342,20 @@ func scanRemoteServiceBinding(d *Database, scan func(...any) error) (*RemoteServ
 
 // RemoteServiceBindings returns the remote service bindings defined in the
 // database.
-func (d *Database) RemoteServiceBindings() ([]*RemoteServiceBinding, error) {
-	return d.RemoteServiceBindingsContext(context.Background())
-}
-
-// RemoteServiceBindingsContext is the context-aware variant of
-// RemoteServiceBindings.
-func (d *Database) RemoteServiceBindingsContext(ctx context.Context) ([]*RemoteServiceBinding, error) {
+func (d *Database) RemoteServiceBindings(ctx context.Context) ([]*RemoteServiceBinding, error) {
 	const q = remoteServiceBindingSelect + `
 ORDER  BY b.name`
 
 	rows, err := d.query(ctx, q)
-	if err != nil {
-		return nil, fmt.Errorf("gosmo: list remote service bindings in %q: %w", d.Name, err)
-	}
-	defer rows.Close()
-
-	var out []*RemoteServiceBinding
-	for rows.Next() {
-		b, err := scanRemoteServiceBinding(d, rows.Scan)
-		if err != nil {
-			return nil, fmt.Errorf("gosmo: list remote service bindings in %q: %w", d.Name, err)
-		}
-		out = append(out, b)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("gosmo: list remote service bindings in %q: %w", d.Name, err)
-	}
-	return out, nil
+	return scanRows(rows, err, fmt.Sprintf("list remote service bindings in %q", d.Name), func(scan func(...any) error) (*RemoteServiceBinding, error) {
+		return scanRemoteServiceBinding(d, scan)
+	})
 }
 
 // RemoteServiceBindingByName returns one remote service binding, or a
 // not-found error (errors.Is ErrNotFound) when the database has none by that
 // name.
-func (d *Database) RemoteServiceBindingByName(name string) (*RemoteServiceBinding, error) {
-	return d.RemoteServiceBindingByNameContext(context.Background(), name)
-}
-
-// RemoteServiceBindingByNameContext is the context-aware variant of
-// RemoteServiceBindingByName.
-func (d *Database) RemoteServiceBindingByNameContext(ctx context.Context, name string) (*RemoteServiceBinding, error) {
+func (d *Database) RemoteServiceBindingByName(ctx context.Context, name string) (*RemoteServiceBinding, error) {
 	var b *RemoteServiceBinding
 	err := d.queryRow(ctx, func(row *sql.Row) error {
 		var err error
@@ -437,13 +363,7 @@ func (d *Database) RemoteServiceBindingByNameContext(ctx context.Context, name s
 		return err
 	}, remoteServiceBindingSelect+`
 WHERE  b.name = @p1`, name)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, notFoundf("gosmo: remote service binding %q not found in %q", name, d.Name)
-	}
-	if err != nil {
-		return nil, fmt.Errorf("gosmo: read remote service binding %q in %q: %w", name, d.Name, err)
-	}
-	return b, nil
+	return foundRow(b, err, notFoundf("gosmo: remote service binding %q not found in %q", name, d.Name), fmt.Sprintf("read remote service binding %q in %q", name, d.Name))
 }
 
 // DropRemoteServiceBinding drops a remote service binding by name.
@@ -451,13 +371,7 @@ WHERE  b.name = @p1`, name)
 // The drop is accepted on Azure SQL Managed Instance, where the *create* is
 // not: CREATE REMOTE SERVICE BINDING is refused there at compile time with
 // Msg 41906, while ALTER and DROP parse and run normally.
-func (d *Database) DropRemoteServiceBinding(name string) error {
-	return d.DropRemoteServiceBindingContext(context.Background(), name)
-}
-
-// DropRemoteServiceBindingContext is the context-aware variant of
-// DropRemoteServiceBinding.
-func (d *Database) DropRemoteServiceBindingContext(ctx context.Context, name string) error {
+func (d *Database) DropRemoteServiceBinding(ctx context.Context, name string) error {
 	if _, err := d.exec(ctx, "DROP REMOTE SERVICE BINDING "+quoteIdent(name)); err != nil {
 		return fmt.Errorf("gosmo: drop remote service binding %q: %w", name, err)
 	}
@@ -465,11 +379,8 @@ func (d *Database) DropRemoteServiceBindingContext(ctx context.Context, name str
 }
 
 // Drop drops the remote service binding.
-func (b *RemoteServiceBinding) Drop() error { return b.DropContext(context.Background()) }
-
-// DropContext is the context-aware variant of Drop.
-func (b *RemoteServiceBinding) DropContext(ctx context.Context) error {
-	return b.db.DropRemoteServiceBindingContext(ctx, b.Name)
+func (b *RemoteServiceBinding) Drop(ctx context.Context) error {
+	return b.db.DropRemoteServiceBinding(ctx, b.Name)
 }
 
 // ============================================================
@@ -536,44 +447,19 @@ func scanBrokerPriority(d *Database, scan func(...any) error) (*BrokerPriority, 
 
 // BrokerPriorities returns the conversation priorities defined in the
 // database.
-func (d *Database) BrokerPriorities() ([]*BrokerPriority, error) {
-	return d.BrokerPrioritiesContext(context.Background())
-}
-
-// BrokerPrioritiesContext is the context-aware variant of BrokerPriorities.
-func (d *Database) BrokerPrioritiesContext(ctx context.Context) ([]*BrokerPriority, error) {
+func (d *Database) BrokerPriorities(ctx context.Context) ([]*BrokerPriority, error) {
 	const q = brokerPrioritySelect + `
 ORDER  BY p.name`
 
 	rows, err := d.query(ctx, q)
-	if err != nil {
-		return nil, fmt.Errorf("gosmo: list broker priorities in %q: %w", d.Name, err)
-	}
-	defer rows.Close()
-
-	var out []*BrokerPriority
-	for rows.Next() {
-		p, err := scanBrokerPriority(d, rows.Scan)
-		if err != nil {
-			return nil, fmt.Errorf("gosmo: list broker priorities in %q: %w", d.Name, err)
-		}
-		out = append(out, p)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("gosmo: list broker priorities in %q: %w", d.Name, err)
-	}
-	return out, nil
+	return scanRows(rows, err, fmt.Sprintf("list broker priorities in %q", d.Name), func(scan func(...any) error) (*BrokerPriority, error) {
+		return scanBrokerPriority(d, scan)
+	})
 }
 
 // BrokerPriorityByName returns one conversation priority, or a not-found
 // error (errors.Is ErrNotFound) when the database has none by that name.
-func (d *Database) BrokerPriorityByName(name string) (*BrokerPriority, error) {
-	return d.BrokerPriorityByNameContext(context.Background(), name)
-}
-
-// BrokerPriorityByNameContext is the context-aware variant of
-// BrokerPriorityByName.
-func (d *Database) BrokerPriorityByNameContext(ctx context.Context, name string) (*BrokerPriority, error) {
+func (d *Database) BrokerPriorityByName(ctx context.Context, name string) (*BrokerPriority, error) {
 	var p *BrokerPriority
 	err := d.queryRow(ctx, func(row *sql.Row) error {
 		var err error
@@ -581,13 +467,7 @@ func (d *Database) BrokerPriorityByNameContext(ctx context.Context, name string)
 		return err
 	}, brokerPrioritySelect+`
 WHERE  p.name = @p1`, name)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, notFoundf("gosmo: broker priority %q not found in %q", name, d.Name)
-	}
-	if err != nil {
-		return nil, fmt.Errorf("gosmo: read broker priority %q in %q: %w", name, d.Name, err)
-	}
-	return p, nil
+	return foundRow(p, err, notFoundf("gosmo: broker priority %q not found in %q", name, d.Name), fmt.Sprintf("read broker priority %q in %q", name, d.Name))
 }
 
 // DropBrokerPriority drops a conversation priority by name.
@@ -595,13 +475,7 @@ WHERE  p.name = @p1`, name)
 // It needs ALTER on the database: SQL Server enforces a BROKER PRIORITY
 // permission it does not publish, so there is no ALTER ANY … to grant
 // instead — HAS_PERMS_BY_NAME answers NULL for every spelling of one.
-func (d *Database) DropBrokerPriority(name string) error {
-	return d.DropBrokerPriorityContext(context.Background(), name)
-}
-
-// DropBrokerPriorityContext is the context-aware variant of
-// DropBrokerPriority.
-func (d *Database) DropBrokerPriorityContext(ctx context.Context, name string) error {
+func (d *Database) DropBrokerPriority(ctx context.Context, name string) error {
 	if _, err := d.exec(ctx, "DROP BROKER PRIORITY "+quoteIdent(name)); err != nil {
 		return fmt.Errorf("gosmo: drop broker priority %q: %w", name, err)
 	}
@@ -609,9 +483,6 @@ func (d *Database) DropBrokerPriorityContext(ctx context.Context, name string) e
 }
 
 // Drop drops the broker priority.
-func (p *BrokerPriority) Drop() error { return p.DropContext(context.Background()) }
-
-// DropContext is the context-aware variant of Drop.
-func (p *BrokerPriority) DropContext(ctx context.Context) error {
-	return p.db.DropBrokerPriorityContext(ctx, p.Name)
+func (p *BrokerPriority) Drop(ctx context.Context) error {
+	return p.db.DropBrokerPriority(ctx, p.Name)
 }

@@ -31,12 +31,12 @@ func TestLiveScriptedSetterMirroring(t *testing.T) {
 	}
 
 	const name = "gosmo_setifapplied_probe"
-	_ = srv.DropDatabaseContext(ctx, name, true)
-	if err := srv.CreateDatabaseContext(ctx, name, nil); err != nil {
+	_ = srv.DropDatabase(ctx, name, true)
+	if err := srv.CreateDatabase(ctx, name, nil); err != nil {
 		t.Fatalf("create %s: %v", name, err)
 	}
 	defer func() {
-		if err := srv.DropDatabaseContext(ctx, name, true); err != nil {
+		if err := srv.DropDatabase(ctx, name, true); err != nil {
 			t.Errorf("drop %s: %v", name, err)
 		}
 	}()
@@ -46,7 +46,7 @@ func TestLiveScriptedSetterMirroring(t *testing.T) {
 	// because the bug being pinned is exactly the two disagreeing.
 	reload := func() *Database {
 		t.Helper()
-		d, err := srv.DatabaseByNameContext(ctx, name)
+		d, err := srv.DatabaseByName(ctx, name)
 		if err != nil {
 			t.Fatalf("reload %s: %v", name, err)
 		}
@@ -73,11 +73,11 @@ func TestLiveScriptedSetterMirroring(t *testing.T) {
 		name string
 		run  func() error
 	}{
-		{"SetRecoveryModel", func() error { return d.SetRecoveryModelContext(sctx, RecoveryModelSimple) }},
-		{"SetCompatibilityLevel", func() error { return d.SetCompatibilityLevelContext(sctx, belowNativeCompatLevel(srv)) }},
-		{"SetReadOnly", func() error { return d.SetReadOnlyContext(sctx, true) }},
-		{"SetOffline", func() error { return d.SetOfflineContext(sctx) }},
-		{"SetOnline", func() error { return d.SetOnlineContext(sctx) }},
+		{"SetRecoveryModel", func() error { return d.SetRecoveryModel(sctx, RecoveryModelSimple) }},
+		{"SetCompatibilityLevel", func() error { return d.SetCompatibilityLevel(sctx, belowNativeCompatLevel(srv)) }},
+		{"SetReadOnly", func() error { return d.SetReadOnly(sctx, true) }},
+		{"SetOffline", func() error { return d.SetOffline(sctx) }},
+		{"SetOnline", func() error { return d.SetOnline(sctx) }},
 	} {
 		if err := step.run(); err != nil {
 			t.Fatalf("scripted %s: %v", step.name, err)
@@ -90,10 +90,10 @@ func TestLiveScriptedSetterMirroring(t *testing.T) {
 			t.Errorf("scripted %s moved the handle's state to %s, want it left at %s", step.name, got, was.state)
 		}
 	}
-	if len(script.Statements) != 5 {
-		t.Fatalf("Statements = %v, want five", script.Statements)
+	if len(script.Statements()) != 5 {
+		t.Fatalf("Statements = %v, want five", script.Statements())
 	}
-	for _, s := range script.Statements {
+	for _, s := range script.Statements() {
 		t.Logf("scripted statement: %s", s)
 	}
 	srvNow := reload()
@@ -120,7 +120,7 @@ func TestLiveScriptedSetterMirroring(t *testing.T) {
 	// Scripted from an online one it assigns "ONLINE" over "ONLINE", so the
 	// bug leaves no trace and the pass above cannot see it — the only state
 	// that distinguishes a mirroring SetOnline is one it would be changing.
-	if err := reload().SetOfflineContext(ctx); err != nil {
+	if err := reload().SetOffline(ctx); err != nil {
 		t.Fatalf("SetOffline (to set up the scripted SetOnline): %v", err)
 	}
 	off := reload()
@@ -128,11 +128,11 @@ func TestLiveScriptedSetterMirroring(t *testing.T) {
 		t.Fatalf("setup: server reports %s, want OFFLINE", off.State)
 	}
 	octx, oscript := WithScript(ctx)
-	if err := off.SetOnlineContext(octx); err != nil {
+	if err := off.SetOnline(octx); err != nil {
 		t.Fatalf("scripted SetOnline: %v", err)
 	}
-	if len(oscript.Statements) != 1 {
-		t.Fatalf("Statements = %v, want one", oscript.Statements)
+	if len(oscript.Statements()) != 1 {
+		t.Fatalf("Statements = %v, want one", oscript.Statements())
 	}
 	if got := off.State; got != "OFFLINE" {
 		t.Errorf("scripted SetOnline moved the handle's state to %s, want it left at OFFLINE", got)
@@ -140,13 +140,13 @@ func TestLiveScriptedSetterMirroring(t *testing.T) {
 	if got := reload().State; got != "OFFLINE" {
 		t.Errorf("scripted SetOnline moved the SERVER to %s, want it left at OFFLINE", got)
 	}
-	if err := reload().SetOnlineContext(ctx); err != nil {
+	if err := reload().SetOnline(ctx); err != nil {
 		t.Fatalf("SetOnline (restoring the probe database): %v", err)
 	}
 
 	// 2. A captured statement, run for real, must produce the change — the
 	// handle being left alone is only correct if the script is what applies it.
-	if err := srv.execContext(ctx, script.Statements[0]); err != nil {
+	if err := srv.exec(ctx, script.Statements()[0]); err != nil {
 		t.Fatalf("running the captured statement: %v", err)
 	}
 	if got := reload().RecoveryModel; got != RecoveryModelSimple {
@@ -155,7 +155,7 @@ func TestLiveScriptedSetterMirroring(t *testing.T) {
 
 	// 3. Applied for real: handle and server must agree, on every setter.
 	d = reload()
-	if err := d.SetRecoveryModelContext(ctx, RecoveryModelFull); err != nil {
+	if err := d.SetRecoveryModel(ctx, RecoveryModelFull); err != nil {
 		t.Fatalf("SetRecoveryModel: %v", err)
 	}
 	if got, srvGot := d.RecoveryModel, reload().RecoveryModel; got != RecoveryModelFull || srvGot != RecoveryModelFull {
@@ -165,28 +165,28 @@ func TestLiveScriptedSetterMirroring(t *testing.T) {
 	// (Msg 15048), so 160 fails on everything before 2022 and the test would
 	// be pinning the version of whichever server it last ran against.
 	wantCompat := belowNativeCompatLevel(srv)
-	if err := d.SetCompatibilityLevelContext(ctx, wantCompat); err != nil {
+	if err := d.SetCompatibilityLevel(ctx, wantCompat); err != nil {
 		t.Fatalf("SetCompatibilityLevel(%d): %v", wantCompat, err)
 	}
 	if got, srvGot := d.CompatibilityLevel, reload().CompatibilityLevel; got != wantCompat || srvGot != wantCompat {
 		t.Errorf("compat: handle=%d server=%d, want both %d", got, srvGot, wantCompat)
 	}
-	if err := d.SetReadOnlyContext(ctx, true); err != nil {
+	if err := d.SetReadOnly(ctx, true); err != nil {
 		t.Fatalf("SetReadOnly: %v", err)
 	}
 	if got, srvGot := d.IsReadOnly, reload().IsReadOnly; !got || !srvGot {
 		t.Errorf("readonly: handle=%v server=%v, want both true", got, srvGot)
 	}
-	if err := d.SetReadOnlyContext(ctx, false); err != nil {
+	if err := d.SetReadOnly(ctx, false); err != nil {
 		t.Fatalf("SetReadOnly back to read-write: %v", err)
 	}
-	if err := d.SetOfflineContext(ctx); err != nil {
+	if err := d.SetOffline(ctx); err != nil {
 		t.Fatalf("SetOffline: %v", err)
 	}
 	if got, srvGot := d.State, reload().State; got != "OFFLINE" || srvGot != "OFFLINE" {
 		t.Errorf("offline: handle=%s server=%s, want both OFFLINE", got, srvGot)
 	}
-	if err := d.SetOnlineContext(ctx); err != nil {
+	if err := d.SetOnline(ctx); err != nil {
 		t.Fatalf("SetOnline: %v", err)
 	}
 	if got, srvGot := d.State, reload().State; got != "ONLINE" || srvGot != "ONLINE" {
@@ -195,20 +195,20 @@ func TestLiveScriptedSetterMirroring(t *testing.T) {
 
 	// 4. ConfigurationOption, scripted only: a real sp_configure would change
 	// the shared instance, which the throwaway-object discipline rules out.
-	c, err := srv.ConfigurationByNameContext(ctx, "max server memory (MB)")
+	c, err := srv.ConfigurationByName(ctx, "max server memory (MB)")
 	if err != nil {
 		t.Fatalf("configuration by name: %v", err)
 	}
 	cbefore := c.Value
 	cctx, cscript := WithScript(ctx)
-	if err := c.SetValueContext(cctx, cbefore-1); err != nil {
+	if err := c.SetValue(cctx, cbefore-1); err != nil {
 		t.Fatalf("scripted SetValue: %v", err)
 	}
-	t.Logf("scripted config statement: %s", cscript.Statements[0])
+	t.Logf("scripted config statement: %s", cscript.Statements()[0])
 	if c.Value != cbefore {
 		t.Errorf("scripted SetValue moved the handle to %d, want it left at %d", c.Value, cbefore)
 	}
-	reloadedC, err := srv.ConfigurationByNameContext(ctx, "max server memory (MB)")
+	reloadedC, err := srv.ConfigurationByName(ctx, "max server memory (MB)")
 	if err != nil {
 		t.Fatalf("configuration reload: %v", err)
 	}
@@ -217,7 +217,7 @@ func TestLiveScriptedSetterMirroring(t *testing.T) {
 	}
 }
 
-// Sequence.RestartContext is the same rule on a different object, and worth a
+// Sequence.Restart is the same rule on a different object, and worth a
 // live check of its own because "current value" is the one field a caller
 // reads back immediately: a scripted restart that mirrored anyway left the
 // handle claiming a value NEXT VALUE FOR would not produce for a long time.
@@ -235,21 +235,21 @@ func TestLiveScriptedSequenceRestartMirroring(t *testing.T) {
 	}
 
 	const name = "gosmo_seq_restart_probe"
-	_ = srv.DropDatabaseContext(ctx, name, true)
-	if err := srv.CreateDatabaseContext(ctx, name, nil); err != nil {
+	_ = srv.DropDatabase(ctx, name, true)
+	if err := srv.CreateDatabase(ctx, name, nil); err != nil {
 		t.Fatalf("create %s: %v", name, err)
 	}
 	defer func() {
-		if err := srv.DropDatabaseContext(ctx, name, true); err != nil {
+		if err := srv.DropDatabase(ctx, name, true); err != nil {
 			t.Errorf("drop %s: %v", name, err)
 		}
 	}()
 
-	d, err := srv.DatabaseByNameContext(ctx, name)
+	d, err := srv.DatabaseByName(ctx, name)
 	if err != nil {
 		t.Fatalf("open %s: %v", name, err)
 	}
-	if err := d.CreateSequenceContext(ctx, CreateSequenceRequest{
+	if err := d.CreateSequence(ctx, CreateSequenceRequest{
 		Schema: "dbo", Name: "probe_seq", StartValue: 1, Increment: 1,
 	}); err != nil {
 		t.Fatalf("create sequence: %v", err)
@@ -259,7 +259,7 @@ func TestLiveScriptedSequenceRestartMirroring(t *testing.T) {
 	// answer, never the handle's memory.
 	reload := func() *Sequence {
 		t.Helper()
-		seqs, err := d.SequencesContext(ctx)
+		seqs, err := d.Sequences(ctx)
 		if err != nil {
 			t.Fatalf("list sequences: %v", err)
 		}
@@ -278,13 +278,13 @@ func TestLiveScriptedSequenceRestartMirroring(t *testing.T) {
 
 	// 1. Scripted: neither the handle nor the server may move.
 	sctx, script := WithScript(ctx)
-	if err := seq.RestartContext(sctx, before+5000); err != nil {
+	if err := seq.Restart(sctx, before+5000); err != nil {
 		t.Fatalf("scripted restart: %v", err)
 	}
-	if len(script.Statements) != 1 {
-		t.Fatalf("Statements = %v, want one", script.Statements)
+	if len(script.Statements()) != 1 {
+		t.Fatalf("Statements = %v, want one", script.Statements())
 	}
-	t.Logf("scripted statement: %s", script.Statements[0])
+	t.Logf("scripted statement: %s", script.Statements()[0])
 	if seq.CurrentValue != before {
 		t.Errorf("scripted restart moved the handle to %d, want it left at %d", seq.CurrentValue, before)
 	}
@@ -294,7 +294,10 @@ func TestLiveScriptedSequenceRestartMirroring(t *testing.T) {
 
 	// 2. The captured statement, run for real, must produce the change — the
 	// handle being left alone is only correct if the script is what applies it.
-	if _, err := d.exec(ctx, script.Statements[0]); err != nil {
+	// The entry's bare SQL, not the rendered statement: that one opens with
+	// its USE and a GO, which only a script runner splits on, and d.exec
+	// supplies the USE itself.
+	if _, err := d.exec(ctx, script.Entries[0].SQL); err != nil {
 		t.Fatalf("running the captured statement: %v", err)
 	}
 	if got := reload().CurrentValue; got != before+5000 {
@@ -305,13 +308,13 @@ func TestLiveScriptedSequenceRestartMirroring(t *testing.T) {
 	// the server actually hands out has to come from there — the whole point
 	// of the field is predicting that.
 	seq = reload()
-	if err := seq.RestartContext(ctx, 7777); err != nil {
+	if err := seq.Restart(ctx, 7777); err != nil {
 		t.Fatalf("restart: %v", err)
 	}
 	if got, srvGot := seq.CurrentValue, reload().CurrentValue; got != 7777 || srvGot != 7777 {
 		t.Errorf("restart: handle=%d server=%d, want both 7777", got, srvGot)
 	}
-	next, err := seq.NextValueContext(ctx)
+	next, err := seq.NextValue(ctx)
 	if err != nil {
 		t.Fatalf("next value: %v", err)
 	}

@@ -111,7 +111,10 @@ func (d *Database) exec(ctx context.Context, q string, args ...any) (sql.Result,
 		// The real path below always runs q after a USE — captured
 		// statements need that made explicit, since the script may be
 		// handed to a session scoped to a different database (or none).
-		c.append("USE " + quoteIdent(d.Name) + ";\n" + bound)
+		// The entry records the database rather than prefixing a USE:
+		// ScriptCollector renders it, with the GO a statement that must
+		// open its batch needs after it.
+		c.append(ScriptEntry{Server: scriptServerName(ctx, d.server), Database: d.Name, SQL: bound})
 		return scriptResult{}, nil
 	}
 	var res sql.Result
@@ -251,12 +254,7 @@ type SpaceInfo struct {
 }
 
 // SpaceUsed returns space usage for the database.
-func (d *Database) SpaceUsed() (SpaceInfo, error) {
-	return d.SpaceUsedContext(context.Background())
-}
-
-// SpaceUsedContext is the context-aware variant of SpaceUsed.
-func (d *Database) SpaceUsedContext(ctx context.Context) (SpaceInfo, error) {
+func (d *Database) SpaceUsed(ctx context.Context) (SpaceInfo, error) {
 	const q = `
 SELECT
     SUM(size) * 8.0 / 1024                                                   AS total_mb,
@@ -325,16 +323,11 @@ type DiskUsage struct {
 }
 
 // DiskUsage returns the database's disk-usage breakdown.
-func (d *Database) DiskUsage() (DiskUsage, error) {
-	return d.DiskUsageContext(context.Background())
-}
-
-// DiskUsageContext is the context-aware variant of DiskUsage.
 //
 // It is one round trip: the file figures and the allocation figures are
-// unrelated aggregates over unrelated tables, so they are cross-joined
-// rather than queried one after the other.
-func (d *Database) DiskUsageContext(ctx context.Context) (DiskUsage, error) {
+// unrelated aggregates over unrelated tables, so they are cross-joined rather
+// than queried one after the other.
+func (d *Database) DiskUsage(ctx context.Context) (DiskUsage, error) {
 	// The allocation half deliberately spans every object, system tables
 	// included: this describes the file, not the user's schema, and pages
 	// left out of the sum would show up as unallocated space that a shrink
@@ -382,50 +375,27 @@ CROSS JOIN (
 
 // -- Schemas -------------------------------------------------------------------
 
-// Schemas returns all schemas in the database.
-func (d *Database) Schemas() ([]*Schema, error) {
-	return d.SchemasContext(context.Background())
-}
-
-// schemaSelect is shared by SchemasContext and SchemaByNameContext so a
+// schemaSelect is shared by Schemas and SchemaByName so a
 // schema carries the same fields however it was fetched.
 const schemaSelect = `
 SELECT s.name, s.schema_id, p.name AS owner
 FROM   sys.schemas s
 JOIN   sys.database_principals p ON p.principal_id = s.principal_id`
 
-// SchemasContext is the context-aware variant of Schemas.
-func (d *Database) SchemasContext(ctx context.Context) ([]*Schema, error) {
+// Schemas returns all schemas in the database.
+func (d *Database) Schemas(ctx context.Context) ([]*Schema, error) {
 	rows, err := d.query(ctx, schemaSelect+`
 ORDER  BY s.name`)
-	if err != nil {
-		return nil, fmt.Errorf("gosmo: list schemas in %q: %w", d.Name, err)
-	}
-	defer rows.Close()
-
-	var schemas []*Schema
-	for rows.Next() {
-		sc, err := scanSchema(d, rows.Scan)
-		if err != nil {
-			return nil, fmt.Errorf("gosmo: list schemas in %q: %w", d.Name, err)
-		}
-		schemas = append(schemas, sc)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("gosmo: list schemas in %q: %w", d.Name, err)
-	}
-	return schemas, nil
+	return scanRows(rows, err, fmt.Sprintf("list schemas in %q", d.Name), func(scan func(...any) error) (*Schema, error) {
+		return scanSchema(d, scan)
+	})
 }
 
 // SchemaByName returns one schema by name.
-func (d *Database) SchemaByName(name string) (*Schema, error) {
-	return d.SchemaByNameContext(context.Background(), name)
-}
-
-// SchemaByNameContext is the context-aware variant of SchemaByName. It
-// returns an error satisfying errors.Is(err, ErrNotFound) when the database
+//
+// It returns an error satisfying errors.Is(err, ErrNotFound) when the database
 // has no such schema.
-func (d *Database) SchemaByNameContext(ctx context.Context, name string) (*Schema, error) {
+func (d *Database) SchemaByName(ctx context.Context, name string) (*Schema, error) {
 	var sc *Schema
 	err := d.queryRow(ctx, func(row *sql.Row) error {
 		var err error
@@ -433,13 +403,7 @@ func (d *Database) SchemaByNameContext(ctx context.Context, name string) (*Schem
 		return err
 	}, schemaSelect+`
 WHERE  s.name = @p1`, name)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, notFoundf("gosmo: schema %q not found in %q", name, d.Name)
-		}
-		return nil, fmt.Errorf("gosmo: find schema %q in %q: %w", name, d.Name, err)
-	}
-	return sc, nil
+	return foundRow(sc, err, notFoundf("gosmo: schema %q not found in %q", name, d.Name), fmt.Sprintf("find schema %q in %q", name, d.Name))
 }
 
 func scanSchema(d *Database, scan func(...any) error) (*Schema, error) {
@@ -451,12 +415,7 @@ func scanSchema(d *Database, scan func(...any) error) (*Schema, error) {
 }
 
 // CreateSchema creates a new schema in the database.
-func (d *Database) CreateSchema(name, owner string) error {
-	return d.CreateSchemaContext(context.Background(), name, owner)
-}
-
-// CreateSchemaContext is the context-aware variant of CreateSchema.
-func (d *Database) CreateSchemaContext(ctx context.Context, name, owner string) error {
+func (d *Database) CreateSchema(ctx context.Context, name, owner string) error {
 	if name == "" {
 		return fmt.Errorf("gosmo: create schema: name is required")
 	}
@@ -471,12 +430,7 @@ func (d *Database) CreateSchemaContext(ctx context.Context, name, owner string) 
 }
 
 // DropSchema drops a schema from the database.
-func (d *Database) DropSchema(name string) error {
-	return d.DropSchemaContext(context.Background(), name)
-}
-
-// DropSchemaContext is the context-aware variant of DropSchema.
-func (d *Database) DropSchemaContext(ctx context.Context, name string) error {
+func (d *Database) DropSchema(ctx context.Context, name string) error {
 	if _, err := d.exec(ctx, "DROP SCHEMA "+quoteIdent(name)); err != nil {
 		return fmt.Errorf("gosmo: drop schema %q: %w", name, err)
 	}
@@ -486,12 +440,7 @@ func (d *Database) DropSchemaContext(ctx context.Context, name string) error {
 // -- Tables --------------------------------------------------------------------
 
 // Tables returns all user tables in the database.
-func (d *Database) Tables() ([]*Table, error) {
-	return d.TablesContext(context.Background())
-}
-
-// TablesContext is the context-aware variant of Tables.
-func (d *Database) TablesContext(ctx context.Context) ([]*Table, error) {
+func (d *Database) Tables(ctx context.Context) ([]*Table, error) {
 	return d.tablesWhere(ctx, userTablesClause, nil)
 }
 
@@ -501,13 +450,8 @@ func (d *Database) TablesContext(ctx context.Context) ([]*Table, error) {
 const userTablesClause = "AND t.is_ms_shipped = 0"
 
 // TablesFiltered returns the user tables an ObjectFilter matches, narrowed by
-// the server rather than by the caller. An empty filter is TablesContext.
-func (d *Database) TablesFiltered(filter ObjectFilter) ([]*Table, error) {
-	return d.TablesFilteredContext(context.Background(), filter)
-}
-
-// TablesFilteredContext is the context-aware variant of TablesFiltered.
-func (d *Database) TablesFilteredContext(ctx context.Context, filter ObjectFilter) ([]*Table, error) {
+// the server rather than by the caller. An empty filter is Tables.
+func (d *Database) TablesFiltered(ctx context.Context, filter ObjectFilter) ([]*Table, error) {
 	where, args := filter.clause(tableFilterColumns, 1)
 	return d.tablesWhere(ctx, userTablesClause+" "+where, args)
 }
@@ -522,12 +466,7 @@ var tableFilterColumns = filterColumns{
 }
 
 // TablesBySchema returns all tables in a specific schema.
-func (d *Database) TablesBySchema(schema string) ([]*Table, error) {
-	return d.TablesBySchemaContext(context.Background(), schema)
-}
-
-// TablesBySchemaContext is the context-aware variant of TablesBySchema.
-func (d *Database) TablesBySchemaContext(ctx context.Context, schema string) ([]*Table, error) {
+func (d *Database) TablesBySchema(ctx context.Context, schema string) ([]*Table, error) {
 	return d.tablesWhere(ctx, userTablesClause+" AND SCHEMA_NAME(t.schema_id) = @p1", []any{schema})
 }
 
@@ -565,23 +504,9 @@ WHERE  1 = 1 ` + where + `
 ORDER  BY SCHEMA_NAME(t.schema_id), t.name`
 
 	rows, err := d.query(ctx, q, args...)
-	if err != nil {
-		return nil, fmt.Errorf("gosmo: list tables in %q: %w", d.Name, err)
-	}
-	defer rows.Close()
-
-	var tables []*Table
-	for rows.Next() {
-		t, err := scanTable(d, rows.Scan)
-		if err != nil {
-			return nil, fmt.Errorf("gosmo: list tables in %q: %w", d.Name, err)
-		}
-		tables = append(tables, t)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("gosmo: list tables in %q: %w", d.Name, err)
-	}
-	return tables, nil
+	return scanRows(rows, err, fmt.Sprintf("list tables in %q", d.Name), func(scan func(...any) error) (*Table, error) {
+		return scanTable(d, scan)
+	})
 }
 
 // TableByName returns a single table by schema and name using a direct query.
@@ -591,12 +516,7 @@ ORDER  BY SCHEMA_NAME(t.schema_id), t.name`
 // what msdb has — are the ones a by-name lookup would otherwise never reach.
 // Tables() still lists only the user tables; the predicate belongs to the
 // listing, not to the lookup.
-func (d *Database) TableByName(schema, name string) (*Table, error) {
-	return d.TableByNameContext(context.Background(), schema, name)
-}
-
-// TableByNameContext is the context-aware variant of TableByName.
-func (d *Database) TableByNameContext(ctx context.Context, schema, name string) (*Table, error) {
+func (d *Database) TableByName(ctx context.Context, schema, name string) (*Table, error) {
 	q := d.tableSelect() + `
 WHERE  SCHEMA_NAME(t.schema_id) = @p1
   AND  t.name                   = @p2`
@@ -619,12 +539,7 @@ WHERE  SCHEMA_NAME(t.schema_id) = @p1
 // -- Database users ------------------------------------------------------------
 
 // Users returns all database users.
-func (d *Database) Users() ([]*User, error) {
-	return d.UsersContext(context.Background())
-}
-
-// UsersContext is the context-aware variant of Users.
-func (d *Database) UsersContext(ctx context.Context) ([]*User, error) {
+func (d *Database) Users(ctx context.Context) ([]*User, error) {
 	const q = `
 SELECT name, principal_id, type_desc, default_schema_name,
        create_date, modify_date, authentication_type_desc
@@ -633,38 +548,23 @@ WHERE  type IN ('S','U','G')
 ORDER  BY name`
 
 	rows, err := d.query(ctx, q)
-	if err != nil {
-		return nil, fmt.Errorf("gosmo: list users in %q: %w", d.Name, err)
-	}
-	defer rows.Close()
-
-	var users []*User
-	for rows.Next() {
+	return scanRows(rows, err, fmt.Sprintf("list users in %q", d.Name), func(scan func(...any) error) (*User, error) {
 		u := &User{db: d}
 		var defSchema, authType sql.NullString
-		if err := rows.Scan(&u.Name, &u.ID, &u.UserType, &defSchema,
+		if err := scan(&u.Name, &u.ID, &u.UserType, &defSchema,
 			&u.CreateDate, &u.ModifyDate, &authType); err != nil {
-			return nil, fmt.Errorf("gosmo: list users in %q: %w", d.Name, err)
+			return nil, err
 		}
 		u.DefaultSchema = defSchema.String
 		u.AuthType = authType.String
-		users = append(users, u)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("gosmo: list users in %q: %w", d.Name, err)
-	}
-	return users, nil
+		return u, nil
+	})
 }
 
 // UserByName returns a single database user by name, with its SID and
-// matching server login (if any) filled in — UsersContext leaves these
+// matching server login (if any) filled in — Users leaves these
 // out since Object Explorer's tree listing never needs them.
-func (d *Database) UserByName(name string) (*User, error) {
-	return d.UserByNameContext(context.Background(), name)
-}
-
-// UserByNameContext is the context-aware variant of UserByName.
-func (d *Database) UserByNameContext(ctx context.Context, name string) (*User, error) {
+func (d *Database) UserByName(ctx context.Context, name string) (*User, error) {
 	const q = `
 SELECT dp.principal_id, dp.type_desc, dp.default_schema_name,
        dp.create_date, dp.modify_date, dp.authentication_type_desc, dp.sid,
@@ -694,11 +594,11 @@ WHERE  dp.type IN ('S','U','G') AND dp.name = @p1`
 }
 
 // UserRef returns a lightweight handle for name without querying the server
-// at all — unlike UserByName/UserByNameContext, it doesn't verify the user
+// at all — unlike UserByName, it doesn't verify the user
 // exists or populate ID/UserType/DefaultSchema/AuthType/SID/LoginName/etc.
-// (they stay at their zero value). Every write method on *User (DropContext,
-// RenameContext, SetDefaultSchemaContext, SetLoginContext, AddToRoleContext,
-// GrantContext, ...) only ever needs the user's name, never those cached
+// (they stay at their zero value). Every write method on *User (Drop,
+// Rename, SetDefaultSchema, SetLogin, AddToRole,
+// Grant, ...) only ever needs the user's name, never those cached
 // fields, so this is sufficient for issuing further ALTER-style calls against
 // a user the caller already knows exists — most commonly one it just created
 // in the same operation. See Server.DatabaseRef's doc comment for why this
@@ -708,12 +608,7 @@ func (d *Database) UserRef(name string) *User {
 }
 
 // CreateUser creates a database user mapped to a login.
-func (d *Database) CreateUser(userName, loginName, defaultSchema string) error {
-	return d.CreateUserContext(context.Background(), userName, loginName, defaultSchema)
-}
-
-// CreateUserContext is the context-aware variant of CreateUser.
-func (d *Database) CreateUserContext(ctx context.Context, userName, loginName, defaultSchema string) error {
+func (d *Database) CreateUser(ctx context.Context, userName, loginName, defaultSchema string) error {
 	if userName == "" {
 		return fmt.Errorf("gosmo: create user: user name is required")
 	}
@@ -735,12 +630,7 @@ func (d *Database) CreateUserContext(ctx context.Context, userName, loginName, d
 }
 
 // DropUser drops a database user.
-func (d *Database) DropUser(name string) error {
-	return d.DropUserContext(context.Background(), name)
-}
-
-// DropUserContext is the context-aware variant of DropUser.
-func (d *Database) DropUserContext(ctx context.Context, name string) error {
+func (d *Database) DropUser(ctx context.Context, name string) error {
 	if _, err := d.exec(ctx, "DROP USER "+quoteIdent(name)); err != nil {
 		return fmt.Errorf("gosmo: drop user %q: %w", name, err)
 	}
@@ -750,16 +640,11 @@ func (d *Database) DropUserContext(ctx context.Context, name string) error {
 // -- Settings ------------------------------------------------------------------
 
 // SetRecoveryModel changes the database recovery model.
-func (d *Database) SetRecoveryModel(model RecoveryModel) error {
-	return d.SetRecoveryModelContext(context.Background(), model)
-}
-
-// SetRecoveryModelContext is the context-aware variant.
-func (d *Database) SetRecoveryModelContext(ctx context.Context, model RecoveryModel) error {
+func (d *Database) SetRecoveryModel(ctx context.Context, model RecoveryModel) error {
 	if !validRecoveryModel(model) {
 		return fmt.Errorf("gosmo: set recovery model: unrecognized recovery model %q", model)
 	}
-	if err := d.server.execContext(ctx,
+	if err := d.server.exec(ctx,
 		fmt.Sprintf("ALTER DATABASE %s SET RECOVERY %s", quoteIdent(d.Name), model),
 	); err != nil {
 		return fmt.Errorf("gosmo: set recovery model: %w", err)
@@ -769,13 +654,8 @@ func (d *Database) SetRecoveryModelContext(ctx context.Context, model RecoveryMo
 }
 
 // SetCompatibilityLevel changes the database compatibility level.
-func (d *Database) SetCompatibilityLevel(level CompatibilityLevel) error {
-	return d.SetCompatibilityLevelContext(context.Background(), level)
-}
-
-// SetCompatibilityLevelContext is the context-aware variant.
-func (d *Database) SetCompatibilityLevelContext(ctx context.Context, level CompatibilityLevel) error {
-	if err := d.server.execContext(ctx,
+func (d *Database) SetCompatibilityLevel(ctx context.Context, level CompatibilityLevel) error {
+	if err := d.server.exec(ctx,
 		fmt.Sprintf("ALTER DATABASE %s SET COMPATIBILITY_LEVEL = %d", quoteIdent(d.Name), level),
 	); err != nil {
 		return fmt.Errorf("gosmo: set compatibility level: %w", err)
@@ -785,17 +665,12 @@ func (d *Database) SetCompatibilityLevelContext(ctx context.Context, level Compa
 }
 
 // SetReadOnly sets the database to read-only or read-write.
-func (d *Database) SetReadOnly(readOnly bool) error {
-	return d.SetReadOnlyContext(context.Background(), readOnly)
-}
-
-// SetReadOnlyContext is the context-aware variant.
-func (d *Database) SetReadOnlyContext(ctx context.Context, readOnly bool) error {
+func (d *Database) SetReadOnly(ctx context.Context, readOnly bool) error {
 	mode := "READ_WRITE"
 	if readOnly {
 		mode = "READ_ONLY"
 	}
-	if err := d.server.execContext(ctx,
+	if err := d.server.exec(ctx,
 		fmt.Sprintf("ALTER DATABASE %s SET %s", quoteIdent(d.Name), mode),
 	); err != nil {
 		return fmt.Errorf("gosmo: set read-only %v: %w", readOnly, err)
@@ -804,26 +679,33 @@ func (d *Database) SetReadOnlyContext(ctx context.Context, readOnly bool) error 
 	return nil
 }
 
-// userAccessModes allowlists the ALTER DATABASE SET user-access keywords —
-// can't be identifier-quoted or parameterised (ALTER DATABASE is DDL).
-var userAccessModes = map[string]bool{
-	"MULTI_USER": true, "SINGLE_USER": true, "RESTRICTED_USER": true,
+// UserAccess is a database's user-access mode, spelled as ALTER DATABASE SET
+// takes it and sys.databases.user_access_desc reports it.
+type UserAccess string
+
+const (
+	UserAccessMulti      UserAccess = "MULTI_USER"
+	UserAccessSingle     UserAccess = "SINGLE_USER"
+	UserAccessRestricted UserAccess = "RESTRICTED_USER"
+)
+
+// userAccessModes is UserAccess's validity check. The keyword can't be
+// identifier-quoted or parameterised (ALTER DATABASE is DDL), so a value
+// outside the constants — a conversion from an arbitrary string — is refused
+// here rather than spliced in.
+var userAccessModes = map[UserAccess]bool{
+	UserAccessMulti: true, UserAccessSingle: true, UserAccessRestricted: true,
 }
 
 // SetUserAccess changes the database's user-access mode (MULTI_USER,
 // SINGLE_USER, or RESTRICTED_USER — SSMS's Database Properties > Options
 // "Restrict access" setting). Existing connections that would violate the
 // new mode are rolled back immediately, matching SSMS's own behavior.
-func (d *Database) SetUserAccess(mode string) error {
-	return d.SetUserAccessContext(context.Background(), mode)
-}
-
-// SetUserAccessContext is the context-aware variant of SetUserAccess.
-func (d *Database) SetUserAccessContext(ctx context.Context, mode string) error {
+func (d *Database) SetUserAccess(ctx context.Context, mode UserAccess) error {
 	if !userAccessModes[mode] {
 		return fmt.Errorf("gosmo: set user access: unrecognized mode %q", mode)
 	}
-	if err := d.server.execContext(ctx,
+	if err := d.server.exec(ctx,
 		fmt.Sprintf("ALTER DATABASE %s SET %s WITH ROLLBACK IMMEDIATE", quoteIdent(d.Name), mode),
 	); err != nil {
 		return fmt.Errorf("gosmo: set user access %s: %w", mode, err)
@@ -832,15 +714,11 @@ func (d *Database) SetUserAccessContext(ctx context.Context, mode string) error 
 }
 
 // SetOffline takes the database offline.
-func (d *Database) SetOffline() error {
-	return d.SetOfflineContext(context.Background())
-}
-
-// SetOfflineContext is the context-aware variant of SetOffline. Existing
-// connections are rolled back immediately, matching SSMS's Object Explorer
-// "Take Database Offline" behavior.
-func (d *Database) SetOfflineContext(ctx context.Context) error {
-	if err := d.server.execContext(ctx,
+//
+// Existing connections are rolled back immediately, matching SSMS's Object
+// Explorer "Take Database Offline" behavior.
+func (d *Database) SetOffline(ctx context.Context) error {
+	if err := d.server.exec(ctx,
 		fmt.Sprintf("ALTER DATABASE %s SET OFFLINE WITH ROLLBACK IMMEDIATE", quoteIdent(d.Name)),
 	); err != nil {
 		return fmt.Errorf("gosmo: set offline: %w", err)
@@ -850,13 +728,8 @@ func (d *Database) SetOfflineContext(ctx context.Context) error {
 }
 
 // SetOnline brings an offline database back online.
-func (d *Database) SetOnline() error {
-	return d.SetOnlineContext(context.Background())
-}
-
-// SetOnlineContext is the context-aware variant of SetOnline.
-func (d *Database) SetOnlineContext(ctx context.Context) error {
-	if err := d.server.execContext(ctx,
+func (d *Database) SetOnline(ctx context.Context) error {
+	if err := d.server.exec(ctx,
 		fmt.Sprintf("ALTER DATABASE %s SET ONLINE", quoteIdent(d.Name)),
 	); err != nil {
 		return fmt.Errorf("gosmo: set online: %w", err)
@@ -878,12 +751,7 @@ type Trigger struct {
 }
 
 // Triggers returns all DML triggers in the database.
-func (d *Database) Triggers() ([]*Trigger, error) {
-	return d.TriggersContext(context.Background())
-}
-
-// TriggersContext is the context-aware variant of Triggers.
-func (d *Database) TriggersContext(ctx context.Context) ([]*Trigger, error) {
+func (d *Database) Triggers(ctx context.Context) ([]*Trigger, error) {
 	return d.triggersWhere(ctx, "", nil)
 }
 
@@ -902,41 +770,26 @@ WHERE  tr.is_ms_shipped = 0 AND tr.parent_class = 1 ` + where + `
 ORDER  BY tr.name`
 
 	rows, err := d.query(ctx, q, args...)
-	if err != nil {
-		return nil, fmt.Errorf("gosmo: list triggers in %q: %w", d.Name, err)
-	}
-	defer rows.Close()
-
-	var triggers []*Trigger
-	for rows.Next() {
+	return scanRows(rows, err, fmt.Sprintf("list triggers in %q", d.Name), func(scan func(...any) error) (*Trigger, error) {
 		t := &Trigger{}
 		var events sql.NullString
 		var isDisabled bool
-		if err := rows.Scan(&t.Name, &t.TableName, &t.Schema, &isDisabled,
+		if err := scan(&t.Name, &t.TableName, &t.Schema, &isDisabled,
 			&events, &t.Definition); err != nil {
-			return nil, fmt.Errorf("gosmo: list triggers in %q: %w", d.Name, err)
+			return nil, err
 		}
 		t.IsEnabled = !isDisabled
 		if events.Valid && events.String != "" {
 			t.Events = strings.Split(events.String, ",")
 		}
-		triggers = append(triggers, t)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("gosmo: list triggers in %q: %w", d.Name, err)
-	}
-	return triggers, nil
+		return t, nil
+	})
 }
 
 // DropTrigger drops a DML trigger. schema is the trigger's own schema —
 // the schema of the table it is defined on. A trigger that isn't there is the
 // server's error, not a silent success — see the note on Database.DropTable.
-func (d *Database) DropTrigger(schema, name string) error {
-	return d.DropTriggerContext(context.Background(), schema, name)
-}
-
-// DropTriggerContext is the context-aware variant of DropTrigger.
-func (d *Database) DropTriggerContext(ctx context.Context, schema, name string) error {
+func (d *Database) DropTrigger(ctx context.Context, schema, name string) error {
 	if schema == "" {
 		schema = "dbo"
 	}
@@ -958,12 +811,7 @@ func (d *Database) DropTriggerContext(ctx context.Context, schema, name string) 
 // This is sp_rename's default 'OBJECT' class: tables, views, procedures,
 // functions, sequences and synonyms. A type or an XML schema collection needs
 // TRANSFER's own class prefix and is not covered.
-func (d *Database) TransferObject(targetSchema, schema, name string) error {
-	return d.TransferObjectContext(context.Background(), targetSchema, schema, name)
-}
-
-// TransferObjectContext is the context-aware variant of TransferObject.
-func (d *Database) TransferObjectContext(ctx context.Context, targetSchema, schema, name string) error {
+func (d *Database) TransferObject(ctx context.Context, targetSchema, schema, name string) error {
 	if targetSchema == "" {
 		return fmt.Errorf("gosmo: transfer %s: target schema is required", qualifiedName(schema, name))
 	}
@@ -988,12 +836,7 @@ func (d *Database) TransferObjectContext(ctx context.Context, targetSchema, sche
 //
 // newName is a bare name: sp_rename refuses a qualified one, and renaming
 // does not move the object between schemas (ALTER SCHEMA ... TRANSFER does).
-func (d *Database) RenameObject(schema, oldName, newName string) error {
-	return d.RenameObjectContext(context.Background(), schema, oldName, newName)
-}
-
-// RenameObjectContext is the context-aware variant of RenameObject.
-func (d *Database) RenameObjectContext(ctx context.Context, schema, oldName, newName string) error {
+func (d *Database) RenameObject(ctx context.Context, schema, oldName, newName string) error {
 	if schema == "" {
 		schema = "dbo"
 	}

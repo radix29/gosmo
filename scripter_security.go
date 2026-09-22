@@ -11,13 +11,8 @@ import (
 // ============================================================
 
 // ScriptSchema generates the CREATE (or DROP) script for one schema.
-func (sc *Scripter) ScriptSchema(name string) (string, error) {
-	return sc.ScriptSchemaContext(context.Background(), name)
-}
-
-// ScriptSchemaContext is the context-aware variant of ScriptSchema.
-func (sc *Scripter) ScriptSchemaContext(ctx context.Context, name string) (string, error) {
-	schemas, err := sc.db.SchemasContext(ctx)
+func (sc *Scripter) ScriptSchema(ctx context.Context, name string) (string, error) {
+	schemas, err := sc.db.Schemas(ctx)
 	if err != nil {
 		return "", err
 	}
@@ -55,13 +50,8 @@ func buildSchemaScript(s *Schema, opts ScriptOptions) string {
 }
 
 // ScriptUser generates the CREATE (or DROP) script for one database user.
-func (sc *Scripter) ScriptUser(name string) (string, error) {
-	return sc.ScriptUserContext(context.Background(), name)
-}
-
-// ScriptUserContext is the context-aware variant of ScriptUser.
-func (sc *Scripter) ScriptUserContext(ctx context.Context, name string) (string, error) {
-	u, err := sc.db.UserByNameContext(ctx, name)
+func (sc *Scripter) ScriptUser(ctx context.Context, name string) (string, error) {
+	u, err := sc.db.UserByName(ctx, name)
 	if err != nil {
 		return "", err
 	}
@@ -117,13 +107,8 @@ func buildUserScript(u *User, opts ScriptOptions) string {
 
 // ScriptDatabaseRole generates the CREATE (or DROP) script for one database
 // role, including the ALTER ROLE statements that restore its membership.
-func (sc *Scripter) ScriptDatabaseRole(name string) (string, error) {
-	return sc.ScriptDatabaseRoleContext(context.Background(), name)
-}
-
-// ScriptDatabaseRoleContext is the context-aware variant.
-func (sc *Scripter) ScriptDatabaseRoleContext(ctx context.Context, name string) (string, error) {
-	roles, err := sc.db.DatabaseRolesContext(ctx)
+func (sc *Scripter) ScriptDatabaseRole(ctx context.Context, name string) (string, error) {
+	roles, err := sc.db.DatabaseRoles(ctx)
 	if err != nil {
 		return "", err
 	}
@@ -161,13 +146,8 @@ func buildDatabaseRoleScript(r *DatabaseRole, opts ScriptOptions) string {
 
 // ScriptDatabaseAuditSpecification generates the CREATE (or DROP) script for
 // one database audit specification.
-func (sc *Scripter) ScriptDatabaseAuditSpecification(name string) (string, error) {
-	return sc.ScriptDatabaseAuditSpecificationContext(context.Background(), name)
-}
-
-// ScriptDatabaseAuditSpecificationContext is the context-aware variant.
-func (sc *Scripter) ScriptDatabaseAuditSpecificationContext(ctx context.Context, name string) (string, error) {
-	spec, err := sc.db.DatabaseAuditSpecificationByNameContext(ctx, name)
+func (sc *Scripter) ScriptDatabaseAuditSpecification(ctx context.Context, name string) (string, error) {
+	spec, err := sc.db.DatabaseAuditSpecificationByName(ctx, name)
 	if err != nil {
 		return "", err
 	}
@@ -218,13 +198,8 @@ func buildDatabaseAuditSpecificationScript(s *DatabaseAuditSpecification, opts S
 
 // ScriptDatabaseScopedCredential generates the CREATE (or DROP) script for
 // one database-scoped credential.
-func (sc *Scripter) ScriptDatabaseScopedCredential(name string) (string, error) {
-	return sc.ScriptDatabaseScopedCredentialContext(context.Background(), name)
-}
-
-// ScriptDatabaseScopedCredentialContext is the context-aware variant.
-func (sc *Scripter) ScriptDatabaseScopedCredentialContext(ctx context.Context, name string) (string, error) {
-	c, err := sc.db.DatabaseScopedCredentialByNameContext(ctx, name)
+func (sc *Scripter) ScriptDatabaseScopedCredential(ctx context.Context, name string) (string, error) {
+	c, err := sc.db.DatabaseScopedCredentialByName(ctx, name)
 	if err != nil {
 		return "", err
 	}
@@ -268,30 +243,20 @@ func buildDatabaseScopedCredentialScript(c *DatabaseScopedCredential, opts Scrip
 
 // ScriptCertificate generates the CREATE (or DROP) script for one
 // certificate.
-func (sc *Scripter) ScriptCertificate(name string) (string, error) {
-	return sc.ScriptCertificateContext(context.Background(), name)
-}
-
-// ScriptCertificateContext is the context-aware variant of ScriptCertificate.
 //
 // CREATE reads the public certificate with CERTENCODED and emits it as FROM
 // BINARY, which recreates the same certificate — same thumbprint, subject,
 // issuer, serial number and validity — on every supported version. The
 // private key cannot be read back, so a script run elsewhere yields a
 // certificate that can verify but not sign or decrypt; the script says so.
-func (sc *Scripter) ScriptCertificateContext(ctx context.Context, name string) (string, error) {
-	c, err := sc.db.CertificateByNameContext(ctx, name)
+func (sc *Scripter) ScriptCertificate(ctx context.Context, name string) (string, error) {
+	c, err := sc.db.CertificateByName(ctx, name)
 	if err != nil {
 		return "", err
 	}
-	// CertificateByName answers (nil, nil) on absence — a published contract
-	// — so the scripter turns it into the ordinary not-found error itself.
-	if c == nil {
-		return "", notFoundf("gosmo: certificate %s not found", quoteIdent(name))
-	}
 	var encoded []byte
 	if sc.opts.verb() != ScriptDrop {
-		if encoded, err = c.EncodedContext(ctx); err != nil {
+		if encoded, err = c.Encoded(ctx); err != nil {
 			return "", err
 		}
 	}
@@ -337,26 +302,15 @@ func buildCertificateScript(c *Certificate, encoded []byte, opts ScriptOptions) 
 
 // ScriptAsymmetricKey generates the CREATE (or DROP) script for one
 // asymmetric key.
-func (sc *Scripter) ScriptAsymmetricKey(name string) (string, error) {
-	return sc.ScriptAsymmetricKeyContext(context.Background(), name)
-}
-
-// ScriptAsymmetricKeyContext is the context-aware variant of
-// ScriptAsymmetricKey.
 //
 // Neither half of an asymmetric key can be scripted back into existence:
 // CREATE ASYMMETRIC KEY has no FROM BINARY form, only imports that read the
-// server's filesystem or an EKM provider. So CREATE is the generated form
-// with the key's algorithm and owner, and says the result is a new key pair.
-func (sc *Scripter) ScriptAsymmetricKeyContext(ctx context.Context, name string) (string, error) {
-	k, err := sc.db.AsymmetricKeyByNameContext(ctx, name)
+// server's filesystem or an EKM provider. So CREATE is the generated form with
+// the key's algorithm and owner, and says the result is a new key pair.
+func (sc *Scripter) ScriptAsymmetricKey(ctx context.Context, name string) (string, error) {
+	k, err := sc.db.AsymmetricKeyByName(ctx, name)
 	if err != nil {
 		return "", err
-	}
-	// AsymmetricKeyByName answers (nil, nil) on absence — a published
-	// contract — so the scripter turns it into the ordinary not-found error.
-	if k == nil {
-		return "", notFoundf("gosmo: asymmetric key %s not found", quoteIdent(name))
 	}
 	return buildAsymmetricKeyScript(k, sc.opts), nil
 }
@@ -415,19 +369,13 @@ func buildAsymmetricKeyScript(k *AsymmetricKey, opts ScriptOptions) string {
 
 // ScriptSymmetricKey generates the CREATE (or DROP) script for one symmetric
 // key.
-func (sc *Scripter) ScriptSymmetricKey(name string) (string, error) {
-	return sc.ScriptSymmetricKeyContext(context.Background(), name)
-}
-
-// ScriptSymmetricKeyContext is the context-aware variant of
-// ScriptSymmetricKey.
 //
 // A symmetric key's material cannot be read back, and neither can the
 // KEY_SOURCE and IDENTITY_VALUE that would regenerate it. So CREATE carries
-// the algorithm, owner and every ENCRYPTION BY the key has now — passwords as
-// placeholders — and says the result is a new key.
-func (sc *Scripter) ScriptSymmetricKeyContext(ctx context.Context, name string) (string, error) {
-	k, err := sc.db.SymmetricKeyByNameContext(ctx, name)
+// the algorithm, owner and every ENCRYPTION BY the key has now — passwords
+// as placeholders — and says the result is a new key.
+func (sc *Scripter) ScriptSymmetricKey(ctx context.Context, name string) (string, error) {
+	k, err := sc.db.SymmetricKeyByName(ctx, name)
 	if err != nil {
 		return "", err
 	}
@@ -517,14 +465,8 @@ func buildSymmetricKeyScript(k *SymmetricKey, opts ScriptOptions) string {
 
 // ScriptSecurityPolicy generates the CREATE (or DROP) script for one
 // row-level security policy.
-func (sc *Scripter) ScriptSecurityPolicy(schema, name string) (string, error) {
-	return sc.ScriptSecurityPolicyContext(context.Background(), schema, name)
-}
-
-// ScriptSecurityPolicyContext is the context-aware variant of
-// ScriptSecurityPolicy.
-func (sc *Scripter) ScriptSecurityPolicyContext(ctx context.Context, schema, name string) (string, error) {
-	policies, err := sc.db.SecurityPoliciesContext(ctx)
+func (sc *Scripter) ScriptSecurityPolicy(ctx context.Context, schema, name string) (string, error) {
+	policies, err := sc.db.SecurityPolicies(ctx)
 	if err != nil {
 		return "", err
 	}
@@ -578,14 +520,8 @@ func buildSecurityPolicyScript(p *SecurityPolicy, opts ScriptOptions) string {
 
 // ScriptColumnMasterKey generates the CREATE (or DROP) script for one
 // Always Encrypted column master key.
-func (sc *Scripter) ScriptColumnMasterKey(name string) (string, error) {
-	return sc.ScriptColumnMasterKeyContext(context.Background(), name)
-}
-
-// ScriptColumnMasterKeyContext is the context-aware variant of
-// ScriptColumnMasterKey.
-func (sc *Scripter) ScriptColumnMasterKeyContext(ctx context.Context, name string) (string, error) {
-	keys, err := sc.db.ColumnMasterKeysContext(ctx)
+func (sc *Scripter) ScriptColumnMasterKey(ctx context.Context, name string) (string, error) {
+	keys, err := sc.db.ColumnMasterKeys(ctx)
 	if err != nil {
 		return "", err
 	}
@@ -627,14 +563,8 @@ func buildColumnMasterKeyScript(k *ColumnMasterKey, opts ScriptOptions) string {
 
 // ScriptColumnEncryptionKey generates the CREATE (or DROP) script for one
 // Always Encrypted column encryption key.
-func (sc *Scripter) ScriptColumnEncryptionKey(name string) (string, error) {
-	return sc.ScriptColumnEncryptionKeyContext(context.Background(), name)
-}
-
-// ScriptColumnEncryptionKeyContext is the context-aware variant of
-// ScriptColumnEncryptionKey.
-func (sc *Scripter) ScriptColumnEncryptionKeyContext(ctx context.Context, name string) (string, error) {
-	keys, err := sc.db.ColumnEncryptionKeysContext(ctx)
+func (sc *Scripter) ScriptColumnEncryptionKey(ctx context.Context, name string) (string, error) {
+	keys, err := sc.db.ColumnEncryptionKeys(ctx)
 	if err != nil {
 		return "", err
 	}

@@ -29,7 +29,7 @@ type DatabaseScopedConfig struct {
 }
 
 // scopedConfigSelect renders the read. Split out from
-// DatabaseScopedConfigsContext so the version gate can be asserted at every
+// DatabaseScopedConfigs so the version gate can be asserted at every
 // major without a server.
 func (d *Database) scopedConfigSelect() string {
 	// is_value_default was "Added in SQL Server 2017" — the column table of
@@ -46,33 +46,17 @@ ORDER  BY name`
 }
 
 // DatabaseScopedConfigs returns every database scoped configuration option.
-func (d *Database) DatabaseScopedConfigs() ([]*DatabaseScopedConfig, error) {
-	return d.DatabaseScopedConfigsContext(context.Background())
-}
-
-// DatabaseScopedConfigsContext is the context-aware variant of
-// DatabaseScopedConfigs.
-func (d *Database) DatabaseScopedConfigsContext(ctx context.Context) ([]*DatabaseScopedConfig, error) {
+func (d *Database) DatabaseScopedConfigs(ctx context.Context) ([]*DatabaseScopedConfig, error) {
 	q := d.scopedConfigSelect()
 
 	rows, err := d.query(ctx, q)
-	if err != nil {
-		return nil, fmt.Errorf("gosmo: database scoped configurations in %q: %w", d.Name, err)
-	}
-	defer rows.Close()
-
-	var configs []*DatabaseScopedConfig
-	for rows.Next() {
+	return scanRows(rows, err, fmt.Sprintf("database scoped configurations in %q", d.Name), func(scan func(...any) error) (*DatabaseScopedConfig, error) {
 		c := &DatabaseScopedConfig{}
-		if err := rows.Scan(&c.ID, &c.Name, &c.Value, &c.ValueForSecondary, &c.IsValueDefault); err != nil {
-			return nil, fmt.Errorf("gosmo: database scoped configurations in %q: %w", d.Name, err)
+		if err := scan(&c.ID, &c.Name, &c.Value, &c.ValueForSecondary, &c.IsValueDefault); err != nil {
+			return nil, err
 		}
-		configs = append(configs, c)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("gosmo: database scoped configurations in %q: %w", d.Name, err)
-	}
-	return configs, nil
+		return c, nil
+	})
 }
 
 // buildScopedConfigStatement renders (and validates the inputs of) one
@@ -103,16 +87,11 @@ func buildScopedConfigStatement(name, value string, forSecondary bool) (string, 
 // reference for each option's accepted values. forSecondary applies the
 // change to readable secondary replicas (FOR SECONDARY) instead of the
 // primary.
-func (d *Database) SetDatabaseScopedConfig(name, value string, forSecondary bool) error {
-	return d.SetDatabaseScopedConfigContext(context.Background(), name, value, forSecondary)
-}
-
-// SetDatabaseScopedConfigContext is the context-aware variant of
-// SetDatabaseScopedConfig. Unlike ALTER DATABASE SET options
-// (SetDatabaseOptionContext), ALTER DATABASE SCOPED CONFIGURATION is
-// scoped to whichever database is current, so this runs through d.exec
-// (USE first), not d.server.execContext.
-func (d *Database) SetDatabaseScopedConfigContext(ctx context.Context, name, value string, forSecondary bool) error {
+//
+// Unlike ALTER DATABASE SET options (SetDatabaseOption), ALTER DATABASE
+// SCOPED CONFIGURATION is scoped to whichever database is current, so this
+// runs through d.exec (USE first), not d.server.exec.
+func (d *Database) SetDatabaseScopedConfig(ctx context.Context, name, value string, forSecondary bool) error {
 	q, err := buildScopedConfigStatement(name, value, forSecondary)
 	if err != nil {
 		return err

@@ -34,8 +34,9 @@ func main() {
 	db, drop := demo.TempDatabase(srv, dbName)
 	defer drop()
 
-	demo.Must(db.CreateSchema("Sales", "dbo"))
-	demo.Must(db.CreateTable(gosmo.CreateTableRequest{
+	ctx := context.Background()
+	demo.Must(db.CreateSchema(ctx, "Sales", "dbo"))
+	demo.Must(db.CreateTable(ctx, gosmo.CreateTableRequest{
 		Schema: "Sales",
 		Name:   "Invoice",
 		Columns: []gosmo.ColumnDefinition{
@@ -46,8 +47,8 @@ func main() {
 			{Name: "Issued", DataType: gosmo.DataTypeDatetime2, Scale: 7, IsNullable: false, DefaultValue: "sysutcdatetime()"},
 		},
 	}))
-	inv := demo.Value(db.TableByName("Sales", "Invoice"))
-	demo.Must(inv.CreateIndex(gosmo.CreateIndexRequest{
+	inv := demo.Value(db.TableByName(ctx, "Sales", "Invoice"))
+	demo.Must(inv.CreateIndex(ctx, gosmo.CreateIndexRequest{
 		Name:            "IX_Invoice_Customer",
 		Type:            gosmo.IndexTypeNonClustered,
 		KeyColumns:      []gosmo.IndexColumnDef{{Name: "CustomerName"}, {Name: "Issued", Descending: true}},
@@ -55,7 +56,7 @@ func main() {
 	}))
 	// CreateStoredProcedure's body is the T-SQL after AS; gosmo writes the
 	// CREATE OR ALTER PROCEDURE header itself.
-	demo.Must(db.CreateStoredProcedure("Sales", "InvoiceTotals", `
+	demo.Must(db.CreateStoredProcedure(ctx, "Sales", "InvoiceTotals", `
 BEGIN
     SET NOCOUNT ON;
     SELECT CustomerName, SUM(Amount) AS Total
@@ -66,7 +67,7 @@ END`))
 	// -- Default options ---------------------------------------------------
 	demo.Section("ScriptTable, default options")
 	sc := gosmo.NewScripter(db, gosmo.DefaultScriptOptions())
-	fmt.Println(indent(demo.Value(sc.ScriptTable("Sales", "Invoice"))))
+	fmt.Println(indent(demo.Value(sc.ScriptTable(ctx, "Sales", "Invoice"))))
 
 	// -- Every option turned up -------------------------------------------
 	//
@@ -80,12 +81,12 @@ END`))
 		SchemaQualify:      true,
 		AnsiPadding:        true,
 	})
-	fmt.Println(indent(demo.Value(verbose.ScriptTable("Sales", "Invoice"))))
+	fmt.Println(indent(demo.Value(verbose.ScriptTable(ctx, "Sales", "Invoice"))))
 
 	// -- DROP instead of CREATE -------------------------------------------
 	demo.Section("ScriptTable, ScriptDrops")
 	dropper := gosmo.NewScripter(db, gosmo.ScriptOptions{ScriptDrops: true, SchemaQualify: true})
-	fmt.Println(indent(demo.Value(dropper.ScriptTable("Sales", "Invoice"))))
+	fmt.Println(indent(demo.Value(dropper.ScriptTable(ctx, "Sales", "Invoice"))))
 
 	// -- Modules come back verbatim ---------------------------------------
 	//
@@ -93,11 +94,11 @@ END`))
 	// sys.sql_modules as-is, so IncludeHeaders and IncludeIfNotExists have
 	// nothing to add to them — those two options apply to synthesized DDL.
 	demo.Section("ScriptStoredProcedure")
-	fmt.Println(indent(demo.Value(sc.ScriptStoredProcedure("Sales", "InvoiceTotals"))))
+	fmt.Println(indent(demo.Value(sc.ScriptStoredProcedure(ctx, "Sales", "InvoiceTotals"))))
 
 	// -- The whole database ------------------------------------------------
 	demo.Section("ScriptDatabase (line count only)")
-	whole := demo.Value(sc.ScriptDatabase())
+	whole := demo.Value(sc.ScriptDatabase(ctx))
 	fmt.Printf("  %d lines, %d bytes\n", strings.Count(whole, "\n")+1, len(whole))
 
 	// -- Collect writes instead of running them ---------------------------
@@ -105,19 +106,19 @@ END`))
 	// Under a WithScript context every write method records its statement
 	// and returns success without touching the server. Note two things:
 	//
-	//   - Use srv.Database(name), not srv.DatabaseByName(name). The latter
+	//   - Use srv.DatabaseRef(name), not srv.DatabaseByName(name). The latter
 	//     queries sys.databases for metadata; the lightweight handle is the
 	//     one that works when nothing is meant to reach the server.
 	//   - A write "succeeds" without happening, so any state you derive from
 	//     it is wrong — a rename followed by a re-read by the new name finds
 	//     nothing. gosmo.Scripting(ctx) is how you detect that case.
 	demo.Section("WithScript: collect, don't execute")
-	ctx, script := gosmo.WithScript(context.Background())
+	ctx, script := gosmo.WithScript(ctx)
 	fmt.Printf("  gosmo.Scripting(ctx) = %t\n\n", gosmo.Scripting(ctx))
 
 	pending := srv.DatabaseRef(dbName)
-	demo.Must(pending.CreateSchemaContext(ctx, "Archive", "dbo"))
-	demo.Must(pending.CreateTableContext(ctx, gosmo.CreateTableRequest{
+	demo.Must(pending.CreateSchema(ctx, "Archive", "dbo"))
+	demo.Must(pending.CreateTable(ctx, gosmo.CreateTableRequest{
 		Schema: "Archive",
 		Name:   "InvoiceHistory",
 		Columns: []gosmo.ColumnDefinition{
@@ -125,17 +126,17 @@ END`))
 			{Name: "ArchivedAt", DataType: gosmo.DataTypeDatetime2, Scale: 0, IsNullable: false},
 		},
 	}))
-	demo.Must(pending.GrantDatabasePermissionContext(ctx, "SELECT", "public"))
-	demo.Must(pending.SetDatabaseOptionContext(ctx, gosmo.DBOptAutoShrink, "OFF"))
-	demo.Must(pending.SetRecoveryModelContext(ctx, gosmo.RecoveryModelBulkLogged))
+	demo.Must(pending.GrantDatabasePermission(ctx, "SELECT", "public"))
+	demo.Must(pending.SetDatabaseOption(ctx, gosmo.DBOptAutoShrink, "OFF"))
+	demo.Must(pending.SetRecoveryModel(ctx, gosmo.RecoveryModelBulkLogged))
 
-	for i, stmt := range script.Statements {
-		fmt.Printf("  -- statement %d\n%s\n\n", i+1, indent(stmt))
-	}
+	// String renders the capture as one runnable script: each statement in a
+	// batch of its own, with a USE wherever the database changes.
+	fmt.Printf("%s\n", indent(script.String()))
 
 	// Nothing above reached the server: the Archive schema does not exist.
 	names := make([]string, 0)
-	for _, s := range demo.Value(db.Schemas()) {
+	for _, s := range demo.Value(db.Schemas(ctx)) {
 		names = append(names, s.Name)
 	}
 	fmt.Printf("  schemas actually in [%s]: %s\n", dbName, strings.Join(names, ", "))

@@ -18,20 +18,20 @@ import (
 func TestScriptedCreatesEmitOneStatement(t *testing.T) {
 	runScriptCases(t, []scriptCase{
 		{"CreateServerAudit", func(c context.Context) error {
-			_, err := (&Server{}).CreateServerAuditContext(c, ServerAuditSpec{
+			_, err := (&Server{}).CreateServerAudit(c, ServerAuditSpec{
 				Name: "aud]1", Type: AuditToSecurityLog, OnFailure: AuditFailureContinue,
 			})
 			return err
 		}, "CREATE SERVER AUDIT [aud]]1]\nTO SECURITY_LOG\nWITH ( QUEUE_DELAY = 0, ON_FAILURE = CONTINUE )"},
 		{"CreateServerAuditSpecification", func(c context.Context) error {
-			_, err := (&Server{}).CreateServerAuditSpecificationContext(c, ServerAuditSpecificationSpec{
+			_, err := (&Server{}).CreateServerAuditSpecification(c, ServerAuditSpecificationSpec{
 				Name: "spec'1", AuditName: "aud]1", ActionGroups: []string{"FAILED_LOGIN_GROUP"},
 			})
 			return err
 		}, "CREATE SERVER AUDIT SPECIFICATION [spec'1]\nFOR SERVER AUDIT [aud]]1]\n" +
 			"    ADD (FAILED_LOGIN_GROUP)\nWITH ( STATE = OFF )"},
 		{"CreateDatabaseAuditSpecification", func(c context.Context) error {
-			_, err := scriptTestDB().CreateDatabaseAuditSpecificationContext(c, DatabaseAuditSpecificationSpec{
+			_, err := scriptTestDB().CreateDatabaseAuditSpecification(c, DatabaseAuditSpecificationSpec{
 				Name: "spec'1", AuditName: "aud]1",
 				ActionGroups: []string{"SCHEMA_OBJECT_ACCESS_GROUP"}, Enabled: true,
 			})
@@ -39,7 +39,7 @@ func TestScriptedCreatesEmitOneStatement(t *testing.T) {
 		}, scriptUsePrefix + "CREATE DATABASE AUDIT SPECIFICATION [spec'1]\nFOR SERVER AUDIT [aud]]1]\n" +
 			"    ADD (SCHEMA_OBJECT_ACCESS_GROUP)\nWITH ( STATE = ON )"},
 		{"CreateDatabaseSnapshot", func(c context.Context) error {
-			_, err := (&Server{}).CreateDatabaseSnapshotContext(c, CreateDatabaseSnapshotRequest{
+			_, err := (&Server{}).CreateDatabaseSnapshot(c, CreateDatabaseSnapshotRequest{
 				Name: "App'DB_snap", SourceDatabase: "App'DB",
 				Files: []SnapshotFileSpec{{LogicalName: "App]Data", FileName: `C:\snap\a'1.ss`}},
 			})
@@ -47,7 +47,7 @@ func TestScriptedCreatesEmitOneStatement(t *testing.T) {
 		}, "CREATE DATABASE [App'DB_snap] ON\n    ( NAME = [App]]Data], FILENAME = 'C:\\snap\\a''1.ss' )\n" +
 			"AS SNAPSHOT OF [App'DB]"},
 		{"AddListener", func(c context.Context) error {
-			return (&AvailabilityGroup{server: &Server{}, Name: "AA]G1"}).AddListenerContext(c,
+			return (&AvailabilityGroup{server: &Server{}, Name: "AA]G1"}).AddListener(c,
 				AvailabilityListenerSpec{DNSName: "aaglsn", Port: 1433,
 					IPAddresses: []AvailabilityListenerIPSpec{{IPAddress: "10.0.0.9", SubnetMask: "255.255.255.0"}}})
 		}, "ALTER AVAILABILITY GROUP [AA]]G1] ADD LISTENER N'aaglsn' " +
@@ -62,41 +62,41 @@ func TestScriptedCreatesReturnANamedHandle(t *testing.T) {
 	ctx, _ := WithScript(context.Background())
 	srv := &Server{}
 
-	audit, err := srv.CreateServerAuditContext(ctx, ServerAuditSpec{
+	audit, err := srv.CreateServerAudit(ctx, ServerAuditSpec{
 		Name: "aud]1", Type: AuditToSecurityLog,
 	})
 	if err != nil {
-		t.Fatalf("CreateServerAuditContext: %v", err)
+		t.Fatalf("CreateServerAudit: %v", err)
 	}
 	if audit == nil || audit.Name != "aud]1" {
 		t.Errorf("server audit handle = %+v, want one named aud]1", audit)
 	}
 
-	spec, err := srv.CreateServerAuditSpecificationContext(ctx, ServerAuditSpecificationSpec{
+	spec, err := srv.CreateServerAuditSpecification(ctx, ServerAuditSpecificationSpec{
 		Name: "spec'1", AuditName: "aud]1",
 	})
 	if err != nil {
-		t.Fatalf("CreateServerAuditSpecificationContext: %v", err)
+		t.Fatalf("CreateServerAuditSpecification: %v", err)
 	}
 	if spec == nil || spec.Name != "spec'1" {
 		t.Errorf("server audit specification handle = %+v, want one named spec'1", spec)
 	}
 
-	dbSpec, err := scriptTestDB().CreateDatabaseAuditSpecificationContext(ctx,
+	dbSpec, err := scriptTestDB().CreateDatabaseAuditSpecification(ctx,
 		DatabaseAuditSpecificationSpec{Name: "spec'1", AuditName: "aud]1"})
 	if err != nil {
-		t.Fatalf("CreateDatabaseAuditSpecificationContext: %v", err)
+		t.Fatalf("CreateDatabaseAuditSpecification: %v", err)
 	}
 	if dbSpec == nil || dbSpec.Name != "spec'1" {
 		t.Errorf("database audit specification handle = %+v, want one named spec'1", dbSpec)
 	}
 
-	snap, err := srv.CreateDatabaseSnapshotContext(ctx, CreateDatabaseSnapshotRequest{
+	snap, err := srv.CreateDatabaseSnapshot(ctx, CreateDatabaseSnapshotRequest{
 		Name: "App'DB_snap", SourceDatabase: "App'DB",
 		Files: []SnapshotFileSpec{{LogicalName: "App]Data", FileName: `C:\snap\a'1.ss`}},
 	})
 	if err != nil {
-		t.Fatalf("CreateDatabaseSnapshotContext: %v", err)
+		t.Fatalf("CreateDatabaseSnapshot: %v", err)
 	}
 	if snap == nil || snap.Name != "App'DB_snap" || snap.SourceDatabase != "App'DB" {
 		t.Errorf("snapshot handle = %+v, want one named App'DB_snap of App'DB", snap)
@@ -105,14 +105,14 @@ func TestScriptedCreatesReturnANamedHandle(t *testing.T) {
 	// The group's handle carries its cluster type as well as its name: the
 	// join that follows a scripted create has to name it back, and under
 	// EXTERNAL or NONE there is no metadata anywhere to read it from.
-	ag, err := srv.CreateAvailabilityGroupContext(ctx, CreateAvailabilityGroupRequest{
+	ag, err := srv.CreateAvailabilityGroup(ctx, CreateAvailabilityGroupRequest{
 		Name: "AA]G1", ClusterType: "external", RequiredSynchronizedSecondariesToCommit: -1,
 		Replicas: []AvailabilityReplicaSpec{
 			{ServerName: "ubusql1", EndpointURL: "tcp://ubusql1:5022", BackupPriority: -1},
 		},
 	})
 	if err != nil {
-		t.Fatalf("CreateAvailabilityGroupContext: %v", err)
+		t.Fatalf("CreateAvailabilityGroup: %v", err)
 	}
 	if ag == nil || ag.Name != "AA]G1" || ag.ClusterType != "EXTERNAL" {
 		t.Errorf("availability group handle = %+v, want AA]G1 with cluster type EXTERNAL", ag)

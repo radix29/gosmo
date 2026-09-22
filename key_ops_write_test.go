@@ -21,7 +21,7 @@ func capture(t *testing.T, writes ...func(ctx context.Context) error) []string {
 			t.Fatalf("write %d: %v", i, err)
 		}
 	}
-	return col.Statements
+	return col.Statements()
 }
 
 func assertStatements(t *testing.T, got, want []string) {
@@ -41,18 +41,18 @@ func TestCertificateBackupRemoveKeyAndOwner(t *testing.T) {
 	c := d.CertificateRef("c]1")
 	got := capture(t,
 		func(ctx context.Context) error {
-			return c.BackupContext(ctx, CertificateBackupSpec{File: `C:\b\it's.cer`})
+			return c.Backup(ctx, CertificateBackupSpec{File: `C:\b\it's.cer`})
 		},
 		func(ctx context.Context) error {
-			return c.BackupContext(ctx, CertificateBackupSpec{File: `C:\b\c.cer`,
+			return c.Backup(ctx, CertificateBackupSpec{File: `C:\b\c.cer`,
 				PrivateKeyFile: `C:\b\c.pvk`, EncryptionPassword: "enc"})
 		},
 		func(ctx context.Context) error {
-			return c.BackupContext(ctx, CertificateBackupSpec{File: `C:\b\c.cer`,
+			return c.Backup(ctx, CertificateBackupSpec{File: `C:\b\c.cer`,
 				PrivateKeyFile: `C:\b\c.pvk`, EncryptionPassword: "enc", DecryptionPassword: "d'ec"})
 		},
-		c.RemovePrivateKeyContext,
-		func(ctx context.Context) error { return c.ChangeOwnerContext(ctx, "u]1") },
+		c.RemovePrivateKey,
+		func(ctx context.Context) error { return c.ChangeOwner(ctx, "u]1") },
 	)
 	assertStatements(t, got, []string{
 		useAppDB + `BACKUP CERTIFICATE [c]]1] TO FILE = N'C:\b\it''s.cer'`,
@@ -86,9 +86,9 @@ func TestAsymmetricAndSymmetricKeyOwnerAndPrivateKey(t *testing.T) {
 	d := (&Server{}).DatabaseRef("AppDB")
 	a, s := d.AsymmetricKeyRef("a"), d.SymmetricKeyRef("s")
 	got := capture(t,
-		a.RemovePrivateKeyContext,
-		func(ctx context.Context) error { return a.ChangeOwnerContext(ctx, "u") },
-		func(ctx context.Context) error { return s.ChangeOwnerContext(ctx, "u") },
+		a.RemovePrivateKey,
+		func(ctx context.Context) error { return a.ChangeOwner(ctx, "u") },
+		func(ctx context.Context) error { return s.ChangeOwner(ctx, "u") },
 	)
 	assertStatements(t, got, []string{
 		useAppDB + "ALTER ASYMMETRIC KEY [a] REMOVE PRIVATE KEY",
@@ -170,22 +170,22 @@ func TestMasterKeyWrites(t *testing.T) {
 			"    CLOSE MASTER KEY;\nTHROW;\nEND CATCH;"
 	}
 	got := capture(t,
-		func(ctx context.Context) error { return m.RegenerateContext(ctx, "new", false, "") },
-		func(ctx context.Context) error { return m.RegenerateContext(ctx, "new", true, "op") },
+		func(ctx context.Context) error { return m.Regenerate(ctx, "new", false, "") },
+		func(ctx context.Context) error { return m.Regenerate(ctx, "new", true, "op") },
 		func(ctx context.Context) error {
-			return m.AddEncryptionContext(ctx, MasterKeyEncryptor{ServiceMasterKey: true}, "op")
+			return m.AddEncryption(ctx, MasterKeyEncryptor{ServiceMasterKey: true}, "op")
 		},
 		func(ctx context.Context) error {
-			return m.DropEncryptionContext(ctx, MasterKeyEncryptor{ServiceMasterKey: true}, "")
+			return m.DropEncryption(ctx, MasterKeyEncryptor{ServiceMasterKey: true}, "")
 		},
 		func(ctx context.Context) error {
-			return m.AddEncryptionContext(ctx, MasterKeyEncryptor{Password: "p'2"}, "")
+			return m.AddEncryption(ctx, MasterKeyEncryptor{Password: "p'2"}, "")
 		},
 		func(ctx context.Context) error {
-			return m.DropEncryptionContext(ctx, MasterKeyEncryptor{Password: "p2"}, "")
+			return m.DropEncryption(ctx, MasterKeyEncryptor{Password: "p2"}, "")
 		},
-		func(ctx context.Context) error { return m.BackupContext(ctx, `C:\b\dmk.key`, "enc", "") },
-		m.DropContext,
+		func(ctx context.Context) error { return m.Backup(ctx, `C:\b\dmk.key`, "enc", "") },
+		m.Drop,
 	)
 	assertStatements(t, got, []string{
 		useAppDB + "ALTER MASTER KEY REGENERATE WITH ENCRYPTION BY PASSWORD = N'new'",
@@ -203,19 +203,19 @@ func TestMasterKeyWritesReject(t *testing.T) {
 	ctx, col := WithScript(context.Background())
 	m := (&Server{}).DatabaseRef("AppDB").MasterKeyRef()
 	for _, err := range []error{
-		m.RegenerateContext(ctx, "", false, ""),
-		m.AddEncryptionContext(ctx, MasterKeyEncryptor{}, ""),
-		m.AddEncryptionContext(ctx, MasterKeyEncryptor{ServiceMasterKey: true, Password: "p"}, ""),
-		m.DropEncryptionContext(ctx, MasterKeyEncryptor{}, ""),
-		m.BackupContext(ctx, "", "enc", ""),
-		m.BackupContext(ctx, "f", "", ""),
+		m.Regenerate(ctx, "", false, ""),
+		m.AddEncryption(ctx, MasterKeyEncryptor{}, ""),
+		m.AddEncryption(ctx, MasterKeyEncryptor{ServiceMasterKey: true, Password: "p"}, ""),
+		m.DropEncryption(ctx, MasterKeyEncryptor{}, ""),
+		m.Backup(ctx, "", "enc", ""),
+		m.Backup(ctx, "f", "", ""),
 	} {
 		if err == nil {
 			t.Error("an invalid master key write was accepted")
 		}
 	}
-	if len(col.Statements) != 0 {
-		t.Errorf("a refused write still sent: %q", col.Statements)
+	if len(col.Statements()) != 0 {
+		t.Errorf("a refused write still sent: %q", col.Statements())
 	}
 }
 
@@ -243,11 +243,11 @@ func TestSignatureWrites(t *testing.T) {
 	cert := Signer{Kind: SignerCertificate, Name: "c", Password: "p'w"}
 	asym := Signer{Kind: SignerAsymmetricKey, Name: "a"}
 	got := capture(t,
-		func(ctx context.Context) error { return d.AddSignatureContext(ctx, "dbo", "p]1", cert, false) },
-		func(ctx context.Context) error { return d.AddSignatureContext(ctx, "dbo", "f", asym, true) },
+		func(ctx context.Context) error { return d.AddSignature(ctx, "dbo", "p]1", cert, false) },
+		func(ctx context.Context) error { return d.AddSignature(ctx, "dbo", "f", asym, true) },
 		// DROP takes no password, even when the signer has one.
-		func(ctx context.Context) error { return d.DropSignatureContext(ctx, "dbo", "p]1", cert, false) },
-		func(ctx context.Context) error { return d.DropSignatureContext(ctx, "dbo", "f", asym, true) },
+		func(ctx context.Context) error { return d.DropSignature(ctx, "dbo", "p]1", cert, false) },
+		func(ctx context.Context) error { return d.DropSignature(ctx, "dbo", "f", asym, true) },
 	)
 	assertStatements(t, got, []string{
 		useAppDB + "ADD SIGNATURE TO [dbo].[p]]1] BY CERTIFICATE [c] WITH PASSWORD = N'p''w'",
@@ -258,15 +258,15 @@ func TestSignatureWrites(t *testing.T) {
 
 	ctx, col := WithScript(context.Background())
 	for _, err := range []error{
-		d.AddSignatureContext(ctx, "dbo", "", cert, false),
-		d.AddSignatureContext(ctx, "dbo", "p", Signer{Kind: "SYMMETRIC KEY", Name: "s"}, false),
-		d.AddSignatureContext(ctx, "dbo", "p", Signer{Kind: SignerCertificate}, false),
+		d.AddSignature(ctx, "dbo", "", cert, false),
+		d.AddSignature(ctx, "dbo", "p", Signer{Kind: "SYMMETRIC KEY", Name: "s"}, false),
+		d.AddSignature(ctx, "dbo", "p", Signer{Kind: SignerCertificate}, false),
 	} {
 		if err == nil {
 			t.Error("an invalid signature write was accepted")
 		}
 	}
-	if len(col.Statements) != 0 {
-		t.Errorf("a refused write still sent: %q", col.Statements)
+	if len(col.Statements()) != 0 {
+		t.Errorf("a refused write still sent: %q", col.Statements())
 	}
 }

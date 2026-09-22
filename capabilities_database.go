@@ -491,7 +491,7 @@ func (c *DatabaseCapabilities) Allows(name string) bool {
 // and Delete on exactly the databases it has no business writing to.
 //
 // The fail-open direction is kept where it belongs: a probe that could not run
-// at all leaves Accessible true (see Database.CapabilitiesContext), so Permits
+// at all leaves Accessible true (see Database.Capabilities), so Permits
 // still says yes there. Only a measured "cannot open this" withholds.
 //
 // Capabilities has no counterpart because there is no server-scope equivalent
@@ -502,7 +502,7 @@ func (c *DatabaseCapabilities) Allows(name string) bool {
 // open, but the *zero value* is not — its Accessible is false, which reads as a
 // measured "cannot open this" and withholds. Anything hand-building one to
 // stand in for a probe that could not run must set Accessible true, the way
-// CapabilitiesContext does for every database it reached.
+// Capabilities does for every database it reached.
 func (c *DatabaseCapabilities) Permits(name string) bool {
 	if c == nil {
 		return true
@@ -511,18 +511,13 @@ func (c *DatabaseCapabilities) Permits(name string) bool {
 }
 
 // Capabilities reports what the connected login may do inside d.
-func (d *Database) Capabilities() (*DatabaseCapabilities, error) {
-	return d.CapabilitiesContext(context.Background())
-}
-
-// CapabilitiesContext is the context-aware variant of Capabilities.
 //
 // Accessibility is settled first, at the *server* scope, and an inaccessible
 // database returns early with Accessible false and no error. That ordering is
 // required rather than tidy: the role and permission probe runs inside the
 // database, and Database.query opens with a USE, which is itself what fails
 // for a login that cannot connect there.
-func (d *Database) CapabilitiesContext(ctx context.Context) (*DatabaseCapabilities, error) {
+func (d *Database) Capabilities(ctx context.Context) (*DatabaseCapabilities, error) {
 	var access sql.NullBool
 	if err := d.server.queryRowScan(ctx, "SELECT HAS_DBACCESS(@p1)", []any{d.Name}, &access); err != nil {
 		return nil, fmt.Errorf("gosmo: read capabilities for database %q: %w", d.Name, err)

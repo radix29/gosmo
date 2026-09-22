@@ -38,12 +38,7 @@ func (s *Server) Name() string { return s.info.Name }
 // currently in — the login's default database when ConnectionOptions.Database
 // was left empty at connect time, or whatever a session-level USE has since
 // switched to.
-func (s *Server) CurrentDatabase() (string, error) {
-	return s.CurrentDatabaseContext(context.Background())
-}
-
-// CurrentDatabaseContext is the context-aware variant of CurrentDatabase.
-func (s *Server) CurrentDatabaseContext(ctx context.Context) (string, error) {
+func (s *Server) CurrentDatabase(ctx context.Context) (string, error) {
 	var name string
 	if err := s.queryRowScan(ctx, "SELECT DB_NAME()", nil, &name); err != nil {
 		return "", fmt.Errorf("gosmo: current database: %w", err)
@@ -55,12 +50,7 @@ func (s *Server) CurrentDatabaseContext(ctx context.Context) (string, error) {
 // authenticated as (SUSER_NAME()) — the real login behind the
 // connection, which for Windows/Entra auth differs from whatever was
 // passed as ConnectionOptions.User (often empty for those methods).
-func (s *Server) CurrentLogin() (string, error) {
-	return s.CurrentLoginContext(context.Background())
-}
-
-// CurrentLoginContext is the context-aware variant of CurrentLogin.
-func (s *Server) CurrentLoginContext(ctx context.Context) (string, error) {
+func (s *Server) CurrentLogin(ctx context.Context) (string, error) {
 	var name string
 	if err := s.queryRowScan(ctx, "SELECT SUSER_NAME()", nil, &name); err != nil {
 		return "", fmt.Errorf("gosmo: current login: %w", err)
@@ -95,8 +85,14 @@ func (s *Server) refusesSingleUser() bool {
 //
 // One batch, so a caller under WithScript gets it as one statement.
 func (s *Server) killDatabaseSessions(ctx context.Context, name string) error {
+	return s.exec(ctx, killDatabaseSessionsBatch(name))
+}
+
+// killDatabaseSessionsBatch is killDatabaseSessions' statement, which a
+// restore closing existing connections also leads its batch with.
+func killDatabaseSessionsBatch(name string) string {
 	lit := "N" + QuoteLiteral(name) // N: a database name can be any Unicode
-	return s.execContext(ctx, fmt.Sprintf(`DECLARE @db int = DB_ID(%[1]s), @kill nvarchar(max) = N'', @waits int = 0;
+	return fmt.Sprintf(`DECLARE @db int = DB_ID(%[1]s), @kill nvarchar(max) = N'', @waits int = 0;
 SELECT @kill += N'BEGIN TRY KILL ' + CAST(s.session_id AS nvarchar(10)) + N'; END TRY BEGIN CATCH END CATCH; '
 FROM sys.dm_exec_sessions AS s
 WHERE s.is_user_process = 1 AND s.session_id <> @@SPID
@@ -110,7 +106,7 @@ WHILE @waits < 150 AND EXISTS (
 BEGIN
     WAITFOR DELAY '00:00:00.200';
     SET @waits += 1;
-END`, lit))
+END`, lit)
 }
 
 // multiUserRepairTimeout bounds restoreMultiUser's statement. Short on
@@ -136,7 +132,7 @@ const multiUserRepairTimeout = 10 * time.Second
 func (s *Server) restoreMultiUser(ctx context.Context, name string) error {
 	rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), multiUserRepairTimeout)
 	defer cancel()
-	return s.execContext(rctx, fmt.Sprintf("ALTER DATABASE %s SET MULTI_USER", quoteIdent(name)))
+	return s.exec(rctx, fmt.Sprintf("ALTER DATABASE %s SET MULTI_USER", quoteIdent(name)))
 }
 
 // query runs a server-scoped, rows-returning read against the pool,
@@ -309,12 +305,7 @@ func platformFromVersionString(v string) string {
 // -- Databases -----------------------------------------------------------------
 
 // Databases returns all user-accessible databases on the server.
-func (s *Server) Databases() ([]*Database, error) {
-	return s.DatabasesContext(context.Background())
-}
-
-// DatabasesContext returns all databases, honouring the provided context.
-func (s *Server) DatabasesContext(ctx context.Context) ([]*Database, error) {
+func (s *Server) Databases(ctx context.Context) ([]*Database, error) {
 	const q = `
 	SELECT name, database_id, state_desc, recovery_model_desc,
 	       compatibility_level, collation_name, is_read_only, create_date,
@@ -323,47 +314,32 @@ func (s *Server) DatabasesContext(ctx context.Context) ([]*Database, error) {
 	ORDER BY name`
 
 	rows, err := s.query(ctx, q)
-	if err != nil {
-		return nil, fmt.Errorf("gosmo: list databases: %w", err)
-	}
-	defer rows.Close()
-
-	var dbs []*Database
-	for rows.Next() {
+	return scanRows(rows, err, "list databases", func(scan func(...any) error) (*Database, error) {
 		d := &Database{server: s}
 		var state, recovery, collation sql.NullString
 		var compatLevel sql.NullInt64
-		if err := rows.Scan(
+		if err := scan(
 			&d.Name, &d.ID, &state, &recovery,
 			&compatLevel, &collation, &d.IsReadOnly, &d.CreateDate,
 			&d.SourceDatabaseID,
 		); err != nil {
-			return nil, fmt.Errorf("gosmo: list databases: %w", err)
+			return nil, err
 		}
 		d.State = state.String
 		d.RecoveryModel = RecoveryModel(recovery.String)
 		d.CompatibilityLevel = CompatibilityLevel(compatLevel.Int64)
 		d.Collation = collation.String
-		dbs = append(dbs, d)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("gosmo: list databases: %w", err)
-	}
-	return dbs, nil
+		return d, nil
+	})
 }
 
 // DatabaseByName returns a single database by name, querying sys.databases
 // so the returned handle is verified to exist and has State/RecoveryModel/
 // Collation/CompatibilityLevel/etc. populated. Use it when you need to read
-// those or to confirm the database is there; use Database when you only
-// need a handle to issue further ALTER-style calls against a database you
-// already know exists. The two are not interchangeable — see Database.
-func (s *Server) DatabaseByName(name string) (*Database, error) {
-	return s.DatabaseByNameContext(context.Background(), name)
-}
-
-// DatabaseByNameContext is the context-aware variant of DatabaseByName.
-func (s *Server) DatabaseByNameContext(ctx context.Context, name string) (*Database, error) {
+// those or to confirm the database is there; use DatabaseRef when you
+// only need a handle to issue further ALTER-style calls against a database you
+// already know exists. The two are not interchangeable — see DatabaseRef.
+func (s *Server) DatabaseByName(ctx context.Context, name string) (*Database, error) {
 	const q = `
 	SELECT name, database_id, state_desc, recovery_model_desc,
 	       compatibility_level, collation_name, is_read_only, create_date,
@@ -393,15 +369,15 @@ func (s *Server) DatabaseByNameContext(ctx context.Context, name string) (*Datab
 }
 
 // DatabaseRef returns a lightweight handle for name without querying the
-// server at all — unlike DatabaseByName/DatabaseByNameContext, it doesn't
+// server at all — unlike DatabaseByName, it doesn't
 // verify the database exists or populate State/RecoveryModel/Collation/
 // CompatibilityLevel/etc. (they stay at their zero value). Every write
-// method on *Database (AddFileGroupContext, SetDatabaseOptionContext,
-// SetOwnerContext, ...) only ever needs the database's name, never those
+// method on *Database (AddFileGroup, SetDatabaseOption,
+// SetOwner, ...) only ever needs the database's name, never those
 // cached fields, so this is sufficient for issuing further ALTER-style
 // calls against a database the caller already knows exists — most
 // commonly one it just created in the same operation. It's also the only
-// way to do that under a WithScript-derived context: DatabaseByNameContext's
+// way to do that under a WithScript-derived context: DatabaseByName's
 // own lookup query is a real read, not a write, so it isn't captured by
 // ScriptCollector and would fail outright (or return stale data) for a
 // database whose CREATE DATABASE was itself only scripted, not actually
@@ -415,12 +391,7 @@ func (s *Server) DatabaseRef(name string) *Database {
 }
 
 // CreateDatabase creates a new database with the given name and optional options.
-func (s *Server) CreateDatabase(name string, opts *CreateDatabaseOptions) error {
-	return s.CreateDatabaseContext(context.Background(), name, opts)
-}
-
-// CreateDatabaseContext is the context-aware variant of CreateDatabase.
-func (s *Server) CreateDatabaseContext(ctx context.Context, name string, opts *CreateDatabaseOptions) error {
+func (s *Server) CreateDatabase(ctx context.Context, name string, opts *CreateDatabaseOptions) error {
 	if name == "" {
 		return fmt.Errorf("gosmo: create database: name is required")
 	}
@@ -444,19 +415,19 @@ func (s *Server) CreateDatabaseContext(ctx context.Context, name string, opts *C
 		opts = &withPrimary
 	}
 
-	if err := s.execContext(ctx, buildCreateDatabaseStatement(name, opts)); err != nil {
+	if err := s.exec(ctx, buildCreateDatabaseStatement(name, opts)); err != nil {
 		return fmt.Errorf("gosmo: create database %q: %w", name, err)
 	}
 
 	if opts.RecoveryModel != "" {
-		if err := s.execContext(ctx,
+		if err := s.exec(ctx,
 			fmt.Sprintf("ALTER DATABASE %s SET RECOVERY %s", quoteIdent(name), opts.RecoveryModel),
 		); err != nil {
 			return fmt.Errorf("gosmo: set recovery model for %q: %w", name, err)
 		}
 	}
 	if opts.CompatLevel > 0 {
-		if err := s.execContext(ctx,
+		if err := s.exec(ctx,
 			fmt.Sprintf("ALTER DATABASE %s SET COMPATIBILITY_LEVEL = %d", quoteIdent(name), opts.CompatLevel),
 		); err != nil {
 			return fmt.Errorf("gosmo: set compat level for %q: %w", name, err)
@@ -530,7 +501,7 @@ type CreateDatabaseOptions struct {
 	// defaultPrimaryFile). FileGroup is
 	// ignored on both (PrimaryFile is always PRIMARY; LogFile has none) —
 	// additional filegroups and files are added after creation via
-	// AddFileGroupContext/AddFileContext, not here.
+	// AddFileGroup/AddFile, not here.
 	PrimaryFile *DatabaseFileSpec
 	LogFile     *DatabaseFileSpec
 }
@@ -539,12 +510,7 @@ type CreateDatabaseOptions struct {
 // When force is true, active connections are terminated first — by SET
 // SINGLE_USER WITH ROLLBACK IMMEDIATE, or on a Managed Instance, which refuses
 // that statement, by killing the database's sessions (see killDatabaseSessions).
-func (s *Server) DropDatabase(name string, force bool) error {
-	return s.DropDatabaseContext(context.Background(), name, force)
-}
-
-// DropDatabaseContext is the context-aware variant of DropDatabase.
-func (s *Server) DropDatabaseContext(ctx context.Context, name string, force bool) error {
+func (s *Server) DropDatabase(ctx context.Context, name string, force bool) error {
 	if name == "" {
 		return fmt.Errorf("gosmo: drop database: name is required")
 	}
@@ -552,19 +518,19 @@ func (s *Server) DropDatabaseContext(ctx context.Context, name string, force boo
 		if err := s.killDatabaseSessions(ctx, name); err != nil {
 			return fmt.Errorf("gosmo: close connections to %q: %w", name, err)
 		}
-		if err := s.execContext(ctx, fmt.Sprintf("DROP DATABASE %s", quoteIdent(name))); err != nil {
+		if err := s.exec(ctx, fmt.Sprintf("DROP DATABASE %s", quoteIdent(name))); err != nil {
 			return fmt.Errorf("gosmo: drop database %q: %w", name, err)
 		}
 		return nil
 	}
 	if force {
-		if err := s.execContext(ctx,
+		if err := s.exec(ctx,
 			fmt.Sprintf("ALTER DATABASE %s SET SINGLE_USER WITH ROLLBACK IMMEDIATE", quoteIdent(name)),
 		); err != nil {
 			return fmt.Errorf("gosmo: set single user on %q: %w", name, err)
 		}
 	}
-	if err := s.execContext(ctx, fmt.Sprintf("DROP DATABASE %s", quoteIdent(name))); err != nil {
+	if err := s.exec(ctx, fmt.Sprintf("DROP DATABASE %s", quoteIdent(name))); err != nil {
 		// A failed DROP leaves the database in place — and, with force, still
 		// in the SINGLE_USER this method put it in, unreachable by every other
 		// login until someone notices. The drop can genuinely fail after the
@@ -594,12 +560,7 @@ func (s *Server) DropDatabaseContext(ctx context.Context, name string, force boo
 // rename itself fails, so a refused rename never leaves the database
 // single-user. A Managed Instance refuses SET SINGLE_USER, so there force
 // kills the database's sessions instead and changes no access mode.
-func (s *Server) RenameDatabase(oldName, newName string, force bool) error {
-	return s.RenameDatabaseContext(context.Background(), oldName, newName, force)
-}
-
-// RenameDatabaseContext is the context-aware variant of RenameDatabase.
-func (s *Server) RenameDatabaseContext(ctx context.Context, oldName, newName string, force bool) error {
+func (s *Server) RenameDatabase(ctx context.Context, oldName, newName string, force bool) error {
 	if oldName == "" || newName == "" {
 		return fmt.Errorf("gosmo: rename database: both names are required")
 	}
@@ -609,19 +570,19 @@ func (s *Server) RenameDatabaseContext(ctx context.Context, oldName, newName str
 		if err := s.killDatabaseSessions(ctx, oldName); err != nil {
 			return fmt.Errorf("gosmo: close connections to %q: %w", oldName, err)
 		}
-		if err := s.execContext(ctx, q); err != nil {
+		if err := s.exec(ctx, q); err != nil {
 			return fmt.Errorf("gosmo: rename database %q to %q: %w", oldName, newName, err)
 		}
 		return nil
 	}
 	if force {
-		if err := s.execContext(ctx,
+		if err := s.exec(ctx,
 			fmt.Sprintf("ALTER DATABASE %s SET SINGLE_USER WITH ROLLBACK IMMEDIATE", quoteIdent(oldName)),
 		); err != nil {
 			return fmt.Errorf("gosmo: set single user on %q: %w", oldName, err)
 		}
 	}
-	err := s.execContext(ctx, q)
+	err := s.exec(ctx, q)
 	if force {
 		// The name to release is whichever one the database now has.
 		name := newName

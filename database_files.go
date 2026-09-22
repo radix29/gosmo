@@ -12,9 +12,9 @@ import (
 // ============================================================
 
 // DatabaseFileInfo describes a single database file, including log files —
-// unlike FileGroups/FileGroupsContext (database.go), which only sees files
+// unlike FileGroups (database.go), which only sees files
 // that belong to a filegroup and so omits the log. Sizes are normalized to
-// KB (FileGroupsContext's MaxSize/Growth fields are not, for backward
+// KB (FileGroups's MaxSize/Growth fields are not, for backward
 // compatibility with existing callers).
 type DatabaseFileInfo struct {
 	FileID          int
@@ -31,12 +31,7 @@ type DatabaseFileInfo struct {
 }
 
 // Files returns every file in the database, data and log alike.
-func (d *Database) Files() ([]*DatabaseFileInfo, error) {
-	return d.FilesContext(context.Background())
-}
-
-// FilesContext is the context-aware variant of Files.
-func (d *Database) FilesContext(ctx context.Context) ([]*DatabaseFileInfo, error) {
+func (d *Database) Files(ctx context.Context) ([]*DatabaseFileInfo, error) {
 	const q = `
 SELECT df.file_id, df.name, df.physical_name, df.type_desc,
        ISNULL(fg.name, ''), df.state_desc,
@@ -46,38 +41,23 @@ LEFT   JOIN sys.filegroups fg ON fg.data_space_id = df.data_space_id
 ORDER  BY df.type_desc, df.file_id`
 
 	rows, err := d.query(ctx, q)
-	if err != nil {
-		return nil, fmt.Errorf("gosmo: list files in %q: %w", d.Name, err)
-	}
-	defer rows.Close()
-
-	var files []*DatabaseFileInfo
-	for rows.Next() {
+	return scanRows(rows, err, fmt.Sprintf("list files in %q", d.Name), func(scan func(...any) error) (*DatabaseFileInfo, error) {
 		f := &DatabaseFileInfo{}
 		var maxSizePages, growthRaw int64
-		if err := rows.Scan(&f.FileID, &f.Name, &f.PhysicalName, &f.Type, &f.FileGroup, &f.State,
+		if err := scan(&f.FileID, &f.Name, &f.PhysicalName, &f.Type, &f.FileGroup, &f.State,
 			&f.SizeKB, &maxSizePages, &growthRaw, &f.IsPercentGrowth); err != nil {
-			return nil, fmt.Errorf("gosmo: list files in %q: %w", d.Name, err)
+			return nil, err
 		}
 		f.MaxSizeKB, f.GrowthKB, f.GrowthPercent = normalizeFileGrowth(maxSizePages, growthRaw, f.IsPercentGrowth)
-		files = append(files, f)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("gosmo: list files in %q: %w", d.Name, err)
-	}
-	return files, nil
+		return f, nil
+	})
 }
 
 // DatabaseFiles returns one database's files read from the server-wide
 // catalog, so it answers for a database in any state.
-func (s *Server) DatabaseFiles(database string) ([]*DatabaseFileInfo, error) {
-	return s.DatabaseFilesContext(context.Background(), database)
-}
-
-// DatabaseFilesContext is the context-aware variant of DatabaseFiles.
 //
-// It reads sys.master_files rather than sys.database_files, which is the
-// whole point of it: Database.FilesContext runs its read through a USE, and a
+// It reads sys.master_files rather than sys.database_files, which is the whole
+// point of it: Database.Files runs its read through a USE, and a
 // database that is OFFLINE, RECOVERY_PENDING or SUSPECT refuses the USE — so
 // the paths become unreadable in exactly the states someone needs them in,
 // such as on the way to a detach. FileGroup is always "" here: sys.filegroups
@@ -85,7 +65,7 @@ func (s *Server) DatabaseFiles(database string) ([]*DatabaseFileInfo, error) {
 //
 // A database the login cannot see reads as no rows rather than an error, the
 // way metadata visibility answers everywhere else.
-func (s *Server) DatabaseFilesContext(ctx context.Context, database string) ([]*DatabaseFileInfo, error) {
+func (s *Server) DatabaseFiles(ctx context.Context, database string) ([]*DatabaseFileInfo, error) {
 	const q = `
 SELECT mf.file_id, mf.name, mf.physical_name, mf.type_desc, mf.state_desc,
        mf.size * 8, mf.max_size, mf.growth, mf.is_percent_growth
@@ -94,26 +74,16 @@ WHERE  mf.database_id = DB_ID(@p1)
 ORDER  BY mf.type_desc, mf.file_id`
 
 	rows, err := s.query(ctx, q, database)
-	if err != nil {
-		return nil, fmt.Errorf("gosmo: list files in %q: %w", database, err)
-	}
-	defer rows.Close()
-
-	var files []*DatabaseFileInfo
-	for rows.Next() {
+	return scanRows(rows, err, fmt.Sprintf("list files in %q", database), func(scan func(...any) error) (*DatabaseFileInfo, error) {
 		f := &DatabaseFileInfo{}
 		var maxSizePages, growthRaw int64
-		if err := rows.Scan(&f.FileID, &f.Name, &f.PhysicalName, &f.Type, &f.State,
+		if err := scan(&f.FileID, &f.Name, &f.PhysicalName, &f.Type, &f.State,
 			&f.SizeKB, &maxSizePages, &growthRaw, &f.IsPercentGrowth); err != nil {
-			return nil, fmt.Errorf("gosmo: list files in %q: %w", database, err)
+			return nil, err
 		}
 		f.MaxSizeKB, f.GrowthKB, f.GrowthPercent = normalizeFileGrowth(maxSizePages, growthRaw, f.IsPercentGrowth)
-		files = append(files, f)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("gosmo: list files in %q: %w", database, err)
-	}
-	return files, nil
+		return f, nil
+	})
 }
 
 // DatabaseFileSpec describes a file to add via AddFile.
@@ -140,17 +110,12 @@ type DatabaseFileSpec struct {
 }
 
 // AddFile adds a new data or log file to the database.
-func (d *Database) AddFile(spec DatabaseFileSpec) error {
-	return d.AddFileContext(context.Background(), spec)
-}
-
-// AddFileContext is the context-aware variant of AddFile.
-func (d *Database) AddFileContext(ctx context.Context, spec DatabaseFileSpec) error {
+func (d *Database) AddFile(ctx context.Context, spec DatabaseFileSpec) error {
 	stmt, err := buildAddFileStatement(d.Name, spec)
 	if err != nil {
 		return err
 	}
-	if err := d.server.execContext(ctx, stmt); err != nil {
+	if err := d.server.exec(ctx, stmt); err != nil {
 		return fmt.Errorf("gosmo: add file %q to %q: %w", spec.Name, d.Name, err)
 	}
 	return nil
@@ -236,19 +201,14 @@ type FileModify struct {
 	// the same value. Without it a UI whose growth control bottoms out at
 	// zero produces an ALTER with no FILEGROWTH clause, and if nothing else
 	// on the file changed, buildAlterFileStatement returns "" and
-	// AlterFileContext returns nil: an Apply that reports success and did
+	// AlterFile returns nil: an Apply that reports success and did
 	// nothing.
 	DisableGrowth bool
 	MaxSizeKB     int64 // -1 = UNLIMITED
 }
 
 // AlterFile changes an existing file's name, size, growth, or max size.
-func (d *Database) AlterFile(name string, m FileModify) error {
-	return d.AlterFileContext(context.Background(), name, m)
-}
-
-// AlterFileContext is the context-aware variant of AlterFile.
-func (d *Database) AlterFileContext(ctx context.Context, name string, m FileModify) error {
+func (d *Database) AlterFile(ctx context.Context, name string, m FileModify) error {
 	stmt, err := buildAlterFileStatement(d.Name, name, m)
 	if err != nil {
 		return err
@@ -256,7 +216,7 @@ func (d *Database) AlterFileContext(ctx context.Context, name string, m FileModi
 	if stmt == "" {
 		return nil
 	}
-	if err := d.server.execContext(ctx, stmt); err != nil {
+	if err := d.server.exec(ctx, stmt); err != nil {
 		return fmt.Errorf("gosmo: alter file %q in %q: %w", name, d.Name, err)
 	}
 	return nil
@@ -297,14 +257,9 @@ func buildAlterFileStatement(dbName, name string, m FileModify) (string, error) 
 
 // RemoveFile drops a file from the database. The file must be empty (0
 // bytes of used space) — SQL Server itself enforces this, not gosmo.
-func (d *Database) RemoveFile(name string) error {
-	return d.RemoveFileContext(context.Background(), name)
-}
-
-// RemoveFileContext is the context-aware variant of RemoveFile.
-func (d *Database) RemoveFileContext(ctx context.Context, name string) error {
+func (d *Database) RemoveFile(ctx context.Context, name string) error {
 	q := fmt.Sprintf("ALTER DATABASE %s REMOVE FILE %s", quoteIdent(d.Name), quoteIdent(name))
-	if err := d.server.execContext(ctx, q); err != nil {
+	if err := d.server.exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: remove file %q from %q: %w", name, d.Name, err)
 	}
 	return nil
@@ -313,12 +268,7 @@ func (d *Database) RemoveFileContext(ctx context.Context, name string) error {
 // -- Filegroups ----------------------------------------------------------------
 
 // FileGroups returns all filegroups and their files.
-func (d *Database) FileGroups() ([]*FileGroup, error) {
-	return d.FileGroupsContext(context.Background())
-}
-
-// FileGroupsContext is the context-aware variant of FileGroups.
-func (d *Database) FileGroupsContext(ctx context.Context) ([]*FileGroup, error) {
+func (d *Database) FileGroups(ctx context.Context) ([]*FileGroup, error) {
 	const q = `
 SELECT fg.name, fg.type_desc, fg.is_default, fg.is_read_only,
        df.name, df.physical_name, df.size * 8, df.max_size, df.growth,
@@ -373,14 +323,9 @@ ORDER  BY fg.name, df.file_id`
 }
 
 // AddFileGroup adds a new (empty) filegroup to the database.
-func (d *Database) AddFileGroup(name string) error {
-	return d.AddFileGroupContext(context.Background(), name)
-}
-
-// AddFileGroupContext is the context-aware variant of AddFileGroup.
-func (d *Database) AddFileGroupContext(ctx context.Context, name string) error {
+func (d *Database) AddFileGroup(ctx context.Context, name string) error {
 	q := fmt.Sprintf("ALTER DATABASE %s ADD FILEGROUP %s", quoteIdent(d.Name), quoteIdent(name))
-	if err := d.server.execContext(ctx, q); err != nil {
+	if err := d.server.exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: add filegroup %q to %q: %w", name, d.Name, err)
 	}
 	return nil
@@ -388,51 +333,36 @@ func (d *Database) AddFileGroupContext(ctx context.Context, name string) error {
 
 // RemoveFileGroup drops a filegroup. It must be empty (no files) — SQL
 // Server itself enforces this, not gosmo.
-func (d *Database) RemoveFileGroup(name string) error {
-	return d.RemoveFileGroupContext(context.Background(), name)
-}
-
-// RemoveFileGroupContext is the context-aware variant of RemoveFileGroup.
-func (d *Database) RemoveFileGroupContext(ctx context.Context, name string) error {
+func (d *Database) RemoveFileGroup(ctx context.Context, name string) error {
 	q := fmt.Sprintf("ALTER DATABASE %s REMOVE FILEGROUP %s", quoteIdent(d.Name), quoteIdent(name))
-	if err := d.server.execContext(ctx, q); err != nil {
+	if err := d.server.exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: remove filegroup %q from %q: %w", name, d.Name, err)
 	}
 	return nil
 }
 
 // SetDefaultFileGroup marks a filegroup as the database's default.
-func (d *Database) SetDefaultFileGroup(name string) error {
-	return d.SetDefaultFileGroupContext(context.Background(), name)
-}
-
-// SetDefaultFileGroupContext is the context-aware variant of SetDefaultFileGroup.
-func (d *Database) SetDefaultFileGroupContext(ctx context.Context, name string) error {
+func (d *Database) SetDefaultFileGroup(ctx context.Context, name string) error {
 	q := fmt.Sprintf("ALTER DATABASE %s MODIFY FILEGROUP %s DEFAULT", quoteIdent(d.Name), quoteIdent(name))
-	if err := d.server.execContext(ctx, q); err != nil {
+	if err := d.server.exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: set default filegroup %q on %q: %w", name, d.Name, err)
 	}
 	return nil
 }
 
 // SetFileGroupReadOnly sets or clears a filegroup's read-only flag.
-func (d *Database) SetFileGroupReadOnly(name string, readOnly bool) error {
-	return d.SetFileGroupReadOnlyContext(context.Background(), name, readOnly)
-}
-
-// SetFileGroupReadOnlyContext is the context-aware variant of SetFileGroupReadOnly.
 //
 // The keywords are the underscored spellings on purpose. ALTER DATABASE also
-// accepts READONLY/READWRITE, but only for backward compatibility — SQL Server
-// documents that pair as deprecated and slated for removal, and it is the
-// spelling this used to emit.
-func (d *Database) SetFileGroupReadOnlyContext(ctx context.Context, name string, readOnly bool) error {
+// accepts READONLY/READWRITE, but only for backward compatibility — SQL
+// Server documents that pair as deprecated and slated for removal, and it is
+// the spelling this used to emit.
+func (d *Database) SetFileGroupReadOnly(ctx context.Context, name string, readOnly bool) error {
 	mode := "READ_WRITE"
 	if readOnly {
 		mode = "READ_ONLY"
 	}
 	q := fmt.Sprintf("ALTER DATABASE %s MODIFY FILEGROUP %s %s", quoteIdent(d.Name), quoteIdent(name), mode)
-	if err := d.server.execContext(ctx, q); err != nil {
+	if err := d.server.exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: set filegroup %q read-only=%v on %q: %w", name, readOnly, d.Name, err)
 	}
 	return nil

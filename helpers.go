@@ -1,10 +1,70 @@
 package gosmo
 
 import (
+	"database/sql"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"strings"
 )
+
+// rowSource is what a list read iterates: *sql.Rows from Server.query, or the
+// *dbRows from Database.query that also releases its pinned connection.
+type rowSource interface {
+	Next() bool
+	Scan(dest ...any) error
+	Err() error
+	Close() error
+}
+
+// scanRows drains a list read into a slice. rows and err are the query's two
+// results, passed straight through; scan reads one row, given the Scan to
+// call. rows is closed, and a failure of the query, of any scan or of
+// rows.Err is wrapped "gosmo: <what>: %w" — the same message for all three,
+// which is the rule CLAUDE.md § Conventions states and this makes true by
+// construction. An empty what returns the error bare, for the shared readers
+// whose callers name the operation. An empty result is a nil slice.
+//
+// scan runs inside the rows.Next() loop, so it must not query: the
+// connection the read pinned is still held.
+func scanRows[T any, R rowSource](rows R, err error, what string, scan func(scan func(...any) error) (T, error)) ([]T, error) {
+	wrap := func(err error) error {
+		if what == "" {
+			return err
+		}
+		return fmt.Errorf("gosmo: %s: %w", what, err)
+	}
+	if err != nil {
+		return nil, wrap(err)
+	}
+	defer rows.Close()
+	var out []T
+	for rows.Next() {
+		v, err := scan(rows.Scan)
+		if err != nil {
+			return nil, wrap(err)
+		}
+		out = append(out, v)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, wrap(err)
+	}
+	return out, nil
+}
+
+// foundRow is the tail of a single-row read by name: sql.ErrNoRows becomes
+// notFound (built with notFoundf, so errors.Is ErrNotFound), any other error
+// is wrapped "gosmo: <what>: %w", and otherwise v is the result.
+func foundRow[T any](v T, err error, notFound error, what string) (T, error) {
+	var zero T
+	if errors.Is(err, sql.ErrNoRows) {
+		return zero, notFound
+	}
+	if err != nil {
+		return zero, fmt.Errorf("gosmo: %s: %w", what, err)
+	}
+	return v, nil
+}
 
 // quoteIdent wraps a SQL Server identifier in square brackets, escaping any
 // embedded closing brackets. Thin internal alias for the exported QuoteName

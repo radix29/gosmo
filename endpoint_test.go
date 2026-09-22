@@ -73,11 +73,11 @@ func TestEndpointStateAndGrantStatements(t *testing.T) {
 		fn   func(ctx context.Context) error
 		want string
 	}{
-		{"start", e.StartContext, "ALTER ENDPOINT [AG]]EP] STATE = STARTED"},
-		{"stop", e.StopContext, "ALTER ENDPOINT [AG]]EP] STATE = STOPPED"},
-		{"drop", e.DropContext, "DROP ENDPOINT [AG]]EP]"},
+		{"start", e.Start, "ALTER ENDPOINT [AG]]EP] STATE = STARTED"},
+		{"stop", e.Stop, "ALTER ENDPOINT [AG]]EP] STATE = STOPPED"},
+		{"drop", e.Drop, "DROP ENDPOINT [AG]]EP]"},
 		{"grant connect", func(ctx context.Context) error {
-			return e.GrantConnectContext(ctx, `NT Service\MSSQLSERVER`)
+			return e.GrantConnect(ctx, `NT Service\MSSQLSERVER`)
 		}, `GRANT CONNECT ON ENDPOINT::[AG]]EP] TO [NT Service\MSSQLSERVER]`},
 	}
 	for _, tt := range tests {
@@ -86,7 +86,7 @@ func TestEndpointStateAndGrantStatements(t *testing.T) {
 			if err := tt.fn(ctx); err != nil {
 				t.Fatalf("under WithScript: %v", err)
 			}
-			if got := soleStatement(t, script.Statements); got != tt.want {
+			if got := soleStatement(t, script.Statements()); got != tt.want {
 				t.Errorf("got  %s\nwant %s", got, tt.want)
 			}
 		})

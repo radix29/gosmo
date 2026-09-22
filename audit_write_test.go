@@ -22,6 +22,9 @@ type auditScript struct {
 	enabled bool     // what is_state_enabled answers
 	missing bool     // the audit / specification is not there at all
 	execs   []string // every statement that reached the driver
+	// onExec, when set, runs after a statement is recorded and its error is
+	// the statement's.
+	onExec func(q string) error
 }
 
 var auditCurrent *auditScript
@@ -38,6 +41,11 @@ func (*auditConn) Begin() (driver.Tx, error)           { return nil, driver.ErrS
 
 func (*auditConn) ExecContext(_ context.Context, q string, _ []driver.NamedValue) (driver.Result, error) {
 	auditCurrent.execs = append(auditCurrent.execs, q)
+	if auditCurrent.onExec != nil {
+		if err := auditCurrent.onExec(q); err != nil {
+			return nil, err
+		}
+	}
 	return driver.ResultNoRows, nil
 }
 
@@ -81,11 +89,11 @@ func TestServerAuditStateStatements(t *testing.T) {
 	} {
 		ctx, col := WithScript(context.Background())
 		a := &ServerAudit{server: &Server{}, Name: "odd]name"}
-		if err := a.SetStateContext(ctx, tc.on); err != nil {
-			t.Fatalf("SetStateContext: %v", err)
+		if err := a.SetState(ctx, tc.on); err != nil {
+			t.Fatalf("SetState: %v", err)
 		}
-		if len(col.Statements) != 1 || col.Statements[0] != tc.want {
-			t.Errorf("got %v, want [%s]", col.Statements, tc.want)
+		if len(col.Statements()) != 1 || col.Statements()[0] != tc.want {
+			t.Errorf("got %v, want [%s]", col.Statements(), tc.want)
 		}
 		// setIfApplied must not mirror a state that was only collected.
 		if a.IsEnabled {
@@ -178,11 +186,11 @@ func TestAlteringAnAuditTurnsItOffAndBackOn(t *testing.T) {
 			srv := auditServer(t, &auditScript{enabled: tc.enabled})
 			ctx, col := WithScript(context.Background())
 			a := srv.ServerAuditRef("a")
-			if err := a.AlterContext(ctx, ServerAuditSpec{Name: "a", QueueDelay: 2000}); err != nil {
-				t.Fatalf("AlterContext: %v", err)
+			if err := a.Alter(ctx, ServerAuditSpec{Name: "a", QueueDelay: 2000}); err != nil {
+				t.Fatalf("Alter: %v", err)
 			}
-			got := make([]string, 0, len(col.Statements))
-			for _, s := range col.Statements {
+			got := make([]string, 0, len(col.Statements()))
+			for _, s := range col.Statements() {
 				if strings.Contains(s, "STATE =") {
 					got = append(got, s)
 					continue
@@ -190,7 +198,7 @@ func TestAlteringAnAuditTurnsItOffAndBackOn(t *testing.T) {
 				got = append(got, "alter")
 			}
 			if !slices.Equal(got, tc.want) {
-				t.Errorf("statements = %v, want %v (raw: %v)", got, tc.want, col.Statements)
+				t.Errorf("statements = %v, want %v (raw: %v)", got, tc.want, col.Statements())
 			}
 		})
 	}
@@ -211,11 +219,11 @@ func TestDroppingAnEnabledAuditDisablesItFirst(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			srv := auditServer(t, &auditScript{enabled: tc.enabled})
 			ctx, col := WithScript(context.Background())
-			if err := srv.ServerAuditRef("a").DropContext(ctx); err != nil {
-				t.Fatalf("DropContext: %v", err)
+			if err := srv.ServerAuditRef("a").Drop(ctx); err != nil {
+				t.Fatalf("Drop: %v", err)
 			}
-			if !slices.Equal(col.Statements, tc.want) {
-				t.Errorf("statements = %v, want %v", col.Statements, tc.want)
+			if !slices.Equal(col.Statements(), tc.want) {
+				t.Errorf("statements = %v, want %v", col.Statements(), tc.want)
 			}
 		})
 	}
@@ -226,12 +234,12 @@ func TestDroppingAnEnabledAuditDisablesItFirst(t *testing.T) {
 func TestAlteringAMissingAuditIsNotFound(t *testing.T) {
 	srv := auditServer(t, &auditScript{missing: true})
 	ctx, col := WithScript(context.Background())
-	err := srv.ServerAuditRef("gone").AlterContext(ctx, ServerAuditSpec{Name: "gone"})
+	err := srv.ServerAuditRef("gone").Alter(ctx, ServerAuditSpec{Name: "gone"})
 	if !errors.Is(err, ErrNotFound) {
 		t.Fatalf("got %v, want a not-found error", err)
 	}
-	if len(col.Statements) != 0 {
-		t.Errorf("a refused alter still built %v", col.Statements)
+	if len(col.Statements()) != 0 {
+		t.Errorf("a refused alter still built %v", col.Statements())
 	}
 }
 
@@ -260,12 +268,12 @@ func TestRenamingAnAuditUsesModifyName(t *testing.T) {
 	srv := auditServer(t, &auditScript{enabled: false})
 	ctx, col := WithScript(context.Background())
 	a := srv.ServerAuditRef("old")
-	if err := a.RenameContext(ctx, "new]er"); err != nil {
-		t.Fatalf("RenameContext: %v", err)
+	if err := a.Rename(ctx, "new]er"); err != nil {
+		t.Fatalf("Rename: %v", err)
 	}
 	want := "ALTER SERVER AUDIT [old] MODIFY NAME = [new]]er]"
-	if len(col.Statements) != 1 || col.Statements[0] != want {
-		t.Errorf("got %v, want [%s]", col.Statements, want)
+	if len(col.Statements()) != 1 || col.Statements()[0] != want {
+		t.Errorf("got %v, want [%s]", col.Statements(), want)
 	}
 	if a.Name != "old" {
 		t.Errorf("Name mirrored to %q while scripting", a.Name)
@@ -279,16 +287,16 @@ func TestRenamingAnAuditUsesModifyName(t *testing.T) {
 func TestRenamingAnEnabledAuditReEnablesUnderTheNewName(t *testing.T) {
 	srv := auditServer(t, &auditScript{enabled: true})
 	ctx, col := WithScript(context.Background())
-	if err := srv.ServerAuditRef("old").RenameContext(ctx, "new"); err != nil {
-		t.Fatalf("RenameContext: %v", err)
+	if err := srv.ServerAuditRef("old").Rename(ctx, "new"); err != nil {
+		t.Fatalf("Rename: %v", err)
 	}
 	want := []string{
 		"ALTER SERVER AUDIT [old] WITH ( STATE = OFF )",
 		"ALTER SERVER AUDIT [old] MODIFY NAME = [new]",
 		"ALTER SERVER AUDIT [new] WITH ( STATE = ON )",
 	}
-	if !slices.Equal(col.Statements, want) {
-		t.Errorf("got %v, want %v", col.Statements, want)
+	if !slices.Equal(col.Statements(), want) {
+		t.Errorf("got %v, want %v", col.Statements(), want)
 	}
 }
 
@@ -300,24 +308,24 @@ func TestAuditWithDisabledOpensOneWindow(t *testing.T) {
 	ctx, col := WithScript(context.Background())
 	a := srv.ServerAuditRef("old")
 	err := a.WithDisabled(ctx, func(ctx context.Context) error {
-		if err := a.AlterContext(ctx, ServerAuditSpec{
+		if err := a.Alter(ctx, ServerAuditSpec{
 			Name: "old", Type: AuditToApplicationLog, QueueDelay: 1000,
 			OnFailure: AuditFailureContinue,
 		}); err != nil {
 			return err
 		}
-		return a.RenameContext(ctx, "new")
+		return a.Rename(ctx, "new")
 	})
 	if err != nil {
 		t.Fatalf("WithDisabled: %v", err)
 	}
-	if n := countStatements(col.Statements, "STATE = OFF"); n != 1 {
-		t.Errorf("got %d disables, want 1: %v", n, col.Statements)
+	if n := countStatements(col.Statements(), "STATE = OFF"); n != 1 {
+		t.Errorf("got %d disables, want 1: %v", n, col.Statements())
 	}
-	if n := countStatements(col.Statements, "STATE = ON"); n != 1 {
-		t.Errorf("got %d enables, want 1: %v", n, col.Statements)
+	if n := countStatements(col.Statements(), "STATE = ON"); n != 1 {
+		t.Errorf("got %d enables, want 1: %v", n, col.Statements())
 	}
-	last := col.Statements[len(col.Statements)-1]
+	last := col.Statements()[len(col.Statements())-1]
 	if last != "ALTER SERVER AUDIT [new] WITH ( STATE = ON )" {
 		t.Errorf("restore = %q, want it under the new name", last)
 	}
@@ -364,6 +372,68 @@ func TestDisableWindowsRestoreAfterACancel(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+// Rename is the one write outside withAuditDisabled, so it restores the
+// state itself — and has to do so off the caller's cancellation, as the
+// windows above do. A MODIFY NAME that returns after the user cancelled (or
+// the deadline ran out) re-enabled on the dead context, never reached the
+// server, and left auditing off: under the new name when the rename
+// committed, under the old one when it did not.
+func TestRenamingAnEnabledAuditRestoresAfterACancel(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		failed bool
+		enable string
+	}{
+		{"committed", false, "ALTER SERVER AUDIT [new] WITH ( STATE = ON )"},
+		{"failed", true, "ALTER SERVER AUDIT [old] WITH ( STATE = ON )"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			renameErr := errors.New("rename refused")
+			s := &auditScript{enabled: true, onExec: func(q string) error {
+				if !strings.Contains(q, "MODIFY NAME") {
+					return nil
+				}
+				cancel()
+				if tc.failed {
+					return renameErr
+				}
+				return nil
+			}}
+			err := auditServer(t, s).ServerAuditRef("old").Rename(ctx, "new")
+			if tc.failed != (err != nil) {
+				t.Fatalf("Rename = %v, want failed=%v", err, tc.failed)
+			}
+			if tc.failed && !errors.Is(err, renameErr) {
+				t.Errorf("Rename = %v, want the rename's own error", err)
+			}
+			if len(s.execs) == 0 || s.execs[len(s.execs)-1] != tc.enable {
+				t.Errorf("statements = %q, want the last to be %q", s.execs, tc.enable)
+			}
+		})
+	}
+}
+
+// A failed rename whose restore also fails reports both: dropping the
+// restore's error hid that auditing was still off.
+func TestRenameFailureKeepsTheRestoreError(t *testing.T) {
+	renameErr, restoreErr := errors.New("rename refused"), errors.New("enable refused")
+	s := &auditScript{enabled: true, onExec: func(q string) error {
+		switch {
+		case strings.Contains(q, "MODIFY NAME"):
+			return renameErr
+		case strings.Contains(q, "STATE = ON"):
+			return restoreErr
+		}
+		return nil
+	}}
+	err := auditServer(t, s).ServerAuditRef("old").Rename(context.Background(), "new")
+	if !errors.Is(err, renameErr) || !errors.Is(err, restoreErr) {
+		t.Errorf("Rename = %v, want both the rename and the restore error", err)
 	}
 }
 

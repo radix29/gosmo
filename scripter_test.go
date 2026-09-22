@@ -21,7 +21,11 @@ func TestColumnTypeString(t *testing.T) {
 		{"decimal with precision", &Column{DataType: DataTypeDecimal, Precision: 10, Scale: 4}, "decimal(10,4)"},
 		{"decimal no precision", &Column{DataType: DataTypeDecimal}, "decimal"},
 		{"time with scale", &Column{DataType: DataTypeTime, Scale: 7}, "time(7)"},
-		{"time no scale", &Column{DataType: DataTypeTime}, "time"},
+		// A zero scale is datetime2(0)/time(0), not the bare type, which means 7.
+		{"time zero scale", &Column{DataType: DataTypeTime}, "time(0)"},
+		{"datetime2 zero scale", &Column{DataType: DataTypeDatetime2}, "datetime2(0)"},
+		{"datetimeoffset zero scale", &Column{DataType: DataTypeDatetimeOffset}, "datetimeoffset(0)"},
+		{"alias type is qualified, no length", &Column{DataType: "Phone", TypeSchema: "app", IsUserDefinedType: true, MaxLength: 20}, "[app].[Phone]"},
 		{"plain bigint", &Column{DataType: DataTypeBigInt}, "bigint"},
 	}
 	for _, c := range cases {
@@ -34,7 +38,7 @@ func TestColumnTypeString(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// buildTableScript — the assembly ScriptTableContext hands its catalog reads
+// buildTableScript — the assembly ScriptTable hands its catalog reads
 // to. Kept separate from those reads precisely so this can be asserted
 // without a server.
 // ---------------------------------------------------------------------------
@@ -49,11 +53,11 @@ func scriptTestTable() (cols []*Column, indexes []*Index, fks []*ForeignKey) {
 		{Name: "OwnerID", DataType: DataTypeInt, IsNullable: true},
 	}
 	indexes = []*Index{
-		{Name: "PK_Widget", IsPrimaryKey: true, IsClustered: true, IsUnique: true,
+		{AllowRowLocks: true, AllowPageLocks: true, Name: "PK_Widget", IsPrimaryKey: true, IsClustered: true, IsUnique: true,
 			Type: IndexTypeClustered, KeyColumns: []IndexColumn{{Name: "ID"}}},
-		{Name: "UQ_Widget_Code", IsUniqueConstraint: true, IsUnique: true,
+		{AllowRowLocks: true, AllowPageLocks: true, Name: "UQ_Widget_Code", IsUniqueConstraint: true, IsUnique: true,
 			Type: IndexTypeNonClustered, KeyColumns: []IndexColumn{{Name: "Code"}}},
-		{Name: "IX_Widget_Owner", Type: IndexTypeNonClustered,
+		{AllowRowLocks: true, AllowPageLocks: true, Name: "IX_Widget_Owner", Type: IndexTypeNonClustered,
 			KeyColumns:       []IndexColumn{{Name: "OwnerID", Descending: true}},
 			IncludedColumns:  []IndexColumn{{Name: "Code"}},
 			FilterDefinition: "([OwnerID] IS NOT NULL)"},
@@ -90,7 +94,7 @@ func splitBatches(script string) []string {
 // parse. Every batch must balance its own BEGIN/END.
 func TestBuildTableScriptKeepsBlocksInsideOneBatch(t *testing.T) {
 	cols, indexes, fks := scriptTestTable()
-	script := buildTableScript("dbo", "Widget", "AppDB", cols, indexes, fks, DataSpace{Name: "PRIMARY", IsDefaultFileGroup: true}, DefaultScriptOptions())
+	script := buildTableScript("dbo", "Widget", "AppDB", tableScriptParts{cols: cols, indexes: indexes, fks: fks, ds: DataSpace{Name: "PRIMARY", IsDefaultFileGroup: true}}, DefaultScriptOptions())
 
 	for i, batch := range splitBatches(script) {
 		begins, ends := 0, 0
@@ -116,7 +120,7 @@ func TestBuildTableScriptKeepsBlocksInsideOneBatch(t *testing.T) {
 // shape that replaced the single BEGIN block.
 func TestBuildTableScriptGuardsEachStatementSeparately(t *testing.T) {
 	cols, indexes, fks := scriptTestTable()
-	script := buildTableScript("dbo", "Widget", "AppDB", cols, indexes, fks, DataSpace{Name: "PRIMARY", IsDefaultFileGroup: true}, DefaultScriptOptions())
+	script := buildTableScript("dbo", "Widget", "AppDB", tableScriptParts{cols: cols, indexes: indexes, fks: fks, ds: DataSpace{Name: "PRIMARY", IsDefaultFileGroup: true}}, DefaultScriptOptions())
 
 	for _, want := range []string{
 		"IF OBJECT_ID(N'[dbo].[Widget]', N'U') IS NULL\nCREATE TABLE [dbo].[Widget] (",
@@ -151,33 +155,33 @@ func TestScriptIndexByType(t *testing.T) {
 	}{
 		{
 			name: "clustered columnstore takes no column list",
-			idx: &Index{Name: "CCI", Type: IndexTypeClusteredColumnStore,
+			idx: &Index{AllowRowLocks: true, AllowPageLocks: true, Name: "CCI", Type: IndexTypeClusteredColumnStore,
 				KeyColumns: []IndexColumn{{Name: "A"}}},
 			want:      "CREATE CLUSTERED COLUMNSTORE INDEX [CCI] ON [dbo].[T];",
 			notWanted: []string{"ASC", "([A]"},
 		},
 		{
 			name: "nonclustered columnstore takes columns without a direction",
-			idx: &Index{Name: "NCCI", Type: IndexTypeColumnStore,
+			idx: &Index{AllowRowLocks: true, AllowPageLocks: true, Name: "NCCI", Type: IndexTypeColumnStore,
 				KeyColumns: []IndexColumn{{Name: "A"}, {Name: "B"}}},
 			want:      "CREATE NONCLUSTERED COLUMNSTORE INDEX [NCCI]\n    ON [dbo].[T] ([A], [B]);",
 			notWanted: []string{"ASC", "DESC"},
 		},
 		{
 			name:      "xml index is skipped with a note, not mis-scripted",
-			idx:       &Index{Name: "XI", Type: IndexTypeXML, KeyColumns: []IndexColumn{{Name: "Doc"}}},
+			idx:       &Index{AllowRowLocks: true, AllowPageLocks: true, Name: "XI", Type: IndexTypeXML, KeyColumns: []IndexColumn{{Name: "Doc"}}},
 			want:      "-- XML index [XI] on [dbo].[T] is not scripted",
 			notWanted: []string{"CREATE XML INDEX", "CREATE  INDEX"},
 		},
 		{
 			name:      "spatial index is skipped with a note",
-			idx:       &Index{Name: "SI", Type: IndexTypeSpatial, KeyColumns: []IndexColumn{{Name: "Geo"}}},
+			idx:       &Index{AllowRowLocks: true, AllowPageLocks: true, Name: "SI", Type: IndexTypeSpatial, KeyColumns: []IndexColumn{{Name: "Geo"}}},
 			want:      "-- SPATIAL index [SI] on [dbo].[T] is not scripted",
 			notWanted: []string{"CREATE SPATIAL INDEX"},
 		},
 		{
 			name: "ordinary nonclustered keeps the b-tree form",
-			idx: &Index{Name: "IX", Type: IndexTypeNonClustered, IsUnique: true,
+			idx: &Index{AllowRowLocks: true, AllowPageLocks: true, Name: "IX", Type: IndexTypeNonClustered, IsUnique: true,
 				KeyColumns: []IndexColumn{{Name: "A", Descending: true}}},
 			want:      "CREATE UNIQUE NONCLUSTERED INDEX [IX]\n    ON [dbo].[T] ([A] DESC);",
 			notWanted: nil,
@@ -204,7 +208,7 @@ func TestBuildTableScriptDrops(t *testing.T) {
 	cols, indexes, fks := scriptTestTable()
 	opts := DefaultScriptOptions()
 	opts.ScriptDrops = true
-	got := buildTableScript("dbo", "Widget", "AppDB", cols, indexes, fks, DataSpace{Name: "PRIMARY", IsDefaultFileGroup: true}, opts)
+	got := buildTableScript("dbo", "Widget", "AppDB", tableScriptParts{cols: cols, indexes: indexes, fks: fks, ds: DataSpace{Name: "PRIMARY", IsDefaultFileGroup: true}}, opts)
 	want := "IF OBJECT_ID(N'[dbo].[Widget]', N'U') IS NOT NULL\n    DROP TABLE [dbo].[Widget];\nGO\n"
 	if got != want {
 		t.Errorf("buildTableScript(drop) = %q, want %q", got, want)
@@ -222,7 +226,7 @@ func TestBuildTableScriptEmitsThePartitionScheme(t *testing.T) {
 	for _, idx := range indexes {
 		idx.DataSpace = ps
 	}
-	script := buildTableScript("dbo", "Widget", "AppDB", cols, indexes, fks, ps, DefaultScriptOptions())
+	script := buildTableScript("dbo", "Widget", "AppDB", tableScriptParts{cols: cols, indexes: indexes, fks: fks, ds: ps}, DefaultScriptOptions())
 
 	for _, want := range []string{
 		") ON [ps_year]([Created]);",
@@ -244,13 +248,13 @@ func TestBuildTableScriptEmitsThePartitionScheme(t *testing.T) {
 func TestBuildTableScriptEmitsANonDefaultFileGroup(t *testing.T) {
 	cols, indexes, fks := scriptTestTable()
 	archive := DataSpace{Name: "FG_Archive"}
-	script := buildTableScript("dbo", "Widget", "AppDB", cols, indexes, fks, archive, DefaultScriptOptions())
+	script := buildTableScript("dbo", "Widget", "AppDB", tableScriptParts{cols: cols, indexes: indexes, fks: fks, ds: archive}, DefaultScriptOptions())
 	if !strings.Contains(script, ") ON [FG_Archive];") {
 		t.Errorf("script does not put the table on its filegroup:\n%s", script)
 	}
 
 	primary := DataSpace{Name: "PRIMARY", IsDefaultFileGroup: true}
-	script = buildTableScript("dbo", "Widget", "AppDB", cols, indexes, fks, primary, DefaultScriptOptions())
+	script = buildTableScript("dbo", "Widget", "AppDB", tableScriptParts{cols: cols, indexes: indexes, fks: fks, ds: primary}, DefaultScriptOptions())
 	if strings.Contains(script, "ON [PRIMARY]") {
 		t.Errorf("script names the default filegroup, which says nothing:\n%s", script)
 	}
@@ -278,5 +282,143 @@ func TestDataSpaceClause(t *testing.T) {
 				t.Errorf("dataSpaceClause(%+v) = %q, want %q", c.ds, got, c.want)
 			}
 		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Table-script fidelity: each case is a table feature ScriptTable used to
+// drop, so CREATE To recreated a different table without saying so.
+// ---------------------------------------------------------------------------
+
+func TestBuildTableScriptKeepsColumnFeatures(t *testing.T) {
+	cols := []*Column{
+		{Name: "ID", DataType: DataTypeInt, IsIdentity: true, IdentitySeed: 1, IdentityIncrement: 1, IdentityNotForReplication: true},
+		{Name: "Stamp", DataType: DataTypeDatetime2, Scale: 0},
+		{Name: "Guid", DataType: DataTypeUniqueIdentifier, IsRowGUID: true},
+		{Name: "Total", DataType: DataTypeInt, IsComputed: true, ComputedText: "([ID]*(2))", IsPersisted: true},
+		{Name: "Loose", DataType: DataTypeInt, IsComputed: true, ComputedText: "([ID]+(1))", IsNullable: true},
+		{Name: "Phone", DataType: "Phone", TypeSchema: "app", IsUserDefinedType: true, MaxLength: 40, IsNullable: true},
+		{Name: "Rare", DataType: DataTypeInt, IsSparse: true, IsNullable: true},
+		{Name: "Props", DataType: DataTypeXML, IsColumnSet: true, IsNullable: true},
+		{Name: "Email", DataType: DataTypeNVarChar, MaxLength: 200, IsNullable: true, MaskingFunction: `partial(1,"XXX",0)`},
+		{Name: "CS", DataType: DataTypeVarChar, MaxLength: 10, IsNullable: true, Collation: "Latin1_General_CS_AS"},
+		{Name: "Same", DataType: DataTypeVarChar, MaxLength: 10, IsNullable: true, Collation: "SQL_Latin1_General_CP1_CI_AS"},
+	}
+	p := tableScriptParts{cols: cols, table: tableScriptOptions{DatabaseCollation: "SQL_Latin1_General_CP1_CI_AS"}}
+	got := buildTableScript("dbo", "T", "db", p, ScriptOptions{})
+	for _, want := range []string{
+		"[ID] int IDENTITY(1,1) NOT FOR REPLICATION NOT NULL",
+		"[Stamp] datetime2(0) NOT NULL",
+		"[Guid] uniqueidentifier ROWGUIDCOL NOT NULL",
+		"[Total] AS ([ID]*(2)) PERSISTED NOT NULL",
+		"[Loose] AS ([ID]+(1)),",
+		"[Phone] [app].[Phone] NULL",
+		"[Rare] int SPARSE NULL",
+		"[Props] xml COLUMN_SET FOR ALL_SPARSE_COLUMNS,",
+		`[Email] nvarchar(100) MASKED WITH (FUNCTION = 'partial(1,"XXX",0)') NULL`,
+		"[CS] varchar(10) COLLATE Latin1_General_CS_AS NULL",
+		"[Same] varchar(10) NULL",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("script is missing %q:\n%s", want, got)
+		}
+	}
+}
+
+func TestBuildTableScriptKeepsCheckConstraints(t *testing.T) {
+	p := tableScriptParts{
+		cols: []*Column{{Name: "a", DataType: DataTypeInt}},
+		checks: []*CheckConstraint{
+			{Name: "CK_on", Definition: "([a]>(0))"},
+			{Name: "CK_off", Definition: "([a]<(9))", IsDisabled: true, IsNotTrusted: true},
+			{Name: "CK_untrusted", Definition: "([a]<>(5))", IsNotTrusted: true},
+			{Name: "CK_nfr", Definition: "([a]<>(6))", IsNotForReplication: true, IsNotTrusted: true},
+		},
+	}
+	got := buildTableScript("dbo", "T", "db", p, ScriptOptions{})
+	for _, want := range []string{
+		"ALTER TABLE [dbo].[T] WITH CHECK\n    ADD CONSTRAINT [CK_on] CHECK ([a]>(0));",
+		"ALTER TABLE [dbo].[T] WITH NOCHECK\n    ADD CONSTRAINT [CK_off] CHECK ([a]<(9));",
+		"ALTER TABLE [dbo].[T] NOCHECK CONSTRAINT [CK_off];",
+		"ALTER TABLE [dbo].[T] WITH NOCHECK\n    ADD CONSTRAINT [CK_untrusted] CHECK ([a]<>(5));",
+		"ADD CONSTRAINT [CK_nfr] CHECK NOT FOR REPLICATION ([a]<>(6));",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("script is missing %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "NOCHECK CONSTRAINT [CK_untrusted]") {
+		t.Errorf("an enabled untrusted constraint was disabled:\n%s", got)
+	}
+}
+
+func TestBuildTableScriptTemporal(t *testing.T) {
+	p := tableScriptParts{
+		cols: []*Column{
+			{Name: "ID", DataType: DataTypeInt},
+			{Name: "ValidFrom", DataType: DataTypeDatetime2, Scale: 7, GeneratedAlwaysType: 1, IsHidden: true},
+			{Name: "ValidTo", DataType: DataTypeDatetime2, Scale: 7, GeneratedAlwaysType: 2},
+		},
+		indexes: []*Index{{AllowRowLocks: true, AllowPageLocks: true, Name: "PK_T", IsPrimaryKey: true,
+			IsClustered: true, KeyColumns: []IndexColumn{{Name: "ID"}}}},
+		table: tableScriptOptions{SystemVersioned: true, HistorySchema: "hist", HistoryTable: "T_History",
+			PeriodStart: "ValidFrom", PeriodEnd: "ValidTo"},
+	}
+	opts := ScriptOptions{Verb: ScriptDropAndCreate}
+	got := buildTableScript("dbo", "T", "db", p, opts)
+	for _, want := range []string{
+		"[ValidFrom] datetime2(7) GENERATED ALWAYS AS ROW START HIDDEN NOT NULL,",
+		"[ValidTo] datetime2(7) GENERATED ALWAYS AS ROW END NOT NULL,",
+		"    PERIOD FOR SYSTEM_TIME ([ValidFrom], [ValidTo]),\n    CONSTRAINT [PK_T] PRIMARY KEY CLUSTERED",
+		")\nWITH (SYSTEM_VERSIONING = ON (HISTORY_TABLE = [hist].[T_History]));",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("script is missing %q:\n%s", want, got)
+		}
+	}
+	off := strings.Index(got, "SET (SYSTEM_VERSIONING = OFF)")
+	drop := strings.Index(got, "DROP TABLE")
+	if off < 0 || off > drop {
+		t.Errorf("DROP TABLE of a system-versioned table needs versioning switched off first:\n%s", got)
+	}
+}
+
+func TestBuildTableScriptIndexOptions(t *testing.T) {
+	p := tableScriptParts{
+		cols: []*Column{{Name: "a", DataType: DataTypeInt}, {Name: "b", DataType: DataTypeInt}},
+		indexes: []*Index{
+			{Name: "PK_T", IsPrimaryKey: true, IsClustered: true, AllowRowLocks: true, AllowPageLocks: false,
+				DataCompression: "PAGE", KeyColumns: []IndexColumn{{Name: "a"}}},
+			{Name: "IX_b", Type: IndexTypeNonClustered, IsUnique: true, IsPadded: true, FillFactor: 80,
+				IgnoreDupKey: true, AllowRowLocks: true, AllowPageLocks: true, DataCompression: "ROW",
+				IsDisabled: true, KeyColumns: []IndexColumn{{Name: "b"}}},
+		},
+		table: tableScriptOptions{HeapCompression: ""},
+	}
+	got := buildTableScript("dbo", "T", "db", p, ScriptOptions{})
+	for _, want := range []string{
+		"PRIMARY KEY CLUSTERED ([a] ASC) WITH (ALLOW_PAGE_LOCKS = OFF, DATA_COMPRESSION = PAGE)",
+		"WITH (PAD_INDEX = ON, FILLFACTOR = 80, IGNORE_DUP_KEY = ON, DATA_COMPRESSION = ROW);",
+		"ALTER INDEX [IX_b] ON [dbo].[T] DISABLE;",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("script is missing %q:\n%s", want, got)
+		}
+	}
+	if strings.Index(got, "DISABLE;") < strings.Index(got, "CREATE UNIQUE NONCLUSTERED INDEX [IX_b]") {
+		t.Errorf("an index must be disabled after it is created:\n%s", got)
+	}
+
+	heap := tableScriptParts{cols: p.cols, table: tableScriptOptions{HeapCompression: "PAGE"}}
+	if got := buildTableScript("dbo", "T", "db", heap, ScriptOptions{}); !strings.Contains(got, ")\nWITH (DATA_COMPRESSION = PAGE);") {
+		t.Errorf("a compressed heap lost its compression:\n%s", got)
+	}
+}
+
+func TestModuleSetOptions(t *testing.T) {
+	got := moduleSetOptions(false, true)
+	want := "SET ANSI_NULLS OFF;\nGO\nSET QUOTED_IDENTIFIER ON;\nGO\n"
+	if got != want {
+		t.Errorf("moduleSetOptions(false, true) = %q, want %q", got, want)
 	}
 }

@@ -65,7 +65,7 @@ func TestParseSQLAgentDuration(t *testing.T) {
 
 // TestJobStepNameRequired pins the empty-name guard on both job-step writers.
 // Beyond rejecting a request sp_add_jobstep/sp_update_jobstep would refuse
-// anyway, the guard has to run before anything else: JobStep.UpdateContext
+// anyway, the guard has to run before anything else: JobStep.Update
 // copies req over the receiver's own fields once the statement succeeds, so an
 // empty name that got that far would blank out JobStep.Name locally. Both
 // receivers here are deliberately zero-valued — no job, no server — so a guard
@@ -76,11 +76,11 @@ func TestJobStepNameRequired(t *testing.T) {
 		name string
 		call func() error
 	}{
-		{"Job.AddStepContext", func() error {
-			return (&Job{}).AddStepContext(t.Context(), JobStepRequest{Command: "SELECT 1"})
+		{"Job.AddStep", func() error {
+			return (&Job{}).AddStep(t.Context(), JobStepRequest{Command: "SELECT 1"})
 		}},
-		{"JobStep.UpdateContext", func() error {
-			return (&JobStep{}).UpdateContext(t.Context(), JobStepRequest{Command: "SELECT 1"})
+		{"JobStep.Update", func() error {
+			return (&JobStep{}).Update(t.Context(), JobStepRequest{Command: "SELECT 1"})
 		}},
 	}
 	for _, c := range cases {
@@ -101,8 +101,8 @@ func TestJobStepNameRequired(t *testing.T) {
 // in-memory fields.
 func TestJobStepUpdateLeavesFieldsAloneOnRejection(t *testing.T) {
 	s := &JobStep{Name: "Load staging", Subsystem: "TSQL", Command: "EXEC dbo.Load"}
-	if err := s.UpdateContext(t.Context(), JobStepRequest{Command: "SELECT 1"}); err == nil {
-		t.Fatal("UpdateContext with an empty Name = nil, want an error")
+	if err := s.Update(t.Context(), JobStepRequest{Command: "SELECT 1"}); err == nil {
+		t.Fatal("Update with an empty Name = nil, want an error")
 	}
 	if s.Name != "Load staging" || s.Subsystem != "TSQL" || s.Command != "EXEC dbo.Load" {
 		t.Errorf("after a rejected update, step = %+v, want its original field values", s)
@@ -132,8 +132,8 @@ func TestDeleteStepAddressesTheStepItWasCalledOn(t *testing.T) {
 	// would pass against a job whose step is step 1.
 	s := captureStepJob(t, "nightly", 3)
 
-	if err := s.DeleteContext(t.Context()); err != nil {
-		t.Fatalf("DeleteContext: %v", err)
+	if err := s.Delete(t.Context()); err != nil {
+		t.Fatalf("Delete: %v", err)
 	}
 
 	got := captured.find("sp_delete_jobstep")
@@ -148,8 +148,8 @@ func TestDeleteStepAddressesTheStepItWasCalledOn(t *testing.T) {
 func TestDeleteStepEscapesTheJobName(t *testing.T) {
 	s := captureStepJob(t, "Bob's nightly", 1)
 
-	if err := s.DeleteContext(t.Context()); err != nil {
-		t.Fatalf("DeleteContext: %v", err)
+	if err := s.Delete(t.Context()); err != nil {
+		t.Fatalf("Delete: %v", err)
 	}
 
 	if got, want := captured.find("sp_delete_jobstep"),
@@ -158,16 +158,16 @@ func TestDeleteStepEscapesTheJobName(t *testing.T) {
 	}
 }
 
-// JobStep.DeleteContext and Job.deleteStepAt are one call now, the step's
-// number being the only difference between them, and ReorderStepsContext
+// JobStep.Delete and Job.deleteStepAt are one call now, the step's
+// number being the only difference between them, and ReorderSteps
 // collects the same text into its batch through deleteStepStmt. The three
 // agreeing is what makes a fix to the statement reach every path that deletes a
 // step; they were two renderings of the same procedure call before.
 func TestEveryStepDeleteRendersTheSameCall(t *testing.T) {
 	s := captureStepJob(t, "nightly", 2)
 
-	if err := s.DeleteContext(t.Context()); err != nil {
-		t.Fatalf("DeleteContext: %v", err)
+	if err := s.Delete(t.Context()); err != nil {
+		t.Fatalf("Delete: %v", err)
 	}
 	viaStep := captured.find("sp_delete_jobstep")
 
@@ -178,7 +178,7 @@ func TestEveryStepDeleteRendersTheSameCall(t *testing.T) {
 	viaNumber := captured.find("sp_delete_jobstep")
 
 	if viaStep != viaNumber {
-		t.Errorf("JobStep.DeleteContext sends\n%s\nand Job.deleteStepAt sends\n%s", viaStep, viaNumber)
+		t.Errorf("JobStep.Delete sends\n%s\nand Job.deleteStepAt sends\n%s", viaStep, viaNumber)
 	}
 	if got := deleteStepStmt("nightly", 2); got != viaStep {
 		t.Errorf("the reorder batch collects\n%s\nand a delete sends\n%s", got, viaStep)
@@ -264,16 +264,16 @@ func TestJobsAndJobByNameDecodeTheSameRowIdentically(t *testing.T) {
 	s := &Server{db: db}
 
 	jobQueries = nil
-	jobs, err := s.JobsContext(context.Background())
+	jobs, err := s.Jobs(context.Background())
 	if err != nil {
-		t.Fatalf("JobsContext: %v", err)
+		t.Fatalf("Jobs: %v", err)
 	}
 	if len(jobs) != 1 {
-		t.Fatalf("JobsContext returned %d jobs, want 1", len(jobs))
+		t.Fatalf("Jobs returned %d jobs, want 1", len(jobs))
 	}
-	byName, err := s.JobByNameContext(context.Background(), "Nightly reindex")
+	byName, err := s.JobByName(context.Background(), "Nightly reindex")
 	if err != nil {
-		t.Fatalf("JobByNameContext: %v", err)
+		t.Fatalf("JobByName: %v", err)
 	}
 
 	if *jobs[0] != *byName {

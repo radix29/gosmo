@@ -47,12 +47,7 @@ SELECT sp.name, SCHEMA_NAME(sp.schema_id), sp.object_id,
 FROM   sys.security_policies sp`
 
 // SecurityPolicies returns all security policies in the database.
-func (d *Database) SecurityPolicies() ([]*SecurityPolicy, error) {
-	return d.SecurityPoliciesContext(context.Background())
-}
-
-// SecurityPoliciesContext is the context-aware variant of SecurityPolicies.
-func (d *Database) SecurityPoliciesContext(ctx context.Context) ([]*SecurityPolicy, error) {
+func (d *Database) SecurityPolicies(ctx context.Context) ([]*SecurityPolicy, error) {
 	rows, err := d.query(ctx, securityPolicySelect+`
 ORDER  BY sp.name`)
 	if err != nil {
@@ -83,13 +78,7 @@ ORDER  BY sp.name`)
 }
 
 // SecurityPolicyByName returns one security policy by schema-qualified name.
-func (d *Database) SecurityPolicyByName(schema, name string) (*SecurityPolicy, error) {
-	return d.SecurityPolicyByNameContext(context.Background(), schema, name)
-}
-
-// SecurityPolicyByNameContext is the context-aware variant of
-// SecurityPolicyByName.
-func (d *Database) SecurityPolicyByNameContext(ctx context.Context, schema, name string) (*SecurityPolicy, error) {
+func (d *Database) SecurityPolicyByName(ctx context.Context, schema, name string) (*SecurityPolicy, error) {
 	var p *SecurityPolicy
 	err := d.queryRow(ctx, func(row *sql.Row) error {
 		var err error
@@ -158,12 +147,7 @@ ORDER  BY spr.predicate_type_desc`
 }
 
 // Enable enables the security policy.
-func (p *SecurityPolicy) Enable() error {
-	return p.EnableContext(context.Background())
-}
-
-// EnableContext is the context-aware variant of Enable.
-func (p *SecurityPolicy) EnableContext(ctx context.Context) error {
+func (p *SecurityPolicy) Enable(ctx context.Context) error {
 	_, err := p.db.exec(ctx,
 		fmt.Sprintf("ALTER SECURITY POLICY %s WITH (STATE = ON)", qualifiedName(p.Schema, p.Name)))
 	if err != nil {
@@ -174,12 +158,7 @@ func (p *SecurityPolicy) EnableContext(ctx context.Context) error {
 }
 
 // Disable disables the security policy.
-func (p *SecurityPolicy) Disable() error {
-	return p.DisableContext(context.Background())
-}
-
-// DisableContext is the context-aware variant of Disable.
-func (p *SecurityPolicy) DisableContext(ctx context.Context) error {
+func (p *SecurityPolicy) Disable(ctx context.Context) error {
 	_, err := p.db.exec(ctx,
 		fmt.Sprintf("ALTER SECURITY POLICY %s WITH (STATE = OFF)", qualifiedName(p.Schema, p.Name)))
 	if err != nil {
@@ -191,12 +170,7 @@ func (p *SecurityPolicy) DisableContext(ctx context.Context) error {
 
 // Drop drops the security policy. A policy that isn't there is the server's
 // error, not a silent success — see the note on Database.DropTable.
-func (p *SecurityPolicy) Drop() error {
-	return p.DropContext(context.Background())
-}
-
-// DropContext is the context-aware variant of Drop.
-func (p *SecurityPolicy) DropContext(ctx context.Context) error {
+func (p *SecurityPolicy) Drop(ctx context.Context) error {
 	_, err := p.db.exec(ctx,
 		fmt.Sprintf("DROP SECURITY POLICY %s", qualifiedName(p.Schema, p.Name)))
 	if err != nil {

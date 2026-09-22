@@ -38,12 +38,12 @@ func TestColTypeSQL(t *testing.T) {
 // testable without a live server.
 func TestAlterColumnRequiresName(t *testing.T) {
 	tbl := &Table{Schema: "dbo", Name: "T"}
-	if err := tbl.AlterColumn(ColumnDefinition{DataType: DataTypeInt}); err == nil {
+	if err := tbl.AlterColumn(t.Context(), ColumnDefinition{DataType: DataTypeInt}); err == nil {
 		t.Error("AlterColumn with empty column name = nil error, want error")
 	}
 }
 
-// IndexesContext costs two queries however many indexes the table has: one
+// Indexes costs two queries however many indexes the table has: one
 // for the indexes, one for every index column on the object. Fetching each
 // index's columns inside the loop over the indexes made it N+1, and
 // Database.query pins its own pooled connection and issues its own USE, so
@@ -86,9 +86,9 @@ func TestIndexesUsesOneQueryForEveryIndexColumn(t *testing.T) {
 		},
 	)
 
-	indexes, err := tbl.IndexesContext(context.Background())
+	indexes, err := tbl.Indexes(context.Background())
 	if err != nil {
-		t.Fatalf("IndexesContext: %v", err)
+		t.Fatalf("Indexes: %v", err)
 	}
 
 	if n := captured.count("sys.index_columns ic"); n != 1 {
@@ -133,9 +133,9 @@ func TestIndexesSkipsTheColumnQueryWhenThereAreNoIndexes(t *testing.T) {
 	tbl := captureTable(t)
 	captured.reset()
 
-	indexes, err := tbl.IndexesContext(context.Background())
+	indexes, err := tbl.Indexes(context.Background())
 	if err != nil {
-		t.Fatalf("IndexesContext: %v", err)
+		t.Fatalf("Indexes: %v", err)
 	}
 	if len(indexes) != 0 {
 		t.Errorf("got %d indexes, want none", len(indexes))
@@ -174,9 +174,9 @@ func TestIndexListReadsEachIndexDataSpace(t *testing.T) {
 		},
 	)
 
-	indexes, err := tbl.IndexesContext(context.Background())
+	indexes, err := tbl.Indexes(context.Background())
 	if err != nil {
-		t.Fatalf("IndexesContext: %v", err)
+		t.Fatalf("Indexes: %v", err)
 	}
 	want := []DataSpace{
 		{Name: "ps_year", IsPartitionScheme: true, PartitionColumn: "Created"},
@@ -205,13 +205,13 @@ func TestTableDataSpaceReadsTheHeapOrClusteredIndex(t *testing.T) {
 		row:   []driver.Value{"ps_year", true, false, "Created"},
 	})
 
-	ds, err := tbl.DataSpaceContext(context.Background())
+	ds, err := tbl.DataSpace(context.Background())
 	if err != nil {
-		t.Fatalf("DataSpaceContext: %v", err)
+		t.Fatalf("DataSpace: %v", err)
 	}
 	want := DataSpace{Name: "ps_year", IsPartitionScheme: true, PartitionColumn: "Created"}
 	if ds != want {
-		t.Errorf("DataSpaceContext = %+v, want %+v", ds, want)
+		t.Errorf("DataSpace = %+v, want %+v", ds, want)
 	}
 	if n := captured.count("i.index_id IN (0, 1)"); n != 1 {
 		t.Errorf("index_id IN (0, 1) appeared in %d queries, want 1 — a heap is only reachable that way", n)
@@ -226,11 +226,11 @@ func TestTableDataSpaceIsEmptyWhenThereIsNoRow(t *testing.T) {
 	tbl := captureTable(t)
 	captured.reset()
 
-	ds, err := tbl.DataSpaceContext(context.Background())
+	ds, err := tbl.DataSpace(context.Background())
 	if err != nil {
-		t.Fatalf("DataSpaceContext: %v", err)
+		t.Fatalf("DataSpace: %v", err)
 	}
 	if (ds != DataSpace{}) {
-		t.Errorf("DataSpaceContext = %+v, want the zero DataSpace", ds)
+		t.Errorf("DataSpace = %+v, want the zero DataSpace", ds)
 	}
 }

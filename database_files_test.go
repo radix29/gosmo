@@ -69,9 +69,9 @@ func TestFileGroupsCarryTheirType(t *testing.T) {
 	}
 	d := qsRecDB(t, 17, cols, rows)
 
-	fgs, err := d.FileGroupsContext(context.Background())
+	fgs, err := d.FileGroups(context.Background())
 	if err != nil {
-		t.Fatalf("FileGroupsContext: %v", err)
+		t.Fatalf("FileGroups: %v", err)
 	}
 	if len(fgs) != 2 {
 		t.Fatalf("got %d filegroups, want 2", len(fgs))
@@ -90,6 +90,6 @@ func TestFileGroupsCarryTheirType(t *testing.T) {
 	// stopped reading type_desc would leave every group's Type empty and
 	// IsFileStream false, which reads as "no FILESTREAM filegroup here".
 	if sql := qsRec.last(t).sql; !strings.Contains(sql, "type_desc") {
-		t.Errorf("FileGroupsContext query does not read type_desc:\n%s", sql)
+		t.Errorf("FileGroups query does not read type_desc:\n%s", sql)
 	}
 }

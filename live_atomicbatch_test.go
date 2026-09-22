@@ -34,11 +34,11 @@ func TestLiveAtomicBatchRollsBackTheStatementsBeforeTheFailure(t *testing.T) {
 	srv := &Server{db: db}
 
 	drop := func() {
-		srv.execContext(ctx, "IF OBJECT_ID('"+atomicBatchTable+"') IS NOT NULL DROP TABLE "+atomicBatchTable)
+		srv.exec(ctx, "IF OBJECT_ID('"+atomicBatchTable+"') IS NOT NULL DROP TABLE "+atomicBatchTable)
 	}
 	drop()
 	defer drop()
-	if err := srv.execContext(ctx, "CREATE TABLE "+atomicBatchTable+" (n INT NOT NULL)"); err != nil {
+	if err := srv.exec(ctx, "CREATE TABLE "+atomicBatchTable+" (n INT NOT NULL)"); err != nil {
 		t.Fatalf("create table: %v", err)
 	}
 
@@ -52,7 +52,7 @@ func TestLiveAtomicBatchRollsBackTheStatementsBeforeTheFailure(t *testing.T) {
 
 	// The happy path first, so a batch that silently does nothing at all
 	// cannot pass the rollback assertion below.
-	if err := srv.execContext(ctx, atomicBatch([]string{
+	if err := srv.exec(ctx, atomicBatch([]string{
 		"INSERT INTO " + atomicBatchTable + " VALUES (1)",
 		"INSERT INTO " + atomicBatchTable + " VALUES (2)",
 	})); err != nil {
@@ -65,7 +65,7 @@ func TestLiveAtomicBatchRollsBackTheStatementsBeforeTheFailure(t *testing.T) {
 	// Now one that fails on its second statement. The first has already
 	// succeeded when it does, which is the delete-then-failed-insert shape a
 	// job step reorder gets into.
-	err := srv.execContext(ctx, atomicBatch([]string{
+	err := srv.exec(ctx, atomicBatch([]string{
 		"INSERT INTO " + atomicBatchTable + " VALUES (3)",
 		"INSERT INTO " + atomicBatchTable + " VALUES ('not an int')",
 	}))
@@ -98,10 +98,10 @@ func TestLiveAtomicBatchRunsMsdbJobProcedures(t *testing.T) {
 	j, drop := liveReorderJob(t, srv, ctx)
 	defer drop()
 
-	if err := j.MoveStepContext(ctx, 4, 1); err != nil {
+	if err := j.MoveStep(ctx, 4, 1); err != nil {
 		t.Fatalf("msdb's job procedures rejected the transactional batch: %v", err)
 	}
-	steps, err := j.StepsContext(ctx)
+	steps, err := j.Steps(ctx)
 	if err != nil {
 		t.Fatalf("steps: %v", err)
 	}

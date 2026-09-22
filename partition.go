@@ -3,7 +3,6 @@ package gosmo
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"fmt"
 	"regexp"
 	"strings"
@@ -28,10 +27,16 @@ func validPartitionBoundary(v string) bool {
 
 // PartitionFunction mirrors sys.partition_functions.
 type PartitionFunction struct {
-	db            *Database
-	Name          string
-	FunctionID    int
-	InputType     DataType
+	db         *Database
+	Name       string
+	FunctionID int
+	InputType  DataType
+	// MaxLength, Precision and Scale qualify InputType the way sys.columns'
+	// columns of the same names qualify a column's type — a datetime2(0) or
+	// nvarchar(20) partitioning function is not the bare type.
+	MaxLength     int
+	Precision     int
+	Scale         int
 	BoundaryCount int
 	IsRight       bool // RIGHT = boundary is in right partition
 	Boundaries    []string
@@ -45,7 +50,8 @@ func (pf *PartitionFunction) Database() *Database { return pf.db }
 // WHERE.
 var partitionFunctionSelect = `
 SELECT pf.name, pf.function_id, pf.fanout - 1,
-       tp.name AS input_type, pf.boundary_value_on_right,
+       tp.name AS input_type, pp.max_length, pp.precision, pp.scale,
+       pf.boundary_value_on_right,
        -- Style 126 (ISO 8601) matters for a date/time boundary: the default
        -- conversion yields "Jan  1 2026", which loses any time part and has
        -- to be reparsed by whoever reads it. It is ignored for every other
@@ -58,41 +64,16 @@ JOIN   sys.partition_parameters pp ON pp.function_id = pf.function_id
 JOIN   sys.types tp ON tp.user_type_id = pp.user_type_id`
 
 // PartitionFunctions returns all partition functions in the database.
-func (d *Database) PartitionFunctions() ([]*PartitionFunction, error) {
-	return d.PartitionFunctionsContext(context.Background())
-}
-
-// PartitionFunctionsContext is the context-aware variant of PartitionFunctions.
-func (d *Database) PartitionFunctionsContext(ctx context.Context) ([]*PartitionFunction, error) {
+func (d *Database) PartitionFunctions(ctx context.Context) ([]*PartitionFunction, error) {
 	rows, err := d.query(ctx, partitionFunctionSelect+`
 ORDER  BY pf.name`)
-	if err != nil {
-		return nil, fmt.Errorf("gosmo: list partition functions: %w", err)
-	}
-	defer rows.Close()
-
-	var funcs []*PartitionFunction
-	for rows.Next() {
-		pf, err := scanPartitionFunction(d, rows.Scan)
-		if err != nil {
-			return nil, fmt.Errorf("gosmo: list partition functions: %w", err)
-		}
-		funcs = append(funcs, pf)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("gosmo: list partition functions: %w", err)
-	}
-	return funcs, nil
+	return scanRows(rows, err, "list partition functions", func(scan func(...any) error) (*PartitionFunction, error) {
+		return scanPartitionFunction(d, scan)
+	})
 }
 
 // PartitionFunctionByName returns one partition function by name.
-func (d *Database) PartitionFunctionByName(name string) (*PartitionFunction, error) {
-	return d.PartitionFunctionByNameContext(context.Background(), name)
-}
-
-// PartitionFunctionByNameContext is the context-aware variant of
-// PartitionFunctionByName.
-func (d *Database) PartitionFunctionByNameContext(ctx context.Context, name string) (*PartitionFunction, error) {
+func (d *Database) PartitionFunctionByName(ctx context.Context, name string) (*PartitionFunction, error) {
 	var pf *PartitionFunction
 	err := d.queryRow(ctx, func(row *sql.Row) error {
 		var err error
@@ -100,20 +81,15 @@ func (d *Database) PartitionFunctionByNameContext(ctx context.Context, name stri
 		return err
 	}, partitionFunctionSelect+`
 WHERE  pf.name = @p1`, name)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, notFoundf("gosmo: partition function %q not found in %q", name, d.Name)
-		}
-		return nil, fmt.Errorf("gosmo: find partition function %q in %q: %w", name, d.Name, err)
-	}
-	return pf, nil
+	return foundRow(pf, err, notFoundf("gosmo: partition function %q not found in %q", name, d.Name), fmt.Sprintf("find partition function %q in %q", name, d.Name))
 }
 
 func scanPartitionFunction(d *Database, scan func(...any) error) (*PartitionFunction, error) {
 	pf := &PartitionFunction{db: d}
 	var boundaries sql.NullString
 	if err := scan(&pf.Name, &pf.FunctionID, &pf.BoundaryCount,
-		&pf.InputType, &pf.IsRight, &boundaries); err != nil {
+		&pf.InputType, &pf.MaxLength, &pf.Precision, &pf.Scale,
+		&pf.IsRight, &boundaries); err != nil {
 		return nil, err
 	}
 	if boundaries.Valid && boundaries.String != "" {
@@ -131,12 +107,7 @@ type CreatePartitionFunctionRequest struct {
 }
 
 // CreatePartitionFunction creates a partition function.
-func (d *Database) CreatePartitionFunction(req CreatePartitionFunctionRequest) error {
-	return d.CreatePartitionFunctionContext(context.Background(), req)
-}
-
-// CreatePartitionFunctionContext is the context-aware variant of CreatePartitionFunction.
-func (d *Database) CreatePartitionFunctionContext(ctx context.Context, req CreatePartitionFunctionRequest) error {
+func (d *Database) CreatePartitionFunction(ctx context.Context, req CreatePartitionFunctionRequest) error {
 	if len(req.Boundaries) == 0 {
 		return fmt.Errorf("gosmo: create partition function: at least one boundary required")
 	}
@@ -165,12 +136,7 @@ func (d *Database) CreatePartitionFunctionContext(ctx context.Context, req Creat
 }
 
 // Drop drops the partition function.
-func (pf *PartitionFunction) Drop() error {
-	return pf.DropContext(context.Background())
-}
-
-// DropContext is the context-aware variant of Drop.
-func (pf *PartitionFunction) DropContext(ctx context.Context) error {
+func (pf *PartitionFunction) Drop(ctx context.Context) error {
 	_, err := pf.db.exec(ctx,
 		fmt.Sprintf("DROP PARTITION FUNCTION %s", quoteIdent(pf.Name)))
 	if err != nil {
@@ -180,12 +146,7 @@ func (pf *PartitionFunction) DropContext(ctx context.Context) error {
 }
 
 // SplitRange adds a new boundary value to the partition function.
-func (pf *PartitionFunction) SplitRange(value string) error {
-	return pf.SplitRangeContext(context.Background(), value)
-}
-
-// SplitRangeContext is the context-aware variant of SplitRange.
-func (pf *PartitionFunction) SplitRangeContext(ctx context.Context, value string) error {
+func (pf *PartitionFunction) SplitRange(ctx context.Context, value string) error {
 	if !validPartitionBoundary(value) {
 		return fmt.Errorf("gosmo: split range on [%s]: invalid boundary literal %q", pf.Name, value)
 	}
@@ -198,12 +159,7 @@ func (pf *PartitionFunction) SplitRangeContext(ctx context.Context, value string
 }
 
 // MergeRange removes a boundary value from the partition function.
-func (pf *PartitionFunction) MergeRange(value string) error {
-	return pf.MergeRangeContext(context.Background(), value)
-}
-
-// MergeRangeContext is the context-aware variant of MergeRange.
-func (pf *PartitionFunction) MergeRangeContext(ctx context.Context, value string) error {
+func (pf *PartitionFunction) MergeRange(ctx context.Context, value string) error {
 	if !validPartitionBoundary(value) {
 		return fmt.Errorf("gosmo: merge range on [%s]: invalid boundary literal %q", pf.Name, value)
 	}
@@ -241,41 +197,16 @@ FROM   sys.partition_schemes ps
 JOIN   sys.partition_functions pf ON pf.function_id = ps.function_id`
 
 // PartitionSchemes returns all partition schemes in the database.
-func (d *Database) PartitionSchemes() ([]*PartitionScheme, error) {
-	return d.PartitionSchemesContext(context.Background())
-}
-
-// PartitionSchemesContext is the context-aware variant of PartitionSchemes.
-func (d *Database) PartitionSchemesContext(ctx context.Context) ([]*PartitionScheme, error) {
+func (d *Database) PartitionSchemes(ctx context.Context) ([]*PartitionScheme, error) {
 	rows, err := d.query(ctx, partitionSchemeSelect+`
 ORDER  BY ps.name`)
-	if err != nil {
-		return nil, fmt.Errorf("gosmo: list partition schemes: %w", err)
-	}
-	defer rows.Close()
-
-	var schemes []*PartitionScheme
-	for rows.Next() {
-		ps, err := scanPartitionScheme(d, rows.Scan)
-		if err != nil {
-			return nil, fmt.Errorf("gosmo: list partition schemes: %w", err)
-		}
-		schemes = append(schemes, ps)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("gosmo: list partition schemes: %w", err)
-	}
-	return schemes, nil
+	return scanRows(rows, err, "list partition schemes", func(scan func(...any) error) (*PartitionScheme, error) {
+		return scanPartitionScheme(d, scan)
+	})
 }
 
 // PartitionSchemeByName returns one partition scheme by name.
-func (d *Database) PartitionSchemeByName(name string) (*PartitionScheme, error) {
-	return d.PartitionSchemeByNameContext(context.Background(), name)
-}
-
-// PartitionSchemeByNameContext is the context-aware variant of
-// PartitionSchemeByName.
-func (d *Database) PartitionSchemeByNameContext(ctx context.Context, name string) (*PartitionScheme, error) {
+func (d *Database) PartitionSchemeByName(ctx context.Context, name string) (*PartitionScheme, error) {
 	var ps *PartitionScheme
 	err := d.queryRow(ctx, func(row *sql.Row) error {
 		var err error
@@ -283,13 +214,7 @@ func (d *Database) PartitionSchemeByNameContext(ctx context.Context, name string
 		return err
 	}, partitionSchemeSelect+`
 WHERE  ps.name = @p1`, name)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, notFoundf("gosmo: partition scheme %q not found in %q", name, d.Name)
-		}
-		return nil, fmt.Errorf("gosmo: find partition scheme %q in %q: %w", name, d.Name, err)
-	}
-	return ps, nil
+	return foundRow(ps, err, notFoundf("gosmo: partition scheme %q not found in %q", name, d.Name), fmt.Sprintf("find partition scheme %q in %q", name, d.Name))
 }
 
 func scanPartitionScheme(d *Database, scan func(...any) error) (*PartitionScheme, error) {
@@ -305,12 +230,7 @@ func scanPartitionScheme(d *Database, scan func(...any) error) (*PartitionScheme
 }
 
 // CreatePartitionScheme creates a partition scheme backed by a partition function.
-func (d *Database) CreatePartitionScheme(name, functionName string, fileGroups []string) error {
-	return d.CreatePartitionSchemeContext(context.Background(), name, functionName, fileGroups)
-}
-
-// CreatePartitionSchemeContext is the context-aware variant of CreatePartitionScheme.
-func (d *Database) CreatePartitionSchemeContext(ctx context.Context, name, functionName string, fileGroups []string) error {
+func (d *Database) CreatePartitionScheme(ctx context.Context, name, functionName string, fileGroups []string) error {
 	if len(fileGroups) == 0 {
 		return fmt.Errorf("gosmo: create partition scheme: at least one filegroup required")
 	}
@@ -330,12 +250,7 @@ func (d *Database) CreatePartitionSchemeContext(ctx context.Context, name, funct
 }
 
 // Drop drops the partition scheme.
-func (ps *PartitionScheme) Drop() error {
-	return ps.DropContext(context.Background())
-}
-
-// DropContext is the context-aware variant of Drop.
-func (ps *PartitionScheme) DropContext(ctx context.Context) error {
+func (ps *PartitionScheme) Drop(ctx context.Context) error {
 	_, err := ps.db.exec(ctx,
 		fmt.Sprintf("DROP PARTITION SCHEME %s", quoteIdent(ps.Name)))
 	if err != nil {
@@ -354,14 +269,10 @@ type PartitionInfo struct {
 }
 
 // Partitions returns per-partition row counts and compression for the table.
-func (t *Table) Partitions() ([]*PartitionInfo, error) {
-	return t.PartitionsContext(context.Background())
-}
-
-// PartitionsContext is the context-aware variant of Partitions. A
-// non-partitioned table still returns exactly one row (partition number 1),
+//
+// A non-partitioned table still returns exactly one row (partition number 1),
 // same as sys.partitions itself.
-func (t *Table) PartitionsContext(ctx context.Context) ([]*PartitionInfo, error) {
+func (t *Table) Partitions(ctx context.Context) ([]*PartitionInfo, error) {
 	const q = `
 SELECT p.partition_number, p.rows, p.data_compression_desc
 FROM   sys.partitions p
@@ -369,23 +280,13 @@ WHERE  p.object_id = @p1 AND p.index_id IN (0,1)
 ORDER  BY p.partition_number`
 
 	rows, err := t.db.query(ctx, q, t.ObjectID)
-	if err != nil {
-		return nil, fmt.Errorf("gosmo: partitions for %s: %w", t.FullName(), err)
-	}
-	defer rows.Close()
-
-	var parts []*PartitionInfo
-	for rows.Next() {
+	return scanRows(rows, err, fmt.Sprintf("partitions for %s", t.FullName()), func(scan func(...any) error) (*PartitionInfo, error) {
 		p := &PartitionInfo{}
-		if err := rows.Scan(&p.PartitionNumber, &p.Rows, &p.DataCompression); err != nil {
-			return nil, fmt.Errorf("gosmo: partitions for %s: %w", t.FullName(), err)
+		if err := scan(&p.PartitionNumber, &p.Rows, &p.DataCompression); err != nil {
+			return nil, err
 		}
-		parts = append(parts, p)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("gosmo: partitions for %s: %w", t.FullName(), err)
-	}
-	return parts, nil
+		return p, nil
+	})
 }
 
 // -- Table space usage -----------------------------------------------------
@@ -406,12 +307,7 @@ type TableSpaceInfo struct {
 }
 
 // SpaceUsed returns space usage for the table.
-func (t *Table) SpaceUsed() (*TableSpaceInfo, error) {
-	return t.SpaceUsedContext(context.Background())
-}
-
-// SpaceUsedContext is the context-aware variant of SpaceUsed.
-func (t *Table) SpaceUsedContext(ctx context.Context) (*TableSpaceInfo, error) {
+func (t *Table) SpaceUsed(ctx context.Context) (*TableSpaceInfo, error) {
 	const q = `
 SELECT
     SUM(a.total_pages) * 8 AS reserved_kb,
@@ -452,14 +348,8 @@ WHERE  p.object_id = @p1`
 // A table with no allocated pages at all has no row in sys.partitions to
 // aggregate and is therefore absent from the map, not present with zeroes —
 // callers should treat a missing key as "no space used".
-func (d *Database) TableSpaceUsedAll() (map[int]*TableSpaceInfo, error) {
-	return d.TableSpaceUsedAllContext(context.Background())
-}
-
-// TableSpaceUsedAllContext is the context-aware variant of
-// TableSpaceUsedAll.
-func (d *Database) TableSpaceUsedAllContext(ctx context.Context) (map[int]*TableSpaceInfo, error) {
-	// Same joins and aggregates as Table.SpaceUsedContext, grouped by object
+func (d *Database) TableSpaceUsedAll(ctx context.Context) (map[int]*TableSpaceInfo, error) {
+	// Same joins and aggregates as Table.SpaceUsed, grouped by object
 	// instead of filtered to one. The filegroup is a LEFT JOIN rather than
 	// that method's correlated subquery: sys.indexes has exactly one row per
 	// object with index_id IN (0,1), so it can't multiply the aggregate. It

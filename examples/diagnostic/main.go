@@ -8,6 +8,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -18,6 +19,7 @@ import (
 const dbName = "GoSMODiagnosticDemo"
 
 func main() {
+	ctx := context.Background()
 	// First, so it runs after the cleanup deferred below it.
 	defer demo.Exit()
 
@@ -27,8 +29,8 @@ func main() {
 	db, drop := demo.TempDatabase(srv, dbName)
 	defer drop()
 
-	demo.Must(db.CreateSchema("Sales", "dbo"))
-	demo.Must(db.CreateTable(gosmo.CreateTableRequest{
+	demo.Must(db.CreateSchema(ctx, "Sales", "dbo"))
+	demo.Must(db.CreateTable(ctx, gosmo.CreateTableRequest{
 		Schema: "Sales",
 		Name:   "Order",
 		Columns: []gosmo.ColumnDefinition{
@@ -40,14 +42,14 @@ func main() {
 	// CreateStoredProcedure's body is the T-SQL *after* AS — gosmo emits the
 	// CREATE OR ALTER PROCEDURE header itself, so the procedure it makes
 	// takes no parameters.
-	demo.Must(db.CreateStoredProcedure("Sales", "CountOrders", `
+	demo.Must(db.CreateStoredProcedure(ctx, "Sales", "CountOrders", `
 BEGIN
     SET NOCOUNT ON;
     DECLARE @c INT;
     SELECT @c = COUNT(*) FROM Sales.[Order];
     RETURN @c;
 END`))
-	_ = demo.Value(db.BulkInsert(gosmo.BulkCopy{
+	_ = demo.Value(db.BulkInsert(ctx, gosmo.BulkCopy{
 		Schema:  "Sales",
 		Table:   "Order",
 		Columns: []string{"CustomerID", "Total"},
@@ -62,7 +64,7 @@ END`))
 	// number without importing go-mssqldb. All carries every error the batch
 	// raised, first to last, when the server reported more than one.
 	demo.Section("SQL errors")
-	_, err := db.EstimatedPlan("SELECT * FROM Sales.NoSuchTable")
+	_, err := db.EstimatedPlan(ctx, "SELECT * FROM Sales.NoSuchTable")
 	if sqlErr, ok := gosmo.AsSQLError(err); ok {
 		fmt.Printf("  %s\n", sqlErr.Header())
 		fmt.Printf("  number=%d class=%d state=%d line=%d\n",
@@ -86,7 +88,7 @@ END`))
 	// The procedure runs as an RPC, which is what makes its RETURN value
 	// available at all — ProcResult.ReturnStatus.
 	demo.Section("ExecProc and the return status")
-	res := demo.Value(db.ExecProc("Sales", "CountOrders"))
+	res := demo.Value(db.ExecProc(ctx, "Sales", "CountOrders"))
 	fmt.Printf("  Sales.CountOrders returned %d\n", res.ReturnStatus)
 
 	// In/Out/InOut build the parameter list. Out and InOut carry a pointer
@@ -96,7 +98,7 @@ END`))
 	demo.Section("ExecProc with output parameters")
 	var orderCount int32
 	var total float64
-	demo.Value(db.ExecProc("sys", "sp_executesql",
+	demo.Value(db.ExecProc(ctx, "sys", "sp_executesql",
 		gosmo.In("stmt", `SELECT @count = COUNT(*), @total = ISNULL(SUM(Total), 0)
 		                  FROM Sales.[Order] WHERE CustomerID = @customer`),
 		gosmo.In("params", "@customer int, @count int OUTPUT, @total decimal(18,2) OUTPUT"),
@@ -107,7 +109,7 @@ END`))
 	fmt.Printf("  customer 7: %d orders totalling %.2f\n", orderCount, total)
 
 	doubled := int32(21)
-	demo.Value(db.ExecProc("sys", "sp_executesql",
+	demo.Value(db.ExecProc(ctx, "sys", "sp_executesql",
 		gosmo.In("stmt", "SET @n = @n * 2;"),
 		gosmo.In("params", "@n int OUTPUT"),
 		gosmo.InOut("n", &doubled),
@@ -120,9 +122,9 @@ END`))
 	// and returns the plan with real row counts. Both come back as Showplan
 	// XML — the same document SSMS parses to draw its graphical plan.
 	demo.Section("Execution plans")
-	estimated := demo.Value(db.EstimatedPlan(
+	estimated := demo.Value(db.EstimatedPlan(ctx,
 		"SELECT CustomerID, SUM(Total) FROM Sales.[Order] GROUP BY CustomerID"))
-	actual := demo.Value(db.ActualPlan(
+	actual := demo.Value(db.ActualPlan(ctx,
 		"SELECT CustomerID, SUM(Total) FROM Sales.[Order] GROUP BY CustomerID"))
 	fmt.Printf("  estimated plan: %d bytes of Showplan XML\n", len(estimated.XML))
 	fmt.Printf("  actual plan   : %d bytes\n", len(actual.XML))
@@ -136,7 +138,7 @@ END`))
 	// function and trigger name — it wraps the term in its own wildcards and
 	// escapes any % or _ you pass, so give it the bare text, not a pattern.
 	demo.Section("Search")
-	for _, r := range demo.Value(db.Search("Order")) {
+	for _, r := range demo.Value(db.Search(ctx, "Order")) {
 		fmt.Printf("  [%s].[%s] %s\n", r.Schema, r.Name, r.TypeDesc)
 	}
 
@@ -145,11 +147,11 @@ END`))
 	// Dependencies is "what does this object reference"; Dependents is the
 	// reverse — "what would break if I dropped it".
 	demo.Section("Dependencies")
-	for _, d := range demo.Value(db.Dependencies("Sales", "CountOrders")) {
+	for _, d := range demo.Value(db.Dependencies(ctx, "Sales", "CountOrders")) {
 		fmt.Printf("  CountOrders references [%s].[%s] (%s, schemabound=%t)\n",
 			d.Schema, d.Name, d.TypeDesc, d.IsSchemaBound)
 	}
-	for _, d := range demo.Value(db.Dependents("Sales", "Order")) {
+	for _, d := range demo.Value(db.Dependents(ctx, "Sales", "Order")) {
 		fmt.Printf("  [%s].[%s] (%s) depends on Sales.Order\n", d.Schema, d.Name, d.TypeDesc)
 	}
 
@@ -160,7 +162,7 @@ END`))
 	// provider or a schema diff wants. SystemCatalog does the same for the
 	// system objects.
 	demo.Section("Catalog snapshot")
-	cat := demo.Value(db.Catalog())
+	cat := demo.Value(db.Catalog(ctx))
 	fmt.Printf("  %d schemas, %d objects\n", len(cat.Schemas), len(cat.Objects))
 	for _, obj := range cat.Objects {
 		kind := "table"
@@ -176,17 +178,17 @@ END`))
 
 	// -- Instance health ---------------------------------------------------
 	demo.Section("Memory")
-	mem := demo.Value(srv.MemoryStats())
+	mem := demo.Value(srv.MemoryStats(ctx))
 	fmt.Printf("  physical=%d MB available=%d MB target=%d MB in use=%d MB\n",
 		mem.PhysicalMemoryMB, mem.AvailableMemoryMB, mem.TargetServerMemoryMB, mem.TotalServerMemoryMB)
 
 	demo.Section("Processors")
-	cpu := demo.Value(srv.ProcessorInfo())
+	cpu := demo.Value(srv.ProcessorInfo(ctx))
 	fmt.Printf("  %d logical CPUs, %d NUMA node(s), hyperthread ratio %d\n",
 		cpu.CPUCount, cpu.NUMANodeCount, cpu.HyperthreadRatio)
 
 	demo.Section("Sessions")
-	sessions := demo.Value(srv.ActiveSessions(false))
+	sessions := demo.Value(srv.ActiveSessions(ctx, false))
 	fmt.Printf("  %d user session(s)\n", len(sessions))
 	for _, s := range sessions {
 		blocked := ""
@@ -199,7 +201,7 @@ END`))
 	// Server.KillSession(spid) ends one — not called here, for obvious reasons.
 
 	demo.Section("Error log (last 5 entries)")
-	entries := demo.Value(srv.ReadErrorLog(0))
+	entries := demo.Value(srv.ReadErrorLog(ctx, 0))
 	for _, e := range entries[max(0, len(entries)-5):] {
 		fmt.Printf("  %s %-10s %s\n", e.LogDate, e.Process, e.Text)
 	}

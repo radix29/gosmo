@@ -49,9 +49,9 @@ func TestLiveTreeFamiliesReadTheirCatalog(t *testing.T) {
 	)
 
 	t.Run("alias types exclude table and CLR types", func(t *testing.T) {
-		aliases, err := d.UserDefinedDataTypesContext(ctx)
+		aliases, err := d.UserDefinedDataTypes(ctx)
 		if err != nil {
-			t.Fatalf("UserDefinedDataTypesContext: %v", err)
+			t.Fatalf("UserDefinedDataTypes: %v", err)
 		}
 		var names []string
 		for _, a := range aliases {
@@ -67,9 +67,9 @@ func TestLiveTreeFamiliesReadTheirCatalog(t *testing.T) {
 			t.Error("alias declared NOT NULL reads as nullable")
 		}
 
-		one, err := d.UserDefinedDataTypeByNameContext(ctx, "dbo", "fam_alias")
+		one, err := d.UserDefinedDataTypeByName(ctx, "dbo", "fam_alias")
 		if err != nil {
-			t.Fatalf("UserDefinedDataTypeByNameContext: %v", err)
+			t.Fatalf("UserDefinedDataTypeByName: %v", err)
 		}
 		if one.UserTypeID != aliases[0].UserTypeID {
 			t.Errorf("finder returned user_type_id %d, listing said %d", one.UserTypeID, aliases[0].UserTypeID)
@@ -77,16 +77,16 @@ func TestLiveTreeFamiliesReadTheirCatalog(t *testing.T) {
 	})
 
 	t.Run("table type columns come off the internal table", func(t *testing.T) {
-		tt, err := d.UserDefinedTableTypeByNameContext(ctx, "dbo", "fam_tabletype")
+		tt, err := d.UserDefinedTableTypeByName(ctx, "dbo", "fam_tabletype")
 		if err != nil {
-			t.Fatalf("UserDefinedTableTypeByNameContext: %v", err)
+			t.Fatalf("UserDefinedTableTypeByName: %v", err)
 		}
 		if tt.TypeTableObjectID == 0 {
 			t.Fatal("type_table_object_id is 0 — the columns read cannot work")
 		}
-		cols, err := tt.ColumnsContext(ctx)
+		cols, err := tt.Columns(ctx)
 		if err != nil {
-			t.Fatalf("ColumnsContext: %v", err)
+			t.Fatalf("Columns: %v", err)
 		}
 		if len(cols) != 2 || cols[0].Name != "id" || cols[1].Name != "note" {
 			t.Fatalf("columns = %+v, want id then note", cols)
@@ -97,16 +97,16 @@ func TestLiveTreeFamiliesReadTheirCatalog(t *testing.T) {
 	})
 
 	t.Run("XML schema collection excludes the sys collection", func(t *testing.T) {
-		cols, err := d.XMLSchemaCollectionsContext(ctx)
+		cols, err := d.XMLSchemaCollections(ctx)
 		if err != nil {
-			t.Fatalf("XMLSchemaCollectionsContext: %v", err)
+			t.Fatalf("XMLSchemaCollections: %v", err)
 		}
 		if len(cols) != 1 || cols[0].Name != "fam_xsd" {
 			t.Fatalf("collections = %+v, want exactly fam_xsd", cols)
 		}
-		def, err := cols[0].DefinitionContext(ctx)
+		def, err := cols[0].Definition(ctx)
 		if err != nil {
-			t.Fatalf("DefinitionContext: %v", err)
+			t.Fatalf("Definition: %v", err)
 		}
 		if !strings.Contains(def, "fam") {
 			t.Errorf("definition does not mention the element it declares: %q", def)
@@ -118,9 +118,9 @@ func TestLiveTreeFamiliesReadTheirCatalog(t *testing.T) {
 	// constraint. Without the parent_object_id = 0 predicate it lands in the
 	// Defaults folder.
 	t.Run("defaults exclude default constraints", func(t *testing.T) {
-		defs, err := d.DefaultsContext(ctx)
+		defs, err := d.Defaults(ctx)
 		if err != nil {
-			t.Fatalf("DefaultsContext: %v", err)
+			t.Fatalf("Defaults: %v", err)
 		}
 		var names []string
 		for _, df := range defs {
@@ -133,15 +133,15 @@ func TestLiveTreeFamiliesReadTheirCatalog(t *testing.T) {
 			t.Errorf("definition = %q, want the CREATE DEFAULT text", defs[0].Definition)
 		}
 
-		if _, err := d.DefaultByNameContext(ctx, "dbo", "DF_fam_child_amount"); !errors.Is(err, ErrNotFound) {
+		if _, err := d.DefaultByName(ctx, "dbo", "DF_fam_child_amount"); !errors.Is(err, ErrNotFound) {
 			t.Errorf("DefaultByName on a default constraint: err = %v, want ErrNotFound", err)
 		}
 	})
 
 	t.Run("rules", func(t *testing.T) {
-		rules, err := d.RulesContext(ctx)
+		rules, err := d.Rules(ctx)
 		if err != nil {
-			t.Fatalf("RulesContext: %v", err)
+			t.Fatalf("Rules: %v", err)
 		}
 		if len(rules) != 1 || rules[0].Name != "fam_rule" {
 			t.Fatalf("rules = %+v, want exactly fam_rule", rules)
@@ -168,9 +168,9 @@ func TestLiveTreeFamiliesPlanGuideEnableDisable(t *testing.T) {
 		   @hints = N'OPTION (OPTIMIZE FOR (@name = N''one''))'`,
 	)
 
-	g, err := d.PlanGuideByNameContext(ctx, "pg_live")
+	g, err := d.PlanGuideByName(ctx, "pg_live")
 	if err != nil {
-		t.Fatalf("PlanGuideByNameContext: %v", err)
+		t.Fatalf("PlanGuideByName: %v", err)
 	}
 	if g.IsDisabled {
 		t.Fatal("a freshly created plan guide reads as disabled")
@@ -186,13 +186,13 @@ func TestLiveTreeFamiliesPlanGuideEnableDisable(t *testing.T) {
 			g.ScopeObject, g.ScopeSchema, g.ScopeName)
 	}
 
-	if err := g.DisableContext(ctx); err != nil {
-		t.Fatalf("DisableContext: %v", err)
+	if err := g.Disable(ctx); err != nil {
+		t.Fatalf("Disable: %v", err)
 	}
 	if !g.IsDisabled {
 		t.Error("receiver still reads as enabled after Disable")
 	}
-	again, err := d.PlanGuideByNameContext(ctx, "pg_live")
+	again, err := d.PlanGuideByName(ctx, "pg_live")
 	if err != nil {
 		t.Fatalf("re-read after Disable: %v", err)
 	}
@@ -200,10 +200,10 @@ func TestLiveTreeFamiliesPlanGuideEnableDisable(t *testing.T) {
 		t.Error("server still reports the plan guide as enabled after Disable")
 	}
 
-	if err := g.EnableContext(ctx); err != nil {
-		t.Fatalf("EnableContext: %v", err)
+	if err := g.Enable(ctx); err != nil {
+		t.Fatalf("Enable: %v", err)
 	}
-	again, err = d.PlanGuideByNameContext(ctx, "pg_live")
+	again, err = d.PlanGuideByName(ctx, "pg_live")
 	if err != nil {
 		t.Fatalf("re-read after Enable: %v", err)
 	}
@@ -211,10 +211,10 @@ func TestLiveTreeFamiliesPlanGuideEnableDisable(t *testing.T) {
 		t.Error("server still reports the plan guide as disabled after Enable")
 	}
 
-	if err := g.DropContext(ctx); err != nil {
-		t.Fatalf("DropContext: %v", err)
+	if err := g.Drop(ctx); err != nil {
+		t.Fatalf("Drop: %v", err)
 	}
-	if _, err := d.PlanGuideByNameContext(ctx, "pg_live"); !errors.Is(err, ErrNotFound) {
+	if _, err := d.PlanGuideByName(ctx, "pg_live"); !errors.Is(err, ErrNotFound) {
 		t.Errorf("after Drop: err = %v, want ErrNotFound", err)
 	}
 }
@@ -238,9 +238,9 @@ func TestLiveTreeFamiliesPlanGuideObjectScope(t *testing.T) {
 		   @params = NULL, @hints = N'OPTION (MAXDOP 1)'`,
 	)
 
-	g, err := d.PlanGuideByNameContext(ctx, "pg_obj")
+	g, err := d.PlanGuideByName(ctx, "pg_obj")
 	if err != nil {
-		t.Fatalf("PlanGuideByNameContext: %v", err)
+		t.Fatalf("PlanGuideByName: %v", err)
 	}
 	if g.Scope != PlanGuideScopeObject {
 		t.Errorf("scope = %q, want OBJECT", g.Scope)
@@ -276,9 +276,9 @@ func TestLiveDatabaseSnapshotLifecycle(t *testing.T) {
 	// every later run of this test at liveScratchDB rather than here.
 	db.ExecContext(ctx, "IF DB_ID('"+snapName+"') IS NOT NULL DROP DATABASE ["+snapName+"]")
 
-	specs, err := srv.SnapshotFileDefaultsContext(ctx, source.Name, snapName)
+	specs, err := srv.SnapshotFileDefaults(ctx, source.Name, snapName)
 	if err != nil {
-		t.Fatalf("SnapshotFileDefaultsContext: %v", err)
+		t.Fatalf("SnapshotFileDefaults: %v", err)
 	}
 	if len(specs) != 1 {
 		t.Fatalf("file defaults = %+v, want one entry — the scratch database has one data file and one log file", specs)
@@ -287,12 +287,12 @@ func TestLiveDatabaseSnapshotLifecycle(t *testing.T) {
 		t.Fatalf("file defaults name the log file %q", specs[0].FileName)
 	}
 
-	snap, err := srv.CreateDatabaseSnapshotContext(ctx, CreateDatabaseSnapshotRequest{
+	snap, err := srv.CreateDatabaseSnapshot(ctx, CreateDatabaseSnapshotRequest{
 		Name:           snapName,
 		SourceDatabase: source.Name,
 	})
 	if err != nil {
-		t.Fatalf("CreateDatabaseSnapshotContext: %v", err)
+		t.Fatalf("CreateDatabaseSnapshot: %v", err)
 	}
 	defer func() {
 		c := context.Background()
@@ -306,9 +306,9 @@ func TestLiveDatabaseSnapshotLifecycle(t *testing.T) {
 	// A snapshot is an ordinary sys.databases row, so Databases returns it.
 	// IsSnapshot is what a caller filtering a tree uses; if it does not hold
 	// here, gossms's Databases folder lists every snapshot twice.
-	dbs, err := srv.DatabasesContext(ctx)
+	dbs, err := srv.Databases(ctx)
 	if err != nil {
-		t.Fatalf("DatabasesContext: %v", err)
+		t.Fatalf("Databases: %v", err)
 	}
 	var found bool
 	for _, cand := range dbs {
@@ -332,9 +332,9 @@ func TestLiveDatabaseSnapshotLifecycle(t *testing.T) {
 		}
 	}
 
-	of, err := srv.SnapshotsOfContext(ctx, source.Name)
+	of, err := srv.SnapshotsOf(ctx, source.Name)
 	if err != nil {
-		t.Fatalf("SnapshotsOfContext: %v", err)
+		t.Fatalf("SnapshotsOf: %v", err)
 	}
 	if len(of) != 1 || of[0].Name != snapName {
 		t.Fatalf("SnapshotsOf(%q) = %+v, want the one snapshot", source.Name, of)
@@ -344,8 +344,8 @@ func TestLiveDatabaseSnapshotLifecycle(t *testing.T) {
 	// point of the folder, and the statement's shape (a string literal, not
 	// a bracketed name) is what it verifies.
 	liveExecIn(t, source, ctx, `DELETE dbo.snap_rows WHERE id = 2`)
-	if err := snap.RestoreContext(ctx); err != nil {
-		t.Fatalf("RestoreContext: %v", err)
+	if err := snap.Restore(ctx); err != nil {
+		t.Fatalf("Restore: %v", err)
 	}
 	var rows int
 	if err := source.queryRow(ctx, func(r *sql.Row) error { return r.Scan(&rows) },
@@ -356,10 +356,10 @@ func TestLiveDatabaseSnapshotLifecycle(t *testing.T) {
 		t.Errorf("%d rows after the revert, want 2", rows)
 	}
 
-	if err := snap.DropContext(ctx); err != nil {
-		t.Fatalf("DropContext: %v", err)
+	if err := snap.Drop(ctx); err != nil {
+		t.Fatalf("Drop: %v", err)
 	}
-	if _, err := srv.DatabaseSnapshotByNameContext(ctx, snapName); !errors.Is(err, ErrNotFound) {
+	if _, err := srv.DatabaseSnapshotByName(ctx, snapName); !errors.Is(err, ErrNotFound) {
 		t.Errorf("after Drop: err = %v, want ErrNotFound", err)
 	}
 }

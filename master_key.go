@@ -52,12 +52,7 @@ func (m *MasterKey) Database() *Database { return m.db }
 // database has none. Its sys.symmetric_keys row is visible only to a
 // principal with a right on it: for one without, the answer is (nil, nil)
 // though a key exists — HasMasterKey is the check for that case.
-func (d *Database) MasterKey() (*MasterKey, error) {
-	return d.MasterKeyContext(context.Background())
-}
-
-// MasterKeyContext is the context-aware variant of MasterKey.
-func (d *Database) MasterKeyContext(ctx context.Context) (*MasterKey, error) {
+func (d *Database) MasterKey(ctx context.Context) (*MasterKey, error) {
 	keys, err := d.symmetricKeys(ctx, `
 WHERE  k.name = N'`+masterKeyName+`'`)
 	if err != nil {
@@ -146,12 +141,7 @@ func (m *MasterKey) exec(ctx context.Context, what, stmt, openPassword string) e
 // FORCE REGENERATE, which goes ahead even when something it protects cannot
 // be decrypted, losing that thing; use it only to recover from a damaged
 // key.
-func (m *MasterKey) Regenerate(password string, force bool, openPassword string) error {
-	return m.RegenerateContext(context.Background(), password, force, openPassword)
-}
-
-// RegenerateContext is the context-aware variant of Regenerate.
-func (m *MasterKey) RegenerateContext(ctx context.Context, password string, force bool, openPassword string) error {
+func (m *MasterKey) Regenerate(ctx context.Context, password string, force bool, openPassword string) error {
 	if password == "" {
 		return fmt.Errorf("gosmo: regenerate the master key in %q: empty password", m.db.Name)
 	}
@@ -166,12 +156,7 @@ func (m *MasterKey) RegenerateContext(ctx context.Context, password string, forc
 // AddEncryption adds an encryption by the service master key or by a
 // password. Adding the service master key's needs the key open, so a key not
 // already encrypted by it needs openPassword (Msg 15581 without).
-func (m *MasterKey) AddEncryption(enc MasterKeyEncryptor, openPassword string) error {
-	return m.AddEncryptionContext(context.Background(), enc, openPassword)
-}
-
-// AddEncryptionContext is the context-aware variant of AddEncryption.
-func (m *MasterKey) AddEncryptionContext(ctx context.Context, enc MasterKeyEncryptor, openPassword string) error {
+func (m *MasterKey) AddEncryption(ctx context.Context, enc MasterKeyEncryptor, openPassword string) error {
 	c, err := enc.clause()
 	if err != nil {
 		return fmt.Errorf("gosmo: add encryption to the master key in %q: %w", m.db.Name, err)
@@ -182,12 +167,7 @@ func (m *MasterKey) AddEncryptionContext(ctx context.Context, enc MasterKeyEncry
 // DropEncryption removes an encryption. The server refuses to remove the
 // last password (Msg 15558); dropping the service master key's leaves the
 // key to be opened by password before every use.
-func (m *MasterKey) DropEncryption(enc MasterKeyEncryptor, openPassword string) error {
-	return m.DropEncryptionContext(context.Background(), enc, openPassword)
-}
-
-// DropEncryptionContext is the context-aware variant of DropEncryption.
-func (m *MasterKey) DropEncryptionContext(ctx context.Context, enc MasterKeyEncryptor, openPassword string) error {
+func (m *MasterKey) DropEncryption(ctx context.Context, enc MasterKeyEncryptor, openPassword string) error {
 	c, err := enc.clause()
 	if err != nil {
 		return fmt.Errorf("gosmo: drop encryption from the master key in %q: %w", m.db.Name, err)
@@ -198,12 +178,7 @@ func (m *MasterKey) DropEncryptionContext(ctx context.Context, enc MasterKeyEncr
 // Backup exports the key to a file on the *server's* filesystem, encrypted by
 // encryptionPassword — BACKUP MASTER KEY. The file is readable only by the
 // SQL Server service account.
-func (m *MasterKey) Backup(file, encryptionPassword, openPassword string) error {
-	return m.BackupContext(context.Background(), file, encryptionPassword, openPassword)
-}
-
-// BackupContext is the context-aware variant of Backup.
-func (m *MasterKey) BackupContext(ctx context.Context, file, encryptionPassword, openPassword string) error {
+func (m *MasterKey) Backup(ctx context.Context, file, encryptionPassword, openPassword string) error {
 	if strings.TrimSpace(file) == "" {
 		return fmt.Errorf("gosmo: back up the master key in %q: no file", m.db.Name)
 	}
@@ -217,9 +192,6 @@ func (m *MasterKey) BackupContext(ctx context.Context, file, encryptionPassword,
 
 // Drop deletes the master key. The server refuses while any certificate or
 // key is encrypted by it (Msg 15580).
-func (m *MasterKey) Drop() error { return m.DropContext(context.Background()) }
-
-// DropContext is the context-aware variant of Drop.
-func (m *MasterKey) DropContext(ctx context.Context) error {
+func (m *MasterKey) Drop(ctx context.Context) error {
 	return m.exec(ctx, "drop", "DROP MASTER KEY", "")
 }

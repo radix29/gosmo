@@ -13,7 +13,7 @@ import (
 // would not notice a write that landed in the wrong database.
 func scriptDB() *Database { return (&Server{}).DatabaseRef("AppDB") }
 
-const useAppDB = "USE [AppDB];\n"
+const useAppDB = "USE [AppDB];\nGO\n"
 
 func TestCreateDatabaseScopedCredentialStatementShape(t *testing.T) {
 	cases := []struct {
@@ -65,7 +65,7 @@ func TestCreateDatabaseScopedCredentialRequiresNameAndIdentity(t *testing.T) {
 }
 
 // A nil secret must emit no SECRET clause — and that clears the stored secret
-// rather than preserving it, which is the whole reason AlterContext takes a
+// rather than preserving it, which is the whole reason Alter takes a
 // pointer, exactly as the server-level half does.
 func TestAlterDatabaseScopedCredentialSecretClause(t *testing.T) {
 	secret := "sv=2019"
@@ -89,14 +89,14 @@ func TestAlterDatabaseScopedCredentialSecretClause(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx, col := WithScript(context.Background())
 			c := scriptDB().DatabaseScopedCredentialRef("app_cred")
-			if err := c.AlterContext(ctx, "Managed Identity", tc.secret); err != nil {
-				t.Fatalf("AlterContext: %v", err)
+			if err := c.Alter(ctx, "Managed Identity", tc.secret); err != nil {
+				t.Fatalf("Alter: %v", err)
 			}
-			if len(col.Statements) != 1 {
-				t.Fatalf("got %d statements, want 1: %v", len(col.Statements), col.Statements)
+			if len(col.Statements()) != 1 {
+				t.Fatalf("got %d statements, want 1: %v", len(col.Statements()), col.Statements())
 			}
-			if col.Statements[0] != tc.want {
-				t.Errorf("got:\n%s\nwant:\n%s", col.Statements[0], tc.want)
+			if col.Statements()[0] != tc.want {
+				t.Errorf("got:\n%s\nwant:\n%s", col.Statements()[0], tc.want)
 			}
 		})
 	}
@@ -104,11 +104,11 @@ func TestAlterDatabaseScopedCredentialSecretClause(t *testing.T) {
 
 func TestAlterDatabaseScopedCredentialRequiresIdentity(t *testing.T) {
 	ctx, col := WithScript(context.Background())
-	if err := scriptDB().DatabaseScopedCredentialRef("app_cred").AlterContext(ctx, "", nil); err == nil {
+	if err := scriptDB().DatabaseScopedCredentialRef("app_cred").Alter(ctx, "", nil); err == nil {
 		t.Error("an empty identity was accepted")
 	}
-	if len(col.Statements) != 0 {
-		t.Errorf("a statement was built anyway: %v", col.Statements)
+	if len(col.Statements()) != 0 {
+		t.Errorf("a statement was built anyway: %v", col.Statements())
 	}
 }
 
@@ -116,48 +116,48 @@ func TestAlterDatabaseScopedCredentialRequiresIdentity(t *testing.T) {
 // back would find nothing. The name-only handle is what a caller gets instead.
 func TestCreateDatabaseScopedCredentialUnderScriptReturnsAHandle(t *testing.T) {
 	ctx, col := WithScript(context.Background())
-	c, err := scriptDB().CreateDatabaseScopedCredentialContext(ctx,
+	c, err := scriptDB().CreateDatabaseScopedCredential(ctx,
 		DatabaseScopedCredentialSpec{Name: "app_cred", Identity: "x"})
 	if err != nil {
-		t.Fatalf("CreateDatabaseScopedCredentialContext: %v", err)
+		t.Fatalf("CreateDatabaseScopedCredential: %v", err)
 	}
 	if c == nil || c.Name != "app_cred" {
 		t.Fatalf("got %#v, want a handle named app_cred", c)
 	}
-	if len(col.Statements) != 1 ||
-		!strings.HasPrefix(col.Statements[0], useAppDB+"CREATE DATABASE SCOPED CREDENTIAL [app_cred]") {
-		t.Errorf("collected statements: %v", col.Statements)
+	if len(col.Statements()) != 1 ||
+		!strings.HasPrefix(col.Statements()[0], useAppDB+"CREATE DATABASE SCOPED CREDENTIAL [app_cred]") {
+		t.Errorf("collected statements: %v", col.Statements())
 	}
 	// The handle must still be usable for a follow-up write.
-	if err := c.DropContext(ctx); err != nil {
-		t.Fatalf("DropContext on the returned handle: %v", err)
+	if err := c.Drop(ctx); err != nil {
+		t.Fatalf("Drop on the returned handle: %v", err)
 	}
 }
 
 func TestDropDatabaseScopedCredentialStatement(t *testing.T) {
 	ctx, col := WithScript(context.Background())
-	if err := scriptDB().DatabaseScopedCredentialRef("app_cred").DropContext(ctx); err != nil {
-		t.Fatalf("DropContext: %v", err)
+	if err := scriptDB().DatabaseScopedCredentialRef("app_cred").Drop(ctx); err != nil {
+		t.Fatalf("Drop: %v", err)
 	}
 	want := useAppDB + "DROP DATABASE SCOPED CREDENTIAL [app_cred]"
-	if len(col.Statements) != 1 || col.Statements[0] != want {
-		t.Errorf("got %v, want [%s]", col.Statements, want)
+	if len(col.Statements()) != 1 || col.Statements()[0] != want {
+		t.Errorf("got %v, want [%s]", col.Statements(), want)
 	}
 	// No Drop* in this package carries IF EXISTS — dropping something that
 	// isn't there has to reach the caller as the server's error.
-	if strings.Contains(col.Statements[0], "IF EXISTS") {
-		t.Errorf("DROP DATABASE SCOPED CREDENTIAL used IF EXISTS: %s", col.Statements[0])
+	if strings.Contains(col.Statements()[0], "IF EXISTS") {
+		t.Errorf("DROP DATABASE SCOPED CREDENTIAL used IF EXISTS: %s", col.Statements()[0])
 	}
 }
 
-// AlterContext mirrors the new identity onto the receiver, so it must not do
+// Alter mirrors the new identity onto the receiver, so it must not do
 // so under WithScript, where the server still holds the old one.
 func TestAlterDatabaseScopedCredentialDoesNotMirrorUnderScript(t *testing.T) {
 	ctx, _ := WithScript(context.Background())
 	c := scriptDB().DatabaseScopedCredentialRef("app_cred")
 	c.Identity = "old"
-	if err := c.AlterContext(ctx, "new", nil); err != nil {
-		t.Fatalf("AlterContext: %v", err)
+	if err := c.Alter(ctx, "new", nil); err != nil {
+		t.Fatalf("Alter: %v", err)
 	}
 	if c.Identity != "old" {
 		t.Errorf("Identity became %q under WithScript; nothing ran, so it must stay %q", c.Identity, "old")

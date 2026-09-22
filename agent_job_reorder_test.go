@@ -9,7 +9,7 @@ import (
 
 // captureJob returns a Job wired to the capture driver, with steps canned to
 // the definitions given. Step ids are 1..n in the order listed, which is what
-// sysjobsteps guarantees and what ReorderStepsContext's ORDER BY relies on.
+// sysjobsteps guarantees and what ReorderSteps's ORDER BY relies on.
 func captureJob(t *testing.T, steps ...*JobStep) *Job {
 	t.Helper()
 	db, err := sql.Open("capture", "")
@@ -77,8 +77,8 @@ func reverseOrder(n int) []int {
 // issued one at a time.
 func TestReorderStepsIsOneAtomicBatch(t *testing.T) {
 	j := captureJob(t, plainSteps(3)...)
-	if err := j.ReorderStepsContext(t.Context(), reverseOrder); err != nil {
-		t.Fatalf("ReorderStepsContext: %v", err)
+	if err := j.ReorderSteps(t.Context(), reverseOrder); err != nil {
+		t.Fatalf("ReorderSteps: %v", err)
 	}
 
 	if n := captured.count("sp_delete_jobstep"); n != 1 {
@@ -125,8 +125,8 @@ func TestReorderStepsRepairsReferencesInsideTheSameTransaction(t *testing.T) {
 	steps[0].OnSuccessAction, steps[0].OnSuccessStepID = goToStepAction, 3
 
 	j := captureJob(t, steps...)
-	if err := j.ReorderStepsContext(t.Context(), reverseOrder); err != nil {
-		t.Fatalf("ReorderStepsContext: %v", err)
+	if err := j.ReorderSteps(t.Context(), reverseOrder); err != nil {
+		t.Fatalf("ReorderSteps: %v", err)
 	}
 
 	batch := captured.find("sp_delete_jobstep")
@@ -160,8 +160,8 @@ func TestReorderStepsWritesNothingWhenNothingMoves(t *testing.T) {
 		}
 		return order
 	}
-	if err := j.ReorderStepsContext(t.Context(), identity); err != nil {
-		t.Fatalf("ReorderStepsContext: %v", err)
+	if err := j.ReorderSteps(t.Context(), identity); err != nil {
+		t.Fatalf("ReorderSteps: %v", err)
 	}
 	if n := captured.count("BEGIN TRANSACTION"); n != 0 {
 		t.Errorf("a no-op reorder still opened %d transactions", n)
@@ -181,8 +181,8 @@ func TestReorderStepsRejectsAnOrderThatIsNotAPermutation(t *testing.T) {
 	for name, order := range cases {
 		t.Run(name, func(t *testing.T) {
 			j := captureJob(t, plainSteps(3)...)
-			if err := j.ReorderStepsContext(t.Context(), order); err == nil {
-				t.Fatal("ReorderStepsContext accepted an order that is not a permutation")
+			if err := j.ReorderSteps(t.Context(), order); err == nil {
+				t.Fatal("ReorderSteps accepted an order that is not a permutation")
 			}
 			if n := captured.count("sp_delete_jobstep"); n != 0 {
 				t.Errorf("%d delete statements were sent for a rejected order", n)

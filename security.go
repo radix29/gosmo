@@ -41,7 +41,7 @@ JOIN   sys.database_principals grantor ON grantor.principal_id = dp.grantor_prin
 
 // scanPermissionEntries reads the rows permissionEntrySelect returns into
 // PermissionEntry values. It returns bare errors; the caller names the scope
-// it was reading. DatabasePermissionsContext does its own scan because its
+// it was reading. DatabasePermissions does its own scan because its
 // DatabasePermissionEntry keeps permission and state as plain strings.
 func scanPermissionEntries(rows *sql.Rows) ([]*PermissionEntry, error) {
 	var grants []*PermissionEntry
@@ -63,12 +63,7 @@ func scanPermissionEntries(rows *sql.Rows) ([]*PermissionEntry, error) {
 
 // Permissions returns the GRANT/DENY entries recorded for schema.name —
 // SSMS's object Properties > Permissions page.
-func (d *Database) Permissions(schema, name string) ([]*PermissionEntry, error) {
-	return d.PermissionsContext(context.Background(), schema, name)
-}
-
-// PermissionsContext is the context-aware variant of Permissions.
-func (d *Database) PermissionsContext(ctx context.Context, schema, name string) ([]*PermissionEntry, error) {
+func (d *Database) Permissions(ctx context.Context, schema, name string) ([]*PermissionEntry, error) {
 	const q = permissionEntrySelect + `
 WHERE  dp.major_id = OBJECT_ID(@p1) AND dp.minor_id = 0
 ORDER  BY pr.name, dp.permission_name`
@@ -114,13 +109,7 @@ var securableObjectTypeNames = map[string]string{
 // excluded — they need their own permission catalog (EXECUTE-centric,
 // distinct from the table/view one) not built yet; see SchemaPermissionNames/
 // ObjectPermissionNames for the catalogs this DOES cover.
-func (d *Database) PermissionsForPrincipal(principal string) ([]*PrincipalSecurable, error) {
-	return d.PermissionsForPrincipalContext(context.Background(), principal)
-}
-
-// PermissionsForPrincipalContext is the context-aware variant of
-// PermissionsForPrincipal.
-func (d *Database) PermissionsForPrincipalContext(ctx context.Context, principal string) ([]*PrincipalSecurable, error) {
+func (d *Database) PermissionsForPrincipal(ctx context.Context, principal string) ([]*PrincipalSecurable, error) {
 	const q = `
 SELECT dp.class_desc, dp.permission_name, dp.state_desc,
        COALESCE(objSchema.name, sch.name, N'') AS schema_name,
@@ -138,17 +127,11 @@ AND    (dp.class_desc <> 'OBJECT_OR_COLUMN' OR obj.object_id IS NOT NULL)
 ORDER  BY dp.class_desc, schema_name, object_name, dp.permission_name`
 
 	rows, err := d.query(ctx, q, principal)
-	if err != nil {
-		return nil, fmt.Errorf("gosmo: permissions for principal %q in %q: %w", principal, d.Name, err)
-	}
-	defer rows.Close()
-
-	var entries []*PrincipalSecurable
-	for rows.Next() {
+	return scanRows(rows, err, fmt.Sprintf("permissions for principal %q in %q", principal, d.Name), func(scan func(...any) error) (*PrincipalSecurable, error) {
 		e := &PrincipalSecurable{}
 		var class, objType string
-		if err := rows.Scan(&class, &e.Permission, &e.State, &e.Schema, &e.Name, &objType); err != nil {
-			return nil, fmt.Errorf("gosmo: permissions for principal %q in %q: %w", principal, d.Name, err)
+		if err := scan(&class, &e.Permission, &e.State, &e.Schema, &e.Name, &objType); err != nil {
+			return nil, err
 		}
 		switch class {
 		case "DATABASE":
@@ -168,12 +151,8 @@ ORDER  BY dp.class_desc, schema_name, object_name, dp.permission_name`
 		default:
 			e.SecurableType = securableObjectTypeNames[objType]
 		}
-		entries = append(entries, e)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("gosmo: permissions for principal %q in %q: %w", principal, d.Name, err)
-	}
-	return entries, nil
+		return e, nil
+	})
 }
 
 // objectPermissionNames allowlists every object-scoped permission name SQL
@@ -207,33 +186,18 @@ func ObjectPermissionNames() []string {
 }
 
 // GrantPermission grants permission on schema.name to principal.
-func (d *Database) GrantPermission(schema, name string, permission ObjectPermission, principal string) error {
-	return d.GrantPermissionContext(context.Background(), schema, name, permission, principal)
-}
-
-// GrantPermissionContext is the context-aware variant of GrantPermission.
-func (d *Database) GrantPermissionContext(ctx context.Context, schema, name string, permission ObjectPermission, principal string) error {
-	return d.GrantPermissionWithOptionsContext(ctx, schema, name, permission, principal, PermissionOptions{})
+func (d *Database) GrantPermission(ctx context.Context, schema, name string, permission ObjectPermission, principal string) error {
+	return d.GrantPermissionWithOptions(ctx, schema, name, permission, principal, PermissionOptions{})
 }
 
 // DenyPermission denies permission on schema.name to principal.
-func (d *Database) DenyPermission(schema, name string, permission ObjectPermission, principal string) error {
-	return d.DenyPermissionContext(context.Background(), schema, name, permission, principal)
-}
-
-// DenyPermissionContext is the context-aware variant of DenyPermission.
-func (d *Database) DenyPermissionContext(ctx context.Context, schema, name string, permission ObjectPermission, principal string) error {
-	return d.DenyPermissionWithOptionsContext(ctx, schema, name, permission, principal, PermissionOptions{})
+func (d *Database) DenyPermission(ctx context.Context, schema, name string, permission ObjectPermission, principal string) error {
+	return d.DenyPermissionWithOptions(ctx, schema, name, permission, principal, PermissionOptions{})
 }
 
 // RevokePermission revokes permission on schema.name from principal.
-func (d *Database) RevokePermission(schema, name string, permission ObjectPermission, principal string) error {
-	return d.RevokePermissionContext(context.Background(), schema, name, permission, principal)
-}
-
-// RevokePermissionContext is the context-aware variant of RevokePermission.
-func (d *Database) RevokePermissionContext(ctx context.Context, schema, name string, permission ObjectPermission, principal string) error {
-	return d.RevokePermissionWithOptionsContext(ctx, schema, name, permission, principal, PermissionOptions{})
+func (d *Database) RevokePermission(ctx context.Context, schema, name string, permission ObjectPermission, principal string) error {
+	return d.RevokePermissionWithOptions(ctx, schema, name, permission, principal, PermissionOptions{})
 }
 
 // ============================================================
@@ -274,12 +238,7 @@ func SchemaPermissionNames() []string {
 // securable via OBJECT_ID(schema.name), which only works for table/view
 // securables — a schema has no OBJECT_ID, so it needs its own query
 // keyed on SCHEMA_ID instead.
-func (d *Database) SchemaPermissions(schemaName string) ([]*PermissionEntry, error) {
-	return d.SchemaPermissionsContext(context.Background(), schemaName)
-}
-
-// SchemaPermissionsContext is the context-aware variant of SchemaPermissions.
-func (d *Database) SchemaPermissionsContext(ctx context.Context, schemaName string) ([]*PermissionEntry, error) {
+func (d *Database) SchemaPermissions(ctx context.Context, schemaName string) ([]*PermissionEntry, error) {
 	const q = permissionEntrySelect + `
 WHERE  dp.class_desc = 'SCHEMA' AND dp.major_id = SCHEMA_ID(@p1)
 ORDER  BY pr.name, dp.permission_name`
@@ -298,33 +257,18 @@ ORDER  BY pr.name, dp.permission_name`
 }
 
 // GrantSchemaPermission grants permission on a schema to principal.
-func (d *Database) GrantSchemaPermission(schemaName string, permission ObjectPermission, principal string) error {
-	return d.GrantSchemaPermissionContext(context.Background(), schemaName, permission, principal)
-}
-
-// GrantSchemaPermissionContext is the context-aware variant of GrantSchemaPermission.
-func (d *Database) GrantSchemaPermissionContext(ctx context.Context, schemaName string, permission ObjectPermission, principal string) error {
-	return d.GrantSchemaPermissionWithOptionsContext(ctx, schemaName, permission, principal, PermissionOptions{})
+func (d *Database) GrantSchemaPermission(ctx context.Context, schemaName string, permission ObjectPermission, principal string) error {
+	return d.GrantSchemaPermissionWithOptions(ctx, schemaName, permission, principal, PermissionOptions{})
 }
 
 // DenySchemaPermission denies permission on a schema to principal.
-func (d *Database) DenySchemaPermission(schemaName string, permission ObjectPermission, principal string) error {
-	return d.DenySchemaPermissionContext(context.Background(), schemaName, permission, principal)
-}
-
-// DenySchemaPermissionContext is the context-aware variant of DenySchemaPermission.
-func (d *Database) DenySchemaPermissionContext(ctx context.Context, schemaName string, permission ObjectPermission, principal string) error {
-	return d.DenySchemaPermissionWithOptionsContext(ctx, schemaName, permission, principal, PermissionOptions{})
+func (d *Database) DenySchemaPermission(ctx context.Context, schemaName string, permission ObjectPermission, principal string) error {
+	return d.DenySchemaPermissionWithOptions(ctx, schemaName, permission, principal, PermissionOptions{})
 }
 
 // RevokeSchemaPermission revokes permission on a schema from principal.
-func (d *Database) RevokeSchemaPermission(schemaName string, permission ObjectPermission, principal string) error {
-	return d.RevokeSchemaPermissionContext(context.Background(), schemaName, permission, principal)
-}
-
-// RevokeSchemaPermissionContext is the context-aware variant of RevokeSchemaPermission.
-func (d *Database) RevokeSchemaPermissionContext(ctx context.Context, schemaName string, permission ObjectPermission, principal string) error {
-	return d.RevokeSchemaPermissionWithOptionsContext(ctx, schemaName, permission, principal, PermissionOptions{})
+func (d *Database) RevokeSchemaPermission(ctx context.Context, schemaName string, permission ObjectPermission, principal string) error {
+	return d.RevokeSchemaPermissionWithOptions(ctx, schemaName, permission, principal, PermissionOptions{})
 }
 
 // ============================================================
@@ -346,35 +290,19 @@ type DatabasePermissionEntry struct {
 // DatabasePermissions returns every database-scoped GRANT/DENY entry —
 // permissions granted on the database itself, not on a specific object
 // within it (see Permissions for that).
-func (d *Database) DatabasePermissions() ([]*DatabasePermissionEntry, error) {
-	return d.DatabasePermissionsContext(context.Background())
-}
-
-// DatabasePermissionsContext is the context-aware variant of
-// DatabasePermissions.
-func (d *Database) DatabasePermissionsContext(ctx context.Context) ([]*DatabasePermissionEntry, error) {
+func (d *Database) DatabasePermissions(ctx context.Context) ([]*DatabasePermissionEntry, error) {
 	const q = permissionEntrySelect + `
 WHERE  dp.class_desc = 'DATABASE'
 ORDER  BY pr.name, dp.permission_name`
 
 	rows, err := d.query(ctx, q)
-	if err != nil {
-		return nil, fmt.Errorf("gosmo: database permissions in %q: %w", d.Name, err)
-	}
-	defer rows.Close()
-
-	var perms []*DatabasePermissionEntry
-	for rows.Next() {
+	return scanRows(rows, err, fmt.Sprintf("database permissions in %q", d.Name), func(scan func(...any) error) (*DatabasePermissionEntry, error) {
 		e := &DatabasePermissionEntry{}
-		if err := rows.Scan(&e.Principal, &e.PrincipalType, &e.Grantor, &e.Permission, &e.State); err != nil {
-			return nil, fmt.Errorf("gosmo: database permissions in %q: %w", d.Name, err)
+		if err := scan(&e.Principal, &e.PrincipalType, &e.Grantor, &e.Permission, &e.State); err != nil {
+			return nil, err
 		}
-		perms = append(perms, e)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("gosmo: database permissions in %q: %w", d.Name, err)
-	}
-	return perms, nil
+		return e, nil
+	})
 }
 
 // databasePermissionNames allowlists every database-scoped permission name
@@ -471,31 +399,16 @@ func DatabasePermissionNames() []string {
 }
 
 // GrantDatabasePermission grants a database-level permission to principal.
-func (d *Database) GrantDatabasePermission(permission, principal string) error {
-	return d.GrantDatabasePermissionContext(context.Background(), permission, principal)
-}
-
-// GrantDatabasePermissionContext is the context-aware variant of GrantDatabasePermission.
-func (d *Database) GrantDatabasePermissionContext(ctx context.Context, permission, principal string) error {
-	return d.GrantDatabasePermissionWithOptionsContext(ctx, permission, principal, PermissionOptions{})
+func (d *Database) GrantDatabasePermission(ctx context.Context, permission, principal string) error {
+	return d.GrantDatabasePermissionWithOptions(ctx, permission, principal, PermissionOptions{})
 }
 
 // DenyDatabasePermission denies a database-level permission to principal.
-func (d *Database) DenyDatabasePermission(permission, principal string) error {
-	return d.DenyDatabasePermissionContext(context.Background(), permission, principal)
-}
-
-// DenyDatabasePermissionContext is the context-aware variant of DenyDatabasePermission.
-func (d *Database) DenyDatabasePermissionContext(ctx context.Context, permission, principal string) error {
-	return d.DenyDatabasePermissionWithOptionsContext(ctx, permission, principal, PermissionOptions{})
+func (d *Database) DenyDatabasePermission(ctx context.Context, permission, principal string) error {
+	return d.DenyDatabasePermissionWithOptions(ctx, permission, principal, PermissionOptions{})
 }
 
 // RevokeDatabasePermission revokes a database-level permission from principal.
-func (d *Database) RevokeDatabasePermission(permission, principal string) error {
-	return d.RevokeDatabasePermissionContext(context.Background(), permission, principal)
-}
-
-// RevokeDatabasePermissionContext is the context-aware variant of RevokeDatabasePermission.
-func (d *Database) RevokeDatabasePermissionContext(ctx context.Context, permission, principal string) error {
-	return d.RevokeDatabasePermissionWithOptionsContext(ctx, permission, principal, PermissionOptions{})
+func (d *Database) RevokeDatabasePermission(ctx context.Context, permission, principal string) error {
+	return d.RevokeDatabasePermissionWithOptions(ctx, permission, principal, PermissionOptions{})
 }

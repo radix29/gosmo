@@ -63,12 +63,7 @@ type Category struct {
 }
 
 // Categories returns every category of the given class.
-func (s *Server) Categories(class CategoryClass) ([]*Category, error) {
-	return s.CategoriesContext(context.Background(), class)
-}
-
-// CategoriesContext is the context-aware variant of Categories.
-func (s *Server) CategoriesContext(ctx context.Context, class CategoryClass) ([]*Category, error) {
+func (s *Server) Categories(ctx context.Context, class CategoryClass) ([]*Category, error) {
 	if !validCategoryClass(class) {
 		return nil, fmt.Errorf("gosmo: list categories: unrecognized category class %q", class)
 	}
@@ -79,23 +74,13 @@ WHERE  category_class = @p1
 ORDER  BY name`
 
 	rows, err := s.query(ctx, q, class.code())
-	if err != nil {
-		return nil, fmt.Errorf("gosmo: list %s categories: %w", class, err)
-	}
-	defer rows.Close()
-
-	var out []*Category
-	for rows.Next() {
+	return scanRows(rows, err, fmt.Sprintf("list %s categories", class), func(scan func(...any) error) (*Category, error) {
 		c := &Category{Class: class}
-		if err := rows.Scan(&c.ID, &c.Name); err != nil {
-			return nil, fmt.Errorf("gosmo: list %s categories: %w", class, err)
+		if err := scan(&c.ID, &c.Name); err != nil {
+			return nil, err
 		}
-		out = append(out, c)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("gosmo: list %s categories: %w", class, err)
-	}
-	return out, nil
+		return c, nil
+	})
 }
 
 // addCategoryType returns the @type sp_add_category requires for a class:
@@ -111,36 +96,26 @@ func addCategoryType(class CategoryClass) string {
 }
 
 // CreateCategory creates a new category via sp_add_category.
-func (s *Server) CreateCategory(class CategoryClass, name string) error {
-	return s.CreateCategoryContext(context.Background(), class, name)
-}
-
-// CreateCategoryContext is the context-aware variant of CreateCategory.
-func (s *Server) CreateCategoryContext(ctx context.Context, class CategoryClass, name string) error {
+func (s *Server) CreateCategory(ctx context.Context, class CategoryClass, name string) error {
 	if !validCategoryClass(class) {
 		return fmt.Errorf("gosmo: create category: unrecognized category class %q", class)
 	}
 	q := fmt.Sprintf("EXEC msdb.dbo.sp_add_category @class = N'%s', @type = N'%s', @name = N'%s'",
 		string(class), addCategoryType(class), escapeSingle(name))
-	if err := s.execContext(ctx, q); err != nil {
+	if err := s.exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: create category %q (%s): %w", name, class, err)
 	}
 	return nil
 }
 
 // DeleteCategory deletes a category via sp_delete_category.
-func (s *Server) DeleteCategory(class CategoryClass, name string) error {
-	return s.DeleteCategoryContext(context.Background(), class, name)
-}
-
-// DeleteCategoryContext is the context-aware variant of DeleteCategory.
-func (s *Server) DeleteCategoryContext(ctx context.Context, class CategoryClass, name string) error {
+func (s *Server) DeleteCategory(ctx context.Context, class CategoryClass, name string) error {
 	if !validCategoryClass(class) {
 		return fmt.Errorf("gosmo: delete category: unrecognized category class %q", class)
 	}
 	q := fmt.Sprintf("EXEC msdb.dbo.sp_delete_category @class = N'%s', @name = N'%s'",
 		string(class), escapeSingle(name))
-	if err := s.execContext(ctx, q); err != nil {
+	if err := s.exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: delete category %q (%s): %w", name, class, err)
 	}
 	return nil

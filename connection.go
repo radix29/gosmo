@@ -273,20 +273,12 @@ type ConnectionOptions struct {
 
 // Connect opens a connection to a SQL Server instance and returns a Server.
 // The driver and DSN are chosen automatically based on opts.Auth.
-func Connect(opts ConnectionOptions) (*Server, error) {
-	ctx := context.Background()
-	if opts.ConnectTimeout > 0 {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, opts.ConnectTimeout)
-		defer cancel()
-	}
-	return ConnectContext(ctx, opts)
-}
-
-// ConnectContext is the context-aware variant of Connect.
-// The context governs the initial ping and server-info load only;
-// subsequent calls each carry their own context.
-func ConnectContext(ctx context.Context, opts ConnectionOptions) (*Server, error) {
+//
+// ctx governs the initial ping and server-info load only; subsequent calls
+// each carry their own context. opts.ConnectTimeout bounds each connection attempt, not the
+// whole call: an interactive Entra sign-in during the dial may take longer, so
+// a caller that wants an overall limit puts a deadline on ctx.
+func Connect(ctx context.Context, opts ConnectionOptions) (*Server, error) {
 	applyDefaults(&opts)
 
 	connector, err := buildConnector(opts)
@@ -319,7 +311,7 @@ func ConnectContext(ctx context.Context, opts ConnectionOptions) (*Server, error
 }
 
 // NewServer wraps an already-open *sql.DB as a Server, loading the same
-// server metadata ConnectContext loads. Use it when the pool is not gosmo's
+// server metadata Connect loads. Use it when the pool is not gosmo's
 // to open: a connection shared with the rest of an application, a driver
 // wrapped for tracing or retries, or a fake driver in a test.
 //
@@ -841,7 +833,7 @@ func mergeExtraParams(q, extra url.Values) error {
 	return nil
 }
 
-// buildConnector builds the driver connector ConnectContext opens the pool
+// buildConnector builds the driver connector Connect opens the pool
 // with. Using a connector (rather than sql.Open on a DSN string) is what
 // lets gosmo hand the driver a token-refresh callback and per-session init
 // SQL that a string DSN can't express.

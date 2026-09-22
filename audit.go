@@ -16,7 +16,7 @@ import (
 //
 // SQL Server refuses ALTER SERVER AUDIT and DROP SERVER AUDIT on an enabled
 // audit with "This command requires audit to be disabled" — verified live, not
-// read from the documentation. AlterContext and DropContext therefore turn the
+// read from the documentation. Alter and Drop therefore turn the
 // audit off, do the work, and turn it back on only if they were the ones who
 // turned it off. A caller doing it by hand would get it wrong on the failure
 // path, which is why it lives here.
@@ -92,42 +92,18 @@ FROM   sys.server_audits a
 LEFT   JOIN sys.server_file_audits f ON f.audit_id = a.audit_id`
 
 // ServerAudits returns every server audit.
-func (s *Server) ServerAudits() ([]*ServerAudit, error) {
-	return s.ServerAuditsContext(context.Background())
-}
-
-// ServerAuditsContext is the context-aware variant of ServerAudits.
-func (s *Server) ServerAuditsContext(ctx context.Context) ([]*ServerAudit, error) {
+func (s *Server) ServerAudits(ctx context.Context) ([]*ServerAudit, error) {
 	rows, err := s.query(ctx, serverAuditSelect+`
 ORDER  BY a.name`)
-	if err != nil {
-		return nil, fmt.Errorf("gosmo: list server audits: %w", err)
-	}
-	defer rows.Close()
-
-	var out []*ServerAudit
-	for rows.Next() {
-		a, err := scanServerAudit(s, rows.Scan)
-		if err != nil {
-			return nil, fmt.Errorf("gosmo: list server audits: %w", err)
-		}
-		out = append(out, a)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("gosmo: list server audits: %w", err)
-	}
-	return out, nil
+	return scanRows(rows, err, "list server audits", func(scan func(...any) error) (*ServerAudit, error) {
+		return scanServerAudit(s, scan)
+	})
 }
 
 // ServerAuditByName returns one server audit with every field populated, or a
 // not-found error (errors.Is ErrNotFound) when the server has none by that
 // name.
-func (s *Server) ServerAuditByName(name string) (*ServerAudit, error) {
-	return s.ServerAuditByNameContext(context.Background(), name)
-}
-
-// ServerAuditByNameContext is the context-aware variant of ServerAuditByName.
-func (s *Server) ServerAuditByNameContext(ctx context.Context, name string) (*ServerAudit, error) {
+func (s *Server) ServerAuditByName(ctx context.Context, name string) (*ServerAudit, error) {
 	var a *ServerAudit
 	err := s.queryRow(ctx, func(row *sql.Row) error {
 		var err error
@@ -135,13 +111,7 @@ func (s *Server) ServerAuditByNameContext(ctx context.Context, name string) (*Se
 		return err
 	}, serverAuditSelect+`
 WHERE  a.name = @p1`, name)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, notFoundf("gosmo: server audit %q not found", name)
-	}
-	if err != nil {
-		return nil, fmt.Errorf("gosmo: read server audit %q: %w", name, err)
-	}
-	return a, nil
+	return foundRow(a, err, notFoundf("gosmo: server audit %q not found", name), fmt.Sprintf("read server audit %q", name))
 }
 
 // ServerAuditRef returns a lightweight handle for a server audit by name, without
@@ -187,18 +157,13 @@ type ServerAuditStatus struct {
 }
 
 // Status returns the audit's runtime state.
-func (a *ServerAudit) Status() (*ServerAuditStatus, error) {
-	return a.StatusContext(context.Background())
-}
-
-// StatusContext is the context-aware variant of Status.
 //
 // This is a separate read rather than more columns on ServerAudits because
 // sys.dm_server_audit_status needs VIEW SERVER STATE: folded into the list
 // query it would fail the whole folder for a login that can see the audits but
 // not the DMV. An audit that has never been started has no row there and
 // returns a not-found error.
-func (a *ServerAudit) StatusContext(ctx context.Context) (*ServerAuditStatus, error) {
+func (a *ServerAudit) Status(ctx context.Context) (*ServerAuditStatus, error) {
 	st := &ServerAuditStatus{}
 	var path sql.NullString
 	var size sql.NullInt64
@@ -334,59 +299,51 @@ func (spec ServerAuditSpec) createServerAuditStatement() (string, error) {
 
 // CreateServerAudit creates a server audit. It is created disabled, which is
 // what CREATE SERVER AUDIT does; use SetState to turn it on.
-func (s *Server) CreateServerAudit(spec ServerAuditSpec) (*ServerAudit, error) {
-	return s.CreateServerAuditContext(context.Background(), spec)
-}
-
-// CreateServerAuditContext is the context-aware variant of CreateServerAudit.
-func (s *Server) CreateServerAuditContext(ctx context.Context, spec ServerAuditSpec) (*ServerAudit, error) {
+func (s *Server) CreateServerAudit(ctx context.Context, spec ServerAuditSpec) (*ServerAudit, error) {
 	stmt, err := spec.createServerAuditStatement()
 	if err != nil {
 		return nil, fmt.Errorf("gosmo: create server audit: %w", err)
 	}
-	if err := s.execContext(ctx, stmt); err != nil {
+	if err := s.exec(ctx, stmt); err != nil {
 		return nil, fmt.Errorf("gosmo: create server audit %q: %w", spec.Name, err)
 	}
 	if Scripting(ctx) {
 		// The CREATE was only collected, so there is nothing to read back.
 		return s.ServerAuditRef(spec.Name), nil
 	}
-	return s.ServerAuditByNameContext(ctx, spec.Name)
+	return s.ServerAuditByName(ctx, spec.Name)
 }
 
 // SetState enables or disables the audit.
-func (a *ServerAudit) SetState(on bool) error {
-	return a.SetStateContext(context.Background(), on)
+//
+// This is the one ALTER SERVER AUDIT form the server accepts on an enabled
+// audit.
+func (a *ServerAudit) SetState(ctx context.Context, on bool) error {
+	return a.setStateNamed(ctx, a.Name, on)
 }
 
-// SetStateContext is the context-aware variant of SetState. This is the one
-// ALTER SERVER AUDIT form the server accepts on an enabled audit.
-func (a *ServerAudit) SetStateContext(ctx context.Context, on bool) error {
-	return a.setStateNamedContext(ctx, a.Name, on)
-}
-
-// setStateNamedContext toggles the state of the audit addressed by name, which
-// is not always a.Name: RenameContext restores the state after MODIFY NAME has
+// setStateNamed toggles the state of the audit addressed by name, which
+// is not always a.Name: Rename restores the state after MODIFY NAME has
 // committed, and under a WithScript context a.Name is never updated at all. An
 // ON addressed to the old name fails after the rename has already committed,
 // leaving auditing switched off — the exact failure the disable/restore dance
 // exists to prevent.
-func (a *ServerAudit) setStateNamedContext(ctx context.Context, name string, on bool) error {
+func (a *ServerAudit) setStateNamed(ctx context.Context, name string, on bool) error {
 	state := "OFF"
 	if on {
 		state = "ON"
 	}
 	stmt := fmt.Sprintf("ALTER SERVER AUDIT %s WITH ( STATE = %s )", quoteIdent(name), state)
-	if err := a.server.execContext(ctx, stmt); err != nil {
+	if err := a.server.exec(ctx, stmt); err != nil {
 		return fmt.Errorf("gosmo: set server audit %q state: %w", name, err)
 	}
 	setIfApplied(ctx, &a.IsEnabled, on)
 	return nil
 }
 
-// isEnabledContext reads the audit's current state straight from the catalog
+// isEnabled reads the audit's current state straight from the catalog
 // rather than trusting the receiver, which may be a name-only handle.
-func (a *ServerAudit) isEnabledContext(ctx context.Context) (bool, error) {
+func (a *ServerAudit) isEnabled(ctx context.Context) (bool, error) {
 	var enabled sql.NullBool
 	err := a.server.queryRow(ctx, func(row *sql.Row) error {
 		return row.Scan(&enabled)
@@ -439,7 +396,7 @@ func (a *ServerAudit) withAuditDisabled(ctx context.Context, fn func(context.Con
 	if _, ok := a.auditWindow(ctx); ok {
 		return fn(ctx)
 	}
-	enabled, err := a.isEnabledContext(ctx)
+	enabled, err := a.isEnabled(ctx)
 	if err != nil {
 		return err
 	}
@@ -448,10 +405,10 @@ func (a *ServerAudit) withAuditDisabled(ctx context.Context, fn func(context.Con
 	if !enabled {
 		return fn(inner)
 	}
-	if err := a.SetStateContext(ctx, false); err != nil {
+	if err := a.SetState(ctx, false); err != nil {
 		return err
 	}
-	enable := func(ctx context.Context) error { return a.setStateNamedContext(ctx, name, true) }
+	enable := func(ctx context.Context) error { return a.setStateNamed(ctx, name, true) }
 	if err := fn(inner); err != nil {
 		// Best effort: report the original failure, not the restore's.
 		_ = restoreWindow(ctx, enable)
@@ -502,20 +459,17 @@ func (spec ServerAuditSpec) alterServerAuditStatements(name string) []string {
 }
 
 // Alter changes the audit's settings.
-func (a *ServerAudit) Alter(spec ServerAuditSpec) error {
-	return a.AlterContext(context.Background(), spec)
-}
-
-// AlterContext is the context-aware variant of Alter. The audit is disabled
-// for the duration and restored afterwards — see withAuditDisabled.
+//
+// The audit is disabled for the duration and restored afterwards — see
+// withAuditDisabled.
 //
 // Renaming is not part of this: ALTER SERVER AUDIT ... MODIFY NAME is a
 // statement of its own and cannot be combined with any other clause, so it is
 // Rename's job.
-func (a *ServerAudit) AlterContext(ctx context.Context, spec ServerAuditSpec) error {
+func (a *ServerAudit) Alter(ctx context.Context, spec ServerAuditSpec) error {
 	return a.withAuditDisabled(ctx, func(ctx context.Context) error {
 		for _, stmt := range spec.alterServerAuditStatements(a.Name) {
-			if err := a.server.execContext(ctx, stmt); err != nil {
+			if err := a.server.exec(ctx, stmt); err != nil {
 				return fmt.Errorf("gosmo: alter server audit %q: %w", a.Name, err)
 			}
 		}
@@ -524,30 +478,28 @@ func (a *ServerAudit) AlterContext(ctx context.Context, spec ServerAuditSpec) er
 }
 
 // Rename changes the audit's name.
-func (a *ServerAudit) Rename(newName string) error {
-	return a.RenameContext(context.Background(), newName)
-}
-
-// RenameContext is the context-aware variant of Rename.
 //
-// This is the one write that cannot use withAuditDisabled: the wrapper restores
-// the state through the receiver's name, and MODIFY NAME has changed what that
-// name has to be. The restore is therefore spelled out here, addressed to
-// newName on the path where the rename committed and to the old name on the
-// path where it did not.
-func (a *ServerAudit) RenameContext(ctx context.Context, newName string) error {
+// This is the one write that cannot use withAuditDisabled: the wrapper
+// restores the state through the receiver's name, and MODIFY NAME has changed
+// what that name has to be. The restore is therefore spelled out here,
+// addressed to newName on the path where the rename committed and to the old
+// name on the path where it did not. Both restores go through restoreWindow,
+// for the reason its comment gives: a rename cancelled by the user, or one
+// whose MODIFY NAME ran out the deadline, is the likeliest way to reach them,
+// and a re-enable on that same context never reaches the server.
+func (a *ServerAudit) Rename(ctx context.Context, newName string) error {
 	if strings.TrimSpace(newName) == "" {
 		return fmt.Errorf("gosmo: rename server audit %q: new name is empty", a.Name)
 	}
 	window, inWindow := a.auditWindow(ctx)
 	restore := false
 	if !inWindow {
-		enabled, err := a.isEnabledContext(ctx)
+		enabled, err := a.isEnabled(ctx)
 		if err != nil {
 			return err
 		}
 		if enabled {
-			if err := a.SetStateContext(ctx, false); err != nil {
+			if err := a.SetState(ctx, false); err != nil {
 				return err
 			}
 			restore = true
@@ -555,12 +507,20 @@ func (a *ServerAudit) RenameContext(ctx context.Context, newName string) error {
 	}
 	stmt := fmt.Sprintf("ALTER SERVER AUDIT %s MODIFY NAME = %s",
 		quoteIdent(a.Name), quoteIdent(newName))
-	if err := a.server.execContext(ctx, stmt); err != nil {
+	if err := a.server.exec(ctx, stmt); err != nil {
+		err = fmt.Errorf("gosmo: rename server audit %q: %w", a.Name, err)
 		if restore {
 			// The rename did not commit, so the audit is still the old name.
-			_ = a.setStateNamedContext(ctx, a.Name, true)
+			// A failed restore is reported alongside the rename's error, not
+			// instead of it: the caller has to know auditing is still off.
+			oldName := a.Name
+			if rerr := restoreWindow(ctx, func(ctx context.Context) error {
+				return a.setStateNamed(ctx, oldName, true)
+			}); rerr != nil {
+				err = errors.Join(err, rerr)
+			}
 		}
-		return fmt.Errorf("gosmo: rename server audit %q: %w", a.Name, err)
+		return err
 	}
 	setIfApplied(ctx, &a.Name, newName)
 	if inWindow {
@@ -568,27 +528,27 @@ func (a *ServerAudit) RenameContext(ctx context.Context, newName string) error {
 		*window = newName
 	}
 	if restore {
-		return a.setStateNamedContext(ctx, newName, true)
+		return restoreWindow(ctx, func(ctx context.Context) error {
+			return a.setStateNamed(ctx, newName, true)
+		})
 	}
 	return nil
 }
 
 // Drop deletes the audit.
-func (a *ServerAudit) Drop() error { return a.DropContext(context.Background()) }
-
-// DropContext is the context-aware variant of Drop. An enabled audit is
-// disabled first; there is nothing to restore afterwards.
-func (a *ServerAudit) DropContext(ctx context.Context) error {
-	enabled, err := a.isEnabledContext(ctx)
+//
+// An enabled audit is disabled first; there is nothing to restore afterwards.
+func (a *ServerAudit) Drop(ctx context.Context) error {
+	enabled, err := a.isEnabled(ctx)
 	if err != nil {
 		return err
 	}
 	if enabled {
-		if err := a.SetStateContext(ctx, false); err != nil {
+		if err := a.SetState(ctx, false); err != nil {
 			return err
 		}
 	}
-	if err := a.server.execContext(ctx, "DROP SERVER AUDIT "+quoteIdent(a.Name)); err != nil {
+	if err := a.server.exec(ctx, "DROP SERVER AUDIT "+quoteIdent(a.Name)); err != nil {
 		return fmt.Errorf("gosmo: drop server audit %q: %w", a.Name, err)
 	}
 	return nil

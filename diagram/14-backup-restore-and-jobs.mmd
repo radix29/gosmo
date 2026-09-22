@@ -36,7 +36,9 @@ classDiagram
         +Files []string
         +FileGroups []string
         +RelocateFiles []RelocateFile
-        +Recovery bool
+        +Recovery RestoreRecovery
+        +StandByFile string
+        +CloseExistingConnections bool
         +Replace bool
         +Checksum bool
         +Stats int

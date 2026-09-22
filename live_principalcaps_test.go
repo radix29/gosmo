@@ -89,9 +89,9 @@ func TestLivePrincipalCapabilitiesMatchWhatTheServerEnforces(t *testing.T) {
 	// Not NewServer, for live_schemacaps_test.go's reason: loadInfo reads
 	// server-scope DMVs this login has no rights to.
 	restricted := &Server{db: pool}
-	caps, err := restricted.DatabaseRef(d.Name).CapabilitiesContext(ctx)
+	caps, err := restricted.DatabaseRef(d.Name).Capabilities(ctx)
 	if err != nil {
-		t.Fatalf("CapabilitiesContext as %s: %v", login, err)
+		t.Fatalf("Capabilities as %s: %v", login, err)
 	}
 	if !caps.Accessible {
 		t.Fatal("the login cannot open the database it was given a user in")
@@ -156,9 +156,9 @@ func TestLivePrincipalCapabilitiesMatchWhatTheServerEnforces(t *testing.T) {
 		t.Fatalf("open as %s: %v", grantee, err)
 	}
 	defer gpool.Close()
-	gcaps, err := (&Server{db: gpool}).DatabaseRef(d.Name).CapabilitiesContext(ctx)
+	gcaps, err := (&Server{db: gpool}).DatabaseRef(d.Name).Capabilities(ctx)
 	if err != nil {
-		t.Fatalf("CapabilitiesContext as %s: %v", grantee, err)
+		t.Fatalf("Capabilities as %s: %v", grantee, err)
 	}
 	if gcaps.Permits("ALTER ANY USER") {
 		t.Fatal("the grantee holds ALTER ANY USER; this fixture no longer isolates the per-user grant")

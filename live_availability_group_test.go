@@ -35,7 +35,7 @@ func liveAG(t *testing.T) (*Server, context.Context, func()) {
 	if *liveAGServer == "" {
 		t.Skip("no -liveag server given")
 	}
-	srv, err := Connect(ConnectionOptions{
+	srv, err := Connect(t.Context(), ConnectionOptions{
 		Server:                 *liveAGServer,
 		User:                   *liveAGUser,
 		Password:               *liveAGPass,
@@ -57,9 +57,9 @@ func TestLiveAvailabilityGroupRead(t *testing.T) {
 		t.Skip("Always On is not enabled on this instance")
 	}
 
-	groups, err := srv.AvailabilityGroupsContext(ctx)
+	groups, err := srv.AvailabilityGroups(ctx)
 	if err != nil {
-		t.Fatalf("AvailabilityGroupsContext: %v", err)
+		t.Fatalf("AvailabilityGroups: %v", err)
 	}
 	if len(groups) == 0 {
 		t.Skip("instance participates in no availability group")
@@ -81,8 +81,8 @@ func TestLiveAvailabilityGroupRead(t *testing.T) {
 			// the ones callers actually get. Drop the UPPER and an
 			// == "EXTERNAL" test elsewhere silently never fires.
 			for label, got := range map[string]string{
-				"ClusterType":               ag.ClusterType,
-				"AutomatedBackupPreference": ag.AutomatedBackupPreference,
+				"ClusterType":               string(ag.ClusterType),
+				"AutomatedBackupPreference": string(ag.AutomatedBackupPreference),
 			} {
 				if got != strings.ToUpper(got) {
 					t.Errorf("%s = %q, want it upper-cased by agColumns", label, got)
@@ -103,9 +103,9 @@ func TestLiveAvailabilityGroupRead(t *testing.T) {
 
 func lookupByName(t *testing.T, srv *Server, ctx context.Context, name string) *AvailabilityGroup {
 	t.Helper()
-	ag, err := srv.AvailabilityGroupByNameContext(ctx, name)
+	ag, err := srv.AvailabilityGroupByName(ctx, name)
 	if err != nil {
-		t.Fatalf("AvailabilityGroupByNameContext(%q): %v", name, err)
+		t.Fatalf("AvailabilityGroupByName(%q): %v", name, err)
 	}
 	return ag
 }
@@ -114,12 +114,12 @@ func lookupByName(t *testing.T, srv *Server, ctx context.Context, name string) *
 // database check needs to prove its own join covered every replica.
 func checkReplicas(t *testing.T, ctx context.Context, ag *AvailabilityGroup) map[string]bool {
 	t.Helper()
-	replicas, err := ag.ReplicasContext(ctx)
+	replicas, err := ag.Replicas(ctx)
 	if err != nil {
-		t.Fatalf("ReplicasContext: %v", err)
+		t.Fatalf("Replicas: %v", err)
 	}
 	if len(replicas) == 0 {
-		t.Fatal("group has no replicas; the group_id join in ReplicasContext is wrong")
+		t.Fatal("group has no replicas; the group_id join in Replicas is wrong")
 	}
 
 	names := make(map[string]bool, len(replicas))
@@ -178,9 +178,9 @@ func checkReplicas(t *testing.T, ctx context.Context, ag *AvailabilityGroup) map
 // no row for it — the case a plain inner join would silently drop.
 func checkDatabases(t *testing.T, ctx context.Context, ag *AvailabilityGroup, replicaNames map[string]bool) {
 	t.Helper()
-	dbs, err := ag.DatabasesContext(ctx)
+	dbs, err := ag.Databases(ctx)
 	if err != nil {
-		t.Fatalf("DatabasesContext: %v", err)
+		t.Fatalf("Databases: %v", err)
 	}
 	if len(dbs) == 0 {
 		t.Skip("group contains no databases")
@@ -231,9 +231,9 @@ func checkDatabases(t *testing.T, ctx context.Context, ag *AvailabilityGroup, re
 
 func checkListeners(t *testing.T, ctx context.Context, ag *AvailabilityGroup) {
 	t.Helper()
-	listeners, err := ag.ListenersContext(ctx)
+	listeners, err := ag.Listeners(ctx)
 	if err != nil {
-		t.Fatalf("ListenersContext: %v", err)
+		t.Fatalf("Listeners: %v", err)
 	}
 	for _, l := range listeners {
 		if l.DNSName == "" {
@@ -281,9 +281,9 @@ func TestLiveAvailabilityGroupWrite(t *testing.T) {
 		t.Skip("write tests modify a live availability group; pass -liveag-write to run them")
 	}
 
-	groups, err := srv.AvailabilityGroupsContext(ctx)
+	groups, err := srv.AvailabilityGroups(ctx)
 	if err != nil {
-		t.Fatalf("AvailabilityGroupsContext: %v", err)
+		t.Fatalf("AvailabilityGroups: %v", err)
 	}
 	var ag *AvailabilityGroup
 	for _, g := range groups {
@@ -300,7 +300,7 @@ func TestLiveAvailabilityGroupWrite(t *testing.T) {
 	// SQL Server actually stored rather than what the setter mirrored.
 	reread := func() *AvailabilityGroup {
 		t.Helper()
-		fresh, err := srv.AvailabilityGroupByNameContext(ctx, ag.Name)
+		fresh, err := srv.AvailabilityGroupByName(ctx, ag.Name)
 		if err != nil {
 			t.Fatalf("re-read %q: %v", ag.Name, err)
 		}
@@ -310,13 +310,13 @@ func TestLiveAvailabilityGroupWrite(t *testing.T) {
 	t.Run("group settings", func(t *testing.T) {
 		orig := reread()
 
-		if err := ag.SetHealthCheckTimeoutContext(ctx, orig.HealthCheckTimeout+5000); err != nil {
+		if err := ag.SetHealthCheckTimeout(ctx, orig.HealthCheckTimeout+5000); err != nil {
 			t.Fatalf("SetHealthCheckTimeout: %v", err)
 		}
 		if got := reread().HealthCheckTimeout; got != orig.HealthCheckTimeout+5000 {
 			t.Errorf("HealthCheckTimeout = %d, want %d", got, orig.HealthCheckTimeout+5000)
 		}
-		if err := ag.SetHealthCheckTimeoutContext(ctx, orig.HealthCheckTimeout); err != nil {
+		if err := ag.SetHealthCheckTimeout(ctx, orig.HealthCheckTimeout); err != nil {
 			t.Fatalf("restore HealthCheckTimeout: %v", err)
 		}
 
@@ -324,57 +324,57 @@ func TestLiveAvailabilityGroupWrite(t *testing.T) {
 		if orig.FailureConditionLevel == 3 {
 			level = 4
 		}
-		if err := ag.SetFailureConditionLevelContext(ctx, level); err != nil {
+		if err := ag.SetFailureConditionLevel(ctx, level); err != nil {
 			t.Fatalf("SetFailureConditionLevel: %v", err)
 		}
 		if got := reread().FailureConditionLevel; got != level {
 			t.Errorf("FailureConditionLevel = %d, want %d", got, level)
 		}
-		if err := ag.SetFailureConditionLevelContext(ctx, orig.FailureConditionLevel); err != nil {
+		if err := ag.SetFailureConditionLevel(ctx, orig.FailureConditionLevel); err != nil {
 			t.Fatalf("restore FailureConditionLevel: %v", err)
 		}
 
-		if err := ag.SetDBFailoverContext(ctx, !orig.DBFailover); err != nil {
+		if err := ag.SetDBFailover(ctx, !orig.DBFailover); err != nil {
 			t.Fatalf("SetDBFailover: %v", err)
 		}
 		if got := reread().DBFailover; got == orig.DBFailover {
 			t.Errorf("DBFailover did not change from %v", orig.DBFailover)
 		}
-		if err := ag.SetDBFailoverContext(ctx, orig.DBFailover); err != nil {
+		if err := ag.SetDBFailover(ctx, orig.DBFailover); err != nil {
 			t.Fatalf("restore DBFailover: %v", err)
 		}
 
 		// DTC_SUPPORT is the one flag whose off value is NONE rather than OFF,
 		// so a wrong keyword here fails on the server and nowhere else.
-		if err := ag.SetDTCSupportContext(ctx, !orig.DTCSupport); err != nil {
+		if err := ag.SetDTCSupport(ctx, !orig.DTCSupport); err != nil {
 			t.Fatalf("SetDTCSupport: %v", err)
 		}
 		if got := reread().DTCSupport; got == orig.DTCSupport {
 			t.Errorf("DTCSupport did not change from %v", orig.DTCSupport)
 		}
-		if err := ag.SetDTCSupportContext(ctx, orig.DTCSupport); err != nil {
+		if err := ag.SetDTCSupport(ctx, orig.DTCSupport); err != nil {
 			t.Fatalf("restore DTCSupport: %v", err)
 		}
 
 		pref := "SECONDARY_ONLY"
-		if strings.EqualFold(orig.AutomatedBackupPreference, pref) {
+		if strings.EqualFold(string(orig.AutomatedBackupPreference), pref) {
 			pref = "PRIMARY"
 		}
-		if err := ag.SetAutomatedBackupPreferenceContext(ctx, pref); err != nil {
+		if err := ag.SetAutomatedBackupPreference(ctx, BackupPreference(pref)); err != nil {
 			t.Fatalf("SetAutomatedBackupPreference: %v", err)
 		}
-		if got := reread().AutomatedBackupPreference; !strings.EqualFold(got, pref) {
+		if got := reread().AutomatedBackupPreference; !strings.EqualFold(string(got), pref) {
 			t.Errorf("AutomatedBackupPreference = %q, want %q", got, pref)
 		}
-		if err := ag.SetAutomatedBackupPreferenceContext(ctx, orig.AutomatedBackupPreference); err != nil {
+		if err := ag.SetAutomatedBackupPreference(ctx, orig.AutomatedBackupPreference); err != nil {
 			t.Fatalf("restore AutomatedBackupPreference: %v", err)
 		}
 	})
 
 	t.Run("replica settings", func(t *testing.T) {
-		replicas, err := ag.ReplicasContext(ctx)
+		replicas, err := ag.Replicas(ctx)
 		if err != nil {
-			t.Fatalf("ReplicasContext: %v", err)
+			t.Fatalf("Replicas: %v", err)
 		}
 		// Pick a secondary: its settings are the ones a DBA actually tunes,
 		// and every one of them is set from the primary, not from the replica
@@ -395,7 +395,7 @@ func TestLiveAvailabilityGroupWrite(t *testing.T) {
 
 		rereadReplica := func() *AvailabilityReplica {
 			t.Helper()
-			rs, err := ag.ReplicasContext(ctx)
+			rs, err := ag.Replicas(ctx)
 			if err != nil {
 				t.Fatalf("re-read replicas: %v", err)
 			}
@@ -413,76 +413,76 @@ func TestLiveAvailabilityGroupWrite(t *testing.T) {
 		if orig.BackupPriority == priority {
 			priority = 40
 		}
-		if err := target.SetBackupPriorityContext(ctx, priority); err != nil {
+		if err := target.SetBackupPriority(ctx, priority); err != nil {
 			t.Fatalf("SetBackupPriority: %v", err)
 		}
 		if got := rereadReplica().BackupPriority; got != priority {
 			t.Errorf("BackupPriority = %d, want %d", got, priority)
 		}
-		if err := target.SetBackupPriorityContext(ctx, orig.BackupPriority); err != nil {
+		if err := target.SetBackupPriority(ctx, orig.BackupPriority); err != nil {
 			t.Fatalf("restore BackupPriority: %v", err)
 		}
 
 		timeout := orig.SessionTimeout + 5
-		if err := target.SetSessionTimeoutContext(ctx, timeout); err != nil {
+		if err := target.SetSessionTimeout(ctx, timeout); err != nil {
 			t.Fatalf("SetSessionTimeout: %v", err)
 		}
 		if got := rereadReplica().SessionTimeout; got != timeout {
 			t.Errorf("SessionTimeout = %d, want %d", got, timeout)
 		}
-		if err := target.SetSessionTimeoutContext(ctx, orig.SessionTimeout); err != nil {
+		if err := target.SetSessionTimeout(ctx, orig.SessionTimeout); err != nil {
 			t.Fatalf("restore SessionTimeout: %v", err)
 		}
 
 		mode := "AUTOMATIC"
-		if strings.EqualFold(orig.SeedingMode, mode) {
+		if strings.EqualFold(string(orig.SeedingMode), mode) {
 			mode = "MANUAL"
 		}
-		if err := target.SetSeedingModeContext(ctx, mode); err != nil {
+		if err := target.SetSeedingMode(ctx, SeedingMode(mode)); err != nil {
 			t.Fatalf("SetSeedingMode: %v", err)
 		}
-		if got := rereadReplica().SeedingMode; !strings.EqualFold(got, mode) {
+		if got := rereadReplica().SeedingMode; !strings.EqualFold(string(got), mode) {
 			t.Errorf("SeedingMode = %q, want %q", got, mode)
 		}
-		if err := target.SetSeedingModeContext(ctx, orig.SeedingMode); err != nil {
+		if err := target.SetSeedingMode(ctx, orig.SeedingMode); err != nil {
 			t.Fatalf("restore SeedingMode: %v", err)
 		}
 
 		// PRIMARY_ROLE/SECONDARY_ROLE nest their option, and the nesting is
 		// where the syntax is easy to get wrong.
 		conn := "ALL"
-		if strings.EqualFold(orig.SecondaryRoleAllowConnections, conn) {
+		if strings.EqualFold(string(orig.SecondaryRoleAllowConnections), conn) {
 			conn = "READ_ONLY"
 		}
-		if err := target.SetSecondaryRoleAllowConnectionsContext(ctx, conn); err != nil {
+		if err := target.SetSecondaryRoleAllowConnections(ctx, AllowConnections(conn)); err != nil {
 			t.Fatalf("SetSecondaryRoleAllowConnections: %v", err)
 		}
-		if got := rereadReplica().SecondaryRoleAllowConnections; !strings.EqualFold(got, conn) {
+		if got := rereadReplica().SecondaryRoleAllowConnections; !strings.EqualFold(string(got), conn) {
 			t.Errorf("SecondaryRoleAllowConnections = %q, want %q", got, conn)
 		}
-		if err := target.SetSecondaryRoleAllowConnectionsContext(ctx, orig.SecondaryRoleAllowConnections); err != nil {
+		if err := target.SetSecondaryRoleAllowConnections(ctx, orig.SecondaryRoleAllowConnections); err != nil {
 			t.Fatalf("restore SecondaryRoleAllowConnections: %v", err)
 		}
 
 		primaryConn := "READ_WRITE"
-		if strings.EqualFold(orig.PrimaryRoleAllowConnections, primaryConn) {
+		if strings.EqualFold(string(orig.PrimaryRoleAllowConnections), primaryConn) {
 			primaryConn = "ALL"
 		}
-		if err := target.SetPrimaryRoleAllowConnectionsContext(ctx, primaryConn); err != nil {
+		if err := target.SetPrimaryRoleAllowConnections(ctx, AllowConnections(primaryConn)); err != nil {
 			t.Fatalf("SetPrimaryRoleAllowConnections: %v", err)
 		}
-		if got := rereadReplica().PrimaryRoleAllowConnections; !strings.EqualFold(got, primaryConn) {
+		if got := rereadReplica().PrimaryRoleAllowConnections; !strings.EqualFold(string(got), primaryConn) {
 			t.Errorf("PrimaryRoleAllowConnections = %q, want %q", got, primaryConn)
 		}
-		if err := target.SetPrimaryRoleAllowConnectionsContext(ctx, orig.PrimaryRoleAllowConnections); err != nil {
+		if err := target.SetPrimaryRoleAllowConnections(ctx, orig.PrimaryRoleAllowConnections); err != nil {
 			t.Fatalf("restore PrimaryRoleAllowConnections: %v", err)
 		}
 	})
 
 	t.Run("read-only routing", func(t *testing.T) {
-		replicas, err := ag.ReplicasContext(ctx)
+		replicas, err := ag.Replicas(ctx)
 		if err != nil {
-			t.Fatalf("ReplicasContext: %v", err)
+			t.Fatalf("Replicas: %v", err)
 		}
 		if len(replicas) < 2 {
 			t.Skip("read-only routing needs at least two replicas")
@@ -500,19 +500,19 @@ func TestLiveAvailabilityGroupWrite(t *testing.T) {
 		}
 
 		origURL := remote.ReadOnlyRoutingURL
-		origList, err := local.ReadOnlyRoutingListContext(ctx)
+		origList, err := local.ReadOnlyRoutingList(ctx)
 		if err != nil {
-			t.Fatalf("ReadOnlyRoutingListContext: %v", err)
+			t.Fatalf("ReadOnlyRoutingList: %v", err)
 		}
 
 		url := "TCP://" + remote.ReplicaServerName + ":1433"
-		if err := remote.SetReadOnlyRoutingURLContext(ctx, url); err != nil {
+		if err := remote.SetReadOnlyRoutingURL(ctx, url); err != nil {
 			t.Fatalf("SetReadOnlyRoutingURL: %v", err)
 		}
-		if err := local.SetReadOnlyRoutingListContext(ctx, [][]string{{remote.ReplicaServerName}}); err != nil {
+		if err := local.SetReadOnlyRoutingList(ctx, [][]string{{remote.ReplicaServerName}}); err != nil {
 			t.Fatalf("SetReadOnlyRoutingList: %v", err)
 		}
-		got, err := local.ReadOnlyRoutingListContext(ctx)
+		got, err := local.ReadOnlyRoutingList(ctx)
 		if err != nil {
 			t.Fatalf("re-read routing list: %v", err)
 		}
@@ -523,26 +523,26 @@ func TestLiveAvailabilityGroupWrite(t *testing.T) {
 		// Clearing is the half most likely to be wrong: the URL clears with
 		// NULL and the list with the bare keyword NONE, and neither spelling
 		// is guessable from the set form.
-		if err := local.SetReadOnlyRoutingListContext(ctx, nil); err != nil {
+		if err := local.SetReadOnlyRoutingList(ctx, nil); err != nil {
 			t.Fatalf("clear routing list: %v", err)
 		}
-		if cleared, err := local.ReadOnlyRoutingListContext(ctx); err != nil {
+		if cleared, err := local.ReadOnlyRoutingList(ctx); err != nil {
 			t.Fatalf("re-read cleared routing list: %v", err)
 		} else if len(cleared) != 0 {
 			t.Errorf("routing list after clearing = %v, want empty", cleared)
 		}
-		if err := remote.SetReadOnlyRoutingURLContext(ctx, ""); err != nil {
+		if err := remote.SetReadOnlyRoutingURL(ctx, ""); err != nil {
 			t.Fatalf("clear routing URL: %v", err)
 		}
 
 		// Restore whatever was there before.
 		if origURL != "" {
-			if err := remote.SetReadOnlyRoutingURLContext(ctx, origURL); err != nil {
+			if err := remote.SetReadOnlyRoutingURL(ctx, origURL); err != nil {
 				t.Fatalf("restore routing URL: %v", err)
 			}
 		}
 		if len(origList) > 0 {
-			if err := local.SetReadOnlyRoutingListContext(ctx, origList); err != nil {
+			if err := local.SetReadOnlyRoutingList(ctx, origList); err != nil {
 				t.Fatalf("restore routing list: %v", err)
 			}
 		}
@@ -574,9 +574,9 @@ func TestLiveAvailabilityGroupOperations(t *testing.T) {
 		t.Skip("operation tests add and remove a database; pass -liveag-ops to run them")
 	}
 
-	groups, err := srv.AvailabilityGroupsContext(ctx)
+	groups, err := srv.AvailabilityGroups(ctx)
 	if err != nil {
-		t.Fatalf("AvailabilityGroupsContext: %v", err)
+		t.Fatalf("AvailabilityGroups: %v", err)
 	}
 	var ag *AvailabilityGroup
 	for _, g := range groups {
@@ -593,7 +593,7 @@ func TestLiveAvailabilityGroupOperations(t *testing.T) {
 		const dbName = "gosmo_agops"
 		liveDropEverywhere(t, srv, ag, dbName)
 
-		if err := srv.CreateDatabaseContext(ctx, dbName, &CreateDatabaseOptions{RecoveryModel: RecoveryModelFull}); err != nil {
+		if err := srv.CreateDatabase(ctx, dbName, &CreateDatabaseOptions{RecoveryModel: RecoveryModelFull}); err != nil {
 			t.Fatalf("create %s: %v", dbName, err)
 		}
 		defer liveDropEverywhere(t, srv, ag, dbName)
@@ -605,7 +605,7 @@ func TestLiveAvailabilityGroupOperations(t *testing.T) {
 			if action == BackupActionLog {
 				ext = ".trn"
 			}
-			if err := srv.BackupContext(ctx, BackupOptions{
+			if err := srv.Backup(ctx, BackupOptions{
 				Database: dbName, Action: action,
 				Devices: []string{*liveAGBackupDir + "/" + dbName + ext},
 				Init:    true, Format: true,
@@ -614,7 +614,7 @@ func TestLiveAvailabilityGroupOperations(t *testing.T) {
 			}
 		}
 
-		if err := ag.AddDatabaseContext(ctx, dbName); err != nil {
+		if err := ag.AddDatabase(ctx, dbName); err != nil {
 			t.Fatalf("AddDatabase: %v", err)
 		}
 		local := liveWaitForAGDatabase(t, ctx, ag, dbName, func(d *AvailabilityDatabase) bool {
@@ -626,7 +626,7 @@ func TestLiveAvailabilityGroupOperations(t *testing.T) {
 
 		// Suspending from the primary suspends every secondary, and the local
 		// row is the one that reports it back here.
-		if err := ag.SuspendDatabaseContext(ctx, dbName); err != nil {
+		if err := ag.SuspendDatabase(ctx, dbName); err != nil {
 			t.Fatalf("SuspendDatabase: %v", err)
 		}
 		suspended := liveWaitForAGDatabase(t, ctx, ag, dbName, func(d *AvailabilityDatabase) bool {
@@ -636,17 +636,17 @@ func TestLiveAvailabilityGroupOperations(t *testing.T) {
 			t.Errorf("suspended database reports no suspend reason")
 		}
 
-		if err := ag.ResumeDatabaseContext(ctx, dbName); err != nil {
+		if err := ag.ResumeDatabase(ctx, dbName); err != nil {
 			t.Fatalf("ResumeDatabase: %v", err)
 		}
 		liveWaitForAGDatabase(t, ctx, ag, dbName, func(d *AvailabilityDatabase) bool {
 			return d.IsLocal && !d.IsSuspended
 		})
 
-		if err := ag.RemoveDatabaseContext(ctx, dbName); err != nil {
+		if err := ag.RemoveDatabase(ctx, dbName); err != nil {
 			t.Fatalf("RemoveDatabase: %v", err)
 		}
-		dbs, err := ag.DatabasesContext(ctx)
+		dbs, err := ag.Databases(ctx)
 		if err != nil {
 			t.Fatalf("Databases after removal: %v", err)
 		}
@@ -662,7 +662,7 @@ func TestLiveAvailabilityGroupOperations(t *testing.T) {
 	// other clause in this file, and a wrong nesting is a syntax error rather
 	// than a wrong result.
 	t.Run("listener", func(t *testing.T) {
-		listeners, err := ag.ListenersContext(ctx)
+		listeners, err := ag.Listeners(ctx)
 		if err != nil {
 			t.Fatalf("Listeners: %v", err)
 		}
@@ -683,14 +683,14 @@ func TestLiveAvailabilityGroupOperations(t *testing.T) {
 			t.Skip("group's listener reports no addresses to restore it from")
 		}
 
-		if err := ag.RemoveListenerContext(ctx, orig.DNSName); err != nil {
+		if err := ag.RemoveListener(ctx, orig.DNSName); err != nil {
 			t.Fatalf("RemoveListener: %v", err)
 		}
-		if err := ag.AddListenerContext(ctx, spec); err != nil {
+		if err := ag.AddListener(ctx, spec); err != nil {
 			t.Fatalf("AddListener (the group is now WITHOUT a listener): %v", err)
 		}
 
-		back, err := ag.ListenersContext(ctx)
+		back, err := ag.Listeners(ctx)
 		if err != nil {
 			t.Fatalf("re-read listeners: %v", err)
 		}
@@ -718,8 +718,8 @@ func TestLiveAvailabilityGroupOperations(t *testing.T) {
 		switch ag.ClusterType {
 		case "EXTERNAL":
 			for name, run := range map[string]func() error{
-				"Failover":                   func() error { return ag.FailoverContext(ctx) },
-				"ForceFailoverAllowDataLoss": func() error { return ag.ForceFailoverAllowDataLossContext(ctx) },
+				"Failover":                   func() error { return ag.Failover(ctx) },
+				"ForceFailoverAllowDataLoss": func() error { return ag.ForceFailoverAllowDataLoss(ctx) },
 			} {
 				err := run()
 				if err == nil {
@@ -732,7 +732,7 @@ func TestLiveAvailabilityGroupOperations(t *testing.T) {
 		case "NONE":
 			// Only the forced form exists here, so exercising the lossless one
 			// is safe and the forced one is not.
-			if err := ag.FailoverContext(ctx); err == nil {
+			if err := ag.Failover(ctx); err == nil {
 				t.Error("Failover succeeded on a CLUSTER_TYPE = NONE group")
 			} else if !strings.Contains(err.Error(), "47122") && !strings.Contains(err.Error(), "CLUSTER_TYPE = NONE") {
 				t.Errorf("Failover failed with %v, want the 47122 refusal", err)
@@ -750,7 +750,7 @@ func liveWaitForAGDatabase(t *testing.T, ctx context.Context, ag *AvailabilityGr
 	t.Helper()
 	deadline := time.Now().Add(90 * time.Second)
 	for {
-		dbs, err := ag.DatabasesContext(ctx)
+		dbs, err := ag.Databases(ctx)
 		if err != nil {
 			t.Fatalf("Databases: %v", err)
 		}
@@ -774,7 +774,7 @@ func liveDropEverywhere(t *testing.T, srv *Server, ag *AvailabilityGroup, dbName
 	t.Helper()
 	ctx := context.Background()
 	liveDropDatabase(t, srv, dbName)
-	replicas, err := ag.ReplicasContext(ctx)
+	replicas, err := ag.Replicas(ctx)
 	if err != nil {
 		t.Logf("listing replicas to clean up %s: %v", dbName, err)
 		return
@@ -783,7 +783,7 @@ func liveDropEverywhere(t *testing.T, srv *Server, ag *AvailabilityGroup, dbName
 		if strings.EqualFold(r.ReplicaServerName, srv.Name()) {
 			continue
 		}
-		peer, err := Connect(ConnectionOptions{
+		peer, err := Connect(ctx, ConnectionOptions{
 			Server: r.ReplicaServerName, User: *liveAGUser, Password: *liveAGPass,
 			TrustServerCertificate: true, Encrypt: "false",
 		})
@@ -805,11 +805,11 @@ func liveDropEverywhere(t *testing.T, srv *Server, ag *AvailabilityGroup, dbName
 func liveDropDatabase(t *testing.T, srv *Server, dbName string) {
 	t.Helper()
 	ctx := context.Background()
-	if err := srv.DropDatabaseContext(ctx, dbName, false); err == nil {
+	if err := srv.DropDatabase(ctx, dbName, false); err == nil {
 		return
 	}
-	if err := srv.DropDatabaseContext(ctx, dbName, true); err != nil {
-		exists, lookupErr := srv.DatabaseByNameContext(ctx, dbName)
+	if err := srv.DropDatabase(ctx, dbName, true); err != nil {
+		exists, lookupErr := srv.DatabaseByName(ctx, dbName)
 		if lookupErr == nil && exists != nil {
 			t.Logf("could not drop %s on %s: %v", dbName, srv.Name(), err)
 		}
@@ -851,7 +851,7 @@ func TestLiveAvailabilityGroupCreate(t *testing.T) {
 	if secondaryName == "" {
 		secondaryName = liveOtherReplicaName(t, ctx, srv)
 	}
-	peer, err := Connect(ConnectionOptions{
+	peer, err := Connect(ctx, ConnectionOptions{
 		Server: secondaryName, User: *liveAGUser, Password: *liveAGPass,
 		TrustServerCertificate: true, Encrypt: "false",
 	})
@@ -888,18 +888,18 @@ func TestLiveAvailabilityGroupCreate(t *testing.T) {
 			},
 		},
 	}
-	ag, err := srv.CreateAvailabilityGroupContext(ctx, req)
+	ag, err := srv.CreateAvailabilityGroup(ctx, req)
 	if err != nil {
 		t.Fatalf("CreateAvailabilityGroup: %v", err)
 	}
-	if !strings.EqualFold(ag.ClusterType, "NONE") {
+	if !strings.EqualFold(string(ag.ClusterType), "NONE") {
 		t.Errorf("created group's cluster type = %q, want NONE", ag.ClusterType)
 	}
 	if !ag.IsLocalPrimary() {
 		t.Errorf("the instance that ran CREATE is not the group's primary")
 	}
 
-	replicas, err := ag.ReplicasContext(ctx)
+	replicas, err := ag.Replicas(ctx)
 	if err != nil {
 		t.Fatalf("Replicas: %v", err)
 	}
@@ -907,7 +907,7 @@ func TestLiveAvailabilityGroupCreate(t *testing.T) {
 		t.Fatalf("created group has %d replicas, want 2", len(replicas))
 	}
 	for _, r := range replicas {
-		if !strings.EqualFold(r.SeedingMode, "AUTOMATIC") {
+		if !strings.EqualFold(string(r.SeedingMode), "AUTOMATIC") {
 			t.Errorf("replica %s seeding mode = %q, want AUTOMATIC", r.ReplicaServerName, r.SeedingMode)
 		}
 	}
@@ -915,22 +915,22 @@ func TestLiveAvailabilityGroupCreate(t *testing.T) {
 	// The secondary joins itself, blind: under CLUSTER_TYPE = NONE the group
 	// does not exist there at all until the JOIN lands, so there is nothing to
 	// read first and the handle has to be built from the name.
-	if _, err := peer.AvailabilityGroupByNameContext(ctx, name); err == nil {
+	if _, err := peer.AvailabilityGroupByName(ctx, name); err == nil {
 		t.Errorf("%s already knows the group before joining — only a WSFC cluster propagates that, "+
 			"and AvailabilityGroup.Join's doc comment says otherwise", secondaryName)
 	}
 	peerAG := peer.AvailabilityGroupRef(name)
-	if err := peerAG.JoinContext(ctx, "NONE"); err != nil {
+	if err := peerAG.Join(ctx, "NONE"); err != nil {
 		t.Fatalf("Join on %s: %v", secondaryName, err)
 	}
-	if err := peerAG.GrantCreateAnyDatabaseContext(ctx); err != nil {
+	if err := peerAG.GrantCreateAnyDatabase(ctx); err != nil {
 		t.Fatalf("GrantCreateAnyDatabase on %s: %v", secondaryName, err)
 	}
 
 	// Joining is asynchronous: the connection comes up a moment later.
 	deadline := time.Now().Add(60 * time.Second)
 	for {
-		replicas, err := ag.ReplicasContext(ctx)
+		replicas, err := ag.Replicas(ctx)
 		if err != nil {
 			t.Fatalf("Replicas after join: %v", err)
 		}
@@ -959,7 +959,7 @@ func TestLiveAvailabilityGroupCreate(t *testing.T) {
 	t.Run("availability and failover modes", func(t *testing.T) {
 		rereadReplica := func(name string) *AvailabilityReplica {
 			t.Helper()
-			rs, err := ag.ReplicasContext(ctx)
+			rs, err := ag.Replicas(ctx)
 			if err != nil {
 				t.Fatalf("re-read replicas: %v", err)
 			}
@@ -973,20 +973,20 @@ func TestLiveAvailabilityGroupCreate(t *testing.T) {
 		}
 
 		target := rereadReplica(peer.Name())
-		if !strings.EqualFold(target.AvailabilityMode, "SYNCHRONOUS_COMMIT") {
+		if !strings.EqualFold(string(target.AvailabilityMode), "SYNCHRONOUS_COMMIT") {
 			t.Fatalf("secondary starts at AvailabilityMode %q, want SYNCHRONOUS_COMMIT", target.AvailabilityMode)
 		}
 
-		if err := target.SetAvailabilityModeContext(ctx, "ASYNCHRONOUS_COMMIT"); err != nil {
+		if err := target.SetAvailabilityMode(ctx, "ASYNCHRONOUS_COMMIT"); err != nil {
 			t.Fatalf("SetAvailabilityMode ASYNCHRONOUS_COMMIT: %v", err)
 		}
-		if got := rereadReplica(peer.Name()).AvailabilityMode; !strings.EqualFold(got, "ASYNCHRONOUS_COMMIT") {
+		if got := rereadReplica(peer.Name()).AvailabilityMode; !strings.EqualFold(string(got), "ASYNCHRONOUS_COMMIT") {
 			t.Errorf("AvailabilityMode = %q, want ASYNCHRONOUS_COMMIT", got)
 		}
-		if err := target.SetAvailabilityModeContext(ctx, "SYNCHRONOUS_COMMIT"); err != nil {
+		if err := target.SetAvailabilityMode(ctx, "SYNCHRONOUS_COMMIT"); err != nil {
 			t.Fatalf("restore AvailabilityMode: %v", err)
 		}
-		if got := rereadReplica(peer.Name()).AvailabilityMode; !strings.EqualFold(got, "SYNCHRONOUS_COMMIT") {
+		if got := rereadReplica(peer.Name()).AvailabilityMode; !strings.EqualFold(string(got), "SYNCHRONOUS_COMMIT") {
 			t.Errorf("restored AvailabilityMode = %q, want SYNCHRONOUS_COMMIT", got)
 		}
 
@@ -1000,14 +1000,14 @@ func TestLiveAvailabilityGroupCreate(t *testing.T) {
 		// only supports MANUAL failover mode", which is a semantic refusal —
 		// a malformed statement would be Msg 102 instead, so this still
 		// proves the statement reaches the server well-formed.
-		if err := target.SetFailoverModeContext(ctx, "MANUAL"); err != nil {
+		if err := target.SetFailoverMode(ctx, "MANUAL"); err != nil {
 			t.Fatalf("SetFailoverMode MANUAL: %v", err)
 		}
-		if got := rereadReplica(peer.Name()).FailoverMode; !strings.EqualFold(got, "MANUAL") {
+		if got := rereadReplica(peer.Name()).FailoverMode; !strings.EqualFold(string(got), "MANUAL") {
 			t.Errorf("FailoverMode = %q, want MANUAL", got)
 		}
 		for _, mode := range []string{"AUTOMATIC", "EXTERNAL"} {
-			err := target.SetFailoverModeContext(ctx, mode)
+			err := target.SetFailoverMode(ctx, FailoverMode(mode))
 			if err == nil {
 				t.Errorf("SetFailoverMode %s on a NONE group succeeded; it should be refused", mode)
 				continue
@@ -1018,11 +1018,11 @@ func TestLiveAvailabilityGroupCreate(t *testing.T) {
 			// A refused write must not move the in-memory field: setIfApplied
 			// runs only after modifyReplica returns nil, and a caller that
 			// mirrored optimistically would show the mode as changed.
-			if !strings.EqualFold(target.FailoverMode, "MANUAL") {
+			if !strings.EqualFold(string(target.FailoverMode), "MANUAL") {
 				t.Errorf("after a refused SetFailoverMode %s, the replica reports FailoverMode %q, want MANUAL",
 					mode, target.FailoverMode)
 			}
-			if got := rereadReplica(peer.Name()).FailoverMode; !strings.EqualFold(got, "MANUAL") {
+			if got := rereadReplica(peer.Name()).FailoverMode; !strings.EqualFold(string(got), "MANUAL") {
 				t.Errorf("after a refused SetFailoverMode %s, the server reports %q, want MANUAL", mode, got)
 			}
 		}
@@ -1038,17 +1038,17 @@ func TestLiveAvailabilityGroupCreate(t *testing.T) {
 		// RemoveReplica's doc comment warns about. A malformed statement would
 		// come back Msg 102, so the numbered refusal also proves the clause
 		// reaches the server well-formed.
-		err := peerAG.RemoveReplicaContext(ctx, peer.Name())
+		err := peerAG.RemoveReplica(ctx, peer.Name())
 		if err == nil {
 			t.Errorf("%s removed itself from the group; a secondary is supposed to refuse with 41190", secondaryName)
 		} else if !strings.Contains(err.Error(), "41190") {
 			t.Errorf("removing a replica from the secondary: err = %v, want the 41190 refusal", err)
 		}
 
-		if err := ag.RemoveReplicaContext(ctx, peer.Name()); err != nil {
+		if err := ag.RemoveReplica(ctx, peer.Name()); err != nil {
 			t.Fatalf("RemoveReplica(%s) on the primary: %v", peer.Name(), err)
 		}
-		rs, err := ag.ReplicasContext(ctx)
+		rs, err := ag.Replicas(ctx)
 		if err != nil {
 			t.Fatalf("re-read replicas after RemoveReplica: %v", err)
 		}
@@ -1062,7 +1062,7 @@ func TestLiveAvailabilityGroupCreate(t *testing.T) {
 		}
 		// The removed instance keeps its own stale row — the claim the doc
 		// comment makes and the cleanup below depends on.
-		if orphan, err := peer.AvailabilityGroupByNameContext(ctx, name); err != nil || orphan == nil {
+		if orphan, err := peer.AvailabilityGroupByName(ctx, name); err != nil || orphan == nil {
 			t.Errorf("%s no longer lists the group after being removed (%v) — "+
 				"if the removal now cleans up the removed instance, RemoveReplica's doc comment is out of date",
 				secondaryName, err)
@@ -1071,19 +1071,19 @@ func TestLiveAvailabilityGroupCreate(t *testing.T) {
 
 	// The stale-row behaviour the teardown depends on: dropping on the primary
 	// leaves the secondary still listing the group.
-	if err := ag.DropContext(ctx); err != nil {
+	if err := ag.Drop(ctx); err != nil {
 		t.Fatalf("Drop on the primary: %v", err)
 	}
-	if _, err := srv.AvailabilityGroupByNameContext(ctx, name); err == nil {
+	if _, err := srv.AvailabilityGroupByName(ctx, name); err == nil {
 		t.Errorf("the group is still readable on the primary after Drop")
 	}
-	stale, err := peer.AvailabilityGroupByNameContext(ctx, name)
+	stale, err := peer.AvailabilityGroupByName(ctx, name)
 	if err != nil || stale == nil {
 		t.Errorf("the secondary no longer lists the group after the primary dropped it (%v) — "+
 			"if this is now cleaned up automatically, AvailabilityGroup.RemoveReplica's doc comment is out of date", err)
 		return
 	}
-	if err := stale.DropContext(ctx); err != nil {
+	if err := stale.Drop(ctx); err != nil {
 		t.Fatalf("Drop the stale row on %s: %v", secondaryName, err)
 	}
 }
@@ -1093,12 +1093,12 @@ func TestLiveAvailabilityGroupCreate(t *testing.T) {
 // that already has one.
 func liveOtherReplicaName(t *testing.T, ctx context.Context, srv *Server) string {
 	t.Helper()
-	groups, err := srv.AvailabilityGroupsContext(ctx)
+	groups, err := srv.AvailabilityGroups(ctx)
 	if err != nil {
-		t.Fatalf("AvailabilityGroupsContext: %v", err)
+		t.Fatalf("AvailabilityGroups: %v", err)
 	}
 	for _, g := range groups {
-		replicas, err := g.ReplicasContext(ctx)
+		replicas, err := g.Replicas(ctx)
 		if err != nil {
 			continue
 		}
@@ -1114,7 +1114,7 @@ func liveOtherReplicaName(t *testing.T, ctx context.Context, srv *Server) string
 
 func liveEndpoint(t *testing.T, ctx context.Context, srv *Server) *DatabaseMirroringEndpoint {
 	t.Helper()
-	ep, err := srv.DatabaseMirroringEndpointContext(ctx)
+	ep, err := srv.DatabaseMirroringEndpoint(ctx)
 	if err != nil {
 		t.Fatalf("read the database mirroring endpoint on %s: %v", srv.Name(), err)
 	}
@@ -1142,16 +1142,16 @@ func liveEndpoint(t *testing.T, ctx context.Context, srv *Server) *DatabaseMirro
 func liveDropGroupEverywhere(t *testing.T, ctx context.Context, name string, servers ...*Server) {
 	t.Helper()
 	for _, srv := range servers {
-		ag, err := srv.AvailabilityGroupByNameContext(ctx, name)
+		ag, err := srv.AvailabilityGroupByName(ctx, name)
 		if err != nil || ag == nil {
 			continue
 		}
-		if !strings.EqualFold(ag.ClusterType, "NONE") {
+		if !strings.EqualFold(string(ag.ClusterType), "NONE") {
 			t.Fatalf("refusing to drop availability group %q on %s: its cluster type is %q, not NONE — "+
 				"this test only ever drops the throwaway group it creates, and -liveag-create-name names a real one",
 				name, srv.Name(), ag.ClusterType)
 		}
-		if err := ag.DropContext(ctx); err != nil {
+		if err := ag.Drop(ctx); err != nil {
 			t.Logf("dropping %s on %s: %v", name, srv.Name(), err)
 		}
 	}

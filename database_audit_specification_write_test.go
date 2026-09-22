@@ -17,7 +17,7 @@ func auditDatabase(t *testing.T, s *auditScript) *Database {
 
 // use is the prefix Database.exec puts in front of every captured statement,
 // since a collected script may be pasted into a session scoped elsewhere.
-const use = "USE [app]]db];\n"
+const use = "USE [app]]db];\nGO\n"
 
 func TestDatabaseAuditSpecificationStateStatements(t *testing.T) {
 	for _, tc := range []struct {
@@ -29,11 +29,11 @@ func TestDatabaseAuditSpecificationStateStatements(t *testing.T) {
 	} {
 		ctx, col := WithScript(context.Background())
 		spec := &DatabaseAuditSpecification{db: &Database{Name: "app]db"}, Name: "odd]name"}
-		if err := spec.SetStateContext(ctx, tc.on); err != nil {
-			t.Fatalf("SetStateContext: %v", err)
+		if err := spec.SetState(ctx, tc.on); err != nil {
+			t.Fatalf("SetState: %v", err)
 		}
-		if len(col.Statements) != 1 || col.Statements[0] != tc.want {
-			t.Errorf("got %v, want [%s]", col.Statements, tc.want)
+		if len(col.Statements()) != 1 || col.Statements()[0] != tc.want {
+			t.Errorf("got %v, want [%s]", col.Statements(), tc.want)
 		}
 		if spec.IsEnabled {
 			t.Error("IsEnabled mirrored while scripting")
@@ -128,7 +128,7 @@ func TestChangingADatabaseSpecificationTurnsItOffAndBackOn(t *testing.T) {
 	}{
 		{"add while enabled", true,
 			func(s *DatabaseAuditSpecification, ctx context.Context) error {
-				return s.AddActionsContext(ctx, []string{"SCHEMA_OBJECT_ACCESS_GROUP"},
+				return s.AddActions(ctx, []string{"SCHEMA_OBJECT_ACCESS_GROUP"},
 					[]DatabaseAuditAction{{ActionName: "SELECT", ObjectName: "T", SchemaName: "dbo"}})
 			},
 			[]string{
@@ -138,12 +138,12 @@ func TestChangingADatabaseSpecificationTurnsItOffAndBackOn(t *testing.T) {
 			}},
 		{"drop while disabled", false,
 			func(s *DatabaseAuditSpecification, ctx context.Context) error {
-				return s.DropActionsContext(ctx, []string{"SCHEMA_OBJECT_ACCESS_GROUP"}, nil)
+				return s.DropActions(ctx, []string{"SCHEMA_OBJECT_ACCESS_GROUP"}, nil)
 			},
 			[]string{use + "ALTER DATABASE AUDIT SPECIFICATION [s]\n    DROP (SCHEMA_OBJECT_ACCESS_GROUP)"}},
 		{"reparent while enabled", true,
 			func(s *DatabaseAuditSpecification, ctx context.Context) error {
-				return s.SetAuditContext(ctx, "other")
+				return s.SetAudit(ctx, "other")
 			},
 			[]string{
 				use + "ALTER DATABASE AUDIT SPECIFICATION [s] WITH ( STATE = OFF )",
@@ -157,8 +157,8 @@ func TestChangingADatabaseSpecificationTurnsItOffAndBackOn(t *testing.T) {
 			if err := tc.act(db.DatabaseAuditSpecificationRef("s"), ctx); err != nil {
 				t.Fatalf("act: %v", err)
 			}
-			if !slices.Equal(col.Statements, tc.want) {
-				t.Errorf("statements =\n%#v\nwant\n%#v", col.Statements, tc.want)
+			if !slices.Equal(col.Statements(), tc.want) {
+				t.Errorf("statements =\n%#v\nwant\n%#v", col.Statements(), tc.want)
 			}
 		})
 	}
@@ -171,10 +171,10 @@ func TestWithDisabledSharesOneWindow(t *testing.T) {
 	ctx, col := WithScript(context.Background())
 	spec := db.DatabaseAuditSpecificationRef("s")
 	err := spec.WithDisabled(ctx, func(ctx context.Context) error {
-		if err := spec.AddActionsContext(ctx, []string{"SCHEMA_OBJECT_ACCESS_GROUP"}, nil); err != nil {
+		if err := spec.AddActions(ctx, []string{"SCHEMA_OBJECT_ACCESS_GROUP"}, nil); err != nil {
 			return err
 		}
-		return spec.SetAuditContext(ctx, "other")
+		return spec.SetAudit(ctx, "other")
 	})
 	if err != nil {
 		t.Fatalf("WithDisabled: %v", err)
@@ -185,8 +185,8 @@ func TestWithDisabledSharesOneWindow(t *testing.T) {
 		use + "ALTER DATABASE AUDIT SPECIFICATION [s]\nFOR SERVER AUDIT [other]",
 		use + "ALTER DATABASE AUDIT SPECIFICATION [s] WITH ( STATE = ON )",
 	}
-	if !slices.Equal(col.Statements, want) {
-		t.Errorf("statements =\n%#v\nwant\n%#v", col.Statements, want)
+	if !slices.Equal(col.Statements(), want) {
+		t.Errorf("statements =\n%#v\nwant\n%#v", col.Statements(), want)
 	}
 }
 
@@ -203,27 +203,27 @@ func TestADatabaseWindowDoesNotMatchAServerWindow(t *testing.T) {
 func TestDroppingAnEnabledDatabaseSpecificationDisablesItFirst(t *testing.T) {
 	db := auditDatabase(t, &auditScript{enabled: true})
 	ctx, col := WithScript(context.Background())
-	if err := db.DatabaseAuditSpecificationRef("s").DropContext(ctx); err != nil {
-		t.Fatalf("DropContext: %v", err)
+	if err := db.DatabaseAuditSpecificationRef("s").Drop(ctx); err != nil {
+		t.Fatalf("Drop: %v", err)
 	}
 	want := []string{
 		use + "ALTER DATABASE AUDIT SPECIFICATION [s] WITH ( STATE = OFF )",
 		use + "DROP DATABASE AUDIT SPECIFICATION [s]",
 	}
-	if !slices.Equal(col.Statements, want) {
-		t.Errorf("statements = %v, want %v", col.Statements, want)
+	if !slices.Equal(col.Statements(), want) {
+		t.Errorf("statements = %v, want %v", col.Statements(), want)
 	}
 }
 
 func TestChangingAMissingDatabaseSpecificationIsNotFound(t *testing.T) {
 	db := auditDatabase(t, &auditScript{missing: true})
 	ctx, col := WithScript(context.Background())
-	err := db.DatabaseAuditSpecificationRef("gone").AddActionsContext(ctx, []string{"SCHEMA_OBJECT_ACCESS_GROUP"}, nil)
+	err := db.DatabaseAuditSpecificationRef("gone").AddActions(ctx, []string{"SCHEMA_OBJECT_ACCESS_GROUP"}, nil)
 	if !errors.Is(err, ErrNotFound) {
 		t.Fatalf("got %v, want a not-found error", err)
 	}
-	if len(col.Statements) != 0 {
-		t.Errorf("a refused change still built %v", col.Statements)
+	if len(col.Statements()) != 0 {
+		t.Errorf("a refused change still built %v", col.Statements())
 	}
 }
 
@@ -232,11 +232,11 @@ func TestChangingAMissingDatabaseSpecificationIsNotFound(t *testing.T) {
 func TestChangingNoDatabaseActionsWritesNothing(t *testing.T) {
 	db := auditDatabase(t, &auditScript{enabled: true})
 	ctx, col := WithScript(context.Background())
-	if err := db.DatabaseAuditSpecificationRef("s").AddActionsContext(ctx, nil, nil); err != nil {
-		t.Fatalf("AddActionsContext: %v", err)
+	if err := db.DatabaseAuditSpecificationRef("s").AddActions(ctx, nil, nil); err != nil {
+		t.Fatalf("AddActions: %v", err)
 	}
-	if len(col.Statements) != 0 {
-		t.Errorf("an empty change wrote %v", col.Statements)
+	if len(col.Statements()) != 0 {
+		t.Errorf("an empty change wrote %v", col.Statements())
 	}
 }
 

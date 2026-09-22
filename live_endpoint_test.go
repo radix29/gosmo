@@ -29,9 +29,9 @@ func TestLiveEndpointsReadAndGuard(t *testing.T) {
 		t.Fatalf("NewServer: %v", err)
 	}
 
-	all, err := s.EndpointsContext(ctx)
+	all, err := s.Endpoints(ctx)
 	if err != nil {
-		t.Fatalf("EndpointsContext: %v", err)
+		t.Fatalf("Endpoints: %v", err)
 	}
 	if len(all) < 5 {
 		t.Fatalf("got %d endpoints, want at least the five built-in ones", len(all))
@@ -57,7 +57,7 @@ func TestLiveEndpointsReadAndGuard(t *testing.T) {
 		if e.EndpointID >= firstUserEndpointID {
 			t.Errorf("endpoint %q has id %d but is marked system", e.Name, e.EndpointID)
 		}
-		if err := e.DropContext(ctx); !errors.Is(err, ErrSystemEndpoint) {
+		if err := e.Drop(ctx); !errors.Is(err, ErrSystemEndpoint) {
 			t.Errorf("dropping system endpoint %q returned %v, want ErrSystemEndpoint", e.Name, err)
 		}
 	}
@@ -68,14 +68,14 @@ func TestLiveEndpointsReadAndGuard(t *testing.T) {
 	}
 
 	// The by-name read must agree with the list; they are separate queries.
-	byName, err := s.EndpointByNameContext(ctx, all[0].Name)
+	byName, err := s.EndpointByName(ctx, all[0].Name)
 	if err != nil {
-		t.Fatalf("EndpointByNameContext(%q): %v", all[0].Name, err)
+		t.Fatalf("EndpointByName(%q): %v", all[0].Name, err)
 	}
 	if byName.EndpointID != all[0].EndpointID || byName.State != all[0].State || byName.IsSystem != all[0].IsSystem {
 		t.Errorf("by-name read %+v disagrees with the list row %+v", byName, all[0])
 	}
-	if _, err := s.EndpointByNameContext(ctx, "no such endpoint here"); !errors.Is(err, ErrNotFound) {
+	if _, err := s.EndpointByName(ctx, "no such endpoint here"); !errors.Is(err, ErrNotFound) {
 		t.Errorf("a missing endpoint returned %v, want ErrNotFound", err)
 	}
 
@@ -87,9 +87,9 @@ func TestLiveEndpointsReadAndGuard(t *testing.T) {
 	// The script has to name the real authentication and certificate: an
 	// endpoint scripted as WINDOWS NEGOTIATE when it authenticates by
 	// certificate is one that recreates a listener nothing can connect to.
-	script, err := NewServerScripter(s, ScriptOptions{Verb: ScriptDropAndCreate}).ScriptEndpointContext(ctx, e.Name)
+	script, err := NewServerScripter(s, ScriptOptions{Verb: ScriptDropAndCreate}).ScriptEndpoint(ctx, e.Name)
 	if err != nil {
-		t.Fatalf("ScriptEndpointContext(%q): %v", e.Name, err)
+		t.Fatalf("ScriptEndpoint(%q): %v", e.Name, err)
 	}
 	for _, want := range []string{"DROP ENDPOINT", "CREATE ENDPOINT", "LISTENER_PORT", "FOR " + e.Type} {
 		if !strings.Contains(script, want) {
@@ -107,14 +107,14 @@ func TestLiveEndpointsReadAndGuard(t *testing.T) {
 	// that — leaving AGEP STOPPED on the way out.
 	was := e.State
 	defer func() {
-		if err := e.SetStateContext(ctx, EndpointState(was)); err != nil {
+		if err := e.SetState(ctx, EndpointState(was)); err != nil {
 			t.Errorf("restoring endpoint %q to %s: %v", e.Name, was, err)
 		}
 	}()
-	if err := e.SetStateContext(ctx, EndpointStopped); err != nil {
-		t.Fatalf("SetStateContext(STOPPED): %v", err)
+	if err := e.SetState(ctx, EndpointStopped); err != nil {
+		t.Fatalf("SetState(STOPPED): %v", err)
 	}
-	after, err := s.EndpointByNameContext(ctx, e.Name)
+	after, err := s.EndpointByName(ctx, e.Name)
 	if err != nil {
 		t.Fatalf("re-read after stop: %v", err)
 	}

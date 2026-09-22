@@ -69,7 +69,7 @@ type DeviceCodeMessage struct {
 // EntraCache holds Microsoft Entra credentials and the access tokens they
 // have issued, so that every connection authenticating as the same identity
 // signs in once rather than once per physical connection. Share one across
-// every ConnectContext call that should share a sign-in — typically one per
+// every Connect call that should share a sign-in — typically one per
 // process. It holds tokens and, for the methods that take one, secrets, in
 // memory only; nothing is written to disk, so a new process signs in again.
 //
@@ -121,7 +121,7 @@ func (c *EntraCache) Clear() {
 // the connection will need, so that a human sign-in (AuthEntraInteractive,
 // AuthEntraDeviceCode) runs under ctx — which may be long and cancellable —
 // rather than under a connect timeout, inside the TDS login handshake. Pass
-// the same options, with EntraCache set to c, to ConnectContext afterwards.
+// the same options, with EntraCache set to c, to Connect afterwards.
 // opts.EntraCache itself is ignored here.
 //
 // The token's scope, sign-in authority and — when TenantID is empty — tenant

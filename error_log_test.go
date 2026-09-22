@@ -43,11 +43,11 @@ func TestErrorLogTypeValid(t *testing.T) {
 // of xp_readerrorlog's raw complaint.
 func TestReadLogRejectsUnknownType(t *testing.T) {
 	s := &Server{}
-	if _, err := s.ReadLogContext(context.Background(), ErrorLogType(7), 0); err == nil {
-		t.Fatal("ReadLogContext with log type 7 returned no error")
+	if _, err := s.ReadLog(context.Background(), ErrorLogType(7), 0); err == nil {
+		t.Fatal("ReadLog with log type 7 returned no error")
 	}
-	if _, err := s.EnumErrorLogsContext(context.Background(), ErrorLogType(7)); err == nil {
-		t.Fatal("EnumErrorLogsContext with log type 7 returned no error")
+	if _, err := s.EnumErrorLogs(context.Background(), ErrorLogType(7)); err == nil {
+		t.Fatal("EnumErrorLogs with log type 7 returned no error")
 	}
 }
 
@@ -98,14 +98,14 @@ func TestCycleLogStatements(t *testing.T) {
 	for _, c := range cases {
 		ctx, script := WithScript(context.Background())
 		s := &Server{}
-		if err := s.CycleLogContext(ctx, c.lt); err != nil {
-			t.Fatalf("CycleLogContext(%s): %v", c.lt, err)
+		if err := s.CycleLog(ctx, c.lt); err != nil {
+			t.Fatalf("CycleLog(%s): %v", c.lt, err)
 		}
-		if len(script.Statements) != 1 {
-			t.Fatalf("CycleLogContext(%s) recorded %d statements, want 1: %q", c.lt, len(script.Statements), script.Statements)
+		if len(script.Statements()) != 1 {
+			t.Fatalf("CycleLog(%s) recorded %d statements, want 1: %q", c.lt, len(script.Statements()), script.Statements())
 		}
-		if got := script.Statements[0]; got != c.want {
-			t.Errorf("CycleLogContext(%s) ran %q, want %q", c.lt, got, c.want)
+		if got := script.Statements()[0]; got != c.want {
+			t.Errorf("CycleLog(%s) ran %q, want %q", c.lt, got, c.want)
 		}
 	}
 }
@@ -116,25 +116,25 @@ func TestCycleLogStatements(t *testing.T) {
 func TestCycleErrorLogIsTheSQLServerFamily(t *testing.T) {
 	ctx, script := WithScript(context.Background())
 	s := &Server{}
-	if err := s.CycleErrorLogContext(ctx); err != nil {
-		t.Fatalf("CycleErrorLogContext: %v", err)
+	if err := s.CycleErrorLog(ctx); err != nil {
+		t.Fatalf("CycleErrorLog: %v", err)
 	}
 	want := []string{"EXEC sp_cycle_errorlog"}
-	if len(script.Statements) != 1 || script.Statements[0] != want[0] {
-		t.Errorf("CycleErrorLogContext ran %q, want %q", script.Statements, want)
+	if len(script.Statements()) != 1 || script.Statements()[0] != want[0] {
+		t.Errorf("CycleErrorLog ran %q, want %q", script.Statements(), want)
 	}
 }
 
 // TestCycleLogRejectsUnknownType pins the argument check, matching
-// ReadLogContext's: an out-of-range type must fail before anything is run.
+// ReadLog's: an out-of-range type must fail before anything is run.
 func TestCycleLogRejectsUnknownType(t *testing.T) {
 	ctx, script := WithScript(context.Background())
 	s := &Server{}
-	if err := s.CycleLogContext(ctx, ErrorLogType(7)); err == nil {
-		t.Fatal("CycleLogContext with log type 7 returned no error")
+	if err := s.CycleLog(ctx, ErrorLogType(7)); err == nil {
+		t.Fatal("CycleLog with log type 7 returned no error")
 	}
-	if len(script.Statements) != 0 {
-		t.Errorf("a rejected log type still recorded %q", script.Statements)
+	if len(script.Statements()) != 0 {
+		t.Errorf("a rejected log type still recorded %q", script.Statements())
 	}
 }
 

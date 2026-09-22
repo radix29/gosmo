@@ -42,11 +42,6 @@ type AvailabilityListenerIP struct {
 	State      string
 }
 
-// Listeners returns the group's listeners, each with its IP addresses.
-func (ag *AvailabilityGroup) Listeners() ([]*AvailabilityGroupListener, error) {
-	return ag.ListenersContext(context.Background())
-}
-
 // listenerSelect builds the sys.availability_group_listeners read for the
 // connected server's version. is_distributed_network_name arrived in SQL
 // Server 2019, and ISNULL does not save a name the parser cannot resolve: on
@@ -65,8 +60,8 @@ func (s *Server) listenerSelect() string {
 	ORDER BY l.dns_name`
 }
 
-// ListenersContext is the context-aware variant of Listeners.
-func (ag *AvailabilityGroup) ListenersContext(ctx context.Context) ([]*AvailabilityGroupListener, error) {
+// Listeners returns the group's listeners, each with its IP addresses.
+func (ag *AvailabilityGroup) Listeners(ctx context.Context) ([]*AvailabilityGroupListener, error) {
 	s := ag.server
 
 	rows, err := s.query(ctx, s.listenerSelect(), ag.ID)
@@ -224,12 +219,7 @@ func (spec AvailabilityListenerSpec) addListenerClause() (string, error) {
 // (on Linux, a Pacemaker IPaddr2 resource), which has to be configured
 // separately for clients to actually reach it. Unlike failover, the statement
 // itself is accepted.
-func (ag *AvailabilityGroup) AddListener(spec AvailabilityListenerSpec) error {
-	return ag.AddListenerContext(context.Background(), spec)
-}
-
-// AddListenerContext is the context-aware variant of AddListener.
-func (ag *AvailabilityGroup) AddListenerContext(ctx context.Context, spec AvailabilityListenerSpec) error {
+func (ag *AvailabilityGroup) AddListener(ctx context.Context, spec AvailabilityListenerSpec) error {
 	clause, err := spec.addListenerClause()
 	if err != nil {
 		return fmt.Errorf("gosmo: add listener to availability group %q: %w", ag.Name, err)
@@ -258,12 +248,7 @@ func modifyListenerClause(dnsName, option string) (string, error) {
 // Clients already connected through the old port stay connected; only new
 // connections are affected, and any that name the port explicitly will need
 // updating.
-func (ag *AvailabilityGroup) SetListenerPort(dnsName string, port int) error {
-	return ag.SetListenerPortContext(context.Background(), dnsName, port)
-}
-
-// SetListenerPortContext is the context-aware variant of SetListenerPort.
-func (ag *AvailabilityGroup) SetListenerPortContext(ctx context.Context, dnsName string, port int) error {
+func (ag *AvailabilityGroup) SetListenerPort(ctx context.Context, dnsName string, port int) error {
 	if port < 1 || port > 65535 {
 		return fmt.Errorf("gosmo: modify listener %q on availability group %q: port %d out of range 1-65535", dnsName, ag.Name, port)
 	}
@@ -290,12 +275,7 @@ func (ag *AvailabilityGroup) SetListenerPortContext(ctx context.Context, dnsName
 // it appears in sys.availability_group_listener_ip_addresses as OFFLINE,
 // because the external cluster manager owns the address, not SQL Server.
 // Verified on SQL Server 2025 under Pacemaker.
-func (ag *AvailabilityGroup) AddListenerIP(dnsName string, ip AvailabilityListenerIPSpec) error {
-	return ag.AddListenerIPContext(context.Background(), dnsName, ip)
-}
-
-// AddListenerIPContext is the context-aware variant of AddListenerIP.
-func (ag *AvailabilityGroup) AddListenerIPContext(ctx context.Context, dnsName string, ip AvailabilityListenerIPSpec) error {
+func (ag *AvailabilityGroup) AddListenerIP(ctx context.Context, dnsName string, ip AvailabilityListenerIPSpec) error {
 	addr, err := listenerIPLiteral(ip)
 	if err != nil {
 		return fmt.Errorf("gosmo: add an address to listener %q on availability group %q: %w", dnsName, ag.Name, err)
@@ -324,12 +304,7 @@ func listenerIPLiteral(ip AvailabilityListenerIPSpec) (string, error) {
 
 // RemoveListener drops the group's listener by DNS name. Run against the
 // primary. Existing connections made through the listener are not dropped.
-func (ag *AvailabilityGroup) RemoveListener(dnsName string) error {
-	return ag.RemoveListenerContext(context.Background(), dnsName)
-}
-
-// RemoveListenerContext is the context-aware variant of RemoveListener.
-func (ag *AvailabilityGroup) RemoveListenerContext(ctx context.Context, dnsName string) error {
+func (ag *AvailabilityGroup) RemoveListener(ctx context.Context, dnsName string) error {
 	if strings.TrimSpace(dnsName) == "" {
 		return fmt.Errorf("gosmo: remove listener from availability group %q: empty DNS name", ag.Name)
 	}

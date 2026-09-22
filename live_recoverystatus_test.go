@@ -1,7 +1,7 @@
 //go:build livedb
 
 // Live verification of the log backup chain reads — Server
-// .DatabaseRecoveryStatusesContext and Database.RecoveryStatusContext.
+// .DatabaseRecoveryStatuses and Database.RecoveryStatus.
 //
 // The state they report is what SQL Server itself tests before letting a
 // database join an availability group, and the three transitions below are the
@@ -54,13 +54,13 @@ func TestLiveRecoveryStatusTracksTheLogBackupChain(t *testing.T) {
 
 	statusOf := func(t *testing.T, what string) *DatabaseRecoveryStatus {
 		t.Helper()
-		one, err := d.RecoveryStatusContext(ctx)
+		one, err := d.RecoveryStatus(ctx)
 		if err != nil {
-			t.Fatalf("%s: RecoveryStatusContext: %v", what, err)
+			t.Fatalf("%s: RecoveryStatus: %v", what, err)
 		}
-		all, err := srv.DatabaseRecoveryStatusesContext(ctx)
+		all, err := srv.DatabaseRecoveryStatuses(ctx)
 		if err != nil {
-			t.Fatalf("%s: DatabaseRecoveryStatusesContext: %v", what, err)
+			t.Fatalf("%s: DatabaseRecoveryStatuses: %v", what, err)
 		}
 		// The two forms must agree, or a caller that reads the whole server
 		// (the Add Database dialog) and one that reads a single database
@@ -90,7 +90,7 @@ func TestLiveRecoveryStatusTracksTheLogBackupChain(t *testing.T) {
 	}
 
 	device := liveBackupPath(t, srv, ctx, name+".bak")
-	if err := srv.BackupContext(ctx, BackupOptions{Database: name, Devices: []string{device}, Init: true}); err != nil {
+	if err := srv.Backup(ctx, BackupOptions{Database: name, Devices: []string{device}, Init: true}); err != nil {
 		t.Fatalf("backup: %v", err)
 	}
 	defer db.ExecContext(context.Background(), "EXEC master.dbo.xp_delete_files @FilePath = N'"+device+"'")

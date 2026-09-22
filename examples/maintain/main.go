@@ -9,6 +9,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"math/rand/v2"
 
@@ -19,6 +20,7 @@ import (
 const dbName = "GoSMOMaintainDemo"
 
 func main() {
+	ctx := context.Background()
 	// First, so it runs after the cleanup deferred below it.
 	defer demo.Exit()
 
@@ -33,15 +35,15 @@ func main() {
 	// Files() reports every file including the log; FileGroups() only sees
 	// files that belong to a filegroup, so the log is absent from it.
 	demo.Section("Files as created")
-	for _, f := range demo.Value(db.Files()) {
+	for _, f := range demo.Value(db.Files(ctx)) {
 		fmt.Printf("  %-20s %-5s %-10s %6d MB  growth=%s\n",
 			f.Name, f.Type, f.FileGroup, f.SizeKB/1024, growth(f))
 	}
 
 	demo.Section("Adding a filegroup and a file")
-	demo.Must(db.AddFileGroup("ARCHIVE"))
+	demo.Must(db.AddFileGroup(ctx, "ARCHIVE"))
 	dataDir := srv.Info().DefaultDataPath
-	demo.Must(db.AddFile(gosmo.DatabaseFileSpec{
+	demo.Must(db.AddFile(ctx, gosmo.DatabaseFileSpec{
 		Name:      dbName + "_archive",
 		FileGroup: "ARCHIVE",
 		Path:      demo.ServerPath(dataDir, dbName+"_archive.ndf"),
@@ -50,14 +52,14 @@ func main() {
 		MaxSizeKB: -1, // UNLIMITED
 	}))
 	// Zero-valued FileModify fields are left alone; this only resizes.
-	demo.Must(db.AlterFile(dbName+"_archive", gosmo.FileModify{SizeKB: 16 * 1024}))
-	for _, fg := range demo.Value(db.FileGroups()) {
+	demo.Must(db.AlterFile(ctx, dbName+"_archive", gosmo.FileModify{SizeKB: 16 * 1024}))
+	for _, fg := range demo.Value(db.FileGroups(ctx)) {
 		fmt.Printf("  filegroup %-10s default=%-5t readonly=%-5t files=%d\n",
 			fg.Name, fg.IsDefault, fg.IsReadOnly, len(fg.Files))
 	}
 
 	// -- A table with enough rows to fragment ------------------------------
-	demo.Must(db.CreateTable(gosmo.CreateTableRequest{
+	demo.Must(db.CreateTable(ctx, gosmo.CreateTableRequest{
 		Schema: "dbo",
 		Name:   "Ledger",
 		Columns: []gosmo.ColumnDefinition{
@@ -67,7 +69,7 @@ func main() {
 			{Name: "Memo", DataType: gosmo.DataTypeNVarChar, MaxLength: 400, IsNullable: true},
 		},
 	}))
-	tbl := demo.Value(db.TableByName("dbo", "Ledger"))
+	tbl := demo.Value(db.TableByName(ctx, "dbo", "Ledger"))
 
 	// Random account names in random order is what actually fragments the
 	// nonclustered index below — sequential data would fill pages neatly.
@@ -84,7 +86,7 @@ func main() {
 			}
 		}
 	}
-	loaded := demo.Value(db.BulkInsert(gosmo.BulkCopy{
+	loaded := demo.Value(db.BulkInsert(ctx, gosmo.BulkCopy{
 		Schema:  "dbo",
 		Table:   "Ledger",
 		Columns: []string{"Account", "Amount", "Memo"},
@@ -92,7 +94,7 @@ func main() {
 	}, rows))
 	fmt.Printf("\nLoaded %d rows into dbo.Ledger\n", loaded)
 
-	demo.Must(tbl.CreateIndex(gosmo.CreateIndexRequest{
+	demo.Must(tbl.CreateIndex(ctx, gosmo.CreateIndexRequest{
 		Name:            "IX_Ledger_Account",
 		Type:            gosmo.IndexTypeNonClustered,
 		KeyColumns:      []gosmo.IndexColumnDef{{Name: "Account"}},
@@ -106,24 +108,24 @@ func main() {
 	// or "DETAILED". AvgPageSpaceUsedPct is only populated by the latter two
 	// — Table.FragmentationStats runs LIMITED and leaves it zero.
 	demo.Section("Fragmentation (DETAILED)")
-	for _, idx := range demo.Value(tbl.Indexes()) {
-		f := demo.Value(idx.Fragmentation(tbl, "DETAILED"))
+	for _, idx := range demo.Value(tbl.Indexes(ctx)) {
+		f := demo.Value(idx.Fragmentation(ctx, tbl, "DETAILED"))
 		fmt.Printf("  %-24s frag=%5.2f%%  pages=%-6d fragments=%-5d page_fullness=%5.2f%%\n",
 			f.IndexName, f.AvgFragmentationPct, f.PageCount, f.FragmentCount, f.AvgPageSpaceUsedPct)
 	}
 
 	demo.Section("Reorganize, then rebuild")
-	idx := demo.Value(tbl.Indexes())[0]
-	demo.Must(idx.Reorganize(tbl))
+	idx := demo.Value(tbl.Indexes(ctx))[0]
+	demo.Must(idx.Reorganize(ctx, tbl))
 	fmt.Printf("  reorganized %s\n", idx.Name)
 	// RebuildWithOptions is the same rebuild plus PAD_INDEX and
 	// DATA_COMPRESSION; the compression keyword is allowlisted, not spliced.
-	demo.Must(idx.RebuildWithOptions(tbl, 90, true, "PAGE"))
+	demo.Must(idx.RebuildWithOptions(ctx, tbl, 90, true, "PAGE"))
 	fmt.Printf("  rebuilt %s at fill factor 90 with PAGE compression\n", idx.Name)
-	demo.Must(tbl.RebuildAllIndexes(90))
+	demo.Must(tbl.RebuildAllIndexes(ctx, 90))
 	fmt.Println("  rebuilt every index on the table")
 
-	after := demo.Value(tbl.FragmentationStats("LIMITED"))
+	after := demo.Value(tbl.FragmentationStats(ctx, "LIMITED"))
 	for _, f := range after {
 		fmt.Printf("  after: %-24s frag=%5.2f%% pages=%d\n",
 			f.IndexName, f.AvgFragmentationPct, f.PageCount)
@@ -131,38 +133,38 @@ func main() {
 
 	// -- Index options -----------------------------------------------------
 	demo.Section("Index options")
-	demo.Must(idx.SetLockOptions(tbl, true, false))
-	demo.Must(idx.Disable(tbl))
+	demo.Must(idx.SetLockOptions(ctx, tbl, true, false))
+	demo.Must(idx.Disable(ctx, tbl))
 	fmt.Printf("  %s disabled — it now costs nothing to maintain and cannot be used\n", idx.Name)
-	demo.Must(idx.Enable(tbl)) // ENABLE is a rebuild; there is no cheaper way back
-	storage := demo.Value(idx.StorageInfo(tbl))
+	demo.Must(idx.Enable(ctx, tbl)) // ENABLE is a rebuild; there is no cheaper way back
+	storage := demo.Value(idx.StorageInfo(ctx, tbl))
 	fmt.Printf("  %s: %d rows, %d KB reserved (%d used) on %s, avg record %.1f bytes\n",
 		idx.Name, storage.RowCount, storage.ReservedKB, storage.UsedKB,
 		storage.FileGroup, storage.AvgRecordSize)
 
 	// -- Statistics --------------------------------------------------------
 	demo.Section("Statistics")
-	demo.Must(tbl.CreateStatistic("ST_Ledger_Amount", []string{"Amount"}, 100))
-	demo.Must(tbl.UpdateAllStatistics(50))
-	for _, st := range demo.Value(tbl.Statistics()) {
+	demo.Must(tbl.CreateStatistic(ctx, "ST_Ledger_Amount", []string{"Amount"}, 100))
+	demo.Must(tbl.UpdateAllStatistics(ctx, 50))
+	for _, st := range demo.Value(tbl.Statistics(ctx)) {
 		origin := "auto"
 		if st.IsUserCreated {
 			origin = "user"
 		}
-		cols := demo.Value(st.Columns())
+		cols := demo.Value(st.Columns(ctx))
 		fmt.Printf("  %-28s %-5s cols=%v rows=%d sampled=%d steps=%d modified=%d\n",
 			st.Name, origin, cols, st.TotalRows, st.RowsSampled, st.Steps, st.ModificationCounter)
 	}
 
 	// DBCC SHOW_STATISTICS, split into its three result sets.
-	st := demo.Value(tbl.Statistics())[0]
-	hdr := demo.Value(st.Header())
+	st := demo.Value(tbl.Statistics(ctx))[0]
+	hdr := demo.Value(st.Header(ctx))
 	fmt.Printf("\n  %s header: updated=%q rows=%d density=%.6f avg_key_len=%.1f\n",
 		st.Name, hdr.Updated, hdr.Rows, hdr.Density, hdr.AverageKeyLength)
-	for _, d := range demo.Value(st.DensityVector()) {
+	for _, d := range demo.Value(st.DensityVector(ctx)) {
 		fmt.Printf("    density %.8f  avg_len=%5.1f  {%s}\n", d.AllDensity, d.AverageLength, d.Columns)
 	}
-	hist := demo.Value(st.Histogram())
+	hist := demo.Value(st.Histogram(ctx))
 	fmt.Printf("    histogram: %d steps; first three:\n", len(hist))
 	for _, step := range hist[:min(3, len(hist))] {
 		fmt.Printf("      high_key=%-20s eq_rows=%-8.0f range_rows=%-8.0f avg_range=%.2f\n",
@@ -171,33 +173,33 @@ func main() {
 
 	// -- Space -------------------------------------------------------------
 	demo.Section("Space")
-	space := demo.Value(db.SpaceUsed())
+	space := demo.Value(db.SpaceUsed(ctx))
 	fmt.Printf("  database: total=%.1f MB data=%.1f MB log=%.1f MB unallocated=%.1f MB avail_log=%.1f MB\n",
 		space.TotalMB, space.DataMB, space.LogMB, space.UnallocatedMB, space.AvailLogMB)
-	ts := demo.Value(tbl.SpaceUsed())
+	ts := demo.Value(tbl.SpaceUsed(ctx))
 	fmt.Printf("  dbo.Ledger: reserved=%d KB data=%d KB index=%d KB lob=%d KB unused=%d KB on %s\n",
 		ts.ReservedKB, ts.DataKB, ts.IndexKB, ts.LOBKB, ts.UnusedKB, ts.FileGroup)
 
 	// One round trip for every table, for a tree or grid that needs them all.
-	counts := demo.Value(db.TableRowCounts())
-	sizes := demo.Value(db.TableSpaceUsedAll())
-	for _, t := range demo.Value(db.Tables()) {
+	counts := demo.Value(db.TableRowCounts(ctx))
+	sizes := demo.Value(db.TableSpaceUsedAll(ctx))
+	for _, t := range demo.Value(db.Tables(ctx)) {
 		fmt.Printf("  %-20s rows=%-8d reserved=%d KB\n",
 			t.FullName(), counts[t.ObjectID], sizes[t.ObjectID].ReservedKB)
 	}
 
 	// -- Database options --------------------------------------------------
 	demo.Section("Database options")
-	demo.Must(db.SetDatabaseOption(gosmo.DBOptAutoCreateStatistics, "ON"))
-	demo.Must(db.SetDatabaseOption(gosmo.DBOptAutoUpdateStatisticsAsync, "ON"))
-	demo.Must(db.SetDatabaseOption(gosmo.DBOptPageVerify, "CHECKSUM"))
-	opts := demo.Value(db.Options())
+	demo.Must(db.SetDatabaseOption(ctx, gosmo.DBOptAutoCreateStatistics, "ON"))
+	demo.Must(db.SetDatabaseOption(ctx, gosmo.DBOptAutoUpdateStatisticsAsync, "ON"))
+	demo.Must(db.SetDatabaseOption(ctx, gosmo.DBOptPageVerify, "CHECKSUM"))
+	opts := demo.Value(db.Options(ctx))
 	fmt.Printf("  owner=%s page_verify=%s user_access=%s auto_create_stats=%t rcsi=%t\n",
 		opts.Owner, opts.PageVerify, opts.UserAccess, opts.AutoCreateStats, opts.ReadCommittedSnapshot)
 
 	demo.Section("Database scoped configurations (non-default only)")
-	demo.Must(db.SetDatabaseScopedConfig("MAXDOP", "2", false))
-	for _, c := range demo.Value(db.DatabaseScopedConfigs()) {
+	demo.Must(db.SetDatabaseScopedConfig(ctx, "MAXDOP", "2", false))
+	for _, c := range demo.Value(db.DatabaseScopedConfigs(ctx)) {
 		if c.IsValueDefault {
 			continue
 		}
@@ -207,23 +209,23 @@ func main() {
 
 	// -- Change tracking ---------------------------------------------------
 	demo.Section("Change tracking")
-	demo.Must(db.SetChangeTracking(gosmo.ChangeTrackingInfo{
+	demo.Must(db.SetChangeTracking(ctx, gosmo.ChangeTrackingInfo{
 		Enabled:         true,
 		AutoCleanup:     true,
 		RetentionPeriod: 2,
 		RetentionUnit:   "DAYS",
 	}))
-	demo.Must(db.SetTableChangeTracking("dbo", "Ledger", true, true))
-	ct := demo.Value(db.ChangeTracking())
+	demo.Must(db.SetTableChangeTracking(ctx, "dbo", "Ledger", true, true))
+	ct := demo.Value(db.ChangeTracking(ctx))
 	fmt.Printf("  database: enabled=%t auto_cleanup=%t retention=%d %s\n",
 		ct.Enabled, ct.AutoCleanup, ct.RetentionPeriod, ct.RetentionUnit)
-	for _, t := range demo.Value(db.TableChangeTracking()) {
+	for _, t := range demo.Value(db.TableChangeTracking(ctx)) {
 		fmt.Printf("  table %s.%s: track_columns=%t\n", t.Schema, t.Name, t.TrackColumnsUpdated)
 	}
 
 	// -- Query Store -------------------------------------------------------
 	demo.Section("Query Store")
-	demo.Must(db.SetQueryStoreOptions(gosmo.QueryStoreOptions{
+	demo.Must(db.SetQueryStoreOptions(ctx, gosmo.QueryStoreOptions{
 		DesiredState:         "READ_WRITE",
 		MaxStorageMB:         256,
 		CaptureMode:          "AUTO",
@@ -234,17 +236,17 @@ func main() {
 		MaxPlansPerQuery:     200,
 		WaitStatsCaptureMode: "ON",
 	}))
-	qs := demo.Value(db.QueryStore())
+	qs := demo.Value(db.QueryStore(ctx))
 	fmt.Printf("  desired=%s actual=%s storage=%d/%d MB capture=%s wait_stats=%s\n",
 		qs.DesiredState, qs.ActualState, qs.CurrentStorageMB, qs.MaxStorageMB,
 		qs.CaptureMode, qs.WaitStatsCaptureMode)
-	demo.Must(db.FlushQueryStore())
-	demo.Must(db.ClearQueryStore())
+	demo.Must(db.FlushQueryStore(ctx))
+	demo.Must(db.ClearQueryStore(ctx))
 	fmt.Println("  flushed and cleared")
 
 	// -- Server-wide storage ------------------------------------------------
 	demo.Section("Volumes backing this instance's files")
-	for _, v := range demo.Value(srv.DiskVolumes()) {
+	for _, v := range demo.Value(srv.DiskVolumes(ctx)) {
 		name := v.MountPoint
 		if name == "" {
 			name = v.SamplePath // containers often report no mount point

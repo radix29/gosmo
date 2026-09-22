@@ -8,7 +8,7 @@
 // The unit tests pin the statement text; only a live run settles what SQL
 // Server accepts. It rejected the first shape tried here — a mapped login
 // cannot have DEFAULT_DATABASE in CREATE *or* ALTER, which is why
-// CreateLoginContext refuses the option rather than sending it.
+// CreateLogin refuses the option rather than sending it.
 //
 //	go test -tags livedb . -run TestLiveCertificateLogin -v \
 //	  -livedb 'sqlserver://sa:PASS@host?TrustServerCertificate=true'
@@ -38,8 +38,8 @@ func TestLiveCertificateLoginCreateReadScript(t *testing.T) {
 
 	cleanup := func() {
 		dropLoginIfPresent(t, s, loginName)
-		if c, err := master.CertificateByNameContext(ctx, certName); err == nil && c != nil {
-			if err := c.DropContext(ctx); err != nil {
+		if c, err := master.CertificateByName(ctx, certName); err == nil && c != nil {
+			if err := c.Drop(ctx); err != nil {
 				t.Logf("cleanup of certificate %q: %v", certName, err)
 			}
 		}
@@ -47,27 +47,27 @@ func TestLiveCertificateLoginCreateReadScript(t *testing.T) {
 	cleanup()
 	defer cleanup()
 
-	if err := master.CreateCertificateContext(ctx, CertificateSpec{
+	if err := master.CreateCertificate(ctx, CertificateSpec{
 		Name: certName, Subject: "gosmo live test certificate",
 	}); err != nil {
 		t.Fatalf("create certificate: %v", err)
 	}
 
-	if err := s.CreateLoginContext(ctx, loginName, "", &CreateLoginOptions{
+	if err := s.CreateLogin(ctx, loginName, "", &CreateLoginOptions{
 		Source: LoginSourceCertificate, CertificateName: certName,
 	}); err != nil {
 		t.Fatalf("create certificate login: %v", err)
 	}
 
-	l, err := s.LoginByNameContext(ctx, loginName)
+	l, err := s.LoginByName(ctx, loginName)
 	if err != nil {
 		t.Fatalf("read the login back: %v", err)
 	}
 	if l.LoginType != "CERTIFICATE_MAPPED_LOGIN" {
 		t.Fatalf("LoginType = %q, want CERTIFICATE_MAPPED_LOGIN", l.LoginType)
 	}
-	if err := l.ResolveMappingContext(ctx); err != nil {
-		t.Fatalf("ResolveMappingContext: %v", err)
+	if err := l.ResolveMapping(ctx); err != nil {
+		t.Fatalf("ResolveMapping: %v", err)
 	}
 	if l.MappedObject != certName {
 		t.Errorf("MappedObject = %q, want %q", l.MappedObject, certName)
@@ -75,7 +75,7 @@ func TestLiveCertificateLoginCreateReadScript(t *testing.T) {
 
 	// SQL Server reports a default database for a mapped login but refuses to
 	// set one, so the script must not carry it back.
-	script, err := NewServerScripter(s, DefaultScriptOptions()).ScriptLoginContext(ctx, loginName)
+	script, err := NewServerScripter(s, DefaultScriptOptions()).ScriptLogin(ctx, loginName)
 	if err != nil {
 		t.Fatalf("script the login: %v", err)
 	}
@@ -88,11 +88,11 @@ func TestLiveCertificateLoginCreateReadScript(t *testing.T) {
 
 	// Recreate it from its own script — the check the statement text cannot
 	// make.
-	if err := s.DropLoginContext(ctx, loginName); err != nil {
+	if err := s.DropLogin(ctx, loginName); err != nil {
 		t.Fatalf("drop before replay: %v", err)
 	}
 	runScript(t, s, script)
-	again, err := s.LoginByNameContext(ctx, loginName)
+	again, err := s.LoginByName(ctx, loginName)
 	if err != nil {
 		t.Fatalf("read back after replaying the script: %v", err)
 	}
@@ -103,7 +103,7 @@ func TestLiveCertificateLoginCreateReadScript(t *testing.T) {
 
 // A mapped login has no default database SQL Server will accept: the CREATE
 // fails, and so does the ALTER an external login's default database goes
-// through. CreateLoginContext refuses it before either is sent — this pins
+// through. CreateLogin refuses it before either is sent — this pins
 // that the server really does reject it, so the refusal is not just gosmo
 // being cautious.
 func TestLiveCertificateLoginRejectsADefaultDatabase(t *testing.T) {
@@ -122,21 +122,21 @@ func TestLiveCertificateLoginRejectsADefaultDatabase(t *testing.T) {
 
 	cleanup := func() {
 		dropLoginIfPresent(t, s, loginName)
-		if c, err := master.CertificateByNameContext(ctx, certName); err == nil && c != nil {
-			c.DropContext(ctx)
+		if c, err := master.CertificateByName(ctx, certName); err == nil && c != nil {
+			c.Drop(ctx)
 		}
 	}
 	cleanup()
 	defer cleanup()
 
-	if err := master.CreateCertificateContext(ctx, CertificateSpec{
+	if err := master.CreateCertificate(ctx, CertificateSpec{
 		Name: certName, Subject: "gosmo live test certificate",
 	}); err != nil {
 		t.Fatalf("create certificate: %v", err)
 	}
 
 	// gosmo refuses it up front.
-	if err := s.CreateLoginContext(ctx, loginName, "", &CreateLoginOptions{
+	if err := s.CreateLogin(ctx, loginName, "", &CreateLoginOptions{
 		Source: LoginSourceCertificate, CertificateName: certName, DefaultDatabase: "tempdb",
 	}); err == nil {
 		t.Fatal("a mapped login with a default database: want an error, got none")
@@ -144,7 +144,7 @@ func TestLiveCertificateLoginRejectsADefaultDatabase(t *testing.T) {
 
 	// And the server refuses it too, on the ALTER the external-login path
 	// would have used.
-	if err := s.CreateLoginContext(ctx, loginName, "", &CreateLoginOptions{
+	if err := s.CreateLogin(ctx, loginName, "", &CreateLoginOptions{
 		Source: LoginSourceCertificate, CertificateName: certName,
 	}); err != nil {
 		t.Fatalf("create certificate login: %v", err)

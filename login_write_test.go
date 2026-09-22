@@ -57,7 +57,7 @@ func TestBuildChangePasswordStatementEscapesQuotes(t *testing.T) {
 // -- CREATE LOGIN sources -----------------------------------------------------
 
 // createLoginStatementFor is the test's view of the statement builder: it
-// resolves LoginSourceAuto the way CreateLoginContext does, so a case can be
+// resolves LoginSourceAuto the way CreateLogin does, so a case can be
 // written the way a caller writes it.
 func createLoginStatementFor(t *testing.T, name, password string, opts *CreateLoginOptions) (string, bool) {
 	t.Helper()
@@ -244,29 +244,29 @@ func TestCreateLoginQuotesMappedObjectNames(t *testing.T) {
 	}
 }
 
-// CreateLoginContext issues both halves under WithScript: the CREATE, then the
+// CreateLogin issues both halves under WithScript: the CREATE, then the
 // ALTER that carries a DefaultDatabase the CREATE form cannot.
 func TestCreateLoginContextScriptsCreateThenAlter(t *testing.T) {
 	s := &Server{}
 	ctx, script := WithScript(context.Background())
 
-	err := s.CreateLoginContext(ctx, "user@contoso.com", "", &CreateLoginOptions{
+	err := s.CreateLogin(ctx, "user@contoso.com", "", &CreateLoginOptions{
 		Source:          LoginSourceExternalProvider,
 		DefaultDatabase: "sales",
 	})
 	if err != nil {
-		t.Fatalf("CreateLoginContext under WithScript: %v", err)
+		t.Fatalf("CreateLogin under WithScript: %v", err)
 	}
 	want := []string{
 		"CREATE LOGIN [user@contoso.com] FROM EXTERNAL PROVIDER",
 		"ALTER LOGIN [user@contoso.com] WITH DEFAULT_DATABASE = [sales]",
 	}
-	if len(script.Statements) != len(want) {
-		t.Fatalf("Statements = %q, want %q", script.Statements, want)
+	if len(script.Statements()) != len(want) {
+		t.Fatalf("Statements = %q, want %q", script.Statements(), want)
 	}
 	for i := range want {
-		if script.Statements[i] != want[i] {
-			t.Errorf("Statements[%d] = %q, want %q", i, script.Statements[i], want[i])
+		if script.Statements()[i] != want[i] {
+			t.Errorf("Statements[%d] = %q, want %q", i, script.Statements()[i], want[i])
 		}
 	}
 }
@@ -277,10 +277,10 @@ func TestCreateLoginContextScriptsASQLLoginAsOneStatement(t *testing.T) {
 	s := &Server{}
 	ctx, script := WithScript(context.Background())
 
-	if err := s.CreateLoginContext(ctx, "app", "hunter2", &CreateLoginOptions{DefaultDatabase: "sales"}); err != nil {
-		t.Fatalf("CreateLoginContext under WithScript: %v", err)
+	if err := s.CreateLogin(ctx, "app", "hunter2", &CreateLoginOptions{DefaultDatabase: "sales"}); err != nil {
+		t.Fatalf("CreateLogin under WithScript: %v", err)
 	}
-	if len(script.Statements) != 1 {
-		t.Fatalf("Statements = %q, want one statement", script.Statements)
+	if len(script.Statements()) != 1 {
+		t.Fatalf("Statements = %q, want one statement", script.Statements())
 	}
 }

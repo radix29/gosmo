@@ -2,7 +2,6 @@ package gosmo
 
 import (
 	"context"
-	"strings"
 	"testing"
 )
 
@@ -14,23 +13,19 @@ func scriptedDB(t *testing.T) (*Database, context.Context, *ScriptCollector) {
 	return &Database{Name: "appdb", server: &Server{}}, ctx, script
 }
 
-// onlyStatement returns the single statement collected, with the USE prefix
-// Database.exec adds stripped off.
+// onlyStatement returns the single statement collected, without the USE
+// Database.exec records it under.
 func onlyStatement(t *testing.T, script *ScriptCollector) string {
 	t.Helper()
-	if len(script.Statements) != 1 {
-		t.Fatalf("collected %d statements, want 1: %v", len(script.Statements), script.Statements)
+	if len(script.Entries) != 1 {
+		t.Fatalf("collected %d statements, want 1: %v", len(script.Entries), script.Statements())
 	}
-	s := script.Statements[0]
-	if _, rest, ok := strings.Cut(s, "\n"); ok {
-		return rest
-	}
-	return s
+	return script.Entries[0].SQL
 }
 
 func TestPermissionOptionsRenderWithGrantOption(t *testing.T) {
 	d, ctx, script := scriptedDB(t)
-	err := d.GrantPermissionWithOptionsContext(ctx, "dbo", "Orders", PermSelect, "app_reader",
+	err := d.GrantPermissionWithOptions(ctx, "dbo", "Orders", PermSelect, "app_reader",
 		PermissionOptions{WithGrantOption: true})
 	if err != nil {
 		t.Fatalf("grant: %v", err)
@@ -45,7 +40,7 @@ func TestPermissionOptionsRenderRevokeGrantOptionFor(t *testing.T) {
 	d, ctx, script := scriptedDB(t)
 	// GRANT OPTION FOR always carries CASCADE — SQL Server rejects it
 	// without one, so it must not depend on the caller also setting Cascade.
-	err := d.RevokePermissionWithOptionsContext(ctx, "dbo", "Orders", PermSelect, "app_reader",
+	err := d.RevokePermissionWithOptions(ctx, "dbo", "Orders", PermSelect, "app_reader",
 		PermissionOptions{GrantOptionOnly: true})
 	if err != nil {
 		t.Fatalf("revoke: %v", err)
@@ -58,7 +53,7 @@ func TestPermissionOptionsRenderRevokeGrantOptionFor(t *testing.T) {
 
 func TestPermissionOptionsRenderDenyCascade(t *testing.T) {
 	d, ctx, script := scriptedDB(t)
-	err := d.DenySchemaPermissionWithOptionsContext(ctx, "sales", PermSelect, "app_reader",
+	err := d.DenySchemaPermissionWithOptions(ctx, "sales", PermSelect, "app_reader",
 		PermissionOptions{Cascade: true})
 	if err != nil {
 		t.Fatalf("deny: %v", err)
@@ -84,31 +79,31 @@ func TestZeroPermissionOptionsMatchesPlainStatement(t *testing.T) {
 	}{
 		{"object grant",
 			func(d *Database, ctx context.Context) error {
-				return d.GrantPermissionContext(ctx, "dbo", "Orders", PermSelect, "app_reader")
+				return d.GrantPermission(ctx, "dbo", "Orders", PermSelect, "app_reader")
 			},
 			func(d *Database, ctx context.Context) error {
-				return d.GrantPermissionWithOptionsContext(ctx, "dbo", "Orders", PermSelect, "app_reader", PermissionOptions{})
+				return d.GrantPermissionWithOptions(ctx, "dbo", "Orders", PermSelect, "app_reader", PermissionOptions{})
 			}},
 		{"object revoke",
 			func(d *Database, ctx context.Context) error {
-				return d.RevokePermissionContext(ctx, "dbo", "Orders", PermSelect, "app_reader")
+				return d.RevokePermission(ctx, "dbo", "Orders", PermSelect, "app_reader")
 			},
 			func(d *Database, ctx context.Context) error {
-				return d.RevokePermissionWithOptionsContext(ctx, "dbo", "Orders", PermSelect, "app_reader", PermissionOptions{})
+				return d.RevokePermissionWithOptions(ctx, "dbo", "Orders", PermSelect, "app_reader", PermissionOptions{})
 			}},
 		{"schema deny",
 			func(d *Database, ctx context.Context) error {
-				return d.DenySchemaPermissionContext(ctx, "sales", PermUpdate, "app_reader")
+				return d.DenySchemaPermission(ctx, "sales", PermUpdate, "app_reader")
 			},
 			func(d *Database, ctx context.Context) error {
-				return d.DenySchemaPermissionWithOptionsContext(ctx, "sales", PermUpdate, "app_reader", PermissionOptions{})
+				return d.DenySchemaPermissionWithOptions(ctx, "sales", PermUpdate, "app_reader", PermissionOptions{})
 			}},
 		{"database grant",
 			func(d *Database, ctx context.Context) error {
-				return d.GrantDatabasePermissionContext(ctx, "CREATE TABLE", "app_reader")
+				return d.GrantDatabasePermission(ctx, "CREATE TABLE", "app_reader")
 			},
 			func(d *Database, ctx context.Context) error {
-				return d.GrantDatabasePermissionWithOptionsContext(ctx, "CREATE TABLE", "app_reader", PermissionOptions{})
+				return d.GrantDatabasePermissionWithOptions(ctx, "CREATE TABLE", "app_reader", PermissionOptions{})
 			}},
 	}
 	for _, tc := range cases {
@@ -136,51 +131,51 @@ func TestZeroPermissionOptionsMatchesPlainStatement(t *testing.T) {
 func TestPermissionOptionsRejectMismatchedModifier(t *testing.T) {
 	d, ctx, script := scriptedDB(t)
 
-	if err := d.DenyPermissionWithOptionsContext(ctx, "dbo", "Orders", PermSelect, "app_reader",
+	if err := d.DenyPermissionWithOptions(ctx, "dbo", "Orders", PermSelect, "app_reader",
 		PermissionOptions{WithGrantOption: true}); err == nil {
 		t.Error("DENY accepted WITH GRANT OPTION, want an error")
 	}
-	if err := d.GrantPermissionWithOptionsContext(ctx, "dbo", "Orders", PermSelect, "app_reader",
+	if err := d.GrantPermissionWithOptions(ctx, "dbo", "Orders", PermSelect, "app_reader",
 		PermissionOptions{Cascade: true}); err == nil {
 		t.Error("GRANT accepted CASCADE, want an error")
 	}
-	if err := d.GrantPermissionWithOptionsContext(ctx, "dbo", "Orders", PermSelect, "app_reader",
+	if err := d.GrantPermissionWithOptions(ctx, "dbo", "Orders", PermSelect, "app_reader",
 		PermissionOptions{GrantOptionOnly: true}); err == nil {
 		t.Error("GRANT accepted GRANT OPTION FOR, want an error")
 	}
-	if len(script.Statements) != 0 {
-		t.Errorf("a rejected statement was still collected: %v", script.Statements)
+	if len(script.Statements()) != 0 {
+		t.Errorf("a rejected statement was still collected: %v", script.Statements())
 	}
 }
 
 func TestServerPermissionWithOptionsKeepsUseMasterPrefix(t *testing.T) {
 	ctx, script := WithScript(context.Background())
 	s := &Server{}
-	if err := s.GrantServerPermissionWithOptionsContext(ctx, "VIEW SERVER STATE", "app_login",
+	if err := s.GrantServerPermissionWithOptions(ctx, "VIEW SERVER STATE", "app_login",
 		PermissionOptions{WithGrantOption: true}); err != nil {
 		t.Fatalf("grant: %v", err)
 	}
-	if len(script.Statements) != 1 {
-		t.Fatalf("collected %d statements, want 1: %v", len(script.Statements), script.Statements)
+	if len(script.Statements()) != 1 {
+		t.Fatalf("collected %d statements, want 1: %v", len(script.Statements()), script.Statements())
 	}
 	want := "USE master; GRANT VIEW SERVER STATE TO [app_login] WITH GRANT OPTION"
-	if got := script.Statements[0]; got != want {
+	if got := script.Statements()[0]; got != want {
 		t.Errorf("statement =\n%q\nwant\n%q", got, want)
 	}
 }
 
 func TestPermissionWithOptionsStillRejectsUnknownPermission(t *testing.T) {
 	d, ctx, _ := scriptedDB(t)
-	if err := d.GrantPermissionWithOptionsContext(ctx, "dbo", "Orders",
+	if err := d.GrantPermissionWithOptions(ctx, "dbo", "Orders",
 		ObjectPermission("SELECT; DROP TABLE Orders; --"), "attacker", PermissionOptions{}); err == nil {
 		t.Error("an unrecognized permission name was accepted, want an error")
 	}
-	if err := d.GrantDatabasePermissionWithOptionsContext(ctx, "CONTROL; DROP DATABASE appdb; --",
+	if err := d.GrantDatabasePermissionWithOptions(ctx, "CONTROL; DROP DATABASE appdb; --",
 		"attacker", PermissionOptions{}); err == nil {
 		t.Error("an unrecognized database permission name was accepted, want an error")
 	}
 	s := &Server{}
-	if err := s.RevokeServerPermissionWithOptionsContext(ctx, "NOT REAL", "sa", PermissionOptions{}); err == nil {
+	if err := s.RevokeServerPermissionWithOptions(ctx, "NOT REAL", "sa", PermissionOptions{}); err == nil {
 		t.Error("an unrecognized server permission name was accepted, want an error")
 	}
 }

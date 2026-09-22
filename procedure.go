@@ -108,12 +108,7 @@ type ProcResult struct {
 // parameters and capturing its return status. Output parameter values are
 // written to the pointers passed to Out / InOut. Any result sets the
 // procedure emits are discarded; use the query methods when you need the rows.
-func (d *Database) ExecProc(schema, name string, params ...ProcParam) (ProcResult, error) {
-	return d.ExecProcContext(context.Background(), schema, name, params...)
-}
-
-// ExecProcContext is the context-aware variant of ExecProc.
-func (d *Database) ExecProcContext(ctx context.Context, schema, name string, params ...ProcParam) (ProcResult, error) {
+func (d *Database) ExecProc(ctx context.Context, schema, name string, params ...ProcParam) (ProcResult, error) {
 	if name == "" {
 		return ProcResult{}, fmt.Errorf("gosmo: exec proc: no procedure name")
 	}
@@ -167,25 +162,14 @@ type StoredProcedure struct {
 }
 
 // StoredProcedures returns all stored procedures in the database.
-func (d *Database) StoredProcedures() ([]*StoredProcedure, error) {
-	return d.StoredProceduresContext(context.Background())
-}
-
-// StoredProceduresContext is the context-aware variant of StoredProcedures.
-func (d *Database) StoredProceduresContext(ctx context.Context) ([]*StoredProcedure, error) {
+func (d *Database) StoredProcedures(ctx context.Context) ([]*StoredProcedure, error) {
 	return d.storedProceduresWhere(ctx, "", nil)
 }
 
 // StoredProceduresFiltered returns the stored procedures an ObjectFilter
 // matches, narrowed by the server. An empty filter is
-// StoredProceduresContext.
-func (d *Database) StoredProceduresFiltered(filter ObjectFilter) ([]*StoredProcedure, error) {
-	return d.StoredProceduresFilteredContext(context.Background(), filter)
-}
-
-// StoredProceduresFilteredContext is the context-aware variant of
-// StoredProceduresFiltered.
-func (d *Database) StoredProceduresFilteredContext(ctx context.Context, filter ObjectFilter) ([]*StoredProcedure, error) {
+// StoredProcedures.
+func (d *Database) StoredProceduresFiltered(ctx context.Context, filter ObjectFilter) ([]*StoredProcedure, error) {
 	where, args := filter.clause(procedureFilterColumns, 1)
 	return d.storedProceduresWhere(ctx, where, args)
 }
@@ -208,34 +192,19 @@ WHERE  p.is_ms_shipped = 0 ` + where + `
 ORDER  BY SCHEMA_NAME(p.schema_id), p.name`
 
 	rows, err := d.query(ctx, q, args...)
-	if err != nil {
-		return nil, fmt.Errorf("gosmo: list stored procs in %q: %w", d.Name, err)
-	}
-	defer rows.Close()
-
-	var procs []*StoredProcedure
-	for rows.Next() {
+	return scanRows(rows, err, fmt.Sprintf("list stored procs in %q", d.Name), func(scan func(...any) error) (*StoredProcedure, error) {
 		p := &StoredProcedure{}
-		if err := rows.Scan(&p.ObjectID, &p.Schema, &p.Name,
+		if err := scan(&p.ObjectID, &p.Schema, &p.Name,
 			&p.Definition, &p.CreateDate, &p.ModifyDate); err != nil {
-			return nil, fmt.Errorf("gosmo: list stored procs in %q: %w", d.Name, err)
+			return nil, err
 		}
-		procs = append(procs, p)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("gosmo: list stored procs in %q: %w", d.Name, err)
-	}
-	return procs, nil
+		return p, nil
+	})
 }
 
 // CreateStoredProcedure creates (or replaces) a stored procedure.
 // schema may be empty (defaults to dbo). body is the raw T-SQL after AS.
-func (d *Database) CreateStoredProcedure(schema, name, body string) error {
-	return d.CreateStoredProcedureContext(context.Background(), schema, name, body)
-}
-
-// CreateStoredProcedureContext is the context-aware variant.
-func (d *Database) CreateStoredProcedureContext(ctx context.Context, schema, name, body string) error {
+func (d *Database) CreateStoredProcedure(ctx context.Context, schema, name, body string) error {
 	if name == "" {
 		return fmt.Errorf("gosmo: create stored procedure: name is required")
 	}
@@ -252,12 +221,7 @@ func (d *Database) CreateStoredProcedureContext(ctx context.Context, schema, nam
 // DropStoredProcedure drops a stored procedure. A procedure that isn't there
 // is the server's error, not a silent success — see the note on
 // Database.DropTable.
-func (d *Database) DropStoredProcedure(schema, name string) error {
-	return d.DropStoredProcedureContext(context.Background(), schema, name)
-}
-
-// DropStoredProcedureContext is the context-aware variant.
-func (d *Database) DropStoredProcedureContext(ctx context.Context, schema, name string) error {
+func (d *Database) DropStoredProcedure(ctx context.Context, schema, name string) error {
 	if schema == "" {
 		schema = "dbo"
 	}
@@ -269,34 +233,23 @@ func (d *Database) DropStoredProcedureContext(ctx context.Context, schema, name 
 
 // SystemStoredProcedures returns every system stored procedure SQL Server
 // ships in the "sys" schema (sp_help, sp_who, ...) — see
-// SystemStoredProceduresContext.
-func (d *Database) SystemStoredProcedures() ([]*StoredProcedure, error) {
-	return d.SystemStoredProceduresContext(context.Background())
-}
-
-// SystemStoredProceduresContext is the context-aware variant of
-// SystemStoredProcedures. Reads sys.all_objects rather than sys.procedures
-// for the same reason SystemViewsContext reads sys.all_objects instead of
-// sys.views: shipped objects are invisible through the non-"all_" catalog
-// views. Restricted to types 'P'/'PC' (SQL/CLR stored procedure), matching
-// what sys.procedures itself documents — extended stored procedures ('X',
-// e.g. xp_cmdshell) are a distinct object kind and excluded. The "sys"
-// schema is identical in every database on a server, so this only needs
-// loading once per connection.
-func (d *Database) SystemStoredProceduresContext(ctx context.Context) ([]*StoredProcedure, error) {
+// SystemStoredProcedures.
+//
+// Reads sys.all_objects rather than sys.procedures for the same reason
+// SystemViews reads sys.all_objects instead of sys.views: shipped
+// objects are invisible through the non-"all_" catalog views. Restricted to
+// types 'P'/'PC' (SQL/CLR stored procedure), matching what sys.procedures
+// itself documents — extended stored procedures ('X', e.g. xp_cmdshell) are
+// a distinct object kind and excluded. The "sys" schema is identical in every
+// database on a server, so this only needs loading once per connection.
+func (d *Database) SystemStoredProcedures(ctx context.Context) ([]*StoredProcedure, error) {
 	return d.systemStoredProceduresWhere(ctx, "", nil)
 }
 
 // SystemStoredProceduresFiltered returns the system stored procedures an
 // ObjectFilter matches, narrowed by the server. An empty filter is
-// SystemStoredProceduresContext.
-func (d *Database) SystemStoredProceduresFiltered(filter ObjectFilter) ([]*StoredProcedure, error) {
-	return d.SystemStoredProceduresFilteredContext(context.Background(), filter)
-}
-
-// SystemStoredProceduresFilteredContext is the context-aware variant of
-// SystemStoredProceduresFiltered.
-func (d *Database) SystemStoredProceduresFilteredContext(ctx context.Context, filter ObjectFilter) ([]*StoredProcedure, error) {
+// SystemStoredProcedures.
+func (d *Database) SystemStoredProceduresFiltered(ctx context.Context, filter ObjectFilter) ([]*StoredProcedure, error) {
 	where, args := filter.clause(allObjectsFilterColumns, 1)
 	return d.systemStoredProceduresWhere(ctx, where, args)
 }
@@ -311,24 +264,14 @@ WHERE  o.type IN ('P','PC') AND o.is_ms_shipped = 1 AND SCHEMA_NAME(o.schema_id)
 ORDER  BY o.name`
 
 	rows, err := d.query(ctx, q, args...)
-	if err != nil {
-		return nil, fmt.Errorf("gosmo: list system stored procs in %q: %w", d.Name, err)
-	}
-	defer rows.Close()
-
-	var procs []*StoredProcedure
-	for rows.Next() {
+	return scanRows(rows, err, fmt.Sprintf("list system stored procs in %q", d.Name), func(scan func(...any) error) (*StoredProcedure, error) {
 		p := &StoredProcedure{}
-		if err := rows.Scan(&p.ObjectID, &p.Schema, &p.Name,
+		if err := scan(&p.ObjectID, &p.Schema, &p.Name,
 			&p.Definition, &p.CreateDate, &p.ModifyDate); err != nil {
-			return nil, fmt.Errorf("gosmo: list system stored procs in %q: %w", d.Name, err)
+			return nil, err
 		}
-		procs = append(procs, p)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("gosmo: list system stored procs in %q: %w", d.Name, err)
-	}
-	return procs, nil
+		return p, nil
+	})
 }
 
 // -- Parameters ----------------------------------------------------------------
@@ -356,12 +299,7 @@ func (p *Parameter) TypeString() string {
 
 // Parameters returns the parameters of one stored procedure or function, in
 // declaration order.
-func (d *Database) Parameters(schema, name string) ([]*Parameter, error) {
-	return d.ParametersContext(context.Background(), schema, name)
-}
-
-// ParametersContext is the context-aware variant of Parameters.
-func (d *Database) ParametersContext(ctx context.Context, schema, name string) ([]*Parameter, error) {
+func (d *Database) Parameters(ctx context.Context, schema, name string) ([]*Parameter, error) {
 	const q = `
 SELECT p.name, p.parameter_id, tp.name,
        p.max_length, p.precision, p.scale,
@@ -376,24 +314,14 @@ ORDER  BY p.parameter_id`
 		schema = "dbo"
 	}
 	rows, err := d.query(ctx, q, schema, name)
-	if err != nil {
-		return nil, fmt.Errorf("gosmo: list parameters of %s: %w", qualifiedName(schema, name), err)
-	}
-	defer rows.Close()
-
-	var params []*Parameter
-	for rows.Next() {
+	return scanRows(rows, err, fmt.Sprintf("list parameters of %s", qualifiedName(schema, name)), func(scan func(...any) error) (*Parameter, error) {
 		p := &Parameter{}
 		var typeName string
-		if err := rows.Scan(&p.Name, &p.Ordinal, &typeName,
+		if err := scan(&p.Name, &p.Ordinal, &typeName,
 			&p.MaxLength, &p.Precision, &p.Scale, &p.IsOutput, &p.HasDefault); err != nil {
-			return nil, fmt.Errorf("gosmo: list parameters of %s: %w", qualifiedName(schema, name), err)
+			return nil, err
 		}
 		p.DataType = DataType(typeName)
-		params = append(params, p)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("gosmo: list parameters of %s: %w", qualifiedName(schema, name), err)
-	}
-	return params, nil
+		return p, nil
+	})
 }

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"reflect"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -17,21 +18,121 @@ import (
 
 type scriptCtxKey struct{}
 
-// ScriptCollector accumulates the SQL statements a write method would have
-// executed, instead of running them. See WithScript. Statements is guarded
-// by mu since nothing stops a caller from reusing one collector/context
-// across write calls issued from multiple goroutines concurrently.
-type ScriptCollector struct {
-	mu         sync.Mutex
-	Statements []string
+// scriptServerKey carries the instance name WithScriptServer overrides.
+type scriptServerKey struct{}
+
+// ScriptEntry is one statement a ScriptCollector captured, with where it
+// would have run.
+type ScriptEntry struct {
+	// Server is the instance the statement would have run on: the
+	// connected server's @@SERVERNAME, or the name WithScriptServer gave.
+	// It is "" for a Server whose info was never loaded.
+	Server string
+	// Database is the database a database-scoped write would have run in,
+	// and "" for a server-scoped one — which runs in whatever database the
+	// session is in.
+	Database string
+	// SQL is the statement alone, with any bound parameters substituted and
+	// no USE in front of it: Database says where it goes.
+	SQL string
 }
 
-// append adds stmt under mu — the only way execContext/exec should touch
-// Statements.
-func (c *ScriptCollector) append(stmt string) {
+// ScriptCollector accumulates the SQL statements a write method would have
+// executed, instead of running them. See WithScript. Entries is guarded
+// by mu since nothing stops a caller from reusing one collector/context
+// across write calls issued from multiple goroutines concurrently.
+//
+// String renders the whole capture as one runnable script, which is what a
+// caller handing it to a person wants. Joining the entries by hand is the
+// mistake it exists to prevent: some statements must open their batch
+// (CREATE SCHEMA, CREATE PROCEDURE, CREATE VIEW …), and two entries sharing a
+// batch collide on anything batch-scoped, such as a second DECLARE of the
+// same variable.
+type ScriptCollector struct {
+	mu      sync.Mutex
+	Entries []ScriptEntry
+}
+
+// append adds e under mu — the only way exec/exec should touch
+// Entries.
+func (c *ScriptCollector) append(e ScriptEntry) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.Statements = append(c.Statements, stmt)
+	c.Entries = append(c.Entries, e)
+}
+
+// snapshot copies Entries under mu.
+func (c *ScriptCollector) snapshot() []ScriptEntry {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return slices.Clone(c.Entries)
+}
+
+// Statements returns each captured entry as a script runnable on its own: a
+// database-scoped entry is preceded by "USE [db];" and a GO, so it opens its
+// own batch; a server-scoped one is its SQL alone. Unlike String, nothing
+// says which instance an entry belongs to.
+func (c *ScriptCollector) Statements() []string {
+	entries := c.snapshot()
+	out := make([]string, len(entries))
+	for i, e := range entries {
+		out[i] = e.SQL
+		if e.Database != "" {
+			out[i] = scriptUse(e.Database) + e.SQL
+		}
+	}
+	return out
+}
+
+// String renders every captured entry as one script, each statement in a
+// batch of its own (followed by GO), in capture order:
+//
+//   - a database-scoped entry is preceded by USE whenever the database
+//     differs from the one the script is already in;
+//   - a server-scoped entry that follows a database-scoped one is preceded by
+//     USE [master], so it does not run inside that database — DROP DATABASE
+//     of the database a session is using fails;
+//   - when the entries span more than one instance, a "-- on <server>" line
+//     opens each run of entries for the same instance, and each run starts
+//     with no database assumed, since it is a different session.
+//
+// It returns "" when nothing was captured.
+func (c *ScriptCollector) String() string {
+	entries := c.snapshot()
+	multi := slices.ContainsFunc(entries, func(e ScriptEntry) bool { return e.Server != entries[0].Server })
+	var b strings.Builder
+	cur := "" // the database the session is known to be in; "" = its default
+	for i, e := range entries {
+		if i > 0 {
+			b.WriteString("\n")
+		}
+		if multi && (i == 0 || e.Server != entries[i-1].Server) {
+			name := e.Server
+			if name == "" {
+				name = "(unknown instance)"
+			}
+			fmt.Fprintf(&b, "-- on %s\n", name)
+			cur = ""
+		}
+		switch {
+		case e.Database != "" && e.Database != cur:
+			b.WriteString(scriptUse(e.Database))
+			cur = e.Database
+		case e.Database == "" && cur != "":
+			b.WriteString(scriptUse("master"))
+			cur = ""
+		}
+		b.WriteString(e.SQL)
+		b.WriteString("\nGO\n")
+	}
+	return b.String()
+}
+
+// scriptUse is the batch that switches a script into db. The GO is what lets
+// the statement after it open a batch — CREATE SCHEMA and CREATE PROCEDURE
+// refuse to run after a USE in the same one (Msg 111).
+func scriptUse(db string) string {
+	return "USE " + quoteIdent(db) + ";\nGO\n"
 }
 
 // WithScript returns a derived context carrying a *ScriptCollector. Every
@@ -42,10 +143,34 @@ func (c *ScriptCollector) append(stmt string) {
 // that opens the statements in a query editor instead of executing them).
 //
 // Read methods are unaffected: only the exec chokepoints
-// (Server.execContext, Database.exec) consult the collector.
+// (Server.exec, Database.exec) consult the collector.
 func WithScript(ctx context.Context) (context.Context, *ScriptCollector) {
 	c := &ScriptCollector{}
 	return context.WithValue(ctx, scriptCtxKey{}, c), c
+}
+
+// WithScriptServer returns a derived context under which captured entries
+// record server as their ScriptEntry.Server, in place of the name of the
+// Server the write was issued through. Outside WithScript it has no effect.
+//
+// It is for a script that spans instances the caller has not connected to:
+// scripting the JOIN an availability group secondary must run needs no
+// connection to the secondary, so the write is issued through a handle on
+// the instance that is connected, and without this the entry would claim to
+// belong there.
+func WithScriptServer(ctx context.Context, server string) context.Context {
+	return context.WithValue(ctx, scriptServerKey{}, server)
+}
+
+// scriptServerName is the ScriptEntry.Server for a write issued through s.
+func scriptServerName(ctx context.Context, s *Server) string {
+	if name, ok := ctx.Value(scriptServerKey{}).(string); ok {
+		return name
+	}
+	if s == nil || s.info == nil {
+		return ""
+	}
+	return s.info.Name
 }
 
 // Scripting reports whether ctx came from WithScript — that is, whether
@@ -94,14 +219,14 @@ func scriptFrom(ctx context.Context) (*ScriptCollector, bool) {
 	return c, ok
 }
 
-// execContext is the chokepoint every server-scoped write method (and, via
+// exec is the chokepoint every server-scoped write method (and, via
 // Database.exec, every database-scoped one) funnels through. stmt must
 // already be a complete, self-contained statement — every write method in
 // this package builds one via QuoteName/QuoteLiteral/escapeSingle before
 // reaching here, since none of these are parameterizable DDL/EXEC calls.
-func (s *Server) execContext(ctx context.Context, stmt string) error {
+func (s *Server) exec(ctx context.Context, stmt string) error {
 	if c, ok := scriptFrom(ctx); ok {
-		c.append(stmt)
+		c.append(ScriptEntry{Server: scriptServerName(ctx, s), SQL: stmt})
 		return nil
 	}
 	_, err := s.db.ExecContext(ctx, stmt)

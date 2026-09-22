@@ -51,7 +51,7 @@ func detLiveSetup(t *testing.T, db *sql.DB, ctx context.Context) (*Server, []str
 		if _, err := db.ExecContext(c, "SELECT 1 FROM sys.databases WHERE name = N'"+detLiveName+"'"); err == nil {
 			var n int
 			if db.QueryRowContext(c, "SELECT COUNT(*) FROM sys.databases WHERE name = N'"+detLiveName+"'").Scan(&n) == nil && n == 0 {
-				_ = srv.AttachDatabaseContext(c, AttachSpec{Name: detLiveName, Files: files})
+				_ = srv.AttachDatabase(c, AttachSpec{Name: detLiveName, Files: files})
 			}
 		}
 		db.ExecContext(c, "ALTER DATABASE ["+detLiveName+"] SET SINGLE_USER WITH ROLLBACK IMMEDIATE")
@@ -90,16 +90,16 @@ func TestLiveDetachAttachRoundTrip(t *testing.T) {
 	srv, files, drop := detLiveSetup(t, db, ctx)
 	defer drop()
 
-	if err := srv.DetachDatabaseContext(ctx, detLiveName, DetachOptions{DropConnections: true}); err != nil {
-		t.Fatalf("DetachDatabaseContext: %v", err)
+	if err := srv.DetachDatabase(ctx, detLiveName, DetachOptions{DropConnections: true}); err != nil {
+		t.Fatalf("DetachDatabase: %v", err)
 	}
 	if databaseExists(t, db, ctx, detLiveName) {
 		t.Fatal("the database is still on the instance after a detach that reported success")
 	}
 
-	info, err := srv.DetachedDatabaseInfoContext(ctx, files[0])
+	info, err := srv.DetachedDatabaseInfo(ctx, files[0])
 	if err != nil {
-		t.Fatalf("DetachedDatabaseInfoContext: %v", err)
+		t.Fatalf("DetachedDatabaseInfo: %v", err)
 	}
 	if info.Name != detLiveName {
 		t.Errorf("detached name = %q, want %q", info.Name, detLiveName)
@@ -147,8 +147,8 @@ func TestLiveDetachAttachRoundTrip(t *testing.T) {
 		paths = append(paths, f.PhysicalName)
 	}
 	const attachedAs = detLiveName + "_2"
-	if err := srv.AttachDatabaseContext(ctx, AttachSpec{Name: attachedAs, Files: paths}); err != nil {
-		t.Fatalf("AttachDatabaseContext: %v", err)
+	if err := srv.AttachDatabase(ctx, AttachSpec{Name: attachedAs, Files: paths}); err != nil {
+		t.Fatalf("AttachDatabase: %v", err)
 	}
 	defer func() {
 		c := context.Background()
@@ -186,7 +186,7 @@ func TestLiveDetachUpdateStatisticsIsAccepted(t *testing.T) {
 	srv, files, drop := detLiveSetup(t, db, ctx)
 	defer drop()
 
-	if err := srv.DetachDatabaseContext(ctx, detLiveName, DetachOptions{
+	if err := srv.DetachDatabase(ctx, detLiveName, DetachOptions{
 		DropConnections: true, UpdateStatistics: true,
 	}); err != nil {
 		t.Fatalf("detach with UpdateStatistics: %v", err)
@@ -194,7 +194,7 @@ func TestLiveDetachUpdateStatisticsIsAccepted(t *testing.T) {
 	if databaseExists(t, db, ctx, detLiveName) {
 		t.Fatal("the database is still attached")
 	}
-	if err := srv.AttachDatabaseContext(ctx, AttachSpec{Name: detLiveName, Files: files}); err != nil {
+	if err := srv.AttachDatabase(ctx, AttachSpec{Name: detLiveName, Files: files}); err != nil {
 		t.Fatalf("re-attach: %v", err)
 	}
 }
@@ -226,7 +226,7 @@ func TestLiveDetachThatFailsAfterSingleUserPutsTheDatabaseBack(t *testing.T) {
 	}
 	defer db.ExecContext(context.Background(), "DROP DATABASE ["+snapshot+"]")
 
-	if err := srv.DetachDatabaseContext(ctx, detLiveName, DetachOptions{DropConnections: true}); err == nil {
+	if err := srv.DetachDatabase(ctx, detLiveName, DetachOptions{DropConnections: true}); err == nil {
 		t.Fatal("detaching a database with a snapshot on it succeeded, so there is no failure path to check")
 	}
 	var access string

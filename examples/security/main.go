@@ -10,6 +10,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -24,6 +25,7 @@ const (
 )
 
 func main() {
+	ctx := context.Background()
 	// First, so it runs after the cleanup deferred below it.
 	defer demo.Exit()
 
@@ -33,8 +35,8 @@ func main() {
 	db, drop := demo.TempDatabase(srv, dbName)
 	defer drop()
 
-	demo.Must(db.CreateSchema("Reporting", "dbo"))
-	demo.Must(db.CreateTable(gosmo.CreateTableRequest{
+	demo.Must(db.CreateSchema(ctx, "Reporting", "dbo"))
+	demo.Must(db.CreateTable(ctx, gosmo.CreateTableRequest{
 		Schema: "Reporting",
 		Name:   "Revenue",
 		Columns: []gosmo.ColumnDefinition{
@@ -45,38 +47,38 @@ func main() {
 
 	// -- Server-level: the login ------------------------------------------
 	demo.Section("Login")
-	_ = srv.DropLogin(loginName) // in case a previous run died mid-way
-	demo.Must(srv.CreateLogin(loginName, "S0me-Str0ng-Pa55!", &gosmo.CreateLoginOptions{
+	_ = srv.DropLogin(ctx, loginName) // in case a previous run died mid-way
+	demo.Must(srv.CreateLogin(ctx, loginName, "S0me-Str0ng-Pa55!", &gosmo.CreateLoginOptions{
 		DefaultDatabase: dbName,
 	}))
 	defer func() {
-		if err := srv.DropLogin(loginName); err == nil {
+		if err := srv.DropLogin(ctx, loginName); err == nil {
 			fmt.Printf("Dropped login [%s]\n", loginName)
 		}
 	}()
 
-	login := demo.Value(srv.LoginByName(loginName))
+	login := demo.Value(srv.LoginByName(ctx, loginName))
 	fmt.Printf("  %s  type=%s  default_db=%s  disabled=%t\n",
 		login.Name, login.LoginType, login.DefaultDatabase, login.IsDisabled)
 
 	// Passwords are always escaped into an N'...' literal, never spliced in
 	// raw, so any password content is safe.
-	demo.Must(login.ChangePasswordWithOptions("An0ther-Str0ng-Pa55!", false, false))
-	demo.Must(login.SetPasswordPolicy(true, false))
-	demo.Must(login.SetDefaultLanguage("us_english"))
+	demo.Must(login.ChangePasswordWithOptions(ctx, "An0ther-Str0ng-Pa55!", false, false))
+	demo.Must(login.SetPasswordPolicy(ctx, true, false))
+	demo.Must(login.SetDefaultLanguage(ctx, "us_english"))
 
 	// -- Server roles and permissions -------------------------------------
 	demo.Section("Server role membership and permissions")
-	demo.Must(login.AddServerRoleMember("dbcreator"))
-	for _, m := range demo.Value(srv.ServerRoleMembers("dbcreator")) {
+	demo.Must(login.AddServerRoleMember(ctx, "dbcreator"))
+	for _, m := range demo.Value(srv.ServerRoleMembers(ctx, "dbcreator")) {
 		fmt.Printf("  dbcreator member: %s (%s)\n", m.Name, m.Type)
 	}
 
 	// VIEW SERVER STATE is what a monitoring login needs before
 	// Server.Info() or the session DMVs work for it.
-	demo.Must(srv.GrantServerPermission("VIEW SERVER STATE", loginName))
-	demo.Must(srv.DenyServerPermission("ALTER ANY LINKED SERVER", loginName))
-	for _, p := range demo.Value(srv.ServerPermissions()) {
+	demo.Must(srv.GrantServerPermission(ctx, "VIEW SERVER STATE", loginName))
+	demo.Must(srv.DenyServerPermission(ctx, "ALTER ANY LINKED SERVER", loginName))
+	for _, p := range demo.Value(srv.ServerPermissions(ctx)) {
 		if strings.EqualFold(p.Principal, loginName) {
 			fmt.Printf("  %-6s %-28s to %s\n", p.State, p.Permission, p.Principal)
 		}
@@ -87,27 +89,27 @@ func main() {
 
 	// -- Database-level: the user ------------------------------------------
 	demo.Section("Database user")
-	demo.Must(db.CreateUser(userName, loginName, "dbo"))
-	user := demo.Value(db.UserByName(userName))
+	demo.Must(db.CreateUser(ctx, userName, loginName, "dbo"))
+	user := demo.Value(db.UserByName(ctx, userName))
 	fmt.Printf("  %s  type=%s  login=%s  default_schema=%s  auth=%s\n",
 		user.Name, user.UserType, user.LoginName, user.DefaultSchema, user.AuthType)
 
 	// An orphaned user — one whose login was dropped — keeps AuthType
 	// "INSTANCE" with an empty LoginName. A user created WITHOUT LOGIN
 	// reports AuthType "NONE" instead; the two look alike without AuthType.
-	demo.Must(user.SetDefaultSchema("Reporting"))
+	demo.Must(user.SetDefaultSchema(ctx, "Reporting"))
 
 	// -- Database roles ----------------------------------------------------
 	demo.Section("Database role membership")
-	demo.Must(db.AddRoleMember("db_datareader", userName))
-	demo.Must(user.AddToRole("db_denydatawriter"))
-	for _, r := range demo.Value(db.DatabaseRoles()) {
+	demo.Must(db.AddRoleMember(ctx, "db_datareader", userName))
+	demo.Must(user.AddToRole(ctx, "db_denydatawriter"))
+	for _, r := range demo.Value(db.DatabaseRoles(ctx)) {
 		if contains(r.Members, userName) {
 			fmt.Printf("  %s is a member of %s\n", userName, r.Name)
 		}
 	}
 	// RoleMembers reads the same relationship from the role's side.
-	for _, m := range demo.Value(db.RoleMembers("db_datareader")) {
+	for _, m := range demo.Value(db.RoleMembers(ctx, "db_datareader")) {
 		fmt.Printf("  db_datareader member: %s (%s)\n", m.Name, m.Type)
 	}
 
@@ -118,18 +120,18 @@ func main() {
 	// ownership already implies control — so testing against dbo makes a
 	// working grant look broken.
 	demo.Section("Object, schema and database permissions")
-	demo.Must(db.GrantPermission("Reporting", "Revenue", gosmo.PermSelect, userName))
-	demo.Must(db.DenyPermission("Reporting", "Revenue", gosmo.PermUpdate, userName))
-	demo.Must(db.GrantSchemaPermission("Reporting", gosmo.PermView, userName))
-	demo.Must(db.GrantDatabasePermission("VIEW DATABASE STATE", userName))
+	demo.Must(db.GrantPermission(ctx, "Reporting", "Revenue", gosmo.PermSelect, userName))
+	demo.Must(db.DenyPermission(ctx, "Reporting", "Revenue", gosmo.PermUpdate, userName))
+	demo.Must(db.GrantSchemaPermission(ctx, "Reporting", gosmo.PermView, userName))
+	demo.Must(db.GrantDatabasePermission(ctx, "VIEW DATABASE STATE", userName))
 
 	fmt.Println("  one securable, every principal — Permissions():")
-	for _, p := range demo.Value(db.Permissions("Reporting", "Revenue")) {
+	for _, p := range demo.Value(db.Permissions(ctx, "Reporting", "Revenue")) {
 		fmt.Printf("    %-5s %-16s to %-20s (by %s)\n", p.State, p.Permission, p.Principal, p.Grantor)
 	}
 
 	fmt.Println("  one principal, every securable — PermissionsForPrincipal():")
-	for _, p := range demo.Value(db.PermissionsForPrincipal(userName)) {
+	for _, p := range demo.Value(db.PermissionsForPrincipal(ctx, userName)) {
 		name := p.Name
 		if p.Schema != "" {
 			name = p.Schema + "." + p.Name
@@ -139,28 +141,28 @@ func main() {
 
 	// -- Revoking ----------------------------------------------------------
 	demo.Section("Revoke")
-	demo.Must(db.RevokePermission("Reporting", "Revenue", gosmo.PermUpdate, userName))
+	demo.Must(db.RevokePermission(ctx, "Reporting", "Revenue", gosmo.PermUpdate, userName))
 	fmt.Printf("  after revoke, %d entries remain on Reporting.Revenue\n",
-		len(demo.Value(db.Permissions("Reporting", "Revenue"))))
+		len(demo.Value(db.Permissions(ctx, "Reporting", "Revenue"))))
 
 	// -- Where is this login used? ----------------------------------------
 	demo.Section("User mappings for the login")
-	for _, m := range demo.Value(login.UserMappings()) {
+	for _, m := range demo.Value(login.UserMappings(ctx)) {
 		fmt.Printf("  [%s] as %s (schema %s) roles=%s\n",
 			m.Database, m.User, m.DefaultSchema, strings.Join(m.Roles, ","))
 	}
 
 	// -- Server security settings -----------------------------------------
 	demo.Section("Server security")
-	fmt.Printf("  authentication mode: %s\n", demo.Value(srv.SecurityInfo()).AuthenticationMode)
+	fmt.Printf("  authentication mode: %s\n", demo.Value(srv.SecurityInfo(ctx)).AuthenticationMode)
 
 	// -- Cleanup -----------------------------------------------------------
 	// Drop the user explicitly: DROP LOGIN fails while a database user is
 	// still mapped to it, and the deferred login drop runs before the
 	// deferred database drop.
-	demo.Must(user.Drop())
-	demo.Must(srv.RevokeServerPermission("VIEW SERVER STATE", loginName))
-	demo.Must(login.RemoveServerRoleMember("dbcreator"))
+	demo.Must(user.Drop(ctx))
+	demo.Must(srv.RevokeServerPermission(ctx, "VIEW SERVER STATE", loginName))
+	demo.Must(login.RemoveServerRoleMember(ctx, "dbcreator"))
 }
 
 func contains(haystack []string, needle string) bool {

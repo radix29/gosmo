@@ -13,12 +13,7 @@ import (
 )
 
 // Steps returns all steps defined for the job, ordered by step_id.
-func (j *Job) Steps() ([]*JobStep, error) {
-	return j.StepsContext(context.Background())
-}
-
-// StepsContext is the context-aware variant of Steps.
-func (j *Job) StepsContext(ctx context.Context) ([]*JobStep, error) {
+func (j *Job) Steps(ctx context.Context) ([]*JobStep, error) {
 	// The proxy is joined by name rather than reported as an id: an id means
 	// nothing to a caller, and a move that re-adds a step has to pass
 	// @proxy_name back.
@@ -36,16 +31,10 @@ WHERE  s.job_id = @p1
 ORDER  BY s.step_id`
 
 	rows, err := j.server.query(ctx, q, j.JobID)
-	if err != nil {
-		return nil, fmt.Errorf("gosmo: steps for job %q: %w", j.Name, err)
-	}
-	defer rows.Close()
-
-	var steps []*JobStep
-	for rows.Next() {
+	return scanRows(rows, err, fmt.Sprintf("steps for job %q", j.Name), func(scan func(...any) error) (*JobStep, error) {
 		s := &JobStep{job: j}
 		var lastRunDate, lastRunTime sql.NullInt64
-		if err := rows.Scan(
+		if err := scan(
 			&s.StepID, &s.Name, &s.Subsystem, &s.Command, &s.Database,
 			&s.OnSuccessAction, &s.OnSuccessStepID, &s.OnFailAction, &s.OnFailStepID,
 			&s.LastRunOutcome, &lastRunDate, &lastRunTime, &s.LastRunDuration,
@@ -53,7 +42,7 @@ ORDER  BY s.step_id`
 			&s.ProxyName, &s.AdditionalParameters, &s.CmdExecSuccessCode,
 			&s.Server, &s.DatabaseUserName, &s.OSRunPriority,
 		); err != nil {
-			return nil, fmt.Errorf("gosmo: steps for job %q: %w", j.Name, err)
+			return nil, err
 		}
 		// last_run_date is 0 for a step that has never run, which
 		// parseSQLAgentDate would turn into a year-zero date rather than a
@@ -63,21 +52,12 @@ ORDER  BY s.step_id`
 			s.LastRunDate = parseSQLAgentDate(int(lastRunDate.Int64), int(lastRunTime.Int64))
 		}
 		s.LastRunElapsed = parseSQLAgentDuration(s.LastRunDuration)
-		steps = append(steps, s)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("gosmo: steps for job %q: %w", j.Name, err)
-	}
-	return steps, nil
+		return s, nil
+	})
 }
 
 // AddStep adds a T-SQL or other subsystem step to the job.
-func (j *Job) AddStep(req JobStepRequest) error {
-	return j.AddStepContext(context.Background(), req)
-}
-
-// AddStepContext is the context-aware variant of AddStep.
-func (j *Job) AddStepContext(ctx context.Context, req JobStepRequest) error {
+func (j *Job) AddStep(ctx context.Context, req JobStepRequest) error {
 	return j.addStepAt(ctx, req, 0)
 }
 
@@ -89,12 +69,7 @@ func (j *Job) AddStepContext(ctx context.Context, req JobStepRequest) error {
 // not symmetrical about this: it clears a reference to a step at or after the
 // one deleted instead of following it, which is why ReorderSteps repairs
 // references itself.
-func (j *Job) InsertStep(req JobStepRequest, stepID int) error {
-	return j.InsertStepContext(context.Background(), req, stepID)
-}
-
-// InsertStepContext is the context-aware variant of InsertStep.
-func (j *Job) InsertStepContext(ctx context.Context, req JobStepRequest, stepID int) error {
+func (j *Job) InsertStep(ctx context.Context, req JobStepRequest, stepID int) error {
 	if stepID < 1 {
 		return fmt.Errorf("gosmo: insert step %q into job %q: step id must be 1 or more", req.Name, j.Name)
 	}
@@ -126,14 +101,14 @@ func (j *Job) addStepAt(ctx context.Context, req JobStepRequest, stepID int) err
 	if req.Name == "" {
 		return fmt.Errorf("gosmo: add step: name is required")
 	}
-	if err := j.server.execContext(ctx, addStepStmt(j.Name, req, stepID)); err != nil {
+	if err := j.server.exec(ctx, addStepStmt(j.Name, req, stepID)); err != nil {
 		return fmt.Errorf("gosmo: add step %q to job %q: %w", req.Name, j.Name, err)
 	}
 	return nil
 }
 
 // addStepStmt renders the sp_add_jobstep call. stepID > 0 inserts at that
-// position; 0 appends. Split out from addStepAt so ReorderStepsContext can
+// position; 0 appends. Split out from addStepAt so ReorderSteps can
 // collect the statement into its transactional batch instead of issuing it —
 // see atomicBatch.
 func addStepStmt(jobName string, req JobStepRequest, stepID int) string {
@@ -167,13 +142,8 @@ func addStepStmt(jobName string, req JobStepRequest, stepID int) string {
 }
 
 // Update replaces the step's definition via sp_update_jobstep.
-func (s *JobStep) Update(req JobStepRequest) error {
-	return s.UpdateContext(context.Background(), req)
-}
-
-// UpdateContext is the context-aware variant of Update.
-func (s *JobStep) UpdateContext(ctx context.Context, req JobStepRequest) error {
-	// Same guard as Job.AddStepContext: sp_update_jobstep rejects an empty
+func (s *JobStep) Update(ctx context.Context, req JobStepRequest) error {
+	// Same guard as Job.AddStep: sp_update_jobstep rejects an empty
 	// @step_name with a server-side error, and the local field writes at the
 	// end of this method would otherwise blank out s.Name on the way past.
 	if req.Name == "" {
@@ -207,7 +177,7 @@ func (s *JobStep) UpdateContext(ctx context.Context, req JobStepRequest) error {
 	// form actually clears the step's output file instead of silently keeping
 	// the old path while the JobStep claimed it was gone.
 	q += fmt.Sprintf(", @output_file_name = N'%s'", escapeSingle(req.OutputFileName))
-	if err := s.job.server.execContext(ctx, q); err != nil {
+	if err := s.job.server.exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: update step %q of job %q: %w", req.Name, s.job.Name, err)
 	}
 	// Not mirrored under WithScript — nothing reached the server, so the step
@@ -227,24 +197,19 @@ func (s *JobStep) UpdateContext(ctx context.Context, req JobStepRequest) error {
 }
 
 // Delete removes the job step via sp_delete_jobstep.
-func (s *JobStep) Delete() error {
-	return s.DeleteContext(context.Background())
-}
-
-// DeleteContext is the context-aware variant of Delete.
 //
 // The step is addressed by its number, which is what sp_delete_jobstep takes:
 // a *JobStep is a snapshot, and its StepID is only current until something
 // renumbers the job.
-func (s *JobStep) DeleteContext(ctx context.Context) error {
+func (s *JobStep) Delete(ctx context.Context) error {
 	return s.job.deleteStepAt(ctx, s.StepID)
 }
 
 // deleteStepAt removes the step currently numbered stepID, without needing a
 // *JobStep for it, for a caller holding a step number rather than the step.
-// JobStep.DeleteContext is this with the number taken off the step.
+// JobStep.Delete is this with the number taken off the step.
 func (j *Job) deleteStepAt(ctx context.Context, stepID int) error {
-	if err := j.server.execContext(ctx, deleteStepStmt(j.Name, stepID)); err != nil {
+	if err := j.server.exec(ctx, deleteStepStmt(j.Name, stepID)); err != nil {
 		return fmt.Errorf("gosmo: delete step %d of job %q: %w", stepID, j.Name, err)
 	}
 	return nil
@@ -319,14 +284,9 @@ type JobStep struct {
 // alone". That is what makes this usable for repairing references after a
 // reorder, where rewriting the whole definition would be both wasteful and a
 // chance to lose a column the request does not model.
-func (s *JobStep) SetFlow(onSuccessAction, onSuccessStepID, onFailAction, onFailStepID int) error {
-	return s.SetFlowContext(context.Background(), onSuccessAction, onSuccessStepID, onFailAction, onFailStepID)
-}
-
-// SetFlowContext is the context-aware variant of SetFlow.
-func (s *JobStep) SetFlowContext(ctx context.Context, onSuccessAction, onSuccessStepID, onFailAction, onFailStepID int) error {
+func (s *JobStep) SetFlow(ctx context.Context, onSuccessAction, onSuccessStepID, onFailAction, onFailStepID int) error {
 	q := setFlowStmt(s.job.Name, s.StepID, onSuccessAction, onSuccessStepID, onFailAction, onFailStepID)
-	if err := s.job.server.execContext(ctx, q); err != nil {
+	if err := s.job.server.exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: set flow of step %q of job %q: %w", s.Name, s.job.Name, err)
 	}
 	if !Scripting(ctx) {
@@ -353,13 +313,7 @@ func setFlowStmt(jobName string, stepID, onSuccessAction, onSuccessStepID, onFai
 // Every other value ignores the accompanying step id.
 const goToStepAction = 4
 
-// MoveStep moves the step at position stepID to position newStepID,
-// renumbering the steps in between. See MoveStepContext.
-func (j *Job) MoveStep(stepID, newStepID int) error {
-	return j.MoveStepContext(context.Background(), stepID, newStepID)
-}
-
-// MoveStepContext moves one step to another position, which is what "move up"
+// MoveStep moves one step to another position, which is what "move up"
 // and "move down" in a job's step list amount to.
 //
 // msdb has no procedure that renumbers a step in place, so the move is a
@@ -379,8 +333,8 @@ func (j *Job) MoveStep(stepID, newStepID int) error {
 // back afterwards from the pre-move reading, mapped through the move. A
 // reference that pointed at the moved step still points at it; one that
 // pointed at a step the move shifted follows that step.
-func (j *Job) MoveStepContext(ctx context.Context, stepID, newStepID int) error {
-	return j.ReorderStepsContext(ctx, moveOrder(stepID, newStepID))
+func (j *Job) MoveStep(ctx context.Context, stepID, newStepID int) error {
+	return j.ReorderSteps(ctx, moveOrder(stepID, newStepID))
 }
 
 // moveOrder expresses a single move as the reorder ReorderSteps takes: the
@@ -399,19 +353,13 @@ func moveOrder(stepID, newStepID int) func(n int) []int {
 	}
 }
 
-// ReorderSteps puts the job's steps into the given order. See
-// ReorderStepsContext.
-func (j *Job) ReorderSteps(order func(n int) []int) error {
-	return j.ReorderStepsContext(context.Background(), order)
-}
-
-// ReorderStepsContext rewrites the job's step order. order is given the
+// ReorderSteps rewrites the job's step order. order is given the
 // current number of steps and returns the current step ids in the sequence
 // they should end up in — every id exactly once.
 //
 // The reorder is realised as delete-and-insert per step that has to move,
 // fewest first, and every "go to step N" reference is rewritten afterwards
-// through the composed mapping. See MoveStepContext for why both halves are
+// through the composed mapping. See MoveStep for why both halves are
 // necessary.
 //
 // All of it goes to the server as a single transactional batch, so the job is
@@ -425,8 +373,8 @@ func (j *Job) ReorderSteps(order func(n int) []int) error {
 //
 // The job must have been read with JobByName: the step listing is by job_id,
 // which a bare Server.JobRef handle does not carry.
-func (j *Job) ReorderStepsContext(ctx context.Context, order func(n int) []int) error {
-	steps, err := j.StepsContext(ctx)
+func (j *Job) ReorderSteps(ctx context.Context, order func(n int) []int) error {
+	steps, err := j.Steps(ctx)
 	if err != nil {
 		return err
 	}
@@ -488,7 +436,7 @@ func (j *Job) ReorderStepsContext(ctx context.Context, order func(n int) []int) 
 	if len(stmts) == 0 {
 		return nil
 	}
-	if err := j.server.execContext(ctx, atomicBatch(stmts)); err != nil {
+	if err := j.server.exec(ctx, atomicBatch(stmts)); err != nil {
 		return fmt.Errorf("gosmo: reorder steps of job %q: %w", j.Name, err)
 	}
 	return nil
@@ -523,7 +471,7 @@ type JobStepRequest struct {
 	//
 	// Empty means "leave the step's own database alone" on an update, not
 	// "clear it": sp_update_jobstep accepts N'' without error and changes
-	// nothing, so JobStep.UpdateContext omits @database_name entirely rather
+	// nothing, so JobStep.Update omits @database_name entirely rather
 	// than sending a value that would be silently ignored. On AddStep an
 	// empty value likewise sends no @database_name, and the server applies
 	// its default. There is no way to null the column through this type,
@@ -548,7 +496,7 @@ type JobStepRequest struct {
 	// Flags is the raw sysjobsteps.flags bitmask.
 	//
 	// This field and the six below it are sent by AddStep and InsertStep,
-	// which create a row and so decide every column of it. UpdateContext
+	// which create a row and so decide every column of it. Update
 	// deliberately does not send them: an omitted sp_update_jobstep
 	// parameter means "leave alone", which is what an edit of the fields a
 	// step form owns should do to a step's proxy, flags and run-as user.

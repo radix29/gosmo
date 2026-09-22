@@ -7,8 +7,7 @@ classDiagram
     class Server {
         -db *sql.DB
         -info *ServerInfo
-        +Connect(opts) *Server
-        +ConnectContext(ctx, opts) *Server
+        +Connect(ctx, opts) *Server
         +NewServer(ctx, db) *Server
         +ParseServerAddress(server) string
         +Close() error
@@ -86,6 +85,7 @@ classDiagram
         +SendMail(opts) error
         +Backup(opts) error
         +Restore(opts) error
+        +BuildRestoreStatement(opts) string
         +VerifyBackup(device) error
         +BackupHeaders(device) []*BackupHeader
         +BackupFileList(device) []*BackupFile

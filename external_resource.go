@@ -23,7 +23,6 @@ package gosmo
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"fmt"
 )
 
@@ -102,45 +101,19 @@ func scanExternalDataSource(d *Database, scan func(...any) error) (*ExternalData
 
 // ExternalDataSources returns the external data sources defined in the
 // database.
-func (d *Database) ExternalDataSources() ([]*ExternalDataSource, error) {
-	return d.ExternalDataSourcesContext(context.Background())
-}
-
-// ExternalDataSourcesContext is the context-aware variant of
-// ExternalDataSources.
-func (d *Database) ExternalDataSourcesContext(ctx context.Context) ([]*ExternalDataSource, error) {
+func (d *Database) ExternalDataSources(ctx context.Context) ([]*ExternalDataSource, error) {
 	q := d.externalDataSourceSelect() + `
 ORDER  BY s.name`
 
 	rows, err := d.query(ctx, q)
-	if err != nil {
-		return nil, fmt.Errorf("gosmo: list external data sources in %q: %w", d.Name, err)
-	}
-	defer rows.Close()
-
-	var sources []*ExternalDataSource
-	for rows.Next() {
-		s, err := scanExternalDataSource(d, rows.Scan)
-		if err != nil {
-			return nil, fmt.Errorf("gosmo: list external data sources in %q: %w", d.Name, err)
-		}
-		sources = append(sources, s)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("gosmo: list external data sources in %q: %w", d.Name, err)
-	}
-	return sources, nil
+	return scanRows(rows, err, fmt.Sprintf("list external data sources in %q", d.Name), func(scan func(...any) error) (*ExternalDataSource, error) {
+		return scanExternalDataSource(d, scan)
+	})
 }
 
 // ExternalDataSourceByName returns one external data source, or a not-found
 // error (errors.Is ErrNotFound) when the database has none by that name.
-func (d *Database) ExternalDataSourceByName(name string) (*ExternalDataSource, error) {
-	return d.ExternalDataSourceByNameContext(context.Background(), name)
-}
-
-// ExternalDataSourceByNameContext is the context-aware variant of
-// ExternalDataSourceByName.
-func (d *Database) ExternalDataSourceByNameContext(ctx context.Context, name string) (*ExternalDataSource, error) {
+func (d *Database) ExternalDataSourceByName(ctx context.Context, name string) (*ExternalDataSource, error) {
 	var s *ExternalDataSource
 	err := d.queryRow(ctx, func(row *sql.Row) error {
 		var err error
@@ -148,24 +121,12 @@ func (d *Database) ExternalDataSourceByNameContext(ctx context.Context, name str
 		return err
 	}, d.externalDataSourceSelect()+`
 WHERE  s.name = @p1`, name)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, notFoundf("gosmo: external data source %q not found in %q", name, d.Name)
-	}
-	if err != nil {
-		return nil, fmt.Errorf("gosmo: read external data source %q in %q: %w", name, d.Name, err)
-	}
-	return s, nil
+	return foundRow(s, err, notFoundf("gosmo: external data source %q not found in %q", name, d.Name), fmt.Sprintf("read external data source %q in %q", name, d.Name))
 }
 
 // DropExternalDataSource drops an external data source by name. One still
 // referenced by an external table is refused by the server.
-func (d *Database) DropExternalDataSource(name string) error {
-	return d.DropExternalDataSourceContext(context.Background(), name)
-}
-
-// DropExternalDataSourceContext is the context-aware variant of
-// DropExternalDataSource.
-func (d *Database) DropExternalDataSourceContext(ctx context.Context, name string) error {
+func (d *Database) DropExternalDataSource(ctx context.Context, name string) error {
 	if _, err := d.exec(ctx, "DROP EXTERNAL DATA SOURCE "+QuoteName(name)); err != nil {
 		return fmt.Errorf("gosmo: drop external data source %q in %q: %w", name, d.Name, err)
 	}
@@ -173,11 +134,8 @@ func (d *Database) DropExternalDataSourceContext(ctx context.Context, name strin
 }
 
 // Drop drops the external data source.
-func (s *ExternalDataSource) Drop() error { return s.DropContext(context.Background()) }
-
-// DropContext is the context-aware variant of Drop.
-func (s *ExternalDataSource) DropContext(ctx context.Context) error {
-	return s.db.DropExternalDataSourceContext(ctx, s.Name)
+func (s *ExternalDataSource) Drop(ctx context.Context) error {
+	return s.db.DropExternalDataSource(ctx, s.Name)
 }
 
 // ============================================================
@@ -244,45 +202,19 @@ func scanExternalFileFormat(d *Database, scan func(...any) error) (*ExternalFile
 
 // ExternalFileFormats returns the external file formats defined in the
 // database.
-func (d *Database) ExternalFileFormats() ([]*ExternalFileFormat, error) {
-	return d.ExternalFileFormatsContext(context.Background())
-}
-
-// ExternalFileFormatsContext is the context-aware variant of
-// ExternalFileFormats.
-func (d *Database) ExternalFileFormatsContext(ctx context.Context) ([]*ExternalFileFormat, error) {
+func (d *Database) ExternalFileFormats(ctx context.Context) ([]*ExternalFileFormat, error) {
 	q := d.externalFileFormatSelect() + `
 ORDER  BY f.name`
 
 	rows, err := d.query(ctx, q)
-	if err != nil {
-		return nil, fmt.Errorf("gosmo: list external file formats in %q: %w", d.Name, err)
-	}
-	defer rows.Close()
-
-	var formats []*ExternalFileFormat
-	for rows.Next() {
-		f, err := scanExternalFileFormat(d, rows.Scan)
-		if err != nil {
-			return nil, fmt.Errorf("gosmo: list external file formats in %q: %w", d.Name, err)
-		}
-		formats = append(formats, f)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("gosmo: list external file formats in %q: %w", d.Name, err)
-	}
-	return formats, nil
+	return scanRows(rows, err, fmt.Sprintf("list external file formats in %q", d.Name), func(scan func(...any) error) (*ExternalFileFormat, error) {
+		return scanExternalFileFormat(d, scan)
+	})
 }
 
 // ExternalFileFormatByName returns one external file format, or a not-found
 // error (errors.Is ErrNotFound) when the database has none by that name.
-func (d *Database) ExternalFileFormatByName(name string) (*ExternalFileFormat, error) {
-	return d.ExternalFileFormatByNameContext(context.Background(), name)
-}
-
-// ExternalFileFormatByNameContext is the context-aware variant of
-// ExternalFileFormatByName.
-func (d *Database) ExternalFileFormatByNameContext(ctx context.Context, name string) (*ExternalFileFormat, error) {
+func (d *Database) ExternalFileFormatByName(ctx context.Context, name string) (*ExternalFileFormat, error) {
 	var f *ExternalFileFormat
 	err := d.queryRow(ctx, func(row *sql.Row) error {
 		var err error
@@ -290,24 +222,12 @@ func (d *Database) ExternalFileFormatByNameContext(ctx context.Context, name str
 		return err
 	}, d.externalFileFormatSelect()+`
 WHERE  f.name = @p1`, name)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, notFoundf("gosmo: external file format %q not found in %q", name, d.Name)
-	}
-	if err != nil {
-		return nil, fmt.Errorf("gosmo: read external file format %q in %q: %w", name, d.Name, err)
-	}
-	return f, nil
+	return foundRow(f, err, notFoundf("gosmo: external file format %q not found in %q", name, d.Name), fmt.Sprintf("read external file format %q in %q", name, d.Name))
 }
 
 // DropExternalFileFormat drops an external file format by name. One still
 // referenced by an external table is refused by the server.
-func (d *Database) DropExternalFileFormat(name string) error {
-	return d.DropExternalFileFormatContext(context.Background(), name)
-}
-
-// DropExternalFileFormatContext is the context-aware variant of
-// DropExternalFileFormat.
-func (d *Database) DropExternalFileFormatContext(ctx context.Context, name string) error {
+func (d *Database) DropExternalFileFormat(ctx context.Context, name string) error {
 	if _, err := d.exec(ctx, "DROP EXTERNAL FILE FORMAT "+QuoteName(name)); err != nil {
 		return fmt.Errorf("gosmo: drop external file format %q in %q: %w", name, d.Name, err)
 	}
@@ -315,11 +235,8 @@ func (d *Database) DropExternalFileFormatContext(ctx context.Context, name strin
 }
 
 // Drop drops the external file format.
-func (f *ExternalFileFormat) Drop() error { return f.DropContext(context.Background()) }
-
-// DropContext is the context-aware variant of Drop.
-func (f *ExternalFileFormat) DropContext(ctx context.Context) error {
-	return f.db.DropExternalFileFormatContext(ctx, f.Name)
+func (f *ExternalFileFormat) Drop(ctx context.Context) error {
+	return f.db.DropExternalFileFormat(ctx, f.Name)
 }
 
 // ============================================================
@@ -382,12 +299,7 @@ func scanExternalLibrary(d *Database, scan func(...any) error) (*ExternalLibrary
 
 // ExternalLibraries returns the external libraries registered in the
 // database. It returns an ErrUnsupportedVersion error before SQL Server 2017.
-func (d *Database) ExternalLibraries() ([]*ExternalLibrary, error) {
-	return d.ExternalLibrariesContext(context.Background())
-}
-
-// ExternalLibrariesContext is the context-aware variant of ExternalLibraries.
-func (d *Database) ExternalLibrariesContext(ctx context.Context) ([]*ExternalLibrary, error) {
+func (d *Database) ExternalLibraries(ctx context.Context) ([]*ExternalLibrary, error) {
 	if err := d.requireExternalLibraries(); err != nil {
 		return nil, err
 	}
@@ -395,35 +307,15 @@ func (d *Database) ExternalLibrariesContext(ctx context.Context) ([]*ExternalLib
 ORDER  BY l.name`
 
 	rows, err := d.query(ctx, q)
-	if err != nil {
-		return nil, fmt.Errorf("gosmo: list external libraries in %q: %w", d.Name, err)
-	}
-	defer rows.Close()
-
-	var libs []*ExternalLibrary
-	for rows.Next() {
-		l, err := scanExternalLibrary(d, rows.Scan)
-		if err != nil {
-			return nil, fmt.Errorf("gosmo: list external libraries in %q: %w", d.Name, err)
-		}
-		libs = append(libs, l)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("gosmo: list external libraries in %q: %w", d.Name, err)
-	}
-	return libs, nil
+	return scanRows(rows, err, fmt.Sprintf("list external libraries in %q", d.Name), func(scan func(...any) error) (*ExternalLibrary, error) {
+		return scanExternalLibrary(d, scan)
+	})
 }
 
 // ExternalLibraryByName returns one external library, or a not-found error
 // (errors.Is ErrNotFound) when the database has none by that name. It
 // returns an ErrUnsupportedVersion error before SQL Server 2017.
-func (d *Database) ExternalLibraryByName(name string) (*ExternalLibrary, error) {
-	return d.ExternalLibraryByNameContext(context.Background(), name)
-}
-
-// ExternalLibraryByNameContext is the context-aware variant of
-// ExternalLibraryByName.
-func (d *Database) ExternalLibraryByNameContext(ctx context.Context, name string) (*ExternalLibrary, error) {
+func (d *Database) ExternalLibraryByName(ctx context.Context, name string) (*ExternalLibrary, error) {
 	if err := d.requireExternalLibraries(); err != nil {
 		return nil, err
 	}
@@ -434,23 +326,11 @@ func (d *Database) ExternalLibraryByNameContext(ctx context.Context, name string
 		return err
 	}, externalLibrarySelect+`
 WHERE  l.name = @p1`, name)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, notFoundf("gosmo: external library %q not found in %q", name, d.Name)
-	}
-	if err != nil {
-		return nil, fmt.Errorf("gosmo: read external library %q in %q: %w", name, d.Name, err)
-	}
-	return l, nil
+	return foundRow(l, err, notFoundf("gosmo: external library %q not found in %q", name, d.Name), fmt.Sprintf("read external library %q in %q", name, d.Name))
 }
 
 // DropExternalLibrary drops an external library by name.
-func (d *Database) DropExternalLibrary(name string) error {
-	return d.DropExternalLibraryContext(context.Background(), name)
-}
-
-// DropExternalLibraryContext is the context-aware variant of
-// DropExternalLibrary.
-func (d *Database) DropExternalLibraryContext(ctx context.Context, name string) error {
+func (d *Database) DropExternalLibrary(ctx context.Context, name string) error {
 	if err := d.requireExternalLibraries(); err != nil {
 		return err
 	}
@@ -461,9 +341,6 @@ func (d *Database) DropExternalLibraryContext(ctx context.Context, name string) 
 }
 
 // Drop drops the external library.
-func (l *ExternalLibrary) Drop() error { return l.DropContext(context.Background()) }
-
-// DropContext is the context-aware variant of Drop.
-func (l *ExternalLibrary) DropContext(ctx context.Context) error {
-	return l.db.DropExternalLibraryContext(ctx, l.Name)
+func (l *ExternalLibrary) Drop(ctx context.Context) error {
+	return l.db.DropExternalLibrary(ctx, l.Name)
 }

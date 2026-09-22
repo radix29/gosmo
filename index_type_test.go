@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-// Table.IndexesContext maps sys.indexes.type_desc onto IndexType. The two
+// Table.Indexes maps sys.indexes.type_desc onto IndexType. The two
 // columnstore spellings are distinct types, and a clustered columnstore index
 // is clustered — a caller labelling indexes from IsClustered otherwise calls
 // it nonclustered.
@@ -48,7 +48,7 @@ func TestSetIncludedColumnsRejectsColumnStore(t *testing.T) {
 		idx := &Index{Name: "cci", Type: typ, IsClustered: typ == IndexTypeClusteredColumnStore,
 			KeyColumns: []IndexColumn{{Name: "a"}}}
 
-		err := idx.SetIncludedColumns(tbl, []string{"b"})
+		err := idx.SetIncludedColumns(t.Context(), tbl, []string{"b"})
 		if err == nil {
 			t.Fatalf("%s: SetIncludedColumns returned nil, want an error", typ)
 		}
@@ -67,7 +67,7 @@ func TestSetIncludedColumnsRejectsColumnStore(t *testing.T) {
 // type existed.
 func TestCreateIndexRejectsKeyColumnsOnClusteredColumnStore(t *testing.T) {
 	tbl := captureTable(t)
-	err := tbl.CreateIndex(CreateIndexRequest{
+	err := tbl.CreateIndex(t.Context(), CreateIndexRequest{
 		Name:       "cci",
 		Type:       IndexTypeClusteredColumnStore,
 		KeyColumns: []IndexColumnDef{{Name: "a"}},
@@ -83,7 +83,7 @@ func TestCreateIndexRejectsKeyColumnsOnClusteredColumnStore(t *testing.T) {
 // The nonclustered columnstore path is unchanged by the split.
 func TestCreateIndexNonClusteredColumnStoreUnchanged(t *testing.T) {
 	tbl := captureTable(t)
-	if err := tbl.CreateIndex(CreateIndexRequest{
+	if err := tbl.CreateIndex(t.Context(), CreateIndexRequest{
 		Name:       "ncci",
 		Type:       IndexTypeColumnStore,
 		KeyColumns: []IndexColumnDef{{Name: "a"}},

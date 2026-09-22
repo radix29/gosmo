@@ -66,9 +66,9 @@ func TestLiveSchemaCapabilitiesSeeAGrantTheDatabaseScopeCannot(t *testing.T) {
 	// Not NewServer: loadInfo reads server-scope DMVs this login has no rights
 	// to, and the probe is what is under test.
 	restricted := &Server{db: pool}
-	caps, err := restricted.DatabaseRef(d.Name).CapabilitiesContext(ctx)
+	caps, err := restricted.DatabaseRef(d.Name).Capabilities(ctx)
 	if err != nil {
-		t.Fatalf("CapabilitiesContext as %s: %v", login, err)
+		t.Fatalf("Capabilities as %s: %v", login, err)
 	}
 
 	if !caps.Accessible {

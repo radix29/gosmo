@@ -10,7 +10,7 @@ import (
 
 // DBCC SHOW_STATISTICS ... WITH STAT_HEADER returns 10 columns before SQL
 // Server 2019 and 11 from it, and its shape is not a documented contract, so
-// HeaderContext binds by column name. These fakes serve whichever shape the
+// Header binds by column name. These fakes serve whichever shape the
 // test asks for.
 
 type statHeaderDriver struct{}
@@ -71,9 +71,9 @@ func statHeaderFor(t *testing.T, cols []string, vals []driver.Value) *StatisticH
 		Name:  "IX_t",
 		table: &Table{db: &Database{server: &Server{db: db}, Name: "d"}, Schema: "dbo", Name: "t"},
 	}
-	h, err := st.HeaderContext(context.Background())
+	h, err := st.Header(context.Background())
 	if err != nil {
-		t.Fatalf("HeaderContext: %v", err)
+		t.Fatalf("Header: %v", err)
 	}
 	return h
 }

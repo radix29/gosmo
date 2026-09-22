@@ -244,18 +244,18 @@ func TestSymmetricKeyWritesUnderScript(t *testing.T) {
 
 	for _, w := range []func() error{
 		func() error {
-			return d.CreateSymmetricKeyContext(ctx, SymmetricKeySpec{Name: "k", Algorithm: SymmetricKeyAES256,
+			return d.CreateSymmetricKey(ctx, SymmetricKeySpec{Name: "k", Algorithm: SymmetricKeyAES256,
 				Encryptions: []SymmetricKeyEncryptor{{Kind: SymmetricKeyByPassword, Password: "old"}}})
 		},
 		func() error {
-			return k.AddEncryptionContext(ctx, SymmetricKeyEncryptor{Kind: SymmetricKeyByCertificate, Name: "c"}, byPassword)
+			return k.AddEncryption(ctx, SymmetricKeyEncryptor{Kind: SymmetricKeyByCertificate, Name: "c"}, byPassword)
 		},
-		func() error { return k.AddEncryptionContext(ctx, bySym, byPassword) },
+		func() error { return k.AddEncryption(ctx, bySym, byPassword) },
 		// The key opened by the encryption being removed.
 		func() error {
-			return k.DropEncryptionContext(ctx, SymmetricKeyEncryptor{Kind: SymmetricKeyByPassword, Password: "old"}, byPassword)
+			return k.DropEncryption(ctx, SymmetricKeyEncryptor{Kind: SymmetricKeyByPassword, Password: "old"}, byPassword)
 		},
-		func() error { return k.DropContext(ctx) },
+		func() error { return k.Drop(ctx) },
 	} {
 		if err := w(); err != nil {
 			t.Fatal(err)
@@ -280,12 +280,12 @@ func TestSymmetricKeyWritesUnderScript(t *testing.T) {
 			"END TRY\nBEGIN CATCH\n" + catchClose("k") + "THROW;\nEND CATCH;",
 		useAppDB + "DROP SYMMETRIC KEY [k]",
 	}
-	if len(col.Statements) != len(want) {
-		t.Fatalf("captured %d statements, want %d:\n%s", len(col.Statements), len(want), strings.Join(col.Statements, "\n---\n"))
+	if len(col.Statements()) != len(want) {
+		t.Fatalf("captured %d statements, want %d:\n%s", len(col.Statements()), len(want), strings.Join(col.Statements(), "\n---\n"))
 	}
 	for i := range want {
-		if col.Statements[i] != want[i] {
-			t.Errorf("statement %d:\ngot:\n%s\nwant:\n%s", i, col.Statements[i], want[i])
+		if col.Statements()[i] != want[i] {
+			t.Errorf("statement %d:\ngot:\n%s\nwant:\n%s", i, col.Statements()[i], want[i])
 		}
 	}
 }
@@ -297,17 +297,17 @@ func TestSymmetricKeyAlterEncryptionRejects(t *testing.T) {
 	k := (&Server{}).DatabaseRef("AppDB").SymmetricKeyRef("k")
 	cert := SymmetricKeyEncryptor{Kind: SymmetricKeyByCertificate, Name: "c"}
 	for _, err := range []error{
-		k.AddEncryptionContext(ctx, cert, SymmetricKeyDecryptor{}),
-		k.AddEncryptionContext(ctx, cert, SymmetricKeyDecryptor{Kind: SymmetricKeyByMasterKey}),
-		k.AddEncryptionContext(ctx, cert, SymmetricKeyDecryptor{Kind: SymmetricKeyBySymmetricKey, Name: "p"}),
-		k.DropEncryptionContext(ctx, SymmetricKeyEncryptor{Kind: SymmetricKeyByPassword},
+		k.AddEncryption(ctx, cert, SymmetricKeyDecryptor{}),
+		k.AddEncryption(ctx, cert, SymmetricKeyDecryptor{Kind: SymmetricKeyByMasterKey}),
+		k.AddEncryption(ctx, cert, SymmetricKeyDecryptor{Kind: SymmetricKeyBySymmetricKey, Name: "p"}),
+		k.DropEncryption(ctx, SymmetricKeyEncryptor{Kind: SymmetricKeyByPassword},
 			SymmetricKeyDecryptor{Kind: SymmetricKeyByPassword, Password: "pw"}),
 	} {
 		if err == nil {
 			t.Error("want an error")
 		}
 	}
-	if len(col.Statements) != 0 {
-		t.Errorf("captured %q, want nothing", col.Statements)
+	if len(col.Statements()) != 0 {
+		t.Errorf("captured %q, want nothing", col.Statements())
 	}
 }

@@ -59,20 +59,20 @@ const (
 func liveStateJob(t *testing.T, srv *Server, ctx context.Context, name, wait string) (*Job, func()) {
 	t.Helper()
 	drop := func() {
-		srv.execContext(context.Background(),
+		srv.exec(context.Background(),
 			"IF EXISTS (SELECT 1 FROM msdb.dbo.sysjobs WHERE name = N'"+name+"') "+
 				"EXEC msdb.dbo.sp_delete_job @job_name = N'"+name+"'")
 	}
 	drop()
-	if _, err := srv.CreateJobContext(ctx, CreateJobRequest{Name: name, Enabled: true}); err != nil {
+	if _, err := srv.CreateJob(ctx, CreateJobRequest{Name: name, Enabled: true}); err != nil {
 		t.Fatalf("create job %s: %v", name, err)
 	}
-	j, err := srv.JobByNameContext(ctx, name)
+	j, err := srv.JobByName(ctx, name)
 	if err != nil {
 		drop()
 		t.Fatalf("job by name %s: %v", name, err)
 	}
-	if err := j.AddStepContext(ctx, JobStepRequest{
+	if err := j.AddStep(ctx, JobStepRequest{
 		Name: "wait", Subsystem: "TSQL", Command: "WAITFOR DELAY '" + wait + "'",
 		OnSuccessAction: 1, OnFailAction: 2,
 	}); err != nil {
@@ -89,7 +89,7 @@ func waitForState(t *testing.T, srv *Server, ctx context.Context, name string, w
 	var got JobState
 	deadline := time.Now().Add(20 * time.Second)
 	for {
-		j, err := srv.JobByNameContext(ctx, name)
+		j, err := srv.JobByName(ctx, name)
 		if err != nil {
 			t.Fatalf("job by name %s: %v", name, err)
 		}
@@ -114,7 +114,7 @@ func TestLiveJobStateFromAgent(t *testing.T) {
 	defer done()
 	srv := &Server{db: db}
 
-	st, err := srv.AgentInfoContext(ctx)
+	st, err := srv.AgentInfo(ctx)
 	if err != nil {
 		t.Fatalf("agent info: %v", err)
 	}
@@ -131,10 +131,10 @@ func TestLiveJobStateFromAgent(t *testing.T) {
 		t.Fatalf("a job that has never run reports state %d, want %d (idle)", got, JobStateIdle)
 	}
 
-	if err := j.StartContext(ctx, ""); err != nil {
+	if err := j.Start(ctx, ""); err != nil {
 		t.Fatalf("start job: %v", err)
 	}
-	defer j.StopContext(context.Background())
+	defer j.Stop(context.Background())
 
 	if got := waitForState(t, srv, ctx, j.Name, JobStateExecuting); got != JobStateExecuting {
 		t.Fatalf("a running job reports state %d, want %d (executing)", got, JobStateExecuting)
@@ -163,7 +163,7 @@ WHERE  ja.job_id = @p1
 		t.Errorf("activity row for a running job = started %v stopped %v, want a start and no stop — the fallback's CASE reads exactly these", started, stopped)
 	}
 
-	if err := j.StopContext(ctx); err != nil {
+	if err := j.Stop(ctx); err != nil {
 		t.Fatalf("stop job: %v", err)
 	}
 	if got := waitForState(t, srv, ctx, j.Name, JobStateIdle); got != JobStateIdle {
@@ -181,7 +181,7 @@ UPDATE msdb.dbo.sysjobactivity SET stop_execution_date = NULL
 WHERE  job_id = @p1 AND stop_execution_date IS NOT NULL`, j.JobID); err != nil {
 		t.Fatalf("clearing the stop date on the throwaway job's activity row: %v", err)
 	}
-	stale, err := srv.JobByNameContext(ctx, j.Name)
+	stale, err := srv.JobByName(ctx, j.Name)
 	if err != nil {
 		t.Fatalf("job by name: %v", err)
 	}
@@ -203,7 +203,7 @@ func TestLiveJobStateArmsARunningJob(t *testing.T) {
 	srv := &Server{db: db}
 
 	j, _ := liveStateJob(t, srv, ctx, jobStateRunningJob, "04:00:00")
-	if err := j.StartContext(ctx, ""); err != nil {
+	if err := j.Start(ctx, ""); err != nil {
 		t.Fatalf("start job: %v", err)
 	}
 	if got := waitForState(t, srv, ctx, j.Name, JobStateExecuting); got != JobStateExecuting {
@@ -227,7 +227,7 @@ func TestLiveJobStateFallbackWhenAgentIsStopped(t *testing.T) {
 
 	// The guard: with Agent up this test would pass on the overlay and prove
 	// nothing about the fallback.
-	st, err := srv.AgentInfoContext(ctx)
+	st, err := srv.AgentInfo(ctx)
 	if err != nil {
 		t.Fatalf("agent info: %v", err)
 	}
@@ -251,7 +251,7 @@ func TestLiveJobStateFallbackWhenAgentIsStopped(t *testing.T) {
 	// derivation's ELSE arm.
 	idle, dropIdle := liveStateJob(t, srv, ctx, jobStateIdleJob, "00:00:05")
 	defer dropIdle()
-	got, err := srv.JobByNameContext(ctx, idle.Name)
+	got, err := srv.JobByName(ctx, idle.Name)
 	if err != nil {
 		t.Fatalf("job by name %s with Agent stopped: %v", idle.Name, err)
 	}
@@ -261,11 +261,11 @@ func TestLiveJobStateFallbackWhenAgentIsStopped(t *testing.T) {
 
 	// And the job Agent was running when it stopped: its activity row still
 	// has a start and no stop, which is the derivation's THEN arm.
-	running, err := srv.JobByNameContext(ctx, jobStateRunningJob)
+	running, err := srv.JobByName(ctx, jobStateRunningJob)
 	if err != nil {
 		t.Fatalf("job by name %s: %v — run -live-agent-arm before stopping Agent", jobStateRunningJob, err)
 	}
-	defer srv.execContext(context.Background(),
+	defer srv.exec(context.Background(),
 		"IF EXISTS (SELECT 1 FROM msdb.dbo.sysjobs WHERE name = N'"+jobStateRunningJob+"') "+
 			"EXEC msdb.dbo.sp_delete_job @job_name = N'"+jobStateRunningJob+"'")
 	if running.CurrentState != JobStateExecuting {
@@ -275,7 +275,7 @@ func TestLiveJobStateFallbackWhenAgentIsStopped(t *testing.T) {
 
 	// The listing as a whole still works: a failed state read is not a failed
 	// listing, and the two jobs above must both be in it with the same states.
-	jobs, err := srv.JobsContext(ctx)
+	jobs, err := srv.Jobs(ctx)
 	if err != nil {
 		t.Fatalf("Jobs with Agent stopped: %v — applyJobStates turned a failed overlay into a failed listing", err)
 	}

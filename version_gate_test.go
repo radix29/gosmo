@@ -171,7 +171,7 @@ func TestQueryStoreOptionsSelectGatesItsLateColumns(t *testing.T) {
 			t.Errorf("major %d names %d of the four capture_policy_* columns, want %d", c.major, named, c.wantPolicy)
 		}
 		if got := len(selectExprs(t, selectList(t, q))); got != 16 {
-			t.Errorf("major %d selects %d expressions, want 16 — QueryStoreContext scans 16 destinations", c.major, got)
+			t.Errorf("major %d selects %d expressions, want 16 — QueryStore scans 16 destinations", c.major, got)
 		}
 	}
 }
@@ -216,7 +216,7 @@ func TestTableDetailSelectGatesTheLedgerColumn(t *testing.T) {
 			t.Errorf("major %d names ledger_type_desc = %v, want %v", c.major, got, c.wantNamed)
 		}
 		if got := len(selectExprs(t, selectList(t, q))); got != 10 {
-			t.Errorf("major %d selects %d expressions, want 10 — DetailContext scans 10 destinations", c.major, got)
+			t.Errorf("major %d selects %d expressions, want 10 — Detail scans 10 destinations", c.major, got)
 		}
 	}
 }
@@ -234,7 +234,7 @@ func TestListenerSelectGatesTheDistributedNetworkNameColumn(t *testing.T) {
 			t.Errorf("major %d names is_distributed_network_name = %v, want %v", c.major, got, c.wantNamed)
 		}
 		if got := len(selectExprs(t, selectList(t, q))); got != 7 {
-			t.Errorf("major %d selects %d expressions, want 7 — ListenersContext scans 7 destinations", c.major, got)
+			t.Errorf("major %d selects %d expressions, want 7 — Listeners scans 7 destinations", c.major, got)
 		}
 	}
 }
@@ -250,23 +250,23 @@ func TestCreateColumnMasterKeyWithSignatureRefusesEnclaveComputationsBelow2019(t
 		{13, false}, {14, false}, {15, true}, {16, true}, {17, true}, {0, true},
 	} {
 		ctx, script := WithScript(context.Background())
-		err := dbAtMajor(c.major).CreateColumnMasterKeyWithSignatureContext(
+		err := dbAtMajor(c.major).CreateColumnMasterKeyWithSignature(
 			ctx, "CMK1", "MSSQL_CERTIFICATE_STORE", "CurrentUser/my/ab", []byte{0x0a, 0xff})
 		if c.wantEmit {
 			if err != nil {
 				t.Errorf("major %d: err = %v, want the create to go through", c.major, err)
 			}
-			if len(script.Statements) != 1 {
-				t.Errorf("major %d emitted %d statement(s), want 1", c.major, len(script.Statements))
+			if len(script.Statements()) != 1 {
+				t.Errorf("major %d emitted %d statement(s), want 1", c.major, len(script.Statements()))
 			}
 			continue
 		}
 		if err == nil || !strings.Contains(err.Error(), "SQL Server 2019 or later") {
 			t.Errorf("major %d: err = %v, want a refusal naming the version requirement", c.major, err)
 		}
-		if len(script.Statements) != 0 {
+		if len(script.Statements()) != 0 {
 			t.Errorf("major %d emitted %d statement(s), want none:\n%s", c.major,
-				len(script.Statements), strings.Join(script.Statements, "\n---\n"))
+				len(script.Statements()), strings.Join(script.Statements(), "\n---\n"))
 		}
 	}
 }
@@ -299,7 +299,7 @@ func TestQueryStorePlansQueryGatesThePlanForcingTypeColumn(t *testing.T) {
 			t.Errorf("major %d groups by a constant: %q", c.major, groupBy)
 		}
 		if got := len(selectExprs(t, selectList(t, q))); got != 14 {
-			t.Errorf("major %d selects %d expressions, want 14 — QueryStorePlansContext scans 14 destinations", c.major, got)
+			t.Errorf("major %d selects %d expressions, want 14 — QueryStorePlans scans 14 destinations", c.major, got)
 		}
 	}
 }
@@ -317,7 +317,7 @@ func TestScopedConfigSelectGatesTheIsValueDefaultColumn(t *testing.T) {
 			t.Errorf("major %d names is_value_default = %v, want %v", c.major, got, c.wantNamed)
 		}
 		if got := len(selectExprs(t, selectList(t, q))); got != 5 {
-			t.Errorf("major %d selects %d expressions, want 5 — DatabaseScopedConfigsContext scans 5 destinations", c.major, got)
+			t.Errorf("major %d selects %d expressions, want 5 — DatabaseScopedConfigs scans 5 destinations", c.major, got)
 		}
 	}
 }
@@ -397,6 +397,6 @@ func TestAzureTakesTheModernFilesystemPaths(t *testing.T) {
 		t.Error("EnumFileSystemIsLegacy() = false with no info, want the xp_dirtree path")
 	}
 	if s.serverMajorVersion() >= 15 {
-		t.Error("FixedDrivesContext would take the xp_fixeddrives path on MI")
+		t.Error("FixedDrives would take the xp_fixeddrives path on MI")
 	}
 }

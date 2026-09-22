@@ -6,6 +6,7 @@ package gosmo
 // availability_group.go.
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"strings"
@@ -42,16 +43,16 @@ type AvailabilityReplicaSpec struct {
 
 	// AvailabilityMode is SYNCHRONOUS_COMMIT, ASYNCHRONOUS_COMMIT or
 	// CONFIGURATION_ONLY. Empty means SYNCHRONOUS_COMMIT.
-	AvailabilityMode string
+	AvailabilityMode AvailabilityMode
 
 	// FailoverMode is MANUAL, AUTOMATIC or EXTERNAL. Empty means MANUAL.
 	// EXTERNAL is required — and the only legal value — under
 	// CLUSTER_TYPE = EXTERNAL.
-	FailoverMode string
+	FailoverMode FailoverMode
 
 	// SeedingMode is AUTOMATIC or MANUAL. Empty omits the clause, which the
 	// server defaults to MANUAL.
-	SeedingMode string
+	SeedingMode SeedingMode
 
 	// BackupPriority is 0-100; 0 excludes the replica from automated backups.
 	// Negative omits the clause, leaving the server's default of 50 — which is
@@ -63,10 +64,10 @@ type AvailabilityReplicaSpec struct {
 	SessionTimeout int
 
 	// PrimaryRoleAllowConnections is ALL or READ_WRITE; empty omits the clause.
-	PrimaryRoleAllowConnections string
+	PrimaryRoleAllowConnections AllowConnections
 
 	// SecondaryRoleAllowConnections is NO, READ_ONLY or ALL; empty omits it.
-	SecondaryRoleAllowConnections string
+	SecondaryRoleAllowConnections AllowConnections
 
 	// ReadOnlyRoutingURL is this replica's routing address for read-intent
 	// redirection, set inside SECONDARY_ROLE. Empty omits it.
@@ -81,11 +82,11 @@ type CreateAvailabilityGroupRequest struct {
 	// ClusterType is WSFC, EXTERNAL or NONE. Empty omits the clause, which
 	// means WSFC — and fails on an instance with no Windows cluster under it,
 	// so Linux callers must set this.
-	ClusterType string
+	ClusterType ClusterType
 
 	// AutomatedBackupPreference is PRIMARY, SECONDARY_ONLY, SECONDARY or NONE.
 	// Empty omits the clause.
-	AutomatedBackupPreference string
+	AutomatedBackupPreference BackupPreference
 
 	// FailureConditionLevel is 1-5; zero omits the clause.
 	FailureConditionLevel int
@@ -131,26 +132,26 @@ func (spec AvailabilityReplicaSpec) withClause() (string, error) {
 		return "", fmt.Errorf("replica %q has no endpoint URL", spec.ServerName)
 	}
 
-	availability := strings.ToUpper(orElse(spec.AvailabilityMode, "SYNCHRONOUS_COMMIT"))
+	availability := upperKeyword(cmp.Or(spec.AvailabilityMode, AvailabilitySynchronousCommit))
 	if !availabilityModes[availability] {
 		return "", fmt.Errorf("replica %q: unrecognized availability mode %q", spec.ServerName, spec.AvailabilityMode)
 	}
-	failover := strings.ToUpper(orElse(spec.FailoverMode, "MANUAL"))
+	failover := upperKeyword(cmp.Or(spec.FailoverMode, FailoverManual))
 	if !failoverModes[failover] {
 		return "", fmt.Errorf("replica %q: unrecognized failover mode %q", spec.ServerName, spec.FailoverMode)
 	}
 
 	parts := []string{
 		"ENDPOINT_URL = " + nStringLiteral(spec.EndpointURL),
-		"AVAILABILITY_MODE = " + availability,
-		"FAILOVER_MODE = " + failover,
+		"AVAILABILITY_MODE = " + string(availability),
+		"FAILOVER_MODE = " + string(failover),
 	}
 	if spec.SeedingMode != "" {
-		seeding := strings.ToUpper(spec.SeedingMode)
+		seeding := upperKeyword(spec.SeedingMode)
 		if !seedingModes[seeding] {
 			return "", fmt.Errorf("replica %q: unrecognized seeding mode %q", spec.ServerName, spec.SeedingMode)
 		}
-		parts = append(parts, "SEEDING_MODE = "+seeding)
+		parts = append(parts, "SEEDING_MODE = "+string(seeding))
 	}
 	if spec.BackupPriority >= 0 {
 		if spec.BackupPriority > 100 {
@@ -162,20 +163,20 @@ func (spec AvailabilityReplicaSpec) withClause() (string, error) {
 		parts = append(parts, fmt.Sprintf("SESSION_TIMEOUT = %d", spec.SessionTimeout))
 	}
 	if spec.PrimaryRoleAllowConnections != "" {
-		v := strings.ToUpper(spec.PrimaryRoleAllowConnections)
+		v := upperKeyword(spec.PrimaryRoleAllowConnections)
 		if !primaryRoleConnections[v] {
 			return "", fmt.Errorf("replica %q: unrecognized primary role connections %q", spec.ServerName, spec.PrimaryRoleAllowConnections)
 		}
-		parts = append(parts, "PRIMARY_ROLE (ALLOW_CONNECTIONS = "+v+")")
+		parts = append(parts, "PRIMARY_ROLE (ALLOW_CONNECTIONS = "+string(v)+")")
 	}
 
 	var secondary []string
 	if spec.SecondaryRoleAllowConnections != "" {
-		v := strings.ToUpper(spec.SecondaryRoleAllowConnections)
+		v := upperKeyword(spec.SecondaryRoleAllowConnections)
 		if !secondaryRoleConnections[v] {
 			return "", fmt.Errorf("replica %q: unrecognized secondary role connections %q", spec.ServerName, spec.SecondaryRoleAllowConnections)
 		}
-		secondary = append(secondary, "ALLOW_CONNECTIONS = "+v)
+		secondary = append(secondary, "ALLOW_CONNECTIONS = "+string(v))
 	}
 	if spec.ReadOnlyRoutingURL != "" {
 		secondary = append(secondary, "READ_ONLY_ROUTING_URL = "+nStringLiteral(spec.ReadOnlyRoutingURL))
@@ -198,18 +199,18 @@ func (req CreateAvailabilityGroupRequest) createStatement() (string, error) {
 
 	var options []string
 	if req.ClusterType != "" {
-		clusterType := strings.ToUpper(req.ClusterType)
+		clusterType := upperKeyword(req.ClusterType)
 		if !clusterTypes[clusterType] {
 			return "", fmt.Errorf("unrecognized cluster type %q", req.ClusterType)
 		}
-		options = append(options, "CLUSTER_TYPE = "+clusterType)
+		options = append(options, "CLUSTER_TYPE = "+string(clusterType))
 	}
 	if req.AutomatedBackupPreference != "" {
-		pref := strings.ToUpper(req.AutomatedBackupPreference)
+		pref := upperKeyword(req.AutomatedBackupPreference)
 		if !backupPreferences[pref] {
 			return "", fmt.Errorf("unrecognized automated backup preference %q", req.AutomatedBackupPreference)
 		}
-		options = append(options, "AUTOMATED_BACKUP_PREFERENCE = "+pref)
+		options = append(options, "AUTOMATED_BACKUP_PREFERENCE = "+string(pref))
 	}
 	if req.FailureConditionLevel != 0 {
 		if req.FailureConditionLevel < 1 || req.FailureConditionLevel > 5 {
@@ -267,10 +268,19 @@ func (req CreateAvailabilityGroupRequest) createStatement() (string, error) {
 	return stmt + " REPLICA ON " + strings.Join(replicas, ", "), nil
 }
 
-// clusterTypes is the closed set of CLUSTER_TYPE values, spelled as CREATE
-// accepts them. Note that sys.availability_groups reports cluster_type_desc in
-// *lower* case — see AvailabilityGroup.ClusterType.
-var clusterTypes = map[string]bool{"WSFC": true, "EXTERNAL": true, "NONE": true}
+// ClusterType is a group's CLUSTER_TYPE, spelled as CREATE accepts it.
+// sys.availability_groups reports cluster_type_desc in *lower* case; the
+// AvailabilityGroup.ClusterType read upper-cases it to match.
+type ClusterType string
+
+const (
+	ClusterTypeWSFC     ClusterType = "WSFC"
+	ClusterTypeExternal ClusterType = "EXTERNAL" // Pacemaker and the like
+	ClusterTypeNone     ClusterType = "NONE"     // read-scale, no cluster manager
+)
+
+// clusterTypes is ClusterType's validity check.
+var clusterTypes = map[ClusterType]bool{ClusterTypeWSFC: true, ClusterTypeExternal: true, ClusterTypeNone: true}
 
 // CreateAvailabilityGroup creates an availability group with this instance as
 // its primary.
@@ -278,26 +288,20 @@ var clusterTypes = map[string]bool{"WSFC": true, "EXTERNAL": true, "NONE": true}
 // This is step 2 of four; see this section's doc comment for the rest. On its
 // own it leaves a group whose secondaries are all disconnected, because none of
 // them has joined yet.
-func (s *Server) CreateAvailabilityGroup(req CreateAvailabilityGroupRequest) (*AvailabilityGroup, error) {
-	return s.CreateAvailabilityGroupContext(context.Background(), req)
-}
-
-// CreateAvailabilityGroupContext is the context-aware variant of
-// CreateAvailabilityGroup.
-func (s *Server) CreateAvailabilityGroupContext(ctx context.Context, req CreateAvailabilityGroupRequest) (*AvailabilityGroup, error) {
+func (s *Server) CreateAvailabilityGroup(ctx context.Context, req CreateAvailabilityGroupRequest) (*AvailabilityGroup, error) {
 	stmt, err := req.createStatement()
 	if err != nil {
 		return nil, fmt.Errorf("gosmo: create availability group: %w", err)
 	}
-	if err := s.execContext(ctx, stmt); err != nil {
+	if err := s.exec(ctx, stmt); err != nil {
 		return nil, fmt.Errorf("gosmo: create availability group %q: %w", req.Name, err)
 	}
 	if Scripting(ctx) {
 		// The group does not exist to be read back; hand out a handle carrying
 		// the name and server so the caller's next scripted step can address it.
-		return &AvailabilityGroup{server: s, Name: req.Name, ClusterType: strings.ToUpper(req.ClusterType)}, nil
+		return &AvailabilityGroup{server: s, Name: req.Name, ClusterType: upperKeyword(req.ClusterType)}, nil
 	}
-	return s.AvailabilityGroupByNameContext(ctx, req.Name)
+	return s.AvailabilityGroupByName(ctx, req.Name)
 }
 
 // Join joins the instance this group was read from to it, as a secondary.
@@ -315,16 +319,12 @@ func (s *Server) CreateAvailabilityGroupContext(ctx context.Context, req CreateA
 // clusterType is passed rather than read off the group for the same reason: a
 // handle that had to be built by name has no metadata to read. It must match
 // what the group was created with, and EXTERNAL and NONE are rejected when it
-// does not; pass "" or "WSFC" for a Windows cluster, which takes no clause.
-func (ag *AvailabilityGroup) Join(clusterType string) error {
-	return ag.JoinContext(context.Background(), clusterType)
-}
-
-// JoinContext is the context-aware variant of Join.
-func (ag *AvailabilityGroup) JoinContext(ctx context.Context, clusterType string) error {
+// does not; pass "" or ClusterTypeWSFC for a Windows cluster, which takes no
+// clause.
+func (ag *AvailabilityGroup) Join(ctx context.Context, clusterType ClusterType) error {
 	clause := "JOIN"
-	if ct := strings.ToUpper(clusterType); ct == "EXTERNAL" || ct == "NONE" {
-		clause += " WITH (CLUSTER_TYPE = " + ct + ")"
+	if ct := upperKeyword(clusterType); ct == ClusterTypeExternal || ct == ClusterTypeNone {
+		clause += " WITH (CLUSTER_TYPE = " + string(ct) + ")"
 	}
 	if err := ag.alter(ctx, clause); err != nil {
 		return fmt.Errorf("gosmo: join availability group %q: %w", ag.Name, err)
@@ -339,13 +339,7 @@ func (ag *AvailabilityGroup) JoinContext(ctx context.Context, clusterType string
 // Run against each secondary. Without it a replica set to
 // SEEDING_MODE = AUTOMATIC seeds nothing, and reports no error for it — the
 // database simply never appears.
-func (ag *AvailabilityGroup) GrantCreateAnyDatabase() error {
-	return ag.GrantCreateAnyDatabaseContext(context.Background())
-}
-
-// GrantCreateAnyDatabaseContext is the context-aware variant of
-// GrantCreateAnyDatabase.
-func (ag *AvailabilityGroup) GrantCreateAnyDatabaseContext(ctx context.Context) error {
+func (ag *AvailabilityGroup) GrantCreateAnyDatabase(ctx context.Context) error {
 	if err := ag.alter(ctx, "GRANT CREATE ANY DATABASE"); err != nil {
 		return fmt.Errorf("gosmo: grant create any database to availability group %q: %w", ag.Name, err)
 	}
@@ -353,13 +347,7 @@ func (ag *AvailabilityGroup) GrantCreateAnyDatabaseContext(ctx context.Context) 
 }
 
 // DenyCreateAnyDatabase revokes what GrantCreateAnyDatabase granted.
-func (ag *AvailabilityGroup) DenyCreateAnyDatabase() error {
-	return ag.DenyCreateAnyDatabaseContext(context.Background())
-}
-
-// DenyCreateAnyDatabaseContext is the context-aware variant of
-// DenyCreateAnyDatabase.
-func (ag *AvailabilityGroup) DenyCreateAnyDatabaseContext(ctx context.Context) error {
+func (ag *AvailabilityGroup) DenyCreateAnyDatabase(ctx context.Context) error {
 	if err := ag.alter(ctx, "DENY CREATE ANY DATABASE"); err != nil {
 		return fmt.Errorf("gosmo: deny create any database to availability group %q: %w", ag.Name, err)
 	}

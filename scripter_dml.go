@@ -17,13 +17,8 @@ import (
 // default was guessed for it.
 
 // ScriptSelect generates a SELECT of every column of a table or view.
-func (sc *Scripter) ScriptSelect(schema, name string) (string, error) {
-	return sc.ScriptSelectContext(context.Background(), schema, name)
-}
-
-// ScriptSelectContext is the context-aware variant of ScriptSelect.
-func (sc *Scripter) ScriptSelectContext(ctx context.Context, schema, name string) (string, error) {
-	cols, err := sc.db.ObjectColumnsContext(ctx, schema, name)
+func (sc *Scripter) ScriptSelect(ctx context.Context, schema, name string) (string, error) {
+	cols, err := sc.db.ObjectColumns(ctx, schema, name)
 	if err != nil {
 		return "", err
 	}
@@ -31,13 +26,8 @@ func (sc *Scripter) ScriptSelectContext(ctx context.Context, schema, name string
 }
 
 // ScriptInsert generates an INSERT template for a table or view.
-func (sc *Scripter) ScriptInsert(schema, name string) (string, error) {
-	return sc.ScriptInsertContext(context.Background(), schema, name)
-}
-
-// ScriptInsertContext is the context-aware variant of ScriptInsert.
-func (sc *Scripter) ScriptInsertContext(ctx context.Context, schema, name string) (string, error) {
-	cols, err := sc.db.ObjectColumnsContext(ctx, schema, name)
+func (sc *Scripter) ScriptInsert(ctx context.Context, schema, name string) (string, error) {
+	cols, err := sc.db.ObjectColumns(ctx, schema, name)
 	if err != nil {
 		return "", err
 	}
@@ -45,13 +35,8 @@ func (sc *Scripter) ScriptInsertContext(ctx context.Context, schema, name string
 }
 
 // ScriptUpdate generates an UPDATE template for a table or view.
-func (sc *Scripter) ScriptUpdate(schema, name string) (string, error) {
-	return sc.ScriptUpdateContext(context.Background(), schema, name)
-}
-
-// ScriptUpdateContext is the context-aware variant of ScriptUpdate.
-func (sc *Scripter) ScriptUpdateContext(ctx context.Context, schema, name string) (string, error) {
-	cols, err := sc.db.ObjectColumnsContext(ctx, schema, name)
+func (sc *Scripter) ScriptUpdate(ctx context.Context, schema, name string) (string, error) {
+	cols, err := sc.db.ObjectColumns(ctx, schema, name)
 	if err != nil {
 		return "", err
 	}
@@ -59,23 +44,13 @@ func (sc *Scripter) ScriptUpdateContext(ctx context.Context, schema, name string
 }
 
 // ScriptDelete generates a DELETE template for a table or view.
-func (sc *Scripter) ScriptDelete(schema, name string) (string, error) {
-	return sc.ScriptDeleteContext(context.Background(), schema, name)
-}
-
-// ScriptDeleteContext is the context-aware variant of ScriptDelete.
-func (sc *Scripter) ScriptDeleteContext(ctx context.Context, schema, name string) (string, error) {
+func (sc *Scripter) ScriptDelete(ctx context.Context, schema, name string) (string, error) {
 	return fmt.Sprintf("DELETE FROM %s\nWHERE  <Search Conditions,,>;\nGO\n", qualifiedName(schema, name)), nil
 }
 
 // ScriptExecute generates an EXECUTE template for a stored procedure.
-func (sc *Scripter) ScriptExecute(schema, name string) (string, error) {
-	return sc.ScriptExecuteContext(context.Background(), schema, name)
-}
-
-// ScriptExecuteContext is the context-aware variant of ScriptExecute.
-func (sc *Scripter) ScriptExecuteContext(ctx context.Context, schema, name string) (string, error) {
-	params, err := sc.db.ParametersContext(ctx, schema, name)
+func (sc *Scripter) ScriptExecute(ctx context.Context, schema, name string) (string, error) {
+	params, err := sc.db.Parameters(ctx, schema, name)
 	if err != nil {
 		return "", err
 	}
@@ -85,14 +60,8 @@ func (sc *Scripter) ScriptExecuteContext(ctx context.Context, schema, name strin
 // ScriptFunctionCall generates a call template for a function: a SELECT of a
 // scalar function's result, or a SELECT from a table-valued one. funcType is
 // the UserDefinedFunction.FuncType — "FN", "IF" or "TF".
-func (sc *Scripter) ScriptFunctionCall(schema, name, funcType string) (string, error) {
-	return sc.ScriptFunctionCallContext(context.Background(), schema, name, funcType)
-}
-
-// ScriptFunctionCallContext is the context-aware variant of
-// ScriptFunctionCall.
-func (sc *Scripter) ScriptFunctionCallContext(ctx context.Context, schema, name, funcType string) (string, error) {
-	params, err := sc.db.ParametersContext(ctx, schema, name)
+func (sc *Scripter) ScriptFunctionCall(ctx context.Context, schema, name, funcType string) (string, error) {
+	params, err := sc.db.Parameters(ctx, schema, name)
 	if err != nil {
 		return "", err
 	}

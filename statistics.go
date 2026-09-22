@@ -3,7 +3,6 @@ package gosmo
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -32,12 +31,7 @@ type Statistic struct {
 	ModificationCounter int64
 }
 
-// Statistics returns all statistics objects for the table.
-func (t *Table) Statistics() ([]*Statistic, error) {
-	return t.StatisticsContext(context.Background())
-}
-
-// statisticSelect is shared by StatisticsContext and StatisticByNameContext
+// statisticSelect is shared by Statistics and StatisticByName
 // so a statistic carries the same fields however it was fetched.
 const statisticSelect = `
 SELECT s.name, s.stats_id,
@@ -50,38 +44,20 @@ FROM   sys.stats s
 CROSS  APPLY sys.dm_db_stats_properties(s.object_id, s.stats_id) sp
 WHERE  s.object_id = @p1`
 
-// StatisticsContext is the context-aware variant of Statistics.
-func (t *Table) StatisticsContext(ctx context.Context) ([]*Statistic, error) {
+// Statistics returns all statistics objects for the table.
+func (t *Table) Statistics(ctx context.Context) ([]*Statistic, error) {
 	rows, err := t.db.query(ctx, statisticSelect+`
 ORDER  BY s.name`, t.ObjectID)
-	if err != nil {
-		return nil, fmt.Errorf("gosmo: statistics for %s: %w", t.FullName(), err)
-	}
-	defer rows.Close()
-
-	var stats []*Statistic
-	for rows.Next() {
-		st, err := scanStatistic(t, rows.Scan)
-		if err != nil {
-			return nil, fmt.Errorf("gosmo: statistics for %s: %w", t.FullName(), err)
-		}
-		stats = append(stats, st)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("gosmo: statistics for %s: %w", t.FullName(), err)
-	}
-	return stats, nil
+	return scanRows(rows, err, fmt.Sprintf("statistics for %s", t.FullName()), func(scan func(...any) error) (*Statistic, error) {
+		return scanStatistic(t, scan)
+	})
 }
 
 // StatisticByName returns one statistics object on the table by name.
-func (t *Table) StatisticByName(name string) (*Statistic, error) {
-	return t.StatisticByNameContext(context.Background(), name)
-}
-
-// StatisticByNameContext is the context-aware variant of StatisticByName. It
-// returns an error satisfying errors.Is(err, ErrNotFound) when the table has
-// no such statistic.
-func (t *Table) StatisticByNameContext(ctx context.Context, name string) (*Statistic, error) {
+//
+// It returns an error satisfying errors.Is(err, ErrNotFound) when the table
+// has no such statistic.
+func (t *Table) StatisticByName(ctx context.Context, name string) (*Statistic, error) {
 	var st *Statistic
 	err := t.db.queryRow(ctx, func(row *sql.Row) error {
 		var err error
@@ -89,25 +65,19 @@ func (t *Table) StatisticByNameContext(ctx context.Context, name string) (*Stati
 		return err
 	}, statisticSelect+`
        AND s.name = @p2`, t.ObjectID, name)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, notFoundf("gosmo: statistic %q not found on %s", name, t.FullName())
-		}
-		return nil, fmt.Errorf("gosmo: find statistic %q on %s: %w", name, t.FullName(), err)
-	}
-	return st, nil
+	return foundRow(st, err, notFoundf("gosmo: statistic %q not found on %s", name, t.FullName()), fmt.Sprintf("find statistic %q on %s", name, t.FullName()))
 }
 
 // StatisticRef returns a lightweight handle for name on the table without
-// querying the server at all — unlike StatisticByName/StatisticByNameContext,
+// querying the server at all — unlike StatisticByName,
 // it doesn't verify the statistic exists or populate StatID/IsAutoCreated/
 // LastUpdated/Steps/etc. (they stay at their zero value). Every write method
-// on *Statistic (UpdateContext, DropContext, RenameContext) only ever needs
+// on *Statistic (Update, Drop, Rename) only ever needs
 // the statistic's name and its table's, never those cached fields, so this is
 // sufficient for issuing further calls against a statistic the caller already
 // knows exists — most commonly one it just created in the same operation. The
-// read methods (ColumnsContext, HeaderContext, DensityVectorContext,
-// HistogramContext) work from the same two names and so are usable from a
+// read methods (Columns, Header, DensityVector,
+// Histogram) work from the same two names and so are usable from a
 // handle too. See Server.DatabaseRef's doc comment for why this also matters
 // under a WithScript-derived context.
 func (t *Table) StatisticRef(name string) *Statistic {
@@ -154,12 +124,7 @@ func checkSamplePct(op string, samplePct int) error {
 
 // Update updates this statistic.
 // Pass samplePct=0 for a FULLSCAN; any value 1-100 uses SAMPLE n PERCENT.
-func (st *Statistic) Update(samplePct int) error {
-	return st.UpdateContext(context.Background(), samplePct)
-}
-
-// UpdateContext is the context-aware variant of Update.
-func (st *Statistic) UpdateContext(ctx context.Context, samplePct int) error {
+func (st *Statistic) Update(ctx context.Context, samplePct int) error {
 	if err := checkSamplePct("update statistic "+st.Name, samplePct); err != nil {
 		return err
 	}
@@ -178,12 +143,7 @@ func (st *Statistic) UpdateContext(ctx context.Context, samplePct int) error {
 
 // Drop drops this statistic.
 // Correct T-SQL syntax: DROP STATISTICS table_name.stat_name
-func (st *Statistic) Drop() error {
-	return st.DropContext(context.Background())
-}
-
-// DropContext is the context-aware variant of Drop.
-func (st *Statistic) DropContext(ctx context.Context) error {
+func (st *Statistic) Drop(ctx context.Context) error {
 	// DROP STATISTICS syntax: schema.table.stat (not quoted as one unit)
 	q := fmt.Sprintf("DROP STATISTICS %s.%s.%s",
 		quoteIdent(st.table.Schema), quoteIdent(st.table.Name), quoteIdent(st.Name))
@@ -194,13 +154,7 @@ func (st *Statistic) DropContext(ctx context.Context) error {
 }
 
 // UpdateAllStatistics updates all statistics on the table.
-func (t *Table) UpdateAllStatistics(samplePct int) error {
-	return t.UpdateAllStatisticsContext(context.Background(), samplePct)
-}
-
-// UpdateAllStatisticsContext is the context-aware variant of
-// UpdateAllStatistics.
-func (t *Table) UpdateAllStatisticsContext(ctx context.Context, samplePct int) error {
+func (t *Table) UpdateAllStatistics(ctx context.Context, samplePct int) error {
 	if err := checkSamplePct("update all statistics on "+t.FullName(), samplePct); err != nil {
 		return err
 	}
@@ -217,13 +171,8 @@ func (t *Table) UpdateAllStatisticsContext(ctx context.Context, samplePct int) e
 // CreateStatistic creates a user-defined statistic on one or more columns.
 // Pass samplePct=0 to let the server choose its own sample; see
 // CreateStatisticWithOptions for a filter, FULLSCAN, or NORECOMPUTE.
-func (t *Table) CreateStatistic(name string, columns []string, samplePct int) error {
-	return t.CreateStatisticContext(context.Background(), name, columns, samplePct)
-}
-
-// CreateStatisticContext is the context-aware variant of CreateStatistic.
-func (t *Table) CreateStatisticContext(ctx context.Context, name string, columns []string, samplePct int) error {
-	return t.CreateStatisticWithOptionsContext(ctx, CreateStatisticRequest{
+func (t *Table) CreateStatistic(ctx context.Context, name string, columns []string, samplePct int) error {
+	return t.CreateStatisticWithOptions(ctx, CreateStatisticRequest{
 		Name:          name,
 		Columns:       columns,
 		SamplePercent: samplePct,
@@ -256,13 +205,7 @@ type CreateStatisticRequest struct {
 // CreateStatisticWithOptions creates a user-defined statistic from a full
 // request — the form that reaches the sampling, filter and recompute options
 // CreateStatistic leaves at their defaults.
-func (t *Table) CreateStatisticWithOptions(req CreateStatisticRequest) error {
-	return t.CreateStatisticWithOptionsContext(context.Background(), req)
-}
-
-// CreateStatisticWithOptionsContext is the context-aware variant of
-// CreateStatisticWithOptions.
-func (t *Table) CreateStatisticWithOptionsContext(ctx context.Context, req CreateStatisticRequest) error {
+func (t *Table) CreateStatisticWithOptions(ctx context.Context, req CreateStatisticRequest) error {
 	q, err := buildCreateStatisticStatement(t.FullName(), req)
 	if err != nil {
 		return err
@@ -322,12 +265,7 @@ func buildCreateStatisticStatement(tableName string, req CreateStatisticRequest)
 // Columns returns this statistic's columns, in stat-column order. The
 // leading column is what the statistic's histogram is built on; every
 // column contributes to its density vector.
-func (st *Statistic) Columns() ([]string, error) {
-	return st.ColumnsContext(context.Background())
-}
-
-// ColumnsContext is the context-aware variant of Columns.
-func (st *Statistic) ColumnsContext(ctx context.Context) ([]string, error) {
+func (st *Statistic) Columns(ctx context.Context) ([]string, error) {
 	const q = `
 SELECT c.name
 FROM   sys.stats_columns sc
@@ -336,23 +274,13 @@ WHERE  sc.object_id = @p1 AND sc.stats_id = @p2
 ORDER  BY sc.stats_column_id`
 
 	rows, err := st.table.db.query(ctx, q, st.table.ObjectID, st.StatID)
-	if err != nil {
-		return nil, fmt.Errorf("gosmo: columns for statistic %q: %w", st.Name, err)
-	}
-	defer rows.Close()
-
-	var cols []string
-	for rows.Next() {
+	return scanRows(rows, err, fmt.Sprintf("columns for statistic %q", st.Name), func(scan func(...any) error) (string, error) {
 		var name string
-		if err := rows.Scan(&name); err != nil {
-			return nil, fmt.Errorf("gosmo: columns for statistic %q: %w", st.Name, err)
+		if err := scan(&name); err != nil {
+			return "", err
 		}
-		cols = append(cols, name)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("gosmo: columns for statistic %q: %w", st.Name, err)
-	}
-	return cols, nil
+		return name, nil
+	})
 }
 
 // StatisticHeader mirrors the single result row of
@@ -375,14 +303,9 @@ type StatisticHeader struct {
 }
 
 // Header returns this statistic's DBCC SHOW_STATISTICS header row.
-func (st *Statistic) Header() (*StatisticHeader, error) {
-	return st.HeaderContext(context.Background())
-}
-
-// HeaderContext is the context-aware variant of Header.
-func (st *Statistic) HeaderContext(ctx context.Context) (*StatisticHeader, error) {
+func (st *Statistic) Header(ctx context.Context) (*StatisticHeader, error) {
 	// DBCC SHOW_STATISTICS does not accept parameters for the table/stat
-	// name (same restriction UpdateContext already works around).
+	// name (same restriction Update already works around).
 	q := fmt.Sprintf("DBCC SHOW_STATISTICS (N'%s', N'%s') WITH STAT_HEADER, NO_INFOMSGS",
 		escapeSingle(st.table.FullName()), escapeSingle(st.Name))
 
@@ -462,33 +385,18 @@ type StatisticDensity struct {
 }
 
 // DensityVector returns this statistic's density vector.
-func (st *Statistic) DensityVector() ([]*StatisticDensity, error) {
-	return st.DensityVectorContext(context.Background())
-}
-
-// DensityVectorContext is the context-aware variant of DensityVector.
-func (st *Statistic) DensityVectorContext(ctx context.Context) ([]*StatisticDensity, error) {
+func (st *Statistic) DensityVector(ctx context.Context) ([]*StatisticDensity, error) {
 	q := fmt.Sprintf("DBCC SHOW_STATISTICS (N'%s', N'%s') WITH DENSITY_VECTOR, NO_INFOMSGS",
 		escapeSingle(st.table.FullName()), escapeSingle(st.Name))
 
 	rows, err := st.table.db.query(ctx, q)
-	if err != nil {
-		return nil, fmt.Errorf("gosmo: density vector for %q: %w", st.Name, err)
-	}
-	defer rows.Close()
-
-	var out []*StatisticDensity
-	for rows.Next() {
+	return scanRows(rows, err, fmt.Sprintf("density vector for %q", st.Name), func(scan func(...any) error) (*StatisticDensity, error) {
 		d := &StatisticDensity{}
-		if err := rows.Scan(&d.AllDensity, &d.AverageLength, &d.Columns); err != nil {
-			return nil, fmt.Errorf("gosmo: density vector for %q: %w", st.Name, err)
+		if err := scan(&d.AllDensity, &d.AverageLength, &d.Columns); err != nil {
+			return nil, err
 		}
-		out = append(out, d)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("gosmo: density vector for %q: %w", st.Name, err)
-	}
-	return out, nil
+		return d, nil
+	})
 }
 
 // StatisticHistogramStep is one step of DBCC SHOW_STATISTICS ... WITH
@@ -504,35 +412,20 @@ type StatisticHistogramStep struct {
 }
 
 // Histogram returns this statistic's histogram steps.
-func (st *Statistic) Histogram() ([]*StatisticHistogramStep, error) {
-	return st.HistogramContext(context.Background())
-}
-
-// HistogramContext is the context-aware variant of Histogram.
-func (st *Statistic) HistogramContext(ctx context.Context) ([]*StatisticHistogramStep, error) {
+func (st *Statistic) Histogram(ctx context.Context) ([]*StatisticHistogramStep, error) {
 	q := fmt.Sprintf("DBCC SHOW_STATISTICS (N'%s', N'%s') WITH HISTOGRAM, NO_INFOMSGS",
 		escapeSingle(st.table.FullName()), escapeSingle(st.Name))
 
 	rows, err := st.table.db.query(ctx, q)
-	if err != nil {
-		return nil, fmt.Errorf("gosmo: histogram for %q: %w", st.Name, err)
-	}
-	defer rows.Close()
-
-	var out []*StatisticHistogramStep
-	for rows.Next() {
+	return scanRows(rows, err, fmt.Sprintf("histogram for %q", st.Name), func(scan func(...any) error) (*StatisticHistogramStep, error) {
 		var rangeHiKey any
 		s := &StatisticHistogramStep{}
-		if err := rows.Scan(&rangeHiKey, &s.RangeRows, &s.EqRows, &s.DistinctRangeRows, &s.AvgRangeRows); err != nil {
-			return nil, fmt.Errorf("gosmo: histogram for %q: %w", st.Name, err)
+		if err := scan(&rangeHiKey, &s.RangeRows, &s.EqRows, &s.DistinctRangeRows, &s.AvgRangeRows); err != nil {
+			return nil, err
 		}
 		s.RangeHighKey = formatHistogramKey(rangeHiKey)
-		out = append(out, s)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("gosmo: histogram for %q: %w", st.Name, err)
-	}
-	return out, nil
+		return s, nil
+	})
 }
 
 // formatHistogramKey renders a RANGE_HI_KEY value as text. A NULL key (the
@@ -551,12 +444,7 @@ func formatHistogramKey(v any) string {
 }
 
 // Rename renames the statistic using sp_rename.
-func (st *Statistic) Rename(newName string) error {
-	return st.RenameContext(context.Background(), newName)
-}
-
-// RenameContext is the context-aware variant of Rename.
-func (st *Statistic) RenameContext(ctx context.Context, newName string) error {
+func (st *Statistic) Rename(ctx context.Context, newName string) error {
 	objName := st.table.FullName() + "." + quoteIdent(st.Name)
 	if _, err := st.table.db.exec(ctx,
 		"EXEC sp_rename @objname = @p1, @newname = @p2, @objtype = N'STATISTICS'",

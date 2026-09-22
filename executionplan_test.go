@@ -103,9 +103,9 @@ func TestCapturePlanKeepsEveryRowOfOneShowplanSet(t *testing.T) {
 	s := planTestServer(t, []fakePlanSet{
 		{cols: []string{planCol}, rows: []string{"<p1/>", "<p2/>", "<p3/>"}},
 	})
-	plan, err := s.DatabaseRef("tempdb").EstimatedPlanContext(context.Background(), "batch")
+	plan, err := s.DatabaseRef("tempdb").EstimatedPlan(context.Background(), "batch")
 	if err != nil {
-		t.Fatalf("EstimatedPlanContext: %v", err)
+		t.Fatalf("EstimatedPlan: %v", err)
 	}
 	want := []string{"<p1/>", "<p2/>", "<p3/>"}
 	if len(plan.All) != len(want) {
@@ -130,9 +130,9 @@ func TestCapturePlanKeepsEveryShowplanResultSet(t *testing.T) {
 		{cols: []string{"id"}, rows: []string{"row"}},
 		{cols: []string{planCol}, rows: []string{"<p2/>"}},
 	})
-	plan, err := s.DatabaseRef("tempdb").ActualPlanContext(context.Background(), "batch")
+	plan, err := s.DatabaseRef("tempdb").ActualPlan(context.Background(), "batch")
 	if err != nil {
-		t.Fatalf("ActualPlanContext: %v", err)
+		t.Fatalf("ActualPlan: %v", err)
 	}
 	if len(plan.All) != 2 || plan.All[0] != "<p1/>" || plan.All[1] != "<p2/>" {
 		t.Fatalf("All = %v, want [<p1/> <p2/>]", plan.All)
@@ -150,9 +150,9 @@ func TestCapturePlanIgnoresNonPlanResultSets(t *testing.T) {
 		{cols: []string{"name"}, rows: []string{"not a plan"}},
 		{cols: []string{planCol}, rows: []string{"<p1/>"}},
 	})
-	plan, err := s.DatabaseRef("tempdb").ActualPlanContext(context.Background(), "batch")
+	plan, err := s.DatabaseRef("tempdb").ActualPlan(context.Background(), "batch")
 	if err != nil {
-		t.Fatalf("ActualPlanContext: %v", err)
+		t.Fatalf("ActualPlan: %v", err)
 	}
 	if len(plan.All) != 1 || plan.All[0] != "<p1/>" {
 		t.Fatalf("All = %v, want [<p1/>]", plan.All)
@@ -165,7 +165,7 @@ func TestCapturePlanErrorsWhenNoPlanCameBack(t *testing.T) {
 	s := planTestServer(t, []fakePlanSet{
 		{cols: []string{"name"}, rows: []string{"not a plan"}},
 	})
-	if _, err := s.DatabaseRef("tempdb").EstimatedPlanContext(context.Background(), "batch"); err == nil {
+	if _, err := s.DatabaseRef("tempdb").EstimatedPlan(context.Background(), "batch"); err == nil {
 		t.Fatal("want an error when no showplan set came back, got nil")
 	}
 }

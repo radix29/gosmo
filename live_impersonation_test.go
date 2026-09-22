@@ -172,7 +172,7 @@ func TestLiveImpersonatedReadCutShort(t *testing.T) {
 // EffectiveServerPermissions now uses as well.
 func TestLiveImpersonatedPublicReads(t *testing.T) {
 	db, ctx, d := liveImpersonation(t)
-	perms, err := d.EffectivePermissionsContext(ctx, liveImpUser)
+	perms, err := d.EffectivePermissions(ctx, liveImpUser)
 	if err != nil || len(perms) == 0 {
 		t.Fatalf("EffectivePermissions = %d, %v", len(perms), err)
 	}
@@ -180,7 +180,7 @@ func TestLiveImpersonatedPublicReads(t *testing.T) {
 	if err := db.QueryRowContext(ctx, "SELECT SUSER_SNAME()").Scan(&login); err != nil {
 		t.Fatal(err)
 	}
-	sp, err := d.server.EffectiveServerPermissionsContext(ctx, login)
+	sp, err := d.server.EffectiveServerPermissions(ctx, login)
 	if err != nil || len(sp) == 0 {
 		t.Fatalf("EffectiveServerPermissions(%s) = %d, %v", login, len(sp), err)
 	}

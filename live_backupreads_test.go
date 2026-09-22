@@ -87,9 +87,9 @@ func TestLiveBackupReads(t *testing.T) {
 	srv := first.server
 
 	t.Run("headers", func(t *testing.T) {
-		headers, err := srv.BackupHeadersContext(ctx, device)
+		headers, err := srv.BackupHeaders(ctx, device)
 		if err != nil {
-			t.Fatalf("BackupHeadersContext: %v", err)
+			t.Fatalf("BackupHeaders: %v", err)
 		}
 		if len(headers) != 3 {
 			t.Fatalf("got %d backup sets, want 3", len(headers))
@@ -127,9 +127,9 @@ func TestLiveBackupReads(t *testing.T) {
 	})
 
 	t.Run("file list", func(t *testing.T) {
-		files, err := srv.BackupFileListContext(ctx, device)
+		files, err := srv.BackupFileList(ctx, device)
 		if err != nil {
-			t.Fatalf("BackupFileListContext: %v", err)
+			t.Fatalf("BackupFileList: %v", err)
 		}
 		assertBackupFileList(t, files, first.Name)
 	})
@@ -138,17 +138,17 @@ func TestLiveBackupReads(t *testing.T) {
 	// FILE clause this reads set 1, so a FileListForSet that ignored its
 	// argument would still return a plausible answer.
 	t.Run("file list for set two", func(t *testing.T) {
-		files, err := srv.BackupFileListForSetContext(ctx, device, 2)
+		files, err := srv.BackupFileListForSet(ctx, device, 2)
 		if err != nil {
-			t.Fatalf("BackupFileListForSetContext: %v", err)
+			t.Fatalf("BackupFileListForSet: %v", err)
 		}
 		assertBackupFileList(t, files, second.Name)
 	})
 
 	t.Run("history", func(t *testing.T) {
-		history, err := srv.BackupHistoryContext(ctx, first.Name)
+		history, err := srv.BackupHistory(ctx, first.Name)
 		if err != nil {
-			t.Fatalf("BackupHistoryContext: %v", err)
+			t.Fatalf("BackupHistory: %v", err)
 		}
 		if len(history) != 2 {
 			t.Fatalf("got %d history rows for %s, want 2 (the other database's must not be here)",
@@ -180,9 +180,9 @@ func TestLiveBackupReads(t *testing.T) {
 	})
 
 	t.Run("history of a database with none", func(t *testing.T) {
-		history, err := srv.BackupHistoryContext(ctx, "gosmo_no_such_database")
+		history, err := srv.BackupHistory(ctx, "gosmo_no_such_database")
 		if err != nil {
-			t.Fatalf("BackupHistoryContext for an unknown database: %v", err)
+			t.Fatalf("BackupHistory for an unknown database: %v", err)
 		}
 		if len(history) != 0 {
 			t.Errorf("got %d history rows, want none", len(history))

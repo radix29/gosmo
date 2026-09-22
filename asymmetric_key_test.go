@@ -54,12 +54,12 @@ func TestCreateAsymmetricKeyStatementRejects(t *testing.T) {
 func TestCreateAsymmetricKeyUnderScript(t *testing.T) {
 	ctx, col := WithScript(context.Background())
 	d := (&Server{}).DatabaseRef("AppDB")
-	if err := d.CreateAsymmetricKeyContext(ctx, AsymmetricKeySpec{Name: "k", Algorithm: AsymmetricKeyRSA2048}); err != nil {
+	if err := d.CreateAsymmetricKey(ctx, AsymmetricKeySpec{Name: "k", Algorithm: AsymmetricKeyRSA2048}); err != nil {
 		t.Fatal(err)
 	}
 	want := useAppDB + "CREATE ASYMMETRIC KEY [k] WITH ALGORITHM = RSA_2048"
-	if len(col.Statements) != 1 || col.Statements[0] != want {
-		t.Errorf("got %q, want [%q]", col.Statements, want)
+	if len(col.Statements()) != 1 || col.Statements()[0] != want {
+		t.Errorf("got %q, want [%q]", col.Statements(), want)
 	}
 }
 

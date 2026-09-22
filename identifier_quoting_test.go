@@ -79,7 +79,7 @@ func (c cannedRow) reply() *captureRows {
 	return &captureRows{cols: c.cols, rows: rows}
 }
 
-// tableMetadataRow satisfies Database.TableByNameContext's sys.tables lookup,
+// tableMetadataRow satisfies Database.TableByName's sys.tables lookup,
 // so a Scripter test gets past it to the SQL it actually wants to inspect.
 // The schema/name it reports are what the scripter then scripts.
 func tableMetadataRow(schema, name string) cannedRow {
@@ -189,7 +189,7 @@ func TestFragmentationQueriesBracketQuoteTheObjectName(t *testing.T) {
 		idx := &Index{Name: "IX_pad", IndexID: 2}
 		// The capture driver returns no rows, so this errors; the statement it
 		// generated on the way is what's under test.
-		_, _ = idx.FragmentationContext(context.Background(), tbl, "SAMPLED")
+		_, _ = idx.Fragmentation(context.Background(), tbl, "SAMPLED")
 
 		q := captured.find("dm_db_index_physical_stats")
 		if q == "" {
@@ -205,7 +205,7 @@ func TestFragmentationQueriesBracketQuoteTheObjectName(t *testing.T) {
 
 	t.Run("Table.FragmentationStats", func(t *testing.T) {
 		tbl := captureTable(t)
-		_, _ = tbl.FragmentationStatsContext(context.Background(), "LIMITED")
+		_, _ = tbl.FragmentationStats(context.Background(), "LIMITED")
 
 		q := captured.find("dm_db_index_physical_stats")
 		if q == "" {
@@ -231,7 +231,7 @@ func TestFragmentationQueryEscapesQuoteInObjectName(t *testing.T) {
 	captured.reset()
 
 	tbl := &Table{db: &Database{server: &Server{db: db}, Name: "testdb"}, Schema: "dbo", Name: "O'Brien.Log"}
-	_, _ = tbl.FragmentationStatsContext(context.Background(), "LIMITED")
+	_, _ = tbl.FragmentationStats(context.Background(), "LIMITED")
 
 	q := captured.find("dm_db_index_physical_stats")
 	if q == "" {
@@ -268,9 +268,9 @@ func TestScripterExistenceGuardsBracketQuoteTheObjectName(t *testing.T) {
 		captured.reset(tableMetadataRow(schema, name))
 
 		d := &Database{server: &Server{db: db}, Name: "testdb"}
-		out, err := NewScripter(d, opts).ScriptTableContext(context.Background(), schema, name)
+		out, err := NewScripter(d, opts).ScriptTable(context.Background(), schema, name)
 		if err != nil {
-			t.Fatalf("ScriptTableContext: %v", err)
+			t.Fatalf("ScriptTable: %v", err)
 		}
 		return out
 	}

@@ -31,14 +31,8 @@ import (
 
 // ScriptUserDefinedDataType generates the CREATE (or DROP) script for one
 // alias type.
-func (sc *Scripter) ScriptUserDefinedDataType(schema, name string) (string, error) {
-	return sc.ScriptUserDefinedDataTypeContext(context.Background(), schema, name)
-}
-
-// ScriptUserDefinedDataTypeContext is the context-aware variant of
-// ScriptUserDefinedDataType.
-func (sc *Scripter) ScriptUserDefinedDataTypeContext(ctx context.Context, schema, name string) (string, error) {
-	t, err := sc.db.UserDefinedDataTypeByNameContext(ctx, schema, name)
+func (sc *Scripter) ScriptUserDefinedDataType(ctx context.Context, schema, name string) (string, error) {
+	t, err := sc.db.UserDefinedDataTypeByName(ctx, schema, name)
 	if err != nil {
 		return "", err
 	}
@@ -104,24 +98,18 @@ func nullClause(nullable bool) string {
 
 // ScriptUserDefinedTableType generates the CREATE (or DROP) script for one
 // table type.
-func (sc *Scripter) ScriptUserDefinedTableType(schema, name string) (string, error) {
-	return sc.ScriptUserDefinedTableTypeContext(context.Background(), schema, name)
-}
-
-// ScriptUserDefinedTableTypeContext is the context-aware variant of
-// ScriptUserDefinedTableType.
 //
 // The columns are read only for a verb that emits a CREATE: a DROP names the
-// type and nothing else, and a caller scripting a drop should not pay for
-// the column read or fail on it.
-func (sc *Scripter) ScriptUserDefinedTableTypeContext(ctx context.Context, schema, name string) (string, error) {
-	t, err := sc.db.UserDefinedTableTypeByNameContext(ctx, schema, name)
+// type and nothing else, and a caller scripting a drop should not pay for the
+// column read or fail on it.
+func (sc *Scripter) ScriptUserDefinedTableType(ctx context.Context, schema, name string) (string, error) {
+	t, err := sc.db.UserDefinedTableTypeByName(ctx, schema, name)
 	if err != nil {
 		return "", err
 	}
 	var cols []*Column
 	if sc.opts.verb() != ScriptDrop {
-		if cols, err = t.ColumnsContext(ctx); err != nil {
+		if cols, err = t.Columns(ctx); err != nil {
 			return "", err
 		}
 	}
@@ -191,13 +179,8 @@ func tableTypeColumn(col *Column) string {
 // ============================================================
 
 // ScriptClrType generates the CREATE (or DROP) script for one CLR type.
-func (sc *Scripter) ScriptClrType(schema, name string) (string, error) {
-	return sc.ScriptClrTypeContext(context.Background(), schema, name)
-}
-
-// ScriptClrTypeContext is the context-aware variant of ScriptClrType.
-func (sc *Scripter) ScriptClrTypeContext(ctx context.Context, schema, name string) (string, error) {
-	t, err := sc.db.ClrTypeByNameContext(ctx, schema, name)
+func (sc *Scripter) ScriptClrType(ctx context.Context, schema, name string) (string, error) {
+	t, err := sc.db.ClrTypeByName(ctx, schema, name)
 	if err != nil {
 		return "", err
 	}
@@ -235,24 +218,18 @@ func buildClrTypeScript(t *ClrType, opts ScriptOptions) string {
 
 // ScriptXMLSchemaCollection generates the CREATE (or DROP) script for one XML
 // schema collection.
-func (sc *Scripter) ScriptXMLSchemaCollection(schema, name string) (string, error) {
-	return sc.ScriptXMLSchemaCollectionContext(context.Background(), schema, name)
-}
-
-// ScriptXMLSchemaCollectionContext is the context-aware variant of
-// ScriptXMLSchemaCollection.
 //
 // The schema documents are read only for a verb that emits a CREATE:
-// XML_SCHEMA_NAMESPACE reassembles the whole collection, which a drop does
-// not need.
-func (sc *Scripter) ScriptXMLSchemaCollectionContext(ctx context.Context, schema, name string) (string, error) {
-	c, err := sc.db.XMLSchemaCollectionByNameContext(ctx, schema, name)
+// XML_SCHEMA_NAMESPACE reassembles the whole collection, which a drop does not
+// need.
+func (sc *Scripter) ScriptXMLSchemaCollection(ctx context.Context, schema, name string) (string, error) {
+	c, err := sc.db.XMLSchemaCollectionByName(ctx, schema, name)
 	if err != nil {
 		return "", err
 	}
 	var def string
 	if sc.opts.verb() != ScriptDrop {
-		if def, err = c.DefinitionContext(ctx); err != nil {
+		if def, err = c.Definition(ctx); err != nil {
 			return "", err
 		}
 	}
@@ -298,13 +275,8 @@ func xmlSchemaCollectionGuard(c *XMLSchemaCollection, sense string) string {
 // ============================================================
 
 // ScriptRule generates the CREATE (or DROP) script for one rule.
-func (sc *Scripter) ScriptRule(schema, name string) (string, error) {
-	return sc.ScriptRuleContext(context.Background(), schema, name)
-}
-
-// ScriptRuleContext is the context-aware variant of ScriptRule.
-func (sc *Scripter) ScriptRuleContext(ctx context.Context, schema, name string) (string, error) {
-	r, err := sc.db.RuleByNameContext(ctx, schema, name)
+func (sc *Scripter) ScriptRule(ctx context.Context, schema, name string) (string, error) {
+	r, err := sc.db.RuleByName(ctx, schema, name)
 	if err != nil {
 		return "", err
 	}
@@ -313,13 +285,8 @@ func (sc *Scripter) ScriptRuleContext(ctx context.Context, schema, name string) 
 
 // ScriptDefault generates the CREATE (or DROP) script for one standalone
 // default.
-func (sc *Scripter) ScriptDefault(schema, name string) (string, error) {
-	return sc.ScriptDefaultContext(context.Background(), schema, name)
-}
-
-// ScriptDefaultContext is the context-aware variant of ScriptDefault.
-func (sc *Scripter) ScriptDefaultContext(ctx context.Context, schema, name string) (string, error) {
-	df, err := sc.db.DefaultByNameContext(ctx, schema, name)
+func (sc *Scripter) ScriptDefault(ctx context.Context, schema, name string) (string, error) {
+	df, err := sc.db.DefaultByName(ctx, schema, name)
 	if err != nil {
 		return "", err
 	}
@@ -367,13 +334,8 @@ func buildBoundObjectScript(keyword, schema, name, definition string, opts Scrip
 const assemblyBinaryPlaceholder = "0x00 /* <replace with the assembly binary, or a FROM '<path>' clause> */"
 
 // ScriptAssembly generates the CREATE (or DROP) script for one CLR assembly.
-func (sc *Scripter) ScriptAssembly(name string) (string, error) {
-	return sc.ScriptAssemblyContext(context.Background(), name)
-}
-
-// ScriptAssemblyContext is the context-aware variant of ScriptAssembly.
-func (sc *Scripter) ScriptAssemblyContext(ctx context.Context, name string) (string, error) {
-	a, err := sc.db.AssemblyByNameContext(ctx, name)
+func (sc *Scripter) ScriptAssembly(ctx context.Context, name string) (string, error) {
+	a, err := sc.db.AssemblyByName(ctx, name)
 	if err != nil {
 		return "", err
 	}
@@ -422,13 +384,8 @@ func buildAssemblyScript(a *Assembly, opts ScriptOptions) string {
 // ============================================================
 
 // ScriptPlanGuide generates the CREATE (or DROP) script for one plan guide.
-func (sc *Scripter) ScriptPlanGuide(name string) (string, error) {
-	return sc.ScriptPlanGuideContext(context.Background(), name)
-}
-
-// ScriptPlanGuideContext is the context-aware variant of ScriptPlanGuide.
-func (sc *Scripter) ScriptPlanGuideContext(ctx context.Context, name string) (string, error) {
-	g, err := sc.db.PlanGuideByNameContext(ctx, name)
+func (sc *Scripter) ScriptPlanGuide(ctx context.Context, name string) (string, error) {
+	g, err := sc.db.PlanGuideByName(ctx, name)
 	if err != nil {
 		return "", err
 	}

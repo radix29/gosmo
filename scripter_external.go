@@ -27,14 +27,8 @@ import (
 
 // ScriptExternalDataSource generates the CREATE (or DROP) script for one
 // external data source.
-func (sc *Scripter) ScriptExternalDataSource(name string) (string, error) {
-	return sc.ScriptExternalDataSourceContext(context.Background(), name)
-}
-
-// ScriptExternalDataSourceContext is the context-aware variant of
-// ScriptExternalDataSource.
-func (sc *Scripter) ScriptExternalDataSourceContext(ctx context.Context, name string) (string, error) {
-	s, err := sc.db.ExternalDataSourceByNameContext(ctx, name)
+func (sc *Scripter) ScriptExternalDataSource(ctx context.Context, name string) (string, error) {
+	s, err := sc.db.ExternalDataSourceByName(ctx, name)
 	if err != nil {
 		return "", err
 	}
@@ -101,14 +95,8 @@ func buildExternalDataSourceScript(s *ExternalDataSource, opts ScriptOptions) st
 
 // ScriptExternalFileFormat generates the CREATE (or DROP) script for one
 // external file format.
-func (sc *Scripter) ScriptExternalFileFormat(name string) (string, error) {
-	return sc.ScriptExternalFileFormatContext(context.Background(), name)
-}
-
-// ScriptExternalFileFormatContext is the context-aware variant of
-// ScriptExternalFileFormat.
-func (sc *Scripter) ScriptExternalFileFormatContext(ctx context.Context, name string) (string, error) {
-	f, err := sc.db.ExternalFileFormatByNameContext(ctx, name)
+func (sc *Scripter) ScriptExternalFileFormat(ctx context.Context, name string) (string, error) {
+	f, err := sc.db.ExternalFileFormatByName(ctx, name)
 	if err != nil {
 		return "", err
 	}
@@ -183,14 +171,8 @@ const externalLibraryContentPlaceholder = "0x00 /* <replace with the package byt
 
 // ScriptExternalLibrary generates the CREATE (or DROP) script for one
 // external library.
-func (sc *Scripter) ScriptExternalLibrary(name string) (string, error) {
-	return sc.ScriptExternalLibraryContext(context.Background(), name)
-}
-
-// ScriptExternalLibraryContext is the context-aware variant of
-// ScriptExternalLibrary.
-func (sc *Scripter) ScriptExternalLibraryContext(ctx context.Context, name string) (string, error) {
-	l, err := sc.db.ExternalLibraryByNameContext(ctx, name)
+func (sc *Scripter) ScriptExternalLibrary(ctx context.Context, name string) (string, error) {
+	l, err := sc.db.ExternalLibraryByName(ctx, name)
 	if err != nil {
 		return "", err
 	}

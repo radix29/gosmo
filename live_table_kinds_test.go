@@ -63,9 +63,9 @@ func TestLiveTableKinds(t *testing.T) {
 	}
 
 	t.Run("the kinds partition sys.tables", func(t *testing.T) {
-		all, err := d.TablesContext(ctx)
+		all, err := d.Tables(ctx)
 		if err != nil {
-			t.Fatalf("TablesContext: %v", err)
+			t.Fatalf("Tables: %v", err)
 		}
 		seen := map[string]int{}
 		kinds := []TableKind{TableKindUser, TableKindFileTable, TableKindExternal}
@@ -73,9 +73,9 @@ func TestLiveTableKinds(t *testing.T) {
 			kinds = append(kinds, TableKindGraph)
 		}
 		for _, k := range kinds {
-			listed, err := d.TablesOfKindContext(ctx, k)
+			listed, err := d.TablesOfKind(ctx, k)
 			if err != nil {
-				t.Fatalf("TablesOfKindContext(%s): %v", k, err)
+				t.Fatalf("TablesOfKind(%s): %v", k, err)
 			}
 			for _, name := range tableNames(listed) {
 				seen[name]++
@@ -100,9 +100,9 @@ func TestLiveTableKinds(t *testing.T) {
 		if !graphOK {
 			t.Skipf("major %d has no is_node/is_edge", major)
 		}
-		users, err := d.TablesOfKindContext(ctx, TableKindUser)
+		users, err := d.TablesOfKind(ctx, TableKindUser)
 		if err != nil {
-			t.Fatalf("TablesOfKindContext(user): %v", err)
+			t.Fatalf("TablesOfKind(user): %v", err)
 		}
 		if !hasName(users, "dbo.tk_plain") {
 			t.Errorf("user tables %v do not include dbo.tk_plain", tableNames(users))
@@ -113,9 +113,9 @@ func TestLiveTableKinds(t *testing.T) {
 			}
 		}
 
-		graph, err := d.TablesOfKindContext(ctx, TableKindGraph)
+		graph, err := d.TablesOfKind(ctx, TableKindGraph)
 		if err != nil {
-			t.Fatalf("TablesOfKindContext(graph): %v", err)
+			t.Fatalf("TablesOfKind(graph): %v", err)
 		}
 		for _, name := range []string{"dbo.tk_node", "dbo.tk_edge"} {
 			if !hasName(graph, name) {
@@ -133,16 +133,16 @@ func TestLiveTableKinds(t *testing.T) {
 		if graphOK {
 			t.Skipf("major %d has the graph columns", major)
 		}
-		_, err := d.TablesOfKindContext(ctx, TableKindGraph)
+		_, err := d.TablesOfKind(ctx, TableKindGraph)
 		if !errors.Is(err, ErrUnsupportedVersion) {
-			t.Errorf("TablesOfKindContext(graph) on major %d = %v, want ErrUnsupportedVersion", major, err)
+			t.Errorf("TablesOfKind(graph) on major %d = %v, want ErrUnsupportedVersion", major, err)
 		}
 	})
 
 	t.Run("presence of the scratch database's kinds", func(t *testing.T) {
-		p, err := d.TableKindsPresentContext(ctx)
+		p, err := d.TableKindsPresent(ctx)
 		if err != nil {
-			t.Fatalf("TableKindsPresentContext: %v", err)
+			t.Fatalf("TableKindsPresent: %v", err)
 		}
 		want := TableKindPresence{Graph: graphOK}
 		if p != want {
@@ -154,13 +154,13 @@ func TestLiveTableKinds(t *testing.T) {
 	// its tables are ordinary rows in sys.tables with is_ms_shipped = 1, and
 	// the reason the user listing has to exclude them at all.
 	t.Run("msdb's own tables are system tables", func(t *testing.T) {
-		msdb, err := srv.DatabaseByNameContext(ctx, "msdb")
+		msdb, err := srv.DatabaseByName(ctx, "msdb")
 		if err != nil {
-			t.Fatalf("DatabaseByNameContext(msdb): %v", err)
+			t.Fatalf("DatabaseByName(msdb): %v", err)
 		}
-		system, err := msdb.TablesOfKindContext(ctx, TableKindSystem)
+		system, err := msdb.TablesOfKind(ctx, TableKindSystem)
 		if err != nil {
-			t.Fatalf("TablesOfKindContext(system): %v", err)
+			t.Fatalf("TablesOfKind(system): %v", err)
 		}
 		if len(system) < 50 {
 			t.Fatalf("msdb reports %d system tables, want the catalog's own hundred-odd", len(system))
@@ -170,9 +170,9 @@ func TestLiveTableKinds(t *testing.T) {
 				t.Errorf("%s.%s came back from the system listing with IsSystem false", tb.Schema, tb.Name)
 			}
 		}
-		users, err := msdb.TablesContext(ctx)
+		users, err := msdb.Tables(ctx)
 		if err != nil {
-			t.Fatalf("TablesContext(msdb): %v", err)
+			t.Fatalf("Tables(msdb): %v", err)
 		}
 		for _, tb := range system {
 			if hasName(users, tb.Schema+"."+tb.Name) {
@@ -180,12 +180,12 @@ func TestLiveTableKinds(t *testing.T) {
 			}
 		}
 		// The by-name lookup deliberately does find one — see TableByName.
-		if _, err := msdb.TableByNameContext(ctx, system[0].Schema, system[0].Name); err != nil {
-			t.Errorf("TableByNameContext(%s.%s): %v", system[0].Schema, system[0].Name, err)
+		if _, err := msdb.TableByName(ctx, system[0].Schema, system[0].Name); err != nil {
+			t.Errorf("TableByName(%s.%s): %v", system[0].Schema, system[0].Name, err)
 		}
-		p, err := msdb.TableKindsPresentContext(ctx)
+		p, err := msdb.TableKindsPresent(ctx)
 		if err != nil {
-			t.Fatalf("TableKindsPresentContext(msdb): %v", err)
+			t.Fatalf("TableKindsPresent(msdb): %v", err)
 		}
 		if !p.System {
 			t.Errorf("msdb presence = %+v, want System true", p)
@@ -199,9 +199,9 @@ func TestLiveTableKinds(t *testing.T) {
 		}
 		defer dropFS()
 
-		fts, err := fdb.TablesOfKindContext(ctx, TableKindFileTable)
+		fts, err := fdb.TablesOfKind(ctx, TableKindFileTable)
 		if err != nil {
-			t.Fatalf("TablesOfKindContext(filetable): %v", err)
+			t.Fatalf("TablesOfKind(filetable): %v", err)
 		}
 		if !hasName(fts, "dbo.tk_files") {
 			t.Fatalf("filetables %v do not include dbo.tk_files", tableNames(fts))
@@ -209,16 +209,16 @@ func TestLiveTableKinds(t *testing.T) {
 		if !fts[0].IsFileTable {
 			t.Errorf("dbo.tk_files came back with IsFileTable false")
 		}
-		users, err := fdb.TablesOfKindContext(ctx, TableKindUser)
+		users, err := fdb.TablesOfKind(ctx, TableKindUser)
 		if err != nil {
-			t.Fatalf("TablesOfKindContext(user): %v", err)
+			t.Fatalf("TablesOfKind(user): %v", err)
 		}
 		if hasName(users, "dbo.tk_files") {
 			t.Errorf("the filetable is listed as a plain user table too: %v", tableNames(users))
 		}
-		p, err := fdb.TableKindsPresentContext(ctx)
+		p, err := fdb.TableKindsPresent(ctx)
 		if err != nil {
-			t.Fatalf("TableKindsPresentContext: %v", err)
+			t.Fatalf("TableKindsPresent: %v", err)
 		}
 		if !p.FileTable {
 			t.Errorf("presence = %+v, want FileTable true", p)
@@ -270,10 +270,10 @@ WITH FILESTREAM ( NON_TRANSACTED_ACCESS = FULL, DIRECTORY_NAME = N'` + name + `'
 		return nil, nil
 	}
 
-	d, err := srv.DatabaseByNameContext(ctx, name)
+	d, err := srv.DatabaseByName(ctx, name)
 	if err != nil {
 		drop()
-		t.Fatalf("DatabaseByNameContext(%s): %v", name, err)
+		t.Fatalf("DatabaseByName(%s): %v", name, err)
 	}
 	liveExecIn(t, d, ctx, `CREATE TABLE dbo.tk_files AS FileTable`)
 	return d, drop

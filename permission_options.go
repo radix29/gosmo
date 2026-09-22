@@ -117,38 +117,20 @@ func (p permissionStmt) render() (string, error) {
 
 // GrantPermissionWithOptions grants permission on schema.name to principal,
 // honouring opts — the WITH GRANT OPTION form of GrantPermission.
-func (d *Database) GrantPermissionWithOptions(schema, name string, permission ObjectPermission, principal string, opts PermissionOptions) error {
-	return d.GrantPermissionWithOptionsContext(context.Background(), schema, name, permission, principal, opts)
-}
-
-// GrantPermissionWithOptionsContext is the context-aware variant of
-// GrantPermissionWithOptions.
-func (d *Database) GrantPermissionWithOptionsContext(ctx context.Context, schema, name string, permission ObjectPermission, principal string, opts PermissionOptions) error {
+func (d *Database) GrantPermissionWithOptions(ctx context.Context, schema, name string, permission ObjectPermission, principal string, opts PermissionOptions) error {
 	return d.objectPermission(ctx, "GRANT", schema, name, permission, nil, principal, opts)
 }
 
 // DenyPermissionWithOptions denies permission on schema.name to principal,
 // honouring opts — the CASCADE form of DenyPermission.
-func (d *Database) DenyPermissionWithOptions(schema, name string, permission ObjectPermission, principal string, opts PermissionOptions) error {
-	return d.DenyPermissionWithOptionsContext(context.Background(), schema, name, permission, principal, opts)
-}
-
-// DenyPermissionWithOptionsContext is the context-aware variant of
-// DenyPermissionWithOptions.
-func (d *Database) DenyPermissionWithOptionsContext(ctx context.Context, schema, name string, permission ObjectPermission, principal string, opts PermissionOptions) error {
+func (d *Database) DenyPermissionWithOptions(ctx context.Context, schema, name string, permission ObjectPermission, principal string, opts PermissionOptions) error {
 	return d.objectPermission(ctx, "DENY", schema, name, permission, nil, principal, opts)
 }
 
 // RevokePermissionWithOptions revokes permission on schema.name from
 // principal, honouring opts — the CASCADE and GRANT OPTION FOR forms of
 // RevokePermission.
-func (d *Database) RevokePermissionWithOptions(schema, name string, permission ObjectPermission, principal string, opts PermissionOptions) error {
-	return d.RevokePermissionWithOptionsContext(context.Background(), schema, name, permission, principal, opts)
-}
-
-// RevokePermissionWithOptionsContext is the context-aware variant of
-// RevokePermissionWithOptions.
-func (d *Database) RevokePermissionWithOptionsContext(ctx context.Context, schema, name string, permission ObjectPermission, principal string, opts PermissionOptions) error {
+func (d *Database) RevokePermissionWithOptions(ctx context.Context, schema, name string, permission ObjectPermission, principal string, opts PermissionOptions) error {
 	return d.objectPermission(ctx, "REVOKE", schema, name, permission, nil, principal, opts)
 }
 
@@ -190,37 +172,19 @@ func fromOrTo(verb string) string {
 
 // GrantSchemaPermissionWithOptions grants permission on a schema to
 // principal, honouring opts.
-func (d *Database) GrantSchemaPermissionWithOptions(schemaName string, permission ObjectPermission, principal string, opts PermissionOptions) error {
-	return d.GrantSchemaPermissionWithOptionsContext(context.Background(), schemaName, permission, principal, opts)
-}
-
-// GrantSchemaPermissionWithOptionsContext is the context-aware variant of
-// GrantSchemaPermissionWithOptions.
-func (d *Database) GrantSchemaPermissionWithOptionsContext(ctx context.Context, schemaName string, permission ObjectPermission, principal string, opts PermissionOptions) error {
+func (d *Database) GrantSchemaPermissionWithOptions(ctx context.Context, schemaName string, permission ObjectPermission, principal string, opts PermissionOptions) error {
 	return d.schemaPermission(ctx, "GRANT", schemaName, permission, principal, opts)
 }
 
 // DenySchemaPermissionWithOptions denies permission on a schema to
 // principal, honouring opts.
-func (d *Database) DenySchemaPermissionWithOptions(schemaName string, permission ObjectPermission, principal string, opts PermissionOptions) error {
-	return d.DenySchemaPermissionWithOptionsContext(context.Background(), schemaName, permission, principal, opts)
-}
-
-// DenySchemaPermissionWithOptionsContext is the context-aware variant of
-// DenySchemaPermissionWithOptions.
-func (d *Database) DenySchemaPermissionWithOptionsContext(ctx context.Context, schemaName string, permission ObjectPermission, principal string, opts PermissionOptions) error {
+func (d *Database) DenySchemaPermissionWithOptions(ctx context.Context, schemaName string, permission ObjectPermission, principal string, opts PermissionOptions) error {
 	return d.schemaPermission(ctx, "DENY", schemaName, permission, principal, opts)
 }
 
 // RevokeSchemaPermissionWithOptions revokes permission on a schema from
 // principal, honouring opts.
-func (d *Database) RevokeSchemaPermissionWithOptions(schemaName string, permission ObjectPermission, principal string, opts PermissionOptions) error {
-	return d.RevokeSchemaPermissionWithOptionsContext(context.Background(), schemaName, permission, principal, opts)
-}
-
-// RevokeSchemaPermissionWithOptionsContext is the context-aware variant of
-// RevokeSchemaPermissionWithOptions.
-func (d *Database) RevokeSchemaPermissionWithOptionsContext(ctx context.Context, schemaName string, permission ObjectPermission, principal string, opts PermissionOptions) error {
+func (d *Database) RevokeSchemaPermissionWithOptions(ctx context.Context, schemaName string, permission ObjectPermission, principal string, opts PermissionOptions) error {
 	return d.schemaPermission(ctx, "REVOKE", schemaName, permission, principal, opts)
 }
 
@@ -246,37 +210,19 @@ func (d *Database) schemaPermission(ctx context.Context, verb, schemaName string
 
 // GrantDatabasePermissionWithOptions grants a database-level permission to
 // principal, honouring opts.
-func (d *Database) GrantDatabasePermissionWithOptions(permission, principal string, opts PermissionOptions) error {
-	return d.GrantDatabasePermissionWithOptionsContext(context.Background(), permission, principal, opts)
-}
-
-// GrantDatabasePermissionWithOptionsContext is the context-aware variant of
-// GrantDatabasePermissionWithOptions.
-func (d *Database) GrantDatabasePermissionWithOptionsContext(ctx context.Context, permission, principal string, opts PermissionOptions) error {
+func (d *Database) GrantDatabasePermissionWithOptions(ctx context.Context, permission, principal string, opts PermissionOptions) error {
 	return d.databasePermission(ctx, "GRANT", permission, principal, opts)
 }
 
 // DenyDatabasePermissionWithOptions denies a database-level permission to
 // principal, honouring opts.
-func (d *Database) DenyDatabasePermissionWithOptions(permission, principal string, opts PermissionOptions) error {
-	return d.DenyDatabasePermissionWithOptionsContext(context.Background(), permission, principal, opts)
-}
-
-// DenyDatabasePermissionWithOptionsContext is the context-aware variant of
-// DenyDatabasePermissionWithOptions.
-func (d *Database) DenyDatabasePermissionWithOptionsContext(ctx context.Context, permission, principal string, opts PermissionOptions) error {
+func (d *Database) DenyDatabasePermissionWithOptions(ctx context.Context, permission, principal string, opts PermissionOptions) error {
 	return d.databasePermission(ctx, "DENY", permission, principal, opts)
 }
 
 // RevokeDatabasePermissionWithOptions revokes a database-level permission
 // from principal, honouring opts.
-func (d *Database) RevokeDatabasePermissionWithOptions(permission, principal string, opts PermissionOptions) error {
-	return d.RevokeDatabasePermissionWithOptionsContext(context.Background(), permission, principal, opts)
-}
-
-// RevokeDatabasePermissionWithOptionsContext is the context-aware variant of
-// RevokeDatabasePermissionWithOptions.
-func (d *Database) RevokeDatabasePermissionWithOptionsContext(ctx context.Context, permission, principal string, opts PermissionOptions) error {
+func (d *Database) RevokeDatabasePermissionWithOptions(ctx context.Context, permission, principal string, opts PermissionOptions) error {
 	return d.databasePermission(ctx, "REVOKE", permission, principal, opts)
 }
 
@@ -299,40 +245,26 @@ func (d *Database) databasePermission(ctx context.Context, verb, permission, pri
 
 // GrantServerPermissionWithOptions grants a server-level permission to
 // principal, honouring opts.
-func (s *Server) GrantServerPermissionWithOptions(permission, principal string, opts PermissionOptions) error {
-	return s.GrantServerPermissionWithOptionsContext(context.Background(), permission, principal, opts)
-}
-
-// GrantServerPermissionWithOptionsContext is the context-aware variant of
-// GrantServerPermissionWithOptions. See GrantServerPermissionContext for the
-// USE master prefix every server-scoped statement carries.
-func (s *Server) GrantServerPermissionWithOptionsContext(ctx context.Context, permission, principal string, opts PermissionOptions) error {
+//
+// See GrantServerPermission for the USE master prefix every
+// server-scoped statement carries.
+func (s *Server) GrantServerPermissionWithOptions(ctx context.Context, permission, principal string, opts PermissionOptions) error {
 	return s.serverPermission(ctx, "GRANT", permission, principal, opts)
 }
 
 // DenyServerPermissionWithOptions denies a server-level permission to
 // principal, honouring opts.
-func (s *Server) DenyServerPermissionWithOptions(permission, principal string, opts PermissionOptions) error {
-	return s.DenyServerPermissionWithOptionsContext(context.Background(), permission, principal, opts)
-}
-
-// DenyServerPermissionWithOptionsContext is the context-aware variant of
-// DenyServerPermissionWithOptions. See GrantServerPermissionContext for the
-// USE master prefix.
-func (s *Server) DenyServerPermissionWithOptionsContext(ctx context.Context, permission, principal string, opts PermissionOptions) error {
+//
+// See GrantServerPermission for the USE master prefix.
+func (s *Server) DenyServerPermissionWithOptions(ctx context.Context, permission, principal string, opts PermissionOptions) error {
 	return s.serverPermission(ctx, "DENY", permission, principal, opts)
 }
 
 // RevokeServerPermissionWithOptions revokes a server-level permission from
 // principal, honouring opts.
-func (s *Server) RevokeServerPermissionWithOptions(permission, principal string, opts PermissionOptions) error {
-	return s.RevokeServerPermissionWithOptionsContext(context.Background(), permission, principal, opts)
-}
-
-// RevokeServerPermissionWithOptionsContext is the context-aware variant of
-// RevokeServerPermissionWithOptions. See GrantServerPermissionContext for the
-// USE master prefix.
-func (s *Server) RevokeServerPermissionWithOptionsContext(ctx context.Context, permission, principal string, opts PermissionOptions) error {
+//
+// See GrantServerPermission for the USE master prefix.
+func (s *Server) RevokeServerPermissionWithOptions(ctx context.Context, permission, principal string, opts PermissionOptions) error {
 	return s.serverPermission(ctx, "REVOKE", permission, principal, opts)
 }
 
@@ -345,7 +277,7 @@ func (s *Server) serverPermission(ctx context.Context, verb, permission, princip
 	if err != nil {
 		return err
 	}
-	if err := s.execContext(ctx, "USE master; "+stmt); err != nil {
+	if err := s.exec(ctx, "USE master; "+stmt); err != nil {
 		return fmt.Errorf("gosmo: %s %s %s %q: %w", lower, permission, fromOrTo(verb), principal, err)
 	}
 	return nil

@@ -88,12 +88,12 @@ func TestLiveScriptedFamiliesRecreateTheirObjects(t *testing.T) {
 	// Rules and defaults first: the alias type's script binds them, and a
 	// binding to an object that does not exist yet is refused.
 	t.Run("rule", func(t *testing.T) {
-		script, err := sc.ScriptRuleContext(ctx, "dbo", "scr_rule")
+		script, err := sc.ScriptRule(ctx, "dbo", "scr_rule")
 		if err != nil {
 			t.Fatalf("ScriptRule: %v", err)
 		}
 		liveRunScript(t, dst, ctx, script)
-		r, err := dst.RuleByNameContext(ctx, "dbo", "scr_rule")
+		r, err := dst.RuleByName(ctx, "dbo", "scr_rule")
 		if err != nil {
 			t.Fatalf("the scripted rule is not there: %v", err)
 		}
@@ -103,28 +103,28 @@ func TestLiveScriptedFamiliesRecreateTheirObjects(t *testing.T) {
 	})
 
 	t.Run("default", func(t *testing.T) {
-		script, err := sc.ScriptDefaultContext(ctx, "dbo", "scr_default")
+		script, err := sc.ScriptDefault(ctx, "dbo", "scr_default")
 		if err != nil {
 			t.Fatalf("ScriptDefault: %v", err)
 		}
 		liveRunScript(t, dst, ctx, script)
-		if _, err := dst.DefaultByNameContext(ctx, "dbo", "scr_default"); err != nil {
+		if _, err := dst.DefaultByName(ctx, "dbo", "scr_default"); err != nil {
 			t.Fatalf("the scripted default is not there: %v", err)
 		}
 	})
 
 	t.Run("alias type keeps its width, nullability and bound rule", func(t *testing.T) {
-		script, err := sc.ScriptUserDefinedDataTypeContext(ctx, "dbo", "scr_alias")
+		script, err := sc.ScriptUserDefinedDataType(ctx, "dbo", "scr_alias")
 		if err != nil {
 			t.Fatalf("ScriptUserDefinedDataType: %v", err)
 		}
 		liveRunScript(t, dst, ctx, script)
 
-		before, err := src.UserDefinedDataTypeByNameContext(ctx, "dbo", "scr_alias")
+		before, err := src.UserDefinedDataTypeByName(ctx, "dbo", "scr_alias")
 		if err != nil {
 			t.Fatalf("read the original: %v", err)
 		}
-		after, err := dst.UserDefinedDataTypeByNameContext(ctx, "dbo", "scr_alias")
+		after, err := dst.UserDefinedDataTypeByName(ctx, "dbo", "scr_alias")
 		if err != nil {
 			t.Fatalf("the scripted type is not there: %v", err)
 		}
@@ -142,17 +142,17 @@ func TestLiveScriptedFamiliesRecreateTheirObjects(t *testing.T) {
 	})
 
 	t.Run("table type keeps its columns", func(t *testing.T) {
-		script, err := sc.ScriptUserDefinedTableTypeContext(ctx, "dbo", "scr_tabletype")
+		script, err := sc.ScriptUserDefinedTableType(ctx, "dbo", "scr_tabletype")
 		if err != nil {
 			t.Fatalf("ScriptUserDefinedTableType: %v", err)
 		}
 		liveRunScript(t, dst, ctx, script)
 
-		after, err := dst.UserDefinedTableTypeByNameContext(ctx, "dbo", "scr_tabletype")
+		after, err := dst.UserDefinedTableTypeByName(ctx, "dbo", "scr_tabletype")
 		if err != nil {
 			t.Fatalf("the scripted table type is not there: %v", err)
 		}
-		cols, err := after.ColumnsContext(ctx)
+		cols, err := after.Columns(ctx)
 		if err != nil {
 			t.Fatalf("columns of the recreated type: %v", err)
 		}
@@ -162,17 +162,17 @@ func TestLiveScriptedFamiliesRecreateTheirObjects(t *testing.T) {
 	})
 
 	t.Run("XML schema collection keeps its documents", func(t *testing.T) {
-		script, err := sc.ScriptXMLSchemaCollectionContext(ctx, "dbo", "scr_xsd")
+		script, err := sc.ScriptXMLSchemaCollection(ctx, "dbo", "scr_xsd")
 		if err != nil {
 			t.Fatalf("ScriptXMLSchemaCollection: %v", err)
 		}
 		liveRunScript(t, dst, ctx, script)
 
-		after, err := dst.XMLSchemaCollectionByNameContext(ctx, "dbo", "scr_xsd")
+		after, err := dst.XMLSchemaCollectionByName(ctx, "dbo", "scr_xsd")
 		if err != nil {
 			t.Fatalf("the scripted collection is not there: %v", err)
 		}
-		def, err := after.DefinitionContext(ctx)
+		def, err := after.Definition(ctx)
 		if err != nil {
 			t.Fatalf("definition of the recreated collection: %v", err)
 		}
@@ -182,19 +182,19 @@ func TestLiveScriptedFamiliesRecreateTheirObjects(t *testing.T) {
 	})
 
 	t.Run("plan guide", func(t *testing.T) {
-		script, err := sc.ScriptPlanGuideContext(ctx, "scr_pg")
+		script, err := sc.ScriptPlanGuide(ctx, "scr_pg")
 		if err != nil {
 			t.Fatalf("ScriptPlanGuide: %v", err)
 		}
 		liveRunScript(t, dst, ctx, script)
 
-		after, err := dst.PlanGuideByNameContext(ctx, "scr_pg")
+		after, err := dst.PlanGuideByName(ctx, "scr_pg")
 		if err != nil {
 			t.Fatalf("the scripted plan guide is not there: %v", err)
 		}
 		// The match is textual, so a query text that came back re-escaped or
 		// re-wrapped is a guide that matches nothing.
-		before, err := src.PlanGuideByNameContext(ctx, "scr_pg")
+		before, err := src.PlanGuideByName(ctx, "scr_pg")
 		if err != nil {
 			t.Fatalf("read the original: %v", err)
 		}
@@ -223,16 +223,16 @@ func TestLiveScriptedFamiliesRecreateTheirObjects(t *testing.T) {
 			gone   func() error
 		}{
 			{"plan guide",
-				func() (string, error) { return dropper.ScriptPlanGuideContext(ctx, "scr_pg") },
-				func() error { _, err := dst.PlanGuideByNameContext(ctx, "scr_pg"); return err }},
+				func() (string, error) { return dropper.ScriptPlanGuide(ctx, "scr_pg") },
+				func() error { _, err := dst.PlanGuideByName(ctx, "scr_pg"); return err }},
 			{"XML schema collection",
-				func() (string, error) { return dropper.ScriptXMLSchemaCollectionContext(ctx, "dbo", "scr_xsd") },
-				func() error { _, err := dst.XMLSchemaCollectionByNameContext(ctx, "dbo", "scr_xsd"); return err }},
+				func() (string, error) { return dropper.ScriptXMLSchemaCollection(ctx, "dbo", "scr_xsd") },
+				func() error { _, err := dst.XMLSchemaCollectionByName(ctx, "dbo", "scr_xsd"); return err }},
 			{"table type",
 				func() (string, error) {
-					return dropper.ScriptUserDefinedTableTypeContext(ctx, "dbo", "scr_tabletype")
+					return dropper.ScriptUserDefinedTableType(ctx, "dbo", "scr_tabletype")
 				},
-				func() error { _, err := dst.UserDefinedTableTypeByNameContext(ctx, "dbo", "scr_tabletype"); return err }},
+				func() error { _, err := dst.UserDefinedTableTypeByName(ctx, "dbo", "scr_tabletype"); return err }},
 		} {
 			t.Run(tc.name, func(t *testing.T) {
 				script, err := tc.script()
@@ -284,22 +284,22 @@ func TestLiveScriptedClrFamiliesReadRealCatalogRows(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewServer: %v", err)
 	}
-	d, err := srv.DatabaseByNameContext(ctx, "master")
+	d, err := srv.DatabaseByName(ctx, "master")
 	if err != nil {
-		t.Fatalf("DatabaseByNameContext master: %v", err)
+		t.Fatalf("DatabaseByName master: %v", err)
 	}
 	sc := NewScripter(d, DefaultScriptOptions())
 
 	t.Run("assembly keeps the permission set the catalog reports", func(t *testing.T) {
 		const name = "Microsoft.SqlServer.Types"
-		a, err := d.AssemblyByNameContext(ctx, name)
+		a, err := d.AssemblyByName(ctx, name)
 		if err != nil {
 			t.Fatalf("AssemblyByName %s: %v — every database has this assembly", name, err)
 		}
 		if a.PermissionSet == "" {
 			t.Fatal("the assembly read back with an empty permission set")
 		}
-		script, err := sc.ScriptAssemblyContext(ctx, name)
+		script, err := sc.ScriptAssembly(ctx, name)
 		if err != nil {
 			t.Fatalf("ScriptAssembly: %v", err)
 		}
@@ -326,14 +326,14 @@ func TestLiveScriptedClrFamiliesReadRealCatalogRows(t *testing.T) {
 		{"hierarchyid", "Microsoft.SqlServer.Types.SqlHierarchyId"},
 	} {
 		t.Run("CLR type "+tc.name, func(t *testing.T) {
-			ct, err := d.ClrTypeByNameContext(ctx, "sys", tc.name)
+			ct, err := d.ClrTypeByName(ctx, "sys", tc.name)
 			if err != nil {
 				t.Fatalf("ClrTypeByName sys.%s: %v — this type is in every database", tc.name, err)
 			}
 			if ct.AssemblyClass != tc.class {
 				t.Errorf("assembly class = %q, want %q — the catalog read picked up the wrong column", ct.AssemblyClass, tc.class)
 			}
-			script, err := sc.ScriptClrTypeContext(ctx, "sys", tc.name)
+			script, err := sc.ScriptClrType(ctx, "sys", tc.name)
 			if err != nil {
 				t.Fatalf("ScriptClrType: %v", err)
 			}

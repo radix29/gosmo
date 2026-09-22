@@ -229,12 +229,7 @@ func scanJob(s *Server, scan func(dest ...any) error) (*Job, error) {
 }
 
 // Jobs returns all SQL Server Agent jobs from msdb.
-func (s *Server) Jobs() ([]*Job, error) {
-	return s.JobsContext(context.Background())
-}
-
-// JobsContext is the context-aware variant of Jobs.
-func (s *Server) JobsContext(ctx context.Context) ([]*Job, error) {
+func (s *Server) Jobs(ctx context.Context) ([]*Job, error) {
 	const q = jobSelect + `
 ORDER  BY j.name`
 
@@ -268,19 +263,14 @@ ORDER  BY j.name`
 // (AddStep, AttachSchedule, Start, Rename, ...), so this handle is enough
 // to keep operating on a job the caller already knows exists — and is the
 // form to use when there is nothing to read yet: under a WithScript-derived
-// context, JobByNameContext's lookup is a real read and a job whose
+// context, JobByName's lookup is a real read and a job whose
 // sp_add_job was merely collected is not there to find.
 func (s *Server) JobRef(name string) *Job {
 	return &Job{server: s, Name: name}
 }
 
 // JobByName returns a single job by name using a direct parameterised query.
-func (s *Server) JobByName(name string) (*Job, error) {
-	return s.JobByNameContext(context.Background(), name)
-}
-
-// JobByNameContext is the context-aware variant of JobByName.
-func (s *Server) JobByNameContext(ctx context.Context, name string) (*Job, error) {
+func (s *Server) JobByName(ctx context.Context, name string) (*Job, error) {
 	const q = jobSelect + `
 WHERE  j.name = @p1`
 
@@ -301,52 +291,36 @@ WHERE  j.name = @p1`
 }
 
 // Start starts the job, optionally from a specific step name.
-func (j *Job) Start(stepName string) error {
-	return j.StartContext(context.Background(), stepName)
-}
-
-// StartContext is the context-aware variant of Start.
-func (j *Job) StartContext(ctx context.Context, stepName string) error {
+func (j *Job) Start(ctx context.Context, stepName string) error {
 	q := fmt.Sprintf("EXEC msdb.dbo.sp_start_job @job_name = N'%s'", escapeSingle(j.Name))
 	if stepName != "" {
 		q += fmt.Sprintf(", @step_name = N'%s'", escapeSingle(stepName))
 	}
-	if err := j.server.execContext(ctx, q); err != nil {
+	if err := j.server.exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: start job %q: %w", j.Name, err)
 	}
 	return nil
 }
 
 // Stop stops a running job.
-func (j *Job) Stop() error {
-	return j.StopContext(context.Background())
-}
-
-// StopContext is the context-aware variant of Stop.
-func (j *Job) StopContext(ctx context.Context) error {
+func (j *Job) Stop(ctx context.Context) error {
 	q := fmt.Sprintf("EXEC msdb.dbo.sp_stop_job @job_name = N'%s'", escapeSingle(j.Name))
-	if err := j.server.execContext(ctx, q); err != nil {
+	if err := j.server.exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: stop job %q: %w", j.Name, err)
 	}
 	return nil
 }
 
 // Enable enables the job.
-func (j *Job) Enable() error { return j.EnableContext(context.Background()) }
-
-// EnableContext is the context-aware variant of Enable.
-func (j *Job) EnableContext(ctx context.Context) error { return j.setEnabled(ctx, true) }
+func (j *Job) Enable(ctx context.Context) error { return j.setEnabled(ctx, true) }
 
 // Disable disables the job.
-func (j *Job) Disable() error { return j.DisableContext(context.Background()) }
-
-// DisableContext is the context-aware variant of Disable.
-func (j *Job) DisableContext(ctx context.Context) error { return j.setEnabled(ctx, false) }
+func (j *Job) Disable(ctx context.Context) error { return j.setEnabled(ctx, false) }
 
 func (j *Job) setEnabled(ctx context.Context, on bool) error {
 	q := fmt.Sprintf("EXEC msdb.dbo.sp_update_job @job_name = N'%s', @enabled = %d",
 		escapeSingle(j.Name), boolToInt(on))
-	if err := j.server.execContext(ctx, q); err != nil {
+	if err := j.server.exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: set enabled=%v for job %q: %w", on, j.Name, err)
 	}
 	setIfApplied(ctx, &j.IsEnabled, on)
@@ -354,27 +328,19 @@ func (j *Job) setEnabled(ctx context.Context, on bool) error {
 }
 
 // Drop drops the agent job.
-func (j *Job) Drop() error {
-	return j.DropContext(context.Background())
-}
-
-// DropContext is the context-aware variant of Drop.
-func (j *Job) DropContext(ctx context.Context) error {
+func (j *Job) Drop(ctx context.Context) error {
 	q := fmt.Sprintf("EXEC msdb.dbo.sp_delete_job @job_name = N'%s'", escapeSingle(j.Name))
-	if err := j.server.execContext(ctx, q); err != nil {
+	if err := j.server.exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: drop job %q: %w", j.Name, err)
 	}
 	return nil
 }
 
 // Rename changes the job's name.
-func (j *Job) Rename(newName string) error { return j.RenameContext(context.Background(), newName) }
-
-// RenameContext is the context-aware variant of Rename.
-func (j *Job) RenameContext(ctx context.Context, newName string) error {
+func (j *Job) Rename(ctx context.Context, newName string) error {
 	q := fmt.Sprintf("EXEC msdb.dbo.sp_update_job @job_name = N'%s', @new_name = N'%s'",
 		escapeSingle(j.Name), escapeSingle(newName))
-	if err := j.server.execContext(ctx, q); err != nil {
+	if err := j.server.exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: rename job %q to %q: %w", j.Name, newName, err)
 	}
 	setIfApplied(ctx, &j.Name, newName)
@@ -382,15 +348,10 @@ func (j *Job) RenameContext(ctx context.Context, newName string) error {
 }
 
 // SetDescription changes the job's description.
-func (j *Job) SetDescription(desc string) error {
-	return j.SetDescriptionContext(context.Background(), desc)
-}
-
-// SetDescriptionContext is the context-aware variant of SetDescription.
-func (j *Job) SetDescriptionContext(ctx context.Context, desc string) error {
+func (j *Job) SetDescription(ctx context.Context, desc string) error {
 	q := fmt.Sprintf("EXEC msdb.dbo.sp_update_job @job_name = N'%s', @description = N'%s'",
 		escapeSingle(j.Name), escapeSingle(desc))
-	if err := j.server.execContext(ctx, q); err != nil {
+	if err := j.server.exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: set description for job %q: %w", j.Name, err)
 	}
 	setIfApplied(ctx, &j.Description, desc)
@@ -398,15 +359,10 @@ func (j *Job) SetDescriptionContext(ctx context.Context, desc string) error {
 }
 
 // SetCategory reassigns the job's category.
-func (j *Job) SetCategory(category string) error {
-	return j.SetCategoryContext(context.Background(), category)
-}
-
-// SetCategoryContext is the context-aware variant of SetCategory.
-func (j *Job) SetCategoryContext(ctx context.Context, category string) error {
+func (j *Job) SetCategory(ctx context.Context, category string) error {
 	q := fmt.Sprintf("EXEC msdb.dbo.sp_update_job @job_name = N'%s', @category_name = N'%s'",
 		escapeSingle(j.Name), escapeSingle(category))
-	if err := j.server.execContext(ctx, q); err != nil {
+	if err := j.server.exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: set category for job %q: %w", j.Name, err)
 	}
 	setIfApplied(ctx, &j.Category, category)
@@ -414,15 +370,10 @@ func (j *Job) SetCategoryContext(ctx context.Context, category string) error {
 }
 
 // SetOwner reassigns the job's owner login.
-func (j *Job) SetOwner(loginName string) error {
-	return j.SetOwnerContext(context.Background(), loginName)
-}
-
-// SetOwnerContext is the context-aware variant of SetOwner.
-func (j *Job) SetOwnerContext(ctx context.Context, loginName string) error {
+func (j *Job) SetOwner(ctx context.Context, loginName string) error {
 	q := fmt.Sprintf("EXEC msdb.dbo.sp_update_job @job_name = N'%s', @owner_login_name = N'%s'",
 		escapeSingle(j.Name), escapeSingle(loginName))
-	if err := j.server.execContext(ctx, q); err != nil {
+	if err := j.server.exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: set owner for job %q: %w", j.Name, err)
 	}
 	setIfApplied(ctx, &j.OwnerLoginName, loginName)
@@ -430,15 +381,10 @@ func (j *Job) SetOwnerContext(ctx context.Context, loginName string) error {
 }
 
 // SetStartStep changes which step the job begins execution from.
-func (j *Job) SetStartStep(stepID int) error {
-	return j.SetStartStepContext(context.Background(), stepID)
-}
-
-// SetStartStepContext is the context-aware variant of SetStartStep.
-func (j *Job) SetStartStepContext(ctx context.Context, stepID int) error {
+func (j *Job) SetStartStep(ctx context.Context, stepID int) error {
 	q := fmt.Sprintf("EXEC msdb.dbo.sp_update_job @job_name = N'%s', @start_step_id = %d",
 		escapeSingle(j.Name), stepID)
-	if err := j.server.execContext(ctx, q); err != nil {
+	if err := j.server.exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: set start step for job %q: %w", j.Name, err)
 	}
 	setIfApplied(ctx, &j.StartStepID, stepID)
@@ -455,18 +401,13 @@ func (j *Job) SetStartStepContext(ctx context.Context, stepID int) error {
 // notify_level_email as 0 and reports no error, since a level with nobody to
 // mail is meaningless to it. Verified on SQL Server 17.0.1135.8, 2026-09-17,
 // and the batched Job.Alter behaves the same way.
-func (j *Job) SetEmailNotify(operatorName string, level NotifyLevel) error {
-	return j.SetEmailNotifyContext(context.Background(), operatorName, level)
-}
-
-// SetEmailNotifyContext is the context-aware variant of SetEmailNotify.
-func (j *Job) SetEmailNotifyContext(ctx context.Context, operatorName string, level NotifyLevel) error {
+func (j *Job) SetEmailNotify(ctx context.Context, operatorName string, level NotifyLevel) error {
 	q := fmt.Sprintf("EXEC msdb.dbo.sp_update_job @job_name = N'%s', @notify_level_email = %d",
 		escapeSingle(j.Name), int(level))
 	if operatorName != "" {
 		q += fmt.Sprintf(", @notify_email_operator_name = N'%s'", escapeSingle(operatorName))
 	}
-	if err := j.server.execContext(ctx, q); err != nil {
+	if err := j.server.exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: set email notification for job %q: %w", j.Name, err)
 	}
 	setIfApplied(ctx, &j.NotifyLevelEmail, level)
@@ -477,15 +418,10 @@ func (j *Job) SetEmailNotifyContext(ctx context.Context, operatorName string, le
 }
 
 // SetDeleteLevel sets the job's automatic-delete condition.
-func (j *Job) SetDeleteLevel(level NotifyLevel) error {
-	return j.SetDeleteLevelContext(context.Background(), level)
-}
-
-// SetDeleteLevelContext is the context-aware variant of SetDeleteLevel.
-func (j *Job) SetDeleteLevelContext(ctx context.Context, level NotifyLevel) error {
+func (j *Job) SetDeleteLevel(ctx context.Context, level NotifyLevel) error {
 	q := fmt.Sprintf("EXEC msdb.dbo.sp_update_job @job_name = N'%s', @delete_level = %d",
 		escapeSingle(j.Name), int(level))
-	if err := j.server.execContext(ctx, q); err != nil {
+	if err := j.server.exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: set delete level for job %q: %w", j.Name, err)
 	}
 	setIfApplied(ctx, &j.DeleteLevel, level)
@@ -493,18 +429,14 @@ func (j *Job) SetDeleteLevelContext(ctx context.Context, level NotifyLevel) erro
 }
 
 // CreateJob creates a new SQL Server Agent job.
-func (s *Server) CreateJob(req CreateJobRequest) (*Job, error) {
-	return s.CreateJobContext(context.Background(), req)
-}
-
-// CreateJobContext is the context-aware variant of CreateJob. It also
-// enlists the job to run on the local server via sp_add_jobserver —
-// without that, SQL Server Agent refuses to start the job (sp_start_job:
-// "does not have any job server or servers defined") or let an alert
-// target it (sp_update_alert/sp_add_alert: "cannot be used by an alert").
-// Multi-server (MSX/TSX) target-server selection is out of scope here, so
-// "(local)" is the only target.
-func (s *Server) CreateJobContext(ctx context.Context, req CreateJobRequest) (*Job, error) {
+//
+// It also enlists the job to run on the local server via sp_add_jobserver —
+// without that, SQL Server Agent refuses to start the job (sp_start_job: "does
+// not have any job server or servers defined") or let an alert target it
+// (sp_update_alert/sp_add_alert: "cannot be used by an alert"). Multi-server
+// (MSX/TSX) target-server selection is out of scope here, so "(local)" is the
+// only target.
+func (s *Server) CreateJob(ctx context.Context, req CreateJobRequest) (*Job, error) {
 	if req.Name == "" {
 		return nil, fmt.Errorf("gosmo: create job: name is required")
 	}
@@ -520,29 +452,24 @@ func (s *Server) CreateJobContext(ctx context.Context, req CreateJobRequest) (*J
 	if req.OwnerLogin != "" {
 		q += fmt.Sprintf(", @owner_login_name = N'%s'", escapeSingle(req.OwnerLogin))
 	}
-	if err := s.execContext(ctx, q); err != nil {
+	if err := s.exec(ctx, q); err != nil {
 		return nil, fmt.Errorf("gosmo: create job %q: %w", req.Name, err)
 	}
 	enlistQ := fmt.Sprintf("EXEC msdb.dbo.sp_add_jobserver @job_name = N'%s', @server_name = N'(local)'", escapeSingle(req.Name))
-	if err := s.execContext(ctx, enlistQ); err != nil {
+	if err := s.exec(ctx, enlistQ); err != nil {
 		return nil, fmt.Errorf("gosmo: enlist job %q on local server: %w", req.Name, err)
 	}
 	if Scripting(ctx) {
-		// See CreateScheduleContext: the read-back is a real query, and the
+		// See CreateSchedule: the read-back is a real query, and the
 		// two EXECs above were only collected, so it would fail with "job not
 		// found" rather than yielding the script that was asked for.
 		return s.JobRef(req.Name), nil
 	}
-	return s.JobByNameContext(ctx, req.Name)
+	return s.JobByName(ctx, req.Name)
 }
 
 // AddSchedule attaches a schedule to the job.
-func (j *Job) AddSchedule(req JobScheduleRequest) error {
-	return j.AddScheduleContext(context.Background(), req)
-}
-
-// AddScheduleContext is the context-aware variant of AddSchedule.
-func (j *Job) AddScheduleContext(ctx context.Context, req JobScheduleRequest) error {
+func (j *Job) AddSchedule(ctx context.Context, req JobScheduleRequest) error {
 	q := fmt.Sprintf(
 		"EXEC msdb.dbo.sp_add_jobschedule @job_name = N'%s', @name = N'%s', "+
 			"@enabled = %d, @freq_type = %d, @freq_interval = %d, "+
@@ -553,7 +480,7 @@ func (j *Job) AddScheduleContext(ctx context.Context, req JobScheduleRequest) er
 		req.FreqSubdayType, req.FreqSubdayInterval,
 		req.ActiveStartTime, req.ActiveEndTime,
 	)
-	if err := j.server.execContext(ctx, q); err != nil {
+	if err := j.server.exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: add schedule %q to job %q: %w", req.Name, j.Name, err)
 	}
 	return nil

@@ -68,18 +68,14 @@ ORDER BY end_time`
 
 // ServerResourceStats returns the most recent max rows of
 // sys.server_resource_stats, oldest first.
-func (s *Server) ServerResourceStats(max int) ([]*ServerResourceStat, error) {
-	return s.ServerResourceStatsContext(context.Background(), max)
-}
-
-// ServerResourceStatsContext is the context-aware variant of
-// ServerResourceStats. max caps how far back the read reaches; a max of 0 or
-// less means the whole retained history.
+//
+// max caps how far back the read reaches; a max of 0 or less means the whole
+// retained history.
 //
 // The view exists only on an Azure engine edition, so this refuses anywhere
 // else with an ErrUnsupportedVersion error rather than letting the server
 // answer with an "invalid object name".
-func (s *Server) ServerResourceStatsContext(ctx context.Context, max int) ([]*ServerResourceStat, error) {
+func (s *Server) ServerResourceStats(ctx context.Context, max int) ([]*ServerResourceStat, error) {
 	if !s.info.IsAzure() {
 		return nil, unsupportedVersionf("gosmo: server resource stats: sys.server_resource_stats requires an Azure SQL Managed Instance")
 	}
@@ -88,13 +84,7 @@ func (s *Server) ServerResourceStatsContext(ctx context.Context, max int) ([]*Se
 	}
 
 	rows, err := s.query(ctx, serverResourceStatsQuery, max)
-	if err != nil {
-		return nil, fmt.Errorf("gosmo: server resource stats: %w", err)
-	}
-	defer rows.Close()
-
-	var out []*ServerResourceStat
-	for rows.Next() {
+	return scanRows(rows, err, "server resource stats", func(scan func(...any) error) (*ServerResourceStat, error) {
 		st := &ServerResourceStat{}
 		// Every column but the two timestamps is nullable in practice: a
 		// window the instance was restarting through reports its shape and
@@ -103,9 +93,9 @@ func (s *Server) ServerResourceStatsContext(ctx context.Context, max int) ([]*Se
 		var cores sql.NullInt64
 		var cpu, used sql.NullFloat64
 		var reserved, ioReq, ioRead, ioWrite sql.NullInt64
-		if err := rows.Scan(&st.StartTime, &st.EndTime, &resType, &resName, &sku, &hw,
+		if err := scan(&st.StartTime, &st.EndTime, &resType, &resName, &sku, &hw,
 			&cores, &cpu, &reserved, &used, &ioReq, &ioRead, &ioWrite); err != nil {
-			return nil, fmt.Errorf("gosmo: server resource stats: %w", err)
+			return nil, err
 		}
 		st.ResourceType, st.ResourceName = resType.String, resName.String
 		st.SKU, st.HardwareGeneration = sku.String, hw.String
@@ -113,12 +103,8 @@ func (s *Server) ServerResourceStatsContext(ctx context.Context, max int) ([]*Se
 		st.AvgCPUPercent, st.StorageSpaceUsedMB = cpu.Float64, used.Float64
 		st.ReservedStorageMB = reserved.Int64
 		st.IORequests, st.IOBytesRead, st.IOBytesWritten = ioReq.Int64, ioRead.Int64, ioWrite.Int64
-		out = append(out, st)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("gosmo: server resource stats: %w", err)
-	}
-	return out, nil
+		return st, nil
+	})
 }
 
 // serverResourceStatsAll is the row cap standing in for "everything retained":
@@ -127,20 +113,14 @@ func (s *Server) ServerResourceStatsContext(ctx context.Context, max int) ([]*Se
 // actually keeps.
 const serverResourceStatsAll = 100000
 
-// LatestServerResourceStats returns the newest sys.server_resource_stats row.
-func (s *Server) LatestServerResourceStats() (*ServerResourceStat, error) {
-	return s.LatestServerResourceStatsContext(context.Background())
-}
-
-// LatestServerResourceStatsContext is the context-aware variant of
-// LatestServerResourceStats — the instance's current SKU, core count and
-// storage quota in one row, for a caller that wants the shape rather than the
-// history.
+// LatestServerResourceStats returns the newest sys.server_resource_stats
+// row — the instance's current SKU, core count and storage quota, for a caller
+// that wants the shape rather than the history.
 //
 // It returns ErrNotFound when the view is empty, which a freshly created
 // instance is until its first 15-second window closes.
-func (s *Server) LatestServerResourceStatsContext(ctx context.Context) (*ServerResourceStat, error) {
-	stats, err := s.ServerResourceStatsContext(ctx, 1)
+func (s *Server) LatestServerResourceStats(ctx context.Context) (*ServerResourceStat, error) {
+	stats, err := s.ServerResourceStats(ctx, 1)
 	if err != nil {
 		return nil, err
 	}
@@ -221,18 +201,12 @@ SELECT server_name, instance_cap_cpu, instance_max_log_rate,
 FROM   sys.dm_instance_resource_governance`
 
 // InstanceResourceGovernance returns the instance's resource-governor limits.
-func (s *Server) InstanceResourceGovernance() (*InstanceResourceGovernance, error) {
-	return s.InstanceResourceGovernanceContext(context.Background())
-}
-
-// InstanceResourceGovernanceContext is the context-aware variant of
-// InstanceResourceGovernance.
 //
 // The view exists only on an Azure engine edition, so this refuses anywhere
 // else with an ErrUnsupportedVersion error rather than letting the server
 // answer with an "invalid object name", and returns ErrNotFound in the
 // (unobserved) case of an empty view.
-func (s *Server) InstanceResourceGovernanceContext(ctx context.Context) (*InstanceResourceGovernance, error) {
+func (s *Server) InstanceResourceGovernance(ctx context.Context) (*InstanceResourceGovernance, error) {
 	if !s.info.IsAzure() {
 		return nil, unsupportedVersionf("gosmo: instance resource governance: sys.dm_instance_resource_governance requires an Azure SQL Managed Instance")
 	}
@@ -331,17 +305,12 @@ SELECT cpu_rate, cpu_affinity_mask, cpu_affinity_group,
 FROM   sys.dm_os_job_object`
 
 // OSJobObject returns the job object the engine process runs inside.
-func (s *Server) OSJobObject() (*OSJobObject, error) {
-	return s.OSJobObjectContext(context.Background())
-}
-
-// OSJobObjectContext is the context-aware variant of OSJobObject.
 //
 // The view exists only on an Azure engine edition, so this refuses anywhere
 // else with an ErrUnsupportedVersion error, and returns ErrNotFound when the
 // view is empty — which is what a hosted engine that is not inside a job
 // object reports.
-func (s *Server) OSJobObjectContext(ctx context.Context) (*OSJobObject, error) {
+func (s *Server) OSJobObject(ctx context.Context) (*OSJobObject, error) {
 	if !s.info.IsAzure() {
 		return nil, unsupportedVersionf("gosmo: os job object: sys.dm_os_job_object requires an Azure SQL Managed Instance")
 	}
@@ -455,18 +424,14 @@ const databaseResourceStatsAll = 10000
 
 // ResourceStats returns the most recent max rows of sys.dm_db_resource_stats
 // for this database, oldest first.
-func (d *Database) ResourceStats(max int) ([]*DatabaseResourceStat, error) {
-	return d.ResourceStatsContext(context.Background(), max)
-}
-
-// ResourceStatsContext is the context-aware variant of ResourceStats. max caps
-// how far back the read reaches; a max of 0 or less means the whole retained
-// history, which is about an hour.
+//
+// max caps how far back the read reaches; a max of 0 or less means the whole
+// retained history, which is about an hour.
 //
 // The view exists only on an Azure engine edition, so this refuses anywhere
 // else with an ErrUnsupportedVersion error rather than letting the server
 // answer with an "invalid object name".
-func (d *Database) ResourceStatsContext(ctx context.Context, max int) ([]*DatabaseResourceStat, error) {
+func (d *Database) ResourceStats(ctx context.Context, max int) ([]*DatabaseResourceStat, error) {
 	if !d.serverInfo().IsAzure() {
 		return nil, unsupportedVersionf("gosmo: database resource stats: sys.dm_db_resource_stats requires an Azure SQL Database or Managed Instance")
 	}
@@ -475,13 +440,7 @@ func (d *Database) ResourceStatsContext(ctx context.Context, max int) ([]*Databa
 	}
 
 	rows, err := d.query(ctx, databaseResourceStatsQuery, max)
-	if err != nil {
-		return nil, fmt.Errorf("gosmo: database resource stats: %w", err)
-	}
-	defer rows.Close()
-
-	var out []*DatabaseResourceStat
-	for rows.Next() {
+	return scanRows(rows, err, "database resource stats", func(scan func(...any) error) (*DatabaseResourceStat, error) {
 		st := &DatabaseResourceStat{}
 		// Every column is nullable in the view, including end_time.
 		var end sql.NullTime
@@ -489,10 +448,10 @@ func (d *Database) ResourceStatsContext(ctx context.Context, max int) ([]*Databa
 		var loginRate, instCPU, instMem, cpuLimit sql.NullFloat64
 		var dtu, role sql.NullInt64
 		var used, alloc sql.NullInt64
-		if err := rows.Scan(&end, &cpu, &dataIO, &logWrite, &mem, &xtp, &worker,
+		if err := scan(&end, &cpu, &dataIO, &logWrite, &mem, &xtp, &worker,
 			&session, &dtu, &loginRate, &instCPU, &instMem, &cpuLimit,
 			&used, &alloc, &role); err != nil {
-			return nil, fmt.Errorf("gosmo: database resource stats: %w", err)
+			return nil, err
 		}
 		st.EndTime = end.Time
 		st.AvgCPUPercent, st.AvgDataIOPercent = cpu.Float64, dataIO.Float64
@@ -505,28 +464,18 @@ func (d *Database) ResourceStatsContext(ctx context.Context, max int) ([]*Databa
 		st.CPULimit = cpuLimit.Float64
 		st.UsedStorageMB, st.AllocatedStorageMB = used.Int64, alloc.Int64
 		st.ReplicaRole = int(role.Int64)
-		out = append(out, st)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("gosmo: database resource stats: %w", err)
-	}
-	return out, nil
+		return st, nil
+	})
 }
 
-// LatestResourceStats returns the newest sys.dm_db_resource_stats row for this
-// database.
-func (d *Database) LatestResourceStats() (*DatabaseResourceStat, error) {
-	return d.LatestResourceStatsContext(context.Background())
-}
-
-// LatestResourceStatsContext is the context-aware variant of
-// LatestResourceStats, for a caller that wants the database's current
-// consumption rather than its history.
+// LatestResourceStats returns the newest sys.dm_db_resource_stats row
+// for this database, for a caller that wants its current consumption rather
+// than its history.
 //
 // It returns ErrNotFound when the view is empty, which a database that has
 // been idle since the instance last restarted is.
-func (d *Database) LatestResourceStatsContext(ctx context.Context) (*DatabaseResourceStat, error) {
-	stats, err := d.ResourceStatsContext(ctx, 1)
+func (d *Database) LatestResourceStats(ctx context.Context) (*DatabaseResourceStat, error) {
+	stats, err := d.ResourceStats(ctx, 1)
 	if err != nil {
 		return nil, err
 	}
@@ -695,20 +644,15 @@ SELECT database_id,
 FROM   sys.dm_user_db_resource_governance
 ORDER BY database_name`
 
-// UserDBResourceGovernance returns one row per database on the instance.
-func (s *Server) UserDBResourceGovernance() ([]*UserDBResourceGovernance, error) {
-	return s.UserDBResourceGovernanceContext(context.Background())
-}
-
-// UserDBResourceGovernanceContext is the context-aware variant of
-// UserDBResourceGovernance, ordered by database name.
+// UserDBResourceGovernance returns one row per database on the
+// instance, ordered by database name.
 //
 // The view exists only on an Azure engine edition, so this refuses anywhere
 // else with an ErrUnsupportedVersion error rather than letting the server
 // answer with an "invalid object name". It lists the system databases the
 // instance governs (master, model, model_msdb, model_replicatedmaster)
 // alongside the user ones, because the view does.
-func (s *Server) UserDBResourceGovernanceContext(ctx context.Context) ([]*UserDBResourceGovernance, error) {
+func (s *Server) UserDBResourceGovernance(ctx context.Context) ([]*UserDBResourceGovernance, error) {
 	if !s.info.IsAzure() {
 		return nil, unsupportedVersionf("gosmo: user db resource governance: sys.dm_user_db_resource_governance requires an Azure SQL Database or Managed Instance")
 	}
@@ -733,18 +677,12 @@ func (s *Server) UserDBResourceGovernanceContext(ctx context.Context) ([]*UserDB
 }
 
 // ResourceGovernance returns this database's row of
-// sys.dm_user_db_resource_governance.
-func (d *Database) ResourceGovernance() (*UserDBResourceGovernance, error) {
-	return d.ResourceGovernanceContext(context.Background())
-}
-
-// ResourceGovernanceContext is the context-aware variant of
-// ResourceGovernance: the limits governing this database, the scale its
+// sys.dm_user_db_resource_governance: the limits governing it, the scale its
 // ResourceStats percentages are of.
 //
 // It returns ErrNotFound when the instance governs no row for the database,
 // and an ErrUnsupportedVersion error off an Azure engine edition.
-func (d *Database) ResourceGovernanceContext(ctx context.Context) (*UserDBResourceGovernance, error) {
+func (d *Database) ResourceGovernance(ctx context.Context) (*UserDBResourceGovernance, error) {
 	if !d.serverInfo().IsAzure() {
 		return nil, unsupportedVersionf("gosmo: database resource governance: sys.dm_user_db_resource_governance requires an Azure SQL Database or Managed Instance")
 	}

@@ -48,9 +48,9 @@ AS
 		t.Fatalf("create trigger: %v", err)
 	}
 
-	tr, err := s.ServerTriggerByNameContext(ctx, liveServerTriggerName)
+	tr, err := s.ServerTriggerByName(ctx, liveServerTriggerName)
 	if err != nil {
-		t.Fatalf("ServerTriggerByNameContext: %v", err)
+		t.Fatalf("ServerTriggerByName: %v", err)
 	}
 	if !tr.IsEnabled {
 		t.Error("a freshly created trigger read back as disabled")
@@ -67,9 +67,9 @@ AS
 		t.Errorf("definition not read back: %q", tr.Definition)
 	}
 
-	list, err := s.ServerTriggersContext(ctx)
+	list, err := s.ServerTriggers(ctx)
 	if err != nil {
-		t.Fatalf("ServerTriggersContext: %v", err)
+		t.Fatalf("ServerTriggers: %v", err)
 	}
 	idx := slices.IndexFunc(list, func(x *ServerTrigger) bool { return x.Name == liveServerTriggerName })
 	if idx < 0 {
@@ -79,39 +79,39 @@ AS
 		t.Errorf("list row disagrees with the by-name read: %+v vs %+v", got, tr)
 	}
 
-	if err := tr.DisableContext(ctx); err != nil {
-		t.Fatalf("DisableContext: %v", err)
+	if err := tr.Disable(ctx); err != nil {
+		t.Fatalf("Disable: %v", err)
 	}
-	after, err := s.ServerTriggerByNameContext(ctx, liveServerTriggerName)
+	after, err := s.ServerTriggerByName(ctx, liveServerTriggerName)
 	if err != nil {
 		t.Fatalf("re-read after disable: %v", err)
 	}
 	if after.IsEnabled {
-		t.Error("trigger still reads as enabled after DisableContext")
+		t.Error("trigger still reads as enabled after Disable")
 	}
 
 	// A disabled trigger's script must carry the DISABLE, or running it puts
 	// the trigger back in a state the source server was not in.
-	script, err := NewServerScripter(s, ScriptOptions{Verb: ScriptDropAndCreate}).ScriptServerTriggerContext(ctx, liveServerTriggerName)
+	script, err := NewServerScripter(s, ScriptOptions{Verb: ScriptDropAndCreate}).ScriptServerTrigger(ctx, liveServerTriggerName)
 	if err != nil {
-		t.Fatalf("ScriptServerTriggerContext: %v", err)
+		t.Fatalf("ScriptServerTrigger: %v", err)
 	}
 	if !strings.Contains(script, "DROP TRIGGER IF EXISTS") || !strings.Contains(script, "gossms plan trigger") ||
 		!strings.Contains(script, "DISABLE TRIGGER") {
 		t.Errorf("script is missing a half:\n%s", script)
 	}
 
-	if err := after.EnableContext(ctx); err != nil {
-		t.Fatalf("EnableContext: %v", err)
+	if err := after.Enable(ctx); err != nil {
+		t.Fatalf("Enable: %v", err)
 	}
-	if back, err := s.ServerTriggerByNameContext(ctx, liveServerTriggerName); err != nil || !back.IsEnabled {
+	if back, err := s.ServerTriggerByName(ctx, liveServerTriggerName); err != nil || !back.IsEnabled {
 		t.Errorf("trigger did not come back enabled: %v %+v", err, back)
 	}
 
-	if err := s.ServerTriggerRef(liveServerTriggerName).DropContext(ctx); err != nil {
-		t.Fatalf("DropContext: %v", err)
+	if err := s.ServerTriggerRef(liveServerTriggerName).Drop(ctx); err != nil {
+		t.Fatalf("Drop: %v", err)
 	}
-	if _, err := s.ServerTriggerByNameContext(ctx, liveServerTriggerName); !errors.Is(err, ErrNotFound) {
+	if _, err := s.ServerTriggerByName(ctx, liveServerTriggerName); !errors.Is(err, ErrNotFound) {
 		t.Errorf("after the drop, want ErrNotFound, got %v", err)
 	}
 }

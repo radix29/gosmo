@@ -42,14 +42,14 @@ func TestCreateBackupDeviceStatementShape(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx, col := WithScript(context.Background())
-			if _, err := (&Server{}).CreateBackupDeviceContext(ctx, tc.devName, tc.devType, tc.physical); err != nil {
-				t.Fatalf("CreateBackupDeviceContext: %v", err)
+			if _, err := (&Server{}).CreateBackupDevice(ctx, tc.devName, tc.devType, tc.physical); err != nil {
+				t.Fatalf("CreateBackupDevice: %v", err)
 			}
-			if len(col.Statements) != 1 {
-				t.Fatalf("got %d statements, want 1: %v", len(col.Statements), col.Statements)
+			if len(col.Statements()) != 1 {
+				t.Fatalf("got %d statements, want 1: %v", len(col.Statements()), col.Statements())
 			}
-			if col.Statements[0] != tc.want {
-				t.Errorf("got:\n%s\nwant:\n%s", col.Statements[0], tc.want)
+			if col.Statements()[0] != tc.want {
+				t.Errorf("got:\n%s\nwant:\n%s", col.Statements()[0], tc.want)
 			}
 		})
 	}
@@ -57,14 +57,14 @@ func TestCreateBackupDeviceStatementShape(t *testing.T) {
 
 func TestCreateBackupDeviceRequiresNameAndPath(t *testing.T) {
 	ctx, col := WithScript(context.Background())
-	if _, err := (&Server{}).CreateBackupDeviceContext(ctx, "  ", BackupDeviceDisk, "/tmp/d.bak"); err == nil {
+	if _, err := (&Server{}).CreateBackupDevice(ctx, "  ", BackupDeviceDisk, "/tmp/d.bak"); err == nil {
 		t.Error("a device with no name was accepted")
 	}
-	if _, err := (&Server{}).CreateBackupDeviceContext(ctx, "Dev", BackupDeviceDisk, ""); err == nil {
+	if _, err := (&Server{}).CreateBackupDevice(ctx, "Dev", BackupDeviceDisk, ""); err == nil {
 		t.Error("a device with no physical name was accepted")
 	}
-	if len(col.Statements) != 0 {
-		t.Errorf("a statement was built anyway: %v", col.Statements)
+	if len(col.Statements()) != 0 {
+		t.Errorf("a statement was built anyway: %v", col.Statements())
 	}
 }
 
@@ -72,19 +72,19 @@ func TestCreateBackupDeviceRequiresNameAndPath(t *testing.T) {
 // would find nothing. The name-only handle is what a caller gets instead.
 func TestCreateBackupDeviceUnderScriptReturnsAHandle(t *testing.T) {
 	ctx, col := WithScript(context.Background())
-	d, err := (&Server{}).CreateBackupDeviceContext(ctx, "NightlyDev", BackupDeviceDisk, `C:\b\n.bak`)
+	d, err := (&Server{}).CreateBackupDevice(ctx, "NightlyDev", BackupDeviceDisk, `C:\b\n.bak`)
 	if err != nil {
-		t.Fatalf("CreateBackupDeviceContext: %v", err)
+		t.Fatalf("CreateBackupDevice: %v", err)
 	}
 	if d == nil || d.Name != "NightlyDev" {
 		t.Fatalf("got %#v, want a handle named NightlyDev", d)
 	}
-	if len(col.Statements) != 1 {
-		t.Fatalf("collected statements: %v", col.Statements)
+	if len(col.Statements()) != 1 {
+		t.Fatalf("collected statements: %v", col.Statements())
 	}
 	// The handle must still be usable for a follow-up write.
-	if err := d.DropContext(ctx, false); err != nil {
-		t.Fatalf("DropContext on the returned handle: %v", err)
+	if err := d.Drop(ctx, false); err != nil {
+		t.Fatalf("Drop on the returned handle: %v", err)
 	}
 }
 
@@ -102,11 +102,11 @@ func TestDropBackupDeviceDelFile(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx, col := WithScript(context.Background())
-			if err := (&Server{}).BackupDeviceRef("NightlyDev").DropContext(ctx, tc.deleteFile); err != nil {
-				t.Fatalf("DropContext: %v", err)
+			if err := (&Server{}).BackupDeviceRef("NightlyDev").Drop(ctx, tc.deleteFile); err != nil {
+				t.Fatalf("Drop: %v", err)
 			}
-			if len(col.Statements) != 1 || col.Statements[0] != tc.want {
-				t.Errorf("got %v, want [%s]", col.Statements, tc.want)
+			if len(col.Statements()) != 1 || col.Statements()[0] != tc.want {
+				t.Errorf("got %v, want [%s]", col.Statements(), tc.want)
 			}
 		})
 	}
@@ -132,23 +132,23 @@ func TestBackupTargetClause(t *testing.T) {
 // statement they did before BackupTarget existed.
 func TestVerifyBackupStillTakesAPath(t *testing.T) {
 	ctx, col := WithScript(context.Background())
-	if err := (&Server{}).VerifyBackupContext(ctx, `C:\b\n.bak`); err != nil {
-		t.Fatalf("VerifyBackupContext: %v", err)
+	if err := (&Server{}).VerifyBackup(ctx, `C:\b\n.bak`); err != nil {
+		t.Fatalf("VerifyBackup: %v", err)
 	}
 	want := `RESTORE VERIFYONLY FROM DISK = N'C:\b\n.bak'`
-	if len(col.Statements) != 1 || col.Statements[0] != want {
-		t.Errorf("got %v, want [%s]", col.Statements, want)
+	if len(col.Statements()) != 1 || col.Statements()[0] != want {
+		t.Errorf("got %v, want [%s]", col.Statements(), want)
 	}
 }
 
 func TestVerifyBackupFromDevice(t *testing.T) {
 	ctx, col := WithScript(context.Background())
-	if err := (&Server{}).VerifyBackupFromContext(ctx, DeviceTarget("NightlyDev")); err != nil {
-		t.Fatalf("VerifyBackupFromContext: %v", err)
+	if err := (&Server{}).VerifyBackupFrom(ctx, DeviceTarget("NightlyDev")); err != nil {
+		t.Fatalf("VerifyBackupFrom: %v", err)
 	}
 	want := "RESTORE VERIFYONLY FROM [NightlyDev]"
-	if len(col.Statements) != 1 || col.Statements[0] != want {
-		t.Errorf("got %v, want [%s]", col.Statements, want)
+	if len(col.Statements()) != 1 || col.Statements()[0] != want {
+		t.Errorf("got %v, want [%s]", col.Statements(), want)
 	}
 }
 

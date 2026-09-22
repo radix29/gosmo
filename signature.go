@@ -97,34 +97,19 @@ ORDER  BY SCHEMA_NAME(o.schema_id), o.name, cp.crypt_type_desc, COALESCE(c.name,
 // error is bare; each caller names its operation.
 func (d *Database) moduleSignatures(ctx context.Context, and string, args ...any) ([]*ModuleSignature, error) {
 	rows, err := d.query(ctx, moduleSignatureSelect+and+moduleSignatureOrder, args...)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var out []*ModuleSignature
-	for rows.Next() {
+	return scanRows(rows, err, "", func(scan func(...any) error) (*ModuleSignature, error) {
 		s := &ModuleSignature{db: d}
-		if err := rows.Scan(&s.ObjectID, &s.Schema, &s.Module, &s.ModuleType,
+		if err := scan(&s.ObjectID, &s.Schema, &s.Module, &s.ModuleType,
 			&s.CryptTypeDesc, &s.Thumbprint, &s.Signer); err != nil {
 			return nil, err
 		}
 		s.Kind, s.Counter = signatureKind(s.CryptTypeDesc)
-		out = append(out, s)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return out, nil
+		return s, nil
+	})
 }
 
 // ModuleSignatures returns every signature on every module in the database.
-func (d *Database) ModuleSignatures() ([]*ModuleSignature, error) {
-	return d.ModuleSignaturesContext(context.Background())
-}
-
-// ModuleSignaturesContext is the context-aware variant of ModuleSignatures.
-func (d *Database) ModuleSignaturesContext(ctx context.Context) ([]*ModuleSignature, error) {
+func (d *Database) ModuleSignatures(ctx context.Context) ([]*ModuleSignature, error) {
 	out, err := d.moduleSignatures(ctx, "")
 	if err != nil {
 		return nil, fmt.Errorf("gosmo: list module signatures in %q: %w", d.Name, err)
@@ -133,12 +118,7 @@ func (d *Database) ModuleSignaturesContext(ctx context.Context) ([]*ModuleSignat
 }
 
 // SignaturesOn returns the signatures on one module — who signed it.
-func (d *Database) SignaturesOn(schema, module string) ([]*ModuleSignature, error) {
-	return d.SignaturesOnContext(context.Background(), schema, module)
-}
-
-// SignaturesOnContext is the context-aware variant of SignaturesOn.
-func (d *Database) SignaturesOnContext(ctx context.Context, schema, module string) ([]*ModuleSignature, error) {
+func (d *Database) SignaturesOn(ctx context.Context, schema, module string) ([]*ModuleSignature, error) {
 	out, err := d.moduleSignatures(ctx, `
   AND  o.schema_id = SCHEMA_ID(@p1) AND o.name = @p2`, schema, module)
 	if err != nil {
@@ -148,12 +128,7 @@ func (d *Database) SignaturesOnContext(ctx context.Context, schema, module strin
 }
 
 // SignedModules returns the modules the certificate signs or counter-signs.
-func (c *Certificate) SignedModules() ([]*ModuleSignature, error) {
-	return c.SignedModulesContext(context.Background())
-}
-
-// SignedModulesContext is the context-aware variant of SignedModules.
-func (c *Certificate) SignedModulesContext(ctx context.Context) ([]*ModuleSignature, error) {
+func (c *Certificate) SignedModules(ctx context.Context) ([]*ModuleSignature, error) {
 	out, err := c.db.moduleSignatures(ctx, `
   AND  c.name = @p1`, c.Name)
 	if err != nil {
@@ -164,12 +139,7 @@ func (c *Certificate) SignedModulesContext(ctx context.Context) ([]*ModuleSignat
 
 // SignedModules returns the modules the asymmetric key signs or
 // counter-signs.
-func (k *AsymmetricKey) SignedModules() ([]*ModuleSignature, error) {
-	return k.SignedModulesContext(context.Background())
-}
-
-// SignedModulesContext is the context-aware variant of SignedModules.
-func (k *AsymmetricKey) SignedModulesContext(ctx context.Context) ([]*ModuleSignature, error) {
+func (k *AsymmetricKey) SignedModules(ctx context.Context) ([]*ModuleSignature, error) {
 	out, err := k.db.moduleSignatures(ctx, `
   AND  a.name = @p1`, k.Name)
 	if err != nil {
@@ -193,34 +163,19 @@ type SignableModule struct {
 // refused by the server (Msg 15560), and a database DDL trigger cannot be
 // named by ADD SIGNATURE at all, so neither is listed. CLR modules are not
 // listed either: signing one has not been tried.
-func (d *Database) SignableModules() ([]*SignableModule, error) {
-	return d.SignableModulesContext(context.Background())
-}
-
-// SignableModulesContext is the context-aware variant of SignableModules.
-func (d *Database) SignableModulesContext(ctx context.Context) ([]*SignableModule, error) {
+func (d *Database) SignableModules(ctx context.Context) ([]*SignableModule, error) {
 	rows, err := d.query(ctx, `
 SELECT SCHEMA_NAME(o.schema_id), o.name, o.type_desc
 FROM   sys.objects o
 WHERE  o.type IN ('P', 'FN', 'TF', 'TR') AND o.is_ms_shipped = 0
 ORDER  BY SCHEMA_NAME(o.schema_id), o.name`)
-	if err != nil {
-		return nil, fmt.Errorf("gosmo: list signable modules in %q: %w", d.Name, err)
-	}
-	defer rows.Close()
-
-	var out []*SignableModule
-	for rows.Next() {
+	return scanRows(rows, err, fmt.Sprintf("list signable modules in %q", d.Name), func(scan func(...any) error) (*SignableModule, error) {
 		m := &SignableModule{}
-		if err := rows.Scan(&m.Schema, &m.Name, &m.Type); err != nil {
-			return nil, fmt.Errorf("gosmo: list signable modules in %q: %w", d.Name, err)
+		if err := scan(&m.Schema, &m.Name, &m.Type); err != nil {
+			return nil, err
 		}
-		out = append(out, m)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("gosmo: list signable modules in %q: %w", d.Name, err)
-	}
-	return out, nil
+		return m, nil
+	})
 }
 
 // Signer names who signs: a certificate or asymmetric key, and the password
@@ -269,12 +224,7 @@ func signatureStatement(add bool, schema, module string, by Signer, counter bool
 // function, or a DML trigger — with ADD [COUNTER] SIGNATURE. Signing needs
 // the signer's private key, and CONTROL on it; altering the module later
 // drops the signature.
-func (d *Database) AddSignature(schema, module string, by Signer, counter bool) error {
-	return d.AddSignatureContext(context.Background(), schema, module, by, counter)
-}
-
-// AddSignatureContext is the context-aware variant of AddSignature.
-func (d *Database) AddSignatureContext(ctx context.Context, schema, module string, by Signer, counter bool) error {
+func (d *Database) AddSignature(ctx context.Context, schema, module string, by Signer, counter bool) error {
 	stmt, err := signatureStatement(true, schema, module, by, counter)
 	if err == nil {
 		_, err = d.exec(ctx, stmt)
@@ -287,12 +237,7 @@ func (d *Database) AddSignatureContext(ctx context.Context, schema, module strin
 
 // DropSignature removes a signature with DROP [COUNTER] SIGNATURE. by's
 // Password is not used.
-func (d *Database) DropSignature(schema, module string, by Signer, counter bool) error {
-	return d.DropSignatureContext(context.Background(), schema, module, by, counter)
-}
-
-// DropSignatureContext is the context-aware variant of DropSignature.
-func (d *Database) DropSignatureContext(ctx context.Context, schema, module string, by Signer, counter bool) error {
+func (d *Database) DropSignature(ctx context.Context, schema, module string, by Signer, counter bool) error {
 	stmt, err := signatureStatement(false, schema, module, by, counter)
 	if err == nil {
 		_, err = d.exec(ctx, stmt)

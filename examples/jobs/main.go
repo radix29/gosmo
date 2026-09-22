@@ -9,6 +9,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"time"
 
@@ -25,6 +26,7 @@ const (
 )
 
 func main() {
+	ctx := context.Background()
 	// First, so it runs after the cleanup deferred below it.
 	defer demo.Exit()
 
@@ -37,45 +39,45 @@ func main() {
 	// Manager, so it works the same on Linux. Azure SQL Database has no
 	// Agent at all and everything below will fail there.
 	demo.Section("Agent status")
-	agent := demo.Value(srv.AgentInfo())
+	agent := demo.Value(srv.AgentInfo(ctx))
 	fmt.Printf("  running=%t  status=%q  since=%s\n",
 		agent.Running, agent.StatusText, formatTime(agent.LastStartupTime))
 
 	// -- Category ----------------------------------------------------------
 	demo.Section("Category")
-	_ = srv.DeleteCategory(gosmo.CategoryClassJob, categoryName)
-	demo.Must(srv.CreateCategory(gosmo.CategoryClassJob, categoryName))
-	defer func() { _ = srv.DeleteCategory(gosmo.CategoryClassJob, categoryName) }()
-	for _, c := range demo.Value(srv.Categories(gosmo.CategoryClassJob)) {
+	_ = srv.DeleteCategory(ctx, gosmo.CategoryClassJob, categoryName)
+	demo.Must(srv.CreateCategory(ctx, gosmo.CategoryClassJob, categoryName))
+	defer func() { _ = srv.DeleteCategory(ctx, gosmo.CategoryClassJob, categoryName) }()
+	for _, c := range demo.Value(srv.Categories(ctx, gosmo.CategoryClassJob)) {
 		fmt.Printf("  [%d] %s\n", c.ID, c.Name)
 	}
 
 	// -- Operator ----------------------------------------------------------
 	demo.Section("Operator")
-	if op, err := srv.OperatorByName(operatorName); err == nil {
-		demo.Must(op.Drop())
+	if op, err := srv.OperatorByName(ctx, operatorName); err == nil {
+		demo.Must(op.Drop(ctx))
 	}
-	op := demo.Value(srv.CreateOperator(gosmo.CreateOperatorRequest{
+	op := demo.Value(srv.CreateOperator(ctx, gosmo.CreateOperatorRequest{
 		Name:         operatorName,
 		Enabled:      true,
 		EmailAddress: "dba@example.com",
 	}))
-	defer func() { _ = op.Drop() }()
+	defer func() { _ = op.Drop(ctx) }()
 	fmt.Printf("  %s  email=%s  enabled=%t\n", op.Name, op.EmailAddress, op.Enabled)
 
 	// -- Job ---------------------------------------------------------------
 	demo.Section("Job")
-	if existing, err := srv.JobByName(jobName); err == nil {
-		demo.Must(existing.Drop())
+	if existing, err := srv.JobByName(ctx, jobName); err == nil {
+		demo.Must(existing.Drop(ctx))
 	}
-	job := demo.Value(srv.CreateJob(gosmo.CreateJobRequest{
+	job := demo.Value(srv.CreateJob(ctx, gosmo.CreateJobRequest{
 		Name:        jobName,
 		Description: "Created by the gosmo jobs example",
 		Category:    categoryName,
 		Enabled:     true,
 	}))
 	defer func() {
-		if err := job.Drop(); err == nil {
+		if err := job.Drop(ctx); err == nil {
 			fmt.Printf("\nDropped job [%s]\n", jobName)
 		}
 	}()
@@ -87,7 +89,7 @@ func main() {
 	// 2=quit reporting failure, 3=go to the next step, 4=go to step N (in
 	// which case set OnSuccessStepID/OnFailStepID).
 	demo.Section("Steps")
-	demo.Must(job.AddStep(gosmo.JobStepRequest{
+	demo.Must(job.AddStep(ctx, gosmo.JobStepRequest{
 		Name:            "Check free space",
 		Subsystem:       "TSQL",
 		Database:        "master",
@@ -98,7 +100,7 @@ func main() {
 		RetryAttempts:   2,
 		RetryInterval:   1, // minutes
 	}))
-	demo.Must(job.AddStep(gosmo.JobStepRequest{
+	demo.Must(job.AddStep(ctx, gosmo.JobStepRequest{
 		Name:            "Cycle the error log",
 		Subsystem:       "TSQL",
 		Database:        "master",
@@ -107,7 +109,7 @@ func main() {
 		OnFailAction:    4,
 		OnFailStepID:    3,
 	}))
-	demo.Must(job.AddStep(gosmo.JobStepRequest{
+	demo.Must(job.AddStep(ctx, gosmo.JobStepRequest{
 		Name:            "Failure handler",
 		Subsystem:       "TSQL",
 		Database:        "master",
@@ -115,14 +117,14 @@ func main() {
 		OnSuccessAction: 2, // quit, failure
 		OnFailAction:    2,
 	}))
-	for _, s := range demo.Value(job.Steps()) {
+	for _, s := range demo.Value(job.Steps(ctx)) {
 		fmt.Printf("  %d. %-20s subsystem=%-6s on_success=%d on_fail=%d->%d\n",
 			s.StepID, s.Name, s.Subsystem, s.OnSuccessAction, s.OnFailAction, s.OnFailStepID)
 	}
 
 	// -- Notification ------------------------------------------------------
-	demo.Must(job.SetEmailNotify(operatorName, gosmo.NotifyOnFailure))
-	demo.Must(job.SetDeleteLevel(gosmo.NotifyNever))
+	demo.Must(job.SetEmailNotify(ctx, operatorName, gosmo.NotifyOnFailure))
+	demo.Must(job.SetDeleteLevel(ctx, gosmo.NotifyNever))
 
 	// -- Schedules ---------------------------------------------------------
 	//
@@ -130,7 +132,7 @@ func main() {
 	// creates a schedule owned by that job; Server.CreateSchedule creates a
 	// shared schedule that Job.AttachSchedule can bind to several jobs.
 	demo.Section("Schedules")
-	demo.Must(job.AddSchedule(gosmo.JobScheduleRequest{
+	demo.Must(job.AddSchedule(ctx, gosmo.JobScheduleRequest{
 		Name:               "every 15 minutes",
 		Enabled:            true,
 		FreqType:           4, // daily
@@ -141,10 +143,10 @@ func main() {
 		ActiveEndTime:      235959, // 23:59:59
 	}))
 
-	if existing, err := srv.ScheduleByName(scheduleName); err == nil {
-		demo.Must(existing.Drop())
+	if existing, err := srv.ScheduleByName(ctx, scheduleName); err == nil {
+		demo.Must(existing.Drop(ctx))
 	}
-	shared := demo.Value(srv.CreateSchedule(gosmo.CreateScheduleRequest{
+	shared := demo.Value(srv.CreateSchedule(ctx, gosmo.CreateScheduleRequest{
 		Name:                 scheduleName,
 		Enabled:              true,
 		FreqType:             gosmo.FreqWeekly,
@@ -153,10 +155,10 @@ func main() {
 		FreqSubdayType:       gosmo.SubdayOnce,
 		ActiveStartTime:      23000, // 02:30:00 as HHMMSS
 	}))
-	defer func() { _ = shared.Drop() }()
-	demo.Must(job.AttachSchedule(scheduleName))
+	defer func() { _ = shared.Drop(ctx) }()
+	demo.Must(job.AttachSchedule(ctx, scheduleName))
 
-	for _, s := range demo.Value(job.Schedules()) {
+	for _, s := range demo.Value(job.Schedules(ctx)) {
 		// Description renders the freq_* cluster the way SSMS's schedule
 		// list does, which is the only readable form of those columns.
 		fmt.Printf("  %-20s %s\n", s.Name, s.Description())
@@ -171,11 +173,11 @@ func main() {
 	if !agent.Running {
 		fmt.Println("  SQL Server Agent is not running — skipping the run and its history")
 	} else {
-		demo.Must(job.Start("")) // "" starts at the job's first step
+		demo.Must(job.Start(ctx, "")) // "" starts at the job's first step
 		fmt.Println("  started; waiting for it to finish")
 		for range 20 {
 			time.Sleep(500 * time.Millisecond)
-			current := demo.Value(srv.JobByName(jobName))
+			current := demo.Value(srv.JobByName(ctx, jobName))
 			if current.CurrentState == gosmo.JobStateIdle {
 				fmt.Printf("  last outcome: %s (%s)\n",
 					outcomeName(current.LastRunOutcome), current.LastRunDuration)
@@ -184,7 +186,7 @@ func main() {
 		}
 
 		demo.Section("History")
-		for _, h := range demo.Value(job.History(10)) {
+		for _, h := range demo.Value(job.History(ctx, 10)) {
 			step := h.StepName
 			if h.StepID == 0 {
 				step = "(job outcome)"
@@ -201,35 +203,35 @@ func main() {
 	// listed but not manageable. IsEventAlert / EventAlerts identify the
 	// manageable subset.
 	demo.Section("Alerts")
-	if existing, err := srv.AlertByName(alertName); err == nil {
-		demo.Must(existing.Drop())
+	if existing, err := srv.AlertByName(ctx, alertName); err == nil {
+		demo.Must(existing.Drop(ctx))
 	}
-	alert := demo.Value(srv.CreateAlert(gosmo.CreateAlertRequest{
+	alert := demo.Value(srv.CreateAlert(ctx, gosmo.CreateAlertRequest{
 		Name:                  alertName,
 		Enabled:               true,
 		Severity:              17, // mutually exclusive with ErrorNumber
 		DelayBetweenResponses: 5 * time.Minute,
 		NotificationMessage:   "Severity 17 raised — see the error log.",
 	}))
-	defer func() { _ = alert.Drop() }()
-	demo.Must(alert.Notify(operatorName, gosmo.NotifyMethodEmail))
-	demo.Must(alert.SetJobResponse(jobName))
+	defer func() { _ = alert.Drop(ctx) }()
+	demo.Must(alert.Notify(ctx, operatorName, gosmo.NotifyMethodEmail))
+	demo.Must(alert.SetJobResponse(ctx, jobName))
 
-	for _, n := range demo.Value(alert.Notifications()) {
+	for _, n := range demo.Value(alert.Notifications(ctx)) {
 		fmt.Printf("  notifies %s via %s\n", n.OperatorName, n.Method)
 	}
-	for _, a := range demo.Value(srv.EventAlerts()) {
+	for _, a := range demo.Value(srv.EventAlerts(ctx)) {
 		fmt.Printf("  %-32s severity=%d error=%d job=%s\n",
 			a.Name, a.Severity, a.ErrorNumber, a.JobName)
 	}
 
 	// The alert has to stop pointing at the job before the job can be
 	// dropped; deferred cleanup runs in reverse order, so undo it here.
-	demo.Must(alert.SetJobResponse(""))
+	demo.Must(alert.SetJobResponse(ctx, ""))
 
 	// -- Everything on the instance ---------------------------------------
 	demo.Section("All jobs")
-	for _, j := range demo.Value(srv.Jobs()) {
+	for _, j := range demo.Value(srv.Jobs(ctx)) {
 		fmt.Printf("  %-40s enabled=%-5t last=%s next=%s\n",
 			j.Name, j.IsEnabled, outcomeName(j.LastRunOutcome), formatTime(j.NextRunDate))
 	}

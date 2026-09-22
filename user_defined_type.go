@@ -18,7 +18,6 @@ package gosmo
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -99,45 +98,19 @@ func scanUserDefinedDataType(d *Database, scan func(...any) error) (*UserDefined
 }
 
 // UserDefinedDataTypes returns the alias types defined in the database.
-func (d *Database) UserDefinedDataTypes() ([]*UserDefinedDataType, error) {
-	return d.UserDefinedDataTypesContext(context.Background())
-}
-
-// UserDefinedDataTypesContext is the context-aware variant of
-// UserDefinedDataTypes.
-func (d *Database) UserDefinedDataTypesContext(ctx context.Context) ([]*UserDefinedDataType, error) {
+func (d *Database) UserDefinedDataTypes(ctx context.Context) ([]*UserDefinedDataType, error) {
 	const q = userDefinedDataTypeSelect + `
 ORDER  BY SCHEMA_NAME(t.schema_id), t.name`
 
 	rows, err := d.query(ctx, q)
-	if err != nil {
-		return nil, fmt.Errorf("gosmo: list user-defined data types in %q: %w", d.Name, err)
-	}
-	defer rows.Close()
-
-	var types []*UserDefinedDataType
-	for rows.Next() {
-		t, err := scanUserDefinedDataType(d, rows.Scan)
-		if err != nil {
-			return nil, fmt.Errorf("gosmo: list user-defined data types in %q: %w", d.Name, err)
-		}
-		types = append(types, t)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("gosmo: list user-defined data types in %q: %w", d.Name, err)
-	}
-	return types, nil
+	return scanRows(rows, err, fmt.Sprintf("list user-defined data types in %q", d.Name), func(scan func(...any) error) (*UserDefinedDataType, error) {
+		return scanUserDefinedDataType(d, scan)
+	})
 }
 
 // UserDefinedDataTypeByName returns one alias type, or a not-found error
 // (errors.Is ErrNotFound) when the database has none by that name.
-func (d *Database) UserDefinedDataTypeByName(schema, name string) (*UserDefinedDataType, error) {
-	return d.UserDefinedDataTypeByNameContext(context.Background(), schema, name)
-}
-
-// UserDefinedDataTypeByNameContext is the context-aware variant of
-// UserDefinedDataTypeByName.
-func (d *Database) UserDefinedDataTypeByNameContext(ctx context.Context, schema, name string) (*UserDefinedDataType, error) {
+func (d *Database) UserDefinedDataTypeByName(ctx context.Context, schema, name string) (*UserDefinedDataType, error) {
 	if schema == "" {
 		schema = "dbo"
 	}
@@ -148,21 +121,12 @@ func (d *Database) UserDefinedDataTypeByNameContext(ctx context.Context, schema,
 		return err
 	}, userDefinedDataTypeSelect+`
    AND SCHEMA_NAME(t.schema_id) = @p1 AND t.name = @p2`, schema, name)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, notFoundf("gosmo: user-defined data type [%s].[%s] not found in %q", schema, name, d.Name)
-	}
-	if err != nil {
-		return nil, fmt.Errorf("gosmo: read user-defined data type [%s].[%s] in %q: %w", schema, name, d.Name, err)
-	}
-	return t, nil
+	return foundRow(t, err, notFoundf("gosmo: user-defined data type [%s].[%s] not found in %q", schema, name, d.Name), fmt.Sprintf("read user-defined data type [%s].[%s] in %q", schema, name, d.Name))
 }
 
 // Drop drops the alias type.
-func (t *UserDefinedDataType) Drop() error { return t.DropContext(context.Background()) }
-
-// DropContext is the context-aware variant of Drop.
-func (t *UserDefinedDataType) DropContext(ctx context.Context) error {
-	return t.db.DropTypeContext(ctx, t.Schema, t.Name)
+func (t *UserDefinedDataType) Drop(ctx context.Context) error {
+	return t.db.DropType(ctx, t.Schema, t.Name)
 }
 
 // ============================================================
@@ -180,7 +144,7 @@ type UserDefinedTableType struct {
 	// TypeTableObjectID is the object_id of the *internal* table that holds
 	// the type's shape. The type's columns, indexes and check constraints
 	// hang off this id, not off UserTypeID and not off any id in sys.objects
-	// a caller could reach by name — see ColumnsContext.
+	// a caller could reach by name — see Columns.
 	TypeTableObjectID int
 
 	// IsMemoryOptimized reports a memory-optimized table type (2014+). The
@@ -210,45 +174,19 @@ func scanUserDefinedTableType(d *Database, scan func(...any) error) (*UserDefine
 }
 
 // UserDefinedTableTypes returns the table types defined in the database.
-func (d *Database) UserDefinedTableTypes() ([]*UserDefinedTableType, error) {
-	return d.UserDefinedTableTypesContext(context.Background())
-}
-
-// UserDefinedTableTypesContext is the context-aware variant of
-// UserDefinedTableTypes.
-func (d *Database) UserDefinedTableTypesContext(ctx context.Context) ([]*UserDefinedTableType, error) {
+func (d *Database) UserDefinedTableTypes(ctx context.Context) ([]*UserDefinedTableType, error) {
 	const q = userDefinedTableTypeSelect + `
 ORDER  BY SCHEMA_NAME(tt.schema_id), tt.name`
 
 	rows, err := d.query(ctx, q)
-	if err != nil {
-		return nil, fmt.Errorf("gosmo: list user-defined table types in %q: %w", d.Name, err)
-	}
-	defer rows.Close()
-
-	var types []*UserDefinedTableType
-	for rows.Next() {
-		t, err := scanUserDefinedTableType(d, rows.Scan)
-		if err != nil {
-			return nil, fmt.Errorf("gosmo: list user-defined table types in %q: %w", d.Name, err)
-		}
-		types = append(types, t)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("gosmo: list user-defined table types in %q: %w", d.Name, err)
-	}
-	return types, nil
+	return scanRows(rows, err, fmt.Sprintf("list user-defined table types in %q", d.Name), func(scan func(...any) error) (*UserDefinedTableType, error) {
+		return scanUserDefinedTableType(d, scan)
+	})
 }
 
 // UserDefinedTableTypeByName returns one table type, or a not-found error
 // (errors.Is ErrNotFound) when the database has none by that name.
-func (d *Database) UserDefinedTableTypeByName(schema, name string) (*UserDefinedTableType, error) {
-	return d.UserDefinedTableTypeByNameContext(context.Background(), schema, name)
-}
-
-// UserDefinedTableTypeByNameContext is the context-aware variant of
-// UserDefinedTableTypeByName.
-func (d *Database) UserDefinedTableTypeByNameContext(ctx context.Context, schema, name string) (*UserDefinedTableType, error) {
+func (d *Database) UserDefinedTableTypeByName(ctx context.Context, schema, name string) (*UserDefinedTableType, error) {
 	if schema == "" {
 		schema = "dbo"
 	}
@@ -259,29 +197,18 @@ func (d *Database) UserDefinedTableTypeByNameContext(ctx context.Context, schema
 		return err
 	}, userDefinedTableTypeSelect+`
    AND SCHEMA_NAME(tt.schema_id) = @p1 AND tt.name = @p2`, schema, name)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, notFoundf("gosmo: user-defined table type [%s].[%s] not found in %q", schema, name, d.Name)
-	}
-	if err != nil {
-		return nil, fmt.Errorf("gosmo: read user-defined table type [%s].[%s] in %q: %w", schema, name, d.Name, err)
-	}
-	return t, nil
+	return foundRow(t, err, notFoundf("gosmo: user-defined table type [%s].[%s] not found in %q", schema, name, d.Name), fmt.Sprintf("read user-defined table type [%s].[%s] in %q", schema, name, d.Name))
 }
 
 // Columns returns the table type's columns in ordinal order.
-func (t *UserDefinedTableType) Columns() ([]*Column, error) {
-	return t.ColumnsContext(context.Background())
-}
-
-// ColumnsContext is the context-aware variant of Columns.
 //
 // The columns are read through TypeTableObjectID, the internal table
 // sys.table_types points at — a table type's columns are *not* on
 // sys.columns under its user_type_id, and OBJECT_ID('[schema].[name]') does
-// not resolve a type at all, so neither of the obvious lookups finds
-// anything. A type built by hand rather than by a listing has a zero
-// TypeTableObjectID and gets a not-found error rather than an empty list.
-func (t *UserDefinedTableType) ColumnsContext(ctx context.Context) ([]*Column, error) {
+// not resolve a type at all, so neither of the obvious lookups finds anything.
+// A type built by hand rather than by a listing has a zero TypeTableObjectID
+// and gets a not-found error rather than an empty list.
+func (t *UserDefinedTableType) Columns(ctx context.Context) ([]*Column, error) {
 	if t.TypeTableObjectID == 0 {
 		return nil, notFoundf("gosmo: user-defined table type %s in %q has no internal table id — read it with UserDefinedTableTypeByName",
 			t.FullName(), t.db.Name)
@@ -304,11 +231,8 @@ ORDER  BY c.column_id`
 }
 
 // Drop drops the table type.
-func (t *UserDefinedTableType) Drop() error { return t.DropContext(context.Background()) }
-
-// DropContext is the context-aware variant of Drop.
-func (t *UserDefinedTableType) DropContext(ctx context.Context) error {
-	return t.db.DropTypeContext(ctx, t.Schema, t.Name)
+func (t *UserDefinedTableType) Drop(ctx context.Context) error {
+	return t.db.DropType(ctx, t.Schema, t.Name)
 }
 
 // ============================================================
@@ -368,43 +292,19 @@ func scanClrType(d *Database, scan func(...any) error) (*ClrType, error) {
 }
 
 // ClrTypes returns the CLR user-defined types in the database.
-func (d *Database) ClrTypes() ([]*ClrType, error) {
-	return d.ClrTypesContext(context.Background())
-}
-
-// ClrTypesContext is the context-aware variant of ClrTypes.
-func (d *Database) ClrTypesContext(ctx context.Context) ([]*ClrType, error) {
+func (d *Database) ClrTypes(ctx context.Context) ([]*ClrType, error) {
 	const q = clrTypeSelect + `
 ORDER  BY SCHEMA_NAME(t.schema_id), t.name`
 
 	rows, err := d.query(ctx, q)
-	if err != nil {
-		return nil, fmt.Errorf("gosmo: list CLR types in %q: %w", d.Name, err)
-	}
-	defer rows.Close()
-
-	var types []*ClrType
-	for rows.Next() {
-		t, err := scanClrType(d, rows.Scan)
-		if err != nil {
-			return nil, fmt.Errorf("gosmo: list CLR types in %q: %w", d.Name, err)
-		}
-		types = append(types, t)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("gosmo: list CLR types in %q: %w", d.Name, err)
-	}
-	return types, nil
+	return scanRows(rows, err, fmt.Sprintf("list CLR types in %q", d.Name), func(scan func(...any) error) (*ClrType, error) {
+		return scanClrType(d, scan)
+	})
 }
 
 // ClrTypeByName returns one CLR type, or a not-found error (errors.Is
 // ErrNotFound) when the database has none by that name.
-func (d *Database) ClrTypeByName(schema, name string) (*ClrType, error) {
-	return d.ClrTypeByNameContext(context.Background(), schema, name)
-}
-
-// ClrTypeByNameContext is the context-aware variant of ClrTypeByName.
-func (d *Database) ClrTypeByNameContext(ctx context.Context, schema, name string) (*ClrType, error) {
+func (d *Database) ClrTypeByName(ctx context.Context, schema, name string) (*ClrType, error) {
 	if schema == "" {
 		schema = "dbo"
 	}
@@ -415,21 +315,12 @@ func (d *Database) ClrTypeByNameContext(ctx context.Context, schema, name string
 		return err
 	}, clrTypeSelect+`
    AND SCHEMA_NAME(t.schema_id) = @p1 AND t.name = @p2`, schema, name)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, notFoundf("gosmo: CLR type [%s].[%s] not found in %q", schema, name, d.Name)
-	}
-	if err != nil {
-		return nil, fmt.Errorf("gosmo: read CLR type [%s].[%s] in %q: %w", schema, name, d.Name, err)
-	}
-	return t, nil
+	return foundRow(t, err, notFoundf("gosmo: CLR type [%s].[%s] not found in %q", schema, name, d.Name), fmt.Sprintf("read CLR type [%s].[%s] in %q", schema, name, d.Name))
 }
 
 // Drop drops the CLR type.
-func (t *ClrType) Drop() error { return t.DropContext(context.Background()) }
-
-// DropContext is the context-aware variant of Drop.
-func (t *ClrType) DropContext(ctx context.Context) error {
-	return t.db.DropTypeContext(ctx, t.Schema, t.Name)
+func (t *ClrType) Drop(ctx context.Context) error {
+	return t.db.DropType(ctx, t.Schema, t.Name)
 }
 
 // ============================================================
@@ -457,12 +348,7 @@ type SystemDataType struct {
 }
 
 // SystemDataTypes returns the built-in data types the instance ships.
-func (d *Database) SystemDataTypes() ([]*SystemDataType, error) {
-	return d.SystemDataTypesContext(context.Background())
-}
-
-// SystemDataTypesContext is the context-aware variant of SystemDataTypes.
-func (d *Database) SystemDataTypesContext(ctx context.Context) ([]*SystemDataType, error) {
+func (d *Database) SystemDataTypes(ctx context.Context) ([]*SystemDataType, error) {
 	const q = `
 SELECT t.name, t.system_type_id, t.max_length, t.precision, t.scale,
        ISNULL(t.is_nullable, 0)
@@ -471,24 +357,14 @@ WHERE  t.is_user_defined = 0
 ORDER  BY t.name`
 
 	rows, err := d.query(ctx, q)
-	if err != nil {
-		return nil, fmt.Errorf("gosmo: list system data types in %q: %w", d.Name, err)
-	}
-	defer rows.Close()
-
-	var types []*SystemDataType
-	for rows.Next() {
+	return scanRows(rows, err, fmt.Sprintf("list system data types in %q", d.Name), func(scan func(...any) error) (*SystemDataType, error) {
 		t := &SystemDataType{}
-		if err := rows.Scan(&t.Name, &t.SystemType, &t.MaxLength,
+		if err := scan(&t.Name, &t.SystemType, &t.MaxLength,
 			&t.Precision, &t.Scale, &t.IsNullable); err != nil {
-			return nil, fmt.Errorf("gosmo: list system data types in %q: %w", d.Name, err)
+			return nil, err
 		}
-		types = append(types, t)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("gosmo: list system data types in %q: %w", d.Name, err)
-	}
-	return types, nil
+		return t, nil
+	})
 }
 
 // ============================================================
@@ -530,46 +406,20 @@ func scanXMLSchemaCollection(d *Database, scan func(...any) error) (*XMLSchemaCo
 }
 
 // XMLSchemaCollections returns the XML schema collections in the database.
-func (d *Database) XMLSchemaCollections() ([]*XMLSchemaCollection, error) {
-	return d.XMLSchemaCollectionsContext(context.Background())
-}
-
-// XMLSchemaCollectionsContext is the context-aware variant of
-// XMLSchemaCollections.
-func (d *Database) XMLSchemaCollectionsContext(ctx context.Context) ([]*XMLSchemaCollection, error) {
+func (d *Database) XMLSchemaCollections(ctx context.Context) ([]*XMLSchemaCollection, error) {
 	const q = xmlSchemaCollectionSelect + `
 ORDER  BY SCHEMA_NAME(x.schema_id), x.name`
 
 	rows, err := d.query(ctx, q)
-	if err != nil {
-		return nil, fmt.Errorf("gosmo: list XML schema collections in %q: %w", d.Name, err)
-	}
-	defer rows.Close()
-
-	var cols []*XMLSchemaCollection
-	for rows.Next() {
-		c, err := scanXMLSchemaCollection(d, rows.Scan)
-		if err != nil {
-			return nil, fmt.Errorf("gosmo: list XML schema collections in %q: %w", d.Name, err)
-		}
-		cols = append(cols, c)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("gosmo: list XML schema collections in %q: %w", d.Name, err)
-	}
-	return cols, nil
+	return scanRows(rows, err, fmt.Sprintf("list XML schema collections in %q", d.Name), func(scan func(...any) error) (*XMLSchemaCollection, error) {
+		return scanXMLSchemaCollection(d, scan)
+	})
 }
 
 // XMLSchemaCollectionByName returns one XML schema collection, or a
 // not-found error (errors.Is ErrNotFound) when the database has none by that
 // name.
-func (d *Database) XMLSchemaCollectionByName(schema, name string) (*XMLSchemaCollection, error) {
-	return d.XMLSchemaCollectionByNameContext(context.Background(), schema, name)
-}
-
-// XMLSchemaCollectionByNameContext is the context-aware variant of
-// XMLSchemaCollectionByName.
-func (d *Database) XMLSchemaCollectionByNameContext(ctx context.Context, schema, name string) (*XMLSchemaCollection, error) {
+func (d *Database) XMLSchemaCollectionByName(ctx context.Context, schema, name string) (*XMLSchemaCollection, error) {
 	if schema == "" {
 		schema = "dbo"
 	}
@@ -580,48 +430,28 @@ func (d *Database) XMLSchemaCollectionByNameContext(ctx context.Context, schema,
 		return err
 	}, xmlSchemaCollectionSelect+`
    AND SCHEMA_NAME(x.schema_id) = @p1 AND x.name = @p2`, schema, name)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, notFoundf("gosmo: XML schema collection [%s].[%s] not found in %q", schema, name, d.Name)
-	}
-	if err != nil {
-		return nil, fmt.Errorf("gosmo: read XML schema collection [%s].[%s] in %q: %w", schema, name, d.Name, err)
-	}
-	return c, nil
+	return foundRow(c, err, notFoundf("gosmo: XML schema collection [%s].[%s] not found in %q", schema, name, d.Name), fmt.Sprintf("read XML schema collection [%s].[%s] in %q", schema, name, d.Name))
 }
 
 // Definition returns the collection's schema documents as one XML string —
 // what CREATE XML SCHEMA COLLECTION was given, as the server reassembles it.
-func (c *XMLSchemaCollection) Definition() (string, error) {
-	return c.DefinitionContext(context.Background())
-}
-
-// DefinitionContext is the context-aware variant of Definition.
 //
 // XML_SCHEMA_NAMESPACE takes the schema and collection name as *string
 // literals*, not identifiers, so both are passed as parameters rather than
 // bracket-quoted into the statement.
-func (c *XMLSchemaCollection) DefinitionContext(ctx context.Context) (string, error) {
+func (c *XMLSchemaCollection) Definition(ctx context.Context) (string, error) {
 	const q = `SELECT CAST(XML_SCHEMA_NAMESPACE(@p1, @p2) AS NVARCHAR(MAX))`
 
 	var def sql.NullString
 	err := c.db.queryRow(ctx, func(row *sql.Row) error {
 		return row.Scan(&def)
 	}, q, c.Schema, c.Name)
-	if errors.Is(err, sql.ErrNoRows) {
-		return "", notFoundf("gosmo: XML schema collection %s not found in %q", c.FullName(), c.db.Name)
-	}
-	if err != nil {
-		return "", fmt.Errorf("gosmo: read XML schema collection %s in %q: %w", c.FullName(), c.db.Name, err)
-	}
-	return def.String, nil
+	return foundRow(def.String, err, notFoundf("gosmo: XML schema collection %s not found in %q", c.FullName(), c.db.Name), fmt.Sprintf("read XML schema collection %s in %q", c.FullName(), c.db.Name))
 }
 
 // Drop drops the XML schema collection.
-func (c *XMLSchemaCollection) Drop() error { return c.DropContext(context.Background()) }
-
-// DropContext is the context-aware variant of Drop.
-func (c *XMLSchemaCollection) DropContext(ctx context.Context) error {
-	return c.db.DropXMLSchemaCollectionContext(ctx, c.Schema, c.Name)
+func (c *XMLSchemaCollection) Drop(ctx context.Context) error {
+	return c.db.DropXMLSchemaCollection(ctx, c.Schema, c.Name)
 }
 
 // ============================================================
@@ -632,12 +462,7 @@ func (c *XMLSchemaCollection) DropContext(ctx context.Context) error {
 // nothing in the statement distinguishes them, so one method serves all
 // three families. A type still referenced by a column, parameter or function
 // is refused by the server; that error is the caller's to report.
-func (d *Database) DropType(schema, name string) error {
-	return d.DropTypeContext(context.Background(), schema, name)
-}
-
-// DropTypeContext is the context-aware variant of DropType.
-func (d *Database) DropTypeContext(ctx context.Context, schema, name string) error {
+func (d *Database) DropType(ctx context.Context, schema, name string) error {
 	if schema == "" {
 		schema = "dbo"
 	}
@@ -648,13 +473,7 @@ func (d *Database) DropTypeContext(ctx context.Context, schema, name string) err
 }
 
 // DropXMLSchemaCollection drops an XML schema collection.
-func (d *Database) DropXMLSchemaCollection(schema, name string) error {
-	return d.DropXMLSchemaCollectionContext(context.Background(), schema, name)
-}
-
-// DropXMLSchemaCollectionContext is the context-aware variant of
-// DropXMLSchemaCollection.
-func (d *Database) DropXMLSchemaCollectionContext(ctx context.Context, schema, name string) error {
+func (d *Database) DropXMLSchemaCollection(ctx context.Context, schema, name string) error {
 	if schema == "" {
 		schema = "dbo"
 	}
@@ -675,25 +494,14 @@ func (d *Database) DropXMLSchemaCollectionContext(ctx context.Context, schema, n
 // is why Database.TransferObject does not serve here. Everything else about
 // the operation is that method's: the type keeps its name, and permissions
 // granted on it directly are dropped by the server.
-func (d *Database) TransferType(targetSchema, schema, name string) error {
-	return d.TransferTypeContext(context.Background(), targetSchema, schema, name)
-}
-
-// TransferTypeContext is the context-aware variant of TransferType.
-func (d *Database) TransferTypeContext(ctx context.Context, targetSchema, schema, name string) error {
+func (d *Database) TransferType(ctx context.Context, targetSchema, schema, name string) error {
 	return d.transferWithClass(ctx, "TYPE", targetSchema, schema, name)
 }
 
 // TransferXMLSchemaCollection moves an XML schema collection into another
 // schema. Its class prefix is the whole three-word noun, not an abbreviation
 // of it.
-func (d *Database) TransferXMLSchemaCollection(targetSchema, schema, name string) error {
-	return d.TransferXMLSchemaCollectionContext(context.Background(), targetSchema, schema, name)
-}
-
-// TransferXMLSchemaCollectionContext is the context-aware variant of
-// TransferXMLSchemaCollection.
-func (d *Database) TransferXMLSchemaCollectionContext(ctx context.Context, targetSchema, schema, name string) error {
+func (d *Database) TransferXMLSchemaCollection(ctx context.Context, targetSchema, schema, name string) error {
 	return d.transferWithClass(ctx, "XML SCHEMA COLLECTION", targetSchema, schema, name)
 }
 
@@ -727,13 +535,7 @@ func (d *Database) transferWithClass(ctx context.Context, class, targetSchema, s
 // success — so callers must not route them through this method.
 //
 // newName is a bare name, as everywhere sp_rename is used.
-func (d *Database) RenameUserDefinedDataType(schema, oldName, newName string) error {
-	return d.RenameUserDefinedDataTypeContext(context.Background(), schema, oldName, newName)
-}
-
-// RenameUserDefinedDataTypeContext is the context-aware variant of
-// RenameUserDefinedDataType.
-func (d *Database) RenameUserDefinedDataTypeContext(ctx context.Context, schema, oldName, newName string) error {
+func (d *Database) RenameUserDefinedDataType(ctx context.Context, schema, oldName, newName string) error {
 	if schema == "" {
 		schema = "dbo"
 	}

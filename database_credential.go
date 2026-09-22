@@ -3,7 +3,6 @@ package gosmo
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -20,7 +19,7 @@ import (
 // sys.database_scoped_credentials never exposes the stored secret, and there
 // is no read that does — exactly as sys.credentials does not. A caller can set
 // one and can clear one; it can never read one back, which is what shapes both
-// AlterContext's signature and what a generated script can honestly emit: the
+// Alter's signature and what a generated script can honestly emit: the
 // script carries a placeholder, not the secret.
 //
 // # It is not a credential with a different WHERE clause
@@ -55,44 +54,18 @@ FROM   sys.database_scoped_credentials c`
 
 // DatabaseScopedCredentials returns every database-scoped credential in the
 // database.
-func (d *Database) DatabaseScopedCredentials() ([]*DatabaseScopedCredential, error) {
-	return d.DatabaseScopedCredentialsContext(context.Background())
-}
-
-// DatabaseScopedCredentialsContext is the context-aware variant of
-// DatabaseScopedCredentials.
-func (d *Database) DatabaseScopedCredentialsContext(ctx context.Context) ([]*DatabaseScopedCredential, error) {
+func (d *Database) DatabaseScopedCredentials(ctx context.Context) ([]*DatabaseScopedCredential, error) {
 	rows, err := d.query(ctx, databaseScopedCredentialSelect+`
 ORDER  BY c.name`)
-	if err != nil {
-		return nil, fmt.Errorf("gosmo: list database scoped credentials in %q: %w", d.Name, err)
-	}
-	defer rows.Close()
-
-	var creds []*DatabaseScopedCredential
-	for rows.Next() {
-		c, err := scanDatabaseScopedCredential(d, rows.Scan)
-		if err != nil {
-			return nil, fmt.Errorf("gosmo: list database scoped credentials in %q: %w", d.Name, err)
-		}
-		creds = append(creds, c)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("gosmo: list database scoped credentials in %q: %w", d.Name, err)
-	}
-	return creds, nil
+	return scanRows(rows, err, fmt.Sprintf("list database scoped credentials in %q", d.Name), func(scan func(...any) error) (*DatabaseScopedCredential, error) {
+		return scanDatabaseScopedCredential(d, scan)
+	})
 }
 
 // DatabaseScopedCredentialByName returns one credential with every field
 // populated, or a not-found error (errors.Is ErrNotFound) when the database
 // has none by that name.
-func (d *Database) DatabaseScopedCredentialByName(name string) (*DatabaseScopedCredential, error) {
-	return d.DatabaseScopedCredentialByNameContext(context.Background(), name)
-}
-
-// DatabaseScopedCredentialByNameContext is the context-aware variant of
-// DatabaseScopedCredentialByName.
-func (d *Database) DatabaseScopedCredentialByNameContext(ctx context.Context, name string) (*DatabaseScopedCredential, error) {
+func (d *Database) DatabaseScopedCredentialByName(ctx context.Context, name string) (*DatabaseScopedCredential, error) {
 	var c *DatabaseScopedCredential
 	err := d.queryRow(ctx, func(row *sql.Row) error {
 		var err error
@@ -100,13 +73,7 @@ func (d *Database) DatabaseScopedCredentialByNameContext(ctx context.Context, na
 		return err
 	}, databaseScopedCredentialSelect+`
 WHERE  c.name = @p1`, name)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, notFoundf("gosmo: database scoped credential %q not found in %q", name, d.Name)
-	}
-	if err != nil {
-		return nil, fmt.Errorf("gosmo: read database scoped credential %q in %q: %w", name, d.Name, err)
-	}
-	return c, nil
+	return foundRow(c, err, notFoundf("gosmo: database scoped credential %q not found in %q", name, d.Name), fmt.Sprintf("read database scoped credential %q in %q", name, d.Name))
 }
 
 // DatabaseScopedCredentialRef returns a lightweight handle for a credential by
@@ -117,7 +84,7 @@ WHERE  c.name = @p1`, name)
 // Every write method on *DatabaseScopedCredential addresses the credential by
 // name, so this handle is enough to go on operating on one the caller already
 // knows exists — and is the form to use when there is nothing to read yet:
-// under a WithScript-derived context, DatabaseScopedCredentialByNameContext's
+// under a WithScript-derived context, DatabaseScopedCredentialByName's
 // lookup is a real read and a credential whose CREATE was merely collected is
 // not there to find.
 func (d *Database) DatabaseScopedCredentialRef(name string) *DatabaseScopedCredential {
@@ -175,13 +142,7 @@ func (spec DatabaseScopedCredentialSpec) createDatabaseScopedCredentialStatement
 }
 
 // CreateDatabaseScopedCredential creates a database-scoped credential.
-func (d *Database) CreateDatabaseScopedCredential(spec DatabaseScopedCredentialSpec) (*DatabaseScopedCredential, error) {
-	return d.CreateDatabaseScopedCredentialContext(context.Background(), spec)
-}
-
-// CreateDatabaseScopedCredentialContext is the context-aware variant of
-// CreateDatabaseScopedCredential.
-func (d *Database) CreateDatabaseScopedCredentialContext(ctx context.Context, spec DatabaseScopedCredentialSpec) (*DatabaseScopedCredential, error) {
+func (d *Database) CreateDatabaseScopedCredential(ctx context.Context, spec DatabaseScopedCredentialSpec) (*DatabaseScopedCredential, error) {
 	stmt, err := spec.createDatabaseScopedCredentialStatement()
 	if err != nil {
 		return nil, fmt.Errorf("gosmo: create database scoped credential: %w", err)
@@ -193,25 +154,20 @@ func (d *Database) CreateDatabaseScopedCredentialContext(ctx context.Context, sp
 		// The CREATE was only collected, so there is nothing to read back.
 		return d.DatabaseScopedCredentialRef(spec.Name), nil
 	}
-	return d.DatabaseScopedCredentialByNameContext(ctx, spec.Name)
+	return d.DatabaseScopedCredentialByName(ctx, spec.Name)
 }
 
 // Alter changes the credential's identity, and its secret.
-func (c *DatabaseScopedCredential) Alter(identity string, secret *string) error {
-	return c.AlterContext(context.Background(), identity, secret)
-}
-
-// AlterContext is the context-aware variant of Alter.
 //
-// A nil secret does not leave the stored secret alone — it clears it, for the
-// same reason Credential.AlterContext's does. ALTER DATABASE SCOPED CREDENTIAL
-// resets both halves every time and an omitted SECRET sets the stored secret
-// to NULL; there is no T-SQL form that changes the identity while keeping the
-// secret. Since the secret can never be read back, a caller that wants to keep
-// one has to ask the user for it again and pass it here. Both branches are
-// deliberate: pass a pointer to the new secret to set it, and nil only when
-// clearing it is the intent.
-func (c *DatabaseScopedCredential) AlterContext(ctx context.Context, identity string, secret *string) error {
+// A nil secret does not leave the stored secret alone — it clears it, for
+// the same reason Credential.Alter's does. ALTER DATABASE SCOPED
+// CREDENTIAL resets both halves every time and an omitted SECRET sets the
+// stored secret to NULL; there is no T-SQL form that changes the identity
+// while keeping the secret. Since the secret can never be read back, a caller
+// that wants to keep one has to ask the user for it again and pass it here.
+// Both branches are deliberate: pass a pointer to the new secret to set it,
+// and nil only when clearing it is the intent.
+func (c *DatabaseScopedCredential) Alter(ctx context.Context, identity string, secret *string) error {
 	if identity == "" {
 		return fmt.Errorf("gosmo: alter database scoped credential %q: identity is required", c.Name)
 	}
@@ -228,12 +184,10 @@ func (c *DatabaseScopedCredential) AlterContext(ctx context.Context, identity st
 }
 
 // Drop deletes the credential.
-func (c *DatabaseScopedCredential) Drop() error { return c.DropContext(context.Background()) }
-
-// DropContext is the context-aware variant of Drop. No IF EXISTS: dropping
-// one that isn't there reaches the caller as the server's error, the way every
-// other Drop* in this package does.
-func (c *DatabaseScopedCredential) DropContext(ctx context.Context) error {
+//
+// No IF EXISTS: dropping one that isn't there reaches the caller as the
+// server's error, the way every other Drop* in this package does.
+func (c *DatabaseScopedCredential) Drop(ctx context.Context) error {
 	if _, err := c.db.exec(ctx, "DROP DATABASE SCOPED CREDENTIAL "+quoteIdent(c.Name)); err != nil {
 		return fmt.Errorf("gosmo: drop database scoped credential %q in %q: %w", c.Name, c.db.Name, err)
 	}

@@ -26,7 +26,7 @@ const (
 // SP1 (13.0.4001), the build that introduced CREATE OR ALTER.
 //
 // Exactly one statement gosmo builds needs SP1 —
-// Database.CreateStoredProcedureContext's CREATE OR ALTER PROCEDURE
+// Database.CreateStoredProcedure's CREATE OR ALTER PROCEDURE
 // (procedure.go). Every catalog read would run on 2016 RTM, so this one
 // statement is the whole of the gap; supporting RTM means rewriting it as
 // IF EXISTS ... ALTER ... ELSE CREATE, which is a decision to take rather
@@ -160,7 +160,7 @@ type IndexType string
 // The values match sys.indexes.type_desc, except IndexTypeColumnStore,
 // which predates IndexTypeClusteredColumnStore and keeps its original
 // spelling. A type_desc with no constant here is carried through verbatim
-// (see Table.IndexesContext), so Type is never empty for an index that
+// (see Table.Indexes), so Type is never empty for an index that
 // exists.
 const (
 	IndexTypeClustered            IndexType = "CLUSTERED"
@@ -269,6 +269,34 @@ var backupActionNames = map[BackupAction]bool{
 
 // validBackupAction reports whether a is a recognized backup/restore action.
 func validBackupAction(a BackupAction) bool { return backupActionNames[a] }
+
+// RestoreRecovery is the state a restore leaves the database in: RESTORE's
+// RECOVERY, NORECOVERY and STANDBY, which are one choice rather than three
+// independent settings. They were three RestoreOptions fields until
+// 2026-09-22, and setting two of them together built a statement with one
+// silently dropped.
+type RestoreRecovery string
+
+const (
+	// RestoreRecoveryDefault writes no clause, which SQL Server reads as
+	// RECOVERY.
+	RestoreRecoveryDefault RestoreRecovery = ""
+	// RestoreWithRecovery brings the database online; no further backups can
+	// be applied to it.
+	RestoreWithRecovery RestoreRecovery = "RECOVERY"
+	// RestoreWithNoRecovery leaves the database RESTORING, to apply a
+	// differential or log backup next.
+	RestoreWithNoRecovery RestoreRecovery = "NORECOVERY"
+	// RestoreWithStandBy leaves the database read-only between log restores,
+	// undoing uncommitted transactions into RestoreOptions.StandByFile, which
+	// it requires.
+	RestoreWithStandBy RestoreRecovery = "STANDBY"
+)
+
+var restoreRecoveryNames = map[RestoreRecovery]bool{
+	RestoreRecoveryDefault: true, RestoreWithRecovery: true,
+	RestoreWithNoRecovery: true, RestoreWithStandBy: true,
+}
 
 // ============================================================
 // Shared value types

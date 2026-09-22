@@ -40,24 +40,14 @@ const ShowplanColumn = "Microsoft SQL Server 2005 XML Showplan"
 
 // EstimatedPlan captures sql's estimated execution plan without running it
 // (SET SHOWPLAN_XML ON) — SSMS's "Display Estimated Execution Plan".
-func (d *Database) EstimatedPlan(sql string) (*ExecutionPlan, error) {
-	return d.EstimatedPlanContext(context.Background(), sql)
-}
-
-// EstimatedPlanContext is the context-aware variant of EstimatedPlan.
-func (d *Database) EstimatedPlanContext(ctx context.Context, sqlText string) (*ExecutionPlan, error) {
+func (d *Database) EstimatedPlan(ctx context.Context, sqlText string) (*ExecutionPlan, error) {
 	return d.capturePlan(ctx, "SHOWPLAN_XML", sqlText)
 }
 
 // ActualPlan executes sql and captures its actual execution plan
 // (SET STATISTICS XML ON) — SSMS's "Include Actual Execution Plan". Unlike
 // EstimatedPlan, this runs the statement.
-func (d *Database) ActualPlan(sql string) (*ExecutionPlan, error) {
-	return d.ActualPlanContext(context.Background(), sql)
-}
-
-// ActualPlanContext is the context-aware variant of ActualPlan.
-func (d *Database) ActualPlanContext(ctx context.Context, sqlText string) (*ExecutionPlan, error) {
+func (d *Database) ActualPlan(ctx context.Context, sqlText string) (*ExecutionPlan, error) {
 	return d.capturePlan(ctx, "STATISTICS XML", sqlText)
 }
 

@@ -36,17 +36,12 @@ type SecurableSearch struct {
 }
 
 // FindSecurables returns the schemas, tables and views matching search.
-func (d *Database) FindSecurables(search SecurableSearch) ([]SecurableRef, error) {
-	return d.FindSecurablesContext(context.Background(), search)
-}
-
-// FindSecurablesContext is the context-aware variant of FindSecurables.
 //
 // One query over sys.schemas, sys.tables and sys.views, for a caller that
-// needs candidates matching what the user typed rather than the whole
-// catalog — a database with thousands of tables makes "list everything and
-// filter in the client" both slow to open and useless as a picker.
-func (d *Database) FindSecurablesContext(ctx context.Context, search SecurableSearch) ([]SecurableRef, error) {
+// needs candidates matching what the user typed rather than the whole catalog
+// — a database with thousands of tables makes "list everything and filter in
+// the client" both slow to open and useless as a picker.
+func (d *Database) FindSecurables(ctx context.Context, search SecurableSearch) ([]SecurableRef, error) {
 	top := ""
 	if search.Limit > 0 {
 		top = "TOP (@p2) "
@@ -78,22 +73,12 @@ ORDER  BY x.rank, x.qualified`
 	}
 
 	rows, err := d.query(ctx, q, args...)
-	if err != nil {
-		return nil, fmt.Errorf("gosmo: find securables in %q: %w", d.Name, err)
-	}
-	defer rows.Close()
-
-	var refs []SecurableRef
-	for rows.Next() {
+	return scanRows(rows, err, fmt.Sprintf("find securables in %q", d.Name), func(scan func(...any) error) (SecurableRef, error) {
 		var r SecurableRef
 		var rank int
-		if err := rows.Scan(&r.Type, &rank, &r.Schema, &r.Name); err != nil {
-			return nil, fmt.Errorf("gosmo: find securables in %q: %w", d.Name, err)
+		if err := scan(&r.Type, &rank, &r.Schema, &r.Name); err != nil {
+			return SecurableRef{}, err
 		}
-		refs = append(refs, r)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("gosmo: find securables in %q: %w", d.Name, err)
-	}
-	return refs, nil
+		return r, nil
+	})
 }

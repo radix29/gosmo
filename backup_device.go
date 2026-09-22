@@ -3,7 +3,6 @@ package gosmo
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"fmt"
 	"strings"
 )
@@ -56,43 +55,18 @@ SELECT name, type_desc, physical_name
 FROM   sys.backup_devices`
 
 // BackupDevices returns every logical backup device on the server.
-func (s *Server) BackupDevices() ([]*BackupDevice, error) {
-	return s.BackupDevicesContext(context.Background())
-}
-
-// BackupDevicesContext is the context-aware variant of BackupDevices.
-func (s *Server) BackupDevicesContext(ctx context.Context) ([]*BackupDevice, error) {
+func (s *Server) BackupDevices(ctx context.Context) ([]*BackupDevice, error) {
 	rows, err := s.query(ctx, backupDeviceSelect+`
 ORDER  BY name`)
-	if err != nil {
-		return nil, fmt.Errorf("gosmo: list backup devices: %w", err)
-	}
-	defer rows.Close()
-
-	var devices []*BackupDevice
-	for rows.Next() {
-		d, err := scanBackupDevice(s, rows.Scan)
-		if err != nil {
-			return nil, fmt.Errorf("gosmo: list backup devices: %w", err)
-		}
-		devices = append(devices, d)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("gosmo: list backup devices: %w", err)
-	}
-	return devices, nil
+	return scanRows(rows, err, "list backup devices", func(scan func(...any) error) (*BackupDevice, error) {
+		return scanBackupDevice(s, scan)
+	})
 }
 
 // BackupDeviceByName returns one backup device with every field populated, or
 // a not-found error (errors.Is ErrNotFound) when the server has none by that
 // name.
-func (s *Server) BackupDeviceByName(name string) (*BackupDevice, error) {
-	return s.BackupDeviceByNameContext(context.Background(), name)
-}
-
-// BackupDeviceByNameContext is the context-aware variant of
-// BackupDeviceByName.
-func (s *Server) BackupDeviceByNameContext(ctx context.Context, name string) (*BackupDevice, error) {
+func (s *Server) BackupDeviceByName(ctx context.Context, name string) (*BackupDevice, error) {
 	var d *BackupDevice
 	err := s.queryRow(ctx, func(row *sql.Row) error {
 		var err error
@@ -100,13 +74,7 @@ func (s *Server) BackupDeviceByNameContext(ctx context.Context, name string) (*B
 		return err
 	}, backupDeviceSelect+`
 WHERE  name = @p1`, name)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, notFoundf("gosmo: backup device %q not found", name)
-	}
-	if err != nil {
-		return nil, fmt.Errorf("gosmo: read backup device %q: %w", name, err)
-	}
-	return d, nil
+	return foundRow(d, err, notFoundf("gosmo: backup device %q not found", name), fmt.Sprintf("read backup device %q", name))
 }
 
 // BackupDeviceRef returns a lightweight handle for a backup device by name,
@@ -114,10 +82,10 @@ WHERE  name = @p1`, name)
 // Server.DatabaseRef. Type and PhysicalName stay at their zero value;
 // BackupDeviceByName is what populates them.
 //
-// DropContext addresses the device by name, so this handle is enough to drop
+// Drop addresses the device by name, so this handle is enough to drop
 // one the caller already knows exists — and is the form to use when there is
 // nothing to read yet: under a WithScript-derived context,
-// BackupDeviceByNameContext's lookup is a real read and a device whose
+// BackupDeviceByName's lookup is a real read and a device whose
 // sp_addumpdevice was merely collected is not there to find.
 func (s *Server) BackupDeviceRef(name string) *BackupDevice {
 	return &BackupDevice{server: s, Name: name}
@@ -142,18 +110,12 @@ func (d *BackupDevice) Target() BackupTarget { return DeviceTarget(d.Name) }
 // -- Writes ----------------------------------------------------------------------
 
 // CreateBackupDevice registers a logical backup device.
-func (s *Server) CreateBackupDevice(name string, devType BackupDeviceType, physicalName string) (*BackupDevice, error) {
-	return s.CreateBackupDeviceContext(context.Background(), name, devType, physicalName)
-}
-
-// CreateBackupDeviceContext is the context-aware variant of
-// CreateBackupDevice.
 //
 // The statement is built as literals rather than bound parameters because
-// every gosmo write goes through execContext, which under a WithScript context
+// every gosmo write goes through exec, which under a WithScript context
 // collects the statement text instead of running it — a parameterized EXEC
 // would script as a statement carrying @p1 and nothing to bind it to.
-func (s *Server) CreateBackupDeviceContext(ctx context.Context, name string, devType BackupDeviceType, physicalName string) (*BackupDevice, error) {
+func (s *Server) CreateBackupDevice(ctx context.Context, name string, devType BackupDeviceType, physicalName string) (*BackupDevice, error) {
 	if strings.TrimSpace(name) == "" {
 		return nil, fmt.Errorf("gosmo: create backup device: device has no name")
 	}
@@ -166,44 +128,34 @@ func (s *Server) CreateBackupDeviceContext(ctx context.Context, name string, dev
 
 	stmt := fmt.Sprintf("EXEC sp_addumpdevice @devtype = N'%s', @logicalname = N'%s', @physicalname = N'%s'",
 		escapeSingle(string(devType)), escapeSingle(name), escapeSingle(physicalName))
-	if err := s.execContext(ctx, stmt); err != nil {
+	if err := s.exec(ctx, stmt); err != nil {
 		return nil, fmt.Errorf("gosmo: create backup device %q: %w", name, err)
 	}
 	if Scripting(ctx) {
 		// The EXEC was only collected, so there is nothing to read back.
 		return s.BackupDeviceRef(name), nil
 	}
-	return s.BackupDeviceByNameContext(ctx, name)
+	return s.BackupDeviceByName(ctx, name)
 }
 
 // Drop removes the logical backup device. deleteFile also deletes the
 // physical file behind it.
-func (d *BackupDevice) Drop(deleteFile bool) error {
-	return d.DropContext(context.Background(), deleteFile)
-}
-
-// DropContext is the context-aware variant of Drop.
 //
 // deleteFile is sp_dropdevice's @delfile: false unregisters the alias and
 // leaves the backup file on disk, true deletes the file too and is not
 // recoverable.
-func (d *BackupDevice) DropContext(ctx context.Context, deleteFile bool) error {
+func (d *BackupDevice) Drop(ctx context.Context, deleteFile bool) error {
 	stmt := fmt.Sprintf("EXEC sp_dropdevice @logicalname = N'%s'", escapeSingle(d.Name))
 	if deleteFile {
 		stmt += ", @delfile = N'DELFILE'"
 	}
-	if err := d.server.execContext(ctx, stmt); err != nil {
+	if err := d.server.exec(ctx, stmt); err != nil {
 		return fmt.Errorf("gosmo: drop backup device %q: %w", d.Name, err)
 	}
 	return nil
 }
 
 // Headers reads the backup sets the device holds (RESTORE HEADERONLY).
-func (d *BackupDevice) Headers() ([]*BackupHeader, error) {
-	return d.HeadersContext(context.Background())
-}
-
-// HeadersContext is the context-aware variant of Headers.
-func (d *BackupDevice) HeadersContext(ctx context.Context) ([]*BackupHeader, error) {
-	return d.server.BackupHeadersFromContext(ctx, d.Target())
+func (d *BackupDevice) Headers(ctx context.Context) ([]*BackupHeader, error) {
+	return d.server.BackupHeadersFrom(ctx, d.Target())
 }

@@ -35,14 +35,14 @@ func captureCEK(t *testing.T) *ColumnEncryptionKey {
 func TestColumnEncryptionKeyValuesTrackTheAlter(t *testing.T) {
 	ctx := context.Background()
 	cek := captureCEK(t)
-	if err := cek.AddValueContext(ctx, ColumnEncryptionKeyValue{
+	if err := cek.AddValue(ctx, ColumnEncryptionKeyValue{
 		MasterKeyName: "CMK]2", EncryptionAlgorithm: "RSA_OAEP", EncryptedValue: []byte{0x02}}); err != nil {
 		t.Fatalf("AddValue: %v", err)
 	}
 	if len(cek.Values) != 2 {
 		t.Fatalf("after AddValue, Values = %d, want 2", len(cek.Values))
 	}
-	if err := cek.DropValueContext(ctx, "cmk]1"); err != nil { // case-insensitive, as SQL Server matches it
+	if err := cek.DropValue(ctx, "cmk]1"); err != nil { // case-insensitive, as SQL Server matches it
 		t.Fatalf("DropValue: %v", err)
 	}
 	if len(cek.Values) != 1 || cek.Values[0].MasterKeyName != "CMK]2" {
@@ -60,7 +60,7 @@ func TestColumnEncryptionKeySummaryFollowsTheValues(t *testing.T) {
 	ctx := context.Background()
 	cek := captureCEK(t)
 
-	if err := cek.AddValueContext(ctx, ColumnEncryptionKeyValue{
+	if err := cek.AddValue(ctx, ColumnEncryptionKeyValue{
 		MasterKeyName: "CMK]2", EncryptionAlgorithm: "RSA_OAEP_256", EncryptedValue: []byte{0x02}}); err != nil {
 		t.Fatalf("AddValue: %v", err)
 	}
@@ -70,7 +70,7 @@ func TestColumnEncryptionKeySummaryFollowsTheValues(t *testing.T) {
 			cek.MasterKeyName, cek.EncryptionAlgorithm)
 	}
 
-	if err := cek.DropValueContext(ctx, "CMK]1"); err != nil {
+	if err := cek.DropValue(ctx, "CMK]1"); err != nil {
 		t.Fatalf("DropValue: %v", err)
 	}
 	if cek.MasterKeyName != "CMK]2" || cek.EncryptionAlgorithm != "RSA_OAEP_256" {
@@ -78,7 +78,7 @@ func TestColumnEncryptionKeySummaryFollowsTheValues(t *testing.T) {
 			cek.MasterKeyName, cek.EncryptionAlgorithm)
 	}
 
-	if err := cek.DropValueContext(ctx, "CMK]2"); err != nil {
+	if err := cek.DropValue(ctx, "CMK]2"); err != nil {
 		t.Fatalf("DropValue: %v", err)
 	}
 	if cek.MasterKeyName != "" || cek.EncryptionAlgorithm != "" {

@@ -149,12 +149,7 @@ ORDER  BY k.name, k.symmetric_key_id`
 
 // SymmetricKeys returns the database's symmetric keys with their encryptions,
 // excluding the database master key and the other internal ##...## keys.
-func (d *Database) SymmetricKeys() ([]*SymmetricKey, error) {
-	return d.SymmetricKeysContext(context.Background())
-}
-
-// SymmetricKeysContext is the context-aware variant of SymmetricKeys.
-func (d *Database) SymmetricKeysContext(ctx context.Context) ([]*SymmetricKey, error) {
+func (d *Database) SymmetricKeys(ctx context.Context) ([]*SymmetricKey, error) {
 	out, err := d.symmetricKeys(ctx, `
 WHERE  k.name NOT LIKE '##%'`)
 	if err != nil {
@@ -164,17 +159,11 @@ WHERE  k.name NOT LIKE '##%'`)
 }
 
 // SymmetricKeyByName returns one symmetric key with its encryptions, or an
-// error wrapping ErrNotFound when the database has none by that name — the
-// ordinary convention, not CertificateByName's (nil, nil). The database
+// error wrapping ErrNotFound when the database has none by that name. The
+// database
 // master key is not found by its ##MS_DatabaseMasterKey## name: it is not a
 // SymmetricKey (see HasMasterKey).
-func (d *Database) SymmetricKeyByName(name string) (*SymmetricKey, error) {
-	return d.SymmetricKeyByNameContext(context.Background(), name)
-}
-
-// SymmetricKeyByNameContext is the context-aware variant of
-// SymmetricKeyByName.
-func (d *Database) SymmetricKeyByNameContext(ctx context.Context, name string) (*SymmetricKey, error) {
+func (d *Database) SymmetricKeyByName(ctx context.Context, name string) (*SymmetricKey, error) {
 	out, err := d.symmetricKeys(ctx, `
 WHERE  k.name = @p1 AND k.name NOT LIKE '##%'`, name)
 	if err != nil {
@@ -591,13 +580,7 @@ func (spec SymmetricKeySpec) createProviderSymmetricKeyStatement() (string, erro
 // encrypted by a certificate or asymmetric key needs CONTROL on it (Msg
 // 15151 without); one encrypted by another symmetric key opens that key
 // first, in the same batch.
-func (d *Database) CreateSymmetricKey(spec SymmetricKeySpec) error {
-	return d.CreateSymmetricKeyContext(context.Background(), spec)
-}
-
-// CreateSymmetricKeyContext is the context-aware variant of
-// CreateSymmetricKey.
-func (d *Database) CreateSymmetricKeyContext(ctx context.Context, spec SymmetricKeySpec) error {
+func (d *Database) CreateSymmetricKey(ctx context.Context, spec SymmetricKeySpec) error {
 	stmt, err := spec.createSymmetricKeyStatement()
 	if err != nil {
 		return fmt.Errorf("gosmo: create symmetric key in %q: %w", d.Name, err)
@@ -611,10 +594,7 @@ func (d *Database) CreateSymmetricKeyContext(ctx context.Context, spec Symmetric
 // Drop deletes the symmetric key. Data encrypted with it cannot be decrypted
 // again, unless the key was created with KEY_SOURCE and IDENTITY_VALUE and is
 // re-created from them.
-func (k *SymmetricKey) Drop() error { return k.DropContext(context.Background()) }
-
-// DropContext is the context-aware variant of Drop.
-func (k *SymmetricKey) DropContext(ctx context.Context) error {
+func (k *SymmetricKey) Drop(ctx context.Context) error {
 	if _, err := k.db.exec(ctx, "DROP SYMMETRIC KEY "+quoteIdent(k.Name)); err != nil {
 		return fmt.Errorf("gosmo: drop symmetric key %q in %q: %w", k.Name, k.db.Name, err)
 	}
@@ -624,12 +604,7 @@ func (k *SymmetricKey) DropContext(ctx context.Context) error {
 // ChangeOwner transfers the key to another database principal with ALTER
 // AUTHORIZATION. SQL Server drops every explicit permission on the key as it
 // does so.
-func (k *SymmetricKey) ChangeOwner(newOwner string) error {
-	return k.ChangeOwnerContext(context.Background(), newOwner)
-}
-
-// ChangeOwnerContext is the context-aware variant of ChangeOwner.
-func (k *SymmetricKey) ChangeOwnerContext(ctx context.Context, newOwner string) error {
+func (k *SymmetricKey) ChangeOwner(ctx context.Context, newOwner string) error {
 	q := "ALTER AUTHORIZATION ON SYMMETRIC KEY::" + quoteIdent(k.Name) + " TO " + quoteIdent(newOwner)
 	if _, err := k.db.exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: change symmetric key %q owner to %q in %q: %w", k.Name, newOwner, k.db.Name, err)
@@ -664,12 +639,7 @@ func (k *SymmetricKey) alterEncryptionStatement(verb string, enc SymmetricKeyEnc
 //
 // The receiver's Encryptions are not updated; SymmetricKeyByName reads them
 // afresh.
-func (k *SymmetricKey) AddEncryption(enc SymmetricKeyEncryptor, dec SymmetricKeyDecryptor) error {
-	return k.AddEncryptionContext(context.Background(), enc, dec)
-}
-
-// AddEncryptionContext is the context-aware variant of AddEncryption.
-func (k *SymmetricKey) AddEncryptionContext(ctx context.Context, enc SymmetricKeyEncryptor, dec SymmetricKeyDecryptor) error {
+func (k *SymmetricKey) AddEncryption(ctx context.Context, enc SymmetricKeyEncryptor, dec SymmetricKeyDecryptor) error {
 	stmt, err := k.alterEncryptionStatement("ADD", enc, dec)
 	if err != nil {
 		return fmt.Errorf("gosmo: add encryption to symmetric key %q in %q: %w", k.Name, k.db.Name, err)
@@ -687,12 +657,7 @@ func (k *SymmetricKey) AddEncryptionContext(ctx context.Context, enc SymmetricKe
 //
 // The receiver's Encryptions are not updated; SymmetricKeyByName reads them
 // afresh.
-func (k *SymmetricKey) DropEncryption(enc SymmetricKeyEncryptor, dec SymmetricKeyDecryptor) error {
-	return k.DropEncryptionContext(context.Background(), enc, dec)
-}
-
-// DropEncryptionContext is the context-aware variant of DropEncryption.
-func (k *SymmetricKey) DropEncryptionContext(ctx context.Context, enc SymmetricKeyEncryptor, dec SymmetricKeyDecryptor) error {
+func (k *SymmetricKey) DropEncryption(ctx context.Context, enc SymmetricKeyEncryptor, dec SymmetricKeyDecryptor) error {
 	stmt, err := k.alterEncryptionStatement("DROP", enc, dec)
 	if err != nil {
 		return fmt.Errorf("gosmo: drop encryption from symmetric key %q in %q: %w", k.Name, k.db.Name, err)

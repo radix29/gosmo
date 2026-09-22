@@ -19,25 +19,25 @@ func TestScriptIndexAndStatisticsWrites(t *testing.T) {
 
 	runScriptCases(t, []scriptCase{
 		{"Index Rebuild", func(c context.Context) error {
-			return index().RebuildContext(c, table(), 80)
+			return index().Rebuild(c, table(), 80)
 		}, scriptUsePrefix + "ALTER INDEX [IX_A]]B] ON [dbo].[Sales.Archive] REBUILD WITH (FILLFACTOR = 80)"},
 		{"Index RebuildWithOptions", func(c context.Context) error {
-			return index().RebuildWithOptionsContext(c, table(), 90, true, "PAGE")
+			return index().RebuildWithOptions(c, table(), 90, true, "PAGE")
 		}, scriptUsePrefix + "ALTER INDEX [IX_A]]B] ON [dbo].[Sales.Archive] REBUILD WITH (PAD_INDEX = ON, FILLFACTOR = 90, DATA_COMPRESSION = PAGE)"},
 		{"Index Reorganize", func(c context.Context) error {
-			return index().ReorganizeContext(c, table())
+			return index().Reorganize(c, table())
 		}, scriptUsePrefix + "ALTER INDEX [IX_A]]B] ON [dbo].[Sales.Archive] REORGANIZE"},
 		{"Index SetOptions", func(c context.Context) error {
-			return index().SetOptionsContext(c, table(), true, false, true)
+			return index().SetOptions(c, table(), true, false, true)
 		}, scriptUsePrefix + "ALTER INDEX [IX_A]]B] ON [dbo].[Sales.Archive] SET (IGNORE_DUP_KEY = ON, ALLOW_ROW_LOCKS = OFF, ALLOW_PAGE_LOCKS = ON)"},
 		{"Index SetLockOptions", func(c context.Context) error {
-			return index().SetLockOptionsContext(c, table(), false, true)
+			return index().SetLockOptions(c, table(), false, true)
 		}, scriptUsePrefix + "ALTER INDEX [IX_A]]B] ON [dbo].[Sales.Archive] SET (ALLOW_ROW_LOCKS = OFF, ALLOW_PAGE_LOCKS = ON)"},
 		{"Index UpdateStatistics", func(c context.Context) error {
-			return index().UpdateStatisticsContext(c, table())
+			return index().UpdateStatistics(c, table())
 		}, scriptUsePrefix + "UPDATE STATISTICS [dbo].[Sales.Archive] ([IX_A]]B])"},
 		{"Index Disable", func(c context.Context) error {
-			return index().DisableContext(c, table())
+			return index().Disable(c, table())
 		}, scriptUsePrefix + "ALTER INDEX [IX_A]]B] ON [dbo].[Sales.Archive] DISABLE"},
 		{
 			// A disabled index is re-enabled by rebuilding it; there is no
@@ -45,25 +45,25 @@ func TestScriptIndexAndStatisticsWrites(t *testing.T) {
 			// which would otherwise change the index's stored setting as a
 			// side effect of turning it back on.
 			"Index Enable rebuilds", func(c context.Context) error {
-				return index().EnableContext(c, table())
+				return index().Enable(c, table())
 			}, scriptUsePrefix + "ALTER INDEX [IX_A]]B] ON [dbo].[Sales.Archive] REBUILD"},
 		{"Index Drop", func(c context.Context) error {
-			return index().DropContext(c, table())
+			return index().Drop(c, table())
 		}, scriptUsePrefix + "DROP INDEX [IX_A]]B] ON [dbo].[Sales.Archive]"},
 		{"Table RebuildAllIndexes", func(c context.Context) error {
-			return table().RebuildAllIndexesContext(c, 70)
+			return table().RebuildAllIndexes(c, 70)
 		}, scriptUsePrefix + "ALTER INDEX ALL ON [dbo].[Sales.Archive] REBUILD WITH (FILLFACTOR = 70)"},
 		{"Table TruncateTable", func(c context.Context) error {
-			return table().TruncateTableContext(c)
+			return table().TruncateTable(c)
 		}, scriptUsePrefix + "TRUNCATE TABLE [dbo].[Sales.Archive]"},
 		{"Table CreateStatistic", func(c context.Context) error {
-			return table().CreateStatisticContext(c, "st]1", []string{"a]b", "c'd"}, 50)
+			return table().CreateStatistic(c, "st]1", []string{"a]b", "c'd"}, 50)
 		}, scriptUsePrefix + "CREATE STATISTICS [st]]1] ON [dbo].[Sales.Archive] ([a]]b], [c'd]) WITH SAMPLE 50 PERCENT"},
 		{"Table CreateStatistic without a sample", func(c context.Context) error {
-			return table().CreateStatisticContext(c, "st1", []string{"ab"}, 0)
+			return table().CreateStatistic(c, "st1", []string{"ab"}, 0)
 		}, scriptUsePrefix + "CREATE STATISTICS [st1] ON [dbo].[Sales.Archive] ([ab])"},
 		{"Table CreateStatisticWithOptions", func(c context.Context) error {
-			return table().CreateStatisticWithOptionsContext(c, CreateStatisticRequest{
+			return table().CreateStatisticWithOptions(c, CreateStatisticRequest{
 				Name:             "st]1",
 				Columns:          []string{"a]b", "c'd"},
 				FullScan:         true,
@@ -73,12 +73,12 @@ func TestScriptIndexAndStatisticsWrites(t *testing.T) {
 			})
 		}, scriptUsePrefix + "CREATE STATISTICS [st]]1] ON [dbo].[Sales.Archive] ([a]]b], [c'd]) WHERE [a]]b] IS NOT NULL WITH FULLSCAN, NORECOMPUTE, INCREMENTAL = ON"},
 		{"Table CreateStatisticWithOptions, sampled", func(c context.Context) error {
-			return table().CreateStatisticWithOptionsContext(c, CreateStatisticRequest{
+			return table().CreateStatisticWithOptions(c, CreateStatisticRequest{
 				Name: "st1", Columns: []string{"ab"}, SamplePercent: 25,
 			})
 		}, scriptUsePrefix + "CREATE STATISTICS [st1] ON [dbo].[Sales.Archive] ([ab]) WITH SAMPLE 25 PERCENT"},
 		{"Table UpdateAllStatistics", func(c context.Context) error {
-			return table().UpdateAllStatisticsContext(c, 25)
+			return table().UpdateAllStatistics(c, 25)
 		}, scriptUsePrefix + "UPDATE STATISTICS [dbo].[Sales.Archive] WITH SAMPLE 25 PERCENT"},
 	})
 }
@@ -99,14 +99,14 @@ func TestCreateStatisticRefusesAnEmptySpec(t *testing.T) {
 	}
 	for _, c := range cases {
 		ctx, script := WithScript(context.Background())
-		err := table.CreateStatisticContext(ctx, c.stat, c.columns, 0)
+		err := table.CreateStatistic(ctx, c.stat, c.columns, 0)
 		if err == nil {
-			t.Errorf("CreateStatisticContext(%s) returned nil, want an error", c.name)
+			t.Errorf("CreateStatistic(%s) returned nil, want an error", c.name)
 		} else if !strings.Contains(err.Error(), c.want) {
-			t.Errorf("CreateStatisticContext(%s) error = %v, want it to mention %q", c.name, err, c.want)
+			t.Errorf("CreateStatistic(%s) error = %v, want it to mention %q", c.name, err, c.want)
 		}
-		if len(script.Statements) != 0 {
-			t.Errorf("CreateStatisticContext(%s) scripted %q, want nothing", c.name, script.Statements)
+		if len(script.Statements()) != 0 {
+			t.Errorf("CreateStatistic(%s) scripted %q, want nothing", c.name, script.Statements())
 		}
 	}
 }
@@ -117,7 +117,7 @@ func TestCreateStatisticRefusesAnEmptySpec(t *testing.T) {
 func TestCreateStatisticRefusesAFullScanAndASample(t *testing.T) {
 	ctx, script := WithScript(context.Background())
 	table := &Table{db: scriptTestDB(), Schema: "dbo", Name: "Sales.Archive"}
-	err := table.CreateStatisticWithOptionsContext(ctx, CreateStatisticRequest{
+	err := table.CreateStatisticWithOptions(ctx, CreateStatisticRequest{
 		Name: "st1", Columns: []string{"a"}, FullScan: true, SamplePercent: 50,
 	})
 	if err == nil {
@@ -126,8 +126,8 @@ func TestCreateStatisticRefusesAFullScanAndASample(t *testing.T) {
 	if !strings.Contains(err.Error(), "alternatives") {
 		t.Errorf("error = %v, want it to say the two are alternatives", err)
 	}
-	if len(script.Statements) != 0 {
-		t.Errorf("refused but still scripted %q", script.Statements)
+	if len(script.Statements()) != 0 {
+		t.Errorf("refused but still scripted %q", script.Statements())
 	}
 }
 
@@ -140,16 +140,16 @@ func TestScriptPlanGuideControls(t *testing.T) {
 
 	runScriptCases(t, []scriptCase{
 		{"PlanGuide Enable", func(c context.Context) error {
-			return guide().EnableContext(c)
+			return guide().Enable(c)
 		}, scriptUsePrefix + "EXEC sp_control_plan_guide @operation = N'ENABLE', @name = N'PG_o''brien'"},
 		{"PlanGuide Disable", func(c context.Context) error {
-			return guide().DisableContext(c)
+			return guide().Disable(c)
 		}, scriptUsePrefix + "EXEC sp_control_plan_guide @operation = N'DISABLE', @name = N'PG_o''brien'"},
 		{"PlanGuide Drop", func(c context.Context) error {
-			return guide().DropContext(c)
+			return guide().Drop(c)
 		}, scriptUsePrefix + "EXEC sp_control_plan_guide @operation = N'DROP', @name = N'PG_o''brien'"},
 		{"DropPlanGuide by name", func(c context.Context) error {
-			return scriptTestDB().DropPlanGuideContext(c, "PG_o'brien")
+			return scriptTestDB().DropPlanGuide(c, "PG_o'brien")
 		}, scriptUsePrefix + "EXEC sp_control_plan_guide @operation = N'DROP', @name = N'PG_o''brien'"},
 	})
 }
@@ -160,14 +160,14 @@ func TestScriptedPlanGuideControlDoesNotMirrorOntoTheReceiver(t *testing.T) {
 	g := &PlanGuide{db: scriptTestDB(), Name: "PG", IsDisabled: true}
 
 	ctx, script := WithScript(context.Background())
-	if err := g.EnableContext(ctx); err != nil {
+	if err := g.Enable(ctx); err != nil {
 		t.Fatalf("scripted enable: %v", err)
 	}
 	if !g.IsDisabled {
 		t.Error("a scripted enable cleared IsDisabled on the receiver; the statement " +
 			"was only captured, so the server's guide is still disabled")
 	}
-	if len(script.Statements) != 1 {
-		t.Fatalf("captured %q, want one statement", script.Statements)
+	if len(script.Statements()) != 1 {
+		t.Fatalf("captured %q, want one statement", script.Statements())
 	}
 }

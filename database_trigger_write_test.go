@@ -18,11 +18,11 @@ func TestDatabaseTriggerWriteStatements(t *testing.T) {
 		act  func(*DatabaseTrigger, context.Context) error
 		want string
 	}{
-		{"enable", func(tr *DatabaseTrigger, ctx context.Context) error { return tr.EnableContext(ctx) },
+		{"enable", func(tr *DatabaseTrigger, ctx context.Context) error { return tr.Enable(ctx) },
 			use + "ENABLE TRIGGER [ddl_audit] ON DATABASE"},
-		{"disable", func(tr *DatabaseTrigger, ctx context.Context) error { return tr.DisableContext(ctx) },
+		{"disable", func(tr *DatabaseTrigger, ctx context.Context) error { return tr.Disable(ctx) },
 			use + "DISABLE TRIGGER [ddl_audit] ON DATABASE"},
-		{"drop", func(tr *DatabaseTrigger, ctx context.Context) error { return tr.DropContext(ctx) },
+		{"drop", func(tr *DatabaseTrigger, ctx context.Context) error { return tr.Drop(ctx) },
 			use + "DROP TRIGGER [ddl_audit] ON DATABASE"},
 	}
 	for _, tc := range cases {
@@ -31,11 +31,11 @@ func TestDatabaseTriggerWriteStatements(t *testing.T) {
 			if err := tc.act(dbTriggerFor("ddl_audit"), ctx); err != nil {
 				t.Fatalf("%s: %v", tc.name, err)
 			}
-			if len(col.Statements) != 1 {
-				t.Fatalf("got %d statements, want 1: %v", len(col.Statements), col.Statements)
+			if len(col.Statements()) != 1 {
+				t.Fatalf("got %d statements, want 1: %v", len(col.Statements()), col.Statements())
 			}
-			if col.Statements[0] != tc.want {
-				t.Errorf("got:\n%s\nwant:\n%s", col.Statements[0], tc.want)
+			if col.Statements()[0] != tc.want {
+				t.Errorf("got:\n%s\nwant:\n%s", col.Statements()[0], tc.want)
 			}
 		})
 	}
@@ -46,14 +46,14 @@ func TestDatabaseTriggerWriteStatements(t *testing.T) {
 // object and omit the ON DATABASE clause the server requires.
 func TestDatabaseTriggerDropIsNotSchemaQualified(t *testing.T) {
 	ctx, col := WithScript(context.Background())
-	if err := dbTriggerFor("ddl_audit").DropContext(ctx); err != nil {
-		t.Fatalf("DropContext: %v", err)
+	if err := dbTriggerFor("ddl_audit").Drop(ctx); err != nil {
+		t.Fatalf("Drop: %v", err)
 	}
-	if strings.Contains(col.Statements[0], "[dbo].") {
-		t.Errorf("the drop schema-qualified a database-scope trigger:\n%s", col.Statements[0])
+	if strings.Contains(col.Statements()[0], "[dbo].") {
+		t.Errorf("the drop schema-qualified a database-scope trigger:\n%s", col.Statements()[0])
 	}
-	if !strings.HasSuffix(col.Statements[0], " ON DATABASE") {
-		t.Errorf("the drop is missing its ON DATABASE clause:\n%s", col.Statements[0])
+	if !strings.HasSuffix(col.Statements()[0], " ON DATABASE") {
+		t.Errorf("the drop is missing its ON DATABASE clause:\n%s", col.Statements()[0])
 	}
 }
 
@@ -61,11 +61,11 @@ func TestDatabaseTriggerDropIsNotSchemaQualified(t *testing.T) {
 // statement addresses a different (or no) trigger.
 func TestDatabaseTriggerNameIsQuoted(t *testing.T) {
 	ctx, col := WithScript(context.Background())
-	if err := dbTriggerFor("odd]name").DropContext(ctx); err != nil {
-		t.Fatalf("DropContext: %v", err)
+	if err := dbTriggerFor("odd]name").Drop(ctx); err != nil {
+		t.Fatalf("Drop: %v", err)
 	}
-	if want := use + "DROP TRIGGER [odd]]name] ON DATABASE"; col.Statements[0] != want {
-		t.Errorf("got %q, want %q", col.Statements[0], want)
+	if want := use + "DROP TRIGGER [odd]]name] ON DATABASE"; col.Statements()[0] != want {
+		t.Errorf("got %q, want %q", col.Statements()[0], want)
 	}
 }
 
@@ -74,8 +74,8 @@ func TestDatabaseTriggerNameIsQuoted(t *testing.T) {
 func TestDatabaseTriggerEnabledFlagIsNotSetWhileScripting(t *testing.T) {
 	tr := dbTriggerFor("ddl_audit")
 	ctx, _ := WithScript(context.Background())
-	if err := tr.EnableContext(ctx); err != nil {
-		t.Fatalf("EnableContext: %v", err)
+	if err := tr.Enable(ctx); err != nil {
+		t.Fatalf("Enable: %v", err)
 	}
 	if tr.IsEnabled {
 		t.Error("IsEnabled was set from a scripted (not executed) ENABLE")

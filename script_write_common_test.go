@@ -42,11 +42,11 @@ func runScriptCases(t *testing.T, cases []scriptCase) {
 			if err := c.call(ctx); err != nil {
 				t.Fatalf("%s under WithScript: %v", c.name, err)
 			}
-			if len(script.Statements) != 1 {
-				t.Fatalf("Statements = %d, want 1:\n%s", len(script.Statements),
-					strings.Join(script.Statements, "\n---\n"))
+			if len(script.Statements()) != 1 {
+				t.Fatalf("Statements = %d, want 1:\n%s", len(script.Statements()),
+					strings.Join(script.Statements(), "\n---\n"))
 			}
-			if got := script.Statements[0]; got != c.want {
+			if got := script.Statements()[0]; got != c.want {
 				t.Errorf("statement mismatch\n got: %q\nwant: %q", got, c.want)
 			}
 		})
@@ -61,4 +61,4 @@ func runScriptCases(t *testing.T, cases []scriptCase) {
 func scriptTestDB() *Database { return &Database{server: &Server{}, Name: "App'DB"} }
 
 // scriptUsePrefix is what Database.exec prepends to every captured statement.
-const scriptUsePrefix = "USE [App'DB];\n"
+const scriptUsePrefix = "USE [App'DB];\nGO\n"

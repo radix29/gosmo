@@ -59,9 +59,9 @@ func TestLiveSymmetricKeyReadScript(t *testing.T) {
 		}
 	}
 
-	keys, err := src.SymmetricKeysContext(ctx)
+	keys, err := src.SymmetricKeys(ctx)
 	if err != nil {
-		t.Fatalf("SymmetricKeysContext: %v", err)
+		t.Fatalf("SymmetricKeys: %v", err)
 	}
 	var names []string
 	byName := map[string]*SymmetricKey{}
@@ -99,22 +99,22 @@ func TestLiveSymmetricKeyReadScript(t *testing.T) {
 
 	// The finder agrees with the list, and follows ErrNotFound for an absent
 	// key and for the master key alike.
-	one, err := src.SymmetricKeyByNameContext(ctx, name)
+	one, err := src.SymmetricKeyByName(ctx, name)
 	if err != nil || kinds(one) != kinds(rt) || one.KeyGUID != rt.KeyGUID {
-		t.Errorf("SymmetricKeyByNameContext: %+v, %v", one, err)
+		t.Errorf("SymmetricKeyByName: %+v, %v", one, err)
 	}
 	for _, n := range []string{"##MS_DatabaseMasterKey##", "no_such_key"} {
-		if _, err := src.SymmetricKeyByNameContext(ctx, n); !errors.Is(err, ErrNotFound) {
-			t.Errorf("SymmetricKeyByNameContext(%q): %v, want a not-found error", n, err)
+		if _, err := src.SymmetricKeyByName(ctx, n); !errors.Is(err, ErrNotFound) {
+			t.Errorf("SymmetricKeyByName(%q): %v, want a not-found error", n, err)
 		}
 	}
 
 	// Each key's scripted CREATE, run in the second database, recreates the
 	// shape — owner, algorithm, encryptors — but not the key: a new GUID.
 	for _, n := range []string{name, "child"} {
-		script, err := NewScripter(src, ScriptOptions{Verb: ScriptCreate}).ScriptSymmetricKeyContext(ctx, n)
+		script, err := NewScripter(src, ScriptOptions{Verb: ScriptCreate}).ScriptSymmetricKey(ctx, n)
 		if err != nil {
-			t.Fatalf("ScriptSymmetricKeyContext(%q): %v", n, err)
+			t.Fatalf("ScriptSymmetricKey(%q): %v", n, err)
 		}
 		t.Logf("script:\n%s", script)
 		if !strings.Contains(script, "NEW key") {
@@ -130,7 +130,7 @@ func TestLiveSymmetricKeyReadScript(t *testing.T) {
 			}
 		}
 		orig := byName[n]
-		got, err := dst.SymmetricKeyByNameContext(ctx, n)
+		got, err := dst.SymmetricKeyByName(ctx, n)
 		if err != nil {
 			t.Fatalf("read recreated %s: %v", n, err)
 		}
@@ -144,7 +144,7 @@ func TestLiveSymmetricKeyReadScript(t *testing.T) {
 	}
 
 	// The DROP script, then the not-found scripter answer.
-	drop, err := NewScripter(dst, ScriptOptions{Verb: ScriptDrop}).ScriptSymmetricKeyContext(ctx, name)
+	drop, err := NewScripter(dst, ScriptOptions{Verb: ScriptDrop}).ScriptSymmetricKey(ctx, name)
 	if err != nil {
 		t.Fatalf("script DROP: %v", err)
 	}
@@ -153,7 +153,7 @@ func TestLiveSymmetricKeyReadScript(t *testing.T) {
 			t.Fatalf("run DROP script: %v\n%s", err, batch)
 		}
 	}
-	if _, err := NewScripter(dst, ScriptOptions{}).ScriptSymmetricKeyContext(ctx, name); !errors.Is(err, ErrNotFound) {
+	if _, err := NewScripter(dst, ScriptOptions{}).ScriptSymmetricKey(ctx, name); !errors.Is(err, ErrNotFound) {
 		t.Errorf("scripting a dropped key: %v, want a not-found error", err)
 	}
 }

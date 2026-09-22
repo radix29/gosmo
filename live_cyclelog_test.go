@@ -1,6 +1,6 @@
 //go:build livedb
 
-// Live coverage for CycleLogContext, which no unit test can reach: WithScript
+// Live coverage for CycleLog, which no unit test can reach: WithScript
 // proves the right statement is *built*, never that SQL Server accepts it or
 // that it does what the name says. What settles it is the archive count
 // before and after.
@@ -32,21 +32,21 @@ func TestLiveCycleLogSQLServer(t *testing.T) {
 		t.Fatalf("NewServer: %v", err)
 	}
 
-	before, err := s.EnumErrorLogsContext(ctx, ErrorLogSQLServer)
+	before, err := s.EnumErrorLogs(ctx, ErrorLogSQLServer)
 	if err != nil {
-		t.Fatalf("EnumErrorLogsContext before: %v", err)
+		t.Fatalf("EnumErrorLogs before: %v", err)
 	}
 	if len(before) == 0 {
 		t.Fatal("no error logs reported before the cycle")
 	}
 
-	if err := s.CycleLogContext(ctx, ErrorLogSQLServer); err != nil {
-		t.Fatalf("CycleLogContext(SQL Server): %v", err)
+	if err := s.CycleLog(ctx, ErrorLogSQLServer); err != nil {
+		t.Fatalf("CycleLog(SQL Server): %v", err)
 	}
 
-	after, err := s.EnumErrorLogsContext(ctx, ErrorLogSQLServer)
+	after, err := s.EnumErrorLogs(ctx, ErrorLogSQLServer)
 	if err != nil {
-		t.Fatalf("EnumErrorLogsContext after: %v", err)
+		t.Fatalf("EnumErrorLogs after: %v", err)
 	}
 	// The count only grows until the instance reaches its configured maximum,
 	// after which cycling drops the oldest and the count holds steady. What is
@@ -82,7 +82,7 @@ func TestLiveCycleLogAgent(t *testing.T) {
 		t.Fatalf("NewServer: %v", err)
 	}
 
-	before, err := s.EnumErrorLogsContext(ctx, ErrorLogAgent)
+	before, err := s.EnumErrorLogs(ctx, ErrorLogAgent)
 	if err != nil {
 		t.Skipf("cannot enumerate Agent logs (Agent not running?): %v", err)
 	}
@@ -90,13 +90,13 @@ func TestLiveCycleLogAgent(t *testing.T) {
 		t.Skip("no Agent error logs reported — Agent has never run on this instance")
 	}
 
-	if err := s.CycleLogContext(ctx, ErrorLogAgent); err != nil {
-		t.Fatalf("CycleLogContext(SQL Server Agent): %v", err)
+	if err := s.CycleLog(ctx, ErrorLogAgent); err != nil {
+		t.Fatalf("CycleLog(SQL Server Agent): %v", err)
 	}
 
-	after, err := s.EnumErrorLogsContext(ctx, ErrorLogAgent)
+	after, err := s.EnumErrorLogs(ctx, ErrorLogAgent)
 	if err != nil {
-		t.Fatalf("EnumErrorLogsContext after: %v", err)
+		t.Fatalf("EnumErrorLogs after: %v", err)
 	}
 	if len(after) < len(before) {
 		t.Errorf("Agent archive count fell from %d to %d", len(before), len(after))

@@ -23,44 +23,44 @@ func TestRefHandleWriteStatements(t *testing.T) {
 		want string
 	}{
 		{"server role rename", func(ctx context.Context, s *Server) error {
-			return s.ServerRoleRef("auditors").RenameContext(ctx, "readers")
+			return s.ServerRoleRef("auditors").Rename(ctx, "readers")
 		}, "ALTER SERVER ROLE [auditors] WITH NAME = [readers]"},
 		{"server role change owner", func(ctx context.Context, s *Server) error {
-			return s.ServerRoleRef("auditors").ChangeOwnerContext(ctx, "sa")
+			return s.ServerRoleRef("auditors").ChangeOwner(ctx, "sa")
 		}, "ALTER AUTHORIZATION ON SERVER ROLE::[auditors] TO [sa]"},
 		{"server role drop", func(ctx context.Context, s *Server) error {
-			return s.ServerRoleRef("auditors").DropContext(ctx)
+			return s.ServerRoleRef("auditors").Drop(ctx)
 		}, "DROP SERVER ROLE [auditors]"},
 
 		{"user rename", func(ctx context.Context, s *Server) error {
-			return s.DatabaseRef("AppDB").UserRef("app").RenameContext(ctx, "app2")
+			return s.DatabaseRef("AppDB").UserRef("app").Rename(ctx, "app2")
 		}, useAppDB + "ALTER USER [app] WITH NAME = [app2]"},
 		{"user set default schema", func(ctx context.Context, s *Server) error {
-			return s.DatabaseRef("AppDB").UserRef("app").SetDefaultSchemaContext(ctx, "sales")
+			return s.DatabaseRef("AppDB").UserRef("app").SetDefaultSchema(ctx, "sales")
 		}, useAppDB + "ALTER USER [app] WITH DEFAULT_SCHEMA = [sales]"},
 		{"user set login", func(ctx context.Context, s *Server) error {
-			return s.DatabaseRef("AppDB").UserRef("app").SetLoginContext(ctx, "applogin")
+			return s.DatabaseRef("AppDB").UserRef("app").SetLogin(ctx, "applogin")
 		}, useAppDB + "ALTER USER [app] WITH LOGIN = [applogin]"},
 		{"user drop", func(ctx context.Context, s *Server) error {
-			return s.DatabaseRef("AppDB").UserRef("app").DropContext(ctx)
+			return s.DatabaseRef("AppDB").UserRef("app").Drop(ctx)
 		}, useAppDB + "DROP USER [app]"},
 
 		{"statistic update", func(ctx context.Context, s *Server) error {
-			return s.DatabaseRef("AppDB").TableRef("dbo", "Orders").StatisticRef("ix_o").UpdateContext(ctx, 0)
+			return s.DatabaseRef("AppDB").TableRef("dbo", "Orders").StatisticRef("ix_o").Update(ctx, 0)
 		}, useAppDB + "UPDATE STATISTICS [dbo].[Orders] [ix_o] WITH FULLSCAN"},
 		{"statistic drop", func(ctx context.Context, s *Server) error {
-			return s.DatabaseRef("AppDB").TableRef("dbo", "Orders").StatisticRef("ix_o").DropContext(ctx)
+			return s.DatabaseRef("AppDB").TableRef("dbo", "Orders").StatisticRef("ix_o").Drop(ctx)
 		}, useAppDB + "DROP STATISTICS [dbo].[Orders].[ix_o]"},
 
 		{"certificate drop", func(ctx context.Context, s *Server) error {
-			return s.DatabaseRef("AppDB").CertificateRef("app_cert").DropContext(ctx)
+			return s.DatabaseRef("AppDB").CertificateRef("app_cert").Drop(ctx)
 		}, useAppDB + "DROP CERTIFICATE [app_cert]"},
 		{"asymmetric key drop", func(ctx context.Context, s *Server) error {
-			return s.DatabaseRef("AppDB").AsymmetricKeyRef("app_key").DropContext(ctx)
+			return s.DatabaseRef("AppDB").AsymmetricKeyRef("app_key").Drop(ctx)
 		}, useAppDB + "DROP ASYMMETRIC KEY [app_key]"},
 
 		{"configuration set value", func(ctx context.Context, s *Server) error {
-			return s.ConfigurationRef("max degree of parallelism").SetValueContext(ctx, 4)
+			return s.ConfigurationRef("max degree of parallelism").SetValue(ctx, 4)
 		}, "EXEC sp_configure N'max degree of parallelism', 4"},
 	}
 	for _, tc := range cases {
@@ -69,11 +69,11 @@ func TestRefHandleWriteStatements(t *testing.T) {
 			if err := tc.act(ctx, &Server{}); err != nil {
 				t.Fatalf("%s: %v", tc.name, err)
 			}
-			if len(col.Statements) != 1 {
-				t.Fatalf("got %d statements, want 1: %v", len(col.Statements), col.Statements)
+			if len(col.Statements()) != 1 {
+				t.Fatalf("got %d statements, want 1: %v", len(col.Statements()), col.Statements())
 			}
-			if col.Statements[0] != tc.want {
-				t.Errorf("got:\n%s\nwant:\n%s", col.Statements[0], tc.want)
+			if col.Statements()[0] != tc.want {
+				t.Errorf("got:\n%s\nwant:\n%s", col.Statements()[0], tc.want)
 			}
 		})
 	}
@@ -85,22 +85,22 @@ func TestRefHandleWriteStatements(t *testing.T) {
 func TestRefHandleNamesAreQuoted(t *testing.T) {
 	ctx, col := WithScript(context.Background())
 	s := &Server{}
-	if err := s.ServerRoleRef("odd]role").DropContext(ctx); err != nil {
-		t.Fatalf("DropContext: %v", err)
+	if err := s.ServerRoleRef("odd]role").Drop(ctx); err != nil {
+		t.Fatalf("Drop: %v", err)
 	}
-	if err := s.DatabaseRef("AppDB").UserRef("odd]user").RenameContext(ctx, "plain"); err != nil {
-		t.Fatalf("RenameContext: %v", err)
+	if err := s.DatabaseRef("AppDB").UserRef("odd]user").Rename(ctx, "plain"); err != nil {
+		t.Fatalf("Rename: %v", err)
 	}
 	want := []string{
 		"DROP SERVER ROLE [odd]]role]",
 		useAppDB + "ALTER USER [odd]]user] WITH NAME = [plain]",
 	}
-	if len(col.Statements) != len(want) {
-		t.Fatalf("got %d statements, want %d: %v", len(col.Statements), len(want), col.Statements)
+	if len(col.Statements()) != len(want) {
+		t.Fatalf("got %d statements, want %d: %v", len(col.Statements()), len(want), col.Statements())
 	}
 	for i, w := range want {
-		if col.Statements[i] != w {
-			t.Errorf("statement %d: got %q, want %q", i, col.Statements[i], w)
+		if col.Statements()[i] != w {
+			t.Errorf("statement %d: got %q, want %q", i, col.Statements()[i], w)
 		}
 	}
 }
@@ -111,22 +111,22 @@ func TestRefHandleNamesAreQuoted(t *testing.T) {
 func TestRefHandleIsNotMutatedWhileScripting(t *testing.T) {
 	ctx, _ := WithScript(context.Background())
 	u := (&Server{}).DatabaseRef("AppDB").UserRef("app")
-	if err := u.RenameContext(ctx, "app2"); err != nil {
-		t.Fatalf("RenameContext: %v", err)
+	if err := u.Rename(ctx, "app2"); err != nil {
+		t.Fatalf("Rename: %v", err)
 	}
 	if u.Name != "app" {
 		t.Errorf("Name = %q after a scripted rename, want %q", u.Name, "app")
 	}
-	if err := u.SetDefaultSchemaContext(ctx, "sales"); err != nil {
-		t.Fatalf("SetDefaultSchemaContext: %v", err)
+	if err := u.SetDefaultSchema(ctx, "sales"); err != nil {
+		t.Fatalf("SetDefaultSchema: %v", err)
 	}
 	if u.DefaultSchema != "" {
 		t.Errorf("DefaultSchema = %q after a scripted change, want empty", u.DefaultSchema)
 	}
 
 	c := (&Server{}).ConfigurationRef("max degree of parallelism")
-	if err := c.SetValueContext(ctx, 4); err != nil {
-		t.Fatalf("SetValueContext: %v", err)
+	if err := c.SetValue(ctx, 4); err != nil {
+		t.Fatalf("SetValue: %v", err)
 	}
 	if c.Value != 0 {
 		t.Errorf("Value = %d after a scripted sp_configure, want 0", c.Value)

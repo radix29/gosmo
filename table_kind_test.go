@@ -91,9 +91,9 @@ func TestTableKindsPresentOnADatabaseWithNoTables(t *testing.T) {
 	})
 
 	d := &Database{server: &Server{db: db}, Name: "testdb"}
-	got, err := d.TableKindsPresentContext(context.Background())
+	got, err := d.TableKindsPresent(context.Background())
 	if err != nil {
-		t.Fatalf("TableKindsPresentContext: %v", err)
+		t.Fatalf("TableKindsPresent: %v", err)
 	}
 	if (got != TableKindPresence{}) {
 		t.Errorf("presence = %+v, want every field false", got)

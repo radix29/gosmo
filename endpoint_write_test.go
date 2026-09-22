@@ -19,11 +19,11 @@ func TestEndpointStateStatements(t *testing.T) {
 		t.Run(string(tc.state), func(t *testing.T) {
 			ctx, col := WithScript(context.Background())
 			e := &Endpoint{server: &Server{}, Name: "AGEP", EndpointID: 65536}
-			if err := e.SetStateContext(ctx, tc.state); err != nil {
-				t.Fatalf("SetStateContext: %v", err)
+			if err := e.SetState(ctx, tc.state); err != nil {
+				t.Fatalf("SetState: %v", err)
 			}
-			if len(col.Statements) != 1 || col.Statements[0] != tc.want {
-				t.Errorf("got %v, want [%s]", col.Statements, tc.want)
+			if len(col.Statements()) != 1 || col.Statements()[0] != tc.want {
+				t.Errorf("got %v, want [%s]", col.Statements(), tc.want)
 			}
 		})
 	}
@@ -32,11 +32,11 @@ func TestEndpointStateStatements(t *testing.T) {
 func TestEndpointDropStatement(t *testing.T) {
 	ctx, col := WithScript(context.Background())
 	e := &Endpoint{server: &Server{}, Name: "odd]name", EndpointID: 65536}
-	if err := e.DropContext(ctx); err != nil {
-		t.Fatalf("DropContext: %v", err)
+	if err := e.Drop(ctx); err != nil {
+		t.Fatalf("Drop: %v", err)
 	}
-	if want := "DROP ENDPOINT [odd]]name]"; col.Statements[0] != want {
-		t.Errorf("got %q, want %q", col.Statements[0], want)
+	if want := "DROP ENDPOINT [odd]]name]"; col.Statements()[0] != want {
+		t.Errorf("got %q, want %q", col.Statements()[0], want)
 	}
 }
 
@@ -48,8 +48,8 @@ func TestASystemEndpointRefusesBothWrites(t *testing.T) {
 		name string
 		act  func(*Endpoint, context.Context) error
 	}{
-		{"drop", func(e *Endpoint, ctx context.Context) error { return e.DropContext(ctx) }},
-		{"set state", func(e *Endpoint, ctx context.Context) error { return e.SetStateContext(ctx, EndpointStopped) }},
+		{"drop", func(e *Endpoint, ctx context.Context) error { return e.Drop(ctx) }},
+		{"set state", func(e *Endpoint, ctx context.Context) error { return e.SetState(ctx, EndpointStopped) }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx, col := WithScript(context.Background())
@@ -60,8 +60,8 @@ func TestASystemEndpointRefusesBothWrites(t *testing.T) {
 			}
 			// Refused *before* the statement is built, so nothing is collected
 			// and nothing could be offered as a script either.
-			if len(col.Statements) != 0 {
-				t.Errorf("a refused write still built %v", col.Statements)
+			if len(col.Statements()) != 0 {
+				t.Errorf("a refused write still built %v", col.Statements())
 			}
 		})
 	}
@@ -70,19 +70,19 @@ func TestASystemEndpointRefusesBothWrites(t *testing.T) {
 func TestAnUnknownEndpointStateIsRefused(t *testing.T) {
 	ctx, col := WithScript(context.Background())
 	e := &Endpoint{server: &Server{}, Name: "AGEP", EndpointID: 65536}
-	if err := e.SetStateContext(ctx, EndpointState("PAUSED")); err == nil {
+	if err := e.SetState(ctx, EndpointState("PAUSED")); err == nil {
 		t.Error("want an error for an unknown state, got nil")
 	}
-	if len(col.Statements) != 0 {
-		t.Errorf("an unknown state still built %v", col.Statements)
+	if len(col.Statements()) != 0 {
+		t.Errorf("an unknown state still built %v", col.Statements())
 	}
 }
 
 func TestEndpointStateIsNotMirroredWhileScripting(t *testing.T) {
 	e := &Endpoint{server: &Server{}, Name: "AGEP", EndpointID: 65536, State: "STARTED"}
 	ctx, _ := WithScript(context.Background())
-	if err := e.SetStateContext(ctx, EndpointStopped); err != nil {
-		t.Fatalf("SetStateContext: %v", err)
+	if err := e.SetState(ctx, EndpointStopped); err != nil {
+		t.Fatalf("SetState: %v", err)
 	}
 	if e.State != "STARTED" {
 		t.Errorf("State became %q from a scripted (not executed) ALTER", e.State)

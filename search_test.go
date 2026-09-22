@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-// Database.SearchContext's SQL, captured off the driver — the same reach
+// Database.Search's SQL, captured off the driver — the same reach
 // extended_properties_read_test.go uses, and the only one there is for a read:
 // WithScript intercepts writes only.
 //
@@ -25,8 +25,8 @@ func TestSearchComparesCaseInsensitivelyWhateverTheCollation(t *testing.T) {
 
 	// The capture driver returns no rows; the statement generated on the way is
 	// what is under test.
-	if _, err := d.SearchContext(context.Background(), "Customer"); err != nil {
-		t.Fatalf("SearchContext: %v", err)
+	if _, err := d.Search(context.Background(), "Customer"); err != nil {
+		t.Fatalf("Search: %v", err)
 	}
 	q := captured.find("sys.objects")
 	if q == "" {
@@ -51,8 +51,8 @@ func TestSearchEscapesWildcardsInThePattern(t *testing.T) {
 
 	// _ is legal in an identifier and is LIKE's single-character wildcard, so
 	// unescaped, a search for pct_1 also finds pct11.
-	if _, err := d.SearchContext(context.Background(), "pct_1"); err != nil {
-		t.Fatalf("SearchContext: %v", err)
+	if _, err := d.Search(context.Background(), "pct_1"); err != nil {
+		t.Fatalf("Search: %v", err)
 	}
 	if q := captured.find("sys.objects"); !strings.Contains(q, `ESCAPE '\'`) {
 		t.Errorf("statement:\n%s\nhas no ESCAPE clause — the backslashes likeEscape "+

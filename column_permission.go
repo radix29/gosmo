@@ -80,12 +80,7 @@ WHERE  dp.class_desc = 'OBJECT_OR_COLUMN' AND dp.minor_id > 0`
 
 // ColumnPermissions returns every column-level GRANT/DENY entry recorded on
 // schema.name, for all principals and all columns.
-func (d *Database) ColumnPermissions(schema, name string) ([]*ColumnPermissionEntry, error) {
-	return d.ColumnPermissionsContext(context.Background(), schema, name)
-}
-
-// ColumnPermissionsContext is the context-aware variant of ColumnPermissions.
-func (d *Database) ColumnPermissionsContext(ctx context.Context, schema, name string) ([]*ColumnPermissionEntry, error) {
+func (d *Database) ColumnPermissions(ctx context.Context, schema, name string) ([]*ColumnPermissionEntry, error) {
 	const q = columnPermissionSelect + `
 AND    dp.major_id = OBJECT_ID(@p1)
 ORDER  BY pr.name, col.name, dp.permission_name`
@@ -100,13 +95,7 @@ ORDER  BY pr.name, col.name, dp.permission_name`
 // database-scoped entries and deliberately leaves column entries out (a
 // Securables page lists securables, and a column is not one of them; SSMS
 // puts them behind a per-securable "Column Permissions..." button).
-func (d *Database) ColumnPermissionsForPrincipal(principal string) ([]*ColumnPermissionEntry, error) {
-	return d.ColumnPermissionsForPrincipalContext(context.Background(), principal)
-}
-
-// ColumnPermissionsForPrincipalContext is the context-aware variant of
-// ColumnPermissionsForPrincipal.
-func (d *Database) ColumnPermissionsForPrincipalContext(ctx context.Context, principal string) ([]*ColumnPermissionEntry, error) {
+func (d *Database) ColumnPermissionsForPrincipal(ctx context.Context, principal string) ([]*ColumnPermissionEntry, error) {
 	const q = columnPermissionSelect + `
 AND    pr.name = @p1
 ORDER  BY sch.name, obj.name, col.name, dp.permission_name`
@@ -119,53 +108,31 @@ ORDER  BY sch.name, obj.name, col.name, dp.permission_name`
 // which return identical column lists.
 func (d *Database) scanColumnPermissions(ctx context.Context, q, what string, arg any) ([]*ColumnPermissionEntry, error) {
 	rows, err := d.query(ctx, q, arg)
-	if err != nil {
-		return nil, fmt.Errorf("gosmo: %s: %w", what, err)
-	}
-	defer rows.Close()
-
-	var entries []*ColumnPermissionEntry
-	for rows.Next() {
+	return scanRows(rows, err, what, func(scan func(...any) error) (*ColumnPermissionEntry, error) {
 		e := &ColumnPermissionEntry{}
 		var perm, state, objType string
-		if err := rows.Scan(&e.Principal, &e.PrincipalType, &e.Grantor,
+		if err := scan(&e.Principal, &e.PrincipalType, &e.Grantor,
 			&e.Schema, &e.Object, &objType, &e.Column, &perm, &state); err != nil {
-			return nil, fmt.Errorf("gosmo: %s: %w", what, err)
+			return nil, err
 		}
 		e.ObjectType = securableObjectTypeNames[objType]
 		e.Permission = ObjectPermission(perm)
 		e.State = PermissionState(state)
-		entries = append(entries, e)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("gosmo: %s: %w", what, err)
-	}
-	return entries, nil
+		return e, nil
+	})
 }
 
 // GrantColumnPermission grants permission on the named columns of
 // schema.name to principal. Passing several columns renders the one
 // statement SQL Server accepts for them — GRANT SELECT (a, b) ON ... — not
 // one statement per column.
-func (d *Database) GrantColumnPermission(schema, name string, permission ObjectPermission, columns []string, principal string) error {
-	return d.GrantColumnPermissionContext(context.Background(), schema, name, permission, columns, principal)
-}
-
-// GrantColumnPermissionContext is the context-aware variant of
-// GrantColumnPermission.
-func (d *Database) GrantColumnPermissionContext(ctx context.Context, schema, name string, permission ObjectPermission, columns []string, principal string) error {
-	return d.GrantColumnPermissionWithOptionsContext(ctx, schema, name, permission, columns, principal, PermissionOptions{})
+func (d *Database) GrantColumnPermission(ctx context.Context, schema, name string, permission ObjectPermission, columns []string, principal string) error {
+	return d.GrantColumnPermissionWithOptions(ctx, schema, name, permission, columns, principal, PermissionOptions{})
 }
 
 // GrantColumnPermissionWithOptions grants a column-level permission
 // honouring opts — the WITH GRANT OPTION form of GrantColumnPermission.
-func (d *Database) GrantColumnPermissionWithOptions(schema, name string, permission ObjectPermission, columns []string, principal string, opts PermissionOptions) error {
-	return d.GrantColumnPermissionWithOptionsContext(context.Background(), schema, name, permission, columns, principal, opts)
-}
-
-// GrantColumnPermissionWithOptionsContext is the context-aware variant of
-// GrantColumnPermissionWithOptions.
-func (d *Database) GrantColumnPermissionWithOptionsContext(ctx context.Context, schema, name string, permission ObjectPermission, columns []string, principal string, opts PermissionOptions) error {
+func (d *Database) GrantColumnPermissionWithOptions(ctx context.Context, schema, name string, permission ObjectPermission, columns []string, principal string, opts PermissionOptions) error {
 	if err := requireColumns("grant", columns); err != nil {
 		return err
 	}
@@ -174,25 +141,13 @@ func (d *Database) GrantColumnPermissionWithOptionsContext(ctx context.Context, 
 
 // DenyColumnPermission denies permission on the named columns of
 // schema.name to principal.
-func (d *Database) DenyColumnPermission(schema, name string, permission ObjectPermission, columns []string, principal string) error {
-	return d.DenyColumnPermissionContext(context.Background(), schema, name, permission, columns, principal)
-}
-
-// DenyColumnPermissionContext is the context-aware variant of
-// DenyColumnPermission.
-func (d *Database) DenyColumnPermissionContext(ctx context.Context, schema, name string, permission ObjectPermission, columns []string, principal string) error {
-	return d.DenyColumnPermissionWithOptionsContext(ctx, schema, name, permission, columns, principal, PermissionOptions{})
+func (d *Database) DenyColumnPermission(ctx context.Context, schema, name string, permission ObjectPermission, columns []string, principal string) error {
+	return d.DenyColumnPermissionWithOptions(ctx, schema, name, permission, columns, principal, PermissionOptions{})
 }
 
 // DenyColumnPermissionWithOptions denies a column-level permission honouring
 // opts — the CASCADE form of DenyColumnPermission.
-func (d *Database) DenyColumnPermissionWithOptions(schema, name string, permission ObjectPermission, columns []string, principal string, opts PermissionOptions) error {
-	return d.DenyColumnPermissionWithOptionsContext(context.Background(), schema, name, permission, columns, principal, opts)
-}
-
-// DenyColumnPermissionWithOptionsContext is the context-aware variant of
-// DenyColumnPermissionWithOptions.
-func (d *Database) DenyColumnPermissionWithOptionsContext(ctx context.Context, schema, name string, permission ObjectPermission, columns []string, principal string, opts PermissionOptions) error {
+func (d *Database) DenyColumnPermissionWithOptions(ctx context.Context, schema, name string, permission ObjectPermission, columns []string, principal string, opts PermissionOptions) error {
 	if err := requireColumns("deny", columns); err != nil {
 		return err
 	}
@@ -201,26 +156,14 @@ func (d *Database) DenyColumnPermissionWithOptionsContext(ctx context.Context, s
 
 // RevokeColumnPermission revokes permission on the named columns of
 // schema.name from principal.
-func (d *Database) RevokeColumnPermission(schema, name string, permission ObjectPermission, columns []string, principal string) error {
-	return d.RevokeColumnPermissionContext(context.Background(), schema, name, permission, columns, principal)
-}
-
-// RevokeColumnPermissionContext is the context-aware variant of
-// RevokeColumnPermission.
-func (d *Database) RevokeColumnPermissionContext(ctx context.Context, schema, name string, permission ObjectPermission, columns []string, principal string) error {
-	return d.RevokeColumnPermissionWithOptionsContext(ctx, schema, name, permission, columns, principal, PermissionOptions{})
+func (d *Database) RevokeColumnPermission(ctx context.Context, schema, name string, permission ObjectPermission, columns []string, principal string) error {
+	return d.RevokeColumnPermissionWithOptions(ctx, schema, name, permission, columns, principal, PermissionOptions{})
 }
 
 // RevokeColumnPermissionWithOptions revokes a column-level permission
 // honouring opts — the CASCADE and GRANT OPTION FOR forms of
 // RevokeColumnPermission.
-func (d *Database) RevokeColumnPermissionWithOptions(schema, name string, permission ObjectPermission, columns []string, principal string, opts PermissionOptions) error {
-	return d.RevokeColumnPermissionWithOptionsContext(context.Background(), schema, name, permission, columns, principal, opts)
-}
-
-// RevokeColumnPermissionWithOptionsContext is the context-aware variant of
-// RevokeColumnPermissionWithOptions.
-func (d *Database) RevokeColumnPermissionWithOptionsContext(ctx context.Context, schema, name string, permission ObjectPermission, columns []string, principal string, opts PermissionOptions) error {
+func (d *Database) RevokeColumnPermissionWithOptions(ctx context.Context, schema, name string, permission ObjectPermission, columns []string, principal string, opts PermissionOptions) error {
 	if err := requireColumns("revoke", columns); err != nil {
 		return err
 	}

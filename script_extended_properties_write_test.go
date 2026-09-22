@@ -29,7 +29,7 @@ func TestScriptExtendedPropertyWrites(t *testing.T) {
 
 	runScriptCases(t, []scriptCase{
 		{"AddExtendedProperty", func(c context.Context) error {
-			return scriptTestDB().AddExtendedPropertyContext(c, "MS_Description", "o'brien", tableLevel)
+			return scriptTestDB().AddExtendedProperty(c, "MS_Description", "o'brien", tableLevel)
 		}, scriptUsePrefix + `
 EXEC sp_addextendedproperty
     @name = N'MS_Description', @value = N'o''brien',
@@ -37,7 +37,7 @@ EXEC sp_addextendedproperty
     @level1type = N'TABLE', @level1name = N'Sales''Archive',
     @level2type = NULL, @level2name = NULL`},
 		{"AddExtendedProperty at column level", func(c context.Context) error {
-			return scriptTestDB().AddExtendedPropertyContext(c, "MS_Description", "v", columnLevel)
+			return scriptTestDB().AddExtendedProperty(c, "MS_Description", "v", columnLevel)
 		}, scriptUsePrefix + `
 EXEC sp_addextendedproperty
     @name = N'MS_Description', @value = N'v',
@@ -45,7 +45,7 @@ EXEC sp_addextendedproperty
     @level1type = N'TABLE', @level1name = N'Sales''Archive',
     @level2type = N'COLUMN', @level2name = N'O''Brien'`},
 		{"SetExtendedProperty", func(c context.Context) error {
-			return scriptTestDB().SetExtendedPropertyContext(c, "MS_Description", "v'2", tableLevel)
+			return scriptTestDB().SetExtendedProperty(c, "MS_Description", "v'2", tableLevel)
 		}, scriptUsePrefix + `
 EXEC sp_updateextendedproperty
     @name = N'MS_Description', @value = N'v''2',
@@ -53,7 +53,7 @@ EXEC sp_updateextendedproperty
     @level1type = N'TABLE', @level1name = N'Sales''Archive',
     @level2type = NULL, @level2name = NULL`},
 		{"DropExtendedProperty", func(c context.Context) error {
-			return scriptTestDB().DropExtendedPropertyContext(c, "MS_Description", tableLevel)
+			return scriptTestDB().DropExtendedProperty(c, "MS_Description", tableLevel)
 		}, scriptUsePrefix + `
 EXEC sp_dropextendedproperty
     @name = N'MS_Description',

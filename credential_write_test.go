@@ -65,7 +65,7 @@ func TestCreateCredentialStatementRequiresNameAndIdentity(t *testing.T) {
 }
 
 // A nil secret must emit no SECRET clause — and that clears the stored secret
-// rather than preserving it, which is the whole reason AlterContext takes a
+// rather than preserving it, which is the whole reason Alter takes a
 // pointer. Documented under ALTER CREDENTIAL: "If the optional SECRET argument
 // is not specified, the value of the stored secret will be set to NULL."
 func TestAlterCredentialSecretClause(t *testing.T) {
@@ -90,14 +90,14 @@ func TestAlterCredentialSecretClause(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx, col := WithScript(context.Background())
 			c := (&Server{}).CredentialRef("app_cred")
-			if err := c.AlterContext(ctx, `DOMAIN\svc`, tc.secret); err != nil {
-				t.Fatalf("AlterContext: %v", err)
+			if err := c.Alter(ctx, `DOMAIN\svc`, tc.secret); err != nil {
+				t.Fatalf("Alter: %v", err)
 			}
-			if len(col.Statements) != 1 {
-				t.Fatalf("got %d statements, want 1: %v", len(col.Statements), col.Statements)
+			if len(col.Statements()) != 1 {
+				t.Fatalf("got %d statements, want 1: %v", len(col.Statements()), col.Statements())
 			}
-			if col.Statements[0] != tc.want {
-				t.Errorf("got:\n%s\nwant:\n%s", col.Statements[0], tc.want)
+			if col.Statements()[0] != tc.want {
+				t.Errorf("got:\n%s\nwant:\n%s", col.Statements()[0], tc.want)
 			}
 		})
 	}
@@ -105,11 +105,11 @@ func TestAlterCredentialSecretClause(t *testing.T) {
 
 func TestAlterCredentialRequiresIdentity(t *testing.T) {
 	ctx, col := WithScript(context.Background())
-	if err := (&Server{}).CredentialRef("app_cred").AlterContext(ctx, "", nil); err == nil {
+	if err := (&Server{}).CredentialRef("app_cred").Alter(ctx, "", nil); err == nil {
 		t.Error("an empty identity was accepted")
 	}
-	if len(col.Statements) != 0 {
-		t.Errorf("a statement was built anyway: %v", col.Statements)
+	if len(col.Statements()) != 0 {
+		t.Errorf("a statement was built anyway: %v", col.Statements())
 	}
 }
 
@@ -117,45 +117,45 @@ func TestAlterCredentialRequiresIdentity(t *testing.T) {
 // back would find nothing. The name-only handle is what a caller gets instead.
 func TestCreateCredentialUnderScriptReturnsAHandle(t *testing.T) {
 	ctx, col := WithScript(context.Background())
-	c, err := (&Server{}).CreateCredentialContext(ctx, CredentialSpec{Name: "app_cred", Identity: "x"})
+	c, err := (&Server{}).CreateCredential(ctx, CredentialSpec{Name: "app_cred", Identity: "x"})
 	if err != nil {
-		t.Fatalf("CreateCredentialContext: %v", err)
+		t.Fatalf("CreateCredential: %v", err)
 	}
 	if c == nil || c.Name != "app_cred" {
 		t.Fatalf("got %#v, want a handle named app_cred", c)
 	}
-	if len(col.Statements) != 1 || !strings.HasPrefix(col.Statements[0], "CREATE CREDENTIAL [app_cred]") {
-		t.Errorf("collected statements: %v", col.Statements)
+	if len(col.Statements()) != 1 || !strings.HasPrefix(col.Statements()[0], "CREATE CREDENTIAL [app_cred]") {
+		t.Errorf("collected statements: %v", col.Statements())
 	}
 	// The handle must still be usable for a follow-up write.
-	if err := c.DropContext(ctx); err != nil {
-		t.Fatalf("DropContext on the returned handle: %v", err)
+	if err := c.Drop(ctx); err != nil {
+		t.Fatalf("Drop on the returned handle: %v", err)
 	}
 }
 
 func TestDropCredentialStatement(t *testing.T) {
 	ctx, col := WithScript(context.Background())
-	if err := (&Server{}).CredentialRef("app_cred").DropContext(ctx); err != nil {
-		t.Fatalf("DropContext: %v", err)
+	if err := (&Server{}).CredentialRef("app_cred").Drop(ctx); err != nil {
+		t.Fatalf("Drop: %v", err)
 	}
 	want := "DROP CREDENTIAL [app_cred]"
-	if len(col.Statements) != 1 || col.Statements[0] != want {
-		t.Errorf("got %v, want [%s]", col.Statements, want)
+	if len(col.Statements()) != 1 || col.Statements()[0] != want {
+		t.Errorf("got %v, want [%s]", col.Statements(), want)
 	}
 	// DROP CREDENTIAL has no IF EXISTS form; emitting one is a syntax error.
-	if strings.Contains(col.Statements[0], "IF EXISTS") {
-		t.Errorf("DROP CREDENTIAL used IF EXISTS, which SQL Server does not accept: %s", col.Statements[0])
+	if strings.Contains(col.Statements()[0], "IF EXISTS") {
+		t.Errorf("DROP CREDENTIAL used IF EXISTS, which SQL Server does not accept: %s", col.Statements()[0])
 	}
 }
 
-// AlterContext mirrors the new identity onto the receiver, so it must not do
+// Alter mirrors the new identity onto the receiver, so it must not do
 // so under WithScript, where the server still holds the old one.
 func TestAlterCredentialDoesNotMirrorUnderScript(t *testing.T) {
 	ctx, _ := WithScript(context.Background())
 	c := (&Server{}).CredentialRef("app_cred")
 	c.Identity = "old"
-	if err := c.AlterContext(ctx, "new", nil); err != nil {
-		t.Fatalf("AlterContext: %v", err)
+	if err := c.Alter(ctx, "new", nil); err != nil {
+		t.Fatalf("Alter: %v", err)
 	}
 	if c.Identity != "old" {
 		t.Errorf("Identity became %q under WithScript; nothing ran, so it must stay %q", c.Identity, "old")

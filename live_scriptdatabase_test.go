@@ -1,12 +1,12 @@
 //go:build livedb
 
-// Live verification that ScriptDatabaseContext produces a real script from a
+// Live verification that ScriptDatabase produces a real script from a
 // bare Server.DatabaseRef(name) handle.
 //
 // The handle carries no metadata by design, and ScriptDatabase used to render
 // it anyway — "SET RECOVERY ;" and "COMPATIBILITY_LEVEL = 0", neither of them
 // valid T-SQL. Only a live server can settle both halves: that the refresh
-// returns the same metadata DatabaseByNameContext would have, and that the
+// returns the same metadata DatabaseByName would have, and that the
 // script the two paths produce is byte-for-byte the same.
 //
 //	go test -tags livedb . -run TestLiveScriptDatabase -v \
@@ -36,19 +36,19 @@ func TestLiveScriptDatabaseFromABareHandle(t *testing.T) {
 	// model is now stale — which is itself the reason the bare handle has to
 	// read rather than guess.
 	var err error
-	full, err = srv.DatabaseByNameContext(ctx, name)
+	full, err = srv.DatabaseByName(ctx, name)
 	if err != nil {
-		t.Fatalf("DatabaseByNameContext: %v", err)
+		t.Fatalf("DatabaseByName: %v", err)
 	}
 
 	opts := DefaultScriptOptions()
 	opts.IncludeHeaders = false
 
-	wantScript, err := NewScripter(full, opts).ScriptDatabaseContext(ctx)
+	wantScript, err := NewScripter(full, opts).ScriptDatabase(ctx)
 	if err != nil {
 		t.Fatalf("script from a fetched database: %v", err)
 	}
-	bare, err := NewScripter(srv.DatabaseRef(name), opts).ScriptDatabaseContext(ctx)
+	bare, err := NewScripter(srv.DatabaseRef(name), opts).ScriptDatabase(ctx)
 	if err != nil {
 		t.Fatalf("script from a bare handle: %v", err)
 	}
@@ -87,7 +87,7 @@ func TestLiveScriptDatabaseFromABareHandle(t *testing.T) {
 			t.Fatalf("replaying %.60q: %v", strings.TrimSpace(batch), err)
 		}
 	}
-	replayed, err := srv.DatabaseByNameContext(ctx, name)
+	replayed, err := srv.DatabaseByName(ctx, name)
 	if err != nil {
 		t.Fatalf("database after replay: %v", err)
 	}

@@ -52,9 +52,9 @@ type AvailabilityGroup struct {
 	// through T-SQL at all: under EXTERNAL the cluster manager owns failover
 	// and SQL Server rejects both ALTER AVAILABILITY GROUP ... FAILOVER and
 	// ... FORCE_FAILOVER_ALLOW_DATA_LOSS with error 47104.
-	ClusterType string
+	ClusterType ClusterType
 
-	AutomatedBackupPreference string
+	AutomatedBackupPreference BackupPreference
 	FailureConditionLevel     int
 	HealthCheckTimeout        int
 	Version                   int
@@ -159,12 +159,7 @@ func (s *Server) scanAvailabilityGroup(scan func(...any) error) (*AvailabilityGr
 // AvailabilityGroups returns every availability group this instance
 // participates in. Returns an empty slice — not an error — on an instance
 // where Always On is disabled or no group has been created.
-func (s *Server) AvailabilityGroups() ([]*AvailabilityGroup, error) {
-	return s.AvailabilityGroupsContext(context.Background())
-}
-
-// AvailabilityGroupsContext is the context-aware variant of AvailabilityGroups.
-func (s *Server) AvailabilityGroupsContext(ctx context.Context) ([]*AvailabilityGroup, error) {
+func (s *Server) AvailabilityGroups(ctx context.Context) ([]*AvailabilityGroup, error) {
 	q := `
 	SELECT ` + s.agColumns() + `
 	FROM sys.availability_groups ag
@@ -172,23 +167,9 @@ func (s *Server) AvailabilityGroupsContext(ctx context.Context) ([]*Availability
 	ORDER BY ag.name`
 
 	rows, err := s.query(ctx, q)
-	if err != nil {
-		return nil, fmt.Errorf("gosmo: list availability groups: %w", err)
-	}
-	defer rows.Close()
-
-	var groups []*AvailabilityGroup
-	for rows.Next() {
-		ag, err := s.scanAvailabilityGroup(rows.Scan)
-		if err != nil {
-			return nil, fmt.Errorf("gosmo: list availability groups: %w", err)
-		}
-		groups = append(groups, ag)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("gosmo: list availability groups: %w", err)
-	}
-	return groups, nil
+	return scanRows(rows, err, "list availability groups", func(scan func(...any) error) (*AvailabilityGroup, error) {
+		return s.scanAvailabilityGroup(scan)
+	})
 }
 
 // AvailabilityGroupRef returns a lightweight handle to an availability group by
@@ -212,13 +193,7 @@ func (s *Server) AvailabilityGroupRef(name string) *AvailabilityGroup {
 // error also satisfies errors.Is(err, sql.ErrNoRows), which this method
 // promised before ErrNotFound existed. Note that neither sentinel was ever
 // returned bare — both have always needed errors.Is rather than ==.
-func (s *Server) AvailabilityGroupByName(name string) (*AvailabilityGroup, error) {
-	return s.AvailabilityGroupByNameContext(context.Background(), name)
-}
-
-// AvailabilityGroupByNameContext is the context-aware variant of
-// AvailabilityGroupByName.
-func (s *Server) AvailabilityGroupByNameContext(ctx context.Context, name string) (*AvailabilityGroup, error) {
+func (s *Server) AvailabilityGroupByName(ctx context.Context, name string) (*AvailabilityGroup, error) {
 	q := `
 	SELECT ` + s.agColumns() + `
 	FROM sys.availability_groups ag
@@ -256,16 +231,25 @@ func (s *Server) AvailabilityGroupByNameContext(ctx context.Context, name string
 
 // alterSet runs one ALTER AVAILABILITY GROUP ... SET (<option>) statement.
 func (ag *AvailabilityGroup) alterSet(ctx context.Context, option string) error {
-	return ag.server.execContext(ctx,
+	return ag.server.exec(ctx,
 		fmt.Sprintf("ALTER AVAILABILITY GROUP %s SET (%s)", quoteIdent(ag.Name), option))
 }
 
-// backupPreferences is the closed set of AUTOMATED_BACKUP_PREFERENCE values,
-// spelled as both ALTER accepts them and automated_backup_preference_desc
-// reports them, so a value read off a group round-trips back through the
-// setter unchanged.
-var backupPreferences = map[string]bool{
-	"PRIMARY": true, "SECONDARY_ONLY": true, "SECONDARY": true, "NONE": true,
+// BackupPreference is a group's AUTOMATED_BACKUP_PREFERENCE, spelled as both
+// ALTER accepts it and automated_backup_preference_desc reports it, so a value
+// read off a group round-trips back through the setter unchanged.
+type BackupPreference string
+
+const (
+	BackupPreferPrimary   BackupPreference = "PRIMARY"
+	BackupSecondaryOnly   BackupPreference = "SECONDARY_ONLY"
+	BackupPreferSecondary BackupPreference = "SECONDARY" // falls back to the primary
+	BackupAnyReplica      BackupPreference = "NONE"
+)
+
+// backupPreferences is BackupPreference's validity check.
+var backupPreferences = map[BackupPreference]bool{
+	BackupPreferPrimary: true, BackupSecondaryOnly: true, BackupPreferSecondary: true, BackupAnyReplica: true,
 }
 
 // SetAutomatedBackupPreference chooses where automated backups of this group's
@@ -275,18 +259,12 @@ var backupPreferences = map[string]bool{
 // The preference is advisory. SQL Server does not enforce it — it is exposed to
 // backup jobs through sys.fn_hadr_backup_is_preferred_replica, which the job
 // has to consult.
-func (ag *AvailabilityGroup) SetAutomatedBackupPreference(pref string) error {
-	return ag.SetAutomatedBackupPreferenceContext(context.Background(), pref)
-}
-
-// SetAutomatedBackupPreferenceContext is the context-aware variant of
-// SetAutomatedBackupPreference.
-func (ag *AvailabilityGroup) SetAutomatedBackupPreferenceContext(ctx context.Context, pref string) error {
-	pref = strings.ToUpper(pref)
+func (ag *AvailabilityGroup) SetAutomatedBackupPreference(ctx context.Context, pref BackupPreference) error {
+	pref = upperKeyword(pref)
 	if !backupPreferences[pref] {
 		return fmt.Errorf("gosmo: set automated backup preference: unrecognized preference %q", pref)
 	}
-	if err := ag.alterSet(ctx, "AUTOMATED_BACKUP_PREFERENCE = "+pref); err != nil {
+	if err := ag.alterSet(ctx, "AUTOMATED_BACKUP_PREFERENCE = "+string(pref)); err != nil {
 		return fmt.Errorf("gosmo: set automated backup preference of availability group %q: %w", ag.Name, err)
 	}
 	setIfApplied(ctx, &ag.AutomatedBackupPreference, pref)
@@ -296,13 +274,7 @@ func (ag *AvailabilityGroup) SetAutomatedBackupPreferenceContext(ctx context.Con
 // SetFailureConditionLevel sets how severe a condition must be before an
 // automatic failover is triggered, 1 (server down only) to 5 (any qualifying
 // internal error).
-func (ag *AvailabilityGroup) SetFailureConditionLevel(level int) error {
-	return ag.SetFailureConditionLevelContext(context.Background(), level)
-}
-
-// SetFailureConditionLevelContext is the context-aware variant of
-// SetFailureConditionLevel.
-func (ag *AvailabilityGroup) SetFailureConditionLevelContext(ctx context.Context, level int) error {
+func (ag *AvailabilityGroup) SetFailureConditionLevel(ctx context.Context, level int) error {
 	if level < 1 || level > 5 {
 		return fmt.Errorf("gosmo: set failure condition level: level %d out of range 1-5", level)
 	}
@@ -316,13 +288,7 @@ func (ag *AvailabilityGroup) SetFailureConditionLevelContext(ctx context.Context
 // SetHealthCheckTimeout sets how long, in milliseconds, the cluster waits for
 // sp_server_diagnostics before declaring the instance unresponsive. SQL Server
 // enforces a 15000 ms floor.
-func (ag *AvailabilityGroup) SetHealthCheckTimeout(ms int) error {
-	return ag.SetHealthCheckTimeoutContext(context.Background(), ms)
-}
-
-// SetHealthCheckTimeoutContext is the context-aware variant of
-// SetHealthCheckTimeout.
-func (ag *AvailabilityGroup) SetHealthCheckTimeoutContext(ctx context.Context, ms int) error {
+func (ag *AvailabilityGroup) SetHealthCheckTimeout(ctx context.Context, ms int) error {
 	if ms < 15000 {
 		return fmt.Errorf("gosmo: set health check timeout: %d ms is below the 15000 ms minimum", ms)
 	}
@@ -335,12 +301,7 @@ func (ag *AvailabilityGroup) SetHealthCheckTimeoutContext(ctx context.Context, m
 
 // SetDBFailover turns database-level health detection on or off: with it on, a
 // single database going offline triggers failover of the whole group.
-func (ag *AvailabilityGroup) SetDBFailover(on bool) error {
-	return ag.SetDBFailoverContext(context.Background(), on)
-}
-
-// SetDBFailoverContext is the context-aware variant of SetDBFailover.
-func (ag *AvailabilityGroup) SetDBFailoverContext(ctx context.Context, on bool) error {
+func (ag *AvailabilityGroup) SetDBFailover(ctx context.Context, on bool) error {
 	if err := ag.alterSet(ctx, "DB_FAILOVER = "+onOffKeyword(on)); err != nil {
 		return fmt.Errorf("gosmo: set database level health detection of availability group %q: %w", ag.Name, err)
 	}
@@ -350,12 +311,7 @@ func (ag *AvailabilityGroup) SetDBFailoverContext(ctx context.Context, on bool) 
 
 // SetDTCSupport turns per-database DTC support on (PER_DB) or off (NONE).
 // SQL Server 2016+.
-func (ag *AvailabilityGroup) SetDTCSupport(perDB bool) error {
-	return ag.SetDTCSupportContext(context.Background(), perDB)
-}
-
-// SetDTCSupportContext is the context-aware variant of SetDTCSupport.
-func (ag *AvailabilityGroup) SetDTCSupportContext(ctx context.Context, perDB bool) error {
+func (ag *AvailabilityGroup) SetDTCSupport(ctx context.Context, perDB bool) error {
 	value := "NONE"
 	if perDB {
 		value = "PER_DB"
@@ -375,13 +331,7 @@ func (ag *AvailabilityGroup) SetDTCSupportContext(ctx context.Context, perDB boo
 // primary accepting writes, which is the intended trade for guaranteed
 // zero-data-loss failover — it is not a setting to nudge experimentally on a
 // live group.
-func (ag *AvailabilityGroup) SetRequiredSynchronizedSecondariesToCommit(n int) error {
-	return ag.SetRequiredSynchronizedSecondariesToCommitContext(context.Background(), n)
-}
-
-// SetRequiredSynchronizedSecondariesToCommitContext is the context-aware
-// variant of SetRequiredSynchronizedSecondariesToCommit.
-func (ag *AvailabilityGroup) SetRequiredSynchronizedSecondariesToCommitContext(ctx context.Context, n int) error {
+func (ag *AvailabilityGroup) SetRequiredSynchronizedSecondariesToCommit(ctx context.Context, n int) error {
 	if n < 0 {
 		return fmt.Errorf("gosmo: set required synchronized secondaries to commit: %d is negative", n)
 	}
@@ -407,7 +357,7 @@ func (ag *AvailabilityGroup) SetRequiredSynchronizedSecondariesToCommitContext(c
 
 // alter runs one ALTER AVAILABILITY GROUP <name> <clause> statement.
 func (ag *AvailabilityGroup) alter(ctx context.Context, clause string) error {
-	return ag.server.execContext(ctx,
+	return ag.server.exec(ctx,
 		fmt.Sprintf("ALTER AVAILABILITY GROUP %s %s", quoteIdent(ag.Name), clause))
 }
 
@@ -423,13 +373,8 @@ func (ag *AvailabilityGroup) alter(ctx context.Context, clause string) error {
 // The databases survive: the primary's copies stay online and read-write, and
 // each secondary is left with the same unusable copies RemoveDatabase leaves
 // behind.
-func (ag *AvailabilityGroup) Drop() error {
-	return ag.DropContext(context.Background())
-}
-
-// DropContext is the context-aware variant of Drop.
-func (ag *AvailabilityGroup) DropContext(ctx context.Context) error {
-	if err := ag.server.execContext(ctx, "DROP AVAILABILITY GROUP "+quoteIdent(ag.Name)); err != nil {
+func (ag *AvailabilityGroup) Drop(ctx context.Context) error {
+	if err := ag.server.exec(ctx, "DROP AVAILABILITY GROUP "+quoteIdent(ag.Name)); err != nil {
 		return fmt.Errorf("gosmo: drop availability group %q: %w", ag.Name, err)
 	}
 	return nil
@@ -449,12 +394,7 @@ func (ag *AvailabilityGroup) DropContext(ctx context.Context) error {
 // rejected with error 47122, which says only forced failover is supported. Both
 // verified against SQL Server 2025. Check ClusterType before offering this; the
 // statement is sent and refused, not silently ignored.
-func (ag *AvailabilityGroup) Failover() error {
-	return ag.FailoverContext(context.Background())
-}
-
-// FailoverContext is the context-aware variant of Failover.
-func (ag *AvailabilityGroup) FailoverContext(ctx context.Context) error {
+func (ag *AvailabilityGroup) Failover(ctx context.Context) error {
 	if err := ag.alter(ctx, "FAILOVER"); err != nil {
 		return fmt.Errorf("gosmo: fail over availability group %q: %w", ag.Name, err)
 	}
@@ -472,13 +412,7 @@ func (ag *AvailabilityGroup) FailoverContext(ctx context.Context) error {
 // Rejected with error 47104 under an EXTERNAL cluster type, exactly as Failover
 // is. Under NONE it is the *only* failover there is, which is why a read-scale
 // group has no lossless one.
-func (ag *AvailabilityGroup) ForceFailoverAllowDataLoss() error {
-	return ag.ForceFailoverAllowDataLossContext(context.Background())
-}
-
-// ForceFailoverAllowDataLossContext is the context-aware variant of
-// ForceFailoverAllowDataLoss.
-func (ag *AvailabilityGroup) ForceFailoverAllowDataLossContext(ctx context.Context) error {
+func (ag *AvailabilityGroup) ForceFailoverAllowDataLoss(ctx context.Context) error {
 	if err := ag.alter(ctx, "FORCE_FAILOVER_ALLOW_DATA_LOSS"); err != nil {
 		return fmt.Errorf("gosmo: force fail over availability group %q with data loss: %w", ag.Name, err)
 	}

@@ -28,10 +28,10 @@ func TestParsePercent(t *testing.T) {
 
 func TestBackupRequiresDatabaseAndDevices(t *testing.T) {
 	s := &Server{}
-	if err := s.Backup(BackupOptions{}); err == nil {
+	if err := s.Backup(t.Context(), BackupOptions{}); err == nil {
 		t.Error("Backup with no database = nil error, want error")
 	}
-	if err := s.Backup(BackupOptions{Database: "AdventureWorks"}); err == nil {
+	if err := s.Backup(t.Context(), BackupOptions{Database: "AdventureWorks"}); err == nil {
 		t.Error("Backup with no devices = nil error, want error")
 	}
 }
@@ -158,7 +158,7 @@ func TestBuildRestoreStatement(t *testing.T) {
 		RelocateFiles: []RelocateFile{
 			{LogicalName: "AW_Data", PhysicalName: "/data/AW_Restore_Data.mdf"},
 		},
-		Recovery: true,
+		Recovery: RestoreWithRecovery,
 		Replace:  true,
 		Stats:    10,
 	})
@@ -177,12 +177,12 @@ func TestBuildRestoreStatement(t *testing.T) {
 }
 
 // TestBuildRestoreStatementNoRecovery covers the NORECOVERY branch (log
-// shipping / tail-log restores), which is mutually exclusive with Recovery.
+// shipping / tail-log restores).
 func TestBuildRestoreStatementNoRecovery(t *testing.T) {
 	got, err := BuildRestoreStatement(RestoreOptions{
-		Database:   "AW_Restore",
-		Devices:    []string{`/var/backups/aw.bak`},
-		NoRecovery: true,
+		Database: "AW_Restore",
+		Devices:  []string{`/var/backups/aw.bak`},
+		Recovery: RestoreWithNoRecovery,
 	})
 	if err != nil {
 		t.Fatalf("BuildRestoreStatement: %v", err)
@@ -198,11 +198,12 @@ func TestBuildRestoreStatementNoRecovery(t *testing.T) {
 func TestBuildRestoreStatementStandbyChecksumStopAt(t *testing.T) {
 	stopAt := time.Date(2026, 7, 18, 12, 30, 0, 0, time.UTC)
 	got, err := BuildRestoreStatement(RestoreOptions{
-		Database: "AW_Restore",
-		Devices:  []string{`/var/backups/aw.bak`},
-		StandBy:  "/var/backups/aw_undo.bak",
-		Checksum: true,
-		StopAt:   &stopAt,
+		Database:    "AW_Restore",
+		Devices:     []string{`/var/backups/aw.bak`},
+		Recovery:    RestoreWithStandBy,
+		StandByFile: "/var/backups/aw_undo.bak",
+		Checksum:    true,
+		StopAt:      &stopAt,
 	})
 	if err != nil {
 		t.Fatalf("BuildRestoreStatement: %v", err)
@@ -329,7 +330,7 @@ func TestBuildBackupStatementFilesNeedsATarget(t *testing.T) {
 // device holding several backup sets always restores the first.
 func TestBuildRestoreStatementFileNumber(t *testing.T) {
 	got, err := BuildRestoreStatement(RestoreOptions{
-		Database: "AppDB", Devices: []string{"d.bak"}, FileNumber: 3, NoRecovery: true,
+		Database: "AppDB", Devices: []string{"d.bak"}, FileNumber: 3, Recovery: RestoreWithNoRecovery,
 	})
 	if err != nil {
 		t.Fatalf("BuildRestoreStatement: %v", err)
@@ -341,7 +342,7 @@ func TestBuildRestoreStatementFileNumber(t *testing.T) {
 	// Zero leaves the clause off entirely — SQL Server's own default is the
 	// first set, so emitting "FILE = 0" would be an error rather than a no-op.
 	got, err = BuildRestoreStatement(RestoreOptions{
-		Database: "AppDB", Devices: []string{"d.bak"}, Recovery: true,
+		Database: "AppDB", Devices: []string{"d.bak"}, Recovery: RestoreWithRecovery,
 	})
 	if err != nil {
 		t.Fatalf("BuildRestoreStatement: %v", err)
@@ -503,12 +504,12 @@ func TestBackupTargetClauseURL(t *testing.T) {
 func TestRestoreSideReadsUseURLForABlob(t *testing.T) {
 	const blob = "https://acct.blob.core.windows.net/c/db.bak"
 	ctx, col := WithScript(context.Background())
-	if err := (&Server{}).VerifyBackupContext(ctx, blob); err != nil {
-		t.Fatalf("VerifyBackupContext: %v", err)
+	if err := (&Server{}).VerifyBackup(ctx, blob); err != nil {
+		t.Fatalf("VerifyBackup: %v", err)
 	}
 	want := "RESTORE VERIFYONLY FROM URL = N'" + blob + "'"
-	if len(col.Statements) != 1 || col.Statements[0] != want {
-		t.Errorf("got %v, want [%s]", col.Statements, want)
+	if len(col.Statements()) != 1 || col.Statements()[0] != want {
+		t.Errorf("got %v, want [%s]", col.Statements(), want)
 	}
 }
 
@@ -534,5 +535,146 @@ func TestBuildStatementsWithCredential(t *testing.T) {
 	}
 	if !strings.Contains(r, "CREDENTIAL = N'AzureStorage'") {
 		t.Errorf("BuildRestoreStatement =\n%s\nwant a CREDENTIAL clause", r)
+	}
+}
+
+// Recovery is one choice. As three fields, NoRecovery silently won when both
+// booleans were set, and a STANDBY path rode alongside either.
+func TestBuildRestoreStatementRecoveryIsOneChoice(t *testing.T) {
+	base := RestoreOptions{Database: "AppDB", Devices: []string{"d.bak"}}
+	for _, c := range []struct {
+		name     string
+		recovery RestoreRecovery
+		standBy  string
+		want     string // the WITH clause; "" for none, "error" for a refusal
+	}{
+		{"default", RestoreRecoveryDefault, "", ""},
+		{"recovery", RestoreWithRecovery, "", "\nWITH RECOVERY"},
+		{"norecovery", RestoreWithNoRecovery, "", "\nWITH NORECOVERY"},
+		{"standby", RestoreWithStandBy, `C:\u'ndo.bak`, `\nWITH STANDBY = N'C:\u''ndo.bak'`},
+		{"standby without a file", RestoreWithStandBy, "", "error"},
+		{"a file without standby", RestoreWithNoRecovery, "u.bak", "error"},
+		{"a file with the default", RestoreRecoveryDefault, "u.bak", "error"},
+		{"unknown", RestoreRecovery("RECOVERY; DROP DATABASE x"), "", "error"},
+	} {
+		opts := base
+		opts.Recovery, opts.StandByFile = c.recovery, c.standBy
+		got, err := BuildRestoreStatement(opts)
+		if c.want == "error" {
+			if err == nil {
+				t.Errorf("%s: built %q, want an error", c.name, got)
+			}
+			continue
+		}
+		want := strings.ReplaceAll("RESTORE DATABASE [AppDB]\nFROM DISK = N'd.bak'"+c.want, `\n`, "\n")
+		if err != nil || got != want {
+			t.Errorf("%s: got %q, %v; want %q", c.name, got, err, want)
+		}
+	}
+}
+
+// Q4 of the 2026-09-22 review: closing connections as its own round trip left
+// the single-user slot free until the RESTORE arrived, so SINGLE_USER, the
+// RESTORE and the release are one batch. The ALTERs are guarded — a database
+// that does not exist yet, is RESTORING or is in STANDBY refuses them, and a
+// refusal would abort the RESTORE after it — and only an access mode the batch
+// itself set is released.
+func TestBuildRestoreStatementClosesConnectionsInTheSameBatch(t *testing.T) {
+	got, err := BuildRestoreStatement(RestoreOptions{
+		Database: "App'DB", Devices: []string{"d.bak"}, Replace: true,
+		CloseExistingConnections: true,
+	})
+	if err != nil {
+		t.Fatalf("BuildRestoreStatement: %v", err)
+	}
+	online := "EXISTS (SELECT 1 FROM sys.databases WHERE name = N'App''DB' AND state = 0 AND is_in_standby = 0)"
+	want := "DECLARE @closed bit = 0;\n" +
+		"IF " + online + "\n" +
+		"BEGIN\n" +
+		"    ALTER DATABASE [App'DB] SET SINGLE_USER WITH ROLLBACK IMMEDIATE;\n" +
+		"    SET @closed = 1;\n" +
+		"END;\n" +
+		"RESTORE DATABASE [App'DB]\nFROM DISK = N'd.bak'\nWITH REPLACE;\n" +
+		"IF @closed = 1 AND " + online + "\n" +
+		"    ALTER DATABASE [App'DB] SET MULTI_USER;"
+	if got != want {
+		t.Errorf("BuildRestoreStatement =\n%s\nwant\n%s", got, want)
+	}
+}
+
+// A Managed Instance refuses SET SINGLE_USER (Msg 5008), so the dialog failed
+// on the preparation step there. The instance-aware builder kills the sessions
+// instead, in the same batch, and touches no access mode.
+func TestServerBuildRestoreStatementKillsSessionsOnAManagedInstance(t *testing.T) {
+	opts := RestoreOptions{Database: "AppDB", Devices: []string{"d.bak"}, CloseExistingConnections: true}
+	mi := &Server{info: &ServerInfo{EngineEdition: int(EngineAzureManagedInst)}}
+	got, err := mi.BuildRestoreStatement(opts)
+	if err != nil {
+		t.Fatalf("BuildRestoreStatement: %v", err)
+	}
+	if !strings.HasPrefix(got, killDatabaseSessionsBatch("AppDB")+";\n") ||
+		!strings.HasSuffix(got, "RESTORE DATABASE [AppDB]\nFROM DISK = N'd.bak';") {
+		t.Errorf("Managed Instance statement =\n%s\nwant the KILL batch then the RESTORE", got)
+	}
+	if strings.Contains(got, "_USER") {
+		t.Errorf("Managed Instance statement sets an access mode it refuses:\n%s", got)
+	}
+
+	onPrem := &Server{info: &ServerInfo{EngineEdition: int(EngineEnterprise)}}
+	got, err = onPrem.BuildRestoreStatement(opts)
+	want, _ := BuildRestoreStatement(opts)
+	if err != nil || got != want {
+		t.Errorf("on-premises statement = %q, %v; want the package-level form %q", got, err, want)
+	}
+
+	opts.CloseExistingConnections = false
+	got, _ = mi.BuildRestoreStatement(opts)
+	if strings.Contains(got, "KILL") {
+		t.Errorf("KILLed sessions without CloseExistingConnections:\n%s", got)
+	}
+}
+
+// The batch's own MULTI_USER does not run when the batch is cut short, and a
+// cancel is the likeliest way for a long restore to fail — so Restore
+// releases the database again, off the caller's cancellation.
+func TestARestoreCutShortIsPutBackToMultiUser(t *testing.T) {
+	s := detServer(t)
+	ctx := detCancelOn(t, "RESTORE DATABASE")
+	err := s.Restore(ctx, RestoreOptions{
+		Database: "appdb", Devices: []string{"d.bak"}, CloseExistingConnections: true,
+	})
+	if err == nil {
+		t.Fatal("a restore whose context was cancelled returned no error")
+	}
+	stmts := detLog.statements()
+	if last := stmts[len(stmts)-1]; last != "ALTER DATABASE [appdb] SET MULTI_USER" {
+		t.Errorf("last statement after a cancelled restore is %q, want the MULTI_USER repair: %v", last, stmts)
+	}
+}
+
+// Without CloseExistingConnections nothing set the access mode, so a failed
+// restore must not touch it — nor on a Managed Instance, where none was set.
+func TestAFailedRestoreLeavesAnAccessModeItDidNotSet(t *testing.T) {
+	for _, c := range []struct {
+		name  string
+		mi    bool
+		close bool
+	}{{"no close", false, false}, {"managed instance", true, true}} {
+		s := detServer(t)
+		if c.mi {
+			s.info = &ServerInfo{EngineEdition: int(EngineAzureManagedInst)}
+		}
+		detLog.mu.Lock()
+		detLog.failOn = "RESTORE DATABASE"
+		detLog.mu.Unlock()
+		err := s.Restore(context.Background(), RestoreOptions{
+			Database: "appdb", Devices: []string{"d.bak"}, CloseExistingConnections: c.close,
+		})
+		if err == nil {
+			t.Fatalf("%s: a failing restore returned no error", c.name)
+		}
+		if stmts := detLog.statements(); len(stmts) != 1 {
+			t.Errorf("%s: statements %v, want only the restore", c.name, stmts)
+		}
 	}
 }

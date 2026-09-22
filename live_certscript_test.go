@@ -43,7 +43,7 @@ func TestLiveCertificateScriptRoundTrip(t *testing.T) {
 		}
 	}
 
-	orig, err := src.CertificateByNameContext(ctx, "round'trip")
+	orig, err := src.CertificateByName(ctx, "round'trip")
 	if err != nil || orig == nil {
 		t.Fatalf("read source certificate: %v, %v", orig, err)
 	}
@@ -52,9 +52,9 @@ func TestLiveCertificateScriptRoundTrip(t *testing.T) {
 		t.Errorf("source certificate read back as %+v", orig)
 	}
 
-	script, err := NewScripter(src, ScriptOptions{Verb: ScriptCreate}).ScriptCertificateContext(ctx, "round'trip")
+	script, err := NewScripter(src, ScriptOptions{Verb: ScriptCreate}).ScriptCertificate(ctx, "round'trip")
 	if err != nil {
-		t.Fatalf("ScriptCertificateContext: %v", err)
+		t.Fatalf("ScriptCertificate: %v", err)
 	}
 	t.Logf("script:\n%s", script)
 	if !strings.Contains(script, "private key cannot be read") {
@@ -66,7 +66,7 @@ func TestLiveCertificateScriptRoundTrip(t *testing.T) {
 		}
 	}
 
-	got, err := dst.CertificateByNameContext(ctx, "round'trip")
+	got, err := dst.CertificateByName(ctx, "round'trip")
 	if err != nil || got == nil {
 		t.Fatalf("read recreated certificate: %v, %v", got, err)
 	}
@@ -83,10 +83,10 @@ func TestLiveCertificateScriptRoundTrip(t *testing.T) {
 	}
 
 	// DROP from a name-only handle, and the not-found scripter answer.
-	if err := dst.CertificateRef("round'trip").DropContext(ctx); err != nil {
+	if err := dst.CertificateRef("round'trip").Drop(ctx); err != nil {
 		t.Fatalf("drop through CertificateRef: %v", err)
 	}
-	if _, err := NewScripter(dst, ScriptOptions{}).ScriptCertificateContext(ctx, "round'trip"); !errors.Is(err, ErrNotFound) {
+	if _, err := NewScripter(dst, ScriptOptions{}).ScriptCertificate(ctx, "round'trip"); !errors.Is(err, ErrNotFound) {
 		t.Errorf("scripting a dropped certificate: %v, want a not-found error", err)
 	}
 }

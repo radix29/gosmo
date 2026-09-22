@@ -18,7 +18,7 @@ func scriptAG(t *testing.T, name string, fn func(ctx context.Context, ag *Availa
 	if err := fn(ctx, ag); err != nil {
 		t.Fatalf("under WithScript: %v", err)
 	}
-	return script.Statements
+	return script.Statements()
 }
 
 func scriptReplica(t *testing.T, group, replica string, fn func(ctx context.Context, r *AvailabilityReplica) error) []string {
@@ -28,7 +28,7 @@ func scriptReplica(t *testing.T, group, replica string, fn func(ctx context.Cont
 	if err := fn(ctx, r); err != nil {
 		t.Fatalf("under WithScript: %v", err)
 	}
-	return script.Statements
+	return script.Statements()
 }
 
 func soleStatement(t *testing.T, stmts []string) string {
@@ -46,29 +46,29 @@ func TestAvailabilityGroupSetStatements(t *testing.T) {
 		want string
 	}{
 		{"backup preference", func(ctx context.Context, ag *AvailabilityGroup) error {
-			return ag.SetAutomatedBackupPreferenceContext(ctx, "SECONDARY_ONLY")
+			return ag.SetAutomatedBackupPreference(ctx, "SECONDARY_ONLY")
 		}, "ALTER AVAILABILITY GROUP [AAG1] SET (AUTOMATED_BACKUP_PREFERENCE = SECONDARY_ONLY)"},
 		{"failure condition level", func(ctx context.Context, ag *AvailabilityGroup) error {
-			return ag.SetFailureConditionLevelContext(ctx, 3)
+			return ag.SetFailureConditionLevel(ctx, 3)
 		}, "ALTER AVAILABILITY GROUP [AAG1] SET (FAILURE_CONDITION_LEVEL = 3)"},
 		{"health check timeout", func(ctx context.Context, ag *AvailabilityGroup) error {
-			return ag.SetHealthCheckTimeoutContext(ctx, 30000)
+			return ag.SetHealthCheckTimeout(ctx, 30000)
 		}, "ALTER AVAILABILITY GROUP [AAG1] SET (HEALTH_CHECK_TIMEOUT = 30000)"},
 		{"db failover on", func(ctx context.Context, ag *AvailabilityGroup) error {
-			return ag.SetDBFailoverContext(ctx, true)
+			return ag.SetDBFailover(ctx, true)
 		}, "ALTER AVAILABILITY GROUP [AAG1] SET (DB_FAILOVER = ON)"},
 		{"db failover off", func(ctx context.Context, ag *AvailabilityGroup) error {
-			return ag.SetDBFailoverContext(ctx, false)
+			return ag.SetDBFailover(ctx, false)
 		}, "ALTER AVAILABILITY GROUP [AAG1] SET (DB_FAILOVER = OFF)"},
 		// DTC_SUPPORT is the one flag whose off value is not OFF.
 		{"dtc support on", func(ctx context.Context, ag *AvailabilityGroup) error {
-			return ag.SetDTCSupportContext(ctx, true)
+			return ag.SetDTCSupport(ctx, true)
 		}, "ALTER AVAILABILITY GROUP [AAG1] SET (DTC_SUPPORT = PER_DB)"},
 		{"dtc support off", func(ctx context.Context, ag *AvailabilityGroup) error {
-			return ag.SetDTCSupportContext(ctx, false)
+			return ag.SetDTCSupport(ctx, false)
 		}, "ALTER AVAILABILITY GROUP [AAG1] SET (DTC_SUPPORT = NONE)"},
 		{"required synchronized secondaries", func(ctx context.Context, ag *AvailabilityGroup) error {
-			return ag.SetRequiredSynchronizedSecondariesToCommitContext(ctx, 1)
+			return ag.SetRequiredSynchronizedSecondariesToCommit(ctx, 1)
 		}, "ALTER AVAILABILITY GROUP [AAG1] SET (REQUIRED_SYNCHRONIZED_SECONDARIES_TO_COMMIT = 1)"},
 	}
 	for _, tt := range tests {
@@ -84,7 +84,7 @@ func TestAvailabilityGroupNameIsBracketQuoted(t *testing.T) {
 	// A group name is an identifier, so a "]" in it has to be doubled or the
 	// statement runs against a different (or no) group.
 	got := soleStatement(t, scriptAG(t, "Odd]Name", func(ctx context.Context, ag *AvailabilityGroup) error {
-		return ag.SetDBFailoverContext(ctx, true)
+		return ag.SetDBFailover(ctx, true)
 	}))
 	if !strings.HasPrefix(got, "ALTER AVAILABILITY GROUP [Odd]]Name] ") {
 		t.Errorf("statement = %q, want the group name bracket-quoted with a doubled ]", got)
@@ -96,19 +96,19 @@ func TestAvailabilityGroupSettersRejectBadValues(t *testing.T) {
 	ctx, script := WithScript(context.Background())
 
 	cases := map[string]error{
-		"unknown backup preference": ag.SetAutomatedBackupPreferenceContext(ctx, "MAYBE"),
-		"failure level 0":           ag.SetFailureConditionLevelContext(ctx, 0),
-		"failure level 6":           ag.SetFailureConditionLevelContext(ctx, 6),
-		"timeout below floor":       ag.SetHealthCheckTimeoutContext(ctx, 14999),
-		"negative required sync":    ag.SetRequiredSynchronizedSecondariesToCommitContext(ctx, -1),
+		"unknown backup preference": ag.SetAutomatedBackupPreference(ctx, "MAYBE"),
+		"failure level 0":           ag.SetFailureConditionLevel(ctx, 0),
+		"failure level 6":           ag.SetFailureConditionLevel(ctx, 6),
+		"timeout below floor":       ag.SetHealthCheckTimeout(ctx, 14999),
+		"negative required sync":    ag.SetRequiredSynchronizedSecondariesToCommit(ctx, -1),
 	}
 	for name, err := range cases {
 		if err == nil {
 			t.Errorf("%s: got nil error, want a rejection", name)
 		}
 	}
-	if len(script.Statements) != 0 {
-		t.Errorf("rejected calls still produced statements: %q", script.Statements)
+	if len(script.Statements()) != 0 {
+		t.Errorf("rejected calls still produced statements: %q", script.Statements())
 	}
 }
 
@@ -119,44 +119,44 @@ func TestAvailabilityReplicaModifyStatements(t *testing.T) {
 		want string
 	}{
 		{"availability mode", func(ctx context.Context, r *AvailabilityReplica) error {
-			return r.SetAvailabilityModeContext(ctx, "SYNCHRONOUS_COMMIT")
+			return r.SetAvailabilityMode(ctx, "SYNCHRONOUS_COMMIT")
 		}, "ALTER AVAILABILITY GROUP [AAG1] MODIFY REPLICA ON N'ubusql2' WITH (AVAILABILITY_MODE = SYNCHRONOUS_COMMIT)"},
 		{"failover mode", func(ctx context.Context, r *AvailabilityReplica) error {
-			return r.SetFailoverModeContext(ctx, "EXTERNAL")
+			return r.SetFailoverMode(ctx, "EXTERNAL")
 		}, "ALTER AVAILABILITY GROUP [AAG1] MODIFY REPLICA ON N'ubusql2' WITH (FAILOVER_MODE = EXTERNAL)"},
 		{"seeding mode", func(ctx context.Context, r *AvailabilityReplica) error {
-			return r.SetSeedingModeContext(ctx, "AUTOMATIC")
+			return r.SetSeedingMode(ctx, "AUTOMATIC")
 		}, "ALTER AVAILABILITY GROUP [AAG1] MODIFY REPLICA ON N'ubusql2' WITH (SEEDING_MODE = AUTOMATIC)"},
 		{"session timeout", func(ctx context.Context, r *AvailabilityReplica) error {
-			return r.SetSessionTimeoutContext(ctx, 20)
+			return r.SetSessionTimeout(ctx, 20)
 		}, "ALTER AVAILABILITY GROUP [AAG1] MODIFY REPLICA ON N'ubusql2' WITH (SESSION_TIMEOUT = 20)"},
 		{"backup priority", func(ctx context.Context, r *AvailabilityReplica) error {
-			return r.SetBackupPriorityContext(ctx, 0)
+			return r.SetBackupPriority(ctx, 0)
 		}, "ALTER AVAILABILITY GROUP [AAG1] MODIFY REPLICA ON N'ubusql2' WITH (BACKUP_PRIORITY = 0)"},
 		// The role-scoped options nest inside PRIMARY_ROLE/SECONDARY_ROLE, and
 		// which one owns which option is the easy thing to get backwards: the
 		// routing URL is a secondary-role property, the routing list a
 		// primary-role one.
 		{"primary role connections", func(ctx context.Context, r *AvailabilityReplica) error {
-			return r.SetPrimaryRoleAllowConnectionsContext(ctx, "READ_WRITE")
+			return r.SetPrimaryRoleAllowConnections(ctx, "READ_WRITE")
 		}, "ALTER AVAILABILITY GROUP [AAG1] MODIFY REPLICA ON N'ubusql2' WITH (PRIMARY_ROLE (ALLOW_CONNECTIONS = READ_WRITE))"},
 		{"secondary role connections", func(ctx context.Context, r *AvailabilityReplica) error {
-			return r.SetSecondaryRoleAllowConnectionsContext(ctx, "READ_ONLY")
+			return r.SetSecondaryRoleAllowConnections(ctx, "READ_ONLY")
 		}, "ALTER AVAILABILITY GROUP [AAG1] MODIFY REPLICA ON N'ubusql2' WITH (SECONDARY_ROLE (ALLOW_CONNECTIONS = READ_ONLY))"},
 		{"routing url", func(ctx context.Context, r *AvailabilityReplica) error {
-			return r.SetReadOnlyRoutingURLContext(ctx, "TCP://ubusql2:1433")
+			return r.SetReadOnlyRoutingURL(ctx, "TCP://ubusql2:1433")
 		}, "ALTER AVAILABILITY GROUP [AAG1] MODIFY REPLICA ON N'ubusql2' WITH (SECONDARY_ROLE (READ_ONLY_ROUTING_URL = N'TCP://ubusql2:1433'))"},
 		{"routing url cleared", func(ctx context.Context, r *AvailabilityReplica) error {
-			return r.SetReadOnlyRoutingURLContext(ctx, "")
+			return r.SetReadOnlyRoutingURL(ctx, "")
 		}, "ALTER AVAILABILITY GROUP [AAG1] MODIFY REPLICA ON N'ubusql2' WITH (SECONDARY_ROLE (READ_ONLY_ROUTING_URL = NONE))"},
 		{"routing list", func(ctx context.Context, r *AvailabilityReplica) error {
-			return r.SetReadOnlyRoutingListContext(ctx, [][]string{{"ubusql1"}})
+			return r.SetReadOnlyRoutingList(ctx, [][]string{{"ubusql1"}})
 		}, "ALTER AVAILABILITY GROUP [AAG1] MODIFY REPLICA ON N'ubusql2' WITH (PRIMARY_ROLE (READ_ONLY_ROUTING_LIST = (N'ubusql1')))"},
 		{"routing list load balanced", func(ctx context.Context, r *AvailabilityReplica) error {
-			return r.SetReadOnlyRoutingListContext(ctx, [][]string{{"a", "b"}, {"c"}})
+			return r.SetReadOnlyRoutingList(ctx, [][]string{{"a", "b"}, {"c"}})
 		}, "ALTER AVAILABILITY GROUP [AAG1] MODIFY REPLICA ON N'ubusql2' WITH (PRIMARY_ROLE (READ_ONLY_ROUTING_LIST = ((N'a', N'b'), N'c')))"},
 		{"routing list cleared", func(ctx context.Context, r *AvailabilityReplica) error {
-			return r.SetReadOnlyRoutingListContext(ctx, nil)
+			return r.SetReadOnlyRoutingList(ctx, nil)
 		}, "ALTER AVAILABILITY GROUP [AAG1] MODIFY REPLICA ON N'ubusql2' WITH (PRIMARY_ROLE (READ_ONLY_ROUTING_LIST = NONE))"},
 	}
 	for _, tt := range tests {
@@ -172,7 +172,7 @@ func TestAvailabilityReplicaNameIsQuotedAsALiteral(t *testing.T) {
 	// MODIFY REPLICA ON takes a string literal, not an identifier, so a quote
 	// in the name has to be doubled — bracket-quoting it would be wrong here.
 	got := soleStatement(t, scriptReplica(t, "AAG1", "o'brien", func(ctx context.Context, r *AvailabilityReplica) error {
-		return r.SetBackupPriorityContext(ctx, 50)
+		return r.SetBackupPriority(ctx, 50)
 	}))
 	if !strings.Contains(got, "MODIFY REPLICA ON N'o''brien'") {
 		t.Errorf("statement = %q, want the replica name as a literal with a doubled quote", got)
@@ -184,26 +184,26 @@ func TestAvailabilityReplicaSettersRejectBadValues(t *testing.T) {
 	ctx, script := WithScript(context.Background())
 
 	cases := map[string]error{
-		"unknown availability mode": r.SetAvailabilityModeContext(ctx, "SOMETIMES"),
-		"unknown failover mode":     r.SetFailoverModeContext(ctx, "SOMETIMES"),
-		"unknown seeding mode":      r.SetSeedingModeContext(ctx, "SOMETIMES"),
+		"unknown availability mode": r.SetAvailabilityMode(ctx, "SOMETIMES"),
+		"unknown failover mode":     r.SetFailoverMode(ctx, "SOMETIMES"),
+		"unknown seeding mode":      r.SetSeedingMode(ctx, "SOMETIMES"),
 		// NO is a secondary-role value only: a primary that accepts nothing
 		// would be unusable, and SQL Server has no such option.
-		"NO in the primary role":     r.SetPrimaryRoleAllowConnectionsContext(ctx, "NO"),
-		"unknown secondary role":     r.SetSecondaryRoleAllowConnectionsContext(ctx, "SOMETIMES"),
-		"session timeout below5":     r.SetSessionTimeoutContext(ctx, 4),
-		"backup priority above 100":  r.SetBackupPriorityContext(ctx, 101),
-		"backup priority negative":   r.SetBackupPriorityContext(ctx, -1),
-		"routing list blank name":    r.SetReadOnlyRoutingListContext(ctx, [][]string{{" "}}),
-		"detached replica has no AG": (&AvailabilityReplica{server: &Server{}, ReplicaServerName: "x"}).SetBackupPriorityContext(ctx, 1),
+		"NO in the primary role":     r.SetPrimaryRoleAllowConnections(ctx, "NO"),
+		"unknown secondary role":     r.SetSecondaryRoleAllowConnections(ctx, "SOMETIMES"),
+		"session timeout below5":     r.SetSessionTimeout(ctx, 4),
+		"backup priority above 100":  r.SetBackupPriority(ctx, 101),
+		"backup priority negative":   r.SetBackupPriority(ctx, -1),
+		"routing list blank name":    r.SetReadOnlyRoutingList(ctx, [][]string{{" "}}),
+		"detached replica has no AG": (&AvailabilityReplica{server: &Server{}, ReplicaServerName: "x"}).SetBackupPriority(ctx, 1),
 	}
 	for name, err := range cases {
 		if err == nil {
 			t.Errorf("%s: got nil error, want a rejection", name)
 		}
 	}
-	if len(script.Statements) != 0 {
-		t.Errorf("rejected calls still produced statements: %q", script.Statements)
+	if len(script.Statements()) != 0 {
+		t.Errorf("rejected calls still produced statements: %q", script.Statements())
 	}
 }
 
@@ -233,8 +233,8 @@ func TestAvailabilityGroupSettersMirrorOnlyWhenApplied(t *testing.T) {
 	// still report the old value — see setIfApplied.
 	ag := &AvailabilityGroup{server: &Server{}, Name: "AAG1", AutomatedBackupPreference: "SECONDARY"}
 	ctx, _ := WithScript(context.Background())
-	if err := ag.SetAutomatedBackupPreferenceContext(ctx, "PRIMARY"); err != nil {
-		t.Fatalf("SetAutomatedBackupPreferenceContext: %v", err)
+	if err := ag.SetAutomatedBackupPreference(ctx, "PRIMARY"); err != nil {
+		t.Fatalf("SetAutomatedBackupPreference: %v", err)
 	}
 	if ag.AutomatedBackupPreference != "SECONDARY" {
 		t.Errorf("scripted write mirrored onto the receiver: AutomatedBackupPreference = %q, want SECONDARY", ag.AutomatedBackupPreference)
@@ -250,40 +250,40 @@ func TestAvailabilityGroupOperationStatements(t *testing.T) {
 		want string
 	}{
 		{"add database", func(ctx context.Context, ag *AvailabilityGroup) error {
-			return ag.AddDatabaseContext(ctx, "testdb_1")
+			return ag.AddDatabase(ctx, "testdb_1")
 		}, "ALTER AVAILABILITY GROUP [AAG1] ADD DATABASE [testdb_1]"},
 		{"remove database", func(ctx context.Context, ag *AvailabilityGroup) error {
-			return ag.RemoveDatabaseContext(ctx, "testdb_1")
+			return ag.RemoveDatabase(ctx, "testdb_1")
 		}, "ALTER AVAILABILITY GROUP [AAG1] REMOVE DATABASE [testdb_1]"},
 		// The secondary-side four are ALTER DATABASE, not ALTER AVAILABILITY
 		// GROUP — a mix-up compiles and then fails on the server.
 		{"join database", func(ctx context.Context, ag *AvailabilityGroup) error {
-			return ag.JoinDatabaseContext(ctx, "testdb_1")
+			return ag.JoinDatabase(ctx, "testdb_1")
 		}, "ALTER DATABASE [testdb_1] SET HADR AVAILABILITY GROUP = [AAG1]"},
 		{"unjoin database", func(ctx context.Context, ag *AvailabilityGroup) error {
-			return ag.UnjoinDatabaseContext(ctx, "testdb_1")
+			return ag.UnjoinDatabase(ctx, "testdb_1")
 		}, "ALTER DATABASE [testdb_1] SET HADR OFF"},
 		{"suspend database", func(ctx context.Context, ag *AvailabilityGroup) error {
-			return ag.SuspendDatabaseContext(ctx, "testdb_1")
+			return ag.SuspendDatabase(ctx, "testdb_1")
 		}, "ALTER DATABASE [testdb_1] SET HADR SUSPEND"},
 		{"resume database", func(ctx context.Context, ag *AvailabilityGroup) error {
-			return ag.ResumeDatabaseContext(ctx, "testdb_1")
+			return ag.ResumeDatabase(ctx, "testdb_1")
 		}, "ALTER DATABASE [testdb_1] SET HADR RESUME"},
 		// A replica is named as a literal, a database as an identifier.
 		{"remove replica", func(ctx context.Context, ag *AvailabilityGroup) error {
-			return ag.RemoveReplicaContext(ctx, "ubusql2")
+			return ag.RemoveReplica(ctx, "ubusql2")
 		}, "ALTER AVAILABILITY GROUP [AAG1] REMOVE REPLICA ON N'ubusql2'"},
 		{"remove listener", func(ctx context.Context, ag *AvailabilityGroup) error {
-			return ag.RemoveListenerContext(ctx, "ubuaag")
+			return ag.RemoveListener(ctx, "ubuaag")
 		}, "ALTER AVAILABILITY GROUP [AAG1] REMOVE LISTENER N'ubuaag'"},
 		{"drop group", func(ctx context.Context, ag *AvailabilityGroup) error {
-			return ag.DropContext(ctx)
+			return ag.Drop(ctx)
 		}, "DROP AVAILABILITY GROUP [AAG1]"},
 		{"failover", func(ctx context.Context, ag *AvailabilityGroup) error {
-			return ag.FailoverContext(ctx)
+			return ag.Failover(ctx)
 		}, "ALTER AVAILABILITY GROUP [AAG1] FAILOVER"},
 		{"forced failover", func(ctx context.Context, ag *AvailabilityGroup) error {
-			return ag.ForceFailoverAllowDataLossContext(ctx)
+			return ag.ForceFailoverAllowDataLoss(ctx)
 		}, "ALTER AVAILABILITY GROUP [AAG1] FORCE_FAILOVER_ALLOW_DATA_LOSS"},
 	}
 	for _, tt := range tests {
@@ -300,7 +300,7 @@ func TestAvailabilityGroupOperationStatements(t *testing.T) {
 // statement.
 func TestJoinDatabaseQuotesBothNames(t *testing.T) {
 	got := soleStatement(t, scriptAG(t, "Odd]Name", func(ctx context.Context, ag *AvailabilityGroup) error {
-		return ag.JoinDatabaseContext(ctx, "db]1")
+		return ag.JoinDatabase(ctx, "db]1")
 	}))
 	want := "ALTER DATABASE [db]]1] SET HADR AVAILABILITY GROUP = [Odd]]Name]"
 	if got != want {
@@ -319,7 +319,7 @@ func TestAddReplicaMatchesTheCreateReplicaClause(t *testing.T) {
 		PrimaryRoleAllowConnections: "ALL", SecondaryRoleAllowConnections: "NO",
 	}
 	got := soleStatement(t, scriptAG(t, "AAG1", func(ctx context.Context, ag *AvailabilityGroup) error {
-		return ag.AddReplicaContext(ctx, spec)
+		return ag.AddReplica(ctx, spec)
 	}))
 	want := "ALTER AVAILABILITY GROUP [AAG1] ADD REPLICA ON N'ubusql2' WITH (" +
 		"ENDPOINT_URL = N'tcp://ubusql2:5022', AVAILABILITY_MODE = SYNCHRONOUS_COMMIT, FAILOVER_MODE = EXTERNAL, " +
@@ -362,11 +362,11 @@ func TestAddReplicaRejectsABadSpec(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			ag := &AvailabilityGroup{server: &Server{}, Name: "AAG1"}
 			ctx, script := WithScript(context.Background())
-			if err := ag.AddReplicaContext(ctx, spec); err == nil {
+			if err := ag.AddReplica(ctx, spec); err == nil {
 				t.Fatal("accepted")
 			}
-			if len(script.Statements) != 0 {
-				t.Errorf("emitted %q", script.Statements)
+			if len(script.Statements()) != 0 {
+				t.Errorf("emitted %q", script.Statements())
 			}
 		})
 	}
@@ -375,10 +375,10 @@ func TestAddReplicaRejectsABadSpec(t *testing.T) {
 // AvailabilityReplica.Drop must issue exactly what the group-side form does.
 func TestReplicaDropMatchesRemoveReplica(t *testing.T) {
 	fromReplica := soleStatement(t, scriptReplica(t, "AAG1", "o'brien", func(ctx context.Context, r *AvailabilityReplica) error {
-		return r.DropContext(ctx)
+		return r.Drop(ctx)
 	}))
 	fromGroup := soleStatement(t, scriptAG(t, "AAG1", func(ctx context.Context, ag *AvailabilityGroup) error {
-		return ag.RemoveReplicaContext(ctx, "o'brien")
+		return ag.RemoveReplica(ctx, "o'brien")
 	}))
 	if fromReplica != fromGroup {
 		t.Errorf("replica form %s\ngroup form   %s", fromReplica, fromGroup)
@@ -393,11 +393,11 @@ func TestReplicaDropMatchesRemoveReplica(t *testing.T) {
 func TestReplicaDropWithoutGroupFails(t *testing.T) {
 	r := &AvailabilityReplica{server: &Server{}, ReplicaServerName: "ubusql2"}
 	ctx, script := WithScript(context.Background())
-	if err := r.DropContext(ctx); err == nil {
+	if err := r.Drop(ctx); err == nil {
 		t.Fatal("dropping a detached replica succeeded")
 	}
-	if len(script.Statements) != 0 {
-		t.Errorf("emitted %q", script.Statements)
+	if len(script.Statements()) != 0 {
+		t.Errorf("emitted %q", script.Statements())
 	}
 }
 
@@ -488,14 +488,14 @@ func TestAddListenerClauseRejects(t *testing.T) {
 // building a statement with an empty identifier in it.
 func TestOperationsRejectEmptyNames(t *testing.T) {
 	ops := map[string]func(ctx context.Context, ag *AvailabilityGroup) error{
-		"add database":    func(ctx context.Context, ag *AvailabilityGroup) error { return ag.AddDatabaseContext(ctx, "") },
-		"remove database": func(ctx context.Context, ag *AvailabilityGroup) error { return ag.RemoveDatabaseContext(ctx, "") },
-		"join database":   func(ctx context.Context, ag *AvailabilityGroup) error { return ag.JoinDatabaseContext(ctx, " ") },
-		"unjoin database": func(ctx context.Context, ag *AvailabilityGroup) error { return ag.UnjoinDatabaseContext(ctx, "") },
-		"suspend":         func(ctx context.Context, ag *AvailabilityGroup) error { return ag.SuspendDatabaseContext(ctx, "") },
-		"resume":          func(ctx context.Context, ag *AvailabilityGroup) error { return ag.ResumeDatabaseContext(ctx, "") },
-		"remove replica":  func(ctx context.Context, ag *AvailabilityGroup) error { return ag.RemoveReplicaContext(ctx, "") },
-		"remove listener": func(ctx context.Context, ag *AvailabilityGroup) error { return ag.RemoveListenerContext(ctx, "") },
+		"add database":    func(ctx context.Context, ag *AvailabilityGroup) error { return ag.AddDatabase(ctx, "") },
+		"remove database": func(ctx context.Context, ag *AvailabilityGroup) error { return ag.RemoveDatabase(ctx, "") },
+		"join database":   func(ctx context.Context, ag *AvailabilityGroup) error { return ag.JoinDatabase(ctx, " ") },
+		"unjoin database": func(ctx context.Context, ag *AvailabilityGroup) error { return ag.UnjoinDatabase(ctx, "") },
+		"suspend":         func(ctx context.Context, ag *AvailabilityGroup) error { return ag.SuspendDatabase(ctx, "") },
+		"resume":          func(ctx context.Context, ag *AvailabilityGroup) error { return ag.ResumeDatabase(ctx, "") },
+		"remove replica":  func(ctx context.Context, ag *AvailabilityGroup) error { return ag.RemoveReplica(ctx, "") },
+		"remove listener": func(ctx context.Context, ag *AvailabilityGroup) error { return ag.RemoveListener(ctx, "") },
 	}
 	for name, fn := range ops {
 		t.Run(name, func(t *testing.T) {
@@ -504,8 +504,8 @@ func TestOperationsRejectEmptyNames(t *testing.T) {
 			if err := fn(ctx, ag); err == nil {
 				t.Fatal("accepted an empty name")
 			}
-			if len(script.Statements) != 0 {
-				t.Errorf("emitted %q", script.Statements)
+			if len(script.Statements()) != 0 {
+				t.Errorf("emitted %q", script.Statements())
 			}
 		})
 	}
@@ -647,10 +647,10 @@ func TestJoinRepeatsTheClusterType(t *testing.T) {
 		t.Run(orEmpty(tt.clusterType), func(t *testing.T) {
 			ag := (&Server{}).AvailabilityGroupRef("AAG1")
 			ctx, script := WithScript(context.Background())
-			if err := ag.JoinContext(ctx, tt.clusterType); err != nil {
+			if err := ag.Join(ctx, ClusterType(tt.clusterType)); err != nil {
 				t.Fatalf("under WithScript: %v", err)
 			}
-			if got := soleStatement(t, script.Statements); got != tt.want {
+			if got := soleStatement(t, script.Statements()); got != tt.want {
 				t.Errorf("got  %s\nwant %s", got, tt.want)
 			}
 		})
@@ -664,10 +664,10 @@ func TestGrantCreateAnyDatabaseStatements(t *testing.T) {
 		want string
 	}{
 		{"grant", func(ctx context.Context, ag *AvailabilityGroup) error {
-			return ag.GrantCreateAnyDatabaseContext(ctx)
+			return ag.GrantCreateAnyDatabase(ctx)
 		}, "ALTER AVAILABILITY GROUP [AAG1] GRANT CREATE ANY DATABASE"},
 		{"deny", func(ctx context.Context, ag *AvailabilityGroup) error {
-			return ag.DenyCreateAnyDatabaseContext(ctx)
+			return ag.DenyCreateAnyDatabase(ctx)
 		}, "ALTER AVAILABILITY GROUP [AAG1] DENY CREATE ANY DATABASE"},
 	}
 	for _, tt := range tests {
@@ -759,7 +759,7 @@ func TestSetListenerPortRejectsAnOutOfRangePort(t *testing.T) {
 	// for a dynamic port rather than rejecting.
 	ag := &AvailabilityGroup{Name: "AAG1"}
 	for _, port := range []int{0, -1, 65536} {
-		if err := ag.SetListenerPort("ubuaag", port); err == nil {
+		if err := ag.SetListenerPort(t.Context(), "ubuaag", port); err == nil {
 			t.Errorf("SetListenerPort(%d) = nil, want an out-of-range error", port)
 		}
 	}
@@ -776,15 +776,15 @@ func TestAddListenerIPScriptsTheWholeStatement(t *testing.T) {
 	ag := &AvailabilityGroup{server: &Server{}, Name: "AAG]1"}
 	ctx, script := WithScript(context.Background())
 
-	err := ag.AddListenerIPContext(ctx, "o'brien",
+	err := ag.AddListenerIP(ctx, "o'brien",
 		AvailabilityListenerIPSpec{IPAddress: "10.1.0.9", SubnetMask: "255.255.255.0"})
 	if err != nil {
-		t.Fatalf("AddListenerIPContext under WithScript: %v", err)
+		t.Fatalf("AddListenerIP under WithScript: %v", err)
 	}
 
 	want := "ALTER AVAILABILITY GROUP [AAG]]1] MODIFY LISTENER N'o''brien' (ADD IP (N'10.1.0.9', N'255.255.255.0'))"
-	if len(script.Statements) != 1 || script.Statements[0] != want {
-		t.Errorf("Statements = %q, want [%q]", script.Statements, want)
+	if len(script.Statements()) != 1 || script.Statements()[0] != want {
+		t.Errorf("Statements = %q, want [%q]", script.Statements(), want)
 	}
 }
 
@@ -796,10 +796,10 @@ func TestAddListenerIPRejectsAnEmptyAddress(t *testing.T) {
 	ag := &AvailabilityGroup{server: &Server{}, Name: "AAG1"}
 	ctx, script := WithScript(context.Background())
 
-	if err := ag.AddListenerIPContext(ctx, "ubuaag", AvailabilityListenerIPSpec{}); err == nil {
-		t.Error("AddListenerIPContext with an empty spec = nil, want an error")
+	if err := ag.AddListenerIP(ctx, "ubuaag", AvailabilityListenerIPSpec{}); err == nil {
+		t.Error("AddListenerIP with an empty spec = nil, want an error")
 	}
-	if len(script.Statements) != 0 {
-		t.Errorf("Statements = %q, want none", script.Statements)
+	if len(script.Statements()) != 0 {
+		t.Errorf("Statements = %q, want none", script.Statements())
 	}
 }

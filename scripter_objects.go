@@ -15,17 +15,12 @@ import (
 // table. An index backing a primary key or unique constraint is scripted as
 // the ALTER TABLE ... ADD CONSTRAINT it really is — CREATE INDEX cannot
 // recreate it.
-func (sc *Scripter) ScriptIndex(schema, table, name string) (string, error) {
-	return sc.ScriptIndexContext(context.Background(), schema, table, name)
-}
-
-// ScriptIndexContext is the context-aware variant of ScriptIndex.
-func (sc *Scripter) ScriptIndexContext(ctx context.Context, schema, table, name string) (string, error) {
-	t, err := sc.db.TableByNameContext(ctx, schema, table)
+func (sc *Scripter) ScriptIndex(ctx context.Context, schema, table, name string) (string, error) {
+	t, err := sc.db.TableByName(ctx, schema, table)
 	if err != nil {
 		return "", err
 	}
-	indexes, err := t.IndexesContext(ctx)
+	indexes, err := t.Indexes(ctx)
 	if err != nil {
 		return "", err
 	}
@@ -56,6 +51,7 @@ func buildIndexScript(idx *Index, tableName string, opts ScriptOptions) string {
 	} else {
 		sb.WriteString(scriptIndex(idx, tableName, opts))
 	}
+	sb.WriteString(indexDisableStatement(idx, tableName))
 	return sb.String()
 }
 
@@ -73,23 +69,19 @@ func scriptKeyConstraint(idx *Index, tableName string, opts ScriptOptions) strin
 	if idx.IsClustered {
 		clust = "CLUSTERED"
 	}
-	fmt.Fprintf(&sb, "ALTER TABLE %s\n    ADD CONSTRAINT %s PRIMARY KEY %s (%s);\nGO\n\n",
-		tableName, quoteIdent(idx.Name), clust, indexColumnList(idx.KeyColumns))
+	fmt.Fprintf(&sb, "ALTER TABLE %s\n    ADD CONSTRAINT %s PRIMARY KEY %s (%s)%s%s;\nGO\n\n",
+		tableName, quoteIdent(idx.Name), clust, indexColumnList(idx.KeyColumns),
+		indexWithClause(idx, " "), dataSpaceClause(idx.DataSpace))
 	return sb.String()
 }
 
 // ScriptCheckConstraint generates the script for one CHECK constraint.
-func (sc *Scripter) ScriptCheckConstraint(schema, table, name string) (string, error) {
-	return sc.ScriptCheckConstraintContext(context.Background(), schema, table, name)
-}
-
-// ScriptCheckConstraintContext is the context-aware variant.
-func (sc *Scripter) ScriptCheckConstraintContext(ctx context.Context, schema, table, name string) (string, error) {
-	t, err := sc.db.TableByNameContext(ctx, schema, table)
+func (sc *Scripter) ScriptCheckConstraint(ctx context.Context, schema, table, name string) (string, error) {
+	t, err := sc.db.TableByName(ctx, schema, table)
 	if err != nil {
 		return "", err
 	}
-	checks, err := t.CheckConstraintsContext(ctx)
+	checks, err := t.CheckConstraints(ctx)
 	if err != nil {
 		return "", err
 	}
@@ -102,9 +94,6 @@ func (sc *Scripter) ScriptCheckConstraintContext(ctx context.Context, schema, ta
 }
 
 // buildCheckConstraintScript assembles one CHECK constraint's script.
-// A disabled constraint is recreated disabled: WITH NOCHECK skips the check
-// of existing rows, and the trailing NOCHECK is what leaves it untrusted, as
-// it was.
 func buildCheckConstraintScript(ck *CheckConstraint, tableName string, opts ScriptOptions) string {
 	var sb strings.Builder
 	if v := opts.verb(); v == ScriptDrop || v == ScriptDropAndCreate {
@@ -114,15 +103,33 @@ func buildCheckConstraintScript(ck *CheckConstraint, tableName string, opts Scri
 		}
 		sb.WriteString("\n")
 	}
+	sb.WriteString(scriptCheckConstraint(ck, tableName, opts))
+	return sb.String()
+}
+
+// scriptCheckConstraint renders the ALTER TABLE ... ADD CONSTRAINT that
+// creates ck — shared by the single-constraint script and the table's.
+//
+// A constraint is recreated as trusted as it was. An untrusted one — disabled,
+// or enabled WITH NOCHECK — is added WITH NOCHECK, which skips the check of
+// existing rows and leaves it untrusted; a disabled one is then switched off
+// by the trailing NOCHECK CONSTRAINT. Adding an untrusted constraint WITH
+// CHECK would instead fail on exactly the rows it was left untrusted for.
+func scriptCheckConstraint(ck *CheckConstraint, tableName string, opts ScriptOptions) string {
+	var sb strings.Builder
 	if opts.IncludeIfNotExists {
 		sb.WriteString(constraintExistenceGuard(ck.Name, tableName))
 	}
 	with := "WITH CHECK"
-	if ck.IsDisabled {
+	if ck.IsDisabled || ck.IsNotTrusted {
 		with = "WITH NOCHECK"
 	}
-	fmt.Fprintf(&sb, "ALTER TABLE %s %s\n    ADD CONSTRAINT %s CHECK %s;\nGO\n",
-		tableName, with, quoteIdent(ck.Name), ck.Definition)
+	nfr := ""
+	if ck.IsNotForReplication {
+		nfr = " NOT FOR REPLICATION"
+	}
+	fmt.Fprintf(&sb, "ALTER TABLE %s %s\n    ADD CONSTRAINT %s CHECK%s %s;\nGO\n",
+		tableName, with, quoteIdent(ck.Name), nfr, ck.Definition)
 	if ck.IsDisabled {
 		fmt.Fprintf(&sb, "ALTER TABLE %s NOCHECK CONSTRAINT %s;\nGO\n", tableName, quoteIdent(ck.Name))
 	}
@@ -130,18 +137,79 @@ func buildCheckConstraintScript(ck *CheckConstraint, tableName string, opts Scri
 	return sb.String()
 }
 
-// ScriptForeignKey generates the script for one foreign key.
-func (sc *Scripter) ScriptForeignKey(schema, table, name string) (string, error) {
-	return sc.ScriptForeignKeyContext(context.Background(), schema, table, name)
-}
-
-// ScriptForeignKeyContext is the context-aware variant.
-func (sc *Scripter) ScriptForeignKeyContext(ctx context.Context, schema, table, name string) (string, error) {
-	t, err := sc.db.TableByNameContext(ctx, schema, table)
+// ScriptStatistic generates the CREATE (or DROP) script for one statistics
+// object on a table.
+//
+// A statistic an index maintains is refused: it is created and dropped with
+// its index, so CREATE STATISTICS under its name collides with the index and
+// DROP STATISTICS on it fails (Msg 3739).
+func (sc *Scripter) ScriptStatistic(ctx context.Context, schema, table, name string) (string, error) {
+	t, err := sc.db.TableByName(ctx, schema, table)
 	if err != nil {
 		return "", err
 	}
-	fks, err := t.ForeignKeysContext(ctx)
+	st, err := t.StatisticByName(ctx, name)
+	if err != nil {
+		return "", err
+	}
+	if !st.IsAutoCreated && !st.IsUserCreated {
+		return "", fmt.Errorf("gosmo: script statistic %q on %s: it belongs to the index of the same name; script the index instead",
+			name, t.FullName())
+	}
+	var cols []string
+	if v := sc.opts.verb(); v != ScriptDrop {
+		if cols, err = st.Columns(ctx); err != nil {
+			return "", err
+		}
+	}
+	return buildStatisticScript(st, cols, t.FullName(), sc.opts)
+}
+
+// buildStatisticScript assembles one statistic's script from metadata
+// already read: its filter and its NORECOMPUTE and INCREMENTAL options, the
+// three things that make it the statistic it is. The sampling it was last
+// built with is not a property of the statistic and is not scripted; the
+// server picks its default sample, as SSMS's script leaves it to.
+//
+// The DROP is always guarded: DROP STATISTICS has no IF EXISTS form, and the
+// DROP half of DROP And CREATE must be re-runnable.
+func buildStatisticScript(st *Statistic, cols []string, tableName string, opts ScriptOptions) (string, error) {
+	var sb strings.Builder
+	guard := fmt.Sprintf("EXISTS (SELECT 1 FROM sys.stats WHERE name = N'%s' AND object_id = OBJECT_ID(N'%s'))",
+		escapeSingle(st.Name), escapeSingle(tableName))
+	v := opts.verb()
+	if v == ScriptDrop || v == ScriptDropAndCreate {
+		fmt.Fprintf(&sb, "IF %s\n    DROP STATISTICS %s.%s;\nGO\n", guard, tableName, quoteIdent(st.Name))
+		if v == ScriptDrop {
+			return sb.String(), nil
+		}
+		sb.WriteString("\n")
+	}
+	stmt, err := buildCreateStatisticStatement(tableName, CreateStatisticRequest{
+		Name:             st.Name,
+		Columns:          cols,
+		FilterDefinition: st.FilterDef,
+		NoRecompute:      st.NoRecompute,
+		Incremental:      st.IsIncremental,
+	})
+	if err != nil {
+		return "", err
+	}
+	if opts.IncludeIfNotExists {
+		fmt.Fprintf(&sb, "IF NOT %s\n", guard)
+	}
+	sb.WriteString(stmt)
+	sb.WriteString(";\nGO\n")
+	return sb.String(), nil
+}
+
+// ScriptForeignKey generates the script for one foreign key.
+func (sc *Scripter) ScriptForeignKey(ctx context.Context, schema, table, name string) (string, error) {
+	t, err := sc.db.TableByName(ctx, schema, table)
+	if err != nil {
+		return "", err
+	}
+	fks, err := t.ForeignKeys(ctx)
 	if err != nil {
 		return "", err
 	}
@@ -169,13 +237,8 @@ func buildForeignKeyScript(fk *ForeignKey, tableName string, opts ScriptOptions)
 }
 
 // ScriptSequence generates the CREATE (or DROP) script for one sequence.
-func (sc *Scripter) ScriptSequence(schema, name string) (string, error) {
-	return sc.ScriptSequenceContext(context.Background(), schema, name)
-}
-
-// ScriptSequenceContext is the context-aware variant of ScriptSequence.
-func (sc *Scripter) ScriptSequenceContext(ctx context.Context, schema, name string) (string, error) {
-	seqs, err := sc.db.SequencesContext(ctx)
+func (sc *Scripter) ScriptSequence(ctx context.Context, schema, name string) (string, error) {
+	seqs, err := sc.db.Sequences(ctx)
 	if err != nil {
 		return "", err
 	}
@@ -232,13 +295,8 @@ func buildSequenceScript(seq *Sequence, opts ScriptOptions) string {
 }
 
 // ScriptSynonym generates the CREATE (or DROP) script for one synonym.
-func (sc *Scripter) ScriptSynonym(schema, name string) (string, error) {
-	return sc.ScriptSynonymContext(context.Background(), schema, name)
-}
-
-// ScriptSynonymContext is the context-aware variant of ScriptSynonym.
-func (sc *Scripter) ScriptSynonymContext(ctx context.Context, schema, name string) (string, error) {
-	syns, err := sc.db.SynonymsContext(ctx)
+func (sc *Scripter) ScriptSynonym(ctx context.Context, schema, name string) (string, error) {
+	syns, err := sc.db.Synonyms(ctx)
 	if err != nil {
 		return "", err
 	}
@@ -271,14 +329,8 @@ func buildSynonymScript(syn *Synonym, opts ScriptOptions) string {
 
 // ScriptPartitionFunction generates the CREATE (or DROP) script for one
 // partition function.
-func (sc *Scripter) ScriptPartitionFunction(name string) (string, error) {
-	return sc.ScriptPartitionFunctionContext(context.Background(), name)
-}
-
-// ScriptPartitionFunctionContext is the context-aware variant of
-// ScriptPartitionFunction.
-func (sc *Scripter) ScriptPartitionFunctionContext(ctx context.Context, name string) (string, error) {
-	pfs, err := sc.db.PartitionFunctionsContext(ctx)
+func (sc *Scripter) ScriptPartitionFunction(ctx context.Context, name string) (string, error) {
+	pfs, err := sc.db.PartitionFunctions(ctx)
 	if err != nil {
 		return "", err
 	}
@@ -313,7 +365,7 @@ func buildPartitionFunctionScript(pf *PartitionFunction, opts ScriptOptions) str
 		values[i] = partitionBoundaryLiteral(pf.InputType, b)
 	}
 	fmt.Fprintf(&sb, "CREATE PARTITION FUNCTION %s (%s)\n    AS RANGE %s FOR VALUES (%s);\nGO\n",
-		quoteIdent(pf.Name), ColumnTypeString(&Column{DataType: pf.InputType}), side,
+		quoteIdent(pf.Name), sqlTypeString(pf.InputType, pf.MaxLength, pf.Precision, pf.Scale), side,
 		strings.Join(values, ", "))
 	return sb.String()
 }
@@ -334,14 +386,8 @@ func partitionBoundaryLiteral(dt DataType, value string) string {
 
 // ScriptPartitionScheme generates the CREATE (or DROP) script for one
 // partition scheme.
-func (sc *Scripter) ScriptPartitionScheme(name string) (string, error) {
-	return sc.ScriptPartitionSchemeContext(context.Background(), name)
-}
-
-// ScriptPartitionSchemeContext is the context-aware variant of
-// ScriptPartitionScheme.
-func (sc *Scripter) ScriptPartitionSchemeContext(ctx context.Context, name string) (string, error) {
-	schemes, err := sc.db.PartitionSchemesContext(ctx)
+func (sc *Scripter) ScriptPartitionScheme(ctx context.Context, name string) (string, error) {
+	schemes, err := sc.db.PartitionSchemes(ctx)
 	if err != nil {
 		return "", err
 	}

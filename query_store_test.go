@@ -44,7 +44,7 @@ func TestQueryStoreWaitStatsModeAllowlist(t *testing.T) {
 }
 
 // TestSetQueryStoreOptionsRejectsUnknownValues confirms each of the four
-// free-text fields is validated before SetQueryStoreOptionsContext ever
+// free-text fields is validated before SetQueryStoreOptions ever
 // builds the ALTER DATABASE statement — an injection payload in any one of
 // them must be rejected end-to-end, not just against the allowlist map in
 // isolation above.
@@ -61,15 +61,19 @@ func TestSetQueryStoreOptionsRejectsUnknownValues(t *testing.T) {
 		name string
 		opts QueryStoreOptions
 	}{
-		{"DesiredState", func() QueryStoreOptions { o := base; o.DesiredState = inject; return o }()},
-		{"CaptureMode", func() QueryStoreOptions { o := base; o.CaptureMode = inject; return o }()},
-		{"SizeCleanupMode", func() QueryStoreOptions { o := base; o.SizeCleanupMode = inject; return o }()},
-		{"WaitStatsCaptureMode", func() QueryStoreOptions { o := base; o.WaitStatsCaptureMode = inject; return o }()},
+		{"DesiredState", func() QueryStoreOptions { o := base; o.DesiredState = QueryStoreState(inject); return o }()},
+		{"CaptureMode", func() QueryStoreOptions { o := base; o.CaptureMode = QueryStoreCaptureMode(inject); return o }()},
+		{"SizeCleanupMode", func() QueryStoreOptions { o := base; o.SizeCleanupMode = QueryStoreCleanupMode(inject); return o }()},
+		{"WaitStatsCaptureMode", func() QueryStoreOptions {
+			o := base
+			o.WaitStatsCaptureMode = QueryStoreWaitStatsMode(inject)
+			return o
+		}()},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			d := &Database{Name: "appdb", server: &Server{}}
-			if err := d.SetQueryStoreOptions(tt.opts); err == nil {
+			if err := d.SetQueryStoreOptions(t.Context(), tt.opts); err == nil {
 				t.Errorf("SetQueryStoreOptions accepted an injection payload in %s, want an error", tt.name)
 			}
 		})
@@ -111,7 +115,7 @@ func TestSetQueryStoreOptionsStatement(t *testing.T) {
 	d := &Database{server: &Server{}, Name: "AppDB"}
 	ctx, script := WithScript(context.Background())
 
-	if err := d.SetQueryStoreOptionsContext(ctx, QueryStoreOptions{
+	if err := d.SetQueryStoreOptions(ctx, QueryStoreOptions{
 		DesiredState:         "READ_WRITE",
 		MaxStorageMB:         256,
 		CaptureMode:          "AUTO",
@@ -122,12 +126,12 @@ func TestSetQueryStoreOptionsStatement(t *testing.T) {
 		MaxPlansPerQuery:     200,
 		WaitStatsCaptureMode: "ON",
 	}); err != nil {
-		t.Fatalf("SetQueryStoreOptionsContext under WithScript: %v", err)
+		t.Fatalf("SetQueryStoreOptions under WithScript: %v", err)
 	}
-	if len(script.Statements) != 1 {
-		t.Fatalf("Statements = %d, want 1", len(script.Statements))
+	if len(script.Statements()) != 1 {
+		t.Fatalf("Statements = %d, want 1", len(script.Statements()))
 	}
-	got := script.Statements[0]
+	got := script.Statements()[0]
 	for _, want := range []string{
 		"ALTER DATABASE [AppDB] SET QUERY_STORE = ON (",
 		"OPERATION_MODE = READ_WRITE",
@@ -151,15 +155,15 @@ func TestSetQueryStoreOptionsOffIgnoresTheRest(t *testing.T) {
 	d := &Database{server: &Server{}, Name: "AppDB"}
 	ctx, script := WithScript(context.Background())
 
-	if err := d.SetQueryStoreOptionsContext(ctx, QueryStoreOptions{
+	if err := d.SetQueryStoreOptions(ctx, QueryStoreOptions{
 		DesiredState: "OFF",
 		MaxStorageMB: 512, // ignored
 	}); err != nil {
-		t.Fatalf("SetQueryStoreOptionsContext under WithScript: %v", err)
+		t.Fatalf("SetQueryStoreOptions under WithScript: %v", err)
 	}
 	want := "ALTER DATABASE [AppDB] SET QUERY_STORE = OFF"
-	if len(script.Statements) != 1 || script.Statements[0] != want {
-		t.Errorf("Statements = %q, want [%q]", script.Statements, want)
+	if len(script.Statements()) != 1 || script.Statements()[0] != want {
+		t.Errorf("Statements = %q, want [%q]", script.Statements(), want)
 	}
 }
 
@@ -181,14 +185,14 @@ func TestSetQueryStoreOptionsOmitsWaitStatsBefore2017(t *testing.T) {
 
 		// The 2016 read returns "" for a column that does not exist; that must
 		// not be rejected as an unrecognized mode.
-		if err := d.SetQueryStoreOptionsContext(ctx, opts); err != nil {
-			t.Fatalf("SetQueryStoreOptionsContext: %v", err)
+		if err := d.SetQueryStoreOptions(ctx, opts); err != nil {
+			t.Fatalf("SetQueryStoreOptions: %v", err)
 		}
-		if len(script.Statements) != 1 {
-			t.Fatalf("Statements = %d, want 1", len(script.Statements))
+		if len(script.Statements()) != 1 {
+			t.Fatalf("Statements = %d, want 1", len(script.Statements()))
 		}
-		if strings.Contains(script.Statements[0], "WAIT_STATS_CAPTURE_MODE") {
-			t.Errorf("2016 statement names WAIT_STATS_CAPTURE_MODE:\n%s", script.Statements[0])
+		if strings.Contains(script.Statements()[0], "WAIT_STATS_CAPTURE_MODE") {
+			t.Errorf("2016 statement names WAIT_STATS_CAPTURE_MODE:\n%s", script.Statements()[0])
 		}
 	})
 
@@ -199,11 +203,11 @@ func TestSetQueryStoreOptionsOmitsWaitStatsBefore2017(t *testing.T) {
 
 			o := opts
 			o.WaitStatsCaptureMode = "ON"
-			if err := d.SetQueryStoreOptionsContext(ctx, o); err != nil {
-				t.Fatalf("SetQueryStoreOptionsContext: %v", err)
+			if err := d.SetQueryStoreOptions(ctx, o); err != nil {
+				t.Fatalf("SetQueryStoreOptions: %v", err)
 			}
-			if !strings.Contains(script.Statements[0], "WAIT_STATS_CAPTURE_MODE = ON") {
-				t.Errorf("major %d dropped WAIT_STATS_CAPTURE_MODE:\n%s", major, script.Statements[0])
+			if !strings.Contains(script.Statements()[0], "WAIT_STATS_CAPTURE_MODE = ON") {
+				t.Errorf("major %d dropped WAIT_STATS_CAPTURE_MODE:\n%s", major, script.Statements()[0])
 			}
 		})
 	}
@@ -216,7 +220,7 @@ func TestSetQueryStoreOptionsOmitsWaitStatsBefore2017(t *testing.T) {
 
 		o := opts
 		o.WaitStatsCaptureMode = "ON) --"
-		if err := d.SetQueryStoreOptionsContext(ctx, o); err == nil {
+		if err := d.SetQueryStoreOptions(ctx, o); err == nil {
 			t.Error("2017 accepted an unrecognized wait stats capture mode, want an error")
 		}
 	})

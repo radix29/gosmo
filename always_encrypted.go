@@ -3,7 +3,6 @@ package gosmo
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -53,41 +52,16 @@ FROM   sys.column_master_keys`
 }
 
 // ColumnMasterKeys returns all column master keys in the database.
-func (d *Database) ColumnMasterKeys() ([]*ColumnMasterKey, error) {
-	return d.ColumnMasterKeysContext(context.Background())
-}
-
-// ColumnMasterKeysContext is the context-aware variant of ColumnMasterKeys.
-func (d *Database) ColumnMasterKeysContext(ctx context.Context) ([]*ColumnMasterKey, error) {
+func (d *Database) ColumnMasterKeys(ctx context.Context) ([]*ColumnMasterKey, error) {
 	rows, err := d.query(ctx, d.columnMasterKeySelect()+`
 ORDER  BY name`)
-	if err != nil {
-		return nil, fmt.Errorf("gosmo: list column master keys: %w", err)
-	}
-	defer rows.Close()
-
-	var keys []*ColumnMasterKey
-	for rows.Next() {
-		k, err := scanColumnMasterKey(d, rows.Scan)
-		if err != nil {
-			return nil, fmt.Errorf("gosmo: list column master keys: %w", err)
-		}
-		keys = append(keys, k)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("gosmo: list column master keys: %w", err)
-	}
-	return keys, nil
+	return scanRows(rows, err, "list column master keys", func(scan func(...any) error) (*ColumnMasterKey, error) {
+		return scanColumnMasterKey(d, scan)
+	})
 }
 
 // ColumnMasterKeyByName returns one column master key by name.
-func (d *Database) ColumnMasterKeyByName(name string) (*ColumnMasterKey, error) {
-	return d.ColumnMasterKeyByNameContext(context.Background(), name)
-}
-
-// ColumnMasterKeyByNameContext is the context-aware variant of
-// ColumnMasterKeyByName.
-func (d *Database) ColumnMasterKeyByNameContext(ctx context.Context, name string) (*ColumnMasterKey, error) {
+func (d *Database) ColumnMasterKeyByName(ctx context.Context, name string) (*ColumnMasterKey, error) {
 	var k *ColumnMasterKey
 	err := d.queryRow(ctx, func(row *sql.Row) error {
 		var err error
@@ -95,13 +69,7 @@ func (d *Database) ColumnMasterKeyByNameContext(ctx context.Context, name string
 		return err
 	}, d.columnMasterKeySelect()+`
 WHERE  name = @p1`, name)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, notFoundf("gosmo: column master key %q not found in %q", name, d.Name)
-		}
-		return nil, fmt.Errorf("gosmo: find column master key %q in %q: %w", name, d.Name, err)
-	}
-	return k, nil
+	return foundRow(k, err, notFoundf("gosmo: column master key %q not found in %q", name, d.Name), fmt.Sprintf("find column master key %q in %q", name, d.Name))
 }
 
 func scanColumnMasterKey(d *Database, scan func(...any) error) (*ColumnMasterKey, error) {
@@ -124,12 +92,7 @@ func scanColumnMasterKey(d *Database, scan func(...any) error) (*ColumnMasterKey
 // so nothing here can supply it. Passing true returns an error naming
 // CreateColumnMasterKeyWithSignature rather than emitting a statement the
 // server will reject.
-func (d *Database) CreateColumnMasterKey(name, keyStoreProvider, keyPath string, enclaveComputations bool) error {
-	return d.CreateColumnMasterKeyContext(context.Background(), name, keyStoreProvider, keyPath, enclaveComputations)
-}
-
-// CreateColumnMasterKeyContext is the context-aware variant of CreateColumnMasterKey.
-func (d *Database) CreateColumnMasterKeyContext(ctx context.Context, name, keyStoreProvider, keyPath string, enclaveComputations bool) error {
+func (d *Database) CreateColumnMasterKey(ctx context.Context, name, keyStoreProvider, keyPath string, enclaveComputations bool) error {
 	if enclaveComputations {
 		return fmt.Errorf("gosmo: create column master key [%s]: enclave computations need the key's signature, which only the client can compute: use CreateColumnMasterKeyWithSignature", name)
 	}
@@ -148,13 +111,7 @@ func (d *Database) CreateColumnMasterKeyContext(ctx context.Context, name, keySt
 // The ENCLAVE_COMPUTATIONS clause is SQL Server 2019 syntax; below that this
 // refuses rather than sending a statement the parser rejects. Ask
 // EnclaveComputationsSupported first.
-func (d *Database) CreateColumnMasterKeyWithSignature(name, keyStoreProvider, keyPath string, signature []byte) error {
-	return d.CreateColumnMasterKeyWithSignatureContext(context.Background(), name, keyStoreProvider, keyPath, signature)
-}
-
-// CreateColumnMasterKeyWithSignatureContext is the context-aware variant of
-// CreateColumnMasterKeyWithSignature.
-func (d *Database) CreateColumnMasterKeyWithSignatureContext(ctx context.Context, name, keyStoreProvider, keyPath string, signature []byte) error {
+func (d *Database) CreateColumnMasterKeyWithSignature(ctx context.Context, name, keyStoreProvider, keyPath string, signature []byte) error {
 	if len(signature) == 0 {
 		return fmt.Errorf("gosmo: create column master key [%s]: signature is empty", name)
 	}
@@ -200,12 +157,7 @@ WITH (
 }
 
 // Drop drops the column master key.
-func (cmk *ColumnMasterKey) Drop() error {
-	return cmk.DropContext(context.Background())
-}
-
-// DropContext is the context-aware variant of Drop.
-func (cmk *ColumnMasterKey) DropContext(ctx context.Context) error {
+func (cmk *ColumnMasterKey) Drop(ctx context.Context) error {
 	_, err := cmk.db.exec(ctx,
 		fmt.Sprintf("DROP COLUMN MASTER KEY %s", quoteIdent(cmk.Name)))
 	if err != nil {
@@ -283,12 +235,7 @@ JOIN   sys.column_encryption_key_values cekv ON cekv.column_encryption_key_id = 
 JOIN   sys.column_master_keys cmk ON cmk.column_master_key_id = cekv.column_master_key_id`
 
 // ColumnEncryptionKeys returns all column encryption keys in the database.
-func (d *Database) ColumnEncryptionKeys() ([]*ColumnEncryptionKey, error) {
-	return d.ColumnEncryptionKeysContext(context.Background())
-}
-
-// ColumnEncryptionKeysContext is the context-aware variant of ColumnEncryptionKeys.
-func (d *Database) ColumnEncryptionKeysContext(ctx context.Context) ([]*ColumnEncryptionKey, error) {
+func (d *Database) ColumnEncryptionKeys(ctx context.Context) ([]*ColumnEncryptionKey, error) {
 	rows, err := d.query(ctx, columnEncryptionKeySelect+`
 ORDER  BY cek.name, cekv.column_master_key_id`)
 	if err != nil {
@@ -304,13 +251,7 @@ ORDER  BY cek.name, cekv.column_master_key_id`)
 }
 
 // ColumnEncryptionKeyByName returns one column encryption key by name.
-func (d *Database) ColumnEncryptionKeyByName(name string) (*ColumnEncryptionKey, error) {
-	return d.ColumnEncryptionKeyByNameContext(context.Background(), name)
-}
-
-// ColumnEncryptionKeyByNameContext is the context-aware variant of
-// ColumnEncryptionKeyByName.
-func (d *Database) ColumnEncryptionKeyByNameContext(ctx context.Context, name string) (*ColumnEncryptionKey, error) {
+func (d *Database) ColumnEncryptionKeyByName(ctx context.Context, name string) (*ColumnEncryptionKey, error) {
 	// query, not queryRow: a key encrypted under two master keys is two rows
 	// and both have to be read, so the not-found answer is an empty fold
 	// rather than sql.ErrNoRows.
@@ -372,15 +313,11 @@ func scanColumnEncryptionKeys(d *Database, rows *dbRows) ([]*ColumnEncryptionKey
 // nothing here can generate or verify it, and the server rejects a value it
 // cannot decrypt on first use. Pass two values only to reproduce a key
 // mid-rotation; one is the ordinary case.
-func (d *Database) CreateColumnEncryptionKey(name string, values []ColumnEncryptionKeyValue) error {
-	return d.CreateColumnEncryptionKeyContext(context.Background(), name, values)
-}
-
-// CreateColumnEncryptionKeyContext is the context-aware variant of
-// CreateColumnEncryptionKey. The statement is written the way the scripter
-// writes it (buildColumnEncryptionKeyScript), so a key created here and one
-// scripted from the server read back the same.
-func (d *Database) CreateColumnEncryptionKeyContext(ctx context.Context, name string, values []ColumnEncryptionKeyValue) error {
+//
+// The statement is written the way the scripter writes it
+// (buildColumnEncryptionKeyScript), so a key created here and one scripted
+// from the server read back the same.
+func (d *Database) CreateColumnEncryptionKey(ctx context.Context, name string, values []ColumnEncryptionKeyValue) error {
 	if name == "" {
 		return fmt.Errorf("gosmo: create column encryption key: name is required")
 	}
@@ -415,12 +352,7 @@ func (d *Database) CreateColumnEncryptionKeyContext(ctx context.Context, name st
 // As with CreateColumnEncryptionKey, the encrypted value is produced
 // client-side by something that can reach the new master key — nothing here
 // can generate it, and the server stores it without checking it.
-func (cek *ColumnEncryptionKey) AddValue(value ColumnEncryptionKeyValue) error {
-	return cek.AddValueContext(context.Background(), value)
-}
-
-// AddValueContext is the context-aware variant of AddValue.
-func (cek *ColumnEncryptionKey) AddValueContext(ctx context.Context, value ColumnEncryptionKeyValue) error {
+func (cek *ColumnEncryptionKey) AddValue(ctx context.Context, value ColumnEncryptionKeyValue) error {
 	if missing := value.missing(); missing != "" {
 		return fmt.Errorf("gosmo: add value to column encryption key [%s]: the value has %s", cek.Name, missing)
 	}
@@ -446,12 +378,7 @@ func (cek *ColumnEncryptionKey) AddValueContext(ctx context.Context, value Colum
 // reach only the dropped master key, so the new value must be in place and
 // distributed first. DROP VALUE names the master key alone; the ciphertext is
 // not restated.
-func (cek *ColumnEncryptionKey) DropValue(masterKeyName string) error {
-	return cek.DropValueContext(context.Background(), masterKeyName)
-}
-
-// DropValueContext is the context-aware variant of DropValue.
-func (cek *ColumnEncryptionKey) DropValueContext(ctx context.Context, masterKeyName string) error {
+func (cek *ColumnEncryptionKey) DropValue(ctx context.Context, masterKeyName string) error {
 	if masterKeyName == "" {
 		return fmt.Errorf("gosmo: drop value from column encryption key [%s]: the column master key name is required", cek.Name)
 	}
@@ -460,7 +387,7 @@ func (cek *ColumnEncryptionKey) DropValueContext(ctx context.Context, masterKeyN
 	if _, err := cek.db.exec(ctx, stmt); err != nil {
 		return fmt.Errorf("gosmo: drop value from column encryption key [%s]: %w", cek.Name, err)
 	}
-	// Not mirrored under WithScript, as in AddValueContext above.
+	// Not mirrored under WithScript, as in AddValue above.
 	if !Scripting(ctx) {
 		cek.Values = slices.DeleteFunc(cek.Values, func(v *ColumnEncryptionKeyValue) bool {
 			return strings.EqualFold(v.MasterKeyName, masterKeyName)
@@ -483,12 +410,7 @@ func (cek *ColumnEncryptionKey) reseatSummary() {
 }
 
 // Drop drops the column encryption key.
-func (cek *ColumnEncryptionKey) Drop() error {
-	return cek.DropContext(context.Background())
-}
-
-// DropContext is the context-aware variant of Drop.
-func (cek *ColumnEncryptionKey) DropContext(ctx context.Context) error {
+func (cek *ColumnEncryptionKey) Drop(ctx context.Context) error {
 	_, err := cek.db.exec(ctx,
 		fmt.Sprintf("DROP COLUMN ENCRYPTION KEY %s", quoteIdent(cek.Name)))
 	if err != nil {

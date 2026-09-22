@@ -12,23 +12,61 @@ import (
 // Properties > Query Store page)
 // ============================================================
 
+// QueryStoreState is Query Store's operation mode, spelled as ALTER DATABASE
+// SET QUERY_STORE takes it and sys.database_query_store_options reports it.
+type QueryStoreState string
+
+const (
+	QueryStoreOff       QueryStoreState = "OFF"
+	QueryStoreReadOnly  QueryStoreState = "READ_ONLY"
+	QueryStoreReadWrite QueryStoreState = "READ_WRITE"
+	// QueryStoreError is reported as an ActualState only; it cannot be set.
+	QueryStoreError QueryStoreState = "ERROR"
+)
+
+// QueryStoreCaptureMode is QUERY_CAPTURE_MODE.
+type QueryStoreCaptureMode string
+
+const (
+	QueryStoreCaptureNone   QueryStoreCaptureMode = "NONE"
+	QueryStoreCaptureAuto   QueryStoreCaptureMode = "AUTO"
+	QueryStoreCaptureAll    QueryStoreCaptureMode = "ALL"
+	QueryStoreCaptureCustom QueryStoreCaptureMode = "CUSTOM" // SQL Server 2019+
+)
+
+// QueryStoreCleanupMode is SIZE_BASED_CLEANUP_MODE.
+type QueryStoreCleanupMode string
+
+const (
+	QueryStoreCleanupOff  QueryStoreCleanupMode = "OFF"
+	QueryStoreCleanupAuto QueryStoreCleanupMode = "AUTO"
+)
+
+// QueryStoreWaitStatsMode is WAIT_STATS_CAPTURE_MODE (SQL Server 2017+).
+type QueryStoreWaitStatsMode string
+
+const (
+	QueryStoreWaitStatsOff QueryStoreWaitStatsMode = "OFF"
+	QueryStoreWaitStatsOn  QueryStoreWaitStatsMode = "ON"
+)
+
 // QueryStoreInfo mirrors the single row of sys.database_query_store_options
 // every database has, whether or not Query Store is actually turned on.
 type QueryStoreInfo struct {
-	DesiredState       string // "OFF", "READ_ONLY", "READ_WRITE"
-	ActualState        string
+	DesiredState       QueryStoreState
+	ActualState        QueryStoreState
 	ReadOnlyReason     int
 	CurrentStorageMB   int64
 	MaxStorageMB       int64
 	FlushIntervalSec   int
 	IntervalMinutes    int
 	MaxPlansPerQuery   int
-	CaptureMode        string // "NONE", "AUTO", "ALL", "CUSTOM"
-	SizeCleanupMode    string // "OFF", "AUTO"
+	CaptureMode        QueryStoreCaptureMode
+	SizeCleanupMode    QueryStoreCleanupMode
 	StaleThresholdDays int
-	// WaitStatsCaptureMode is "OFF" or "ON", and empty on SQL Server 2016,
-	// which has no such setting.
-	WaitStatsCaptureMode string
+	// WaitStatsCaptureMode is empty on SQL Server 2016, which has no such
+	// setting.
+	WaitStatsCaptureMode QueryStoreWaitStatsMode
 	// The custom capture policy is SQL Server 2019 and later; these four are
 	// zero on anything older, as they are on any instance whose capture mode
 	// isn't CUSTOM.
@@ -62,12 +100,7 @@ FROM   sys.database_query_store_options`
 }
 
 // QueryStore returns the database's Query Store configuration and state.
-func (d *Database) QueryStore() (*QueryStoreInfo, error) {
-	return d.QueryStoreContext(context.Background())
-}
-
-// QueryStoreContext is the context-aware variant of QueryStore.
-func (d *Database) QueryStoreContext(ctx context.Context) (*QueryStoreInfo, error) {
+func (d *Database) QueryStore(ctx context.Context) (*QueryStoreInfo, error) {
 	q := d.queryStoreOptionsSelect()
 
 	// The four capture_policy_* columns are NULL whenever query capture
@@ -99,18 +132,18 @@ func (d *Database) QueryStoreContext(ctx context.Context) (*QueryStoreInfo, erro
 // ALTER DATABASE ... SET QUERY_STORE = ON (...). DesiredState of "OFF"
 // turns Query Store off and ignores every other field.
 type QueryStoreOptions struct {
-	DesiredState       string // "OFF", "READ_ONLY", "READ_WRITE"
+	DesiredState       QueryStoreState
 	MaxStorageMB       int64
-	CaptureMode        string // "NONE", "AUTO", "ALL", "CUSTOM"
-	SizeCleanupMode    string // "OFF", "AUTO"
+	CaptureMode        QueryStoreCaptureMode
+	SizeCleanupMode    QueryStoreCleanupMode
 	StaleThresholdDays int
 	FlushIntervalSec   int
 	IntervalMinutes    int
 	MaxPlansPerQuery   int
-	// WaitStatsCaptureMode is "OFF" or "ON". It is ignored on SQL Server 2016,
-	// which has no such setting — the clause is left out of the statement
-	// rather than sent and rejected.
-	WaitStatsCaptureMode string
+	// WaitStatsCaptureMode is ignored on SQL Server 2016, which has no such
+	// setting — the clause is left out of the statement rather than sent and
+	// rejected.
+	WaitStatsCaptureMode QueryStoreWaitStatsMode
 	// Custom capture policy thresholds, used only when CaptureMode is
 	// "CUSTOM".
 	CapturePolicyExecCount    int
@@ -119,33 +152,28 @@ type QueryStoreOptions struct {
 	CapturePolicyStaleHours   int
 }
 
+// The validity checks for the Query Store keywords, which can't be
+// identifier-quoted or parameterised (ALTER DATABASE is DDL): a value outside
+// the constants — a conversion from an arbitrary string — is refused rather
+// than spliced in. The operation modes are the settable ones, once already
+// past the OFF case handled separately below.
+var (
+	queryStoreOperationModes = map[QueryStoreState]bool{QueryStoreReadOnly: true, QueryStoreReadWrite: true}
+	queryStoreCaptureModes   = map[QueryStoreCaptureMode]bool{
+		QueryStoreCaptureNone: true, QueryStoreCaptureAuto: true, QueryStoreCaptureAll: true, QueryStoreCaptureCustom: true,
+	}
+	queryStoreCleanupModes   = map[QueryStoreCleanupMode]bool{QueryStoreCleanupOff: true, QueryStoreCleanupAuto: true}
+	queryStoreWaitStatsModes = map[QueryStoreWaitStatsMode]bool{QueryStoreWaitStatsOff: true, QueryStoreWaitStatsOn: true}
+)
+
 // SetQueryStoreOptions turns Query Store on (reconfiguring it) or off.
-func (d *Database) SetQueryStoreOptions(opts QueryStoreOptions) error {
-	return d.SetQueryStoreOptionsContext(context.Background(), opts)
-}
-
-// queryStoreOperationModes allowlists the ALTER DATABASE SET QUERY_STORE
-// OPERATION_MODE keywords SQL Server accepts (once already past the OFF
-// case, handled separately below) — can't be identifier-quoted or
-// parameterised (ALTER DATABASE is DDL).
-var queryStoreOperationModes = map[string]bool{"READ_ONLY": true, "READ_WRITE": true}
-
-// queryStoreCaptureModes allowlists the QUERY_CAPTURE_MODE keywords.
-var queryStoreCaptureModes = map[string]bool{"NONE": true, "AUTO": true, "ALL": true, "CUSTOM": true}
-
-// queryStoreCleanupModes allowlists the SIZE_BASED_CLEANUP_MODE keywords.
-var queryStoreCleanupModes = map[string]bool{"OFF": true, "AUTO": true}
-
-// queryStoreWaitStatsModes allowlists the WAIT_STATS_CAPTURE_MODE keywords.
-var queryStoreWaitStatsModes = map[string]bool{"OFF": true, "ON": true}
-
-// SetQueryStoreOptionsContext is the context-aware variant of
-// SetQueryStoreOptions. Like SetRecoveryModelContext, this is an ALTER
-// DATABASE statement naming the database explicitly, so it runs through
-// d.server.execContext rather than d.exec.
-func (d *Database) SetQueryStoreOptionsContext(ctx context.Context, opts QueryStoreOptions) error {
-	if opts.DesiredState == "OFF" {
-		if err := d.server.execContext(ctx,
+//
+// Like SetRecoveryModel, this is an ALTER DATABASE statement naming the
+// database explicitly, so it runs through d.server.exec rather than
+// d.exec.
+func (d *Database) SetQueryStoreOptions(ctx context.Context, opts QueryStoreOptions) error {
+	if opts.DesiredState == QueryStoreOff {
+		if err := d.server.exec(ctx,
 			fmt.Sprintf("ALTER DATABASE %s SET QUERY_STORE = OFF", quoteIdent(d.Name)),
 		); err != nil {
 			return fmt.Errorf("gosmo: disable query store on %q: %w", d.Name, err)
@@ -171,12 +199,12 @@ func (d *Database) SetQueryStoreOptionsContext(ctx context.Context, opts QuerySt
 	}
 
 	withs := []string{
-		"OPERATION_MODE = " + opts.DesiredState,
+		"OPERATION_MODE = " + string(opts.DesiredState),
 		fmt.Sprintf("MAX_STORAGE_SIZE_MB = %d", opts.MaxStorageMB),
 		fmt.Sprintf("DATA_FLUSH_INTERVAL_SECONDS = %d", opts.FlushIntervalSec),
 		fmt.Sprintf("INTERVAL_LENGTH_MINUTES = %d", opts.IntervalMinutes),
 		fmt.Sprintf("MAX_PLANS_PER_QUERY = %d", opts.MaxPlansPerQuery),
-		"SIZE_BASED_CLEANUP_MODE = " + opts.SizeCleanupMode,
+		"SIZE_BASED_CLEANUP_MODE = " + string(opts.SizeCleanupMode),
 		fmt.Sprintf("QUERY_CAPTURE_MODE = %s", opts.CaptureMode),
 		// STALE_QUERY_THRESHOLD_DAYS is not a top-level option: SET
 		// QUERY_STORE only accepts it inside CLEANUP_POLICY, and rejects the
@@ -184,9 +212,9 @@ func (d *Database) SetQueryStoreOptionsContext(ctx context.Context, opts QuerySt
 		fmt.Sprintf("CLEANUP_POLICY = (STALE_QUERY_THRESHOLD_DAYS = %d)", opts.StaleThresholdDays),
 	}
 	if waitStats {
-		withs = append(withs, "WAIT_STATS_CAPTURE_MODE = "+opts.WaitStatsCaptureMode)
+		withs = append(withs, "WAIT_STATS_CAPTURE_MODE = "+string(opts.WaitStatsCaptureMode))
 	}
-	if opts.CaptureMode == "CUSTOM" {
+	if opts.CaptureMode == QueryStoreCaptureCustom {
 		withs = append(withs, fmt.Sprintf(
 			"QUERY_CAPTURE_POLICY = (EXECUTION_COUNT = %d, TOTAL_COMPILE_CPU_TIME_MS = %d, TOTAL_EXECUTION_CPU_TIME_MS = %d, STALE_CAPTURE_POLICY_THRESHOLD = %d HOURS)",
 			opts.CapturePolicyExecCount, opts.CapturePolicyCompileCPUMs, opts.CapturePolicyExecCPUMs, opts.CapturePolicyStaleHours,
@@ -194,7 +222,7 @@ func (d *Database) SetQueryStoreOptionsContext(ctx context.Context, opts QuerySt
 	}
 
 	q := fmt.Sprintf("ALTER DATABASE %s SET QUERY_STORE = ON (%s)", quoteIdent(d.Name), strings.Join(withs, ", "))
-	if err := d.server.execContext(ctx, q); err != nil {
+	if err := d.server.exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: set query store options on %q: %w", d.Name, err)
 	}
 	return nil
@@ -202,12 +230,7 @@ func (d *Database) SetQueryStoreOptionsContext(ctx context.Context, opts QuerySt
 
 // FlushQueryStore forces Query Store to persist its in-memory data to disk
 // immediately (SSMS's "Flush Data" action), via sys.sp_query_store_flush_db.
-func (d *Database) FlushQueryStore() error {
-	return d.FlushQueryStoreContext(context.Background())
-}
-
-// FlushQueryStoreContext is the context-aware variant of FlushQueryStore.
-func (d *Database) FlushQueryStoreContext(ctx context.Context) error {
+func (d *Database) FlushQueryStore(ctx context.Context) error {
 	if _, err := d.exec(ctx, "EXEC sys.sp_query_store_flush_db"); err != nil {
 		return fmt.Errorf("gosmo: flush query store on %q: %w", d.Name, err)
 	}
@@ -216,13 +239,8 @@ func (d *Database) FlushQueryStoreContext(ctx context.Context) error {
 
 // ClearQueryStore discards all captured Query Store data (SSMS's "Clear
 // Query Store" action) without changing its configuration.
-func (d *Database) ClearQueryStore() error {
-	return d.ClearQueryStoreContext(context.Background())
-}
-
-// ClearQueryStoreContext is the context-aware variant of ClearQueryStore.
-func (d *Database) ClearQueryStoreContext(ctx context.Context) error {
-	if err := d.server.execContext(ctx,
+func (d *Database) ClearQueryStore(ctx context.Context) error {
+	if err := d.server.exec(ctx,
 		fmt.Sprintf("ALTER DATABASE %s SET QUERY_STORE CLEAR", quoteIdent(d.Name)),
 	); err != nil {
 		return fmt.Errorf("gosmo: clear query store on %q: %w", d.Name, err)

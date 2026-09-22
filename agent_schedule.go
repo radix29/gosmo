@@ -3,7 +3,6 @@ package gosmo
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -131,39 +130,17 @@ func scanSchedule(s *Server, scan func(dest ...any) error) (*Schedule, error) {
 }
 
 // Schedules returns every SQL Server Agent schedule defined on the server.
-func (s *Server) Schedules() ([]*Schedule, error) { return s.SchedulesContext(context.Background()) }
-
-// SchedulesContext is the context-aware variant of Schedules.
-func (s *Server) SchedulesContext(ctx context.Context) ([]*Schedule, error) {
+func (s *Server) Schedules(ctx context.Context) ([]*Schedule, error) {
 	q := "SELECT " + scheduleColumns + " " + scheduleFrom + " ORDER BY sch.name"
 
 	rows, err := s.query(ctx, q)
-	if err != nil {
-		return nil, fmt.Errorf("gosmo: list schedules: %w", err)
-	}
-	defer rows.Close()
-
-	var out []*Schedule
-	for rows.Next() {
-		sch, err := scanSchedule(s, rows.Scan)
-		if err != nil {
-			return nil, fmt.Errorf("gosmo: list schedules: %w", err)
-		}
-		out = append(out, sch)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("gosmo: list schedules: %w", err)
-	}
-	return out, nil
+	return scanRows(rows, err, "list schedules", func(scan func(...any) error) (*Schedule, error) {
+		return scanSchedule(s, scan)
+	})
 }
 
 // ScheduleByName returns a single schedule by name.
-func (s *Server) ScheduleByName(name string) (*Schedule, error) {
-	return s.ScheduleByNameContext(context.Background(), name)
-}
-
-// ScheduleByNameContext is the context-aware variant of ScheduleByName.
-func (s *Server) ScheduleByNameContext(ctx context.Context, name string) (*Schedule, error) {
+func (s *Server) ScheduleByName(ctx context.Context, name string) (*Schedule, error) {
 	q := "SELECT " + scheduleColumns + " " + scheduleFrom + " WHERE sch.name = @p1"
 
 	var sch *Schedule
@@ -172,13 +149,7 @@ func (s *Server) ScheduleByNameContext(ctx context.Context, name string) (*Sched
 		sch, scanErr = scanSchedule(s, row.Scan)
 		return scanErr
 	}, q, name)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, notFoundf("gosmo: schedule %q not found", name)
-		}
-		return nil, fmt.Errorf("gosmo: schedule by name: %w", err)
-	}
-	return sch, nil
+	return foundRow(sch, err, notFoundf("gosmo: schedule %q not found", name), "schedule by name")
 }
 
 // ScheduleRef returns a lightweight handle for a shared schedule by name,
@@ -189,7 +160,7 @@ func (s *Server) ScheduleByNameContext(ctx context.Context, name string) (*Sched
 // Every write method on *Schedule that addresses the schedule by name
 // (Job.AttachSchedule/DetachSchedule take the name directly) works from
 // this handle. It is also the form to use when there is nothing to read
-// yet: under a WithScript-derived context, ScheduleByNameContext's lookup is
+// yet: under a WithScript-derived context, ScheduleByName's lookup is
 // a real read, so a schedule whose sp_add_schedule was merely collected is
 // not there to find.
 func (s *Server) ScheduleRef(name string) *Schedule {
@@ -218,12 +189,7 @@ type CreateScheduleRequest struct {
 
 // CreateSchedule creates a new shared schedule via sp_add_schedule. The
 // returned Schedule is not yet attached to any job — see Job.AttachSchedule.
-func (s *Server) CreateSchedule(req CreateScheduleRequest) (*Schedule, error) {
-	return s.CreateScheduleContext(context.Background(), req)
-}
-
-// CreateScheduleContext is the context-aware variant of CreateSchedule.
-func (s *Server) CreateScheduleContext(ctx context.Context, req CreateScheduleRequest) (*Schedule, error) {
+func (s *Server) CreateSchedule(ctx context.Context, req CreateScheduleRequest) (*Schedule, error) {
 	if req.Name == "" {
 		return nil, fmt.Errorf("gosmo: create schedule: name is required")
 	}
@@ -248,7 +214,7 @@ func (s *Server) CreateScheduleContext(ctx context.Context, req CreateScheduleRe
 	if req.OwnerLoginName != "" {
 		q += fmt.Sprintf(", @owner_login_name = N'%s'", escapeSingle(req.OwnerLoginName))
 	}
-	if err := s.execContext(ctx, q); err != nil {
+	if err := s.exec(ctx, q); err != nil {
 		return nil, fmt.Errorf("gosmo: create schedule %q: %w", req.Name, err)
 	}
 	if Scripting(ctx) {
@@ -258,19 +224,14 @@ func (s *Server) CreateScheduleContext(ctx context.Context, req CreateScheduleRe
 		// asked for. A name-only handle is what the caller can act on here.
 		return s.ScheduleRef(req.Name), nil
 	}
-	return s.ScheduleByNameContext(ctx, req.Name)
+	return s.ScheduleByName(ctx, req.Name)
 }
 
 // Rename changes the schedule's name.
-func (sch *Schedule) Rename(newName string) error {
-	return sch.RenameContext(context.Background(), newName)
-}
-
-// RenameContext is the context-aware variant of Rename.
-func (sch *Schedule) RenameContext(ctx context.Context, newName string) error {
+func (sch *Schedule) Rename(ctx context.Context, newName string) error {
 	q := fmt.Sprintf("EXEC msdb.dbo.sp_update_schedule @schedule_id = %d, @new_name = N'%s'",
 		sch.ID, escapeSingle(newName))
-	if err := sch.server.execContext(ctx, q); err != nil {
+	if err := sch.server.exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: rename schedule %q to %q: %w", sch.Name, newName, err)
 	}
 	setIfApplied(ctx, &sch.Name, newName)
@@ -278,21 +239,15 @@ func (sch *Schedule) RenameContext(ctx context.Context, newName string) error {
 }
 
 // Enable enables the schedule.
-func (sch *Schedule) Enable() error { return sch.EnableContext(context.Background()) }
-
-// EnableContext is the context-aware variant of Enable.
-func (sch *Schedule) EnableContext(ctx context.Context) error { return sch.setEnabled(ctx, true) }
+func (sch *Schedule) Enable(ctx context.Context) error { return sch.setEnabled(ctx, true) }
 
 // Disable disables the schedule.
-func (sch *Schedule) Disable() error { return sch.DisableContext(context.Background()) }
-
-// DisableContext is the context-aware variant of Disable.
-func (sch *Schedule) DisableContext(ctx context.Context) error { return sch.setEnabled(ctx, false) }
+func (sch *Schedule) Disable(ctx context.Context) error { return sch.setEnabled(ctx, false) }
 
 func (sch *Schedule) setEnabled(ctx context.Context, on bool) error {
 	q := fmt.Sprintf("EXEC msdb.dbo.sp_update_schedule @schedule_id = %d, @enabled = %d",
 		sch.ID, boolToInt(on))
-	if err := sch.server.execContext(ctx, q); err != nil {
+	if err := sch.server.exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: set enabled=%v for schedule %q: %w", on, sch.Name, err)
 	}
 	setIfApplied(ctx, &sch.Enabled, on)
@@ -313,12 +268,7 @@ type ScheduleFrequency struct {
 }
 
 // SetFrequency replaces the schedule's frequency definition.
-func (sch *Schedule) SetFrequency(f ScheduleFrequency) error {
-	return sch.SetFrequencyContext(context.Background(), f)
-}
-
-// SetFrequencyContext is the context-aware variant of SetFrequency.
-func (sch *Schedule) SetFrequencyContext(ctx context.Context, f ScheduleFrequency) error {
+func (sch *Schedule) SetFrequency(ctx context.Context, f ScheduleFrequency) error {
 	q := fmt.Sprintf(
 		"EXEC msdb.dbo.sp_update_schedule @schedule_id = %d, "+
 			"@freq_type = %d, @freq_interval = %d, "+
@@ -329,7 +279,7 @@ func (sch *Schedule) SetFrequencyContext(ctx context.Context, f ScheduleFrequenc
 		int(f.FreqSubdayType), f.FreqSubdayInterval,
 		f.FreqRelativeInterval, f.FreqRecurrenceFactor,
 	)
-	if err := sch.server.execContext(ctx, q); err != nil {
+	if err := sch.server.exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: set frequency for schedule %q: %w", sch.Name, err)
 	}
 	setIfApplied(ctx, &sch.FreqType, f.FreqType)
@@ -344,12 +294,7 @@ func (sch *Schedule) SetFrequencyContext(ctx context.Context, f ScheduleFrequenc
 // SetActiveRange changes the schedule's Duration section: the date range
 // it's active over, plus the daily time-of-day window (HHMMSS) it can fire
 // within. A zero endDate means "no end date".
-func (sch *Schedule) SetActiveRange(startDate, endDate time.Time, startTime, endTime int) error {
-	return sch.SetActiveRangeContext(context.Background(), startDate, endDate, startTime, endTime)
-}
-
-// SetActiveRangeContext is the context-aware variant of SetActiveRange.
-func (sch *Schedule) SetActiveRangeContext(ctx context.Context, startDate, endDate time.Time, startTime, endTime int) error {
+func (sch *Schedule) SetActiveRange(ctx context.Context, startDate, endDate time.Time, startTime, endTime int) error {
 	q := fmt.Sprintf(
 		"EXEC msdb.dbo.sp_update_schedule @schedule_id = %d, "+
 			"@active_start_date = %d, @active_end_date = %d, "+
@@ -358,7 +303,7 @@ func (sch *Schedule) SetActiveRangeContext(ctx context.Context, startDate, endDa
 		timeToYYYYMMDD(startDate), scheduleEndDateRaw(endDate),
 		startTime, endTime,
 	)
-	if err := sch.server.execContext(ctx, q); err != nil {
+	if err := sch.server.exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: set active range for schedule %q: %w", sch.Name, err)
 	}
 	setIfApplied(ctx, &sch.ActiveStartDate, startDate)
@@ -369,15 +314,10 @@ func (sch *Schedule) SetActiveRangeContext(ctx context.Context, startDate, endDa
 }
 
 // SetOwner reassigns the schedule's owner login.
-func (sch *Schedule) SetOwner(loginName string) error {
-	return sch.SetOwnerContext(context.Background(), loginName)
-}
-
-// SetOwnerContext is the context-aware variant of SetOwner.
-func (sch *Schedule) SetOwnerContext(ctx context.Context, loginName string) error {
+func (sch *Schedule) SetOwner(ctx context.Context, loginName string) error {
 	q := fmt.Sprintf("EXEC msdb.dbo.sp_update_schedule @schedule_id = %d, @owner_login_name = N'%s'",
 		sch.ID, escapeSingle(loginName))
-	if err := sch.server.execContext(ctx, q); err != nil {
+	if err := sch.server.exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: set owner for schedule %q: %w", sch.Name, err)
 	}
 	setIfApplied(ctx, &sch.OwnerLoginName, loginName)
@@ -387,12 +327,9 @@ func (sch *Schedule) SetOwnerContext(ctx context.Context, loginName string) erro
 // Drop deletes the schedule via sp_delete_schedule. SQL Server refuses the
 // call (returning a wrapped SQLError) if the schedule is still attached to
 // one or more jobs — detach it first via Job.DetachSchedule.
-func (sch *Schedule) Drop() error { return sch.DropContext(context.Background()) }
-
-// DropContext is the context-aware variant of Drop.
-func (sch *Schedule) DropContext(ctx context.Context) error {
+func (sch *Schedule) Drop(ctx context.Context) error {
 	q := fmt.Sprintf("EXEC msdb.dbo.sp_delete_schedule @schedule_id = %d", sch.ID)
-	if err := sch.server.execContext(ctx, q); err != nil {
+	if err := sch.server.exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: drop schedule %q: %w", sch.Name, err)
 	}
 	return nil
@@ -402,10 +339,7 @@ func (sch *Schedule) DropContext(ctx context.Context) error {
 // list. Only JobID/Name/IsEnabled are populated on each returned Job (not
 // its activity/history joins), enough for a reference list without the
 // extra round trips Server.Jobs pays for.
-func (sch *Schedule) Jobs() ([]*Job, error) { return sch.JobsContext(context.Background()) }
-
-// JobsContext is the context-aware variant of Jobs.
-func (sch *Schedule) JobsContext(ctx context.Context) ([]*Job, error) {
+func (sch *Schedule) Jobs(ctx context.Context) ([]*Job, error) {
 	const q = `
 SELECT CONVERT(varchar(36), j.job_id), j.name, j.enabled
 FROM   msdb.dbo.sysjobs j
@@ -414,67 +348,35 @@ WHERE  js.schedule_id = @p1
 ORDER  BY j.name`
 
 	rows, err := sch.server.query(ctx, q, sch.ID)
-	if err != nil {
-		return nil, fmt.Errorf("gosmo: jobs for schedule %q: %w", sch.Name, err)
-	}
-	defer rows.Close()
-
-	var out []*Job
-	for rows.Next() {
+	return scanRows(rows, err, fmt.Sprintf("jobs for schedule %q", sch.Name), func(scan func(...any) error) (*Job, error) {
 		j := &Job{server: sch.server}
-		if err := rows.Scan(&j.JobID, &j.Name, &j.IsEnabled); err != nil {
-			return nil, fmt.Errorf("gosmo: jobs for schedule %q: %w", sch.Name, err)
+		if err := scan(&j.JobID, &j.Name, &j.IsEnabled); err != nil {
+			return nil, err
 		}
-		out = append(out, j)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("gosmo: jobs for schedule %q: %w", sch.Name, err)
-	}
-	return out, nil
+		return j, nil
+	})
 }
 
 // Schedules returns every schedule attached to the job.
-func (j *Job) Schedules() ([]*Schedule, error) { return j.SchedulesContext(context.Background()) }
-
-// SchedulesContext is the context-aware variant of Schedules.
-func (j *Job) SchedulesContext(ctx context.Context) ([]*Schedule, error) {
+func (j *Job) Schedules(ctx context.Context) ([]*Schedule, error) {
 	q := "SELECT " + scheduleColumns + " " + scheduleFrom + `
 JOIN   msdb.dbo.sysjobschedules js ON js.schedule_id = sch.schedule_id
 WHERE  js.job_id = @p1
 ORDER  BY sch.name`
 
 	rows, err := j.server.query(ctx, q, j.JobID)
-	if err != nil {
-		return nil, fmt.Errorf("gosmo: schedules for job %q: %w", j.Name, err)
-	}
-	defer rows.Close()
-
-	var out []*Schedule
-	for rows.Next() {
-		sch, err := scanSchedule(j.server, rows.Scan)
-		if err != nil {
-			return nil, fmt.Errorf("gosmo: schedules for job %q: %w", j.Name, err)
-		}
-		out = append(out, sch)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("gosmo: schedules for job %q: %w", j.Name, err)
-	}
-	return out, nil
+	return scanRows(rows, err, fmt.Sprintf("schedules for job %q", j.Name), func(scan func(...any) error) (*Schedule, error) {
+		return scanSchedule(j.server, scan)
+	})
 }
 
 // AttachSchedule attaches an existing shared schedule to the job — as
 // opposed to AddSchedule, which creates a brand-new schedule and attaches
 // it in one step.
-func (j *Job) AttachSchedule(scheduleName string) error {
-	return j.AttachScheduleContext(context.Background(), scheduleName)
-}
-
-// AttachScheduleContext is the context-aware variant of AttachSchedule.
-func (j *Job) AttachScheduleContext(ctx context.Context, scheduleName string) error {
+func (j *Job) AttachSchedule(ctx context.Context, scheduleName string) error {
 	q := fmt.Sprintf("EXEC msdb.dbo.sp_attach_schedule @job_name = N'%s', @schedule_name = N'%s'",
 		escapeSingle(j.Name), escapeSingle(scheduleName))
-	if err := j.server.execContext(ctx, q); err != nil {
+	if err := j.server.exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: attach schedule %q to job %q: %w", scheduleName, j.Name, err)
 	}
 	return nil
@@ -482,15 +384,10 @@ func (j *Job) AttachScheduleContext(ctx context.Context, scheduleName string) er
 
 // DetachSchedule detaches a schedule from the job without deleting the
 // schedule itself (it may still be shared by other jobs).
-func (j *Job) DetachSchedule(scheduleName string) error {
-	return j.DetachScheduleContext(context.Background(), scheduleName)
-}
-
-// DetachScheduleContext is the context-aware variant of DetachSchedule.
-func (j *Job) DetachScheduleContext(ctx context.Context, scheduleName string) error {
+func (j *Job) DetachSchedule(ctx context.Context, scheduleName string) error {
 	q := fmt.Sprintf("EXEC msdb.dbo.sp_detach_schedule @job_name = N'%s', @schedule_name = N'%s'",
 		escapeSingle(j.Name), escapeSingle(scheduleName))
-	if err := j.server.execContext(ctx, q); err != nil {
+	if err := j.server.exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: detach schedule %q from job %q: %w", scheduleName, j.Name, err)
 	}
 	return nil

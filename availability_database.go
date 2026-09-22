@@ -64,12 +64,7 @@ type AvailabilityDatabase struct {
 // The database list comes from sys.availability_databases_cluster, which is
 // cluster-wide metadata, so a database appears even on a replica that has not
 // finished seeding it — with empty state rather than being silently missing.
-func (ag *AvailabilityGroup) Databases() ([]*AvailabilityDatabase, error) {
-	return ag.DatabasesContext(context.Background())
-}
-
-// DatabasesContext is the context-aware variant of Databases.
-func (ag *AvailabilityGroup) DatabasesContext(ctx context.Context) ([]*AvailabilityDatabase, error) {
+func (ag *AvailabilityGroup) Databases(ctx context.Context) ([]*AvailabilityDatabase, error) {
 	s := ag.server
 
 	major := s.serverMajorVersion()
@@ -106,16 +101,10 @@ func (ag *AvailabilityGroup) DatabasesContext(ctx context.Context) ([]*Availabil
 	ORDER BY adc.database_name, ar.replica_server_name`
 
 	rows, err := s.query(ctx, q, ag.ID)
-	if err != nil {
-		return nil, fmt.Errorf("gosmo: list databases of availability group %q: %w", ag.Name, err)
-	}
-	defer rows.Close()
-
-	var dbs []*AvailabilityDatabase
-	for rows.Next() {
+	return scanRows(rows, err, fmt.Sprintf("list databases of availability group %q", ag.Name), func(scan func(...any) error) (*AvailabilityDatabase, error) {
 		d := &AvailabilityDatabase{}
 		var sent, received, hardened, redone, commit sql.NullTime
-		if err := rows.Scan(
+		if err := scan(
 			&d.GroupID, &d.ReplicaID, &d.ReplicaServerName, &d.DatabaseName,
 			&d.GroupDatabaseID, &d.IsLocal, &d.IsPrimaryReplica,
 			&d.SynchronizationState, &d.SynchronizationHealth, &d.DatabaseState,
@@ -124,7 +113,7 @@ func (ag *AvailabilityGroup) DatabasesContext(ctx context.Context) ([]*Availabil
 			&d.SecondaryLagSeconds,
 			&sent, &received, &hardened, &redone, &commit,
 		); err != nil {
-			return nil, fmt.Errorf("gosmo: list databases of availability group %q: %w", ag.Name, err)
+			return nil, err
 		}
 		for _, f := range []struct {
 			src sql.NullTime
@@ -138,12 +127,8 @@ func (ag *AvailabilityGroup) DatabasesContext(ctx context.Context) ([]*Availabil
 				*f.dst = f.src.Time
 			}
 		}
-		dbs = append(dbs, d)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("gosmo: list databases of availability group %q: %w", ag.Name, err)
-	}
-	return dbs, nil
+		return d, nil
+	})
 }
 
 // -- Databases in the group ------------------------------------------------
@@ -155,12 +140,7 @@ func (ag *AvailabilityGroup) DatabasesContext(ctx context.Context) ([]*Availabil
 // on the secondaries afterwards depends on their seeding mode: an AUTOMATIC
 // replica seeds itself, a MANUAL one needs the database restored there and then
 // JoinDatabase called against it.
-func (ag *AvailabilityGroup) AddDatabase(name string) error {
-	return ag.AddDatabaseContext(context.Background(), name)
-}
-
-// AddDatabaseContext is the context-aware variant of AddDatabase.
-func (ag *AvailabilityGroup) AddDatabaseContext(ctx context.Context, name string) error {
+func (ag *AvailabilityGroup) AddDatabase(ctx context.Context, name string) error {
 	if strings.TrimSpace(name) == "" {
 		return fmt.Errorf("gosmo: add database to availability group %q: empty database name", ag.Name)
 	}
@@ -178,12 +158,7 @@ func (ag *AvailabilityGroup) AddDatabaseContext(ctx context.Context, name string
 // it fails with error 983 until it is dropped or restored WITH RECOVERY.
 // sys.databases still reports that copy as ONLINE, so state_desc is not the way
 // to find one — verified against SQL Server 2025.
-func (ag *AvailabilityGroup) RemoveDatabase(name string) error {
-	return ag.RemoveDatabaseContext(context.Background(), name)
-}
-
-// RemoveDatabaseContext is the context-aware variant of RemoveDatabase.
-func (ag *AvailabilityGroup) RemoveDatabaseContext(ctx context.Context, name string) error {
+func (ag *AvailabilityGroup) RemoveDatabase(ctx context.Context, name string) error {
 	if strings.TrimSpace(name) == "" {
 		return fmt.Errorf("gosmo: remove database from availability group %q: empty database name", ag.Name)
 	}
@@ -202,7 +177,7 @@ func (ag *AvailabilityGroup) RemoveDatabaseContext(ctx context.Context, name str
 
 // alterDatabaseHADR runs one ALTER DATABASE <name> SET HADR <clause> statement.
 func (ag *AvailabilityGroup) alterDatabaseHADR(ctx context.Context, name, clause string) error {
-	return ag.server.execContext(ctx,
+	return ag.server.exec(ctx,
 		fmt.Sprintf("ALTER DATABASE %s SET HADR %s", quoteIdent(name), clause))
 }
 
@@ -211,12 +186,7 @@ func (ag *AvailabilityGroup) alterDatabaseHADR(ctx context.Context, name, clause
 // Run against the secondary holding the copy, after restoring it WITH NORECOVERY
 // from a full and a log backup of the primary's. Only needed for a MANUAL-seeding
 // replica; an AUTOMATIC one joins itself as part of seeding.
-func (ag *AvailabilityGroup) JoinDatabase(name string) error {
-	return ag.JoinDatabaseContext(context.Background(), name)
-}
-
-// JoinDatabaseContext is the context-aware variant of JoinDatabase.
-func (ag *AvailabilityGroup) JoinDatabaseContext(ctx context.Context, name string) error {
+func (ag *AvailabilityGroup) JoinDatabase(ctx context.Context, name string) error {
 	if strings.TrimSpace(name) == "" {
 		return fmt.Errorf("gosmo: join database to availability group %q: empty database name", ag.Name)
 	}
@@ -232,12 +202,7 @@ func (ag *AvailabilityGroup) JoinDatabaseContext(ctx context.Context, name strin
 // Run against the secondary. This is the per-secondary counterpart of
 // RemoveDatabase: it takes one copy out of the group and leaves the database in
 // it on every other replica.
-func (ag *AvailabilityGroup) UnjoinDatabase(name string) error {
-	return ag.UnjoinDatabaseContext(context.Background(), name)
-}
-
-// UnjoinDatabaseContext is the context-aware variant of UnjoinDatabase.
-func (ag *AvailabilityGroup) UnjoinDatabaseContext(ctx context.Context, name string) error {
+func (ag *AvailabilityGroup) UnjoinDatabase(ctx context.Context, name string) error {
 	if strings.TrimSpace(name) == "" {
 		return fmt.Errorf("gosmo: unjoin database from availability group %q: empty database name", ag.Name)
 	}
@@ -254,12 +219,7 @@ func (ag *AvailabilityGroup) UnjoinDatabaseContext(ctx context.Context, name str
 // *every* secondary. Either way the primary keeps accepting writes and its log
 // cannot be truncated while movement is suspended, so a long suspension fills
 // the log drive.
-func (ag *AvailabilityGroup) SuspendDatabase(name string) error {
-	return ag.SuspendDatabaseContext(context.Background(), name)
-}
-
-// SuspendDatabaseContext is the context-aware variant of SuspendDatabase.
-func (ag *AvailabilityGroup) SuspendDatabaseContext(ctx context.Context, name string) error {
+func (ag *AvailabilityGroup) SuspendDatabase(ctx context.Context, name string) error {
 	if strings.TrimSpace(name) == "" {
 		return fmt.Errorf("gosmo: suspend database in availability group %q: empty database name", ag.Name)
 	}
@@ -271,12 +231,7 @@ func (ag *AvailabilityGroup) SuspendDatabaseContext(ctx context.Context, name st
 
 // ResumeDatabase resumes data movement for one database, on the same scope
 // SuspendDatabase used.
-func (ag *AvailabilityGroup) ResumeDatabase(name string) error {
-	return ag.ResumeDatabaseContext(context.Background(), name)
-}
-
-// ResumeDatabaseContext is the context-aware variant of ResumeDatabase.
-func (ag *AvailabilityGroup) ResumeDatabaseContext(ctx context.Context, name string) error {
+func (ag *AvailabilityGroup) ResumeDatabase(ctx context.Context, name string) error {
 	if strings.TrimSpace(name) == "" {
 		return fmt.Errorf("gosmo: resume database in availability group %q: empty database name", ag.Name)
 	}

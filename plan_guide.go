@@ -14,7 +14,6 @@ package gosmo
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"fmt"
 	"time"
 )
@@ -111,44 +110,20 @@ func scanPlanGuide(d *Database, scan func(...any) error) (*PlanGuide, error) {
 }
 
 // PlanGuides returns the plan guides defined in the database.
-func (d *Database) PlanGuides() ([]*PlanGuide, error) {
-	return d.PlanGuidesContext(context.Background())
-}
-
-// PlanGuidesContext is the context-aware variant of PlanGuides.
-func (d *Database) PlanGuidesContext(ctx context.Context) ([]*PlanGuide, error) {
+func (d *Database) PlanGuides(ctx context.Context) ([]*PlanGuide, error) {
 	const q = planGuideSelect + `
 ORDER  BY g.name`
 
 	rows, err := d.query(ctx, q)
-	if err != nil {
-		return nil, fmt.Errorf("gosmo: list plan guides in %q: %w", d.Name, err)
-	}
-	defer rows.Close()
-
-	var guides []*PlanGuide
-	for rows.Next() {
-		g, err := scanPlanGuide(d, rows.Scan)
-		if err != nil {
-			return nil, fmt.Errorf("gosmo: list plan guides in %q: %w", d.Name, err)
-		}
-		guides = append(guides, g)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("gosmo: list plan guides in %q: %w", d.Name, err)
-	}
-	return guides, nil
+	return scanRows(rows, err, fmt.Sprintf("list plan guides in %q", d.Name), func(scan func(...any) error) (*PlanGuide, error) {
+		return scanPlanGuide(d, scan)
+	})
 }
 
 // PlanGuideByName returns one plan guide with every field populated, or a
 // not-found error (errors.Is ErrNotFound) when the database has none by that
 // name.
-func (d *Database) PlanGuideByName(name string) (*PlanGuide, error) {
-	return d.PlanGuideByNameContext(context.Background(), name)
-}
-
-// PlanGuideByNameContext is the context-aware variant of PlanGuideByName.
-func (d *Database) PlanGuideByNameContext(ctx context.Context, name string) (*PlanGuide, error) {
+func (d *Database) PlanGuideByName(ctx context.Context, name string) (*PlanGuide, error) {
 	var g *PlanGuide
 	err := d.queryRow(ctx, func(row *sql.Row) error {
 		var err error
@@ -156,13 +131,7 @@ func (d *Database) PlanGuideByNameContext(ctx context.Context, name string) (*Pl
 		return err
 	}, planGuideSelect+`
 WHERE  g.name = @p1`, name)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, notFoundf("gosmo: plan guide %q not found in %q", name, d.Name)
-	}
-	if err != nil {
-		return nil, fmt.Errorf("gosmo: read plan guide %q in %q: %w", name, d.Name, err)
-	}
-	return g, nil
+	return foundRow(g, err, notFoundf("gosmo: plan guide %q not found in %q", name, d.Name), fmt.Sprintf("read plan guide %q in %q", name, d.Name))
 }
 
 // PlanGuideRef returns a lightweight handle for a plan guide by name, without
@@ -173,7 +142,7 @@ WHERE  g.name = @p1`, name)
 // populates them. Enable, Disable and Drop address the guide by name, so
 // this handle is enough to act on one the caller already knows exists, and is
 // the form to use when there is nothing to read yet — under a
-// WithScript-derived context, PlanGuideByNameContext's lookup is a real read
+// WithScript-derived context, PlanGuideByName's lookup is a real read
 // and therefore finds nothing for a guide whose CREATE was merely collected.
 func (d *Database) PlanGuideRef(name string) *PlanGuide {
 	return &PlanGuide{db: d, Name: name}
@@ -197,10 +166,7 @@ func (g *PlanGuide) controlPlanGuide(ctx context.Context, operation, verb string
 }
 
 // Enable enables the plan guide.
-func (g *PlanGuide) Enable() error { return g.EnableContext(context.Background()) }
-
-// EnableContext is the context-aware variant of Enable.
-func (g *PlanGuide) EnableContext(ctx context.Context) error {
+func (g *PlanGuide) Enable(ctx context.Context) error {
 	if err := g.controlPlanGuide(ctx, "ENABLE", "enable"); err != nil {
 		return err
 	}
@@ -210,10 +176,7 @@ func (g *PlanGuide) EnableContext(ctx context.Context) error {
 
 // Disable disables the plan guide. The optimizer then ignores it; the guide
 // itself stays defined.
-func (g *PlanGuide) Disable() error { return g.DisableContext(context.Background()) }
-
-// DisableContext is the context-aware variant of Disable.
-func (g *PlanGuide) DisableContext(ctx context.Context) error {
+func (g *PlanGuide) Disable(ctx context.Context) error {
 	if err := g.controlPlanGuide(ctx, "DISABLE", "disable"); err != nil {
 		return err
 	}
@@ -222,20 +185,12 @@ func (g *PlanGuide) DisableContext(ctx context.Context) error {
 }
 
 // Drop drops the plan guide.
-func (g *PlanGuide) Drop() error { return g.DropContext(context.Background()) }
-
-// DropContext is the context-aware variant of Drop.
-func (g *PlanGuide) DropContext(ctx context.Context) error {
+func (g *PlanGuide) Drop(ctx context.Context) error {
 	return g.controlPlanGuide(ctx, "DROP", "drop")
 }
 
 // DropPlanGuide drops a plan guide by name — the form for a caller that has
 // the name but not the object.
-func (d *Database) DropPlanGuide(name string) error {
-	return d.DropPlanGuideContext(context.Background(), name)
-}
-
-// DropPlanGuideContext is the context-aware variant of DropPlanGuide.
-func (d *Database) DropPlanGuideContext(ctx context.Context, name string) error {
-	return d.PlanGuideRef(name).DropContext(ctx)
+func (d *Database) DropPlanGuide(ctx context.Context, name string) error {
+	return d.PlanGuideRef(name).Drop(ctx)
 }

@@ -724,14 +724,14 @@ func TestCreateDatabaseWithOnlyALogFileNamesTheDefaultDataFile(t *testing.T) {
 		opts := &CreateDatabaseOptions{LogFile: &DatabaseFileSpec{
 			Name: "Sales'DW_log", Path: `L:\Sales'DW_log.ldf`, SizeKB: 12000 * 1024,
 		}}
-		if err := srv.CreateDatabaseContext(ctx, "Sales'DW", opts); err != nil {
-			t.Fatalf("%s: CreateDatabaseContext: %v", tc.dataPath, err)
+		if err := srv.CreateDatabase(ctx, "Sales'DW", opts); err != nil {
+			t.Fatalf("%s: CreateDatabase: %v", tc.dataPath, err)
 		}
 		want := "CREATE DATABASE [Sales'DW] ON PRIMARY \n" +
 			"( NAME = [Sales'DW], FILENAME = " + QuoteLiteral(tc.wantFile) + " ) \n" +
 			"LOG ON \n( NAME = [Sales'DW_log], FILENAME = 'L:\\Sales''DW_log.ldf', SIZE = 12288000KB )"
-		if len(col.Statements) != 1 || col.Statements[0] != want {
-			t.Errorf("%s: statements =\n%q\nwant\n%q", tc.dataPath, col.Statements, want)
+		if len(col.Statements()) != 1 || col.Statements()[0] != want {
+			t.Errorf("%s: statements =\n%q\nwant\n%q", tc.dataPath, col.Statements(), want)
 		}
 		if opts.PrimaryFile != nil {
 			t.Errorf("%s: the caller's options were modified", tc.dataPath)
@@ -740,9 +740,9 @@ func TestCreateDatabaseWithOnlyALogFileNamesTheDefaultDataFile(t *testing.T) {
 
 	srv := &Server{info: &ServerInfo{}}
 	ctx, col := WithScript(context.Background())
-	err := srv.CreateDatabaseContext(ctx, "x", &CreateDatabaseOptions{LogFile: &DatabaseFileSpec{Name: "x_log", Path: "/l/x_log.ldf"}})
-	if err == nil || len(col.Statements) != 0 {
-		t.Errorf("no default data path: err=%v statements=%q, want an error and nothing sent", err, col.Statements)
+	err := srv.CreateDatabase(ctx, "x", &CreateDatabaseOptions{LogFile: &DatabaseFileSpec{Name: "x_log", Path: "/l/x_log.ldf"}})
+	if err == nil || len(col.Statements()) != 0 {
+		t.Errorf("no default data path: err=%v statements=%q, want an error and nothing sent", err, col.Statements())
 	}
 }
 

@@ -22,7 +22,7 @@ func TestValidServerPermission(t *testing.T) {
 
 func TestGrantServerPermissionRejectsUnknownPermission(t *testing.T) {
 	s := &Server{}
-	err := s.GrantServerPermission("CONTROL SERVER; DROP DATABASE master; --", "attacker")
+	err := s.GrantServerPermission(t.Context(), "CONTROL SERVER; DROP DATABASE master; --", "attacker")
 	if err == nil {
 		t.Fatal("GrantServerPermission accepted an unrecognized permission name, want an error")
 	}
@@ -30,10 +30,10 @@ func TestGrantServerPermissionRejectsUnknownPermission(t *testing.T) {
 
 func TestDenyAndRevokeServerPermissionRejectUnknownPermission(t *testing.T) {
 	s := &Server{}
-	if err := s.DenyServerPermission("NOT A REAL PERMISSION", "sa"); err == nil {
+	if err := s.DenyServerPermission(t.Context(), "NOT A REAL PERMISSION", "sa"); err == nil {
 		t.Error("DenyServerPermission accepted an unrecognized permission, want an error")
 	}
-	if err := s.RevokeServerPermission("NOT A REAL PERMISSION", "sa"); err == nil {
+	if err := s.RevokeServerPermission(t.Context(), "NOT A REAL PERMISSION", "sa"); err == nil {
 		t.Error("RevokeServerPermission accepted an unrecognized permission, want an error")
 	}
 }
@@ -52,7 +52,7 @@ func TestValidDatabasePermission(t *testing.T) {
 
 func TestGrantDatabasePermissionRejectsUnknownPermission(t *testing.T) {
 	d := &Database{Name: "appdb", server: &Server{}}
-	err := d.GrantDatabasePermission("CONTROL; DROP TABLE Users; --", "attacker")
+	err := d.GrantDatabasePermission(t.Context(), "CONTROL; DROP TABLE Users; --", "attacker")
 	if err == nil {
 		t.Fatal("GrantDatabasePermission accepted an unrecognized permission name, want an error")
 	}
@@ -90,10 +90,10 @@ func TestIsSimpleSetValue(t *testing.T) {
 
 func TestSetDatabaseOptionRejectsUnknownOptionAndUnsafeValue(t *testing.T) {
 	d := &Database{Name: "appdb", server: &Server{}}
-	if err := d.SetDatabaseOption(DatabaseOption("EVIL_OPTION"), "ON"); err == nil {
+	if err := d.SetDatabaseOption(t.Context(), DatabaseOption("EVIL_OPTION"), "ON"); err == nil {
 		t.Error("SetDatabaseOption accepted an unrecognized option, want an error")
 	}
-	if err := d.SetDatabaseOption(DBOptAutoClose, "ON; DROP DATABASE appdb; --"); err == nil {
+	if err := d.SetDatabaseOption(t.Context(), DBOptAutoClose, "ON; DROP DATABASE appdb; --"); err == nil {
 		t.Error("SetDatabaseOption accepted an unsafe value, want an error")
 	}
 }
@@ -109,10 +109,10 @@ func TestValidCategoryClass(t *testing.T) {
 
 func TestCreateAndDeleteCategoryRejectUnknownClass(t *testing.T) {
 	s := &Server{}
-	if err := s.CreateCategory(CategoryClass("EVIL"), "cat"); err == nil {
+	if err := s.CreateCategory(t.Context(), CategoryClass("EVIL"), "cat"); err == nil {
 		t.Error("CreateCategory accepted an unrecognized category class, want an error")
 	}
-	if err := s.DeleteCategory(CategoryClass("EVIL"), "cat"); err == nil {
+	if err := s.DeleteCategory(t.Context(), CategoryClass("EVIL"), "cat"); err == nil {
 		t.Error("DeleteCategory accepted an unrecognized category class, want an error")
 	}
 }
@@ -128,14 +128,14 @@ func TestValidRecoveryModel(t *testing.T) {
 
 func TestSetRecoveryModelRejectsUnknownModel(t *testing.T) {
 	d := &Database{Name: "appdb", server: &Server{}}
-	if err := d.SetRecoveryModel(RecoveryModel("FULL; DROP DATABASE appdb; --")); err == nil {
+	if err := d.SetRecoveryModel(t.Context(), RecoveryModel("FULL; DROP DATABASE appdb; --")); err == nil {
 		t.Error("SetRecoveryModel accepted an unrecognized recovery model, want an error")
 	}
 }
 
 func TestCreateDatabaseRejectsUnknownRecoveryModel(t *testing.T) {
 	s := &Server{}
-	err := s.CreateDatabase("appdb", &CreateDatabaseOptions{RecoveryModel: RecoveryModel("FULL; DROP DATABASE appdb; --")})
+	err := s.CreateDatabase(t.Context(), "appdb", &CreateDatabaseOptions{RecoveryModel: RecoveryModel("FULL; DROP DATABASE appdb; --")})
 	if err == nil {
 		t.Error("CreateDatabase accepted an unrecognized recovery model, want an error")
 	}
@@ -184,7 +184,7 @@ func TestValidDataType(t *testing.T) {
 func TestAlterColumnRejectsUnknownDataType(t *testing.T) {
 	tbl := &Table{}
 	col := ColumnDefinition{Name: "Evil", DataType: DataType("int); DROP TABLE Users; --")}
-	if err := tbl.AlterColumn(col); err == nil {
+	if err := tbl.AlterColumn(t.Context(), col); err == nil {
 		t.Error("AlterColumn accepted an unrecognized data type, want an error")
 	}
 }
@@ -197,7 +197,7 @@ func TestCreateTableRejectsUnknownDataType(t *testing.T) {
 			{Name: "Id", DataType: DataType("int); DROP TABLE Users; --")},
 		},
 	}
-	if err := d.CreateTable(req); err == nil {
+	if err := d.CreateTable(t.Context(), req); err == nil {
 		t.Error("CreateTable accepted an unrecognized data type, want an error")
 	}
 }
@@ -208,14 +208,14 @@ func TestCreateSequenceRejectsUnknownDataType(t *testing.T) {
 		Name:     "EvilSeq",
 		DataType: DataType("int); DROP TABLE Users; --"),
 	}
-	if err := d.CreateSequence(req); err == nil {
+	if err := d.CreateSequence(t.Context(), req); err == nil {
 		t.Error("CreateSequence accepted an unrecognized data type, want an error")
 	}
 }
 
 func TestCategoriesRejectsUnknownClass(t *testing.T) {
 	s := &Server{}
-	if _, err := s.Categories(CategoryClass("EVIL")); err == nil {
+	if _, err := s.Categories(t.Context(), CategoryClass("EVIL")); err == nil {
 		t.Error("Categories accepted an unrecognized category class, want an error")
 	}
 }
@@ -246,14 +246,14 @@ func TestValidPartitionBoundary(t *testing.T) {
 
 func TestCreatePartitionFunctionRejectsUnknownDataTypeAndBadBoundary(t *testing.T) {
 	d := &Database{Name: "appdb", server: &Server{}}
-	if err := d.CreatePartitionFunction(CreatePartitionFunctionRequest{
+	if err := d.CreatePartitionFunction(t.Context(), CreatePartitionFunctionRequest{
 		Name:       "pf1",
 		InputType:  DataType("int); DROP TABLE Users; --"),
 		Boundaries: []string{"100"},
 	}); err == nil {
 		t.Error("CreatePartitionFunction accepted an unrecognized data type, want an error")
 	}
-	if err := d.CreatePartitionFunction(CreatePartitionFunctionRequest{
+	if err := d.CreatePartitionFunction(t.Context(), CreatePartitionFunctionRequest{
 		Name:       "pf1",
 		InputType:  DataTypeInt,
 		Boundaries: []string{"100); DROP TABLE Users; --"},
@@ -264,10 +264,10 @@ func TestCreatePartitionFunctionRejectsUnknownDataTypeAndBadBoundary(t *testing.
 
 func TestSplitAndMergeRangeRejectBadBoundary(t *testing.T) {
 	pf := &PartitionFunction{db: &Database{Name: "appdb", server: &Server{}}, Name: "pf1"}
-	if err := pf.SplitRange("100); DROP TABLE Users; --"); err == nil {
+	if err := pf.SplitRange(t.Context(), "100); DROP TABLE Users; --"); err == nil {
 		t.Error("SplitRange accepted an invalid boundary literal, want an error")
 	}
-	if err := pf.MergeRange("100); DROP TABLE Users; --"); err == nil {
+	if err := pf.MergeRange(t.Context(), "100); DROP TABLE Users; --"); err == nil {
 		t.Error("MergeRange accepted an invalid boundary literal, want an error")
 	}
 }

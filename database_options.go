@@ -18,7 +18,7 @@ import (
 type DatabaseOptions struct {
 	Owner             string
 	PageVerify        string // e.g. "CHECKSUM", "TORN_PAGE_DETECTION", "NONE"
-	UserAccess        string // "MULTI_USER", "SINGLE_USER", "RESTRICTED_USER"
+	UserAccess        UserAccess
 	Containment       string // "NONE", "PARTIAL"
 	DefaultCursor     string // "LOCAL" or "GLOBAL"
 	SnapshotIsolation string // e.g. "OFF", "ON"
@@ -45,14 +45,11 @@ type DatabaseOptions struct {
 }
 
 // Options returns the database's ALTER DATABASE SET options.
-func (d *Database) Options() (*DatabaseOptions, error) {
-	return d.OptionsContext(context.Background())
-}
-
-// OptionsContext is the context-aware variant of Options. Queried against
-// sys.databases at server scope (like Server.DatabaseByNameContext), not
-// through d.query — these are catalog-view columns, not per-database data.
-func (d *Database) OptionsContext(ctx context.Context) (*DatabaseOptions, error) {
+//
+// Queried against sys.databases at server scope (like
+// Server.DatabaseByName), not through d.query — these are
+// catalog-view columns, not per-database data.
+func (d *Database) Options(ctx context.Context) (*DatabaseOptions, error) {
 	const q = `
 SELECT SUSER_SNAME(owner_sid), page_verify_option_desc, user_access_desc,
        containment_desc, is_local_cursor_default, snapshot_isolation_state_desc,
@@ -187,12 +184,7 @@ func isSimpleSetValue(s string) bool {
 // the keyword or clause that follows the option name verbatim, e.g. "ON",
 // "OFF", "CHECKSUM", "PARTIAL", "SNAPSHOT_ISOLATION" — see SQL Server's
 // ALTER DATABASE SET reference for each option's accepted values.
-func (d *Database) SetDatabaseOption(opt DatabaseOption, value string) error {
-	return d.SetDatabaseOptionContext(context.Background(), opt, value)
-}
-
-// SetDatabaseOptionContext is the context-aware variant of SetDatabaseOption.
-func (d *Database) SetDatabaseOptionContext(ctx context.Context, opt DatabaseOption, value string) error {
+func (d *Database) SetDatabaseOption(ctx context.Context, opt DatabaseOption, value string) error {
 	if !validDatabaseOption(opt) {
 		return fmt.Errorf("gosmo: set database option: unrecognized option %q", opt)
 	}
@@ -200,21 +192,16 @@ func (d *Database) SetDatabaseOptionContext(ctx context.Context, opt DatabaseOpt
 		return fmt.Errorf("gosmo: set database option %s: invalid value %q", opt, value)
 	}
 	q := fmt.Sprintf("ALTER DATABASE %s SET %s %s", quoteIdent(d.Name), opt, value)
-	if err := d.server.execContext(ctx, q); err != nil {
+	if err := d.server.exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: set %s %s on %q: %w", opt, value, d.Name, err)
 	}
 	return nil
 }
 
 // SetOwner transfers database ownership to a new principal.
-func (d *Database) SetOwner(principal string) error {
-	return d.SetOwnerContext(context.Background(), principal)
-}
-
-// SetOwnerContext is the context-aware variant of SetOwner.
-func (d *Database) SetOwnerContext(ctx context.Context, principal string) error {
+func (d *Database) SetOwner(ctx context.Context, principal string) error {
 	q := fmt.Sprintf("ALTER AUTHORIZATION ON DATABASE::%s TO %s", quoteIdent(d.Name), quoteIdent(principal))
-	if err := d.server.execContext(ctx, q); err != nil {
+	if err := d.server.exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: set owner of %q to %q: %w", d.Name, principal, err)
 	}
 	return nil

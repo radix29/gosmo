@@ -36,11 +36,6 @@ type FixedDrive struct {
 
 // EnumFileSystem lists the files and directories directly inside path on the
 // server host.
-func (s *Server) EnumFileSystem(path string) ([]*FileSystemEntry, error) {
-	return s.EnumFileSystemContext(context.Background(), path)
-}
-
-// EnumFileSystemContext is the context-aware variant of EnumFileSystem.
 //
 // On SQL Server 2017 and later this reads sys.dm_os_enumerate_filesystem,
 // which reports sizes and timestamps; anything else uses xp_dirtree, which
@@ -55,7 +50,7 @@ func (s *Server) EnumFileSystem(path string) ([]*FileSystemEntry, error) {
 // and LastModified fields. A caller browsing for a path needs the names and
 // the directory flag; it can live without the other two. Degrade, don't
 // fail.
-func (s *Server) EnumFileSystemContext(ctx context.Context, path string) ([]*FileSystemEntry, error) {
+func (s *Server) EnumFileSystem(ctx context.Context, path string) ([]*FileSystemEntry, error) {
 	if strings.TrimSpace(path) == "" {
 		return nil, fmt.Errorf("gosmo: enumerate filesystem: empty path")
 	}
@@ -67,7 +62,7 @@ func (s *Server) EnumFileSystemContext(ctx context.Context, path string) ([]*Fil
 
 // EnumFileSystemIsLegacy reports whether EnumFileSystem will take the
 // xp_dirtree path rather than sys.dm_os_enumerate_filesystem — the same
-// positive version gate EnumFileSystemContext applies, exposed so a caller can
+// positive version gate EnumFileSystem applies, exposed so a caller can
 // reason about what it is about to get.
 //
 // Two things differ on that path and a caller may need to say so: entries carry
@@ -101,32 +96,22 @@ func (s *Server) enumFileSystemDMF(ctx context.Context, path string) ([]*FileSys
 	WHERE  level = 0`
 
 	rows, err := s.query(ctx, q, path)
-	if err != nil {
-		return nil, fmt.Errorf("gosmo: enumerate filesystem %q: %w", path, err)
-	}
-	defer rows.Close()
-
-	var entries []*FileSystemEntry
-	for rows.Next() {
+	return scanRows(rows, err, fmt.Sprintf("enumerate filesystem %q", path), func(scan func(...any) error) (*FileSystemEntry, error) {
 		e := &FileSystemEntry{}
 		var full, name sql.NullString
 		var isDir sql.NullInt64
 		var size sql.NullInt64
 		var mod sql.NullTime
-		if err := rows.Scan(&full, &name, &isDir, &size, &mod); err != nil {
-			return nil, fmt.Errorf("gosmo: enumerate filesystem %q: %w", path, err)
+		if err := scan(&full, &name, &isDir, &size, &mod); err != nil {
+			return nil, err
 		}
 		e.Name = name.String
 		e.FullPath = full.String
 		e.IsDirectory = isDir.Int64 == 1
 		e.Size = size.Int64
 		e.LastModified = mod.Time
-		entries = append(entries, e)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("gosmo: enumerate filesystem %q: %w", path, err)
-	}
-	return entries, nil
+		return e, nil
+	})
 }
 
 // enumFileSystemDirTree is the pre-2017 fallback. xp_dirtree's third
@@ -160,14 +145,10 @@ func (s *Server) enumFileSystemDirTree(ctx context.Context, path string) ([]*Fil
 }
 
 // FixedDrives returns the fixed drives visible to the SQL Server host.
-func (s *Server) FixedDrives() ([]*FixedDrive, error) {
-	return s.FixedDrivesContext(context.Background())
-}
-
-// FixedDrivesContext is the context-aware variant of FixedDrives. It reads
-// sys.dm_os_enumerate_fixed_drives on SQL Server 2019 and later, and falls
-// back to xp_fixeddrives — which reports the drive letter and free megabytes
-// only — on older instances.
+//
+// It reads sys.dm_os_enumerate_fixed_drives on SQL Server 2019 and later, and
+// falls back to xp_fixeddrives — which reports the drive letter and free
+// megabytes only — on older instances.
 //
 // The fallback is Windows-only: xp_fixeddrives does not exist on SQL Server
 // on Linux, so a pre-2019 Linux instance returns an error here rather than
@@ -176,7 +157,7 @@ func (s *Server) FixedDrives() ([]*FixedDrive, error) {
 // file dialog only asks for one when a path walks above a root, which
 // "/"-separated paths never do (PosixPathRules.Parent("/") == "/"). Do not
 // "fix" it by synthesizing a "/" entry; there is no caller that would see it.
-func (s *Server) FixedDrivesContext(ctx context.Context) ([]*FixedDrive, error) {
+func (s *Server) FixedDrives(ctx context.Context) ([]*FixedDrive, error) {
 	// serverMajorVersion, not info.VersionMajor: it is 0 on an Azure edition,
 	// which has sys.dm_os_enumerate_fixed_drives despite reporting 12.
 	if major := s.serverMajorVersion(); major > 0 && major < 15 {
@@ -188,61 +169,36 @@ func (s *Server) FixedDrivesContext(ctx context.Context) ([]*FixedDrive, error) 
 	FROM   sys.dm_os_enumerate_fixed_drives`
 
 	rows, err := s.query(ctx, q)
-	if err != nil {
-		return nil, fmt.Errorf("gosmo: enumerate fixed drives: %w", err)
-	}
-	defer rows.Close()
-
-	var drives []*FixedDrive
-	for rows.Next() {
+	return scanRows(rows, err, "enumerate fixed drives", func(scan func(...any) error) (*FixedDrive, error) {
 		var name, typ sql.NullString
 		var free sql.NullInt64
-		if err := rows.Scan(&name, &typ, &free); err != nil {
-			return nil, fmt.Errorf("gosmo: enumerate fixed drives: %w", err)
+		if err := scan(&name, &typ, &free); err != nil {
+			return nil, err
 		}
-		drives = append(drives, &FixedDrive{Name: name.String, Type: typ.String, FreeSpaceBytes: free.Int64})
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("gosmo: enumerate fixed drives: %w", err)
-	}
-	return drives, nil
+		return &FixedDrive{Name: name.String, Type: typ.String, FreeSpaceBytes: free.Int64}, nil
+	})
 }
 
 func (s *Server) fixedDrivesXP(ctx context.Context) ([]*FixedDrive, error) {
 	rows, err := s.query(ctx, "EXEC master.dbo.xp_fixeddrives")
-	if err != nil {
-		return nil, fmt.Errorf("gosmo: enumerate fixed drives: %w", err)
-	}
-	defer rows.Close()
-
-	var drives []*FixedDrive
-	for rows.Next() {
+	return scanRows(rows, err, "enumerate fixed drives", func(scan func(...any) error) (*FixedDrive, error) {
 		var letter sql.NullString
 		var freeMB sql.NullInt64
-		if err := rows.Scan(&letter, &freeMB); err != nil {
-			return nil, fmt.Errorf("gosmo: enumerate fixed drives: %w", err)
+		if err := scan(&letter, &freeMB); err != nil {
+			return nil, err
 		}
-		drives = append(drives, &FixedDrive{
+		return &FixedDrive{
 			Name:           letter.String + `:\`,
 			Type:           "DRIVE_FIXED",
 			FreeSpaceBytes: freeMB.Int64 * 1024 * 1024,
-		})
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("gosmo: enumerate fixed drives: %w", err)
-	}
-	return drives, nil
+		}, nil
+	})
 }
 
 // FileSystemExists reports whether path exists on the server host and
 // whether it is a directory. A path that doesn't exist is not an error:
 // exists is false and err is nil.
-func (s *Server) FileSystemExists(path string) (exists, isDirectory bool, err error) {
-	return s.FileSystemExistsContext(context.Background(), path)
-}
-
-// FileSystemExistsContext is the context-aware variant of FileSystemExists.
-func (s *Server) FileSystemExistsContext(ctx context.Context, path string) (exists, isDirectory bool, err error) {
+func (s *Server) FileSystemExists(ctx context.Context, path string) (exists, isDirectory bool, err error) {
 	if strings.TrimSpace(path) == "" {
 		return false, false, nil
 	}

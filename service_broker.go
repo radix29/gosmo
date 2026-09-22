@@ -156,43 +156,19 @@ func decodeMessageTypeValidation(desc string, hasCollection bool) MessageTypeVal
 
 // MessageTypes returns the message types defined in the database, the ones
 // SQL Server ships included (marked IsSystemObject).
-func (d *Database) MessageTypes() ([]*MessageType, error) {
-	return d.MessageTypesContext(context.Background())
-}
-
-// MessageTypesContext is the context-aware variant of MessageTypes.
-func (d *Database) MessageTypesContext(ctx context.Context) ([]*MessageType, error) {
+func (d *Database) MessageTypes(ctx context.Context) ([]*MessageType, error) {
 	const q = messageTypeSelect + `
 ORDER  BY mt.name`
 
 	rows, err := d.query(ctx, q)
-	if err != nil {
-		return nil, fmt.Errorf("gosmo: list message types in %q: %w", d.Name, err)
-	}
-	defer rows.Close()
-
-	var out []*MessageType
-	for rows.Next() {
-		mt, err := scanMessageType(d, rows.Scan)
-		if err != nil {
-			return nil, fmt.Errorf("gosmo: list message types in %q: %w", d.Name, err)
-		}
-		out = append(out, mt)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("gosmo: list message types in %q: %w", d.Name, err)
-	}
-	return out, nil
+	return scanRows(rows, err, fmt.Sprintf("list message types in %q", d.Name), func(scan func(...any) error) (*MessageType, error) {
+		return scanMessageType(d, scan)
+	})
 }
 
 // MessageTypeByName returns one message type, or a not-found error
 // (errors.Is ErrNotFound) when the database has none by that name.
-func (d *Database) MessageTypeByName(name string) (*MessageType, error) {
-	return d.MessageTypeByNameContext(context.Background(), name)
-}
-
-// MessageTypeByNameContext is the context-aware variant of MessageTypeByName.
-func (d *Database) MessageTypeByNameContext(ctx context.Context, name string) (*MessageType, error) {
+func (d *Database) MessageTypeByName(ctx context.Context, name string) (*MessageType, error) {
 	var mt *MessageType
 	err := d.queryRow(ctx, func(row *sql.Row) error {
 		var err error
@@ -200,23 +176,12 @@ func (d *Database) MessageTypeByNameContext(ctx context.Context, name string) (*
 		return err
 	}, messageTypeSelect+`
 WHERE  mt.name = @p1`, name)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, notFoundf("gosmo: message type %q not found in %q", name, d.Name)
-	}
-	if err != nil {
-		return nil, fmt.Errorf("gosmo: read message type %q in %q: %w", name, d.Name, err)
-	}
-	return mt, nil
+	return foundRow(mt, err, notFoundf("gosmo: message type %q not found in %q", name, d.Name), fmt.Sprintf("read message type %q in %q", name, d.Name))
 }
 
 // DropMessageType drops a message type by name. A message type still named
 // by a contract is refused by the server (Msg 3716) until the contract goes.
-func (d *Database) DropMessageType(name string) error {
-	return d.DropMessageTypeContext(context.Background(), name)
-}
-
-// DropMessageTypeContext is the context-aware variant of DropMessageType.
-func (d *Database) DropMessageTypeContext(ctx context.Context, name string) error {
+func (d *Database) DropMessageType(ctx context.Context, name string) error {
 	if _, err := d.exec(ctx, "DROP MESSAGE TYPE "+quoteIdent(name)); err != nil {
 		return fmt.Errorf("gosmo: drop message type %q: %w", name, err)
 	}
@@ -224,11 +189,8 @@ func (d *Database) DropMessageTypeContext(ctx context.Context, name string) erro
 }
 
 // Drop drops the message type.
-func (mt *MessageType) Drop() error { return mt.DropContext(context.Background()) }
-
-// DropContext is the context-aware variant of Drop.
-func (mt *MessageType) DropContext(ctx context.Context) error {
-	return mt.db.DropMessageTypeContext(ctx, mt.Name)
+func (mt *MessageType) Drop(ctx context.Context) error {
+	return mt.db.DropMessageType(ctx, mt.Name)
 }
 
 // ============================================================
@@ -321,9 +283,9 @@ func decodeContractSender(initiator, target bool) ContractSender {
 	}
 }
 
-// contractMessagesContext reads the message usages, optionally for one
+// contractMessages reads the message usages, optionally for one
 // contract, and returns them grouped by contract id.
-func (d *Database) contractMessagesContext(ctx context.Context, contractID int) (map[int][]ContractMessage, error) {
+func (d *Database) contractMessages(ctx context.Context, contractID int) (map[int][]ContractMessage, error) {
 	q := contractMessageSelect
 	var args []any
 	if contractID != 0 {
@@ -357,10 +319,10 @@ ORDER  BY u.service_contract_id, mt.name`
 	return out, nil
 }
 
-// contractListContext returns the contracts with no messages attached. Its
+// contractList returns the contracts with no messages attached. Its
 // rows are drained and closed before the caller asks for the messages, so the
 // two queries never hold two pooled connections at once.
-func (d *Database) contractListContext(ctx context.Context) ([]*ServiceContract, error) {
+func (d *Database) contractList(ctx context.Context) ([]*ServiceContract, error) {
 	const q = contractSelect + `
 ORDER  BY c.name`
 
@@ -384,22 +346,18 @@ ORDER  BY c.name`
 
 // Contracts returns the service contracts defined in the database, the ones
 // SQL Server ships included (marked IsSystemObject), each with its messages.
-func (d *Database) Contracts() ([]*ServiceContract, error) {
-	return d.ContractsContext(context.Background())
-}
-
-// ContractsContext is the context-aware variant of Contracts. Two queries:
-// the message usages for every contract come in one read and are grouped in
-// Go, never one read per contract inside the listing loop.
-func (d *Database) ContractsContext(ctx context.Context) ([]*ServiceContract, error) {
-	out, err := d.contractListContext(ctx)
+//
+// Two queries: the message usages for every contract come in one read and are
+// grouped in Go, never one read per contract inside the listing loop.
+func (d *Database) Contracts(ctx context.Context) ([]*ServiceContract, error) {
+	out, err := d.contractList(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("gosmo: list contracts in %q: %w", d.Name, err)
 	}
 	if len(out) == 0 {
 		return nil, nil
 	}
-	byID, err := d.contractMessagesContext(ctx, 0)
+	byID, err := d.contractMessages(ctx, 0)
 	if err != nil {
 		return nil, fmt.Errorf("gosmo: list contracts in %q: %w", d.Name, err)
 	}
@@ -412,12 +370,7 @@ func (d *Database) ContractsContext(ctx context.Context) ([]*ServiceContract, er
 // ContractByName returns one service contract with its messages, or a
 // not-found error (errors.Is ErrNotFound) when the database has none by that
 // name.
-func (d *Database) ContractByName(name string) (*ServiceContract, error) {
-	return d.ContractByNameContext(context.Background(), name)
-}
-
-// ContractByNameContext is the context-aware variant of ContractByName.
-func (d *Database) ContractByNameContext(ctx context.Context, name string) (*ServiceContract, error) {
+func (d *Database) ContractByName(ctx context.Context, name string) (*ServiceContract, error) {
 	c := &ServiceContract{db: d}
 	err := d.queryRow(ctx, func(row *sql.Row) error {
 		return row.Scan(&c.ContractID, &c.Name, &c.Owner)
@@ -431,7 +384,7 @@ WHERE  c.name = @p1`, name)
 	}
 	c.IsSystemObject = c.ContractID < firstUserBrokerID
 
-	byID, err := d.contractMessagesContext(ctx, c.ContractID)
+	byID, err := d.contractMessages(ctx, c.ContractID)
 	if err != nil {
 		return nil, fmt.Errorf("gosmo: read contract %q in %q: %w", name, d.Name, err)
 	}
@@ -441,12 +394,7 @@ WHERE  c.name = @p1`, name)
 
 // DropContract drops a service contract by name. A contract still named by a
 // service or a conversation priority is refused by the server (Msg 3716).
-func (d *Database) DropContract(name string) error {
-	return d.DropContractContext(context.Background(), name)
-}
-
-// DropContractContext is the context-aware variant of DropContract.
-func (d *Database) DropContractContext(ctx context.Context, name string) error {
+func (d *Database) DropContract(ctx context.Context, name string) error {
 	if _, err := d.exec(ctx, "DROP CONTRACT "+quoteIdent(name)); err != nil {
 		return fmt.Errorf("gosmo: drop contract %q: %w", name, err)
 	}
@@ -454,11 +402,8 @@ func (d *Database) DropContractContext(ctx context.Context, name string) error {
 }
 
 // Drop drops the contract.
-func (c *ServiceContract) Drop() error { return c.DropContext(context.Background()) }
-
-// DropContext is the context-aware variant of Drop.
-func (c *ServiceContract) DropContext(ctx context.Context) error {
-	return c.db.DropContractContext(ctx, c.Name)
+func (c *ServiceContract) Drop(ctx context.Context) error {
+	return c.db.DropContract(ctx, c.Name)
 }
 
 // ============================================================
@@ -525,9 +470,9 @@ SELECT u.service_id, c.name
 FROM   sys.service_contract_usages u
 JOIN   sys.service_contracts c ON c.service_contract_id = u.service_contract_id`
 
-// serviceContractsContext reads the contract usages, optionally for one
+// serviceContracts reads the contract usages, optionally for one
 // service, grouped by service id.
-func (d *Database) serviceContractsContext(ctx context.Context, serviceID int) (map[int][]string, error) {
+func (d *Database) serviceContracts(ctx context.Context, serviceID int) (map[int][]string, error) {
 	q := serviceContractSelect
 	var args []any
 	if serviceID != 0 {
@@ -559,9 +504,9 @@ ORDER  BY u.service_id, c.name`
 	return out, nil
 }
 
-// brokerServiceListContext returns the services with no contracts attached,
+// brokerServiceList returns the services with no contracts attached,
 // draining and closing its rows before the caller asks for the contracts.
-func (d *Database) brokerServiceListContext(ctx context.Context) ([]*BrokerService, error) {
+func (d *Database) brokerServiceList(ctx context.Context) ([]*BrokerService, error) {
 	const q = serviceSelect + `
 ORDER  BY s.name`
 
@@ -587,21 +532,17 @@ ORDER  BY s.name`
 // BrokerServices returns the Service Broker services defined in the
 // database, the ones SQL Server ships included (marked IsSystemObject), each
 // with its contracts.
-func (d *Database) BrokerServices() ([]*BrokerService, error) {
-	return d.BrokerServicesContext(context.Background())
-}
-
-// BrokerServicesContext is the context-aware variant of BrokerServices. Two
-// queries, the same shape as ContractsContext.
-func (d *Database) BrokerServicesContext(ctx context.Context) ([]*BrokerService, error) {
-	out, err := d.brokerServiceListContext(ctx)
+//
+// Two queries, the same shape as Contracts.
+func (d *Database) BrokerServices(ctx context.Context) ([]*BrokerService, error) {
+	out, err := d.brokerServiceList(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("gosmo: list services in %q: %w", d.Name, err)
 	}
 	if len(out) == 0 {
 		return nil, nil
 	}
-	byID, err := d.serviceContractsContext(ctx, 0)
+	byID, err := d.serviceContracts(ctx, 0)
 	if err != nil {
 		return nil, fmt.Errorf("gosmo: list services in %q: %w", d.Name, err)
 	}
@@ -613,13 +554,7 @@ func (d *Database) BrokerServicesContext(ctx context.Context) ([]*BrokerService,
 
 // BrokerServiceByName returns one service with its contracts, or a not-found
 // error (errors.Is ErrNotFound) when the database has none by that name.
-func (d *Database) BrokerServiceByName(name string) (*BrokerService, error) {
-	return d.BrokerServiceByNameContext(context.Background(), name)
-}
-
-// BrokerServiceByNameContext is the context-aware variant of
-// BrokerServiceByName.
-func (d *Database) BrokerServiceByNameContext(ctx context.Context, name string) (*BrokerService, error) {
+func (d *Database) BrokerServiceByName(ctx context.Context, name string) (*BrokerService, error) {
 	s := &BrokerService{db: d}
 	err := d.queryRow(ctx, func(row *sql.Row) error {
 		return row.Scan(&s.ServiceID, &s.Name, &s.Owner, &s.QueueSchema, &s.QueueName)
@@ -633,7 +568,7 @@ WHERE  s.name = @p1`, name)
 	}
 	s.IsSystemObject = s.ServiceID < firstUserBrokerID
 
-	byID, err := d.serviceContractsContext(ctx, s.ServiceID)
+	byID, err := d.serviceContracts(ctx, s.ServiceID)
 	if err != nil {
 		return nil, fmt.Errorf("gosmo: read service %q in %q: %w", name, d.Name, err)
 	}
@@ -643,12 +578,7 @@ WHERE  s.name = @p1`, name)
 
 // DropBrokerService drops a service by name. A service with conversations
 // still open on it is refused by the server.
-func (d *Database) DropBrokerService(name string) error {
-	return d.DropBrokerServiceContext(context.Background(), name)
-}
-
-// DropBrokerServiceContext is the context-aware variant of DropBrokerService.
-func (d *Database) DropBrokerServiceContext(ctx context.Context, name string) error {
+func (d *Database) DropBrokerService(ctx context.Context, name string) error {
 	if _, err := d.exec(ctx, "DROP SERVICE "+quoteIdent(name)); err != nil {
 		return fmt.Errorf("gosmo: drop service %q: %w", name, err)
 	}
@@ -656,9 +586,6 @@ func (d *Database) DropBrokerServiceContext(ctx context.Context, name string) er
 }
 
 // Drop drops the service.
-func (s *BrokerService) Drop() error { return s.DropContext(context.Background()) }
-
-// DropContext is the context-aware variant of Drop.
-func (s *BrokerService) DropContext(ctx context.Context) error {
-	return s.db.DropBrokerServiceContext(ctx, s.Name)
+func (s *BrokerService) Drop(ctx context.Context) error {
+	return s.db.DropBrokerService(ctx, s.Name)
 }

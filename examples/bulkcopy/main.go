@@ -7,6 +7,7 @@
 package main
 
 import (
+	"context"
 	"encoding/csv"
 	"errors"
 	"fmt"
@@ -23,6 +24,7 @@ import (
 const dbName = "GoSMOBulkDemo"
 
 func main() {
+	ctx := context.Background()
 	// First, so it runs after the cleanup deferred below it.
 	defer demo.Exit()
 
@@ -32,7 +34,7 @@ func main() {
 	db, drop := demo.TempDatabase(srv, dbName)
 	defer drop()
 
-	demo.Must(db.CreateTable(gosmo.CreateTableRequest{
+	demo.Must(db.CreateTable(ctx, gosmo.CreateTableRequest{
 		Schema: "dbo",
 		Name:   "Reading",
 		Columns: []gosmo.ColumnDefinition{
@@ -43,7 +45,7 @@ func main() {
 			{Name: "Note", DataType: gosmo.DataTypeNVarChar, MaxLength: 100, IsNullable: true, DefaultValue: "'(none)'"},
 		},
 	}))
-	tbl := demo.Value(db.TableByName("dbo", "Reading"))
+	tbl := demo.Value(db.TableByName(ctx, "dbo", "Reading"))
 
 	// -- A slice you already have ------------------------------------------
 	//
@@ -51,7 +53,7 @@ func main() {
 	// column is not listed in Columns, so the server assigns it.
 	demo.Section("SliceRows")
 	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	n := demo.Value(db.BulkInsert(gosmo.BulkCopy{
+	n := demo.Value(db.BulkInsert(ctx, gosmo.BulkCopy{
 		Schema:  "dbo",
 		Table:   "Reading",
 		Columns: []string{"SensorID", "TakenAt", "Celsius", "Note"},
@@ -69,7 +71,7 @@ func main() {
 	// Neither matters for three rows; both matter for a million.
 	demo.Section("Generated rows")
 	const generated = 100_000
-	n = demo.Value(db.BulkInsert(gosmo.BulkCopy{
+	n = demo.Value(db.BulkInsert(ctx, gosmo.BulkCopy{
 		Schema:  "dbo",
 		Table:   "Reading",
 		Columns: []string{"SensorID", "TakenAt", "Celsius"},
@@ -91,7 +93,7 @@ func main() {
 	// load, so a bad source file cannot half-succeed silently.
 	demo.Section("Streaming a CSV")
 	const goodCSV = "3,2026-02-01T08:00:00Z,18.5,morning\n3,2026-02-01T12:00:00Z,24.0,noon\n"
-	n = demo.Value(db.BulkInsert(gosmo.BulkCopy{
+	n = demo.Value(db.BulkInsert(ctx, gosmo.BulkCopy{
 		Schema:  "dbo",
 		Table:   "Reading",
 		Columns: []string{"SensorID", "TakenAt", "Celsius", "Note"},
@@ -100,7 +102,7 @@ func main() {
 
 	demo.Section("A source that fails mid-stream")
 	const badCSV = "4,2026-02-01T08:00:00Z,18.5,ok\n4,not-a-timestamp,24.0,bad\n"
-	if _, err := db.BulkInsert(gosmo.BulkCopy{
+	if _, err := db.BulkInsert(ctx, gosmo.BulkCopy{
 		Schema:  "dbo",
 		Table:   "Reading",
 		Columns: []string{"SensorID", "TakenAt", "Celsius", "Note"},
@@ -116,7 +118,7 @@ func main() {
 	// bcp defaults, which is why a bulk load can admit rows a plain INSERT
 	// would reject.
 	demo.Section("KeepNulls")
-	_ = demo.Value(db.BulkInsert(gosmo.BulkCopy{
+	_ = demo.Value(db.BulkInsert(ctx, gosmo.BulkCopy{
 		Schema:  "dbo",
 		Table:   "Reading",
 		Columns: []string{"SensorID", "TakenAt", "Celsius", "Note"},
@@ -125,9 +127,9 @@ func main() {
 	fmt.Println("  1 row with an explicit NULL Note (default not applied)")
 
 	demo.Section("Result")
-	fmt.Printf("  dbo.Reading holds %d rows\n", demo.Value(tbl.RowCount()))
-	fmt.Printf("  %d of them are sensor 1\n", demo.Value(tbl.CountWhere("SensorID = 1")))
-	fmt.Printf("  %d have no note\n", demo.Value(tbl.CountWhere("Note IS NULL")))
+	fmt.Printf("  dbo.Reading holds %d rows\n", demo.Value(tbl.RowCount(ctx)))
+	fmt.Printf("  %d of them are sensor 1\n", demo.Value(tbl.CountWhere(ctx, "SensorID = 1")))
+	fmt.Printf("  %d have no note\n", demo.Value(tbl.CountWhere(ctx, "Note IS NULL")))
 }
 
 // sensorReadings yields count synthetic readings without building a slice.

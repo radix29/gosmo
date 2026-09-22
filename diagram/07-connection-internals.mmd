@@ -189,13 +189,16 @@ classDiagram
 
     class ScriptCollector {
         -mu sync.Mutex
-        +Statements []string
+        +Entries []ScriptEntry
+        +Statements() []string
+        +String() string
         +WithScript(ctx) *ScriptCollector
+        +WithScriptServer(ctx, server) ctx
         +Scripting(ctx) bool
         Captures the exact statement(s) a set of
         pending write calls would run, without
         running them. Every write funnels through
-        Server.execContext or Database.exec, the
+        Server.exec or Database.exec, the
         two chokepoints WithScript intercepts.
         Bound parameters are substituted as
         literals so a captured statement runs
@@ -204,7 +207,10 @@ classDiagram
         a context is one of these, so a caller
         does not mirror a write the server never
         saw into its own state.
-        Statements is mutex-guarded: one collector
+        Each entry records Server, Database and
+        the bare SQL; String() renders them with
+        USE/GO and per-instance headers.
+        Entries is mutex-guarded: one collector
         may be shared across goroutines.
     }
 

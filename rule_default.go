@@ -18,7 +18,6 @@ package gosmo
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"fmt"
 	"time"
 )
@@ -91,44 +90,24 @@ var (
 // ============================================================
 
 // Rules returns the standalone rules defined in the database.
-func (d *Database) Rules() ([]*Rule, error) {
-	return d.RulesContext(context.Background())
-}
-
-// RulesContext is the context-aware variant of Rules.
-func (d *Database) RulesContext(ctx context.Context) ([]*Rule, error) {
+func (d *Database) Rules(ctx context.Context) ([]*Rule, error) {
 	q := ruleSelect + `
 ORDER  BY SCHEMA_NAME(o.schema_id), o.name`
 
 	rows, err := d.query(ctx, q)
-	if err != nil {
-		return nil, fmt.Errorf("gosmo: list rules in %q: %w", d.Name, err)
-	}
-	defer rows.Close()
-
-	var rules []*Rule
-	for rows.Next() {
+	return scanRows(rows, err, fmt.Sprintf("list rules in %q", d.Name), func(scan func(...any) error) (*Rule, error) {
 		r := &Rule{db: d}
-		if err := rows.Scan(&r.Name, &r.Schema, &r.ObjectID,
+		if err := scan(&r.Name, &r.Schema, &r.ObjectID,
 			&r.Definition, &r.CreateDate, &r.ModifyDate); err != nil {
-			return nil, fmt.Errorf("gosmo: list rules in %q: %w", d.Name, err)
+			return nil, err
 		}
-		rules = append(rules, r)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("gosmo: list rules in %q: %w", d.Name, err)
-	}
-	return rules, nil
+		return r, nil
+	})
 }
 
 // RuleByName returns one rule, or a not-found error (errors.Is ErrNotFound)
 // when the database has none by that name.
-func (d *Database) RuleByName(schema, name string) (*Rule, error) {
-	return d.RuleByNameContext(context.Background(), schema, name)
-}
-
-// RuleByNameContext is the context-aware variant of RuleByName.
-func (d *Database) RuleByNameContext(ctx context.Context, schema, name string) (*Rule, error) {
+func (d *Database) RuleByName(ctx context.Context, schema, name string) (*Rule, error) {
 	if schema == "" {
 		schema = "dbo"
 	}
@@ -138,23 +117,12 @@ func (d *Database) RuleByNameContext(ctx context.Context, schema, name string) (
 			&r.Definition, &r.CreateDate, &r.ModifyDate)
 	}, ruleSelect+`
    AND SCHEMA_NAME(o.schema_id) = @p1 AND o.name = @p2`, schema, name)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, notFoundf("gosmo: rule [%s].[%s] not found in %q", schema, name, d.Name)
-	}
-	if err != nil {
-		return nil, fmt.Errorf("gosmo: read rule [%s].[%s] in %q: %w", schema, name, d.Name, err)
-	}
-	return r, nil
+	return foundRow(r, err, notFoundf("gosmo: rule [%s].[%s] not found in %q", schema, name, d.Name), fmt.Sprintf("read rule [%s].[%s] in %q", schema, name, d.Name))
 }
 
 // DropRule drops a rule by name. A rule still bound to a column or type is
 // refused by the server until sp_unbindrule releases it.
-func (d *Database) DropRule(schema, name string) error {
-	return d.DropRuleContext(context.Background(), schema, name)
-}
-
-// DropRuleContext is the context-aware variant of DropRule.
-func (d *Database) DropRuleContext(ctx context.Context, schema, name string) error {
+func (d *Database) DropRule(ctx context.Context, schema, name string) error {
 	if schema == "" {
 		schema = "dbo"
 	}
@@ -165,11 +133,8 @@ func (d *Database) DropRuleContext(ctx context.Context, schema, name string) err
 }
 
 // Drop drops the rule.
-func (r *Rule) Drop() error { return r.DropContext(context.Background()) }
-
-// DropContext is the context-aware variant of Drop.
-func (r *Rule) DropContext(ctx context.Context) error {
-	return r.db.DropRuleContext(ctx, r.Schema, r.Name)
+func (r *Rule) Drop(ctx context.Context) error {
+	return r.db.DropRule(ctx, r.Schema, r.Name)
 }
 
 // ============================================================
@@ -178,44 +143,24 @@ func (r *Rule) DropContext(ctx context.Context) error {
 
 // Defaults returns the standalone defaults defined in the database — the
 // CREATE DEFAULT objects, not table default constraints.
-func (d *Database) Defaults() ([]*Default, error) {
-	return d.DefaultsContext(context.Background())
-}
-
-// DefaultsContext is the context-aware variant of Defaults.
-func (d *Database) DefaultsContext(ctx context.Context) ([]*Default, error) {
+func (d *Database) Defaults(ctx context.Context) ([]*Default, error) {
 	q := defaultSelect + `
 ORDER  BY SCHEMA_NAME(o.schema_id), o.name`
 
 	rows, err := d.query(ctx, q)
-	if err != nil {
-		return nil, fmt.Errorf("gosmo: list defaults in %q: %w", d.Name, err)
-	}
-	defer rows.Close()
-
-	var defs []*Default
-	for rows.Next() {
+	return scanRows(rows, err, fmt.Sprintf("list defaults in %q", d.Name), func(scan func(...any) error) (*Default, error) {
 		df := &Default{db: d}
-		if err := rows.Scan(&df.Name, &df.Schema, &df.ObjectID,
+		if err := scan(&df.Name, &df.Schema, &df.ObjectID,
 			&df.Definition, &df.CreateDate, &df.ModifyDate); err != nil {
-			return nil, fmt.Errorf("gosmo: list defaults in %q: %w", d.Name, err)
+			return nil, err
 		}
-		defs = append(defs, df)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("gosmo: list defaults in %q: %w", d.Name, err)
-	}
-	return defs, nil
+		return df, nil
+	})
 }
 
 // DefaultByName returns one standalone default, or a not-found error
 // (errors.Is ErrNotFound) when the database has none by that name.
-func (d *Database) DefaultByName(schema, name string) (*Default, error) {
-	return d.DefaultByNameContext(context.Background(), schema, name)
-}
-
-// DefaultByNameContext is the context-aware variant of DefaultByName.
-func (d *Database) DefaultByNameContext(ctx context.Context, schema, name string) (*Default, error) {
+func (d *Database) DefaultByName(ctx context.Context, schema, name string) (*Default, error) {
 	if schema == "" {
 		schema = "dbo"
 	}
@@ -225,23 +170,12 @@ func (d *Database) DefaultByNameContext(ctx context.Context, schema, name string
 			&df.Definition, &df.CreateDate, &df.ModifyDate)
 	}, defaultSelect+`
    AND SCHEMA_NAME(o.schema_id) = @p1 AND o.name = @p2`, schema, name)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, notFoundf("gosmo: default [%s].[%s] not found in %q", schema, name, d.Name)
-	}
-	if err != nil {
-		return nil, fmt.Errorf("gosmo: read default [%s].[%s] in %q: %w", schema, name, d.Name, err)
-	}
-	return df, nil
+	return foundRow(df, err, notFoundf("gosmo: default [%s].[%s] not found in %q", schema, name, d.Name), fmt.Sprintf("read default [%s].[%s] in %q", schema, name, d.Name))
 }
 
 // DropDefault drops a standalone default by name. A default still bound to a
 // column or type is refused by the server until sp_unbindefault releases it.
-func (d *Database) DropDefault(schema, name string) error {
-	return d.DropDefaultContext(context.Background(), schema, name)
-}
-
-// DropDefaultContext is the context-aware variant of DropDefault.
-func (d *Database) DropDefaultContext(ctx context.Context, schema, name string) error {
+func (d *Database) DropDefault(ctx context.Context, schema, name string) error {
 	if schema == "" {
 		schema = "dbo"
 	}
@@ -252,9 +186,6 @@ func (d *Database) DropDefaultContext(ctx context.Context, schema, name string) 
 }
 
 // Drop drops the default.
-func (df *Default) Drop() error { return df.DropContext(context.Background()) }
-
-// DropContext is the context-aware variant of Drop.
-func (df *Default) DropContext(ctx context.Context) error {
-	return df.db.DropDefaultContext(ctx, df.Schema, df.Name)
+func (df *Default) Drop(ctx context.Context) error {
+	return df.db.DropDefault(ctx, df.Schema, df.Name)
 }

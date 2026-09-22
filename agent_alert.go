@@ -3,7 +3,6 @@ package gosmo
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -126,41 +125,21 @@ func scanAlert(s *Server, scan func(dest ...any) error) (*Alert, error) {
 }
 
 // Alerts returns every SQL Server Agent alert defined on the server.
-func (s *Server) Alerts() ([]*Alert, error) { return s.AlertsContext(context.Background()) }
-
-// AlertsContext is the context-aware variant of Alerts.
-func (s *Server) AlertsContext(ctx context.Context) ([]*Alert, error) {
+func (s *Server) Alerts(ctx context.Context) ([]*Alert, error) {
 	q := "SELECT " + alertColumns + " " + alertFrom + " ORDER BY a.name"
 
 	rows, err := s.query(ctx, q)
-	if err != nil {
-		return nil, fmt.Errorf("gosmo: list alerts: %w", err)
-	}
-	defer rows.Close()
-
-	var out []*Alert
-	for rows.Next() {
-		a, err := scanAlert(s, rows.Scan)
-		if err != nil {
-			return nil, fmt.Errorf("gosmo: list alerts: %w", err)
-		}
-		out = append(out, a)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("gosmo: list alerts: %w", err)
-	}
-	return out, nil
+	return scanRows(rows, err, "list alerts", func(scan func(...any) error) (*Alert, error) {
+		return scanAlert(s, scan)
+	})
 }
 
 // EventAlerts returns only plain SQL Server event alerts — the SQL-only
 // implementable subset (see Alert.IsEventAlert). WMI alerts and
 // performance-condition alerts are excluded, since they depend on non-SQL
 // subsystems.
-func (s *Server) EventAlerts() ([]*Alert, error) { return s.EventAlertsContext(context.Background()) }
-
-// EventAlertsContext is the context-aware variant of EventAlerts.
-func (s *Server) EventAlertsContext(ctx context.Context) ([]*Alert, error) {
-	all, err := s.AlertsContext(ctx)
+func (s *Server) EventAlerts(ctx context.Context) ([]*Alert, error) {
+	all, err := s.Alerts(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -182,19 +161,14 @@ func (s *Server) EventAlertsContext(ctx context.Context) ([]*Alert, error) {
 // RemoveNotify, Update, ...), so this handle is enough to keep operating on
 // an alert the caller already knows exists — and is the form to use when
 // there is nothing to read yet: under a WithScript-derived context,
-// AlertByNameContext's lookup is a real read and an alert whose sp_add_alert
+// AlertByName's lookup is a real read and an alert whose sp_add_alert
 // was merely collected is not there to find.
 func (s *Server) AlertRef(name string) *Alert {
 	return &Alert{server: s, Name: name}
 }
 
 // AlertByName returns a single alert by name.
-func (s *Server) AlertByName(name string) (*Alert, error) {
-	return s.AlertByNameContext(context.Background(), name)
-}
-
-// AlertByNameContext is the context-aware variant of AlertByName.
-func (s *Server) AlertByNameContext(ctx context.Context, name string) (*Alert, error) {
+func (s *Server) AlertByName(ctx context.Context, name string) (*Alert, error) {
 	q := "SELECT " + alertColumns + " " + alertFrom + " WHERE a.name = @p1"
 
 	var a *Alert
@@ -203,13 +177,7 @@ func (s *Server) AlertByNameContext(ctx context.Context, name string) (*Alert, e
 		a, scanErr = scanAlert(s, row.Scan)
 		return scanErr
 	}, q, name)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, notFoundf("gosmo: alert %q not found", name)
-		}
-		return nil, fmt.Errorf("gosmo: alert by name: %w", err)
-	}
-	return a, nil
+	return foundRow(a, err, notFoundf("gosmo: alert %q not found", name), "alert by name")
 }
 
 // CreateAlertRequest describes a new SQL Server event alert.
@@ -228,12 +196,7 @@ type CreateAlertRequest struct {
 }
 
 // CreateAlert creates a new SQL Server event alert via sp_add_alert.
-func (s *Server) CreateAlert(req CreateAlertRequest) (*Alert, error) {
-	return s.CreateAlertContext(context.Background(), req)
-}
-
-// CreateAlertContext is the context-aware variant of CreateAlert.
-func (s *Server) CreateAlertContext(ctx context.Context, req CreateAlertRequest) (*Alert, error) {
+func (s *Server) CreateAlert(ctx context.Context, req CreateAlertRequest) (*Alert, error) {
 	if req.Name == "" {
 		return nil, fmt.Errorf("gosmo: create alert: name is required")
 	}
@@ -252,24 +215,21 @@ func (s *Server) CreateAlertContext(ctx context.Context, req CreateAlertRequest)
 	if req.Category != "" {
 		q += fmt.Sprintf(", @category_name = N'%s'", escapeSingle(req.Category))
 	}
-	if err := s.execContext(ctx, q); err != nil {
+	if err := s.exec(ctx, q); err != nil {
 		return nil, fmt.Errorf("gosmo: create alert %q: %w", req.Name, err)
 	}
 	if Scripting(ctx) {
-		// See CreateScheduleContext.
+		// See CreateSchedule.
 		return s.AlertRef(req.Name), nil
 	}
-	return s.AlertByNameContext(ctx, req.Name)
+	return s.AlertByName(ctx, req.Name)
 }
 
 // Rename changes the alert's name.
-func (a *Alert) Rename(newName string) error { return a.RenameContext(context.Background(), newName) }
-
-// RenameContext is the context-aware variant of Rename.
-func (a *Alert) RenameContext(ctx context.Context, newName string) error {
+func (a *Alert) Rename(ctx context.Context, newName string) error {
 	q := fmt.Sprintf("EXEC msdb.dbo.sp_update_alert @name = N'%s', @new_name = N'%s'",
 		escapeSingle(a.Name), escapeSingle(newName))
-	if err := a.server.execContext(ctx, q); err != nil {
+	if err := a.server.exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: rename alert %q to %q: %w", a.Name, newName, err)
 	}
 	setIfApplied(ctx, &a.Name, newName)
@@ -277,20 +237,14 @@ func (a *Alert) RenameContext(ctx context.Context, newName string) error {
 }
 
 // Enable enables the alert.
-func (a *Alert) Enable() error { return a.EnableContext(context.Background()) }
-
-// EnableContext is the context-aware variant of Enable.
-func (a *Alert) EnableContext(ctx context.Context) error { return a.setEnabled(ctx, true) }
+func (a *Alert) Enable(ctx context.Context) error { return a.setEnabled(ctx, true) }
 
 // Disable disables the alert.
-func (a *Alert) Disable() error { return a.DisableContext(context.Background()) }
-
-// DisableContext is the context-aware variant of Disable.
-func (a *Alert) DisableContext(ctx context.Context) error { return a.setEnabled(ctx, false) }
+func (a *Alert) Disable(ctx context.Context) error { return a.setEnabled(ctx, false) }
 
 func (a *Alert) setEnabled(ctx context.Context, on bool) error {
 	q := fmt.Sprintf("EXEC msdb.dbo.sp_update_alert @name = N'%s', @enabled = %d", escapeSingle(a.Name), boolToInt(on))
-	if err := a.server.execContext(ctx, q); err != nil {
+	if err := a.server.exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: set enabled=%v for alert %q: %w", on, a.Name, err)
 	}
 	setIfApplied(ctx, &a.Enabled, on)
@@ -300,15 +254,10 @@ func (a *Alert) setEnabled(ctx context.Context, on bool) error {
 // SetTrigger sets what raises the alert: a specific SQL Server error
 // number, or a severity level. SQL Server treats these as mutually
 // exclusive — pass 0 for whichever one isn't in use.
-func (a *Alert) SetTrigger(errorNumber, severity int) error {
-	return a.SetTriggerContext(context.Background(), errorNumber, severity)
-}
-
-// SetTriggerContext is the context-aware variant of SetTrigger.
-func (a *Alert) SetTriggerContext(ctx context.Context, errorNumber, severity int) error {
+func (a *Alert) SetTrigger(ctx context.Context, errorNumber, severity int) error {
 	q := fmt.Sprintf("EXEC msdb.dbo.sp_update_alert @name = N'%s', @message_id = %d, @severity = %d",
 		escapeSingle(a.Name), errorNumber, severity)
-	if err := a.server.execContext(ctx, q); err != nil {
+	if err := a.server.exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: set trigger for alert %q: %w", a.Name, err)
 	}
 	setIfApplied(ctx, &a.ErrorNumber, errorNumber)
@@ -317,15 +266,10 @@ func (a *Alert) SetTriggerContext(ctx context.Context, errorNumber, severity int
 }
 
 // SetDatabase scopes the alert to a single database, or "" for all databases.
-func (a *Alert) SetDatabase(dbName string) error {
-	return a.SetDatabaseContext(context.Background(), dbName)
-}
-
-// SetDatabaseContext is the context-aware variant of SetDatabase.
-func (a *Alert) SetDatabaseContext(ctx context.Context, dbName string) error {
+func (a *Alert) SetDatabase(ctx context.Context, dbName string) error {
 	q := fmt.Sprintf("EXEC msdb.dbo.sp_update_alert @name = N'%s', @database_name = N'%s'",
 		escapeSingle(a.Name), escapeSingle(dbName))
-	if err := a.server.execContext(ctx, q); err != nil {
+	if err := a.server.exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: set database for alert %q: %w", a.Name, err)
 	}
 	setIfApplied(ctx, &a.DatabaseName, dbName)
@@ -333,13 +277,10 @@ func (a *Alert) SetDatabaseContext(ctx context.Context, dbName string) error {
 }
 
 // SetDelay sets the minimum delay between repeated responses to the alert.
-func (a *Alert) SetDelay(d time.Duration) error { return a.SetDelayContext(context.Background(), d) }
-
-// SetDelayContext is the context-aware variant of SetDelay.
-func (a *Alert) SetDelayContext(ctx context.Context, d time.Duration) error {
+func (a *Alert) SetDelay(ctx context.Context, d time.Duration) error {
 	q := fmt.Sprintf("EXEC msdb.dbo.sp_update_alert @name = N'%s', @delay_between_responses = %d",
 		escapeSingle(a.Name), int(d.Seconds()))
-	if err := a.server.execContext(ctx, q); err != nil {
+	if err := a.server.exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: set delay for alert %q: %w", a.Name, err)
 	}
 	setIfApplied(ctx, &a.DelayBetweenResponses, d)
@@ -348,15 +289,10 @@ func (a *Alert) SetDelayContext(ctx context.Context, d time.Duration) error {
 
 // SetNotificationMessage sets the extra text appended to the alert's
 // notification.
-func (a *Alert) SetNotificationMessage(msg string) error {
-	return a.SetNotificationMessageContext(context.Background(), msg)
-}
-
-// SetNotificationMessageContext is the context-aware variant of SetNotificationMessage.
-func (a *Alert) SetNotificationMessageContext(ctx context.Context, msg string) error {
+func (a *Alert) SetNotificationMessage(ctx context.Context, msg string) error {
 	q := fmt.Sprintf("EXEC msdb.dbo.sp_update_alert @name = N'%s', @notification_message = N'%s'",
 		escapeSingle(a.Name), escapeSingle(msg))
-	if err := a.server.execContext(ctx, q); err != nil {
+	if err := a.server.exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: set notification message for alert %q: %w", a.Name, err)
 	}
 	setIfApplied(ctx, &a.NotificationMessage, msg)
@@ -368,16 +304,11 @@ func (a *Alert) SetNotificationMessageContext(ctx context.Context, msg string) e
 // an empty name outright ("The specified @category_name (”) does not
 // exist") and [Uncategorized] is what an alert created with no category
 // actually holds in msdb.dbo.syscategories.
-func (a *Alert) SetCategory(category string) error {
-	return a.SetCategoryContext(context.Background(), category)
-}
-
-// SetCategoryContext is the context-aware variant of SetCategory.
-func (a *Alert) SetCategoryContext(ctx context.Context, category string) error {
+func (a *Alert) SetCategory(ctx context.Context, category string) error {
 	target := agentCategoryTarget(category)
 	q := fmt.Sprintf("EXEC msdb.dbo.sp_update_alert @name = N'%s', @category_name = N'%s'",
 		escapeSingle(a.Name), escapeSingle(target))
-	if err := a.server.execContext(ctx, q); err != nil {
+	if err := a.server.exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: set category for alert %q: %w", a.Name, err)
 	}
 	setIfApplied(ctx, &a.Category, target)
@@ -386,19 +317,14 @@ func (a *Alert) SetCategoryContext(ctx context.Context, category string) error {
 
 // SetJobResponse sets the job executed in response to this alert, or ""
 // to clear it.
-func (a *Alert) SetJobResponse(jobName string) error {
-	return a.SetJobResponseContext(context.Background(), jobName)
-}
-
-// SetJobResponseContext is the context-aware variant of SetJobResponse.
-func (a *Alert) SetJobResponseContext(ctx context.Context, jobName string) error {
+func (a *Alert) SetJobResponse(ctx context.Context, jobName string) error {
 	// An empty @job_name is sp_update_alert's own sentinel for "no job
 	// response" — it maps N'' to a job_id of 0x00 before sp_verify_alert
 	// would otherwise reject the name for not matching a job. Anything else,
 	// including a placeholder like [UNSPECIFIED], fails as a missing job.
 	q := fmt.Sprintf("EXEC msdb.dbo.sp_update_alert @name = N'%s', @job_name = N'%s'",
 		escapeSingle(a.Name), escapeSingle(jobName))
-	if err := a.server.execContext(ctx, q); err != nil {
+	if err := a.server.exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: set job response for alert %q: %w", a.Name, err)
 	}
 	setIfApplied(ctx, &a.JobName, jobName)
@@ -406,12 +332,9 @@ func (a *Alert) SetJobResponseContext(ctx context.Context, jobName string) error
 }
 
 // Drop deletes the alert via sp_delete_alert.
-func (a *Alert) Drop() error { return a.DropContext(context.Background()) }
-
-// DropContext is the context-aware variant of Drop.
-func (a *Alert) DropContext(ctx context.Context) error {
+func (a *Alert) Drop(ctx context.Context) error {
 	q := fmt.Sprintf("EXEC msdb.dbo.sp_delete_alert @name = N'%s'", escapeSingle(a.Name))
-	if err := a.server.execContext(ctx, q); err != nil {
+	if err := a.server.exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: drop alert %q: %w", a.Name, err)
 	}
 	return nil
@@ -424,42 +347,27 @@ type AlertNotification struct {
 }
 
 // Notify configures the alert to notify an operator via sp_add_notification.
-func (a *Alert) Notify(operatorName string, method NotificationMethod) error {
-	return a.NotifyContext(context.Background(), operatorName, method)
-}
-
-// NotifyContext is the context-aware variant of Notify.
-func (a *Alert) NotifyContext(ctx context.Context, operatorName string, method NotificationMethod) error {
+func (a *Alert) Notify(ctx context.Context, operatorName string, method NotificationMethod) error {
 	q := fmt.Sprintf("EXEC msdb.dbo.sp_add_notification @alert_name = N'%s', @operator_name = N'%s', @notification_method = %d",
 		escapeSingle(a.Name), escapeSingle(operatorName), int(method))
-	if err := a.server.execContext(ctx, q); err != nil {
+	if err := a.server.exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: add notification for alert %q to operator %q: %w", a.Name, operatorName, err)
 	}
 	return nil
 }
 
 // RemoveNotify removes an operator's notification link from the alert.
-func (a *Alert) RemoveNotify(operatorName string) error {
-	return a.RemoveNotifyContext(context.Background(), operatorName)
-}
-
-// RemoveNotifyContext is the context-aware variant of RemoveNotify.
-func (a *Alert) RemoveNotifyContext(ctx context.Context, operatorName string) error {
+func (a *Alert) RemoveNotify(ctx context.Context, operatorName string) error {
 	q := fmt.Sprintf("EXEC msdb.dbo.sp_delete_notification @alert_name = N'%s', @operator_name = N'%s'",
 		escapeSingle(a.Name), escapeSingle(operatorName))
-	if err := a.server.execContext(ctx, q); err != nil {
+	if err := a.server.exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: remove notification for alert %q from operator %q: %w", a.Name, operatorName, err)
 	}
 	return nil
 }
 
 // Notifications returns every operator notified by this alert.
-func (a *Alert) Notifications() ([]*AlertNotification, error) {
-	return a.NotificationsContext(context.Background())
-}
-
-// NotificationsContext is the context-aware variant of Notifications.
-func (a *Alert) NotificationsContext(ctx context.Context) ([]*AlertNotification, error) {
+func (a *Alert) Notifications(ctx context.Context) ([]*AlertNotification, error) {
 	const q = `
 SELECT o.name, n.notification_method
 FROM   msdb.dbo.sysnotifications n
@@ -468,25 +376,15 @@ WHERE  n.alert_id = @p1
 ORDER  BY o.name`
 
 	rows, err := a.server.query(ctx, q, a.ID)
-	if err != nil {
-		return nil, fmt.Errorf("gosmo: notifications for alert %q: %w", a.Name, err)
-	}
-	defer rows.Close()
-
-	var out []*AlertNotification
-	for rows.Next() {
+	return scanRows(rows, err, fmt.Sprintf("notifications for alert %q", a.Name), func(scan func(...any) error) (*AlertNotification, error) {
 		n := &AlertNotification{}
 		var method int
-		if err := rows.Scan(&n.OperatorName, &method); err != nil {
-			return nil, fmt.Errorf("gosmo: notifications for alert %q: %w", a.Name, err)
+		if err := scan(&n.OperatorName, &method); err != nil {
+			return nil, err
 		}
 		n.Method = NotificationMethod(method)
-		out = append(out, n)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("gosmo: notifications for alert %q: %w", a.Name, err)
-	}
-	return out, nil
+		return n, nil
+	})
 }
 
 // parseSQLAgentDateOrZero is parseSQLAgentDate, but treats a 0 date (msdb's

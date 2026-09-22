@@ -47,9 +47,9 @@ func TestLiveHasMasterKeySeenByALowPrivilegeUser(t *testing.T) {
 	defer pool.Close()
 	has := func(s *Server) bool {
 		t.Helper()
-		ok, err := s.DatabaseRef(d.Name).HasMasterKeyContext(ctx)
+		ok, err := s.DatabaseRef(d.Name).HasMasterKey(ctx)
 		if err != nil {
-			t.Fatalf("HasMasterKeyContext: %v", err)
+			t.Fatalf("HasMasterKey: %v", err)
 		}
 		return ok
 	}

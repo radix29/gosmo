@@ -46,9 +46,9 @@ AS
 	liveExecIn(t, d, ctx,
 		"CREATE TRIGGER dbo.tr_V ON dbo.V INSTEAD OF INSERT AS PRINT 'view dml';")
 
-	tr, err := d.DatabaseTriggerByNameContext(ctx, ddlName)
+	tr, err := d.DatabaseTriggerByName(ctx, ddlName)
 	if err != nil {
-		t.Fatalf("DatabaseTriggerByNameContext: %v", err)
+		t.Fatalf("DatabaseTriggerByName: %v", err)
 	}
 	if !tr.IsEnabled {
 		t.Error("a freshly created trigger read back as disabled")
@@ -64,9 +64,9 @@ AS
 		t.Errorf("Events = %v, want %v", tr.Events, want)
 	}
 
-	list, err := d.DatabaseTriggersContext(ctx)
+	list, err := d.DatabaseTriggers(ctx)
 	if err != nil {
-		t.Fatalf("DatabaseTriggersContext: %v", err)
+		t.Fatalf("DatabaseTriggers: %v", err)
 	}
 	if len(list) != 1 || list[0].Name != ddlName {
 		t.Fatalf("DatabaseTriggers listed %d rows, want just %s: %+v", len(list), ddlName, list)
@@ -74,9 +74,9 @@ AS
 
 	// The DML folder must be byte-for-byte what it was: the table's trigger
 	// and the view's, and neither the DDL one nor anything else.
-	dml, err := d.TriggersContext(ctx)
+	dml, err := d.Triggers(ctx)
 	if err != nil {
-		t.Fatalf("TriggersContext: %v", err)
+		t.Fatalf("Triggers: %v", err)
 	}
 	var dmlNames []string
 	for _, x := range dml {
@@ -87,18 +87,18 @@ AS
 		t.Errorf("Database.Triggers = %v, want %v — the DML family changed", dmlNames, want)
 	}
 
-	viewTrigs, err := d.ObjectTriggersContext(ctx, "dbo", "V")
+	viewTrigs, err := d.ObjectTriggers(ctx, "dbo", "V")
 	if err != nil {
-		t.Fatalf("ObjectTriggersContext: %v", err)
+		t.Fatalf("ObjectTriggers: %v", err)
 	}
 	if len(viewTrigs) != 1 || viewTrigs[0].Name != "tr_V" {
 		t.Errorf("ObjectTriggers(dbo.V) = %+v, want just tr_V", viewTrigs)
 	}
 
-	if err := d.DatabaseTriggerRef(ddlName).DisableContext(ctx); err != nil {
-		t.Fatalf("DisableContext: %v", err)
+	if err := d.DatabaseTriggerRef(ddlName).Disable(ctx); err != nil {
+		t.Fatalf("Disable: %v", err)
 	}
-	after, err := d.DatabaseTriggerByNameContext(ctx, ddlName)
+	after, err := d.DatabaseTriggerByName(ctx, ddlName)
 	if err != nil {
 		t.Fatalf("re-read after disable: %v", err)
 	}
@@ -108,9 +108,9 @@ AS
 
 	// A disabled trigger's script must carry the DISABLE that puts it back
 	// the way it was found.
-	script, err := NewScripter(d, ScriptOptions{Verb: ScriptDropAndCreate}).ScriptDatabaseTriggerContext(ctx, ddlName)
+	script, err := NewScripter(d, ScriptOptions{Verb: ScriptDropAndCreate}).ScriptDatabaseTrigger(ctx, ddlName)
 	if err != nil {
-		t.Fatalf("ScriptDatabaseTriggerContext: %v", err)
+		t.Fatalf("ScriptDatabaseTrigger: %v", err)
 	}
 	for _, want := range []string{
 		"DROP TRIGGER IF EXISTS [" + ddlName + "] ON DATABASE;",
@@ -122,17 +122,17 @@ AS
 		}
 	}
 
-	if err := d.DatabaseTriggerRef(ddlName).EnableContext(ctx); err != nil {
-		t.Fatalf("EnableContext: %v", err)
+	if err := d.DatabaseTriggerRef(ddlName).Enable(ctx); err != nil {
+		t.Fatalf("Enable: %v", err)
 	}
-	if back, err := d.DatabaseTriggerByNameContext(ctx, ddlName); err != nil || !back.IsEnabled {
+	if back, err := d.DatabaseTriggerByName(ctx, ddlName); err != nil || !back.IsEnabled {
 		t.Fatalf("re-read after enable: %v (enabled=%v)", err, back != nil && back.IsEnabled)
 	}
 
-	if err := d.DatabaseTriggerRef(ddlName).DropContext(ctx); err != nil {
-		t.Fatalf("DropContext: %v", err)
+	if err := d.DatabaseTriggerRef(ddlName).Drop(ctx); err != nil {
+		t.Fatalf("Drop: %v", err)
 	}
-	if _, err := d.DatabaseTriggerByNameContext(ctx, ddlName); !errors.Is(err, ErrNotFound) {
+	if _, err := d.DatabaseTriggerByName(ctx, ddlName); !errors.Is(err, ErrNotFound) {
 		t.Errorf("after drop, read gave %v, want ErrNotFound", err)
 	}
 }

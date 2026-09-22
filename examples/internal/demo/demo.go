@@ -143,7 +143,7 @@ func Connect() *gosmo.Server {
 		log.Fatalf("unknown MSSQL_AUTH value: %q", authStr)
 	}
 
-	srv, err := gosmo.Connect(opts)
+	srv, err := gosmo.Connect(context.Background(), opts)
 	Must(err)
 	return srv
 }
@@ -152,17 +152,18 @@ func Connect() *gosmo.Server {
 // same name first, and returns it with the function that drops it again.
 // Examples never write to a database they didn't create.
 func TempDatabase(srv *gosmo.Server, name string) (*gosmo.Database, func()) {
-	_ = srv.DropDatabase(name, true)
-	Must(srv.CreateDatabase(name, &gosmo.CreateDatabaseOptions{
+	ctx := context.Background()
+	_ = srv.DropDatabase(ctx, name, true)
+	Must(srv.CreateDatabase(ctx, name, &gosmo.CreateDatabaseOptions{
 		RecoveryModel: gosmo.RecoveryModelSimple,
 		CompatLevel:   gosmo.CompatLevel2019,
 	}))
-	db, err := srv.DatabaseByName(name)
+	db, err := srv.DatabaseByName(ctx, name)
 	Must(err)
 	fmt.Printf("Created throwaway database [%s]\n", name)
 
 	return db, func() {
-		if err := srv.DropDatabase(name, true); err != nil {
+		if err := srv.DropDatabase(ctx, name, true); err != nil {
 			log.Printf("cleanup: dropping [%s]: %v", name, err)
 			return
 		}

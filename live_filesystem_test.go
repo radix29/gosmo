@@ -1,6 +1,6 @@
 //go:build livedb
 
-// Live verification of EnumFileSystemContext's version gate.
+// Live verification of EnumFileSystem's version gate.
 //
 // The gate decides between sys.dm_os_enumerate_filesystem (2017+, reports
 // sizes and timestamps) and xp_dirtree (every version, names and the
@@ -64,7 +64,7 @@ func TestLiveEnumFileSystemKnownModernTakesTheDMV(t *testing.T) {
 	}
 	t.Logf("server major version %d", info.VersionMajor)
 
-	entries, err := srv.EnumFileSystemContext(ctx, *livePath)
+	entries, err := srv.EnumFileSystem(ctx, *livePath)
 	if err != nil {
 		t.Fatalf("enumerate %q on a major-%d server: %v", *livePath, info.VersionMajor, err)
 	}
@@ -108,7 +108,7 @@ func TestLiveEnumFileSystemFallbackAgreesWithDMV(t *testing.T) {
 	if unknown.info != nil {
 		t.Fatal("fixture is wrong: this Server must have no ServerInfo loaded")
 	}
-	viaDirTree, err := unknown.EnumFileSystemContext(ctx, *livePath)
+	viaDirTree, err := unknown.EnumFileSystem(ctx, *livePath)
 	if err != nil {
 		t.Fatalf("unknown-version enumerate %q must degrade, not fail: %v", *livePath, err)
 	}
@@ -126,7 +126,7 @@ func TestLiveEnumFileSystemFallbackAgreesWithDMV(t *testing.T) {
 			real.serverMajorVersion(), len(names(viaDirTree)), *livePath)
 	}
 	known := &Server{db: db, info: &ServerInfo{VersionMajor: 17}}
-	viaDMV, err := known.EnumFileSystemContext(ctx, *livePath)
+	viaDMV, err := known.EnumFileSystem(ctx, *livePath)
 	if err != nil {
 		t.Fatalf("known-modern enumerate %q: %v", *livePath, err)
 	}
@@ -159,7 +159,7 @@ func TestLiveEnumFileSystemFallbackAgreesWithDMV(t *testing.T) {
 	t.Logf("both branches agree on %d entries under %q", len(dmvNames), *livePath)
 
 	// And the degradation itself: xp_dirtree reports no sizes or timestamps.
-	// Documented on EnumFileSystemContext as the cost of the fallback, so it
+	// Documented on EnumFileSystem as the cost of the fallback, so it
 	// is pinned rather than left as a claim.
 	for _, e := range viaDirTree {
 		if e.Size != 0 || !e.LastModified.IsZero() {

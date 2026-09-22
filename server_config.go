@@ -29,12 +29,7 @@ type ConfigurationOption struct {
 func (c *ConfigurationOption) Server() *Server { return c.server }
 
 // Configurations returns all server configuration options.
-func (s *Server) Configurations() ([]*ConfigurationOption, error) {
-	return s.ConfigurationsContext(context.Background())
-}
-
-// ConfigurationsContext is the context-aware variant of Configurations.
-func (s *Server) ConfigurationsContext(ctx context.Context) ([]*ConfigurationOption, error) {
+func (s *Server) Configurations(ctx context.Context) ([]*ConfigurationOption, error) {
 	const q = `
 SELECT configuration_id, name, value, value_in_use,
        minimum, maximum, is_dynamic, is_advanced, description
@@ -42,37 +37,22 @@ FROM   sys.configurations
 ORDER  BY name`
 
 	rows, err := s.query(ctx, q)
-	if err != nil {
-		return nil, fmt.Errorf("gosmo: list configurations: %w", err)
-	}
-	defer rows.Close()
-
-	var opts []*ConfigurationOption
-	for rows.Next() {
+	return scanRows(rows, err, "list configurations", func(scan func(...any) error) (*ConfigurationOption, error) {
 		c := &ConfigurationOption{server: s}
 		var desc sql.NullString
-		if err := rows.Scan(
+		if err := scan(
 			&c.ConfigID, &c.Name, &c.Value, &c.ValueInUse,
 			&c.Minimum, &c.Maximum, &c.IsDynamic, &c.IsAdvanced, &desc,
 		); err != nil {
-			return nil, fmt.Errorf("gosmo: list configurations: %w", err)
+			return nil, err
 		}
 		c.Description = desc.String
-		opts = append(opts, c)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("gosmo: list configurations: %w", err)
-	}
-	return opts, nil
+		return c, nil
+	})
 }
 
 // ConfigurationByName returns a single option using a direct parameterised query.
-func (s *Server) ConfigurationByName(name string) (*ConfigurationOption, error) {
-	return s.ConfigurationByNameContext(context.Background(), name)
-}
-
-// ConfigurationByNameContext is the context-aware variant.
-func (s *Server) ConfigurationByNameContext(ctx context.Context, name string) (*ConfigurationOption, error) {
+func (s *Server) ConfigurationByName(ctx context.Context, name string) (*ConfigurationOption, error) {
 	const q = `
 SELECT configuration_id, name, value, value_in_use,
        minimum, maximum, is_dynamic, is_advanced, description
@@ -95,10 +75,10 @@ WHERE  name = @p1`
 }
 
 // ConfigurationRef returns a lightweight handle for name without querying the
-// server at all — unlike ConfigurationByName/ConfigurationByNameContext, it
+// server at all — unlike ConfigurationByName, it
 // doesn't verify the option exists or populate ConfigID/Value/ValueInUse/
 // Minimum/Maximum/IsDynamic/IsAdvanced/Description (they stay at their zero
-// value). SetValueContext only ever needs the option's name, never those
+// value). SetValue only ever needs the option's name, never those
 // cached fields, so this is sufficient for setting an option whose name the
 // caller already knows. Note that IsDynamic stays false on a handle, so the
 // caller decides on its own whether Server.Reconfigure is needed. See
@@ -110,14 +90,9 @@ func (s *Server) ConfigurationRef(name string) *ConfigurationOption {
 
 // SetValue changes the option value using sp_configure.
 // For non-dynamic options, call Server.Reconfigure() afterwards.
-func (c *ConfigurationOption) SetValue(value int64) error {
-	return c.SetValueContext(context.Background(), value)
-}
-
-// SetValueContext is the context-aware variant of SetValue.
-func (c *ConfigurationOption) SetValueContext(ctx context.Context, value int64) error {
+func (c *ConfigurationOption) SetValue(ctx context.Context, value int64) error {
 	q := fmt.Sprintf("EXEC sp_configure N'%s', %d", escapeSingle(c.Name), value)
-	if err := c.server.execContext(ctx, q); err != nil {
+	if err := c.server.exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: set configuration %q = %d: %w", c.Name, value, err)
 	}
 	setIfApplied(ctx, &c.Value, value)
@@ -126,17 +101,12 @@ func (c *ConfigurationOption) SetValueContext(ctx context.Context, value int64) 
 
 // Reconfigure applies pending sp_configure changes.
 // Pass override=true to use RECONFIGURE WITH OVERRIDE (bypasses range checks).
-func (s *Server) Reconfigure(override bool) error {
-	return s.ReconfigureContext(context.Background(), override)
-}
-
-// ReconfigureContext is the context-aware variant of Reconfigure.
-func (s *Server) ReconfigureContext(ctx context.Context, override bool) error {
+func (s *Server) Reconfigure(ctx context.Context, override bool) error {
 	q := "RECONFIGURE"
 	if override {
 		q += " WITH OVERRIDE"
 	}
-	if err := s.execContext(ctx, q); err != nil {
+	if err := s.exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: reconfigure: %w", err)
 	}
 	return nil
@@ -159,12 +129,7 @@ type ServerMemoryStats struct {
 }
 
 // MemoryStats returns live server memory figures.
-func (s *Server) MemoryStats() (*ServerMemoryStats, error) {
-	return s.MemoryStatsContext(context.Background())
-}
-
-// MemoryStatsContext is the context-aware variant of MemoryStats.
-func (s *Server) MemoryStatsContext(ctx context.Context) (*ServerMemoryStats, error) {
+func (s *Server) MemoryStats(ctx context.Context) (*ServerMemoryStats, error) {
 	const q = `
 SELECT
     (SELECT total_physical_memory_kb / 1024 FROM sys.dm_os_sys_memory),
@@ -199,12 +164,7 @@ type ProcessorInfo struct {
 }
 
 // ProcessorInfo returns server-wide CPU/NUMA topology.
-func (s *Server) ProcessorInfo() (*ProcessorInfo, error) {
-	return s.ProcessorInfoContext(context.Background())
-}
-
-// ProcessorInfoContext is the context-aware variant of ProcessorInfo.
-func (s *Server) ProcessorInfoContext(ctx context.Context) (*ProcessorInfo, error) {
+func (s *Server) ProcessorInfo(ctx context.Context) (*ProcessorInfo, error) {
 	info := &ProcessorInfo{}
 	const q = `SELECT cpu_count, hyperthread_ratio FROM sys.dm_os_sys_info`
 	if err := s.queryRowScan(ctx, q, nil, &info.CPUCount, &info.HyperthreadRatio); err != nil {
@@ -274,12 +234,7 @@ type DiskVolumeInfo struct {
 
 // DiskVolumes returns free/total space for every storage volume backing a
 // database file on the server.
-func (s *Server) DiskVolumes() ([]DiskVolumeInfo, error) {
-	return s.DiskVolumesContext(context.Background())
-}
-
-// DiskVolumesContext is the context-aware variant of DiskVolumes.
-func (s *Server) DiskVolumesContext(ctx context.Context) ([]DiskVolumeInfo, error) {
+func (s *Server) DiskVolumes(ctx context.Context) ([]DiskVolumeInfo, error) {
 	const q = `
 SELECT
     vs.volume_mount_point,
@@ -293,25 +248,15 @@ GROUP BY vs.volume_mount_point, vs.logical_volume_name, vs.total_bytes, vs.avail
 ORDER BY vs.volume_mount_point`
 
 	rows, err := s.query(ctx, q)
-	if err != nil {
-		return nil, fmt.Errorf("gosmo: disk volumes: %w", err)
-	}
-	defer rows.Close()
-
-	var out []DiskVolumeInfo
-	for rows.Next() {
+	return scanRows(rows, err, "disk volumes", func(scan func(...any) error) (DiskVolumeInfo, error) {
 		var v DiskVolumeInfo
 		var mount, name, path sql.NullString
-		if err := rows.Scan(&mount, &name, &path, &v.TotalMB, &v.AvailableMB); err != nil {
-			return nil, fmt.Errorf("gosmo: disk volumes: %w", err)
+		if err := scan(&mount, &name, &path, &v.TotalMB, &v.AvailableMB); err != nil {
+			return DiskVolumeInfo{}, err
 		}
 		v.MountPoint, v.VolumeName, v.SamplePath = mount.String, name.String, path.String
-		out = append(out, v)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("gosmo: disk volumes: %w", err)
-	}
-	return out, nil
+		return v, nil
+	})
 }
 
 // ============================================================
@@ -327,32 +272,17 @@ type Language struct {
 }
 
 // Languages returns every language installed on the server.
-func (s *Server) Languages() ([]*Language, error) {
-	return s.LanguagesContext(context.Background())
-}
-
-// LanguagesContext is the context-aware variant of Languages.
-func (s *Server) LanguagesContext(ctx context.Context) ([]*Language, error) {
+func (s *Server) Languages(ctx context.Context) ([]*Language, error) {
 	const q = `SELECT langid, name, alias FROM sys.syslanguages ORDER BY name`
 
 	rows, err := s.query(ctx, q)
-	if err != nil {
-		return nil, fmt.Errorf("gosmo: list languages: %w", err)
-	}
-	defer rows.Close()
-
-	var langs []*Language
-	for rows.Next() {
+	return scanRows(rows, err, "list languages", func(scan func(...any) error) (*Language, error) {
 		l := &Language{}
-		if err := rows.Scan(&l.LangID, &l.Name, &l.Alias); err != nil {
-			return nil, fmt.Errorf("gosmo: list languages: %w", err)
+		if err := scan(&l.LangID, &l.Name, &l.Alias); err != nil {
+			return nil, err
 		}
-		langs = append(langs, l)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("gosmo: list languages: %w", err)
-	}
-	return langs, nil
+		return l, nil
+	})
 }
 
 // ============================================================
@@ -379,12 +309,7 @@ type ActiveSession struct {
 
 // ActiveSessions returns running sessions.
 // Set includeSystem=true to include SQL Server internal sessions.
-func (s *Server) ActiveSessions(includeSystem bool) ([]*ActiveSession, error) {
-	return s.ActiveSessionsContext(context.Background(), includeSystem)
-}
-
-// ActiveSessionsContext is the context-aware variant of ActiveSessions.
-func (s *Server) ActiveSessionsContext(ctx context.Context, includeSystem bool) ([]*ActiveSession, error) {
+func (s *Server) ActiveSessions(ctx context.Context, includeSystem bool) ([]*ActiveSession, error) {
 	sysFilter := "AND s.is_user_process = 1"
 	if includeSystem {
 		sysFilter = ""
@@ -405,45 +330,30 @@ WHERE  s.session_id != @@SPID %s
 ORDER  BY s.session_id`, sysFilter)
 
 	rows, err := s.query(ctx, q)
-	if err != nil {
-		return nil, fmt.Errorf("gosmo: active sessions: %w", err)
-	}
-	defer rows.Close()
-
-	var sessions []*ActiveSession
-	for rows.Next() {
+	return scanRows(rows, err, "active sessions", func(scan func(...any) error) (*ActiveSession, error) {
 		as := &ActiveSession{}
 		var dbName, waitType, lastReq, cmd, status sql.NullString
-		if err := rows.Scan(
+		if err := scan(
 			&as.SessionID, &as.LoginName, &as.HostName, &as.ProgramName,
 			&dbName, &status,
 			&as.CPUTime, &as.MemoryUsage, &as.TotalElapsedMS,
 			&lastReq, &cmd,
 			&as.BlockingSessionID, &waitType, &as.WaitTimeMS,
 		); err != nil {
-			return nil, fmt.Errorf("gosmo: active sessions: %w", err)
+			return nil, err
 		}
 		as.DatabaseName = dbName.String
 		as.Status = status.String
 		as.LastRequestStart = lastReq.String
 		as.CommandText = cmd.String
 		as.WaitType = waitType.String
-		sessions = append(sessions, as)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("gosmo: active sessions: %w", err)
-	}
-	return sessions, nil
+		return as, nil
+	})
 }
 
 // KillSession terminates a session by session ID.
-func (s *Server) KillSession(sessionID int) error {
-	return s.KillSessionContext(context.Background(), sessionID)
-}
-
-// KillSessionContext is the context-aware variant of KillSession.
-func (s *Server) KillSessionContext(ctx context.Context, sessionID int) error {
-	if err := s.execContext(ctx, fmt.Sprintf("KILL %d", sessionID)); err != nil {
+func (s *Server) KillSession(ctx context.Context, sessionID int) error {
+	if err := s.exec(ctx, fmt.Sprintf("KILL %d", sessionID)); err != nil {
 		return fmt.Errorf("gosmo: kill session %d: %w", sessionID, err)
 	}
 	return nil
@@ -462,12 +372,7 @@ type MailProfile struct {
 }
 
 // MailProfiles returns all Database Mail profiles from msdb.
-func (s *Server) MailProfiles() ([]*MailProfile, error) {
-	return s.MailProfilesContext(context.Background())
-}
-
-// MailProfilesContext is the context-aware variant of MailProfiles.
-func (s *Server) MailProfilesContext(ctx context.Context) ([]*MailProfile, error) {
+func (s *Server) MailProfiles(ctx context.Context) ([]*MailProfile, error) {
 	const q = `
 SELECT p.profile_id, p.name, ISNULL(p.description,''),
        ISNULL(pp.is_default, 0)
@@ -477,39 +382,24 @@ LEFT   JOIN msdb.dbo.sysmail_principalprofile pp
 ORDER  BY p.name`
 
 	rows, err := s.query(ctx, q)
-	if err != nil {
-		return nil, fmt.Errorf("gosmo: list mail profiles: %w", err)
-	}
-	defer rows.Close()
-
-	var profiles []*MailProfile
-	for rows.Next() {
+	return scanRows(rows, err, "list mail profiles", func(scan func(...any) error) (*MailProfile, error) {
 		p := &MailProfile{}
-		if err := rows.Scan(&p.ProfileID, &p.Name, &p.Description, &p.IsDefault); err != nil {
-			return nil, fmt.Errorf("gosmo: list mail profiles: %w", err)
+		if err := scan(&p.ProfileID, &p.Name, &p.Description, &p.IsDefault); err != nil {
+			return nil, err
 		}
-		profiles = append(profiles, p)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("gosmo: list mail profiles: %w", err)
-	}
-	return profiles, nil
+		return p, nil
+	})
 }
 
 // SendMail sends an email via Database Mail (sp_send_dbmail).
-func (s *Server) SendMail(profile, recipients, subject, body string) error {
-	return s.SendMailContext(context.Background(), profile, recipients, subject, body)
-}
-
-// SendMailContext is the context-aware variant of SendMail.
-func (s *Server) SendMailContext(ctx context.Context, profile, recipients, subject, body string) error {
+func (s *Server) SendMail(ctx context.Context, profile, recipients, subject, body string) error {
 	q := fmt.Sprintf(
 		"EXEC msdb.dbo.sp_send_dbmail @profile_name = N'%s', @recipients = N'%s', "+
 			"@subject = N'%s', @body = N'%s'",
 		escapeSingle(profile), escapeSingle(recipients),
 		escapeSingle(subject), escapeSingle(body),
 	)
-	if err := s.execContext(ctx, q); err != nil {
+	if err := s.exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: send mail: %w", err)
 	}
 	return nil

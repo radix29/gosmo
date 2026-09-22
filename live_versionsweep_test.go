@@ -44,20 +44,20 @@ import (
 // method fails the test instead of silently un-skipping — or silently
 // skipping nothing.
 var sweepSkip = map[string]string{
-	"Server.CycleErrorLogContext":     "rolls the error log over",
-	"Database.ClearQueryStoreContext": "discards the query store's contents",
-	"Database.FlushQueryStoreContext": "forces a query store write",
-	"Database.SetOfflineContext":      "takes the database offline",
-	"Database.SetOnlineContext":       "brings the database online",
-	"Table.TruncateTableContext":      "deletes every row",
-	"Statistic.DropContext":           "drops the statistic",
-	"Login.DisableContext":            "disables the login",
-	"Login.DropContext":               "drops the login",
-	"Login.EnableContext":             "enables the login",
-	"Job.DisableContext":              "disables the job",
-	"Job.DropContext":                 "drops the job",
-	"Job.EnableContext":               "enables the job",
-	"Job.StopContext":                 "stops a running job",
+	"Server.CycleErrorLog":     "rolls the error log over",
+	"Database.ClearQueryStore": "discards the query store's contents",
+	"Database.FlushQueryStore": "forces a query store write",
+	"Database.SetOffline":      "takes the database offline",
+	"Database.SetOnline":       "brings the database online",
+	"Table.TruncateTable":      "deletes every row",
+	"Statistic.Drop":           "drops the statistic",
+	"Login.Disable":            "disables the login",
+	"Login.Drop":               "drops the login",
+	"Login.Enable":             "enables the login",
+	"Job.Disable":              "disables the job",
+	"Job.Drop":                 "drops the job",
+	"Job.Enable":               "enables the job",
+	"Job.Stop":                 "stops a running job",
 }
 
 // sweep records what ran and what failed, so the result is one report rather
@@ -95,7 +95,7 @@ func (sw *sweep) call(label string, fn func() error) {
 		// oldest instance available. Counted separately so an old major can
 		// still be 0 failures.
 		sw.refused = append(sw.refused, fmt.Sprintf("%s: %v", label, err))
-	case strings.HasPrefix(label, "Database.LatestResourceStatsContext") && errors.Is(err, ErrNotFound):
+	case strings.HasPrefix(label, "Database.LatestResourceStats") && errors.Is(err, ErrNotFound):
 		// sys.dm_db_resource_stats gains its first row a few seconds after a
 		// database is created (3 s on a Managed Instance, 2026-09-10), and the
 		// sweep's database is seconds old, so an empty view is a race rather
@@ -180,115 +180,115 @@ func checkSkipList(t *testing.T) {
 // " [<instance>]" and the hand-driven half sometimes appends "(<arg>)".
 var sweepMustCall = []string{
 	// Types (Stage A/B): five listings, four by-name finders.
-	"Database.SystemDataTypesContext",
-	"Database.UserDefinedDataTypesContext",
-	"Database.UserDefinedTableTypesContext",
-	"Database.ClrTypesContext",
-	"Database.XMLSchemaCollectionsContext",
-	"Database.UserDefinedDataTypeByNameContext",
-	"Database.ClrTypeByNameContext",
-	"Database.XMLSchemaCollectionByNameContext",
-	"UserDefinedTableType.ColumnsContext",
-	"XMLSchemaCollection.DefinitionContext",
+	"Database.SystemDataTypes",
+	"Database.UserDefinedDataTypes",
+	"Database.UserDefinedTableTypes",
+	"Database.ClrTypes",
+	"Database.XMLSchemaCollections",
+	"Database.UserDefinedDataTypeByName",
+	"Database.ClrTypeByName",
+	"Database.XMLSchemaCollectionByName",
+	"UserDefinedTableType.Columns",
+	"XMLSchemaCollection.Definition",
 
 	// The capability probe, which grew a class 5/6/10 block reading
 	// sys.assemblies, sys.types and sys.xml_schema_collections — the same
 	// version exposure as the listings above.
-	"Database.CapabilitiesContext",
+	"Database.Capabilities",
 
 	// Assemblies.
-	"Database.AssembliesContext",
-	"Database.AssemblyByNameContext",
-	"Assembly.FilesContext/ModulesContext",
+	"Database.Assemblies",
+	"Database.AssemblyByName",
+	"Assembly.Files/Modules",
 
 	// Rules and defaults.
-	"Database.RulesContext",
-	"Database.RuleByNameContext",
-	"Database.DefaultsContext",
-	"Database.DefaultByNameContext",
+	"Database.Rules",
+	"Database.RuleByName",
+	"Database.Defaults",
+	"Database.DefaultByName",
 
 	// Plan guides.
-	"Database.PlanGuidesContext",
-	"Database.PlanGuideByNameContext",
+	"Database.PlanGuides",
+	"Database.PlanGuideByName",
 
 	// Service Broker: seven listings, seven by-name finders, and the two
 	// DMV-backed reads, which are the ones a caller without VIEW DATABASE
 	// STATE loses — they are separate calls precisely so that losing them
 	// does not cost the queue listing as well.
-	"Database.MessageTypesContext",
-	"Database.MessageTypeByNameContext",
-	"Database.ContractsContext",
-	"Database.ContractByNameContext",
-	"Database.BrokerQueuesContext",
-	"Database.BrokerQueueByNameContext",
-	"Database.BrokerServicesContext",
-	"Database.BrokerServiceByNameContext",
-	"Database.RoutesContext",
-	"Database.RouteByNameContext",
-	"Database.RemoteServiceBindingsContext",
-	"Database.RemoteServiceBindingByNameContext",
-	"Database.BrokerPrioritiesContext",
-	"Database.BrokerPriorityByNameContext",
-	"Database.QueueMessageCountsContext",
-	"Database.QueueMonitorsContext",
-	"BrokerQueue.MessageCountContext",
+	"Database.MessageTypes",
+	"Database.MessageTypeByName",
+	"Database.Contracts",
+	"Database.ContractByName",
+	"Database.BrokerQueues",
+	"Database.BrokerQueueByName",
+	"Database.BrokerServices",
+	"Database.BrokerServiceByName",
+	"Database.Routes",
+	"Database.RouteByName",
+	"Database.RemoteServiceBindings",
+	"Database.RemoteServiceBindingByName",
+	"Database.BrokerPriorities",
+	"Database.BrokerPriorityByName",
+	"Database.QueueMessageCounts",
+	"Database.QueueMonitors",
+	"BrokerQueue.MessageCount",
 
 	// External resources.
-	"Database.ExternalDataSourcesContext",
-	"Database.ExternalDataSourceByNameContext",
-	"Database.ExternalFileFormatsContext",
-	"Database.ExternalFileFormatByNameContext",
-	"Database.ExternalLibrariesContext",
-	"Database.ExternalLibraryByNameContext",
+	"Database.ExternalDataSources",
+	"Database.ExternalDataSourceByName",
+	"Database.ExternalFileFormats",
+	"Database.ExternalFileFormatByName",
+	"Database.ExternalLibraries",
+	"Database.ExternalLibraryByName",
 
 	// Tables sub-folders (Stage E).
-	"Database.TableKindsPresentContext",
-	"Database.TablesOfKindContext(user)",
-	"Database.TablesOfKindContext(system)",
-	"Database.TablesOfKindContext(filetable)",
-	"Database.TablesOfKindContext(external)",
-	"Database.TablesOfKindContext(graph)",
+	"Database.TableKindsPresent",
+	"Database.TablesOfKind(user)",
+	"Database.TablesOfKind(system)",
+	"Database.TablesOfKind(filetable)",
+	"Database.TablesOfKind(external)",
+	"Database.TablesOfKind(graph)",
 
 	// Database snapshots (Stage E).
-	"Server.DatabaseSnapshotsContext",
-	"Server.SnapshotsOfContext",
-	"Server.SnapshotFileDefaultsContext",
+	"Server.DatabaseSnapshots",
+	"Server.SnapshotsOf",
+	"Server.SnapshotFileDefaults",
 
 	// The eleven scripters the new families added. Each opens with a by-name
 	// catalog read, so each carries the same version exposure as a listing.
-	"Scripter.ScriptUserDefinedDataTypeContext",
-	"Scripter.ScriptUserDefinedTableTypeContext",
-	"Scripter.ScriptClrTypeContext",
-	"Scripter.ScriptXMLSchemaCollectionContext",
-	"Scripter.ScriptRuleContext",
-	"Scripter.ScriptDefaultContext",
-	"Scripter.ScriptAssemblyContext",
-	"Scripter.ScriptPlanGuideContext",
+	"Scripter.ScriptUserDefinedDataType",
+	"Scripter.ScriptUserDefinedTableType",
+	"Scripter.ScriptClrType",
+	"Scripter.ScriptXMLSchemaCollection",
+	"Scripter.ScriptRule",
+	"Scripter.ScriptDefault",
+	"Scripter.ScriptAssembly",
+	"Scripter.ScriptPlanGuide",
 
 	// The seven Service Broker scripters, each of which opens with the
 	// family's by-name read.
-	"Scripter.ScriptMessageTypeContext",
-	"Scripter.ScriptContractContext",
-	"Scripter.ScriptBrokerQueueContext",
-	"Scripter.ScriptBrokerServiceContext",
-	"Scripter.ScriptRouteContext",
-	"Scripter.ScriptRemoteServiceBindingContext",
-	"Scripter.ScriptBrokerPriorityContext",
-	"Scripter.ScriptExternalDataSourceContext",
-	"Scripter.ScriptExternalFileFormatContext",
-	"Scripter.ScriptExternalLibraryContext",
+	"Scripter.ScriptMessageType",
+	"Scripter.ScriptContract",
+	"Scripter.ScriptBrokerQueue",
+	"Scripter.ScriptBrokerService",
+	"Scripter.ScriptRoute",
+	"Scripter.ScriptRemoteServiceBinding",
+	"Scripter.ScriptBrokerPriority",
+	"Scripter.ScriptExternalDataSource",
+	"Scripter.ScriptExternalFileFormat",
+	"Scripter.ScriptExternalLibrary",
 
 	// Phase 3 item 15: certificates, asymmetric keys, symmetric keys.
-	"Database.CertificatesContext",
-	"Database.CertificateByNameContext",
-	"Certificate.EncodedContext",
-	"Scripter.ScriptCertificateContext",
-	"Database.AsymmetricKeysContext",
-	"Database.AsymmetricKeyByNameContext",
-	"Scripter.ScriptAsymmetricKeyContext",
-	"Database.SymmetricKeysContext",
-	"Database.SymmetricKeyByNameContext",
-	"Scripter.ScriptSymmetricKeyContext",
+	"Database.Certificates",
+	"Database.CertificateByName",
+	"Certificate.Encoded",
+	"Scripter.ScriptCertificate",
+	"Database.AsymmetricKeys",
+	"Database.AsymmetricKeyByName",
+	"Scripter.ScriptAsymmetricKey",
+	"Database.SymmetricKeys",
+	"Database.SymmetricKeyByName",
+	"Scripter.ScriptSymmetricKey",
 }
 
 // checkCoverage fails on any sweepMustCall entry no label matched. It runs
@@ -430,11 +430,11 @@ func TestLiveVersionSweep(t *testing.T) {
 
 	// Re-read the scratch database through the Server NewServer built.
 	// liveScratchDB's own Server carries no ServerInfo, and a read gated on
-	// the version behaves differently — or, in ScriptDatabaseContext's case,
+	// the version behaves differently — or, in ScriptDatabase's case,
 	// panics — against one that has none.
-	d, err := srv.DatabaseByNameContext(ctx, scratch.Name)
+	d, err := srv.DatabaseByName(ctx, scratch.Name)
 	if err != nil {
-		t.Fatalf("DatabaseByNameContext %s: %v", scratch.Name, err)
+		t.Fatalf("DatabaseByName %s: %v", scratch.Name, err)
 	}
 	for _, stmt := range sweepSchema {
 		if _, err := d.exec(ctx, stmt); err != nil {
@@ -452,9 +452,9 @@ func TestLiveVersionSweep(t *testing.T) {
 	// Tables, and everything reached through one. Both scratch tables are
 	// swept rather than the first: a read that ignores the object it was
 	// given passes on a single-table database.
-	tables, err := d.TablesContext(ctx)
+	tables, err := d.Tables(ctx)
 	if err != nil {
-		t.Errorf("TablesContext: %v — every table-level read is unreachable", err)
+		t.Errorf("Tables: %v — every table-level read is unreachable", err)
 	}
 	if len(tables) == 0 {
 		t.Error("scratch database has no tables — the table, index and statistic sweeps below prove nothing")
@@ -465,13 +465,13 @@ func TestLiveVersionSweep(t *testing.T) {
 
 		// Index has no context-only reads today. It is swept anyway so that
 		// one added later is covered without anyone editing this list.
-		idxs, err := tbl.IndexesContext(ctx)
+		idxs, err := tbl.Indexes(ctx)
 		if err == nil {
 			for _, ix := range idxs {
 				sw.reflectSweep("Index", name+"."+ix.Name, ix)
 			}
 		}
-		stats, err := tbl.StatisticsContext(ctx)
+		stats, err := tbl.Statistics(ctx)
 		if err == nil {
 			for _, st := range stats {
 				sw.reflectSweep("Statistic", name+"."+st.Name, st)
@@ -481,16 +481,16 @@ func TestLiveVersionSweep(t *testing.T) {
 
 	// Logins and jobs as the instance already has them — read only, never
 	// created or modified here.
-	logins, err := srv.LoginsContext(ctx)
+	logins, err := srv.Logins(ctx)
 	if err != nil {
-		t.Errorf("LoginsContext: %v", err)
+		t.Errorf("Logins: %v", err)
 	}
 	for _, l := range logins {
 		sw.reflectSweep("Login", l.Name, l)
 	}
-	jobs, err := srv.JobsContext(ctx)
+	jobs, err := srv.Jobs(ctx)
 	if err != nil {
-		t.Errorf("JobsContext: %v", err)
+		t.Errorf("Jobs: %v", err)
 	}
 	for _, j := range jobs {
 		sw.reflectSweep("Job", j.Name, j)
@@ -526,8 +526,8 @@ func sweepTableKinds(sw *sweep, d *Database) {
 		TableKindUser, TableKindSystem, TableKindFileTable,
 		TableKindExternal, TableKindGraph,
 	} {
-		sw.call("Database.TablesOfKindContext("+kind.String()+")", func() error {
-			_, err := d.TablesOfKindContext(sw.ctx, kind)
+		sw.call("Database.TablesOfKind("+kind.String()+")", func() error {
+			_, err := d.TablesOfKind(sw.ctx, kind)
 			return err
 		})
 	}
@@ -535,7 +535,7 @@ func sweepTableKinds(sw *sweep, d *Database) {
 
 // sweepServiceBroker drives the Service Broker by-name finders and the two
 // DMV-backed reads, all of which the reflective half cannot reach: the
-// finders take a name, and BrokerQueue.MessageCountContext hangs off a queue
+// finders take a name, and BrokerQueue.MessageCount hangs off a queue
 // the listing returned.
 //
 // The seven listings themselves come from the reflective half, against the
@@ -552,12 +552,12 @@ func sweepServiceBroker(sw *sweep, d *Database) {
 			"Msg 41906): %v", err)
 	}
 
-	sw.call("Database.MessageTypeByNameContext", func() error {
-		_, err := d.MessageTypeByNameContext(sw.ctx, "//gosmo/sweep/mt")
+	sw.call("Database.MessageTypeByName", func() error {
+		_, err := d.MessageTypeByName(sw.ctx, "//gosmo/sweep/mt")
 		return err
 	})
-	sw.call("Database.ContractByNameContext", func() error {
-		c, err := d.ContractByNameContext(sw.ctx, "//gosmo/sweep/contract")
+	sw.call("Database.ContractByName", func() error {
+		c, err := d.ContractByName(sw.ctx, "//gosmo/sweep/contract")
 		if err != nil {
 			return err
 		}
@@ -569,8 +569,8 @@ func sweepServiceBroker(sw *sweep, d *Database) {
 		}
 		return nil
 	})
-	sw.call("Database.BrokerQueueByNameContext", func() error {
-		q, err := d.BrokerQueueByNameContext(sw.ctx, "dbo", "sweep_queue")
+	sw.call("Database.BrokerQueueByName", func() error {
+		q, err := d.BrokerQueueByName(sw.ctx, "dbo", "sweep_queue")
 		if err != nil {
 			return err
 		}
@@ -581,16 +581,16 @@ func sweepServiceBroker(sw *sweep, d *Database) {
 		}
 		return nil
 	})
-	sw.call("BrokerQueue.MessageCountContext", func() error {
-		q, err := d.BrokerQueueByNameContext(sw.ctx, "dbo", "sweep_queue")
+	sw.call("BrokerQueue.MessageCount", func() error {
+		q, err := d.BrokerQueueByName(sw.ctx, "dbo", "sweep_queue")
 		if err != nil {
 			return err
 		}
-		_, err = q.MessageCountContext(sw.ctx)
+		_, err = q.MessageCount(sw.ctx)
 		return err
 	})
-	sw.call("Database.BrokerServiceByNameContext", func() error {
-		s, err := d.BrokerServiceByNameContext(sw.ctx, "//gosmo/sweep/service")
+	sw.call("Database.BrokerServiceByName", func() error {
+		s, err := d.BrokerServiceByName(sw.ctx, "//gosmo/sweep/service")
 		if err != nil {
 			return err
 		}
@@ -600,23 +600,23 @@ func sweepServiceBroker(sw *sweep, d *Database) {
 		}
 		return nil
 	})
-	sw.call("Database.RouteByNameContext", func() error {
-		_, err := d.RouteByNameContext(sw.ctx, "sweep_route")
+	sw.call("Database.RouteByName", func() error {
+		_, err := d.RouteByName(sw.ctx, "sweep_route")
 		return err
 	})
-	sw.call("Database.RemoteServiceBindingByNameContext", func() error {
-		_, err := d.RemoteServiceBindingByNameContext(sw.ctx, "sweep_rsb")
+	sw.call("Database.RemoteServiceBindingByName", func() error {
+		_, err := d.RemoteServiceBindingByName(sw.ctx, "sweep_rsb")
 		if !bindingCreated && errors.Is(err, ErrNotFound) {
 			return nil
 		}
 		return err
 	})
-	sw.call("Database.BrokerPriorityByNameContext", func() error {
-		_, err := d.BrokerPriorityByNameContext(sw.ctx, "sweep_priority")
+	sw.call("Database.BrokerPriorityByName", func() error {
+		_, err := d.BrokerPriorityByName(sw.ctx, "sweep_priority")
 		return err
 	})
-	sw.call("Database.QueueMessageCountsContext", func() error {
-		counts, err := d.QueueMessageCountsContext(sw.ctx)
+	sw.call("Database.QueueMessageCounts", func() error {
+		counts, err := d.QueueMessageCounts(sw.ctx)
 		if err != nil {
 			return err
 		}
@@ -642,58 +642,58 @@ func sweepServiceBroker(sw *sweep, d *Database) {
 // listings still run, which is what the version exposure is about; only the
 // by-name finders below go unexercised against a real row.
 func sweepProgrammability(sw *sweep, d *Database) {
-	sw.call("Database.UserDefinedDataTypeByNameContext", func() error {
-		_, err := d.UserDefinedDataTypeByNameContext(sw.ctx, "dbo", "sweep_alias")
+	sw.call("Database.UserDefinedDataTypeByName", func() error {
+		_, err := d.UserDefinedDataTypeByName(sw.ctx, "dbo", "sweep_alias")
 		return err
 	})
-	sw.call("Database.ClrTypeByNameContext", func() error {
+	sw.call("Database.ClrTypeByName", func() error {
 		// No CLR type exists here, so a not-found is the right answer and
 		// not a failure: what is being swept is whether the query runs.
-		_, err := d.ClrTypeByNameContext(sw.ctx, "dbo", "sweep_clr_absent")
+		_, err := d.ClrTypeByName(sw.ctx, "dbo", "sweep_clr_absent")
 		if errors.Is(err, ErrNotFound) {
 			return nil
 		}
 		return err
 	})
-	sw.call("Database.XMLSchemaCollectionByNameContext", func() error {
-		_, err := d.XMLSchemaCollectionByNameContext(sw.ctx, "dbo", "sweep_xsd")
+	sw.call("Database.XMLSchemaCollectionByName", func() error {
+		_, err := d.XMLSchemaCollectionByName(sw.ctx, "dbo", "sweep_xsd")
 		return err
 	})
-	sw.call("Database.RuleByNameContext", func() error {
-		_, err := d.RuleByNameContext(sw.ctx, "dbo", "sweep_rule")
+	sw.call("Database.RuleByName", func() error {
+		_, err := d.RuleByName(sw.ctx, "dbo", "sweep_rule")
 		return err
 	})
-	sw.call("Database.DefaultByNameContext", func() error {
-		_, err := d.DefaultByNameContext(sw.ctx, "dbo", "sweep_default")
+	sw.call("Database.DefaultByName", func() error {
+		_, err := d.DefaultByName(sw.ctx, "dbo", "sweep_default")
 		return err
 	})
-	sw.call("Database.PlanGuideByNameContext", func() error {
-		_, err := d.PlanGuideByNameContext(sw.ctx, "sweep_pg")
+	sw.call("Database.PlanGuideByName", func() error {
+		_, err := d.PlanGuideByName(sw.ctx, "sweep_pg")
 		return err
 	})
-	sw.call("Database.AssemblyByNameContext", func() error {
-		_, err := d.AssemblyByNameContext(sw.ctx, "sweep_assembly_absent")
+	sw.call("Database.AssemblyByName", func() error {
+		_, err := d.AssemblyByName(sw.ctx, "sweep_assembly_absent")
 		if errors.Is(err, ErrNotFound) {
 			return nil
 		}
 		return err
 	})
-	sw.call("Database.ExternalDataSourceByNameContext", func() error {
-		_, err := d.ExternalDataSourceByNameContext(sw.ctx, "sweep_eds_absent")
+	sw.call("Database.ExternalDataSourceByName", func() error {
+		_, err := d.ExternalDataSourceByName(sw.ctx, "sweep_eds_absent")
 		if errors.Is(err, ErrNotFound) {
 			return nil
 		}
 		return err
 	})
-	sw.call("Database.ExternalFileFormatByNameContext", func() error {
-		_, err := d.ExternalFileFormatByNameContext(sw.ctx, "sweep_eff_absent")
+	sw.call("Database.ExternalFileFormatByName", func() error {
+		_, err := d.ExternalFileFormatByName(sw.ctx, "sweep_eff_absent")
 		if errors.Is(err, ErrNotFound) {
 			return nil
 		}
 		return err
 	})
-	sw.call("Database.ExternalLibraryByNameContext", func() error {
-		_, err := d.ExternalLibraryByNameContext(sw.ctx, "sweep_lib_absent")
+	sw.call("Database.ExternalLibraryByName", func() error {
+		_, err := d.ExternalLibraryByName(sw.ctx, "sweep_lib_absent")
 		if errors.Is(err, ErrNotFound) {
 			return nil
 		}
@@ -703,12 +703,12 @@ func sweepProgrammability(sw *sweep, d *Database) {
 	// The table type's columns come off the internal table sys.table_types
 	// points at, which is the read most likely to be wrong and the one a
 	// listing alone would never exercise.
-	sw.call("UserDefinedTableType.ColumnsContext", func() error {
-		tt, err := d.UserDefinedTableTypeByNameContext(sw.ctx, "dbo", "sweep_tabletype")
+	sw.call("UserDefinedTableType.Columns", func() error {
+		tt, err := d.UserDefinedTableTypeByName(sw.ctx, "dbo", "sweep_tabletype")
 		if err != nil {
 			return err
 		}
-		cols, err := tt.ColumnsContext(sw.ctx)
+		cols, err := tt.Columns(sw.ctx)
 		if err != nil {
 			return err
 		}
@@ -718,12 +718,12 @@ func sweepProgrammability(sw *sweep, d *Database) {
 		return nil
 	})
 
-	sw.call("XMLSchemaCollection.DefinitionContext", func() error {
-		c, err := d.XMLSchemaCollectionByNameContext(sw.ctx, "dbo", "sweep_xsd")
+	sw.call("XMLSchemaCollection.Definition", func() error {
+		c, err := d.XMLSchemaCollectionByName(sw.ctx, "dbo", "sweep_xsd")
 		if err != nil {
 			return err
 		}
-		def, err := c.DefinitionContext(sw.ctx)
+		def, err := c.Definition(sw.ctx)
 		if err != nil {
 			return err
 		}
@@ -736,18 +736,18 @@ func sweepProgrammability(sw *sweep, d *Database) {
 	// Assembly's own reads, against whatever the instance already has —
 	// Microsoft.SqlServer.Types is registered in every database, so this
 	// reaches a real row without the sweep creating one.
-	sw.call("Assembly.FilesContext/ModulesContext", func() error {
-		asms, err := d.AssembliesContext(sw.ctx)
+	sw.call("Assembly.Files/Modules", func() error {
+		asms, err := d.Assemblies(sw.ctx)
 		if err != nil {
 			return err
 		}
 		if len(asms) == 0 {
 			return nil
 		}
-		if _, err := asms[0].FilesContext(sw.ctx); err != nil {
+		if _, err := asms[0].Files(sw.ctx); err != nil {
 			return err
 		}
-		_, err = asms[0].ModulesContext(sw.ctx)
+		_, err = asms[0].Modules(sw.ctx)
 		return err
 	})
 }
@@ -761,99 +761,91 @@ func sweepQueryStoreReports(sw *sweep, d *Database) {
 	// exercises the statement — the sweep asks whether the query runs on this
 	// version, not whether the row exists.
 	queryID := int64(1)
-	if top, err := d.QueryStoreTopResourceQueriesContext(sw.ctx, opts); err == nil && len(top) > 0 {
+	if top, err := d.QueryStoreTopResourceQueries(sw.ctx, opts); err == nil && len(top) > 0 {
 		queryID = top[0].QueryID
 	}
 
-	sw.call("Database.QueryStoreTopResourceQueriesContext", func() error {
-		_, err := d.QueryStoreTopResourceQueriesContext(sw.ctx, opts)
+	sw.call("Database.QueryStoreTopResourceQueries", func() error {
+		_, err := d.QueryStoreTopResourceQueries(sw.ctx, opts)
 		return err
 	})
-	sw.call("Database.QueryStoreForcedPlanQueriesContext", func() error {
-		_, err := d.QueryStoreForcedPlanQueriesContext(sw.ctx, opts)
+	sw.call("Database.QueryStoreForcedPlanQueries", func() error {
+		_, err := d.QueryStoreForcedPlanQueries(sw.ctx, opts)
 		return err
 	})
-	sw.call("Database.QueryStoreHighVariationQueriesContext", func() error {
-		_, err := d.QueryStoreHighVariationQueriesContext(sw.ctx, opts)
+	sw.call("Database.QueryStoreHighVariationQueries", func() error {
+		_, err := d.QueryStoreHighVariationQueries(sw.ctx, opts)
 		return err
 	})
-	sw.call("Database.QueryStoreRegressedQueriesContext", func() error {
-		_, err := d.QueryStoreRegressedQueriesContext(sw.ctx, opts)
+	sw.call("Database.QueryStoreRegressedQueries", func() error {
+		_, err := d.QueryStoreRegressedQueries(sw.ctx, opts)
 		return err
 	})
-	sw.call("Database.QueryStoreOverallConsumptionContext", func() error {
-		_, err := d.QueryStoreOverallConsumptionContext(sw.ctx, opts)
+	sw.call("Database.QueryStoreOverallConsumption", func() error {
+		_, err := d.QueryStoreOverallConsumption(sw.ctx, opts)
 		return err
 	})
-	sw.call("Database.QueryStoreTrackedQueryContext", func() error {
-		_, err := d.QueryStoreTrackedQueryContext(sw.ctx, queryID, opts)
+	sw.call("Database.QueryStoreTrackedQuery", func() error {
+		_, err := d.QueryStoreTrackedQuery(sw.ctx, queryID, opts)
 		return err
 	})
-	sw.call("Database.QueryStorePlansContext", func() error {
-		_, err := d.QueryStorePlansContext(sw.ctx, queryID, opts)
+	sw.call("Database.QueryStorePlans", func() error {
+		_, err := d.QueryStorePlans(sw.ctx, queryID, opts)
 		return err
 	})
-	sw.call("Database.QueryStoreQueryTextContext", func() error {
-		_, _, err := d.QueryStoreQueryTextContext(sw.ctx, queryID)
+	sw.call("Database.QueryStoreQueryText", func() error {
+		_, _, err := d.QueryStoreQueryText(sw.ctx, queryID)
 		return err
 	})
-	sw.call("Database.QueryStoreWaitCategoriesContext", func() error {
-		_, err := d.QueryStoreWaitCategoriesContext(sw.ctx, opts)
+	sw.call("Database.QueryStoreWaitCategories", func() error {
+		_, err := d.QueryStoreWaitCategories(sw.ctx, opts)
 		return err
 	})
-	sw.call("Database.QueryStoreWaitingQueriesContext", func() error {
-		_, err := d.QueryStoreWaitingQueriesContext(sw.ctx, "CPU", opts)
+	sw.call("Database.QueryStoreWaitingQueries", func() error {
+		_, err := d.QueryStoreWaitingQueries(sw.ctx, "CPU", opts)
 		return err
 	})
 }
 
 // sweepKeys drives the certificate and key reads that take a name, which
-// the reflective half cannot reach. The finder is checked for a row, not just
-// for no error: CertificateByName answers (nil, nil) on absence, so a query
-// that matched nothing would otherwise pass.
+// the reflective half cannot reach.
 func sweepKeys(sw *sweep, d *Database) {
-	sw.call("Database.CertificateByNameContext", func() error {
-		c, err := d.CertificateByNameContext(sw.ctx, "sweep_cert")
-		if err == nil && c == nil {
-			return errors.New("sweep_cert not found")
-		}
+	sw.call("Database.CertificateByName", func() error {
+		c, err := d.CertificateByName(sw.ctx, "sweep_cert")
 		if err == nil && (c.KeyLength == 0 || c.Owner == "") {
 			return fmt.Errorf("sweep_cert read back with KeyLength %d, Owner %q", c.KeyLength, c.Owner)
 		}
 		return err
 	})
-	sw.call("Certificate.EncodedContext", func() error {
-		_, err := d.CertificateRef("sweep_cert").EncodedContext(sw.ctx)
+	sw.call("Certificate.Encoded", func() error {
+		_, err := d.CertificateRef("sweep_cert").Encoded(sw.ctx)
 		return err
 	})
-	sw.call("Scripter.ScriptCertificateContext", func() error {
-		_, err := NewScripter(d, ScriptOptions{Verb: ScriptDropAndCreate}).ScriptCertificateContext(sw.ctx, "sweep_cert")
+	sw.call("Scripter.ScriptCertificate", func() error {
+		_, err := NewScripter(d, ScriptOptions{Verb: ScriptDropAndCreate}).ScriptCertificate(sw.ctx, "sweep_cert")
 		return err
 	})
-	sw.call("Database.AsymmetricKeyByNameContext", func() error {
-		k, err := d.AsymmetricKeyByNameContext(sw.ctx, "sweep_asymkey")
-		if err == nil && k == nil {
-			return errors.New("sweep_asymkey not found")
-		}
+	sw.call("Database.AsymmetricKeyByName", func() error {
+		k, err := d.AsymmetricKeyByName(sw.ctx, "sweep_asymkey")
 		if err == nil && (k.KeyLength != 2048 || k.Owner == "") {
 			return fmt.Errorf("sweep_asymkey read back with KeyLength %d, Owner %q", k.KeyLength, k.Owner)
 		}
 		return err
 	})
-	sw.call("Scripter.ScriptAsymmetricKeyContext", func() error {
-		_, err := NewScripter(d, ScriptOptions{Verb: ScriptDropAndCreate}).ScriptAsymmetricKeyContext(sw.ctx, "sweep_asymkey")
+	sw.call("Scripter.ScriptAsymmetricKey", func() error {
+		_, err := NewScripter(d, ScriptOptions{Verb: ScriptDropAndCreate}).ScriptAsymmetricKey(sw.ctx, "sweep_asymkey")
 		return err
 	})
-	sw.call("Database.SymmetricKeyByNameContext", func() error {
-		k, err := d.SymmetricKeyByNameContext(sw.ctx, "sweep_symkey")
+	sw.call("Database.SymmetricKeyByName", func() error {
+		k, err := d.SymmetricKeyByName(sw.ctx, "sweep_symkey")
 		if err == nil && (k.KeyLength != 256 || k.Owner == "" || len(k.Encryptions) != 2 ||
 			k.Encryptions[0].Name != "sweep_cert" || k.Encryptions[1].Kind != SymmetricKeyByPassword) {
 			return fmt.Errorf("sweep_symkey read back as %+v", k)
 		}
 		return err
 	})
-	sw.call("Scripter.ScriptSymmetricKeyContext", func() error {
-		_, err := NewScripter(d, ScriptOptions{Verb: ScriptDropAndCreate}).ScriptSymmetricKeyContext(sw.ctx, "sweep_symkey")
+	sw.call("Scripter.ScriptSymmetricKey", func() error {
+		_, err := NewScripter(d, ScriptOptions{Verb: ScriptDropAndCreate}).ScriptSymmetricKey(sw.ctx, "sweep_symkey")
 		return err
 	})
 }
@@ -868,89 +860,89 @@ func sweepScripter(sw *sweep, d *Database) {
 		sw.call("Scripter."+label, func() error { _, err := fn(); return err })
 	}
 
-	str("ScriptDatabaseContext", func() (string, error) { return sc.ScriptDatabaseContext(sw.ctx) })
-	str("ScriptTableContext", func() (string, error) { return sc.ScriptTableContext(sw.ctx, "dbo", "sweep_child") })
-	str("ScriptViewContext", func() (string, error) { return sc.ScriptViewContext(sw.ctx, "dbo", "sweep_view") })
-	str("ScriptStoredProcedureContext", func() (string, error) {
-		return sc.ScriptStoredProcedureContext(sw.ctx, "dbo", "usp_sweep")
+	str("ScriptDatabase", func() (string, error) { return sc.ScriptDatabase(sw.ctx) })
+	str("ScriptTable", func() (string, error) { return sc.ScriptTable(sw.ctx, "dbo", "sweep_child") })
+	str("ScriptView", func() (string, error) { return sc.ScriptView(sw.ctx, "dbo", "sweep_view") })
+	str("ScriptStoredProcedure", func() (string, error) {
+		return sc.ScriptStoredProcedure(sw.ctx, "dbo", "usp_sweep")
 	})
-	str("ScriptFunctionContext", func() (string, error) { return sc.ScriptFunctionContext(sw.ctx, "dbo", "sweep_fn") })
-	str("ScriptTriggerContext", func() (string, error) {
-		return sc.ScriptTriggerContext(sw.ctx, "dbo", "trg_sweep_child")
+	str("ScriptFunction", func() (string, error) { return sc.ScriptFunction(sw.ctx, "dbo", "sweep_fn") })
+	str("ScriptTrigger", func() (string, error) {
+		return sc.ScriptTrigger(sw.ctx, "dbo", "trg_sweep_child")
 	})
-	str("ScriptSelectContext", func() (string, error) { return sc.ScriptSelectContext(sw.ctx, "dbo", "sweep_parent") })
-	str("ScriptInsertContext", func() (string, error) { return sc.ScriptInsertContext(sw.ctx, "dbo", "sweep_parent") })
-	str("ScriptUpdateContext", func() (string, error) { return sc.ScriptUpdateContext(sw.ctx, "dbo", "sweep_parent") })
-	str("ScriptDeleteContext", func() (string, error) { return sc.ScriptDeleteContext(sw.ctx, "dbo", "sweep_parent") })
-	str("ScriptExecuteContext", func() (string, error) { return sc.ScriptExecuteContext(sw.ctx, "dbo", "usp_sweep") })
-	str("ScriptFunctionCallContext", func() (string, error) {
-		return sc.ScriptFunctionCallContext(sw.ctx, "dbo", "sweep_fn", "FN")
+	str("ScriptSelect", func() (string, error) { return sc.ScriptSelect(sw.ctx, "dbo", "sweep_parent") })
+	str("ScriptInsert", func() (string, error) { return sc.ScriptInsert(sw.ctx, "dbo", "sweep_parent") })
+	str("ScriptUpdate", func() (string, error) { return sc.ScriptUpdate(sw.ctx, "dbo", "sweep_parent") })
+	str("ScriptDelete", func() (string, error) { return sc.ScriptDelete(sw.ctx, "dbo", "sweep_parent") })
+	str("ScriptExecute", func() (string, error) { return sc.ScriptExecute(sw.ctx, "dbo", "usp_sweep") })
+	str("ScriptFunctionCall", func() (string, error) {
+		return sc.ScriptFunctionCall(sw.ctx, "dbo", "sweep_fn", "FN")
 	})
-	str("ScriptSchemaContext", func() (string, error) { return sc.ScriptSchemaContext(sw.ctx, "app") })
-	str("ScriptUserContext", func() (string, error) { return sc.ScriptUserContext(sw.ctx, "sweep_user") })
-	str("ScriptDatabaseRoleContext", func() (string, error) { return sc.ScriptDatabaseRoleContext(sw.ctx, "sweep_role") })
-	str("ScriptSecurityPolicyContext", func() (string, error) {
-		return sc.ScriptSecurityPolicyContext(sw.ctx, "app", "sweep_policy")
+	str("ScriptSchema", func() (string, error) { return sc.ScriptSchema(sw.ctx, "app") })
+	str("ScriptUser", func() (string, error) { return sc.ScriptUser(sw.ctx, "sweep_user") })
+	str("ScriptDatabaseRole", func() (string, error) { return sc.ScriptDatabaseRole(sw.ctx, "sweep_role") })
+	str("ScriptSecurityPolicy", func() (string, error) {
+		return sc.ScriptSecurityPolicy(sw.ctx, "app", "sweep_policy")
 	})
-	str("ScriptColumnMasterKeyContext", func() (string, error) {
-		return sc.ScriptColumnMasterKeyContext(sw.ctx, "sweep_cmk")
+	str("ScriptColumnMasterKey", func() (string, error) {
+		return sc.ScriptColumnMasterKey(sw.ctx, "sweep_cmk")
 	})
-	str("ScriptColumnEncryptionKeyContext", func() (string, error) {
-		return sc.ScriptColumnEncryptionKeyContext(sw.ctx, "sweep_cek")
+	str("ScriptColumnEncryptionKey", func() (string, error) {
+		return sc.ScriptColumnEncryptionKey(sw.ctx, "sweep_cek")
 	})
-	str("ScriptIndexContext", func() (string, error) {
-		return sc.ScriptIndexContext(sw.ctx, "dbo", "sweep_child", "IX_sweep_child_parent")
+	str("ScriptIndex", func() (string, error) {
+		return sc.ScriptIndex(sw.ctx, "dbo", "sweep_child", "IX_sweep_child_parent")
 	})
-	str("ScriptCheckConstraintContext", func() (string, error) {
-		return sc.ScriptCheckConstraintContext(sw.ctx, "dbo", "sweep_child", "CK_sweep_child_id")
+	str("ScriptCheckConstraint", func() (string, error) {
+		return sc.ScriptCheckConstraint(sw.ctx, "dbo", "sweep_child", "CK_sweep_child_id")
 	})
-	str("ScriptForeignKeyContext", func() (string, error) {
-		return sc.ScriptForeignKeyContext(sw.ctx, "dbo", "sweep_child", "FK_sweep_child_parent")
+	str("ScriptForeignKey", func() (string, error) {
+		return sc.ScriptForeignKey(sw.ctx, "dbo", "sweep_child", "FK_sweep_child_parent")
 	})
-	str("ScriptSequenceContext", func() (string, error) { return sc.ScriptSequenceContext(sw.ctx, "dbo", "sweep_seq") })
-	str("ScriptSynonymContext", func() (string, error) { return sc.ScriptSynonymContext(sw.ctx, "dbo", "sweep_syn") })
-	str("ScriptPartitionFunctionContext", func() (string, error) {
-		return sc.ScriptPartitionFunctionContext(sw.ctx, "sweep_pf")
+	str("ScriptSequence", func() (string, error) { return sc.ScriptSequence(sw.ctx, "dbo", "sweep_seq") })
+	str("ScriptSynonym", func() (string, error) { return sc.ScriptSynonym(sw.ctx, "dbo", "sweep_syn") })
+	str("ScriptPartitionFunction", func() (string, error) {
+		return sc.ScriptPartitionFunction(sw.ctx, "sweep_pf")
 	})
-	str("ScriptPartitionSchemeContext", func() (string, error) {
-		return sc.ScriptPartitionSchemeContext(sw.ctx, "sweep_ps")
+	str("ScriptPartitionScheme", func() (string, error) {
+		return sc.ScriptPartitionScheme(sw.ctx, "sweep_ps")
 	})
 
 	// The new families' scripters. Each opens with a by-name catalog read, so
 	// each is version-exposed exactly like a listing is, and none of them was
 	// reachable from the sweep before Stage F.
-	str("ScriptUserDefinedDataTypeContext", func() (string, error) {
-		return sc.ScriptUserDefinedDataTypeContext(sw.ctx, "dbo", "sweep_alias")
+	str("ScriptUserDefinedDataType", func() (string, error) {
+		return sc.ScriptUserDefinedDataType(sw.ctx, "dbo", "sweep_alias")
 	})
-	str("ScriptUserDefinedTableTypeContext", func() (string, error) {
-		return sc.ScriptUserDefinedTableTypeContext(sw.ctx, "dbo", "sweep_tabletype")
+	str("ScriptUserDefinedTableType", func() (string, error) {
+		return sc.ScriptUserDefinedTableType(sw.ctx, "dbo", "sweep_tabletype")
 	})
-	str("ScriptXMLSchemaCollectionContext", func() (string, error) {
-		return sc.ScriptXMLSchemaCollectionContext(sw.ctx, "dbo", "sweep_xsd")
+	str("ScriptXMLSchemaCollection", func() (string, error) {
+		return sc.ScriptXMLSchemaCollection(sw.ctx, "dbo", "sweep_xsd")
 	})
-	str("ScriptRuleContext", func() (string, error) { return sc.ScriptRuleContext(sw.ctx, "dbo", "sweep_rule") })
-	str("ScriptDefaultContext", func() (string, error) {
-		return sc.ScriptDefaultContext(sw.ctx, "dbo", "sweep_default")
+	str("ScriptRule", func() (string, error) { return sc.ScriptRule(sw.ctx, "dbo", "sweep_rule") })
+	str("ScriptDefault", func() (string, error) {
+		return sc.ScriptDefault(sw.ctx, "dbo", "sweep_default")
 	})
-	str("ScriptPlanGuideContext", func() (string, error) { return sc.ScriptPlanGuideContext(sw.ctx, "sweep_pg") })
+	str("ScriptPlanGuide", func() (string, error) { return sc.ScriptPlanGuide(sw.ctx, "sweep_pg") })
 
 	// The seven Service Broker scripters. Each opens with its family's
 	// by-name read, so each is version-exposed exactly like a listing.
-	str("ScriptMessageTypeContext", func() (string, error) {
-		return sc.ScriptMessageTypeContext(sw.ctx, "//gosmo/sweep/mt")
+	str("ScriptMessageType", func() (string, error) {
+		return sc.ScriptMessageType(sw.ctx, "//gosmo/sweep/mt")
 	})
-	str("ScriptContractContext", func() (string, error) {
-		return sc.ScriptContractContext(sw.ctx, "//gosmo/sweep/contract")
+	str("ScriptContract", func() (string, error) {
+		return sc.ScriptContract(sw.ctx, "//gosmo/sweep/contract")
 	})
-	str("ScriptBrokerQueueContext", func() (string, error) {
-		return sc.ScriptBrokerQueueContext(sw.ctx, "dbo", "sweep_queue")
+	str("ScriptBrokerQueue", func() (string, error) {
+		return sc.ScriptBrokerQueue(sw.ctx, "dbo", "sweep_queue")
 	})
-	str("ScriptBrokerServiceContext", func() (string, error) {
-		return sc.ScriptBrokerServiceContext(sw.ctx, "//gosmo/sweep/service")
+	str("ScriptBrokerService", func() (string, error) {
+		return sc.ScriptBrokerService(sw.ctx, "//gosmo/sweep/service")
 	})
-	str("ScriptRouteContext", func() (string, error) { return sc.ScriptRouteContext(sw.ctx, "sweep_route") })
-	str("ScriptBrokerPriorityContext", func() (string, error) {
-		return sc.ScriptBrokerPriorityContext(sw.ctx, "sweep_priority")
+	str("ScriptRoute", func() (string, error) { return sc.ScriptRoute(sw.ctx, "sweep_route") })
+	str("ScriptBrokerPriority", func() (string, error) {
+		return sc.ScriptBrokerPriority(sw.ctx, "sweep_priority")
 	})
 
 	// The remaining five script objects the sweep cannot create — a CLR type
@@ -971,23 +963,23 @@ func sweepScripter(sw *sweep, d *Database) {
 	// The remote service binding's scripter goes with them: the binding
 	// exists on every box product and on none of Managed Instance, where
 	// CREATE REMOTE SERVICE BINDING is refused outright.
-	absent("ScriptRemoteServiceBindingContext", func() (string, error) {
-		return sc.ScriptRemoteServiceBindingContext(sw.ctx, "sweep_rsb")
+	absent("ScriptRemoteServiceBinding", func() (string, error) {
+		return sc.ScriptRemoteServiceBinding(sw.ctx, "sweep_rsb")
 	})
-	absent("ScriptClrTypeContext", func() (string, error) {
-		return sc.ScriptClrTypeContext(sw.ctx, "dbo", "sweep_clr_absent")
+	absent("ScriptClrType", func() (string, error) {
+		return sc.ScriptClrType(sw.ctx, "dbo", "sweep_clr_absent")
 	})
-	absent("ScriptAssemblyContext", func() (string, error) {
-		return sc.ScriptAssemblyContext(sw.ctx, "sweep_assembly_absent")
+	absent("ScriptAssembly", func() (string, error) {
+		return sc.ScriptAssembly(sw.ctx, "sweep_assembly_absent")
 	})
-	absent("ScriptExternalDataSourceContext", func() (string, error) {
-		return sc.ScriptExternalDataSourceContext(sw.ctx, "sweep_eds_absent")
+	absent("ScriptExternalDataSource", func() (string, error) {
+		return sc.ScriptExternalDataSource(sw.ctx, "sweep_eds_absent")
 	})
-	absent("ScriptExternalFileFormatContext", func() (string, error) {
-		return sc.ScriptExternalFileFormatContext(sw.ctx, "sweep_eff_absent")
+	absent("ScriptExternalFileFormat", func() (string, error) {
+		return sc.ScriptExternalFileFormat(sw.ctx, "sweep_eff_absent")
 	})
-	absent("ScriptExternalLibraryContext", func() (string, error) {
-		return sc.ScriptExternalLibraryContext(sw.ctx, "sweep_lib_absent")
+	absent("ScriptExternalLibrary", func() (string, error) {
+		return sc.ScriptExternalLibrary(sw.ctx, "sweep_lib_absent")
 	})
 }
 
@@ -995,16 +987,16 @@ func sweepScripter(sw *sweep, d *Database) {
 // and the filesystem enumeration.
 func sweepServerCalls(sw *sweep, srv *Server, info *ServerInfo) {
 	for _, lt := range []ErrorLogType{ErrorLogSQLServer, ErrorLogAgent} {
-		sw.call(fmt.Sprintf("Server.EnumErrorLogsContext(%v)", lt), func() error {
-			_, err := srv.EnumErrorLogsContext(sw.ctx, lt)
+		sw.call(fmt.Sprintf("Server.EnumErrorLogs(%v)", lt), func() error {
+			_, err := srv.EnumErrorLogs(sw.ctx, lt)
 			return err
 		})
-		sw.call(fmt.Sprintf("Server.ReadLogContext(%v)", lt), func() error {
-			_, err := srv.ReadLogContext(sw.ctx, lt, 0)
+		sw.call(fmt.Sprintf("Server.ReadLog(%v)", lt), func() error {
+			_, err := srv.ReadLog(sw.ctx, lt, 0)
 			return err
 		})
-		sw.call(fmt.Sprintf("Server.ReadLogFilteredContext(%v)", lt), func() error {
-			_, err := srv.ReadLogFilteredContext(sw.ctx, lt, 0, LogSearch{Text1: "server"})
+		sw.call(fmt.Sprintf("Server.ReadLogFiltered(%v)", lt), func() error {
+			_, err := srv.ReadLogFiltered(sw.ctx, lt, 0, LogSearch{Text1: "server"})
 			return err
 		})
 	}
@@ -1017,25 +1009,25 @@ func sweepServerCalls(sw *sweep, srv *Server, info *ServerInfo) {
 			path = "/"
 		}
 	}
-	sw.call("Server.EnumFileSystemContext", func() error {
-		_, err := srv.EnumFileSystemContext(sw.ctx, path)
+	sw.call("Server.EnumFileSystem", func() error {
+		_, err := srv.EnumFileSystem(sw.ctx, path)
 		return err
 	})
-	sw.call("Server.FileSystemExistsContext", func() error {
-		_, _, err := srv.FileSystemExistsContext(sw.ctx, path)
+	sw.call("Server.FileSystemExists", func() error {
+		_, _, err := srv.FileSystemExists(sw.ctx, path)
 		return err
 	})
 
 	// Database snapshots. The listing is reflective; these two take a name.
-	// SnapshotFileDefaultsContext is a read, not the create: it only asks
+	// SnapshotFileDefaults is a read, not the create: it only asks
 	// sys.master_files what the source's data files are, which is where a
 	// snapshot statement most often goes wrong.
-	sw.call("Server.SnapshotsOfContext", func() error {
-		_, err := srv.SnapshotsOfContext(sw.ctx, "master")
+	sw.call("Server.SnapshotsOf", func() error {
+		_, err := srv.SnapshotsOf(sw.ctx, "master")
 		return err
 	})
-	sw.call("Server.SnapshotFileDefaultsContext", func() error {
-		specs, err := srv.SnapshotFileDefaultsContext(sw.ctx, "master", "sweep_snap")
+	sw.call("Server.SnapshotFileDefaults", func() error {
+		specs, err := srv.SnapshotFileDefaults(sw.ctx, "master", "sweep_snap")
 		if err != nil {
 			return err
 		}

@@ -39,12 +39,12 @@ func TestLiveDropColumnAndTransferObject(t *testing.T) {
 	tbl := d.TableRef("dbo", "Orders")
 
 	// The plain case: a column nothing depends on goes.
-	if err := tbl.DropColumnContext(ctx, "spare"); err != nil {
-		t.Fatalf("DropColumnContext(spare): %v", err)
+	if err := tbl.DropColumn(ctx, "spare"); err != nil {
+		t.Fatalf("DropColumn(spare): %v", err)
 	}
-	cols, err := d.ObjectColumnsContext(ctx, "dbo", "Orders")
+	cols, err := d.ObjectColumns(ctx, "dbo", "Orders")
 	if err != nil {
-		t.Fatalf("ObjectColumnsContext: %v", err)
+		t.Fatalf("ObjectColumns: %v", err)
 	}
 	for _, c := range cols {
 		if c.Name == "spare" {
@@ -63,7 +63,7 @@ func TestLiveDropColumnAndTransferObject(t *testing.T) {
 	// (internal/tui/explorer_object_ops.go, NodeColumn.warning), so if Msg 5074
 	// ever stopped reaching the caller that warning would be a lie. Verified on
 	// majors 13, 14 and 17.
-	err = tbl.DropColumnContext(ctx, "flagged")
+	err = tbl.DropColumn(ctx, "flagged")
 	if err == nil {
 		t.Fatal("dropping a column with a default constraint succeeded; expected the server to refuse")
 	}
@@ -73,36 +73,36 @@ func TestLiveDropColumnAndTransferObject(t *testing.T) {
 	if !strings.Contains(err.Error(), "DF_Orders_flagged") {
 		t.Errorf("refusal = %v, want it to name the blocking constraint DF_Orders_flagged", err)
 	}
-	if err := tbl.DropConstraintContext(ctx, "DF_Orders_flagged"); err != nil {
-		t.Fatalf("DropConstraintContext: %v", err)
+	if err := tbl.DropConstraint(ctx, "DF_Orders_flagged"); err != nil {
+		t.Fatalf("DropConstraint: %v", err)
 	}
-	if err := tbl.DropColumnContext(ctx, "flagged"); err != nil {
-		t.Errorf("DropColumnContext after dropping the constraint: %v", err)
+	if err := tbl.DropColumn(ctx, "flagged"); err != nil {
+		t.Errorf("DropColumn after dropping the constraint: %v", err)
 	}
 
 	// The transfer: same object, different schema.
-	before, err := d.TableByNameContext(ctx, "dbo", "Orders")
+	before, err := d.TableByName(ctx, "dbo", "Orders")
 	if err != nil {
-		t.Fatalf("TableByNameContext before the transfer: %v", err)
+		t.Fatalf("TableByName before the transfer: %v", err)
 	}
-	if err := d.TransferObjectContext(ctx, "arch", "dbo", "Orders"); err != nil {
-		t.Fatalf("TransferObjectContext: %v", err)
+	if err := d.TransferObject(ctx, "arch", "dbo", "Orders"); err != nil {
+		t.Fatalf("TransferObject: %v", err)
 	}
-	after, err := d.TableByNameContext(ctx, "arch", "Orders")
+	after, err := d.TableByName(ctx, "arch", "Orders")
 	if err != nil {
-		t.Fatalf("TableByNameContext after the transfer: %v", err)
+		t.Fatalf("TableByName after the transfer: %v", err)
 	}
 	if after.ObjectID != before.ObjectID {
 		t.Errorf("object_id = %d after the transfer, want %d — the object was replaced, not moved",
 			after.ObjectID, before.ObjectID)
 	}
-	if _, err := d.TableByNameContext(ctx, "dbo", "Orders"); err == nil {
+	if _, err := d.TableByName(ctx, "dbo", "Orders"); err == nil {
 		t.Errorf("the table is still in dbo as well")
 	}
 
 	// Transferring back into the schema it is already in is refused before
 	// anything reaches the server.
-	if err := d.TransferObjectContext(ctx, "arch", "arch", "Orders"); err == nil {
+	if err := d.TransferObject(ctx, "arch", "arch", "Orders"); err == nil {
 		t.Errorf("a same-schema transfer was accepted")
 	}
 }

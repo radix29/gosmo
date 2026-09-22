@@ -133,7 +133,7 @@ const (
 // runtime renders the aggregate over a sys.query_store_runtime_stats alias
 // and a metric column stem; wait renders it over sys.query_store_wait_stats,
 // whose columns are named differently and which has no execution count of its
-// own (see QueryStoreWaitCategoriesContext).
+// own (see QueryStoreWaitCategories).
 //
 // Both are functions rather than format strings so the substitution order is
 // the compiler's problem, not a reviewer's.
@@ -247,7 +247,7 @@ type QueryStoreReportOptions struct {
 	From, To time.Time
 
 	// BaselineFrom and BaselineTo bound the comparison window
-	// QueryStoreRegressedQueriesContext measures regression against, and are
+	// QueryStoreRegressedQueries measures regression against, and are
 	// ignored by every other report. Zero means the window of the same length
 	// immediately before From.
 	BaselineFrom, BaselineTo time.Time
@@ -264,8 +264,8 @@ type QueryStoreReportOptions struct {
 	// ranking the whole database — what the Tracked Queries view reads, where
 	// the caller already knows which queries it is following. Empty means
 	// every query. Honoured by the four per-query reports; ignored by the
-	// reports whose rows are not queries (QueryStoreOverallConsumptionContext,
-	// QueryStoreWaitCategoriesContext) and by QueryStorePlansContext, which
+	// reports whose rows are not queries (QueryStoreOverallConsumption,
+	// QueryStoreWaitCategories) and by QueryStorePlans, which
 	// names the one query it is about.
 	//
 	// Top still applies: a caller asking for more ids than Top gets the
@@ -378,7 +378,7 @@ func (sp qsReportSpec) window(a *qsArgs, from, to time.Time) string {
 
 // queryFilter renders the Options.QueryIDs restriction as further predicates
 // for the window's WHERE, or nothing when there is no list. Appended by the
-// per-query reports only: QueryStorePlansContext names its own query, and
+// per-query reports only: QueryStorePlans names its own query, and
 // adding a second id predicate there would answer nothing for any query the
 // caller had not also listed.
 func (sp qsReportSpec) queryFilter(a *qsArgs) string {
@@ -421,8 +421,8 @@ func (sp qsReportSpec) regressionFloor(a *qsArgs) string {
 // QSQueryStat is one query's line in a Query Store report.
 //
 // Which fields carry a value depends on the report: BaselineValue and
-// BaselineExecCount are populated only by QueryStoreRegressedQueriesContext,
-// and Variation only by QueryStoreHighVariationQueriesContext. Both are zero
+// BaselineExecCount are populated only by QueryStoreRegressedQueries,
+// and Variation only by QueryStoreHighVariationQueries. Both are zero
 // elsewhere.
 type QSQueryStat struct {
 	QueryID    int64
@@ -546,13 +546,7 @@ func qsQueryColumns(value, variation string) string {
 
 // QueryStoreTopResourceQueries ranks the database's queries by one metric —
 // SSMS's Top Resource Consuming Queries view.
-func (d *Database) QueryStoreTopResourceQueries(opts QueryStoreReportOptions) ([]*QSQueryStat, error) {
-	return d.QueryStoreTopResourceQueriesContext(context.Background(), opts)
-}
-
-// QueryStoreTopResourceQueriesContext is the context-aware variant of
-// QueryStoreTopResourceQueries.
-func (d *Database) QueryStoreTopResourceQueriesContext(ctx context.Context, opts QueryStoreReportOptions) ([]*QSQueryStat, error) {
+func (d *Database) QueryStoreTopResourceQueries(ctx context.Context, opts QueryStoreReportOptions) ([]*QSQueryStat, error) {
 	sp, err := opts.resolve()
 	if err != nil {
 		return nil, err
@@ -577,18 +571,12 @@ func (d *Database) QueryStoreTopResourceQueriesContext(ctx context.Context, opts
 
 // QueryStoreForcedPlanQueries lists the queries that have a forced plan —
 // SSMS's Queries With Forced Plans view.
-func (d *Database) QueryStoreForcedPlanQueries(opts QueryStoreReportOptions) ([]*QSQueryStat, error) {
-	return d.QueryStoreForcedPlanQueriesContext(context.Background(), opts)
-}
-
-// QueryStoreForcedPlanQueriesContext is the context-aware variant of
-// QueryStoreForcedPlanQueries.
 //
-// The forced-plan predicate is applied as a HAVING over the whole query
-// rather than a WHERE on the plan: a query's *other* plans still have runtime
-// stats in the window, and filtering them out at the row level would report
-// the forced plan's cost as the query's total.
-func (d *Database) QueryStoreForcedPlanQueriesContext(ctx context.Context, opts QueryStoreReportOptions) ([]*QSQueryStat, error) {
+// The forced-plan predicate is applied as a HAVING over the whole query rather
+// than a WHERE on the plan: a query's *other* plans still have runtime stats
+// in the window, and filtering them out at the row level would report the
+// forced plan's cost as the query's total.
+func (d *Database) QueryStoreForcedPlanQueries(ctx context.Context, opts QueryStoreReportOptions) ([]*QSQueryStat, error) {
 	sp, err := opts.resolve()
 	if err != nil {
 		return nil, err
@@ -619,18 +607,12 @@ func (d *Database) QueryStoreForcedPlanQueriesContext(ctx context.Context, opts 
 
 // QueryStoreHighVariationQueries ranks queries by how unstable one metric is
 // — SSMS's Queries With High Variation view.
-func (d *Database) QueryStoreHighVariationQueries(opts QueryStoreReportOptions) ([]*QSQueryStat, error) {
-	return d.QueryStoreHighVariationQueriesContext(context.Background(), opts)
-}
-
-// QueryStoreHighVariationQueriesContext is the context-aware variant of
-// QueryStoreHighVariationQueries.
 //
 // Ranking is by coefficient of variation (stdev/avg), not by stdev: the most
-// expensive query in the database otherwise tops a variation report merely
-// for being expensive. Value still carries the statistic the caller asked
-// for, so the report can show the cost beside the instability.
-func (d *Database) QueryStoreHighVariationQueriesContext(ctx context.Context, opts QueryStoreReportOptions) ([]*QSQueryStat, error) {
+// expensive query in the database otherwise tops a variation report merely for
+// being expensive. Value still carries the statistic the caller asked for, so
+// the report can show the cost beside the instability.
+func (d *Database) QueryStoreHighVariationQueries(ctx context.Context, opts QueryStoreReportOptions) ([]*QSQueryStat, error) {
 	sp, err := opts.resolve()
 	if err != nil {
 		return nil, err
@@ -660,20 +642,15 @@ func (d *Database) QueryStoreHighVariationQueriesContext(ctx context.Context, op
 
 // QueryStoreRegressedQueries ranks queries by how much one metric has grown
 // between two windows — SSMS's Regressed Queries view.
-func (d *Database) QueryStoreRegressedQueries(opts QueryStoreReportOptions) ([]*QSQueryStat, error) {
-	return d.QueryStoreRegressedQueriesContext(context.Background(), opts)
-}
-
-// QueryStoreRegressedQueriesContext is the context-aware variant of
-// QueryStoreRegressedQueries. It compares [From, To) against
-// [BaselineFrom, BaselineTo), which default to the equally long window
-// immediately before From.
+//
+// It compares [From, To) against [BaselineFrom, BaselineTo), which default to
+// the equally long window immediately before From.
 //
 // The join between the two windows is an inner one on purpose: a query with
 // no executions in the baseline window has not regressed, it is new, and
 // ranking it by "growth from zero" would fill the report with first-time
 // queries and hide the actual regressions.
-func (d *Database) QueryStoreRegressedQueriesContext(ctx context.Context, opts QueryStoreReportOptions) ([]*QSQueryStat, error) {
+func (d *Database) QueryStoreRegressedQueries(ctx context.Context, opts QueryStoreReportOptions) ([]*QSQueryStat, error) {
 	sp, err := opts.resolve()
 	if err != nil {
 		return nil, err
@@ -737,15 +714,11 @@ ORDER BY regression DESC`, recent, baseline, top, sp.regressionFloor(&a))
 
 // QueryStoreOverallConsumption totals one metric per runtime-stats interval
 // across the whole database — SSMS's Overall Resource Consumption view.
-func (d *Database) QueryStoreOverallConsumption(opts QueryStoreReportOptions) ([]*QSIntervalStat, error) {
-	return d.QueryStoreOverallConsumptionContext(context.Background(), opts)
-}
-
-// QueryStoreOverallConsumptionContext is the context-aware variant of
-// QueryStoreOverallConsumption. Rows come back oldest first, ready to plot,
-// and Options.Top does not apply — the caller asked for a time range, and
-// dropping intervals out of the middle of it would misdraw the chart.
-func (d *Database) QueryStoreOverallConsumptionContext(ctx context.Context, opts QueryStoreReportOptions) ([]*QSIntervalStat, error) {
+//
+// Rows come back oldest first, ready to plot, and Options.Top does not apply
+// — the caller asked for a time range, and dropping intervals out of the
+// middle of it would misdraw the chart.
+func (d *Database) QueryStoreOverallConsumption(ctx context.Context, opts QueryStoreReportOptions) ([]*QSIntervalStat, error) {
 	sp, err := opts.resolve()
 	if err != nil {
 		return nil, err
@@ -761,36 +734,23 @@ GROUP BY rsi.runtime_stats_interval_id, rsi.start_time, rsi.end_time
 ORDER BY rsi.start_time`, sp.value("rs"), qsRuntimeFrom, sp.window(&a, sp.opts.From, sp.opts.To))
 
 	rows, err := d.query(ctx, q, a.args...)
-	if err != nil {
-		return nil, fmt.Errorf("gosmo: overall resource consumption in %q: %w", d.Name, err)
-	}
-	defer rows.Close()
-	var out []*QSIntervalStat
-	for rows.Next() {
+	return scanRows(rows, err, fmt.Sprintf("overall resource consumption in %q", d.Name), func(scan func(...any) error) (*QSIntervalStat, error) {
 		st := &QSIntervalStat{}
 		var value sql.NullFloat64
-		if err := rows.Scan(&st.StartTime, &st.EndTime, &st.ExecCount, &value); err != nil {
-			return nil, fmt.Errorf("gosmo: overall resource consumption in %q: %w", d.Name, err)
+		if err := scan(&st.StartTime, &st.EndTime, &st.ExecCount, &value); err != nil {
+			return nil, err
 		}
 		st.Value = value.Float64
-		out = append(out, st)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("gosmo: overall resource consumption in %q: %w", d.Name, err)
-	}
-	return out, nil
+		return st, nil
+	})
 }
 
 // QueryStoreTrackedQuery returns one query's per-plan time series — SSMS's
 // Tracked Queries view.
-func (d *Database) QueryStoreTrackedQuery(queryID int64, opts QueryStoreReportOptions) ([]*QSPlanIntervalStat, error) {
-	return d.QueryStoreTrackedQueryContext(context.Background(), queryID, opts)
-}
-
-// QueryStoreTrackedQueryContext is the context-aware variant of
-// QueryStoreTrackedQuery. Rows come back plan by plan, oldest interval first,
-// which is the order a per-plan series is plotted in.
-func (d *Database) QueryStoreTrackedQueryContext(ctx context.Context, queryID int64, opts QueryStoreReportOptions) ([]*QSPlanIntervalStat, error) {
+//
+// Rows come back plan by plan, oldest interval first, which is the order a
+// per-plan series is plotted in.
+func (d *Database) QueryStoreTrackedQuery(ctx context.Context, queryID int64, opts QueryStoreReportOptions) ([]*QSPlanIntervalStat, error) {
 	sp, err := opts.resolve()
 	if err != nil {
 		return nil, err
@@ -809,28 +769,19 @@ ORDER BY p.plan_id, rsi.start_time`,
 		sp.value("rs"), qsRuntimeFrom, sp.window(&a, sp.opts.From, sp.opts.To), a.add(queryID))
 
 	rows, err := d.query(ctx, q, a.args...)
-	if err != nil {
-		return nil, fmt.Errorf("gosmo: tracked query %d in %q: %w", queryID, d.Name, err)
-	}
-	defer rows.Close()
-	var out []*QSPlanIntervalStat
-	for rows.Next() {
+	return scanRows(rows, err, fmt.Sprintf("tracked query %d in %q", queryID, d.Name), func(scan func(...any) error) (*QSPlanIntervalStat, error) {
 		st := &QSPlanIntervalStat{}
 		var value sql.NullFloat64
-		if err := rows.Scan(&st.PlanID, &st.StartTime, &st.EndTime, &st.ExecCount, &value); err != nil {
-			return nil, fmt.Errorf("gosmo: tracked query %d in %q: %w", queryID, d.Name, err)
+		if err := scan(&st.PlanID, &st.StartTime, &st.EndTime, &st.ExecCount, &value); err != nil {
+			return nil, err
 		}
 		st.Value = value.Float64
-		out = append(out, st)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("gosmo: tracked query %d in %q: %w", queryID, d.Name, err)
-	}
-	return out, nil
+		return st, nil
+	})
 }
 
 // queryStorePlansQuery renders the plan-list query. Split out from
-// QueryStorePlansContext so the version gate below can be asserted at every
+// QueryStorePlans so the version gate below can be asserted at every
 // major without a server.
 func (d *Database) queryStorePlansQuery(valueExpr, from, to, id string) string {
 	// plan_forcing_type_desc is "SQL Server 2017 (14.x) and later versions" in
@@ -878,17 +829,12 @@ ORDER BY p.plan_id`,
 // QueryStorePlans returns every plan Query Store holds for one query, with
 // its cost over the report's window — the plan list under SSMS's Query Store
 // views, and what Force Plan picks from.
-func (d *Database) QueryStorePlans(queryID int64, opts QueryStoreReportOptions) ([]*QSPlan, error) {
-	return d.QueryStorePlansContext(context.Background(), queryID, opts)
-}
-
-// QueryStorePlansContext is the context-aware variant of QueryStorePlans.
 //
 // The runtime-stats join is a LEFT one: a plan that did not run inside the
 // window still exists, is still forceable, and still has plan XML worth
 // showing — dropping it would hide the very plan a user opened the report to
 // force back.
-func (d *Database) QueryStorePlansContext(ctx context.Context, queryID int64, opts QueryStoreReportOptions) ([]*QSPlan, error) {
+func (d *Database) QueryStorePlans(ctx context.Context, queryID int64, opts QueryStoreReportOptions) ([]*QSPlan, error) {
 	sp, err := opts.resolve()
 	if err != nil {
 		return nil, err
@@ -897,42 +843,29 @@ func (d *Database) QueryStorePlansContext(ctx context.Context, queryID int64, op
 	q := d.queryStorePlansQuery(sp.value("rs"), a.add(sp.opts.From), a.add(sp.opts.To), a.add(queryID))
 
 	rows, err := d.query(ctx, q, a.args...)
-	if err != nil {
-		return nil, fmt.Errorf("gosmo: query store plans for query %d in %q: %w", queryID, d.Name, err)
-	}
-	defer rows.Close()
-	var out []*QSPlan
-	for rows.Next() {
+	return scanRows(rows, err, fmt.Sprintf("query store plans for query %d in %q", queryID, d.Name), func(scan func(...any) error) (*QSPlan, error) {
 		pl := &QSPlan{}
 		var value sql.NullFloat64
 		var compiled, executed sql.NullTime
-		if err := rows.Scan(&pl.PlanID, &pl.QueryID, &pl.IsForced, &pl.ForcingType,
+		if err := scan(&pl.PlanID, &pl.QueryID, &pl.IsForced, &pl.ForcingType,
 			&pl.ForceFailureCount, &pl.LastForceFailureReason, &pl.CompatibilityLevel,
 			&pl.IsTrivialPlan, &pl.IsParallelPlan, &compiled, &executed,
 			&pl.QueryPlanXML, &pl.ExecCount, &value); err != nil {
-			return nil, fmt.Errorf("gosmo: query store plans for query %d in %q: %w", queryID, d.Name, err)
+			return nil, err
 		}
 		pl.LastCompileStartTime = compiled.Time
 		pl.LastExecutionTime = executed.Time
 		pl.Value = value.Float64
-		out = append(out, pl)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("gosmo: query store plans for query %d in %q: %w", queryID, d.Name, err)
-	}
-	return out, nil
+		return pl, nil
+	})
 }
 
 // QueryStoreQueryText returns one query's SQL text and the schema-qualified
 // module it belongs to, empty if it is ad hoc.
-func (d *Database) QueryStoreQueryText(queryID int64) (text, objectName string, err error) {
-	return d.QueryStoreQueryTextContext(context.Background(), queryID)
-}
-
-// QueryStoreQueryTextContext is the context-aware variant of
-// QueryStoreQueryText. A query id Query Store no longer holds — cleanup
-// removes them — comes back as an error wrapping ErrNotFound.
-func (d *Database) QueryStoreQueryTextContext(ctx context.Context, queryID int64) (text, objectName string, err error) {
+//
+// A query id Query Store no longer holds — cleanup removes them — comes
+// back as an error wrapping ErrNotFound.
+func (d *Database) QueryStoreQueryText(ctx context.Context, queryID int64) (text, objectName string, err error) {
 	q := fmt.Sprintf(`SELECT qt.query_sql_text, %s
 FROM   sys.query_store_query      AS q
 JOIN   sys.query_store_query_text AS qt ON qt.query_text_id = q.query_text_id
@@ -987,15 +920,11 @@ LEFT JOIN sys.query_store_runtime_stats       AS rs  ON rs.plan_id = ws.plan_id
 
 // QueryStoreWaitCategories totals wait time by category — the top half of
 // SSMS's Query Wait Statistics view.
-func (d *Database) QueryStoreWaitCategories(opts QueryStoreReportOptions) ([]*QSWaitStat, error) {
-	return d.QueryStoreWaitCategoriesContext(context.Background(), opts)
-}
-
-// QueryStoreWaitCategoriesContext is the context-aware variant of
-// QueryStoreWaitCategories. Values are milliseconds whatever Options.Metric
-// says — Query Store records wait time and nothing else per category — but
-// Options.Statistic still applies.
-func (d *Database) QueryStoreWaitCategoriesContext(ctx context.Context, opts QueryStoreReportOptions) ([]*QSWaitStat, error) {
+//
+// Values are milliseconds whatever Options.Metric says — Query Store records
+// wait time and nothing else per category — but Options.Statistic still
+// applies.
+func (d *Database) QueryStoreWaitCategories(ctx context.Context, opts QueryStoreReportOptions) ([]*QSWaitStat, error) {
 	if !d.QueryStoreWaitStatsSupported() {
 		return nil, d.errWaitStatsUnsupported()
 	}
@@ -1014,38 +943,24 @@ GROUP BY ws.wait_category_desc
 ORDER BY value DESC`, top, sp.stat.wait("ws", "rs"), qsWaitFrom, sp.window(&a, sp.opts.From, sp.opts.To))
 
 	rows, err := d.query(ctx, q, a.args...)
-	if err != nil {
-		return nil, fmt.Errorf("gosmo: query store wait categories in %q: %w", d.Name, err)
-	}
-	defer rows.Close()
-	var out []*QSWaitStat
-	for rows.Next() {
+	return scanRows(rows, err, fmt.Sprintf("query store wait categories in %q", d.Name), func(scan func(...any) error) (*QSWaitStat, error) {
 		st := &QSWaitStat{}
 		var value sql.NullFloat64
-		if err := rows.Scan(&st.Category, &st.ExecCount, &value); err != nil {
-			return nil, fmt.Errorf("gosmo: query store wait categories in %q: %w", d.Name, err)
+		if err := scan(&st.Category, &st.ExecCount, &value); err != nil {
+			return nil, err
 		}
 		st.Value = value.Float64
-		out = append(out, st)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("gosmo: query store wait categories in %q: %w", d.Name, err)
-	}
-	return out, nil
+		return st, nil
+	})
 }
 
 // QueryStoreWaitingQueries ranks the queries waiting in one category — the
 // drill-down half of SSMS's Query Wait Statistics view.
-func (d *Database) QueryStoreWaitingQueries(category string, opts QueryStoreReportOptions) ([]*QSQueryStat, error) {
-	return d.QueryStoreWaitingQueriesContext(context.Background(), category, opts)
-}
-
-// QueryStoreWaitingQueriesContext is the context-aware variant of
-// QueryStoreWaitingQueries. category is a sys.query_store_wait_stats
-// wait_category_desc value — one of the Category strings
-// QueryStoreWaitCategoriesContext returned. An empty category covers every
-// one of them. Values are milliseconds.
-func (d *Database) QueryStoreWaitingQueriesContext(ctx context.Context, category string, opts QueryStoreReportOptions) ([]*QSQueryStat, error) {
+//
+// category is a sys.query_store_wait_stats wait_category_desc value — one of
+// the Category strings QueryStoreWaitCategories returned. An empty
+// category covers every one of them. Values are milliseconds.
+func (d *Database) QueryStoreWaitingQueries(ctx context.Context, category string, opts QueryStoreReportOptions) ([]*QSQueryStat, error) {
 	if !d.QueryStoreWaitStatsSupported() {
 		return nil, d.errWaitStatsUnsupported()
 	}
@@ -1092,18 +1007,14 @@ ORDER BY value DESC`, top, qsObjectName, sp.stat.wait("ws", "rs"), qsWaitFrom, w
 
 // QueryStoreForcePlan pins one plan as the only plan the optimizer may use
 // for a query — SSMS's Force Plan.
-func (d *Database) QueryStoreForcePlan(queryID, planID int64) error {
-	return d.QueryStoreForcePlanContext(context.Background(), queryID, planID)
-}
-
-// QueryStoreForcePlanContext is the context-aware variant of
-// QueryStoreForcePlan. It needs ALTER on the database.
+//
+// It needs ALTER on the database.
 //
 // Forcing does not guarantee the plan is used: the engine records a failure
 // on sys.query_store_plan.last_force_failure_reason_desc and silently
 // recompiles when the plan can no longer be produced (a dropped index, say).
-// Read the plan back with QueryStorePlansContext to see whether it took.
-func (d *Database) QueryStoreForcePlanContext(ctx context.Context, queryID, planID int64) error {
+// Read the plan back with QueryStorePlans to see whether it took.
+func (d *Database) QueryStoreForcePlan(ctx context.Context, queryID, planID int64) error {
 	const q = `EXEC sys.sp_query_store_force_plan @query_id = @p1, @plan_id = @p2`
 	if _, err := d.exec(ctx, q, queryID, planID); err != nil {
 		return fmt.Errorf("gosmo: force plan %d for query %d in %q: %w", planID, queryID, d.Name, err)
@@ -1113,13 +1024,9 @@ func (d *Database) QueryStoreForcePlanContext(ctx context.Context, queryID, plan
 
 // QueryStoreUnforcePlan releases a plan forced by QueryStoreForcePlan,
 // returning the query to normal optimization — SSMS's Unforce Plan.
-func (d *Database) QueryStoreUnforcePlan(queryID, planID int64) error {
-	return d.QueryStoreUnforcePlanContext(context.Background(), queryID, planID)
-}
-
-// QueryStoreUnforcePlanContext is the context-aware variant of
-// QueryStoreUnforcePlan. It needs ALTER on the database.
-func (d *Database) QueryStoreUnforcePlanContext(ctx context.Context, queryID, planID int64) error {
+//
+// It needs ALTER on the database.
+func (d *Database) QueryStoreUnforcePlan(ctx context.Context, queryID, planID int64) error {
 	const q = `EXEC sys.sp_query_store_unforce_plan @query_id = @p1, @plan_id = @p2`
 	if _, err := d.exec(ctx, q, queryID, planID); err != nil {
 		return fmt.Errorf("gosmo: unforce plan %d for query %d in %q: %w", planID, queryID, d.Name, err)

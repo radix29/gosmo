@@ -12,12 +12,7 @@ import (
 
 // Rebuild rebuilds the index (ALTER INDEX ... REBUILD).
 // Pass fillFactor=0 to keep the existing fill factor.
-func (idx *Index) Rebuild(t *Table, fillFactor int) error {
-	return idx.RebuildContext(context.Background(), t, fillFactor)
-}
-
-// RebuildContext is the context-aware variant of Rebuild.
-func (idx *Index) RebuildContext(ctx context.Context, t *Table, fillFactor int) error {
+func (idx *Index) Rebuild(ctx context.Context, t *Table, fillFactor int) error {
 	q := fmt.Sprintf("ALTER INDEX %s ON %s REBUILD", quoteIdent(idx.Name), t.FullName())
 	if fillFactor > 0 {
 		q += fmt.Sprintf(" WITH (FILLFACTOR = %d)", fillFactor)
@@ -29,12 +24,7 @@ func (idx *Index) RebuildContext(ctx context.Context, t *Table, fillFactor int) 
 }
 
 // Reorganize reorganizes the index (ALTER INDEX ... REORGANIZE).
-func (idx *Index) Reorganize(t *Table) error {
-	return idx.ReorganizeContext(context.Background(), t)
-}
-
-// ReorganizeContext is the context-aware variant of Reorganize.
-func (idx *Index) ReorganizeContext(ctx context.Context, t *Table) error {
+func (idx *Index) Reorganize(ctx context.Context, t *Table) error {
 	q := fmt.Sprintf("ALTER INDEX %s ON %s REORGANIZE", quoteIdent(idx.Name), t.FullName())
 	if _, err := t.db.exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: reorganize index %q: %w", idx.Name, err)
@@ -43,12 +33,7 @@ func (idx *Index) ReorganizeContext(ctx context.Context, t *Table) error {
 }
 
 // Disable disables the index (ALTER INDEX ... DISABLE).
-func (idx *Index) Disable(t *Table) error {
-	return idx.DisableContext(context.Background(), t)
-}
-
-// DisableContext is the context-aware variant of Disable.
-func (idx *Index) DisableContext(ctx context.Context, t *Table) error {
+func (idx *Index) Disable(ctx context.Context, t *Table) error {
 	q := fmt.Sprintf("ALTER INDEX %s ON %s DISABLE", quoteIdent(idx.Name), t.FullName())
 	if _, err := t.db.exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: disable index %q: %w", idx.Name, err)
@@ -58,22 +43,12 @@ func (idx *Index) DisableContext(ctx context.Context, t *Table) error {
 }
 
 // Enable re-enables a disabled index by rebuilding it.
-func (idx *Index) Enable(t *Table) error {
-	return idx.EnableContext(context.Background(), t)
-}
-
-// EnableContext is the context-aware variant of Enable.
-func (idx *Index) EnableContext(ctx context.Context, t *Table) error {
-	return idx.RebuildContext(ctx, t, 0)
+func (idx *Index) Enable(ctx context.Context, t *Table) error {
+	return idx.Rebuild(ctx, t, 0)
 }
 
 // Drop drops the index.
-func (idx *Index) Drop(t *Table) error {
-	return idx.DropContext(context.Background(), t)
-}
-
-// DropContext is the context-aware variant of Drop.
-func (idx *Index) DropContext(ctx context.Context, t *Table) error {
+func (idx *Index) Drop(ctx context.Context, t *Table) error {
 	q := fmt.Sprintf("DROP INDEX %s ON %s", quoteIdent(idx.Name), t.FullName())
 	if _, err := t.db.exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: drop index %q: %w", idx.Name, err)
@@ -82,12 +57,7 @@ func (idx *Index) DropContext(ctx context.Context, t *Table) error {
 }
 
 // RebuildAllIndexes rebuilds all indexes on the table (ALTER INDEX ALL ... REBUILD).
-func (t *Table) RebuildAllIndexes(fillFactor int) error {
-	return t.RebuildAllIndexesContext(context.Background(), fillFactor)
-}
-
-// RebuildAllIndexesContext is the context-aware variant of RebuildAllIndexes.
-func (t *Table) RebuildAllIndexesContext(ctx context.Context, fillFactor int) error {
+func (t *Table) RebuildAllIndexes(ctx context.Context, fillFactor int) error {
 	q := fmt.Sprintf("ALTER INDEX ALL ON %s REBUILD", t.FullName())
 	if fillFactor > 0 {
 		q += fmt.Sprintf(" WITH (FILLFACTOR = %d)", fillFactor)
@@ -110,12 +80,7 @@ func onOffKeyword(b bool) string {
 // SetOptions applies the index's SET-able runtime options (ALTER INDEX ...
 // SET). Fill factor, pad index, and data compression only take effect on a
 // rebuild — see RebuildWithOptions for those.
-func (idx *Index) SetOptions(t *Table, ignoreDupKey, allowRowLocks, allowPageLocks bool) error {
-	return idx.SetOptionsContext(context.Background(), t, ignoreDupKey, allowRowLocks, allowPageLocks)
-}
-
-// SetOptionsContext is the context-aware variant of SetOptions.
-func (idx *Index) SetOptionsContext(ctx context.Context, t *Table, ignoreDupKey, allowRowLocks, allowPageLocks bool) error {
+func (idx *Index) SetOptions(ctx context.Context, t *Table, ignoreDupKey, allowRowLocks, allowPageLocks bool) error {
 	q := fmt.Sprintf("ALTER INDEX %s ON %s SET (IGNORE_DUP_KEY = %s, ALLOW_ROW_LOCKS = %s, ALLOW_PAGE_LOCKS = %s)",
 		quoteIdent(idx.Name), t.FullName(),
 		onOffKeyword(ignoreDupKey), onOffKeyword(allowRowLocks), onOffKeyword(allowPageLocks))
@@ -131,12 +96,7 @@ func (idx *Index) SetOptionsContext(ctx context.Context, t *Table, ignoreDupKey,
 // index backing a PRIMARY KEY or UNIQUE constraint ("Cannot use index option
 // ignore_dup_key to alter index '...' as it enforces a primary or unique
 // constraint").
-func (idx *Index) SetLockOptions(t *Table, allowRowLocks, allowPageLocks bool) error {
-	return idx.SetLockOptionsContext(context.Background(), t, allowRowLocks, allowPageLocks)
-}
-
-// SetLockOptionsContext is the context-aware variant of SetLockOptions.
-func (idx *Index) SetLockOptionsContext(ctx context.Context, t *Table, allowRowLocks, allowPageLocks bool) error {
+func (idx *Index) SetLockOptions(ctx context.Context, t *Table, allowRowLocks, allowPageLocks bool) error {
 	q := fmt.Sprintf("ALTER INDEX %s ON %s SET (ALLOW_ROW_LOCKS = %s, ALLOW_PAGE_LOCKS = %s)",
 		quoteIdent(idx.Name), t.FullName(), onOffKeyword(allowRowLocks), onOffKeyword(allowPageLocks))
 	if _, err := t.db.exec(ctx, q); err != nil {
@@ -148,12 +108,7 @@ func (idx *Index) SetLockOptionsContext(ctx context.Context, t *Table, allowRowL
 // Rename renames the index using sp_rename — also the mechanism for
 // renaming a PRIMARY KEY or UNIQUE constraint, since its name is the
 // backing index's name in sys.indexes.
-func (idx *Index) Rename(t *Table, newName string) error {
-	return idx.RenameContext(context.Background(), t, newName)
-}
-
-// RenameContext is the context-aware variant of Rename.
-func (idx *Index) RenameContext(ctx context.Context, t *Table, newName string) error {
+func (idx *Index) Rename(ctx context.Context, t *Table, newName string) error {
 	objName := t.FullName() + "." + quoteIdent(idx.Name)
 	if _, err := t.db.exec(ctx,
 		"EXEC sp_rename @objname = @p1, @newname = @p2, @objtype = N'INDEX'",
@@ -170,12 +125,7 @@ func (idx *Index) RenameContext(ctx context.Context, t *Table, newName string) e
 // only way to change these three, since none is a plain ALTER INDEX SET
 // option. Pass dataCompression="" to leave compression unspecified (keeps
 // the index's current setting).
-func (idx *Index) RebuildWithOptions(t *Table, fillFactor int, padIndex bool, dataCompression string) error {
-	return idx.RebuildWithOptionsContext(context.Background(), t, fillFactor, padIndex, dataCompression)
-}
-
-// RebuildWithOptionsContext is the context-aware variant of RebuildWithOptions.
-func (idx *Index) RebuildWithOptionsContext(ctx context.Context, t *Table, fillFactor int, padIndex bool, dataCompression string) error {
+func (idx *Index) RebuildWithOptions(ctx context.Context, t *Table, fillFactor int, padIndex bool, dataCompression string) error {
 	switch dataCompression {
 	case "", "NONE", "ROW", "PAGE", "COLUMNSTORE", "COLUMNSTORE_ARCHIVE":
 	default:
@@ -202,12 +152,7 @@ func (idx *Index) RebuildWithOptionsContext(ctx context.Context, t *Table, fillF
 // index, so this reissues a full CREATE INDEX ... WITH (DROP_EXISTING = ON)
 // from idx's own key columns, uniqueness, type, and filter, with columns as
 // the new INCLUDE list.
-func (idx *Index) SetIncludedColumns(t *Table, columns []string) error {
-	return idx.SetIncludedColumnsContext(context.Background(), t, columns)
-}
-
-// SetIncludedColumnsContext is the context-aware variant of SetIncludedColumns.
-func (idx *Index) SetIncludedColumnsContext(ctx context.Context, t *Table, columns []string) error {
+func (idx *Index) SetIncludedColumns(ctx context.Context, t *Table, columns []string) error {
 	// A columnstore index has no INCLUDE list, and the CREATE below would
 	// recreate it as a rowstore index of whatever clustering IsClustered
 	// reports — silently replacing the index with a different kind.
@@ -259,12 +204,7 @@ func (idx *Index) SetIncludedColumnsContext(ctx context.Context, t *Table, colum
 // UpdateStatistics updates the statistics object tied to this index
 // (UPDATE STATISTICS table (index) — every index has an implicit
 // statistics object with the same name).
-func (idx *Index) UpdateStatistics(t *Table) error {
-	return idx.UpdateStatisticsContext(context.Background(), t)
-}
-
-// UpdateStatisticsContext is the context-aware variant of UpdateStatistics.
-func (idx *Index) UpdateStatisticsContext(ctx context.Context, t *Table) error {
+func (idx *Index) UpdateStatistics(ctx context.Context, t *Table) error {
 	q := fmt.Sprintf("UPDATE STATISTICS %s (%s)", t.FullName(), quoteIdent(idx.Name))
 	if _, err := t.db.exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: update statistics for index %q: %w", idx.Name, err)
@@ -294,12 +234,7 @@ type IndexStorageInfo struct {
 }
 
 // StorageInfo returns filegroup/partitioning and space usage for this index.
-func (idx *Index) StorageInfo(t *Table) (*IndexStorageInfo, error) {
-	return idx.StorageInfoContext(context.Background(), t)
-}
-
-// StorageInfoContext is the context-aware variant of StorageInfo.
-func (idx *Index) StorageInfoContext(ctx context.Context, t *Table) (*IndexStorageInfo, error) {
+func (idx *Index) StorageInfo(ctx context.Context, t *Table) (*IndexStorageInfo, error) {
 	const headerQ = `
 SELECT
     ds.name, ds.type,
@@ -375,12 +310,7 @@ ORDER  BY a.type_desc`
 // Table.FragmentationStats's (LIMITED, SAMPLED, or DETAILED); page density
 // is only populated by SAMPLED or DETAILED (LIMITED always reports 0, same
 // as the underlying DMV).
-func (idx *Index) Fragmentation(t *Table, mode string) (*IndexFragmentation, error) {
-	return idx.FragmentationContext(context.Background(), t, mode)
-}
-
-// FragmentationContext is the context-aware variant of Fragmentation.
-func (idx *Index) FragmentationContext(ctx context.Context, t *Table, mode string) (*IndexFragmentation, error) {
+func (idx *Index) Fragmentation(ctx context.Context, t *Table, mode string) (*IndexFragmentation, error) {
 	if mode == "" {
 		mode = "LIMITED"
 	}
@@ -436,12 +366,7 @@ type XMLIndex struct {
 
 // XMLIndexes returns the XML indexes on the table, primary and secondary, in
 // name order.
-func (t *Table) XMLIndexes() ([]*XMLIndex, error) {
-	return t.XMLIndexesContext(context.Background())
-}
-
-// XMLIndexesContext is the context-aware variant of XMLIndexes.
-func (t *Table) XMLIndexesContext(ctx context.Context) ([]*XMLIndex, error) {
+func (t *Table) XMLIndexes(ctx context.Context) ([]*XMLIndex, error) {
 	const q = `
 SELECT xi.name, xi.index_id, ISNULL(xi.secondary_type_desc, ''), c.name, ISNULL(p.name, '')
 FROM   sys.xml_indexes xi
@@ -451,26 +376,16 @@ LEFT   JOIN sys.xml_indexes p ON p.object_id = xi.object_id AND p.index_id = xi.
 WHERE  xi.object_id = @p1
 ORDER  BY xi.name`
 	rows, err := t.db.query(ctx, q, t.ObjectID)
-	if err != nil {
-		return nil, fmt.Errorf("gosmo: xml indexes on %s: %w", t.FullName(), err)
-	}
-	defer rows.Close()
-
-	var out []*XMLIndex
-	for rows.Next() {
+	return scanRows(rows, err, fmt.Sprintf("xml indexes on %s", t.FullName()), func(scan func(...any) error) (*XMLIndex, error) {
 		x := &XMLIndex{}
 		var secondary string
-		if err := rows.Scan(&x.Name, &x.IndexID, &secondary, &x.ColumnName, &x.PrimaryIndexName); err != nil {
-			return nil, fmt.Errorf("gosmo: xml indexes on %s: %w", t.FullName(), err)
+		if err := scan(&x.Name, &x.IndexID, &secondary, &x.ColumnName, &x.PrimaryIndexName); err != nil {
+			return nil, err
 		}
 		x.SecondaryType = XMLSecondaryIndexType(secondary)
 		x.IsPrimary = secondary == ""
-		out = append(out, x)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("gosmo: xml indexes on %s: %w", t.FullName(), err)
-	}
-	return out, nil
+		return x, nil
+	})
 }
 
 // CreateIndexRequest describes a new index to create. Which fields apply
@@ -570,12 +485,7 @@ func (g SpatialGridLevels) levels() string {
 }
 
 // CreateIndex creates a new index on the table.
-func (t *Table) CreateIndex(req CreateIndexRequest) error {
-	return t.CreateIndexContext(context.Background(), req)
-}
-
-// CreateIndexContext is the context-aware variant of CreateIndex.
-func (t *Table) CreateIndexContext(ctx context.Context, req CreateIndexRequest) error {
+func (t *Table) CreateIndex(ctx context.Context, req CreateIndexRequest) error {
 	stmt, err := buildCreateIndexStatement(t.FullName(), req)
 	if err != nil {
 		return err
@@ -587,7 +497,7 @@ func (t *Table) CreateIndexContext(ctx context.Context, req CreateIndexRequest) 
 }
 
 // buildCreateIndexStatement renders one CREATE INDEX statement, or reports
-// why the request cannot be one. Separated from CreateIndexContext so the
+// why the request cannot be one. Separated from CreateIndex so the
 // statement each index type produces can be pinned without a server.
 func buildCreateIndexStatement(tableName string, req CreateIndexRequest) (string, error) {
 	if err := req.validate(); err != nil {
@@ -916,21 +826,25 @@ type IndexFragmentation struct {
 	AvgPageSpaceUsedPct float64
 }
 
-// FragmentationStats returns fragmentation info for all indexes on the table.
-// mode must be one of "LIMITED" (fast, default), "SAMPLED", or "DETAILED".
-func (t *Table) FragmentationStats(mode string) ([]*IndexFragmentation, error) {
-	return t.FragmentationStatsContext(context.Background(), mode)
-}
+// FragmentationMode is sys.dm_db_index_physical_stats's scan mode.
+type FragmentationMode string
 
-// FragmentationStatsContext is the context-aware variant of FragmentationStats.
-func (t *Table) FragmentationStatsContext(ctx context.Context, mode string) ([]*IndexFragmentation, error) {
+const (
+	FragmentationLimited  FragmentationMode = "LIMITED" // fastest; leaf-level page counts are estimates
+	FragmentationSampled  FragmentationMode = "SAMPLED"
+	FragmentationDetailed FragmentationMode = "DETAILED"
+)
+
+// FragmentationStats returns fragmentation info for all indexes on the table.
+// An empty mode is FragmentationLimited.
+func (t *Table) FragmentationStats(ctx context.Context, mode FragmentationMode) ([]*IndexFragmentation, error) {
 	if mode == "" {
-		mode = "LIMITED"
+		mode = FragmentationLimited
 	}
 	// sys.dm_db_index_physical_stats does not accept parameters for the mode string;
 	// validate it here to prevent injection.
 	switch mode {
-	case "LIMITED", "SAMPLED", "DETAILED":
+	case FragmentationLimited, FragmentationSampled, FragmentationDetailed:
 	default:
 		return nil, fmt.Errorf("gosmo: fragmentation stats: invalid mode %q (must be LIMITED, SAMPLED, or DETAILED)", mode)
 	}
@@ -947,22 +861,12 @@ ORDER  BY s.avg_fragmentation_in_percent DESC`,
 		escapeSingle(t.FullName()), mode)
 
 	rows, err := t.db.query(ctx, q)
-	if err != nil {
-		return nil, fmt.Errorf("gosmo: fragmentation stats for %s: %w", t.FullName(), err)
-	}
-	defer rows.Close()
-
-	var results []*IndexFragmentation
-	for rows.Next() {
+	return scanRows(rows, err, fmt.Sprintf("fragmentation stats for %s", t.FullName()), func(scan func(...any) error) (*IndexFragmentation, error) {
 		f := &IndexFragmentation{}
-		if err := rows.Scan(&f.IndexName, &f.IndexID,
+		if err := scan(&f.IndexName, &f.IndexID,
 			&f.AvgFragmentationPct, &f.PageCount, &f.FragmentCount); err != nil {
-			return nil, fmt.Errorf("gosmo: fragmentation stats for %s: %w", t.FullName(), err)
+			return nil, err
 		}
-		results = append(results, f)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("gosmo: fragmentation stats for %s: %w", t.FullName(), err)
-	}
-	return results, nil
+		return f, nil
+	})
 }

@@ -118,16 +118,13 @@ func (ch JobChanges) params() *agentParams {
 
 // Alter applies every property set on ch in one sp_update_job call. An
 // empty JobChanges is a no-op and issues nothing.
-func (j *Job) Alter(ch JobChanges) error { return j.AlterContext(context.Background(), ch) }
-
-// AlterContext is the context-aware variant of Alter.
-func (j *Job) AlterContext(ctx context.Context, ch JobChanges) error {
+func (j *Job) Alter(ctx context.Context, ch JobChanges) error {
 	p := ch.params()
 	if p.empty() {
 		return nil
 	}
 	q := p.statement("sp_update_job", fmt.Sprintf("@job_name = N'%s'", escapeSingle(j.Name)))
-	if err := j.server.execContext(ctx, q); err != nil {
+	if err := j.server.exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: alter job %q: %w", j.Name, err)
 	}
 	setPtrIfApplied(ctx, &j.Description, ch.Description)
@@ -209,16 +206,13 @@ func (ch AlertChanges) params() *agentParams {
 
 // Alter applies every property set on ch in one sp_update_alert call. An
 // empty AlertChanges is a no-op and issues nothing.
-func (a *Alert) Alter(ch AlertChanges) error { return a.AlterContext(context.Background(), ch) }
-
-// AlterContext is the context-aware variant of Alter.
-func (a *Alert) AlterContext(ctx context.Context, ch AlertChanges) error {
+func (a *Alert) Alter(ctx context.Context, ch AlertChanges) error {
 	p := ch.params()
 	if p.empty() {
 		return nil
 	}
 	q := p.statement("sp_update_alert", fmt.Sprintf("@name = N'%s'", escapeSingle(a.Name)))
-	if err := a.server.execContext(ctx, q); err != nil {
+	if err := a.server.exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: alter alert %q: %w", a.Name, err)
 	}
 	setPtrIfApplied(ctx, &a.Enabled, ch.Enabled)
@@ -278,18 +272,13 @@ func (ch OperatorChanges) params() *agentParams {
 
 // Alter applies every property set on ch in one sp_update_operator call. An
 // empty OperatorChanges is a no-op and issues nothing.
-func (o *Operator) Alter(ch OperatorChanges) error {
-	return o.AlterContext(context.Background(), ch)
-}
-
-// AlterContext is the context-aware variant of Alter.
-func (o *Operator) AlterContext(ctx context.Context, ch OperatorChanges) error {
+func (o *Operator) Alter(ctx context.Context, ch OperatorChanges) error {
 	p := ch.params()
 	if p.empty() {
 		return nil
 	}
 	q := p.statement("sp_update_operator", fmt.Sprintf("@name = N'%s'", escapeSingle(o.Name)))
-	if err := o.server.execContext(ctx, q); err != nil {
+	if err := o.server.exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: alter operator %q: %w", o.Name, err)
 	}
 	setPtrIfApplied(ctx, &o.Enabled, ch.Enabled)
@@ -363,19 +352,14 @@ func (ch ScheduleChanges) params() *agentParams {
 
 // Alter applies every property set on ch in one sp_update_schedule call. An
 // empty ScheduleChanges is a no-op and issues nothing.
-func (sch *Schedule) Alter(ch ScheduleChanges) error {
-	return sch.AlterContext(context.Background(), ch)
-}
-
-// AlterContext is the context-aware variant of Alter.
 //
 // The schedule is addressed by @schedule_id where the receiver has one,
 // because msdb allows two schedules to share a name and sp_update_schedule
-// refuses a @name that matches more than one. A handle from
-// Server.ScheduleRef has no ID, so it is addressed by @name instead — which
-// is what makes the batched form usable under WithScript, where the
-// per-property setters, keyed on an ID a Ref does not carry, are not.
-func (sch *Schedule) AlterContext(ctx context.Context, ch ScheduleChanges) error {
+// refuses a @name that matches more than one. A handle from Server.ScheduleRef
+// has no ID, so it is addressed by @name instead — which is what makes the
+// batched form usable under WithScript, where the per-property setters, keyed
+// on an ID a Ref does not carry, are not.
+func (sch *Schedule) Alter(ctx context.Context, ch ScheduleChanges) error {
 	p := ch.params()
 	if p.empty() {
 		return nil
@@ -385,7 +369,7 @@ func (sch *Schedule) AlterContext(ctx context.Context, ch ScheduleChanges) error
 		key = fmt.Sprintf("@name = N'%s'", escapeSingle(sch.Name))
 	}
 	q := p.statement("sp_update_schedule", key)
-	if err := sch.server.execContext(ctx, q); err != nil {
+	if err := sch.server.exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: alter schedule %q: %w", sch.Name, err)
 	}
 	setPtrIfApplied(ctx, &sch.Enabled, ch.Enabled)
