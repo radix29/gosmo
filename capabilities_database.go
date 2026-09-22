@@ -136,12 +136,13 @@ type DatabaseCapabilities struct {
 	// ObjectPermissions' reason, and read the same way.
 	ColumnPermissions map[string]map[string]CapabilityState
 
-	// SecurablePermissions maps each assembly, user-defined type and XML
-	// schema collection in the database — keyed by DatabaseSecurableKey — to
-	// the state of each name in ProbedSecurablePermissions on it. Read it
-	// through HasOnSecurable or PermitsOnSecurable.
+	// SecurablePermissions maps each assembly, user-defined type, XML schema
+	// collection, certificate, asymmetric key and symmetric key in the
+	// database — keyed by DatabaseSecurableKey — to the state of each name in
+	// ProbedSecurablePermissions on it. Read it through HasOnSecurable or
+	// PermitsOnSecurable.
 	//
-	// It exists because none of the maps above can answer for these three
+	// It exists because none of the maps above can answer for these six
 	// classes: ObjectPermissions is class 1 only, and a principal granted
 	// CONTROL on one assembly, or owning it, holds no database- or
 	// schema-scope permission at all. A caller gating the drop on those alone
@@ -410,7 +411,8 @@ func (c *DatabaseCapabilities) DeniedOnAnyColumn(schema, object, name string) (s
 }
 
 // SecurablePermission returns the state of one permission on an assembly, a
-// user-defined type or an XML schema collection; schema is "" for an assembly.
+// user-defined type, an XML schema collection, a certificate or a key; schema
+// is "" for all but a type or a collection.
 // A securable the probe did not reach, a name that was never probed, and every
 // securable of a database that was not probed at all are CapabilityUnknown.
 func (c *DatabaseCapabilities) SecurablePermission(kind DatabaseSecurableKind, schema, name, perm string) CapabilityState {

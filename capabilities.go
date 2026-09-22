@@ -243,6 +243,21 @@ var ProbedDatabasePermissions = []string{
 	// does not know, which reads as CapabilityUnknown — there is no external
 	// library on that version to be gated anyway.
 	"ALTER ANY EXTERNAL LIBRARY",
+	// Certificates, asymmetric keys and symmetric keys, probed with
+	// WITHOUT LOGIN users on majors 13, 14 and 17 and on a Managed Instance
+	// (2026-09-22, identical on all four). ALTER ANY <family> permits CREATE,
+	// DROP and, for a symmetric key, ADD/DROP ENCRYPTION BY a password, and
+	// makes every row of the family visible. CREATE <family> permits the
+	// CREATE alone: its holder owns what it creates and can drop exactly
+	// that, which SecurablePermissions answers for, and sees no one else's
+	// rows. ALTER and CONTROL on the database cover both; db_ddladmin does
+	// too, and db_securityadmin does not.
+	"CREATE CERTIFICATE",
+	"CREATE ASYMMETRIC KEY",
+	"CREATE SYMMETRIC KEY",
+	"ALTER ANY CERTIFICATE",
+	"ALTER ANY ASYMMETRIC KEY",
+	"ALTER ANY SYMMETRIC KEY",
 	"SELECT",
 	"INSERT",
 	"UPDATE",
@@ -318,8 +333,9 @@ var ProbedPrincipalPermissions = []string{
 }
 
 // ProbedSecurablePermissions are the permissions DatabaseCapabilities probes on
-// every assembly (class 5), user-defined type (class 6) and XML schema
-// collection (class 10) in the database, once per securable.
+// every assembly (class 5), user-defined type (class 6), XML schema collection
+// (class 10), symmetric key (class 24), certificate (class 25) and asymmetric
+// key (class 26) in the database, once per securable.
 //
 // This block is asked with HAS_PERMS_BY_NAME, as class 108 is, rather than
 // read out of the catalog, and the answer it gives is the one no catalog row
@@ -328,7 +344,7 @@ var ProbedPrincipalPermissions = []string{
 // families hold a handful of rows each, so one call per securable costs
 // little.
 //
-// CONTROL is the one name worth asking, and what it answers was probed live on
+// CONTROL is the name that answers for these, and what it answers was probed live on
 // majors 13, 14 and 17 (2026-09-11, identical on all three) with a
 // WITHOUT LOGIN user per case:
 //
@@ -343,18 +359,41 @@ var ProbedPrincipalPermissions = []string{
 //     schema for a type or a collection, ALTER on the database for all three.
 //     So for a drop this is an additional reason to permit, never the whole
 //     test.
-//   - ALTER is not worth asking. GRANT ALTER on the securable alone reads 1
+//   - ALTER answers neither. GRANT ALTER on the securable alone reads 1
 //     for ALTER and permits neither statement, and DENY ALTER reads 0 while
-//     the drop goes through.
+//     the drop goes through. It is asked for the symmetric key's sake (below)
+//     and answers nothing for these three.
+//
+// For certificates, asymmetric keys and symmetric keys CONTROL answers for the
+// drop, again in the permitting direction only (2026-09-22, majors 13, 14 and
+// 17 and a Managed Instance): the owner and a CONTROL grantee can drop with no
+// database-scope right at all, which is the case a CREATE CERTIFICATE-only
+// user hits on the first certificate it makes; ALTER ANY <family>, ALTER on
+// the database and db_ddladmin drop too, and read 0 here. ALTER on the key
+// alone permits no drop, and VIEW DEFINITION on it permits nothing but seeing
+// it. CONTROL on a certificate or asymmetric key is also what a symmetric key
+// needs to be opened with it, or to DROP ENCRYPTION BY it.
+//
+// ALTER on a symmetric key is the exact answer for ALTER SYMMETRIC KEY ... ADD
+// / DROP ENCRYPTION (2026-09-22, majors 13 and 17, identical): the statement
+// goes through exactly when the effective ALTER reads 1 — under ALTER on the
+// key alone, ALTER ANY SYMMETRIC KEY, or ownership — and is refused (Msg
+// 15151) when it reads 0, which includes CONTROL on the key with ALTER denied
+// and VIEW DEFINITION alone. CONTROL is not a stand-in for it in either
+// direction. ALTER is asked of all six classes, since the block binds one list;
+// on the other five it is read by nothing.
 //
 // There is no catalog block for the DENY direction, and that is SQL Server's
-// doing rather than an omission: DENY CONTROL on any of the three — to the
+// doing rather than an omission: DENY CONTROL on any of the six — to the
 // user or to public — withholds VIEW DEFINITION with it, and the securable
-// disappears from sys.assemblies, sys.types and sys.xml_schema_collections for
-// that principal (verified on the same three majors). A listing built from
-// those views never shows it, so there is nothing for a gate to withhold.
+// disappears from sys.assemblies, sys.types, sys.xml_schema_collections,
+// sys.certificates, sys.asymmetric_keys or sys.symmetric_keys for that
+// principal (verified on the same three majors; for certificates on
+// 2026-09-22). A listing built from those views never shows it, so there is
+// nothing for a gate to withhold.
 var ProbedSecurablePermissions = []string{
 	"CONTROL",
+	"ALTER",
 }
 
 // DatabaseSecurableKind is the kind of database securable
@@ -374,11 +413,23 @@ const (
 	// DatabaseSecurableXMLSchemaCollection is an XML schema collection —
 	// class 10.
 	DatabaseSecurableXMLSchemaCollection DatabaseSecurableKind = "XML SCHEMA COLLECTION"
+
+	// DatabaseSecurableSymmetricKey is a symmetric key — class 24,
+	// schemaless. The database master key is not asked about.
+	DatabaseSecurableSymmetricKey DatabaseSecurableKind = "SYMMETRIC KEY"
+
+	// DatabaseSecurableCertificate is a certificate — class 25, schemaless.
+	DatabaseSecurableCertificate DatabaseSecurableKind = "CERTIFICATE"
+
+	// DatabaseSecurableAsymmetricKey is an asymmetric key — class 26,
+	// schemaless.
+	DatabaseSecurableAsymmetricKey DatabaseSecurableKind = "ASYMMETRIC KEY"
 )
 
 // DatabaseSecurableKey is the key SecurablePermissions is indexed by: the kind
 // and the securable joined with "::", the securable being "schema.name" for a
-// type or a collection and the bare name for an assembly, whose schema is "".
+// type or a collection and the bare name for an assembly, a certificate or a
+// key, whose schema is "".
 //
 // The kind is part of the key for ServerSecurableKey's reason: types and XML
 // schema collections live in separate namespaces, so dbo.x can be both, and

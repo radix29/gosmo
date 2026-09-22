@@ -125,11 +125,25 @@ classDiagram
         +DropExtendedProperty(name, level) error
         +Certificates() []*Certificate
         +CertificateByName(name) *Certificate
+        +CertificateRef(name) *Certificate
         +CreateCertificate(spec) error
         +AsymmetricKeys() []*AsymmetricKey
         +AsymmetricKeyByName(name) *AsymmetricKey
+        +AsymmetricKeyRef(name) *AsymmetricKey
+        +CreateAsymmetricKey(spec) error
+        +SymmetricKeys() []*SymmetricKey
+        +SymmetricKeyByName(name) *SymmetricKey
+        +SymmetricKeyRef(name) *SymmetricKey
+        +CreateSymmetricKey(spec) error
         +HasMasterKey() bool
         +CreateMasterKey(password) error
+        +MasterKey() *MasterKey
+        +MasterKeyRef() *MasterKey
+        +ModuleSignatures() []*ModuleSignature
+        +SignaturesOn(schema, module) []*ModuleSignature
+        +SignableModules() []*SignableModule
+        +AddSignature(schema, module, by, counter) error
+        +DropSignature(schema, module, by, counter) error
         +ColumnMasterKeys() []*ColumnMasterKey
         +ColumnMasterKeyByName(name) *ColumnMasterKey
         +CreateColumnMasterKeyWithSignature(name, provider, path, sig) error

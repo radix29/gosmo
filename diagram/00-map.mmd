@@ -41,6 +41,7 @@ flowchart TB
         N16["16 · Always On availability groups"]
         N17["17 · Endpoints, audits, and audit specifications"]
         N18["18 · Database triggers, keys, certificates, and the error log"]
+        N21["21 · The master key, module signatures, and EKM keys"]
     end
     subgraph A8["Azure instance resources"]
         direction TB
@@ -61,6 +62,7 @@ flowchart TB
     N05 -- "contains the object families" --> N13
     N05 -- "owns the Service Broker families" --> N20
     N05 -- "owns database audit specifications" --> N17
+    N05 -- "owns the master key and module signatures" --> N21
     N05 -- "exposes its own Azure resource views" --> N19
     click N01 href "diagram/01-connection-options.mmd"
     click N02 href "diagram/02-server.mmd"
@@ -82,3 +84,4 @@ flowchart TB
     click N18 href "diagram/18-triggers-keys-and-error-log.mmd"
     click N19 href "diagram/19-azure-instance-resources.mmd"
     click N20 href "diagram/20-service-broker.mmd"
+    click N21 href "diagram/21-master-key-and-signatures.mmd"

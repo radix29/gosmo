@@ -218,6 +218,36 @@ func iterWirings(t *testing.T) []seqWiring {
 				}
 			},
 			func(ctx context.Context) { _, _ = dbo.AsymmetricKeysContext(ctx) }},
+		{"Database.ModuleSignatureSeq",
+			func(ctx context.Context) {
+				for range dbo.ModuleSignatureSeq(ctx) {
+				}
+			},
+			func(ctx context.Context) { _, _ = dbo.ModuleSignaturesContext(ctx) }},
+		{"Database.SignableModuleSeq",
+			func(ctx context.Context) {
+				for range dbo.SignableModuleSeq(ctx) {
+				}
+			},
+			func(ctx context.Context) { _, _ = dbo.SignableModulesContext(ctx) }},
+		{"Certificate.SignedModuleSeq",
+			func(ctx context.Context) {
+				for range dbo.CertificateRef("c").SignedModuleSeq(ctx) {
+				}
+			},
+			func(ctx context.Context) { _, _ = dbo.CertificateRef("c").SignedModulesContext(ctx) }},
+		{"AsymmetricKey.SignedModuleSeq",
+			func(ctx context.Context) {
+				for range dbo.AsymmetricKeyRef("k").SignedModuleSeq(ctx) {
+				}
+			},
+			func(ctx context.Context) { _, _ = dbo.AsymmetricKeyRef("k").SignedModulesContext(ctx) }},
+		{"Database.SymmetricKeySeq",
+			func(ctx context.Context) {
+				for range dbo.SymmetricKeySeq(ctx) {
+				}
+			},
+			func(ctx context.Context) { _, _ = dbo.SymmetricKeysContext(ctx) }},
 		{"Database.DatabaseAuditSpecificationSeq",
 			func(ctx context.Context) {
 				for range dbo.DatabaseAuditSpecificationSeq(ctx) {

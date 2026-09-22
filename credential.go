@@ -249,9 +249,9 @@ func (c *Credential) DropContext(ctx context.Context) error {
 
 // CryptographicProvider mirrors a row of sys.cryptographic_providers — an
 // Extensible Key Management provider registered with CREATE CRYPTOGRAPHIC
-// PROVIDER. It lives here rather than in a file of its own because a
-// credential's FOR CRYPTOGRAPHIC PROVIDER binding is the only thing in gosmo
-// that refers to one.
+// PROVIDER. It lives here because a credential's FOR CRYPTOGRAPHIC PROVIDER
+// binding was the first thing in gosmo to refer to one; the keys' FROM
+// PROVIDER half is in cryptographic_provider.go.
 type CryptographicProvider struct {
 	ProviderID int
 	Name       string

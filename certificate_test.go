@@ -100,3 +100,54 @@ func TestCreateCertificateFromBinaryIsUppercaseHex(t *testing.T) {
 		t.Errorf("statement = %s, want it to end with an uppercase 0x literal", got)
 	}
 }
+
+func TestBuildCertificateScript(t *testing.T) {
+	c := &Certificate{
+		Name: "o'cert", Owner: "cert_owner",
+		PvtKeyEncryptionType: "ENCRYPTED_BY_MASTER_KEY", IsActiveForBeginDialog: true,
+	}
+	enc := []byte{0x30, 0x82, 0x01, 0xab}
+	tests := []struct {
+		name string
+		c    *Certificate
+		opts ScriptOptions
+		want string
+	}{
+		{"create", c, ScriptOptions{Verb: ScriptCreate},
+			"/* The certificate's private key cannot be read from the server, so it is\n" +
+				"   not scripted: this recreates the public certificate only, which can\n" +
+				"   verify signatures and encrypt, but not sign or decrypt. */\n" +
+				"CREATE CERTIFICATE [o'cert] AUTHORIZATION [cert_owner]\n" +
+				"    FROM BINARY = 0x308201AB;\nGO\n"},
+		{"drop", c, ScriptOptions{Verb: ScriptDrop},
+			"IF EXISTS (SELECT 1 FROM sys.certificates WHERE name = N'o''cert')\n" +
+				"    DROP CERTIFICATE [o'cert];\nGO\n"},
+		// An imported public certificate has no private key to lose, so the
+		// comment would be wrong; a certificate switched off for Service
+		// Broker must stay off, since ON is the default.
+		{"public only, inactive, if not exists", &Certificate{Name: "peer",
+			PvtKeyEncryptionType: "NO_PRIVATE_KEY"},
+			ScriptOptions{Verb: ScriptCreate, IncludeIfNotExists: true},
+			"IF NOT EXISTS (SELECT 1 FROM sys.certificates WHERE name = N'peer')\n" +
+				"CREATE CERTIFICATE [peer]\n" +
+				"    FROM BINARY = 0x308201AB\n" +
+				"    ACTIVE FOR BEGIN_DIALOG = OFF;\nGO\n"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := buildCertificateScript(tt.c, enc, tt.opts); got != tt.want {
+				t.Errorf("got:\n%s\nwant:\n%s", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestBuildCertificateScriptDropAndCreate(t *testing.T) {
+	c := &Certificate{Name: "c", IsActiveForBeginDialog: true}
+	got := buildCertificateScript(c, []byte{1}, ScriptOptions{Verb: ScriptDropAndCreate})
+	drop := strings.Index(got, "DROP CERTIFICATE [c]")
+	create := strings.Index(got, "CREATE CERTIFICATE [c]")
+	if drop < 0 || create < 0 || drop > create {
+		t.Errorf("want DROP then CREATE:\n%s", got)
+	}
+}

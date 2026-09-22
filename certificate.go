@@ -24,8 +24,11 @@ import (
 // for database mirroring endpoints, where each instance keeps its own key pair
 // and holds only the public certificate of its peers.
 //
-// FROM BINARY requires SQL Server 2022 or later. Against an older instance the
-// file route is the only one, and CREATE CERTIFICATE fails with a syntax error.
+// FROM BINARY works on every supported version — probed on 2016, 2017 and
+// 2025 and on Managed Instance, with and without WITH PRIVATE KEY (BINARY =
+// ...). It fails with Msg 15232 only when the target database already holds
+// a certificate with the same thumbprint, which is what importing into the
+// database the certificate came from does.
 
 // Certificate mirrors a row of sys.certificates.
 type Certificate struct {
@@ -49,6 +52,31 @@ type Certificate struct {
 	ExpiryDate time.Time
 
 	Thumbprint []byte
+
+	// Owner is the name of the database principal that owns the certificate
+	// (principal_id resolved through sys.database_principals).
+	Owner string
+
+	// IssuerName and SerialNumber are the certificate's issuer and serial
+	// number as SQL Server decoded them (issuer_name, cert_serial_number).
+	IssuerName   string
+	SerialNumber string
+
+	// KeyLength is the key size in bits. It is read, never assumed: a
+	// certificate SQL Server generates is 2048 bits on 2016 and 3072 on 2025.
+	KeyLength int
+
+	// IsActiveForBeginDialog is whether Service Broker may use the
+	// certificate to initiate a dialog (ACTIVE FOR BEGIN_DIALOG).
+	IsActiveForBeginDialog bool
+
+	// PvtKeyLastBackupDate is when the private key was last exported with
+	// BACKUP CERTIFICATE, or the zero time if it never was.
+	PvtKeyLastBackupDate time.Time
+
+	// AttestedBy is set only for a certificate SQL Server created for itself
+	// from a signed file; empty otherwise.
+	AttestedBy string
 }
 
 // Database returns the database the certificate belongs to.
@@ -60,11 +88,17 @@ func (c *Certificate) HasPrivateKey() bool {
 	return c.PvtKeyEncryptionType != "" && c.PvtKeyEncryptionType != "NO_PRIVATE_KEY"
 }
 
+// certificateSelect is aliased c, so a caller's predicate names c.name — the
+// owner join brings a second name column into scope.
 const certificateSelect = `
-SELECT name, certificate_id, principal_id,
-       ISNULL(subject, ''), ISNULL(pvt_key_encryption_type_desc, ''),
-       start_date, expiry_date, ISNULL(thumbprint, 0x)
-FROM   sys.certificates`
+SELECT c.name, c.certificate_id, c.principal_id,
+       ISNULL(c.subject, N''), ISNULL(c.pvt_key_encryption_type_desc, N''),
+       c.start_date, c.expiry_date, ISNULL(c.thumbprint, 0x),
+       ISNULL(p.name, N''), ISNULL(c.issuer_name, N''), ISNULL(c.cert_serial_number, N''),
+       ISNULL(c.key_length, 0), c.is_active_for_begin_dialog,
+       c.pvt_key_last_backup_date, ISNULL(c.attested_by, N'')
+FROM   sys.certificates c
+LEFT   JOIN sys.database_principals p ON p.principal_id = c.principal_id`
 
 // Certificates returns the database's certificates, excluding the internal
 // ones SQL Server creates for itself (named ##...##).
@@ -75,8 +109,8 @@ func (d *Database) Certificates() ([]*Certificate, error) {
 // CertificatesContext is the context-aware variant of Certificates.
 func (d *Database) CertificatesContext(ctx context.Context) ([]*Certificate, error) {
 	rows, err := d.query(ctx, certificateSelect+`
-WHERE  name NOT LIKE '##%'
-ORDER  BY name`)
+WHERE  c.name NOT LIKE '##%'
+ORDER  BY c.name`)
 	if err != nil {
 		return nil, fmt.Errorf("gosmo: list certificates in %q: %w", d.Name, err)
 	}
@@ -111,7 +145,7 @@ func (d *Database) CertificateByNameContext(ctx context.Context, name string) (*
 		c, err = scanCertificate(d, row.Scan)
 		return err
 	}, certificateSelect+`
-WHERE  name = @p1`, name)
+WHERE  c.name = @p1`, name)
 	// errors.Is, not ==, and it matters here more than at the twenty sites that
 	// already use it: this is the one lookup whose not-found answer is
 	// (nil, nil). Database.queryRow already wraps some of its failures
@@ -130,11 +164,30 @@ WHERE  name = @p1`, name)
 
 func scanCertificate(d *Database, scan func(...any) error) (*Certificate, error) {
 	c := &Certificate{db: d}
+	var backup sql.NullTime
 	if err := scan(&c.Name, &c.CertificateID, &c.PrincipalID, &c.Subject,
-		&c.PvtKeyEncryptionType, &c.StartDate, &c.ExpiryDate, &c.Thumbprint); err != nil {
+		&c.PvtKeyEncryptionType, &c.StartDate, &c.ExpiryDate, &c.Thumbprint,
+		&c.Owner, &c.IssuerName, &c.SerialNumber, &c.KeyLength,
+		&c.IsActiveForBeginDialog, &backup, &c.AttestedBy); err != nil {
 		return nil, err
 	}
+	c.PvtKeyLastBackupDate = backup.Time
 	return c, nil
+}
+
+// CertificateRef returns a lightweight handle for a certificate by name,
+// without querying the catalog — the counterpart of Server.DatabaseRef.
+// CertificateID, Subject and every other cached field stay at their zero
+// value (HasPrivateKey answers false); CertificateByName is what populates
+// them.
+//
+// Every write on *Certificate addresses it by name, so this handle is enough
+// to drop one the caller already knows exists — and is the form to use when
+// there is nothing to read yet, such as a New Certificate dialog scripting a
+// certificate whose CREATE was only collected. Encoded does read the server,
+// by name, and works from a handle to an existing certificate.
+func (d *Database) CertificateRef(name string) *Certificate {
+	return &Certificate{db: d, Name: name}
 }
 
 // Encoded returns the ASN.1-encoded public certificate — what
@@ -255,10 +308,113 @@ func (c *Certificate) DropContext(ctx context.Context) error {
 	return nil
 }
 
+// CertificateBackupSpec says where BACKUP CERTIFICATE writes, and whether
+// the private key goes with it. Every path is on the *server's* filesystem,
+// resolved by the SQL Server service account — not the caller's machine.
+type CertificateBackupSpec struct {
+	// File receives the public certificate; required.
+	File string
+
+	// PrivateKeyFile, when set, also exports the private key, encrypted by
+	// EncryptionPassword (required with it). A certificate whose key is
+	// protected by a password also needs DecryptionPassword; one protected
+	// by the database master key does not.
+	PrivateKeyFile     string
+	EncryptionPassword string
+	DecryptionPassword string
+}
+
+// backupStatement builds BACKUP CERTIFICATE, validating the spec.
+func (c *Certificate) backupStatement(spec CertificateBackupSpec) (string, error) {
+	if strings.TrimSpace(spec.File) == "" {
+		return "", fmt.Errorf("no file to back up to")
+	}
+	stmt := "BACKUP CERTIFICATE " + quoteIdent(c.Name) + " TO FILE = " + nStringLiteral(spec.File)
+	if spec.PrivateKeyFile == "" {
+		if spec.EncryptionPassword != "" || spec.DecryptionPassword != "" {
+			return "", fmt.Errorf("a password was given but no private key file")
+		}
+		return stmt, nil
+	}
+	if spec.EncryptionPassword == "" {
+		return "", fmt.Errorf("the private key file needs a password to encrypt it with")
+	}
+	stmt += " WITH PRIVATE KEY (FILE = " + nStringLiteral(spec.PrivateKeyFile) +
+		", ENCRYPTION BY PASSWORD = " + nStringLiteral(spec.EncryptionPassword)
+	if spec.DecryptionPassword != "" {
+		stmt += ", DECRYPTION BY PASSWORD = " + nStringLiteral(spec.DecryptionPassword)
+	}
+	return stmt + ")", nil
+}
+
+// Backup writes the certificate, and optionally its private key, to files on
+// the server with BACKUP CERTIFICATE. The files it writes are readable only
+// by its own service account. A private-key backup sets PvtKeyLastBackupDate; the
+// receiver is not updated.
+func (c *Certificate) Backup(spec CertificateBackupSpec) error {
+	return c.BackupContext(context.Background(), spec)
+}
+
+// BackupContext is the context-aware variant of Backup.
+func (c *Certificate) BackupContext(ctx context.Context, spec CertificateBackupSpec) error {
+	stmt, err := c.backupStatement(spec)
+	if err != nil {
+		return fmt.Errorf("gosmo: back up certificate %q in %q: %w", c.Name, c.db.Name, err)
+	}
+	if _, err := c.db.exec(ctx, stmt); err != nil {
+		return fmt.Errorf("gosmo: back up certificate %q in %q: %w", c.Name, c.db.Name, err)
+	}
+	return nil
+}
+
+// RemovePrivateKey deletes the certificate's private key, leaving the public
+// certificate — ALTER CERTIFICATE ... REMOVE PRIVATE KEY. It cannot be undone
+// short of re-importing the key from a backup: nothing the certificate signed
+// or encrypts can be signed or decrypted by it afterwards.
+func (c *Certificate) RemovePrivateKey() error {
+	return c.RemovePrivateKeyContext(context.Background())
+}
+
+// RemovePrivateKeyContext is the context-aware variant of RemovePrivateKey.
+func (c *Certificate) RemovePrivateKeyContext(ctx context.Context) error {
+	if _, err := c.db.exec(ctx, "ALTER CERTIFICATE "+quoteIdent(c.Name)+" REMOVE PRIVATE KEY"); err != nil {
+		return fmt.Errorf("gosmo: remove private key of certificate %q in %q: %w", c.Name, c.db.Name, err)
+	}
+	setIfApplied(ctx, &c.PvtKeyEncryptionType, "NO_PRIVATE_KEY")
+	return nil
+}
+
+// ChangeOwner transfers the certificate to another database principal with
+// ALTER AUTHORIZATION. SQL Server drops every explicit permission on the
+// certificate as it does so (verified 2026-09-22 on 13 and 17).
+func (c *Certificate) ChangeOwner(newOwner string) error {
+	return c.ChangeOwnerContext(context.Background(), newOwner)
+}
+
+// ChangeOwnerContext is the context-aware variant of ChangeOwner.
+func (c *Certificate) ChangeOwnerContext(ctx context.Context, newOwner string) error {
+	q := "ALTER AUTHORIZATION ON CERTIFICATE::" + quoteIdent(c.Name) + " TO " + quoteIdent(newOwner)
+	if _, err := c.db.exec(ctx, q); err != nil {
+		return fmt.Errorf("gosmo: change certificate %q owner to %q in %q: %w", c.Name, newOwner, c.db.Name, err)
+	}
+	setIfApplied(ctx, &c.Owner, newOwner)
+	return nil
+}
+
 // -- The database master key -----------------------------------------------
 
 // HasMasterKey reports whether the database has a master key. A certificate
 // whose private key is to open without a password needs one.
+//
+// sys.symmetric_keys alone is not enough: it shows a principal only the keys
+// it holds a right on, so for a user with CREATE CERTIFICATE and nothing else
+// the master key's row is absent and the answer would be a confident false —
+// and CREATE MASTER KEY then fails Msg 15247, not "already exists". The
+// database's is_master_key_encrypted_by_server flag, in sys.databases and
+// visible to anyone who can see the database, answers for the usual key,
+// which SQL Server encrypts by the service master key on creation. What stays
+// invisible to such a principal is a master key whose service-master-key
+// encryption was dropped; that one still reads false.
 func (d *Database) HasMasterKey() (bool, error) {
 	return d.HasMasterKeyContext(context.Background())
 }
@@ -268,7 +424,9 @@ func (d *Database) HasMasterKeyContext(ctx context.Context) (bool, error) {
 	var n int
 	err := d.queryRow(ctx, func(row *sql.Row) error {
 		return row.Scan(&n)
-	}, "SELECT COUNT(*) FROM sys.symmetric_keys WHERE name = '##MS_DatabaseMasterKey##'")
+	}, `SELECT CASE WHEN EXISTS (SELECT 1 FROM sys.symmetric_keys WHERE name = '##MS_DatabaseMasterKey##')
+	                  OR EXISTS (SELECT 1 FROM sys.databases WHERE database_id = DB_ID() AND is_master_key_encrypted_by_server = 1)
+	             THEN 1 ELSE 0 END`)
 	if err != nil {
 		return false, fmt.Errorf("gosmo: check for a master key in %q: %w", d.Name, err)
 	}

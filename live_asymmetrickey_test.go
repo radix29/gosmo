@@ -38,8 +38,8 @@ func TestLiveAsymmetricKeysListingAndFinderAgree(t *testing.T) {
 	defer drop()
 
 	// Generated rather than imported: CREATE ASYMMETRIC KEY's import forms all
-	// read the server's filesystem, which is why gosmo has no create method.
-	if err := s.execContext(ctx, "USE [master]; CREATE ASYMMETRIC KEY "+quoteIdent(keyName)+" WITH ALGORITHM = RSA_2048"); err != nil {
+	// read the server's filesystem, which is why CreateAsymmetricKey has none.
+	if err := master.CreateAsymmetricKeyContext(ctx, AsymmetricKeySpec{Name: keyName, Algorithm: AsymmetricKeyRSA2048}); err != nil {
 		t.Fatalf("create asymmetric key: %v", err)
 	}
 
@@ -67,7 +67,7 @@ func TestLiveAsymmetricKeysListingAndFinderAgree(t *testing.T) {
 	if found == nil {
 		t.Fatal("by-name finder reported the key absent")
 	}
-	if found.KeyID != listed.KeyID || found.Algorithm != listed.Algorithm ||
+	if found.KeyID != listed.KeyID || found.Algorithm != listed.Algorithm || found.Owner != listed.Owner ||
 		found.KeyLength != listed.KeyLength || found.PvtKeyEncryptionType != listed.PvtKeyEncryptionType ||
 		!bytes.Equal(found.Thumbprint, listed.Thumbprint) {
 		t.Errorf("finder and listing disagree:\n finder  = %+v\n listing = %+v", found, listed)
@@ -75,6 +75,9 @@ func TestLiveAsymmetricKeysListingAndFinderAgree(t *testing.T) {
 	// The values the picker in gossms's New Login dialog relies on being real.
 	if found.Algorithm != "RSA_2048" || found.KeyLength != 2048 {
 		t.Errorf("algorithm/length read back as %q/%d, want RSA_2048/2048", found.Algorithm, found.KeyLength)
+	}
+	if found.Owner != "dbo" || found.ProviderType != "" {
+		t.Errorf("owner/provider read back as %q/%q, want dbo and none", found.Owner, found.ProviderType)
 	}
 	if !found.HasPrivateKey() {
 		t.Errorf("a generated key reported no private key (pvt_key_encryption_type_desc = %q)", found.PvtKeyEncryptionType)

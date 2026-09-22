@@ -10,8 +10,8 @@ import (
 // a database-scoped handle's scripted statement carries it and a
 // server-scoped one does not.
 //
-// The Ref handles added for the server-role, user, statistic and
-// configuration families carry only a name. These pin that every write those
+// The Ref handles added for the server-role, user, statistic, configuration,
+// certificate and asymmetric-key families carry only a name. These pin that every write those
 // families expose builds the same statement from a handle as it would from a
 // ByName-populated object — the whole point of the handle is that the write
 // never reads a cached field — and that each one works under WithScript,
@@ -51,6 +51,13 @@ func TestRefHandleWriteStatements(t *testing.T) {
 		{"statistic drop", func(ctx context.Context, s *Server) error {
 			return s.DatabaseRef("AppDB").TableRef("dbo", "Orders").StatisticRef("ix_o").DropContext(ctx)
 		}, useAppDB + "DROP STATISTICS [dbo].[Orders].[ix_o]"},
+
+		{"certificate drop", func(ctx context.Context, s *Server) error {
+			return s.DatabaseRef("AppDB").CertificateRef("app_cert").DropContext(ctx)
+		}, useAppDB + "DROP CERTIFICATE [app_cert]"},
+		{"asymmetric key drop", func(ctx context.Context, s *Server) error {
+			return s.DatabaseRef("AppDB").AsymmetricKeyRef("app_key").DropContext(ctx)
+		}, useAppDB + "DROP ASYMMETRIC KEY [app_key]"},
 
 		{"configuration set value", func(ctx context.Context, s *Server) error {
 			return s.ConfigurationRef("max degree of parallelism").SetValueContext(ctx, 4)

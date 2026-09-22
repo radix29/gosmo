@@ -95,8 +95,8 @@ Every object family SSMS shows, read and — where it makes sense — written:
   mirroring endpoints beneath them and the certificates that authenticate
   them.
 - **Security** — audits and audit specifications at both scopes, credentials
-  at both scopes, endpoints, certificates, asymmetric keys, column
-  encryption.
+  at both scopes, endpoints, certificates, asymmetric and symmetric keys,
+  column encryption.
 - **Query Store** — its options and all seven report views.
 - **Azure SQL Managed Instance** — supported, not merely reachable: its own
   version gating, resource history and governance limits at instance and

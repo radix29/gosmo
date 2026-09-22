@@ -1443,7 +1443,7 @@ func TestTheSecurableBlockAsksPerSecurable(t *testing.T) {
 		t.Errorf("the securable block bound %d names, want %d — it must not bind per securable",
 			len(args), len(ProbedSecurablePermissions))
 	}
-	if !strings.Contains(q, "(VALUES (@p9)) AS n(v)") {
+	if !strings.Contains(q, "(VALUES (@p9)") {
 		t.Errorf("the securable block does not number its placeholders from @p9:\n%s", q)
 	}
 	for _, want := range []struct{ frag, why string }{
@@ -1455,6 +1455,15 @@ func TestTheSecurableBlockAsksPerSecurable(t *testing.T) {
 		{"'XML SCHEMA COLLECTION', n.v)", "a collection is asked as its own class"},
 		{"WHERE t.is_user_defined = 1", "the built-in types are not asked about"},
 		{"WHERE a.is_user_defined = 1", "the system assembly is not asked about"},
+		{"CONCAT('SYMMETRIC KEY::', k.name)", "a symmetric key is keyed as DatabaseSecurableKey spells it"},
+		{"HAS_PERMS_BY_NAME(QUOTENAME(k.name), 'SYMMETRIC KEY', n.v)", "a symmetric key is asked as its own class, quoted"},
+		{"FROM sys.symmetric_keys AS k CROSS JOIN", "symmetric keys are read from their own view"},
+		{"CONCAT('CERTIFICATE::', c.name)", "a certificate is keyed as DatabaseSecurableKey spells it"},
+		{"HAS_PERMS_BY_NAME(QUOTENAME(c.name), 'CERTIFICATE', n.v)", "a certificate is asked as its own class, quoted"},
+		{"WHERE c.name NOT LIKE '##%'", "the server's own certificates are not asked about"},
+		{"CONCAT('ASYMMETRIC KEY::', k.name)", "an asymmetric key is keyed as DatabaseSecurableKey spells it"},
+		{"HAS_PERMS_BY_NAME(QUOTENAME(k.name), 'ASYMMETRIC KEY', n.v)", "an asymmetric key is asked as its own class, quoted"},
+		{"FROM sys.asymmetric_keys AS k CROSS JOIN", "asymmetric keys are read from their own view"},
 	} {
 		if !strings.Contains(q, want.frag) {
 			t.Errorf("the securable block is missing %q — %s:\n%s", want.frag, want.why, q)
@@ -1469,6 +1478,9 @@ func TestTheSecurableBlockAsksPerSecurable(t *testing.T) {
 		{DatabaseSecurableAssembly, "", "a1", "ASSEMBLY::a1"},
 		{DatabaseSecurableType, "dbo", "Phone", "TYPE::dbo.Phone"},
 		{DatabaseSecurableXMLSchemaCollection, "Sales", "Doc", "XML SCHEMA COLLECTION::Sales.Doc"},
+		{DatabaseSecurableSymmetricKey, "", "k1", "SYMMETRIC KEY::k1"},
+		{DatabaseSecurableCertificate, "", "c1", "CERTIFICATE::c1"},
+		{DatabaseSecurableAsymmetricKey, "", "a1", "ASYMMETRIC KEY::a1"},
 	} {
 		if got := DatabaseSecurableKey(tc.kind, tc.schema, tc.name); got != tc.want {
 			t.Errorf("DatabaseSecurableKey(%s, %q, %q) = %q, want %q", tc.kind, tc.schema, tc.name, got, tc.want)
@@ -1491,6 +1503,11 @@ func TestDatabaseCapabilitiesReadSecurableAnswersByKind(t *testing.T) {
 			{"K:CONTROL", "ASSEMBLY::a1", int64(1)},
 			// NULL: not a state, and so not a denial.
 			{"K:CONTROL", "ASSEMBLY::a2", nil},
+			// A certificate and both kinds of key live in separate
+			// namespaces too, so k may be all three.
+			{"K:CONTROL", "CERTIFICATE::k", int64(1)},
+			{"K:CONTROL", "ASYMMETRIC KEY::k", int64(0)},
+			{"K:CONTROL", "SYMMETRIC KEY::k", int64(1)},
 		},
 	})
 	c, err := srv.DatabaseRef("HealthClinic").CapabilitiesContext(context.Background())
@@ -1510,6 +1527,14 @@ func TestDatabaseCapabilitiesReadSecurableAnswersByKind(t *testing.T) {
 	if c.HasOnSecurable(DatabaseSecurableAssembly, "", "a2", "CONTROL") ||
 		!c.PermitsOnSecurable(DatabaseSecurableAssembly, "", "a2", "CONTROL") {
 		t.Error("a NULL answer read as held or as denied")
+	}
+	if !c.HasOnSecurable(DatabaseSecurableCertificate, "", "k", "CONTROL") ||
+		!c.HasOnSecurable(DatabaseSecurableSymmetricKey, "", "k", "CONTROL") {
+		t.Error("a certificate's or a symmetric key's CONTROL did not read back")
+	}
+	if c.HasOnSecurable(DatabaseSecurableAsymmetricKey, "", "k", "CONTROL") ||
+		c.PermitsOnSecurable(DatabaseSecurableAsymmetricKey, "", "k", "CONTROL") {
+		t.Error("the asymmetric key read the same-named certificate's answer")
 	}
 	if c.Allows("CONTROL") {
 		t.Error("a securable row overwrote the database-scope CONTROL")

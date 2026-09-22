@@ -502,6 +502,36 @@ func (d *Database) AsymmetricKeySeq(ctx context.Context) iter.Seq2[*AsymmetricKe
 	return seqFrom(ctx, d.AsymmetricKeysContext)
 }
 
+// ModuleSignatureSeq returns an iterator over every signature on every module
+// in the database.
+func (d *Database) ModuleSignatureSeq(ctx context.Context) iter.Seq2[*ModuleSignature, error] {
+	return seqFrom(ctx, d.ModuleSignaturesContext)
+}
+
+// SignableModuleSeq returns an iterator over the modules in the database
+// that can be signed.
+func (d *Database) SignableModuleSeq(ctx context.Context) iter.Seq2[*SignableModule, error] {
+	return seqFrom(ctx, d.SignableModulesContext)
+}
+
+// SignedModuleSeq returns an iterator over the modules the certificate signs
+// or counter-signs.
+func (c *Certificate) SignedModuleSeq(ctx context.Context) iter.Seq2[*ModuleSignature, error] {
+	return seqFrom(ctx, c.SignedModulesContext)
+}
+
+// SignedModuleSeq returns an iterator over the modules the asymmetric key
+// signs or counter-signs.
+func (k *AsymmetricKey) SignedModuleSeq(ctx context.Context) iter.Seq2[*ModuleSignature, error] {
+	return seqFrom(ctx, k.SignedModulesContext)
+}
+
+// SymmetricKeySeq returns an iterator over all symmetric keys in the
+// database, the database master key excluded.
+func (d *Database) SymmetricKeySeq(ctx context.Context) iter.Seq2[*SymmetricKey, error] {
+	return seqFrom(ctx, d.SymmetricKeysContext)
+}
+
 // ColumnEncryptionKeySeq returns an iterator over all column encryption keys in the database.
 func (d *Database) ColumnEncryptionKeySeq(ctx context.Context) iter.Seq2[*ColumnEncryptionKey, error] {
 	return seqFrom(ctx, d.ColumnEncryptionKeysContext)

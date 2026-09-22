@@ -33,8 +33,15 @@ classDiagram
         +KeyLength int
         +PvtKeyEncryptionType string
         +Thumbprint []byte
+        +Owner string
+        +ProviderType string
+        +AttestedBy string
         +Database() *Database
         +HasPrivateKey() bool
+        +RemovePrivateKey() error
+        +ChangeOwner(newOwner) error
+        +SignedModules() []*ModuleSignature
+        +Drop() error
     }
 
     class Certificate {
@@ -47,8 +54,20 @@ classDiagram
         +StartDate time.Time
         +ExpiryDate time.Time
         +Thumbprint []byte
+        +Owner string
+        +IssuerName string
+        +SerialNumber string
+        +KeyLength int
+        +IsActiveForBeginDialog bool
+        +PvtKeyLastBackupDate time.Time
+        +AttestedBy string
+        +Database() *Database
         +HasPrivateKey() bool
         +Encoded() []byte
+        +Backup(spec) error
+        +RemovePrivateKey() error
+        +ChangeOwner(newOwner) error
+        +SignedModules() []*ModuleSignature
         +Drop() error
     }
 
@@ -60,6 +79,91 @@ classDiagram
         +ExpiryDate time.Time
         +EncryptionPassword string
         +FromBinary []byte
+    }
+
+    class SymmetricKey {
+        +Name string
+        +KeyID int
+        +PrincipalID int
+        +Owner string
+        +Algorithm string
+        +KeyLength int
+        +KeyGUID string
+        +CreateDate time.Time
+        +ModifyDate time.Time
+        +ProviderType string
+        +Encryptions []SymmetricKeyEncryption
+        +Database() *Database
+        +AddEncryption(enc, dec) error
+        +DropEncryption(enc, dec) error
+        +ChangeOwner(newOwner) error
+        +Drop() error
+    }
+
+    class SymmetricKeyEncryption {
+        +Kind SymmetricKeyEncryptionKind
+        +Name string
+        +CryptTypeDesc string
+        +Thumbprint []byte
+    }
+
+    class SymmetricKeyEncryptionKind {
+        <<enumeration>>
+        CERTIFICATE
+        ASYMMETRIC KEY
+        SYMMETRIC KEY
+        PASSWORD
+        MASTER KEY
+    }
+
+    class SymmetricKeyAlgorithm {
+        <<enumeration>>
+        AES_128
+        AES_192
+        AES_256
+        DES / TRIPLE_DES / TRIPLE_DES_3KEY
+        RC2 / RC4 / RC4_128 / DESX
+    }
+
+    class SymmetricKeySpec {
+        +Name string
+        +Authorization string
+        +Algorithm SymmetricKeyAlgorithm
+        +KeySource string
+        +IdentityValue string
+        +Encryptions []SymmetricKeyEncryptor
+        +FromProvider *ProviderKey
+    }
+
+    class SymmetricKeyEncryptor {
+        +Kind SymmetricKeyEncryptionKind
+        +Name string
+        +Password string
+        +Open *SymmetricKeyDecryptor
+    }
+
+    class SymmetricKeyDecryptor {
+        +Kind SymmetricKeyEncryptionKind
+        +Name string
+        +Password string
+        +Open *SymmetricKeyDecryptor
+    }
+
+    class AsymmetricKeySpec {
+        +Name string
+        +Authorization string
+        +Algorithm AsymmetricKeyAlgorithm
+        +EncryptionPassword string
+        +FromProvider *ProviderKey
+    }
+
+    class AsymmetricKeyAlgorithm {
+        <<enumeration>>
+        RSA_512
+        RSA_1024
+        RSA_2048
+        RSA_3072
+        RSA_4096
     }
 
     %% =========================================================
@@ -132,4 +236,15 @@ classDiagram
     Server ..> LogSearch : ReadLogFiltered() narrowed by
     Database "1" --> "*" Certificate : contains
     Database "1" --> "*" AsymmetricKey : contains
+    Database "1" --> "*" SymmetricKey : contains
+    SymmetricKey "1" --> "*" SymmetricKeyEncryption : Encryptions
+    SymmetricKeyEncryption ..> SymmetricKeyEncryptionKind : uses
+    Database --> SymmetricKeySpec : CreateSymmetricKey() accepts
+    SymmetricKeySpec ..> SymmetricKeyAlgorithm : uses
+    SymmetricKeySpec "1" --> "*" SymmetricKeyEncryptor : Encryptions
+    SymmetricKey ..> SymmetricKeyEncryptor : Add/DropEncryption() take
+    SymmetricKey ..> SymmetricKeyDecryptor : opened by
+    SymmetricKeyEncryptor ..> SymmetricKeyDecryptor : Open
     Database --> CertificateSpec : CreateCertificate() accepts
+    Database --> AsymmetricKeySpec : CreateAsymmetricKey() accepts
+    AsymmetricKeySpec ..> AsymmetricKeyAlgorithm : uses

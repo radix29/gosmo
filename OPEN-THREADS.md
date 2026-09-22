@@ -72,6 +72,20 @@ execution, not on a preference.
 Restore's URL-side cases, and the dialog behaviour around backup history, are
 gossms's: `docs/decisions.md` § Azure SQL Managed Instance.
 
+## Keys `FROM PROVIDER` have never executed
+
+`AsymmetricKeySpec.FromProvider` and `SymmetricKeySpec.FromProvider`
+(`cryptographic_provider.go`) build `CREATE … FROM PROVIDER` from the
+documented grammar and are pinned by unit tests only. Executing one needs an
+EKM provider DLL registered with `CREATE CRYPTOGRAPHIC PROVIDER` and `EKM
+provider enabled` switched on, and no test instance has one (win10cli: zero
+rows in `sys.cryptographic_providers`, the option at 0, 2026-09-22).
+
+What to check when one exists: whether `OPEN_EXISTING` really accepts no
+`ALGORITHM` (the builder omits it when the caller leaves it empty), and
+whether a provider symmetric key accepts `IDENTITY_VALUE` — refused here
+until seen.
+
 ## Two login writes have no offline test, and cannot have one
 
 Every write path in the library now has a `WithScript` test pinning the exact

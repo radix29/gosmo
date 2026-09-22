@@ -1,0 +1,96 @@
+classDiagram
+
+    %% =========================================================
+    %% The database master key, module signatures, certificate
+    %% backup and the EKM (FROM PROVIDER) half of a key spec
+    %% =========================================================
+
+    class MasterKey {
+        -db *Database
+        +Algorithm string
+        +KeyLength int
+        +KeyGUID string
+        +CreateDate time.Time
+        +ModifyDate time.Time
+        +EncryptedByServer bool
+        +Encryptions []SymmetricKeyEncryption
+        +Database() *Database
+        +Regenerate(password, force, openPassword) error
+        +AddEncryption(enc, openPassword) error
+        +DropEncryption(enc, openPassword) error
+        +Backup(file, encryptionPassword, openPassword) error
+        +Drop() error
+        openPassword wraps the write in OPEN / CLOSE
+        MASTER KEY, for a key the service master key
+        no longer encrypts
+    }
+
+    class MasterKeyEncryptor {
+        +ServiceMasterKey bool
+        +Password string
+    }
+
+    class ModuleSignature {
+        -db *Database
+        +ObjectID int
+        +Schema string
+        +Module string
+        +ModuleType string
+        +Kind SignerKind
+        +Signer string
+        +Counter bool
+        +CryptTypeDesc string
+        +Thumbprint []byte
+        +Database() *Database
+    }
+
+    class SignableModule {
+        +Schema string
+        +Name string
+        +Type string
+    }
+
+    class Signer {
+        +Kind SignerKind
+        +Name string
+        +Password string
+    }
+
+    class SignerKind {
+        <<enumeration>>
+        CERTIFICATE
+        ASYMMETRIC KEY
+    }
+
+    class CertificateBackupSpec {
+        +File string
+        +PrivateKeyFile string
+        +EncryptionPassword string
+        +DecryptionPassword string
+    }
+
+    class ProviderKey {
+        +Provider string
+        +KeyName string
+        +Disposition ProviderKeyDisposition
+    }
+
+    class ProviderKeyDisposition {
+        <<enumeration>>
+        CREATE_NEW
+        OPEN_EXISTING
+    }
+
+    Database --> MasterKey : MasterKey / MasterKeyRef
+    Database --> ModuleSignature : ModuleSignatures / SignaturesOn
+    Database ..> Signer : AddSignature / DropSignature
+    Database --> SignableModule : SignableModules
+    Certificate --> ModuleSignature : SignedModules
+    AsymmetricKey --> ModuleSignature : SignedModules
+    Certificate ..> CertificateBackupSpec : Backup
+    MasterKey ..> MasterKeyEncryptor
+    Signer --> SignerKind
+    ModuleSignature --> SignerKind
+    AsymmetricKeySpec --> ProviderKey : FromProvider
+    SymmetricKeySpec --> ProviderKey : FromProvider
+    ProviderKey --> ProviderKeyDisposition

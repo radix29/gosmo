@@ -28,11 +28,13 @@ import (
 //   - Most by-name lookups — LoginByName, DatabaseByName, TableByName,
 //     UserByName, RoleByName, JobByName, AlertByName, OperatorByName,
 //     ScheduleByName, ServerRoleByName, ConfigurationByName,
-//     AvailabilityGroupByName and the scripter's view/procedure/function
-//     lookups — return an error wrapping ErrNotFound.
+//     AvailabilityGroupByName, SymmetricKeyByName and the scripter's
+//     view/procedure/function lookups — return an error wrapping ErrNotFound.
 //   - CertificateByName and AsymmetricKeyByName return (nil, nil), because
 //     their callers branch on absence as the ordinary case rather than the
-//     exceptional one.
+//     exceptional one. The contract is kept because it is published, and
+//     goes no further: SymmetricKeyByName, the third key family's finder,
+//     follows the rule above.
 //   - AgentInfo reports an unreachable Agent as a populated value
 //     (StatusText "Unknown"), not an error.
 //

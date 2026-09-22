@@ -209,8 +209,9 @@ func explicitPrincipalCapabilityQuery(first int, perms []string) (string, []any)
 	  AND USER_NAME(p.major_id) IS NOT NULL`, args
 }
 
-// securableCapabilityQuery builds the class 5/6/10 block: one row per
-// assembly, user-defined type and XML schema collection per probed permission,
+// securableCapabilityQuery builds the class 5/6/10/24/25/26 block: one row per
+// assembly, user-defined type, XML schema collection, symmetric key,
+// certificate and asymmetric key per probed permission,
 // tagged "K:<permission>" with the securable as DatabaseSecurableKey spells it.
 //
 // It asks HAS_PERMS_BY_NAME where the object block reads the catalog, and has
@@ -230,7 +231,10 @@ func explicitPrincipalCapabilityQuery(first int, perms []string) (string, []any)
 //     securable, or none.
 //   - System rows are skipped: the built-in types, Microsoft.SqlServer.Types
 //     and the sys schema's collection offer nothing to gate, and there are
-//     thirty-odd built-in types per database.
+//     thirty-odd built-in types per database. The ##...## certificates and
+//     keys SQL Server creates for itself — the database master key among
+//     them — are skipped by name, as Certificates and AsymmetricKeys skip
+//     them.
 func securableCapabilityQuery(first int, perms []string) (string, []any) {
 	args := make([]any, len(perms))
 	for i, n := range perms {
@@ -250,7 +254,22 @@ UNION ALL
 	SELECT CONCAT('K:', n.v), CONCAT('XML SCHEMA COLLECTION::', SCHEMA_NAME(x.schema_id), '.', x.name),
 	       HAS_PERMS_BY_NAME(QUOTENAME(SCHEMA_NAME(x.schema_id)) + '.' + QUOTENAME(x.name), 'XML SCHEMA COLLECTION', n.v)
 	FROM sys.xml_schema_collections AS x CROSS JOIN (VALUES ` + vals + `) AS n(v)
-	WHERE x.schema_id <> SCHEMA_ID('sys')`, args
+	WHERE x.schema_id <> SCHEMA_ID('sys')
+UNION ALL
+	SELECT CONCAT('K:', n.v), CONCAT('SYMMETRIC KEY::', k.name),
+	       HAS_PERMS_BY_NAME(QUOTENAME(k.name), 'SYMMETRIC KEY', n.v)
+	FROM sys.symmetric_keys AS k CROSS JOIN (VALUES ` + vals + `) AS n(v)
+	WHERE k.name NOT LIKE '##%'
+UNION ALL
+	SELECT CONCAT('K:', n.v), CONCAT('CERTIFICATE::', c.name),
+	       HAS_PERMS_BY_NAME(QUOTENAME(c.name), 'CERTIFICATE', n.v)
+	FROM sys.certificates AS c CROSS JOIN (VALUES ` + vals + `) AS n(v)
+	WHERE c.name NOT LIKE '##%'
+UNION ALL
+	SELECT CONCAT('K:', n.v), CONCAT('ASYMMETRIC KEY::', k.name),
+	       HAS_PERMS_BY_NAME(QUOTENAME(k.name), 'ASYMMETRIC KEY', n.v)
+	FROM sys.asymmetric_keys AS k CROSS JOIN (VALUES ` + vals + `) AS n(v)
+	WHERE k.name NOT LIKE '##%'`, args
 }
 
 // explicitServerCapabilityQuery builds the server-scope catalog block: one row

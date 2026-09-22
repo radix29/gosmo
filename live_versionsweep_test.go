@@ -277,6 +277,18 @@ var sweepMustCall = []string{
 	"Scripter.ScriptExternalDataSourceContext",
 	"Scripter.ScriptExternalFileFormatContext",
 	"Scripter.ScriptExternalLibraryContext",
+
+	// Phase 3 item 15: certificates, asymmetric keys, symmetric keys.
+	"Database.CertificatesContext",
+	"Database.CertificateByNameContext",
+	"Certificate.EncodedContext",
+	"Scripter.ScriptCertificateContext",
+	"Database.AsymmetricKeysContext",
+	"Database.AsymmetricKeyByNameContext",
+	"Scripter.ScriptAsymmetricKeyContext",
+	"Database.SymmetricKeysContext",
+	"Database.SymmetricKeyByNameContext",
+	"Scripter.ScriptSymmetricKeyContext",
 }
 
 // checkCoverage fails on any sweepMustCall entry no label matched. It runs
@@ -374,6 +386,12 @@ var sweepSchema = []string{
 	   AS RETURN SELECT 1 AS ok WHERE @name = USER_NAME()`,
 	`CREATE SECURITY POLICY app.sweep_policy
 	   ADD FILTER PREDICATE app.sweep_pred(name) ON dbo.sweep_parent WITH (STATE = ON)`,
+	// Password-protected, so the scratch database needs no master key. The
+	// Certificate reads' columns are the ones a missing column would kill.
+	`CREATE CERTIFICATE sweep_cert ENCRYPTION BY PASSWORD = N'Sw33p!Cert#Pass' WITH SUBJECT = N'gosmo sweep'`,
+	`CREATE ASYMMETRIC KEY sweep_asymkey WITH ALGORITHM = RSA_2048 ENCRYPTION BY PASSWORD = N'Sw33p!Asym#Pass'`,
+	`CREATE SYMMETRIC KEY sweep_symkey WITH ALGORITHM = AES_256
+	   ENCRYPTION BY CERTIFICATE sweep_cert, PASSWORD = N'Sw33p!Sym#Pass'`,
 	`CREATE ROLE sweep_role`,
 	`CREATE USER sweep_user WITHOUT LOGIN`,
 	`ALTER ROLE sweep_role ADD MEMBER sweep_user`,
@@ -482,6 +500,7 @@ func TestLiveVersionSweep(t *testing.T) {
 	sweepProgrammability(sw, d)
 	sweepServiceBroker(sw, d)
 	sweepQueryStoreReports(sw, d)
+	sweepKeys(sw, d)
 	sweepScripter(sw, d)
 	sweepServerCalls(sw, srv, info)
 
@@ -784,6 +803,57 @@ func sweepQueryStoreReports(sw *sweep, d *Database) {
 	})
 	sw.call("Database.QueryStoreWaitingQueriesContext", func() error {
 		_, err := d.QueryStoreWaitingQueriesContext(sw.ctx, "CPU", opts)
+		return err
+	})
+}
+
+// sweepKeys drives the certificate and key reads that take a name, which
+// the reflective half cannot reach. The finder is checked for a row, not just
+// for no error: CertificateByName answers (nil, nil) on absence, so a query
+// that matched nothing would otherwise pass.
+func sweepKeys(sw *sweep, d *Database) {
+	sw.call("Database.CertificateByNameContext", func() error {
+		c, err := d.CertificateByNameContext(sw.ctx, "sweep_cert")
+		if err == nil && c == nil {
+			return errors.New("sweep_cert not found")
+		}
+		if err == nil && (c.KeyLength == 0 || c.Owner == "") {
+			return fmt.Errorf("sweep_cert read back with KeyLength %d, Owner %q", c.KeyLength, c.Owner)
+		}
+		return err
+	})
+	sw.call("Certificate.EncodedContext", func() error {
+		_, err := d.CertificateRef("sweep_cert").EncodedContext(sw.ctx)
+		return err
+	})
+	sw.call("Scripter.ScriptCertificateContext", func() error {
+		_, err := NewScripter(d, ScriptOptions{Verb: ScriptDropAndCreate}).ScriptCertificateContext(sw.ctx, "sweep_cert")
+		return err
+	})
+	sw.call("Database.AsymmetricKeyByNameContext", func() error {
+		k, err := d.AsymmetricKeyByNameContext(sw.ctx, "sweep_asymkey")
+		if err == nil && k == nil {
+			return errors.New("sweep_asymkey not found")
+		}
+		if err == nil && (k.KeyLength != 2048 || k.Owner == "") {
+			return fmt.Errorf("sweep_asymkey read back with KeyLength %d, Owner %q", k.KeyLength, k.Owner)
+		}
+		return err
+	})
+	sw.call("Scripter.ScriptAsymmetricKeyContext", func() error {
+		_, err := NewScripter(d, ScriptOptions{Verb: ScriptDropAndCreate}).ScriptAsymmetricKeyContext(sw.ctx, "sweep_asymkey")
+		return err
+	})
+	sw.call("Database.SymmetricKeyByNameContext", func() error {
+		k, err := d.SymmetricKeyByNameContext(sw.ctx, "sweep_symkey")
+		if err == nil && (k.KeyLength != 256 || k.Owner == "" || len(k.Encryptions) != 2 ||
+			k.Encryptions[0].Name != "sweep_cert" || k.Encryptions[1].Kind != SymmetricKeyByPassword) {
+			return fmt.Errorf("sweep_symkey read back as %+v", k)
+		}
+		return err
+	})
+	sw.call("Scripter.ScriptSymmetricKeyContext", func() error {
+		_, err := NewScripter(d, ScriptOptions{Verb: ScriptDropAndCreate}).ScriptSymmetricKeyContext(sw.ctx, "sweep_symkey")
 		return err
 	})
 }

@@ -263,6 +263,255 @@ func buildDatabaseScopedCredentialScript(c *DatabaseScopedCredential, opts Scrip
 }
 
 // ============================================================
+// Scripter — certificates and keys
+// ============================================================
+
+// ScriptCertificate generates the CREATE (or DROP) script for one
+// certificate.
+func (sc *Scripter) ScriptCertificate(name string) (string, error) {
+	return sc.ScriptCertificateContext(context.Background(), name)
+}
+
+// ScriptCertificateContext is the context-aware variant of ScriptCertificate.
+//
+// CREATE reads the public certificate with CERTENCODED and emits it as FROM
+// BINARY, which recreates the same certificate — same thumbprint, subject,
+// issuer, serial number and validity — on every supported version. The
+// private key cannot be read back, so a script run elsewhere yields a
+// certificate that can verify but not sign or decrypt; the script says so.
+func (sc *Scripter) ScriptCertificateContext(ctx context.Context, name string) (string, error) {
+	c, err := sc.db.CertificateByNameContext(ctx, name)
+	if err != nil {
+		return "", err
+	}
+	// CertificateByName answers (nil, nil) on absence — a published contract
+	// — so the scripter turns it into the ordinary not-found error itself.
+	if c == nil {
+		return "", notFoundf("gosmo: certificate %s not found", quoteIdent(name))
+	}
+	var encoded []byte
+	if sc.opts.verb() != ScriptDrop {
+		if encoded, err = c.EncodedContext(ctx); err != nil {
+			return "", err
+		}
+	}
+	return buildCertificateScript(c, encoded, sc.opts), nil
+}
+
+// buildCertificateScript assembles one certificate's script from the catalog
+// row and its CERTENCODED bytes (unused for a DROP-only script). DROP
+// CERTIFICATE has no IF EXISTS form, so the drop is guarded with a
+// sys.certificates lookup.
+func buildCertificateScript(c *Certificate, encoded []byte, opts ScriptOptions) string {
+	var sb strings.Builder
+	if v := opts.verb(); v == ScriptDrop || v == ScriptDropAndCreate {
+		fmt.Fprintf(&sb, "IF EXISTS (SELECT 1 FROM sys.certificates WHERE name = N'%s')\n"+
+			"    DROP CERTIFICATE %s;\nGO\n",
+			escapeSingle(c.Name), quoteIdent(c.Name))
+		if v == ScriptDrop {
+			return sb.String()
+		}
+		sb.WriteString("\n")
+	}
+	if c.HasPrivateKey() {
+		sb.WriteString("/* The certificate's private key cannot be read from the server, so it is\n" +
+			"   not scripted: this recreates the public certificate only, which can\n" +
+			"   verify signatures and encrypt, but not sign or decrypt. */\n")
+	}
+	if opts.IncludeIfNotExists {
+		fmt.Fprintf(&sb, "IF NOT EXISTS (SELECT 1 FROM sys.certificates WHERE name = N'%s')\n",
+			escapeSingle(c.Name))
+	}
+	sb.WriteString("CREATE CERTIFICATE " + quoteIdent(c.Name))
+	if c.Owner != "" {
+		sb.WriteString(" AUTHORIZATION " + quoteIdent(c.Owner))
+	}
+	sb.WriteString("\n    FROM BINARY = " + binaryLiteral(encoded))
+	// ON is the default, so only a certificate switched off says anything.
+	if !c.IsActiveForBeginDialog {
+		sb.WriteString("\n    ACTIVE FOR BEGIN_DIALOG = OFF")
+	}
+	sb.WriteString(";\nGO\n")
+	return sb.String()
+}
+
+// ScriptAsymmetricKey generates the CREATE (or DROP) script for one
+// asymmetric key.
+func (sc *Scripter) ScriptAsymmetricKey(name string) (string, error) {
+	return sc.ScriptAsymmetricKeyContext(context.Background(), name)
+}
+
+// ScriptAsymmetricKeyContext is the context-aware variant of
+// ScriptAsymmetricKey.
+//
+// Neither half of an asymmetric key can be scripted back into existence:
+// CREATE ASYMMETRIC KEY has no FROM BINARY form, only imports that read the
+// server's filesystem or an EKM provider. So CREATE is the generated form
+// with the key's algorithm and owner, and says the result is a new key pair.
+func (sc *Scripter) ScriptAsymmetricKeyContext(ctx context.Context, name string) (string, error) {
+	k, err := sc.db.AsymmetricKeyByNameContext(ctx, name)
+	if err != nil {
+		return "", err
+	}
+	// AsymmetricKeyByName answers (nil, nil) on absence — a published
+	// contract — so the scripter turns it into the ordinary not-found error.
+	if k == nil {
+		return "", notFoundf("gosmo: asymmetric key %s not found", quoteIdent(name))
+	}
+	return buildAsymmetricKeyScript(k, sc.opts), nil
+}
+
+// keyPasswordPlaceholder stands in for a key's protecting password in a
+// generated script: no catalog view exposes it, and a script that silently
+// switched the key to master-key protection would be wrong in a way nobody
+// sees until the master key is missing.
+const keyPasswordPlaceholder = "<insert password here>"
+
+// buildAsymmetricKeyScript assembles one asymmetric key's script. DROP
+// ASYMMETRIC KEY has no IF EXISTS form, so the drop is guarded with a
+// sys.asymmetric_keys lookup.
+func buildAsymmetricKeyScript(k *AsymmetricKey, opts ScriptOptions) string {
+	var sb strings.Builder
+	if v := opts.verb(); v == ScriptDrop || v == ScriptDropAndCreate {
+		fmt.Fprintf(&sb, "IF EXISTS (SELECT 1 FROM sys.asymmetric_keys WHERE name = N'%s')\n"+
+			"    DROP ASYMMETRIC KEY %s;\nGO\n",
+			escapeSingle(k.Name), quoteIdent(k.Name))
+		if v == ScriptDrop {
+			return sb.String()
+		}
+		sb.WriteString("\n")
+	}
+	sb.WriteString("/* An asymmetric key cannot be recreated from what the server exposes, so\n" +
+		"   this creates a NEW key pair with the same algorithm, not this key: what\n" +
+		"   the original signed or encrypted will not verify or decrypt with it.")
+	if !k.HasPrivateKey() {
+		sb.WriteString("\n   The original holds only a public key; the result has a private key too.")
+	}
+	if k.ProviderType != "" {
+		sb.WriteString("\n   The original is held by an EKM provider (FROM PROVIDER); the result is not.")
+	}
+	sb.WriteString(" */\n")
+	if opts.IncludeIfNotExists {
+		fmt.Fprintf(&sb, "IF NOT EXISTS (SELECT 1 FROM sys.asymmetric_keys WHERE name = N'%s')\n",
+			escapeSingle(k.Name))
+	}
+	sb.WriteString("CREATE ASYMMETRIC KEY " + quoteIdent(k.Name))
+	if k.Owner != "" {
+		sb.WriteString(" AUTHORIZATION " + quoteIdent(k.Owner))
+	}
+	alg := k.Algorithm
+	if !AsymmetricKeyAlgorithm(alg).valid() {
+		// An EKM key's algorithm can be one CREATE ... WITH ALGORITHM does
+		// not take, or none; leave the choice to the script's reader.
+		alg = "<algorithm>"
+	}
+	sb.WriteString("\n    WITH ALGORITHM = " + alg)
+	if k.PvtKeyEncryptionType == "ENCRYPTED_BY_PASSWORD" {
+		sb.WriteString("\n    ENCRYPTION BY PASSWORD = N'" + keyPasswordPlaceholder + "'")
+	}
+	sb.WriteString(";\nGO\n")
+	return sb.String()
+}
+
+// ScriptSymmetricKey generates the CREATE (or DROP) script for one symmetric
+// key.
+func (sc *Scripter) ScriptSymmetricKey(name string) (string, error) {
+	return sc.ScriptSymmetricKeyContext(context.Background(), name)
+}
+
+// ScriptSymmetricKeyContext is the context-aware variant of
+// ScriptSymmetricKey.
+//
+// A symmetric key's material cannot be read back, and neither can the
+// KEY_SOURCE and IDENTITY_VALUE that would regenerate it. So CREATE carries
+// the algorithm, owner and every ENCRYPTION BY the key has now — passwords as
+// placeholders — and says the result is a new key.
+func (sc *Scripter) ScriptSymmetricKeyContext(ctx context.Context, name string) (string, error) {
+	k, err := sc.db.SymmetricKeyByNameContext(ctx, name)
+	if err != nil {
+		return "", err
+	}
+	return buildSymmetricKeyScript(k, sc.opts), nil
+}
+
+// buildSymmetricKeyScript assembles one symmetric key's script. DROP
+// SYMMETRIC KEY has no IF EXISTS form, so the drop is guarded with a
+// sys.symmetric_keys lookup.
+func buildSymmetricKeyScript(k *SymmetricKey, opts ScriptOptions) string {
+	var sb strings.Builder
+	if v := opts.verb(); v == ScriptDrop || v == ScriptDropAndCreate {
+		fmt.Fprintf(&sb, "IF EXISTS (SELECT 1 FROM sys.symmetric_keys WHERE name = N'%s')\n"+
+			"    DROP SYMMETRIC KEY %s;\nGO\n",
+			escapeSingle(k.Name), quoteIdent(k.Name))
+		if v == ScriptDrop {
+			return sb.String()
+		}
+		sb.WriteString("\n")
+	}
+
+	// Each encryptor becomes one ENCRYPTION BY item. An encryptor the reader
+	// cannot see, or a kind a symmetric key cannot be created with (MASTER
+	// KEY, an unrecognised one), is left as a placeholder rather than dropped:
+	// a script that silently lost a way to open the key would be wrong in a
+	// way nobody sees until that way is needed.
+	var items, parents []string
+	for _, e := range k.Encryptions {
+		switch e.Kind {
+		case SymmetricKeyByPassword:
+			items = append(items, "PASSWORD = N'"+keyPasswordPlaceholder+"'")
+		case SymmetricKeyByCertificate, SymmetricKeyByAsymmetricKey, SymmetricKeyBySymmetricKey:
+			n := "<" + strings.ToLower(string(e.Kind)) + " name>"
+			if e.Name != "" {
+				n = quoteIdent(e.Name)
+			}
+			items = append(items, string(e.Kind)+" "+n)
+			if e.Kind == SymmetricKeyBySymmetricKey {
+				parents = append(parents, n)
+			}
+		default:
+			items = append(items, "<"+e.CryptTypeDesc+">")
+		}
+	}
+
+	sb.WriteString("/* A symmetric key's material cannot be read from the server, so this\n" +
+		"   creates a NEW key with the same algorithm and encryptions, not this key:\n" +
+		"   data encrypted with the original will not decrypt with it. Only a key\n" +
+		"   created with KEY_SOURCE and IDENTITY_VALUE can be recreated, by adding\n" +
+		"   both to the WITH clause with their original values.")
+	if len(k.Encryptions) == 0 && k.ProviderType == "" {
+		sb.WriteString("\n   No encryption of the original could be read; the one below is a placeholder.")
+		items = append(items, "PASSWORD = N'"+keyPasswordPlaceholder+"'")
+	}
+	for _, p := range parents {
+		sb.WriteString("\n   " + p + " must be open in this session first: OPEN SYMMETRIC KEY " + p +
+			" DECRYPTION BY <decryptor>.")
+	}
+	if k.ProviderType != "" {
+		sb.WriteString("\n   The original is held by an EKM provider (FROM PROVIDER); the result is not.")
+	}
+	sb.WriteString(" */\n")
+
+	if opts.IncludeIfNotExists {
+		fmt.Fprintf(&sb, "IF NOT EXISTS (SELECT 1 FROM sys.symmetric_keys WHERE name = N'%s')\n",
+			escapeSingle(k.Name))
+	}
+	sb.WriteString("CREATE SYMMETRIC KEY " + quoteIdent(k.Name))
+	if k.Owner != "" {
+		sb.WriteString(" AUTHORIZATION " + quoteIdent(k.Owner))
+	}
+	alg := k.Algorithm
+	if !SymmetricKeyAlgorithm(alg).valid() {
+		alg = "<algorithm>"
+	}
+	sb.WriteString("\n    WITH ALGORITHM = " + alg)
+	if len(items) > 0 {
+		sb.WriteString("\n    ENCRYPTION BY " + strings.Join(items, ",\n        "))
+	}
+	sb.WriteString(";\nGO\n")
+	return sb.String()
+}
+
+// ============================================================
 // Scripter — row-level security and Always Encrypted keys
 // ============================================================
 

@@ -122,6 +122,7 @@ flowchart TB
         N16["16 · Always On availability groups"]
         N17["17 · Endpoints, audits, and audit specifications"]
         N18["18 · Database triggers, keys, certificates, and the error log"]
+        N21["21 · The master key, module signatures, and EKM keys"]
     end
     subgraph A8["Azure instance resources"]
         direction TB
@@ -142,6 +143,7 @@ flowchart TB
     N05 -- "contains the object families" --> N13
     N05 -- "owns the Service Broker families" --> N20
     N05 -- "owns database audit specifications" --> N17
+    N05 -- "owns the master key and module signatures" --> N21
     N05 -- "exposes its own Azure resource views" --> N19
     click N01 href "diagram/01-connection-options.mmd"
     click N02 href "diagram/02-server.mmd"
@@ -163,6 +165,7 @@ flowchart TB
     click N18 href "diagram/18-triggers-keys-and-error-log.mmd"
     click N19 href "diagram/19-azure-instance-resources.mmd"
     click N20 href "diagram/20-service-broker.mmd"
+    click N21 href "diagram/21-master-key-and-signatures.mmd"
 ```
 
 ### Connecting and the `Server` object
@@ -254,6 +257,7 @@ server's own filesystem.
 | [`16-availability-groups.mmd`](diagram/16-availability-groups.mmd) | `AvailabilityGroup`, its replicas, databases and listeners, and the request types that create one. |
 | [`17-endpoints-and-audits.mmd`](diagram/17-endpoints-and-audits.mmd) | The mirroring endpoint and the other endpoints, server and database audits and their specifications, and server triggers. |
 | [`18-triggers-keys-and-error-log.mmd`](diagram/18-triggers-keys-and-error-log.mmd) | Database DDL triggers, asymmetric keys and certificates, the error log surface, and the server filesystem views. |
+| [`21-master-key-and-signatures.mmd`](diagram/21-master-key-and-signatures.mmd) | The database master key and its encryptions, module signatures and their signers, certificate backup, and the EKM `FROM PROVIDER` half of a key spec. |
 
 ### Azure instance resources
 
@@ -374,8 +378,10 @@ The instance and database halves pair up: `ServerResourceStat` and
 | Partition schemes               | `db.PartitionSchemes()` / `db.PartitionSchemeByName(name)` |
 | Extended properties             | `db.ExtendedProperties(level)` / `db.AddExtendedProperty(...)` / `db.SetExtendedProperty(...)` / `db.DropExtendedProperty(...)` |
 | `Database.Certificates`         | `db.Certificates()` / `db.CertificateByName(name)` / `db.CreateCertificate(spec)` / `cert.Drop()` — see [Certificates](#certificates-and-the-database-master-key) |
-| `Database.AsymmetricKeys`       | `db.AsymmetricKeys()` / `db.AsymmetricKeyByName(name)` — read only; CREATE ASYMMETRIC KEY imports from the server's own filesystem |
-| Database master key             | `db.HasMasterKey()` / `db.CreateMasterKey(password)` |
+| `Database.AsymmetricKeys`       | `db.AsymmetricKeys()` / `db.AsymmetricKeyByName(name)` / `db.AsymmetricKeyRef(name)` / `db.CreateAsymmetricKey(spec)` / `key.Drop()` — generated keys only; every import form reads the server's own filesystem or an EKM provider |
+| `Database.SymmetricKeys`        | `db.SymmetricKeys()` / `db.SymmetricKeyByName(name)` / `db.SymmetricKeyRef(name)` / `db.CreateSymmetricKey(spec)` / `key.AddEncryption(enc, dec)` / `key.DropEncryption(enc, dec)` / `key.Drop()` — each key with its `Encryptions` (certificate / asymmetric key / symmetric key / password), the master key excluded |
+| Database master key             | `db.HasMasterKey()` / `db.CreateMasterKey(password)` / `db.MasterKey()` / `db.MasterKeyRef()` — see [Certificates](#certificates-and-the-database-master-key) |
+| Module signatures               | `db.ModuleSignatures()` / `db.SignaturesOn(schema, module)` / `db.AddSignature(...)` / `db.DropSignature(...)` / `cert.SignedModules()` / `key.SignedModules()` |
 | Column master keys              | `db.ColumnMasterKeys()` / `db.ColumnMasterKeyByName(name)` / `db.CreateColumnMasterKey(...)` / `...WithSignature(...)` |
 | Column encryption keys          | `db.ColumnEncryptionKeys()` / `db.ColumnEncryptionKeyByName(name)` / `db.CreateColumnEncryptionKey(name, values)` / `cek.AddValue(value)` / `cek.DropValue(masterKeyName)` — the two halves of a master-key rotation |
 | Security policies (RLS)         | `db.SecurityPolicies()` / `db.SecurityPolicyByName(schema, name)` |
@@ -1073,6 +1079,9 @@ ddl, _ := sc.ScriptPartitionScheme("psMonthly")
 ddl, _ := sc.ScriptSecurityPolicy("sec", "TenantFilter")
 ddl, _ := sc.ScriptColumnMasterKey("CMK1")
 ddl, _ := sc.ScriptColumnEncryptionKey("CEK1")
+ddl, _ := sc.ScriptCertificate("AppCert")   // FROM BINARY: the public certificate, no private key
+ddl, _ := sc.ScriptAsymmetricKey("AppKey")  // WITH ALGORITHM: a new key pair, not this one
+ddl, _ := sc.ScriptSymmetricKey("AppSymKey") // WITH ALGORITHM + every ENCRYPTION BY: a new key, passwords as placeholders
 ddl, _ := sc.ScriptUserDefinedDataType("dbo", "PhoneNumber")
 ddl, _ := sc.ScriptUserDefinedTableType("dbo", "OrderLines")
 ddl, _ := sc.ScriptClrType("dbo", "Point")
@@ -1563,12 +1572,26 @@ authentication — each instance needs the others' public **certificates**.
 
 | SSMS equivalent                  | gosmo                                                    |
 | -------------------------------- | -------------------------------------------------------- |
-| Security → Certificates          | `db.Certificates()` / `db.CertificateByName(name)`        |
-| Security → Asymmetric Keys       | `db.AsymmetricKeys()` / `db.AsymmetricKeyByName(name)`    |
+| Security → Certificates          | `db.Certificates()` / `db.CertificateByName(name)` / `db.CertificateRef(name)` |
+| Security → Asymmetric Keys       | `db.AsymmetricKeys()` / `db.AsymmetricKeyByName(name)` / `db.AsymmetricKeyRef(name)` |
+| Security → Symmetric Keys        | `db.SymmetricKeys()` / `db.SymmetricKeyByName(name)` (`ErrNotFound` on absence) / `db.SymmetricKeyRef(name)` |
 | New / drop certificate           | `db.CreateCertificate(gosmo.CertificateSpec{...})` / `cert.Drop()` |
 | Database master key              | `db.HasMasterKey()` / `db.CreateMasterKey(password)`      |
+| Master key properties / regenerate | `db.MasterKey()` (`nil` when absent or invisible) / `mk.Regenerate(password, force, openPassword)` |
+| Master key encryptions / backup  | `mk.AddEncryption(enc, openPassword)` / `mk.DropEncryption(...)` (service master key or password) / `mk.Backup(file, password, openPassword)` / `mk.Drop()` — `openPassword` opens a key the service master key no longer encrypts |
+| Back up a certificate            | `cert.Backup(gosmo.CertificateBackupSpec{...})` — files on the *server*, private key optional |
+| Remove a private key             | `cert.RemovePrivateKey()` / `asymKey.RemovePrivateKey()` — irreversible; there is no `BACKUP ASYMMETRIC KEY` |
+| Change owner                     | `cert.ChangeOwner(u)` / `asymKey.ChangeOwner(u)` / `symKey.ChangeOwner(u)` — `ALTER AUTHORIZATION`, which drops the object's explicit permissions |
+| Keys held by an EKM provider     | `AsymmetricKeySpec.FromProvider` / `SymmetricKeySpec.FromProvider` (`gosmo.ProviderKey`) — not run live; no test instance has a provider |
+| Module signatures                | `db.AddSignature(schema, module, gosmo.Signer{...}, counter)` / `db.DropSignature(...)` / `db.SignaturesOn(schema, module)` / `cert.SignedModules()` / `asymKey.SignedModules()` |
 | Export the public certificate    | `cert.Encoded()` → `[]byte` (`CERTENCODED`)               |
-| Import it on another instance    | `CertificateSpec.FromBinary` (`CREATE CERTIFICATE ... FROM BINARY`, SQL Server 2022+) |
+| Import it on another instance    | `CertificateSpec.FromBinary` (`CREATE CERTIFICATE ... FROM BINARY`, every supported version) |
+| New / drop asymmetric key        | `db.CreateAsymmetricKey(gosmo.AsymmetricKeySpec{...})` (generated: `WITH ALGORITHM`) / `key.Drop()` |
+| New / drop symmetric key         | `db.CreateSymmetricKey(gosmo.SymmetricKeySpec{...})` (`KEY_SOURCE` / `IDENTITY_VALUE` optional) / `key.Drop()` |
+| Symmetric key → Encryption       | `key.AddEncryption(enc, dec)` / `key.DropEncryption(enc, dec)` — `dec` opens the key; OPEN, ALTER and CLOSE go as one batch on one connection |
+| Script as CREATE / DROP          | `sc.ScriptCertificate(name)` — `FROM BINARY` of the public certificate; the private key is not scripted |
+| Script asymmetric key            | `sc.ScriptAsymmetricKey(name)` — `WITH ALGORITHM` and owner: a new key pair, since neither half can be scripted back |
+| Script symmetric key             | `sc.ScriptSymmetricKey(name)` — `WITH ALGORITHM`, owner and every `ENCRYPTION BY`, passwords as placeholders: a new key, since neither the material nor `KEY_SOURCE`/`IDENTITY_VALUE` can be read back |
 
 `Encoded` and `FromBinary` are the pair that moves a certificate between
 instances **without filesystem access on either host**. The documented route

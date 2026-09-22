@@ -117,7 +117,7 @@ func scanCapabilityRows(rows *sql.Rows, into capabilityDest) error {
 			}
 			into.availabilityGroups[name][strings.TrimPrefix(kind, "G:")] = st
 		case strings.HasPrefix(kind, "K:"):
-			// The class 5/6/10 block, keyed by DatabaseSecurableKey. A
+			// The class 5/6/10/24/25/26 block, keyed by DatabaseSecurableKey. A
 			// HAS_PERMS_BY_NAME answer like "G:", so a NULL is skipped rather
 			// than recorded as a denial — and like "G:" there is one row per
 			// securable, so nothing needs a denial to win over a grant.
