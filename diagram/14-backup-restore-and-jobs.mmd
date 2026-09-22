@@ -141,6 +141,7 @@ classDiagram
         +LastRunDuration Duration
         +NextRunDate time.Time
         +CurrentState JobState
+        +Server() *Server
         +Steps() []*JobStep
         +AddStep(req) error
         +InsertStep(req, stepID) error

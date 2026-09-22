@@ -80,6 +80,7 @@ classDiagram
         +LastConnectErrorTimestamp time.Time
         +CreateDate time.Time
         +ModifyDate time.Time
+        +Server() *Server
         +ReadOnlyRoutingList() [][]string
         +SetAvailabilityMode(mode) error
         +SetFailoverMode(mode) error

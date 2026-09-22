@@ -86,8 +86,11 @@ Every object family SSMS shows, read and — where it makes sense — written:
   and libraries.
 - **Backup & restore** — to disk, to a logical device, or to Azure Storage,
   with headers, history, file lists and progress callbacks.
+- **Service Broker** — message types, contracts, queues, services, routes,
+  remote service bindings and broker priorities, with queue and route
+  settings.
 - **SQL Server Agent** — jobs, steps, schedules, alerts, operators,
-  categories.
+  categories, with each object's properties applied in one call.
 - **Always On** — availability groups, replicas, databases, listeners, the
   mirroring endpoints beneath them and the certificates that authenticate
   them.
@@ -104,6 +107,9 @@ Every object family SSMS shows, read and — where it makes sense — written:
 
 Every collection method has a `FooSeq(ctx)` iterator beside it, and every
 method that touches the database comes as a `Foo`/`FooContext` pair.
+`FooByName` reads an object from the catalog; `FooRef` is a lookup-free
+handle carrying only the name. Catalog state is exported fields, and every
+object reaches its parent through `Server()` or `Database()`.
 
 The full API map — twenty Mermaid class diagrams in [`diagram/`](diagram/)
 under a master map, and a feature map giving gosmo's name for each SMO one —

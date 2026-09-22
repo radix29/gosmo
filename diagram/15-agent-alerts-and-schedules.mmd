@@ -21,6 +21,7 @@ classDiagram
         +OccurrenceCount int
         +LastOccurrence time.Time
         +LastResponse time.Time
+        +Server() *Server
         +IsEventAlert() bool
         +Enable() error
         +Disable() error
@@ -67,6 +68,7 @@ classDiagram
         +LastEmailDate time.Time
         +LastPagerDate time.Time
         +LastNetSendDate time.Time
+        +Server() *Server
         +Enable() error
         +Disable() error
         +Rename(newName) error
@@ -114,6 +116,7 @@ classDiagram
         +OwnerLoginName string
         +CreateDate time.Time
         +ModifyDate time.Time
+        +Server() *Server
         +Description() string
         +Enable() error
         +Disable() error

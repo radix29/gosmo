@@ -12,6 +12,7 @@ classDiagram
         +ModifyDate time.Time
         +HasReplicationFilter bool
         +IsMemoryOptimized bool
+        +Database() *Database
         +FullName() string
         +Columns() []*Column
         +Indexes() []*Index

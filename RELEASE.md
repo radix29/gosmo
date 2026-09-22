@@ -3,70 +3,36 @@
 The current release, in brief. Detail and history are in
 [CHANGELOG.md](CHANGELOG.md).
 
-## v0.0.13
-
-The Programmability and External Resources folders arrive whole — types,
-rules, defaults, assemblies, plan guides, external data sources, file formats
-and libraries — along with database snapshots and the table sub-folders.
-Underneath them, Entra sign-in and the Browser probe stopped repeating
-themselves once per connection, and a `Database` read costs one round trip
-instead of two.
+## v0.0.14
 
 ### New
 
-- Types: alias, table, CLR and system, plus XML schema collections — read,
-  drop, transfer, rename.
-- Rules and defaults — the two deprecated families, read-only.
-- CLR assemblies, with their files and modules.
-- Plan guides — read, enable, disable, drop.
-- External data sources, external file formats and external libraries.
-- Database snapshots at server scope: create, restore, drop, and every
-  snapshot of a given source.
-- Table kinds — System, FileTable, External and Graph as their own listings,
-  with `TableKindsPresent()` to say which exist at all.
-- `Database.DiskUsage()` — the SSMS Disk Usage report's numbers.
-- Azure per-database resource stats and governance limits, the database-scoped
-  twins of `v0.0.12`'s instance ones.
-- Per-securable database capabilities for assemblies, types and XML schema
-  collections.
-- Eleven more scripting verbs, covering every new family above.
-- `ConnectionOptions.ExtraParams` — driver parameters with no field of their
-  own; one a field controls is refused, never merged.
-- `ConnectionOptions.ConnectionString(maskSecrets)` — the DSN, without
-  dialling.
-- Fourteen more `*Seq` iterators (112 now), and `AuthMethod.String()`.
+- Service Broker: message types, contracts, queues, services, routes, remote
+  service bindings and broker priorities — read, script, drop.
+- `ALTER QUEUE` and `ALTER ROUTE`, plus queue message counts and activation
+  monitors.
+- Batched Agent writes: `Job`/`Alert`/`Operator`/`Schedule.Alter` send one
+  `sp_update_*` call; `gosmo.Ptr` builds the fields.
+- `AcquireConn` — a pinned connection that retries a dead one from the pool.
+- `ServerRoleRef`, `ConfigurationRef`, `UserRef`, `StatisticRef` handles.
+- `Server()`/`Database()` back-pointer on every type that has a parent.
+- `Sequence.DataTypeSchema` and the exported `ShowplanColumn`.
+- Sixteen more `*Seq` iterators (128 now).
 
 ### Fixes
 
-- `CreateDatabase` failed outright when given a log file and no data file.
-- A cancelled or failed write left auditing switched off, the one thing the
-  disable window exists to prevent.
-- An interrupted `EXECUTE AS` read left a pooled connection impersonating, so
-  the next caller to get it failed with Msg 596.
-- A forced drop or rename could not work on a Managed Instance, which rejects
-  `SET SINGLE_USER`.
-- `ParseServerAddress` misread IPv6 literals, taking the last group for a port.
-- An Entra `User` already carrying a tenant had `TenantID` appended again.
-- `StopAt` silently discarded sub-second precision from a point-in-time
-  restore.
+- `Alert.SetTrigger`, `Schedule.SetFrequency` and `Schedule.SetActiveRange`
+  changed the receiver under `WithScript`.
+- A scripted sequence over an alias type lost the type's schema.
 
 ### Changes
 
-- **Entra credentials are built by gosmo, once per identity, not once per
-  connection** — one browser sign-in or device code for a whole pool. Share
-  one via `ConnectionOptions.EntraCache`, warm it with `Warm`, and put the
-  device code where a user can see it with `DeviceCodePrompt`.
-- **A `Database` read is one round trip**, the `USE` batched with the query —
-  41 ms per read against a Managed Instance.
-- **A Browser reply is cached for two minutes**, rather than re-probed for
-  every new pooled connection; a failed connection evicts it.
-- Under `WithScript`, a nil `[]byte` scripts as `NULL` and an empty one as
-  `0x`; both were `0x00`.
-- `AuthEntraIntegrated` is documented as what it is — the
-  `AuthEntraDefault` chain, not Windows SSO — and `AuthEntraPassword` as
-  unable to satisfy MFA.
-- Four new version gates, checked against real instances: the graph columns at
-  2017, the PolyBase v2 and file-format columns at 2019.
-- `azcore` and `azidentity` are direct dependencies now.
-- Docs split: `README.md` is a short summary, the API map and reference moved
-  to `ARCHITECTURE.md`, and `PLAN.md` is gone.
+- **Breaking:** `Database` fields are exported — `db.Name()` is `db.Name`.
+- **Breaking:** lookup-free handles take the `Ref` suffix —
+  `srv.Database(name)` is `srv.DatabaseRef(name)`, and so on for all 18.
+- **Breaking:** `Table.DB()` is `Table.Database()`.
+- **Breaking:** `Xml` is `XML` in every identifier
+  (`XMLSchemaCollection`, …).
+- Large files split along their section banners; no behaviour change.
+- Every write path now has an offline test of its exact statement.
+- New `OPEN-THREADS.md` for open work and settled decisions.

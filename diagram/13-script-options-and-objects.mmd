@@ -33,6 +33,7 @@ classDiagram
         +Name string
         +ID int
         +Owner string
+        +Database() *Database
         +ObjectCount() int
         +ObjectCountsByType() SchemaObjectCounts
         +ChangeOwner(newOwner) error
@@ -91,6 +92,7 @@ classDiagram
         +SID []byte
         +LoginName string
         +LoginDisabled bool
+        +Database() *Database
         +Rename(newName) error
         +SetDefaultSchema(schemaName) error
         +SetLogin(loginName) error
@@ -105,6 +107,7 @@ classDiagram
         +SID []byte
         +CreateDate time.Time
         +ModifyDate time.Time
+        +Database() *Database
         +Rename(newName) error
         +Drop() error
         +ChangeOwner(newOwner) error
@@ -148,6 +151,7 @@ classDiagram
         +CreateDate time.Time
         +ModifyDate time.Time
         +Members []string
+        +Server() *Server
         +Rename(newName) error
         +Drop() error
         +ChangeOwner(newOwner) error

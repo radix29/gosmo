@@ -68,6 +68,9 @@ diagram and not a linked file, so open a `.mmd` in a Mermaid-aware editor, or
 paste it into [mermaid.live](https://mermaid.live), to see it drawn. Each
 file is a standalone `classDiagram` and renders on its own.
 
+Every type with a parent carries a `Server()` or `Database()` back-pointer;
+a class shows it as the `-server`/`-db` field, the accessor, or both.
+
 ### The map at a glance
 
 Which diagram holds what, and the links that cross between them. Every arrow
@@ -935,7 +938,7 @@ Enable/Disable is the one write: a disabled guide is invisible from the
 query side, so it is the operation that makes the folder worth having.
 There is no create — its arguments *are* the statement, matched character
 for character. Enable and Disable address the guide by name, so the no-I/O
-handle is enough, and is the only form under `WithScript`.
+handle is enough.
 
 ### External resources
 
@@ -1343,9 +1346,11 @@ is still reported alongside.
 Agent counterparts of `srv.DatabaseRef`/`srv.LoginRef`. Every write method on
 those types addresses its object by name, so a handle is enough to keep
 operating on one you already know exists; the `...ByName` form is what
-queries `msdb` and populates the cached fields. Under `WithScript` the
-handle is the only usable form, and is what `CreateJob`/`CreateAlert`/
-`CreateOperator`/`CreateSchedule` return there.
+queries `msdb` and populates the cached fields. `WithScript` intercepts
+writes only, so a `...ByName` read under it still reaches the server; the
+handle is what `CreateJob`/`CreateAlert`/`CreateOperator`/`CreateSchedule`
+return there, since an object whose `CREATE` was only collected is not in
+`msdb` to be read back.
 
 #### Applying several properties at once
 
