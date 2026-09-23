@@ -36,7 +36,7 @@ func main() {
 		Columns: []gosmo.ColumnDefinition{
 			{Name: "OrderID", DataType: gosmo.DataTypeInt, IsIdentity: true, IdentitySeed: 1, IdentityIncr: 1, IsPrimaryKey: true},
 			{Name: "CustomerID", DataType: gosmo.DataTypeInt, IsNullable: false},
-			{Name: "Total", DataType: gosmo.DataTypeDecimal, Precision: 18, Scale: 2, IsNullable: false},
+			{Name: "Total", DataType: gosmo.DataTypeDecimal, Precision: new(18), Scale: new(2), IsNullable: false},
 		},
 	}))
 	// CreateStoredProcedure's body is the T-SQL *after* AS — gosmo emits the

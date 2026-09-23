@@ -17,7 +17,7 @@ func TestBuildAddFileStatement(t *testing.T) {
 				Name: "appdb_idx", FileGroup: "INDEXES", Path: `D:\SQLData\appdb_idx.ndf`,
 				SizeKB: 4096 * 1024, GrowthKB: 1024 * 1024, MaxSizeKB: -1,
 			},
-			want: "ALTER DATABASE [appdb] ADD FILE (NAME = [appdb_idx], FILENAME = 'D:\\SQLData\\appdb_idx.ndf', " +
+			want: "ALTER DATABASE [appdb] ADD FILE (NAME = [appdb_idx], FILENAME = N'D:\\SQLData\\appdb_idx.ndf', " +
 				"SIZE = 4194304KB, MAXSIZE = UNLIMITED, FILEGROWTH = 1048576KB) TO FILEGROUP [INDEXES]",
 		},
 		{
@@ -26,18 +26,18 @@ func TestBuildAddFileStatement(t *testing.T) {
 				Name: "appdb_log2", Type: "LOG", FileGroup: "PRIMARY", Path: `D:\SQLLog\appdb_log2.ldf`,
 				SizeKB: 512 * 1024, GrowthPercent: 10,
 			},
-			want: "ALTER DATABASE [appdb] ADD LOG FILE (NAME = [appdb_log2], FILENAME = 'D:\\SQLLog\\appdb_log2.ldf', " +
+			want: "ALTER DATABASE [appdb] ADD LOG FILE (NAME = [appdb_log2], FILENAME = N'D:\\SQLLog\\appdb_log2.ldf', " +
 				"SIZE = 524288KB, FILEGROWTH = 10%)",
 		},
 		{
 			name: "minimal spec — no optional clauses",
 			spec: DatabaseFileSpec{Name: "f1", Path: "/var/opt/mssql/data/f1.ndf"},
-			want: "ALTER DATABASE [appdb] ADD FILE (NAME = [f1], FILENAME = '/var/opt/mssql/data/f1.ndf')",
+			want: "ALTER DATABASE [appdb] ADD FILE (NAME = [f1], FILENAME = N'/var/opt/mssql/data/f1.ndf')",
 		},
 		{
 			name: "bounded (positive) max size, not unlimited",
 			spec: DatabaseFileSpec{Name: "f2", Path: "/var/opt/mssql/data/f2.ndf", MaxSizeKB: 102400},
-			want: "ALTER DATABASE [appdb] ADD FILE (NAME = [f2], FILENAME = '/var/opt/mssql/data/f2.ndf', MAXSIZE = 102400KB)",
+			want: "ALTER DATABASE [appdb] ADD FILE (NAME = [f2], FILENAME = N'/var/opt/mssql/data/f2.ndf', MAXSIZE = 102400KB)",
 		},
 	}
 	for _, c := range cases {

@@ -126,13 +126,9 @@ func (d *Database) scanColumnPermissions(ctx context.Context, q, what string, ar
 // schema.name to principal. Passing several columns renders the one
 // statement SQL Server accepts for them — GRANT SELECT (a, b) ON ... — not
 // one statement per column.
-func (d *Database) GrantColumnPermission(ctx context.Context, schema, name string, permission ObjectPermission, columns []string, principal string) error {
-	return d.GrantColumnPermissionWithOptions(ctx, schema, name, permission, columns, principal, PermissionOptions{})
-}
-
-// GrantColumnPermissionWithOptions grants a column-level permission
-// honouring opts — the WITH GRANT OPTION form of GrantColumnPermission.
-func (d *Database) GrantColumnPermissionWithOptions(ctx context.Context, schema, name string, permission ObjectPermission, columns []string, principal string, opts PermissionOptions) error {
+//
+// opts adds the WITH GRANT OPTION modifiers; the zero value is the plain statement.
+func (d *Database) GrantColumnPermission(ctx context.Context, schema, name string, permission ObjectPermission, columns []string, principal string, opts PermissionOptions) error {
 	if err := requireColumns("grant", columns); err != nil {
 		return err
 	}
@@ -141,13 +137,9 @@ func (d *Database) GrantColumnPermissionWithOptions(ctx context.Context, schema,
 
 // DenyColumnPermission denies permission on the named columns of
 // schema.name to principal.
-func (d *Database) DenyColumnPermission(ctx context.Context, schema, name string, permission ObjectPermission, columns []string, principal string) error {
-	return d.DenyColumnPermissionWithOptions(ctx, schema, name, permission, columns, principal, PermissionOptions{})
-}
-
-// DenyColumnPermissionWithOptions denies a column-level permission honouring
-// opts — the CASCADE form of DenyColumnPermission.
-func (d *Database) DenyColumnPermissionWithOptions(ctx context.Context, schema, name string, permission ObjectPermission, columns []string, principal string, opts PermissionOptions) error {
+//
+// opts adds the CASCADE modifiers; the zero value is the plain statement.
+func (d *Database) DenyColumnPermission(ctx context.Context, schema, name string, permission ObjectPermission, columns []string, principal string, opts PermissionOptions) error {
 	if err := requireColumns("deny", columns); err != nil {
 		return err
 	}
@@ -156,14 +148,9 @@ func (d *Database) DenyColumnPermissionWithOptions(ctx context.Context, schema, 
 
 // RevokeColumnPermission revokes permission on the named columns of
 // schema.name from principal.
-func (d *Database) RevokeColumnPermission(ctx context.Context, schema, name string, permission ObjectPermission, columns []string, principal string) error {
-	return d.RevokeColumnPermissionWithOptions(ctx, schema, name, permission, columns, principal, PermissionOptions{})
-}
-
-// RevokeColumnPermissionWithOptions revokes a column-level permission
-// honouring opts — the CASCADE and GRANT OPTION FOR forms of
-// RevokeColumnPermission.
-func (d *Database) RevokeColumnPermissionWithOptions(ctx context.Context, schema, name string, permission ObjectPermission, columns []string, principal string, opts PermissionOptions) error {
+//
+// opts adds the CASCADE and GRANT OPTION FOR modifiers; the zero value is the plain statement.
+func (d *Database) RevokeColumnPermission(ctx context.Context, schema, name string, permission ObjectPermission, columns []string, principal string, opts PermissionOptions) error {
 	if err := requireColumns("revoke", columns); err != nil {
 		return err
 	}

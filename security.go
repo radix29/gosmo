@@ -185,21 +185,6 @@ func ObjectPermissionNames() []string {
 	return names
 }
 
-// GrantPermission grants permission on schema.name to principal.
-func (d *Database) GrantPermission(ctx context.Context, schema, name string, permission ObjectPermission, principal string) error {
-	return d.GrantPermissionWithOptions(ctx, schema, name, permission, principal, PermissionOptions{})
-}
-
-// DenyPermission denies permission on schema.name to principal.
-func (d *Database) DenyPermission(ctx context.Context, schema, name string, permission ObjectPermission, principal string) error {
-	return d.DenyPermissionWithOptions(ctx, schema, name, permission, principal, PermissionOptions{})
-}
-
-// RevokePermission revokes permission on schema.name from principal.
-func (d *Database) RevokePermission(ctx context.Context, schema, name string, permission ObjectPermission, principal string) error {
-	return d.RevokePermissionWithOptions(ctx, schema, name, permission, principal, PermissionOptions{})
-}
-
 // ============================================================
 // Schema-scoped permissions (GRANT/DENY ON SCHEMA::x — grants every
 // current and future object in the schema at once)
@@ -256,21 +241,6 @@ ORDER  BY pr.name, dp.permission_name`
 	return grants, nil
 }
 
-// GrantSchemaPermission grants permission on a schema to principal.
-func (d *Database) GrantSchemaPermission(ctx context.Context, schemaName string, permission ObjectPermission, principal string) error {
-	return d.GrantSchemaPermissionWithOptions(ctx, schemaName, permission, principal, PermissionOptions{})
-}
-
-// DenySchemaPermission denies permission on a schema to principal.
-func (d *Database) DenySchemaPermission(ctx context.Context, schemaName string, permission ObjectPermission, principal string) error {
-	return d.DenySchemaPermissionWithOptions(ctx, schemaName, permission, principal, PermissionOptions{})
-}
-
-// RevokeSchemaPermission revokes permission on a schema from principal.
-func (d *Database) RevokeSchemaPermission(ctx context.Context, schemaName string, permission ObjectPermission, principal string) error {
-	return d.RevokeSchemaPermissionWithOptions(ctx, schemaName, permission, principal, PermissionOptions{})
-}
-
 // ============================================================
 // Database-scoped permissions (GRANT/DENY not tied to a specific object —
 // e.g. CONNECT, CREATE TABLE, ALTER ANY USER)
@@ -283,8 +253,8 @@ type DatabasePermissionEntry struct {
 	Principal     string
 	PrincipalType string // e.g. "DATABASE_ROLE", "SQL_USER"
 	Grantor       string
-	Permission    string // e.g. "CONNECT", "CREATE TABLE", "ALTER"
-	State         string // "GRANT", "GRANT_WITH_GRANT_OPTION", "DENY"
+	Permission    DatabasePermission // e.g. "CONNECT", "CREATE TABLE", "ALTER"
+	State         string             // "GRANT", "GRANT_WITH_GRANT_OPTION", "DENY"
 }
 
 // DatabasePermissions returns every database-scoped GRANT/DENY entry —
@@ -313,7 +283,7 @@ ORDER  BY pr.name, dp.permission_name`
 // BULK OPERATIONS' is not supported in this version of SQL Server.
 // Alternatively, use the server level 'ADMINISTER BULK OPERATIONS'
 // permission." — which serverPermissionNames already has.
-var databasePermissionNames = map[string]bool{
+var databasePermissionNames = map[DatabasePermission]bool{
 	"ALTER":                                  true,
 	"ALTER ANY APPLICATION ROLE":             true,
 	"ALTER ANY ASSEMBLY":                     true,
@@ -384,7 +354,7 @@ var databasePermissionNames = map[string]bool{
 
 // validDatabasePermission reports whether name is a recognized
 // database-scoped permission name.
-func validDatabasePermission(name string) bool { return databasePermissionNames[name] }
+func validDatabasePermission(name DatabasePermission) bool { return databasePermissionNames[name] }
 
 // DatabasePermissionNames returns every database-scoped permission name
 // GRANT/DENY/REVOKE accepts, sorted — see ServerPermissionNames for what
@@ -392,23 +362,8 @@ func validDatabasePermission(name string) bool { return databasePermissionNames[
 func DatabasePermissionNames() []string {
 	names := make([]string, 0, len(databasePermissionNames))
 	for name := range databasePermissionNames {
-		names = append(names, name)
+		names = append(names, string(name))
 	}
 	slices.Sort(names)
 	return names
-}
-
-// GrantDatabasePermission grants a database-level permission to principal.
-func (d *Database) GrantDatabasePermission(ctx context.Context, permission, principal string) error {
-	return d.GrantDatabasePermissionWithOptions(ctx, permission, principal, PermissionOptions{})
-}
-
-// DenyDatabasePermission denies a database-level permission to principal.
-func (d *Database) DenyDatabasePermission(ctx context.Context, permission, principal string) error {
-	return d.DenyDatabasePermissionWithOptions(ctx, permission, principal, PermissionOptions{})
-}
-
-// RevokeDatabasePermission revokes a database-level permission from principal.
-func (d *Database) RevokeDatabasePermission(ctx context.Context, permission, principal string) error {
-	return d.RevokeDatabasePermissionWithOptions(ctx, permission, principal, PermissionOptions{})
 }

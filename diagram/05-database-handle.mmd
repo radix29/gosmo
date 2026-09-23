@@ -167,12 +167,12 @@ classDiagram
         +TableSpaceUsedAll() map~int,TableSpaceInfo~
         +SetRecoveryModel(model) error
         +SetCompatibilityLevel(level) error
-        +SetReadOnly(bool) error
+        +SetReadOnly(ro, term) error
         +SetUserAccess(mode) error
         +SetOffline() error
         +SetOnline() error
         +Options() *DatabaseOptions
-        +SetDatabaseOption(opt, value) error
+        +SetDatabaseOption(opt, value, term) error
         +SetOwner(principal) error
         +DatabaseScopedConfigs() []*DatabaseScopedConfig
         +SetDatabaseScopedConfig(name, value, forSecondary) error
@@ -199,7 +199,7 @@ classDiagram
         +AddFileGroup(name) error
         +RemoveFileGroup(name) error
         +SetDefaultFileGroup(name) error
-        +SetFileGroupReadOnly(name, ro) error
+        +SetFileGroupReadOnly(name, ro, term) error
         +ChangeTracking() *ChangeTrackingInfo
         +SetChangeTracking(info) error
         +TableChangeTracking() []*TableChangeTracking
@@ -211,38 +211,26 @@ classDiagram
         +FindSecurables(search) []SecurableRef
         +ObjectColumns(schema, name) []*Column
         +Permissions(schema, name) []*PermissionEntry
-        +GrantPermission(schema, name, perm, principal) error
-        +DenyPermission(schema, name, perm, principal) error
-        +RevokePermission(schema, name, perm, principal) error
+        +GrantPermission(schema, name, perm, principal, opts) error
+        +DenyPermission(schema, name, perm, principal, opts) error
+        +RevokePermission(schema, name, perm, principal, opts) error
         +PermissionsForPrincipal(principal) []*PrincipalSecurable
-        +GrantPermissionWithOptions(schema, name, perm, principal, opts) error
-        +DenyPermissionWithOptions(schema, name, perm, principal, opts) error
-        +RevokePermissionWithOptions(schema, name, perm, principal, opts) error
         +ColumnPermissions(schema, name) []*ColumnPermissionEntry
         +ColumnPermissionsForPrincipal(principal) []*ColumnPermissionEntry
-        +GrantColumnPermission(schema, name, perm, cols, principal) error
-        +DenyColumnPermission(schema, name, perm, cols, principal) error
-        +RevokeColumnPermission(schema, name, perm, cols, principal) error
-        +GrantColumnPermissionWithOptions(schema, name, perm, cols, principal, opts) error
-        +DenyColumnPermissionWithOptions(schema, name, perm, cols, principal, opts) error
-        +RevokeColumnPermissionWithOptions(schema, name, perm, cols, principal, opts) error
+        +GrantColumnPermission(schema, name, perm, cols, principal, opts) error
+        +DenyColumnPermission(schema, name, perm, cols, principal, opts) error
+        +RevokeColumnPermission(schema, name, perm, cols, principal, opts) error
         +EffectivePermissions(principal) []*EffectivePermission
         +EffectiveObjectPermissions(schema, name, principal) []*EffectivePermission
         +EffectiveSchemaPermissions(schema, principal) []*EffectivePermission
         +SchemaPermissions(schema) []*PermissionEntry
-        +GrantSchemaPermission(schema, perm, principal) error
-        +DenySchemaPermission(schema, perm, principal) error
-        +RevokeSchemaPermission(schema, perm, principal) error
-        +GrantSchemaPermissionWithOptions(schema, perm, principal, opts) error
-        +DenySchemaPermissionWithOptions(schema, perm, principal, opts) error
-        +RevokeSchemaPermissionWithOptions(schema, perm, principal, opts) error
+        +GrantSchemaPermission(schema, perm, principal, opts) error
+        +DenySchemaPermission(schema, perm, principal, opts) error
+        +RevokeSchemaPermission(schema, perm, principal, opts) error
         +DatabasePermissions() []*DatabasePermissionEntry
-        +GrantDatabasePermission(perm, principal) error
-        +DenyDatabasePermission(perm, principal) error
-        +RevokeDatabasePermission(perm, principal) error
-        +GrantDatabasePermissionWithOptions(perm, principal, opts) error
-        +DenyDatabasePermissionWithOptions(perm, principal, opts) error
-        +RevokeDatabasePermissionWithOptions(perm, principal, opts) error
+        +GrantDatabasePermission(perm DatabasePermission, principal, opts) error
+        +DenyDatabasePermission(perm DatabasePermission, principal, opts) error
+        +RevokeDatabasePermission(perm DatabasePermission, principal, opts) error
         +EstimatedPlan(sql) *ExecutionPlan
         +ActualPlan(sql) *ExecutionPlan
         +ExecProc(schema, name, params) ProcResult

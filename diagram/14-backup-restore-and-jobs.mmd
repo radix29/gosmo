@@ -6,7 +6,7 @@ classDiagram
 
     class BackupOptions {
         +Database string
-        +Devices []string
+        +Devices []BackupTarget
         +Action BackupAction
         +Files []string
         +FileGroups []string
@@ -31,7 +31,7 @@ classDiagram
 
     class RestoreOptions {
         +Database string
-        +Devices []string
+        +Devices []BackupTarget
         +Action BackupAction
         +Files []string
         +FileGroups []string
@@ -47,7 +47,6 @@ classDiagram
         +FileNumber int
         +Credential string
         +Progress func
-        +BuildRestoreStatement(opts) string
     }
 
     class BackupHeader {
@@ -81,6 +80,8 @@ classDiagram
         +DiskTarget(path) BackupTarget
         +URLTarget(url) BackupTarget
         +DeviceTarget(name) BackupTarget
+        +IsURL() bool
+        +IsDevice() bool
         +IsBackupURL(device) bool
         +String() string
         A logical device is named bare, a path

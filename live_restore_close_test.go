@@ -38,7 +38,7 @@ func TestLiveRestoreCloseExistingConnections(t *testing.T) {
 
 	device := liveBackupPath(t, srv, ctx, name+".bak")
 	undo := liveBackupPath(t, srv, ctx, name+"_undo.dat")
-	if err := srv.Backup(ctx, BackupOptions{Database: name, Devices: []string{device}, Init: true}); err != nil {
+	if err := srv.Backup(ctx, BackupOptions{Database: name, Devices: []BackupTarget{DiskTarget(device)}, Init: true}); err != nil {
 		t.Fatalf("backup: %v", err)
 	}
 	defer db.ExecContext(context.Background(), "EXEC master.dbo.xp_delete_files @FilePath = N'"+device+"'")
@@ -59,7 +59,7 @@ func TestLiveRestoreCloseExistingConnections(t *testing.T) {
 		return st, access
 	}
 	restore := func(opts RestoreOptions) error {
-		opts.Database, opts.Devices, opts.Replace = name, []string{device}, true
+		opts.Database, opts.Devices, opts.Replace = name, []BackupTarget{DiskTarget(device)}, true
 		return srv.Restore(ctx, opts)
 	}
 
@@ -130,7 +130,7 @@ func TestLiveRestoreCloseExistingConnections(t *testing.T) {
 	})
 
 	t.Run("a database that does not exist yet", func(t *testing.T) {
-		files, err := srv.BackupFileList(ctx, device)
+		files, err := srv.BackupFileList(ctx, DiskTarget(device), 0)
 		if err != nil {
 			t.Fatalf("file list: %v", err)
 		}
@@ -141,7 +141,7 @@ func TestLiveRestoreCloseExistingConnections(t *testing.T) {
 		}
 		defer db.ExecContext(context.Background(), "IF DB_ID('"+copyName+"') IS NOT NULL DROP DATABASE "+quoteIdent(copyName))
 		if err := srv.Restore(ctx, RestoreOptions{
-			Database: copyName, Devices: []string{device}, RelocateFiles: move,
+			Database: copyName, Devices: []BackupTarget{DiskTarget(device)}, RelocateFiles: move,
 			CloseExistingConnections: true,
 		}); err != nil {
 			t.Fatalf("restore as a new database: %v", err)

@@ -168,6 +168,22 @@ func TestScriptIndexByType(t *testing.T) {
 			notWanted: []string{"ASC", "DESC"},
 		},
 		{
+			// How Table.Indexes reads one: sys.index_columns marks every
+			// NCCI column included, so KeyColumns is empty.
+			name: "nonclustered columnstore as read lists its included columns",
+			idx: &Index{AllowRowLocks: true, AllowPageLocks: true, Name: "NCCI", Type: IndexTypeColumnStore,
+				IncludedColumns: []IndexColumn{{Name: "A", IsIncluded: true}, {Name: "B", IsIncluded: true}}},
+			want:      "CREATE NONCLUSTERED COLUMNSTORE INDEX [NCCI]\n    ON [dbo].[T] ([A], [B]);",
+			notWanted: []string{"()"},
+		},
+		{
+			// Recreated without its WHERE, a filtered NCCI covers every row.
+			name: "filtered nonclustered columnstore keeps its filter",
+			idx: &Index{AllowRowLocks: true, AllowPageLocks: true, Name: "NCCI", Type: IndexTypeColumnStore,
+				KeyColumns: []IndexColumn{{Name: "A"}}, FilterDefinition: "([A]>(0))"},
+			want: "CREATE NONCLUSTERED COLUMNSTORE INDEX [NCCI]\n    ON [dbo].[T] ([A])\n    WHERE ([A]>(0));",
+		},
+		{
 			name:      "xml index is skipped with a note, not mis-scripted",
 			idx:       &Index{AllowRowLocks: true, AllowPageLocks: true, Name: "XI", Type: IndexTypeXML, KeyColumns: []IndexColumn{{Name: "Doc"}}},
 			want:      "-- XML index [XI] on [dbo].[T] is not scripted",
@@ -388,17 +404,18 @@ func TestBuildTableScriptIndexOptions(t *testing.T) {
 		cols: []*Column{{Name: "a", DataType: DataTypeInt}, {Name: "b", DataType: DataTypeInt}},
 		indexes: []*Index{
 			{Name: "PK_T", IsPrimaryKey: true, IsClustered: true, AllowRowLocks: true, AllowPageLocks: false,
-				DataCompression: "PAGE", KeyColumns: []IndexColumn{{Name: "a"}}},
+				OptimizeForSequentialKey: true,
+				DataCompression:          "PAGE", KeyColumns: []IndexColumn{{Name: "a"}}},
 			{Name: "IX_b", Type: IndexTypeNonClustered, IsUnique: true, IsPadded: true, FillFactor: 80,
-				IgnoreDupKey: true, AllowRowLocks: true, AllowPageLocks: true, DataCompression: "ROW",
+				IgnoreDupKey: true, StatisticsNoRecompute: true, AllowRowLocks: true, AllowPageLocks: true, DataCompression: "ROW",
 				IsDisabled: true, KeyColumns: []IndexColumn{{Name: "b"}}},
 		},
 		table: tableScriptOptions{HeapCompression: ""},
 	}
 	got := buildTableScript("dbo", "T", "db", p, ScriptOptions{})
 	for _, want := range []string{
-		"PRIMARY KEY CLUSTERED ([a] ASC) WITH (ALLOW_PAGE_LOCKS = OFF, DATA_COMPRESSION = PAGE)",
-		"WITH (PAD_INDEX = ON, FILLFACTOR = 80, IGNORE_DUP_KEY = ON, DATA_COMPRESSION = ROW);",
+		"PRIMARY KEY CLUSTERED ([a] ASC) WITH (ALLOW_PAGE_LOCKS = OFF, OPTIMIZE_FOR_SEQUENTIAL_KEY = ON, DATA_COMPRESSION = PAGE)",
+		"WITH (PAD_INDEX = ON, FILLFACTOR = 80, IGNORE_DUP_KEY = ON, STATISTICS_NORECOMPUTE = ON, DATA_COMPRESSION = ROW);",
 		"ALTER INDEX [IX_b] ON [dbo].[T] DISABLE;",
 	} {
 		if !strings.Contains(got, want) {

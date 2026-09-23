@@ -51,6 +51,10 @@ var sweepSkip = map[string]string{
 	"Database.SetOnline":       "brings the database online",
 	"Table.TruncateTable":      "deletes every row",
 	"Statistic.Drop":           "drops the statistic",
+	"Index.Disable":            "disables the index",
+	"Index.Drop":               "drops the index",
+	"Index.Enable":             "rebuilds the index",
+	"Index.Reorganize":         "reorganizes the index",
 	"Login.Disable":            "disables the login",
 	"Login.Drop":               "drops the login",
 	"Login.Enable":             "enables the login",
@@ -463,12 +467,18 @@ func TestLiveVersionSweep(t *testing.T) {
 		name := tbl.Schema + "." + tbl.Name
 		sw.reflectSweep("Table", name, tbl)
 
-		// Index has no context-only reads today. It is swept anyway so that
-		// one added later is covered without anyone editing this list.
+		// Index's context-only read is StorageInfo; its context-only writes
+		// (Drop, Disable, Enable, Reorganize — context-only since the table
+		// parameter went, 2026-09-23) are in sweepSkip. A read added later is
+		// covered without anyone editing this list.
 		idxs, err := tbl.Indexes(ctx)
 		if err == nil {
 			for _, ix := range idxs {
 				sw.reflectSweep("Index", name+"."+ix.Name, ix)
+				sw.call(fmt.Sprintf("Index.Fragmentation [%s.%s]", name, ix.Name), func() error {
+					_, err := ix.Fragmentation(ctx, FragmentationSampled)
+					return err
+				})
 			}
 		}
 		stats, err := tbl.Statistics(ctx)

@@ -14,7 +14,7 @@ func TestWithScriptCapturesServerWriteWithoutExecuting(t *testing.T) {
 	s := &Server{}
 	ctx, script := WithScript(context.Background())
 
-	if err := s.GrantServerPermission(ctx, "CONNECT SQL", "app_user"); err != nil {
+	if err := s.GrantServerPermission(ctx, "CONNECT SQL", "app_user", PermissionOptions{}); err != nil {
 		t.Fatalf("GrantServerPermission under WithScript: %v", err)
 	}
 
@@ -30,7 +30,7 @@ func TestWithScriptCapturesDatabaseWriteWithoutExecuting(t *testing.T) {
 	d := &Database{server: &Server{}, Name: "AppDB"}
 	ctx, script := WithScript(context.Background())
 
-	if err := d.GrantDatabasePermission(ctx, "SELECT", "app_user"); err != nil {
+	if err := d.GrantDatabasePermission(ctx, "SELECT", "app_user", PermissionOptions{}); err != nil {
 		t.Fatalf("GrantDatabasePermission under WithScript: %v", err)
 	}
 
@@ -50,10 +50,10 @@ func TestWithScriptCollectorsAreIndependent(t *testing.T) {
 	ctx1, script1 := WithScript(context.Background())
 	ctx2, script2 := WithScript(context.Background())
 
-	if err := s.GrantServerPermission(ctx1, "CONNECT SQL", "a"); err != nil {
+	if err := s.GrantServerPermission(ctx1, "CONNECT SQL", "a", PermissionOptions{}); err != nil {
 		t.Fatalf("grant under ctx1: %v", err)
 	}
-	if err := s.GrantServerPermission(ctx2, "CONNECT SQL", "b"); err != nil {
+	if err := s.GrantServerPermission(ctx2, "CONNECT SQL", "b", PermissionOptions{}); err != nil {
 		t.Fatalf("grant under ctx2: %v", err)
 	}
 
@@ -110,15 +110,14 @@ func TestWithScriptBindsParametersIntoTheStatement(t *testing.T) {
 			name: "Index.Rename",
 			write: func(ctx context.Context, d *Database) error {
 				t := &Table{db: d, Schema: "dbo", Name: "Orders"}
-				idx := &Index{Name: "IX_Old"}
-				return idx.Rename(ctx, t, "IX_New")
+				return t.IndexRef("IX_Old").Rename(ctx, "IX_New")
 			},
 			want: []string{"EXEC sp_rename", "N'[dbo].[Orders].[IX_Old]'", "N'IX_New'", "N'INDEX'"},
 		},
 		{
 			name:  "DropTable cascade",
 			write: func(ctx context.Context, d *Database) error { return d.DropTable(ctx, "dbo", "Orders", true) },
-			want:  []string{"OBJECT_ID(N'[dbo].[Orders]')", "DROP TABLE [dbo].[Orders]"},
+			want:  []string{"OBJECT_ID(N''[dbo].[Orders]'')", "DROP TABLE [dbo].[Orders]"},
 		},
 	}
 
@@ -336,13 +335,13 @@ func TestServerScopePermissionsScriptTheUsePrefix(t *testing.T) {
 		want string
 	}{
 		{"grant", func(ctx context.Context) error {
-			return s.GrantServerPermission(ctx, "CONNECT SQL", "app_user")
+			return s.GrantServerPermission(ctx, "CONNECT SQL", "app_user", PermissionOptions{})
 		}, "GRANT CONNECT SQL TO [app_user]"},
 		{"deny", func(ctx context.Context) error {
-			return s.DenyServerPermission(ctx, "CONNECT SQL", "app_user")
+			return s.DenyServerPermission(ctx, "CONNECT SQL", "app_user", PermissionOptions{})
 		}, "DENY CONNECT SQL TO [app_user]"},
 		{"revoke", func(ctx context.Context) error {
-			return s.RevokeServerPermission(ctx, "CONNECT SQL", "app_user")
+			return s.RevokeServerPermission(ctx, "CONNECT SQL", "app_user", PermissionOptions{})
 		}, "REVOKE CONNECT SQL FROM [app_user]"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
@@ -369,7 +368,7 @@ func TestServerScopePermissionsScriptTheUsePrefix(t *testing.T) {
 // connected.
 func TestServerPermissionRejectedBeforeConnecting(t *testing.T) {
 	s := &Server{}
-	if err := s.GrantServerPermission(context.Background(), "DROP TABLE x", "app_user"); err == nil {
+	if err := s.GrantServerPermission(context.Background(), "DROP TABLE x", "app_user", PermissionOptions{}); err == nil {
 		t.Error("GrantServerPermission accepted an unrecognized permission")
 	}
 }
@@ -500,7 +499,7 @@ func TestScriptedSetterDoesNotMirrorOntoTheReceiver(t *testing.T) {
 		{
 			name: "SetReadOnly",
 			set: func(ctx context.Context, d *Database, _ *ConfigurationOption) error {
-				return d.SetReadOnly(ctx, true)
+				return d.SetReadOnly(ctx, true, TerminationNone)
 			},
 			got:    func(d *Database, _ *ConfigurationOption) any { return d.IsReadOnly },
 			server: false, want: true,
@@ -638,5 +637,31 @@ func TestBindScriptArgsSkipsLiteralsAndComments(t *testing.T) {
 func TestBindScriptArgsRefusesAPlaceholderOnlyInsideALiteral(t *testing.T) {
 	if _, err := bindScriptArgs("EXEC sp_rename N'@p1'", []any{"new"}); err == nil {
 		t.Error("bindScriptArgs accepted a statement whose only @p1 is inside a literal, want an error")
+	}
+}
+
+// CONTAINMENT is the one SET option whose grammar takes '=' — without it the
+// server answers "Incorrect syntax near 'PARTIAL'" — while every other option
+// is a bare keyword after the name.
+func TestWithScriptSetDatabaseOptionContainmentTakesEquals(t *testing.T) {
+	d := &Database{server: &Server{}, Name: "AppDB"}
+	cases := []struct {
+		opt   DatabaseOption
+		value string
+		want  string
+	}{
+		{DBOptContainment, "PARTIAL", "ALTER DATABASE [AppDB] SET CONTAINMENT = PARTIAL"},
+		{DBOptContainment, "NONE", "ALTER DATABASE [AppDB] SET CONTAINMENT = NONE"},
+		{DBOptAutoClose, "ON", "ALTER DATABASE [AppDB] SET AUTO_CLOSE ON"},
+		{DBOptPageVerify, "CHECKSUM", "ALTER DATABASE [AppDB] SET PAGE_VERIFY CHECKSUM"},
+	}
+	for _, c := range cases {
+		ctx, script := WithScript(context.Background())
+		if err := d.SetDatabaseOption(ctx, c.opt, c.value, TerminationNone); err != nil {
+			t.Fatalf("SetDatabaseOption(%s, %s) under WithScript: %v", c.opt, c.value, err)
+		}
+		if got := script.Statements(); len(got) != 1 || got[0] != c.want {
+			t.Errorf("SetDatabaseOption(%s, %s) = %q, want [%q]", c.opt, c.value, got, c.want)
+		}
 	}
 }

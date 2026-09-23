@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	mssql "github.com/microsoft/go-mssqldb"
 )
 
 func TestParsePercent(t *testing.T) {
@@ -40,7 +42,7 @@ func TestBuildBackupStatementDifferential(t *testing.T) {
 	got, err := BuildBackupStatement(BackupOptions{
 		Database: "AdventureWorks",
 		Action:   BackupActionDifferential,
-		Devices:  []string{`/var/backups/aw_diff.bak`},
+		Devices:  []BackupTarget{DiskTarget(`/var/backups/aw_diff.bak`)},
 	})
 	if err != nil {
 		t.Fatalf("BuildBackupStatement: %v", err)
@@ -56,7 +58,7 @@ func TestBuildBackupStatementDifferential(t *testing.T) {
 func TestBuildBackupStatementDefaultAction(t *testing.T) {
 	got, err := BuildBackupStatement(BackupOptions{
 		Database: "AdventureWorks",
-		Devices:  []string{`/var/backups/aw.bak`},
+		Devices:  []BackupTarget{DiskTarget(`/var/backups/aw.bak`)},
 	})
 	if err != nil {
 		t.Fatalf("BuildBackupStatement: %v", err)
@@ -73,7 +75,7 @@ func TestBuildBackupStatementLogMultiDevice(t *testing.T) {
 	got, err := BuildBackupStatement(BackupOptions{
 		Database: "AdventureWorks",
 		Action:   BackupActionLog,
-		Devices:  []string{`/var/backups/aw1.trn`, `/var/backups/aw2.trn`},
+		Devices:  []BackupTarget{DiskTarget(`/var/backups/aw1.trn`), DiskTarget(`/var/backups/aw2.trn`)},
 	})
 	if err != nil {
 		t.Fatalf("BuildBackupStatement: %v", err)
@@ -91,7 +93,7 @@ func TestBuildBackupStatementAllOptions(t *testing.T) {
 	compressionOn := true
 	got, err := BuildBackupStatement(BackupOptions{
 		Database:         "AdventureWorks",
-		Devices:          []string{`/var/backups/aw.bak`},
+		Devices:          []BackupTarget{DiskTarget(`/var/backups/aw.bak`)},
 		BackupSetName:    "AW Full",
 		Description:      "Weekly full backup",
 		MediaDescription: "Backup media",
@@ -119,7 +121,7 @@ func TestBuildBackupStatementCompressionOff(t *testing.T) {
 	compressionOff := false
 	got, err := BuildBackupStatement(BackupOptions{
 		Database:    "AdventureWorks",
-		Devices:     []string{`/var/backups/aw.bak`},
+		Devices:     []BackupTarget{DiskTarget(`/var/backups/aw.bak`)},
 		Compression: &compressionOff,
 	})
 	if err != nil {
@@ -152,9 +154,9 @@ func TestBackupTypeFromHeader(t *testing.T) {
 }
 
 func TestBuildRestoreStatement(t *testing.T) {
-	got, err := BuildRestoreStatement(RestoreOptions{
+	got, err := (&Server{}).BuildRestoreStatement(RestoreOptions{
 		Database: "AW_Restore",
-		Devices:  []string{`/var/backups/aw.bak`},
+		Devices:  []BackupTarget{DiskTarget(`/var/backups/aw.bak`)},
 		RelocateFiles: []RelocateFile{
 			{LogicalName: "AW_Data", PhysicalName: "/data/AW_Restore_Data.mdf"},
 		},
@@ -179,9 +181,9 @@ func TestBuildRestoreStatement(t *testing.T) {
 // TestBuildRestoreStatementNoRecovery covers the NORECOVERY branch (log
 // shipping / tail-log restores).
 func TestBuildRestoreStatementNoRecovery(t *testing.T) {
-	got, err := BuildRestoreStatement(RestoreOptions{
+	got, err := (&Server{}).BuildRestoreStatement(RestoreOptions{
 		Database: "AW_Restore",
-		Devices:  []string{`/var/backups/aw.bak`},
+		Devices:  []BackupTarget{DiskTarget(`/var/backups/aw.bak`)},
 		Recovery: RestoreWithNoRecovery,
 	})
 	if err != nil {
@@ -197,9 +199,9 @@ func TestBuildRestoreStatementNoRecovery(t *testing.T) {
 // and a point-in-time STOPAT restore together.
 func TestBuildRestoreStatementStandbyChecksumStopAt(t *testing.T) {
 	stopAt := time.Date(2026, 7, 18, 12, 30, 0, 0, time.UTC)
-	got, err := BuildRestoreStatement(RestoreOptions{
+	got, err := (&Server{}).BuildRestoreStatement(RestoreOptions{
 		Database:    "AW_Restore",
-		Devices:     []string{`/var/backups/aw.bak`},
+		Devices:     []BackupTarget{DiskTarget(`/var/backups/aw.bak`)},
 		Recovery:    RestoreWithStandBy,
 		StandByFile: "/var/backups/aw_undo.bak",
 		Checksum:    true,
@@ -233,9 +235,9 @@ func TestBuildRestoreStatementStopAtKeepsMillisecondsAndWallClock(t *testing.T) 
 		{"milliseconds", time.Date(2026, 7, 18, 12, 30, 5, 123_456_789, time.UTC), "STOPAT = '2026-07-18T12:30:05.123'"},
 		{"non-UTC zone, no conversion", time.Date(2026, 7, 18, 12, 30, 5, 7_000_000, east), "STOPAT = '2026-07-18T12:30:05.007'"},
 	} {
-		got, err := BuildRestoreStatement(RestoreOptions{
+		got, err := (&Server{}).BuildRestoreStatement(RestoreOptions{
 			Database: "AW_Restore",
-			Devices:  []string{`/var/backups/aw.bak`},
+			Devices:  []BackupTarget{DiskTarget(`/var/backups/aw.bak`)},
 			StopAt:   &c.at,
 		})
 		if err != nil {
@@ -250,9 +252,9 @@ func TestBuildRestoreStatementStopAtKeepsMillisecondsAndWallClock(t *testing.T) 
 // TestBuildRestoreStatementNoOptions confirms the bare minimum — just
 // Database and Devices — produces no WITH clause at all.
 func TestBuildRestoreStatementNoOptions(t *testing.T) {
-	got, err := BuildRestoreStatement(RestoreOptions{
+	got, err := (&Server{}).BuildRestoreStatement(RestoreOptions{
 		Database: "AW_Restore",
-		Devices:  []string{`/var/backups/aw.bak`},
+		Devices:  []BackupTarget{DiskTarget(`/var/backups/aw.bak`)},
 	})
 	if err != nil {
 		t.Fatalf("BuildRestoreStatement: %v", err)
@@ -264,10 +266,10 @@ func TestBuildRestoreStatementNoOptions(t *testing.T) {
 }
 
 func TestBuildRestoreStatementRequiresDatabaseAndDevices(t *testing.T) {
-	if _, err := BuildRestoreStatement(RestoreOptions{}); err == nil {
+	if _, err := (&Server{}).BuildRestoreStatement(RestoreOptions{}); err == nil {
 		t.Error("BuildRestoreStatement with no database = nil error, want error")
 	}
-	if _, err := BuildRestoreStatement(RestoreOptions{Database: "x"}); err == nil {
+	if _, err := (&Server{}).BuildRestoreStatement(RestoreOptions{Database: "x"}); err == nil {
 		t.Error("BuildRestoreStatement with no devices = nil error, want error")
 	}
 }
@@ -300,7 +302,7 @@ func TestBuildBackupStatementFiles(t *testing.T) {
 		Action:     BackupActionFiles,
 		Files:      []string{"AppDB_dat2"},
 		FileGroups: []string{"FG_Archive"},
-		Devices:    []string{`C:\B\p.bak`},
+		Devices:    []BackupTarget{DiskTarget(`C:\B\p.bak`)},
 	})
 	if err != nil {
 		t.Fatalf("BuildBackupStatement: %v", err)
@@ -319,7 +321,7 @@ func TestBuildBackupStatementFiles(t *testing.T) {
 // full BACKUP DATABASE that does far more work than asked.
 func TestBuildBackupStatementFilesNeedsATarget(t *testing.T) {
 	_, err := BuildBackupStatement(BackupOptions{
-		Database: "AppDB", Action: BackupActionFiles, Devices: []string{"d.bak"},
+		Database: "AppDB", Action: BackupActionFiles, Devices: []BackupTarget{DiskTarget("d.bak")},
 	})
 	if err == nil {
 		t.Fatal("BuildBackupStatement(FILES with no file/filegroup) = nil error, want one")
@@ -329,41 +331,41 @@ func TestBuildBackupStatementFilesNeedsATarget(t *testing.T) {
 // TestBuildRestoreStatementFileNumber pins WITH FILE = n, without which a
 // device holding several backup sets always restores the first.
 func TestBuildRestoreStatementFileNumber(t *testing.T) {
-	got, err := BuildRestoreStatement(RestoreOptions{
-		Database: "AppDB", Devices: []string{"d.bak"}, FileNumber: 3, Recovery: RestoreWithNoRecovery,
+	got, err := (&Server{}).BuildRestoreStatement(RestoreOptions{
+		Database: "AppDB", Devices: []BackupTarget{DiskTarget("d.bak")}, FileNumber: 3, Recovery: RestoreWithNoRecovery,
 	})
 	if err != nil {
 		t.Fatalf("BuildRestoreStatement: %v", err)
 	}
 	if !strings.Contains(got, "WITH FILE = 3,\n     NORECOVERY") {
-		t.Errorf("BuildRestoreStatement() = %q, want it to carry WITH FILE = 3", got)
+		t.Errorf("(&Server{}).BuildRestoreStatement() = %q, want it to carry WITH FILE = 3", got)
 	}
 
 	// Zero leaves the clause off entirely — SQL Server's own default is the
 	// first set, so emitting "FILE = 0" would be an error rather than a no-op.
-	got, err = BuildRestoreStatement(RestoreOptions{
-		Database: "AppDB", Devices: []string{"d.bak"}, Recovery: RestoreWithRecovery,
+	got, err = (&Server{}).BuildRestoreStatement(RestoreOptions{
+		Database: "AppDB", Devices: []BackupTarget{DiskTarget("d.bak")}, Recovery: RestoreWithRecovery,
 	})
 	if err != nil {
 		t.Fatalf("BuildRestoreStatement: %v", err)
 	}
 	if strings.Contains(got, "FILE =") {
-		t.Errorf("BuildRestoreStatement() = %q, want no FILE clause for FileNumber 0", got)
+		t.Errorf("(&Server{}).BuildRestoreStatement() = %q, want no FILE clause for FileNumber 0", got)
 	}
 }
 
 // TestBuildRestoreStatementFiles is the RESTORE counterpart of
 // TestBuildBackupStatementFiles.
 func TestBuildRestoreStatementFiles(t *testing.T) {
-	got, err := BuildRestoreStatement(RestoreOptions{
+	got, err := (&Server{}).BuildRestoreStatement(RestoreOptions{
 		Database: "AppDB", Action: BackupActionFiles,
-		Files: []string{"AppDB_dat2"}, Devices: []string{"d.bak"},
+		Files: []string{"AppDB_dat2"}, Devices: []BackupTarget{DiskTarget("d.bak")},
 	})
 	if err != nil {
 		t.Fatalf("BuildRestoreStatement: %v", err)
 	}
 	if !strings.HasPrefix(got, "RESTORE DATABASE [AppDB] FILE = N'AppDB_dat2'\nFROM ") {
-		t.Errorf("BuildRestoreStatement() = %q", got)
+		t.Errorf("(&Server{}).BuildRestoreStatement() = %q", got)
 	}
 	if strings.Contains(got, "RESTORE FILES") {
 		t.Errorf("emitted the non-existent RESTORE FILES verb: %q", got)
@@ -436,7 +438,7 @@ func TestIsBackupURL(t *testing.T) {
 func TestBuildBackupStatementToURL(t *testing.T) {
 	got, err := BuildBackupStatement(BackupOptions{
 		Database: "GoTest01",
-		Devices:  []string{"https://acct.blob.core.windows.net/backups/GoTest01_full.bak"},
+		Devices:  []BackupTarget{DiskTarget("https://acct.blob.core.windows.net/backups/GoTest01_full.bak")},
 		CopyOnly: true,
 	})
 	if err != nil {
@@ -449,9 +451,9 @@ func TestBuildBackupStatementToURL(t *testing.T) {
 }
 
 func TestBuildRestoreStatementFromURL(t *testing.T) {
-	got, err := BuildRestoreStatement(RestoreOptions{
+	got, err := (&Server{}).BuildRestoreStatement(RestoreOptions{
 		Database: "GoTest01",
-		Devices:  []string{"https://acct.blob.core.windows.net/backups/GoTest01_full.bak"},
+		Devices:  []BackupTarget{DiskTarget("https://acct.blob.core.windows.net/backups/GoTest01_full.bak")},
 	})
 	if err != nil {
 		t.Fatalf("BuildRestoreStatement: %v", err)
@@ -470,9 +472,9 @@ func TestBuildRestoreStatementFromURL(t *testing.T) {
 func TestBuildBackupStatementClassifiesEachDevice(t *testing.T) {
 	got, err := BuildBackupStatement(BackupOptions{
 		Database: "GoTest01",
-		Devices: []string{
-			"https://acct.blob.core.windows.net/backups/a.bak",
-			`C:\Backups\b.bak`,
+		Devices: []BackupTarget{
+			DiskTarget("https://acct.blob.core.windows.net/backups/a.bak"),
+			DiskTarget(`C:\Backups\b.bak`),
 		},
 	})
 	if err != nil {
@@ -485,8 +487,8 @@ func TestBuildBackupStatementClassifiesEachDevice(t *testing.T) {
 }
 
 // DiskTarget classifying a URL for itself is what makes the three RESTORE-side
-// reads work against a blob: VerifyBackup, BackupHeaders and BackupFileList all
-// take a plain path and funnel through it. TestBackupTargetClause in
+// reads work against a blob a caller named with DiskTarget: VerifyBackup,
+// BackupHeaders and BackupFileList read it as a URL. TestBackupTargetClause in
 // backup_device_write_test.go covers the path and logical-device cases.
 func TestBackupTargetClauseURL(t *testing.T) {
 	const blob = "https://acct.blob.core.windows.net/c/db.bak"
@@ -504,7 +506,7 @@ func TestBackupTargetClauseURL(t *testing.T) {
 func TestRestoreSideReadsUseURLForABlob(t *testing.T) {
 	const blob = "https://acct.blob.core.windows.net/c/db.bak"
 	ctx, col := WithScript(context.Background())
-	if err := (&Server{}).VerifyBackup(ctx, blob); err != nil {
+	if err := (&Server{}).VerifyBackup(ctx, DiskTarget(blob)); err != nil {
 		t.Fatalf("VerifyBackup: %v", err)
 	}
 	want := "RESTORE VERIFYONLY FROM URL = N'" + blob + "'"
@@ -516,7 +518,7 @@ func TestRestoreSideReadsUseURLForABlob(t *testing.T) {
 func TestBuildStatementsWithCredential(t *testing.T) {
 	b, err := BuildBackupStatement(BackupOptions{
 		Database:   "GoTest01",
-		Devices:    []string{"https://acct.blob.core.windows.net/backups/a.bak"},
+		Devices:    []BackupTarget{DiskTarget("https://acct.blob.core.windows.net/backups/a.bak")},
 		Credential: "AzureStorage",
 	})
 	if err != nil {
@@ -525,9 +527,9 @@ func TestBuildStatementsWithCredential(t *testing.T) {
 	if !strings.Contains(b, "CREDENTIAL = N'AzureStorage'") {
 		t.Errorf("BuildBackupStatement =\n%s\nwant a CREDENTIAL clause", b)
 	}
-	r, err := BuildRestoreStatement(RestoreOptions{
+	r, err := (&Server{}).BuildRestoreStatement(RestoreOptions{
 		Database:   "GoTest01",
-		Devices:    []string{"https://acct.blob.core.windows.net/backups/a.bak"},
+		Devices:    []BackupTarget{DiskTarget("https://acct.blob.core.windows.net/backups/a.bak")},
 		Credential: "AzureStorage",
 	})
 	if err != nil {
@@ -541,7 +543,7 @@ func TestBuildStatementsWithCredential(t *testing.T) {
 // Recovery is one choice. As three fields, NoRecovery silently won when both
 // booleans were set, and a STANDBY path rode alongside either.
 func TestBuildRestoreStatementRecoveryIsOneChoice(t *testing.T) {
-	base := RestoreOptions{Database: "AppDB", Devices: []string{"d.bak"}}
+	base := RestoreOptions{Database: "AppDB", Devices: []BackupTarget{DiskTarget("d.bak")}}
 	for _, c := range []struct {
 		name     string
 		recovery RestoreRecovery
@@ -559,7 +561,7 @@ func TestBuildRestoreStatementRecoveryIsOneChoice(t *testing.T) {
 	} {
 		opts := base
 		opts.Recovery, opts.StandByFile = c.recovery, c.standBy
-		got, err := BuildRestoreStatement(opts)
+		got, err := (&Server{}).BuildRestoreStatement(opts)
 		if c.want == "error" {
 			if err == nil {
 				t.Errorf("%s: built %q, want an error", c.name, got)
@@ -580,8 +582,8 @@ func TestBuildRestoreStatementRecoveryIsOneChoice(t *testing.T) {
 // refusal would abort the RESTORE after it — and only an access mode the batch
 // itself set is released.
 func TestBuildRestoreStatementClosesConnectionsInTheSameBatch(t *testing.T) {
-	got, err := BuildRestoreStatement(RestoreOptions{
-		Database: "App'DB", Devices: []string{"d.bak"}, Replace: true,
+	got, err := (&Server{}).BuildRestoreStatement(RestoreOptions{
+		Database: "App'DB", Devices: []BackupTarget{DiskTarget("d.bak")}, Replace: true,
 		CloseExistingConnections: true,
 	})
 	if err != nil {
@@ -606,7 +608,7 @@ func TestBuildRestoreStatementClosesConnectionsInTheSameBatch(t *testing.T) {
 // on the preparation step there. The instance-aware builder kills the sessions
 // instead, in the same batch, and touches no access mode.
 func TestServerBuildRestoreStatementKillsSessionsOnAManagedInstance(t *testing.T) {
-	opts := RestoreOptions{Database: "AppDB", Devices: []string{"d.bak"}, CloseExistingConnections: true}
+	opts := RestoreOptions{Database: "AppDB", Devices: []BackupTarget{DiskTarget("d.bak")}, CloseExistingConnections: true}
 	mi := &Server{info: &ServerInfo{EngineEdition: int(EngineAzureManagedInst)}}
 	got, err := mi.BuildRestoreStatement(opts)
 	if err != nil {
@@ -622,9 +624,12 @@ func TestServerBuildRestoreStatementKillsSessionsOnAManagedInstance(t *testing.T
 
 	onPrem := &Server{info: &ServerInfo{EngineEdition: int(EngineEnterprise)}}
 	got, err = onPrem.BuildRestoreStatement(opts)
-	want, _ := BuildRestoreStatement(opts)
+	want, _ := (&Server{}).BuildRestoreStatement(opts)
 	if err != nil || got != want {
-		t.Errorf("on-premises statement = %q, %v; want the package-level form %q", got, err, want)
+		t.Errorf("on-premises statement = %q, %v; want the SINGLE_USER form a server of unknown edition writes, %q", got, err, want)
+	}
+	if !strings.Contains(got, "SET SINGLE_USER") {
+		t.Errorf("on-premises statement does not set SINGLE_USER:\n%s", got)
 	}
 
 	opts.CloseExistingConnections = false
@@ -641,7 +646,7 @@ func TestARestoreCutShortIsPutBackToMultiUser(t *testing.T) {
 	s := detServer(t)
 	ctx := detCancelOn(t, "RESTORE DATABASE")
 	err := s.Restore(ctx, RestoreOptions{
-		Database: "appdb", Devices: []string{"d.bak"}, CloseExistingConnections: true,
+		Database: "appdb", Devices: []BackupTarget{DiskTarget("d.bak")}, CloseExistingConnections: true,
 	})
 	if err == nil {
 		t.Fatal("a restore whose context was cancelled returned no error")
@@ -668,7 +673,7 @@ func TestAFailedRestoreLeavesAnAccessModeItDidNotSet(t *testing.T) {
 		detLog.failOn = "RESTORE DATABASE"
 		detLog.mu.Unlock()
 		err := s.Restore(context.Background(), RestoreOptions{
-			Database: "appdb", Devices: []string{"d.bak"}, CloseExistingConnections: c.close,
+			Database: "appdb", Devices: []BackupTarget{DiskTarget("d.bak")}, CloseExistingConnections: c.close,
 		})
 		if err == nil {
 			t.Fatalf("%s: a failing restore returned no error", c.name)
@@ -676,5 +681,81 @@ func TestAFailedRestoreLeavesAnAccessModeItDidNotSet(t *testing.T) {
 		if stmts := detLog.statements(); len(stmts) != 1 {
 			t.Errorf("%s: statements %v, want only the restore", c.name, stmts)
 		}
+	}
+}
+
+// A logical backup device is named bare on both sides. With Devices as plain
+// strings it could not be said at all: the name became DISK = N'devname', a
+// file of that name in the default backup directory.
+func TestBackupAndRestoreToALogicalDevice(t *testing.T) {
+	got, err := BuildBackupStatement(BackupOptions{
+		Database: "AppDB",
+		Devices:  []BackupTarget{DeviceTarget("Nightly]Dev")},
+	})
+	if err != nil {
+		t.Fatalf("BuildBackupStatement: %v", err)
+	}
+	if want := "BACKUP DATABASE [AppDB] TO [Nightly]]Dev]"; got != want {
+		t.Errorf("backup = %q, want %q", got, want)
+	}
+	got, err = (&Server{}).BuildRestoreStatement(RestoreOptions{
+		Database: "AppDB",
+		Devices:  []BackupTarget{DeviceTarget("Nightly]Dev")},
+	})
+	if err != nil {
+		t.Fatalf("BuildRestoreStatement: %v", err)
+	}
+	if want := "RESTORE DATABASE [AppDB]\nFROM [Nightly]]Dev]"; got != want {
+		t.Errorf("restore = %q, want %q", got, want)
+	}
+}
+
+// The zero BackupTarget has no name and would render as DISK = N”.
+func TestZeroBackupTargetIsRefused(t *testing.T) {
+	if _, err := BuildBackupStatement(BackupOptions{Database: "AppDB", Devices: []BackupTarget{{}}}); err == nil {
+		t.Error("backup to a zero BackupTarget built a statement, want an error")
+	}
+	if _, err := (&Server{}).BuildRestoreStatement(RestoreOptions{Database: "AppDB", Devices: []BackupTarget{DiskTarget("a.bak"), {}}}); err == nil {
+		t.Error("restore from a zero BackupTarget built a statement, want an error")
+	}
+}
+
+// A failed BACKUP sends the cause first and "terminating abnormally" after
+// it. The progress path returned at the first message and the plain path at
+// the last; both must report both, as exec's withAllMessages does.
+func TestProgressErrorKeepsEveryMessage(t *testing.T) {
+	msgs := []mssql.Error{
+		{Number: 3201, Class: 16, Message: "Cannot open backup device 'X:\\nope.bak'."},
+		{Number: 3013, Class: 16, Message: "BACKUP DATABASE is terminating abnormally."},
+	}
+	err := progressError(msgs, nil, nil)
+	for _, m := range msgs {
+		if !strings.Contains(err.Error(), m.Message) {
+			t.Errorf("error %q does not carry %q", err, m.Message)
+		}
+	}
+	if se, ok := AsSQLError(err); !ok || se.Number != 3013 {
+		t.Errorf("AsSQLError = %+v, %v; want the last message, 3013, as the headline", se, ok)
+	}
+	if err := progressError(nil, nil, nil); err != nil {
+		t.Errorf("no messages: %v, want nil", err)
+	}
+}
+
+// The progress path runs its statement on a connection of its own, which
+// WithScript cannot intercept: a Backup or Restore with Progress set under a
+// scripting context ran for real. Both take exec's path there.
+func TestProgressIsIgnoredUnderWithScript(t *testing.T) {
+	ctx, col := WithScript(context.Background())
+	progress := func(int, string) {}
+	s := &Server{}
+	if err := s.Backup(ctx, BackupOptions{Database: "AppDB", Devices: []BackupTarget{DiskTarget("a.bak")}, Progress: progress}); err != nil {
+		t.Fatalf("Backup: %v", err)
+	}
+	if err := s.Restore(ctx, RestoreOptions{Database: "AppDB", Devices: []BackupTarget{DiskTarget("a.bak")}, Progress: progress}); err != nil {
+		t.Fatalf("Restore: %v", err)
+	}
+	if n := len(col.Statements()); n != 2 {
+		t.Errorf("collected %d statements, want the BACKUP and the RESTORE: %v", n, col.Statements())
 	}
 }

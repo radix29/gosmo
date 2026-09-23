@@ -78,22 +78,6 @@ func (l *Login) Enable(ctx context.Context) error {
 	return nil
 }
 
-// ChangePassword changes the login's password.
-//
-// Security: the password is quoted via nStringLiteral (N'...', doubling
-// any embedded quote) rather than interpolated raw. HASHED is
-// deliberately not used — it tells SQL Server the value is already one of
-// its own password-hash formats, not cleartext, so passing a hex encoding
-// of the cleartext under HASHED either fails outright or creates a login
-// nothing can ever authenticate as.
-func (l *Login) ChangePassword(ctx context.Context, newPassword string) error {
-	q := fmt.Sprintf("ALTER LOGIN %s WITH PASSWORD = %s", quoteIdent(l.Name), nStringLiteral(newPassword))
-	if err := l.server.exec(ctx, q); err != nil {
-		return fmt.Errorf("gosmo: change password for login %q: %w", l.Name, err)
-	}
-	return nil
-}
-
 // Drop drops the login from the server.
 func (l *Login) Drop(ctx context.Context) error {
 	return l.server.DropLogin(ctx, l.Name)
@@ -236,19 +220,37 @@ func (l *Login) SetPasswordPolicy(ctx context.Context, checkPolicy, checkExpirat
 	return nil
 }
 
-// ChangePasswordWithOptions changes the login's password with the same
-// quoted-literal encoding ChangePassword uses, plus MUST_CHANGE (force a
-// password change at next login) and UNLOCK (clear a lockout).
-func (l *Login) ChangePasswordWithOptions(ctx context.Context, newPassword string, mustChange, unlock bool) error {
-	stmt := buildChangePasswordStatement(l.Name, newPassword, mustChange, unlock)
+// ChangePassword changes the login's password.
+//
+// Security: the password is quoted via nStringLiteral (N'...', doubling
+// any embedded quote) rather than interpolated raw. HASHED is
+// deliberately not used — it tells SQL Server the value is already one of
+// its own password-hash formats, not cleartext, so passing a hex encoding
+// of the cleartext under HASHED either fails outright or creates a login
+// nothing can ever authenticate as.
+//
+// opts adds MUST_CHANGE (force a password change at next login) and UNLOCK
+// (clear a lockout); the zero value changes the password alone.
+func (l *Login) ChangePassword(ctx context.Context, newPassword string, opts ChangePasswordOptions) error {
+	stmt := buildChangePasswordStatement(l.Name, newPassword, opts.MustChange, opts.Unlock)
 	if err := l.server.exec(ctx, stmt); err != nil {
-		return fmt.Errorf("gosmo: change password (with options) for login %q: %w", l.Name, err)
+		return fmt.Errorf("gosmo: change password for login %q: %w", l.Name, err)
 	}
 	return nil
 }
 
+// ChangePasswordOptions are the password-clause modifiers ChangePassword
+// can add.
+type ChangePasswordOptions struct {
+	// MustChange forces a password change at the next login (MUST_CHANGE),
+	// which also turns CHECK_EXPIRATION on — SQL Server refuses it otherwise.
+	MustChange bool
+	// Unlock clears a lockout (UNLOCK).
+	Unlock bool
+}
+
 // buildChangePasswordStatement builds the ALTER LOGIN ... WITH PASSWORD
-// statement for ChangePasswordWithOptions. Unexported and side-effect-free
+// statement for ChangePassword. Unexported and side-effect-free
 // so it's unit-testable without a server.
 //
 // MUST_CHANGE and UNLOCK are password-clause modifiers, not comma-separated
@@ -322,16 +324,6 @@ func (l *Login) UserMappings(ctx context.Context) ([]*LoginUserMapping, error) {
 		return nil, err
 	}
 
-	const q = `
-SELECT dp.name, ISNULL(dp.default_schema_name, ''),
-       ISNULL(STUFF((SELECT ', ' + r.name
-              FROM   sys.database_role_members rm
-              JOIN   sys.database_principals r ON r.principal_id = rm.role_principal_id
-              WHERE  rm.member_principal_id = dp.principal_id
-              FOR XML PATH(''), TYPE).value('.','NVARCHAR(MAX)'), 1, 2, ''), '')
-FROM   sys.database_principals dp
-WHERE  dp.sid = @p1`
-
 	// One query per database, serially. Fanning these across a worker pool
 	// was tried and measured slower against a 46-database instance
 	// (2026-08-14): Database.query pins a pooled connection of its own, and
@@ -342,7 +334,7 @@ WHERE  dp.sid = @p1`
 		if db.State != "ONLINE" {
 			continue
 		}
-		ms, err := l.userMappingsIn(ctx, db, q)
+		ms, err := l.userMappingsIn(ctx, db, true)
 		if err != nil {
 			return nil, err
 		}
@@ -351,10 +343,27 @@ WHERE  dp.sid = @p1`
 	return out, nil
 }
 
-// userMappingsIn reads one database's mapping for l, or (nil, nil) if that
-// database's query would not open — the skip UserMappings documents.
-func (l *Login) userMappingsIn(ctx context.Context, db *Database, q string) ([]*LoginUserMapping, error) {
-	rows, err := db.query(ctx, q, l.SID)
+// userMappingsQuery reads a login's user in the current database with one row
+// per role it is a member of — none when it is in no role, hence the LEFT
+// JOINs — ordered so userMappingsIn can group the rows in Go.
+//
+// The roles were a comma-joined string (STUFF ... FOR XML PATH) split back
+// apart on ", " until 2026-09-23, which split a role whose name held a comma
+// into two roles that do not exist.
+const userMappingsQuery = `
+SELECT dp.principal_id, dp.name, ISNULL(dp.default_schema_name, ''), r.name
+FROM   sys.database_principals dp
+LEFT   JOIN sys.database_role_members rm ON rm.member_principal_id = dp.principal_id
+LEFT   JOIN sys.database_principals r ON r.principal_id = rm.role_principal_id
+WHERE  dp.sid = @p1
+ORDER  BY dp.principal_id, r.name`
+
+// userMappingsIn reads one database's mapping for l. With skipUnreachable a
+// database whose query would not open reads as (nil, nil) — the skip
+// UserMappings documents; without it that failure is returned, for a caller
+// asking about one database by name.
+func (l *Login) userMappingsIn(ctx context.Context, db *Database, skipUnreachable bool) ([]*LoginUserMapping, error) {
+	rows, err := db.query(ctx, userMappingsQuery, l.SID)
 	if err != nil {
 		// Skipping an unreachable database is the point of this scan, but a
 		// cancelled context is not one of those — every remaining database
@@ -363,21 +372,31 @@ func (l *Login) userMappingsIn(ctx context.Context, db *Database, q string) ([]*
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
-		return nil, nil
+		if skipUnreachable {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("gosmo: user mappings for login %q in %q: %w", l.Name, db.Name, err)
 	}
 	defer rows.Close()
 
 	var out []*LoginUserMapping
+	var last *LoginUserMapping
+	lastID := -1
 	for rows.Next() {
-		m := &LoginUserMapping{Database: db.Name}
-		var roles string
-		if err := rows.Scan(&m.User, &m.DefaultSchema, &roles); err != nil {
+		var id int
+		var user, schema string
+		var role sql.NullString
+		if err := rows.Scan(&id, &user, &schema, &role); err != nil {
 			return nil, fmt.Errorf("gosmo: user mappings for login %q in %q: %w", l.Name, db.Name, err)
 		}
-		if roles != "" {
-			m.Roles = strings.Split(roles, ", ")
+		if last == nil || id != lastID {
+			last = &LoginUserMapping{Database: db.Name, User: user, DefaultSchema: schema}
+			lastID = id
+			out = append(out, last)
 		}
-		out = append(out, m)
+		if role.Valid {
+			last.Roles = append(last.Roles, role.String)
+		}
 	}
 	if err := rows.Err(); err != nil {
 		if ctx.Err() != nil {
@@ -404,21 +423,21 @@ func (l *Login) MapToDatabase(ctx context.Context, dbName, userName, defaultSche
 }
 
 // UnmapFromDatabase drops this login's mapped user in the named database.
+// It reads that database's mapping alone: UserMappings would query every
+// database on the server to find the one whose name it was already given.
 func (l *Login) UnmapFromDatabase(ctx context.Context, dbName string) error {
 	d, err := l.server.DatabaseByName(ctx, dbName)
 	if err != nil {
 		return err
 	}
-	mappings, err := l.UserMappings(ctx)
+	mappings, err := l.userMappingsIn(ctx, d, false)
 	if err != nil {
 		return err
 	}
-	for _, m := range mappings {
-		if m.Database == dbName {
-			return d.DropUser(ctx, m.User)
-		}
+	if len(mappings) == 0 {
+		return fmt.Errorf("gosmo: login %q is not mapped to database %q", l.Name, dbName)
 	}
-	return fmt.Errorf("gosmo: login %q is not mapped to database %q", l.Name, dbName)
+	return d.DropUser(ctx, mappings[0].User)
 }
 
 // -- Logins --------------------------------------------------------------------

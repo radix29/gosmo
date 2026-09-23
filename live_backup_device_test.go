@@ -104,9 +104,9 @@ func TestLiveBackupDeviceCreateReadDrop(t *testing.T) {
 		t.Errorf("header reads %+v, want the master backup just taken", headers[0])
 	}
 
-	files, err := s.BackupFileListForSetFrom(ctx, d.Target(), headers[0].Position)
+	files, err := s.BackupFileList(ctx, d.Target(), headers[0].Position)
 	if err != nil {
-		t.Fatalf("BackupFileListForSetFrom on the device: %v", err)
+		t.Fatalf("BackupFileList on the device: %v", err)
 	}
 	if len(files) == 0 {
 		t.Fatal("the device's file list came back empty")
@@ -114,8 +114,8 @@ func TestLiveBackupDeviceCreateReadDrop(t *testing.T) {
 	if filepath.Base(files[0].PhysicalName) == "" {
 		t.Errorf("file list has no physical name: %+v", files[0])
 	}
-	if err := s.VerifyBackupFrom(ctx, d.Target()); err != nil {
-		t.Fatalf("VerifyBackupFrom on the device: %v", err)
+	if err := s.VerifyBackup(ctx, d.Target()); err != nil {
+		t.Fatalf("VerifyBackup on the device: %v", err)
 	}
 
 	// A drop that keeps the file must leave the file behind — the alias goes,
@@ -127,7 +127,7 @@ func TestLiveBackupDeviceCreateReadDrop(t *testing.T) {
 		t.Errorf("after the drop, the by-name read returned %v, want ErrNotFound", err)
 	}
 	// The file is still readable by path, which proves @delfile was not sent.
-	if _, err := s.BackupHeaders(ctx, path); err != nil {
+	if _, err := s.BackupHeaders(ctx, DiskTarget(path)); err != nil {
 		t.Errorf("a drop without @delfile took the backup file with it: %v", err)
 	}
 

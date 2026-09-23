@@ -23,6 +23,7 @@ classDiagram
         +DropDatabase(name, force) error
         +RenameDatabase(oldName, newName, force) error
         +DetachDatabase(name, opts) error
+        +ReleaseIdleConnections() error
         +AttachDatabase(spec) error
         +DetachedDatabaseInfo(primaryFilePath) *DetachedDatabase
         +DatabaseSnapshots() []*DatabaseSnapshot
@@ -47,6 +48,7 @@ classDiagram
         +LinkedServers() []*LinkedServer
         +Configurations() []*ConfigurationOption
         +ConfigurationRef(name) *ConfigurationOption
+        +ApplyConfiguration(changes, opts) error
         +AgentInfo() *AgentStatus
         +Jobs() []*Job
         +JobByName(name) *Job
@@ -86,13 +88,9 @@ classDiagram
         +Backup(opts) error
         +Restore(opts) error
         +BuildRestoreStatement(opts) string
-        +VerifyBackup(device) error
-        +BackupHeaders(device) []*BackupHeader
-        +BackupFileList(device) []*BackupFile
-        +BackupFileListForSet(device, fileNumber) []*BackupFile
-        +VerifyBackupFrom(target) error
-        +BackupHeadersFrom(target) []*BackupHeader
-        +BackupFileListForSetFrom(target, fileNumber) []*BackupFile
+        +VerifyBackup(target) error
+        +BackupHeaders(target) []*BackupHeader
+        +BackupFileList(target, fileNumber) []*BackupFile
         +BackupDevices() []*BackupDevice
         +BackupDeviceByName(name) *BackupDevice
         +BackupDeviceRef(name) *BackupDevice
@@ -102,13 +100,10 @@ classDiagram
         +Capabilities() *Capabilities
         +SecurityInfo() *ServerSecurityInfo
         +ServerPermissions() []*ServerPermissionEntry
-        +GrantServerPermissionWithOptions(perm, principal, opts) error
-        +DenyServerPermissionWithOptions(perm, principal, opts) error
-        +RevokeServerPermissionWithOptions(perm, principal, opts) error
         +EffectiveServerPermissions(login) []*EffectivePermission
-        +GrantServerPermission(perm, principal) error
-        +DenyServerPermission(perm, principal) error
-        +RevokeServerPermission(perm, principal) error
+        +GrantServerPermission(perm ServerPermission, principal, opts) error
+        +DenyServerPermission(perm ServerPermission, principal, opts) error
+        +RevokeServerPermission(perm ServerPermission, principal, opts) error
         +ServerPermissionNames() []string
         +Credentials() []*Credential
         +CredentialByName(name) *Credential

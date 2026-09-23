@@ -43,8 +43,8 @@ func main() {
 			{Name: "InvoiceID", DataType: gosmo.DataTypeInt, IsIdentity: true, IdentitySeed: 1, IdentityIncr: 1, IsPrimaryKey: true},
 			{Name: "CustomerName", DataType: gosmo.DataTypeNVarChar, MaxLength: 200, IsNullable: false},
 			{Name: "Notes", DataType: gosmo.DataTypeNVarChar, MaxLength: -1, IsNullable: true}, // -1 = MAX
-			{Name: "Amount", DataType: gosmo.DataTypeDecimal, Precision: 19, Scale: 4, IsNullable: false, DefaultValue: "0"},
-			{Name: "Issued", DataType: gosmo.DataTypeDatetime2, Scale: 7, IsNullable: false, DefaultValue: "sysutcdatetime()"},
+			{Name: "Amount", DataType: gosmo.DataTypeDecimal, Precision: new(19), Scale: new(4), IsNullable: false, DefaultValue: "0"},
+			{Name: "Issued", DataType: gosmo.DataTypeDatetime2, Scale: new(7), IsNullable: false, DefaultValue: "sysutcdatetime()"},
 		},
 	}))
 	inv := demo.Value(db.TableByName(ctx, "Sales", "Invoice"))
@@ -123,11 +123,11 @@ END`))
 		Name:   "InvoiceHistory",
 		Columns: []gosmo.ColumnDefinition{
 			{Name: "InvoiceID", DataType: gosmo.DataTypeInt, IsNullable: false, IsPrimaryKey: true},
-			{Name: "ArchivedAt", DataType: gosmo.DataTypeDatetime2, Scale: 0, IsNullable: false},
+			{Name: "ArchivedAt", DataType: gosmo.DataTypeDatetime2, Scale: new(0), IsNullable: false},
 		},
 	}))
-	demo.Must(pending.GrantDatabasePermission(ctx, "SELECT", "public"))
-	demo.Must(pending.SetDatabaseOption(ctx, gosmo.DBOptAutoShrink, "OFF"))
+	demo.Must(pending.GrantDatabasePermission(ctx, "SELECT", "public", gosmo.PermissionOptions{}))
+	demo.Must(pending.SetDatabaseOption(ctx, gosmo.DBOptAutoShrink, "OFF", gosmo.TerminationNone))
 	demo.Must(pending.SetRecoveryModel(ctx, gosmo.RecoveryModelBulkLogged))
 
 	// String renders the capture as one runnable script: each statement in a

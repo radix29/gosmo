@@ -613,18 +613,16 @@ func TestDropColumnRefusesAnEmptyName(t *testing.T) {
 // and leaving it there locks everyone else out of a database that still exists.
 func TestAFailedForcedDropIsPutBackToMultiUser(t *testing.T) {
 	s := detServer(t)
-	detLog.mu.Lock()
-	detLog.failOn = "DROP DATABASE"
-	detLog.mu.Unlock()
+	detFailOn("DROP DATABASE")
 
 	if err := s.DropDatabase(context.Background(), "appdb", true); err == nil {
 		t.Fatal("a failing drop returned no error")
 	}
 	stmts := detLog.statements()
-	last := stmts[len(stmts)-1]
-	if !strings.Contains(last, "[appdb] SET MULTI_USER") {
-		t.Errorf("last statement after a failed forced drop is %q, want the database put back to MULTI_USER: %v", last, stmts)
+	if len(stmts) != 1 {
+		t.Fatalf("statements %v, want only the batch, which repairs itself", stmts)
 	}
+	assertExclusiveBatch(t, stmts[0], "[appdb]", "DROP DATABASE [appdb]")
 }
 
 // TestAFailedForcedDropIsPutBackToMultiUserEvenWhenTheContextIsGone. The
@@ -651,7 +649,7 @@ func TestAFailedForcedDropIsPutBackToMultiUserEvenWhenTheContextIsGone(t *testin
 func TestAFailedDropWithoutForceLeavesTheAccessModeAlone(t *testing.T) {
 	s := detServer(t)
 	detLog.mu.Lock()
-	detLog.failOn = "DROP DATABASE"
+	detLog.failOn = "DROP DATABASE" // a plain error: cut short, the worst case
 	detLog.mu.Unlock()
 
 	if err := s.DropDatabase(context.Background(), "appdb", false); err == nil {
@@ -667,17 +665,17 @@ func TestAFailedDropWithoutForceLeavesTheAccessModeAlone(t *testing.T) {
 // TestASuccessfulDropDoesNotTryToAlterTheDatabaseAfterwards. The database is
 // gone by then, so the alter would fail with "not found" — and the repair is
 // best-effort, so that failure would be swallowed rather than reported, which
-// is worse than not issuing it.
+// is worse than not issuing it. The batch's own repair is guarded on DB_ID.
 func TestASuccessfulDropDoesNotTryToAlterTheDatabaseAfterwards(t *testing.T) {
 	s := detServer(t)
 	if err := s.DropDatabase(context.Background(), "appdb", true); err != nil {
 		t.Fatalf("DropDatabase: %v", err)
 	}
-	for _, stmt := range detLog.statements() {
-		if strings.Contains(stmt, "MULTI_USER") {
-			t.Errorf("a successful drop issued %q against a database that no longer exists", stmt)
-		}
+	stmts := detLog.statements()
+	if len(stmts) != 1 {
+		t.Fatalf("statements %v, want only the batch", stmts)
 	}
+	assertExclusiveBatch(t, stmts[0], "[appdb]", "DROP DATABASE [appdb]")
 }
 
 // TestAForcedRenameReleasesMultiUserEvenWhenTheContextIsGone. Unlike the drop
@@ -694,10 +692,41 @@ func TestAForcedRenameReleasesMultiUserEvenWhenTheContextIsGone(t *testing.T) {
 	}
 	stmts := detLog.statements()
 	last := stmts[len(stmts)-1]
-	// The old name: the rename did not happen, so that is what the database
-	// is still called.
-	if !strings.Contains(last, "[AppDB] SET MULTI_USER") {
-		t.Errorf("last statement after a cancelled rename is %q, want [AppDB] put back to MULTI_USER: %v", last, stmts)
+	// Nothing says whether the rename happened, so the repair asks: the old
+	// name first, the new one only if the old is gone.
+	if len(stmts) != 2 || !strings.HasPrefix(last, "IF DB_ID(N'AppDB') IS NOT NULL ALTER DATABASE [AppDB] SET MULTI_USER") ||
+		!strings.Contains(last, "ELSE IF DB_ID(N'AppDB2') IS NOT NULL ALTER DATABASE [AppDB2] SET MULTI_USER") {
+		t.Errorf("last statement after a cancelled rename is %q, want the repair under whichever name exists: %v", last, stmts)
+	}
+}
+
+// TestAForcedRenameIsOneBatchThatReleasesWhicheverNameTheDatabaseHas. The
+// release runs on success too — under the new name — and on failure under
+// the old one; a refused rename to a name another database already has must
+// not touch that other database.
+func TestAForcedRenameIsOneBatchThatReleasesWhicheverNameTheDatabaseHas(t *testing.T) {
+	for _, fail := range []bool{false, true} {
+		s := detServer(t)
+		if fail {
+			detFailOn("MODIFY NAME")
+		}
+		err := s.RenameDatabase(context.Background(), "AppDB", "AppDB2", true)
+		if (err != nil) != fail {
+			t.Fatalf("fail=%v: RenameDatabase returned %v", fail, err)
+		}
+		stmts := detLog.statements()
+		if len(stmts) != 1 {
+			t.Fatalf("fail=%v: statements %v, want one batch", fail, stmts)
+		}
+		b := stmts[0]
+		single := strings.Index(b, "ALTER DATABASE [AppDB] SET SINGLE_USER WITH ROLLBACK IMMEDIATE")
+		rename := strings.Index(b, "ALTER DATABASE [AppDB] MODIFY NAME = [AppDB2]")
+		if single < 0 || rename < single || !strings.Contains(b, "IF @closed = 1\nBEGIN\n    BEGIN TRY\n        ALTER DATABASE [AppDB] MODIFY NAME") {
+			t.Errorf("fail=%v: batch does not gate MODIFY NAME on SINGLE_USER:\n%s", fail, b)
+		}
+		if !strings.Contains(b, "BEGIN CATCH\n        ALTER DATABASE [AppDB] SET MULTI_USER;\n        THROW;\n    END CATCH;\n    ALTER DATABASE [AppDB2] SET MULTI_USER;\nEND;") {
+			t.Errorf("fail=%v: batch does not release under whichever name the database has:\n%s", fail, b)
+		}
 	}
 }
 
@@ -718,10 +747,13 @@ func TestAForcedDropOnAManagedInstanceKillsSessionsInsteadOfSingleUser(t *testin
 		if (err != nil) != fail {
 			t.Fatalf("fail=%v: DropDatabase returned %v", fail, err)
 		}
+		// One batch: a session reconnecting between the KILLs and the DROP
+		// fails the DROP (S8).
 		stmts := detLog.statements()
-		if len(stmts) != 2 || !strings.Contains(stmts[0], "KILL") || !strings.Contains(stmts[0], "DB_ID(N'appdb')") ||
-			!strings.Contains(stmts[1], "DROP DATABASE [appdb]") {
-			t.Errorf("fail=%v: statements %v, want the session KILL batch then DROP DATABASE", fail, stmts)
+		if len(stmts) != 1 || !strings.Contains(stmts[0], "DB_ID(N'appdb')") ||
+			!strings.HasSuffix(stmts[0], "END;\nDROP DATABASE [appdb];") ||
+			strings.Index(stmts[0], "KILL") > strings.Index(stmts[0], "DROP DATABASE") {
+			t.Errorf("fail=%v: statements %v, want the session KILL batch then DROP DATABASE, as one", fail, stmts)
 		}
 		for _, stmt := range stmts {
 			if strings.Contains(stmt, "SINGLE_USER") || strings.Contains(stmt, "MULTI_USER") {
@@ -740,8 +772,9 @@ func TestAForcedRenameOnAManagedInstanceKillsSessionsInsteadOfSingleUser(t *test
 		t.Fatalf("RenameDatabase: %v", err)
 	}
 	stmts := detLog.statements()
-	if len(stmts) != 2 || !strings.Contains(stmts[0], "KILL") || !strings.Contains(stmts[1], "MODIFY NAME = [AppDB2]") {
-		t.Errorf("statements %v, want the session KILL batch then MODIFY NAME", stmts)
+	if len(stmts) != 1 || !strings.Contains(stmts[0], "KILL") ||
+		!strings.HasSuffix(stmts[0], "END;\nALTER DATABASE [AppDB] MODIFY NAME = [AppDB2];") {
+		t.Errorf("statements %v, want the session KILL batch then MODIFY NAME, as one", stmts)
 	}
 }
 
@@ -754,7 +787,39 @@ func TestAForcedDropOnPremStillUsesSingleUser(t *testing.T) {
 		t.Fatalf("DropDatabase: %v", err)
 	}
 	stmts := detLog.statements()
-	if len(stmts) != 2 || !strings.Contains(stmts[0], "SET SINGLE_USER WITH ROLLBACK IMMEDIATE") {
-		t.Errorf("statements %v, want SET SINGLE_USER then DROP DATABASE", stmts)
+	if len(stmts) != 1 {
+		t.Fatalf("statements %v, want one batch", stmts)
+	}
+	assertExclusiveBatch(t, stmts[0], "[appdb]", "DROP DATABASE [appdb]")
+}
+
+// TestWithScriptForcedExclusiveWritesAreOneStatement. A captured forced drop,
+// rename or detach is one statement, so a script run by hand has no gap
+// between freeing the single-user slot and using it either (S8).
+func TestWithScriptForcedExclusiveWritesAreOneStatement(t *testing.T) {
+	cases := map[string]func(context.Context, *Server) error{
+		"drop":   func(ctx context.Context, s *Server) error { return s.DropDatabase(ctx, "appdb", true) },
+		"rename": func(ctx context.Context, s *Server) error { return s.RenameDatabase(ctx, "appdb", "appdb2", true) },
+		"detach": func(ctx context.Context, s *Server) error {
+			return s.DetachDatabase(ctx, "appdb", DetachOptions{DropConnections: true})
+		},
+	}
+	for name, write := range cases {
+		for _, mi := range []bool{false, true} {
+			if mi && name == "detach" {
+				continue // a Managed Instance cannot detach at all
+			}
+			s := &Server{}
+			if mi {
+				s.info = &ServerInfo{EngineEdition: int(EngineAzureManagedInst)}
+			}
+			ctx, script := WithScript(context.Background())
+			if err := write(ctx, s); err != nil {
+				t.Fatalf("%s (mi=%v) under WithScript: %v", name, mi, err)
+			}
+			if got := script.Statements(); len(got) != 1 {
+				t.Errorf("%s (mi=%v): captured %d statements, want 1: %v", name, mi, len(got), got)
+			}
+		}
 	}
 }

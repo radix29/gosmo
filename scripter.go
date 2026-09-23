@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 	"unicode"
 )
@@ -414,16 +415,25 @@ func scriptIndex(idx *Index, tableName string, opts ScriptOptions) string {
 			quoteIdent(idx.Name), tableName, columnstoreWithClause(idx), dataSpaceClause(idx.DataSpace))
 		return sb.String()
 	case idx.Type == IndexTypeColumnStore:
-		cols := make([]string, len(idx.KeyColumns))
-		for i, kc := range idx.KeyColumns {
-			cols[i] = quoteIdent(kc.Name)
+		// sys.index_columns marks every column of a nonclustered columnstore
+		// index is_included_column = 1, so a read index carries them all in
+		// IncludedColumns and none in KeyColumns — scripting KeyColumns alone
+		// emitted "ON [t] ()", which does not parse.
+		var cols []string
+		for _, c := range slices.Concat(idx.KeyColumns, idx.IncludedColumns) {
+			cols = append(cols, quoteIdent(c.Name))
 		}
 		if opts.IncludeIfNotExists {
 			sb.WriteString(indexExistenceGuard(idx.Name, tableName))
 		}
-		fmt.Fprintf(&sb, "CREATE NONCLUSTERED COLUMNSTORE INDEX %s\n    ON %s (%s)%s%s;\nGO\n\n",
-			quoteIdent(idx.Name), tableName, strings.Join(cols, ", "), columnstoreWithClause(idx),
-			dataSpaceClause(idx.DataSpace))
+		fmt.Fprintf(&sb, "CREATE NONCLUSTERED COLUMNSTORE INDEX %s\n    ON %s (%s)",
+			quoteIdent(idx.Name), tableName, strings.Join(cols, ", "))
+		// A filtered NCCI (2016+) recreated without its WHERE covers every
+		// row instead — a different, larger index under the same name.
+		if idx.FilterDefinition != "" {
+			fmt.Fprintf(&sb, "\n    WHERE %s", idx.FilterDefinition)
+		}
+		fmt.Fprintf(&sb, "%s%s;\nGO\n\n", columnstoreWithClause(idx), dataSpaceClause(idx.DataSpace))
 		return sb.String()
 	case idx.Type == IndexTypeXML || idx.Type == IndexTypeSpatial:
 		fmt.Fprintf(&sb, "-- %s index %s on %s is not scripted (its DDL has no generic form here).\n\n",
@@ -434,6 +444,19 @@ func scriptIndex(idx *Index, tableName string, opts ScriptOptions) string {
 	if opts.IncludeIfNotExists {
 		sb.WriteString(indexExistenceGuard(idx.Name, tableName))
 	}
+	sb.WriteString(rowstoreIndexCreate(idx, tableName, indexWithClause(idx, "\n    "), dataSpaceClause(idx.DataSpace)))
+	sb.WriteString(";\nGO\n\n")
+	return sb.String()
+}
+
+// rowstoreIndexCreate renders a rowstore index's CREATE INDEX up to the
+// statement terminator: everything idx says, with the WITH and ON clauses
+// supplied by the caller. It is the one builder behind both Script as CREATE
+// and Index.SetIncludedColumns, so the two cannot drift — the latter, built
+// by hand, once recreated an index without its fill factor, pad, lock,
+// NORECOMPUTE and IGNORE_DUP_KEY options and on the wrong filegroup.
+func rowstoreIndexCreate(idx *Index, tableName, with, on string) string {
+	var sb strings.Builder
 	uniq := ""
 	if idx.IsUnique {
 		uniq = "UNIQUE "
@@ -454,17 +477,18 @@ func scriptIndex(idx *Index, tableName string, opts ScriptOptions) string {
 	if idx.FilterDefinition != "" {
 		fmt.Fprintf(&sb, "\n    WHERE %s", idx.FilterDefinition)
 	}
-	sb.WriteString(indexWithClause(idx, "\n    "))
-	sb.WriteString(dataSpaceClause(idx.DataSpace))
-	sb.WriteString(";\nGO\n\n")
+	sb.WriteString(with)
+	sb.WriteString(on)
 	return sb.String()
 }
 
 // indexWithClause renders a rowstore index's WITH (...) options — only those
 // that differ from what CREATE INDEX does anyway — preceded by sep, or ""
 // when there are none. It serves CREATE INDEX and the PRIMARY KEY / UNIQUE
-// constraints alike, which take the same options.
-func indexWithClause(idx *Index, sep string) string {
+// constraints alike, which take the same options. extra is appended as
+// given — DROP_EXISTING = ON for a rebuild in place — and forces a clause
+// even when idx has nothing of its own to say.
+func indexWithClause(idx *Index, sep string, extra ...string) string {
 	var o []string
 	if idx.IsPadded {
 		o = append(o, "PAD_INDEX = ON")
@@ -475,15 +499,24 @@ func indexWithClause(idx *Index, sep string) string {
 	if idx.IgnoreDupKey {
 		o = append(o, "IGNORE_DUP_KEY = ON")
 	}
+	if idx.StatisticsNoRecompute {
+		o = append(o, "STATISTICS_NORECOMPUTE = ON")
+	}
 	if !idx.AllowRowLocks {
 		o = append(o, "ALLOW_ROW_LOCKS = OFF")
 	}
 	if !idx.AllowPageLocks {
 		o = append(o, "ALLOW_PAGE_LOCKS = OFF")
 	}
-	if c := idx.DataCompression; c == "ROW" || c == "PAGE" {
-		o = append(o, "DATA_COMPRESSION = "+c)
+	// Only ever true on 2019+, so emitting it never hands an older parser an
+	// option it rejects unless the script is taken to an older server.
+	if idx.OptimizeForSequentialKey {
+		o = append(o, "OPTIMIZE_FOR_SEQUENTIAL_KEY = ON")
 	}
+	if c := idx.DataCompression; c == "ROW" || c == "PAGE" {
+		o = append(o, "DATA_COMPRESSION = "+string(c))
+	}
+	o = append(o, extra...)
 	if len(o) == 0 {
 		return ""
 	}
@@ -528,6 +561,25 @@ func dataSpaceClause(ds DataSpace) string {
 		return ""
 	default:
 		return fmt.Sprintf(" ON %s", quoteIdent(ds.Name))
+	}
+}
+
+// explicitDataSpaceClause is dataSpaceClause without the default-filegroup
+// omission, for CREATE INDEX ... WITH (DROP_EXISTING = ON): there an omitted
+// ON does not mean the default filegroup but the *table's* data space, which
+// moved an index off its own filegroup. It errors where no clause can be
+// written — a memory-optimized table's index, or a partition scheme whose
+// column was not read.
+func explicitDataSpaceClause(ds DataSpace) (string, error) {
+	switch {
+	case ds.Name == "":
+		return "", errors.New("the index has no data space to recreate it on")
+	case ds.IsPartitionScheme && ds.PartitionColumn == "":
+		return "", fmt.Errorf("partition scheme %s has no partitioning column", quoteIdent(ds.Name))
+	case ds.IsPartitionScheme:
+		return fmt.Sprintf(" ON %s(%s)", quoteIdent(ds.Name), quoteIdent(ds.PartitionColumn)), nil
+	default:
+		return fmt.Sprintf(" ON %s", quoteIdent(ds.Name)), nil
 	}
 }
 

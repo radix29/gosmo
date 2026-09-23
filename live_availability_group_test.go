@@ -607,7 +607,7 @@ func TestLiveAvailabilityGroupOperations(t *testing.T) {
 			}
 			if err := srv.Backup(ctx, BackupOptions{
 				Database: dbName, Action: action,
-				Devices: []string{*liveAGBackupDir + "/" + dbName + ext},
+				Devices: []BackupTarget{DiskTarget(*liveAGBackupDir + "/" + dbName + ext)},
 				Init:    true, Format: true,
 			}); err != nil {
 				t.Fatalf("backup %s (%v): %v", dbName, action, err)

@@ -18,6 +18,11 @@ import (
 // could reach the database it came from, a caller holding a *Login could not
 // and had to thread a *Server alongside it.
 //
+// A child of a table holds `table *Table` and declares `Table() *Table` the
+// same way. Index was the one such type without the field until 2026-09-23:
+// every index write took its table as a parameter, so passing the wrong one
+// compiled and altered an index of the same name on another table.
+//
 // That is the same defect CLAUDE.md § Conventions records against Database's
 // accessors — the shape being unguessable from the type — and it drifts back
 // the same way, one new type at a time. So the package is parsed, and every
@@ -173,7 +178,7 @@ func TestNoParentAccessorIsNamedDB(t *testing.T) {
 	}
 }
 
-// backPointerKind reports "Database" or "Server" when st holds the
+// backPointerKind reports "Database", "Server" or "Table" when st holds the
 // corresponding unexported parent field, and "" otherwise.
 func backPointerKind(st *ast.StructType) string {
 	for _, field := range st.Fields.List {
@@ -182,7 +187,7 @@ func backPointerKind(st *ast.StructType) string {
 			continue
 		}
 		id, ok := star.X.(*ast.Ident)
-		if !ok || (id.Name != "Database" && id.Name != "Server") {
+		if !ok || (id.Name != "Database" && id.Name != "Server" && id.Name != "Table") {
 			continue
 		}
 		for _, name := range field.Names {
@@ -191,6 +196,9 @@ func backPointerKind(st *ast.StructType) string {
 			}
 			if name.Name == "server" && id.Name == "Server" {
 				return "Server"
+			}
+			if name.Name == "table" && id.Name == "Table" {
+				return "Table"
 			}
 		}
 	}

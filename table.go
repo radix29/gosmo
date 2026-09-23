@@ -3,7 +3,6 @@ package gosmo
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -298,8 +297,8 @@ func (t *Table) AlterColumn(ctx context.Context, col ColumnDefinition) error {
 	if col.Name == "" {
 		return fmt.Errorf("gosmo: alter column: name is required")
 	}
-	if !validDataType(col.DataType) {
-		return fmt.Errorf("gosmo: alter column %q: unrecognized data type %q", col.Name, col.DataType)
+	if err := checkColumnDefinition(col); err != nil {
+		return fmt.Errorf("gosmo: alter column %q: %w", col.Name, err)
 	}
 
 	var sb strings.Builder
@@ -357,272 +356,6 @@ func (t *Table) RenameColumn(ctx context.Context, name, newName string) error {
 		return fmt.Errorf("gosmo: rename column %q to %q on %s: %w", name, newName, t.FullName(), err)
 	}
 	return nil
-}
-
-// -- Indexes -------------------------------------------------------------------
-
-// Index mirrors Microsoft.SqlServer.Management.Smo.Index.
-type Index struct {
-	Name               string
-	IndexID            int
-	Type               IndexType
-	IsClustered        bool
-	IsUnique           bool
-	IsPrimaryKey       bool
-	IsUniqueConstraint bool
-	IsDisabled         bool
-	FillFactor         int
-	IsPadded           bool
-	IgnoreDupKey       bool
-	AllowRowLocks      bool
-	AllowPageLocks     bool
-	DataCompression    string
-	KeyColumns         []IndexColumn
-	IncludedColumns    []IndexColumn
-	FilterDefinition   string
-	DataSpace          DataSpace
-}
-
-// DataSpace names where a table or index keeps its rows — the ON clause of
-// CREATE TABLE and CREATE INDEX. It is either a filegroup or a partition
-// scheme, and for a partition scheme the partitioning column is part of the
-// clause, so it is carried here too: `ON [scheme]([column])`.
-//
-// Name is empty for an index with no data space of its own in sys.indexes —
-// a memory-optimized table's, whose rows are not on a filegroup at all.
-type DataSpace struct {
-	Name              string
-	IsPartitionScheme bool
-	// IsDefaultFileGroup is true for the database's default filegroup, the
-	// one an object with no ON clause lands on. A scripter uses it to leave
-	// the clause off where it would say nothing.
-	IsDefaultFileGroup bool
-	// PartitionColumn is the column the scheme partitions by; set only when
-	// IsPartitionScheme.
-	PartitionColumn string
-}
-
-// dataSpaceColumns and dataSpaceJoins read an index's ON clause out of
-// sys.indexes: the data space's name and kind, whether it is the default
-// filegroup, and — for a partition scheme — the partitioning column, which
-// sys.index_columns marks with partition_ordinal 1.
-//
-// Every join is a LEFT/OUTER one and every column is wrapped in ISNULL: an
-// index can have no data space at all (a memory-optimized table's), and a
-// filegroup row exists only for ds.type 'FG'. The partitioning column's
-// join is aliased pic, not ic: the index-column query these sit beside is
-// told apart from this one by its `sys.index_columns ic`, and two of its
-// tests count round trips that way.
-const dataSpaceColumns = `ISNULL(ds.name, ''), CASE WHEN ds.type = 'PS' THEN 1 ELSE 0 END,
-       ISNULL(fg.is_default, 0), ISNULL(pc.name, '')`
-
-const dataSpaceJoins = `LEFT   JOIN sys.data_spaces ds ON ds.data_space_id = i.data_space_id
-LEFT   JOIN sys.filegroups fg ON fg.data_space_id = ds.data_space_id
-OUTER  APPLY (SELECT TOP 1 c.name
-              FROM   sys.index_columns pic
-              JOIN   sys.columns c ON c.object_id = pic.object_id AND c.column_id = pic.column_id
-              WHERE  pic.object_id = i.object_id AND pic.index_id = i.index_id
-                AND  pic.partition_ordinal > 0
-              ORDER  BY pic.partition_ordinal) pc`
-
-// IndexColumn represents one column in an index.
-type IndexColumn struct {
-	Name       string
-	Descending bool
-	IsIncluded bool
-}
-
-// Indexes returns all indexes on the table.
-//
-// Two queries, whatever the index count: one for the indexes, one for every
-// index column on the object at once. Fetching each index's columns inside the
-// loop over the indexes cost a query per index, and Database.query pins its
-// own pooled connection and issues its own USE, so a table with 20 indexes ran
-// 42 round trips across 21 connections — with the outer one held throughout,
-// which is the shape that exhausts a pool rather than merely being slow.
-func (t *Table) Indexes(ctx context.Context) ([]*Index, error) {
-	indexes, err := t.indexList(ctx, "")
-	if err != nil {
-		return nil, fmt.Errorf("gosmo: list indexes for %s: %w", t.FullName(), err)
-	}
-	if len(indexes) == 0 {
-		return nil, nil
-	}
-	if err := t.attachIndexColumns(ctx, indexes, ""); err != nil {
-		return nil, err
-	}
-	return indexes, nil
-}
-
-// IndexByName returns one index on the table by name, with its columns.
-//
-// It returns an error satisfying errors.Is(err, ErrNotFound) when the table
-// has no such index. Two queries, the same shape as Indexes — see its
-// comment for why the columns are not fetched inside the index scan.
-func (t *Table) IndexByName(ctx context.Context, name string) (*Index, error) {
-	indexes, err := t.indexList(ctx, " AND i.name = @p2", name)
-	if err != nil {
-		return nil, fmt.Errorf("gosmo: find index %q on %s: %w", name, t.FullName(), err)
-	}
-	if len(indexes) == 0 {
-		return nil, notFoundf("gosmo: index %q not found on %s", name, t.FullName())
-	}
-	if err := t.attachIndexColumns(ctx, indexes, " AND ic.index_id = @p2", indexes[0].IndexID); err != nil {
-		return nil, err
-	}
-	return indexes[0], nil
-}
-
-// attachIndexColumns fetches the object's index columns in one query and
-// distributes them over indexes by index ID.
-func (t *Table) attachIndexColumns(ctx context.Context, indexes []*Index, extra string, args ...any) error {
-	cols, err := t.indexColumns(ctx, extra, args...)
-	if err != nil {
-		return fmt.Errorf("gosmo: columns of indexes on %s: %w", t.FullName(), err)
-	}
-	for _, idx := range indexes {
-		for _, c := range cols[idx.IndexID] {
-			if c.IsIncluded {
-				idx.IncludedColumns = append(idx.IncludedColumns, c)
-			} else {
-				idx.KeyColumns = append(idx.KeyColumns, c)
-			}
-		}
-	}
-	return nil
-}
-
-// indexList returns the table's indexes with no columns attached,
-// narrowed by extra — an additional predicate ANDed onto the object filter,
-// with its parameters starting at @p2. Its rows are drained and closed before
-// the caller asks for the columns, so the two queries never hold two pooled
-// connections at once.
-func (t *Table) indexList(ctx context.Context, extra string, args ...any) ([]*Index, error) {
-	q := `
-SELECT i.name, i.index_id, i.type_desc, i.is_unique, i.is_primary_key,
-       i.is_unique_constraint, i.is_disabled, i.fill_factor,
-       ISNULL(i.filter_definition, ''),
-       i.is_padded, i.ignore_dup_key, i.allow_row_locks, i.allow_page_locks,
-       ISNULL(p.data_compression_desc, 'NONE'),
-       ` + dataSpaceColumns + `
-FROM   sys.indexes i
-OUTER  APPLY (SELECT TOP 1 pp.data_compression_desc FROM sys.partitions pp
-              WHERE pp.object_id = i.object_id AND pp.index_id = i.index_id
-              ORDER BY pp.partition_number) p
-` + dataSpaceJoins + `
-WHERE  i.object_id = @p1 AND i.type > 0` + extra + `
-ORDER  BY i.index_id`
-
-	rows, err := t.db.query(ctx, q, append([]any{t.ObjectID}, args...)...)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var indexes []*Index
-	for rows.Next() {
-		idx := &Index{}
-		var typeDesc sql.NullString
-		if err := rows.Scan(&idx.Name, &idx.IndexID, &typeDesc,
-			&idx.IsUnique, &idx.IsPrimaryKey, &idx.IsUniqueConstraint,
-			&idx.IsDisabled, &idx.FillFactor, &idx.FilterDefinition,
-			&idx.IsPadded, &idx.IgnoreDupKey, &idx.AllowRowLocks, &idx.AllowPageLocks,
-			&idx.DataCompression,
-			&idx.DataSpace.Name, &idx.DataSpace.IsPartitionScheme,
-			&idx.DataSpace.IsDefaultFileGroup, &idx.DataSpace.PartitionColumn); err != nil {
-			return nil, err
-		}
-		switch desc := strings.TrimSpace(typeDesc.String); desc {
-		case "CLUSTERED":
-			idx.Type = IndexTypeClustered
-			idx.IsClustered = true
-		case "NONCLUSTERED":
-			idx.Type = IndexTypeNonClustered
-		case "XML":
-			idx.Type = IndexTypeXML
-		case "SPATIAL":
-			idx.Type = IndexTypeSpatial
-		case "CLUSTERED COLUMNSTORE":
-			idx.Type = IndexTypeClusteredColumnStore
-			idx.IsClustered = true
-		case "NONCLUSTERED COLUMNSTORE":
-			idx.Type = IndexTypeColumnStore
-		default:
-			// A type_desc with no constant — NONCLUSTERED HASH on a
-			// memory-optimized table, or a type a newer SQL Server adds —
-			// is carried through as the server's own text rather than left
-			// empty, so a caller displays the real type instead of nothing.
-			idx.Type = IndexType(desc)
-		}
-		indexes = append(indexes, idx)
-	}
-	return indexes, rows.Err()
-}
-
-// DataSpace returns where the table itself stores its rows — the filegroup
-// or partition scheme its heap or clustered index is on, which is CREATE
-// TABLE's ON clause.
-//
-// Read from index_id 0 or 1, so it answers for a heap as well as a clustered
-// table — which is why it is a query of its own rather than a field of the
-// index list, whose `i.type > 0` filter has no heap in it.
-//
-// A table with no row there at all — a Database.TableRef handle, whose ObjectID
-// is zero, or a memory-optimized table — reads as the zero DataSpace and no
-// error: absence means "no filegroup to name", not a failure.
-func (t *Table) DataSpace(ctx context.Context) (DataSpace, error) {
-	q := `
-SELECT ` + dataSpaceColumns + `
-FROM   sys.indexes i
-` + dataSpaceJoins + `
-WHERE  i.object_id = @p1 AND i.index_id IN (0, 1)`
-
-	var ds DataSpace
-	err := t.db.queryRow(ctx, func(row *sql.Row) error {
-		return row.Scan(&ds.Name, &ds.IsPartitionScheme, &ds.IsDefaultFileGroup, &ds.PartitionColumn)
-	}, q, t.ObjectID)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return DataSpace{}, nil
-		}
-		return DataSpace{}, fmt.Errorf("gosmo: data space of %s: %w", t.FullName(), err)
-	}
-	return ds, nil
-}
-
-// indexColumns returns every index column on the table, keyed by
-// index_id and in each index's own key order.
-//
-// The rows for index_id 0 — the heap's, which no index in the list claims —
-// come back too, and are simply never looked up: excluding them would cost a
-// predicate to save nothing, since a heap has at most one such row.
-//
-// extra is an additional predicate ANDed onto the object filter, with its
-// parameters starting at @p2 — the same contract as indexList.
-func (t *Table) indexColumns(ctx context.Context, extra string, args ...any) (map[int][]IndexColumn, error) {
-	q := `
-SELECT ic.index_id, c.name, ic.is_descending_key, ic.is_included_column
-FROM   sys.index_columns ic
-JOIN   sys.columns c ON c.object_id = ic.object_id AND c.column_id = ic.column_id
-WHERE  ic.object_id = @p1` + extra + `
-ORDER  BY ic.index_id, ic.key_ordinal, ic.index_column_id`
-
-	rows, err := t.db.query(ctx, q, append([]any{t.ObjectID}, args...)...)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	cols := make(map[int][]IndexColumn)
-	for rows.Next() {
-		var indexID int
-		c := IndexColumn{}
-		if err := rows.Scan(&indexID, &c.Name, &c.Descending, &c.IsIncluded); err != nil {
-			return nil, err
-		}
-		cols[indexID] = append(cols[indexID], c)
-	}
-	return cols, rows.Err()
 }
 
 // -- Foreign keys --------------------------------------------------------------
@@ -763,11 +496,21 @@ type CreateTableRequest struct {
 
 // ColumnDefinition describes a column in a CREATE TABLE statement.
 type ColumnDefinition struct {
-	Name         string
-	DataType     DataType
-	MaxLength    int // char/varchar/nchar/nvarchar: 0 = omit, -1 = MAX
-	Precision    int // decimal/numeric
-	Scale        int // decimal/numeric / datetime2 / time
+	Name      string
+	DataType  DataType
+	MaxLength int // char/varchar/nchar/nvarchar/binary/varbinary: 0 = omit, -1 = MAX
+	// Precision is a decimal/numeric column's precision; nil leaves it to the
+	// type's default (18).
+	Precision *int
+	// Scale is a decimal/numeric column's scale, or the fractional-seconds
+	// precision of a datetime2, time or datetimeoffset one; nil leaves it to
+	// the type's default (0 for decimal, 7 for the three time types).
+	//
+	// A pointer because 0 is a real scale: as an int, datetime2(0), time(0)
+	// and datetimeoffset(0) could not be asked for — zero read as
+	// "unspecified" and produced the 7-digit default — and decimal(p,0) with
+	// no precision became decimal(18,0).
+	Scale        *int
 	IsNullable   bool
 	IsIdentity   bool
 	IdentitySeed int64
@@ -788,8 +531,8 @@ func (d *Database) CreateTable(ctx context.Context, req CreateTableRequest) erro
 		return fmt.Errorf("gosmo: create table: at least one column is required")
 	}
 	for _, col := range req.Columns {
-		if !validDataType(col.DataType) {
-			return fmt.Errorf("gosmo: create table %q: unrecognized data type %q for column %q", req.Name, col.DataType, col.Name)
+		if err := checkColumnDefinition(col); err != nil {
+			return fmt.Errorf("gosmo: create table %q: column %q: %w", req.Name, col.Name, err)
 		}
 	}
 
@@ -852,23 +595,46 @@ func (d *Database) CreateTable(ctx context.Context, req CreateTableRequest) erro
 // The generated *scripts* keep IF EXISTS — Scripter's DROP-and-CREATE output
 // exists to be re-run, which is the opposite requirement.
 func (d *Database) DropTable(ctx context.Context, schema, name string, cascade bool) error {
-	if cascade {
-		const dropFKs = `
-DECLARE @sql NVARCHAR(MAX) = N'';
+	qn := qualifiedName(schema, name)
+	if !cascade {
+		if _, err := d.exec(ctx, "DROP TABLE "+qn); err != nil {
+			return fmt.Errorf("gosmo: drop table %s: %w", qn, err)
+		}
+		return nil
+	}
+	if _, err := d.exec(ctx, dropTableCascadeBatch(qn)); err != nil {
+		return fmt.Errorf("gosmo: drop table %s with its incoming foreign keys: %w", qn, err)
+	}
+	return nil
+}
+
+// dropTableCascadeBatch renders the cascade drop of the table qn (already
+// bracket-quoted) as one atomicBatch: every incoming foreign key, then the
+// table, or neither.
+//
+// It was two execs, and the DROP TABLE failing after the first had committed
+// — a schema-bound view on the table (Msg 3729), a permission the second
+// statement needs, a cancel — left the table in place with its foreign keys
+// gone for good and nothing saying so.
+//
+// The key drop runs as its own dynamic SQL through EXEC(N'…'), so its
+// DECLARE @sql is scoped to that inner batch: a batch-scoped DECLARE would
+// collide with itself when a ScriptCollector concatenates two of these (see
+// atomicBatch). atomicBatch takes no parameters, so the table name is inlined
+// as a literal — escaped once for OBJECT_ID's literal and once more for the
+// EXEC string around it.
+func dropTableCascadeBatch(qn string) string {
+	dropFKs := `DECLARE @sql NVARCHAR(MAX) = N'';
 SELECT @sql += N'ALTER TABLE ' + QUOTENAME(SCHEMA_NAME(fk.schema_id)) +
                N'.' + QUOTENAME(OBJECT_NAME(fk.parent_object_id)) +
                N' DROP CONSTRAINT ' + QUOTENAME(fk.name) + N'; '
 FROM   sys.foreign_keys fk
-WHERE  fk.referenced_object_id = OBJECT_ID(@p1);
+WHERE  fk.referenced_object_id = OBJECT_ID(` + nStringLiteral(qn) + `);
 IF LEN(@sql) > 0 EXEC sp_executesql @sql;`
-		if _, err := d.exec(ctx, dropFKs, qualifiedName(schema, name)); err != nil {
-			return fmt.Errorf("gosmo: drop incoming FKs for %s: %w", qualifiedName(schema, name), err)
-		}
-	}
-	if _, err := d.exec(ctx, "DROP TABLE "+qualifiedName(schema, name)); err != nil {
-		return fmt.Errorf("gosmo: drop table %s: %w", qualifiedName(schema, name), err)
-	}
-	return nil
+	return atomicBatch([]string{
+		"EXEC(" + nStringLiteral(dropFKs) + ")",
+		"DROP TABLE " + qn,
+	})
 }
 
 // RenameTable renames a table using sp_rename.
@@ -995,15 +761,43 @@ func colTypeSQL(col ColumnDefinition) string {
 			return fmt.Sprintf("%s(%d)", col.DataType, col.MaxLength)
 		}
 	case DataTypeDecimal, DataTypeNumeric:
-		if col.Precision > 0 {
-			return fmt.Sprintf("%s(%d,%d)", col.DataType, col.Precision, col.Scale)
+		switch {
+		case col.Precision != nil && col.Scale != nil:
+			return fmt.Sprintf("%s(%d,%d)", col.DataType, *col.Precision, *col.Scale)
+		case col.Precision != nil:
+			return fmt.Sprintf("%s(%d)", col.DataType, *col.Precision)
 		}
 	case DataTypeDatetime2, DataTypeTime, DataTypeDatetimeOffset:
-		if col.Scale > 0 {
-			return fmt.Sprintf("%s(%d)", col.DataType, col.Scale)
+		if col.Scale != nil {
+			return fmt.Sprintf("%s(%d)", col.DataType, *col.Scale)
 		}
 	}
 	return string(col.DataType)
+}
+
+// checkColumnDefinition refuses a definition colTypeSQL cannot render as
+// written, rather than rendering something else: a decimal scale with no
+// precision has no T-SQL spelling (decimal(,2) is a syntax error), and a
+// precision or scale on a type that takes neither would be dropped silently.
+func checkColumnDefinition(col ColumnDefinition) error {
+	if !validDataType(col.DataType) {
+		return fmt.Errorf("unrecognized data type %q", col.DataType)
+	}
+	switch col.DataType {
+	case DataTypeDecimal, DataTypeNumeric:
+		if col.Scale != nil && col.Precision == nil {
+			return fmt.Errorf("a %s scale needs a precision", col.DataType)
+		}
+	case DataTypeDatetime2, DataTypeTime, DataTypeDatetimeOffset:
+		if col.Precision != nil {
+			return fmt.Errorf("%s takes a scale, not a precision", col.DataType)
+		}
+	default:
+		if col.Precision != nil || col.Scale != nil {
+			return fmt.Errorf("%s takes no precision or scale", col.DataType)
+		}
+	}
+	return nil
 }
 
 // DropConstraint drops a named table constraint — a PRIMARY KEY, UNIQUE

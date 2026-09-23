@@ -664,14 +664,50 @@ func (d *Database) SetCompatibilityLevel(ctx context.Context, level Compatibilit
 	return nil
 }
 
-// SetReadOnly sets the database to read-only or read-write.
-func (d *Database) SetReadOnly(ctx context.Context, readOnly bool) error {
+// Termination says what an ALTER DATABASE needing exclusive access does about
+// the other sessions in the database — the WITH <termination> clause of ALTER
+// DATABASE SET.
+type Termination int
+
+const (
+	// TerminationNone waits for the other sessions to leave, as the bare
+	// statement does. Nothing bounds the wait but the caller's context: WITH
+	// NO_WAIT was probed on 17.0 and still waited, so it is not offered.
+	TerminationNone Termination = iota
+
+	// TerminationRollbackImmediate disconnects every other session in the
+	// database and rolls back its open transaction, so the statement finishes
+	// now. Those sessions' uncommitted work is lost.
+	TerminationRollbackImmediate
+)
+
+// withClause is t as the suffix of an ALTER DATABASE SET statement.
+func (t Termination) withClause() (string, error) {
+	switch t {
+	case TerminationNone:
+		return "", nil
+	case TerminationRollbackImmediate:
+		return " WITH ROLLBACK IMMEDIATE", nil
+	}
+	return "", fmt.Errorf("unrecognized termination %d", t)
+}
+
+// SetReadOnly sets the database to read-only or read-write. Either needs
+// exclusive access to the database, so term says what happens to the other
+// sessions in it; this Server's own idle sessions are released first either
+// way (see Server.ReleaseIdleConnections).
+func (d *Database) SetReadOnly(ctx context.Context, readOnly bool, term Termination) error {
 	mode := "READ_WRITE"
 	if readOnly {
 		mode = "READ_ONLY"
 	}
+	with, err := term.withClause()
+	if err != nil {
+		return fmt.Errorf("gosmo: set read-only %v: %w", readOnly, err)
+	}
+	d.server.releaseIdle(ctx)
 	if err := d.server.exec(ctx,
-		fmt.Sprintf("ALTER DATABASE %s SET %s", quoteIdent(d.Name), mode),
+		fmt.Sprintf("ALTER DATABASE %s SET %s%s", quoteIdent(d.Name), mode, with),
 	); err != nil {
 		return fmt.Errorf("gosmo: set read-only %v: %w", readOnly, err)
 	}

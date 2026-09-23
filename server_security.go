@@ -42,8 +42,8 @@ type ServerPermissionEntry struct {
 	Principal     string
 	PrincipalType string // e.g. "SQL_LOGIN", "SERVER_ROLE"
 	Grantor       string
-	Permission    string // e.g. "CONNECT SQL", "ALTER ANY LOGIN", "CONTROL SERVER"
-	State         string // "GRANT", "GRANT_WITH_GRANT_OPTION", "DENY"
+	Permission    ServerPermission // e.g. "CONNECT SQL", "ALTER ANY LOGIN", "CONTROL SERVER"
+	State         string           // "GRANT", "GRANT_WITH_GRANT_OPTION", "DENY"
 }
 
 // ServerPermissions returns every server-level GRANT/DENY entry.
@@ -72,7 +72,7 @@ ORDER  BY pr.name, sp.permission_name`
 // SQL Server doesn't expect here) or passed as query parameters (GRANT is
 // DDL), so Grant/Deny/RevokeServerPermission reject anything not in this
 // list rather than splicing caller input directly into the statement.
-var serverPermissionNames = map[string]bool{
+var serverPermissionNames = map[ServerPermission]bool{
 	"ADMINISTER BULK OPERATIONS":      true,
 	"ALTER ANY AVAILABILITY GROUP":    true,
 	"ALTER ANY CONNECTION":            true,
@@ -112,7 +112,7 @@ var serverPermissionNames = map[string]bool{
 
 // validServerPermission reports whether name is a recognized server-scoped
 // permission name.
-func validServerPermission(name string) bool { return serverPermissionNames[name] }
+func validServerPermission(name ServerPermission) bool { return serverPermissionNames[name] }
 
 // ServerPermissionNames returns every server-scoped permission name
 // GRANT/DENY/REVOKE accepts, sorted — the catalog SSMS's Server Properties
@@ -121,49 +121,8 @@ func validServerPermission(name string) bool { return serverPermissionNames[name
 func ServerPermissionNames() []string {
 	names := make([]string, 0, len(serverPermissionNames))
 	for name := range serverPermissionNames {
-		names = append(names, name)
+		names = append(names, string(name))
 	}
 	slices.Sort(names)
 	return names
-}
-
-// GrantServerPermission grants a server-level permission to principal.
-//
-// SQL Server rejects GRANT/DENY/REVOKE at server scope outright unless the
-// session's current database is master ("Permissions at the server scope can
-// only be granted when the current database is master") — its own
-// restriction, not one gosmo imposes — so every statement here is prefixed
-// with USE master in the same batch.
-//
-// That USE does not leak into whatever borrows the connection next, and the
-// reason is the driver, not this package: USE is session state and would
-// otherwise survive the connection's return to the pool. database/sql calls
-// driver.SessionResetter.ResetSession before handing a pooled connection to
-// its next user, and go-mssqldb implements it by flagging the next TDS batch
-// as a connection reset (Conn.ResetSession -> sendSqlBatch72's resetSession),
-// which restores the session's database to the connection string's.
-//
-// Verified live 2026-08-01, A/B against a connection opened with
-// Database set: eight pooled connections all still reported that database
-// after a GRANT. Recorded because the shape of this code invites the
-// opposite conclusion — a review that session proposed replacing it with a
-// pinned connection that reads DB_NAME(), switches, and switches back, which
-// is three extra round trips per grant to re-solve what the driver already
-// handles.
-func (s *Server) GrantServerPermission(ctx context.Context, permission, principal string) error {
-	return s.GrantServerPermissionWithOptions(ctx, permission, principal, PermissionOptions{})
-}
-
-// DenyServerPermission denies a server-level permission to principal.
-//
-// See GrantServerPermission's doc comment for the USE master prefix.
-func (s *Server) DenyServerPermission(ctx context.Context, permission, principal string) error {
-	return s.DenyServerPermissionWithOptions(ctx, permission, principal, PermissionOptions{})
-}
-
-// RevokeServerPermission revokes a server-level permission from principal.
-//
-// See GrantServerPermission's doc comment for the USE master prefix.
-func (s *Server) RevokeServerPermission(ctx context.Context, permission, principal string) error {
-	return s.RevokeServerPermissionWithOptions(ctx, permission, principal, PermissionOptions{})
 }

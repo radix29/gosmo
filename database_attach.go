@@ -46,27 +46,33 @@ type DetachOptions struct {
 // The database's files are left where they are — this is not a delete, and
 // AttachDatabase brings the same files back, under this name or another
 // one.
+//
+// A detach needs exclusive access, so this Server's own idle sessions are
+// released first (see ReleaseIdleConnections) — without that, a read of the
+// database moments earlier made even a detach nobody else was using fail
+// Msg 3703.
 func (s *Server) DetachDatabase(ctx context.Context, name string, opts DetachOptions) error {
 	if name == "" {
 		return fmt.Errorf("gosmo: detach database: name is required")
 	}
-	if opts.DropConnections {
-		if err := s.exec(ctx,
-			fmt.Sprintf("ALTER DATABASE %s SET SINGLE_USER WITH ROLLBACK IMMEDIATE", quoteIdent(name)),
-		); err != nil {
-			return fmt.Errorf("gosmo: set single user on %q: %w", name, err)
-		}
-	}
-	err := s.exec(ctx, fmt.Sprintf(
+	s.releaseIdle(ctx)
+	detach := fmt.Sprintf(
 		"EXEC master.dbo.sp_detach_db @dbname = %s, @skipchecks = %s, @keepfulltextindexfile = %s",
 		nStringLiteral(name),
 		sqlTextBool(!opts.UpdateStatistics),
 		sqlTextBool(!opts.DropFullTextIndexFile),
-	))
-	if err != nil {
-		// Only on failure: a detach that succeeded has no database left to
-		// set anything on, and the ALTER would fail with "not found".
-		if opts.DropConnections {
+	)
+	if !opts.DropConnections {
+		if err := s.exec(ctx, detach); err != nil {
+			return fmt.Errorf("gosmo: detach database %q: %w", name, err)
+		}
+		return nil
+	}
+	// One batch — see exclusiveBatch — which also puts a database whose
+	// detach failed back to MULTI_USER. A batch cut short may not have got
+	// that far.
+	if err := s.exec(ctx, exclusiveBatch(name, detach)); err != nil {
+		if batchCutShort(err) {
 			_ = s.restoreMultiUser(ctx, name)
 		}
 		return fmt.Errorf("gosmo: detach database %q: %w", name, err)

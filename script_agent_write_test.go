@@ -210,7 +210,7 @@ func TestScriptServerLevelWrites(t *testing.T) {
 		{"Restore", func(c context.Context) error {
 			return (&Server{}).Restore(c, RestoreOptions{
 				Database: "App'DB",
-				Devices:  []string{`C:\bak\a'1.bak`},
+				Devices:  []BackupTarget{DiskTarget(`C:\bak\a'1.bak`)},
 				Replace:  true,
 			})
 		}, "RESTORE DATABASE [App'DB]\nFROM DISK = N'C:\\bak\\a''1.bak'\nWITH REPLACE"},

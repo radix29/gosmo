@@ -107,15 +107,15 @@ func TestScriptSecurityWrites(t *testing.T) {
 			// would tell the server the value is one of its own hash formats
 			// rather than cleartext.
 			"Login ChangePassword", func(c context.Context) error {
-				return login().ChangePassword(c, "p'wd")
+				return login().ChangePassword(c, "p'wd", ChangePasswordOptions{})
 			}, "ALTER LOGIN [o'brien] WITH PASSWORD = N'p''wd'"},
 		{
 			// MUST_CHANGE and UNLOCK follow the password space-separated —
 			// they are password-clause modifiers, not comma-separated set
 			// options — and MUST_CHANGE drags CHECK_EXPIRATION = ON in after
 			// the comma.
-			"Login ChangePasswordWithOptions", func(c context.Context) error {
-				return login().ChangePasswordWithOptions(c, "p'wd", true, true)
+			"Login ChangePassword with options", func(c context.Context) error {
+				return login().ChangePassword(c, "p'wd", ChangePasswordOptions{MustChange: true, Unlock: true})
 			}, "ALTER LOGIN [o'brien] WITH PASSWORD = N'p''wd' MUST_CHANGE UNLOCK, CHECK_EXPIRATION = ON"},
 		{"Login MapCredential", func(c context.Context) error {
 			return login().MapCredential(c, "cred]1")
@@ -235,29 +235,29 @@ func TestScriptPermissionOptionWrites(t *testing.T) {
 	revokeGrantOption := PermissionOptions{Cascade: true, GrantOptionOnly: true}
 
 	runScriptCases(t, []scriptCase{
-		{"GrantSchemaPermissionWithOptions", func(c context.Context) error {
-			return scriptTestDB().GrantSchemaPermissionWithOptions(c, "sa]les", PermSelect, "o'brien", withGrant)
+		{"GrantSchemaPermission with options", func(c context.Context) error {
+			return scriptTestDB().GrantSchemaPermission(c, "sa]les", PermSelect, "o'brien", withGrant)
 		}, scriptUsePrefix + "GRANT SELECT ON SCHEMA::[sa]]les] TO [o'brien] WITH GRANT OPTION"},
-		{"RevokeSchemaPermissionWithOptions", func(c context.Context) error {
-			return scriptTestDB().RevokeSchemaPermissionWithOptions(c, "sa]les", PermSelect, "o'brien", revokeGrantOption)
+		{"RevokeSchemaPermission with options", func(c context.Context) error {
+			return scriptTestDB().RevokeSchemaPermission(c, "sa]les", PermSelect, "o'brien", revokeGrantOption)
 		}, scriptUsePrefix + "REVOKE GRANT OPTION FOR SELECT ON SCHEMA::[sa]]les] FROM [o'brien] CASCADE"},
-		{"DenyDatabasePermissionWithOptions", func(c context.Context) error {
-			return scriptTestDB().DenyDatabasePermissionWithOptions(c, "CREATE TABLE", "o'brien", cascadeOnly)
+		{"DenyDatabasePermission with options", func(c context.Context) error {
+			return scriptTestDB().DenyDatabasePermission(c, "CREATE TABLE", "o'brien", cascadeOnly)
 		}, scriptUsePrefix + "DENY CREATE TABLE TO [o'brien] CASCADE"},
-		{"RevokeDatabasePermissionWithOptions", func(c context.Context) error {
-			return scriptTestDB().RevokeDatabasePermissionWithOptions(c, "CREATE TABLE", "o'brien", revokeGrantOption)
+		{"RevokeDatabasePermission with options", func(c context.Context) error {
+			return scriptTestDB().RevokeDatabasePermission(c, "CREATE TABLE", "o'brien", revokeGrantOption)
 		}, scriptUsePrefix + "REVOKE GRANT OPTION FOR CREATE TABLE FROM [o'brien] CASCADE"},
-		{"DenyServerPermissionWithOptions", func(c context.Context) error {
-			return (&Server{}).DenyServerPermissionWithOptions(c, "VIEW SERVER STATE", "o'brien", cascadeOnly)
+		{"DenyServerPermission with options", func(c context.Context) error {
+			return (&Server{}).DenyServerPermission(c, "VIEW SERVER STATE", "o'brien", cascadeOnly)
 		}, "USE master; DENY VIEW SERVER STATE TO [o'brien] CASCADE"},
 		{"DenyColumnPermission", func(c context.Context) error {
-			return scriptTestDB().DenyColumnPermission(c, "dbo", "Sales.Archive", PermSelect, []string{"a]b", "c'd"}, "o'brien")
+			return scriptTestDB().DenyColumnPermission(c, "dbo", "Sales.Archive", PermSelect, []string{"a]b", "c'd"}, "o'brien", PermissionOptions{})
 		}, scriptUsePrefix + "DENY SELECT ([a]]b], [c'd]) ON [dbo].[Sales.Archive] TO [o'brien]"},
-		{"DenyColumnPermissionWithOptions", func(c context.Context) error {
-			return scriptTestDB().DenyColumnPermissionWithOptions(c, "dbo", "Sales.Archive", PermSelect, []string{"a]b"}, "o'brien", cascadeOnly)
+		{"DenyColumnPermission with options", func(c context.Context) error {
+			return scriptTestDB().DenyColumnPermission(c, "dbo", "Sales.Archive", PermSelect, []string{"a]b"}, "o'brien", cascadeOnly)
 		}, scriptUsePrefix + "DENY SELECT ([a]]b]) ON [dbo].[Sales.Archive] TO [o'brien] CASCADE"},
-		{"RevokeColumnPermissionWithOptions", func(c context.Context) error {
-			return scriptTestDB().RevokeColumnPermissionWithOptions(c, "dbo", "Sales.Archive", PermSelect, []string{"a]b"}, "o'brien", revokeGrantOption)
+		{"RevokeColumnPermission with options", func(c context.Context) error {
+			return scriptTestDB().RevokeColumnPermission(c, "dbo", "Sales.Archive", PermSelect, []string{"a]b"}, "o'brien", revokeGrantOption)
 		}, scriptUsePrefix + "REVOKE GRANT OPTION FOR SELECT ([a]]b]) ON [dbo].[Sales.Archive] FROM [o'brien] CASCADE"},
 	})
 }

@@ -17,12 +17,20 @@ func TestColTypeSQL(t *testing.T) {
 		{"varchar MAX", ColumnDefinition{DataType: DataTypeVarChar, MaxLength: -1}, "varchar(MAX)"},
 		{"varchar no length", ColumnDefinition{DataType: DataTypeVarChar, MaxLength: 0}, "varchar"},
 		{"nvarchar with length", ColumnDefinition{DataType: DataTypeNVarChar, MaxLength: 100}, "nvarchar(100)"},
-		{"decimal with precision", ColumnDefinition{DataType: DataTypeDecimal, Precision: 18, Scale: 2}, "decimal(18,2)"},
+		{"decimal with precision", ColumnDefinition{DataType: DataTypeDecimal, Precision: new(18), Scale: new(2)}, "decimal(18,2)"},
 		{"decimal no precision", ColumnDefinition{DataType: DataTypeDecimal}, "decimal"},
-		{"datetime2 with scale", ColumnDefinition{DataType: DataTypeDatetime2, Scale: 3}, "datetime2(3)"},
+		{"datetime2 with scale", ColumnDefinition{DataType: DataTypeDatetime2, Scale: new(3)}, "datetime2(3)"},
 		{"datetime2 no scale", ColumnDefinition{DataType: DataTypeDatetime2}, "datetime2"},
 		{"plain int", ColumnDefinition{DataType: DataTypeInt}, "int"},
 		{"bit", ColumnDefinition{DataType: DataTypeBit}, "bit"},
+		{"varbinary with length", ColumnDefinition{DataType: DataTypeVarBinary, MaxLength: 16}, "varbinary(16)"},
+		// Zero is a scale, not "unspecified": each of these became the
+		// 7-digit or (18,0) default while Scale and Precision were ints.
+		{"datetime2(0)", ColumnDefinition{DataType: DataTypeDatetime2, Scale: new(0)}, "datetime2(0)"},
+		{"time(0)", ColumnDefinition{DataType: DataTypeTime, Scale: new(0)}, "time(0)"},
+		{"datetimeoffset(0)", ColumnDefinition{DataType: DataTypeDatetimeOffset, Scale: new(0)}, "datetimeoffset(0)"},
+		{"decimal(p,0)", ColumnDefinition{DataType: DataTypeDecimal, Precision: new(10), Scale: new(0)}, "decimal(10,0)"},
+		{"decimal precision only", ColumnDefinition{DataType: DataTypeNumeric, Precision: new(10)}, "numeric(10)"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -30,6 +38,23 @@ func TestColTypeSQL(t *testing.T) {
 				t.Errorf("colTypeSQL(%+v) = %q, want %q", c.col, got, c.want)
 			}
 		})
+	}
+}
+
+// A precision or scale colTypeSQL has no spelling for is refused, never
+// rendered as something else.
+func TestCheckColumnDefinitionRefusesWhatCannotBeSaid(t *testing.T) {
+	for _, col := range []ColumnDefinition{
+		{Name: "a", DataType: DataTypeDecimal, Scale: new(2)},
+		{Name: "b", DataType: DataTypeDatetime2, Precision: new(3)},
+		{Name: "c", DataType: DataTypeInt, Scale: new(0)},
+	} {
+		if err := checkColumnDefinition(col); err == nil {
+			t.Errorf("checkColumnDefinition(%s %s) = nil, want an error", col.Name, col.DataType)
+		}
+	}
+	if err := checkColumnDefinition(ColumnDefinition{Name: "d", DataType: DataTypeDecimal, Precision: new(9), Scale: new(0)}); err != nil {
+		t.Errorf("decimal(9,0) refused: %v", err)
 	}
 }
 
@@ -65,11 +90,12 @@ func TestIndexesUsesOneQueryForEveryIndexColumn(t *testing.T) {
 				"is_unique_constraint", "is_disabled", "fill_factor", "filter_definition",
 				"is_padded", "ignore_dup_key", "allow_row_locks", "allow_page_locks",
 				"data_compression_desc",
-				"data_space", "is_partition_scheme", "is_default_filegroup", "partition_column"},
+				"data_space", "is_partition_scheme", "is_default_filegroup", "partition_column",
+				"no_recompute", "optimize_for_sequential_key"},
 			rows: [][]driver.Value{
-				{"PK_T", int64(1), "CLUSTERED", true, true, false, false, int64(0), "", false, false, true, true, "NONE", "PRIMARY", false, true, ""},
-				{"IX_covering", int64(2), "NONCLUSTERED", false, false, false, false, int64(0), "", false, false, true, true, "NONE", "ps_year", true, false, "created"},
-				{"IX_empty", int64(3), "NONCLUSTERED", false, false, false, false, int64(0), "", false, false, true, true, "NONE", "FG_archive", false, false, ""},
+				{"PK_T", int64(1), "CLUSTERED", true, true, false, false, int64(0), "", false, false, true, true, "NONE", "PRIMARY", false, true, "", false, false},
+				{"IX_covering", int64(2), "NONCLUSTERED", false, false, false, false, int64(0), "", false, false, true, true, "NONE", "ps_year", true, false, "created", true, true},
+				{"IX_empty", int64(3), "NONCLUSTERED", false, false, false, false, int64(0), "", false, false, true, true, "NONE", "FG_archive", false, false, "", false, false},
 			},
 		},
 		cannedRow{
@@ -123,6 +149,12 @@ func TestIndexesUsesOneQueryForEveryIndexColumn(t *testing.T) {
 		if !slices.Equal(got.IncludedColumns, w.incl) {
 			t.Errorf("%s included columns = %+v, want %+v", w.name, got.IncludedColumns, w.incl)
 		}
+		// Only IX_covering's row sets the two trailing options; a scan that
+		// shifted them onto the wrong destinations flips one of these.
+		if wantOn := w.name == "IX_covering"; got.StatisticsNoRecompute != wantOn || got.OptimizeForSequentialKey != wantOn {
+			t.Errorf("%s NoRecompute/OptimizeForSequentialKey = %v/%v, want %v/%v",
+				w.name, got.StatisticsNoRecompute, got.OptimizeForSequentialKey, wantOn, wantOn)
+		}
 	}
 }
 
@@ -160,11 +192,12 @@ func TestIndexListReadsEachIndexDataSpace(t *testing.T) {
 				"is_unique_constraint", "is_disabled", "fill_factor", "filter_definition",
 				"is_padded", "ignore_dup_key", "allow_row_locks", "allow_page_locks",
 				"data_compression_desc",
-				"data_space", "is_partition_scheme", "is_default_filegroup", "partition_column"},
+				"data_space", "is_partition_scheme", "is_default_filegroup", "partition_column",
+				"no_recompute", "optimize_for_sequential_key"},
 			rows: [][]driver.Value{
-				{"PK_T", int64(1), "CLUSTERED", true, true, false, false, int64(0), "", false, false, true, true, "NONE", "ps_year", true, false, "Created"},
-				{"IX_archive", int64(2), "NONCLUSTERED", false, false, false, false, int64(0), "", false, false, true, true, "NONE", "FG_Archive", false, false, ""},
-				{"IX_default", int64(3), "NONCLUSTERED", false, false, false, false, int64(0), "", false, false, true, true, "NONE", "PRIMARY", false, true, ""},
+				{"PK_T", int64(1), "CLUSTERED", true, true, false, false, int64(0), "", false, false, true, true, "NONE", "ps_year", true, false, "Created", false, false},
+				{"IX_archive", int64(2), "NONCLUSTERED", false, false, false, false, int64(0), "", false, false, true, true, "NONE", "FG_Archive", false, false, "", false, false},
+				{"IX_default", int64(3), "NONCLUSTERED", false, false, false, false, int64(0), "", false, false, true, true, "NONE", "PRIMARY", false, true, "", false, false},
 			},
 		},
 		cannedRow{

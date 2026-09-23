@@ -15,16 +15,22 @@ func QuoteName(name string) string {
 	return mssql.TSQLQuoter{}.ID(name)
 }
 
-// QuoteLiteral renders s as a T-SQL string literal, including the surrounding
-// single quotes and doubling any embedded quote — safe to embed in SQL text
-// where a parameter placeholder is not accepted (DDL, dynamic SQL). Prefer a
-// query parameter for ordinary values.
+// QuoteLiteral renders s as a T-SQL Unicode string literal — N'…', doubling
+// any embedded quote — safe to embed in SQL text where a parameter
+// placeholder is not accepted (DDL, dynamic SQL). Prefer a query parameter
+// for ordinary values.
+//
+// The N prefix is not optional. Without it the literal is varchar, converted
+// through the current database's code page, and any character outside that
+// code page becomes '?': a Cyrillic or CJK file path in CREATE DATABASE's
+// FILENAME created a file somewhere else, or failed. Until 2026-09-23 this
+// returned the driver's bare '…' and every caller that knew added the N by
+// hand; the ones that did not were the bug (S9).
 //
 // Use QuoteLiteral where the whole literal is being produced. Where the
 // quotes are already part of a format string — the common shape in this
 // package, e.g. "@name = N'%s'" — use the unexported escapeSingle (helpers.go)
-// instead, which escapes without adding quotes of its own. QuoteLiteral also
-// does not emit the N prefix.
+// instead, which escapes without adding quotes of its own.
 //
 // Neither one quotes an *identifier*. An identifier that ends up inside a
 // string literal — the argument to OBJECT_ID, DBCC SHOW_STATISTICS,
@@ -41,5 +47,5 @@ func QuoteName(name string) string {
 // for the wrong tables instead of failing. See
 // identifier_quoting_test.go, which pins all of this.
 func QuoteLiteral(s string) string {
-	return mssql.TSQLQuoter{}.Value(s)
+	return "N" + mssql.TSQLQuoter{}.Value(s)
 }

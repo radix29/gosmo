@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 )
 
 // ============================================================
@@ -90,6 +91,13 @@ func (s *Server) ConfigurationRef(name string) *ConfigurationOption {
 
 // SetValue changes the option value using sp_configure.
 // For non-dynamic options, call Server.Reconfigure() afterwards.
+//
+// It is the raw single-statement primitive: a bare sp_configure. On a server
+// where "show advanced options" is 0 — the installation default — every
+// advanced option (max degree of parallelism, max server memory, fill
+// factor, …) fails with Msg 15123 "does not exist, or it may be an advanced
+// option". Server.ApplyConfiguration handles that, and applies a set of
+// changes with one RECONFIGURE; prefer it for anything a user edits.
 func (c *ConfigurationOption) SetValue(ctx context.Context, value int64) error {
 	q := fmt.Sprintf("EXEC sp_configure N'%s', %d", escapeSingle(c.Name), value)
 	if err := c.server.exec(ctx, q); err != nil {
@@ -110,6 +118,106 @@ func (s *Server) Reconfigure(ctx context.Context, override bool) error {
 		return fmt.Errorf("gosmo: reconfigure: %w", err)
 	}
 	return nil
+}
+
+// ConfigChange is one sp_configure change for Server.ApplyConfiguration:
+// the option's sys.configurations name and its new value.
+type ConfigChange struct {
+	Name  string
+	Value int64
+}
+
+// ConfigApplyOptions controls Server.ApplyConfiguration.
+type ConfigApplyOptions struct {
+	// Override issues RECONFIGURE WITH OVERRIDE, which installs values the
+	// plain form refuses as out of the recommended range.
+	Override bool
+}
+
+// showAdvancedOptions is the sp_configure option that hides every advanced
+// option from sp_configure while it is 0.
+const showAdvancedOptions = "show advanced options"
+
+// ApplyConfiguration applies changes in one batch, the way SSMS scripts a
+// Server Properties change:
+//
+//  1. record "show advanced options" and, when it is off and any change
+//     names an advanced option, turn it on (with its own RECONFIGURE, which
+//     sp_configure needs before it will accept an advanced name);
+//  2. sp_configure every change;
+//  3. one RECONFIGURE [WITH OVERRIDE];
+//  4. put "show advanced options" back if step 1 turned it on.
+//
+// A bare sp_configure of an advanced option fails Msg 15123 while "show
+// advanced options" is 0, which is how every stock installation ships — see
+// ConfigurationOption.SetValue. Whether an option is advanced is decided by
+// the server (sys.configurations.is_advanced), not by gosmo, so the batch is
+// the same scripted as executed.
+//
+// A change to "show advanced options" itself wins over step 4: it is applied
+// after every other change and nothing is restored afterwards.
+//
+// The batch has no TRY/CATCH: an sp_configure that fails (an unknown name, a
+// value out of range) does not stop the rest, so the RECONFIGURE still
+// installs every change that was accepted and step 4 still runs. The error
+// returned names every failure. An empty changes is a no-op.
+func (s *Server) ApplyConfiguration(ctx context.Context, changes []ConfigChange, opts ConfigApplyOptions) error {
+	if len(changes) == 0 {
+		return nil
+	}
+	if err := s.exec(ctx, buildApplyConfiguration(changes, opts)); err != nil {
+		return fmt.Errorf("gosmo: apply configuration: %w", err)
+	}
+	return nil
+}
+
+// buildApplyConfiguration renders ApplyConfiguration's batch.
+func buildApplyConfiguration(changes []ConfigChange, opts ConfigApplyOptions) string {
+	reconfigure := "RECONFIGURE"
+	if opts.Override {
+		reconfigure += " WITH OVERRIDE"
+	}
+	var names []string
+	var ordered []ConfigChange
+	var showAdvanced *ConfigChange
+	for _, c := range changes {
+		if strings.EqualFold(c.Name, showAdvancedOptions) {
+			showAdvanced = &c
+			continue
+		}
+		ordered = append(ordered, c)
+		names = append(names, "N'"+escapeSingle(c.Name)+"'")
+	}
+	if showAdvanced != nil {
+		ordered = append(ordered, *showAdvanced)
+	}
+
+	var b strings.Builder
+	enable := len(names) > 0
+	if enable {
+		fmt.Fprintf(&b, `DECLARE @show_advanced_enabled bit = 0;
+IF EXISTS (SELECT 1 FROM sys.configurations WHERE name = N'%[1]s' AND value_in_use = 0)
+   AND EXISTS (SELECT 1 FROM sys.configurations WHERE is_advanced = 1 AND name IN (%[2]s))
+BEGIN
+    EXEC sys.sp_configure N'%[1]s', 1;
+    %[3]s;
+    SET @show_advanced_enabled = 1;
+END;
+`, showAdvancedOptions, strings.Join(names, ", "), reconfigure)
+	}
+	for _, c := range ordered {
+		fmt.Fprintf(&b, "EXEC sys.sp_configure N'%s', %d;\n", escapeSingle(c.Name), c.Value)
+	}
+	b.WriteString(reconfigure + ";")
+	if enable && showAdvanced == nil {
+		fmt.Fprintf(&b, `
+IF @show_advanced_enabled = 1
+BEGIN
+    EXEC sys.sp_configure N'%s', 0;
+    %s;
+END;`, showAdvancedOptions, reconfigure)
+	}
+	return b.String()
 }
 
 // ============================================================

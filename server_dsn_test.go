@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/microsoft/go-mssqldb/msdsn"
 )
@@ -44,6 +45,90 @@ func TestBuildDSNIPv6RoundTripsThroughDriver(t *testing.T) {
 					cfg.Host, cfg.Instance, cfg.Port, c.wantHost, c.wantInstance, c.wantPort)
 			}
 		})
+	}
+}
+
+// TestBuildDSNAcceptsTheTCPPrefix (S10): "tcp:host,port" is what the Azure
+// Portal's ADO.NET string shows and SSMS accepts. Unstripped, the colon made
+// the host look like an IPv6 literal, and both Connect and ConnectionString
+// failed "cannot mask an unparseable DSN".
+func TestBuildDSNAcceptsTheTCPPrefix(t *testing.T) {
+	cases := []struct {
+		server       string
+		wantHost     string
+		wantInstance string
+		wantPort     uint64
+	}{
+		{"tcp:x.database.windows.net,1433", "x.database.windows.net", "", 1433},
+		{"TCP:myserver", "myserver", "", 0},
+		{`tcp:myserver\SQLEXPRESS,1434`, "myserver", "SQLEXPRESS", 1434},
+		{"tcp:[fe80::1]:1500", "fe80::1", "", 1500},
+		// Not a prefix: a host that happens to be called tcp, on a port.
+		{"tcp:1500", "tcp", "", 1500},
+	}
+	for _, c := range cases {
+		t.Run(c.server, func(t *testing.T) {
+			dsn, _, err := buildDSN(ConnectionOptions{Server: c.server, User: "sa", Password: "p"})
+			if err != nil {
+				t.Fatalf("buildDSN: %v", err)
+			}
+			cfg, err := msdsn.Parse(dsn)
+			if err != nil {
+				t.Fatalf("msdsn.Parse(%q): %v", dsn, err)
+			}
+			if cfg.Host != c.wantHost || cfg.Instance != c.wantInstance || cfg.Port != c.wantPort {
+				t.Errorf("%q → host/instance/port = %q/%q/%d, want %q/%q/%d", dsn,
+					cfg.Host, cfg.Instance, cfg.Port, c.wantHost, c.wantInstance, c.wantPort)
+			}
+			if _, err := (ConnectionOptions{Server: c.server, User: "sa", Password: "p"}).ConnectionString(true); err != nil {
+				t.Errorf("ConnectionString(masked): %v", err)
+			}
+		})
+	}
+}
+
+// TestBuildDSNRefusesOtherProtocolsByName (S10): the driver dials TCP only,
+// so np:, lpc: and admin: are refused with an error naming the protocol
+// rather than bracketed into an IPv6 host that fails somewhere less obvious.
+func TestBuildDSNRefusesOtherProtocolsByName(t *testing.T) {
+	for server, want := range map[string]string{
+		`np:\\myserver\pipe\sql\query`: "named pipes",
+		"lpc:myserver":                 "shared memory",
+		"Admin:myserver":               "admin:",
+	} {
+		_, _, err := buildDSN(ConnectionOptions{Server: server})
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("buildDSN(%q) err = %v, want one naming %q", server, err, want)
+		}
+	}
+	// "admin" on a port is a host, not the DAC prefix.
+	if _, _, err := buildDSN(ConnectionOptions{Server: "admin:1433"}); err != nil {
+		t.Errorf("buildDSN(admin:1433): %v", err)
+	}
+}
+
+// TestConnectTimeoutRoundsUpToWholeSeconds (S10): the driver takes whole
+// seconds and reads 0 as no timeout at all, so truncating 500ms turned a
+// short timeout into an unbounded one.
+func TestConnectTimeoutRoundsUpToWholeSeconds(t *testing.T) {
+	for d, want := range map[time.Duration]time.Duration{
+		500 * time.Millisecond:  time.Second,
+		time.Second:             time.Second,
+		1500 * time.Millisecond: 2 * time.Second,
+		30 * time.Second:        30 * time.Second,
+	} {
+		p, err := driverParams(ConnectionOptions{Server: "myserver", User: "sa", Password: "p", ConnectTimeout: d})
+		if err != nil {
+			t.Fatalf("%v: %v", d, err)
+		}
+		dsn, _, _ := buildDSN(ConnectionOptions{Server: "myserver", User: "sa", Password: "p", ConnectTimeout: d})
+		cfg, err := msdsn.Parse(dsn)
+		if err != nil {
+			t.Fatalf("msdsn.Parse: %v", err)
+		}
+		if cfg.ConnTimeout != want {
+			t.Errorf("ConnectTimeout %v → driver ConnTimeout %v (param %q), want %v", d, cfg.ConnTimeout, p["connection timeout"], want)
+		}
 	}
 }
 

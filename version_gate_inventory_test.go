@@ -67,6 +67,9 @@ var gatedColumns = []gatedColumn{
 	{"availability_group_listeners", "is_distributed_network_name", "ISNULL(l.is_distributed_network_name, 0)", SQLServer2019, false,
 		"DNN was backported: win10cli\\sql2016 (13.0.6404.1, SP3) has the column while win10cli\\sql2017 (14.0.2120.1) does not"},
 
+	// sys.indexes — OPTIMIZE_FOR_SEQUENTIAL_KEY, 2019.
+	{"indexes", "optimize_for_sequential_key", "i.optimize_for_sequential_key", SQLServer2019, false, ""},
+
 	// sys.tables — ledger tables, 2022.
 	{"tables", "ledger_type_desc", "t.ledger_type_desc", SQLServer2022, false, ""},
 

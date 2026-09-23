@@ -75,7 +75,7 @@ func TestLiveScriptedSetterMirroring(t *testing.T) {
 	}{
 		{"SetRecoveryModel", func() error { return d.SetRecoveryModel(sctx, RecoveryModelSimple) }},
 		{"SetCompatibilityLevel", func() error { return d.SetCompatibilityLevel(sctx, belowNativeCompatLevel(srv)) }},
-		{"SetReadOnly", func() error { return d.SetReadOnly(sctx, true) }},
+		{"SetReadOnly", func() error { return d.SetReadOnly(sctx, true, TerminationNone) }},
 		{"SetOffline", func() error { return d.SetOffline(sctx) }},
 		{"SetOnline", func() error { return d.SetOnline(sctx) }},
 	} {
@@ -171,13 +171,13 @@ func TestLiveScriptedSetterMirroring(t *testing.T) {
 	if got, srvGot := d.CompatibilityLevel, reload().CompatibilityLevel; got != wantCompat || srvGot != wantCompat {
 		t.Errorf("compat: handle=%d server=%d, want both %d", got, srvGot, wantCompat)
 	}
-	if err := d.SetReadOnly(ctx, true); err != nil {
+	if err := d.SetReadOnly(ctx, true, TerminationNone); err != nil {
 		t.Fatalf("SetReadOnly: %v", err)
 	}
 	if got, srvGot := d.IsReadOnly, reload().IsReadOnly; !got || !srvGot {
 		t.Errorf("readonly: handle=%v server=%v, want both true", got, srvGot)
 	}
-	if err := d.SetReadOnly(ctx, false); err != nil {
+	if err := d.SetReadOnly(ctx, false, TerminationNone); err != nil {
 		t.Fatalf("SetReadOnly back to read-write: %v", err)
 	}
 	if err := d.SetOffline(ctx); err != nil {

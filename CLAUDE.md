@@ -193,10 +193,10 @@ rename, and before a tag.
   scripted DROP of an object that exists works either way. This bullet is
   the authority on that rule; `gossms/CLAUDE.md`, `gossms/docs/decisions.md`
   and `dbOf` in `gossms/internal/tui/explorer_object_ops.go` point here
-  rather than restate it. Twenty-five families pair this way
+  rather than restate it. Twenty-six families pair this way
   (`DatabaseRef`, `LoginRef`, `TableRef`, the four Agent ones, the
   audit/credential/trigger/snapshot/plan-guide/backup-device/AG families, and
-  `ServerRoleRef`, `UserRef`, `StatisticRef`, `ConfigurationRef`,
+  `ServerRoleRef`, `UserRef`, `StatisticRef`, `IndexRef`, `ConfigurationRef`,
   `CertificateRef`, `AsymmetricKeyRef`, `SymmetricKeyRef`); every
   other by-name lookup in the library is `*ByName` with no handle beside it.
   `Endpoint` is the one family deliberately left without one — `IsSystem` is

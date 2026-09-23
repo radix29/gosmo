@@ -102,9 +102,9 @@ func scanBackupDevice(s *Server, scan func(...any) error) (*BackupDevice, error)
 	return d, nil
 }
 
-// Target returns the device as a BackupTarget, for the RESTORE-side reads
-// (BackupHeadersFrom, BackupFileListForSetFrom, VerifyBackupFrom) that report
-// what a device holds.
+// Target returns the device as a BackupTarget — for BackupOptions.Devices and
+// RestoreOptions.Devices, and for the RESTORE-side reads (BackupHeaders,
+// BackupFileList, VerifyBackup) that report what a device holds.
 func (d *BackupDevice) Target() BackupTarget { return DeviceTarget(d.Name) }
 
 // -- Writes ----------------------------------------------------------------------
@@ -157,5 +157,5 @@ func (d *BackupDevice) Drop(ctx context.Context, deleteFile bool) error {
 
 // Headers reads the backup sets the device holds (RESTORE HEADERONLY).
 func (d *BackupDevice) Headers(ctx context.Context) ([]*BackupHeader, error) {
-	return d.server.BackupHeadersFrom(ctx, d.Target())
+	return d.server.BackupHeaders(ctx, d.Target())
 }

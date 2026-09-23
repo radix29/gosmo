@@ -15,29 +15,38 @@ import (
 // an index on something else — or on nothing, which reports success.
 func TestScriptIndexAndStatisticsWrites(t *testing.T) {
 	table := func() *Table { return &Table{db: scriptTestDB(), Schema: "dbo", Name: "Sales.Archive"} }
-	index := func() *Index { return &Index{Name: "IX_A]B", IndexID: 3} }
+	index := func() *Index { return table().IndexRef("IX_A]B") }
 
 	runScriptCases(t, []scriptCase{
 		{"Index Rebuild", func(c context.Context) error {
-			return index().Rebuild(c, table(), 80)
+			return index().Rebuild(c, IndexRebuildOptions{FillFactor: 80})
 		}, scriptUsePrefix + "ALTER INDEX [IX_A]]B] ON [dbo].[Sales.Archive] REBUILD WITH (FILLFACTOR = 80)"},
-		{"Index RebuildWithOptions", func(c context.Context) error {
-			return index().RebuildWithOptions(c, table(), 90, true, "PAGE")
+		{"Index Rebuild with options", func(c context.Context) error {
+			return index().Rebuild(c, IndexRebuildOptions{FillFactor: 90, PadIndex: new(true), DataCompression: DataCompressionPage})
 		}, scriptUsePrefix + "ALTER INDEX [IX_A]]B] ON [dbo].[Sales.Archive] REBUILD WITH (PAD_INDEX = ON, FILLFACTOR = 90, DATA_COMPRESSION = PAGE)"},
 		{"Index Reorganize", func(c context.Context) error {
-			return index().Reorganize(c, table())
+			return index().Reorganize(c)
 		}, scriptUsePrefix + "ALTER INDEX [IX_A]]B] ON [dbo].[Sales.Archive] REORGANIZE"},
 		{"Index SetOptions", func(c context.Context) error {
-			return index().SetOptions(c, table(), true, false, true)
+			return index().SetOptions(c, IndexSetOptions{IgnoreDupKey: new(true), AllowRowLocks: new(false), AllowPageLocks: new(true)})
 		}, scriptUsePrefix + "ALTER INDEX [IX_A]]B] ON [dbo].[Sales.Archive] SET (IGNORE_DUP_KEY = ON, ALLOW_ROW_LOCKS = OFF, ALLOW_PAGE_LOCKS = ON)"},
-		{"Index SetLockOptions", func(c context.Context) error {
-			return index().SetLockOptions(c, table(), false, true)
-		}, scriptUsePrefix + "ALTER INDEX [IX_A]]B] ON [dbo].[Sales.Archive] SET (ALLOW_ROW_LOCKS = OFF, ALLOW_PAGE_LOCKS = ON)"},
-		{"Index UpdateStatistics", func(c context.Context) error {
-			return index().UpdateStatistics(c, table())
-		}, scriptUsePrefix + "UPDATE STATISTICS [dbo].[Sales.Archive] ([IX_A]]B])"},
+		{
+			// A nil option is not sent: IGNORE_DUP_KEY stays off the
+			// statement, which is the form a constraint-backing index needs.
+			"Index SetOptions leaves nil options out", func(c context.Context) error {
+				return index().SetOptions(c, IndexSetOptions{AllowRowLocks: new(false), AllowPageLocks: new(true)})
+			}, scriptUsePrefix + "ALTER INDEX [IX_A]]B] ON [dbo].[Sales.Archive] SET (ALLOW_ROW_LOCKS = OFF, ALLOW_PAGE_LOCKS = ON)"},
+		{
+			// 0 is a FULLSCAN, as it is to Statistic.Update — not the
+			// server's default sample, which it was until 2026-09-23.
+			"Index UpdateStatistics", func(c context.Context) error {
+				return index().UpdateStatistics(c, 0)
+			}, scriptUsePrefix + "UPDATE STATISTICS [dbo].[Sales.Archive] ([IX_A]]B]) WITH FULLSCAN"},
+		{"Index UpdateStatistics sampled", func(c context.Context) error {
+			return index().UpdateStatistics(c, 25)
+		}, scriptUsePrefix + "UPDATE STATISTICS [dbo].[Sales.Archive] ([IX_A]]B]) WITH SAMPLE 25 PERCENT"},
 		{"Index Disable", func(c context.Context) error {
-			return index().Disable(c, table())
+			return index().Disable(c)
 		}, scriptUsePrefix + "ALTER INDEX [IX_A]]B] ON [dbo].[Sales.Archive] DISABLE"},
 		{
 			// A disabled index is re-enabled by rebuilding it; there is no
@@ -45,10 +54,10 @@ func TestScriptIndexAndStatisticsWrites(t *testing.T) {
 			// which would otherwise change the index's stored setting as a
 			// side effect of turning it back on.
 			"Index Enable rebuilds", func(c context.Context) error {
-				return index().Enable(c, table())
+				return index().Enable(c)
 			}, scriptUsePrefix + "ALTER INDEX [IX_A]]B] ON [dbo].[Sales.Archive] REBUILD"},
 		{"Index Drop", func(c context.Context) error {
-			return index().Drop(c, table())
+			return index().Drop(c)
 		}, scriptUsePrefix + "DROP INDEX [IX_A]]B] ON [dbo].[Sales.Archive]"},
 		{"Table RebuildAllIndexes", func(c context.Context) error {
 			return table().RebuildAllIndexes(c, 70)
@@ -57,13 +66,13 @@ func TestScriptIndexAndStatisticsWrites(t *testing.T) {
 			return table().TruncateTable(c)
 		}, scriptUsePrefix + "TRUNCATE TABLE [dbo].[Sales.Archive]"},
 		{"Table CreateStatistic", func(c context.Context) error {
-			return table().CreateStatistic(c, "st]1", []string{"a]b", "c'd"}, 50)
+			return table().CreateStatistic(c, CreateStatisticRequest{Name: "st]1", Columns: []string{"a]b", "c'd"}, SamplePercent: 50})
 		}, scriptUsePrefix + "CREATE STATISTICS [st]]1] ON [dbo].[Sales.Archive] ([a]]b], [c'd]) WITH SAMPLE 50 PERCENT"},
 		{"Table CreateStatistic without a sample", func(c context.Context) error {
-			return table().CreateStatistic(c, "st1", []string{"ab"}, 0)
+			return table().CreateStatistic(c, CreateStatisticRequest{Name: "st1", Columns: []string{"ab"}})
 		}, scriptUsePrefix + "CREATE STATISTICS [st1] ON [dbo].[Sales.Archive] ([ab])"},
-		{"Table CreateStatisticWithOptions", func(c context.Context) error {
-			return table().CreateStatisticWithOptions(c, CreateStatisticRequest{
+		{"Table CreateStatistic with options", func(c context.Context) error {
+			return table().CreateStatistic(c, CreateStatisticRequest{
 				Name:             "st]1",
 				Columns:          []string{"a]b", "c'd"},
 				FullScan:         true,
@@ -72,8 +81,8 @@ func TestScriptIndexAndStatisticsWrites(t *testing.T) {
 				Incremental:      true,
 			})
 		}, scriptUsePrefix + "CREATE STATISTICS [st]]1] ON [dbo].[Sales.Archive] ([a]]b], [c'd]) WHERE [a]]b] IS NOT NULL WITH FULLSCAN, NORECOMPUTE, INCREMENTAL = ON"},
-		{"Table CreateStatisticWithOptions, sampled", func(c context.Context) error {
-			return table().CreateStatisticWithOptions(c, CreateStatisticRequest{
+		{"Table CreateStatistic with options, sampled", func(c context.Context) error {
+			return table().CreateStatistic(c, CreateStatisticRequest{
 				Name: "st1", Columns: []string{"ab"}, SamplePercent: 25,
 			})
 		}, scriptUsePrefix + "CREATE STATISTICS [st1] ON [dbo].[Sales.Archive] ([ab]) WITH SAMPLE 25 PERCENT"},
@@ -99,7 +108,7 @@ func TestCreateStatisticRefusesAnEmptySpec(t *testing.T) {
 	}
 	for _, c := range cases {
 		ctx, script := WithScript(context.Background())
-		err := table.CreateStatistic(ctx, c.stat, c.columns, 0)
+		err := table.CreateStatistic(ctx, CreateStatisticRequest{Name: c.stat, Columns: c.columns})
 		if err == nil {
 			t.Errorf("CreateStatistic(%s) returned nil, want an error", c.name)
 		} else if !strings.Contains(err.Error(), c.want) {
@@ -117,11 +126,11 @@ func TestCreateStatisticRefusesAnEmptySpec(t *testing.T) {
 func TestCreateStatisticRefusesAFullScanAndASample(t *testing.T) {
 	ctx, script := WithScript(context.Background())
 	table := &Table{db: scriptTestDB(), Schema: "dbo", Name: "Sales.Archive"}
-	err := table.CreateStatisticWithOptions(ctx, CreateStatisticRequest{
+	err := table.CreateStatistic(ctx, CreateStatisticRequest{
 		Name: "st1", Columns: []string{"a"}, FullScan: true, SamplePercent: 50,
 	})
 	if err == nil {
-		t.Fatal("CreateStatisticWithOptions returned nil, want an error")
+		t.Fatal("CreateStatistic returned nil, want an error")
 	}
 	if !strings.Contains(err.Error(), "alternatives") {
 		t.Errorf("error = %v, want it to say the two are alternatives", err)

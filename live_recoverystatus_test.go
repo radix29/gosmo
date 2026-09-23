@@ -90,7 +90,7 @@ func TestLiveRecoveryStatusTracksTheLogBackupChain(t *testing.T) {
 	}
 
 	device := liveBackupPath(t, srv, ctx, name+".bak")
-	if err := srv.Backup(ctx, BackupOptions{Database: name, Devices: []string{device}, Init: true}); err != nil {
+	if err := srv.Backup(ctx, BackupOptions{Database: name, Devices: []BackupTarget{DiskTarget(device)}, Init: true}); err != nil {
 		t.Fatalf("backup: %v", err)
 	}
 	defer db.ExecContext(context.Background(), "EXEC master.dbo.xp_delete_files @FilePath = N'"+device+"'")

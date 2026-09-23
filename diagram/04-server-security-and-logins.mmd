@@ -114,8 +114,7 @@ classDiagram
         +ResolveMapping() error
         +Enable() error
         +Disable() error
-        +ChangePassword(newPassword) error
-        +ChangePasswordWithOptions(pw, mustChange, unlock) error
+        +ChangePassword(newPassword, opts ChangePasswordOptions) error
         +AddServerRoleMember(role) error
         +RemoveServerRoleMember(role) error
         +Drop() error

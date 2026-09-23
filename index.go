@@ -3,54 +3,360 @@ package gosmo
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
-	"strconv"
 	"strings"
 )
 
-// -- Index management ----------------------------------------------------------
+// -- Indexes -------------------------------------------------------------------
 
-// Rebuild rebuilds the index (ALTER INDEX ... REBUILD).
-// Pass fillFactor=0 to keep the existing fill factor.
-func (idx *Index) Rebuild(ctx context.Context, t *Table, fillFactor int) error {
-	q := fmt.Sprintf("ALTER INDEX %s ON %s REBUILD", quoteIdent(idx.Name), t.FullName())
-	if fillFactor > 0 {
-		q += fmt.Sprintf(" WITH (FILLFACTOR = %d)", fillFactor)
+// Index mirrors Microsoft.SqlServer.Management.Smo.Index.
+//
+// It carries the table it is on, so every write and read on it names that
+// table itself; Table returns it.
+type Index struct {
+	table              *Table
+	Name               string
+	IndexID            int
+	Type               IndexType
+	IsClustered        bool
+	IsUnique           bool
+	IsPrimaryKey       bool
+	IsUniqueConstraint bool
+	IsDisabled         bool
+	FillFactor         int
+	IsPadded           bool
+	IgnoreDupKey       bool
+	AllowRowLocks      bool
+	AllowPageLocks     bool
+	DataCompression    DataCompression
+	// StatisticsNoRecompute is the index's STATISTICS_NORECOMPUTE option,
+	// read from its statistics object (sys.stats.no_recompute) — sys.indexes
+	// has no column for it.
+	StatisticsNoRecompute bool
+	// OptimizeForSequentialKey is SQL Server 2019's last-page-insert
+	// contention option; always false on an older instance.
+	OptimizeForSequentialKey bool
+	KeyColumns               []IndexColumn
+	IncludedColumns          []IndexColumn
+	FilterDefinition         string
+	DataSpace                DataSpace
+}
+
+// DataSpace names where a table or index keeps its rows — the ON clause of
+// CREATE TABLE and CREATE INDEX. It is either a filegroup or a partition
+// scheme, and for a partition scheme the partitioning column is part of the
+// clause, so it is carried here too: `ON [scheme]([column])`.
+//
+// Name is empty for an index with no data space of its own in sys.indexes —
+// a memory-optimized table's, whose rows are not on a filegroup at all.
+type DataSpace struct {
+	Name              string
+	IsPartitionScheme bool
+	// IsDefaultFileGroup is true for the database's default filegroup, the
+	// one an object with no ON clause lands on. A scripter uses it to leave
+	// the clause off where it would say nothing.
+	IsDefaultFileGroup bool
+	// PartitionColumn is the column the scheme partitions by; set only when
+	// IsPartitionScheme.
+	PartitionColumn string
+}
+
+// dataSpaceColumns and dataSpaceJoins read an index's ON clause out of
+// sys.indexes: the data space's name and kind, whether it is the default
+// filegroup, and — for a partition scheme — the partitioning column, which
+// sys.index_columns marks with partition_ordinal 1.
+//
+// Every join is a LEFT/OUTER one and every column is wrapped in ISNULL: an
+// index can have no data space at all (a memory-optimized table's), and a
+// filegroup row exists only for ds.type 'FG'. The partitioning column's
+// join is aliased pic, not ic: the index-column query these sit beside is
+// told apart from this one by its `sys.index_columns ic`, and two of its
+// tests count round trips that way.
+const dataSpaceColumns = `ISNULL(ds.name, ''), CASE WHEN ds.type = 'PS' THEN 1 ELSE 0 END,
+       ISNULL(fg.is_default, 0), ISNULL(pc.name, '')`
+
+const dataSpaceJoins = `LEFT   JOIN sys.data_spaces ds ON ds.data_space_id = i.data_space_id
+LEFT   JOIN sys.filegroups fg ON fg.data_space_id = ds.data_space_id
+OUTER  APPLY (SELECT TOP 1 c.name
+              FROM   sys.index_columns pic
+              JOIN   sys.columns c ON c.object_id = pic.object_id AND c.column_id = pic.column_id
+              WHERE  pic.object_id = i.object_id AND pic.index_id = i.index_id
+                AND  pic.partition_ordinal > 0
+              ORDER  BY pic.partition_ordinal) pc`
+
+// IndexColumn represents one column in an index.
+type IndexColumn struct {
+	Name       string
+	Descending bool
+	IsIncluded bool
+}
+
+// Indexes returns all indexes on the table.
+//
+// Two queries, whatever the index count: one for the indexes, one for every
+// index column on the object at once. Fetching each index's columns inside the
+// loop over the indexes cost a query per index, and Database.query pins its
+// own pooled connection and issues its own USE, so a table with 20 indexes ran
+// 42 round trips across 21 connections — with the outer one held throughout,
+// which is the shape that exhausts a pool rather than merely being slow.
+func (t *Table) Indexes(ctx context.Context) ([]*Index, error) {
+	indexes, err := t.indexList(ctx, "")
+	if err != nil {
+		return nil, fmt.Errorf("gosmo: list indexes for %s: %w", t.FullName(), err)
 	}
-	if _, err := t.db.exec(ctx, q); err != nil {
-		return fmt.Errorf("gosmo: rebuild index %q: %w", idx.Name, err)
+	if len(indexes) == 0 {
+		return nil, nil
+	}
+	if err := t.attachIndexColumns(ctx, indexes, ""); err != nil {
+		return nil, err
+	}
+	return indexes, nil
+}
+
+// IndexByName returns one index on the table by name, with its columns.
+//
+// It returns an error satisfying errors.Is(err, ErrNotFound) when the table
+// has no such index. Two queries, the same shape as Indexes — see its
+// comment for why the columns are not fetched inside the index scan.
+func (t *Table) IndexByName(ctx context.Context, name string) (*Index, error) {
+	indexes, err := t.indexList(ctx, " AND i.name = @p2", name)
+	if err != nil {
+		return nil, fmt.Errorf("gosmo: find index %q on %s: %w", name, t.FullName(), err)
+	}
+	if len(indexes) == 0 {
+		return nil, notFoundf("gosmo: index %q not found on %s", name, t.FullName())
+	}
+	if err := t.attachIndexColumns(ctx, indexes, " AND ic.index_id = @p2", indexes[0].IndexID); err != nil {
+		return nil, err
+	}
+	return indexes[0], nil
+}
+
+// attachIndexColumns fetches the object's index columns in one query and
+// distributes them over indexes by index ID.
+func (t *Table) attachIndexColumns(ctx context.Context, indexes []*Index, extra string, args ...any) error {
+	cols, err := t.indexColumns(ctx, extra, args...)
+	if err != nil {
+		return fmt.Errorf("gosmo: columns of indexes on %s: %w", t.FullName(), err)
+	}
+	for _, idx := range indexes {
+		for _, c := range cols[idx.IndexID] {
+			if c.IsIncluded {
+				idx.IncludedColumns = append(idx.IncludedColumns, c)
+			} else {
+				idx.KeyColumns = append(idx.KeyColumns, c)
+			}
+		}
 	}
 	return nil
 }
 
+// indexListSelect is indexList's query up to its object filter, which the
+// caller extends with its own predicate and ORDER BY.
+//
+// optimize_for_sequential_key is SQL Server 2019 (15.x); sys.indexes has no
+// such column before then, and naming it fails the whole read, so an older
+// instance reads the option as off — the only value it can have there.
+// https://learn.microsoft.com/sql/relational-databases/system-catalog-views/sys-indexes-transact-sql
+// STATISTICS_NORECOMPUTE lives on the index's statistics object, which
+// shares the index's ID; the join is a LEFT one because not every index type
+// is guaranteed a row there.
+func (t *Table) indexListSelect() string {
+	return `
+SELECT i.name, i.index_id, i.type_desc, i.is_unique, i.is_primary_key,
+       i.is_unique_constraint, i.is_disabled, i.fill_factor,
+       ISNULL(i.filter_definition, ''),
+       i.is_padded, i.ignore_dup_key, i.allow_row_locks, i.allow_page_locks,
+       ISNULL(p.data_compression_desc, 'NONE'),
+       ` + dataSpaceColumns + `,
+       ISNULL(st.no_recompute, CAST(0 AS bit)),
+       ` + colSince(t.db.serverMajorVersion(), SQLServer2019, "i.optimize_for_sequential_key", "CAST(0 AS bit)") + `
+FROM   sys.indexes i
+OUTER  APPLY (SELECT TOP 1 pp.data_compression_desc FROM sys.partitions pp
+              WHERE pp.object_id = i.object_id AND pp.index_id = i.index_id
+              ORDER BY pp.partition_number) p
+LEFT   JOIN sys.stats st ON st.object_id = i.object_id AND st.stats_id = i.index_id
+` + dataSpaceJoins + `
+WHERE  i.object_id = @p1 AND i.type > 0`
+}
+
+// indexList returns the table's indexes with no columns attached,
+// narrowed by extra — an additional predicate ANDed onto the object filter,
+// with its parameters starting at @p2. Its rows are drained and closed before
+// the caller asks for the columns, so the two queries never hold two pooled
+// connections at once.
+func (t *Table) indexList(ctx context.Context, extra string, args ...any) ([]*Index, error) {
+	q := t.indexListSelect() + extra + `
+ORDER  BY i.index_id`
+
+	rows, err := t.db.query(ctx, q, append([]any{t.ObjectID}, args...)...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var indexes []*Index
+	for rows.Next() {
+		idx := &Index{table: t}
+		var typeDesc sql.NullString
+		if err := rows.Scan(&idx.Name, &idx.IndexID, &typeDesc,
+			&idx.IsUnique, &idx.IsPrimaryKey, &idx.IsUniqueConstraint,
+			&idx.IsDisabled, &idx.FillFactor, &idx.FilterDefinition,
+			&idx.IsPadded, &idx.IgnoreDupKey, &idx.AllowRowLocks, &idx.AllowPageLocks,
+			&idx.DataCompression,
+			&idx.DataSpace.Name, &idx.DataSpace.IsPartitionScheme,
+			&idx.DataSpace.IsDefaultFileGroup, &idx.DataSpace.PartitionColumn,
+			&idx.StatisticsNoRecompute, &idx.OptimizeForSequentialKey); err != nil {
+			return nil, err
+		}
+		switch desc := strings.TrimSpace(typeDesc.String); desc {
+		case "CLUSTERED":
+			idx.Type = IndexTypeClustered
+			idx.IsClustered = true
+		case "NONCLUSTERED":
+			idx.Type = IndexTypeNonClustered
+		case "XML":
+			idx.Type = IndexTypeXML
+		case "SPATIAL":
+			idx.Type = IndexTypeSpatial
+		case "CLUSTERED COLUMNSTORE":
+			idx.Type = IndexTypeClusteredColumnStore
+			idx.IsClustered = true
+		case "NONCLUSTERED COLUMNSTORE":
+			idx.Type = IndexTypeColumnStore
+		default:
+			// A type_desc with no constant — NONCLUSTERED HASH on a
+			// memory-optimized table, or a type a newer SQL Server adds —
+			// is carried through as the server's own text rather than left
+			// empty, so a caller displays the real type instead of nothing.
+			idx.Type = IndexType(desc)
+		}
+		indexes = append(indexes, idx)
+	}
+	return indexes, rows.Err()
+}
+
+// DataSpace returns where the table itself stores its rows — the filegroup
+// or partition scheme its heap or clustered index is on, which is CREATE
+// TABLE's ON clause.
+//
+// Read from index_id 0 or 1, so it answers for a heap as well as a clustered
+// table — which is why it is a query of its own rather than a field of the
+// index list, whose `i.type > 0` filter has no heap in it.
+//
+// A table with no row there at all — a Database.TableRef handle, whose ObjectID
+// is zero, or a memory-optimized table — reads as the zero DataSpace and no
+// error: absence means "no filegroup to name", not a failure.
+func (t *Table) DataSpace(ctx context.Context) (DataSpace, error) {
+	q := `
+SELECT ` + dataSpaceColumns + `
+FROM   sys.indexes i
+` + dataSpaceJoins + `
+WHERE  i.object_id = @p1 AND i.index_id IN (0, 1)`
+
+	var ds DataSpace
+	err := t.db.queryRow(ctx, func(row *sql.Row) error {
+		return row.Scan(&ds.Name, &ds.IsPartitionScheme, &ds.IsDefaultFileGroup, &ds.PartitionColumn)
+	}, q, t.ObjectID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return DataSpace{}, nil
+		}
+		return DataSpace{}, fmt.Errorf("gosmo: data space of %s: %w", t.FullName(), err)
+	}
+	return ds, nil
+}
+
+// indexColumns returns every index column on the table, keyed by
+// index_id and in each index's own key order.
+//
+// The rows for index_id 0 — the heap's, which no index in the list claims —
+// come back too, and are simply never looked up: excluding them would cost a
+// predicate to save nothing, since a heap has at most one such row.
+//
+// extra is an additional predicate ANDed onto the object filter, with its
+// parameters starting at @p2 — the same contract as indexList.
+func (t *Table) indexColumns(ctx context.Context, extra string, args ...any) (map[int][]IndexColumn, error) {
+	q := `
+SELECT ic.index_id, c.name, ic.is_descending_key, ic.is_included_column
+FROM   sys.index_columns ic
+JOIN   sys.columns c ON c.object_id = ic.object_id AND c.column_id = ic.column_id
+WHERE  ic.object_id = @p1` + extra + `
+ORDER  BY ic.index_id, ic.key_ordinal, ic.index_column_id`
+
+	rows, err := t.db.query(ctx, q, append([]any{t.ObjectID}, args...)...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	cols := make(map[int][]IndexColumn)
+	for rows.Next() {
+		var indexID int
+		c := IndexColumn{}
+		if err := rows.Scan(&indexID, &c.Name, &c.Descending, &c.IsIncluded); err != nil {
+			return nil, err
+		}
+		cols[indexID] = append(cols[indexID], c)
+	}
+	return cols, rows.Err()
+}
+
+// -- Index management ----------------------------------------------------------
+
+// Table returns the table the index is on.
+func (idx *Index) Table() *Table { return idx.table }
+
+// IndexRef returns a lightweight handle for name on the table without
+// querying the server at all — unlike IndexByName, it doesn't verify the
+// index exists or populate IndexID/Type/FillFactor/etc. (they stay at their
+// zero value). The write methods that only name the index — Rebuild,
+// Reorganize, Disable, Enable, Drop, SetOptions, Rename,
+// UpdateStatistics — and the two reads StorageInfo and Fragmentation, which
+// resolve the index by name, work from a handle. SetIncludedColumns and
+// IncludedColumnsSupported restate the index as read and so need
+// IndexByName. See Server.DatabaseRef's doc comment for when a handle is the
+// right form.
+func (t *Table) IndexRef(name string) *Index {
+	return &Index{table: t, Name: name}
+}
+
+// target is the `[index] ON [schema].[table]` pair every ALTER/DROP INDEX
+// statement names.
+func (idx *Index) target() string {
+	return quoteIdent(idx.Name) + " ON " + idx.table.FullName()
+}
+
 // Reorganize reorganizes the index (ALTER INDEX ... REORGANIZE).
-func (idx *Index) Reorganize(ctx context.Context, t *Table) error {
-	q := fmt.Sprintf("ALTER INDEX %s ON %s REORGANIZE", quoteIdent(idx.Name), t.FullName())
-	if _, err := t.db.exec(ctx, q); err != nil {
+func (idx *Index) Reorganize(ctx context.Context) error {
+	q := fmt.Sprintf("ALTER INDEX %s REORGANIZE", idx.target())
+	if _, err := idx.table.db.exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: reorganize index %q: %w", idx.Name, err)
 	}
 	return nil
 }
 
 // Disable disables the index (ALTER INDEX ... DISABLE).
-func (idx *Index) Disable(ctx context.Context, t *Table) error {
-	q := fmt.Sprintf("ALTER INDEX %s ON %s DISABLE", quoteIdent(idx.Name), t.FullName())
-	if _, err := t.db.exec(ctx, q); err != nil {
+func (idx *Index) Disable(ctx context.Context) error {
+	q := fmt.Sprintf("ALTER INDEX %s DISABLE", idx.target())
+	if _, err := idx.table.db.exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: disable index %q: %w", idx.Name, err)
 	}
 	setIfApplied(ctx, &idx.IsDisabled, true)
 	return nil
 }
 
-// Enable re-enables a disabled index by rebuilding it.
-func (idx *Index) Enable(ctx context.Context, t *Table) error {
-	return idx.Rebuild(ctx, t, 0)
+// Enable re-enables a disabled index by rebuilding it — with no options, so
+// the rebuild does not change a stored setting as a side effect.
+func (idx *Index) Enable(ctx context.Context) error {
+	return idx.Rebuild(ctx, IndexRebuildOptions{})
 }
 
 // Drop drops the index.
-func (idx *Index) Drop(ctx context.Context, t *Table) error {
-	q := fmt.Sprintf("DROP INDEX %s ON %s", quoteIdent(idx.Name), t.FullName())
-	if _, err := t.db.exec(ctx, q); err != nil {
+func (idx *Index) Drop(ctx context.Context) error {
+	q := fmt.Sprintf("DROP INDEX %s", idx.target())
+	if _, err := idx.table.db.exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: drop index %q: %w", idx.Name, err)
 	}
 	return nil
@@ -77,30 +383,44 @@ func onOffKeyword(b bool) string {
 	return "OFF"
 }
 
-// SetOptions applies the index's SET-able runtime options (ALTER INDEX ...
-// SET). Fill factor, pad index, and data compression only take effect on a
-// rebuild — see RebuildWithOptions for those.
-func (idx *Index) SetOptions(ctx context.Context, t *Table, ignoreDupKey, allowRowLocks, allowPageLocks bool) error {
-	q := fmt.Sprintf("ALTER INDEX %s ON %s SET (IGNORE_DUP_KEY = %s, ALLOW_ROW_LOCKS = %s, ALLOW_PAGE_LOCKS = %s)",
-		quoteIdent(idx.Name), t.FullName(),
-		onOffKeyword(ignoreDupKey), onOffKeyword(allowRowLocks), onOffKeyword(allowPageLocks))
-	if _, err := t.db.exec(ctx, q); err != nil {
-		return fmt.Errorf("gosmo: set options on index %q: %w", idx.Name, err)
-	}
-	return nil
+// IndexSetOptions are the index options ALTER INDEX ... SET changes in
+// place. A nil field leaves that option as it is and is not sent.
+//
+// Leave IgnoreDupKey nil for an index backing a PRIMARY KEY or UNIQUE
+// constraint: SQL Server rejects the option outright there, whatever its
+// value ("Cannot use index option ignore_dup_key to alter index '...' as it
+// enforces a primary or unique constraint").
+type IndexSetOptions struct {
+	IgnoreDupKey   *bool
+	AllowRowLocks  *bool
+	AllowPageLocks *bool
 }
 
-// SetLockOptions applies just the lock-granularity SET options (ALTER INDEX
-// ... SET (ALLOW_ROW_LOCKS = .., ALLOW_PAGE_LOCKS = ..)) — unlike SetOptions,
-// this never touches IGNORE_DUP_KEY, which SQL Server rejects outright on an
-// index backing a PRIMARY KEY or UNIQUE constraint ("Cannot use index option
-// ignore_dup_key to alter index '...' as it enforces a primary or unique
-// constraint").
-func (idx *Index) SetLockOptions(ctx context.Context, t *Table, allowRowLocks, allowPageLocks bool) error {
-	q := fmt.Sprintf("ALTER INDEX %s ON %s SET (ALLOW_ROW_LOCKS = %s, ALLOW_PAGE_LOCKS = %s)",
-		quoteIdent(idx.Name), t.FullName(), onOffKeyword(allowRowLocks), onOffKeyword(allowPageLocks))
-	if _, err := t.db.exec(ctx, q); err != nil {
-		return fmt.Errorf("gosmo: set lock options on index %q: %w", idx.Name, err)
+// SetOptions applies the index's SET-able runtime options (ALTER INDEX ...
+// SET), sending only the ones opts names. Fill factor, pad index, and data
+// compression only take effect on a rebuild — see Rebuild for those. An opts naming nothing is an error, not a no-op: ALTER INDEX ...
+// SET () is a syntax error, and a caller that meant to change something
+// should hear that it didn't.
+func (idx *Index) SetOptions(ctx context.Context, opts IndexSetOptions) error {
+	var set []string
+	for _, o := range []struct {
+		name string
+		v    *bool
+	}{
+		{"IGNORE_DUP_KEY", opts.IgnoreDupKey},
+		{"ALLOW_ROW_LOCKS", opts.AllowRowLocks},
+		{"ALLOW_PAGE_LOCKS", opts.AllowPageLocks},
+	} {
+		if o.v != nil {
+			set = append(set, o.name+" = "+onOffKeyword(*o.v))
+		}
+	}
+	if len(set) == 0 {
+		return fmt.Errorf("gosmo: set options on index %q: no option given", idx.Name)
+	}
+	q := fmt.Sprintf("ALTER INDEX %s SET (%s)", idx.target(), strings.Join(set, ", "))
+	if _, err := idx.table.db.exec(ctx, q); err != nil {
+		return fmt.Errorf("gosmo: set options on index %q: %w", idx.Name, err)
 	}
 	return nil
 }
@@ -108,9 +428,9 @@ func (idx *Index) SetLockOptions(ctx context.Context, t *Table, allowRowLocks, a
 // Rename renames the index using sp_rename — also the mechanism for
 // renaming a PRIMARY KEY or UNIQUE constraint, since its name is the
 // backing index's name in sys.indexes.
-func (idx *Index) Rename(ctx context.Context, t *Table, newName string) error {
-	objName := t.FullName() + "." + quoteIdent(idx.Name)
-	if _, err := t.db.exec(ctx,
+func (idx *Index) Rename(ctx context.Context, newName string) error {
+	objName := idx.table.FullName() + "." + quoteIdent(idx.Name)
+	if _, err := idx.table.db.exec(ctx,
 		"EXEC sp_rename @objname = @p1, @newname = @p2, @objtype = N'INDEX'",
 		objName, newName,
 	); err != nil {
@@ -120,29 +440,70 @@ func (idx *Index) Rename(ctx context.Context, t *Table, newName string) error {
 	return nil
 }
 
-// RebuildWithOptions rebuilds the index with an explicit fill factor, pad
-// index setting, and data compression (ALTER INDEX ... REBUILD WITH) — the
-// only way to change these three, since none is a plain ALTER INDEX SET
-// option. Pass dataCompression="" to leave compression unspecified (keeps
-// the index's current setting).
-func (idx *Index) RebuildWithOptions(ctx context.Context, t *Table, fillFactor int, padIndex bool, dataCompression string) error {
-	switch dataCompression {
-	case "", "NONE", "ROW", "PAGE", "COLUMNSTORE", "COLUMNSTORE_ARCHIVE":
-	default:
-		return fmt.Errorf("gosmo: rebuild index %q with options: invalid data compression %q (must be NONE, ROW, PAGE, COLUMNSTORE, or COLUMNSTORE_ARCHIVE)", idx.Name, dataCompression)
+// DataCompression is an index's or partition's DATA_COMPRESSION keyword.
+// NONE, ROW and PAGE apply to a rowstore index, COLUMNSTORE and
+// COLUMNSTORE_ARCHIVE to a columnstore one.
+type DataCompression string
+
+const (
+	DataCompressionNone               DataCompression = "NONE"
+	DataCompressionRow                DataCompression = "ROW"
+	DataCompressionPage               DataCompression = "PAGE"
+	DataCompressionColumnstore        DataCompression = "COLUMNSTORE"
+	DataCompressionColumnstoreArchive DataCompression = "COLUMNSTORE_ARCHIVE"
+)
+
+// valid reports whether c is one of the five keywords. The empty value is
+// not; callers that read it as "unspecified" check for it first.
+func (c DataCompression) valid() bool {
+	switch c {
+	case DataCompressionNone, DataCompressionRow, DataCompressionPage,
+		DataCompressionColumnstore, DataCompressionColumnstoreArchive:
+		return true
+	}
+	return false
+}
+
+// IndexRebuildOptions are the options ALTER INDEX ... REBUILD WITH can
+// set. The zero value is a plain REBUILD that keeps every stored setting.
+//
+// Fill factor, pad index and data compression are rebuild-only: none is an
+// ALTER INDEX ... SET option, so a rebuild is the only way to change them.
+type IndexRebuildOptions struct {
+	// FillFactor is the leaf-page fill percentage, 1-100. Zero keeps the
+	// index's stored fill factor.
+	FillFactor int
+	// PadIndex applies the fill factor to the intermediate pages too
+	// (PAD_INDEX). Nil leaves it unspecified.
+	PadIndex *bool
+	// DataCompression is the compression to rebuild with. Empty keeps the
+	// index's current setting.
+	DataCompression DataCompression
+}
+
+// Rebuild rebuilds the index (ALTER INDEX ... REBUILD), with a WITH clause
+// only for the options opts sets.
+func (idx *Index) Rebuild(ctx context.Context, opts IndexRebuildOptions) error {
+	if opts.DataCompression != "" && !opts.DataCompression.valid() {
+		return fmt.Errorf("gosmo: rebuild index %q: invalid data compression %q (must be NONE, ROW, PAGE, COLUMNSTORE, or COLUMNSTORE_ARCHIVE)", idx.Name, opts.DataCompression)
 	}
 
-	withParts := []string{fmt.Sprintf("PAD_INDEX = %s", onOffKeyword(padIndex))}
-	if fillFactor > 0 {
-		withParts = append(withParts, fmt.Sprintf("FILLFACTOR = %d", fillFactor))
+	var withParts []string
+	if opts.PadIndex != nil {
+		withParts = append(withParts, "PAD_INDEX = "+onOffKeyword(*opts.PadIndex))
 	}
-	if dataCompression != "" {
-		withParts = append(withParts, fmt.Sprintf("DATA_COMPRESSION = %s", dataCompression))
+	if opts.FillFactor > 0 {
+		withParts = append(withParts, fmt.Sprintf("FILLFACTOR = %d", opts.FillFactor))
 	}
-	q := fmt.Sprintf("ALTER INDEX %s ON %s REBUILD WITH (%s)",
-		quoteIdent(idx.Name), t.FullName(), strings.Join(withParts, ", "))
-	if _, err := t.db.exec(ctx, q); err != nil {
-		return fmt.Errorf("gosmo: rebuild index %q with options: %w", idx.Name, err)
+	if opts.DataCompression != "" {
+		withParts = append(withParts, "DATA_COMPRESSION = "+string(opts.DataCompression))
+	}
+	q := fmt.Sprintf("ALTER INDEX %s REBUILD", idx.target())
+	if len(withParts) > 0 {
+		q += " WITH (" + strings.Join(withParts, ", ") + ")"
+	}
+	if _, err := idx.table.db.exec(ctx, q); err != nil {
+		return fmt.Errorf("gosmo: rebuild index %q: %w", idx.Name, err)
 	}
 	return nil
 }
@@ -150,63 +511,77 @@ func (idx *Index) RebuildWithOptions(ctx context.Context, t *Table, fillFactor i
 // SetIncludedColumns replaces the index's included (non-key) columns.
 // Changing included columns isn't a plain ALTER — it requires recreating the
 // index, so this reissues a full CREATE INDEX ... WITH (DROP_EXISTING = ON)
-// from idx's own key columns, uniqueness, type, and filter, with columns as
-// the new INCLUDE list.
-func (idx *Index) SetIncludedColumns(ctx context.Context, t *Table, columns []string) error {
-	// A columnstore index has no INCLUDE list, and the CREATE below would
-	// recreate it as a rowstore index of whatever clustering IsClustered
-	// reports — silently replacing the index with a different kind.
-	if idx.Type.IsColumnStore() {
-		return fmt.Errorf("gosmo: set included columns on %q: not supported for a %s index",
-			idx.Name, idx.Type)
+// from idx as read, with columns as the new INCLUDE list.
+//
+// DROP_EXISTING builds the index from what the statement says, not from the
+// index it replaces: every option idx carries is restated, and the ON clause
+// is always explicit (see explicitDataSpaceClause). A disabled index is
+// enabled by the rebuild, so the same batch disables it again.
+//
+// Only a rowstore nonclustered index that backs no constraint can have its
+// INCLUDE list changed. Anything else is refused before a statement is sent,
+// with an error naming what the index is: a columnstore index would be
+// recreated as a rowstore one, and a clustered, XML, spatial, hash or
+// constraint-backing index would fail at the server anyway.
+func (idx *Index) SetIncludedColumns(ctx context.Context, columns []string) error {
+	if err := idx.IncludedColumnsSupported(); err != nil {
+		return fmt.Errorf("gosmo: set included columns on %q: %w", idx.Name, err)
 	}
-	var sb strings.Builder
-	sb.WriteString("CREATE ")
-	if idx.IsUnique {
-		sb.WriteString("UNIQUE ")
+	on, err := explicitDataSpaceClause(idx.DataSpace)
+	if err != nil {
+		return fmt.Errorf("gosmo: set included columns on %q: %w", idx.Name, err)
 	}
-	if idx.IsClustered {
-		sb.WriteString("CLUSTERED ")
-	} else {
-		sb.WriteString("NONCLUSTERED ")
+	next := *idx
+	next.IncludedColumns = make([]IndexColumn, len(columns))
+	for i, c := range columns {
+		next.IncludedColumns[i] = IndexColumn{Name: c, IsIncluded: true}
 	}
-	fmt.Fprintf(&sb, "INDEX %s ON %s (", quoteIdent(idx.Name), t.FullName())
-
-	keyCols := make([]string, len(idx.KeyColumns))
-	for i, c := range idx.KeyColumns {
-		dir := "ASC"
-		if c.Descending {
-			dir = "DESC"
-		}
-		keyCols[i] = fmt.Sprintf("%s %s", quoteIdent(c.Name), dir)
+	q := rowstoreIndexCreate(&next, idx.table.FullName(), indexWithClause(&next, "\n    ", "DROP_EXISTING = ON"), on)
+	if idx.IsDisabled {
+		q += fmt.Sprintf(";\nALTER INDEX %s DISABLE", idx.target())
 	}
-	sb.WriteString(strings.Join(keyCols, ", "))
-	sb.WriteString(")")
-
-	if len(columns) > 0 {
-		inc := make([]string, len(columns))
-		for i, c := range columns {
-			inc[i] = quoteIdent(c)
-		}
-		fmt.Fprintf(&sb, " INCLUDE (%s)", strings.Join(inc, ", "))
-	}
-	if idx.FilterDefinition != "" {
-		fmt.Fprintf(&sb, " WHERE %s", idx.FilterDefinition)
-	}
-	sb.WriteString(" WITH (DROP_EXISTING = ON)")
-
-	if _, err := t.db.exec(ctx, sb.String()); err != nil {
+	if _, err := idx.table.db.exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: set included columns on index %q: %w", idx.Name, err)
+	}
+	return nil
+}
+
+// IncludedColumnsSupported reports whether SetIncludedColumns can change
+// idx's INCLUDE list, and if not, why — so a caller can grey the choice out
+// up front rather than learn it on Apply. nil means supported.
+func (idx *Index) IncludedColumnsSupported() error {
+	switch {
+	case idx.Type == "":
+		// An IndexRef handle: nothing was read, so nothing can be restated.
+		return errors.New("the index's properties were not read — use Table.IndexByName, not IndexRef")
+	case idx.Type != IndexTypeNonClustered:
+		return fmt.Errorf("not supported for a %s index", idx.Type)
+	case idx.IsPrimaryKey:
+		return errors.New("not supported for an index backing a PRIMARY KEY constraint")
+	case idx.IsUniqueConstraint:
+		return errors.New("not supported for an index backing a UNIQUE constraint")
+	case idx.DataSpace.Name == "":
+		// A memory-optimized table's index: no data space of its own, and
+		// its indexes are changed with ALTER TABLE, never CREATE INDEX.
+		return errors.New("not supported for an index on a memory-optimized table")
 	}
 	return nil
 }
 
 // UpdateStatistics updates the statistics object tied to this index
 // (UPDATE STATISTICS table (index) — every index has an implicit
-// statistics object with the same name).
-func (idx *Index) UpdateStatistics(ctx context.Context, t *Table) error {
-	q := fmt.Sprintf("UPDATE STATISTICS %s (%s)", t.FullName(), quoteIdent(idx.Name))
-	if _, err := t.db.exec(ctx, q); err != nil {
+// statistics object with the same name). samplePct means what it means to
+// Statistic.Update: 0 is a FULLSCAN, 1-100 SAMPLE n PERCENT.
+//
+// It took no sample until 2026-09-23 and so used the server's default
+// sampling, while Statistic.Update(0) was a FULLSCAN: "update statistics"
+// read the table differently depending on which node it was asked from.
+func (idx *Index) UpdateStatistics(ctx context.Context, samplePct int) error {
+	if err := checkSamplePct("update statistics for index "+idx.Name, samplePct); err != nil {
+		return err
+	}
+	q := fmt.Sprintf("UPDATE STATISTICS %s (%s) WITH %s", idx.table.FullName(), quoteIdent(idx.Name), sampleClause(samplePct))
+	if _, err := idx.table.db.exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: update statistics for index %q: %w", idx.Name, err)
 	}
 	return nil
@@ -234,15 +609,25 @@ type IndexStorageInfo struct {
 }
 
 // StorageInfo returns filegroup/partitioning and space usage for this index.
-func (idx *Index) StorageInfo(ctx context.Context, t *Table) (*IndexStorageInfo, error) {
-	const headerQ = `
+// The row count comes from sys.partitions alone: summed over the
+// allocation-unit join, each partition's rows count once per allocation
+// unit, so a table with LOB and row-overflow columns reported three times its
+// rows.
+//
+// The index is found by its table's name and its own, as Fragmentation finds
+// it, so both work from an IndexRef handle — whose table may itself be a
+// TableRef with no ObjectID.
+func (idx *Index) StorageInfo(ctx context.Context) (*IndexStorageInfo, error) {
+	target := fmt.Sprintf("i.object_id = OBJECT_ID(N'%s') AND i.name = @p1", escapeSingle(idx.table.FullName()))
+	headerQ := `
 SELECT
     ds.name, ds.type,
     ISNULL(pf.name, ''),
     ISNULL((SELECT c.name FROM sys.index_columns ic
             JOIN sys.columns c ON c.object_id = ic.object_id AND c.column_id = ic.column_id
             WHERE ic.object_id = i.object_id AND ic.index_id = i.index_id AND ic.partition_ordinal = 1), ''),
-    ISNULL(SUM(p.rows), 0),
+    ISNULL((SELECT SUM(p.rows) FROM sys.partitions p
+            WHERE p.object_id = i.object_id AND p.index_id = i.index_id), 0),
     ISNULL(SUM(a.used_pages), 0) * 8,
     ISNULL(SUM(a.total_pages), 0) * 8
 FROM   sys.indexes i
@@ -251,16 +636,17 @@ LEFT   JOIN sys.partition_schemes ps ON ps.data_space_id = i.data_space_id
 LEFT   JOIN sys.partition_functions pf ON pf.function_id = ps.function_id
 LEFT   JOIN sys.partitions p ON p.object_id = i.object_id AND p.index_id = i.index_id
 LEFT   JOIN sys.allocation_units a ON a.container_id = p.partition_id
-WHERE  i.object_id = @p1 AND i.index_id = @p2
+WHERE  ` + target + `
 GROUP  BY ds.name, ds.type, pf.name, i.object_id, i.index_id`
 
+	db := idx.table.db
 	info := &IndexStorageInfo{}
 	var dsType string
 	var fgOrPS string
-	err := t.db.queryRow(ctx, func(row *sql.Row) error {
+	err := db.queryRow(ctx, func(row *sql.Row) error {
 		return row.Scan(&fgOrPS, &dsType, &info.PartitionScheme, &info.PartitionColumn,
 			&info.RowCount, &info.UsedKB, &info.ReservedKB)
-	}, headerQ, t.ObjectID, idx.IndexID)
+	}, headerQ, idx.Name)
 	if err != nil {
 		return nil, fmt.Errorf("gosmo: storage info for index %q: %w", idx.Name, err)
 	}
@@ -270,23 +656,25 @@ GROUP  BY ds.name, ds.type, pf.name, i.object_id, i.index_id`
 		info.PartitionScheme = fgOrPS
 	}
 
-	const avgQ = `
-SELECT TOP 1 avg_record_size_in_bytes
-FROM   sys.dm_db_index_physical_stats(DB_ID(), @p1, @p2, NULL, 'SAMPLED')
-WHERE  index_level = 0`
+	avgQ := `
+SELECT TOP 1 s.avg_record_size_in_bytes
+FROM   sys.indexes i
+CROSS  APPLY sys.dm_db_index_physical_stats(DB_ID(), i.object_id, i.index_id, NULL, 'SAMPLED') s
+WHERE  ` + target + ` AND s.index_level = 0`
 	var avg sql.NullFloat64
-	if err := t.db.queryRow(ctx, func(row *sql.Row) error { return row.Scan(&avg) }, avgQ, t.ObjectID, idx.IndexID); err == nil {
+	if err := db.queryRow(ctx, func(row *sql.Row) error { return row.Scan(&avg) }, avgQ, idx.Name); err == nil {
 		info.AvgRecordSize = avg.Float64
 	}
 
-	const allocQ = `
+	allocQ := `
 SELECT a.type_desc, SUM(a.used_pages), SUM(a.used_pages) * 8
-FROM   sys.partitions p
+FROM   sys.indexes i
+JOIN   sys.partitions p ON p.object_id = i.object_id AND p.index_id = i.index_id
 JOIN   sys.allocation_units a ON a.container_id = p.partition_id
-WHERE  p.object_id = @p1 AND p.index_id = @p2
+WHERE  ` + target + `
 GROUP  BY a.type_desc
 ORDER  BY a.type_desc`
-	rows, err := t.db.query(ctx, allocQ, t.ObjectID, idx.IndexID)
+	rows, err := db.query(ctx, allocQ, idx.Name)
 	if err != nil {
 		return nil, fmt.Errorf("gosmo: allocation units for index %q: %w", idx.Name, err)
 	}
@@ -306,16 +694,20 @@ ORDER  BY a.type_desc`
 
 // Fragmentation returns fragmentation and page-density statistics for this
 // index alone — the single-index analog of Table.FragmentationStats, used
-// by Index Properties' Fragmentation page. mode follows
-// Table.FragmentationStats's (LIMITED, SAMPLED, or DETAILED); page density
-// is only populated by SAMPLED or DETAILED (LIMITED always reports 0, same
-// as the underlying DMV).
-func (idx *Index) Fragmentation(ctx context.Context, t *Table, mode string) (*IndexFragmentation, error) {
+// by Index Properties' Fragmentation page. An empty mode is
+// FragmentationLimited; page density is only populated by SAMPLED or
+// DETAILED (LIMITED always reports 0, same as the underlying DMV).
+//
+// The DMV is applied to the index sys.indexes finds by name rather than
+// called with OBJECT_ID directly: a name that resolves to nothing then
+// yields no row, where a NULL object_id passed to the DMV would mean every
+// object in the database.
+func (idx *Index) Fragmentation(ctx context.Context, mode FragmentationMode) (*IndexFragmentation, error) {
 	if mode == "" {
-		mode = "LIMITED"
+		mode = FragmentationLimited
 	}
 	switch mode {
-	case "LIMITED", "SAMPLED", "DETAILED":
+	case FragmentationLimited, FragmentationSampled, FragmentationDetailed:
 	default:
 		return nil, fmt.Errorf("gosmo: fragmentation for index %q: invalid mode %q (must be LIMITED, SAMPLED, or DETAILED)", idx.Name, mode)
 	}
@@ -326,16 +718,16 @@ SELECT i.name, s.index_id,
        s.page_count,
        s.fragment_count,
        s.avg_page_space_used_in_percent
-FROM   sys.dm_db_index_physical_stats(DB_ID(), OBJECT_ID(N'%s'), %d, NULL, N'%s') s
-JOIN   sys.indexes i ON i.object_id = s.object_id AND i.index_id = s.index_id
-WHERE  s.index_level = 0`,
-		escapeSingle(t.FullName()), idx.IndexID, mode)
+FROM   sys.indexes i
+CROSS  APPLY sys.dm_db_index_physical_stats(DB_ID(), i.object_id, i.index_id, NULL, N'%s') s
+WHERE  i.object_id = OBJECT_ID(N'%s') AND i.name = @p1 AND s.index_level = 0`,
+		mode, escapeSingle(idx.table.FullName()))
 
 	f := &IndexFragmentation{}
 	var density sql.NullFloat64
-	if err := t.db.queryRow(ctx, func(row *sql.Row) error {
+	if err := idx.table.db.queryRow(ctx, func(row *sql.Row) error {
 		return row.Scan(&f.IndexName, &f.IndexID, &f.AvgFragmentationPct, &f.PageCount, &f.FragmentCount, &density)
-	}, q); err != nil {
+	}, q, idx.Name); err != nil {
 		return nil, fmt.Errorf("gosmo: fragmentation for index %q: %w", idx.Name, err)
 	}
 	f.AvgPageSpaceUsedPct = density.Float64
@@ -386,430 +778,6 @@ ORDER  BY xi.name`
 		x.IsPrimary = secondary == ""
 		return x, nil
 	})
-}
-
-// CreateIndexRequest describes a new index to create. Which fields apply
-// depends on Type, and CreateIndex refuses a combination the server would
-// reject rather than emitting DDL that fails at the far end:
-//
-//   - rowstore (CLUSTERED, NONCLUSTERED, and the zero value): key columns,
-//     IsUnique, IncludedColumns (nonclustered only), FilterDefinition
-//     (nonclustered only), FillFactor/PadIndex, DataCompression NONE/ROW/PAGE.
-//   - COLUMNSTORE: key columns and FilterDefinition (the filtered NCCI form),
-//     DataCompression COLUMNSTORE/COLUMNSTORE_ARCHIVE, CompressionDelay.
-//   - CLUSTERED COLUMNSTORE: no key columns at all — the index covers every
-//     column of the table.
-//   - XML: one key column (the xml one) plus IsPrimaryXML, or
-//     PrimaryXMLIndex and SecondaryXMLType for a secondary index.
-//   - SPATIAL: one key column (the geometry/geography one) plus Tessellation,
-//     and BoundingBox for the two GEOMETRY_ schemes.
-type CreateIndexRequest struct {
-	Name       string
-	Type       IndexType
-	IsUnique   bool
-	KeyColumns []IndexColumnDef
-	// IncludedColumns are the non-key columns of a nonclustered rowstore
-	// index (INCLUDE).
-	IncludedColumns []string
-	// FilterDefinition is a filtered index's predicate, without the WHERE.
-	FilterDefinition string
-	FillFactor       int
-	PadIndex         bool
-	Online           bool
-	SortInTempDB     bool
-	// DropExisting recreates an index of the same name in place
-	// (DROP_EXISTING = ON) instead of failing on the collision.
-	DropExisting bool
-	// DataCompression is the compression keyword — NONE, ROW or PAGE for a
-	// rowstore index, COLUMNSTORE or COLUMNSTORE_ARCHIVE for a columnstore
-	// one. Empty leaves it unspecified.
-	DataCompression string
-	// CompressionDelay is a columnstore index's COMPRESSION_DELAY, in
-	// minutes. Zero leaves it unspecified.
-	CompressionDelay int
-	// FileGroup is the filegroup the index is created on, and
-	// PartitionScheme/PartitionColumns the partition scheme it is partitioned
-	// by. The two are alternatives — an index has one ON clause.
-	FileGroup        string
-	PartitionScheme  string
-	PartitionColumns []string
-	// IsPrimaryXML selects the primary XML index form; PrimaryXMLIndex and
-	// SecondaryXMLType describe a secondary one, which is built over the
-	// primary index named here.
-	IsPrimaryXML     bool
-	PrimaryXMLIndex  string
-	SecondaryXMLType XMLSecondaryIndexType
-	// Tessellation is a spatial index's tessellation scheme (USING).
-	Tessellation SpatialTessellation
-	// BoundingBox bounds a geometry index's tessellation. Required for the
-	// two GEOMETRY_ schemes and rejected for the GEOGRAPHY_ ones, which
-	// tessellate the whole globe.
-	BoundingBox *SpatialBoundingBox
-	// GridLevels is the per-level grid density (GRIDS), which only the two
-	// non-automatic schemes accept.
-	GridLevels SpatialGridLevels
-	// CellsPerObject is the tessellation cell budget per object
-	// (CELLS_PER_OBJECT), 1-8192. Zero leaves it unspecified.
-	CellsPerObject int
-}
-
-// IndexColumnDef describes one key column for a new index.
-type IndexColumnDef struct {
-	Name       string
-	Descending bool
-}
-
-// SpatialBoundingBox is the rectangle a geometry index tessellates
-// (BOUNDING_BOX). Anything outside it lands in the single top-level cell,
-// so it belongs around the data, not around the coordinate system.
-type SpatialBoundingBox struct {
-	XMin, YMin, XMax, YMax float64
-}
-
-// SpatialGridLevels is a spatial index's per-level grid density (GRIDS).
-// A level left empty is omitted from the clause and takes the server's
-// default, so the zero value means "no GRIDS clause at all".
-type SpatialGridLevels struct {
-	Level1, Level2, Level3, Level4 SpatialGridDensity
-}
-
-// levels renders the GRIDS clause body, or "" when no level is set.
-func (g SpatialGridLevels) levels() string {
-	var parts []string
-	for i, d := range []SpatialGridDensity{g.Level1, g.Level2, g.Level3, g.Level4} {
-		if d != "" {
-			parts = append(parts, fmt.Sprintf("LEVEL_%d = %s", i+1, d))
-		}
-	}
-	return strings.Join(parts, ", ")
-}
-
-// CreateIndex creates a new index on the table.
-func (t *Table) CreateIndex(ctx context.Context, req CreateIndexRequest) error {
-	stmt, err := buildCreateIndexStatement(t.FullName(), req)
-	if err != nil {
-		return err
-	}
-	if _, err := t.db.exec(ctx, stmt); err != nil {
-		return fmt.Errorf("gosmo: create index %q on %s: %w", req.Name, t.FullName(), err)
-	}
-	return nil
-}
-
-// buildCreateIndexStatement renders one CREATE INDEX statement, or reports
-// why the request cannot be one. Separated from CreateIndex so the
-// statement each index type produces can be pinned without a server.
-func buildCreateIndexStatement(tableName string, req CreateIndexRequest) (string, error) {
-	if err := req.validate(); err != nil {
-		return "", err
-	}
-
-	var sb strings.Builder
-	name := quoteIdent(req.Name)
-	switch req.Type {
-	case IndexTypeClusteredColumnStore:
-		fmt.Fprintf(&sb, "CREATE CLUSTERED COLUMNSTORE INDEX %s ON %s", name, tableName)
-	case IndexTypeColumnStore:
-		fmt.Fprintf(&sb, "CREATE NONCLUSTERED COLUMNSTORE INDEX %s ON %s (%s)",
-			name, tableName, createIndexColumnList(req.KeyColumns, false))
-	case IndexTypeXML:
-		if req.IsPrimaryXML {
-			fmt.Fprintf(&sb, "CREATE PRIMARY XML INDEX %s ON %s (%s)",
-				name, tableName, createIndexColumnList(req.KeyColumns, false))
-		} else {
-			fmt.Fprintf(&sb, "CREATE XML INDEX %s ON %s (%s) USING XML INDEX %s FOR %s",
-				name, tableName, createIndexColumnList(req.KeyColumns, false),
-				quoteIdent(req.PrimaryXMLIndex), req.SecondaryXMLType)
-		}
-	case IndexTypeSpatial:
-		fmt.Fprintf(&sb, "CREATE SPATIAL INDEX %s ON %s (%s) USING %s",
-			name, tableName, createIndexColumnList(req.KeyColumns, false), req.Tessellation)
-	default:
-		sb.WriteString("CREATE ")
-		if req.IsUnique {
-			sb.WriteString("UNIQUE ")
-		}
-		if req.Type == IndexTypeClustered {
-			sb.WriteString("CLUSTERED ")
-		} else {
-			sb.WriteString("NONCLUSTERED ")
-		}
-		fmt.Fprintf(&sb, "INDEX %s ON %s (%s)", name, tableName, createIndexColumnList(req.KeyColumns, true))
-		if len(req.IncludedColumns) > 0 {
-			inc := make([]string, len(req.IncludedColumns))
-			for i, c := range req.IncludedColumns {
-				inc[i] = quoteIdent(c)
-			}
-			fmt.Fprintf(&sb, " INCLUDE (%s)", strings.Join(inc, ", "))
-		}
-	}
-
-	if req.FilterDefinition != "" {
-		fmt.Fprintf(&sb, " WHERE %s", req.FilterDefinition)
-	}
-	if withs := req.withOptions(); len(withs) > 0 {
-		fmt.Fprintf(&sb, " WITH (%s)", strings.Join(withs, ", "))
-	}
-	switch {
-	case req.PartitionScheme != "":
-		cols := make([]string, len(req.PartitionColumns))
-		for i, c := range req.PartitionColumns {
-			cols[i] = quoteIdent(c)
-		}
-		fmt.Fprintf(&sb, " ON %s (%s)", quoteIdent(req.PartitionScheme), strings.Join(cols, ", "))
-	case req.FileGroup != "":
-		fmt.Fprintf(&sb, " ON %s", quoteIdent(req.FileGroup))
-	}
-	return sb.String(), nil
-}
-
-// withOptions is the WITH clause's contents, in the order CREATE INDEX
-// documents them: the spatial tessellation options first, then the ones
-// every index form shares.
-func (req CreateIndexRequest) withOptions() []string {
-	var withs []string
-	if req.Type == IndexTypeSpatial {
-		if b := req.BoundingBox; b != nil {
-			withs = append(withs, fmt.Sprintf("BOUNDING_BOX = (%s, %s, %s, %s)",
-				floatLiteral(b.XMin), floatLiteral(b.YMin), floatLiteral(b.XMax), floatLiteral(b.YMax)))
-		}
-		if g := req.GridLevels.levels(); g != "" {
-			withs = append(withs, fmt.Sprintf("GRIDS = (%s)", g))
-		}
-		if req.CellsPerObject > 0 {
-			withs = append(withs, fmt.Sprintf("CELLS_PER_OBJECT = %d", req.CellsPerObject))
-		}
-	}
-	if req.PadIndex {
-		withs = append(withs, "PAD_INDEX = ON")
-	}
-	if req.FillFactor > 0 {
-		withs = append(withs, fmt.Sprintf("FILLFACTOR = %d", req.FillFactor))
-	}
-	if req.Online {
-		withs = append(withs, "ONLINE = ON")
-	}
-	if req.SortInTempDB {
-		withs = append(withs, "SORT_IN_TEMPDB = ON")
-	}
-	if req.DropExisting {
-		withs = append(withs, "DROP_EXISTING = ON")
-	}
-	if req.DataCompression != "" {
-		withs = append(withs, fmt.Sprintf("DATA_COMPRESSION = %s", req.DataCompression))
-	}
-	if req.CompressionDelay > 0 {
-		withs = append(withs, fmt.Sprintf("COMPRESSION_DELAY = %d MINUTES", req.CompressionDelay))
-	}
-	return withs
-}
-
-// createIndexColumnList renders a key column list. Only a rowstore index
-// orders its key columns: ASC/DESC on a columnstore, XML or spatial column
-// list is a syntax error, which is why the direction is the caller's choice
-// rather than the column's.
-func createIndexColumnList(cols []IndexColumnDef, withDirection bool) string {
-	out := make([]string, len(cols))
-	for i, c := range cols {
-		out[i] = quoteIdent(c.Name)
-		if withDirection {
-			dir := "ASC"
-			if c.Descending {
-				dir = "DESC"
-			}
-			out[i] += " " + dir
-		}
-	}
-	return strings.Join(out, ", ")
-}
-
-// floatLiteral renders a bounding-box coordinate without an exponent or a
-// trailing ".0" — BOUNDING_BOX takes a plain numeric literal.
-func floatLiteral(v float64) string {
-	return strconv.FormatFloat(v, 'f', -1, 64)
-}
-
-// validate reports why req cannot become a CREATE INDEX statement. Each
-// check is a combination SQL Server itself rejects; refusing here means the
-// caller gets a message naming the field rather than a parse error naming a
-// column number.
-func (req CreateIndexRequest) validate() error {
-	fail := func(format string, args ...any) error {
-		return fmt.Errorf("gosmo: create index %q: %s", req.Name, fmt.Sprintf(format, args...))
-	}
-	if req.Name == "" {
-		return fmt.Errorf("gosmo: create index: name is required")
-	}
-
-	rowstore := req.Type == "" || req.Type == IndexTypeClustered || req.Type == IndexTypeNonClustered
-	nonclustered := req.Type == "" || req.Type == IndexTypeNonClustered
-	switch req.Type {
-	case "", IndexTypeClustered, IndexTypeNonClustered,
-		IndexTypeColumnStore, IndexTypeClusteredColumnStore, IndexTypeXML, IndexTypeSpatial:
-	default:
-		return fail("index type %q cannot be created here", req.Type)
-	}
-
-	// CREATE CLUSTERED COLUMNSTORE INDEX covers every column of the table and
-	// takes no column list at all; everything else names at least one.
-	if req.Type == IndexTypeClusteredColumnStore {
-		if len(req.KeyColumns) > 0 {
-			return fail("a clustered columnstore index takes no key columns — it covers every column of the table")
-		}
-	} else if len(req.KeyColumns) == 0 {
-		return fail("at least one key column required")
-	}
-	if req.Type == IndexTypeXML || req.Type == IndexTypeSpatial {
-		if len(req.KeyColumns) != 1 {
-			return fail("%s takes exactly one key column", strings.ToLower(string(req.Type))+" index")
-		}
-	}
-	if !rowstore {
-		for _, c := range req.KeyColumns {
-			if c.Descending {
-				return fail("only a rowstore index orders its key columns")
-			}
-		}
-	}
-	for _, c := range req.KeyColumns {
-		if c.Name == "" {
-			return fail("a key column has no name")
-		}
-	}
-
-	if req.IsUnique && !rowstore {
-		return fail("only a rowstore index can be unique")
-	}
-	if len(req.IncludedColumns) > 0 && !nonclustered {
-		return fail("only a nonclustered rowstore index has included columns")
-	}
-	if req.FilterDefinition != "" && !nonclustered && req.Type != IndexTypeColumnStore {
-		return fail("only a nonclustered rowstore or columnstore index can be filtered")
-	}
-	if req.FillFactor < 0 || req.FillFactor > 100 {
-		return fail("fill factor %d out of range (0-100)", req.FillFactor)
-	}
-	if (req.FillFactor > 0 || req.PadIndex) && req.Type.IsColumnStore() {
-		return fail("a columnstore index has no fill factor")
-	}
-	if req.SortInTempDB && req.Type.IsColumnStore() {
-		return fail("a columnstore index cannot sort in tempdb")
-	}
-	if err := req.validateCompression(fail); err != nil {
-		return err
-	}
-	if err := req.validateXML(fail); err != nil {
-		return err
-	}
-	if err := req.validateSpatial(fail); err != nil {
-		return err
-	}
-
-	if req.PartitionScheme != "" && req.FileGroup != "" {
-		return fail("an index is created on a filegroup or on a partition scheme, not both")
-	}
-	if (req.PartitionScheme != "") != (len(req.PartitionColumns) > 0) {
-		return fail("a partition scheme and its partitioning column go together")
-	}
-	if (req.PartitionScheme != "" || req.FileGroup != "") && req.Type == IndexTypeXML {
-		return fail("an XML index is stored with the table it indexes and takes no filegroup")
-	}
-	return nil
-}
-
-// validateCompression checks the two compression options against the index
-// family that accepts them — the rowstore and columnstore keywords are not
-// interchangeable.
-func (req CreateIndexRequest) validateCompression(fail func(string, ...any) error) error {
-	switch req.DataCompression {
-	case "":
-	case "NONE", "ROW", "PAGE":
-		if req.Type.IsColumnStore() {
-			return fail("data compression %s is a rowstore setting", req.DataCompression)
-		}
-	case "COLUMNSTORE", "COLUMNSTORE_ARCHIVE":
-		if !req.Type.IsColumnStore() {
-			return fail("data compression %s applies to a columnstore index only", req.DataCompression)
-		}
-	default:
-		return fail("invalid data compression %q (must be NONE, ROW, PAGE, COLUMNSTORE, or COLUMNSTORE_ARCHIVE)", req.DataCompression)
-	}
-	if req.CompressionDelay != 0 {
-		if !req.Type.IsColumnStore() {
-			return fail("compression delay applies to a columnstore index only")
-		}
-		if req.CompressionDelay < 0 {
-			return fail("compression delay %d is negative", req.CompressionDelay)
-		}
-	}
-	return nil
-}
-
-// validateXML checks the three XML fields, which are meaningless off an XML
-// index and, on one, describe either the primary form or the secondary form
-// but never both.
-func (req CreateIndexRequest) validateXML(fail func(string, ...any) error) error {
-	if req.Type != IndexTypeXML {
-		if req.IsPrimaryXML || req.PrimaryXMLIndex != "" || req.SecondaryXMLType != "" {
-			return fail("the XML index options apply to an XML index only")
-		}
-		return nil
-	}
-	if req.IsPrimaryXML {
-		if req.PrimaryXMLIndex != "" || req.SecondaryXMLType != "" {
-			return fail("a primary XML index is not built over another index")
-		}
-		return nil
-	}
-	if req.PrimaryXMLIndex == "" {
-		return fail("a secondary XML index names the primary XML index it is built over")
-	}
-	switch req.SecondaryXMLType {
-	case XMLSecondaryPath, XMLSecondaryValue, XMLSecondaryProperty:
-	default:
-		return fail("secondary XML index type %q is not PATH, VALUE, or PROPERTY", req.SecondaryXMLType)
-	}
-	return nil
-}
-
-// validateSpatial checks the tessellation options. BOUNDING_BOX is the one
-// that is required rather than merely allowed: a geometry index without one
-// is rejected by the server, since there is nothing to tessellate.
-func (req CreateIndexRequest) validateSpatial(fail func(string, ...any) error) error {
-	if req.Type != IndexTypeSpatial {
-		if req.Tessellation != "" || req.BoundingBox != nil || req.GridLevels.levels() != "" || req.CellsPerObject != 0 {
-			return fail("the spatial index options apply to a spatial index only")
-		}
-		return nil
-	}
-	switch req.Tessellation {
-	case SpatialGeometryGrid, SpatialGeometryAutoGrid, SpatialGeographyGrid, SpatialGeographyAutoGrid:
-	default:
-		return fail("tessellation scheme %q is not one of GEOMETRY_GRID, GEOMETRY_AUTO_GRID, GEOGRAPHY_GRID, GEOGRAPHY_AUTO_GRID", req.Tessellation)
-	}
-	if req.Tessellation.IsGeometry() && req.BoundingBox == nil {
-		return fail("a %s index requires a bounding box", req.Tessellation)
-	}
-	if !req.Tessellation.IsGeometry() && req.BoundingBox != nil {
-		return fail("a %s index tessellates the whole globe and takes no bounding box", req.Tessellation)
-	}
-	if b := req.BoundingBox; b != nil && (b.XMax <= b.XMin || b.YMax <= b.YMin) {
-		return fail("bounding box is empty — xmax and ymax must exceed xmin and ymin")
-	}
-	if req.GridLevels.levels() != "" && req.Tessellation.IsAutoGrid() {
-		return fail("a %s index chooses its own grid densities", req.Tessellation)
-	}
-	for _, d := range []SpatialGridDensity{req.GridLevels.Level1, req.GridLevels.Level2, req.GridLevels.Level3, req.GridLevels.Level4} {
-		switch d {
-		case "", SpatialGridLow, SpatialGridMedium, SpatialGridHigh:
-		default:
-			return fail("grid density %q is not LOW, MEDIUM, or HIGH", d)
-		}
-	}
-	if req.CellsPerObject < 0 || req.CellsPerObject > 8192 {
-		return fail("cells per object %d out of range (1-8192)", req.CellsPerObject)
-	}
-	return nil
 }
 
 // IndexFragmentation holds fragmentation statistics for one index.

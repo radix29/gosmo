@@ -22,7 +22,7 @@ func TestValidServerPermission(t *testing.T) {
 
 func TestGrantServerPermissionRejectsUnknownPermission(t *testing.T) {
 	s := &Server{}
-	err := s.GrantServerPermission(t.Context(), "CONTROL SERVER; DROP DATABASE master; --", "attacker")
+	err := s.GrantServerPermission(t.Context(), "CONTROL SERVER; DROP DATABASE master; --", "attacker", PermissionOptions{})
 	if err == nil {
 		t.Fatal("GrantServerPermission accepted an unrecognized permission name, want an error")
 	}
@@ -30,10 +30,10 @@ func TestGrantServerPermissionRejectsUnknownPermission(t *testing.T) {
 
 func TestDenyAndRevokeServerPermissionRejectUnknownPermission(t *testing.T) {
 	s := &Server{}
-	if err := s.DenyServerPermission(t.Context(), "NOT A REAL PERMISSION", "sa"); err == nil {
+	if err := s.DenyServerPermission(t.Context(), "NOT A REAL PERMISSION", "sa", PermissionOptions{}); err == nil {
 		t.Error("DenyServerPermission accepted an unrecognized permission, want an error")
 	}
-	if err := s.RevokeServerPermission(t.Context(), "NOT A REAL PERMISSION", "sa"); err == nil {
+	if err := s.RevokeServerPermission(t.Context(), "NOT A REAL PERMISSION", "sa", PermissionOptions{}); err == nil {
 		t.Error("RevokeServerPermission accepted an unrecognized permission, want an error")
 	}
 }
@@ -52,7 +52,7 @@ func TestValidDatabasePermission(t *testing.T) {
 
 func TestGrantDatabasePermissionRejectsUnknownPermission(t *testing.T) {
 	d := &Database{Name: "appdb", server: &Server{}}
-	err := d.GrantDatabasePermission(t.Context(), "CONTROL; DROP TABLE Users; --", "attacker")
+	err := d.GrantDatabasePermission(t.Context(), "CONTROL; DROP TABLE Users; --", "attacker", PermissionOptions{})
 	if err == nil {
 		t.Fatal("GrantDatabasePermission accepted an unrecognized permission name, want an error")
 	}
@@ -90,10 +90,10 @@ func TestIsSimpleSetValue(t *testing.T) {
 
 func TestSetDatabaseOptionRejectsUnknownOptionAndUnsafeValue(t *testing.T) {
 	d := &Database{Name: "appdb", server: &Server{}}
-	if err := d.SetDatabaseOption(t.Context(), DatabaseOption("EVIL_OPTION"), "ON"); err == nil {
+	if err := d.SetDatabaseOption(t.Context(), DatabaseOption("EVIL_OPTION"), "ON", TerminationNone); err == nil {
 		t.Error("SetDatabaseOption accepted an unrecognized option, want an error")
 	}
-	if err := d.SetDatabaseOption(t.Context(), DBOptAutoClose, "ON; DROP DATABASE appdb; --"); err == nil {
+	if err := d.SetDatabaseOption(t.Context(), DBOptAutoClose, "ON; DROP DATABASE appdb; --", TerminationNone); err == nil {
 		t.Error("SetDatabaseOption accepted an unsafe value, want an error")
 	}
 }
@@ -154,7 +154,7 @@ func TestBuildBackupStatementRejectsUnknownAction(t *testing.T) {
 	_, err := BuildBackupStatement(BackupOptions{
 		Database: "appdb",
 		Action:   BackupAction("DATABASE; DROP DATABASE appdb; --"),
-		Devices:  []string{`C:\Backups\appdb.bak`},
+		Devices:  []BackupTarget{DiskTarget(`C:\Backups\appdb.bak`)},
 	})
 	if err == nil {
 		t.Error("BuildBackupStatement accepted an unrecognized action, want an error")
@@ -162,10 +162,10 @@ func TestBuildBackupStatementRejectsUnknownAction(t *testing.T) {
 }
 
 func TestBuildRestoreStatementRejectsUnknownAction(t *testing.T) {
-	_, err := BuildRestoreStatement(RestoreOptions{
+	_, err := (&Server{}).BuildRestoreStatement(RestoreOptions{
 		Database: "appdb",
 		Action:   BackupAction("DATABASE; DROP DATABASE appdb; --"),
-		Devices:  []string{`C:\Backups\appdb.bak`},
+		Devices:  []BackupTarget{DiskTarget(`C:\Backups\appdb.bak`)},
 	})
 	if err == nil {
 		t.Error("BuildRestoreStatement accepted an unrecognized action, want an error")

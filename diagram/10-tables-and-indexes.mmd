@@ -37,8 +37,8 @@ classDiagram
         +RebuildAllIndexes(fillFactor) error
         +UpdateAllStatistics(samplePct) error
         +CreateIndex(req) error
-        +CreateStatistic(name, cols, pct) error
-        +CreateStatisticWithOptions(req) error
+        +CreateStatistic(req) error
+        +IndexRef(name) *Index
         +AlterColumn(col) error
         +DropColumn(name) error
         +RenameColumn(name, newName) error
@@ -86,30 +86,33 @@ classDiagram
         +IgnoreDupKey bool
         +AllowRowLocks bool
         +AllowPageLocks bool
-        +DataCompression string
+        +DataCompression DataCompression
+        +StatisticsNoRecompute bool
+        +OptimizeForSequentialKey bool
         +KeyColumns []IndexColumn
         +IncludedColumns []IndexColumn
         +FilterDefinition string
         +DataSpace DataSpace
-        +Rebuild(t, fillFactor) error
-        +RebuildWithOptions(t, fillFactor, padIndex, compression) error
-        +Reorganize(t) error
-        +Disable(t) error
-        +Enable(t) error
-        +Rename(t, newName) error
-        +SetOptions(t, ignoreDupKey, rowLocks, pageLocks) error
-        +SetLockOptions(t, rowLocks, pageLocks) error
-        +SetIncludedColumns(t, columns) error
-        +UpdateStatistics(t) error
-        +StorageInfo(t) *IndexStorageInfo
-        +Fragmentation(t, mode) *IndexFragmentation
-        +Drop(t) error
+        +Table() *Table
+        +Rebuild(opts IndexRebuildOptions) error
+        +Reorganize() error
+        +Disable() error
+        +Enable() error
+        +Rename(newName) error
+        +SetOptions(opts IndexSetOptions) error
+        +SetIncludedColumns(columns) error
+        +IncludedColumnsSupported() error
+        +UpdateStatistics(samplePct) error
+        +StorageInfo() *IndexStorageInfo
+        +Fragmentation(mode FragmentationMode) *IndexFragmentation
+        +Drop() error
         +Type.IsColumnStore() bool
         Type is a sys.indexes type_desc value; an
         unrecognized one is carried through as the
         server's own text. IsColumnStore covers
-        both columnstore forms, neither of which
-        SetIncludedColumns supports.
+        both columnstore forms. SetIncludedColumns
+        supports only a rowstore nonclustered index
+        backing no constraint.
     }
 
     class IndexStorageInfo {

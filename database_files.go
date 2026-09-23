@@ -356,12 +356,29 @@ func (d *Database) SetDefaultFileGroup(ctx context.Context, name string) error {
 // accepts READONLY/READWRITE, but only for backward compatibility — SQL
 // Server documents that pair as deprecated and slated for removal, and it is
 // the spelling this used to emit.
-func (d *Database) SetFileGroupReadOnly(ctx context.Context, name string, readOnly bool) error {
+//
+// The change needs exclusive access to the database. This Server's own idle
+// sessions are released first (see Server.ReleaseIdleConnections); anyone
+// else's are what term decides. MODIFY FILEGROUP parses a WITH ROLLBACK
+// IMMEDIATE and ignores it — probed on 17.0: it waited ~20 s behind an open
+// transaction and failed Msg 5070 all the same — so
+// TerminationRollbackImmediate kills the database's sessions in the same
+// batch instead, the form a Managed Instance's forced drop uses. That needs
+// ALTER ANY CONNECTION where the ROLLBACK IMMEDIATE of a SET option needs
+// only ALTER on the database.
+func (d *Database) SetFileGroupReadOnly(ctx context.Context, name string, readOnly bool, term Termination) error {
 	mode := "READ_WRITE"
 	if readOnly {
 		mode = "READ_ONLY"
 	}
+	if _, err := term.withClause(); err != nil {
+		return fmt.Errorf("gosmo: set filegroup %q read-only=%v on %q: %w", name, readOnly, d.Name, err)
+	}
 	q := fmt.Sprintf("ALTER DATABASE %s MODIFY FILEGROUP %s %s", quoteIdent(d.Name), quoteIdent(name), mode)
+	if term == TerminationRollbackImmediate {
+		q = killDatabaseSessionsBatch(d.Name) + ";\n" + q + ";"
+	}
+	d.server.releaseIdle(ctx)
 	if err := d.server.exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: set filegroup %q read-only=%v on %q: %w", name, readOnly, d.Name, err)
 	}

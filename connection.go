@@ -376,7 +376,16 @@ func applyDefaults(opts *ConnectionOptions) {
 // A malformed trailing port (non-numeric) is left as part of host rather
 // than rejected outright — the caller surfaces connection failures via
 // the driver's own error, not a separate parse error here.
+//
+// A leading "tcp:" protocol prefix — the form the Azure Portal's ADO.NET
+// connection string shows, "tcp:x.database.windows.net,1433", and SSMS
+// accepts — is dropped, since TCP is the only protocol there is here. The
+// other prefixes (np:, lpc:, admin:) are left in place, as part of host;
+// Connect and ConnectionString refuse them by name.
 func ParseServerAddress(server string) (host, instance string, port int) {
+	if proto, rest := splitProtocolPrefix(server); proto == "tcp" {
+		server = rest
+	}
 	if i := strings.IndexByte(server, '\\'); i >= 0 {
 		host, instance = server[:i], server[i+1:]
 		// host\instance,port — the port trails the instance name.
@@ -409,6 +418,37 @@ func ParseServerAddress(server string) (host, instance string, port int) {
 		return server[:sep], "", p
 	}
 	return server, "", 0
+}
+
+// splitProtocolPrefix splits a SQL Server protocol prefix — tcp:, np:, lpc:,
+// admin: (any case) — off server, returning it lower-cased without its colon
+// and the address after it; proto is "" when there is none. A prefix followed
+// by nothing but digits is not one: "admin:1433" is the host "admin" on port
+// 1433.
+func splitProtocolPrefix(server string) (proto, rest string) {
+	i := strings.IndexByte(server, ':')
+	if i <= 0 {
+		return "", server
+	}
+	p := strings.ToLower(server[:i])
+	switch p {
+	case "tcp", "np", "lpc", "admin":
+	default:
+		return "", server
+	}
+	rest = server[i+1:]
+	if strings.Trim(rest, "0123456789") == "" {
+		return "", server
+	}
+	return p, rest
+}
+
+// unsupportedProtocols names each protocol prefix gosmo cannot dial, for
+// dsnHost's refusal. go-mssqldb speaks TDS over TCP only.
+var unsupportedProtocols = map[string]string{
+	"np":    "named pipes (np:) are not supported; connect over TCP — host, host\\instance or host,port",
+	"lpc":   "shared memory (lpc:) is not supported; connect over TCP — host, host\\instance or host,port",
+	"admin": "the admin: prefix is not supported; to reach the dedicated admin connection, name its TCP port (host,port)",
 }
 
 // buildDSN constructs the DSN URL and a driver-name selector from
@@ -688,7 +728,9 @@ func commonDSNValues(opts ConnectionOptions) url.Values {
 	q := url.Values{}
 	q.Set("database", opts.Database)
 	q.Set("app name", opts.ApplicationName)
-	q.Set("connection timeout", strconv.Itoa(int(opts.ConnectTimeout.Seconds())))
+	// Rounded up: the driver takes whole seconds and reads 0 as "no timeout",
+	// so truncating turned a 500ms timeout into none at all.
+	q.Set("connection timeout", strconv.Itoa(int((opts.ConnectTimeout+time.Second-1)/time.Second)))
 
 	if opts.TrustServerCertificate {
 		q.Set("TrustServerCertificate", "true")
@@ -742,6 +784,9 @@ func baseDSN(opts ConnectionOptions) (string, error) {
 // probe's address. That is an error naming the fix, not a dial that fails
 // somewhere less obvious.
 func dsnHost(server string) (host, instance string, err error) {
+	if proto, _ := splitProtocolPrefix(server); unsupportedProtocols[proto] != "" {
+		return "", "", fmt.Errorf("gosmo: server %q: %s", server, unsupportedProtocols[proto])
+	}
 	host, instance, port := ParseServerAddress(server)
 	if strings.ContainsRune(host, ':') {
 		if !strings.HasPrefix(host, "[") {

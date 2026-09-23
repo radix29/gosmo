@@ -1,6 +1,6 @@
 //go:build livedb
 
-// Live verification of CreateIndex and CreateStatisticWithOptions against a
+// Live verification of CreateIndex and CreateStatistic against a
 // real server. The unit tests pin the statement text; what only a server can
 // answer is whether that text parses and produces the index that was asked
 // for — clause order, which options each index family accepts, and whether a
@@ -319,7 +319,7 @@ func TestLiveCreateIndexRefusalsMatchTheServer(t *testing.T) {
 	}
 }
 
-func TestLiveCreateStatisticWithOptions(t *testing.T) {
+func TestLiveCreateStatistic(t *testing.T) {
 	db, ctx, done := liveDB(t)
 	defer done()
 
@@ -338,14 +338,14 @@ func TestLiveCreateStatisticWithOptions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("TableByName: %v", err)
 	}
-	if err := tbl.CreateStatisticWithOptions(ctx, CreateStatisticRequest{
+	if err := tbl.CreateStatistic(ctx, CreateStatisticRequest{
 		Name:             "ST_S_ab",
 		Columns:          []string{"a", "b"},
 		FullScan:         true,
 		FilterDefinition: "[b] IS NOT NULL",
 		NoRecompute:      true,
 	}); err != nil {
-		t.Fatalf("CreateStatisticWithOptions: %v", err)
+		t.Fatalf("CreateStatistic: %v", err)
 	}
 	facts := liveScalar(t, d, ctx,
 		`SELECT CONCAT(CAST(s.has_filter AS INT), '/', CAST(s.no_recompute AS INT), '/',
@@ -359,13 +359,13 @@ func TestLiveCreateStatisticWithOptions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("TableByName P: %v", err)
 	}
-	if err := parted.CreateStatisticWithOptions(ctx, CreateStatisticRequest{
+	if err := parted.CreateStatistic(ctx, CreateStatisticRequest{
 		Name:          "ST_P_b",
 		Columns:       []string{"b"},
 		SamplePercent: 50,
 		Incremental:   true,
 	}); err != nil {
-		t.Fatalf("CreateStatisticWithOptions (incremental): %v", err)
+		t.Fatalf("CreateStatistic (incremental): %v", err)
 	}
 	if got := liveScalar(t, d, ctx,
 		`SELECT CAST(is_incremental AS NVARCHAR(2)) FROM sys.stats

@@ -21,13 +21,13 @@ func TestScriptFileAndFileGroupWrites(t *testing.T) {
 				Name: "App]Dat2", FileGroup: "FG'1", Path: `C:\d\a'2.ndf`,
 				SizeKB: 8192, GrowthKB: 4096, MaxSizeKB: -1,
 			})
-		}, `ALTER DATABASE [App'DB] ADD FILE (NAME = [App]]Dat2], FILENAME = 'C:\d\a''2.ndf', SIZE = 8192KB, MAXSIZE = UNLIMITED, FILEGROWTH = 4096KB) TO FILEGROUP [FG'1]`},
+		}, `ALTER DATABASE [App'DB] ADD FILE (NAME = [App]]Dat2], FILENAME = N'C:\d\a''2.ndf', SIZE = 8192KB, MAXSIZE = UNLIMITED, FILEGROWTH = 4096KB) TO FILEGROUP [FG'1]`},
 		{"AddFile log with percentage growth", func(c context.Context) error {
 			return scriptTestDB().AddFile(c, DatabaseFileSpec{
 				Name: "AppLog2", Type: "LOG", Path: `C:\d\l2.ldf`,
 				SizeKB: 1024, GrowthPercent: 10, MaxSizeKB: 102400,
 			})
-		}, `ALTER DATABASE [App'DB] ADD LOG FILE (NAME = [AppLog2], FILENAME = 'C:\d\l2.ldf', SIZE = 1024KB, MAXSIZE = 102400KB, FILEGROWTH = 10%)`},
+		}, `ALTER DATABASE [App'DB] ADD LOG FILE (NAME = [AppLog2], FILENAME = N'C:\d\l2.ldf', SIZE = 1024KB, MAXSIZE = 102400KB, FILEGROWTH = 10%)`},
 		{"AlterFile", func(c context.Context) error {
 			return scriptTestDB().AlterFile(c, "App]Dat2", FileModify{
 				NewName: "New'Name", SizeKB: 16384, GrowthPercent: 25, MaxSizeKB: -1,
@@ -46,10 +46,10 @@ func TestScriptFileAndFileGroupWrites(t *testing.T) {
 			return scriptTestDB().SetDefaultFileGroup(c, "FG]2")
 		}, "ALTER DATABASE [App'DB] MODIFY FILEGROUP [FG]]2] DEFAULT"},
 		{"SetFileGroupReadOnly", func(c context.Context) error {
-			return scriptTestDB().SetFileGroupReadOnly(c, "FG]2", true)
+			return scriptTestDB().SetFileGroupReadOnly(c, "FG]2", true, TerminationNone)
 		}, "ALTER DATABASE [App'DB] MODIFY FILEGROUP [FG]]2] READ_ONLY"},
 		{"SetFileGroupReadOnly false is READ_WRITE", func(c context.Context) error {
-			return scriptTestDB().SetFileGroupReadOnly(c, "FG]2", false)
+			return scriptTestDB().SetFileGroupReadOnly(c, "FG]2", false, TerminationNone)
 		}, "ALTER DATABASE [App'DB] MODIFY FILEGROUP [FG]]2] READ_WRITE"},
 	})
 }

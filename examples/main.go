@@ -93,7 +93,7 @@ func main() {
 			{Name: "FirstName", DataType: gosmo.DataTypeNVarChar, MaxLength: 100, IsNullable: false},
 			{Name: "LastName", DataType: gosmo.DataTypeNVarChar, MaxLength: 100, IsNullable: false},
 			{Name: "Email", DataType: gosmo.DataTypeNVarChar, MaxLength: 255, IsNullable: true},
-			{Name: "CreatedAt", DataType: gosmo.DataTypeDatetime2, Scale: 3, IsNullable: false, DefaultValue: "sysdatetime()"},
+			{Name: "CreatedAt", DataType: gosmo.DataTypeDatetime2, Scale: new(3), IsNullable: false, DefaultValue: "sysdatetime()"},
 			{Name: "IsActive", DataType: gosmo.DataTypeBit, IsNullable: false, DefaultValue: "1"},
 		},
 	}))
@@ -104,7 +104,7 @@ func main() {
 			{Name: "OrderID", DataType: gosmo.DataTypeBigInt, IsNullable: false, IsIdentity: true, IdentitySeed: 1000, IdentityIncr: 1, IsPrimaryKey: true},
 			{Name: "CustomerID", DataType: gosmo.DataTypeInt, IsNullable: false},
 			{Name: "OrderDate", DataType: gosmo.DataTypeDate, IsNullable: false, DefaultValue: "CAST(SYSDATETIME() AS DATE)"},
-			{Name: "TotalAmount", DataType: gosmo.DataTypeDecimal, Precision: 18, Scale: 2, IsNullable: false, DefaultValue: "0"},
+			{Name: "TotalAmount", DataType: gosmo.DataTypeDecimal, Precision: new(18), Scale: new(2), IsNullable: false, DefaultValue: "0"},
 			{Name: "Status", DataType: gosmo.DataTypeVarChar, MaxLength: 20, IsNullable: false, DefaultValue: "'PENDING'"},
 		},
 	}))

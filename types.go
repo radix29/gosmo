@@ -252,6 +252,17 @@ const (
 	PermViewChangeTracking ObjectPermission = "VIEW CHANGE TRACKING"
 )
 
+// DatabasePermission is a database-scoped permission name — "CONNECT",
+// "CREATE TABLE", "ALTER ANY USER". GRANT/DENY/REVOKE refuse a name
+// outside the allowlist DatabasePermissionNames returns, since a permission
+// name can be neither quoted nor bound as a parameter.
+type DatabasePermission string
+
+// ServerPermission is a server-scoped permission name — "CONNECT SQL",
+// "VIEW SERVER STATE", "CONTROL SERVER" — allowlisted the same way, by
+// ServerPermissionNames.
+type ServerPermission string
+
 // BackupAction mirrors SQL Server backup types.
 type BackupAction string
 

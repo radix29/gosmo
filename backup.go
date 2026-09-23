@@ -3,12 +3,14 @@ package gosmo
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/golang-sql/sqlexp"
+	mssql "github.com/microsoft/go-mssqldb"
 )
 
 // ============================================================
@@ -28,8 +30,10 @@ type BackupOptions struct {
 	// DATABASE carrying FILE = / FILEGROUP = clauses.
 	Files      []string
 	FileGroups []string
-	// Devices is one or more backup device paths, e.g. `C:\Backups\MyDB.bak`.
-	Devices []string
+	// Devices is where the backup is written: one or more DiskTarget paths
+	// (`C:\Backups\MyDB.bak`), URLTarget blobs, or DeviceTarget logical
+	// backup devices. A striped backup names several.
+	Devices []BackupTarget
 	// BackupSetName is the NAME clause.
 	BackupSetName string
 	// Description is the DESCRIPTION clause.
@@ -74,7 +78,7 @@ func (s *Server) Backup(ctx context.Context, opts BackupOptions) error {
 		return err
 	}
 
-	if opts.Progress == nil {
+	if opts.Progress == nil || Scripting(ctx) {
 		if err := s.exec(ctx, sqlText); err != nil {
 			return fmt.Errorf("gosmo: backup %q: %w", opts.Database, err)
 		}
@@ -95,8 +99,8 @@ func BuildBackupStatement(opts BackupOptions) (string, error) {
 	if opts.Database == "" {
 		return "", fmt.Errorf("gosmo: backup: database name is required")
 	}
-	if len(opts.Devices) == 0 {
-		return "", fmt.Errorf("gosmo: backup: at least one device is required")
+	if err := checkTargets("backup", opts.Devices); err != nil {
+		return "", err
 	}
 	if opts.Action == "" {
 		opts.Action = BackupActionDatabase
@@ -125,12 +129,7 @@ func BuildBackupStatement(opts BackupOptions) (string, error) {
 		fmt.Fprintf(&sb, " %s", spec)
 	}
 	sb.WriteString(" TO ")
-
-	deviceList := make([]string, len(opts.Devices))
-	for i, d := range opts.Devices {
-		deviceList[i] = backupDeviceClause(d)
-	}
-	sb.WriteString(strings.Join(deviceList, ", "))
+	sb.WriteString(targetList(opts.Devices))
 
 	var withs []string
 	if opts.Action == BackupActionDifferential {
@@ -201,6 +200,14 @@ func backupFileSpec(verb string, files, fileGroups []string) (string, error) {
 // execWithProgress runs sqlText on a dedicated connection, draining the
 // driver's message stream and forwarding each notice to progress — this is
 // how BACKUP/RESTORE's WITH STATS = N percentage messages reach the caller.
+//
+// The message stream delivers each error message on its own, so the stream
+// is drained to the end and every one is kept: a failed BACKUP sends the
+// cause first ("Cannot open backup device ...") and "BACKUP DATABASE is
+// terminating abnormally" after it, and returning at the first — or keeping
+// only the last — told the caller half of it. The collected messages are
+// combined the way exec's are, by withAllMessages. Never run under
+// WithScript: Backup and Restore take exec's path there.
 func execWithProgress(ctx context.Context, db *sql.DB, sqlText string, progress func(pct int, message string)) error {
 	conn, err := db.Conn(ctx)
 	if err != nil {
@@ -215,13 +222,19 @@ func execWithProgress(ctx context.Context, db *sql.DB, sqlText string, progress 
 	}
 	defer rows.Close()
 
+	var msgs []mssql.Error
+	var other error
 	for active := true; active; {
 		switch m := retmsg.Message(ctx).(type) {
 		case sqlexp.MsgNotice:
 			text := m.Message.String()
 			progress(parsePercent(text), text)
 		case sqlexp.MsgError:
-			return m.Error
+			if me, ok := errors.AsType[mssql.Error](m.Error); ok {
+				msgs = append(msgs, me)
+			} else if other == nil {
+				other = m.Error
+			}
 		case sqlexp.MsgNext:
 			for rows.Next() {
 			}
@@ -229,7 +242,23 @@ func execWithProgress(ctx context.Context, db *sql.DB, sqlText string, progress 
 			active = rows.NextResultSet()
 		}
 	}
-	return rows.Err()
+	return progressError(msgs, other, rows.Err())
+}
+
+// progressError is execWithProgress's result from what the stream carried:
+// the server's error messages as one mssql.Error — the last as its headline,
+// as database/sql reports a failed exec, with every one in All — then any
+// other error the stream or the rows reported.
+func progressError(msgs []mssql.Error, other, rowsErr error) error {
+	if len(msgs) > 0 {
+		last := msgs[len(msgs)-1]
+		last.All = msgs
+		return withAllMessages(last)
+	}
+	if other != nil {
+		return other
+	}
+	return rowsErr
 }
 
 // parsePercent extracts the leading integer from a "N percent processed."
@@ -267,8 +296,9 @@ type RestoreOptions struct {
 	// these are clauses on a RESTORE DATABASE rather than a verb of their own.
 	Files      []string
 	FileGroups []string
-	// Devices is one or more backup file paths (required).
-	Devices []string
+	// Devices is where the backup is read from (required) — DiskTarget,
+	// URLTarget or DeviceTarget, several for a striped backup.
+	Devices []BackupTarget
 	// FileNumber selects which backup set on the device to restore (RESTORE's
 	// WITH FILE = n, 1-based, as reported by BackupHeader.Position). Zero
 	// leaves the clause off, which SQL Server reads as the first set — so a
@@ -298,9 +328,7 @@ type RestoreOptions struct {
 	// nobody to close and is left alone, and so is one in STANDBY, which
 	// refuses the ALTER. A Managed Instance refuses SET SINGLE_USER, so
 	// Server.BuildRestoreStatement and Restore kill the database's
-	// sessions there instead and change no access mode; the package-level
-	// BuildRestoreStatement, having no server to ask, always writes the
-	// SINGLE_USER form.
+	// sessions there instead and change no access mode.
 	CloseExistingConnections bool
 	// Replace forces restoration over an existing database.
 	Replace bool
@@ -345,7 +373,7 @@ func (s *Server) Restore(ctx context.Context, opts RestoreOptions) error {
 		return err
 	}
 
-	if opts.Progress == nil {
+	if opts.Progress == nil || Scripting(ctx) {
 		err = s.exec(ctx, sqlText)
 	} else {
 		err = execWithProgress(ctx, s.db, sqlText, opts.Progress)
@@ -364,15 +392,6 @@ func (s *Server) Restore(ctx context.Context, opts RestoreOptions) error {
 	return nil
 }
 
-// BuildRestoreStatement is the package-level BuildRestoreStatement for this
-// instance: the same statement, but with CloseExistingConnections written in
-// the form the instance accepts — killing the database's sessions on a Managed
-// Instance, which refuses SET SINGLE_USER. Restore runs what this
-// returns.
-func (s *Server) BuildRestoreStatement(opts RestoreOptions) (string, error) {
-	return buildRestoreStatement(opts, s.refusesSingleUser())
-}
-
 // BuildRestoreStatement returns the T-SQL RESTORE statement opts describes,
 // without executing it — the RESTORE counterpart of BuildBackupStatement.
 // Restore validates and builds the statement the same way, then runs
@@ -388,20 +407,24 @@ func (s *Server) BuildRestoreStatement(opts RestoreOptions) (string, error) {
 // executed statement is unchanged.
 //
 // With CloseExistingConnections the result is a batch — see that field — in
-// the SINGLE_USER form; Server.BuildRestoreStatement picks the form the
-// connected instance accepts.
-func BuildRestoreStatement(opts RestoreOptions) (string, error) {
-	return buildRestoreStatement(opts, false)
+// the form the instance accepts: SET SINGLE_USER, or killing the database's
+// sessions on a Managed Instance, which refuses SET SINGLE_USER. That is why
+// this is a Server method and BuildBackupStatement is not: until 2026-09-23 a
+// package-level BuildRestoreStatement sat beside this one and always wrote
+// the SINGLE_USER form, which a Managed Instance fails.
+func (s *Server) BuildRestoreStatement(opts RestoreOptions) (string, error) {
+	return buildRestoreStatement(opts, s.refusesSingleUser())
 }
 
-// buildRestoreStatement is BuildRestoreStatement, closing existing connections
-// by killing sessions rather than by SET SINGLE_USER when killSessions is set.
+// buildRestoreStatement is Server.BuildRestoreStatement, closing existing
+// connections by killing sessions rather than by SET SINGLE_USER when
+// killSessions is set.
 func buildRestoreStatement(opts RestoreOptions, killSessions bool) (string, error) {
 	if opts.Database == "" {
 		return "", fmt.Errorf("gosmo: restore: database name is required")
 	}
-	if len(opts.Devices) == 0 {
-		return "", fmt.Errorf("gosmo: restore: at least one device is required")
+	if err := checkTargets("restore", opts.Devices); err != nil {
+		return "", err
 	}
 	if opts.Action == "" {
 		opts.Action = BackupActionDatabase
@@ -433,12 +456,7 @@ func buildRestoreStatement(opts RestoreOptions, killSessions bool) (string, erro
 		fmt.Fprintf(&sb, " %s", spec)
 	}
 	sb.WriteString("\nFROM ")
-
-	deviceList := make([]string, len(opts.Devices))
-	for i, d := range opts.Devices {
-		deviceList[i] = backupDeviceClause(d)
-	}
-	sb.WriteString(strings.Join(deviceList, ", "))
+	sb.WriteString(targetList(opts.Devices))
 
 	var withs []string
 	if opts.FileNumber > 0 {
@@ -480,7 +498,7 @@ func buildRestoreStatement(opts RestoreOptions, killSessions bool) (string, erro
 	}
 	// Online and read-write: a database that does not exist yet or is RESTORING
 	// has no connections to close, and one in STANDBY refuses the ALTER.
-	online := fmt.Sprintf("EXISTS (SELECT 1 FROM sys.databases WHERE name = N%s AND state = 0 AND is_in_standby = 0)",
+	online := fmt.Sprintf("EXISTS (SELECT 1 FROM sys.databases WHERE name = %s AND state = 0 AND is_in_standby = 0)",
 		QuoteLiteral(opts.Database))
 	db := quoteIdent(opts.Database)
 	return fmt.Sprintf(`DECLARE @closed bit = 0;
@@ -703,20 +721,17 @@ func deviceClause(name string, isURL bool) string {
 	return fmt.Sprintf("%s = N'%s'", kw, escapeSingle(name))
 }
 
-// backupDeviceClause renders one device from BackupOptions.Devices /
-// RestoreOptions.Devices, choosing DISK or URL by the device's own shape —
-// those two fields are plain strings, so the shape is all there is to go on,
-// and IsBackupURL is what a caller should use to reach the same verdict.
-func backupDeviceClause(device string) string {
-	return deviceClause(device, IsBackupURL(device))
-}
-
-// BackupTarget names where a RESTORE-side read finds a backup: a physical
-// path, a blob URL, or a logical backup device from sys.backup_devices. The
-// three are addressed differently and are not interchangeable — a logical
-// device is named bare, as FROM [devicename], and passing its name as a path
-// produces FROM DISK = N'devicename', which SQL Server reads as a file of that
-// name in the server's default backup directory.
+// BackupTarget names where a backup is written or read: a physical path, a
+// blob URL, or a logical backup device from sys.backup_devices. The three are
+// addressed differently and are not interchangeable — a logical device is
+// named bare, as TO [devicename] / FROM [devicename], and passing its name as
+// a path produces DISK = N'devicename', which SQL Server reads as a file of
+// that name in the server's default backup directory.
+//
+// It is the one way to name a backup location, for BACKUP, RESTORE and the
+// RESTORE-side reads alike. Until 2026-09-23 BackupOptions.Devices and
+// RestoreOptions.Devices were plain strings, sniffed for a URL, and so could
+// not name a logical device at all.
 //
 // Build one with DiskTarget, URLTarget or DeviceTarget.
 type BackupTarget struct {
@@ -743,7 +758,8 @@ func URLTarget(url string) BackupTarget { return BackupTarget{name: url, url: tr
 // a row of sys.backup_devices, see Server.BackupDevices.
 func DeviceTarget(name string) BackupTarget { return BackupTarget{name: name, logical: true} }
 
-// clause renders the target as the FROM operand of a RESTORE statement.
+// clause renders the target as a TO operand of BACKUP or a FROM operand of
+// RESTORE — the same form in both.
 func (t BackupTarget) clause() string {
 	if t.logical {
 		return quoteIdent(t.name)
@@ -754,16 +770,38 @@ func (t BackupTarget) clause() string {
 // String returns the target's name, for error messages and display.
 func (t BackupTarget) String() string { return t.name }
 
-// VerifyBackup checks that the backup set on device is complete and
-// readable (RESTORE VERIFYONLY), without restoring it. device is a path on
-// the server's filesystem; VerifyBackupFrom takes a logical backup device.
-func (s *Server) VerifyBackup(ctx context.Context, device string) error {
-	return s.VerifyBackupFrom(ctx, DiskTarget(device))
+// IsURL reports whether the target is an Azure Storage blob.
+func (t BackupTarget) IsURL() bool { return t.url }
+
+// IsDevice reports whether the target is a logical backup device.
+func (t BackupTarget) IsDevice() bool { return t.logical }
+
+// checkTargets refuses an empty device list, and a target with no name — the
+// zero BackupTarget, which would render as DISK = N”.
+func checkTargets(verb string, targets []BackupTarget) error {
+	if len(targets) == 0 {
+		return fmt.Errorf("gosmo: %s: at least one device is required", verb)
+	}
+	for i, t := range targets {
+		if t.name == "" {
+			return fmt.Errorf("gosmo: %s: device %d has no name", verb, i+1)
+		}
+	}
+	return nil
 }
 
-// VerifyBackupFrom is VerifyBackup for any BackupTarget — a path or a
-// logical backup device.
-func (s *Server) VerifyBackupFrom(ctx context.Context, target BackupTarget) error {
+// targetList renders targets as the comma-separated TO/FROM operand list.
+func targetList(targets []BackupTarget) string {
+	parts := make([]string, len(targets))
+	for i, t := range targets {
+		parts[i] = t.clause()
+	}
+	return strings.Join(parts, ", ")
+}
+
+// VerifyBackup checks that the backup set on target is complete and
+// readable (RESTORE VERIFYONLY), without restoring it.
+func (s *Server) VerifyBackup(ctx context.Context, target BackupTarget) error {
 	stmt := "RESTORE VERIFYONLY FROM " + target.clause()
 	if err := s.exec(ctx, stmt); err != nil {
 		return fmt.Errorf("gosmo: verify backup %q: %w", target.name, err)
@@ -771,16 +809,9 @@ func (s *Server) VerifyBackupFrom(ctx context.Context, target BackupTarget) erro
 	return nil
 }
 
-// BackupHeaders reads the backup sets on a backup device (RESTORE
-// HEADERONLY) — one BackupHeader per set, in position order. device is a path
-// on the server's filesystem; BackupHeadersFrom takes a logical backup device.
-func (s *Server) BackupHeaders(ctx context.Context, device string) ([]*BackupHeader, error) {
-	return s.BackupHeadersFrom(ctx, DiskTarget(device))
-}
-
-// BackupHeadersFrom is BackupHeaders for any BackupTarget — a path or a
-// logical backup device.
-func (s *Server) BackupHeadersFrom(ctx context.Context, target BackupTarget) ([]*BackupHeader, error) {
+// BackupHeaders reads the backup sets on target (RESTORE HEADERONLY) — one
+// BackupHeader per set, in position order.
+func (s *Server) BackupHeaders(ctx context.Context, target BackupTarget) ([]*BackupHeader, error) {
 	device := target.name
 	q := "RESTORE HEADERONLY FROM " + target.clause()
 	rows, err := s.query(ctx, q)
@@ -850,15 +881,8 @@ func backupFileListQuery(target BackupTarget, fileNumber int) string {
 	return q
 }
 
-// BackupFileList reads the database files contained in the first backup set
-// on a backup device (RESTORE FILELISTONLY). Use BackupFileListForSet for a
-// device holding more than one set.
-func (s *Server) BackupFileList(ctx context.Context, device string) ([]*BackupFile, error) {
-	return s.BackupFileListForSet(ctx, device, 0)
-}
-
-// BackupFileListForSet reads the database files contained in one particular
-// backup set on a device (RESTORE FILELISTONLY WITH FILE = n).
+// BackupFileList reads the database files contained in one particular
+// backup set on target (RESTORE FILELISTONLY WITH FILE = n).
 //
 // fileNumber is 1-based, as reported by BackupHeader.Position, and matches
 // RestoreOptions.FileNumber — pass the same value to both or the file list
@@ -870,13 +894,7 @@ func (s *Server) BackupFileList(ctx context.Context, device string) ([]*BackupFi
 // were added between them. Building RESTORE's MOVE clauses from the wrong
 // set names logical files the restored set does not contain, which SQL
 // Server rejects outright.
-func (s *Server) BackupFileListForSet(ctx context.Context, device string, fileNumber int) ([]*BackupFile, error) {
-	return s.BackupFileListForSetFrom(ctx, DiskTarget(device), fileNumber)
-}
-
-// BackupFileListForSetFrom is BackupFileListForSet for any BackupTarget — a
-// path or a logical backup device.
-func (s *Server) BackupFileListForSetFrom(ctx context.Context, target BackupTarget, fileNumber int) ([]*BackupFile, error) {
+func (s *Server) BackupFileList(ctx context.Context, target BackupTarget, fileNumber int) ([]*BackupFile, error) {
 	device := target.name
 	rows, err := s.query(ctx, backupFileListQuery(target, fileNumber))
 	if err != nil {

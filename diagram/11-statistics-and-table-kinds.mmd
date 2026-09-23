@@ -76,6 +76,7 @@ classDiagram
         +Header() *StatisticHeader
         +DensityVector() []*StatisticDensity
         +Histogram() []*StatisticHistogramStep
+        +Table() *Table
         +Update(samplePct) error
         +Drop() error
         +Rename(newName) error
@@ -263,7 +264,7 @@ classDiagram
     Table --> TableDetail : has
     Table --> TableSpaceInfo : has
     Table --> DataSpace : DataSpace() returns
-    Table ..> CreateStatisticRequest : CreateStatisticWithOptions() takes
+    Table ..> CreateStatisticRequest : CreateStatistic() takes
     Index --> DataSpace : read with the index
     CreateIndexRequest --> SpatialBoundingBox : geometry schemes bounded by
     CreateIndexRequest --> SpatialGridLevels : grid density set by

@@ -65,7 +65,7 @@ func main() {
 		Columns: []gosmo.ColumnDefinition{
 			{Name: "LedgerID", DataType: gosmo.DataTypeInt, IsIdentity: true, IdentitySeed: 1, IdentityIncr: 1, IsPrimaryKey: true},
 			{Name: "Account", DataType: gosmo.DataTypeNVarChar, MaxLength: 40, IsNullable: false},
-			{Name: "Amount", DataType: gosmo.DataTypeDecimal, Precision: 18, Scale: 2, IsNullable: false},
+			{Name: "Amount", DataType: gosmo.DataTypeDecimal, Precision: new(18), Scale: new(2), IsNullable: false},
 			{Name: "Memo", DataType: gosmo.DataTypeNVarChar, MaxLength: 400, IsNullable: true},
 		},
 	}))
@@ -104,23 +104,25 @@ func main() {
 
 	// -- Fragmentation -----------------------------------------------------
 	//
-	// The mode is the DMV's: "LIMITED" (cheap, index leaf only), "SAMPLED",
-	// or "DETAILED". AvgPageSpaceUsedPct is only populated by the latter two
+	// The mode is the DMV's: FragmentationLimited (cheap, index leaf only),
+	// FragmentationSampled, or FragmentationDetailed. AvgPageSpaceUsedPct is only populated by the latter two
 	// — Table.FragmentationStats runs LIMITED and leaves it zero.
 	demo.Section("Fragmentation (DETAILED)")
 	for _, idx := range demo.Value(tbl.Indexes(ctx)) {
-		f := demo.Value(idx.Fragmentation(ctx, tbl, "DETAILED"))
+		f := demo.Value(idx.Fragmentation(ctx, gosmo.FragmentationDetailed))
 		fmt.Printf("  %-24s frag=%5.2f%%  pages=%-6d fragments=%-5d page_fullness=%5.2f%%\n",
 			f.IndexName, f.AvgFragmentationPct, f.PageCount, f.FragmentCount, f.AvgPageSpaceUsedPct)
 	}
 
 	demo.Section("Reorganize, then rebuild")
 	idx := demo.Value(tbl.Indexes(ctx))[0]
-	demo.Must(idx.Reorganize(ctx, tbl))
+	demo.Must(idx.Reorganize(ctx))
 	fmt.Printf("  reorganized %s\n", idx.Name)
-	// RebuildWithOptions is the same rebuild plus PAD_INDEX and
-	// DATA_COMPRESSION; the compression keyword is allowlisted, not spliced.
-	demo.Must(idx.RebuildWithOptions(ctx, tbl, 90, true, "PAGE"))
+	// Rebuild's options add PAD_INDEX, FILLFACTOR and DATA_COMPRESSION; the
+	// compression keyword is typed and allowlisted.
+	demo.Must(idx.Rebuild(ctx, gosmo.IndexRebuildOptions{
+		FillFactor: 90, PadIndex: new(true), DataCompression: gosmo.DataCompressionPage,
+	}))
 	fmt.Printf("  rebuilt %s at fill factor 90 with PAGE compression\n", idx.Name)
 	demo.Must(tbl.RebuildAllIndexes(ctx, 90))
 	fmt.Println("  rebuilt every index on the table")
@@ -133,18 +135,25 @@ func main() {
 
 	// -- Index options -----------------------------------------------------
 	demo.Section("Index options")
-	demo.Must(idx.SetLockOptions(ctx, tbl, true, false))
-	demo.Must(idx.Disable(ctx, tbl))
+	// A nil option is left alone and not sent — IGNORE_DUP_KEY stays off the
+	// statement, which a constraint-backing index would refuse.
+	demo.Must(idx.SetOptions(ctx, gosmo.IndexSetOptions{
+		AllowRowLocks:  new(true),
+		AllowPageLocks: new(false),
+	}))
+	demo.Must(idx.Disable(ctx))
 	fmt.Printf("  %s disabled — it now costs nothing to maintain and cannot be used\n", idx.Name)
-	demo.Must(idx.Enable(ctx, tbl)) // ENABLE is a rebuild; there is no cheaper way back
-	storage := demo.Value(idx.StorageInfo(ctx, tbl))
+	demo.Must(idx.Enable(ctx)) // ENABLE is a rebuild; there is no cheaper way back
+	storage := demo.Value(idx.StorageInfo(ctx))
 	fmt.Printf("  %s: %d rows, %d KB reserved (%d used) on %s, avg record %.1f bytes\n",
 		idx.Name, storage.RowCount, storage.ReservedKB, storage.UsedKB,
 		storage.FileGroup, storage.AvgRecordSize)
 
 	// -- Statistics --------------------------------------------------------
 	demo.Section("Statistics")
-	demo.Must(tbl.CreateStatistic(ctx, "ST_Ledger_Amount", []string{"Amount"}, 100))
+	demo.Must(tbl.CreateStatistic(ctx, gosmo.CreateStatisticRequest{
+		Name: "ST_Ledger_Amount", Columns: []string{"Amount"}, SamplePercent: 100,
+	}))
 	demo.Must(tbl.UpdateAllStatistics(ctx, 50))
 	for _, st := range demo.Value(tbl.Statistics(ctx)) {
 		origin := "auto"
@@ -190,9 +199,9 @@ func main() {
 
 	// -- Database options --------------------------------------------------
 	demo.Section("Database options")
-	demo.Must(db.SetDatabaseOption(ctx, gosmo.DBOptAutoCreateStatistics, "ON"))
-	demo.Must(db.SetDatabaseOption(ctx, gosmo.DBOptAutoUpdateStatisticsAsync, "ON"))
-	demo.Must(db.SetDatabaseOption(ctx, gosmo.DBOptPageVerify, "CHECKSUM"))
+	demo.Must(db.SetDatabaseOption(ctx, gosmo.DBOptAutoCreateStatistics, "ON", gosmo.TerminationNone))
+	demo.Must(db.SetDatabaseOption(ctx, gosmo.DBOptAutoUpdateStatisticsAsync, "ON", gosmo.TerminationNone))
+	demo.Must(db.SetDatabaseOption(ctx, gosmo.DBOptPageVerify, "CHECKSUM", gosmo.TerminationNone))
 	opts := demo.Value(db.Options(ctx))
 	fmt.Printf("  owner=%s page_verify=%s user_access=%s auto_create_stats=%t rcsi=%t\n",
 		opts.Owner, opts.PageVerify, opts.UserAccess, opts.AutoCreateStats, opts.ReadCommittedSnapshot)

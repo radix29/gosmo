@@ -84,6 +84,9 @@ func (t *Table) StatisticRef(name string) *Statistic {
 	return &Statistic{table: t, Name: name}
 }
 
+// Table returns the table the statistic is on.
+func (st *Statistic) Table() *Table { return st.table }
+
 func scanStatistic(t *Table, scan func(...any) error) (*Statistic, error) {
 	st := &Statistic{table: t}
 	var lastUpdated sql.NullTime
@@ -122,16 +125,24 @@ func checkSamplePct(op string, samplePct int) error {
 	return nil
 }
 
+// sampleClause is the WITH option for a sampling percentage checked by
+// checkSamplePct: FULLSCAN for 0, SAMPLE n PERCENT otherwise. Statistic.Update,
+// Table.UpdateAllStatistics and Index.UpdateStatistics share it so the three
+// read "0" the same way.
+func sampleClause(samplePct int) string {
+	if samplePct > 0 {
+		return fmt.Sprintf("SAMPLE %d PERCENT", samplePct)
+	}
+	return "FULLSCAN"
+}
+
 // Update updates this statistic.
 // Pass samplePct=0 for a FULLSCAN; any value 1-100 uses SAMPLE n PERCENT.
 func (st *Statistic) Update(ctx context.Context, samplePct int) error {
 	if err := checkSamplePct("update statistic "+st.Name, samplePct); err != nil {
 		return err
 	}
-	option := "FULLSCAN"
-	if samplePct > 0 {
-		option = fmt.Sprintf("SAMPLE %d PERCENT", samplePct)
-	}
+	option := sampleClause(samplePct)
 	// UPDATE STATISTICS does not support parameterised stat names.
 	q := fmt.Sprintf("UPDATE STATISTICS %s %s WITH %s",
 		st.table.FullName(), quoteIdent(st.Name), option)
@@ -158,25 +169,11 @@ func (t *Table) UpdateAllStatistics(ctx context.Context, samplePct int) error {
 	if err := checkSamplePct("update all statistics on "+t.FullName(), samplePct); err != nil {
 		return err
 	}
-	option := "FULLSCAN"
-	if samplePct > 0 {
-		option = fmt.Sprintf("SAMPLE %d PERCENT", samplePct)
-	}
+	option := sampleClause(samplePct)
 	if _, err := t.db.exec(ctx, fmt.Sprintf("UPDATE STATISTICS %s WITH %s", t.FullName(), option)); err != nil {
 		return fmt.Errorf("gosmo: update all statistics on %s: %w", t.FullName(), err)
 	}
 	return nil
-}
-
-// CreateStatistic creates a user-defined statistic on one or more columns.
-// Pass samplePct=0 to let the server choose its own sample; see
-// CreateStatisticWithOptions for a filter, FULLSCAN, or NORECOMPUTE.
-func (t *Table) CreateStatistic(ctx context.Context, name string, columns []string, samplePct int) error {
-	return t.CreateStatisticWithOptions(ctx, CreateStatisticRequest{
-		Name:          name,
-		Columns:       columns,
-		SamplePercent: samplePct,
-	})
 }
 
 // CreateStatisticRequest describes a user-defined statistic to create.
@@ -202,10 +199,9 @@ type CreateStatisticRequest struct {
 	Incremental bool
 }
 
-// CreateStatisticWithOptions creates a user-defined statistic from a full
-// request — the form that reaches the sampling, filter and recompute options
-// CreateStatistic leaves at their defaults.
-func (t *Table) CreateStatisticWithOptions(ctx context.Context, req CreateStatisticRequest) error {
+// CreateStatistic creates a user-defined statistic. A request naming only
+// the statistic and its columns lets the server choose its own sample.
+func (t *Table) CreateStatistic(ctx context.Context, req CreateStatisticRequest) error {
 	q, err := buildCreateStatisticStatement(t.FullName(), req)
 	if err != nil {
 		return err

@@ -44,7 +44,7 @@ func TestScriptedCreatesEmitOneStatement(t *testing.T) {
 				Files: []SnapshotFileSpec{{LogicalName: "App]Data", FileName: `C:\snap\a'1.ss`}},
 			})
 			return err
-		}, "CREATE DATABASE [App'DB_snap] ON\n    ( NAME = [App]]Data], FILENAME = 'C:\\snap\\a''1.ss' )\n" +
+		}, "CREATE DATABASE [App'DB_snap] ON\n    ( NAME = [App]]Data], FILENAME = N'C:\\snap\\a''1.ss' )\n" +
 			"AS SNAPSHOT OF [App'DB]"},
 		{"AddListener", func(c context.Context) error {
 			return (&AvailabilityGroup{server: &Server{}, Name: "AA]G1"}).AddListener(c,

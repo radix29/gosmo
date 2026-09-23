@@ -184,14 +184,34 @@ func isSimpleSetValue(s string) bool {
 // the keyword or clause that follows the option name verbatim, e.g. "ON",
 // "OFF", "CHECKSUM", "PARTIAL", "SNAPSHOT_ISOLATION" — see SQL Server's
 // ALTER DATABASE SET reference for each option's accepted values.
-func (d *Database) SetDatabaseOption(ctx context.Context, opt DatabaseOption, value string) error {
+//
+// term is the statement's WITH clause. It matters for an option needing
+// exclusive access — READ_COMMITTED_SNAPSHOT is the one here — which under
+// TerminationNone waits for every other session in the database to leave;
+// this Server's own idle sessions are released first for that option (see
+// Server.ReleaseIdleConnections). The other options take it too.
+func (d *Database) SetDatabaseOption(ctx context.Context, opt DatabaseOption, value string, term Termination) error {
 	if !validDatabaseOption(opt) {
 		return fmt.Errorf("gosmo: set database option: unrecognized option %q", opt)
 	}
 	if !isSimpleSetValue(value) {
 		return fmt.Errorf("gosmo: set database option %s: invalid value %q", opt, value)
 	}
-	q := fmt.Sprintf("ALTER DATABASE %s SET %s %s", quoteIdent(d.Name), opt, value)
+	with, err := term.withClause()
+	if err != nil {
+		return fmt.Errorf("gosmo: set database option %s: %w", opt, err)
+	}
+	// CONTAINMENT is the one option here whose grammar needs '=' —
+	// "SET CONTAINMENT = PARTIAL"; without it the server answers
+	// "Incorrect syntax near 'PARTIAL'".
+	sep := " "
+	if opt == DBOptContainment {
+		sep = " = "
+	}
+	q := fmt.Sprintf("ALTER DATABASE %s SET %s%s%s%s", quoteIdent(d.Name), opt, sep, value, with)
+	if opt == DBOptReadCommittedSnapshot {
+		d.server.releaseIdle(ctx)
+	}
 	if err := d.server.exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: set %s %s on %q: %w", opt, value, d.Name, err)
 	}

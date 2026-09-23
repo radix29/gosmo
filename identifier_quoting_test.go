@@ -186,10 +186,10 @@ func TestFragmentationQueriesBracketQuoteTheObjectName(t *testing.T) {
 
 	t.Run("Index.Fragmentation", func(t *testing.T) {
 		tbl := captureTable(t)
-		idx := &Index{Name: "IX_pad", IndexID: 2}
+		idx := tbl.IndexRef("IX_pad")
 		// The capture driver returns no rows, so this errors; the statement it
 		// generated on the way is what's under test.
-		_, _ = idx.Fragmentation(context.Background(), tbl, "SAMPLED")
+		_, _ = idx.Fragmentation(context.Background(), FragmentationSampled)
 
 		q := captured.find("dm_db_index_physical_stats")
 		if q == "" {
@@ -291,5 +291,32 @@ func TestScripterExistenceGuardsBracketQuoteTheObjectName(t *testing.T) {
 				t.Errorf("script does not contain %s:\n%s", wantName, out)
 			}
 		})
+	}
+}
+
+// TestQuoteLiteralIsUnicode pins S9: a literal without the N prefix is
+// varchar, converted through the database's code page, and a Cyrillic or CJK
+// path outside it turns into '?' — a file created somewhere else, or not at
+// all. Every FILENAME gosmo writes goes through QuoteLiteral.
+func TestQuoteLiteralIsUnicode(t *testing.T) {
+	if got, want := QuoteLiteral(`C:\Данные\日本's.mdf`), `N'C:\Данные\日本''s.mdf'`; got != want {
+		t.Errorf("QuoteLiteral = %s, want %s", got, want)
+	}
+	spec := DatabaseFileSpec{Name: "d", Path: `C:\Данные\d.mdf`}
+	add, err := buildAddFileStatement("appdb", spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, stmt := range map[string]string{"CREATE DATABASE file": buildFileDefClause(spec), "ADD FILE": add} {
+		if !strings.Contains(stmt, `FILENAME = N'C:\Данные\d.mdf'`) {
+			t.Errorf("%s: %s — the path is not an N'…' literal", name, stmt)
+		}
+	}
+	ctx, script := WithScript(context.Background())
+	if err := (&Server{}).RestoreFromSnapshot(ctx, "appdb", "снимок"); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(script.Statements(), ""); !strings.Contains(got, "DATABASE_SNAPSHOT = N'снимок'") {
+		t.Errorf("RestoreFromSnapshot: %s — the snapshot name is not an N'…' literal", got)
 	}
 }

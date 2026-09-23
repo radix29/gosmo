@@ -70,7 +70,7 @@ func main() {
 	demo.Section("Generated T-SQL")
 	fmt.Println(" ", demo.Value(gosmo.BuildBackupStatement(gosmo.BackupOptions{
 		Database:    dbName,
-		Devices:     []string{device},
+		Devices:     []gosmo.BackupTarget{gosmo.DiskTarget(device)},
 		Checksum:    true,
 		Init:        true,
 		Stats:       10,
@@ -86,7 +86,7 @@ func main() {
 	demo.Section("Full backup")
 	demo.Must(srv.Backup(ctx, gosmo.BackupOptions{
 		Database:      dbName,
-		Devices:       []string{device},
+		Devices:       []gosmo.BackupTarget{gosmo.DiskTarget(device)},
 		BackupSetName: dbName + " full",
 		Description:   "gosmo example full backup",
 		Checksum:      true,
@@ -106,32 +106,32 @@ func main() {
 	demo.Must(srv.Backup(ctx, gosmo.BackupOptions{
 		Database:      dbName,
 		Action:        gosmo.BackupActionDifferential,
-		Devices:       []string{device},
+		Devices:       []gosmo.BackupTarget{gosmo.DiskTarget(device)},
 		BackupSetName: dbName + " diff",
 	}))
 	demo.Must(srv.Backup(ctx, gosmo.BackupOptions{
 		Database:      dbName,
 		Action:        gosmo.BackupActionLog,
-		Devices:       []string{device},
+		Devices:       []gosmo.BackupTarget{gosmo.DiskTarget(device)},
 		BackupSetName: dbName + " log",
 	}))
 	fmt.Println("  appended")
 
 	// -- What is on the media ---------------------------------------------
 	demo.Section("Backup sets on the device (RESTORE HEADERONLY)")
-	for _, h := range demo.Value(srv.BackupHeaders(ctx, device)) {
+	for _, h := range demo.Value(srv.BackupHeaders(ctx, gosmo.DiskTarget(device))) {
 		fmt.Printf("  pos=%d  %-24s type=%-6s size=%.1f MB  %s\n",
 			h.Position, h.BackupName, h.BackupType,
 			float64(h.BackupSize)/(1024*1024), h.BackupFinish.Format(time.RFC3339))
 	}
 
 	demo.Section("Files inside the first set (RESTORE FILELISTONLY)")
-	for _, f := range demo.Value(srv.BackupFileList(ctx, device)) {
+	for _, f := range demo.Value(srv.BackupFileList(ctx, gosmo.DiskTarget(device), 0)) {
 		fmt.Printf("  %-16s %-6s %s\n", f.LogicalName, f.Type, f.PhysicalName)
 	}
 
 	demo.Section("Verify (RESTORE VERIFYONLY)")
-	demo.Must(srv.VerifyBackup(ctx, device))
+	demo.Must(srv.VerifyBackup(ctx, gosmo.DiskTarget(device)))
 	fmt.Println("  backup set is readable and complete")
 
 	// -- msdb's backup history --------------------------------------------
@@ -151,7 +151,7 @@ func main() {
 	// server with different paths — work at all.
 	demo.Section("Restore (full set, files relocated)")
 	dataDir := srv.Info().DefaultDataPath
-	files := demo.Value(srv.BackupFileList(ctx, device))
+	files := demo.Value(srv.BackupFileList(ctx, gosmo.DiskTarget(device), 0))
 	relocate := make([]gosmo.RelocateFile, 0, len(files))
 	for _, f := range files {
 		ext := ".mdf"
@@ -165,7 +165,7 @@ func main() {
 	}
 	demo.Must(srv.Restore(ctx, gosmo.RestoreOptions{
 		Database:      dbName,
-		Devices:       []string{device},
+		Devices:       []gosmo.BackupTarget{gosmo.DiskTarget(device)},
 		FileNumber:    1,
 		RelocateFiles: relocate,
 		Replace:       true,
@@ -191,9 +191,9 @@ func main() {
 	// set, then roll the log forward:
 	//
 	//	stopAt := time.Now().Add(-5 * time.Minute)
-	//	srv.Restore(gosmo.RestoreOptions{Database: dbName, Devices: []string{device},
+	//	srv.Restore(gosmo.RestoreOptions{Database: dbName, Devices: []gosmo.BackupTarget{gosmo.DiskTarget(device)},
 	//		FileNumber: 1, Replace: true, Recovery: gosmo.RestoreWithNoRecovery})
-	//	srv.Restore(gosmo.RestoreOptions{Database: dbName, Devices: []string{device},
+	//	srv.Restore(gosmo.RestoreOptions{Database: dbName, Devices: []gosmo.BackupTarget{gosmo.DiskTarget(device)},
 	//		FileNumber: 3, Action: gosmo.BackupActionLog, StopAt: &stopAt, Recovery: gosmo.RestoreWithRecovery})
 	demo.Section("Cleanup")
 	fmt.Printf("  the backup device %s is left on the server\n", device)

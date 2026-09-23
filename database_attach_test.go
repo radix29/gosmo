@@ -9,6 +9,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	mssql "github.com/microsoft/go-mssqldb"
 )
 
 // -- a driver that answers the two DBCC options differently ----------------
@@ -35,6 +37,9 @@ func (c *detConn) ExecContext(ctx context.Context, q string, _ []driver.NamedVal
 		return nil, ctx.Err()
 	}
 	if detLog.failOn != "" && strings.Contains(q, detLog.failOn) {
+		if detLog.failErr != nil {
+			return nil, detLog.failErr
+		}
 		return nil, errors.New("scripted failure")
 	}
 	return driver.ResultNoRows, nil
@@ -49,6 +54,10 @@ type detRecorder struct {
 	mu     sync.Mutex
 	calls  []string
 	failOn string
+	// failErr is what a failOn match returns; nil means a plain error, which
+	// is not a server error and so reads as a batch cut short (see
+	// batchCutShort). serverErr sets it to one that ran to the batch's end.
+	failErr error
 
 	// cancelOn stands in for the caller's deadline expiring *during* a
 	// statement — the failure mode the MULTI_USER repair exists for, and the
@@ -147,9 +156,38 @@ func detServer(t *testing.T) *Server {
 	t.Cleanup(func() { pool.Close() })
 	detLog.mu.Lock()
 	detLog.calls, detLog.failOn, detLog.props, detLog.files = nil, "", nil, nil
+	detLog.failErr = nil
 	detLog.cancelOn, detLog.cancel = "", nil
 	detLog.mu.Unlock()
 	return &Server{db: pool}
+}
+
+// detFailOn arms the recorder to fail the statement containing needle with
+// an ordinary server error — one reported after the batch ran to its end.
+func detFailOn(needle string) {
+	detLog.mu.Lock()
+	detLog.failOn = needle
+	detLog.failErr = mssql.Error{Number: 3702, Class: 16, Message: "Cannot drop database because it is currently in use."}
+	detLog.mu.Unlock()
+}
+
+// assertExclusiveBatch checks stmt is exclusiveBatch's shape around op:
+// SINGLE_USER first, op gated on it having succeeded and inside TRY, and a
+// CATCH that repairs a database still there before re-raising. A trailing
+// repair after op does not run — a failed DROP DATABASE or sp_detach_db
+// aborts the batch (probed) — so the repair must be in the CATCH.
+func assertExclusiveBatch(t *testing.T, stmt, db, op string) {
+	t.Helper()
+	single := strings.Index(stmt, "ALTER DATABASE "+db+" SET SINGLE_USER WITH ROLLBACK IMMEDIATE")
+	gate := strings.Index(stmt, "IF @@ERROR = 0 SET @closed = 1;\nIF @closed = 1\nBEGIN TRY\n    "+op)
+	catch := strings.Index(stmt, "BEGIN CATCH\n    IF DB_ID(")
+	multi := strings.Index(stmt, "IS NOT NULL ALTER DATABASE "+db+" SET MULTI_USER;\n    THROW;\nEND CATCH;")
+	if single < 0 || gate < 0 || catch < 0 || multi < 0 || !(single < gate && gate < catch && catch < multi) {
+		t.Errorf("batch is not SINGLE_USER, then %q gated on it in TRY, then a CATCH repairing with a DB_ID-guarded MULTI_USER and THROW:\n%s", op, stmt)
+	}
+	if !strings.HasSuffix(stmt, "END CATCH;") {
+		t.Errorf("something follows the CATCH, which a failed op never reaches:\n%s", stmt)
+	}
 }
 
 // detCancelOn arms the recorder to cancel ctx when the statement containing
@@ -210,22 +248,19 @@ func TestDetachFlagsAreTheInverseOfTheProceduresParameters(t *testing.T) {
 
 // TestDetachDropConnectionsSetsSingleUserFirst. A database with any other
 // connection open refuses to detach, so the option has to run before the
-// procedure — after it, there is no database left to alter.
+// procedure — after it, there is no database left to alter. And in the same
+// batch: as a separate exec, a reconnecting application took the slot
+// SINGLE_USER freed before the detach reached the server (S8).
 func TestDetachDropConnectionsSetsSingleUserFirst(t *testing.T) {
 	s := detServer(t)
 	if err := s.DetachDatabase(context.Background(), "appdb", DetachOptions{DropConnections: true}); err != nil {
 		t.Fatalf("DetachDatabase: %v", err)
 	}
 	stmts := detLog.statements()
-	if len(stmts) != 2 {
-		t.Fatalf("got %d statements, want the single-user alter and the detach: %v", len(stmts), stmts)
+	if len(stmts) != 1 {
+		t.Fatalf("got %d statements, want the single-user alter and the detach in one batch: %v", len(stmts), stmts)
 	}
-	if !strings.Contains(stmts[0], "SET SINGLE_USER WITH ROLLBACK IMMEDIATE") {
-		t.Errorf("first statement is %q, want the single-user alter", stmts[0])
-	}
-	if !strings.Contains(stmts[1], "sp_detach_db") {
-		t.Errorf("second statement is %q, want the detach", stmts[1])
-	}
+	assertExclusiveBatch(t, stmts[0], "[appdb]", "EXEC master.dbo.sp_detach_db")
 }
 
 // TestAFailedDetachIsPutBackToMultiUser. SINGLE_USER blocks every other
@@ -234,19 +269,19 @@ func TestDetachDropConnectionsSetsSingleUserFirst(t *testing.T) {
 // never asked for. Same contract as RenameDatabase's force.
 func TestAFailedDetachIsPutBackToMultiUser(t *testing.T) {
 	s := detServer(t)
-	detLog.mu.Lock()
-	detLog.failOn = "sp_detach_db"
-	detLog.mu.Unlock()
+	detFailOn("sp_detach_db")
 
 	err := s.DetachDatabase(context.Background(), "appdb", DetachOptions{DropConnections: true})
 	if err == nil {
 		t.Fatal("a failing detach returned no error")
 	}
+	// The batch carries its own repair and ran to its end; a second one from
+	// here would be redundant, and wrong where the ALTER was what failed.
 	stmts := detLog.statements()
-	last := stmts[len(stmts)-1]
-	if !strings.Contains(last, "SET MULTI_USER") {
-		t.Errorf("last statement after a failed detach is %q, want the database put back to MULTI_USER: %v", last, stmts)
+	if len(stmts) != 1 {
+		t.Fatalf("statements %v, want only the batch, which repairs itself", stmts)
 	}
+	assertExclusiveBatch(t, stmts[0], "[appdb]", "EXEC master.dbo.sp_detach_db")
 }
 
 // TestAFailedDetachIsPutBackToMultiUserEvenWhenTheContextIsGone. The repair
@@ -273,17 +308,19 @@ func TestAFailedDetachIsPutBackToMultiUserEvenWhenTheContextIsGone(t *testing.T)
 
 // TestASuccessfulDetachDoesNotTryToAlterTheDatabaseAfterwards. The database
 // is gone from the instance by then, so a MULTI_USER alter would fail with
-// "not found" — turning a detach that worked into a reported failure.
+// "not found" — turning a detach that worked into a reported failure. The
+// batch's repair is guarded on DB_ID (assertExclusiveBatch), and nothing
+// follows it.
 func TestASuccessfulDetachDoesNotTryToAlterTheDatabaseAfterwards(t *testing.T) {
 	s := detServer(t)
 	if err := s.DetachDatabase(context.Background(), "appdb", DetachOptions{DropConnections: true}); err != nil {
 		t.Fatalf("DetachDatabase: %v", err)
 	}
-	for _, stmt := range detLog.statements() {
-		if strings.Contains(stmt, "SET MULTI_USER") {
-			t.Errorf("a successful detach issued %q against a database that no longer exists", stmt)
-		}
+	stmts := detLog.statements()
+	if len(stmts) != 1 {
+		t.Fatalf("statements %v, want only the batch", stmts)
 	}
+	assertExclusiveBatch(t, stmts[0], "[appdb]", "EXEC master.dbo.sp_detach_db")
 }
 
 func TestDetachRequiresAName(t *testing.T) {

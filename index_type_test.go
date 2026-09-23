@@ -48,7 +48,7 @@ func TestSetIncludedColumnsRejectsColumnStore(t *testing.T) {
 		idx := &Index{Name: "cci", Type: typ, IsClustered: typ == IndexTypeClusteredColumnStore,
 			KeyColumns: []IndexColumn{{Name: "a"}}}
 
-		err := idx.SetIncludedColumns(t.Context(), tbl, []string{"b"})
+		err := onTable(tbl, idx).SetIncludedColumns(t.Context(), []string{"b"})
 		if err == nil {
 			t.Fatalf("%s: SetIncludedColumns returned nil, want an error", typ)
 		}

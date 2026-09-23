@@ -1,7 +1,7 @@
 //go:build livedb
 
 // Live coverage for the four backup *reads*: BackupHeaders, BackupFileList,
-// BackupFileListForSet and BackupHistory.
+// BackupFileList for a later set, and BackupHistory.
 //
 // All four are reads — RESTORE HEADERONLY / FILELISTONLY and an msdb history
 // query — so WithScript cannot capture them and no unit test can reach them:
@@ -87,7 +87,7 @@ func TestLiveBackupReads(t *testing.T) {
 	srv := first.server
 
 	t.Run("headers", func(t *testing.T) {
-		headers, err := srv.BackupHeaders(ctx, device)
+		headers, err := srv.BackupHeaders(ctx, DiskTarget(device))
 		if err != nil {
 			t.Fatalf("BackupHeaders: %v", err)
 		}
@@ -127,7 +127,7 @@ func TestLiveBackupReads(t *testing.T) {
 	})
 
 	t.Run("file list", func(t *testing.T) {
-		files, err := srv.BackupFileList(ctx, device)
+		files, err := srv.BackupFileList(ctx, DiskTarget(device), 0)
 		if err != nil {
 			t.Fatalf("BackupFileList: %v", err)
 		}
@@ -138,9 +138,9 @@ func TestLiveBackupReads(t *testing.T) {
 	// FILE clause this reads set 1, so a FileListForSet that ignored its
 	// argument would still return a plausible answer.
 	t.Run("file list for set two", func(t *testing.T) {
-		files, err := srv.BackupFileListForSet(ctx, device, 2)
+		files, err := srv.BackupFileList(ctx, DiskTarget(device), 2)
 		if err != nil {
-			t.Fatalf("BackupFileListForSet: %v", err)
+			t.Fatalf("BackupFileList set 2: %v", err)
 		}
 		assertBackupFileList(t, files, second.Name)
 	})

@@ -40,8 +40,8 @@ func main() {
 		Columns: []gosmo.ColumnDefinition{
 			{Name: "ReadingID", DataType: gosmo.DataTypeInt, IsIdentity: true, IdentitySeed: 1, IdentityIncr: 1, IsPrimaryKey: true},
 			{Name: "SensorID", DataType: gosmo.DataTypeInt, IsNullable: false},
-			{Name: "TakenAt", DataType: gosmo.DataTypeDatetime2, Scale: 3, IsNullable: false},
-			{Name: "Celsius", DataType: gosmo.DataTypeDecimal, Precision: 6, Scale: 2, IsNullable: false},
+			{Name: "TakenAt", DataType: gosmo.DataTypeDatetime2, Scale: new(3), IsNullable: false},
+			{Name: "Celsius", DataType: gosmo.DataTypeDecimal, Precision: new(6), Scale: new(2), IsNullable: false},
 			{Name: "Note", DataType: gosmo.DataTypeNVarChar, MaxLength: 100, IsNullable: true, DefaultValue: "'(none)'"},
 		},
 	}))

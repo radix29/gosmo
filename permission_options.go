@@ -11,13 +11,15 @@ import (
 // GRANT OPTION FOR
 // ============================================================
 
-// PermissionOptions carries the GRANT/DENY/REVOKE modifiers the plain
-// Grant/Deny/Revoke trios do not expose. The zero value renders exactly the
-// statement those trios render, at every scope — true by construction since
-// 2026-08-05: each plain method is a one-line delegation to its
-// WithOptions counterpart passing PermissionOptions{}, so there is one
-// renderer (permissionStmt) and one set of error strings rather than two
-// that have to be kept in step.
+// PermissionOptions carries the GRANT/DENY/REVOKE modifiers every
+// Grant/Deny/Revoke method at every scope takes as its last argument. The
+// zero value renders the plain statement. There is one renderer
+// (permissionStmt) and one set of error strings for all five scopes.
+//
+// Until 2026-09-23 each method came as a pair, a plain Foo delegating to a
+// FooWithOptions passing PermissionOptions{} — eighteen twins whose zero
+// options equalled the plain form, the same shape the Foo/FooContext pairs
+// had before them.
 //
 // The three fields are not independent of each other in practice, because
 // SQL Server refuses some sequences outright:
@@ -115,22 +117,21 @@ func (p permissionStmt) render() (string, error) {
 
 // -- Object scope (tables and views) ---------------------------------------
 
-// GrantPermissionWithOptions grants permission on schema.name to principal,
-// honouring opts — the WITH GRANT OPTION form of GrantPermission.
-func (d *Database) GrantPermissionWithOptions(ctx context.Context, schema, name string, permission ObjectPermission, principal string, opts PermissionOptions) error {
+// GrantPermission grants permission on schema.name to principal. opts adds
+// WITH GRANT OPTION; the zero value is the plain GRANT.
+func (d *Database) GrantPermission(ctx context.Context, schema, name string, permission ObjectPermission, principal string, opts PermissionOptions) error {
 	return d.objectPermission(ctx, "GRANT", schema, name, permission, nil, principal, opts)
 }
 
-// DenyPermissionWithOptions denies permission on schema.name to principal,
-// honouring opts — the CASCADE form of DenyPermission.
-func (d *Database) DenyPermissionWithOptions(ctx context.Context, schema, name string, permission ObjectPermission, principal string, opts PermissionOptions) error {
+// DenyPermission denies permission on schema.name to principal. opts adds
+// CASCADE; the zero value is the plain DENY.
+func (d *Database) DenyPermission(ctx context.Context, schema, name string, permission ObjectPermission, principal string, opts PermissionOptions) error {
 	return d.objectPermission(ctx, "DENY", schema, name, permission, nil, principal, opts)
 }
 
-// RevokePermissionWithOptions revokes permission on schema.name from
-// principal, honouring opts — the CASCADE and GRANT OPTION FOR forms of
-// RevokePermission.
-func (d *Database) RevokePermissionWithOptions(ctx context.Context, schema, name string, permission ObjectPermission, principal string, opts PermissionOptions) error {
+// RevokePermission revokes permission on schema.name from principal. opts
+// adds CASCADE or GRANT OPTION FOR; the zero value is the plain REVOKE.
+func (d *Database) RevokePermission(ctx context.Context, schema, name string, permission ObjectPermission, principal string, opts PermissionOptions) error {
 	return d.objectPermission(ctx, "REVOKE", schema, name, permission, nil, principal, opts)
 }
 
@@ -170,21 +171,21 @@ func fromOrTo(verb string) string {
 
 // -- Schema scope ----------------------------------------------------------
 
-// GrantSchemaPermissionWithOptions grants permission on a schema to
-// principal, honouring opts.
-func (d *Database) GrantSchemaPermissionWithOptions(ctx context.Context, schemaName string, permission ObjectPermission, principal string, opts PermissionOptions) error {
+// GrantSchemaPermission grants permission on a schema to principal,
+// honouring opts.
+func (d *Database) GrantSchemaPermission(ctx context.Context, schemaName string, permission ObjectPermission, principal string, opts PermissionOptions) error {
 	return d.schemaPermission(ctx, "GRANT", schemaName, permission, principal, opts)
 }
 
-// DenySchemaPermissionWithOptions denies permission on a schema to
-// principal, honouring opts.
-func (d *Database) DenySchemaPermissionWithOptions(ctx context.Context, schemaName string, permission ObjectPermission, principal string, opts PermissionOptions) error {
+// DenySchemaPermission denies permission on a schema to principal,
+// honouring opts.
+func (d *Database) DenySchemaPermission(ctx context.Context, schemaName string, permission ObjectPermission, principal string, opts PermissionOptions) error {
 	return d.schemaPermission(ctx, "DENY", schemaName, permission, principal, opts)
 }
 
-// RevokeSchemaPermissionWithOptions revokes permission on a schema from
-// principal, honouring opts.
-func (d *Database) RevokeSchemaPermissionWithOptions(ctx context.Context, schemaName string, permission ObjectPermission, principal string, opts PermissionOptions) error {
+// RevokeSchemaPermission revokes permission on a schema from principal,
+// honouring opts.
+func (d *Database) RevokeSchemaPermission(ctx context.Context, schemaName string, permission ObjectPermission, principal string, opts PermissionOptions) error {
 	return d.schemaPermission(ctx, "REVOKE", schemaName, permission, principal, opts)
 }
 
@@ -208,30 +209,30 @@ func (d *Database) schemaPermission(ctx context.Context, verb, schemaName string
 
 // -- Database scope --------------------------------------------------------
 
-// GrantDatabasePermissionWithOptions grants a database-level permission to
-// principal, honouring opts.
-func (d *Database) GrantDatabasePermissionWithOptions(ctx context.Context, permission, principal string, opts PermissionOptions) error {
+// GrantDatabasePermission grants a database-level permission to principal,
+// honouring opts.
+func (d *Database) GrantDatabasePermission(ctx context.Context, permission DatabasePermission, principal string, opts PermissionOptions) error {
 	return d.databasePermission(ctx, "GRANT", permission, principal, opts)
 }
 
-// DenyDatabasePermissionWithOptions denies a database-level permission to
-// principal, honouring opts.
-func (d *Database) DenyDatabasePermissionWithOptions(ctx context.Context, permission, principal string, opts PermissionOptions) error {
+// DenyDatabasePermission denies a database-level permission to principal,
+// honouring opts.
+func (d *Database) DenyDatabasePermission(ctx context.Context, permission DatabasePermission, principal string, opts PermissionOptions) error {
 	return d.databasePermission(ctx, "DENY", permission, principal, opts)
 }
 
-// RevokeDatabasePermissionWithOptions revokes a database-level permission
-// from principal, honouring opts.
-func (d *Database) RevokeDatabasePermissionWithOptions(ctx context.Context, permission, principal string, opts PermissionOptions) error {
+// RevokeDatabasePermission revokes a database-level permission from
+// principal, honouring opts.
+func (d *Database) RevokeDatabasePermission(ctx context.Context, permission DatabasePermission, principal string, opts PermissionOptions) error {
 	return d.databasePermission(ctx, "REVOKE", permission, principal, opts)
 }
 
-func (d *Database) databasePermission(ctx context.Context, verb, permission, principal string, opts PermissionOptions) error {
+func (d *Database) databasePermission(ctx context.Context, verb string, permission DatabasePermission, principal string, opts PermissionOptions) error {
 	lower := strings.ToLower(verb)
 	if !validDatabasePermission(permission) {
 		return fmt.Errorf("gosmo: %s database permission: unrecognized permission %q", lower, permission)
 	}
-	q, err := permissionStmt{verb: verb, permission: permission, principal: principal, opts: opts}.render()
+	q, err := permissionStmt{verb: verb, permission: string(permission), principal: principal, opts: opts}.render()
 	if err != nil {
 		return err
 	}
@@ -243,37 +244,57 @@ func (d *Database) databasePermission(ctx context.Context, verb, permission, pri
 
 // -- Server scope ----------------------------------------------------------
 
-// GrantServerPermissionWithOptions grants a server-level permission to
-// principal, honouring opts.
+// GrantServerPermission grants a server-level permission to principal,
+// honouring opts.
 //
-// See GrantServerPermission for the USE master prefix every
-// server-scoped statement carries.
-func (s *Server) GrantServerPermissionWithOptions(ctx context.Context, permission, principal string, opts PermissionOptions) error {
+// SQL Server rejects GRANT/DENY/REVOKE at server scope outright unless the
+// session's current database is master ("Permissions at the server scope can
+// only be granted when the current database is master") — its own
+// restriction, not one gosmo imposes — so every statement here is prefixed
+// with USE master in the same batch.
+//
+// That USE does not leak into whatever borrows the connection next, and the
+// reason is the driver, not this package: USE is session state and would
+// otherwise survive the connection's return to the pool. database/sql calls
+// driver.SessionResetter.ResetSession before handing a pooled connection to
+// its next user, and go-mssqldb implements it by flagging the next TDS batch
+// as a connection reset (Conn.ResetSession -> sendSqlBatch72's resetSession),
+// which restores the session's database to the connection string's.
+//
+// Verified live 2026-08-01, A/B against a connection opened with
+// Database set: eight pooled connections all still reported that database
+// after a GRANT. Recorded because the shape of this code invites the
+// opposite conclusion — a review that session proposed replacing it with a
+// pinned connection that reads DB_NAME(), switches, and switches back, which
+// is three extra round trips per grant to re-solve what the driver already
+// handles.
+func (s *Server) GrantServerPermission(ctx context.Context, permission ServerPermission, principal string, opts PermissionOptions) error {
 	return s.serverPermission(ctx, "GRANT", permission, principal, opts)
 }
 
-// DenyServerPermissionWithOptions denies a server-level permission to
-// principal, honouring opts.
+// DenyServerPermission denies a server-level permission to principal,
+// honouring opts.
 //
-// See GrantServerPermission for the USE master prefix.
-func (s *Server) DenyServerPermissionWithOptions(ctx context.Context, permission, principal string, opts PermissionOptions) error {
+// See GrantServerPermission for the USE master prefix every
+// server-scoped statement carries.
+func (s *Server) DenyServerPermission(ctx context.Context, permission ServerPermission, principal string, opts PermissionOptions) error {
 	return s.serverPermission(ctx, "DENY", permission, principal, opts)
 }
 
-// RevokeServerPermissionWithOptions revokes a server-level permission from
-// principal, honouring opts.
+// RevokeServerPermission revokes a server-level permission from principal,
+// honouring opts.
 //
 // See GrantServerPermission for the USE master prefix.
-func (s *Server) RevokeServerPermissionWithOptions(ctx context.Context, permission, principal string, opts PermissionOptions) error {
+func (s *Server) RevokeServerPermission(ctx context.Context, permission ServerPermission, principal string, opts PermissionOptions) error {
 	return s.serverPermission(ctx, "REVOKE", permission, principal, opts)
 }
 
-func (s *Server) serverPermission(ctx context.Context, verb, permission, principal string, opts PermissionOptions) error {
+func (s *Server) serverPermission(ctx context.Context, verb string, permission ServerPermission, principal string, opts PermissionOptions) error {
 	lower := strings.ToLower(verb)
 	if !validServerPermission(permission) {
 		return fmt.Errorf("gosmo: %s server permission: unrecognized permission %q", lower, permission)
 	}
-	stmt, err := permissionStmt{verb: verb, permission: permission, principal: principal, opts: opts}.render()
+	stmt, err := permissionStmt{verb: verb, permission: string(permission), principal: principal, opts: opts}.render()
 	if err != nil {
 		return err
 	}

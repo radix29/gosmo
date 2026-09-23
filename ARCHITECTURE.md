@@ -294,11 +294,13 @@ The instance and database halves pair up: `ServerResourceStat` and
 | Drop a server role      | `srv.DropServerRole(ctx, name)` / `role.Drop(ctx)`  |
 | Rename a database       | `srv.RenameDatabase(ctx, old, new, force)` — `force` puts it in single-user mode first |
 | Detach a database       | `srv.DetachDatabase(ctx, name, gosmo.DetachOptions{...})` — leaves the files on disk; a detach that fails after `DropConnections` is put back to MULTI_USER |
+| Free the pool's own sessions from a database | `srv.ReleaseIdleConnections(ctx)` — closes idle pooled connections, which otherwise sit inside the last database they read and block an exclusive-access statement (detach, rename, drop, `SET READ_ONLY`, RCSI, filegroup read-only — each of which calls it itself) |
 | Attach a database       | `srv.AttachDatabase(ctx, gosmo.AttachSpec{Name, Files, Owner, RebuildLog})` — the name need not be the one it was detached under |
 | Read a detached file    | `srv.DetachedDatabaseInfo(ctx, primaryFilePath)` → `*DetachedDatabase` (`.Name`, `.Files`, `.DataFiles()`, `.LogFiles()`) — the only way to learn a detached database's other files |
 | Database snapshots      | `srv.DatabaseSnapshots(ctx)` / `srv.DatabaseSnapshotByName(ctx, name)` / `srv.DatabaseSnapshotRef(name)` (no-I/O handle) / `srv.SnapshotsOf(ctx, database)` / `srv.CreateDatabaseSnapshot(ctx, req)` / `srv.RestoreFromSnapshot(ctx, database, snapshot)` — see [Database snapshots](#database-snapshots) |
 | `Server.LinkedServers`  | `srv.LinkedServers(ctx)`                      |
 | `Server.Configuration`  | `srv.Configurations(ctx)` / `srv.ConfigurationByName(ctx, name)` / `srv.ConfigurationRef(name)` (no-I/O handle) |
+| Change sp_configure options | `srv.ApplyConfiguration(ctx, []gosmo.ConfigChange{{Name, Value}}, gosmo.ConfigApplyOptions{Override})` — one batch: turns `show advanced options` on for it when needed and puts it back, one `RECONFIGURE`. `ConfigurationOption.SetValue` is the bare `sp_configure`, which fails Msg 15123 for an advanced option while `show advanced options` is 0 |
 | `Server.JobServer` (Agent) | see [SQL Server Agent](#sql-server-agent) below |
 | Active sessions         | `srv.ActiveSessions(ctx, includeSystem)`        |
 | Kill session            | `srv.KillSession(ctx, id)`                      |
@@ -307,7 +309,7 @@ The instance and database halves pair up: `ServerResourceStat` and
 | Create login (safe)     | `srv.CreateLogin(ctx, name, password, opts)` — SQL, Windows, external provider, certificate or asymmetric key |
 | Authentication mode     | `srv.SecurityInfo(ctx)`                       |
 | Server-level permissions | `srv.ServerPermissions(ctx)` / `srv.Grant\|Deny\|RevokeServerPermission(ctx, ...)` / `srv.ServerPermissionNames()` |
-| Server permissions with modifiers | `srv.Grant\|Deny\|RevokeServerPermissionWithOptions(ctx, perm, principal, opts)` — `WITH GRANT OPTION`, `CASCADE`, `GRANT OPTION FOR` |
+| Server permissions with modifiers | the same methods' `opts gosmo.PermissionOptions` — `WITH GRANT OPTION`, `CASCADE`, `GRANT OPTION FOR`; the zero value is the plain statement |
 | Effective server permissions | `srv.EffectiveServerPermissions(ctx, login)` (`EXECUTE AS LOGIN` + `fn_my_permissions`) |
 | Credentials              | `srv.Credentials(ctx)` / `srv.CredentialByName(ctx, name)` / `srv.CredentialRef(name)` (no-I/O handle) / `srv.CreateCredential(ctx, spec)` / `cred.Alter(ctx, identity, secret)` / `cred.Drop(ctx)` — see [Credentials](#credentials) |
 | Cryptographic providers  | `srv.CryptographicProviders(ctx)`             |
@@ -330,8 +332,7 @@ The instance and database halves pair up: `ServerResourceStat` and
 | Host OS family            | `srv.Info().Platform` (`"Windows"` / `"Linux"`, from `@@VERSION`) |
 | `Server.AvailabilityGroups` | `srv.AvailabilityGroups(ctx)` / `srv.AvailabilityGroupRef(name)` (no-I/O handle) / `srv.AvailabilityGroupByName(ctx, name)` — see [Always On](#always-on-availability-groups) |
 | Database mirroring endpoint | `srv.DatabaseMirroringEndpoint(ctx)` / `srv.CreateDatabaseMirroringEndpoint(ctx, spec)` |
-| Verify / inspect a backup device | `srv.VerifyBackup(ctx, path)` / `srv.BackupHeaders(ctx, path)` / `srv.BackupFileList(ctx, path)` |
-| ... from a path, a blob URL or a logical device | `srv.VerifyBackupFrom(ctx, t)` / `srv.BackupHeadersFrom(ctx, t)` / `srv.BackupFileListForSetFrom(ctx, t, n)`, with `t` = `gosmo.DiskTarget(path)`, `gosmo.URLTarget(url)` or `gosmo.DeviceTarget(name)` |
+| Verify / inspect a backup | `srv.VerifyBackup(ctx, t)` / `srv.BackupHeaders(ctx, t)` / `srv.BackupFileList(ctx, t, setNumber)`, with `t` = `gosmo.DiskTarget(path)`, `gosmo.URLTarget(url)` or `gosmo.DeviceTarget(name)` |
 | Is this device a blob?    | `gosmo.IsBackupURL(device)` — decides `TO URL` vs `TO DISK`; a Managed Instance refuses DISK outright |
 | Log backup chain state    | `srv.DatabaseRecoveryStatuses(ctx)` / `db.RecoveryStatus(ctx)` → `*DatabaseRecoveryStatus` |
 | What may this login do?   | `srv.Capabilities(ctx)` → `*Capabilities` — see [Capabilities](#capabilities-of-the-connected-login) |
@@ -392,7 +393,7 @@ The instance and database halves pair up: `ServerResourceStat` and
 | Disk usage report               | `db.DiskUsage(ctx)` — data/index/unused/unallocated against the file totals, and the log's used/unused split, in MB |
 | Azure per-database resources    | `db.ResourceStats(ctx, max)` / `db.LatestResourceStats(ctx)` / `db.ResourceGovernance(ctx)` — see [Azure instance resources](#azure-instance-resources) |
 | Every table's row count / space used, in one query | `db.TableRowCounts(ctx)` / `db.TableSpaceUsedAll(ctx)` (keyed by `object_id`) |
-| ALTER DATABASE SET options      | `db.Options(ctx)` / `db.SetDatabaseOption(ctx, opt, value)` |
+| ALTER DATABASE SET options      | `db.Options(ctx)` / `db.SetDatabaseOption(ctx, opt, value, term)` — `term` is the `WITH` clause: `gosmo.TerminationNone` waits for other sessions, `gosmo.TerminationRollbackImmediate` rolls them back |
 | Restrict access (single/multi/restricted user) | `db.SetUserAccess(ctx, mode)`     |
 | Take offline / bring online     | `db.SetOffline(ctx)` / `db.SetOnline(ctx)`        |
 | Change ownership                | `db.SetOwner(ctx, principal)`                    |
@@ -405,7 +406,7 @@ The instance and database halves pair up: `ServerResourceStat` and
 | Every file, incl. log           | `db.Files(ctx)`                                |
 | Add / alter / remove file       | `db.AddFile(ctx, spec)` / `db.AlterFile(ctx, name, m)` / `db.RemoveFile(ctx, name)` |
 | Add / remove filegroup          | `db.AddFileGroup(ctx, name)` / `db.RemoveFileGroup(ctx, name)` |
-| Filegroup default / read-only   | `db.SetDefaultFileGroup(ctx, name)` / `db.SetFileGroupReadOnly(ctx, name, ro)` |
+| Filegroup default / read-only   | `db.SetDefaultFileGroup(ctx, name)` / `db.SetFileGroupReadOnly(ctx, name, ro, term)` — `TerminationRollbackImmediate` kills the database's sessions in the same batch, since `MODIFY FILEGROUP` ignores `WITH ROLLBACK IMMEDIATE` |
 | CREATE DATABASE file placement  | `CreateDatabaseOptions.PrimaryFile` / `.LogFile` (`*DatabaseFileSpec`) |
 | Change tracking                 | `db.ChangeTracking(ctx)` / `db.SetChangeTracking(ctx, info)` |
 | Table change tracking           | `db.TableChangeTracking(ctx)` / `db.TableChangeTrackingFor(ctx, schema, name)` / `db.SetTableChangeTracking(ctx, ...)` |
@@ -476,19 +477,20 @@ that would read as "this database has none".
 
 | gosmo                               |
 | ----------------------------------- |
-| `idx.Rebuild(ctx, t, fillFactor)`        |
-| `idx.RebuildWithOptions(ctx, t, fillFactor, padIndex, dataCompression)` |
-| `idx.Reorganize(ctx, t)`                 |
-| `idx.Disable(ctx, t)` / `idx.Enable(ctx, t)` |
-| `idx.Rename(ctx, t, newName)` — also renames a PK/UNIQUE constraint |
-| `idx.SetOptions(ctx, t, ignoreDupKey, allowRowLocks, allowPageLocks)` |
-| `idx.SetLockOptions(ctx, t, allowRowLocks, allowPageLocks)` — no `IGNORE_DUP_KEY`, which a PK/UNIQUE-backing index rejects |
-| `idx.SetIncludedColumns(ctx, t, columns)` — via `CREATE INDEX ... DROP_EXISTING` |
-| `idx.UpdateStatistics(ctx, t)`           |
-| `idx.StorageInfo(ctx, t)` — filegroup, partitioning, allocation-unit space |
-| `idx.Fragmentation(ctx, t, mode)` — one index (`t.FragmentationStats(ctx, mode)` does all) |
+| `t.IndexByName(ctx, name)` / `t.IndexRef(name)` (no-I/O handle) |
+| `idx.Table()` — the table it is on; every method below names it itself |
+| `idx.Rebuild(ctx, gosmo.IndexRebuildOptions{FillFactor, PadIndex, DataCompression})` — the zero value is a plain `REBUILD` |
+| `idx.Reorganize(ctx)`                 |
+| `idx.Disable(ctx)` / `idx.Enable(ctx)` |
+| `idx.Rename(ctx, newName)` — also renames a PK/UNIQUE constraint |
+| `idx.SetOptions(ctx, gosmo.IndexSetOptions{IgnoreDupKey, AllowRowLocks, AllowPageLocks})` — a nil field is not sent; leave `IgnoreDupKey` nil on a PK/UNIQUE-backing index, which rejects it |
+| `idx.SetIncludedColumns(ctx, columns)` — via `CREATE INDEX ... DROP_EXISTING`, every option and the ON clause restated; needs `IndexByName`, not a handle |
+| `idx.IncludedColumnsSupported()` — nil, or why the INCLUDE list cannot change |
+| `idx.UpdateStatistics(ctx, samplePct)` — 0 is `FULLSCAN`, as for `st.Update` |
+| `idx.StorageInfo(ctx)` — filegroup, partitioning, allocation-unit space |
+| `idx.Fragmentation(ctx, mode)` — one index (`t.FragmentationStats(ctx, mode)` does all) |
 | `idx.DataSpace` — the filegroup or partition scheme it is on, read with the index |
-| `idx.Drop(ctx, t)`                       |
+| `idx.Drop(ctx)`                       |
 
 `Index.Type` is a `sys.indexes.type_desc` value — `IndexTypeClustered`,
 `IndexTypeNonClustered`, `IndexTypeXML`, `IndexTypeSpatial`,
@@ -497,7 +499,13 @@ text for a type gosmo has no constant for (e.g. `NONCLUSTERED HASH`), so it
 is never empty for an index that exists. `idx.Type.IsColumnStore()` covers
 both columnstore forms — neither has an `INCLUDE` list, so
 `SetIncludedColumns` rejects them rather than silently producing a rowstore
-index.
+index. It rejects everything but a rowstore nonclustered index backing no
+constraint, before sending anything; `IncludedColumnsSupported` asks the
+same question up front, for a UI to grey the choice. The statement comes
+from the scripter's own builder (`rowstoreIndexCreate`), so it and Script as
+CREATE cannot drift, and its ON clause is always explicit: under
+`DROP_EXISTING` an omitted ON means the *table's* data space, not the
+default filegroup.
 
 `CreateIndexRequest` creates any of them, and which of its fields apply
 depends on `Type`:
@@ -520,8 +528,7 @@ rather than a parse error naming a column number.
 
 | SSMS equivalent                | gosmo                                     |
 | ------------------------------ | ----------------------------------------- |
-| Statistics of a table          | `t.Statistics(ctx)` / `t.CreateStatistic(ctx, name, cols, pct)` |
-| ... with a filter, `FULLSCAN`, `NORECOMPUTE`, `INCREMENTAL` | `t.CreateStatisticWithOptions(ctx, req)` |
+| Statistics of a table          | `t.Statistics(ctx)` / `t.CreateStatistic(ctx, gosmo.CreateStatisticRequest{...})` — name and columns, plus a sample, filter, `FULLSCAN`, `NORECOMPUTE`, `INCREMENTAL` |
 | Statistic's key columns        | `st.Columns(ctx)`                            |
 | `DBCC SHOW_STATISTICS` header  | `st.Header(ctx)` → `*StatisticHeader`        |
 | ... density vector             | `st.DensityVector(ctx)` → `[]*StatisticDensity` |
@@ -535,7 +542,7 @@ rather than a parse error naming a column number.
 | gosmo                                   |
 | --------------------------------------- |
 | `srv.CreateLogin(ctx, name, password, opts)` |
-| `login.ChangePassword(ctx, newPassword)`     |
+| `login.ChangePassword(ctx, newPassword, gosmo.ChangePasswordOptions{MustChange, Unlock})` |
 | `login.Enable(ctx)` / `login.Disable(ctx)`   |
 | `login.AddServerRoleMember(ctx, role)`       |
 | `login.RemoveServerRoleMember(ctx, role)`    |
@@ -543,7 +550,6 @@ rather than a parse error naming a column number.
 | `login.Rename(ctx, newName)`                 |
 | `login.SetDefaultDatabase(ctx, name)` / `login.SetDefaultLanguage(ctx, name)` |
 | `login.SetPasswordPolicy(ctx, checkPolicy, checkExpiration)` |
-| `login.ChangePasswordWithOptions(ctx, pw, mustChange, unlock)` |
 | `login.MapCredential(ctx, name)` / `login.UnmapCredential(ctx, name)` |
 | `login.Details(ctx)` — locked/expired/policy/last-login status |
 | `login.ResolveMapping(ctx)` — fills `login.MappedObject` for a certificate- or asymmetric-key-mapped login |
@@ -726,9 +732,8 @@ an unescaped filter for `pct_1` also matches `pct1100`.
 | Schema permissions            | `db.SchemaPermissions(ctx, schema)`                            |
 | Grant / deny / revoke (schema) | `db.GrantSchemaPermission(ctx, ...)` / `db.DenySchemaPermission(ctx, ...)` / `db.RevokeSchemaPermission(ctx, ...)` |
 | Every securable one principal holds | `db.PermissionsForPrincipal(ctx, principal)`             |
-| Permissions with modifiers   | `db.Grant\|Deny\|RevokePermissionWithOptions(ctx, ...)` / `...SchemaPermissionWithOptions(ctx, ...)` / `...DatabasePermissionWithOptions(ctx, ...)` |
 | Column permissions           | `db.ColumnPermissions(ctx, schema, name)` / `db.ColumnPermissionsForPrincipal(ctx, principal)` |
-| Grant / deny / revoke (column) | `db.Grant\|Deny\|RevokeColumnPermission(ctx, schema, name, perm, cols, principal)` |
+| Grant / deny / revoke (column) | `db.Grant\|Deny\|RevokeColumnPermission(ctx, schema, name, perm, cols, principal, opts)` |
 | Effective permissions        | `db.EffectivePermissions(ctx, principal)` / `db.EffectiveObjectPermissions(ctx, schema, name, principal)` / `db.EffectiveSchemaPermissions(ctx, schema, principal)` |
 | Permission-name catalogs (for pickers) | `gosmo.ObjectPermissionNames()` / `SchemaPermissionNames()` / `DatabasePermissionNames()` / `ServerPermissionNames()` / `ColumnPermissionNames()` |
 | Estimated execution plan     | `db.EstimatedPlan(ctx, sql)` (`SET SHOWPLAN_XML`, statement not run) |
@@ -736,22 +741,23 @@ an unescaped filter for `pct_1` also matches `pct1100`.
 | Every plan a multi-statement batch produced | `plan.All` (`plan.XML` is the last of them) |
 | Recognising a plan result set in a caller's own batch | `gosmo.ShowplanColumn` (a one-column set with this name is a plan, not data) |
 
-Every `Grant|Deny|Revoke...` method has a `...WithOptions` counterpart taking
-a `PermissionOptions`, at all four scopes (object, column, schema, database,
-server). The zero value renders exactly the statement the plain method
-renders — the plain methods *are* one-line delegations to the `WithOptions`
-form, so there is one renderer and one set of error strings rather than two
-that have to be kept in step.
+Every `Grant|Deny|Revoke...` method, at all five scopes (object, column,
+schema, database, server), takes a `PermissionOptions` as its last argument;
+the zero value renders the plain statement. There is one method per verb and
+scope — the `...WithOptions` twins were merged into them on 2026-09-23 — so
+one renderer and one set of error strings. Database- and server-scoped
+permission names are typed, `gosmo.DatabasePermission` and
+`gosmo.ServerPermission`, as object-scoped ones are `gosmo.ObjectPermission`.
 
 ```go
 // WITH GRANT OPTION, and the CASCADE that taking such a grant back requires.
-db.GrantPermissionWithOptions(ctx, "dbo", "Orders", gosmo.PermSelect, "app_reader",
+db.GrantPermission(ctx, "dbo", "Orders", gosmo.PermSelect, "app_reader",
     gosmo.PermissionOptions{WithGrantOption: true})
-db.RevokePermissionWithOptions(ctx, "dbo", "Orders", gosmo.PermSelect, "app_reader",
+db.RevokePermission(ctx, "dbo", "Orders", gosmo.PermSelect, "app_reader",
     gosmo.PermissionOptions{Cascade: true})
 
 // Downgrade WITH GRANT OPTION back to a plain GRANT (REVOKE GRANT OPTION FOR).
-db.RevokePermissionWithOptions(ctx, "dbo", "Orders", gosmo.PermSelect, "app_reader",
+db.RevokePermission(ctx, "dbo", "Orders", gosmo.PermSelect, "app_reader",
     gosmo.PermissionOptions{GrantOptionOnly: true})
 ```
 
@@ -1186,8 +1192,8 @@ that already exist): `WithScript` captures the exact statement(s) a set of
 ```go
 ctx, script := gosmo.WithScript(context.Background())
 
-srv.GrantServerPermission(ctx, "CONNECT SQL", "app_user")
-db.SetDatabaseOption(ctx, gosmo.DBOptAutoShrink, "ON")
+srv.GrantServerPermission(ctx, "CONNECT SQL", "app_user", gosmo.PermissionOptions{})
+db.SetDatabaseOption(ctx, gosmo.DBOptAutoShrink, "ON", gosmo.TerminationNone)
 
 fmt.Print(script.String()) // never executed against the server
 ```
@@ -1232,7 +1238,7 @@ query, and the `Create*` methods return one of these handles under
 ```go
 srv.Backup(ctx, gosmo.BackupOptions{
     Database: "MyDB",
-    Devices:  []string{`C:\Backups\MyDB.bak`},
+    Devices:  []gosmo.BackupTarget{gosmo.DiskTarget(`C:\Backups\MyDB.bak`)},
     CopyOnly: true,
     // Optional: receive "N percent processed" notices as the backup runs
     // (Stats defaults to 10 automatically once Progress is set).
@@ -1241,7 +1247,7 @@ srv.Backup(ctx, gosmo.BackupOptions{
 
 srv.Restore(ctx, gosmo.RestoreOptions{
     Database: "MyDB_Restored",
-    Devices:  []string{`C:\Backups\MyDB.bak`},
+    Devices:  []gosmo.BackupTarget{gosmo.DiskTarget(`C:\Backups\MyDB.bak`)},
     RelocateFiles: []gosmo.RelocateFile{
         {LogicalName: "MyDB",     PhysicalName: `C:\Data\MyDB.mdf`},
         {LogicalName: "MyDB_log", PhysicalName: `C:\Data\MyDB.ldf`},
@@ -1269,29 +1275,30 @@ srv.Backup(ctx, gosmo.BackupOptions{
     Database:   "MyDB",
     Action:     gosmo.BackupActionFiles,
     FileGroups: []string{"FG_Archive"},
-    Devices:    []string{`C:\Backups\MyDB_FG.bak`},
+    Devices:    []gosmo.BackupTarget{gosmo.DiskTarget(`C:\Backups\MyDB_FG.bak`)},
 })
 
 // Inspect a backup device before restoring — SSMS's Restore Database
 // dialog's backup-set/file picker.
-headers, _ := srv.BackupHeaders(ctx, `C:\Backups\MyDB.bak`)
-files, _ := srv.BackupFileList(ctx, `C:\Backups\MyDB.bak`) // first set on the device
-err := srv.VerifyBackup(ctx, `C:\Backups\MyDB.bak`)
+bak := gosmo.DiskTarget(`C:\Backups\MyDB.bak`)
+headers, _ := srv.BackupHeaders(ctx, bak)
+files, _ := srv.BackupFileList(ctx, bak, 0) // 0: the first set on the device
+err := srv.VerifyBackup(ctx, bak)
 
 // A device backups were appended to holds one set per backup, and their file
 // lists differ. Pass the same 1-based set number to the file list and to the
 // restore, or the MOVE clauses name logical files the restored set doesn't
 // contain and SQL Server rejects the statement.
-files, _ = srv.BackupFileListForSet(ctx, `C:\Backups\MyDB.bak`, headers[1].Position)
+files, _ = srv.BackupFileList(ctx, bak, headers[1].Position)
 ```
 
 #### Backing up to Azure Storage
 
 A device that is an `http`/`https` URL is a blob, and renders as `TO URL` /
-`FROM URL` rather than `TO DISK`. `BackupOptions.Devices` and
-`RestoreOptions.Devices` are plain strings, so the shape decides it —
-`gosmo.IsBackupURL(device)` is the same test a caller can ask itself, and
-`gosmo.URLTarget(url)` states it outright on the RESTORE-side reads.
+`FROM URL` rather than `TO DISK`. `gosmo.DiskTarget(path)` classifies an
+`http`/`https` path as a blob by that shape — `gosmo.IsBackupURL(device)` is
+the same test a caller can ask itself — and `gosmo.URLTarget(url)` states it
+outright.
 
 It is not a cosmetic difference on Azure SQL Managed Instance, which refuses
 every `DISK` device with *"SQL Database Managed Instance supports database
@@ -1323,14 +1330,16 @@ There is no `Alter`, deliberately: `sp_addumpdevice` and `sp_dropdevice` are
 the whole write surface, and a device's name, type and physical path are
 fixed at creation.
 
-The three RESTORE-side reads take a `BackupTarget` in their `…From` form, so
-they can read a device as well as a path:
+`BackupOptions.Devices`, `RestoreOptions.Devices` and the three RESTORE-side
+reads all take a `BackupTarget`, so each can name a device as well as a path —
+`dev.Target()` is the same thing from a `*BackupDevice`:
 
 ```go
 t := gosmo.DeviceTarget("NightlyFull")     // or gosmo.DiskTarget(path)
-headers, _ := srv.BackupHeadersFrom(ctx, t)
-files, _   := srv.BackupFileListForSetFrom(ctx, t, headers[0].Position)
-err := srv.VerifyBackupFrom(ctx, t)
+srv.Backup(ctx, gosmo.BackupOptions{Database: "MyDB", Devices: []gosmo.BackupTarget{t}})
+headers, _ := srv.BackupHeaders(ctx, t)
+files, _   := srv.BackupFileList(ctx, t, headers[0].Position)
+err := srv.VerifyBackup(ctx, t)
 ```
 
 The two forms are not interchangeable, which is why they are separate
@@ -2107,10 +2116,10 @@ the prologue is retried; whatever the caller goes on to run is not.
 
 ## Security
 
-- **Passwords are escaped, never spliced in raw.** `CreateLogin`, `ChangePassword`, and `ChangePasswordWithOptions` quote the password as an `N'...'` literal through the same `nStringLiteral` escaping every other string literal in the package uses, so it's injection-proof regardless of password content.
+- **Passwords are escaped, never spliced in raw.** `CreateLogin` and `ChangePassword` quote the password as an `N'...'` literal through the same `nStringLiteral` escaping every other string literal in the package uses, so it's injection-proof regardless of password content.
 - **Connection lifetimes are correctly scoped.** `Database.query` returns a `*dbRows` that owns both the `*sql.Rows` and the `*sql.Conn` pinned to run its `USE`, closing both together — `*sql.Rows.Close` on its own would leave that connection checked out of the pool for good.
 - **Values that can't be parameterized are validated by shape or allowlist.** DDL can't parameterize keyword or literal arguments, so anything spliced into one is checked first: recovery models, data types, and backup actions against their known sets; partition function boundary values against the shape of a well-formed SQL Server literal; Query Store mode keywords and index data-compression settings against their allowlists.
-- **One shared quoting implementation.** `QuoteName` and `QuoteLiteral` wrap the driver's own `TSQLQuoter`, so gosmo's internal identifier/literal escaping — and any caller or downstream consumer (e.g. gossms) building its own DDL — go through the same tested implementation rather than a hand-rolled one.
+- **One shared quoting implementation.** `QuoteName` and `QuoteLiteral` wrap the driver's own `TSQLQuoter` (`QuoteLiteral` adding the `N` prefix, so a literal is never varchar), so gosmo's internal identifier/literal escaping — and any caller or downstream consumer (e.g. gossms) building its own DDL — go through the same tested implementation rather than a hand-rolled one.
 - **Permission and SET-option names are allowlisted, not interpolated.** `GRANT`/`DENY`/`REVOKE` and `ALTER DATABASE ... SET` are DDL and can't parameterize their keyword arguments; every method that accepts one (`GrantServerPermission`, `GrantPermission`, `GrantDatabasePermission`, `SetDatabaseOption`, ...) rejects any name not on its allowlist instead of splicing caller input directly into the statement.
 
 ---

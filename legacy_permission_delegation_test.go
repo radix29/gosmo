@@ -5,13 +5,13 @@ import (
 	"testing"
 )
 
-// The twelve plain Grant/Deny/RevokePermission*Context methods each rendered
-// their own fmt.Sprintf before delegating to the shared permissionStmt
-// renderer. This pins the exact statement and the exact validation error
-// every one of them produces, so the delegation can be shown to change
-// neither. Written against the pre-delegation code first, then re-run
-// against it — a table here rather than in permission_options_test.go
-// because it is about the legacy surface, not about the modifiers.
+// The twelve Grant/Deny/Revoke methods at object, schema, database and
+// server scope, called with the zero PermissionOptions. This pins the exact
+// statement and the exact validation error each produces — the plain form
+// every caller without a modifier gets. It began as the pin for moving each
+// plain method onto the shared permissionStmt renderer (2026-08-05), and
+// stayed when the plain/WithOptions pairs were merged into one method per
+// verb (2026-09-23).
 func TestLegacyPermissionMethodsRenderAndReject(t *testing.T) {
 	cases := []struct {
 		name string
@@ -25,10 +25,10 @@ func TestLegacyPermissionMethodsRenderAndReject(t *testing.T) {
 		{
 			name: "object grant",
 			call: func(d *Database, _ *Server, ctx context.Context) error {
-				return d.GrantPermission(ctx, "dbo", "Orders", PermSelect, "app_reader")
+				return d.GrantPermission(ctx, "dbo", "Orders", PermSelect, "app_reader", PermissionOptions{})
 			},
 			badPermission: func(d *Database, _ *Server, ctx context.Context) error {
-				return d.GrantPermission(ctx, "dbo", "Orders", ObjectPermission("NOPE"), "app_reader")
+				return d.GrantPermission(ctx, "dbo", "Orders", ObjectPermission("NOPE"), "app_reader", PermissionOptions{})
 			},
 			wantStmt: "GRANT SELECT ON [dbo].[Orders] TO [app_reader]",
 			wantErr:  `gosmo: grant permission: unrecognized permission "NOPE"`,
@@ -36,10 +36,10 @@ func TestLegacyPermissionMethodsRenderAndReject(t *testing.T) {
 		{
 			name: "object deny",
 			call: func(d *Database, _ *Server, ctx context.Context) error {
-				return d.DenyPermission(ctx, "dbo", "Orders", PermSelect, "app_reader")
+				return d.DenyPermission(ctx, "dbo", "Orders", PermSelect, "app_reader", PermissionOptions{})
 			},
 			badPermission: func(d *Database, _ *Server, ctx context.Context) error {
-				return d.DenyPermission(ctx, "dbo", "Orders", ObjectPermission("NOPE"), "app_reader")
+				return d.DenyPermission(ctx, "dbo", "Orders", ObjectPermission("NOPE"), "app_reader", PermissionOptions{})
 			},
 			wantStmt: "DENY SELECT ON [dbo].[Orders] TO [app_reader]",
 			wantErr:  `gosmo: deny permission: unrecognized permission "NOPE"`,
@@ -47,10 +47,10 @@ func TestLegacyPermissionMethodsRenderAndReject(t *testing.T) {
 		{
 			name: "object revoke",
 			call: func(d *Database, _ *Server, ctx context.Context) error {
-				return d.RevokePermission(ctx, "dbo", "Orders", PermSelect, "app_reader")
+				return d.RevokePermission(ctx, "dbo", "Orders", PermSelect, "app_reader", PermissionOptions{})
 			},
 			badPermission: func(d *Database, _ *Server, ctx context.Context) error {
-				return d.RevokePermission(ctx, "dbo", "Orders", ObjectPermission("NOPE"), "app_reader")
+				return d.RevokePermission(ctx, "dbo", "Orders", ObjectPermission("NOPE"), "app_reader", PermissionOptions{})
 			},
 			wantStmt: "REVOKE SELECT ON [dbo].[Orders] FROM [app_reader]",
 			wantErr:  `gosmo: revoke permission: unrecognized permission "NOPE"`,
@@ -58,10 +58,10 @@ func TestLegacyPermissionMethodsRenderAndReject(t *testing.T) {
 		{
 			name: "schema grant",
 			call: func(d *Database, _ *Server, ctx context.Context) error {
-				return d.GrantSchemaPermission(ctx, "sales", PermSelect, "app_reader")
+				return d.GrantSchemaPermission(ctx, "sales", PermSelect, "app_reader", PermissionOptions{})
 			},
 			badPermission: func(d *Database, _ *Server, ctx context.Context) error {
-				return d.GrantSchemaPermission(ctx, "sales", ObjectPermission("NOPE"), "app_reader")
+				return d.GrantSchemaPermission(ctx, "sales", ObjectPermission("NOPE"), "app_reader", PermissionOptions{})
 			},
 			wantStmt: "GRANT SELECT ON SCHEMA::[sales] TO [app_reader]",
 			wantErr:  `gosmo: grant schema permission: unrecognized permission "NOPE"`,
@@ -69,10 +69,10 @@ func TestLegacyPermissionMethodsRenderAndReject(t *testing.T) {
 		{
 			name: "schema deny",
 			call: func(d *Database, _ *Server, ctx context.Context) error {
-				return d.DenySchemaPermission(ctx, "sales", PermUpdate, "app_reader")
+				return d.DenySchemaPermission(ctx, "sales", PermUpdate, "app_reader", PermissionOptions{})
 			},
 			badPermission: func(d *Database, _ *Server, ctx context.Context) error {
-				return d.DenySchemaPermission(ctx, "sales", ObjectPermission("NOPE"), "app_reader")
+				return d.DenySchemaPermission(ctx, "sales", ObjectPermission("NOPE"), "app_reader", PermissionOptions{})
 			},
 			wantStmt: "DENY UPDATE ON SCHEMA::[sales] TO [app_reader]",
 			wantErr:  `gosmo: deny schema permission: unrecognized permission "NOPE"`,
@@ -80,10 +80,10 @@ func TestLegacyPermissionMethodsRenderAndReject(t *testing.T) {
 		{
 			name: "schema revoke",
 			call: func(d *Database, _ *Server, ctx context.Context) error {
-				return d.RevokeSchemaPermission(ctx, "sales", PermExecute, "app_reader")
+				return d.RevokeSchemaPermission(ctx, "sales", PermExecute, "app_reader", PermissionOptions{})
 			},
 			badPermission: func(d *Database, _ *Server, ctx context.Context) error {
-				return d.RevokeSchemaPermission(ctx, "sales", ObjectPermission("NOPE"), "app_reader")
+				return d.RevokeSchemaPermission(ctx, "sales", ObjectPermission("NOPE"), "app_reader", PermissionOptions{})
 			},
 			wantStmt: "REVOKE EXECUTE ON SCHEMA::[sales] FROM [app_reader]",
 			wantErr:  `gosmo: revoke schema permission: unrecognized permission "NOPE"`,
@@ -91,10 +91,10 @@ func TestLegacyPermissionMethodsRenderAndReject(t *testing.T) {
 		{
 			name: "database grant",
 			call: func(d *Database, _ *Server, ctx context.Context) error {
-				return d.GrantDatabasePermission(ctx, "CREATE TABLE", "app_reader")
+				return d.GrantDatabasePermission(ctx, "CREATE TABLE", "app_reader", PermissionOptions{})
 			},
 			badPermission: func(d *Database, _ *Server, ctx context.Context) error {
-				return d.GrantDatabasePermission(ctx, "NOPE", "app_reader")
+				return d.GrantDatabasePermission(ctx, "NOPE", "app_reader", PermissionOptions{})
 			},
 			wantStmt: "GRANT CREATE TABLE TO [app_reader]",
 			wantErr:  `gosmo: grant database permission: unrecognized permission "NOPE"`,
@@ -102,10 +102,10 @@ func TestLegacyPermissionMethodsRenderAndReject(t *testing.T) {
 		{
 			name: "database deny",
 			call: func(d *Database, _ *Server, ctx context.Context) error {
-				return d.DenyDatabasePermission(ctx, "CREATE TABLE", "app_reader")
+				return d.DenyDatabasePermission(ctx, "CREATE TABLE", "app_reader", PermissionOptions{})
 			},
 			badPermission: func(d *Database, _ *Server, ctx context.Context) error {
-				return d.DenyDatabasePermission(ctx, "NOPE", "app_reader")
+				return d.DenyDatabasePermission(ctx, "NOPE", "app_reader", PermissionOptions{})
 			},
 			wantStmt: "DENY CREATE TABLE TO [app_reader]",
 			wantErr:  `gosmo: deny database permission: unrecognized permission "NOPE"`,
@@ -113,10 +113,10 @@ func TestLegacyPermissionMethodsRenderAndReject(t *testing.T) {
 		{
 			name: "database revoke",
 			call: func(d *Database, _ *Server, ctx context.Context) error {
-				return d.RevokeDatabasePermission(ctx, "CREATE TABLE", "app_reader")
+				return d.RevokeDatabasePermission(ctx, "CREATE TABLE", "app_reader", PermissionOptions{})
 			},
 			badPermission: func(d *Database, _ *Server, ctx context.Context) error {
-				return d.RevokeDatabasePermission(ctx, "NOPE", "app_reader")
+				return d.RevokeDatabasePermission(ctx, "NOPE", "app_reader", PermissionOptions{})
 			},
 			wantStmt: "REVOKE CREATE TABLE FROM [app_reader]",
 			wantErr:  `gosmo: revoke database permission: unrecognized permission "NOPE"`,
@@ -124,10 +124,10 @@ func TestLegacyPermissionMethodsRenderAndReject(t *testing.T) {
 		{
 			name: "server grant",
 			call: func(_ *Database, s *Server, ctx context.Context) error {
-				return s.GrantServerPermission(ctx, "VIEW SERVER STATE", "app_login")
+				return s.GrantServerPermission(ctx, "VIEW SERVER STATE", "app_login", PermissionOptions{})
 			},
 			badPermission: func(_ *Database, s *Server, ctx context.Context) error {
-				return s.GrantServerPermission(ctx, "NOPE", "app_login")
+				return s.GrantServerPermission(ctx, "NOPE", "app_login", PermissionOptions{})
 			},
 			wantStmt: "USE master; GRANT VIEW SERVER STATE TO [app_login]",
 			wantErr:  `gosmo: grant server permission: unrecognized permission "NOPE"`,
@@ -135,10 +135,10 @@ func TestLegacyPermissionMethodsRenderAndReject(t *testing.T) {
 		{
 			name: "server deny",
 			call: func(_ *Database, s *Server, ctx context.Context) error {
-				return s.DenyServerPermission(ctx, "VIEW SERVER STATE", "app_login")
+				return s.DenyServerPermission(ctx, "VIEW SERVER STATE", "app_login", PermissionOptions{})
 			},
 			badPermission: func(_ *Database, s *Server, ctx context.Context) error {
-				return s.DenyServerPermission(ctx, "NOPE", "app_login")
+				return s.DenyServerPermission(ctx, "NOPE", "app_login", PermissionOptions{})
 			},
 			wantStmt: "USE master; DENY VIEW SERVER STATE TO [app_login]",
 			wantErr:  `gosmo: deny server permission: unrecognized permission "NOPE"`,
@@ -146,10 +146,10 @@ func TestLegacyPermissionMethodsRenderAndReject(t *testing.T) {
 		{
 			name: "server revoke",
 			call: func(_ *Database, s *Server, ctx context.Context) error {
-				return s.RevokeServerPermission(ctx, "VIEW SERVER STATE", "app_login")
+				return s.RevokeServerPermission(ctx, "VIEW SERVER STATE", "app_login", PermissionOptions{})
 			},
 			badPermission: func(_ *Database, s *Server, ctx context.Context) error {
-				return s.RevokeServerPermission(ctx, "NOPE", "app_login")
+				return s.RevokeServerPermission(ctx, "NOPE", "app_login", PermissionOptions{})
 			},
 			wantStmt: "USE master; REVOKE VIEW SERVER STATE FROM [app_login]",
 			wantErr:  `gosmo: revoke server permission: unrecognized permission "NOPE"`,

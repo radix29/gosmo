@@ -146,7 +146,8 @@ func qualifiedName(schema, name string) string {
 // user searching for one gets a wildcard match instead of the name they typed;
 // and a name containing [ turns the pattern into a character class that
 // silently matches nothing, so the search comes up empty with no explanation.
-func likeEscape(s string) string {
-	r := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`, `[`, `\[`)
-	return r.Replace(s)
-}
+func likeEscape(s string) string { return likeEscaper.Replace(s) }
+
+// likeEscaper is built once: a strings.Replacer is safe for concurrent use and
+// compiles its lookup on first use, which a per-call one paid every time.
+var likeEscaper = strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`, `[`, `\[`)

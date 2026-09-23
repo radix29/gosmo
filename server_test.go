@@ -118,6 +118,11 @@ func TestParseServerAddress(t *testing.T) {
 		{"[fe80::1]:1500", "[fe80::1]", "", 1500},
 		{"fe80::1,1500", "fe80::1", "", 1500},
 		{`fe80::1\SQLEXPRESS,1500`, "fe80::1", "SQLEXPRESS", 1500},
+		// The Azure Portal's form: a tcp: prefix is dropped (S10); the
+		// protocols that cannot be dialled are left for dsnHost to refuse.
+		{"tcp:x.database.windows.net,1433", "x.database.windows.net", "", 1433},
+		{`Tcp:myserver\SQLEXPRESS`, "myserver", "SQLEXPRESS", 0},
+		{"tcp:1433", "tcp", "", 1433},
 	}
 	for _, c := range cases {
 		host, instance, port := ParseServerAddress(c.server)
@@ -674,7 +679,7 @@ func TestBuildCreateDatabaseStatement(t *testing.T) {
 				},
 			},
 			want: "CREATE DATABASE [SalesDW] ON PRIMARY \n" +
-				"( NAME = [SalesDW], FILENAME = 'F:\\MSSQL\\DATA\\SalesDW.mdf', SIZE = 262144KB, FILEGROWTH = 65536KB )",
+				"( NAME = [SalesDW], FILENAME = N'F:\\MSSQL\\DATA\\SalesDW.mdf', SIZE = 262144KB, FILEGROWTH = 65536KB )",
 		},
 		{
 			name: "primary and log files, with collation",
@@ -690,9 +695,9 @@ func TestBuildCreateDatabaseStatement(t *testing.T) {
 				},
 			},
 			want: "CREATE DATABASE [SalesDW] ON PRIMARY \n" +
-				"( NAME = [SalesDW], FILENAME = 'F:\\MSSQL\\DATA\\SalesDW.mdf', SIZE = 262144KB, MAXSIZE = UNLIMITED, FILEGROWTH = 65536KB ) \n" +
+				"( NAME = [SalesDW], FILENAME = N'F:\\MSSQL\\DATA\\SalesDW.mdf', SIZE = 262144KB, MAXSIZE = UNLIMITED, FILEGROWTH = 65536KB ) \n" +
 				"LOG ON \n" +
-				"( NAME = [SalesDW_log], FILENAME = 'L:\\MSSQL\\LOG\\SalesDW_log.ldf', SIZE = 131072KB, FILEGROWTH = 10% ) " +
+				"( NAME = [SalesDW_log], FILENAME = N'L:\\MSSQL\\LOG\\SalesDW_log.ldf', SIZE = 131072KB, FILEGROWTH = 10% ) " +
 				"COLLATE SQL_Latin1_General_CP1_CI_AS",
 		},
 	}
@@ -729,7 +734,7 @@ func TestCreateDatabaseWithOnlyALogFileNamesTheDefaultDataFile(t *testing.T) {
 		}
 		want := "CREATE DATABASE [Sales'DW] ON PRIMARY \n" +
 			"( NAME = [Sales'DW], FILENAME = " + QuoteLiteral(tc.wantFile) + " ) \n" +
-			"LOG ON \n( NAME = [Sales'DW_log], FILENAME = 'L:\\Sales''DW_log.ldf', SIZE = 12288000KB )"
+			"LOG ON \n( NAME = [Sales'DW_log], FILENAME = N'L:\\Sales''DW_log.ldf', SIZE = 12288000KB )"
 		if len(col.Statements()) != 1 || col.Statements()[0] != want {
 			t.Errorf("%s: statements =\n%q\nwant\n%q", tc.dataPath, col.Statements(), want)
 		}

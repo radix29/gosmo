@@ -125,16 +125,31 @@ What to check when one exists: whether `OPEN_EXISTING` really accepts no
 whether a provider symmetric key accepts `IDENTITY_VALUE` — refused here
 until seen.
 
+## `ConnectTimeout` does not bound the TCP dial
+
+`ConnectTimeout` is written as the driver's `connection timeout`, which
+go-mssqldb applies to the connection's I/O *after* the dial (`tds.go`,
+`newTimeoutConn`). The dial itself runs on the driver's `dial timeout`,
+15 s per protocol by default, which gosmo does not set. Probed 2026-09-23:
+`ConnectTimeout: 500ms` against an unroutable address failed after 15 s. The
+field's doc ("the maximum time to wait for the initial connection") promises
+more than that. The 2026-09-23 review's S10 fixed only the rounding — a
+sub-second value used to become `connection timeout=0`, which the driver
+reads as none. Candidate fix: also write `dial timeout` from the same value
+unless `ExtraParams` sets it; `ctx` on `Connect` already bounds the whole
+call for a caller who needs it now.
+
 ## Two login writes have no offline test, and cannot have one
 
 Every write path in the library now has a `WithScript` test pinning the exact
 statement it emits — the 2026-09-17 sweep took the zero-coverage count from 86
 to 0 — with two exceptions, both in `login.go`:
 `Login.MapToDatabase` and `Login.UnmapFromDatabase`. Each reads
-the catalog before it writes (`DatabaseByName`, and for the unmap
-`UserMappings` on top), and a read is exactly what `WithScript` cannot
+the catalog before it writes (`DatabaseByName`, and for the unmap that
+database's user mapping on top), and a read is exactly what `WithScript` cannot
 serve: nothing ran, so there is nothing to read back. They stay live-only, and
-`live_*` is where a regression in them will show.
+`live_*` is where a regression in them will show — `live_api_pass_test.go`
+drives the unmap.
 
 This is the shape `CLAUDE.md` § Script mode already names — a path that reads
 to decide what to write does not work under a scripting context. The two here
@@ -146,6 +161,17 @@ table (or `drop_rename_test.go` for a one-statement drop) in the same change,
 and mutation-check it: swap a parameter name or drop a `dbo` default in the
 source and confirm the new case fails. A case built from the same constant the
 code uses proves nothing.
+
+## `live_keycaps_test.go` leaves its login behind
+
+Seen 2026-09-23: after a full `-run TestLive` on win10cli the login
+`gosmo_live_keycaps` was still there. The test's cleanup is an unchecked
+`defer db.ExecContext(…, "DROP LOGIN …")`, registered after the scratch
+database's drop and so run before it; a DROP LOGIN refused (most likely
+because the login still has a session in that database) fails silently. Not
+investigated further. The next run's pre-drop removes it, so it only
+accumulates as one stray login, but a live run should leave nothing: check
+the DROP's error, and kill the login's sessions first.
 
 ## The two DDL-trigger files stay near-identical — settled, do not re-raise
 

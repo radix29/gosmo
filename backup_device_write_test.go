@@ -128,11 +128,11 @@ func TestBackupTargetClause(t *testing.T) {
 	}
 }
 
-// The three RESTORE-side reads that take a path must go on building the same
-// statement they did before BackupTarget existed.
-func TestVerifyBackupStillTakesAPath(t *testing.T) {
+// A DiskTarget path builds the DISK form every RESTORE-side read used before
+// BackupTarget existed.
+func TestVerifyBackupFromAPath(t *testing.T) {
 	ctx, col := WithScript(context.Background())
-	if err := (&Server{}).VerifyBackup(ctx, `C:\b\n.bak`); err != nil {
+	if err := (&Server{}).VerifyBackup(ctx, DiskTarget(`C:\b\n.bak`)); err != nil {
 		t.Fatalf("VerifyBackup: %v", err)
 	}
 	want := `RESTORE VERIFYONLY FROM DISK = N'C:\b\n.bak'`
@@ -143,8 +143,8 @@ func TestVerifyBackupStillTakesAPath(t *testing.T) {
 
 func TestVerifyBackupFromDevice(t *testing.T) {
 	ctx, col := WithScript(context.Background())
-	if err := (&Server{}).VerifyBackupFrom(ctx, DeviceTarget("NightlyDev")); err != nil {
-		t.Fatalf("VerifyBackupFrom: %v", err)
+	if err := (&Server{}).VerifyBackup(ctx, DeviceTarget("NightlyDev")); err != nil {
+		t.Fatalf("VerifyBackup: %v", err)
 	}
 	want := "RESTORE VERIFYONLY FROM [NightlyDev]"
 	if len(col.Statements()) != 1 || col.Statements()[0] != want {
