@@ -46,6 +46,8 @@ classDiagram
         +DeleteAction string
         +UpdateAction string
         +IsDisabled bool
+        +IsNotTrusted bool
+        +IsNotForReplication bool
     }
 
     class CheckConstraint {
@@ -55,6 +57,14 @@ classDiagram
         +Column string
         +IsNotTrusted bool
         +IsNotForReplication bool
+    }
+
+    class EdgeConstraint {
+        +Name string
+        +Clauses []EdgeConnection
+        +DeleteAction string
+        +IsDisabled bool
+        +IsNotTrusted bool
     }
 
     class Statistic {
@@ -260,6 +270,7 @@ classDiagram
     Database "1" --> "*" Rule : contains
     Table "1" --> "*" ForeignKey : has
     Table "1" --> "*" CheckConstraint : has
+    Table "1" --> "*" EdgeConstraint : has
     Table "1" --> "*" Statistic : has
     Table --> TableDetail : has
     Table --> TableSpaceInfo : has

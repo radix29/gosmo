@@ -227,14 +227,14 @@ func (spec CertificateSpec) createCertificateStatement() (string, error) {
 	}
 
 	if spec.EncryptionPassword != "" {
-		stmt += " ENCRYPTION BY PASSWORD = " + nStringLiteral(spec.EncryptionPassword)
+		stmt += " ENCRYPTION BY PASSWORD = " + QuoteLiteral(spec.EncryptionPassword)
 	}
-	stmt += " WITH SUBJECT = " + nStringLiteral(spec.Subject)
+	stmt += " WITH SUBJECT = " + QuoteLiteral(spec.Subject)
 	if !spec.StartDate.IsZero() {
-		stmt += ", START_DATE = " + nStringLiteral(spec.StartDate.Format("20060102"))
+		stmt += ", START_DATE = " + QuoteLiteral(spec.StartDate.Format("20060102"))
 	}
 	if !spec.ExpiryDate.IsZero() {
-		stmt += ", EXPIRY_DATE = " + nStringLiteral(spec.ExpiryDate.Format("20060102"))
+		stmt += ", EXPIRY_DATE = " + QuoteLiteral(spec.ExpiryDate.Format("20060102"))
 	}
 	return stmt, nil
 }
@@ -280,7 +280,7 @@ func (c *Certificate) backupStatement(spec CertificateBackupSpec) (string, error
 	if strings.TrimSpace(spec.File) == "" {
 		return "", fmt.Errorf("no file to back up to")
 	}
-	stmt := "BACKUP CERTIFICATE " + quoteIdent(c.Name) + " TO FILE = " + nStringLiteral(spec.File)
+	stmt := "BACKUP CERTIFICATE " + quoteIdent(c.Name) + " TO FILE = " + QuoteLiteral(spec.File)
 	if spec.PrivateKeyFile == "" {
 		if spec.EncryptionPassword != "" || spec.DecryptionPassword != "" {
 			return "", fmt.Errorf("a password was given but no private key file")
@@ -290,10 +290,10 @@ func (c *Certificate) backupStatement(spec CertificateBackupSpec) (string, error
 	if spec.EncryptionPassword == "" {
 		return "", fmt.Errorf("the private key file needs a password to encrypt it with")
 	}
-	stmt += " WITH PRIVATE KEY (FILE = " + nStringLiteral(spec.PrivateKeyFile) +
-		", ENCRYPTION BY PASSWORD = " + nStringLiteral(spec.EncryptionPassword)
+	stmt += " WITH PRIVATE KEY (FILE = " + QuoteLiteral(spec.PrivateKeyFile) +
+		", ENCRYPTION BY PASSWORD = " + QuoteLiteral(spec.EncryptionPassword)
 	if spec.DecryptionPassword != "" {
-		stmt += ", DECRYPTION BY PASSWORD = " + nStringLiteral(spec.DecryptionPassword)
+		stmt += ", DECRYPTION BY PASSWORD = " + QuoteLiteral(spec.DecryptionPassword)
 	}
 	return stmt + ")", nil
 }
@@ -374,7 +374,7 @@ func (d *Database) CreateMasterKey(ctx context.Context, password string) error {
 	if password == "" {
 		return fmt.Errorf("gosmo: create master key in %q: empty password", d.Name)
 	}
-	if _, err := d.exec(ctx, "CREATE MASTER KEY ENCRYPTION BY PASSWORD = "+nStringLiteral(password)); err != nil {
+	if _, err := d.exec(ctx, "CREATE MASTER KEY ENCRYPTION BY PASSWORD = "+QuoteLiteral(password)); err != nil {
 		return fmt.Errorf("gosmo: create master key in %q: %w", d.Name, err)
 	}
 	return nil

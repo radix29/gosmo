@@ -228,6 +228,8 @@ func TestValidPartitionBoundary(t *testing.T) {
 		{"100", true},
 		{"-100", true},
 		{"3.14", true},
+		{"-1.5E-3", true},
+		{"1e", false},
 		{"0x1F", true},
 		{"'2024-01-01'", true},
 		{"N'active'", true},

@@ -93,14 +93,6 @@ func nullableStr(s string) string {
 	return fmt.Sprintf("N'%s'", escapeSingle(s))
 }
 
-// nStringLiteral quotes s as an N'...' T-SQL string literal, escaping any
-// embedded quote. Unlike nullableStr, an empty s still quotes to N” rather
-// than becoming NULL — callers use this for values (e.g. passwords) where
-// NULL is never the intended result.
-func nStringLiteral(s string) string {
-	return fmt.Sprintf("N'%s'", escapeSingle(s))
-}
-
 // binaryLiteral renders b as a T-SQL 0x… binary literal in uppercase hex.
 // Empty (or nil) b renders as 0x, the empty binary string — DATALENGTH(0x)
 // is 0, where 0x00 would be one zero byte. A caller for which nil means NULL

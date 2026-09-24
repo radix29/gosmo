@@ -5,10 +5,9 @@ import (
 	"testing"
 )
 
-// A date boundary comes back from sys.partition_range_values as text and has
-// to be re-quoted, or the generated CREATE doesn't parse; a numeric one must
-// not be.
-func TestBuildPartitionFunctionScriptQuotesNonNumericBoundaries(t *testing.T) {
+// Boundaries are already literals by the time a script is built, so the
+// script splices them as they are.
+func TestBuildPartitionFunctionScriptSplicesBoundaryLiterals(t *testing.T) {
 	opts := DefaultScriptOptions()
 
 	num := &PartitionFunction{Name: "pfInt", InputType: DataTypeInt, IsRight: true,
@@ -22,10 +21,38 @@ func TestBuildPartitionFunctionScriptQuotesNonNumericBoundaries(t *testing.T) {
 	}
 
 	dates := &PartitionFunction{Name: "pfDate", InputType: DataTypeDate,
-		Boundaries: []string{"2026-01-01", "2026-07-01"}}
+		Boundaries: []string{"N'2026-01-01'", "N'2026-07-01'"}}
 	got = buildPartitionFunctionScript(dates, opts)
 	if !strings.Contains(got, "AS RANGE LEFT FOR VALUES (N'2026-01-01', N'2026-07-01')") {
-		t.Errorf("date boundaries not quoted:\n%s", got)
+		t.Errorf("date boundaries wrong:\n%s", got)
+	}
+}
+
+// T3: a boundary is rendered from its stored base type. A string or date is
+// re-quoted (escaping a quote inside it), a number or 0x… binary is not —
+// quoting the binary one is what would turn it into a different value — and
+// a NULL boundary, which FOR JSON leaves out, is the keyword.
+func TestPartitionBoundaryLiteral(t *testing.T) {
+	for _, c := range []struct{ baseType, value, want string }{
+		{"int", "100", "100"},
+		{"decimal", "12.50", "12.50"},
+		{"float", "1.0000000000000001e-001", "1.0000000000000001e-001"},
+		{"money", "10.1234", "10.1234"},
+		{"varbinary", "0x0A0B", "0x0A0B"},
+		{"binary", "0x00", "0x00"},
+		{"date", "2026-01-01", "N'2026-01-01'"},
+		{"datetime2", "2026-01-01T12:30:00", "N'2026-01-01T12:30:00'"},
+		{"nvarchar", "O'Brien, a", "N'O''Brien, a'"},
+		{"uniqueidentifier", "6F9619FF-8B86-D011-B42D-00C04FC964FF", "N'6F9619FF-8B86-D011-B42D-00C04FC964FF'"},
+		{"", "", "NULL"},
+	} {
+		got := partitionBoundaryLiteral(c.baseType, c.value)
+		if got != c.want {
+			t.Errorf("partitionBoundaryLiteral(%q, %q) = %s, want %s", c.baseType, c.value, got, c.want)
+		}
+		if !validPartitionBoundary(got) {
+			t.Errorf("%s is not accepted back by validPartitionBoundary, so SplitRange/MergeRange refuse it", got)
+		}
 	}
 }
 

@@ -33,7 +33,7 @@ const (
 // than an oversight to fix. TestOnlyKnownSitesEmitCreateOrAlter fails if a
 // second such statement appears without one.
 //
-// scripter.go is not a second site, though it names the keywords:
+// scripter_module.go is not a second site, though it names the keywords:
 // alterModuleDefinition recognises a CREATE OR ALTER the server's own stored
 // definition already contains and returns it unchanged.
 const MinimumServerVersion = SQLServer2016
@@ -169,6 +169,8 @@ const (
 	IndexTypeSpatial              IndexType = "SPATIAL"
 	IndexTypeColumnStore          IndexType = "COLUMNSTORE"
 	IndexTypeClusteredColumnStore IndexType = "CLUSTERED COLUMNSTORE"
+	// IndexTypeNonClusteredHash is a memory-optimized table's hash index.
+	IndexTypeNonClusteredHash IndexType = "NONCLUSTERED HASH"
 )
 
 // IsColumnStore reports whether t is either columnstore index type.

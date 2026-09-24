@@ -49,7 +49,7 @@ func (p *ProviderKey) clauses() (from string, opts []string, err error) {
 	if strings.TrimSpace(p.KeyName) == "" {
 		return "", nil, fmt.Errorf("no provider key name")
 	}
-	opts = []string{"PROVIDER_KEY_NAME = " + nStringLiteral(p.KeyName)}
+	opts = []string{"PROVIDER_KEY_NAME = " + QuoteLiteral(p.KeyName)}
 	switch p.Disposition {
 	case "":
 	case ProviderCreateNew, ProviderOpenExisting:

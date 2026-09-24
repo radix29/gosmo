@@ -67,7 +67,7 @@ func TestBuildSchemaScriptGuardsWithDynamicExec(t *testing.T) {
 func TestBuildLoginScript(t *testing.T) {
 	sql := &Login{Name: "app", LoginType: "SQL_LOGIN", DefaultDatabase: "master", IsDisabled: true}
 	got := buildLoginScript(sql, DefaultScriptOptions())
-	if !strings.Contains(got, "CREATE LOGIN [app] WITH PASSWORD = N'<password, sysname, >', DEFAULT_DATABASE = [master];") {
+	if !strings.Contains(got, "CREATE LOGIN [app] WITH PASSWORD = N'<password, sysname, >', DEFAULT_DATABASE = [master], CHECK_EXPIRATION = OFF, CHECK_POLICY = OFF;") {
 		t.Errorf("SQL login script wrong:\n%s", got)
 	}
 	if !strings.Contains(got, "ALTER LOGIN [app] DISABLE;") {
@@ -111,7 +111,7 @@ func TestBuildLoginScriptCarriesTheSID(t *testing.T) {
 	if !strings.Contains(got, "SID = 0x010600AB") {
 		t.Errorf("a SQL login's SID must be scripted:\n%s", got)
 	}
-	if !strings.Contains(got, "CREATE LOGIN [app] WITH PASSWORD = N'<password, sysname, >', SID = 0x010600AB;") {
+	if !strings.Contains(got, "CREATE LOGIN [app] WITH PASSWORD = N'<password, sysname, >', SID = 0x010600AB,") {
 		t.Errorf("SID must continue the WITH list, not open a second one:\n%s", got)
 	}
 
@@ -150,7 +150,7 @@ func TestBuildLoginScriptOpensWithFromTheBranchNotTheText(t *testing.T) {
 	// so its DEFAULT_DATABASE must continue it with a comma.
 	sqlLogin := &Login{Name: `app WITH rights`, LoginType: "SQL_LOGIN", DefaultDatabase: "master"}
 	got = buildLoginScript(sqlLogin, DefaultScriptOptions())
-	if !strings.Contains(got, "N'<password, sysname, >', DEFAULT_DATABASE = [master];") {
+	if !strings.Contains(got, "N'<password, sysname, >', DEFAULT_DATABASE = [master],") {
 		t.Errorf("a SQL login's DEFAULT_DATABASE must continue the open WITH:\n%s", got)
 	}
 	if strings.Contains(got, "WITH DEFAULT_DATABASE") {
@@ -235,5 +235,87 @@ func TestBuildLoginScriptPlaceholdersAnUnresolvedMapping(t *testing.T) {
 	got := buildLoginScript(&Login{Name: "signer", LoginType: "CERTIFICATE_MAPPED_LOGIN"}, DefaultScriptOptions())
 	if !strings.Contains(got, "FROM CERTIFICATE [<certificate name, sysname, >];") {
 		t.Errorf("unresolved certificate mapping wrong:\n%s", got)
+	}
+}
+
+// A user whose own name contains " WITH " must not make DEFAULT_SCHEMA
+// continue a WITH list that was never opened — the name is quoted text, not
+// the statement's keyword.
+func TestBuildUserScriptIsNotFooledByWithInTheName(t *testing.T) {
+	got := buildUserScript(&User{Name: "x WITH y", AuthType: "NONE", DefaultSchema: "dbo"}, DefaultScriptOptions())
+	want := "CREATE USER [x WITH y] WITHOUT LOGIN WITH DEFAULT_SCHEMA = [dbo];"
+	if !strings.Contains(got, want) {
+		t.Errorf("user script:\n%s\nwant it to contain:\n%s", got, want)
+	}
+}
+
+func TestBuildLoginScriptCarriesLanguageAndPasswordPolicy(t *testing.T) {
+	// A login created with CHECK_POLICY = OFF came back enforcing the policy,
+	// since ON is the default: the placeholder password then had to pass it
+	// and the login behaved differently from the one scripted.
+	sql := &Login{Name: "app", LoginType: "SQL_LOGIN", DefaultDatabase: "master",
+		DefaultLanguage: "Deutsch", IsPolicyChecked: false, IsExpirationChecked: false}
+	got := buildLoginScript(sql, DefaultScriptOptions())
+	want := "CREATE LOGIN [app] WITH PASSWORD = N'<password, sysname, >', DEFAULT_DATABASE = [master], DEFAULT_LANGUAGE = [Deutsch], CHECK_EXPIRATION = OFF, CHECK_POLICY = OFF;"
+	if !strings.Contains(got, want) {
+		t.Errorf("SQL login script:\n%s\nwant it to contain:\n%s", got, want)
+	}
+	sql.IsPolicyChecked, sql.IsExpirationChecked = true, true
+	if got := buildLoginScript(sql, DefaultScriptOptions()); !strings.Contains(got, "CHECK_EXPIRATION = ON, CHECK_POLICY = ON;") {
+		t.Errorf("an enforced policy must be scripted ON:\n%s", got)
+	}
+
+	// A Windows login takes the language in its own WITH list, and never the
+	// policy clauses, which are SQL-login only.
+	win := &Login{Name: `CONTOSO\svc`, LoginType: "WINDOWS_LOGIN", DefaultLanguage: "us_english"}
+	got = buildLoginScript(win, DefaultScriptOptions())
+	if !strings.Contains(got, `CREATE LOGIN [CONTOSO\svc] FROM WINDOWS WITH DEFAULT_LANGUAGE = [us_english];`) {
+		t.Errorf("Windows login language:\n%s", got)
+	}
+	if strings.Contains(got, "CHECK_") {
+		t.Errorf("a Windows login has no password policy:\n%s", got)
+	}
+
+	// External: both defaults go out in one following ALTER LOGIN.
+	ext := &Login{Name: "a@contoso.com", LoginType: "EXTERNAL_LOGIN", DefaultDatabase: "sales", DefaultLanguage: "us_english"}
+	got = buildLoginScript(ext, DefaultScriptOptions())
+	if !strings.Contains(got, "ALTER LOGIN [a@contoso.com] WITH DEFAULT_DATABASE = [sales], DEFAULT_LANGUAGE = [us_english];") {
+		t.Errorf("external login defaults:\n%s", got)
+	}
+
+	// Mapped: DEFAULT_LANGUAGE is a syntax error there (probed on 17).
+	cert := &Login{Name: "signer", LoginType: "CERTIFICATE_MAPPED_LOGIN", MappedObject: "c", DefaultLanguage: "us_english"}
+	if got := buildLoginScript(cert, DefaultScriptOptions()); strings.Contains(got, "DEFAULT_LANGUAGE") {
+		t.Errorf("a certificate-mapped login takes no language:\n%s", got)
+	}
+}
+
+func TestBuildUserScriptMappedAndWindowsUsers(t *testing.T) {
+	cases := []struct {
+		name string
+		user *User
+		want string
+	}{
+		// DEFAULT_SCHEMA is refused for a mapped user, and a LoginName sharing
+		// the certificate's SID must not turn it into FOR LOGIN.
+		{"certificate", &User{Name: "cu", UserType: "CERTIFICATE_MAPPED_USER", AuthType: "NONE",
+			MappedObject: "c1", LoginName: "certLogin", DefaultSchema: "dbo"},
+			"CREATE USER [cu] FROM CERTIFICATE [c1];"},
+		{"asymmetric key", &User{Name: "ku", UserType: "ASYMMETRIC_KEY_MAPPED_USER", AuthType: "NONE", MappedObject: "ak1"},
+			"CREATE USER [ku] FROM ASYMMETRIC KEY [ak1];"},
+		{"certificate gone", &User{Name: "cu", UserType: "CERTIFICATE_MAPPED_USER", AuthType: "NONE"},
+			"CREATE USER [cu] FROM CERTIFICATE [<certificate name, sysname, >];"},
+		{"contained windows", &User{Name: `CONTOSO\u`, UserType: "WINDOWS_USER", AuthType: "WINDOWS", DefaultSchema: "dbo"},
+			`CREATE USER [CONTOSO\u] WITH DEFAULT_SCHEMA = [dbo];`},
+		{"windows for login", &User{Name: `CONTOSO\u`, UserType: "WINDOWS_USER", AuthType: "WINDOWS", LoginName: `CONTOSO\u`},
+			`CREATE USER [CONTOSO\u] FOR LOGIN [CONTOSO\u];`},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := buildUserScript(c.user, DefaultScriptOptions())
+			if !strings.Contains(got, c.want) {
+				t.Errorf("user script:\n%s\nwant it to contain:\n%s", got, c.want)
+			}
+		})
 	}
 }

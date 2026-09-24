@@ -8,8 +8,10 @@ SELECT i.name, i.index_id, i.type_desc, i.is_unique, i.is_primary_key,
        ISNULL(ds.name, ''), CASE WHEN ds.type = 'PS' THEN 1 ELSE 0 END,
        ISNULL(fg.is_default, 0), ISNULL(pc.name, ''),
        ISNULL(st.no_recompute, CAST(0 AS bit)),
-       CAST(0 AS bit)
+       CAST(0 AS bit),
+       ISNULL(h.bucket_count, 0)
 FROM   sys.indexes i
+LEFT   JOIN sys.hash_indexes h ON h.object_id = i.object_id AND h.index_id = i.index_id
 OUTER  APPLY (SELECT TOP 1 pp.data_compression_desc FROM sys.partitions pp
               WHERE pp.object_id = i.object_id AND pp.index_id = i.index_id
               ORDER BY pp.partition_number) p
@@ -33,8 +35,10 @@ SELECT i.name, i.index_id, i.type_desc, i.is_unique, i.is_primary_key,
        ISNULL(ds.name, ''), CASE WHEN ds.type = 'PS' THEN 1 ELSE 0 END,
        ISNULL(fg.is_default, 0), ISNULL(pc.name, ''),
        ISNULL(st.no_recompute, CAST(0 AS bit)),
-       CAST(0 AS bit)
+       CAST(0 AS bit),
+       ISNULL(h.bucket_count, 0)
 FROM   sys.indexes i
+LEFT   JOIN sys.hash_indexes h ON h.object_id = i.object_id AND h.index_id = i.index_id
 OUTER  APPLY (SELECT TOP 1 pp.data_compression_desc FROM sys.partitions pp
               WHERE pp.object_id = i.object_id AND pp.index_id = i.index_id
               ORDER BY pp.partition_number) p
@@ -58,8 +62,10 @@ SELECT i.name, i.index_id, i.type_desc, i.is_unique, i.is_primary_key,
        ISNULL(ds.name, ''), CASE WHEN ds.type = 'PS' THEN 1 ELSE 0 END,
        ISNULL(fg.is_default, 0), ISNULL(pc.name, ''),
        ISNULL(st.no_recompute, CAST(0 AS bit)),
-       i.optimize_for_sequential_key
+       i.optimize_for_sequential_key,
+       ISNULL(h.bucket_count, 0)
 FROM   sys.indexes i
+LEFT   JOIN sys.hash_indexes h ON h.object_id = i.object_id AND h.index_id = i.index_id
 OUTER  APPLY (SELECT TOP 1 pp.data_compression_desc FROM sys.partitions pp
               WHERE pp.object_id = i.object_id AND pp.index_id = i.index_id
               ORDER BY pp.partition_number) p
@@ -83,8 +89,10 @@ SELECT i.name, i.index_id, i.type_desc, i.is_unique, i.is_primary_key,
        ISNULL(ds.name, ''), CASE WHEN ds.type = 'PS' THEN 1 ELSE 0 END,
        ISNULL(fg.is_default, 0), ISNULL(pc.name, ''),
        ISNULL(st.no_recompute, CAST(0 AS bit)),
-       i.optimize_for_sequential_key
+       i.optimize_for_sequential_key,
+       ISNULL(h.bucket_count, 0)
 FROM   sys.indexes i
+LEFT   JOIN sys.hash_indexes h ON h.object_id = i.object_id AND h.index_id = i.index_id
 OUTER  APPLY (SELECT TOP 1 pp.data_compression_desc FROM sys.partitions pp
               WHERE pp.object_id = i.object_id AND pp.index_id = i.index_id
               ORDER BY pp.partition_number) p
@@ -108,8 +116,10 @@ SELECT i.name, i.index_id, i.type_desc, i.is_unique, i.is_primary_key,
        ISNULL(ds.name, ''), CASE WHEN ds.type = 'PS' THEN 1 ELSE 0 END,
        ISNULL(fg.is_default, 0), ISNULL(pc.name, ''),
        ISNULL(st.no_recompute, CAST(0 AS bit)),
-       i.optimize_for_sequential_key
+       i.optimize_for_sequential_key,
+       ISNULL(h.bucket_count, 0)
 FROM   sys.indexes i
+LEFT   JOIN sys.hash_indexes h ON h.object_id = i.object_id AND h.index_id = i.index_id
 OUTER  APPLY (SELECT TOP 1 pp.data_compression_desc FROM sys.partitions pp
               WHERE pp.object_id = i.object_id AND pp.index_id = i.index_id
               ORDER BY pp.partition_number) p

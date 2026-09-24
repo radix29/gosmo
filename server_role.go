@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 )
 
@@ -29,13 +28,12 @@ func (r *ServerRole) Server() *Server { return r.server }
 
 // ServerRoles returns all fixed and user-defined server roles.
 func (s *Server) ServerRoles(ctx context.Context) ([]*ServerRole, error) {
-	const q = `
+	q := `
 	SELECT r.name, r.principal_id, r.is_fixed_role, ISNULL(p.name, ''),
-	       STUFF((SELECT ', ' + m.name
-	              FROM sys.server_role_members rm
-	              JOIN sys.server_principals m ON m.principal_id = rm.member_principal_id
-	              WHERE rm.role_principal_id = r.principal_id
-	              FOR XML PATH(''), TYPE).value('.','NVARCHAR(MAX)'), 1, 2, '') AS members
+	       ` + jsonList("m.name", `
+        FROM   sys.server_role_members rm
+        JOIN   sys.server_principals m ON m.principal_id = rm.member_principal_id
+        WHERE  rm.role_principal_id = r.principal_id`, "m.name") + ` AS members
 	FROM sys.server_principals r
 	LEFT JOIN sys.server_principals p ON p.principal_id = r.owning_principal_id
 	WHERE r.type = 'R'
@@ -48,8 +46,9 @@ func (s *Server) ServerRoles(ctx context.Context) ([]*ServerRole, error) {
 		if err := scan(&r.Name, &r.ID, &r.IsFixedRole, &r.Owner, &members); err != nil {
 			return nil, err
 		}
-		if members.Valid && members.String != "" {
-			r.Members = strings.Split(members.String, ", ")
+		var err error
+		if r.Members, err = decodeJSONList(members); err != nil {
+			return nil, err
 		}
 		return r, nil
 	})
@@ -60,14 +59,13 @@ func (s *Server) ServerRoles(ctx context.Context) ([]*ServerRole, error) {
 // ServerRoles leaves these out since Object Explorer's tree listing
 // never needs them.
 func (s *Server) ServerRoleByName(ctx context.Context, name string) (*ServerRole, error) {
-	const q = `
+	q := `
 	SELECT r.principal_id, r.is_fixed_role, ISNULL(p.name, ''),
 	       r.sid, r.create_date, r.modify_date,
-	       STUFF((SELECT ', ' + m.name
-	              FROM sys.server_role_members rm
-	              JOIN sys.server_principals m ON m.principal_id = rm.member_principal_id
-	              WHERE rm.role_principal_id = r.principal_id
-	              FOR XML PATH(''), TYPE).value('.','NVARCHAR(MAX)'), 1, 2, '') AS members
+	       ` + jsonList("m.name", `
+        FROM   sys.server_role_members rm
+        JOIN   sys.server_principals m ON m.principal_id = rm.member_principal_id
+        WHERE  rm.role_principal_id = r.principal_id`, "m.name") + ` AS members
 	FROM sys.server_principals r
 	LEFT JOIN sys.server_principals p ON p.principal_id = r.owning_principal_id
 	WHERE r.type = 'R' AND r.name = @p1`
@@ -82,8 +80,9 @@ func (s *Server) ServerRoleByName(ctx context.Context, name string) (*ServerRole
 		}
 		return nil, fmt.Errorf("gosmo: find server role %q: %w", name, err)
 	}
-	if members.Valid && members.String != "" {
-		r.Members = strings.Split(members.String, ", ")
+	var err error
+	if r.Members, err = decodeJSONList(members); err != nil {
+		return nil, err
 	}
 	return r, nil
 }

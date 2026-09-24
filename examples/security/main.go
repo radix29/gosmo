@@ -89,7 +89,7 @@ func main() {
 
 	// -- Database-level: the user ------------------------------------------
 	demo.Section("Database user")
-	demo.Must(db.CreateUser(ctx, userName, loginName, "dbo"))
+	demo.Must(db.CreateUser(ctx, gosmo.CreateUserRequest{Name: userName, Login: loginName, DefaultSchema: "dbo"}))
 	user := demo.Value(db.UserByName(ctx, userName))
 	fmt.Printf("  %s  type=%s  login=%s  default_schema=%s  auth=%s\n",
 		user.Name, user.UserType, user.LoginName, user.DefaultSchema, user.AuthType)

@@ -222,6 +222,7 @@ classDiagram
     Capabilities --> CapabilityState : answers with
     DatabaseCapabilities --> CapabilityState : answers with
     Login ..> LoginSource : created from
+    Login ..> Quoting : password quoted by QuoteLiteral
     Database ..> withConn : writes run via
     Database ..> dbRows : query() returns
     Database ..> DatabaseQueryRow : single-row reads via

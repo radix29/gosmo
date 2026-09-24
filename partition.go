@@ -9,9 +9,10 @@ import (
 )
 
 // partitionBoundaryPattern matches a well-formed SQL Server literal: a
-// signed integer or decimal, a hex literal, a properly quoted (and
+// signed integer or decimal (with an optional exponent, the form a float
+// boundary reads back as), a hex literal, a properly quoted (and
 // escaped) string/date literal, or NULL.
-var partitionBoundaryPattern = regexp.MustCompile(`(?i)^(-?\d+(\.\d+)?|0x[0-9a-f]+|n?'(?:[^']|'')*'|null)$`)
+var partitionBoundaryPattern = regexp.MustCompile(`(?i)^(-?\d+(\.\d+)?(e[+-]?\d+)?|0x[0-9a-f]+|n?'(?:[^']|'')*'|null)$`)
 
 // validPartitionBoundary reports whether v is safe to splice directly into
 // a partition function's VALUES/SPLIT RANGE/MERGE RANGE clause. These
@@ -39,7 +40,12 @@ type PartitionFunction struct {
 	Scale         int
 	BoundaryCount int
 	IsRight       bool // RIGHT = boundary is in right partition
-	Boundaries    []string
+	// Boundaries are T-SQL literals in boundary order, ready to splice into
+	// a VALUES, SPLIT RANGE or MERGE RANGE clause: 100, N'2026-01-01',
+	// 0x0A, NULL. Each is rendered from the stored value's own base type
+	// (see partitionBoundaryLiteral), the same form
+	// CreatePartitionFunctionRequest.Boundaries takes.
+	Boundaries []string
 }
 
 // Database returns the database the partition function belongs to.
@@ -52,13 +58,30 @@ var partitionFunctionSelect = `
 SELECT pf.name, pf.function_id, pf.fanout - 1,
        tp.name AS input_type, pp.max_length, pp.precision, pp.scale,
        pf.boundary_value_on_right,
-       -- Style 126 (ISO 8601) matters for a date/time boundary: the default
-       -- conversion yields "Jan  1 2026", which loses any time part and has
-       -- to be reparsed by whoever reads it. It is ignored for every other
-       -- type, so it costs nothing there.
-       ` + commaList("CONVERT(NVARCHAR(256), prv.value, 126)", `
-        FROM sys.partition_range_values prv
-        WHERE prv.function_id = pf.function_id`, "prv.boundary_id") + ` AS boundaries
+       ` + jsonRows(`b.t, CASE
+                 -- Style 1 keeps the 0x prefix. Style 126 — right for a
+                 -- date — is refused for varbinary (Msg 9809), and that
+                 -- error failed every partition function in the database.
+                 WHEN b.t IN (N'binary', N'varbinary')
+                      THEN CONVERT(nvarchar(max), CONVERT(varbinary(max), prv.value), 1)
+                 -- Style 126 (ISO 8601): the default conversion yields
+                 -- "Jan  1 2026", which loses any time part.
+                 WHEN b.t IN (N'date', N'time', N'datetime', N'datetime2',
+                              N'smalldatetime', N'datetimeoffset')
+                      THEN CONVERT(nvarchar(max), prv.value, 126)
+                 -- Style 3 is float's lossless 17 digits; the default
+                 -- rounds to 6.
+                 WHEN b.t IN (N'float', N'real')
+                      THEN CONVERT(nvarchar(max), CONVERT(float, prv.value), 3)
+                 -- Style 2 keeps money's 4 decimals; the default keeps 2.
+                 WHEN b.t IN (N'money', N'smallmoney')
+                      THEN CONVERT(nvarchar(max), CONVERT(money, prv.value), 2)
+                 ELSE CONVERT(nvarchar(max), prv.value)
+               END AS v`, `
+        FROM   sys.partition_range_values prv
+        CROSS  APPLY (SELECT CONVERT(nvarchar(128),
+                        SQL_VARIANT_PROPERTY(prv.value, 'BaseType')) AS t) b
+        WHERE  prv.function_id = pf.function_id`, "prv.boundary_id") + ` AS boundaries
 FROM   sys.partition_functions pf
 JOIN   sys.partition_parameters pp ON pp.function_id = pf.function_id
 JOIN   sys.types tp ON tp.user_type_id = pp.user_type_id`
@@ -92,10 +115,38 @@ func scanPartitionFunction(d *Database, scan func(...any) error) (*PartitionFunc
 		&pf.IsRight, &boundaries); err != nil {
 		return nil, err
 	}
-	if boundaries.Valid && boundaries.String != "" {
-		pf.Boundaries = strings.Split(boundaries.String, ",")
+	values, err := decodeJSONRows[partitionBoundary](boundaries)
+	if err != nil {
+		return nil, err
+	}
+	for _, b := range values {
+		pf.Boundaries = append(pf.Boundaries, partitionBoundaryLiteral(b.BaseType, b.Value))
 	}
 	return pf, nil
+}
+
+// partitionBoundary is one sys.partition_range_values row as
+// partitionFunctionSelect's boundary list renders it: the sql_variant's base
+// type, and its value as text in the style that type needs.
+type partitionBoundary struct {
+	BaseType string `json:"t"`
+	Value    string `json:"v"`
+}
+
+// partitionBoundaryLiteral renders one boundary as a T-SQL literal. It goes
+// by the stored value's base type, not the function's input type: the value
+// is what was converted to text, so its type is what says how to read the
+// text back. A NULL boundary has neither, since FOR JSON leaves out a NULL.
+func partitionBoundaryLiteral(baseType, value string) string {
+	switch baseType {
+	case "":
+		return "NULL"
+	case "bigint", "int", "smallint", "tinyint", "bit",
+		"decimal", "numeric", "float", "real", "money", "smallmoney",
+		"binary", "varbinary":
+		return value
+	}
+	return "N'" + escapeSingle(value) + "'"
 }
 
 // CreatePartitionFunctionRequest describes a partition function to create.
@@ -103,7 +154,7 @@ type CreatePartitionFunctionRequest struct {
 	Name       string
 	InputType  DataType
 	IsRight    bool
-	Boundaries []string // literal boundary values, e.g. {"100","200","300"}
+	Boundaries []string // T-SQL literals, e.g. {"100","200","300"} or {"N'2026-01-01'"}
 }
 
 // CreatePartitionFunction creates a partition function.
@@ -189,7 +240,7 @@ func (ps *PartitionScheme) Database() *Database { return ps.db }
 // scheme read shares; the listing adds ORDER BY, the by-name lookup a WHERE.
 var partitionSchemeSelect = `
 SELECT ps.name, ps.data_space_id, pf.name AS func_name,
-       ` + commaList("fg.name", `
+       ` + jsonList("fg.name", `
         FROM sys.destination_data_spaces dds
         JOIN sys.filegroups fg ON fg.data_space_id = dds.data_space_id
         WHERE dds.partition_scheme_id = ps.data_space_id`, "dds.destination_id") + ` AS filegroups
@@ -223,8 +274,9 @@ func scanPartitionScheme(d *Database, scan func(...any) error) (*PartitionScheme
 	if err := scan(&ps.Name, &ps.SchemeID, &ps.FunctionName, &fgs); err != nil {
 		return nil, err
 	}
-	if fgs.Valid && fgs.String != "" {
-		ps.FileGroups = strings.Split(fgs.String, ",")
+	var err error
+	if ps.FileGroups, err = decodeJSONList(fgs); err != nil {
+		return nil, err
 	}
 	return ps, nil
 }

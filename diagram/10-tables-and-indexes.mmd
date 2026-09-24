@@ -21,6 +21,7 @@ classDiagram
         +ForeignKeys() []*ForeignKey
         +ForeignKeyByName(name) *ForeignKey
         +CheckConstraints() []*CheckConstraint
+        +EdgeConstraints() []*EdgeConstraint
         +Statistics() []*Statistic
         +StatisticByName(name) *Statistic
         +StatisticRef(name) *Statistic
@@ -54,8 +55,8 @@ classDiagram
         +Scale int
         +IsNullable bool
         +IsIdentity bool
-        +IdentitySeed int64
-        +IdentityIncrement int64
+        +IdentitySeed string
+        +IdentityIncrement string
         +IsComputed bool
         +ComputedText string
         +DefaultValue *ColumnDefault
@@ -71,6 +72,8 @@ classDiagram
         +MaskingFunction string
         +GeneratedAlwaysType int
         +IsHidden bool
+        +IsFileStream bool
+        +GraphType int
     }
 
     class Index {
@@ -89,6 +92,7 @@ classDiagram
         +DataCompression DataCompression
         +StatisticsNoRecompute bool
         +OptimizeForSequentialKey bool
+        +BucketCount int64
         +KeyColumns []IndexColumn
         +IncludedColumns []IndexColumn
         +FilterDefinition string

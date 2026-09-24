@@ -145,7 +145,7 @@ END TRY
 BEGIN CATCH
     IF DB_ID(%[3]s) IS NOT NULL ALTER DATABASE %[1]s SET MULTI_USER;
     THROW;
-END CATCH;`, db, op, nStringLiteral(name))
+END CATCH;`, db, op, QuoteLiteral(name))
 }
 
 // renameExclusiveBatch is exclusiveBatch for ALTER DATABASE … MODIFY NAME:
@@ -264,7 +264,7 @@ func (s *Server) restoreMultiUserAfterRename(ctx context.Context, oldName, newNa
 	defer cancel()
 	return s.exec(rctx, fmt.Sprintf(`IF DB_ID(%s) IS NOT NULL ALTER DATABASE %s SET MULTI_USER
 ELSE IF DB_ID(%s) IS NOT NULL ALTER DATABASE %s SET MULTI_USER`,
-		nStringLiteral(oldName), quoteIdent(oldName), nStringLiteral(newName), quoteIdent(newName)))
+		QuoteLiteral(oldName), quoteIdent(oldName), QuoteLiteral(newName), quoteIdent(newName)))
 }
 
 // query runs a server-scoped, rows-returning read against the pool,

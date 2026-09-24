@@ -102,7 +102,7 @@ func (e MasterKeyEncryptor) clause() (string, error) {
 	case e.ServiceMasterKey:
 		return "SERVICE MASTER KEY", nil
 	case e.Password != "":
-		return "PASSWORD = " + nStringLiteral(e.Password), nil
+		return "PASSWORD = " + QuoteLiteral(e.Password), nil
 	}
 	return "", fmt.Errorf("no encryption named")
 }
@@ -117,7 +117,7 @@ func withOpen(stmt, openPassword string) string {
 	}
 	var b strings.Builder
 	b.WriteString("BEGIN TRY\n")
-	b.WriteString("OPEN MASTER KEY DECRYPTION BY PASSWORD = " + nStringLiteral(openPassword) + ";\n")
+	b.WriteString("OPEN MASTER KEY DECRYPTION BY PASSWORD = " + QuoteLiteral(openPassword) + ";\n")
 	b.WriteString(stmt + ";\n")
 	b.WriteString("CLOSE MASTER KEY;\n")
 	b.WriteString("END TRY\nBEGIN CATCH\n")
@@ -149,7 +149,7 @@ func (m *MasterKey) Regenerate(ctx context.Context, password string, force bool,
 	if force {
 		stmt += "FORCE "
 	}
-	stmt += "REGENERATE WITH ENCRYPTION BY PASSWORD = " + nStringLiteral(password)
+	stmt += "REGENERATE WITH ENCRYPTION BY PASSWORD = " + QuoteLiteral(password)
 	return m.exec(ctx, "regenerate", stmt, openPassword)
 }
 
@@ -185,8 +185,8 @@ func (m *MasterKey) Backup(ctx context.Context, file, encryptionPassword, openPa
 	if encryptionPassword == "" {
 		return fmt.Errorf("gosmo: back up the master key in %q: empty password", m.db.Name)
 	}
-	stmt := "BACKUP MASTER KEY TO FILE = " + nStringLiteral(file) +
-		" ENCRYPTION BY PASSWORD = " + nStringLiteral(encryptionPassword)
+	stmt := "BACKUP MASTER KEY TO FILE = " + QuoteLiteral(file) +
+		" ENCRYPTION BY PASSWORD = " + QuoteLiteral(encryptionPassword)
 	return m.exec(ctx, "back up", stmt, openPassword)
 }
 

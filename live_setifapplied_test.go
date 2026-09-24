@@ -16,6 +16,7 @@
 package gosmo
 
 import (
+	"strconv"
 	"testing"
 )
 
@@ -273,8 +274,19 @@ func TestLiveScriptedSequenceRestartMirroring(t *testing.T) {
 	}
 
 	seq := reload()
-	before := seq.CurrentValue
+	before, err := strconv.ParseInt(seq.CurrentValue, 10, 64)
+	if err != nil {
+		t.Fatalf("current_value %q: %v", seq.CurrentValue, err)
+	}
 	t.Logf("created at current_value=%d", before)
+	cur := func(s *Sequence) int64 {
+		t.Helper()
+		n, err := strconv.ParseInt(s.CurrentValue, 10, 64)
+		if err != nil {
+			t.Fatalf("current_value %q: %v", s.CurrentValue, err)
+		}
+		return n
+	}
 
 	// 1. Scripted: neither the handle nor the server may move.
 	sctx, script := WithScript(ctx)
@@ -285,10 +297,10 @@ func TestLiveScriptedSequenceRestartMirroring(t *testing.T) {
 		t.Fatalf("Statements = %v, want one", script.Statements())
 	}
 	t.Logf("scripted statement: %s", script.Statements()[0])
-	if seq.CurrentValue != before {
-		t.Errorf("scripted restart moved the handle to %d, want it left at %d", seq.CurrentValue, before)
+	if got := cur(seq); got != before {
+		t.Errorf("scripted restart moved the handle to %d, want it left at %d", got, before)
 	}
-	if got := reload().CurrentValue; got != before {
+	if got := cur(reload()); got != before {
 		t.Errorf("scripted restart moved the SERVER to %d, want it left at %d", got, before)
 	}
 
@@ -300,7 +312,7 @@ func TestLiveScriptedSequenceRestartMirroring(t *testing.T) {
 	if _, err := d.exec(ctx, script.Entries[0].SQL); err != nil {
 		t.Fatalf("running the captured statement: %v", err)
 	}
-	if got := reload().CurrentValue; got != before+5000 {
+	if got := cur(reload()); got != before+5000 {
 		t.Errorf("after running the captured statement the server reports %d, want %d", got, before+5000)
 	}
 
@@ -311,7 +323,7 @@ func TestLiveScriptedSequenceRestartMirroring(t *testing.T) {
 	if err := seq.Restart(ctx, 7777); err != nil {
 		t.Fatalf("restart: %v", err)
 	}
-	if got, srvGot := seq.CurrentValue, reload().CurrentValue; got != 7777 || srvGot != 7777 {
+	if got, srvGot := cur(seq), cur(reload()); got != 7777 || srvGot != 7777 {
 		t.Errorf("restart: handle=%d server=%d, want both 7777", got, srvGot)
 	}
 	next, err := seq.NextValue(ctx)

@@ -48,45 +48,39 @@ var externalDataSourceTypes = map[string]bool{
 
 // buildExternalDataSourceScript assembles one external data source's script.
 func buildExternalDataSourceScript(s *ExternalDataSource, opts ScriptOptions) string {
-	var sb strings.Builder
-	if v := opts.verb(); v == ScriptDrop || v == ScriptDropAndCreate {
-		fmt.Fprintf(&sb, "IF EXISTS (SELECT 1 FROM sys.external_data_sources WHERE name = N'%s')\n"+
-			"    DROP EXTERNAL DATA SOURCE %s;\nGO\n", escapeSingle(s.Name), quoteIdent(s.Name))
-		if v == ScriptDrop {
-			return sb.String()
+	drop := fmt.Sprintf("IF EXISTS (SELECT 1 FROM sys.external_data_sources WHERE name = N'%s')\n"+
+		"    DROP EXTERNAL DATA SOURCE %s;\nGO\n", escapeSingle(s.Name), quoteIdent(s.Name))
+	return opts.envelope(drop, "", func(sb *strings.Builder) {
+		kind := strings.ToUpper(s.Type)
+		if kind != "" && !externalDataSourceTypes[kind] {
+			fmt.Fprintf(sb, "/* Reported type: %s — CREATE EXTERNAL DATA SOURCE has no TYPE keyword\n"+
+				"   for it, so the type is left to the location prefix. */\n", kind)
 		}
-		sb.WriteString("\n")
-	}
-	kind := strings.ToUpper(s.Type)
-	if kind != "" && !externalDataSourceTypes[kind] {
-		fmt.Fprintf(&sb, "/* Reported type: %s — CREATE EXTERNAL DATA SOURCE has no TYPE keyword\n"+
-			"   for it, so the type is left to the location prefix. */\n", kind)
-	}
-	if opts.IncludeIfNotExists {
-		fmt.Fprintf(&sb, "IF NOT EXISTS (SELECT 1 FROM sys.external_data_sources WHERE name = N'%s')\n",
-			escapeSingle(s.Name))
-	}
-	fmt.Fprintf(&sb, "CREATE EXTERNAL DATA SOURCE %s WITH (\n", quoteIdent(s.Name))
+		if opts.IncludeIfNotExists {
+			fmt.Fprintf(sb, "IF NOT EXISTS (SELECT 1 FROM sys.external_data_sources WHERE name = N'%s')\n",
+				escapeSingle(s.Name))
+		}
+		fmt.Fprintf(sb, "CREATE EXTERNAL DATA SOURCE %s WITH (\n", quoteIdent(s.Name))
 
-	opt := newClauseList()
-	opt.addLiteral("LOCATION", s.Location)
-	if externalDataSourceTypes[kind] {
-		opt.addKeyword("TYPE", kind)
-	}
-	if s.Credential != "" {
-		opt.addKeyword("CREDENTIAL", quoteIdent(s.Credential))
-	}
-	opt.addLiteral("RESOURCE_MANAGER_LOCATION", s.ResourceManagerLocation)
-	opt.addLiteral("DATABASE_NAME", s.DatabaseName)
-	opt.addLiteral("SHARD_MAP_NAME", s.ShardMapName)
-	opt.addLiteral("CONNECTION_OPTIONS", s.ConnectionOptions)
-	if s.PushdownEnabled {
-		opt.addKeyword("PUSHDOWN", "ON")
-	}
-	sb.WriteString(opt.render("    "))
+		opt := newClauseList()
+		opt.addLiteral("LOCATION", s.Location)
+		if externalDataSourceTypes[kind] {
+			opt.addKeyword("TYPE", kind)
+		}
+		if s.Credential != "" {
+			opt.addKeyword("CREDENTIAL", quoteIdent(s.Credential))
+		}
+		opt.addLiteral("RESOURCE_MANAGER_LOCATION", s.ResourceManagerLocation)
+		opt.addLiteral("DATABASE_NAME", s.DatabaseName)
+		opt.addLiteral("SHARD_MAP_NAME", s.ShardMapName)
+		opt.addLiteral("CONNECTION_OPTIONS", s.ConnectionOptions)
+		if s.PushdownEnabled {
+			opt.addKeyword("PUSHDOWN", "ON")
+		}
+		sb.WriteString(opt.render("    "))
 
-	sb.WriteString(");\nGO\n")
-	return sb.String()
+		sb.WriteString(");\nGO\n")
+	})
 }
 
 // ============================================================
@@ -109,54 +103,48 @@ func (sc *Scripter) ScriptExternalFileFormat(ctx context.Context, name string) (
 // valid empty, and every option in it belongs to DELIMITEDTEXT — a PARQUET
 // or ORC format carries none.
 func buildExternalFileFormatScript(f *ExternalFileFormat, opts ScriptOptions) string {
-	var sb strings.Builder
-	if v := opts.verb(); v == ScriptDrop || v == ScriptDropAndCreate {
-		fmt.Fprintf(&sb, "IF EXISTS (SELECT 1 FROM sys.external_file_formats WHERE name = N'%s')\n"+
-			"    DROP EXTERNAL FILE FORMAT %s;\nGO\n", escapeSingle(f.Name), quoteIdent(f.Name))
-		if v == ScriptDrop {
-			return sb.String()
+	drop := fmt.Sprintf("IF EXISTS (SELECT 1 FROM sys.external_file_formats WHERE name = N'%s')\n"+
+		"    DROP EXTERNAL FILE FORMAT %s;\nGO\n", escapeSingle(f.Name), quoteIdent(f.Name))
+	return opts.envelope(drop, "", func(sb *strings.Builder) {
+		if f.RowTerminator != "" {
+			// sys.external_file_formats stores it; CREATE EXTERNAL FILE FORMAT
+			// takes no option for it, so it is reported rather than emitted.
+			fmt.Fprintf(sb, "/* Row terminator stored with this format: N'%s' — CREATE EXTERNAL FILE\n"+
+				"   FORMAT has no option for it. */\n", escapeSingle(f.RowTerminator))
 		}
-		sb.WriteString("\n")
-	}
-	if f.RowTerminator != "" {
-		// sys.external_file_formats stores it; CREATE EXTERNAL FILE FORMAT
-		// takes no option for it, so it is reported rather than emitted.
-		fmt.Fprintf(&sb, "/* Row terminator stored with this format: N'%s' — CREATE EXTERNAL FILE\n"+
-			"   FORMAT has no option for it. */\n", escapeSingle(f.RowTerminator))
-	}
-	if opts.IncludeIfNotExists {
-		fmt.Fprintf(&sb, "IF NOT EXISTS (SELECT 1 FROM sys.external_file_formats WHERE name = N'%s')\n",
-			escapeSingle(f.Name))
-	}
-	fmt.Fprintf(&sb, "CREATE EXTERNAL FILE FORMAT %s WITH (\n", quoteIdent(f.Name))
+		if opts.IncludeIfNotExists {
+			fmt.Fprintf(sb, "IF NOT EXISTS (SELECT 1 FROM sys.external_file_formats WHERE name = N'%s')\n",
+				escapeSingle(f.Name))
+		}
+		fmt.Fprintf(sb, "CREATE EXTERNAL FILE FORMAT %s WITH (\n", quoteIdent(f.Name))
 
-	outer := newClauseList()
-	outer.addKeyword("FORMAT_TYPE", strings.ToUpper(f.FormatType))
+		outer := newClauseList()
+		outer.addKeyword("FORMAT_TYPE", strings.ToUpper(f.FormatType))
 
-	inner := newClauseList()
-	inner.addLiteral("FIELD_TERMINATOR", f.FieldTerminator)
-	inner.addLiteral("STRING_DELIMITER", f.StringDelimiter)
-	inner.addLiteral("DATE_FORMAT", f.DateFormat)
-	if f.UseTypeDefault {
-		inner.addKeyword("USE_TYPE_DEFAULT", "TRUE")
-	}
-	if f.FirstRow > 0 {
-		inner.addKeyword("FIRST_ROW", fmt.Sprintf("%d", f.FirstRow))
-	}
-	inner.addLiteral("ENCODING", f.Encoding)
-	inner.addLiteral("PARSER_VERSION", f.ParserVersion)
-	if !inner.empty() {
-		// FORMAT_OPTIONS takes its list directly, with no "=" before it —
-		// the one option here that is not a NAME = value pair.
-		outer.addRaw("FORMAT_OPTIONS (" + inner.inline() + ")")
-	}
+		inner := newClauseList()
+		inner.addLiteral("FIELD_TERMINATOR", f.FieldTerminator)
+		inner.addLiteral("STRING_DELIMITER", f.StringDelimiter)
+		inner.addLiteral("DATE_FORMAT", f.DateFormat)
+		if f.UseTypeDefault {
+			inner.addKeyword("USE_TYPE_DEFAULT", "TRUE")
+		}
+		if f.FirstRow > 0 {
+			inner.addKeyword("FIRST_ROW", fmt.Sprintf("%d", f.FirstRow))
+		}
+		inner.addLiteral("ENCODING", f.Encoding)
+		inner.addLiteral("PARSER_VERSION", f.ParserVersion)
+		if !inner.empty() {
+			// FORMAT_OPTIONS takes its list directly, with no "=" before it —
+			// the one option here that is not a NAME = value pair.
+			outer.addRaw("FORMAT_OPTIONS (" + inner.inline() + ")")
+		}
 
-	outer.addLiteral("SERDE_METHOD", f.SerDeMethod)
-	outer.addLiteral("DATA_COMPRESSION", f.DataCompression)
-	sb.WriteString(outer.render("    "))
+		outer.addLiteral("SERDE_METHOD", f.SerDeMethod)
+		outer.addLiteral("DATA_COMPRESSION", f.DataCompression)
+		sb.WriteString(outer.render("    "))
 
-	sb.WriteString(");\nGO\n")
-	return sb.String()
+		sb.WriteString(");\nGO\n")
+	})
 }
 
 // ============================================================
@@ -185,31 +173,25 @@ func (sc *Scripter) ScriptExternalLibrary(ctx context.Context, name string) (str
 // PRIVATE or PUBLIC by who owns it and who was granted the package rights,
 // and CREATE EXTERNAL LIBRARY has no clause that sets it.
 func buildExternalLibraryScript(l *ExternalLibrary, opts ScriptOptions) string {
-	var sb strings.Builder
-	if v := opts.verb(); v == ScriptDrop || v == ScriptDropAndCreate {
-		fmt.Fprintf(&sb, "IF EXISTS (SELECT 1 FROM sys.external_libraries WHERE name = N'%s')\n"+
-			"    DROP EXTERNAL LIBRARY %s;\nGO\n", escapeSingle(l.Name), quoteIdent(l.Name))
-		if v == ScriptDrop {
-			return sb.String()
+	drop := fmt.Sprintf("IF EXISTS (SELECT 1 FROM sys.external_libraries WHERE name = N'%s')\n"+
+		"    DROP EXTERNAL LIBRARY %s;\nGO\n", escapeSingle(l.Name), quoteIdent(l.Name))
+	return opts.envelope(drop, "", func(sb *strings.Builder) {
+		sb.WriteString("/* The library's package content cannot be scripted — it is not text.\n" +
+			"   Replace the placeholder below with the package bytes or its path. */\n")
+		if l.Scope != "" {
+			fmt.Fprintf(sb, "/* Scope: %s — set by ownership and package rights, not by this statement. */\n",
+				strings.ToUpper(l.Scope))
 		}
-		sb.WriteString("\n")
-	}
-	sb.WriteString("/* The library's package content cannot be scripted — it is not text.\n" +
-		"   Replace the placeholder below with the package bytes or its path. */\n")
-	if l.Scope != "" {
-		fmt.Fprintf(&sb, "/* Scope: %s — set by ownership and package rights, not by this statement. */\n",
-			strings.ToUpper(l.Scope))
-	}
-	fmt.Fprintf(&sb, "CREATE EXTERNAL LIBRARY %s", quoteIdent(l.Name))
-	if l.Owner != "" {
-		fmt.Fprintf(&sb, " AUTHORIZATION %s", quoteIdent(l.Owner))
-	}
-	fmt.Fprintf(&sb, "\nFROM (CONTENT = %s)", externalLibraryContentPlaceholder)
-	if l.Language != "" {
-		fmt.Fprintf(&sb, "\nWITH (LANGUAGE = N'%s')", escapeSingle(l.Language))
-	}
-	sb.WriteString(";\nGO\n")
-	return sb.String()
+		fmt.Fprintf(sb, "CREATE EXTERNAL LIBRARY %s", quoteIdent(l.Name))
+		if l.Owner != "" {
+			fmt.Fprintf(sb, " AUTHORIZATION %s", quoteIdent(l.Owner))
+		}
+		fmt.Fprintf(sb, "\nFROM (CONTENT = %s)", externalLibraryContentPlaceholder)
+		if l.Language != "" {
+			fmt.Fprintf(sb, "\nWITH (LANGUAGE = N'%s')", escapeSingle(l.Language))
+		}
+		sb.WriteString(";\nGO\n")
+	})
 }
 
 // ============================================================

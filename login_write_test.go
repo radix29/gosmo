@@ -8,7 +8,7 @@ import (
 
 func TestBuildChangePasswordStatementQuotesLiteralByDefault(t *testing.T) {
 	got := buildChangePasswordStatement("app_login", "hunter2", false, false)
-	want := "ALTER LOGIN [app_login] WITH PASSWORD = " + nStringLiteral("hunter2")
+	want := "ALTER LOGIN [app_login] WITH PASSWORD = " + QuoteLiteral("hunter2")
 	if got != want {
 		t.Errorf("got:\n%s\nwant:\n%s", got, want)
 	}
@@ -20,7 +20,7 @@ func TestBuildChangePasswordStatementQuotesLiteralByDefault(t *testing.T) {
 func TestBuildChangePasswordStatementMustChangeAddsCheckExpiration(t *testing.T) {
 	// MUST_CHANGE requires CHECK_EXPIRATION = ON or SQL Server rejects it.
 	got := buildChangePasswordStatement("app_login", "hunter2", true, false)
-	want := "ALTER LOGIN [app_login] WITH PASSWORD = " + nStringLiteral("hunter2") + " MUST_CHANGE, CHECK_EXPIRATION = ON"
+	want := "ALTER LOGIN [app_login] WITH PASSWORD = " + QuoteLiteral("hunter2") + " MUST_CHANGE, CHECK_EXPIRATION = ON"
 	if got != want {
 		t.Errorf("got:\n%s\nwant:\n%s", got, want)
 	}
@@ -32,7 +32,7 @@ func TestBuildChangePasswordStatementUnlock(t *testing.T) {
 	// "ALTER LOGIN ... WITH PASSWORD = '...', UNLOCK" is rejected with
 	// "Incorrect syntax near 'UNLOCK'".
 	got := buildChangePasswordStatement("app_login", "hunter2", false, true)
-	want := "ALTER LOGIN [app_login] WITH PASSWORD = " + nStringLiteral("hunter2") + " UNLOCK"
+	want := "ALTER LOGIN [app_login] WITH PASSWORD = " + QuoteLiteral("hunter2") + " UNLOCK"
 	if got != want {
 		t.Errorf("got:\n%s\nwant:\n%s", got, want)
 	}
@@ -40,7 +40,7 @@ func TestBuildChangePasswordStatementUnlock(t *testing.T) {
 
 func TestBuildChangePasswordStatementMustChangeAndUnlock(t *testing.T) {
 	got := buildChangePasswordStatement("app_login", "hunter2", true, true)
-	want := "ALTER LOGIN [app_login] WITH PASSWORD = " + nStringLiteral("hunter2") + " MUST_CHANGE UNLOCK, CHECK_EXPIRATION = ON"
+	want := "ALTER LOGIN [app_login] WITH PASSWORD = " + QuoteLiteral("hunter2") + " MUST_CHANGE UNLOCK, CHECK_EXPIRATION = ON"
 	if got != want {
 		t.Errorf("got:\n%s\nwant:\n%s", got, want)
 	}
@@ -48,7 +48,7 @@ func TestBuildChangePasswordStatementMustChangeAndUnlock(t *testing.T) {
 
 func TestBuildChangePasswordStatementEscapesQuotes(t *testing.T) {
 	got := buildChangePasswordStatement("app_login", "it's a secret", true, false)
-	want := "ALTER LOGIN [app_login] WITH PASSWORD = " + nStringLiteral("it's a secret") + " MUST_CHANGE, CHECK_EXPIRATION = ON"
+	want := "ALTER LOGIN [app_login] WITH PASSWORD = " + QuoteLiteral("it's a secret") + " MUST_CHANGE, CHECK_EXPIRATION = ON"
 	if got != want {
 		t.Errorf("got:\n%s\nwant:\n%s", got, want)
 	}
@@ -80,7 +80,7 @@ func createLoginStatementFor(t *testing.T, name, password string, opts *CreateLo
 // rule, which every existing caller relies on.
 func TestCreateLoginAutoSourceFollowsThePassword(t *testing.T) {
 	stmt, alter := createLoginStatementFor(t, "app", "hunter2", &CreateLoginOptions{DefaultDatabase: "master"})
-	want := "CREATE LOGIN [app] WITH PASSWORD = " + nStringLiteral("hunter2") + ", DEFAULT_DATABASE = [master]"
+	want := "CREATE LOGIN [app] WITH PASSWORD = " + QuoteLiteral("hunter2") + ", DEFAULT_DATABASE = [master]"
 	if stmt != want {
 		t.Errorf("got:\n%s\nwant:\n%s", stmt, want)
 	}
@@ -119,7 +119,7 @@ func TestCreateLoginExternalProviderWithObjectID(t *testing.T) {
 		ObjectID: "3f2504e0-4f89-11d3-9a0c-0305e82c3301",
 	})
 	want := "CREATE LOGIN [sales team] FROM EXTERNAL PROVIDER WITH OBJECT_ID = " +
-		nStringLiteral("3f2504e0-4f89-11d3-9a0c-0305e82c3301")
+		QuoteLiteral("3f2504e0-4f89-11d3-9a0c-0305e82c3301")
 	if stmt != want {
 		t.Errorf("got:\n%s\nwant:\n%s", stmt, want)
 	}
@@ -135,7 +135,7 @@ func TestCreateLoginObjectIDIsQuotedAsALiteral(t *testing.T) {
 		Source:   LoginSourceExternalProvider,
 		ObjectID: "a'b",
 	})
-	if !strings.Contains(stmt, nStringLiteral("a'b")) {
+	if !strings.Contains(stmt, QuoteLiteral("a'b")) {
 		t.Errorf("object id was not quoted as a literal: %s", stmt)
 	}
 }

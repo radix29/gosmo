@@ -96,3 +96,42 @@ func TestBuildFunctionCallScriptShapeFollowsFunctionType(t *testing.T) {
 		}
 	}
 }
+
+// A rowversion, a GENERATED ALWAYS period column and a graph table's internal
+// columns all refuse an explicit value, so a template naming one always
+// fails. An edge's endpoints are the exception on INSERT: the row must name
+// them, through the bare $from_id/$to_id pseudo-columns.
+func TestDMLTemplatesSkipServerFilledColumns(t *testing.T) {
+	cols := []*Column{
+		{Name: "graph_id_X", DataType: DataTypeBigInt, IsHidden: true, GraphType: GraphColumnID},
+		{Name: "$edge_id_X", DataType: DataTypeNVarChar, MaxLength: 2000, GraphType: GraphColumnIDComputed},
+		{Name: "from_id_X", DataType: DataTypeBigInt, IsHidden: true, GraphType: GraphColumnFromID},
+		{Name: "$from_id_X", DataType: DataTypeNVarChar, MaxLength: 2000, GraphType: GraphColumnFromIDComputed},
+		{Name: "$to_id_X", DataType: DataTypeNVarChar, MaxLength: 2000, GraphType: GraphColumnToIDComputed},
+		{Name: "w", DataType: DataTypeInt},
+		{Name: "rv", DataType: "timestamp"},
+		{Name: "valid_from", DataType: DataTypeDatetime2, GeneratedAlwaysType: 1},
+		{Name: "valid_to", DataType: DataTypeDatetime2, GeneratedAlwaysType: 2},
+	}
+	ins := buildInsertScript("dbo", "E", cols)
+	upd := buildUpdateScript("dbo", "E", cols)
+	for _, bad := range []string{"graph_id_X", "$edge_id_X", "from_id_X", "[rv]", "[valid_from]", "[valid_to]"} {
+		if strings.Contains(ins, bad) {
+			t.Errorf("INSERT template names %s:\n%s", bad, ins)
+		}
+		if strings.Contains(upd, bad) {
+			t.Errorf("UPDATE template names %s:\n%s", bad, upd)
+		}
+	}
+	want := "INSERT INTO [dbo].[E]\n           ($from_id\n          , $to_id\n          , [w])\n" +
+		"VALUES     (<$from_id, nvarchar(1000),>\n          , <$to_id, nvarchar(1000),>\n          , <w, int,>);"
+	if !strings.Contains(ins, want) {
+		t.Errorf("INSERT template:\n%s\nwant it to contain:\n%s", ins, want)
+	}
+	if strings.Contains(upd, "$from_id") || strings.Contains(upd, "$to_id") {
+		t.Errorf("UPDATE template assigns an edge endpoint, which cannot be updated:\n%s", upd)
+	}
+	if !strings.Contains(upd, "SET    [w] = <w, int,>\nWHERE") {
+		t.Errorf("UPDATE template:\n%s", upd)
+	}
+}

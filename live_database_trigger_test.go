@@ -3,7 +3,7 @@
 // Live verification of the database-scope DDL trigger family — sys.triggers
 // with parent_class = 0, the third trigger family. It pins the two things
 // only a real server settles: that the catalog shape database_trigger.go
-// scans is right (the LEFT JOIN onto sys.sql_modules and the commaList
+// scans is right (the LEFT JOIN onto sys.sql_modules and the jsonList
 // aggregate over sys.trigger_events), and that the DML family is untouched by
 // it — Database.Triggers must still list exactly what it listed before, and
 // must not list a DDL trigger.

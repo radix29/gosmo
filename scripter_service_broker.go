@@ -40,12 +40,12 @@ func brokerCatalogGuard(sense, view, name string) string {
 		sense, view, escapeSingle(name))
 }
 
-// brokerDropScript emits the guarded drop for one of the six schemaless
+// brokerDropScript is the guarded drop for one of the six schemaless
 // families. keyword is the DROP's object keyword ("MESSAGE TYPE", "CONTRACT",
 // …) and view the catalog view its names live in.
-func brokerDropScript(sb *strings.Builder, keyword, view, name string) {
-	sb.WriteString(brokerCatalogGuard("EXISTS", view, name))
-	fmt.Fprintf(sb, "    DROP %s %s;\nGO\n", keyword, quoteIdent(name))
+func brokerDropScript(keyword, view, name string) string {
+	return brokerCatalogGuard("EXISTS", view, name) +
+		fmt.Sprintf("    DROP %s %s;\nGO\n", keyword, quoteIdent(name))
 }
 
 // authorizationClause is the AUTHORIZATION line the five owned families
@@ -80,21 +80,13 @@ func (sc *Scripter) ScriptMessageType(ctx context.Context, name string) (string,
 // the clause, and the schema-collection form is the one case where getting
 // it wrong silently creates a message type that accepts anything.
 func buildMessageTypeScript(mt *MessageType, opts ScriptOptions) string {
-	var sb strings.Builder
-	if v := opts.verb(); v == ScriptDrop || v == ScriptDropAndCreate {
-		brokerDropScript(&sb, "MESSAGE TYPE", "service_message_types", mt.Name)
-		if v == ScriptDrop {
-			return sb.String()
-		}
-		sb.WriteString("\n")
-	}
-	if opts.IncludeIfNotExists {
-		sb.WriteString(brokerCatalogGuard("NOT EXISTS", "service_message_types", mt.Name))
-	}
-	fmt.Fprintf(&sb, "CREATE MESSAGE TYPE %s\n", mt.FullName())
-	sb.WriteString(authorizationClause(mt.Owner))
-	fmt.Fprintf(&sb, "    VALIDATION = %s;\nGO\n", messageTypeValidationClause(mt))
-	return sb.String()
+	drop := brokerDropScript("MESSAGE TYPE", "service_message_types", mt.Name)
+	guard := brokerCatalogGuard("NOT EXISTS", "service_message_types", mt.Name)
+	return opts.envelope(drop, guard, func(sb *strings.Builder) {
+		fmt.Fprintf(sb, "CREATE MESSAGE TYPE %s\n", mt.FullName())
+		sb.WriteString(authorizationClause(mt.Owner))
+		fmt.Fprintf(sb, "    VALIDATION = %s;\nGO\n", messageTypeValidationClause(mt))
+	})
 }
 
 // messageTypeValidationClause renders the VALIDATION clause, which is the
@@ -128,33 +120,25 @@ func (sc *Scripter) ScriptContract(ctx context.Context, name string) (string, er
 // script falls back to that pair — the shape the server would accept, the
 // same choice buildAssemblyScript makes for a payload it cannot read.
 func buildContractScript(c *ServiceContract, opts ScriptOptions) string {
-	var sb strings.Builder
-	if v := opts.verb(); v == ScriptDrop || v == ScriptDropAndCreate {
-		brokerDropScript(&sb, "CONTRACT", "service_contracts", c.Name)
-		if v == ScriptDrop {
-			return sb.String()
-		}
-		sb.WriteString("\n")
-	}
-	if opts.IncludeIfNotExists {
-		sb.WriteString(brokerCatalogGuard("NOT EXISTS", "service_contracts", c.Name))
-	}
-	fmt.Fprintf(&sb, "CREATE CONTRACT %s\n", c.FullName())
-	sb.WriteString(authorizationClause(c.Owner))
+	drop := brokerDropScript("CONTRACT", "service_contracts", c.Name)
+	guard := brokerCatalogGuard("NOT EXISTS", "service_contracts", c.Name)
+	return opts.envelope(drop, guard, func(sb *strings.Builder) {
+		fmt.Fprintf(sb, "CREATE CONTRACT %s\n", c.FullName())
+		sb.WriteString(authorizationClause(c.Owner))
 
-	messages := c.Messages
-	if len(messages) == 0 {
-		messages = []ContractMessage{{MessageType: "DEFAULT", SentBy: ContractSentByAny}}
-	}
-	sb.WriteString("    (")
-	for i, m := range messages {
-		if i > 0 {
-			sb.WriteString(",\n     ")
+		messages := c.Messages
+		if len(messages) == 0 {
+			messages = []ContractMessage{{MessageType: "DEFAULT", SentBy: ContractSentByAny}}
 		}
-		fmt.Fprintf(&sb, "%s SENT BY %s", quoteIdent(m.MessageType), m.SentBy)
-	}
-	sb.WriteString(");\nGO\n")
-	return sb.String()
+		sb.WriteString("    (")
+		for i, m := range messages {
+			if i > 0 {
+				sb.WriteString(",\n     ")
+			}
+			fmt.Fprintf(sb, "%s SENT BY %s", quoteIdent(m.MessageType), m.SentBy)
+		}
+		sb.WriteString(");\nGO\n")
+	})
 }
 
 // ============================================================
@@ -180,35 +164,26 @@ func (sc *Scripter) ScriptBrokerQueue(ctx context.Context, schema, name string) 
 // procedure, including with STATUS = OFF — activation that is configured but
 // switched off is a state a script has to preserve, not one to drop.
 func buildBrokerQueueScript(q *BrokerQueue, opts ScriptOptions) string {
-	var sb strings.Builder
-	if v := opts.verb(); v == ScriptDrop || v == ScriptDropAndCreate {
-		fmt.Fprintf(&sb, "IF OBJECT_ID(N'%s', 'SQ') IS NOT NULL\n", escapeSingle(q.FullName()))
-		fmt.Fprintf(&sb, "    DROP QUEUE %s;\nGO\n", q.FullName())
-		if v == ScriptDrop {
-			return sb.String()
+	drop := fmt.Sprintf("IF OBJECT_ID(N'%s', 'SQ') IS NOT NULL\n    DROP QUEUE %s;\nGO\n", escapeSingle(q.FullName()), q.FullName())
+	guard := fmt.Sprintf("IF OBJECT_ID(N'%s', 'SQ') IS NULL\n", escapeSingle(q.FullName()))
+	return opts.envelope(drop, guard, func(sb *strings.Builder) {
+		fmt.Fprintf(sb, "CREATE QUEUE %s\n", q.FullName())
+		fmt.Fprintf(sb, "    WITH STATUS = %s,\n", onOff(q.IsReceiveEnabled))
+		fmt.Fprintf(sb, "         RETENTION = %s", onOff(q.IsRetentionEnabled))
+		if q.ActivationProcedure != "" {
+			sb.WriteString(",\n         ACTIVATION\n         (  ")
+			fmt.Fprintf(sb, "STATUS = %s,\n            PROCEDURE_NAME = %s,\n",
+				onOff(q.IsActivationEnabled), q.ActivationProcedure)
+			fmt.Fprintf(sb, "            MAX_QUEUE_READERS = %d,\n", q.MaxReaders)
+			fmt.Fprintf(sb, "            EXECUTE AS %s\n         )", queueExecuteAsClause(q))
 		}
-		sb.WriteString("\n")
-	}
-	if opts.IncludeIfNotExists {
-		fmt.Fprintf(&sb, "IF OBJECT_ID(N'%s', 'SQ') IS NULL\n", escapeSingle(q.FullName()))
-	}
-	fmt.Fprintf(&sb, "CREATE QUEUE %s\n", q.FullName())
-	fmt.Fprintf(&sb, "    WITH STATUS = %s,\n", onOff(q.IsReceiveEnabled))
-	fmt.Fprintf(&sb, "         RETENTION = %s", onOff(q.IsRetentionEnabled))
-	if q.ActivationProcedure != "" {
-		sb.WriteString(",\n         ACTIVATION\n         (  ")
-		fmt.Fprintf(&sb, "STATUS = %s,\n            PROCEDURE_NAME = %s,\n",
-			onOff(q.IsActivationEnabled), q.ActivationProcedure)
-		fmt.Fprintf(&sb, "            MAX_QUEUE_READERS = %d,\n", q.MaxReaders)
-		fmt.Fprintf(&sb, "            EXECUTE AS %s\n         )", queueExecuteAsClause(q))
-	}
-	fmt.Fprintf(&sb, ",\n         POISON_MESSAGE_HANDLING (STATUS = %s)",
-		onOff(q.IsPoisonMessageHandlingEnabled))
-	if q.FileGroup != "" {
-		fmt.Fprintf(&sb, "\n    ON %s", quoteIdent(q.FileGroup))
-	}
-	sb.WriteString(";\nGO\n")
-	return sb.String()
+		fmt.Fprintf(sb, ",\n         POISON_MESSAGE_HANDLING (STATUS = %s)",
+			onOff(q.IsPoisonMessageHandlingEnabled))
+		if q.FileGroup != "" {
+			fmt.Fprintf(sb, "\n    ON %s", quoteIdent(q.FileGroup))
+		}
+		sb.WriteString(";\nGO\n")
+	})
 }
 
 // queueExecuteAsClause renders the activation principal. OWNER is a keyword;
@@ -219,7 +194,7 @@ func queueExecuteAsClause(q *BrokerQueue) string {
 	if q.ActivationExecuteAs == "" || q.ActivationExecuteAs == "OWNER" {
 		return "OWNER"
 	}
-	return nStringLiteral(q.ActivationExecuteAs)
+	return QuoteLiteral(q.ActivationExecuteAs)
 }
 
 // ============================================================
@@ -242,32 +217,24 @@ func (sc *Scripter) ScriptBrokerService(ctx context.Context, name string) (strin
 // contract only. Emitting an empty parenthesised list instead would not
 // parse.
 func buildBrokerServiceScript(s *BrokerService, opts ScriptOptions) string {
-	var sb strings.Builder
-	if v := opts.verb(); v == ScriptDrop || v == ScriptDropAndCreate {
-		brokerDropScript(&sb, "SERVICE", "services", s.Name)
-		if v == ScriptDrop {
-			return sb.String()
-		}
-		sb.WriteString("\n")
-	}
-	if opts.IncludeIfNotExists {
-		sb.WriteString(brokerCatalogGuard("NOT EXISTS", "services", s.Name))
-	}
-	fmt.Fprintf(&sb, "CREATE SERVICE %s\n", s.FullName())
-	sb.WriteString(authorizationClause(s.Owner))
-	fmt.Fprintf(&sb, "    ON QUEUE %s", s.Queue())
-	if len(s.Contracts) > 0 {
-		sb.WriteString("\n    (")
-		for i, c := range s.Contracts {
-			if i > 0 {
-				sb.WriteString(",\n     ")
+	drop := brokerDropScript("SERVICE", "services", s.Name)
+	guard := brokerCatalogGuard("NOT EXISTS", "services", s.Name)
+	return opts.envelope(drop, guard, func(sb *strings.Builder) {
+		fmt.Fprintf(sb, "CREATE SERVICE %s\n", s.FullName())
+		sb.WriteString(authorizationClause(s.Owner))
+		fmt.Fprintf(sb, "    ON QUEUE %s", s.Queue())
+		if len(s.Contracts) > 0 {
+			sb.WriteString("\n    (")
+			for i, c := range s.Contracts {
+				if i > 0 {
+					sb.WriteString(",\n     ")
+				}
+				sb.WriteString(quoteIdent(c))
 			}
-			sb.WriteString(quoteIdent(c))
+			sb.WriteString(")")
 		}
-		sb.WriteString(")")
-	}
-	sb.WriteString(";\nGO\n")
-	return sb.String()
+		sb.WriteString(";\nGO\n")
+	})
 }
 
 // ============================================================
@@ -289,36 +256,28 @@ func (sc *Scripter) ScriptRoute(ctx context.Context, name string) (string, error
 // — see Route.LifetimeSeconds. A route that has already expired scripts
 // without the clause rather than with a zero, which CREATE ROUTE rejects.
 func buildRouteScript(r *Route, opts ScriptOptions) string {
-	var sb strings.Builder
-	if v := opts.verb(); v == ScriptDrop || v == ScriptDropAndCreate {
-		brokerDropScript(&sb, "ROUTE", "routes", r.Name)
-		if v == ScriptDrop {
-			return sb.String()
-		}
-		sb.WriteString("\n")
-	}
-	if opts.IncludeIfNotExists {
-		sb.WriteString(brokerCatalogGuard("NOT EXISTS", "routes", r.Name))
-	}
-	fmt.Fprintf(&sb, "CREATE ROUTE %s\n", r.FullName())
-	sb.WriteString(authorizationClause(r.Owner))
+	drop := brokerDropScript("ROUTE", "routes", r.Name)
+	guard := brokerCatalogGuard("NOT EXISTS", "routes", r.Name)
+	return opts.envelope(drop, guard, func(sb *strings.Builder) {
+		fmt.Fprintf(sb, "CREATE ROUTE %s\n", r.FullName())
+		sb.WriteString(authorizationClause(r.Owner))
 
-	var clauses []string
-	if r.RemoteService != "" {
-		clauses = append(clauses, "SERVICE_NAME = "+nStringLiteral(r.RemoteService))
-	}
-	if r.BrokerInstance != "" {
-		clauses = append(clauses, "BROKER_INSTANCE = "+nStringLiteral(r.BrokerInstance))
-	}
-	if secs := r.LifetimeSeconds(); secs > 0 {
-		clauses = append(clauses, fmt.Sprintf("LIFETIME = %d", secs))
-	}
-	clauses = append(clauses, "ADDRESS = "+nStringLiteral(r.Address))
-	if r.MirrorAddress != "" {
-		clauses = append(clauses, "MIRROR_ADDRESS = "+nStringLiteral(r.MirrorAddress))
-	}
-	fmt.Fprintf(&sb, "    WITH %s;\nGO\n", strings.Join(clauses, ",\n         "))
-	return sb.String()
+		var clauses []string
+		if r.RemoteService != "" {
+			clauses = append(clauses, "SERVICE_NAME = "+QuoteLiteral(r.RemoteService))
+		}
+		if r.BrokerInstance != "" {
+			clauses = append(clauses, "BROKER_INSTANCE = "+QuoteLiteral(r.BrokerInstance))
+		}
+		if secs := r.LifetimeSeconds(); secs > 0 {
+			clauses = append(clauses, fmt.Sprintf("LIFETIME = %d", secs))
+		}
+		clauses = append(clauses, "ADDRESS = "+QuoteLiteral(r.Address))
+		if r.MirrorAddress != "" {
+			clauses = append(clauses, "MIRROR_ADDRESS = "+QuoteLiteral(r.MirrorAddress))
+		}
+		fmt.Fprintf(sb, "    WITH %s;\nGO\n", strings.Join(clauses, ",\n         "))
+	})
 }
 
 // ============================================================
@@ -342,23 +301,15 @@ func (sc *Scripter) ScriptRemoteServiceBinding(ctx context.Context, name string)
 
 // buildRemoteServiceBindingScript assembles one binding's script.
 func buildRemoteServiceBindingScript(b *RemoteServiceBinding, opts ScriptOptions) string {
-	var sb strings.Builder
-	if v := opts.verb(); v == ScriptDrop || v == ScriptDropAndCreate {
-		brokerDropScript(&sb, "REMOTE SERVICE BINDING", "remote_service_bindings", b.Name)
-		if v == ScriptDrop {
-			return sb.String()
-		}
-		sb.WriteString("\n")
-	}
-	if opts.IncludeIfNotExists {
-		sb.WriteString(brokerCatalogGuard("NOT EXISTS", "remote_service_bindings", b.Name))
-	}
-	fmt.Fprintf(&sb, "CREATE REMOTE SERVICE BINDING %s\n", b.FullName())
-	sb.WriteString(authorizationClause(b.Owner))
-	fmt.Fprintf(&sb, "    TO SERVICE %s\n", nStringLiteral(b.RemoteService))
-	fmt.Fprintf(&sb, "    WITH USER = %s, ANONYMOUS = %s;\nGO\n",
-		quoteIdent(b.User), onOff(b.IsAnonymous))
-	return sb.String()
+	drop := brokerDropScript("REMOTE SERVICE BINDING", "remote_service_bindings", b.Name)
+	guard := brokerCatalogGuard("NOT EXISTS", "remote_service_bindings", b.Name)
+	return opts.envelope(drop, guard, func(sb *strings.Builder) {
+		fmt.Fprintf(sb, "CREATE REMOTE SERVICE BINDING %s\n", b.FullName())
+		sb.WriteString(authorizationClause(b.Owner))
+		fmt.Fprintf(sb, "    TO SERVICE %s\n", QuoteLiteral(b.RemoteService))
+		fmt.Fprintf(sb, "    WITH USER = %s, ANONYMOUS = %s;\nGO\n",
+			quoteIdent(b.User), onOff(b.IsAnonymous))
+	})
 }
 
 // ============================================================
@@ -382,24 +333,16 @@ func (sc *Scripter) ScriptBrokerPriority(ctx context.Context, name string) (stri
 // the form is written out rather than omitted so that a priority scripted
 // from a narrow one cannot be misread as matching everything by accident.
 func buildBrokerPriorityScript(p *BrokerPriority, opts ScriptOptions) string {
-	var sb strings.Builder
-	if v := opts.verb(); v == ScriptDrop || v == ScriptDropAndCreate {
-		brokerDropScript(&sb, "BROKER PRIORITY", "conversation_priorities", p.Name)
-		if v == ScriptDrop {
-			return sb.String()
-		}
-		sb.WriteString("\n")
-	}
-	if opts.IncludeIfNotExists {
-		sb.WriteString(brokerCatalogGuard("NOT EXISTS", "conversation_priorities", p.Name))
-	}
-	fmt.Fprintf(&sb, "CREATE BROKER PRIORITY %s\n", p.FullName())
-	sb.WriteString("FOR CONVERSATION\n")
-	fmt.Fprintf(&sb, "SET (CONTRACT_NAME = %s,\n", anyOrIdent(p.Contract))
-	fmt.Fprintf(&sb, "     LOCAL_SERVICE_NAME = %s,\n", anyOrIdent(p.LocalService))
-	fmt.Fprintf(&sb, "     REMOTE_SERVICE_NAME = %s,\n", anyOrLiteral(p.RemoteService))
-	fmt.Fprintf(&sb, "     PRIORITY_LEVEL = %d);\nGO\n", p.Level)
-	return sb.String()
+	drop := brokerDropScript("BROKER PRIORITY", "conversation_priorities", p.Name)
+	guard := brokerCatalogGuard("NOT EXISTS", "conversation_priorities", p.Name)
+	return opts.envelope(drop, guard, func(sb *strings.Builder) {
+		fmt.Fprintf(sb, "CREATE BROKER PRIORITY %s\n", p.FullName())
+		sb.WriteString("FOR CONVERSATION\n")
+		fmt.Fprintf(sb, "SET (CONTRACT_NAME = %s,\n", anyOrIdent(p.Contract))
+		fmt.Fprintf(sb, "     LOCAL_SERVICE_NAME = %s,\n", anyOrIdent(p.LocalService))
+		fmt.Fprintf(sb, "     REMOTE_SERVICE_NAME = %s,\n", anyOrLiteral(p.RemoteService))
+		fmt.Fprintf(sb, "     PRIORITY_LEVEL = %d);\nGO\n", p.Level)
+	})
 }
 
 // anyOrIdent renders a criterion that names an object in this database.
@@ -416,5 +359,5 @@ func anyOrLiteral(name string) string {
 	if name == "" {
 		return "ANY"
 	}
-	return nStringLiteral(name)
+	return QuoteLiteral(name)
 }

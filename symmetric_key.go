@@ -361,7 +361,7 @@ func (e SymmetricKeyEncryptor) clause() (string, error) {
 		if e.Password == "" {
 			return "", fmt.Errorf("encryption by password has no password")
 		}
-		return "PASSWORD = " + nStringLiteral(e.Password), nil
+		return "PASSWORD = " + QuoteLiteral(e.Password), nil
 	case SymmetricKeyByCertificate, SymmetricKeyByAsymmetricKey, SymmetricKeyBySymmetricKey:
 		if strings.TrimSpace(e.Name) == "" {
 			return "", fmt.Errorf("encryption by %s has no name", strings.ToLower(string(e.Kind)))
@@ -379,14 +379,14 @@ func (dec SymmetricKeyDecryptor) clause() (string, error) {
 		if dec.Password == "" {
 			return "", fmt.Errorf("decryption by password has no password")
 		}
-		return "PASSWORD = " + nStringLiteral(dec.Password), nil
+		return "PASSWORD = " + QuoteLiteral(dec.Password), nil
 	case SymmetricKeyByCertificate, SymmetricKeyByAsymmetricKey, SymmetricKeyBySymmetricKey:
 		if strings.TrimSpace(dec.Name) == "" {
 			return "", fmt.Errorf("decryption by %s has no name", strings.ToLower(string(dec.Kind)))
 		}
 		s := string(dec.Kind) + " " + quoteIdent(dec.Name)
 		if dec.Password != "" && dec.Kind != SymmetricKeyBySymmetricKey {
-			s += " WITH PASSWORD = " + nStringLiteral(dec.Password)
+			s += " WITH PASSWORD = " + QuoteLiteral(dec.Password)
 		}
 		return s, nil
 	}
@@ -539,10 +539,10 @@ func (spec SymmetricKeySpec) createSymmetricKeyStatement() (string, error) {
 	}
 	stmt += " WITH ALGORITHM = " + string(spec.Algorithm)
 	if spec.KeySource != "" {
-		stmt += ", KEY_SOURCE = " + nStringLiteral(spec.KeySource)
+		stmt += ", KEY_SOURCE = " + QuoteLiteral(spec.KeySource)
 	}
 	if spec.IdentityValue != "" {
-		stmt += ", IDENTITY_VALUE = " + nStringLiteral(spec.IdentityValue)
+		stmt += ", IDENTITY_VALUE = " + QuoteLiteral(spec.IdentityValue)
 	}
 	stmt += " ENCRYPTION BY " + strings.Join(items, ", ")
 	return opens.wrap(stmt), nil

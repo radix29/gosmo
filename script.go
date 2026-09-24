@@ -445,7 +445,7 @@ func scriptLiteral(v any) (string, error) {
 	}
 	switch x := v.(type) {
 	case string:
-		return nStringLiteral(x), nil
+		return QuoteLiteral(x), nil
 	case []byte:
 		// go-mssqldb sends a nil slice as NULL and an empty non-nil one as
 		// the zero-length value, so the two script differently.

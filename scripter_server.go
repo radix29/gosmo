@@ -44,10 +44,11 @@ func (sc *ServerScripter) ScriptLogin(ctx context.Context, name string) (string,
 
 // buildLoginScript assembles one login's script.
 //
-// Only a SQL or Windows login can carry DEFAULT_DATABASE in CREATE LOGIN;
-// FROM EXTERNAL PROVIDER takes no WITH option list, so an external login's
-// goes out as a following ALTER LOGIN. A certificate- or asymmetric-key-
-// mapped login gets neither: SQL Server refuses DEFAULT_DATABASE for those in
+// Only a SQL or Windows login can carry DEFAULT_DATABASE or DEFAULT_LANGUAGE
+// in CREATE LOGIN; FROM EXTERNAL PROVIDER takes no WITH option list, so an
+// external login's go out as a following ALTER LOGIN. A certificate- or
+// asymmetric-key-mapped login gets neither: SQL Server refuses DEFAULT_DATABASE
+// (and DEFAULT_LANGUAGE is a syntax error, 2026-09-24) for those in
 // CREATE *and* ALTER ("Cannot use the parameter DEFAULT_DATABASE for a
 // certificate or asymmetric key login", verified live), while still reporting
 // one in sys.server_principals — so scripting the value back is a script that
@@ -64,72 +65,85 @@ func (sc *ServerScripter) ScriptLogin(ctx context.Context, name string) (string,
 // Note DROP LOGIN has no IF EXISTS form — unlike DROP USER or DROP ROLE — so
 // the drop is guarded by SUSER_ID instead.
 func buildLoginScript(l *Login, opts ScriptOptions) string {
-	var sb strings.Builder
-	if v := opts.verb(); v == ScriptDrop || v == ScriptDropAndCreate {
-		fmt.Fprintf(&sb, "IF SUSER_ID(N'%s') IS NOT NULL\n    DROP LOGIN %s;\nGO\n",
-			escapeSingle(l.Name), quoteIdent(l.Name))
-		if v == ScriptDrop {
-			return sb.String()
-		}
-		sb.WriteString("\n")
-	}
-	if opts.IncludeIfNotExists {
-		fmt.Fprintf(&sb, "IF SUSER_ID(N'%s') IS NULL\n", escapeSingle(l.Name))
-	}
-	stmt := "CREATE LOGIN " + quoteIdent(l.Name)
+	drop := fmt.Sprintf("IF SUSER_ID(N'%s') IS NOT NULL\n    DROP LOGIN %s;\nGO\n",
+		escapeSingle(l.Name), quoteIdent(l.Name))
+	guard := fmt.Sprintf("IF SUSER_ID(N'%s') IS NULL\n", escapeSingle(l.Name))
+	return opts.envelope(drop, guard, func(sb *strings.Builder) {
+		stmt := "CREATE LOGIN " + quoteIdent(l.Name)
 
-	// withOpen tracks whether the WITH keyword has already been emitted, so
-	// the next clause knows to continue the list with a comma. Read from the
-	// branch taken, never sniffed back out of stmt with strings.Contains: a
-	// login legitimately named [svc WITH rights] made a Windows login's
-	// DEFAULT_DATABASE continue a WITH list that was never opened.
-	withOpen := false
-	// takesWithOptions is the other half of the same rule: CREATE LOGIN's
-	// WITH list exists for SQL and Windows logins only, so DEFAULT_DATABASE
-	// goes out as an ALTER for the rest rather than as a clause that does
-	// not parse.
-	takesWithOptions := true
-	// alterDefaultDB is the third state: the login takes a default database,
-	// but only through a separate ALTER LOGIN.
-	alterDefaultDB := false
-	switch {
-	case strings.HasPrefix(l.LoginType, "WINDOWS"):
-		stmt += " FROM WINDOWS"
-	case strings.HasPrefix(l.LoginType, "EXTERNAL"):
-		stmt += " FROM EXTERNAL PROVIDER"
-		takesWithOptions = false
-		alterDefaultDB = true
-	case l.LoginType == "CERTIFICATE_MAPPED_LOGIN":
-		stmt += " FROM CERTIFICATE " + mappedObjectName(l, "certificate")
-		takesWithOptions = false
-	case l.LoginType == "ASYMMETRIC_KEY_MAPPED_LOGIN":
-		stmt += " FROM ASYMMETRIC KEY " + mappedObjectName(l, "asymmetric key")
-		takesWithOptions = false
-	default:
-		stmt += " WITH PASSWORD = N'<password, sysname, >'"
-		withOpen = true
-		if len(l.SID) > 0 {
-			stmt += ", SID = " + binaryLiteral(l.SID)
-		}
-	}
-	if l.DefaultDatabase != "" && takesWithOptions {
-		if withOpen {
-			stmt += ", "
-		} else {
-			stmt += " WITH "
+		// withOpen tracks whether the WITH keyword has already been emitted, so
+		// the next clause knows to continue the list with a comma. Read from the
+		// branch taken, never sniffed back out of stmt with strings.Contains: a
+		// login legitimately named [svc WITH rights] made a Windows login's
+		// DEFAULT_DATABASE continue a WITH list that was never opened.
+		withOpen := false
+		// takesWithOptions is the other half of the same rule: CREATE LOGIN's
+		// WITH list exists for SQL and Windows logins only, so DEFAULT_DATABASE
+		// goes out as an ALTER for the rest rather than as a clause that does
+		// not parse.
+		takesWithOptions := true
+		// alterDefaultDB is the third state: the login takes a default database
+		// and language, but only through a separate ALTER LOGIN.
+		alterDefaultDB := false
+		switch {
+		case strings.HasPrefix(l.LoginType, "WINDOWS"):
+			stmt += " FROM WINDOWS"
+		case strings.HasPrefix(l.LoginType, "EXTERNAL"):
+			stmt += " FROM EXTERNAL PROVIDER"
+			takesWithOptions = false
+			alterDefaultDB = true
+		case l.LoginType == "CERTIFICATE_MAPPED_LOGIN":
+			stmt += " FROM CERTIFICATE " + mappedObjectName(l, "certificate")
+			takesWithOptions = false
+		case l.LoginType == "ASYMMETRIC_KEY_MAPPED_LOGIN":
+			stmt += " FROM ASYMMETRIC KEY " + mappedObjectName(l, "asymmetric key")
+			takesWithOptions = false
+		default:
+			stmt += " WITH PASSWORD = N'<password, sysname, >'"
 			withOpen = true
+			if len(l.SID) > 0 {
+				stmt += ", SID = " + binaryLiteral(l.SID)
+			}
 		}
-		stmt += "DEFAULT_DATABASE = " + quoteIdent(l.DefaultDatabase)
-	}
-	fmt.Fprintf(&sb, "%s;\nGO\n", stmt)
-	if l.DefaultDatabase != "" && alterDefaultDB {
-		fmt.Fprintf(&sb, "ALTER LOGIN %s WITH DEFAULT_DATABASE = %s;\nGO\n",
-			quoteIdent(l.Name), quoteIdent(l.DefaultDatabase))
-	}
-	if l.IsDisabled {
-		fmt.Fprintf(&sb, "ALTER LOGIN %s DISABLE;\nGO\n", quoteIdent(l.Name))
-	}
-	return sb.String()
+		// with continues the WITH list, opening it first if no branch has.
+		with := func(clause string) {
+			if withOpen {
+				stmt += ", "
+			} else {
+				stmt += " WITH "
+				withOpen = true
+			}
+			stmt += clause
+		}
+		var altered []string
+		for _, opt := range []struct{ value, clause string }{
+			{l.DefaultDatabase, "DEFAULT_DATABASE = "},
+			{l.DefaultLanguage, "DEFAULT_LANGUAGE = "},
+		} {
+			switch {
+			case opt.value == "":
+			case takesWithOptions:
+				with(opt.clause + quoteIdent(opt.value))
+			case alterDefaultDB:
+				altered = append(altered, opt.clause+quoteIdent(opt.value))
+			}
+		}
+		if l.LoginType == "SQL_LOGIN" {
+			// Both always written, as SSMS does: CHECK_POLICY defaults to ON, so a
+			// login created with it OFF came back enforcing a policy its
+			// placeholder password then has to pass.
+			with("CHECK_EXPIRATION = " + onOff(l.IsExpirationChecked))
+			with("CHECK_POLICY = " + onOff(l.IsPolicyChecked))
+		}
+		fmt.Fprintf(sb, "%s;\nGO\n", stmt)
+		if len(altered) > 0 {
+			fmt.Fprintf(sb, "ALTER LOGIN %s WITH %s;\nGO\n",
+				quoteIdent(l.Name), strings.Join(altered, ", "))
+		}
+		if l.IsDisabled {
+			fmt.Fprintf(sb, "ALTER LOGIN %s DISABLE;\nGO\n", quoteIdent(l.Name))
+		}
+	})
 }
 
 // mappedObjectName renders the certificate or asymmetric key a mapped login
@@ -157,27 +171,19 @@ func (sc *ServerScripter) ScriptServerRole(ctx context.Context, name string) (st
 // buildServerRoleScript assembles one server role's script. DROP SERVER ROLE
 // has no IF EXISTS form, so the drop is guarded the same way a login's is.
 func buildServerRoleScript(r *ServerRole, opts ScriptOptions) string {
-	var sb strings.Builder
-	if v := opts.verb(); v == ScriptDrop || v == ScriptDropAndCreate {
-		fmt.Fprintf(&sb, "IF SUSER_ID(N'%s') IS NOT NULL\n    DROP SERVER ROLE %s;\nGO\n",
-			escapeSingle(r.Name), quoteIdent(r.Name))
-		if v == ScriptDrop {
-			return sb.String()
+	drop := fmt.Sprintf("IF SUSER_ID(N'%s') IS NOT NULL\n    DROP SERVER ROLE %s;\nGO\n",
+		escapeSingle(r.Name), quoteIdent(r.Name))
+	guard := fmt.Sprintf("IF SUSER_ID(N'%s') IS NULL\n", escapeSingle(r.Name))
+	return opts.envelope(drop, guard, func(sb *strings.Builder) {
+		fmt.Fprintf(sb, "CREATE SERVER ROLE %s", quoteIdent(r.Name))
+		if r.Owner != "" {
+			fmt.Fprintf(sb, " AUTHORIZATION %s", quoteIdent(r.Owner))
 		}
-		sb.WriteString("\n")
-	}
-	if opts.IncludeIfNotExists {
-		fmt.Fprintf(&sb, "IF SUSER_ID(N'%s') IS NULL\n", escapeSingle(r.Name))
-	}
-	fmt.Fprintf(&sb, "CREATE SERVER ROLE %s", quoteIdent(r.Name))
-	if r.Owner != "" {
-		fmt.Fprintf(&sb, " AUTHORIZATION %s", quoteIdent(r.Owner))
-	}
-	sb.WriteString(";\nGO\n")
-	for _, m := range r.Members {
-		fmt.Fprintf(&sb, "ALTER SERVER ROLE %s ADD MEMBER %s;\nGO\n", quoteIdent(r.Name), quoteIdent(m))
-	}
-	return sb.String()
+		sb.WriteString(";\nGO\n")
+		for _, m := range r.Members {
+			fmt.Fprintf(sb, "ALTER SERVER ROLE %s ADD MEMBER %s;\nGO\n", quoteIdent(r.Name), quoteIdent(m))
+		}
+	})
 }
 
 // ScriptCredential generates the CREATE (or DROP) script for one server-level
@@ -208,22 +214,14 @@ func (sc *ServerScripter) ScriptBackupDevice(ctx context.Context, name string) (
 // sp_addumpdevice takes, so it is mapped back — a script emitting
 // @devtype = N'VIRTUAL_DEVICE' is one the server refuses.
 func buildBackupDeviceScript(d *BackupDevice, opts ScriptOptions) string {
-	var sb strings.Builder
-	if v := opts.verb(); v == ScriptDrop || v == ScriptDropAndCreate {
-		fmt.Fprintf(&sb, "IF EXISTS (SELECT 1 FROM sys.backup_devices WHERE name = N'%s')\n    EXEC sp_dropdevice @logicalname = N'%s';\nGO\n",
-			escapeSingle(d.Name), escapeSingle(d.Name))
-		if v == ScriptDrop {
-			return sb.String()
-		}
-		sb.WriteString("\n")
-	}
-	if opts.IncludeIfNotExists {
-		fmt.Fprintf(&sb, "IF NOT EXISTS (SELECT 1 FROM sys.backup_devices WHERE name = N'%s')\n",
-			escapeSingle(d.Name))
-	}
-	fmt.Fprintf(&sb, "EXEC sp_addumpdevice @devtype = N'%s', @logicalname = N'%s', @physicalname = N'%s';\nGO\n",
-		escapeSingle(string(backupDeviceKeyword(d.Type))), escapeSingle(d.Name), escapeSingle(d.PhysicalName))
-	return sb.String()
+	drop := fmt.Sprintf("IF EXISTS (SELECT 1 FROM sys.backup_devices WHERE name = N'%s')\n    EXEC sp_dropdevice @logicalname = N'%s';\nGO\n",
+		escapeSingle(d.Name), escapeSingle(d.Name))
+	guard := fmt.Sprintf("IF NOT EXISTS (SELECT 1 FROM sys.backup_devices WHERE name = N'%s')\n",
+		escapeSingle(d.Name))
+	return opts.envelope(drop, guard, func(sb *strings.Builder) {
+		fmt.Fprintf(sb, "EXEC sp_addumpdevice @devtype = N'%s', @logicalname = N'%s', @physicalname = N'%s';\nGO\n",
+			escapeSingle(string(backupDeviceKeyword(d.Type))), escapeSingle(d.Name), escapeSingle(d.PhysicalName))
+	})
 }
 
 // ScriptServerTrigger generates the CREATE (or DROP) script for one
@@ -245,27 +243,22 @@ func (sc *ServerScripter) ScriptServerTrigger(ctx context.Context, name string) 
 // IncludeIfNotExists is not honoured because CREATE TRIGGER must be the first
 // statement in its batch, the same reason scriptModule ignores it.
 func buildServerTriggerScript(t *ServerTrigger, opts ScriptOptions) (string, error) {
-	var sb strings.Builder
-	if v := opts.verb(); v == ScriptDrop || v == ScriptDropAndCreate {
-		fmt.Fprintf(&sb, "DROP TRIGGER IF EXISTS %s ON ALL SERVER;\nGO\n", quoteIdent(t.Name))
-		if v == ScriptDrop {
-			return sb.String(), nil
+	drop := fmt.Sprintf("DROP TRIGGER IF EXISTS %s ON ALL SERVER;\nGO\n", quoteIdent(t.Name))
+	return opts.envelopeErr(drop, "", func(sb *strings.Builder) error {
+		if strings.TrimSpace(t.Definition) == "" {
+			return fmt.Errorf("gosmo: script server trigger %q: definition is not readable (encrypted or CLR)", t.Name)
 		}
-		sb.WriteString("\n")
-	}
-	if strings.TrimSpace(t.Definition) == "" {
-		return "", fmt.Errorf("gosmo: script server trigger %q: definition is not readable (encrypted or CLR)", t.Name)
-	}
-	def := t.Definition
-	if opts.verb() == ScriptAlter {
-		def = alterModuleDefinition(def)
-	}
-	sb.WriteString(def)
-	sb.WriteString("\nGO\n")
-	if !t.IsEnabled {
-		fmt.Fprintf(&sb, "DISABLE TRIGGER %s ON ALL SERVER;\nGO\n", quoteIdent(t.Name))
-	}
-	return sb.String(), nil
+		def := t.Definition
+		if opts.verb() == ScriptAlter {
+			def = alterModuleDefinition(def)
+		}
+		sb.WriteString(def)
+		sb.WriteString("\nGO\n")
+		if !t.IsEnabled {
+			fmt.Fprintf(sb, "DISABLE TRIGGER %s ON ALL SERVER;\nGO\n", quoteIdent(t.Name))
+		}
+		return nil
+	})
 }
 
 // ScriptEndpoint generates the CREATE (or DROP) script for one endpoint.
@@ -281,33 +274,25 @@ func (sc *ServerScripter) ScriptEndpoint(ctx context.Context, name string) (stri
 		return "", fmt.Errorf("gosmo: script endpoint %q: %w", e.Name, ErrSystemEndpoint)
 	}
 
-	var sb strings.Builder
-	if v := sc.opts.verb(); v == ScriptDrop || v == ScriptDropAndCreate {
-		fmt.Fprintf(&sb, "IF EXISTS (SELECT 1 FROM sys.endpoints WHERE name = N'%s')\n    DROP ENDPOINT %s;\nGO\n",
-			escapeSingle(e.Name), quoteIdent(e.Name))
-		if v == ScriptDrop {
-			return sb.String(), nil
+	drop := fmt.Sprintf("IF EXISTS (SELECT 1 FROM sys.endpoints WHERE name = N'%s')\n    DROP ENDPOINT %s;\nGO\n",
+		escapeSingle(e.Name), quoteIdent(e.Name))
+	guard := fmt.Sprintf("IF NOT EXISTS (SELECT 1 FROM sys.endpoints WHERE name = N'%s')\n",
+		escapeSingle(e.Name))
+	return sc.opts.envelopeErr(drop, guard, func(sb *strings.Builder) error {
+		payload, err := sc.endpointPayloadClause(ctx, e)
+		if err != nil {
+			return err
 		}
-		sb.WriteString("\n")
-	}
-
-	payload, err := sc.endpointPayloadClause(ctx, e)
-	if err != nil {
-		return "", err
-	}
-	if sc.opts.IncludeIfNotExists {
-		fmt.Fprintf(&sb, "IF NOT EXISTS (SELECT 1 FROM sys.endpoints WHERE name = N'%s')\n",
-			escapeSingle(e.Name))
-	}
-	fmt.Fprintf(&sb, "CREATE ENDPOINT %s", quoteIdent(e.Name))
-	if e.Owner != "" {
-		fmt.Fprintf(&sb, "\n    AUTHORIZATION %s", quoteIdent(e.Owner))
-	}
-	if e.State != "" {
-		fmt.Fprintf(&sb, "\n    STATE = %s", e.State)
-	}
-	fmt.Fprintf(&sb, "\n    AS TCP (LISTENER_PORT = %d, LISTENER_IP = ALL)\n    FOR %s;\nGO\n", e.Port, payload)
-	return sb.String(), nil
+		fmt.Fprintf(sb, "CREATE ENDPOINT %s", quoteIdent(e.Name))
+		if e.Owner != "" {
+			fmt.Fprintf(sb, "\n    AUTHORIZATION %s", quoteIdent(e.Owner))
+		}
+		if e.State != "" {
+			fmt.Fprintf(sb, "\n    STATE = %s", e.State)
+		}
+		fmt.Fprintf(sb, "\n    AS TCP (LISTENER_PORT = %d, LISTENER_IP = ALL)\n    FOR %s;\nGO\n", e.Port, payload)
+		return nil
+	})
 }
 
 // endpointPayloadClause builds the FOR <payload> half of CREATE ENDPOINT,
@@ -429,28 +414,22 @@ const credentialSecretPlaceholder = "<insert secret here>"
 // no IF EXISTS form, so the drop is guarded with a sys.credentials lookup the
 // way a server role's is guarded with SUSER_ID.
 func buildCredentialScript(c *Credential, opts ScriptOptions) string {
-	var sb strings.Builder
-	if v := opts.verb(); v == ScriptDrop || v == ScriptDropAndCreate {
-		fmt.Fprintf(&sb, "IF EXISTS (SELECT 1 FROM sys.credentials WHERE name = N'%s')\n    DROP CREDENTIAL %s;\nGO\n",
-			escapeSingle(c.Name), quoteIdent(c.Name))
-		if v == ScriptDrop {
-			return sb.String()
+	drop := fmt.Sprintf("IF EXISTS (SELECT 1 FROM sys.credentials WHERE name = N'%s')\n    DROP CREDENTIAL %s;\nGO\n",
+		escapeSingle(c.Name), quoteIdent(c.Name))
+	return opts.envelope(drop, "", func(sb *strings.Builder) {
+		sb.WriteString("/* The credential's secret cannot be read from the server. Replace the\n" +
+			"   placeholder below, or remove the SECRET clause if it has none. */\n")
+		if opts.IncludeIfNotExists {
+			fmt.Fprintf(sb, "IF NOT EXISTS (SELECT 1 FROM sys.credentials WHERE name = N'%s')\n",
+				escapeSingle(c.Name))
 		}
-		sb.WriteString("\n")
-	}
-	sb.WriteString("/* The credential's secret cannot be read from the server. Replace the\n" +
-		"   placeholder below, or remove the SECRET clause if it has none. */\n")
-	if opts.IncludeIfNotExists {
-		fmt.Fprintf(&sb, "IF NOT EXISTS (SELECT 1 FROM sys.credentials WHERE name = N'%s')\n",
-			escapeSingle(c.Name))
-	}
-	fmt.Fprintf(&sb, "CREATE CREDENTIAL %s WITH IDENTITY = N'%s', SECRET = N'%s'",
-		quoteIdent(c.Name), escapeSingle(c.Identity), credentialSecretPlaceholder)
-	if c.CryptographicProvider != "" {
-		fmt.Fprintf(&sb, " FOR CRYPTOGRAPHIC PROVIDER %s", quoteIdent(c.CryptographicProvider))
-	}
-	sb.WriteString(";\nGO\n")
-	return sb.String()
+		fmt.Fprintf(sb, "CREATE CREDENTIAL %s WITH IDENTITY = N'%s', SECRET = N'%s'",
+			quoteIdent(c.Name), escapeSingle(c.Identity), credentialSecretPlaceholder)
+		if c.CryptographicProvider != "" {
+			fmt.Fprintf(sb, " FOR CRYPTOGRAPHIC PROVIDER %s", quoteIdent(c.CryptographicProvider))
+		}
+		sb.WriteString(";\nGO\n")
+	})
 }
 
 // ScriptServerAudit generates the CREATE (or DROP) script for one server audit.
@@ -471,44 +450,38 @@ func (sc *ServerScripter) ScriptServerAudit(ctx context.Context, name string) (s
 // create. DROP SERVER AUDIT has no IF EXISTS form of its own, hence the catalog
 // guard — the same shape as the credential's.
 func buildServerAuditScript(a *ServerAudit, opts ScriptOptions) string {
-	var sb strings.Builder
-	if v := opts.verb(); v == ScriptDrop || v == ScriptDropAndCreate {
-		fmt.Fprintf(&sb, "IF EXISTS (SELECT 1 FROM sys.server_audits WHERE name = N'%s')\nBEGIN\n"+
-			"    ALTER SERVER AUDIT %s WITH ( STATE = OFF );\n    DROP SERVER AUDIT %s;\nEND\nGO\n",
-			escapeSingle(a.Name), quoteIdent(a.Name), quoteIdent(a.Name))
-		if v == ScriptDrop {
-			return sb.String()
+	drop := fmt.Sprintf("IF EXISTS (SELECT 1 FROM sys.server_audits WHERE name = N'%s')\nBEGIN\n"+
+		"    ALTER SERVER AUDIT %s WITH ( STATE = OFF );\n    DROP SERVER AUDIT %s;\nEND\nGO\n",
+		escapeSingle(a.Name), quoteIdent(a.Name), quoteIdent(a.Name))
+	return opts.envelope(drop, "", func(sb *strings.Builder) {
+
+		spec := ServerAuditSpec{
+			Name:             a.Name,
+			Type:             a.Type,
+			QueueDelay:       a.QueueDelay,
+			OnFailure:        a.OnFailure,
+			Predicate:        a.Predicate,
+			FilePath:         strings.TrimRight(a.LogFilePath, `\/`),
+			MaxFileSize:      a.MaxFileSize,
+			MaxRolloverFiles: a.MaxRolloverFiles,
+			MaxFiles:         a.MaxFiles,
+			ReserveDiskSpace: a.ReserveDiskSpace,
 		}
-		sb.WriteString("\n")
-	}
+		// The spec builder validates a caller-supplied spec; this one is built
+		// from a row that already exists on the server, so the error cannot fire.
+		create, _ := spec.createServerAuditStatement()
 
-	spec := ServerAuditSpec{
-		Name:             a.Name,
-		Type:             a.Type,
-		QueueDelay:       a.QueueDelay,
-		OnFailure:        a.OnFailure,
-		Predicate:        a.Predicate,
-		FilePath:         strings.TrimRight(a.LogFilePath, `\/`),
-		MaxFileSize:      a.MaxFileSize,
-		MaxRolloverFiles: a.MaxRolloverFiles,
-		MaxFiles:         a.MaxFiles,
-		ReserveDiskSpace: a.ReserveDiskSpace,
-	}
-	// The spec builder validates a caller-supplied spec; this one is built
-	// from a row that already exists on the server, so the error cannot fire.
-	create, _ := spec.createServerAuditStatement()
-
-	if opts.IncludeIfNotExists {
-		fmt.Fprintf(&sb, "IF NOT EXISTS (SELECT 1 FROM sys.server_audits WHERE name = N'%s')\nBEGIN\n%s\nEND\nGO\n",
-			escapeSingle(a.Name), create)
-	} else {
-		sb.WriteString(create)
-		sb.WriteString("\nGO\n")
-	}
-	if a.IsEnabled {
-		fmt.Fprintf(&sb, "\nALTER SERVER AUDIT %s WITH ( STATE = ON );\nGO\n", quoteIdent(a.Name))
-	}
-	return sb.String()
+		if opts.IncludeIfNotExists {
+			fmt.Fprintf(sb, "IF NOT EXISTS (SELECT 1 FROM sys.server_audits WHERE name = N'%s')\nBEGIN\n%s\nEND\nGO\n",
+				escapeSingle(a.Name), create)
+		} else {
+			sb.WriteString(create)
+			sb.WriteString("\nGO\n")
+		}
+		if a.IsEnabled {
+			fmt.Fprintf(sb, "\nALTER SERVER AUDIT %s WITH ( STATE = ON );\nGO\n", quoteIdent(a.Name))
+		}
+	})
 }
 
 // ScriptServerAuditSpecification generates the CREATE (or DROP) script for one
@@ -527,37 +500,32 @@ func (sc *ServerScripter) ScriptServerAuditSpecification(ctx context.Context, na
 // it, which SQL Server allows — is refused rather than scripted with an empty
 // FOR SERVER AUDIT clause, which would not parse.
 func buildServerAuditSpecificationScript(s *ServerAuditSpecification, opts ScriptOptions) (string, error) {
-	var sb strings.Builder
-	if v := opts.verb(); v == ScriptDrop || v == ScriptDropAndCreate {
-		fmt.Fprintf(&sb, "IF EXISTS (SELECT 1 FROM sys.server_audit_specifications WHERE name = N'%s')\nBEGIN\n"+
-			"    ALTER SERVER AUDIT SPECIFICATION %s WITH ( STATE = OFF );\n"+
-			"    DROP SERVER AUDIT SPECIFICATION %s;\nEND\nGO\n",
-			escapeSingle(s.Name), quoteIdent(s.Name), quoteIdent(s.Name))
-		if v == ScriptDrop {
-			return sb.String(), nil
+	drop := fmt.Sprintf("IF EXISTS (SELECT 1 FROM sys.server_audit_specifications WHERE name = N'%s')\nBEGIN\n"+
+		"    ALTER SERVER AUDIT SPECIFICATION %s WITH ( STATE = OFF );\n"+
+		"    DROP SERVER AUDIT SPECIFICATION %s;\nEND\nGO\n",
+		escapeSingle(s.Name), quoteIdent(s.Name), quoteIdent(s.Name))
+	return opts.envelopeErr(drop, "", func(sb *strings.Builder) error {
+
+		if s.AuditName == "" {
+			return fmt.Errorf("gosmo: script server audit specification %q: it names no audit", s.Name)
 		}
-		sb.WriteString("\n")
-	}
+		create, err := ServerAuditSpecificationSpec{
+			Name:         s.Name,
+			AuditName:    s.AuditName,
+			ActionGroups: s.ActionGroups,
+			Enabled:      s.IsEnabled,
+		}.createStatement()
+		if err != nil {
+			return fmt.Errorf("gosmo: script server audit specification %q: %w", s.Name, err)
+		}
 
-	if s.AuditName == "" {
-		return "", fmt.Errorf("gosmo: script server audit specification %q: it names no audit", s.Name)
-	}
-	create, err := ServerAuditSpecificationSpec{
-		Name:         s.Name,
-		AuditName:    s.AuditName,
-		ActionGroups: s.ActionGroups,
-		Enabled:      s.IsEnabled,
-	}.createStatement()
-	if err != nil {
-		return "", fmt.Errorf("gosmo: script server audit specification %q: %w", s.Name, err)
-	}
-
-	if opts.IncludeIfNotExists {
-		fmt.Fprintf(&sb, "IF NOT EXISTS (SELECT 1 FROM sys.server_audit_specifications WHERE name = N'%s')\nBEGIN\n%s\nEND\nGO\n",
-			escapeSingle(s.Name), create)
-	} else {
-		sb.WriteString(create)
-		sb.WriteString("\nGO\n")
-	}
-	return sb.String(), nil
+		if opts.IncludeIfNotExists {
+			fmt.Fprintf(sb, "IF NOT EXISTS (SELECT 1 FROM sys.server_audit_specifications WHERE name = N'%s')\nBEGIN\n%s\nEND\nGO\n",
+				escapeSingle(s.Name), create)
+		} else {
+			sb.WriteString(create)
+			sb.WriteString("\nGO\n")
+		}
+		return nil
+	})
 }

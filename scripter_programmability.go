@@ -48,28 +48,20 @@ func (sc *Scripter) ScriptUserDefinedDataType(ctx context.Context, schema, name 
 // scripted, not a reason to script it incompletely.
 func buildUserDefinedDataTypeScript(t *UserDefinedDataType, opts ScriptOptions) string {
 	fullName := qualifiedName(t.Schema, t.Name)
-	var sb strings.Builder
-	if v := opts.verb(); v == ScriptDrop || v == ScriptDropAndCreate {
-		fmt.Fprintf(&sb, "DROP TYPE IF EXISTS %s;\nGO\n", fullName)
-		if v == ScriptDrop {
-			return sb.String()
+	drop := fmt.Sprintf("DROP TYPE IF EXISTS %s;\nGO\n", fullName)
+	guard := fmt.Sprintf("IF TYPE_ID(N'%s') IS NULL\n", escapeSingle(fullName))
+	return opts.envelope(drop, guard, func(sb *strings.Builder) {
+		fmt.Fprintf(sb, "CREATE TYPE %s FROM %s %s;\nGO\n",
+			fullName, aliasBaseType(t), nullClause(t.IsNullable))
+		if t.Rule != "" {
+			fmt.Fprintf(sb, "\nEXEC sp_bindrule N'%s', N'%s';\nGO\n",
+				escapeSingle(quoteIdent(t.Rule)), escapeSingle(fullName))
 		}
-		sb.WriteString("\n")
-	}
-	if opts.IncludeIfNotExists {
-		fmt.Fprintf(&sb, "IF TYPE_ID(N'%s') IS NULL\n", escapeSingle(fullName))
-	}
-	fmt.Fprintf(&sb, "CREATE TYPE %s FROM %s %s;\nGO\n",
-		fullName, aliasBaseType(t), nullClause(t.IsNullable))
-	if t.Rule != "" {
-		fmt.Fprintf(&sb, "\nEXEC sp_bindrule N'%s', N'%s';\nGO\n",
-			escapeSingle(quoteIdent(t.Rule)), escapeSingle(fullName))
-	}
-	if t.Default != "" {
-		fmt.Fprintf(&sb, "\nEXEC sp_bindefault N'%s', N'%s';\nGO\n",
-			escapeSingle(quoteIdent(t.Default)), escapeSingle(fullName))
-	}
-	return sb.String()
+		if t.Default != "" {
+			fmt.Fprintf(sb, "\nEXEC sp_bindefault N'%s', N'%s';\nGO\n",
+				escapeSingle(quoteIdent(t.Default)), escapeSingle(fullName))
+		}
+	})
 }
 
 // aliasBaseType renders the alias's base type with the length, precision or
@@ -125,32 +117,24 @@ func (sc *Scripter) ScriptUserDefinedTableType(ctx context.Context, schema, name
 // indexes hang off its internal table id, which gosmo does not read.
 func buildUserDefinedTableTypeScript(t *UserDefinedTableType, cols []*Column, opts ScriptOptions) string {
 	fullName := qualifiedName(t.Schema, t.Name)
-	var sb strings.Builder
-	if v := opts.verb(); v == ScriptDrop || v == ScriptDropAndCreate {
-		fmt.Fprintf(&sb, "DROP TYPE IF EXISTS %s;\nGO\n", fullName)
-		if v == ScriptDrop {
-			return sb.String()
+	drop := fmt.Sprintf("DROP TYPE IF EXISTS %s;\nGO\n", fullName)
+	guard := fmt.Sprintf("IF TYPE_ID(N'%s') IS NULL\n", escapeSingle(fullName))
+	return opts.envelope(drop, guard, func(sb *strings.Builder) {
+		fmt.Fprintf(sb, "CREATE TYPE %s AS TABLE (\n", fullName)
+		for i, col := range cols {
+			sb.WriteString("    ")
+			sb.WriteString(tableTypeColumn(col))
+			if i != len(cols)-1 {
+				sb.WriteString(",")
+			}
+			sb.WriteString("\n")
 		}
-		sb.WriteString("\n")
-	}
-	if opts.IncludeIfNotExists {
-		fmt.Fprintf(&sb, "IF TYPE_ID(N'%s') IS NULL\n", escapeSingle(fullName))
-	}
-	fmt.Fprintf(&sb, "CREATE TYPE %s AS TABLE (\n", fullName)
-	for i, col := range cols {
-		sb.WriteString("    ")
-		sb.WriteString(tableTypeColumn(col))
-		if i != len(cols)-1 {
-			sb.WriteString(",")
+		if t.IsMemoryOptimized {
+			sb.WriteString(")\nWITH (MEMORY_OPTIMIZED = ON);\nGO\n")
+			return
 		}
-		sb.WriteString("\n")
-	}
-	if t.IsMemoryOptimized {
-		sb.WriteString(")\nWITH (MEMORY_OPTIMIZED = ON);\nGO\n")
-		return sb.String()
-	}
-	sb.WriteString(");\nGO\n")
-	return sb.String()
+		sb.WriteString(");\nGO\n")
+	})
 }
 
 // tableTypeColumn renders one column of a table type, in the same shape
@@ -162,7 +146,7 @@ func tableTypeColumn(col *Column) string {
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "%s %s", quoteIdent(col.Name), ColumnTypeString(col))
 	if col.IsIdentity {
-		fmt.Fprintf(&sb, " IDENTITY(%d,%d)", col.IdentitySeed, col.IdentityIncrement)
+		fmt.Fprintf(&sb, " IDENTITY(%s,%s)", col.IdentitySeed, col.IdentityIncrement)
 	}
 	fmt.Fprintf(&sb, " %s", nullClause(col.IsNullable))
 	if col.DefaultValue != nil {
@@ -192,24 +176,18 @@ func (sc *Scripter) ScriptClrType(ctx context.Context, schema, name string) (str
 // exist first, which is what the note says.
 func buildClrTypeScript(t *ClrType, opts ScriptOptions) string {
 	fullName := qualifiedName(t.Schema, t.Name)
-	var sb strings.Builder
-	if v := opts.verb(); v == ScriptDrop || v == ScriptDropAndCreate {
-		fmt.Fprintf(&sb, "DROP TYPE IF EXISTS %s;\nGO\n", fullName)
-		if v == ScriptDrop {
-			return sb.String()
+	drop := fmt.Sprintf("DROP TYPE IF EXISTS %s;\nGO\n", fullName)
+	return opts.envelope(drop, "", func(sb *strings.Builder) {
+		sb.WriteString("/* The assembly named below must already be registered in the database. */\n")
+		if opts.IncludeIfNotExists {
+			fmt.Fprintf(sb, "IF TYPE_ID(N'%s') IS NULL\n", escapeSingle(fullName))
 		}
-		sb.WriteString("\n")
-	}
-	sb.WriteString("/* The assembly named below must already be registered in the database. */\n")
-	if opts.IncludeIfNotExists {
-		fmt.Fprintf(&sb, "IF TYPE_ID(N'%s') IS NULL\n", escapeSingle(fullName))
-	}
-	externalName := quoteIdent(t.Assembly)
-	if t.AssemblyClass != "" {
-		externalName += "." + quoteIdent(t.AssemblyClass)
-	}
-	fmt.Fprintf(&sb, "CREATE TYPE %s EXTERNAL NAME %s;\nGO\n", fullName, externalName)
-	return sb.String()
+		externalName := quoteIdent(t.Assembly)
+		if t.AssemblyClass != "" {
+			externalName += "." + quoteIdent(t.AssemblyClass)
+		}
+		fmt.Fprintf(sb, "CREATE TYPE %s EXTERNAL NAME %s;\nGO\n", fullName, externalName)
+	})
 }
 
 // ============================================================
@@ -243,23 +221,12 @@ func (sc *Scripter) ScriptXMLSchemaCollection(ctx context.Context, schema, name 
 // since two schemas can hold collections of the same name.
 func buildXMLSchemaCollectionScript(c *XMLSchemaCollection, def string, opts ScriptOptions) string {
 	fullName := qualifiedName(c.Schema, c.Name)
-	var sb strings.Builder
-	if v := opts.verb(); v == ScriptDrop || v == ScriptDropAndCreate {
-		sb.WriteString(xmlSchemaCollectionGuard(c, "IF EXISTS"))
-		sb.WriteString("    DROP XML SCHEMA COLLECTION ")
-		sb.WriteString(fullName)
-		sb.WriteString(";\nGO\n")
-		if v == ScriptDrop {
-			return sb.String()
-		}
-		sb.WriteString("\n")
-	}
-	if opts.IncludeIfNotExists {
-		sb.WriteString(xmlSchemaCollectionGuard(c, "IF NOT EXISTS"))
-	}
-	fmt.Fprintf(&sb, "CREATE XML SCHEMA COLLECTION %s AS N'%s';\nGO\n",
-		fullName, escapeSingle(def))
-	return sb.String()
+	drop := xmlSchemaCollectionGuard(c, "IF EXISTS") + "    DROP XML SCHEMA COLLECTION " + fullName + ";\nGO\n"
+	guard := xmlSchemaCollectionGuard(c, "IF NOT EXISTS")
+	return opts.envelope(drop, guard, func(sb *strings.Builder) {
+		fmt.Fprintf(sb, "CREATE XML SCHEMA COLLECTION %s AS N'%s';\nGO\n",
+			fullName, escapeSingle(def))
+	})
 }
 
 // xmlSchemaCollectionGuard is the existence check both verbs use, in the
@@ -304,22 +271,16 @@ func (sc *Scripter) ScriptDefault(ctx context.Context, schema, name string) (str
 // emitting an empty batch that would look like a rule with no expression.
 func buildBoundObjectScript(keyword, schema, name, definition string, opts ScriptOptions) string {
 	fullName := qualifiedName(schema, name)
-	var sb strings.Builder
-	if v := opts.verb(); v == ScriptDrop || v == ScriptDropAndCreate {
-		fmt.Fprintf(&sb, "DROP %s IF EXISTS %s;\nGO\n", keyword, fullName)
-		if v == ScriptDrop {
-			return sb.String()
+	drop := fmt.Sprintf("DROP %s IF EXISTS %s;\nGO\n", keyword, fullName)
+	return opts.envelope(drop, "", func(sb *strings.Builder) {
+		if strings.TrimSpace(definition) == "" {
+			fmt.Fprintf(sb, "/* The definition of %s %s cannot be read — it is encrypted. */\n",
+				strings.ToLower(keyword), fullName)
+			return
 		}
-		sb.WriteString("\n")
-	}
-	if strings.TrimSpace(definition) == "" {
-		fmt.Fprintf(&sb, "/* The definition of %s %s cannot be read — it is encrypted. */\n",
-			strings.ToLower(keyword), fullName)
-		return sb.String()
-	}
-	sb.WriteString(strings.TrimRight(definition, "\r\n"))
-	sb.WriteString("\nGO\n")
-	return sb.String()
+		sb.WriteString(strings.TrimRight(definition, "\r\n"))
+		sb.WriteString("\nGO\n")
+	})
 }
 
 // ============================================================
@@ -350,33 +311,27 @@ func (sc *Scripter) ScriptAssembly(ctx context.Context, name string) (string, er
 // registered UNSAFE that came back SAFE would run under a policy it was not
 // given.
 func buildAssemblyScript(a *Assembly, opts ScriptOptions) string {
-	var sb strings.Builder
-	if v := opts.verb(); v == ScriptDrop || v == ScriptDropAndCreate {
-		fmt.Fprintf(&sb, "DROP ASSEMBLY IF EXISTS %s;\nGO\n", quoteIdent(a.Name))
-		if v == ScriptDrop {
-			return sb.String()
+	drop := fmt.Sprintf("DROP ASSEMBLY IF EXISTS %s;\nGO\n", quoteIdent(a.Name))
+	return opts.envelope(drop, "", func(sb *strings.Builder) {
+		sb.WriteString("/* The assembly binary cannot be scripted — it is not text. Replace the\n" +
+			"   placeholder below with the assembly's bytes, or with a FROM '<path>' clause. */\n")
+		fmt.Fprintf(sb, "CREATE ASSEMBLY %s", quoteIdent(a.Name))
+		if a.Owner != "" {
+			fmt.Fprintf(sb, " AUTHORIZATION %s", quoteIdent(a.Owner))
 		}
-		sb.WriteString("\n")
-	}
-	sb.WriteString("/* The assembly binary cannot be scripted — it is not text. Replace the\n" +
-		"   placeholder below with the assembly's bytes, or with a FROM '<path>' clause. */\n")
-	fmt.Fprintf(&sb, "CREATE ASSEMBLY %s", quoteIdent(a.Name))
-	if a.Owner != "" {
-		fmt.Fprintf(&sb, " AUTHORIZATION %s", quoteIdent(a.Owner))
-	}
-	permSet := a.PermissionSet
-	if permSet == "" {
-		permSet = AssemblySafe
-	}
-	fmt.Fprintf(&sb, "\nFROM %s\nWITH PERMISSION_SET = %s;\nGO\n",
-		assemblyBinaryPlaceholder, permSet)
-	if !a.IsVisible {
-		// is_visible = 0 is how a referenced-only dependency is registered;
-		// recreating it visible would let CREATE PROCEDURE bind to routines
-		// the original assembly deliberately hides.
-		fmt.Fprintf(&sb, "\nALTER ASSEMBLY %s WITH VISIBILITY = OFF;\nGO\n", quoteIdent(a.Name))
-	}
-	return sb.String()
+		permSet := a.PermissionSet
+		if permSet == "" {
+			permSet = AssemblySafe
+		}
+		fmt.Fprintf(sb, "\nFROM %s\nWITH PERMISSION_SET = %s;\nGO\n",
+			assemblyBinaryPlaceholder, permSet)
+		if !a.IsVisible {
+			// is_visible = 0 is how a referenced-only dependency is registered;
+			// recreating it visible would let CREATE PROCEDURE bind to routines
+			// the original assembly deliberately hides.
+			fmt.Fprintf(sb, "\nALTER ASSEMBLY %s WITH VISIBILITY = OFF;\nGO\n", quoteIdent(a.Name))
+		}
+	})
 }
 
 // ============================================================
@@ -408,28 +363,22 @@ func (sc *Scripter) ScriptPlanGuide(ctx context.Context, name string) (string, e
 // The drop is sp_control_plan_guide's, the statement gosmo's own
 // PlanGuide.Drop runs.
 func buildPlanGuideScript(g *PlanGuide, opts ScriptOptions) string {
-	var sb strings.Builder
-	if v := opts.verb(); v == ScriptDrop || v == ScriptDropAndCreate {
-		fmt.Fprintf(&sb, "EXEC sp_control_plan_guide @operation = N'DROP', @name = N'%s';\nGO\n",
-			escapeSingle(g.Name))
-		if v == ScriptDrop {
-			return sb.String()
+	drop := fmt.Sprintf("EXEC sp_control_plan_guide @operation = N'DROP', @name = N'%s';\nGO\n",
+		escapeSingle(g.Name))
+	return opts.envelope(drop, "", func(sb *strings.Builder) {
+		fmt.Fprintf(sb, "EXEC sp_create_plan_guide\n     @name = N'%s',\n     @stmt = N'%s',\n     @type = N'%s',\n",
+			escapeSingle(g.Name), escapeSingle(g.QueryText), escapeSingle(string(g.Scope)))
+		fmt.Fprintf(sb, "     @module_or_batch = %s,\n", planGuideModuleOrBatch(g))
+		fmt.Fprintf(sb, "     @params = %s,\n", nullableLiteral(g.Parameters))
+		fmt.Fprintf(sb, "     @hints = %s;\nGO\n", nullableLiteral(g.Hints))
+		if g.IsDisabled {
+			// A guide created by sp_create_plan_guide is enabled; recreating a
+			// disabled one without this would quietly start applying hints the
+			// original stopped applying.
+			fmt.Fprintf(sb, "\nEXEC sp_control_plan_guide @operation = N'DISABLE', @name = N'%s';\nGO\n",
+				escapeSingle(g.Name))
 		}
-		sb.WriteString("\n")
-	}
-	fmt.Fprintf(&sb, "EXEC sp_create_plan_guide\n     @name = N'%s',\n     @stmt = N'%s',\n     @type = N'%s',\n",
-		escapeSingle(g.Name), escapeSingle(g.QueryText), escapeSingle(string(g.Scope)))
-	fmt.Fprintf(&sb, "     @module_or_batch = %s,\n", planGuideModuleOrBatch(g))
-	fmt.Fprintf(&sb, "     @params = %s,\n", nullableLiteral(g.Parameters))
-	fmt.Fprintf(&sb, "     @hints = %s;\nGO\n", nullableLiteral(g.Hints))
-	if g.IsDisabled {
-		// A guide created by sp_create_plan_guide is enabled; recreating a
-		// disabled one without this would quietly start applying hints the
-		// original stopped applying.
-		fmt.Fprintf(&sb, "\nEXEC sp_control_plan_guide @operation = N'DISABLE', @name = N'%s';\nGO\n",
-			escapeSingle(g.Name))
-	}
-	return sb.String()
+	})
 }
 
 // planGuideModuleOrBatch is the @module_or_batch argument for a guide's

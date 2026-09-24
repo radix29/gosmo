@@ -354,7 +354,7 @@ The instance and database halves pair up: `ServerResourceStat` and
 | `Database.UserDefinedFunctions` | `db.UserDefinedFunctions(ctx)` / `db.DropFunction(ctx, schema, name)` |
 | System Views/Procedures/Functions | `db.SystemViews(ctx)` / `db.SystemStoredProcedures(ctx)` / `db.SystemFunctions(ctx)` |
 | `Database.Schemas`              | `db.Schemas(ctx)` / `db.SchemaByName(ctx, name)` / `schema.ObjectCount(ctx)` / `schema.ObjectCountsByType(ctx)` |
-| `Database.Users`                | `db.Users(ctx)` / `db.UserByName(ctx, name)` / `db.UserRef(name)` (no-I/O handle) |
+| `Database.Users`                | `db.Users(ctx)` / `db.UserByName(ctx, name)` / `db.UserRef(name)` (no-I/O handle) / `db.CreateUser(ctx, gosmo.CreateUserRequest{Name, Kind, ...})` — for login, with password (contained), without login, Windows, certificate, asymmetric key, external provider |
 | Database user administration    | `user.Rename(ctx, newName)` / `user.SetDefaultSchema(ctx, schemaName)` / `user.SetLogin(ctx, loginName)` |
 | `Database.AuditSpecifications`  | `db.DatabaseAuditSpecifications(ctx)` / `...ByName(ctx, name)` / `db.DatabaseAuditSpecificationRef(name)` (no-I/O handle) / `db.CreateDatabaseAuditSpecification(ctx, spec)` |
 | `Database.Roles`                | `db.DatabaseRoles(ctx)` / `db.RoleByName(ctx, name)` / `db.RoleMembers(ctx, roleName)` |
@@ -362,8 +362,8 @@ The instance and database halves pair up: `ServerResourceStat` and
 | `Database.FileGroups`           | `db.FileGroups(ctx)` — `fg.Type` is the `type_desc` (ROWS / FILESTREAM / MEMORY_OPTIMIZED), `fg.IsFileStream()` the common test |
 | `Database.Triggers`             | `db.Triggers(ctx)` / `db.ObjectTriggers(ctx, schema, name)` (one table or view, by name) / `db.DropTrigger(ctx, schema, name)` |
 | Database-scope DDL triggers     | `db.DatabaseTriggers(ctx)` / `db.DatabaseTriggerByName(ctx, name)` / `db.DatabaseTriggerRef(name)` (no-I/O handle) / `tr.Enable(ctx)` / `tr.Disable(ctx)` / `tr.Drop(ctx)` — see [Database DDL triggers](#database-ddl-triggers) |
-| `Database.Sequences`            | `db.Sequences(ctx)` / `db.DropSequence(ctx, schema, name)` |
-| `Database.Synonyms`             | `db.Synonyms(ctx)` / `db.DropSynonym(ctx, schema, name)` |
+| `Database.Sequences`            | `db.Sequences(ctx)` / `db.SequenceByName(ctx, schema, name)` / `db.DropSequence(ctx, schema, name)` |
+| `Database.Synonyms`             | `db.Synonyms(ctx)` / `db.SynonymByName(ctx, schema, name)` / `db.DropSynonym(ctx, schema, name)` |
 | `Database.UserDefinedDataTypes` / `...TableTypes` / `...Types` (CLR) | `db.UserDefinedDataTypes(ctx)` / `db.UserDefinedTableTypes(ctx)` / `db.ClrTypes(ctx)` (each with `...ByName(ctx, schema, name)`) / `db.SystemDataTypes(ctx)` — see [Types, rules and defaults](#types-rules-and-defaults) |
 | `Database.XMLSchemaCollections` | `db.XMLSchemaCollections(ctx)` / `db.XMLSchemaCollectionByName(ctx, schema, name)` / `c.Definition(ctx)` |
 | `Database.Rules` / `Database.Defaults` | `db.Rules(ctx)` / `db.Defaults(ctx)` (each with `...ByName(ctx, schema, name)` and `db.Drop...`) — read-only, deprecated families |
@@ -422,6 +422,7 @@ The instance and database halves pair up: `ServerResourceStat` and
 | XML indexes           | `t.XMLIndexes(ctx)` → `[]*XMLIndex` (primary/secondary, and which primary) |
 | `Table.ForeignKeys`   | `t.ForeignKeys(ctx)` / `t.ForeignKeyByName(ctx, name)` |
 | `Table.Checks`        | `t.CheckConstraints(ctx)`             |
+| Graph edge constraints | `t.EdgeConstraints(ctx)` → `[]*EdgeConstraint` (2019+; empty below) |
 | `Table.Statistics`    | `t.Statistics(ctx)` / `t.StatisticByName(ctx, name)` / `t.StatisticRef(name)` (no-I/O handle) |
 | `Table.Partitions`    | `t.Partitions(ctx)`                   |
 | `Table.Triggers`      | `t.Triggers(ctx)`                     |
@@ -1164,6 +1165,18 @@ default, a heap's `DATA_COMPRESSION`, and each index's `PAD_INDEX`,
 table offline). `live_script_fidelity_test.go` replays a script into a second
 database and compares the catalogs. What is still not scripted is in
 `OPEN-THREADS.md` § Scripter fidelity.
+
+Beyond a plain disk-based table it scripts graph node and edge tables (`AS
+NODE`/`AS EDGE`, without the internal columns and the automatic
+`GRAPH_UNIQUE_INDEX_…`, an index on a pseudo-column as `$from_id`/`$to_id`,
+and edge constraints with their trust), memory-optimized tables
+(`MEMORY_OPTIMIZED`, `DURABILITY`, every index inline, `HASH … BUCKET_COUNT`),
+`FILESTREAM` columns with `FILESTREAM_ON`, and `TEXTIMAGE_ON`
+(`live_script_table_kinds_test.go`). External tables, FileTables, ledger
+tables and tables with Always Encrypted columns are refused with an
+`ErrUnsupported` error and no script, for every verb — each would otherwise
+come out as a plain table under the same name, and `DROP AND CREATE` would
+drop the original.
 
 A module script (view, procedure, function, trigger) opens with the `SET
 ANSI_NULLS` and `SET QUOTED_IDENTIFIER` the module was compiled under, each in
@@ -1932,6 +1945,13 @@ idempotent form ignores the error — a decision it can make and this package
 cannot make for it. The DDL that `Scripter` *generates* does keep
 `IF EXISTS`, since that output exists to be re-run.
 
+### `ErrUnsupported`
+
+`Scripter.ScriptTable` refuses a table it cannot express faithfully —
+external, FileTable, ledger, Always Encrypted — with an error wrapping
+`ErrUnsupported`, before any text is produced. It is not
+`ErrUnsupportedVersion`: nothing is wrong with the server's version.
+
 ### `ErrUnsupportedVersion`
 
 A call gosmo refuses because the connected instance is older than the
@@ -2116,7 +2136,7 @@ the prologue is retried; whatever the caller goes on to run is not.
 
 ## Security
 
-- **Passwords are escaped, never spliced in raw.** `CreateLogin` and `ChangePassword` quote the password as an `N'...'` literal through the same `nStringLiteral` escaping every other string literal in the package uses, so it's injection-proof regardless of password content.
+- **Passwords are escaped, never spliced in raw.** `CreateLogin` and `ChangePassword` quote the password as an `N'...'` literal through the same `QuoteLiteral` escaping every other string literal in the package uses, so it's injection-proof regardless of password content.
 - **Connection lifetimes are correctly scoped.** `Database.query` returns a `*dbRows` that owns both the `*sql.Rows` and the `*sql.Conn` pinned to run its `USE`, closing both together — `*sql.Rows.Close` on its own would leave that connection checked out of the pool for good.
 - **Values that can't be parameterized are validated by shape or allowlist.** DDL can't parameterize keyword or literal arguments, so anything spliced into one is checked first: recovery models, data types, and backup actions against their known sets; partition function boundary values against the shape of a well-formed SQL Server literal; Query Store mode keywords and index data-compression settings against their allowlists.
 - **One shared quoting implementation.** `QuoteName` and `QuoteLiteral` wrap the driver's own `TSQLQuoter` (`QuoteLiteral` adding the `N` prefix, so a literal is never varchar), so gosmo's internal identifier/literal escaping — and any caller or downstream consumer (e.g. gossms) building its own DDL — go through the same tested implementation rather than a hand-rolled one.

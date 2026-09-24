@@ -48,7 +48,7 @@ func TestColumnTypeString(t *testing.T) {
 // every branch buildTableScript has.
 func scriptTestTable() (cols []*Column, indexes []*Index, fks []*ForeignKey) {
 	cols = []*Column{
-		{Name: "ID", DataType: DataTypeInt, IsIdentity: true, IdentitySeed: 1, IdentityIncrement: 1},
+		{Name: "ID", DataType: DataTypeInt, IsIdentity: true, IdentitySeed: "1", IdentityIncrement: "1"},
 		{Name: "Code", DataType: DataTypeNVarChar, MaxLength: 40},
 		{Name: "OwnerID", DataType: DataTypeInt, IsNullable: true},
 	}
@@ -308,7 +308,7 @@ func TestDataSpaceClause(t *testing.T) {
 
 func TestBuildTableScriptKeepsColumnFeatures(t *testing.T) {
 	cols := []*Column{
-		{Name: "ID", DataType: DataTypeInt, IsIdentity: true, IdentitySeed: 1, IdentityIncrement: 1, IdentityNotForReplication: true},
+		{Name: "ID", DataType: DataTypeInt, IsIdentity: true, IdentitySeed: "1", IdentityIncrement: "1", IdentityNotForReplication: true},
 		{Name: "Stamp", DataType: DataTypeDatetime2, Scale: 0},
 		{Name: "Guid", DataType: DataTypeUniqueIdentifier, IsRowGUID: true},
 		{Name: "Total", DataType: DataTypeInt, IsComputed: true, ComputedText: "([ID]*(2))", IsPersisted: true},

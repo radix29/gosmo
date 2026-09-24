@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"regexp"
+	"strconv"
 )
 
 // ============================================================
@@ -27,14 +28,35 @@ type Sequence struct {
 	// qualify with it, or a re-run resolves the alias against the executing
 	// principal's default schema instead.
 	DataTypeSchema string
-	StartValue     int64
-	Increment      int64
-	MinValue       int64
-	MaxValue       int64
-	IsCycling      bool
-	IsCached       bool
-	CacheSize      int
-	CurrentValue   int64
+	// Precision and Scale are the declared type's, from sys.sequences; they
+	// matter for a decimal/numeric sequence, whose bare type name means
+	// (18,0).
+	Precision int
+	Scale     int
+	// StartValue, Increment, MinValue, MaxValue and CurrentValue are the
+	// catalog's values as decimal digits. They are strings because a
+	// decimal(38,0) sequence ranges far past int64, and reading one as an
+	// integer failed the whole listing with an arithmetic overflow. ALTER
+	// SEQUENCE … RESTART moves StartValue to the restart value.
+	StartValue string
+	Increment  string
+	MinValue   string
+	MaxValue   string
+	IsCycling  bool
+	IsCached   bool
+	CacheSize  int
+	// CurrentValue is sys.sequences.current_value: the last value handed
+	// out, or StartValue when none has been since the sequence was created
+	// or restarted.
+	CurrentValue string
+	// LastUsedValue is sys.sequences.last_used_value (SQL Server 2017+):
+	// the last value handed out, "" when none has been since the sequence
+	// was created or restarted. Unlike CurrentValue it tells those two
+	// cases apart. Always "" before 2017, which has no such column.
+	LastUsedValue string
+	// noLastUsed records that the server predates last_used_value, so an
+	// empty LastUsedValue says nothing about whether a value was handed out.
+	noLastUsed bool
 }
 
 // Database returns the database the sequence belongs to.
@@ -42,34 +64,72 @@ func (seq *Sequence) Database() *Database { return seq.db }
 
 // Sequences returns all sequences in the database.
 func (d *Database) Sequences(ctx context.Context) ([]*Sequence, error) {
-	const q = `
-SELECT s.name, SCHEMA_NAME(s.schema_id), s.object_id,
-       tp.name, SCHEMA_NAME(tp.schema_id),
-       CAST(s.start_value AS BIGINT),
-       CAST(s.increment AS BIGINT),
-       CAST(s.minimum_value AS BIGINT),
-       CAST(s.maximum_value AS BIGINT),
-       s.is_cycling, s.is_cached, ISNULL(s.cache_size, 0),
-       CAST(s.current_value AS BIGINT)
-FROM   sys.sequences s
-JOIN   sys.types tp ON tp.user_type_id = s.user_type_id
-ORDER  BY SCHEMA_NAME(s.schema_id), s.name`
-
-	rows, err := d.query(ctx, q)
+	rows, err := d.query(ctx, d.sequenceSelect()+`
+ORDER  BY SCHEMA_NAME(s.schema_id), s.name`)
 	return scanRows(rows, err, "list sequences", func(scan func(...any) error) (*Sequence, error) {
-		seq := &Sequence{db: d}
-		if err := scan(
-			&seq.Name, &seq.Schema, &seq.ObjectID,
-			&seq.DataType, &seq.DataTypeSchema,
-			&seq.StartValue, &seq.Increment,
-			&seq.MinValue, &seq.MaxValue,
-			&seq.IsCycling, &seq.IsCached, &seq.CacheSize,
-			&seq.CurrentValue,
-		); err != nil {
-			return nil, err
-		}
-		return seq, nil
+		return scanSequence(d, scan)
 	})
+}
+
+// SequenceByName returns one sequence by schema and name. The names compare
+// under the database's collation, so a case-sensitive database with both
+// [Sales].[seq] and [sales].[seq] returns the one asked for. An empty schema
+// means dbo.
+//
+// It returns an error satisfying errors.Is(err, ErrNotFound) when the database
+// has no such sequence.
+func (d *Database) SequenceByName(ctx context.Context, schema, name string) (*Sequence, error) {
+	if schema == "" {
+		schema = "dbo"
+	}
+	var seq *Sequence
+	err := d.queryRow(ctx, func(row *sql.Row) error {
+		var err error
+		seq, err = scanSequence(d, row.Scan)
+		return err
+	}, d.sequenceSelect()+`
+WHERE  SCHEMA_NAME(s.schema_id) = @p1
+  AND  s.name                   = @p2`, schema, name)
+	return foundRow(seq, err, notFoundf("gosmo: sequence %s not found in %q", qualifiedName(schema, name), d.Name),
+		fmt.Sprintf("find sequence %s in %q", qualifiedName(schema, name), d.Name))
+}
+
+func scanSequence(d *Database, scan func(...any) error) (*Sequence, error) {
+	// The colSince test, spelled out: hasColumnSince is reserved for
+	// GROUP BY gates, and version_gate_inventory_test counts it.
+	major := d.serverMajorVersion()
+	seq := &Sequence{db: d, noLastUsed: major != 0 && major < int(SQLServer2017)}
+	var lastUsed sql.NullString
+	if err := scan(
+		&seq.Name, &seq.Schema, &seq.ObjectID,
+		&seq.DataType, &seq.DataTypeSchema, &seq.Precision, &seq.Scale,
+		&seq.StartValue, &seq.Increment,
+		&seq.MinValue, &seq.MaxValue,
+		&seq.IsCycling, &seq.IsCached, &seq.CacheSize,
+		&seq.CurrentValue, &lastUsed,
+	); err != nil {
+		return nil, err
+	}
+	seq.LastUsedValue = lastUsed.String
+	return seq, nil
+}
+
+// sequenceSelect is the query Sequences and SequenceByName share, without
+// its WHERE or ORDER BY. Every value column is read as text: see the
+// Sequence field comments.
+func (d *Database) sequenceSelect() string {
+	return `
+SELECT s.name, SCHEMA_NAME(s.schema_id), s.object_id,
+       tp.name, SCHEMA_NAME(tp.schema_id), s.precision, s.scale,
+       CONVERT(nvarchar(40), s.start_value),
+       CONVERT(nvarchar(40), s.increment),
+       CONVERT(nvarchar(40), s.minimum_value),
+       CONVERT(nvarchar(40), s.maximum_value),
+       s.is_cycling, s.is_cached, ISNULL(s.cache_size, 0),
+       CONVERT(nvarchar(40), s.current_value),
+       ` + colSince(d.serverMajorVersion(), SQLServer2017, "CONVERT(nvarchar(40), s.last_used_value)", "CAST(NULL AS nvarchar(40))") + `
+FROM   sys.sequences s
+JOIN   sys.types tp ON tp.user_type_id = s.user_type_id`
 }
 
 // CreateSequenceRequest describes a new sequence.
@@ -157,7 +217,12 @@ func (seq *Sequence) Restart(ctx context.Context, value int64) error {
 	if err != nil {
 		return fmt.Errorf("gosmo: restart sequence [%s].[%s]: %w", seq.Schema, seq.Name, err)
 	}
-	setIfApplied(ctx, &seq.CurrentValue, value)
+	// RESTART moves start_value too and clears last_used_value, so the
+	// handle mirrors all three.
+	v := strconv.FormatInt(value, 10)
+	setIfApplied(ctx, &seq.StartValue, v)
+	setIfApplied(ctx, &seq.CurrentValue, v)
+	setIfApplied(ctx, &seq.LastUsedValue, "")
 	return nil
 }
 
@@ -181,7 +246,8 @@ func (seq *Sequence) NextValue(ctx context.Context) (int64, error) {
 	}
 	// Assigned directly, not via setIfApplied: this is the value the server
 	// just returned, and reads run against the server under WithScript too.
-	seq.CurrentValue = val
+	seq.CurrentValue = strconv.FormatInt(val, 10)
+	seq.LastUsedValue = seq.CurrentValue
 	return val, nil
 }
 
@@ -203,21 +269,46 @@ func (syn *Synonym) Database() *Database { return syn.db }
 
 // Synonyms returns all synonyms in the database.
 func (d *Database) Synonyms(ctx context.Context) ([]*Synonym, error) {
-	const q = `
-SELECT name, SCHEMA_NAME(schema_id), object_id, base_object_name
-FROM   sys.synonyms
-ORDER  BY SCHEMA_NAME(schema_id), name`
-
-	rows, err := d.query(ctx, q)
+	rows, err := d.query(ctx, synonymSelect+`
+ORDER  BY SCHEMA_NAME(schema_id), name`)
 	return scanRows(rows, err, "list synonyms", func(scan func(...any) error) (*Synonym, error) {
-		s := &Synonym{db: d}
-		var baseObj sql.NullString
-		if err := scan(&s.Name, &s.Schema, &s.ObjectID, &baseObj); err != nil {
-			return nil, err
-		}
-		s.BaseObject = baseObj.String
-		return s, nil
+		return scanSynonym(d, scan)
 	})
+}
+
+// SynonymByName returns one synonym by schema and name, compared under the
+// database's collation. An empty schema means dbo.
+//
+// It returns an error satisfying errors.Is(err, ErrNotFound) when the database
+// has no such synonym.
+func (d *Database) SynonymByName(ctx context.Context, schema, name string) (*Synonym, error) {
+	if schema == "" {
+		schema = "dbo"
+	}
+	var syn *Synonym
+	err := d.queryRow(ctx, func(row *sql.Row) error {
+		var err error
+		syn, err = scanSynonym(d, row.Scan)
+		return err
+	}, synonymSelect+`
+WHERE  SCHEMA_NAME(schema_id) = @p1
+  AND  name                   = @p2`, schema, name)
+	return foundRow(syn, err, notFoundf("gosmo: synonym %s not found in %q", qualifiedName(schema, name), d.Name),
+		fmt.Sprintf("find synonym %s in %q", qualifiedName(schema, name), d.Name))
+}
+
+const synonymSelect = `
+SELECT name, SCHEMA_NAME(schema_id), object_id, base_object_name
+FROM   sys.synonyms`
+
+func scanSynonym(d *Database, scan func(...any) error) (*Synonym, error) {
+	s := &Synonym{db: d}
+	var baseObj sql.NullString
+	if err := scan(&s.Name, &s.Schema, &s.ObjectID, &baseObj); err != nil {
+		return nil, err
+	}
+	s.BaseObject = baseObj.String
+	return s, nil
 }
 
 // qualifiedObjectNamePart matches one part of a dot-separated multi-part

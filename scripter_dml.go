@@ -68,18 +68,53 @@ func (sc *Scripter) ScriptFunctionCall(ctx context.Context, schema, name, funcTy
 	return buildFunctionCallScript(schema, name, funcType, params), nil
 }
 
-// scriptableColumns drops the columns a caller can't write to: an identity
-// column and a computed one both reject an explicit value, so leaving them in
-// an INSERT or UPDATE template produces a statement that always fails.
-func scriptableColumns(cols []*Column) []*Column {
-	out := make([]*Column, 0, len(cols))
+// scriptableColumns drops the columns a caller can't write to, since leaving
+// one in an INSERT or UPDATE template produces a statement that always
+// fails: an identity or computed column, a rowversion, a system-versioned
+// table's GENERATED ALWAYS period column, and a graph table's internal
+// columns.
+//
+// An edge table is the exception for INSERT: its row has to name the two
+// nodes it joins, through the $from_id and $to_id pseudo-columns, and an
+// INSERT without them fails on the NOT NULL internal columns behind them. The
+// pseudo-column is written bare, because bracketed as [$from_id] it is an
+// ordinary name that resolves to nothing (Msg 207). An edge's endpoints
+// cannot be updated, so UPDATE leaves them out with the rest.
+func scriptableColumns(cols []*Column, forInsert bool) []dmlColumn {
+	out := make([]dmlColumn, 0, len(cols))
 	for _, c := range cols {
-		if c.IsIdentity || c.IsComputed {
+		switch {
+		case forInsert && c.GraphType == GraphColumnFromIDComputed:
+			out = append(out, graphEndpoint("$from_id"))
+		case forInsert && c.GraphType == GraphColumnToIDComputed:
+			out = append(out, graphEndpoint("$to_id"))
+		case c.IsIdentity, c.IsComputed, isRowVersion(c),
+			c.GeneratedAlwaysType != 0, c.GraphType != 0:
 			continue
+		default:
+			out = append(out, dmlColumn{name: quoteIdent(c.Name), placeholder: columnPlaceholder(c)})
 		}
-		out = append(out, c)
 	}
 	return out
+}
+
+// dmlColumn is one column of an INSERT or UPDATE template: the name as the
+// statement writes it, and the value placeholder that goes with it.
+type dmlColumn struct {
+	name, placeholder string
+}
+
+// graphEndpoint is an edge's $from_id or $to_id. The value is a node's
+// $node_id, which is JSON text.
+func graphEndpoint(pseudo string) dmlColumn {
+	return dmlColumn{name: pseudo, placeholder: fmt.Sprintf("<%s, nvarchar(1000),>", pseudo)}
+}
+
+// isRowVersion reports a rowversion column, which the server fills on every
+// write and which refuses an explicit value. sys.types still names the type
+// by its deprecated synonym, timestamp.
+func isRowVersion(c *Column) bool {
+	return strings.EqualFold(string(c.DataType), "timestamp") || strings.EqualFold(string(c.DataType), string(DataTypeRowVersion))
 }
 
 // columnPlaceholder renders the <name, type, value> token SSMS's templates
@@ -102,15 +137,15 @@ func buildSelectScript(schema, name string, cols []*Column) string {
 
 func buildInsertScript(schema, name string, cols []*Column) string {
 	full := qualifiedName(schema, name)
-	writable := scriptableColumns(cols)
+	writable := scriptableColumns(cols, true)
 	if len(writable) == 0 {
 		return fmt.Sprintf("INSERT INTO %s\nDEFAULT VALUES;\nGO\n", full)
 	}
 	names := make([]string, len(writable))
 	values := make([]string, len(writable))
 	for i, c := range writable {
-		names[i] = quoteIdent(c.Name)
-		values[i] = columnPlaceholder(c)
+		names[i] = c.name
+		values[i] = c.placeholder
 	}
 	return fmt.Sprintf("INSERT INTO %s\n           (%s)\nVALUES     (%s);\nGO\n",
 		full, strings.Join(names, "\n          , "), strings.Join(values, "\n          , "))
@@ -118,13 +153,13 @@ func buildInsertScript(schema, name string, cols []*Column) string {
 
 func buildUpdateScript(schema, name string, cols []*Column) string {
 	full := qualifiedName(schema, name)
-	writable := scriptableColumns(cols)
+	writable := scriptableColumns(cols, false)
 	if len(writable) == 0 {
 		return fmt.Sprintf("-- %s has no updatable columns.\n", full)
 	}
 	sets := make([]string, len(writable))
 	for i, c := range writable {
-		sets[i] = fmt.Sprintf("%s = %s", quoteIdent(c.Name), columnPlaceholder(c))
+		sets[i] = fmt.Sprintf("%s = %s", c.name, c.placeholder)
 	}
 	return fmt.Sprintf("UPDATE %s\nSET    %s\nWHERE  <Search Conditions,,>;\nGO\n",
 		full, strings.Join(sets, "\n     , "))

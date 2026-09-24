@@ -112,10 +112,13 @@ SELECT
 
 // User mirrors Microsoft.SqlServer.Management.Smo.User.
 type User struct {
-	db            *Database
-	Name          string
-	ID            int
-	UserType      string // "SQL_USER", "WINDOWS_USER", "WINDOWS_GROUP", etc.
+	db   *Database
+	Name string
+	ID   int
+	// UserType is type_desc: "SQL_USER", "WINDOWS_USER", "WINDOWS_GROUP",
+	// "EXTERNAL_USER", "EXTERNAL_GROUPS", "CERTIFICATE_MAPPED_USER" or
+	// "ASYMMETRIC_KEY_MAPPED_USER".
+	UserType      string
 	DefaultSchema string
 	AuthType      string
 	CreateDate    time.Time
@@ -131,6 +134,11 @@ type User struct {
 	LoginName string
 	// LoginDisabled is only meaningful when LoginName is non-empty.
 	LoginDisabled bool
+	// MappedObject is the certificate or asymmetric key in this database a
+	// CERTIFICATE_MAPPED_USER / ASYMMETRIC_KEY_MAPPED_USER maps to, matched
+	// by SID. Populated by UserByName only, and empty when the object has
+	// been dropped out from under the user.
+	MappedObject string
 }
 
 // Database returns the database the user belongs to.

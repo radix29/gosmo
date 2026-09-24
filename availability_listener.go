@@ -191,7 +191,7 @@ func (spec AvailabilityListenerSpec) addListenerClause() (string, error) {
 		with = "WITH DHCP"
 		switch {
 		case spec.DHCPSubnet != "" && spec.DHCPSubnetMask != "":
-			with += fmt.Sprintf(" ON (%s, %s)", nStringLiteral(spec.DHCPSubnet), nStringLiteral(spec.DHCPSubnetMask))
+			with += fmt.Sprintf(" ON (%s, %s)", QuoteLiteral(spec.DHCPSubnet), QuoteLiteral(spec.DHCPSubnetMask))
 		case spec.DHCPSubnet != "" || spec.DHCPSubnetMask != "":
 			return "", fmt.Errorf("listener %q gives only one half of the DHCP subnet and mask", spec.DNSName)
 		}
@@ -209,7 +209,7 @@ func (spec AvailabilityListenerSpec) addListenerClause() (string, error) {
 	if spec.Port > 0 {
 		with += fmt.Sprintf(", PORT = %d", spec.Port)
 	}
-	return fmt.Sprintf("ADD LISTENER %s (%s)", nStringLiteral(spec.DNSName), with), nil
+	return fmt.Sprintf("ADD LISTENER %s (%s)", QuoteLiteral(spec.DNSName), with), nil
 }
 
 // AddListener creates the group's listener. Run against the primary.
@@ -239,7 +239,7 @@ func modifyListenerClause(dnsName, option string) (string, error) {
 	if strings.TrimSpace(dnsName) == "" {
 		return "", fmt.Errorf("listener has no DNS name")
 	}
-	return fmt.Sprintf("MODIFY LISTENER %s (%s)", nStringLiteral(dnsName), option), nil
+	return fmt.Sprintf("MODIFY LISTENER %s (%s)", QuoteLiteral(dnsName), option), nil
 }
 
 // SetListenerPort changes the port an existing listener answers on. Run against
@@ -297,9 +297,9 @@ func listenerIPLiteral(ip AvailabilityListenerIPSpec) (string, error) {
 		return "", fmt.Errorf("empty IP address")
 	}
 	if ip.SubnetMask == "" {
-		return "(" + nStringLiteral(ip.IPAddress) + ")", nil
+		return "(" + QuoteLiteral(ip.IPAddress) + ")", nil
 	}
-	return fmt.Sprintf("(%s, %s)", nStringLiteral(ip.IPAddress), nStringLiteral(ip.SubnetMask)), nil
+	return fmt.Sprintf("(%s, %s)", QuoteLiteral(ip.IPAddress), QuoteLiteral(ip.SubnetMask)), nil
 }
 
 // RemoveListener drops the group's listener by DNS name. Run against the
@@ -308,7 +308,7 @@ func (ag *AvailabilityGroup) RemoveListener(ctx context.Context, dnsName string)
 	if strings.TrimSpace(dnsName) == "" {
 		return fmt.Errorf("gosmo: remove listener from availability group %q: empty DNS name", ag.Name)
 	}
-	if err := ag.alter(ctx, "REMOVE LISTENER "+nStringLiteral(dnsName)); err != nil {
+	if err := ag.alter(ctx, "REMOVE LISTENER "+QuoteLiteral(dnsName)); err != nil {
 		return fmt.Errorf("gosmo: remove listener %q from availability group %q: %w", dnsName, ag.Name, err)
 	}
 	return nil

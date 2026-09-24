@@ -37,10 +37,13 @@ type Index struct {
 	// OptimizeForSequentialKey is SQL Server 2019's last-page-insert
 	// contention option; always false on an older instance.
 	OptimizeForSequentialKey bool
-	KeyColumns               []IndexColumn
-	IncludedColumns          []IndexColumn
-	FilterDefinition         string
-	DataSpace                DataSpace
+	// BucketCount is a hash index's BUCKET_COUNT (sys.hash_indexes), as the
+	// server rounded it up to a power of two; 0 for every other index type.
+	BucketCount      int64
+	KeyColumns       []IndexColumn
+	IncludedColumns  []IndexColumn
+	FilterDefinition string
+	DataSpace        DataSpace
 }
 
 // DataSpace names where a table or index keeps its rows — the ON clause of
@@ -90,6 +93,21 @@ type IndexColumn struct {
 	Name       string
 	Descending bool
 	IsIncluded bool
+
+	// pseudo marks a graph pseudo-column ($node_id, $from_id, …) the
+	// scripter substituted for a graph table's internal column. It is
+	// written bare: SQL Server 2017 does not resolve it bracketed (Msg 1911),
+	// though later releases do.
+	pseudo bool
+}
+
+// ref is the column as DDL names it: bracket-quoted, or bare for a graph
+// pseudo-column.
+func (c IndexColumn) ref() string {
+	if c.pseudo {
+		return c.Name
+	}
+	return quoteIdent(c.Name)
 }
 
 // Indexes returns all indexes on the table.
@@ -171,8 +189,10 @@ SELECT i.name, i.index_id, i.type_desc, i.is_unique, i.is_primary_key,
        ISNULL(p.data_compression_desc, 'NONE'),
        ` + dataSpaceColumns + `,
        ISNULL(st.no_recompute, CAST(0 AS bit)),
-       ` + colSince(t.db.serverMajorVersion(), SQLServer2019, "i.optimize_for_sequential_key", "CAST(0 AS bit)") + `
+       ` + colSince(t.db.serverMajorVersion(), SQLServer2019, "i.optimize_for_sequential_key", "CAST(0 AS bit)") + `,
+       ISNULL(h.bucket_count, 0)
 FROM   sys.indexes i
+LEFT   JOIN sys.hash_indexes h ON h.object_id = i.object_id AND h.index_id = i.index_id
 OUTER  APPLY (SELECT TOP 1 pp.data_compression_desc FROM sys.partitions pp
               WHERE pp.object_id = i.object_id AND pp.index_id = i.index_id
               ORDER BY pp.partition_number) p
@@ -207,7 +227,8 @@ ORDER  BY i.index_id`
 			&idx.DataCompression,
 			&idx.DataSpace.Name, &idx.DataSpace.IsPartitionScheme,
 			&idx.DataSpace.IsDefaultFileGroup, &idx.DataSpace.PartitionColumn,
-			&idx.StatisticsNoRecompute, &idx.OptimizeForSequentialKey); err != nil {
+			&idx.StatisticsNoRecompute, &idx.OptimizeForSequentialKey,
+			&idx.BucketCount); err != nil {
 			return nil, err
 		}
 		switch desc := strings.TrimSpace(typeDesc.String); desc {
@@ -226,9 +247,9 @@ ORDER  BY i.index_id`
 		case "NONCLUSTERED COLUMNSTORE":
 			idx.Type = IndexTypeColumnStore
 		default:
-			// A type_desc with no constant — NONCLUSTERED HASH on a
-			// memory-optimized table, or a type a newer SQL Server adds —
-			// is carried through as the server's own text rather than left
+			// A type_desc with no case here — NONCLUSTERED HASH, whose
+			// verbatim text is IndexTypeNonClusteredHash, or a type a newer
+			// SQL Server adds — is carried through as the server's own text rather than left
 			// empty, so a caller displays the real type instead of nothing.
 			idx.Type = IndexType(desc)
 		}

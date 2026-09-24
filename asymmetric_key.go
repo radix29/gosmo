@@ -202,7 +202,7 @@ func (spec AsymmetricKeySpec) createAsymmetricKeyStatement() (string, error) {
 	}
 	stmt += " WITH ALGORITHM = " + string(spec.Algorithm)
 	if spec.EncryptionPassword != "" {
-		stmt += " ENCRYPTION BY PASSWORD = " + nStringLiteral(spec.EncryptionPassword)
+		stmt += " ENCRYPTION BY PASSWORD = " + QuoteLiteral(spec.EncryptionPassword)
 	}
 	return stmt, nil
 }

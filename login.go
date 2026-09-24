@@ -23,6 +23,14 @@ type Login struct {
 	CreateDate      time.Time
 	ModifyDate      time.Time
 
+	// DefaultLanguage is sys.server_principals.default_language_name: set for
+	// every SQL and Windows login, empty for the kinds that take none.
+	DefaultLanguage string
+	// IsPolicyChecked and IsExpirationChecked are a SQL login's CHECK_POLICY
+	// and CHECK_EXPIRATION. Every other type has neither and reads false.
+	IsPolicyChecked     bool
+	IsExpirationChecked bool
+
 	// MappedObject is the master certificate or asymmetric key a
 	// CERTIFICATE_MAPPED_LOGIN / ASYMMETRIC_KEY_MAPPED_LOGIN maps to. It is
 	// not read with the login — the name lives in master, not in
@@ -136,7 +144,9 @@ SELECT
     (SELECT MAX(login_time) FROM sys.dm_exec_sessions WHERE login_name = @p1),
     ISNULL(CAST(LOGINPROPERTY(@p1, 'BadPasswordCount') AS INT), 0),
     CAST(LOGINPROPERTY(@p1, 'BadPasswordTime') AS DATETIME2),
-    ISNULL(sl.default_language_name, ''),
+    -- sys.server_principals, not sys.sql_logins: the latter holds SQL
+    -- logins only, so a Windows login's language read as unset.
+    ISNULL(sp.default_language_name, ''),
     ISNULL(cr.name, ''),
     ISNULL((SELECT TOP 1 perm.state_desc FROM sys.server_permissions perm
             WHERE perm.grantee_principal_id = sp.principal_id AND perm.permission_name = 'CONNECT SQL'), '')
@@ -222,7 +232,7 @@ func (l *Login) SetPasswordPolicy(ctx context.Context, checkPolicy, checkExpirat
 
 // ChangePassword changes the login's password.
 //
-// Security: the password is quoted via nStringLiteral (N'...', doubling
+// Security: the password is quoted via QuoteLiteral (N'...', doubling
 // any embedded quote) rather than interpolated raw. HASHED is
 // deliberately not used — it tells SQL Server the value is already one of
 // its own password-hash formats, not cleartext, so passing a hex encoding
@@ -261,7 +271,7 @@ type ChangePasswordOptions struct {
 // <set_option>.
 func buildChangePasswordStatement(loginName, newPassword string, mustChange, unlock bool) string {
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("ALTER LOGIN %s WITH PASSWORD = %s", quoteIdent(loginName), nStringLiteral(newPassword)))
+	sb.WriteString(fmt.Sprintf("ALTER LOGIN %s WITH PASSWORD = %s", quoteIdent(loginName), QuoteLiteral(newPassword)))
 	if mustChange {
 		sb.WriteString(" MUST_CHANGE")
 	}
@@ -419,7 +429,7 @@ func (l *Login) MapToDatabase(ctx context.Context, dbName, userName, defaultSche
 	if err != nil {
 		return err
 	}
-	return d.CreateUser(ctx, userName, l.Name, defaultSchema)
+	return d.CreateUser(ctx, CreateUserRequest{Name: userName, Login: l.Name, DefaultSchema: defaultSchema})
 }
 
 // UnmapFromDatabase drops this login's mapped user in the named database.
@@ -442,6 +452,30 @@ func (l *Login) UnmapFromDatabase(ctx context.Context, dbName string) error {
 
 // -- Logins --------------------------------------------------------------------
 
+// loginSelect is the column list Logins and LoginByName share, in
+// scanLogin's order. sys.sql_logins is joined for the password-policy flags a
+// script has to carry; every other login type has no row there.
+const loginSelect = `
+	SELECT sp.name, sp.sid, sp.type_desc, sp.is_disabled, sp.default_database_name,
+	       sp.create_date, sp.modify_date, sp.default_language_name,
+	       ISNULL(sl.is_policy_checked, 0), ISNULL(sl.is_expiration_checked, 0)
+	FROM sys.server_principals sp
+	LEFT JOIN sys.sql_logins sl ON sl.principal_id = sp.principal_id
+	WHERE sp.type IN ('S','U','G','E','X','C','K')`
+
+func scanLogin(s *Server, scan func(...any) error) (*Login, error) {
+	l := &Login{server: s}
+	var defDB, defLang sql.NullString
+	if err := scan(&l.Name, &l.SID, &l.LoginType, &l.IsDisabled,
+		&defDB, &l.CreateDate, &l.ModifyDate, &defLang,
+		&l.IsPolicyChecked, &l.IsExpirationChecked); err != nil {
+		return nil, err
+	}
+	l.DefaultDatabase = defDB.String
+	l.DefaultLanguage = defLang.String
+	return l, nil
+}
+
 // Logins returns all server-level logins.
 //
 // Every server-level login is listed, not just the SQL/Windows ones: the type
@@ -449,46 +483,26 @@ func (l *Login) UnmapFromDatabase(ctx context.Context, dbName string) error {
 // asymmetric-key-mapped logins ('C','K') that hold permissions for signed
 // code, which is what SSMS's Logins folder shows.
 func (s *Server) Logins(ctx context.Context) ([]*Login, error) {
-	const q = `
-	SELECT name, sid, type_desc, is_disabled, default_database_name,
-	       create_date, modify_date
-	FROM sys.server_principals
-	WHERE type IN ('S','U','G','E','X','C','K')
-	ORDER BY name`
-
-	rows, err := s.query(ctx, q)
+	rows, err := s.query(ctx, loginSelect+"\n\tORDER BY sp.name")
 	return scanRows(rows, err, "list logins", func(scan func(...any) error) (*Login, error) {
-		l := &Login{server: s}
-		var defDB sql.NullString
-		if err := scan(&l.Name, &l.SID, &l.LoginType, &l.IsDisabled,
-			&defDB, &l.CreateDate, &l.ModifyDate); err != nil {
-			return nil, err
-		}
-		l.DefaultDatabase = defDB.String
-		return l, nil
+		return scanLogin(s, scan)
 	})
 }
 
 // LoginByName returns a single server-level login by name.
 func (s *Server) LoginByName(ctx context.Context, name string) (*Login, error) {
-	const q = `
-	SELECT name, sid, type_desc, is_disabled, default_database_name,
-	       create_date, modify_date
-	FROM sys.server_principals
-	WHERE type IN ('S','U','G','E','X','C','K') AND name = @p1`
-
-	l := &Login{server: s}
-	var defDB sql.NullString
-
-	if err := s.queryRowScan(ctx, q, []any{name},
-		&l.Name, &l.SID, &l.LoginType, &l.IsDisabled, &defDB, &l.CreateDate, &l.ModifyDate,
-	); err != nil {
+	var l *Login
+	err := s.queryRow(ctx, func(row *sql.Row) error {
+		var err error
+		l, err = scanLogin(s, row.Scan)
+		return err
+	}, loginSelect+" AND sp.name = @p1", name)
+	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, notFoundf("gosmo: login %q not found", name)
 		}
 		return nil, fmt.Errorf("gosmo: find login %q: %w", name, err)
 	}
-	l.DefaultDatabase = defDB.String
 	return l, nil
 }
 
@@ -511,7 +525,7 @@ func (s *Server) LoginRef(name string) *Login {
 // login; set Source to create any of the other kinds.
 //
 // Security: the password is never string-concatenated raw into the SQL text
-// — it's quoted via nStringLiteral (N'...', doubling any embedded quote),
+// — it's quoted via QuoteLiteral (N'...', doubling any embedded quote),
 // the same escaping every other literal in this package uses. HASHED is
 // deliberately not used here: it tells SQL Server the value is already one of
 // its own password-hash formats, not a cleartext password, so passing an
@@ -587,7 +601,7 @@ func createLoginStatement(name, password string, src LoginSource, opts *CreateLo
 		if password == "" {
 			return "", false, fmt.Errorf("a SQL login requires a password")
 		}
-		fmt.Fprintf(&sb, " WITH PASSWORD = %s", nStringLiteral(password))
+		fmt.Fprintf(&sb, " WITH PASSWORD = %s", QuoteLiteral(password))
 		if opts.MustChange {
 			// MUST_CHANGE requires CHECK_EXPIRATION = ON (and CHECK_POLICY =
 			// ON, already the server default) — SQL Server rejects
@@ -609,7 +623,7 @@ func createLoginStatement(name, password string, src LoginSource, opts *CreateLo
 			// not part of the general option list: OBJECT_ID names the Entra
 			// principal directly, so DEFAULT_DATABASE still cannot join it
 			// here and stays on the following ALTER LOGIN.
-			fmt.Fprintf(&sb, " WITH OBJECT_ID = %s", nStringLiteral(opts.ObjectID))
+			fmt.Fprintf(&sb, " WITH OBJECT_ID = %s", QuoteLiteral(opts.ObjectID))
 		}
 		return sb.String(), opts.DefaultDatabase != "", nil
 	case LoginSourceCertificate:

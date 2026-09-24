@@ -91,11 +91,11 @@ func TestIndexesUsesOneQueryForEveryIndexColumn(t *testing.T) {
 				"is_padded", "ignore_dup_key", "allow_row_locks", "allow_page_locks",
 				"data_compression_desc",
 				"data_space", "is_partition_scheme", "is_default_filegroup", "partition_column",
-				"no_recompute", "optimize_for_sequential_key"},
+				"no_recompute", "optimize_for_sequential_key", "bucket_count"},
 			rows: [][]driver.Value{
-				{"PK_T", int64(1), "CLUSTERED", true, true, false, false, int64(0), "", false, false, true, true, "NONE", "PRIMARY", false, true, "", false, false},
-				{"IX_covering", int64(2), "NONCLUSTERED", false, false, false, false, int64(0), "", false, false, true, true, "NONE", "ps_year", true, false, "created", true, true},
-				{"IX_empty", int64(3), "NONCLUSTERED", false, false, false, false, int64(0), "", false, false, true, true, "NONE", "FG_archive", false, false, "", false, false},
+				{"PK_T", int64(1), "CLUSTERED", true, true, false, false, int64(0), "", false, false, true, true, "NONE", "PRIMARY", false, true, "", false, false, int64(0)},
+				{"IX_covering", int64(2), "NONCLUSTERED", false, false, false, false, int64(0), "", false, false, true, true, "NONE", "ps_year", true, false, "created", true, true, int64(0)},
+				{"IX_empty", int64(3), "NONCLUSTERED", false, false, false, false, int64(0), "", false, false, true, true, "NONE", "FG_archive", false, false, "", false, false, int64(0)},
 			},
 		},
 		cannedRow{
@@ -193,11 +193,11 @@ func TestIndexListReadsEachIndexDataSpace(t *testing.T) {
 				"is_padded", "ignore_dup_key", "allow_row_locks", "allow_page_locks",
 				"data_compression_desc",
 				"data_space", "is_partition_scheme", "is_default_filegroup", "partition_column",
-				"no_recompute", "optimize_for_sequential_key"},
+				"no_recompute", "optimize_for_sequential_key", "bucket_count"},
 			rows: [][]driver.Value{
-				{"PK_T", int64(1), "CLUSTERED", true, true, false, false, int64(0), "", false, false, true, true, "NONE", "ps_year", true, false, "Created", false, false},
-				{"IX_archive", int64(2), "NONCLUSTERED", false, false, false, false, int64(0), "", false, false, true, true, "NONE", "FG_Archive", false, false, "", false, false},
-				{"IX_default", int64(3), "NONCLUSTERED", false, false, false, false, int64(0), "", false, false, true, true, "NONE", "PRIMARY", false, true, "", false, false},
+				{"PK_T", int64(1), "CLUSTERED", true, true, false, false, int64(0), "", false, false, true, true, "NONE", "ps_year", true, false, "Created", false, false, int64(0)},
+				{"IX_archive", int64(2), "NONCLUSTERED", false, false, false, false, int64(0), "", false, false, true, true, "NONE", "FG_Archive", false, false, "", false, false, int64(0)},
+				{"IX_default", int64(3), "NONCLUSTERED", false, false, false, false, int64(0), "", false, false, true, true, "NONE", "PRIMARY", false, true, "", false, false, int64(0)},
 			},
 		},
 		cannedRow{

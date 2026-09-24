@@ -196,7 +196,7 @@ func (s Signer) clause(withPassword bool) (string, error) {
 	}
 	c := string(s.Kind) + " " + quoteIdent(s.Name)
 	if withPassword && s.Password != "" {
-		c += " WITH PASSWORD = " + nStringLiteral(s.Password)
+		c += " WITH PASSWORD = " + QuoteLiteral(s.Password)
 	}
 	return c, nil
 }

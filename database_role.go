@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 )
 
@@ -29,13 +28,12 @@ func (r *DatabaseRole) Database() *Database { return r.db }
 
 // DatabaseRoles returns all roles defined in the database.
 func (d *Database) DatabaseRoles(ctx context.Context) ([]*DatabaseRole, error) {
-	const q = `
+	q := `
 SELECT r.name, r.principal_id, r.is_fixed_role, p.name AS owner,
-       STUFF((SELECT ', ' + m.name
-              FROM   sys.database_role_members rm
-              JOIN   sys.database_principals m ON m.principal_id = rm.member_principal_id
-              WHERE  rm.role_principal_id = r.principal_id
-              FOR XML PATH(''), TYPE).value('.','NVARCHAR(MAX)'), 1, 2, '') AS members
+       ` + jsonList("m.name", `
+        FROM   sys.database_role_members rm
+        JOIN   sys.database_principals m ON m.principal_id = rm.member_principal_id
+        WHERE  rm.role_principal_id = r.principal_id`, "m.name") + ` AS members
 FROM   sys.database_principals r
 JOIN   sys.database_principals p ON p.principal_id = r.owning_principal_id
 WHERE  r.type = 'R'
@@ -48,8 +46,9 @@ ORDER  BY r.name`
 		if err := scan(&r.Name, &r.ID, &r.IsFixedRole, &r.Owner, &members); err != nil {
 			return nil, err
 		}
-		if members.Valid && members.String != "" {
-			r.Members = strings.Split(members.String, ", ")
+		var err error
+		if r.Members, err = decodeJSONList(members); err != nil {
+			return nil, err
 		}
 		return r, nil
 	})
@@ -59,22 +58,21 @@ ORDER  BY r.name`
 // detail (SID, create/modify dates) filled in — DatabaseRoles
 // leaves these out since Object Explorer's tree listing never needs them.
 func (d *Database) RoleByName(ctx context.Context, name string) (*DatabaseRole, error) {
-	const q = `
-SELECT r.principal_id, r.is_fixed_role, p.name AS owner,
+	q := `
+SELECT r.name, r.principal_id, r.is_fixed_role, p.name AS owner,
        r.sid, r.create_date, r.modify_date,
-       STUFF((SELECT ', ' + m.name
-              FROM   sys.database_role_members rm
-              JOIN   sys.database_principals m ON m.principal_id = rm.member_principal_id
-              WHERE  rm.role_principal_id = r.principal_id
-              FOR XML PATH(''), TYPE).value('.','NVARCHAR(MAX)'), 1, 2, '') AS members
+       ` + jsonList("m.name", `
+        FROM   sys.database_role_members rm
+        JOIN   sys.database_principals m ON m.principal_id = rm.member_principal_id
+        WHERE  rm.role_principal_id = r.principal_id`, "m.name") + ` AS members
 FROM   sys.database_principals r
 JOIN   sys.database_principals p ON p.principal_id = r.owning_principal_id
 WHERE  r.type = 'R' AND r.name = @p1`
 
-	r := &DatabaseRole{db: d, Name: name}
+	r := &DatabaseRole{db: d}
 	var members sql.NullString
 	err := d.queryRow(ctx, func(row *sql.Row) error {
-		return row.Scan(&r.ID, &r.IsFixedRole, &r.Owner, &r.SID, &r.CreateDate, &r.ModifyDate, &members)
+		return row.Scan(&r.Name, &r.ID, &r.IsFixedRole, &r.Owner, &r.SID, &r.CreateDate, &r.ModifyDate, &members)
 	}, q, name)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -82,8 +80,8 @@ WHERE  r.type = 'R' AND r.name = @p1`
 		}
 		return nil, fmt.Errorf("gosmo: find database role %q in %q: %w", name, d.Name, err)
 	}
-	if members.Valid && members.String != "" {
-		r.Members = strings.Split(members.String, ", ")
+	if r.Members, err = decodeJSONList(members); err != nil {
+		return nil, err
 	}
 	return r, nil
 }

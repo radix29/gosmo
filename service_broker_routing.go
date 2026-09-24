@@ -206,7 +206,7 @@ func routeSettingClauses(s RouteSettings) ([]string, error) {
 			return fmt.Errorf("%s is empty, and ALTER ROUTE cannot clear a setting: "+
 				"the server refuses an empty value and NULL does not parse", keyword)
 		}
-		clauses = append(clauses, keyword+" = "+nStringLiteral(*v))
+		clauses = append(clauses, keyword+" = "+QuoteLiteral(*v))
 		return nil
 	}
 	if err := add("SERVICE_NAME", s.RemoteService); err != nil {

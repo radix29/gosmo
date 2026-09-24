@@ -52,7 +52,7 @@ func (t *ServerTrigger) Server() *Server { return t.server }
 // Database.triggersWhere does.
 var serverTriggerSelect = `
 SELECT tr.name, tr.is_disabled, tr.create_date, tr.modify_date,
-       ` + commaList("te.type_desc", `
+       ` + jsonList("te.type_desc", `
         FROM   sys.server_trigger_events te
         WHERE  te.object_id = tr.object_id`, "") + ` AS events,
        m.definition
@@ -116,8 +116,9 @@ func scanServerTrigger(s *Server, scan func(...any) error) (*ServerTrigger, erro
 		return nil, err
 	}
 	t.IsEnabled = !isDisabled
-	if events.Valid && events.String != "" {
-		t.Events = strings.Split(events.String, ",")
+	var err error
+	if t.Events, err = decodeJSONList(events); err != nil {
+		return nil, err
 	}
 	t.Definition = definition.String
 	return t, nil

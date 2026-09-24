@@ -162,7 +162,7 @@ func main() {
 		Cache:      &noCache,
 	}))
 	for _, s := range demo.Value(db.Sequences(ctx)) {
-		fmt.Printf("  [%s].[%s] start=%d incr=%d\n", s.Schema, s.Name, s.StartValue, s.Increment)
+		fmt.Printf("  [%s].[%s] start=%s incr=%s\n", s.Schema, s.Name, s.StartValue, s.Increment)
 	}
 
 	// -- Synonym ----------------------------------------------------------

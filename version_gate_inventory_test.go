@@ -72,6 +72,7 @@ var gatedColumns = []gatedColumn{
 
 	// sys.tables — ledger tables, 2022.
 	{"tables", "ledger_type_desc", "t.ledger_type_desc", SQLServer2022, false, ""},
+	{"tables", "ledger_type", "t.ledger_type", SQLServer2022, false, ""},
 
 	// sys.tables — the graph columns, 2017. Two entries each because each
 	// column has two call sites: the listing's SELECT list (tableSelect) and
@@ -86,6 +87,12 @@ var gatedColumns = []gatedColumn{
 	{"tables", "is_node", "t.is_node", SQLServer2017, false, ""},
 	{"tables", "is_edge", "t.is_edge", SQLServer2017, false, ""},
 	{"tables", "is_edge", "t.is_edge", SQLServer2017, false, ""},
+
+	// sys.columns — graph_type, 2017, with graph tables.
+	{"columns", "graph_type", "ISNULL(c.graph_type, 0)", SQLServer2017, false, ""},
+
+	// sys.sequences — last_used_value, 2017.
+	{"sequences", "last_used_value", "CONVERT(nvarchar(40), s.last_used_value)", SQLServer2017, false, ""},
 
 	// sys.external_data_sources — the PolyBase v2 columns, 2019.
 	{"external_data_sources", "connection_options", "s.connection_options", SQLServer2019, false, ""},

@@ -26,11 +26,30 @@ func TestScriptSecurityWrites(t *testing.T) {
 			return scriptTestDB().CreateSchema(c, "sa]les", "")
 		}, scriptUsePrefix + "CREATE SCHEMA [sa]]les]"},
 		{"CreateUser", func(c context.Context) error {
-			return scriptTestDB().CreateUser(c, "o'brien", `DOM\o]b`, "sa]les")
+			return scriptTestDB().CreateUser(c, CreateUserRequest{Name: "o'brien", Login: `DOM\o]b`, DefaultSchema: "sa]les"})
 		}, scriptUsePrefix + `CREATE USER [o'brien] FOR LOGIN [DOM\o]]b] WITH DEFAULT_SCHEMA = [sa]]les]`},
 		{"CreateUser without a default schema", func(c context.Context) error {
-			return scriptTestDB().CreateUser(c, "o'brien", "app_login", "")
+			return scriptTestDB().CreateUser(c, CreateUserRequest{Name: "o'brien", Login: "app_login"})
 		}, scriptUsePrefix + "CREATE USER [o'brien] FOR LOGIN [app_login]"},
+		{"CreateUser without login", func(c context.Context) error {
+			return scriptTestDB().CreateUser(c, CreateUserRequest{Name: "o'brien", Kind: UserWithoutLogin, DefaultSchema: "sa]les"})
+		}, scriptUsePrefix + "CREATE USER [o'brien] WITHOUT LOGIN WITH DEFAULT_SCHEMA = [sa]]les]"},
+		{"CreateUser Windows for login", func(c context.Context) error {
+			return scriptTestDB().CreateUser(c, CreateUserRequest{Name: `DOM\o]b`, Kind: UserWindows, Login: `DOM\o]b`})
+		}, scriptUsePrefix + `CREATE USER [DOM\o]]b] FOR LOGIN [DOM\o]]b]`},
+		{"CreateUser contained Windows", func(c context.Context) error {
+			return scriptTestDB().CreateUser(c, CreateUserRequest{Name: `DOM\o]b`, Kind: UserWindows, DefaultSchema: "dbo"})
+		}, scriptUsePrefix + `CREATE USER [DOM\o]]b] WITH DEFAULT_SCHEMA = [dbo]`},
+		{"CreateUser from certificate", func(c context.Context) error {
+			return scriptTestDB().CreateUser(c, CreateUserRequest{Name: "o'brien", Kind: UserFromCertificate, Certificate: "ce]rt"})
+		}, scriptUsePrefix + "CREATE USER [o'brien] FROM CERTIFICATE [ce]]rt]"},
+		{"CreateUser from asymmetric key", func(c context.Context) error {
+			return scriptTestDB().CreateUser(c, CreateUserRequest{Name: "o'brien", Kind: UserFromAsymmetricKey, AsymmetricKey: "k]ey"})
+		}, scriptUsePrefix + "CREATE USER [o'brien] FROM ASYMMETRIC KEY [k]]ey]"},
+		{"CreateUser from external provider", func(c context.Context) error {
+			return scriptTestDB().CreateUser(c, CreateUserRequest{Name: "a@contoso.com", Kind: UserFromExternalProvider,
+				ObjectID: "0000-o'id", DefaultSchema: "dbo"})
+		}, scriptUsePrefix + "CREATE USER [a@contoso.com] FROM EXTERNAL PROVIDER WITH OBJECT_ID = N'0000-o''id', DEFAULT_SCHEMA = [dbo]"},
 		{"AddRoleMember", func(c context.Context) error {
 			return scriptTestDB().AddRoleMember(c, "db_own]er", "o'brien")
 		}, scriptUsePrefix + "ALTER ROLE [db_own]]er] ADD MEMBER [o'brien]"},
@@ -262,24 +281,43 @@ func TestScriptPermissionOptionWrites(t *testing.T) {
 	})
 }
 
-// TestCreateUserRefusesAnEmptyLogin pins the guard on the one parameter
-// CreateUser cannot quote its way out of. quoteIdent("") is "[]", so
-// an empty login produced "CREATE USER [x] FOR LOGIN []" — syntactically
-// valid to gosmo and rejected by the server with a message naming an empty
-// login the caller never typed. A user with no login is CREATE USER ...
-// WITHOUT LOGIN, a different statement; refusing here rather than guessing
-// which was meant keeps that an explicit choice.
-func TestCreateUserRefusesAnEmptyLogin(t *testing.T) {
-	ctx, script := WithScript(context.Background())
-	err := scriptTestDB().CreateUser(ctx, "o'brien", "", "dbo")
-	if err == nil {
-		t.Fatalf("CreateUser with an empty login returned nil, want an error")
-	}
-	if !strings.Contains(err.Error(), "login name") {
-		t.Errorf("error = %v, want it to name the missing login", err)
-	}
-	if len(script.Statements()) != 0 {
-		t.Errorf("Statements = %q, want none", script.Statements())
+// TestCreateUserRefusesWhatItsKindCannotCarry pins the refusals. The first is
+// the guard on the one parameter CreateUser cannot quote its way out of:
+// quoteIdent("") is "[]", so an empty login produced "CREATE USER [x] FOR
+// LOGIN []" — rejected by the server with a message naming an empty login the
+// caller never typed. The rest refuse a field set for a kind with no clause
+// for it, which would otherwise be dropped silently — a password typed for a
+// login-less user, a schema the server refuses for a mapped one.
+func TestCreateUserRefusesWhatItsKindCannotCarry(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		req  CreateUserRequest
+		want string
+	}{
+		{"empty login", CreateUserRequest{Name: "o'brien", DefaultSchema: "dbo"}, "login name"},
+		{"no name", CreateUserRequest{Kind: UserWithoutLogin}, "user name is required"},
+		{"password on a login user", CreateUserRequest{Name: "u", Login: "l", Password: "p"}, "takes no password"},
+		{"login on a login-less user", CreateUserRequest{Name: "u", Kind: UserWithoutLogin, Login: "l"}, "takes no login"},
+		{"contained with no password", CreateUserRequest{Name: "u", Kind: UserWithPassword}, "requires a password"},
+		{"certificate with no name", CreateUserRequest{Name: "u", Kind: UserFromCertificate}, "requires Certificate"},
+		{"key with no name", CreateUserRequest{Name: "u", Kind: UserFromAsymmetricKey}, "requires AsymmetricKey"},
+		{"certificate on a key user", CreateUserRequest{Name: "u", Kind: UserFromAsymmetricKey, AsymmetricKey: "k", Certificate: "c"}, "no certificate"},
+		{"schema on a certificate user", CreateUserRequest{Name: "u", Kind: UserFromCertificate, Certificate: "c", DefaultSchema: "dbo"}, "default schema"},
+		{"object id on a Windows user", CreateUserRequest{Name: "u", Kind: UserWindows, ObjectID: "x"}, "ObjectID"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			ctx, script := WithScript(context.Background())
+			err := scriptTestDB().CreateUser(ctx, c.req)
+			if err == nil {
+				t.Fatalf("CreateUser(%+v) returned nil, want an error", c.req)
+			}
+			if !strings.Contains(err.Error(), c.want) {
+				t.Errorf("error = %v, want it to contain %q", err, c.want)
+			}
+			if len(script.Statements()) != 0 {
+				t.Errorf("Statements = %q, want none", script.Statements())
+			}
+		})
 	}
 }
 

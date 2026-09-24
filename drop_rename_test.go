@@ -2,6 +2,8 @@ package gosmo
 
 import (
 	"context"
+	"database/sql"
+	"database/sql/driver"
 	"strings"
 	"testing"
 )
@@ -565,7 +567,6 @@ func TestTransferObjectRefusals(t *testing.T) {
 	}{
 		{"empty target", "", "sales", "target schema is required"},
 		{"same schema", "sales", "sales", "already in schema"},
-		{"same schema, different case", "SALES", "sales", "already in schema"},
 		{"same schema by default", "dbo", "", "already in schema"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
@@ -582,6 +583,53 @@ func TestTransferObjectRefusals(t *testing.T) {
 				t.Errorf("emitted %q, want nothing", script.Statements())
 			}
 		})
+	}
+}
+
+// TestTransferObjectCaseOnlyDifferenceAsksTheServer pins T13: target and
+// source names that differ only in case are one schema under a
+// case-insensitive collation and two under a case-sensitive one. The server's
+// SCHEMA_ID comparison decides, rather than a case-blind compare in Go that
+// refused a legitimate [sales] → [Sales] transfer in a _CS_ database.
+func TestTransferObjectCaseOnlyDifferenceAsksTheServer(t *testing.T) {
+	db, err := sql.Open("capture", "")
+	if err != nil {
+		t.Fatalf("sql.Open: %v", err)
+	}
+	t.Cleanup(func() { db.Close() })
+	d := &Database{server: &Server{db: db}, Name: "AppDB"}
+	ctx := context.Background()
+	for _, c := range []struct {
+		name     string
+		sameID   bool
+		wantSent bool
+	}{
+		{"case-insensitive collation: same schema", true, false},
+		{"case-sensitive collation: two schemas", false, true},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			captured.reset(cannedRow{match: "SCHEMA_ID(@p1) = SCHEMA_ID(@p2)",
+				cols: []string{"same"}, row: []driver.Value{c.sameID}})
+			err := d.TransferObject(ctx, "SALES", "sales", "Orders")
+			sent := captured.find("ALTER SCHEMA [SALES] TRANSFER [sales].[Orders]") != ""
+			if sent != c.wantSent {
+				t.Errorf("ALTER SCHEMA sent = %v, want %v (err %v)", sent, c.wantSent, err)
+			}
+			if c.wantSent && err != nil {
+				t.Errorf("err = %v, want nil", err)
+			}
+			if !c.wantSent && (err == nil || !strings.Contains(err.Error(), "already in schema")) {
+				t.Errorf("err = %v, want an already-in-schema refusal", err)
+			}
+		})
+	}
+	// Names that differ by more than case never ask.
+	captured.reset()
+	if err := d.TransferObject(ctx, "hr", "sales", "Orders"); err != nil {
+		t.Fatalf("TransferObject: %v", err)
+	}
+	if captured.find("SCHEMA_ID(") != "" {
+		t.Error("a transfer between differently-spelled schemas queried SCHEMA_ID")
 	}
 }
 

@@ -481,7 +481,7 @@ func queueExecuteAsValue(executeAs string) string {
 	case QueueExecuteAsSelf:
 		return QueueExecuteAsSelf
 	default:
-		return nStringLiteral(executeAs)
+		return QuoteLiteral(executeAs)
 	}
 }
 

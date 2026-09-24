@@ -367,7 +367,7 @@ func (r *AvailabilityReplica) SetBackupPriority(ctx context.Context, priority in
 func (r *AvailabilityReplica) SetReadOnlyRoutingURL(ctx context.Context, url string) error {
 	value := "NONE"
 	if url != "" {
-		value = nStringLiteral(url)
+		value = QuoteLiteral(url)
 	}
 	if err := r.modifyReplica(ctx, "SECONDARY_ROLE (READ_ONLY_ROUTING_URL = "+value+")"); err != nil {
 		return fmt.Errorf("gosmo: set read-only routing URL of replica %q: %w", r.ReplicaServerName, err)
@@ -405,7 +405,7 @@ func formatRoutingList(list [][]string) (string, error) {
 			if strings.TrimSpace(name) == "" {
 				return "", fmt.Errorf("routing list contains an empty replica name")
 			}
-			names = append(names, nStringLiteral(name))
+			names = append(names, QuoteLiteral(name))
 		}
 		switch len(names) {
 		case 0:
@@ -431,7 +431,7 @@ func addReplicaClause(spec AvailabilityReplicaSpec) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("ADD REPLICA ON %s WITH (%s)", nStringLiteral(spec.ServerName), with), nil
+	return fmt.Sprintf("ADD REPLICA ON %s WITH (%s)", QuoteLiteral(spec.ServerName), with), nil
 }
 
 // AddReplica adds a secondary replica to an existing availability group.

@@ -375,7 +375,7 @@ func TestLiveSchemaAndTableChildFindersMatchTheirListings(t *testing.T) {
 			got.IsDisabled != want.IsDisabled {
 			t.Errorf("by name = %+v, listing = %+v", got, want)
 		}
-		// Both column lists are commaList subqueries; an empty one scripts
+		// Both column lists are jsonList subqueries; an empty one scripts
 		// a FOREIGN KEY with no columns.
 		if len(got.Columns) != 1 || got.Columns[0] != "parent_id" {
 			t.Errorf("columns = %v, want [parent_id]", got.Columns)

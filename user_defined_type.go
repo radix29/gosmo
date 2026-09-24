@@ -19,7 +19,6 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"strings"
 	"time"
 )
 
@@ -213,7 +212,7 @@ func (t *UserDefinedTableType) Columns(ctx context.Context) ([]*Column, error) {
 		return nil, notFoundf("gosmo: user-defined table type %s in %q has no internal table id — read it with UserDefinedTableTypeByName",
 			t.FullName(), t.db.Name)
 	}
-	const q = columnSelect + `
+	q := t.db.columnSelect() + `
 WHERE  c.object_id = @p1
 ORDER  BY c.column_id`
 
@@ -515,8 +514,8 @@ func (d *Database) transferWithClass(ctx context.Context, class, targetSchema, s
 	if schema == "" {
 		schema = "dbo"
 	}
-	if strings.EqualFold(targetSchema, schema) {
-		return fmt.Errorf("gosmo: transfer %s: it is already in schema [%s]", qualifiedName(schema, name), schema)
+	if err := d.refuseSameSchemaTransfer(ctx, targetSchema, schema, name); err != nil {
+		return err
 	}
 	if _, err := d.exec(ctx, fmt.Sprintf("ALTER SCHEMA %s TRANSFER %s::%s",
 		quoteIdent(targetSchema), class, qualifiedName(schema, name))); err != nil {

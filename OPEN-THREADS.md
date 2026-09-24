@@ -12,7 +12,7 @@ lines it carried had no home afterwards.
 ## Version support: the policy, and how it is held
 
 The target is **SQL Server 2016 SP1 and later**. SP1 rather than RTM because
-`procedure.go` and `scripter.go` emit `CREATE OR ALTER` — as does gossms's
+`procedure.go` and `scripter_module.go` emit `CREATE OR ALTER` — as does gossms's
 `internal/activity/block.go`, pinned there by its own test.
 
 **The standing check is `TestLiveVersionSweep`** (`live_versionsweep_test.go`):
@@ -32,7 +32,7 @@ The gates, recorded because the next audit will otherwise re-derive them:
 
 | Column or construct | Held by |
 |---|---|
-| `STRING_AGG` (2017) — partition functions and schemes, server and database triggers, foreign keys, audit specifications | `sql_agg.go` `commaList` renders the `FOR XML PATH`/`STUFF` form, valid from 2008. No raw `STRING_AGG` in non-test source. |
+| `STRING_AGG` (2017) — partition functions and schemes, server and database triggers, foreign keys, audit specifications, role members | `sql_agg.go` `jsonList` aggregates with `FOR JSON PATH` (2016, independent of compatibility level) and `encoding/json` decodes it, so no name is split on a separator. No raw `STRING_AGG` and no `FOR XML PATH` aggregate in non-test source. |
 | Column Master Keys: `allow_enclave_computations`, `signature` (2019) | `always_encrypted.go`, `colSince(major, SQLServer2019, …)` |
 | Query Store options: the 2017 and 2019 columns | `query_store.go`, `colSince` per column |
 | `Table.Detail`'s `ledger_type_desc` (2022) | `table.go`, `colSince(…, SQLServer2022, …)` |
@@ -88,28 +88,33 @@ MI KILL form itself has not executed either, since a Managed Instance restores
 ## Scripter fidelity: what `ScriptTable` still does not recreate
 
 The 2026-09-22 pass (gossms review plan Q2) made `ScriptTable` keep every
-feature listed in `ARCHITECTURE.md` § Scripter. Knowingly still missing, each
-of which recreates a *different* table rather than failing:
+feature listed in `ARCHITECTURE.md` § Scripter, and the 2026-09-24 pass
+(review plan T7) added graph tables and edge constraints, memory-optimized
+tables and hash indexes, FILESTREAM and `TEXTIMAGE_ON`.
 
-- **Always Encrypted columns** — no `ENCRYPTED WITH (…)`; the column is
-  recreated in plaintext.
-- **FILESTREAM** — no `FILESTREAM` column attribute and no `FILESTREAM_ON`;
-  `TEXTIMAGE_ON` is not emitted either.
-- **Ledger tables** (2022+) and the `generated_always_type` values above 2
-  (transaction-id / sequence-number columns): not emitted; `LEDGER = ON` is
-  not read.
-- **Memory-optimized tables**: no `MEMORY_OPTIMIZED`/`DURABILITY`, and hash
-  indexes script as B-trees.
+**Refused, not scripted** (an `ErrUnsupported` error and no script, for every
+verb): external tables, FileTables, ledger tables (and with them the
+`generated_always_type` values above 2), and tables with Always Encrypted
+columns. Each would otherwise recreate a plain table under the same name.
+Scripting them is open work — external tables need their data source and
+file format, FileTables their directory and collation options, ledger tables
+`LEDGER = ON (…)` and their history/ledger-view names, and Always Encrypted
+columns `ENCRYPTED WITH (…)`.
+
+Knowingly still missing, each of which recreates a *different* table rather
+than failing:
+
 - **Per-partition compression**: an index's compression is its first
   partition's.
 - **XML and spatial indexes** — skipped with a comment, as before.
+- **Memory-optimized index options**: a columnstore index's
+  `COMPRESSION_DELAY` is not read, and a natively compiled module's
+  dependence on the table is not scripted.
 - A disabled **clustered** index is recreated and then disabled, as the
   source is — which takes the replayed table offline, faithfully.
 
 `Parameter.TypeString` shares the `datetime2(0)` fix but not the alias-type
 qualification: `sys.parameters`' type is still rendered unqualified.
-`PartitionFunction.Boundaries` is split on `,`, so a string boundary
-containing one is mis-read.
 
 ## Keys `FROM PROVIDER` have never executed
 
@@ -124,6 +129,21 @@ What to check when one exists: whether `OPEN_EXISTING` really accepts no
 `ALGORITHM` (the builder omits it when the caller leaves it empty), and
 whether a provider symmetric key accepts `IDENTITY_VALUE` — refused here
 until seen.
+
+## Entra users and Entra login defaults have never executed
+
+`CreateUserRequest{Kind: UserFromExternalProvider}` (with `ObjectID` and
+`DEFAULT_SCHEMA` in one `WITH` list), and the external-login half of
+`buildLoginScript` (`DEFAULT_DATABASE` and `DEFAULT_LANGUAGE` in one following
+`ALTER LOGIN`), are pinned by unit tests only. Every other user kind and the
+SQL/Windows login script were replayed on 13 and 17 (2026-09-24,
+`live_user_kinds_test.go`); these need a real directory principal, which none
+of the test instances has — `t-qmi-01` is reachable with SQL auth, but no Entra
+user or group to name.
+
+What to check when one exists: that `FROM EXTERNAL PROVIDER WITH OBJECT_ID =
+…, DEFAULT_SCHEMA = …` parses in that order, and that an Entra login takes
+`DEFAULT_LANGUAGE` through `ALTER LOGIN` as it does `DEFAULT_DATABASE`.
 
 ## `ConnectTimeout` does not bound the TCP dial
 

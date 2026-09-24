@@ -121,16 +121,21 @@ WHERE  t.object_id = @p1`
 
 // Column mirrors Microsoft.SqlServer.Management.Smo.Column.
 type Column struct {
-	Name              string
-	OrdinalPosition   int
-	DataType          DataType
-	MaxLength         int // -1 = MAX
-	Precision         int
-	Scale             int
-	IsNullable        bool
-	IsIdentity        bool
-	IdentitySeed      int64
-	IdentityIncrement int64
+	Name            string
+	OrdinalPosition int
+	DataType        DataType
+	MaxLength       int // -1 = MAX
+	Precision       int
+	Scale           int
+	IsNullable      bool
+	IsIdentity      bool
+	// IdentitySeed and IdentityIncrement are the IDENTITY arguments as the
+	// decimal digits the catalog holds, "" when the column is not an
+	// identity. They are strings because a decimal(38,0) identity can be
+	// seeded past int64 — reading it as an integer failed the whole column
+	// listing for the table — and they are only ever rendered back into T-SQL.
+	IdentitySeed      string
+	IdentityIncrement string
 	IsComputed        bool
 	ComputedText      string
 	DefaultValue      *ColumnDefault
@@ -162,12 +167,39 @@ type Column struct {
 	GeneratedAlwaysType int
 	// IsHidden is a period column declared HIDDEN.
 	IsHidden bool
+	// IsFileStream is a varbinary(max) FILESTREAM column, whose data lives in
+	// the table's FILESTREAM filegroup rather than in the row.
+	IsFileStream bool
+	// GraphType is sys.columns.graph_type: 0 for an ordinary column, and for
+	// a node or edge table's internal columns one of the GraphColumn*
+	// values. It is always 0 before SQL Server 2017, which has no graph
+	// tables.
+	GraphType int
 }
+
+// The sys.columns.graph_type values for a graph table's internal columns.
+// The two an INSERT into an edge table supplies are the computed $from_id
+// and $to_id pseudo-columns.
+const (
+	GraphColumnID             = 1
+	GraphColumnIDComputed     = 2
+	GraphColumnFromID         = 3
+	GraphColumnFromObjID      = 4
+	GraphColumnFromIDComputed = 5
+	GraphColumnToID           = 6
+	GraphColumnToObjID        = 7
+	GraphColumnToIDComputed   = 8
+)
 
 // columnSelect is the SELECT and joins every column listing shares; each
 // caller appends its own WHERE, because a Table already holds an object_id
 // while Database.ObjectColumns has only a name to resolve.
-const columnSelect = `
+//
+// graph_type is SQL Server 2017's, with graph tables themselves.
+// https://learn.microsoft.com/sql/relational-databases/system-catalog-views/sys-columns-transact-sql
+func (d *Database) columnSelect() string {
+	major := d.serverMajorVersion()
+	return `
 SELECT c.name, c.column_id,
        tp.name,
        c.max_length, c.precision, c.scale,
@@ -175,13 +207,14 @@ SELECT c.name, c.column_id,
        ISNULL(cc.definition, ''),
        ISNULL(dc.name, ''), ISNULL(dc.definition, ''),
        c.is_rowguidcol, ISNULL(c.collation_name, ''),
-       ISNULL(ic.seed_value, 0), ISNULL(ic.increment_value, 0),
+       CONVERT(nvarchar(40), ic.seed_value), CONVERT(nvarchar(40), ic.increment_value),
        CAST(CASE WHEN pk.column_id IS NOT NULL THEN 1 ELSE 0 END AS BIT),
        SCHEMA_NAME(tp.schema_id), tp.is_user_defined,
        ISNULL(cc.is_persisted, 0), ISNULL(ic.is_not_for_replication, 0),
        c.is_sparse, c.is_column_set,
        ISNULL(mc.masking_function, ''),
-       c.generated_always_type, c.is_hidden
+       c.generated_always_type, c.is_hidden, c.is_filestream,
+       ` + colSince(major, SQLServer2017, "ISNULL(c.graph_type, 0)", "CAST(0 AS int)") + `
 FROM   sys.columns c
 JOIN   sys.types tp ON tp.user_type_id = c.user_type_id
 LEFT   JOIN sys.masked_columns mc
@@ -198,10 +231,11 @@ LEFT   JOIN (
        JOIN   sys.indexes i ON i.object_id = ic2.object_id AND i.index_id = ic2.index_id
        WHERE  i.is_primary_key = 1
        ) pk ON pk.object_id = c.object_id AND pk.column_id = c.column_id`
+}
 
 // Columns returns all columns for this table in ordinal order.
 func (t *Table) Columns(ctx context.Context) ([]*Column, error) {
-	const q = columnSelect + `
+	q := t.db.columnSelect() + `
 WHERE  c.object_id = @p1
 ORDER  BY c.column_id`
 
@@ -229,7 +263,7 @@ ORDER  BY c.column_id`
 // supply them simply do not match for a view. Name, ordinal, type,
 // length/precision/scale, nullability and collation are all real.
 func (d *Database) ObjectColumns(ctx context.Context, schema, name string) ([]*Column, error) {
-	const q = columnSelect + `
+	q := d.columnSelect() + `
 WHERE  c.object_id = OBJECT_ID(@p1)
 ORDER  BY c.column_id`
 
@@ -259,7 +293,7 @@ func scanColumns(rows *sql.Rows) ([]*Column, error) {
 	for rows.Next() {
 		col := &Column{}
 		var compText, dcName, dcDef, collation, typeSchema sql.NullString
-		var seed, increment sql.NullInt64
+		var seed, increment sql.NullString
 		if err := rows.Scan(
 			&col.Name, &col.OrdinalPosition,
 			&col.DataType, &col.MaxLength, &col.Precision, &col.Scale,
@@ -272,7 +306,8 @@ func scanColumns(rows *sql.Rows) ([]*Column, error) {
 			&col.IsPersisted, &col.IdentityNotForReplication,
 			&col.IsSparse, &col.IsColumnSet,
 			&col.MaskingFunction,
-			&col.GeneratedAlwaysType, &col.IsHidden,
+			&col.GeneratedAlwaysType, &col.IsHidden, &col.IsFileStream,
+			&col.GraphType,
 		); err != nil {
 			return nil, err
 		}
@@ -282,8 +317,8 @@ func scanColumns(rows *sql.Rows) ([]*Column, error) {
 		if dcName.String != "" {
 			col.DefaultValue = &ColumnDefault{Name: dcName.String, Definition: dcDef.String}
 		}
-		col.IdentitySeed = seed.Int64
-		col.IdentityIncrement = increment.Int64
+		col.IdentitySeed = seed.String
+		col.IdentityIncrement = increment.String
 		cols = append(cols, col)
 	}
 	return cols, rows.Err()
@@ -362,14 +397,18 @@ func (t *Table) RenameColumn(ctx context.Context, name, newName string) error {
 
 // ForeignKey mirrors Microsoft.SqlServer.Management.Smo.ForeignKey.
 type ForeignKey struct {
-	Name                string
-	Columns             []string
-	ReferencedTable     string
-	ReferencedSchema    string
-	ReferencedColumns   []string
-	DeleteAction        string // NO_ACTION, CASCADE, SET_NULL, SET_DEFAULT
-	UpdateAction        string
-	IsDisabled          bool
+	Name              string
+	Columns           []string
+	ReferencedTable   string
+	ReferencedSchema  string
+	ReferencedColumns []string
+	DeleteAction      string // NO_ACTION, CASCADE, SET_NULL, SET_DEFAULT
+	UpdateAction      string
+	IsDisabled        bool
+	// IsNotTrusted is set when the server has not verified the key against
+	// every existing row — always for a disabled one, and for one enabled or
+	// added WITH NOCHECK.
+	IsNotTrusted        bool
 	IsNotForReplication bool
 }
 
@@ -377,17 +416,17 @@ type ForeignKey struct {
 // ForeignKeyByName so a foreign key carries the same fields however
 // it was fetched.
 var foreignKeySelect = `
-SELECT fk.name, fk.is_disabled, fk.is_not_for_replication,
+SELECT fk.name, fk.is_disabled, fk.is_not_trusted, fk.is_not_for_replication,
        fk.delete_referential_action_desc, fk.update_referential_action_desc,
        SCHEMA_NAME(rt.schema_id), rt.name,
-       ` + commaList("c.name", `
+       ` + jsonList("c.name", `
         FROM   sys.foreign_key_columns fkc
         JOIN   sys.columns c
                ON  c.object_id = fkc.parent_object_id
                AND c.column_id = fkc.parent_column_id
         WHERE  fkc.constraint_object_id = fk.object_id`,
 	"fkc.constraint_column_id") + `,
-       ` + commaList("c.name", `
+       ` + jsonList("c.name", `
         FROM   sys.foreign_key_columns fkc
         JOIN   sys.columns c
                ON  c.object_id = fkc.referenced_object_id
@@ -425,17 +464,18 @@ func (t *Table) ForeignKeyByName(ctx context.Context, name string) (*ForeignKey,
 func scanForeignKey(scan func(...any) error) (*ForeignKey, error) {
 	fk := &ForeignKey{}
 	var cols, refCols sql.NullString
-	if err := scan(&fk.Name, &fk.IsDisabled, &fk.IsNotForReplication,
+	if err := scan(&fk.Name, &fk.IsDisabled, &fk.IsNotTrusted, &fk.IsNotForReplication,
 		&fk.DeleteAction, &fk.UpdateAction,
 		&fk.ReferencedSchema, &fk.ReferencedTable,
 		&cols, &refCols); err != nil {
 		return nil, err
 	}
-	if cols.Valid {
-		fk.Columns = strings.Split(cols.String, ",")
+	var err error
+	if fk.Columns, err = decodeJSONList(cols); err != nil {
+		return nil, err
 	}
-	if refCols.Valid {
-		fk.ReferencedColumns = strings.Split(refCols.String, ",")
+	if fk.ReferencedColumns, err = decodeJSONList(refCols); err != nil {
+		return nil, err
 	}
 	return fk, nil
 }
@@ -629,10 +669,10 @@ SELECT @sql += N'ALTER TABLE ' + QUOTENAME(SCHEMA_NAME(fk.schema_id)) +
                N'.' + QUOTENAME(OBJECT_NAME(fk.parent_object_id)) +
                N' DROP CONSTRAINT ' + QUOTENAME(fk.name) + N'; '
 FROM   sys.foreign_keys fk
-WHERE  fk.referenced_object_id = OBJECT_ID(` + nStringLiteral(qn) + `);
+WHERE  fk.referenced_object_id = OBJECT_ID(` + QuoteLiteral(qn) + `);
 IF LEN(@sql) > 0 EXEC sp_executesql @sql;`
 	return atomicBatch([]string{
-		"EXEC(" + nStringLiteral(dropFKs) + ")",
+		"EXEC(" + QuoteLiteral(dropFKs) + ")",
 		"DROP TABLE " + qn,
 	})
 }
@@ -746,7 +786,7 @@ func (t *Table) CheckWhereSyntax(ctx context.Context, predicate string) error {
 // colTypeSQL returns the T-SQL data-type fragment for a ColumnDefinition.
 // Callers must validate col.DataType (see validDataType) before calling this
 // — it trusts its input and does not itself reject an unrecognized type.
-// scripter.go's ColumnTypeString does the equivalent for a *Column (from
+// scripter_table.go's ColumnTypeString does the equivalent for a *Column (from
 // sys.columns), which uses different field names.
 func colTypeSQL(col ColumnDefinition) string {
 	switch col.DataType {

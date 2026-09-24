@@ -93,6 +93,31 @@ func unsupportedVersionf(format string, args ...any) error {
 	return &unsupportedVersionError{msg: fmt.Sprintf(format, args...)}
 }
 
+// ErrUnsupported reports an object gosmo refuses to script because it cannot
+// express it faithfully — an external table, a FileTable, a ledger table, a
+// table with Always Encrypted columns. The refusal comes before any text is
+// produced: a script that recreates something *different* under the same name
+// is worse than none, and under DROP AND CREATE it drops the object and never
+// recreates it.
+//
+// It is not ErrUnsupportedVersion: the server is not too old for anything,
+// the scripter simply has no form for the object.
+var ErrUnsupported = errors.New("not supported by the scripter")
+
+// unsupportedError carries its own message and reaches ErrUnsupported through
+// the chain.
+type unsupportedError struct{ msg string }
+
+func (e *unsupportedError) Error() string { return e.msg }
+
+func (e *unsupportedError) Unwrap() error { return ErrUnsupported }
+
+// unsupportedf builds a scripter refusal whose message is exactly
+// format/args.
+func unsupportedf(format string, args ...any) error {
+	return &unsupportedError{msg: fmt.Sprintf(format, args...)}
+}
+
 // ============================================================
 // SQL Server errors
 // ============================================================

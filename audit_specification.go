@@ -52,7 +52,7 @@ func (spec *ServerAuditSpecification) Server() *Server { return spec.server }
 var serverAuditSpecificationSelect = `
 SELECT s.server_specification_id, s.name, CONVERT(varchar(36), s.audit_guid),
        a.name, s.is_state_enabled, s.create_date, s.modify_date,
-       ` + commaList("d.audit_action_name", `
+       ` + jsonList("d.audit_action_name", `
         FROM   sys.server_audit_specification_details d
         WHERE  d.server_specification_id = s.server_specification_id`,
 	"d.audit_action_name") + ` AS action_groups
@@ -99,9 +99,11 @@ func scanServerAuditSpecification(s *Server, scan func(...any) error) (*ServerAu
 	}
 	spec.AuditGUID, spec.AuditName = guid.String, auditName.String
 	spec.IsEnabled = enabled.Bool
-	if groups.String != "" {
-		spec.ActionGroups = strings.Split(groups.String, ",")
+	groupList, err := decodeJSONList(groups)
+	if err != nil {
+		return nil, err
 	}
+	spec.ActionGroups = groupList
 	return spec, nil
 }
 

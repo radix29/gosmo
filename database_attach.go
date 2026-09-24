@@ -58,7 +58,7 @@ func (s *Server) DetachDatabase(ctx context.Context, name string, opts DetachOpt
 	s.releaseIdle(ctx)
 	detach := fmt.Sprintf(
 		"EXEC master.dbo.sp_detach_db @dbname = %s, @skipchecks = %s, @keepfulltextindexfile = %s",
-		nStringLiteral(name),
+		QuoteLiteral(name),
 		sqlTextBool(!opts.UpdateStatistics),
 		sqlTextBool(!opts.DropFullTextIndexFile),
 	)
@@ -142,7 +142,7 @@ func (s *Server) AttachDatabase(ctx context.Context, spec AttachSpec) error {
 func buildAttachStatement(spec AttachSpec) string {
 	clauses := make([]string, 0, len(spec.Files))
 	for _, f := range spec.Files {
-		clauses = append(clauses, fmt.Sprintf("  (FILENAME = %s)", nStringLiteral(f)))
+		clauses = append(clauses, fmt.Sprintf("  (FILENAME = %s)", QuoteLiteral(f)))
 	}
 	forClause := "FOR ATTACH"
 	if spec.RebuildLog {
@@ -250,7 +250,7 @@ const detachedFileIsLog = 0x40
 // result is one property-name/value row per property rather than one row of
 // columns.
 func (s *Server) readDetachedProperties(ctx context.Context, path string, d *DetachedDatabase) error {
-	rows, err := s.query(ctx, fmt.Sprintf("DBCC CHECKPRIMARYFILE (%s, 2) WITH NO_INFOMSGS", nStringLiteral(path)))
+	rows, err := s.query(ctx, fmt.Sprintf("DBCC CHECKPRIMARYFILE (%s, 2) WITH NO_INFOMSGS", QuoteLiteral(path)))
 	if err != nil {
 		return fmt.Errorf("gosmo: detached database info for %q: %w", path, err)
 	}
@@ -278,7 +278,7 @@ func (s *Server) readDetachedProperties(ctx context.Context, path string, d *Det
 // readDetachedFiles fills Files from option 3: one row per file, as
 // status/fileid/name/filename.
 func (s *Server) readDetachedFiles(ctx context.Context, path string, d *DetachedDatabase) error {
-	rows, err := s.query(ctx, fmt.Sprintf("DBCC CHECKPRIMARYFILE (%s, 3) WITH NO_INFOMSGS", nStringLiteral(path)))
+	rows, err := s.query(ctx, fmt.Sprintf("DBCC CHECKPRIMARYFILE (%s, 3) WITH NO_INFOMSGS", QuoteLiteral(path)))
 	if err != nil {
 		return fmt.Errorf("gosmo: detached database files for %q: %w", path, err)
 	}

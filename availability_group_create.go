@@ -142,7 +142,7 @@ func (spec AvailabilityReplicaSpec) withClause() (string, error) {
 	}
 
 	parts := []string{
-		"ENDPOINT_URL = " + nStringLiteral(spec.EndpointURL),
+		"ENDPOINT_URL = " + QuoteLiteral(spec.EndpointURL),
 		"AVAILABILITY_MODE = " + string(availability),
 		"FAILOVER_MODE = " + string(failover),
 	}
@@ -179,7 +179,7 @@ func (spec AvailabilityReplicaSpec) withClause() (string, error) {
 		secondary = append(secondary, "ALLOW_CONNECTIONS = "+string(v))
 	}
 	if spec.ReadOnlyRoutingURL != "" {
-		secondary = append(secondary, "READ_ONLY_ROUTING_URL = "+nStringLiteral(spec.ReadOnlyRoutingURL))
+		secondary = append(secondary, "READ_ONLY_ROUTING_URL = "+QuoteLiteral(spec.ReadOnlyRoutingURL))
 	}
 	if len(secondary) > 0 {
 		parts = append(parts, "SECONDARY_ROLE ("+strings.Join(secondary, ", ")+")")
@@ -263,7 +263,7 @@ func (req CreateAvailabilityGroupRequest) createStatement() (string, error) {
 		if err != nil {
 			return "", err
 		}
-		replicas = append(replicas, fmt.Sprintf("%s WITH (%s)", nStringLiteral(spec.ServerName), with))
+		replicas = append(replicas, fmt.Sprintf("%s WITH (%s)", QuoteLiteral(spec.ServerName), with))
 	}
 	return stmt + " REPLICA ON " + strings.Join(replicas, ", "), nil
 }
