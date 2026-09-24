@@ -31,8 +31,42 @@ func (s *Server) Close() error { return s.db.Close() }
 // DB returns the underlying *sql.DB for ad-hoc queries.
 func (s *Server) DB() *sql.DB { return s.db }
 
-// Info returns cached server metadata (version, edition, paths ...).
+// Info returns server metadata (version, edition, paths ...) as read once, at
+// connect. It is a snapshot and is never refreshed: a setting changed since —
+// a default data, log or backup directory moved in SSMS or with T-SQL — is
+// not in it until the next connect. Read DefaultPaths for directories a
+// caller is about to write files to.
 func (s *Server) Info() *ServerInfo { return s.info }
+
+// DefaultPaths is the instance's default directories for new data, log and
+// backup files.
+type DefaultPaths struct {
+	Data   string
+	Log    string
+	Backup string // from the registry on SQL Server 2017 and older; see backupPathFromRegistry
+}
+
+// DefaultPaths reads the instance's default data, log and backup
+// directories now, rather than from the connect-time snapshot Info holds.
+// Anything that places a file — a restore relocating its files, a new or
+// attached database, a backup — should use this: with Info's copy, a default
+// moved since connect sends the files to the old directory. A path the
+// server does not report comes back empty, as it does in Info.
+func (s *Server) DefaultPaths(ctx context.Context) (DefaultPaths, error) {
+	const q = `
+	SELECT SERVERPROPERTY('InstanceDefaultDataPath'),
+	       SERVERPROPERTY('InstanceDefaultLogPath'),
+	       SERVERPROPERTY('InstanceDefaultBackupPath')`
+	var data, log, backup sql.NullString
+	if err := s.queryRowScan(ctx, q, nil, &data, &log, &backup); err != nil {
+		return DefaultPaths{}, fmt.Errorf("gosmo: read default paths: %w", err)
+	}
+	p := DefaultPaths{Data: data.String, Log: log.String, Backup: backup.String}
+	if p.Backup == "" && s.info != nil {
+		p.Backup = s.backupPathFromRegistry(ctx, s.info.Platform)
+	}
+	return p, nil
+}
 
 // Name returns the SQL Server instance name.
 func (s *Server) Name() string { return s.info.Name }
@@ -247,9 +281,10 @@ const multiUserRepairTimeout = 10 * time.Second
 // deferred SET ... OFF (executionplan.go).
 //
 // WithoutCancel keeps ctx's values, so a caller under WithScript still captures
-// the statement rather than running it.
+// the statement rather than running it. The repair is not reported to a
+// statement observer: it puts back what the failed write changed.
 func (s *Server) restoreMultiUser(ctx context.Context, name string) error {
-	rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), multiUserRepairTimeout)
+	rctx, cancel := context.WithTimeout(context.WithoutCancel(unobserved(ctx)), multiUserRepairTimeout)
 	defer cancel()
 	return s.exec(rctx, fmt.Sprintf("ALTER DATABASE %s SET MULTI_USER", quoteIdent(name)))
 }
@@ -260,7 +295,7 @@ func (s *Server) restoreMultiUser(ctx context.Context, name string) error {
 // case where the new name exists and the rename did not happen — and there the
 // old name exists too, so the other database is never touched.
 func (s *Server) restoreMultiUserAfterRename(ctx context.Context, oldName, newName string) error {
-	rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), multiUserRepairTimeout)
+	rctx, cancel := context.WithTimeout(context.WithoutCancel(unobserved(ctx)), multiUserRepairTimeout)
 	defer cancel()
 	return s.exec(rctx, fmt.Sprintf(`IF DB_ID(%s) IS NOT NULL ALTER DATABASE %s SET MULTI_USER
 ELSE IF DB_ID(%s) IS NOT NULL ALTER DATABASE %s SET MULTI_USER`,
@@ -522,25 +557,25 @@ func (s *Server) DatabaseRef(name string) *Database {
 	return &Database{server: s, Name: name}
 }
 
-// CreateDatabase creates a new database with the given name and optional options.
-func (s *Server) CreateDatabase(ctx context.Context, name string, opts *CreateDatabaseOptions) error {
+// CreateDatabase creates a new database, and returns it read back from
+// sys.databases — or, under Scripting(ctx), the DatabaseRef handle, since
+// nothing ran.
+func (s *Server) CreateDatabase(ctx context.Context, req CreateDatabaseRequest) (*Database, error) {
+	name, opts := req.Name, &req
 	if name == "" {
-		return fmt.Errorf("gosmo: create database: name is required")
-	}
-	if opts == nil {
-		opts = &CreateDatabaseOptions{}
+		return nil, fmt.Errorf("gosmo: create database: name is required")
 	}
 	if opts.RecoveryModel != "" && !validRecoveryModel(opts.RecoveryModel) {
-		return fmt.Errorf("gosmo: create database %q: unrecognized recovery model %q", name, opts.RecoveryModel)
+		return nil, fmt.Errorf("gosmo: create database %q: unrecognized recovery model %q", name, opts.RecoveryModel)
 	}
 	if opts.Collation != "" && !isSimpleIdentifier(opts.Collation) {
-		return fmt.Errorf("gosmo: create database %q: invalid collation %q", name, opts.Collation)
+		return nil, fmt.Errorf("gosmo: create database %q: invalid collation %q", name, opts.Collation)
 	}
 
 	if opts.LogFile != nil && opts.PrimaryFile == nil {
 		primary, err := defaultPrimaryFile(name, s.info)
 		if err != nil {
-			return fmt.Errorf("gosmo: create database %q: %w", name, err)
+			return nil, fmt.Errorf("gosmo: create database %q: %w", name, err)
 		}
 		withPrimary := *opts
 		withPrimary.PrimaryFile = primary
@@ -548,24 +583,26 @@ func (s *Server) CreateDatabase(ctx context.Context, name string, opts *CreateDa
 	}
 
 	if err := s.exec(ctx, buildCreateDatabaseStatement(name, opts)); err != nil {
-		return fmt.Errorf("gosmo: create database %q: %w", name, err)
+		return nil, fmt.Errorf("gosmo: create database %q: %w", name, err)
 	}
 
 	if opts.RecoveryModel != "" {
 		if err := s.exec(ctx,
 			fmt.Sprintf("ALTER DATABASE %s SET RECOVERY %s", quoteIdent(name), opts.RecoveryModel),
 		); err != nil {
-			return fmt.Errorf("gosmo: set recovery model for %q: %w", name, err)
+			return nil, fmt.Errorf("gosmo: set recovery model for %q: %w", name, err)
 		}
 	}
 	if opts.CompatLevel > 0 {
 		if err := s.exec(ctx,
 			fmt.Sprintf("ALTER DATABASE %s SET COMPATIBILITY_LEVEL = %d", quoteIdent(name), opts.CompatLevel),
 		); err != nil {
-			return fmt.Errorf("gosmo: set compat level for %q: %w", name, err)
+			return nil, fmt.Errorf("gosmo: set compat level for %q: %w", name, err)
 		}
 	}
-	return nil
+	return createdObject(ctx, s.DatabaseRef(name), func() (*Database, error) {
+		return s.DatabaseByName(ctx, name)
+	})
 }
 
 // defaultPrimaryFile is the data file CREATE DATABASE would have made on its
@@ -602,7 +639,7 @@ func joinServerPath(dir, file string) string {
 // buildCreateDatabaseStatement builds the CREATE DATABASE statement for
 // name/opts. Unexported and side-effect-free so it's unit-testable without
 // a server, mirroring buildAddFileStatement.
-func buildCreateDatabaseStatement(name string, opts *CreateDatabaseOptions) string {
+func buildCreateDatabaseStatement(name string, opts *CreateDatabaseRequest) string {
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "CREATE DATABASE %s", quoteIdent(name))
 	if opts.PrimaryFile != nil {
@@ -617,8 +654,10 @@ func buildCreateDatabaseStatement(name string, opts *CreateDatabaseOptions) stri
 	return sb.String()
 }
 
-// CreateDatabaseOptions holds optional parameters for CreateDatabase.
-type CreateDatabaseOptions struct {
+// CreateDatabaseRequest describes a new database. Only Name is required.
+type CreateDatabaseRequest struct {
+	Name string
+
 	Collation     string
 	RecoveryModel RecoveryModel
 	CompatLevel   CompatibilityLevel
@@ -627,7 +666,7 @@ type CreateDatabaseOptions struct {
 	// log file (name, path, size, growth, max size) via CREATE DATABASE's
 	// ON PRIMARY/LOG ON clauses. Leaving either nil lets the server place
 	// that file at its own default path/size, exactly like CreateDatabase
-	// with a zero-valued CreateDatabaseOptions always has — for a nil
+	// with only a Name always has — for a nil
 	// PrimaryFile beside a LogFile, by naming that default file explicitly,
 	// since SQL Server refuses LOG ON without a data file (see
 	// defaultPrimaryFile). FileGroup is

@@ -15,17 +15,15 @@
 package gosmo
 
 import (
-	"context"
 	"slices"
 	"testing"
+	"time"
 )
 
 func TestLiveScriptExternalTable(t *testing.T) {
-	db, ctx, done := liveDB(t)
-	defer done()
 	// Creating a database on Managed Instance outlasts liveDB's minute.
-	ctx, cancel := context.WithTimeout(context.Background(), 10*60e9)
-	defer cancel()
+	db, ctx, done := liveDBTimeout(t, 10*time.Minute)
+	defer done()
 
 	var polyBase int
 	if err := db.QueryRowContext(ctx, "SELECT CONVERT(int, ISNULL(SERVERPROPERTY('IsPolyBaseInstalled'), 0))").Scan(&polyBase); err != nil {

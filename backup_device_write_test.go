@@ -42,7 +42,7 @@ func TestCreateBackupDeviceStatementShape(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx, col := WithScript(context.Background())
-			if _, err := (&Server{}).CreateBackupDevice(ctx, tc.devName, tc.devType, tc.physical); err != nil {
+			if _, err := (&Server{}).CreateBackupDevice(ctx, CreateBackupDeviceRequest{Name: tc.devName, Type: tc.devType, PhysicalName: tc.physical}); err != nil {
 				t.Fatalf("CreateBackupDevice: %v", err)
 			}
 			if len(col.Statements()) != 1 {
@@ -57,10 +57,10 @@ func TestCreateBackupDeviceStatementShape(t *testing.T) {
 
 func TestCreateBackupDeviceRequiresNameAndPath(t *testing.T) {
 	ctx, col := WithScript(context.Background())
-	if _, err := (&Server{}).CreateBackupDevice(ctx, "  ", BackupDeviceDisk, "/tmp/d.bak"); err == nil {
+	if _, err := (&Server{}).CreateBackupDevice(ctx, CreateBackupDeviceRequest{Name: "  ", Type: BackupDeviceDisk, PhysicalName: "/tmp/d.bak"}); err == nil {
 		t.Error("a device with no name was accepted")
 	}
-	if _, err := (&Server{}).CreateBackupDevice(ctx, "Dev", BackupDeviceDisk, ""); err == nil {
+	if _, err := (&Server{}).CreateBackupDevice(ctx, CreateBackupDeviceRequest{Name: "Dev", Type: BackupDeviceDisk}); err == nil {
 		t.Error("a device with no physical name was accepted")
 	}
 	if len(col.Statements()) != 0 {
@@ -72,7 +72,7 @@ func TestCreateBackupDeviceRequiresNameAndPath(t *testing.T) {
 // would find nothing. The name-only handle is what a caller gets instead.
 func TestCreateBackupDeviceUnderScriptReturnsAHandle(t *testing.T) {
 	ctx, col := WithScript(context.Background())
-	d, err := (&Server{}).CreateBackupDevice(ctx, "NightlyDev", BackupDeviceDisk, `C:\b\n.bak`)
+	d, err := (&Server{}).CreateBackupDevice(ctx, CreateBackupDeviceRequest{Name: "NightlyDev", Type: BackupDeviceDisk, PhysicalName: `C:\b\n.bak`})
 	if err != nil {
 		t.Fatalf("CreateBackupDevice: %v", err)
 	}

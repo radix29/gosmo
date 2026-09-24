@@ -15,6 +15,9 @@ import (
 
 // ScriptTable generates a CREATE TABLE (or DROP TABLE) script.
 func (sc *Scripter) ScriptTable(ctx context.Context, schema, name string) (string, error) {
+	if err := requireSchema("script table", schema, name); err != nil {
+		return "", err
+	}
 	t, err := sc.db.TableByName(ctx, schema, name)
 	if err != nil {
 		return "", err

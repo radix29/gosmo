@@ -110,8 +110,8 @@ ORDER  BY SCHEMA_NAME(t.schema_id), t.name`
 // UserDefinedDataTypeByName returns one alias type, or a not-found error
 // (errors.Is ErrNotFound) when the database has none by that name.
 func (d *Database) UserDefinedDataTypeByName(ctx context.Context, schema, name string) (*UserDefinedDataType, error) {
-	if schema == "" {
-		schema = "dbo"
+	if err := requireSchema("user defined data type by name", schema, name); err != nil {
+		return nil, err
 	}
 	var t *UserDefinedDataType
 	err := d.queryRow(ctx, func(row *sql.Row) error {
@@ -123,9 +123,24 @@ func (d *Database) UserDefinedDataTypeByName(ctx context.Context, schema, name s
 	return foundRow(t, err, notFoundf("gosmo: user-defined data type [%s].[%s] not found in %q", schema, name, d.Name), fmt.Sprintf("read user-defined data type [%s].[%s] in %q", schema, name, d.Name))
 }
 
+// UserDefinedDataTypeRef returns a lightweight handle for an alias type by name, without
+// querying the catalog — the counterpart of Server.DatabaseRef. Every field
+// but the schema and name stays at its zero value; UserDefinedDataTypeByName is what populates them.
+//
+// Every write on *UserDefinedDataType addresses it by name, so this handle is enough to
+// drop one the caller already knows exists — and is the form to use when
+// there is nothing to read yet, such as a script of a CREATE that was only
+// collected.
+//
+// schema is taken as given: an empty one is refused by the handle's writes
+// (ErrSchemaRequired), never defaulted.
+func (d *Database) UserDefinedDataTypeRef(schema, name string) *UserDefinedDataType {
+	return &UserDefinedDataType{db: d, Schema: schema, Name: name}
+}
+
 // Drop drops the alias type.
 func (t *UserDefinedDataType) Drop(ctx context.Context) error {
-	return t.db.DropType(ctx, t.Schema, t.Name)
+	return dropType(ctx, t.db, t.Schema, t.Name)
 }
 
 // ============================================================
@@ -186,8 +201,8 @@ ORDER  BY SCHEMA_NAME(tt.schema_id), tt.name`
 // UserDefinedTableTypeByName returns one table type, or a not-found error
 // (errors.Is ErrNotFound) when the database has none by that name.
 func (d *Database) UserDefinedTableTypeByName(ctx context.Context, schema, name string) (*UserDefinedTableType, error) {
-	if schema == "" {
-		schema = "dbo"
+	if err := requireSchema("user defined table type by name", schema, name); err != nil {
+		return nil, err
 	}
 	var t *UserDefinedTableType
 	err := d.queryRow(ctx, func(row *sql.Row) error {
@@ -197,6 +212,21 @@ func (d *Database) UserDefinedTableTypeByName(ctx context.Context, schema, name 
 	}, userDefinedTableTypeSelect+`
    AND SCHEMA_NAME(tt.schema_id) = @p1 AND tt.name = @p2`, schema, name)
 	return foundRow(t, err, notFoundf("gosmo: user-defined table type [%s].[%s] not found in %q", schema, name, d.Name), fmt.Sprintf("read user-defined table type [%s].[%s] in %q", schema, name, d.Name))
+}
+
+// UserDefinedTableTypeRef returns a lightweight handle for a table type by name, without
+// querying the catalog — the counterpart of Server.DatabaseRef. Every field
+// but the schema and name stays at its zero value; UserDefinedTableTypeByName is what populates them.
+//
+// Every write on *UserDefinedTableType addresses it by name, so this handle is enough to
+// drop one the caller already knows exists — and is the form to use when
+// there is nothing to read yet, such as a script of a CREATE that was only
+// collected.
+//
+// schema is taken as given: an empty one is refused by the handle's writes
+// (ErrSchemaRequired), never defaulted.
+func (d *Database) UserDefinedTableTypeRef(schema, name string) *UserDefinedTableType {
+	return &UserDefinedTableType{db: d, Schema: schema, Name: name}
 }
 
 // Columns returns the table type's columns in ordinal order.
@@ -231,7 +261,7 @@ ORDER  BY c.column_id`
 
 // Drop drops the table type.
 func (t *UserDefinedTableType) Drop(ctx context.Context) error {
-	return t.db.DropType(ctx, t.Schema, t.Name)
+	return dropType(ctx, t.db, t.Schema, t.Name)
 }
 
 // ============================================================
@@ -304,8 +334,8 @@ ORDER  BY SCHEMA_NAME(t.schema_id), t.name`
 // ClrTypeByName returns one CLR type, or a not-found error (errors.Is
 // ErrNotFound) when the database has none by that name.
 func (d *Database) ClrTypeByName(ctx context.Context, schema, name string) (*ClrType, error) {
-	if schema == "" {
-		schema = "dbo"
+	if err := requireSchema("clr type by name", schema, name); err != nil {
+		return nil, err
 	}
 	var t *ClrType
 	err := d.queryRow(ctx, func(row *sql.Row) error {
@@ -317,9 +347,24 @@ func (d *Database) ClrTypeByName(ctx context.Context, schema, name string) (*Clr
 	return foundRow(t, err, notFoundf("gosmo: CLR type [%s].[%s] not found in %q", schema, name, d.Name), fmt.Sprintf("read CLR type [%s].[%s] in %q", schema, name, d.Name))
 }
 
+// ClrTypeRef returns a lightweight handle for a CLR type by name, without
+// querying the catalog — the counterpart of Server.DatabaseRef. Every field
+// but the schema and name stays at its zero value; ClrTypeByName is what populates them.
+//
+// Every write on *ClrType addresses it by name, so this handle is enough to
+// drop one the caller already knows exists — and is the form to use when
+// there is nothing to read yet, such as a script of a CREATE that was only
+// collected.
+//
+// schema is taken as given: an empty one is refused by the handle's writes
+// (ErrSchemaRequired), never defaulted.
+func (d *Database) ClrTypeRef(schema, name string) *ClrType {
+	return &ClrType{db: d, Schema: schema, Name: name}
+}
+
 // Drop drops the CLR type.
 func (t *ClrType) Drop(ctx context.Context) error {
-	return t.db.DropType(ctx, t.Schema, t.Name)
+	return dropType(ctx, t.db, t.Schema, t.Name)
 }
 
 // ============================================================
@@ -419,8 +464,8 @@ ORDER  BY SCHEMA_NAME(x.schema_id), x.name`
 // not-found error (errors.Is ErrNotFound) when the database has none by that
 // name.
 func (d *Database) XMLSchemaCollectionByName(ctx context.Context, schema, name string) (*XMLSchemaCollection, error) {
-	if schema == "" {
-		schema = "dbo"
+	if err := requireSchema("XML schema collection by name", schema, name); err != nil {
+		return nil, err
 	}
 	var c *XMLSchemaCollection
 	err := d.queryRow(ctx, func(row *sql.Row) error {
@@ -430,6 +475,21 @@ func (d *Database) XMLSchemaCollectionByName(ctx context.Context, schema, name s
 	}, xmlSchemaCollectionSelect+`
    AND SCHEMA_NAME(x.schema_id) = @p1 AND x.name = @p2`, schema, name)
 	return foundRow(c, err, notFoundf("gosmo: XML schema collection [%s].[%s] not found in %q", schema, name, d.Name), fmt.Sprintf("read XML schema collection [%s].[%s] in %q", schema, name, d.Name))
+}
+
+// XMLSchemaCollectionRef returns a lightweight handle for an XML schema collection by name, without
+// querying the catalog — the counterpart of Server.DatabaseRef. Every field
+// but the schema and name stays at its zero value; XMLSchemaCollectionByName is what populates them.
+//
+// Every write on *XMLSchemaCollection addresses it by name, so this handle is enough to
+// drop one the caller already knows exists — and is the form to use when
+// there is nothing to read yet, such as a script of a CREATE that was only
+// collected.
+//
+// schema is taken as given: an empty one is refused by the handle's writes
+// (ErrSchemaRequired), never defaulted.
+func (d *Database) XMLSchemaCollectionRef(schema, name string) *XMLSchemaCollection {
+	return &XMLSchemaCollection{db: d, Schema: schema, Name: name}
 }
 
 // Definition returns the collection's schema documents as one XML string —
@@ -450,34 +510,29 @@ func (c *XMLSchemaCollection) Definition(ctx context.Context) (string, error) {
 
 // Drop drops the XML schema collection.
 func (c *XMLSchemaCollection) Drop(ctx context.Context) error {
-	return c.db.DropXMLSchemaCollection(ctx, c.Schema, c.Name)
+	if err := requireSchema("drop XML schema collection", c.Schema, c.Name); err != nil {
+		return err
+	}
+	if _, err := c.db.exec(ctx, "DROP XML SCHEMA COLLECTION "+qualifiedName(c.Schema, c.Name)); err != nil {
+		return fmt.Errorf("gosmo: drop XML schema collection [%s].[%s]: %w", c.Schema, c.Name, err)
+	}
+	return nil
 }
 
 // ============================================================
 // Drops by name
 // ============================================================
 
-// DropType drops an alias, table or CLR type — all three are DROP TYPE, and
-// nothing in the statement distinguishes them, so one method serves all
-// three families. A type still referenced by a column, parameter or function
-// is refused by the server; that error is the caller's to report.
-func (d *Database) DropType(ctx context.Context, schema, name string) error {
-	if schema == "" {
-		schema = "dbo"
+// dropType is the Drop of the alias, table and CLR type families — all three
+// are DROP TYPE, and nothing in the statement distinguishes them. A type
+// still referenced by a column, parameter or function is refused by the
+// server; that error is the caller's to report.
+func dropType(ctx context.Context, d *Database, schema, name string) error {
+	if err := requireSchema("drop type", schema, name); err != nil {
+		return err
 	}
 	if _, err := d.exec(ctx, "DROP TYPE "+qualifiedName(schema, name)); err != nil {
 		return fmt.Errorf("gosmo: drop type [%s].[%s]: %w", schema, name, err)
-	}
-	return nil
-}
-
-// DropXMLSchemaCollection drops an XML schema collection.
-func (d *Database) DropXMLSchemaCollection(ctx context.Context, schema, name string) error {
-	if schema == "" {
-		schema = "dbo"
-	}
-	if _, err := d.exec(ctx, "DROP XML SCHEMA COLLECTION "+qualifiedName(schema, name)); err != nil {
-		return fmt.Errorf("gosmo: drop XML schema collection [%s].[%s]: %w", schema, name, err)
 	}
 	return nil
 }
@@ -494,6 +549,12 @@ func (d *Database) DropXMLSchemaCollection(ctx context.Context, schema, name str
 // the operation is that method's: the type keeps its name, and permissions
 // granted on it directly are dropped by the server.
 func (d *Database) TransferType(ctx context.Context, targetSchema, schema, name string) error {
+	if err := requireSchema("transfer type", schema, name); err != nil {
+		return err
+	}
+	if err := requireSchema("transfer type", targetSchema, name); err != nil {
+		return err
+	}
 	return d.transferWithClass(ctx, "TYPE", targetSchema, schema, name)
 }
 
@@ -501,6 +562,12 @@ func (d *Database) TransferType(ctx context.Context, targetSchema, schema, name 
 // schema. Its class prefix is the whole three-word noun, not an abbreviation
 // of it.
 func (d *Database) TransferXMLSchemaCollection(ctx context.Context, targetSchema, schema, name string) error {
+	if err := requireSchema("transfer XML schema collection", schema, name); err != nil {
+		return err
+	}
+	if err := requireSchema("transfer XML schema collection", targetSchema, name); err != nil {
+		return err
+	}
 	return d.transferWithClass(ctx, "XML SCHEMA COLLECTION", targetSchema, schema, name)
 }
 
@@ -510,9 +577,6 @@ func (d *Database) TransferXMLSchemaCollection(ctx context.Context, targetSchema
 func (d *Database) transferWithClass(ctx context.Context, class, targetSchema, schema, name string) error {
 	if targetSchema == "" {
 		return fmt.Errorf("gosmo: transfer %s: target schema is required", qualifiedName(schema, name))
-	}
-	if schema == "" {
-		schema = "dbo"
 	}
 	if err := d.refuseSameSchemaTransfer(ctx, targetSchema, schema, name); err != nil {
 		return err
@@ -535,8 +599,8 @@ func (d *Database) transferWithClass(ctx context.Context, class, targetSchema, s
 //
 // newName is a bare name, as everywhere sp_rename is used.
 func (d *Database) RenameUserDefinedDataType(ctx context.Context, schema, oldName, newName string) error {
-	if schema == "" {
-		schema = "dbo"
+	if err := requireSchema("rename user defined data type", schema, oldName); err != nil {
+		return err
 	}
 	if _, err := d.exec(ctx,
 		"EXEC sp_rename @objname = @p1, @newname = @p2, @objtype = N'USERDATATYPE'",

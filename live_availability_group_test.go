@@ -593,7 +593,7 @@ func TestLiveAvailabilityGroupOperations(t *testing.T) {
 		const dbName = "gosmo_agops"
 		liveDropEverywhere(t, srv, ag, dbName)
 
-		if err := srv.CreateDatabase(ctx, dbName, &CreateDatabaseOptions{RecoveryModel: RecoveryModelFull}); err != nil {
+		if _, err := srv.CreateDatabase(ctx, CreateDatabaseRequest{Name: dbName, RecoveryModel: RecoveryModelFull}); err != nil {
 			t.Fatalf("create %s: %v", dbName, err)
 		}
 		defer liveDropEverywhere(t, srv, ag, dbName)
@@ -791,8 +791,45 @@ func liveDropEverywhere(t *testing.T, srv *Server, ag *AvailabilityGroup, dbName
 			t.Logf("connecting to %s to clean up %s: %v", r.ReplicaServerName, dbName, err)
 			continue
 		}
+		// Just after RemoveDatabase the secondary's copy can still be joined,
+		// and then the plain DROP fails, and the forced fallback's SET
+		// SINGLE_USER is refused on a RESTORING database — the copy stayed
+		// behind (seen 2026-09-24). Wait for it to leave the group, and give
+		// the plain drop a few tries, before falling back.
+		if !liveWaitOutOfGroup(peer, dbName, 30*time.Second) {
+			t.Logf("%s on %s is still joined after 30s; dropping anyway", dbName, r.ReplicaServerName)
+		}
+		for range 3 {
+			if err := peer.DropDatabase(ctx, dbName, false); err == nil {
+				break
+			}
+			time.Sleep(time.Second)
+		}
 		liveDropDatabase(t, peer, dbName)
 		peer.Close()
+	}
+}
+
+// liveWaitOutOfGroup waits, up to timeout, for srv's own replica to stop
+// holding dbName in any availability group — its local
+// sys.dm_hadr_database_replica_states row to disappear — and reports whether
+// it did.
+func liveWaitOutOfGroup(srv *Server, dbName string, timeout time.Duration) bool {
+	const q = `
+SELECT COUNT(*)
+FROM   sys.dm_hadr_database_replica_states rs
+JOIN   sys.databases d ON d.database_id = rs.database_id
+WHERE  rs.is_local = 1 AND d.name = @p1`
+	ctx := context.Background()
+	for deadline := time.Now().Add(timeout); ; {
+		var n int
+		if err := srv.queryRowScan(ctx, q, []any{dbName}, &n); err == nil && n == 0 {
+			return true
+		}
+		if time.Now().After(deadline) {
+			return false
+		}
+		time.Sleep(500 * time.Millisecond)
 	}
 }
 

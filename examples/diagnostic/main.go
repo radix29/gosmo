@@ -29,8 +29,8 @@ func main() {
 	db, drop := demo.TempDatabase(srv, dbName)
 	defer drop()
 
-	demo.Must(db.CreateSchema(ctx, "Sales", "dbo"))
-	demo.Must(db.CreateTable(ctx, gosmo.CreateTableRequest{
+	demo.Value(db.CreateSchema(ctx, gosmo.CreateSchemaRequest{Name: "Sales", Owner: "dbo"}))
+	demo.Value(db.CreateTable(ctx, gosmo.CreateTableRequest{
 		Schema: "Sales",
 		Name:   "Order",
 		Columns: []gosmo.ColumnDefinition{
@@ -42,13 +42,17 @@ func main() {
 	// CreateStoredProcedure's body is the T-SQL *after* AS — gosmo emits the
 	// CREATE OR ALTER PROCEDURE header itself, so the procedure it makes
 	// takes no parameters.
-	demo.Must(db.CreateStoredProcedure(ctx, "Sales", "CountOrders", `
+	demo.Value(db.CreateStoredProcedure(ctx, gosmo.CreateStoredProcedureRequest{
+		Schema: "Sales",
+		Name:   "CountOrders",
+		Body: `
 BEGIN
     SET NOCOUNT ON;
     DECLARE @c INT;
     SELECT @c = COUNT(*) FROM Sales.[Order];
     RETURN @c;
-END`))
+END`,
+	}))
 	_ = demo.Value(db.BulkInsert(ctx, gosmo.BulkCopy{
 		Schema:  "Sales",
 		Table:   "Order",

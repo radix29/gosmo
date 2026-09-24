@@ -99,7 +99,7 @@ func TestLiveCreateIndexEveryType(t *testing.T) {
 	// The rowstore case carries every shared option at once: if any of them is
 	// in the wrong place in the clause order, the statement does not parse.
 	t.Run("rowstore nonclustered", func(t *testing.T) {
-		if err := docs.CreateIndex(ctx, CreateIndexRequest{
+		if _, err := docs.CreateIndex(ctx, CreateIndexRequest{
 			Name:             "IX_Docs_Name",
 			Type:             IndexTypeNonClustered,
 			IsUnique:         true,
@@ -128,7 +128,7 @@ func TestLiveCreateIndexEveryType(t *testing.T) {
 	})
 
 	t.Run("rowstore clustered", func(t *testing.T) {
-		if err := tableOf("Heap").CreateIndex(ctx, CreateIndexRequest{
+		if _, err := tableOf("Heap").CreateIndex(ctx, CreateIndexRequest{
 			Name:       "CIX_Heap",
 			Type:       IndexTypeClustered,
 			KeyColumns: []IndexColumnDef{{Name: "a"}},
@@ -141,7 +141,7 @@ func TestLiveCreateIndexEveryType(t *testing.T) {
 	})
 
 	t.Run("nonclustered columnstore", func(t *testing.T) {
-		if err := tableOf("Facts").CreateIndex(ctx, CreateIndexRequest{
+		if _, err := tableOf("Facts").CreateIndex(ctx, CreateIndexRequest{
 			Name:             "NCCI_Facts",
 			Type:             IndexTypeColumnStore,
 			KeyColumns:       []IndexColumnDef{{Name: "a"}, {Name: "b"}},
@@ -167,7 +167,7 @@ func TestLiveCreateIndexEveryType(t *testing.T) {
 	})
 
 	t.Run("clustered columnstore", func(t *testing.T) {
-		if err := tableOf("Cold").CreateIndex(ctx, CreateIndexRequest{
+		if _, err := tableOf("Cold").CreateIndex(ctx, CreateIndexRequest{
 			Name: "CCI_Cold",
 			Type: IndexTypeClusteredColumnStore,
 		}); err != nil {
@@ -179,7 +179,7 @@ func TestLiveCreateIndexEveryType(t *testing.T) {
 	})
 
 	t.Run("primary and secondary XML", func(t *testing.T) {
-		if err := docs.CreateIndex(ctx, CreateIndexRequest{
+		if _, err := docs.CreateIndex(ctx, CreateIndexRequest{
 			Name:         "PXML_Docs",
 			Type:         IndexTypeXML,
 			IsPrimaryXML: true,
@@ -187,7 +187,7 @@ func TestLiveCreateIndexEveryType(t *testing.T) {
 		}); err != nil {
 			t.Fatalf("CreateIndex (primary): %v", err)
 		}
-		if err := docs.CreateIndex(ctx, CreateIndexRequest{
+		if _, err := docs.CreateIndex(ctx, CreateIndexRequest{
 			Name:             "SXML_Docs_Path",
 			Type:             IndexTypeXML,
 			KeyColumns:       []IndexColumnDef{{Name: "Doc"}},
@@ -205,7 +205,7 @@ func TestLiveCreateIndexEveryType(t *testing.T) {
 	})
 
 	t.Run("spatial geometry grid", func(t *testing.T) {
-		if err := docs.CreateIndex(ctx, CreateIndexRequest{
+		if _, err := docs.CreateIndex(ctx, CreateIndexRequest{
 			Name:           "SI_Docs_Geom",
 			Type:           IndexTypeSpatial,
 			KeyColumns:     []IndexColumnDef{{Name: "GeomShape"}},
@@ -234,7 +234,7 @@ func TestLiveCreateIndexEveryType(t *testing.T) {
 	})
 
 	t.Run("spatial geography auto grid", func(t *testing.T) {
-		if err := docs.CreateIndex(ctx, CreateIndexRequest{
+		if _, err := docs.CreateIndex(ctx, CreateIndexRequest{
 			Name:           "SI_Docs_Geog",
 			Type:           IndexTypeSpatial,
 			KeyColumns:     []IndexColumnDef{{Name: "GeogShape"}},
@@ -254,7 +254,7 @@ func TestLiveCreateIndexEveryType(t *testing.T) {
 	// The partition-scheme ON clause is the one that has to come last and
 	// carry its partitioning column with it.
 	t.Run("on a partition scheme", func(t *testing.T) {
-		if err := tableOf("Parted").CreateIndex(ctx, CreateIndexRequest{
+		if _, err := tableOf("Parted").CreateIndex(ctx, CreateIndexRequest{
 			Name:             "IX_Parted_Note",
 			Type:             IndexTypeNonClustered,
 			KeyColumns:       []IndexColumnDef{{Name: "Note"}},
@@ -272,7 +272,7 @@ func TestLiveCreateIndexEveryType(t *testing.T) {
 	// DROP_EXISTING recreates an index that is already there; it needs one to
 	// exist, so it runs after the rowstore case above.
 	t.Run("drop existing", func(t *testing.T) {
-		if err := docs.CreateIndex(ctx, CreateIndexRequest{
+		if _, err := docs.CreateIndex(ctx, CreateIndexRequest{
 			Name:         "IX_Docs_Name",
 			Type:         IndexTypeNonClustered,
 			KeyColumns:   []IndexColumnDef{{Name: "Note"}},
@@ -338,7 +338,7 @@ func TestLiveCreateStatistic(t *testing.T) {
 	if err != nil {
 		t.Fatalf("TableByName: %v", err)
 	}
-	if err := tbl.CreateStatistic(ctx, CreateStatisticRequest{
+	if _, err := tbl.CreateStatistic(ctx, CreateStatisticRequest{
 		Name:             "ST_S_ab",
 		Columns:          []string{"a", "b"},
 		FullScan:         true,
@@ -359,7 +359,7 @@ func TestLiveCreateStatistic(t *testing.T) {
 	if err != nil {
 		t.Fatalf("TableByName P: %v", err)
 	}
-	if err := parted.CreateStatistic(ctx, CreateStatisticRequest{
+	if _, err := parted.CreateStatistic(ctx, CreateStatisticRequest{
 		Name:          "ST_P_b",
 		Columns:       []string{"b"},
 		SamplePercent: 50,

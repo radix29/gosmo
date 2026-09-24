@@ -86,6 +86,18 @@ WHERE  r.type = 'R' AND r.name = @p1`
 	return r, nil
 }
 
+// RoleRef returns a lightweight handle for a database role by name, without
+// querying the catalog — the counterpart of Server.DatabaseRef. Every field
+// but the name stays at its zero value; RoleByName is what populates them.
+//
+// Every write on *DatabaseRole addresses it by name, so this handle is enough to
+// drop one the caller already knows exists — and is the form to use when
+// there is nothing to read yet, such as a script of a CREATE that was only
+// collected.
+func (d *Database) RoleRef(name string) *DatabaseRole {
+	return &DatabaseRole{db: d, Name: name}
+}
+
 // Rename changes the database role's name.
 func (r *DatabaseRole) Rename(ctx context.Context, newName string) error {
 	q := fmt.Sprintf("ALTER ROLE %s WITH NAME = %s", quoteIdent(r.Name), quoteIdent(newName))
@@ -154,16 +166,11 @@ func (d *Database) RemoveRoleMember(ctx context.Context, roleName, memberName st
 	return nil
 }
 
-// DropDatabaseRole drops a database role. A role that still owns a schema
-// or has members is refused by the server, not here.
-func (d *Database) DropDatabaseRole(ctx context.Context, name string) error {
-	if _, err := d.exec(ctx, "DROP ROLE "+quoteIdent(name)); err != nil {
-		return fmt.Errorf("gosmo: drop database role %q: %w", name, err)
+// Drop drops this database role. A role that still owns a schema or has
+// members is refused by the server, not here.
+func (r *DatabaseRole) Drop(ctx context.Context) error {
+	if _, err := r.db.exec(ctx, "DROP ROLE "+quoteIdent(r.Name)); err != nil {
+		return fmt.Errorf("gosmo: drop database role %q: %w", r.Name, err)
 	}
 	return nil
-}
-
-// Drop drops this database role.
-func (r *DatabaseRole) Drop(ctx context.Context) error {
-	return r.db.DropDatabaseRole(ctx, r.Name)
 }

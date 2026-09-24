@@ -24,14 +24,6 @@ func TestDropStatements(t *testing.T) {
 			want:  "DROP VIEW [Sales].[vCustomer]",
 		},
 		{
-			// An empty schema means dbo, not an unqualified name — an
-			// unqualified DROP resolves against the caller's default schema,
-			// which is not necessarily the object's.
-			name:  "DropView defaults the schema",
-			write: func(ctx context.Context, d *Database) error { return d.DropView(ctx, "", "vCustomer") },
-			want:  "DROP VIEW [dbo].[vCustomer]",
-		},
-		{
 			name:  "DropFunction",
 			write: func(ctx context.Context, d *Database) error { return d.DropFunction(ctx, "dbo", "fnAge") },
 			want:  "DROP FUNCTION [dbo].[fnAge]",
@@ -43,7 +35,7 @@ func TestDropStatements(t *testing.T) {
 		},
 		{
 			name:  "DropDatabaseRole",
-			write: func(ctx context.Context, d *Database) error { return d.DropDatabaseRole(ctx, "app_reader") },
+			write: func(ctx context.Context, d *Database) error { return d.RoleRef("app_reader").Drop(ctx) },
 			want:  "DROP ROLE [app_reader]",
 		},
 		{
@@ -84,24 +76,11 @@ func TestDropStatements(t *testing.T) {
 			want: "DROP TYPE [Sales].[Geo]",
 		},
 		{
-			// The same dbo default as DropView, reached through the handle:
-			// an unqualified DROP TYPE resolves against the caller's default
-			// schema, not the type's.
-			name: "UserDefinedDataType.Drop defaults the schema",
+			name: "DropType",
 			write: func(ctx context.Context, d *Database) error {
-				return (&UserDefinedDataType{db: d, Name: "Phone"}).Drop(ctx)
+				return d.UserDefinedDataTypeRef("Sales", "Phone").Drop(ctx)
 			},
-			want: "DROP TYPE [dbo].[Phone]",
-		},
-		{
-			name:  "DropType",
-			write: func(ctx context.Context, d *Database) error { return d.DropType(ctx, "Sales", "Phone") },
-			want:  "DROP TYPE [Sales].[Phone]",
-		},
-		{
-			name:  "DropType defaults the schema",
-			write: func(ctx context.Context, d *Database) error { return d.DropType(ctx, "", "Phone") },
-			want:  "DROP TYPE [dbo].[Phone]",
+			want: "DROP TYPE [Sales].[Phone]",
 		},
 		{
 			name: "XMLSchemaCollection.Drop",
@@ -111,51 +90,23 @@ func TestDropStatements(t *testing.T) {
 			want: "DROP XML SCHEMA COLLECTION [arch]]ive].[Order'Schema]",
 		},
 		{
-			name: "XMLSchemaCollection.Drop defaults the schema",
-			write: func(ctx context.Context, d *Database) error {
-				return (&XMLSchemaCollection{db: d, Name: "OrderSchema"}).Drop(ctx)
-			},
-			want: "DROP XML SCHEMA COLLECTION [dbo].[OrderSchema]",
-		},
-		{
 			name: "DropXMLSchemaCollection",
 			write: func(ctx context.Context, d *Database) error {
-				return d.DropXMLSchemaCollection(ctx, "archive", "OrderSchema")
+				return d.XMLSchemaCollectionRef("archive", "OrderSchema").Drop(ctx)
 			},
 			want: "DROP XML SCHEMA COLLECTION [archive].[OrderSchema]",
 		},
 		{
-			name: "DropXMLSchemaCollection defaults the schema",
-			write: func(ctx context.Context, d *Database) error {
-				return d.DropXMLSchemaCollection(ctx, "", "OrderSchema")
-			},
-			want: "DROP XML SCHEMA COLLECTION [dbo].[OrderSchema]",
-		},
-		{
 			name:  "DropRule",
-			write: func(ctx context.Context, d *Database) error { return d.DropRule(ctx, "Sales", "ru'le") },
+			write: func(ctx context.Context, d *Database) error { return d.RuleRef("Sales", "ru'le").Drop(ctx) },
 			want:  "DROP RULE [Sales].[ru'le]",
-		},
-		{
-			name: "Rule.Drop defaults the schema",
-			write: func(ctx context.Context, d *Database) error {
-				return (&Rule{db: d, Name: "ru]le"}).Drop(ctx)
-			},
-			want: "DROP RULE [dbo].[ru]]le]",
 		},
 		{
 			name: "DropDefault",
 			write: func(ctx context.Context, d *Database) error {
-				return d.DropDefault(ctx, "Sales", "df'1")
+				return d.DefaultRef("Sales", "df'1").Drop(ctx)
 			},
 			want: "DROP DEFAULT [Sales].[df'1]",
-		},
-		{
-			name: "Default.Drop defaults the schema",
-			write: func(ctx context.Context, d *Database) error {
-				return (&Default{db: d, Name: "df]1"}).Drop(ctx)
-			},
-			want: "DROP DEFAULT [dbo].[df]]1]",
 		},
 		{
 			name: "Sequence.Drop",
@@ -165,25 +116,11 @@ func TestDropStatements(t *testing.T) {
 			want: "DROP SEQUENCE [Sales].[seq'1]",
 		},
 		{
-			name: "Sequence.Drop defaults the schema",
-			write: func(ctx context.Context, d *Database) error {
-				return (&Sequence{db: d, Name: "seq]1"}).Drop(ctx)
-			},
-			want: "DROP SEQUENCE [dbo].[seq]]1]",
-		},
-		{
 			name: "Synonym.Drop",
 			write: func(ctx context.Context, d *Database) error {
 				return (&Synonym{db: d, Schema: "Sales", Name: "syn'1"}).Drop(ctx)
 			},
 			want: "DROP SYNONYM [Sales].[syn'1]",
-		},
-		{
-			name: "Synonym.Drop defaults the schema",
-			write: func(ctx context.Context, d *Database) error {
-				return (&Synonym{db: d, Name: "syn]1"}).Drop(ctx)
-			},
-			want: "DROP SYNONYM [dbo].[syn]]1]",
 		},
 		{
 			// A partition function and scheme are database-scoped and have no
@@ -204,7 +141,7 @@ func TestDropStatements(t *testing.T) {
 		{
 			name: "DropExternalDataSource",
 			write: func(ctx context.Context, d *Database) error {
-				return d.DropExternalDataSource(ctx, "eds]1")
+				return d.ExternalDataSourceRef("eds]1").Drop(ctx)
 			},
 			want: "DROP EXTERNAL DATA SOURCE [eds]]1]",
 		},
@@ -256,7 +193,7 @@ func TestDropStatements(t *testing.T) {
 		{
 			name: "DropAssembly",
 			write: func(ctx context.Context, d *Database) error {
-				return d.DropAssembly(ctx, "asm]1")
+				return d.AssemblyRef("asm]1").Drop(ctx)
 			},
 			want: "DROP ASSEMBLY [asm]]1]",
 		},
@@ -363,7 +300,7 @@ func TestRenameStatements(t *testing.T) {
 			// sys.types, and it reaches alias types only.
 			name: "RenameUserDefinedDataType",
 			write: func(ctx context.Context, d *Database) error {
-				return d.RenameUserDefinedDataType(ctx, "", "Phone", "PhoneNo")
+				return d.RenameUserDefinedDataType(ctx, "dbo", "Phone", "PhoneNo")
 			},
 			want: []string{"EXEC sp_rename", "N'[dbo].[Phone]'", "N'PhoneNo'", "N'USERDATATYPE'"},
 		},
@@ -380,16 +317,9 @@ func TestRenameStatements(t *testing.T) {
 		{
 			name: "TransferXMLSchemaCollection",
 			write: func(ctx context.Context, d *Database) error {
-				return d.TransferXMLSchemaCollection(ctx, "archive", "", "OrderSchema")
+				return d.TransferXMLSchemaCollection(ctx, "archive", "dbo", "OrderSchema")
 			},
 			want: []string{"ALTER SCHEMA [archive] TRANSFER XML SCHEMA COLLECTION::[dbo].[OrderSchema]"},
-		},
-		{
-			name: "TransferObject defaults the source schema",
-			write: func(ctx context.Context, d *Database) error {
-				return d.TransferObject(ctx, "archive", "", "Orders")
-			},
-			want: []string{"ALTER SCHEMA [archive] TRANSFER [dbo].[Orders]"},
 		},
 		{
 			// sp_rename's COLUMN class takes the three-part table.column form
@@ -442,7 +372,7 @@ func TestServerLevelDropAndRenameStatements(t *testing.T) {
 	}{
 		{
 			name:  "DropServerRole",
-			write: func(ctx context.Context, s *Server) error { return s.DropServerRole(ctx, "auditors") },
+			write: func(ctx context.Context, s *Server) error { return s.ServerRoleRef("auditors").Drop(ctx) },
 			want:  "DROP SERVER ROLE [auditors]",
 		},
 		{
@@ -507,16 +437,16 @@ func TestDropStatementsAreNotIdempotent(t *testing.T) {
 		{"procedure", func() error { return d.DropStoredProcedure(ctx, "dbo", "p") }},
 		{"trigger", func() error { return d.DropTrigger(ctx, "dbo", "tr") }},
 		{"database trigger", func() error { return d.DatabaseTriggerRef("ddl_tr").Drop(ctx) }},
-		{"synonym", func() error { return d.DropSynonym(ctx, "dbo", "syn") }},
-		{"sequence", func() error { return d.DropSequence(ctx, "dbo", "seq") }},
+		{"synonym", func() error { return d.SynonymRef("dbo", "syn").Drop(ctx) }},
+		{"sequence", func() error { return d.SequenceRef("dbo", "seq").Drop(ctx) }},
 		{"table", func() error { return d.DropTable(ctx, "dbo", "t", false) }},
 		{"database scoped credential", func() error { return d.DatabaseScopedCredentialRef("cred").Drop(ctx) }},
 		{"certificate", func() error { return d.CertificateRef("cert").Drop(ctx) }},
 		{"asymmetric key", func() error { return d.AsymmetricKeyRef("key").Drop(ctx) }},
 		{"symmetric key", func() error { return d.SymmetricKeyRef("key").Drop(ctx) }},
-		{"database role", func() error { return d.DropDatabaseRole(ctx, "r") }},
-		{"schema", func() error { return d.DropSchema(ctx, "s") }},
-		{"user", func() error { return d.DropUser(ctx, "u") }},
+		{"database role", func() error { return d.RoleRef("r").Drop(ctx) }},
+		{"schema", func() error { return d.SchemaRef("s").Drop(ctx) }},
+		{"user", func() error { return d.UserRef("u").Drop(ctx) }},
 	}
 	for _, dr := range drops {
 		if err := dr.write(); err != nil {
@@ -565,9 +495,9 @@ func TestTransferObjectRefusals(t *testing.T) {
 		target, schema string
 		want           string
 	}{
-		{"empty target", "", "sales", "target schema is required"},
+		{"empty target", "", "sales", "schema is required"},
+		{"empty source", "sales", "", "schema is required"},
 		{"same schema", "sales", "sales", "already in schema"},
-		{"same schema by default", "dbo", "", "already in schema"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			d := &Database{server: &Server{}, Name: "AppDB"}

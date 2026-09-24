@@ -120,18 +120,27 @@ func (p permissionStmt) render() (string, error) {
 // GrantPermission grants permission on schema.name to principal. opts adds
 // WITH GRANT OPTION; the zero value is the plain GRANT.
 func (d *Database) GrantPermission(ctx context.Context, schema, name string, permission ObjectPermission, principal string, opts PermissionOptions) error {
+	if err := requireSchema("grant permission", schema, name); err != nil {
+		return err
+	}
 	return d.objectPermission(ctx, "GRANT", schema, name, permission, nil, principal, opts)
 }
 
 // DenyPermission denies permission on schema.name to principal. opts adds
 // CASCADE; the zero value is the plain DENY.
 func (d *Database) DenyPermission(ctx context.Context, schema, name string, permission ObjectPermission, principal string, opts PermissionOptions) error {
+	if err := requireSchema("deny permission", schema, name); err != nil {
+		return err
+	}
 	return d.objectPermission(ctx, "DENY", schema, name, permission, nil, principal, opts)
 }
 
 // RevokePermission revokes permission on schema.name from principal. opts
 // adds CASCADE or GRANT OPTION FOR; the zero value is the plain REVOKE.
 func (d *Database) RevokePermission(ctx context.Context, schema, name string, permission ObjectPermission, principal string, opts PermissionOptions) error {
+	if err := requireSchema("revoke permission", schema, name); err != nil {
+		return err
+	}
 	return d.objectPermission(ctx, "REVOKE", schema, name, permission, nil, principal, opts)
 }
 

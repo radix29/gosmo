@@ -79,6 +79,9 @@ ORDER  BY sp.name`)
 
 // SecurityPolicyByName returns one security policy by schema-qualified name.
 func (d *Database) SecurityPolicyByName(ctx context.Context, schema, name string) (*SecurityPolicy, error) {
+	if err := requireSchema("security policy by name", schema, name); err != nil {
+		return nil, err
+	}
 	var p *SecurityPolicy
 	err := d.queryRow(ctx, func(row *sql.Row) error {
 		var err error

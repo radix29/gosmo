@@ -307,11 +307,9 @@ func (s *Server) CreateServerAudit(ctx context.Context, spec ServerAuditSpec) (*
 	if err := s.exec(ctx, stmt); err != nil {
 		return nil, fmt.Errorf("gosmo: create server audit %q: %w", spec.Name, err)
 	}
-	if Scripting(ctx) {
-		// The CREATE was only collected, so there is nothing to read back.
-		return s.ServerAuditRef(spec.Name), nil
-	}
-	return s.ServerAuditByName(ctx, spec.Name)
+	return createdObject(ctx, s.ServerAuditRef(spec.Name), func() (*ServerAudit, error) {
+		return s.ServerAuditByName(ctx, spec.Name)
+	})
 }
 
 // SetState enables or disables the audit.
@@ -405,7 +403,7 @@ func (a *ServerAudit) withAuditDisabled(ctx context.Context, fn func(context.Con
 	if !enabled {
 		return fn(inner)
 	}
-	if err := a.SetState(ctx, false); err != nil {
+	if err := a.SetState(unobserved(ctx), false); err != nil {
 		return err
 	}
 	enable := func(ctx context.Context) error { return a.setStateNamed(ctx, name, true) }
@@ -433,9 +431,11 @@ const windowRestoreTimeout = 10 * time.Second
 // audit stayed switched off exactly when the window promised it would not. Same
 // shape as restoreMultiUser (server.go). The values are kept, so under WithScript
 // the re-enable is still captured rather than run, and a rename inside the
-// window still restores under its new name.
+// window still restores under its new name. Neither the re-enable nor the
+// disable that opened the window is reported to a statement observer — see
+// WithStatementObserver.
 func restoreWindow(ctx context.Context, enable func(context.Context) error) error {
-	rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), windowRestoreTimeout)
+	rctx, cancel := context.WithTimeout(context.WithoutCancel(unobserved(ctx)), windowRestoreTimeout)
 	defer cancel()
 	return enable(rctx)
 }
@@ -499,7 +499,7 @@ func (a *ServerAudit) Rename(ctx context.Context, newName string) error {
 			return err
 		}
 		if enabled {
-			if err := a.SetState(ctx, false); err != nil {
+			if err := a.SetState(unobserved(ctx), false); err != nil {
 				return err
 			}
 			restore = true

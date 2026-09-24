@@ -236,10 +236,9 @@ func (s *Server) CreateDatabaseSnapshot(ctx context.Context, req CreateDatabaseS
 	if err := s.exec(ctx, sb.String()); err != nil {
 		return nil, fmt.Errorf("gosmo: create database snapshot %q of %q: %w", req.Name, req.SourceDatabase, err)
 	}
-	if Scripting(ctx) {
-		return &DatabaseSnapshot{server: s, Name: req.Name, SourceDatabase: req.SourceDatabase}, nil
-	}
-	return s.DatabaseSnapshotByName(ctx, req.Name)
+	return createdObject(ctx, &DatabaseSnapshot{server: s, Name: req.Name, SourceDatabase: req.SourceDatabase}, func() (*DatabaseSnapshot, error) {
+		return s.DatabaseSnapshotByName(ctx, req.Name)
+	})
 }
 
 // ============================================================

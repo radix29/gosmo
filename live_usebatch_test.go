@@ -52,10 +52,8 @@ func assertUseError(t *testing.T, what string, err error, dbName string, number 
 }
 
 func TestLiveUseBatch(t *testing.T) {
-	pool, _, done := liveDB(t)
+	pool, ctx, done := liveDBTimeout(t, 5*time.Minute)
 	defer done()
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-	defer cancel()
 	srv := liveServer(t, pool, ctx)
 
 	t.Run("missing database", func(t *testing.T) {

@@ -147,6 +147,9 @@ func buildContractScript(c *ServiceContract, opts ScriptOptions) string {
 
 // ScriptBrokerQueue generates the CREATE (or DROP) script for one queue.
 func (sc *Scripter) ScriptBrokerQueue(ctx context.Context, schema, name string) (string, error) {
+	if err := requireSchema("script broker queue", schema, name); err != nil {
+		return "", err
+	}
 	q, err := sc.db.BrokerQueueByName(ctx, schema, name)
 	if err != nil {
 		return "", err

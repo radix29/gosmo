@@ -69,3 +69,22 @@ func TestRouteLifetimeSecondsIsTheRemainingLifetime(t *testing.T) {
 		t.Errorf("a route expiring in an hour reported %d seconds, want ~3600", got)
 	}
 }
+
+// A route read from the catalog counts down from the server's own measure of
+// the time left, not from Expires against the client's clock. Expires here is
+// a day out — a client clock wildly skewed from the server's — and the answer
+// must still be the ten minutes the server reported, less what has elapsed.
+func TestRouteLifetimeSecondsIgnoresClientClockSkew(t *testing.T) {
+	r := &Route{
+		Expires:     time.Now().UTC().Add(24 * time.Hour),
+		remainingMs: 600_000,
+		readAt:      time.Now().Add(-100 * time.Second),
+	}
+	if got := r.LifetimeSeconds(); got < 499 || got > 500 {
+		t.Errorf("LifetimeSeconds = %d, want 500: 600 s left at the read, 100 s ago", got)
+	}
+	r.readAt = time.Now().Add(-time.Hour)
+	if got := r.LifetimeSeconds(); got != 0 {
+		t.Errorf("a route the server gave 600 s, read an hour ago, reported %d, want 0", got)
+	}
+}

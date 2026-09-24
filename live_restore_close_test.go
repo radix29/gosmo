@@ -130,7 +130,7 @@ func TestLiveRestoreCloseExistingConnections(t *testing.T) {
 	})
 
 	t.Run("a database that does not exist yet", func(t *testing.T) {
-		files, err := srv.BackupFileList(ctx, DiskTarget(device), 0)
+		files, err := srv.BackupFileList(ctx, 0, DiskTarget(device))
 		if err != nil {
 			t.Fatalf("file list: %v", err)
 		}

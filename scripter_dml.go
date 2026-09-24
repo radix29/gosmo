@@ -18,6 +18,9 @@ import (
 
 // ScriptSelect generates a SELECT of every column of a table or view.
 func (sc *Scripter) ScriptSelect(ctx context.Context, schema, name string) (string, error) {
+	if err := requireSchema("script select", schema, name); err != nil {
+		return "", err
+	}
 	cols, err := sc.db.ObjectColumns(ctx, schema, name)
 	if err != nil {
 		return "", err
@@ -27,6 +30,9 @@ func (sc *Scripter) ScriptSelect(ctx context.Context, schema, name string) (stri
 
 // ScriptInsert generates an INSERT template for a table or view.
 func (sc *Scripter) ScriptInsert(ctx context.Context, schema, name string) (string, error) {
+	if err := requireSchema("script insert", schema, name); err != nil {
+		return "", err
+	}
 	cols, err := sc.db.ObjectColumns(ctx, schema, name)
 	if err != nil {
 		return "", err
@@ -36,6 +42,9 @@ func (sc *Scripter) ScriptInsert(ctx context.Context, schema, name string) (stri
 
 // ScriptUpdate generates an UPDATE template for a table or view.
 func (sc *Scripter) ScriptUpdate(ctx context.Context, schema, name string) (string, error) {
+	if err := requireSchema("script update", schema, name); err != nil {
+		return "", err
+	}
 	cols, err := sc.db.ObjectColumns(ctx, schema, name)
 	if err != nil {
 		return "", err
@@ -45,11 +54,17 @@ func (sc *Scripter) ScriptUpdate(ctx context.Context, schema, name string) (stri
 
 // ScriptDelete generates a DELETE template for a table or view.
 func (sc *Scripter) ScriptDelete(ctx context.Context, schema, name string) (string, error) {
+	if err := requireSchema("script delete", schema, name); err != nil {
+		return "", err
+	}
 	return fmt.Sprintf("DELETE FROM %s\nWHERE  <Search Conditions,,>;\nGO\n", qualifiedName(schema, name)), nil
 }
 
 // ScriptExecute generates an EXECUTE template for a stored procedure.
 func (sc *Scripter) ScriptExecute(ctx context.Context, schema, name string) (string, error) {
+	if err := requireSchema("script execute", schema, name); err != nil {
+		return "", err
+	}
 	params, err := sc.db.Parameters(ctx, schema, name)
 	if err != nil {
 		return "", err
@@ -61,6 +76,9 @@ func (sc *Scripter) ScriptExecute(ctx context.Context, schema, name string) (str
 // scalar function's result, or a SELECT from a table-valued one. funcType is
 // the UserDefinedFunction.FuncType — "FN", "IF" or "TF".
 func (sc *Scripter) ScriptFunctionCall(ctx context.Context, schema, name, funcType string) (string, error) {
+	if err := requireSchema("script function call", schema, name); err != nil {
+		return "", err
+	}
 	params, err := sc.db.Parameters(ctx, schema, name)
 	if err != nil {
 		return "", err

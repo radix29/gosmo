@@ -120,11 +120,9 @@ func (s *Server) CreateOperator(ctx context.Context, req CreateOperatorRequest) 
 	if err := s.exec(ctx, q); err != nil {
 		return nil, fmt.Errorf("gosmo: create operator %q: %w", req.Name, err)
 	}
-	if Scripting(ctx) {
-		// See CreateSchedule.
-		return s.OperatorRef(req.Name), nil
-	}
-	return s.OperatorByName(ctx, req.Name)
+	return createdObject(ctx, s.OperatorRef(req.Name), func() (*Operator, error) {
+		return s.OperatorByName(ctx, req.Name)
+	})
 }
 
 // Rename changes the operator's name.

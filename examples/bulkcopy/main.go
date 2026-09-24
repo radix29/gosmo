@@ -34,7 +34,7 @@ func main() {
 	db, drop := demo.TempDatabase(srv, dbName)
 	defer drop()
 
-	demo.Must(db.CreateTable(ctx, gosmo.CreateTableRequest{
+	demo.Value(db.CreateTable(ctx, gosmo.CreateTableRequest{
 		Schema: "dbo",
 		Name:   "Reading",
 		Columns: []gosmo.ColumnDefinition{

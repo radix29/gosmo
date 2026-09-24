@@ -134,8 +134,8 @@ ORDER  BY name`
 
 // -- Writes ----------------------------------------------------------------------
 
-// ServerAuditSpecificationSpec describes a specification to create.
-type ServerAuditSpecificationSpec struct {
+// CreateServerAuditSpecificationRequest describes a specification to create.
+type CreateServerAuditSpecificationRequest struct {
 	Name string
 
 	// AuditName is the server audit the specification writes to. Required.
@@ -181,7 +181,7 @@ func auditActionGroupClauses(verb string, groups []string) (string, error) {
 	return strings.Join(parts, ",\n    "), nil
 }
 
-func (spec ServerAuditSpecificationSpec) createStatement() (string, error) {
+func (spec CreateServerAuditSpecificationRequest) createStatement() (string, error) {
 	if strings.TrimSpace(spec.Name) == "" {
 		return "", fmt.Errorf("server audit specification has no name")
 	}
@@ -205,7 +205,7 @@ func (spec ServerAuditSpecificationSpec) createStatement() (string, error) {
 }
 
 // CreateServerAuditSpecification creates a server audit specification.
-func (s *Server) CreateServerAuditSpecification(ctx context.Context, spec ServerAuditSpecificationSpec) (*ServerAuditSpecification, error) {
+func (s *Server) CreateServerAuditSpecification(ctx context.Context, spec CreateServerAuditSpecificationRequest) (*ServerAuditSpecification, error) {
 	stmt, err := spec.createStatement()
 	if err != nil {
 		return nil, fmt.Errorf("gosmo: create server audit specification: %w", err)
@@ -213,11 +213,9 @@ func (s *Server) CreateServerAuditSpecification(ctx context.Context, spec Server
 	if err := s.exec(ctx, stmt); err != nil {
 		return nil, fmt.Errorf("gosmo: create server audit specification %q: %w", spec.Name, err)
 	}
-	if Scripting(ctx) {
-		// The CREATE was only collected, so there is nothing to read back.
-		return s.ServerAuditSpecificationRef(spec.Name), nil
-	}
-	return s.ServerAuditSpecificationByName(ctx, spec.Name)
+	return createdObject(ctx, s.ServerAuditSpecificationRef(spec.Name), func() (*ServerAuditSpecification, error) {
+		return s.ServerAuditSpecificationByName(ctx, spec.Name)
+	})
 }
 
 // SetState enables or disables the specification.
@@ -294,7 +292,7 @@ func (spec *ServerAuditSpecification) withSpecificationDisabled(ctx context.Cont
 	if !enabled {
 		return fn(inner)
 	}
-	if err := spec.SetState(ctx, false); err != nil {
+	if err := spec.SetState(unobserved(ctx), false); err != nil {
 		return err
 	}
 	enable := func(ctx context.Context) error { return spec.SetState(ctx, true) }

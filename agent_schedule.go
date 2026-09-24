@@ -217,14 +217,9 @@ func (s *Server) CreateSchedule(ctx context.Context, req CreateScheduleRequest) 
 	if err := s.exec(ctx, q); err != nil {
 		return nil, fmt.Errorf("gosmo: create schedule %q: %w", req.Name, err)
 	}
-	if Scripting(ctx) {
-		// The read-back is a real query and the EXEC above was only collected,
-		// so under WithScript it fails with "schedule not found" — turning a
-		// scripted create into an error and losing the statement the caller
-		// asked for. A name-only handle is what the caller can act on here.
-		return s.ScheduleRef(req.Name), nil
-	}
-	return s.ScheduleByName(ctx, req.Name)
+	return createdObject(ctx, s.ScheduleRef(req.Name), func() (*Schedule, error) {
+		return s.ScheduleByName(ctx, req.Name)
+	})
 }
 
 // Rename changes the schedule's name.

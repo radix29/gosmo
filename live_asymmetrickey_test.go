@@ -40,7 +40,7 @@ func TestLiveAsymmetricKeysListingAndFinderAgree(t *testing.T) {
 
 	// Generated rather than imported: CREATE ASYMMETRIC KEY's import forms all
 	// read the server's filesystem, which is why CreateAsymmetricKey has none.
-	if err := master.CreateAsymmetricKey(ctx, AsymmetricKeySpec{Name: keyName, Algorithm: AsymmetricKeyRSA2048}); err != nil {
+	if _, err := master.CreateAsymmetricKey(ctx, CreateAsymmetricKeyRequest{Name: keyName, Algorithm: AsymmetricKeyRSA2048}); err != nil {
 		t.Fatalf("create asymmetric key: %v", err)
 	}
 

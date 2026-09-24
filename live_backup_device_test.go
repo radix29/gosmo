@@ -55,7 +55,7 @@ func TestLiveBackupDeviceCreateReadDrop(t *testing.T) {
 	cleanup()
 	defer cleanup()
 
-	d, err := s.CreateBackupDevice(ctx, liveBackupDeviceName, BackupDeviceDisk, path)
+	d, err := s.CreateBackupDevice(ctx, CreateBackupDeviceRequest{Name: liveBackupDeviceName, Type: BackupDeviceDisk, PhysicalName: path})
 	if err != nil {
 		t.Fatalf("CreateBackupDevice: %v", err)
 	}
@@ -104,7 +104,7 @@ func TestLiveBackupDeviceCreateReadDrop(t *testing.T) {
 		t.Errorf("header reads %+v, want the master backup just taken", headers[0])
 	}
 
-	files, err := s.BackupFileList(ctx, d.Target(), headers[0].Position)
+	files, err := s.BackupFileList(ctx, headers[0].Position, d.Target())
 	if err != nil {
 		t.Fatalf("BackupFileList on the device: %v", err)
 	}
@@ -133,7 +133,7 @@ func TestLiveBackupDeviceCreateReadDrop(t *testing.T) {
 
 	// Re-add it so the deferred cleanup's @delfile branch runs and removes the
 	// file this test wrote.
-	if _, err := s.CreateBackupDevice(ctx, liveBackupDeviceName, BackupDeviceDisk, path); err != nil {
+	if _, err := s.CreateBackupDevice(ctx, CreateBackupDeviceRequest{Name: liveBackupDeviceName, Type: BackupDeviceDisk, PhysicalName: path}); err != nil {
 		t.Fatalf("re-create for cleanup: %v", err)
 	}
 }
@@ -166,7 +166,7 @@ func TestLiveBackupDeviceScriptRunsAsGenerated(t *testing.T) {
 	}
 	path := strings.TrimRight(dir, sep) + sep + name + ".bak"
 
-	src, err := s.CreateBackupDevice(ctx, name, BackupDeviceDisk, path)
+	src, err := s.CreateBackupDevice(ctx, CreateBackupDeviceRequest{Name: name, Type: BackupDeviceDisk, PhysicalName: path})
 	if err != nil {
 		t.Fatalf("CreateBackupDevice: %v", err)
 	}

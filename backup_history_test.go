@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"database/sql/driver"
 	"io"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -33,7 +34,8 @@ func (r *histRows) Columns() []string {
 	return []string{"database_name", "name", "description", "type",
 		"backup_start_date", "backup_finish_date", "backup_size",
 		"physical_device_name", "user_name", "server_name",
-		"database_version", "compatibility_level"}
+		"database_version", "compatibility_level",
+		"position", "backup_set_id", "media_set_id", "mirror_count"}
 }
 func (r *histRows) Close() error { return nil }
 func (r *histRows) Next(dest []driver.Value) error {
@@ -55,11 +57,11 @@ func TestBackupHistoryScansNullColumns(t *testing.T) {
 	finished := time.Date(2026, 9, 8, 22, 5, 0, 0, time.UTC)
 	drv := &histDriver{rows: [][]driver.Value{
 		// Everything NULL — the automated-backup row.
-		{nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil},
+		{nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil},
 		// A populated row, to prove the values still arrive.
 		{"GoTest01", "set", "desc", "D", finished, finished, int64(2048),
 			"https://example.blob.core.windows.net/b/GoTest01.bak", "testgo", "t-qmi-01",
-			int64(957), int64(170)},
+			int64(957), int64(170), int64(1), int64(9), int64(4), int64(1)},
 	}}
 	sql.Register("fakebackuphistory", drv)
 
@@ -107,8 +109,8 @@ func TestBackupHistoryScansNullColumns(t *testing.T) {
 func TestBackupHistoryQueryWrapsEveryNullableColumn(t *testing.T) {
 	list := selectList(t, backupHistorySelect)
 	exprs := selectExprs(t, list)
-	if len(exprs) != 12 {
-		t.Fatalf("select list has %d expressions, want 12 — the scan passes 12 destinations", len(exprs))
+	if len(exprs) != 16 {
+		t.Fatalf("select list has %d expressions, want 16 — the scan passes 16 destinations", len(exprs))
 	}
 	for i, e := range exprs {
 		// The two dates are deliberately unwrapped: a zero Time says
@@ -118,6 +120,56 @@ func TestBackupHistoryQueryWrapsEveryNullableColumn(t *testing.T) {
 		}
 		if !strings.HasPrefix(e, "ISNULL(") {
 			t.Errorf("expression %d is %q, which is not ISNULL-wrapped", i, e)
+		}
+	}
+}
+
+// backupmediafamily holds one row per media family, so a set striped over two
+// files came back as two history entries, and a restore from either named one
+// stripe — which the server refuses: "The media set has 2 media families but
+// only 1 are provided". The read now folds the families into one entry per
+// set, in family order, and keeps two sets appended to one file (NOINIT)
+// apart, each with its own Position.
+func TestBackupHistoryGroupsStripedFamilies(t *testing.T) {
+	at := func(m int) time.Time { return time.Date(2026, 9, 24, 10, m, 0, 0, time.UTC) }
+	row := func(finish time.Time, device string, position, setID, mediaSetID int64) []driver.Value {
+		return []driver.Value{"GoTest01", "", "", "D", finish, finish, int64(1024),
+			device, "sa", "srv", int64(957), int64(160), position, setID, mediaSetID, int64(1)}
+	}
+	drv := &histDriver{rows: [][]driver.Value{
+		// Newest: striped over two files.
+		row(at(30), `/b/s1.bak`, 1, 12, 7),
+		row(at(30), `/b/s2.bak`, 1, 12, 7),
+		// Two sets appended to one file.
+		row(at(20), `/b/app.bak`, 2, 11, 6),
+		row(at(10), `/b/app.bak`, 1, 10, 6),
+	}}
+	sql.Register("fakebackuphistorystriped", drv)
+	db, err := sql.Open("fakebackuphistorystriped", "")
+	if err != nil {
+		t.Fatalf("sql.Open: %v", err)
+	}
+	defer db.Close()
+
+	hist, err := (&Server{db: db}).BackupHistory(context.Background(), "GoTest01")
+	if err != nil {
+		t.Fatalf("BackupHistory: %v", err)
+	}
+	if len(hist) != 3 {
+		t.Fatalf("got %d entries, want 3 (one per backup set): %+v", len(hist), hist)
+	}
+	striped := hist[0]
+	if !slices.Equal(striped.Devices, []string{`/b/s1.bak`, `/b/s2.bak`}) || striped.DeviceName != `/b/s1.bak` {
+		t.Errorf("striped set Devices = %q, DeviceName = %q; want both stripes in order, the first as DeviceName",
+			striped.Devices, striped.DeviceName)
+	}
+	if striped.BackupSetID != 12 || striped.MediaSetID != 7 || striped.MirrorCount != 1 {
+		t.Errorf("striped set keys = %d/%d/%d, want 12/7/1", striped.BackupSetID, striped.MediaSetID, striped.MirrorCount)
+	}
+	for i, want := range []int{2, 1} {
+		b := hist[i+1]
+		if b.Position != want || len(b.Devices) != 1 || b.Devices[0] != `/b/app.bak` {
+			t.Errorf("appended set %d: Position %d, Devices %q; want Position %d on app.bak alone", i, b.Position, b.Devices, want)
 		}
 	}
 }

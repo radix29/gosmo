@@ -188,9 +188,3 @@ func (g *PlanGuide) Disable(ctx context.Context) error {
 func (g *PlanGuide) Drop(ctx context.Context) error {
 	return g.controlPlanGuide(ctx, "DROP", "drop")
 }
-
-// DropPlanGuide drops a plan guide by name — the form for a caller that has
-// the name but not the object.
-func (d *Database) DropPlanGuide(ctx context.Context, name string) error {
-	return d.PlanGuideRef(name).Drop(ctx)
-}

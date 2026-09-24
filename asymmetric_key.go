@@ -147,8 +147,8 @@ func (a AsymmetricKeyAlgorithm) valid() bool {
 	return false
 }
 
-// AsymmetricKeySpec describes an asymmetric key for SQL Server to generate.
-type AsymmetricKeySpec struct {
+// CreateAsymmetricKeyRequest describes an asymmetric key for SQL Server to generate.
+type CreateAsymmetricKeyRequest struct {
 	Name string
 
 	// Authorization is the database user or role that will own the key.
@@ -172,7 +172,7 @@ type AsymmetricKeySpec struct {
 
 // createAsymmetricKeyStatement builds CREATE ASYMMETRIC KEY, validating the
 // spec.
-func (spec AsymmetricKeySpec) createAsymmetricKeyStatement() (string, error) {
+func (spec CreateAsymmetricKeyRequest) createAsymmetricKeyStatement() (string, error) {
 	if strings.TrimSpace(spec.Name) == "" {
 		return "", fmt.Errorf("asymmetric key has no name")
 	}
@@ -208,16 +208,19 @@ func (spec AsymmetricKeySpec) createAsymmetricKeyStatement() (string, error) {
 }
 
 // CreateAsymmetricKey has SQL Server generate a new asymmetric key pair in
-// the database.
-func (d *Database) CreateAsymmetricKey(ctx context.Context, spec AsymmetricKeySpec) error {
+// the database, and returns it read back from the catalog — or, under
+// Scripting(ctx), the AsymmetricKeyRef handle, since nothing ran.
+func (d *Database) CreateAsymmetricKey(ctx context.Context, spec CreateAsymmetricKeyRequest) (*AsymmetricKey, error) {
 	stmt, err := spec.createAsymmetricKeyStatement()
 	if err != nil {
-		return fmt.Errorf("gosmo: create asymmetric key in %q: %w", d.Name, err)
+		return nil, fmt.Errorf("gosmo: create asymmetric key in %q: %w", d.Name, err)
 	}
 	if _, err := d.exec(ctx, stmt); err != nil {
-		return fmt.Errorf("gosmo: create asymmetric key %q in %q: %w", spec.Name, d.Name, err)
+		return nil, fmt.Errorf("gosmo: create asymmetric key %q in %q: %w", spec.Name, d.Name, err)
 	}
-	return nil
+	return createdObject(ctx, d.AsymmetricKeyRef(spec.Name), func() (*AsymmetricKey, error) {
+		return d.AsymmetricKeyByName(ctx, spec.Name)
+	})
 }
 
 // Drop deletes the asymmetric key. SQL Server refuses (Msg 15559) while a

@@ -101,8 +101,8 @@ ORDER  BY o.name`
 // FUNCTION removes. A function that isn't there is the server's error, not a
 // silent success — see the note on Database.DropTable.
 func (d *Database) DropFunction(ctx context.Context, schema, name string) error {
-	if schema == "" {
-		schema = "dbo"
+	if err := requireSchema("drop function", schema, name); err != nil {
+		return err
 	}
 	if _, err := d.exec(ctx, "DROP FUNCTION "+qualifiedName(schema, name)); err != nil {
 		return fmt.Errorf("gosmo: drop function [%s].[%s]: %w", schema, name, err)

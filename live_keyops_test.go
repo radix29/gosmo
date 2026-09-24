@@ -36,7 +36,7 @@ func TestLiveKeyOps(t *testing.T) {
 		}
 	}
 	const mk, cp = "Mk!111aaaBBB", "Cp!111aaaBBB"
-	if err := d.CreateMasterKey(ctx, mk); err != nil {
+	if _, err := d.CreateMasterKey(ctx, CreateMasterKeyRequest{Password: mk}); err != nil {
 		t.Fatal(err)
 	}
 	run("CREATE CERTIFICATE c1 WITH SUBJECT = 'c1'")

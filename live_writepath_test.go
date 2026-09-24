@@ -159,7 +159,8 @@ func TestLiveNonASCIIFilePath(t *testing.T) {
 	// collation.
 	dataPath := dataDir + "gosmo_Данные_日本.mdf"
 	logPath := logDir + "gosmo_Журнал_日本.ldf"
-	err := srv.CreateDatabase(ctx, name, &CreateDatabaseOptions{
+	_, err := srv.CreateDatabase(ctx, CreateDatabaseRequest{
+		Name:        name,
 		PrimaryFile: &DatabaseFileSpec{Name: name, Path: dataPath},
 		LogFile:     &DatabaseFileSpec{Name: name + "_log", Path: logPath},
 	})

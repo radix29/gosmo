@@ -176,8 +176,8 @@ ORDER  BY SCHEMA_NAME(q.schema_id), q.name`
 // ErrNotFound) when the database has none by that name. An empty schema
 // means dbo.
 func (d *Database) BrokerQueueByName(ctx context.Context, schema, name string) (*BrokerQueue, error) {
-	if schema == "" {
-		schema = "dbo"
+	if err := requireSchema("broker queue by name", schema, name); err != nil {
+		return nil, err
 	}
 	var bq *BrokerQueue
 	err := d.queryRow(ctx, func(row *sql.Row) error {
@@ -189,21 +189,32 @@ WHERE  SCHEMA_NAME(q.schema_id) = @p1 AND q.name = @p2`, schema, name)
 	return foundRow(bq, err, notFoundf("gosmo: queue [%s].[%s] not found in %q", schema, name, d.Name), fmt.Sprintf("read queue [%s].[%s] in %q", schema, name, d.Name))
 }
 
-// DropBrokerQueue drops a queue by name. A queue a service still receives on
-// is refused by the server until the service goes. An empty schema means dbo.
-func (d *Database) DropBrokerQueue(ctx context.Context, schema, name string) error {
-	if schema == "" {
-		schema = "dbo"
-	}
-	if _, err := d.exec(ctx, "DROP QUEUE "+qualifiedName(schema, name)); err != nil {
-		return fmt.Errorf("gosmo: drop queue [%s].[%s]: %w", schema, name, err)
-	}
-	return nil
+// BrokerQueueRef returns a lightweight handle for a Service Broker queue by name, without
+// querying the catalog — the counterpart of Server.DatabaseRef. Every field
+// but the schema and name stays at its zero value; BrokerQueueByName is what populates them.
+//
+// Every write on *BrokerQueue addresses it by name, so this handle is enough to
+// drop one the caller already knows exists — and is the form to use when
+// there is nothing to read yet, such as a script of a CREATE that was only
+// collected.
+//
+// schema is taken as given: an empty one is refused by the handle's writes
+// (ErrSchemaRequired), never defaulted.
+func (d *Database) BrokerQueueRef(schema, name string) *BrokerQueue {
+	return &BrokerQueue{db: d, Schema: schema, Name: name}
 }
 
-// Drop drops the queue.
+// Drop drops the queue. A queue a service still receives on is refused by the
+// server until the service goes. An empty schema is refused
+// (ErrSchemaRequired).
 func (q *BrokerQueue) Drop(ctx context.Context) error {
-	return q.db.DropBrokerQueue(ctx, q.Schema, q.Name)
+	if err := requireSchema("drop broker queue", q.Schema, q.Name); err != nil {
+		return err
+	}
+	if _, err := q.db.exec(ctx, "DROP QUEUE "+qualifiedName(q.Schema, q.Name)); err != nil {
+		return fmt.Errorf("gosmo: drop queue [%s].[%s]: %w", q.Schema, q.Name, err)
+	}
+	return nil
 }
 
 // queueMessageCountSelect counts the rows in each queue's internal table.
@@ -356,7 +367,7 @@ type QueueActivation struct {
 	Enabled bool
 
 	// ProcedureSchema and ProcedureName name the activation procedure,
-	// unquoted. An empty schema means dbo.
+	// unquoted. An empty ProcedureSchema is refused (ErrSchemaRequired).
 	ProcedureSchema string
 	ProcedureName   string
 
@@ -399,7 +410,7 @@ type QueueSettings struct {
 	DropActivation bool
 }
 
-// AlterBrokerQueue changes a queue's settings. An empty schema means dbo.
+// AlterBrokerQueue changes a queue's settings. An empty schema is refused (ErrSchemaRequired).
 //
 // It needs ALTER on the queue itself (ALTER ON OBJECT::<queue>), CONTROL on
 // it, or ALTER on its schema or the database — measured on majors 13, 14 and
@@ -408,8 +419,8 @@ type QueueSettings struct {
 // two verbs take different rights, and a caller gating them shares no entry
 // between them.
 func (d *Database) AlterBrokerQueue(ctx context.Context, schema, name string, s QueueSettings) error {
-	if schema == "" {
-		schema = "dbo"
+	if err := requireSchema("alter broker queue", schema, name); err != nil {
+		return err
 	}
 	clauses, err := queueSettingClauses(s)
 	if err != nil {
@@ -448,13 +459,12 @@ func queueSettingClauses(s QueueSettings) ([]string, error) {
 			return nil, fmt.Errorf("QueueActivation.MaxQueueReaders is %d, "+
 				"outside MAX_QUEUE_READERS' range of 0 to 32767", a.MaxQueueReaders)
 		}
-		schema := a.ProcedureSchema
-		if schema == "" {
-			schema = "dbo"
+		if a.ProcedureSchema == "" {
+			return nil, fmt.Errorf("QueueActivation.ProcedureSchema: %w", ErrSchemaRequired)
 		}
 		clauses = append(clauses, fmt.Sprintf(
 			"ACTIVATION (STATUS = %s, PROCEDURE_NAME = %s, MAX_QUEUE_READERS = %d, EXECUTE AS %s)",
-			onOff(a.Enabled), qualifiedName(schema, a.ProcedureName),
+			onOff(a.Enabled), qualifiedName(a.ProcedureSchema, a.ProcedureName),
 			a.MaxQueueReaders, queueExecuteAsValue(a.ExecuteAs)))
 	}
 	if s.DropActivation {
@@ -515,9 +525,6 @@ func mirrorQueueSettings(ctx context.Context, q *BrokerQueue, s QueueSettings) {
 	}
 	if a := s.Activation; a != nil {
 		schema := a.ProcedureSchema
-		if schema == "" {
-			schema = "dbo"
-		}
 		setIfApplied(ctx, &q.IsActivationEnabled, a.Enabled)
 		setIfApplied(ctx, &q.ActivationProcedure, qualifiedName(schema, a.ProcedureName))
 		setIfApplied(ctx, &q.ActivationProcedureSchema, schema)

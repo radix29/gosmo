@@ -121,8 +121,8 @@ func (s *Server) DatabaseMirroringEndpoint(ctx context.Context) (*DatabaseMirror
 	return e, nil
 }
 
-// EndpointSpec describes a database mirroring endpoint to create.
-type EndpointSpec struct {
+// CreateDatabaseMirroringEndpointRequest describes a database mirroring endpoint to create.
+type CreateDatabaseMirroringEndpointRequest struct {
 	// Name is the endpoint's name. Required; it is arbitrary and purely local
 	// — replicas address each other by URL, never by endpoint name.
 	Name string
@@ -172,7 +172,7 @@ var (
 // createEndpointStatement and the handle a scripted create hands back are both
 // built from this, so the statement and the handle cannot disagree about what
 // was asked for.
-func (spec EndpointSpec) normalized() (EndpointSpec, error) {
+func (spec CreateDatabaseMirroringEndpointRequest) normalized() (CreateDatabaseMirroringEndpointRequest, error) {
 	if strings.TrimSpace(spec.Name) == "" {
 		return spec, fmt.Errorf("endpoint has no name")
 	}
@@ -202,7 +202,7 @@ func (spec EndpointSpec) normalized() (EndpointSpec, error) {
 
 // createEndpointStatement builds the CREATE ENDPOINT statement, validating the
 // keyword-valued parts of the spec.
-func (spec EndpointSpec) createEndpointStatement() (string, error) {
+func (spec CreateDatabaseMirroringEndpointRequest) createEndpointStatement() (string, error) {
 	n, err := spec.normalized()
 	if err != nil {
 		return "", err
@@ -226,7 +226,7 @@ func (spec EndpointSpec) createEndpointStatement() (string, error) {
 // Owner are left empty: the first is a server-side *_desc keyword rather than
 // the spec's clause text, and the second is decided by the connection that
 // runs the script, which is not necessarily this one.
-func (spec EndpointSpec) handle(s *Server) *DatabaseMirroringEndpoint {
+func (spec CreateDatabaseMirroringEndpointRequest) handle(s *Server) *DatabaseMirroringEndpoint {
 	n, _ := spec.normalized() // already validated by createEndpointStatement
 	return &DatabaseMirroringEndpoint{
 		server:              s,
@@ -245,7 +245,7 @@ func (spec EndpointSpec) handle(s *Server) *DatabaseMirroringEndpoint {
 // Fails if the instance already has one, whatever it is named — see this
 // file's doc comment. Read DatabaseMirroringEndpoint first and reuse what is
 // there rather than treating "no endpoint of my name" as "no endpoint".
-func (s *Server) CreateDatabaseMirroringEndpoint(ctx context.Context, spec EndpointSpec) (*DatabaseMirroringEndpoint, error) {
+func (s *Server) CreateDatabaseMirroringEndpoint(ctx context.Context, spec CreateDatabaseMirroringEndpointRequest) (*DatabaseMirroringEndpoint, error) {
 	stmt, err := spec.createEndpointStatement()
 	if err != nil {
 		return nil, fmt.Errorf("gosmo: create database mirroring endpoint on %q: %w", s.Name(), err)
@@ -259,10 +259,15 @@ func (s *Server) CreateDatabaseMirroringEndpoint(ctx context.Context, spec Endpo
 		// indistinguishable from a failed create, and leaving the caller
 		// nothing to script the GRANT CONNECTs and the ALTERs against. Hand
 		// out a handle built from the spec, as every other scripted create
-		// does (see CreateSchedule).
+		// does (see createdObject).
 		return spec.handle(s), nil
 	}
-	return s.DatabaseMirroringEndpoint(ctx)
+	e, err := s.DatabaseMirroringEndpoint(ctx)
+	if err == nil && e == nil {
+		// Created, but not visible to this principal — see createdObject.
+		return spec.handle(s), nil
+	}
+	return e, err
 }
 
 // Start starts a stopped endpoint. An endpoint that is not STARTED accepts no

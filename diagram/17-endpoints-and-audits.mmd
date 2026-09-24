@@ -22,7 +22,7 @@ classDiagram
         +GrantConnect(login) error
     }
 
-    class EndpointSpec {
+    class CreateDatabaseMirroringEndpointRequest {
         +Name string
         +Port int
         +Role string
@@ -140,7 +140,7 @@ classDiagram
         audit_guid pointing at nothing.
     }
 
-    class ServerAuditSpecificationSpec {
+    class CreateServerAuditSpecificationRequest {
         +Name string
         +AuditName string
         +ActionGroups []string
@@ -177,7 +177,7 @@ classDiagram
         +FullName() string
     }
 
-    class DatabaseAuditSpecificationSpec {
+    class CreateDatabaseAuditSpecificationRequest {
         +Name string
         +AuditName string
         +ActionGroups []string
@@ -206,7 +206,7 @@ classDiagram
     %% Relationships
     %% =========================================================
     Server "1" --> "1" DatabaseMirroringEndpoint : has at most one
-    Server --> EndpointSpec : accepts
+    Server --> CreateDatabaseMirroringEndpointRequest : accepts
     Server "1" --> "*" Endpoint : Endpoints() returns
     Endpoint --> EndpointState : SetState() takes
     Endpoint ..> DatabaseMirroringEndpoint : MirroringDetail() returns
@@ -215,10 +215,10 @@ classDiagram
     Server --> ServerAuditSpec : CreateServerAudit() takes
     ServerAudit --> ServerAuditStatus : Status() returns
     Server "1" --> "*" ServerAuditSpecification : owns
-    Server --> ServerAuditSpecificationSpec : CreateServerAuditSpecification() takes
+    Server --> CreateServerAuditSpecificationRequest : CreateServerAuditSpecification() takes
     ServerAuditSpecification "*" --> "1" ServerAudit : writes to
     Database "1" --> "*" DatabaseAuditSpecification : owns
-    Database --> DatabaseAuditSpecificationSpec : CreateDatabaseAuditSpecification() takes
+    Database --> CreateDatabaseAuditSpecificationRequest : CreateDatabaseAuditSpecification() takes
     DatabaseAuditSpecification "1" --> "*" DatabaseAuditAction : records
     DatabaseAuditSpecification "*" --> "1" ServerAudit : writes to
     Server "1" --> "*" ServerTrigger : owns

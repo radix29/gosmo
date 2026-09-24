@@ -1,6 +1,7 @@
 package gosmo
 
 import (
+	"context"
 	"database/sql"
 	"encoding/hex"
 	"errors"
@@ -66,6 +67,28 @@ func foundRow[T any](v T, err error, notFound error, what string) (T, error) {
 	return v, nil
 }
 
+// createdObject is the tail of every Create*: it returns what was created.
+// Under Scripting(ctx) the statement was only collected, so there is nothing
+// to read and handle — the family's name-only Ref form — is the answer.
+// Otherwise read fetches the object back from the catalog.
+//
+// A read-back that finds nothing returns handle too, not the not-found error.
+// The create succeeded; what failed is visibility — SQL Server hides a
+// catalog row from a principal with no permission on it, and the one that
+// created an object is not always one that can see it afterwards. Reporting
+// that as an error would tell the caller a create that happened had failed.
+// Any other read error is returned as is.
+func createdObject[T any](ctx context.Context, handle T, read func() (T, error)) (T, error) {
+	if Scripting(ctx) {
+		return handle, nil
+	}
+	v, err := read()
+	if errors.Is(err, ErrNotFound) {
+		return handle, nil
+	}
+	return v, err
+}
+
 // quoteIdent wraps a SQL Server identifier in square brackets, escaping any
 // embedded closing brackets. Thin internal alias for the exported QuoteName
 // (see quoting.go) so the many internal call sites stay terse.
@@ -116,6 +139,22 @@ func boolToInt(b bool) int {
 		return 1
 	}
 	return 0
+}
+
+// requireSchema is the one rule for a caller-supplied schema: an empty one is
+// refused, by every call that takes a schema-scoped name. It used to mean two
+// things — dbo to DropSequence and ~20 like it, the caller's own default
+// schema to DropTable, which passed it to qualifiedName unqualified — so a
+// login whose default schema was sales got sales.t from DropTable("", "t")
+// and dbo.s from DropSequence("", "s"). Defaulting either way addresses the
+// wrong object for some caller; refusing cannot.
+//
+// what is the operation, for the message ("drop view"); name the object.
+func requireSchema(what, schema, name string) error {
+	if schema == "" {
+		return fmt.Errorf("gosmo: %s %q: %w", what, name, ErrSchemaRequired)
+	}
+	return nil
 }
 
 // qualifiedName returns [schema].[name], or just [name] when schema is empty.

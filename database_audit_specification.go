@@ -303,8 +303,8 @@ ORDER  BY name`
 
 // -- Writes ----------------------------------------------------------------------
 
-// DatabaseAuditSpecificationSpec describes a specification to create.
-type DatabaseAuditSpecificationSpec struct {
+// CreateDatabaseAuditSpecificationRequest describes a specification to create.
+type CreateDatabaseAuditSpecificationRequest struct {
 	Name string
 
 	// AuditName is the server audit the specification writes to. Required.
@@ -385,7 +385,7 @@ func databaseAuditClauses(verb string, groups []string, actions []DatabaseAuditA
 	return strings.Join(parts, ",\n    "), nil
 }
 
-func (spec DatabaseAuditSpecificationSpec) createStatement() (string, error) {
+func (spec CreateDatabaseAuditSpecificationRequest) createStatement() (string, error) {
 	if strings.TrimSpace(spec.Name) == "" {
 		return "", fmt.Errorf("database audit specification has no name")
 	}
@@ -409,7 +409,7 @@ func (spec DatabaseAuditSpecificationSpec) createStatement() (string, error) {
 }
 
 // CreateDatabaseAuditSpecification creates a database audit specification.
-func (d *Database) CreateDatabaseAuditSpecification(ctx context.Context, spec DatabaseAuditSpecificationSpec) (*DatabaseAuditSpecification, error) {
+func (d *Database) CreateDatabaseAuditSpecification(ctx context.Context, spec CreateDatabaseAuditSpecificationRequest) (*DatabaseAuditSpecification, error) {
 	stmt, err := spec.createStatement()
 	if err != nil {
 		return nil, fmt.Errorf("gosmo: create database audit specification: %w", err)
@@ -417,11 +417,9 @@ func (d *Database) CreateDatabaseAuditSpecification(ctx context.Context, spec Da
 	if _, err := d.exec(ctx, stmt); err != nil {
 		return nil, fmt.Errorf("gosmo: create database audit specification %q in %q: %w", spec.Name, d.Name, err)
 	}
-	if Scripting(ctx) {
-		// The CREATE was only collected, so there is nothing to read back.
-		return d.DatabaseAuditSpecificationRef(spec.Name), nil
-	}
-	return d.DatabaseAuditSpecificationByName(ctx, spec.Name)
+	return createdObject(ctx, d.DatabaseAuditSpecificationRef(spec.Name), func() (*DatabaseAuditSpecification, error) {
+		return d.DatabaseAuditSpecificationByName(ctx, spec.Name)
+	})
 }
 
 // SetState enables or disables the specification.
@@ -502,7 +500,7 @@ func (spec *DatabaseAuditSpecification) withSpecificationDisabled(ctx context.Co
 	if !enabled {
 		return fn(inner)
 	}
-	if err := spec.SetState(ctx, false); err != nil {
+	if err := spec.SetState(unobserved(ctx), false); err != nil {
 		return err
 	}
 	enable := func(ctx context.Context) error { return spec.SetState(ctx, true) }

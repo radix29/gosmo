@@ -73,6 +73,11 @@ without dialling) and assert on `msdsn.Parse(dsn).Parameters`;
 `auth_test.go`'s `driverParams` does both. A known, unfixed bug is pinned
 there with a `knownBroken` marker, which fails once the fix lands.
 
+**A live test registers its connection's close with `t.Cleanup`, never
+`defer`,** when anything it creates is dropped in a `t.Cleanup`: cleanups run
+after the test function returns, so a deferred close shuts the pool first and
+every drop fails silently, leaving the objects on the server.
+
 Build and test **inside this repo** before relying on a change from gossms —
 a gossms-side build only compiles the packages it imports.
 
@@ -149,7 +154,8 @@ rename, and before a tag.
   that *reads* to decide what to write does not work under it — the standing
   shape is a `Create*` reading its own object back by name after an `EXEC`
   that was only collected. Every such method returns a name-only handle
-  under `Scripting(ctx)` instead; a new one must do the same.
+  under `Scripting(ctx)` instead, through `createdObject` (`helpers.go`); a
+  new one must do the same.
   - A write that mirrors its change back onto the receiver (`Rename` setting
     `.Name`, `Enable` setting `.IsEnabled`) must go through `setIfApplied`,
     never a direct assignment. Under `WithScript` nothing ran, so a direct
@@ -158,6 +164,14 @@ rename, and before a tag.
   - A statement captured with bound parameters is substituted to literals
     (`bindScriptArgs`) — a captured statement is pasted into a query editor,
     where nothing binds `@p1`.
+- **Every `Create*` has one shape: `CreateX(ctx, CreateXRequest) (*X,
+  error)`.** Until 2026-09-24 there were four — `…Spec` structs, `Create…Request`
+  structs, `*Create…Options` pointers and positional lists — and 20 of 33
+  returned only `error`, so a caller could guess neither the argument nor the
+  result. The request is a value; the result is read back through
+  `createdObject`, which returns the `XRef` handle under `Scripting(ctx)` and
+  when the new row is not visible to the caller. A type keeps the `Spec` name
+  only when a non-create method takes it too (`ServerAuditSpec`, for `Alter`).
 - **Catalog state is an exported field, not an accessor.** A type scanned
   from a catalog row exposes what it scanned as exported fields — `Login.SID`,
   `Table.Name`, `Job.IsEnabled`. `Database` was the last holdout, hiding nine
@@ -193,12 +207,20 @@ rename, and before a tag.
   scripted DROP of an object that exists works either way. This bullet is
   the authority on that rule; `gossms/CLAUDE.md`, `gossms/docs/decisions.md`
   and `dbOf` in `gossms/internal/tui/explorer_object_ops.go` point here
-  rather than restate it. Twenty-six families pair this way
+  rather than restate it. Fifty-one families pair this way
   (`DatabaseRef`, `LoginRef`, `TableRef`, the four Agent ones, the
-  audit/credential/trigger/snapshot/plan-guide/backup-device/AG families, and
+  audit/credential/trigger/snapshot/plan-guide/backup-device/AG families,
   `ServerRoleRef`, `UserRef`, `StatisticRef`, `IndexRef`, `ConfigurationRef`,
-  `CertificateRef`, `AsymmetricKeyRef`, `SymmetricKeyRef`); every
-  other by-name lookup in the library is `*ByName` with no handle beside it.
+  `CertificateRef`, `AsymmetricKeyRef`, `SymmetricKeyRef`, and — since
+  2026-09-24, when the parent `DropX(ctx, name)` methods were folded into
+  `XRef(name).Drop` and every `Create*` began returning its object — the
+  schema, sequence, synonym, rule, default, three type, XML schema
+  collection, partition, Always Encrypted key, assembly, database role
+  (`RoleRef`), external-resource and Service Broker families); every other
+  by-name lookup in the library is `*ByName` with no handle beside it. A
+  schema-scoped handle takes its schema as given and refuses an empty one on
+  write (`ErrSchemaRequired`, through `requireSchema`), like every call that
+  takes a schema.
   `Endpoint` is the one family deliberately left without one — `IsSystem` is
   derived from a scanned id, so a name-only handle would carry id 0 and
   refuse every write on itself; see `endpoint.go`'s comment above

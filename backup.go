@@ -87,6 +87,7 @@ func (s *Server) Backup(ctx context.Context, opts BackupOptions) error {
 	if err := execWithProgress(ctx, s.db, sqlText, opts.Progress); err != nil {
 		return fmt.Errorf("gosmo: backup %q: %w", opts.Database, err)
 	}
+	observe(ctx, ScriptEntry{Server: scriptServerName(ctx, s), SQL: sqlText})
 	return nil
 }
 
@@ -207,7 +208,8 @@ func backupFileSpec(verb string, files, fileGroups []string) (string, error) {
 // terminating abnormally" after it, and returning at the first — or keeping
 // only the last — told the caller half of it. The collected messages are
 // combined the way exec's are, by withAllMessages. Never run under
-// WithScript: Backup and Restore take exec's path there.
+// WithScript: Backup and Restore take exec's path there. Its callers report
+// a success to the statement observer themselves, as exec does.
 func execWithProgress(ctx context.Context, db *sql.DB, sqlText string, progress func(pct int, message string)) error {
 	conn, err := db.Conn(ctx)
 	if err != nil {
@@ -378,6 +380,9 @@ func (s *Server) Restore(ctx context.Context, opts RestoreOptions) error {
 		err = s.exec(ctx, sqlText)
 	} else {
 		err = execWithProgress(ctx, s.db, sqlText, opts.Progress)
+		if err == nil {
+			observe(ctx, ScriptEntry{Server: scriptServerName(ctx, s), SQL: sqlText})
+		}
 	}
 	if err != nil {
 		// The batch's own MULTI_USER does not run when the batch is cut
@@ -525,19 +530,30 @@ IF @closed = 1 AND %[1]s
 // backupHistorySelect is the msdb read behind BackupHistory, at package
 // scope so TestBackupHistoryQueryWrapsEveryNullableColumn can check that every
 // nullable column is still wrapped.
+//
+// backupmediafamily has one row per media family *and* per mirror, so the
+// join returns a striped set once per stripe. Only the first mirror is read
+// (any mirror is a complete copy), and BackupHistory folds the families back
+// into one BackupInfo per set — which is why the ORDER BY keeps a set's rows
+// together, in family order.
 const backupHistorySelect = `
 SELECT ISNULL(bs.database_name,''), ISNULL(bs.name,''), ISNULL(bs.description,''),
        ISNULL(bs.type,''),
        bs.backup_start_date, bs.backup_finish_date, ISNULL(bs.backup_size,0),
        ISNULL(bmf.physical_device_name,''), ISNULL(bs.user_name,''),
        ISNULL(bs.server_name,''),
-       ISNULL(bs.database_version,0), ISNULL(bs.compatibility_level,0)
+       ISNULL(bs.database_version,0), ISNULL(bs.compatibility_level,0),
+       ISNULL(bs.position,0), ISNULL(bs.backup_set_id,0), ISNULL(bs.media_set_id,0),
+       ISNULL(bms.mirror_count,1)
 FROM   msdb.dbo.backupset bs
-JOIN   msdb.dbo.backupmediafamily bmf ON bmf.media_set_id = bs.media_set_id
+JOIN   msdb.dbo.backupmediafamily bmf ON bmf.media_set_id = bs.media_set_id AND bmf.mirror = 0
+LEFT JOIN msdb.dbo.backupmediaset bms ON bms.media_set_id = bs.media_set_id
 WHERE  bs.database_name = @p1
-ORDER  BY bs.backup_finish_date DESC`
+ORDER  BY bs.backup_finish_date DESC, bs.backup_set_id DESC, bmf.family_sequence_number`
 
-// BackupHistory returns the backup history for a database from msdb.
+// BackupHistory returns the backup history for a database from msdb, newest
+// first, one BackupInfo per backup set whatever number of files it was striped
+// over — see BackupInfo.Devices.
 //
 // Every column read here is nullable in msdb, and a NULL in any of them used
 // to kill the whole read — which took Database Properties' General page, the
@@ -555,16 +571,17 @@ ORDER  BY bs.backup_finish_date DESC`
 // particular server populates the columns.
 func (s *Server) BackupHistory(ctx context.Context, databaseName string) ([]*BackupInfo, error) {
 	rows, err := s.query(ctx, backupHistorySelect, databaseName)
-	return scanRows(rows, err, fmt.Sprintf("backup history for %q", databaseName), func(scan func(...any) error) (*BackupInfo, error) {
+	perFamily, err := scanRows(rows, err, fmt.Sprintf("backup history for %q", databaseName), func(scan func(...any) error) (*BackupInfo, error) {
 		b := &BackupInfo{}
 		var dbName, setName, desc, bType, device, user, server sql.NullString
 		var start, finish sql.NullTime
-		var size, dbVersion, compat sql.NullInt64
+		var size, dbVersion, compat, position, setID, mediaSetID, mirrors sql.NullInt64
 		if err := scan(
 			&dbName, &setName, &desc, &bType,
 			&start, &finish, &size,
 			&device, &user, &server,
 			&dbVersion, &compat,
+			&position, &setID, &mediaSetID, &mirrors,
 		); err != nil {
 			return nil, err
 		}
@@ -572,8 +589,11 @@ func (s *Server) BackupHistory(ctx context.Context, databaseName string) ([]*Bac
 		b.BackupStart, b.BackupFinish = start.Time, finish.Time
 		b.BackupSize = size.Int64
 		b.DeviceName, b.UserName, b.ServerName = device.String, user.String, server.String
+		b.Devices = []string{device.String}
 		b.DatabaseVersion = int(dbVersion.Int64)
 		b.CompatibilityLevel = CompatibilityLevel(compat.Int64)
+		b.Position, b.BackupSetID, b.MediaSetID = int(position.Int64), setID.Int64, int(mediaSetID.Int64)
+		b.MirrorCount = max(int(mirrors.Int64), 1)
 		switch bType.String {
 		case "D":
 			b.BackupType = BackupActionDatabase
@@ -586,6 +606,32 @@ func (s *Server) BackupHistory(ctx context.Context, databaseName string) ([]*Bac
 		}
 		return b, nil
 	})
+	if err != nil {
+		return nil, err
+	}
+	return groupBackupFamilies(perFamily), nil
+}
+
+// groupBackupFamilies folds BackupHistory's one-row-per-media-family read into
+// one BackupInfo per backup set, keeping the sets' order and each set's
+// families in the order read. Rows of one set arrive together (the query
+// orders by set id before family), but the fold keys on the id rather than on
+// adjacency, so an ordering change cannot split a set in two. A row with no
+// set id — only a fake or a damaged msdb produces one — stays its own entry.
+func groupBackupFamilies(rows []*BackupInfo) []*BackupInfo {
+	out := make([]*BackupInfo, 0, len(rows))
+	byID := make(map[int64]*BackupInfo, len(rows))
+	for _, b := range rows {
+		if b.BackupSetID != 0 {
+			if first, ok := byID[b.BackupSetID]; ok {
+				first.Devices = append(first.Devices, b.Devices...)
+				continue
+			}
+			byID[b.BackupSetID] = b
+		}
+		out = append(out, b)
+	}
+	return out
 }
 
 // ============================================================
@@ -809,21 +855,42 @@ func targetList(targets []BackupTarget) string {
 	return strings.Join(parts, ", ")
 }
 
-// VerifyBackup checks that the backup set on target is complete and
+// VerifyBackup checks that the backup set on targets is complete and
 // readable (RESTORE VERIFYONLY), without restoring it.
-func (s *Server) VerifyBackup(ctx context.Context, target BackupTarget) error {
-	stmt := "RESTORE VERIFYONLY FROM " + target.clause()
+//
+// Every read on the RESTORE side takes the media set's full device list, as
+// RestoreOptions.Devices does: a backup striped over several files is one
+// media set, and VERIFYONLY on one stripe of it is refused ("The media set
+// has 2 media families but only 1 are provided").
+func (s *Server) VerifyBackup(ctx context.Context, targets ...BackupTarget) error {
+	if err := checkTargets("verify backup", targets); err != nil {
+		return err
+	}
+	stmt := "RESTORE VERIFYONLY FROM " + targetList(targets)
 	if err := s.exec(ctx, stmt); err != nil {
-		return fmt.Errorf("gosmo: verify backup %q: %w", target.name, err)
+		return fmt.Errorf("gosmo: verify backup %q: %w", targetNames(targets), err)
 	}
 	return nil
 }
 
-// BackupHeaders reads the backup sets on target (RESTORE HEADERONLY) — one
-// BackupHeader per set, in position order.
-func (s *Server) BackupHeaders(ctx context.Context, target BackupTarget) ([]*BackupHeader, error) {
-	device := target.name
-	q := "RESTORE HEADERONLY FROM " + target.clause()
+// targetNames joins targets' names for an error message.
+func targetNames(targets []BackupTarget) string {
+	names := make([]string, len(targets))
+	for i, t := range targets {
+		names[i] = t.name
+	}
+	return strings.Join(names, ", ")
+}
+
+// BackupHeaders reads the backup sets on targets (RESTORE HEADERONLY) — one
+// BackupHeader per set, in position order. targets is the media set's full
+// device list — see VerifyBackup.
+func (s *Server) BackupHeaders(ctx context.Context, targets ...BackupTarget) ([]*BackupHeader, error) {
+	if err := checkTargets("read backup header", targets); err != nil {
+		return nil, err
+	}
+	device := targetNames(targets)
+	q := "RESTORE HEADERONLY FROM " + targetList(targets)
 	rows, err := s.query(ctx, q)
 	if err != nil {
 		return nil, fmt.Errorf("gosmo: read backup header %q: %w", device, err)
@@ -881,10 +948,10 @@ func backupTypeFromHeader(n int) BackupAction {
 }
 
 // backupFileListQuery builds the RESTORE FILELISTONLY statement reading the
-// file list of one backup set on target. fileNumber 0 leaves the WITH clause
+// file list of one backup set on targets. fileNumber 0 leaves the WITH clause
 // off, which SQL Server reads as the first set.
-func backupFileListQuery(target BackupTarget, fileNumber int) string {
-	q := "RESTORE FILELISTONLY FROM " + target.clause()
+func backupFileListQuery(fileNumber int, targets []BackupTarget) string {
+	q := "RESTORE FILELISTONLY FROM " + targetList(targets)
 	if fileNumber > 0 {
 		q += fmt.Sprintf(" WITH FILE = %d", fileNumber)
 	}
@@ -892,7 +959,8 @@ func backupFileListQuery(target BackupTarget, fileNumber int) string {
 }
 
 // BackupFileList reads the database files contained in one particular
-// backup set on target (RESTORE FILELISTONLY WITH FILE = n).
+// backup set on targets (RESTORE FILELISTONLY WITH FILE = n). targets is the
+// media set's full device list — see VerifyBackup.
 //
 // fileNumber is 1-based, as reported by BackupHeader.Position, and matches
 // RestoreOptions.FileNumber — pass the same value to both or the file list
@@ -904,9 +972,12 @@ func backupFileListQuery(target BackupTarget, fileNumber int) string {
 // were added between them. Building RESTORE's MOVE clauses from the wrong
 // set names logical files the restored set does not contain, which SQL
 // Server rejects outright.
-func (s *Server) BackupFileList(ctx context.Context, target BackupTarget, fileNumber int) ([]*BackupFile, error) {
-	device := target.name
-	rows, err := s.query(ctx, backupFileListQuery(target, fileNumber))
+func (s *Server) BackupFileList(ctx context.Context, fileNumber int, targets ...BackupTarget) ([]*BackupFile, error) {
+	if err := checkTargets("read backup file list", targets); err != nil {
+		return nil, err
+	}
+	device := targetNames(targets)
+	rows, err := s.query(ctx, backupFileListQuery(fileNumber, targets))
 	if err != nil {
 		return nil, fmt.Errorf("gosmo: read backup file list %q: %w", device, err)
 	}

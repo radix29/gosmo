@@ -172,15 +172,24 @@ func liveAzureDatabase(t *testing.T, name string) (*Database, bool) {
 }
 
 func TestLiveAzureDatabaseResourceStats(t *testing.T) {
-	d, azure := liveAzureDatabase(t, *liveAzureDB)
-
-	stats, err := d.ResourceStats(t.Context(), 0)
+	srv, azure := liveAzureServer(t)
 	if !azure {
+		// Checked before any database is looked up: the gate answers ahead
+		// of every read, so a name-only handle reaches it, and an instance
+		// without the -liveazuredb database (the usual non-Azure case) still
+		// tests the refusal instead of failing on the lookup.
+		_, err := srv.DatabaseRef(*liveAzureDB).ResourceStats(t.Context(), 0)
 		if !errors.Is(err, ErrUnsupportedVersion) {
 			t.Fatalf("on a non-Azure instance: err = %v, want ErrUnsupportedVersion", err)
 		}
 		return
 	}
+	d, err := srv.DatabaseByName(t.Context(), *liveAzureDB)
+	if err != nil {
+		t.Fatalf("DatabaseByName %s: %v", *liveAzureDB, err)
+	}
+
+	stats, err := d.ResourceStats(t.Context(), 0)
 	if err != nil {
 		t.Fatalf("ResourceStats: %v", err)
 	}

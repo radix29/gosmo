@@ -14,10 +14,10 @@ import (
 func TestScriptedCreateSchemaAndProcedureEachOpenABatch(t *testing.T) {
 	ctx, script := WithScript(context.Background())
 	d := scriptTestDB()
-	if err := d.CreateSchema(ctx, "sales", ""); err != nil {
+	if _, err := d.CreateSchema(ctx, CreateSchemaRequest{Name: "sales"}); err != nil {
 		t.Fatalf("CreateSchema: %v", err)
 	}
-	if err := d.CreateStoredProcedure(ctx, "sales", "usp_x", "AS\nSELECT 1"); err != nil {
+	if _, err := d.CreateStoredProcedure(ctx, CreateStoredProcedureRequest{Schema: "sales", Name: "usp_x", Body: "AS\nSELECT 1"}); err != nil {
 		t.Fatalf("CreateStoredProcedure: %v", err)
 	}
 	if len(script.Entries) != 2 {

@@ -459,13 +459,9 @@ func (s *Server) CreateJob(ctx context.Context, req CreateJobRequest) (*Job, err
 	if err := s.exec(ctx, enlistQ); err != nil {
 		return nil, fmt.Errorf("gosmo: enlist job %q on local server: %w", req.Name, err)
 	}
-	if Scripting(ctx) {
-		// See CreateSchedule: the read-back is a real query, and the
-		// two EXECs above were only collected, so it would fail with "job not
-		// found" rather than yielding the script that was asked for.
-		return s.JobRef(req.Name), nil
-	}
-	return s.JobByName(ctx, req.Name)
+	return createdObject(ctx, s.JobRef(req.Name), func() (*Job, error) {
+		return s.JobByName(ctx, req.Name)
+	})
 }
 
 // AddSchedule attaches a schedule to the job.

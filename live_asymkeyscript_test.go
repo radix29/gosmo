@@ -33,7 +33,7 @@ func TestLiveAsymmetricKeyCreateScriptDrop(t *testing.T) {
 	}
 
 	const name, pass = "round'trip", "R0und!Trip#Pass"
-	if err := src.CreateAsymmetricKey(ctx, AsymmetricKeySpec{
+	if _, err := src.CreateAsymmetricKey(ctx, CreateAsymmetricKeyRequest{
 		Name: name, Authorization: "key_owner", Algorithm: AsymmetricKeyRSA4096, EncryptionPassword: pass,
 	}); err != nil {
 		t.Fatalf("CreateAsymmetricKey: %v", err)
@@ -49,7 +49,7 @@ func TestLiveAsymmetricKeyCreateScriptDrop(t *testing.T) {
 
 	// No master key in a scratch database: a key with no password must fail
 	// there (Msg 15581), which is the precondition a New dialog checks for.
-	if err := src.CreateAsymmetricKey(ctx, AsymmetricKeySpec{Name: "no_dmk", Algorithm: AsymmetricKeyRSA2048}); err == nil {
+	if _, err := src.CreateAsymmetricKey(ctx, CreateAsymmetricKeyRequest{Name: "no_dmk", Algorithm: AsymmetricKeyRSA2048}); err == nil {
 		t.Error("a master-key-protected key was created in a database with no master key")
 	}
 

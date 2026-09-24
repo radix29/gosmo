@@ -154,6 +154,9 @@ func leadingTriviaEnd(def string) int {
 
 // ScriptView returns the CREATE VIEW definition as stored in sys.sql_modules.
 func (sc *Scripter) ScriptView(ctx context.Context, schema, name string) (string, error) {
+	if err := requireSchema("script view", schema, name); err != nil {
+		return "", err
+	}
 	return sc.scriptModule(ctx, moduleView, schema, name)
 }
 
@@ -163,6 +166,9 @@ func (sc *Scripter) ScriptView(ctx context.Context, schema, name string) (string
 
 // ScriptStoredProcedure returns the CREATE PROCEDURE definition.
 func (sc *Scripter) ScriptStoredProcedure(ctx context.Context, schema, name string) (string, error) {
+	if err := requireSchema("script stored procedure", schema, name); err != nil {
+		return "", err
+	}
 	return sc.scriptModule(ctx, moduleProcedure, schema, name)
 }
 
@@ -172,6 +178,9 @@ func (sc *Scripter) ScriptStoredProcedure(ctx context.Context, schema, name stri
 
 // ScriptFunction returns the CREATE FUNCTION definition.
 func (sc *Scripter) ScriptFunction(ctx context.Context, schema, name string) (string, error) {
+	if err := requireSchema("script function", schema, name); err != nil {
+		return "", err
+	}
 	return sc.scriptModule(ctx, moduleFunction, schema, name)
 }
 
@@ -188,6 +197,9 @@ func (sc *Scripter) ScriptFunction(ctx context.Context, schema, name string) (st
 // disabled one. Both follow ALTER too — ALTER TRIGGER resets a First or Last
 // order to None.
 func (sc *Scripter) ScriptTrigger(ctx context.Context, schema, name string) (string, error) {
+	if err := requireSchema("script trigger", schema, name); err != nil {
+		return "", err
+	}
 	script, err := sc.scriptModule(ctx, moduleTrigger, schema, name)
 	if err != nil || sc.opts.verb() == ScriptDrop {
 		return script, err

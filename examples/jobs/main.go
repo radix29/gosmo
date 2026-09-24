@@ -46,7 +46,7 @@ func main() {
 	// -- Category ----------------------------------------------------------
 	demo.Section("Category")
 	_ = srv.DeleteCategory(ctx, gosmo.CategoryClassJob, categoryName)
-	demo.Must(srv.CreateCategory(ctx, gosmo.CategoryClassJob, categoryName))
+	demo.Value(srv.CreateCategory(ctx, gosmo.CreateCategoryRequest{Class: gosmo.CategoryClassJob, Name: categoryName}))
 	defer func() { _ = srv.DeleteCategory(ctx, gosmo.CategoryClassJob, categoryName) }()
 	for _, c := range demo.Value(srv.Categories(ctx, gosmo.CategoryClassJob)) {
 		fmt.Printf("  [%d] %s\n", c.ID, c.Name)

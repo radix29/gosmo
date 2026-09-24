@@ -33,7 +33,7 @@ func TestLiveScriptedSetterMirroring(t *testing.T) {
 
 	const name = "gosmo_setifapplied_probe"
 	_ = srv.DropDatabase(ctx, name, true)
-	if err := srv.CreateDatabase(ctx, name, nil); err != nil {
+	if _, err := srv.CreateDatabase(ctx, CreateDatabaseRequest{Name: name}); err != nil {
 		t.Fatalf("create %s: %v", name, err)
 	}
 	defer func() {
@@ -237,7 +237,7 @@ func TestLiveScriptedSequenceRestartMirroring(t *testing.T) {
 
 	const name = "gosmo_seq_restart_probe"
 	_ = srv.DropDatabase(ctx, name, true)
-	if err := srv.CreateDatabase(ctx, name, nil); err != nil {
+	if _, err := srv.CreateDatabase(ctx, CreateDatabaseRequest{Name: name}); err != nil {
 		t.Fatalf("create %s: %v", name, err)
 	}
 	defer func() {
@@ -250,7 +250,7 @@ func TestLiveScriptedSequenceRestartMirroring(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open %s: %v", name, err)
 	}
-	if err := d.CreateSequence(ctx, CreateSequenceRequest{
+	if _, err := d.CreateSequence(ctx, CreateSequenceRequest{
 		Schema: "dbo", Name: "probe_seq", StartValue: 1, Increment: 1,
 	}); err != nil {
 		t.Fatalf("create sequence: %v", err)

@@ -676,27 +676,27 @@ func TestLiveServiceBrokerFamiliesRoundTrip(t *testing.T) {
 	// is the normal case here, so the order is what makes them succeed.
 	t.Run("drops", func(t *testing.T) {
 		if bindingCreated {
-			if err := src.DropRemoteServiceBinding(ctx, "sb_live_binding"); err != nil {
+			if err := src.RemoteServiceBindingRef("sb_live_binding").Drop(ctx); err != nil {
 				t.Errorf("DropRemoteServiceBinding: %v", err)
 			}
 		}
-		if err := src.DropBrokerPriority(ctx, "sb_live_priority"); err != nil {
+		if err := src.BrokerPriorityRef("sb_live_priority").Drop(ctx); err != nil {
 			t.Errorf("DropBrokerPriority: %v", err)
 		}
-		if err := src.DropRoute(ctx, "sb_live_route"); err != nil {
+		if err := src.RouteRef("sb_live_route").Drop(ctx); err != nil {
 			t.Errorf("DropRoute: %v", err)
 		}
-		if err := src.DropBrokerService(ctx, "//gosmo/live/service"); err != nil {
+		if err := src.BrokerServiceRef("//gosmo/live/service").Drop(ctx); err != nil {
 			t.Errorf("DropBrokerService: %v", err)
 		}
-		if err := src.DropBrokerQueue(ctx, "dbo", "sb_live_queue"); err != nil {
+		if err := src.BrokerQueueRef("dbo", "sb_live_queue").Drop(ctx); err != nil {
 			t.Errorf("DropBrokerQueue: %v", err)
 		}
-		if err := src.DropContract(ctx, "//gosmo/live/contract"); err != nil {
+		if err := src.ContractRef("//gosmo/live/contract").Drop(ctx); err != nil {
 			t.Errorf("DropContract: %v", err)
 		}
 		for _, name := range []string{"//gosmo/live/mt_xml", "//gosmo/live/mt_any"} {
-			if err := src.DropMessageType(ctx, name); err != nil {
+			if err := src.MessageTypeRef(name).Drop(ctx); err != nil {
 				t.Errorf("DropMessageType %s: %v", name, err)
 			}
 		}
@@ -717,7 +717,7 @@ func TestLiveServiceBrokerFamiliesRoundTrip(t *testing.T) {
 	// is what a caller shows: dropping the destination's message type while
 	// its contract still names it must fail, with Msg 3716.
 	t.Run("dependency refusal", func(t *testing.T) {
-		err := dst.DropMessageType(ctx, "//gosmo/live/mt_any")
+		err := dst.MessageTypeRef("//gosmo/live/mt_any").Drop(ctx)
 		if err == nil {
 			t.Fatal("dropping a message type still bound to a contract succeeded")
 		}

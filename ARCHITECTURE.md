@@ -287,11 +287,12 @@ The instance and database halves pair up: `ServerResourceStat` and
 | ----------------------- | ------------------------------------------ |
 | `Server.Databases`      | `srv.Databases(ctx)` / `srv.DatabaseRef(name)` (no-I/O handle) |
 | Current database         | `srv.CurrentDatabase(ctx)`                    |
+| Default file locations   | `srv.DefaultPaths(ctx)` → `DefaultPaths{Data, Log, Backup}`, read now — `srv.Info()`'s `Default*Path` fields are the connect-time snapshot, stale once a default moves; place files with this one |
 | Current login (`SUSER_NAME()`) | `srv.CurrentLogin(ctx)`                 |
 | `Server.Logins`         | `srv.Logins(ctx)` / `srv.LoginByName(ctx, name)` / `srv.LoginRef(name)` (no-I/O handle) |
 | `Server.Roles`          | `srv.ServerRoles(ctx)` / `srv.ServerRoleByName(ctx, name)` / `srv.ServerRoleRef(name)` (no-I/O handle) / `srv.ServerRoleMembers(ctx, role)` |
 | Server role administration | `role.Rename(ctx, newName)` / `role.ChangeOwner(ctx, owner)` / `srv.Add\|RemoveServerRoleMember(ctx, role, member)` |
-| Drop a server role      | `srv.DropServerRole(ctx, name)` / `role.Drop(ctx)`  |
+| Drop a server role      | `srv.ServerRoleRef(name).Drop(ctx)` / `role.Drop(ctx)`  |
 | Rename a database       | `srv.RenameDatabase(ctx, old, new, force)` — `force` puts it in single-user mode first |
 | Detach a database       | `srv.DetachDatabase(ctx, name, gosmo.DetachOptions{...})` — leaves the files on disk; a detach that fails after `DropConnections` is put back to MULTI_USER |
 | Free the pool's own sessions from a database | `srv.ReleaseIdleConnections(ctx)` — closes idle pooled connections, which otherwise sit inside the last database they read and block an exclusive-access statement (detach, rename, drop, `SET READ_ONLY`, RCSI, filegroup read-only — each of which calls it itself) |
@@ -306,7 +307,7 @@ The instance and database halves pair up: `ServerResourceStat` and
 | Kill session            | `srv.KillSession(ctx, id)`                      |
 | Error log               | `srv.ReadLog(ctx, logType, n)` / `srv.ReadLogFiltered(ctx, logType, n, search)` / `srv.EnumErrorLogs(ctx, logType)` / `srv.CycleLog(ctx, logType)` — see [Error log](#error-log) |
 | Database Mail           | `srv.MailProfiles(ctx)` / `srv.SendMail(ctx, ...)` |
-| Create login (safe)     | `srv.CreateLogin(ctx, name, password, opts)` — SQL, Windows, external provider, certificate or asymmetric key |
+| Create login (safe)     | `srv.CreateLogin(ctx, gosmo.CreateLoginRequest{Name, Password, Source, ...})` — SQL, Windows, external provider, certificate or asymmetric key |
 | Authentication mode     | `srv.SecurityInfo(ctx)`                       |
 | Server-level permissions | `srv.ServerPermissions(ctx)` / `srv.Grant\|Deny\|RevokeServerPermission(ctx, ...)` / `srv.ServerPermissionNames()` |
 | Server permissions with modifiers | the same methods' `opts gosmo.PermissionOptions` — `WITH GRANT OPTION`, `CASCADE`, `GRANT OPTION FOR`; the zero value is the plain statement |
@@ -316,7 +317,7 @@ The instance and database halves pair up: `ServerResourceStat` and
 | Server audits            | `srv.ServerAudits(ctx)` / `srv.ServerAuditByName(ctx, name)` / `srv.ServerAuditRef(name)` (no-I/O handle) / `srv.CreateServerAudit(ctx, spec)` — see [Audits](#audits-and-audit-specifications) |
 | Server audit specifications | `srv.ServerAuditSpecifications(ctx)` / `...ByName(ctx, name)` / `srv.ServerAuditSpecificationRef(name)` (no-I/O handle) / `srv.CreateServerAuditSpecification(ctx, spec)` |
 | Audit action groups      | `srv.AuditActionGroups(ctx)` / `srv.DatabaseAuditActionGroups(ctx)` / `srv.DatabaseAuditActions(ctx)` |
-| Backup devices           | `srv.BackupDevices(ctx)` / `srv.BackupDeviceByName(ctx, name)` / `srv.BackupDeviceRef(name)` (no-I/O handle) / `srv.CreateBackupDevice(ctx, name, type, physicalName)` / `dev.Drop(ctx, deleteFile)` / `dev.Headers(ctx)` |
+| Backup devices           | `srv.BackupDevices(ctx)` / `srv.BackupDeviceByName(ctx, name)` / `srv.BackupDeviceRef(name)` (no-I/O handle) / `srv.CreateBackupDevice(ctx, gosmo.CreateBackupDeviceRequest{Name, Type, PhysicalName})` / `dev.Drop(ctx, deleteFile)` / `dev.Headers(ctx)` |
 | Endpoints (all protocols) | `srv.Endpoints(ctx)` / `srv.EndpointByName(ctx, name)` / `ep.SetState(ctx, state)` / `ep.Drop(ctx)` / `ep.MirroringDetail(ctx)` / `ep.ServiceBrokerDetail(ctx)` — see [Endpoints](#endpoints) |
 | Server DDL / logon triggers | `srv.ServerTriggers(ctx)` / `srv.ServerTriggerByName(ctx, name)` / `srv.ServerTriggerRef(name)` (no-I/O handle) / `tr.Enable(ctx)` / `tr.Disable(ctx)` / `tr.Drop(ctx)` |
 | Azure engine edition             | `srv.Info().IsAzure()` — the test every version gate asks before it believes `VersionMajor`, which Azure freezes |
@@ -332,7 +333,7 @@ The instance and database halves pair up: `ServerResourceStat` and
 | Host OS family            | `srv.Info().Platform` (`"Windows"` / `"Linux"`, from `@@VERSION`) |
 | `Server.AvailabilityGroups` | `srv.AvailabilityGroups(ctx)` / `srv.AvailabilityGroupRef(name)` (no-I/O handle) / `srv.AvailabilityGroupByName(ctx, name)` — see [Always On](#always-on-availability-groups) |
 | Database mirroring endpoint | `srv.DatabaseMirroringEndpoint(ctx)` / `srv.CreateDatabaseMirroringEndpoint(ctx, spec)` |
-| Verify / inspect a backup | `srv.VerifyBackup(ctx, t)` / `srv.BackupHeaders(ctx, t)` / `srv.BackupFileList(ctx, t, setNumber)`, with `t` = `gosmo.DiskTarget(path)`, `gosmo.URLTarget(url)` or `gosmo.DeviceTarget(name)` |
+| Verify / inspect a backup | `srv.VerifyBackup(ctx, t...)` / `srv.BackupHeaders(ctx, t...)` / `srv.BackupFileList(ctx, setNumber, t...)`, with each `t` a `gosmo.DiskTarget(path)`, `gosmo.URLTarget(url)` or `gosmo.DeviceTarget(name)` — every family of a striped set |
 | Is this device a blob?    | `gosmo.IsBackupURL(device)` — decides `TO URL` vs `TO DISK`; a Managed Instance refuses DISK outright |
 | Log backup chain state    | `srv.DatabaseRecoveryStatuses(ctx)` / `db.RecoveryStatus(ctx)` → `*DatabaseRecoveryStatus` |
 | What may this login do?   | `srv.Capabilities(ctx)` → `*Capabilities` — see [Capabilities](#capabilities-of-the-connected-login) |
@@ -350,20 +351,20 @@ The instance and database halves pair up: `ServerResourceStat` and
 | One family of tables (System, FileTables, External, Graph) | `db.TablesOfKind(ctx, kind)` / `db.TablesOfKindFiltered(ctx, kind, f)` / `db.TableKindsPresent(ctx)` — see [Table kinds](#table-kinds) |
 | Bulk table/view + column snapshot | `db.Catalog(ctx)` (user objects) / `db.SystemCatalog(ctx)` (`sys` schema) |
 | `Database.Views`                | `db.Views(ctx)` / `db.DropView(ctx, schema, name)`  |
-| `Database.StoredProcedures`     | `db.StoredProcedures(ctx)`                     |
+| `Database.StoredProcedures`     | `db.StoredProcedures(ctx)` / `db.StoredProcedureByName(ctx, schema, name)` / `db.CreateStoredProcedure(ctx, req)` |
 | `Database.UserDefinedFunctions` | `db.UserDefinedFunctions(ctx)` / `db.DropFunction(ctx, schema, name)` |
 | System Views/Procedures/Functions | `db.SystemViews(ctx)` / `db.SystemStoredProcedures(ctx)` / `db.SystemFunctions(ctx)` |
-| `Database.Schemas`              | `db.Schemas(ctx)` / `db.SchemaByName(ctx, name)` / `schema.ObjectCount(ctx)` / `schema.ObjectCountsByType(ctx)` |
+| `Database.Schemas`              | `db.Schemas(ctx)` / `db.SchemaByName(ctx, name)` / `db.SchemaRef(name)` / `db.CreateSchema(ctx, req)` / `schema.ObjectCount(ctx)` / `schema.ObjectCountsByType(ctx)` |
 | `Database.Users`                | `db.Users(ctx)` / `db.UserByName(ctx, name)` / `db.UserRef(name)` (no-I/O handle) / `db.CreateUser(ctx, gosmo.CreateUserRequest{Name, Kind, ...})` — for login, with password (contained), without login, Windows, certificate, asymmetric key, external provider |
 | Database user administration    | `user.Rename(ctx, newName)` / `user.SetDefaultSchema(ctx, schemaName)` / `user.SetLogin(ctx, loginName)` |
 | `Database.AuditSpecifications`  | `db.DatabaseAuditSpecifications(ctx)` / `...ByName(ctx, name)` / `db.DatabaseAuditSpecificationRef(name)` (no-I/O handle) / `db.CreateDatabaseAuditSpecification(ctx, spec)` |
 | `Database.Roles`                | `db.DatabaseRoles(ctx)` / `db.RoleByName(ctx, name)` / `db.RoleMembers(ctx, roleName)` |
-| Database role administration    | `role.Rename(ctx, newName)` / `role.ChangeOwner(ctx, newOwner)` / `role.Drop(ctx)` / `db.DropDatabaseRole(ctx, name)` |
+| Database role administration    | `role.Rename(ctx, newName)` / `role.ChangeOwner(ctx, newOwner)` / `role.Drop(ctx)` / `db.RoleRef(name).Drop(ctx)` |
 | `Database.FileGroups`           | `db.FileGroups(ctx)` — `fg.Type` is the `type_desc` (ROWS / FILESTREAM / MEMORY_OPTIMIZED), `fg.IsFileStream()` the common test |
 | `Database.Triggers`             | `db.Triggers(ctx)` / `db.ObjectTriggers(ctx, schema, name)` (one table or view, by name) / `db.DropTrigger(ctx, schema, name)` |
 | Database-scope DDL triggers     | `db.DatabaseTriggers(ctx)` / `db.DatabaseTriggerByName(ctx, name)` / `db.DatabaseTriggerRef(name)` (no-I/O handle) / `tr.Enable(ctx)` / `tr.Disable(ctx)` / `tr.Drop(ctx)` — see [Database DDL triggers](#database-ddl-triggers) |
-| `Database.Sequences`            | `db.Sequences(ctx)` / `db.SequenceByName(ctx, schema, name)` / `db.DropSequence(ctx, schema, name)` |
-| `Database.Synonyms`             | `db.Synonyms(ctx)` / `db.SynonymByName(ctx, schema, name)` / `db.DropSynonym(ctx, schema, name)` |
+| `Database.Sequences`            | `db.Sequences(ctx)` / `db.SequenceByName(ctx, schema, name)` / `db.SequenceRef(schema, name).Drop(ctx)` |
+| `Database.Synonyms`             | `db.Synonyms(ctx)` / `db.SynonymByName(ctx, schema, name)` / `db.SynonymRef(schema, name).Drop(ctx)` |
 | `Database.UserDefinedDataTypes` / `...TableTypes` / `...Types` (CLR) | `db.UserDefinedDataTypes(ctx)` / `db.UserDefinedTableTypes(ctx)` / `db.ClrTypes(ctx)` (each with `...ByName(ctx, schema, name)`) / `db.SystemDataTypes(ctx)` — see [Types, rules and defaults](#types-rules-and-defaults) |
 | `Database.XMLSchemaCollections` | `db.XMLSchemaCollections(ctx)` / `db.XMLSchemaCollectionByName(ctx, schema, name)` / `c.Definition(ctx)` |
 | `Database.Rules` / `Database.Defaults` | `db.Rules(ctx)` / `db.Defaults(ctx)` (each with `...ByName(ctx, schema, name)` and `db.Drop...`) — read-only, deprecated families |
@@ -375,16 +376,16 @@ The instance and database halves pair up: `ServerResourceStat` and
 | Parameters of a procedure or function | `db.Parameters(ctx, schema, name)` → `[]*Parameter` |
 | Filtered listings                | `db.TablesFiltered(ctx, f)` / `ViewsFiltered` / `StoredProceduresFiltered` / `UserDefinedFunctionsFiltered` (and the `System...` forms) — see [Filtering a listing](#filtering-a-listing) |
 | What may this login do here?     | `db.Capabilities(ctx)` → `*DatabaseCapabilities` |
-| Partition functions             | `db.PartitionFunctions(ctx)` / `db.PartitionFunctionByName(ctx, name)` |
-| Partition schemes               | `db.PartitionSchemes(ctx)` / `db.PartitionSchemeByName(ctx, name)` |
+| Partition functions             | `db.PartitionFunctions(ctx)` / `db.PartitionFunctionByName(ctx, name)` / `db.PartitionFunctionRef(name)` |
+| Partition schemes               | `db.PartitionSchemes(ctx)` / `db.PartitionSchemeByName(ctx, name)` / `db.PartitionSchemeRef(name)` |
 | Extended properties             | `db.ExtendedProperties(ctx, level)` / `db.AddExtendedProperty(ctx, ...)` / `db.SetExtendedProperty(ctx, ...)` / `db.DropExtendedProperty(ctx, ...)` |
-| `Database.Certificates`         | `db.Certificates(ctx)` / `db.CertificateByName(ctx, name)` / `db.CreateCertificate(ctx, spec)` / `cert.Drop(ctx)` — see [Certificates](#certificates-and-the-database-master-key) |
-| `Database.AsymmetricKeys`       | `db.AsymmetricKeys(ctx)` / `db.AsymmetricKeyByName(ctx, name)` / `db.AsymmetricKeyRef(name)` / `db.CreateAsymmetricKey(ctx, spec)` / `key.Drop(ctx)` — generated keys only; every import form reads the server's own filesystem or an EKM provider |
-| `Database.SymmetricKeys`        | `db.SymmetricKeys(ctx)` / `db.SymmetricKeyByName(ctx, name)` / `db.SymmetricKeyRef(name)` / `db.CreateSymmetricKey(ctx, spec)` / `key.AddEncryption(ctx, enc, dec)` / `key.DropEncryption(ctx, enc, dec)` / `key.Drop(ctx)` — each key with its `Encryptions` (certificate / asymmetric key / symmetric key / password), the master key excluded |
-| Database master key             | `db.HasMasterKey(ctx)` / `db.CreateMasterKey(ctx, password)` / `db.MasterKey(ctx)` / `db.MasterKeyRef()` — see [Certificates](#certificates-and-the-database-master-key) |
+| `Database.Certificates`         | `db.Certificates(ctx)` / `db.CertificateByName(ctx, name)` / `db.CreateCertificate(ctx, req)` / `cert.Drop(ctx)` — see [Certificates](#certificates-and-the-database-master-key) |
+| `Database.AsymmetricKeys`       | `db.AsymmetricKeys(ctx)` / `db.AsymmetricKeyByName(ctx, name)` / `db.AsymmetricKeyRef(name)` / `db.CreateAsymmetricKey(ctx, req)` / `key.Drop(ctx)` — generated keys only; every import form reads the server's own filesystem or an EKM provider |
+| `Database.SymmetricKeys`        | `db.SymmetricKeys(ctx)` / `db.SymmetricKeyByName(ctx, name)` / `db.SymmetricKeyRef(name)` / `db.CreateSymmetricKey(ctx, req)` / `key.AddEncryption(ctx, enc, dec)` / `key.DropEncryption(ctx, enc, dec)` / `key.Drop(ctx)` — each key with its `Encryptions` (certificate / asymmetric key / symmetric key / password), the master key excluded |
+| Database master key             | `db.HasMasterKey(ctx)` / `db.CreateMasterKey(ctx, gosmo.CreateMasterKeyRequest{Password})` / `db.MasterKey(ctx)` / `db.MasterKeyRef()` — see [Certificates](#certificates-and-the-database-master-key) |
 | Module signatures               | `db.ModuleSignatures(ctx)` / `db.SignaturesOn(ctx, schema, module)` / `db.AddSignature(ctx, ...)` / `db.DropSignature(ctx, ...)` / `cert.SignedModules(ctx)` / `key.SignedModules(ctx)` |
-| Column master keys              | `db.ColumnMasterKeys(ctx)` / `db.ColumnMasterKeyByName(ctx, name)` / `db.CreateColumnMasterKey(ctx, ...)` / `...WithSignature(ctx, ...)` |
-| Column encryption keys          | `db.ColumnEncryptionKeys(ctx)` / `db.ColumnEncryptionKeyByName(ctx, name)` / `db.CreateColumnEncryptionKey(ctx, name, values)` / `cek.AddValue(ctx, value)` / `cek.DropValue(ctx, masterKeyName)` — the two halves of a master-key rotation |
+| Column master keys              | `db.ColumnMasterKeys(ctx)` / `db.ColumnMasterKeyByName(ctx, name)` / `db.ColumnMasterKeyRef(name)` / `db.CreateColumnMasterKey(ctx, gosmo.CreateColumnMasterKeyRequest{Name, KeyStoreProvider, KeyPath, Signature})` — a `Signature` makes it allow enclave computations |
+| Column encryption keys          | `db.ColumnEncryptionKeys(ctx)` / `db.ColumnEncryptionKeyByName(ctx, name)` / `db.ColumnEncryptionKeyRef(name)` / `db.CreateColumnEncryptionKey(ctx, gosmo.CreateColumnEncryptionKeyRequest{Name, Values})` / `cek.AddValue(ctx, value)` / `cek.DropValue(ctx, masterKeyName)` — the two halves of a master-key rotation |
 | Security policies (RLS)         | `db.SecurityPolicies(ctx)` / `db.SecurityPolicyByName(ctx, schema, name)` |
 | Database scoped credentials     | `db.DatabaseScopedCredentials(ctx)` / `db.DatabaseScopedCredentialByName(ctx, name)` / `db.DatabaseScopedCredentialRef(name)` (no-I/O handle) / `db.CreateDatabaseScopedCredential(ctx, spec)` — see [Credentials](#credentials) |
 | `Database.RecoveryModel`        | `db.SetRecoveryModel(ctx, model)`                |
@@ -407,7 +408,7 @@ The instance and database halves pair up: `ServerResourceStat` and
 | Add / alter / remove file       | `db.AddFile(ctx, spec)` / `db.AlterFile(ctx, name, m)` / `db.RemoveFile(ctx, name)` |
 | Add / remove filegroup          | `db.AddFileGroup(ctx, name)` / `db.RemoveFileGroup(ctx, name)` |
 | Filegroup default / read-only   | `db.SetDefaultFileGroup(ctx, name)` / `db.SetFileGroupReadOnly(ctx, name, ro, term)` — `TerminationRollbackImmediate` kills the database's sessions in the same batch, since `MODIFY FILEGROUP` ignores `WITH ROLLBACK IMMEDIATE` |
-| CREATE DATABASE file placement  | `CreateDatabaseOptions.PrimaryFile` / `.LogFile` (`*DatabaseFileSpec`) |
+| CREATE DATABASE file placement  | `CreateDatabaseRequest.PrimaryFile` / `.LogFile` (`*DatabaseFileSpec`) |
 | Change tracking                 | `db.ChangeTracking(ctx)` / `db.SetChangeTracking(ctx, info)` |
 | Table change tracking           | `db.TableChangeTracking(ctx)` / `db.TableChangeTrackingFor(ctx, schema, name)` / `db.SetTableChangeTracking(ctx, ...)` |
 | Database-level permissions      | `db.DatabasePermissions(ctx)` / `db.Grant\|Deny\|RevokeDatabasePermission(ctx, ...)` |
@@ -542,7 +543,7 @@ rather than a parse error naming a column number.
 
 | gosmo                                   |
 | --------------------------------------- |
-| `srv.CreateLogin(ctx, name, password, opts)` |
+| `srv.CreateLogin(ctx, req)` |
 | `login.ChangePassword(ctx, newPassword, gosmo.ChangePasswordOptions{MustChange, Unlock})` |
 | `login.Enable(ctx)` / `login.Disable(ctx)`   |
 | `login.AddServerRoleMember(ctx, role)`       |
@@ -895,7 +896,7 @@ since SQL Server 2008 in favour of `CHECK` and `DEFAULT` constraints.
 
 | Operation        | Alias type | Table / CLR type | XML schema collection | Rule / default |
 | ---------------- | ---------- | ---------------- | --------------------- | -------------- |
-| Drop             | `db.DropType` / `t.Drop(ctx)` | `db.DropType` / `t.Drop(ctx)` | `db.DropXMLSchemaCollection` / `c.Drop(ctx)` | `db.DropRule` / `db.DropDefault` / `.Drop()` |
+| Drop             | `db.UserDefinedDataTypeRef(schema, name).Drop(ctx)` / `t.Drop(ctx)` | `db.UserDefinedTableTypeRef` / `db.ClrTypeRef` / `t.Drop(ctx)` | `db.XMLSchemaCollectionRef(schema, name).Drop(ctx)` / `c.Drop(ctx)` | `db.RuleRef` / `db.DefaultRef` / `.Drop(ctx)` |
 | Rename           | `db.RenameUserDefinedDataType` | — (`sp_rename` has no class for them) | — | `db.RenameObject` |
 | Move to a schema | `db.TransferType` | `db.TransferType` | `db.TransferXMLSchemaCollection` | `db.TransferObject` |
 
@@ -924,7 +925,7 @@ collection, a column or type bound to the rule or default (`sp_unbindrule`
 | *db* → Programmability → Assemblies | `db.Assemblies(ctx)` / `db.AssemblyByName(ctx, name)` → `*Assembly` |
 | Its files                         | `a.Files(ctx)` → `[]*AssemblyFile` (name, id, byte length) / `a.FileContent(ctx, fileID)` (the bytes) |
 | The routines and types it implements | `a.Modules(ctx)` → `[]*AssemblyModule` (object, class, method) |
-| Delete                            | `a.Drop(ctx)` / `db.DropAssembly(ctx, name)`           |
+| Delete                            | `a.Drop(ctx)` / `db.AssemblyRef(name).Drop(ctx)`           |
 
 `PermissionSet` is an `AssemblyPermissionSet` — `AssemblySafe`,
 `AssemblyExternalAccess` or `AssemblyUnsafe`. There is no create or alter:
@@ -941,7 +942,7 @@ VISIBILITY = OFF` back, so a re-created dependency stays hidden from
 | --------------------------------- | ---------------------------------------------- |
 | *db* → Programmability → Plan Guides | `db.PlanGuides(ctx)` / `db.PlanGuideByName(ctx, name)` / `db.PlanGuideRef(name)` (no-I/O handle) |
 | Enable / Disable                  | `g.Enable(ctx)` / `g.Disable(ctx)` — `sp_control_plan_guide` |
-| Delete                            | `g.Drop(ctx)` / `db.DropPlanGuide(ctx, name)`          |
+| Delete                            | `g.Drop(ctx)` / `db.PlanGuideRef(name).Drop(ctx)`          |
 | Script                            | `sc.ScriptPlanGuide(ctx, name)` — the `sp_create_plan_guide` call, every argument named |
 
 `Scope` is a `PlanGuideScope` (`PlanGuideScopeObject`, `...SQL`,
@@ -960,9 +961,9 @@ and Machine Learning Services' external libraries.
 
 | SSMS folder              | gosmo                                              |
 | ------------------------ | -------------------------------------------------- |
-| External Data Sources    | `db.ExternalDataSources(ctx)` / `db.ExternalDataSourceByName(ctx, name)` / `s.Drop(ctx)` / `db.DropExternalDataSource(ctx, name)` |
-| External File Formats    | `db.ExternalFileFormats(ctx)` / `db.ExternalFileFormatByName(ctx, name)` / `f.Drop(ctx)` / `db.DropExternalFileFormat(ctx, name)` |
-| External Libraries       | `db.ExternalLibraries(ctx)` / `db.ExternalLibraryByName(ctx, name)` / `l.Drop(ctx)` / `db.DropExternalLibrary(ctx, name)` |
+| External Data Sources    | `db.ExternalDataSources(ctx)` / `db.ExternalDataSourceByName(ctx, name)` / `s.Drop(ctx)` / `db.ExternalDataSourceRef(name).Drop(ctx)` |
+| External File Formats    | `db.ExternalFileFormats(ctx)` / `db.ExternalFileFormatByName(ctx, name)` / `f.Drop(ctx)` / `db.ExternalFileFormatRef(name).Drop(ctx)` |
+| External Libraries       | `db.ExternalLibraries(ctx)` / `db.ExternalLibraryByName(ctx, name)` / `l.Drop(ctx)` / `db.ExternalLibraryRef(name).Drop(ctx)` |
 
 Read, script and drop only: data sources and file formats have no `ALTER`
 that restates them, and `ALTER EXTERNAL LIBRARY` replaces the package
@@ -986,13 +987,13 @@ are the ones that change in operation rather than at design time.
 
 | SSMS folder              | gosmo                                              |
 | ------------------------ | -------------------------------------------------- |
-| Message Types            | `db.MessageTypes(ctx)` / `db.MessageTypeByName(ctx, name)` / `mt.Drop(ctx)` / `db.DropMessageType(ctx, name)` |
-| Contracts                | `db.Contracts(ctx)` / `db.ContractByName(ctx, name)` / `c.Drop(ctx)` / `db.DropContract(ctx, name)` |
-| Queues                   | `db.BrokerQueues(ctx)` / `db.BrokerQueueByName(ctx, schema, name)` / `q.Drop(ctx)` / `db.DropBrokerQueue(ctx, schema, name)` |
-| Services                 | `db.BrokerServices(ctx)` / `db.BrokerServiceByName(ctx, name)` / `s.Drop(ctx)` / `db.DropBrokerService(ctx, name)` |
-| Routes                   | `db.Routes(ctx)` / `db.RouteByName(ctx, name)` / `r.Drop(ctx)` / `db.DropRoute(ctx, name)` |
-| Remote Service Bindings  | `db.RemoteServiceBindings(ctx)` / `db.RemoteServiceBindingByName(ctx, name)` / `b.Drop(ctx)` / `db.DropRemoteServiceBinding(ctx, name)` |
-| Broker Priorities        | `db.BrokerPriorities(ctx)` / `db.BrokerPriorityByName(ctx, name)` / `p.Drop(ctx)` / `db.DropBrokerPriority(ctx, name)` |
+| Message Types            | `db.MessageTypes(ctx)` / `db.MessageTypeByName(ctx, name)` / `mt.Drop(ctx)` / `db.MessageTypeRef(name).Drop(ctx)` |
+| Contracts                | `db.Contracts(ctx)` / `db.ContractByName(ctx, name)` / `c.Drop(ctx)` / `db.ContractRef(name).Drop(ctx)` |
+| Queues                   | `db.BrokerQueues(ctx)` / `db.BrokerQueueByName(ctx, schema, name)` / `q.Drop(ctx)` / `db.BrokerQueueRef(schema, name).Drop(ctx)` |
+| Services                 | `db.BrokerServices(ctx)` / `db.BrokerServiceByName(ctx, name)` / `s.Drop(ctx)` / `db.BrokerServiceRef(name).Drop(ctx)` |
+| Routes                   | `db.Routes(ctx)` / `db.RouteByName(ctx, name)` / `r.Drop(ctx)` / `db.RouteRef(name).Drop(ctx)` |
+| Remote Service Bindings  | `db.RemoteServiceBindings(ctx)` / `db.RemoteServiceBindingByName(ctx, name)` / `b.Drop(ctx)` / `db.RemoteServiceBindingRef(name).Drop(ctx)` |
+| Broker Priorities        | `db.BrokerPriorities(ctx)` / `db.BrokerPriorityByName(ctx, name)` / `p.Drop(ctx)` / `db.BrokerPriorityRef(name).Drop(ctx)` |
 | Queue Properties (write)  | `q.Alter(ctx, QueueSettings{…})` / `db.AlterBrokerQueue(ctx, schema, name, s)` |
 | Route Properties (write)  | `r.Alter(ctx, RouteSettings{…})` / `db.AlterRoute(ctx, name, s)` |
 | A queue's message counts | `db.QueueMessageCounts(ctx)` → `map[objectID]int64`, or `q.MessageCount(ctx)` |
@@ -1302,14 +1303,28 @@ srv.Backup(ctx, gosmo.BackupOptions{
 // dialog's backup-set/file picker.
 bak := gosmo.DiskTarget(`C:\Backups\MyDB.bak`)
 headers, _ := srv.BackupHeaders(ctx, bak)
-files, _ := srv.BackupFileList(ctx, bak, 0) // 0: the first set on the device
+files, _ := srv.BackupFileList(ctx, 0, bak) // 0: the first set on the device
 err := srv.VerifyBackup(ctx, bak)
 
 // A device backups were appended to holds one set per backup, and their file
 // lists differ. Pass the same 1-based set number to the file list and to the
 // restore, or the MOVE clauses name logical files the restored set doesn't
 // contain and SQL Server rejects the statement.
-files, _ = srv.BackupFileList(ctx, bak, headers[1].Position)
+files, _ = srv.BackupFileList(ctx, headers[1].Position, bak)
+
+// A backup striped over several files is one media set: every read, and the
+// restore, names all of them — one stripe alone is refused. BackupHistory
+// returns one entry per set, with its files in Devices and its place on
+// them in Position.
+history, _ := srv.BackupHistory(ctx, "MyDB")
+for _, b := range history {
+	targets := make([]gosmo.BackupTarget, len(b.Devices))
+	for i, d := range b.Devices {
+		targets[i] = gosmo.DiskTarget(d)
+	}
+	err = srv.VerifyBackup(ctx, targets...)
+	// ...RestoreOptions{Devices: targets, FileNumber: b.Position}
+}
 ```
 
 #### Backing up to Azure Storage
@@ -1342,7 +1357,7 @@ Objects → Backup Devices — usable anywhere `BACKUP` or `RESTORE` takes one.
 | SSMS equivalent               | gosmo                                                    |
 | ----------------------------- | -------------------------------------------------------- |
 | Server Objects → Backup Devices | `srv.BackupDevices(ctx)` / `srv.BackupDeviceByName(ctx, name)` / `srv.BackupDeviceRef(name)` (no-I/O handle) |
-| New backup device             | `srv.CreateBackupDevice(ctx, name, gosmo.BackupDeviceDisk, path)` |
+| New backup device             | `srv.CreateBackupDevice(ctx, gosmo.CreateBackupDeviceRequest{Name: name, Type: gosmo.BackupDeviceDisk, PhysicalName: path})` |
 | Delete (optionally the file)  | `dev.Drop(ctx, deleteFile)`                                    |
 | Contents                      | `dev.Headers(ctx)` → `[]*BackupHeader`                       |
 
@@ -1566,7 +1581,8 @@ manageable, _ := srv.EventAlerts(ctx)
 
 ```go
 cats, _ := srv.Categories(ctx, gosmo.CategoryClassJob)
-srv.CreateCategory(ctx, gosmo.CategoryClassAlert, "Storage")
+cat, _ := srv.CategoryByName(ctx, gosmo.CategoryClassJob, "Nightly")
+srv.CreateCategory(ctx, gosmo.CreateCategoryRequest{Class: gosmo.CategoryClassAlert, Name: "Storage"})
 srv.DeleteCategory(ctx, gosmo.CategoryClassAlert, "Storage")
 ```
 
@@ -1615,19 +1631,19 @@ authentication — each instance needs the others' public **certificates**.
 | Security → Certificates          | `db.Certificates(ctx)` / `db.CertificateByName(ctx, name)` / `db.CertificateRef(name)` |
 | Security → Asymmetric Keys       | `db.AsymmetricKeys(ctx)` / `db.AsymmetricKeyByName(ctx, name)` / `db.AsymmetricKeyRef(name)` |
 | Security → Symmetric Keys        | `db.SymmetricKeys(ctx)` / `db.SymmetricKeyByName(ctx, name)` (`ErrNotFound` on absence) / `db.SymmetricKeyRef(name)` |
-| New / drop certificate           | `db.CreateCertificate(ctx, gosmo.CertificateSpec{...})` / `cert.Drop(ctx)` |
-| Database master key              | `db.HasMasterKey(ctx)` / `db.CreateMasterKey(ctx, password)`      |
+| New / drop certificate           | `db.CreateCertificate(ctx, gosmo.CreateCertificateRequest{...})` / `cert.Drop(ctx)` |
+| Database master key              | `db.HasMasterKey(ctx)` / `db.CreateMasterKey(ctx, req)`           |
 | Master key properties / regenerate | `db.MasterKey(ctx)` (`nil` when absent or invisible) / `mk.Regenerate(ctx, password, force, openPassword)` |
 | Master key encryptions / backup  | `mk.AddEncryption(ctx, enc, openPassword)` / `mk.DropEncryption(ctx, ...)` (service master key or password) / `mk.Backup(ctx, file, password, openPassword)` / `mk.Drop(ctx)` — `openPassword` opens a key the service master key no longer encrypts |
 | Back up a certificate            | `cert.Backup(ctx, gosmo.CertificateBackupSpec{...})` — files on the *server*, private key optional |
 | Remove a private key             | `cert.RemovePrivateKey(ctx)` / `asymKey.RemovePrivateKey(ctx)` — irreversible; there is no `BACKUP ASYMMETRIC KEY` |
 | Change owner                     | `cert.ChangeOwner(ctx, u)` / `asymKey.ChangeOwner(ctx, u)` / `symKey.ChangeOwner(ctx, u)` — `ALTER AUTHORIZATION`, which drops the object's explicit permissions |
-| Keys held by an EKM provider     | `AsymmetricKeySpec.FromProvider` / `SymmetricKeySpec.FromProvider` (`gosmo.ProviderKey`) — not run live; no test instance has a provider |
+| Keys held by an EKM provider     | `CreateAsymmetricKeyRequest.FromProvider` / `CreateSymmetricKeyRequest.FromProvider` (`gosmo.ProviderKey`) — not run live; no test instance has a provider |
 | Module signatures                | `db.AddSignature(ctx, schema, module, gosmo.Signer{...}, counter)` / `db.DropSignature(ctx, ...)` / `db.SignaturesOn(ctx, schema, module)` / `cert.SignedModules(ctx)` / `asymKey.SignedModules(ctx)` |
 | Export the public certificate    | `cert.Encoded(ctx)` → `[]byte` (`CERTENCODED`)               |
-| Import it on another instance    | `CertificateSpec.FromBinary` (`CREATE CERTIFICATE ... FROM BINARY`, every supported version) |
-| New / drop asymmetric key        | `db.CreateAsymmetricKey(ctx, gosmo.AsymmetricKeySpec{...})` (generated: `WITH ALGORITHM`) / `key.Drop(ctx)` |
-| New / drop symmetric key         | `db.CreateSymmetricKey(ctx, gosmo.SymmetricKeySpec{...})` (`KEY_SOURCE` / `IDENTITY_VALUE` optional) / `key.Drop(ctx)` |
+| Import it on another instance    | `CreateCertificateRequest.FromBinary` (`CREATE CERTIFICATE ... FROM BINARY`, every supported version) |
+| New / drop asymmetric key        | `db.CreateAsymmetricKey(ctx, gosmo.CreateAsymmetricKeyRequest{...})` (generated: `WITH ALGORITHM`) / `key.Drop(ctx)` |
+| New / drop symmetric key         | `db.CreateSymmetricKey(ctx, gosmo.CreateSymmetricKeyRequest{...})` (`KEY_SOURCE` / `IDENTITY_VALUE` optional) / `key.Drop(ctx)` |
 | Symmetric key → Encryption       | `key.AddEncryption(ctx, enc, dec)` / `key.DropEncryption(ctx, enc, dec)` — `dec` opens the key; OPEN, ALTER and CLOSE go as one batch on one connection |
 | Script as CREATE / DROP          | `sc.ScriptCertificate(ctx, name)` — `FROM BINARY` of the public certificate; the private key is not scripted |
 | Script asymmetric key            | `sc.ScriptAsymmetricKey(ctx, name)` — `WITH ALGORITHM` and owner: a new key pair, since neither half can be scripted back |
@@ -1651,7 +1667,7 @@ wrapping `ErrNotFound`, like every other by-name lookup — it answered
 | SSMS equivalent                | gosmo                                                     |
 | ------------------------------ | --------------------------------------------------------- |
 | Server Objects → Endpoints     | `srv.DatabaseMirroringEndpoint(ctx)` → `*DatabaseMirroringEndpoint` |
-| New endpoint                   | `srv.CreateDatabaseMirroringEndpoint(ctx, gosmo.EndpointSpec{...})` |
+| New endpoint                   | `srv.CreateDatabaseMirroringEndpoint(ctx, gosmo.CreateDatabaseMirroringEndpointRequest{...})` |
 | Start / stop / drop            | `e.Start(ctx)` / `e.Stop(ctx)` / `e.Drop(ctx)`                      |
 | Grant CONNECT to a peer's login | `e.GrantConnect(ctx, login)`                                   |
 | The `TCP://host:port` form     | `e.URL()`                                                  |
@@ -1704,13 +1720,13 @@ is the destination — a file, the Windows Application log or the Security log
 | Enable / disable               | `a.SetState(ctx, true \| false)`                                 |
 | Is it running, and to which file | `a.Status(ctx)` → `*ServerAuditStatus`                       |
 | Security → Server Audit Specifications | `srv.ServerAuditSpecifications(ctx)` / `...ByName(ctx, name)` / `srv.ServerAuditSpecificationRef(name)` |
-| New specification              | `srv.CreateServerAuditSpecification(ctx, gosmo.ServerAuditSpecificationSpec{...})` |
+| New specification              | `srv.CreateServerAuditSpecification(ctx, gosmo.CreateServerAuditSpecificationRequest{...})` |
 | Add / drop action groups       | `spec.AddActionGroups(ctx, g...)` / `spec.DropActionGroups(ctx, g...)` |
 | Point it at another audit      | `spec.SetAudit(ctx, auditName)`                                  |
 | Enable / disable / drop        | `spec.SetState(ctx, on)` / `spec.Drop(ctx)`                         |
 | What can be audited            | `srv.AuditActionGroups(ctx)`                                   |
 | Database → Security → Database Audit Specifications | `db.DatabaseAuditSpecifications(ctx)` / `...ByName(ctx, name)` / `db.DatabaseAuditSpecificationRef(name)` |
-| New database specification     | `db.CreateDatabaseAuditSpecification(ctx, gosmo.DatabaseAuditSpecificationSpec{...})` |
+| New database specification     | `db.CreateDatabaseAuditSpecification(ctx, gosmo.CreateDatabaseAuditSpecificationRequest{...})` |
 | Add / drop groups and actions  | `spec.AddActions(ctx, groups, actions)` / `spec.DropActions(ctx, groups, actions)` |
 | What can be audited in a database | `srv.DatabaseAuditActionGroups(ctx)` / `srv.DatabaseAuditActions(ctx)` |
 
@@ -1752,7 +1768,7 @@ SSMS's Security → Credentials, and the identity a login can be mapped to.
 | SSMS equivalent           | gosmo                                                |
 | ------------------------- | ---------------------------------------------------- |
 | Security → Credentials    | `srv.Credentials(ctx)` / `srv.CredentialByName(ctx, name)` / `srv.CredentialRef(name)` (no-I/O handle) |
-| New credential            | `srv.CreateCredential(ctx, gosmo.CredentialSpec{Name, Identity, Secret, CryptographicProvider})` |
+| New credential            | `srv.CreateCredential(ctx, gosmo.CreateCredentialRequest{Name, Identity, Secret, CryptographicProvider})` |
 | Change identity or secret | `cred.Alter(ctx, identity, secret)` — `secret` is a `*string`, and nil **clears** the stored secret: `ALTER CREDENTIAL` resets both halves, so there is no form that changes the identity and keeps the secret |
 | Drop                      | `cred.Drop(ctx)`                                        |
 | Cryptographic providers   | `srv.CryptographicProviders(ctx)`                       |
@@ -1765,12 +1781,12 @@ instead of a value it cannot know.
 Database-scoped credentials are a separate securable with their own DDL, and
 live on `*Database` rather than `*Server` — SSMS's *database* → Security →
 Database Scoped Credentials. There is no `FOR CRYPTOGRAPHIC PROVIDER` form of
-one, so `DatabaseScopedCredentialSpec` has no provider field.
+one, so `CreateDatabaseScopedCredentialRequest` has no provider field.
 
 | SSMS equivalent                       | gosmo                                          |
 | ------------------------------------- | ---------------------------------------------- |
 | *db* → Security → Database Scoped Credentials | `db.DatabaseScopedCredentials(ctx)` / `db.DatabaseScopedCredentialByName(ctx, name)` / `db.DatabaseScopedCredentialRef(name)` (no-I/O handle) |
-| New database scoped credential        | `db.CreateDatabaseScopedCredential(ctx, gosmo.DatabaseScopedCredentialSpec{Name, Identity, Secret})` |
+| New database scoped credential        | `db.CreateDatabaseScopedCredential(ctx, gosmo.CreateDatabaseScopedCredentialRequest{Name, Identity, Secret})` |
 | Change identity or secret             | `dsc.Alter(ctx, identity, secret)` — same `*string`, same meaning |
 | Drop                                  | `dsc.Drop(ctx)`                                   |
 
@@ -1959,13 +1975,23 @@ external, FileTable, ledger, Always Encrypted — with an error wrapping
 `ErrUnsupported`, before any text is produced. It is not
 `ErrUnsupportedVersion`: nothing is wrong with the server's version.
 
+### `ErrSchemaRequired`
+
+Every call that takes a schema-scoped name refuses an empty schema with
+`ErrSchemaRequired`, before a statement is built — parameters
+(`db.DropTable(ctx, "", "t", false)`), request fields
+(`CreateTableRequest.Schema`) and handles (`db.SequenceRef("", "s").Drop(ctx)`,
+any write on `db.TableRef("", "t")`) alike. An empty schema once meant dbo to
+some calls and the caller's own default schema to others; either default
+addresses the wrong object for some caller.
+
 ### `ErrUnsupportedVersion`
 
 A call gosmo refuses because the connected instance is older than the
 feature it names wraps `ErrUnsupportedVersion` — decided here, before any
 statement is sent, because the server's own answer would be a parse error
 naming syntax the caller never wrote
-(`CreateColumnMasterKeyWithSignature` below SQL Server 2019 is the standing
+(`CreateColumnMasterKey` with a `Signature` below SQL Server 2019 is the standing
 case). It is only for that: a missing *column* is gated instead, so the read
 returns a zero value rather than an error. Where a caller can ask in
 advance, it should — `db.EnclaveComputationsSupported()`,

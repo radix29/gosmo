@@ -109,7 +109,7 @@ func TestValidCategoryClass(t *testing.T) {
 
 func TestCreateAndDeleteCategoryRejectUnknownClass(t *testing.T) {
 	s := &Server{}
-	if err := s.CreateCategory(t.Context(), CategoryClass("EVIL"), "cat"); err == nil {
+	if _, err := s.CreateCategory(t.Context(), CreateCategoryRequest{Class: CategoryClass("EVIL"), Name: "cat"}); err == nil {
 		t.Error("CreateCategory accepted an unrecognized category class, want an error")
 	}
 	if err := s.DeleteCategory(t.Context(), CategoryClass("EVIL"), "cat"); err == nil {
@@ -135,7 +135,7 @@ func TestSetRecoveryModelRejectsUnknownModel(t *testing.T) {
 
 func TestCreateDatabaseRejectsUnknownRecoveryModel(t *testing.T) {
 	s := &Server{}
-	err := s.CreateDatabase(t.Context(), "appdb", &CreateDatabaseOptions{RecoveryModel: RecoveryModel("FULL; DROP DATABASE appdb; --")})
+	_, err := s.CreateDatabase(t.Context(), CreateDatabaseRequest{Name: "appdb", RecoveryModel: RecoveryModel("FULL; DROP DATABASE appdb; --")})
 	if err == nil {
 		t.Error("CreateDatabase accepted an unrecognized recovery model, want an error")
 	}
@@ -197,7 +197,7 @@ func TestCreateTableRejectsUnknownDataType(t *testing.T) {
 			{Name: "Id", DataType: DataType("int); DROP TABLE Users; --")},
 		},
 	}
-	if err := d.CreateTable(t.Context(), req); err == nil {
+	if _, err := d.CreateTable(t.Context(), req); err == nil {
 		t.Error("CreateTable accepted an unrecognized data type, want an error")
 	}
 }
@@ -208,7 +208,7 @@ func TestCreateSequenceRejectsUnknownDataType(t *testing.T) {
 		Name:     "EvilSeq",
 		DataType: DataType("int); DROP TABLE Users; --"),
 	}
-	if err := d.CreateSequence(t.Context(), req); err == nil {
+	if _, err := d.CreateSequence(t.Context(), req); err == nil {
 		t.Error("CreateSequence accepted an unrecognized data type, want an error")
 	}
 }
@@ -248,14 +248,14 @@ func TestValidPartitionBoundary(t *testing.T) {
 
 func TestCreatePartitionFunctionRejectsUnknownDataTypeAndBadBoundary(t *testing.T) {
 	d := &Database{Name: "appdb", server: &Server{}}
-	if err := d.CreatePartitionFunction(t.Context(), CreatePartitionFunctionRequest{
+	if _, err := d.CreatePartitionFunction(t.Context(), CreatePartitionFunctionRequest{
 		Name:       "pf1",
 		InputType:  DataType("int); DROP TABLE Users; --"),
 		Boundaries: []string{"100"},
 	}); err == nil {
 		t.Error("CreatePartitionFunction accepted an unrecognized data type, want an error")
 	}
-	if err := d.CreatePartitionFunction(t.Context(), CreatePartitionFunctionRequest{
+	if _, err := d.CreatePartitionFunction(t.Context(), CreatePartitionFunctionRequest{
 		Name:       "pf1",
 		InputType:  DataTypeInt,
 		Boundaries: []string{"100); DROP TABLE Users; --"},

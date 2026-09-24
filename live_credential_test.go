@@ -41,7 +41,7 @@ func TestLiveCredentialCreateAlterReadDrop(t *testing.T) {
 	cleanup()
 	defer cleanup()
 
-	c, err := s.CreateCredential(ctx, CredentialSpec{
+	c, err := s.CreateCredential(ctx, CreateCredentialRequest{
 		Name:     liveCredentialName,
 		Identity: `GOSMO\svc_account`,
 		Secret:   "gosmo-live-secret-1",
@@ -139,7 +139,7 @@ func TestLiveCredentialScriptRunsAsGenerated(t *testing.T) {
 	drop()
 	defer drop()
 
-	src, err := s.CreateCredential(ctx, CredentialSpec{Name: name, Identity: "scripted_identity"})
+	src, err := s.CreateCredential(ctx, CreateCredentialRequest{Name: name, Identity: "scripted_identity"})
 	if err != nil {
 		t.Fatalf("CreateCredential: %v", err)
 	}

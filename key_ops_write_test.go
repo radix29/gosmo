@@ -106,16 +106,16 @@ func TestProviderKeyStatements(t *testing.T) {
 		want string
 	}{
 		{func() (string, error) {
-			return AsymmetricKeySpec{Name: "a", Algorithm: AsymmetricKeyRSA2048, FromProvider: prov(ProviderCreateNew)}.createAsymmetricKeyStatement()
+			return CreateAsymmetricKeyRequest{Name: "a", Algorithm: AsymmetricKeyRSA2048, FromProvider: prov(ProviderCreateNew)}.createAsymmetricKeyStatement()
 		}, "CREATE ASYMMETRIC KEY [a] FROM PROVIDER [EKM]]P] WITH ALGORITHM = RSA_2048, PROVIDER_KEY_NAME = N'k''1', CREATION_DISPOSITION = CREATE_NEW"},
 		{func() (string, error) {
-			return AsymmetricKeySpec{Name: "a", Authorization: "o", FromProvider: prov(ProviderOpenExisting)}.createAsymmetricKeyStatement()
+			return CreateAsymmetricKeyRequest{Name: "a", Authorization: "o", FromProvider: prov(ProviderOpenExisting)}.createAsymmetricKeyStatement()
 		}, "CREATE ASYMMETRIC KEY [a] AUTHORIZATION [o] FROM PROVIDER [EKM]]P] WITH PROVIDER_KEY_NAME = N'k''1', CREATION_DISPOSITION = OPEN_EXISTING"},
 		{func() (string, error) {
-			return SymmetricKeySpec{Name: "s", Algorithm: SymmetricKeyAES256, FromProvider: prov("")}.createSymmetricKeyStatement()
+			return CreateSymmetricKeyRequest{Name: "s", Algorithm: SymmetricKeyAES256, FromProvider: prov("")}.createSymmetricKeyStatement()
 		}, "CREATE SYMMETRIC KEY [s] FROM PROVIDER [EKM]]P] WITH ALGORITHM = AES_256, PROVIDER_KEY_NAME = N'k''1'"},
 		{func() (string, error) {
-			return SymmetricKeySpec{Name: "s", FromProvider: prov(ProviderOpenExisting)}.createSymmetricKeyStatement()
+			return CreateSymmetricKeyRequest{Name: "s", FromProvider: prov(ProviderOpenExisting)}.createSymmetricKeyStatement()
 		}, "CREATE SYMMETRIC KEY [s] FROM PROVIDER [EKM]]P] WITH PROVIDER_KEY_NAME = N'k''1', CREATION_DISPOSITION = OPEN_EXISTING"},
 	} {
 		got, err := tc.got()
@@ -133,26 +133,26 @@ func TestProviderKeyStatementsReject(t *testing.T) {
 	p := &ProviderKey{Provider: "P", KeyName: "k"}
 	for name, f := range map[string]func() (string, error){
 		"asym with password": func() (string, error) {
-			return AsymmetricKeySpec{Name: "a", Algorithm: AsymmetricKeyRSA2048, EncryptionPassword: "x", FromProvider: p}.createAsymmetricKeyStatement()
+			return CreateAsymmetricKeyRequest{Name: "a", Algorithm: AsymmetricKeyRSA2048, EncryptionPassword: "x", FromProvider: p}.createAsymmetricKeyStatement()
 		},
 		"asym CREATE_NEW without algorithm": func() (string, error) {
-			return AsymmetricKeySpec{Name: "a", FromProvider: p}.createAsymmetricKeyStatement()
+			return CreateAsymmetricKeyRequest{Name: "a", FromProvider: p}.createAsymmetricKeyStatement()
 		},
 		"asym no provider": func() (string, error) {
-			return AsymmetricKeySpec{Name: "a", Algorithm: AsymmetricKeyRSA2048, FromProvider: &ProviderKey{KeyName: "k"}}.createAsymmetricKeyStatement()
+			return CreateAsymmetricKeyRequest{Name: "a", Algorithm: AsymmetricKeyRSA2048, FromProvider: &ProviderKey{KeyName: "k"}}.createAsymmetricKeyStatement()
 		},
 		"asym no key name": func() (string, error) {
-			return AsymmetricKeySpec{Name: "a", Algorithm: AsymmetricKeyRSA2048, FromProvider: &ProviderKey{Provider: "P"}}.createAsymmetricKeyStatement()
+			return CreateAsymmetricKeyRequest{Name: "a", Algorithm: AsymmetricKeyRSA2048, FromProvider: &ProviderKey{Provider: "P"}}.createAsymmetricKeyStatement()
 		},
 		"asym bad disposition": func() (string, error) {
-			return AsymmetricKeySpec{Name: "a", Algorithm: AsymmetricKeyRSA2048, FromProvider: &ProviderKey{Provider: "P", KeyName: "k", Disposition: "X; DROP"}}.createAsymmetricKeyStatement()
+			return CreateAsymmetricKeyRequest{Name: "a", Algorithm: AsymmetricKeyRSA2048, FromProvider: &ProviderKey{Provider: "P", KeyName: "k", Disposition: "X; DROP"}}.createAsymmetricKeyStatement()
 		},
 		"sym with encryption": func() (string, error) {
-			return SymmetricKeySpec{Name: "s", Algorithm: SymmetricKeyAES256, FromProvider: p,
+			return CreateSymmetricKeyRequest{Name: "s", Algorithm: SymmetricKeyAES256, FromProvider: p,
 				Encryptions: []SymmetricKeyEncryptor{{Kind: SymmetricKeyByPassword, Password: "x"}}}.createSymmetricKeyStatement()
 		},
 		"sym with key source": func() (string, error) {
-			return SymmetricKeySpec{Name: "s", Algorithm: SymmetricKeyAES256, FromProvider: p, KeySource: "k"}.createSymmetricKeyStatement()
+			return CreateSymmetricKeyRequest{Name: "s", Algorithm: SymmetricKeyAES256, FromProvider: p, KeySource: "k"}.createSymmetricKeyStatement()
 		},
 	} {
 		if s, err := f(); err == nil {

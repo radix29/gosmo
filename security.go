@@ -64,6 +64,9 @@ func scanPermissionEntries(rows *sql.Rows) ([]*PermissionEntry, error) {
 // Permissions returns the GRANT/DENY entries recorded for schema.name —
 // SSMS's object Properties > Permissions page.
 func (d *Database) Permissions(ctx context.Context, schema, name string) ([]*PermissionEntry, error) {
+	if err := requireSchema("permissions", schema, name); err != nil {
+		return nil, err
+	}
 	const q = permissionEntrySelect + `
 WHERE  dp.major_id = OBJECT_ID(@p1) AND dp.minor_id = 0
 ORDER  BY pr.name, dp.permission_name`

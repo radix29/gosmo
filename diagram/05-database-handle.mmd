@@ -21,7 +21,7 @@ classDiagram
         +TablesBySchema(schema) []*Table
         +TableByName(schema, name) *Table
         +TableRef(schema, name) *Table
-        +CreateTable(req) error
+        +CreateTable(req) *Table
         +DropTable(schema, name, cascade) error
         +RenameTable(schema, oldName, newName) error
         +RenameObject(schema, oldName, newName) error
@@ -36,8 +36,9 @@ classDiagram
         +ViewsFiltered(filter) []*View
         +DropView(schema, name) error
         +StoredProcedures() []*StoredProcedure
+        +StoredProcedureByName(schema, name) *StoredProcedure
         +StoredProceduresFiltered(filter) []*StoredProcedure
-        +CreateStoredProcedure(schema, name, body) error
+        +CreateStoredProcedure(req) *StoredProcedure
         +DropStoredProcedure(schema, name) error
         +UserDefinedFunctions() []*UserDefinedFunction
         +UserDefinedFunctionsFiltered(filter) []*UserDefinedFunction
@@ -51,20 +52,19 @@ classDiagram
         +SystemFunctionsFiltered(filter) []*UserDefinedFunction
         +Schemas() []*Schema
         +SchemaByName(name) *Schema
-        +CreateSchema(name, owner) error
-        +DropSchema(name) error
+        +CreateSchema(req) *Schema
+        +SchemaRef(name) *Schema
         +Users() []*User
         +UserByName(name) *User
         +UserRef(name) *User
-        +CreateUser(user, login, schema) error
-        +DropUser(name) error
+        +CreateUser(req) *User
         +DatabaseAuditSpecifications() []*DatabaseAuditSpecification
         +DatabaseAuditSpecificationByName(name) *DatabaseAuditSpecification
         +DatabaseAuditSpecificationRef(name) *DatabaseAuditSpecification
-        +CreateDatabaseAuditSpecification(spec) *DatabaseAuditSpecification
+        +CreateDatabaseAuditSpecification(req) *DatabaseAuditSpecification
         +DatabaseRoles() []*DatabaseRole
         +RoleByName(name) *DatabaseRole
-        +DropDatabaseRole(name) error
+        +RoleRef(name) *DatabaseRole
         +RoleMembers(role) []*RoleMember
         +AddRoleMember(role, member) error
         +RemoveRoleMember(role, member) error
@@ -77,16 +77,16 @@ classDiagram
         +DatabaseTriggerRef(name) *DatabaseTrigger
         +Sequences() []*Sequence
         +SequenceByName(schema, name) *Sequence
-        +DropSequence(schema, name) error
+        +SequenceRef(schema, name) *Sequence
         +Synonyms() []*Synonym
         +SynonymByName(schema, name) *Synonym
-        +DropSynonym(schema, name) error
+        +SynonymRef(schema, name) *Synonym
         +Rules() []*Rule
         +RuleByName(schema, name) *Rule
-        +DropRule(schema, name) error
+        +RuleRef(schema, name) *Rule
         +Defaults() []*Default
         +DefaultByName(schema, name) *Default
-        +DropDefault(schema, name) error
+        +DefaultRef(schema, name) *Default
         +UserDefinedDataTypes() []*UserDefinedDataType
         +UserDefinedDataTypeByName(schema, name) *UserDefinedDataType
         +RenameUserDefinedDataType(schema, oldName, newName) error
@@ -95,31 +95,32 @@ classDiagram
         +ClrTypes() []*ClrType
         +ClrTypeByName(schema, name) *ClrType
         +SystemDataTypes() []*SystemDataType
-        +DropType(schema, name) error
+        +UserDefinedDataTypeRef(schema, name) *UserDefinedDataType
         +TransferType(targetSchema, schema, name) error
         +XMLSchemaCollections() []*XMLSchemaCollection
         +XMLSchemaCollectionByName(schema, name) *XMLSchemaCollection
-        +DropXMLSchemaCollection(schema, name) error
+        +XMLSchemaCollectionRef(schema, name) *XMLSchemaCollection
         +TransferXMLSchemaCollection(targetSchema, schema, name) error
         +Assemblies() []*Assembly
         +AssemblyByName(name) *Assembly
-        +DropAssembly(name) error
+        +AssemblyRef(name) *Assembly
         +ExternalDataSources() []*ExternalDataSource
         +ExternalDataSourceByName(name) *ExternalDataSource
-        +DropExternalDataSource(name) error
+        +ExternalDataSourceRef(name) *ExternalDataSource
         +ExternalFileFormats() []*ExternalFileFormat
         +ExternalFileFormatByName(name) *ExternalFileFormat
-        +DropExternalFileFormat(name) error
+        +ExternalFileFormatRef(name) *ExternalFileFormat
         +ExternalLibraries() []*ExternalLibrary
         +ExternalLibraryByName(name) *ExternalLibrary
-        +DropExternalLibrary(name) error
+        +ExternalLibraryRef(name) *ExternalLibrary
         +PlanGuides() []*PlanGuide
         +PlanGuideByName(name) *PlanGuide
         +PlanGuideRef(name) *PlanGuide
-        +DropPlanGuide(name) error
         +PartitionFunctions() []*PartitionFunction
+        +PartitionFunctionRef(name) *PartitionFunction
         +PartitionFunctionByName(name) *PartitionFunction
         +PartitionSchemes() []*PartitionScheme
+        +PartitionSchemeRef(name) *PartitionScheme
         +PartitionSchemeByName(name) *PartitionScheme
         +ExtendedProperties(level) []*ExtendedProperty
         +AddExtendedProperty(name, value, level) error
@@ -128,17 +129,17 @@ classDiagram
         +Certificates() []*Certificate
         +CertificateByName(name) *Certificate
         +CertificateRef(name) *Certificate
-        +CreateCertificate(spec) error
+        +CreateCertificate(req) *Certificate
         +AsymmetricKeys() []*AsymmetricKey
         +AsymmetricKeyByName(name) *AsymmetricKey
         +AsymmetricKeyRef(name) *AsymmetricKey
-        +CreateAsymmetricKey(spec) error
+        +CreateAsymmetricKey(req) *AsymmetricKey
         +SymmetricKeys() []*SymmetricKey
         +SymmetricKeyByName(name) *SymmetricKey
         +SymmetricKeyRef(name) *SymmetricKey
-        +CreateSymmetricKey(spec) error
+        +CreateSymmetricKey(req) *SymmetricKey
         +HasMasterKey() bool
-        +CreateMasterKey(password) error
+        +CreateMasterKey(req) *MasterKey
         +MasterKey() *MasterKey
         +MasterKeyRef() *MasterKey
         +ModuleSignatures() []*ModuleSignature
@@ -148,16 +149,18 @@ classDiagram
         +DropSignature(schema, module, by, counter) error
         +ColumnMasterKeys() []*ColumnMasterKey
         +ColumnMasterKeyByName(name) *ColumnMasterKey
-        +CreateColumnMasterKeyWithSignature(name, provider, path, sig) error
+        +ColumnMasterKeyRef(name) *ColumnMasterKey
+        +CreateColumnMasterKey(req) *ColumnMasterKey
         +ColumnEncryptionKeys() []*ColumnEncryptionKey
+        +ColumnEncryptionKeyRef(name) *ColumnEncryptionKey
         +ColumnEncryptionKeyByName(name) *ColumnEncryptionKey
-        +CreateColumnEncryptionKey(name, values) error
+        +CreateColumnEncryptionKey(req) *ColumnEncryptionKey
         +SecurityPolicies() []*SecurityPolicy
         +SecurityPolicyByName(schema, name) *SecurityPolicy
         +DatabaseScopedCredentials() []*DatabaseScopedCredential
         +DatabaseScopedCredentialByName(name) *DatabaseScopedCredential
         +DatabaseScopedCredentialRef(name) *DatabaseScopedCredential
-        +CreateDatabaseScopedCredential(spec) *DatabaseScopedCredential
+        +CreateDatabaseScopedCredential(req) *DatabaseScopedCredential
         +Capabilities() *DatabaseCapabilities
         +RecoveryStatus() *DatabaseRecoveryStatus
         +SpaceUsed() SpaceInfo

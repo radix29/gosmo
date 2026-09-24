@@ -24,6 +24,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 // liveAddFileGroups gives d the filegroups the table kinds need: FG2 (rows),
@@ -91,11 +92,9 @@ ORDER  BY ec.name`
 )
 
 func TestLiveScriptTableKinds(t *testing.T) {
-	db, ctx, done := liveDB(t)
-	defer done()
 	// Two databases with three filegroups each outlast liveDB's minute.
-	ctx, cancel := context.WithTimeout(context.Background(), 5*60e9)
-	defer cancel()
+	db, ctx, done := liveDBTimeout(t, 5*time.Minute)
+	defer done()
 
 	var dataPath string
 	var fsLevel int

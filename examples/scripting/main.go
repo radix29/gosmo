@@ -35,8 +35,8 @@ func main() {
 	defer drop()
 
 	ctx := context.Background()
-	demo.Must(db.CreateSchema(ctx, "Sales", "dbo"))
-	demo.Must(db.CreateTable(ctx, gosmo.CreateTableRequest{
+	demo.Value(db.CreateSchema(ctx, gosmo.CreateSchemaRequest{Name: "Sales", Owner: "dbo"}))
+	demo.Value(db.CreateTable(ctx, gosmo.CreateTableRequest{
 		Schema: "Sales",
 		Name:   "Invoice",
 		Columns: []gosmo.ColumnDefinition{
@@ -48,7 +48,7 @@ func main() {
 		},
 	}))
 	inv := demo.Value(db.TableByName(ctx, "Sales", "Invoice"))
-	demo.Must(inv.CreateIndex(ctx, gosmo.CreateIndexRequest{
+	demo.Value(inv.CreateIndex(ctx, gosmo.CreateIndexRequest{
 		Name:            "IX_Invoice_Customer",
 		Type:            gosmo.IndexTypeNonClustered,
 		KeyColumns:      []gosmo.IndexColumnDef{{Name: "CustomerName"}, {Name: "Issued", Descending: true}},
@@ -56,13 +56,17 @@ func main() {
 	}))
 	// CreateStoredProcedure's body is the T-SQL after AS; gosmo writes the
 	// CREATE OR ALTER PROCEDURE header itself.
-	demo.Must(db.CreateStoredProcedure(ctx, "Sales", "InvoiceTotals", `
+	demo.Value(db.CreateStoredProcedure(ctx, gosmo.CreateStoredProcedureRequest{
+		Schema: "Sales",
+		Name:   "InvoiceTotals",
+		Body: `
 BEGIN
     SET NOCOUNT ON;
     SELECT CustomerName, SUM(Amount) AS Total
     FROM   Sales.Invoice
     GROUP  BY CustomerName;
-END`))
+END`,
+	}))
 
 	// -- Default options ---------------------------------------------------
 	demo.Section("ScriptTable, default options")
@@ -117,8 +121,8 @@ END`))
 	fmt.Printf("  gosmo.Scripting(ctx) = %t\n\n", gosmo.Scripting(ctx))
 
 	pending := srv.DatabaseRef(dbName)
-	demo.Must(pending.CreateSchema(ctx, "Archive", "dbo"))
-	demo.Must(pending.CreateTable(ctx, gosmo.CreateTableRequest{
+	demo.Value(pending.CreateSchema(ctx, gosmo.CreateSchemaRequest{Name: "Archive", Owner: "dbo"}))
+	demo.Value(pending.CreateTable(ctx, gosmo.CreateTableRequest{
 		Schema: "Archive",
 		Name:   "InvoiceHistory",
 		Columns: []gosmo.ColumnDefinition{

@@ -37,8 +37,8 @@ classDiagram
         +FragmentationStats(mode) []*IndexFragmentation
         +RebuildAllIndexes(fillFactor) error
         +UpdateAllStatistics(samplePct) error
-        +CreateIndex(req) error
-        +CreateStatistic(req) error
+        +CreateIndex(req) *Index
+        +CreateStatistic(req) *Statistic
         +IndexRef(name) *Index
         +AlterColumn(col) error
         +DropColumn(name) error

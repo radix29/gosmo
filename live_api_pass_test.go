@@ -87,7 +87,7 @@ func TestLiveAPIPass(t *testing.T) {
 	})
 
 	t.Run("datetime2(0) and decimal(p,0)", func(t *testing.T) {
-		err := d.CreateTable(ctx, CreateTableRequest{Schema: "dbo", Name: "Scales", Columns: []ColumnDefinition{
+		_, err := d.CreateTable(ctx, CreateTableRequest{Schema: "dbo", Name: "Scales", Columns: []ColumnDefinition{
 			{Name: "D0", DataType: DataTypeDatetime2, Scale: new(0), IsNullable: true},
 			{Name: "T0", DataType: DataTypeTime, Scale: new(0), IsNullable: true},
 			{Name: "N0", DataType: DataTypeDecimal, Precision: new(10), Scale: new(0), IsNullable: true},
@@ -124,7 +124,7 @@ func TestLiveAPIPass(t *testing.T) {
 		}
 		cleanup()
 		defer cleanup()
-		dev, err := srv.CreateBackupDevice(ctx, devName, BackupDeviceDisk, path)
+		dev, err := srv.CreateBackupDevice(ctx, CreateBackupDeviceRequest{Name: devName, Type: BackupDeviceDisk, PhysicalName: path})
 		if err != nil {
 			t.Fatalf("CreateBackupDevice: %v", err)
 		}
@@ -149,7 +149,7 @@ func TestLiveAPIPass(t *testing.T) {
 		}
 		// Written to the device's file, not to a file named after the device
 		// in the default directory — which is what DISK = N'devname' did.
-		files, err := srv.BackupFileList(ctx, DiskTarget(path), headers[0].Position)
+		files, err := srv.BackupFileList(ctx, headers[0].Position, DiskTarget(path))
 		if err != nil || len(files) == 0 {
 			t.Errorf("BackupFileList of the device's own path = %v, %v", files, err)
 		}

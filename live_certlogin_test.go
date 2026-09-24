@@ -47,15 +47,13 @@ func TestLiveCertificateLoginCreateReadScript(t *testing.T) {
 	cleanup()
 	defer cleanup()
 
-	if err := master.CreateCertificate(ctx, CertificateSpec{
+	if _, err := master.CreateCertificate(ctx, CreateCertificateRequest{
 		Name: certName, Subject: "gosmo live test certificate",
 	}); err != nil {
 		t.Fatalf("create certificate: %v", err)
 	}
 
-	if err := s.CreateLogin(ctx, loginName, "", &CreateLoginOptions{
-		Source: LoginSourceCertificate, CertificateName: certName,
-	}); err != nil {
+	if _, err := s.CreateLogin(ctx, CreateLoginRequest{Name: loginName, Source: LoginSourceCertificate, CertificateName: certName}); err != nil {
 		t.Fatalf("create certificate login: %v", err)
 	}
 
@@ -88,7 +86,7 @@ func TestLiveCertificateLoginCreateReadScript(t *testing.T) {
 
 	// Recreate it from its own script — the check the statement text cannot
 	// make.
-	if err := s.DropLogin(ctx, loginName); err != nil {
+	if err := s.LoginRef(loginName).Drop(ctx); err != nil {
 		t.Fatalf("drop before replay: %v", err)
 	}
 	runScript(t, s, script)
@@ -129,24 +127,20 @@ func TestLiveCertificateLoginRejectsADefaultDatabase(t *testing.T) {
 	cleanup()
 	defer cleanup()
 
-	if err := master.CreateCertificate(ctx, CertificateSpec{
+	if _, err := master.CreateCertificate(ctx, CreateCertificateRequest{
 		Name: certName, Subject: "gosmo live test certificate",
 	}); err != nil {
 		t.Fatalf("create certificate: %v", err)
 	}
 
 	// gosmo refuses it up front.
-	if err := s.CreateLogin(ctx, loginName, "", &CreateLoginOptions{
-		Source: LoginSourceCertificate, CertificateName: certName, DefaultDatabase: "tempdb",
-	}); err == nil {
+	if _, err := s.CreateLogin(ctx, CreateLoginRequest{Name: loginName, Source: LoginSourceCertificate, CertificateName: certName, DefaultDatabase: "tempdb"}); err == nil {
 		t.Fatal("a mapped login with a default database: want an error, got none")
 	}
 
 	// And the server refuses it too, on the ALTER the external-login path
 	// would have used.
-	if err := s.CreateLogin(ctx, loginName, "", &CreateLoginOptions{
-		Source: LoginSourceCertificate, CertificateName: certName,
-	}); err != nil {
+	if _, err := s.CreateLogin(ctx, CreateLoginRequest{Name: loginName, Source: LoginSourceCertificate, CertificateName: certName}); err != nil {
 		t.Fatalf("create certificate login: %v", err)
 	}
 	_, err = s.db.Exec("ALTER LOGIN " + quoteIdent(loginName) + " WITH DEFAULT_DATABASE = [tempdb]")

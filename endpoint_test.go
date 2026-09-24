@@ -13,15 +13,15 @@ import (
 func TestCreateEndpointStatement(t *testing.T) {
 	tests := []struct {
 		name string
-		spec EndpointSpec
+		spec CreateDatabaseMirroringEndpointRequest
 		want string
 	}{
-		{"defaults", EndpointSpec{Name: "Hadr_endpoint"},
+		{"defaults", CreateDatabaseMirroringEndpointRequest{Name: "Hadr_endpoint"},
 			"CREATE ENDPOINT [Hadr_endpoint] STATE = STARTED AS TCP (LISTENER_PORT = 5022, LISTENER_IP = ALL) " +
 				"FOR DATABASE_MIRRORING (AUTHENTICATION = WINDOWS NEGOTIATE, ENCRYPTION = REQUIRED, ROLE = ALL)"},
 		// The Linux shape: no shared domain, so the far end is authenticated
 		// by certificate, and the clause is a phrase rather than a keyword.
-		{"certificate auth", EndpointSpec{
+		{"certificate auth", CreateDatabaseMirroringEndpointRequest{
 			Name: "AGEP", Port: 5023, Authentication: "CERTIFICATE dbm_certificate",
 			Encryption: "REQUIRED", EncryptionAlgorithm: "AES",
 		},
@@ -29,10 +29,10 @@ func TestCreateEndpointStatement(t *testing.T) {
 				"FOR DATABASE_MIRRORING (AUTHENTICATION = CERTIFICATE dbm_certificate, ENCRYPTION = REQUIRED ALGORITHM AES, ROLE = ALL)"},
 		// The two-word form of the ALGORITHM sub-clause, lower-cased: both
 		// words are one allowlisted value, not two to be checked apart.
-		{"algorithm pair", EndpointSpec{Name: "p", EncryptionAlgorithm: "aes rc4"},
+		{"algorithm pair", CreateDatabaseMirroringEndpointRequest{Name: "p", EncryptionAlgorithm: "aes rc4"},
 			"CREATE ENDPOINT [p] STATE = STARTED AS TCP (LISTENER_PORT = 5022, LISTENER_IP = ALL) " +
 				"FOR DATABASE_MIRRORING (AUTHENTICATION = WINDOWS NEGOTIATE, ENCRYPTION = REQUIRED ALGORITHM AES RC4, ROLE = ALL)"},
-		{"witness", EndpointSpec{Name: "w", Role: "witness", Encryption: "disabled"},
+		{"witness", CreateDatabaseMirroringEndpointRequest{Name: "w", Role: "witness", Encryption: "disabled"},
 			"CREATE ENDPOINT [w] STATE = STARTED AS TCP (LISTENER_PORT = 5022, LISTENER_IP = ALL) " +
 				"FOR DATABASE_MIRRORING (AUTHENTICATION = WINDOWS NEGOTIATE, ENCRYPTION = DISABLED, ROLE = WITNESS)"},
 	}
@@ -50,7 +50,7 @@ func TestCreateEndpointStatement(t *testing.T) {
 }
 
 func TestCreateEndpointStatementRejects(t *testing.T) {
-	for name, spec := range map[string]EndpointSpec{
+	for name, spec := range map[string]CreateDatabaseMirroringEndpointRequest{
 		"no name":         {Port: 5022},
 		"bad port":        {Name: "e", Port: 70000},
 		"unknown role":    {Name: "e", Role: "PRIMARY"},

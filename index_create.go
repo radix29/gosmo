@@ -104,15 +104,17 @@ func (g SpatialGridLevels) levels() string {
 }
 
 // CreateIndex creates a new index on the table.
-func (t *Table) CreateIndex(ctx context.Context, req CreateIndexRequest) error {
+func (t *Table) CreateIndex(ctx context.Context, req CreateIndexRequest) (*Index, error) {
 	stmt, err := buildCreateIndexStatement(t.FullName(), req)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	if _, err := t.db.exec(ctx, stmt); err != nil {
-		return fmt.Errorf("gosmo: create index %q on %s: %w", req.Name, t.FullName(), err)
+	if _, err := t.exec(ctx, stmt); err != nil {
+		return nil, fmt.Errorf("gosmo: create index %q on %s: %w", req.Name, t.FullName(), err)
 	}
-	return nil
+	return createdObject(ctx, t.IndexRef(req.Name), func() (*Index, error) {
+		return t.IndexByName(ctx, req.Name)
+	})
 }
 
 // buildCreateIndexStatement renders one CREATE INDEX statement, or reports

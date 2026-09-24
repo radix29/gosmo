@@ -71,7 +71,7 @@ classDiagram
         +Drop() error
     }
 
-    class CertificateSpec {
+    class CreateCertificateRequest {
         +Name string
         +Authorization string
         +Subject string
@@ -125,7 +125,7 @@ classDiagram
         RC2 / RC4 / RC4_128 / DESX
     }
 
-    class SymmetricKeySpec {
+    class CreateSymmetricKeyRequest {
         +Name string
         +Authorization string
         +Algorithm SymmetricKeyAlgorithm
@@ -149,7 +149,7 @@ classDiagram
         +Open *SymmetricKeyDecryptor
     }
 
-    class AsymmetricKeySpec {
+    class CreateAsymmetricKeyRequest {
         +Name string
         +Authorization string
         +Algorithm AsymmetricKeyAlgorithm
@@ -239,12 +239,12 @@ classDiagram
     Database "1" --> "*" SymmetricKey : contains
     SymmetricKey "1" --> "*" SymmetricKeyEncryption : Encryptions
     SymmetricKeyEncryption ..> SymmetricKeyEncryptionKind : uses
-    Database --> SymmetricKeySpec : CreateSymmetricKey() accepts
-    SymmetricKeySpec ..> SymmetricKeyAlgorithm : uses
-    SymmetricKeySpec "1" --> "*" SymmetricKeyEncryptor : Encryptions
+    Database --> CreateSymmetricKeyRequest : CreateSymmetricKey() accepts
+    CreateSymmetricKeyRequest ..> SymmetricKeyAlgorithm : uses
+    CreateSymmetricKeyRequest "1" --> "*" SymmetricKeyEncryptor : Encryptions
     SymmetricKey ..> SymmetricKeyEncryptor : Add/DropEncryption() take
     SymmetricKey ..> SymmetricKeyDecryptor : opened by
     SymmetricKeyEncryptor ..> SymmetricKeyDecryptor : Open
-    Database --> CertificateSpec : CreateCertificate() accepts
-    Database --> AsymmetricKeySpec : CreateAsymmetricKey() accepts
-    AsymmetricKeySpec ..> AsymmetricKeyAlgorithm : uses
+    Database --> CreateCertificateRequest : CreateCertificate() accepts
+    Database --> CreateAsymmetricKeyRequest : CreateAsymmetricKey() accepts
+    CreateAsymmetricKeyRequest ..> AsymmetricKeyAlgorithm : uses

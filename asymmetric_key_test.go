@@ -9,17 +9,17 @@ import (
 func TestCreateAsymmetricKeyStatement(t *testing.T) {
 	tests := []struct {
 		name string
-		spec AsymmetricKeySpec
+		spec CreateAsymmetricKeyRequest
 		want string
 	}{
-		{"master key protected", AsymmetricKeySpec{Name: "k", Algorithm: AsymmetricKeyRSA2048},
+		{"master key protected", CreateAsymmetricKeyRequest{Name: "k", Algorithm: AsymmetricKeyRSA2048},
 			"CREATE ASYMMETRIC KEY [k] WITH ALGORITHM = RSA_2048"},
 		// The password goes after WITH ALGORITHM — the reverse of CREATE
 		// CERTIFICATE's order, and the one the grammar documents.
-		{"password protected, owned", AsymmetricKeySpec{Name: "k", Authorization: "o]wner",
+		{"password protected, owned", CreateAsymmetricKeyRequest{Name: "k", Authorization: "o]wner",
 			Algorithm: AsymmetricKeyRSA4096, EncryptionPassword: "p'w"},
 			"CREATE ASYMMETRIC KEY [k] AUTHORIZATION [o]]wner] WITH ALGORITHM = RSA_4096 ENCRYPTION BY PASSWORD = N'p''w'"},
-		{"quoted name", AsymmetricKeySpec{Name: "we[i]rd", Algorithm: AsymmetricKeyRSA3072},
+		{"quoted name", CreateAsymmetricKeyRequest{Name: "we[i]rd", Algorithm: AsymmetricKeyRSA3072},
 			"CREATE ASYMMETRIC KEY [we[i]]rd] WITH ALGORITHM = RSA_3072"},
 	}
 	for _, tt := range tests {
@@ -39,7 +39,7 @@ func TestCreateAsymmetricKeyStatement(t *testing.T) {
 // the known set — including a well-meant lower-case spelling — is refused
 // before it reaches the server.
 func TestCreateAsymmetricKeyStatementRejects(t *testing.T) {
-	for _, spec := range []AsymmetricKeySpec{
+	for _, spec := range []CreateAsymmetricKeyRequest{
 		{Name: " ", Algorithm: AsymmetricKeyRSA2048},
 		{Name: "k"},
 		{Name: "k", Algorithm: "rsa_2048"},
@@ -54,7 +54,7 @@ func TestCreateAsymmetricKeyStatementRejects(t *testing.T) {
 func TestCreateAsymmetricKeyUnderScript(t *testing.T) {
 	ctx, col := WithScript(context.Background())
 	d := (&Server{}).DatabaseRef("AppDB")
-	if err := d.CreateAsymmetricKey(ctx, AsymmetricKeySpec{Name: "k", Algorithm: AsymmetricKeyRSA2048}); err != nil {
+	if _, err := d.CreateAsymmetricKey(ctx, CreateAsymmetricKeyRequest{Name: "k", Algorithm: AsymmetricKeyRSA2048}); err != nil {
 		t.Fatal(err)
 	}
 	want := useAppDB + "CREATE ASYMMETRIC KEY [k] WITH ALGORITHM = RSA_2048"

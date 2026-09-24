@@ -81,6 +81,9 @@ WHERE  dp.class_desc = 'OBJECT_OR_COLUMN' AND dp.minor_id > 0`
 // ColumnPermissions returns every column-level GRANT/DENY entry recorded on
 // schema.name, for all principals and all columns.
 func (d *Database) ColumnPermissions(ctx context.Context, schema, name string) ([]*ColumnPermissionEntry, error) {
+	if err := requireSchema("column permissions", schema, name); err != nil {
+		return nil, err
+	}
 	const q = columnPermissionSelect + `
 AND    dp.major_id = OBJECT_ID(@p1)
 ORDER  BY pr.name, col.name, dp.permission_name`
@@ -129,6 +132,9 @@ func (d *Database) scanColumnPermissions(ctx context.Context, q, what string, ar
 //
 // opts adds the WITH GRANT OPTION modifiers; the zero value is the plain statement.
 func (d *Database) GrantColumnPermission(ctx context.Context, schema, name string, permission ObjectPermission, columns []string, principal string, opts PermissionOptions) error {
+	if err := requireSchema("grant column permission", schema, name); err != nil {
+		return err
+	}
 	if err := requireColumns("grant", columns); err != nil {
 		return err
 	}
@@ -140,6 +146,9 @@ func (d *Database) GrantColumnPermission(ctx context.Context, schema, name strin
 //
 // opts adds the CASCADE modifiers; the zero value is the plain statement.
 func (d *Database) DenyColumnPermission(ctx context.Context, schema, name string, permission ObjectPermission, columns []string, principal string, opts PermissionOptions) error {
+	if err := requireSchema("deny column permission", schema, name); err != nil {
+		return err
+	}
 	if err := requireColumns("deny", columns); err != nil {
 		return err
 	}
@@ -151,6 +160,9 @@ func (d *Database) DenyColumnPermission(ctx context.Context, schema, name string
 //
 // opts adds the CASCADE and GRANT OPTION FOR modifiers; the zero value is the plain statement.
 func (d *Database) RevokeColumnPermission(ctx context.Context, schema, name string, permission ObjectPermission, columns []string, principal string, opts PermissionOptions) error {
+	if err := requireSchema("revoke column permission", schema, name); err != nil {
+		return err
+	}
 	if err := requireColumns("revoke", columns); err != nil {
 		return err
 	}

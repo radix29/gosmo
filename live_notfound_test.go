@@ -74,7 +74,7 @@ func TestLiveNotFoundDoesNotSwallowAVisibleLogin(t *testing.T) {
 		`IF SUSER_ID(@p1) IS NOT NULL DROP LOGIN `+quoteIdent(name), name); err != nil {
 		t.Fatalf("pre-clean: %v", err)
 	}
-	if err := srv.CreateLogin(ctx, name, "inSecure123!Probe", nil); err != nil {
+	if _, err := srv.CreateLogin(ctx, CreateLoginRequest{Name: name, Password: "inSecure123!Probe"}); err != nil {
 		t.Fatalf("create throwaway login: %v", err)
 	}
 	defer func() {

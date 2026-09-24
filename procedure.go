@@ -109,11 +109,11 @@ type ProcResult struct {
 // written to the pointers passed to Out / InOut. Any result sets the
 // procedure emits are discarded; use the query methods when you need the rows.
 func (d *Database) ExecProc(ctx context.Context, schema, name string, params ...ProcParam) (ProcResult, error) {
+	if err := requireSchema("exec proc", schema, name); err != nil {
+		return ProcResult{}, err
+	}
 	if name == "" {
 		return ProcResult{}, fmt.Errorf("gosmo: exec proc: no procedure name")
-	}
-	if schema == "" {
-		schema = "dbo"
 	}
 	proc := qualifiedName(schema, name)
 
@@ -202,28 +202,59 @@ ORDER  BY SCHEMA_NAME(p.schema_id), p.name`
 	})
 }
 
-// CreateStoredProcedure creates (or replaces) a stored procedure.
-// schema may be empty (defaults to dbo). body is the raw T-SQL after AS.
-func (d *Database) CreateStoredProcedure(ctx context.Context, schema, name, body string) error {
-	if name == "" {
-		return fmt.Errorf("gosmo: create stored procedure: name is required")
+// StoredProcedureByName returns one user stored procedure by schema and
+// name.
+//
+// It returns an error satisfying errors.Is(err, ErrNotFound) when the
+// database has no such procedure.
+func (d *Database) StoredProcedureByName(ctx context.Context, schema, name string) (*StoredProcedure, error) {
+	if err := requireSchema("stored procedure by name", schema, name); err != nil {
+		return nil, err
 	}
-	if schema == "" {
-		schema = "dbo"
+	procs, err := d.storedProceduresWhere(ctx, "AND SCHEMA_NAME(p.schema_id) = @p1 AND p.name = @p2", []any{schema, name})
+	if err != nil {
+		return nil, fmt.Errorf("gosmo: find stored procedure [%s].[%s] in %q: %w", schema, name, d.Name, err)
 	}
-	q := fmt.Sprintf("CREATE OR ALTER PROCEDURE %s\nAS\n%s", qualifiedName(schema, name), body)
+	if len(procs) == 0 {
+		return nil, notFoundf("gosmo: stored procedure [%s].[%s] not found in %q", schema, name, d.Name)
+	}
+	return procs[0], nil
+}
+
+// CreateStoredProcedureRequest describes a stored procedure to create or
+// replace.
+type CreateStoredProcedureRequest struct {
+	Schema string // required; see ErrSchemaRequired
+	Name   string
+	Body   string // the raw T-SQL after AS
+}
+
+// CreateStoredProcedure creates (or replaces) a stored procedure, and returns
+// it read back from the catalog — or, under Scripting(ctx), one carrying only
+// its schema and name, since nothing ran.
+func (d *Database) CreateStoredProcedure(ctx context.Context, req CreateStoredProcedureRequest) (*StoredProcedure, error) {
+	if req.Name == "" {
+		return nil, fmt.Errorf("gosmo: create stored procedure: name is required")
+	}
+	schema := req.Schema
+	if err := requireSchema("create stored procedure", schema, req.Name); err != nil {
+		return nil, err
+	}
+	q := fmt.Sprintf("CREATE OR ALTER PROCEDURE %s\nAS\n%s", qualifiedName(schema, req.Name), req.Body)
 	if _, err := d.exec(ctx, q); err != nil {
-		return fmt.Errorf("gosmo: create stored procedure [%s].[%s]: %w", schema, name, err)
+		return nil, fmt.Errorf("gosmo: create stored procedure [%s].[%s]: %w", schema, req.Name, err)
 	}
-	return nil
+	return createdObject(ctx, &StoredProcedure{Schema: schema, Name: req.Name}, func() (*StoredProcedure, error) {
+		return d.StoredProcedureByName(ctx, schema, req.Name)
+	})
 }
 
 // DropStoredProcedure drops a stored procedure. A procedure that isn't there
 // is the server's error, not a silent success — see the note on
 // Database.DropTable.
 func (d *Database) DropStoredProcedure(ctx context.Context, schema, name string) error {
-	if schema == "" {
-		schema = "dbo"
+	if err := requireSchema("drop stored procedure", schema, name); err != nil {
+		return err
 	}
 	if _, err := d.exec(ctx, "DROP PROCEDURE "+qualifiedName(schema, name)); err != nil {
 		return fmt.Errorf("gosmo: drop stored procedure [%s].[%s]: %w", schema, name, err)
@@ -308,6 +339,9 @@ func (p *Parameter) TypeString() string {
 // Parameters returns the parameters of one stored procedure or function, in
 // declaration order.
 func (d *Database) Parameters(ctx context.Context, schema, name string) ([]*Parameter, error) {
+	if err := requireSchema("parameters", schema, name); err != nil {
+		return nil, err
+	}
 	const q = `
 SELECT p.name, p.parameter_id, tp.name,
        p.max_length, p.precision, p.scale,
@@ -319,9 +353,6 @@ WHERE  p.object_id = OBJECT_ID(QUOTENAME(@p1) + N'.' + QUOTENAME(@p2))
   AND  p.parameter_id > 0
 ORDER  BY p.parameter_id`
 
-	if schema == "" {
-		schema = "dbo"
-	}
 	rows, err := d.query(ctx, q, schema, name)
 	return scanRows(rows, err, fmt.Sprintf("list parameters of %s", qualifiedName(schema, name)), func(scan func(...any) error) (*Parameter, error) {
 		p := &Parameter{}

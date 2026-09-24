@@ -112,8 +112,8 @@ func scanCredential(s *Server, scan func(...any) error) (*Credential, error) {
 
 // -- Writes ----------------------------------------------------------------------
 
-// CredentialSpec describes a credential to create.
-type CredentialSpec struct {
+// CreateCredentialRequest describes a credential to create.
+type CreateCredentialRequest struct {
 	Name string
 
 	// Identity is the account the credential presents when connecting
@@ -131,7 +131,7 @@ type CredentialSpec struct {
 }
 
 // createCredentialStatement builds CREATE CREDENTIAL, validating the spec.
-func (spec CredentialSpec) createCredentialStatement() (string, error) {
+func (spec CreateCredentialRequest) createCredentialStatement() (string, error) {
 	if strings.TrimSpace(spec.Name) == "" {
 		return "", fmt.Errorf("credential has no name")
 	}
@@ -153,7 +153,7 @@ func (spec CredentialSpec) createCredentialStatement() (string, error) {
 }
 
 // CreateCredential creates a server-level credential.
-func (s *Server) CreateCredential(ctx context.Context, spec CredentialSpec) (*Credential, error) {
+func (s *Server) CreateCredential(ctx context.Context, spec CreateCredentialRequest) (*Credential, error) {
 	stmt, err := spec.createCredentialStatement()
 	if err != nil {
 		return nil, fmt.Errorf("gosmo: create credential: %w", err)
@@ -161,11 +161,9 @@ func (s *Server) CreateCredential(ctx context.Context, spec CredentialSpec) (*Cr
 	if err := s.exec(ctx, stmt); err != nil {
 		return nil, fmt.Errorf("gosmo: create credential %q: %w", spec.Name, err)
 	}
-	if Scripting(ctx) {
-		// The CREATE was only collected, so there is nothing to read back.
-		return s.CredentialRef(spec.Name), nil
-	}
-	return s.CredentialByName(ctx, spec.Name)
+	return createdObject(ctx, s.CredentialRef(spec.Name), func() (*Credential, error) {
+		return s.CredentialByName(ctx, spec.Name)
+	})
 }
 
 // Alter changes the credential's identity, and its secret.

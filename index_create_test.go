@@ -12,7 +12,7 @@ import (
 func TestScriptCreateIndexWrites(t *testing.T) {
 	table := func() *Table { return &Table{db: scriptTestDB(), Schema: "dbo", Name: "Sales.Archive"} }
 	create := func(req CreateIndexRequest) func(context.Context) error {
-		return func(c context.Context) error { return table().CreateIndex(c, req) }
+		return func(c context.Context) error { return errOnly(table().CreateIndex(c, req)) }
 	}
 
 	runScriptCases(t, []scriptCase{
@@ -168,7 +168,7 @@ func TestCreateIndexRefusesAWrongCombination(t *testing.T) {
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			tbl := captureTable(t)
-			err := tbl.CreateIndex(t.Context(), c.req)
+			_, err := tbl.CreateIndex(t.Context(), c.req)
 			if err == nil {
 				t.Fatalf("CreateIndex(%s) returned nil, want an error", c.name)
 			}

@@ -33,7 +33,7 @@ classDiagram
         ALTER CREDENTIAL resets both halves.
     }
 
-    class CredentialSpec {
+    class CreateCredentialRequest {
         +Name string
         +Identity string
         +Secret string
@@ -54,7 +54,7 @@ classDiagram
         is write-only here for the same reason.
     }
 
-    class DatabaseScopedCredentialSpec {
+    class CreateDatabaseScopedCredentialRequest {
         +Name string
         +Identity string
         +Secret string
@@ -159,11 +159,11 @@ classDiagram
     Server --> ServerSecurityInfo : has
     Server "1" --> "*" ServerPermissionEntry : grants
     Server "1" --> "*" Credential : owns
-    Server --> CredentialSpec : CreateCredential() takes
+    Server --> CreateCredentialRequest : CreateCredential() takes
     Server "1" --> "*" CryptographicProvider : lists
     Credential ..> CryptographicProvider : may be bound to
     Database "1" --> "*" DatabaseScopedCredential : owns
-    Database --> DatabaseScopedCredentialSpec : CreateDatabaseScopedCredential() takes
+    Database --> CreateDatabaseScopedCredentialRequest : CreateDatabaseScopedCredential() takes
     Server --> ServerMemoryStats : has
     Server "1" --> "*" Language : lists
     Server --> ProcessorInfo : has

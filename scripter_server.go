@@ -509,7 +509,7 @@ func buildServerAuditSpecificationScript(s *ServerAuditSpecification, opts Scrip
 		if s.AuditName == "" {
 			return fmt.Errorf("gosmo: script server audit specification %q: it names no audit", s.Name)
 		}
-		create, err := ServerAuditSpecificationSpec{
+		create, err := CreateServerAuditSpecificationRequest{
 			Name:         s.Name,
 			AuditName:    s.AuditName,
 			ActionGroups: s.ActionGroups,

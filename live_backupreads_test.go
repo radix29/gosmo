@@ -1,7 +1,8 @@
 //go:build livedb
 
 // Live coverage for the four backup *reads*: BackupHeaders, BackupFileList,
-// BackupFileList for a later set, and BackupHistory.
+// BackupFileList for a later set, and BackupHistory — plus all three RESTORE
+// reads and the history of a striped backup.
 //
 // All four are reads — RESTORE HEADERONLY / FILELISTONLY and an msdb history
 // query — so WithScript cannot capture them and no unit test can reach them:
@@ -127,7 +128,7 @@ func TestLiveBackupReads(t *testing.T) {
 	})
 
 	t.Run("file list", func(t *testing.T) {
-		files, err := srv.BackupFileList(ctx, DiskTarget(device), 0)
+		files, err := srv.BackupFileList(ctx, 0, DiskTarget(device))
 		if err != nil {
 			t.Fatalf("BackupFileList: %v", err)
 		}
@@ -138,7 +139,7 @@ func TestLiveBackupReads(t *testing.T) {
 	// FILE clause this reads set 1, so a FileListForSet that ignored its
 	// argument would still return a plausible answer.
 	t.Run("file list for set two", func(t *testing.T) {
-		files, err := srv.BackupFileList(ctx, DiskTarget(device), 2)
+		files, err := srv.BackupFileList(ctx, 2, DiskTarget(device))
 		if err != nil {
 			t.Fatalf("BackupFileList set 2: %v", err)
 		}
@@ -177,6 +178,54 @@ func TestLiveBackupReads(t *testing.T) {
 			t.Errorf("history set names = %q, %q; want \"set three\", \"set one\"",
 				history[0].BackupSetName, history[1].BackupSetName)
 		}
+		// Both sets share one file, so only Position tells a RESTORE which
+		// of them to read; without it the server reads set 1, the oldest.
+		if history[0].Position != 3 || history[1].Position != 1 {
+			t.Errorf("history positions = %d, %d; want 3, 1", history[0].Position, history[1].Position)
+		}
+	})
+
+	// A backup striped over two files is one set in the history, naming both
+	// files in order, and every RESTORE-side read accepts the pair — one
+	// stripe alone is refused.
+	t.Run("striped", func(t *testing.T) {
+		s1, s2 := device+".s1", device+".s2"
+		defer db.ExecContext(context.Background(), `EXEC master.sys.xp_delete_files N'`+s1+`'`)
+		defer db.ExecContext(context.Background(), `EXEC master.sys.xp_delete_files N'`+s2+`'`)
+		if _, err := db.ExecContext(ctx, `BACKUP DATABASE [`+second.Name+`] TO DISK = N'`+s1+`', DISK = N'`+s2+`' WITH INIT, COPY_ONLY`); err != nil {
+			t.Fatalf("striped backup: %v", err)
+		}
+		history, err := srv.BackupHistory(ctx, second.Name)
+		if err != nil {
+			t.Fatalf("BackupHistory: %v", err)
+		}
+		var striped *BackupInfo
+		for _, b := range history {
+			if len(b.Devices) > 1 {
+				striped = b
+			}
+		}
+		if striped == nil || len(history) != 2 {
+			t.Fatalf("history for %s = %d entries, striped %v; want 2 with one striped set", second.Name, len(history), striped)
+		}
+		if striped.Devices[0] != s1 || striped.Devices[1] != s2 || striped.Position != 1 {
+			t.Errorf("striped set Devices %q Position %d; want [%s %s] at 1", striped.Devices, striped.Position, s1, s2)
+		}
+		both := []BackupTarget{DiskTarget(s1), DiskTarget(s2)}
+		if err := srv.VerifyBackup(ctx, both...); err != nil {
+			t.Errorf("VerifyBackup of both stripes: %v", err)
+		}
+		if err := srv.VerifyBackup(ctx, DiskTarget(s1)); err == nil {
+			t.Error("VerifyBackup of one stripe: want the server's refusal")
+		}
+		if h, err := srv.BackupHeaders(ctx, both...); err != nil || len(h) != 1 {
+			t.Errorf("BackupHeaders of both stripes = %d, %v; want one set", len(h), err)
+		}
+		files, err := srv.BackupFileList(ctx, 0, both...)
+		if err != nil {
+			t.Fatalf("BackupFileList of both stripes: %v", err)
+		}
+		assertBackupFileList(t, files, second.Name)
 	})
 
 	t.Run("history of a database with none", func(t *testing.T) {

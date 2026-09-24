@@ -108,8 +108,8 @@ ORDER  BY SCHEMA_NAME(o.schema_id), o.name`
 // RuleByName returns one rule, or a not-found error (errors.Is ErrNotFound)
 // when the database has none by that name.
 func (d *Database) RuleByName(ctx context.Context, schema, name string) (*Rule, error) {
-	if schema == "" {
-		schema = "dbo"
+	if err := requireSchema("rule by name", schema, name); err != nil {
+		return nil, err
 	}
 	r := &Rule{db: d}
 	err := d.queryRow(ctx, func(row *sql.Row) error {
@@ -120,21 +120,31 @@ func (d *Database) RuleByName(ctx context.Context, schema, name string) (*Rule, 
 	return foundRow(r, err, notFoundf("gosmo: rule [%s].[%s] not found in %q", schema, name, d.Name), fmt.Sprintf("read rule [%s].[%s] in %q", schema, name, d.Name))
 }
 
-// DropRule drops a rule by name. A rule still bound to a column or type is
-// refused by the server until sp_unbindrule releases it.
-func (d *Database) DropRule(ctx context.Context, schema, name string) error {
-	if schema == "" {
-		schema = "dbo"
-	}
-	if _, err := d.exec(ctx, "DROP RULE "+qualifiedName(schema, name)); err != nil {
-		return fmt.Errorf("gosmo: drop rule [%s].[%s]: %w", schema, name, err)
-	}
-	return nil
+// RuleRef returns a lightweight handle for a rule by name, without
+// querying the catalog — the counterpart of Server.DatabaseRef. Every field
+// but the schema and name stays at its zero value; RuleByName is what populates them.
+//
+// Every write on *Rule addresses it by name, so this handle is enough to
+// drop one the caller already knows exists — and is the form to use when
+// there is nothing to read yet, such as a script of a CREATE that was only
+// collected.
+//
+// schema is taken as given: an empty one is refused by the handle's writes
+// (ErrSchemaRequired), never defaulted.
+func (d *Database) RuleRef(schema, name string) *Rule {
+	return &Rule{db: d, Schema: schema, Name: name}
 }
 
-// Drop drops the rule.
+// Drop drops the rule. A rule still bound to a column or type is refused by
+// the server until sp_unbindrule releases it.
 func (r *Rule) Drop(ctx context.Context) error {
-	return r.db.DropRule(ctx, r.Schema, r.Name)
+	if err := requireSchema("drop rule", r.Schema, r.Name); err != nil {
+		return err
+	}
+	if _, err := r.db.exec(ctx, "DROP RULE "+qualifiedName(r.Schema, r.Name)); err != nil {
+		return fmt.Errorf("gosmo: drop rule [%s].[%s]: %w", r.Schema, r.Name, err)
+	}
+	return nil
 }
 
 // ============================================================
@@ -161,8 +171,8 @@ ORDER  BY SCHEMA_NAME(o.schema_id), o.name`
 // DefaultByName returns one standalone default, or a not-found error
 // (errors.Is ErrNotFound) when the database has none by that name.
 func (d *Database) DefaultByName(ctx context.Context, schema, name string) (*Default, error) {
-	if schema == "" {
-		schema = "dbo"
+	if err := requireSchema("default by name", schema, name); err != nil {
+		return nil, err
 	}
 	df := &Default{db: d}
 	err := d.queryRow(ctx, func(row *sql.Row) error {
@@ -173,19 +183,29 @@ func (d *Database) DefaultByName(ctx context.Context, schema, name string) (*Def
 	return foundRow(df, err, notFoundf("gosmo: default [%s].[%s] not found in %q", schema, name, d.Name), fmt.Sprintf("read default [%s].[%s] in %q", schema, name, d.Name))
 }
 
-// DropDefault drops a standalone default by name. A default still bound to a
-// column or type is refused by the server until sp_unbindefault releases it.
-func (d *Database) DropDefault(ctx context.Context, schema, name string) error {
-	if schema == "" {
-		schema = "dbo"
-	}
-	if _, err := d.exec(ctx, "DROP DEFAULT "+qualifiedName(schema, name)); err != nil {
-		return fmt.Errorf("gosmo: drop default [%s].[%s]: %w", schema, name, err)
-	}
-	return nil
+// DefaultRef returns a lightweight handle for a standalone default by name, without
+// querying the catalog — the counterpart of Server.DatabaseRef. Every field
+// but the schema and name stays at its zero value; DefaultByName is what populates them.
+//
+// Every write on *Default addresses it by name, so this handle is enough to
+// drop one the caller already knows exists — and is the form to use when
+// there is nothing to read yet, such as a script of a CREATE that was only
+// collected.
+//
+// schema is taken as given: an empty one is refused by the handle's writes
+// (ErrSchemaRequired), never defaulted.
+func (d *Database) DefaultRef(schema, name string) *Default {
+	return &Default{db: d, Schema: schema, Name: name}
 }
 
-// Drop drops the default.
+// Drop drops the default. A default still bound to a column or type is refused
+// by the server until sp_unbindefault releases it.
 func (df *Default) Drop(ctx context.Context) error {
-	return df.db.DropDefault(ctx, df.Schema, df.Name)
+	if err := requireSchema("drop default", df.Schema, df.Name); err != nil {
+		return err
+	}
+	if _, err := df.db.exec(ctx, "DROP DEFAULT "+qualifiedName(df.Schema, df.Name)); err != nil {
+		return fmt.Errorf("gosmo: drop default [%s].[%s]: %w", df.Schema, df.Name, err)
+	}
+	return nil
 }

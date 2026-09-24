@@ -63,7 +63,7 @@ func TestLiveScriptLoginRoundTripsTheSID(t *testing.T) {
 	dropLoginIfPresent(t, s, name)
 	defer dropLoginIfPresent(t, s, name)
 
-	if err := s.CreateLogin(ctx, name, "Sc0pe!Test#2026", &CreateLoginOptions{DefaultDatabase: "master"}); err != nil {
+	if _, err := s.CreateLogin(ctx, CreateLoginRequest{Name: name, Password: "Sc0pe!Test#2026", DefaultDatabase: "master"}); err != nil {
 		t.Fatalf("create the login to be scripted: %v", err)
 	}
 	before, err := s.LoginByName(ctx, name)
@@ -123,7 +123,7 @@ func TestLiveScriptedLoginKeepsAUserMapped(t *testing.T) {
 	dropLoginIfPresent(t, s, login)
 	defer dropLoginIfPresent(t, s, login)
 
-	if err := s.CreateLogin(ctx, login, "Sc0pe!Test#2026", nil); err != nil {
+	if _, err := s.CreateLogin(ctx, CreateLoginRequest{Name: login, Password: "Sc0pe!Test#2026"}); err != nil {
 		t.Fatalf("create login: %v", err)
 	}
 	_, drop := liveScratchDB(t, db, ctx, dbName)

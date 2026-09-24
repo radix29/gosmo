@@ -123,6 +123,13 @@ func (d *Database) exec(ctx context.Context, q string, args ...any) (sql.Result,
 		res, e = c.ExecContext(ctx, q, args...)
 		return e
 	})
+	if err == nil && observerFrom(ctx) != nil {
+		sent, berr := bindScriptArgs(q, args)
+		if berr != nil {
+			sent = q
+		}
+		observe(ctx, ScriptEntry{Server: scriptServerName(ctx, d.server), Database: d.Name, SQL: sent})
+	}
 	return res, err
 }
 
@@ -406,6 +413,18 @@ WHERE  s.name = @p1`, name)
 	return foundRow(sc, err, notFoundf("gosmo: schema %q not found in %q", name, d.Name), fmt.Sprintf("find schema %q in %q", name, d.Name))
 }
 
+// SchemaRef returns a lightweight handle for a schema by name, without
+// querying the catalog — the counterpart of Server.DatabaseRef. Every field
+// but the name stays at its zero value; SchemaByName is what populates them.
+//
+// Every write on *Schema addresses it by name, so this handle is enough to
+// drop one the caller already knows exists — and is the form to use when
+// there is nothing to read yet, such as a script of a CREATE that was only
+// collected.
+func (d *Database) SchemaRef(name string) *Schema {
+	return &Schema{db: d, Name: name}
+}
+
 func scanSchema(d *Database, scan func(...any) error) (*Schema, error) {
 	sc := &Schema{db: d}
 	if err := scan(&sc.Name, &sc.ID, &sc.Owner); err != nil {
@@ -414,27 +433,31 @@ func scanSchema(d *Database, scan func(...any) error) (*Schema, error) {
 	return sc, nil
 }
 
-// CreateSchema creates a new schema in the database.
-func (d *Database) CreateSchema(ctx context.Context, name, owner string) error {
-	if name == "" {
-		return fmt.Errorf("gosmo: create schema: name is required")
-	}
-	q := "CREATE SCHEMA " + quoteIdent(name)
-	if owner != "" {
-		q += " AUTHORIZATION " + quoteIdent(owner)
-	}
-	if _, err := d.exec(ctx, q); err != nil {
-		return fmt.Errorf("gosmo: create schema %q: %w", name, err)
-	}
-	return nil
+// CreateSchemaRequest describes a new schema.
+type CreateSchemaRequest struct {
+	Name string
+	// Owner is the AUTHORIZATION principal; empty leaves it to the server
+	// (the caller's user).
+	Owner string
 }
 
-// DropSchema drops a schema from the database.
-func (d *Database) DropSchema(ctx context.Context, name string) error {
-	if _, err := d.exec(ctx, "DROP SCHEMA "+quoteIdent(name)); err != nil {
-		return fmt.Errorf("gosmo: drop schema %q: %w", name, err)
+// CreateSchema creates a new schema in the database, and returns it read
+// back from the catalog — or, under Scripting(ctx), the SchemaRef handle,
+// since nothing ran.
+func (d *Database) CreateSchema(ctx context.Context, req CreateSchemaRequest) (*Schema, error) {
+	if req.Name == "" {
+		return nil, fmt.Errorf("gosmo: create schema: name is required")
 	}
-	return nil
+	q := "CREATE SCHEMA " + quoteIdent(req.Name)
+	if req.Owner != "" {
+		q += " AUTHORIZATION " + quoteIdent(req.Owner)
+	}
+	if _, err := d.exec(ctx, q); err != nil {
+		return nil, fmt.Errorf("gosmo: create schema %q: %w", req.Name, err)
+	}
+	return createdObject(ctx, d.SchemaRef(req.Name), func() (*Schema, error) {
+		return d.SchemaByName(ctx, req.Name)
+	})
 }
 
 // -- Tables --------------------------------------------------------------------
@@ -467,6 +490,9 @@ var tableFilterColumns = filterColumns{
 
 // TablesBySchema returns all tables in a specific schema.
 func (d *Database) TablesBySchema(ctx context.Context, schema string) ([]*Table, error) {
+	if err := requireSchema("tables by schema", schema, schema); err != nil {
+		return nil, err
+	}
 	return d.tablesWhere(ctx, userTablesClause+" AND SCHEMA_NAME(t.schema_id) = @p1", []any{schema})
 }
 
@@ -517,6 +543,9 @@ ORDER  BY SCHEMA_NAME(t.schema_id), t.name`
 // Tables() still lists only the user tables; the predicate belongs to the
 // listing, not to the lookup.
 func (d *Database) TableByName(ctx context.Context, schema, name string) (*Table, error) {
+	if err := requireSchema("table by name", schema, name); err != nil {
+		return nil, err
+	}
 	q := d.tableSelect() + `
 WHERE  SCHEMA_NAME(t.schema_id) = @p1
   AND  t.name                   = @p2`
@@ -697,30 +726,32 @@ type CreateUserRequest struct {
 // refused here, after a read of sys.databases: SQL Server's own refusal
 // (Msg 33233) says "only in a contained database" without naming the setting
 // or the database.
-func (d *Database) CreateUser(ctx context.Context, req CreateUserRequest) error {
+func (d *Database) CreateUser(ctx context.Context, req CreateUserRequest) (*User, error) {
 	stmt, err := createUserStatement(req)
 	if err != nil {
 		if req.Name == "" {
-			return fmt.Errorf("gosmo: create user: %w", err)
+			return nil, fmt.Errorf("gosmo: create user: %w", err)
 		}
-		return fmt.Errorf("gosmo: create user %q: %w", req.Name, err)
+		return nil, fmt.Errorf("gosmo: create user %q: %w", req.Name, err)
 	}
 	if req.Kind == UserWithPassword && !d.server.everyDatabaseContained() {
 		var containment string
 		if err := d.server.queryRowScan(ctx,
 			"SELECT containment_desc FROM sys.databases WHERE name = @p1",
 			[]any{d.Name}, &containment); err != nil {
-			return fmt.Errorf("gosmo: create user %q: read containment of %q: %w", req.Name, d.Name, err)
+			return nil, fmt.Errorf("gosmo: create user %q: read containment of %q: %w", req.Name, d.Name, err)
 		}
 		if containment != "PARTIAL" {
-			return fmt.Errorf("gosmo: create user %q: a user with a password needs a contained database, and %q has CONTAINMENT = %s",
+			return nil, fmt.Errorf("gosmo: create user %q: a user with a password needs a contained database, and %q has CONTAINMENT = %s",
 				req.Name, d.Name, containment)
 		}
 	}
 	if _, err := d.exec(ctx, stmt); err != nil {
-		return fmt.Errorf("gosmo: create user %q: %w", req.Name, err)
+		return nil, fmt.Errorf("gosmo: create user %q: %w", req.Name, err)
 	}
-	return nil
+	return createdObject(ctx, d.UserRef(req.Name), func() (*User, error) {
+		return d.UserByName(ctx, req.Name)
+	})
 }
 
 // everyDatabaseContained reports whether the engine takes contained users in
@@ -799,14 +830,6 @@ func createUserStatement(req CreateUserRequest) (string, error) {
 		stmt += " WITH " + strings.Join(opts, ", ")
 	}
 	return stmt, nil
-}
-
-// DropUser drops a database user.
-func (d *Database) DropUser(ctx context.Context, name string) error {
-	if _, err := d.exec(ctx, "DROP USER "+quoteIdent(name)); err != nil {
-		return fmt.Errorf("gosmo: drop user %q: %w", name, err)
-	}
-	return nil
 }
 
 // -- Settings ------------------------------------------------------------------
@@ -999,8 +1022,8 @@ ORDER  BY tr.name`
 // the schema of the table it is defined on. A trigger that isn't there is the
 // server's error, not a silent success — see the note on Database.DropTable.
 func (d *Database) DropTrigger(ctx context.Context, schema, name string) error {
-	if schema == "" {
-		schema = "dbo"
+	if err := requireSchema("drop trigger", schema, name); err != nil {
+		return err
 	}
 	if _, err := d.exec(ctx, "DROP TRIGGER "+qualifiedName(schema, name)); err != nil {
 		return fmt.Errorf("gosmo: drop trigger [%s].[%s]: %w", schema, name, err)
@@ -1021,11 +1044,14 @@ func (d *Database) DropTrigger(ctx context.Context, schema, name string) error {
 // functions, sequences and synonyms. A type or an XML schema collection needs
 // TRANSFER's own class prefix and is not covered.
 func (d *Database) TransferObject(ctx context.Context, targetSchema, schema, name string) error {
+	if err := requireSchema("transfer object", schema, name); err != nil {
+		return err
+	}
+	if err := requireSchema("transfer object", targetSchema, name); err != nil {
+		return err
+	}
 	if targetSchema == "" {
 		return fmt.Errorf("gosmo: transfer %s: target schema is required", qualifiedName(schema, name))
-	}
-	if schema == "" {
-		schema = "dbo"
 	}
 	if err := d.refuseSameSchemaTransfer(ctx, targetSchema, schema, name); err != nil {
 		return err
@@ -1070,8 +1096,8 @@ func (d *Database) refuseSameSchemaTransfer(ctx context.Context, targetSchema, s
 // newName is a bare name: sp_rename refuses a qualified one, and renaming
 // does not move the object between schemas (ALTER SCHEMA ... TRANSFER does).
 func (d *Database) RenameObject(ctx context.Context, schema, oldName, newName string) error {
-	if schema == "" {
-		schema = "dbo"
+	if err := requireSchema("rename object", schema, oldName); err != nil {
+		return err
 	}
 	if _, err := d.exec(ctx,
 		"EXEC sp_rename @objname = @p1, @newname = @p2, @objtype = N'OBJECT'",

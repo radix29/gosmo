@@ -11,7 +11,8 @@ import (
 // server-scoped one does not.
 //
 // The Ref handles added for the server-role, user, statistic, configuration,
-// certificate and asymmetric-key families carry only a name. These pin that every write those
+// certificate, asymmetric-key, partition and Always Encrypted key families,
+// and the external-resource ones, carry only a name. These pin that every write those
 // families expose builds the same statement from a handle as it would from a
 // ByName-populated object — the whole point of the handle is that the write
 // never reads a cached field — and that each one works under WithScript,
@@ -58,6 +59,25 @@ func TestRefHandleWriteStatements(t *testing.T) {
 		{"asymmetric key drop", func(ctx context.Context, s *Server) error {
 			return s.DatabaseRef("AppDB").AsymmetricKeyRef("app_key").Drop(ctx)
 		}, useAppDB + "DROP ASYMMETRIC KEY [app_key]"},
+
+		{"partition function drop", func(ctx context.Context, s *Server) error {
+			return s.DatabaseRef("AppDB").PartitionFunctionRef("pf]1").Drop(ctx)
+		}, useAppDB + "DROP PARTITION FUNCTION [pf]]1]"},
+		{"partition scheme drop", func(ctx context.Context, s *Server) error {
+			return s.DatabaseRef("AppDB").PartitionSchemeRef("ps]1").Drop(ctx)
+		}, useAppDB + "DROP PARTITION SCHEME [ps]]1]"},
+		{"column master key drop", func(ctx context.Context, s *Server) error {
+			return s.DatabaseRef("AppDB").ColumnMasterKeyRef("CMK]1").Drop(ctx)
+		}, useAppDB + "DROP COLUMN MASTER KEY [CMK]]1]"},
+		{"column encryption key drop", func(ctx context.Context, s *Server) error {
+			return s.DatabaseRef("AppDB").ColumnEncryptionKeyRef("CEK]1").Drop(ctx)
+		}, useAppDB + "DROP COLUMN ENCRYPTION KEY [CEK]]1]"},
+		{"external file format drop", func(ctx context.Context, s *Server) error {
+			return s.DatabaseRef("AppDB").ExternalFileFormatRef("ff]1").Drop(ctx)
+		}, useAppDB + "DROP EXTERNAL FILE FORMAT [ff]]1]"},
+		{"external library drop", func(ctx context.Context, s *Server) error {
+			return s.DatabaseRef("AppDB").ExternalLibraryRef("lib]1").Drop(ctx)
+		}, useAppDB + "DROP EXTERNAL LIBRARY [lib]]1]"},
 
 		{"configuration set value", func(ctx context.Context, s *Server) error {
 			return s.ConfigurationRef("max degree of parallelism").SetValue(ctx, 4)

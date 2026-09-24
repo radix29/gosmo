@@ -426,14 +426,30 @@ func (i *ServerInfo) IsAzure() bool {
 
 // BackupInfo holds metadata about a specific database backup.
 type BackupInfo struct {
-	DatabaseName       string
-	BackupSetName      string
-	Description        string
-	BackupType         BackupAction
-	BackupStart        time.Time
-	BackupFinish       time.Time
-	BackupSize         int64
-	DeviceName         string
+	DatabaseName  string
+	BackupSetName string
+	Description   string
+	BackupType    BackupAction
+	BackupStart   time.Time
+	BackupFinish  time.Time
+	BackupSize    int64
+	// DeviceName is Devices[0], kept for the common single-file backup.
+	DeviceName string
+	// Devices is every media family the set was written to, in
+	// family_sequence_number order — one path for a plain backup, several for
+	// a striped one, and a RESTORE has to name them all. Mirrors are left
+	// out: any one mirror is a complete copy, and the first is the one read.
+	Devices []string
+	// Position is the set's place on its media (RESTORE's WITH FILE = n). A
+	// file written with NOINIT holds one set per backup appended to it, and
+	// a RESTORE that leaves the clause off reads set 1, the oldest.
+	Position int
+	// BackupSetID and MediaSetID are msdb's keys for the set and its media.
+	BackupSetID int64
+	MediaSetID  int
+	// MirrorCount is how many mirrored copies the media set has, 1 when it
+	// is not mirrored.
+	MirrorCount        int
 	UserName           string
 	ServerName         string
 	DatabaseVersion    int

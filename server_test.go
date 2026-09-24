@@ -657,22 +657,22 @@ func TestBuildConnectorInvalidServer(t *testing.T) {
 func TestBuildCreateDatabaseStatement(t *testing.T) {
 	cases := []struct {
 		name string
-		opts *CreateDatabaseOptions
+		opts *CreateDatabaseRequest
 		want string
 	}{
 		{
 			name: "nil opts — bare create, unchanged from before file support existed",
-			opts: &CreateDatabaseOptions{},
+			opts: &CreateDatabaseRequest{},
 			want: "CREATE DATABASE [SalesDW]",
 		},
 		{
 			name: "collation only",
-			opts: &CreateDatabaseOptions{Collation: "SQL_Latin1_General_CP1_CI_AS"},
+			opts: &CreateDatabaseRequest{Collation: "SQL_Latin1_General_CP1_CI_AS"},
 			want: "CREATE DATABASE [SalesDW] COLLATE SQL_Latin1_General_CP1_CI_AS",
 		},
 		{
 			name: "primary file only",
-			opts: &CreateDatabaseOptions{
+			opts: &CreateDatabaseRequest{
 				PrimaryFile: &DatabaseFileSpec{
 					Name: "SalesDW", Path: `F:\MSSQL\DATA\SalesDW.mdf`,
 					SizeKB: 256 * 1024, GrowthKB: 64 * 1024,
@@ -683,7 +683,7 @@ func TestBuildCreateDatabaseStatement(t *testing.T) {
 		},
 		{
 			name: "primary and log files, with collation",
-			opts: &CreateDatabaseOptions{
+			opts: &CreateDatabaseRequest{
 				Collation: "SQL_Latin1_General_CP1_CI_AS",
 				PrimaryFile: &DatabaseFileSpec{
 					Name: "SalesDW", Path: `F:\MSSQL\DATA\SalesDW.mdf`,
@@ -726,10 +726,10 @@ func TestCreateDatabaseWithOnlyALogFileNamesTheDefaultDataFile(t *testing.T) {
 	} {
 		srv := &Server{info: &ServerInfo{DefaultDataPath: tc.dataPath}}
 		ctx, col := WithScript(context.Background())
-		opts := &CreateDatabaseOptions{LogFile: &DatabaseFileSpec{
+		opts := &CreateDatabaseRequest{Name: "Sales'DW", LogFile: &DatabaseFileSpec{
 			Name: "Sales'DW_log", Path: `L:\Sales'DW_log.ldf`, SizeKB: 12000 * 1024,
 		}}
-		if err := srv.CreateDatabase(ctx, "Sales'DW", opts); err != nil {
+		if _, err := srv.CreateDatabase(ctx, *opts); err != nil {
 			t.Fatalf("%s: CreateDatabase: %v", tc.dataPath, err)
 		}
 		want := "CREATE DATABASE [Sales'DW] ON PRIMARY \n" +
@@ -745,7 +745,7 @@ func TestCreateDatabaseWithOnlyALogFileNamesTheDefaultDataFile(t *testing.T) {
 
 	srv := &Server{info: &ServerInfo{}}
 	ctx, col := WithScript(context.Background())
-	err := srv.CreateDatabase(ctx, "x", &CreateDatabaseOptions{LogFile: &DatabaseFileSpec{Name: "x_log", Path: "/l/x_log.ldf"}})
+	_, err := srv.CreateDatabase(ctx, CreateDatabaseRequest{Name: "x", LogFile: &DatabaseFileSpec{Name: "x_log", Path: "/l/x_log.ldf"}})
 	if err == nil || len(col.Statements()) != 0 {
 		t.Errorf("no default data path: err=%v statements=%q, want an error and nothing sent", err, col.Statements())
 	}

@@ -129,18 +129,25 @@ WHERE  s.name = @p1`, name)
 	return foundRow(s, err, notFoundf("gosmo: external data source %q not found in %q", name, d.Name), fmt.Sprintf("read external data source %q in %q", name, d.Name))
 }
 
-// DropExternalDataSource drops an external data source by name. One still
-// referenced by an external table is refused by the server.
-func (d *Database) DropExternalDataSource(ctx context.Context, name string) error {
-	if _, err := d.exec(ctx, "DROP EXTERNAL DATA SOURCE "+QuoteName(name)); err != nil {
-		return fmt.Errorf("gosmo: drop external data source %q in %q: %w", name, d.Name, err)
-	}
-	return nil
+// ExternalDataSourceRef returns a lightweight handle for an external data source by name, without
+// querying the catalog — the counterpart of Server.DatabaseRef. Every field
+// but the name stays at its zero value; ExternalDataSourceByName is what populates them.
+//
+// Every write on *ExternalDataSource addresses it by name, so this handle is enough to
+// drop one the caller already knows exists — and is the form to use when
+// there is nothing to read yet, such as a script of a CREATE that was only
+// collected.
+func (d *Database) ExternalDataSourceRef(name string) *ExternalDataSource {
+	return &ExternalDataSource{db: d, Name: name}
 }
 
-// Drop drops the external data source.
+// Drop drops the external data source. One still referenced by an external
+// table is refused by the server.
 func (s *ExternalDataSource) Drop(ctx context.Context) error {
-	return s.db.DropExternalDataSource(ctx, s.Name)
+	if _, err := s.db.exec(ctx, "DROP EXTERNAL DATA SOURCE "+QuoteName(s.Name)); err != nil {
+		return fmt.Errorf("gosmo: drop external data source %q in %q: %w", s.Name, s.db.Name, err)
+	}
+	return nil
 }
 
 // ============================================================
@@ -230,18 +237,25 @@ WHERE  f.name = @p1`, name)
 	return foundRow(f, err, notFoundf("gosmo: external file format %q not found in %q", name, d.Name), fmt.Sprintf("read external file format %q in %q", name, d.Name))
 }
 
-// DropExternalFileFormat drops an external file format by name. One still
-// referenced by an external table is refused by the server.
-func (d *Database) DropExternalFileFormat(ctx context.Context, name string) error {
-	if _, err := d.exec(ctx, "DROP EXTERNAL FILE FORMAT "+QuoteName(name)); err != nil {
-		return fmt.Errorf("gosmo: drop external file format %q in %q: %w", name, d.Name, err)
-	}
-	return nil
+// ExternalFileFormatRef returns a lightweight handle for an external file format by name, without
+// querying the catalog — the counterpart of Server.DatabaseRef. Every field
+// but the name stays at its zero value; ExternalFileFormatByName is what populates them.
+//
+// Every write on *ExternalFileFormat addresses it by name, so this handle is enough to
+// drop one the caller already knows exists — and is the form to use when
+// there is nothing to read yet, such as a script of a CREATE that was only
+// collected.
+func (d *Database) ExternalFileFormatRef(name string) *ExternalFileFormat {
+	return &ExternalFileFormat{db: d, Name: name}
 }
 
-// Drop drops the external file format.
+// Drop drops the external file format. One still referenced by an external
+// table is refused by the server.
 func (f *ExternalFileFormat) Drop(ctx context.Context) error {
-	return f.db.DropExternalFileFormat(ctx, f.Name)
+	if _, err := f.db.exec(ctx, "DROP EXTERNAL FILE FORMAT "+QuoteName(f.Name)); err != nil {
+		return fmt.Errorf("gosmo: drop external file format %q in %q: %w", f.Name, f.db.Name, err)
+	}
+	return nil
 }
 
 // ============================================================
@@ -334,18 +348,25 @@ WHERE  l.name = @p1`, name)
 	return foundRow(l, err, notFoundf("gosmo: external library %q not found in %q", name, d.Name), fmt.Sprintf("read external library %q in %q", name, d.Name))
 }
 
-// DropExternalLibrary drops an external library by name.
-func (d *Database) DropExternalLibrary(ctx context.Context, name string) error {
-	if err := d.requireExternalLibraries(); err != nil {
-		return err
-	}
-	if _, err := d.exec(ctx, "DROP EXTERNAL LIBRARY "+QuoteName(name)); err != nil {
-		return fmt.Errorf("gosmo: drop external library %q in %q: %w", name, d.Name, err)
-	}
-	return nil
+// ExternalLibraryRef returns a lightweight handle for an external library by name, without
+// querying the catalog — the counterpart of Server.DatabaseRef. Every field
+// but the name stays at its zero value; ExternalLibraryByName is what populates them.
+//
+// Every write on *ExternalLibrary addresses it by name, so this handle is enough to
+// drop one the caller already knows exists — and is the form to use when
+// there is nothing to read yet, such as a script of a CREATE that was only
+// collected.
+func (d *Database) ExternalLibraryRef(name string) *ExternalLibrary {
+	return &ExternalLibrary{db: d, Name: name}
 }
 
 // Drop drops the external library.
 func (l *ExternalLibrary) Drop(ctx context.Context) error {
-	return l.db.DropExternalLibrary(ctx, l.Name)
+	if err := l.db.requireExternalLibraries(); err != nil {
+		return err
+	}
+	if _, err := l.db.exec(ctx, "DROP EXTERNAL LIBRARY "+QuoteName(l.Name)); err != nil {
+		return fmt.Errorf("gosmo: drop external library %q in %q: %w", l.Name, l.db.Name, err)
+	}
+	return nil
 }

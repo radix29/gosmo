@@ -48,11 +48,22 @@ type Table struct {
 // Like Server.DatabaseRef, it is also the only form that works before the
 // table exists — a CREATE TABLE a WithScript context merely collected is not
 // in the catalog to find.
+//
+// schema is taken as given: an empty one is refused by every write on the
+// handle (ErrSchemaRequired), never defaulted — see Table.exec.
 func (d *Database) TableRef(schema, name string) *Table {
-	if schema == "" {
-		schema = "dbo"
-	}
 	return &Table{db: d, Schema: schema, Name: name}
+}
+
+// exec is every write on a table, index or statistic: the statement names
+// the table by FullName, and a table with no schema — only a TableRef can be
+// one — would name it unqualified, resolving through the caller's default
+// schema. It is refused here instead; see requireSchema.
+func (t *Table) exec(ctx context.Context, q string, args ...any) (sql.Result, error) {
+	if err := requireSchema("write to table", t.Schema, t.Name); err != nil {
+		return nil, err
+	}
+	return t.db.exec(ctx, q, args...)
 }
 
 // FullName returns [Schema].[Name].
@@ -283,6 +294,9 @@ ORDER  BY c.column_id`
 // supply them simply do not match for a view. Name, ordinal, type,
 // length/precision/scale, nullability and collation are all real.
 func (d *Database) ObjectColumns(ctx context.Context, schema, name string) ([]*Column, error) {
+	if err := requireSchema("object columns", schema, name); err != nil {
+		return nil, err
+	}
 	q := d.columnSelect() + `
 WHERE  c.object_id = OBJECT_ID(@p1)
 ORDER  BY c.column_id`
@@ -365,7 +379,7 @@ func (t *Table) AlterColumn(ctx context.Context, col ColumnDefinition) error {
 		sb.WriteString(" NOT NULL")
 	}
 
-	if _, err := t.db.exec(ctx, sb.String()); err != nil {
+	if _, err := t.exec(ctx, sb.String()); err != nil {
 		return fmt.Errorf("gosmo: alter column %q on %s: %w", col.Name, t.FullName(), err)
 	}
 	return nil
@@ -382,7 +396,7 @@ func (t *Table) DropColumn(ctx context.Context, name string) error {
 	if name == "" {
 		return fmt.Errorf("gosmo: drop column on %s: name is required", t.FullName())
 	}
-	if _, err := t.db.exec(ctx,
+	if _, err := t.exec(ctx,
 		fmt.Sprintf("ALTER TABLE %s DROP COLUMN %s", t.FullName(), quoteIdent(name))); err != nil {
 		return fmt.Errorf("gosmo: drop column %q on %s: %w", name, t.FullName(), err)
 	}
@@ -405,7 +419,7 @@ func (t *Table) RenameColumn(ctx context.Context, name, newName string) error {
 		return fmt.Errorf("gosmo: rename column on %s: both names are required", t.FullName())
 	}
 	objName := t.FullName() + "." + quoteIdent(name)
-	if _, err := t.db.exec(ctx,
+	if _, err := t.exec(ctx,
 		"EXEC sp_rename @objname = @p1, @newname = @p2, @objtype = N'COLUMN'",
 		objName, newName,
 	); err != nil {
@@ -581,19 +595,19 @@ type ColumnDefinition struct {
 }
 
 // CreateTable creates a table from a CreateTableRequest.
-func (d *Database) CreateTable(ctx context.Context, req CreateTableRequest) error {
-	if req.Schema == "" {
-		req.Schema = "dbo"
-	}
+func (d *Database) CreateTable(ctx context.Context, req CreateTableRequest) (*Table, error) {
 	if req.Name == "" {
-		return fmt.Errorf("gosmo: create table: name is required")
+		return nil, fmt.Errorf("gosmo: create table: name is required")
+	}
+	if err := requireSchema("create table", req.Schema, req.Name); err != nil {
+		return nil, err
 	}
 	if len(req.Columns) == 0 {
-		return fmt.Errorf("gosmo: create table: at least one column is required")
+		return nil, fmt.Errorf("gosmo: create table: at least one column is required")
 	}
 	for _, col := range req.Columns {
 		if err := checkColumnDefinition(col); err != nil {
-			return fmt.Errorf("gosmo: create table %q: column %q: %w", req.Name, col.Name, err)
+			return nil, fmt.Errorf("gosmo: create table %q: column %q: %w", req.Name, col.Name, err)
 		}
 	}
 
@@ -634,9 +648,11 @@ func (d *Database) CreateTable(ctx context.Context, req CreateTableRequest) erro
 	sb.WriteString(")")
 
 	if _, err := d.exec(ctx, sb.String()); err != nil {
-		return fmt.Errorf("gosmo: create table %s: %w", qualifiedName(req.Schema, req.Name), err)
+		return nil, fmt.Errorf("gosmo: create table %s: %w", qualifiedName(req.Schema, req.Name), err)
 	}
-	return nil
+	return createdObject(ctx, d.TableRef(req.Schema, req.Name), func() (*Table, error) {
+		return d.TableByName(ctx, req.Schema, req.Name)
+	})
 }
 
 // DropTable drops a table.
@@ -656,6 +672,9 @@ func (d *Database) CreateTable(ctx context.Context, req CreateTableRequest) erro
 // The generated *scripts* keep IF EXISTS — Scripter's DROP-and-CREATE output
 // exists to be re-run, which is the opposite requirement.
 func (d *Database) DropTable(ctx context.Context, schema, name string, cascade bool) error {
+	if err := requireSchema("drop table", schema, name); err != nil {
+		return err
+	}
 	qn := qualifiedName(schema, name)
 	if !cascade {
 		if _, err := d.exec(ctx, "DROP TABLE "+qn); err != nil {
@@ -700,6 +719,9 @@ IF LEN(@sql) > 0 EXEC sp_executesql @sql;`
 
 // RenameTable renames a table using sp_rename.
 func (d *Database) RenameTable(ctx context.Context, schema, oldName, newName string) error {
+	if err := requireSchema("rename table", schema, oldName); err != nil {
+		return err
+	}
 	if _, err := d.exec(ctx,
 		"EXEC sp_rename @objname = @p1, @newname = @p2, @objtype = N'OBJECT'",
 		qualifiedName(schema, oldName), newName,
@@ -711,7 +733,7 @@ func (d *Database) RenameTable(ctx context.Context, schema, oldName, newName str
 
 // TruncateTable truncates a table.
 func (t *Table) TruncateTable(ctx context.Context) error {
-	if _, err := t.db.exec(ctx, "TRUNCATE TABLE "+t.FullName()); err != nil {
+	if _, err := t.exec(ctx, "TRUNCATE TABLE "+t.FullName()); err != nil {
 		return fmt.Errorf("gosmo: truncate %s: %w", t.FullName(), err)
 	}
 	return nil
@@ -868,7 +890,7 @@ func checkColumnDefinition(col ColumnDefinition) error {
 // constraint and needs Index.Drop instead.
 func (t *Table) DropConstraint(ctx context.Context, name string) error {
 	q := fmt.Sprintf("ALTER TABLE %s DROP CONSTRAINT %s", t.FullName(), quoteIdent(name))
-	if _, err := t.db.exec(ctx, q); err != nil {
+	if _, err := t.exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: drop constraint %q on %s: %w", name, t.FullName(), err)
 	}
 	return nil

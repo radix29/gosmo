@@ -9,34 +9,34 @@ import (
 func TestCreateCredentialStatementShape(t *testing.T) {
 	cases := []struct {
 		name string
-		spec CredentialSpec
+		spec CreateCredentialRequest
 		want string
 	}{
 		{
 			name: "identity only",
-			spec: CredentialSpec{Name: "app_cred", Identity: `DOMAIN\svc`},
+			spec: CreateCredentialRequest{Name: "app_cred", Identity: `DOMAIN\svc`},
 			want: `CREATE CREDENTIAL [app_cred] WITH IDENTITY = N'DOMAIN\svc'`,
 		},
 		{
 			name: "identity and secret",
-			spec: CredentialSpec{Name: "app_cred", Identity: `DOMAIN\svc`, Secret: "hunter2"},
+			spec: CreateCredentialRequest{Name: "app_cred", Identity: `DOMAIN\svc`, Secret: "hunter2"},
 			want: `CREATE CREDENTIAL [app_cred] WITH IDENTITY = N'DOMAIN\svc', SECRET = N'hunter2'`,
 		},
 		{
 			// FOR CRYPTOGRAPHIC PROVIDER follows the whole WITH clause. As
 			// another comma-separated option inside it, SQL Server rejects it.
 			name: "cryptographic provider",
-			spec: CredentialSpec{Name: "ekm_cred", Identity: "ekm_user", Secret: "s", CryptographicProvider: "MyEKM"},
+			spec: CreateCredentialRequest{Name: "ekm_cred", Identity: "ekm_user", Secret: "s", CryptographicProvider: "MyEKM"},
 			want: `CREATE CREDENTIAL [ekm_cred] WITH IDENTITY = N'ekm_user', SECRET = N's' FOR CRYPTOGRAPHIC PROVIDER [MyEKM]`,
 		},
 		{
 			name: "quotes in the literals are escaped",
-			spec: CredentialSpec{Name: "o'brien", Identity: "it's me", Secret: "don't"},
+			spec: CreateCredentialRequest{Name: "o'brien", Identity: "it's me", Secret: "don't"},
 			want: `CREATE CREDENTIAL [o'brien] WITH IDENTITY = N'it''s me', SECRET = N'don''t'`,
 		},
 		{
 			name: "a bracket in the name is doubled",
-			spec: CredentialSpec{Name: "we[i]rd", Identity: "x"},
+			spec: CreateCredentialRequest{Name: "we[i]rd", Identity: "x"},
 			want: `CREATE CREDENTIAL [we[i]]rd] WITH IDENTITY = N'x'`,
 		},
 	}
@@ -54,12 +54,12 @@ func TestCreateCredentialStatementShape(t *testing.T) {
 }
 
 func TestCreateCredentialStatementRequiresNameAndIdentity(t *testing.T) {
-	if _, err := (CredentialSpec{Identity: "x"}).createCredentialStatement(); err == nil {
+	if _, err := (CreateCredentialRequest{Identity: "x"}).createCredentialStatement(); err == nil {
 		t.Error("a credential with no name was accepted")
 	}
 	// CREATE CREDENTIAL has no form without IDENTITY; the server's own error
 	// is a syntax error naming nothing useful.
-	if _, err := (CredentialSpec{Name: "c"}).createCredentialStatement(); err == nil {
+	if _, err := (CreateCredentialRequest{Name: "c"}).createCredentialStatement(); err == nil {
 		t.Error("a credential with no identity was accepted")
 	}
 }
@@ -117,7 +117,7 @@ func TestAlterCredentialRequiresIdentity(t *testing.T) {
 // back would find nothing. The name-only handle is what a caller gets instead.
 func TestCreateCredentialUnderScriptReturnsAHandle(t *testing.T) {
 	ctx, col := WithScript(context.Background())
-	c, err := (&Server{}).CreateCredential(ctx, CredentialSpec{Name: "app_cred", Identity: "x"})
+	c, err := (&Server{}).CreateCredential(ctx, CreateCredentialRequest{Name: "app_cred", Identity: "x"})
 	if err != nil {
 		t.Fatalf("CreateCredential: %v", err)
 	}

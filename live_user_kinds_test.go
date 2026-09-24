@@ -91,7 +91,7 @@ FROM sys.database_principals WHERE name IN (N'certUser', N'akUser', N'x WITH y')
 		const login = "gosmo_userkinds_login"
 		dropLoginIfPresent(t, src.server, login)
 		defer dropLoginIfPresent(t, src.server, login)
-		if err := src.server.CreateLogin(ctx, login, "Sc0pe!Test#2026", nil); err != nil {
+		if _, err := src.server.CreateLogin(ctx, CreateLoginRequest{Name: login, Password: "Sc0pe!Test#2026"}); err != nil {
 			t.Fatalf("create login: %v", err)
 		}
 
@@ -108,7 +108,7 @@ FROM sys.database_principals WHERE name IN (N'certUser', N'akUser', N'x WITH y')
 			{Name: "x WITH y", Kind: UserWithoutLogin, DefaultSchema: "dbo"},
 			{Name: "forLogin", Login: login, DefaultSchema: "dbo"},
 		} {
-			if err := fresh.CreateUser(ctx, req); err != nil {
+			if _, err := fresh.CreateUser(ctx, req); err != nil {
 				t.Fatalf("CreateUser %+v: %v", req, err)
 			}
 		}
@@ -125,7 +125,7 @@ FROM sys.database_principals WHERE name IN (N'certUser', N'akUser', N'x WITH y')
 		var win string
 		if err := db.QueryRowContext(ctx, `SELECT TOP 1 name FROM sys.server_principals
 WHERE type = 'U' AND name NOT LIKE N'NT %' ORDER BY name`).Scan(&win); err == nil {
-			if err := fresh.CreateUser(ctx, CreateUserRequest{Name: win, Kind: UserWindows, Login: win}); err != nil {
+			if _, err := fresh.CreateUser(ctx, CreateUserRequest{Name: win, Kind: UserWindows, Login: win}); err != nil {
 				t.Errorf("CreateUser Windows %s: %v", win, err)
 			} else if u, err := fresh.UserByName(ctx, win); err != nil || u.UserType != "WINDOWS_USER" {
 				t.Errorf("Windows user read back as %v, %v", u, err)
@@ -136,7 +136,7 @@ WHERE type = 'U' AND name NOT LIKE N'NT %' ORDER BY name`).Scan(&win); err == ni
 
 		// Refused in a database that is not contained, before anything is
 		// sent — the server's own refusal names neither.
-		err = fresh.CreateUser(ctx, CreateUserRequest{Name: "cu", Kind: UserWithPassword, Password: "Sc0pe!Test#2026"})
+		_, err = fresh.CreateUser(ctx, CreateUserRequest{Name: "cu", Kind: UserWithPassword, Password: "Sc0pe!Test#2026"})
 		if err == nil || !strings.Contains(err.Error(), "CONTAINMENT = NONE") {
 			t.Errorf("contained user in a non-contained database: err = %v, want the containment refusal", err)
 		}
@@ -164,7 +164,7 @@ WHERE name = 'contained database authentication'`).Scan(&was); err != nil {
 		if _, err := db.ExecContext(ctx, "ALTER DATABASE gosmo_userkinds_contained SET CONTAINMENT = PARTIAL WITH ROLLBACK IMMEDIATE"); err != nil {
 			t.Fatalf("set containment: %v", err)
 		}
-		if err := cdb.CreateUser(ctx, CreateUserRequest{Name: "cu", Kind: UserWithPassword,
+		if _, err := cdb.CreateUser(ctx, CreateUserRequest{Name: "cu", Kind: UserWithPassword,
 			Password: "Sc0pe!'Test#2026", DefaultSchema: "dbo"}); err != nil {
 			t.Fatalf("CreateUser contained: %v", err)
 		}

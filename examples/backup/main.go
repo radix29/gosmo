@@ -37,7 +37,7 @@ func main() {
 	// TempDatabase creates it SIMPLE, where BACKUP LOG is an error.
 	demo.Must(db.SetRecoveryModel(ctx, gosmo.RecoveryModelFull))
 
-	demo.Must(db.CreateTable(ctx, gosmo.CreateTableRequest{
+	demo.Value(db.CreateTable(ctx, gosmo.CreateTableRequest{
 		Schema: "dbo",
 		Name:   "Events",
 		Columns: []gosmo.ColumnDefinition{
@@ -126,7 +126,7 @@ func main() {
 	}
 
 	demo.Section("Files inside the first set (RESTORE FILELISTONLY)")
-	for _, f := range demo.Value(srv.BackupFileList(ctx, gosmo.DiskTarget(device), 0)) {
+	for _, f := range demo.Value(srv.BackupFileList(ctx, 0, gosmo.DiskTarget(device))) {
 		fmt.Printf("  %-16s %-6s %s\n", f.LogicalName, f.Type, f.PhysicalName)
 	}
 
@@ -151,7 +151,7 @@ func main() {
 	// server with different paths — work at all.
 	demo.Section("Restore (full set, files relocated)")
 	dataDir := srv.Info().DefaultDataPath
-	files := demo.Value(srv.BackupFileList(ctx, gosmo.DiskTarget(device), 0))
+	files := demo.Value(srv.BackupFileList(ctx, 0, gosmo.DiskTarget(device)))
 	relocate := make([]gosmo.RelocateFile, 0, len(files))
 	for _, f := range files {
 		ext := ".mdf"

@@ -35,8 +35,8 @@ func main() {
 	db, drop := demo.TempDatabase(srv, dbName)
 	defer drop()
 
-	demo.Must(db.CreateSchema(ctx, "Reporting", "dbo"))
-	demo.Must(db.CreateTable(ctx, gosmo.CreateTableRequest{
+	demo.Value(db.CreateSchema(ctx, gosmo.CreateSchemaRequest{Name: "Reporting", Owner: "dbo"}))
+	demo.Value(db.CreateTable(ctx, gosmo.CreateTableRequest{
 		Schema: "Reporting",
 		Name:   "Revenue",
 		Columns: []gosmo.ColumnDefinition{
@@ -47,12 +47,10 @@ func main() {
 
 	// -- Server-level: the login ------------------------------------------
 	demo.Section("Login")
-	_ = srv.DropLogin(ctx, loginName) // in case a previous run died mid-way
-	demo.Must(srv.CreateLogin(ctx, loginName, "S0me-Str0ng-Pa55!", &gosmo.CreateLoginOptions{
-		DefaultDatabase: dbName,
-	}))
+	_ = srv.LoginRef(loginName).Drop(ctx) // in case a previous run died mid-way
+	demo.Value(srv.CreateLogin(ctx, gosmo.CreateLoginRequest{Name: loginName, Password: "S0me-Str0ng-Pa55!", DefaultDatabase: dbName}))
 	defer func() {
-		if err := srv.DropLogin(ctx, loginName); err == nil {
+		if err := srv.LoginRef(loginName).Drop(ctx); err == nil {
 			fmt.Printf("Dropped login [%s]\n", loginName)
 		}
 	}()
@@ -89,7 +87,7 @@ func main() {
 
 	// -- Database-level: the user ------------------------------------------
 	demo.Section("Database user")
-	demo.Must(db.CreateUser(ctx, gosmo.CreateUserRequest{Name: userName, Login: loginName, DefaultSchema: "dbo"}))
+	demo.Value(db.CreateUser(ctx, gosmo.CreateUserRequest{Name: userName, Login: loginName, DefaultSchema: "dbo"}))
 	user := demo.Value(db.UserByName(ctx, userName))
 	fmt.Printf("  %s  type=%s  login=%s  default_schema=%s  auth=%s\n",
 		user.Name, user.UserType, user.LoginName, user.DefaultSchema, user.AuthType)

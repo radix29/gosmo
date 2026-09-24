@@ -88,7 +88,13 @@ func (l *Login) Enable(ctx context.Context) error {
 
 // Drop drops the login from the server.
 func (l *Login) Drop(ctx context.Context) error {
-	return l.server.DropLogin(ctx, l.Name)
+	if l.Name == "" {
+		return fmt.Errorf("gosmo: drop login: name is required")
+	}
+	if err := l.server.exec(ctx, fmt.Sprintf("DROP LOGIN %s", quoteIdent(l.Name))); err != nil {
+		return fmt.Errorf("gosmo: drop login %q: %w", l.Name, err)
+	}
+	return nil
 }
 
 // AddServerRoleMember adds this login to a server role.
@@ -429,7 +435,8 @@ func (l *Login) MapToDatabase(ctx context.Context, dbName, userName, defaultSche
 	if err != nil {
 		return err
 	}
-	return d.CreateUser(ctx, CreateUserRequest{Name: userName, Login: l.Name, DefaultSchema: defaultSchema})
+	_, err = d.CreateUser(ctx, CreateUserRequest{Name: userName, Login: l.Name, DefaultSchema: defaultSchema})
+	return err
 }
 
 // UnmapFromDatabase drops this login's mapped user in the named database.
@@ -447,7 +454,7 @@ func (l *Login) UnmapFromDatabase(ctx context.Context, dbName string) error {
 	if len(mappings) == 0 {
 		return fmt.Errorf("gosmo: login %q is not mapped to database %q", l.Name, dbName)
 	}
-	return d.DropUser(ctx, mappings[0].User)
+	return d.UserRef(mappings[0].User).Drop(ctx)
 }
 
 // -- Logins --------------------------------------------------------------------
@@ -520,9 +527,11 @@ func (s *Server) LoginRef(name string) *Login {
 	return &Login{server: s, Name: name}
 }
 
-// CreateLogin creates a login. With no CreateLoginOptions.Source, an empty
+// CreateLogin creates a login. With no CreateLoginRequest.Source, an empty
 // password means a Windows login (FROM WINDOWS) and a non-empty one a SQL
-// login; set Source to create any of the other kinds.
+// login; set Source to create any of the other kinds. It returns the login
+// read back from the catalog — or, under Scripting(ctx), the LoginRef handle,
+// since nothing ran.
 //
 // Security: the password is never string-concatenated raw into the SQL text
 // — it's quoted via QuoteLiteral (N'...', doubling any embedded quote),
@@ -540,12 +549,10 @@ func (s *Server) LoginRef(name string) *Login {
 // ("Cannot use the parameter DEFAULT_DATABASE for a certificate or
 // asymmetric key login", verified live) — so asking for one is an error
 // rather than a statement the server will refuse.
-func (s *Server) CreateLogin(ctx context.Context, name, password string, opts *CreateLoginOptions) error {
+func (s *Server) CreateLogin(ctx context.Context, req CreateLoginRequest) (*Login, error) {
+	name, password, opts := req.Name, req.Password, &req
 	if name == "" {
-		return fmt.Errorf("gosmo: create login: name is required")
-	}
-	if opts == nil {
-		opts = &CreateLoginOptions{}
+		return nil, fmt.Errorf("gosmo: create login: name is required")
 	}
 
 	src := opts.Source
@@ -558,19 +565,21 @@ func (s *Server) CreateLogin(ctx context.Context, name, password string, opts *C
 	}
 	stmt, alterDefaultDB, err := createLoginStatement(name, password, src, opts)
 	if err != nil {
-		return fmt.Errorf("gosmo: create login %q: %w", name, err)
+		return nil, fmt.Errorf("gosmo: create login %q: %w", name, err)
 	}
 	if err := s.exec(ctx, stmt); err != nil {
-		return fmt.Errorf("gosmo: create login %q: %w", name, err)
+		return nil, fmt.Errorf("gosmo: create login %q: %w", name, err)
 	}
 	if alterDefaultDB {
 		q := fmt.Sprintf("ALTER LOGIN %s WITH DEFAULT_DATABASE = %s",
 			quoteIdent(name), quoteIdent(opts.DefaultDatabase))
 		if err := s.exec(ctx, q); err != nil {
-			return fmt.Errorf("gosmo: create login %q: set default database: %w", name, err)
+			return nil, fmt.Errorf("gosmo: create login %q: set default database: %w", name, err)
 		}
 	}
-	return nil
+	return createdObject(ctx, s.LoginRef(name), func() (*Login, error) {
+		return s.LoginByName(ctx, name)
+	})
 }
 
 // createLoginStatement builds the CREATE LOGIN statement for one resolved
@@ -579,7 +588,7 @@ func (s *Server) CreateLogin(ctx context.Context, name, password string, opts *C
 // list in CREATE LOGIN and EXTERNAL PROVIDER takes only OBJECT_ID, so naming
 // DEFAULT_DATABASE there is a syntax error. A mapped login has no default database at all; see
 // CreateLogin.
-func createLoginStatement(name, password string, src LoginSource, opts *CreateLoginOptions) (string, bool, error) {
+func createLoginStatement(name, password string, src LoginSource, opts *CreateLoginRequest) (string, bool, error) {
 	if src != LoginSourceSQL && password != "" {
 		return "", false, fmt.Errorf("a %s login takes no password", src)
 	}
@@ -651,8 +660,8 @@ type LoginSource int
 const (
 	// LoginSourceAuto resolves from the password CreateLogin is given: empty
 	// means a Windows login, non-empty a SQL login. It is the zero value, so
-	// a CreateLoginOptions written before LoginSource existed behaves exactly
-	// as it did.
+	// a CreateLoginRequest that does not set it behaves as the kind its
+	// password implies.
 	LoginSourceAuto LoginSource = iota
 	// LoginSourceSQL is a SQL Server login (WITH PASSWORD).
 	LoginSourceSQL
@@ -691,8 +700,13 @@ func (src LoginSource) String() string {
 	return fmt.Sprintf("LoginSource(%d)", int(src))
 }
 
-// CreateLoginOptions holds optional parameters for CreateLogin.
-type CreateLoginOptions struct {
+// CreateLoginRequest describes a new login.
+type CreateLoginRequest struct {
+	Name string
+	// Password is the SQL login's password. With Source left at
+	// LoginSourceAuto, an empty one means a Windows login.
+	Password string
+
 	DefaultDatabase string
 	MustChange      bool
 
@@ -718,15 +732,4 @@ type CreateLoginOptions struct {
 	// login name up itself, which is the ordinary case. Naming it for any
 	// other source is an error rather than a silently ignored field.
 	ObjectID string
-}
-
-// DropLogin drops a server login.
-func (s *Server) DropLogin(ctx context.Context, name string) error {
-	if name == "" {
-		return fmt.Errorf("gosmo: drop login: name is required")
-	}
-	if err := s.exec(ctx, fmt.Sprintf("DROP LOGIN %s", quoteIdent(name))); err != nil {
-		return fmt.Errorf("gosmo: drop login %q: %w", name, err)
-	}
-	return nil
 }

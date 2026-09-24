@@ -146,7 +146,7 @@ func (st *Statistic) Update(ctx context.Context, samplePct int) error {
 	// UPDATE STATISTICS does not support parameterised stat names.
 	q := fmt.Sprintf("UPDATE STATISTICS %s %s WITH %s",
 		st.table.FullName(), quoteIdent(st.Name), option)
-	if _, err := st.table.db.exec(ctx, q); err != nil {
+	if _, err := st.table.exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: update statistic %q: %w", st.Name, err)
 	}
 	return nil
@@ -158,7 +158,7 @@ func (st *Statistic) Drop(ctx context.Context) error {
 	// DROP STATISTICS syntax: schema.table.stat (not quoted as one unit)
 	q := fmt.Sprintf("DROP STATISTICS %s.%s.%s",
 		quoteIdent(st.table.Schema), quoteIdent(st.table.Name), quoteIdent(st.Name))
-	if _, err := st.table.db.exec(ctx, q); err != nil {
+	if _, err := st.table.exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: drop statistic %q: %w", st.Name, err)
 	}
 	return nil
@@ -170,7 +170,7 @@ func (t *Table) UpdateAllStatistics(ctx context.Context, samplePct int) error {
 		return err
 	}
 	option := sampleClause(samplePct)
-	if _, err := t.db.exec(ctx, fmt.Sprintf("UPDATE STATISTICS %s WITH %s", t.FullName(), option)); err != nil {
+	if _, err := t.exec(ctx, fmt.Sprintf("UPDATE STATISTICS %s WITH %s", t.FullName(), option)); err != nil {
 		return fmt.Errorf("gosmo: update all statistics on %s: %w", t.FullName(), err)
 	}
 	return nil
@@ -201,15 +201,17 @@ type CreateStatisticRequest struct {
 
 // CreateStatistic creates a user-defined statistic. A request naming only
 // the statistic and its columns lets the server choose its own sample.
-func (t *Table) CreateStatistic(ctx context.Context, req CreateStatisticRequest) error {
+func (t *Table) CreateStatistic(ctx context.Context, req CreateStatisticRequest) (*Statistic, error) {
 	q, err := buildCreateStatisticStatement(t.FullName(), req)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	if _, err := t.db.exec(ctx, q); err != nil {
-		return fmt.Errorf("gosmo: create statistic %q: %w", req.Name, err)
+	if _, err := t.exec(ctx, q); err != nil {
+		return nil, fmt.Errorf("gosmo: create statistic %q: %w", req.Name, err)
 	}
-	return nil
+	return createdObject(ctx, t.StatisticRef(req.Name), func() (*Statistic, error) {
+		return t.StatisticByName(ctx, req.Name)
+	})
 }
 
 // buildCreateStatisticStatement renders one CREATE STATISTICS statement, or
@@ -442,7 +444,7 @@ func formatHistogramKey(v any) string {
 // Rename renames the statistic using sp_rename.
 func (st *Statistic) Rename(ctx context.Context, newName string) error {
 	objName := st.table.FullName() + "." + quoteIdent(st.Name)
-	if _, err := st.table.db.exec(ctx,
+	if _, err := st.table.exec(ctx,
 		"EXEC sp_rename @objname = @p1, @newname = @p2, @objtype = N'STATISTICS'",
 		objName, newName,
 	); err != nil {

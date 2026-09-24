@@ -92,3 +92,7 @@ func TestQualifiedName(t *testing.T) {
 		t.Errorf("qualifiedName(\"\", Users) = %q, want [Users]", got)
 	}
 }
+
+// errOnly drops a Create*'s returned object, for a test that only asserts on
+// the error or on the statement it scripted.
+func errOnly[T any](_ T, err error) error { return err }

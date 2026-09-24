@@ -101,21 +101,16 @@ func (s *Server) ServerRoleRef(name string) *ServerRole {
 	return &ServerRole{server: s, Name: name}
 }
 
-// DropServerRole drops a user-defined server role. A fixed role, or one
-// that still owns another role, is refused by the server, not here.
-func (s *Server) DropServerRole(ctx context.Context, name string) error {
-	if name == "" {
+// Drop drops this server role. A fixed role, or one that still owns another
+// role, is refused by the server, not here.
+func (r *ServerRole) Drop(ctx context.Context) error {
+	if r.Name == "" {
 		return fmt.Errorf("gosmo: drop server role: name is required")
 	}
-	if err := s.exec(ctx, "DROP SERVER ROLE "+quoteIdent(name)); err != nil {
-		return fmt.Errorf("gosmo: drop server role %q: %w", name, err)
+	if err := r.server.exec(ctx, "DROP SERVER ROLE "+quoteIdent(r.Name)); err != nil {
+		return fmt.Errorf("gosmo: drop server role %q: %w", r.Name, err)
 	}
 	return nil
-}
-
-// Drop drops this server role.
-func (r *ServerRole) Drop(ctx context.Context) error {
-	return r.server.DropServerRole(ctx, r.Name)
 }
 
 // Rename changes the server role's name.

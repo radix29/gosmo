@@ -64,6 +64,13 @@ type Route struct {
 	// route with no lifetime. The catalog stores the expiry instant, not the
 	// LIFETIME seconds CREATE ROUTE was given; see Route.LifetimeSeconds.
 	Expires time.Time
+
+	// remainingMs is the time left until Expires as the *server* measured it
+	// when the row was read, and readAt the client's clock at that moment.
+	// LifetimeSeconds counts down from the pair, so a client clock that
+	// disagrees with the server's does not shift the answer; see there.
+	remainingMs int64
+	readAt      time.Time
 }
 
 // Database returns the database the route belongs to.
@@ -82,11 +89,24 @@ func (r *Route) FullName() string { return quoteIdent(r.Name) }
 // once any time has passed. A script generated from an expiring route
 // therefore creates one that expires at the same instant, which is the
 // closest a script can come to the original.
+//
+// The remaining time is measured on the server (SYSUTCDATETIME against the
+// expiry) when the route is read, and only the time elapsed since is taken
+// from the client. Subtracting the client's clock from Expires instead put
+// every script out by the skew between the two machines: win10cli running a
+// second ahead of the client read LIFETIME = 600 back as 601 remaining — a
+// route that outlives the one it was scripted from. A Route not read from
+// the catalog (built by hand) falls back to the client's clock.
 func (r *Route) LifetimeSeconds() int {
 	if r.Expires.IsZero() {
 		return 0
 	}
-	secs := int(time.Until(r.Expires).Seconds())
+	var secs int
+	if !r.readAt.IsZero() {
+		secs = int((time.Duration(r.remainingMs)*time.Millisecond - time.Since(r.readAt)).Seconds())
+	} else {
+		secs = int(time.Until(r.Expires).Seconds())
+	}
 	if secs < 0 {
 		return 0
 	}
@@ -98,23 +118,32 @@ func (r *Route) LifetimeSeconds() int {
 // lifetime is a datetime in UTC, which is what the scan reads; the driver
 // hands back a time.Time with no location, so the value is stamped UTC here
 // rather than being left to be read as local time an hour or more out.
+//
+// The last column is the time left, measured on the server's own clock — see
+// Route.LifetimeSeconds. Milliseconds, not seconds: DATEDIFF counts boundaries
+// crossed, so a second-grained difference can overstate by up to a second.
 const routeSelect = `
 SELECT r.route_id, r.name, ISNULL(USER_NAME(r.principal_id), ''),
        ISNULL(r.remote_service_name, ''), ISNULL(r.broker_instance, ''),
-       ISNULL(r.address, ''), ISNULL(r.mirror_address, ''), r.lifetime
+       ISNULL(r.address, ''), ISNULL(r.mirror_address, ''), r.lifetime,
+       DATEDIFF_BIG(millisecond, SYSUTCDATETIME(), r.lifetime)
 FROM   sys.routes r`
 
 func scanRoute(d *Database, scan func(...any) error) (*Route, error) {
 	r := &Route{db: d}
 	var lifetime sql.NullTime
+	var remainingMs sql.NullInt64
 	if err := scan(&r.RouteID, &r.Name, &r.Owner, &r.RemoteService,
-		&r.BrokerInstance, &r.Address, &r.MirrorAddress, &lifetime); err != nil {
+		&r.BrokerInstance, &r.Address, &r.MirrorAddress, &lifetime, &remainingMs); err != nil {
 		return nil, err
 	}
 	if lifetime.Valid {
 		t := lifetime.Time
 		r.Expires = time.Date(t.Year(), t.Month(), t.Day(),
 			t.Hour(), t.Minute(), t.Second(), t.Nanosecond(), time.UTC)
+	}
+	if remainingMs.Valid {
+		r.remainingMs, r.readAt = remainingMs.Int64, time.Now()
 	}
 	return r, nil
 }
@@ -142,6 +171,18 @@ func (d *Database) RouteByName(ctx context.Context, name string) (*Route, error)
 	}, routeSelect+`
 WHERE  r.name = @p1`, name)
 	return foundRow(r, err, notFoundf("gosmo: route %q not found in %q", name, d.Name), fmt.Sprintf("read route %q in %q", name, d.Name))
+}
+
+// RouteRef returns a lightweight handle for a route by name, without
+// querying the catalog — the counterpart of Server.DatabaseRef. Every field
+// but the name stays at its zero value; RouteByName is what populates them.
+//
+// Every write on *Route addresses it by name, so this handle is enough to
+// drop one the caller already knows exists — and is the form to use when
+// there is nothing to read yet, such as a script of a CREATE that was only
+// collected.
+func (d *Database) RouteRef(name string) *Route {
+	return &Route{db: d, Name: name}
 }
 
 // RouteSettings is what ALTER ROUTE can change. A nil field leaves that
@@ -263,17 +304,12 @@ func (r *Route) Alter(ctx context.Context, s RouteSettings) error {
 	return nil
 }
 
-// DropRoute drops a route by name.
-func (d *Database) DropRoute(ctx context.Context, name string) error {
-	if _, err := d.exec(ctx, "DROP ROUTE "+quoteIdent(name)); err != nil {
-		return fmt.Errorf("gosmo: drop route %q: %w", name, err)
-	}
-	return nil
-}
-
 // Drop drops the route.
 func (r *Route) Drop(ctx context.Context) error {
-	return r.db.DropRoute(ctx, r.Name)
+	if _, err := r.db.exec(ctx, "DROP ROUTE "+quoteIdent(r.Name)); err != nil {
+		return fmt.Errorf("gosmo: drop route %q: %w", r.Name, err)
+	}
+	return nil
 }
 
 // ============================================================
@@ -366,21 +402,27 @@ WHERE  b.name = @p1`, name)
 	return foundRow(b, err, notFoundf("gosmo: remote service binding %q not found in %q", name, d.Name), fmt.Sprintf("read remote service binding %q in %q", name, d.Name))
 }
 
-// DropRemoteServiceBinding drops a remote service binding by name.
+// RemoteServiceBindingRef returns a lightweight handle for a remote service binding by name, without
+// querying the catalog — the counterpart of Server.DatabaseRef. Every field
+// but the name stays at its zero value; RemoteServiceBindingByName is what populates them.
 //
-// The drop is accepted on Azure SQL Managed Instance, where the *create* is
-// not: CREATE REMOTE SERVICE BINDING is refused there at compile time with
-// Msg 41906, while ALTER and DROP parse and run normally.
-func (d *Database) DropRemoteServiceBinding(ctx context.Context, name string) error {
-	if _, err := d.exec(ctx, "DROP REMOTE SERVICE BINDING "+quoteIdent(name)); err != nil {
-		return fmt.Errorf("gosmo: drop remote service binding %q: %w", name, err)
-	}
-	return nil
+// Every write on *RemoteServiceBinding addresses it by name, so this handle is enough to
+// drop one the caller already knows exists — and is the form to use when
+// there is nothing to read yet, such as a script of a CREATE that was only
+// collected.
+func (d *Database) RemoteServiceBindingRef(name string) *RemoteServiceBinding {
+	return &RemoteServiceBinding{db: d, Name: name}
 }
 
-// Drop drops the remote service binding.
+// Drop drops the remote service binding.  The drop is accepted on Azure SQL
+// Managed Instance, where the *create* is not: CREATE REMOTE SERVICE BINDING
+// is refused there at compile time with Msg 41906, while ALTER and DROP parse
+// and run normally.
 func (b *RemoteServiceBinding) Drop(ctx context.Context) error {
-	return b.db.DropRemoteServiceBinding(ctx, b.Name)
+	if _, err := b.db.exec(ctx, "DROP REMOTE SERVICE BINDING "+quoteIdent(b.Name)); err != nil {
+		return fmt.Errorf("gosmo: drop remote service binding %q: %w", b.Name, err)
+	}
+	return nil
 }
 
 // ============================================================
@@ -470,19 +512,25 @@ WHERE  p.name = @p1`, name)
 	return foundRow(p, err, notFoundf("gosmo: broker priority %q not found in %q", name, d.Name), fmt.Sprintf("read broker priority %q in %q", name, d.Name))
 }
 
-// DropBrokerPriority drops a conversation priority by name.
+// BrokerPriorityRef returns a lightweight handle for a conversation priority by name, without
+// querying the catalog — the counterpart of Server.DatabaseRef. Every field
+// but the name stays at its zero value; BrokerPriorityByName is what populates them.
 //
-// It needs ALTER on the database: SQL Server enforces a BROKER PRIORITY
-// permission it does not publish, so there is no ALTER ANY … to grant
-// instead — HAS_PERMS_BY_NAME answers NULL for every spelling of one.
-func (d *Database) DropBrokerPriority(ctx context.Context, name string) error {
-	if _, err := d.exec(ctx, "DROP BROKER PRIORITY "+quoteIdent(name)); err != nil {
-		return fmt.Errorf("gosmo: drop broker priority %q: %w", name, err)
-	}
-	return nil
+// Every write on *BrokerPriority addresses it by name, so this handle is enough to
+// drop one the caller already knows exists — and is the form to use when
+// there is nothing to read yet, such as a script of a CREATE that was only
+// collected.
+func (d *Database) BrokerPriorityRef(name string) *BrokerPriority {
+	return &BrokerPriority{db: d, Name: name}
 }
 
-// Drop drops the broker priority.
+// Drop drops the broker priority.  It needs ALTER on the database: SQL Server
+// enforces a BROKER PRIORITY permission it does not publish, so there is no
+// ALTER ANY … to grant instead — HAS_PERMS_BY_NAME answers NULL for every
+// spelling of one.
 func (p *BrokerPriority) Drop(ctx context.Context) error {
-	return p.db.DropBrokerPriority(ctx, p.Name)
+	if _, err := p.db.exec(ctx, "DROP BROKER PRIORITY "+quoteIdent(p.Name)); err != nil {
+		return fmt.Errorf("gosmo: drop broker priority %q: %w", p.Name, err)
+	}
+	return nil
 }

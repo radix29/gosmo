@@ -169,7 +169,7 @@ func buildDatabaseAuditSpecificationScript(s *DatabaseAuditSpecification, opts S
 		if s.AuditName == "" {
 			return fmt.Errorf("gosmo: script database audit specification %q: it names no audit", s.Name)
 		}
-		create, err := DatabaseAuditSpecificationSpec{
+		create, err := CreateDatabaseAuditSpecificationRequest{
 			Name:         s.Name,
 			AuditName:    s.AuditName,
 			ActionGroups: s.ActionGroups,
@@ -437,6 +437,9 @@ func buildSymmetricKeyScript(k *SymmetricKey, opts ScriptOptions) string {
 // ScriptSecurityPolicy generates the CREATE (or DROP) script for one
 // row-level security policy.
 func (sc *Scripter) ScriptSecurityPolicy(ctx context.Context, schema, name string) (string, error) {
+	if err := requireSchema("script security policy", schema, name); err != nil {
+		return "", err
+	}
 	if schema != "" {
 		p, err := sc.db.SecurityPolicyByName(ctx, schema, name)
 		if err != nil {

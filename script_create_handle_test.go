@@ -24,14 +24,14 @@ func TestScriptedCreatesEmitOneStatement(t *testing.T) {
 			return err
 		}, "CREATE SERVER AUDIT [aud]]1]\nTO SECURITY_LOG\nWITH ( QUEUE_DELAY = 0, ON_FAILURE = CONTINUE )"},
 		{"CreateServerAuditSpecification", func(c context.Context) error {
-			_, err := (&Server{}).CreateServerAuditSpecification(c, ServerAuditSpecificationSpec{
+			_, err := (&Server{}).CreateServerAuditSpecification(c, CreateServerAuditSpecificationRequest{
 				Name: "spec'1", AuditName: "aud]1", ActionGroups: []string{"FAILED_LOGIN_GROUP"},
 			})
 			return err
 		}, "CREATE SERVER AUDIT SPECIFICATION [spec'1]\nFOR SERVER AUDIT [aud]]1]\n" +
 			"    ADD (FAILED_LOGIN_GROUP)\nWITH ( STATE = OFF )"},
 		{"CreateDatabaseAuditSpecification", func(c context.Context) error {
-			_, err := scriptTestDB().CreateDatabaseAuditSpecification(c, DatabaseAuditSpecificationSpec{
+			_, err := scriptTestDB().CreateDatabaseAuditSpecification(c, CreateDatabaseAuditSpecificationRequest{
 				Name: "spec'1", AuditName: "aud]1",
 				ActionGroups: []string{"SCHEMA_OBJECT_ACCESS_GROUP"}, Enabled: true,
 			})
@@ -72,7 +72,7 @@ func TestScriptedCreatesReturnANamedHandle(t *testing.T) {
 		t.Errorf("server audit handle = %+v, want one named aud]1", audit)
 	}
 
-	spec, err := srv.CreateServerAuditSpecification(ctx, ServerAuditSpecificationSpec{
+	spec, err := srv.CreateServerAuditSpecification(ctx, CreateServerAuditSpecificationRequest{
 		Name: "spec'1", AuditName: "aud]1",
 	})
 	if err != nil {
@@ -83,7 +83,7 @@ func TestScriptedCreatesReturnANamedHandle(t *testing.T) {
 	}
 
 	dbSpec, err := scriptTestDB().CreateDatabaseAuditSpecification(ctx,
-		DatabaseAuditSpecificationSpec{Name: "spec'1", AuditName: "aud]1"})
+		CreateDatabaseAuditSpecificationRequest{Name: "spec'1", AuditName: "aud]1"})
 	if err != nil {
 		t.Fatalf("CreateDatabaseAuditSpecification: %v", err)
 	}

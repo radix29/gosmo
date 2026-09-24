@@ -32,6 +32,9 @@ import (
 // ScriptUserDefinedDataType generates the CREATE (or DROP) script for one
 // alias type.
 func (sc *Scripter) ScriptUserDefinedDataType(ctx context.Context, schema, name string) (string, error) {
+	if err := requireSchema("script user defined data type", schema, name); err != nil {
+		return "", err
+	}
 	t, err := sc.db.UserDefinedDataTypeByName(ctx, schema, name)
 	if err != nil {
 		return "", err
@@ -95,6 +98,9 @@ func nullClause(nullable bool) string {
 // type and nothing else, and a caller scripting a drop should not pay for the
 // column read or fail on it.
 func (sc *Scripter) ScriptUserDefinedTableType(ctx context.Context, schema, name string) (string, error) {
+	if err := requireSchema("script user defined table type", schema, name); err != nil {
+		return "", err
+	}
 	t, err := sc.db.UserDefinedTableTypeByName(ctx, schema, name)
 	if err != nil {
 		return "", err
@@ -164,6 +170,9 @@ func tableTypeColumn(col *Column) string {
 
 // ScriptClrType generates the CREATE (or DROP) script for one CLR type.
 func (sc *Scripter) ScriptClrType(ctx context.Context, schema, name string) (string, error) {
+	if err := requireSchema("script clr type", schema, name); err != nil {
+		return "", err
+	}
 	t, err := sc.db.ClrTypeByName(ctx, schema, name)
 	if err != nil {
 		return "", err
@@ -201,6 +210,9 @@ func buildClrTypeScript(t *ClrType, opts ScriptOptions) string {
 // XML_SCHEMA_NAMESPACE reassembles the whole collection, which a drop does not
 // need.
 func (sc *Scripter) ScriptXMLSchemaCollection(ctx context.Context, schema, name string) (string, error) {
+	if err := requireSchema("script XML schema collection", schema, name); err != nil {
+		return "", err
+	}
 	c, err := sc.db.XMLSchemaCollectionByName(ctx, schema, name)
 	if err != nil {
 		return "", err
@@ -243,6 +255,9 @@ func xmlSchemaCollectionGuard(c *XMLSchemaCollection, sense string) string {
 
 // ScriptRule generates the CREATE (or DROP) script for one rule.
 func (sc *Scripter) ScriptRule(ctx context.Context, schema, name string) (string, error) {
+	if err := requireSchema("script rule", schema, name); err != nil {
+		return "", err
+	}
 	r, err := sc.db.RuleByName(ctx, schema, name)
 	if err != nil {
 		return "", err
@@ -253,6 +268,9 @@ func (sc *Scripter) ScriptRule(ctx context.Context, schema, name string) (string
 // ScriptDefault generates the CREATE (or DROP) script for one standalone
 // default.
 func (sc *Scripter) ScriptDefault(ctx context.Context, schema, name string) (string, error) {
+	if err := requireSchema("script default", schema, name); err != nil {
+		return "", err
+	}
 	df, err := sc.db.DefaultByName(ctx, schema, name)
 	if err != nil {
 		return "", err

@@ -158,15 +158,15 @@ func TestCreateSymmetricKeyStatement(t *testing.T) {
 		Open: &SymmetricKeyDecryptor{Kind: SymmetricKeyByCertificate, Name: "c", Password: "cp"}}
 	tests := []struct {
 		name string
-		spec SymmetricKeySpec
+		spec CreateSymmetricKeyRequest
 		want string
 	}{
-		{"certificate", SymmetricKeySpec{Name: "k", Algorithm: SymmetricKeyAES256,
+		{"certificate", CreateSymmetricKeyRequest{Name: "k", Algorithm: SymmetricKeyAES256,
 			Encryptions: []SymmetricKeyEncryptor{{Kind: SymmetricKeyByCertificate, Name: "c"}}},
 			"CREATE SYMMETRIC KEY [k] WITH ALGORITHM = AES_256 ENCRYPTION BY CERTIFICATE [c]"},
 		// Every option and every non-symmetric encryptor, in the order given;
 		// the secrets are escaped literals.
-		{"all options", SymmetricKeySpec{Name: "k", Authorization: "o]wner", Algorithm: SymmetricKeyAES128,
+		{"all options", CreateSymmetricKeyRequest{Name: "k", Authorization: "o]wner", Algorithm: SymmetricKeyAES128,
 			KeySource: "s'rc", IdentityValue: "id",
 			Encryptions: []SymmetricKeyEncryptor{
 				{Kind: SymmetricKeyByPassword, Password: "p'w"},
@@ -176,12 +176,12 @@ func TestCreateSymmetricKeyStatement(t *testing.T) {
 			"CREATE SYMMETRIC KEY [k] AUTHORIZATION [o]]wner] WITH ALGORITHM = AES_128, " +
 				"KEY_SOURCE = N's''rc', IDENTITY_VALUE = N'id' " +
 				"ENCRYPTION BY PASSWORD = N'p''w', ASYMMETRIC KEY [a], CERTIFICATE [c]"},
-		{"identity value alone", SymmetricKeySpec{Name: "k", Algorithm: SymmetricKeyAES192, IdentityValue: "id",
+		{"identity value alone", CreateSymmetricKeyRequest{Name: "k", Algorithm: SymmetricKeyAES192, IdentityValue: "id",
 			Encryptions: []SymmetricKeyEncryptor{{Kind: SymmetricKeyByPassword, Password: "pw"}}},
 			"CREATE SYMMETRIC KEY [k] WITH ALGORITHM = AES_192, IDENTITY_VALUE = N'id' ENCRYPTION BY PASSWORD = N'pw'"},
 		// A symmetric-key encryptor is opened first and closed after, with
 		// the CATCH closing it too.
-		{"by symmetric key", SymmetricKeySpec{Name: "k", Algorithm: SymmetricKeyAES256,
+		{"by symmetric key", CreateSymmetricKeyRequest{Name: "k", Algorithm: SymmetricKeyAES256,
 			Encryptions: []SymmetricKeyEncryptor{parent}},
 			"BEGIN TRY\n" +
 				"OPEN SYMMETRIC KEY [p'k] DECRYPTION BY CERTIFICATE [c] WITH PASSWORD = N'cp';\n" +
@@ -209,7 +209,7 @@ func TestCreateSymmetricKeyStatementRejects(t *testing.T) {
 	pw := []SymmetricKeyEncryptor{{Kind: SymmetricKeyByPassword, Password: "pw"}}
 	cyclic := &SymmetricKeyDecryptor{Kind: SymmetricKeyBySymmetricKey, Name: "a"}
 	cyclic.Open = &SymmetricKeyDecryptor{Kind: SymmetricKeyBySymmetricKey, Name: "b", Open: cyclic}
-	for _, spec := range []SymmetricKeySpec{
+	for _, spec := range []CreateSymmetricKeyRequest{
 		{Name: " ", Algorithm: SymmetricKeyAES256, Encryptions: pw},
 		{Name: "k", Encryptions: pw},
 		{Name: "k", Algorithm: "aes_256", Encryptions: pw},
@@ -244,8 +244,8 @@ func TestSymmetricKeyWritesUnderScript(t *testing.T) {
 
 	for _, w := range []func() error{
 		func() error {
-			return d.CreateSymmetricKey(ctx, SymmetricKeySpec{Name: "k", Algorithm: SymmetricKeyAES256,
-				Encryptions: []SymmetricKeyEncryptor{{Kind: SymmetricKeyByPassword, Password: "old"}}})
+			return errOnly(d.CreateSymmetricKey(ctx, CreateSymmetricKeyRequest{Name: "k", Algorithm: SymmetricKeyAES256,
+				Encryptions: []SymmetricKeyEncryptor{{Kind: SymmetricKeyByPassword, Password: "old"}}}))
 		},
 		func() error {
 			return k.AddEncryption(ctx, SymmetricKeyEncryptor{Kind: SymmetricKeyByCertificate, Name: "c"}, byPassword)

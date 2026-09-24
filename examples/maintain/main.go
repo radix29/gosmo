@@ -59,7 +59,7 @@ func main() {
 	}
 
 	// -- A table with enough rows to fragment ------------------------------
-	demo.Must(db.CreateTable(ctx, gosmo.CreateTableRequest{
+	demo.Value(db.CreateTable(ctx, gosmo.CreateTableRequest{
 		Schema: "dbo",
 		Name:   "Ledger",
 		Columns: []gosmo.ColumnDefinition{
@@ -94,7 +94,7 @@ func main() {
 	}, rows))
 	fmt.Printf("\nLoaded %d rows into dbo.Ledger\n", loaded)
 
-	demo.Must(tbl.CreateIndex(ctx, gosmo.CreateIndexRequest{
+	demo.Value(tbl.CreateIndex(ctx, gosmo.CreateIndexRequest{
 		Name:            "IX_Ledger_Account",
 		Type:            gosmo.IndexTypeNonClustered,
 		KeyColumns:      []gosmo.IndexColumnDef{{Name: "Account"}},
@@ -151,7 +151,7 @@ func main() {
 
 	// -- Statistics --------------------------------------------------------
 	demo.Section("Statistics")
-	demo.Must(tbl.CreateStatistic(ctx, gosmo.CreateStatisticRequest{
+	demo.Value(tbl.CreateStatistic(ctx, gosmo.CreateStatisticRequest{
 		Name: "ST_Ledger_Amount", Columns: []string{"Amount"}, SamplePercent: 100,
 	}))
 	demo.Must(tbl.UpdateAllStatistics(ctx, 50))

@@ -296,12 +296,11 @@ func (s *Server) CreateAvailabilityGroup(ctx context.Context, req CreateAvailabi
 	if err := s.exec(ctx, stmt); err != nil {
 		return nil, fmt.Errorf("gosmo: create availability group %q: %w", req.Name, err)
 	}
-	if Scripting(ctx) {
-		// The group does not exist to be read back; hand out a handle carrying
-		// the name and server so the caller's next scripted step can address it.
-		return &AvailabilityGroup{server: s, Name: req.Name, ClusterType: upperKeyword(req.ClusterType)}, nil
-	}
-	return s.AvailabilityGroupByName(ctx, req.Name)
+	// Under Scripting(ctx) the group does not exist yet; the handle carries
+	// the name and server so the caller's next scripted step can address it.
+	return createdObject(ctx, &AvailabilityGroup{server: s, Name: req.Name, ClusterType: upperKeyword(req.ClusterType)}, func() (*AvailabilityGroup, error) {
+		return s.AvailabilityGroupByName(ctx, req.Name)
+	})
 }
 
 // Join joins the instance this group was read from to it, as a secondary.

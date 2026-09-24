@@ -59,7 +59,7 @@ func TestBuildChangePasswordStatementEscapesQuotes(t *testing.T) {
 // createLoginStatementFor is the test's view of the statement builder: it
 // resolves LoginSourceAuto the way CreateLogin does, so a case can be
 // written the way a caller writes it.
-func createLoginStatementFor(t *testing.T, name, password string, opts *CreateLoginOptions) (string, bool) {
+func createLoginStatementFor(t *testing.T, name, password string, opts *CreateLoginRequest) (string, bool) {
 	t.Helper()
 	src := opts.Source
 	if src == LoginSourceAuto {
@@ -79,7 +79,7 @@ func createLoginStatementFor(t *testing.T, name, password string, opts *CreateLo
 // The zero Source keeps CreateLogin's original password-decides-the-type
 // rule, which every existing caller relies on.
 func TestCreateLoginAutoSourceFollowsThePassword(t *testing.T) {
-	stmt, alter := createLoginStatementFor(t, "app", "hunter2", &CreateLoginOptions{DefaultDatabase: "master"})
+	stmt, alter := createLoginStatementFor(t, "app", "hunter2", &CreateLoginRequest{DefaultDatabase: "master"})
 	want := "CREATE LOGIN [app] WITH PASSWORD = " + QuoteLiteral("hunter2") + ", DEFAULT_DATABASE = [master]"
 	if stmt != want {
 		t.Errorf("got:\n%s\nwant:\n%s", stmt, want)
@@ -88,7 +88,7 @@ func TestCreateLoginAutoSourceFollowsThePassword(t *testing.T) {
 		t.Error("a SQL login carries DEFAULT_DATABASE in CREATE; no ALTER is needed")
 	}
 
-	stmt, alter = createLoginStatementFor(t, `CONTOSO\svc`, "", &CreateLoginOptions{DefaultDatabase: "master"})
+	stmt, alter = createLoginStatementFor(t, `CONTOSO\svc`, "", &CreateLoginRequest{DefaultDatabase: "master"})
 	if stmt != `CREATE LOGIN [CONTOSO\svc] FROM WINDOWS WITH DEFAULT_DATABASE = [master]` {
 		t.Errorf("Windows login statement wrong: %s", stmt)
 	}
@@ -100,7 +100,7 @@ func TestCreateLoginAutoSourceFollowsThePassword(t *testing.T) {
 // The capability the round trip was missing: gosmo could read and script an
 // Entra login but not create one.
 func TestCreateLoginExternalProvider(t *testing.T) {
-	stmt, alter := createLoginStatementFor(t, "user@contoso.com", "", &CreateLoginOptions{
+	stmt, alter := createLoginStatementFor(t, "user@contoso.com", "", &CreateLoginRequest{
 		Source: LoginSourceExternalProvider,
 	})
 	if stmt != "CREATE LOGIN [user@contoso.com] FROM EXTERNAL PROVIDER" {
@@ -114,7 +114,7 @@ func TestCreateLoginExternalProvider(t *testing.T) {
 // OBJECT_ID names the Entra principal explicitly, for a display name the
 // directory cannot resolve on its own. SQL Server 2022 and later.
 func TestCreateLoginExternalProviderWithObjectID(t *testing.T) {
-	stmt, alter := createLoginStatementFor(t, "sales team", "", &CreateLoginOptions{
+	stmt, alter := createLoginStatementFor(t, "sales team", "", &CreateLoginRequest{
 		Source:   LoginSourceExternalProvider,
 		ObjectID: "3f2504e0-4f89-11d3-9a0c-0305e82c3301",
 	})
@@ -131,7 +131,7 @@ func TestCreateLoginExternalProviderWithObjectID(t *testing.T) {
 // The object id is a string literal, so it is escaped like every other one
 // rather than concatenated raw.
 func TestCreateLoginObjectIDIsQuotedAsALiteral(t *testing.T) {
-	stmt, _ := createLoginStatementFor(t, "x", "", &CreateLoginOptions{
+	stmt, _ := createLoginStatementFor(t, "x", "", &CreateLoginRequest{
 		Source:   LoginSourceExternalProvider,
 		ObjectID: "a'b",
 	})
@@ -143,7 +143,7 @@ func TestCreateLoginObjectIDIsQuotedAsALiteral(t *testing.T) {
 // DEFAULT_DATABASE still cannot ride along with OBJECT_ID — it is not part of
 // the option list FROM EXTERNAL PROVIDER accepts, and stays on the ALTER.
 func TestCreateLoginObjectIDDoesNotPullDefaultDatabaseIntoTheCreate(t *testing.T) {
-	stmt, alter := createLoginStatementFor(t, "x", "", &CreateLoginOptions{
+	stmt, alter := createLoginStatementFor(t, "x", "", &CreateLoginRequest{
 		Source:          LoginSourceExternalProvider,
 		ObjectID:        "3f2504e0-4f89-11d3-9a0c-0305e82c3301",
 		DefaultDatabase: "sales",
@@ -161,7 +161,7 @@ func TestCreateLoginObjectIDDoesNotPullDefaultDatabaseIntoTheCreate(t *testing.T
 // create as something else entirely.
 func TestCreateLoginObjectIDOnAnotherSourceIsRefused(t *testing.T) {
 	for _, src := range []LoginSource{LoginSourceSQL, LoginSourceWindows, LoginSourceCertificate, LoginSourceAsymmetricKey} {
-		opts := CreateLoginOptions{Source: src, ObjectID: "3f2504e0-4f89-11d3-9a0c-0305e82c3301",
+		opts := CreateLoginRequest{Source: src, ObjectID: "3f2504e0-4f89-11d3-9a0c-0305e82c3301",
 			CertificateName: "c", AsymmetricKeyName: "k"}
 		password := ""
 		if src == LoginSourceSQL {
@@ -177,7 +177,7 @@ func TestCreateLoginObjectIDOnAnotherSourceIsRefused(t *testing.T) {
 // to be applied by a following ALTER LOGIN rather than named in the CREATE,
 // which would not parse.
 func TestCreateLoginDefaultDatabaseMovesToAnAlterForAnExternalLogin(t *testing.T) {
-	stmt, alter := createLoginStatementFor(t, "x", "", &CreateLoginOptions{
+	stmt, alter := createLoginStatementFor(t, "x", "", &CreateLoginRequest{
 		Source: LoginSourceExternalProvider, DefaultDatabase: "sales",
 	})
 	if stmt != "CREATE LOGIN [x] FROM EXTERNAL PROVIDER" {
@@ -196,7 +196,7 @@ func TestCreateLoginDefaultDatabaseMovesToAnAlterForAnExternalLogin(t *testing.T
 // asymmetric key login" to the CREATE and to the ALTER alike (verified live
 // on win10cli), so the option is refused rather than sent.
 func TestCreateLoginRefusesADefaultDatabaseForAMappedLogin(t *testing.T) {
-	for _, opts := range []CreateLoginOptions{
+	for _, opts := range []CreateLoginRequest{
 		{Source: LoginSourceCertificate, CertificateName: "sig_cert", DefaultDatabase: "sales"},
 		{Source: LoginSourceAsymmetricKey, AsymmetricKeyName: "sig_key", DefaultDatabase: "sales"},
 	} {
@@ -206,7 +206,7 @@ func TestCreateLoginRefusesADefaultDatabaseForAMappedLogin(t *testing.T) {
 	}
 
 	// Without one, both build normally.
-	stmt, alter := createLoginStatementFor(t, "x", "", &CreateLoginOptions{
+	stmt, alter := createLoginStatementFor(t, "x", "", &CreateLoginRequest{
 		Source: LoginSourceCertificate, CertificateName: "sig_cert",
 	})
 	if stmt != "CREATE LOGIN [x] FROM CERTIFICATE [sig_cert]" || alter {
@@ -218,14 +218,14 @@ func TestCreateLoginRejectsMismatchedOptions(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
 		password string
-		opts     CreateLoginOptions
+		opts     CreateLoginRequest
 	}{
-		{"password on a Windows login", "hunter2", CreateLoginOptions{Source: LoginSourceWindows}},
-		{"password on an external login", "hunter2", CreateLoginOptions{Source: LoginSourceExternalProvider}},
-		{"SQL login with no password", "", CreateLoginOptions{Source: LoginSourceSQL}},
-		{"certificate with no name", "", CreateLoginOptions{Source: LoginSourceCertificate}},
-		{"asymmetric key with no name", "", CreateLoginOptions{Source: LoginSourceAsymmetricKey}},
-		{"MustChange on a Windows login", "", CreateLoginOptions{Source: LoginSourceWindows, MustChange: true}},
+		{"password on a Windows login", "hunter2", CreateLoginRequest{Source: LoginSourceWindows}},
+		{"password on an external login", "hunter2", CreateLoginRequest{Source: LoginSourceExternalProvider}},
+		{"SQL login with no password", "", CreateLoginRequest{Source: LoginSourceSQL}},
+		{"certificate with no name", "", CreateLoginRequest{Source: LoginSourceCertificate}},
+		{"asymmetric key with no name", "", CreateLoginRequest{Source: LoginSourceAsymmetricKey}},
+		{"MustChange on a Windows login", "", CreateLoginRequest{Source: LoginSourceWindows, MustChange: true}},
 	} {
 		if _, _, err := createLoginStatement("x", tc.password, tc.opts.Source, &tc.opts); err == nil {
 			t.Errorf("%s: want an error, got none", tc.name)
@@ -236,7 +236,7 @@ func TestCreateLoginRejectsMismatchedOptions(t *testing.T) {
 // The identifiers reach the statement bracket-quoted, like every other name
 // gosmo emits.
 func TestCreateLoginQuotesMappedObjectNames(t *testing.T) {
-	stmt, _ := createLoginStatementFor(t, "x", "", &CreateLoginOptions{
+	stmt, _ := createLoginStatementFor(t, "x", "", &CreateLoginRequest{
 		Source: LoginSourceCertificate, CertificateName: "cert]name",
 	})
 	if stmt != "CREATE LOGIN [x] FROM CERTIFICATE [cert]]name]" {
@@ -250,7 +250,8 @@ func TestCreateLoginContextScriptsCreateThenAlter(t *testing.T) {
 	s := &Server{}
 	ctx, script := WithScript(context.Background())
 
-	err := s.CreateLogin(ctx, "user@contoso.com", "", &CreateLoginOptions{
+	_, err := s.CreateLogin(ctx, CreateLoginRequest{
+		Name:            "user@contoso.com",
 		Source:          LoginSourceExternalProvider,
 		DefaultDatabase: "sales",
 	})
@@ -277,7 +278,7 @@ func TestCreateLoginContextScriptsASQLLoginAsOneStatement(t *testing.T) {
 	s := &Server{}
 	ctx, script := WithScript(context.Background())
 
-	if err := s.CreateLogin(ctx, "app", "hunter2", &CreateLoginOptions{DefaultDatabase: "sales"}); err != nil {
+	if _, err := s.CreateLogin(ctx, CreateLoginRequest{Name: "app", Password: "hunter2", DefaultDatabase: "sales"}); err != nil {
 		t.Fatalf("CreateLogin under WithScript: %v", err)
 	}
 	if len(script.Statements()) != 1 {

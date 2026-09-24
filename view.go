@@ -109,8 +109,8 @@ var allObjectsFilterColumns = filterColumns{
 // DropView drops a view. A view that isn't there is the server's error, not
 // a silent success — see the note on Database.DropTable.
 func (d *Database) DropView(ctx context.Context, schema, name string) error {
-	if schema == "" {
-		schema = "dbo"
+	if err := requireSchema("drop view", schema, name); err != nil {
+		return err
 	}
 	if _, err := d.exec(ctx, "DROP VIEW "+qualifiedName(schema, name)); err != nil {
 		return fmt.Errorf("gosmo: drop view [%s].[%s]: %w", schema, name, err)
@@ -127,8 +127,8 @@ func (d *Database) DropView(ctx context.Context, schema, name string) error {
 // OF triggers had no reader at all. The parent is resolved by OBJECT_ID, which
 // does not care which of the two it is.
 func (d *Database) ObjectTriggers(ctx context.Context, schema, name string) ([]*Trigger, error) {
-	if schema == "" {
-		schema = "dbo"
+	if err := requireSchema("object triggers", schema, name); err != nil {
+		return nil, err
 	}
 	return d.triggersWhere(ctx, "AND tr.parent_id = OBJECT_ID(@p1)",
 		[]any{qualifiedName(schema, name)})

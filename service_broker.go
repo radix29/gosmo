@@ -179,18 +179,25 @@ WHERE  mt.name = @p1`, name)
 	return foundRow(mt, err, notFoundf("gosmo: message type %q not found in %q", name, d.Name), fmt.Sprintf("read message type %q in %q", name, d.Name))
 }
 
-// DropMessageType drops a message type by name. A message type still named
-// by a contract is refused by the server (Msg 3716) until the contract goes.
-func (d *Database) DropMessageType(ctx context.Context, name string) error {
-	if _, err := d.exec(ctx, "DROP MESSAGE TYPE "+quoteIdent(name)); err != nil {
-		return fmt.Errorf("gosmo: drop message type %q: %w", name, err)
-	}
-	return nil
+// MessageTypeRef returns a lightweight handle for a message type by name, without
+// querying the catalog — the counterpart of Server.DatabaseRef. Every field
+// but the name stays at its zero value; MessageTypeByName is what populates them.
+//
+// Every write on *MessageType addresses it by name, so this handle is enough to
+// drop one the caller already knows exists — and is the form to use when
+// there is nothing to read yet, such as a script of a CREATE that was only
+// collected.
+func (d *Database) MessageTypeRef(name string) *MessageType {
+	return &MessageType{db: d, Name: name}
 }
 
-// Drop drops the message type.
+// Drop drops the message type. A message type still named by a contract is
+// refused by the server (Msg 3716) until the contract goes.
 func (mt *MessageType) Drop(ctx context.Context) error {
-	return mt.db.DropMessageType(ctx, mt.Name)
+	if _, err := mt.db.exec(ctx, "DROP MESSAGE TYPE "+quoteIdent(mt.Name)); err != nil {
+		return fmt.Errorf("gosmo: drop message type %q: %w", mt.Name, err)
+	}
+	return nil
 }
 
 // ============================================================
@@ -392,18 +399,25 @@ WHERE  c.name = @p1`, name)
 	return c, nil
 }
 
-// DropContract drops a service contract by name. A contract still named by a
-// service or a conversation priority is refused by the server (Msg 3716).
-func (d *Database) DropContract(ctx context.Context, name string) error {
-	if _, err := d.exec(ctx, "DROP CONTRACT "+quoteIdent(name)); err != nil {
-		return fmt.Errorf("gosmo: drop contract %q: %w", name, err)
-	}
-	return nil
+// ContractRef returns a lightweight handle for a service contract by name, without
+// querying the catalog — the counterpart of Server.DatabaseRef. Every field
+// but the name stays at its zero value; ContractByName is what populates them.
+//
+// Every write on *ServiceContract addresses it by name, so this handle is enough to
+// drop one the caller already knows exists — and is the form to use when
+// there is nothing to read yet, such as a script of a CREATE that was only
+// collected.
+func (d *Database) ContractRef(name string) *ServiceContract {
+	return &ServiceContract{db: d, Name: name}
 }
 
-// Drop drops the contract.
+// Drop drops the contract. A contract still named by a service or a
+// conversation priority is refused by the server (Msg 3716).
 func (c *ServiceContract) Drop(ctx context.Context) error {
-	return c.db.DropContract(ctx, c.Name)
+	if _, err := c.db.exec(ctx, "DROP CONTRACT "+quoteIdent(c.Name)); err != nil {
+		return fmt.Errorf("gosmo: drop contract %q: %w", c.Name, err)
+	}
+	return nil
 }
 
 // ============================================================
@@ -576,16 +590,23 @@ WHERE  s.name = @p1`, name)
 	return s, nil
 }
 
-// DropBrokerService drops a service by name. A service with conversations
-// still open on it is refused by the server.
-func (d *Database) DropBrokerService(ctx context.Context, name string) error {
-	if _, err := d.exec(ctx, "DROP SERVICE "+quoteIdent(name)); err != nil {
-		return fmt.Errorf("gosmo: drop service %q: %w", name, err)
-	}
-	return nil
+// BrokerServiceRef returns a lightweight handle for a Service Broker service by name, without
+// querying the catalog — the counterpart of Server.DatabaseRef. Every field
+// but the name stays at its zero value; BrokerServiceByName is what populates them.
+//
+// Every write on *BrokerService addresses it by name, so this handle is enough to
+// drop one the caller already knows exists — and is the form to use when
+// there is nothing to read yet, such as a script of a CREATE that was only
+// collected.
+func (d *Database) BrokerServiceRef(name string) *BrokerService {
+	return &BrokerService{db: d, Name: name}
 }
 
-// Drop drops the service.
+// Drop drops the service. A service with conversations still open on it is
+// refused by the server.
 func (s *BrokerService) Drop(ctx context.Context) error {
-	return s.db.DropBrokerService(ctx, s.Name)
+	if _, err := s.db.exec(ctx, "DROP SERVICE "+quoteIdent(s.Name)); err != nil {
+		return fmt.Errorf("gosmo: drop service %q: %w", s.Name, err)
+	}
+	return nil
 }

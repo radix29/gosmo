@@ -89,6 +89,9 @@ func (d *Database) SetChangeTracking(ctx context.Context, info ChangeTrackingInf
 // SetTableChangeTracking enables or disables change tracking on one
 // table. trackColumns is ignored when enable is false.
 func (d *Database) SetTableChangeTracking(ctx context.Context, schema, name string, enable, trackColumns bool) error {
+	if err := requireSchema("set table change tracking", schema, name); err != nil {
+		return err
+	}
 	ref := qualifiedName(schema, name)
 	var q string
 	if !enable {
@@ -145,6 +148,9 @@ ORDER  BY SCHEMA_NAME(t.schema_id), t.name`)
 // comes back with Enabled false. The error satisfies errors.Is(err,
 // ErrNotFound) only when the database has no such user table.
 func (d *Database) TableChangeTrackingFor(ctx context.Context, schema, name string) (*TableChangeTracking, error) {
+	if err := requireSchema("table change tracking for", schema, name); err != nil {
+		return nil, err
+	}
 	t := &TableChangeTracking{}
 	err := d.queryRow(ctx, func(row *sql.Row) error {
 		return row.Scan(&t.Schema, &t.Name, &t.Enabled, &t.TrackColumnsUpdated)

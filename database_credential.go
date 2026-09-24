@@ -106,9 +106,9 @@ func scanDatabaseScopedCredential(d *Database, scan func(...any) error) (*Databa
 
 // -- Writes ----------------------------------------------------------------------
 
-// DatabaseScopedCredentialSpec describes a database-scoped credential to
+// CreateDatabaseScopedCredentialRequest describes a database-scoped credential to
 // create.
-type DatabaseScopedCredentialSpec struct {
+type CreateDatabaseScopedCredentialRequest struct {
 	Name string
 
 	// Identity is the account the credential presents when the database
@@ -125,7 +125,7 @@ type DatabaseScopedCredentialSpec struct {
 
 // createDatabaseScopedCredentialStatement builds CREATE DATABASE SCOPED
 // CREDENTIAL, validating the spec.
-func (spec DatabaseScopedCredentialSpec) createDatabaseScopedCredentialStatement() (string, error) {
+func (spec CreateDatabaseScopedCredentialRequest) createDatabaseScopedCredentialStatement() (string, error) {
 	if strings.TrimSpace(spec.Name) == "" {
 		return "", fmt.Errorf("database scoped credential has no name")
 	}
@@ -142,7 +142,7 @@ func (spec DatabaseScopedCredentialSpec) createDatabaseScopedCredentialStatement
 }
 
 // CreateDatabaseScopedCredential creates a database-scoped credential.
-func (d *Database) CreateDatabaseScopedCredential(ctx context.Context, spec DatabaseScopedCredentialSpec) (*DatabaseScopedCredential, error) {
+func (d *Database) CreateDatabaseScopedCredential(ctx context.Context, spec CreateDatabaseScopedCredentialRequest) (*DatabaseScopedCredential, error) {
 	stmt, err := spec.createDatabaseScopedCredentialStatement()
 	if err != nil {
 		return nil, fmt.Errorf("gosmo: create database scoped credential: %w", err)
@@ -150,11 +150,9 @@ func (d *Database) CreateDatabaseScopedCredential(ctx context.Context, spec Data
 	if _, err := d.exec(ctx, stmt); err != nil {
 		return nil, fmt.Errorf("gosmo: create database scoped credential %q in %q: %w", spec.Name, d.Name, err)
 	}
-	if Scripting(ctx) {
-		// The CREATE was only collected, so there is nothing to read back.
-		return d.DatabaseScopedCredentialRef(spec.Name), nil
-	}
-	return d.DatabaseScopedCredentialByName(ctx, spec.Name)
+	return createdObject(ctx, d.DatabaseScopedCredentialRef(spec.Name), func() (*DatabaseScopedCredential, error) {
+		return d.DatabaseScopedCredentialByName(ctx, spec.Name)
+	})
 }
 
 // Alter changes the credential's identity, and its secret.

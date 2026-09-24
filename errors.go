@@ -57,6 +57,12 @@ func (e *notFoundError) Unwrap() []error {
 }
 
 // notFoundf builds a not-found error whose message is exactly format/args.
+// ErrSchemaRequired is wrapped by every call given a schema-scoped name with
+// an empty schema. Nothing defaults it: dbo and the caller's own default
+// schema are both plausible readings, and guessing wrong addresses — or
+// drops — a different object.
+var ErrSchemaRequired = errors.New("schema is required")
+
 func notFoundf(format string, args ...any) error {
 	return &notFoundError{msg: fmt.Sprintf(format, args...)}
 }

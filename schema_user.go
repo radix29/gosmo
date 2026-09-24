@@ -24,7 +24,10 @@ func (s *Schema) Database() *Database { return s.db }
 
 // Drop drops the schema.
 func (s *Schema) Drop(ctx context.Context) error {
-	return s.db.DropSchema(ctx, s.Name)
+	if _, err := s.db.exec(ctx, "DROP SCHEMA "+quoteIdent(s.Name)); err != nil {
+		return fmt.Errorf("gosmo: drop schema %q: %w", s.Name, err)
+	}
+	return nil
 }
 
 // ChangeOwner transfers schema ownership to a new principal.
@@ -146,7 +149,10 @@ func (u *User) Database() *Database { return u.db }
 
 // Drop drops the database user.
 func (u *User) Drop(ctx context.Context) error {
-	return u.db.DropUser(ctx, u.Name)
+	if _, err := u.db.exec(ctx, "DROP USER "+quoteIdent(u.Name)); err != nil {
+		return fmt.Errorf("gosmo: drop user %q: %w", u.Name, err)
+	}
+	return nil
 }
 
 // Rename changes the database user's name.

@@ -395,7 +395,7 @@ func TestBackupFileListQuerySelectsTheSet(t *testing.T) {
 		{DeviceTarget("Nightly]Dev"), 2, `RESTORE FILELISTONLY FROM [Nightly]]Dev] WITH FILE = 2`},
 	}
 	for _, c := range cases {
-		if got := backupFileListQuery(c.device, c.file); got != c.want {
+		if got := backupFileListQuery(c.file, []BackupTarget{c.device}); got != c.want {
 			t.Errorf("backupFileListQuery(%q, %d) =\n  %s\nwant\n  %s", c.device, c.file, got, c.want)
 		}
 	}
@@ -512,6 +512,35 @@ func TestRestoreSideReadsUseURLForABlob(t *testing.T) {
 	want := "RESTORE VERIFYONLY FROM URL = N'" + blob + "'"
 	if len(col.Statements()) != 1 || col.Statements()[0] != want {
 		t.Errorf("got %v, want [%s]", col.Statements(), want)
+	}
+}
+
+// A striped backup is one media set, and each RESTORE-side read has to name
+// every family of it — the server refuses one stripe of two. An empty list is
+// refused before it reaches the server as a statement with no FROM operand.
+func TestRestoreSideReadsNameEveryFamily(t *testing.T) {
+	ctx, col := WithScript(context.Background())
+	s := &Server{}
+	if err := s.VerifyBackup(ctx, DiskTarget(`/b/s1.bak`), DiskTarget(`/b/s2.bak`)); err != nil {
+		t.Fatalf("VerifyBackup: %v", err)
+	}
+	want := `RESTORE VERIFYONLY FROM DISK = N'/b/s1.bak', DISK = N'/b/s2.bak'`
+	if got := col.Statements(); len(got) != 1 || got[0] != want {
+		t.Errorf("VerifyBackup = %v, want [%s]", got, want)
+	}
+	two := []BackupTarget{DiskTarget(`/b/s1.bak`), DiskTarget(`/b/s2.bak`)}
+	if got, want := backupFileListQuery(3, two),
+		`RESTORE FILELISTONLY FROM DISK = N'/b/s1.bak', DISK = N'/b/s2.bak' WITH FILE = 3`; got != want {
+		t.Errorf("backupFileListQuery = %s, want %s", got, want)
+	}
+	if err := s.VerifyBackup(ctx); err == nil {
+		t.Error("VerifyBackup with no device: want an error")
+	}
+	if _, err := s.BackupHeaders(ctx); err == nil {
+		t.Error("BackupHeaders with no device: want an error")
+	}
+	if _, err := s.BackupFileList(ctx, 1); err == nil {
+		t.Error("BackupFileList with no device: want an error")
 	}
 }
 

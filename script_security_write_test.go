@@ -20,35 +20,35 @@ func TestScriptSecurityWrites(t *testing.T) {
 	runScriptCases(t, []scriptCase{
 		// --- database principals
 		{"CreateSchema", func(c context.Context) error {
-			return scriptTestDB().CreateSchema(c, "sa]les", "o'brien")
+			return errOnly(scriptTestDB().CreateSchema(c, CreateSchemaRequest{Name: "sa]les", Owner: "o'brien"}))
 		}, scriptUsePrefix + "CREATE SCHEMA [sa]]les] AUTHORIZATION [o'brien]"},
 		{"CreateSchema without an owner", func(c context.Context) error {
-			return scriptTestDB().CreateSchema(c, "sa]les", "")
+			return errOnly(scriptTestDB().CreateSchema(c, CreateSchemaRequest{Name: "sa]les"}))
 		}, scriptUsePrefix + "CREATE SCHEMA [sa]]les]"},
 		{"CreateUser", func(c context.Context) error {
-			return scriptTestDB().CreateUser(c, CreateUserRequest{Name: "o'brien", Login: `DOM\o]b`, DefaultSchema: "sa]les"})
+			return errOnly(scriptTestDB().CreateUser(c, CreateUserRequest{Name: "o'brien", Login: `DOM\o]b`, DefaultSchema: "sa]les"}))
 		}, scriptUsePrefix + `CREATE USER [o'brien] FOR LOGIN [DOM\o]]b] WITH DEFAULT_SCHEMA = [sa]]les]`},
 		{"CreateUser without a default schema", func(c context.Context) error {
-			return scriptTestDB().CreateUser(c, CreateUserRequest{Name: "o'brien", Login: "app_login"})
+			return errOnly(scriptTestDB().CreateUser(c, CreateUserRequest{Name: "o'brien", Login: "app_login"}))
 		}, scriptUsePrefix + "CREATE USER [o'brien] FOR LOGIN [app_login]"},
 		{"CreateUser without login", func(c context.Context) error {
-			return scriptTestDB().CreateUser(c, CreateUserRequest{Name: "o'brien", Kind: UserWithoutLogin, DefaultSchema: "sa]les"})
+			return errOnly(scriptTestDB().CreateUser(c, CreateUserRequest{Name: "o'brien", Kind: UserWithoutLogin, DefaultSchema: "sa]les"}))
 		}, scriptUsePrefix + "CREATE USER [o'brien] WITHOUT LOGIN WITH DEFAULT_SCHEMA = [sa]]les]"},
 		{"CreateUser Windows for login", func(c context.Context) error {
-			return scriptTestDB().CreateUser(c, CreateUserRequest{Name: `DOM\o]b`, Kind: UserWindows, Login: `DOM\o]b`})
+			return errOnly(scriptTestDB().CreateUser(c, CreateUserRequest{Name: `DOM\o]b`, Kind: UserWindows, Login: `DOM\o]b`}))
 		}, scriptUsePrefix + `CREATE USER [DOM\o]]b] FOR LOGIN [DOM\o]]b]`},
 		{"CreateUser contained Windows", func(c context.Context) error {
-			return scriptTestDB().CreateUser(c, CreateUserRequest{Name: `DOM\o]b`, Kind: UserWindows, DefaultSchema: "dbo"})
+			return errOnly(scriptTestDB().CreateUser(c, CreateUserRequest{Name: `DOM\o]b`, Kind: UserWindows, DefaultSchema: "dbo"}))
 		}, scriptUsePrefix + `CREATE USER [DOM\o]]b] WITH DEFAULT_SCHEMA = [dbo]`},
 		{"CreateUser from certificate", func(c context.Context) error {
-			return scriptTestDB().CreateUser(c, CreateUserRequest{Name: "o'brien", Kind: UserFromCertificate, Certificate: "ce]rt"})
+			return errOnly(scriptTestDB().CreateUser(c, CreateUserRequest{Name: "o'brien", Kind: UserFromCertificate, Certificate: "ce]rt"}))
 		}, scriptUsePrefix + "CREATE USER [o'brien] FROM CERTIFICATE [ce]]rt]"},
 		{"CreateUser from asymmetric key", func(c context.Context) error {
-			return scriptTestDB().CreateUser(c, CreateUserRequest{Name: "o'brien", Kind: UserFromAsymmetricKey, AsymmetricKey: "k]ey"})
+			return errOnly(scriptTestDB().CreateUser(c, CreateUserRequest{Name: "o'brien", Kind: UserFromAsymmetricKey, AsymmetricKey: "k]ey"}))
 		}, scriptUsePrefix + "CREATE USER [o'brien] FROM ASYMMETRIC KEY [k]]ey]"},
 		{"CreateUser from external provider", func(c context.Context) error {
-			return scriptTestDB().CreateUser(c, CreateUserRequest{Name: "a@contoso.com", Kind: UserFromExternalProvider,
-				ObjectID: "0000-o'id", DefaultSchema: "dbo"})
+			return errOnly(scriptTestDB().CreateUser(c, CreateUserRequest{Name: "a@contoso.com", Kind: UserFromExternalProvider,
+				ObjectID: "0000-o'id", DefaultSchema: "dbo"}))
 		}, scriptUsePrefix + "CREATE USER [a@contoso.com] FROM EXTERNAL PROVIDER WITH OBJECT_ID = N'0000-o''id', DEFAULT_SCHEMA = [dbo]"},
 		{"AddRoleMember", func(c context.Context) error {
 			return scriptTestDB().AddRoleMember(c, "db_own]er", "o'brien")
@@ -161,20 +161,20 @@ func TestScriptSecurityWrites(t *testing.T) {
 			return securityPolicy().Disable(c)
 		}, scriptUsePrefix + "ALTER SECURITY POLICY [Se]]c].[sp'1] WITH (STATE = OFF)"},
 		{"Server DropLogin", func(c context.Context) error {
-			return (&Server{}).DropLogin(c, "o'brien")
+			return (&Server{}).LoginRef("o'brien").Drop(c)
 		}, "DROP LOGIN [o'brien]"},
 
 		// --- keys and certificates
 		{"CreateCertificate", func(c context.Context) error {
-			return scriptTestDB().CreateCertificate(c, CertificateSpec{
+			return errOnly(scriptTestDB().CreateCertificate(c, CreateCertificateRequest{
 				Name: "Cert]1", Authorization: "o'brien", Subject: "gossms o'brien",
-			})
+			}))
 		}, scriptUsePrefix + "CREATE CERTIFICATE [Cert]]1] AUTHORIZATION [o'brien] WITH SUBJECT = N'gossms o''brien'"},
 		{"CreateMasterKey", func(c context.Context) error {
-			return scriptTestDB().CreateMasterKey(c, "p'wd")
+			return errOnly(scriptTestDB().CreateMasterKey(c, CreateMasterKeyRequest{Password: "p'wd"}))
 		}, scriptUsePrefix + "CREATE MASTER KEY ENCRYPTION BY PASSWORD = N'p''wd'"},
-		{"CreateColumnMasterKeyWithSignature", func(c context.Context) error {
-			return scriptTestDB().CreateColumnMasterKeyWithSignature(c, "CMK]1", "MSSQL_CERTIFICATE_STORE", "CurrentUser/my/a'b", []byte{0x0a, 0xff})
+		{"CreateColumnMasterKey with a signature", func(c context.Context) error {
+			return errOnly(scriptTestDB().CreateColumnMasterKey(c, CreateColumnMasterKeyRequest{Name: "CMK]1", KeyStoreProvider: "MSSQL_CERTIFICATE_STORE", KeyPath: "CurrentUser/my/a'b", Signature: []byte{0x0a, 0xff}}))
 		}, scriptUsePrefix + `
 CREATE COLUMN MASTER KEY [CMK]]1]
 WITH (
@@ -183,7 +183,7 @@ WITH (
     ENCLAVE_COMPUTATIONS (SIGNATURE = 0x0AFF)
 )`},
 		{"CreateColumnMasterKey without enclave computations", func(c context.Context) error {
-			return scriptTestDB().CreateColumnMasterKey(c, "CMK]1", "MSSQL_CERTIFICATE_STORE", "CurrentUser/my/a'b", false)
+			return errOnly(scriptTestDB().CreateColumnMasterKey(c, CreateColumnMasterKeyRequest{Name: "CMK]1", KeyStoreProvider: "MSSQL_CERTIFICATE_STORE", KeyPath: "CurrentUser/my/a'b"}))
 		}, scriptUsePrefix + `
 CREATE COLUMN MASTER KEY [CMK]]1]
 WITH (
@@ -191,9 +191,12 @@ WITH (
     KEY_PATH = N'CurrentUser/my/a''b'
 )`},
 		{"CreateColumnEncryptionKey", func(c context.Context) error {
-			return scriptTestDB().CreateColumnEncryptionKey(c, "CEK]1", []ColumnEncryptionKeyValue{
-				{MasterKeyName: "CMK]1", EncryptionAlgorithm: "RSA_OAEP", EncryptedValue: []byte{0x0a, 0xff}},
-			})
+			return errOnly(scriptTestDB().CreateColumnEncryptionKey(c, CreateColumnEncryptionKeyRequest{
+				Name: "CEK]1",
+				Values: []ColumnEncryptionKeyValue{
+					{MasterKeyName: "CMK]1", EncryptionAlgorithm: "RSA_OAEP", EncryptedValue: []byte{0x0a, 0xff}},
+				},
+			}))
 		}, scriptUsePrefix + `CREATE COLUMN ENCRYPTION KEY [CEK]]1]
 WITH VALUES
 (
@@ -204,10 +207,13 @@ WITH VALUES
 		// A key mid-rotation is encrypted under two master keys and CREATE has
 		// to restate both — one comma, and every value repeated in full.
 		{"CreateColumnEncryptionKey mid-rotation", func(c context.Context) error {
-			return scriptTestDB().CreateColumnEncryptionKey(c, "CEK1", []ColumnEncryptionKeyValue{
-				{MasterKeyName: "CMK1", EncryptionAlgorithm: "RSA_OAEP", EncryptedValue: []byte{0x01}},
-				{MasterKeyName: "CMK2", EncryptionAlgorithm: "RSA_OAEP", EncryptedValue: []byte{0x02}},
-			})
+			return errOnly(scriptTestDB().CreateColumnEncryptionKey(c, CreateColumnEncryptionKeyRequest{
+				Name: "CEK1",
+				Values: []ColumnEncryptionKeyValue{
+					{MasterKeyName: "CMK1", EncryptionAlgorithm: "RSA_OAEP", EncryptedValue: []byte{0x01}},
+					{MasterKeyName: "CMK2", EncryptionAlgorithm: "RSA_OAEP", EncryptedValue: []byte{0x02}},
+				},
+			}))
 		}, scriptUsePrefix + `CREATE COLUMN ENCRYPTION KEY [CEK1]
 WITH VALUES
 (
@@ -307,7 +313,7 @@ func TestCreateUserRefusesWhatItsKindCannotCarry(t *testing.T) {
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			ctx, script := WithScript(context.Background())
-			err := scriptTestDB().CreateUser(ctx, c.req)
+			_, err := scriptTestDB().CreateUser(ctx, c.req)
 			if err == nil {
 				t.Fatalf("CreateUser(%+v) returned nil, want an error", c.req)
 			}
@@ -316,43 +322,6 @@ func TestCreateUserRefusesWhatItsKindCannotCarry(t *testing.T) {
 			}
 			if len(script.Statements()) != 0 {
 				t.Errorf("Statements = %q, want none", script.Statements())
-			}
-		})
-	}
-}
-
-// TestCreateColumnMasterKeyRefusesEnclaveComputationsWithoutASignature pins the
-// two refusals rather than the statements. ENCLAVE_COMPUTATIONS takes a
-// signature the client computes from the master key's private key — the boolean
-// spelling this package emitted until 2026-08-21 (ENCLAVE_COMPUTATIONS = YES)
-// is not syntax SQL Server accepts, so a caller asking for one has to be sent
-// to CreateColumnMasterKeyWithSignature instead of shipped a statement that
-// fails at the server.
-func TestCreateColumnMasterKeyRefusesEnclaveComputationsWithoutASignature(t *testing.T) {
-	for _, c := range []struct {
-		name string
-		call func(context.Context) error
-		want string
-	}{
-		{"bool form asking for enclave computations", func(c context.Context) error {
-			return scriptTestDB().CreateColumnMasterKey(c, "CMK1", "MSSQL_CERTIFICATE_STORE", "CurrentUser/my/ab", true)
-		}, "CreateColumnMasterKeyWithSignature"},
-		{"signature form with an empty signature", func(c context.Context) error {
-			return scriptTestDB().CreateColumnMasterKeyWithSignature(c, "CMK1", "MSSQL_CERTIFICATE_STORE", "CurrentUser/my/ab", nil)
-		}, "signature is empty"},
-	} {
-		t.Run(c.name, func(t *testing.T) {
-			ctx, script := WithScript(context.Background())
-			err := c.call(ctx)
-			if err == nil {
-				t.Fatalf("no error; statements: %v", script.Statements())
-			}
-			if !strings.Contains(err.Error(), c.want) {
-				t.Errorf("error = %v, want it to mention %q", err, c.want)
-			}
-			if len(script.Statements()) != 0 {
-				t.Errorf("emitted %d statement(s), want none:\n%s",
-					len(script.Statements()), strings.Join(script.Statements(), "\n---\n"))
 			}
 		})
 	}
@@ -381,7 +350,7 @@ func TestCreateColumnEncryptionKeyRefusesAnIncompleteValue(t *testing.T) {
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			ctx, script := WithScript(context.Background())
-			err := scriptTestDB().CreateColumnEncryptionKey(ctx, "CEK1", c.values)
+			_, err := scriptTestDB().CreateColumnEncryptionKey(ctx, CreateColumnEncryptionKeyRequest{Name: "CEK1", Values: c.values})
 			if err == nil {
 				t.Fatalf("no error; statements: %v", script.Statements())
 			}

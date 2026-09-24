@@ -115,7 +115,7 @@ than failing:
 
 ## Keys `FROM PROVIDER` have never executed
 
-`AsymmetricKeySpec.FromProvider` and `SymmetricKeySpec.FromProvider`
+`CreateAsymmetricKeyRequest.FromProvider` and `CreateSymmetricKeyRequest.FromProvider`
 (`cryptographic_provider.go`) build `CREATE … FROM PROVIDER` from the
 documented grammar and are pinned by unit tests only. Executing one needs an
 EKM provider DLL registered with `CREATE CRYPTOGRAPHIC PROVIDER` and `EKM
@@ -164,36 +164,6 @@ table (or `drop_rename_test.go` for a one-statement drop) in the same change,
 and mutation-check it: swap a parameter name or drop a `dbo` default in the
 source and confirm the new case fails. A case built from the same constant the
 code uses proves nothing.
-
-## `TestLiveAvailabilityGroupOperations` leaves `gosmo_agops` on the secondary
-
-Seen 2026-09-24 with `-liveag-ops` against AAG1: the test passes, but its
-deferred `liveDropEverywhere` logs `could not drop gosmo_agops on ubusql2 …
-ALTER DATABASE is not permitted while a database is in the Restoring state`,
-and the copy stays behind `RESTORING`. Afterwards it is in no group
-(`sys.dm_hadr_database_replica_states` has no local row), so a plain `DROP
-DATABASE` should now succeed. The likely cause is a race: the plain drop runs
-while the secondary's copy is still joined just after `RemoveDatabase`, fails,
-and the forced fallback's `SET SINGLE_USER` is refused on a `RESTORING`
-database. The fix is probably to wait for the local row to disappear, or to
-retry the plain drop, before falling back. It is intermittent: the next run,
-the same day after the stray copy was dropped by hand, cleaned up on both
-nodes, which fits a race.
-
-## Two live tests fail on win10cli's default instance for reasons outside the code under test
-
-Seen on the full `-run TestLive` run on major 17, 2026-09-24:
-
-- `TestLiveServiceBrokerFamiliesRoundTrip` fails with "LIFETIME = 600 read
-  back as 601 seconds remaining", and fails again when rerun. `Route.LifetimeSeconds` subtracts the
-  *client's* clock from the server's `expiry_date`, and win10cli's clock runs
-  ahead of this client by more than a second. The test's `secs > 600` bound
-  has no allowance for skew. The fix is either to widen the bound or to
-  compute the remaining time on the server.
-- `TestLiveAzureDatabaseResourceStats` calls `DatabaseByName(-liveazuredb)`
-  (default `GoTest01`) before it checks whether the instance is Azure, so
-  on any instance without that database it fails instead of reaching its
-  non-Azure `ErrUnsupportedVersion` branch.
 
 ## The two DDL-trigger files stay near-identical — settled, do not re-raise
 

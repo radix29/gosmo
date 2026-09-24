@@ -301,7 +301,7 @@ func (a SymmetricKeyAlgorithm) valid() bool {
 // -- Writes -------------------------------------------------------------------
 
 // SymmetricKeyEncryptor is one ENCRYPTION BY item: what a new key is created
-// with (SymmetricKeySpec.Encryptions), or what ADD / DROP ENCRYPTION adds to
+// with (CreateSymmetricKeyRequest.Encryptions), or what ADD / DROP ENCRYPTION adds to
 // or removes from an existing one.
 type SymmetricKeyEncryptor struct {
 	// Kind is SymmetricKeyByCertificate, SymmetricKeyByAsymmetricKey,
@@ -471,8 +471,8 @@ func (o *keyOpens) wrap(stmt string) string {
 	return b.String()
 }
 
-// SymmetricKeySpec describes a symmetric key for CREATE SYMMETRIC KEY.
-type SymmetricKeySpec struct {
+// CreateSymmetricKeyRequest describes a symmetric key for CREATE SYMMETRIC KEY.
+type CreateSymmetricKeyRequest struct {
 	Name string
 
 	// Authorization is the database user or role that will own the key.
@@ -506,7 +506,7 @@ type SymmetricKeySpec struct {
 // createSymmetricKeyStatement builds CREATE SYMMETRIC KEY, wrapped in the
 // OPEN / CLOSE of every symmetric key it is encrypted by, validating the
 // spec.
-func (spec SymmetricKeySpec) createSymmetricKeyStatement() (string, error) {
+func (spec CreateSymmetricKeyRequest) createSymmetricKeyStatement() (string, error) {
 	if strings.TrimSpace(spec.Name) == "" {
 		return "", fmt.Errorf("symmetric key has no name")
 	}
@@ -550,7 +550,7 @@ func (spec SymmetricKeySpec) createSymmetricKeyStatement() (string, error) {
 
 // createProviderSymmetricKeyStatement builds CREATE SYMMETRIC KEY ... FROM
 // PROVIDER.
-func (spec SymmetricKeySpec) createProviderSymmetricKeyStatement() (string, error) {
+func (spec CreateSymmetricKeyRequest) createProviderSymmetricKeyStatement() (string, error) {
 	p := spec.FromProvider
 	if len(spec.Encryptions) > 0 {
 		return "", fmt.Errorf("symmetric key %q is held by a provider, so it takes no encryption", spec.Name)
@@ -580,15 +580,20 @@ func (spec SymmetricKeySpec) createProviderSymmetricKeyStatement() (string, erro
 // encrypted by a certificate or asymmetric key needs CONTROL on it (Msg
 // 15151 without); one encrypted by another symmetric key opens that key
 // first, in the same batch.
-func (d *Database) CreateSymmetricKey(ctx context.Context, spec SymmetricKeySpec) error {
+//
+// It returns the key read back from the catalog — or, under Scripting(ctx),
+// the SymmetricKeyRef handle, since nothing ran.
+func (d *Database) CreateSymmetricKey(ctx context.Context, spec CreateSymmetricKeyRequest) (*SymmetricKey, error) {
 	stmt, err := spec.createSymmetricKeyStatement()
 	if err != nil {
-		return fmt.Errorf("gosmo: create symmetric key in %q: %w", d.Name, err)
+		return nil, fmt.Errorf("gosmo: create symmetric key in %q: %w", d.Name, err)
 	}
 	if _, err := d.exec(ctx, stmt); err != nil {
-		return fmt.Errorf("gosmo: create symmetric key %q in %q: %w", spec.Name, d.Name, err)
+		return nil, fmt.Errorf("gosmo: create symmetric key %q in %q: %w", spec.Name, d.Name, err)
 	}
-	return nil
+	return createdObject(ctx, d.SymmetricKeyRef(spec.Name), func() (*SymmetricKey, error) {
+		return d.SymmetricKeyByName(ctx, spec.Name)
+	})
 }
 
 // Drop deletes the symmetric key. Data encrypted with it cannot be decrypted

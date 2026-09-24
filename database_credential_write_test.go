@@ -18,27 +18,27 @@ const useAppDB = "USE [AppDB];\nGO\n"
 func TestCreateDatabaseScopedCredentialStatementShape(t *testing.T) {
 	cases := []struct {
 		name string
-		spec DatabaseScopedCredentialSpec
+		spec CreateDatabaseScopedCredentialRequest
 		want string
 	}{
 		{
 			name: "identity only",
-			spec: DatabaseScopedCredentialSpec{Name: "app_cred", Identity: "Managed Identity"},
+			spec: CreateDatabaseScopedCredentialRequest{Name: "app_cred", Identity: "Managed Identity"},
 			want: `CREATE DATABASE SCOPED CREDENTIAL [app_cred] WITH IDENTITY = N'Managed Identity'`,
 		},
 		{
 			name: "identity and secret",
-			spec: DatabaseScopedCredentialSpec{Name: "app_cred", Identity: "SHARED ACCESS SIGNATURE", Secret: "sv=2019"},
+			spec: CreateDatabaseScopedCredentialRequest{Name: "app_cred", Identity: "SHARED ACCESS SIGNATURE", Secret: "sv=2019"},
 			want: `CREATE DATABASE SCOPED CREDENTIAL [app_cred] WITH IDENTITY = N'SHARED ACCESS SIGNATURE', SECRET = N'sv=2019'`,
 		},
 		{
 			name: "quotes in the literals are escaped",
-			spec: DatabaseScopedCredentialSpec{Name: "o'brien", Identity: "it's me", Secret: "don't"},
+			spec: CreateDatabaseScopedCredentialRequest{Name: "o'brien", Identity: "it's me", Secret: "don't"},
 			want: `CREATE DATABASE SCOPED CREDENTIAL [o'brien] WITH IDENTITY = N'it''s me', SECRET = N'don''t'`,
 		},
 		{
 			name: "a bracket in the name is doubled",
-			spec: DatabaseScopedCredentialSpec{Name: "we[i]rd", Identity: "x"},
+			spec: CreateDatabaseScopedCredentialRequest{Name: "we[i]rd", Identity: "x"},
 			want: `CREATE DATABASE SCOPED CREDENTIAL [we[i]]rd] WITH IDENTITY = N'x'`,
 		},
 	}
@@ -56,10 +56,10 @@ func TestCreateDatabaseScopedCredentialStatementShape(t *testing.T) {
 }
 
 func TestCreateDatabaseScopedCredentialRequiresNameAndIdentity(t *testing.T) {
-	if _, err := (DatabaseScopedCredentialSpec{Identity: "x"}).createDatabaseScopedCredentialStatement(); err == nil {
+	if _, err := (CreateDatabaseScopedCredentialRequest{Identity: "x"}).createDatabaseScopedCredentialStatement(); err == nil {
 		t.Error("a credential with no name was accepted")
 	}
-	if _, err := (DatabaseScopedCredentialSpec{Name: "c"}).createDatabaseScopedCredentialStatement(); err == nil {
+	if _, err := (CreateDatabaseScopedCredentialRequest{Name: "c"}).createDatabaseScopedCredentialStatement(); err == nil {
 		t.Error("a credential with no identity was accepted")
 	}
 }
@@ -117,7 +117,7 @@ func TestAlterDatabaseScopedCredentialRequiresIdentity(t *testing.T) {
 func TestCreateDatabaseScopedCredentialUnderScriptReturnsAHandle(t *testing.T) {
 	ctx, col := WithScript(context.Background())
 	c, err := scriptDB().CreateDatabaseScopedCredential(ctx,
-		DatabaseScopedCredentialSpec{Name: "app_cred", Identity: "x"})
+		CreateDatabaseScopedCredentialRequest{Name: "app_cred", Identity: "x"})
 	if err != nil {
 		t.Fatalf("CreateDatabaseScopedCredential: %v", err)
 	}

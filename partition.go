@@ -107,6 +107,18 @@ WHERE  pf.name = @p1`, name)
 	return foundRow(pf, err, notFoundf("gosmo: partition function %q not found in %q", name, d.Name), fmt.Sprintf("find partition function %q in %q", name, d.Name))
 }
 
+// PartitionFunctionRef returns a lightweight handle for a partition function by name, without
+// querying the catalog — the counterpart of Server.DatabaseRef. Every field
+// but the name stays at its zero value; PartitionFunctionByName is what populates them.
+//
+// Every write on *PartitionFunction addresses it by name, so this handle is enough to
+// drop one the caller already knows exists — and is the form to use when
+// there is nothing to read yet, such as a script of a CREATE that was only
+// collected.
+func (d *Database) PartitionFunctionRef(name string) *PartitionFunction {
+	return &PartitionFunction{db: d, Name: name}
+}
+
 func scanPartitionFunction(d *Database, scan func(...any) error) (*PartitionFunction, error) {
 	pf := &PartitionFunction{db: d}
 	var boundaries sql.NullString
@@ -158,16 +170,16 @@ type CreatePartitionFunctionRequest struct {
 }
 
 // CreatePartitionFunction creates a partition function.
-func (d *Database) CreatePartitionFunction(ctx context.Context, req CreatePartitionFunctionRequest) error {
+func (d *Database) CreatePartitionFunction(ctx context.Context, req CreatePartitionFunctionRequest) (*PartitionFunction, error) {
 	if len(req.Boundaries) == 0 {
-		return fmt.Errorf("gosmo: create partition function: at least one boundary required")
+		return nil, fmt.Errorf("gosmo: create partition function: at least one boundary required")
 	}
 	if !validDataType(req.InputType) {
-		return fmt.Errorf("gosmo: create partition function %q: unrecognized data type %q", req.Name, req.InputType)
+		return nil, fmt.Errorf("gosmo: create partition function %q: unrecognized data type %q", req.Name, req.InputType)
 	}
 	for _, b := range req.Boundaries {
 		if !validPartitionBoundary(b) {
-			return fmt.Errorf("gosmo: create partition function %q: invalid boundary literal %q", req.Name, b)
+			return nil, fmt.Errorf("gosmo: create partition function %q: invalid boundary literal %q", req.Name, b)
 		}
 	}
 	side := "LEFT"
@@ -181,9 +193,11 @@ func (d *Database) CreatePartitionFunction(ctx context.Context, req CreatePartit
 	)
 	_, err := d.exec(ctx, q)
 	if err != nil {
-		return fmt.Errorf("gosmo: create partition function [%s]: %w", req.Name, err)
+		return nil, fmt.Errorf("gosmo: create partition function [%s]: %w", req.Name, err)
 	}
-	return nil
+	return createdObject(ctx, d.PartitionFunctionRef(req.Name), func() (*PartitionFunction, error) {
+		return d.PartitionFunctionByName(ctx, req.Name)
+	})
 }
 
 // Drop drops the partition function.
@@ -268,6 +282,18 @@ WHERE  ps.name = @p1`, name)
 	return foundRow(ps, err, notFoundf("gosmo: partition scheme %q not found in %q", name, d.Name), fmt.Sprintf("find partition scheme %q in %q", name, d.Name))
 }
 
+// PartitionSchemeRef returns a lightweight handle for a partition scheme by name, without
+// querying the catalog — the counterpart of Server.DatabaseRef. Every field
+// but the name stays at its zero value; PartitionSchemeByName is what populates them.
+//
+// Every write on *PartitionScheme addresses it by name, so this handle is enough to
+// drop one the caller already knows exists — and is the form to use when
+// there is nothing to read yet, such as a script of a CREATE that was only
+// collected.
+func (d *Database) PartitionSchemeRef(name string) *PartitionScheme {
+	return &PartitionScheme{db: d, Name: name}
+}
+
 func scanPartitionScheme(d *Database, scan func(...any) error) (*PartitionScheme, error) {
 	ps := &PartitionScheme{db: d}
 	var fgs sql.NullString
@@ -281,24 +307,37 @@ func scanPartitionScheme(d *Database, scan func(...any) error) (*PartitionScheme
 	return ps, nil
 }
 
-// CreatePartitionScheme creates a partition scheme backed by a partition function.
-func (d *Database) CreatePartitionScheme(ctx context.Context, name, functionName string, fileGroups []string) error {
-	if len(fileGroups) == 0 {
-		return fmt.Errorf("gosmo: create partition scheme: at least one filegroup required")
+// CreatePartitionSchemeRequest describes a partition scheme to create.
+type CreatePartitionSchemeRequest struct {
+	Name     string
+	Function string // the partition function the scheme maps
+	// FileGroups lists one filegroup per partition, in order — or a single
+	// one, which SQL Server then requires ALL TO for; see the T-SQL docs.
+	FileGroups []string
+}
+
+// CreatePartitionScheme creates a partition scheme backed by a partition
+// function, and returns it read back from the catalog — or, under
+// Scripting(ctx), the PartitionSchemeRef handle, since nothing ran.
+func (d *Database) CreatePartitionScheme(ctx context.Context, req CreatePartitionSchemeRequest) (*PartitionScheme, error) {
+	if len(req.FileGroups) == 0 {
+		return nil, fmt.Errorf("gosmo: create partition scheme: at least one filegroup required")
 	}
-	fgs := make([]string, len(fileGroups))
-	for i, fg := range fileGroups {
+	fgs := make([]string, len(req.FileGroups))
+	for i, fg := range req.FileGroups {
 		fgs[i] = quoteIdent(fg)
 	}
 	q := fmt.Sprintf(
 		"CREATE PARTITION SCHEME %s AS PARTITION %s TO (%s)",
-		quoteIdent(name), quoteIdent(functionName), strings.Join(fgs, ", "),
+		quoteIdent(req.Name), quoteIdent(req.Function), strings.Join(fgs, ", "),
 	)
 	_, err := d.exec(ctx, q)
 	if err != nil {
-		return fmt.Errorf("gosmo: create partition scheme [%s]: %w", name, err)
+		return nil, fmt.Errorf("gosmo: create partition scheme [%s]: %w", req.Name, err)
 	}
-	return nil
+	return createdObject(ctx, d.PartitionSchemeRef(req.Name), func() (*PartitionScheme, error) {
+		return d.PartitionSchemeByName(ctx, req.Name)
+	})
 }
 
 // Drop drops the partition scheme.

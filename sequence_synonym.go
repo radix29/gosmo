@@ -79,8 +79,8 @@ ORDER  BY SCHEMA_NAME(s.schema_id), s.name`)
 // It returns an error satisfying errors.Is(err, ErrNotFound) when the database
 // has no such sequence.
 func (d *Database) SequenceByName(ctx context.Context, schema, name string) (*Sequence, error) {
-	if schema == "" {
-		schema = "dbo"
+	if err := requireSchema("sequence by name", schema, name); err != nil {
+		return nil, err
 	}
 	var seq *Sequence
 	err := d.queryRow(ctx, func(row *sql.Row) error {
@@ -92,6 +92,21 @@ WHERE  SCHEMA_NAME(s.schema_id) = @p1
   AND  s.name                   = @p2`, schema, name)
 	return foundRow(seq, err, notFoundf("gosmo: sequence %s not found in %q", qualifiedName(schema, name), d.Name),
 		fmt.Sprintf("find sequence %s in %q", qualifiedName(schema, name), d.Name))
+}
+
+// SequenceRef returns a lightweight handle for a sequence by name, without
+// querying the catalog — the counterpart of Server.DatabaseRef. Every field
+// but the schema and name stays at its zero value; SequenceByName is what populates them.
+//
+// Every write on *Sequence addresses it by name, so this handle is enough to
+// drop one the caller already knows exists — and is the form to use when
+// there is nothing to read yet, such as a script of a CREATE that was only
+// collected.
+//
+// schema is taken as given: an empty one is refused by the handle's writes
+// (ErrSchemaRequired), never defaulted.
+func (d *Database) SequenceRef(schema, name string) *Sequence {
+	return &Sequence{db: d, Schema: schema, Name: name}
 }
 
 func scanSequence(d *Database, scan func(...any) error) (*Sequence, error) {
@@ -146,16 +161,16 @@ type CreateSequenceRequest struct {
 }
 
 // CreateSequence creates a new sequence in the database.
-func (d *Database) CreateSequence(ctx context.Context, req CreateSequenceRequest) error {
+func (d *Database) CreateSequence(ctx context.Context, req CreateSequenceRequest) (*Sequence, error) {
 	if req.DataType == "" {
 		req.DataType = DataTypeBigInt
 	}
 	if !validDataType(req.DataType) {
-		return fmt.Errorf("gosmo: create sequence %q: unrecognized data type %q", req.Name, req.DataType)
+		return nil, fmt.Errorf("gosmo: create sequence %q: unrecognized data type %q", req.Name, req.DataType)
 	}
 	schema := req.Schema
-	if schema == "" {
-		schema = "dbo"
+	if err := requireSchema("create sequence", schema, req.Name); err != nil {
+		return nil, err
 	}
 
 	q := fmt.Sprintf("CREATE SEQUENCE %s AS %s", qualifiedName(schema, req.Name), req.DataType)
@@ -185,32 +200,30 @@ func (d *Database) CreateSequence(ctx context.Context, req CreateSequenceRequest
 
 	_, err := d.exec(ctx, q)
 	if err != nil {
-		return fmt.Errorf("gosmo: create sequence [%s].[%s]: %w", schema, req.Name, err)
+		return nil, fmt.Errorf("gosmo: create sequence [%s].[%s]: %w", schema, req.Name, err)
 	}
-	return nil
-}
-
-// DropSequence drops a sequence by name — the form for a caller that has
-// the name but not the object, as Sequences() would have to be listed
-// first to get one.
-func (d *Database) DropSequence(ctx context.Context, schema, name string) error {
-	if schema == "" {
-		schema = "dbo"
-	}
-	_, err := d.exec(ctx, fmt.Sprintf("DROP SEQUENCE %s", qualifiedName(schema, name)))
-	if err != nil {
-		return fmt.Errorf("gosmo: drop sequence [%s].[%s]: %w", schema, name, err)
-	}
-	return nil
+	return createdObject(ctx, d.SequenceRef(schema, req.Name), func() (*Sequence, error) {
+		return d.SequenceByName(ctx, schema, req.Name)
+	})
 }
 
 // Drop drops the sequence.
 func (seq *Sequence) Drop(ctx context.Context) error {
-	return seq.db.DropSequence(ctx, seq.Schema, seq.Name)
+	if err := requireSchema("drop sequence", seq.Schema, seq.Name); err != nil {
+		return err
+	}
+	_, err := seq.db.exec(ctx, fmt.Sprintf("DROP SEQUENCE %s", qualifiedName(seq.Schema, seq.Name)))
+	if err != nil {
+		return fmt.Errorf("gosmo: drop sequence [%s].[%s]: %w", seq.Schema, seq.Name, err)
+	}
+	return nil
 }
 
 // Restart restarts the sequence at the given value.
 func (seq *Sequence) Restart(ctx context.Context, value int64) error {
+	if err := requireSchema("restart sequence", seq.Schema, seq.Name); err != nil {
+		return err
+	}
 	_, err := seq.db.exec(ctx,
 		fmt.Sprintf("ALTER SEQUENCE %s RESTART WITH %d",
 			qualifiedName(seq.Schema, seq.Name), value))
@@ -235,6 +248,9 @@ func (seq *Sequence) Restart(ctx context.Context, value int64) error {
 // still retries the acquire+USE step (safe, nothing server-side has happened
 // yet), just not the query itself.
 func (seq *Sequence) NextValue(ctx context.Context) (int64, error) {
+	if err := requireSchema("next value for", seq.Schema, seq.Name); err != nil {
+		return 0, err
+	}
 	var val int64
 	err := seq.db.withConn(ctx, func(conn *sql.Conn) error {
 		return conn.QueryRowContext(ctx,
@@ -277,13 +293,13 @@ ORDER  BY SCHEMA_NAME(schema_id), name`)
 }
 
 // SynonymByName returns one synonym by schema and name, compared under the
-// database's collation. An empty schema means dbo.
+// database's collation. An empty schema is refused (ErrSchemaRequired).
 //
 // It returns an error satisfying errors.Is(err, ErrNotFound) when the database
 // has no such synonym.
 func (d *Database) SynonymByName(ctx context.Context, schema, name string) (*Synonym, error) {
-	if schema == "" {
-		schema = "dbo"
+	if err := requireSchema("synonym by name", schema, name); err != nil {
+		return nil, err
 	}
 	var syn *Synonym
 	err := d.queryRow(ctx, func(row *sql.Row) error {
@@ -295,6 +311,21 @@ WHERE  SCHEMA_NAME(schema_id) = @p1
   AND  name                   = @p2`, schema, name)
 	return foundRow(syn, err, notFoundf("gosmo: synonym %s not found in %q", qualifiedName(schema, name), d.Name),
 		fmt.Sprintf("find synonym %s in %q", qualifiedName(schema, name), d.Name))
+}
+
+// SynonymRef returns a lightweight handle for a synonym by name, without
+// querying the catalog — the counterpart of Server.DatabaseRef. Every field
+// but the schema and name stays at its zero value; SynonymByName is what populates them.
+//
+// Every write on *Synonym addresses it by name, so this handle is enough to
+// drop one the caller already knows exists — and is the form to use when
+// there is nothing to read yet, such as a script of a CREATE that was only
+// collected.
+//
+// schema is taken as given: an empty one is refused by the handle's writes
+// (ErrSchemaRequired), never defaulted.
+func (d *Database) SynonymRef(schema, name string) *Synonym {
+	return &Synonym{db: d, Schema: schema, Name: name}
 }
 
 const synonymSelect = `
@@ -334,39 +365,45 @@ func validQualifiedObjectName(s string) bool {
 	return qualifiedObjectNamePattern.MatchString(s)
 }
 
-// CreateSynonym creates a synonym for a base object.
-// baseObject should be the fully qualified name, e.g. "[OtherDB].[dbo].[MyTable]".
-func (d *Database) CreateSynonym(ctx context.Context, schema, name, baseObject string) error {
-	if schema == "" {
-		schema = "dbo"
+// CreateSynonymRequest describes a new synonym.
+type CreateSynonymRequest struct {
+	Schema string // required; see ErrSchemaRequired
+	Name   string
+	// BaseObject is the fully qualified name of what the synonym stands
+	// for, already bracket-quoted: "[OtherDB].[dbo].[MyTable]".
+	BaseObject string
+}
+
+// CreateSynonym creates a synonym for a base object, and returns it read
+// back from the catalog — or, under Scripting(ctx), the SynonymRef handle,
+// since nothing ran.
+func (d *Database) CreateSynonym(ctx context.Context, req CreateSynonymRequest) (*Synonym, error) {
+	schema := req.Schema
+	if err := requireSchema("create synonym", schema, req.Name); err != nil {
+		return nil, err
 	}
-	if !validQualifiedObjectName(baseObject) {
-		return fmt.Errorf("gosmo: create synonym [%s].[%s]: invalid base object %q", schema, name, baseObject)
+	if !validQualifiedObjectName(req.BaseObject) {
+		return nil, fmt.Errorf("gosmo: create synonym [%s].[%s]: invalid base object %q", schema, req.Name, req.BaseObject)
 	}
 	_, err := d.exec(ctx,
-		fmt.Sprintf("CREATE SYNONYM %s FOR %s", qualifiedName(schema, name), baseObject))
+		fmt.Sprintf("CREATE SYNONYM %s FOR %s", qualifiedName(schema, req.Name), req.BaseObject))
 	if err != nil {
-		return fmt.Errorf("gosmo: create synonym [%s].[%s]: %w", schema, name, err)
+		return nil, fmt.Errorf("gosmo: create synonym [%s].[%s]: %w", schema, req.Name, err)
 	}
-	return nil
+	return createdObject(ctx, d.SynonymRef(schema, req.Name), func() (*Synonym, error) {
+		return d.SynonymByName(ctx, schema, req.Name)
+	})
 }
 
-// DropSynonym drops a synonym by name — the form for a caller that has the
-// name but not the object, as Synonyms() would have to be listed first to
-// get one. A synonym that isn't there is the server's error, not a silent
-// success — see the note on Database.DropTable.
-func (d *Database) DropSynonym(ctx context.Context, schema, name string) error {
-	if schema == "" {
-		schema = "dbo"
-	}
-	_, err := d.exec(ctx, fmt.Sprintf("DROP SYNONYM %s", qualifiedName(schema, name)))
-	if err != nil {
-		return fmt.Errorf("gosmo: drop synonym [%s].[%s]: %w", schema, name, err)
-	}
-	return nil
-}
-
-// Drop drops the synonym.
+// Drop drops the synonym. A synonym that isn't there is the server's error,
+// not a silent success — see the note on Database.DropTable.
 func (syn *Synonym) Drop(ctx context.Context) error {
-	return syn.db.DropSynonym(ctx, syn.Schema, syn.Name)
+	if err := requireSchema("drop synonym", syn.Schema, syn.Name); err != nil {
+		return err
+	}
+	_, err := syn.db.exec(ctx, fmt.Sprintf("DROP SYNONYM %s", qualifiedName(syn.Schema, syn.Name)))
+	if err != nil {
+		return fmt.Errorf("gosmo: drop synonym [%s].[%s]: %w", syn.Schema, syn.Name, err)
+	}
+	return nil
 }

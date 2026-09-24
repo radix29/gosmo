@@ -97,16 +97,13 @@ func TestScriptDatabaseOptionWrites(t *testing.T) {
 func TestScriptDatabaseObjectCreates(t *testing.T) {
 	runScriptCases(t, []scriptCase{
 		{"CreateSynonym", func(c context.Context) error {
-			return scriptTestDB().CreateSynonym(c, "dbo", "S]yn", "[Other'DB].[dbo].[T]]bl]")
+			return errOnly(scriptTestDB().CreateSynonym(c, CreateSynonymRequest{Schema: "dbo", Name: "S]yn", BaseObject: "[Other'DB].[dbo].[T]]bl]"}))
 		}, scriptUsePrefix + "CREATE SYNONYM [dbo].[S]]yn] FOR [Other'DB].[dbo].[T]]bl]"},
-		{"CreateSynonym defaults the schema to dbo", func(c context.Context) error {
-			return scriptTestDB().CreateSynonym(c, "", "Syn", "[OtherDB].[dbo].[Tbl]")
-		}, scriptUsePrefix + "CREATE SYNONYM [dbo].[Syn] FOR [OtherDB].[dbo].[Tbl]"},
 		{"CreateStoredProcedure", func(c context.Context) error {
-			return scriptTestDB().CreateStoredProcedure(c, "dbo", "usp_x", "SELECT 1")
+			return errOnly(scriptTestDB().CreateStoredProcedure(c, CreateStoredProcedureRequest{Schema: "dbo", Name: "usp_x", Body: "SELECT 1"}))
 		}, scriptUsePrefix + "CREATE OR ALTER PROCEDURE [dbo].[usp_x]\nAS\nSELECT 1"},
 		{"CreatePartitionScheme", func(c context.Context) error {
-			return scriptTestDB().CreatePartitionScheme(c, "ps]1", "pf'1", []string{"FG1", "FG]2"})
+			return errOnly(scriptTestDB().CreatePartitionScheme(c, CreatePartitionSchemeRequest{Name: "ps]1", Function: "pf'1", FileGroups: []string{"FG1", "FG]2"}}))
 		}, scriptUsePrefix + "CREATE PARTITION SCHEME [ps]]1] AS PARTITION [pf'1] TO ([FG1], [FG]]2])"},
 	})
 }
@@ -123,7 +120,7 @@ func TestCreateSynonymRefusesAnUnquotedBaseObject(t *testing.T) {
 		"a.b.c.d.e",
 	} {
 		ctx, script := WithScript(context.Background())
-		err := scriptTestDB().CreateSynonym(ctx, "dbo", "Syn", bad)
+		_, err := scriptTestDB().CreateSynonym(ctx, CreateSynonymRequest{Schema: "dbo", Name: "Syn", BaseObject: bad})
 		if err == nil {
 			t.Errorf("CreateSynonym(%q) returned nil, want an error", bad)
 		} else if !strings.Contains(err.Error(), "invalid base object") {

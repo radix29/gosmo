@@ -125,6 +125,18 @@ WHERE  a.name = @p1`, name)
 	return foundRow(a, err, notFoundf("gosmo: assembly %q not found in %q", name, d.Name), fmt.Sprintf("read assembly %q in %q", name, d.Name))
 }
 
+// AssemblyRef returns a lightweight handle for an assembly by name, without
+// querying the catalog — the counterpart of Server.DatabaseRef. Every field
+// but the name stays at its zero value; AssemblyByName is what populates them.
+//
+// Every write on *Assembly addresses it by name, so this handle is enough to
+// drop one the caller already knows exists — and is the form to use when
+// there is nothing to read yet, such as a script of a CREATE that was only
+// collected.
+func (d *Database) AssemblyRef(name string) *Assembly {
+	return &Assembly{db: d, Name: name}
+}
+
 // ============================================================
 // Assembly files
 // ============================================================
@@ -234,17 +246,11 @@ ORDER  BY SCHEMA_NAME(o.schema_id), o.name`
 // Drop
 // ============================================================
 
-// DropAssembly drops an assembly by name — the form for a caller that has
-// the name but not the object. An assembly still referenced by a routine or
-// type is refused by the server, as is one another assembly depends on.
-func (d *Database) DropAssembly(ctx context.Context, name string) error {
-	if _, err := d.exec(ctx, "DROP ASSEMBLY "+QuoteName(name)); err != nil {
-		return fmt.Errorf("gosmo: drop assembly %q in %q: %w", name, d.Name, err)
+// Drop drops the assembly. An assembly still referenced by a routine or type
+// is refused by the server, as is one another assembly depends on.
+func (a *Assembly) Drop(ctx context.Context) error {
+	if _, err := a.db.exec(ctx, "DROP ASSEMBLY "+QuoteName(a.Name)); err != nil {
+		return fmt.Errorf("gosmo: drop assembly %q in %q: %w", a.Name, a.db.Name, err)
 	}
 	return nil
-}
-
-// Drop drops the assembly.
-func (a *Assembly) Drop(ctx context.Context) error {
-	return a.db.DropAssembly(ctx, a.Name)
 }

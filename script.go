@@ -214,6 +214,65 @@ func setPtrIfApplied[T any](ctx context.Context, dst *T, v *T) {
 	}
 }
 
+// observerCtxKey carries the func(ScriptEntry) WithStatementObserver installs.
+// A nil value is how unobserved hides one from a bracket's own statements.
+type observerCtxKey struct{}
+
+// WithStatementObserver returns a derived context under which fn is called
+// once for every statement a write method invoked with it executed
+// successfully, after the server accepted it. It is the executing-side twin
+// of WithScript, hooked at the same chokepoints: a caller running several
+// writes in a row learns which of them reached the server before one failed,
+// which the error alone cannot say. An audit trail is the other obvious use.
+//
+// fn never fires under WithScript, where nothing is executed, nor for a
+// statement that failed — a statement that failed part-way through a
+// non-atomic batch is reported by its error, not here. It is called on the
+// goroutine that issued the write, so a caller writing from several at once
+// synchronises fn itself. An observer already on ctx keeps firing, before fn.
+//
+// The entry's SQL is the statement as sent, with bound parameters substituted
+// as WithScript would render them (the unbound text if they cannot be).
+//
+// The two halves of a window a write opens and closes around itself — an
+// audit disabled for an ALTER and re-enabled after it, a database put back to
+// MULTI_USER after a failed exclusive operation — are not reported: they
+// leave the server as it was, and reporting them would make a write that
+// changed nothing look as if it had. A window that fails to close is the
+// write's error to report.
+func WithStatementObserver(ctx context.Context, fn func(ScriptEntry)) context.Context {
+	if parent := observerFrom(ctx); parent != nil {
+		own := fn
+		fn = func(e ScriptEntry) {
+			parent(e)
+			own(e)
+		}
+	}
+	return context.WithValue(ctx, observerCtxKey{}, fn)
+}
+
+func observerFrom(ctx context.Context) func(ScriptEntry) {
+	fn, _ := ctx.Value(observerCtxKey{}).(func(ScriptEntry))
+	return fn
+}
+
+// unobserved is ctx with any statement observer hidden, for the statements
+// that open and close a window — see WithStatementObserver. The writes a
+// window wraps must still get the observed context, not this one.
+func unobserved(ctx context.Context) context.Context {
+	if observerFrom(ctx) == nil {
+		return ctx
+	}
+	return context.WithValue(ctx, observerCtxKey{}, (func(ScriptEntry))(nil))
+}
+
+// observe reports e to ctx's statement observer, if there is one.
+func observe(ctx context.Context, e ScriptEntry) {
+	if fn := observerFrom(ctx); fn != nil {
+		fn(e)
+	}
+}
+
 func scriptFrom(ctx context.Context) (*ScriptCollector, bool) {
 	c, ok := ctx.Value(scriptCtxKey{}).(*ScriptCollector)
 	return c, ok
@@ -229,8 +288,11 @@ func (s *Server) exec(ctx context.Context, stmt string) error {
 		c.append(ScriptEntry{Server: scriptServerName(ctx, s), SQL: stmt})
 		return nil
 	}
-	_, err := s.db.ExecContext(ctx, stmt)
-	return withAllMessages(err)
+	if _, err := s.db.ExecContext(ctx, stmt); err != nil {
+		return withAllMessages(err)
+	}
+	observe(ctx, ScriptEntry{Server: scriptServerName(ctx, s), SQL: stmt})
+	return nil
 }
 
 // atomicBatch renders stmts as one batch that applies all of them or none.

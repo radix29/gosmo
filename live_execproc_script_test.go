@@ -29,6 +29,15 @@ var liveDSN = flag.String("livedb", "", "SQL Server DSN for the live ExecProc sc
 
 func liveDB(t *testing.T) (*sql.DB, context.Context, func()) {
 	t.Helper()
+	return liveDBTimeout(t, 60*time.Second)
+}
+
+// liveDBTimeout is liveDB with a longer deadline, for a test whose setup
+// alone outlasts the minute (creating databases, on Managed Instance above
+// all). Taking it here, rather than shadowing liveDB's ctx with a fresh one,
+// keeps a single context per test.
+func liveDBTimeout(t *testing.T, timeout time.Duration) (*sql.DB, context.Context, func()) {
+	t.Helper()
 	if *liveDSN == "" {
 		t.Skip("no -livedb DSN given")
 	}
@@ -36,7 +45,7 @@ func liveDB(t *testing.T) (*sql.DB, context.Context, func()) {
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	if err := db.PingContext(ctx); err != nil {
 		cancel()
 		db.Close()

@@ -154,12 +154,11 @@ func Connect() *gosmo.Server {
 func TempDatabase(srv *gosmo.Server, name string) (*gosmo.Database, func()) {
 	ctx := context.Background()
 	_ = srv.DropDatabase(ctx, name, true)
-	Must(srv.CreateDatabase(ctx, name, &gosmo.CreateDatabaseOptions{
+	db := Value(srv.CreateDatabase(ctx, gosmo.CreateDatabaseRequest{
+		Name:          name,
 		RecoveryModel: gosmo.RecoveryModelSimple,
 		CompatLevel:   gosmo.CompatLevel2019,
 	}))
-	db, err := srv.DatabaseByName(ctx, name)
-	Must(err)
 	fmt.Printf("Created throwaway database [%s]\n", name)
 
 	return db, func() {

@@ -98,3 +98,39 @@ SELECT (SELECT MAX(agent_start_date) FROM msdb.dbo.syssessions),
 	}
 	return st, nil
 }
+
+// AgentCounts is how many of each Agent object msdb holds — the census an
+// Agent overview shows beside its run state.
+type AgentCounts struct {
+	Jobs      int
+	Schedules int
+	// Alerts counts every alert; EventAlerts only the subset EventAlerts
+	// returns (Alert.IsEventAlert).
+	Alerts      int
+	EventAlerts int
+	Operators   int
+}
+
+// AgentCounts counts msdb's Agent objects in one round trip. Counting through
+// Jobs/Schedules/EventAlerts/Operators instead costs four full catalog reads
+// plus Jobs' xp_sqlagent_enum_jobs call, in series, to produce four numbers.
+//
+// EventAlerts mirrors Alert.IsEventAlert in SQL: no performance condition and
+// an event source other than WMI. DATALENGTH rather than an equality test, because the Go
+// predicate tests for the empty string and T-SQL's = ignores trailing spaces.
+func (s *Server) AgentCounts(ctx context.Context) (*AgentCounts, error) {
+	const q = `
+SELECT (SELECT COUNT(*) FROM msdb.dbo.sysjobs),
+       (SELECT COUNT(*) FROM msdb.dbo.sysschedules),
+       (SELECT COUNT(*) FROM msdb.dbo.sysalerts),
+       (SELECT COUNT(*) FROM msdb.dbo.sysalerts
+        WHERE  DATALENGTH(ISNULL(performance_condition, N'')) = 0
+        AND    UPPER(ISNULL(event_source, N'')) <> N'WMI'),
+       (SELECT COUNT(*) FROM msdb.dbo.sysoperators)`
+
+	c := &AgentCounts{}
+	if err := s.queryRowScan(ctx, q, nil, &c.Jobs, &c.Schedules, &c.Alerts, &c.EventAlerts, &c.Operators); err != nil {
+		return nil, fmt.Errorf("gosmo: agent counts: %w", err)
+	}
+	return c, nil
+}

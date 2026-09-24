@@ -135,7 +135,7 @@ func TestLiveServerAuditLifecycle(t *testing.T) {
 	}
 
 	// The specification half, on the enabled audit.
-	spec, err := s.CreateServerAuditSpecification(ctx, ServerAuditSpecificationSpec{
+	spec, err := s.CreateServerAuditSpecification(ctx, CreateServerAuditSpecificationRequest{
 		Name: specName, AuditName: name,
 		ActionGroups: []string{"BACKUP_RESTORE_GROUP", "LOGIN_CHANGE_PASSWORD_GROUP"},
 		Enabled:      true,
@@ -219,7 +219,7 @@ func TestLiveAuditScriptsRunAsGenerated(t *testing.T) {
 	if err := a.SetState(ctx, true); err != nil {
 		t.Fatalf("SetState: %v", err)
 	}
-	if _, err := s.CreateServerAuditSpecification(ctx, ServerAuditSpecificationSpec{
+	if _, err := s.CreateServerAuditSpecification(ctx, CreateServerAuditSpecificationRequest{
 		Name: specName, AuditName: name,
 		ActionGroups: []string{"BACKUP_RESTORE_GROUP"}, Enabled: true,
 	}); err != nil {

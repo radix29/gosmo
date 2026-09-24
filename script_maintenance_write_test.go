@@ -66,25 +66,25 @@ func TestScriptIndexAndStatisticsWrites(t *testing.T) {
 			return table().TruncateTable(c)
 		}, scriptUsePrefix + "TRUNCATE TABLE [dbo].[Sales.Archive]"},
 		{"Table CreateStatistic", func(c context.Context) error {
-			return table().CreateStatistic(c, CreateStatisticRequest{Name: "st]1", Columns: []string{"a]b", "c'd"}, SamplePercent: 50})
+			return errOnly(table().CreateStatistic(c, CreateStatisticRequest{Name: "st]1", Columns: []string{"a]b", "c'd"}, SamplePercent: 50}))
 		}, scriptUsePrefix + "CREATE STATISTICS [st]]1] ON [dbo].[Sales.Archive] ([a]]b], [c'd]) WITH SAMPLE 50 PERCENT"},
 		{"Table CreateStatistic without a sample", func(c context.Context) error {
-			return table().CreateStatistic(c, CreateStatisticRequest{Name: "st1", Columns: []string{"ab"}})
+			return errOnly(table().CreateStatistic(c, CreateStatisticRequest{Name: "st1", Columns: []string{"ab"}}))
 		}, scriptUsePrefix + "CREATE STATISTICS [st1] ON [dbo].[Sales.Archive] ([ab])"},
 		{"Table CreateStatistic with options", func(c context.Context) error {
-			return table().CreateStatistic(c, CreateStatisticRequest{
+			return errOnly(table().CreateStatistic(c, CreateStatisticRequest{
 				Name:             "st]1",
 				Columns:          []string{"a]b", "c'd"},
 				FullScan:         true,
 				FilterDefinition: "[a]]b] IS NOT NULL",
 				NoRecompute:      true,
 				Incremental:      true,
-			})
+			}))
 		}, scriptUsePrefix + "CREATE STATISTICS [st]]1] ON [dbo].[Sales.Archive] ([a]]b], [c'd]) WHERE [a]]b] IS NOT NULL WITH FULLSCAN, NORECOMPUTE, INCREMENTAL = ON"},
 		{"Table CreateStatistic with options, sampled", func(c context.Context) error {
-			return table().CreateStatistic(c, CreateStatisticRequest{
+			return errOnly(table().CreateStatistic(c, CreateStatisticRequest{
 				Name: "st1", Columns: []string{"ab"}, SamplePercent: 25,
-			})
+			}))
 		}, scriptUsePrefix + "CREATE STATISTICS [st1] ON [dbo].[Sales.Archive] ([ab]) WITH SAMPLE 25 PERCENT"},
 		{"Table UpdateAllStatistics", func(c context.Context) error {
 			return table().UpdateAllStatistics(c, 25)
@@ -108,7 +108,7 @@ func TestCreateStatisticRefusesAnEmptySpec(t *testing.T) {
 	}
 	for _, c := range cases {
 		ctx, script := WithScript(context.Background())
-		err := table.CreateStatistic(ctx, CreateStatisticRequest{Name: c.stat, Columns: c.columns})
+		_, err := table.CreateStatistic(ctx, CreateStatisticRequest{Name: c.stat, Columns: c.columns})
 		if err == nil {
 			t.Errorf("CreateStatistic(%s) returned nil, want an error", c.name)
 		} else if !strings.Contains(err.Error(), c.want) {
@@ -126,7 +126,7 @@ func TestCreateStatisticRefusesAnEmptySpec(t *testing.T) {
 func TestCreateStatisticRefusesAFullScanAndASample(t *testing.T) {
 	ctx, script := WithScript(context.Background())
 	table := &Table{db: scriptTestDB(), Schema: "dbo", Name: "Sales.Archive"}
-	err := table.CreateStatistic(ctx, CreateStatisticRequest{
+	_, err := table.CreateStatistic(ctx, CreateStatisticRequest{
 		Name: "st1", Columns: []string{"a"}, FullScan: true, SamplePercent: 50,
 	})
 	if err == nil {
@@ -158,7 +158,7 @@ func TestScriptPlanGuideControls(t *testing.T) {
 			return guide().Drop(c)
 		}, scriptUsePrefix + "EXEC sp_control_plan_guide @operation = N'DROP', @name = N'PG_o''brien'"},
 		{"DropPlanGuide by name", func(c context.Context) error {
-			return scriptTestDB().DropPlanGuide(c, "PG_o'brien")
+			return scriptTestDB().PlanGuideRef("PG_o'brien").Drop(c)
 		}, scriptUsePrefix + "EXEC sp_control_plan_guide @operation = N'DROP', @name = N'PG_o''brien'"},
 	})
 }

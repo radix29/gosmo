@@ -13,13 +13,14 @@ classDiagram
         +Close() error
         +DB() *sql.DB
         +Info() *ServerInfo
+        +DefaultPaths() DefaultPaths
         +Name() string
         +CurrentDatabase() string
         +CurrentLogin() string
         +Databases() []*Database
         +DatabaseByName(name) *Database
         +DatabaseRef(name) *Database
-        +CreateDatabase(name, opts) error
+        +CreateDatabase(req) *Database
         +DropDatabase(name, force) error
         +RenameDatabase(oldName, newName, force) error
         +DetachDatabase(name, opts) error
@@ -36,12 +37,10 @@ classDiagram
         +Logins() []*Login
         +LoginByName(name) *Login
         +LoginRef(name) *Login
-        +CreateLogin(name, password, opts) error
-        +DropLogin(name) error
+        +CreateLogin(req) *Login
         +ServerRoles() []*ServerRole
         +ServerRoleByName(name) *ServerRole
         +ServerRoleRef(name) *ServerRole
-        +DropServerRole(name) error
         +ServerRoleMembers(role) []*RoleMember
         +AddServerRoleMember(role, member) error
         +RemoveServerRoleMember(role, member) error
@@ -69,7 +68,8 @@ classDiagram
         +ScheduleRef(name) *Schedule
         +CreateSchedule(req) *Schedule
         +Categories(class) []*Category
-        +CreateCategory(class, name) error
+        +CategoryByName(class, name) *Category
+        +CreateCategory(req) *Category
         +DeleteCategory(class, name) error
         +ActiveSessions(sys) []*Session
         +KillSession(id) error
@@ -94,7 +94,7 @@ classDiagram
         +BackupDevices() []*BackupDevice
         +BackupDeviceByName(name) *BackupDevice
         +BackupDeviceRef(name) *BackupDevice
-        +CreateBackupDevice(name, devType, physicalName) *BackupDevice
+        +CreateBackupDevice(req) *BackupDevice
         +DatabaseFiles(database) []*DatabaseFileInfo
         +DatabaseRecoveryStatuses() []*DatabaseRecoveryStatus
         +Capabilities() *Capabilities
@@ -108,7 +108,7 @@ classDiagram
         +Credentials() []*Credential
         +CredentialByName(name) *Credential
         +CredentialRef(name) *Credential
-        +CreateCredential(spec) *Credential
+        +CreateCredential(req) *Credential
         +CryptographicProviders() []*CryptographicProvider
         +ServerAudits() []*ServerAudit
         +ServerAuditByName(name) *ServerAudit
@@ -117,7 +117,7 @@ classDiagram
         +ServerAuditSpecifications() []*ServerAuditSpecification
         +ServerAuditSpecificationByName(name) *ServerAuditSpecification
         +ServerAuditSpecificationRef(name) *ServerAuditSpecification
-        +CreateServerAuditSpecification(spec) *ServerAuditSpecification
+        +CreateServerAuditSpecification(req) *ServerAuditSpecification
         +AuditActionGroups() []string
         +DatabaseAuditActionGroups() []string
         +DatabaseAuditActions() []string
@@ -140,7 +140,7 @@ classDiagram
         +AvailabilityGroupRef(name) *AvailabilityGroup
         +CreateAvailabilityGroup(req) *AvailabilityGroup
         +DatabaseMirroringEndpoint() *DatabaseMirroringEndpoint
-        +CreateDatabaseMirroringEndpoint(spec) *DatabaseMirroringEndpoint
+        +CreateDatabaseMirroringEndpoint(req) *DatabaseMirroringEndpoint
     }
 
     %% =========================================================

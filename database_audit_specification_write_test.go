@@ -44,12 +44,12 @@ func TestDatabaseAuditSpecificationStateStatements(t *testing.T) {
 func TestCreateDatabaseAuditSpecificationStatement(t *testing.T) {
 	for _, tc := range []struct {
 		name string
-		spec DatabaseAuditSpecificationSpec
+		spec CreateDatabaseAuditSpecificationRequest
 		want []string
 		bad  bool
 	}{
 		{name: "group and action",
-			spec: DatabaseAuditSpecificationSpec{Name: "s]p", AuditName: "a]ud",
+			spec: CreateDatabaseAuditSpecificationRequest{Name: "s]p", AuditName: "a]ud",
 				ActionGroups: []string{"SCHEMA_OBJECT_ACCESS_GROUP"},
 				Actions: []DatabaseAuditAction{
 					{ActionName: "SELECT", ClassDesc: "OBJECT", SchemaName: "dbo", ObjectName: "T", Principal: "public"},
@@ -61,13 +61,13 @@ func TestCreateDatabaseAuditSpecificationStatement(t *testing.T) {
 		// A securable is an identifier, and a ] in its name must be doubled —
 		// the opposite treatment to the action keyword beside it.
 		{name: "securable with a bracket",
-			spec: DatabaseAuditSpecificationSpec{Name: "s", AuditName: "a",
+			spec: CreateDatabaseAuditSpecificationRequest{Name: "s", AuditName: "a",
 				Actions: []DatabaseAuditAction{
 					{ActionName: "INSERT", ClassDesc: "OBJECT", SchemaName: "od]d", ObjectName: "t]bl", Principal: "us]r"},
 				}},
 			want: []string{"ADD (INSERT ON OBJECT::[od]]d].[t]]bl] BY [us]]r])"}},
 		{name: "schema and database classes",
-			spec: DatabaseAuditSpecificationSpec{Name: "s", AuditName: "a",
+			spec: CreateDatabaseAuditSpecificationRequest{Name: "s", AuditName: "a",
 				Actions: []DatabaseAuditAction{
 					{ActionName: "EXECUTE", ClassDesc: "SCHEMA", ObjectName: "dbo"},
 					{ActionName: "SELECT", ClassDesc: "DATABASE", ObjectName: "appdb", Principal: "dbo"},
@@ -77,23 +77,23 @@ func TestCreateDatabaseAuditSpecificationStatement(t *testing.T) {
 			want: []string{"ADD (EXECUTE ON SCHEMA::[dbo] BY [public])",
 				"ADD (SELECT ON DATABASE::[appdb] BY [dbo])"}},
 		{name: "no actions disabled",
-			spec: DatabaseAuditSpecificationSpec{Name: "s", AuditName: "a"},
+			spec: CreateDatabaseAuditSpecificationRequest{Name: "s", AuditName: "a"},
 			want: []string{"WITH ( STATE = OFF )"}},
-		{name: "no name", spec: DatabaseAuditSpecificationSpec{AuditName: "a"}, bad: true},
-		{name: "no audit", spec: DatabaseAuditSpecificationSpec{Name: "s"}, bad: true},
+		{name: "no name", spec: CreateDatabaseAuditSpecificationRequest{AuditName: "a"}, bad: true},
+		{name: "no audit", spec: CreateDatabaseAuditSpecificationRequest{Name: "s"}, bad: true},
 		{name: "injected group",
-			spec: DatabaseAuditSpecificationSpec{Name: "s", AuditName: "a",
+			spec: CreateDatabaseAuditSpecificationRequest{Name: "s", AuditName: "a",
 				ActionGroups: []string{"X), ADD (Y"}}, bad: true},
 		// The action name and the class are keywords: neither can be quoted,
 		// so anything that is not a bare word has to be refused.
 		{name: "injected action",
-			spec: DatabaseAuditSpecificationSpec{Name: "s", AuditName: "a",
+			spec: CreateDatabaseAuditSpecificationRequest{Name: "s", AuditName: "a",
 				Actions: []DatabaseAuditAction{{ActionName: "SELECT), ADD (DELETE", ObjectName: "T"}}}, bad: true},
 		{name: "bogus class",
-			spec: DatabaseAuditSpecificationSpec{Name: "s", AuditName: "a",
+			spec: CreateDatabaseAuditSpecificationRequest{Name: "s", AuditName: "a",
 				Actions: []DatabaseAuditAction{{ActionName: "SELECT", ClassDesc: "SERVER", ObjectName: "T"}}}, bad: true},
 		{name: "action with no securable",
-			spec: DatabaseAuditSpecificationSpec{Name: "s", AuditName: "a",
+			spec: CreateDatabaseAuditSpecificationRequest{Name: "s", AuditName: "a",
 				Actions: []DatabaseAuditAction{{ActionName: "SELECT"}}}, bad: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

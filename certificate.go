@@ -172,11 +172,11 @@ func (c *Certificate) Encoded(ctx context.Context) ([]byte, error) {
 	return raw, nil
 }
 
-// CertificateSpec describes a certificate to create.
+// CreateCertificateRequest describes a certificate to create.
 //
 // Exactly one origin: either FromBinary, which imports an existing public
 // certificate, or a Subject, which has SQL Server generate a new key pair.
-type CertificateSpec struct {
+type CreateCertificateRequest struct {
 	Name string
 
 	// Authorization is the database user that will own the certificate. Empty
@@ -204,7 +204,7 @@ type CertificateSpec struct {
 }
 
 // createCertificateStatement builds CREATE CERTIFICATE, validating the spec.
-func (spec CertificateSpec) createCertificateStatement() (string, error) {
+func (spec CreateCertificateRequest) createCertificateStatement() (string, error) {
 	if strings.TrimSpace(spec.Name) == "" {
 		return "", fmt.Errorf("certificate has no name")
 	}
@@ -239,16 +239,20 @@ func (spec CertificateSpec) createCertificateStatement() (string, error) {
 	return stmt, nil
 }
 
-// CreateCertificate creates a certificate in the database.
-func (d *Database) CreateCertificate(ctx context.Context, spec CertificateSpec) error {
+// CreateCertificate creates a certificate in the database, and returns it
+// read back from the catalog — or, under Scripting(ctx), the CertificateRef
+// handle, since nothing ran.
+func (d *Database) CreateCertificate(ctx context.Context, spec CreateCertificateRequest) (*Certificate, error) {
 	stmt, err := spec.createCertificateStatement()
 	if err != nil {
-		return fmt.Errorf("gosmo: create certificate in %q: %w", d.Name, err)
+		return nil, fmt.Errorf("gosmo: create certificate in %q: %w", d.Name, err)
 	}
 	if _, err := d.exec(ctx, stmt); err != nil {
-		return fmt.Errorf("gosmo: create certificate %q in %q: %w", spec.Name, d.Name, err)
+		return nil, fmt.Errorf("gosmo: create certificate %q in %q: %w", spec.Name, d.Name, err)
 	}
-	return nil
+	return createdObject(ctx, d.CertificateRef(spec.Name), func() (*Certificate, error) {
+		return d.CertificateByName(ctx, spec.Name)
+	})
 }
 
 // Drop deletes the certificate.
@@ -364,18 +368,39 @@ func (d *Database) HasMasterKey(ctx context.Context) (bool, error) {
 	return n > 0, nil
 }
 
-// CreateMasterKey creates the database master key, protected by password.
+// CreateMasterKeyRequest describes a database master key.
+type CreateMasterKeyRequest struct {
+	// Password protects the key (ENCRYPTION BY PASSWORD); required.
+	Password string
+}
+
+// CreateMasterKey creates the database master key, protected by a password.
 //
 // The key is also encrypted by the service master key automatically, which is
 // what lets SQL Server open it without the password at startup. Losing that —
 // a restore onto another instance, or a service master key that no longer
 // decrypts — leaves the password as the only way in, so it is worth keeping.
-func (d *Database) CreateMasterKey(ctx context.Context, password string) error {
-	if password == "" {
-		return fmt.Errorf("gosmo: create master key in %q: empty password", d.Name)
+//
+// It returns the key read back — or, under Scripting(ctx), the MasterKeyRef
+// handle, since nothing ran.
+func (d *Database) CreateMasterKey(ctx context.Context, req CreateMasterKeyRequest) (*MasterKey, error) {
+	if req.Password == "" {
+		return nil, fmt.Errorf("gosmo: create master key in %q: empty password", d.Name)
 	}
-	if _, err := d.exec(ctx, "CREATE MASTER KEY ENCRYPTION BY PASSWORD = "+QuoteLiteral(password)); err != nil {
-		return fmt.Errorf("gosmo: create master key in %q: %w", d.Name, err)
+	if _, err := d.exec(ctx, "CREATE MASTER KEY ENCRYPTION BY PASSWORD = "+QuoteLiteral(req.Password)); err != nil {
+		return nil, fmt.Errorf("gosmo: create master key in %q: %w", d.Name, err)
 	}
-	return nil
+	if Scripting(ctx) {
+		return d.MasterKeyRef(), nil
+	}
+	m, err := d.MasterKey(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if m == nil {
+		// Created, but its row is not visible to this principal — see
+		// MasterKey and createdObject. The handle still addresses it.
+		return d.MasterKeyRef(), nil
+	}
+	return m, nil
 }

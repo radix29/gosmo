@@ -1,6 +1,7 @@
 package gosmo
 
 import (
+	"errors"
 	"strings"
 	"testing"
 )
@@ -67,7 +68,7 @@ func TestSetIncludedColumnsRejectsColumnStore(t *testing.T) {
 // type existed.
 func TestCreateIndexRejectsKeyColumnsOnClusteredColumnStore(t *testing.T) {
 	tbl := captureTable(t)
-	err := tbl.CreateIndex(t.Context(), CreateIndexRequest{
+	_, err := tbl.CreateIndex(t.Context(), CreateIndexRequest{
 		Name:       "cci",
 		Type:       IndexTypeClusteredColumnStore,
 		KeyColumns: []IndexColumnDef{{Name: "a"}},
@@ -80,14 +81,16 @@ func TestCreateIndexRejectsKeyColumnsOnClusteredColumnStore(t *testing.T) {
 	}
 }
 
-// The nonclustered columnstore path is unchanged by the split.
+// The nonclustered columnstore path is unchanged by the split. The capture
+// connection runs nothing, so CreateIndex's read-back finds no index; only
+// the statement is under test.
 func TestCreateIndexNonClusteredColumnStoreUnchanged(t *testing.T) {
 	tbl := captureTable(t)
-	if err := tbl.CreateIndex(t.Context(), CreateIndexRequest{
+	if _, err := tbl.CreateIndex(t.Context(), CreateIndexRequest{
 		Name:       "ncci",
 		Type:       IndexTypeColumnStore,
 		KeyColumns: []IndexColumnDef{{Name: "a"}},
-	}); err != nil {
+	}); err != nil && !errors.Is(err, ErrNotFound) {
 		t.Fatalf("CreateIndex: %v", err)
 	}
 	q := captured.find("CREATE")

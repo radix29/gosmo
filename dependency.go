@@ -22,6 +22,9 @@ type Dependency struct {
 // Dependencies returns the objects that schema.name's own definition
 // references — SSMS's "Object Dependencies > Objects on which ... depends".
 func (d *Database) Dependencies(ctx context.Context, schema, name string) ([]*Dependency, error) {
+	if err := requireSchema("dependencies", schema, name); err != nil {
+		return nil, err
+	}
 	const q = `
 SELECT DISTINCT SCHEMA_NAME(o.schema_id), o.name, o.type_desc, sed.is_schema_bound_reference
 FROM   sys.sql_expression_dependencies sed
@@ -34,6 +37,9 @@ ORDER  BY o.name`
 // Dependents returns the objects whose own definition references
 // schema.name — SSMS's "Object Dependencies > Objects that depend on ...".
 func (d *Database) Dependents(ctx context.Context, schema, name string) ([]*Dependency, error) {
+	if err := requireSchema("dependents", schema, name); err != nil {
+		return nil, err
+	}
 	const q = `
 SELECT DISTINCT SCHEMA_NAME(o.schema_id), o.name, o.type_desc, sed.is_schema_bound_reference
 FROM   sys.sql_expression_dependencies sed

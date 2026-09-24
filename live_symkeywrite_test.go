@@ -68,7 +68,7 @@ func TestLiveSymmetricKeyWrites(t *testing.T) {
 
 	// A parent, and a key created encrypted by it: the parent is opened for
 	// the CREATE in the same batch.
-	for _, spec := range []SymmetricKeySpec{
+	for _, spec := range []CreateSymmetricKeyRequest{
 		{Name: "parent", Algorithm: SymmetricKeyAES128,
 			Encryptions: []SymmetricKeyEncryptor{{Kind: SymmetricKeyByPassword, Password: parentPw}}},
 		{Name: "k'ey", Authorization: "key_owner", Algorithm: SymmetricKeyAES256,
@@ -77,7 +77,7 @@ func TestLiveSymmetricKeyWrites(t *testing.T) {
 				{Kind: SymmetricKeyBySymmetricKey, Name: "parent", Open: parentOpen},
 			}},
 	} {
-		if err := d.CreateSymmetricKey(ctx, spec); err != nil {
+		if _, err := d.CreateSymmetricKey(ctx, spec); err != nil {
 			t.Fatalf("CreateSymmetricKey(%s): %v", spec.Name, err)
 		}
 	}
@@ -184,11 +184,11 @@ func TestLiveSymmetricKeyWrites(t *testing.T) {
 
 	// KEY_SOURCE and IDENTITY_VALUE recreate the same key in another
 	// database: same GUID, and what one encrypts the other decrypts.
-	same := SymmetricKeySpec{Name: "shared", Algorithm: SymmetricKeyAES256,
+	same := CreateSymmetricKeyRequest{Name: "shared", Algorithm: SymmetricKeyAES256,
 		KeySource: "gosmo key source", IdentityValue: "gosmo identity",
 		Encryptions: []SymmetricKeyEncryptor{{Kind: SymmetricKeyByPassword, Password: pass}}}
 	for _, x := range []*Database{d, d2} {
-		if err := x.CreateSymmetricKey(ctx, same); err != nil {
+		if _, err := x.CreateSymmetricKey(ctx, same); err != nil {
 			t.Fatalf("create shared in %s: %v", x.Name, err)
 		}
 	}
@@ -238,7 +238,7 @@ func TestLiveSymmetricKeyAlterUnderLoad(t *testing.T) {
 
 	const writers, readers, rounds = 8, 4, 6
 	for i := range writers {
-		if err := d.CreateSymmetricKey(ctx, SymmetricKeySpec{Name: fmt.Sprintf("k%d", i), Algorithm: SymmetricKeyAES256,
+		if _, err := d.CreateSymmetricKey(ctx, CreateSymmetricKeyRequest{Name: fmt.Sprintf("k%d", i), Algorithm: SymmetricKeyAES256,
 			Encryptions: []SymmetricKeyEncryptor{{Kind: SymmetricKeyByPassword, Password: "Base!Pass1"}}}); err != nil {
 			t.Fatal(err)
 		}

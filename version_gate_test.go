@@ -242,7 +242,7 @@ func TestListenerSelectGatesTheDistributedNetworkNameColumn(t *testing.T) {
 // B2: ENCLAVE_COMPUTATIONS is SQL Server 2019 syntax, and below it the parser
 // rejects the whole CREATE — so the refusal has to happen before the statement
 // is sent, not be left to the server.
-func TestCreateColumnMasterKeyWithSignatureRefusesEnclaveComputationsBelow2019(t *testing.T) {
+func TestCreateColumnMasterKeySignatureRefusedBelow2019(t *testing.T) {
 	for _, c := range []struct {
 		major    int
 		wantEmit bool
@@ -250,8 +250,7 @@ func TestCreateColumnMasterKeyWithSignatureRefusesEnclaveComputationsBelow2019(t
 		{13, false}, {14, false}, {15, true}, {16, true}, {17, true}, {0, true},
 	} {
 		ctx, script := WithScript(context.Background())
-		err := dbAtMajor(c.major).CreateColumnMasterKeyWithSignature(
-			ctx, "CMK1", "MSSQL_CERTIFICATE_STORE", "CurrentUser/my/ab", []byte{0x0a, 0xff})
+		_, err := dbAtMajor(c.major).CreateColumnMasterKey(ctx, CreateColumnMasterKeyRequest{Name: "CMK1", KeyStoreProvider: "MSSQL_CERTIFICATE_STORE", KeyPath: "CurrentUser/my/ab", Signature: []byte{0x0a, 0xff}})
 		if c.wantEmit {
 			if err != nil {
 				t.Errorf("major %d: err = %v, want the create to go through", c.major, err)

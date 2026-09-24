@@ -184,14 +184,14 @@ func TestScriptServerLevelWrites(t *testing.T) {
 			return (&Server{}).SendMail(c, "Prof'ile", "o'brien@example.com", "Sub'ject", "Bo'dy")
 		}, "EXEC msdb.dbo.sp_send_dbmail @profile_name = N'Prof''ile', @recipients = N'o''brien@example.com', @subject = N'Sub''ject', @body = N'Bo''dy'"},
 		{"CreateDatabaseMirroringEndpoint", func(c context.Context) error {
-			_, err := (&Server{}).CreateDatabaseMirroringEndpoint(c, EndpointSpec{
+			_, err := (&Server{}).CreateDatabaseMirroringEndpoint(c, CreateDatabaseMirroringEndpointRequest{
 				Name: "Hadr]Endpoint", Port: 5022,
 				Authentication: "CERTIFICATE [c'1]", Encryption: "REQUIRED", EncryptionAlgorithm: "AES",
 			})
 			return err
 		}, "CREATE ENDPOINT [Hadr]]Endpoint] STATE = STARTED AS TCP (LISTENER_PORT = 5022, LISTENER_IP = ALL) FOR DATABASE_MIRRORING (AUTHENTICATION = CERTIFICATE [c'1], ENCRYPTION = REQUIRED ALGORITHM AES, ROLE = ALL)"},
 		{"CreateDatabaseMirroringEndpoint defaults", func(c context.Context) error {
-			_, err := (&Server{}).CreateDatabaseMirroringEndpoint(c, EndpointSpec{Name: "Hadr_Endpoint"})
+			_, err := (&Server{}).CreateDatabaseMirroringEndpoint(c, CreateDatabaseMirroringEndpointRequest{Name: "Hadr_Endpoint"})
 			return err
 		}, "CREATE ENDPOINT [Hadr_Endpoint] STATE = STARTED AS TCP (LISTENER_PORT = 5022, LISTENER_IP = ALL) FOR DATABASE_MIRRORING (AUTHENTICATION = WINDOWS NEGOTIATE, ENCRYPTION = REQUIRED, ROLE = ALL)"},
 		{"Endpoint Start", func(c context.Context) error {
@@ -227,7 +227,7 @@ func TestScriptServerLevelWrites(t *testing.T) {
 // CREATE have to be collected too, and a nil handle leaves nothing to collect
 // them against. goSSMS's New Endpoint wizard bailed out on the nil and emitted
 // its CREATEs without a single GRANT. Every other scripted create in this
-// library hands back a name-only handle (see CreateSchedule); this one
+// library hands back a name-only handle (see createdObject); this one
 // was the outlier.
 //
 // The handle carries what the CREATE statement itself determines and nothing
@@ -235,7 +235,7 @@ func TestScriptServerLevelWrites(t *testing.T) {
 func TestScriptedEndpointCreateReturnsAHandle(t *testing.T) {
 	ctx, script := WithScript(context.Background())
 	srv := &Server{}
-	ep, err := srv.CreateDatabaseMirroringEndpoint(ctx, EndpointSpec{
+	ep, err := srv.CreateDatabaseMirroringEndpoint(ctx, CreateDatabaseMirroringEndpointRequest{
 		Name:                "Hadr_Endpoint",
 		EncryptionAlgorithm: "aes",
 	})
@@ -278,7 +278,7 @@ func TestScriptedEndpointCreateReturnsAHandle(t *testing.T) {
 // handle has to say so rather than inheriting the REQUIRED default's answer.
 func TestScriptedEndpointHandleReflectsDisabledEncryption(t *testing.T) {
 	ctx, _ := WithScript(context.Background())
-	ep, err := (&Server{}).CreateDatabaseMirroringEndpoint(ctx, EndpointSpec{
+	ep, err := (&Server{}).CreateDatabaseMirroringEndpoint(ctx, CreateDatabaseMirroringEndpointRequest{
 		Name: "EP", Port: 7022, Role: "partner", Encryption: "disabled",
 	})
 	if err != nil {

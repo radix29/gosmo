@@ -62,7 +62,7 @@ func (o BulkOptions) driverOptions() mssql.BulkOptions {
 
 // BulkCopy describes the destination of a bulk-insert load.
 type BulkCopy struct {
-	// Schema is the destination schema; empty defaults to "dbo".
+	// Schema is the destination schema; required (see ErrSchemaRequired).
 	Schema string
 
 	// Table is the destination table name (unquoted).
@@ -106,11 +106,10 @@ func (d *Database) BulkInsert(ctx context.Context, bc BulkCopy, rows iter.Seq2[[
 	if len(bc.Columns) == 0 {
 		return 0, fmt.Errorf("gosmo: bulk insert into %q: no columns specified", bc.Table)
 	}
-	schema := bc.Schema
-	if schema == "" {
-		schema = "dbo"
+	if err := requireSchema("bulk insert into", bc.Schema, bc.Table); err != nil {
+		return 0, err
 	}
-	target := qualifiedName(schema, bc.Table)
+	target := qualifiedName(bc.Schema, bc.Table)
 
 	conn, err := d.server.db.Conn(ctx)
 	if err != nil {

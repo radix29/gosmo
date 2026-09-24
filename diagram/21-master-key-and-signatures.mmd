@@ -91,6 +91,6 @@ classDiagram
     MasterKey ..> MasterKeyEncryptor
     Signer --> SignerKind
     ModuleSignature --> SignerKind
-    AsymmetricKeySpec --> ProviderKey : FromProvider
-    SymmetricKeySpec --> ProviderKey : FromProvider
+    CreateAsymmetricKeyRequest --> ProviderKey : FromProvider
+    CreateSymmetricKeyRequest --> ProviderKey : FromProvider
     ProviderKey --> ProviderKeyDisposition

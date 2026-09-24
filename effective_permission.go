@@ -58,6 +58,9 @@ func (d *Database) EffectivePermissions(ctx context.Context, principal string) (
 // EffectivePermission.Subentity). principal must be a database user — see
 // EffectivePermissions for why a role cannot be one.
 func (d *Database) EffectiveObjectPermissions(ctx context.Context, schema, name, principal string) ([]*EffectivePermission, error) {
+	if err := requireSchema("effective object permissions", schema, name); err != nil {
+		return nil, err
+	}
 	// fn_my_permissions parses its first argument as a securable *name*, so
 	// this is an identifier inside a string value — bracket-quote it first,
 	// or a schema or table containing a dot resolves to something else.

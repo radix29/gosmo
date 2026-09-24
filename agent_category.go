@@ -95,17 +95,43 @@ func addCategoryType(class CategoryClass) string {
 	return "NONE"
 }
 
-// CreateCategory creates a new category via sp_add_category.
-func (s *Server) CreateCategory(ctx context.Context, class CategoryClass, name string) error {
+// CategoryByName returns one category of the given class by name.
+//
+// It returns an error satisfying errors.Is(err, ErrNotFound) when there is no
+// such category.
+func (s *Server) CategoryByName(ctx context.Context, class CategoryClass, name string) (*Category, error) {
 	if !validCategoryClass(class) {
-		return fmt.Errorf("gosmo: create category: unrecognized category class %q", class)
+		return nil, fmt.Errorf("gosmo: find category %q: unrecognized category class %q", name, class)
+	}
+	c := &Category{Class: class, Name: name}
+	err := s.queryRowScan(ctx, `
+SELECT category_id
+FROM   msdb.dbo.syscategories
+WHERE  category_class = @p1 AND name = @p2`, []any{class.code(), name}, &c.ID)
+	return foundRow(c, err, notFoundf("gosmo: %s category %q not found", class, name), fmt.Sprintf("find %s category %q", class, name))
+}
+
+// CreateCategoryRequest describes a new Agent category.
+type CreateCategoryRequest struct {
+	Class CategoryClass
+	Name  string
+}
+
+// CreateCategory creates a new category via sp_add_category, and returns it
+// read back from msdb — or, under Scripting(ctx), one carrying only its class
+// and name, since nothing ran.
+func (s *Server) CreateCategory(ctx context.Context, req CreateCategoryRequest) (*Category, error) {
+	if !validCategoryClass(req.Class) {
+		return nil, fmt.Errorf("gosmo: create category: unrecognized category class %q", req.Class)
 	}
 	q := fmt.Sprintf("EXEC msdb.dbo.sp_add_category @class = N'%s', @type = N'%s', @name = N'%s'",
-		string(class), addCategoryType(class), escapeSingle(name))
+		string(req.Class), addCategoryType(req.Class), escapeSingle(req.Name))
 	if err := s.exec(ctx, q); err != nil {
-		return fmt.Errorf("gosmo: create category %q (%s): %w", name, class, err)
+		return nil, fmt.Errorf("gosmo: create category %q (%s): %w", req.Name, req.Class, err)
 	}
-	return nil
+	return createdObject(ctx, &Category{Class: req.Class, Name: req.Name}, func() (*Category, error) {
+		return s.CategoryByName(ctx, req.Class, req.Name)
+	})
 }
 
 // DeleteCategory deletes a category via sp_delete_category.

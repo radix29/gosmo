@@ -33,25 +33,25 @@ func TestServerAuditSpecificationStateStatements(t *testing.T) {
 func TestCreateServerAuditSpecificationStatement(t *testing.T) {
 	for _, tc := range []struct {
 		name string
-		spec ServerAuditSpecificationSpec
+		spec CreateServerAuditSpecificationRequest
 		want []string
 		bad  bool
 	}{
 		{name: "two groups enabled",
-			spec: ServerAuditSpecificationSpec{Name: "s]p", AuditName: "a]ud",
+			spec: CreateServerAuditSpecificationRequest{Name: "s]p", AuditName: "a]ud",
 				ActionGroups: []string{"BACKUP_RESTORE_GROUP", "DATABASE_CHANGE_GROUP"}, Enabled: true},
 			want: []string{"CREATE SERVER AUDIT SPECIFICATION [s]]p]", "FOR SERVER AUDIT [a]]ud]",
 				"ADD (BACKUP_RESTORE_GROUP)", "ADD (DATABASE_CHANGE_GROUP)", "WITH ( STATE = ON )"}},
 		{name: "no groups disabled",
-			spec: ServerAuditSpecificationSpec{Name: "s", AuditName: "a"},
+			spec: CreateServerAuditSpecificationRequest{Name: "s", AuditName: "a"},
 			want: []string{"WITH ( STATE = OFF )"}},
-		{name: "no name", spec: ServerAuditSpecificationSpec{AuditName: "a"}, bad: true},
-		{name: "no audit", spec: ServerAuditSpecificationSpec{Name: "s"}, bad: true},
+		{name: "no name", spec: CreateServerAuditSpecificationRequest{AuditName: "a"}, bad: true},
+		{name: "no audit", spec: CreateServerAuditSpecificationRequest{Name: "s"}, bad: true},
 		// A group name is a keyword inside ADD (...), not an identifier: it
 		// cannot be bracket-quoted, so anything that is not a bare name has to
 		// be refused rather than interpolated.
 		{name: "injected group",
-			spec: ServerAuditSpecificationSpec{Name: "s", AuditName: "a",
+			spec: CreateServerAuditSpecificationRequest{Name: "s", AuditName: "a",
 				ActionGroups: []string{"X), ADD (Y"}}, bad: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

@@ -109,13 +109,24 @@ func (d *BackupDevice) Target() BackupTarget { return DeviceTarget(d.Name) }
 
 // -- Writes ----------------------------------------------------------------------
 
-// CreateBackupDevice registers a logical backup device.
+// CreateBackupDeviceRequest describes a logical backup device.
+type CreateBackupDeviceRequest struct {
+	Name string
+	// Type is the device type; empty means BackupDeviceDisk.
+	Type         BackupDeviceType
+	PhysicalName string // the file path (or tape name) the device aliases
+}
+
+// CreateBackupDevice registers a logical backup device, and returns it read
+// back from the catalog — or, under Scripting(ctx), the BackupDeviceRef
+// handle, since nothing ran.
 //
 // The statement is built as literals rather than bound parameters because
 // every gosmo write goes through exec, which under a WithScript context
 // collects the statement text instead of running it — a parameterized EXEC
 // would script as a statement carrying @p1 and nothing to bind it to.
-func (s *Server) CreateBackupDevice(ctx context.Context, name string, devType BackupDeviceType, physicalName string) (*BackupDevice, error) {
+func (s *Server) CreateBackupDevice(ctx context.Context, req CreateBackupDeviceRequest) (*BackupDevice, error) {
+	name, devType, physicalName := req.Name, req.Type, req.PhysicalName
 	if strings.TrimSpace(name) == "" {
 		return nil, fmt.Errorf("gosmo: create backup device: device has no name")
 	}
@@ -131,11 +142,9 @@ func (s *Server) CreateBackupDevice(ctx context.Context, name string, devType Ba
 	if err := s.exec(ctx, stmt); err != nil {
 		return nil, fmt.Errorf("gosmo: create backup device %q: %w", name, err)
 	}
-	if Scripting(ctx) {
-		// The EXEC was only collected, so there is nothing to read back.
-		return s.BackupDeviceRef(name), nil
-	}
-	return s.BackupDeviceByName(ctx, name)
+	return createdObject(ctx, s.BackupDeviceRef(name), func() (*BackupDevice, error) {
+		return s.BackupDeviceByName(ctx, name)
+	})
 }
 
 // Drop removes the logical backup device. deleteFile also deletes the

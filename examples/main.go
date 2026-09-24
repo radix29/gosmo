@@ -77,15 +77,15 @@ func main() {
 
 	// -- Schemas ----------------------------------------------------------
 	demo.Section("Schemas")
-	demo.Must(db.CreateSchema(ctx, "Sales", "dbo"))
-	demo.Must(db.CreateSchema(ctx, "HR", "dbo"))
+	demo.Value(db.CreateSchema(ctx, gosmo.CreateSchemaRequest{Name: "Sales", Owner: "dbo"}))
+	demo.Value(db.CreateSchema(ctx, gosmo.CreateSchemaRequest{Name: "HR", Owner: "dbo"}))
 	for _, s := range demo.Value(db.Schemas(ctx)) {
 		fmt.Printf("  [%s] owner=%s\n", s.Name, s.Owner)
 	}
 
 	// -- Tables -----------------------------------------------------------
 	demo.Section("Tables")
-	demo.Must(db.CreateTable(ctx, gosmo.CreateTableRequest{
+	demo.Value(db.CreateTable(ctx, gosmo.CreateTableRequest{
 		Schema: "dbo",
 		Name:   "Customers",
 		Columns: []gosmo.ColumnDefinition{
@@ -97,7 +97,7 @@ func main() {
 			{Name: "IsActive", DataType: gosmo.DataTypeBit, IsNullable: false, DefaultValue: "1"},
 		},
 	}))
-	demo.Must(db.CreateTable(ctx, gosmo.CreateTableRequest{
+	demo.Value(db.CreateTable(ctx, gosmo.CreateTableRequest{
 		Schema: "Sales",
 		Name:   "Orders",
 		Columns: []gosmo.ColumnDefinition{
@@ -128,7 +128,7 @@ func main() {
 
 	// -- Index -----------------------------------------------------------
 	demo.Section("Indexes")
-	demo.Must(cust.CreateIndex(ctx, gosmo.CreateIndexRequest{
+	demo.Value(cust.CreateIndex(ctx, gosmo.CreateIndexRequest{
 		Name: "IX_Customers_LastName",
 		Type: gosmo.IndexTypeNonClustered,
 		KeyColumns: []gosmo.IndexColumnDef{
@@ -138,7 +138,7 @@ func main() {
 		IncludedColumns: []string{"Email"},
 		FillFactor:      90,
 	}))
-	demo.Must(cust.CreateIndex(ctx, gosmo.CreateIndexRequest{
+	demo.Value(cust.CreateIndex(ctx, gosmo.CreateIndexRequest{
 		Name:             "UIX_Customers_Email",
 		Type:             gosmo.IndexTypeNonClustered,
 		IsUnique:         true,
@@ -153,7 +153,7 @@ func main() {
 	// -- Sequence --------------------------------------------------------
 	demo.Section("Sequence")
 	noCache := 0
-	demo.Must(db.CreateSequence(ctx, gosmo.CreateSequenceRequest{
+	demo.Value(db.CreateSequence(ctx, gosmo.CreateSequenceRequest{
 		Schema:     "dbo",
 		Name:       "InvoiceSeq",
 		DataType:   gosmo.DataTypeBigInt,
@@ -167,7 +167,7 @@ func main() {
 
 	// -- Synonym ----------------------------------------------------------
 	demo.Section("Synonym")
-	demo.Must(db.CreateSynonym(ctx, "dbo", "Cust", "dbo.Customers"))
+	demo.Value(db.CreateSynonym(ctx, gosmo.CreateSynonymRequest{Schema: "dbo", Name: "Cust", BaseObject: "dbo.Customers"}))
 	for _, syn := range demo.Value(db.Synonyms(ctx)) {
 		fmt.Printf("  [%s].[%s] -> %s\n", syn.Schema, syn.Name, syn.BaseObject)
 	}
@@ -176,13 +176,17 @@ func main() {
 	// The body is the T-SQL *after* AS — gosmo writes the CREATE OR ALTER
 	// PROCEDURE header itself.
 	demo.Section("Stored Procedure")
-	demo.Must(db.CreateStoredProcedure(ctx, "dbo", "RecentOrders", `
+	demo.Value(db.CreateStoredProcedure(ctx, gosmo.CreateStoredProcedureRequest{
+		Schema: "dbo",
+		Name:   "RecentOrders",
+		Body: `
 BEGIN
     SET NOCOUNT ON;
     SELECT TOP (100) o.OrderID, o.OrderDate, o.TotalAmount, o.Status
     FROM   Sales.Orders o
     ORDER  BY o.OrderDate DESC;
-END`))
+END`,
+	}))
 	fmt.Println("  [dbo].[RecentOrders] created")
 
 	// -- Dependencies -----------------------------------------------------
@@ -204,7 +208,7 @@ END`))
 
 	// -- Partition function ----------------------------------------------
 	demo.Section("Partition Function")
-	demo.Must(db.CreatePartitionFunction(ctx, gosmo.CreatePartitionFunctionRequest{
+	demo.Value(db.CreatePartitionFunction(ctx, gosmo.CreatePartitionFunctionRequest{
 		Name:       "pf_OrderDate",
 		InputType:  gosmo.DataTypeDate,
 		IsRight:    true,

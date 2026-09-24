@@ -119,6 +119,9 @@ func (d *Database) ModuleSignatures(ctx context.Context) ([]*ModuleSignature, er
 
 // SignaturesOn returns the signatures on one module — who signed it.
 func (d *Database) SignaturesOn(ctx context.Context, schema, module string) ([]*ModuleSignature, error) {
+	if err := requireSchema("signatures on", schema, module); err != nil {
+		return nil, err
+	}
 	out, err := d.moduleSignatures(ctx, `
   AND  o.schema_id = SCHEMA_ID(@p1) AND o.name = @p2`, schema, module)
 	if err != nil {
@@ -225,6 +228,9 @@ func signatureStatement(add bool, schema, module string, by Signer, counter bool
 // the signer's private key, and CONTROL on it; altering the module later
 // drops the signature.
 func (d *Database) AddSignature(ctx context.Context, schema, module string, by Signer, counter bool) error {
+	if err := requireSchema("add signature", schema, module); err != nil {
+		return err
+	}
 	stmt, err := signatureStatement(true, schema, module, by, counter)
 	if err == nil {
 		_, err = d.exec(ctx, stmt)
@@ -238,6 +244,9 @@ func (d *Database) AddSignature(ctx context.Context, schema, module string, by S
 // DropSignature removes a signature with DROP [COUNTER] SIGNATURE. by's
 // Password is not used.
 func (d *Database) DropSignature(ctx context.Context, schema, module string, by Signer, counter bool) error {
+	if err := requireSchema("drop signature", schema, module); err != nil {
+		return err
+	}
 	stmt, err := signatureStatement(false, schema, module, by, counter)
 	if err == nil {
 		_, err = d.exec(ctx, stmt)

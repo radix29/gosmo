@@ -17,6 +17,9 @@ import (
 // the ALTER TABLE ... ADD CONSTRAINT it really is — CREATE INDEX cannot
 // recreate it.
 func (sc *Scripter) ScriptIndex(ctx context.Context, schema, table, name string) (string, error) {
+	if err := requireSchema("script index", schema, table); err != nil {
+		return "", err
+	}
 	t, err := sc.db.TableByName(ctx, schema, table)
 	if err != nil {
 		return "", err
@@ -72,6 +75,9 @@ func scriptKeyConstraint(idx *Index, tableName string, opts ScriptOptions) strin
 
 // ScriptCheckConstraint generates the script for one CHECK constraint.
 func (sc *Scripter) ScriptCheckConstraint(ctx context.Context, schema, table, name string) (string, error) {
+	if err := requireSchema("script check constraint", schema, table); err != nil {
+		return "", err
+	}
 	t, err := sc.db.TableByName(ctx, schema, table)
 	if err != nil {
 		return "", err
@@ -133,6 +139,9 @@ func scriptCheckConstraint(ck *CheckConstraint, tableName string, opts ScriptOpt
 // its index, so CREATE STATISTICS under its name collides with the index and
 // DROP STATISTICS on it fails (Msg 3739).
 func (sc *Scripter) ScriptStatistic(ctx context.Context, schema, table, name string) (string, error) {
+	if err := requireSchema("script statistic", schema, table); err != nil {
+		return "", err
+	}
 	t, err := sc.db.TableByName(ctx, schema, table)
 	if err != nil {
 		return "", err
@@ -186,6 +195,9 @@ func buildStatisticScript(st *Statistic, cols []string, tableName string, opts S
 
 // ScriptForeignKey generates the script for one foreign key.
 func (sc *Scripter) ScriptForeignKey(ctx context.Context, schema, table, name string) (string, error) {
+	if err := requireSchema("script foreign key", schema, table); err != nil {
+		return "", err
+	}
 	t, err := sc.db.TableByName(ctx, schema, table)
 	if err != nil {
 		return "", err
@@ -213,6 +225,9 @@ func buildForeignKeyScript(fk *ForeignKey, tableName string, opts ScriptOptions)
 
 // ScriptSequence generates the CREATE (or DROP) script for one sequence.
 func (sc *Scripter) ScriptSequence(ctx context.Context, schema, name string) (string, error) {
+	if err := requireSchema("script sequence", schema, name); err != nil {
+		return "", err
+	}
 	seq, err := sc.db.SequenceByName(ctx, schema, name)
 	if err != nil {
 		return "", err
@@ -320,6 +335,9 @@ func sequenceStartWith(seq *Sequence) (start string, exhausted bool) {
 
 // ScriptSynonym generates the CREATE (or DROP) script for one synonym.
 func (sc *Scripter) ScriptSynonym(ctx context.Context, schema, name string) (string, error) {
+	if err := requireSchema("script synonym", schema, name); err != nil {
+		return "", err
+	}
 	syn, err := sc.db.SynonymByName(ctx, schema, name)
 	if err != nil {
 		return "", err
