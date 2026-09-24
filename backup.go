@@ -325,10 +325,11 @@ type RestoreOptions struct {
 	// read-write — which also repairs it when the RESTORE fails; Restore
 	// repairs it again, off the caller's cancellation, if the batch itself
 	// was cut short. A database that does not exist yet or is RESTORING has
-	// nobody to close and is left alone, and so is one in STANDBY, which
-	// refuses the ALTER. A Managed Instance refuses SET SINGLE_USER, so
+	// nobody to close and is left alone. One in STANDBY refuses the ALTER
+	// but can have readers, so its sessions are killed instead and no access
+	// mode is changed. A Managed Instance refuses SET SINGLE_USER, so
 	// Server.BuildRestoreStatement and Restore kill the database's
-	// sessions there instead and change no access mode.
+	// sessions there too, whatever its state, and change no access mode.
 	CloseExistingConnections bool
 	// Replace forces restoration over an existing database.
 	Replace bool
@@ -497,19 +498,28 @@ func buildRestoreStatement(opts RestoreOptions, killSessions bool) (string, erro
 		return killDatabaseSessionsBatch(opts.Database) + ";\n" + sb.String() + ";", nil
 	}
 	// Online and read-write: a database that does not exist yet or is RESTORING
-	// has no connections to close, and one in STANDBY refuses the ALTER.
-	online := fmt.Sprintf("EXISTS (SELECT 1 FROM sys.databases WHERE name = %s AND state = 0 AND is_in_standby = 0)",
-		QuoteLiteral(opts.Database))
+	// has no connections to close. One in STANDBY refuses the ALTER but is
+	// readable, so it has readers — the log-shipping secondary — and they
+	// would fail the RESTORE with "Exclusive access could not be obtained";
+	// they are killed instead, as on a Managed Instance, and no access mode
+	// is set, so none is released.
+	lit := QuoteLiteral(opts.Database)
+	online := fmt.Sprintf("EXISTS (SELECT 1 FROM sys.databases WHERE name = %s AND state = 0 AND is_in_standby = 0)", lit)
+	standby := fmt.Sprintf("EXISTS (SELECT 1 FROM sys.databases WHERE name = %s AND state = 0 AND is_in_standby = 1)", lit)
 	db := quoteIdent(opts.Database)
 	return fmt.Sprintf(`DECLARE @closed bit = 0;
 IF %[1]s
 BEGIN
     ALTER DATABASE %[2]s SET SINGLE_USER WITH ROLLBACK IMMEDIATE;
     SET @closed = 1;
+END
+ELSE IF %[4]s
+BEGIN
+%[5]s;
 END;
 %[3]s;
 IF @closed = 1 AND %[1]s
-    ALTER DATABASE %[2]s SET MULTI_USER;`, online, db, sb.String()), nil
+    ALTER DATABASE %[2]s SET MULTI_USER;`, online, db, sb.String(), standby, killDatabaseSessionsBatch(opts.Database)), nil
 }
 
 // backupHistorySelect is the msdb read behind BackupHistory, at package

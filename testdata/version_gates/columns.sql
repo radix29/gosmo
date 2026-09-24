@@ -14,9 +14,13 @@ SELECT c.name, c.column_id,
        c.is_sparse, c.is_column_set,
        ISNULL(mc.masking_function, ''),
        c.generated_always_type, c.is_hidden, c.is_filestream,
-       CAST(0 AS int)
+       CAST(0 AS int),
+       CAST(0 AS bit),
+       ISNULL(cek.name, ''), ISNULL(c.encryption_type_desc, ''), ISNULL(c.encryption_algorithm_name, '')
 FROM   sys.columns c
 JOIN   sys.types tp ON tp.user_type_id = c.user_type_id
+LEFT   JOIN sys.column_encryption_keys cek
+       ON  cek.column_encryption_key_id = c.column_encryption_key_id
 LEFT   JOIN sys.masked_columns mc
        ON  mc.object_id  = c.object_id AND mc.column_id = c.column_id AND mc.is_masked = 1
 LEFT   JOIN sys.computed_columns cc
@@ -47,9 +51,13 @@ SELECT c.name, c.column_id,
        c.is_sparse, c.is_column_set,
        ISNULL(mc.masking_function, ''),
        c.generated_always_type, c.is_hidden, c.is_filestream,
-       ISNULL(c.graph_type, 0)
+       ISNULL(c.graph_type, 0),
+       CAST(0 AS bit),
+       ISNULL(cek.name, ''), ISNULL(c.encryption_type_desc, ''), ISNULL(c.encryption_algorithm_name, '')
 FROM   sys.columns c
 JOIN   sys.types tp ON tp.user_type_id = c.user_type_id
+LEFT   JOIN sys.column_encryption_keys cek
+       ON  cek.column_encryption_key_id = c.column_encryption_key_id
 LEFT   JOIN sys.masked_columns mc
        ON  mc.object_id  = c.object_id AND mc.column_id = c.column_id AND mc.is_masked = 1
 LEFT   JOIN sys.computed_columns cc
@@ -80,9 +88,13 @@ SELECT c.name, c.column_id,
        c.is_sparse, c.is_column_set,
        ISNULL(mc.masking_function, ''),
        c.generated_always_type, c.is_hidden, c.is_filestream,
-       ISNULL(c.graph_type, 0)
+       ISNULL(c.graph_type, 0),
+       CAST(0 AS bit),
+       ISNULL(cek.name, ''), ISNULL(c.encryption_type_desc, ''), ISNULL(c.encryption_algorithm_name, '')
 FROM   sys.columns c
 JOIN   sys.types tp ON tp.user_type_id = c.user_type_id
+LEFT   JOIN sys.column_encryption_keys cek
+       ON  cek.column_encryption_key_id = c.column_encryption_key_id
 LEFT   JOIN sys.masked_columns mc
        ON  mc.object_id  = c.object_id AND mc.column_id = c.column_id AND mc.is_masked = 1
 LEFT   JOIN sys.computed_columns cc
@@ -113,9 +125,13 @@ SELECT c.name, c.column_id,
        c.is_sparse, c.is_column_set,
        ISNULL(mc.masking_function, ''),
        c.generated_always_type, c.is_hidden, c.is_filestream,
-       ISNULL(c.graph_type, 0)
+       ISNULL(c.graph_type, 0),
+       c.is_dropped_ledger_column,
+       ISNULL(cek.name, ''), ISNULL(c.encryption_type_desc, ''), ISNULL(c.encryption_algorithm_name, '')
 FROM   sys.columns c
 JOIN   sys.types tp ON tp.user_type_id = c.user_type_id
+LEFT   JOIN sys.column_encryption_keys cek
+       ON  cek.column_encryption_key_id = c.column_encryption_key_id
 LEFT   JOIN sys.masked_columns mc
        ON  mc.object_id  = c.object_id AND mc.column_id = c.column_id AND mc.is_masked = 1
 LEFT   JOIN sys.computed_columns cc
@@ -146,9 +162,13 @@ SELECT c.name, c.column_id,
        c.is_sparse, c.is_column_set,
        ISNULL(mc.masking_function, ''),
        c.generated_always_type, c.is_hidden, c.is_filestream,
-       ISNULL(c.graph_type, 0)
+       ISNULL(c.graph_type, 0),
+       c.is_dropped_ledger_column,
+       ISNULL(cek.name, ''), ISNULL(c.encryption_type_desc, ''), ISNULL(c.encryption_algorithm_name, '')
 FROM   sys.columns c
 JOIN   sys.types tp ON tp.user_type_id = c.user_type_id
+LEFT   JOIN sys.column_encryption_keys cek
+       ON  cek.column_encryption_key_id = c.column_encryption_key_id
 LEFT   JOIN sys.masked_columns mc
        ON  mc.object_id  = c.object_id AND mc.column_id = c.column_id AND mc.is_masked = 1
 LEFT   JOIN sys.computed_columns cc

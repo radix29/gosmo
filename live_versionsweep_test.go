@@ -652,6 +652,13 @@ func sweepServiceBroker(sw *sweep, d *Database) {
 // listings still run, which is what the version exposure is about; only the
 // by-name finders below go unexercised against a real row.
 func sweepProgrammability(sw *sweep, d *Database) {
+	sw.call("Database.Parameters", func() error {
+		ps, err := d.Parameters(sw.ctx, "dbo", "usp_sweep")
+		if err == nil && len(ps) != 1 {
+			err = fmt.Errorf("usp_sweep has %d parameters, want 1", len(ps))
+		}
+		return err
+	})
 	sw.call("Database.UserDefinedDataTypeByName", func() error {
 		_, err := d.UserDefinedDataTypeByName(sw.ctx, "dbo", "sweep_alias")
 		return err

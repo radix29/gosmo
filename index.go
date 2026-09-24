@@ -29,7 +29,14 @@ type Index struct {
 	IgnoreDupKey       bool
 	AllowRowLocks      bool
 	AllowPageLocks     bool
-	DataCompression    DataCompression
+	// DataCompression is the index's compression — its first partition's
+	// when it is partitioned; PartitionCompression has every partition's.
+	DataCompression DataCompression
+	// PartitionCompression is each partition's DATA_COMPRESSION, in
+	// partition_number order: element i is partition i+1. A partitioned
+	// index can mix them, and a script written from DataCompression alone
+	// recreated it with one compression throughout.
+	PartitionCompression []DataCompression
 	// StatisticsNoRecompute is the index's STATISTICS_NORECOMPUTE option,
 	// read from its statistics object (sys.stats.no_recompute) — sys.indexes
 	// has no column for it.
@@ -39,11 +46,32 @@ type Index struct {
 	OptimizeForSequentialKey bool
 	// BucketCount is a hash index's BUCKET_COUNT (sys.hash_indexes), as the
 	// server rounded it up to a power of two; 0 for every other index type.
-	BucketCount      int64
+	BucketCount int64
+	// CompressionDelay is a columnstore index's COMPRESSION_DELAY in minutes
+	// (sys.indexes.compression_delay); 0 for no delay and for every other
+	// index type.
+	CompressionDelay int
 	KeyColumns       []IndexColumn
 	IncludedColumns  []IndexColumn
 	FilterDefinition string
 	DataSpace        DataSpace
+
+	// IsPrimaryXML, PrimaryXMLIndex and SecondaryXMLType describe an XML
+	// index (sys.xml_indexes), as CreateIndexRequest's fields of the same
+	// names do: the primary form, or a secondary one of that type built over
+	// the primary index named. All three are zero for a selective XML index,
+	// which neither form describes, and for every other index type.
+	IsPrimaryXML     bool
+	PrimaryXMLIndex  string
+	SecondaryXMLType XMLSecondaryIndexType
+	// Tessellation, BoundingBox, GridLevels and CellsPerObject describe a
+	// spatial index (sys.spatial_index_tessellations), as CreateIndexRequest's
+	// fields of the same names do. BoundingBox is nil for a geography index,
+	// and GridLevels is zero for an automatic-grid one.
+	Tessellation   SpatialTessellation
+	BoundingBox    *SpatialBoundingBox
+	GridLevels     SpatialGridLevels
+	CellsPerObject int
 }
 
 // DataSpace names where a table or index keeps its rows — the ON clause of
@@ -186,16 +214,24 @@ SELECT i.name, i.index_id, i.type_desc, i.is_unique, i.is_primary_key,
        i.is_unique_constraint, i.is_disabled, i.fill_factor,
        ISNULL(i.filter_definition, ''),
        i.is_padded, i.ignore_dup_key, i.allow_row_locks, i.allow_page_locks,
-       ISNULL(p.data_compression_desc, 'NONE'),
+       ` + partitionCompressionList("i.object_id", "i.index_id") + `,
        ` + dataSpaceColumns + `,
        ISNULL(st.no_recompute, CAST(0 AS bit)),
        ` + colSince(t.db.serverMajorVersion(), SQLServer2019, "i.optimize_for_sequential_key", "CAST(0 AS bit)") + `,
-       ISNULL(h.bucket_count, 0)
+       ISNULL(h.bucket_count, 0), ISNULL(i.compression_delay, 0),
+       CAST(CASE WHEN xi.xml_index_type = 0 THEN 1 ELSE 0 END AS bit),
+       CASE WHEN xi.xml_index_type = 1 THEN ISNULL(pxi.name, '') ELSE '' END,
+       CASE WHEN xi.xml_index_type = 1 THEN ISNULL(xi.secondary_type_desc, '') ELSE '' END,
+       ISNULL(sit.tessellation_scheme, ''),
+       sit.bounding_box_xmin, sit.bounding_box_ymin, sit.bounding_box_xmax, sit.bounding_box_ymax,
+       ISNULL(sit.level_1_grid_desc, ''), ISNULL(sit.level_2_grid_desc, ''),
+       ISNULL(sit.level_3_grid_desc, ''), ISNULL(sit.level_4_grid_desc, ''),
+       ISNULL(sit.cells_per_object, 0)
 FROM   sys.indexes i
 LEFT   JOIN sys.hash_indexes h ON h.object_id = i.object_id AND h.index_id = i.index_id
-OUTER  APPLY (SELECT TOP 1 pp.data_compression_desc FROM sys.partitions pp
-              WHERE pp.object_id = i.object_id AND pp.index_id = i.index_id
-              ORDER BY pp.partition_number) p
+LEFT   JOIN sys.xml_indexes xi ON xi.object_id = i.object_id AND xi.index_id = i.index_id
+LEFT   JOIN sys.xml_indexes pxi ON pxi.object_id = xi.object_id AND pxi.index_id = xi.using_xml_index_id
+LEFT   JOIN sys.spatial_index_tessellations sit ON sit.object_id = i.object_id AND sit.index_id = i.index_id
 LEFT   JOIN sys.stats st ON st.object_id = i.object_id AND st.stats_id = i.index_id
 ` + dataSpaceJoins + `
 WHERE  i.object_id = @p1 AND i.type > 0`
@@ -219,17 +255,36 @@ ORDER  BY i.index_id`
 	var indexes []*Index
 	for rows.Next() {
 		idx := &Index{table: t}
-		var typeDesc sql.NullString
+		var typeDesc, compression sql.NullString
+		var secondary, tessellation string
+		var xmin, ymin, xmax, ymax sql.NullFloat64
 		if err := rows.Scan(&idx.Name, &idx.IndexID, &typeDesc,
 			&idx.IsUnique, &idx.IsPrimaryKey, &idx.IsUniqueConstraint,
 			&idx.IsDisabled, &idx.FillFactor, &idx.FilterDefinition,
 			&idx.IsPadded, &idx.IgnoreDupKey, &idx.AllowRowLocks, &idx.AllowPageLocks,
-			&idx.DataCompression,
+			&compression,
 			&idx.DataSpace.Name, &idx.DataSpace.IsPartitionScheme,
 			&idx.DataSpace.IsDefaultFileGroup, &idx.DataSpace.PartitionColumn,
 			&idx.StatisticsNoRecompute, &idx.OptimizeForSequentialKey,
-			&idx.BucketCount); err != nil {
+			&idx.BucketCount, &idx.CompressionDelay,
+			&idx.IsPrimaryXML, &idx.PrimaryXMLIndex, &secondary,
+			&tessellation, &xmin, &ymin, &xmax, &ymax,
+			&idx.GridLevels.Level1, &idx.GridLevels.Level2,
+			&idx.GridLevels.Level3, &idx.GridLevels.Level4,
+			&idx.CellsPerObject); err != nil {
 			return nil, err
+		}
+		idx.SecondaryXMLType = XMLSecondaryIndexType(secondary)
+		idx.Tessellation = SpatialTessellation(tessellation)
+		if xmin.Valid && ymin.Valid && xmax.Valid && ymax.Valid {
+			idx.BoundingBox = &SpatialBoundingBox{XMin: xmin.Float64, YMin: ymin.Float64, XMax: xmax.Float64, YMax: ymax.Float64}
+		}
+		if idx.PartitionCompression, err = decodePartitionCompression(compression); err != nil {
+			return nil, err
+		}
+		idx.DataCompression = DataCompressionNone
+		if len(idx.PartitionCompression) > 0 {
+			idx.DataCompression = idx.PartitionCompression[0]
 		}
 		switch desc := strings.TrimSpace(typeDesc.String); desc {
 		case "CLUSTERED":
@@ -296,6 +351,14 @@ WHERE  i.object_id = @p1 AND i.index_id IN (0, 1)`
 // come back too, and are simply never looked up: excluding them would cost a
 // predicate to save nothing, since a heap has at most one such row.
 //
+// A partitioning column the index does not name is left out. The server
+// adds one to every partition-aligned index that lacks it and lists it with
+// key_ordinal 0 and is_included_column 0, and the ORDER BY would then put it
+// first — CREATE INDEX CX (ID) ON ps(Yr) came back as CX (Yr, ID). Every
+// column a CREATE INDEX does name is kept: a rowstore key has key_ordinal > 0,
+// an included or columnstore column has is_included_column 1, and an XML or
+// spatial index's one column has partition_ordinal 0.
+//
 // extra is an additional predicate ANDed onto the object filter, with its
 // parameters starting at @p2 — the same contract as indexList.
 func (t *Table) indexColumns(ctx context.Context, extra string, args ...any) (map[int][]IndexColumn, error) {
@@ -304,6 +367,7 @@ SELECT ic.index_id, c.name, ic.is_descending_key, ic.is_included_column
 FROM   sys.index_columns ic
 JOIN   sys.columns c ON c.object_id = ic.object_id AND c.column_id = ic.column_id
 WHERE  ic.object_id = @p1` + extra + `
+  AND  NOT (ic.key_ordinal = 0 AND ic.is_included_column = 0 AND ic.partition_ordinal > 0)
 ORDER  BY ic.index_id, ic.key_ordinal, ic.index_column_id`
 
 	rows, err := t.db.query(ctx, q, append([]any{t.ObjectID}, args...)...)
@@ -459,6 +523,37 @@ func (idx *Index) Rename(ctx context.Context, newName string) error {
 	}
 	setIfApplied(ctx, &idx.Name, newName)
 	return nil
+}
+
+// partitionCompressionList renders a correlated FOR JSON subquery listing
+// each partition's compression of the heap or index objectID/indexID name,
+// in partition_number order, for decodePartitionCompression. JSON rather
+// than TOP 1: the first partition's alone was what made a partitioned index
+// with mixed compression script as uniformly compressed.
+func partitionCompressionList(objectID, indexID string) string {
+	return jsonRows("pp.partition_number AS n, pp.data_compression_desc AS c",
+		"\n        FROM sys.partitions pp WHERE pp.object_id = "+objectID+" AND pp.index_id = "+indexID,
+		"pp.partition_number")
+}
+
+// decodePartitionCompression decodes one partitionCompressionList column into
+// a slice indexed by partition_number - 1. NULL (no partitions) is nil.
+func decodePartitionCompression(col sql.NullString) ([]DataCompression, error) {
+	rows, err := decodeJSONRows[struct {
+		N int    `json:"n"`
+		C string `json:"c"`
+	}](col)
+	if err != nil || rows == nil {
+		return nil, err
+	}
+	out := make([]DataCompression, len(rows))
+	for i, r := range rows {
+		if r.N != i+1 {
+			return nil, fmt.Errorf("gosmo: partition %d listed at position %d", r.N, i+1)
+		}
+		out[i] = DataCompression(r.C)
+	}
+	return out, nil
 }
 
 // DataCompression is an index's or partition's DATA_COMPRESSION keyword.

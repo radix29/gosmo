@@ -1,34 +1,72 @@
 package gosmo
 
 import (
+	"context"
 	"fmt"
+	"strconv"
 	"strings"
 )
 
 // The table kinds ScriptTable handles beyond a plain disk-based table —
 // graph node and edge tables, memory-optimized tables, FILESTREAM and
-// TEXTIMAGE_ON storage — and the kinds it refuses.
+// TEXTIMAGE_ON storage, ledger tables, Always Encrypted columns, FileTables
+// and external tables — and the kinds it refuses.
 
 // refusal returns the ErrUnsupported error for a table the scripter cannot
-// express, or nil. Each refused kind would otherwise script as a plain table
-// with the same name: an external table's rows are elsewhere, a FileTable's
-// fixed schema is not its own to declare, a ledger table would lose its
-// ledger, and an Always Encrypted column would be recreated in plaintext.
+// express, or nil. Each refused kind is one no CREATE TABLE can make: a
+// ledger history table is created by its ledger table's CREATE and by
+// nothing else, and a dropped ledger table is the ledger's record of a
+// table that no longer exists. Scripting either as a plain table would
+// create something different under the same name.
 func (o tableScriptOptions) refusal(fullName string) error {
 	var kind string
 	switch {
-	case o.IsExternal:
-		kind = "an external table"
-	case o.IsFileTable:
-		kind = "a FileTable"
-	case o.LedgerType != 0:
-		kind = "a ledger table"
-	case o.HasEncryptedColumns:
-		kind = "a table with Always Encrypted columns"
+	case o.IsDroppedLedgerTable:
+		kind = "a dropped ledger table"
+	case o.LedgerType == 1:
+		kind = "a ledger history table, which only its ledger table's CREATE TABLE creates,"
 	default:
 		return nil
 	}
 	return unsupportedf("gosmo: script table %s: %s cannot be scripted", fullName, kind)
+}
+
+// ledgerOptions returns a ledger table's entries for CREATE TABLE's WITH
+// clause, or nil for a table that is not one. An updatable ledger table is
+// system-versioned into its history table — sys.tables reports it with
+// temporal_type 0 all the same, so SystemVersioned does not cover it — and
+// an append-only one has no history. The ledger view is named with its
+// four columns, since each can be renamed from its ledger_… default.
+func ledgerOptions(o tableScriptOptions) []string {
+	var opts, ledger []string
+	switch o.LedgerType {
+	case 2:
+		if o.HistoryTable != "" {
+			opts = append(opts, fmt.Sprintf("SYSTEM_VERSIONING = ON (HISTORY_TABLE = %s)",
+				qualifiedName(o.HistorySchema, o.HistoryTable)))
+		} else {
+			opts = append(opts, "SYSTEM_VERSIONING = ON")
+		}
+	case 3:
+	default:
+		return nil
+	}
+	if o.LedgerViewName != "" {
+		view := "LEDGER_VIEW = " + qualifiedName(o.LedgerViewSchema, o.LedgerViewName)
+		if c := o.LedgerViewColumns; len(c) == 4 {
+			view += fmt.Sprintf(" (TRANSACTION_ID_COLUMN_NAME = %s, SEQUENCE_NUMBER_COLUMN_NAME = %s, "+
+				"OPERATION_TYPE_COLUMN_NAME = %s, OPERATION_TYPE_DESC_COLUMN_NAME = %s)",
+				quoteIdent(c[0]), quoteIdent(c[1]), quoteIdent(c[2]), quoteIdent(c[3]))
+		}
+		ledger = append(ledger, view)
+	}
+	if o.LedgerType == 3 {
+		ledger = append(ledger, "APPEND_ONLY = ON")
+	}
+	if len(ledger) == 0 {
+		return append(opts, "LEDGER = ON")
+	}
+	return append(opts, "LEDGER = ON ("+strings.Join(ledger, ", ")+")")
 }
 
 // graphTableClause is the AS NODE / AS EDGE that follows a graph table's
@@ -152,7 +190,7 @@ func inlineIndexDefinition(idx *Index, o tableScriptOptions) string {
 
 // memoryOptimizedIndexSpec renders a memory-optimized table's index from its
 // kind on: `NONCLUSTERED HASH (…) WITH (BUCKET_COUNT = n)`, a range index's
-// `NONCLUSTERED (…)`, or `CLUSTERED COLUMNSTORE`.
+// `NONCLUSTERED (…)`, or `CLUSTERED COLUMNSTORE` with its COMPRESSION_DELAY.
 //
 // None of a disk index's options apply. The catalog reports a
 // memory-optimized index with row and page locks off, and passing that
@@ -161,6 +199,9 @@ func inlineIndexDefinition(idx *Index, o tableScriptOptions) string {
 func memoryOptimizedIndexSpec(idx *Index) string {
 	switch idx.Type {
 	case IndexTypeClusteredColumnStore:
+		if idx.CompressionDelay > 0 {
+			return fmt.Sprintf("CLUSTERED COLUMNSTORE WITH (COMPRESSION_DELAY = %d MINUTES)", idx.CompressionDelay)
+		}
 		return "CLUSTERED COLUMNSTORE"
 	case IndexTypeNonClusteredHash:
 		names := make([]string, len(idx.KeyColumns))
@@ -252,4 +293,180 @@ func scriptEdgeConstraint(ec *EdgeConstraint, tableName string, opts ScriptOptio
 	}
 	sb.WriteString("\n")
 	return sb.String()
+}
+
+// ============================================================
+// FileTables
+// ============================================================
+
+// buildFileTableScript assembles a FileTable's script. Its columns are
+// fixed by AS FILETABLE and are not the table's to declare, and neither are
+// the constraints AS FILETABLE adds with them — the primary key, the two
+// unique constraints, and the defaults, checks and self-referencing foreign
+// key sys.filetable_system_defined_objects lists. The primary key and
+// unique constraints take their names from the WITH clause, so a DROP AND
+// CREATE keeps them; the rest are left to AS FILETABLE, whose names are
+// generated. Only what was added to the table afterwards is scripted after
+// it.
+func buildFileTableScript(schema, name, dbName string, p tableScriptParts, opts ScriptOptions) string {
+	fullName := qualifiedName(schema, name)
+	var drop strings.Builder
+	if opts.IncludeIfNotExists {
+		fmt.Fprintf(&drop, "IF OBJECT_ID(N'%s', N'U') IS NOT NULL\n    ", escapeSingle(fullName))
+	}
+	fmt.Fprintf(&drop, "DROP TABLE %s;\nGO\n", fullName)
+
+	system := make(map[string]bool, len(p.table.FileTableSystemObjects))
+	for _, n := range p.table.FileTableSystemObjects {
+		system[n] = true
+	}
+	with := newClauseList()
+	with.addLiteral("FILETABLE_DIRECTORY", p.table.FileTableDirectory)
+	if p.table.FileTableCollation != "" {
+		with.addKeyword("FILETABLE_COLLATE_FILENAME", p.table.FileTableCollation)
+	}
+	var user []*Index
+	for _, idx := range p.indexes {
+		if !system[idx.Name] {
+			user = append(user, idx)
+			continue
+		}
+		switch {
+		case idx.IsPrimaryKey:
+			with.addKeyword("FILETABLE_PRIMARY_KEY_CONSTRAINT_NAME", quoteIdent(idx.Name))
+		case idx.IsUniqueConstraint && len(idx.KeyColumns) == 1 && idx.KeyColumns[0].Name == "stream_id":
+			with.addKeyword("FILETABLE_STREAMID_UNIQUE_CONSTRAINT_NAME", quoteIdent(idx.Name))
+		case idx.IsUniqueConstraint:
+			with.addKeyword("FILETABLE_FULLPATH_UNIQUE_CONSTRAINT_NAME", quoteIdent(idx.Name))
+		}
+	}
+	rest := p
+	rest.fks, rest.checks = nil, nil
+	for _, fk := range p.fks {
+		if !system[fk.Name] {
+			rest.fks = append(rest.fks, fk)
+		}
+	}
+	for _, ck := range p.checks {
+		if !system[ck.Name] {
+			rest.checks = append(rest.checks, ck)
+		}
+	}
+
+	return opts.envelope(drop.String(), "", func(sb *strings.Builder) {
+		if opts.IncludeHeaders {
+			fmt.Fprintf(sb, "/* FileTable: %s  Database: %s */\n", fullName, dbName)
+		}
+		if opts.IncludeIfNotExists {
+			fmt.Fprintf(sb, "IF OBJECT_ID(N'%s', N'U') IS NULL\n", escapeSingle(fullName))
+		}
+		fmt.Fprintf(sb, "CREATE TABLE %s AS FILETABLE%s", fullName, dataSpaceClause(p.ds))
+		if p.table.FileStreamDataSpace != "" {
+			fmt.Fprintf(sb, " FILESTREAM_ON %s", quoteIdent(p.table.FileStreamDataSpace))
+		}
+		if !with.empty() {
+			sb.WriteString("\nWITH (\n" + with.render("    ") + ")")
+		}
+		sb.WriteString(";\nGO\n\n")
+		writeTableDependents(sb, user, nil, rest, fullName, opts)
+		if !p.table.FileTableNamespaceEnabled {
+			fmt.Fprintf(sb, "ALTER TABLE %s DISABLE FILETABLE_NAMESPACE;\nGO\n\n", fullName)
+		}
+	})
+}
+
+// ============================================================
+// External tables
+// ============================================================
+
+// scriptExternalTable reads the data source and file format an external
+// table reads through, and renders the table with them.
+func (sc *Scripter) scriptExternalTable(ctx context.Context, schema, name string, p tableScriptParts) (string, error) {
+	var deps []string
+	// Each is always guarded and never dropped, whatever the options say:
+	// both are shared by every external table over the same source, and
+	// already exist wherever the table itself is being recreated.
+	depOpts := ScriptOptions{Verb: ScriptCreate, IncludeIfNotExists: true}
+	if n := p.table.External.DataSource; n != "" {
+		ds, err := sc.db.ExternalDataSourceByName(ctx, n)
+		if err != nil {
+			return "", err
+		}
+		deps = append(deps, buildExternalDataSourceScript(ds, depOpts))
+	}
+	if n := p.table.External.FileFormat; n != "" {
+		ff, err := sc.db.ExternalFileFormatByName(ctx, n)
+		if err != nil {
+			return "", err
+		}
+		deps = append(deps, buildExternalFileFormatScript(ff, depOpts))
+	}
+	return buildExternalTableScript(schema, name, sc.db.Name, p, deps, sc.opts), nil
+}
+
+// buildExternalTableScript assembles an external table's script: deps (its
+// data source and file format, already rendered) ahead of a CREATE
+// EXTERNAL TABLE, whose columns carry only a type, a collation and
+// nullability.
+//
+// The existence checks name no object type: an external table is 'U' in
+// sys.objects on some instances and 'ET' on others.
+func buildExternalTableScript(schema, name, dbName string, p tableScriptParts, deps []string, opts ScriptOptions) string {
+	fullName := qualifiedName(schema, name)
+	var drop strings.Builder
+	if opts.IncludeIfNotExists {
+		fmt.Fprintf(&drop, "IF OBJECT_ID(N'%s') IS NOT NULL\n    ", escapeSingle(fullName))
+	}
+	fmt.Fprintf(&drop, "DROP EXTERNAL TABLE %s;\nGO\n", fullName)
+
+	e := p.table.External
+	with := newClauseList()
+	with.addLiteral("LOCATION", e.Location)
+	if e.DataSource != "" {
+		with.addKeyword("DATA_SOURCE", quoteIdent(e.DataSource))
+	}
+	if e.FileFormat != "" {
+		with.addKeyword("FILE_FORMAT", quoteIdent(e.FileFormat))
+		// The reject options belong to a file-format table; the catalog
+		// reports the defaults, VALUE and 0, for one created without them.
+		if e.RejectType != "" && e.RejectValue.Valid {
+			with.addKeyword("REJECT_TYPE", e.RejectType)
+			with.addKeyword("REJECT_VALUE", strconv.FormatFloat(e.RejectValue.Float64, 'f', -1, 64))
+			if e.RejectType == "PERCENTAGE" && e.RejectSampleValue.Valid {
+				with.addKeyword("REJECT_SAMPLE_VALUE", strconv.FormatFloat(e.RejectSampleValue.Float64, 'f', -1, 64))
+			}
+		}
+	}
+	with.addLiteral("SCHEMA_NAME", e.RemoteSchema)
+	with.addLiteral("OBJECT_NAME", e.RemoteObject)
+	switch e.Distribution {
+	case "SHARDED":
+		if e.ShardingColumn != "" {
+			with.addKeyword("DISTRIBUTION", "SHARDED("+quoteIdent(e.ShardingColumn)+")")
+		}
+	case "REPLICATED", "ROUND_ROBIN":
+		with.addKeyword("DISTRIBUTION", e.Distribution)
+	}
+
+	return opts.envelope(drop.String(), "", func(sb *strings.Builder) {
+		if opts.IncludeHeaders {
+			fmt.Fprintf(sb, "/* External table: %s  Database: %s */\n", fullName, dbName)
+		}
+		for _, d := range deps {
+			sb.WriteString(d)
+			sb.WriteString("\n")
+		}
+		if opts.IncludeIfNotExists {
+			fmt.Fprintf(sb, "IF OBJECT_ID(N'%s') IS NULL\n", escapeSingle(fullName))
+		}
+		fmt.Fprintf(sb, "CREATE EXTERNAL TABLE %s (\n", fullName)
+		for i, col := range p.cols {
+			sb.WriteString("    " + tableColumnDefinition(col, p.table.DatabaseCollation))
+			if i < len(p.cols)-1 {
+				sb.WriteString(",")
+			}
+			sb.WriteString("\n")
+		}
+		sb.WriteString(")\nWITH (\n" + with.render("    ") + ");\nGO\n")
+	})
 }

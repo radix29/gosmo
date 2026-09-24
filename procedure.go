@@ -289,12 +289,20 @@ type Parameter struct {
 	Scale      int
 	IsOutput   bool
 	HasDefault bool
+
+	// TypeSchema is the schema DataType belongs to — "sys" for a built-in
+	// type — and IsUserDefinedType is sys.types.is_user_defined, as on
+	// Column: an alias or table type's unqualified name resolves against the
+	// executing user's default schema, so TypeString qualifies it.
+	TypeSchema        string
+	IsUserDefinedType bool
 }
 
 // TypeString returns the T-SQL data-type fragment for the parameter, in the
-// same form ColumnTypeString gives a column.
+// same form ColumnTypeString gives a column: a user-defined type is
+// schema-qualified and carries no length.
 func (p *Parameter) TypeString() string {
-	return sqlTypeString(p.DataType, p.MaxLength, p.Precision, p.Scale)
+	return catalogTypeString(p.DataType, p.TypeSchema, p.IsUserDefinedType, p.MaxLength, p.Precision, p.Scale)
 }
 
 // Parameters returns the parameters of one stored procedure or function, in
@@ -303,7 +311,8 @@ func (d *Database) Parameters(ctx context.Context, schema, name string) ([]*Para
 	const q = `
 SELECT p.name, p.parameter_id, tp.name,
        p.max_length, p.precision, p.scale,
-       p.is_output, p.has_default_value
+       p.is_output, p.has_default_value,
+       SCHEMA_NAME(tp.schema_id), tp.is_user_defined
 FROM   sys.parameters p
 JOIN   sys.types tp ON tp.user_type_id = p.user_type_id
 WHERE  p.object_id = OBJECT_ID(QUOTENAME(@p1) + N'.' + QUOTENAME(@p2))
@@ -318,7 +327,8 @@ ORDER  BY p.parameter_id`
 		p := &Parameter{}
 		var typeName string
 		if err := scan(&p.Name, &p.Ordinal, &typeName,
-			&p.MaxLength, &p.Precision, &p.Scale, &p.IsOutput, &p.HasDefault); err != nil {
+			&p.MaxLength, &p.Precision, &p.Scale, &p.IsOutput, &p.HasDefault,
+			&p.TypeSchema, &p.IsUserDefinedType); err != nil {
 			return nil, err
 		}
 		p.DataType = DataType(typeName)

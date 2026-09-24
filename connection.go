@@ -200,8 +200,10 @@ type ConnectionOptions struct {
 
 	// -- Connection pool ---------------------------------------------------------
 
-	// ConnectTimeout is the maximum time to wait for the initial connection.
-	// Defaults to 30s when zero.
+	// ConnectTimeout is the maximum time to wait for the initial connection,
+	// the TCP dial included. Defaults to 30s when zero. It is rounded up to
+	// whole seconds, which is all the driver takes. A "dial timeout" entry in
+	// ExtraParams overrides it for the dial alone.
 	ConnectTimeout time.Duration
 
 	// ApplicationName is shown in sys.dm_exec_sessions.program_name.
@@ -730,7 +732,12 @@ func commonDSNValues(opts ConnectionOptions) url.Values {
 	q.Set("app name", opts.ApplicationName)
 	// Rounded up: the driver takes whole seconds and reads 0 as "no timeout",
 	// so truncating turned a 500ms timeout into none at all.
-	q.Set("connection timeout", strconv.Itoa(int((opts.ConnectTimeout+time.Second-1)/time.Second)))
+	timeout := strconv.Itoa(int((opts.ConnectTimeout + time.Second - 1) / time.Second))
+	q.Set("connection timeout", timeout)
+	// The driver applies "connection timeout" only to I/O after the dial; the
+	// dial runs on its own 15 s default, so without this a 500ms timeout to an
+	// unroutable host took 15 s. A caller's ExtraParams entry replaces it.
+	q.Set("dial timeout", timeout)
 
 	if opts.TrustServerCertificate {
 		q.Set("TrustServerCertificate", "true")
@@ -829,6 +836,12 @@ var reservedDSNKeys = map[string]bool{
 	"trust server certificate": true, "host name in certificate": true, "server spn": true,
 }
 
+// overridableDSNKeys are the driver parameters gosmo writes as a default
+// derived from a ConnectionOptions field, which an ExtraParams entry may
+// replace rather than being refused: "dial timeout" follows ConnectTimeout
+// unless the caller wants the dial bounded differently from the login.
+var overridableDSNKeys = map[string]bool{"dial timeout": true}
+
 // ExtraParamError is the error Connect and ConnectionString return for a
 // ConnectionOptions.ExtraParams entry they refuse. Key is the name as the
 // caller gave it.
@@ -869,7 +882,10 @@ func mergeExtraParams(q, extra url.Values) error {
 		}
 		for existing := range q {
 			if strings.EqualFold(existing, key) {
-				return &ExtraParamError{Key: k, Reserved: true, reason: reserved}
+				if !overridableDSNKeys[key] {
+					return &ExtraParamError{Key: k, Reserved: true, reason: reserved}
+				}
+				q.Del(existing)
 			}
 		}
 		seen[key] = true

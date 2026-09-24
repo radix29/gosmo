@@ -4,17 +4,28 @@ SELECT i.name, i.index_id, i.type_desc, i.is_unique, i.is_primary_key,
        i.is_unique_constraint, i.is_disabled, i.fill_factor,
        ISNULL(i.filter_definition, ''),
        i.is_padded, i.ignore_dup_key, i.allow_row_locks, i.allow_page_locks,
-       ISNULL(p.data_compression_desc, 'NONE'),
+       (SELECT pp.partition_number AS n, pp.data_compression_desc AS c
+        FROM sys.partitions pp WHERE pp.object_id = i.object_id AND pp.index_id = i.index_id
+        ORDER BY pp.partition_number
+        FOR JSON PATH),
        ISNULL(ds.name, ''), CASE WHEN ds.type = 'PS' THEN 1 ELSE 0 END,
        ISNULL(fg.is_default, 0), ISNULL(pc.name, ''),
        ISNULL(st.no_recompute, CAST(0 AS bit)),
        CAST(0 AS bit),
-       ISNULL(h.bucket_count, 0)
+       ISNULL(h.bucket_count, 0), ISNULL(i.compression_delay, 0),
+       CAST(CASE WHEN xi.xml_index_type = 0 THEN 1 ELSE 0 END AS bit),
+       CASE WHEN xi.xml_index_type = 1 THEN ISNULL(pxi.name, '') ELSE '' END,
+       CASE WHEN xi.xml_index_type = 1 THEN ISNULL(xi.secondary_type_desc, '') ELSE '' END,
+       ISNULL(sit.tessellation_scheme, ''),
+       sit.bounding_box_xmin, sit.bounding_box_ymin, sit.bounding_box_xmax, sit.bounding_box_ymax,
+       ISNULL(sit.level_1_grid_desc, ''), ISNULL(sit.level_2_grid_desc, ''),
+       ISNULL(sit.level_3_grid_desc, ''), ISNULL(sit.level_4_grid_desc, ''),
+       ISNULL(sit.cells_per_object, 0)
 FROM   sys.indexes i
 LEFT   JOIN sys.hash_indexes h ON h.object_id = i.object_id AND h.index_id = i.index_id
-OUTER  APPLY (SELECT TOP 1 pp.data_compression_desc FROM sys.partitions pp
-              WHERE pp.object_id = i.object_id AND pp.index_id = i.index_id
-              ORDER BY pp.partition_number) p
+LEFT   JOIN sys.xml_indexes xi ON xi.object_id = i.object_id AND xi.index_id = i.index_id
+LEFT   JOIN sys.xml_indexes pxi ON pxi.object_id = xi.object_id AND pxi.index_id = xi.using_xml_index_id
+LEFT   JOIN sys.spatial_index_tessellations sit ON sit.object_id = i.object_id AND sit.index_id = i.index_id
 LEFT   JOIN sys.stats st ON st.object_id = i.object_id AND st.stats_id = i.index_id
 LEFT   JOIN sys.data_spaces ds ON ds.data_space_id = i.data_space_id
 LEFT   JOIN sys.filegroups fg ON fg.data_space_id = ds.data_space_id
@@ -31,17 +42,28 @@ SELECT i.name, i.index_id, i.type_desc, i.is_unique, i.is_primary_key,
        i.is_unique_constraint, i.is_disabled, i.fill_factor,
        ISNULL(i.filter_definition, ''),
        i.is_padded, i.ignore_dup_key, i.allow_row_locks, i.allow_page_locks,
-       ISNULL(p.data_compression_desc, 'NONE'),
+       (SELECT pp.partition_number AS n, pp.data_compression_desc AS c
+        FROM sys.partitions pp WHERE pp.object_id = i.object_id AND pp.index_id = i.index_id
+        ORDER BY pp.partition_number
+        FOR JSON PATH),
        ISNULL(ds.name, ''), CASE WHEN ds.type = 'PS' THEN 1 ELSE 0 END,
        ISNULL(fg.is_default, 0), ISNULL(pc.name, ''),
        ISNULL(st.no_recompute, CAST(0 AS bit)),
        CAST(0 AS bit),
-       ISNULL(h.bucket_count, 0)
+       ISNULL(h.bucket_count, 0), ISNULL(i.compression_delay, 0),
+       CAST(CASE WHEN xi.xml_index_type = 0 THEN 1 ELSE 0 END AS bit),
+       CASE WHEN xi.xml_index_type = 1 THEN ISNULL(pxi.name, '') ELSE '' END,
+       CASE WHEN xi.xml_index_type = 1 THEN ISNULL(xi.secondary_type_desc, '') ELSE '' END,
+       ISNULL(sit.tessellation_scheme, ''),
+       sit.bounding_box_xmin, sit.bounding_box_ymin, sit.bounding_box_xmax, sit.bounding_box_ymax,
+       ISNULL(sit.level_1_grid_desc, ''), ISNULL(sit.level_2_grid_desc, ''),
+       ISNULL(sit.level_3_grid_desc, ''), ISNULL(sit.level_4_grid_desc, ''),
+       ISNULL(sit.cells_per_object, 0)
 FROM   sys.indexes i
 LEFT   JOIN sys.hash_indexes h ON h.object_id = i.object_id AND h.index_id = i.index_id
-OUTER  APPLY (SELECT TOP 1 pp.data_compression_desc FROM sys.partitions pp
-              WHERE pp.object_id = i.object_id AND pp.index_id = i.index_id
-              ORDER BY pp.partition_number) p
+LEFT   JOIN sys.xml_indexes xi ON xi.object_id = i.object_id AND xi.index_id = i.index_id
+LEFT   JOIN sys.xml_indexes pxi ON pxi.object_id = xi.object_id AND pxi.index_id = xi.using_xml_index_id
+LEFT   JOIN sys.spatial_index_tessellations sit ON sit.object_id = i.object_id AND sit.index_id = i.index_id
 LEFT   JOIN sys.stats st ON st.object_id = i.object_id AND st.stats_id = i.index_id
 LEFT   JOIN sys.data_spaces ds ON ds.data_space_id = i.data_space_id
 LEFT   JOIN sys.filegroups fg ON fg.data_space_id = ds.data_space_id
@@ -58,17 +80,28 @@ SELECT i.name, i.index_id, i.type_desc, i.is_unique, i.is_primary_key,
        i.is_unique_constraint, i.is_disabled, i.fill_factor,
        ISNULL(i.filter_definition, ''),
        i.is_padded, i.ignore_dup_key, i.allow_row_locks, i.allow_page_locks,
-       ISNULL(p.data_compression_desc, 'NONE'),
+       (SELECT pp.partition_number AS n, pp.data_compression_desc AS c
+        FROM sys.partitions pp WHERE pp.object_id = i.object_id AND pp.index_id = i.index_id
+        ORDER BY pp.partition_number
+        FOR JSON PATH),
        ISNULL(ds.name, ''), CASE WHEN ds.type = 'PS' THEN 1 ELSE 0 END,
        ISNULL(fg.is_default, 0), ISNULL(pc.name, ''),
        ISNULL(st.no_recompute, CAST(0 AS bit)),
        i.optimize_for_sequential_key,
-       ISNULL(h.bucket_count, 0)
+       ISNULL(h.bucket_count, 0), ISNULL(i.compression_delay, 0),
+       CAST(CASE WHEN xi.xml_index_type = 0 THEN 1 ELSE 0 END AS bit),
+       CASE WHEN xi.xml_index_type = 1 THEN ISNULL(pxi.name, '') ELSE '' END,
+       CASE WHEN xi.xml_index_type = 1 THEN ISNULL(xi.secondary_type_desc, '') ELSE '' END,
+       ISNULL(sit.tessellation_scheme, ''),
+       sit.bounding_box_xmin, sit.bounding_box_ymin, sit.bounding_box_xmax, sit.bounding_box_ymax,
+       ISNULL(sit.level_1_grid_desc, ''), ISNULL(sit.level_2_grid_desc, ''),
+       ISNULL(sit.level_3_grid_desc, ''), ISNULL(sit.level_4_grid_desc, ''),
+       ISNULL(sit.cells_per_object, 0)
 FROM   sys.indexes i
 LEFT   JOIN sys.hash_indexes h ON h.object_id = i.object_id AND h.index_id = i.index_id
-OUTER  APPLY (SELECT TOP 1 pp.data_compression_desc FROM sys.partitions pp
-              WHERE pp.object_id = i.object_id AND pp.index_id = i.index_id
-              ORDER BY pp.partition_number) p
+LEFT   JOIN sys.xml_indexes xi ON xi.object_id = i.object_id AND xi.index_id = i.index_id
+LEFT   JOIN sys.xml_indexes pxi ON pxi.object_id = xi.object_id AND pxi.index_id = xi.using_xml_index_id
+LEFT   JOIN sys.spatial_index_tessellations sit ON sit.object_id = i.object_id AND sit.index_id = i.index_id
 LEFT   JOIN sys.stats st ON st.object_id = i.object_id AND st.stats_id = i.index_id
 LEFT   JOIN sys.data_spaces ds ON ds.data_space_id = i.data_space_id
 LEFT   JOIN sys.filegroups fg ON fg.data_space_id = ds.data_space_id
@@ -85,17 +118,28 @@ SELECT i.name, i.index_id, i.type_desc, i.is_unique, i.is_primary_key,
        i.is_unique_constraint, i.is_disabled, i.fill_factor,
        ISNULL(i.filter_definition, ''),
        i.is_padded, i.ignore_dup_key, i.allow_row_locks, i.allow_page_locks,
-       ISNULL(p.data_compression_desc, 'NONE'),
+       (SELECT pp.partition_number AS n, pp.data_compression_desc AS c
+        FROM sys.partitions pp WHERE pp.object_id = i.object_id AND pp.index_id = i.index_id
+        ORDER BY pp.partition_number
+        FOR JSON PATH),
        ISNULL(ds.name, ''), CASE WHEN ds.type = 'PS' THEN 1 ELSE 0 END,
        ISNULL(fg.is_default, 0), ISNULL(pc.name, ''),
        ISNULL(st.no_recompute, CAST(0 AS bit)),
        i.optimize_for_sequential_key,
-       ISNULL(h.bucket_count, 0)
+       ISNULL(h.bucket_count, 0), ISNULL(i.compression_delay, 0),
+       CAST(CASE WHEN xi.xml_index_type = 0 THEN 1 ELSE 0 END AS bit),
+       CASE WHEN xi.xml_index_type = 1 THEN ISNULL(pxi.name, '') ELSE '' END,
+       CASE WHEN xi.xml_index_type = 1 THEN ISNULL(xi.secondary_type_desc, '') ELSE '' END,
+       ISNULL(sit.tessellation_scheme, ''),
+       sit.bounding_box_xmin, sit.bounding_box_ymin, sit.bounding_box_xmax, sit.bounding_box_ymax,
+       ISNULL(sit.level_1_grid_desc, ''), ISNULL(sit.level_2_grid_desc, ''),
+       ISNULL(sit.level_3_grid_desc, ''), ISNULL(sit.level_4_grid_desc, ''),
+       ISNULL(sit.cells_per_object, 0)
 FROM   sys.indexes i
 LEFT   JOIN sys.hash_indexes h ON h.object_id = i.object_id AND h.index_id = i.index_id
-OUTER  APPLY (SELECT TOP 1 pp.data_compression_desc FROM sys.partitions pp
-              WHERE pp.object_id = i.object_id AND pp.index_id = i.index_id
-              ORDER BY pp.partition_number) p
+LEFT   JOIN sys.xml_indexes xi ON xi.object_id = i.object_id AND xi.index_id = i.index_id
+LEFT   JOIN sys.xml_indexes pxi ON pxi.object_id = xi.object_id AND pxi.index_id = xi.using_xml_index_id
+LEFT   JOIN sys.spatial_index_tessellations sit ON sit.object_id = i.object_id AND sit.index_id = i.index_id
 LEFT   JOIN sys.stats st ON st.object_id = i.object_id AND st.stats_id = i.index_id
 LEFT   JOIN sys.data_spaces ds ON ds.data_space_id = i.data_space_id
 LEFT   JOIN sys.filegroups fg ON fg.data_space_id = ds.data_space_id
@@ -112,17 +156,28 @@ SELECT i.name, i.index_id, i.type_desc, i.is_unique, i.is_primary_key,
        i.is_unique_constraint, i.is_disabled, i.fill_factor,
        ISNULL(i.filter_definition, ''),
        i.is_padded, i.ignore_dup_key, i.allow_row_locks, i.allow_page_locks,
-       ISNULL(p.data_compression_desc, 'NONE'),
+       (SELECT pp.partition_number AS n, pp.data_compression_desc AS c
+        FROM sys.partitions pp WHERE pp.object_id = i.object_id AND pp.index_id = i.index_id
+        ORDER BY pp.partition_number
+        FOR JSON PATH),
        ISNULL(ds.name, ''), CASE WHEN ds.type = 'PS' THEN 1 ELSE 0 END,
        ISNULL(fg.is_default, 0), ISNULL(pc.name, ''),
        ISNULL(st.no_recompute, CAST(0 AS bit)),
        i.optimize_for_sequential_key,
-       ISNULL(h.bucket_count, 0)
+       ISNULL(h.bucket_count, 0), ISNULL(i.compression_delay, 0),
+       CAST(CASE WHEN xi.xml_index_type = 0 THEN 1 ELSE 0 END AS bit),
+       CASE WHEN xi.xml_index_type = 1 THEN ISNULL(pxi.name, '') ELSE '' END,
+       CASE WHEN xi.xml_index_type = 1 THEN ISNULL(xi.secondary_type_desc, '') ELSE '' END,
+       ISNULL(sit.tessellation_scheme, ''),
+       sit.bounding_box_xmin, sit.bounding_box_ymin, sit.bounding_box_xmax, sit.bounding_box_ymax,
+       ISNULL(sit.level_1_grid_desc, ''), ISNULL(sit.level_2_grid_desc, ''),
+       ISNULL(sit.level_3_grid_desc, ''), ISNULL(sit.level_4_grid_desc, ''),
+       ISNULL(sit.cells_per_object, 0)
 FROM   sys.indexes i
 LEFT   JOIN sys.hash_indexes h ON h.object_id = i.object_id AND h.index_id = i.index_id
-OUTER  APPLY (SELECT TOP 1 pp.data_compression_desc FROM sys.partitions pp
-              WHERE pp.object_id = i.object_id AND pp.index_id = i.index_id
-              ORDER BY pp.partition_number) p
+LEFT   JOIN sys.xml_indexes xi ON xi.object_id = i.object_id AND xi.index_id = i.index_id
+LEFT   JOIN sys.xml_indexes pxi ON pxi.object_id = xi.object_id AND pxi.index_id = xi.using_xml_index_id
+LEFT   JOIN sys.spatial_index_tessellations sit ON sit.object_id = i.object_id AND sit.index_id = i.index_id
 LEFT   JOIN sys.stats st ON st.object_id = i.object_id AND st.stats_id = i.index_id
 LEFT   JOIN sys.data_spaces ds ON ds.data_space_id = i.data_space_id
 LEFT   JOIN sys.filegroups fg ON fg.data_space_id = ds.data_space_id

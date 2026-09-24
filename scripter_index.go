@@ -30,9 +30,10 @@ func indexColumnList(cols []IndexColumn) string {
 // columnstore index takes no column list at all, a nonclustered columnstore
 // takes columns but rejects ASC/DESC, and XML/spatial indexes have their own
 // syntax entirely (a USING/primary-XML-index clause, a bounding box). Pasting
-// the type_desc into the B-tree form — which is what this did — emits DDL SQL
-// Server rejects, so those cases are emitted as a comment naming what was
-// skipped rather than as a statement that cannot run.
+// the type_desc into the B-tree form — which is what this once did — emits
+// DDL SQL Server rejects. An XML or spatial index whose form was not read —
+// a selective XML index, which neither XML form describes — is emitted as a
+// comment naming what was skipped rather than as a statement that cannot run.
 func scriptIndex(idx *Index, tableName string, opts ScriptOptions) string {
 	var sb strings.Builder
 	switch {
@@ -64,6 +65,14 @@ func scriptIndex(idx *Index, tableName string, opts ScriptOptions) string {
 		}
 		fmt.Fprintf(&sb, "%s%s;\nGO\n\n", columnstoreWithClause(idx), dataSpaceClause(idx.DataSpace))
 		return sb.String()
+	case idx.Type == IndexTypeXML && (idx.IsPrimaryXML || idx.PrimaryXMLIndex != ""),
+		idx.Type == IndexTypeSpatial && idx.Tessellation != "":
+		if opts.IncludeIfNotExists {
+			sb.WriteString(indexExistenceGuard(idx.Name, tableName))
+		}
+		sb.WriteString(xmlOrSpatialIndexCreate(idx, tableName))
+		sb.WriteString(";\nGO\n\n")
+		return sb.String()
 	case idx.Type == IndexTypeXML || idx.Type == IndexTypeSpatial:
 		fmt.Fprintf(&sb, "-- %s index %s on %s is not scripted (its DDL has no generic form here).\n\n",
 			idx.Type, quoteIdent(idx.Name), tableName)
@@ -75,6 +84,69 @@ func scriptIndex(idx *Index, tableName string, opts ScriptOptions) string {
 	}
 	sb.WriteString(rowstoreIndexCreate(idx, tableName, indexWithClause(idx, "\n    "), dataSpaceClause(idx.DataSpace)))
 	sb.WriteString(";\nGO\n\n")
+	return sb.String()
+}
+
+// xmlOrSpatialIndexCreate renders an XML or spatial index's CREATE up to the
+// statement terminator.
+//
+// Neither takes a sort direction, and each takes a narrower WITH list than a
+// B-tree index: an XML index has no STATISTICS_NORECOMPUTE or compression
+// before 2022, and no ON clause at all — it lives with the table. A spatial
+// index's ON is a filegroup only; on a partitioned table it is aligned with
+// the table by the server, and naming the scheme is refused.
+func xmlOrSpatialIndexCreate(idx *Index, tableName string) string {
+	var sb strings.Builder
+	col := ""
+	if len(idx.KeyColumns) > 0 {
+		col = idx.KeyColumns[0].ref()
+	}
+	var o []string
+	if idx.Type == IndexTypeXML {
+		if idx.IsPrimaryXML {
+			fmt.Fprintf(&sb, "CREATE PRIMARY XML INDEX %s\n    ON %s (%s)", quoteIdent(idx.Name), tableName, col)
+		} else {
+			fmt.Fprintf(&sb, "CREATE XML INDEX %s\n    ON %s (%s)\n    USING XML INDEX %s FOR %s",
+				quoteIdent(idx.Name), tableName, col, quoteIdent(idx.PrimaryXMLIndex), idx.SecondaryXMLType)
+		}
+	} else {
+		fmt.Fprintf(&sb, "CREATE SPATIAL INDEX %s\n    ON %s (%s)\n    USING %s",
+			quoteIdent(idx.Name), tableName, col, idx.Tessellation)
+		if b := idx.BoundingBox; b != nil && idx.Tessellation.IsGeometry() {
+			o = append(o, fmt.Sprintf("BOUNDING_BOX = (%s, %s, %s, %s)",
+				floatLiteral(b.XMin), floatLiteral(b.YMin), floatLiteral(b.XMax), floatLiteral(b.YMax)))
+		}
+		if g := idx.GridLevels.levels(); g != "" && !idx.Tessellation.IsAutoGrid() {
+			o = append(o, "GRIDS = ("+g+")")
+		}
+		if idx.CellsPerObject > 0 {
+			o = append(o, fmt.Sprintf("CELLS_PER_OBJECT = %d", idx.CellsPerObject))
+		}
+	}
+	if idx.IsPadded {
+		o = append(o, "PAD_INDEX = ON")
+	}
+	if idx.FillFactor > 0 {
+		o = append(o, fmt.Sprintf("FILLFACTOR = %d", idx.FillFactor))
+	}
+	if idx.Type == IndexTypeSpatial && idx.StatisticsNoRecompute {
+		o = append(o, "STATISTICS_NORECOMPUTE = ON")
+	}
+	if !idx.AllowRowLocks {
+		o = append(o, "ALLOW_ROW_LOCKS = OFF")
+	}
+	if !idx.AllowPageLocks {
+		o = append(o, "ALLOW_PAGE_LOCKS = OFF")
+	}
+	if idx.Type == IndexTypeSpatial {
+		o = append(o, compressionOptions(idx.DataCompression, nil, rowstoreCompressed)...)
+	}
+	if len(o) > 0 {
+		sb.WriteString("\n    WITH (" + strings.Join(o, ", ") + ")")
+	}
+	if ds := idx.DataSpace; idx.Type == IndexTypeSpatial && !ds.IsPartitionScheme {
+		sb.WriteString(dataSpaceClause(ds))
+	}
 	return sb.String()
 }
 
@@ -142,9 +214,7 @@ func indexWithClause(idx *Index, sep string, extra ...string) string {
 	if idx.OptimizeForSequentialKey {
 		o = append(o, "OPTIMIZE_FOR_SEQUENTIAL_KEY = ON")
 	}
-	if c := idx.DataCompression; c == "ROW" || c == "PAGE" {
-		o = append(o, "DATA_COMPRESSION = "+string(c))
-	}
+	o = append(o, compressionOptions(idx.DataCompression, idx.PartitionCompression, rowstoreCompressed)...)
 	o = append(o, extra...)
 	if len(o) == 0 {
 		return ""
@@ -153,12 +223,68 @@ func indexWithClause(idx *Index, sep string, extra ...string) string {
 }
 
 // columnstoreWithClause is indexWithClause for a columnstore index, whose
-// only non-default compression is COLUMNSTORE_ARCHIVE.
+// only options are a COLUMNSTORE_ARCHIVE compression and a COMPRESSION_DELAY.
 func columnstoreWithClause(idx *Index) string {
-	if idx.DataCompression == "COLUMNSTORE_ARCHIVE" {
-		return " WITH (DATA_COMPRESSION = COLUMNSTORE_ARCHIVE)"
+	o := compressionOptions(idx.DataCompression, idx.PartitionCompression, func(c DataCompression) bool {
+		return c == DataCompressionColumnstoreArchive
+	})
+	if idx.CompressionDelay > 0 {
+		o = append(o, fmt.Sprintf("COMPRESSION_DELAY = %d MINUTES", idx.CompressionDelay))
 	}
-	return ""
+	if len(o) == 0 {
+		return ""
+	}
+	return " WITH (" + strings.Join(o, ", ") + ")"
+}
+
+// rowstoreCompressed reports whether a rowstore heap or index compression
+// needs naming — NONE is what CREATE does anyway.
+func rowstoreCompressed(c DataCompression) bool {
+	return c == DataCompressionRow || c == DataCompressionPage
+}
+
+// compressionOptions renders the DATA_COMPRESSION option(s) for a heap or
+// index whose compression is single and, per partition, parts; named says
+// which values are worth writing, the rest being the statement's default.
+//
+// When every partition agrees — or there is only one, or none were read —
+// this is the single-value form. Otherwise each compression gets its own
+// DATA_COMPRESSION = X ON PARTITIONS (…), with contiguous partitions
+// collapsed to a range, in the order each first appears: writing only the
+// first partition's, which is what this did, recreated a table whose
+// partitions mixed PAGE and NONE as PAGE (or NONE) throughout.
+func compressionOptions(single DataCompression, parts []DataCompression, named func(DataCompression) bool) []string {
+	if len(parts) > 1 && slices.ContainsFunc(parts[1:], func(c DataCompression) bool { return c != parts[0] }) {
+		var order []DataCompression
+		ranges := map[DataCompression][]string{}
+		for start := 0; start < len(parts); {
+			end := start
+			for end+1 < len(parts) && parts[end+1] == parts[start] {
+				end++
+			}
+			c := parts[start]
+			if _, seen := ranges[c]; !seen {
+				order = append(order, c)
+			}
+			if start == end {
+				ranges[c] = append(ranges[c], fmt.Sprint(start+1))
+			} else {
+				ranges[c] = append(ranges[c], fmt.Sprintf("%d TO %d", start+1, end+1))
+			}
+			start = end + 1
+		}
+		var o []string
+		for _, c := range order {
+			if named(c) {
+				o = append(o, fmt.Sprintf("DATA_COMPRESSION = %s ON PARTITIONS (%s)", c, strings.Join(ranges[c], ", ")))
+			}
+		}
+		return o
+	}
+	if named(single) {
+		return []string{"DATA_COMPRESSION = " + string(single)}
+	}
+	return nil
 }
 
 // indexDisableStatement renders the ALTER INDEX ... DISABLE that leaves a

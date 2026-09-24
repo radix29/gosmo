@@ -162,11 +162,25 @@ type Column struct {
 	MaskingFunction string
 	// GeneratedAlwaysType is sys.columns.generated_always_type: 0 for an
 	// ordinary column, 1 for a system-versioned table's AS ROW START
-	// column, 2 for its AS ROW END; 2022's ledger and transaction-id kinds
-	// use the values above that.
+	// column, 2 for its AS ROW END, and 7 to 10 for a ledger table's
+	// TRANSACTION_ID START/END and SEQUENCE_NUMBER START/END columns (SQL
+	// Server 2022).
 	GeneratedAlwaysType int
-	// IsHidden is a period column declared HIDDEN.
+	// IsHidden is a generated-always column declared HIDDEN.
 	IsHidden bool
+	// IsDroppedLedgerColumn is a column dropped from a ledger table, which
+	// the ledger keeps under a MSSQL_DroppedLedgerColumn_… name rather than
+	// removing. Always false before SQL Server 2022.
+	IsDroppedLedgerColumn bool
+	// ColumnEncryptionKey, EncryptionType and EncryptionAlgorithm describe
+	// an Always Encrypted column: the column encryption key's name,
+	// DETERMINISTIC or RANDOMIZED, and the algorithm (always
+	// AEAD_AES_256_CBC_HMAC_SHA_256 so far). All three are "" for a column
+	// that is not encrypted. DataType and Collation are the plaintext ones
+	// the column was declared with.
+	ColumnEncryptionKey string
+	EncryptionType      string
+	EncryptionAlgorithm string
 	// IsFileStream is a varbinary(max) FILESTREAM column, whose data lives in
 	// the table's FILESTREAM filegroup rather than in the row.
 	IsFileStream bool
@@ -195,7 +209,9 @@ const (
 // caller appends its own WHERE, because a Table already holds an object_id
 // while Database.ObjectColumns has only a name to resolve.
 //
-// graph_type is SQL Server 2017's, with graph tables themselves.
+// graph_type is SQL Server 2017's, with graph tables themselves, and
+// is_dropped_ledger_column 2022's, with ledger tables. The Always Encrypted
+// columns are 2016, gosmo's floor, and need no gate.
 // https://learn.microsoft.com/sql/relational-databases/system-catalog-views/sys-columns-transact-sql
 func (d *Database) columnSelect() string {
 	major := d.serverMajorVersion()
@@ -214,9 +230,13 @@ SELECT c.name, c.column_id,
        c.is_sparse, c.is_column_set,
        ISNULL(mc.masking_function, ''),
        c.generated_always_type, c.is_hidden, c.is_filestream,
-       ` + colSince(major, SQLServer2017, "ISNULL(c.graph_type, 0)", "CAST(0 AS int)") + `
+       ` + colSince(major, SQLServer2017, "ISNULL(c.graph_type, 0)", "CAST(0 AS int)") + `,
+       ` + colSince(major, SQLServer2022, "c.is_dropped_ledger_column", "CAST(0 AS bit)") + `,
+       ISNULL(cek.name, ''), ISNULL(c.encryption_type_desc, ''), ISNULL(c.encryption_algorithm_name, '')
 FROM   sys.columns c
 JOIN   sys.types tp ON tp.user_type_id = c.user_type_id
+LEFT   JOIN sys.column_encryption_keys cek
+       ON  cek.column_encryption_key_id = c.column_encryption_key_id
 LEFT   JOIN sys.masked_columns mc
        ON  mc.object_id  = c.object_id AND mc.column_id = c.column_id AND mc.is_masked = 1
 LEFT   JOIN sys.computed_columns cc
@@ -307,7 +327,8 @@ func scanColumns(rows *sql.Rows) ([]*Column, error) {
 			&col.IsSparse, &col.IsColumnSet,
 			&col.MaskingFunction,
 			&col.GeneratedAlwaysType, &col.IsHidden, &col.IsFileStream,
-			&col.GraphType,
+			&col.GraphType, &col.IsDroppedLedgerColumn,
+			&col.ColumnEncryptionKey, &col.EncryptionType, &col.EncryptionAlgorithm,
 		); err != nil {
 			return nil, err
 		}

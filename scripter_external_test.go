@@ -35,6 +35,32 @@ func TestBuildExternalDataSourceScriptOptionsAndGuardedDrop(t *testing.T) {
 	}
 }
 
+// TestBuildExternalDataSourceScriptPushdown: the catalog reports pushdown ON
+// for every source, and PUSHDOWN = ON on an abs:// source is a syntax error —
+// which a data source scripted ahead of an external table on Managed
+// Instance hit. Only OFF is written, and only on a connector that takes it.
+func TestBuildExternalDataSourceScriptPushdown(t *testing.T) {
+	for _, c := range []struct {
+		location, pushdown, want string
+	}{
+		{"abs://c@a.blob.core.windows.net/", "ON", ""},
+		{"abs://c@a.blob.core.windows.net/", "OFF", ""},
+		{"sqlserver://srv:1433", "ON", ""},
+		{"sqlserver://srv:1433", "OFF", "PUSHDOWN = OFF"},
+		{"ODBC://srv", "off", "PUSHDOWN = OFF"},
+		{"sqlserver://srv:1433", "", ""},
+	} {
+		got := buildExternalDataSourceScript(&ExternalDataSource{Name: "S", Location: c.location, Pushdown: c.pushdown}, DefaultScriptOptions())
+		if has := strings.Contains(got, "PUSHDOWN"); has != (c.want != "") || (c.want != "" && !strings.Contains(got, c.want)) {
+			t.Errorf("%s with pushdown %q: want %q, got:\n%s", c.location, c.pushdown, c.want, got)
+		}
+	}
+	// type_desc NONE is no type at all, not one to report.
+	if got := buildExternalDataSourceScript(&ExternalDataSource{Name: "S", Location: "abs://c@a/", Type: "NONE"}, DefaultScriptOptions()); strings.Contains(got, "NONE") {
+		t.Errorf("type NONE reported:\n%s", got)
+	}
+}
+
 func TestBuildExternalDataSourceScriptOmitsATypeKeywordItCannotEmit(t *testing.T) {
 	// type_desc reports kinds CREATE EXTERNAL DATA SOURCE has no keyword for;
 	// naming one is a parse error, so the type is reported in a comment.

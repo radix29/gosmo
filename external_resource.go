@@ -24,6 +24,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 )
 
 // ============================================================
@@ -63,6 +64,10 @@ type ExternalDataSource struct {
 	// reads as false, rather than the read failing.
 	ConnectionOptions string
 	PushdownEnabled   bool
+	// Pushdown is sys.external_data_sources.pushdown as the catalog reports
+	// it, "ON" or "OFF", and "" before SQL Server 2019 — where
+	// PushdownEnabled cannot tell an unknown setting from OFF.
+	Pushdown string
 }
 
 // Database returns the database the data source belongs to.
@@ -72,7 +77,7 @@ func (s *ExternalDataSource) Database() *Database { return s.db }
 // finder use, with the 2019 columns substituted out on an older instance.
 //
 // pushdown is nvarchar ('ON'/'OFF'), not a bit, so the zero literal is a
-// string and the comparison happens in SQL rather than in the scan.
+// string; PushdownEnabled is derived from it in the scan.
 func (d *Database) externalDataSourceSelect() string {
 	major := d.serverMajorVersion()
 	return `
@@ -83,8 +88,7 @@ SELECT s.name, s.data_source_id, s.location,
                WHERE c.credential_id = s.credential_id), ''),
        ISNULL(s.database_name, ''), ISNULL(s.shard_map_name, ''),
        ISNULL(` + colSince(major, SQLServer2019, "s.connection_options", "CAST('' AS nvarchar(4000))") + `, ''),
-       CASE WHEN ` + colSince(major, SQLServer2019, "s.pushdown", "CAST('' AS nvarchar(4))") + ` = 'ON'
-            THEN CAST(1 AS bit) ELSE CAST(0 AS bit) END
+       ISNULL(` + colSince(major, SQLServer2019, "s.pushdown", "CAST('' AS nvarchar(4))") + `, '')
 FROM   sys.external_data_sources s`
 }
 
@@ -93,9 +97,10 @@ func scanExternalDataSource(d *Database, scan func(...any) error) (*ExternalData
 	if err := scan(&s.Name, &s.DataSourceID, &s.Location,
 		&s.Type, &s.ResourceManagerLocation, &s.Credential,
 		&s.DatabaseName, &s.ShardMapName,
-		&s.ConnectionOptions, &s.PushdownEnabled); err != nil {
+		&s.ConnectionOptions, &s.Pushdown); err != nil {
 		return nil, err
 	}
+	s.PushdownEnabled = strings.EqualFold(s.Pushdown, "ON")
 	return s, nil
 }
 

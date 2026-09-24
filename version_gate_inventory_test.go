@@ -73,6 +73,11 @@ var gatedColumns = []gatedColumn{
 	// sys.tables — ledger tables, 2022.
 	{"tables", "ledger_type_desc", "t.ledger_type_desc", SQLServer2022, false, ""},
 	{"tables", "ledger_type", "t.ledger_type", SQLServer2022, false, ""},
+	{"tables", "is_dropped_ledger_table", "t.is_dropped_ledger_table", SQLServer2022, false, ""},
+	{"tables", "ledger_view_id", "ISNULL(OBJECT_SCHEMA_NAME(t.ledger_view_id), '')", SQLServer2022, false, ""},
+	{"tables", "ledger_view_id", "ISNULL(OBJECT_NAME(t.ledger_view_id), '')", SQLServer2022, false, ""},
+	{"tables", "ledger_view_id", "(SELECT TOP (4) lv.name AS v FROM sys.columns lv WHERE lv.object_id = t.ledger_view_id ORDER BY lv.column_id DESC FOR JSON PATH)", SQLServer2022, false, ""},
+	{"columns", "is_dropped_ledger_column", "c.is_dropped_ledger_column", SQLServer2022, false, ""},
 
 	// sys.tables — the graph columns, 2017. Two entries each because each
 	// column has two call sites: the listing's SELECT list (tableSelect) and

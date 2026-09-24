@@ -19,6 +19,7 @@ package gosmo
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -96,6 +97,24 @@ func TestLiveScriptTablePartitionSurvivesTheRoundTrip(t *testing.T) {
 		// only reachable through Table.DataSpace.
 		`CREATE TABLE dbo.PartedHeap (ID INT NOT NULL, Yr INT NOT NULL) ON ps_year(Yr)`,
 		`CREATE TABLE dbo.OnArchive (ID INT NOT NULL) ON FG_Archive`,
+		// G3: PAGE on partition 1 and NONE on the others, on a clustered
+		// index, a nonclustered one and a heap — each carries its own
+		// per-partition compression, and the script wrote only the first's.
+		`CREATE TABLE dbo.MixedComp (ID INT NOT NULL, Yr INT NOT NULL, Note NVARCHAR(40) NULL,
+		    CONSTRAINT PK_MixedComp PRIMARY KEY CLUSTERED (ID, Yr)
+		    WITH (DATA_COMPRESSION = PAGE ON PARTITIONS (1)) ON ps_year(Yr))
+		 ON ps_year(Yr)`,
+		`CREATE NONCLUSTERED INDEX IX_MixedComp_Note ON dbo.MixedComp (Note)
+		 WITH (DATA_COMPRESSION = ROW ON PARTITIONS (2 TO 3)) ON ps_year(Yr)`,
+		`CREATE TABLE dbo.MixedHeap (ID INT NOT NULL, Yr INT NOT NULL)
+		 ON ps_year(Yr) WITH (DATA_COMPRESSION = PAGE ON PARTITIONS (1))`,
+		// Neither index names the partitioning column, so the server adds it
+		// to each: sys.index_columns lists Yr with key_ordinal 0 and
+		// partition_ordinal 1, and the script wrote it as the first key
+		// column — CX (Yr, ID), a different index.
+		`CREATE TABLE dbo.ImplicitPart (ID INT NOT NULL, Yr INT NOT NULL, Note NVARCHAR(40) NULL) ON ps_year(Yr)`,
+		`CREATE CLUSTERED INDEX CX_ImplicitPart ON dbo.ImplicitPart (ID) ON ps_year(Yr)`,
+		`CREATE NONCLUSTERED INDEX IX_ImplicitPart_Note ON dbo.ImplicitPart (Note) INCLUDE (ID) ON ps_year(Yr)`,
 	)
 
 	cases := []struct {
@@ -106,6 +125,9 @@ func TestLiveScriptTablePartitionSurvivesTheRoundTrip(t *testing.T) {
 		{"Parted", "ps_year", "PS"},
 		{"PartedHeap", "ps_year", "PS"},
 		{"OnArchive", "FG_Archive", "FG"},
+		{"MixedComp", "ps_year", "PS"},
+		{"MixedHeap", "ps_year", "PS"},
+		{"ImplicitPart", "ps_year", "PS"},
 	}
 
 	opts := DefaultScriptOptions()
@@ -148,4 +170,91 @@ func TestLiveScriptTablePartitionSurvivesTheRoundTrip(t *testing.T) {
 	if idxSpace != "ps_year" {
 		t.Errorf("replayed IX_Parted_Note is on %q, want ps_year", idxSpace)
 	}
+
+	// Every index keeps its declared key and included columns, and no more.
+	for _, table := range []string{"Parted", "MixedComp", "ImplicitPart"} {
+		want := liveIndexKeys(t, src, ctx, table)
+		got := liveIndexKeys(t, dst, ctx, table)
+		if want != got {
+			t.Errorf("replayed dbo.%s index columns = %s, want %s", table, got, want)
+		}
+	}
+
+	// G3: every partition of every heap and index keeps its compression.
+	// Read from sys.partitions directly, for the same reason liveStorage is.
+	for _, table := range []string{"MixedComp", "MixedHeap"} {
+		want := livePartitionCompression(t, src, ctx, table)
+		got := livePartitionCompression(t, dst, ctx, table)
+		if want != got {
+			t.Errorf("replayed dbo.%s compression per index/partition = %s, want %s", table, got, want)
+		}
+		if !strings.Contains(want, "PAGE") || !strings.Contains(want, "NONE") {
+			t.Errorf("dbo.%s source is not mixed (%s): the case tests nothing", table, want)
+		}
+	}
+}
+
+// livePartitionCompression renders each (index, partition)'s compression of
+// dbo.table as one comparable string, index 0 or 1 standing for the table
+// itself and every other index named.
+func livePartitionCompression(t *testing.T, d *Database, ctx context.Context, table string) string {
+	t.Helper()
+	const q = `
+SELECT ISNULL(i.name, '(heap)'), p.partition_number, p.data_compression_desc
+FROM   sys.partitions p
+JOIN   sys.indexes i ON i.object_id = p.object_id AND i.index_id = p.index_id
+WHERE  p.object_id = OBJECT_ID(@p1)
+ORDER  BY p.index_id, p.partition_number`
+	rows, err := d.query(ctx, q, "dbo."+table)
+	if err != nil {
+		t.Fatalf("compression of dbo.%s in %s: %v", table, d.Name, err)
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var name, comp string
+		var n int
+		if err := rows.Scan(&name, &n, &comp); err != nil {
+			t.Fatalf("compression of dbo.%s in %s: %v", table, d.Name, err)
+		}
+		out = append(out, fmt.Sprintf("%s:%d=%s", name, n, comp))
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("compression of dbo.%s in %s: %v", table, d.Name, err)
+	}
+	return strings.Join(out, " ")
+}
+
+// liveIndexKeys renders the declared columns of every index on dbo.table —
+// key columns in key order, then included ones — as one comparable string.
+// The partitioning column the server adds on its own (key_ordinal 0, not
+// included) is left out, as a CREATE INDEX never names it.
+func liveIndexKeys(t *testing.T, d *Database, ctx context.Context, table string) string {
+	t.Helper()
+	const q = `
+SELECT i.name, c.name, ic.key_ordinal, ic.is_included_column, ic.is_descending_key
+FROM   sys.indexes i
+JOIN   sys.index_columns ic ON ic.object_id = i.object_id AND ic.index_id = i.index_id
+JOIN   sys.columns c ON c.object_id = ic.object_id AND c.column_id = ic.column_id
+WHERE  i.object_id = OBJECT_ID(@p1) AND (ic.key_ordinal > 0 OR ic.is_included_column = 1)
+ORDER  BY i.name, ic.is_included_column, ic.key_ordinal, c.name`
+	rows, err := d.query(ctx, q, "dbo."+table)
+	if err != nil {
+		t.Fatalf("index columns of dbo.%s in %s: %v", table, d.Name, err)
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var idx, col string
+		var ord int
+		var inc, desc bool
+		if err := rows.Scan(&idx, &col, &ord, &inc, &desc); err != nil {
+			t.Fatalf("index columns of dbo.%s in %s: %v", table, d.Name, err)
+		}
+		out = append(out, fmt.Sprintf("%s:%s/%d/%t/%t", idx, col, ord, inc, desc))
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("index columns of dbo.%s in %s: %v", table, d.Name, err)
+	}
+	return strings.Join(out, " ")
 }

@@ -1,6 +1,7 @@
 package gosmo
 
 import (
+	"slices"
 	"strings"
 	"testing"
 )
@@ -182,6 +183,20 @@ func TestScriptIndexByType(t *testing.T) {
 			idx: &Index{AllowRowLocks: true, AllowPageLocks: true, Name: "NCCI", Type: IndexTypeColumnStore,
 				KeyColumns: []IndexColumn{{Name: "A"}}, FilterDefinition: "([A]>(0))"},
 			want: "CREATE NONCLUSTERED COLUMNSTORE INDEX [NCCI]\n    ON [dbo].[T] ([A])\n    WHERE ([A]>(0));",
+		},
+		{
+			// G5: recreated without it, rows compress into the columnstore
+			// at once instead of after the delay.
+			name: "clustered columnstore keeps its compression delay",
+			idx: &Index{AllowRowLocks: true, AllowPageLocks: true, Name: "CCI", Type: IndexTypeClusteredColumnStore,
+				CompressionDelay: 30},
+			want: "CREATE CLUSTERED COLUMNSTORE INDEX [CCI] ON [dbo].[T] WITH (COMPRESSION_DELAY = 30 MINUTES);",
+		},
+		{
+			name: "nonclustered columnstore keeps archive compression and delay together",
+			idx: &Index{AllowRowLocks: true, AllowPageLocks: true, Name: "NCCI", Type: IndexTypeColumnStore,
+				KeyColumns: []IndexColumn{{Name: "A"}}, DataCompression: "COLUMNSTORE_ARCHIVE", CompressionDelay: 10},
+			want: "CREATE NONCLUSTERED COLUMNSTORE INDEX [NCCI]\n    ON [dbo].[T] ([A]) WITH (DATA_COMPRESSION = COLUMNSTORE_ARCHIVE, COMPRESSION_DELAY = 10 MINUTES);",
 		},
 		{
 			name:      "xml index is skipped with a note, not mis-scripted",
@@ -429,6 +444,144 @@ func TestBuildTableScriptIndexOptions(t *testing.T) {
 	heap := tableScriptParts{cols: p.cols, table: tableScriptOptions{HeapCompression: "PAGE"}}
 	if got := buildTableScript("dbo", "T", "db", heap, ScriptOptions{}); !strings.Contains(got, ")\nWITH (DATA_COMPRESSION = PAGE);") {
 		t.Errorf("a compressed heap lost its compression:\n%s", got)
+	}
+}
+
+// TestCompressionOptionsPerPartition (G3): a partitioned heap or index whose
+// partitions mix compressions scripts one DATA_COMPRESSION per value with
+// its partitions, contiguous ones collapsed; a uniform one keeps the
+// single-value form.
+func TestCompressionOptionsPerPartition(t *testing.T) {
+	const (
+		N = DataCompressionNone
+		R = DataCompressionRow
+		P = DataCompressionPage
+		A = DataCompressionColumnstoreArchive
+		C = DataCompressionColumnstore
+	)
+	archive := func(c DataCompression) bool { return c == A }
+	cases := []struct {
+		name   string
+		single DataCompression
+		parts  []DataCompression
+		named  func(DataCompression) bool
+		want   []string
+	}{
+		{"uniform", P, []DataCompression{P, P, P}, rowstoreCompressed, []string{"DATA_COMPRESSION = PAGE"}},
+		{"uniform none", N, []DataCompression{N, N}, rowstoreCompressed, nil},
+		{"single partition", R, []DataCompression{R}, rowstoreCompressed, []string{"DATA_COMPRESSION = ROW"}},
+		{"not read", P, nil, rowstoreCompressed, []string{"DATA_COMPRESSION = PAGE"}},
+		{"mixed", P, []DataCompression{P, N, N}, rowstoreCompressed,
+			[]string{"DATA_COMPRESSION = PAGE ON PARTITIONS (1)"}},
+		{"range plus one", P, []DataCompression{P, P, P, N, P}, rowstoreCompressed,
+			[]string{"DATA_COMPRESSION = PAGE ON PARTITIONS (1 TO 3, 5)"}},
+		{"two compressions", N, []DataCompression{N, R, R, P}, rowstoreCompressed,
+			[]string{"DATA_COMPRESSION = ROW ON PARTITIONS (2 TO 3)", "DATA_COMPRESSION = PAGE ON PARTITIONS (4)"}},
+		{"columnstore", C, []DataCompression{C, A, A}, archive,
+			[]string{"DATA_COMPRESSION = COLUMNSTORE_ARCHIVE ON PARTITIONS (2 TO 3)"}},
+	}
+	for _, c := range cases {
+		if got := compressionOptions(c.single, c.parts, c.named); !slices.Equal(got, c.want) {
+			t.Errorf("%s: got %q, want %q", c.name, got, c.want)
+		}
+	}
+
+	// Through the whole script: the clustered PK, a nonclustered index, a
+	// columnstore index and a heap each carry their own partitions.
+	p := tableScriptParts{
+		cols: []*Column{{Name: "a", DataType: DataTypeInt}, {Name: "b", DataType: DataTypeInt}},
+		indexes: []*Index{
+			{Name: "PK_T", IsPrimaryKey: true, IsClustered: true, AllowRowLocks: true, AllowPageLocks: true,
+				DataCompression: P, PartitionCompression: []DataCompression{P, N, N},
+				KeyColumns: []IndexColumn{{Name: "a"}}},
+			{Name: "IX_b", Type: IndexTypeNonClustered, AllowRowLocks: true, AllowPageLocks: true,
+				DataCompression: N, PartitionCompression: []DataCompression{N, R},
+				KeyColumns: []IndexColumn{{Name: "b"}}},
+			{Name: "NCCI", Type: IndexTypeColumnStore,
+				DataCompression: A, PartitionCompression: []DataCompression{A, C},
+				IncludedColumns: []IndexColumn{{Name: "b", IsIncluded: true}}},
+		},
+	}
+	got := buildTableScript("dbo", "T", "db", p, ScriptOptions{})
+	for _, want := range []string{
+		"PRIMARY KEY CLUSTERED ([a] ASC) WITH (DATA_COMPRESSION = PAGE ON PARTITIONS (1))",
+		"WITH (DATA_COMPRESSION = ROW ON PARTITIONS (2));",
+		"ON [dbo].[T] ([b]) WITH (DATA_COMPRESSION = COLUMNSTORE_ARCHIVE ON PARTITIONS (1));",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("script is missing %q:\n%s", want, got)
+		}
+	}
+	heap := tableScriptParts{cols: p.cols, table: tableScriptOptions{
+		HeapCompression: "NONE", HeapPartitionCompression: []DataCompression{N, P, P}}}
+	if got := buildTableScript("dbo", "T", "db", heap, ScriptOptions{}); !strings.Contains(got, ")\nWITH (DATA_COMPRESSION = PAGE ON PARTITIONS (2 TO 3));") {
+		t.Errorf("a heap with mixed compression lost it:\n%s", got)
+	}
+}
+
+// TestScriptXMLAndSpatialIndexes (G4): XML and spatial indexes script as
+// their own CREATE forms, not as a comment, and a secondary XML index comes
+// after the primary it is built over whatever order the list had.
+func TestScriptXMLAndSpatialIndexes(t *testing.T) {
+	locks := func(idx *Index) *Index { idx.AllowRowLocks, idx.AllowPageLocks = true, true; return idx }
+	doc := []IndexColumn{{Name: "Doc"}}
+	secondary := func(name string, kind XMLSecondaryIndexType) *Index {
+		return locks(&Index{Name: name, Type: IndexTypeXML, KeyColumns: doc, PrimaryXMLIndex: "PX", SecondaryXMLType: kind})
+	}
+	p := tableScriptParts{
+		cols: []*Column{{Name: "ID", DataType: DataTypeInt}, {Name: "Doc", DataType: DataTypeXML}},
+		indexes: []*Index{
+			locks(&Index{Name: "PK_X", IsPrimaryKey: true, IsClustered: true, KeyColumns: []IndexColumn{{Name: "ID"}}}),
+			// Listed ahead of its primary: the script must still put it after.
+			secondary("SX_Path", XMLSecondaryPath),
+			locks(&Index{Name: "PX", Type: IndexTypeXML, KeyColumns: doc, IsPrimaryXML: true, FillFactor: 90}),
+			secondary("SX_Value", XMLSecondaryValue),
+			secondary("SX_Prop", XMLSecondaryProperty),
+			locks(&Index{Name: "SP_G", Type: IndexTypeSpatial, KeyColumns: []IndexColumn{{Name: "G"}},
+				Tessellation: SpatialGeometryGrid, BoundingBox: &SpatialBoundingBox{XMin: -1.5, YMin: 0, XMax: 500, YMax: 200},
+				GridLevels:     SpatialGridLevels{Level1: SpatialGridLow, Level2: SpatialGridMedium, Level3: SpatialGridHigh, Level4: SpatialGridLow},
+				CellsPerObject: 64, DataCompression: DataCompressionPage,
+				DataSpace: DataSpace{Name: "FG_Archive"}}),
+			locks(&Index{Name: "SP_Gg", Type: IndexTypeSpatial, KeyColumns: []IndexColumn{{Name: "Gg"}},
+				Tessellation: SpatialGeographyAutoGrid, CellsPerObject: 12,
+				// A partitioned table's spatial index is aligned by the server
+				// and refuses an ON naming the scheme.
+				DataSpace: DataSpace{Name: "ps_year", IsPartitionScheme: true, PartitionColumn: "Yr"}}),
+			// A selective XML index is neither form: still a comment.
+			locks(&Index{Name: "SXI", Type: IndexTypeXML, KeyColumns: doc}),
+		},
+	}
+	got := buildTableScript("dbo", "X", "db", p, ScriptOptions{})
+	for _, want := range []string{
+		"CREATE PRIMARY XML INDEX [PX]\n    ON [dbo].[X] ([Doc])\n    WITH (FILLFACTOR = 90);\nGO",
+		"CREATE XML INDEX [SX_Path]\n    ON [dbo].[X] ([Doc])\n    USING XML INDEX [PX] FOR PATH;\nGO",
+		"CREATE XML INDEX [SX_Value]\n    ON [dbo].[X] ([Doc])\n    USING XML INDEX [PX] FOR VALUE;\nGO",
+		"CREATE XML INDEX [SX_Prop]\n    ON [dbo].[X] ([Doc])\n    USING XML INDEX [PX] FOR PROPERTY;\nGO",
+		"CREATE SPATIAL INDEX [SP_G]\n    ON [dbo].[X] ([G])\n    USING GEOMETRY_GRID\n" +
+			"    WITH (BOUNDING_BOX = (-1.5, 0, 500, 200), GRIDS = (LEVEL_1 = LOW, LEVEL_2 = MEDIUM, LEVEL_3 = HIGH, LEVEL_4 = LOW), " +
+			"CELLS_PER_OBJECT = 64, DATA_COMPRESSION = PAGE) ON [FG_Archive];\nGO",
+		"CREATE SPATIAL INDEX [SP_Gg]\n    ON [dbo].[X] ([Gg])\n    USING GEOGRAPHY_AUTO_GRID\n    WITH (CELLS_PER_OBJECT = 12);\nGO",
+		"-- XML index [SXI] on [dbo].[X] is not scripted",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("script is missing %q:\n%s", want, got)
+		}
+	}
+	primary := strings.Index(got, "CREATE PRIMARY XML INDEX [PX]")
+	for _, name := range []string{"SX_Path", "SX_Value", "SX_Prop"} {
+		if i := strings.Index(got, "CREATE XML INDEX ["+name+"]"); i < primary {
+			t.Errorf("secondary XML index %s is created before its primary:\n%s", name, got)
+		}
+	}
+
+	// A lock option off, and no GRIDS on an automatic grid even if the
+	// levels were somehow read.
+	odd := &Index{Name: "SP", Type: IndexTypeSpatial, KeyColumns: []IndexColumn{{Name: "G"}},
+		Tessellation: SpatialGeometryAutoGrid, BoundingBox: &SpatialBoundingBox{XMax: 1, YMax: 1},
+		GridLevels: SpatialGridLevels{Level1: SpatialGridLow}, AllowRowLocks: false, AllowPageLocks: true}
+	if got, want := xmlOrSpatialIndexCreate(odd, "[t]"),
+		"CREATE SPATIAL INDEX [SP]\n    ON [t] ([G])\n    USING GEOMETRY_AUTO_GRID\n    WITH (BOUNDING_BOX = (0, 0, 1, 1), ALLOW_ROW_LOCKS = OFF)"; got != want {
+		t.Errorf("got\n%s\nwant\n%s", got, want)
 	}
 }
 

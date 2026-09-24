@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 )
 
@@ -30,6 +31,12 @@ func (sc *Scripter) ScriptTable(ctx context.Context, schema, name string) (strin
 	if p.cols, err = t.Columns(ctx); err != nil {
 		return "", err
 	}
+	if p.table.IsExternal {
+		// An external table has no indexes, constraints or data space of
+		// its own; what it has instead is the data source and file format
+		// it reads through.
+		return sc.scriptExternalTable(ctx, schema, name, p)
+	}
 	if p.indexes, err = t.Indexes(ctx); err != nil {
 		return "", err
 	}
@@ -48,6 +55,9 @@ func (sc *Scripter) ScriptTable(ctx context.Context, schema, name string) (strin
 		if p.ecs, err = t.EdgeConstraints(ctx); err != nil {
 			return "", err
 		}
+	}
+	if p.table.IsFileTable {
+		return buildFileTableScript(schema, name, sc.db.Name, p, sc.opts), nil
 	}
 	return buildTableScript(schema, name, sc.db.Name, p, sc.opts), nil
 }
@@ -78,6 +88,10 @@ type tableScriptOptions struct {
 	// compressed, "" when the table is not a heap). A clustered table's
 	// compression is its clustered index's, and is rendered with that.
 	HeapCompression string
+	// HeapPartitionCompression is each of the heap's partitions'
+	// compression, in partition_number order; nil when the table is not a
+	// heap.
+	HeapPartitionCompression []DataCompression
 	// DatabaseCollation is the database default, against which a column's
 	// own collation is compared: a column that differs from it gets a
 	// COLLATE clause, since the script would otherwise recreate it with
@@ -98,11 +112,46 @@ type tableScriptOptions struct {
 	LobDataSpace        string
 	LobIsFileGroup      bool
 	FileStreamDataSpace string
-	// LedgerType is sys.tables.ledger_type, 0 for a non-ledger table and
-	// always 0 before SQL Server 2022.
+	// LedgerType is sys.tables.ledger_type: 0 for a non-ledger table, 1 for
+	// an updatable ledger table's history table, 2 for an updatable ledger
+	// table and 3 for an append-only one. Always 0 before SQL Server 2022.
 	LedgerType int
-	// HasEncryptedColumns is set when any column is Always Encrypted.
-	HasEncryptedColumns bool
+	// IsDroppedLedgerTable is a ledger table that has been dropped, which
+	// the ledger keeps under a MSSQL_DroppedLedgerTable_… name.
+	IsDroppedLedgerTable bool
+	// LedgerViewSchema and LedgerViewName name a ledger table's ledger view,
+	// and LedgerViewColumns the view's four ledger columns, in the order
+	// LEDGER_VIEW takes them: transaction id, sequence number, operation
+	// type, operation type description.
+	LedgerViewSchema, LedgerViewName string
+	LedgerViewColumns                []string
+
+	// A FileTable's directory, file-name collation and whether its
+	// namespace is enabled (sys.filetables), and the names of the
+	// constraints and indexes AS FILETABLE created for it — which the table
+	// script must not create a second time.
+	FileTableDirectory, FileTableCollation string
+	FileTableNamespaceEnabled              bool
+	FileTableSystemObjects                 []string
+
+	// External is an external table's sys.external_tables row; zero for any
+	// other table.
+	External externalTableOptions
+}
+
+// externalTableOptions is what CREATE EXTERNAL TABLE's WITH clause says,
+// read from sys.external_tables.
+type externalTableOptions struct {
+	DataSource, FileFormat, Location string
+	// RejectType is VALUE or PERCENTAGE, "" for a source that takes no
+	// reject options; RejectSampleValue applies to PERCENTAGE only.
+	RejectType                     string
+	RejectValue, RejectSampleValue sql.NullFloat64
+	// RemoteSchema and RemoteObject are an elastic-query table's SCHEMA_NAME
+	// and OBJECT_NAME, and Distribution with ShardingColumn a shard-map
+	// table's DISTRIBUTION; "" when the table has none.
+	RemoteSchema, RemoteObject   string
+	Distribution, ShardingColumn string
 }
 
 // scriptOptions reads tableScriptOptions in one round trip.
@@ -111,11 +160,33 @@ func (t *Table) scriptOptions(ctx context.Context) (tableScriptOptions, error) {
 		IsNode: t.IsNode, IsEdge: t.IsEdge, IsMemoryOptimized: t.IsMemoryOptimized,
 		IsFileTable: t.IsFileTable, IsExternal: t.IsExternal,
 	}
+	var heap, ledgerCols, ftObjects sql.NullString
 	if err := t.db.queryRow(ctx, func(row *sql.Row) error {
-		return row.Scan(&o.SystemVersioned, &o.HistorySchema, &o.HistoryTable,
-			&o.PeriodStart, &o.PeriodEnd, &o.HeapCompression, &o.DatabaseCollation,
+		e := &o.External
+		if err := row.Scan(&o.SystemVersioned, &o.HistorySchema, &o.HistoryTable,
+			&o.PeriodStart, &o.PeriodEnd, &heap, &o.DatabaseCollation,
 			&o.Durability, &o.LobDataSpace, &o.LobIsFileGroup, &o.FileStreamDataSpace,
-			&o.LedgerType, &o.HasEncryptedColumns)
+			&o.LedgerType, &o.IsDroppedLedgerTable, &o.LedgerViewSchema, &o.LedgerViewName, &ledgerCols,
+			&o.FileTableDirectory, &o.FileTableCollation, &o.FileTableNamespaceEnabled, &ftObjects,
+			&e.DataSource, &e.FileFormat, &e.Location, &e.RejectType, &e.RejectValue, &e.RejectSampleValue,
+			&e.RemoteSchema, &e.RemoteObject, &e.Distribution, &e.ShardingColumn); err != nil {
+			return err
+		}
+		parts, err := decodePartitionCompression(heap)
+		if err != nil {
+			return err
+		}
+		o.HeapPartitionCompression = parts
+		if len(parts) > 0 {
+			o.HeapCompression = string(parts[0])
+		}
+		// Read last-first, so the four come back in view order.
+		if o.LedgerViewColumns, err = decodeJSONList(ledgerCols); err != nil {
+			return err
+		}
+		slices.Reverse(o.LedgerViewColumns)
+		o.FileTableSystemObjects, err = decodeJSONList(ftObjects)
+		return err
 	}, t.scriptOptionsSelect(), t.ObjectID); err != nil && !errors.Is(err, sql.ErrNoRows) {
 		// No row is a table dropped since it was looked up; the column and
 		// index reads beside this one answer that with empty lists, and so
@@ -127,33 +198,46 @@ func (t *Table) scriptOptions(ctx context.Context) (tableScriptOptions, error) {
 
 // scriptOptionsSelect is scriptOptions' query, version-gated.
 //
-// ledger_type is SQL Server 2022's, with ledger tables; every table on an
-// older instance is a non-ledger one. encryption_type (Always Encrypted) is
-// 2016, gosmo's floor, and needs no gate.
+// The ledger columns are SQL Server 2022's, with ledger tables; every table
+// on an older instance is a non-ledger one. A ledger view's four ledger
+// columns follow the table's own, so they are its last four by column_id,
+// read as a jsonList-shaped column.
+// sys.filetables and sys.external_tables are older than gosmo's 2016 floor.
 // https://learn.microsoft.com/sql/relational-databases/system-catalog-views/sys-tables-transact-sql
 func (t *Table) scriptOptionsSelect() string {
+	major := t.db.serverMajorVersion()
 	return `
 SELECT CAST(CASE WHEN t.temporal_type = 2 THEN 1 ELSE 0 END AS BIT),
        ISNULL(OBJECT_SCHEMA_NAME(t.history_table_id), ''),
        ISNULL(OBJECT_NAME(t.history_table_id), ''),
        ISNULL(COL_NAME(p.object_id, p.start_column_id), ''),
        ISNULL(COL_NAME(p.object_id, p.end_column_id), ''),
-       ISNULL((SELECT TOP 1 pp.data_compression_desc FROM sys.partitions pp
-               WHERE pp.object_id = t.object_id AND pp.index_id = 0
-               ORDER BY pp.partition_number), ''),
+       ` + partitionCompressionList("t.object_id", "0") + `,
        ISNULL(CONVERT(sysname, DATABASEPROPERTYEX(DB_NAME(), 'Collation')), ''),
        ISNULL(t.durability_desc, ''),
        ISNULL(lds.name, ''), CAST(CASE WHEN lds.type = 'FG' THEN 1 ELSE 0 END AS bit),
        ISNULL(fds.name, ''),
-       ` + colSince(t.db.serverMajorVersion(), SQLServer2022, "t.ledger_type", "CAST(0 AS tinyint)") + `,
-       CAST(CASE WHEN EXISTS (SELECT 1 FROM sys.columns ec
-                              WHERE ec.object_id = t.object_id
-                                AND ec.encryption_type IS NOT NULL)
-                 THEN 1 ELSE 0 END AS bit)
+       ` + colSince(major, SQLServer2022, "t.ledger_type", "CAST(0 AS tinyint)") + `,
+       ` + colSince(major, SQLServer2022, "t.is_dropped_ledger_table", "CAST(0 AS bit)") + `,
+       ` + colSince(major, SQLServer2022, "ISNULL(OBJECT_SCHEMA_NAME(t.ledger_view_id), '')", "CAST('' AS sysname)") + `,
+       ` + colSince(major, SQLServer2022, "ISNULL(OBJECT_NAME(t.ledger_view_id), '')", "CAST('' AS sysname)") + `,
+       ` + colSince(major, SQLServer2022, "(SELECT TOP (4) lv.name AS v FROM sys.columns lv WHERE lv.object_id = t.ledger_view_id ORDER BY lv.column_id DESC FOR JSON PATH)",
+		"CAST(NULL AS nvarchar(max))") + `,
+       ISNULL(ft.directory_name, ''), ISNULL(ft.filename_collation_name, ''), ISNULL(ft.is_enabled, 0),
+       ` + jsonList("OBJECT_NAME(so.object_id)",
+		"\n        FROM sys.filetable_system_defined_objects so WHERE so.parent_object_id = t.object_id", "") + `,
+       ISNULL(eds.name, ''), ISNULL(eff.name, ''), ISNULL(et.location, ''),
+       ISNULL(et.reject_type, ''), et.reject_value, et.reject_sample_value,
+       ISNULL(et.remote_schema_name, ''), ISNULL(et.remote_object_name, ''),
+       ISNULL(et.distribution_desc, ''), ISNULL(COL_NAME(et.object_id, et.sharding_col_id), '')
 FROM   sys.tables AS t
 LEFT   JOIN sys.periods p ON p.object_id = t.object_id
 LEFT   JOIN sys.data_spaces lds ON lds.data_space_id = NULLIF(t.lob_data_space_id, 0)
 LEFT   JOIN sys.data_spaces fds ON fds.data_space_id = t.filestream_data_space_id
+LEFT   JOIN sys.filetables ft ON ft.object_id = t.object_id
+LEFT   JOIN sys.external_tables et ON et.object_id = t.object_id
+LEFT   JOIN sys.external_data_sources eds ON eds.data_source_id = et.data_source_id
+LEFT   JOIN sys.external_file_formats eff ON eff.file_format_id = et.file_format_id
 WHERE  t.object_id = @p1`
 }
 
@@ -215,8 +299,10 @@ func buildTableScript(schema, name, dbName string, p tableScriptParts, opts Scri
 
 		elems := make([]string, 0, len(p.cols)+2)
 		for _, col := range p.cols {
-			// A graph table's internal columns are AS NODE / AS EDGE's to create.
-			if col.GraphType != 0 {
+			// A graph table's internal columns are AS NODE / AS EDGE's to
+			// create, and a column dropped from a ledger table is the ledger's
+			// record of it, not a column the table has.
+			if col.GraphType != 0 || col.IsDroppedLedgerColumn {
 				continue
 			}
 			elems = append(elems, tableColumnDefinition(col, p.table.DatabaseCollation))
@@ -258,8 +344,9 @@ func buildTableScript(schema, name, dbName string, p tableScriptParts, opts Scri
 			if p.table.Durability != "" {
 				tableOpts = append(tableOpts, "DURABILITY = "+p.table.Durability)
 			}
-		} else if c := p.table.HeapCompression; c != "" && c != "NONE" {
-			tableOpts = append(tableOpts, "DATA_COMPRESSION = "+c)
+		} else {
+			tableOpts = append(tableOpts, compressionOptions(
+				DataCompression(p.table.HeapCompression), p.table.HeapPartitionCompression, rowstoreCompressed)...)
 		}
 		if p.table.SystemVersioned {
 			if p.table.HistoryTable != "" {
@@ -269,6 +356,7 @@ func buildTableScript(schema, name, dbName string, p tableScriptParts, opts Scri
 				tableOpts = append(tableOpts, "SYSTEM_VERSIONING = ON")
 			}
 		}
+		tableOpts = append(tableOpts, ledgerOptions(p.table)...)
 		with := ""
 		if len(tableOpts) > 0 {
 			with = "\nWITH (" + strings.Join(tableOpts, ", ") + ")"
@@ -277,37 +365,58 @@ func buildTableScript(schema, name, dbName string, p tableScriptParts, opts Scri
 		fmt.Fprintf(sb, ")%s%s%s%s;\nGO\n\n", graphTableClause(p.table),
 			dataSpaceClause(p.ds), tableStorageClauses(p), with)
 
-		// Non-PK indexes. A unique *constraint* is backed by an index in
-		// sys.indexes but is not created with CREATE INDEX — it belongs to the
-		// table, and scripting it as an index leaves the constraint missing.
-		for _, idx := range indexes {
-			if idx.IsPrimaryKey || inline[idx.Name] {
-				continue
-			}
-			if idx.IsUniqueConstraint {
-				sb.WriteString(scriptUniqueConstraint(idx, fullName, opts))
-				continue
-			}
-			sb.WriteString(scriptIndex(idx, fullName, opts))
-		}
-
-		for _, fk := range p.fks {
-			sb.WriteString(scriptForeignKey(fk, fullName, opts))
-		}
-		for _, ck := range p.checks {
-			sb.WriteString(scriptCheckConstraint(ck, fullName, opts))
-		}
-		for _, ec := range p.ecs {
-			sb.WriteString(scriptEdgeConstraint(ec, fullName, opts))
-		}
-
-		// Disabled indexes are disabled last. Disabling a clustered index takes
-		// the whole table offline, so doing it where the index is created would
-		// fail every CREATE INDEX and ADD CONSTRAINT after it.
-		for _, idx := range indexes {
-			sb.WriteString(indexDisableStatement(idx, fullName))
-		}
+		writeTableDependents(sb, indexes, inline, p, fullName, opts)
 	})
+}
+
+// writeTableDependents writes the statements that follow a CREATE TABLE:
+// the indexes and unique constraints not declared inside it (inline, by
+// name, and the primary key), the foreign keys, check constraints and edge
+// constraints, and last the disabling of any disabled index.
+func writeTableDependents(sb *strings.Builder, indexes []*Index, inline map[string]bool,
+	p tableScriptParts, fullName string, opts ScriptOptions) {
+	// Non-PK indexes. A unique *constraint* is backed by an index in
+	// sys.indexes but is not created with CREATE INDEX — it belongs to the
+	// table, and scripting it as an index leaves the constraint missing.
+	//
+	// A secondary XML index is built over its primary, which must exist
+	// first, so the secondaries go last whatever their index IDs say.
+	var ordered, secondaryXML []*Index
+	for _, idx := range indexes {
+		if idx.PrimaryXMLIndex != "" {
+			secondaryXML = append(secondaryXML, idx)
+		} else {
+			ordered = append(ordered, idx)
+		}
+	}
+	ordered = append(ordered, secondaryXML...)
+	for _, idx := range ordered {
+		if idx.IsPrimaryKey || inline[idx.Name] {
+			continue
+		}
+		if idx.IsUniqueConstraint {
+			sb.WriteString(scriptUniqueConstraint(idx, fullName, opts))
+			continue
+		}
+		sb.WriteString(scriptIndex(idx, fullName, opts))
+	}
+
+	for _, fk := range p.fks {
+		sb.WriteString(scriptForeignKey(fk, fullName, opts))
+	}
+	for _, ck := range p.checks {
+		sb.WriteString(scriptCheckConstraint(ck, fullName, opts))
+	}
+	for _, ec := range p.ecs {
+		sb.WriteString(scriptEdgeConstraint(ec, fullName, opts))
+	}
+
+	// Disabled indexes are disabled last. Disabling a clustered index takes
+	// the whole table offline, so doing it where the index is created would
+	// fail every CREATE INDEX and ADD CONSTRAINT after it.
+	for _, idx := range indexes {
+		sb.WriteString(indexDisableStatement(idx, fullName))
+	}
 }
 
 // tableColumnDefinition renders one column of a CREATE TABLE, in the clause
@@ -352,17 +461,20 @@ func tableColumnDefinition(col *Column, dbCollation string) string {
 			sb.WriteString(" NOT FOR REPLICATION")
 		}
 	}
-	switch col.GeneratedAlwaysType {
-	case 1:
-		sb.WriteString(" GENERATED ALWAYS AS ROW START")
-	case 2:
-		sb.WriteString(" GENERATED ALWAYS AS ROW END")
-	}
-	if col.IsHidden {
-		sb.WriteString(" HIDDEN")
+	if g := generatedAlwaysClauses[col.GeneratedAlwaysType]; g != "" {
+		sb.WriteString(" GENERATED ALWAYS AS " + g)
+		// HIDDEN is part of the GENERATED ALWAYS clause and does not parse
+		// without it.
+		if col.IsHidden {
+			sb.WriteString(" HIDDEN")
+		}
 	}
 	if col.IsRowGUID {
 		sb.WriteString(" ROWGUIDCOL")
+	}
+	if col.ColumnEncryptionKey != "" {
+		fmt.Fprintf(&sb, " ENCRYPTED WITH (COLUMN_ENCRYPTION_KEY = %s, ENCRYPTION_TYPE = %s, ALGORITHM = '%s')",
+			quoteIdent(col.ColumnEncryptionKey), col.EncryptionType, escapeSingle(col.EncryptionAlgorithm))
 	}
 	if !col.IsNullable {
 		sb.WriteString(" NOT NULL")
@@ -374,6 +486,18 @@ func tableColumnDefinition(col *Column, dbCollation string) string {
 			quoteIdent(col.DefaultValue.Name), col.DefaultValue.Definition)
 	}
 	return sb.String()
+}
+
+// generatedAlwaysClauses is what follows GENERATED ALWAYS AS for each
+// sys.columns.generated_always_type: a temporal table's period columns and
+// a ledger table's transaction-id and sequence-number columns.
+var generatedAlwaysClauses = map[int]string{
+	1:  "ROW START",
+	2:  "ROW END",
+	7:  "TRANSACTION_ID START",
+	8:  "TRANSACTION_ID END",
+	9:  "SEQUENCE_NUMBER START",
+	10: "SEQUENCE_NUMBER END",
 }
 
 // scriptUniqueConstraint renders a unique constraint backed by idx as the
@@ -468,10 +592,17 @@ func scriptForeignKey(fk *ForeignKey, tableName string, opts ScriptOptions) stri
 // of its own definition, and an unqualified name resolves against the
 // executing user's default schema — a different type, or none.
 func ColumnTypeString(col *Column) string {
-	if col.IsUserDefinedType {
-		return qualifiedName(col.TypeSchema, string(col.DataType))
+	return catalogTypeString(col.DataType, col.TypeSchema, col.IsUserDefinedType, col.MaxLength, col.Precision, col.Scale)
+}
+
+// catalogTypeString is ColumnTypeString's rendering, shared with
+// Parameter.TypeString: a user-defined type qualified and bare, any other
+// type through sqlTypeString.
+func catalogTypeString(dt DataType, typeSchema string, userDefined bool, maxLength, precision, scale int) string {
+	if userDefined {
+		return qualifiedName(typeSchema, string(dt))
 	}
-	return sqlTypeString(col.DataType, col.MaxLength, col.Precision, col.Scale)
+	return sqlTypeString(dt, maxLength, precision, scale)
 }
 
 // sqlTypeString renders a catalog data type with whatever length, precision

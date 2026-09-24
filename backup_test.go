@@ -580,7 +580,9 @@ func TestBuildRestoreStatementRecoveryIsOneChoice(t *testing.T) {
 // RESTORE and the release are one batch. The ALTERs are guarded — a database
 // that does not exist yet, is RESTORING or is in STANDBY refuses them, and a
 // refusal would abort the RESTORE after it — and only an access mode the batch
-// itself set is released.
+// itself set is released. A STANDBY database's readers are killed instead
+// (G11, 2026-09-24): left alone, they failed a log-shipping secondary's next
+// log restore with "Exclusive access could not be obtained".
 func TestBuildRestoreStatementClosesConnectionsInTheSameBatch(t *testing.T) {
 	got, err := (&Server{}).BuildRestoreStatement(RestoreOptions{
 		Database: "App'DB", Devices: []BackupTarget{DiskTarget("d.bak")}, Replace: true,
@@ -590,11 +592,16 @@ func TestBuildRestoreStatementClosesConnectionsInTheSameBatch(t *testing.T) {
 		t.Fatalf("BuildRestoreStatement: %v", err)
 	}
 	online := "EXISTS (SELECT 1 FROM sys.databases WHERE name = N'App''DB' AND state = 0 AND is_in_standby = 0)"
+	standby := "EXISTS (SELECT 1 FROM sys.databases WHERE name = N'App''DB' AND state = 0 AND is_in_standby = 1)"
 	want := "DECLARE @closed bit = 0;\n" +
 		"IF " + online + "\n" +
 		"BEGIN\n" +
 		"    ALTER DATABASE [App'DB] SET SINGLE_USER WITH ROLLBACK IMMEDIATE;\n" +
 		"    SET @closed = 1;\n" +
+		"END\n" +
+		"ELSE IF " + standby + "\n" +
+		"BEGIN\n" +
+		killDatabaseSessionsBatch("App'DB") + ";\n" +
 		"END;\n" +
 		"RESTORE DATABASE [App'DB]\nFROM DISK = N'd.bak'\nWITH REPLACE;\n" +
 		"IF @closed = 1 AND " + online + "\n" +

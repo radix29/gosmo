@@ -132,6 +132,75 @@ func TestConnectTimeoutRoundsUpToWholeSeconds(t *testing.T) {
 	}
 }
 
+// TestConnectTimeoutBoundsTheDial (G1): the driver applies "connection
+// timeout" only after the dial, which ran on its own 15 s default, so a 500ms
+// ConnectTimeout to an unroutable host took 15 s.
+func TestConnectTimeoutBoundsTheDial(t *testing.T) {
+	for d, want := range map[time.Duration]time.Duration{
+		500 * time.Millisecond:  time.Second,
+		1500 * time.Millisecond: 2 * time.Second,
+		5 * time.Second:         5 * time.Second,
+	} {
+		opts := ConnectionOptions{Server: "myserver", User: "sa", Password: "p", ConnectTimeout: d}
+		dsn, _, err := buildDSN(opts)
+		if err != nil {
+			t.Fatalf("%v: buildDSN: %v", d, err)
+		}
+		cfg, err := msdsn.Parse(dsn)
+		if err != nil {
+			t.Fatalf("msdsn.Parse: %v", err)
+		}
+		if cfg.DialTimeout != want || cfg.ConnTimeout != want {
+			t.Errorf("ConnectTimeout %v → DialTimeout %v, ConnTimeout %v; want both %v", d, cfg.DialTimeout, cfg.ConnTimeout, want)
+		}
+
+		// baseDSN, the access-token-provider path, shares the builder.
+		base, err := baseDSN(opts)
+		if err != nil {
+			t.Fatalf("%v: baseDSN: %v", d, err)
+		}
+		if cfg, err := msdsn.Parse(base); err != nil || cfg.DialTimeout != want {
+			t.Errorf("baseDSN: ConnectTimeout %v → DialTimeout %v (%v), want %v", d, cfg.DialTimeout, err, want)
+		}
+	}
+}
+
+// TestExtraParamsOverrideTheDialTimeout: "dial timeout" is a default derived
+// from ConnectTimeout, not a reserved key, so an ExtraParams entry replaces it
+// — in any case — and leaves "connection timeout" alone.
+func TestExtraParamsOverrideTheDialTimeout(t *testing.T) {
+	for _, key := range []string{"dial timeout", "Dial Timeout"} {
+		opts := ConnectionOptions{Server: "myserver", User: "sa", Password: "p",
+			ConnectTimeout: 30 * time.Second, ExtraParams: url.Values{key: {"3"}}}
+		for name, build := range map[string]func() (string, error){
+			"buildDSN": func() (string, error) { d, _, err := buildDSN(opts); return d, err },
+			"baseDSN":  func() (string, error) { return baseDSN(opts) },
+		} {
+			dsn, err := build()
+			if err != nil {
+				t.Fatalf("%s with %q: %v", name, key, err)
+			}
+			u, _ := url.Parse(dsn)
+			n := 0
+			for k, vs := range u.Query() {
+				if strings.EqualFold(k, "dial timeout") {
+					n += len(vs)
+				}
+			}
+			if n != 1 {
+				t.Errorf("%s with %q: dial timeout written %d times, want once (%s)", name, key, n, dsn)
+			}
+			cfg, err := msdsn.Parse(dsn)
+			if err != nil {
+				t.Fatalf("msdsn.Parse: %v", err)
+			}
+			if cfg.DialTimeout != 3*time.Second || cfg.ConnTimeout != 30*time.Second {
+				t.Errorf("%s with %q: DialTimeout %v, ConnTimeout %v; want 3s, 30s", name, key, cfg.DialTimeout, cfg.ConnTimeout)
+			}
+		}
+	}
+}
+
 // TestBuildDSNIPv6InstanceWithoutPortIsAnError: the Browser probe would get
 // the bracketed literal as its address, so this must fail up front.
 func TestBuildDSNIPv6InstanceWithoutPortIsAnError(t *testing.T) {
@@ -258,7 +327,7 @@ func checkReservedKeys(t *testing.T, auth AuthMethod, kerberos bool) {
 	}
 	for k := range u.Query() {
 		lk := strings.ToLower(k)
-		if !reservedDSNKeys[lk] && !strings.HasPrefix(lk, "krb5-") {
+		if !reservedDSNKeys[lk] && !overridableDSNKeys[lk] && !strings.HasPrefix(lk, "krb5-") {
 			t.Errorf("auth %d: buildDSN writes %q, which reservedDSNKeys does not list", auth, k)
 		}
 	}

@@ -80,6 +80,29 @@ func TestBuildExecuteScriptDeclaresOutputParameters(t *testing.T) {
 	}
 }
 
+// G6: an alias type's unqualified name resolves against the executing user's
+// default schema — another type, or none — so a parameter of one is rendered
+// qualified and without a length, as a column of one is.
+func TestParameterTypeStringQualifiesUserDefinedTypes(t *testing.T) {
+	params := []*Parameter{
+		{Name: "@phone", Ordinal: 1, DataType: "Phone", TypeSchema: "app", IsUserDefinedType: true, MaxLength: 40},
+		{Name: "@out", Ordinal: 2, DataType: "Phone", TypeSchema: "app", IsUserDefinedType: true, MaxLength: 40, IsOutput: true},
+		{Name: "@name", Ordinal: 3, DataType: DataTypeNVarChar, TypeSchema: "sys", MaxLength: 100},
+	}
+	if got := params[0].TypeString(); got != "[app].[Phone]" {
+		t.Errorf("alias parameter TypeString = %q, want [app].[Phone]", got)
+	}
+	if got := params[2].TypeString(); got != "nvarchar(50)" {
+		t.Errorf("built-in parameter TypeString = %q, want nvarchar(50)", got)
+	}
+	got := buildExecuteScript("dbo", "usp_Call", params)
+	for _, want := range []string{"DECLARE @out [app].[Phone];", "@phone = <phone, [app].[Phone],>"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("EXEC template missing %q:\n%s", want, got)
+		}
+	}
+}
+
 func TestBuildFunctionCallScriptShapeFollowsFunctionType(t *testing.T) {
 	params := []*Parameter{{Name: "@id", Ordinal: 1, DataType: DataTypeInt}}
 

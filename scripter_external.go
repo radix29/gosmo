@@ -46,13 +46,31 @@ var externalDataSourceTypes = map[string]bool{
 	"HADOOP": true, "RDBMS": true, "SHARD_MAP_MANAGER": true, "BLOB_STORAGE": true,
 }
 
+// pushdownLocation reports whether a data source at location takes the
+// PUSHDOWN option: only the ODBC-style PolyBase connectors do. The catalog
+// reports pushdown ON for every source all the same — an abs:// one
+// included — and naming the option on any other kind, or on Managed
+// Instance at all, is a syntax error. ON is the default, so only OFF is
+// ever written, and only where it parses.
+func pushdownLocation(location string) bool {
+	scheme, _, ok := strings.Cut(location, "://")
+	if !ok {
+		return false
+	}
+	switch strings.ToLower(scheme) {
+	case "sqlserver", "oracle", "teradata", "mongodb", "odbc":
+		return true
+	}
+	return false
+}
+
 // buildExternalDataSourceScript assembles one external data source's script.
 func buildExternalDataSourceScript(s *ExternalDataSource, opts ScriptOptions) string {
 	drop := fmt.Sprintf("IF EXISTS (SELECT 1 FROM sys.external_data_sources WHERE name = N'%s')\n"+
 		"    DROP EXTERNAL DATA SOURCE %s;\nGO\n", escapeSingle(s.Name), quoteIdent(s.Name))
 	return opts.envelope(drop, "", func(sb *strings.Builder) {
 		kind := strings.ToUpper(s.Type)
-		if kind != "" && !externalDataSourceTypes[kind] {
+		if kind != "" && kind != "NONE" && !externalDataSourceTypes[kind] {
 			fmt.Fprintf(sb, "/* Reported type: %s — CREATE EXTERNAL DATA SOURCE has no TYPE keyword\n"+
 				"   for it, so the type is left to the location prefix. */\n", kind)
 		}
@@ -74,8 +92,8 @@ func buildExternalDataSourceScript(s *ExternalDataSource, opts ScriptOptions) st
 		opt.addLiteral("DATABASE_NAME", s.DatabaseName)
 		opt.addLiteral("SHARD_MAP_NAME", s.ShardMapName)
 		opt.addLiteral("CONNECTION_OPTIONS", s.ConnectionOptions)
-		if s.PushdownEnabled {
-			opt.addKeyword("PUSHDOWN", "ON")
+		if strings.EqualFold(s.Pushdown, "OFF") && pushdownLocation(s.Location) {
+			opt.addKeyword("PUSHDOWN", "OFF")
 		}
 		sb.WriteString(opt.render("    "))
 

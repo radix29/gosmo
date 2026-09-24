@@ -72,19 +72,6 @@ execution, not on a preference.
 Restore's URL-side cases, and the dialog behaviour around backup history, are
 gossms's: `docs/decisions.md` § Azure SQL Managed Instance.
 
-## Closing connections leaves a STANDBY database's readers alone
-
-`RestoreOptions.CloseExistingConnections` sets SINGLE_USER only on a database
-that is online and not in standby: a STANDBY database refuses the ALTER, and a
-refusal in the batch would abort the RESTORE behind it (a RESTORING one refuses
-it too, Msg 5052, verified live 2026-09-22). So a log restore over a STANDBY
-database with readers connected still fails with "Exclusive access could not
-be obtained" — the log-shipping secondary case. `killDatabaseSessionsBatch`
-would close them, and is what a Managed Instance already gets; it was not
-switched on for standby here without a live run with a parked reader. The
-MI KILL form itself has not executed either, since a Managed Instance restores
-`FROM URL` only (see above).
-
 ## Scripter fidelity: what `ScriptTable` still does not recreate
 
 The 2026-09-22 pass (gossms review plan Q2) made `ScriptTable` keep every
@@ -92,29 +79,39 @@ feature listed in `ARCHITECTURE.md` § Scripter, and the 2026-09-24 pass
 (review plan T7) added graph tables and edge constraints, memory-optimized
 tables and hash indexes, FILESTREAM and `TEXTIMAGE_ON`.
 
-**Refused, not scripted** (an `ErrUnsupported` error and no script, for every
-verb): external tables, FileTables, ledger tables (and with them the
-`generated_always_type` values above 2), and tables with Always Encrypted
-columns. Each would otherwise recreate a plain table under the same name.
-Scripting them is open work — external tables need their data source and
-file format, FileTables their directory and collation options, ledger tables
-`LEDGER = ON (…)` and their history/ledger-view names, and Always Encrypted
-columns `ENCRYPTED WITH (…)`.
+The 2026-09-24 fix-plan pass (G7–G10) added Always Encrypted columns, ledger
+tables, FileTables and external tables. **Refused, not scripted** (an
+`ErrUnsupported` error and no script, for every verb), by design rather than
+as open work: a ledger history table and a dropped ledger table, which only
+the ledger creates. A column dropped from a ledger table is left out of the
+script, and the history table and ledger view of the recreated table do not
+have it.
+
+What those four kinds still leave out:
+
+- **External tables** are verified live only on Azure SQL Managed Instance —
+  no on-premises test instance has PolyBase. `SCHEMA_NAME`, `OBJECT_NAME` and
+  `DISTRIBUTION` (elastic query) are unit-tested only, and
+  `sys.external_tables`' 2022+ `rejected_row_location` and `table_options`
+  are not read. The data source's database-scoped credential is named, not
+  scripted.
+- **FileTables** keep the names of their primary key and two unique
+  constraints; the defaults, checks and foreign key `AS FILETABLE` adds get
+  new generated names.
+- **Always Encrypted**: the column master and column encryption keys are
+  referenced by name and must exist where the script runs.
 
 Knowingly still missing, each of which recreates a *different* table rather
 than failing:
 
-- **Per-partition compression**: an index's compression is its first
-  partition's.
-- **XML and spatial indexes** — skipped with a comment, as before.
-- **Memory-optimized index options**: a columnstore index's
-  `COMPRESSION_DELAY` is not read, and a natively compiled module's
-  dependence on the table is not scripted.
+- **Selective XML indexes** (`xml_index_type` 2 and 3) — skipped with a
+  comment. Primary and secondary XML indexes and spatial indexes are
+  scripted; a selective index's paths (`sys.selective_xml_index_paths`) are
+  not read.
+- **Natively compiled modules**: a natively compiled module's dependence on
+  a memory-optimized table is not scripted.
 - A disabled **clustered** index is recreated and then disabled, as the
   source is — which takes the replayed table offline, faithfully.
-
-`Parameter.TypeString` shares the `datetime2(0)` fix but not the alias-type
-qualification: `sys.parameters`' type is still rendered unqualified.
 
 ## Keys `FROM PROVIDER` have never executed
 
@@ -145,20 +142,6 @@ What to check when one exists: that `FROM EXTERNAL PROVIDER WITH OBJECT_ID =
 …, DEFAULT_SCHEMA = …` parses in that order, and that an Entra login takes
 `DEFAULT_LANGUAGE` through `ALTER LOGIN` as it does `DEFAULT_DATABASE`.
 
-## `ConnectTimeout` does not bound the TCP dial
-
-`ConnectTimeout` is written as the driver's `connection timeout`, which
-go-mssqldb applies to the connection's I/O *after* the dial (`tds.go`,
-`newTimeoutConn`). The dial itself runs on the driver's `dial timeout`,
-15 s per protocol by default, which gosmo does not set. Probed 2026-09-23:
-`ConnectTimeout: 500ms` against an unroutable address failed after 15 s. The
-field's doc ("the maximum time to wait for the initial connection") promises
-more than that. The 2026-09-23 review's S10 fixed only the rounding — a
-sub-second value used to become `connection timeout=0`, which the driver
-reads as none. Candidate fix: also write `dial timeout` from the same value
-unless `ExtraParams` sets it; `ctx` on `Connect` already bounds the whole
-call for a caller who needs it now.
-
 ## Two login writes have no offline test, and cannot have one
 
 Every write path in the library now has a `WithScript` test pinning the exact
@@ -182,16 +165,35 @@ and mutation-check it: swap a parameter name or drop a `dbo` default in the
 source and confirm the new case fails. A case built from the same constant the
 code uses proves nothing.
 
-## `live_keycaps_test.go` leaves its login behind
+## `TestLiveAvailabilityGroupOperations` leaves `gosmo_agops` on the secondary
 
-Seen 2026-09-23: after a full `-run TestLive` on win10cli the login
-`gosmo_live_keycaps` was still there. The test's cleanup is an unchecked
-`defer db.ExecContext(…, "DROP LOGIN …")`, registered after the scratch
-database's drop and so run before it; a DROP LOGIN refused (most likely
-because the login still has a session in that database) fails silently. Not
-investigated further. The next run's pre-drop removes it, so it only
-accumulates as one stray login, but a live run should leave nothing: check
-the DROP's error, and kill the login's sessions first.
+Seen 2026-09-24 with `-liveag-ops` against AAG1: the test passes, but its
+deferred `liveDropEverywhere` logs `could not drop gosmo_agops on ubusql2 …
+ALTER DATABASE is not permitted while a database is in the Restoring state`,
+and the copy stays behind `RESTORING`. Afterwards it is in no group
+(`sys.dm_hadr_database_replica_states` has no local row), so a plain `DROP
+DATABASE` should now succeed. The likely cause is a race: the plain drop runs
+while the secondary's copy is still joined just after `RemoveDatabase`, fails,
+and the forced fallback's `SET SINGLE_USER` is refused on a `RESTORING`
+database. The fix is probably to wait for the local row to disappear, or to
+retry the plain drop, before falling back. It is intermittent: the next run,
+the same day after the stray copy was dropped by hand, cleaned up on both
+nodes, which fits a race.
+
+## Two live tests fail on win10cli's default instance for reasons outside the code under test
+
+Seen on the full `-run TestLive` run on major 17, 2026-09-24:
+
+- `TestLiveServiceBrokerFamiliesRoundTrip` fails with "LIFETIME = 600 read
+  back as 601 seconds remaining", and fails again when rerun. `Route.LifetimeSeconds` subtracts the
+  *client's* clock from the server's `expiry_date`, and win10cli's clock runs
+  ahead of this client by more than a second. The test's `secs > 600` bound
+  has no allowance for skew. The fix is either to widen the bound or to
+  compute the remaining time on the server.
+- `TestLiveAzureDatabaseResourceStats` calls `DatabaseByName(-liveazuredb)`
+  (default `GoTest01`) before it checks whether the instance is Azure, so
+  on any instance without that database it fails instead of reaching its
+  non-Azure `ErrUnsupportedVersion` branch.
 
 ## The two DDL-trigger files stay near-identical — settled, do not re-raise
 

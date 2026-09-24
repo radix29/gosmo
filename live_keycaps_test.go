@@ -41,14 +41,29 @@ func TestLiveKeyCapabilitiesMatchWhatTheServerEnforces(t *testing.T) {
 	const pass = "P@ssw0rd_gosmo_live"
 	const pw = ` ENCRYPTION BY PASSWORD = 'K3y_P@ssw0rd_live'`
 
+	// Deferred ahead of the scratch database's drop so it runs after it, and
+	// checked: an unchecked DROP LOGIN issued first failed silently while the
+	// login still held a session, and left the login behind.
+	dropLogin := "DECLARE @k nvarchar(max) = N'';" +
+		" SELECT @k += N'KILL ' + CAST(session_id AS nvarchar(10)) + N';'" +
+		" FROM sys.dm_exec_sessions WHERE login_name = N'" + login + "' AND session_id <> @@SPID;" +
+		" EXEC (@k);" +
+		" IF SUSER_ID(N'" + login + "') IS NOT NULL DROP LOGIN [" + login + "]"
+	defer func() {
+		if _, err := db.ExecContext(context.Background(), dropLogin); err != nil {
+			t.Errorf("drop login %s: %v", login, err)
+		}
+	}()
+
 	d, drop := liveScratchDB(t, db, ctx, "gosmo_keycaps_live")
 	defer drop()
 
-	db.ExecContext(ctx, "IF SUSER_ID('"+login+"') IS NOT NULL DROP LOGIN ["+login+"]")
+	if _, err := db.ExecContext(ctx, dropLogin); err != nil {
+		t.Fatalf("pre-drop login: %v", err)
+	}
 	if _, err := db.ExecContext(ctx, "CREATE LOGIN ["+login+"] WITH PASSWORD = '"+pass+"', CHECK_POLICY = OFF"); err != nil {
 		t.Fatalf("create login: %v", err)
 	}
-	defer db.ExecContext(context.Background(), "DROP LOGIN ["+login+"]")
 
 	u := "[" + login + "]"
 	liveExecIn(t, d, ctx,

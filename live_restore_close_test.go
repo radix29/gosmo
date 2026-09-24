@@ -151,3 +151,97 @@ func TestLiveRestoreCloseExistingConnections(t *testing.T) {
 		}
 	})
 }
+
+// The log-shipping secondary case: a database in STANDBY is readable, so it
+// has readers, and SET SINGLE_USER is refused there. Closing connections kills
+// them instead, so the next log restores rather than failing with "Exclusive
+// access could not be obtained".
+func TestLiveRestoreCloseReleasesAStandbyReader(t *testing.T) {
+	db, ctx, done := liveDB(t)
+	defer done()
+
+	const name = "gosmo_restore_standby_live"
+	_, drop := liveScratchDB(t, db, ctx, name)
+	// A STANDBY database refuses the SINGLE_USER the scratch drop leads with,
+	// so recover it first; on a database already online this is refused and
+	// harmless.
+	defer drop()
+	defer db.ExecContext(context.Background(), "RESTORE DATABASE "+quoteIdent(name)+" WITH RECOVERY")
+	srv, err := NewServer(ctx, db)
+	if err != nil {
+		t.Fatalf("NewServer: %v", err)
+	}
+	if srv.refusesSingleUser() {
+		t.Skip("a Managed Instance restores FROM URL only")
+	}
+
+	full := liveBackupPath(t, srv, ctx, name+".bak")
+	logDev := liveBackupPath(t, srv, ctx, name+".trn")
+	undo := liveBackupPath(t, srv, ctx, name+"_undo.dat")
+	for _, f := range []string{full, logDev, undo} {
+		defer db.ExecContext(context.Background(), "EXEC master.dbo.xp_delete_files @FilePath = N'"+f+"'")
+	}
+	defer db.ExecContext(context.Background(), "EXEC msdb.dbo.sp_delete_database_backuphistory @database_name = N'"+name+"'")
+
+	if _, err := db.ExecContext(ctx, "ALTER DATABASE "+quoteIdent(name)+" SET RECOVERY FULL"); err != nil {
+		t.Fatalf("recovery model: %v", err)
+	}
+	if err := srv.Backup(ctx, BackupOptions{Database: name, Devices: []BackupTarget{DiskTarget(full)}, Init: true}); err != nil {
+		t.Fatalf("full backup: %v", err)
+	}
+	if _, err := db.ExecContext(ctx, "CREATE TABLE "+quoteIdent(name)+".dbo.t (i int); INSERT "+quoteIdent(name)+".dbo.t VALUES (1)"); err != nil {
+		t.Fatalf("log some work: %v", err)
+	}
+	if err := srv.Backup(ctx, BackupOptions{Database: name, Action: BackupActionLog, Devices: []BackupTarget{DiskTarget(logDev)}, Init: true}); err != nil {
+		t.Fatalf("log backup: %v", err)
+	}
+	if err := srv.Restore(ctx, RestoreOptions{
+		Database: name, Devices: []BackupTarget{DiskTarget(full)}, Replace: true,
+		Recovery: RestoreWithStandBy, StandByFile: undo, CloseExistingConnections: true,
+	}); err != nil {
+		t.Fatalf("restore the full backup into standby: %v", err)
+	}
+
+	// A reader parked in the standby database, on its own pool.
+	other, err := sql.Open("sqlserver", *liveDSN)
+	if err != nil {
+		t.Fatalf("open the second pool: %v", err)
+	}
+	defer other.Close()
+	parked, err := other.Conn(ctx)
+	if err != nil {
+		t.Fatalf("second session: %v", err)
+	}
+	defer parked.Close()
+	var spid int
+	if err := parked.QueryRowContext(ctx, "USE "+quoteIdent(name)+"; SELECT @@SPID").Scan(&spid); err != nil {
+		t.Fatalf("park the reader: %v", err)
+	}
+
+	if err := srv.Restore(ctx, RestoreOptions{
+		Database: name, Action: BackupActionLog, Devices: []BackupTarget{DiskTarget(logDev)},
+		Recovery: RestoreWithStandBy, StandByFile: undo, CloseExistingConnections: true,
+	}); err != nil {
+		t.Fatalf("restore the next log over a standby database with a reader: %v", err)
+	}
+
+	var standby bool
+	if err := db.QueryRowContext(ctx, "SELECT is_in_standby FROM sys.databases WHERE name = @p1", name).Scan(&standby); err != nil {
+		t.Fatalf("read standby: %v", err)
+	}
+	if !standby {
+		t.Error("after the log restore the database is not in standby")
+	}
+	var left int
+	if err := db.QueryRowContext(ctx,
+		"SELECT COUNT(*) FROM sys.dm_exec_sessions WHERE session_id = @p1 AND database_id = DB_ID(@p2)", spid, name).Scan(&left); err != nil {
+		t.Fatalf("read sessions: %v", err)
+	}
+	if left != 0 {
+		t.Errorf("the reader's session %d is still in the database", spid)
+	}
+	var n int
+	if err := db.QueryRowContext(ctx, "SELECT COUNT(*) FROM "+quoteIdent(name)+".dbo.t").Scan(&n); err != nil || n != 1 {
+		t.Errorf("the log's row after the restore: %d, %v; want 1", n, err)
+	}
+}

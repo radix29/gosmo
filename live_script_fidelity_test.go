@@ -108,7 +108,7 @@ FROM   sys.check_constraints WHERE parent_object_id = OBJECT_ID(@p1)`
 
 	liveFidelityIndexes = `
 SELECT i.name, i.type_desc, i.is_unique, i.is_primary_key, i.is_disabled, i.fill_factor,
-       i.is_padded, i.ignore_dup_key, i.allow_row_locks, i.allow_page_locks,
+       i.is_padded, i.ignore_dup_key, i.allow_row_locks, i.allow_page_locks, i.compression_delay,
        (SELECT TOP 1 p.data_compression_desc FROM sys.partitions p
         WHERE p.object_id = i.object_id AND p.index_id = i.index_id) AS compression
 FROM   sys.indexes i WHERE i.object_id = OBJECT_ID(@p1)`
@@ -126,6 +126,26 @@ SELECT s.name, s.has_filter, ISNULL(s.filter_definition, '') AS filter, s.no_rec
               WHERE sc.object_id = s.object_id AND sc.stats_id = s.stats_id
               ORDER BY sc.stats_column_id FOR XML PATH('')), 1, 1, '') AS cols
 FROM   sys.stats s WHERE s.object_id = OBJECT_ID(@p1) AND s.name = @p2`
+
+	// G4: the XML index's form and the primary it is built over, and every
+	// tessellation setting of a spatial index, by index name.
+	liveFidelityXMLIndexes = `
+SELECT xi.name, xi.xml_index_type, ISNULL(xi.secondary_type_desc, '') AS secondary,
+       ISNULL(p.name, '') AS primary_index, COL_NAME(ic.object_id, ic.column_id) AS col
+FROM   sys.xml_indexes xi
+JOIN   sys.index_columns ic ON ic.object_id = xi.object_id AND ic.index_id = xi.index_id
+LEFT   JOIN sys.xml_indexes p ON p.object_id = xi.object_id AND p.index_id = xi.using_xml_index_id
+WHERE  xi.object_id = OBJECT_ID(@p1)`
+
+	liveFidelitySpatial = `
+SELECT i.name, st.tessellation_scheme, st.bounding_box_xmin, st.bounding_box_ymin,
+       st.bounding_box_xmax, st.bounding_box_ymax, st.level_1_grid_desc, st.level_2_grid_desc,
+       st.level_3_grid_desc, st.level_4_grid_desc, st.cells_per_object,
+       COL_NAME(ic.object_id, ic.column_id) AS col
+FROM   sys.spatial_index_tessellations st
+JOIN   sys.indexes i ON i.object_id = st.object_id AND i.index_id = st.index_id
+JOIN   sys.index_columns ic ON ic.object_id = st.object_id AND ic.index_id = st.index_id
+WHERE  st.object_id = OBJECT_ID(@p1)`
 
 	liveFidelityModule = `
 SELECT uses_ansi_nulls, uses_quoted_identifier
@@ -186,13 +206,34 @@ func TestLiveScriptFidelity(t *testing.T) {
 		`CREATE TABLE dbo.Heap (a int NULL) WITH (DATA_COMPRESSION = ROW)`,
 		`CREATE TABLE dbo.Parted (ID int NOT NULL, Yr int NOT NULL) ON ps_fid(Yr)`,
 		`CREATE STATISTICS st_Parted_Inc ON dbo.Parted (ID) WITH INCREMENTAL = ON`,
+		`CREATE TABLE dbo.CCI (a int NOT NULL, b int NULL)`,
+		`CREATE CLUSTERED COLUMNSTORE INDEX CCI_CCI ON dbo.CCI WITH (COMPRESSION_DELAY = 30 MINUTES)`,
+		`CREATE TABLE dbo.NCCI (a int NOT NULL, b int NULL)`,
+		`CREATE NONCLUSTERED COLUMNSTORE INDEX NCCI_NCCI ON dbo.NCCI (a, b)
+		 WITH (DATA_COMPRESSION = COLUMNSTORE_ARCHIVE, COMPRESSION_DELAY = 15)`,
+		// G4: every XML index form and spatial tessellation scheme on one
+		// table. They were skipped with a comment, so the copy had none.
+		`CREATE TABLE dbo.XmlGeo (ID int NOT NULL CONSTRAINT PK_XmlGeo PRIMARY KEY CLUSTERED,
+		    Doc xml NULL, G geometry NULL, Gg geography NULL)`,
+		`CREATE PRIMARY XML INDEX PX_XmlGeo ON dbo.XmlGeo (Doc) WITH (FILLFACTOR = 90)`,
+		`CREATE XML INDEX SX_XmlGeo_Path ON dbo.XmlGeo (Doc) USING XML INDEX PX_XmlGeo FOR PATH`,
+		`CREATE XML INDEX SX_XmlGeo_Value ON dbo.XmlGeo (Doc) USING XML INDEX PX_XmlGeo FOR VALUE`,
+		`CREATE XML INDEX SX_XmlGeo_Prop ON dbo.XmlGeo (Doc) USING XML INDEX PX_XmlGeo FOR PROPERTY`,
+		`CREATE SPATIAL INDEX SP_XmlGeo_G ON dbo.XmlGeo (G) USING GEOMETRY_GRID
+		 WITH (BOUNDING_BOX = (-1.5, 0, 500, 200), GRIDS = (LEVEL_1 = LOW, LEVEL_2 = MEDIUM, LEVEL_3 = HIGH, LEVEL_4 = LOW),
+		       CELLS_PER_OBJECT = 64, DATA_COMPRESSION = PAGE, ALLOW_ROW_LOCKS = OFF)`,
+		`CREATE SPATIAL INDEX SP_XmlGeo_GA ON dbo.XmlGeo (G) USING GEOMETRY_AUTO_GRID
+		 WITH (BOUNDING_BOX = (0, 0, 1000, 1000))`,
+		`CREATE SPATIAL INDEX SP_XmlGeo_Gg ON dbo.XmlGeo (Gg) USING GEOGRAPHY_GRID
+		 WITH (GRIDS = (HIGH, HIGH, MEDIUM, LOW), CELLS_PER_OBJECT = 32)`,
+		`CREATE SPATIAL INDEX SP_XmlGeo_GgA ON dbo.XmlGeo (Gg) USING GEOGRAPHY_AUTO_GRID`,
 	)
 
 	opts := DefaultScriptOptions()
 	opts.IncludeHeaders = false
 	sc := NewScripter(src, opts)
 
-	tables := []string{"Fidelity", "Sparse", "Heap", "Parted"}
+	tables := []string{"Fidelity", "Sparse", "Heap", "Parted", "CCI", "NCCI", "XmlGeo"}
 	for _, tbl := range tables {
 		script, err := sc.ScriptTable(ctx, "dbo", tbl)
 		if err != nil {
@@ -225,6 +266,8 @@ func TestLiveScriptFidelity(t *testing.T) {
 		compare(tbl+" indexes", liveFidelityIndexes, "dbo."+tbl)
 		compare(tbl+" table options", liveFidelityTable, "dbo."+tbl)
 	}
+	compare("XmlGeo XML indexes", liveFidelityXMLIndexes, "dbo.XmlGeo")
+	compare("XmlGeo spatial indexes", liveFidelitySpatial, "dbo.XmlGeo")
 	compare("Fidelity check constraints", liveFidelityChecks, "dbo.Fidelity")
 	compare("filtered statistic", liveFidelityStats, "dbo.Fidelity", "st_Fidelity_Filtered")
 	compare("incremental statistic", liveFidelityStats, "dbo.Parted", "st_Parted_Inc")

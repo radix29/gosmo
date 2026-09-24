@@ -72,6 +72,10 @@ classDiagram
         +MaskingFunction string
         +GeneratedAlwaysType int
         +IsHidden bool
+        +IsDroppedLedgerColumn bool
+        +ColumnEncryptionKey string
+        +EncryptionType string
+        +EncryptionAlgorithm string
         +IsFileStream bool
         +GraphType int
     }
@@ -90,13 +94,22 @@ classDiagram
         +AllowRowLocks bool
         +AllowPageLocks bool
         +DataCompression DataCompression
+        +PartitionCompression []DataCompression
         +StatisticsNoRecompute bool
         +OptimizeForSequentialKey bool
         +BucketCount int64
+        +CompressionDelay int
         +KeyColumns []IndexColumn
         +IncludedColumns []IndexColumn
         +FilterDefinition string
         +DataSpace DataSpace
+        +IsPrimaryXML bool
+        +PrimaryXMLIndex string
+        +SecondaryXMLType XMLSecondaryIndexType
+        +Tessellation SpatialTessellation
+        +BoundingBox *SpatialBoundingBox
+        +GridLevels SpatialGridLevels
+        +CellsPerObject int
         +Table() *Table
         +Rebuild(opts IndexRebuildOptions) error
         +Reorganize() error

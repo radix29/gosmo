@@ -1171,12 +1171,19 @@ NODE`/`AS EDGE`, without the internal columns and the automatic
 `GRAPH_UNIQUE_INDEX_…`, an index on a pseudo-column as `$from_id`/`$to_id`,
 and edge constraints with their trust), memory-optimized tables
 (`MEMORY_OPTIMIZED`, `DURABILITY`, every index inline, `HASH … BUCKET_COUNT`),
-`FILESTREAM` columns with `FILESTREAM_ON`, and `TEXTIMAGE_ON`
-(`live_script_table_kinds_test.go`). External tables, FileTables, ledger
-tables and tables with Always Encrypted columns are refused with an
-`ErrUnsupported` error and no script, for every verb — each would otherwise
-come out as a plain table under the same name, and `DROP AND CREATE` would
-drop the original.
+`FILESTREAM` columns with `FILESTREAM_ON`, `TEXTIMAGE_ON`, Always Encrypted
+columns (`ENCRYPTED WITH`, the key referenced by name), ledger tables (`LEDGER
+= ON` with the ledger view and its column names, the history table, and the
+`GENERATED ALWAYS AS TRANSACTION_ID`/`SEQUENCE_NUMBER` columns) and FileTables
+(`AS FILETABLE` with its directory, collation and constraint names, and only
+what was added after it) (`live_script_table_kinds_test.go`). An external
+table is `CREATE EXTERNAL TABLE`/`DROP EXTERNAL TABLE`, preceded by its data
+source and file format, each guarded so the script also runs where they
+already exist (`live_script_external_table_test.go`, on Managed Instance). A
+ledger history table and a dropped ledger table are refused with an
+`ErrUnsupported` error and no script, for every verb: only the ledger makes
+them, and as a plain table under the same name `DROP AND CREATE` would drop
+the original.
 
 A module script (view, procedure, function, trigger) opens with the `SET
 ANSI_NULLS` and `SET QUOTED_IDENTIFIER` the module was compiled under, each in
@@ -2086,6 +2093,12 @@ synonyms (`initial catalog`, `uid`, `trust server certificate`, …). Otherwise
 which of the two won would depend on the driver's parsing order rather than on
 anything the caller wrote. `Connect` and `ConnectionString` fail with an
 `*ExtraParamError` naming the key.
+
+`dial timeout` is the one parameter that is both: gosmo writes it from
+`ConnectTimeout`, rounded up to whole seconds like `connection timeout`,
+because the driver applies `connection timeout` only after the TCP dial and
+otherwise dials on its own 15 s default. An `ExtraParams` entry for it replaces
+that default instead of being refused.
 
 `ConnectionOptions.ConnectionString(maskSecrets)` renders the DSN gosmo would
 dial with, without dialling — for a UI's "copy connection string", a log line,
