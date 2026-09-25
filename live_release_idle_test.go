@@ -91,8 +91,8 @@ func TestLiveExclusiveAccessDetachAfterRead(t *testing.T) {
 
 	dctx, cancel := context.WithTimeout(ctx, exclusiveDeadline)
 	defer cancel()
-	if err := srv.DetachDatabase(dctx, detLiveName, DetachOptions{}); err != nil {
-		t.Fatalf("DetachDatabase without DropConnections after a read: %v", err)
+	if err := srv.DatabaseRef(detLiveName).Detach(dctx, DetachOptions{}); err != nil {
+		t.Fatalf("Detach without DropConnections after a read: %v", err)
 	}
 	if databaseExists(t, db, ctx, detLiveName) {
 		t.Fatal("the database is still attached after a detach that reported success")

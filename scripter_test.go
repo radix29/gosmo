@@ -31,8 +31,8 @@ func TestColumnTypeString(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			if got := ColumnTypeString(c.col); got != c.want {
-				t.Errorf("ColumnTypeString(%+v) = %q, want %q", c.col, got, c.want)
+			if got := c.col.TypeString(); got != c.want {
+				t.Errorf("Column.TypeString(%+v) = %q, want %q", c.col, got, c.want)
 			}
 		})
 	}

@@ -28,6 +28,46 @@ func TestParsePercent(t *testing.T) {
 	}
 }
 
+// TestNoticePercentLocalised pins that a WITH STATS notice is recognised by
+// its message number, not its English text: sys.messages holds 3211 in 22
+// languages, and several put the number mid-sentence.
+func TestNoticePercentLocalised(t *testing.T) {
+	cases := []struct {
+		msg  string
+		want int
+	}{
+		{"50 percent processed.", 50},
+		{"50 Prozent verarbeitet.", 50},
+		{"Bylo zpracováno 50 procent.", 50},
+		{"Yüzde 50 işlendi.", 50},
+		{"50 パーセント処理されました。", 50},
+		{"已处理百分之 100。", 100},
+		{"Przetworzono: 10 procent.", 10},
+		{"30por ciento procesado.", 30},
+	}
+	for _, c := range cases {
+		n := mssql.Error{Number: msgPercentProcessed, Message: c.msg}
+		if got := noticePercent(n); got != c.want {
+			t.Errorf("noticePercent(3211 %q) = %d, want %d", c.msg, got, c.want)
+		}
+	}
+	// Another numbered notice carrying digits is not progress.
+	if got := noticePercent(mssql.Error{Number: 4035, Message: "Processed 128 pages for database 'x', file 'x' on file 1."}); got != -1 {
+		t.Errorf("noticePercent(4035) = %d, want -1", got)
+	}
+	// A notice that is not an mssql.Error falls back to the English text.
+	if got := noticePercent(plainNotice("20 percent processed.")); got != 20 {
+		t.Errorf("noticePercent(plain English) = %d, want 20", got)
+	}
+	if got := noticePercent(plainNotice("20 Prozent verarbeitet.")); got != -1 {
+		t.Errorf("noticePercent(plain German) = %d, want -1", got)
+	}
+}
+
+type plainNotice string
+
+func (p plainNotice) String() string { return string(p) }
+
 func TestBackupRequiresDatabaseAndDevices(t *testing.T) {
 	s := &Server{}
 	if err := s.Backup(t.Context(), BackupOptions{}); err == nil {

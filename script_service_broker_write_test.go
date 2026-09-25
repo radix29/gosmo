@@ -26,15 +26,14 @@ func TestScriptedQueueAndRouteAlters(t *testing.T) {
 		{
 			name: "queue status alone",
 			call: func(ctx context.Context) error {
-				return db.AlterBrokerQueue(ctx, "Sales.Archive", "o'brien",
-					QueueSettings{Status: boolPtr(false)})
+				return db.BrokerQueueRef("Sales.Archive", "o'brien").Alter(ctx, QueueSettings{Status: boolPtr(false)})
 			},
 			want: scriptUsePrefix + "ALTER QUEUE [Sales.Archive].[o'brien]\n    WITH STATUS = OFF",
 		},
 		{
 			name: "queue every setting at once",
 			call: func(ctx context.Context) error {
-				return db.AlterBrokerQueue(ctx, "dbo", "a]b", QueueSettings{
+				return db.BrokerQueueRef("dbo", "a]b").Alter(ctx, QueueSettings{
 					Status:                boolPtr(true),
 					Retention:             boolPtr(true),
 					PoisonMessageHandling: boolPtr(false),
@@ -59,7 +58,7 @@ func TestScriptedQueueAndRouteAlters(t *testing.T) {
 			// address a user by those names, or fail.
 			name: "queue execute as OWNER is a keyword",
 			call: func(ctx context.Context) error {
-				return db.AlterBrokerQueue(ctx, "dbo", "q", QueueSettings{
+				return db.BrokerQueueRef("dbo", "q").Alter(ctx, QueueSettings{
 					Activation: &QueueActivation{Enabled: true, ProcedureSchema: "dbo", ProcedureName: "p",
 						MaxQueueReaders: 1, ExecuteAs: QueueExecuteAsOwner},
 				})
@@ -71,7 +70,7 @@ func TestScriptedQueueAndRouteAlters(t *testing.T) {
 		{
 			name: "queue execute as SELF is a keyword",
 			call: func(ctx context.Context) error {
-				return db.AlterBrokerQueue(ctx, "dbo", "q", QueueSettings{
+				return db.BrokerQueueRef("dbo", "q").Alter(ctx, QueueSettings{
 					Activation: &QueueActivation{Enabled: false, ProcedureSchema: "dbo", ProcedureName: "p",
 						MaxQueueReaders: 0, ExecuteAs: QueueExecuteAsSelf},
 				})
@@ -83,23 +82,21 @@ func TestScriptedQueueAndRouteAlters(t *testing.T) {
 		{
 			name: "queue activation dropped",
 			call: func(ctx context.Context) error {
-				return db.AlterBrokerQueue(ctx, "dbo", "q",
-					QueueSettings{DropActivation: true})
+				return db.BrokerQueueRef("dbo", "q").Alter(ctx, QueueSettings{DropActivation: true})
 			},
 			want: scriptUsePrefix + "ALTER QUEUE [dbo].[q]\n    WITH ACTIVATION (DROP)",
 		},
 		{
 			name: "route address alone",
 			call: func(ctx context.Context) error {
-				return db.AlterRoute(ctx, "o'brien",
-					RouteSettings{Address: strPtr("TCP://host:4022")})
+				return db.RouteRef("o'brien").Alter(ctx, RouteSettings{Address: strPtr("TCP://host:4022")})
 			},
 			want: scriptUsePrefix + "ALTER ROUTE [o'brien]\n    WITH ADDRESS = N'TCP://host:4022'",
 		},
 		{
 			name: "route every setting at once",
 			call: func(ctx context.Context) error {
-				return db.AlterRoute(ctx, "a]b", RouteSettings{
+				return db.RouteRef("a]b").Alter(ctx, RouteSettings{
 					RemoteService:   strPtr("//app/o'brien"),
 					BrokerInstance:  strPtr("AAAA-BBBB"),
 					LifetimeSeconds: intPtr(600),
@@ -128,46 +125,44 @@ func TestQueueAndRouteAltersRefuseWhatTheServerWould(t *testing.T) {
 	}{
 		{"queue with no setting",
 			func(ctx context.Context) error {
-				return scriptTestDB().AlterBrokerQueue(ctx, "dbo", "q", QueueSettings{})
+				return scriptTestDB().BrokerQueueRef("dbo", "q").Alter(ctx, QueueSettings{})
 			}, "no setting was given"},
 		{"queue activation and drop together",
 			func(ctx context.Context) error {
-				return scriptTestDB().AlterBrokerQueue(ctx, "dbo", "q", QueueSettings{
+				return scriptTestDB().BrokerQueueRef("dbo", "q").Alter(ctx, QueueSettings{
 					DropActivation: true,
 					Activation:     &QueueActivation{ProcedureName: "p"},
 				})
 			}, "mutually exclusive"},
 		{"queue activation with no procedure",
 			func(ctx context.Context) error {
-				return scriptTestDB().AlterBrokerQueue(ctx, "dbo", "q", QueueSettings{
+				return scriptTestDB().BrokerQueueRef("dbo", "q").Alter(ctx, QueueSettings{
 					Activation: &QueueActivation{Enabled: true, MaxQueueReaders: 1},
 				})
 			}, "ProcedureName is empty"},
 		{"queue readers out of range",
 			func(ctx context.Context) error {
-				return scriptTestDB().AlterBrokerQueue(ctx, "dbo", "q", QueueSettings{
+				return scriptTestDB().BrokerQueueRef("dbo", "q").Alter(ctx, QueueSettings{
 					Activation: &QueueActivation{ProcedureName: "p", MaxQueueReaders: 40000},
 				})
 			}, "0 to 32767"},
 		{"route with no setting",
 			func(ctx context.Context) error {
-				return scriptTestDB().AlterRoute(ctx, "r", RouteSettings{})
+				return scriptTestDB().RouteRef("r").Alter(ctx, RouteSettings{})
 			}, "no setting was given"},
 		// The server cannot clear any of these, and NULL does not even parse,
 		// so an empty string must not be sent as one.
 		{"route address cleared",
 			func(ctx context.Context) error {
-				return scriptTestDB().AlterRoute(ctx, "r", RouteSettings{Address: strPtr("")})
+				return scriptTestDB().RouteRef("r").Alter(ctx, RouteSettings{Address: strPtr("")})
 			}, "ADDRESS is empty"},
 		{"route broker instance cleared",
 			func(ctx context.Context) error {
-				return scriptTestDB().AlterRoute(ctx, "r",
-					RouteSettings{BrokerInstance: strPtr("")})
+				return scriptTestDB().RouteRef("r").Alter(ctx, RouteSettings{BrokerInstance: strPtr("")})
 			}, "BROKER_INSTANCE is empty"},
 		{"route lifetime cleared",
 			func(ctx context.Context) error {
-				return scriptTestDB().AlterRoute(ctx, "r",
-					RouteSettings{LifetimeSeconds: intPtr(0)})
+				return scriptTestDB().RouteRef("r").Alter(ctx, RouteSettings{LifetimeSeconds: intPtr(0)})
 			}, "LIFETIME must be 1 or more"},
 	}
 	for _, c := range cases {

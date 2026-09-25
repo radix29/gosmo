@@ -253,7 +253,7 @@ func TestLiveScriptedFamiliesRecreateTheirObjects(t *testing.T) {
 func columnSummaries(cols []*Column) []string {
 	out := make([]string, len(cols))
 	for i, c := range cols {
-		out[i] = c.Name + " " + ColumnTypeString(c)
+		out[i] = c.Name + " " + c.TypeString()
 	}
 	return out
 }

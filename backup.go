@@ -230,7 +230,7 @@ func execWithProgress(ctx context.Context, db *sql.DB, sqlText string, progress 
 		switch m := retmsg.Message(ctx).(type) {
 		case sqlexp.MsgNotice:
 			text := m.Message.String()
-			progress(parsePercent(text), text)
+			progress(noticePercent(m.Message), text)
 		case sqlexp.MsgError:
 			if me, ok := errors.AsType[mssql.Error](m.Error); ok {
 				msgs = append(msgs, me)
@@ -263,20 +263,49 @@ func progressError(msgs []mssql.Error, other, rowsErr error) error {
 	return rowsErr
 }
 
-// parsePercent extracts the leading integer from a "N percent processed."
+// msgPercentProcessed is the number of STATS = N's progress notice, "%d
+// percent processed.".
+const msgPercentProcessed = 3211
+
+// noticePercent returns the percentage a WITH STATS progress notice carries,
+// or -1 for any other notice. The server localises message 3211 to the
+// session language — "50 Prozent verarbeitet.", "Bylo zpracováno 50
+// procent.", "Yüzde 50 işlendi." — so matching on the English text left the
+// progress at -1 for every login whose default language is not English. The
+// driver hands each notice over as an mssql.Error carrying its number; the
+// English text is only the fallback for a notice that isn't one.
+func noticePercent(msg fmt.Stringer) int {
+	if me, ok := msg.(mssql.Error); ok {
+		if me.Number != msgPercentProcessed {
+			return -1
+		}
+		return firstInt(me.Message)
+	}
+	return parsePercent(msg.String())
+}
+
+// parsePercent extracts the integer from an English "N percent processed."
 // message; it returns -1 for any message that isn't shaped like one.
 func parsePercent(text string) int {
 	if !strings.Contains(text, "percent processed") {
 		return -1
 	}
-	i := 0
-	for i < len(text) && text[i] >= '0' && text[i] <= '9' {
-		i++
-	}
-	if i == 0 {
+	return firstInt(text)
+}
+
+// firstInt returns the first run of ASCII digits in text as an integer, or
+// -1 when there is none. The number is not always the leading token: Czech
+// and Turkish put it mid-sentence, and Chinese right before the full stop.
+func firstInt(text string) int {
+	i := strings.IndexFunc(text, func(r rune) bool { return r >= '0' && r <= '9' })
+	if i < 0 {
 		return -1
 	}
-	n, err := strconv.Atoi(text[:i])
+	j := i
+	for j < len(text) && text[j] >= '0' && text[j] <= '9' {
+		j++
+	}
+	n, err := strconv.Atoi(text[i:j])
 	if err != nil {
 		return -1
 	}

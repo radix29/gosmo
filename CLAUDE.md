@@ -172,6 +172,11 @@ rename, and before a tag.
   `createdObject`, which returns the `XRef` handle under `Scripting(ctx)` and
   when the new row is not visible to the caller. A type keeps the `Spec` name
   only when a non-create method takes it too (`ServerAuditSpec`, for `Alter`).
+- **A write on an existing object is a method on its handle** —
+  `db.ViewRef(s, n).Drop(ctx)`, `t.Rename(ctx, n)`, `db.Detach(ctx, opts)` —
+  never `Parent.VerbX(ctx, name, …)`. The 2026-09-24 fold moved the drops of
+  most families and stopped there, leaving two shapes for one operation until
+  2026-09-25; a new family gets its `Ref` and its writes together.
 - **Catalog state is an exported field, not an accessor.** A type scanned
   from a catalog row exposes what it scanned as exported fields — `Login.SID`,
   `Table.Name`, `Job.IsEnabled`. `Database` was the last holdout, hiding nine
@@ -207,7 +212,7 @@ rename, and before a tag.
   scripted DROP of an object that exists works either way. This bullet is
   the authority on that rule; `gossms/CLAUDE.md`, `gossms/docs/decisions.md`
   and `dbOf` in `gossms/internal/tui/explorer_object_ops.go` point here
-  rather than restate it. Fifty-one families pair this way
+  rather than restate it. Fifty-five families pair this way
   (`DatabaseRef`, `LoginRef`, `TableRef`, the four Agent ones, the
   audit/credential/trigger/snapshot/plan-guide/backup-device/AG families,
   `ServerRoleRef`, `UserRef`, `StatisticRef`, `IndexRef`, `ConfigurationRef`,
@@ -216,7 +221,10 @@ rename, and before a tag.
   `XRef(name).Drop` and every `Create*` began returning its object — the
   schema, sequence, synonym, rule, default, three type, XML schema
   collection, partition, Always Encrypted key, assembly, database role
-  (`RoleRef`), external-resource and Service Broker families); every other
+  (`RoleRef`), external-resource and Service Broker families, and — since
+  2026-09-25, when the parent `Database.DropView`/`RenameObject`/
+  `TransferObject` forms were folded onto the handles — `ViewRef`,
+  `StoredProcedureRef`, `UserDefinedFunctionRef` and `TriggerRef`); every other
   by-name lookup in the library is `*ByName` with no handle beside it. A
   schema-scoped handle takes its schema as given and refuses an empty one on
   write (`ErrSchemaRequired`, through `requireSchema`), like every call that

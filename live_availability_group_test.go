@@ -800,7 +800,7 @@ func liveDropEverywhere(t *testing.T, srv *Server, ag *AvailabilityGroup, dbName
 			t.Logf("%s on %s is still joined after 30s; dropping anyway", dbName, r.ReplicaServerName)
 		}
 		for range 3 {
-			if err := peer.DropDatabase(ctx, dbName, false); err == nil {
+			if err := peer.DatabaseRef(dbName).Drop(ctx, false); err == nil {
 				break
 			}
 			time.Sleep(time.Second)
@@ -842,10 +842,10 @@ WHERE  rs.is_local = 1 AND d.name = @p1`
 func liveDropDatabase(t *testing.T, srv *Server, dbName string) {
 	t.Helper()
 	ctx := context.Background()
-	if err := srv.DropDatabase(ctx, dbName, false); err == nil {
+	if err := srv.DatabaseRef(dbName).Drop(ctx, false); err == nil {
 		return
 	}
-	if err := srv.DropDatabase(ctx, dbName, true); err != nil {
+	if err := srv.DatabaseRef(dbName).Drop(ctx, true); err != nil {
 		exists, lookupErr := srv.DatabaseByName(ctx, dbName)
 		if lookupErr == nil && exists != nil {
 			t.Logf("could not drop %s on %s: %v", dbName, srv.Name(), err)

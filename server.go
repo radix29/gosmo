@@ -145,7 +145,7 @@ END`, lit)
 // itself — as one batch that takes exclusive access with SET SINGLE_USER WITH
 // ROLLBACK IMMEDIATE, runs op only if that succeeded, and puts the database
 // back to MULTI_USER when op fails and the database still exists: the forced
-// DropDatabase and DetachDatabase. (RenameDatabase's is renameExclusiveBatch,
+// Database.Drop and Database.Detach. (Database.Rename's is renameExclusiveBatch,
 // since which name to release depends on whether the rename happened.)
 //
 // One batch, not three execs, because the slot SINGLE_USER frees is taken
@@ -303,7 +303,7 @@ ELSE IF DB_ID(%s) IS NOT NULL ALTER DATABASE %s SET MULTI_USER`,
 }
 
 // query runs a server-scoped, rows-returning read against the pool,
-// retrying once on a transient connection failure (a dropped pooled
+// retrying on a transient connection failure (up to readRetryAttempts tries) (a dropped pooled
 // connection, etc.) — the Server-level counterpart of Database.query. A
 // single read is idempotent, so it's always safe to re-run on a fresh
 // connection; unlike Database.query, there's no USE to redo first, since a
@@ -675,85 +675,4 @@ type CreateDatabaseRequest struct {
 	// AddFileGroup/AddFile, not here.
 	PrimaryFile *DatabaseFileSpec
 	LogFile     *DatabaseFileSpec
-}
-
-// DropDatabase drops the named database.
-// When force is true, active connections are terminated first — by SET
-// SINGLE_USER WITH ROLLBACK IMMEDIATE, or on a Managed Instance, which refuses
-// that statement, by killing the database's sessions (see killDatabaseSessions).
-// This Server's own idle sessions are released first either way (see
-// ReleaseIdleConnections).
-func (s *Server) DropDatabase(ctx context.Context, name string, force bool) error {
-	if name == "" {
-		return fmt.Errorf("gosmo: drop database: name is required")
-	}
-	s.releaseIdle(ctx)
-	drop := fmt.Sprintf("DROP DATABASE %s", quoteIdent(name))
-	switch {
-	case !force:
-		// Nothing here set the access mode, so nothing is repaired: a
-		// MULTI_USER on the way out would silently undo a RESTRICTED_USER or
-		// SINGLE_USER the database was deliberately left in.
-		if err := s.exec(ctx, drop); err != nil {
-			return fmt.Errorf("gosmo: drop database %q: %w", name, err)
-		}
-	case s.refusesSingleUser():
-		// One batch for the same reason as exclusiveBatch: a session that
-		// reconnects between the KILLs and the DROP makes the DROP fail.
-		if err := s.exec(ctx, killDatabaseSessionsBatch(name)+";\n"+drop+";"); err != nil {
-			return fmt.Errorf("gosmo: drop database %q: %w", name, err)
-		}
-	default:
-		if err := s.exec(ctx, exclusiveBatch(name, drop)); err != nil {
-			// The drop can genuinely fail after the alter succeeded — the
-			// database belongs to an availability group, the login may set
-			// state but not drop — and the batch puts it back to MULTI_USER
-			// itself. Only a batch cut short needs the repair from here.
-			// Best effort: the drop's own error is what the caller is told.
-			if batchCutShort(err) {
-				_ = s.restoreMultiUser(ctx, name)
-			}
-			return fmt.Errorf("gosmo: drop database %q: %w", name, err)
-		}
-	}
-	return nil
-}
-
-// RenameDatabase renames a database (ALTER DATABASE ... MODIFY NAME). The
-// server needs exclusive access to it, so any other connection to the
-// database fails the statement outright rather than waiting.
-//
-// When force is true the database is put into SINGLE_USER WITH ROLLBACK
-// IMMEDIATE first — terminating those connections and rolling back their
-// transactions — and back to MULTI_USER afterwards, including when the
-// rename itself fails, so a refused rename never leaves the database
-// single-user. A Managed Instance refuses SET SINGLE_USER, so there force
-// kills the database's sessions instead and changes no access mode. This
-// Server's own idle sessions are released first either way (see
-// ReleaseIdleConnections).
-func (s *Server) RenameDatabase(ctx context.Context, oldName, newName string, force bool) error {
-	if oldName == "" || newName == "" {
-		return fmt.Errorf("gosmo: rename database: both names are required")
-	}
-	q := fmt.Sprintf("ALTER DATABASE %s MODIFY NAME = %s", quoteIdent(oldName), quoteIdent(newName))
-	s.releaseIdle(ctx)
-	switch {
-	case !force:
-	case s.refusesSingleUser():
-		// Nothing to release afterwards: no access mode was changed. One
-		// batch, as in DropDatabase.
-		q = killDatabaseSessionsBatch(oldName) + ";\n" + q + ";"
-	default:
-		if err := s.exec(ctx, renameExclusiveBatch(oldName, newName)); err != nil {
-			if batchCutShort(err) {
-				_ = s.restoreMultiUserAfterRename(ctx, oldName, newName)
-			}
-			return fmt.Errorf("gosmo: rename database %q to %q: %w", oldName, newName, err)
-		}
-		return nil
-	}
-	if err := s.exec(ctx, q); err != nil {
-		return fmt.Errorf("gosmo: rename database %q to %q: %w", oldName, newName, err)
-	}
-	return nil
 }

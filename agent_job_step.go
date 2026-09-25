@@ -141,13 +141,13 @@ func addStepStmt(jobName string, req JobStepRequest, stepID int) string {
 	return q
 }
 
-// Update replaces the step's definition via sp_update_jobstep.
-func (s *JobStep) Update(ctx context.Context, req JobStepRequest) error {
+// Alter replaces the step's definition via sp_update_jobstep.
+func (s *JobStep) Alter(ctx context.Context, req JobStepRequest) error {
 	// Same guard as Job.AddStep: sp_update_jobstep rejects an empty
 	// @step_name with a server-side error, and the local field writes at the
 	// end of this method would otherwise blank out s.Name on the way past.
 	if req.Name == "" {
-		return fmt.Errorf("gosmo: update step: name is required")
+		return fmt.Errorf("gosmo: alter step: name is required")
 	}
 	q := fmt.Sprintf(
 		"EXEC msdb.dbo.sp_update_jobstep @job_name = N'%s', @step_id = %d, "+
@@ -178,7 +178,7 @@ func (s *JobStep) Update(ctx context.Context, req JobStepRequest) error {
 	// the old path while the JobStep claimed it was gone.
 	q += fmt.Sprintf(", @output_file_name = N'%s'", escapeSingle(req.OutputFileName))
 	if err := s.job.server.exec(ctx, q); err != nil {
-		return fmt.Errorf("gosmo: update step %q of job %q: %w", req.Name, s.job.Name, err)
+		return fmt.Errorf("gosmo: alter step %q of job %q: %w", req.Name, s.job.Name, err)
 	}
 	// Not mirrored under WithScript — nothing reached the server, so the step
 	// must keep describing what is actually there. See setIfApplied, which is
@@ -462,7 +462,7 @@ func checkReorder(want []int, n int) error {
 }
 
 // JobStepRequest describes a step to add to, or replace the definition of
-// (see JobStep.Update), a job.
+// (see JobStep.Alter), a job.
 type JobStepRequest struct {
 	Name      string
 	Subsystem string // "TSQL" is the most common value
@@ -471,7 +471,7 @@ type JobStepRequest struct {
 	//
 	// Empty means "leave the step's own database alone" on an update, not
 	// "clear it": sp_update_jobstep accepts N'' without error and changes
-	// nothing, so JobStep.Update omits @database_name entirely rather
+	// nothing, so JobStep.Alter omits @database_name entirely rather
 	// than sending a value that would be silently ignored. On AddStep an
 	// empty value likewise sends no @database_name, and the server applies
 	// its default. There is no way to null the column through this type,

@@ -19,7 +19,7 @@ type DetachOptions struct {
 	// database first (SET SINGLE_USER WITH ROLLBACK IMMEDIATE). Without it a
 	// database with any other connection open refuses to detach. A detach
 	// that then fails is put back to MULTI_USER, so a refusal never leaves
-	// the database single-user — same contract as RenameDatabase.
+	// the database single-user — same contract as Database.Rename.
 	DropConnections bool
 
 	// UpdateStatistics runs UPDATE STATISTICS across the database before
@@ -40,8 +40,8 @@ type DetachOptions struct {
 	DropFullTextIndexFile bool
 }
 
-// DetachDatabase detaches the named database from the instance, leaving its
-// files on disk.
+// Detach detaches the database from the instance, leaving its files on
+// disk.
 //
 // The database's files are left where they are — this is not a delete, and
 // AttachDatabase brings the same files back, under this name or another
@@ -51,7 +51,8 @@ type DetachOptions struct {
 // released first (see ReleaseIdleConnections) — without that, a read of the
 // database moments earlier made even a detach nobody else was using fail
 // Msg 3703.
-func (s *Server) DetachDatabase(ctx context.Context, name string, opts DetachOptions) error {
+func (d *Database) Detach(ctx context.Context, opts DetachOptions) error {
+	s, name := d.server, d.Name
 	if name == "" {
 		return fmt.Errorf("gosmo: detach database: name is required")
 	}

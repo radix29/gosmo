@@ -91,7 +91,7 @@ func (s *Server) ServerRoleByName(ctx context.Context, name string) (*ServerRole
 // server at all — unlike ServerRoleByName, it doesn't
 // verify the role exists or populate ID/IsFixedRole/Owner/Members/SID/
 // CreateDate/ModifyDate (they stay at their zero value). Every write method
-// on *ServerRole (Drop, Rename, ChangeOwner) only ever
+// on *ServerRole (Drop, Rename, SetOwner) only ever
 // needs the role's name, never those cached fields, so this is sufficient for
 // issuing further ALTER-style calls against a role the caller already knows
 // exists — most commonly one it just created in the same operation. See
@@ -123,8 +123,8 @@ func (r *ServerRole) Rename(ctx context.Context, newName string) error {
 	return nil
 }
 
-// ChangeOwner transfers ownership of the server role to a new principal.
-func (r *ServerRole) ChangeOwner(ctx context.Context, newOwner string) error {
+// SetOwner transfers ownership of the server role to a new principal.
+func (r *ServerRole) SetOwner(ctx context.Context, newOwner string) error {
 	q := fmt.Sprintf("ALTER AUTHORIZATION ON SERVER ROLE::%s TO %s", quoteIdent(r.Name), quoteIdent(newOwner))
 	if err := r.server.exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: change server role %q owner to %q: %w", r.Name, newOwner, err)

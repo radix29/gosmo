@@ -32,12 +32,12 @@ func TestLiveScriptedSetterMirroring(t *testing.T) {
 	}
 
 	const name = "gosmo_setifapplied_probe"
-	_ = srv.DropDatabase(ctx, name, true)
+	_ = srv.DatabaseRef(name).Drop(ctx, true)
 	if _, err := srv.CreateDatabase(ctx, CreateDatabaseRequest{Name: name}); err != nil {
 		t.Fatalf("create %s: %v", name, err)
 	}
 	defer func() {
-		if err := srv.DropDatabase(ctx, name, true); err != nil {
+		if err := srv.DatabaseRef(name).Drop(ctx, true); err != nil {
 			t.Errorf("drop %s: %v", name, err)
 		}
 	}()
@@ -236,12 +236,12 @@ func TestLiveScriptedSequenceRestartMirroring(t *testing.T) {
 	}
 
 	const name = "gosmo_seq_restart_probe"
-	_ = srv.DropDatabase(ctx, name, true)
+	_ = srv.DatabaseRef(name).Drop(ctx, true)
 	if _, err := srv.CreateDatabase(ctx, CreateDatabaseRequest{Name: name}); err != nil {
 		t.Fatalf("create %s: %v", name, err)
 	}
 	defer func() {
-		if err := srv.DropDatabase(ctx, name, true); err != nil {
+		if err := srv.DatabaseRef(name).Drop(ctx, true); err != nil {
 			t.Errorf("drop %s: %v", name, err)
 		}
 	}()

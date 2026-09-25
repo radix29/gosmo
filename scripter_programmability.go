@@ -55,7 +55,7 @@ func buildUserDefinedDataTypeScript(t *UserDefinedDataType, opts ScriptOptions) 
 	guard := fmt.Sprintf("IF TYPE_ID(N'%s') IS NULL\n", escapeSingle(fullName))
 	return opts.envelope(drop, guard, func(sb *strings.Builder) {
 		fmt.Fprintf(sb, "CREATE TYPE %s FROM %s %s;\nGO\n",
-			fullName, aliasBaseType(t), nullClause(t.IsNullable))
+			fullName, t.BaseTypeString(), nullClause(t.IsNullable))
 		if t.Rule != "" {
 			fmt.Fprintf(sb, "\nEXEC sp_bindrule N'%s', N'%s';\nGO\n",
 				escapeSingle(quoteIdent(t.Rule)), escapeSingle(fullName))
@@ -67,13 +67,14 @@ func buildUserDefinedDataTypeScript(t *UserDefinedDataType, opts ScriptOptions) 
 	})
 }
 
-// aliasBaseType renders the alias's base type with the length, precision or
-// scale it was declared with. BaseType is sys.types' own name for the system
-// type, which is what DataType's constants are, so the shared renderer that
-// serves ColumnTypeString serves this too — a second copy would be the place
-// nchar's byte-doubled max_length gets forgotten.
-func aliasBaseType(t *UserDefinedDataType) string {
-	return sqlTypeString(DataType(strings.ToLower(t.BaseType)), t.MaxLength, t.Precision, t.Scale)
+// BaseTypeString renders the alias's base type with the length, precision or
+// scale it was declared with — "nvarchar(20)", not the stored 40. BaseType is
+// sys.types' own name for the system type, which is what DataType's constants
+// are, so the shared renderer that serves Column.TypeString serves this too —
+// a second copy would be the place nchar's byte-doubled max_length gets
+// forgotten.
+func (t *UserDefinedDataType) BaseTypeString() string {
+	return TypeString(DataType(strings.ToLower(t.BaseType)), t.MaxLength, t.Precision, t.Scale)
 }
 
 // nullClause is the explicit nullability CREATE TYPE takes. Always emitted:
@@ -150,7 +151,7 @@ func tableTypeColumn(col *Column) string {
 		return fmt.Sprintf("%s AS %s", quoteIdent(col.Name), col.ComputedText)
 	}
 	var sb strings.Builder
-	fmt.Fprintf(&sb, "%s %s", quoteIdent(col.Name), ColumnTypeString(col))
+	fmt.Fprintf(&sb, "%s %s", quoteIdent(col.Name), col.TypeString())
 	if col.IsIdentity {
 		fmt.Fprintf(&sb, " IDENTITY(%s,%s)", col.IdentitySeed, col.IdentityIncrement)
 	}

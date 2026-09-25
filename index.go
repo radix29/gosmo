@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 )
 
@@ -51,6 +52,10 @@ type Index struct {
 	// (sys.indexes.compression_delay); 0 for no delay and for every other
 	// index type.
 	CompressionDelay int
+	// ColumnstoreOrder is an ordered columnstore index's ORDER (…) columns,
+	// in order (sys.index_columns.column_store_order_ordinal, SQL Server
+	// 2022); nil for an unordered one and for every other index type.
+	ColumnstoreOrder []string
 	KeyColumns       []IndexColumn
 	IncludedColumns  []IndexColumn
 	FilterDefinition string
@@ -122,6 +127,10 @@ type IndexColumn struct {
 	Descending bool
 	IsIncluded bool
 
+	// orderOrdinal is the column's place in an ordered columnstore index's
+	// ORDER (…), 0 when it has none; Index.ColumnstoreOrder is built from it.
+	orderOrdinal int
+
 	// pseudo marks a graph pseudo-column ($node_id, $from_id, …) the
 	// scripter substituted for a graph table's internal column. It is
 	// written bare: SQL Server 2017 does not resolve it bracketed (Msg 1911),
@@ -187,12 +196,20 @@ func (t *Table) attachIndexColumns(ctx context.Context, indexes []*Index, extra 
 		return fmt.Errorf("gosmo: columns of indexes on %s: %w", t.FullName(), err)
 	}
 	for _, idx := range indexes {
+		var ordered []IndexColumn
 		for _, c := range cols[idx.IndexID] {
 			if c.IsIncluded {
 				idx.IncludedColumns = append(idx.IncludedColumns, c)
 			} else {
 				idx.KeyColumns = append(idx.KeyColumns, c)
 			}
+			if c.orderOrdinal > 0 {
+				ordered = append(ordered, c)
+			}
+		}
+		slices.SortFunc(ordered, func(a, b IndexColumn) int { return a.orderOrdinal - b.orderOrdinal })
+		for _, c := range ordered {
+			idx.ColumnstoreOrder = append(idx.ColumnstoreOrder, c.Name)
 		}
 	}
 	return nil
@@ -362,11 +379,7 @@ WHERE  i.object_id = @p1 AND i.index_id IN (0, 1)`
 // extra is an additional predicate ANDed onto the object filter, with its
 // parameters starting at @p2 — the same contract as indexList.
 func (t *Table) indexColumns(ctx context.Context, extra string, args ...any) (map[int][]IndexColumn, error) {
-	q := `
-SELECT ic.index_id, c.name, ic.is_descending_key, ic.is_included_column
-FROM   sys.index_columns ic
-JOIN   sys.columns c ON c.object_id = ic.object_id AND c.column_id = ic.column_id
-WHERE  ic.object_id = @p1` + extra + `
+	q := t.indexColumnsSelect() + extra + `
   AND  NOT (ic.key_ordinal = 0 AND ic.is_included_column = 0 AND ic.partition_ordinal > 0)
 ORDER  BY ic.index_id, ic.key_ordinal, ic.index_column_id`
 
@@ -380,12 +393,26 @@ ORDER  BY ic.index_id, ic.key_ordinal, ic.index_column_id`
 	for rows.Next() {
 		var indexID int
 		c := IndexColumn{}
-		if err := rows.Scan(&indexID, &c.Name, &c.Descending, &c.IsIncluded); err != nil {
+		if err := rows.Scan(&indexID, &c.Name, &c.Descending, &c.IsIncluded, &c.orderOrdinal); err != nil {
 			return nil, err
 		}
 		cols[indexID] = append(cols[indexID], c)
 	}
 	return cols, rows.Err()
+}
+
+// indexColumnsSelect is indexColumns' query up to its object filter.
+//
+// column_store_order_ordinal is SQL Server 2022's, with ordered columnstore
+// indexes; every columnstore index on an older instance is unordered.
+// https://learn.microsoft.com/sql/relational-databases/system-catalog-views/sys-index-columns-transact-sql
+func (t *Table) indexColumnsSelect() string {
+	return `
+SELECT ic.index_id, c.name, ic.is_descending_key, ic.is_included_column,
+       ` + colSince(t.db.serverMajorVersion(), SQLServer2022, "ic.column_store_order_ordinal", "CAST(0 AS tinyint)") + `
+FROM   sys.index_columns ic
+JOIN   sys.columns c ON c.object_id = ic.object_id AND c.column_id = ic.column_id
+WHERE  ic.object_id = @p1`
 }
 
 // -- Index management ----------------------------------------------------------

@@ -102,8 +102,8 @@ func TestWithScriptBindsParametersIntoTheStatement(t *testing.T) {
 		absent string
 	}{
 		{
-			name:  "RenameTable",
-			write: func(ctx context.Context, d *Database) error { return d.RenameTable(ctx, "dbo", "Old", "New") },
+			name:  "Table.Rename",
+			write: func(ctx context.Context, d *Database) error { return d.TableRef("dbo", "Old").Rename(ctx, "New") },
 			want:  []string{"EXEC sp_rename", "N'[dbo].[Old]'", "N'New'", "N'OBJECT'"},
 		},
 		{
@@ -115,8 +115,8 @@ func TestWithScriptBindsParametersIntoTheStatement(t *testing.T) {
 			want: []string{"EXEC sp_rename", "N'[dbo].[Orders].[IX_Old]'", "N'IX_New'", "N'INDEX'"},
 		},
 		{
-			name:  "DropTable cascade",
-			write: func(ctx context.Context, d *Database) error { return d.DropTable(ctx, "dbo", "Orders", true) },
+			name:  "Table.Drop cascade",
+			write: func(ctx context.Context, d *Database) error { return d.TableRef("dbo", "Orders").Drop(ctx, true) },
 			want:  []string{"OBJECT_ID(N''[dbo].[Orders]'')", "DROP TABLE [dbo].[Orders]"},
 		},
 	}

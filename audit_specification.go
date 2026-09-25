@@ -218,10 +218,20 @@ func (s *Server) CreateServerAuditSpecification(ctx context.Context, spec Create
 	})
 }
 
-// SetState enables or disables the specification.
+// Enable turns the specification on (STATE = ON).
 //
-// This is the one ALTER form the server accepts on an enabled specification.
-func (spec *ServerAuditSpecification) SetState(ctx context.Context, on bool) error {
+// STATE is the one ALTER form the server accepts on an enabled
+// specification.
+func (spec *ServerAuditSpecification) Enable(ctx context.Context) error {
+	return spec.setEnabled(ctx, true)
+}
+
+// Disable turns the specification off (STATE = OFF).
+func (spec *ServerAuditSpecification) Disable(ctx context.Context) error {
+	return spec.setEnabled(ctx, false)
+}
+
+func (spec *ServerAuditSpecification) setEnabled(ctx context.Context, on bool) error {
 	state := "OFF"
 	if on {
 		state = "ON"
@@ -292,10 +302,10 @@ func (spec *ServerAuditSpecification) withSpecificationDisabled(ctx context.Cont
 	if !enabled {
 		return fn(inner)
 	}
-	if err := spec.SetState(unobserved(ctx), false); err != nil {
+	if err := spec.setEnabled(unobserved(ctx), false); err != nil {
 		return err
 	}
-	enable := func(ctx context.Context) error { return spec.SetState(ctx, true) }
+	enable := func(ctx context.Context) error { return spec.setEnabled(ctx, true) }
 	if err := fn(inner); err != nil {
 		// Best effort: report the original failure, not the restore's.
 		_ = restoreWindow(ctx, enable)
@@ -365,7 +375,7 @@ func (spec *ServerAuditSpecification) Drop(ctx context.Context) error {
 		return err
 	}
 	if enabled {
-		if err := spec.SetState(ctx, false); err != nil {
+		if err := spec.setEnabled(ctx, false); err != nil {
 			return err
 		}
 	}

@@ -62,8 +62,8 @@ func TestScriptIndexAndStatisticsWrites(t *testing.T) {
 		{"Table RebuildAllIndexes", func(c context.Context) error {
 			return table().RebuildAllIndexes(c, 70)
 		}, scriptUsePrefix + "ALTER INDEX ALL ON [dbo].[Sales.Archive] REBUILD WITH (FILLFACTOR = 70)"},
-		{"Table TruncateTable", func(c context.Context) error {
-			return table().TruncateTable(c)
+		{"Table Truncate", func(c context.Context) error {
+			return table().Truncate(c)
 		}, scriptUsePrefix + "TRUNCATE TABLE [dbo].[Sales.Archive]"},
 		{"Table CreateStatistic", func(c context.Context) error {
 			return errOnly(table().CreateStatistic(c, CreateStatisticRequest{Name: "st]1", Columns: []string{"a]b", "c'd"}, SamplePercent: 50}))

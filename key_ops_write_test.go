@@ -52,7 +52,7 @@ func TestCertificateBackupRemoveKeyAndOwner(t *testing.T) {
 				PrivateKeyFile: `C:\b\c.pvk`, EncryptionPassword: "enc", DecryptionPassword: "d'ec"})
 		},
 		c.RemovePrivateKey,
-		func(ctx context.Context) error { return c.ChangeOwner(ctx, "u]1") },
+		func(ctx context.Context) error { return c.SetOwner(ctx, "u]1") },
 	)
 	assertStatements(t, got, []string{
 		useAppDB + `BACKUP CERTIFICATE [c]]1] TO FILE = N'C:\b\it''s.cer'`,
@@ -87,8 +87,8 @@ func TestAsymmetricAndSymmetricKeyOwnerAndPrivateKey(t *testing.T) {
 	a, s := d.AsymmetricKeyRef("a"), d.SymmetricKeyRef("s")
 	got := capture(t,
 		a.RemovePrivateKey,
-		func(ctx context.Context) error { return a.ChangeOwner(ctx, "u") },
-		func(ctx context.Context) error { return s.ChangeOwner(ctx, "u") },
+		func(ctx context.Context) error { return a.SetOwner(ctx, "u") },
+		func(ctx context.Context) error { return s.SetOwner(ctx, "u") },
 	)
 	assertStatements(t, got, []string{
 		useAppDB + "ALTER ASYMMETRIC KEY [a] REMOVE PRIVATE KEY",

@@ -96,6 +96,20 @@ var gatedColumns = []gatedColumn{
 	// sys.columns — graph_type, 2017, with graph tables.
 	{"columns", "graph_type", "ISNULL(c.graph_type, 0)", SQLServer2017, false, ""},
 
+	// sys.columns and sys.parameters — the vector type's facets, 2025.
+	// Confirmed on the catalog: 17.0.1135.8 has all four.
+	{"columns", "vector_dimensions", "ISNULL(c.vector_dimensions, 0)", SQLServer2025, false, ""},
+	{"columns", "vector_base_type_desc", "ISNULL(c.vector_base_type_desc, '')", SQLServer2025, false, ""},
+	{"parameters", "vector_dimensions", "ISNULL(p.vector_dimensions, 0)", SQLServer2025, false, ""},
+	{"parameters", "vector_base_type_desc", "ISNULL(p.vector_base_type_desc, '')", SQLServer2025, false, ""},
+
+	// sys.index_columns — ordered columnstore, 2022.
+	{"index_columns", "column_store_order_ordinal", "ic.column_store_order_ordinal", SQLServer2022, false, ""},
+
+	// sys.tables — temporal history retention, 2017.
+	{"tables", "history_retention_period", "CASE WHEN t.history_retention_period > 0 THEN t.history_retention_period ELSE 0 END", SQLServer2017, false, ""},
+	{"tables", "history_retention_period_unit_desc", "CASE WHEN t.history_retention_period > 0 THEN t.history_retention_period_unit_desc ELSE '' END", SQLServer2017, false, ""},
+
 	// sys.sequences — last_used_value, 2017.
 	{"sequences", "last_used_value", "CONVERT(nvarchar(40), s.last_used_value)", SQLServer2017, false, ""},
 

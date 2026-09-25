@@ -80,8 +80,8 @@ func TestLiveServerAuditLifecycle(t *testing.T) {
 		t.Error("a new audit is created disabled")
 	}
 
-	if err := a.SetState(ctx, true); err != nil {
-		t.Fatalf("SetState(on): %v", err)
+	if err := a.Enable(ctx); err != nil {
+		t.Fatalf("Enable: %v", err)
 	}
 	st, err := a.Status(ctx)
 	if err != nil {
@@ -216,8 +216,8 @@ func TestLiveAuditScriptsRunAsGenerated(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateServerAudit: %v", err)
 	}
-	if err := a.SetState(ctx, true); err != nil {
-		t.Fatalf("SetState: %v", err)
+	if err := a.Enable(ctx); err != nil {
+		t.Fatalf("Enable: %v", err)
 	}
 	if _, err := s.CreateServerAuditSpecification(ctx, CreateServerAuditSpecificationRequest{
 		Name: specName, AuditName: name,
@@ -301,8 +301,8 @@ func TestLiveRenamingAnEnabledAudit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateServerAudit: %v", err)
 	}
-	if err := a.SetState(ctx, true); err != nil {
-		t.Fatalf("SetState(on): %v", err)
+	if err := a.Enable(ctx); err != nil {
+		t.Fatalf("Enable: %v", err)
 	}
 
 	if err := a.Rename(ctx, to); err != nil {

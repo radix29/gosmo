@@ -41,8 +41,8 @@ func scriptIndex(idx *Index, tableName string, opts ScriptOptions) string {
 		if opts.IncludeIfNotExists {
 			sb.WriteString(indexExistenceGuard(idx.Name, tableName))
 		}
-		fmt.Fprintf(&sb, "CREATE CLUSTERED COLUMNSTORE INDEX %s ON %s%s%s;\nGO\n\n",
-			quoteIdent(idx.Name), tableName, columnstoreWithClause(idx), dataSpaceClause(idx.DataSpace))
+		fmt.Fprintf(&sb, "CREATE CLUSTERED COLUMNSTORE INDEX %s ON %s%s%s%s;\nGO\n\n",
+			quoteIdent(idx.Name), tableName, columnstoreOrderClause(idx), columnstoreWithClause(idx), dataSpaceClause(idx.DataSpace))
 		return sb.String()
 	case idx.Type == IndexTypeColumnStore:
 		// sys.index_columns marks every column of a nonclustered columnstore
@@ -56,8 +56,8 @@ func scriptIndex(idx *Index, tableName string, opts ScriptOptions) string {
 		if opts.IncludeIfNotExists {
 			sb.WriteString(indexExistenceGuard(idx.Name, tableName))
 		}
-		fmt.Fprintf(&sb, "CREATE NONCLUSTERED COLUMNSTORE INDEX %s\n    ON %s (%s)",
-			quoteIdent(idx.Name), tableName, strings.Join(cols, ", "))
+		fmt.Fprintf(&sb, "CREATE NONCLUSTERED COLUMNSTORE INDEX %s\n    ON %s (%s)%s",
+			quoteIdent(idx.Name), tableName, strings.Join(cols, ", "), columnstoreOrderClause(idx))
 		// A filtered NCCI (2016+) recreated without its WHERE covers every
 		// row instead — a different, larger index under the same name.
 		if idx.FilterDefinition != "" {
@@ -85,6 +85,20 @@ func scriptIndex(idx *Index, tableName string, opts ScriptOptions) string {
 	sb.WriteString(rowstoreIndexCreate(idx, tableName, indexWithClause(idx, "\n    "), dataSpaceClause(idx.DataSpace)))
 	sb.WriteString(";\nGO\n\n")
 	return sb.String()
+}
+
+// columnstoreOrderClause renders an ordered columnstore index's ORDER (…),
+// with its leading space, or "" for an unordered one. Left off, the index is
+// recreated unordered and loses the segment elimination it was ordered for.
+func columnstoreOrderClause(idx *Index) string {
+	if len(idx.ColumnstoreOrder) == 0 {
+		return ""
+	}
+	cols := make([]string, len(idx.ColumnstoreOrder))
+	for i, c := range idx.ColumnstoreOrder {
+		cols[i] = quoteIdent(c)
+	}
+	return " ORDER (" + strings.Join(cols, ", ") + ")"
 }
 
 // xmlOrSpatialIndexCreate renders an XML or spatial index's CREATE up to the

@@ -121,9 +121,9 @@ func main() {
 		if c.IsNullable {
 			null = "NULL"
 		}
-		// ColumnTypeString renders the type the way SSMS does, resolving
+		// TypeString renders the type the way SSMS does, resolving
 		// MaxLength/Precision/Scale into "nvarchar(100)", "decimal(18,2)", ...
-		fmt.Printf("  %-12s %-16s %s\n", c.Name, gosmo.ColumnTypeString(c), null)
+		fmt.Printf("  %-12s %-16s %s\n", c.Name, c.TypeString(), null)
 	}
 
 	// -- Index -----------------------------------------------------------

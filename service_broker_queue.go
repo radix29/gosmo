@@ -71,7 +71,7 @@ type BrokerQueue struct {
 	// ActivationProcedureSchema and ActivationProcedureName are the same
 	// procedure unquoted, resolved through OBJECT_ID — the form
 	// QueueActivation takes, so a queue read back can be handed to
-	// AlterBrokerQueue without parsing the bracketed text. Both are empty
+	// BrokerQueue.Alter without parsing the bracketed text. Both are empty
 	// when the queue has no activation procedure, and also when it names one
 	// that has since been dropped: the catalog keeps the text either way.
 	ActivationProcedureSchema string
@@ -186,7 +186,7 @@ func (d *Database) BrokerQueueByName(ctx context.Context, schema, name string) (
 		return err
 	}, queueSelect+`
 WHERE  SCHEMA_NAME(q.schema_id) = @p1 AND q.name = @p2`, schema, name)
-	return foundRow(bq, err, notFoundf("gosmo: queue [%s].[%s] not found in %q", schema, name, d.Name), fmt.Sprintf("read queue [%s].[%s] in %q", schema, name, d.Name))
+	return foundRow(bq, err, notFoundf("gosmo: queue %s not found in %q", qualifiedName(schema, name), d.Name), fmt.Sprintf("read queue %s in %q", qualifiedName(schema, name), d.Name))
 }
 
 // BrokerQueueRef returns a lightweight handle for a Service Broker queue by name, without
@@ -212,7 +212,7 @@ func (q *BrokerQueue) Drop(ctx context.Context) error {
 		return err
 	}
 	if _, err := q.db.exec(ctx, "DROP QUEUE "+qualifiedName(q.Schema, q.Name)); err != nil {
-		return fmt.Errorf("gosmo: drop queue [%s].[%s]: %w", q.Schema, q.Name, err)
+		return fmt.Errorf("gosmo: drop queue %s: %w", qualifiedName(q.Schema, q.Name), err)
 	}
 	return nil
 }
@@ -410,30 +410,6 @@ type QueueSettings struct {
 	DropActivation bool
 }
 
-// AlterBrokerQueue changes a queue's settings. An empty schema is refused (ErrSchemaRequired).
-//
-// It needs ALTER on the queue itself (ALTER ON OBJECT::<queue>), CONTROL on
-// it, or ALTER on its schema or the database — measured on majors 13, 14 and
-// 17, which answered identically. The object-scoped ALTER is *not* enough to
-// drop the same queue, which needs CONTROL on it or ALTER on its schema: the
-// two verbs take different rights, and a caller gating them shares no entry
-// between them.
-func (d *Database) AlterBrokerQueue(ctx context.Context, schema, name string, s QueueSettings) error {
-	if err := requireSchema("alter broker queue", schema, name); err != nil {
-		return err
-	}
-	clauses, err := queueSettingClauses(s)
-	if err != nil {
-		return fmt.Errorf("gosmo: alter queue [%s].[%s]: %w", schema, name, err)
-	}
-	q := "ALTER QUEUE " + qualifiedName(schema, name) + "\n    WITH " +
-		strings.Join(clauses, ",\n         ")
-	if _, err := d.exec(ctx, q); err != nil {
-		return fmt.Errorf("gosmo: alter queue [%s].[%s]: %w", schema, name, err)
-	}
-	return nil
-}
-
 // queueSettingClauses renders the WITH clauses, or reports why the settings
 // cannot be a statement. Every refusal here is one the server would give
 // anyway, raised before a round trip and naming the field rather than the
@@ -495,13 +471,30 @@ func queueExecuteAsValue(executeAs string) string {
 	}
 }
 
-// Alter changes the queue's settings and mirrors them onto the receiver.
+// Alter changes the queue's settings and mirrors them onto the receiver. An
+// empty schema is refused (ErrSchemaRequired).
+//
+// It needs ALTER on the queue itself (ALTER ON OBJECT::<queue>), CONTROL on
+// it, or ALTER on its schema or the database — measured on majors 13, 14 and
+// 17, which answered identically. The object-scoped ALTER is *not* enough to
+// drop the same queue, which needs CONTROL on it or ALTER on its schema: the
+// two verbs take different rights, and a caller gating them shares no entry
+// between them.
 //
 // The fields it changed are mirrored onto the receiver — see
 // mirrorQueueSettings, which is also where EXECUTE AS SELF's one exception is.
 func (q *BrokerQueue) Alter(ctx context.Context, s QueueSettings) error {
-	if err := q.db.AlterBrokerQueue(ctx, q.Schema, q.Name, s); err != nil {
+	if err := requireSchema("alter broker queue", q.Schema, q.Name); err != nil {
 		return err
+	}
+	clauses, err := queueSettingClauses(s)
+	if err != nil {
+		return fmt.Errorf("gosmo: alter queue %s: %w", qualifiedName(q.Schema, q.Name), err)
+	}
+	stmt := "ALTER QUEUE " + qualifiedName(q.Schema, q.Name) + "\n    WITH " +
+		strings.Join(clauses, ",\n         ")
+	if _, err := q.db.exec(ctx, stmt); err != nil {
+		return fmt.Errorf("gosmo: alter queue %s: %w", qualifiedName(q.Schema, q.Name), err)
 	}
 	mirrorQueueSettings(ctx, q, s)
 	return nil
@@ -549,4 +542,15 @@ func mirrorQueueSettings(ctx context.Context, q *BrokerQueue, s QueueSettings) {
 		setIfApplied(ctx, &q.MaxReaders, 0)
 		setIfApplied(ctx, &q.ActivationExecuteAs, "")
 	}
+}
+
+// Transfer moves the queue into another schema (ALTER SCHEMA ... TRANSFER).
+// It keeps its name and object_id; permissions granted on it directly are
+// dropped by the server.
+func (q *BrokerQueue) Transfer(ctx context.Context, targetSchema string) error {
+	if err := q.db.transferSchemaObject(ctx, "queue", transferObjectClass, targetSchema, q.Schema, q.Name); err != nil {
+		return err
+	}
+	setIfApplied(ctx, &q.Schema, targetSchema)
+	return nil
 }

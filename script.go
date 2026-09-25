@@ -348,8 +348,8 @@ var placeholderPat = regexp.MustCompile(`@p([0-9]+)`)
 // A captured statement is handed to a query editor and run by hand, where
 // nothing binds parameters — so recording the placeholder text alone produced
 // a script that fails with "Must declare the scalar variable '@p1'". That was
-// a real bug: Index.Rename, Database.RenameTable and
-// Database.DropTable(cascade=true) are the parameterised write methods, and
+// a real bug: Index.Rename, Table.Rename and
+// Table.Drop(cascade=true) are the parameterised write methods, and
 // all three are reachable from a Script Changes button.
 //
 // Declaring the parameters in a preamble instead would collide, not compose:

@@ -133,13 +133,13 @@ func TestLiveKeyOps(t *testing.T) {
 
 	// -- Owner changes, and the permissions they drop.
 	run("GRANT VIEW DEFINITION ON CERTIFICATE::c1 TO u1")
-	if err := c1.ChangeOwner(ctx, "u1"); err != nil {
+	if err := c1.SetOwner(ctx, "u1"); err != nil {
 		t.Fatal(err)
 	}
-	if err := d.AsymmetricKeyRef("a1").ChangeOwner(ctx, "u1"); err != nil {
+	if err := d.AsymmetricKeyRef("a1").SetOwner(ctx, "u1"); err != nil {
 		t.Fatal(err)
 	}
-	if err := d.SymmetricKeyRef("s1").ChangeOwner(ctx, "u1"); err != nil {
+	if err := d.SymmetricKeyRef("s1").SetOwner(ctx, "u1"); err != nil {
 		t.Fatal(err)
 	}
 	if c1.Owner != "u1" {

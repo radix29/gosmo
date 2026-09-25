@@ -19,18 +19,20 @@ func TestDropStatements(t *testing.T) {
 		want  string
 	}{
 		{
-			name:  "DropView",
-			write: func(ctx context.Context, d *Database) error { return d.DropView(ctx, "Sales", "vCustomer") },
+			name:  "View.Drop",
+			write: func(ctx context.Context, d *Database) error { return d.ViewRef("Sales", "vCustomer").Drop(ctx) },
 			want:  "DROP VIEW [Sales].[vCustomer]",
 		},
 		{
-			name:  "DropFunction",
-			write: func(ctx context.Context, d *Database) error { return d.DropFunction(ctx, "dbo", "fnAge") },
-			want:  "DROP FUNCTION [dbo].[fnAge]",
+			name: "UserDefinedFunction.Drop",
+			write: func(ctx context.Context, d *Database) error {
+				return d.UserDefinedFunctionRef("dbo", "fnAge").Drop(ctx)
+			},
+			want: "DROP FUNCTION [dbo].[fnAge]",
 		},
 		{
-			name:  "DropTrigger",
-			write: func(ctx context.Context, d *Database) error { return d.DropTrigger(ctx, "dbo", "trAudit") },
+			name:  "Trigger.Drop",
+			write: func(ctx context.Context, d *Database) error { return d.TriggerRef("dbo", "trAudit").Drop(ctx) },
 			want:  "DROP TRIGGER [dbo].[trAudit]",
 		},
 		{
@@ -273,18 +275,18 @@ func TestRenameStatements(t *testing.T) {
 		want  []string
 	}{
 		{
-			name: "RenameObject",
+			name: "View.Rename",
 			write: func(ctx context.Context, d *Database) error {
-				return d.RenameObject(ctx, "Sales", "vOld", "vNew")
+				return d.ViewRef("Sales", "vOld").Rename(ctx, "vNew")
 			},
 			want: []string{"EXEC sp_rename", "N'[Sales].[vOld]'", "N'vNew'", "N'OBJECT'"},
 		},
 		{
 			// The counterpart to a rename: sp_rename cannot cross schemas, so
 			// the move is its own statement and its own method.
-			name: "TransferObject",
+			name: "Table.Transfer",
 			write: func(ctx context.Context, d *Database) error {
-				return d.TransferObject(ctx, "arch]ive", "sa]les", "Or'ders")
+				return d.TableRef("sa]les", "Or'ders").Transfer(ctx, "arch]ive")
 			},
 			want: []string{"ALTER SCHEMA [arch]]ive] TRANSFER [sa]]les].[Or'ders]"},
 		},
@@ -298,9 +300,9 @@ func TestRenameStatements(t *testing.T) {
 		{
 			// sp_rename's USERDATATYPE class is the only one that reaches
 			// sys.types, and it reaches alias types only.
-			name: "RenameUserDefinedDataType",
+			name: "UserDefinedDataType.Rename",
 			write: func(ctx context.Context, d *Database) error {
-				return d.RenameUserDefinedDataType(ctx, "dbo", "Phone", "PhoneNo")
+				return d.UserDefinedDataTypeRef("dbo", "Phone").Rename(ctx, "PhoneNo")
 			},
 			want: []string{"EXEC sp_rename", "N'[dbo].[Phone]'", "N'PhoneNo'", "N'USERDATATYPE'"},
 		},
@@ -308,16 +310,16 @@ func TestRenameStatements(t *testing.T) {
 			// A type is not in sys.objects, so TRANSFER needs its class
 			// prefix; without it the server refuses the transfer naming an
 			// object that does not exist.
-			name: "TransferType",
+			name: "UserDefinedDataType.Transfer",
 			write: func(ctx context.Context, d *Database) error {
-				return d.TransferType(ctx, "archive", "sales", "Phone")
+				return d.UserDefinedDataTypeRef("sales", "Phone").Transfer(ctx, "archive")
 			},
 			want: []string{"ALTER SCHEMA [archive] TRANSFER TYPE::[sales].[Phone]"},
 		},
 		{
-			name: "TransferXMLSchemaCollection",
+			name: "XMLSchemaCollection.Transfer",
 			write: func(ctx context.Context, d *Database) error {
-				return d.TransferXMLSchemaCollection(ctx, "archive", "dbo", "OrderSchema")
+				return d.XMLSchemaCollectionRef("dbo", "OrderSchema").Transfer(ctx, "archive")
 			},
 			want: []string{"ALTER SCHEMA [archive] TRANSFER XML SCHEMA COLLECTION::[dbo].[OrderSchema]"},
 		},
@@ -376,25 +378,25 @@ func TestServerLevelDropAndRenameStatements(t *testing.T) {
 			want:  "DROP SERVER ROLE [auditors]",
 		},
 		{
-			name: "RenameDatabase",
+			name: "Database.Rename",
 			write: func(ctx context.Context, s *Server) error {
-				return s.RenameDatabase(ctx, "AppDB", "AppDB2", false)
+				return s.DatabaseRef("AppDB").Rename(ctx, "AppDB2", false)
 			},
 			want: "ALTER DATABASE [AppDB] MODIFY NAME = [AppDB2]",
 		},
 		{
 			// Forced: single-user before, multi-user after — and the release
 			// names the database by whatever it is called by then.
-			name: "RenameDatabase force",
+			name: "Database.Rename force",
 			write: func(ctx context.Context, s *Server) error {
-				return s.RenameDatabase(ctx, "AppDB", "AppDB2", true)
+				return s.DatabaseRef("AppDB").Rename(ctx, "AppDB2", true)
 			},
 			want: "ALTER DATABASE [AppDB] SET SINGLE_USER WITH ROLLBACK IMMEDIATE",
 		},
 		{
-			name: "RenameDatabase force releases under the new name",
+			name: "Database.Rename force releases under the new name",
 			write: func(ctx context.Context, s *Server) error {
-				return s.RenameDatabase(ctx, "AppDB", "AppDB2", true)
+				return s.DatabaseRef("AppDB").Rename(ctx, "AppDB2", true)
 			},
 			want: "ALTER DATABASE [AppDB2] SET MULTI_USER",
 		},
@@ -418,7 +420,7 @@ func TestServerLevelDropAndRenameStatements(t *testing.T) {
 // there has to reach the caller as the server's error, or a UI built on this
 // reports "deleted" for an object it never touched. Half the family used to
 // carry it and half did not, so the same gesture answered two different ways
-// depending on the object type. See the note on Database.DropTable.
+// depending on the object type. See the note on Table.Drop.
 //
 // Asserted over the statements themselves rather than by grepping the source,
 // so a new Drop* that reintroduces IF EXISTS is caught only if it is listed
@@ -432,14 +434,14 @@ func TestDropStatementsAreNotIdempotent(t *testing.T) {
 		name  string
 		write func() error
 	}{
-		{"view", func() error { return d.DropView(ctx, "dbo", "v") }},
-		{"function", func() error { return d.DropFunction(ctx, "dbo", "f") }},
-		{"procedure", func() error { return d.DropStoredProcedure(ctx, "dbo", "p") }},
-		{"trigger", func() error { return d.DropTrigger(ctx, "dbo", "tr") }},
+		{"view", func() error { return d.ViewRef("dbo", "v").Drop(ctx) }},
+		{"function", func() error { return d.UserDefinedFunctionRef("dbo", "f").Drop(ctx) }},
+		{"procedure", func() error { return d.StoredProcedureRef("dbo", "p").Drop(ctx) }},
+		{"trigger", func() error { return d.TriggerRef("dbo", "tr").Drop(ctx) }},
 		{"database trigger", func() error { return d.DatabaseTriggerRef("ddl_tr").Drop(ctx) }},
 		{"synonym", func() error { return d.SynonymRef("dbo", "syn").Drop(ctx) }},
 		{"sequence", func() error { return d.SequenceRef("dbo", "seq").Drop(ctx) }},
-		{"table", func() error { return d.DropTable(ctx, "dbo", "t", false) }},
+		{"table", func() error { return d.TableRef("dbo", "t").Drop(ctx, false) }},
 		{"database scoped credential", func() error { return d.DatabaseScopedCredentialRef("cred").Drop(ctx) }},
 		{"certificate", func() error { return d.CertificateRef("cert").Drop(ctx) }},
 		{"asymmetric key", func() error { return d.AsymmetricKeyRef("key").Drop(ctx) }},
@@ -469,8 +471,8 @@ func TestDropStatementsAreNotIdempotent(t *testing.T) {
 func TestDropRenameQuotesAwkwardNames(t *testing.T) {
 	d := &Database{server: &Server{}, Name: "AppDB"}
 	ctx, script := WithScript(context.Background())
-	if err := d.DropView(ctx, "we]ird", "v]iew"); err != nil {
-		t.Fatalf("DropView: %v", err)
+	if err := d.ViewRef("we]ird", "v]iew").Drop(ctx); err != nil {
+		t.Fatalf("View.Drop: %v", err)
 	}
 	if err := (&Table{db: d, Schema: "dbo", Name: "Ord]ers"}).DropConstraint(ctx, "CK]1"); err != nil {
 		t.Fatalf("DropConstraint: %v", err)
@@ -483,13 +485,13 @@ func TestDropRenameQuotesAwkwardNames(t *testing.T) {
 	}
 }
 
-// TestTransferObjectRefusals pins the two cases where no statement should
+// TestTransferRefusals pins the two cases where no statement should
 // reach the server. A same-schema transfer is not a no-op at the server — it
 // still drops the permissions granted directly on the object — so it is
 // refused rather than sent, and an empty target would quote into
 // "ALTER SCHEMA [] TRANSFER", which fails naming a schema the caller never
 // typed.
-func TestTransferObjectRefusals(t *testing.T) {
+func TestTransferRefusals(t *testing.T) {
 	for _, c := range []struct {
 		name           string
 		target, schema string
@@ -502,7 +504,7 @@ func TestTransferObjectRefusals(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			d := &Database{server: &Server{}, Name: "AppDB"}
 			ctx, script := WithScript(context.Background())
-			err := d.TransferObject(ctx, c.target, c.schema, "Orders")
+			err := d.TableRef(c.schema, "Orders").Transfer(ctx, c.target)
 			if err == nil {
 				t.Fatalf("no error; statements: %v", script.Statements())
 			}
@@ -516,12 +518,12 @@ func TestTransferObjectRefusals(t *testing.T) {
 	}
 }
 
-// TestTransferObjectCaseOnlyDifferenceAsksTheServer pins T13: target and
+// TestTransferCaseOnlyDifferenceAsksTheServer pins T13: target and
 // source names that differ only in case are one schema under a
 // case-insensitive collation and two under a case-sensitive one. The server's
 // SCHEMA_ID comparison decides, rather than a case-blind compare in Go that
 // refused a legitimate [sales] → [Sales] transfer in a _CS_ database.
-func TestTransferObjectCaseOnlyDifferenceAsksTheServer(t *testing.T) {
+func TestTransferCaseOnlyDifferenceAsksTheServer(t *testing.T) {
 	db, err := sql.Open("capture", "")
 	if err != nil {
 		t.Fatalf("sql.Open: %v", err)
@@ -540,7 +542,7 @@ func TestTransferObjectCaseOnlyDifferenceAsksTheServer(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			captured.reset(cannedRow{match: "SCHEMA_ID(@p1) = SCHEMA_ID(@p2)",
 				cols: []string{"same"}, row: []driver.Value{c.sameID}})
-			err := d.TransferObject(ctx, "SALES", "sales", "Orders")
+			err := d.TableRef("sales", "Orders").Transfer(ctx, "SALES")
 			sent := captured.find("ALTER SCHEMA [SALES] TRANSFER [sales].[Orders]") != ""
 			if sent != c.wantSent {
 				t.Errorf("ALTER SCHEMA sent = %v, want %v (err %v)", sent, c.wantSent, err)
@@ -555,8 +557,8 @@ func TestTransferObjectCaseOnlyDifferenceAsksTheServer(t *testing.T) {
 	}
 	// Names that differ by more than case never ask.
 	captured.reset()
-	if err := d.TransferObject(ctx, "hr", "sales", "Orders"); err != nil {
-		t.Fatalf("TransferObject: %v", err)
+	if err := d.TableRef("sales", "Orders").Transfer(ctx, "hr"); err != nil {
+		t.Fatalf("Transfer: %v", err)
 	}
 	if captured.find("SCHEMA_ID(") != "" {
 		t.Error("a transfer between differently-spelled schemas queried SCHEMA_ID")
@@ -593,7 +595,7 @@ func TestAFailedForcedDropIsPutBackToMultiUser(t *testing.T) {
 	s := detServer(t)
 	detFailOn("DROP DATABASE")
 
-	if err := s.DropDatabase(context.Background(), "appdb", true); err == nil {
+	if err := s.DatabaseRef("appdb").Drop(context.Background(), true); err == nil {
 		t.Fatal("a failing drop returned no error")
 	}
 	stmts := detLog.statements()
@@ -611,7 +613,7 @@ func TestAFailedForcedDropIsPutBackToMultiUserEvenWhenTheContextIsGone(t *testin
 	s := detServer(t)
 	ctx := detCancelOn(t, "DROP DATABASE")
 
-	if err := s.DropDatabase(ctx, "appdb", true); err == nil {
+	if err := s.DatabaseRef("appdb").Drop(ctx, true); err == nil {
 		t.Fatal("a drop whose context expired returned no error")
 	}
 	stmts := detLog.statements()
@@ -630,7 +632,7 @@ func TestAFailedDropWithoutForceLeavesTheAccessModeAlone(t *testing.T) {
 	detLog.failOn = "DROP DATABASE" // a plain error: cut short, the worst case
 	detLog.mu.Unlock()
 
-	if err := s.DropDatabase(context.Background(), "appdb", false); err == nil {
+	if err := s.DatabaseRef("appdb").Drop(context.Background(), false); err == nil {
 		t.Fatal("a failing drop returned no error")
 	}
 	for _, stmt := range detLog.statements() {
@@ -646,8 +648,8 @@ func TestAFailedDropWithoutForceLeavesTheAccessModeAlone(t *testing.T) {
 // is worse than not issuing it. The batch's own repair is guarded on DB_ID.
 func TestASuccessfulDropDoesNotTryToAlterTheDatabaseAfterwards(t *testing.T) {
 	s := detServer(t)
-	if err := s.DropDatabase(context.Background(), "appdb", true); err != nil {
-		t.Fatalf("DropDatabase: %v", err)
+	if err := s.DatabaseRef("appdb").Drop(context.Background(), true); err != nil {
+		t.Fatalf("Database.Drop: %v", err)
 	}
 	stmts := detLog.statements()
 	if len(stmts) != 1 {
@@ -665,7 +667,7 @@ func TestAForcedRenameReleasesMultiUserEvenWhenTheContextIsGone(t *testing.T) {
 	s := detServer(t)
 	ctx := detCancelOn(t, "MODIFY NAME")
 
-	if err := s.RenameDatabase(ctx, "AppDB", "AppDB2", true); err == nil {
+	if err := s.DatabaseRef("AppDB").Rename(ctx, "AppDB2", true); err == nil {
 		t.Fatal("a rename whose context expired returned no error")
 	}
 	stmts := detLog.statements()
@@ -688,9 +690,9 @@ func TestAForcedRenameIsOneBatchThatReleasesWhicheverNameTheDatabaseHas(t *testi
 		if fail {
 			detFailOn("MODIFY NAME")
 		}
-		err := s.RenameDatabase(context.Background(), "AppDB", "AppDB2", true)
+		err := s.DatabaseRef("AppDB").Rename(context.Background(), "AppDB2", true)
 		if (err != nil) != fail {
-			t.Fatalf("fail=%v: RenameDatabase returned %v", fail, err)
+			t.Fatalf("fail=%v: Database.Rename returned %v", fail, err)
 		}
 		stmts := detLog.statements()
 		if len(stmts) != 1 {
@@ -721,9 +723,9 @@ func TestAForcedDropOnAManagedInstanceKillsSessionsInsteadOfSingleUser(t *testin
 			detLog.failOn = "DROP DATABASE"
 			detLog.mu.Unlock()
 		}
-		err := s.DropDatabase(context.Background(), "appdb", true)
+		err := s.DatabaseRef("appdb").Drop(context.Background(), true)
 		if (err != nil) != fail {
-			t.Fatalf("fail=%v: DropDatabase returned %v", fail, err)
+			t.Fatalf("fail=%v: Database.Drop returned %v", fail, err)
 		}
 		// One batch: a session reconnecting between the KILLs and the DROP
 		// fails the DROP (S8).
@@ -746,8 +748,8 @@ func TestAForcedDropOnAManagedInstanceKillsSessionsInsteadOfSingleUser(t *testin
 func TestAForcedRenameOnAManagedInstanceKillsSessionsInsteadOfSingleUser(t *testing.T) {
 	s := detServer(t)
 	s.info = &ServerInfo{EngineEdition: int(EngineAzureManagedInst)}
-	if err := s.RenameDatabase(context.Background(), "AppDB", "AppDB2", true); err != nil {
-		t.Fatalf("RenameDatabase: %v", err)
+	if err := s.DatabaseRef("AppDB").Rename(context.Background(), "AppDB2", true); err != nil {
+		t.Fatalf("Database.Rename: %v", err)
 	}
 	stmts := detLog.statements()
 	if len(stmts) != 1 || !strings.Contains(stmts[0], "KILL") ||
@@ -761,8 +763,8 @@ func TestAForcedRenameOnAManagedInstanceKillsSessionsInsteadOfSingleUser(t *test
 func TestAForcedDropOnPremStillUsesSingleUser(t *testing.T) {
 	s := detServer(t)
 	s.info = &ServerInfo{EngineEdition: int(EngineEnterprise)}
-	if err := s.DropDatabase(context.Background(), "appdb", true); err != nil {
-		t.Fatalf("DropDatabase: %v", err)
+	if err := s.DatabaseRef("appdb").Drop(context.Background(), true); err != nil {
+		t.Fatalf("Database.Drop: %v", err)
 	}
 	stmts := detLog.statements()
 	if len(stmts) != 1 {
@@ -776,10 +778,10 @@ func TestAForcedDropOnPremStillUsesSingleUser(t *testing.T) {
 // between freeing the single-user slot and using it either (S8).
 func TestWithScriptForcedExclusiveWritesAreOneStatement(t *testing.T) {
 	cases := map[string]func(context.Context, *Server) error{
-		"drop":   func(ctx context.Context, s *Server) error { return s.DropDatabase(ctx, "appdb", true) },
-		"rename": func(ctx context.Context, s *Server) error { return s.RenameDatabase(ctx, "appdb", "appdb2", true) },
+		"drop":   func(ctx context.Context, s *Server) error { return s.DatabaseRef("appdb").Drop(ctx, true) },
+		"rename": func(ctx context.Context, s *Server) error { return s.DatabaseRef("appdb").Rename(ctx, "appdb2", true) },
 		"detach": func(ctx context.Context, s *Server) error {
-			return s.DetachDatabase(ctx, "appdb", DetachOptions{DropConnections: true})
+			return s.DatabaseRef("appdb").Detach(ctx, DetachOptions{DropConnections: true})
 		},
 	}
 	for name, write := range cases {

@@ -298,7 +298,7 @@ func (spec ServerAuditSpec) createServerAuditStatement() (string, error) {
 }
 
 // CreateServerAudit creates a server audit. It is created disabled, which is
-// what CREATE SERVER AUDIT does; use SetState to turn it on.
+// what CREATE SERVER AUDIT does; use Enable to turn it on.
 func (s *Server) CreateServerAudit(ctx context.Context, spec ServerAuditSpec) (*ServerAudit, error) {
 	stmt, err := spec.createServerAuditStatement()
 	if err != nil {
@@ -312,13 +312,14 @@ func (s *Server) CreateServerAudit(ctx context.Context, spec ServerAuditSpec) (*
 	})
 }
 
-// SetState enables or disables the audit.
+// Enable turns the audit on (STATE = ON).
 //
-// This is the one ALTER SERVER AUDIT form the server accepts on an enabled
+// STATE is the one ALTER SERVER AUDIT form the server accepts on an enabled
 // audit.
-func (a *ServerAudit) SetState(ctx context.Context, on bool) error {
-	return a.setStateNamed(ctx, a.Name, on)
-}
+func (a *ServerAudit) Enable(ctx context.Context) error { return a.setStateNamed(ctx, a.Name, true) }
+
+// Disable turns the audit off (STATE = OFF).
+func (a *ServerAudit) Disable(ctx context.Context) error { return a.setStateNamed(ctx, a.Name, false) }
 
 // setStateNamed toggles the state of the audit addressed by name, which
 // is not always a.Name: Rename restores the state after MODIFY NAME has
@@ -403,7 +404,7 @@ func (a *ServerAudit) withAuditDisabled(ctx context.Context, fn func(context.Con
 	if !enabled {
 		return fn(inner)
 	}
-	if err := a.SetState(unobserved(ctx), false); err != nil {
+	if err := a.Disable(unobserved(ctx)); err != nil {
 		return err
 	}
 	enable := func(ctx context.Context) error { return a.setStateNamed(ctx, name, true) }
@@ -499,7 +500,7 @@ func (a *ServerAudit) Rename(ctx context.Context, newName string) error {
 			return err
 		}
 		if enabled {
-			if err := a.SetState(unobserved(ctx), false); err != nil {
+			if err := a.Disable(unobserved(ctx)); err != nil {
 				return err
 			}
 			restore = true
@@ -544,7 +545,7 @@ func (a *ServerAudit) Drop(ctx context.Context) error {
 		return err
 	}
 	if enabled {
-		if err := a.SetState(ctx, false); err != nil {
+		if err := a.Disable(ctx); err != nil {
 			return err
 		}
 	}

@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 )
 
@@ -558,552 +557,105 @@ WHERE  SCHEMA_NAME(t.schema_id) = @p1
 	}, q, schema, name)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return nil, notFoundf("gosmo: table [%s].[%s] not found in %q", schema, name, d.Name)
+			return nil, notFoundf("gosmo: table %s not found in %q", qualifiedName(schema, name), d.Name)
 		}
 		return nil, err
 	}
 	return t, nil
 }
 
-// -- Database users ------------------------------------------------------------
+// -- Drop and rename -----------------------------------------------------------
 
-// userTypes is every sys.database_principals type that is a user rather than
-// a role: SQL, Windows user and group, Entra user and group ('E','X'), and
-// the certificate- and asymmetric-key-mapped users ('C','K'). Listing only
-// the first three left the rest out of the Users folder and made Script as
-// report them not found — every FROM EXTERNAL PROVIDER user on Managed
-// Instance among them.
-const userTypes = `('S','U','G','E','X','C','K')`
-
-// Users returns all database users.
-func (d *Database) Users(ctx context.Context) ([]*User, error) {
-	const q = `
-SELECT name, principal_id, type_desc, default_schema_name,
-       create_date, modify_date, authentication_type_desc
-FROM   sys.database_principals
-WHERE  type IN ` + userTypes + `
-ORDER  BY name`
-
-	rows, err := d.query(ctx, q)
-	return scanRows(rows, err, fmt.Sprintf("list users in %q", d.Name), func(scan func(...any) error) (*User, error) {
-		u := &User{db: d}
-		var defSchema, authType sql.NullString
-		if err := scan(&u.Name, &u.ID, &u.UserType, &defSchema,
-			&u.CreateDate, &u.ModifyDate, &authType); err != nil {
-			return nil, err
-		}
-		u.DefaultSchema = defSchema.String
-		u.AuthType = authType.String
-		return u, nil
-	})
-}
-
-// UserByName returns a single database user by name, with its SID, matching
-// server login (if any) and mapped certificate or asymmetric key filled in —
-// Users leaves these out since Object Explorer's tree listing never needs
-// them.
-func (d *Database) UserByName(ctx context.Context, name string) (*User, error) {
-	const q = `
-SELECT dp.principal_id, dp.type_desc, dp.default_schema_name,
-       dp.create_date, dp.modify_date, dp.authentication_type_desc, dp.sid,
-       sp.name, sp.is_disabled,
-       CASE dp.type WHEN 'C' THEN (SELECT TOP 1 c.name  FROM sys.certificates    c  WHERE c.sid  = dp.sid)
-                    WHEN 'K' THEN (SELECT TOP 1 ak.name FROM sys.asymmetric_keys ak WHERE ak.sid = dp.sid)
-       END
-FROM   sys.database_principals dp
-LEFT   JOIN sys.server_principals sp ON sp.sid = dp.sid
-WHERE  dp.type IN ` + userTypes + ` AND dp.name = @p1`
-
-	u := &User{db: d, Name: name}
-	var defSchema, authType, loginName, mapped sql.NullString
-	var loginDisabled sql.NullBool
-	err := d.queryRow(ctx, func(row *sql.Row) error {
-		return row.Scan(&u.ID, &u.UserType, &defSchema, &u.CreateDate, &u.ModifyDate,
-			&authType, &u.SID, &loginName, &loginDisabled, &mapped)
-	}, q, name)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, notFoundf("gosmo: database user %q not found in %q", name, d.Name)
-		}
-		return nil, fmt.Errorf("gosmo: find database user %q in %q: %w", name, d.Name, err)
+// Drop drops the database.
+// When force is true, active connections are terminated first — by SET
+// SINGLE_USER WITH ROLLBACK IMMEDIATE, or on a Managed Instance, which refuses
+// that statement, by killing the database's sessions (see killDatabaseSessions).
+// This Server's own idle sessions are released first either way (see
+// ReleaseIdleConnections).
+func (d *Database) Drop(ctx context.Context, force bool) error {
+	s, name := d.server, d.Name
+	if name == "" {
+		return fmt.Errorf("gosmo: drop database: name is required")
 	}
-	u.DefaultSchema = defSchema.String
-	u.AuthType = authType.String
-	u.LoginName = loginName.String
-	u.LoginDisabled = loginDisabled.Bool
-	u.MappedObject = mapped.String
-	return u, nil
-}
-
-// UserRef returns a lightweight handle for name without querying the server
-// at all — unlike UserByName, it doesn't verify the user
-// exists or populate ID/UserType/DefaultSchema/AuthType/SID/LoginName/etc.
-// (they stay at their zero value). Every write method on *User (Drop,
-// Rename, SetDefaultSchema, SetLogin, AddToRole,
-// Grant, ...) only ever needs the user's name, never those cached
-// fields, so this is sufficient for issuing further ALTER-style calls against
-// a user the caller already knows exists — most commonly one it just created
-// in the same operation. See Server.DatabaseRef's doc comment for why this
-// also matters under a WithScript-derived context.
-func (d *Database) UserRef(name string) *User {
-	return &User{db: d, Name: name}
-}
-
-// UserKind selects the CREATE USER form a CreateUserRequest issues.
-type UserKind int
-
-const (
-	// UserForLogin is a user mapped to a server login (FOR LOGIN). It is the
-	// zero value.
-	UserForLogin UserKind = iota
-	// UserWithoutLogin is a user nobody connects as (WITHOUT LOGIN) — for
-	// impersonation, or to own objects and hold permissions.
-	UserWithoutLogin
-	// UserWithPassword is a contained database user that authenticates with
-	// its own password (WITH PASSWORD). The database must be partially
-	// contained, except on Azure SQL Database, where every database is.
-	UserWithPassword
-	// UserWindows is a Windows user or group, named DOMAIN\name. With a
-	// Login it is FOR LOGIN; without one it is the bare statement, a
-	// contained database's Windows user.
-	UserWindows
-	// UserFromCertificate maps the user to a certificate in the database
-	// (FROM CERTIFICATE), to hold permissions for code signed by it.
-	UserFromCertificate
-	// UserFromAsymmetricKey is UserFromCertificate for an asymmetric key.
-	UserFromAsymmetricKey
-	// UserFromExternalProvider is a Microsoft Entra user or group
-	// (FROM EXTERNAL PROVIDER) — Azure SQL Database, Managed Instance and
-	// SQL Server 2022 and later.
-	UserFromExternalProvider
-)
-
-// String renders the kind as the words used in error messages.
-func (k UserKind) String() string {
-	switch k {
-	case UserForLogin:
-		return "login-mapped"
-	case UserWithoutLogin:
-		return "login-less"
-	case UserWithPassword:
-		return "contained"
-	case UserWindows:
-		return "Windows"
-	case UserFromCertificate:
-		return "certificate-mapped"
-	case UserFromAsymmetricKey:
-		return "asymmetric-key-mapped"
-	case UserFromExternalProvider:
-		return "external provider"
-	}
-	return fmt.Sprintf("UserKind(%d)", int(k))
-}
-
-// CreateUserRequest describes a new database user. Kind selects the form, and
-// each of the other fields is accepted only by the kinds that use it — a field
-// set for a kind that has no clause for it is refused rather than dropped.
-type CreateUserRequest struct {
-	Name string
-	Kind UserKind
-	// Login is required for UserForLogin and optional for UserWindows.
-	Login string
-	// Password is required for UserWithPassword, and refused otherwise.
-	Password string
-	// Certificate / AsymmetricKey name the object a mapped user maps to.
-	Certificate   string
-	AsymmetricKey string
-	// ObjectID is the Entra object id, for UserFromExternalProvider only.
-	ObjectID string
-	// DefaultSchema is refused for the certificate- and key-mapped kinds,
-	// which SQL Server refuses it for too.
-	DefaultSchema string
-}
-
-// CreateUser creates a database user of any kind — see UserKind.
-//
-// A contained user's password goes through QuoteLiteral, as CreateLogin's
-// does. Asking for one in a database that is not partially contained is
-// refused here, after a read of sys.databases: SQL Server's own refusal
-// (Msg 33233) says "only in a contained database" without naming the setting
-// or the database.
-func (d *Database) CreateUser(ctx context.Context, req CreateUserRequest) (*User, error) {
-	stmt, err := createUserStatement(req)
-	if err != nil {
-		if req.Name == "" {
-			return nil, fmt.Errorf("gosmo: create user: %w", err)
-		}
-		return nil, fmt.Errorf("gosmo: create user %q: %w", req.Name, err)
-	}
-	if req.Kind == UserWithPassword && !d.server.everyDatabaseContained() {
-		var containment string
-		if err := d.server.queryRowScan(ctx,
-			"SELECT containment_desc FROM sys.databases WHERE name = @p1",
-			[]any{d.Name}, &containment); err != nil {
-			return nil, fmt.Errorf("gosmo: create user %q: read containment of %q: %w", req.Name, d.Name, err)
-		}
-		if containment != "PARTIAL" {
-			return nil, fmt.Errorf("gosmo: create user %q: a user with a password needs a contained database, and %q has CONTAINMENT = %s",
-				req.Name, d.Name, containment)
-		}
-	}
-	if _, err := d.exec(ctx, stmt); err != nil {
-		return nil, fmt.Errorf("gosmo: create user %q: %w", req.Name, err)
-	}
-	return createdObject(ctx, d.UserRef(req.Name), func() (*User, error) {
-		return d.UserByName(ctx, req.Name)
-	})
-}
-
-// everyDatabaseContained reports whether the engine takes contained users in
-// any database without CONTAINMENT = PARTIAL — Azure SQL Database does, and
-// reports containment NONE for all of them.
-func (s *Server) everyDatabaseContained() bool {
-	return s.info != nil && EngineEdition(s.info.EngineEdition) == EngineAzureSQLDatabase
-}
-
-// createUserStatement validates req and builds its CREATE USER statement.
-func createUserStatement(req CreateUserRequest) (string, error) {
-	if req.Name == "" {
-		return "", fmt.Errorf("user name is required")
-	}
-	k := req.Kind
-	// Each optional field against the kinds that have a clause for it.
+	s.releaseIdle(ctx)
+	drop := fmt.Sprintf("DROP DATABASE %s", quoteIdent(name))
 	switch {
-	case req.Login != "" && k != UserForLogin && k != UserWindows:
-		return "", fmt.Errorf("a %s user takes no login", k)
-	case req.Password != "" && k != UserWithPassword:
-		return "", fmt.Errorf("a %s user takes no password", k)
-	case req.Certificate != "" && k != UserFromCertificate:
-		return "", fmt.Errorf("a %s user maps to no certificate", k)
-	case req.AsymmetricKey != "" && k != UserFromAsymmetricKey:
-		return "", fmt.Errorf("a %s user maps to no asymmetric key", k)
-	case req.ObjectID != "" && k != UserFromExternalProvider:
-		return "", fmt.Errorf("ObjectID applies to an external provider user only, not a %s user", k)
-	case req.DefaultSchema != "" && (k == UserFromCertificate || k == UserFromAsymmetricKey):
-		return "", fmt.Errorf("a %s user cannot have a default schema", k)
-	}
-
-	var opts []string
-	stmt := "CREATE USER " + quoteIdent(req.Name)
-	switch k {
-	case UserForLogin:
-		// Without this, quoteIdent("") turns an empty login into "FOR LOGIN
-		// []" — a statement the server rejects with a message naming an empty
-		// login the caller never typed.
-		if req.Login == "" {
-			return "", fmt.Errorf("login name is required")
+	case !force:
+		// Nothing here set the access mode, so nothing is repaired: a
+		// MULTI_USER on the way out would silently undo a RESTRICTED_USER or
+		// SINGLE_USER the database was deliberately left in.
+		if err := s.exec(ctx, drop); err != nil {
+			return fmt.Errorf("gosmo: drop database %q: %w", name, err)
 		}
-		stmt += " FOR LOGIN " + quoteIdent(req.Login)
-	case UserWithoutLogin:
-		stmt += " WITHOUT LOGIN"
-	case UserWithPassword:
-		if req.Password == "" {
-			return "", fmt.Errorf("a contained user requires a password")
-		}
-		opts = append(opts, "PASSWORD = "+QuoteLiteral(req.Password))
-	case UserWindows:
-		if req.Login != "" {
-			stmt += " FOR LOGIN " + quoteIdent(req.Login)
-		}
-	case UserFromCertificate:
-		if req.Certificate == "" {
-			return "", fmt.Errorf("a certificate-mapped user requires Certificate")
-		}
-		stmt += " FROM CERTIFICATE " + quoteIdent(req.Certificate)
-	case UserFromAsymmetricKey:
-		if req.AsymmetricKey == "" {
-			return "", fmt.Errorf("an asymmetric-key-mapped user requires AsymmetricKey")
-		}
-		stmt += " FROM ASYMMETRIC KEY " + quoteIdent(req.AsymmetricKey)
-	case UserFromExternalProvider:
-		stmt += " FROM EXTERNAL PROVIDER"
-		if req.ObjectID != "" {
-			opts = append(opts, "OBJECT_ID = "+QuoteLiteral(req.ObjectID))
+	case s.refusesSingleUser():
+		// One batch for the same reason as exclusiveBatch: a session that
+		// reconnects between the KILLs and the DROP makes the DROP fail.
+		if err := s.exec(ctx, killDatabaseSessionsBatch(name)+";\n"+drop+";"); err != nil {
+			return fmt.Errorf("gosmo: drop database %q: %w", name, err)
 		}
 	default:
-		return "", fmt.Errorf("unknown user kind %s", k)
-	}
-	if req.DefaultSchema != "" {
-		opts = append(opts, "DEFAULT_SCHEMA = "+quoteIdent(req.DefaultSchema))
-	}
-	if len(opts) > 0 {
-		stmt += " WITH " + strings.Join(opts, ", ")
-	}
-	return stmt, nil
-}
-
-// -- Settings ------------------------------------------------------------------
-
-// SetRecoveryModel changes the database recovery model.
-func (d *Database) SetRecoveryModel(ctx context.Context, model RecoveryModel) error {
-	if !validRecoveryModel(model) {
-		return fmt.Errorf("gosmo: set recovery model: unrecognized recovery model %q", model)
-	}
-	if err := d.server.exec(ctx,
-		fmt.Sprintf("ALTER DATABASE %s SET RECOVERY %s", quoteIdent(d.Name), model),
-	); err != nil {
-		return fmt.Errorf("gosmo: set recovery model: %w", err)
-	}
-	setIfApplied(ctx, &d.RecoveryModel, model)
-	return nil
-}
-
-// SetCompatibilityLevel changes the database compatibility level.
-func (d *Database) SetCompatibilityLevel(ctx context.Context, level CompatibilityLevel) error {
-	if err := d.server.exec(ctx,
-		fmt.Sprintf("ALTER DATABASE %s SET COMPATIBILITY_LEVEL = %d", quoteIdent(d.Name), level),
-	); err != nil {
-		return fmt.Errorf("gosmo: set compatibility level: %w", err)
-	}
-	setIfApplied(ctx, &d.CompatibilityLevel, level)
-	return nil
-}
-
-// Termination says what an ALTER DATABASE needing exclusive access does about
-// the other sessions in the database — the WITH <termination> clause of ALTER
-// DATABASE SET.
-type Termination int
-
-const (
-	// TerminationNone waits for the other sessions to leave, as the bare
-	// statement does. Nothing bounds the wait but the caller's context: WITH
-	// NO_WAIT was probed on 17.0 and still waited, so it is not offered.
-	TerminationNone Termination = iota
-
-	// TerminationRollbackImmediate disconnects every other session in the
-	// database and rolls back its open transaction, so the statement finishes
-	// now. Those sessions' uncommitted work is lost.
-	TerminationRollbackImmediate
-)
-
-// withClause is t as the suffix of an ALTER DATABASE SET statement.
-func (t Termination) withClause() (string, error) {
-	switch t {
-	case TerminationNone:
-		return "", nil
-	case TerminationRollbackImmediate:
-		return " WITH ROLLBACK IMMEDIATE", nil
-	}
-	return "", fmt.Errorf("unrecognized termination %d", t)
-}
-
-// SetReadOnly sets the database to read-only or read-write. Either needs
-// exclusive access to the database, so term says what happens to the other
-// sessions in it; this Server's own idle sessions are released first either
-// way (see Server.ReleaseIdleConnections).
-func (d *Database) SetReadOnly(ctx context.Context, readOnly bool, term Termination) error {
-	mode := "READ_WRITE"
-	if readOnly {
-		mode = "READ_ONLY"
-	}
-	with, err := term.withClause()
-	if err != nil {
-		return fmt.Errorf("gosmo: set read-only %v: %w", readOnly, err)
-	}
-	d.server.releaseIdle(ctx)
-	if err := d.server.exec(ctx,
-		fmt.Sprintf("ALTER DATABASE %s SET %s%s", quoteIdent(d.Name), mode, with),
-	); err != nil {
-		return fmt.Errorf("gosmo: set read-only %v: %w", readOnly, err)
-	}
-	setIfApplied(ctx, &d.IsReadOnly, readOnly)
-	return nil
-}
-
-// UserAccess is a database's user-access mode, spelled as ALTER DATABASE SET
-// takes it and sys.databases.user_access_desc reports it.
-type UserAccess string
-
-const (
-	UserAccessMulti      UserAccess = "MULTI_USER"
-	UserAccessSingle     UserAccess = "SINGLE_USER"
-	UserAccessRestricted UserAccess = "RESTRICTED_USER"
-)
-
-// userAccessModes is UserAccess's validity check. The keyword can't be
-// identifier-quoted or parameterised (ALTER DATABASE is DDL), so a value
-// outside the constants — a conversion from an arbitrary string — is refused
-// here rather than spliced in.
-var userAccessModes = map[UserAccess]bool{
-	UserAccessMulti: true, UserAccessSingle: true, UserAccessRestricted: true,
-}
-
-// SetUserAccess changes the database's user-access mode (MULTI_USER,
-// SINGLE_USER, or RESTRICTED_USER — SSMS's Database Properties > Options
-// "Restrict access" setting). Existing connections that would violate the
-// new mode are rolled back immediately, matching SSMS's own behavior.
-func (d *Database) SetUserAccess(ctx context.Context, mode UserAccess) error {
-	if !userAccessModes[mode] {
-		return fmt.Errorf("gosmo: set user access: unrecognized mode %q", mode)
-	}
-	if err := d.server.exec(ctx,
-		fmt.Sprintf("ALTER DATABASE %s SET %s WITH ROLLBACK IMMEDIATE", quoteIdent(d.Name), mode),
-	); err != nil {
-		return fmt.Errorf("gosmo: set user access %s: %w", mode, err)
-	}
-	return nil
-}
-
-// SetOffline takes the database offline.
-//
-// Existing connections are rolled back immediately, matching SSMS's Object
-// Explorer "Take Database Offline" behavior.
-func (d *Database) SetOffline(ctx context.Context) error {
-	if err := d.server.exec(ctx,
-		fmt.Sprintf("ALTER DATABASE %s SET OFFLINE WITH ROLLBACK IMMEDIATE", quoteIdent(d.Name)),
-	); err != nil {
-		return fmt.Errorf("gosmo: set offline: %w", err)
-	}
-	setIfApplied(ctx, &d.State, "OFFLINE")
-	return nil
-}
-
-// SetOnline brings an offline database back online.
-func (d *Database) SetOnline(ctx context.Context) error {
-	if err := d.server.exec(ctx,
-		fmt.Sprintf("ALTER DATABASE %s SET ONLINE", quoteIdent(d.Name)),
-	); err != nil {
-		return fmt.Errorf("gosmo: set online: %w", err)
-	}
-	setIfApplied(ctx, &d.State, "ONLINE")
-	return nil
-}
-
-// -- Triggers ------------------------------------------------------------------
-
-// Trigger represents a DML trigger attached to a table.
-type Trigger struct {
-	Name       string
-	TableName  string
-	Schema     string
-	IsEnabled  bool
-	Events     []string
-	Definition string
-}
-
-// Triggers returns all DML triggers in the database.
-func (d *Database) Triggers(ctx context.Context) ([]*Trigger, error) {
-	return d.triggersWhere(ctx, "", nil)
-}
-
-func (d *Database) triggersWhere(ctx context.Context, where string, args []any) ([]*Trigger, error) {
-	q := `
-SELECT tr.name, OBJECT_NAME(tr.parent_id), SCHEMA_NAME(o.schema_id),
-       tr.is_disabled,
-       ` + jsonList("te.type_desc", `
-        FROM   sys.trigger_events te
-        WHERE  te.object_id = tr.object_id`, "") + ` AS events,
-       ISNULL(m.definition, '')
-FROM   sys.triggers tr
-JOIN   sys.objects o   ON o.object_id  = tr.parent_id
-JOIN   sys.sql_modules m ON m.object_id = tr.object_id
-WHERE  tr.is_ms_shipped = 0 AND tr.parent_class = 1 ` + where + `
-ORDER  BY tr.name`
-
-	rows, err := d.query(ctx, q, args...)
-	return scanRows(rows, err, fmt.Sprintf("list triggers in %q", d.Name), func(scan func(...any) error) (*Trigger, error) {
-		t := &Trigger{}
-		var events sql.NullString
-		var isDisabled bool
-		if err := scan(&t.Name, &t.TableName, &t.Schema, &isDisabled,
-			&events, &t.Definition); err != nil {
-			return nil, err
-		}
-		t.IsEnabled = !isDisabled
-		var err error
-		if t.Events, err = decodeJSONList(events); err != nil {
-			return nil, err
-		}
-		return t, nil
-	})
-}
-
-// DropTrigger drops a DML trigger. schema is the trigger's own schema —
-// the schema of the table it is defined on. A trigger that isn't there is the
-// server's error, not a silent success — see the note on Database.DropTable.
-func (d *Database) DropTrigger(ctx context.Context, schema, name string) error {
-	if err := requireSchema("drop trigger", schema, name); err != nil {
-		return err
-	}
-	if _, err := d.exec(ctx, "DROP TRIGGER "+qualifiedName(schema, name)); err != nil {
-		return fmt.Errorf("gosmo: drop trigger [%s].[%s]: %w", schema, name, err)
-	}
-	return nil
-}
-
-// TransferObject moves a schema-scoped object into another schema
-// (ALTER SCHEMA ... TRANSFER), which is the operation sp_rename cannot do —
-// a rename takes a bare name and never crosses schemas.
-//
-// The object keeps its name and its object_id; permissions granted on it
-// directly are dropped by the server, which is the documented behaviour of
-// ALTER SCHEMA TRANSFER and the reason it is not a cosmetic change. An empty
-// schema means dbo, as everywhere else here.
-//
-// This is sp_rename's default 'OBJECT' class: tables, views, procedures,
-// functions, sequences and synonyms. A type or an XML schema collection needs
-// TRANSFER's own class prefix and is not covered.
-func (d *Database) TransferObject(ctx context.Context, targetSchema, schema, name string) error {
-	if err := requireSchema("transfer object", schema, name); err != nil {
-		return err
-	}
-	if err := requireSchema("transfer object", targetSchema, name); err != nil {
-		return err
-	}
-	if targetSchema == "" {
-		return fmt.Errorf("gosmo: transfer %s: target schema is required", qualifiedName(schema, name))
-	}
-	if err := d.refuseSameSchemaTransfer(ctx, targetSchema, schema, name); err != nil {
-		return err
-	}
-	if _, err := d.exec(ctx, fmt.Sprintf("ALTER SCHEMA %s TRANSFER %s",
-		quoteIdent(targetSchema), qualifiedName(schema, name))); err != nil {
-		return fmt.Errorf("gosmo: transfer %s to schema [%s]: %w", qualifiedName(schema, name), targetSchema, err)
-	}
-	return nil
-}
-
-// refuseSameSchemaTransfer is the refusal TransferObject and
-// transferWithClass share. A same-schema transfer is not a no-op at the
-// server — it still drops the permissions granted directly on the object —
-// so it is refused rather than sent.
-//
-// Names that differ only in case are one schema under a case-insensitive
-// collation and two under a case-sensitive one, so only the server can say
-// which; that case alone costs a round trip. Comparing case-blind here
-// refused a legitimate [sales] → [Sales] transfer in a _CS_ database.
-func (d *Database) refuseSameSchemaTransfer(ctx context.Context, targetSchema, schema, name string) error {
-	same := targetSchema == schema
-	if !same && strings.EqualFold(targetSchema, schema) {
-		err := d.queryRow(ctx, func(row *sql.Row) error { return row.Scan(&same) },
-			`SELECT CAST(CASE WHEN SCHEMA_ID(@p1) = SCHEMA_ID(@p2) THEN 1 ELSE 0 END AS bit)`, targetSchema, schema)
-		if err != nil {
-			return fmt.Errorf("gosmo: transfer %s to schema [%s]: %w", qualifiedName(schema, name), targetSchema, err)
+		if err := s.exec(ctx, exclusiveBatch(name, drop)); err != nil {
+			// The drop can genuinely fail after the alter succeeded — the
+			// database belongs to an availability group, the login may set
+			// state but not drop — and the batch puts it back to MULTI_USER
+			// itself. Only a batch cut short needs the repair from here.
+			// Best effort: the drop's own error is what the caller is told.
+			if batchCutShort(err) {
+				_ = s.restoreMultiUser(ctx, name)
+			}
+			return fmt.Errorf("gosmo: drop database %q: %w", name, err)
 		}
 	}
-	if same {
-		return fmt.Errorf("gosmo: transfer %s: it is already in schema [%s]", qualifiedName(schema, name), schema)
-	}
 	return nil
 }
 
-// RenameObject renames any schema-scoped object sp_rename's default
-// 'OBJECT' type covers — a view, procedure, function, sequence, synonym, or
-// trigger. A table is the same statement with its own wording; see
-// RenameTable. An index, statistic, or column each needs its own @objtype
-// and has its own method.
+// Rename renames the database (ALTER DATABASE ... MODIFY NAME). The
+// server needs exclusive access to it, so any other connection to the
+// database fails the statement outright rather than waiting.
 //
-// newName is a bare name: sp_rename refuses a qualified one, and renaming
-// does not move the object between schemas (ALTER SCHEMA ... TRANSFER does).
-func (d *Database) RenameObject(ctx context.Context, schema, oldName, newName string) error {
-	if err := requireSchema("rename object", schema, oldName); err != nil {
+// When force is true the database is put into SINGLE_USER WITH ROLLBACK
+// IMMEDIATE first — terminating those connections and rolling back their
+// transactions — and back to MULTI_USER afterwards, including when the
+// rename itself fails, so a refused rename never leaves the database
+// single-user. A Managed Instance refuses SET SINGLE_USER, so there force
+// kills the database's sessions instead and changes no access mode. This
+// Server's own idle sessions are released first either way (see
+// ReleaseIdleConnections).
+//
+// The new name is mirrored onto the receiver (through setIfApplied, so not
+// under WithScript).
+func (d *Database) Rename(ctx context.Context, newName string, force bool) error {
+	if err := d.rename(ctx, newName, force); err != nil {
 		return err
 	}
-	if _, err := d.exec(ctx,
-		"EXEC sp_rename @objname = @p1, @newname = @p2, @objtype = N'OBJECT'",
-		qualifiedName(schema, oldName), newName,
-	); err != nil {
-		return fmt.Errorf("gosmo: rename %s -> %q: %w", qualifiedName(schema, oldName), newName, err)
+	setIfApplied(ctx, &d.Name, newName)
+	return nil
+}
+
+func (d *Database) rename(ctx context.Context, newName string, force bool) error {
+	s, oldName := d.server, d.Name
+	if oldName == "" || newName == "" {
+		return fmt.Errorf("gosmo: rename database: both names are required")
+	}
+	q := fmt.Sprintf("ALTER DATABASE %s MODIFY NAME = %s", quoteIdent(oldName), quoteIdent(newName))
+	s.releaseIdle(ctx)
+	switch {
+	case !force:
+	case s.refusesSingleUser():
+		// Nothing to release afterwards: no access mode was changed. One
+		// batch, as in Drop.
+		q = killDatabaseSessionsBatch(oldName) + ";\n" + q + ";"
+	default:
+		if err := s.exec(ctx, renameExclusiveBatch(oldName, newName)); err != nil {
+			if batchCutShort(err) {
+				_ = s.restoreMultiUserAfterRename(ctx, oldName, newName)
+			}
+			return fmt.Errorf("gosmo: rename database %q to %q: %w", oldName, newName, err)
+		}
+		return nil
+	}
+	if err := s.exec(ctx, q); err != nil {
+		return fmt.Errorf("gosmo: rename database %q to %q: %w", oldName, newName, err)
 	}
 	return nil
 }

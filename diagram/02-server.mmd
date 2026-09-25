@@ -21,9 +21,6 @@ classDiagram
         +DatabaseByName(name) *Database
         +DatabaseRef(name) *Database
         +CreateDatabase(req) *Database
-        +DropDatabase(name, force) error
-        +RenameDatabase(oldName, newName, force) error
-        +DetachDatabase(name, opts) error
         +ReleaseIdleConnections() error
         +AttachDatabase(spec) error
         +DetachedDatabaseInfo(primaryFilePath) *DetachedDatabase

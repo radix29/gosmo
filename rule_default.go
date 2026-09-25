@@ -117,7 +117,7 @@ func (d *Database) RuleByName(ctx context.Context, schema, name string) (*Rule, 
 			&r.Definition, &r.CreateDate, &r.ModifyDate)
 	}, ruleSelect+`
    AND SCHEMA_NAME(o.schema_id) = @p1 AND o.name = @p2`, schema, name)
-	return foundRow(r, err, notFoundf("gosmo: rule [%s].[%s] not found in %q", schema, name, d.Name), fmt.Sprintf("read rule [%s].[%s] in %q", schema, name, d.Name))
+	return foundRow(r, err, notFoundf("gosmo: rule %s not found in %q", qualifiedName(schema, name), d.Name), fmt.Sprintf("read rule %s in %q", qualifiedName(schema, name), d.Name))
 }
 
 // RuleRef returns a lightweight handle for a rule by name, without
@@ -142,7 +142,7 @@ func (r *Rule) Drop(ctx context.Context) error {
 		return err
 	}
 	if _, err := r.db.exec(ctx, "DROP RULE "+qualifiedName(r.Schema, r.Name)); err != nil {
-		return fmt.Errorf("gosmo: drop rule [%s].[%s]: %w", r.Schema, r.Name, err)
+		return fmt.Errorf("gosmo: drop rule %s: %w", qualifiedName(r.Schema, r.Name), err)
 	}
 	return nil
 }
@@ -180,7 +180,7 @@ func (d *Database) DefaultByName(ctx context.Context, schema, name string) (*Def
 			&df.Definition, &df.CreateDate, &df.ModifyDate)
 	}, defaultSelect+`
    AND SCHEMA_NAME(o.schema_id) = @p1 AND o.name = @p2`, schema, name)
-	return foundRow(df, err, notFoundf("gosmo: default [%s].[%s] not found in %q", schema, name, d.Name), fmt.Sprintf("read default [%s].[%s] in %q", schema, name, d.Name))
+	return foundRow(df, err, notFoundf("gosmo: default %s not found in %q", qualifiedName(schema, name), d.Name), fmt.Sprintf("read default %s in %q", qualifiedName(schema, name), d.Name))
 }
 
 // DefaultRef returns a lightweight handle for a standalone default by name, without
@@ -205,7 +205,49 @@ func (df *Default) Drop(ctx context.Context) error {
 		return err
 	}
 	if _, err := df.db.exec(ctx, "DROP DEFAULT "+qualifiedName(df.Schema, df.Name)); err != nil {
-		return fmt.Errorf("gosmo: drop default [%s].[%s]: %w", df.Schema, df.Name, err)
+		return fmt.Errorf("gosmo: drop default %s: %w", qualifiedName(df.Schema, df.Name), err)
 	}
+	return nil
+}
+
+// Rename renames the rule (sp_rename's 'OBJECT' class). newName is a bare
+// name; a rename never moves the rule between schemas — see Transfer.
+func (r *Rule) Rename(ctx context.Context, newName string) error {
+	if err := r.db.renameSchemaObject(ctx, "rule", renameObjectClass, r.Schema, r.Name, newName); err != nil {
+		return err
+	}
+	setIfApplied(ctx, &r.Name, newName)
+	return nil
+}
+
+// Transfer moves the rule into another schema (ALTER SCHEMA ... TRANSFER).
+// It keeps its name and object_id; permissions granted on it directly are
+// dropped by the server.
+func (r *Rule) Transfer(ctx context.Context, targetSchema string) error {
+	if err := r.db.transferSchemaObject(ctx, "rule", transferObjectClass, targetSchema, r.Schema, r.Name); err != nil {
+		return err
+	}
+	setIfApplied(ctx, &r.Schema, targetSchema)
+	return nil
+}
+
+// Rename renames the default (sp_rename's 'OBJECT' class). newName is a bare
+// name; a rename never moves the default between schemas — see Transfer.
+func (df *Default) Rename(ctx context.Context, newName string) error {
+	if err := df.db.renameSchemaObject(ctx, "default", renameObjectClass, df.Schema, df.Name, newName); err != nil {
+		return err
+	}
+	setIfApplied(ctx, &df.Name, newName)
+	return nil
+}
+
+// Transfer moves the default into another schema (ALTER SCHEMA ... TRANSFER).
+// It keeps its name and object_id; permissions granted on it directly are
+// dropped by the server.
+func (df *Default) Transfer(ctx context.Context, targetSchema string) error {
+	if err := df.db.transferSchemaObject(ctx, "default", transferObjectClass, targetSchema, df.Schema, df.Name); err != nil {
+		return err
+	}
+	setIfApplied(ctx, &df.Schema, targetSchema)
 	return nil
 }

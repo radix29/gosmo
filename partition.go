@@ -193,7 +193,7 @@ func (d *Database) CreatePartitionFunction(ctx context.Context, req CreatePartit
 	)
 	_, err := d.exec(ctx, q)
 	if err != nil {
-		return nil, fmt.Errorf("gosmo: create partition function [%s]: %w", req.Name, err)
+		return nil, fmt.Errorf("gosmo: create partition function %q: %w", req.Name, err)
 	}
 	return createdObject(ctx, d.PartitionFunctionRef(req.Name), func() (*PartitionFunction, error) {
 		return d.PartitionFunctionByName(ctx, req.Name)
@@ -205,7 +205,7 @@ func (pf *PartitionFunction) Drop(ctx context.Context) error {
 	_, err := pf.db.exec(ctx,
 		fmt.Sprintf("DROP PARTITION FUNCTION %s", quoteIdent(pf.Name)))
 	if err != nil {
-		return fmt.Errorf("gosmo: drop partition function [%s]: %w", pf.Name, err)
+		return fmt.Errorf("gosmo: drop partition function %q: %w", pf.Name, err)
 	}
 	return nil
 }
@@ -213,12 +213,12 @@ func (pf *PartitionFunction) Drop(ctx context.Context) error {
 // SplitRange adds a new boundary value to the partition function.
 func (pf *PartitionFunction) SplitRange(ctx context.Context, value string) error {
 	if !validPartitionBoundary(value) {
-		return fmt.Errorf("gosmo: split range on [%s]: invalid boundary literal %q", pf.Name, value)
+		return fmt.Errorf("gosmo: split range on %q: invalid boundary literal %q", pf.Name, value)
 	}
 	_, err := pf.db.exec(ctx,
 		fmt.Sprintf("ALTER PARTITION FUNCTION %s() SPLIT RANGE (%s)", quoteIdent(pf.Name), value))
 	if err != nil {
-		return fmt.Errorf("gosmo: split range on [%s]: %w", pf.Name, err)
+		return fmt.Errorf("gosmo: split range on %q: %w", pf.Name, err)
 	}
 	return nil
 }
@@ -226,12 +226,12 @@ func (pf *PartitionFunction) SplitRange(ctx context.Context, value string) error
 // MergeRange removes a boundary value from the partition function.
 func (pf *PartitionFunction) MergeRange(ctx context.Context, value string) error {
 	if !validPartitionBoundary(value) {
-		return fmt.Errorf("gosmo: merge range on [%s]: invalid boundary literal %q", pf.Name, value)
+		return fmt.Errorf("gosmo: merge range on %q: invalid boundary literal %q", pf.Name, value)
 	}
 	_, err := pf.db.exec(ctx,
 		fmt.Sprintf("ALTER PARTITION FUNCTION %s() MERGE RANGE (%s)", quoteIdent(pf.Name), value))
 	if err != nil {
-		return fmt.Errorf("gosmo: merge range on [%s]: %w", pf.Name, err)
+		return fmt.Errorf("gosmo: merge range on %q: %w", pf.Name, err)
 	}
 	return nil
 }
@@ -333,7 +333,7 @@ func (d *Database) CreatePartitionScheme(ctx context.Context, req CreatePartitio
 	)
 	_, err := d.exec(ctx, q)
 	if err != nil {
-		return nil, fmt.Errorf("gosmo: create partition scheme [%s]: %w", req.Name, err)
+		return nil, fmt.Errorf("gosmo: create partition scheme %q: %w", req.Name, err)
 	}
 	return createdObject(ctx, d.PartitionSchemeRef(req.Name), func() (*PartitionScheme, error) {
 		return d.PartitionSchemeByName(ctx, req.Name)
@@ -345,7 +345,7 @@ func (ps *PartitionScheme) Drop(ctx context.Context) error {
 	_, err := ps.db.exec(ctx,
 		fmt.Sprintf("DROP PARTITION SCHEME %s", quoteIdent(ps.Name)))
 	if err != nil {
-		return fmt.Errorf("gosmo: drop partition scheme [%s]: %w", ps.Name, err)
+		return fmt.Errorf("gosmo: drop partition scheme %q: %w", ps.Name, err)
 	}
 	return nil
 }

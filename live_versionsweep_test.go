@@ -49,7 +49,7 @@ var sweepSkip = map[string]string{
 	"Database.FlushQueryStore": "forces a query store write",
 	"Database.SetOffline":      "takes the database offline",
 	"Database.SetOnline":       "brings the database online",
-	"Table.TruncateTable":      "deletes every row",
+	"Table.Truncate":           "deletes every row",
 	"Statistic.Drop":           "drops the statistic",
 	"Index.Disable":            "disables the index",
 	"Index.Drop":               "drops the index",

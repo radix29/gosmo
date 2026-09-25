@@ -65,7 +65,7 @@ func TestParseSQLAgentDuration(t *testing.T) {
 
 // TestJobStepNameRequired pins the empty-name guard on both job-step writers.
 // Beyond rejecting a request sp_add_jobstep/sp_update_jobstep would refuse
-// anyway, the guard has to run before anything else: JobStep.Update
+// anyway, the guard has to run before anything else: JobStep.Alter
 // copies req over the receiver's own fields once the statement succeeds, so an
 // empty name that got that far would blank out JobStep.Name locally. Both
 // receivers here are deliberately zero-valued — no job, no server — so a guard
@@ -79,8 +79,8 @@ func TestJobStepNameRequired(t *testing.T) {
 		{"Job.AddStep", func() error {
 			return (&Job{}).AddStep(t.Context(), JobStepRequest{Command: "SELECT 1"})
 		}},
-		{"JobStep.Update", func() error {
-			return (&JobStep{}).Update(t.Context(), JobStepRequest{Command: "SELECT 1"})
+		{"JobStep.Alter", func() error {
+			return (&JobStep{}).Alter(t.Context(), JobStepRequest{Command: "SELECT 1"})
 		}},
 	}
 	for _, c := range cases {
@@ -101,7 +101,7 @@ func TestJobStepNameRequired(t *testing.T) {
 // in-memory fields.
 func TestJobStepUpdateLeavesFieldsAloneOnRejection(t *testing.T) {
 	s := &JobStep{Name: "Load staging", Subsystem: "TSQL", Command: "EXEC dbo.Load"}
-	if err := s.Update(t.Context(), JobStepRequest{Command: "SELECT 1"}); err == nil {
+	if err := s.Alter(t.Context(), JobStepRequest{Command: "SELECT 1"}); err == nil {
 		t.Fatal("Update with an empty Name = nil, want an error")
 	}
 	if s.Name != "Load staging" || s.Subsystem != "TSQL" || s.Command != "EXEC dbo.Load" {

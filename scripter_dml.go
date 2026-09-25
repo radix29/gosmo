@@ -138,7 +138,7 @@ func isRowVersion(c *Column) bool {
 // columnPlaceholder renders the <name, type, value> token SSMS's templates
 // use for a value the operator has to supply.
 func columnPlaceholder(c *Column) string {
-	return fmt.Sprintf("<%s, %s,>", c.Name, ColumnTypeString(c))
+	return fmt.Sprintf("<%s, %s,>", c.Name, c.TypeString())
 }
 
 func buildSelectScript(schema, name string, cols []*Column) string {

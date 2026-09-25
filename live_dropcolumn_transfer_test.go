@@ -1,6 +1,6 @@
 //go:build livedb
 
-// Live verification of Table.DropColumn and Database.TransferObject, the two
+// Live verification of Table.DropColumn and Table.Transfer, the two
 // writes added for gossms's Object Explorer column Delete and Move to Schema.
 //
 // Both are one statement whose text a unit test already pins, so what only a
@@ -20,7 +20,7 @@ import (
 	"testing"
 )
 
-func TestLiveDropColumnAndTransferObject(t *testing.T) {
+func TestLiveDropColumnAndTableTransfer(t *testing.T) {
 	db, ctx, done := liveDB(t)
 	defer done()
 
@@ -85,8 +85,8 @@ func TestLiveDropColumnAndTransferObject(t *testing.T) {
 	if err != nil {
 		t.Fatalf("TableByName before the transfer: %v", err)
 	}
-	if err := d.TransferObject(ctx, "arch", "dbo", "Orders"); err != nil {
-		t.Fatalf("TransferObject: %v", err)
+	if err := d.TableRef("dbo", "Orders").Transfer(ctx, "arch"); err != nil {
+		t.Fatalf("Transfer: %v", err)
 	}
 	after, err := d.TableByName(ctx, "arch", "Orders")
 	if err != nil {
@@ -102,7 +102,7 @@ func TestLiveDropColumnAndTransferObject(t *testing.T) {
 
 	// Transferring back into the schema it is already in is refused before
 	// anything reaches the server.
-	if err := d.TransferObject(ctx, "arch", "arch", "Orders"); err == nil {
+	if err := d.TableRef("arch", "Orders").Transfer(ctx, "arch"); err == nil {
 		t.Errorf("a same-schema transfer was accepted")
 	}
 }

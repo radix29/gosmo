@@ -90,8 +90,8 @@ func TestLiveDetachAttachRoundTrip(t *testing.T) {
 	srv, files, drop := detLiveSetup(t, db, ctx)
 	defer drop()
 
-	if err := srv.DetachDatabase(ctx, detLiveName, DetachOptions{DropConnections: true}); err != nil {
-		t.Fatalf("DetachDatabase: %v", err)
+	if err := srv.DatabaseRef(detLiveName).Detach(ctx, DetachOptions{DropConnections: true}); err != nil {
+		t.Fatalf("Detach: %v", err)
 	}
 	if databaseExists(t, db, ctx, detLiveName) {
 		t.Fatal("the database is still on the instance after a detach that reported success")
@@ -186,7 +186,7 @@ func TestLiveDetachUpdateStatisticsIsAccepted(t *testing.T) {
 	srv, files, drop := detLiveSetup(t, db, ctx)
 	defer drop()
 
-	if err := srv.DetachDatabase(ctx, detLiveName, DetachOptions{
+	if err := srv.DatabaseRef(detLiveName).Detach(ctx, DetachOptions{
 		DropConnections: true, UpdateStatistics: true,
 	}); err != nil {
 		t.Fatalf("detach with UpdateStatistics: %v", err)
@@ -226,7 +226,7 @@ func TestLiveDetachThatFailsAfterSingleUserPutsTheDatabaseBack(t *testing.T) {
 	}
 	defer db.ExecContext(context.Background(), "DROP DATABASE ["+snapshot+"]")
 
-	if err := srv.DetachDatabase(ctx, detLiveName, DetachOptions{DropConnections: true}); err == nil {
+	if err := srv.DatabaseRef(detLiveName).Detach(ctx, DetachOptions{DropConnections: true}); err == nil {
 		t.Fatal("detaching a database with a snapshot on it succeeded, so there is no failure path to check")
 	}
 	var access string

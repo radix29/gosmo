@@ -73,14 +73,21 @@ var goldenQueries = []goldenQuery{
 	{"table_detail", []string{"tables"}, []string{"ledger_type_desc"}, func(m int) string {
 		return (&Table{db: dbAtMajor(m)}).detailSelect()
 	}},
-	{"table_script_options", []string{"tables"}, []string{"ledger_type", "is_dropped_ledger_table", "ledger_view_id"}, func(m int) string {
+	{"table_script_options", []string{"tables"}, []string{"ledger_type", "is_dropped_ledger_table", "ledger_view_id",
+		"history_retention_period", "history_retention_period_unit_desc"}, func(m int) string {
 		return (&Table{db: dbAtMajor(m)}).scriptOptionsSelect()
 	}},
 	{"index_list", []string{"indexes"}, nil, func(m int) string {
 		return (&Table{db: dbAtMajor(m)}).indexListSelect()
 	}},
+	{"index_columns", []string{"index_columns"}, nil, func(m int) string {
+		return (&Table{db: dbAtMajor(m)}).indexColumnsSelect()
+	}},
 	{"columns", []string{"columns"}, nil, func(m int) string {
 		return dbAtMajor(m).columnSelect()
+	}},
+	{"parameters", []string{"parameters"}, nil, func(m int) string {
+		return dbAtMajor(m).parameterSelect()
 	}},
 	{"sequences", []string{"sequences"}, nil, func(m int) string {
 		return dbAtMajor(m).sequenceSelect()

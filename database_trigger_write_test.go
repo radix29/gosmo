@@ -42,7 +42,7 @@ func TestDatabaseTriggerWriteStatements(t *testing.T) {
 }
 
 // A DDL trigger has no schema, so its drop must not be schema-qualified —
-// Database.DropTrigger's form, which would address a different (nonexistent)
+// Trigger.Drop's form, which would address a different (nonexistent)
 // object and omit the ON DATABASE clause the server requires.
 func TestDatabaseTriggerDropIsNotSchemaQualified(t *testing.T) {
 	ctx, col := WithScript(context.Background())

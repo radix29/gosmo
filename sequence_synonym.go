@@ -200,7 +200,7 @@ func (d *Database) CreateSequence(ctx context.Context, req CreateSequenceRequest
 
 	_, err := d.exec(ctx, q)
 	if err != nil {
-		return nil, fmt.Errorf("gosmo: create sequence [%s].[%s]: %w", schema, req.Name, err)
+		return nil, fmt.Errorf("gosmo: create sequence %s: %w", qualifiedName(schema, req.Name), err)
 	}
 	return createdObject(ctx, d.SequenceRef(schema, req.Name), func() (*Sequence, error) {
 		return d.SequenceByName(ctx, schema, req.Name)
@@ -214,7 +214,7 @@ func (seq *Sequence) Drop(ctx context.Context) error {
 	}
 	_, err := seq.db.exec(ctx, fmt.Sprintf("DROP SEQUENCE %s", qualifiedName(seq.Schema, seq.Name)))
 	if err != nil {
-		return fmt.Errorf("gosmo: drop sequence [%s].[%s]: %w", seq.Schema, seq.Name, err)
+		return fmt.Errorf("gosmo: drop sequence %s: %w", qualifiedName(seq.Schema, seq.Name), err)
 	}
 	return nil
 }
@@ -228,7 +228,7 @@ func (seq *Sequence) Restart(ctx context.Context, value int64) error {
 		fmt.Sprintf("ALTER SEQUENCE %s RESTART WITH %d",
 			qualifiedName(seq.Schema, seq.Name), value))
 	if err != nil {
-		return fmt.Errorf("gosmo: restart sequence [%s].[%s]: %w", seq.Schema, seq.Name, err)
+		return fmt.Errorf("gosmo: restart sequence %s: %w", qualifiedName(seq.Schema, seq.Name), err)
 	}
 	// RESTART moves start_value too and clears last_used_value, so the
 	// handle mirrors all three.
@@ -258,7 +258,7 @@ func (seq *Sequence) NextValue(ctx context.Context) (int64, error) {
 		).Scan(&val)
 	})
 	if err != nil {
-		return 0, fmt.Errorf("gosmo: next value for [%s].[%s]: %w", seq.Schema, seq.Name, err)
+		return 0, fmt.Errorf("gosmo: next value for %s: %w", qualifiedName(seq.Schema, seq.Name), err)
 	}
 	// Assigned directly, not via setIfApplied: this is the value the server
 	// just returned, and reads run against the server under WithScript too.
@@ -383,12 +383,12 @@ func (d *Database) CreateSynonym(ctx context.Context, req CreateSynonymRequest) 
 		return nil, err
 	}
 	if !validQualifiedObjectName(req.BaseObject) {
-		return nil, fmt.Errorf("gosmo: create synonym [%s].[%s]: invalid base object %q", schema, req.Name, req.BaseObject)
+		return nil, fmt.Errorf("gosmo: create synonym %s: invalid base object %q", qualifiedName(schema, req.Name), req.BaseObject)
 	}
 	_, err := d.exec(ctx,
 		fmt.Sprintf("CREATE SYNONYM %s FOR %s", qualifiedName(schema, req.Name), req.BaseObject))
 	if err != nil {
-		return nil, fmt.Errorf("gosmo: create synonym [%s].[%s]: %w", schema, req.Name, err)
+		return nil, fmt.Errorf("gosmo: create synonym %s: %w", qualifiedName(schema, req.Name), err)
 	}
 	return createdObject(ctx, d.SynonymRef(schema, req.Name), func() (*Synonym, error) {
 		return d.SynonymByName(ctx, schema, req.Name)
@@ -396,14 +396,56 @@ func (d *Database) CreateSynonym(ctx context.Context, req CreateSynonymRequest) 
 }
 
 // Drop drops the synonym. A synonym that isn't there is the server's error,
-// not a silent success — see the note on Database.DropTable.
+// not a silent success — see the note on Table.Drop.
 func (syn *Synonym) Drop(ctx context.Context) error {
 	if err := requireSchema("drop synonym", syn.Schema, syn.Name); err != nil {
 		return err
 	}
 	_, err := syn.db.exec(ctx, fmt.Sprintf("DROP SYNONYM %s", qualifiedName(syn.Schema, syn.Name)))
 	if err != nil {
-		return fmt.Errorf("gosmo: drop synonym [%s].[%s]: %w", syn.Schema, syn.Name, err)
+		return fmt.Errorf("gosmo: drop synonym %s: %w", qualifiedName(syn.Schema, syn.Name), err)
 	}
+	return nil
+}
+
+// Rename renames the sequence (sp_rename's 'OBJECT' class). newName is a bare
+// name; a rename never moves the sequence between schemas — see Transfer.
+func (seq *Sequence) Rename(ctx context.Context, newName string) error {
+	if err := seq.db.renameSchemaObject(ctx, "sequence", renameObjectClass, seq.Schema, seq.Name, newName); err != nil {
+		return err
+	}
+	setIfApplied(ctx, &seq.Name, newName)
+	return nil
+}
+
+// Transfer moves the sequence into another schema (ALTER SCHEMA ... TRANSFER).
+// It keeps its name and object_id; permissions granted on it directly are
+// dropped by the server.
+func (seq *Sequence) Transfer(ctx context.Context, targetSchema string) error {
+	if err := seq.db.transferSchemaObject(ctx, "sequence", transferObjectClass, targetSchema, seq.Schema, seq.Name); err != nil {
+		return err
+	}
+	setIfApplied(ctx, &seq.Schema, targetSchema)
+	return nil
+}
+
+// Rename renames the synonym (sp_rename's 'OBJECT' class). newName is a bare
+// name; a rename never moves the synonym between schemas — see Transfer.
+func (syn *Synonym) Rename(ctx context.Context, newName string) error {
+	if err := syn.db.renameSchemaObject(ctx, "synonym", renameObjectClass, syn.Schema, syn.Name, newName); err != nil {
+		return err
+	}
+	setIfApplied(ctx, &syn.Name, newName)
+	return nil
+}
+
+// Transfer moves the synonym into another schema (ALTER SCHEMA ... TRANSFER).
+// It keeps its name and object_id; permissions granted on it directly are
+// dropped by the server.
+func (syn *Synonym) Transfer(ctx context.Context, targetSchema string) error {
+	if err := syn.db.transferSchemaObject(ctx, "synonym", transferObjectClass, targetSchema, syn.Schema, syn.Name); err != nil {
+		return err
+	}
+	setIfApplied(ctx, &syn.Schema, targetSchema)
 	return nil
 }

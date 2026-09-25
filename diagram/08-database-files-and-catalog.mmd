@@ -305,7 +305,7 @@ classDiagram
     QueryStoreReportOptions --> QSMetric : ranks by
     QueryStoreReportOptions --> QSStatistic : aggregated with
     QSMetric ..> QSUnit : measured in
-    Server --> DetachOptions : DetachDatabase() takes
+    Database --> DetachOptions : Detach() takes
     Server --> AttachSpec : AttachDatabase() takes
     Server --> DetachedDatabase : DetachedDatabaseInfo() returns
     DetachedDatabase "1" --> "*" DetachedFile : contains

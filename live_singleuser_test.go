@@ -62,7 +62,7 @@ func userAccess(t *testing.T, srv *Server, ctx context.Context, name string) str
 
 // TestLiveSingleUserForcedDropThatFailsLeavesTheDatabaseUsable.
 //
-// DropDatabase(force) sets SINGLE_USER WITH ROLLBACK IMMEDIATE and then
+// Database.Drop(force) sets SINGLE_USER WITH ROLLBACK IMMEDIATE and then
 // drops. The drop can genuinely fail after the alter succeeded, and it used to
 // return that failure with the database still there and still single-user.
 //
@@ -96,7 +96,7 @@ func TestLiveSingleUserForcedDropThatFailsLeavesTheDatabaseUsable(t *testing.T) 
 		t.Fatalf("create snapshot: %v", err)
 	}
 
-	err := srv.DropDatabase(ctx, name, true)
+	err := srv.DatabaseRef(name).Drop(ctx, true)
 	if err == nil {
 		t.Fatal("the drop succeeded; the snapshot was supposed to make it fail")
 	}
@@ -194,7 +194,7 @@ func TestLiveSingleUserForcedRenameReleasesTheDatabase(t *testing.T) {
 	defer holder.Close()
 
 	start := time.Now()
-	if err := srv.RenameDatabase(ctx, name, renamed, true); err != nil {
+	if err := srv.DatabaseRef(name).Rename(ctx, renamed, true); err != nil {
 		t.Fatalf("forced rename: %v", err)
 	}
 	t.Logf("forced rename took %v", time.Since(start))

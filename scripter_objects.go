@@ -377,7 +377,7 @@ func buildPartitionFunctionScript(pf *PartitionFunction, opts ScriptOptions) str
 			side = "RIGHT"
 		}
 		fmt.Fprintf(sb, "CREATE PARTITION FUNCTION %s (%s)\n    AS RANGE %s FOR VALUES (%s);\nGO\n",
-			quoteIdent(pf.Name), sqlTypeString(pf.InputType, pf.MaxLength, pf.Precision, pf.Scale), side,
+			quoteIdent(pf.Name), TypeString(pf.InputType, pf.MaxLength, pf.Precision, pf.Scale), side,
 			strings.Join(pf.Boundaries, ", "))
 	})
 }

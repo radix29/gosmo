@@ -84,6 +84,14 @@ type tableScriptOptions struct {
 	// table is HistorySchema.HistoryTable.
 	SystemVersioned             bool
 	HistorySchema, HistoryTable string
+	// HistoryRetentionPeriod and HistoryRetentionUnit are the temporal
+	// table's HISTORY_RETENTION_PERIOD ("6" and "MONTH"); 0 and "" when it
+	// is INFINITE, the default, and before SQL Server 2017.
+	HistoryRetentionPeriod int
+	HistoryRetentionUnit   string
+	// LockEscalation is sys.tables.lock_escalation_desc: TABLE (the
+	// default), AUTO or DISABLE.
+	LockEscalation string
 	// PeriodStart and PeriodEnd are the PERIOD FOR SYSTEM_TIME columns; ""
 	// when the table has no period.
 	PeriodStart, PeriodEnd string
@@ -167,6 +175,7 @@ func (t *Table) scriptOptions(ctx context.Context) (tableScriptOptions, error) {
 	if err := t.db.queryRow(ctx, func(row *sql.Row) error {
 		e := &o.External
 		if err := row.Scan(&o.SystemVersioned, &o.HistorySchema, &o.HistoryTable,
+			&o.HistoryRetentionPeriod, &o.HistoryRetentionUnit, &o.LockEscalation,
 			&o.PeriodStart, &o.PeriodEnd, &heap, &o.DatabaseCollation,
 			&o.Durability, &o.LobDataSpace, &o.LobIsFileGroup, &o.FileStreamDataSpace,
 			&o.LedgerType, &o.IsDroppedLedgerTable, &o.LedgerViewSchema, &o.LedgerViewName, &ledgerCols,
@@ -204,7 +213,8 @@ func (t *Table) scriptOptions(ctx context.Context) (tableScriptOptions, error) {
 // The ledger columns are SQL Server 2022's, with ledger tables; every table
 // on an older instance is a non-ledger one. A ledger view's four ledger
 // columns follow the table's own, so they are its last four by column_id,
-// read as a jsonList-shaped column.
+// read as a jsonList-shaped column. HISTORY_RETENTION_PERIOD is SQL Server
+// 2017's; -1 is INFINITE, read as 0 so that it is left implicit.
 // sys.filetables and sys.external_tables are older than gosmo's 2016 floor.
 // https://learn.microsoft.com/sql/relational-databases/system-catalog-views/sys-tables-transact-sql
 func (t *Table) scriptOptionsSelect() string {
@@ -213,6 +223,9 @@ func (t *Table) scriptOptionsSelect() string {
 SELECT CAST(CASE WHEN t.temporal_type = 2 THEN 1 ELSE 0 END AS BIT),
        ISNULL(OBJECT_SCHEMA_NAME(t.history_table_id), ''),
        ISNULL(OBJECT_NAME(t.history_table_id), ''),
+       ` + colSince(major, SQLServer2017, "CASE WHEN t.history_retention_period > 0 THEN t.history_retention_period ELSE 0 END", "CAST(0 AS int)") + `,
+       ` + colSince(major, SQLServer2017, "CASE WHEN t.history_retention_period > 0 THEN t.history_retention_period_unit_desc ELSE '' END", "CAST('' AS nvarchar(60))") + `,
+       ISNULL(t.lock_escalation_desc, ''),
        ISNULL(COL_NAME(p.object_id, p.start_column_id), ''),
        ISNULL(COL_NAME(p.object_id, p.end_column_id), ''),
        ` + partitionCompressionList("t.object_id", "0") + `,
@@ -352,12 +365,7 @@ func buildTableScript(schema, name, dbName string, p tableScriptParts, opts Scri
 				DataCompression(p.table.HeapCompression), p.table.HeapPartitionCompression, rowstoreCompressed)...)
 		}
 		if p.table.SystemVersioned {
-			if p.table.HistoryTable != "" {
-				tableOpts = append(tableOpts, fmt.Sprintf("SYSTEM_VERSIONING = ON (HISTORY_TABLE = %s)",
-					qualifiedName(p.table.HistorySchema, p.table.HistoryTable)))
-			} else {
-				tableOpts = append(tableOpts, "SYSTEM_VERSIONING = ON")
-			}
+			tableOpts = append(tableOpts, systemVersioningOption(p.table))
 		}
 		tableOpts = append(tableOpts, ledgerOptions(p.table)...)
 		with := ""
@@ -367,9 +375,44 @@ func buildTableScript(schema, name, dbName string, p tableScriptParts, opts Scri
 		// AS NODE / AS EDGE precedes the ON clause; the server refuses it after.
 		fmt.Fprintf(sb, ")%s%s%s%s;\nGO\n\n", graphTableClause(p.table),
 			dataSpaceClause(p.ds), tableStorageClauses(p), with)
+		sb.WriteString(lockEscalationStatement(p.table, fullName))
 
 		writeTableDependents(sb, indexes, inline, p, fullName, opts)
 	})
+}
+
+// systemVersioningOption renders a temporal table's SYSTEM_VERSIONING entry
+// for CREATE TABLE's WITH clause: its history table and any finite
+// retention. Left off, the retention reverts to INFINITE and the history the
+// original ages out is kept forever.
+func systemVersioningOption(o tableScriptOptions) string {
+	var sub []string
+	if o.HistoryTable != "" {
+		sub = append(sub, "HISTORY_TABLE = "+qualifiedName(o.HistorySchema, o.HistoryTable))
+	}
+	if o.HistoryRetentionPeriod > 0 && o.HistoryRetentionUnit != "" {
+		unit := o.HistoryRetentionUnit
+		if o.HistoryRetentionPeriod != 1 {
+			unit += "S"
+		}
+		sub = append(sub, fmt.Sprintf("HISTORY_RETENTION_PERIOD = %d %s", o.HistoryRetentionPeriod, unit))
+	}
+	if len(sub) == 0 {
+		return "SYSTEM_VERSIONING = ON"
+	}
+	return "SYSTEM_VERSIONING = ON (" + strings.Join(sub, ", ") + ")"
+}
+
+// lockEscalationStatement renders the ALTER TABLE that restores a table's
+// LOCK_ESCALATION, or "" for the default, TABLE. CREATE TABLE has no clause
+// for it, so without this the recreated table escalates where the original
+// was set not to. A memory-optimized table takes no locks and refuses the
+// option.
+func lockEscalationStatement(o tableScriptOptions, fullName string) string {
+	if o.LockEscalation == "" || strings.EqualFold(o.LockEscalation, "TABLE") || o.IsMemoryOptimized {
+		return ""
+	}
+	return fmt.Sprintf("ALTER TABLE %s SET (LOCK_ESCALATION = %s);\nGO\n\n", fullName, o.LockEscalation)
 }
 
 // writeTableDependents writes the statements that follow a CREATE TABLE:
@@ -442,10 +485,10 @@ func tableColumnDefinition(col *Column, dbCollation string) string {
 		return sb.String()
 	case col.IsColumnSet:
 		// A column set takes no nullability clause: it is always nullable.
-		fmt.Fprintf(&sb, "%s %s COLUMN_SET FOR ALL_SPARSE_COLUMNS", name, ColumnTypeString(col))
+		fmt.Fprintf(&sb, "%s %s COLUMN_SET FOR ALL_SPARSE_COLUMNS", name, col.TypeString())
 		return sb.String()
 	}
-	fmt.Fprintf(&sb, "%s %s", name, ColumnTypeString(col))
+	fmt.Fprintf(&sb, "%s %s", name, col.TypeString())
 	if col.IsFileStream {
 		sb.WriteString(" FILESTREAM")
 	}
@@ -587,33 +630,82 @@ func scriptForeignKey(fk *ForeignKey, tableName string, opts ScriptOptions) stri
 // Column's type for display, e.g. SSMS's Table Properties > Columns page)
 // ============================================================
 
-// ColumnTypeString returns the T-SQL data-type fragment for a Column read from
+// TypeString returns the T-SQL data-type fragment for a Column read from
 // sys.columns.
 //
 // A user-defined alias or CLR type is schema-qualified and bracketed
 // ([dbo].[Phone]), and never given a length: an alias type's length is part
 // of its own definition, and an unqualified name resolves against the
 // executing user's default schema — a different type, or none.
-func ColumnTypeString(col *Column) string {
-	return catalogTypeString(col.DataType, col.TypeSchema, col.IsUserDefinedType, col.MaxLength, col.Precision, col.Scale)
+func (col *Column) TypeString() string {
+	return catalogType{
+		dt: col.DataType, typeSchema: col.TypeSchema, userDefined: col.IsUserDefinedType,
+		maxLength: col.MaxLength, precision: col.Precision, scale: col.Scale,
+		xmlSchema: col.XMLSchemaCollectionSchema, xmlCollection: col.XMLSchemaCollection, xmlDocument: col.IsXMLDocument,
+		vectorDimensions: col.VectorDimensions, vectorBaseType: col.VectorBaseType,
+	}.String()
 }
 
-// catalogTypeString is ColumnTypeString's rendering, shared with
-// Parameter.TypeString: a user-defined type qualified and bare, any other
-// type through sqlTypeString.
-func catalogTypeString(dt DataType, typeSchema string, userDefined bool, maxLength, precision, scale int) string {
-	if userDefined {
-		return qualifiedName(typeSchema, string(dt))
+// catalogType is a data type as sys.columns and sys.parameters describe it,
+// shared by Column.TypeString and Parameter.TypeString.
+type catalogType struct {
+	dt                          DataType
+	typeSchema                  string
+	userDefined                 bool
+	maxLength, precision, scale int
+	// xmlSchema and xmlCollection name a typed xml's schema collection;
+	// xmlDocument is its DOCUMENT facet.
+	xmlSchema, xmlCollection string
+	xmlDocument              bool
+	// vectorDimensions and vectorBaseType are a vector's.
+	vectorDimensions int
+	vectorBaseType   string
+}
+
+// dataTypeVector is SQL Server 2025's vector type. It has no exported
+// DataType: CreateTable's ColumnDefinition has nowhere to put its
+// dimensions, so it is read and scripted but not yet creatable.
+const dataTypeVector DataType = "vector"
+
+// defaultVectorBaseType is the base type vector(n) means when none is given.
+const defaultVectorBaseType = "float32"
+
+// String renders the type: a user-defined type qualified and bare, a typed
+// xml with its facet and collection, a vector with its dimensions, any other
+// type through TypeString. A bare "xml" is untyped and a bare "vector"
+// does not parse (Msg 2715), so dropping either facet changed or broke the
+// script.
+func (t catalogType) String() string {
+	switch {
+	case t.userDefined:
+		return qualifiedName(t.typeSchema, string(t.dt))
+	case t.dt == DataTypeXML && t.xmlCollection != "":
+		facet := "CONTENT"
+		if t.xmlDocument {
+			facet = "DOCUMENT"
+		}
+		return fmt.Sprintf("%s(%s %s)", t.dt, facet, qualifiedName(t.xmlSchema, t.xmlCollection))
+	case t.dt == dataTypeVector && t.vectorDimensions > 0:
+		if t.vectorBaseType != "" && !strings.EqualFold(t.vectorBaseType, defaultVectorBaseType) {
+			return fmt.Sprintf("%s(%d, %s)", t.dt, t.vectorDimensions, t.vectorBaseType)
+		}
+		return fmt.Sprintf("%s(%d)", t.dt, t.vectorDimensions)
 	}
-	return sqlTypeString(dt, maxLength, precision, scale)
+	return TypeString(t.dt, t.maxLength, t.precision, t.scale)
 }
 
-// sqlTypeString renders a catalog data type with whatever length, precision
-// or scale that type actually carries — shared by ColumnTypeString and
+// TypeString renders a catalog data type with whatever length, precision
+// or scale that type actually carries — shared by Column.TypeString and
 // Parameter.TypeString, which read the same columns out of sys.columns and
 // sys.parameters. nchar/nvarchar store max_length in bytes (2 per
 // character); -1 is MAX.
-func sqlTypeString(dt DataType, maxLength, precision, scale int) string {
+//
+// It is exported for a caller holding the raw catalog fields rather than a
+// Column — a CatalogColumn, an alias type's base type — so every display of
+// a type goes through this one renderer instead of a copy of it. dt must be
+// sys.types' own lower-case name; a user-defined type comes back bare, and
+// only Column.TypeString and Parameter.TypeString know to qualify it.
+func TypeString(dt DataType, maxLength, precision, scale int) string {
 	switch dt {
 	case DataTypeVarChar, DataTypeChar, DataTypeBinary, DataTypeVarBinary:
 		if maxLength == -1 {

@@ -2,7 +2,7 @@
 
 // Live verification of the 2026-09-23 review plan's write-path items:
 //
-//   - S7: DropTable(cascade) drops the incoming foreign keys and the table in
+//   - S7: Table.Drop(cascade) drops the incoming foreign keys and the table in
 //     one transaction, so a DROP TABLE the server refuses leaves the keys.
 //
 //   - S8: a forced rename runs SINGLE_USER, the rename and the MULTI_USER
@@ -51,18 +51,18 @@ func TestLiveDropTableCascadeIsAtomic(t *testing.T) {
 
 	// The schema-bound view makes DROP TABLE fail (Msg 3729) after the key
 	// drop has run; the key must survive it.
-	if err := d.DropTable(ctx, "dbo", "Parent", true); err == nil {
-		t.Fatal("DropTable(cascade) of a table a schema-bound view references succeeded")
+	if err := d.TableRef("dbo", "Parent").Drop(ctx, true); err == nil {
+		t.Fatal("Table.Drop(cascade) of a table a schema-bound view references succeeded")
 	} else if !strings.Contains(err.Error(), "vParent") {
-		t.Errorf("DropTable error %v does not name the view", err)
+		t.Errorf("Table.Drop error %v does not name the view", err)
 	}
 	if fks() != 1 || parent() != 1 {
 		t.Fatalf("after a refused cascade drop: FK count %d, Parent count %d, want both 1", fks(), parent())
 	}
 
 	liveExecIn(t, d, ctx, "DROP VIEW dbo.vParent")
-	if err := d.DropTable(ctx, "dbo", "Parent", true); err != nil {
-		t.Fatalf("DropTable(cascade): %v", err)
+	if err := d.TableRef("dbo", "Parent").Drop(ctx, true); err != nil {
+		t.Fatalf("Table.Drop(cascade): %v", err)
 	}
 	if fks() != 0 || parent() != 0 {
 		t.Errorf("after the cascade drop: FK count %d, Parent count %d, want both 0", fks(), parent())
@@ -98,7 +98,7 @@ func TestLiveForcedRenameAndDropAreOneBatch(t *testing.T) {
 	_, dropTaken := liveScratchDB(t, db, ctx, taken)
 	defer dropTaken()
 	liveExecIn(t, d, ctx, "ALTER DATABASE ["+taken+"] SET RESTRICTED_USER")
-	if err := srv.RenameDatabase(ctx, name, taken, true); err == nil {
+	if err := srv.DatabaseRef(name).Rename(ctx, taken, true); err == nil {
 		t.Fatal("renaming onto a taken name succeeded")
 	} else if !strings.Contains(err.Error(), "already exists") {
 		t.Errorf("refused rename error %v is not the server's own (Msg 1801)", err)
@@ -124,8 +124,8 @@ func TestLiveForcedRenameAndDropAreOneBatch(t *testing.T) {
 
 	rctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
-	if err := srv.RenameDatabase(rctx, name, renamed, true); err != nil {
-		t.Fatalf("forced RenameDatabase with a parked session: %v", err)
+	if err := srv.DatabaseRef(name).Rename(rctx, renamed, true); err != nil {
+		t.Fatalf("forced Database.Rename with a parked session: %v", err)
 	}
 	if got := userAccess(t, srv, ctx, renamed); got != "MULTI_USER" {
 		t.Errorf("after the forced rename %s is %q, want MULTI_USER", renamed, got)
@@ -133,8 +133,8 @@ func TestLiveForcedRenameAndDropAreOneBatch(t *testing.T) {
 
 	dctx, cancel2 := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel2()
-	if err := srv.DropDatabase(dctx, renamed, true); err != nil {
-		t.Fatalf("forced DropDatabase: %v", err)
+	if err := srv.DatabaseRef(renamed).Drop(dctx, true); err != nil {
+		t.Fatalf("forced Database.Drop: %v", err)
 	}
 	if got := userAccess(t, srv, ctx, renamed); got != "(no such database)" {
 		t.Errorf("%s still exists (%s) after the forced drop", renamed, got)

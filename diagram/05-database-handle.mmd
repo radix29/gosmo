@@ -22,27 +22,23 @@ classDiagram
         +TableByName(schema, name) *Table
         +TableRef(schema, name) *Table
         +CreateTable(req) *Table
-        +DropTable(schema, name, cascade) error
-        +RenameTable(schema, oldName, newName) error
-        +RenameObject(schema, oldName, newName) error
         +Catalog() *Catalog
         +SystemCatalog() *Catalog
         +TablesFiltered(filter) []*Table
         +TablesOfKind(kind) []*Table
         +TablesOfKindFiltered(kind, filter) []*Table
         +TableKindsPresent() TableKindPresence
-        +TransferObject(targetSchema, schema, name) error
         +Views() []*View
         +ViewsFiltered(filter) []*View
-        +DropView(schema, name) error
+        +ViewRef(schema, name) *View
         +StoredProcedures() []*StoredProcedure
         +StoredProcedureByName(schema, name) *StoredProcedure
         +StoredProceduresFiltered(filter) []*StoredProcedure
         +CreateStoredProcedure(req) *StoredProcedure
-        +DropStoredProcedure(schema, name) error
+        +StoredProcedureRef(schema, name) *StoredProcedure
         +UserDefinedFunctions() []*UserDefinedFunction
         +UserDefinedFunctionsFiltered(filter) []*UserDefinedFunction
-        +DropFunction(schema, name) error
+        +UserDefinedFunctionRef(schema, name) *UserDefinedFunction
         +Parameters(schema, name) []*Parameter
         +SystemViews() []*View
         +SystemViewsFiltered(filter) []*View
@@ -71,7 +67,7 @@ classDiagram
         +FileGroups() []*FileGroup
         +Triggers() []*Trigger
         +ObjectTriggers(schema, name) []*Trigger
-        +DropTrigger(schema, name) error
+        +TriggerRef(schema, name) *Trigger
         +DatabaseTriggers() []*DatabaseTrigger
         +DatabaseTriggerByName(name) *DatabaseTrigger
         +DatabaseTriggerRef(name) *DatabaseTrigger
@@ -89,18 +85,15 @@ classDiagram
         +DefaultRef(schema, name) *Default
         +UserDefinedDataTypes() []*UserDefinedDataType
         +UserDefinedDataTypeByName(schema, name) *UserDefinedDataType
-        +RenameUserDefinedDataType(schema, oldName, newName) error
         +UserDefinedTableTypes() []*UserDefinedTableType
         +UserDefinedTableTypeByName(schema, name) *UserDefinedTableType
         +ClrTypes() []*ClrType
         +ClrTypeByName(schema, name) *ClrType
         +SystemDataTypes() []*SystemDataType
         +UserDefinedDataTypeRef(schema, name) *UserDefinedDataType
-        +TransferType(targetSchema, schema, name) error
         +XMLSchemaCollections() []*XMLSchemaCollection
         +XMLSchemaCollectionByName(schema, name) *XMLSchemaCollection
         +XMLSchemaCollectionRef(schema, name) *XMLSchemaCollection
-        +TransferXMLSchemaCollection(targetSchema, schema, name) error
         +Assemblies() []*Assembly
         +AssemblyByName(name) *Assembly
         +AssemblyRef(name) *Assembly
@@ -176,6 +169,9 @@ classDiagram
         +SetUserAccess(mode) error
         +SetOffline() error
         +SetOnline() error
+        +Drop(force) error
+        +Rename(newName, force) error
+        +Detach(opts) error
         +Options() *DatabaseOptions
         +SetDatabaseOption(opt, value, term) error
         +SetOwner(principal) error

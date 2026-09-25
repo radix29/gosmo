@@ -27,7 +27,7 @@ func TestRefHandleWriteStatements(t *testing.T) {
 			return s.ServerRoleRef("auditors").Rename(ctx, "readers")
 		}, "ALTER SERVER ROLE [auditors] WITH NAME = [readers]"},
 		{"server role change owner", func(ctx context.Context, s *Server) error {
-			return s.ServerRoleRef("auditors").ChangeOwner(ctx, "sa")
+			return s.ServerRoleRef("auditors").SetOwner(ctx, "sa")
 		}, "ALTER AUTHORIZATION ON SERVER ROLE::[auditors] TO [sa]"},
 		{"server role drop", func(ctx context.Context, s *Server) error {
 			return s.ServerRoleRef("auditors").Drop(ctx)

@@ -108,8 +108,8 @@ func (r *DatabaseRole) Rename(ctx context.Context, newName string) error {
 	return nil
 }
 
-// ChangeOwner transfers ownership of the database role to a new principal.
-func (r *DatabaseRole) ChangeOwner(ctx context.Context, newOwner string) error {
+// SetOwner transfers ownership of the database role to a new principal.
+func (r *DatabaseRole) SetOwner(ctx context.Context, newOwner string) error {
 	q := fmt.Sprintf("ALTER AUTHORIZATION ON ROLE::%s TO %s", quoteIdent(r.Name), quoteIdent(newOwner))
 	if _, err := r.db.exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: change database role %q owner to %q: %w", r.Name, newOwner, err)

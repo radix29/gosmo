@@ -140,7 +140,7 @@ func (d *Database) CreateColumnMasterKey(ctx context.Context, req CreateColumnMa
 	enclave := ""
 	if len(req.Signature) > 0 {
 		if !d.EnclaveComputationsSupported() {
-			return nil, unsupportedVersionf("gosmo: create column master key [%s]: enclave computations require SQL Server 2019 or later", req.Name)
+			return nil, unsupportedVersionf("gosmo: create column master key %q: enclave computations require SQL Server 2019 or later", req.Name)
 		}
 		enclave = fmt.Sprintf(",\n    ENCLAVE_COMPUTATIONS (SIGNATURE = %s)", binaryLiteral(req.Signature))
 	}
@@ -153,7 +153,7 @@ WITH (
     KEY_PATH = N'%s'%s
 )`, quoteIdent(req.Name), escapeSingle(req.KeyStoreProvider), escapeSingle(req.KeyPath), enclave)
 	if _, err := d.exec(ctx, q); err != nil {
-		return nil, fmt.Errorf("gosmo: create column master key [%s]: %w", req.Name, err)
+		return nil, fmt.Errorf("gosmo: create column master key %q: %w", req.Name, err)
 	}
 	return createdObject(ctx, d.ColumnMasterKeyRef(req.Name), func() (*ColumnMasterKey, error) {
 		return d.ColumnMasterKeyByName(ctx, req.Name)
@@ -165,7 +165,7 @@ func (cmk *ColumnMasterKey) Drop(ctx context.Context) error {
 	_, err := cmk.db.exec(ctx,
 		fmt.Sprintf("DROP COLUMN MASTER KEY %s", quoteIdent(cmk.Name)))
 	if err != nil {
-		return fmt.Errorf("gosmo: drop column master key [%s]: %w", cmk.Name, err)
+		return fmt.Errorf("gosmo: drop column master key %q: %w", cmk.Name, err)
 	}
 	return nil
 }
@@ -346,11 +346,11 @@ func (d *Database) CreateColumnEncryptionKey(ctx context.Context, req CreateColu
 		return nil, fmt.Errorf("gosmo: create column encryption key: name is required")
 	}
 	if len(values) == 0 {
-		return nil, fmt.Errorf("gosmo: create column encryption key [%s]: at least one encrypted value is required", name)
+		return nil, fmt.Errorf("gosmo: create column encryption key %q: at least one encrypted value is required", name)
 	}
 	for i, v := range values {
 		if missing := v.missing(); missing != "" {
-			return nil, fmt.Errorf("gosmo: create column encryption key [%s]: value %d has %s", name, i+1, missing)
+			return nil, fmt.Errorf("gosmo: create column encryption key %q: value %d has %s", name, i+1, missing)
 		}
 	}
 
@@ -363,7 +363,7 @@ func (d *Database) CreateColumnEncryptionKey(ctx context.Context, req CreateColu
 		fmt.Fprintf(&sb, "\n%s", v.valueClause())
 	}
 	if _, err := d.exec(ctx, sb.String()); err != nil {
-		return nil, fmt.Errorf("gosmo: create column encryption key [%s]: %w", name, err)
+		return nil, fmt.Errorf("gosmo: create column encryption key %q: %w", name, err)
 	}
 	return createdObject(ctx, d.ColumnEncryptionKeyRef(name), func() (*ColumnEncryptionKey, error) {
 		return d.ColumnEncryptionKeyByName(ctx, name)
@@ -380,12 +380,12 @@ func (d *Database) CreateColumnEncryptionKey(ctx context.Context, req CreateColu
 // can generate it, and the server stores it without checking it.
 func (cek *ColumnEncryptionKey) AddValue(ctx context.Context, value ColumnEncryptionKeyValue) error {
 	if missing := value.missing(); missing != "" {
-		return fmt.Errorf("gosmo: add value to column encryption key [%s]: the value has %s", cek.Name, missing)
+		return fmt.Errorf("gosmo: add value to column encryption key %q: the value has %s", cek.Name, missing)
 	}
 	stmt := fmt.Sprintf("ALTER COLUMN ENCRYPTION KEY %s\nADD VALUE\n%s",
 		quoteIdent(cek.Name), value.valueClause())
 	if _, err := cek.db.exec(ctx, stmt); err != nil {
-		return fmt.Errorf("gosmo: add value to column encryption key [%s]: %w", cek.Name, err)
+		return fmt.Errorf("gosmo: add value to column encryption key %q: %w", cek.Name, err)
 	}
 	// Not mirrored under WithScript — nothing reached the server, so the
 	// handle must keep describing what is actually there. See setIfApplied,
@@ -406,12 +406,12 @@ func (cek *ColumnEncryptionKey) AddValue(ctx context.Context, value ColumnEncryp
 // not restated.
 func (cek *ColumnEncryptionKey) DropValue(ctx context.Context, masterKeyName string) error {
 	if masterKeyName == "" {
-		return fmt.Errorf("gosmo: drop value from column encryption key [%s]: the column master key name is required", cek.Name)
+		return fmt.Errorf("gosmo: drop value from column encryption key %q: the column master key name is required", cek.Name)
 	}
 	stmt := fmt.Sprintf("ALTER COLUMN ENCRYPTION KEY %s\nDROP VALUE\n(\n    COLUMN_MASTER_KEY = %s\n)",
 		quoteIdent(cek.Name), quoteIdent(masterKeyName))
 	if _, err := cek.db.exec(ctx, stmt); err != nil {
-		return fmt.Errorf("gosmo: drop value from column encryption key [%s]: %w", cek.Name, err)
+		return fmt.Errorf("gosmo: drop value from column encryption key %q: %w", cek.Name, err)
 	}
 	// Not mirrored under WithScript, as in AddValue above.
 	if !Scripting(ctx) {
@@ -440,7 +440,7 @@ func (cek *ColumnEncryptionKey) Drop(ctx context.Context) error {
 	_, err := cek.db.exec(ctx,
 		fmt.Sprintf("DROP COLUMN ENCRYPTION KEY %s", quoteIdent(cek.Name)))
 	if err != nil {
-		return fmt.Errorf("gosmo: drop column encryption key [%s]: %w", cek.Name, err)
+		return fmt.Errorf("gosmo: drop column encryption key %q: %w", cek.Name, err)
 	}
 	return nil
 }

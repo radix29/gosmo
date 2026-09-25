@@ -16,9 +16,14 @@ SELECT c.name, c.column_id,
        c.generated_always_type, c.is_hidden, c.is_filestream,
        CAST(0 AS int),
        CAST(0 AS bit),
-       ISNULL(cek.name, ''), ISNULL(c.encryption_type_desc, ''), ISNULL(c.encryption_algorithm_name, '')
+       ISNULL(cek.name, ''), ISNULL(c.encryption_type_desc, ''), ISNULL(c.encryption_algorithm_name, ''),
+       ISNULL(SCHEMA_NAME(xsc.schema_id), ''), ISNULL(xsc.name, ''), c.is_xml_document,
+       CAST(0 AS int),
+       CAST('' AS nvarchar(60))
 FROM   sys.columns c
 JOIN   sys.types tp ON tp.user_type_id = c.user_type_id
+LEFT   JOIN sys.xml_schema_collections xsc
+       ON  xsc.xml_collection_id = NULLIF(c.xml_collection_id, 0)
 LEFT   JOIN sys.column_encryption_keys cek
        ON  cek.column_encryption_key_id = c.column_encryption_key_id
 LEFT   JOIN sys.masked_columns mc
@@ -53,9 +58,14 @@ SELECT c.name, c.column_id,
        c.generated_always_type, c.is_hidden, c.is_filestream,
        ISNULL(c.graph_type, 0),
        CAST(0 AS bit),
-       ISNULL(cek.name, ''), ISNULL(c.encryption_type_desc, ''), ISNULL(c.encryption_algorithm_name, '')
+       ISNULL(cek.name, ''), ISNULL(c.encryption_type_desc, ''), ISNULL(c.encryption_algorithm_name, ''),
+       ISNULL(SCHEMA_NAME(xsc.schema_id), ''), ISNULL(xsc.name, ''), c.is_xml_document,
+       CAST(0 AS int),
+       CAST('' AS nvarchar(60))
 FROM   sys.columns c
 JOIN   sys.types tp ON tp.user_type_id = c.user_type_id
+LEFT   JOIN sys.xml_schema_collections xsc
+       ON  xsc.xml_collection_id = NULLIF(c.xml_collection_id, 0)
 LEFT   JOIN sys.column_encryption_keys cek
        ON  cek.column_encryption_key_id = c.column_encryption_key_id
 LEFT   JOIN sys.masked_columns mc
@@ -90,9 +100,14 @@ SELECT c.name, c.column_id,
        c.generated_always_type, c.is_hidden, c.is_filestream,
        ISNULL(c.graph_type, 0),
        CAST(0 AS bit),
-       ISNULL(cek.name, ''), ISNULL(c.encryption_type_desc, ''), ISNULL(c.encryption_algorithm_name, '')
+       ISNULL(cek.name, ''), ISNULL(c.encryption_type_desc, ''), ISNULL(c.encryption_algorithm_name, ''),
+       ISNULL(SCHEMA_NAME(xsc.schema_id), ''), ISNULL(xsc.name, ''), c.is_xml_document,
+       CAST(0 AS int),
+       CAST('' AS nvarchar(60))
 FROM   sys.columns c
 JOIN   sys.types tp ON tp.user_type_id = c.user_type_id
+LEFT   JOIN sys.xml_schema_collections xsc
+       ON  xsc.xml_collection_id = NULLIF(c.xml_collection_id, 0)
 LEFT   JOIN sys.column_encryption_keys cek
        ON  cek.column_encryption_key_id = c.column_encryption_key_id
 LEFT   JOIN sys.masked_columns mc
@@ -127,9 +142,14 @@ SELECT c.name, c.column_id,
        c.generated_always_type, c.is_hidden, c.is_filestream,
        ISNULL(c.graph_type, 0),
        c.is_dropped_ledger_column,
-       ISNULL(cek.name, ''), ISNULL(c.encryption_type_desc, ''), ISNULL(c.encryption_algorithm_name, '')
+       ISNULL(cek.name, ''), ISNULL(c.encryption_type_desc, ''), ISNULL(c.encryption_algorithm_name, ''),
+       ISNULL(SCHEMA_NAME(xsc.schema_id), ''), ISNULL(xsc.name, ''), c.is_xml_document,
+       CAST(0 AS int),
+       CAST('' AS nvarchar(60))
 FROM   sys.columns c
 JOIN   sys.types tp ON tp.user_type_id = c.user_type_id
+LEFT   JOIN sys.xml_schema_collections xsc
+       ON  xsc.xml_collection_id = NULLIF(c.xml_collection_id, 0)
 LEFT   JOIN sys.column_encryption_keys cek
        ON  cek.column_encryption_key_id = c.column_encryption_key_id
 LEFT   JOIN sys.masked_columns mc
@@ -164,9 +184,14 @@ SELECT c.name, c.column_id,
        c.generated_always_type, c.is_hidden, c.is_filestream,
        ISNULL(c.graph_type, 0),
        c.is_dropped_ledger_column,
-       ISNULL(cek.name, ''), ISNULL(c.encryption_type_desc, ''), ISNULL(c.encryption_algorithm_name, '')
+       ISNULL(cek.name, ''), ISNULL(c.encryption_type_desc, ''), ISNULL(c.encryption_algorithm_name, ''),
+       ISNULL(SCHEMA_NAME(xsc.schema_id), ''), ISNULL(xsc.name, ''), c.is_xml_document,
+       ISNULL(c.vector_dimensions, 0),
+       ISNULL(c.vector_base_type_desc, '')
 FROM   sys.columns c
 JOIN   sys.types tp ON tp.user_type_id = c.user_type_id
+LEFT   JOIN sys.xml_schema_collections xsc
+       ON  xsc.xml_collection_id = NULLIF(c.xml_collection_id, 0)
 LEFT   JOIN sys.column_encryption_keys cek
        ON  cek.column_encryption_key_id = c.column_encryption_key_id
 LEFT   JOIN sys.masked_columns mc

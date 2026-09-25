@@ -128,8 +128,8 @@ func TestLiveScriptLookupsHonourCollation(t *testing.T) {
 	})
 
 	t.Run("transfer between schemas that differ only in case", func(t *testing.T) {
-		if err := d.TransferObject(ctx, "Sales", "sales", "Orders"); err != nil {
-			t.Fatalf("TransferObject sales → Sales: %v", err)
+		if err := d.TableRef("sales", "Orders").Transfer(ctx, "Sales"); err != nil {
+			t.Fatalf("Transfer sales → Sales: %v", err)
 		}
 		if _, err := d.TableByName(ctx, "Sales", "Orders"); err != nil {
 			t.Errorf("after the transfer, [Sales].[Orders]: %v", err)
@@ -140,9 +140,9 @@ func TestLiveScriptLookupsHonourCollation(t *testing.T) {
 		ci, dropCI := liveScratchDBCollated(t, db, ctx, "gosmo_t13_ci", "Latin1_General_100_CI_AS")
 		defer dropCI()
 		liveExecIn(t, ci, ctx, `CREATE SCHEMA [sales]`, `CREATE TABLE [sales].[Orders] (id int NOT NULL)`)
-		err := ci.TransferObject(ctx, "SALES", "sales", "Orders")
+		err := ci.TableRef("sales", "Orders").Transfer(ctx, "SALES")
 		if err == nil || !strings.Contains(err.Error(), "already in schema") {
-			t.Errorf("TransferObject SALES ← sales err = %v, want an already-in-schema refusal", err)
+			t.Errorf("Transfer SALES ← sales err = %v, want an already-in-schema refusal", err)
 		}
 	})
 }

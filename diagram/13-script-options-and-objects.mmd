@@ -36,7 +36,7 @@ classDiagram
         +Database() *Database
         +ObjectCount() int
         +ObjectCountsByType() SchemaObjectCounts
-        +ChangeOwner(newOwner) error
+        +SetOwner(newOwner) error
         +Drop() error
     }
 
@@ -54,24 +54,36 @@ classDiagram
     }
 
     class View {
+        -db *Database
         +ObjectID int
         +Schema string
         +Name string
         +Definition string
         +CreateDate time.Time
         +ModifyDate time.Time
+        +Database() *Database
+        +Drop() error
+        +Rename(newName) error
+        +Transfer(targetSchema) error
+        +Triggers() []*Trigger
     }
 
     class StoredProcedure {
+        -db *Database
         +ObjectID int
         +Schema string
         +Name string
         +Definition string
         +CreateDate time.Time
         +ModifyDate time.Time
+        +Database() *Database
+        +Drop() error
+        +Rename(newName) error
+        +Transfer(targetSchema) error
     }
 
     class UserDefinedFunction {
+        -db *Database
         +ObjectID int
         +Schema string
         +Name string
@@ -79,6 +91,10 @@ classDiagram
         +Definition string
         +CreateDate time.Time
         +ModifyDate time.Time
+        +Database() *Database
+        +Drop() error
+        +Rename(newName) error
+        +Transfer(targetSchema) error
     }
 
     class User {
@@ -110,7 +126,7 @@ classDiagram
         +Database() *Database
         +Rename(newName) error
         +Drop() error
-        +ChangeOwner(newOwner) error
+        +SetOwner(newOwner) error
     }
 
     class RoleMember {
@@ -134,12 +150,17 @@ classDiagram
     }
 
     class Trigger {
+        -db *Database
         +Name string
         +TableName string
         +Schema string
         +IsEnabled bool
         +Events []string
         +Definition string
+        +Database() *Database
+        +Drop() error
+        +Rename(newName) error
+        No Transfer: a trigger moves with its table.
     }
 
     class ServerRole {
@@ -154,7 +175,7 @@ classDiagram
         +Server() *Server
         +Rename(newName) error
         +Drop() error
-        +ChangeOwner(newOwner) error
+        +SetOwner(newOwner) error
     }
 
     class LinkedServer {

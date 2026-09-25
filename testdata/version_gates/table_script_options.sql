@@ -3,6 +3,9 @@
 SELECT CAST(CASE WHEN t.temporal_type = 2 THEN 1 ELSE 0 END AS BIT),
        ISNULL(OBJECT_SCHEMA_NAME(t.history_table_id), ''),
        ISNULL(OBJECT_NAME(t.history_table_id), ''),
+       CAST(0 AS int),
+       CAST('' AS nvarchar(60)),
+       ISNULL(t.lock_escalation_desc, ''),
        ISNULL(COL_NAME(p.object_id, p.start_column_id), ''),
        ISNULL(COL_NAME(p.object_id, p.end_column_id), ''),
        (SELECT pp.partition_number AS n, pp.data_compression_desc AS c
@@ -40,6 +43,9 @@ WHERE  t.object_id = @p1
 SELECT CAST(CASE WHEN t.temporal_type = 2 THEN 1 ELSE 0 END AS BIT),
        ISNULL(OBJECT_SCHEMA_NAME(t.history_table_id), ''),
        ISNULL(OBJECT_NAME(t.history_table_id), ''),
+       CASE WHEN t.history_retention_period > 0 THEN t.history_retention_period ELSE 0 END,
+       CASE WHEN t.history_retention_period > 0 THEN t.history_retention_period_unit_desc ELSE '' END,
+       ISNULL(t.lock_escalation_desc, ''),
        ISNULL(COL_NAME(p.object_id, p.start_column_id), ''),
        ISNULL(COL_NAME(p.object_id, p.end_column_id), ''),
        (SELECT pp.partition_number AS n, pp.data_compression_desc AS c
@@ -77,6 +83,9 @@ WHERE  t.object_id = @p1
 SELECT CAST(CASE WHEN t.temporal_type = 2 THEN 1 ELSE 0 END AS BIT),
        ISNULL(OBJECT_SCHEMA_NAME(t.history_table_id), ''),
        ISNULL(OBJECT_NAME(t.history_table_id), ''),
+       CASE WHEN t.history_retention_period > 0 THEN t.history_retention_period ELSE 0 END,
+       CASE WHEN t.history_retention_period > 0 THEN t.history_retention_period_unit_desc ELSE '' END,
+       ISNULL(t.lock_escalation_desc, ''),
        ISNULL(COL_NAME(p.object_id, p.start_column_id), ''),
        ISNULL(COL_NAME(p.object_id, p.end_column_id), ''),
        (SELECT pp.partition_number AS n, pp.data_compression_desc AS c
@@ -114,6 +123,9 @@ WHERE  t.object_id = @p1
 SELECT CAST(CASE WHEN t.temporal_type = 2 THEN 1 ELSE 0 END AS BIT),
        ISNULL(OBJECT_SCHEMA_NAME(t.history_table_id), ''),
        ISNULL(OBJECT_NAME(t.history_table_id), ''),
+       CASE WHEN t.history_retention_period > 0 THEN t.history_retention_period ELSE 0 END,
+       CASE WHEN t.history_retention_period > 0 THEN t.history_retention_period_unit_desc ELSE '' END,
+       ISNULL(t.lock_escalation_desc, ''),
        ISNULL(COL_NAME(p.object_id, p.start_column_id), ''),
        ISNULL(COL_NAME(p.object_id, p.end_column_id), ''),
        (SELECT pp.partition_number AS n, pp.data_compression_desc AS c
@@ -151,6 +163,9 @@ WHERE  t.object_id = @p1
 SELECT CAST(CASE WHEN t.temporal_type = 2 THEN 1 ELSE 0 END AS BIT),
        ISNULL(OBJECT_SCHEMA_NAME(t.history_table_id), ''),
        ISNULL(OBJECT_NAME(t.history_table_id), ''),
+       CASE WHEN t.history_retention_period > 0 THEN t.history_retention_period ELSE 0 END,
+       CASE WHEN t.history_retention_period > 0 THEN t.history_retention_period_unit_desc ELSE '' END,
+       ISNULL(t.lock_escalation_desc, ''),
        ISNULL(COL_NAME(p.object_id, p.start_column_id), ''),
        ISNULL(COL_NAME(p.object_id, p.end_column_id), ''),
        (SELECT pp.partition_number AS n, pp.data_compression_desc AS c

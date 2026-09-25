@@ -30,8 +30,8 @@ func (s *Schema) Drop(ctx context.Context) error {
 	return nil
 }
 
-// ChangeOwner transfers schema ownership to a new principal.
-func (s *Schema) ChangeOwner(ctx context.Context, newOwner string) error {
+// SetOwner transfers schema ownership to a new principal.
+func (s *Schema) SetOwner(ctx context.Context, newOwner string) error {
 	q := fmt.Sprintf("ALTER AUTHORIZATION ON SCHEMA::%s TO %s",
 		quoteIdent(s.Name), quoteIdent(newOwner))
 	if _, err := s.db.exec(ctx, q); err != nil {

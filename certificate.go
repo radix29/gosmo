@@ -329,10 +329,10 @@ func (c *Certificate) RemovePrivateKey(ctx context.Context) error {
 	return nil
 }
 
-// ChangeOwner transfers the certificate to another database principal with
+// SetOwner transfers the certificate to another database principal with
 // ALTER AUTHORIZATION. SQL Server drops every explicit permission on the
 // certificate as it does so (verified 2026-09-22 on 13 and 17).
-func (c *Certificate) ChangeOwner(ctx context.Context, newOwner string) error {
+func (c *Certificate) SetOwner(ctx context.Context, newOwner string) error {
 	q := "ALTER AUTHORIZATION ON CERTIFICATE::" + quoteIdent(c.Name) + " TO " + quoteIdent(newOwner)
 	if _, err := c.db.exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: change certificate %q owner to %q in %q: %w", c.Name, newOwner, c.db.Name, err)

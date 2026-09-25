@@ -228,8 +228,8 @@ contains, and the `Scripter` that generates CREATE DDL for any of them.
 
 | Diagram | Holds |
 | --- | --- |
-| [`10-tables-and-indexes.mmd`](diagram/10-tables-and-indexes.mmd) | `Table`, `Column`, `Index` and everything an index reports — storage, allocation, fragmentation, XML and spatial variants. |
-| [`11-statistics-and-table-kinds.mmd`](diagram/11-statistics-and-table-kinds.mmd) | Spatial tessellation, data spaces, foreign keys and check constraints, statistics and their histograms, table details and kinds, and the user-defined types. |
+| [`10-tables-and-indexes.mmd`](diagram/10-tables-and-indexes.mmd) | `Table`, `Column`, `Index` and everything an index reports — storage, allocation, XML and spatial variants. |
+| [`11-statistics-and-table-kinds.mmd`](diagram/11-statistics-and-table-kinds.mmd) | Index fragmentation, spatial tessellation, data spaces, foreign keys and check constraints, statistics and their histograms, table details and kinds, and the user-defined types. |
 | [`12-programmability-and-external.mmd`](diagram/12-programmability-and-external.mmd) | Rules and defaults, assemblies, plan guides, PolyBase and elastic-query resources, `Scripter` and `ServerScripter`. |
 | [`13-script-options-and-objects.mmd`](diagram/13-script-options-and-objects.mmd) | `ScriptVerb`/`ScriptOptions`, and schemas, views, procedures, functions, users, roles, filegroups, triggers, server roles and linked servers. |
 | [`20-service-broker.mmd`](diagram/20-service-broker.mmd) | Message types and their validation, contracts and their messages, services, queues and queue monitors, routes, remote service bindings and conversation priorities. |
@@ -291,10 +291,11 @@ The instance and database halves pair up: `ServerResourceStat` and
 | Current login (`SUSER_NAME()`) | `srv.CurrentLogin(ctx)`                 |
 | `Server.Logins`         | `srv.Logins(ctx)` / `srv.LoginByName(ctx, name)` / `srv.LoginRef(name)` (no-I/O handle) |
 | `Server.Roles`          | `srv.ServerRoles(ctx)` / `srv.ServerRoleByName(ctx, name)` / `srv.ServerRoleRef(name)` (no-I/O handle) / `srv.ServerRoleMembers(ctx, role)` |
-| Server role administration | `role.Rename(ctx, newName)` / `role.ChangeOwner(ctx, owner)` / `srv.Add\|RemoveServerRoleMember(ctx, role, member)` |
+| Server role administration | `role.Rename(ctx, newName)` / `role.SetOwner(ctx, owner)` / `srv.Add\|RemoveServerRoleMember(ctx, role, member)` |
 | Drop a server role      | `srv.ServerRoleRef(name).Drop(ctx)` / `role.Drop(ctx)`  |
-| Rename a database       | `srv.RenameDatabase(ctx, old, new, force)` — `force` puts it in single-user mode first |
-| Detach a database       | `srv.DetachDatabase(ctx, name, gosmo.DetachOptions{...})` — leaves the files on disk; a detach that fails after `DropConnections` is put back to MULTI_USER |
+| Drop a database         | `srv.DatabaseRef(name).Drop(ctx, force)` / `db.Drop(ctx, force)` — `force` closes other connections first |
+| Rename a database       | `srv.DatabaseRef(old).Rename(ctx, new, force)` / `db.Rename(ctx, new, force)` — `force` puts it in single-user mode first |
+| Detach a database       | `srv.DatabaseRef(name).Detach(ctx, gosmo.DetachOptions{...})` — leaves the files on disk; a detach that fails after `DropConnections` is put back to MULTI_USER |
 | Free the pool's own sessions from a database | `srv.ReleaseIdleConnections(ctx)` — closes idle pooled connections, which otherwise sit inside the last database they read and block an exclusive-access statement (detach, rename, drop, `SET READ_ONLY`, RCSI, filegroup read-only — each of which calls it itself) |
 | Attach a database       | `srv.AttachDatabase(ctx, gosmo.AttachSpec{Name, Files, Owner, RebuildLog})` — the name need not be the one it was detached under |
 | Read a detached file    | `srv.DetachedDatabaseInfo(ctx, primaryFilePath)` → `*DetachedDatabase` (`.Name`, `.Files`, `.DataFiles()`, `.LogFiles()`) — the only way to learn a detached database's other files |
@@ -350,18 +351,18 @@ The instance and database halves pair up: `ServerResourceStat` and
 | `Database.Tables`               | `db.Tables(ctx)` / `db.TablesBySchema(ctx, schema)` |
 | One family of tables (System, FileTables, External, Graph) | `db.TablesOfKind(ctx, kind)` / `db.TablesOfKindFiltered(ctx, kind, f)` / `db.TableKindsPresent(ctx)` — see [Table kinds](#table-kinds) |
 | Bulk table/view + column snapshot | `db.Catalog(ctx)` (user objects) / `db.SystemCatalog(ctx)` (`sys` schema) |
-| `Database.Views`                | `db.Views(ctx)` / `db.DropView(ctx, schema, name)`  |
-| `Database.StoredProcedures`     | `db.StoredProcedures(ctx)` / `db.StoredProcedureByName(ctx, schema, name)` / `db.CreateStoredProcedure(ctx, req)` |
-| `Database.UserDefinedFunctions` | `db.UserDefinedFunctions(ctx)` / `db.DropFunction(ctx, schema, name)` |
+| `Database.Views`                | `db.Views(ctx)` / `db.ViewRef(schema, name)` (no-I/O handle) / `v.Drop(ctx)` / `v.Triggers(ctx)` |
+| `Database.StoredProcedures`     | `db.StoredProcedures(ctx)` / `db.StoredProcedureByName(ctx, schema, name)` / `db.StoredProcedureRef(schema, name)` (no-I/O handle) / `db.CreateStoredProcedure(ctx, req)` / `p.Drop(ctx)` |
+| `Database.UserDefinedFunctions` | `db.UserDefinedFunctions(ctx)` / `db.UserDefinedFunctionRef(schema, name)` (no-I/O handle) / `f.Drop(ctx)` |
 | System Views/Procedures/Functions | `db.SystemViews(ctx)` / `db.SystemStoredProcedures(ctx)` / `db.SystemFunctions(ctx)` |
 | `Database.Schemas`              | `db.Schemas(ctx)` / `db.SchemaByName(ctx, name)` / `db.SchemaRef(name)` / `db.CreateSchema(ctx, req)` / `schema.ObjectCount(ctx)` / `schema.ObjectCountsByType(ctx)` |
 | `Database.Users`                | `db.Users(ctx)` / `db.UserByName(ctx, name)` / `db.UserRef(name)` (no-I/O handle) / `db.CreateUser(ctx, gosmo.CreateUserRequest{Name, Kind, ...})` — for login, with password (contained), without login, Windows, certificate, asymmetric key, external provider |
 | Database user administration    | `user.Rename(ctx, newName)` / `user.SetDefaultSchema(ctx, schemaName)` / `user.SetLogin(ctx, loginName)` |
 | `Database.AuditSpecifications`  | `db.DatabaseAuditSpecifications(ctx)` / `...ByName(ctx, name)` / `db.DatabaseAuditSpecificationRef(name)` (no-I/O handle) / `db.CreateDatabaseAuditSpecification(ctx, spec)` |
 | `Database.Roles`                | `db.DatabaseRoles(ctx)` / `db.RoleByName(ctx, name)` / `db.RoleMembers(ctx, roleName)` |
-| Database role administration    | `role.Rename(ctx, newName)` / `role.ChangeOwner(ctx, newOwner)` / `role.Drop(ctx)` / `db.RoleRef(name).Drop(ctx)` |
+| Database role administration    | `role.Rename(ctx, newName)` / `role.SetOwner(ctx, newOwner)` / `role.Drop(ctx)` / `db.RoleRef(name).Drop(ctx)` |
 | `Database.FileGroups`           | `db.FileGroups(ctx)` — `fg.Type` is the `type_desc` (ROWS / FILESTREAM / MEMORY_OPTIMIZED), `fg.IsFileStream()` the common test |
-| `Database.Triggers`             | `db.Triggers(ctx)` / `db.ObjectTriggers(ctx, schema, name)` (one table or view, by name) / `db.DropTrigger(ctx, schema, name)` |
+| `Database.Triggers`             | `db.Triggers(ctx)` / `db.ObjectTriggers(ctx, schema, name)` (one table or view, by name) / `db.TriggerRef(schema, name)` (no-I/O handle) / `tr.Drop(ctx)` / `tr.Rename(ctx, newName)` |
 | Database-scope DDL triggers     | `db.DatabaseTriggers(ctx)` / `db.DatabaseTriggerByName(ctx, name)` / `db.DatabaseTriggerRef(name)` (no-I/O handle) / `tr.Enable(ctx)` / `tr.Disable(ctx)` / `tr.Drop(ctx)` — see [Database DDL triggers](#database-ddl-triggers) |
 | `Database.Sequences`            | `db.Sequences(ctx)` / `db.SequenceByName(ctx, schema, name)` / `db.SequenceRef(schema, name).Drop(ctx)` |
 | `Database.Synonyms`             | `db.Synonyms(ctx)` / `db.SynonymByName(ctx, schema, name)` / `db.SynonymRef(schema, name).Drop(ctx)` |
@@ -371,8 +372,8 @@ The instance and database halves pair up: `ServerResourceStat` and
 | `Database.Assemblies`           | `db.Assemblies(ctx)` / `db.AssemblyByName(ctx, name)` / `a.Files(ctx)` / `a.Modules(ctx)` — see [Assemblies](#assemblies) |
 | `Database.PlanGuides`           | `db.PlanGuides(ctx)` / `db.PlanGuideByName(ctx, name)` / `db.PlanGuideRef(name)` (no-I/O handle) / `g.Enable(ctx)` / `g.Disable(ctx)` / `g.Drop(ctx)` — see [Plan guides](#plan-guides) |
 | External data sources / file formats / libraries | `db.ExternalDataSources(ctx)` / `db.ExternalFileFormats(ctx)` / `db.ExternalLibraries(ctx)` (each with `...ByName(ctx, name)` and `db.Drop...`) — see [External resources](#external-resources) |
-| Rename any `sp_rename`-able object | `db.RenameObject(ctx, schema, oldName, newName)` — view, procedure, function, sequence, synonym, trigger |
-| Move an object to another schema | `db.TransferObject(ctx, targetSchema, schema, name)` — `ALTER SCHEMA ... TRANSFER`, which `sp_rename` cannot do |
+| Rename a schema-scoped object | `x.Rename(ctx, newName)` on its handle — table, view, procedure, function, trigger, sequence, synonym, rule, default, alias type; a constraint is `t.RenameConstraint(ctx, name, newName)` |
+| Move an object to another schema | `x.Transfer(ctx, targetSchema)` on its handle — `ALTER SCHEMA ... TRANSFER`, which `sp_rename` cannot do; every family above but the trigger, plus the table and CLR types, XML schema collections and queues |
 | Parameters of a procedure or function | `db.Parameters(ctx, schema, name)` → `[]*Parameter` |
 | Filtered listings                | `db.TablesFiltered(ctx, f)` / `ViewsFiltered` / `StoredProceduresFiltered` / `UserDefinedFunctionsFiltered` (and the `System...` forms) — see [Filtering a listing](#filtering-a-listing) |
 | What may this login do here?     | `db.Capabilities(ctx)` → `*DatabaseCapabilities` |
@@ -432,7 +433,8 @@ The instance and database halves pair up: `ServerResourceStat` and
 | Validate a filter predicate | `t.CheckWhereSyntax(ctx, predicate)` |
 | Object details (lock escalation, ANSI_NULLS, CDC, temporal, ledger, ...) | `t.Detail(ctx)` |
 | Space used (`sp_spaceused`-style) | `t.SpaceUsed(ctx)` (all tables at once: `db.TableSpaceUsedAll(ctx)`) |
-| Truncate              | `t.TruncateTable(ctx)`                |
+| Truncate              | `t.Truncate(ctx)`                     |
+| Drop / rename / move  | `t.Drop(ctx, cascade)` / `t.Rename(ctx, newName)` / `t.Transfer(ctx, targetSchema)` |
 | Fragmentation         | `t.FragmentationStats(ctx, mode)`       |
 | Rebuild all indexes   | `t.RebuildAllIndexes(ctx, fillFactor)`  |
 | Update all statistics | `t.UpdateAllStatistics(ctx, samplePct)` |
@@ -825,7 +827,7 @@ rows.
 
 | SSMS equivalent                    | gosmo                                              |
 | ---------------------------------- | -------------------------------------------------- |
-| Tasks → Detach                     | `srv.DetachDatabase(ctx, name, gosmo.DetachOptions{...})` |
+| Tasks → Detach                     | `db.Detach(ctx, gosmo.DetachOptions{...})` |
 | Databases → Attach                 | `srv.AttachDatabase(ctx, gosmo.AttachSpec{Name, Files, Owner, RebuildLog})` |
 | The Attach dialog's file list      | `srv.DetachedDatabaseInfo(ctx, primaryFilePath)` → `*DetachedDatabase` |
 | The paths to detach from           | `srv.DatabaseFiles(ctx, name)` — reads `sys.master_files`, so it answers for a database `db.Files(ctx)` cannot `USE` |
@@ -897,17 +899,18 @@ since SQL Server 2008 in favour of `CHECK` and `DEFAULT` constraints.
 | Operation        | Alias type | Table / CLR type | XML schema collection | Rule / default |
 | ---------------- | ---------- | ---------------- | --------------------- | -------------- |
 | Drop             | `db.UserDefinedDataTypeRef(schema, name).Drop(ctx)` / `t.Drop(ctx)` | `db.UserDefinedTableTypeRef` / `db.ClrTypeRef` / `t.Drop(ctx)` | `db.XMLSchemaCollectionRef(schema, name).Drop(ctx)` / `c.Drop(ctx)` | `db.RuleRef` / `db.DefaultRef` / `.Drop(ctx)` |
-| Rename           | `db.RenameUserDefinedDataType` | — (`sp_rename` has no class for them) | — | `db.RenameObject` |
-| Move to a schema | `db.TransferType` | `db.TransferType` | `db.TransferXMLSchemaCollection` | `db.TransferObject` |
+| Rename           | `t.Rename(ctx, newName)` | — (`sp_rename` has no class for them) | — | `r.Rename(ctx, newName)` |
+| Move to a schema | `t.Transfer(ctx, targetSchema)` | `t.Transfer(ctx, targetSchema)` | `c.Transfer(ctx, targetSchema)` | `r.Transfer(ctx, targetSchema)` |
 
 All four type families live in `sys.types`, separated only by flags; a
 table type is `is_user_defined` too, so the alias-type reads exclude it
 explicitly rather than trusting that flag alone. `ALTER SCHEMA ... TRANSFER`
-needs the `TYPE::` or `XML SCHEMA COLLECTION::` class prefix, which is why
-`TransferObject` (the default `OBJECT` class) does not serve them.
-`RenameUserDefinedDataType` is alias types only: passing it a table or CLR
-type renames nothing and reports success. Rules and defaults *are*
-`sys.objects` rows, so the general `RenameObject`/`TransferObject` do.
+needs the `TYPE::` or `XML SCHEMA COLLECTION::` class prefix, which each
+handle's `Transfer` adds — the default `OBJECT` class finds nothing in
+`sys.types`. Only an alias type has a `Rename`: sp_rename's `USERDATATYPE`
+class covers nothing else, and passing it a table or CLR type renames nothing
+and reports success. Rules and defaults *are* `sys.objects` rows, so theirs
+use the default classes.
 
 `Defaults()` returns standalone `CREATE DEFAULT` objects only.
 `sys.objects` type `D` also covers every `DF_…` default constraint on every
@@ -994,8 +997,8 @@ are the ones that change in operation rather than at design time.
 | Routes                   | `db.Routes(ctx)` / `db.RouteByName(ctx, name)` / `r.Drop(ctx)` / `db.RouteRef(name).Drop(ctx)` |
 | Remote Service Bindings  | `db.RemoteServiceBindings(ctx)` / `db.RemoteServiceBindingByName(ctx, name)` / `b.Drop(ctx)` / `db.RemoteServiceBindingRef(name).Drop(ctx)` |
 | Broker Priorities        | `db.BrokerPriorities(ctx)` / `db.BrokerPriorityByName(ctx, name)` / `p.Drop(ctx)` / `db.BrokerPriorityRef(name).Drop(ctx)` |
-| Queue Properties (write)  | `q.Alter(ctx, QueueSettings{…})` / `db.AlterBrokerQueue(ctx, schema, name, s)` |
-| Route Properties (write)  | `r.Alter(ctx, RouteSettings{…})` / `db.AlterRoute(ctx, name, s)` |
+| Queue Properties (write)  | `q.Alter(ctx, QueueSettings{…})` / `db.BrokerQueueRef(schema, name).Alter(ctx, s)` / `q.Transfer(ctx, targetSchema)` |
+| Route Properties (write)  | `r.Alter(ctx, RouteSettings{…})` / `db.RouteRef(name).Alter(ctx, s)` |
 | A queue's message counts | `db.QueueMessageCounts(ctx)` → `map[objectID]int64`, or `q.MessageCount(ctx)` |
 | A queue's activation state | `db.QueueMonitors(ctx)` → `[]*QueueMonitor` |
 
@@ -1158,13 +1161,16 @@ trust (`WITH NOCHECK`, `NOCHECK CONSTRAINT`) and `NOT FOR REPLICATION`,
 `PERSISTED` computed columns, `ROWGUIDCOL`, `IDENTITY … NOT FOR REPLICATION`,
 `SPARSE` and column sets, `MASKED WITH`, a system-versioned table's `GENERATED
 ALWAYS` / `HIDDEN` period columns, `PERIOD FOR SYSTEM_TIME` and `SYSTEM_VERSIONING`
-(its `DROP` switches versioning off first, and keeps the history table), a
-schema-qualified alias type, a column `COLLATE` that differs from the database
-default, a heap's `DATA_COMPRESSION`, and each index's `PAD_INDEX`,
-`FILLFACTOR`, `IGNORE_DUP_KEY`, lock options, compression and disabled state
-(disabled at the end of the script, since a disabled clustered index takes the
-table offline). `live_script_fidelity_test.go` replays a script into a second
-database and compares the catalogs. What is still not scripted is in
+(its `DROP` switches versioning off first, and keeps the history table) with
+its `HISTORY_RETENTION_PERIOD`, a schema-qualified alias type, a typed
+`xml(DOCUMENT|CONTENT …)` column, a `vector(n)` column (the bare type does not
+parse), a column `COLLATE` that differs from the database default, a heap's
+`DATA_COMPRESSION`, a non-default `LOCK_ESCALATION`, a columnstore index's
+`ORDER (…)`, and each index's `PAD_INDEX`, `FILLFACTOR`, `IGNORE_DUP_KEY`, lock
+options, compression and disabled state (disabled at the end of the script,
+since a disabled clustered index takes the table offline).
+`live_script_fidelity_test.go` and `live_script_facets_test.go` replay a
+script into a second database and compare the catalogs. What is still not scripted is in
 `OPEN-THREADS.md` § Scripter fidelity.
 
 Beyond a plain disk-based table it scripts graph node and edge tables (`AS
@@ -1637,7 +1643,7 @@ authentication — each instance needs the others' public **certificates**.
 | Master key encryptions / backup  | `mk.AddEncryption(ctx, enc, openPassword)` / `mk.DropEncryption(ctx, ...)` (service master key or password) / `mk.Backup(ctx, file, password, openPassword)` / `mk.Drop(ctx)` — `openPassword` opens a key the service master key no longer encrypts |
 | Back up a certificate            | `cert.Backup(ctx, gosmo.CertificateBackupSpec{...})` — files on the *server*, private key optional |
 | Remove a private key             | `cert.RemovePrivateKey(ctx)` / `asymKey.RemovePrivateKey(ctx)` — irreversible; there is no `BACKUP ASYMMETRIC KEY` |
-| Change owner                     | `cert.ChangeOwner(ctx, u)` / `asymKey.ChangeOwner(ctx, u)` / `symKey.ChangeOwner(ctx, u)` — `ALTER AUTHORIZATION`, which drops the object's explicit permissions |
+| Change owner                     | `cert.SetOwner(ctx, u)` / `asymKey.SetOwner(ctx, u)` / `symKey.SetOwner(ctx, u)` — `ALTER AUTHORIZATION`, which drops the object's explicit permissions |
 | Keys held by an EKM provider     | `CreateAsymmetricKeyRequest.FromProvider` / `CreateSymmetricKeyRequest.FromProvider` (`gosmo.ProviderKey`) — not run live; no test instance has a provider |
 | Module signatures                | `db.AddSignature(ctx, schema, module, gosmo.Signer{...}, counter)` / `db.DropSignature(ctx, ...)` / `db.SignaturesOn(ctx, schema, module)` / `cert.SignedModules(ctx)` / `asymKey.SignedModules(ctx)` |
 | Export the public certificate    | `cert.Encoded(ctx)` → `[]byte` (`CERTENCODED`)               |
@@ -1717,13 +1723,13 @@ is the destination — a file, the Windows Application log or the Security log
 | Security → Audits              | `srv.ServerAudits(ctx)` / `srv.ServerAuditByName(ctx, name)` / `srv.ServerAuditRef(name)` (no-I/O handle) |
 | New audit                      | `srv.CreateServerAudit(ctx, gosmo.ServerAuditSpec{...})`         |
 | Alter / rename / drop          | `a.Alter(ctx, spec)` / `a.Rename(ctx, newName)` / `a.Drop(ctx)`          |
-| Enable / disable               | `a.SetState(ctx, true \| false)`                                 |
+| Enable / disable               | `a.Enable(ctx)` / `a.Disable(ctx)`                               |
 | Is it running, and to which file | `a.Status(ctx)` → `*ServerAuditStatus`                       |
 | Security → Server Audit Specifications | `srv.ServerAuditSpecifications(ctx)` / `...ByName(ctx, name)` / `srv.ServerAuditSpecificationRef(name)` |
 | New specification              | `srv.CreateServerAuditSpecification(ctx, gosmo.CreateServerAuditSpecificationRequest{...})` |
 | Add / drop action groups       | `spec.AddActionGroups(ctx, g...)` / `spec.DropActionGroups(ctx, g...)` |
 | Point it at another audit      | `spec.SetAudit(ctx, auditName)`                                  |
-| Enable / disable / drop        | `spec.SetState(ctx, on)` / `spec.Drop(ctx)`                         |
+| Enable / disable / drop        | `spec.Enable(ctx)` / `spec.Disable(ctx)` / `spec.Drop(ctx)`          |
 | What can be audited            | `srv.AuditActionGroups(ctx)`                                   |
 | Database → Security → Database Audit Specifications | `db.DatabaseAuditSpecifications(ctx)` / `...ByName(ctx, name)` / `db.DatabaseAuditSpecificationRef(name)` |
 | New database specification     | `db.CreateDatabaseAuditSpecification(ctx, gosmo.CreateDatabaseAuditSpecificationRequest{...})` |
@@ -1979,7 +1985,7 @@ external, FileTable, ledger, Always Encrypted — with an error wrapping
 
 Every call that takes a schema-scoped name refuses an empty schema with
 `ErrSchemaRequired`, before a statement is built — parameters
-(`db.DropTable(ctx, "", "t", false)`), request fields
+(`db.Parameters(ctx, "", "p")`), request fields
 (`CreateTableRequest.Schema`) and handles (`db.SequenceRef("", "s").Drop(ctx)`,
 any write on `db.TableRef("", "t")`) alike. An empty schema once meant dbo to
 some calls and the caller's own default schema to others; either default

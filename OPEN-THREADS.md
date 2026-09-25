@@ -79,6 +79,16 @@ feature listed in `ARCHITECTURE.md` § Scripter, and the 2026-09-24 pass
 (review plan T7) added graph tables and edge constraints, memory-optimized
 tables and hash indexes, FILESTREAM and `TEXTIMAGE_ON`.
 
+The 2026-09-24 review pass (gossms review plan W1) added typed xml columns' schema
+collections, `vector(n[, float16])` columns, ordered columnstore indexes,
+`HISTORY_RETENTION_PERIOD` and a non-default `LOCK_ESCALATION`
+(`live_script_facets_test.go`). They are read and scripted only:
+`CreateTable`'s `ColumnDefinition` still cannot declare a typed xml or a
+`vector` column, and `CreateIndexRequest` cannot declare `ORDER (…)`. The
+ordered-columnstore gate (major 16) has no instance here and is argued from
+the documentation. A `float16` vector needs `PREVIEW_FEATURES = ON` in the
+database the script is replayed into, which the table script does not set.
+
 The 2026-09-24 fix-plan pass (G7–G10) added Always Encrypted columns, ledger
 tables, FileTables and external tables. **Refused, not scripted** (an
 `ErrUnsupported` error and no script, for every verb), by design rather than

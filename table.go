@@ -157,7 +157,7 @@ type Column struct {
 	// TypeSchema is the schema DataType belongs to — "sys" for a built-in
 	// type — and IsUserDefinedType is sys.types.is_user_defined. An alias or
 	// CLR type's name resolves against the executing user's default schema
-	// when it is not qualified, so ColumnTypeString qualifies it.
+	// when it is not qualified, so TypeString qualifies it.
 	TypeSchema        string
 	IsUserDefinedType bool
 	// IsPersisted is sys.computed_columns.is_persisted; false for a column
@@ -200,6 +200,19 @@ type Column struct {
 	// values. It is always 0 before SQL Server 2017, which has no graph
 	// tables.
 	GraphType int
+	// XMLSchemaCollectionSchema and XMLSchemaCollection name a typed xml
+	// column's schema collection, and IsXMLDocument is its DOCUMENT facet
+	// (false is CONTENT). Both names are "" for an untyped xml column and
+	// for every other type. An xml column scripted without them is untyped:
+	// it accepts any well-formed XML its collection would have rejected.
+	XMLSchemaCollectionSchema string
+	XMLSchemaCollection       string
+	IsXMLDocument             bool
+	// VectorDimensions and VectorBaseType describe a vector column (SQL
+	// Server 2025): vector(3) has 3 dimensions and base type "float32", the
+	// default. Zero and "" for every other type and before 2025.
+	VectorDimensions int
+	VectorBaseType   string
 }
 
 // The sys.columns.graph_type values for a graph table's internal columns.
@@ -220,9 +233,10 @@ const (
 // caller appends its own WHERE, because a Table already holds an object_id
 // while Database.ObjectColumns has only a name to resolve.
 //
-// graph_type is SQL Server 2017's, with graph tables themselves, and
-// is_dropped_ledger_column 2022's, with ledger tables. The Always Encrypted
-// columns are 2016, gosmo's floor, and need no gate.
+// graph_type is SQL Server 2017's, with graph tables themselves,
+// is_dropped_ledger_column 2022's, with ledger tables, and the vector_*
+// columns 2025's, with the vector type. The Always Encrypted and typed-xml
+// columns are older than gosmo's 2016 floor and need no gate.
 // https://learn.microsoft.com/sql/relational-databases/system-catalog-views/sys-columns-transact-sql
 func (d *Database) columnSelect() string {
 	major := d.serverMajorVersion()
@@ -243,9 +257,14 @@ SELECT c.name, c.column_id,
        c.generated_always_type, c.is_hidden, c.is_filestream,
        ` + colSince(major, SQLServer2017, "ISNULL(c.graph_type, 0)", "CAST(0 AS int)") + `,
        ` + colSince(major, SQLServer2022, "c.is_dropped_ledger_column", "CAST(0 AS bit)") + `,
-       ISNULL(cek.name, ''), ISNULL(c.encryption_type_desc, ''), ISNULL(c.encryption_algorithm_name, '')
+       ISNULL(cek.name, ''), ISNULL(c.encryption_type_desc, ''), ISNULL(c.encryption_algorithm_name, ''),
+       ISNULL(SCHEMA_NAME(xsc.schema_id), ''), ISNULL(xsc.name, ''), c.is_xml_document,
+       ` + colSince(major, SQLServer2025, "ISNULL(c.vector_dimensions, 0)", "CAST(0 AS int)") + `,
+       ` + colSince(major, SQLServer2025, "ISNULL(c.vector_base_type_desc, '')", "CAST('' AS nvarchar(60))") + `
 FROM   sys.columns c
 JOIN   sys.types tp ON tp.user_type_id = c.user_type_id
+LEFT   JOIN sys.xml_schema_collections xsc
+       ON  xsc.xml_collection_id = NULLIF(c.xml_collection_id, 0)
 LEFT   JOIN sys.column_encryption_keys cek
        ON  cek.column_encryption_key_id = c.column_encryption_key_id
 LEFT   JOIN sys.masked_columns mc
@@ -343,6 +362,8 @@ func scanColumns(rows *sql.Rows) ([]*Column, error) {
 			&col.GeneratedAlwaysType, &col.IsHidden, &col.IsFileStream,
 			&col.GraphType, &col.IsDroppedLedgerColumn,
 			&col.ColumnEncryptionKey, &col.EncryptionType, &col.EncryptionAlgorithm,
+			&col.XMLSchemaCollectionSchema, &col.XMLSchemaCollection, &col.IsXMLDocument,
+			&col.VectorDimensions, &col.VectorBaseType,
 		); err != nil {
 			return nil, err
 		}
@@ -655,7 +676,7 @@ func (d *Database) CreateTable(ctx context.Context, req CreateTableRequest) (*Ta
 	})
 }
 
-// DropTable drops a table.
+// Drop drops the table.
 // When cascade=true it first drops all incoming foreign-key constraints.
 //
 // # Dropping something that isn't there is an error
@@ -671,18 +692,15 @@ func (d *Database) CreateTable(ctx context.Context, req CreateTableRequest) (*Ta
 //
 // The generated *scripts* keep IF EXISTS — Scripter's DROP-and-CREATE output
 // exists to be re-run, which is the opposite requirement.
-func (d *Database) DropTable(ctx context.Context, schema, name string, cascade bool) error {
-	if err := requireSchema("drop table", schema, name); err != nil {
-		return err
-	}
-	qn := qualifiedName(schema, name)
+func (t *Table) Drop(ctx context.Context, cascade bool) error {
+	qn := t.FullName()
 	if !cascade {
-		if _, err := d.exec(ctx, "DROP TABLE "+qn); err != nil {
+		if _, err := t.exec(ctx, "DROP TABLE "+qn); err != nil {
 			return fmt.Errorf("gosmo: drop table %s: %w", qn, err)
 		}
 		return nil
 	}
-	if _, err := d.exec(ctx, dropTableCascadeBatch(qn)); err != nil {
+	if _, err := t.exec(ctx, dropTableCascadeBatch(qn)); err != nil {
 		return fmt.Errorf("gosmo: drop table %s with its incoming foreign keys: %w", qn, err)
 	}
 	return nil
@@ -717,22 +735,29 @@ IF LEN(@sql) > 0 EXEC sp_executesql @sql;`
 	})
 }
 
-// RenameTable renames a table using sp_rename.
-func (d *Database) RenameTable(ctx context.Context, schema, oldName, newName string) error {
-	if err := requireSchema("rename table", schema, oldName); err != nil {
+// Rename renames the table (sp_rename's 'OBJECT' class). newName is a bare
+// name; a rename never moves the table between schemas — see Transfer.
+func (t *Table) Rename(ctx context.Context, newName string) error {
+	if err := t.db.renameSchemaObject(ctx, "table", renameObjectClass, t.Schema, t.Name, newName); err != nil {
 		return err
 	}
-	if _, err := d.exec(ctx,
-		"EXEC sp_rename @objname = @p1, @newname = @p2, @objtype = N'OBJECT'",
-		qualifiedName(schema, oldName), newName,
-	); err != nil {
-		return fmt.Errorf("gosmo: rename table %s -> %s: %w", qualifiedName(schema, oldName), newName, err)
-	}
+	setIfApplied(ctx, &t.Name, newName)
 	return nil
 }
 
-// TruncateTable truncates a table.
-func (t *Table) TruncateTable(ctx context.Context) error {
+// Transfer moves the table into another schema (ALTER SCHEMA ... TRANSFER).
+// It keeps its name and object_id, and its indexes, constraints and triggers
+// move with it; permissions granted on it directly are dropped by the server.
+func (t *Table) Transfer(ctx context.Context, targetSchema string) error {
+	if err := t.db.transferSchemaObject(ctx, "table", transferObjectClass, targetSchema, t.Schema, t.Name); err != nil {
+		return err
+	}
+	setIfApplied(ctx, &t.Schema, targetSchema)
+	return nil
+}
+
+// Truncate empties the table (TRUNCATE TABLE).
+func (t *Table) Truncate(ctx context.Context) error {
 	if _, err := t.exec(ctx, "TRUNCATE TABLE "+t.FullName()); err != nil {
 		return fmt.Errorf("gosmo: truncate %s: %w", t.FullName(), err)
 	}
@@ -829,7 +854,7 @@ func (t *Table) CheckWhereSyntax(ctx context.Context, predicate string) error {
 // colTypeSQL returns the T-SQL data-type fragment for a ColumnDefinition.
 // Callers must validate col.DataType (see validDataType) before calling this
 // — it trusts its input and does not itself reject an unrecognized type.
-// scripter_table.go's ColumnTypeString does the equivalent for a *Column (from
+// scripter_table.go's Column.TypeString does the equivalent for a *Column (from
 // sys.columns), which uses different field names.
 func colTypeSQL(col ColumnDefinition) string {
 	switch col.DataType {
@@ -892,6 +917,21 @@ func (t *Table) DropConstraint(ctx context.Context, name string) error {
 	q := fmt.Sprintf("ALTER TABLE %s DROP CONSTRAINT %s", t.FullName(), quoteIdent(name))
 	if _, err := t.exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: drop constraint %q on %s: %w", name, t.FullName(), err)
+	}
+	return nil
+}
+
+// RenameConstraint renames a foreign key, CHECK or default constraint on the
+// table (sp_rename's 'OBJECT' class — a constraint is a row of sys.objects,
+// in the table's schema). A primary key or unique constraint is renamed
+// through its backing index instead — Index.Rename — since its name is the
+// index's name in sys.indexes.
+func (t *Table) RenameConstraint(ctx context.Context, name, newName string) error {
+	if name == "" || newName == "" {
+		return fmt.Errorf("gosmo: rename constraint on %s: both names are required", t.FullName())
+	}
+	if err := t.db.renameSchemaObject(ctx, "constraint", renameObjectClass, t.Schema, name, newName); err != nil {
+		return err
 	}
 	return nil
 }

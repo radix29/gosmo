@@ -102,14 +102,14 @@ func TestIndexesUsesOneQueryForEveryIndexColumn(t *testing.T) {
 		},
 		cannedRow{
 			match: "FROM   sys.index_columns ic",
-			cols:  []string{"index_id", "name", "is_descending_key", "is_included_column"},
+			cols:  []string{"index_id", "name", "is_descending_key", "is_included_column", "column_store_order_ordinal"},
 			rows: [][]driver.Value{
-				{int64(0), "heap_col", false, false},
-				{int64(1), "id", false, false},
-				{int64(2), "a", true, false},
-				{int64(2), "b", false, false},
-				{int64(2), "note", false, true},
-				{int64(2), "total", false, true},
+				{int64(0), "heap_col", false, false, int64(0)},
+				{int64(1), "id", false, false, int64(0)},
+				{int64(2), "a", true, false, int64(0)},
+				{int64(2), "b", false, false, int64(0)},
+				{int64(2), "note", false, true, int64(0)},
+				{int64(2), "total", false, true, int64(0)},
 			},
 		},
 	)
@@ -220,8 +220,8 @@ func TestIndexListReadsEachIndexDataSpace(t *testing.T) {
 		},
 		cannedRow{
 			match: "FROM   sys.index_columns ic",
-			cols:  []string{"index_id", "name", "is_descending_key", "is_included_column"},
-			rows:  [][]driver.Value{{int64(1), "id", false, false}},
+			cols:  []string{"index_id", "name", "is_descending_key", "is_included_column", "column_store_order_ordinal"},
+			rows:  [][]driver.Value{{int64(1), "id", false, false, int64(0)}},
 		},
 	)
 
@@ -319,7 +319,7 @@ func TestIndexListReadsXMLAndSpatialForms(t *testing.T) {
 		},
 		cannedRow{
 			match: "FROM   sys.index_columns ic",
-			cols:  []string{"index_id", "name", "is_descending_key", "is_included_column"},
+			cols:  []string{"index_id", "name", "is_descending_key", "is_included_column", "column_store_order_ordinal"},
 		},
 	)
 	indexes, err := tbl.Indexes(context.Background())

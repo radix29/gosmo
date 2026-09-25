@@ -216,25 +216,6 @@ type RouteSettings struct {
 	MirrorAddress *string
 }
 
-// AlterRoute changes a route's settings.
-//
-// It needs ALTER ANY ROUTE, or ALTER on the database — measured on majors
-// 13, 14 and 17, which answered identically. ALTER ANY ROUTE alone is enough
-// for both this and the drop, so the two verbs share a right here, unlike a
-// queue's.
-func (d *Database) AlterRoute(ctx context.Context, name string, s RouteSettings) error {
-	clauses, err := routeSettingClauses(s)
-	if err != nil {
-		return fmt.Errorf("gosmo: alter route %q: %w", name, err)
-	}
-	q := "ALTER ROUTE " + quoteIdent(name) + "\n    WITH " +
-		strings.Join(clauses, ",\n         ")
-	if _, err := d.exec(ctx, q); err != nil {
-		return fmt.Errorf("gosmo: alter route %q: %w", name, err)
-	}
-	return nil
-}
-
 // routeSettingClauses renders the WITH clauses, or reports why the settings
 // cannot be a statement.
 func routeSettingClauses(s RouteSettings) ([]string, error) {
@@ -277,13 +258,24 @@ func routeSettingClauses(s RouteSettings) ([]string, error) {
 
 // Alter changes the route's settings and mirrors them onto the receiver.
 //
+// It needs ALTER ANY ROUTE, or ALTER on the database — measured on majors
+// 13, 14 and 17, which answered identically. ALTER ANY ROUTE alone is enough
+// for both this and the drop, so the two verbs share a right here, unlike a
+// queue's.
+//
 // The fields it changed are mirrored onto the receiver through setIfApplied,
 // so under WithScript — where nothing ran — the route does not start
 // claiming state the server does not have. Expires is mirrored as "now plus
 // the lifetime", which is what the server computes, to within the round trip.
 func (r *Route) Alter(ctx context.Context, s RouteSettings) error {
-	if err := r.db.AlterRoute(ctx, r.Name, s); err != nil {
-		return err
+	clauses, err := routeSettingClauses(s)
+	if err != nil {
+		return fmt.Errorf("gosmo: alter route %q: %w", r.Name, err)
+	}
+	stmt := "ALTER ROUTE " + quoteIdent(r.Name) + "\n    WITH " +
+		strings.Join(clauses, ",\n         ")
+	if _, err := r.db.exec(ctx, stmt); err != nil {
+		return fmt.Errorf("gosmo: alter route %q: %w", r.Name, err)
 	}
 	if s.RemoteService != nil {
 		setIfApplied(ctx, &r.RemoteService, *s.RemoteService)

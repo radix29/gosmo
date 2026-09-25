@@ -11,6 +11,8 @@ import (
 
 // UserDefinedFunction represents a UDF.
 type UserDefinedFunction struct {
+	db *Database
+
 	ObjectID   int
 	Schema     string
 	Name       string
@@ -43,7 +45,7 @@ ORDER  BY SCHEMA_NAME(o.schema_id), o.name`
 
 	rows, err := d.query(ctx, q, args...)
 	return scanRows(rows, err, fmt.Sprintf("list UDFs in %q", d.Name), func(scan func(...any) error) (*UserDefinedFunction, error) {
-		f := &UserDefinedFunction{}
+		f := &UserDefinedFunction{db: d}
 		if err := scan(&f.ObjectID, &f.Schema, &f.Name, &f.FuncType,
 			&f.Definition, &f.CreateDate, &f.ModifyDate); err != nil {
 			return nil, err
@@ -86,7 +88,7 @@ ORDER  BY o.name`
 
 	rows, err := d.query(ctx, q, args...)
 	return scanRows(rows, err, fmt.Sprintf("list system UDFs in %q", d.Name), func(scan func(...any) error) (*UserDefinedFunction, error) {
-		f := &UserDefinedFunction{}
+		f := &UserDefinedFunction{db: d}
 		if err := scan(&f.ObjectID, &f.Schema, &f.Name, &f.FuncType,
 			&f.Definition, &f.CreateDate, &f.ModifyDate); err != nil {
 			return nil, err
@@ -96,16 +98,41 @@ ORDER  BY o.name`
 	})
 }
 
-// DropFunction drops a user-defined function — scalar, inline
-// table-valued, or multi-statement table-valued alike, all of which DROP
-// FUNCTION removes. A function that isn't there is the server's error, not a
-// silent success — see the note on Database.DropTable.
-func (d *Database) DropFunction(ctx context.Context, schema, name string) error {
-	if err := requireSchema("drop function", schema, name); err != nil {
+// UserDefinedFunctionRef returns a lightweight handle for the function [schema].[name] — no
+// query; every field but Schema and Name is zero. See Server.DatabaseRef for
+// when a handle is the right form.
+func (d *Database) UserDefinedFunctionRef(schema, name string) *UserDefinedFunction {
+	return &UserDefinedFunction{db: d, Schema: schema, Name: name}
+}
+
+// Database returns the database the function belongs to.
+func (f *UserDefinedFunction) Database() *Database { return f.db }
+
+// Drop drops the function — scalar, inline table-valued or multi-statement
+// table-valued alike, all of which DROP FUNCTION removes. A function that
+// isn't there is the server's error, not a silent success — see the note on
+// Table.Drop.
+func (f *UserDefinedFunction) Drop(ctx context.Context) error {
+	return f.db.dropSchemaObject(ctx, "function", "FUNCTION", f.Schema, f.Name)
+}
+
+// Rename renames the function (sp_rename's 'OBJECT' class). newName is a bare
+// name; a rename never moves the function between schemas — see Transfer.
+func (f *UserDefinedFunction) Rename(ctx context.Context, newName string) error {
+	if err := f.db.renameSchemaObject(ctx, "function", renameObjectClass, f.Schema, f.Name, newName); err != nil {
 		return err
 	}
-	if _, err := d.exec(ctx, "DROP FUNCTION "+qualifiedName(schema, name)); err != nil {
-		return fmt.Errorf("gosmo: drop function [%s].[%s]: %w", schema, name, err)
+	setIfApplied(ctx, &f.Name, newName)
+	return nil
+}
+
+// Transfer moves the function into another schema (ALTER SCHEMA ... TRANSFER).
+// It keeps its name and object_id; permissions granted on it directly are
+// dropped by the server.
+func (f *UserDefinedFunction) Transfer(ctx context.Context, targetSchema string) error {
+	if err := f.db.transferSchemaObject(ctx, "function", transferObjectClass, targetSchema, f.Schema, f.Name); err != nil {
+		return err
 	}
+	setIfApplied(ctx, &f.Schema, targetSchema)
 	return nil
 }

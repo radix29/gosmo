@@ -150,7 +150,7 @@ func (t *ServerTrigger) setEnabled(ctx context.Context, enabled bool) error {
 }
 
 // Drop removes the trigger. A trigger that isn't there is the server's error,
-// not a silent success — see the note on Database.DropTable.
+// not a silent success — see the note on Table.Drop.
 func (t *ServerTrigger) Drop(ctx context.Context) error {
 	stmt := fmt.Sprintf("DROP TRIGGER %s ON ALL SERVER", quoteIdent(t.Name))
 	if err := t.server.exec(ctx, stmt); err != nil {

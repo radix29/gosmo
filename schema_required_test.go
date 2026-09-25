@@ -23,13 +23,13 @@ func TestEmptySchemaIsRefused(t *testing.T) {
 		call func(context.Context, *Database) error
 	}{
 		// The plan's two examples, which disagreed.
-		{"DropTable", func(c context.Context, d *Database) error { return d.DropTable(c, "", "t", false) }},
+		{"Table.Drop", func(c context.Context, d *Database) error { return d.TableRef("", "t").Drop(c, false) }},
 		{"Sequence handle Drop", func(c context.Context, d *Database) error { return d.SequenceRef("", "s").Drop(c) }},
 
-		{"DropView", func(c context.Context, d *Database) error { return d.DropView(c, "", "v") }},
-		{"DropFunction", func(c context.Context, d *Database) error { return d.DropFunction(c, "", "f") }},
-		{"DropStoredProcedure", func(c context.Context, d *Database) error { return d.DropStoredProcedure(c, "", "p") }},
-		{"DropTrigger", func(c context.Context, d *Database) error { return d.DropTrigger(c, "", "tr") }},
+		{"View.Drop", func(c context.Context, d *Database) error { return d.ViewRef("", "v").Drop(c) }},
+		{"UserDefinedFunction.Drop", func(c context.Context, d *Database) error { return d.UserDefinedFunctionRef("", "f").Drop(c) }},
+		{"StoredProcedure.Drop", func(c context.Context, d *Database) error { return d.StoredProcedureRef("", "p").Drop(c) }},
+		{"Trigger.Drop", func(c context.Context, d *Database) error { return d.TriggerRef("", "tr").Drop(c) }},
 		{"Synonym handle Drop", func(c context.Context, d *Database) error { return d.SynonymRef("", "s").Drop(c) }},
 		{"Rule handle Drop", func(c context.Context, d *Database) error { return d.RuleRef("", "r").Drop(c) }},
 		{"Default handle Drop", func(c context.Context, d *Database) error { return d.DefaultRef("", "df").Drop(c) }},
@@ -44,20 +44,20 @@ func TestEmptySchemaIsRefused(t *testing.T) {
 
 		// A TableRef's writes all go through Table.exec.
 		{"Table handle DropColumn", func(c context.Context, d *Database) error { return d.TableRef("", "t").DropColumn(c, "c") }},
-		{"Table handle TruncateTable", func(c context.Context, d *Database) error { return d.TableRef("", "t").TruncateTable(c) }},
+		{"Table handle Truncate", func(c context.Context, d *Database) error { return d.TableRef("", "t").Truncate(c) }},
 		{"Index on a table handle", func(c context.Context, d *Database) error { return d.TableRef("", "t").IndexRef("ix").Drop(c) }},
 		{"Statistic on a table handle", func(c context.Context, d *Database) error {
 			return d.TableRef("", "t").StatisticRef("st").Drop(c)
 		}},
 
-		{"RenameObject", func(c context.Context, d *Database) error { return d.RenameObject(c, "", "a", "b") }},
-		{"TransferObject source", func(c context.Context, d *Database) error { return d.TransferObject(c, "archive", "", "t") }},
-		{"TransferObject target", func(c context.Context, d *Database) error { return d.TransferObject(c, "", "dbo", "t") }},
+		{"View.Rename", func(c context.Context, d *Database) error { return d.ViewRef("", "a").Rename(c, "b") }},
+		{"Transfer source", func(c context.Context, d *Database) error { return d.TableRef("", "t").Transfer(c, "archive") }},
+		{"Transfer target", func(c context.Context, d *Database) error { return d.TableRef("dbo", "t").Transfer(c, "") }},
 		{"GrantPermission", func(c context.Context, d *Database) error {
 			return d.GrantPermission(c, "", "t", PermSelect, "u", PermissionOptions{})
 		}},
-		{"AlterBrokerQueue activation procedure", func(c context.Context, d *Database) error {
-			return d.AlterBrokerQueue(c, "dbo", "q", QueueSettings{Activation: &QueueActivation{ProcedureName: "p"}})
+		{"BrokerQueue.Alter activation procedure", func(c context.Context, d *Database) error {
+			return d.BrokerQueueRef("dbo", "q").Alter(c, QueueSettings{Activation: &QueueActivation{ProcedureName: "p"}})
 		}},
 
 		{"CreateTable", func(c context.Context, d *Database) error {

@@ -15,6 +15,8 @@ classDiagram
         +ModifyDate time.Time
         +FullName() string
         +Drop() error
+        +Rename(newName) error
+        +Transfer(targetSchema) error
         Standalone CREATE DEFAULT objects only,
         never a table's DF_ constraint.
     }

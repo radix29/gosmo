@@ -244,10 +244,10 @@ func (k *AsymmetricKey) RemovePrivateKey(ctx context.Context) error {
 	return nil
 }
 
-// ChangeOwner transfers the key to another database principal with ALTER
+// SetOwner transfers the key to another database principal with ALTER
 // AUTHORIZATION. SQL Server drops every explicit permission on the key as it
 // does so.
-func (k *AsymmetricKey) ChangeOwner(ctx context.Context, newOwner string) error {
+func (k *AsymmetricKey) SetOwner(ctx context.Context, newOwner string) error {
 	q := "ALTER AUTHORIZATION ON ASYMMETRIC KEY::" + quoteIdent(k.Name) + " TO " + quoteIdent(newOwner)
 	if _, err := k.db.exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: change asymmetric key %q owner to %q in %q: %w", k.Name, newOwner, k.db.Name, err)

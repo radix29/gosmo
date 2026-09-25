@@ -96,6 +96,7 @@ classDiagram
         +MessageCount() int64
         +Alter(QueueSettings) error
         +Drop() error
+        +Transfer(targetSchema) error
         The one schema-scoped family, and the
         one marked from is_ms_shipped.
     }

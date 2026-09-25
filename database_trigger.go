@@ -151,9 +151,9 @@ func (t *DatabaseTrigger) setEnabled(ctx context.Context, enabled bool) error {
 }
 
 // Drop removes the trigger. A trigger that isn't there is the server's error,
-// not a silent success — see the note on Database.DropTable.
+// not a silent success — see the note on Table.Drop.
 //
-// This is not Database.DropTrigger: that one schema-qualifies the name, which
+// This is not Trigger.Drop: that one schema-qualifies the name, which
 // a DDL trigger has no schema for, and omits the ON DATABASE clause the
 // server requires here.
 func (t *DatabaseTrigger) Drop(ctx context.Context) error {

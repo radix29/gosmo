@@ -23,12 +23,12 @@ func TestLiveCreateReturnsTheCreatedObject(t *testing.T) {
 	srv := liveServer(t, sqldb, ctx)
 
 	const dbName = "gosmo_create_returns"
-	_ = srv.DropDatabase(ctx, dbName, true)
+	_ = srv.DatabaseRef(dbName).Drop(ctx, true)
 	d, err := srv.CreateDatabase(ctx, CreateDatabaseRequest{Name: dbName})
 	if err != nil {
 		t.Fatalf("CreateDatabase: %v", err)
 	}
-	t.Cleanup(func() { _ = srv.DropDatabase(context.Background(), dbName, true) })
+	t.Cleanup(func() { _ = srv.DatabaseRef(dbName).Drop(context.Background(), true) })
 	if d.ID == 0 {
 		t.Fatalf("CreateDatabase returned %+v, want it read back", d)
 	}

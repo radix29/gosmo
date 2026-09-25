@@ -87,8 +87,8 @@ func TestScriptSecurityWrites(t *testing.T) {
 		{"Schema Drop", func(c context.Context) error {
 			return (&Schema{db: scriptTestDB(), Name: "sa]les"}).Drop(c)
 		}, scriptUsePrefix + "DROP SCHEMA [sa]]les]"},
-		{"Schema ChangeOwner", func(c context.Context) error {
-			return (&Schema{db: scriptTestDB(), Name: "sa]les", Owner: "dbo"}).ChangeOwner(c, "o'brien")
+		{"Schema SetOwner", func(c context.Context) error {
+			return (&Schema{db: scriptTestDB(), Name: "sa]les", Owner: "dbo"}).SetOwner(c, "o'brien")
 		}, scriptUsePrefix + "ALTER AUTHORIZATION ON SCHEMA::[sa]]les] TO [o'brien]"},
 		{"User Drop", func(c context.Context) error {
 			return user().Drop(c)
@@ -148,8 +148,8 @@ func TestScriptSecurityWrites(t *testing.T) {
 		{"ServerRole Rename", func(c context.Context) error {
 			return serverRole().Rename(c, "r]2")
 		}, "ALTER SERVER ROLE [ro'le] WITH NAME = [r]]2]"},
-		{"ServerRole ChangeOwner", func(c context.Context) error {
-			return serverRole().ChangeOwner(c, "o'brien")
+		{"ServerRole SetOwner", func(c context.Context) error {
+			return serverRole().SetOwner(c, "o'brien")
 		}, "ALTER AUTHORIZATION ON SERVER ROLE::[ro'le] TO [o'brien]"},
 		{"ServerRole Drop", func(c context.Context) error {
 			return serverRole().Drop(c)

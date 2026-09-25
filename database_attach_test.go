@@ -230,8 +230,8 @@ func TestDetachFlagsAreTheInverseOfTheProceduresParameters(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			s := detServer(t)
-			if err := s.DetachDatabase(context.Background(), "appdb", c.opts); err != nil {
-				t.Fatalf("DetachDatabase: %v", err)
+			if err := s.DatabaseRef("appdb").Detach(context.Background(), c.opts); err != nil {
+				t.Fatalf("Detach: %v", err)
 			}
 			stmt := detLog.only(t, "sp_detach_db")
 			for _, want := range c.want {
@@ -253,8 +253,8 @@ func TestDetachFlagsAreTheInverseOfTheProceduresParameters(t *testing.T) {
 // SINGLE_USER freed before the detach reached the server (S8).
 func TestDetachDropConnectionsSetsSingleUserFirst(t *testing.T) {
 	s := detServer(t)
-	if err := s.DetachDatabase(context.Background(), "appdb", DetachOptions{DropConnections: true}); err != nil {
-		t.Fatalf("DetachDatabase: %v", err)
+	if err := s.DatabaseRef("appdb").Detach(context.Background(), DetachOptions{DropConnections: true}); err != nil {
+		t.Fatalf("Detach: %v", err)
 	}
 	stmts := detLog.statements()
 	if len(stmts) != 1 {
@@ -266,12 +266,12 @@ func TestDetachDropConnectionsSetsSingleUserFirst(t *testing.T) {
 // TestAFailedDetachIsPutBackToMultiUser. SINGLE_USER blocks every other
 // login, so a detach that dropped the connections and then failed would leave
 // the database unusable by anyone but the caller — for a reason the caller
-// never asked for. Same contract as RenameDatabase's force.
+// never asked for. Same contract as Database.Rename's force.
 func TestAFailedDetachIsPutBackToMultiUser(t *testing.T) {
 	s := detServer(t)
 	detFailOn("sp_detach_db")
 
-	err := s.DetachDatabase(context.Background(), "appdb", DetachOptions{DropConnections: true})
+	err := s.DatabaseRef("appdb").Detach(context.Background(), DetachOptions{DropConnections: true})
 	if err == nil {
 		t.Fatal("a failing detach returned no error")
 	}
@@ -295,7 +295,7 @@ func TestAFailedDetachIsPutBackToMultiUserEvenWhenTheContextIsGone(t *testing.T)
 	s := detServer(t)
 	ctx := detCancelOn(t, "sp_detach_db")
 
-	err := s.DetachDatabase(ctx, "appdb", DetachOptions{DropConnections: true})
+	err := s.DatabaseRef("appdb").Detach(ctx, DetachOptions{DropConnections: true})
 	if err == nil {
 		t.Fatal("a detach whose context expired returned no error")
 	}
@@ -313,8 +313,8 @@ func TestAFailedDetachIsPutBackToMultiUserEvenWhenTheContextIsGone(t *testing.T)
 // follows it.
 func TestASuccessfulDetachDoesNotTryToAlterTheDatabaseAfterwards(t *testing.T) {
 	s := detServer(t)
-	if err := s.DetachDatabase(context.Background(), "appdb", DetachOptions{DropConnections: true}); err != nil {
-		t.Fatalf("DetachDatabase: %v", err)
+	if err := s.DatabaseRef("appdb").Detach(context.Background(), DetachOptions{DropConnections: true}); err != nil {
+		t.Fatalf("Detach: %v", err)
 	}
 	stmts := detLog.statements()
 	if len(stmts) != 1 {
@@ -325,7 +325,7 @@ func TestASuccessfulDetachDoesNotTryToAlterTheDatabaseAfterwards(t *testing.T) {
 
 func TestDetachRequiresAName(t *testing.T) {
 	s := detServer(t)
-	if err := s.DetachDatabase(context.Background(), "", DetachOptions{}); err == nil {
+	if err := s.DatabaseRef("").Detach(context.Background(), DetachOptions{}); err == nil {
 		t.Error("detaching a database with no name returned no error")
 	}
 	if n := len(detLog.statements()); n != 0 {
@@ -443,7 +443,7 @@ func TestDetachAndAttachAreScriptable(t *testing.T) {
 	s := detServer(t)
 	ctx, script := WithScript(context.Background())
 
-	if err := s.DetachDatabase(ctx, "appdb", DetachOptions{DropConnections: true, UpdateStatistics: true}); err != nil {
+	if err := s.DatabaseRef("appdb").Detach(ctx, DetachOptions{DropConnections: true, UpdateStatistics: true}); err != nil {
 		t.Fatalf("scripted detach: %v", err)
 	}
 	if err := s.AttachDatabase(ctx, AttachSpec{

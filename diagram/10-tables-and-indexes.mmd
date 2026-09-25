@@ -33,7 +33,10 @@ classDiagram
         +CheckWhereSyntax(predicate) error
         +Detail() *TableDetail
         +SpaceUsed() *TableSpaceInfo
-        +TruncateTable() error
+        +Truncate() error
+        +Drop(cascade) error
+        +Rename(newName) error
+        +Transfer(targetSchema) error
         +FragmentationStats(mode) []*IndexFragmentation
         +RebuildAllIndexes(fillFactor) error
         +UpdateAllStatistics(samplePct) error
@@ -44,6 +47,7 @@ classDiagram
         +DropColumn(name) error
         +RenameColumn(name, newName) error
         +DropConstraint(name) error
+        +RenameConstraint(name, newName) error
     }
 
     class Column {
@@ -78,6 +82,8 @@ classDiagram
         +EncryptionAlgorithm string
         +IsFileStream bool
         +GraphType int
+        +XMLSchemaCollection string
+        +VectorDimensions int
     }
 
     class Index {
@@ -99,6 +105,7 @@ classDiagram
         +OptimizeForSequentialKey bool
         +BucketCount int64
         +CompressionDelay int
+        +ColumnstoreOrder []string
         +KeyColumns []IndexColumn
         +IncludedColumns []IndexColumn
         +FilterDefinition string
@@ -147,15 +154,6 @@ classDiagram
         +Type string
         +Pages int64
         +UsedKB int64
-    }
-
-    class IndexFragmentation {
-        +IndexName string
-        +IndexID int
-        +AvgFragmentationPct float64
-        +PageCount int64
-        +FragmentCount int64
-        +AvgPageSpaceUsedPct float64
     }
 
     class CreateIndexRequest {
@@ -225,12 +223,10 @@ classDiagram
     UserDefinedTableType "1" --> "*" Column : Columns() returns
     Table "1" --> "*" Column : has
     Table "1" --> "*" Index : has
-    Table "1" --> "*" IndexFragmentation : FragmentationStats() returns
     Table "1" --> "*" XMLIndex : XMLIndexes() returns
     Table ..> CreateIndexRequest : CreateIndex() takes
     Index --> IndexStorageInfo : StorageInfo() returns
     IndexStorageInfo "1" --> "*" IndexAllocationUnit : breaks down into
-    Index --> IndexFragmentation : Fragmentation() returns
     CreateIndexRequest --> XMLSecondaryIndexType : XML form selected by
     CreateIndexRequest --> SpatialTessellation : spatial scheme selected by
     XMLIndex --> XMLSecondaryIndexType : secondary form

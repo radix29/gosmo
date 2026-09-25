@@ -120,7 +120,7 @@ func (d *Database) UserDefinedDataTypeByName(ctx context.Context, schema, name s
 		return err
 	}, userDefinedDataTypeSelect+`
    AND SCHEMA_NAME(t.schema_id) = @p1 AND t.name = @p2`, schema, name)
-	return foundRow(t, err, notFoundf("gosmo: user-defined data type [%s].[%s] not found in %q", schema, name, d.Name), fmt.Sprintf("read user-defined data type [%s].[%s] in %q", schema, name, d.Name))
+	return foundRow(t, err, notFoundf("gosmo: user-defined data type %s not found in %q", qualifiedName(schema, name), d.Name), fmt.Sprintf("read user-defined data type %s in %q", qualifiedName(schema, name), d.Name))
 }
 
 // UserDefinedDataTypeRef returns a lightweight handle for an alias type by name, without
@@ -211,7 +211,7 @@ func (d *Database) UserDefinedTableTypeByName(ctx context.Context, schema, name 
 		return err
 	}, userDefinedTableTypeSelect+`
    AND SCHEMA_NAME(tt.schema_id) = @p1 AND tt.name = @p2`, schema, name)
-	return foundRow(t, err, notFoundf("gosmo: user-defined table type [%s].[%s] not found in %q", schema, name, d.Name), fmt.Sprintf("read user-defined table type [%s].[%s] in %q", schema, name, d.Name))
+	return foundRow(t, err, notFoundf("gosmo: user-defined table type %s not found in %q", qualifiedName(schema, name), d.Name), fmt.Sprintf("read user-defined table type %s in %q", qualifiedName(schema, name), d.Name))
 }
 
 // UserDefinedTableTypeRef returns a lightweight handle for a table type by name, without
@@ -344,7 +344,7 @@ func (d *Database) ClrTypeByName(ctx context.Context, schema, name string) (*Clr
 		return err
 	}, clrTypeSelect+`
    AND SCHEMA_NAME(t.schema_id) = @p1 AND t.name = @p2`, schema, name)
-	return foundRow(t, err, notFoundf("gosmo: CLR type [%s].[%s] not found in %q", schema, name, d.Name), fmt.Sprintf("read CLR type [%s].[%s] in %q", schema, name, d.Name))
+	return foundRow(t, err, notFoundf("gosmo: CLR type %s not found in %q", qualifiedName(schema, name), d.Name), fmt.Sprintf("read CLR type %s in %q", qualifiedName(schema, name), d.Name))
 }
 
 // ClrTypeRef returns a lightweight handle for a CLR type by name, without
@@ -474,7 +474,7 @@ func (d *Database) XMLSchemaCollectionByName(ctx context.Context, schema, name s
 		return err
 	}, xmlSchemaCollectionSelect+`
    AND SCHEMA_NAME(x.schema_id) = @p1 AND x.name = @p2`, schema, name)
-	return foundRow(c, err, notFoundf("gosmo: XML schema collection [%s].[%s] not found in %q", schema, name, d.Name), fmt.Sprintf("read XML schema collection [%s].[%s] in %q", schema, name, d.Name))
+	return foundRow(c, err, notFoundf("gosmo: XML schema collection %s not found in %q", qualifiedName(schema, name), d.Name), fmt.Sprintf("read XML schema collection %s in %q", qualifiedName(schema, name), d.Name))
 }
 
 // XMLSchemaCollectionRef returns a lightweight handle for an XML schema collection by name, without
@@ -514,7 +514,7 @@ func (c *XMLSchemaCollection) Drop(ctx context.Context) error {
 		return err
 	}
 	if _, err := c.db.exec(ctx, "DROP XML SCHEMA COLLECTION "+qualifiedName(c.Schema, c.Name)); err != nil {
-		return fmt.Errorf("gosmo: drop XML schema collection [%s].[%s]: %w", c.Schema, c.Name, err)
+		return fmt.Errorf("gosmo: drop XML schema collection %s: %w", qualifiedName(c.Schema, c.Name), err)
 	}
 	return nil
 }
@@ -532,81 +532,67 @@ func dropType(ctx context.Context, d *Database, schema, name string) error {
 		return err
 	}
 	if _, err := d.exec(ctx, "DROP TYPE "+qualifiedName(schema, name)); err != nil {
-		return fmt.Errorf("gosmo: drop type [%s].[%s]: %w", schema, name, err)
+		return fmt.Errorf("gosmo: drop type %s: %w", qualifiedName(schema, name), err)
 	}
 	return nil
 }
 
 // ============================================================
-// Schema transfers
+// Renames and schema transfers
 // ============================================================
 
-// TransferType moves an alias, table or CLR type into another schema.
-//
-// ALTER SCHEMA ... TRANSFER's default class covers only the objects in
-// sys.objects; a type lives in sys.types and needs the TYPE:: prefix, which
-// is why Database.TransferObject does not serve here. Everything else about
-// the operation is that method's: the type keeps its name, and permissions
-// granted on it directly are dropped by the server.
-func (d *Database) TransferType(ctx context.Context, targetSchema, schema, name string) error {
-	if err := requireSchema("transfer type", schema, name); err != nil {
+// Rename renames the alias type (sp_rename's 'USERDATATYPE' class). newName
+// is a bare name. It is the only type family with a rename: sp_rename has no
+// class for a table type or a CLR type, so UserDefinedTableType and ClrType
+// have none.
+func (t *UserDefinedDataType) Rename(ctx context.Context, newName string) error {
+	if err := t.db.renameSchemaObject(ctx, "type", renameAliasTypeClass, t.Schema, t.Name, newName); err != nil {
 		return err
 	}
-	if err := requireSchema("transfer type", targetSchema, name); err != nil {
-		return err
-	}
-	return d.transferWithClass(ctx, "TYPE", targetSchema, schema, name)
-}
-
-// TransferXMLSchemaCollection moves an XML schema collection into another
-// schema. Its class prefix is the whole three-word noun, not an abbreviation
-// of it.
-func (d *Database) TransferXMLSchemaCollection(ctx context.Context, targetSchema, schema, name string) error {
-	if err := requireSchema("transfer XML schema collection", schema, name); err != nil {
-		return err
-	}
-	if err := requireSchema("transfer XML schema collection", targetSchema, name); err != nil {
-		return err
-	}
-	return d.transferWithClass(ctx, "XML SCHEMA COLLECTION", targetSchema, schema, name)
-}
-
-// transferWithClass is ALTER SCHEMA ... TRANSFER for a securable that needs a
-// class prefix. class is a fixed keyword chosen by the caller here, never
-// caller input.
-func (d *Database) transferWithClass(ctx context.Context, class, targetSchema, schema, name string) error {
-	if targetSchema == "" {
-		return fmt.Errorf("gosmo: transfer %s: target schema is required", qualifiedName(schema, name))
-	}
-	if err := d.refuseSameSchemaTransfer(ctx, targetSchema, schema, name); err != nil {
-		return err
-	}
-	if _, err := d.exec(ctx, fmt.Sprintf("ALTER SCHEMA %s TRANSFER %s::%s",
-		quoteIdent(targetSchema), class, qualifiedName(schema, name))); err != nil {
-		return fmt.Errorf("gosmo: transfer %s to schema [%s]: %w", qualifiedName(schema, name), targetSchema, err)
-	}
+	setIfApplied(ctx, &t.Name, newName)
 	return nil
 }
 
-// RenameUserDefinedDataType renames an alias type (sp_rename's
-// 'USERDATATYPE' class).
-//
-// Alias types only. The class is documented as covering "an alias data type
-// added by sp_addtype or CREATE TYPE", and it is the whole of what sp_rename
-// can rename in sys.types: a table type or a CLR type has no @objtype at
-// all, and passing one of those here renames nothing while reporting
-// success — so callers must not route them through this method.
-//
-// newName is a bare name, as everywhere sp_rename is used.
-func (d *Database) RenameUserDefinedDataType(ctx context.Context, schema, oldName, newName string) error {
-	if err := requireSchema("rename user defined data type", schema, oldName); err != nil {
+// Transfer moves the alias type into another schema (ALTER SCHEMA ...
+// TRANSFER TYPE::). The type keeps its name; permissions granted on it
+// directly are dropped by the server.
+func (t *UserDefinedDataType) Transfer(ctx context.Context, targetSchema string) error {
+	if err := t.db.transferSchemaObject(ctx, "type", transferTypeClass, targetSchema, t.Schema, t.Name); err != nil {
 		return err
 	}
-	if _, err := d.exec(ctx,
-		"EXEC sp_rename @objname = @p1, @newname = @p2, @objtype = N'USERDATATYPE'",
-		qualifiedName(schema, oldName), newName,
-	); err != nil {
-		return fmt.Errorf("gosmo: rename type %s -> %q: %w", qualifiedName(schema, oldName), newName, err)
+	setIfApplied(ctx, &t.Schema, targetSchema)
+	return nil
+}
+
+// Transfer moves the table type into another schema (ALTER SCHEMA ...
+// TRANSFER TYPE::). The type keeps its name; permissions granted on it
+// directly are dropped by the server.
+func (t *UserDefinedTableType) Transfer(ctx context.Context, targetSchema string) error {
+	if err := t.db.transferSchemaObject(ctx, "type", transferTypeClass, targetSchema, t.Schema, t.Name); err != nil {
+		return err
 	}
+	setIfApplied(ctx, &t.Schema, targetSchema)
+	return nil
+}
+
+// Transfer moves the CLR type into another schema (ALTER SCHEMA ... TRANSFER
+// TYPE::). The type keeps its name; permissions granted on it directly are
+// dropped by the server.
+func (t *ClrType) Transfer(ctx context.Context, targetSchema string) error {
+	if err := t.db.transferSchemaObject(ctx, "type", transferTypeClass, targetSchema, t.Schema, t.Name); err != nil {
+		return err
+	}
+	setIfApplied(ctx, &t.Schema, targetSchema)
+	return nil
+}
+
+// Transfer moves the XML schema collection into another schema (ALTER
+// SCHEMA ... TRANSFER XML SCHEMA COLLECTION::). There is no rename: sp_rename
+// has no class for one.
+func (c *XMLSchemaCollection) Transfer(ctx context.Context, targetSchema string) error {
+	if err := c.db.transferSchemaObject(ctx, "XML schema collection", transferXMLSchemaCollectionClass, targetSchema, c.Schema, c.Name); err != nil {
+		return err
+	}
+	setIfApplied(ctx, &c.Schema, targetSchema)
 	return nil
 }

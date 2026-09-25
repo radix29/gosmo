@@ -153,6 +153,8 @@ func (d *Database) ExecProc(ctx context.Context, schema, name string, params ...
 
 // StoredProcedure represents a stored procedure.
 type StoredProcedure struct {
+	db *Database
+
 	ObjectID   int
 	Schema     string
 	Name       string
@@ -193,7 +195,7 @@ ORDER  BY SCHEMA_NAME(p.schema_id), p.name`
 
 	rows, err := d.query(ctx, q, args...)
 	return scanRows(rows, err, fmt.Sprintf("list stored procs in %q", d.Name), func(scan func(...any) error) (*StoredProcedure, error) {
-		p := &StoredProcedure{}
+		p := &StoredProcedure{db: d}
 		if err := scan(&p.ObjectID, &p.Schema, &p.Name,
 			&p.Definition, &p.CreateDate, &p.ModifyDate); err != nil {
 			return nil, err
@@ -213,10 +215,10 @@ func (d *Database) StoredProcedureByName(ctx context.Context, schema, name strin
 	}
 	procs, err := d.storedProceduresWhere(ctx, "AND SCHEMA_NAME(p.schema_id) = @p1 AND p.name = @p2", []any{schema, name})
 	if err != nil {
-		return nil, fmt.Errorf("gosmo: find stored procedure [%s].[%s] in %q: %w", schema, name, d.Name, err)
+		return nil, fmt.Errorf("gosmo: find stored procedure %s in %q: %w", qualifiedName(schema, name), d.Name, err)
 	}
 	if len(procs) == 0 {
-		return nil, notFoundf("gosmo: stored procedure [%s].[%s] not found in %q", schema, name, d.Name)
+		return nil, notFoundf("gosmo: stored procedure %s not found in %q", qualifiedName(schema, name), d.Name)
 	}
 	return procs[0], nil
 }
@@ -242,24 +244,11 @@ func (d *Database) CreateStoredProcedure(ctx context.Context, req CreateStoredPr
 	}
 	q := fmt.Sprintf("CREATE OR ALTER PROCEDURE %s\nAS\n%s", qualifiedName(schema, req.Name), req.Body)
 	if _, err := d.exec(ctx, q); err != nil {
-		return nil, fmt.Errorf("gosmo: create stored procedure [%s].[%s]: %w", schema, req.Name, err)
+		return nil, fmt.Errorf("gosmo: create stored procedure %s: %w", qualifiedName(schema, req.Name), err)
 	}
-	return createdObject(ctx, &StoredProcedure{Schema: schema, Name: req.Name}, func() (*StoredProcedure, error) {
+	return createdObject(ctx, d.StoredProcedureRef(schema, req.Name), func() (*StoredProcedure, error) {
 		return d.StoredProcedureByName(ctx, schema, req.Name)
 	})
-}
-
-// DropStoredProcedure drops a stored procedure. A procedure that isn't there
-// is the server's error, not a silent success — see the note on
-// Database.DropTable.
-func (d *Database) DropStoredProcedure(ctx context.Context, schema, name string) error {
-	if err := requireSchema("drop stored procedure", schema, name); err != nil {
-		return err
-	}
-	if _, err := d.exec(ctx, "DROP PROCEDURE "+qualifiedName(schema, name)); err != nil {
-		return fmt.Errorf("gosmo: drop stored procedure [%s].[%s]: %w", schema, name, err)
-	}
-	return nil
 }
 
 // SystemStoredProcedures returns every system stored procedure SQL Server
@@ -296,7 +285,7 @@ ORDER  BY o.name`
 
 	rows, err := d.query(ctx, q, args...)
 	return scanRows(rows, err, fmt.Sprintf("list system stored procs in %q", d.Name), func(scan func(...any) error) (*StoredProcedure, error) {
-		p := &StoredProcedure{}
+		p := &StoredProcedure{db: d}
 		if err := scan(&p.ObjectID, &p.Schema, &p.Name,
 			&p.Definition, &p.CreateDate, &p.ModifyDate); err != nil {
 			return nil, err
@@ -327,13 +316,27 @@ type Parameter struct {
 	// executing user's default schema, so TypeString qualifies it.
 	TypeSchema        string
 	IsUserDefinedType bool
+
+	// XMLSchemaCollectionSchema, XMLSchemaCollection, IsXMLDocument,
+	// VectorDimensions and VectorBaseType are the typed-xml and vector
+	// facets, as on Column.
+	XMLSchemaCollectionSchema string
+	XMLSchemaCollection       string
+	IsXMLDocument             bool
+	VectorDimensions          int
+	VectorBaseType            string
 }
 
 // TypeString returns the T-SQL data-type fragment for the parameter, in the
-// same form ColumnTypeString gives a column: a user-defined type is
+// same form Column.TypeString gives a column: a user-defined type is
 // schema-qualified and carries no length.
 func (p *Parameter) TypeString() string {
-	return catalogTypeString(p.DataType, p.TypeSchema, p.IsUserDefinedType, p.MaxLength, p.Precision, p.Scale)
+	return catalogType{
+		dt: p.DataType, typeSchema: p.TypeSchema, userDefined: p.IsUserDefinedType,
+		maxLength: p.MaxLength, precision: p.Precision, scale: p.Scale,
+		xmlSchema: p.XMLSchemaCollectionSchema, xmlCollection: p.XMLSchemaCollection, xmlDocument: p.IsXMLDocument,
+		vectorDimensions: p.VectorDimensions, vectorBaseType: p.VectorBaseType,
+	}.String()
 }
 
 // Parameters returns the parameters of one stored procedure or function, in
@@ -342,27 +345,77 @@ func (d *Database) Parameters(ctx context.Context, schema, name string) ([]*Para
 	if err := requireSchema("parameters", schema, name); err != nil {
 		return nil, err
 	}
-	const q = `
-SELECT p.name, p.parameter_id, tp.name,
-       p.max_length, p.precision, p.scale,
-       p.is_output, p.has_default_value,
-       SCHEMA_NAME(tp.schema_id), tp.is_user_defined
-FROM   sys.parameters p
-JOIN   sys.types tp ON tp.user_type_id = p.user_type_id
-WHERE  p.object_id = OBJECT_ID(QUOTENAME(@p1) + N'.' + QUOTENAME(@p2))
-  AND  p.parameter_id > 0
-ORDER  BY p.parameter_id`
-
-	rows, err := d.query(ctx, q, schema, name)
+	rows, err := d.query(ctx, d.parameterSelect(), schema, name)
 	return scanRows(rows, err, fmt.Sprintf("list parameters of %s", qualifiedName(schema, name)), func(scan func(...any) error) (*Parameter, error) {
 		p := &Parameter{}
 		var typeName string
 		if err := scan(&p.Name, &p.Ordinal, &typeName,
 			&p.MaxLength, &p.Precision, &p.Scale, &p.IsOutput, &p.HasDefault,
-			&p.TypeSchema, &p.IsUserDefinedType); err != nil {
+			&p.TypeSchema, &p.IsUserDefinedType,
+			&p.XMLSchemaCollectionSchema, &p.XMLSchemaCollection, &p.IsXMLDocument,
+			&p.VectorDimensions, &p.VectorBaseType); err != nil {
 			return nil, err
 		}
 		p.DataType = DataType(typeName)
 		return p, nil
 	})
+}
+
+// parameterSelect is Parameters' query. The vector_* columns are SQL Server
+// 2025's, with the vector type; the typed-xml ones predate gosmo's floor.
+// https://learn.microsoft.com/sql/relational-databases/system-catalog-views/sys-parameters-transact-sql
+func (d *Database) parameterSelect() string {
+	major := d.serverMajorVersion()
+	return `
+SELECT p.name, p.parameter_id, tp.name,
+       p.max_length, p.precision, p.scale,
+       p.is_output, p.has_default_value,
+       SCHEMA_NAME(tp.schema_id), tp.is_user_defined,
+       ISNULL(SCHEMA_NAME(xsc.schema_id), ''), ISNULL(xsc.name, ''), p.is_xml_document,
+       ` + colSince(major, SQLServer2025, "ISNULL(p.vector_dimensions, 0)", "CAST(0 AS int)") + `,
+       ` + colSince(major, SQLServer2025, "ISNULL(p.vector_base_type_desc, '')", "CAST('' AS nvarchar(60))") + `
+FROM   sys.parameters p
+JOIN   sys.types tp ON tp.user_type_id = p.user_type_id
+LEFT   JOIN sys.xml_schema_collections xsc
+       ON  xsc.xml_collection_id = NULLIF(p.xml_collection_id, 0)
+WHERE  p.object_id = OBJECT_ID(QUOTENAME(@p1) + N'.' + QUOTENAME(@p2))
+  AND  p.parameter_id > 0
+ORDER  BY p.parameter_id`
+}
+
+// StoredProcedureRef returns a lightweight handle for the stored procedure [schema].[name] — no
+// query; every field but Schema and Name is zero. See Server.DatabaseRef for
+// when a handle is the right form.
+func (d *Database) StoredProcedureRef(schema, name string) *StoredProcedure {
+	return &StoredProcedure{db: d, Schema: schema, Name: name}
+}
+
+// Database returns the database the stored procedure belongs to.
+func (p *StoredProcedure) Database() *Database { return p.db }
+
+// Drop drops the stored procedure. A stored procedure that isn't there is the server's
+// error, not a silent success — see the note on Table.Drop.
+func (p *StoredProcedure) Drop(ctx context.Context) error {
+	return p.db.dropSchemaObject(ctx, "stored procedure", "PROCEDURE", p.Schema, p.Name)
+}
+
+// Rename renames the stored procedure (sp_rename's 'OBJECT' class). newName is a bare
+// name; a rename never moves the stored procedure between schemas — see Transfer.
+func (p *StoredProcedure) Rename(ctx context.Context, newName string) error {
+	if err := p.db.renameSchemaObject(ctx, "stored procedure", renameObjectClass, p.Schema, p.Name, newName); err != nil {
+		return err
+	}
+	setIfApplied(ctx, &p.Name, newName)
+	return nil
+}
+
+// Transfer moves the stored procedure into another schema (ALTER SCHEMA ... TRANSFER).
+// It keeps its name and object_id; permissions granted on it directly are
+// dropped by the server.
+func (p *StoredProcedure) Transfer(ctx context.Context, targetSchema string) error {
+	if err := p.db.transferSchemaObject(ctx, "stored procedure", transferObjectClass, targetSchema, p.Schema, p.Name); err != nil {
+		return err
+	}
+	setIfApplied(ctx, &p.Schema, targetSchema)
+	return nil
 }

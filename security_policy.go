@@ -92,9 +92,9 @@ WHERE  SCHEMA_NAME(sp.schema_id) = @p1
   AND  sp.name                   = @p2`, schema, name)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return nil, notFoundf("gosmo: security policy [%s].[%s] not found in %q", schema, name, d.Name)
+			return nil, notFoundf("gosmo: security policy %s not found in %q", qualifiedName(schema, name), d.Name)
 		}
-		return nil, fmt.Errorf("gosmo: find security policy [%s].[%s] in %q: %w", schema, name, d.Name, err)
+		return nil, fmt.Errorf("gosmo: find security policy %s in %q: %w", qualifiedName(schema, name), d.Name, err)
 	}
 	if err := d.loadSecurityPredicates(ctx, p); err != nil {
 		return nil, err
@@ -154,7 +154,7 @@ func (p *SecurityPolicy) Enable(ctx context.Context) error {
 	_, err := p.db.exec(ctx,
 		fmt.Sprintf("ALTER SECURITY POLICY %s WITH (STATE = ON)", qualifiedName(p.Schema, p.Name)))
 	if err != nil {
-		return fmt.Errorf("gosmo: enable security policy [%s]: %w", p.Name, err)
+		return fmt.Errorf("gosmo: enable security policy %q: %w", p.Name, err)
 	}
 	setIfApplied(ctx, &p.IsEnabled, true)
 	return nil
@@ -165,19 +165,19 @@ func (p *SecurityPolicy) Disable(ctx context.Context) error {
 	_, err := p.db.exec(ctx,
 		fmt.Sprintf("ALTER SECURITY POLICY %s WITH (STATE = OFF)", qualifiedName(p.Schema, p.Name)))
 	if err != nil {
-		return fmt.Errorf("gosmo: disable security policy [%s]: %w", p.Name, err)
+		return fmt.Errorf("gosmo: disable security policy %q: %w", p.Name, err)
 	}
 	setIfApplied(ctx, &p.IsEnabled, false)
 	return nil
 }
 
 // Drop drops the security policy. A policy that isn't there is the server's
-// error, not a silent success — see the note on Database.DropTable.
+// error, not a silent success — see the note on Table.Drop.
 func (p *SecurityPolicy) Drop(ctx context.Context) error {
 	_, err := p.db.exec(ctx,
 		fmt.Sprintf("DROP SECURITY POLICY %s", qualifiedName(p.Schema, p.Name)))
 	if err != nil {
-		return fmt.Errorf("gosmo: drop security policy [%s]: %w", p.Name, err)
+		return fmt.Errorf("gosmo: drop security policy %q: %w", p.Name, err)
 	}
 	return nil
 }

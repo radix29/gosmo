@@ -193,6 +193,8 @@ classDiagram
         +Default string
         +FullName() string
         +Drop() error
+        +Rename(newName) error
+        +Transfer(targetSchema) error
         An alias type: CREATE TYPE ... FROM.
     }
 
@@ -206,6 +208,7 @@ classDiagram
         +FullName() string
         +Columns() []*Column
         +Drop() error
+        +Transfer(targetSchema) error
     }
 
     class ClrType {
@@ -221,6 +224,7 @@ classDiagram
         +AssemblyClass string
         +FullName() string
         +Drop() error
+        +Transfer(targetSchema) error
     }
 
     class SystemDataType {
@@ -243,6 +247,7 @@ classDiagram
         +FullName() string
         +Definition() string
         +Drop() error
+        +Transfer(targetSchema) error
     }
 
     class Rule {
@@ -255,6 +260,17 @@ classDiagram
         +ModifyDate time.Time
         +FullName() string
         +Drop() error
+        +Rename(newName) error
+        +Transfer(targetSchema) error
+    }
+
+    class IndexFragmentation {
+        +IndexName string
+        +IndexID int
+        +AvgFragmentationPct float64
+        +PageCount int64
+        +FragmentCount int64
+        +AvgPageSpaceUsedPct float64
     }
 
     %% =========================================================
@@ -283,3 +299,5 @@ classDiagram
     Statistic --> StatisticHeader : Header() returns
     Statistic "1" --> "*" StatisticDensity : DensityVector() returns
     Statistic "1" --> "*" StatisticHistogramStep : Histogram() returns
+    Table "1" --> "*" IndexFragmentation : FragmentationStats() returns
+    Index --> IndexFragmentation : Fragmentation() returns
