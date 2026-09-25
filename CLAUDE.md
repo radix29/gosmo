@@ -4,250 +4,156 @@ Context for Claude Code sessions on **gosmo**.
 
 ## What this is
 
-gosmo is a Go library that mimics Microsoft SQL Server Management Objects
-(SMO) without WMI, COM, or any Windows-only dependency. It is pure Go, no
-CGO, and talks to SQL Server through `github.com/microsoft/go-mssqldb`.
+gosmo is a pure-Go (no CGO) library mimicking SQL Server Management Objects
+(SMO) without WMI/COM, over `github.com/microsoft/go-mssqldb`. Go 1.27.
 
-- Module: `github.com/radix29/gosmo` — https://github.com/radix29/gosmo
-- `ARCHITECTURE.md` carries the full API map (as Mermaid class diagrams), the
-  feature map, the error and authentication reference, and the connection
-  internals. `README.md` is a short summary and points there.
-- Requires Go 1.27.
-
-Read what the task touches: `ARCHITECTURE.md` for the API map and the feature
-map, `quoting.go`'s doc comments for anything that builds an identifier or
-literal, `server.go`/`login.go`'s doc comments for the handle-vs-lookup
-method pairs. A one-file fix needs none of it. `ARCHITECTURE.md` § Maintaining
-this document is the authority on editing the class map — read it before
-touching a diagram. The diagrams themselves are `diagram/*.mmd`; `ARCHITECTURE.md`
-inlines only `diagram/00-map.mmd` and links the rest.
+- Module `github.com/radix29/gosmo` — https://github.com/radix29/gosmo
+- `ARCHITECTURE.md`: API map (Mermaid), feature map, errors, authentication,
+  connection internals. Diagrams live in `diagram/*.mmd`; only
+  `diagram/00-map.mmd` is inlined. Read § Maintaining this document before
+  touching a diagram.
+- Read only what the task touches: `quoting.go`'s doc comments for anything
+  building an identifier or literal; `server.go`/`login.go`'s for the
+  handle-vs-lookup pairs.
 
 ## This is a library, not gossms's back end
 
-The author also writes **goSSMS** (https://github.com/radix29/gossms), a
-terminal SSMS reimplementation that is gosmo's main consumer and is developed
-in the same sitting — the sibling layout is `~/go/gosmo` and `~/go/gossms`,
-and gossms's `go.mod` normally has an active `replace
-github.com/radix29/gosmo => ../gosmo`.
+**goSSMS** (`~/go/gossms`, https://github.com/radix29/gossms) is the main
+consumer, developed in the same sitting with an active `replace
+github.com/radix29/gosmo => ../gosmo`. **It is not the definition of gosmo's
+API** — gosmo has other users.
 
-**That does not make gossms the definition of gosmo's API.** gosmo is a
-published, general-purpose library with users beyond gossms.
-
-- **Never remove or narrow a capability because gossms doesn't call it.**
-  "No callers in gossms" is not evidence of dead code. This covers whole
-  files, exported methods, exported types and their fields, and struct
-  fields only some paths populate. The 2026-09-22 removals — the
-  context-free `Foo` delegates and the `*Seq` iterators — were made under an
-  explicit, one-off compatibility waiver from the author, not under this rule,
-  and are not a precedent for it.
-- When an audit turns up something unused, the allowed moves are: make it
-  faster, make its doc comment accurate about what it actually does, or add
-  a test that pins it. Removal, or replacing a general form with the narrow
-  one gossms happens to need, is not one of them — raise it instead.
-- Optimisation must be behaviour-preserving at the API surface: same
-  signature, same results, same errors.
-- Adding capability for gossms is encouraged — that's the intended
-  direction. Design it as a library feature, not as a gossms shim.
+- **Never remove or narrow a capability because gossms doesn't call it** —
+  files, exported methods/types/fields, or fields only some paths populate.
+  (The 2026-09-22 removal of the context-free `Foo` delegates and `*Seq`
+  iterators was a one-off author waiver, not a precedent.)
+- For unused surface the allowed moves are: make it faster, make its doc
+  accurate, or pin it with a test. Removal or narrowing — raise it instead.
+- Optimisation must preserve the API: same signature, results, errors.
+- Adding capability for gossms is encouraged — as a library feature, not a shim.
 
 ## Build & verify
 
 ```
-go build ./...    # build
-go test ./...     # test
-gofmt -w .        # format in place
-go vet ./...      # vet
+go build ./...  &&  go test ./...  &&  gofmt -w .  &&  go vet ./...
+go vet -tags livedb ./...   # after any rename, and before a tag
 ```
 
-Plain `go` toolchain only, no Makefile. `go test ./...` runs against fakes
-(`captureConn`, `fakeQueryConn`) and needs no server. Anything touching real
-SQL behaviour should also be exercised against a live instance — connection
-details are deliberately not in the repo; ask for them. Create throwaway
-databases/logins, exercise the write path, drop them; never mutate
-pre-existing objects.
+Plain `go`, no Makefile. `go test ./...` uses fakes (`captureConn`,
+`fakeQueryConn`) and needs no server. Real SQL behaviour must also run against
+a live instance (details not in the repo; ask): create throwaway objects,
+exercise the write, drop them; never mutate pre-existing objects.
 
-**A DSN test asserts what the driver parses, not only what gosmo writes.**
-Four Entra methods shipped unable to connect because every test checked the
-query string `buildDSN` produced and none ran it through go-mssqldb. Go
-through `buildConnector` (for Entra it runs the azuread parser and validator
-without dialling) and assert on `msdsn.Parse(dsn).Parameters`;
-`auth_test.go`'s `driverParams` does both. A known, unfixed bug is pinned
-there with a `knownBroken` marker, which fails once the fix lands.
-
-**A live test registers its connection's close with `t.Cleanup`, never
-`defer`,** when anything it creates is dropped in a `t.Cleanup`: cleanups run
-after the test function returns, so a deferred close shuts the pool first and
-every drop fails silently, leaving the objects on the server.
-
-Build and test **inside this repo** before relying on a change from gossms —
-a gossms-side build only compiles the packages it imports.
-
-**A plain `go vet ./...` does not compile the `livedb` tests.** An API rename
-can leave every one of them uncompilable and nothing says so: the 2026-09-17
-`Ref` rename did exactly that to 17 files, found only when the next breaking
-change swept the same call sites. Run `go vet -tags livedb ./...` too after any
-rename, and before a tag.
+- **`go vet ./...` does not compile the `livedb` tests** — the 2026-09-17 `Ref`
+  rename silently broke 17 of them. Hence the `-tags livedb` line above.
+- **A DSN test asserts what the driver parses**, not only what gosmo writes
+  (four Entra methods shipped unable to connect). Go through `buildConnector`
+  and assert on `msdsn.Parse(dsn).Parameters`; `auth_test.go`'s `driverParams`
+  does both. A known unfixed bug is pinned with a `knownBroken` marker.
+- **A live test closes its connection with `t.Cleanup`, never `defer`,** when
+  it drops objects in a `t.Cleanup` — a deferred close runs first and every
+  drop fails silently.
+- Build and test **here** before relying on a change from gossms — a gossms
+  build compiles only the packages it imports.
 
 ## Conventions
 
-- **One form, context first.** Every method that touches the database takes
-  `ctx context.Context` as its first parameter and has no other form — no
-  `Foo`/`FooContext` pair, no `…Context` suffix. Accessors that only read
-  already-fetched struct state take no context. Until 2026-09-22 every such
-  method came as a pair, `Foo(...)` delegating to `FooContext(ctx, ...)`:
-  707 one-line delegates at 0.0% coverage, pinned only by a source-reading
-  wiring test because a delegate wired to a same-signature sibling
-  (`AddRoleMember`/`RemoveRoleMember`) compiled and passed everything else.
-  Do not reintroduce a context-free convenience form.
-- **Errors** wrap with `%w` and are prefixed `gosmo: ` plus what was being
-  attempted — `fmt.Errorf("gosmo: drop statistic %q: %w", st.Name, err)`.
-- **`rows.Err()` is always checked**, and every `query` is followed by
-  `defer rows.Close()`. Both it and every `rows.Scan` wrap with the *same*
-  message the function's query error uses — a failure mid-iteration is
-  otherwise indistinguishable from any other, and comes back to the caller as
-  a naked `context deadline exceeded` naming nothing. A list read goes through
-  `scanRows` (`helpers.go`), which does all three by construction; a by-name
-  read ends in `foundRow`, which maps `sql.ErrNoRows` to the `notFoundf`
-  error. Hand-roll the loop only for a shape they do not fit — grouping into a
-  map, a single-row aggregate. The rule is per exported
-  entry point, not per statement: the shared scan helpers (`scanColumns`,
-  `scanExtProps`, `scanEffectivePermissions`, `securityPredicates`,
-  `indexColumns`, `execWithProgress`) return bare errors on purpose,
-  because only their callers know which operation to name, and each caller
-  wraps what they return.
-- **Quoting.** See `quoting.go`'s doc comments, which are the authority:
-  `QuoteName`/`qualifiedName` bracket-quote an *identifier*; `QuoteLiteral`
-  produces a whole string literal; the unexported `escapeSingle`
-  (`helpers.go`) escapes for a literal whose quotes are already in the
-  caller's format string — the common shape here. An identifier that ends up
-  *inside* a string literal (`OBJECT_ID`, `DBCC SHOW_STATISTICS`,
-  `fn_listextendedproperty`) needs bracket-quoting first and `escapeSingle`
-  on top: `escapeSingle(t.FullName())`. Getting this wrong is not cosmetic —
-  a name containing `.` resolves to the wrong object or to NULL, and a NULL
-  `object_id` means "every object in the database" to
-  `sys.dm_db_index_physical_stats`, so the wrong form returns plausible
-  stats for the wrong tables instead of failing. `identifier_quoting_test.go`
-  pins it. Prefer a query parameter over any of this where the server
-  accepts one.
+- **One form, context first.** Every database-touching method takes `ctx` first
+  and has no other form — no `Foo`/`FooContext` pair. Accessors over fetched
+  state take no context. Do not reintroduce a context-free form (the old pairs
+  were 707 untested delegates, one miswired to a sibling).
+- **Errors** wrap with `%w`, prefixed `gosmo: ` + the attempted operation:
+  `fmt.Errorf("gosmo: drop statistic %q: %w", st.Name, err)`.
+- **Row iteration.** Every `query` gets `defer rows.Close()` and a checked
+  `rows.Err()`; it and every `rows.Scan` wrap with the *same* message as the
+  query error (else a mid-iteration failure surfaces as a bare `context
+  deadline exceeded`). List reads use `scanRows` (`helpers.go`); by-name reads
+  end in `foundRow` (`sql.ErrNoRows` → `notFoundf`). Hand-roll only for shapes
+  they don't fit. Shared scan helpers (`scanColumns`, `scanExtProps`,
+  `scanEffectivePermissions`, `securityPredicates`, `indexColumns`,
+  `execWithProgress`) return bare errors on purpose; their callers wrap.
+- **Quoting** — `quoting.go`'s doc comments are the authority. `QuoteName`/
+  `qualifiedName` bracket an identifier; `QuoteLiteral` builds a whole literal;
+  `escapeSingle` (`helpers.go`) escapes inside quotes already in the format
+  string. An identifier *inside* a literal (`OBJECT_ID`, `DBCC
+  SHOW_STATISTICS`, `fn_listextendedproperty`) needs both:
+  `escapeSingle(t.FullName())`. Wrong forms resolve to the wrong object or to
+  NULL — and a NULL `object_id` means "every object" to
+  `sys.dm_db_index_physical_stats`. `identifier_quoting_test.go` pins it.
+  Prefer a query parameter where the server accepts one.
 - **Never query inside a `rows.Next()` loop.** `Database.query` pins its own
-  pooled connection and issues its own `USE` (batched with the query — see
-  `Database.useBatch`), so a per-row lookup costs a round trip and an
-  acquisition per row *while the outer connection is still held* — the shape
-  that exhausts a pool, not merely a slow one. Fetch the
-  child rows for the whole object in one query with no parent-id predicate,
-  ordered by the parent id first, and group them in Go.
-  `Table.Indexes` is the worked example (2026-08-14: 42 round trips
-  across 21 connections for a 20-index table, now 2).
-- **A zoneless server clock is stamped `time.UTC`, never `time.Local`.**
-  go-mssqldb already hands `datetime` columns back in UTC, so a value decoded
-  by hand (msdb's YYYYMMDD/HHMMSS integer pairs in `parseSQLAgentDate`, an
-  error-log line) must match. `time.Local` renders the same digits and so
-  looks right, but is off by the client's UTC offset the moment it is
-  compared with or subtracted from a `datetime`-derived value beside it.
-- **Over ~900 lines is the prompt to split** a file, along the lines its own
-  section banners already draw — a prompt to look, not a defect on its own.
-  Extract by exact line range, diff the extracted text byte-for-byte against
-  the original, and only then delete the source.
-- **One file per subject area** (`table.go`, `index.go`, `security.go`, …),
-  with `helpers.go` for cross-file helpers and `types.go` for shared enums.
-- **Script mode.** `WithScript` collects statements instead of executing
-  them, and `Scripting(ctx)` reports whether a context is one. A code path
-  that *reads* to decide what to write does not work under it — the standing
-  shape is a `Create*` reading its own object back by name after an `EXEC`
-  that was only collected. Every such method returns a name-only handle
-  under `Scripting(ctx)` instead, through `createdObject` (`helpers.go`); a
-  new one must do the same.
-  - A write that mirrors its change back onto the receiver (`Rename` setting
-    `.Name`, `Enable` setting `.IsEnabled`) must go through `setIfApplied`,
-    never a direct assignment. Under `WithScript` nothing ran, so a direct
-    assignment leaves the object claiming state the server doesn't have and
-    the next call built from it targets an object that doesn't exist.
-  - A statement captured with bound parameters is substituted to literals
-    (`bindScriptArgs`) — a captured statement is pasted into a query editor,
-    where nothing binds `@p1`.
-- **Every `Create*` has one shape: `CreateX(ctx, CreateXRequest) (*X,
-  error)`.** Until 2026-09-24 there were four — `…Spec` structs, `Create…Request`
-  structs, `*Create…Options` pointers and positional lists — and 20 of 33
-  returned only `error`, so a caller could guess neither the argument nor the
-  result. The request is a value; the result is read back through
-  `createdObject`, which returns the `XRef` handle under `Scripting(ctx)` and
-  when the new row is not visible to the caller. A type keeps the `Spec` name
-  only when a non-create method takes it too (`ServerAuditSpec`, for `Alter`).
+  pooled connection and `USE` (`Database.useBatch`), so per-row lookups hold
+  the outer connection while acquiring more — pool exhaustion. Fetch children
+  in one query ordered by parent id and group in Go (`Table.Indexes`: 42 round
+  trips → 2).
+- **Zoneless server clocks are `time.UTC`, never `time.Local`** — go-mssqldb
+  returns `datetime` in UTC, so hand-decoded values (`parseSQLAgentDate`,
+  error-log lines) must match or they are off by the client's offset.
+- **Files.** One per subject area (`table.go`, `index.go`, …), `helpers.go` for
+  cross-file helpers, `types.go` for shared enums. Over ~900 lines is a prompt
+  to split along existing section banners: extract by exact line range, diff
+  byte-for-byte, then delete the source.
+- **Script mode.** `WithScript` collects statements instead of executing;
+  `Scripting(ctx)` detects it. A path that *reads* to decide what to write
+  breaks under it:
+  - A `Create*` reading its object back returns a name-only handle under
+    `Scripting(ctx)` via `createdObject` (`helpers.go`); a new one must too.
+  - A write mirroring onto the receiver (`Rename` → `.Name`, `Enable` →
+    `.IsEnabled`) goes through `setIfApplied`, never direct assignment.
+  - Bound parameters in a captured statement are substituted to literals
+    (`bindScriptArgs`) — nothing binds `@p1` in a query editor.
+- **Every `Create*` is `CreateX(ctx, CreateXRequest) (*X, error)`.** The
+  request is a value; the result comes back through `createdObject` (the `XRef`
+  handle under `Scripting(ctx)` or when the new row isn't visible). A type keeps
+  a `Spec` name only if a non-create method takes it too (`ServerAuditSpec`).
 - **A write on an existing object is a method on its handle** —
-  `db.ViewRef(s, n).Drop(ctx)`, `t.Rename(ctx, n)`, `db.Detach(ctx, opts)` —
-  never `Parent.VerbX(ctx, name, …)`. The 2026-09-24 fold moved the drops of
-  most families and stopped there, leaving two shapes for one operation until
-  2026-09-25; a new family gets its `Ref` and its writes together.
-- **Catalog state is an exported field, not an accessor.** A type scanned
-  from a catalog row exposes what it scanned as exported fields — `Login.SID`,
-  `Table.Name`, `Job.IsEnabled`. `Database` was the last holdout, hiding nine
-  behind `Name()`/`State()`/… until 2026-09-18, and the shape was unguessable:
-  a caller could not tell from the type which form it would get, and
-  `DatabaseRef("master").IsSystem()` compiling to `false` was the trap it
-  produced. Only a *derivation* stays a method (`Database.IsSystem`,
-  `Database.IsSnapshot`, computed from `ID`/`SourceDatabaseID`), as does a
-  back-pointer (`Database.Server`, `Table.Database`). Adding an accessor over
-  a scanned field re-creates the holdout.
-- **The parent back-pointer is exposed by every type that holds one**, as
-  `Database() *Database` or `Server() *Server` — one line, no context, never
-  named anything else. It was 26 types out of 54 until 2026-09-18, which is
-  close enough to a coin flip that no caller could guess: a `*Rule` could
-  reach its database, a `*Login` could not and had to be threaded alongside a
-  `*Server`. `Table.DB` was the sole outlier on the *name*, and the name it
-  took was already spoken for — `Server.DB()` returns the `*sql.DB` pool —
-  so it was renamed to `Table.Database` in the same pass.
-  `parent_accessor_wiring_test.go` reads the source and fails on a type with
-  a `db`/`server` field and no accessor, or on a `DB()` returning
-  `*Database`; a deliberate omission goes in its `parentAccessorExceptions`
-  with a reason.
-- **The `Ref` suffix marks a lookup-free handle.** `Server.DatabaseRef(name)`
-  returns a `*Database` carrying only its name — no query, every other field
-  at its zero value — while `Server.DatabaseByName(name)` reads the catalog.
-  They are not interchangeable: the populated one is the only form whose
-  fields answer anything, and the handle is the only form that works when
-  there is nothing to read — no live connection at all, or an object the
-  script is about to *create* and the catalog therefore does not have yet
-  (a New-X dialog's Script Changes). `WithScript` on its own is not that
-  case: it intercepts writes only, so a by-name read under a
-  `WithScript`-derived context goes to the real server and succeeds, and a
-  scripted DROP of an object that exists works either way. This bullet is
-  the authority on that rule; `gossms/CLAUDE.md`, `gossms/docs/decisions.md`
-  and `dbOf` in `gossms/internal/tui/explorer_object_ops.go` point here
-  rather than restate it. Fifty-five families pair this way
-  (`DatabaseRef`, `LoginRef`, `TableRef`, the four Agent ones, the
-  audit/credential/trigger/snapshot/plan-guide/backup-device/AG families,
-  `ServerRoleRef`, `UserRef`, `StatisticRef`, `IndexRef`, `ConfigurationRef`,
-  `CertificateRef`, `AsymmetricKeyRef`, `SymmetricKeyRef`, and — since
-  2026-09-24, when the parent `DropX(ctx, name)` methods were folded into
-  `XRef(name).Drop` and every `Create*` began returning its object — the
-  schema, sequence, synonym, rule, default, three type, XML schema
-  collection, partition, Always Encrypted key, assembly, database role
-  (`RoleRef`), external-resource and Service Broker families, and — since
-  2026-09-25, when the parent `Database.DropView`/`RenameObject`/
-  `TransferObject` forms were folded onto the handles — `ViewRef`,
-  `StoredProcedureRef`, `UserDefinedFunctionRef` and `TriggerRef`); every other
-  by-name lookup in the library is `*ByName` with no handle beside it. A
-  schema-scoped handle takes its schema as given and refuses an empty one on
-  write (`ErrSchemaRequired`, through `requireSchema`), like every call that
-  takes a schema.
-  `Endpoint` is the one family deliberately left without one — `IsSystem` is
-  derived from a scanned id, so a name-only handle would carry id 0 and
-  refuse every write on itself; see `endpoint.go`'s comment above
-  `ErrSystemEndpoint`. **A new handle method takes the `Ref` suffix** — the
-  suffix is what stops `s.Database("x").State()` from compiling into a silent
-  zero value, which is what the un-suffixed name allowed. Their doc
-  comments in `server.go` and `login.go` are the authority;
-  `go doc gosmo.Server.DatabaseRef`.
+  `db.ViewRef(s, n).Drop(ctx)`, `t.Rename(ctx, n)` — never
+  `Parent.VerbX(ctx, name, …)`. A new family gets its `Ref` and writes together.
+- **Catalog state is an exported field, not an accessor** (`Login.SID`,
+  `Table.Name`, `Database.State`). Only derivations (`Database.IsSystem`,
+  `IsSnapshot`) and back-pointers stay methods. Don't add an accessor over a
+  scanned field.
+- **Every type holding a parent exposes it** as `Database() *Database` or
+  `Server() *Server` — one line, no context, never another name (`Server.DB()`
+  is the `*sql.DB` pool). `parent_accessor_wiring_test.go` enforces it;
+  deliberate omissions go in `parentAccessorExceptions` with a reason.
+- **The `Ref` suffix marks a lookup-free handle** — this bullet is the
+  authority (gossms's `CLAUDE.md`, `docs/decisions.md` and `dbOf` in
+  `internal/tui/explorer_object_ops.go` point here). `Server.DatabaseRef(name)`
+  carries only the name, no query; `Server.DatabaseByName(name)` reads the
+  catalog. Not interchangeable: only the populated one answers field questions,
+  and only the handle works with nothing to read — no connection, or an object
+  a script is about to *create* (a New-X dialog's Script Changes). `WithScript`
+  alone is not that case: it intercepts writes only, so by-name reads still hit
+  the server.
+  - Fifty-five families pair this way: `DatabaseRef`, `LoginRef`, `TableRef`,
+    the four Agent ones, the audit/credential/trigger/snapshot/plan-guide/
+    backup-device/AG families, `ServerRoleRef`, `UserRef`, `StatisticRef`,
+    `IndexRef`, `ConfigurationRef`, `CertificateRef`, `AsymmetricKeyRef`,
+    `SymmetricKeyRef`, the schema, sequence, synonym, rule, default, three type,
+    XML schema collection, partition, Always Encrypted key, assembly, `RoleRef`,
+    external-resource and Service Broker families, and `ViewRef`,
+    `StoredProcedureRef`, `UserDefinedFunctionRef`, `TriggerRef`. Every other
+    by-name lookup is `*ByName` with no handle.
+  - A schema-scoped handle takes its schema as given and refuses an empty one
+    on write (`ErrSchemaRequired` via `requireSchema`).
+  - `Endpoint` deliberately has no handle: `IsSystem` derives from a scanned
+    id, so a name-only handle would refuse every write (see `endpoint.go` above
+    `ErrSystemEndpoint`).
+  - **A new handle method takes the `Ref` suffix** — it is what stops
+    `s.Database("x").State()` compiling into a silent zero value. Doc comments
+    in `server.go`/`login.go` are authoritative; `go doc
+    gosmo.Server.DatabaseRef`.
 
 ## Open threads
 
-`OPEN-THREADS.md` holds open work and settled decisions — what is knowingly
-left undone, and what must be watched (azidentity's deprecated ROPC credential,
-the version-support gate table, backup `TO URL`). Anything knowingly deferred,
-or any rule learned from a mistake that does not belong in this file or
-`ARCHITECTURE.md`, goes there rather than into a commit message.
+`OPEN-THREADS.md` holds work knowingly left undone and what to watch
+(azidentity's deprecated ROPC credential, the version-support gate table,
+backup `TO URL`). Deferred work, or a lesson that belongs in neither this file
+nor `ARCHITECTURE.md`, goes there — not into a commit message.
 
 ## Release
 
-`RELEASE.md` carries the current release and `CHANGELOG.md` the history;
-don't edit either as part of a feature or fix unless asked. Note that gossms cannot cut a
-release while gosmo's `HEAD` is untagged — tag and push here first.
+`RELEASE.md` is the current release, `CHANGELOG.md` the history; don't edit
+either in a feature or fix unless asked. gossms cannot release while gosmo's
+`HEAD` is untagged — tag and push here first.
