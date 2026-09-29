@@ -10,8 +10,8 @@ classDiagram
         +Name string
         +ResourceID string
         +ResourceGroupID string
-        +ClusterType string
-        +AutomatedBackupPreference string
+        +ClusterType ClusterType
+        +AutomatedBackupPreference BackupPreference
         +FailureConditionLevel int
         +HealthCheckTimeout int
         +Version int
@@ -61,12 +61,12 @@ classDiagram
         +ReplicaID string
         +ReplicaServerName string
         +EndpointURL string
-        +AvailabilityMode string
-        +FailoverMode string
-        +SeedingMode string
+        +AvailabilityMode AvailabilityMode
+        +FailoverMode FailoverMode
+        +SeedingMode SeedingMode
         +SessionTimeout int
-        +PrimaryRoleAllowConnections string
-        +SecondaryRoleAllowConnections string
+        +PrimaryRoleAllowConnections AllowConnections
+        +SecondaryRoleAllowConnections AllowConnections
         +BackupPriority int
         +ReadOnlyRoutingURL string
         +IsLocal bool
@@ -139,8 +139,8 @@ classDiagram
 
     class CreateAvailabilityGroupRequest {
         +Name string
-        +ClusterType string
-        +AutomatedBackupPreference string
+        +ClusterType ClusterType
+        +AutomatedBackupPreference BackupPreference
         +FailureConditionLevel int
         +HealthCheckTimeout int
         +DBFailover bool
@@ -154,13 +154,13 @@ classDiagram
     class AvailabilityReplicaSpec {
         +ServerName string
         +EndpointURL string
-        +AvailabilityMode string
-        +FailoverMode string
-        +SeedingMode string
+        +AvailabilityMode AvailabilityMode
+        +FailoverMode FailoverMode
+        +SeedingMode SeedingMode
         +SessionTimeout int
         +BackupPriority int
-        +PrimaryRoleAllowConnections string
-        +SecondaryRoleAllowConnections string
+        +PrimaryRoleAllowConnections AllowConnections
+        +SecondaryRoleAllowConnections AllowConnections
         +ReadOnlyRoutingURL string
     }
 

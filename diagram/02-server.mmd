@@ -46,6 +46,7 @@ classDiagram
         +ConfigurationRef(name) *ConfigurationOption
         +ApplyConfiguration(changes, opts) error
         +AgentInfo() *AgentStatus
+        +AgentCounts() *AgentCounts
         +Jobs() []*Job
         +JobByName(name) *Job
         +JobRef(name) *Job
@@ -81,7 +82,7 @@ classDiagram
         +FixedDrives() []*FixedDrive
         +FileSystemExists(path) bool
         +MailProfiles() []*MailProfile
-        +SendMail(opts) error
+        +SendMail(profile, recipients, subject, body) error
         +Backup(opts) error
         +Restore(opts) error
         +BuildRestoreStatement(opts) string

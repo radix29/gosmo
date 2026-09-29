@@ -3,36 +3,64 @@
 The current release, in brief. Detail and history are in
 [CHANGELOG.md](CHANGELOG.md).
 
-## v0.0.14
+## v0.0.15
 
 ### New
 
-- Service Broker: message types, contracts, queues, services, routes, remote
-  service bindings and broker priorities — read, script, drop.
-- `ALTER QUEUE` and `ALTER ROUTE`, plus queue message counts and activation
-  monitors.
-- Batched Agent writes: `Job`/`Alert`/`Operator`/`Schedule.Alter` send one
-  `sp_update_*` call; `gosmo.Ptr` builds the fields.
-- `AcquireConn` — a pinned connection that retries a dead one from the pool.
-- `ServerRoleRef`, `ConfigurationRef`, `UserRef`, `StatisticRef` handles.
-- `Server()`/`Database()` back-pointer on every type that has a parent.
-- `Sequence.DataTypeSchema` and the exported `ShowplanColumn`.
-- Sixteen more `*Seq` iterators (128 now).
+- Symmetric keys: list, create, add/drop encryptions, change owner, drop.
+- Database master key as an object: regenerate, encryptions, backup, drop.
+- Module signatures: add, drop and list `ADD [COUNTER] SIGNATURE`.
+- Certificate backup, `RemovePrivateKey` and `SetOwner` on certificates and
+  asymmetric keys; `CreateAsymmetricKey`; EKM `FROM PROVIDER` keys.
+- `ScriptCertificate`, `ScriptAsymmetricKey`, `ScriptSymmetricKey`,
+  `ScriptStatistic`.
+- `ScriptTable` keeps every table facet it used to drop, and scripts graph,
+  memory-optimized, FILESTREAM, Always Encrypted, ledger, FileTable and
+  external tables, and XML and spatial indexes.
+- `CreateUserRequest` for every kind of database user.
+- `Rename` and `Transfer` on every schema-scoped handle;
+  `Table.RenameConstraint`.
+- 34 more `Ref` handles (56 in all).
+- `Server.ApplyConfiguration`, `ReleaseIdleConnections`, `DefaultPaths`,
+  `AgentCounts`.
+- `WithStatementObserver`, `WithScriptServer`, and `ScriptCollector.String()`.
+- `RestoreOptions.CloseExistingConnections`.
 
 ### Fixes
 
-- `Alert.SetTrigger`, `Schedule.SetFrequency` and `Schedule.SetActiveRange`
-  changed the receiver under `WithScript`.
-- A scripted sequence over an alias type lost the type's schema.
+- A statement captured under `WithScript` kept its `@p1` placeholders and
+  would not run.
+- `Table.Drop(cascade)` could drop the foreign keys and keep the table.
+- `Index.SetIncludedColumns` lost the index's options and filegroup.
+- Non-ASCII file paths and names were mangled by non-`N` literals.
+- A role name containing a comma split into two roles.
+- `Index.StorageInfo` over-counted rows on tables with LOB data.
+- Mixed per-partition compression scripted as uniform.
+- `Index.UpdateStatistics` sampled differently from `Statistic.Update`.
+- Detach and other exclusive-access writes were blocked by gosmo's own
+  idle connection.
+- `BackupHistory` listed a striped backup once per stripe.
+- A `decimal(38,0)` sequence or identity failed its listing.
+- `CreateTable` turned `datetime2(0)` into `datetime2(7)`.
+- Sequences and partition functions scripted without precision or length.
 
 ### Changes
 
-- **Breaking:** `Database` fields are exported — `db.Name()` is `db.Name`.
-- **Breaking:** lookup-free handles take the `Ref` suffix —
-  `srv.Database(name)` is `srv.DatabaseRef(name)`, and so on for all 18.
-- **Breaking:** `Table.DB()` is `Table.Database()`.
-- **Breaking:** `Xml` is `XML` in every identifier
-  (`XMLSchemaCollection`, …).
-- Large files split along their section banners; no behaviour change.
-- Every write path now has an offline test of its exact statement.
-- New `OPEN-THREADS.md` for open work and settled decisions.
+- **Breaking:** one form per method — `FooContext` is now `Foo(ctx, …)`.
+- **Breaking:** the `*Seq` iterators are removed.
+- **Breaking:** every `Create*` takes a `CreateXRequest` and returns the
+  object.
+- **Breaking:** writes on an existing object are methods on its handle —
+  `db.DropView(ctx, s, n)` is `db.ViewRef(s, n).Drop(ctx)`.
+- **Breaking:** string modes and permission names are typed constants.
+- **Breaking:** the `...WithOptions` permission twins are merged.
+- **Breaking:** option structs replace positional flags (index rebuild and
+  options, change password, restore recovery, `Termination`).
+- **Breaking:** backup locations are `BackupTarget`s everywhere.
+- **Breaking:** `ChangeOwner` → `SetOwner`, `SetState` → `Enable`/`Disable`,
+  `ColumnTypeString` → `Column.TypeString`.
+- **Breaking:** sequence and identity values are strings.
+- An empty schema is refused with `ErrSchemaRequired`.
+- `CertificateByName`/`AsymmetricKeyByName` return `ErrNotFound`.
+- `ConnectTimeout` now covers the TCP dial.
+- Dependencies: `azcore` v1.23.2, MSAL for Go v1.10.1.

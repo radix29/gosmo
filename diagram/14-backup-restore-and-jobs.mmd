@@ -11,16 +11,11 @@ classDiagram
         +Files []string
         +FileGroups []string
         +CopyOnly bool
-        +Compression bool
+        +Compression *bool
         +Checksum bool
+        +BackupSetName string
         +Description string
-        +Name string
-        +MediaName string
-        +Expiry time.Time
-        +RetainDays int
-        +BlockSize int
-        +BufferCount int
-        +MaxTransferSize int
+        +MediaDescription string
         +Stats int
         +Init bool
         +Format bool
@@ -42,8 +37,7 @@ classDiagram
         +Replace bool
         +Checksum bool
         +Stats int
-        +StopAt time.Time
-        +StopAtMarkName string
+        +StopAt *time.Time
         +FileNumber int
         +Credential string
         +Progress func

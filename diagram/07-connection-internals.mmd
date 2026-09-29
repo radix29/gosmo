@@ -194,6 +194,7 @@ classDiagram
         +String() string
         +WithScript(ctx) *ScriptCollector
         +WithScriptServer(ctx, server) ctx
+        +WithStatementObserver(ctx, fn) ctx
         +Scripting(ctx) bool
         Captures the exact statement(s) a set of
         pending write calls would run, without

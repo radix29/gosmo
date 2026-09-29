@@ -45,7 +45,7 @@ classDiagram
     class DatabaseOptions {
         +Owner string
         +PageVerify string
-        +UserAccess string
+        +UserAccess UserAccess
         +Containment string
         +DefaultCursor string
         +SnapshotIsolation string
@@ -77,7 +77,7 @@ classDiagram
         +Enabled bool
         +AutoCleanup bool
         +RetentionPeriod int
-        +RetentionUnit string
+        +RetentionUnit ChangeTrackingUnit
     }
 
     class TableChangeTracking {
@@ -118,15 +118,15 @@ classDiagram
     %% =========================================================
 
     class QueryStoreInfo {
-        +DesiredState string
-        +ActualState string
+        +DesiredState QueryStoreState
+        +ActualState QueryStoreState
         +ReadOnlyReason int
         +CurrentStorageMB int64
         +MaxStorageMB int64
-        +CaptureMode string
-        +SizeCleanupMode string
+        +CaptureMode QueryStoreCaptureMode
+        +SizeCleanupMode QueryStoreCleanupMode
         +StaleThresholdDays int
-        +WaitStatsCaptureMode string
+        +WaitStatsCaptureMode QueryStoreWaitStatsMode
     }
 
     class QueryStoreReportOptions {

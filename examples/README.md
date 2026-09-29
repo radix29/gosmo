@@ -1,6 +1,6 @@
 # gosmo examples
 
-Nine runnable programs. Each is a `package main` you run directly:
+Eight runnable programs. Each is a `package main` you run directly:
 
 ```sh
 export MSSQL_SERVER="localhost:1433"

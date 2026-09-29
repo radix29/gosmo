@@ -13,7 +13,7 @@ release and `CHANGELOG.md` the history.
 
 - [Version gating](#version-gating) — how a column or statement newer than the
   floor is handled, and how each gate is pinned.
-- [Architecture](#architecture) — the master map, and the twenty Mermaid
+- [Architecture](#architecture) — the master map, and the twenty-one Mermaid
   class diagrams in [`diagram/`](diagram/) that cover every type gosmo
   exports.
 - [Feature map](#feature-map) — SMO's names against gosmo's, family by family,
@@ -56,9 +56,9 @@ correctly for its own major.
 
 ## Architecture
 
-The class map is **twenty-one Mermaid diagrams in [`diagram/`](diagram/)** — the
-master map below, and twenty class diagrams, one per group of types. It is
-one map, not twenty-one: an edge that crosses files is drawn in the file that
+The class map is **twenty-two Mermaid diagrams in [`diagram/`](diagram/)** — the
+master map below, and twenty-one class diagrams, one per group of types. It is
+one map, not twenty-two: an edge that crosses files is drawn in the file that
 defines the class it points *into*, where the other end shows up as a bare
 box (`Server --> AvailabilityGroup` lives in
 [`16-availability-groups.mmd`](diagram/16-availability-groups.mmd)).
@@ -384,7 +384,7 @@ The instance and database halves pair up: `ServerResourceStat` and
 | `Database.AsymmetricKeys`       | `db.AsymmetricKeys(ctx)` / `db.AsymmetricKeyByName(ctx, name)` / `db.AsymmetricKeyRef(name)` / `db.CreateAsymmetricKey(ctx, req)` / `key.Drop(ctx)` — generated keys only; every import form reads the server's own filesystem or an EKM provider |
 | `Database.SymmetricKeys`        | `db.SymmetricKeys(ctx)` / `db.SymmetricKeyByName(ctx, name)` / `db.SymmetricKeyRef(name)` / `db.CreateSymmetricKey(ctx, req)` / `key.AddEncryption(ctx, enc, dec)` / `key.DropEncryption(ctx, enc, dec)` / `key.Drop(ctx)` — each key with its `Encryptions` (certificate / asymmetric key / symmetric key / password), the master key excluded |
 | Database master key             | `db.HasMasterKey(ctx)` / `db.CreateMasterKey(ctx, gosmo.CreateMasterKeyRequest{Password})` / `db.MasterKey(ctx)` / `db.MasterKeyRef()` — see [Certificates](#certificates-and-the-database-master-key) |
-| Module signatures               | `db.ModuleSignatures(ctx)` / `db.SignaturesOn(ctx, schema, module)` / `db.AddSignature(ctx, ...)` / `db.DropSignature(ctx, ...)` / `cert.SignedModules(ctx)` / `key.SignedModules(ctx)` |
+| Module signatures               | `db.ModuleSignatures(ctx)` / `db.SignaturesOn(ctx, schema, module)` / `db.SignableModules(ctx)` / `db.AddSignature(ctx, ...)` / `db.DropSignature(ctx, ...)` / `cert.SignedModules(ctx)` / `key.SignedModules(ctx)` |
 | Column master keys              | `db.ColumnMasterKeys(ctx)` / `db.ColumnMasterKeyByName(ctx, name)` / `db.ColumnMasterKeyRef(name)` / `db.CreateColumnMasterKey(ctx, gosmo.CreateColumnMasterKeyRequest{Name, KeyStoreProvider, KeyPath, Signature})` — a `Signature` makes it allow enclave computations |
 | Column encryption keys          | `db.ColumnEncryptionKeys(ctx)` / `db.ColumnEncryptionKeyByName(ctx, name)` / `db.ColumnEncryptionKeyRef(name)` / `db.CreateColumnEncryptionKey(ctx, gosmo.CreateColumnEncryptionKeyRequest{Name, Values})` / `cek.AddValue(ctx, value)` / `cek.DropValue(ctx, masterKeyName)` — the two halves of a master-key rotation |
 | Security policies (RLS)         | `db.SecurityPolicies(ctx)` / `db.SecurityPolicyByName(ctx, schema, name)` |
@@ -1241,6 +1241,12 @@ issued through a handle on one instance but meant for another — scripting an
 availability group secondary's `JOIN` without connecting to it. Read methods
 are unaffected — only the two exec chokepoints consult the collector.
 
+`WithStatementObserver(ctx, fn)` is the executing twin, hooked at the same
+chokepoints: `fn` receives the `ScriptEntry` of every statement a write ran
+*successfully*, so a caller running several writes in a row learns which of
+them reached the server before one failed. It never fires under `WithScript`,
+nor for a failed statement, and runs on the goroutine that issued the write.
+
 Bound parameters are substituted into the captured text as literals, since
 a script pasted into a query editor has nothing to bind `@p1` to, and
 `ExecProc` is captured as the `EXEC` form it would run — inputs as literals,
@@ -1379,7 +1385,7 @@ reads all take a `BackupTarget`, so each can name a device as well as a path —
 t := gosmo.DeviceTarget("NightlyFull")     // or gosmo.DiskTarget(path)
 srv.Backup(ctx, gosmo.BackupOptions{Database: "MyDB", Devices: []gosmo.BackupTarget{t}})
 headers, _ := srv.BackupHeaders(ctx, t)
-files, _   := srv.BackupFileList(ctx, t, headers[0].Position)
+files, _   := srv.BackupFileList(ctx, headers[0].Position, t)
 err := srv.VerifyBackup(ctx, t)
 ```
 
@@ -1401,6 +1407,9 @@ alerts are visible but not manageable — see
 // Is Agent even running? (Reported, not inferred from a failed call.)
 status, _ := srv.AgentInfo(ctx)
 fmt.Println(status.Running, status.StatusText, status.LastStartupTime)
+
+// How many jobs, schedules, alerts (and event alerts) and operators, in one query.
+counts, _ := srv.AgentCounts(ctx)
 ```
 
 On an Azure engine edition there is no Windows service to report and
