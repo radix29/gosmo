@@ -23,6 +23,7 @@ import (
 type Server struct {
 	db   *sql.DB
 	info *ServerInfo
+	xe   xeCatalogCache // XEObjects & co., filled on first use
 }
 
 // Close releases all resources held by the server connection pool.

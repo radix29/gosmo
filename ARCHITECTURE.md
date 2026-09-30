@@ -318,6 +318,7 @@ The instance and database halves pair up: `ServerResourceStat` and
 | Server audits            | `srv.ServerAudits(ctx)` / `srv.ServerAuditByName(ctx, name)` / `srv.ServerAuditRef(name)` (no-I/O handle) / `srv.CreateServerAudit(ctx, spec)` — see [Audits](#audits-and-audit-specifications) |
 | Server audit specifications | `srv.ServerAuditSpecifications(ctx)` / `...ByName(ctx, name)` / `srv.ServerAuditSpecificationRef(name)` (no-I/O handle) / `srv.CreateServerAuditSpecification(ctx, spec)` |
 | Audit action groups      | `srv.AuditActionGroups(ctx)` / `srv.DatabaseAuditActionGroups(ctx)` / `srv.DatabaseAuditActions(ctx)` |
+| Extended Events sessions | `srv.EventSessions(ctx)` / `srv.EventSessionByName(ctx, name)` / `srv.EventSessionRef(name)` (no-I/O handle) / `srv.CreateEventSession(ctx, spec)` — see [Extended Events](#extended-events) |
 | Backup devices           | `srv.BackupDevices(ctx)` / `srv.BackupDeviceByName(ctx, name)` / `srv.BackupDeviceRef(name)` (no-I/O handle) / `srv.CreateBackupDevice(ctx, gosmo.CreateBackupDeviceRequest{Name, Type, PhysicalName})` / `dev.Drop(ctx, deleteFile)` / `dev.Headers(ctx)` |
 | Endpoints (all protocols) | `srv.Endpoints(ctx)` / `srv.EndpointByName(ctx, name)` / `ep.SetState(ctx, state)` / `ep.Drop(ctx)` / `ep.MirroringDetail(ctx)` / `ep.ServiceBrokerDetail(ctx)` — see [Endpoints](#endpoints) |
 | Server DDL / logon triggers | `srv.ServerTriggers(ctx)` / `srv.ServerTriggerByName(ctx, name)` / `srv.ServerTriggerRef(name)` (no-I/O handle) / `tr.Enable(ctx)` / `tr.Disable(ctx)` / `tr.Drop(ctx)` |
@@ -1775,6 +1776,49 @@ the server half's group-only `AddActionGroups`/`DropActionGroups`. The two
 halves of an action clause quote in opposite ways: the action name and the
 securable class are keywords and are charset-checked, the securable and the
 principal are identifiers and are bracket-quoted.
+
+### Extended Events
+
+SSMS's Management → Extended Events → Sessions, Watch Live Data's source, and
+the library the New Session dialog picks from. `extended_events.go` (model,
+catalog), `extended_events_script.go` (DDL, scripter), `extended_events_read.go`
+(target readers, event XML), `extended_events_templates.go` (XEvent Profiler
+specs, New Session templates, target builders).
+
+| SSMS equivalent                  | gosmo                                                      |
+| -------------------------------- | ---------------------------------------------------------- |
+| Extended Events → Sessions       | `srv.EventSessions(ctx)` / `srv.EventSessionByName(ctx, name)` / `srv.EventSessionRef(name)` (no-I/O handle) — each with its `Events` and `Targets` |
+| New session                      | `srv.CreateEventSession(ctx, gosmo.EventSessionSpec{...})`   |
+| Properties → OK                  | `es.Alter(ctx, spec)` — the minimal ADD/DROP diff against the catalog; start from `es.Spec()` |
+| Start / Stop / Delete            | `es.Start(ctx)` / `es.Stop(ctx)` / `es.Drop(ctx)`              |
+| Running state, dropped events, current file | `es.Status(ctx)` → `*EventSessionStatus`            |
+| Script Session as CREATE         | `NewServerScripter(srv, opts).ScriptEventSession(ctx, name)`   |
+| View Target Data (event_file)    | `srv.ReadEventFile(ctx, es.EventFilePattern(), cursor, max)` — incremental by `EventFileCursor` |
+| View Target Data (ring_buffer)   | `es.ReadRingBuffer(ctx)` → `*RingBufferData`                  |
+| The .xel files of an event_file  | `srv.EventFiles(ctx, pattern)` — oldest first, via `EnumFileSystem`; a cursor into a file rollover deleted fails `errors.Is(err, gosmo.ErrEventFileGone)` |
+| Add a target                     | `es.AddTarget(ctx, gosmo.EventFileTarget(name, mb, files))` / `gosmo.RingBufferTarget(kb)` — no stop needed |
+| XEvent Profiler (Standard / TSQL) | `gosmo.XEProfilerStandard()` / `gosmo.XEProfilerTSQL()` — SSMS's definitions as specs, no target |
+| New Session → Template           | `gosmo.XESessionTemplates()` — name, category, description and a fresh nameless spec each; reconstructed, not copied from SSMS's .xml files, and each checked live to read back unchanged |
+| Event XML a caller already holds | `gosmo.DecodeEventXML(b)` / `gosmo.DecodeRingBuffer(b)`         |
+| The event / action / target library | `srv.XEPackages(ctx)` / `srv.XEObjects(ctx, kind)` (a pred_source's value type in `TypeName`) / `srv.XEObjectColumns(ctx, pkg, obj)` / `srv.XEMapValues(ctx, pkg, map)` — cached per `Server` |
+| Azure SQL Database (database-scoped) | `db.EventSessions(ctx)` / `db.EventSessionByName` / `db.EventSessionRef` / `db.CreateEventSession` — the same type, `es.Database()` non-nil, `ON DATABASE` |
+
+**Live data is polled from a target**, never read from the XE stream SSMS
+uses (`sys.fn_MSxe_read_event_stream` is undocumented, and so is its binary
+format). An `event_file` read resumes exactly from its cursor; a
+`ring_buffer` is re-read whole and new events are told apart by `XEvent.Seq`,
+the `package0.event_sequence` action.
+
+**Every WITH option but STARTUP_STATE is refused on a running session** (Msg
+25707). `Alter` stops the session around such a change and restarts it, on the
+failure path too — the audit's disable window. Adding and dropping events and
+targets needs no stop, but events and targets cannot share one statement, so
+`Alter` emits one per group.
+
+`EventSessionSpec`'s zero values: `RetentionMode`, `MaxDispatchLatency`,
+`MaxMemory` and `MemoryPartitionMode` at zero mean "server default" on a create
+and "leave alone" on an alter; INFINITE latency is `gosmo.XEInfinite`, which
+is what a catalog 0 reads as through `es.Spec()`.
 
 ### Credentials
 

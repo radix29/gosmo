@@ -126,11 +126,12 @@ exercise the write, drop them; never mutate pre-existing objects.
   a script is about to *create* (a New-X dialog's Script Changes). `WithScript`
   alone is not that case: it intercepts writes only, so by-name reads still hit
   the server.
-  - Fifty-five families pair this way: `DatabaseRef`, `LoginRef`, `TableRef`,
+  - Fifty-six families pair this way: `DatabaseRef`, `LoginRef`, `TableRef`,
     the four Agent ones, the audit/credential/trigger/snapshot/plan-guide/
     backup-device/AG families, `ServerRoleRef`, `UserRef`, `StatisticRef`,
     `IndexRef`, `ConfigurationRef`, `CertificateRef`, `AsymmetricKeyRef`,
-    `SymmetricKeyRef`, the schema, sequence, synonym, rule, default, three type,
+    `SymmetricKeyRef`, `EventSessionRef` (server and database), the schema,
+    sequence, synonym, rule, default, three type,
     XML schema collection, partition, Always Encrypted key, assembly, `RoleRef`,
     external-resource and Service Broker families, and `ViewRef`,
     `StoredProcedureRef`, `UserDefinedFunctionRef`, `TriggerRef`. Every other

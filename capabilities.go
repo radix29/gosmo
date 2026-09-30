@@ -90,6 +90,20 @@ var ProbedServerPermissions = []string{
 	"ALTER ANY ENDPOINT",
 	"ALTER ANY LINKED SERVER",
 	"ALTER ANY EVENT SESSION",
+	// SQL Server 2022 split ALTER ANY EVENT SESSION into these nine, each
+	// covered by it (sys.fn_builtin_permissions, checked on major 17). A
+	// write gate accepts either the wide name or the narrow one it needs. On
+	// 2016–2019 HAS_PERMS_BY_NAME answers NULL for all nine, which reads as
+	// CapabilityUnknown — only the wide name decides there.
+	"CREATE ANY EVENT SESSION",
+	"DROP ANY EVENT SESSION",
+	"ALTER ANY EVENT SESSION OPTION",
+	"ALTER ANY EVENT SESSION ADD EVENT",
+	"ALTER ANY EVENT SESSION DROP EVENT",
+	"ALTER ANY EVENT SESSION ADD TARGET",
+	"ALTER ANY EVENT SESSION DROP TARGET",
+	"ALTER ANY EVENT SESSION ENABLE",
+	"ALTER ANY EVENT SESSION DISABLE",
 	"ALTER ANY AVAILABILITY GROUP",
 }
 
@@ -226,6 +240,10 @@ var ProbedDatabasePermissions = []string{
 	"ALTER ANY ASSEMBLY",
 	"ALTER ANY EXTERNAL DATA SOURCE",
 	"ALTER ANY EXTERNAL FILE FORMAT",
+	// Database-scoped event sessions, which only Azure SQL Database has; the
+	// name is defined on SQL Server too (majors 13 and 17), so it probes
+	// cleanly everywhere.
+	"ALTER ANY DATABASE EVENT SESSION",
 	// Service Broker. Each of these five is enough on its own to ALTER and
 	// DROP its family — probed with WITHOUT LOGIN users on majors 13, 14 and
 	// 17, which answered identically — so none of them is paired with ALTER

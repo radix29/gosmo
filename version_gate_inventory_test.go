@@ -98,6 +98,9 @@ var gatedColumns = []gatedColumn{
 
 	// sys.columns and sys.parameters — the vector type's facets, 2025.
 	// Confirmed on the catalog: 17.0.1135.8 has all four.
+	// sys.server_event_sessions — time-bound sessions (MAX_DURATION), 2025.
+	{"server_event_sessions", "max_duration", "s.max_duration", SQLServer2025, false, ""},
+
 	{"columns", "vector_dimensions", "ISNULL(c.vector_dimensions, 0)", SQLServer2025, false, ""},
 	{"columns", "vector_base_type_desc", "ISNULL(c.vector_base_type_desc, '')", SQLServer2025, false, ""},
 	{"parameters", "vector_dimensions", "ISNULL(p.vector_dimensions, 0)", SQLServer2025, false, ""},

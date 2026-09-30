@@ -104,6 +104,9 @@ var goldenQueries = []goldenQuery{
 	{"external_file_formats", []string{"external_file_formats"}, nil, func(m int) string {
 		return dbAtMajor(m).externalFileFormatSelect()
 	}},
+	{"event_sessions", []string{"server_event_sessions"}, nil, func(m int) string {
+		return eventSessionSelect(xeServerScope, m)
+	}},
 }
 
 // renderGolden is the file's whole text: every major, in order, under a header
