@@ -1,0 +1,157 @@
+classDiagram
+
+    %% =========================================================
+    %% Resource Governor — the user-configurable one
+    %% (azure_resources.go's InstanceResourceGovernance is the
+    %% platform's, and lives in 19)
+    %% =========================================================
+
+    class ResourceGovernor {
+        -server *Server
+        +IsEnabled bool
+        +ClassifierFunctionID int
+        +ClassifierSchema string
+        +ClassifierName string
+        +MaxOutstandingIOPerVolume int
+        +Server() *Server
+        +Reconfigure() error
+        +Enable() error
+        +Disable() error
+        +ResetStatistics() error
+        +SetClassifier(schema, name) error
+        +SetMaxOutstandingIOPerVolume(n) error
+        The stored configuration. Not visible
+        without VIEW ANY DEFINITION: ErrNotFound.
+    }
+
+    class ResourceGovernorStatus {
+        +ClassifierFunctionID int
+        +ClassifierSchema string
+        +ClassifierName string
+        +IsReconfigurationPending bool
+        +MaxOutstandingIOPerVolume int
+        The configuration in force. Needs VIEW
+        SERVER STATE, which ResourceGovernor does not.
+    }
+
+    class ResourcePool {
+        -server *Server
+        +ID int
+        +Name string
+        +MinCPUPercent int
+        +MaxCPUPercent int
+        +CapCPUPercent int
+        +MinMemoryPercent int
+        +MaxMemoryPercent int
+        +MinIOPSPerVolume int
+        +MaxIOPSPerVolume int
+        +Affinity []ResourcePoolAffinity
+        +Server() *Server
+        +IsSystem() bool
+        +WorkloadGroups() []*WorkloadGroup
+        +Alter(ResourcePoolOptions) error
+        +Drop() error
+    }
+
+    class ResourcePoolAffinity {
+        +ProcessorGroup int
+        +SchedulerMask int64
+    }
+
+    class WorkloadGroup {
+        -server *Server
+        +ID int
+        +Name string
+        +PoolID int
+        +PoolName string
+        +ExternalPoolID int
+        +ExternalPoolName string
+        +Importance string
+        +RequestMaxMemoryGrantPercent float64
+        +RequestMaxCPUTimeSec int
+        +RequestMemoryGrantTimeoutSec int
+        +MaxDOP int
+        +GroupMaxRequests int
+        +GroupMaxTempdbDataPercent *float64
+        +GroupMaxTempdbDataMB *float64
+        +Server() *Server
+        +IsSystem() bool
+        +Alter(WorkloadGroupOptions) error
+        +Drop() error
+    }
+
+    class ExternalResourcePool {
+        -server *Server
+        +ID int
+        +Name string
+        +MaxCPUPercent int
+        +MaxMemoryPercent int
+        +MaxProcesses int
+        +Version int64
+        +Affinity []ExternalResourcePoolAffinity
+        +Server() *Server
+        +IsSystem() bool
+        +Alter(ExternalResourcePoolOptions) error
+        +Drop() error
+    }
+
+    class WorkloadGroupOptions {
+        +Importance *WorkloadImportance
+        +RequestMaxMemoryGrantPercent *float64
+        +GroupMaxTempdbDataPercent / MB *float64
+        +ClearGroupMaxTempdbDataPercent / MB bool
+        +Pool *string
+        +ExternalPool *string
+        and the other *int limits. nil = leave out.
+        ResourcePoolOptions and ExternalResourcePoolOptions
+        are the same shape over their own WITH lists.
+    }
+
+    class ClassifierFunction {
+        +Schema string
+        +Name string
+    }
+
+    class ExternalResourcePoolAffinity {
+        +ProcessorGroup int
+        +CPUMask int64
+    }
+
+    class ResourcePoolStats {
+        +PoolID int
+        +Name string
+        +StatisticsStartTime time.Time
+        +TotalCPUUsageMS int64
+        +UsedMemoryKB int64
+        +MemgrantWaiterCount int
+        and the other memory and I/O counters
+    }
+
+    class WorkloadGroupStats {
+        +GroupID int
+        +Name string
+        +PoolID int
+        +ActiveRequestCount int
+        +QueuedRequestCount int
+        +TotalCPUUsageMS int64
+        +EffectiveMaxDOP int
+        and the other request counters
+    }
+
+    Server "1" --> "1" ResourceGovernor : ResourceGovernor
+    Server ..> ResourceGovernorStatus : ResourceGovernorStatus
+    Server "1" --> "*" ResourcePool : ResourcePools / ResourcePoolByName
+    Server "1" --> "*" WorkloadGroup : WorkloadGroups / WorkloadGroupByName
+    Server "1" --> "*" ExternalResourcePool : ExternalResourcePools / ExternalResourcePoolByName
+    Server ..> ResourcePoolStats : ResourcePoolStats
+    Server ..> WorkloadGroupStats : WorkloadGroupStats
+    ResourcePool "1" --> "*" WorkloadGroup : WorkloadGroups
+    ResourcePool *-- ResourcePoolAffinity
+    ExternalResourcePool *-- ExternalResourcePoolAffinity
+    WorkloadGroup --> ExternalResourcePool : ExternalPoolID
+    Server ..> ResourceGovernor : ResourceGovernorRef
+    Server ..> ResourcePool : CreateResourcePool / ResourcePoolRef
+    Server ..> WorkloadGroup : CreateWorkloadGroup / WorkloadGroupRef
+    Server ..> ExternalResourcePool : CreateExternalResourcePool / ExternalResourcePoolRef
+    Server ..> ClassifierFunction : ClassifierFunctionCandidates
+    WorkloadGroup ..> WorkloadGroupOptions : Alter

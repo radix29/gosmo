@@ -42,6 +42,27 @@ Which instances exist to sweep against, and the sweep's current result, are
 environment facts rather than library facts: gossms's `docs/open-threads.md`
 § Version support carries them, and points here for the table above.
 
+## `Database.EventSessions` fails on every on-premises major
+
+Found by `TestLiveVersionSweep` on 2026-09-30 (13, 14 and 17 alike), not
+fixed: `Database.EventSessions` reads `sys.database_event_sessions`, which
+exists only on Azure SQL Database and Managed Instance, so on a box product it
+fails with Msg 208 instead of refusing. It needs the refusal the other
+Azure-only reads have (`ErrUnsupportedVersion` off Azure, as
+`Server.InstanceResourceGovernance` does); until then it is the sweep's one
+standing failure on-premises. Arrived in `7d5d176`.
+
+## Resource Governor affinity: read and scripted, not written
+
+`ResourcePoolOptions` and `ExternalResourcePoolOptions` have no affinity
+field (2026-09-30): the DDL takes scheduler/CPU ids or NUMA nodes, the catalog
+stores a mask per processor group, and no consumer edits it yet (gossms
+defers it, its open-threads N6). The scripter maps group 0 exactly (bit n is
+id n) and refuses affinity in any later group with `ErrUnsupported`: ids there
+continue from the previous group's actual size, which the catalog does not
+hold — `sys.dm_os_schedulers`/`sys.dm_os_nodes` would, at the cost of VIEW
+SERVER STATE. No instance in the estate has more than one processor group.
+
 ## azidentity: watch for the removal, not the deprecation
 
 azidentity has **deprecated** `UsernamePasswordCredential` (it lacks MFA),

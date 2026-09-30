@@ -107,6 +107,9 @@ var goldenQueries = []goldenQuery{
 	{"event_sessions", []string{"server_event_sessions"}, nil, func(m int) string {
 		return eventSessionSelect(xeServerScope, m)
 	}},
+	{"workload_groups", []string{"resource_governor_workload_groups"}, nil, func(m int) string {
+		return (&Server{info: &ServerInfo{VersionMajor: m}}).workloadGroupSelect()
+	}},
 }
 
 // renderGolden is the file's whole text: every major, in order, under a header

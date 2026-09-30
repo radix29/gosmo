@@ -56,9 +56,9 @@ correctly for its own major.
 
 ## Architecture
 
-The class map is **twenty-two Mermaid diagrams in [`diagram/`](diagram/)** — the
-master map below, and twenty-one class diagrams, one per group of types. It is
-one map, not twenty-two: an edge that crosses files is drawn in the file that
+The class map is **twenty-three Mermaid diagrams in [`diagram/`](diagram/)** — the
+master map below, and twenty-two class diagrams, one per group of types. It is
+one map, not twenty-three: an edge that crosses files is drawn in the file that
 defines the class it points *into*, where the other end shows up as a bare
 box (`Server --> AvailabilityGroup` lives in
 [`16-availability-groups.mmd`](diagram/16-availability-groups.mmd)).
@@ -123,6 +123,7 @@ flowchart TB
         N17["17 · Endpoints, audits, and audit specifications"]
         N18["18 · Database triggers, keys, certificates, and the error log"]
         N21["21 · The master key, module signatures, and EKM keys"]
+        N22["22 · Resource Governor"]
     end
     subgraph A8["Azure instance resources"]
         direction TB
@@ -136,6 +137,7 @@ flowchart TB
     N02 -- "owns availability groups" --> N16
     N02 -- "owns endpoints and server audits" --> N17
     N02 -- "exposes the Azure instance views" --> N19
+    N02 -- "owns the Resource Governor configuration" --> N22
     N05 -- "writes through withConn, captured by ScriptCollector" --> N07
     N05 -- "has files, options, catalog, Query Store" --> N08
     N05 -- "filters listings and answers permissions" --> N09
@@ -166,6 +168,7 @@ flowchart TB
     click N19 href "diagram/19-azure-instance-resources.mmd"
     click N20 href "diagram/20-service-broker.mmd"
     click N21 href "diagram/21-master-key-and-signatures.mmd"
+    click N22 href "diagram/22-resource-governor.mmd"
 ```
 
 ### Connecting and the `Server` object
@@ -258,6 +261,7 @@ server's own filesystem.
 | [`17-endpoints-and-audits.mmd`](diagram/17-endpoints-and-audits.mmd) | The mirroring endpoint and the other endpoints, server and database audits and their specifications, and server triggers. |
 | [`18-triggers-keys-and-error-log.mmd`](diagram/18-triggers-keys-and-error-log.mmd) | Database DDL triggers, asymmetric keys and certificates, the error log surface, and the server filesystem views. |
 | [`21-master-key-and-signatures.mmd`](diagram/21-master-key-and-signatures.mmd) | The database master key and its encryptions, module signatures and their signers, certificate backup, and the EKM `FROM PROVIDER` half of a key spec. |
+| [`22-resource-governor.mmd`](diagram/22-resource-governor.mmd) | The user-configurable Resource Governor: its stored and effective configuration, resource pools, workload groups, external pools, and their runtime statistics. |
 
 ### Azure instance resources
 
@@ -318,6 +322,7 @@ The instance and database halves pair up: `ServerResourceStat` and
 | Server audits            | `srv.ServerAudits(ctx)` / `srv.ServerAuditByName(ctx, name)` / `srv.ServerAuditRef(name)` (no-I/O handle) / `srv.CreateServerAudit(ctx, spec)` — see [Audits](#audits-and-audit-specifications) |
 | Server audit specifications | `srv.ServerAuditSpecifications(ctx)` / `...ByName(ctx, name)` / `srv.ServerAuditSpecificationRef(name)` (no-I/O handle) / `srv.CreateServerAuditSpecification(ctx, spec)` |
 | Audit action groups      | `srv.AuditActionGroups(ctx)` / `srv.DatabaseAuditActionGroups(ctx)` / `srv.DatabaseAuditActions(ctx)` |
+| Resource Governor        | `srv.ResourceGovernor(ctx)` (stored) / `srv.ResourceGovernorStatus(ctx)` (in force, pending flag; VIEW SERVER STATE) / `srv.ResourcePools(ctx)` / `srv.ResourcePoolByName(ctx, name)` / `pool.WorkloadGroups(ctx)` / `srv.WorkloadGroups(ctx)` / `srv.WorkloadGroupByName(ctx, name)` / `srv.ExternalResourcePools(ctx)` / `srv.ExternalResourcePoolByName(ctx, name)` / `srv.ResourcePoolStats(ctx)` / `srv.WorkloadGroupStats(ctx)` — the catalog reads return nothing, not an error, without VIEW ANY DEFINITION; see `resource_governor.go`. Writes: `srv.CreateResourcePool` / `CreateWorkloadGroup` / `CreateExternalResourcePool(ctx, req)`, `.Alter(ctx, …Options)` / `.Drop(ctx)` on each (`…Ref(name)` handles), and on `srv.ResourceGovernorRef()`: `SetClassifier` / `SetMaxOutstandingIOPerVolume` / `Reconfigure` (also enables) / `Enable` / `Disable` / `ResetStatistics`; `srv.ClassifierFunctionCandidates(ctx)`. No write reconfigures on its own — see `resource_governor_write.go` |
 | Extended Events sessions | `srv.EventSessions(ctx)` / `srv.EventSessionByName(ctx, name)` / `srv.EventSessionRef(name)` (no-I/O handle) / `srv.CreateEventSession(ctx, spec)` — see [Extended Events](#extended-events) |
 | Backup devices           | `srv.BackupDevices(ctx)` / `srv.BackupDeviceByName(ctx, name)` / `srv.BackupDeviceRef(name)` (no-I/O handle) / `srv.CreateBackupDevice(ctx, gosmo.CreateBackupDeviceRequest{Name, Type, PhysicalName})` / `dev.Drop(ctx, deleteFile)` / `dev.Headers(ctx)` |
 | Endpoints (all protocols) | `srv.Endpoints(ctx)` / `srv.EndpointByName(ctx, name)` / `ep.SetState(ctx, state)` / `ep.Drop(ctx)` / `ep.MirroringDetail(ctx)` / `ep.ServiceBrokerDetail(ctx)` — see [Endpoints](#endpoints) |
@@ -1119,7 +1124,17 @@ ddl, _ := ssc.ScriptBackupDevice(ctx, "NightlyFull")
 ddl, _ := ssc.ScriptServerAudit(ctx, "Audit-Logins")
 ddl, _ := ssc.ScriptServerAuditSpecification(ctx, "Spec-Logins")
 ddl, _ := ssc.ScriptServerTrigger(ctx, "trg_ddl_guard")
+ddl, _ := ssc.ScriptResourceGovernor(ctx) // classifier, I/O, RECONFIGURE or DISABLE
+ddl, _ := ssc.ScriptResourcePool(ctx, "reporting")
+ddl, _ := ssc.ScriptWorkloadGroup(ctx, "reports")
+ddl, _ := ssc.ScriptExternalResourcePool(ctx, "ml")
 ```
+
+A Resource Governor pool, group or external-pool script ends in a comment,
+not in `ALTER RESOURCE GOVERNOR RECONFIGURE`: RECONFIGURE also enables a
+disabled governor. A built-in object scripts as an `ALTER` of its non-default
+options, and its DROP is refused with `ErrUnsupported`, as is affinity outside
+processor group 0 (see `scripter_resource_governor.go`).
 
 A scripted credential carries a `<insert secret here>` placeholder: the
 secret is not readable from the catalog, and emitting nothing there would

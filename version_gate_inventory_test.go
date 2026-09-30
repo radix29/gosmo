@@ -131,6 +131,15 @@ var gatedColumns = []gatedColumn{
 	{"external_file_formats", "first_row", "f.first_row", SQLServer2019, false, ""},
 	{"external_file_formats", "parser_version", "f.parser_version", SQLServer2019, false, ""},
 
+	// sys.resource_governor_workload_groups — the fractional grant percent,
+	// 2019, and tempdb space governance, 2025. Documented versions; the
+	// catalog confirms absence on 13.0.6500.1 and 14.0.2130.4 and presence of
+	// all three on 17.0.1135.8, but no 2019 or 2022 instance exists to
+	// confirm the 2019 floor itself.
+	{"resource_governor_workload_groups", "request_max_memory_grant_percent_numeric", "g.request_max_memory_grant_percent_numeric", SQLServer2019, false, ""},
+	{"resource_governor_workload_groups", "group_max_tempdb_data_percent", "g.group_max_tempdb_data_percent", SQLServer2025, false, ""},
+	{"resource_governor_workload_groups", "group_max_tempdb_data_mb", "g.group_max_tempdb_data_mb", SQLServer2025, false, ""},
+
 	// Service Broker has no entry here, deliberately — see
 	// TestServiceBrokerReadsNeedNoVersionGate below.
 }

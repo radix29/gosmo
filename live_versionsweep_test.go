@@ -62,6 +62,7 @@ var sweepSkip = map[string]string{
 	"Job.Drop":                 "drops the job",
 	"Job.Enable":               "enables the job",
 	"Job.Stop":                 "stops a running job",
+	"ResourcePool.Drop":        "drops the pool (refused for the built-in ones, which are all a pristine instance has)",
 }
 
 // sweep records what ran and what failed, so the result is one report rather
@@ -155,6 +156,8 @@ func checkSkipList(t *testing.T) {
 		"Statistic": reflect.TypeOf(&Statistic{}),
 		"Login":     reflect.TypeOf(&Login{}),
 		"Job":       reflect.TypeOf(&Job{}),
+
+		"ResourcePool": reflect.TypeOf(&ResourcePool{}),
 	}
 	for key := range sweepSkip {
 		typeName, method, ok := strings.Cut(key, ".")
@@ -293,6 +296,22 @@ var sweepMustCall = []string{
 	"Database.SymmetricKeys",
 	"Database.SymmetricKeyByName",
 	"Scripter.ScriptSymmetricKey",
+
+	// Phase 5 item 24: Resource Governor. The four server-level listings and
+	// the three DMV reads are reflective; the finders and the per-pool
+	// listing take arguments or another receiver.
+	"Server.ResourceGovernor",
+	"Server.ResourceGovernorStatus",
+	"Server.ResourcePools",
+	"Server.ResourcePoolStats",
+	"Server.ResourcePoolByName",
+	"Server.WorkloadGroups",
+	"Server.WorkloadGroupStats",
+	"Server.WorkloadGroupByName",
+	"Server.ExternalResourcePools",
+	"Server.ExternalResourcePoolByName",
+	"ResourcePool.WorkloadGroups",
+	"Server.ClassifierFunctionCandidates",
 }
 
 // checkCoverage fails on any sweepMustCall entry no label matched. It runs
@@ -1034,6 +1053,30 @@ func sweepServerCalls(sw *sweep, srv *Server, info *ServerInfo) {
 		_, _, err := srv.FileSystemExists(sw.ctx, path)
 		return err
 	})
+
+	// Resource Governor. default exists in all three catalogs on every
+	// instance, so each finder has a row to find.
+	sw.call("Server.ResourcePoolByName", func() error {
+		_, err := srv.ResourcePoolByName(sw.ctx, "default")
+		return err
+	})
+	sw.call("Server.WorkloadGroupByName", func() error {
+		_, err := srv.WorkloadGroupByName(sw.ctx, "default")
+		return err
+	})
+	sw.call("Server.ExternalResourcePoolByName", func() error {
+		_, err := srv.ExternalResourcePoolByName(sw.ctx, "default")
+		return err
+	})
+	sw.call("Server.ClassifierFunctionCandidates", func() error {
+		_, err := srv.ClassifierFunctionCandidates(sw.ctx)
+		return err
+	})
+	if pools, err := srv.ResourcePools(sw.ctx); err == nil {
+		for _, p := range pools {
+			sw.reflectSweep("ResourcePool", p.Name, p)
+		}
+	}
 
 	// Database snapshots. The listing is reflective; these two take a name.
 	// SnapshotFileDefaults is a read, not the create: it only asks

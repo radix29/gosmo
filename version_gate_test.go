@@ -399,3 +399,32 @@ func TestAzureTakesTheModernFilesystemPaths(t *testing.T) {
 		t.Error("FixedDrives would take the xp_fixeddrives path on MI")
 	}
 }
+
+// Resource Governor: the fractional grant percent is 2019, tempdb space
+// governance 2025. Below each, a substitute keeps scanWorkloadGroup's 14
+// destinations — and the grant percent falls back to the whole-number column
+// rather than to zero, since it is the same setting.
+func TestWorkloadGroupSelectGatesItsLateColumns(t *testing.T) {
+	for _, c := range []struct {
+		major                   int
+		wantNumeric, wantTempdb bool
+	}{
+		{13, false, false}, {14, false, false}, {15, true, false}, {16, true, false}, {17, true, true}, {0, true, true},
+	} {
+		q := (&Server{info: &ServerInfo{VersionMajor: c.major}}).workloadGroupSelect()
+		if got := strings.Contains(q, "request_max_memory_grant_percent_numeric"); got != c.wantNumeric {
+			t.Errorf("major %d names request_max_memory_grant_percent_numeric = %v, want %v", c.major, got, c.wantNumeric)
+		}
+		if !c.wantNumeric && !strings.Contains(q, "CAST(g.request_max_memory_grant_percent AS float)") {
+			t.Errorf("major %d does not fall back to the whole-number grant percent", c.major)
+		}
+		for _, col := range []string{"group_max_tempdb_data_percent", "group_max_tempdb_data_mb"} {
+			if got := strings.Contains(q, col); got != c.wantTempdb {
+				t.Errorf("major %d names %s = %v, want %v", c.major, col, got, c.wantTempdb)
+			}
+		}
+		if got := len(selectExprs(t, selectList(t, q))); got != 14 {
+			t.Errorf("major %d selects %d expressions, want 14 — scanWorkloadGroup scans 14 destinations", c.major, got)
+		}
+	}
+}
