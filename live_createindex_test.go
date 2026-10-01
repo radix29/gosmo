@@ -19,6 +19,8 @@ package gosmo
 import (
 	"context"
 	"database/sql"
+	"errors"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -310,10 +312,82 @@ func TestLiveCreateIndexRefusalsMatchTheServer(t *testing.T) {
 		{"key columns on a clustered columnstore index", "CREATE CLUSTERED COLUMNSTORE INDEX ix ON dbo.T (a)"},
 		{"rowstore compression on a columnstore index", "CREATE NONCLUSTERED COLUMNSTORE INDEX ix ON dbo.T (a) WITH (DATA_COMPRESSION = PAGE)"},
 		{"filtered clustered index", "CREATE CLUSTERED INDEX ix ON dbo.T (a) WHERE a > 0"},
+		// Below 2025 these fail as syntax whatever gosmo checks; from 2025
+		// they are Msg 35331 and Msg 1911.
+		{"ORDER column repeated", "CREATE CLUSTERED COLUMNSTORE INDEX ix ON dbo.T ORDER (a, a)"},
+		{"NCCI ORDER column outside the index", "CREATE NONCLUSTERED COLUMNSTORE INDEX ix ON dbo.T (a) ORDER (b)"},
+		{"ORDER on a rowstore index", "CREATE CLUSTERED INDEX ix ON dbo.T (a) ORDER (a)"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			if _, err := d.exec(ctx, c.stmt); err == nil {
 				t.Errorf("the server accepted %q — gosmo refuses it, so the refusal is wrong", c.stmt)
+			}
+		})
+	}
+}
+
+// TestLiveCreateIndexColumnstoreOrder creates ordered columnstore indexes
+// where the instance has them and reads ColumnstoreOrder back; below each
+// gate it checks that gosmo refuses with ErrUnsupportedVersion and that the
+// server would have refused the statement too, so the gate is not keeping a
+// legal statement from an instance that takes it.
+func TestLiveCreateIndexColumnstoreOrder(t *testing.T) {
+	db, ctx, done := liveDB(t)
+	defer done()
+
+	d, drop := liveScratchDB(t, db, ctx, "gosmo_idxorder")
+	defer drop()
+	liveExecIn(t, d, ctx,
+		`CREATE TABLE dbo.Cold (a INT NOT NULL, [b]]x] INT NULL, c NVARCHAR(20) NULL)`,
+		`CREATE TABLE dbo.Facts (a INT NOT NULL, b INT NULL, c INT NULL)`)
+	major := d.serverMajorVersion()
+
+	for _, c := range []struct {
+		name, table string
+		since       ServerVersion
+		req         CreateIndexRequest
+		raw         string
+	}{
+		{"clustered", "Cold", SQLServer2022, CreateIndexRequest{
+			Name:             "CCI_Cold",
+			Type:             IndexTypeClusteredColumnStore,
+			ColumnstoreOrder: []string{"b]x", "a"},
+			DataCompression:  "COLUMNSTORE_ARCHIVE",
+			CompressionDelay: 5,
+			FileGroup:        "PRIMARY",
+		}, "CREATE CLUSTERED COLUMNSTORE INDEX raw_cci ON dbo.Cold ORDER (a)"},
+		{"nonclustered", "Facts", SQLServer2025, CreateIndexRequest{
+			Name:             "NCCI_Facts",
+			Type:             IndexTypeColumnStore,
+			KeyColumns:       []IndexColumnDef{{Name: "a"}, {Name: "b"}, {Name: "c"}},
+			ColumnstoreOrder: []string{"c", "a"},
+			FilterDefinition: "[a] > 0",
+		}, "CREATE NONCLUSTERED COLUMNSTORE INDEX raw_ncci ON dbo.Facts (a) ORDER (a)"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			tbl, err := d.TableByName(ctx, "dbo", c.table)
+			if err != nil {
+				t.Fatalf("TableByName %s: %v", c.table, err)
+			}
+			_, err = tbl.CreateIndex(ctx, c.req)
+			if major < int(c.since) {
+				if !errors.Is(err, ErrUnsupportedVersion) {
+					t.Fatalf("CreateIndex on major %d: err = %v, want ErrUnsupportedVersion", major, err)
+				}
+				if _, err := d.exec(ctx, c.raw); err == nil {
+					t.Errorf("major %d accepted %q — the gate refuses it, so the gate is wrong", major, c.raw)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("CreateIndex: %v", err)
+			}
+			idx, err := tbl.IndexByName(ctx, c.req.Name)
+			if err != nil {
+				t.Fatalf("IndexByName: %v", err)
+			}
+			if !slices.Equal(idx.ColumnstoreOrder, c.req.ColumnstoreOrder) || idx.Type != c.req.Type {
+				t.Errorf("read back type %q order %q, want %q %q", idx.Type, idx.ColumnstoreOrder, c.req.Type, c.req.ColumnstoreOrder)
 			}
 		})
 	}

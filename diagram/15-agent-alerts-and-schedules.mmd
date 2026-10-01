@@ -89,6 +89,16 @@ classDiagram
         +Category *string
     }
 
+    class AgentMailSettings {
+        +Enabled bool
+        +Profile string
+    }
+
+    class AgentMailChanges {
+        +Enabled *bool
+        +Profile *string
+    }
+
     class AlertNotificationRef {
         +AlertName string
         +Method NotificationMethod
@@ -228,6 +238,8 @@ classDiagram
     Server "1" --> "*" Operator : owns
     Server "1" --> "*" Schedule : owns
     Server "1" --> "*" Category : owns
+    Server --> AgentMailSettings : AgentMailSettings() returns
+    Server --> AgentMailChanges : SetAgentMailSettings() accepts
     Job "1" --> "*" Schedule : attached to
     Job --> JobState : CurrentState is
     Job --> NotifyLevel : notified per

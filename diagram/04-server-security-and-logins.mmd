@@ -89,6 +89,16 @@ classDiagram
         +CPUNUMANode []int
     }
 
+    class Scheduler {
+        +ID int
+        +CPUID int
+        +NUMANode int
+        +ProcessorGroup int
+        +IsOnline bool
+        A visible scheduler: the ids
+        PoolAffinity names.
+    }
+
     class DiskVolumeInfo {
         +MountPoint string
         +VolumeName string
@@ -167,6 +177,7 @@ classDiagram
     Server --> ServerMemoryStats : has
     Server "1" --> "*" Language : lists
     Server --> ProcessorInfo : has
+    Server ..> Scheduler : Schedulers
     Server "1" --> "*" DiskVolumeInfo : lists
     Login --> LoginDetails : has
     Login "1" --> "*" LoginUserMapping : mapped via

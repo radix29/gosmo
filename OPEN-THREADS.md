@@ -42,26 +42,16 @@ Which instances exist to sweep against, and the sweep's current result, are
 environment facts rather than library facts: gossms's `docs/open-threads.md`
 § Version support carries them, and points here for the table above.
 
-## `Database.EventSessions` fails on every on-premises major
+## Resource Governor affinity beyond processor group 0
 
-Found by `TestLiveVersionSweep` on 2026-09-30 (13, 14 and 17 alike), not
-fixed: `Database.EventSessions` reads `sys.database_event_sessions`, which
-exists only on Azure SQL Database and Managed Instance, so on a box product it
-fails with Msg 208 instead of refusing. It needs the refusal the other
-Azure-only reads have (`ErrUnsupportedVersion` off Azure, as
-`Server.InstanceResourceGovernance` does); until then it is the sweep's one
-standing failure on-premises. Arrived in `7d5d176`.
-
-## Resource Governor affinity: read and scripted, not written
-
-`ResourcePoolOptions` and `ExternalResourcePoolOptions` have no affinity
-field (2026-09-30): the DDL takes scheduler/CPU ids or NUMA nodes, the catalog
-stores a mask per processor group, and no consumer edits it yet (gossms
-defers it, its open-threads N6). The scripter maps group 0 exactly (bit n is
-id n) and refuses affinity in any later group with `ErrUnsupported`: ids there
-continue from the previous group's actual size, which the catalog does not
-hold — `sys.dm_os_schedulers`/`sys.dm_os_nodes` would, at the cost of VIEW
-SERVER STATE. No instance in the estate has more than one processor group.
+`PoolAffinity` writes AFFINITY SCHEDULER/CPU/NUMANODE by id (2026-10-01), but
+the catalog stores a mask per processor group, and ids past group 0 continue
+from the previous group's *actual* size, which the catalog does not hold. So
+the scripter maps group 0 exactly (bit n is id n) and refuses any later group
+with `ErrUnsupported`; `Server.Schedulers` carries each scheduler's
+`ProcessorGroup` and would supply the mapping, at the cost of VIEW SERVER
+STATE in the scripter. No instance in the estate has more than one processor
+group.
 
 ## azidentity: watch for the removal, not the deprecation
 
@@ -103,12 +93,17 @@ tables and hash indexes, FILESTREAM and `TEXTIMAGE_ON`.
 The 2026-09-24 review pass (gossms review plan W1) added typed xml columns' schema
 collections, `vector(n[, float16])` columns, ordered columnstore indexes,
 `HISTORY_RETENTION_PERIOD` and a non-default `LOCK_ESCALATION`
-(`live_script_facets_test.go`). They are read and scripted only:
-`CreateTable`'s `ColumnDefinition` still cannot declare a typed xml or a
-`vector` column, and `CreateIndexRequest` cannot declare `ORDER (…)`. The
-ordered-columnstore gate (major 16) has no instance here and is argued from
-the documentation. A `float16` vector needs `PREVIEW_FEATURES = ON` in the
-database the script is replayed into, which the table script does not set.
+(`live_script_facets_test.go`). `ColumnDefinition` declares the typed xml and
+`vector` columns and `CreateIndexRequest.ColumnstoreOrder` the `ORDER (…)`
+(2026-10-01). The ordered-columnstore gates (clustered major 16,
+nonclustered 17) have no major-16 instance here: 16 itself is argued from
+the documentation, and only the refusal on 13/14 and acceptance on 17 are
+run live. A `float16` vector needs `PREVIEW_FEATURES = ON` in the
+database the script is replayed into (Msg 195 otherwise): the table script
+names it in a leading comment and deliberately does not set it
+(`live_script_float16_test.go`, 2026-10-01). A module with a `float16`
+parameter or variable has the same need and no comment — its script is the
+stored definition, and nothing short of parsing it finds the type.
 
 The 2026-09-24 fix-plan pass (G7–G10) added Always Encrypted columns, ledger
 tables, FileTables and external tables. **Refused, not scripted** (an
@@ -132,15 +127,15 @@ What those four kinds still leave out:
 - **Always Encrypted**: the column master and column encryption keys are
   referenced by name and must exist where the script runs.
 
+A table's `DROP` names the modules schema-bound to it (2026-10-01) but not a
+foreign key from another table, which blocks it the same way (Msg 3726).
+Comments that embed an identifier other than that note and the `float16` one
+(`commentSafe`) are not guarded: a line break in a name ends a `--` comment,
+and `*/` in one ends the `/* Table: … */` header early.
+
 Knowingly still missing, each of which recreates a *different* table rather
 than failing:
 
-- **Selective XML indexes** (`xml_index_type` 2 and 3) — skipped with a
-  comment. Primary and secondary XML indexes and spatial indexes are
-  scripted; a selective index's paths (`sys.selective_xml_index_paths`) are
-  not read.
-- **Natively compiled modules**: a natively compiled module's dependence on
-  a memory-optimized table is not scripted.
 - A disabled **clustered** index is recreated and then disabled, as the
   source is — which takes the replayed table offline, faithfully.
 

@@ -3,6 +3,7 @@ package gosmo
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -15,9 +16,10 @@ import (
 //     IsUnique, IncludedColumns (nonclustered only), FilterDefinition
 //     (nonclustered only), FillFactor/PadIndex, DataCompression NONE/ROW/PAGE.
 //   - COLUMNSTORE: key columns and FilterDefinition (the filtered NCCI form),
-//     DataCompression COLUMNSTORE/COLUMNSTORE_ARCHIVE, CompressionDelay.
+//     DataCompression COLUMNSTORE/COLUMNSTORE_ARCHIVE, CompressionDelay,
+//     ColumnstoreOrder (a subset of the key columns; SQL Server 2025).
 //   - CLUSTERED COLUMNSTORE: no key columns at all — the index covers every
-//     column of the table.
+//     column of the table. ColumnstoreOrder from SQL Server 2022.
 //   - XML: one key column (the xml one) plus IsPrimaryXML, or
 //     PrimaryXMLIndex and SecondaryXMLType for a secondary index.
 //   - SPATIAL: one key column (the geometry/geography one) plus Tessellation,
@@ -46,6 +48,12 @@ type CreateIndexRequest struct {
 	// CompressionDelay is a columnstore index's COMPRESSION_DELAY, in
 	// minutes. Zero leaves it unspecified.
 	CompressionDelay int
+	// ColumnstoreOrder is an ordered columnstore index's ORDER (…) columns,
+	// named as on Index. A clustered columnstore index takes it from SQL
+	// Server 2022 (16.x), a nonclustered one from SQL Server 2025 (17.x) and
+	// only over its own key columns; an older instance is refused with
+	// ErrUnsupportedVersion before any statement is sent.
+	ColumnstoreOrder []string
 	// FileGroup is the filegroup the index is created on, and
 	// PartitionScheme/PartitionColumns the partition scheme it is partitioned
 	// by. The two are alternatives — an index has one ON clause.
@@ -105,7 +113,7 @@ func (g SpatialGridLevels) levels() string {
 
 // CreateIndex creates a new index on the table.
 func (t *Table) CreateIndex(ctx context.Context, req CreateIndexRequest) (*Index, error) {
-	stmt, err := buildCreateIndexStatement(t.FullName(), req)
+	stmt, err := buildCreateIndexStatement(t.FullName(), t.db.serverMajorVersion(), req)
 	if err != nil {
 		return nil, err
 	}
@@ -119,9 +127,13 @@ func (t *Table) CreateIndex(ctx context.Context, req CreateIndexRequest) (*Index
 
 // buildCreateIndexStatement renders one CREATE INDEX statement, or reports
 // why the request cannot be one. Separated from CreateIndex so the
-// statement each index type produces can be pinned without a server.
-func buildCreateIndexStatement(tableName string, req CreateIndexRequest) (string, error) {
+// statement each index type produces can be pinned without a server. major
+// is the instance's major version, 0 when unknown (treated as newest).
+func buildCreateIndexStatement(tableName string, major int, req CreateIndexRequest) (string, error) {
 	if err := req.validate(); err != nil {
+		return "", err
+	}
+	if err := req.checkVersion(major); err != nil {
 		return "", err
 	}
 
@@ -129,10 +141,10 @@ func buildCreateIndexStatement(tableName string, req CreateIndexRequest) (string
 	name := quoteIdent(req.Name)
 	switch req.Type {
 	case IndexTypeClusteredColumnStore:
-		fmt.Fprintf(&sb, "CREATE CLUSTERED COLUMNSTORE INDEX %s ON %s", name, tableName)
+		fmt.Fprintf(&sb, "CREATE CLUSTERED COLUMNSTORE INDEX %s ON %s%s", name, tableName, req.orderClause())
 	case IndexTypeColumnStore:
-		fmt.Fprintf(&sb, "CREATE NONCLUSTERED COLUMNSTORE INDEX %s ON %s (%s)",
-			name, tableName, createIndexColumnList(req.KeyColumns, false))
+		fmt.Fprintf(&sb, "CREATE NONCLUSTERED COLUMNSTORE INDEX %s ON %s (%s)%s",
+			name, tableName, createIndexColumnList(req.KeyColumns, false), req.orderClause())
 	case IndexTypeXML:
 		if req.IsPrimaryXML {
 			fmt.Fprintf(&sb, "CREATE PRIMARY XML INDEX %s ON %s (%s)",
@@ -182,6 +194,39 @@ func buildCreateIndexStatement(tableName string, req CreateIndexRequest) (string
 		fmt.Fprintf(&sb, " ON %s", quoteIdent(req.FileGroup))
 	}
 	return sb.String(), nil
+}
+
+// orderClause renders ColumnstoreOrder as " ORDER (…)", or "" when unset.
+// It comes before WHERE, as the scripter writes it.
+func (req CreateIndexRequest) orderClause() string {
+	if len(req.ColumnstoreOrder) == 0 {
+		return ""
+	}
+	cols := make([]string, len(req.ColumnstoreOrder))
+	for i, c := range req.ColumnstoreOrder {
+		cols[i] = quoteIdent(c)
+	}
+	return " ORDER (" + strings.Join(cols, ", ") + ")"
+}
+
+// checkVersion refuses what the instance is too old to parse: ORDER (…) on a
+// clustered columnstore index before SQL Server 2022, on a nonclustered one
+// before 2025. major 0 (unknown, or Azure) passes.
+func (req CreateIndexRequest) checkVersion(major int) error {
+	if len(req.ColumnstoreOrder) == 0 || major == 0 {
+		return nil
+	}
+	if req.Type == IndexTypeClusteredColumnStore && major < int(SQLServer2022) {
+		return unsupportedVersionf(
+			"gosmo: create index %q: an ordered clustered columnstore index needs SQL Server 2022 or later; this instance is major %d",
+			req.Name, major)
+	}
+	if req.Type == IndexTypeColumnStore && major < int(SQLServer2025) {
+		return unsupportedVersionf(
+			"gosmo: create index %q: an ordered nonclustered columnstore index needs SQL Server 2025 or later; this instance is major %d",
+			req.Name, major)
+	}
+	return nil
 }
 
 // withOptions is the WITH clause's contents, in the order CREATE INDEX
@@ -319,6 +364,9 @@ func (req CreateIndexRequest) validate() error {
 	if err := req.validateCompression(fail); err != nil {
 		return err
 	}
+	if err := req.validateColumnstoreOrder(fail); err != nil {
+		return err
+	}
 	if err := req.validateXML(fail); err != nil {
 		return err
 	}
@@ -361,6 +409,34 @@ func (req CreateIndexRequest) validateCompression(fail func(string, ...any) erro
 		}
 		if req.CompressionDelay < 0 {
 			return fail("compression delay %d is negative", req.CompressionDelay)
+		}
+	}
+	return nil
+}
+
+// validateColumnstoreOrder checks ORDER (…): columnstore only, no empty or
+// repeated name (Msg 35331), and on a nonclustered index only its own key
+// columns (Msg 1911). The repeat check is exact and the key-column one
+// case-insensitive, so a case-sensitive database's distinct columns, or a
+// differently cased key column, are left to the server.
+func (req CreateIndexRequest) validateColumnstoreOrder(fail func(string, ...any) error) error {
+	if len(req.ColumnstoreOrder) == 0 {
+		return nil
+	}
+	if !req.Type.IsColumnStore() {
+		return fail("only a columnstore index takes an ORDER column list")
+	}
+	for i, c := range req.ColumnstoreOrder {
+		if c == "" {
+			return fail("an ORDER column has no name")
+		}
+		if slices.Contains(req.ColumnstoreOrder[:i], c) {
+			return fail("ORDER column %q appears more than once", c)
+		}
+		if req.Type == IndexTypeColumnStore && !slices.ContainsFunc(req.KeyColumns, func(k IndexColumnDef) bool {
+			return strings.EqualFold(k.Name, c)
+		}) {
+			return fail("ORDER column %q is not one of the nonclustered columnstore index's columns", c)
 		}
 	}
 	return nil

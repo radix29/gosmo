@@ -87,7 +87,7 @@ func TestAddTargetStatement(t *testing.T) {
 	if err := es.AddTarget(ctx, EventFileTarget("s1", 0, 0)); err != nil {
 		t.Fatal(err)
 	}
-	if err := (&Server{}).DatabaseRef("AppDB").EventSessionRef("d").AddTarget(ctx, RingBufferTarget(0)); err != nil {
+	if err := (&Server{info: &ServerInfo{EngineEdition: int(EngineAzureSQLDatabase)}}).DatabaseRef("AppDB").EventSessionRef("d").AddTarget(ctx, RingBufferTarget(0)); err != nil {
 		t.Fatal(err)
 	}
 	want := []string{

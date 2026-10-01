@@ -319,6 +319,39 @@ ORDER  BY cpu_id`
 	return info, nil
 }
 
+// Scheduler is one scheduler user work can run on — a VISIBLE row of
+// sys.dm_os_schedulers — with the NUMA node and processor group hosting it.
+// It is what a pool's AFFINITY names (PoolAffinity): a resource pool takes
+// ID, an external pool CPUID, either NUMANode.
+type Scheduler struct {
+	ID             int
+	CPUID          int
+	NUMANode       int
+	ProcessorGroup int
+
+	// IsOnline is false for a scheduler the server's own affinity mask
+	// leaves out (VISIBLE OFFLINE). A pool can still name it.
+	IsOnline bool
+}
+
+// Schedulers returns the instance's visible schedulers in id order — hidden
+// (system) ones and the dedicated admin connection's are left out. Needs
+// VIEW SERVER STATE (VIEW SERVER PERFORMANCE STATE from SQL Server 2022);
+// without it the server refuses the read.
+func (s *Server) Schedulers(ctx context.Context) ([]Scheduler, error) {
+	rows, err := s.query(ctx, `
+SELECT s.scheduler_id, s.cpu_id, s.parent_node_id, n.processor_group, s.is_online
+FROM   sys.dm_os_schedulers s
+JOIN   sys.dm_os_nodes n ON n.node_id = s.parent_node_id
+WHERE  s.status IN (N'VISIBLE ONLINE', N'VISIBLE OFFLINE')
+ORDER  BY s.scheduler_id`)
+	return scanRows(rows, err, "list schedulers", func(scan func(...any) error) (Scheduler, error) {
+		var sc Scheduler
+		err := scan(&sc.ID, &sc.CPUID, &sc.NUMANode, &sc.ProcessorGroup, &sc.IsOnline)
+		return sc, err
+	})
+}
+
 // ============================================================
 // Disk volumes
 // ============================================================

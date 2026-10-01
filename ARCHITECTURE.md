@@ -326,7 +326,7 @@ The instance and database halves pair up: `ServerResourceStat` and
 | Server audits            | `srv.ServerAudits(ctx)` / `srv.ServerAuditByName(ctx, name)` / `srv.ServerAuditRef(name)` (no-I/O handle) / `srv.CreateServerAudit(ctx, spec)` — see [Audits](#audits-and-audit-specifications) |
 | Server audit specifications | `srv.ServerAuditSpecifications(ctx)` / `...ByName(ctx, name)` / `srv.ServerAuditSpecificationRef(name)` (no-I/O handle) / `srv.CreateServerAuditSpecification(ctx, spec)` |
 | Audit action groups      | `srv.AuditActionGroups(ctx)` / `srv.DatabaseAuditActionGroups(ctx)` / `srv.DatabaseAuditActions(ctx)` |
-| Resource Governor        | `srv.ResourceGovernor(ctx)` (stored) / `srv.ResourceGovernorStatus(ctx)` (in force, pending flag; VIEW SERVER STATE) / `srv.ResourcePools(ctx)` / `srv.ResourcePoolByName(ctx, name)` / `pool.WorkloadGroups(ctx)` / `srv.WorkloadGroups(ctx)` / `srv.WorkloadGroupByName(ctx, name)` / `srv.ExternalResourcePools(ctx)` / `srv.ExternalResourcePoolByName(ctx, name)` / `srv.ResourcePoolStats(ctx)` / `srv.WorkloadGroupStats(ctx)` — the catalog reads return nothing, not an error, without VIEW ANY DEFINITION; see `resource_governor.go`. Writes: `srv.CreateResourcePool` / `CreateWorkloadGroup` / `CreateExternalResourcePool(ctx, req)`, `.Alter(ctx, …Options)` / `.Drop(ctx)` on each (`…Ref(name)` handles), and on `srv.ResourceGovernorRef()`: `SetClassifier` / `SetMaxOutstandingIOPerVolume` / `Reconfigure` (also enables) / `Enable` / `Disable` / `ResetStatistics`; `srv.ClassifierFunctionCandidates(ctx)`. No write reconfigures on its own — see `resource_governor_write.go` |
+| Resource Governor        | `srv.ResourceGovernor(ctx)` (stored) / `srv.ResourceGovernorStatus(ctx)` (in force, pending flag; VIEW SERVER STATE) / `srv.ResourcePools(ctx)` / `srv.ResourcePoolByName(ctx, name)` / `pool.WorkloadGroups(ctx)` / `srv.WorkloadGroups(ctx)` / `srv.WorkloadGroupByName(ctx, name)` / `srv.ExternalResourcePools(ctx)` / `srv.ExternalResourcePoolByName(ctx, name)` / `srv.ResourcePoolStats(ctx)` / `srv.WorkloadGroupStats(ctx)` — the catalog reads return nothing, not an error, without VIEW ANY DEFINITION; see `resource_governor.go`. Writes: `srv.CreateResourcePool` / `CreateWorkloadGroup` / `CreateExternalResourcePool(ctx, req)`, `.Alter(ctx, …Options)` / `.Drop(ctx)` on each (`…Ref(name)` handles; a pool's `Affinity *PoolAffinity` writes AFFINITY SCHEDULER/CPU, NUMANODE or AUTO, ids from `srv.Schedulers`), and on `srv.ResourceGovernorRef()`: `SetClassifier` / `SetMaxOutstandingIOPerVolume` / `Reconfigure` (also enables) / `Enable` / `Disable` / `ResetStatistics`; `srv.ClassifierFunctionCandidates(ctx)`. No write reconfigures on its own — see `resource_governor_write.go` |
 | Extended Events sessions | `srv.EventSessions(ctx)` / `srv.EventSessionByName(ctx, name)` / `srv.EventSessionRef(name)` (no-I/O handle) / `srv.CreateEventSession(ctx, spec)` — see [Extended Events](#extended-events) |
 | Backup devices           | `srv.BackupDevices(ctx)` / `srv.BackupDeviceByName(ctx, name)` / `srv.BackupDeviceRef(name)` (no-I/O handle) / `srv.CreateBackupDevice(ctx, gosmo.CreateBackupDeviceRequest{Name, Type, PhysicalName})` / `dev.Drop(ctx, deleteFile)` / `dev.Headers(ctx)` |
 | Endpoints (all protocols) | `srv.Endpoints(ctx)` / `srv.EndpointByName(ctx, name)` / `ep.SetState(ctx, state)` / `ep.Drop(ctx)` / `ep.MirroringDetail(ctx)` / `ep.ServiceBrokerDetail(ctx)` — see [Endpoints](#endpoints) |
@@ -338,7 +338,7 @@ The instance and database halves pair up: `ServerResourceStat` and
 | Files of one database, in any state | `srv.DatabaseFiles(ctx, name)` — reads `sys.master_files`, so it answers for an OFFLINE / RECOVERY_PENDING / SUSPECT database that `db.Files(ctx)` cannot `USE` |
 | Live memory stats        | `srv.MemoryStats(ctx)`                        |
 | Languages                | `srv.Languages(ctx)`                          |
-| Processors / NUMA topology | `srv.ProcessorInfo(ctx)`                    |
+| Processors / NUMA topology | `srv.ProcessorInfo(ctx)`; `srv.Schedulers(ctx)` — the visible schedulers with CPU, NUMA node and processor group (what `PoolAffinity` names; VIEW SERVER STATE) |
 | Disk volumes              | `srv.DiskVolumes(ctx)`                        |
 | `Server.EnumDirectories` / `EnumFiles` | `srv.EnumFileSystem(ctx, path)` / `srv.FixedDrives(ctx)` / `srv.FileSystemExists(ctx, path)` — see [Server filesystem](#server-filesystem) |
 | Host OS family            | `srv.Info().Platform` (`"Windows"` / `"Linux"`, from `@@VERSION`) |
@@ -431,7 +431,7 @@ The instance and database halves pair up: `ServerResourceStat` and
 | `Database.Tables` (no-I/O handle) | `db.TableRef(schema, name)` — works under `WithScript`, where `TableByName`'s catalog read has nothing to find |
 | `Table.Columns`       | `t.Columns(ctx)`                      |
 | `Table.Indexes`       | `t.Indexes(ctx)` / `t.IndexByName(ctx, name)` |
-| XML indexes           | `t.XMLIndexes(ctx)` → `[]*XMLIndex` (primary/secondary, and which primary) |
+| XML indexes           | `t.XMLIndexes(ctx)` → `[]*XMLIndex` (primary/secondary/selective, and which primary) |
 | `Table.ForeignKeys`   | `t.ForeignKeys(ctx)` / `t.ForeignKeyByName(ctx, name)` |
 | `Table.Checks`        | `t.CheckConstraints(ctx)`             |
 | Graph edge constraints | `t.EdgeConstraints(ctx)` → `[]*EdgeConstraint` (2019+; empty below) |
@@ -527,16 +527,17 @@ depends on `Type`:
 | Type                          | Statement                                    | Its own fields |
 | ----------------------------- | -------------------------------------------- | -------------- |
 | `IndexTypeClustered` / `IndexTypeNonClustered` (and the zero value) | `CREATE [UNIQUE] CLUSTERED\|NONCLUSTERED INDEX` | `IsUnique`, `IncludedColumns` and `FilterDefinition` (nonclustered only) |
-| `IndexTypeColumnStore`        | `CREATE NONCLUSTERED COLUMNSTORE INDEX`      | `FilterDefinition`, `CompressionDelay` |
-| `IndexTypeClusteredColumnStore` | `CREATE CLUSTERED COLUMNSTORE INDEX`       | takes no key columns at all — it covers every column |
+| `IndexTypeColumnStore`        | `CREATE NONCLUSTERED COLUMNSTORE INDEX`      | `FilterDefinition`, `CompressionDelay`, `ColumnstoreOrder` (a subset of its key columns; SQL Server 2025) |
+| `IndexTypeClusteredColumnStore` | `CREATE CLUSTERED COLUMNSTORE INDEX`       | takes no key columns at all — it covers every column; `ColumnstoreOrder` (SQL Server 2022) |
 | `IndexTypeXML`                | `CREATE [PRIMARY] XML INDEX`                 | `IsPrimaryXML`, or `PrimaryXMLIndex` + `SecondaryXMLType` |
 | `IndexTypeSpatial`            | `CREATE SPATIAL INDEX ... USING`             | `Tessellation`, `BoundingBox` (the `GEOMETRY_` schemes), `GridLevels`, `CellsPerObject` |
 
 A combination the server would reject is refused before anything is
-executed — a unique columnstore index, an ordered columnstore column list, a
-fill factor on a columnstore index, a geography index with a bounding box, a
+executed — a unique columnstore index, a DESC columnstore key column, a
+repeated `ORDER` column, a fill factor on a columnstore index, a geography index with a bounding box, a
 secondary XML index naming no primary — with an error naming the field
-rather than a parse error naming a column number.
+rather than a parse error naming a column number. An `ORDER (…)` the
+instance is too old for is refused with `ErrUnsupportedVersion`.
 
 ### Statistics
 
@@ -1184,11 +1185,17 @@ ALWAYS` / `HIDDEN` period columns, `PERIOD FOR SYSTEM_TIME` and `SYSTEM_VERSIONI
 (its `DROP` switches versioning off first, and keeps the history table) with
 its `HISTORY_RETENTION_PERIOD`, a schema-qualified alias type, a typed
 `xml(DOCUMENT|CONTENT …)` column, a `vector(n)` column (the bare type does not
-parse), a column `COLLATE` that differs from the database default, a heap's
+parse; a `float16` one adds a comment naming the `PREVIEW_FEATURES` setting
+its replay needs, which the script does not change), a column `COLLATE` that differs from the database default, a heap's
 `DATA_COMPRESSION`, a non-default `LOCK_ESCALATION`, a columnstore index's
 `ORDER (…)`, and each index's `PAD_INDEX`, `FILLFACTOR`, `IGNORE_DUP_KEY`, lock
 options, compression and disabled state (disabled at the end of the script,
 since a disabled clustered index takes the table offline).
+A `DROP` or `DROP AND CREATE` opens with a comment naming the modules
+schema-bound to the table — a natively compiled module on a memory-optimized
+table, a `SCHEMABINDING` view — since they make the `DROP` fail with Msg 3729
+and leave the table as it was (`live_script_schemabound_test.go`); they are
+named, not dropped.
 `live_script_fidelity_test.go` and `live_script_facets_test.go` replay a
 script into a second database and compare the catalogs. What is still not scripted is in
 `OPEN-THREADS.md` § Scripter fidelity.
@@ -1439,6 +1446,21 @@ N'SQLAgent%'` means Agent is up right now, and `msdb.dbo.syssessions`'
 newest `agent_start_date` is its last startup. A login without `VIEW SERVER
 STATE` sees no sessions and reads as stopped, which is why the startup time
 is still reported alongside.
+
+Agent's own settings — SSMS's SQL Server Agent Properties — are so far the
+Alert System page's mail profile. Agent keeps them in the registry, not msdb:
+`AgentMailSettings` reads them with `xp_instance_regread` (public may),
+`SetAgentMailSettings` writes them with `sp_set_sqlagent_properties`
+(sysadmin or msdb `db_owner`; CONTROL SERVER alone writes the value and is
+then refused Agent's reload notification, Msg 14260). On Linux, where Agent
+reads them from `mssql.conf`, both refuse with `ErrAgentSettingsInMssqlConf`.
+
+```go
+mail, _ := srv.AgentMailSettings(ctx) // .Enabled, .Profile
+err := srv.SetAgentMailSettings(ctx, gosmo.AgentMailChanges{
+    Enabled: gosmo.Ptr(true), Profile: gosmo.Ptr("Ops"),
+})
+```
 
 `srv.JobRef(name)`, `srv.AlertRef(name)`, `srv.OperatorRef(name)` and
 `srv.ScheduleRef(name)` return a no-I/O handle carrying only the name — the

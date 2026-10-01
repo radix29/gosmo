@@ -29,11 +29,11 @@ func indexColumnList(cols []IndexColumn) string {
 // The index type decides the grammar, not just a keyword: a clustered
 // columnstore index takes no column list at all, a nonclustered columnstore
 // takes columns but rejects ASC/DESC, and XML/spatial indexes have their own
-// syntax entirely (a USING/primary-XML-index clause, a bounding box). Pasting
-// the type_desc into the B-tree form — which is what this once did — emits
-// DDL SQL Server rejects. An XML or spatial index whose form was not read —
-// a selective XML index, which neither XML form describes — is emitted as a
-// comment naming what was skipped rather than as a statement that cannot run.
+// syntax entirely (a USING/primary-XML-index clause, a selective index's
+// promoted paths, a bounding box). Pasting the type_desc into the B-tree
+// form — which is what this once did — emits DDL SQL Server rejects. An XML
+// or spatial index whose form was not read is emitted as a comment naming
+// what was skipped rather than as a statement that cannot run.
 func scriptIndex(idx *Index, tableName string, opts ScriptOptions) string {
 	var sb strings.Builder
 	switch {
@@ -64,6 +64,13 @@ func scriptIndex(idx *Index, tableName string, opts ScriptOptions) string {
 			fmt.Fprintf(&sb, "\n    WHERE %s", idx.FilterDefinition)
 		}
 		fmt.Fprintf(&sb, "%s%s;\nGO\n\n", columnstoreWithClause(idx), dataSpaceClause(idx.DataSpace))
+		return sb.String()
+	case idx.Type == IndexTypeXML && (idx.IsSelectiveXML || idx.SelectiveXMLPath != ""):
+		if opts.IncludeIfNotExists {
+			sb.WriteString(indexExistenceGuard(idx.Name, tableName))
+		}
+		sb.WriteString(selectiveXMLIndexCreate(idx, tableName))
+		sb.WriteString(";\nGO\n\n")
 		return sb.String()
 	case idx.Type == IndexTypeXML && (idx.IsPrimaryXML || idx.PrimaryXMLIndex != ""),
 		idx.Type == IndexTypeSpatial && idx.Tessellation != "":
@@ -137,6 +144,18 @@ func xmlOrSpatialIndexCreate(idx *Index, tableName string) string {
 			o = append(o, fmt.Sprintf("CELLS_PER_OBJECT = %d", idx.CellsPerObject))
 		}
 	}
+	sb.WriteString(withList(append(o, xmlOrSpatialOptions(idx)...)))
+	if ds := idx.DataSpace; idx.Type == IndexTypeSpatial && !ds.IsPartitionScheme {
+		sb.WriteString(dataSpaceClause(ds))
+	}
+	return sb.String()
+}
+
+// xmlOrSpatialOptions is the part of an XML or spatial index's WITH list
+// the two share — page fill and locking — plus a spatial index's
+// NORECOMPUTE and compression, which an XML index does not take.
+func xmlOrSpatialOptions(idx *Index) []string {
+	var o []string
 	if idx.IsPadded {
 		o = append(o, "PAD_INDEX = ON")
 	}
@@ -155,15 +174,22 @@ func xmlOrSpatialIndexCreate(idx *Index, tableName string) string {
 	if idx.Type == IndexTypeSpatial {
 		o = append(o, compressionOptions(idx.DataCompression, nil, rowstoreCompressed)...)
 	}
-	if len(o) > 0 {
-		sb.WriteString("\n    WITH (")
-		sb.WriteString(strings.Join(o, ", "))
-		sb.WriteString(")")
+	return o
+}
+
+// xmlIndexWithClause is an XML index's WITH (…), with its leading line
+// break, or "" when every option is at its default.
+func xmlIndexWithClause(idx *Index) string {
+	return withList(xmlOrSpatialOptions(idx))
+}
+
+// withList renders options as an index's WITH (…), with its leading line
+// break, or "" for none.
+func withList(o []string) string {
+	if len(o) == 0 {
+		return ""
 	}
-	if ds := idx.DataSpace; idx.Type == IndexTypeSpatial && !ds.IsPartitionScheme {
-		sb.WriteString(dataSpaceClause(ds))
-	}
-	return sb.String()
+	return "\n    WITH (" + strings.Join(o, ", ") + ")"
 }
 
 // rowstoreIndexCreate renders a rowstore index's CREATE INDEX up to the

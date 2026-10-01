@@ -35,6 +35,7 @@ const (
 	liveMailWindows  = "gosmo_live_mail_win"
 	liveMailProfile  = "gosmo_live_mail_profile"
 	liveMailLogin    = "gosmo_live_mail_login"
+	liveMailReader   = "gosmo_live_mail_reader"
 	liveMailPassword = "P@ssw0rd_gosmo_live_mail"
 )
 
@@ -119,6 +120,15 @@ EXEC sp_configure 'show advanced options', %d; RECONFIGURE;`, adv))
 	cleanup("EXEC msdb.sys.sp_executesql N'DROP USER [" + liveMailLogin + "]'")
 	exec("EXEC msdb.dbo.sysmail_add_principalprofile_sp @principal_name = @p1, @profile_name = @p2, @is_default = 0",
 		liveMailLogin, liveMailProfile)
+
+	// msdb db_datareader: no sysadmin, so the views would show it nothing,
+	// but SELECT on the base tables.
+	db.ExecContext(ctx, "IF SUSER_ID(@p1) IS NOT NULL DROP LOGIN ["+liveMailReader+"]", liveMailReader)
+	exec("CREATE LOGIN [" + liveMailReader + "] WITH PASSWORD = '" + liveMailPassword + "', CHECK_POLICY = OFF")
+	cleanup("DROP LOGIN [" + liveMailReader + "]")
+	exec("EXEC msdb.sys.sp_executesql N'CREATE USER [" + liveMailReader + "] FOR LOGIN [" + liveMailReader + "]; " +
+		"ALTER ROLE db_datareader ADD MEMBER [" + liveMailReader + "]'")
+	cleanup("EXEC msdb.sys.sp_executesql N'DROP USER [" + liveMailReader + "]'")
 
 	// -- Accounts ------------------------------------------------------------------
 	accts, err := srv.MailAccounts(ctx)
@@ -321,14 +331,86 @@ SELECT @id`, liveMailProfile).Scan(&id); err != nil {
 		t.Errorf("MailEvents(error, Max 1) = %d, %v", len(errs), err)
 	}
 
-	// -- DatabaseMailUserRole only ---------------------------------------------------
-	pool, err := sql.Open("sqlserver", liveRestrictedDSN(t, liveMailLogin, liveMailPassword))
-	if err != nil {
-		t.Fatalf("open as %s: %v", liveMailLogin, err)
+	if v, err := srv.MailVisibility(ctx); err != nil || !v.AllItems || !v.AllEvents {
+		t.Errorf("sysadmin MailVisibility = %+v, %v; want everything", v, err)
 	}
-	t.Cleanup(func() { pool.Close() })
-	// Not NewServer: loadInfo's DMV half needs VIEW SERVER STATE.
-	restricted := &Server{db: pool}
+
+	// login opens a pool as one of the fixture logins. Not NewServer:
+	// loadInfo's DMV half needs VIEW SERVER STATE.
+	login := func(name string) *Server {
+		t.Helper()
+		pool, err := sql.Open("sqlserver", liveRestrictedDSN(t, name, liveMailPassword))
+		if err != nil {
+			t.Fatalf("open as %s: %v", name, err)
+		}
+		t.Cleanup(func() { pool.Close() })
+		return &Server{db: pool}
+	}
+
+	// -- msdb db_datareader: the base tables ----------------------------------------
+	// The item is sa's, and the log holds events naming no item (Database
+	// Mail starting): the views would show this login neither.
+	reader := login(liveMailReader)
+	if v, err := reader.MailVisibility(ctx); err != nil || !v.AllItems || !v.AllEvents {
+		t.Errorf("db_datareader MailVisibility = %+v, %v; want everything", v, err)
+	}
+	if v, err := reader.MailItems(ctx, MailItemFilter{Status: MailFailed}); err != nil ||
+		!slices.ContainsFunc(v, func(m *MailItem) bool { return m.MailItemID == id }) {
+		t.Errorf("db_datareader MailItems(failed) = %d, %v; want sa's item %d", len(v), err, id)
+	}
+	// Compared with a sysadmin read taken just after, not with item: Database
+	// Mail stamps sent_date a moment after it marks the item failed (seen on
+	// 13), so the two reads are retried until the item has settled.
+	for try := 0; ; try++ {
+		m, err := reader.MailItemByID(ctx, id)
+		want, werr := srv.MailItemByID(ctx, id)
+		if err == nil && werr == nil && *m == *want {
+			break
+		}
+		if try == 5 {
+			t.Errorf("db_datareader MailItemByID(%d) = %+v, %v; want what sysadmin read, %+v, %v", id, m, err, want, werr)
+			break
+		}
+		time.Sleep(time.Second)
+	}
+	allEvents, err := srv.MailEvents(ctx, MailEventFilter{Max: 50})
+	if err != nil {
+		t.Fatalf("MailEvents: %v", err)
+	}
+	if v, err := reader.MailEvents(ctx, MailEventFilter{Max: 50}); err != nil || len(v) != len(allEvents) {
+		t.Errorf("db_datareader MailEvents = %d, %v; want sysadmin's %d", len(v), err, len(allEvents))
+	} else {
+		for i := range v {
+			if *v[i] != *allEvents[i] {
+				t.Errorf("db_datareader event %d = %+v; sysadmin read %+v", i, *v[i], *allEvents[i])
+			}
+		}
+		// Present only when DatabaseMail.exe started during the run, not when
+		// a previous run left it up.
+		noItem := func(e *MailEvent) bool { return e.MailItemID == 0 }
+		if slices.ContainsFunc(allEvents, noItem) && !slices.ContainsFunc(v, noItem) {
+			t.Errorf("db_datareader MailEvents has no event naming no item")
+		}
+	}
+	if v, err := reader.ReadLog(ctx, ErrorLogDatabaseMail, 0); err != nil || len(v) == 0 {
+		t.Errorf("db_datareader ReadLog(Database Mail) = %d, %v; want the whole log", len(v), err)
+	}
+	// A DENY on the table sends the read back to the view: HAS_PERMS_BY_NAME
+	// sees the DENY, so the base-table branch is never tried and refused.
+	exec("EXEC msdb.sys.sp_executesql N'DENY SELECT ON dbo.sysmail_mailitems TO [" + liveMailReader + "]'")
+	if v, err := reader.MailVisibility(ctx); err != nil || v.AllItems || !v.AllEvents {
+		t.Errorf("db_datareader denied the items table: MailVisibility = %+v, %v; want items own-only, events all", v, err)
+	}
+	if v, err := reader.MailItems(ctx, MailItemFilter{}); err != nil || len(v) != 0 {
+		t.Errorf("db_datareader denied the items table: MailItems = %d, %v; want none and no error", len(v), err)
+	}
+	exec("EXEC msdb.sys.sp_executesql N'REVOKE SELECT ON dbo.sysmail_mailitems FROM [" + liveMailReader + "]'")
+
+	// -- DatabaseMailUserRole only ---------------------------------------------------
+	restricted := login(liveMailLogin)
+	if v, err := restricted.MailVisibility(ctx); err != nil || v.AllItems || v.AllEvents {
+		t.Errorf("role member MailVisibility = %+v, %v; want own-only", v, err)
+	}
 	if st, err := restricted.MailStatus(ctx); err != nil || st != MailStarted {
 		t.Errorf("role member MailStatus = %v, %v; the role is granted the status proc", st, err)
 	}

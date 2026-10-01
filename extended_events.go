@@ -195,10 +195,26 @@ func (es *EventSession) scope() xeScope {
 	return xeServerScope
 }
 
+// scopeSupported refuses a database-scoped session off Azure. Its catalog
+// views and its ON DATABASE DDL exist only on Azure SQL Database and Managed
+// Instance; on a box product (2016 through 2025 alike) the read fails with
+// Msg 208 and the DDL with a syntax error, so every database-scoped read and
+// write — scripted ones too, which would not replay — is refused up front, as
+// Server.InstanceResourceGovernance is.
+func (es *EventSession) scopeSupported() error {
+	if es.db != nil && !es.server.info.IsAzure() {
+		return unsupportedVersionf("database-scoped event sessions require Azure SQL Database or Managed Instance")
+	}
+	return nil
+}
+
 // query runs a read in the session's scope: on the server, or USE'd into its
 // database.
 func (es *EventSession) query(ctx context.Context, q string, args ...any) (rowSource, error) {
 	if es.db != nil {
+		if err := es.scopeSupported(); err != nil {
+			return nil, err
+		}
 		return es.db.query(ctx, q, args...)
 	}
 	return es.server.query(ctx, q, args...)
@@ -207,6 +223,9 @@ func (es *EventSession) query(ctx context.Context, q string, args ...any) (rowSo
 // exec runs a write in the session's scope.
 func (es *EventSession) exec(ctx context.Context, stmt string) error {
 	if es.db != nil {
+		if err := es.scopeSupported(); err != nil {
+			return err
+		}
 		_, err := es.db.exec(ctx, stmt)
 		return err
 	}
@@ -238,8 +257,8 @@ func (s *Server) EventSessionRef(name string) *EventSession {
 }
 
 // EventSessions returns the database's database-scoped event sessions — Azure
-// SQL Database's kind. On SQL Server the views are absent (2016–2019) or
-// empty, and the read fails or returns nothing accordingly.
+// SQL Database's kind. Off Azure the views do not exist, and this (like every
+// database-scoped read and write) refuses with an ErrUnsupportedVersion error.
 func (d *Database) EventSessions(ctx context.Context) ([]*EventSession, error) {
 	return readEventSessions(ctx, d.EventSessionRef(""), "")
 }

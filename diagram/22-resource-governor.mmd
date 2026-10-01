@@ -104,7 +104,16 @@ classDiagram
         +ExternalPool *string
         and the other *int limits. nil = leave out.
         ResourcePoolOptions and ExternalResourcePoolOptions
-        are the same shape over their own WITH lists.
+        are the same shape over their own WITH lists,
+        plus Affinity *PoolAffinity.
+    }
+
+    class PoolAffinity {
+        +Schedulers []int
+        +NUMANodes []int
+        Zero value = AUTO. Scheduler ids for a pool,
+        CPU ids for an external pool (Server.Schedulers).
+        Stored as masks, so Alter does not mirror it.
     }
 
     class ClassifierFunction {
@@ -155,3 +164,5 @@ classDiagram
     Server ..> ExternalResourcePool : CreateExternalResourcePool / ExternalResourcePoolRef
     Server ..> ClassifierFunction : ClassifierFunctionCandidates
     WorkloadGroup ..> WorkloadGroupOptions : Alter
+    ResourcePool ..> PoolAffinity : Alter / Create
+    ExternalResourcePool ..> PoolAffinity : Alter / Create

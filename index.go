@@ -64,11 +64,23 @@ type Index struct {
 	// IsPrimaryXML, PrimaryXMLIndex and SecondaryXMLType describe an XML
 	// index (sys.xml_indexes), as CreateIndexRequest's fields of the same
 	// names do: the primary form, or a secondary one of that type built over
-	// the primary index named. All three are zero for a selective XML index,
-	// which neither form describes, and for every other index type.
+	// the primary index named. A secondary selective XML index has
+	// PrimaryXMLIndex too — the selective index it is built over — and no
+	// SecondaryXMLType. All three are zero for every other index type.
 	IsPrimaryXML     bool
 	PrimaryXMLIndex  string
 	SecondaryXMLType XMLSecondaryIndexType
+	// IsSelectiveXML marks a selective XML index (xml_index_type 2):
+	// SelectiveXMLPaths are its FOR (…) promoted paths in path_id order, and
+	// SelectiveXMLNamespaces its WITH XMLNAMESPACES, which the paths'
+	// prefixes resolve through. SelectiveXMLPath is a secondary selective
+	// XML index's one path, named in its FOR (…) — one of the paths of the
+	// selective index PrimaryXMLIndex names. All are zero for every other
+	// index type.
+	IsSelectiveXML         bool
+	SelectiveXMLPaths      []SelectiveXMLPath
+	SelectiveXMLNamespaces []XMLNamespace
+	SelectiveXMLPath       string
 	// Tessellation, BoundingBox, GridLevels and CellsPerObject describe a
 	// spatial index (sys.spatial_index_tessellations), as CreateIndexRequest's
 	// fields of the same names do. BoundingBox is nil for a geography index,
@@ -150,7 +162,8 @@ func (c IndexColumn) ref() string {
 // Indexes returns all indexes on the table.
 //
 // Two queries, whatever the index count: one for the indexes, one for every
-// index column on the object at once. Fetching each index's columns inside the
+// index column on the object at once — and two more, for the paths and
+// namespaces, only when the table has a selective XML index. Fetching each index's columns inside the
 // loop over the indexes cost a query per index, and Database.query pins its
 // own pooled connection and issues its own USE, so a table with 20 indexes ran
 // 42 round trips across 21 connections — with the outer one held throughout,
@@ -164,6 +177,9 @@ func (t *Table) Indexes(ctx context.Context) ([]*Index, error) {
 		return nil, nil
 	}
 	if err := t.attachIndexColumns(ctx, indexes, ""); err != nil {
+		return nil, err
+	}
+	if err := t.attachSelectiveXML(ctx, indexes); err != nil {
 		return nil, err
 	}
 	return indexes, nil
@@ -183,6 +199,9 @@ func (t *Table) IndexByName(ctx context.Context, name string) (*Index, error) {
 		return nil, notFoundf("gosmo: index %q not found on %s", name, t.FullName())
 	}
 	if err := t.attachIndexColumns(ctx, indexes, " AND ic.index_id = @p2", indexes[0].IndexID); err != nil {
+		return nil, err
+	}
+	if err := t.attachSelectiveXML(ctx, indexes); err != nil {
 		return nil, err
 	}
 	return indexes[0], nil
@@ -237,8 +256,10 @@ SELECT i.name, i.index_id, i.type_desc, i.is_unique, i.is_primary_key,
        ` + colSince(t.db.serverMajorVersion(), SQLServer2019, "i.optimize_for_sequential_key", "CAST(0 AS bit)") + `,
        ISNULL(h.bucket_count, 0), ISNULL(i.compression_delay, 0),
        CAST(CASE WHEN xi.xml_index_type = 0 THEN 1 ELSE 0 END AS bit),
-       CASE WHEN xi.xml_index_type = 1 THEN ISNULL(pxi.name, '') ELSE '' END,
+       CASE WHEN xi.xml_index_type IN (1, 3) THEN ISNULL(pxi.name, '') ELSE '' END,
        CASE WHEN xi.xml_index_type = 1 THEN ISNULL(xi.secondary_type_desc, '') ELSE '' END,
+       CAST(CASE WHEN xi.xml_index_type = 2 THEN 1 ELSE 0 END AS bit),
+       CASE WHEN xi.xml_index_type = 3 THEN ISNULL(sxp.name, '') ELSE '' END,
        ISNULL(sit.tessellation_scheme, ''),
        sit.bounding_box_xmin, sit.bounding_box_ymin, sit.bounding_box_xmax, sit.bounding_box_ymax,
        ISNULL(sit.level_1_grid_desc, ''), ISNULL(sit.level_2_grid_desc, ''),
@@ -248,6 +269,8 @@ FROM   sys.indexes i
 LEFT   JOIN sys.hash_indexes h ON h.object_id = i.object_id AND h.index_id = i.index_id
 LEFT   JOIN sys.xml_indexes xi ON xi.object_id = i.object_id AND xi.index_id = i.index_id
 LEFT   JOIN sys.xml_indexes pxi ON pxi.object_id = xi.object_id AND pxi.index_id = xi.using_xml_index_id
+LEFT   JOIN sys.selective_xml_index_paths sxp ON sxp.object_id = xi.object_id
+                AND sxp.index_id = xi.using_xml_index_id AND sxp.path_id = xi.path_id
 LEFT   JOIN sys.spatial_index_tessellations sit ON sit.object_id = i.object_id AND sit.index_id = i.index_id
 LEFT   JOIN sys.stats st ON st.object_id = i.object_id AND st.stats_id = i.index_id
 ` + dataSpaceJoins + `
@@ -285,6 +308,7 @@ ORDER  BY i.index_id`
 			&idx.StatisticsNoRecompute, &idx.OptimizeForSequentialKey,
 			&idx.BucketCount, &idx.CompressionDelay,
 			&idx.IsPrimaryXML, &idx.PrimaryXMLIndex, &secondary,
+			&idx.IsSelectiveXML, &idx.SelectiveXMLPath,
 			&tessellation, &xmin, &ymin, &xmax, &ymax,
 			&idx.GridLevels.Level1, &idx.GridLevels.Level2,
 			&idx.GridLevels.Level3, &idx.GridLevels.Level4,
@@ -889,6 +913,11 @@ type XMLIndex struct {
 	// IsPrimary is true for a primary XML index, which is the one built
 	// directly on the xml column; a secondary index is built over it.
 	IsPrimary bool
+	// IsSelective is true for a selective XML index and for a secondary
+	// one built over it (PrimaryIndexName then names the selective index).
+	// Neither is a primary XML index, and a PATH, VALUE or PROPERTY
+	// secondary index cannot be built over either.
+	IsSelective bool
 	// SecondaryType is PATH, VALUE or PROPERTY for a secondary index, and
 	// empty for a primary one.
 	SecondaryType XMLSecondaryIndexType
@@ -903,7 +932,9 @@ type XMLIndex struct {
 // name order.
 func (t *Table) XMLIndexes(ctx context.Context) ([]*XMLIndex, error) {
 	const q = `
-SELECT xi.name, xi.index_id, ISNULL(xi.secondary_type_desc, ''), c.name, ISNULL(p.name, '')
+SELECT xi.name, xi.index_id, ISNULL(xi.secondary_type_desc, ''), c.name, ISNULL(p.name, ''),
+       CAST(CASE WHEN xi.xml_index_type = 0 THEN 1 ELSE 0 END AS bit),
+       CAST(CASE WHEN xi.xml_index_type IN (2, 3) THEN 1 ELSE 0 END AS bit)
 FROM   sys.xml_indexes xi
 JOIN   sys.index_columns ic ON ic.object_id = xi.object_id AND ic.index_id = xi.index_id
 JOIN   sys.columns c ON c.object_id = xi.object_id AND c.column_id = ic.column_id
@@ -914,11 +945,11 @@ ORDER  BY xi.name`
 	return scanRows(rows, err, fmt.Sprintf("xml indexes on %s", t.FullName()), func(scan func(...any) error) (*XMLIndex, error) {
 		x := &XMLIndex{}
 		var secondary string
-		if err := scan(&x.Name, &x.IndexID, &secondary, &x.ColumnName, &x.PrimaryIndexName); err != nil {
+		if err := scan(&x.Name, &x.IndexID, &secondary, &x.ColumnName, &x.PrimaryIndexName,
+			&x.IsPrimary, &x.IsSelective); err != nil {
 			return nil, err
 		}
 		x.SecondaryType = XMLSecondaryIndexType(secondary)
-		x.IsPrimary = secondary == ""
 		return x, nil
 	})
 }

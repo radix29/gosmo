@@ -19,11 +19,13 @@ import (
 // ordinary msdb permission:
 //
 //   - msdb db_owner or CONTROL SERVER reads everything: accounts, profiles,
-//     principal profiles, configuration, status, every item and event.
+//     principal profiles, configuration, status, every item and event (the
+//     last two through the base tables — see "Items and events" below).
 //   - DatabaseMailUserRole alone reads MailStatus, its own MailItems and the
 //     MailEvents of those items only. The account, profile, principal-profile
 //     and configuration reads fail Msg 229 for it — and the reads here never
 //     join an item or event to a profile, so the role's reads stay readable.
+//   - msdb db_datareader reads every item and event, and nothing else here.
 //   - Any other login, guest included, gets Msg 229 from every read.
 //   - MailQueues needs VIEW SERVER STATE besides (VIEW SERVER PERFORMANCE
 //     STATE on 2022 and later), Msg 300 without it.
@@ -37,6 +39,24 @@ import (
 // except the status procedure, which is refused (Msg 15281). MailStatus
 // therefore reads the option first and answers MailDisabled rather than an
 // error.
+//
+// # Items and events
+//
+// The documented views, sysmail_allitems and sysmail_event_log, filter on
+// IS_SRVROLEMEMBER('sysadmin'): every other login sees only the items it
+// sent and those items' events — not even the log's own start/stop events,
+// which name no item. So CONTROL SERVER and msdb db_owner, who configure
+// everything, would see almost nothing. MailItems, MailItemByID, MailEvents
+// and the ErrorLogDatabaseMail family therefore read the undocumented base
+// tables, sysmail_mailitems and sysmail_log, when the caller is not
+// sysadmin but may SELECT them (HAS_PERMS_BY_NAME, so a DENY counts), and
+// the views otherwise — sysadmin, whom the views already show everything,
+// and a DatabaseMailUserRole member, who may not read the tables. The
+// choice is made server-side in one batch: a statement SQL Server does not
+// run is not permission-checked, so the role member's batch naming the
+// table does not fail. The base-table read decodes sent_status and
+// event_type as the views do (probed on 17, 2026-10-01). MailVisibility
+// says which the caller got.
 //
 // # Versions
 //
@@ -578,6 +598,73 @@ const mailItemColumns = `mailitem_id, profile_id,
        send_request_date, send_request_user, ISNULL(sent_account_id, 0),
        sent_status, sent_date, last_mod_date`
 
+// The base-table sources: a derived table carrying the view's own column
+// names and decoding, so one query text reads either. Only the columns the
+// reads here select are listed.
+const (
+	mailItemsView = "msdb.dbo.sysmail_allitems"
+	mailItemsBase = `(SELECT mailitem_id, profile_id, recipients, copy_recipients, blind_copy_recipients,
+       subject, body, body_format, importance, sensitivity, file_attachments,
+       send_request_date, send_request_user, sent_account_id,
+       CASE sent_status WHEN 0 THEN 'unsent' WHEN 1 THEN 'sent' WHEN 3 THEN 'retrying' ELSE 'failed' END AS sent_status,
+       sent_date, last_mod_date
+FROM   msdb.dbo.sysmail_mailitems) AS ai`
+	mailEventsView = "msdb.dbo.sysmail_event_log"
+	mailEventsBase = `(SELECT log_id,
+       CASE event_type WHEN 0 THEN 'success' WHEN 1 THEN 'information' WHEN 2 THEN 'warning' ELSE 'error' END AS event_type,
+       log_date, description, process_id, mailitem_id, account_id, last_mod_date, last_mod_user
+FROM   msdb.dbo.sysmail_log) AS sl`
+)
+
+// mailReadsBase is the predicate under which a read takes the base table
+// (msdb.dbo.<table>) over its view — see "Items and events" above.
+func mailReadsBase(table string) string {
+	return "ISNULL(IS_SRVROLEMEMBER(N'sysadmin'), 0) = 0 AND " +
+		"ISNULL(HAS_PERMS_BY_NAME(N'msdb.dbo." + table + "', N'OBJECT', N'SELECT'), 0) = 1"
+}
+
+// mailItemsQuery is q, whose one %s is the item source, as a batch reading
+// sysmail_mailitems when the caller may and sysmail_allitems otherwise.
+func mailItemsQuery(q string) string {
+	return mailSourceBatch("sysmail_mailitems", q, mailItemsBase, mailItemsView)
+}
+
+// mailEventsQuery is mailItemsQuery for the log: sysmail_log or
+// sysmail_event_log.
+func mailEventsQuery(q string) string {
+	return mailSourceBatch("sysmail_log", q, mailEventsBase, mailEventsView)
+}
+
+func mailSourceBatch(table, q, base, view string) string {
+	return "IF " + mailReadsBase(table) + "\n" + fmt.Sprintf(q, base) +
+		"\nELSE\n" + fmt.Sprintf(q, view)
+}
+
+// MailVisibility is how much of Database Mail's items and log the caller's
+// reads return: everything, or only its own items and their events (see
+// "Items and events" above).
+type MailVisibility struct {
+	// AllItems is true when MailItems and MailItemByID see every login's
+	// items.
+	AllItems bool
+	// AllEvents is true when MailEvents and the ErrorLogDatabaseMail family
+	// see the whole log.
+	AllEvents bool
+}
+
+// MailVisibility reports what the caller's item and event reads return — the
+// same test those reads branch on, so a caller saying "only your items"
+// says what the reads did.
+func (s *Server) MailVisibility(ctx context.Context) (MailVisibility, error) {
+	var v MailVisibility
+	q := "SELECT CAST(CASE WHEN ISNULL(IS_SRVROLEMEMBER(N'sysadmin'), 0) = 1 OR (" + mailReadsBase("sysmail_mailitems") + ") THEN 1 ELSE 0 END AS bit), " +
+		"CAST(CASE WHEN ISNULL(IS_SRVROLEMEMBER(N'sysadmin'), 0) = 1 OR (" + mailReadsBase("sysmail_log") + ") THEN 1 ELSE 0 END AS bit)"
+	if err := s.queryRowScan(ctx, q, nil, &v.AllItems, &v.AllEvents); err != nil {
+		return MailVisibility{}, fmt.Errorf("gosmo: read mail visibility: %w", err)
+	}
+	return v, nil
+}
+
 func scanMailItem(scan func(...any) error) (*MailItem, error) {
 	m := &MailItem{}
 	var status string
@@ -594,9 +681,10 @@ func scanMailItem(scan func(...any) error) (*MailItem, error) {
 	return m, nil
 }
 
-// MailItems reads mail items, newest first. Through sysmail_allitems, which
-// filters on IS_SRVROLEMEMBER('sysadmin'): every other login — CONTROL SERVER
-// and msdb db_owner included — sees only the items it sent.
+// MailItems reads mail items, newest first. A login that may read neither
+// sysmail_mailitems nor every row of sysmail_allitems — a
+// DatabaseMailUserRole member — sees only the items it sent (see "Items and
+// events" above; MailVisibility).
 func (s *Server) MailItems(ctx context.Context, f MailItemFilter) ([]*MailItem, error) {
 	var where []string
 	var args []any
@@ -614,8 +702,8 @@ func (s *Server) MailItems(ctx context.Context, f MailItemFilter) ([]*MailItem, 
 		args = append(args, f.Before)
 		where = append(where, fmt.Sprintf("send_request_date < CAST(@p%d AS datetime)", len(args)))
 	}
-	q := fmt.Sprintf("SELECT TOP (%d) %s FROM msdb.dbo.sysmail_allitems%s ORDER BY mailitem_id DESC",
-		rowLimit(f.Max), mailItemColumns, whereClause(where))
+	q := mailItemsQuery(fmt.Sprintf("SELECT TOP (%d) %s FROM %%s%s ORDER BY mailitem_id DESC",
+		rowLimit(f.Max), mailItemColumns, whereClause(where)))
 
 	rows, err := s.query(ctx, q, args...)
 	return scanRows(rows, err, "list mail items", func(scan func(...any) error) (*MailItem, error) {
@@ -632,7 +720,7 @@ func (s *Server) MailItemByID(ctx context.Context, id int) (*MailItem, error) {
 		var err error
 		m, err = scanMailItem(row.Scan)
 		return err
-	}, "SELECT "+mailItemColumns+" FROM msdb.dbo.sysmail_allitems WHERE mailitem_id = @p1", id)
+	}, mailItemsQuery("SELECT "+mailItemColumns+" FROM %s WHERE mailitem_id = @p1"), id)
 	return foundRow(m, err,
 		notFoundf("gosmo: mail item %d not found", id),
 		fmt.Sprintf("read mail item %d", id))
@@ -678,9 +766,9 @@ type MailEventFilter struct {
 	Max int
 }
 
-// MailEvents reads the Database Mail log, newest first. Through
-// sysmail_event_log, so a DatabaseMailUserRole member sees only the events
-// of their own items.
+// MailEvents reads the Database Mail log, newest first. A
+// DatabaseMailUserRole member sees only the events of its own items (see
+// "Items and events" above; MailVisibility).
 func (s *Server) MailEvents(ctx context.Context, f MailEventFilter) ([]*MailEvent, error) {
 	var where []string
 	var args []any
@@ -696,11 +784,11 @@ func (s *Server) MailEvents(ctx context.Context, f MailEventFilter) ([]*MailEven
 		args = append(args, f.Before)
 		where = append(where, fmt.Sprintf("log_date < CAST(@p%d AS datetime)", len(args))) // as MailItems' Before
 	}
-	q := fmt.Sprintf(`SELECT TOP (%d) log_id, event_type, log_date, ISNULL(description, N''),
+	q := mailEventsQuery(fmt.Sprintf(`SELECT TOP (%d) log_id, event_type, log_date, ISNULL(description, N''),
        ISNULL(process_id, 0), ISNULL(mailitem_id, 0), ISNULL(account_id, 0),
        last_mod_date, last_mod_user
-FROM   msdb.dbo.sysmail_event_log%s
-ORDER  BY log_id DESC`, rowLimit(f.Max), whereClause(where))
+FROM   %%s%s
+ORDER  BY log_id DESC`, rowLimit(f.Max), whereClause(where)))
 
 	rows, err := s.query(ctx, q, args...)
 	return scanRows(rows, err, "read mail log", func(scan func(...any) error) (*MailEvent, error) {

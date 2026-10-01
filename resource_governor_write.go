@@ -3,6 +3,7 @@ package gosmo
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -232,13 +233,59 @@ ORDER  BY sc.name, o.name`)
 
 // -- Resource pools --------------------------------------------------------------
 
+// PoolAffinity is the AFFINITY item of a pool's WITH list: which schedulers
+// (a resource pool) or CPUs (an external pool) its work may run on. The zero
+// value is AUTO — no affinity. Schedulers names the ids themselves; NUMANodes
+// names whole nodes instead, every scheduler or CPU on them. Set at most one.
+//
+// The ids are what Server.Schedulers lists: Scheduler.ID for a resource
+// pool, Scheduler.CPUID for an external pool, Scheduler.NUMANode for either.
+// One the instance does not have is refused by the server (Msg 10926).
+//
+// The catalog keeps neither form: it stores a scheduler (or CPU) mask per
+// processor group, so a pool given NUMANODE reads back, and scripts, as the
+// schedulers of those nodes. That is why Alter does not mirror an affinity
+// change onto the receiver's Affinity — re-read the pool for what was stored.
+type PoolAffinity struct {
+	Schedulers []int
+	NUMANodes  []int
+}
+
+// item renders the AFFINITY item, word being SCHEDULER or CPU.
+func (a *PoolAffinity) item(word string) (string, error) {
+	if len(a.Schedulers) > 0 && len(a.NUMANodes) > 0 {
+		return "", fmt.Errorf("affinity names both %s ids and NUMA nodes; set one", strings.ToLower(word))
+	}
+	for _, id := range slices.Concat(a.Schedulers, a.NUMANodes) {
+		if id < 0 {
+			return "", fmt.Errorf("affinity id %d is negative", id)
+		}
+	}
+	switch {
+	case len(a.NUMANodes) > 0:
+		return "AFFINITY NUMANODE = (" + idRanges(a.NUMANodes) + ")", nil
+	case len(a.Schedulers) > 0:
+		return "AFFINITY " + word + " = (" + idRanges(a.Schedulers) + ")", nil
+	}
+	return "AFFINITY " + word + " = AUTO", nil
+}
+
+// affinity adds the AFFINITY item when a is set.
+func (o *rgOptions) affinity(word string, a *PoolAffinity) error {
+	if a == nil {
+		return nil
+	}
+	item, err := a.item(word)
+	if err != nil {
+		return err
+	}
+	o.raw(item)
+	return nil
+}
+
 // ResourcePoolOptions is the WITH list of CREATE and ALTER RESOURCE POOL. A
 // nil field is left out — at the server default on create, unchanged on
 // alter; a non-nil one is sent even when it holds the default.
-//
-// Affinity is not here: it is read and scripted but not written (the
-// scheduler list the DDL takes is not what the catalog stores; see
-// scripter_resource_governor.go).
 type ResourcePoolOptions struct {
 	MinCPUPercent    *int
 	MaxCPUPercent    *int
@@ -247,9 +294,12 @@ type ResourcePoolOptions struct {
 	MaxMemoryPercent *int
 	MinIOPSPerVolume *int
 	MaxIOPSPerVolume *int
+
+	// Affinity is AFFINITY SCHEDULER (or NUMANODE); &PoolAffinity{} is AUTO.
+	Affinity *PoolAffinity
 }
 
-func (o ResourcePoolOptions) render() *rgOptions {
+func (o ResourcePoolOptions) render() (*rgOptions, error) {
 	w := &rgOptions{}
 	w.int("MIN_CPU_PERCENT", o.MinCPUPercent)
 	w.int("MAX_CPU_PERCENT", o.MaxCPUPercent)
@@ -258,7 +308,7 @@ func (o ResourcePoolOptions) render() *rgOptions {
 	w.int("MAX_MEMORY_PERCENT", o.MaxMemoryPercent)
 	w.int("MIN_IOPS_PER_VOLUME", o.MinIOPSPerVolume)
 	w.int("MAX_IOPS_PER_VOLUME", o.MaxIOPSPerVolume)
-	return w
+	return w, w.affinity("SCHEDULER", o.Affinity)
 }
 
 // CreateResourcePoolRequest describes a new resource pool.
@@ -282,8 +332,11 @@ func (s *Server) CreateResourcePool(ctx context.Context, req CreateResourcePoolR
 	if strings.TrimSpace(req.Name) == "" {
 		return nil, fmt.Errorf("gosmo: create resource pool: pool has no name")
 	}
-	stmt := "CREATE RESOURCE POOL " + quoteIdent(req.Name) + req.Options.render().with()
-	if err := s.exec(ctx, stmt); err != nil {
+	w, err := req.Options.render()
+	if err != nil {
+		return nil, fmt.Errorf("gosmo: create resource pool %q: %w", req.Name, err)
+	}
+	if err := s.exec(ctx, "CREATE RESOURCE POOL "+quoteIdent(req.Name)+w.with()); err != nil {
 		return nil, fmt.Errorf("gosmo: create resource pool %q: %w", req.Name, err)
 	}
 	return createdObject(ctx, s.ResourcePoolRef(req.Name), func() (*ResourcePool, error) {
@@ -292,9 +345,13 @@ func (s *Server) CreateResourcePool(ctx context.Context, req CreateResourcePoolR
 }
 
 // Alter applies every option set on o in one ALTER RESOURCE POOL. An empty
-// o issues nothing. Pending until ResourceGovernor.Reconfigure.
+// o issues nothing. Pending until ResourceGovernor.Reconfigure. Affinity is
+// not mirrored onto p (see PoolAffinity).
 func (p *ResourcePool) Alter(ctx context.Context, o ResourcePoolOptions) error {
-	w := o.render()
+	w, err := o.render()
+	if err != nil {
+		return fmt.Errorf("gosmo: alter resource pool %q: %w", p.Name, err)
+	}
 	if len(w.parts) == 0 {
 		return nil
 	}
@@ -502,20 +559,23 @@ func (g *WorkloadGroup) Drop(ctx context.Context) error {
 // -- External resource pools -----------------------------------------------------
 
 // ExternalResourcePoolOptions is the WITH list of CREATE and ALTER EXTERNAL
-// RESOURCE POOL. A nil field is left out. Affinity is read and scripted, not
-// written, as for ResourcePoolOptions.
+// RESOURCE POOL. A nil field is left out.
 type ExternalResourcePoolOptions struct {
 	MaxCPUPercent    *int
 	MaxMemoryPercent *int
 	MaxProcesses     *int
+
+	// Affinity is AFFINITY CPU (or NUMANODE): PoolAffinity.Schedulers holds
+	// CPU ids here. &PoolAffinity{} is AUTO.
+	Affinity *PoolAffinity
 }
 
-func (o ExternalResourcePoolOptions) render() *rgOptions {
+func (o ExternalResourcePoolOptions) render() (*rgOptions, error) {
 	w := &rgOptions{}
 	w.int("MAX_CPU_PERCENT", o.MaxCPUPercent)
 	w.int("MAX_MEMORY_PERCENT", o.MaxMemoryPercent)
 	w.int("MAX_PROCESSES", o.MaxProcesses)
-	return w
+	return w, w.affinity("CPU", o.Affinity)
 }
 
 // CreateExternalResourcePoolRequest describes a new external resource pool.
@@ -537,8 +597,11 @@ func (s *Server) CreateExternalResourcePool(ctx context.Context, req CreateExter
 	if strings.TrimSpace(req.Name) == "" {
 		return nil, fmt.Errorf("gosmo: create external resource pool: pool has no name")
 	}
-	stmt := "CREATE EXTERNAL RESOURCE POOL " + quoteIdent(req.Name) + req.Options.render().with()
-	if err := s.exec(ctx, stmt); err != nil {
+	w, err := req.Options.render()
+	if err != nil {
+		return nil, fmt.Errorf("gosmo: create external resource pool %q: %w", req.Name, err)
+	}
+	if err := s.exec(ctx, "CREATE EXTERNAL RESOURCE POOL "+quoteIdent(req.Name)+w.with()); err != nil {
 		return nil, fmt.Errorf("gosmo: create external resource pool %q: %w", req.Name, err)
 	}
 	return createdObject(ctx, s.ExternalResourcePoolRef(req.Name), func() (*ExternalResourcePool, error) {
@@ -547,9 +610,13 @@ func (s *Server) CreateExternalResourcePool(ctx context.Context, req CreateExter
 }
 
 // Alter applies every option set on o in one ALTER EXTERNAL RESOURCE POOL.
-// An empty o issues nothing. The default external pool accepts it.
+// An empty o issues nothing. The default external pool accepts it. Affinity
+// is not mirrored onto p (see PoolAffinity).
 func (p *ExternalResourcePool) Alter(ctx context.Context, o ExternalResourcePoolOptions) error {
-	w := o.render()
+	w, err := o.render()
+	if err != nil {
+		return fmt.Errorf("gosmo: alter external resource pool %q: %w", p.Name, err)
+	}
 	if len(w.parts) == 0 {
 		return nil
 	}

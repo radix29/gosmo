@@ -207,7 +207,8 @@ func TestEventSessionStateAndDropStatements(t *testing.T) {
 	if err := es.Drop(ctx); err != nil {
 		t.Fatal(err)
 	}
-	db := (&Server{}).DatabaseRef("AppDB").EventSessionRef("d")
+	azure := &Server{info: &ServerInfo{EngineEdition: int(EngineAzureSQLDatabase)}}
+	db := azure.DatabaseRef("AppDB").EventSessionRef("d")
 	if err := db.Start(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -222,6 +223,41 @@ func TestEventSessionStateAndDropStatements(t *testing.T) {
 	}
 	if es.IsRunning {
 		t.Error("IsRunning mirrored while scripting")
+	}
+}
+
+// TestDatabaseScopedEventSessionsRefusedOffAzure pins the refusal every
+// database-scoped verb gives on a box product, where the catalog views and
+// ON DATABASE DDL do not exist (Msg 208 on 13, 14 and 17 before it). Script
+// mode is refused too: the captured statement would not replay. The server
+// has no connection, so a verb that slipped past the guard panics.
+func TestDatabaseScopedEventSessionsRefusedOffAzure(t *testing.T) {
+	ctx, col := WithScript(context.Background())
+	for _, edition := range []EngineEdition{EngineEnterprise, EngineStandard, 0} {
+		s := &Server{info: &ServerInfo{EngineEdition: int(edition), VersionMajor: 17}}
+		d := s.DatabaseRef("AppDB")
+		es := d.EventSessionRef("d")
+		spec := EventSessionSpec{Name: "d", Events: []SessionEvent{{Package: "sqlserver", Name: "sql_batch_completed"}}}
+		for name, call := range map[string]func() error{
+			"EventSessions":      func() error { _, err := d.EventSessions(ctx); return err },
+			"EventSessionByName": func() error { _, err := d.EventSessionByName(ctx, "d"); return err },
+			"CreateEventSession": func() error { _, err := d.CreateEventSession(ctx, spec); return err },
+			"Status":             func() error { _, err := es.Status(ctx); return err },
+			"ReadRingBuffer":     func() error { _, err := es.ReadRingBuffer(ctx); return err },
+			"Start":              func() error { return es.Start(ctx) },
+			"Stop":               func() error { return es.Stop(ctx) },
+			"AddTarget":          func() error { return es.AddTarget(ctx, RingBufferTarget(0)) },
+			"Drop":               func() error { return es.Drop(ctx) },
+			"Alter":              func() error { return es.Alter(ctx, spec) },
+			"ScriptEventSession": func() error { _, err := NewScripter(d, ScriptOptions{}).ScriptEventSession(ctx, "d"); return err },
+		} {
+			if err := call(); !errors.Is(err, ErrUnsupportedVersion) {
+				t.Errorf("edition %d: %s: err = %v, want ErrUnsupportedVersion", edition, name, err)
+			}
+		}
+	}
+	if got := col.Statements(); len(got) != 0 {
+		t.Errorf("refused writes were captured: %q", got)
 	}
 }
 

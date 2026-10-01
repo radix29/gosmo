@@ -2,6 +2,8 @@ package gosmo
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -66,6 +68,26 @@ func TestScriptCreateIndexWrites(t *testing.T) {
 			DropExisting: true,
 		}), scriptUsePrefix + "CREATE CLUSTERED COLUMNSTORE INDEX [cci] ON [dbo].[Sales.Archive] WITH (DROP_EXISTING = ON)"},
 
+		// ORDER comes before WHERE and WITH, as ScriptTable writes it.
+		{"ordered nonclustered columnstore", create(CreateIndexRequest{
+			Name:             "nc]ci",
+			Type:             IndexTypeColumnStore,
+			KeyColumns:       []IndexColumnDef{{Name: "a]b"}, {Name: "c'd"}},
+			ColumnstoreOrder: []string{"c'd", "a]b"},
+			FilterDefinition: "[x] > 0",
+			CompressionDelay: 5,
+		}), scriptUsePrefix + "CREATE NONCLUSTERED COLUMNSTORE INDEX [nc]]ci] ON [dbo].[Sales.Archive] ([a]]b], [c'd]) " +
+			"ORDER ([c'd], [a]]b]) WHERE [x] > 0 WITH (COMPRESSION_DELAY = 5 MINUTES)"},
+
+		{"ordered clustered columnstore", create(CreateIndexRequest{
+			Name:             "cci",
+			Type:             IndexTypeClusteredColumnStore,
+			ColumnstoreOrder: []string{"o]rd"},
+			DataCompression:  "COLUMNSTORE_ARCHIVE",
+			FileGroup:        "FG]1",
+		}), scriptUsePrefix + "CREATE CLUSTERED COLUMNSTORE INDEX [cci] ON [dbo].[Sales.Archive] ORDER ([o]]rd]) " +
+			"WITH (DATA_COMPRESSION = COLUMNSTORE_ARCHIVE) ON [FG]]1]"},
+
 		{"primary XML", create(CreateIndexRequest{
 			Name:         "PXML]1",
 			Type:         IndexTypeXML,
@@ -126,6 +148,14 @@ func TestCreateIndexRefusesAWrongCombination(t *testing.T) {
 			"can be filtered"},
 		{"ordered columnstore column", CreateIndexRequest{Name: "ix", Type: IndexTypeColumnStore, KeyColumns: []IndexColumnDef{{Name: "a", Descending: true}}},
 			"orders its key columns"},
+		{"ORDER on a rowstore index", CreateIndexRequest{Name: "ix", Type: IndexTypeClustered, KeyColumns: keyA, ColumnstoreOrder: []string{"a"}},
+			"only a columnstore index takes an ORDER"},
+		{"ORDER column with no name", CreateIndexRequest{Name: "ix", Type: IndexTypeClusteredColumnStore, ColumnstoreOrder: []string{""}},
+			"ORDER column has no name"},
+		{"ORDER column repeated", CreateIndexRequest{Name: "ix", Type: IndexTypeClusteredColumnStore, ColumnstoreOrder: []string{"a", "b", "a"}},
+			`"a" appears more than once`},
+		{"NCCI ORDER column outside the index", CreateIndexRequest{Name: "ix", Type: IndexTypeColumnStore, KeyColumns: keyA, ColumnstoreOrder: []string{"b"}},
+			`"b" is not one of`},
 		{"fill factor on a columnstore index", CreateIndexRequest{Name: "ix", Type: IndexTypeColumnStore, KeyColumns: keyA, FillFactor: 80},
 			"no fill factor"},
 		{"fill factor out of range", CreateIndexRequest{Name: "ix", KeyColumns: keyA, FillFactor: 101}, "out of range"},
@@ -179,5 +209,55 @@ func TestCreateIndexRefusesAWrongCombination(t *testing.T) {
 				t.Errorf("refused but still executed: %s", q)
 			}
 		})
+	}
+}
+
+// TestCreateIndexColumnstoreOrderVersionGate pins where ORDER (…) is refused
+// before a statement is sent: clustered below SQL Server 2022, nonclustered
+// below 2025. A differently cased NCCI key column passes the check — the
+// server's collation decides that one.
+func TestCreateIndexColumnstoreOrderVersionGate(t *testing.T) {
+	cci := CreateIndexRequest{Name: "cci", Type: IndexTypeClusteredColumnStore, ColumnstoreOrder: []string{"a"}}
+	ncci := CreateIndexRequest{Name: "ncci", Type: IndexTypeColumnStore,
+		KeyColumns: []IndexColumnDef{{Name: "A"}, {Name: "b"}}, ColumnstoreOrder: []string{"a"}}
+	unordered := CreateIndexRequest{Name: "ncci", Type: IndexTypeColumnStore, KeyColumns: []IndexColumnDef{{Name: "a"}}}
+	for _, c := range []struct {
+		name    string
+		major   int
+		req     CreateIndexRequest
+		refused bool
+	}{
+		{"clustered on 2019", 15, cci, true},
+		{"clustered on 2022", 16, cci, false},
+		{"clustered, major unknown", 0, cci, false},
+		{"nonclustered on 2022", 16, ncci, true},
+		{"nonclustered on 2025", 17, ncci, false},
+		{"unordered on 2016", 13, unordered, false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			_, err := buildCreateIndexStatement("[dbo].[t]", c.major, c.req)
+			if c.refused {
+				if !errors.Is(err, ErrUnsupportedVersion) {
+					t.Fatalf("err = %v, want ErrUnsupportedVersion", err)
+				}
+				if want := fmt.Sprintf("this instance is major %d", c.major); !strings.Contains(err.Error(), want) {
+					t.Errorf("err = %v, want it to mention %q", err, want)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("err = %v, want none", err)
+			}
+		})
+	}
+
+	// Through CreateIndex: the refusal executes nothing.
+	tbl := captureTable(t)
+	tbl.db.server.info = &ServerInfo{VersionMajor: 14}
+	if _, err := tbl.CreateIndex(t.Context(), cci); !errors.Is(err, ErrUnsupportedVersion) {
+		t.Fatalf("CreateIndex on 2017: err = %v, want ErrUnsupportedVersion", err)
+	}
+	if q := captured.find("CREATE"); q != "" {
+		t.Errorf("refused but still executed: %s", q)
 	}
 }

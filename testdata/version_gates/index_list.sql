@@ -14,8 +14,10 @@ SELECT i.name, i.index_id, i.type_desc, i.is_unique, i.is_primary_key,
        CAST(0 AS bit),
        ISNULL(h.bucket_count, 0), ISNULL(i.compression_delay, 0),
        CAST(CASE WHEN xi.xml_index_type = 0 THEN 1 ELSE 0 END AS bit),
-       CASE WHEN xi.xml_index_type = 1 THEN ISNULL(pxi.name, '') ELSE '' END,
+       CASE WHEN xi.xml_index_type IN (1, 3) THEN ISNULL(pxi.name, '') ELSE '' END,
        CASE WHEN xi.xml_index_type = 1 THEN ISNULL(xi.secondary_type_desc, '') ELSE '' END,
+       CAST(CASE WHEN xi.xml_index_type = 2 THEN 1 ELSE 0 END AS bit),
+       CASE WHEN xi.xml_index_type = 3 THEN ISNULL(sxp.name, '') ELSE '' END,
        ISNULL(sit.tessellation_scheme, ''),
        sit.bounding_box_xmin, sit.bounding_box_ymin, sit.bounding_box_xmax, sit.bounding_box_ymax,
        ISNULL(sit.level_1_grid_desc, ''), ISNULL(sit.level_2_grid_desc, ''),
@@ -25,6 +27,8 @@ FROM   sys.indexes i
 LEFT   JOIN sys.hash_indexes h ON h.object_id = i.object_id AND h.index_id = i.index_id
 LEFT   JOIN sys.xml_indexes xi ON xi.object_id = i.object_id AND xi.index_id = i.index_id
 LEFT   JOIN sys.xml_indexes pxi ON pxi.object_id = xi.object_id AND pxi.index_id = xi.using_xml_index_id
+LEFT   JOIN sys.selective_xml_index_paths sxp ON sxp.object_id = xi.object_id
+                AND sxp.index_id = xi.using_xml_index_id AND sxp.path_id = xi.path_id
 LEFT   JOIN sys.spatial_index_tessellations sit ON sit.object_id = i.object_id AND sit.index_id = i.index_id
 LEFT   JOIN sys.stats st ON st.object_id = i.object_id AND st.stats_id = i.index_id
 LEFT   JOIN sys.data_spaces ds ON ds.data_space_id = i.data_space_id
@@ -52,8 +56,10 @@ SELECT i.name, i.index_id, i.type_desc, i.is_unique, i.is_primary_key,
        CAST(0 AS bit),
        ISNULL(h.bucket_count, 0), ISNULL(i.compression_delay, 0),
        CAST(CASE WHEN xi.xml_index_type = 0 THEN 1 ELSE 0 END AS bit),
-       CASE WHEN xi.xml_index_type = 1 THEN ISNULL(pxi.name, '') ELSE '' END,
+       CASE WHEN xi.xml_index_type IN (1, 3) THEN ISNULL(pxi.name, '') ELSE '' END,
        CASE WHEN xi.xml_index_type = 1 THEN ISNULL(xi.secondary_type_desc, '') ELSE '' END,
+       CAST(CASE WHEN xi.xml_index_type = 2 THEN 1 ELSE 0 END AS bit),
+       CASE WHEN xi.xml_index_type = 3 THEN ISNULL(sxp.name, '') ELSE '' END,
        ISNULL(sit.tessellation_scheme, ''),
        sit.bounding_box_xmin, sit.bounding_box_ymin, sit.bounding_box_xmax, sit.bounding_box_ymax,
        ISNULL(sit.level_1_grid_desc, ''), ISNULL(sit.level_2_grid_desc, ''),
@@ -63,6 +69,8 @@ FROM   sys.indexes i
 LEFT   JOIN sys.hash_indexes h ON h.object_id = i.object_id AND h.index_id = i.index_id
 LEFT   JOIN sys.xml_indexes xi ON xi.object_id = i.object_id AND xi.index_id = i.index_id
 LEFT   JOIN sys.xml_indexes pxi ON pxi.object_id = xi.object_id AND pxi.index_id = xi.using_xml_index_id
+LEFT   JOIN sys.selective_xml_index_paths sxp ON sxp.object_id = xi.object_id
+                AND sxp.index_id = xi.using_xml_index_id AND sxp.path_id = xi.path_id
 LEFT   JOIN sys.spatial_index_tessellations sit ON sit.object_id = i.object_id AND sit.index_id = i.index_id
 LEFT   JOIN sys.stats st ON st.object_id = i.object_id AND st.stats_id = i.index_id
 LEFT   JOIN sys.data_spaces ds ON ds.data_space_id = i.data_space_id
@@ -90,8 +98,10 @@ SELECT i.name, i.index_id, i.type_desc, i.is_unique, i.is_primary_key,
        i.optimize_for_sequential_key,
        ISNULL(h.bucket_count, 0), ISNULL(i.compression_delay, 0),
        CAST(CASE WHEN xi.xml_index_type = 0 THEN 1 ELSE 0 END AS bit),
-       CASE WHEN xi.xml_index_type = 1 THEN ISNULL(pxi.name, '') ELSE '' END,
+       CASE WHEN xi.xml_index_type IN (1, 3) THEN ISNULL(pxi.name, '') ELSE '' END,
        CASE WHEN xi.xml_index_type = 1 THEN ISNULL(xi.secondary_type_desc, '') ELSE '' END,
+       CAST(CASE WHEN xi.xml_index_type = 2 THEN 1 ELSE 0 END AS bit),
+       CASE WHEN xi.xml_index_type = 3 THEN ISNULL(sxp.name, '') ELSE '' END,
        ISNULL(sit.tessellation_scheme, ''),
        sit.bounding_box_xmin, sit.bounding_box_ymin, sit.bounding_box_xmax, sit.bounding_box_ymax,
        ISNULL(sit.level_1_grid_desc, ''), ISNULL(sit.level_2_grid_desc, ''),
@@ -101,6 +111,8 @@ FROM   sys.indexes i
 LEFT   JOIN sys.hash_indexes h ON h.object_id = i.object_id AND h.index_id = i.index_id
 LEFT   JOIN sys.xml_indexes xi ON xi.object_id = i.object_id AND xi.index_id = i.index_id
 LEFT   JOIN sys.xml_indexes pxi ON pxi.object_id = xi.object_id AND pxi.index_id = xi.using_xml_index_id
+LEFT   JOIN sys.selective_xml_index_paths sxp ON sxp.object_id = xi.object_id
+                AND sxp.index_id = xi.using_xml_index_id AND sxp.path_id = xi.path_id
 LEFT   JOIN sys.spatial_index_tessellations sit ON sit.object_id = i.object_id AND sit.index_id = i.index_id
 LEFT   JOIN sys.stats st ON st.object_id = i.object_id AND st.stats_id = i.index_id
 LEFT   JOIN sys.data_spaces ds ON ds.data_space_id = i.data_space_id
@@ -128,8 +140,10 @@ SELECT i.name, i.index_id, i.type_desc, i.is_unique, i.is_primary_key,
        i.optimize_for_sequential_key,
        ISNULL(h.bucket_count, 0), ISNULL(i.compression_delay, 0),
        CAST(CASE WHEN xi.xml_index_type = 0 THEN 1 ELSE 0 END AS bit),
-       CASE WHEN xi.xml_index_type = 1 THEN ISNULL(pxi.name, '') ELSE '' END,
+       CASE WHEN xi.xml_index_type IN (1, 3) THEN ISNULL(pxi.name, '') ELSE '' END,
        CASE WHEN xi.xml_index_type = 1 THEN ISNULL(xi.secondary_type_desc, '') ELSE '' END,
+       CAST(CASE WHEN xi.xml_index_type = 2 THEN 1 ELSE 0 END AS bit),
+       CASE WHEN xi.xml_index_type = 3 THEN ISNULL(sxp.name, '') ELSE '' END,
        ISNULL(sit.tessellation_scheme, ''),
        sit.bounding_box_xmin, sit.bounding_box_ymin, sit.bounding_box_xmax, sit.bounding_box_ymax,
        ISNULL(sit.level_1_grid_desc, ''), ISNULL(sit.level_2_grid_desc, ''),
@@ -139,6 +153,8 @@ FROM   sys.indexes i
 LEFT   JOIN sys.hash_indexes h ON h.object_id = i.object_id AND h.index_id = i.index_id
 LEFT   JOIN sys.xml_indexes xi ON xi.object_id = i.object_id AND xi.index_id = i.index_id
 LEFT   JOIN sys.xml_indexes pxi ON pxi.object_id = xi.object_id AND pxi.index_id = xi.using_xml_index_id
+LEFT   JOIN sys.selective_xml_index_paths sxp ON sxp.object_id = xi.object_id
+                AND sxp.index_id = xi.using_xml_index_id AND sxp.path_id = xi.path_id
 LEFT   JOIN sys.spatial_index_tessellations sit ON sit.object_id = i.object_id AND sit.index_id = i.index_id
 LEFT   JOIN sys.stats st ON st.object_id = i.object_id AND st.stats_id = i.index_id
 LEFT   JOIN sys.data_spaces ds ON ds.data_space_id = i.data_space_id
@@ -166,8 +182,10 @@ SELECT i.name, i.index_id, i.type_desc, i.is_unique, i.is_primary_key,
        i.optimize_for_sequential_key,
        ISNULL(h.bucket_count, 0), ISNULL(i.compression_delay, 0),
        CAST(CASE WHEN xi.xml_index_type = 0 THEN 1 ELSE 0 END AS bit),
-       CASE WHEN xi.xml_index_type = 1 THEN ISNULL(pxi.name, '') ELSE '' END,
+       CASE WHEN xi.xml_index_type IN (1, 3) THEN ISNULL(pxi.name, '') ELSE '' END,
        CASE WHEN xi.xml_index_type = 1 THEN ISNULL(xi.secondary_type_desc, '') ELSE '' END,
+       CAST(CASE WHEN xi.xml_index_type = 2 THEN 1 ELSE 0 END AS bit),
+       CASE WHEN xi.xml_index_type = 3 THEN ISNULL(sxp.name, '') ELSE '' END,
        ISNULL(sit.tessellation_scheme, ''),
        sit.bounding_box_xmin, sit.bounding_box_ymin, sit.bounding_box_xmax, sit.bounding_box_ymax,
        ISNULL(sit.level_1_grid_desc, ''), ISNULL(sit.level_2_grid_desc, ''),
@@ -177,6 +195,8 @@ FROM   sys.indexes i
 LEFT   JOIN sys.hash_indexes h ON h.object_id = i.object_id AND h.index_id = i.index_id
 LEFT   JOIN sys.xml_indexes xi ON xi.object_id = i.object_id AND xi.index_id = i.index_id
 LEFT   JOIN sys.xml_indexes pxi ON pxi.object_id = xi.object_id AND pxi.index_id = xi.using_xml_index_id
+LEFT   JOIN sys.selective_xml_index_paths sxp ON sxp.object_id = xi.object_id
+                AND sxp.index_id = xi.using_xml_index_id AND sxp.path_id = xi.path_id
 LEFT   JOIN sys.spatial_index_tessellations sit ON sit.object_id = i.object_id AND sit.index_id = i.index_id
 LEFT   JOIN sys.stats st ON st.object_id = i.object_id AND st.stats_id = i.index_id
 LEFT   JOIN sys.data_spaces ds ON ds.data_space_id = i.data_space_id

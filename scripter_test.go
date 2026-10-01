@@ -520,8 +520,10 @@ func TestCompressionOptionsPerPartition(t *testing.T) {
 }
 
 // TestScriptXMLAndSpatialIndexes (G4): XML and spatial indexes script as
-// their own CREATE forms, not as a comment, and a secondary XML index comes
-// after the primary it is built over whatever order the list had.
+// their own CREATE forms, not as a comment — selective XML indexes with
+// their namespaces and every path form — and a secondary XML index comes
+// after the primary or selective index it is built over whatever order the
+// list had.
 func TestScriptXMLAndSpatialIndexes(t *testing.T) {
 	locks := func(idx *Index) *Index { idx.AllowRowLocks, idx.AllowPageLocks = true, true; return idx }
 	doc := []IndexColumn{{Name: "Doc"}}
@@ -547,8 +549,21 @@ func TestScriptXMLAndSpatialIndexes(t *testing.T) {
 				// A partitioned table's spatial index is aligned by the server
 				// and refuses an ON naming the scheme.
 				DataSpace: DataSpace{Name: "ps_year", IsPartitionScheme: true, PartitionColumn: "Yr"}}),
-			// A selective XML index is neither form: still a comment.
-			locks(&Index{Name: "SXI", Type: IndexTypeXML, KeyColumns: doc}),
+			// Listed ahead of its selective index: the script must still put
+			// it after.
+			locks(&Index{Name: "SXI_n", Type: IndexTypeXML, KeyColumns: doc, PrimaryXMLIndex: "SXI", SelectiveXMLPath: "n"}),
+			locks(&Index{Name: "SXI", Type: IndexTypeXML, KeyColumns: doc, IsSelectiveXML: true, IsPadded: true,
+				SelectiveXMLNamespaces: []XMLNamespace{{URI: "urn:d"}, {Prefix: "a", URI: "urn:a'q"}},
+				SelectiveXMLPaths: []SelectiveXMLPath{
+					{Name: "item", Path: "/a:root/a:item", IsNode: true},
+					{Name: "one", Path: "/a:root/a:one", IsNode: true, IsSingleton: true},
+					{Name: "id", Path: "/a:root/a:item/@id", XQueryType: "xs:string", MaxLength: 20, IsSingleton: true},
+					{Name: "n", Path: "/a:root/n", IsSQL: true, SQLType: "nvarchar(30)", IsSingleton: true},
+					{Name: "d", Path: "/a:root/a:d", XQueryType: "xs:double"},
+					{Name: "plain", Path: "/root/ü"},
+				}}),
+			// An XML index whose form was not read is neither: a comment.
+			locks(&Index{Name: "XUnread", Type: IndexTypeXML, KeyColumns: doc}),
 		},
 	}
 	got := buildTableScript("dbo", "X", "db", p, ScriptOptions{})
@@ -561,7 +576,17 @@ func TestScriptXMLAndSpatialIndexes(t *testing.T) {
 			"    WITH (BOUNDING_BOX = (-1.5, 0, 500, 200), GRIDS = (LEVEL_1 = LOW, LEVEL_2 = MEDIUM, LEVEL_3 = HIGH, LEVEL_4 = LOW), " +
 			"CELLS_PER_OBJECT = 64, DATA_COMPRESSION = PAGE) ON [FG_Archive];\nGO",
 		"CREATE SPATIAL INDEX [SP_Gg]\n    ON [dbo].[X] ([Gg])\n    USING GEOGRAPHY_AUTO_GRID\n    WITH (CELLS_PER_OBJECT = 12);\nGO",
-		"-- XML index [SXI] on [dbo].[X] is not scripted",
+		"CREATE SELECTIVE XML INDEX [SXI]\n    ON [dbo].[X] ([Doc])\n" +
+			"    WITH XMLNAMESPACES (DEFAULT N'urn:d', N'urn:a''q' AS [a])\n    FOR (\n" +
+			"        [item] = N'/a:root/a:item' AS XQUERY 'node()',\n" +
+			"        [one] = N'/a:root/a:one' AS XQUERY 'node()' SINGLETON,\n" +
+			"        [id] = N'/a:root/a:item/@id' AS XQUERY 'xs:string' MAXLENGTH(20) SINGLETON,\n" +
+			"        [n] = N'/a:root/n' AS SQL nvarchar(30) SINGLETON,\n" +
+			"        [d] = N'/a:root/a:d' AS XQUERY 'xs:double',\n" +
+			"        [plain] = N'/root/ü'\n" +
+			"    )\n    WITH (PAD_INDEX = ON);\nGO",
+		"CREATE XML INDEX [SXI_n]\n    ON [dbo].[X] ([Doc])\n    USING XML INDEX [SXI] FOR ([n]);\nGO",
+		"-- XML index [XUnread] on [dbo].[X] is not scripted",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("script is missing %q:\n%s", want, got)
@@ -572,6 +597,9 @@ func TestScriptXMLAndSpatialIndexes(t *testing.T) {
 		if i := strings.Index(got, "CREATE XML INDEX ["+name+"]"); i < primary {
 			t.Errorf("secondary XML index %s is created before its primary:\n%s", name, got)
 		}
+	}
+	if strings.Index(got, "CREATE XML INDEX [SXI_n]") < strings.Index(got, "CREATE SELECTIVE XML INDEX [SXI]") {
+		t.Errorf("secondary selective XML index is created before its selective index:\n%s", got)
 	}
 
 	// A lock option off, and no GRIDS on an automatic grid even if the

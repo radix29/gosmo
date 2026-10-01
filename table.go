@@ -606,13 +606,27 @@ type ColumnDefinition struct {
 	// and datetimeoffset(0) could not be asked for — zero read as
 	// "unspecified" and produced the 7-digit default — and decimal(p,0) with
 	// no precision became decimal(18,0).
-	Scale        *int
-	IsNullable   bool
-	IsIdentity   bool
-	IdentitySeed int64
-	IdentityIncr int64
-	DefaultValue string // expression, e.g. "sysdatetime()" or "0"
-	IsPrimaryKey bool
+	Scale *int
+	// XMLSchemaCollectionSchema and XMLSchemaCollection make an xml column
+	// typed by that schema collection, and IsXMLDocument picks DOCUMENT over
+	// CONTENT; all three are refused on any other type, and the schema is
+	// required with the collection (unqualified, it resolves against the
+	// caller's default schema). Both names "" is an untyped xml column.
+	XMLSchemaCollectionSchema string
+	XMLSchemaCollection       string
+	IsXMLDocument             bool
+	// VectorDimensions and VectorBaseType declare a vector column (SQL
+	// Server 2025): the dimensions are required, and VectorBaseType is ""
+	// or "float32" (the default) or "float16" — which the server accepts
+	// only with the database's PREVIEW_FEATURES scoped configuration on.
+	VectorDimensions int
+	VectorBaseType   string
+	IsNullable       bool
+	IsIdentity       bool
+	IdentitySeed     int64
+	IdentityIncr     int64
+	DefaultValue     string // expression, e.g. "sysdatetime()" or "0"
+	IsPrimaryKey     bool
 }
 
 // CreateTable creates a table from a CreateTableRequest.
@@ -879,6 +893,13 @@ func colTypeSQL(col ColumnDefinition) string {
 		if col.Scale != nil {
 			return fmt.Sprintf("%s(%d)", col.DataType, *col.Scale)
 		}
+	case DataTypeXML, DataTypeVector:
+		// The same spelling ScriptTable gives a column read back.
+		return catalogType{
+			dt:        col.DataType,
+			xmlSchema: col.XMLSchemaCollectionSchema, xmlCollection: col.XMLSchemaCollection, xmlDocument: col.IsXMLDocument,
+			vectorDimensions: col.VectorDimensions, vectorBaseType: col.VectorBaseType,
+		}.String()
 	}
 	return string(col.DataType)
 }
@@ -887,9 +908,36 @@ func colTypeSQL(col ColumnDefinition) string {
 // written, rather than rendering something else: a decimal scale with no
 // precision has no T-SQL spelling (decimal(,2) is a syntax error), and a
 // precision or scale on a type that takes neither would be dropped silently.
+// The same holds for a schema collection off an xml column and dimensions
+// off a vector, and a vector without dimensions does not parse (Msg 2715).
 func checkColumnDefinition(col ColumnDefinition) error {
 	if !validDataType(col.DataType) {
 		return fmt.Errorf("unrecognized data type %q", col.DataType)
+	}
+	if col.DataType != DataTypeXML &&
+		(col.XMLSchemaCollectionSchema != "" || col.XMLSchemaCollection != "" || col.IsXMLDocument) {
+		return fmt.Errorf("%s takes no XML schema collection", col.DataType)
+	}
+	if col.DataType != DataTypeVector && (col.VectorDimensions != 0 || col.VectorBaseType != "") {
+		return fmt.Errorf("%s takes no vector dimensions or base type", col.DataType)
+	}
+	switch col.DataType {
+	case DataTypeXML:
+		switch {
+		case col.XMLSchemaCollection == "" && (col.XMLSchemaCollectionSchema != "" || col.IsXMLDocument):
+			return fmt.Errorf("an xml schema or DOCUMENT facet needs a schema collection")
+		case col.XMLSchemaCollection != "" && col.XMLSchemaCollectionSchema == "":
+			return fmt.Errorf("xml schema collection %q: %w", col.XMLSchemaCollection, ErrSchemaRequired)
+		}
+	case DataTypeVector:
+		if col.VectorDimensions <= 0 {
+			return fmt.Errorf("a vector needs a positive number of dimensions")
+		}
+		switch strings.ToLower(col.VectorBaseType) {
+		case "", "float32", "float16":
+		default:
+			return fmt.Errorf("unrecognized vector base type %q", col.VectorBaseType)
+		}
 	}
 	switch col.DataType {
 	case DataTypeDecimal, DataTypeNumeric:

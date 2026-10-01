@@ -136,7 +136,10 @@ const (
 	DataTypeUniqueIdentifier DataType = "uniqueidentifier"
 	DataTypeVarBinary        DataType = "varbinary"
 	DataTypeVarChar          DataType = "varchar"
-	DataTypeXML              DataType = "xml"
+	// DataTypeVector is SQL Server 2025's vector; a column of it needs its
+	// dimensions (ColumnDefinition.VectorDimensions, Column.VectorDimensions).
+	DataTypeVector DataType = "vector"
+	DataTypeXML    DataType = "xml"
 )
 
 var dataTypeNames = map[DataType]bool{
@@ -148,7 +151,7 @@ var dataTypeNames = map[DataType]bool{
 	DataTypeReal: true, DataTypeRowVersion: true, DataTypeSmallDatetime: true, DataTypeSmallInt: true,
 	DataTypeSmallMoney: true, DataTypeSQLVariant: true, DataTypeText: true, DataTypeTime: true,
 	DataTypeTinyInt: true, DataTypeUniqueIdentifier: true, DataTypeVarBinary: true,
-	DataTypeVarChar: true, DataTypeXML: true,
+	DataTypeVarChar: true, DataTypeVector: true, DataTypeXML: true,
 }
 
 // validDataType reports whether t is a recognized column data type.

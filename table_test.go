@@ -92,7 +92,8 @@ func TestIndexesUsesOneQueryForEveryIndexColumn(t *testing.T) {
 				"data_compression_desc",
 				"data_space", "is_partition_scheme", "is_default_filegroup", "partition_column",
 				"no_recompute", "optimize_for_sequential_key", "bucket_count", "compression_delay",
-				"is_primary_xml", "primary_xml_index", "secondary_type_desc", "tessellation_scheme",
+				"is_primary_xml", "primary_xml_index", "secondary_type_desc", "is_selective_xml", "selective_xml_path",
+				"tessellation_scheme",
 				"xmin", "ymin", "xmax", "ymax", "level_1", "level_2", "level_3", "level_4", "cells_per_object"},
 			rows: [][]driver.Value{
 				withNoXMLOrSpatial("PK_T", int64(1), "CLUSTERED", true, true, false, false, int64(0), "", false, false, true, true, `[{"n":1,"c":"NONE"}]`, "PRIMARY", false, true, "", false, false, int64(0), int64(0)),
@@ -124,6 +125,9 @@ func TestIndexesUsesOneQueryForEveryIndexColumn(t *testing.T) {
 	}
 	if n := captured.count("sys.indexes i"); n != 1 {
 		t.Errorf("sys.indexes queried %d times, want 1", n)
+	}
+	if n := captured.count("FROM   sys.selective_xml_index"); n != 0 {
+		t.Errorf("selective XML paths/namespaces queried %d times with no selective index, want 0", n)
 	}
 
 	if len(indexes) != 3 {
@@ -210,7 +214,8 @@ func TestIndexListReadsEachIndexDataSpace(t *testing.T) {
 				"data_compression_desc",
 				"data_space", "is_partition_scheme", "is_default_filegroup", "partition_column",
 				"no_recompute", "optimize_for_sequential_key", "bucket_count", "compression_delay",
-				"is_primary_xml", "primary_xml_index", "secondary_type_desc", "tessellation_scheme",
+				"is_primary_xml", "primary_xml_index", "secondary_type_desc", "is_selective_xml", "selective_xml_path",
+				"tessellation_scheme",
 				"xmin", "ymin", "xmax", "ymax", "level_1", "level_2", "level_3", "level_4", "cells_per_object"},
 			rows: [][]driver.Value{
 				withNoXMLOrSpatial("PK_T", int64(1), "CLUSTERED", true, true, false, false, int64(0), "", false, false, true, true, `[{"n":1,"c":"NONE"}]`, "ps_year", true, false, "Created", false, false, int64(0), int64(0)),
@@ -298,7 +303,8 @@ func TestIndexListReadsXMLAndSpatialForms(t *testing.T) {
 		"data_compression_desc",
 		"data_space", "is_partition_scheme", "is_default_filegroup", "partition_column",
 		"no_recompute", "optimize_for_sequential_key", "bucket_count", "compression_delay",
-		"is_primary_xml", "primary_xml_index", "secondary_type_desc", "tessellation_scheme",
+		"is_primary_xml", "primary_xml_index", "secondary_type_desc", "is_selective_xml", "selective_xml_path",
+		"tessellation_scheme",
 		"xmin", "ymin", "xmax", "ymax", "level_1", "level_2", "level_3", "level_4", "cells_per_object"}
 	head := func(name string, id int64, typ string) []driver.Value {
 		return []driver.Value{name, id, typ, false, false, false, false, int64(0), "", false, false, true, true,
@@ -309,11 +315,11 @@ func TestIndexListReadsXMLAndSpatialForms(t *testing.T) {
 			match: "FROM   sys.indexes i",
 			cols:  cols,
 			rows: [][]driver.Value{
-				append(head("PX", 256000, "XML"), true, "", "", "", nil, nil, nil, nil, "", "", "", "", int64(0)),
-				append(head("SX", 256001, "XML"), false, "PX", "VALUE", "", nil, nil, nil, nil, "", "", "", "", int64(0)),
-				append(head("SP_G", 384000, "SPATIAL"), false, "", "", "GEOMETRY_GRID",
+				append(head("PX", 256000, "XML"), true, "", "", false, "", "", nil, nil, nil, nil, "", "", "", "", int64(0)),
+				append(head("SX", 256001, "XML"), false, "PX", "VALUE", false, "", "", nil, nil, nil, nil, "", "", "", "", int64(0)),
+				append(head("SP_G", 384000, "SPATIAL"), false, "", "", false, "", "GEOMETRY_GRID",
 					float64(-1.5), float64(0), float64(500), float64(200), "LOW", "MEDIUM", "HIGH", "LOW", int64(64)),
-				append(head("SP_Gg", 384001, "SPATIAL"), false, "", "", "GEOGRAPHY_AUTO_GRID",
+				append(head("SP_Gg", 384001, "SPATIAL"), false, "", "", false, "", "GEOGRAPHY_AUTO_GRID",
 					nil, nil, nil, nil, "", "", "", "", int64(12)),
 			},
 		},
@@ -347,8 +353,134 @@ func TestIndexListReadsXMLAndSpatialForms(t *testing.T) {
 	}
 }
 
+// TestIndexListReadsSelectiveXML: a selective XML index is read with its
+// paths and namespaces — fetched once for the table, and landing on the
+// index whose id they carry — and a secondary selective one with the
+// selective index and path it is built over. Before, both read as an XML
+// index of neither form and ScriptTable left a comment in their place.
+func TestIndexListReadsSelectiveXML(t *testing.T) {
+	tbl := captureTable(t)
+	cols := []string{"name", "index_id", "type_desc", "is_unique", "is_primary_key",
+		"is_unique_constraint", "is_disabled", "fill_factor", "filter_definition",
+		"is_padded", "ignore_dup_key", "allow_row_locks", "allow_page_locks",
+		"data_compression_desc",
+		"data_space", "is_partition_scheme", "is_default_filegroup", "partition_column",
+		"no_recompute", "optimize_for_sequential_key", "bucket_count", "compression_delay",
+		"is_primary_xml", "primary_xml_index", "secondary_type_desc", "is_selective_xml", "selective_xml_path",
+		"tessellation_scheme",
+		"xmin", "ymin", "xmax", "ymax", "level_1", "level_2", "level_3", "level_4", "cells_per_object"}
+	head := func(name string, id int64) []driver.Value {
+		return []driver.Value{name, id, "XML", false, false, false, false, int64(0), "", false, false, true, true,
+			nil, "", false, false, "", false, false, int64(0), int64(0)}
+	}
+	spatial := []driver.Value{"", nil, nil, nil, nil, "", "", "", "", int64(0)}
+	captured.reset(
+		cannedRow{
+			match: "FROM   sys.indexes i",
+			cols:  cols,
+			rows: [][]driver.Value{
+				append(append(head("SXI", 256000), false, "", "", true, ""), spatial...),
+				append(append(head("SXI_n", 256001), false, "SXI", "", false, "n"), spatial...),
+			},
+		},
+		cannedRow{
+			match: "FROM   sys.index_columns ic",
+			cols:  []string{"index_id", "name", "is_descending_key", "is_included_column", "column_store_order_ordinal"},
+		},
+		cannedRow{
+			match: "FROM   sys.selective_xml_index_paths p",
+			cols: []string{"index_id", "name", "path", "is_sql", "type", "max_length", "precision", "scale",
+				"xquery_type", "xquery_max_length", "is_node", "is_singleton"},
+			rows: [][]driver.Value{
+				{int64(256000), "item", "/a:item", false, "", int64(0), int64(0), int64(0), "", int64(0), true, false},
+				{int64(256000), "n", "/a:n", true, "nvarchar", int64(60), int64(0), int64(0), "", int64(0), false, true},
+				{int64(256000), "d", "/a:d", true, "decimal", int64(9), int64(10), int64(3), "", int64(0), false, false},
+				{int64(256000), "id", "/a:item/@id", false, "", int64(0), int64(0), int64(0), "xs:string", int64(20), false, true},
+			},
+		},
+		cannedRow{
+			match: "FROM   sys.selective_xml_index_namespaces n",
+			cols:  []string{"index_id", "prefix", "uri"},
+			rows: [][]driver.Value{
+				{int64(256000), "", "urn:d"},
+				{int64(256000), "a", "urn:a"},
+			},
+		},
+	)
+	indexes, err := tbl.Indexes(context.Background())
+	if err != nil {
+		t.Fatalf("Indexes: %v", err)
+	}
+	if len(indexes) != 2 {
+		t.Fatalf("got %d indexes, want 2", len(indexes))
+	}
+	sxi, sec := indexes[0], indexes[1]
+	if !sxi.IsSelectiveXML || sxi.PrimaryXMLIndex != "" || sxi.SelectiveXMLPath != "" {
+		t.Errorf("selective index read as %v/%q/%q", sxi.IsSelectiveXML, sxi.PrimaryXMLIndex, sxi.SelectiveXMLPath)
+	}
+	wantPaths := []SelectiveXMLPath{
+		{Name: "item", Path: "/a:item", IsNode: true},
+		{Name: "n", Path: "/a:n", IsSQL: true, SQLType: "nvarchar(30)", IsSingleton: true},
+		{Name: "d", Path: "/a:d", IsSQL: true, SQLType: "decimal(10,3)"},
+		{Name: "id", Path: "/a:item/@id", XQueryType: "xs:string", MaxLength: 20, IsSingleton: true},
+	}
+	if !slices.Equal(sxi.SelectiveXMLPaths, wantPaths) {
+		t.Errorf("paths = %+v\nwant %+v", sxi.SelectiveXMLPaths, wantPaths)
+	}
+	wantNS := []XMLNamespace{{URI: "urn:d"}, {Prefix: "a", URI: "urn:a"}}
+	if !slices.Equal(sxi.SelectiveXMLNamespaces, wantNS) {
+		t.Errorf("namespaces = %+v, want %+v", sxi.SelectiveXMLNamespaces, wantNS)
+	}
+	if sec.IsSelectiveXML || sec.PrimaryXMLIndex != "SXI" || sec.SelectiveXMLPath != "n" ||
+		sec.SecondaryXMLType != "" || sec.SelectiveXMLPaths != nil {
+		t.Errorf("secondary selective index read as %+v", sec)
+	}
+	for _, q := range []string{"FROM   sys.selective_xml_index_paths p", "FROM   sys.selective_xml_index_namespaces n"} {
+		if n := captured.count(q); n != 1 {
+			t.Errorf("%q queried %d times, want 1", q, n)
+		}
+	}
+}
+
 // withNoXMLOrSpatial completes a canned index-list row with the trailing XML
 // and spatial columns every other index type reads as zero.
 func withNoXMLOrSpatial(vals ...driver.Value) []driver.Value {
-	return append(vals, false, "", "", "", nil, nil, nil, nil, "", "", "", "", int64(0))
+	return append(vals, false, "", "", false, "", "", nil, nil, nil, nil, "", "", "", "", int64(0))
+}
+
+// TestXMLIndexesTellsSelectiveFromPrimary: a selective XML index and its
+// secondary have no secondary_type_desc, and IsPrimary once derived from
+// that alone read both as primary XML indexes — so a New Index dialog
+// offered them as the parent of a PATH/VALUE/PROPERTY index, which the
+// server refuses. IsPrimary now comes from xml_index_type.
+func TestXMLIndexesTellsSelectiveFromPrimary(t *testing.T) {
+	tbl := captureTable(t)
+	captured.reset(cannedRow{
+		match: "FROM   sys.xml_indexes xi",
+		cols:  []string{"name", "index_id", "secondary_type_desc", "column", "primary", "is_primary", "is_selective"},
+		rows: [][]driver.Value{
+			{"PX", int64(256000), "", "x", "", true, false},
+			{"SX", int64(256001), "PATH", "x", "PX", false, false},
+			{"SXI", int64(256002), "", "y", "", false, true},
+			{"SXI_n", int64(256003), "", "y", "SXI", false, true},
+		},
+	})
+	got, err := tbl.XMLIndexes(context.Background())
+	if err != nil {
+		t.Fatalf("XMLIndexes: %v", err)
+	}
+	want := []XMLIndex{
+		{Name: "PX", IndexID: 256000, IsPrimary: true, ColumnName: "x"},
+		{Name: "SX", IndexID: 256001, SecondaryType: XMLSecondaryPath, ColumnName: "x", PrimaryIndexName: "PX"},
+		{Name: "SXI", IndexID: 256002, IsSelective: true, ColumnName: "y"},
+		{Name: "SXI_n", IndexID: 256003, IsSelective: true, ColumnName: "y", PrimaryIndexName: "SXI"},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("got %d XML indexes, want %d", len(got), len(want))
+	}
+	for i := range want {
+		if *got[i] != want[i] {
+			t.Errorf("XML index %d = %+v, want %+v", i, *got[i], want[i])
+		}
+	}
 }

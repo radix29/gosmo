@@ -3,6 +3,7 @@ package gosmo
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -210,6 +211,96 @@ func TestExternalResourcePoolStatementShapes(t *testing.T) {
 		return e.Alter(ctx, ExternalResourcePoolOptions{MaxProcesses: Ptr(0)})
 	}), "ALTER EXTERNAL RESOURCE POOL [e] WITH (MAX_PROCESSES = 0)")
 	wantOne(t, rgStatements(t, e.Drop), "DROP EXTERNAL RESOURCE POOL [e]")
+}
+
+func TestPoolAffinityStatementShapes(t *testing.T) {
+	s := &Server{}
+	cases := []struct {
+		name  string
+		write func(ctx context.Context) error
+		want  string
+	}{
+		{"create with schedulers", func(ctx context.Context) error {
+			_, err := s.CreateResourcePool(ctx, CreateResourcePoolRequest{Name: "p", Options: ResourcePoolOptions{
+				MaxCPUPercent: Ptr(50), Affinity: &PoolAffinity{Schedulers: []int{6, 0, 2, 1, 3, 2}}}})
+			return err
+		}, "CREATE RESOURCE POOL [p] WITH (MAX_CPU_PERCENT = 50, AFFINITY SCHEDULER = (0 TO 3, 6))"},
+		{"alter to NUMA nodes", func(ctx context.Context) error {
+			return s.ResourcePoolRef("p").Alter(ctx, ResourcePoolOptions{Affinity: &PoolAffinity{NUMANodes: []int{1, 0}}})
+		}, "ALTER RESOURCE POOL [p] WITH (AFFINITY NUMANODE = (0 TO 1))"},
+		// The zero value is AUTO, sent: it is how a pinned pool is released.
+		{"alter to auto", func(ctx context.Context) error {
+			return s.ResourcePoolRef("p").Alter(ctx, ResourcePoolOptions{Affinity: &PoolAffinity{}})
+		}, "ALTER RESOURCE POOL [p] WITH (AFFINITY SCHEDULER = AUTO)"},
+		{"external create with CPUs", func(ctx context.Context) error {
+			_, err := s.CreateExternalResourcePool(ctx, CreateExternalResourcePoolRequest{Name: "e",
+				Options: ExternalResourcePoolOptions{Affinity: &PoolAffinity{Schedulers: []int{1}}}})
+			return err
+		}, "CREATE EXTERNAL RESOURCE POOL [e] WITH (AFFINITY CPU = (1))"},
+		{"external alter to NUMA nodes", func(ctx context.Context) error {
+			return s.ExternalResourcePoolRef("e").Alter(ctx, ExternalResourcePoolOptions{Affinity: &PoolAffinity{NUMANodes: []int{0}}})
+		}, "ALTER EXTERNAL RESOURCE POOL [e] WITH (AFFINITY NUMANODE = (0))"},
+		{"external alter to auto", func(ctx context.Context) error {
+			return s.ExternalResourcePoolRef("e").Alter(ctx, ExternalResourcePoolOptions{Affinity: &PoolAffinity{}})
+		}, "ALTER EXTERNAL RESOURCE POOL [e] WITH (AFFINITY CPU = AUTO)"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) { wantOne(t, rgStatements(t, c.write), c.want) })
+	}
+}
+
+func TestPoolAffinityRefusals(t *testing.T) {
+	s := &Server{}
+	for name, a := range map[string]*PoolAffinity{
+		"both forms":  {Schedulers: []int{0}, NUMANodes: []int{0}},
+		"negative id": {Schedulers: []int{-1}},
+	} {
+		ctx, col := WithScript(context.Background())
+		_, cerr := s.CreateResourcePool(ctx, CreateResourcePoolRequest{Name: "p", Options: ResourcePoolOptions{Affinity: a}})
+		aerr := s.ResourcePoolRef("p").Alter(ctx, ResourcePoolOptions{Affinity: a})
+		_, xerr := s.CreateExternalResourcePool(ctx, CreateExternalResourcePoolRequest{Name: "e", Options: ExternalResourcePoolOptions{Affinity: a}})
+		xaerr := s.ExternalResourcePoolRef("e").Alter(ctx, ExternalResourcePoolOptions{Affinity: a})
+		for _, err := range []error{cerr, aerr, xerr, xaerr} {
+			if err == nil {
+				t.Errorf("%s: accepted", name)
+			}
+		}
+		if len(col.Statements()) != 0 {
+			t.Errorf("%s: statements built anyway: %v", name, col.Statements())
+		}
+	}
+}
+
+// The catalog stores a mask, not the ids sent, so a scripted or real Alter
+// leaves Affinity for a re-read.
+func TestPoolAffinityIsNotMirrored(t *testing.T) {
+	p := &ResourcePool{server: &Server{}, Name: "p", Affinity: []ResourcePoolAffinity{{0, 1}}}
+	rgStatements(t, func(ctx context.Context) error {
+		return p.Alter(ctx, ResourcePoolOptions{Affinity: &PoolAffinity{}})
+	})
+	if len(p.Affinity) != 1 {
+		t.Errorf("Alter changed Affinity to %v", p.Affinity)
+	}
+}
+
+func TestIDRanges(t *testing.T) {
+	for in, want := range map[string]string{
+		"":          "",
+		"5":         "5",
+		"3 1 2":     "1 TO 3",
+		"0 2 4 5 9": "0, 2, 4 TO 5, 9",
+		"7 7 6":     "6 TO 7",
+	} {
+		var ids []int
+		for _, f := range strings.Fields(in) {
+			var n int
+			fmt.Sscan(f, &n)
+			ids = append(ids, n)
+		}
+		if got := idRanges(ids); got != want {
+			t.Errorf("idRanges(%v) = %q, want %q", ids, got, want)
+		}
+	}
 }
 
 // -- Scripter ---------------------------------------------------------------------

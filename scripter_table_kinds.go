@@ -311,6 +311,7 @@ func scriptEdgeConstraint(ec *EdgeConstraint, tableName string, opts ScriptOptio
 func buildFileTableScript(schema, name, dbName string, p tableScriptParts, opts ScriptOptions) string {
 	fullName := qualifiedName(schema, name)
 	var drop strings.Builder
+	drop.WriteString(schemaBoundNote(fullName, p.boundBy))
 	if opts.IncludeIfNotExists {
 		fmt.Fprintf(&drop, "IF OBJECT_ID(N'%s', N'U') IS NOT NULL\n    ", escapeSingle(fullName))
 	}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math/bits"
+	"slices"
 	"strings"
 )
 
@@ -82,7 +83,7 @@ func buildResourceGovernorScript(rg *ResourceGovernor, opts ScriptOptions) (stri
 // affinityList renders group-0 masks as a DDL id list — "0 TO 3, 6" — or
 // refuses one reaching past processor group 0 (see the file comment).
 func affinityList(what string, groups []int, masks []int64) (string, error) {
-	var ids []string
+	var ids []int
 	for i, g := range groups {
 		if masks[i] == 0 {
 			continue
@@ -90,24 +91,31 @@ func affinityList(what string, groups []int, masks []int64) (string, error) {
 		if g != 0 {
 			return "", unsupportedf("gosmo: script %s: affinity in processor group %d cannot be mapped to scheduler ids from the catalog", what, g)
 		}
-		m := uint64(masks[i])
-		for m != 0 {
-			lo := bits.TrailingZeros64(m)
-			hi := lo
-			for hi+1 < 64 && m&(1<<(hi+1)) != 0 {
-				hi++
-			}
-			if hi == lo {
-				ids = append(ids, fmt.Sprint(lo))
-			} else {
-				ids = append(ids, fmt.Sprintf("%d TO %d", lo, hi))
-			}
-			for b := lo; b <= hi; b++ {
-				m &^= 1 << b
-			}
+		for m := uint64(masks[i]); m != 0; m &= m - 1 {
+			ids = append(ids, bits.TrailingZeros64(m))
 		}
 	}
-	return strings.Join(ids, ", "), nil
+	return idRanges(ids), nil
+}
+
+// idRanges renders ids as a DDL range list — "0 TO 3, 6" — sorted, each id
+// once.
+func idRanges(ids []int) string {
+	ids = slices.Compact(slices.Sorted(slices.Values(ids)))
+	var parts []string
+	for i := 0; i < len(ids); {
+		j := i
+		for j+1 < len(ids) && ids[j+1] == ids[j]+1 {
+			j++
+		}
+		if j == i {
+			parts = append(parts, fmt.Sprint(ids[i]))
+		} else {
+			parts = append(parts, fmt.Sprintf("%d TO %d", ids[i], ids[j]))
+		}
+		i = j + 1
+	}
+	return strings.Join(parts, ", ")
 }
 
 // systemRGScript is the CREATE half for a built-in object: an ALTER of what
@@ -162,7 +170,7 @@ func (p *ResourcePool) nonDefaultOptions() ResourcePoolOptions {
 }
 
 func buildResourcePoolScript(p *ResourcePool, opts ScriptOptions) (string, error) {
-	w := p.nonDefaultOptions().render()
+	w, _ := p.nonDefaultOptions().render() // no Affinity set: cannot fail
 	groups, masks := make([]int, len(p.Affinity)), make([]int64, len(p.Affinity))
 	for i, a := range p.Affinity {
 		groups[i], masks[i] = a.ProcessorGroup, a.SchedulerMask
@@ -296,7 +304,7 @@ func (p *ExternalResourcePool) nonDefaultOptions() ExternalResourcePoolOptions {
 }
 
 func buildExternalResourcePoolScript(p *ExternalResourcePool, opts ScriptOptions) (string, error) {
-	w := p.nonDefaultOptions().render()
+	w, _ := p.nonDefaultOptions().render() // no Affinity set: cannot fail
 	groups, masks := make([]int, len(p.Affinity)), make([]int64, len(p.Affinity))
 	for i, a := range p.Affinity {
 		groups[i], masks[i] = a.ProcessorGroup, a.CPUMask

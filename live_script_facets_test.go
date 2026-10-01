@@ -4,7 +4,8 @@
 // once dropped without a word (review W1): a typed xml column's schema
 // collection, a vector column's dimensions (whose loss made the script fail
 // outright, Msg 2715), an ordered columnstore index's ORDER, a finite
-// temporal HISTORY_RETENTION_PERIOD and a non-default LOCK_ESCALATION.
+// temporal HISTORY_RETENTION_PERIOD and a non-default LOCK_ESCALATION — and
+// the selective XML indexes it once left as a comment.
 //
 // As in live_script_fidelity_test.go, the assertion is on the catalog after a
 // replay into a second database, never on the script's text. Each shape is
@@ -49,6 +50,28 @@ func TestLiveScriptFacets(t *testing.T) {
 		`CREATE TABLE dbo.Xmls (id int NOT NULL PRIMARY KEY, d xml(DOCUMENT dbo.XC) NULL, c xml(CONTENT dbo.XC) NULL, u xml NULL)`,
 		`ALTER TABLE dbo.Xmls SET (LOCK_ESCALATION = DISABLE)`,
 	)
+	// Selective XML indexes (2012 SP1), on an untyped column with every path
+	// form and a secondary index, and on a typed one, whose paths' XSD types
+	// are inferred from the collection and must not be scripted (Msg 6368).
+	tables = append(tables, "SelXml", "SelXmlTyped")
+	liveExecIn(t, src, ctx,
+		`CREATE TABLE dbo.SelXml (id int NOT NULL PRIMARY KEY, x xml NULL)`,
+		`CREATE SELECTIVE XML INDEX sxi ON dbo.SelXml (x)
+		 WITH XMLNAMESPACES (DEFAULT 'urn:d', N'urn:ä''q' AS a)
+		 FOR (
+		   item = '/a:root/a:item' AS XQUERY 'node()',
+		   id   = '/a:root/a:item/@id' AS XQUERY 'xs:string' MAXLENGTH(20) SINGLETON,
+		   s    = '/a:root/a:s' AS XQUERY 'xs:string',
+		   d    = '/a:root/a:d' AS XQUERY 'xs:double',
+		   n    = '/a:root/n' AS SQL nvarchar(30) SINGLETON,
+		   m    = '/a:root/m' AS SQL nvarchar(max),
+		   dec  = '/a:root/a:dec' AS SQL decimal(10, 3),
+		   [ü p] = N'/root/ü'
+		 ) WITH (PAD_INDEX = ON, FILLFACTOR = 80, ALLOW_ROW_LOCKS = OFF)`,
+		`CREATE XML INDEX sxi_n ON dbo.SelXml (x) USING XML INDEX sxi FOR (n) WITH (FILLFACTOR = 70)`,
+		`CREATE TABLE dbo.SelXmlTyped (id int NOT NULL PRIMARY KEY, x xml(CONTENT dbo.XC) NULL)`,
+		`CREATE SELECTIVE XML INDEX sxi ON dbo.SelXmlTyped (x) FOR (a = '/a' AS XQUERY SINGLETON, an = '/a' AS XQUERY 'node()' SINGLETON)`,
+	)
 	if has(SQLServer2017) {
 		tables = append(tables, "Temporal")
 		liveExecIn(t, src, ctx,
@@ -76,6 +99,25 @@ func TestLiveScriptFacets(t *testing.T) {
 		)
 	}
 	t.Logf("major %d: %v", major, tables)
+
+	// Neither selective index is a primary XML index a PATH/VALUE/PROPERTY
+	// one could be built over.
+	selTable, err := src.TableByName(ctx, "dbo", "SelXml")
+	if err != nil {
+		t.Fatalf("TableByName(SelXml): %v", err)
+	}
+	xis, err := selTable.XMLIndexes(ctx)
+	if err != nil {
+		t.Fatalf("XMLIndexes: %v", err)
+	}
+	if len(xis) != 2 {
+		t.Fatalf("XMLIndexes(SelXml) = %d indexes, want 2", len(xis))
+	}
+	for _, x := range xis {
+		if x.IsPrimary || !x.IsSelective {
+			t.Errorf("XMLIndexes(SelXml): %s read as primary %v, selective %v", x.Name, x.IsPrimary, x.IsSelective)
+		}
+	}
 
 	opts := DefaultScriptOptions()
 	opts.IncludeHeaders = false
@@ -126,8 +168,42 @@ WHERE  ic.object_id = OBJECT_ID(@p1) AND i.type IN (5, 6)`
 				what, strings.Join(want, "\n  "), strings.Join(got, "\n  "))
 		}
 	}
+	xmlIndexes := `
+SELECT i.name, xi.xml_index_type, ISNULL(u.name, '') AS using_index, ISNULL(sp.name, '') AS path,
+       i.is_padded, i.fill_factor, i.allow_row_locks
+FROM   sys.xml_indexes xi
+JOIN   sys.indexes i ON i.object_id = xi.object_id AND i.index_id = xi.index_id
+LEFT   JOIN sys.xml_indexes u ON u.object_id = xi.object_id AND u.index_id = xi.using_xml_index_id
+LEFT   JOIN sys.selective_xml_index_paths sp ON sp.object_id = xi.object_id
+            AND sp.index_id = xi.using_xml_index_id AND sp.path_id = xi.path_id
+WHERE  xi.object_id = OBJECT_ID(@p1)
+ORDER  BY i.name`
+	selectivePaths := `
+SELECT i.name, p.path_id, p.name, p.path, p.path_type, ISNULL(p.xquery_type_description, '') AS xtype,
+       ISNULL(p.is_xquery_type_inferred, 0) AS inferred, ISNULL(p.xquery_max_length, 0) AS xmax,
+       ISNULL(p.is_xquery_max_length_inferred, 0) AS xmax_inferred, p.is_node,
+       ISNULL(TYPE_NAME(p.user_type_id), '') AS sqltype, ISNULL(p.max_length, 0) AS len,
+       ISNULL(p.precision, 0) AS prec, ISNULL(p.scale, 0) AS scale, p.is_singleton
+FROM   sys.selective_xml_index_paths p
+JOIN   sys.indexes i ON i.object_id = p.object_id AND i.index_id = p.index_id
+WHERE  p.object_id = OBJECT_ID(@p1)
+ORDER  BY i.name, p.path_id`
+	selectiveNamespaces := `
+SELECT i.name, n.is_default_uri, n.uri, ISNULL(n.prefix, '') AS prefix
+FROM   sys.selective_xml_index_namespaces n
+JOIN   sys.indexes i ON i.object_id = n.object_id AND i.index_id = n.index_id
+WHERE  n.object_id = OBJECT_ID(@p1)
+ORDER  BY i.name, n.is_default_uri DESC, n.prefix`
+
 	for _, tbl := range tables {
 		compare(tbl+" columns", columns, "dbo."+tbl)
+		if strings.HasPrefix(tbl, "SelXml") {
+			compare(tbl+" xml indexes", xmlIndexes, "dbo."+tbl)
+			compare(tbl+" selective paths", selectivePaths, "dbo."+tbl)
+		}
+		if tbl == "SelXml" {
+			compare(tbl+" selective namespaces", selectiveNamespaces, "dbo."+tbl)
+		}
 		compare(tbl+" table options", table, "dbo."+tbl)
 		if strings.HasPrefix(tbl, "Ordered") {
 			compare(tbl+" columnstore order", indexColumns, "dbo."+tbl)

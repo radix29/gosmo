@@ -113,3 +113,42 @@ func TestLockEscalationIsScripted(t *testing.T) {
 		t.Errorf("AUTO: %q", s)
 	}
 }
+
+// A float16 vector parses only with PREVIEW_FEATURES on in the database the
+// script runs in (Msg 195 otherwise); the script names the setting, before
+// the CREATE TABLE, and never changes it itself.
+func TestFloat16VectorScriptNamesPreviewFeatures(t *testing.T) {
+	const setting = "--   ALTER DATABASE SCOPED CONFIGURATION SET PREVIEW_FEATURES = ON;\n"
+	script := func(cols ...*Column) string {
+		opts := DefaultScriptOptions()
+		opts.Verb = ScriptDropAndCreate
+		return buildTableScript("dbo", "T", "db", tableScriptParts{cols: cols}, opts)
+	}
+
+	got := script(
+		&Column{Name: "id", DataType: DataTypeInt},
+		&Column{Name: "v", DataType: DataTypeVector, VectorDimensions: 3, VectorBaseType: "float32"},
+		&Column{Name: "h]1", DataType: DataTypeVector, VectorDimensions: 4, VectorBaseType: "float16"},
+		&Column{Name: "H2", DataType: DataTypeVector, VectorDimensions: 2, VectorBaseType: "FLOAT16"},
+	)
+	note := strings.Index(got, "-- [h]]1], [H2]: vector(n, float16) is a SQL Server 2025 preview feature.")
+	set := strings.Index(got, setting)
+	create := strings.Index(got, "CREATE TABLE")
+	if note < 0 || set < note || create < set || note < strings.Index(got, "DROP TABLE") {
+		t.Errorf("want the note naming [h]]1] and [H2], then the setting, between the DROP and the CREATE:\n%s", got)
+	}
+	if strings.Count(got, "PREVIEW_FEATURES") != 1 {
+		t.Errorf("want PREVIEW_FEATURES only in the comment:\n%s", got)
+	}
+
+	for _, cols := range [][]*Column{
+		{{Name: "v", DataType: DataTypeVector, VectorDimensions: 3}},
+		{{Name: "v", DataType: DataTypeVector, VectorDimensions: 3, VectorBaseType: "float32"}},
+		{{Name: "f", DataType: DataTypeVarChar, VectorBaseType: "float16"}},
+		{{Name: "h", DataType: DataTypeVector, VectorDimensions: 4, VectorBaseType: "float16", IsDroppedLedgerColumn: true}},
+	} {
+		if got := script(cols...); strings.Contains(got, "PREVIEW_FEATURES") {
+			t.Errorf("%+v: want no note:\n%s", *cols[0], got)
+		}
+	}
+}

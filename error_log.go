@@ -30,9 +30,9 @@ const (
 	// ErrorLogDatabaseMail is the Database Mail log (sysmail_event_log). It
 	// has one "file", number 0, and cannot be cycled — rows are purged with
 	// DeleteMailLog instead. An entry's Process is the event type
-	// ("error", "information" …) and its Text the event's description. The
-	// view shows a login that is not sysadmin only the events of its own mail
-	// items (see Server.MailItems); DeleteMailLog purges the table.
+	// ("error", "information" …) and its Text the event's description. A
+	// DatabaseMailUserRole member sees only the events of its own mail items
+	// (see Server.MailVisibility); DeleteMailLog purges the table.
 	ErrorLogDatabaseMail ErrorLogType = 3
 )
 
@@ -310,7 +310,7 @@ func (s *Server) CycleErrorLog(ctx context.Context) error {
 // table's size is not a file size, so SizeBytes is 0.
 func (s *Server) enumMailLog(ctx context.Context) ([]*ErrorLogFile, error) {
 	var last sql.NullTime
-	if err := s.queryRowScan(ctx, "SELECT MAX(log_date) FROM msdb.dbo.sysmail_event_log", nil, &last); err != nil {
+	if err := s.queryRowScan(ctx, mailEventsQuery("SELECT MAX(log_date) FROM %s"), nil, &last); err != nil {
 		return nil, fmt.Errorf("gosmo: enumerate %s logs: %w", ErrorLogDatabaseMail, err)
 	}
 	f := &ErrorLogFile{Number: 0, LastWritten: last.Time}
@@ -347,9 +347,9 @@ func (s *Server) readMailLog(ctx context.Context, logNumber int, search LogSearc
 		args = append(args, search.To)
 		where = append(where, fmt.Sprintf("log_date <= CAST(@p%d AS datetime)", len(args)))
 	}
-	rows, err := s.query(ctx, `SELECT log_date, event_type, ISNULL(description, N'')
-FROM   msdb.dbo.sysmail_event_log`+whereClause(where)+`
-ORDER  BY log_id`, args...)
+	rows, err := s.query(ctx, mailEventsQuery(`SELECT log_date, event_type, ISNULL(description, N'')
+FROM   %s`+whereClause(where)+`
+ORDER  BY log_id`), args...)
 	return scanRows(rows, err, what, func(scan func(...any) error) (*ErrorLogEntry, error) {
 		e := &ErrorLogEntry{}
 		if err := scan(&e.Date, &e.Process, &e.Text); err != nil {

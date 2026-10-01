@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"unicode"
 )
 
 // ============================================================
@@ -33,6 +34,11 @@ func (sc *Scripter) ScriptTable(ctx context.Context, schema, name string) (strin
 	}
 	if p.cols, err = t.Columns(ctx); err != nil {
 		return "", err
+	}
+	if v := sc.opts.verb(); !p.table.IsExternal && (v == ScriptDrop || v == ScriptDropAndCreate) {
+		if p.boundBy, err = t.schemaBoundDependents(ctx); err != nil {
+			return "", err
+		}
 	}
 	if p.table.IsExternal {
 		// An external table has no indexes, constraints or data space of
@@ -75,6 +81,8 @@ type tableScriptParts struct {
 	ecs     []*EdgeConstraint
 	ds      DataSpace
 	table   tableScriptOptions
+	// boundBy is what blocks the DROP — read only for a script that has one.
+	boundBy []schemaBoundDependent
 }
 
 // tableScriptOptions is what a CREATE TABLE says about the table as a whole
@@ -268,6 +276,7 @@ func buildTableScript(schema, name, dbName string, p tableScriptParts, opts Scri
 	// switched off first. The history table is left in place, so a DROP
 	// And CREATE reattaches it by name and keeps the history.
 	var drop strings.Builder
+	drop.WriteString(schemaBoundNote(fullName, p.boundBy))
 	if p.table.SystemVersioned {
 		if opts.IncludeIfNotExists {
 			fmt.Fprintf(&drop, "IF OBJECT_ID(N'%s', N'U') IS NOT NULL\n    ",
@@ -287,6 +296,7 @@ func buildTableScript(schema, name, dbName string, p tableScriptParts, opts Scri
 		if opts.IncludeHeaders {
 			fmt.Fprintf(sb, "/* Table: %s  Database: %s */\n", fullName, dbName)
 		}
+		sb.WriteString(previewFeaturesNote(p.cols))
 		if opts.AnsiPadding {
 			sb.WriteString("SET ANSI_PADDING ON;\nGO\n\n")
 		}
@@ -379,6 +389,101 @@ func buildTableScript(schema, name, dbName string, p tableScriptParts, opts Scri
 
 		writeTableDependents(sb, indexes, inline, p, fullName, opts)
 	})
+}
+
+// previewFeaturesNote is a comment naming the PREVIEW_FEATURES database
+// scoped configuration when a column is vector(n, float16), "" otherwise.
+// SQL Server 2025 parses float16 only with that setting on in the current
+// database; off, the CREATE TABLE fails with Msg 195, "'float16' is not a
+// recognized vector base type". The script names the setting rather than
+// setting it: replaying a table script must not silently change a
+// database-wide configuration of its target.
+func previewFeaturesNote(cols []*Column) string {
+	var names []string
+	for _, col := range cols {
+		if col.GraphType != 0 || col.IsDroppedLedgerColumn {
+			continue
+		}
+		if col.DataType == DataTypeVector && strings.EqualFold(col.VectorBaseType, "float16") {
+			names = append(names, commentSafe(quoteIdent(col.Name)))
+		}
+	}
+	if len(names) == 0 {
+		return ""
+	}
+	return fmt.Sprintf("-- %s: vector(n, float16) is a SQL Server 2025 preview feature. This script\n"+
+		"-- fails with Msg 195 unless the target database enables it first:\n"+
+		"--   ALTER DATABASE SCOPED CONFIGURATION SET PREVIEW_FEATURES = ON;\n",
+		strings.Join(names, ", "))
+}
+
+// schemaBoundDependent is a module bound to a table WITH SCHEMABINDING —
+// every natively compiled module is — which DROP TABLE cannot get past.
+type schemaBoundDependent struct {
+	schema, name, typeDesc string
+	native                 bool
+}
+
+// schemaBoundDependents lists the modules schema-bound to t, other than its
+// own triggers (a natively compiled trigger is schema-bound to its table, and
+// DROP TABLE takes it along rather than refusing).
+func (t *Table) schemaBoundDependents(ctx context.Context) ([]schemaBoundDependent, error) {
+	const q = `
+SELECT DISTINCT SCHEMA_NAME(o.schema_id), o.name, o.type_desc,
+       CAST(ISNULL(m.uses_native_compilation, 0) AS bit)
+FROM   sys.sql_expression_dependencies sed
+JOIN   sys.objects o ON o.object_id = sed.referencing_id
+LEFT JOIN sys.sql_modules m ON m.object_id = o.object_id
+WHERE  sed.referenced_id = @p1 AND sed.is_schema_bound_reference = 1
+  AND  o.object_id <> @p1 AND o.parent_object_id <> @p1
+ORDER  BY 1, 2`
+	rows, err := t.db.query(ctx, q, t.ObjectID)
+	return scanRows(rows, err, fmt.Sprintf("schema-bound dependents of %s", t.FullName()), func(scan func(...any) error) (schemaBoundDependent, error) {
+		var d schemaBoundDependent
+		err := scan(&d.schema, &d.name, &d.typeDesc, &d.native)
+		return d, err
+	})
+}
+
+// schemaBoundNote is a comment ahead of a table's DROP naming the modules
+// schema-bound to it, "" when there are none. DROP TABLE fails on them with
+// Msg 3729 and leaves the table in place, so a DROP AND CREATE's guarded
+// CREATE is then skipped and the script changes nothing. A temporal table's
+// SET (SYSTEM_VERSIONING = OFF) is refused the same way, so it too stays as
+// it was (its DROP then fails with Msg 13552). The script names them rather
+// than dropping them: they are other objects, with their own permissions,
+// and SSMS's table script does not touch them either.
+func schemaBoundNote(fullName string, deps []schemaBoundDependent) string {
+	if len(deps) == 0 {
+		return ""
+	}
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "-- This DROP fails with Msg 3729 while these are schema-bound to %s:\n", commentSafe(fullName))
+	native := false
+	for _, d := range deps {
+		kind := d.typeDesc
+		if d.native {
+			kind += ", natively compiled"
+			native = true
+		}
+		fmt.Fprintf(&sb, "--   %s (%s)\n", commentSafe(qualifiedName(d.schema, d.name)), kind)
+	}
+	sb.WriteString("-- Drop them first, or ALTER them without SCHEMABINDING.\n")
+	if native {
+		sb.WriteString("-- A natively compiled module requires SCHEMABINDING: drop it and recreate it after.\n")
+	}
+	return sb.String()
+}
+
+// commentSafe makes s safe inside a -- comment: a line break in an
+// identifier would end the comment and run the rest of the name as T-SQL.
+func commentSafe(s string) string {
+	return strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) {
+			return ' '
+		}
+		return r
+	}, s)
 }
 
 // systemVersioningOption renders a temporal table's SYSTEM_VERSIONING entry
@@ -663,11 +768,6 @@ type catalogType struct {
 	vectorBaseType   string
 }
 
-// dataTypeVector is SQL Server 2025's vector type. It has no exported
-// DataType: CreateTable's ColumnDefinition has nowhere to put its
-// dimensions, so it is read and scripted but not yet creatable.
-const dataTypeVector DataType = "vector"
-
 // defaultVectorBaseType is the base type vector(n) means when none is given.
 const defaultVectorBaseType = "float32"
 
@@ -686,7 +786,7 @@ func (t catalogType) String() string {
 			facet = "DOCUMENT"
 		}
 		return fmt.Sprintf("%s(%s %s)", t.dt, facet, qualifiedName(t.xmlSchema, t.xmlCollection))
-	case t.dt == dataTypeVector && t.vectorDimensions > 0:
+	case t.dt == DataTypeVector && t.vectorDimensions > 0:
 		if t.vectorBaseType != "" && !strings.EqualFold(t.vectorBaseType, defaultVectorBaseType) {
 			return fmt.Sprintf("%s(%d, %s)", t.dt, t.vectorDimensions, t.vectorBaseType)
 		}
