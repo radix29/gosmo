@@ -39,6 +39,9 @@ func (sc *Scripter) ScriptTable(ctx context.Context, schema, name string) (strin
 		if p.boundBy, err = t.schemaBoundDependents(ctx); err != nil {
 			return "", err
 		}
+		if p.referencedBy, err = t.referencingForeignKeys(ctx); err != nil {
+			return "", err
+		}
 	}
 	if p.table.IsExternal {
 		// An external table has no indexes, constraints or data space of
@@ -81,8 +84,10 @@ type tableScriptParts struct {
 	ecs     []*EdgeConstraint
 	ds      DataSpace
 	table   tableScriptOptions
-	// boundBy is what blocks the DROP — read only for a script that has one.
-	boundBy []schemaBoundDependent
+	// boundBy and referencedBy are what block the DROP — read only for a
+	// script that has one.
+	boundBy      []schemaBoundDependent
+	referencedBy []referencingForeignKey
 }
 
 // tableScriptOptions is what a CREATE TABLE says about the table as a whole
@@ -277,6 +282,7 @@ func buildTableScript(schema, name, dbName string, p tableScriptParts, opts Scri
 	// And CREATE reattaches it by name and keeps the history.
 	var drop strings.Builder
 	drop.WriteString(schemaBoundNote(fullName, p.boundBy))
+	drop.WriteString(referencingForeignKeyNote(fullName, p.referencedBy, p.table.SystemVersioned))
 	if p.table.SystemVersioned {
 		if opts.IncludeIfNotExists {
 			fmt.Fprintf(&drop, "IF OBJECT_ID(N'%s', N'U') IS NOT NULL\n    ",
@@ -294,7 +300,7 @@ func buildTableScript(schema, name, dbName string, p tableScriptParts, opts Scri
 	// written below rather than passed as the envelope's.
 	return opts.envelope(drop.String(), "", func(sb *strings.Builder) {
 		if opts.IncludeHeaders {
-			fmt.Fprintf(sb, "/* Table: %s  Database: %s */\n", fullName, dbName)
+			fmt.Fprintf(sb, "/* Table: %s  Database: %s */\n", blockCommentSafe(fullName), blockCommentSafe(dbName))
 		}
 		sb.WriteString(previewFeaturesNote(p.cols))
 		if opts.AnsiPadding {
@@ -475,8 +481,56 @@ func schemaBoundNote(fullName string, deps []schemaBoundDependent) string {
 	return sb.String()
 }
 
+// referencingForeignKey is a foreign key on another table that references
+// this one, which DROP TABLE cannot get past.
+type referencingForeignKey struct {
+	schema, table, name string
+}
+
+// referencingForeignKeys lists the foreign keys on other tables that
+// reference t. A self-reference is left out: DROP TABLE takes it along.
+func (t *Table) referencingForeignKeys(ctx context.Context) ([]referencingForeignKey, error) {
+	const q = `
+SELECT SCHEMA_NAME(p.schema_id), p.name, fk.name
+FROM   sys.foreign_keys fk
+JOIN   sys.objects p ON p.object_id = fk.parent_object_id
+WHERE  fk.referenced_object_id = @p1 AND fk.parent_object_id <> @p1
+ORDER  BY 1, 2, 3`
+	rows, err := t.db.query(ctx, q, t.ObjectID)
+	return scanRows(rows, err, fmt.Sprintf("foreign keys referencing %s", t.FullName()), func(scan func(...any) error) (referencingForeignKey, error) {
+		var fk referencingForeignKey
+		err := scan(&fk.schema, &fk.table, &fk.name)
+		return fk, err
+	})
+}
+
+// referencingForeignKeyNote is a comment ahead of a table's DROP naming the
+// foreign keys on other tables that reference it, "" when there are none.
+// DROP TABLE fails on them with Msg 3726 and leaves the table in place, so
+// a DROP AND CREATE's CREATE then fails or is skipped and the script changes
+// nothing — except that a temporal table's SET (SYSTEM_VERSIONING = OFF),
+// which they do not block, has already run and stays run. The script names
+// them rather than dropping them, as SSMS's table script does not either:
+// they belong to other tables.
+func referencingForeignKeyNote(fullName string, fks []referencingForeignKey, versioned bool) string {
+	if len(fks) == 0 {
+		return ""
+	}
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "-- This DROP fails with Msg 3726 while these foreign keys reference %s:\n", commentSafe(fullName))
+	for _, fk := range fks {
+		fmt.Fprintf(&sb, "--   %s.%s (FOREIGN KEY)\n", commentSafe(qualifiedName(fk.schema, fk.table)), commentSafe(quoteIdent(fk.name)))
+	}
+	sb.WriteString("-- Drop them first, and recreate them after.\n")
+	if versioned {
+		sb.WriteString("-- They do not block SET (SYSTEM_VERSIONING = OFF): it runs, and stays off.\n")
+	}
+	return sb.String()
+}
+
 // commentSafe makes s safe inside a -- comment: a line break in an
 // identifier would end the comment and run the rest of the name as T-SQL.
+// Use blockCommentSafe inside /* */.
 func commentSafe(s string) string {
 	return strings.Map(func(r rune) rune {
 		if unicode.IsControl(r) {
@@ -484,6 +538,28 @@ func commentSafe(s string) string {
 		}
 		return r
 	}, s)
+}
+
+// blockCommentSafe makes s safe inside a /* */ comment: a "*/" in an
+// identifier would close the comment early and run the rest as T-SQL, and a
+// "/*" would open a nested one — T-SQL block comments nest — that swallows
+// the closing "*/" and everything after it. A space goes between the two
+// runes of either pair, checked against what was already written so that
+// "*/*" cannot leave a "/*" behind.
+func blockCommentSafe(s string) string {
+	if !strings.Contains(s, "*/") && !strings.Contains(s, "/*") {
+		return s
+	}
+	var sb strings.Builder
+	var prev rune
+	for _, r := range s {
+		if (prev == '*' && r == '/') || (prev == '/' && r == '*') {
+			sb.WriteByte(' ')
+		}
+		sb.WriteRune(r)
+		prev = r
+	}
+	return sb.String()
 }
 
 // systemVersioningOption renders a temporal table's SYSTEM_VERSIONING entry

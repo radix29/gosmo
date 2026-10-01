@@ -306,12 +306,16 @@ func scriptEdgeConstraint(ec *EdgeConstraint, tableName string, opts ScriptOptio
 // key sys.filetable_system_defined_objects lists. The primary key and
 // unique constraints take their names from the WITH clause, so a DROP AND
 // CREATE keeps them; the rest are left to AS FILETABLE, whose names are
-// generated. Only what was added to the table afterwards is scripted after
-// it.
+// generated. Those cannot be carried over, and no user can have chosen them:
+// the WITH clause has no option for them, and sp_rename or DROP CONSTRAINT
+// on any of them fails with Msg 3865 ("a FileTable system defined object"),
+// namespace enabled or not — checked on SQL Server 2025, 2026-10-02. Only
+// what was added to the table afterwards is scripted after it.
 func buildFileTableScript(schema, name, dbName string, p tableScriptParts, opts ScriptOptions) string {
 	fullName := qualifiedName(schema, name)
 	var drop strings.Builder
 	drop.WriteString(schemaBoundNote(fullName, p.boundBy))
+	drop.WriteString(referencingForeignKeyNote(fullName, p.referencedBy, false))
 	if opts.IncludeIfNotExists {
 		fmt.Fprintf(&drop, "IF OBJECT_ID(N'%s', N'U') IS NOT NULL\n    ", escapeSingle(fullName))
 	}
@@ -356,7 +360,7 @@ func buildFileTableScript(schema, name, dbName string, p tableScriptParts, opts 
 
 	return opts.envelope(drop.String(), "", func(sb *strings.Builder) {
 		if opts.IncludeHeaders {
-			fmt.Fprintf(sb, "/* FileTable: %s  Database: %s */\n", fullName, dbName)
+			fmt.Fprintf(sb, "/* FileTable: %s  Database: %s */\n", blockCommentSafe(fullName), blockCommentSafe(dbName))
 		}
 		if opts.IncludeIfNotExists {
 			fmt.Fprintf(sb, "IF OBJECT_ID(N'%s', N'U') IS NULL\n", escapeSingle(fullName))
@@ -453,7 +457,7 @@ func buildExternalTableScript(schema, name, dbName string, p tableScriptParts, d
 
 	return opts.envelope(drop.String(), "", func(sb *strings.Builder) {
 		if opts.IncludeHeaders {
-			fmt.Fprintf(sb, "/* External table: %s  Database: %s */\n", fullName, dbName)
+			fmt.Fprintf(sb, "/* External table: %s  Database: %s */\n", blockCommentSafe(fullName), blockCommentSafe(dbName))
 		}
 		for _, d := range deps {
 			sb.WriteString(d)

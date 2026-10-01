@@ -9,6 +9,9 @@ func TestCatalogObjectType(t *testing.T) {
 	}{
 		{"V", CatalogView},
 		{"U", CatalogTable},
+		{"IF", CatalogFunction},
+		{"TF", CatalogFunction},
+		{"FT", CatalogFunction},
 	}
 	for _, c := range cases {
 		t.Run(c.typeCode, func(t *testing.T) {

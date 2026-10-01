@@ -328,6 +328,11 @@ var sweepMustCall = []string{
 	"Server.MailItems",
 	"Server.MailItemByID",
 	"Server.MailEvents",
+
+	// Table-valued function result shapes in the bulk catalog snapshots,
+	// asserted against the sweep's own inline function and a system DMF.
+	"Database.Catalog",
+	"Database.SystemCatalog",
 }
 
 // checkCoverage fails on any sweepMustCall entry no label matched. It runs
@@ -687,6 +692,33 @@ func sweepServiceBroker(sw *sweep, d *Database) {
 // listings still run, which is what the version exposure is about; only the
 // by-name finders below go unexercised against a real row.
 func sweepProgrammability(sw *sweep, d *Database) {
+	sw.call("Database.Catalog", func() error {
+		cat, err := d.Catalog(sw.ctx)
+		if err != nil {
+			return err
+		}
+		for _, fn := range cat.Functions {
+			if fn.Schema == "app" && fn.Name == "sweep_pred" {
+				if len(fn.Columns) != 1 || fn.Columns[0].Name != "ok" {
+					return fmt.Errorf("app.sweep_pred columns = %+v, want [ok]", fn.Columns)
+				}
+				return nil
+			}
+		}
+		return fmt.Errorf("Catalog.Functions has no app.sweep_pred among %d", len(cat.Functions))
+	})
+	sw.call("Database.SystemCatalog", func() error {
+		cat, err := d.SystemCatalog(sw.ctx)
+		if err != nil {
+			return err
+		}
+		for _, fn := range cat.Functions {
+			if fn.Name == "dm_exec_sql_text" {
+				return nil
+			}
+		}
+		return fmt.Errorf("SystemCatalog.Functions has no sys.dm_exec_sql_text among %d", len(cat.Functions))
+	})
 	sw.call("Database.Parameters", func() error {
 		ps, err := d.Parameters(sw.ctx, "dbo", "usp_sweep")
 		if err == nil && len(ps) != 1 {

@@ -88,12 +88,13 @@ classDiagram
     }
 
     %% =========================================================
-    %% Catalog snapshot (bulk table/view + column inventory)
+    %% Catalog snapshot (bulk table/view/TVF + column inventory)
     %% =========================================================
 
     class Catalog {
         +Schemas []string
         +Objects []CatalogObject
+        +Functions []CatalogObject
     }
 
     class CatalogObject {

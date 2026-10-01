@@ -166,7 +166,7 @@ func (sc *Scripter) scriptDatabaseFrom(d *Database) (string, error) {
 		if d.server != nil && d.server.info != nil {
 			version = d.server.info.ProductVersion
 		}
-		fmt.Fprintf(&sb, "/* Database: %s  Version: %s */\n\n", d.Name, version)
+		fmt.Fprintf(&sb, "/* Database: %s  Version: %s */\n\n", blockCommentSafe(d.Name), blockCommentSafe(version))
 	}
 	if sc.opts.IncludeIfNotExists {
 		fmt.Fprintf(&sb, "IF DB_ID(N'%s') IS NULL\nBEGIN\n    ", escapeSingle(d.Name))

@@ -82,7 +82,7 @@ func scriptIndex(idx *Index, tableName string, opts ScriptOptions) string {
 		return sb.String()
 	case idx.Type == IndexTypeXML || idx.Type == IndexTypeSpatial:
 		fmt.Fprintf(&sb, "-- %s index %s on %s is not scripted (its DDL has no generic form here).\n\n",
-			idx.Type, quoteIdent(idx.Name), tableName)
+			idx.Type, commentSafe(quoteIdent(idx.Name)), commentSafe(tableName))
 		return sb.String()
 	}
 

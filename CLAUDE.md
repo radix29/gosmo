@@ -81,6 +81,11 @@ exercise the write, drop them; never mutate pre-existing objects.
   NULL — and a NULL `object_id` means "every object" to
   `sys.dm_db_index_physical_stats`. `identifier_quoting_test.go` pins it.
   Prefer a query parameter where the server accepts one.
+- **A name or stored value written into a script comment is wrapped**:
+  `commentSafe` inside `--` (a line break ends the comment), `blockCommentSafe`
+  inside `/* */` (`*/` closes it, `/*` nests and swallows the rest). Either
+  way the remainder runs as T-SQL. `comment_safe_test.go` lists every site;
+  a new one goes there too.
 - **Never query inside a `rows.Next()` loop.** `Database.query` pins its own
   pooled connection and `USE` (`Database.useBatch`), so per-row lookups hold
   the outer connection while acquiring more — pool exhaustion. Fetch children

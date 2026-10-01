@@ -9,8 +9,9 @@ import (
 
 // ============================================================
 // Catalog: a single bulk snapshot of every table/view and its columns,
-// for callers (like a SQL editor's autocomplete) that need to inventory a
-// whole database up front instead of querying one object at a time via
+// and of every table-valued function and its result columns, for callers
+// (like a SQL editor's autocomplete) that need to inventory a whole database
+// up front instead of querying one object at a time via
 // Table.Columns/Database.Tables/Database.Views.
 // ============================================================
 
@@ -20,6 +21,9 @@ type CatalogObjectType int
 const (
 	CatalogTable CatalogObjectType = iota
 	CatalogView
+	// CatalogFunction is a table-valued function — inline (IF), multi-
+	// statement (TF) or CLR (FT). Only Catalog.Functions holds these.
+	CatalogFunction
 )
 
 // CatalogColumn is one column of a CatalogObject — the subset of Column's
@@ -35,7 +39,9 @@ type CatalogColumn struct {
 	IsNullable bool
 }
 
-// CatalogObject is one table or view and its columns, in ordinal order.
+// CatalogObject is one table, view or table-valued function and its columns,
+// in ordinal order. A function's columns are its result shape, which
+// sys.columns records for all three table-valued kinds.
 type CatalogObject struct {
 	ObjectID int
 	Schema   string
@@ -46,20 +52,29 @@ type CatalogObject struct {
 
 // Catalog is a bulk snapshot of every user table and view in a database,
 // each with its columns already loaded — see Database.Catalog.
+//
+// Functions is kept apart from Objects because a table-valued function is
+// not interchangeable with a table: it is only usable called, with its
+// argument list. Schemas names the schemas Objects spans, not Functions'.
 type Catalog struct {
-	Schemas []string
-	Objects []CatalogObject
+	Schemas   []string
+	Objects   []CatalogObject
+	Functions []CatalogObject
 }
 
 // Catalog returns a bulk snapshot of every user table and view in the
-// database, each with its columns, sorted by schema then name.
+// database, and every user table-valued function, each with its columns,
+// sorted by schema then name.
 func (d *Database) Catalog(ctx context.Context) (*Catalog, error) {
-	return d.catalog(ctx, "sys.objects", "sys.columns", "o.type IN ('U','V') AND o.is_ms_shipped = 0")
+	return d.catalog(ctx, "sys.objects", "sys.columns",
+		"o.type IN ('U','V') AND o.is_ms_shipped = 0",
+		"o.type IN ('IF','TF','FT') AND o.is_ms_shipped = 0")
 }
 
 // SystemCatalog returns a bulk snapshot of every catalog view in the "sys"
-// schema (sys.tables, sys.columns, sys.objects, ...) — see
-// SystemCatalog.
+// schema (sys.tables, sys.columns, sys.objects, ...), and of every
+// table-valued function there that records its result columns
+// (sys.dm_exec_sql_text, sys.dm_db_index_physical_stats, ...).
 //
 // The "sys" schema's catalog views are defined identically in every database
 // on a server, so a caller only needs to load this once per connection — any
@@ -72,14 +87,17 @@ func (d *Database) Catalog(ctx context.Context) (*Catalog, error) {
 // and every other built-in catalog view only show up through the "all_"
 // variants.
 func (d *Database) SystemCatalog(ctx context.Context) (*Catalog, error) {
-	return d.catalog(ctx, "sys.all_objects", "sys.all_columns", "o.type = 'V' AND SCHEMA_NAME(o.schema_id) = 'sys'")
+	return d.catalog(ctx, "sys.all_objects", "sys.all_columns",
+		"o.type = 'V' AND SCHEMA_NAME(o.schema_id) = 'sys'",
+		"o.type IN ('IF','TF','FT') AND SCHEMA_NAME(o.schema_id) = 'sys'")
 }
 
 // catalog is the shared implementation behind Catalog and
 // SystemCatalog — they differ only in which objects/columns views
-// and where clause (fixed, package-internal constants — never
-// caller-supplied) select the rows.
-func (d *Database) catalog(ctx context.Context, objectsView, columnsView, where string) (*Catalog, error) {
+// and where clauses (fixed, package-internal constants — never
+// caller-supplied) select the rows: where for Objects, fnWhere for
+// Functions.
+func (d *Database) catalog(ctx context.Context, objectsView, columnsView, where, fnWhere string) (*Catalog, error) {
 	objects, err := d.catalogObjects(ctx, objectsView, where)
 	if err != nil {
 		return nil, err
@@ -87,6 +105,17 @@ func (d *Database) catalog(ctx context.Context, objectsView, columnsView, where 
 	if err := d.catalogColumns(ctx, objects, objectsView, columnsView, where); err != nil {
 		return nil, err
 	}
+	functions, err := d.catalogObjects(ctx, objectsView, fnWhere)
+	if err != nil {
+		return nil, err
+	}
+	if err := d.catalogColumns(ctx, functions, objectsView, columnsView, fnWhere); err != nil {
+		return nil, err
+	}
+	// Most system functions return a shape decided at run time and record
+	// no columns; one that records none is no use to a caller binding a
+	// result shape, so it is left out rather than listed empty.
+	functions = slices.DeleteFunc(functions, func(o CatalogObject) bool { return len(o.Columns) == 0 })
 
 	var schemas []string
 	for _, o := range objects {
@@ -96,15 +125,18 @@ func (d *Database) catalog(ctx context.Context, objectsView, columnsView, where 
 	}
 	slices.Sort(schemas)
 
-	return &Catalog{Schemas: schemas, Objects: objects}, nil
+	return &Catalog{Schemas: schemas, Objects: objects, Functions: functions}, nil
 }
 
 // catalogObjectType maps a sys.objects.type code to a CatalogObjectType —
-// "V" is a view, anything else (the query only ever selects "U" or "V") is
-// a table.
+// "V" is a view, "IF"/"TF"/"FT" a table-valued function, anything else (the
+// queries only ever select those or "U") a table.
 func catalogObjectType(typeCode string) CatalogObjectType {
-	if typeCode == "V" {
+	switch typeCode {
+	case "V":
 		return CatalogView
+	case "IF", "TF", "FT":
+		return CatalogFunction
 	}
 	return CatalogTable
 }

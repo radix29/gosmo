@@ -122,7 +122,7 @@ func idRanges(ids []int) string {
 // differs from the defaults, or a comment when nothing does.
 func systemRGScript(sb *strings.Builder, alter, kind, name string, w *rgOptions, using string) {
 	if len(w.parts) == 0 && using == "" {
-		fmt.Fprintf(sb, "-- %s %s is built in and has its default settings.\n", kind, quoteIdent(name))
+		fmt.Fprintf(sb, "-- %s %s is built in and has its default settings.\n", kind, commentSafe(quoteIdent(name)))
 		return
 	}
 	fmt.Fprintf(sb, "%s %s%s%s;\nGO\n", alter, quoteIdent(name), w.with(), using)

@@ -111,7 +111,7 @@ func (c *ScriptCollector) String() string {
 			if name == "" {
 				name = "(unknown instance)"
 			}
-			fmt.Fprintf(&b, "-- on %s\n", name)
+			fmt.Fprintf(&b, "-- on %s\n", commentSafe(name))
 			cur = ""
 		}
 		switch {

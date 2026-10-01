@@ -121,17 +121,8 @@ What those four kinds still leave out:
   `sys.external_tables`' 2022+ `rejected_row_location` and `table_options`
   are not read. The data source's database-scoped credential is named, not
   scripted.
-- **FileTables** keep the names of their primary key and two unique
-  constraints; the defaults, checks and foreign key `AS FILETABLE` adds get
-  new generated names.
 - **Always Encrypted**: the column master and column encryption keys are
   referenced by name and must exist where the script runs.
-
-A table's `DROP` names the modules schema-bound to it (2026-10-01) but not a
-foreign key from another table, which blocks it the same way (Msg 3726).
-Comments that embed an identifier other than that note and the `float16` one
-(`commentSafe`) are not guarded: a line break in a name ends a `--` comment,
-and `*/` in one ends the `/* Table: … */` header early.
 
 Knowingly still missing, each of which recreates a *different* table rather
 than failing:

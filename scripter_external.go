@@ -72,7 +72,7 @@ func buildExternalDataSourceScript(s *ExternalDataSource, opts ScriptOptions) st
 		kind := strings.ToUpper(s.Type)
 		if kind != "" && kind != "NONE" && !externalDataSourceTypes[kind] {
 			fmt.Fprintf(sb, "/* Reported type: %s — CREATE EXTERNAL DATA SOURCE has no TYPE keyword\n"+
-				"   for it, so the type is left to the location prefix. */\n", kind)
+				"   for it, so the type is left to the location prefix. */\n", blockCommentSafe(kind))
 		}
 		if opts.IncludeIfNotExists {
 			fmt.Fprintf(sb, "IF NOT EXISTS (SELECT 1 FROM sys.external_data_sources WHERE name = N'%s')\n",
@@ -128,7 +128,7 @@ func buildExternalFileFormatScript(f *ExternalFileFormat, opts ScriptOptions) st
 			// sys.external_file_formats stores it; CREATE EXTERNAL FILE FORMAT
 			// takes no option for it, so it is reported rather than emitted.
 			fmt.Fprintf(sb, "/* Row terminator stored with this format: N'%s' — CREATE EXTERNAL FILE\n"+
-				"   FORMAT has no option for it. */\n", escapeSingle(f.RowTerminator))
+				"   FORMAT has no option for it. */\n", blockCommentSafe(escapeSingle(f.RowTerminator)))
 		}
 		if opts.IncludeIfNotExists {
 			fmt.Fprintf(sb, "IF NOT EXISTS (SELECT 1 FROM sys.external_file_formats WHERE name = N'%s')\n",
@@ -198,7 +198,7 @@ func buildExternalLibraryScript(l *ExternalLibrary, opts ScriptOptions) string {
 			"   Replace the placeholder below with the package bytes or its path. */\n")
 		if l.Scope != "" {
 			fmt.Fprintf(sb, "/* Scope: %s — set by ownership and package rights, not by this statement. */\n",
-				strings.ToUpper(l.Scope))
+				blockCommentSafe(strings.ToUpper(l.Scope)))
 		}
 		fmt.Fprintf(sb, "CREATE EXTERNAL LIBRARY %s", quoteIdent(l.Name))
 		if l.Owner != "" {
