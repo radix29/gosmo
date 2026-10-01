@@ -208,7 +208,8 @@ END;
 	for _, c := range ordered {
 		fmt.Fprintf(&b, "EXEC sys.sp_configure N'%s', %d;\n", escapeSingle(c.Name), c.Value)
 	}
-	b.WriteString(reconfigure + ";")
+	b.WriteString(reconfigure)
+	b.WriteString(";")
 	if enable && showAdvanced == nil {
 		fmt.Fprintf(&b, `
 IF @show_advanced_enabled = 1

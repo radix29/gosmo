@@ -508,7 +508,8 @@ func tableColumnDefinition(col *Column, dbCollation string) string {
 		}
 	}
 	if g := generatedAlwaysClauses[col.GeneratedAlwaysType]; g != "" {
-		sb.WriteString(" GENERATED ALWAYS AS " + g)
+		sb.WriteString(" GENERATED ALWAYS AS ")
+		sb.WriteString(g)
 		// HIDDEN is part of the GENERATED ALWAYS clause and does not parse
 		// without it.
 		if col.IsHidden {

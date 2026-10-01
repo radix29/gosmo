@@ -156,7 +156,9 @@ func xmlOrSpatialIndexCreate(idx *Index, tableName string) string {
 		o = append(o, compressionOptions(idx.DataCompression, nil, rowstoreCompressed)...)
 	}
 	if len(o) > 0 {
-		sb.WriteString("\n    WITH (" + strings.Join(o, ", ") + ")")
+		sb.WriteString("\n    WITH (")
+		sb.WriteString(strings.Join(o, ", "))
+		sb.WriteString(")")
 	}
 	if ds := idx.DataSpace; idx.Type == IndexTypeSpatial && !ds.IsPartitionScheme {
 		sb.WriteString(dataSpaceClause(ds))

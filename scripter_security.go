@@ -270,11 +270,14 @@ func buildCertificateScript(c *Certificate, encoded []byte, opts ScriptOptions) 
 			fmt.Fprintf(sb, "IF NOT EXISTS (SELECT 1 FROM sys.certificates WHERE name = N'%s')\n",
 				escapeSingle(c.Name))
 		}
-		sb.WriteString("CREATE CERTIFICATE " + quoteIdent(c.Name))
+		sb.WriteString("CREATE CERTIFICATE ")
+		sb.WriteString(quoteIdent(c.Name))
 		if c.Owner != "" {
-			sb.WriteString(" AUTHORIZATION " + quoteIdent(c.Owner))
+			sb.WriteString(" AUTHORIZATION ")
+			sb.WriteString(quoteIdent(c.Owner))
 		}
-		sb.WriteString("\n    FROM BINARY = " + binaryLiteral(encoded))
+		sb.WriteString("\n    FROM BINARY = ")
+		sb.WriteString(binaryLiteral(encoded))
 		// ON is the default, so only a certificate switched off says anything.
 		if !c.IsActiveForBeginDialog {
 			sb.WriteString("\n    ACTIVE FOR BEGIN_DIALOG = OFF")
@@ -326,9 +329,11 @@ func buildAsymmetricKeyScript(k *AsymmetricKey, opts ScriptOptions) string {
 			fmt.Fprintf(sb, "IF NOT EXISTS (SELECT 1 FROM sys.asymmetric_keys WHERE name = N'%s')\n",
 				escapeSingle(k.Name))
 		}
-		sb.WriteString("CREATE ASYMMETRIC KEY " + quoteIdent(k.Name))
+		sb.WriteString("CREATE ASYMMETRIC KEY ")
+		sb.WriteString(quoteIdent(k.Name))
 		if k.Owner != "" {
-			sb.WriteString(" AUTHORIZATION " + quoteIdent(k.Owner))
+			sb.WriteString(" AUTHORIZATION ")
+			sb.WriteString(quoteIdent(k.Owner))
 		}
 		alg := k.Algorithm
 		if !AsymmetricKeyAlgorithm(alg).valid() {
@@ -336,7 +341,8 @@ func buildAsymmetricKeyScript(k *AsymmetricKey, opts ScriptOptions) string {
 			// not take, or none; leave the choice to the script's reader.
 			alg = "<algorithm>"
 		}
-		sb.WriteString("\n    WITH ALGORITHM = " + alg)
+		sb.WriteString("\n    WITH ALGORITHM = ")
+		sb.WriteString(alg)
 		if k.PvtKeyEncryptionType == "ENCRYPTED_BY_PASSWORD" {
 			sb.WriteString("\n    ENCRYPTION BY PASSWORD = N'" + keyPasswordPlaceholder + "'")
 		}
@@ -402,8 +408,11 @@ func buildSymmetricKeyScript(k *SymmetricKey, opts ScriptOptions) string {
 			items = append(items, "PASSWORD = N'"+keyPasswordPlaceholder+"'")
 		}
 		for _, p := range parents {
-			sb.WriteString("\n   " + p + " must be open in this session first: OPEN SYMMETRIC KEY " + p +
-				" DECRYPTION BY <decryptor>.")
+			sb.WriteString("\n   ")
+			sb.WriteString(p)
+			sb.WriteString(" must be open in this session first: OPEN SYMMETRIC KEY ")
+			sb.WriteString(p)
+			sb.WriteString(" DECRYPTION BY <decryptor>.")
 		}
 		if k.ProviderType != "" {
 			sb.WriteString("\n   The original is held by an EKM provider (FROM PROVIDER); the result is not.")
@@ -414,17 +423,21 @@ func buildSymmetricKeyScript(k *SymmetricKey, opts ScriptOptions) string {
 			fmt.Fprintf(sb, "IF NOT EXISTS (SELECT 1 FROM sys.symmetric_keys WHERE name = N'%s')\n",
 				escapeSingle(k.Name))
 		}
-		sb.WriteString("CREATE SYMMETRIC KEY " + quoteIdent(k.Name))
+		sb.WriteString("CREATE SYMMETRIC KEY ")
+		sb.WriteString(quoteIdent(k.Name))
 		if k.Owner != "" {
-			sb.WriteString(" AUTHORIZATION " + quoteIdent(k.Owner))
+			sb.WriteString(" AUTHORIZATION ")
+			sb.WriteString(quoteIdent(k.Owner))
 		}
 		alg := k.Algorithm
 		if !SymmetricKeyAlgorithm(alg).valid() {
 			alg = "<algorithm>"
 		}
-		sb.WriteString("\n    WITH ALGORITHM = " + alg)
+		sb.WriteString("\n    WITH ALGORITHM = ")
+		sb.WriteString(alg)
 		if len(items) > 0 {
-			sb.WriteString("\n    ENCRYPTION BY " + strings.Join(items, ",\n        "))
+			sb.WriteString("\n    ENCRYPTION BY ")
+			sb.WriteString(strings.Join(items, ",\n        "))
 		}
 		sb.WriteString(";\nGO\n")
 	})

@@ -365,7 +365,9 @@ func buildFileTableScript(schema, name, dbName string, p tableScriptParts, opts 
 			fmt.Fprintf(sb, " FILESTREAM_ON %s", quoteIdent(p.table.FileStreamDataSpace))
 		}
 		if !with.empty() {
-			sb.WriteString("\nWITH (\n" + with.render("    ") + ")")
+			sb.WriteString("\nWITH (\n")
+			sb.WriteString(with.render("    "))
+			sb.WriteString(")")
 		}
 		sb.WriteString(";\nGO\n\n")
 		writeTableDependents(sb, user, nil, rest, fullName, opts)
@@ -461,12 +463,15 @@ func buildExternalTableScript(schema, name, dbName string, p tableScriptParts, d
 		}
 		fmt.Fprintf(sb, "CREATE EXTERNAL TABLE %s (\n", fullName)
 		for i, col := range p.cols {
-			sb.WriteString("    " + tableColumnDefinition(col, p.table.DatabaseCollation))
+			sb.WriteString("    ")
+			sb.WriteString(tableColumnDefinition(col, p.table.DatabaseCollation))
 			if i < len(p.cols)-1 {
 				sb.WriteString(",")
 			}
 			sb.WriteString("\n")
 		}
-		sb.WriteString(")\nWITH (\n" + with.render("    ") + ");\nGO\n")
+		sb.WriteString(")\nWITH (\n")
+		sb.WriteString(with.render("    "))
+		sb.WriteString(");\nGO\n")
 	})
 }

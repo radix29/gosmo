@@ -456,11 +456,15 @@ func (o *keyOpens) wrap(stmt string) string {
 	var b strings.Builder
 	b.WriteString("BEGIN TRY\n")
 	for _, s := range o.opens {
-		b.WriteString(s + ";\n")
+		b.WriteString(s)
+		b.WriteString(";\n")
 	}
-	b.WriteString(stmt + ";\n")
+	b.WriteString(stmt)
+	b.WriteString(";\n")
 	for i := len(o.names) - 1; i >= 0; i-- {
-		b.WriteString("CLOSE SYMMETRIC KEY " + quoteIdent(o.names[i]) + ";\n")
+		b.WriteString("CLOSE SYMMETRIC KEY ")
+		b.WriteString(quoteIdent(o.names[i]))
+		b.WriteString(";\n")
 	}
 	b.WriteString("END TRY\nBEGIN CATCH\n")
 	for i := len(o.names) - 1; i >= 0; i-- {

@@ -117,8 +117,11 @@ func withOpen(stmt, openPassword string) string {
 	}
 	var b strings.Builder
 	b.WriteString("BEGIN TRY\n")
-	b.WriteString("OPEN MASTER KEY DECRYPTION BY PASSWORD = " + QuoteLiteral(openPassword) + ";\n")
-	b.WriteString(stmt + ";\n")
+	b.WriteString("OPEN MASTER KEY DECRYPTION BY PASSWORD = ")
+	b.WriteString(QuoteLiteral(openPassword))
+	b.WriteString(";\n")
+	b.WriteString(stmt)
+	b.WriteString(";\n")
 	b.WriteString("CLOSE MASTER KEY;\n")
 	b.WriteString("END TRY\nBEGIN CATCH\n")
 	b.WriteString("IF EXISTS (SELECT 1 FROM sys.openkeys WHERE database_id = DB_ID() AND key_name = N'" + masterKeyName + "')\n")

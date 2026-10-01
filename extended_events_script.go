@@ -198,15 +198,19 @@ func (spec EventSessionSpec) createStatement(sc xeScope) (string, error) {
 		if i > 0 {
 			sb.WriteString(",")
 		}
-		sb.WriteString("\nADD EVENT " + e.clause())
+		sb.WriteString("\nADD EVENT ")
+		sb.WriteString(e.clause())
 	}
 	for i, t := range spec.Targets {
 		if i > 0 {
 			sb.WriteString(",")
 		}
-		sb.WriteString("\nADD TARGET " + t.clause())
+		sb.WriteString("\nADD TARGET ")
+		sb.WriteString(t.clause())
 	}
-	sb.WriteString("\nWITH (" + strings.Join(spec.createOptions(), ",") + ")")
+	sb.WriteString("\nWITH (")
+	sb.WriteString(strings.Join(spec.createOptions(), ","))
+	sb.WriteString(")")
 	return sb.String(), nil
 }
 
