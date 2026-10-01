@@ -63,6 +63,8 @@ var sweepSkip = map[string]string{
 	"Job.Enable":               "enables the job",
 	"Job.Stop":                 "stops a running job",
 	"ResourcePool.Drop":        "drops the pool (refused for the built-in ones, which are all a pristine instance has)",
+	"Server.StartDatabaseMail": "starts the Database Mail queue",
+	"Server.StopDatabaseMail":  "stops the Database Mail queue",
 }
 
 // sweep records what ran and what failed, so the result is one report rather
@@ -312,6 +314,20 @@ var sweepMustCall = []string{
 	"Server.ExternalResourcePoolByName",
 	"ResourcePool.WorkloadGroups",
 	"Server.ClassifierFunctionCandidates",
+
+	// Phase 5 item 24: Database Mail. The six ctx-only reads are reflective;
+	// the finders and the filtered item/event reads are driven by hand.
+	"Server.MailAccounts",
+	"Server.MailAccountByName",
+	"Server.MailProfiles",
+	"Server.MailProfileByName",
+	"Server.MailPrincipalProfiles",
+	"Server.MailConfiguration",
+	"Server.MailStatus",
+	"Server.MailQueues",
+	"Server.MailItems",
+	"Server.MailItemByID",
+	"Server.MailEvents",
 }
 
 // checkCoverage fails on any sweepMustCall entry no label matched. It runs
@@ -1077,6 +1093,35 @@ func sweepServerCalls(sw *sweep, srv *Server, info *ServerInfo) {
 			sw.reflectSweep("ResourcePool", p.Name, p)
 		}
 	}
+
+	// Database Mail. A pristine instance has no account, profile or item, so
+	// the finders' not-found is the query having run.
+	notFound := func(err error) error {
+		if errors.Is(err, ErrNotFound) {
+			return nil
+		}
+		return err
+	}
+	sw.call("Server.MailAccountByName", func() error {
+		_, err := srv.MailAccountByName(sw.ctx, "sweep_absent")
+		return notFound(err)
+	})
+	sw.call("Server.MailProfileByName", func() error {
+		_, err := srv.MailProfileByName(sw.ctx, "sweep_absent")
+		return notFound(err)
+	})
+	sw.call("Server.MailItemByID", func() error {
+		_, err := srv.MailItemByID(sw.ctx, -1)
+		return notFound(err)
+	})
+	sw.call("Server.MailItems", func() error {
+		_, err := srv.MailItems(sw.ctx, MailItemFilter{Status: MailFailed, Before: time.Now(), Max: 5})
+		return err
+	})
+	sw.call("Server.MailEvents", func() error {
+		_, err := srv.MailEvents(sw.ctx, MailEventFilter{MailItemID: 1, EventType: MailEventError, Before: time.Now(), Max: 5})
+		return err
+	})
 
 	// Database snapshots. The listing is reflective; these two take a name.
 	// SnapshotFileDefaults is a read, not the create: it only asks

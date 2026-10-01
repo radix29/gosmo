@@ -15,6 +15,7 @@ func TestErrorLogTypeString(t *testing.T) {
 	}{
 		{ErrorLogSQLServer, "SQL Server"},
 		{ErrorLogAgent, "SQL Server Agent"},
+		{ErrorLogDatabaseMail, "Database Mail"},
 		{0, "ErrorLogType(0)"},
 		{9, "ErrorLogType(9)"},
 	}
@@ -26,12 +27,12 @@ func TestErrorLogTypeString(t *testing.T) {
 }
 
 func TestErrorLogTypeValid(t *testing.T) {
-	for _, lt := range []ErrorLogType{ErrorLogSQLServer, ErrorLogAgent} {
+	for _, lt := range []ErrorLogType{ErrorLogSQLServer, ErrorLogAgent, ErrorLogDatabaseMail} {
 		if !lt.valid() {
 			t.Errorf("ErrorLogType(%d).valid() = false, want true", int(lt))
 		}
 	}
-	for _, lt := range []ErrorLogType{0, 3, -1} {
+	for _, lt := range []ErrorLogType{0, 4, -1} {
 		if lt.valid() {
 			t.Errorf("ErrorLogType(%d).valid() = true, want false", int(lt))
 		}
@@ -135,6 +136,19 @@ func TestCycleLogRejectsUnknownType(t *testing.T) {
 	}
 	if len(script.Statements()) != 0 {
 		t.Errorf("a rejected log type still recorded %q", script.Statements())
+	}
+}
+
+// TestCycleLogRefusesDatabaseMail: the Database Mail log is a table with no
+// archives, so there is nothing to cycle and nothing may be run.
+func TestCycleLogRefusesDatabaseMail(t *testing.T) {
+	ctx, script := WithScript(context.Background())
+	s := &Server{}
+	if err := s.CycleLog(ctx, ErrorLogDatabaseMail); err == nil {
+		t.Fatal("CycleLog(ErrorLogDatabaseMail) returned no error")
+	}
+	if len(script.Statements()) != 0 {
+		t.Errorf("a refused cycle still recorded %q", script.Statements())
 	}
 }
 

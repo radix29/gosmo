@@ -13,10 +13,12 @@ import (
 // Error Log
 // ============================================================
 
-// ErrorLogType selects which of the two log families a read or an
-// enumeration addresses. The values are the log-type argument
+// ErrorLogType selects which log family a read or an enumeration addresses.
+// ErrorLogSQLServer and ErrorLogAgent are the log-type argument
 // xp_readerrorlog and sp_enumerrorlogs themselves take, so they can be
-// passed straight through.
+// passed straight through. ErrorLogDatabaseMail is gosmo's own: the Database
+// Mail log is a table, msdb.dbo.sysmail_event_log, not a file, and is read
+// with a query.
 type ErrorLogType int
 
 const (
@@ -25,6 +27,13 @@ const (
 	// ErrorLogAgent is the SQL Server Agent error log (SQLAGENT.OUT,
 	// SQLAGENT.1, …).
 	ErrorLogAgent ErrorLogType = 2
+	// ErrorLogDatabaseMail is the Database Mail log (sysmail_event_log). It
+	// has one "file", number 0, and cannot be cycled — rows are purged with
+	// DeleteMailLog instead. An entry's Process is the event type
+	// ("error", "information" …) and its Text the event's description. The
+	// view shows a login that is not sysadmin only the events of its own mail
+	// items (see Server.MailItems); DeleteMailLog purges the table.
+	ErrorLogDatabaseMail ErrorLogType = 3
 )
 
 // String names the log family for display.
@@ -34,16 +43,17 @@ func (t ErrorLogType) String() string {
 		return "SQL Server"
 	case ErrorLogAgent:
 		return "SQL Server Agent"
+	case ErrorLogDatabaseMail:
+		return "Database Mail"
 	}
 	return fmt.Sprintf("ErrorLogType(%d)", int(t))
 }
 
-// valid reports whether t is one of the two log families the extended
-// procedures accept. Anything else would reach xp_readerrorlog as a bad
-// argument and come back as a raw msg 22004, so callers get a clear error
-// instead.
+// valid reports whether t is a log family gosmo reads. Anything else would
+// reach xp_readerrorlog as a bad argument and come back as a raw msg 22004,
+// so callers get a clear error instead.
 func (t ErrorLogType) valid() bool {
-	return t == ErrorLogSQLServer || t == ErrorLogAgent
+	return t == ErrorLogSQLServer || t == ErrorLogAgent || t == ErrorLogDatabaseMail
 }
 
 // ErrorLogEntry represents one row returned by xp_readerrorlog.
@@ -101,6 +111,9 @@ type ErrorLogFile struct {
 func (s *Server) EnumErrorLogs(ctx context.Context, logType ErrorLogType) ([]*ErrorLogFile, error) {
 	if !logType.valid() {
 		return nil, fmt.Errorf("gosmo: enumerate error logs: unknown log type %d", int(logType))
+	}
+	if logType == ErrorLogDatabaseMail {
+		return s.enumMailLog(ctx)
 	}
 	rows, err := s.query(ctx, fmt.Sprintf("EXEC sp_enumerrorlogs %d", int(logType)))
 	if err != nil {
@@ -182,6 +195,9 @@ func (s *Server) ReadLogFiltered(ctx context.Context, logType ErrorLogType, logN
 	if !logType.valid() {
 		return nil, fmt.Errorf("gosmo: read error log: unknown log type %d", int(logType))
 	}
+	if logType == ErrorLogDatabaseMail {
+		return s.readMailLog(ctx, logNumber, search)
+	}
 	q, args := readErrorLogCall(logType, logNumber, search)
 	rows, err := s.query(ctx, q, args...)
 	return scanRows(rows, err, fmt.Sprintf("read %s error log %d", logType, logNumber), func(scan func(...any) error) (*ErrorLogEntry, error) {
@@ -262,8 +278,12 @@ var cycleLogStatements = map[ErrorLogType]string{
 // renumbering the archives and deleting the oldest if the instance is already
 // holding as many as it is configured to keep.
 //
-// Cycling the Agent log requires SQL Server Agent to be running.
+// Cycling the Agent log requires SQL Server Agent to be running. The
+// Database Mail log cannot be cycled; DeleteMailLog purges it.
 func (s *Server) CycleLog(ctx context.Context, logType ErrorLogType) error {
+	if logType == ErrorLogDatabaseMail {
+		return fmt.Errorf("gosmo: cycle %s log: it has no archives to cycle into; purge it with DeleteMailLog", logType)
+	}
 	stmt, ok := cycleLogStatements[logType]
 	if !ok {
 		return fmt.Errorf("gosmo: cycle error log: unknown log type %d", int(logType))
@@ -279,4 +299,63 @@ func (s *Server) CycleLog(ctx context.Context, logType ErrorLogType) error {
 // log family.
 func (s *Server) CycleErrorLog(ctx context.Context) error {
 	return s.CycleLog(ctx, ErrorLogSQLServer)
+}
+
+// ============================================================
+// The Database Mail log as an error-log family
+// ============================================================
+
+// enumMailLog is EnumErrorLogs for ErrorLogDatabaseMail: one file, number 0,
+// last written at the newest row's log_date (zero for an empty log). The
+// table's size is not a file size, so SizeBytes is 0.
+func (s *Server) enumMailLog(ctx context.Context) ([]*ErrorLogFile, error) {
+	var last sql.NullTime
+	if err := s.queryRowScan(ctx, "SELECT MAX(log_date) FROM msdb.dbo.sysmail_event_log", nil, &last); err != nil {
+		return nil, fmt.Errorf("gosmo: enumerate %s logs: %w", ErrorLogDatabaseMail, err)
+	}
+	f := &ErrorLogFile{Number: 0, LastWritten: last.Time}
+	if last.Valid {
+		f.Date = last.Time.Format(logSearchDateLayout)
+	}
+	return []*ErrorLogFile{f}, nil
+}
+
+// readMailLog is ReadLogFiltered for ErrorLogDatabaseMail, oldest first as
+// xp_readerrorlog reads a file. The search keeps xp_readerrorlog's meaning:
+// Text1 and Text2 are substrings of the description AND-ed together, From
+// and To bound log_date inclusively.
+func (s *Server) readMailLog(ctx context.Context, logNumber int, search LogSearch) ([]*ErrorLogEntry, error) {
+	what := fmt.Sprintf("read %s log %d", ErrorLogDatabaseMail, logNumber)
+	if logNumber != 0 {
+		return nil, fmt.Errorf("gosmo: %s: the Database Mail log has only log 0", what)
+	}
+	var where []string
+	var args []any
+	for _, text := range []string{search.Text1, search.Text2} {
+		if text != "" {
+			args = append(args, text)
+			where = append(where, fmt.Sprintf("CHARINDEX(@p%d, ISNULL(description, N'') COLLATE Latin1_General_CI_AS) > 0", len(args)))
+		}
+	}
+	// datetime, not datetime2, for MailItems' reason: an entry's own Date
+	// must bound it inclusively.
+	if !search.From.IsZero() {
+		args = append(args, search.From)
+		where = append(where, fmt.Sprintf("log_date >= CAST(@p%d AS datetime)", len(args)))
+	}
+	if !search.To.IsZero() {
+		args = append(args, search.To)
+		where = append(where, fmt.Sprintf("log_date <= CAST(@p%d AS datetime)", len(args)))
+	}
+	rows, err := s.query(ctx, `SELECT log_date, event_type, ISNULL(description, N'')
+FROM   msdb.dbo.sysmail_event_log`+whereClause(where)+`
+ORDER  BY log_id`, args...)
+	return scanRows(rows, err, what, func(scan func(...any) error) (*ErrorLogEntry, error) {
+		e := &ErrorLogEntry{}
+		if err := scan(&e.Date, &e.Process, &e.Text); err != nil {
+			return nil, err
+		}
+		e.LogDate = e.Date.Format(time.RFC3339Nano)
+		return e, nil
+	})
 }

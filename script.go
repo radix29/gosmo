@@ -295,6 +295,23 @@ func (s *Server) exec(ctx context.Context, stmt string) error {
 	return nil
 }
 
+// execSecret is exec for a statement carrying a secret: stmt, with the
+// secret, is what runs; shown, the same statement with a placeholder in its
+// place, is all a WithScript collector or a statement observer ever sees. A
+// Database Mail account's password is the case — a captured script is shown
+// to a person and an observer is an audit trail, and neither may carry it.
+func (s *Server) execSecret(ctx context.Context, stmt, shown string) error {
+	if c, ok := scriptFrom(ctx); ok {
+		c.append(ScriptEntry{Server: scriptServerName(ctx, s), SQL: shown})
+		return nil
+	}
+	if _, err := s.db.ExecContext(ctx, stmt); err != nil {
+		return withAllMessages(err)
+	}
+	observe(ctx, ScriptEntry{Server: scriptServerName(ctx, s), SQL: shown})
+	return nil
+}
+
 // atomicBatch renders stmts as one batch that applies all of them or none.
 // It is for a multi-statement write with no single procedure behind it, whose
 // half-done state is one nobody asked for. Job step reordering is the case it

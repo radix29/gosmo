@@ -17,6 +17,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"reflect"
 	"slices"
 	"strings"
@@ -322,14 +323,30 @@ func TestLiveResourceGovernorWrites(t *testing.T) {
 	handle := srv.ResourceGovernorRef()
 
 	// Cleanups run last-registered first, so this reads bottom-up: classifier
-	// off and applied, group, pools, stored I/O back to DEFAULT, DISABLE,
-	// and the function last — it cannot be dropped while in force.
+	// off and applied, group, pools, stored I/O back to DEFAULT, RECONFIGURE,
+	// DISABLE, and the function last — it cannot be dropped while in force.
+	// The second RECONFIGURE takes the drops out of force: DISABLE alone
+	// clears the pending flag without applying, so the dropped pool and group
+	// stayed in sys.dm_resource_governor_* on every instance until the next
+	// enable (found 2026-10-01).
 	clf := "[dbo].[" + liveRGWClassifier + "]"
 	cleanup("drop classifier function", func() error {
 		_, err := db.ExecContext(bg, "EXEC master.sys.sp_executesql N'DROP FUNCTION IF EXISTS "+clf+"'")
 		return err
 	})
+	cleanup("nothing left in force", func() error {
+		var n int
+		if err := db.QueryRowContext(bg, `SELECT (SELECT COUNT(*) FROM sys.dm_resource_governor_resource_pools WHERE name = @p1)
+			+ (SELECT COUNT(*) FROM sys.dm_resource_governor_workload_groups WHERE name = @p2)`, liveRGWPool, liveRGWGroup).Scan(&n); err != nil {
+			return err
+		}
+		if n != 0 {
+			return fmt.Errorf("%d dropped pool/group rows still in force", n)
+		}
+		return nil
+	})
 	cleanup("disable", func() error { return handle.Disable(bg) })
+	cleanup("apply the drops", func() error { return handle.Reconfigure(bg) })
 	cleanup("max outstanding I/O", func() error { return handle.SetMaxOutstandingIOPerVolume(bg, 0) })
 	cleanup("drop external pool", func() error { return ignoreMissing(srv.ExternalResourcePoolRef(liveRGWExtPool).Drop(bg)) })
 	cleanup("drop pool", func() error { return ignoreMissing(srv.ResourcePoolRef(liveRGWPool).Drop(bg)) })

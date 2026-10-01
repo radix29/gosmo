@@ -189,8 +189,8 @@ func ServerSecurableKey(kind ServerSecurableKind, name string) string {
 
 // ProbedDatabaseRoles are the fixed database roles DatabaseCapabilities probes.
 //
-// The three SQLAgent* roles exist only in msdb; elsewhere IS_ROLEMEMBER
-// returns NULL for them and they read as false. They are probed for every
+// The three SQLAgent* roles and DatabaseMailUserRole exist only in msdb;
+// elsewhere IS_ROLEMEMBER returns NULL for them and they read as false. They are probed for every
 // database rather than only msdb because doing so costs nothing and keeps one
 // code path.
 var ProbedDatabaseRoles = []string{
@@ -206,6 +206,7 @@ var ProbedDatabaseRoles = []string{
 	"SQLAgentUserRole",
 	"SQLAgentReaderRole",
 	"SQLAgentOperatorRole",
+	"DatabaseMailUserRole",
 }
 
 // ProbedDatabasePermissions are the database-scope permissions

@@ -1,0 +1,137 @@
+classDiagram
+
+    %% =========================================================
+    %% Database Mail — msdb.dbo.sysmail_* (database_mail.go reads,
+    %% database_mail_write.go writes, scripter_database_mail.go scripts)
+    %% =========================================================
+
+    class MailAccount {
+        -server *Server
+        +AccountID int
+        +Name string
+        +Description string
+        +EmailAddress string
+        +DisplayName string
+        +ReplyToAddress string
+        +ServerType string
+        +ServerName string
+        +Port int
+        +EnableSSL bool
+        +UserName string
+        +CredentialID int
+        +UseDefaultCredentials bool
+        +Timeout int
+        +LastModified time.Time
+        +Server() *Server
+        +Authentication() MailAuthentication
+        +Alter(ctx, MailAccountOptions) error
+        +Drop(ctx) error
+        No password field: it is a server credential.
+    }
+
+    class MailCredentials {
+        +Authentication MailAuthentication
+        +UserName string
+        +Password string
+        Write-only; scripts carry <password>.
+    }
+
+    class MailProfile {
+        -server *Server
+        +ProfileID int
+        +Name string
+        +Description string
+        +IsPublic bool
+        +IsDefault bool
+        +Accounts []*MailProfileAccount
+        +LastModified time.Time
+        +Server() *Server
+        +Alter(ctx, MailProfileOptions) error
+        +Drop(ctx) error
+        +SetAccounts(ctx, []string) error
+        +AddAccount / RemoveAccount / SetAccountSequence
+        +Grant / SetGrantDefault / Revoke
+    }
+
+    class MailProfileAccount {
+        +AccountID int
+        +AccountName string
+        +SequenceNumber int
+    }
+
+    class MailPrincipalProfile {
+        +ProfileID int
+        +ProfileName string
+        +PrincipalSID []byte
+        +PrincipalName string
+        +IsDefault bool
+        +IsPublic() bool
+        SID 0x00 is public, named here, not guest.
+    }
+
+    class MailConfiguration {
+        +AccountRetryAttempts int
+        +AccountRetryDelay int
+        +DatabaseMailExeMinimumLifeTime int
+        +DefaultAttachmentEncoding string
+        +LoggingLevel MailLoggingLevel
+        +MaxFileSize int
+        +ProhibitedExtensions string
+    }
+
+    class MailState {
+        <<enumeration>>
+        MailDisabled
+        MailStopped
+        MailStarted
+    }
+
+    class MailQueue {
+        +Type string
+        +Length int
+        +State string
+        +LastEmptyRowset time.Time
+        +LastActivated time.Time
+        Needs VIEW SERVER STATE.
+    }
+
+    class MailItem {
+        +MailItemID int
+        +ProfileID int
+        +Recipients string
+        +Subject string
+        +Body string
+        +SendRequestDate time.Time
+        +SentStatus MailSentStatus
+        +SentDate time.Time
+        and the other sysmail_allitems columns
+    }
+
+    class MailEvent {
+        +LogID int
+        +EventType MailEventType
+        +LogDate time.Time
+        +Description string
+        +MailItemID int
+        +AccountID int
+    }
+
+    Server "1" --> "*" MailAccount : MailAccounts / MailAccountByName
+    Server "1" --> "*" MailProfile : MailProfiles / MailProfileByName
+    MailProfile *-- MailProfileAccount : Accounts
+    MailProfileAccount --> MailAccount : AccountID
+    Server "1" --> "*" MailPrincipalProfile : MailPrincipalProfiles
+    MailPrincipalProfile --> MailProfile : ProfileID
+    Server ..> MailConfiguration : MailConfiguration
+    Server ..> MailState : MailStatus
+    Server ..> MailQueue : MailQueues
+    Server ..> MailItem : MailItems(MailItemFilter) / MailItemByID
+    Server ..> MailEvent : MailEvents(MailEventFilter)
+    MailEvent --> MailItem : MailItemID
+    Server ..> MailAccount : CreateMailAccount / MailAccountRef
+    Server ..> MailProfile : CreateMailProfile / MailProfileRef
+    MailAccount ..> MailCredentials : CreateMailAccountRequest / MailAccountOptions
+    Server ..> MailConfiguration : SetMailConfiguration(MailConfigurationOptions)
+    Server ..> MailState : StartDatabaseMail / StopDatabaseMail
+    Server ..> MailItem : SendTestMail → mailitem_id / DeleteMailItems
+    Server ..> MailEvent : DeleteMailLog / ReadLog(ErrorLogDatabaseMail)
