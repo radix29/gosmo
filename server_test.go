@@ -776,3 +776,25 @@ func firstLine(s string) string {
 	}
 	return s
 }
+
+// The Managed Instance KILL batch waits for every session it killed: the wait
+// once checked only database_id, so a session killed for its database lock
+// from another context was still rolling back when the DROP ran (Msg 3702).
+func TestKillDatabaseSessionsBatchWaitsForEverySessionItKills(t *testing.T) {
+	got := killDatabaseSessionsBatch("App'DB")
+	if !strings.Contains(got, "DB_ID(N'App''DB')") {
+		t.Errorf("batch does not resolve the quoted name:\n%s", got)
+	}
+	kill, wait, ok := strings.Cut(got, "EXEC (@kill);")
+	if !ok {
+		t.Fatalf("no EXEC (@kill) in the batch:\n%s", got)
+	}
+	for part, text := range map[string]string{"KILL selection": kill, "wait loop": wait} {
+		if !strings.Contains(text, databaseSessionPredicate) {
+			t.Errorf("%s does not use databaseSessionPredicate:\n%s", part, text)
+		}
+	}
+	if !strings.Contains(databaseSessionPredicate, "dm_tran_locks") {
+		t.Error("databaseSessionPredicate no longer covers sessions holding a database lock")
+	}
+}

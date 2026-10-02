@@ -181,8 +181,10 @@ func TestScriptServerLevelWrites(t *testing.T) {
 			return (&Server{}).KillSession(c, 57)
 		}, "KILL 57"},
 		{"SendMail", func(c context.Context) error {
-			return (&Server{}).SendMail(c, "Prof'ile", "o'brien@example.com", "Sub'ject", "Bo'dy")
-		}, "EXEC msdb.dbo.sp_send_dbmail @profile_name = N'Prof''ile', @recipients = N'o''brien@example.com', @subject = N'Sub''ject', @body = N'Bo''dy'"},
+			_, err := (&Server{}).SendMail(c, MailMessage{Profile: "Prof'ile", To: "o'brien@example.com", Subject: "Sub'ject", Body: "Bo'dy"})
+			return err
+		}, "DECLARE @mailitem_id int;\nEXEC msdb.dbo.sp_send_dbmail @profile_name = N'Prof''ile', @recipients = N'o''brien@example.com', " +
+			"@subject = N'Sub''ject', @body = N'Bo''dy', @mailitem_id = @mailitem_id OUTPUT;\nSELECT @mailitem_id AS mailitem_id;"},
 		{"CreateDatabaseMirroringEndpoint", func(c context.Context) error {
 			_, err := (&Server{}).CreateDatabaseMirroringEndpoint(c, CreateDatabaseMirroringEndpointRequest{
 				Name: "Hadr]Endpoint", Port: 5022,

@@ -46,6 +46,17 @@ func TestScriptAgentAlterWrites(t *testing.T) {
 		{"Job Alter sends a zero value it was given", func(c context.Context) error {
 			return job().Alter(c, JobChanges{Description: Ptr(""), StartStepID: Ptr(0)})
 		}, "EXEC msdb.dbo.sp_update_job @job_name = N'Nightly''Run', @description = N'', @start_step_id = 0"},
+		// [DEFAULT] is sp_verify_job's own "back to uncategorised"
+		// sentinel, right for a multi-server job too, where the N'' that
+		// sp_update_job turns into NULL always means the local category.
+		// Jobs do not share the [Uncategorized] spelling alerts and
+		// operators use — see agentCategoryTarget.
+		{"Job Alter clears the category as [DEFAULT]", func(c context.Context) error {
+			return job().Alter(c, JobChanges{Category: Ptr("")})
+		}, "EXEC msdb.dbo.sp_update_job @job_name = N'Nightly''Run', @category_name = N'[DEFAULT]'"},
+		{"Job SetCategory clears the category as [DEFAULT]", func(c context.Context) error {
+			return job().SetCategory(c, "")
+		}, "EXEC msdb.dbo.sp_update_job @job_name = N'Nightly''Run', @category_name = N'[DEFAULT]'"},
 
 		{"Alert Alter, trigger and delay", func(c context.Context) error {
 			return alert().Alter(c, AlertChanges{
@@ -85,6 +96,9 @@ func TestScriptAgentAlterWrites(t *testing.T) {
 				Category:       Ptr("Cat'1"),
 			})
 		}, "EXEC msdb.dbo.sp_update_operator @name = N'On''Call', @new_name = N'New''Op', @enabled = 0, @email_address = N'o''brien@example.com', @pager_address = N'pager''1', @netsend_address = N'host''1', @category_name = N'Cat''1'"},
+		{"Operator Alter clears the category as [Uncategorized]", func(c context.Context) error {
+			return operator().Alter(c, OperatorChanges{Category: Ptr("")})
+		}, "EXEC msdb.dbo.sp_update_operator @name = N'On''Call', @category_name = N'[Uncategorized]'"},
 
 		{"Schedule Alter, frequency and range in one call", func(c context.Context) error {
 			return schedule().Alter(c, ScheduleChanges{
@@ -106,11 +120,14 @@ func TestScriptAgentAlterWrites(t *testing.T) {
 				Range: &ScheduleActiveRange{StartDate: time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC)},
 			})
 		}, "EXEC msdb.dbo.sp_update_schedule @schedule_id = 7, @active_start_date = 20260801, @active_end_date = 99991231, @active_start_time = 0, @active_end_time = 0"},
-		// A ScheduleRef carries no ID, and the per-property setters key on
-		// one — @schedule_id = 0 names no schedule. The batched form falls
-		// back to @name, which is what makes it usable from a Ref.
+		// A ScheduleRef carries no ID, and @schedule_id = 0 names no
+		// schedule. Alter falls back to @name, which is what makes it — and
+		// the setters, which wrap it — usable from a Ref.
 		{"Schedule Alter from a Ref addresses by name", func(c context.Context) error {
 			return (&Server{}).ScheduleRef("Daily'2am").Alter(c, ScheduleChanges{Enabled: Ptr(false)})
+		}, "EXEC msdb.dbo.sp_update_schedule @name = N'Daily''2am', @enabled = 0"},
+		{"Schedule Disable from a Ref addresses by name", func(c context.Context) error {
+			return (&Server{}).ScheduleRef("Daily'2am").Disable(c)
 		}, "EXEC msdb.dbo.sp_update_schedule @name = N'Daily''2am', @enabled = 0"},
 	})
 }
@@ -185,5 +202,22 @@ func TestAgentAlterMirrorsOnlyWhatItSet(t *testing.T) {
 	if a.DatabaseName != "keep" || a.Severity != 17 {
 		t.Errorf("Alter touched a field it was not given: DatabaseName=%q Severity=%d",
 			a.DatabaseName, a.Severity)
+	}
+
+	// An emptied category mirrors the name msdb stores, not the sentinel
+	// sent: [DEFAULT] resolves to [Uncategorized (Local)] for a job.
+	jr := &Job{server: &Server{db: db}, Name: "Nightly'Run", Category: "Cat"}
+	if err := jr.SetCategory(context.Background(), ""); err != nil {
+		t.Fatalf("Job.SetCategory: %v", err)
+	}
+	if jr.Category != "[Uncategorized (Local)]" {
+		t.Errorf("Job.Category = %q, want %q", jr.Category, "[Uncategorized (Local)]")
+	}
+	o := &Operator{server: &Server{db: db}, Name: "On'Call", Category: "Cat"}
+	if err := o.Alter(context.Background(), OperatorChanges{Category: Ptr("")}); err != nil {
+		t.Fatalf("Operator.Alter: %v", err)
+	}
+	if o.Category != "[Uncategorized]" {
+		t.Errorf("Operator.Category = %q, want %q", o.Category, "[Uncategorized]")
 	}
 }

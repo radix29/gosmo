@@ -310,7 +310,9 @@ func (s *Server) CycleErrorLog(ctx context.Context) error {
 // table's size is not a file size, so SizeBytes is 0.
 func (s *Server) enumMailLog(ctx context.Context) ([]*ErrorLogFile, error) {
 	var last sql.NullTime
-	if err := s.queryRowScan(ctx, mailEventsQuery("SELECT MAX(log_date) FROM %s"), nil, &last); err != nil {
+	if err := s.queryRowScan(ctx, mailEventsQuery(func(source string) string {
+		return "SELECT MAX(log_date) FROM " + source
+	}), nil, &last); err != nil {
 		return nil, fmt.Errorf("gosmo: enumerate %s logs: %w", ErrorLogDatabaseMail, err)
 	}
 	f := &ErrorLogFile{Number: 0, LastWritten: last.Time}
@@ -347,9 +349,11 @@ func (s *Server) readMailLog(ctx context.Context, logNumber int, search LogSearc
 		args = append(args, search.To)
 		where = append(where, fmt.Sprintf("log_date <= CAST(@p%d AS datetime)", len(args)))
 	}
-	rows, err := s.query(ctx, mailEventsQuery(`SELECT log_date, event_type, ISNULL(description, N'')
-FROM   %s`+whereClause(where)+`
-ORDER  BY log_id`), args...)
+	rows, err := s.query(ctx, mailEventsQuery(func(source string) string {
+		return `SELECT log_date, event_type, ISNULL(description, N'')
+FROM   ` + source + whereClause(where) + `
+ORDER  BY log_id`
+	}), args...)
 	return scanRows(rows, err, what, func(scan func(...any) error) (*ErrorLogEntry, error) {
 		e := &ErrorLogEntry{}
 		if err := scan(&e.Date, &e.Process, &e.Text); err != nil {

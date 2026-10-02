@@ -20,13 +20,13 @@ import (
 // authentication stores its password as a server credential, so creating
 // one, or changing its user name or password, also needs ALTER ANY
 // CREDENTIAL (Msg 15247), which CONTROL SERVER implies and db_owner does not.
-// A DatabaseMailUserRole member can SendTestMail through a profile granted to
+// A DatabaseMailUserRole member can SendMail through a profile granted to
 // it and DeleteMailItems its own items; nothing else.
 //
 // # 'Database Mail XPs'
 //
 // With the option at 0 every configuration write here still works; only
-// StartDatabaseMail, StopDatabaseMail and SendTestMail are refused (Msg
+// StartDatabaseMail, StopDatabaseMail and SendMail are refused (Msg
 // 15281).
 //
 // # What the procedures do that a caller would not guess
@@ -698,23 +698,33 @@ func (s *Server) StopDatabaseMail(ctx context.Context) error {
 	return nil
 }
 
-// SendTestMail queues one plain-text message through sp_send_dbmail and
-// returns its mailitem_id, for MailItemByID and MailEvents to follow. An
-// empty profile sends through the caller's default profile, or the public
-// default — what a DatabaseMailUserRole member, who cannot list profiles,
-// passes.
+// MailMessage is one plain-text message for SendMail. An empty Profile
+// sends through the caller's default profile, or the public default — what a
+// DatabaseMailUserRole member, who cannot list profiles, passes. To is
+// sp_send_dbmail's @recipients: one or more addresses separated by ';'.
+type MailMessage struct {
+	Profile string
+	To      string
+	Subject string
+	Body    string
+}
+
+// SendMail queues m through sp_send_dbmail and returns its mailitem_id, for
+// MailItemByID and MailEvents to follow.
 //
 // It returns once the message is queued; whether it was sent is learned by
-// polling. Under Scripting(ctx) the statement is recorded and the id is 0.
-func (s *Server) SendTestMail(ctx context.Context, profile, to, subject, body string) (int, error) {
-	if strings.TrimSpace(to) == "" {
-		return 0, fmt.Errorf("gosmo: send test mail: no recipient")
+// polling. It is never retried (execScan): a connection lost after the
+// server queued the message would queue it again. Under Scripting(ctx) the
+// statement is recorded and the id is 0.
+func (s *Server) SendMail(ctx context.Context, m MailMessage) (int, error) {
+	if strings.TrimSpace(m.To) == "" {
+		return 0, fmt.Errorf("gosmo: send mail: no recipient")
 	}
 	var a procArgs
-	a.strSet("@profile_name", profile)
-	a.str("@recipients", to)
-	a.str("@subject", subject)
-	a.str("@body", body)
+	a.strSet("@profile_name", m.Profile)
+	a.str("@recipients", m.To)
+	a.str("@subject", m.Subject)
+	a.str("@body", m.Body)
 	a.raw("@mailitem_id", "@mailitem_id OUTPUT")
 	stmt := "DECLARE @mailitem_id int;\n" + a.exec("sp_send_dbmail")
 	if c, ok := scriptFrom(ctx); ok {
@@ -722,8 +732,8 @@ func (s *Server) SendTestMail(ctx context.Context, profile, to, subject, body st
 		return 0, nil
 	}
 	var id int
-	if err := s.queryRowScan(ctx, stmt+";\nSELECT @mailitem_id;", nil, &id); err != nil {
-		return 0, fmt.Errorf("gosmo: send test mail: %w", withAllMessages(err))
+	if err := s.execScan(ctx, stmt+";\nSELECT @mailitem_id;", &id); err != nil {
+		return 0, fmt.Errorf("gosmo: send mail: %w", err)
 	}
 	observe(ctx, ScriptEntry{Server: scriptServerName(ctx, s), SQL: stmt + ";\nSELECT @mailitem_id AS mailitem_id;"})
 	return id, nil

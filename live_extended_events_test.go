@@ -314,6 +314,51 @@ func checkLiveEventFile(t *testing.T, s *Server, ctx context.Context, es *EventS
 	}
 }
 
+// TestLiveEventSessionAlterOnlyEvent: changing a session's only event is a
+// DROP EVENT and an ADD EVENT in separate statements (one statement naming
+// both is a syntax error), so the session holds no events in between. The
+// server allows that, stopped and running alike, and a running session stays
+// running through it.
+func TestLiveEventSessionAlterOnlyEvent(t *testing.T) {
+	s, db, ctx := liveXEServer(t)
+	const name = "gossms_test_xe_only_event"
+	dropXESessionAfter(t, s, db, name)
+
+	event := func(spid int) SessionEvent {
+		return SessionEvent{Package: "sqlserver", Name: "sql_batch_completed",
+			Predicate: fmt.Sprintf("([sqlserver].[session_id]=(%d))", spid)}
+	}
+	es, err := s.CreateEventSession(ctx, EventSessionSpec{
+		Name:    name,
+		Events:  []SessionEvent{event(1)},
+		Targets: []SessionTarget{{Package: "package0", Name: XETargetRingBuffer}},
+	})
+	if err != nil {
+		t.Fatalf("CreateEventSession: %v", err)
+	}
+
+	for i, running := range []bool{false, true} {
+		if running {
+			if err := es.Start(ctx); err != nil {
+				t.Fatalf("Start: %v", err)
+			}
+		}
+		want := es.Spec()
+		want.Events = []SessionEvent{event(10 + i)}
+		if err := es.Alter(ctx, want); err != nil {
+			t.Fatalf("Alter (running %v): %v", running, err)
+		}
+		got, err := s.EventSessionByName(ctx, name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(got.Events) != 1 || got.Events[0].Predicate != want.Events[0].Predicate || got.IsRunning != running {
+			t.Errorf("after Alter (running %v): running %v, events %+v", running, got.IsRunning, got.Events)
+		}
+		es = got
+	}
+}
+
 // TestLiveEventSessionScriptRoundTrip: script → drop → run the script →
 // script again, and the two scripts are equal. Then the same against a copy of
 // system_health, the richest definition on every instance (predicates with

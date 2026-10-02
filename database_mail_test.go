@@ -9,12 +9,17 @@ import (
 // predicate, the view under ELSE, and the caller's filter and order in both.
 // Live: TestLiveDatabaseMailReads (db_datareader, the DENY, the role member).
 func TestMailReadsBranchToTheBaseTable(t *testing.T) {
+	// The condition carries a %, which a format-string builder would have
+	// corrupted (K8).
+	q := func(source string) string {
+		return "SELECT x FROM " + source + " WHERE sent_status = @p1 AND subject LIKE N'100%' ORDER BY mailitem_id DESC"
+	}
 	for _, tc := range []struct {
 		name, q, table, base, view string
 	}{
-		{"items", mailItemsQuery("SELECT x FROM %s WHERE sent_status = @p1 ORDER BY mailitem_id DESC"),
+		{"items", mailItemsQuery(q),
 			"sysmail_mailitems", "FROM   msdb.dbo.sysmail_mailitems) AS ai", "FROM msdb.dbo.sysmail_allitems WHERE"},
-		{"events", mailEventsQuery("SELECT x FROM %s WHERE sent_status = @p1 ORDER BY mailitem_id DESC"),
+		{"events", mailEventsQuery(q),
 			"sysmail_log", "FROM   msdb.dbo.sysmail_log) AS sl", "FROM msdb.dbo.sysmail_event_log WHERE"},
 	} {
 		ifPart, elsePart, ok := strings.Cut(tc.q, "\nELSE\n")
@@ -32,7 +37,7 @@ func TestMailReadsBranchToTheBaseTable(t *testing.T) {
 			t.Errorf("%s: the view must be read under the ELSE only:\n%s", tc.name, tc.q)
 		}
 		for _, part := range []string{ifPart, elsePart} {
-			if !strings.Contains(part, "sent_status = @p1 ORDER BY mailitem_id DESC") {
+			if !strings.Contains(part, "sent_status = @p1 AND subject LIKE N'100%' ORDER BY mailitem_id DESC") {
 				t.Errorf("%s: a branch lost the filter: %q", tc.name, part)
 			}
 		}

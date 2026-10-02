@@ -224,13 +224,7 @@ func (s *Server) CreateSchedule(ctx context.Context, req CreateScheduleRequest) 
 
 // Rename changes the schedule's name.
 func (sch *Schedule) Rename(ctx context.Context, newName string) error {
-	q := fmt.Sprintf("EXEC msdb.dbo.sp_update_schedule @schedule_id = %d, @new_name = N'%s'",
-		sch.ID, escapeSingle(newName))
-	if err := sch.server.exec(ctx, q); err != nil {
-		return fmt.Errorf("gosmo: rename schedule %q to %q: %w", sch.Name, newName, err)
-	}
-	setIfApplied(ctx, &sch.Name, newName)
-	return nil
+	return sch.Alter(ctx, ScheduleChanges{Name: &newName})
 }
 
 // Enable enables the schedule.
@@ -240,13 +234,7 @@ func (sch *Schedule) Enable(ctx context.Context) error { return sch.setEnabled(c
 func (sch *Schedule) Disable(ctx context.Context) error { return sch.setEnabled(ctx, false) }
 
 func (sch *Schedule) setEnabled(ctx context.Context, on bool) error {
-	q := fmt.Sprintf("EXEC msdb.dbo.sp_update_schedule @schedule_id = %d, @enabled = %d",
-		sch.ID, boolToInt(on))
-	if err := sch.server.exec(ctx, q); err != nil {
-		return fmt.Errorf("gosmo: set enabled=%v for schedule %q: %w", on, sch.Name, err)
-	}
-	setIfApplied(ctx, &sch.Enabled, on)
-	return nil
+	return sch.Alter(ctx, ScheduleChanges{Enabled: &on})
 }
 
 // ScheduleFrequency bundles the freq_type cluster of sp_update_schedule's
@@ -264,59 +252,21 @@ type ScheduleFrequency struct {
 
 // SetFrequency replaces the schedule's frequency definition.
 func (sch *Schedule) SetFrequency(ctx context.Context, f ScheduleFrequency) error {
-	q := fmt.Sprintf(
-		"EXEC msdb.dbo.sp_update_schedule @schedule_id = %d, "+
-			"@freq_type = %d, @freq_interval = %d, "+
-			"@freq_subday_type = %d, @freq_subday_interval = %d, "+
-			"@freq_relative_interval = %d, @freq_recurrence_factor = %d",
-		sch.ID,
-		int(f.FreqType), f.FreqInterval,
-		int(f.FreqSubdayType), f.FreqSubdayInterval,
-		f.FreqRelativeInterval, f.FreqRecurrenceFactor,
-	)
-	if err := sch.server.exec(ctx, q); err != nil {
-		return fmt.Errorf("gosmo: set frequency for schedule %q: %w", sch.Name, err)
-	}
-	setIfApplied(ctx, &sch.FreqType, f.FreqType)
-	setIfApplied(ctx, &sch.FreqInterval, f.FreqInterval)
-	setIfApplied(ctx, &sch.FreqSubdayType, f.FreqSubdayType)
-	setIfApplied(ctx, &sch.FreqSubdayInterval, f.FreqSubdayInterval)
-	setIfApplied(ctx, &sch.FreqRelativeInterval, f.FreqRelativeInterval)
-	setIfApplied(ctx, &sch.FreqRecurrenceFactor, f.FreqRecurrenceFactor)
-	return nil
+	return sch.Alter(ctx, ScheduleChanges{Frequency: &f})
 }
 
 // SetActiveRange changes the schedule's Duration section: the date range
 // it's active over, plus the daily time-of-day window (HHMMSS) it can fire
 // within. A zero endDate means "no end date".
 func (sch *Schedule) SetActiveRange(ctx context.Context, startDate, endDate time.Time, startTime, endTime int) error {
-	q := fmt.Sprintf(
-		"EXEC msdb.dbo.sp_update_schedule @schedule_id = %d, "+
-			"@active_start_date = %d, @active_end_date = %d, "+
-			"@active_start_time = %d, @active_end_time = %d",
-		sch.ID,
-		timeToYYYYMMDD(startDate), scheduleEndDateRaw(endDate),
-		startTime, endTime,
-	)
-	if err := sch.server.exec(ctx, q); err != nil {
-		return fmt.Errorf("gosmo: set active range for schedule %q: %w", sch.Name, err)
-	}
-	setIfApplied(ctx, &sch.ActiveStartDate, startDate)
-	setIfApplied(ctx, &sch.ActiveEndDate, endDate)
-	setIfApplied(ctx, &sch.ActiveStartTime, startTime)
-	setIfApplied(ctx, &sch.ActiveEndTime, endTime)
-	return nil
+	return sch.Alter(ctx, ScheduleChanges{Range: &ScheduleActiveRange{
+		StartDate: startDate, EndDate: endDate, StartTime: startTime, EndTime: endTime,
+	}})
 }
 
 // SetOwner reassigns the schedule's owner login.
 func (sch *Schedule) SetOwner(ctx context.Context, loginName string) error {
-	q := fmt.Sprintf("EXEC msdb.dbo.sp_update_schedule @schedule_id = %d, @owner_login_name = N'%s'",
-		sch.ID, escapeSingle(loginName))
-	if err := sch.server.exec(ctx, q); err != nil {
-		return fmt.Errorf("gosmo: set owner for schedule %q: %w", sch.Name, err)
-	}
-	setIfApplied(ctx, &sch.OwnerLoginName, loginName)
-	return nil
+	return sch.Alter(ctx, ScheduleChanges{OwnerLogin: &loginName})
 }
 
 // Drop deletes the schedule via sp_delete_schedule. SQL Server refuses the

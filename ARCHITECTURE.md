@@ -315,7 +315,7 @@ The instance and database halves pair up: `ServerResourceStat` and
 | Active sessions         | `srv.ActiveSessions(ctx, includeSystem)`        |
 | Kill session            | `srv.KillSession(ctx, id)`                      |
 | Error log               | `srv.ReadLog(ctx, logType, n)` / `srv.ReadLogFiltered(ctx, logType, n, search)` / `srv.EnumErrorLogs(ctx, logType)` / `srv.CycleLog(ctx, logType)` — see [Error log](#error-log) |
-| Database Mail           | `srv.MailAccounts(ctx)` / `srv.MailAccountByName(ctx, name)` / `srv.MailProfiles(ctx)` / `srv.MailProfileByName(ctx, name)` (each with its ordered `Accounts`) / `srv.MailPrincipalProfiles(ctx)` (SID 0x00 = public) / `srv.MailConfiguration(ctx)` / `srv.MailStatus(ctx)` (`MailDisabled` while 'Database Mail XPs' is 0, not an error) / `srv.MailQueues(ctx)` (VIEW SERVER STATE) / `srv.MailItems(ctx, gosmo.MailItemFilter{...})` / `srv.MailItemByID(ctx, id)` / `srv.MailEvents(ctx, gosmo.MailEventFilter{...})` / `srv.SendMail(ctx, ...)`. Writes: `srv.CreateMailAccount(ctx, req)` / `MailAccountRef(name).Alter(ctx, gosmo.MailAccountOptions{...})` (nil `Credentials` keeps the stored user and password) / `.Drop(ctx)`; `srv.CreateMailProfile(ctx, req)` / `MailProfileRef(name).Alter` / `.Drop` / `.SetAccounts(ctx, ordered)` / `.Grant(ctx, principal, isDefault)` / `.SetGrantDefault` / `.Revoke`; `srv.SetMailConfiguration(ctx, opts)`; `srv.StartDatabaseMail(ctx)` / `StopDatabaseMail`; `srv.SendTestMail(ctx, profile, to, subject, body)` → mailitem_id; `srv.DeleteMailItems(ctx, before, status)` / `DeleteMailLog(ctx, before, eventType)`. The log also reads as `ReadLog(ctx, gosmo.ErrorLogDatabaseMail, 0)`. Scripts: `ScriptMailAccount` / `ScriptMailProfile` / `ScriptDatabaseMail`, the password as `<password>` (also under `WithScript` and to a statement observer) — msdb permission, not sysadmin; see `database_mail.go`, `database_mail_write.go` |
+| Database Mail           | `srv.MailAccounts(ctx)` / `srv.MailAccountByName(ctx, name)` / `srv.MailProfiles(ctx)` / `srv.MailProfileByName(ctx, name)` (each with its ordered `Accounts`) / `srv.MailPrincipalProfiles(ctx)` (SID 0x00 = public) / `srv.MailConfiguration(ctx)` / `srv.MailStatus(ctx)` (`MailDisabled` while 'Database Mail XPs' is 0, not an error) / `srv.MailQueues(ctx)` (VIEW SERVER STATE) / `srv.MailItems(ctx, gosmo.MailItemFilter{...})` / `srv.MailItemByID(ctx, id)` / `srv.MailEvents(ctx, gosmo.MailEventFilter{...})`. Writes: `srv.CreateMailAccount(ctx, req)` / `MailAccountRef(name).Alter(ctx, gosmo.MailAccountOptions{...})` (nil `Credentials` keeps the stored user and password) / `.Drop(ctx)`; `srv.CreateMailProfile(ctx, req)` / `MailProfileRef(name).Alter` / `.Drop` / `.SetAccounts(ctx, ordered)` / `.Grant(ctx, principal, isDefault)` / `.SetGrantDefault` / `.Revoke`; `srv.SetMailConfiguration(ctx, opts)`; `srv.StartDatabaseMail(ctx)` / `StopDatabaseMail`; `srv.SendMail(ctx, gosmo.MailMessage{Profile, To, Subject, Body})` → mailitem_id (never retried); `srv.DeleteMailItems(ctx, before, status)` / `DeleteMailLog(ctx, before, eventType)`. The log also reads as `ReadLog(ctx, gosmo.ErrorLogDatabaseMail, 0)`. Scripts: `ScriptMailAccount` / `ScriptMailProfile` / `ScriptDatabaseMail`, the password as `<password>` (also under `WithScript` and to a statement observer) — msdb permission, not sysadmin; see `database_mail.go`, `database_mail_write.go` |
 | Create login (safe)     | `srv.CreateLogin(ctx, gosmo.CreateLoginRequest{Name, Password, Source, ...})` — SQL, Windows, external provider, certificate or asymmetric key |
 | Authentication mode     | `srv.SecurityInfo(ctx)`                       |
 | Server-level permissions | `srv.ServerPermissions(ctx)` / `srv.Grant\|Deny\|RevokeServerPermission(ctx, ...)` / `srv.ServerPermissionNames()` |
@@ -1505,14 +1505,17 @@ empty `Changes` emits nothing at all, rather than a parameterless
 
 `ScheduleChanges` takes its frequency and its active range as whole units,
 for the reason `ScheduleFrequency` already states: `freq_interval`'s meaning
-depends on `freq_type`, so half a frequency is not one. It is also the one
-family whose batched form is addressable from a `Ref` — the per-property
-setters key on `@schedule_id`, which a no-I/O handle does not carry, while
-`Alter` falls back to `@name` when the receiver has no ID.
+depends on `freq_type`, so half a frequency is not one. It addresses the
+schedule by `@schedule_id`, falling back to `@name` when the receiver has no
+ID — so a schedule is writable from a no-I/O `ScheduleRef` handle.
 
-The per-property setters are unchanged and are not deprecated;
+The per-property setters are not deprecated —
 `Enable()`/`Disable()`/`Rename()` read better than a struct literal for a
-single edit.
+single edit — but each is a one-line wrapper over its family's `Alter`, so
+there is one statement builder and one receiver mirror per family. An empty
+category is sent as what each class accepts (`agentCategoryTarget`):
+`[Uncategorized]` for an alert or operator, `[DEFAULT]` for a job, mirrored
+as the `[Uncategorized (Local)]` msdb then reports.
 
 #### Jobs and steps
 

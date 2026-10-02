@@ -740,9 +740,9 @@ EXEC sp_configure 'Database Mail XPs', 1; RECONFIGURE;`)
 	}
 
 	// No profile: the caller's default, here public's.
-	id, err := srv.SendTestMail(ctx, "", "nobody@example.com", "gosmo live write", "gosmo live write body")
+	id, err := srv.SendMail(ctx, MailMessage{To: "nobody@example.com", Subject: "gosmo live write", Body: "gosmo live write body"})
 	if err != nil || id == 0 {
-		t.Fatalf("SendTestMail = %d, %v", id, err)
+		t.Fatalf("SendMail = %d, %v", id, err)
 	}
 	var item *MailItem
 	for deadline := time.Now().Add(2 * time.Minute); ; {

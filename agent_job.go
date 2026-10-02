@@ -318,13 +318,7 @@ func (j *Job) Enable(ctx context.Context) error { return j.setEnabled(ctx, true)
 func (j *Job) Disable(ctx context.Context) error { return j.setEnabled(ctx, false) }
 
 func (j *Job) setEnabled(ctx context.Context, on bool) error {
-	q := fmt.Sprintf("EXEC msdb.dbo.sp_update_job @job_name = N'%s', @enabled = %d",
-		escapeSingle(j.Name), boolToInt(on))
-	if err := j.server.exec(ctx, q); err != nil {
-		return fmt.Errorf("gosmo: set enabled=%v for job %q: %w", on, j.Name, err)
-	}
-	setIfApplied(ctx, &j.IsEnabled, on)
-	return nil
+	return j.Alter(ctx, JobChanges{Enabled: &on})
 }
 
 // Drop drops the agent job.
@@ -338,57 +332,30 @@ func (j *Job) Drop(ctx context.Context) error {
 
 // Rename changes the job's name.
 func (j *Job) Rename(ctx context.Context, newName string) error {
-	q := fmt.Sprintf("EXEC msdb.dbo.sp_update_job @job_name = N'%s', @new_name = N'%s'",
-		escapeSingle(j.Name), escapeSingle(newName))
-	if err := j.server.exec(ctx, q); err != nil {
-		return fmt.Errorf("gosmo: rename job %q to %q: %w", j.Name, newName, err)
-	}
-	setIfApplied(ctx, &j.Name, newName)
-	return nil
+	return j.Alter(ctx, JobChanges{Name: &newName})
 }
 
 // SetDescription changes the job's description.
 func (j *Job) SetDescription(ctx context.Context, desc string) error {
-	q := fmt.Sprintf("EXEC msdb.dbo.sp_update_job @job_name = N'%s', @description = N'%s'",
-		escapeSingle(j.Name), escapeSingle(desc))
-	if err := j.server.exec(ctx, q); err != nil {
-		return fmt.Errorf("gosmo: set description for job %q: %w", j.Name, err)
-	}
-	setIfApplied(ctx, &j.Description, desc)
-	return nil
+	return j.Alter(ctx, JobChanges{Description: &desc})
 }
 
-// SetCategory reassigns the job's category.
+// SetCategory reassigns the job's category. category == "" moves it back to
+// the default category, sent as msdb's [DEFAULT] sentinel and mirrored as
+// the [Uncategorized (Local)] the catalog then reports — see
+// agentCategoryTarget.
 func (j *Job) SetCategory(ctx context.Context, category string) error {
-	q := fmt.Sprintf("EXEC msdb.dbo.sp_update_job @job_name = N'%s', @category_name = N'%s'",
-		escapeSingle(j.Name), escapeSingle(category))
-	if err := j.server.exec(ctx, q); err != nil {
-		return fmt.Errorf("gosmo: set category for job %q: %w", j.Name, err)
-	}
-	setIfApplied(ctx, &j.Category, category)
-	return nil
+	return j.Alter(ctx, JobChanges{Category: &category})
 }
 
 // SetOwner reassigns the job's owner login.
 func (j *Job) SetOwner(ctx context.Context, loginName string) error {
-	q := fmt.Sprintf("EXEC msdb.dbo.sp_update_job @job_name = N'%s', @owner_login_name = N'%s'",
-		escapeSingle(j.Name), escapeSingle(loginName))
-	if err := j.server.exec(ctx, q); err != nil {
-		return fmt.Errorf("gosmo: set owner for job %q: %w", j.Name, err)
-	}
-	setIfApplied(ctx, &j.OwnerLoginName, loginName)
-	return nil
+	return j.Alter(ctx, JobChanges{OwnerLogin: &loginName})
 }
 
 // SetStartStep changes which step the job begins execution from.
 func (j *Job) SetStartStep(ctx context.Context, stepID int) error {
-	q := fmt.Sprintf("EXEC msdb.dbo.sp_update_job @job_name = N'%s', @start_step_id = %d",
-		escapeSingle(j.Name), stepID)
-	if err := j.server.exec(ctx, q); err != nil {
-		return fmt.Errorf("gosmo: set start step for job %q: %w", j.Name, err)
-	}
-	setIfApplied(ctx, &j.StartStepID, stepID)
-	return nil
+	return j.Alter(ctx, JobChanges{StartStepID: &stepID})
 }
 
 // SetEmailNotify sets which operator is emailed on job completion, and
@@ -402,30 +369,16 @@ func (j *Job) SetStartStep(ctx context.Context, stepID int) error {
 // mail is meaningless to it. Verified on SQL Server 17.0.1135.8, 2026-09-17,
 // and the batched Job.Alter behaves the same way.
 func (j *Job) SetEmailNotify(ctx context.Context, operatorName string, level NotifyLevel) error {
-	q := fmt.Sprintf("EXEC msdb.dbo.sp_update_job @job_name = N'%s', @notify_level_email = %d",
-		escapeSingle(j.Name), int(level))
+	ch := JobChanges{NotifyLevelEmail: &level}
 	if operatorName != "" {
-		q += fmt.Sprintf(", @notify_email_operator_name = N'%s'", escapeSingle(operatorName))
+		ch.NotifyEmailOperatorName = &operatorName
 	}
-	if err := j.server.exec(ctx, q); err != nil {
-		return fmt.Errorf("gosmo: set email notification for job %q: %w", j.Name, err)
-	}
-	setIfApplied(ctx, &j.NotifyLevelEmail, level)
-	if operatorName != "" {
-		setIfApplied(ctx, &j.NotifyEmailOperatorName, operatorName)
-	}
-	return nil
+	return j.Alter(ctx, ch)
 }
 
 // SetDeleteLevel sets the job's automatic-delete condition.
 func (j *Job) SetDeleteLevel(ctx context.Context, level NotifyLevel) error {
-	q := fmt.Sprintf("EXEC msdb.dbo.sp_update_job @job_name = N'%s', @delete_level = %d",
-		escapeSingle(j.Name), int(level))
-	if err := j.server.exec(ctx, q); err != nil {
-		return fmt.Errorf("gosmo: set delete level for job %q: %w", j.Name, err)
-	}
-	setIfApplied(ctx, &j.DeleteLevel, level)
-	return nil
+	return j.Alter(ctx, JobChanges{DeleteLevel: &level})
 }
 
 // CreateJob creates a new SQL Server Agent job.

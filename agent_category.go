@@ -24,17 +24,32 @@ var categoryClassNames = map[CategoryClass]bool{
 	CategoryClassJob: true, CategoryClassAlert: true, CategoryClassOperator: true,
 }
 
-// agentCategoryTarget maps an empty category name to the real
-// [Uncategorized] category. sp_verify_category — which sp_update_alert and
-// sp_update_operator both go through — rejects an empty name outright ("The
-// specified @category_name (”) does not exist"), and [Uncategorized] is
-// what an alert or operator created with no category actually holds in
-// msdb.dbo.syscategories.
-func agentCategoryTarget(category string) string {
-	if category == "" {
-		return "[Uncategorized]"
+// agentCategoryTarget maps an empty category name to what msdb accepts as
+// "uncategorised" for class, returning both the @category_name to send and
+// the name msdb.dbo.syscategories then reports for the object. A non-empty
+// name is returned unchanged as both.
+//
+// Each class spells the default differently:
+//
+//   - ALERT, OPERATOR: sp_verify_category (shared by sp_update_alert and
+//     sp_update_operator) rejects an empty name outright ("The specified
+//     @category_name (”) does not exist"); [Uncategorized] is the real row
+//     an alert or operator created with no category holds.
+//   - JOB: sp_update_job accepts an empty name, but only by turning it into
+//     NULL, which sp_verify_job resolves to category 0 — [Uncategorized
+//     (Local)] even for a multi-server job. [DEFAULT] is sp_verify_job's own
+//     "back to uncategorised" sentinel, resolved by job type to category 0
+//     or 2, [Uncategorized (Multi-Server)]. (Read from msdb on 13.0.6500.1
+//     and 17.0.1135.8, 2026-10-02.) stored assumes a local job — the only
+//     kind CreateJob makes; Job carries no job type to tell otherwise.
+func agentCategoryTarget(class CategoryClass, category string) (send, stored string) {
+	if category != "" {
+		return category, category
 	}
-	return category
+	if class == CategoryClassJob {
+		return "[DEFAULT]", "[Uncategorized (Local)]"
+	}
+	return "[Uncategorized]", "[Uncategorized]"
 }
 
 // validCategoryClass reports whether c is a recognized category class.

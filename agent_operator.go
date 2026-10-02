@@ -127,13 +127,7 @@ func (s *Server) CreateOperator(ctx context.Context, req CreateOperatorRequest) 
 
 // Rename changes the operator's name.
 func (o *Operator) Rename(ctx context.Context, newName string) error {
-	q := fmt.Sprintf("EXEC msdb.dbo.sp_update_operator @name = N'%s', @new_name = N'%s'",
-		escapeSingle(o.Name), escapeSingle(newName))
-	if err := o.server.exec(ctx, q); err != nil {
-		return fmt.Errorf("gosmo: rename operator %q to %q: %w", o.Name, newName, err)
-	}
-	setIfApplied(ctx, &o.Name, newName)
-	return nil
+	return o.Alter(ctx, OperatorChanges{Name: &newName})
 }
 
 // Enable enables the operator.
@@ -143,23 +137,12 @@ func (o *Operator) Enable(ctx context.Context) error { return o.setEnabled(ctx, 
 func (o *Operator) Disable(ctx context.Context) error { return o.setEnabled(ctx, false) }
 
 func (o *Operator) setEnabled(ctx context.Context, on bool) error {
-	q := fmt.Sprintf("EXEC msdb.dbo.sp_update_operator @name = N'%s', @enabled = %d", escapeSingle(o.Name), boolToInt(on))
-	if err := o.server.exec(ctx, q); err != nil {
-		return fmt.Errorf("gosmo: set enabled=%v for operator %q: %w", on, o.Name, err)
-	}
-	setIfApplied(ctx, &o.Enabled, on)
-	return nil
+	return o.Alter(ctx, OperatorChanges{Enabled: &on})
 }
 
 // SetEmailAddress changes the operator's email address.
 func (o *Operator) SetEmailAddress(ctx context.Context, addr string) error {
-	q := fmt.Sprintf("EXEC msdb.dbo.sp_update_operator @name = N'%s', @email_address = N'%s'",
-		escapeSingle(o.Name), escapeSingle(addr))
-	if err := o.server.exec(ctx, q); err != nil {
-		return fmt.Errorf("gosmo: set email address for operator %q: %w", o.Name, err)
-	}
-	setIfApplied(ctx, &o.EmailAddress, addr)
-	return nil
+	return o.Alter(ctx, OperatorChanges{EmailAddress: &addr})
 }
 
 // SetCategory reassigns the operator's category. category == "" clears it —
@@ -168,14 +151,7 @@ func (o *Operator) SetEmailAddress(ctx context.Context, addr string) error {
 // (sp_verify_category, shared with sp_update_alert) rejects an empty name
 // outright.
 func (o *Operator) SetCategory(ctx context.Context, category string) error {
-	target := agentCategoryTarget(category)
-	q := fmt.Sprintf("EXEC msdb.dbo.sp_update_operator @name = N'%s', @category_name = N'%s'",
-		escapeSingle(o.Name), escapeSingle(target))
-	if err := o.server.exec(ctx, q); err != nil {
-		return fmt.Errorf("gosmo: set category for operator %q: %w", o.Name, err)
-	}
-	setIfApplied(ctx, &o.Category, target)
-	return nil
+	return o.Alter(ctx, OperatorChanges{Category: &category})
 }
 
 // Drop deletes the operator via sp_delete_operator.

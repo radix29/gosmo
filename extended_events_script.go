@@ -3,6 +3,7 @@ package gosmo
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"slices"
 	"strings"
 	"time"
@@ -18,6 +19,11 @@ import (
 //     syntax error ("Incorrect syntax near 'TARGET'"). Alter therefore emits
 //     one statement per group.
 //   - Events and targets can be added and dropped on a running session.
+//   - A session may be left with no events, stopped or running (it stays
+//     running), so re-adding a changed event after dropping it is safe even
+//     when it is the only one. DROP EVENT x, ADD EVENT x in one statement is a
+//     syntax error (Msg 156). Verified on 13, 14 and 17, 2026-10-02;
+//     TestLiveEventSessionAlterOnlyEvent.
 //   - Every WITH option but STARTUP_STATE is refused on a running session
 //     (Msg 25707, "cannot be changed while the session is running"). Alter
 //     stops the session around such a change and starts it again — the
@@ -84,11 +90,56 @@ func (es *EventSession) Spec() EventSessionSpec {
 
 // literal renders one SET value as the DDL wants it: N'…' for a string,
 // (n) for anything else — the form SSMS scripts and the catalog round-trips.
+// The (n) form splices Value raw, so every statement builder runs
+// checkFields first.
 func (f SessionField) literal() string {
 	if f.IsString {
 		return QuoteLiteral(f.Value)
 	}
 	return "(" + f.Value + ")"
+}
+
+// xeNumericValue is what a non-string field value may be: an integer, a
+// decimal, a float as CONVERT(nvarchar, float) renders it (1e+006), or a
+// boolean token. Anything else would be spliced into the DDL as typed — a
+// ")" there makes different, still-parseable DDL.
+var xeNumericValue = regexp.MustCompile(`(?i)^([+-]?(\d+(\.\d*)?|\.\d+)(e[+-]?\d+)?|true|false)$`)
+
+// Validate reports a non-string value that is not a number or a boolean
+// token — one literal would splice into the DDL raw. A string value is quoted
+// and always valid. Create, Alter and AddTarget run it on every field; a
+// caller editing fields can run it first to report the error where it was
+// typed.
+func (f SessionField) Validate() error {
+	if !f.IsString && !xeNumericValue.MatchString(f.Value) {
+		return fmt.Errorf("field %s: value %q is not a number", f.Name, f.Value)
+	}
+	return nil
+}
+
+// checkFields validates fields, naming the event or target they belong to.
+func checkFields(owner string, fields []SessionField) error {
+	for _, f := range fields {
+		if err := f.Validate(); err != nil {
+			return fmt.Errorf("%s: %w", owner, err)
+		}
+	}
+	return nil
+}
+
+// checkFields runs the package-level check over every event and target.
+func (spec EventSessionSpec) checkFields() error {
+	for _, e := range spec.Events {
+		if err := checkFields("event "+e.QualifiedName(), e.Fields); err != nil {
+			return err
+		}
+	}
+	for _, t := range spec.Targets {
+		if err := checkFields("target "+t.QualifiedName(), t.Fields); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func setClause(fields []SessionField) string {
@@ -182,6 +233,9 @@ func (spec EventSessionSpec) validate() error {
 			return fmt.Errorf("event session %q: target %q has no package or name", spec.Name, t.QualifiedName())
 		}
 	}
+	if err := spec.checkFields(); err != nil {
+		return fmt.Errorf("event session %q: %w", spec.Name, err)
+	}
 	return nil
 }
 
@@ -270,6 +324,9 @@ func (es *EventSession) setState(ctx context.Context, start bool) error {
 func (es *EventSession) AddTarget(ctx context.Context, t SessionTarget) error {
 	if t.Package == "" || t.Name == "" {
 		return fmt.Errorf("gosmo: add target to event session %q: target %q has no package or name", es.Name, t.QualifiedName())
+	}
+	if err := checkFields("target "+t.QualifiedName(), t.Fields); err != nil {
+		return fmt.Errorf("gosmo: add target to event session %q: %w", es.Name, err)
 	}
 	stmt := fmt.Sprintf("ALTER EVENT SESSION %s %s\nADD TARGET %s", quoteIdent(es.Name), es.scope().on, t.clause())
 	if err := es.exec(ctx, stmt); err != nil {
@@ -433,6 +490,9 @@ func fieldsEqual(a, b []SessionField) bool {
 // The statements are not one transaction — the server runs event-session DDL
 // outside any — so a failure part-way leaves the groups before it applied.
 func (es *EventSession) Alter(ctx context.Context, spec EventSessionSpec) error {
+	if err := spec.checkFields(); err != nil {
+		return fmt.Errorf("gosmo: alter event session %q: %w", es.Name, err)
+	}
 	cur, err := eventSessionByName(ctx, es.refLike())
 	if err != nil {
 		return err

@@ -225,13 +225,7 @@ func (s *Server) CreateAlert(ctx context.Context, req CreateAlertRequest) (*Aler
 
 // Rename changes the alert's name.
 func (a *Alert) Rename(ctx context.Context, newName string) error {
-	q := fmt.Sprintf("EXEC msdb.dbo.sp_update_alert @name = N'%s', @new_name = N'%s'",
-		escapeSingle(a.Name), escapeSingle(newName))
-	if err := a.server.exec(ctx, q); err != nil {
-		return fmt.Errorf("gosmo: rename alert %q to %q: %w", a.Name, newName, err)
-	}
-	setIfApplied(ctx, &a.Name, newName)
-	return nil
+	return a.Alter(ctx, AlertChanges{Name: &newName})
 }
 
 // Enable enables the alert.
@@ -241,60 +235,30 @@ func (a *Alert) Enable(ctx context.Context) error { return a.setEnabled(ctx, tru
 func (a *Alert) Disable(ctx context.Context) error { return a.setEnabled(ctx, false) }
 
 func (a *Alert) setEnabled(ctx context.Context, on bool) error {
-	q := fmt.Sprintf("EXEC msdb.dbo.sp_update_alert @name = N'%s', @enabled = %d", escapeSingle(a.Name), boolToInt(on))
-	if err := a.server.exec(ctx, q); err != nil {
-		return fmt.Errorf("gosmo: set enabled=%v for alert %q: %w", on, a.Name, err)
-	}
-	setIfApplied(ctx, &a.Enabled, on)
-	return nil
+	return a.Alter(ctx, AlertChanges{Enabled: &on})
 }
 
 // SetTrigger sets what raises the alert: a specific SQL Server error
 // number, or a severity level. SQL Server treats these as mutually
 // exclusive — pass 0 for whichever one isn't in use.
 func (a *Alert) SetTrigger(ctx context.Context, errorNumber, severity int) error {
-	q := fmt.Sprintf("EXEC msdb.dbo.sp_update_alert @name = N'%s', @message_id = %d, @severity = %d",
-		escapeSingle(a.Name), errorNumber, severity)
-	if err := a.server.exec(ctx, q); err != nil {
-		return fmt.Errorf("gosmo: set trigger for alert %q: %w", a.Name, err)
-	}
-	setIfApplied(ctx, &a.ErrorNumber, errorNumber)
-	setIfApplied(ctx, &a.Severity, severity)
-	return nil
+	return a.Alter(ctx, AlertChanges{ErrorNumber: &errorNumber, Severity: &severity})
 }
 
 // SetDatabase scopes the alert to a single database, or "" for all databases.
 func (a *Alert) SetDatabase(ctx context.Context, dbName string) error {
-	q := fmt.Sprintf("EXEC msdb.dbo.sp_update_alert @name = N'%s', @database_name = N'%s'",
-		escapeSingle(a.Name), escapeSingle(dbName))
-	if err := a.server.exec(ctx, q); err != nil {
-		return fmt.Errorf("gosmo: set database for alert %q: %w", a.Name, err)
-	}
-	setIfApplied(ctx, &a.DatabaseName, dbName)
-	return nil
+	return a.Alter(ctx, AlertChanges{DatabaseName: &dbName})
 }
 
 // SetDelay sets the minimum delay between repeated responses to the alert.
 func (a *Alert) SetDelay(ctx context.Context, d time.Duration) error {
-	q := fmt.Sprintf("EXEC msdb.dbo.sp_update_alert @name = N'%s', @delay_between_responses = %d",
-		escapeSingle(a.Name), int(d.Seconds()))
-	if err := a.server.exec(ctx, q); err != nil {
-		return fmt.Errorf("gosmo: set delay for alert %q: %w", a.Name, err)
-	}
-	setIfApplied(ctx, &a.DelayBetweenResponses, d)
-	return nil
+	return a.Alter(ctx, AlertChanges{DelayBetweenResponses: &d})
 }
 
 // SetNotificationMessage sets the extra text appended to the alert's
 // notification.
 func (a *Alert) SetNotificationMessage(ctx context.Context, msg string) error {
-	q := fmt.Sprintf("EXEC msdb.dbo.sp_update_alert @name = N'%s', @notification_message = N'%s'",
-		escapeSingle(a.Name), escapeSingle(msg))
-	if err := a.server.exec(ctx, q); err != nil {
-		return fmt.Errorf("gosmo: set notification message for alert %q: %w", a.Name, err)
-	}
-	setIfApplied(ctx, &a.NotificationMessage, msg)
-	return nil
+	return a.Alter(ctx, AlertChanges{NotificationMessage: &msg})
 }
 
 // SetCategory reassigns the alert's category. category == "" clears it —
@@ -303,14 +267,7 @@ func (a *Alert) SetNotificationMessage(ctx context.Context, msg string) error {
 // exist") and [Uncategorized] is what an alert created with no category
 // actually holds in msdb.dbo.syscategories.
 func (a *Alert) SetCategory(ctx context.Context, category string) error {
-	target := agentCategoryTarget(category)
-	q := fmt.Sprintf("EXEC msdb.dbo.sp_update_alert @name = N'%s', @category_name = N'%s'",
-		escapeSingle(a.Name), escapeSingle(target))
-	if err := a.server.exec(ctx, q); err != nil {
-		return fmt.Errorf("gosmo: set category for alert %q: %w", a.Name, err)
-	}
-	setIfApplied(ctx, &a.Category, target)
-	return nil
+	return a.Alter(ctx, AlertChanges{Category: &category})
 }
 
 // SetJobResponse sets the job executed in response to this alert, or ""
@@ -320,13 +277,7 @@ func (a *Alert) SetJobResponse(ctx context.Context, jobName string) error {
 	// response" — it maps N'' to a job_id of 0x00 before sp_verify_alert
 	// would otherwise reject the name for not matching a job. Anything else,
 	// including a placeholder like [UNSPECIFIED], fails as a missing job.
-	q := fmt.Sprintf("EXEC msdb.dbo.sp_update_alert @name = N'%s', @job_name = N'%s'",
-		escapeSingle(a.Name), escapeSingle(jobName))
-	if err := a.server.exec(ctx, q); err != nil {
-		return fmt.Errorf("gosmo: set job response for alert %q: %w", a.Name, err)
-	}
-	setIfApplied(ctx, &a.JobName, jobName)
-	return nil
+	return a.Alter(ctx, AlertChanges{JobName: &jobName})
 }
 
 // Drop deletes the alert via sp_delete_alert.

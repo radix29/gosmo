@@ -124,23 +124,29 @@ func (s *Server) refusesSingleUser() bool {
 // finishes, and until it does the database is still in use and the DROP
 // fails with Msg 3702; ROLLBACK IMMEDIATE waits out the same rollback itself.
 func killDatabaseSessionsBatch(name string) string {
-	lit := QuoteLiteral(name)
 	return fmt.Sprintf(`DECLARE @db int = DB_ID(%[1]s), @kill nvarchar(max) = N'', @waits int = 0;
 SELECT @kill += N'BEGIN TRY KILL ' + CAST(s.session_id AS nvarchar(10)) + N'; END TRY BEGIN CATCH END CATCH; '
 FROM sys.dm_exec_sessions AS s
-WHERE s.is_user_process = 1 AND s.session_id <> @@SPID
-  AND (s.database_id = @db OR s.session_id IN (
-    SELECT l.request_session_id FROM sys.dm_tran_locks AS l
-    WHERE l.resource_type = N'DATABASE' AND l.resource_database_id = @db));
+WHERE %[2]s;
 EXEC (@kill);
 WHILE @waits < 150 AND EXISTS (
     SELECT 1 FROM sys.dm_exec_sessions AS s
-    WHERE s.is_user_process = 1 AND s.session_id <> @@SPID AND s.database_id = @db)
+    WHERE %[2]s)
 BEGIN
     WAITFOR DELAY '00:00:00.200';
     SET @waits += 1;
-END`, lit)
+END`, QuoteLiteral(name), databaseSessionPredicate)
 }
+
+// databaseSessionPredicate selects, over sys.dm_exec_sessions AS s, the
+// sessions killDatabaseSessionsBatch kills — and therefore the ones it waits
+// for. One string for both: the wait once checked only database_id, so a
+// session killed for its database lock was left rolling back unwaited and the
+// DROP after it failed Msg 3702.
+const databaseSessionPredicate = `s.is_user_process = 1 AND s.session_id <> @@SPID
+  AND (s.database_id = @db OR s.session_id IN (
+    SELECT l.request_session_id FROM sys.dm_tran_locks AS l
+    WHERE l.resource_type = N'DATABASE' AND l.resource_database_id = @db))`
 
 // exclusiveBatch renders op — a statement needing the database name to
 // itself — as one batch that takes exclusive access with SET SINGLE_USER WITH
@@ -341,6 +347,20 @@ func (s *Server) queryRow(ctx context.Context, scan func(*sql.Row) error, q stri
 // queryRow directly.
 func (s *Server) queryRowScan(ctx context.Context, q string, args []any, dest ...any) error {
 	return s.queryRow(ctx, func(row *sql.Row) error { return row.Scan(dest...) }, q, args...)
+}
+
+// execScan runs stmt — a write that reads a value back, such as an EXEC with
+// an OUTPUT parameter followed by a SELECT of it — and scans its one row into
+// dest, exactly once. It is queryRowScan without withRetry, and that is the
+// whole point: a connection that breaks after the server has run the write
+// but before the row arrives fails with one of the errors IsRetryable
+// accepts, and a retry would run the write a second time. sp_send_dbmail was
+// the case: a retried send queued the message twice.
+//
+// It does not handle Scripting(ctx) or observe: a caller's scripted text
+// differs from what it runs (a named result column), so the caller does both.
+func (s *Server) execScan(ctx context.Context, stmt string, dest ...any) error {
+	return withAllMessages(s.db.QueryRowContext(ctx, stmt).Scan(dest...))
 }
 
 // loadInfo populates s.info. It runs two statements rather than one, and the

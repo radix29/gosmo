@@ -558,3 +558,46 @@ func TestReadEventFileNamesAFileRolloverDeleted(t *testing.T) {
 		t.Error("another error read as a rolled-over file")
 	}
 }
+
+// TestNonStringFieldValuesAreChecked pins K7: a non-string field value is
+// spliced into the DDL inside (…), so anything but a number or a boolean
+// token is refused before a statement is built — create, alter and AddTarget.
+func TestNonStringFieldValuesAreChecked(t *testing.T) {
+	for _, v := range []string{"1", "-20", "+3", "1.5", ".5", "1e+006", "2.5E-3", "true", "FALSE"} {
+		if err := checkFields("event x", []SessionField{{Name: "f", Value: v}}); err != nil {
+			t.Errorf("%q: %v", v, err)
+		}
+	}
+	for _, v := range []string{"", "1)", "1),max_file_size=(5", "0x10", " 1", "abc", "1e", "-"} {
+		err := checkFields("event x", []SessionField{{Name: "f", Value: v}})
+		if err == nil || !strings.Contains(err.Error(), "field f") {
+			t.Errorf("%q: want an error naming the field, got %v", v, err)
+		}
+	}
+	// A string value is quoted, so anything goes.
+	if err := checkFields("event x", []SessionField{{Name: "f", Value: "a)b'", IsString: true}}); err != nil {
+		t.Error(err)
+	}
+
+	bad := SessionEvent{Package: "sqlserver", Name: "sql_batch_completed",
+		Fields: []SessionField{{Name: "collect_batch_text", Value: "1),x=(2"}}}
+	spec := EventSessionSpec{Name: "s", Events: []SessionEvent{bad}}
+	if _, err := spec.createStatement(xeServerScope); err == nil ||
+		!strings.Contains(err.Error(), "event sqlserver.sql_batch_completed: field collect_batch_text") {
+		t.Errorf("create: got %v", err)
+	}
+
+	ctx, col := WithScript(t.Context())
+	es := (&Server{}).EventSessionRef("s")
+	if err := es.Alter(ctx, spec); err == nil {
+		t.Error("alter: want an error")
+	}
+	tgt := SessionTarget{Package: "package0", Name: "event_file",
+		Fields: []SessionField{{Name: "max_file_size", Value: "5)"}}}
+	if err := es.AddTarget(ctx, tgt); err == nil || !strings.Contains(err.Error(), "target package0.event_file: field max_file_size") {
+		t.Errorf("add target: got %v", err)
+	}
+	if got := col.Statements(); len(got) != 0 {
+		t.Errorf("sent %q, want nothing", got)
+	}
+}

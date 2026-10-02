@@ -64,6 +64,10 @@ exercise the write, drop them; never mutate pre-existing objects.
   were 707 untested delegates, one miswired to a sibling).
 - **Errors** wrap with `%w`, prefixed `gosmo: ` + the attempted operation:
   `fmt.Errorf("gosmo: drop statistic %q: %w", st.Name, err)`.
+- **A write never goes through `query`/`queryRow*`** — they retry
+  (`withRetry`), and a write retried after a broken connection runs twice. A
+  write that reads a value back (an `OUTPUT` parameter) uses `execScan`.
+  `write_through_read_test.go` enforces it.
 - **Row iteration.** Every `query` gets `defer rows.Close()` and a checked
   `rows.Err()`; it and every `rows.Scan` wrap with the *same* message as the
   query error (else a mid-iteration failure surfaces as a bare `context

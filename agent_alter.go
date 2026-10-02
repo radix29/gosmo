@@ -7,7 +7,11 @@ package gosmo
 // The per-property setters in agent_job.go, agent_alert.go,
 // agent_operator.go and agent_schedule.go stay — they are the right shape
 // for a single change, and Enable/Disable/Rename read better than a struct
-// literal. What they are not is the right shape for a Properties dialog
+// literal — but each is a one-line wrapper over Alter, so there is one
+// statement builder, one escaping path and one receiver update per family.
+// (They were once hand-rolled copies, and the job copy and Alter both missed
+// the empty-category mapping the alert and operator paths had: a cleared job
+// category was mirrored as "" while msdb reported [Uncategorized (Local)].) What they are not is the right shape for a Properties dialog
 // applying five edits at once: msdb's sp_update_* procedures take every
 // updatable parameter in one call, and SMO's own shape is
 // set-properties-then-Alter(), so five setters is four round trips more
@@ -69,6 +73,8 @@ func (p *agentParams) statement(proc, key string) string {
 type JobChanges struct {
 	Name        *string
 	Description *string
+	// Category set to "" moves the job back to the default category, sent
+	// as msdb's [DEFAULT] — see agentCategoryTarget.
 	Category    *string
 	OwnerLogin  *string
 	Enabled     *bool
@@ -93,7 +99,8 @@ func (ch JobChanges) params() *agentParams {
 		p.str("@description", *ch.Description)
 	}
 	if ch.Category != nil {
-		p.str("@category_name", *ch.Category)
+		send, _ := agentCategoryTarget(CategoryClassJob, *ch.Category)
+		p.str("@category_name", send)
 	}
 	if ch.OwnerLogin != nil {
 		p.str("@owner_login_name", *ch.OwnerLogin)
@@ -128,7 +135,10 @@ func (j *Job) Alter(ctx context.Context, ch JobChanges) error {
 		return fmt.Errorf("gosmo: alter job %q: %w", j.Name, err)
 	}
 	setPtrIfApplied(ctx, &j.Description, ch.Description)
-	setPtrIfApplied(ctx, &j.Category, ch.Category)
+	if ch.Category != nil {
+		_, stored := agentCategoryTarget(CategoryClassJob, *ch.Category)
+		setIfApplied(ctx, &j.Category, stored)
+	}
 	setPtrIfApplied(ctx, &j.OwnerLoginName, ch.OwnerLogin)
 	setPtrIfApplied(ctx, &j.IsEnabled, ch.Enabled)
 	setPtrIfApplied(ctx, &j.StartStepID, ch.StartStepID)
@@ -196,7 +206,8 @@ func (ch AlertChanges) params() *agentParams {
 		p.num("@include_event_description_in", *ch.IncludeEventDescriptionIn)
 	}
 	if ch.Category != nil {
-		p.str("@category_name", agentCategoryTarget(*ch.Category))
+		send, _ := agentCategoryTarget(CategoryClassAlert, *ch.Category)
+		p.str("@category_name", send)
 	}
 	if ch.JobName != nil {
 		p.str("@job_name", *ch.JobName)
@@ -223,7 +234,8 @@ func (a *Alert) Alter(ctx context.Context, ch AlertChanges) error {
 	setPtrIfApplied(ctx, &a.NotificationMessage, ch.NotificationMessage)
 	setPtrIfApplied(ctx, &a.IncludeEventDescriptionIn, ch.IncludeEventDescriptionIn)
 	if ch.Category != nil {
-		setIfApplied(ctx, &a.Category, agentCategoryTarget(*ch.Category))
+		_, stored := agentCategoryTarget(CategoryClassAlert, *ch.Category)
+		setIfApplied(ctx, &a.Category, stored)
 	}
 	setPtrIfApplied(ctx, &a.JobName, ch.JobName)
 	setPtrIfApplied(ctx, &a.Name, ch.Name)
@@ -265,7 +277,8 @@ func (ch OperatorChanges) params() *agentParams {
 		p.str("@netsend_address", *ch.NetSendAddress)
 	}
 	if ch.Category != nil {
-		p.str("@category_name", agentCategoryTarget(*ch.Category))
+		send, _ := agentCategoryTarget(CategoryClassOperator, *ch.Category)
+		p.str("@category_name", send)
 	}
 	return p
 }
@@ -286,7 +299,8 @@ func (o *Operator) Alter(ctx context.Context, ch OperatorChanges) error {
 	setPtrIfApplied(ctx, &o.PagerAddress, ch.PagerAddress)
 	setPtrIfApplied(ctx, &o.NetSendAddress, ch.NetSendAddress)
 	if ch.Category != nil {
-		setIfApplied(ctx, &o.Category, agentCategoryTarget(*ch.Category))
+		_, stored := agentCategoryTarget(CategoryClassOperator, *ch.Category)
+		setIfApplied(ctx, &o.Category, stored)
 	}
 	setPtrIfApplied(ctx, &o.Name, ch.Name)
 	return nil

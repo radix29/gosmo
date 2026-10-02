@@ -623,21 +623,22 @@ func mailReadsBase(table string) string {
 		"ISNULL(HAS_PERMS_BY_NAME(N'msdb.dbo." + table + "', N'OBJECT', N'SELECT'), 0) = 1"
 }
 
-// mailItemsQuery is q, whose one %s is the item source, as a batch reading
-// sysmail_mailitems when the caller may and sysmail_allitems otherwise.
-func mailItemsQuery(q string) string {
+// mailItemsQuery is q, called with the item source, as a batch reading
+// sysmail_mailitems when the caller may and sysmail_allitems otherwise. q is a
+// builder, not a format string with a %s, so a condition holding a % cannot
+// corrupt the query and vet's printf check sees every Sprintf.
+func mailItemsQuery(q func(source string) string) string {
 	return mailSourceBatch("sysmail_mailitems", q, mailItemsBase, mailItemsView)
 }
 
 // mailEventsQuery is mailItemsQuery for the log: sysmail_log or
 // sysmail_event_log.
-func mailEventsQuery(q string) string {
+func mailEventsQuery(q func(source string) string) string {
 	return mailSourceBatch("sysmail_log", q, mailEventsBase, mailEventsView)
 }
 
-func mailSourceBatch(table, q, base, view string) string {
-	return "IF " + mailReadsBase(table) + "\n" + fmt.Sprintf(q, base) +
-		"\nELSE\n" + fmt.Sprintf(q, view)
+func mailSourceBatch(table string, q func(source string) string, base, view string) string {
+	return "IF " + mailReadsBase(table) + "\n" + q(base) + "\nELSE\n" + q(view)
 }
 
 // MailVisibility is how much of Database Mail's items and log the caller's
@@ -702,8 +703,10 @@ func (s *Server) MailItems(ctx context.Context, f MailItemFilter) ([]*MailItem, 
 		args = append(args, f.Before)
 		where = append(where, fmt.Sprintf("send_request_date < CAST(@p%d AS datetime)", len(args)))
 	}
-	q := mailItemsQuery(fmt.Sprintf("SELECT TOP (%d) %s FROM %%s%s ORDER BY mailitem_id DESC",
-		rowLimit(f.Max), mailItemColumns, whereClause(where)))
+	q := mailItemsQuery(func(source string) string {
+		return fmt.Sprintf("SELECT TOP (%d) %s FROM %s%s ORDER BY mailitem_id DESC",
+			rowLimit(f.Max), mailItemColumns, source, whereClause(where))
+	})
 
 	rows, err := s.query(ctx, q, args...)
 	return scanRows(rows, err, "list mail items", func(scan func(...any) error) (*MailItem, error) {
@@ -720,7 +723,9 @@ func (s *Server) MailItemByID(ctx context.Context, id int) (*MailItem, error) {
 		var err error
 		m, err = scanMailItem(row.Scan)
 		return err
-	}, mailItemsQuery("SELECT "+mailItemColumns+" FROM %s WHERE mailitem_id = @p1"), id)
+	}, mailItemsQuery(func(source string) string {
+		return "SELECT " + mailItemColumns + " FROM " + source + " WHERE mailitem_id = @p1"
+	}), id)
 	return foundRow(m, err,
 		notFoundf("gosmo: mail item %d not found", id),
 		fmt.Sprintf("read mail item %d", id))
@@ -784,11 +789,13 @@ func (s *Server) MailEvents(ctx context.Context, f MailEventFilter) ([]*MailEven
 		args = append(args, f.Before)
 		where = append(where, fmt.Sprintf("log_date < CAST(@p%d AS datetime)", len(args))) // as MailItems' Before
 	}
-	q := mailEventsQuery(fmt.Sprintf(`SELECT TOP (%d) log_id, event_type, log_date, ISNULL(description, N''),
+	q := mailEventsQuery(func(source string) string {
+		return fmt.Sprintf(`SELECT TOP (%d) log_id, event_type, log_date, ISNULL(description, N''),
        ISNULL(process_id, 0), ISNULL(mailitem_id, 0), ISNULL(account_id, 0),
        last_mod_date, last_mod_user
-FROM   %%s%s
-ORDER  BY log_id DESC`, rowLimit(f.Max), whereClause(where)))
+FROM   %s%s
+ORDER  BY log_id DESC`, rowLimit(f.Max), source, whereClause(where))
+	})
 
 	rows, err := s.query(ctx, q, args...)
 	return scanRows(rows, err, "read mail log", func(scan func(...any) error) (*MailEvent, error) {
@@ -816,22 +823,4 @@ func whereClause(conds []string) string {
 		return ""
 	}
 	return " WHERE " + strings.Join(conds, " AND ")
-}
-
-// ============================================================
-// Sending
-// ============================================================
-
-// SendMail sends an email via Database Mail (sp_send_dbmail).
-func (s *Server) SendMail(ctx context.Context, profile, recipients, subject, body string) error {
-	q := fmt.Sprintf(
-		"EXEC msdb.dbo.sp_send_dbmail @profile_name = N'%s', @recipients = N'%s', "+
-			"@subject = N'%s', @body = N'%s'",
-		escapeSingle(profile), escapeSingle(recipients),
-		escapeSingle(subject), escapeSingle(body),
-	)
-	if err := s.exec(ctx, q); err != nil {
-		return fmt.Errorf("gosmo: send mail: %w", err)
-	}
-	return nil
 }

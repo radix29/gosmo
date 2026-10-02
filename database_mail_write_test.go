@@ -2,8 +2,13 @@ package gosmo
 
 import (
 	"context"
+	"database/sql"
+	"database/sql/driver"
+	"errors"
+	"io"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -243,7 +248,7 @@ func TestMailServerStatementShapes(t *testing.T) {
 		{"start", s.StartDatabaseMail, []string{"EXEC msdb.dbo.sysmail_start_sp"}},
 		{"stop", s.StopDatabaseMail, []string{"EXEC msdb.dbo.sysmail_stop_sp"}},
 		{"send", func(ctx context.Context) error {
-			_, err := s.SendTestMail(ctx, "", "a@b", "Database Mail Test", "it's a test")
+			_, err := s.SendMail(ctx, MailMessage{To: "a@b", Subject: "Database Mail Test", Body: "it's a test"})
 			return err
 		}, []string{"DECLARE @mailitem_id int;\nEXEC msdb.dbo.sp_send_dbmail @recipients = N'a@b', " +
 			"@subject = N'Database Mail Test', @body = N'it''s a test', @mailitem_id = @mailitem_id OUTPUT;\n" +
@@ -263,5 +268,53 @@ func TestMailServerStatementShapes(t *testing.T) {
 	ctx, col := WithScript(context.Background())
 	if err := s.SetMailConfiguration(ctx, MailConfigurationOptions{LoggingLevel: new(MailLoggingLevel(4))}); err == nil || len(col.Statements()) != 0 {
 		t.Errorf("logging level 4: err %v, statements %q; want a refusal", err, col.Statements())
+	}
+}
+
+// -- eofDriver: every query "runs", then the connection breaks ----------------
+
+// eofQueries counts the statements eofDriver was handed.
+var eofQueries atomic.Int32
+
+type eofDriver struct{}
+
+func (eofDriver) Open(string) (driver.Conn, error) { return eofConn{}, nil }
+
+type eofConn struct{}
+
+func (eofConn) Prepare(string) (driver.Stmt, error) { return nil, driver.ErrSkip }
+func (eofConn) Close() error                        { return nil }
+func (eofConn) Begin() (driver.Tx, error)           { return nil, driver.ErrSkip }
+
+// QueryContext fails with io.EOF — what a connection broken after the server
+// ran the statement, before the result came back, surfaces as. IsRetryable
+// accepts it.
+func (eofConn) QueryContext(context.Context, string, []driver.NamedValue) (driver.Rows, error) {
+	eofQueries.Add(1)
+	return nil, io.EOF
+}
+
+func init() { sql.Register("eofafterrun", eofDriver{}) }
+
+// A send is a write, so a connection lost after the server queued the message
+// must not be retried: SendMail ran through the retrying read helper and
+// a broken connection queued the message up to three times.
+func TestSendMailIsNotRetried(t *testing.T) {
+	db, err := sql.Open("eofafterrun", "")
+	if err != nil {
+		t.Fatalf("sql.Open: %v", err)
+	}
+	defer db.Close()
+	if !IsRetryable(io.EOF) {
+		t.Fatal("io.EOF is no longer retryable; the test no longer exercises the retry path")
+	}
+	eofQueries.Store(0)
+	s := &Server{db: db}
+	_, err = s.SendMail(context.Background(), MailMessage{To: "a@b", Subject: "s", Body: "b"})
+	if !errors.Is(err, io.EOF) {
+		t.Errorf("err = %v, want the io.EOF surfaced", err)
+	}
+	if n := eofQueries.Load(); n != 1 {
+		t.Errorf("sp_send_dbmail sent %d times, want 1", n)
 	}
 }
