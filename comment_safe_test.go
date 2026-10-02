@@ -78,6 +78,9 @@ func TestScriptCommentsContainHostileNames(t *testing.T) {
 		"external library scope": func(n string) string {
 			return buildExternalLibraryScript(&ExternalLibrary{Name: "l", Scope: n}, DefaultScriptOptions())
 		},
+		"float16 parameter note": func(n string) string {
+			return float16Note([]string{commentSafe(n)}) // as float16Parameters scans it
+		},
 	}
 	for site, script := range sites {
 		for _, n := range hostileNames {

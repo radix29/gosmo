@@ -42,16 +42,16 @@ Which instances exist to sweep against, and the sweep's current result, are
 environment facts rather than library facts: gossms's `docs/open-threads.md`
 § Version support carries them, and points here for the table above.
 
-## Resource Governor affinity beyond processor group 0
+## Resource Governor affinity beyond processor group 0: unit-tested only
 
-`PoolAffinity` writes AFFINITY SCHEDULER/CPU/NUMANODE by id (2026-10-01), but
-the catalog stores a mask per processor group, and ids past group 0 continue
-from the previous group's *actual* size, which the catalog does not hold. So
-the scripter maps group 0 exactly (bit n is id n) and refuses any later group
-with `ErrUnsupported`; `Server.Schedulers` carries each scheduler's
-`ProcessorGroup` and would supply the mapping, at the cost of VIEW SERVER
-STATE in the scripter. No instance in the estate has more than one processor
-group.
+Since 2026-10-02 the scripter maps a mask in a later processor group through
+`Server.Schedulers` (each group's visible-scheduler count; VIEW SERVER STATE,
+refused with `ErrUnsupported` naming it). No instance in the estate has more
+than one processor group, so that path is covered only by
+`TestResourcePoolAffinityBeyondGroupZero`'s fake sizes. Two assumptions are
+unconfirmed against a live multi-group host: that ids continue across groups
+by visible-scheduler count (VISIBLE OFFLINE included), and that an external
+pool's CPU ids number the same way. Replay on the first multi-group instance.
 
 ## azidentity: watch for the removal, not the deprecation
 
@@ -101,9 +101,11 @@ the documentation, and only the refusal on 13/14 and acceptance on 17 are
 run live. A `float16` vector needs `PREVIEW_FEATURES = ON` in the
 database the script is replayed into (Msg 195 otherwise): the table script
 names it in a leading comment and deliberately does not set it
-(`live_script_float16_test.go`, 2026-10-01). A module with a `float16`
-parameter or variable has the same need and no comment — its script is the
-stored definition, and nothing short of parsing it finds the type.
+(`live_script_float16_test.go`, 2026-10-01). A procedure or function with a
+`float16` parameter gets the same comment, naming the parameters from
+`sys.parameters` (2026-10-02). A `float16` **local variable** still gets
+none — it is in the stored definition only, and nothing short of parsing it
+finds the type.
 
 The 2026-09-24 fix-plan pass (G7–G10) added Always Encrypted columns, ledger
 tables, FileTables and external tables. **Refused, not scripted** (an
@@ -117,9 +119,10 @@ What those four kinds still leave out:
 
 - **External tables** are verified live only on Azure SQL Managed Instance —
   no on-premises test instance has PolyBase. `SCHEMA_NAME`, `OBJECT_NAME` and
-  `DISTRIBUTION` (elastic query) are unit-tested only, and
-  `sys.external_tables`' 2022+ `rejected_row_location` and `table_options`
-  are not read. The data source's database-scoped credential is named, not
+  `DISTRIBUTION` (elastic query) are unit-tested only, and so are
+  `REJECTED_ROW_LOCATION` and `TABLE_OPTIONS` (`sys.external_tables`, read
+  from 2022; 2026-10-02) — replay them on the Managed Instance or the first
+  PolyBase instance. The data source's database-scoped credential is named, not
   scripted.
 - **Always Encrypted**: the column master and column encryption keys are
   referenced by name and must exist where the script runs.

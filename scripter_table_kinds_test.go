@@ -234,6 +234,38 @@ func TestBuildExternalTableScript(t *testing.T) {
 	if strings.Contains(s, "REJECT") {
 		t.Errorf("elastic-query script has reject options:\n%s", s)
 	}
+
+	// SQL Server 2022's two: the rejected-row directory with the reject
+	// options, TABLE_OPTIONS last; neither when unset (every table below 16).
+	p.table.External = externalTableOptions{DataSource: "ds", FileFormat: "csv", Location: "z/",
+		RejectType: "VALUE", RejectValue: sql.NullFloat64{Float64: 5, Valid: true},
+		RejectedRowLocation: "/rej'ects", TableOptions: `{"READ_OPTIONS":["ALLOW_INCONSISTENT_READS"]}`}
+	s = buildExternalTableScript("dbo", "ET", "G", p, nil, DefaultScriptOptions())
+	if want := "    REJECT_VALUE = 5,\n    REJECTED_ROW_LOCATION = N'/rej''ects',\n" +
+		"    TABLE_OPTIONS = N'{\"READ_OPTIONS\":[\"ALLOW_INCONSISTENT_READS\"]}'\n);"; !strings.Contains(s, want) {
+		t.Errorf("2022 options missing %q:\n%s", want, s)
+	}
+	p.table.External.RejectedRowLocation, p.table.External.TableOptions = "", ""
+	if s = buildExternalTableScript("dbo", "ET", "G", p, nil, DefaultScriptOptions()); strings.Contains(s, "REJECTED_ROW_LOCATION") ||
+		strings.Contains(s, "TABLE_OPTIONS") {
+		t.Errorf("unset 2022 options scripted:\n%s", s)
+	}
+}
+
+// The two 2022 sys.external_tables columns are read from 16 and substituted
+// below it.
+func TestExternalTableOptionsGate(t *testing.T) {
+	for _, c := range []struct {
+		major int
+		named bool
+	}{{13, false}, {15, false}, {16, true}, {17, true}, {0, true}} {
+		q := (&Table{db: dbAtMajor(c.major)}).scriptOptionsSelect()
+		for _, col := range []string{"et.rejected_row_location", "et.table_options"} {
+			if got := strings.Contains(q, col); got != c.named {
+				t.Errorf("major %d names %s = %v, want %v", c.major, col, got, c.named)
+			}
+		}
+	}
 }
 
 // graphTestColumns is a node or edge table's catalog columns as sys.columns

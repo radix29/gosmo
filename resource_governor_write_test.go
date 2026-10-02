@@ -331,7 +331,7 @@ func TestResourceGovernorScript(t *testing.T) {
 func TestResourcePoolScript(t *testing.T) {
 	p := &ResourcePool{ID: 256, Name: "p", MinCPUPercent: 5, MaxCPUPercent: 100, CapCPUPercent: 70,
 		MaxMemoryPercent: 100, Affinity: []ResourcePoolAffinity{{0, 0b1011_0111}}}
-	got, err := buildResourcePoolScript(p, ScriptOptions{Verb: ScriptDropAndCreate, IncludeIfNotExists: true})
+	got, err := buildResourcePoolScript(p, ScriptOptions{Verb: ScriptDropAndCreate, IncludeIfNotExists: true}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -347,27 +347,27 @@ func TestResourcePoolScript(t *testing.T) {
 	}
 
 	p.Affinity = []ResourcePoolAffinity{{1, 1}}
-	if _, err := buildResourcePoolScript(p, ScriptOptions{}); !errors.Is(err, ErrUnsupported) {
+	if _, err := buildResourcePoolScript(p, ScriptOptions{}, nil); !errors.Is(err, ErrUnsupported) {
 		t.Errorf("affinity in processor group 1 = %v, want ErrUnsupported", err)
 	}
 	// Bit 63 is a scheduler too, not a sign.
 	p.Affinity = []ResourcePoolAffinity{{0, -1 << 63}}
-	if got, _ := buildResourcePoolScript(p, ScriptOptions{}); !strings.Contains(got, "AFFINITY SCHEDULER = (63)") {
+	if got, _ := buildResourcePoolScript(p, ScriptOptions{}, nil); !strings.Contains(got, "AFFINITY SCHEDULER = (63)") {
 		t.Errorf("mask with bit 63 scripted as:\n%s", got)
 	}
 }
 
 func TestSystemResourceGovernorObjectsScriptAsAlter(t *testing.T) {
 	def := &ResourcePool{ID: 2, Name: "default", MaxCPUPercent: 80, CapCPUPercent: 100, MaxMemoryPercent: 100}
-	got, err := buildResourcePoolScript(def, ScriptOptions{})
+	got, err := buildResourcePoolScript(def, ScriptOptions{}, nil)
 	if err != nil || got != "ALTER RESOURCE POOL [default] WITH (MAX_CPU_PERCENT = 80);\nGO\n" {
 		t.Errorf("default pool scripted as %q, %v", got, err)
 	}
 	internal := &ResourcePool{ID: 1, Name: "internal", MaxCPUPercent: 100, CapCPUPercent: 100, MaxMemoryPercent: 100}
-	if got, _ := buildResourcePoolScript(internal, ScriptOptions{}); !strings.HasPrefix(got, "-- ") {
+	if got, _ := buildResourcePoolScript(internal, ScriptOptions{}, nil); !strings.HasPrefix(got, "-- ") {
 		t.Errorf("internal pool scripted as %q, want only a comment", got)
 	}
-	if _, err := buildResourcePoolScript(def, ScriptOptions{Verb: ScriptDrop}); !errors.Is(err, ErrUnsupported) {
+	if _, err := buildResourcePoolScript(def, ScriptOptions{Verb: ScriptDrop}, nil); !errors.Is(err, ErrUnsupported) {
 		t.Errorf("DROP of default = %v, want ErrUnsupported", err)
 	}
 	g := &WorkloadGroup{ID: 2, Name: "default", PoolName: "default", ExternalPoolName: "default",
@@ -376,7 +376,7 @@ func TestSystemResourceGovernorObjectsScriptAsAlter(t *testing.T) {
 		t.Errorf("unchanged default group scripted as %q", got)
 	}
 	ext := &ExternalResourcePool{ID: 2, Name: "default", MaxCPUPercent: 100, MaxMemoryPercent: 20}
-	if got, _ := buildExternalResourcePoolScript(ext, ScriptOptions{}); !strings.HasPrefix(got, "-- ") {
+	if got, _ := buildExternalResourcePoolScript(ext, ScriptOptions{}, nil); !strings.HasPrefix(got, "-- ") {
 		t.Errorf("unchanged default external pool scripted as %q", got)
 	}
 }
@@ -398,5 +398,59 @@ func TestWorkloadGroupScript(t *testing.T) {
 	got, _ = buildWorkloadGroupScript(g, ScriptOptions{Verb: ScriptDrop})
 	if got != "IF EXISTS (SELECT 1 FROM sys.resource_governor_workload_groups WHERE name = N'g')\n    DROP WORKLOAD GROUP [g];\nGO\n" {
 		t.Errorf("drop scripted as:\n%s", got)
+	}
+}
+
+// Ids past processor group 0 continue from the earlier groups' real sizes —
+// uneven here (40 + 24), the case the old refusal existed for.
+func TestResourcePoolAffinityBeyondGroupZero(t *testing.T) {
+	calls := 0
+	sizes := func() (map[int]int, error) {
+		calls++
+		return map[int]int{0: 40, 1: 24, 2: 8}, nil
+	}
+	p := &ResourcePool{ID: 256, Name: "p", MaxCPUPercent: 100, CapCPUPercent: 100, MaxMemoryPercent: 100,
+		Affinity: []ResourcePoolAffinity{{0, 0b11}, {1, 0b101}, {2, 1 << 7}}}
+	got, err := buildResourcePoolScript(p, ScriptOptions{}, sizes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(got, "AFFINITY SCHEDULER = (0 TO 1, 40, 42, 71)") {
+		t.Errorf("multi-group pool scripted as:\n%s", got)
+	}
+	if calls != 2 {
+		t.Errorf("sizes called %d times, want once per later group (2)", calls)
+	}
+
+	// Group 0 alone never asks.
+	p.Affinity = []ResourcePoolAffinity{{0, 1}, {1, 0}}
+	calls = 0
+	if _, err := buildResourcePoolScript(p, ScriptOptions{}, sizes); err != nil || calls != 0 {
+		t.Errorf("group-0 pool: err %v, sizes called %d times", err, calls)
+	}
+
+	// A bit past the group's schedulers would land on the next group's ids.
+	p.Affinity = []ResourcePoolAffinity{{1, 1 << 24}}
+	if _, err := buildResourcePoolScript(p, ScriptOptions{}, sizes); !errors.Is(err, ErrUnsupported) {
+		t.Errorf("bit past group 1's size = %v, want ErrUnsupported", err)
+	}
+	// A group the instance does not have.
+	p.Affinity = []ResourcePoolAffinity{{3, 1}}
+	if _, err := buildResourcePoolScript(p, ScriptOptions{}, sizes); !errors.Is(err, ErrUnsupported) {
+		t.Errorf("unknown group = %v, want ErrUnsupported", err)
+	}
+	// The read's refusal passes through.
+	refused := func() (map[int]int, error) { return nil, unsupportedf("needs VIEW SERVER STATE") }
+	p.Affinity = []ResourcePoolAffinity{{1, 1}}
+	if _, err := buildResourcePoolScript(p, ScriptOptions{}, refused); !errors.Is(err, ErrUnsupported) ||
+		!strings.Contains(err.Error(), "VIEW SERVER STATE") {
+		t.Errorf("refused read = %v, want ErrUnsupported naming the permission", err)
+	}
+
+	ext := &ExternalResourcePool{ID: 256, Name: "e", MaxCPUPercent: 100, MaxMemoryPercent: 20,
+		Affinity: []ExternalResourcePoolAffinity{{1, 0b11}}}
+	got, err = buildExternalResourcePoolScript(ext, ScriptOptions{}, sizes)
+	if err != nil || !strings.Contains(got, "AFFINITY CPU = (40 TO 41)") {
+		t.Errorf("multi-group external pool scripted as %q, %v", got, err)
 	}
 }

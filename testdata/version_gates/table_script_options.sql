@@ -28,7 +28,9 @@ SELECT CAST(CASE WHEN t.temporal_type = 2 THEN 1 ELSE 0 END AS BIT),
        ISNULL(eds.name, ''), ISNULL(eff.name, ''), ISNULL(et.location, ''),
        ISNULL(et.reject_type, ''), et.reject_value, et.reject_sample_value,
        ISNULL(et.remote_schema_name, ''), ISNULL(et.remote_object_name, ''),
-       ISNULL(et.distribution_desc, ''), ISNULL(COL_NAME(et.object_id, et.sharding_col_id), '')
+       ISNULL(et.distribution_desc, ''), ISNULL(COL_NAME(et.object_id, et.sharding_col_id), ''),
+       CAST('' AS nvarchar(4000)),
+       CAST('' AS nvarchar(1000))
 FROM   sys.tables AS t
 LEFT   JOIN sys.periods p ON p.object_id = t.object_id
 LEFT   JOIN sys.data_spaces lds ON lds.data_space_id = NULLIF(t.lob_data_space_id, 0)
@@ -68,7 +70,9 @@ SELECT CAST(CASE WHEN t.temporal_type = 2 THEN 1 ELSE 0 END AS BIT),
        ISNULL(eds.name, ''), ISNULL(eff.name, ''), ISNULL(et.location, ''),
        ISNULL(et.reject_type, ''), et.reject_value, et.reject_sample_value,
        ISNULL(et.remote_schema_name, ''), ISNULL(et.remote_object_name, ''),
-       ISNULL(et.distribution_desc, ''), ISNULL(COL_NAME(et.object_id, et.sharding_col_id), '')
+       ISNULL(et.distribution_desc, ''), ISNULL(COL_NAME(et.object_id, et.sharding_col_id), ''),
+       CAST('' AS nvarchar(4000)),
+       CAST('' AS nvarchar(1000))
 FROM   sys.tables AS t
 LEFT   JOIN sys.periods p ON p.object_id = t.object_id
 LEFT   JOIN sys.data_spaces lds ON lds.data_space_id = NULLIF(t.lob_data_space_id, 0)
@@ -108,7 +112,9 @@ SELECT CAST(CASE WHEN t.temporal_type = 2 THEN 1 ELSE 0 END AS BIT),
        ISNULL(eds.name, ''), ISNULL(eff.name, ''), ISNULL(et.location, ''),
        ISNULL(et.reject_type, ''), et.reject_value, et.reject_sample_value,
        ISNULL(et.remote_schema_name, ''), ISNULL(et.remote_object_name, ''),
-       ISNULL(et.distribution_desc, ''), ISNULL(COL_NAME(et.object_id, et.sharding_col_id), '')
+       ISNULL(et.distribution_desc, ''), ISNULL(COL_NAME(et.object_id, et.sharding_col_id), ''),
+       CAST('' AS nvarchar(4000)),
+       CAST('' AS nvarchar(1000))
 FROM   sys.tables AS t
 LEFT   JOIN sys.periods p ON p.object_id = t.object_id
 LEFT   JOIN sys.data_spaces lds ON lds.data_space_id = NULLIF(t.lob_data_space_id, 0)
@@ -148,7 +154,9 @@ SELECT CAST(CASE WHEN t.temporal_type = 2 THEN 1 ELSE 0 END AS BIT),
        ISNULL(eds.name, ''), ISNULL(eff.name, ''), ISNULL(et.location, ''),
        ISNULL(et.reject_type, ''), et.reject_value, et.reject_sample_value,
        ISNULL(et.remote_schema_name, ''), ISNULL(et.remote_object_name, ''),
-       ISNULL(et.distribution_desc, ''), ISNULL(COL_NAME(et.object_id, et.sharding_col_id), '')
+       ISNULL(et.distribution_desc, ''), ISNULL(COL_NAME(et.object_id, et.sharding_col_id), ''),
+       ISNULL(et.rejected_row_location, ''),
+       ISNULL(et.table_options, '')
 FROM   sys.tables AS t
 LEFT   JOIN sys.periods p ON p.object_id = t.object_id
 LEFT   JOIN sys.data_spaces lds ON lds.data_space_id = NULLIF(t.lob_data_space_id, 0)
@@ -188,7 +196,9 @@ SELECT CAST(CASE WHEN t.temporal_type = 2 THEN 1 ELSE 0 END AS BIT),
        ISNULL(eds.name, ''), ISNULL(eff.name, ''), ISNULL(et.location, ''),
        ISNULL(et.reject_type, ''), et.reject_value, et.reject_sample_value,
        ISNULL(et.remote_schema_name, ''), ISNULL(et.remote_object_name, ''),
-       ISNULL(et.distribution_desc, ''), ISNULL(COL_NAME(et.object_id, et.sharding_col_id), '')
+       ISNULL(et.distribution_desc, ''), ISNULL(COL_NAME(et.object_id, et.sharding_col_id), ''),
+       ISNULL(et.rejected_row_location, ''),
+       ISNULL(et.table_options, '')
 FROM   sys.tables AS t
 LEFT   JOIN sys.periods p ON p.object_id = t.object_id
 LEFT   JOIN sys.data_spaces lds ON lds.data_space_id = NULLIF(t.lob_data_space_id, 0)

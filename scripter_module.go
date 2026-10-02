@@ -21,6 +21,9 @@ type moduleKind struct {
 	keyword string
 	noun    string
 	query   string
+	// params marks a kind that has parameters, whose float16 vectors the
+	// script names (float16Parameters).
+	params bool
 }
 
 var (
@@ -28,20 +31,20 @@ var (
 SELECT m.definition, m.uses_ansi_nulls, m.uses_quoted_identifier
 FROM   sys.views v
 JOIN   sys.sql_modules m ON m.object_id = v.object_id
-WHERE  SCHEMA_NAME(v.schema_id) = @p1 AND v.name = @p2`}
+WHERE  SCHEMA_NAME(v.schema_id) = @p1 AND v.name = @p2`, false}
 
 	moduleProcedure = moduleKind{"PROCEDURE", "stored procedure", `
 SELECT m.definition, m.uses_ansi_nulls, m.uses_quoted_identifier
 FROM   sys.procedures p
 JOIN   sys.sql_modules m ON m.object_id = p.object_id
-WHERE  SCHEMA_NAME(p.schema_id) = @p1 AND p.name = @p2`}
+WHERE  SCHEMA_NAME(p.schema_id) = @p1 AND p.name = @p2`, true}
 
 	moduleFunction = moduleKind{"FUNCTION", "function", `
 SELECT m.definition, m.uses_ansi_nulls, m.uses_quoted_identifier
 FROM   sys.objects o
 JOIN   sys.sql_modules m ON m.object_id = o.object_id
 WHERE  SCHEMA_NAME(o.schema_id) = @p1 AND o.name = @p2
-  AND  o.type IN ('FN','TF','IF')`}
+  AND  o.type IN ('FN','TF','IF')`, true}
 
 	// A trigger's own schema is its parent table's — sys.triggers has no
 	// schema_id of its own.
@@ -50,7 +53,7 @@ SELECT m.definition, m.uses_ansi_nulls, m.uses_quoted_identifier
 FROM   sys.triggers tr
 JOIN   sys.objects o     ON o.object_id = tr.parent_id
 JOIN   sys.sql_modules m ON m.object_id = tr.object_id
-WHERE  SCHEMA_NAME(o.schema_id) = @p1 AND tr.name = @p2`}
+WHERE  SCHEMA_NAME(o.schema_id) = @p1 AND tr.name = @p2`, false}
 )
 
 // scriptModule renders one sys.sql_modules-backed object. CREATE and ALTER
@@ -83,10 +86,40 @@ func (sc *Scripter) scriptModule(ctx context.Context, k moduleKind, schema, name
 		if sc.opts.verb() == ScriptAlter {
 			text = alterModuleDefinition(text)
 		}
+		if k.params {
+			names, err := sc.db.float16Parameters(ctx, schema, name)
+			if err != nil {
+				return fmt.Errorf("gosmo: script %s %s: %w", k.noun, qualifiedName(schema, name), err)
+			}
+			sb.WriteString(float16Note(names))
+		}
 		sb.WriteString(moduleSetOptions(ansiNulls, quotedIdent))
 		sb.WriteString(text)
 		sb.WriteString("\nGO\n")
 		return nil
+	})
+}
+
+// float16Parameters lists [schema].[name]'s vector(n, float16) parameters,
+// comment-safe, for the same PREVIEW_FEATURES note a table script carries
+// (previewFeaturesNote): the type sits inside the stored definition, but
+// parameters are cataloged. A local variable of the type is not — finding
+// one would mean parsing the definition — so it goes unnamed. Below SQL
+// Server 2025 there is no vector type and no read.
+func (d *Database) float16Parameters(ctx context.Context, schema, name string) ([]string, error) {
+	if m := d.serverMajorVersion(); m != 0 && m < int(SQLServer2025) {
+		return nil, nil
+	}
+	rows, err := d.query(ctx, `
+SELECT p.name
+FROM   sys.parameters p
+WHERE  p.object_id = OBJECT_ID(QUOTENAME(@p1) + N'.' + QUOTENAME(@p2))
+  AND  p.vector_base_type_desc = N'float16'
+ORDER  BY p.parameter_id`, schema, name)
+	return scanRows(rows, err, "", func(scan func(...any) error) (string, error) {
+		var n string
+		err := scan(&n)
+		return commentSafe(n), err
 	})
 }
 

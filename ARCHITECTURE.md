@@ -308,7 +308,7 @@ The instance and database halves pair up: `ServerResourceStat` and
 | Attach a database       | `srv.AttachDatabase(ctx, gosmo.AttachSpec{Name, Files, Owner, RebuildLog})` — the name need not be the one it was detached under |
 | Read a detached file    | `srv.DetachedDatabaseInfo(ctx, primaryFilePath)` → `*DetachedDatabase` (`.Name`, `.Files`, `.DataFiles()`, `.LogFiles()`) — the only way to learn a detached database's other files |
 | Database snapshots      | `srv.DatabaseSnapshots(ctx)` / `srv.DatabaseSnapshotByName(ctx, name)` / `srv.DatabaseSnapshotRef(name)` (no-I/O handle) / `srv.SnapshotsOf(ctx, database)` / `srv.CreateDatabaseSnapshot(ctx, req)` / `srv.RestoreFromSnapshot(ctx, database, snapshot)` — see [Database snapshots](#database-snapshots) |
-| `Server.LinkedServers`  | `srv.LinkedServers(ctx)`                      |
+| `Server.LinkedServers`  | `srv.LinkedServers(ctx)` (`DataAccess` = `is_data_access_enabled`); through one, `srv.LinkedServerDatabases(ctx, ls)` / `srv.LinkedServerCatalog(ctx, ls, db)` — `Catalog`'s snapshot read from the remote's own sys views via `OPENQUERY`, SQL Server remotes only (see `linked_server.go`) |
 | `Server.Configuration`  | `srv.Configurations(ctx)` / `srv.ConfigurationByName(ctx, name)` / `srv.ConfigurationRef(name)` (no-I/O handle) |
 | Change sp_configure options | `srv.ApplyConfiguration(ctx, []gosmo.ConfigChange{{Name, Value}}, gosmo.ConfigApplyOptions{Override})` — one batch: turns `show advanced options` on for it when needed and puts it back, one `RECONFIGURE`. `ConfigurationOption.SetValue` is the bare `sp_configure`, which fails Msg 15123 for an advanced option while `show advanced options` is 0 |
 | `Server.JobServer` (Agent) | see [SQL Server Agent](#sql-server-agent) below |

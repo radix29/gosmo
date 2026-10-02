@@ -176,6 +176,9 @@ type externalTableOptions struct {
 	// table's DISTRIBUTION; "" when the table has none.
 	RemoteSchema, RemoteObject   string
 	Distribution, ShardingColumn string
+	// RejectedRowLocation and TableOptions are SQL Server 2022's; "" when
+	// unset or on an older instance.
+	RejectedRowLocation, TableOptions string
 }
 
 // scriptOptions reads tableScriptOptions in one round trip.
@@ -194,7 +197,8 @@ func (t *Table) scriptOptions(ctx context.Context) (tableScriptOptions, error) {
 			&o.LedgerType, &o.IsDroppedLedgerTable, &o.LedgerViewSchema, &o.LedgerViewName, &ledgerCols,
 			&o.FileTableDirectory, &o.FileTableCollation, &o.FileTableNamespaceEnabled, &ftObjects,
 			&e.DataSource, &e.FileFormat, &e.Location, &e.RejectType, &e.RejectValue, &e.RejectSampleValue,
-			&e.RemoteSchema, &e.RemoteObject, &e.Distribution, &e.ShardingColumn); err != nil {
+			&e.RemoteSchema, &e.RemoteObject, &e.Distribution, &e.ShardingColumn,
+			&e.RejectedRowLocation, &e.TableOptions); err != nil {
 			return err
 		}
 		parts, err := decodePartitionCompression(heap)
@@ -228,7 +232,8 @@ func (t *Table) scriptOptions(ctx context.Context) (tableScriptOptions, error) {
 // columns follow the table's own, so they are its last four by column_id,
 // read as a jsonList-shaped column. HISTORY_RETENTION_PERIOD is SQL Server
 // 2017's; -1 is INFINITE, read as 0 so that it is left implicit.
-// sys.filetables and sys.external_tables are older than gosmo's 2016 floor.
+// sys.filetables and sys.external_tables are older than gosmo's 2016 floor;
+// external_tables' rejected_row_location and table_options are 2022's.
 // https://learn.microsoft.com/sql/relational-databases/system-catalog-views/sys-tables-transact-sql
 func (t *Table) scriptOptionsSelect() string {
 	major := t.db.serverMajorVersion()
@@ -258,7 +263,9 @@ SELECT CAST(CASE WHEN t.temporal_type = 2 THEN 1 ELSE 0 END AS BIT),
        ISNULL(eds.name, ''), ISNULL(eff.name, ''), ISNULL(et.location, ''),
        ISNULL(et.reject_type, ''), et.reject_value, et.reject_sample_value,
        ISNULL(et.remote_schema_name, ''), ISNULL(et.remote_object_name, ''),
-       ISNULL(et.distribution_desc, ''), ISNULL(COL_NAME(et.object_id, et.sharding_col_id), '')
+       ISNULL(et.distribution_desc, ''), ISNULL(COL_NAME(et.object_id, et.sharding_col_id), ''),
+       ` + colSince(major, SQLServer2022, "ISNULL(et.rejected_row_location, '')", "CAST('' AS nvarchar(4000))") + `,
+       ` + colSince(major, SQLServer2022, "ISNULL(et.table_options, '')", "CAST('' AS nvarchar(1000))") + `
 FROM   sys.tables AS t
 LEFT   JOIN sys.periods p ON p.object_id = t.object_id
 LEFT   JOIN sys.data_spaces lds ON lds.data_space_id = NULLIF(t.lob_data_space_id, 0)
@@ -414,6 +421,12 @@ func previewFeaturesNote(cols []*Column) string {
 			names = append(names, commentSafe(quoteIdent(col.Name)))
 		}
 	}
+	return float16Note(names)
+}
+
+// float16Note is previewFeaturesNote's comment for names already made
+// comment-safe — columns, or a module's parameters — "" for none.
+func float16Note(names []string) string {
 	if len(names) == 0 {
 		return ""
 	}

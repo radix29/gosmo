@@ -37,9 +37,14 @@ import (
 //
 // The catalog stores affinity as a bit mask per processor group, and the DDL
 // takes scheduler (or CPU) ids. In processor group 0 bit n is id n. Beyond
-// group 0 the ids are numbered on from the previous group's *actual* size,
-// which the catalog does not record, so a pool with affinity outside group 0
-// is refused with ErrUnsupported rather than scripted onto the wrong
+// group 0 the ids are numbered on from the previous groups' *actual* sizes,
+// which the catalog does not record: a mask naming a later group makes the
+// scripter read Server.Schedulers (VIEW SERVER STATE; VIEW SERVER PERFORMANCE
+// STATE from 2022) and map bit n of group g to the size of every group below
+// g plus n. Group 0 needs no read, so only a multi-group pool gains the
+// permission need. Without the permission — or with a bit past its group's
+// visible schedulers, which would land on the next group's ids — the pool is
+// refused with ErrUnsupported rather than scripted onto the wrong
 // schedulers. A pool created with AFFINITY NUMANODE is stored as its
 // schedulers and scripts as AFFINITY SCHEDULER — the same placement.
 
@@ -80,19 +85,72 @@ func buildResourceGovernorScript(rg *ResourceGovernor, opts ScriptOptions) (stri
 	return sb.String(), nil
 }
 
-// affinityList renders group-0 masks as a DDL id list — "0 TO 3, 6" — or
-// refuses one reaching past processor group 0 (see the file comment).
-func affinityList(what string, groups []int, masks []int64) (string, error) {
+// groupSizesFunc reports how many visible schedulers each processor group
+// holds. affinityList calls it only for a mask beyond group 0; nil means no
+// server to ask.
+type groupSizesFunc func() (map[int]int, error)
+
+// schedulerGroupSizes is s's groupSizesFunc: Server.Schedulers counted per
+// group, read at most once. A permission refusal becomes ErrUnsupported
+// naming the permission; any other failure is returned as is.
+func schedulerGroupSizes(ctx context.Context, s *Server) groupSizesFunc {
+	var sizes map[int]int
+	var err error
+	read := false
+	return func() (map[int]int, error) {
+		if read {
+			return sizes, err
+		}
+		read = true
+		var scheds []Scheduler
+		if scheds, err = s.Schedulers(ctx); err != nil {
+			if se, ok := AsSQLError(err); ok && (se.Number == 297 || se.Number == 300) {
+				err = unsupportedf("mapping affinity beyond processor group 0 reads sys.dm_os_schedulers, which needs VIEW SERVER STATE (VIEW SERVER PERFORMANCE STATE from SQL Server 2022): %v", err)
+			}
+			return nil, err
+		}
+		sizes = map[int]int{}
+		for _, sc := range scheds {
+			sizes[sc.ProcessorGroup]++
+		}
+		return sizes, nil
+	}
+}
+
+// affinityList renders per-group masks as a DDL id list — "0 TO 3, 6" (see
+// the file comment). Group 0 maps bit n to id n; a later group asks sizes
+// for the groups below it, and is refused when sizes is nil or the mask does
+// not fit the group.
+func affinityList(what string, groups []int, masks []int64, sizes groupSizesFunc) (string, error) {
 	var ids []int
 	for i, g := range groups {
 		if masks[i] == 0 {
 			continue
 		}
+		base, size := 0, 64
 		if g != 0 {
-			return "", unsupportedf("gosmo: script %s: affinity in processor group %d cannot be mapped to scheduler ids from the catalog", what, g)
+			if sizes == nil {
+				return "", unsupportedf("gosmo: script %s: affinity in processor group %d cannot be mapped to scheduler ids from the catalog", what, g)
+			}
+			n, err := sizes()
+			if err != nil {
+				return "", fmt.Errorf("gosmo: script %s: %w", what, err)
+			}
+			if size = n[g]; size == 0 {
+				return "", unsupportedf("gosmo: script %s: affinity names processor group %d, which has no visible schedulers", what, g)
+			}
+			for k, c := range n {
+				if k < g {
+					base += c
+				}
+			}
 		}
 		for m := uint64(masks[i]); m != 0; m &= m - 1 {
-			ids = append(ids, bits.TrailingZeros64(m))
+			b := bits.TrailingZeros64(m)
+			if b >= size {
+				return "", unsupportedf("gosmo: script %s: affinity bit %d is past processor group %d's %d visible schedulers", what, b, g, size)
+			}
+			ids = append(ids, base+b)
 		}
 	}
 	return idRanges(ids), nil
@@ -144,7 +202,7 @@ func (sc *ServerScripter) ScriptResourcePool(ctx context.Context, name string) (
 	if err != nil {
 		return "", err
 	}
-	return buildResourcePoolScript(p, sc.opts)
+	return buildResourcePoolScript(p, sc.opts, schedulerGroupSizes(ctx, sc.server))
 }
 
 // nonDefaultOptions is the pool's WITH list with the server defaults left out.
@@ -169,13 +227,13 @@ func (p *ResourcePool) nonDefaultOptions() ResourcePoolOptions {
 	return o
 }
 
-func buildResourcePoolScript(p *ResourcePool, opts ScriptOptions) (string, error) {
+func buildResourcePoolScript(p *ResourcePool, opts ScriptOptions, sizes groupSizesFunc) (string, error) {
 	w, _ := p.nonDefaultOptions().render() // no Affinity set: cannot fail
 	groups, masks := make([]int, len(p.Affinity)), make([]int64, len(p.Affinity))
 	for i, a := range p.Affinity {
 		groups[i], masks[i] = a.ProcessorGroup, a.SchedulerMask
 	}
-	aff, err := affinityList(fmt.Sprintf("resource pool %q", p.Name), groups, masks)
+	aff, err := affinityList(fmt.Sprintf("resource pool %q", p.Name), groups, masks, sizes)
 	if err != nil {
 		return "", err
 	}
@@ -283,7 +341,7 @@ func (sc *ServerScripter) ScriptExternalResourcePool(ctx context.Context, name s
 	if err != nil {
 		return "", err
 	}
-	return buildExternalResourcePoolScript(p, sc.opts)
+	return buildExternalResourcePoolScript(p, sc.opts, schedulerGroupSizes(ctx, sc.server))
 }
 
 // nonDefaultOptions is the external pool's WITH list with the server defaults
@@ -303,13 +361,13 @@ func (p *ExternalResourcePool) nonDefaultOptions() ExternalResourcePoolOptions {
 	return o
 }
 
-func buildExternalResourcePoolScript(p *ExternalResourcePool, opts ScriptOptions) (string, error) {
+func buildExternalResourcePoolScript(p *ExternalResourcePool, opts ScriptOptions, sizes groupSizesFunc) (string, error) {
 	w, _ := p.nonDefaultOptions().render() // no Affinity set: cannot fail
 	groups, masks := make([]int, len(p.Affinity)), make([]int64, len(p.Affinity))
 	for i, a := range p.Affinity {
 		groups[i], masks[i] = a.ProcessorGroup, a.CPUMask
 	}
-	aff, err := affinityList(fmt.Sprintf("external resource pool %q", p.Name), groups, masks)
+	aff, err := affinityList(fmt.Sprintf("external resource pool %q", p.Name), groups, masks, sizes)
 	if err != nil {
 		return "", err
 	}

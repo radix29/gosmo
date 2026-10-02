@@ -152,3 +152,16 @@ func TestFloat16VectorScriptNamesPreviewFeatures(t *testing.T) {
 		}
 	}
 }
+
+// A module's float16 parameters get the table script's note, by parameter
+// name; none, no note.
+func TestFloat16ParameterNote(t *testing.T) {
+	got := float16Note([]string{"@h", "@q"})
+	if !strings.HasPrefix(got, "-- @h, @q: vector(n, float16) is a SQL Server 2025 preview feature.") ||
+		!strings.HasSuffix(got, "--   ALTER DATABASE SCOPED CONFIGURATION SET PREVIEW_FEATURES = ON;\n") {
+		t.Errorf("note = %q", got)
+	}
+	if got := float16Note(nil); got != "" {
+		t.Errorf("no parameters: note = %q", got)
+	}
+}

@@ -2,6 +2,7 @@ package gosmo
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"slices"
 	"strings"
@@ -69,6 +70,24 @@ func (d *Database) Catalog(ctx context.Context) (*Catalog, error) {
 	return d.catalog(ctx, "sys.objects", "sys.columns",
 		"o.type IN ('U','V') AND o.is_ms_shipped = 0",
 		"o.type IN ('IF','TF','FT') AND o.is_ms_shipped = 0")
+}
+
+// CallerDefaultSchema returns the connected login's default schema in the
+// database — the schema an unqualified or "db..name" reference resolves to
+// there. It is read in the database (no-argument SCHEMA_NAME() answers for the
+// caller), so it reflects the user the login maps to there: dbo for a
+// sysadmin or the database owner, the user's DEFAULT_SCHEMA otherwise, and
+// for a login reaching the database through guest, guest's. A user with no
+// default schema (one mapped through a Windows group) answers "".
+func (d *Database) CallerDefaultSchema(ctx context.Context) (string, error) {
+	var schema sql.NullString
+	err := d.queryRow(ctx, func(row *sql.Row) error {
+		return row.Scan(&schema)
+	}, `SELECT SCHEMA_NAME()`)
+	if err != nil {
+		return "", fmt.Errorf("gosmo: read the caller's default schema in %q: %w", d.Name, err)
+	}
+	return schema.String, nil
 }
 
 // SystemCatalog returns a bulk snapshot of every catalog view in the "sys"

@@ -443,7 +443,9 @@ func buildExternalTableScript(schema, name, dbName string, p tableScriptParts, d
 				with.addKeyword("REJECT_SAMPLE_VALUE", strconv.FormatFloat(e.RejectSampleValue.Float64, 'f', -1, 64))
 			}
 		}
+		with.addLiteral("REJECTED_ROW_LOCATION", e.RejectedRowLocation)
 	}
+	with.addLiteral("TABLE_OPTIONS", e.TableOptions)
 	with.addLiteral("SCHEMA_NAME", e.RemoteSchema)
 	with.addLiteral("OBJECT_NAME", e.RemoteObject)
 	switch e.Distribution {
