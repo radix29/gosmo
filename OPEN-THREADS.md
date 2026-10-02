@@ -103,9 +103,12 @@ database the script is replayed into (Msg 195 otherwise): the table script
 names it in a leading comment and deliberately does not set it
 (`live_script_float16_test.go`, 2026-10-01). A procedure or function with a
 `float16` parameter gets the same comment, naming the parameters from
-`sys.parameters` (2026-10-02). A `float16` **local variable** still gets
-none — it is in the stored definition only, and nothing short of parsing it
-finds the type.
+`sys.parameters` (2026-10-02). A module that uses the type only in its body —
+a local variable, a table variable's or `RETURNS` table's column, a `CAST` in
+a view — gets it too, unnamed: a lexical scan of the definition that skips
+comments, strings and quoted identifiers (`usesFloat16Vector`, 2026-10-02).
+The type spelled inside **dynamic SQL** is a string literal and still gets
+none.
 
 The 2026-09-24 fix-plan pass (G7–G10) added Always Encrypted columns, ledger
 tables, FileTables and external tables. **Refused, not scripted** (an

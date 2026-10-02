@@ -86,12 +86,18 @@ func (sc *Scripter) scriptModule(ctx context.Context, k moduleKind, schema, name
 		if sc.opts.verb() == ScriptAlter {
 			text = alterModuleDefinition(text)
 		}
+		var names []string
 		if k.params {
-			names, err := sc.db.float16Parameters(ctx, schema, name)
+			names, err = sc.db.float16Parameters(ctx, schema, name)
 			if err != nil {
 				return fmt.Errorf("gosmo: script %s %s: %w", k.noun, qualifiedName(schema, name), err)
 			}
+		}
+		switch {
+		case len(names) > 0:
 			sb.WriteString(float16Note(names))
+		case usesFloat16Vector(def.String):
+			sb.WriteString(float16DefinitionNote)
 		}
 		sb.WriteString(moduleSetOptions(ansiNulls, quotedIdent))
 		sb.WriteString(text)
@@ -103,9 +109,10 @@ func (sc *Scripter) scriptModule(ctx context.Context, k moduleKind, schema, name
 // float16Parameters lists [schema].[name]'s vector(n, float16) parameters,
 // comment-safe, for the same PREVIEW_FEATURES note a table script carries
 // (previewFeaturesNote): the type sits inside the stored definition, but
-// parameters are cataloged. A local variable of the type is not — finding
-// one would mean parsing the definition — so it goes unnamed. Below SQL
-// Server 2025 there is no vector type and no read.
+// parameters are cataloged. A local variable, table-variable column, RETURNS
+// table column or CAST target is not; usesFloat16Vector finds those in the
+// definition instead, unnamed. Below SQL Server 2025 there is no vector type
+// and no read.
 func (d *Database) float16Parameters(ctx context.Context, schema, name string) ([]string, error) {
 	if m := d.serverMajorVersion(); m != 0 && m < int(SQLServer2025) {
 		return nil, nil
@@ -121,6 +128,31 @@ ORDER  BY p.parameter_id`, schema, name)
 		err := scan(&n)
 		return commentSafe(n), err
 	})
+}
+
+// float16VectorType matches vector(<int>, float16) in a definition's code,
+// case-insensitively and with any whitespace a comment left between the
+// tokens. The leading class keeps a longer identifier ending in "vector"
+// (my_vector, x$vector, @vector) from matching.
+var float16VectorType = regexp.MustCompile(`(?i)(?:^|[^\w@#$])vector\s*\(\s*\d+\s*,\s*float16\s*\)`)
+
+// usesFloat16Vector reports whether a module definition names the
+// vector(n, float16) type anywhere a parameter catalog cannot see: a DECLAREd
+// variable, a table variable's or RETURNS table's column, a CAST. Replaying
+// it into a database with PREVIEW_FEATURES off fails with Msg 195 just as a
+// float16 parameter does.
+//
+// It is a lexical scan, not a parse: scriptCodeSpans drops comments, string
+// literals and quoted identifiers, each replaced by a space since the server
+// treats a comment between two tokens as whitespace. The type spelled inside
+// dynamic SQL is a string literal, and is not found.
+func usesFloat16Vector(def string) bool {
+	var code strings.Builder
+	for _, sp := range scriptCodeSpans(def) {
+		code.WriteString(def[sp.start:sp.end])
+		code.WriteByte(' ')
+	}
+	return float16VectorType.MatchString(code.String())
 }
 
 // moduleSetOptions renders the two SET options a module is compiled under,

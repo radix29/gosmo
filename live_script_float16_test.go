@@ -175,3 +175,85 @@ FROM sys.parameters WHERE object_id IN (OBJECT_ID(N'dbo.P'), OBJECT_ID(N'dbo.F')
 		t.Errorf("replayed parameters = %q, want %q", got, want)
 	}
 }
+
+// A module that names float16 only in its body — a local, a RETURNS table's
+// column, a CAST in a view — gets the definition's generic note, and its
+// replay fails without the setting just as a parameter's does. The type in a
+// comment gets none.
+func TestLiveFloat16DefinitionScript(t *testing.T) {
+	db, ctx, done := liveDB(t)
+	t.Cleanup(done)
+	if major := liveServer(t, db, ctx).serverMajorVersion(); major != 0 && major < int(SQLServer2025) {
+		t.Skipf("major %d has no vector type", major)
+	}
+
+	src, dropSrc := liveScratchDB(t, db, ctx, "gosmo_f16d_src")
+	t.Cleanup(dropSrc)
+	dst, dropDst := liveScratchDB(t, db, ctx, "gosmo_f16d_dst")
+	t.Cleanup(dropDst)
+	liveExecIn(t, src, ctx,
+		`ALTER DATABASE SCOPED CONFIGURATION SET PREVIEW_FEATURES = ON`,
+		`CREATE PROCEDURE dbo.Local @v vector(3) AS DECLARE @h vector(4, float16); SELECT 1`,
+		`CREATE FUNCTION dbo.Tvf () RETURNS @t TABLE (h vector(2, float16)) AS BEGIN RETURN END`,
+		`CREATE VIEW dbo.V AS SELECT CAST('[1,2]' AS vector(2, float16)) AS h`,
+		`CREATE PROCEDURE dbo.Commented AS /* DECLARE @h vector(4, float16) */ SELECT 1`,
+	)
+
+	opts := DefaultScriptOptions()
+	opts.IncludeHeaders = false
+	sc := NewScripter(src, opts)
+	const setting = "ALTER DATABASE SCOPED CONFIGURATION SET PREVIEW_FEATURES = ON;"
+	for _, c := range []struct {
+		name   string
+		note   bool
+		script func(context.Context, string, string) (string, error)
+	}{
+		{"Local", true, sc.ScriptStoredProcedure},
+		{"Tvf", true, sc.ScriptFunction},
+		{"V", true, sc.ScriptView},
+		{"Commented", false, sc.ScriptStoredProcedure},
+	} {
+		script, err := c.script(ctx, "dbo", c.name)
+		if err != nil {
+			t.Fatalf("script %s: %v", c.name, err)
+		}
+		if !c.note {
+			if strings.Contains(script, "PREVIEW_FEATURES") {
+				t.Errorf("%s uses float16 only in a comment but names the setting:\n%s", c.name, script)
+			}
+			continue
+		}
+		if !strings.HasPrefix(script, float16DefinitionNote) {
+			t.Fatalf("%s: the script does not open with the definition note:\n%s", c.name, script)
+		}
+
+		// Off in the target, the replay fails with Msg 195.
+		conn, err := db.Conn(ctx)
+		if err != nil {
+			t.Fatalf("pin a connection: %v", err)
+		}
+		if _, err := conn.ExecContext(ctx, "USE "+quoteIdent(dst.Name)); err != nil {
+			t.Fatalf("USE %s: %v", dst.Name, err)
+		}
+		var runErr error
+		for _, batch := range splitGoBatches(script) {
+			if _, runErr = conn.ExecContext(ctx, batch); runErr != nil {
+				break
+			}
+		}
+		conn.Close()
+		msErr, ok := errors.AsType[mssql.Error](runErr)
+		if !ok || !slices.ContainsFunc(msErr.All, func(e mssql.Error) bool { return e.Number == 195 }) {
+			t.Fatalf("%s: replay with PREVIEW_FEATURES off: got %v, want Msg 195", c.name, runErr)
+		}
+
+		// With it on, the script replays.
+		liveExecIn(t, dst, ctx, setting)
+		livePinnedRun(t, db, ctx, dst.Name, script)
+		liveExecIn(t, dst, ctx, `ALTER DATABASE SCOPED CONFIGURATION SET PREVIEW_FEATURES = OFF`)
+	}
+	got := liveRowsAsStrings(t, dst, ctx, `SELECT name FROM sys.objects WHERE name IN (N'Local', N'Tvf', N'V') ORDER BY name`)
+	if want := []string{"name=Local", "name=Tvf", "name=V"}; !slices.Equal(got, want) {
+		t.Errorf("replayed modules = %q, want %q", got, want)
+	}
+}

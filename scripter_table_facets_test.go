@@ -165,3 +165,37 @@ func TestFloat16ParameterNote(t *testing.T) {
 		t.Errorf("no parameters: note = %q", got)
 	}
 }
+
+// A float16 vector the parameter catalog cannot see — a local, a table
+// variable's or RETURNS table's column, a CAST — is found in the definition's
+// code, and only there: not in a comment, a string or a quoted identifier.
+func TestUsesFloat16Vector(t *testing.T) {
+	for _, c := range []struct {
+		name, def string
+		want      bool
+	}{
+		{"declare", "CREATE PROCEDURE p AS DECLARE @v vector(4, float16); SELECT 1", true},
+		{"table variable", "CREATE PROCEDURE p AS DECLARE @t TABLE (id int, v VECTOR ( 3 , FLOAT16 )); SELECT 1", true},
+		{"returns table", "CREATE FUNCTION f() RETURNS @t TABLE (v vector(2,float16)) AS BEGIN RETURN END", true},
+		{"cast in a view", "CREATE VIEW v AS SELECT CAST(x AS vector(2, float16)) AS h FROM t", true},
+		{"comment between tokens", "CREATE PROCEDURE p AS DECLARE @v vector/* c */(4, -- c\nfloat16); SELECT 1", true},
+		{"after a string", "CREATE PROCEDURE p AS DECLARE @s nvarchar(9) = N'x'; DECLARE @v vector(4, float16)", true},
+		{"start of definition", "vector(4, float16)", true},
+
+		{"float32", "CREATE PROCEDURE p AS DECLARE @v vector(4, float32), @w vector(3); SELECT 1", false},
+		{"line comment", "CREATE PROCEDURE p AS -- DECLARE @v vector(4, float16)\nSELECT 1", false},
+		{"nested block comment", "CREATE PROCEDURE p AS /* a /* b */ vector(4, float16) */ SELECT 1", false},
+		{"string", "CREATE PROCEDURE p AS EXEC (N'DECLARE @v vector(4, float16)')", false},
+		{"bracketed identifier", "CREATE PROCEDURE p AS SELECT 1 AS [vector(4, float16)]", false},
+		{"quoted identifier", `CREATE PROCEDURE p AS SELECT 1 AS "vector(4, float16)"`, false},
+		{"longer identifier", "CREATE PROCEDURE p AS SELECT my_vector(4, float16), dbo.x$vector(1, float16)", false},
+	} {
+		if got := usesFloat16Vector(c.def); got != c.want {
+			t.Errorf("%s: usesFloat16Vector(%q) = %v, want %v", c.name, c.def, got, c.want)
+		}
+	}
+	if !strings.HasPrefix(float16DefinitionNote, "-- The definition uses vector(n, float16), a SQL Server 2025 preview feature.") ||
+		!strings.HasSuffix(float16DefinitionNote, "--   ALTER DATABASE SCOPED CONFIGURATION SET PREVIEW_FEATURES = ON;\n") {
+		t.Errorf("note = %q", float16DefinitionNote)
+	}
+}

@@ -430,10 +430,19 @@ func float16Note(names []string) string {
 	if len(names) == 0 {
 		return ""
 	}
-	return fmt.Sprintf("-- %s: vector(n, float16) is a SQL Server 2025 preview feature. This script\n"+
-		"-- fails with Msg 195 unless the target database enables it first:\n"+
-		"--   ALTER DATABASE SCOPED CONFIGURATION SET PREVIEW_FEATURES = ON;\n",
-		strings.Join(names, ", "))
+	return previewFeaturesComment(strings.Join(names, ", ") + ": vector(n, float16) is")
+}
+
+// float16DefinitionNote is the same comment for a module whose definition
+// uses the type where nothing catalogs it by name (usesFloat16Vector).
+var float16DefinitionNote = previewFeaturesComment("The definition uses vector(n, float16),")
+
+// previewFeaturesComment completes the PREVIEW_FEATURES comment after lead,
+// which must already be comment-safe.
+func previewFeaturesComment(lead string) string {
+	return "-- " + lead + " a SQL Server 2025 preview feature. This script\n" +
+		"-- fails with Msg 195 unless the target database enables it first:\n" +
+		"--   ALTER DATABASE SCOPED CONFIGURATION SET PREVIEW_FEATURES = ON;\n"
 }
 
 // schemaBoundDependent is a module bound to a table WITH SCHEMABINDING —
