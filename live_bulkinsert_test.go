@@ -39,8 +39,8 @@ func TestLiveBulkInsertObservedAndScripted(t *testing.T) {
 	if _, err := d.BulkInsert(sctx, bc, rows); !errors.Is(err, ErrUnsupported) {
 		t.Errorf("BulkInsert under WithScript = %v, want an ErrUnsupported error", err)
 	}
-	if n := count(); n != 0 || len(c.Entries) != 0 {
-		t.Errorf("a scripted bulk insert left %d rows and collected %v, want neither", n, c.Entries)
+	if n := count(); n != 0 || c.Len() != 0 {
+		t.Errorf("a scripted bulk insert left %d rows and collected %v, want neither", n, c.Entries())
 	}
 
 	octx, got := observed(ctx)

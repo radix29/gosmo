@@ -51,7 +51,7 @@ func (backupPathConn) QueryContext(_ context.Context, q string, _ []driver.Named
 			`FAKE\SQL`, "Developer Edition (64-bit)", "14.0.2120.1", "RTM", "SQL_Latin1_General_CP1_CI_AS",
 			int64(0), int64(0), int64(0), int64(3),
 			"Microsoft SQL Server 2017 ... (64-bit) on " + backupPathCfg.platform + " 10 Pro",
-			`C:\Data`, `C:\Log`, backupPathCfg.propValue,
+			`C:\Data`, `C:\Log`, backupPathCfg.propValue, "sa",
 		}}, nil
 	}
 }

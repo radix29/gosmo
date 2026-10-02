@@ -237,3 +237,116 @@ func TestUnsupportedKeepsAWrappedCause(t *testing.T) {
 		t.Errorf("plain refusal reaches the wrong sentinels: %v", plain)
 	}
 }
+
+// msgs builds a driver error carrying every message of a batch, as the driver
+// reports it: the last one mirrored into the top-level fields.
+func msgs(all ...mssql.Error) mssql.Error {
+	last := all[len(all)-1]
+	last.All = all
+	return last
+}
+
+// TestClassifyRefusalReadsTheFirstMessage: a refused DMV read sends Msg 300,
+// which names the right, and then the contentless Msg 297 that database/sql
+// surfaces. The classification must come from the first. Captured live on
+// win10cli, 2026-08-25.
+func TestClassifyRefusalReadsTheFirstMessage(t *testing.T) {
+	err := fmt.Errorf("gosmo: memory: %w", msgs(
+		mssql.Error{Number: 300, Class: 14, Message: "VIEW SERVER PERFORMANCE STATE permission was denied on object 'server', database 'master'."},
+		mssql.Error{Number: 297, Class: 16, Message: "The user does not have permission to perform this action."},
+	))
+	kind, m := ClassifyRefusal(err)
+	if kind != PermissionDenied || m == nil || m.Number != 300 {
+		t.Fatalf("ClassifyRefusal = %v, %+v; want PermissionDenied from Msg 300", kind, m)
+	}
+	if !IsPermissionDenied(err) || IsMissingOrDenied(err) {
+		t.Error("a stated denial must be IsPermissionDenied and not IsMissingOrDenied")
+	}
+}
+
+// TestClassifyRefusalKinds pins every measured number to its kind, and the
+// filters: an informational message, a message with no text and a non-SQL
+// error are never refusals.
+func TestClassifyRefusalKinds(t *testing.T) {
+	for _, n := range []int32{229, 230, 262, 297, 300, 916} {
+		if k, _ := ClassifyRefusal(mssql.Error{Number: n, Class: 14, Message: "x"}); k != PermissionDenied {
+			t.Errorf("Msg %d = %v, want PermissionDenied", n, k)
+		}
+	}
+	for _, n := range []int32{1088, 3701, 5011, 15151, 15247} {
+		err := mssql.Error{Number: n, Class: 16, Message: "x"}
+		if k, _ := ClassifyRefusal(err); k != MissingOrDenied {
+			t.Errorf("Msg %d = %v, want MissingOrDenied", n, k)
+		}
+		if IsPermissionDenied(err) || !IsMissingOrDenied(err) {
+			t.Errorf("Msg %d: the ambiguity must not be narrowed to a denial", n)
+		}
+	}
+	for name, err := range map[string]error{
+		"other number":  mssql.Error{Number: 208, Class: 16, Message: "Invalid object name 'x'."},
+		"informational": mssql.Error{Number: 229, Class: 10, Message: "x"},
+		"no text":       mssql.Error{Number: 229, Class: 14},
+		"not SQL":       errors.New("The SELECT permission was denied"),
+		"nil":           nil,
+	} {
+		if k, m := ClassifyRefusal(err); k != NotRefused || m != nil {
+			t.Errorf("%s: ClassifyRefusal = %v, %+v; want NotRefused, nil", name, k, m)
+		}
+	}
+}
+
+// TestIsAlreadyExistsMatchesTheNumberInAnyLanguage: the message follows the
+// session's language, so only the number is read — 15025 and 15023 confirmed
+// live under SET LANGUAGE Deutsch.
+func TestIsAlreadyExistsMatchesTheNumberInAnyLanguage(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"login, German", mssql.Error{Number: 15025, Message: `Der Serverprinzipal "x_login" ist bereits vorhanden.`}, true},
+		{"user, German", mssql.Error{Number: 15023, Message: `Der Benutzer, die Gruppe oder die Rolle "x_user" ist in der aktuellen Datenbank bereits vorhanden.`}, true},
+		{"wrapped", fmt.Errorf("gosmo: create login: %w", mssql.Error{Number: 15025, Message: "déjà"}), true},
+		{"object", mssql.Error{Number: 2714, Message: "There is already an object named 'T' in the database."}, true},
+		{"database", mssql.Error{Number: 1801, Message: "Database 'D' already exists."}, true},
+		{"index", mssql.Error{Number: 1913, Message: "The operation failed because an index or statistics with name 'IX' already exists on table 'T'."}, true},
+		{"in a later message", msgs(
+			mssql.Error{Number: 15025, Class: 16, Message: "exists"},
+			mssql.Error{Number: 3609, Class: 16, Message: "The transaction ended in the trigger."},
+		), true},
+		{"other number", mssql.Error{Number: 15247, Message: "User does not have permission; the object already exists elsewhere"}, false},
+		{"not SQL", errors.New("login already exists"), false},
+		{"nil", nil, false},
+	} {
+		if got := IsAlreadyExists(c.err); got != c.want {
+			t.Errorf("%s: IsAlreadyExists = %v, want %v", c.name, got, c.want)
+		}
+	}
+}
+
+// TestSendMailRefusalsReachTheirSentinel: each refusal sp_send_dbmail raises
+// is reachable through errors.Is, keeps its text, and keeps the SQL error.
+func TestSendMailRefusalsReachTheirSentinel(t *testing.T) {
+	for n, want := range map[int32]error{
+		14607: ErrMailProfileInvalid,
+		14636: ErrMailNoDefaultProfile,
+		14641: ErrMailStopped,
+		15281: ErrMailXPsDisabled,
+	} {
+		raw := mssql.Error{Number: n, Class: 16, Message: "the procedure's own text"}
+		err := fmt.Errorf("gosmo: send mail: %w", classifyMailSendError(raw))
+		if !errors.Is(err, want) {
+			t.Errorf("Msg %d: errors.Is(%v) = false", n, want)
+		}
+		if se, ok := AsSQLError(err); !ok || se.Number != n {
+			t.Errorf("Msg %d: the SQL error is no longer reachable", n)
+		}
+		if err.Error() != "gosmo: send mail: "+raw.Error() {
+			t.Errorf("Msg %d: text changed to %q", n, err.Error())
+		}
+	}
+	other := mssql.Error{Number: 208, Class: 16, Message: "x"}
+	if _, wrapped := classifyMailSendError(other).(*classifiedError); wrapped {
+		t.Error("an unrelated error was rewrapped")
+	}
+}

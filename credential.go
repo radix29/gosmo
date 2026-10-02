@@ -166,16 +166,25 @@ func (s *Server) CreateCredential(ctx context.Context, spec CreateCredentialRequ
 	})
 }
 
+// CredentialOptions is what ALTER CREDENTIAL and ALTER DATABASE SCOPED
+// CREDENTIAL set: both halves, every time. See Credential.Alter for why a nil
+// Secret clears the stored one rather than keeping it.
+type CredentialOptions struct {
+	Identity string  // required
+	Secret   *string // nil clears the stored secret
+}
+
 // Alter changes the credential's identity, and its secret.
 //
-// A nil secret does not leave the stored secret alone — it clears it. ALTER
+// A nil Secret does not leave the stored secret alone — it clears it. ALTER
 // CREDENTIAL resets both halves every time, and SQL Server documents omitting
 // SECRET as setting the stored secret to NULL; there is no T-SQL form that
 // changes the identity while keeping the secret. Since the secret can never be
 // read back, a caller that wants to keep one has to ask the user for it again
 // and pass it here. Both branches are deliberate: pass a pointer to the new
 // secret to set it, and nil only when clearing it is the intent.
-func (c *Credential) Alter(ctx context.Context, identity string, secret *string) error {
+func (c *Credential) Alter(ctx context.Context, o CredentialOptions) error {
+	identity, secret := o.Identity, o.Secret
 	if identity == "" {
 		return fmt.Errorf("gosmo: alter credential %q: identity is required", c.Name)
 	}

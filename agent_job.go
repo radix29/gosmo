@@ -167,6 +167,19 @@ type Job struct {
 // Server returns the server the job belongs to.
 func (j *Job) Server() *Server { return j.server }
 
+// IsSystem reports whether j is one SQL Server creates for itself
+// (syspolicy_purge_history). msdb has no flag for it, so it is the
+// "syspolicy_" name prefix, and it answers on a JobRef too.
+//
+// msdb lets sp_delete_job drop any job, so a caller that gates Delete on this
+// is the only thing protecting the job: widening the prefix hides a permitted
+// operation, narrowing it exposes one.
+//
+// Deliberately narrow: sysutility_*, mdw_purge_data* and "SSIS Server
+// Maintenance Job" come with optionally installed features, and removing them
+// is ordinary administration.
+func (j *Job) IsSystem() bool { return strings.HasPrefix(j.Name, "syspolicy_") }
+
 // jobSelect is the 17-column select list and the five joins both job reads
 // share; each caller appends its own ORDER BY or WHERE. Written once because
 // the select list *is* what makes a *Job complete — a column added, or an

@@ -21,7 +21,6 @@ classDiagram
         +Format bool
         +Credential string
         +Progress func
-        +BuildBackupStatement(opts) string
     }
 
     class RestoreOptions {
@@ -140,8 +139,8 @@ classDiagram
         +CurrentState JobState
         +Server() *Server
         +Steps() []*JobStep
-        +AddStep(req) error
-        +InsertStep(req, stepID) error
+        +AddStep(req) *JobStep
+        +InsertStep(req, stepID) *JobStep
         +MoveStep(stepID, newStepID) error
         +ReorderSteps(order) error
         +Schedules() []*Schedule
@@ -205,7 +204,7 @@ classDiagram
         +OSRunPriority int
         +Alter(req) error
         +SetFlow(onSuccess, successStep, onFail, failStep) error
-        +Delete() error
+        +Drop() error
         The whole definition is carried because
         a move is a delete and a re-insert —
         msdb has no procedure that renumbers a

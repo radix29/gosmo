@@ -314,13 +314,13 @@ func (c evictingConnector) Connect(ctx context.Context) (driver.Conn, error) {
 
 // poolConnector is what sql.OpenDB is given for connector: evictingConnector
 // when connector probes Browser through browserDialer, connector itself
-// otherwise. host is the one ParseServerAddress reads out of opts.Server,
+// otherwise. host is the one opts.address reads out of opts.Server,
 // which is the host the driver sends the probe to.
 func poolConnector(connector *mssql.Connector, opts ConnectionOptions) driver.Connector {
 	if _, ok := connector.Dialer.(browserDialer); !ok {
 		return connector
 	}
-	host, _, _ := ParseServerAddress(opts.Server)
+	host, _, _ := opts.address()
 	return evictingConnector{Connector: connector, host: host}
 }
 
@@ -485,7 +485,7 @@ func dialerFor(opts ConnectionOptions) mssql.Dialer {
 	if opts.Dialer != nil {
 		return opts.Dialer
 	}
-	if _, instance, port := ParseServerAddress(opts.Server); instance != "" && port == 0 {
+	if _, instance, port := opts.address(); instance != "" && port == 0 {
 		return browserDialer{}
 	}
 	return nil

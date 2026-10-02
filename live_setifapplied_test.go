@@ -309,7 +309,7 @@ func TestLiveScriptedSequenceRestartMirroring(t *testing.T) {
 	// The entry's bare SQL, not the rendered statement: that one opens with
 	// its USE and a GO, which only a script runner splits on, and d.exec
 	// supplies the USE itself.
-	if _, err := d.exec(ctx, script.Entries[0].SQL); err != nil {
+	if _, err := d.exec(ctx, script.Entries()[0].SQL); err != nil {
 		t.Fatalf("running the captured statement: %v", err)
 	}
 	if got := cur(reload()); got != before+5000 {

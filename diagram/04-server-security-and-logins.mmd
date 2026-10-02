@@ -25,7 +25,7 @@ classDiagram
         +CryptographicProvider string
         +CreateDate time.Time
         +ModifyDate time.Time
-        +Alter(identity, secret) error
+        +Alter(CredentialOptions) error
         +Drop() error
         The secret is write-only: sys.credentials
         never exposes it, so Alter takes a *string —
@@ -47,7 +47,7 @@ classDiagram
         +Identity string
         +CreateDate time.Time
         +ModifyDate time.Time
-        +Alter(identity, secret) error
+        +Alter(CredentialOptions) error
         +Drop() error
         The database-scope family, a separate
         securable with its own DDL. The secret

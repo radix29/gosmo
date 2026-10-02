@@ -296,9 +296,10 @@ The instance and database halves pair up: `ServerResourceStat` and
 | `Server.Databases`      | `srv.Databases(ctx)` / `srv.DatabaseRef(name)` (no-I/O handle) |
 | Current database         | `srv.CurrentDatabase(ctx)`                    |
 | Default file locations   | `srv.DefaultPaths(ctx)` → `DefaultPaths{Data, Log, Backup}`, read now — `srv.Info()`'s `Default*Path` fields are the connect-time snapshot, stale once a default moves; place files with this one |
-| Current login (`SUSER_NAME()`) | `srv.CurrentLogin(ctx)`                 |
+| Current login (`SUSER_NAME()`) | `srv.Info().Login` (read at connect) / `srv.CurrentLogin(ctx)` |
+| Connection lifetime      | `srv.Context()` — cancelled by `srv.Close()`, which also stops every gosmo statement in flight; derive work run on `srv.DB()` from it |
 | `Server.Logins`         | `srv.Logins(ctx)` / `srv.LoginByName(ctx, name)` / `srv.LoginRef(name)` (no-I/O handle) |
-| `Server.Roles`          | `srv.ServerRoles(ctx)` / `srv.ServerRoleByName(ctx, name)` / `srv.ServerRoleRef(name)` (no-I/O handle) / `srv.ServerRoleMembers(ctx, role)` |
+| `Server.Roles`          | `srv.ServerRoles(ctx)` / `srv.ServerRoleByName(ctx, name)` / `srv.ServerRoleRef(name)` (no-I/O handle) / `srv.ServerRoleMembers(ctx, role)`; writes on the handle — `role.AddMember(ctx, member)` / `role.RemoveMember(ctx, member)` |
 | Server role administration | `role.Rename(ctx, newName)` / `role.SetOwner(ctx, owner)` / `srv.Add\|RemoveServerRoleMember(ctx, role, member)` |
 | Drop a server role      | `srv.ServerRoleRef(name).Drop(ctx)` / `role.Drop(ctx)`  |
 | Drop a database         | `srv.DatabaseRef(name).Drop(ctx, force)` / `db.Drop(ctx, force)` — `force` closes other connections first |
@@ -321,7 +322,7 @@ The instance and database halves pair up: `ServerResourceStat` and
 | Server-level permissions | `srv.ServerPermissions(ctx)` / `srv.Grant\|Deny\|RevokeServerPermission(ctx, ...)` / `srv.ServerPermissionNames()` |
 | Server permissions with modifiers | the same methods' `opts gosmo.PermissionOptions` — `WITH GRANT OPTION`, `CASCADE`, `GRANT OPTION FOR`; the zero value is the plain statement |
 | Effective server permissions | `srv.EffectiveServerPermissions(ctx, login)` (`EXECUTE AS LOGIN` + `fn_my_permissions`) |
-| Credentials              | `srv.Credentials(ctx)` / `srv.CredentialByName(ctx, name)` / `srv.CredentialRef(name)` (no-I/O handle) / `srv.CreateCredential(ctx, spec)` / `cred.Alter(ctx, identity, secret)` / `cred.Drop(ctx)` — see [Credentials](#credentials) |
+| Credentials              | `srv.Credentials(ctx)` / `srv.CredentialByName(ctx, name)` / `srv.CredentialRef(name)` (no-I/O handle) / `srv.CreateCredential(ctx, spec)` / `cred.Alter(ctx, gosmo.CredentialOptions{Identity, Secret})` / `cred.Drop(ctx)` — see [Credentials](#credentials) |
 | Cryptographic providers  | `srv.CryptographicProviders(ctx)`             |
 | Server audits            | `srv.ServerAudits(ctx)` / `srv.ServerAuditByName(ctx, name)` / `srv.ServerAuditRef(name)` (no-I/O handle) / `srv.CreateServerAudit(ctx, spec)` — see [Audits](#audits-and-audit-specifications) |
 | Server audit specifications | `srv.ServerAuditSpecifications(ctx)` / `...ByName(ctx, name)` / `srv.ServerAuditSpecificationRef(name)` (no-I/O handle) / `srv.CreateServerAuditSpecification(ctx, spec)` |
@@ -369,7 +370,7 @@ The instance and database halves pair up: `ServerResourceStat` and
 | `Database.Users`                | `db.Users(ctx)` / `db.UserByName(ctx, name)` / `db.UserRef(name)` (no-I/O handle) / `db.CreateUser(ctx, gosmo.CreateUserRequest{Name, Kind, ...})` — for login, with password (contained), without login, Windows, certificate, asymmetric key, external provider |
 | Database user administration    | `user.Rename(ctx, newName)` / `user.SetDefaultSchema(ctx, schemaName)` / `user.SetLogin(ctx, loginName)` |
 | `Database.AuditSpecifications`  | `db.DatabaseAuditSpecifications(ctx)` / `...ByName(ctx, name)` / `db.DatabaseAuditSpecificationRef(name)` (no-I/O handle) / `db.CreateDatabaseAuditSpecification(ctx, spec)` |
-| `Database.Roles`                | `db.DatabaseRoles(ctx)` / `db.RoleByName(ctx, name)` / `db.RoleMembers(ctx, roleName)` |
+| `Database.Roles`                | `db.DatabaseRoles(ctx)` / `db.RoleByName(ctx, name)` / `db.RoleRef(name)` (no-I/O handle) / `db.RoleMembers(ctx, roleName)`; writes on the handle — `role.AddMember(ctx, member)` / `role.RemoveMember(ctx, member)` |
 | Database role administration    | `role.Rename(ctx, newName)` / `role.SetOwner(ctx, newOwner)` / `role.Drop(ctx)` / `db.RoleRef(name).Drop(ctx)` |
 | `Database.FileGroups`           | `db.FileGroups(ctx)` — `fg.Type` is the `type_desc` (ROWS / FILESTREAM / MEMORY_OPTIMIZED), `fg.IsFileStream()` the common test |
 | `Database.Triggers`             | `db.Triggers(ctx)` / `db.ObjectTriggers(ctx, schema, name)` (one table or view, by name) / `db.TriggerRef(schema, name)` (no-I/O handle) / `tr.Drop(ctx)` / `tr.Rename(ctx, newName)` |
@@ -416,9 +417,9 @@ The instance and database halves pair up: `ServerResourceStat` and
 | Force / unforce a plan          | `db.QueryStoreForcePlan(ctx, queryID, planID)` / `db.QueryStoreUnforcePlan(ctx, queryID, planID)` |
 | What a report can rank by       | `db.QueryStoreMetrics()` / `gosmo.QSStatistics()` / `gosmo.QSMetricUnit(m)` — metrics are version-gated, and `db.QueryStoreWaitStatsSupported()` gates the two wait reports (2017+) |
 | Every file, incl. log           | `db.Files(ctx)`                                |
-| Add / alter / remove file       | `db.AddFile(ctx, spec)` / `db.AlterFile(ctx, name, m)` / `db.RemoveFile(ctx, name)` |
-| Add / remove filegroup          | `db.AddFileGroup(ctx, name)` / `db.RemoveFileGroup(ctx, name)` |
-| Filegroup default / read-only   | `db.SetDefaultFileGroup(ctx, name)` / `db.SetFileGroupReadOnly(ctx, name, ro, term)` — `TerminationRollbackImmediate` kills the database's sessions in the same batch, since `MODIFY FILEGROUP` ignores `WITH ROLLBACK IMMEDIATE` |
+| Add / alter / remove file       | `db.AddFile(ctx, spec)` / `db.FileRef(name).Alter(ctx, m)` / `db.FileRef(name).Drop(ctx)` — `Files` returns the same handles, populated |
+| Add / remove filegroup          | `db.AddFileGroup(ctx, name)` / `db.FileGroupRef(name).Drop(ctx)` — `FileGroups` returns the same handles, populated |
+| Filegroup default / read-only   | `fg.SetDefault(ctx)` / `fg.SetReadOnly(ctx, ro, term)` — `TerminationRollbackImmediate` kills the database's sessions in the same batch, since `MODIFY FILEGROUP` ignores `WITH ROLLBACK IMMEDIATE` |
 | CREATE DATABASE file placement  | `CreateDatabaseRequest.PrimaryFile` / `.LogFile` (`*DatabaseFileSpec`) |
 | Change tracking                 | `db.ChangeTracking(ctx)` / `db.SetChangeTracking(ctx, info)` |
 | Table change tracking           | `db.TableChangeTracking(ctx)` / `db.TableChangeTrackingFor(ctx, schema, name)` / `db.SetTableChangeTracking(ctx, ...)` |
@@ -1525,7 +1526,7 @@ as the `[Uncategorized (Local)]` msdb then reports.
 
 ```go
 job, _ := srv.CreateJob(ctx, gosmo.CreateJobRequest{Name: "NightlyBackup", Enabled: true})
-job.AddStep(ctx, gosmo.JobStepRequest{
+step, _ := job.AddStep(ctx, gosmo.JobStepRequest{ // read back: step.StepID is its number
     Name:            "Run backup",
     Subsystem:       "TSQL",
     Command:         "EXEC dbo.RunNightlyBackup",
@@ -1534,12 +1535,12 @@ job.AddStep(ctx, gosmo.JobStepRequest{
     OnFailAction:    2,
 })
 job.SetEmailNotify(ctx, "DBA on call", gosmo.NotifyOnFailure)
-job.Start(ctx, "")
+job.Start(ctx, step.Name)
 
 // Edit or remove a step in place.
 steps, _ := job.Steps(ctx)
-steps[0].Update(gosmo.JobStepRequest{ /* ... */ })
-steps[0].Delete()
+steps[0].Alter(ctx, gosmo.JobStepRequest{ /* ... */ })
+steps[0].Drop(ctx)
 
 // Reorder them: insert at a position, move one step, or reorder the lot.
 job.InsertStep(ctx, gosmo.JobStepRequest{ /* ... */ }, 2)
@@ -1648,7 +1649,7 @@ manageable, _ := srv.EventAlerts(ctx)
 cats, _ := srv.Categories(ctx, gosmo.CategoryClassJob)
 cat, _ := srv.CategoryByName(ctx, gosmo.CategoryClassJob, "Nightly")
 srv.CreateCategory(ctx, gosmo.CreateCategoryRequest{Class: gosmo.CategoryClassAlert, Name: "Storage"})
-srv.DeleteCategory(ctx, gosmo.CategoryClassAlert, "Storage")
+srv.CategoryRef(gosmo.CategoryClassAlert, "Storage").Drop(ctx)
 ```
 
 ### Always On availability groups
@@ -1877,7 +1878,7 @@ SSMS's Security → Credentials, and the identity a login can be mapped to.
 | ------------------------- | ---------------------------------------------------- |
 | Security → Credentials    | `srv.Credentials(ctx)` / `srv.CredentialByName(ctx, name)` / `srv.CredentialRef(name)` (no-I/O handle) |
 | New credential            | `srv.CreateCredential(ctx, gosmo.CreateCredentialRequest{Name, Identity, Secret, CryptographicProvider})` |
-| Change identity or secret | `cred.Alter(ctx, identity, secret)` — `secret` is a `*string`, and nil **clears** the stored secret: `ALTER CREDENTIAL` resets both halves, so there is no form that changes the identity and keeps the secret |
+| Change identity or secret | `cred.Alter(ctx, gosmo.CredentialOptions{Identity, Secret})` — `Secret` is a `*string`, and nil **clears** the stored secret: `ALTER CREDENTIAL` resets both halves, so there is no form that changes the identity and keeps the secret |
 | Drop                      | `cred.Drop(ctx)`                                        |
 | Cryptographic providers   | `srv.CryptographicProviders(ctx)`                       |
 
@@ -2031,6 +2032,24 @@ if _, err := db.CreateTable(ctx, req); err != nil {
     }
 }
 ```
+
+### Classifying a SQL Server error
+
+Three predicates answer the questions a caller otherwise asks of message
+text, keyed on error numbers so they hold on a server of any language:
+
+- `ClassifyRefusal(err)` returns `PermissionDenied` (the server stated a
+  denial: Msg 229, 230, 262, 297, 300, 916), `MissingOrDenied` (its
+  deliberately ambiguous "does not exist or you do not have permission":
+  1088, 3701, 5011, 15151, 15247) or `NotRefused`, with the message that said
+  so. It reads the *first* qualifying message of the batch: the last is
+  usually the contentless Msg 297 or 3013. `IsPermissionDenied` and
+  `IsMissingOrDenied` are its two booleans. Nothing may narrow
+  `MissingOrDenied` to either half — the server withholds which on purpose.
+- `IsAlreadyExists(err)` — a CREATE refused because the name is taken
+  (1801, 1913, 2714, 15023, 15025), in any message of the batch.
+- `SendMail`'s known refusals wrap `ErrMailProfileInvalid`,
+  `ErrMailNoDefaultProfile`, `ErrMailStopped` and `ErrMailXPsDisabled`.
 
 ### `ErrNotFound`
 
@@ -2247,6 +2266,13 @@ unmasked, it is a live credential.
 Exported so a caller building its own connection-address UI can reuse the
 same parsing `Connect` relies on internally.
 
+A caller with a separate port field sets `ConnectionOptions.Port` rather than
+folding it into `Server`; a port written in `Server` wins over it, and on a
+named instance either one skips the SQL Server Browser lookup. Every reader of
+the dial target (the DSN host, the Browser-dialer choice, the Entra sign-in
+cache key) goes through the internal `ConnectionOptions.address`, so the two
+spellings dial alike.
+
 ---
 
 ## Connection helpers (internal)
@@ -2284,9 +2310,9 @@ the prologue is retried; whatever the caller goes on to run is not.
 ## Security
 
 - **Passwords are escaped, never spliced in raw.** `CreateLogin` and `ChangePassword` quote the password as an `N'...'` literal through the same `QuoteLiteral` escaping every other string literal in the package uses, so it's injection-proof regardless of password content. `HASHED` is emitted only for `CreateLoginRequest.PasswordHash` (a hash SQL Server produced, rendered as a `0x…` binary literal), never for a cleartext password.
-- **Connection lifetimes are correctly scoped.** `Database.query` returns a `*dbRows` that owns both the `*sql.Rows` and the `*sql.Conn` pinned to run its `USE`, closing both together — `*sql.Rows.Close` on its own would leave that connection checked out of the pool for good.
+- **Connection lifetimes are correctly scoped.** `Database.query` returns a `*dbRows` that owns both the `*sql.Rows` and the `*sql.Conn` pinned to run its `USE`, closing both together — `*sql.Rows.Close` on its own would leave that connection checked out of the pool for good. Every statement is also bounded by the `Server`'s lifetime (`Server.bound`): `Close` cancels `Server.Context()` and with it each statement in flight, which closing the `*sql.DB` alone leaves running — and its session on the server.
 - **Values that can't be parameterized are validated by shape or allowlist.** DDL can't parameterize keyword or literal arguments, so anything spliced into one is checked first: recovery models, data types, and backup actions against their known sets; partition function boundary values against the shape of a well-formed SQL Server literal; Query Store mode keywords and index data-compression settings against their allowlists.
-- **One shared quoting implementation.** `QuoteName` and `QuoteLiteral` wrap the driver's own `TSQLQuoter` (`QuoteLiteral` adding the `N` prefix, so a literal is never varchar), so gosmo's internal identifier/literal escaping — and any caller or downstream consumer (e.g. gossms) building its own DDL — go through the same tested implementation rather than a hand-rolled one.
+- **One shared quoting implementation.** `QuoteName` and `QuoteLiteral` wrap the driver's own `TSQLQuoter` (`QuoteLiteral` adding the `N` prefix, so a literal is never varchar), so gosmo's internal identifier/literal escaping — and any caller or downstream consumer (e.g. gossms) building its own DDL — go through the same tested implementation rather than a hand-rolled one. Beside them: `QuoteNameIfNeeded` (brackets only a name that is not an ASCII regular identifier or is a reserved keyword — for text a person reads), `UnquoteName` (the inverse of `QuoteName` for one part), `IsReservedKeyword` (the documented list, pinned against the parser by `TestLiveReservedKeywords`), and `QuoteAnsiLiteral` (a varchar `'…'`, for an Extended Events `ansi_string` predicate).
 - **Permission and SET-option names are allowlisted, not interpolated.** `GRANT`/`DENY`/`REVOKE` and `ALTER DATABASE ... SET` are DDL and can't parameterize their keyword arguments; every method that accepts one (`GrantServerPermission`, `GrantPermission`, `GrantDatabasePermission`, `SetDatabaseOption`, ...) rejects any name not on its allowlist instead of splicing caller input directly into the statement.
 
 ---

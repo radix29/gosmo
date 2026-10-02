@@ -69,7 +69,9 @@ func (d *Database) Server() *Server { return d.server }
 // is not retried: fn is the caller's actual write, and blindly re-running
 // it on a fresh connection after a partial failure could re-apply side
 // effects that already took hold.
-func (d *Database) withConn(ctx context.Context, fn func(*sql.Conn) error) error {
+func (d *Database) withConn(ctx context.Context, fn func(context.Context, *sql.Conn) error) error {
+	ctx, release := d.server.bound(ctx)
+	defer release()
 	conn, err := withRetry(ctx, func() (*sql.Conn, error) {
 		conn, err := d.server.db.Conn(ctx)
 		if err != nil {
@@ -85,7 +87,7 @@ func (d *Database) withConn(ctx context.Context, fn func(*sql.Conn) error) error
 		return err
 	}
 	defer conn.Close()
-	return withAllMessages(fn(conn))
+	return withAllMessages(fn(ctx, conn))
 }
 
 // scriptResult is the sql.Result stand-in returned to callers of exec when
@@ -117,7 +119,7 @@ func (d *Database) exec(ctx context.Context, q string, args ...any) (sql.Result,
 		return scriptResult{}, nil
 	}
 	var res sql.Result
-	err := d.withConn(ctx, func(c *sql.Conn) error {
+	err := d.withConn(ctx, func(ctx context.Context, c *sql.Conn) error {
 		var e error
 		res, e = c.ExecContext(ctx, q, args...)
 		return e
@@ -132,20 +134,27 @@ func (d *Database) exec(ctx context.Context, q string, args ...any) (sql.Result,
 	return res, err
 }
 
-// dbRows wraps a *sql.Rows obtained from a *sql.Conn pinned specifically for
-// it (see Database.query), so that closing the rows also returns the pinned
-// connection to the pool. *sql.Rows.Close alone only releases the query's
-// own resources — a *sql.Conn stays checked out from the pool until its own
-// Close is called, and nothing does that automatically.
+// dbRows is a read's *sql.Rows plus what closing them must also let go of:
+// the *sql.Conn pinned for the read (see Database.query), which *sql.Rows.Close
+// alone leaves checked out of the pool, and the read's link to the Server's
+// lifetime (see Server.bound). Either may be nil; a server-scoped read off the
+// pool pins no connection.
 type dbRows struct {
 	*sql.Rows
-	conn *sql.Conn
+	conn    *sql.Conn
+	release func()
 }
 
 func (r *dbRows) Close() error {
 	err := r.Rows.Close()
-	if cerr := r.conn.Close(); err == nil {
-		err = cerr
+	if r.conn != nil {
+		if cerr := r.conn.Close(); err == nil {
+			err = cerr
+		}
+	}
+	if r.release != nil {
+		r.release()
+		r.release = nil
 	}
 	return err
 }
@@ -185,7 +194,8 @@ func (d *Database) query(ctx context.Context, q string, args ...any) (*dbRows, e
 	// with that conn — the caller's defer rows.Close() releases both.
 	// A single read is idempotent, so a transient failure (dropped pooled
 	// connection, etc.) is retried on a fresh connection.
-	return withRetry(ctx, func() (*dbRows, error) {
+	ctx, release := d.server.bound(ctx)
+	rows, err := withRetry(ctx, func() (*dbRows, error) {
 		conn, err := d.server.db.Conn(ctx)
 		if err != nil {
 			return nil, fmt.Errorf("gosmo: acquire connection: %w", err)
@@ -206,8 +216,12 @@ func (d *Database) query(ctx context.Context, q string, args ...any) (*dbRows, e
 			conn.Close()
 			return nil, err
 		}
-		return &dbRows{Rows: rows, conn: conn}, nil
+		return &dbRows{Rows: rows, conn: conn, release: release}, nil
 	})
+	if err != nil {
+		release()
+	}
+	return rows, err
 }
 
 // queryRow acquires a connection, switches it to d's database (USE), runs
@@ -224,6 +238,8 @@ func (d *Database) query(ctx context.Context, q string, args ...any) (*dbRows, e
 // the two statements, as query does — scan never sees a USE failure, which it
 // could otherwise wrap or map to something else.
 func (d *Database) queryRow(ctx context.Context, scan func(*sql.Row) error, q string, args ...any) error {
+	ctx, release := d.server.bound(ctx)
+	defer release()
 	_, err := withRetry(ctx, func() (struct{}, error) {
 		conn, err := d.server.db.Conn(ctx)
 		if err != nil {

@@ -41,6 +41,24 @@ type Login struct {
 // Server returns the server the login belongs to.
 func (l *Login) Server() *Server { return l.server }
 
+// IsSystem reports whether l is one SQL Server creates and manages for itself:
+// a name in ## (##MS_PolicyEventProcessingLogin##, ##MS_PolicyTsqlExecutionLogin##
+// and the like). Derived from the name alone, so it answers on a LoginRef too.
+//
+// The server lets most of these be dropped, and that is the reason to ask:
+// dropping [##MS_PolicyEventProcessingLogin##] succeeds and takes Policy-Based
+// Management's execution identity with it, orphaning the matching users in
+// master and msdb, and nothing fails until a policy runs.
+//
+// Deliberately narrow: sa and the NT SERVICE\* logins are not system logins
+// here. Renaming sa is a documented hardening step, and the service logins
+// are ordinary Windows logins an administrator may want gone.
+func (l *Login) IsSystem() bool { return strings.HasPrefix(l.Name, "##") }
+
+// IsSQLLogin reports whether l authenticates with a SQL Server password — the
+// only kind with a password, CHECK_POLICY or CHECK_EXPIRATION.
+func (l *Login) IsSQLLogin() bool { return l.LoginType == "SQL_LOGIN" }
+
 // ResolveMapping looks up the certificate or asymmetric key this login maps
 // to and stores its name in MappedObject.
 //
@@ -99,12 +117,12 @@ func (l *Login) Drop(ctx context.Context) error {
 
 // AddServerRoleMember adds this login to a server role.
 func (l *Login) AddServerRoleMember(ctx context.Context, roleName string) error {
-	return l.server.AddServerRoleMember(ctx, roleName, l.Name)
+	return l.server.ServerRoleRef(roleName).AddMember(ctx, l.Name)
 }
 
 // RemoveServerRoleMember removes this login from a server role.
 func (l *Login) RemoveServerRoleMember(ctx context.Context, roleName string) error {
-	return l.server.RemoveServerRoleMember(ctx, roleName, l.Name)
+	return l.server.ServerRoleRef(roleName).RemoveMember(ctx, l.Name)
 }
 
 // -- Status / details --------------------------------------------------------

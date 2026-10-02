@@ -7,10 +7,12 @@ classDiagram
     class Server {
         -db *sql.DB
         -info *ServerInfo
+        -ctx context.Context
         +Connect(ctx, opts) *Server
         +NewServer(ctx, db) *Server
         +ParseServerAddress(server) string
         +Close() error
+        +Context() context.Context
         +DB() *sql.DB
         +Info() *ServerInfo
         +DefaultPaths() DefaultPaths
@@ -39,8 +41,6 @@ classDiagram
         +ServerRoleByName(name) *ServerRole
         +ServerRoleRef(name) *ServerRole
         +ServerRoleMembers(role) []*RoleMember
-        +AddServerRoleMember(role, member) error
-        +RemoveServerRoleMember(role, member) error
         +LinkedServers() []*LinkedServer
         +Configurations() []*ConfigurationOption
         +ConfigurationRef(name) *ConfigurationOption
@@ -68,7 +68,7 @@ classDiagram
         +Categories(class) []*Category
         +CategoryByName(class, name) *Category
         +CreateCategory(req) *Category
-        +DeleteCategory(class, name) error
+        +CategoryRef(class, name) *Category
         +ActiveSessions(sys) []*Session
         +KillSession(id) error
         +EnumErrorLogs(logType) []*ErrorLogFile
@@ -85,6 +85,7 @@ classDiagram
         +SendMail(profile, recipients, subject, body) error
         +Backup(opts) error
         +Restore(opts) error
+        +BuildBackupStatement(opts) string
         +BuildRestoreStatement(opts) string
         +VerifyBackup(target) error
         +BackupHeaders(target) []*BackupHeader

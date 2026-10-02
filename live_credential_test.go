@@ -82,7 +82,7 @@ func TestLiveCredentialCreateAlterReadDrop(t *testing.T) {
 	// the second clears the stored secret, which is why the API takes a
 	// pointer rather than a string.
 	newSecret := "gosmo-live-secret-2"
-	if err := c.Alter(ctx, `GOSMO\other_account`, &newSecret); err != nil {
+	if err := c.Alter(ctx, CredentialOptions{Identity: `GOSMO\other_account`, Secret: &newSecret}); err != nil {
 		t.Fatalf("Alter with a secret: %v", err)
 	}
 	if c.Identity != `GOSMO\other_account` {
@@ -95,7 +95,7 @@ func TestLiveCredentialCreateAlterReadDrop(t *testing.T) {
 	if after.Identity != `GOSMO\other_account` {
 		t.Errorf("server has identity %q after the alter, want %q", after.Identity, `GOSMO\other_account`)
 	}
-	if err := c.Alter(ctx, `GOSMO\third_account`, nil); err != nil {
+	if err := c.Alter(ctx, CredentialOptions{Identity: `GOSMO\third_account`, Secret: nil}); err != nil {
 		t.Fatalf("Alter without a secret: %v", err)
 	}
 

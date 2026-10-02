@@ -38,9 +38,11 @@ type ScriptEntry struct {
 }
 
 // ScriptCollector accumulates the SQL statements a write method would have
-// executed, instead of running them. See WithScript. Entries is guarded
-// by mu since nothing stops a caller from reusing one collector/context
-// across write calls issued from multiple goroutines concurrently.
+// executed, instead of running them. See WithScript. The entries are
+// guarded by mu since nothing stops a caller from reusing one
+// collector/context across write calls issued from multiple goroutines
+// concurrently — which is why they are read through Entries and Len, never
+// a field.
 //
 // String renders the whole capture as one runnable script, which is what a
 // caller handing it to a person wants. Joining the entries by hand is the
@@ -50,22 +52,28 @@ type ScriptEntry struct {
 // same variable.
 type ScriptCollector struct {
 	mu      sync.Mutex
-	Entries []ScriptEntry
+	entries []ScriptEntry
 }
 
-// append adds e under mu — the only way exec/exec should touch
-// Entries.
+// append adds e under mu — the only way exec should touch the entries.
 func (c *ScriptCollector) append(e ScriptEntry) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.Entries = append(c.Entries, e)
+	c.entries = append(c.entries, e)
 }
 
-// snapshot copies Entries under mu.
-func (c *ScriptCollector) snapshot() []ScriptEntry {
+// Entries returns a copy of every captured entry, in capture order.
+func (c *ScriptCollector) Entries() []ScriptEntry {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return slices.Clone(c.Entries)
+	return slices.Clone(c.entries)
+}
+
+// Len returns how many entries have been captured.
+func (c *ScriptCollector) Len() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return len(c.entries)
 }
 
 // Statements returns each captured entry as a script runnable on its own: a
@@ -73,7 +81,7 @@ func (c *ScriptCollector) snapshot() []ScriptEntry {
 // own batch; a server-scoped one is its SQL alone. Unlike String, nothing
 // says which instance an entry belongs to.
 func (c *ScriptCollector) Statements() []string {
-	entries := c.snapshot()
+	entries := c.Entries()
 	out := make([]string, len(entries))
 	for i, e := range entries {
 		out[i] = e.SQL
@@ -98,7 +106,7 @@ func (c *ScriptCollector) Statements() []string {
 //
 // It returns "" when nothing was captured.
 func (c *ScriptCollector) String() string {
-	entries := c.snapshot()
+	entries := c.Entries()
 	multi := slices.ContainsFunc(entries, func(e ScriptEntry) bool { return e.Server != entries[0].Server })
 	var b strings.Builder
 	cur := "" // the database the session is known to be in; "" = its default
@@ -288,6 +296,8 @@ func (s *Server) exec(ctx context.Context, stmt string) error {
 		c.append(ScriptEntry{Server: scriptServerName(ctx, s), SQL: stmt})
 		return nil
 	}
+	ctx, release := s.bound(ctx)
+	defer release()
 	if _, err := s.db.ExecContext(ctx, stmt); err != nil {
 		return withAllMessages(err)
 	}
@@ -305,6 +315,8 @@ func (s *Server) execSecret(ctx context.Context, stmt, shown string) error {
 		c.append(ScriptEntry{Server: scriptServerName(ctx, s), SQL: shown})
 		return nil
 	}
+	ctx, release := s.bound(ctx)
+	defer release()
 	if _, err := s.db.ExecContext(ctx, stmt); err != nil {
 		return withAllMessages(err)
 	}

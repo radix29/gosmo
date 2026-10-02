@@ -83,8 +83,8 @@ func TestStatementObserverSilentUnderWithScript(t *testing.T) {
 	if _, err := srv.DatabaseRef("sales").exec(ctx, "SELECT 2"); err != nil {
 		t.Fatalf("db exec: %v", err)
 	}
-	if len(col.Entries) != 2 {
-		t.Fatalf("collected %d, want 2", len(col.Entries))
+	if col.Len() != 2 {
+		t.Fatalf("collected %d, want 2", col.Len())
 	}
 	if len(*got) != 0 {
 		t.Errorf("observed %v under WithScript, want nothing", observedSQL(*got))

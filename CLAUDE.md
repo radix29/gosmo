@@ -139,6 +139,7 @@ exercise the write, drop them; never mutate pre-existing objects.
     the four Agent ones, the audit/credential/trigger/snapshot/plan-guide/
     backup-device/AG families, `ServerRoleRef`, `UserRef`, `StatisticRef`,
     `IndexRef`, `ConfigurationRef`, `CertificateRef`, `AsymmetricKeyRef`,
+    `FileRef`, `FileGroupRef`, `CategoryRef`,
     `SymmetricKeyRef`, `EventSessionRef` (server and database), the schema,
     sequence, synonym, rule, default, three type,
     XML schema collection, partition, Always Encrypted key, assembly, `RoleRef`,

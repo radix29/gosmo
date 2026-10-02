@@ -416,8 +416,12 @@ func TestScriptedAgentCreatesReturnNameOnlyHandles(t *testing.T) {
 		}
 		// sp_add_job and sp_add_jobserver as one atomic batch (T30), then
 		// the dependent step.
-		if err := j.AddStep(ctx, JobStepRequest{Name: "step 1", Subsystem: "TSQL", Command: "SELECT 1"}); err != nil {
+		step, err := j.AddStep(ctx, JobStepRequest{Name: "step 1", Subsystem: "TSQL", Command: "SELECT 1"})
+		if err != nil {
 			t.Fatalf("AddStep under WithScript: %v", err)
+		}
+		if step == nil || step.Name != "step 1" || step.job != j {
+			t.Fatalf("returned step = %+v, want a handle named \"step 1\" on the job", step)
 		}
 		st := script.Statements()
 		if len(st) != 2 || !strings.HasPrefix(st[0], "SET XACT_ABORT ON;") ||

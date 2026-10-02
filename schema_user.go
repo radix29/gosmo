@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -147,6 +148,19 @@ type User struct {
 // Database returns the database the user belongs to.
 func (u *User) Database() *Database { return u.db }
 
+// IsMapped reports whether u is mapped to a certificate or asymmetric key
+// (CERTIFICATE_MAPPED_USER, ASYMMETRIC_KEY_MAPPED_USER). Such a user has no
+// login and no password, and cannot be given either.
+func (u *User) IsMapped() bool {
+	return u.UserType == "CERTIFICATE_MAPPED_USER" || u.UserType == "ASYMMETRIC_KEY_MAPPED_USER"
+}
+
+// IsExternal reports whether u is a Microsoft Entra user or group: AuthType
+// EXTERNAL, or an EXTERNAL_* UserType for a listing that read no AuthType.
+func (u *User) IsExternal() bool {
+	return u.AuthType == "EXTERNAL" || strings.HasPrefix(u.UserType, "EXTERNAL_")
+}
+
 // Drop drops the database user.
 func (u *User) Drop(ctx context.Context) error {
 	if _, err := u.db.exec(ctx, "DROP USER "+quoteIdent(u.Name)); err != nil {
@@ -187,12 +201,12 @@ func (u *User) SetLogin(ctx context.Context, loginName string) error {
 
 // AddToRole adds the user to a database role.
 func (u *User) AddToRole(ctx context.Context, roleName string) error {
-	return u.db.AddRoleMember(ctx, roleName, u.Name)
+	return u.db.RoleRef(roleName).AddMember(ctx, u.Name)
 }
 
 // RemoveFromRole removes the user from a database role.
 func (u *User) RemoveFromRole(ctx context.Context, roleName string) error {
-	return u.db.RemoveRoleMember(ctx, roleName, u.Name)
+	return u.db.RoleRef(roleName).RemoveMember(ctx, u.Name)
 }
 
 // Grant grants a permission on a schema-qualified object to the user.

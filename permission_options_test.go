@@ -17,10 +17,10 @@ func scriptedDB(t *testing.T) (*Database, context.Context, *ScriptCollector) {
 // Database.exec records it under.
 func onlyStatement(t *testing.T, script *ScriptCollector) string {
 	t.Helper()
-	if len(script.Entries) != 1 {
-		t.Fatalf("collected %d statements, want 1: %v", len(script.Entries), script.Statements())
+	if script.Len() != 1 {
+		t.Fatalf("collected %d statements, want 1: %v", script.Len(), script.Statements())
 	}
-	return script.Entries[0].SQL
+	return script.Entries()[0].SQL
 }
 
 func TestPermissionOptionsRenderWithGrantOption(t *testing.T) {

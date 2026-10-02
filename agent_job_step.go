@@ -12,12 +12,11 @@ import (
 	"time"
 )
 
-// Steps returns all steps defined for the job, ordered by step_id.
-func (j *Job) Steps(ctx context.Context) ([]*JobStep, error) {
-	// The proxy is joined by name rather than reported as an id: an id means
-	// nothing to a caller, and a move that re-adds a step has to pass
-	// @proxy_name back.
-	const q = `
+// stepSelect is the column list and FROM every step read shares; the caller
+// adds the WHERE. The proxy is joined by name rather than reported as an id:
+// an id means nothing to a caller, and a move that re-adds a step has to pass
+// @proxy_name back.
+const stepSelect = `
 SELECT s.step_id, s.step_name, s.subsystem, s.command, ISNULL(s.database_name, ''),
        s.on_success_action, s.on_success_step_id, s.on_fail_action, s.on_fail_step_id,
        s.last_run_outcome, s.last_run_date, s.last_run_time, s.last_run_duration,
@@ -26,52 +25,80 @@ SELECT s.step_id, s.step_name, s.subsystem, s.command, ISNULL(s.database_name, '
        ISNULL(s.cmdexec_success_code, 0), ISNULL(s.server, ''),
        ISNULL(s.database_user_name, ''), ISNULL(s.os_run_priority, 0)
 FROM   msdb.dbo.sysjobsteps s
-LEFT   JOIN msdb.dbo.sysproxies p ON p.proxy_id = s.proxy_id
+LEFT   JOIN msdb.dbo.sysproxies p ON p.proxy_id = s.proxy_id`
+
+// scanStep scans one stepSelect row into a step of j.
+func (j *Job) scanStep(scan func(...any) error) (*JobStep, error) {
+	s := &JobStep{job: j}
+	var lastRunDate, lastRunTime sql.NullInt64
+	if err := scan(
+		&s.StepID, &s.Name, &s.Subsystem, &s.Command, &s.Database,
+		&s.OnSuccessAction, &s.OnSuccessStepID, &s.OnFailAction, &s.OnFailStepID,
+		&s.LastRunOutcome, &lastRunDate, &lastRunTime, &s.LastRunDuration,
+		&s.RetryAttempts, &s.RetryInterval, &s.OutputFileName, &s.Flags,
+		&s.ProxyName, &s.AdditionalParameters, &s.CmdExecSuccessCode,
+		&s.Server, &s.DatabaseUserName, &s.OSRunPriority,
+	); err != nil {
+		return nil, err
+	}
+	// last_run_date is 0 for a step that has never run, which
+	// parseSQLAgentDate would turn into a year-zero date rather than a
+	// zero Time. Leave LastRunDate zero so IsZero() is the "never ran"
+	// test callers expect.
+	if lastRunDate.Valid && lastRunDate.Int64 != 0 {
+		s.LastRunDate = parseSQLAgentDate(int(lastRunDate.Int64), int(lastRunTime.Int64))
+	}
+	s.LastRunElapsed = parseSQLAgentDuration(s.LastRunDuration)
+	return s, nil
+}
+
+// Steps returns all steps defined for the job, ordered by step_id.
+func (j *Job) Steps(ctx context.Context) ([]*JobStep, error) {
+	const q = stepSelect + `
 WHERE  s.job_id = @p1
 ORDER  BY s.step_id`
 
 	rows, err := j.server.query(ctx, q, j.JobID)
-	return scanRows(rows, err, fmt.Sprintf("steps for job %q", j.Name), func(scan func(...any) error) (*JobStep, error) {
-		s := &JobStep{job: j}
-		var lastRunDate, lastRunTime sql.NullInt64
-		if err := scan(
-			&s.StepID, &s.Name, &s.Subsystem, &s.Command, &s.Database,
-			&s.OnSuccessAction, &s.OnSuccessStepID, &s.OnFailAction, &s.OnFailStepID,
-			&s.LastRunOutcome, &lastRunDate, &lastRunTime, &s.LastRunDuration,
-			&s.RetryAttempts, &s.RetryInterval, &s.OutputFileName, &s.Flags,
-			&s.ProxyName, &s.AdditionalParameters, &s.CmdExecSuccessCode,
-			&s.Server, &s.DatabaseUserName, &s.OSRunPriority,
-		); err != nil {
-			return nil, err
-		}
-		// last_run_date is 0 for a step that has never run, which
-		// parseSQLAgentDate would turn into a year-zero date rather than a
-		// zero Time. Leave LastRunDate zero so IsZero() is the "never ran"
-		// test callers expect.
-		if lastRunDate.Valid && lastRunDate.Int64 != 0 {
-			s.LastRunDate = parseSQLAgentDate(int(lastRunDate.Int64), int(lastRunTime.Int64))
-		}
-		s.LastRunElapsed = parseSQLAgentDuration(s.LastRunDuration)
-		return s, nil
-	})
+	return scanRows(rows, err, fmt.Sprintf("steps for job %q", j.Name), j.scanStep)
 }
 
-// AddStep adds a T-SQL or other subsystem step to the job.
-func (j *Job) AddStep(ctx context.Context, req JobStepRequest) error {
+// stepByName reads one step back by name. msdb keeps step names unique
+// within a job (sp_add_jobstep refuses a duplicate, Msg 14261), and the job
+// is matched by name, so a JobRef handle (JobID zero) works.
+func (j *Job) stepByName(ctx context.Context, name string) (*JobStep, error) {
+	const q = stepSelect + `
+JOIN   msdb.dbo.sysjobs j ON j.job_id = s.job_id
+WHERE  j.name = @p1 AND s.step_name = @p2`
+
+	var st *JobStep
+	err := j.server.queryRow(ctx, func(row *sql.Row) error {
+		var scanErr error
+		st, scanErr = j.scanStep(row.Scan)
+		return scanErr
+	}, q, j.Name, name)
+	return foundRow(st, err, notFoundf("gosmo: step %q not found on job %q", name, j.Name),
+		fmt.Sprintf("read step %q of job %q", name, j.Name))
+}
+
+// AddStep appends a T-SQL or other subsystem step to the job, and returns it
+// read back from msdb — or, under Scripting(ctx), a handle carrying only the
+// job and the step's name, since nothing ran and its number is not known.
+func (j *Job) AddStep(ctx context.Context, req JobStepRequest) (*JobStep, error) {
 	return j.addStepAt(ctx, req, 0)
 }
 
 // InsertStep adds a step at position stepID, renumbering the steps at and
-// after it, rather than appending.
+// after it, rather than appending. It returns the step the way AddStep does;
+// under Scripting(ctx) the handle's StepID is stepID.
 //
 // The renumbering is msdb's, and it carries every other step's "go to step N"
 // reference with it — verified against SQL Server 2025. sp_delete_jobstep is
 // not symmetrical about this: it clears a reference to a step at or after the
 // one deleted instead of following it, which is why ReorderSteps repairs
 // references itself.
-func (j *Job) InsertStep(ctx context.Context, req JobStepRequest, stepID int) error {
+func (j *Job) InsertStep(ctx context.Context, req JobStepRequest, stepID int) (*JobStep, error) {
 	if stepID < 1 {
-		return fmt.Errorf("gosmo: insert step %q into job %q: step id must be 1 or more", req.Name, j.Name)
+		return nil, fmt.Errorf("gosmo: insert step %q into job %q: step id must be 1 or more", req.Name, j.Name)
 	}
 	return j.addStepAt(ctx, req, stepID)
 }
@@ -97,14 +124,16 @@ func stepExtraArgs(req JobStepRequest) string {
 	return q
 }
 
-func (j *Job) addStepAt(ctx context.Context, req JobStepRequest, stepID int) error {
+func (j *Job) addStepAt(ctx context.Context, req JobStepRequest, stepID int) (*JobStep, error) {
 	if req.Name == "" {
-		return fmt.Errorf("gosmo: add step: name is required")
+		return nil, fmt.Errorf("gosmo: add step: name is required")
 	}
 	if err := j.server.exec(ctx, addStepStmt(j.Name, req, stepID)); err != nil {
-		return fmt.Errorf("gosmo: add step %q to job %q: %w", req.Name, j.Name, err)
+		return nil, fmt.Errorf("gosmo: add step %q to job %q: %w", req.Name, j.Name, err)
 	}
-	return nil
+	return createdObject(ctx, &JobStep{job: j, StepID: stepID, Name: req.Name}, func() (*JobStep, error) {
+		return j.stepByName(ctx, req.Name)
+	})
 }
 
 // addStepStmt renders the sp_add_jobstep call. stepID > 0 inserts at that
@@ -196,18 +225,18 @@ func (s *JobStep) Alter(ctx context.Context, req JobStepRequest) error {
 	return nil
 }
 
-// Delete removes the job step via sp_delete_jobstep.
+// Drop removes the job step via sp_delete_jobstep.
 //
 // The step is addressed by its number, which is what sp_delete_jobstep takes:
 // a *JobStep is a snapshot, and its StepID is only current until something
 // renumbers the job.
-func (s *JobStep) Delete(ctx context.Context) error {
+func (s *JobStep) Drop(ctx context.Context) error {
 	return s.job.deleteStepAt(ctx, s.StepID)
 }
 
 // deleteStepAt removes the step currently numbered stepID, without needing a
 // *JobStep for it, for a caller holding a step number rather than the step.
-// JobStep.Delete is this with the number taken off the step.
+// JobStep.Drop is this with the number taken off the step.
 func (j *Job) deleteStepAt(ctx context.Context, stepID int) error {
 	if err := j.server.exec(ctx, deleteStepStmt(j.Name, stepID)); err != nil {
 		return fmt.Errorf("gosmo: delete step %d of job %q: %w", stepID, j.Name, err)

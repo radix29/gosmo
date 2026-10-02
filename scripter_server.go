@@ -128,7 +128,7 @@ func buildLoginScript(l *Login, opts ScriptOptions) string {
 				altered = append(altered, opt.clause+quoteIdent(opt.value))
 			}
 		}
-		if l.LoginType == "SQL_LOGIN" {
+		if l.IsSQLLogin() {
 			// Both always written, as SSMS does: CHECK_POLICY defaults to ON, so a
 			// login created with it OFF came back enforcing a policy its
 			// placeholder password then has to pass.

@@ -73,7 +73,7 @@ func (s *Server) Backup(ctx context.Context, opts BackupOptions) error {
 	if opts.Progress != nil && opts.Stats == 0 {
 		opts.Stats = 10
 	}
-	sqlText, err := BuildBackupStatement(opts)
+	sqlText, err := s.BuildBackupStatement(opts)
 	if err != nil {
 		return err
 	}
@@ -84,7 +84,7 @@ func (s *Server) Backup(ctx context.Context, opts BackupOptions) error {
 		}
 		return nil
 	}
-	if err := execWithProgress(ctx, s.db, sqlText, opts.Progress); err != nil {
+	if err := s.execWithProgress(ctx, sqlText, opts.Progress); err != nil {
 		return fmt.Errorf("gosmo: backup %q: %w", opts.Database, err)
 	}
 	observe(ctx, ScriptEntry{Server: scriptServerName(ctx, s), SQL: sqlText})
@@ -96,7 +96,17 @@ func (s *Server) Backup(ctx context.Context, opts BackupOptions) error {
 // script (e.g. an editor pane) rather than run it immediately.
 // Backup validates and builds the statement the same way, then runs
 // what this returns.
-func BuildBackupStatement(opts BackupOptions) (string, error) {
+//
+// It is a Server method, like BuildRestoreStatement, although nothing in the
+// statement depends on the instance yet: a BACKUP form that does (a Managed
+// Instance's COPY_ONLY rule, an edition's compression support) then has
+// somewhere to go without another signature change.
+func (s *Server) BuildBackupStatement(opts BackupOptions) (string, error) {
+	return buildBackupStatement(opts)
+}
+
+// buildBackupStatement is Server.BuildBackupStatement.
+func buildBackupStatement(opts BackupOptions) (string, error) {
 	if opts.Database == "" {
 		return "", fmt.Errorf("gosmo: backup: database name is required")
 	}
@@ -210,8 +220,10 @@ func backupFileSpec(verb string, files, fileGroups []string) (string, error) {
 // combined the way exec's are, by withAllMessages. Never run under
 // WithScript: Backup and Restore take exec's path there. Its callers report
 // a success to the statement observer themselves, as exec does.
-func execWithProgress(ctx context.Context, db *sql.DB, sqlText string, progress func(pct int, message string)) error {
-	conn, err := db.Conn(ctx)
+func (s *Server) execWithProgress(ctx context.Context, sqlText string, progress func(pct int, message string)) error {
+	ctx, release := s.bound(ctx)
+	defer release()
+	conn, err := s.db.Conn(ctx)
 	if err != nil {
 		return err
 	}
@@ -409,7 +421,7 @@ func (s *Server) Restore(ctx context.Context, opts RestoreOptions) error {
 	if opts.Progress == nil || Scripting(ctx) {
 		err = s.exec(ctx, sqlText)
 	} else {
-		err = execWithProgress(ctx, s.db, sqlText, opts.Progress)
+		err = s.execWithProgress(ctx, sqlText, opts.Progress)
 		if err == nil {
 			observe(ctx, ScriptEntry{Server: scriptServerName(ctx, s), SQL: sqlText})
 		}
@@ -449,9 +461,9 @@ func (s *Server) Restore(ctx context.Context, opts RestoreOptions) error {
 // With CloseExistingConnections the result is a batch — see that field — in
 // the form the instance accepts: SET SINGLE_USER, or killing the database's
 // sessions on a Managed Instance, which refuses SET SINGLE_USER. That is why
-// this is a Server method and BuildBackupStatement is not: until 2026-09-23 a
-// package-level BuildRestoreStatement sat beside this one and always wrote
-// the SINGLE_USER form, which a Managed Instance fails.
+// this is a Server method: until 2026-09-23 a package-level
+// BuildRestoreStatement sat beside this one and always wrote the SINGLE_USER
+// form, which a Managed Instance fails.
 func (s *Server) BuildRestoreStatement(opts RestoreOptions) (string, error) {
 	return buildRestoreStatement(opts, s.refusesSingleUser())
 }
@@ -931,7 +943,7 @@ func (s *Server) BackupHeaders(ctx context.Context, targets ...BackupTarget) ([]
 	}
 	defer rows.Close()
 
-	nr, err := newNamedRow(rows)
+	nr, err := newNamedRow(rows.Rows)
 	if err != nil {
 		return nil, fmt.Errorf("gosmo: read backup header %q: %w", device, err)
 	}
@@ -1017,7 +1029,7 @@ func (s *Server) BackupFileList(ctx context.Context, fileNumber int, targets ...
 	}
 	defer rows.Close()
 
-	nr, err := newNamedRow(rows)
+	nr, err := newNamedRow(rows.Rows)
 	if err != nil {
 		return nil, fmt.Errorf("gosmo: read backup file list %q: %w", device, err)
 	}

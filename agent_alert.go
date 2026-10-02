@@ -305,8 +305,9 @@ func (a *Alert) Notify(ctx context.Context, operatorName string, method Notifica
 	return nil
 }
 
-// RemoveNotify removes an operator's notification link from the alert.
-func (a *Alert) RemoveNotify(ctx context.Context, operatorName string) error {
+// RemoveNotification removes an operator's notification link from the alert
+// — the inverse of Notify.
+func (a *Alert) RemoveNotification(ctx context.Context, operatorName string) error {
 	q := fmt.Sprintf("EXEC msdb.dbo.sp_delete_notification @alert_name = N'%s', @operator_name = N'%s'",
 		escapeSingle(a.Name), escapeSingle(operatorName))
 	if err := a.server.exec(ctx, q); err != nil {

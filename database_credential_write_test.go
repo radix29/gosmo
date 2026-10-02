@@ -89,7 +89,7 @@ func TestAlterDatabaseScopedCredentialSecretClause(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx, col := WithScript(context.Background())
 			c := scriptDB().DatabaseScopedCredentialRef("app_cred")
-			if err := c.Alter(ctx, "Managed Identity", tc.secret); err != nil {
+			if err := c.Alter(ctx, CredentialOptions{Identity: "Managed Identity", Secret: tc.secret}); err != nil {
 				t.Fatalf("Alter: %v", err)
 			}
 			if len(col.Statements()) != 1 {
@@ -104,7 +104,7 @@ func TestAlterDatabaseScopedCredentialSecretClause(t *testing.T) {
 
 func TestAlterDatabaseScopedCredentialRequiresIdentity(t *testing.T) {
 	ctx, col := WithScript(context.Background())
-	if err := scriptDB().DatabaseScopedCredentialRef("app_cred").Alter(ctx, "", nil); err == nil {
+	if err := scriptDB().DatabaseScopedCredentialRef("app_cred").Alter(ctx, CredentialOptions{Identity: "", Secret: nil}); err == nil {
 		t.Error("an empty identity was accepted")
 	}
 	if len(col.Statements()) != 0 {
@@ -156,7 +156,7 @@ func TestAlterDatabaseScopedCredentialDoesNotMirrorUnderScript(t *testing.T) {
 	ctx, _ := WithScript(context.Background())
 	c := scriptDB().DatabaseScopedCredentialRef("app_cred")
 	c.Identity = "old"
-	if err := c.Alter(ctx, "new", nil); err != nil {
+	if err := c.Alter(ctx, CredentialOptions{Identity: "new", Secret: nil}); err != nil {
 		t.Fatalf("Alter: %v", err)
 	}
 	if c.Identity != "old" {

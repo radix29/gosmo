@@ -72,7 +72,7 @@ func liveStateJob(t *testing.T, srv *Server, ctx context.Context, name, wait str
 		drop()
 		t.Fatalf("job by name %s: %v", name, err)
 	}
-	if err := j.AddStep(ctx, JobStepRequest{
+	if _, err := j.AddStep(ctx, JobStepRequest{
 		Name: "wait", Subsystem: "TSQL", Command: "WAITFOR DELAY '" + wait + "'",
 		OnSuccessAction: 1, OnFailAction: 2,
 	}); err != nil {

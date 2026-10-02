@@ -16,7 +16,11 @@ import (
 // that belong to a filegroup and so omits the log. Sizes are normalized to
 // KB (FileGroups's MaxSize/Growth fields are not, for backward
 // compatibility with existing callers).
+//
+// It is also the handle file writes go through: Alter and Drop address the
+// file by Name alone, so Database.FileRef is enough for either.
 type DatabaseFileInfo struct {
+	db              *Database
 	FileID          int
 	Name            string
 	PhysicalName    string
@@ -28,6 +32,17 @@ type DatabaseFileInfo struct {
 	GrowthKB        int64 // 0 when IsPercentGrowth is true
 	GrowthPercent   int   // 0 when IsPercentGrowth is false
 	IsPercentGrowth bool
+}
+
+// Database returns the database the file belongs to.
+func (f *DatabaseFileInfo) Database() *Database { return f.db }
+
+// FileRef returns a lightweight handle for a database file by logical name,
+// without querying the catalog — the counterpart of Server.DatabaseRef.
+// Every field but the name stays at its zero value; Files is what populates
+// them.
+func (d *Database) FileRef(name string) *DatabaseFileInfo {
+	return &DatabaseFileInfo{db: d, Name: name}
 }
 
 // Files returns every file in the database, data and log alike.
@@ -42,7 +57,7 @@ ORDER  BY df.type_desc, df.file_id`
 
 	rows, err := d.query(ctx, q)
 	return scanRows(rows, err, fmt.Sprintf("list files in %q", d.Name), func(scan func(...any) error) (*DatabaseFileInfo, error) {
-		f := &DatabaseFileInfo{}
+		f := &DatabaseFileInfo{db: d}
 		var maxSizePages, growthRaw int64
 		if err := scan(&f.FileID, &f.Name, &f.PhysicalName, &f.Type, &f.FileGroup, &f.State,
 			&f.SizeKB, &maxSizePages, &growthRaw, &f.IsPercentGrowth); err != nil {
@@ -73,9 +88,10 @@ FROM   sys.master_files mf
 WHERE  mf.database_id = DB_ID(@p1)
 ORDER  BY mf.type_desc, mf.file_id`
 
+	dbRef := s.DatabaseRef(database)
 	rows, err := s.query(ctx, q, database)
 	return scanRows(rows, err, fmt.Sprintf("list files in %q", database), func(scan func(...any) error) (*DatabaseFileInfo, error) {
-		f := &DatabaseFileInfo{}
+		f := &DatabaseFileInfo{db: dbRef}
 		var maxSizePages, growthRaw int64
 		if err := scan(&f.FileID, &f.Name, &f.PhysicalName, &f.Type, &f.State,
 			&f.SizeKB, &maxSizePages, &growthRaw, &f.IsPercentGrowth); err != nil {
@@ -86,7 +102,8 @@ ORDER  BY mf.type_desc, mf.file_id`
 	})
 }
 
-// DatabaseFileSpec describes a file to add via AddFile.
+// DatabaseFileSpec describes a file to add via AddFile, or one of CREATE
+// DATABASE's file definitions.
 type DatabaseFileSpec struct {
 	Name      string
 	FileGroup string // ignored when Type is "LOG"
@@ -185,7 +202,8 @@ func buildAddFileStatement(dbName string, spec DatabaseFileSpec) (string, error)
 	return sb.String(), nil
 }
 
-// FileModify holds the fields to change on an existing file via AlterFile.
+// FileModify holds the fields to change on an existing file via
+// DatabaseFileInfo.Alter.
 // Zero-valued fields are left unchanged; NewName renames the file.
 type FileModify struct {
 	NewName       string
@@ -201,23 +219,27 @@ type FileModify struct {
 	// the same value. Without it a UI whose growth control bottoms out at
 	// zero produces an ALTER with no FILEGROWTH clause, and if nothing else
 	// on the file changed, buildAlterFileStatement returns "" and
-	// AlterFile returns nil: an Apply that reports success and did
+	// Alter returns nil: an Apply that reports success and did
 	// nothing.
 	DisableGrowth bool
 	MaxSizeKB     int64 // -1 = UNLIMITED
 }
 
-// AlterFile changes an existing file's name, size, growth, or max size.
-func (d *Database) AlterFile(ctx context.Context, name string, m FileModify) error {
-	stmt, err := buildAlterFileStatement(d.Name, name, m)
+// Alter changes the file's name, size, growth, or max size. A FileModify
+// that changes nothing issues no statement.
+func (f *DatabaseFileInfo) Alter(ctx context.Context, m FileModify) error {
+	stmt, err := buildAlterFileStatement(f.db.Name, f.Name, m)
 	if err != nil {
 		return err
 	}
 	if stmt == "" {
 		return nil
 	}
-	if err := d.server.exec(ctx, stmt); err != nil {
-		return fmt.Errorf("gosmo: alter file %q in %q: %w", name, d.Name, err)
+	if err := f.db.server.exec(ctx, stmt); err != nil {
+		return fmt.Errorf("gosmo: alter file %q in %q: %w", f.Name, f.db.Name, err)
+	}
+	if m.NewName != "" {
+		setIfApplied(ctx, &f.Name, m.NewName)
 	}
 	return nil
 }
@@ -255,17 +277,27 @@ func buildAlterFileStatement(dbName, name string, m FileModify) (string, error) 
 	return fmt.Sprintf("ALTER DATABASE %s MODIFY FILE (%s)", quoteIdent(dbName), strings.Join(props, ", ")), nil
 }
 
-// RemoveFile drops a file from the database. The file must be empty (0
-// bytes of used space) — SQL Server itself enforces this, not gosmo.
-func (d *Database) RemoveFile(ctx context.Context, name string) error {
-	q := fmt.Sprintf("ALTER DATABASE %s REMOVE FILE %s", quoteIdent(d.Name), quoteIdent(name))
-	if err := d.server.exec(ctx, q); err != nil {
-		return fmt.Errorf("gosmo: remove file %q from %q: %w", name, d.Name, err)
+// Drop removes the file from its database (ALTER DATABASE ... REMOVE FILE).
+// The file must be empty (0 bytes of used space) — SQL Server itself
+// enforces this, not gosmo.
+func (f *DatabaseFileInfo) Drop(ctx context.Context) error {
+	q := fmt.Sprintf("ALTER DATABASE %s REMOVE FILE %s", quoteIdent(f.db.Name), quoteIdent(f.Name))
+	if err := f.db.server.exec(ctx, q); err != nil {
+		return fmt.Errorf("gosmo: remove file %q from %q: %w", f.Name, f.db.Name, err)
 	}
 	return nil
 }
 
 // -- Filegroups ----------------------------------------------------------------
+
+// FileGroupRef returns a lightweight handle for a filegroup by name, without
+// querying the catalog — the counterpart of Server.DatabaseRef. Every field
+// but the name stays at its zero value; FileGroups is what populates them.
+// Every write on *FileGroup addresses it by name, so this handle is enough
+// for any of them — including on a filegroup AddFileGroup only scripted.
+func (d *Database) FileGroupRef(name string) *FileGroup {
+	return &FileGroup{db: d, Name: name}
+}
 
 // FileGroups returns all filegroups and their files.
 func (d *Database) FileGroups(ctx context.Context) ([]*FileGroup, error) {
@@ -305,7 +337,7 @@ ORDER  BY fg.name, df.file_id`
 
 		fg, ok := fgMap[fgName]
 		if !ok {
-			fg = &FileGroup{Name: fgName, Type: fgType, IsDefault: fgDefault, IsReadOnly: fgReadOnly}
+			fg = &FileGroup{db: d, Name: fgName, Type: fgType, IsDefault: fgDefault, IsReadOnly: fgReadOnly}
 			fgMap[fgName] = fg
 			order = append(order, fgName)
 		}
@@ -331,26 +363,31 @@ func (d *Database) AddFileGroup(ctx context.Context, name string) error {
 	return nil
 }
 
-// RemoveFileGroup drops a filegroup. It must be empty (no files) — SQL
-// Server itself enforces this, not gosmo.
-func (d *Database) RemoveFileGroup(ctx context.Context, name string) error {
-	q := fmt.Sprintf("ALTER DATABASE %s REMOVE FILEGROUP %s", quoteIdent(d.Name), quoteIdent(name))
+// Drop removes the filegroup from its database (ALTER DATABASE ... REMOVE
+// FILEGROUP). It must be empty (no files) — SQL Server itself enforces this,
+// not gosmo.
+func (fg *FileGroup) Drop(ctx context.Context) error {
+	d := fg.db
+	q := fmt.Sprintf("ALTER DATABASE %s REMOVE FILEGROUP %s", quoteIdent(d.Name), quoteIdent(fg.Name))
 	if err := d.server.exec(ctx, q); err != nil {
-		return fmt.Errorf("gosmo: remove filegroup %q from %q: %w", name, d.Name, err)
+		return fmt.Errorf("gosmo: remove filegroup %q from %q: %w", fg.Name, d.Name, err)
 	}
 	return nil
 }
 
-// SetDefaultFileGroup marks a filegroup as the database's default.
-func (d *Database) SetDefaultFileGroup(ctx context.Context, name string) error {
-	q := fmt.Sprintf("ALTER DATABASE %s MODIFY FILEGROUP %s DEFAULT", quoteIdent(d.Name), quoteIdent(name))
+// SetDefault makes the filegroup its database's default (for its filegroup
+// type — see FileGroup.IsDefault).
+func (fg *FileGroup) SetDefault(ctx context.Context) error {
+	d := fg.db
+	q := fmt.Sprintf("ALTER DATABASE %s MODIFY FILEGROUP %s DEFAULT", quoteIdent(d.Name), quoteIdent(fg.Name))
 	if err := d.server.exec(ctx, q); err != nil {
-		return fmt.Errorf("gosmo: set default filegroup %q on %q: %w", name, d.Name, err)
+		return fmt.Errorf("gosmo: set default filegroup %q on %q: %w", fg.Name, d.Name, err)
 	}
+	setIfApplied(ctx, &fg.IsDefault, true)
 	return nil
 }
 
-// SetFileGroupReadOnly sets or clears a filegroup's read-only flag.
+// SetReadOnly sets or clears the filegroup's read-only flag.
 //
 // The keywords are the underscored spellings on purpose. ALTER DATABASE also
 // accepts READONLY/READWRITE, but only for backward compatibility — SQL
@@ -366,7 +403,8 @@ func (d *Database) SetDefaultFileGroup(ctx context.Context, name string) error {
 // batch instead, the form a Managed Instance's forced drop uses. That needs
 // ALTER ANY CONNECTION where the ROLLBACK IMMEDIATE of a SET option needs
 // only ALTER on the database.
-func (d *Database) SetFileGroupReadOnly(ctx context.Context, name string, readOnly bool, term Termination) error {
+func (fg *FileGroup) SetReadOnly(ctx context.Context, readOnly bool, term Termination) error {
+	d, name := fg.db, fg.Name
 	mode := "READ_WRITE"
 	if readOnly {
 		mode = "READ_ONLY"
@@ -382,6 +420,7 @@ func (d *Database) SetFileGroupReadOnly(ctx context.Context, name string, readOn
 	if err := d.server.exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: set filegroup %q read-only=%v on %q: %w", name, readOnly, d.Name, err)
 	}
+	setIfApplied(ctx, &fg.IsReadOnly, readOnly)
 	return nil
 }
 

@@ -76,6 +76,13 @@ type QueryStoreInfo struct {
 	CapturePolicyStaleHours   int
 }
 
+// IsReadable reports whether Query Store holds data worth reporting: it is
+// collecting (READ_WRITE) or read-only (READ_ONLY) — what a Query Store that
+// filled its quota degrades to, and still readable.
+func (q *QueryStoreInfo) IsReadable() bool {
+	return q.ActualState == QueryStoreReadWrite || q.ActualState == QueryStoreReadOnly
+}
+
 // Two sets of columns postdate the view, and naming one the instance
 // lacks fails the whole read — Database Properties > Query Store then
 // renders an error in place of the page. Dated from the column table of

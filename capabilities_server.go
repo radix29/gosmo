@@ -255,7 +255,7 @@ func (s *Server) Capabilities(ctx context.Context) (*Capabilities, error) {
 		ExplicitServerPermissions:    map[string]map[string]CapabilityState{},
 		AvailabilityGroupPermissions: map[string]map[string]CapabilityState{},
 	}
-	if err := scanCapabilityRows(rows, capabilityDest{
+	if err := scanCapabilityRows(rows.Rows, capabilityDest{
 		roles:              c.ServerRoles,
 		perms:              c.ServerPermissions,
 		explicitServer:     c.ExplicitServerPermissions,

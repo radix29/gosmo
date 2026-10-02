@@ -28,40 +28,40 @@ func TestScriptFileAndFileGroupWrites(t *testing.T) {
 				SizeKB: 1024, GrowthPercent: 10, MaxSizeKB: 102400,
 			})
 		}, `ALTER DATABASE [App'DB] ADD LOG FILE (NAME = [AppLog2], FILENAME = N'C:\d\l2.ldf', SIZE = 1024KB, MAXSIZE = 102400KB, FILEGROWTH = 10%)`},
-		{"AlterFile", func(c context.Context) error {
-			return scriptTestDB().AlterFile(c, "App]Dat2", FileModify{
+		{"File Alter", func(c context.Context) error {
+			return scriptTestDB().FileRef("App]Dat2").Alter(c, FileModify{
 				NewName: "New'Name", SizeKB: 16384, GrowthPercent: 25, MaxSizeKB: -1,
 			})
 		}, `ALTER DATABASE [App'DB] MODIFY FILE (NAME = [App]]Dat2], NEWNAME = [New'Name], SIZE = 16384KB, MAXSIZE = UNLIMITED, FILEGROWTH = 25%)`},
-		{"RemoveFile", func(c context.Context) error {
-			return scriptTestDB().RemoveFile(c, "App]Dat2")
+		{"File Drop", func(c context.Context) error {
+			return scriptTestDB().FileRef("App]Dat2").Drop(c)
 		}, "ALTER DATABASE [App'DB] REMOVE FILE [App]]Dat2]"},
 		{"AddFileGroup", func(c context.Context) error {
 			return scriptTestDB().AddFileGroup(c, "FG]2")
 		}, "ALTER DATABASE [App'DB] ADD FILEGROUP [FG]]2]"},
-		{"RemoveFileGroup", func(c context.Context) error {
-			return scriptTestDB().RemoveFileGroup(c, "FG]2")
+		{"FileGroup Drop", func(c context.Context) error {
+			return scriptTestDB().FileGroupRef("FG]2").Drop(c)
 		}, "ALTER DATABASE [App'DB] REMOVE FILEGROUP [FG]]2]"},
-		{"SetDefaultFileGroup", func(c context.Context) error {
-			return scriptTestDB().SetDefaultFileGroup(c, "FG]2")
+		{"FileGroup SetDefault", func(c context.Context) error {
+			return scriptTestDB().FileGroupRef("FG]2").SetDefault(c)
 		}, "ALTER DATABASE [App'DB] MODIFY FILEGROUP [FG]]2] DEFAULT"},
-		{"SetFileGroupReadOnly", func(c context.Context) error {
-			return scriptTestDB().SetFileGroupReadOnly(c, "FG]2", true, TerminationNone)
+		{"FileGroup SetReadOnly", func(c context.Context) error {
+			return scriptTestDB().FileGroupRef("FG]2").SetReadOnly(c, true, TerminationNone)
 		}, "ALTER DATABASE [App'DB] MODIFY FILEGROUP [FG]]2] READ_ONLY"},
-		{"SetFileGroupReadOnly false is READ_WRITE", func(c context.Context) error {
-			return scriptTestDB().SetFileGroupReadOnly(c, "FG]2", false, TerminationNone)
+		{"FileGroup SetReadOnly false is READ_WRITE", func(c context.Context) error {
+			return scriptTestDB().FileGroupRef("FG]2").SetReadOnly(c, false, TerminationNone)
 		}, "ALTER DATABASE [App'DB] MODIFY FILEGROUP [FG]]2] READ_WRITE"},
 	})
 }
 
 // TestAlterFileWithNoChangeScriptsNothing pins the empty-modification case:
 // buildAlterFileStatement returns "" rather than an ALTER DATABASE ... MODIFY
-// FILE with no clauses, which is a syntax error, and AlterFile then
+// FILE with no clauses, which is a syntax error, and Alter then
 // returns without executing anything.
 func TestAlterFileWithNoChangeScriptsNothing(t *testing.T) {
 	ctx, script := WithScript(context.Background())
-	if err := scriptTestDB().AlterFile(ctx, "AppDat", FileModify{}); err != nil {
-		t.Fatalf("AlterFile with an empty FileModify: %v", err)
+	if err := scriptTestDB().FileRef("AppDat").Alter(ctx, FileModify{}); err != nil {
+		t.Fatalf("Alter with an empty FileModify: %v", err)
 	}
 	if len(script.Statements()) != 0 {
 		t.Errorf("Statements = %q, want none", script.Statements())

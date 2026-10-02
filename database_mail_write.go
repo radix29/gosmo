@@ -2,6 +2,7 @@ package gosmo
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -709,8 +710,64 @@ type MailMessage struct {
 	Body    string
 }
 
+// The refusals SendMail reports through errors.Is, each the server error
+// sp_send_dbmail raises for it, captured live on 17 (2026-10-01). The server's
+// own text — "profile name is not valid" — names nothing a user can act on;
+// these let a caller say what to do instead. The SQL Server error stays
+// reachable through AsSQLError, and the message text is unchanged.
+var (
+	// ErrMailProfileInvalid: the profile does not exist, or is not granted to
+	// the caller (Msg 14607).
+	ErrMailProfileInvalid = errors.New("database mail profile not valid")
+	// ErrMailNoDefaultProfile: no profile was named and the caller has no
+	// default to fall back on (Msg 14636).
+	ErrMailNoDefaultProfile = errors.New("no default database mail profile")
+	// ErrMailStopped: Database Mail is stopped, and the message was not
+	// queued (Msg 14641).
+	ErrMailStopped = errors.New("database mail is stopped")
+	// ErrMailXPsDisabled: the 'Database Mail XPs' option is 0 (Msg 15281).
+	ErrMailXPsDisabled = errors.New("database mail XPs are disabled")
+)
+
+// mailSendErrors maps the error numbers sp_send_dbmail refuses with to the
+// sentinels above.
+var mailSendErrors = map[int32]error{
+	14607: ErrMailProfileInvalid,
+	14636: ErrMailNoDefaultProfile,
+	14641: ErrMailStopped,
+	15281: ErrMailXPsDisabled,
+}
+
+// classifiedError keeps err's text and chain and adds kind to it, so
+// errors.Is reaches both.
+type classifiedError struct {
+	err  error
+	kind error
+}
+
+func (e *classifiedError) Error() string   { return e.err.Error() }
+func (e *classifiedError) Unwrap() []error { return []error{e.kind, e.err} }
+
+// classifyMailSendError returns err carrying the mail sentinel its first
+// error-severity message maps to, or err unchanged.
+func classifyMailSendError(err error) error {
+	se, ok := AsSQLError(err)
+	if !ok {
+		return err
+	}
+	for _, m := range se.messages() {
+		if kind, ok := mailSendErrors[m.Number]; ok && m.IsError() {
+			return &classifiedError{err: err, kind: kind}
+		}
+	}
+	return err
+}
+
 // SendMail queues m through sp_send_dbmail and returns its mailitem_id, for
 // MailItemByID and MailEvents to follow.
+//
+// A refusal sp_send_dbmail is known to raise wraps ErrMailProfileInvalid,
+// ErrMailNoDefaultProfile, ErrMailStopped or ErrMailXPsDisabled.
 //
 // It returns once the message is queued; whether it was sent is learned by
 // polling. It is never retried (execScan): a connection lost after the
@@ -733,7 +790,7 @@ func (s *Server) SendMail(ctx context.Context, m MailMessage) (int, error) {
 	}
 	var id int
 	if err := s.execScan(ctx, stmt+";\nSELECT @mailitem_id;", &id); err != nil {
-		return 0, fmt.Errorf("gosmo: send mail: %w", err)
+		return 0, fmt.Errorf("gosmo: send mail: %w", classifyMailSendError(err))
 	}
 	observe(ctx, ScriptEntry{Server: scriptServerName(ctx, s), SQL: stmt + ";\nSELECT @mailitem_id AS mailitem_id;"})
 	return id, nil

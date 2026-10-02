@@ -106,7 +106,7 @@ func TestLiveCreateReturnsTheCreatedObject(t *testing.T) {
 
 	cat, err := srv.CreateCategory(ctx, CreateCategoryRequest{Class: CategoryClassJob, Name: dbName + "_cat"})
 	if err == nil {
-		t.Cleanup(func() { _ = srv.DeleteCategory(context.Background(), CategoryClassJob, dbName+"_cat") })
+		t.Cleanup(func() { _ = srv.CategoryRef(CategoryClassJob, dbName+"_cat").Drop(context.Background()) })
 	}
 	check("CreateCategory", err, err == nil && cat.ID != 0)
 

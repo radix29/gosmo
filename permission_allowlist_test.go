@@ -107,13 +107,13 @@ func TestValidCategoryClass(t *testing.T) {
 	}
 }
 
-func TestCreateAndDeleteCategoryRejectUnknownClass(t *testing.T) {
+func TestCreateAndDropCategoryRejectUnknownClass(t *testing.T) {
 	s := &Server{}
 	if _, err := s.CreateCategory(t.Context(), CreateCategoryRequest{Class: CategoryClass("EVIL"), Name: "cat"}); err == nil {
 		t.Error("CreateCategory accepted an unrecognized category class, want an error")
 	}
-	if err := s.DeleteCategory(t.Context(), CategoryClass("EVIL"), "cat"); err == nil {
-		t.Error("DeleteCategory accepted an unrecognized category class, want an error")
+	if err := s.CategoryRef(CategoryClass("EVIL"), "cat").Drop(t.Context()); err == nil {
+		t.Error("Category.Drop accepted an unrecognized category class, want an error")
 	}
 }
 
@@ -151,7 +151,7 @@ func TestValidBackupAction(t *testing.T) {
 }
 
 func TestBuildBackupStatementRejectsUnknownAction(t *testing.T) {
-	_, err := BuildBackupStatement(BackupOptions{
+	_, err := (&Server{}).BuildBackupStatement(BackupOptions{
 		Database: "appdb",
 		Action:   BackupAction("DATABASE; DROP DATABASE appdb; --"),
 		Devices:  []BackupTarget{DiskTarget(`C:\Backups\appdb.bak`)},

@@ -147,6 +147,8 @@ REVERT;`, escapeSingle(login))
 
 	// Pinned rather than read off the pool, so readImpersonated can discard
 	// the one connection the impersonation ran on.
+	ctx, release := s.bound(ctx)
+	defer release()
 	rows, err := withRetry(ctx, func() (*dbRows, error) {
 		conn, err := s.db.Conn(ctx)
 		if err != nil {

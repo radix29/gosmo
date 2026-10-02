@@ -62,8 +62,6 @@ classDiagram
         +RoleByName(name) *DatabaseRole
         +RoleRef(name) *DatabaseRole
         +RoleMembers(role) []*RoleMember
-        +AddRoleMember(role, member) error
-        +RemoveRoleMember(role, member) error
         +FileGroups() []*FileGroup
         +Triggers() []*Trigger
         +ObjectTriggers(schema, name) []*Trigger
@@ -194,13 +192,10 @@ classDiagram
         +QueryStoreForcePlan(queryID, planID) error
         +QueryStoreUnforcePlan(queryID, planID) error
         +Files() []*DatabaseFileInfo
+        +FileRef(name) *DatabaseFileInfo
         +AddFile(spec) error
-        +AlterFile(name, m) error
-        +RemoveFile(name) error
+        +FileGroupRef(name) *FileGroup
         +AddFileGroup(name) error
-        +RemoveFileGroup(name) error
-        +SetDefaultFileGroup(name) error
-        +SetFileGroupReadOnly(name, ro, term) error
         +ChangeTracking() *ChangeTrackingInfo
         +SetChangeTracking(info) error
         +TableChangeTracking() []*TableChangeTracking

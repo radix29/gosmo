@@ -72,9 +72,21 @@ func (c CategoryClass) code() int {
 // Category represents a SQL Server Agent job, alert, or operator category
 // (msdb.dbo.syscategories) — Class says which.
 type Category struct {
-	ID    int
-	Class CategoryClass
-	Name  string
+	server *Server
+	ID     int
+	Class  CategoryClass
+	Name   string
+}
+
+// Server returns the server the category belongs to.
+func (c *Category) Server() *Server { return c.server }
+
+// CategoryRef returns a lightweight handle for a category of class by name,
+// without querying msdb — the counterpart of Server.DatabaseRef. ID stays
+// zero; CategoryByName is what populates it. Drop addresses the category by
+// class and name alone, so this handle is enough for it.
+func (s *Server) CategoryRef(class CategoryClass, name string) *Category {
+	return &Category{server: s, Class: class, Name: name}
 }
 
 // Categories returns every category of the given class.
@@ -90,7 +102,7 @@ ORDER  BY name`
 
 	rows, err := s.query(ctx, q, class.code())
 	return scanRows(rows, err, fmt.Sprintf("list %s categories", class), func(scan func(...any) error) (*Category, error) {
-		c := &Category{Class: class}
+		c := &Category{server: s, Class: class}
 		if err := scan(&c.ID, &c.Name); err != nil {
 			return nil, err
 		}
@@ -118,7 +130,7 @@ func (s *Server) CategoryByName(ctx context.Context, class CategoryClass, name s
 	if !validCategoryClass(class) {
 		return nil, fmt.Errorf("gosmo: find category %q: unrecognized category class %q", name, class)
 	}
-	c := &Category{Class: class, Name: name}
+	c := s.CategoryRef(class, name)
 	err := s.queryRowScan(ctx, `
 SELECT category_id
 FROM   msdb.dbo.syscategories
@@ -144,20 +156,20 @@ func (s *Server) CreateCategory(ctx context.Context, req CreateCategoryRequest) 
 	if err := s.exec(ctx, q); err != nil {
 		return nil, fmt.Errorf("gosmo: create category %q (%s): %w", req.Name, req.Class, err)
 	}
-	return createdObject(ctx, &Category{Class: req.Class, Name: req.Name}, func() (*Category, error) {
+	return createdObject(ctx, s.CategoryRef(req.Class, req.Name), func() (*Category, error) {
 		return s.CategoryByName(ctx, req.Class, req.Name)
 	})
 }
 
-// DeleteCategory deletes a category via sp_delete_category.
-func (s *Server) DeleteCategory(ctx context.Context, class CategoryClass, name string) error {
-	if !validCategoryClass(class) {
-		return fmt.Errorf("gosmo: delete category: unrecognized category class %q", class)
+// Drop deletes the category via sp_delete_category.
+func (c *Category) Drop(ctx context.Context) error {
+	if !validCategoryClass(c.Class) {
+		return fmt.Errorf("gosmo: drop category %q: unrecognized category class %q", c.Name, c.Class)
 	}
 	q := fmt.Sprintf("EXEC msdb.dbo.sp_delete_category @class = N'%s', @name = N'%s'",
-		string(class), escapeSingle(name))
-	if err := s.exec(ctx, q); err != nil {
-		return fmt.Errorf("gosmo: delete category %q (%s): %w", name, class, err)
+		string(c.Class), escapeSingle(c.Name))
+	if err := c.server.exec(ctx, q); err != nil {
+		return fmt.Errorf("gosmo: drop category %q (%s): %w", c.Name, c.Class, err)
 	}
 	return nil
 }

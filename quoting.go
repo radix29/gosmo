@@ -1,6 +1,10 @@
 package gosmo
 
-import mssql "github.com/microsoft/go-mssqldb"
+import (
+	"strings"
+
+	mssql "github.com/microsoft/go-mssqldb"
+)
 
 // quoting.go centralises T-SQL identifier and literal quoting on the driver's
 // own TSQLQuoter, so gosmo, its callers, and gossms share one implementation
@@ -14,6 +18,121 @@ import mssql "github.com/microsoft/go-mssqldb"
 func QuoteName(name string) string {
 	return mssql.TSQLQuoter{}.ID(name)
 }
+
+// QuoteNameIfNeeded returns name as it stands when SQL Server would read it
+// bare as the same identifier, and QuoteName(name) otherwise — for text a
+// person reads or edits (a completion, a generated query), where [brackets]
+// on every name are noise. Code that only builds statements should call
+// QuoteName: it is always right.
+//
+// A name stays bare only if it is an ASCII regular identifier — a letter or
+// '_', then letters, digits, '_', '@', '#' or '$' — and not a reserved
+// keyword (IsReservedKeyword). Two consequences worth knowing:
+//
+//   - Non-ASCII names are always bracketed. SQL Server's regular-identifier
+//     letters are Unicode 3.2's; a letter added since would be a syntax error
+//     bare, and bracketing one that needed none is harmless.
+//   - The keyword check is not cosmetic. A column named User, read bare, is
+//     the USER function: the query runs and returns the caller's user name in
+//     every row instead of the column. CURRENT_USER, SESSION_USER,
+//     SYSTEM_USER, CURRENT_TIMESTAMP, CURRENT_DATE and NULL do the same.
+func QuoteNameIfNeeded(name string) string {
+	if isRegularIdentifier(name) && !IsReservedKeyword(name) {
+		return name
+	}
+	return QuoteName(name)
+}
+
+// isRegularIdentifier reports whether name is an ASCII regular identifier:
+// see QuoteNameIfNeeded. A leading '@' (a variable) or '#' (a temporary
+// object) is a different name bare, so neither may start one here.
+func isRegularIdentifier(name string) bool {
+	if name == "" {
+		return false
+	}
+	for i := 0; i < len(name); i++ {
+		c := name[i]
+		switch {
+		case c >= 'A' && c <= 'Z', c >= 'a' && c <= 'z', c == '_':
+		case i > 0 && (c >= '0' && c <= '9' || c == '@' || c == '#' || c == '$'):
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// UnquoteName undoes QuoteName for one name part: "[a]]b]" is "a]b", and a
+// double-quoted identifier, `"a""b"`, is `a"b`. Anything else — a bare name,
+// or one whose brackets don't match — comes back unchanged. It does not split
+// a multi-part name: "[dbo].[t]" is not one part, so it is returned as is.
+//
+// Use it where SQL Server hands back an identifier already quoted (showplan
+// XML, sys.dm_exec_* text) and the bare name is wanted. strings.Trim(s, "[]")
+// is not that: it leaves "]]" doubled and also strips a bracket that is part
+// of the name.
+func UnquoteName(name string) string {
+	if len(name) < 2 {
+		return name
+	}
+	var closer string
+	switch {
+	case name[0] == '[' && name[len(name)-1] == ']':
+		closer = "]"
+	case name[0] == '"' && name[len(name)-1] == '"':
+		closer = `"`
+	default:
+		return name
+	}
+	inner := name[1 : len(name)-1]
+	// Every closer inside must be doubled, or the outer pair is not one
+	// quoted identifier ("[a]b]", "[a].[b]").
+	if strings.Count(inner, closer+closer)*2 != strings.Count(inner, closer) {
+		return name
+	}
+	return strings.ReplaceAll(inner, closer+closer, closer)
+}
+
+// IsReservedKeyword reports whether word, in any case, is one of SQL Server's
+// reserved keywords — the words that cannot stand as an identifier without
+// [brackets] or "double quotes". It is the list Microsoft documents
+// ("Reserved keywords (Transact-SQL)"), probed on 13 and 17: the server
+// refuses each one bare as a column alias except DISK, DUMP, LOAD, PRECISION
+// and SECURITYAUDIT, which are kept because they are documented. ODBC and
+// "future" keywords are not included: they are accepted bare. The two-word
+// WITHIN GROUP is not a single word and is left out.
+func IsReservedKeyword(word string) bool {
+	_, ok := reservedKeywords[strings.ToUpper(word)]
+	return ok
+}
+
+var reservedKeywords = func() map[string]struct{} {
+	words := strings.Fields(`
+ADD ALL ALTER AND ANY AS ASC AUTHORIZATION BACKUP BEGIN BETWEEN BREAK BROWSE
+BULK BY CASCADE CASE CHECK CHECKPOINT CLOSE CLUSTERED COALESCE COLLATE COLUMN
+COMMIT COMPUTE CONSTRAINT CONTAINS CONTAINSTABLE CONTINUE CONVERT CREATE CROSS
+CURRENT CURRENT_DATE CURRENT_TIME CURRENT_TIMESTAMP CURRENT_USER CURSOR
+DATABASE DBCC DEALLOCATE DECLARE DEFAULT DELETE DENY DESC DISK DISTINCT
+DISTRIBUTED DOUBLE DROP DUMP ELSE END ERRLVL ESCAPE EXCEPT EXEC EXECUTE EXISTS
+EXIT EXTERNAL FETCH FILE FILLFACTOR FOR FOREIGN FREETEXT FREETEXTTABLE FROM
+FULL FUNCTION GOTO GRANT GROUP HAVING HOLDLOCK IDENTITY IDENTITY_INSERT
+IDENTITYCOL IF IN INDEX INNER INSERT INTERSECT INTO IS JOIN KEY KILL LEFT LIKE
+LINENO LOAD MERGE NATIONAL NOCHECK NONCLUSTERED NOT NULL NULLIF OF OFF OFFSETS
+ON OPEN OPENDATASOURCE OPENQUERY OPENROWSET OPENXML OPTION OR ORDER OUTER OVER
+PERCENT PIVOT PLAN PRECISION PRIMARY PRINT PROC PROCEDURE PUBLIC RAISERROR
+READ READTEXT RECONFIGURE REFERENCES REPLICATION RESTORE RESTRICT RETURN
+REVERT REVOKE RIGHT ROLLBACK ROWCOUNT ROWGUIDCOL RULE SAVE SCHEMA
+SECURITYAUDIT SELECT SEMANTICKEYPHRASETABLE SEMANTICSIMILARITYDETAILSTABLE
+SEMANTICSIMILARITYTABLE SESSION_USER SET SETUSER SHUTDOWN SOME STATISTICS
+SYSTEM_USER TABLE TABLESAMPLE TEXTSIZE THEN TO TOP TRAN TRANSACTION TRIGGER
+TRUNCATE TRY_CONVERT TSEQUAL UNION UNIQUE UNPIVOT UPDATE UPDATETEXT USE USER
+VALUES VARYING VIEW WAITFOR WHEN WHERE WHILE WITH WRITETEXT`)
+	m := make(map[string]struct{}, len(words))
+	for _, w := range words {
+		m[w] = struct{}{}
+	}
+	return m
+}()
 
 // QuoteLiteral renders s as a T-SQL Unicode string literal — N'…', doubling
 // any embedded quote — safe to embed in SQL text where a parameter
@@ -48,4 +167,14 @@ func QuoteName(name string) string {
 // identifier_quoting_test.go, which pins all of this.
 func QuoteLiteral(s string) string {
 	return "N" + mssql.TSQLQuoter{}.Value(s)
+}
+
+// QuoteAnsiLiteral renders s as a T-SQL non-Unicode string literal — '…',
+// doubling any embedded quote, with no N prefix. It is for the few places
+// that want varchar and not nvarchar: an Extended Events predicate on an
+// ansi_string field, whose like_i_sql_ansi_string comparator takes a
+// varchar. Everywhere else use QuoteLiteral; a character outside the current
+// code page becomes '?' here, which is the reason QuoteLiteral has its N.
+func QuoteAnsiLiteral(s string) string {
+	return mssql.TSQLQuoter{}.Value(s)
 }

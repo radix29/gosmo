@@ -87,6 +87,15 @@ func (c *Certificate) HasPrivateKey() bool {
 	return c.PvtKeyEncryptionType != "" && c.PvtKeyEncryptionType != "NO_PRIVATE_KEY"
 }
 
+// IsExpired reports whether c's expiry date is behind now. A certificate with
+// no expiry date read (a handle) is never expired.
+//
+// now is a parameter rather than time.Now so a caller listing many
+// certificates judges them all against one instant.
+func (c *Certificate) IsExpired(now time.Time) bool {
+	return !c.ExpiryDate.IsZero() && c.ExpiryDate.Before(now)
+}
+
 // certificateSelect is aliased c, so a caller's predicate names c.name — the
 // owner join brings a second name column into scope.
 const certificateSelect = `

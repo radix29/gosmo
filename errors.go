@@ -3,6 +3,7 @@ package gosmo
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
 	mssql "github.com/microsoft/go-mssqldb"
@@ -302,4 +303,138 @@ func withAllMessages(err error) error {
 		return err
 	}
 	return &multiMessageError{err: err, text: "mssql: " + strings.Join(parts, " ")}
+}
+
+// ============================================================
+// Classifying SQL Server errors
+// ============================================================
+
+// RefusalKind is how much a SQL Server error lets a caller claim about
+// permissions.
+type RefusalKind int
+
+const (
+	// NotRefused — the error says nothing about permissions.
+	NotRefused RefusalKind = iota
+
+	// PermissionDenied — the server stated that a permission was denied.
+	PermissionDenied
+
+	// MissingOrDenied — the server said the object "does not exist or you do
+	// not have permission", which it does deliberately: telling the two apart
+	// would let an unprivileged login enumerate objects it cannot see. Nothing
+	// downstream may narrow it to one or the other.
+	MissingOrDenied
+)
+
+// refusalNumbers classifies the SQL Server error numbers that mean a login was
+// refused. Every one was captured from a live instance against a
+// least-privileged test login, not taken from documentation — the wording
+// differs between numbers in ways no amount of reasoning predicts, and a
+// pattern written from the docs matches nothing.
+//
+//	229   The SELECT/EXECUTE permission was denied on the object '…'
+//	230   The SELECT permission was denied on the column '…'
+//	262   CREATE TABLE / BACKUP DATABASE / … permission denied in database '…'
+//	297   The user does not have permission to perform this action
+//	300   VIEW SERVER (PERFORMANCE|SECURITY) STATE permission was denied …
+//	916   The server principal "…" is not able to access the database "…"
+//	1088  Cannot find the object "…" because it does not exist or you do not
+//	      have permissions
+//	3701  Cannot drop the table '…', because it does not exist or …
+//	5011  User does not have permission to alter database '…', the database
+//	      does not exist, or …
+//	15151 Cannot alter the login '…', because it does not exist or …
+//	15247 User does not have permission to perform this action
+//
+// A number missing from this map is simply NotRefused.
+var refusalNumbers = map[int32]RefusalKind{
+	229: PermissionDenied, 230: PermissionDenied, 262: PermissionDenied,
+	297: PermissionDenied, 300: PermissionDenied, 916: PermissionDenied,
+
+	1088: MissingOrDenied,
+	3701: MissingOrDenied, 5011: MissingOrDenied,
+	15151: MissingOrDenied, 15247: MissingOrDenied,
+}
+
+// ClassifyRefusal reports what err says about permissions, and the message
+// that says it. It reads the *first* qualifying message of the batch rather
+// than the last, because that is the one that names the right: a refused
+// sys.dm_os_process_memory read sends "VIEW SERVER PERFORMANCE STATE
+// permission was denied on object 'server'" (Msg 300) followed by the
+// contentless "The user does not have permission to perform this action"
+// (Msg 297), and database/sql surfaces only the second. A refused BACKUP
+// sends Msg 262 then the contentless Msg 3013 the same way. Both
+// live-captured 2026-08-25.
+//
+// Only an error-severity message (11 and above) with text qualifies. The
+// result is (NotRefused, nil) when nothing does, including for an error that
+// is not a SQL Server error at all.
+//
+// Classification is keyed on the number, never the wording: the message
+// follows the session's language, the number does not.
+func ClassifyRefusal(err error) (RefusalKind, *SQLError) {
+	se, ok := AsSQLError(err)
+	if !ok {
+		return NotRefused, nil
+	}
+	for _, m := range se.messages() {
+		if kind := refusalNumbers[m.Number]; kind != NotRefused && m.IsError() && m.Message != "" {
+			return kind, &m
+		}
+	}
+	return NotRefused, nil
+}
+
+// IsPermissionDenied reports whether err is SQL Server stating that the login
+// lacks a permission. The "does not exist or you do not have permission"
+// errors are not this: see IsMissingOrDenied.
+func IsPermissionDenied(err error) bool {
+	kind, _ := ClassifyRefusal(err)
+	return kind == PermissionDenied
+}
+
+// IsMissingOrDenied reports whether err is SQL Server's deliberately ambiguous
+// "does not exist or you do not have permission". The server will not say
+// which, so neither may a caller: treat it as both.
+func IsMissingOrDenied(err error) bool {
+	kind, _ := ClassifyRefusal(err)
+	return kind == MissingOrDenied
+}
+
+// alreadyExistsNumbers are the errors a CREATE raises when its name is taken.
+//
+//	1801  Database '…' already exists.
+//	1913  The operation failed because an index or statistics with name '…'
+//	      already exists on table '…'.
+//	2714  There is already an object named '…' in the database.
+//	15023 User, group, or role '…' already exists in the current database.
+//	15025 The server principal '…' already exists.
+//
+// 15023 and 15025 were confirmed live under SET LANGUAGE Deutsch, where the
+// text reads "… ist bereits vorhanden" — which is why this is keyed on the
+// number.
+var alreadyExistsNumbers = []int32{1801, 1913, 2714, 15023, 15025}
+
+// IsAlreadyExists reports whether err is SQL Server refusing a CREATE because
+// the name is already taken, in any message of the batch. It matches error
+// numbers only, so it holds on a server of any language, and an error that is
+// not a SQL Server error is never one.
+func IsAlreadyExists(err error) bool {
+	se, ok := AsSQLError(err)
+	if !ok {
+		return false
+	}
+	return slices.ContainsFunc(se.messages(), func(m SQLError) bool {
+		return slices.Contains(alreadyExistsNumbers, m.Number)
+	})
+}
+
+// messages is every message the batch produced: All, or the error itself when
+// it reported only one.
+func (e *SQLError) messages() []SQLError {
+	if len(e.All) > 0 {
+		return e.All
+	}
+	return []SQLError{*e}
 }

@@ -45,9 +45,9 @@ func main() {
 
 	// -- Category ----------------------------------------------------------
 	demo.Section("Category")
-	_ = srv.DeleteCategory(ctx, gosmo.CategoryClassJob, categoryName)
+	_ = srv.CategoryRef(gosmo.CategoryClassJob, categoryName).Drop(ctx)
 	demo.Value(srv.CreateCategory(ctx, gosmo.CreateCategoryRequest{Class: gosmo.CategoryClassJob, Name: categoryName}))
-	defer func() { _ = srv.DeleteCategory(ctx, gosmo.CategoryClassJob, categoryName) }()
+	defer func() { _ = srv.CategoryRef(gosmo.CategoryClassJob, categoryName).Drop(ctx) }()
 	for _, c := range demo.Value(srv.Categories(ctx, gosmo.CategoryClassJob)) {
 		fmt.Printf("  [%d] %s\n", c.ID, c.Name)
 	}
@@ -89,7 +89,7 @@ func main() {
 	// 2=quit reporting failure, 3=go to the next step, 4=go to step N (in
 	// which case set OnSuccessStepID/OnFailStepID).
 	demo.Section("Steps")
-	demo.Must(job.AddStep(ctx, gosmo.JobStepRequest{
+	demo.Value(job.AddStep(ctx, gosmo.JobStepRequest{
 		Name:            "Check free space",
 		Subsystem:       "TSQL",
 		Database:        "master",
@@ -100,7 +100,7 @@ func main() {
 		RetryAttempts:   2,
 		RetryInterval:   1, // minutes
 	}))
-	demo.Must(job.AddStep(ctx, gosmo.JobStepRequest{
+	demo.Value(job.AddStep(ctx, gosmo.JobStepRequest{
 		Name:            "Cycle the error log",
 		Subsystem:       "TSQL",
 		Database:        "master",
@@ -109,7 +109,7 @@ func main() {
 		OnFailAction:    4,
 		OnFailStepID:    3,
 	}))
-	demo.Must(job.AddStep(ctx, gosmo.JobStepRequest{
+	demo.Value(job.AddStep(ctx, gosmo.JobStepRequest{
 		Name:            "Failure handler",
 		Subsystem:       "TSQL",
 		Database:        "master",

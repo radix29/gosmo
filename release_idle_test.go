@@ -123,9 +123,9 @@ func TestWithScriptTerminationClause(t *testing.T) {
 	ctx, script := WithScript(context.Background())
 	bad := Termination(7)
 	for name, err := range map[string]error{
-		"SetDatabaseOption":    d.SetDatabaseOption(ctx, DBOptAutoClose, "ON", bad),
-		"SetReadOnly":          d.SetReadOnly(ctx, true, bad),
-		"SetFileGroupReadOnly": d.SetFileGroupReadOnly(ctx, "FG2", true, bad),
+		"SetDatabaseOption":     d.SetDatabaseOption(ctx, DBOptAutoClose, "ON", bad),
+		"SetReadOnly":           d.SetReadOnly(ctx, true, bad),
+		"FileGroup.SetReadOnly": d.FileGroupRef("FG2").SetReadOnly(ctx, true, bad),
 	} {
 		if err == nil {
 			t.Errorf("%s accepted Termination(7)", name)
@@ -142,8 +142,8 @@ func TestWithScriptTerminationClause(t *testing.T) {
 func TestWithScriptFileGroupReadOnlyRollbackImmediateKillsFirst(t *testing.T) {
 	d := &Database{server: &Server{}, Name: "App'DB"}
 	ctx, script := WithScript(context.Background())
-	if err := d.SetFileGroupReadOnly(ctx, "FG]2", true, TerminationRollbackImmediate); err != nil {
-		t.Fatalf("SetFileGroupReadOnly: %v", err)
+	if err := d.FileGroupRef("FG]2").SetReadOnly(ctx, true, TerminationRollbackImmediate); err != nil {
+		t.Fatalf("SetReadOnly: %v", err)
 	}
 	got := script.Statements()
 	if len(got) != 1 {

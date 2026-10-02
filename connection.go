@@ -65,8 +65,15 @@ type ConnectionOptions struct {
 	// -- Target ------------------------------------------------------------------
 
 	// Server is the host[:port] or host\instance, e.g. "localhost:1433" or
-	// "myserver.database.windows.net". Required.
+	// "myserver.database.windows.net" — any ParseServerAddress form. Required.
 	Server string
+
+	// Port is the TCP port to dial when Server writes none. Zero leaves the
+	// default: 1433 for a default instance, SQL Server Browser's answer for a
+	// named one. Set on a named instance, it skips the Browser lookup, as
+	// "host\instance,port" does. A port written in Server wins over Port.
+	// Outside 0-65535 is an error.
+	Port int
 
 	// Database to connect to initially. Defaults to "master".
 	Database string
@@ -304,9 +311,9 @@ func Connect(ctx context.Context, opts ConnectionOptions) (*Server, error) {
 		return nil, fmt.Errorf("gosmo: ping: %w", err)
 	}
 
-	s := &Server{db: pool}
+	s := newServer(pool)
 	if err = s.loadInfo(ctx); err != nil {
-		pool.Close()
+		s.Close()
 		return nil, err
 	}
 	return s, nil
@@ -330,8 +337,9 @@ func NewServer(ctx context.Context, db *sql.DB) (*Server, error) {
 	if db == nil {
 		return nil, fmt.Errorf("gosmo: new server: db is nil")
 	}
-	s := &Server{db: db}
+	s := newServer(db)
 	if err := s.loadInfo(ctx); err != nil {
+		s.cancel()
 		return nil, err
 	}
 	return s, nil
@@ -354,6 +362,17 @@ func applyDefaults(opts *ConnectionOptions) {
 	if opts.ConnMaxIdleTime == 0 {
 		opts.ConnMaxIdleTime = 5 * time.Minute
 	}
+}
+
+// address is Server split by ParseServerAddress, with Port standing in for a
+// port Server does not write. Every reader of the dial target goes through it,
+// so a Port-field port and a written one behave alike.
+func (o ConnectionOptions) address() (host, instance string, port int) {
+	host, instance, port = ParseServerAddress(o.Server)
+	if port == 0 {
+		port = o.Port
+	}
+	return host, instance, port
 }
 
 // ParseServerAddress splits a user-supplied server address into its host,
@@ -466,7 +485,7 @@ func buildDSN(opts ConnectionOptions) (dsn, driverName string, err error) {
 	// literal backslash gets percent-escaped and go-mssqldb's own URL-DSN
 	// convention (see its splitConnectionStringURL) expects the instance
 	// name as a URL path segment instead: sqlserver://host:port/instance.
-	dialHost, instance, err := dsnHost(opts.Server)
+	dialHost, instance, err := dsnHost(opts)
 	if err != nil {
 		return "", "", err
 	}
@@ -759,7 +778,7 @@ func baseDSN(opts ConnectionOptions) (string, error) {
 	if opts.Server == "" {
 		return "", fmt.Errorf("gosmo: ConnectionOptions.Server is required")
 	}
-	dialHost, instance, err := dsnHost(opts.Server)
+	dialHost, instance, err := dsnHost(opts)
 	if err != nil {
 		return "", err
 	}
@@ -778,7 +797,7 @@ func baseDSN(opts ConnectionOptions) (string, error) {
 	return u.String(), nil
 }
 
-// dsnHost renders a ConnectionOptions.Server address as the Host of a
+// dsnHost renders opts' Server address (and Port) as the Host of a
 // sqlserver:// URL, plus the instance name that travels as its path.
 //
 // An IPv6 literal is bracketed there: unbracketed, url.Parse takes its last
@@ -790,11 +809,15 @@ func baseDSN(opts ConnectionOptions) (string, error) {
 // reads back correctly: it would carry the brackets into the SQL Browser
 // probe's address. That is an error naming the fix, not a dial that fails
 // somewhere less obvious.
-func dsnHost(server string) (host, instance string, err error) {
+func dsnHost(opts ConnectionOptions) (host, instance string, err error) {
+	server := opts.Server
 	if proto, _ := splitProtocolPrefix(server); unsupportedProtocols[proto] != "" {
 		return "", "", fmt.Errorf("gosmo: server %q: %s", server, unsupportedProtocols[proto])
 	}
-	host, instance, port := ParseServerAddress(server)
+	if opts.Port < 0 || opts.Port > 65535 {
+		return "", "", fmt.Errorf("gosmo: ConnectionOptions.Port %d out of range 0-65535", opts.Port)
+	}
+	host, instance, port := opts.address()
 	if strings.ContainsRune(host, ':') {
 		if !strings.HasPrefix(host, "[") {
 			host = "[" + host + "]"

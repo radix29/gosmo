@@ -77,7 +77,7 @@ func TestJobStepNameRequired(t *testing.T) {
 		call func() error
 	}{
 		{"Job.AddStep", func() error {
-			return (&Job{}).AddStep(t.Context(), JobStepRequest{Command: "SELECT 1"})
+			return errOnly((&Job{}).AddStep(t.Context(), JobStepRequest{Command: "SELECT 1"}))
 		}},
 		{"JobStep.Alter", func() error {
 			return (&JobStep{}).Alter(t.Context(), JobStepRequest{Command: "SELECT 1"})
@@ -123,17 +123,17 @@ func captureStepJob(t *testing.T, jobName string, stepID int) *JobStep {
 	return &JobStep{job: j, StepID: stepID, Name: "Load staging"}
 }
 
-// TestDeleteStepAddressesTheStepItWasCalledOn. sp_delete_jobstep takes a
+// TestDropStepAddressesTheStepItWasCalledOn. sp_delete_jobstep takes a
 // number, and msdb renumbers the steps after it — so a delete that sent the
 // wrong number removes a step the caller never named, and succeeds while doing
 // it. There is no error to notice and no second statement to compare against.
-func TestDeleteStepAddressesTheStepItWasCalledOn(t *testing.T) {
+func TestDropStepAddressesTheStepItWasCalledOn(t *testing.T) {
 	// The third step, not the first: a delete that ignored StepID and sent 1
 	// would pass against a job whose step is step 1.
 	s := captureStepJob(t, "nightly", 3)
 
-	if err := s.Delete(t.Context()); err != nil {
-		t.Fatalf("Delete: %v", err)
+	if err := s.Drop(t.Context()); err != nil {
+		t.Fatalf("Drop: %v", err)
 	}
 
 	got := captured.find("sp_delete_jobstep")
@@ -145,11 +145,11 @@ func TestDeleteStepAddressesTheStepItWasCalledOn(t *testing.T) {
 
 // A job name carrying an apostrophe is escaped, not concatenated. Job names are
 // user text and reach this statement as a literal.
-func TestDeleteStepEscapesTheJobName(t *testing.T) {
+func TestDropStepEscapesTheJobName(t *testing.T) {
 	s := captureStepJob(t, "Bob's nightly", 1)
 
-	if err := s.Delete(t.Context()); err != nil {
-		t.Fatalf("Delete: %v", err)
+	if err := s.Drop(t.Context()); err != nil {
+		t.Fatalf("Drop: %v", err)
 	}
 
 	if got, want := captured.find("sp_delete_jobstep"),
@@ -158,7 +158,7 @@ func TestDeleteStepEscapesTheJobName(t *testing.T) {
 	}
 }
 
-// JobStep.Delete and Job.deleteStepAt are one call now, the step's
+// JobStep.Drop and Job.deleteStepAt are one call now, the step's
 // number being the only difference between them, and ReorderSteps
 // collects the same text into its batch through deleteStepStmt. The three
 // agreeing is what makes a fix to the statement reach every path that deletes a
@@ -166,8 +166,8 @@ func TestDeleteStepEscapesTheJobName(t *testing.T) {
 func TestEveryStepDeleteRendersTheSameCall(t *testing.T) {
 	s := captureStepJob(t, "nightly", 2)
 
-	if err := s.Delete(t.Context()); err != nil {
-		t.Fatalf("Delete: %v", err)
+	if err := s.Drop(t.Context()); err != nil {
+		t.Fatalf("Drop: %v", err)
 	}
 	viaStep := captured.find("sp_delete_jobstep")
 
@@ -178,7 +178,7 @@ func TestEveryStepDeleteRendersTheSameCall(t *testing.T) {
 	viaNumber := captured.find("sp_delete_jobstep")
 
 	if viaStep != viaNumber {
-		t.Errorf("JobStep.Delete sends\n%s\nand Job.deleteStepAt sends\n%s", viaStep, viaNumber)
+		t.Errorf("JobStep.Drop sends\n%s\nand Job.deleteStepAt sends\n%s", viaStep, viaNumber)
 	}
 	if got := deleteStepStmt("nightly", 2); got != viaStep {
 		t.Errorf("the reorder batch collects\n%s\nand a delete sends\n%s", got, viaStep)

@@ -35,7 +35,7 @@ classDiagram
         +Alter(ch AlertChanges) error
         +Notifications() []*AlertNotification
         +Notify(operator, method) error
-        +RemoveNotify(operator) error
+        +RemoveNotification(operator) error
         +Drop() error
     }
 
@@ -171,6 +171,8 @@ classDiagram
         +ID int
         +Class CategoryClass
         +Name string
+        +Server() *Server
+        +Drop() error
     }
 
     class JobState {

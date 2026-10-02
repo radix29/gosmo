@@ -39,11 +39,11 @@ func fakeInfoAnswer(q string, sysInfoErr error) (driver.Rows, error) {
 	return &fakeInfoRows{}, nil
 }
 
-// fakeInfoRows yields the thirteen SERVERPROPERTY/@@VERSION columns loadInfo
-// scans, once.
+// fakeInfoRows yields the fourteen SERVERPROPERTY/@@VERSION/SUSER_NAME
+// columns loadInfo scans, once.
 type fakeInfoRows struct{ done bool }
 
-func (r *fakeInfoRows) Columns() []string { return make([]string, 13) }
+func (r *fakeInfoRows) Columns() []string { return make([]string, 14) }
 func (r *fakeInfoRows) Close() error      { return nil }
 func (r *fakeInfoRows) Next(dest []driver.Value) error {
 	if r.done {
@@ -54,7 +54,7 @@ func (r *fakeInfoRows) Next(dest []driver.Value) error {
 		"FAKE\\SQL", "Developer Edition (64-bit)", "16.0.4085.2", "RTM", "SQL_Latin1_General_CP1_CI_AS",
 		int64(0), int64(1), int64(0), int64(3),
 		"Microsoft SQL Server 2022 ... on Linux (Ubuntu 22.04.3 LTS)",
-		`C:\Data`, `C:\Log`, `C:\Backup`,
+		`C:\Data`, `C:\Log`, `C:\Backup`, `FAKE\alice`,
 	}
 	copy(dest, vals)
 	return nil
@@ -103,6 +103,9 @@ func TestNewServerWrapsACallerSuppliedPool(t *testing.T) {
 	}
 	if got := s.Info().EngineEdition; got != 3 {
 		t.Errorf("EngineEdition = %d, want 3", got)
+	}
+	if got := s.Info().Login; got != `FAKE\alice` {
+		t.Errorf("Login = %q, want %q", got, `FAKE\alice`)
 	}
 	if got := s.Info().VersionMajor; got != 16 {
 		t.Errorf("VersionMajor = %d, want 16", got)

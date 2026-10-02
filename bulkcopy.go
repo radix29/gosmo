@@ -122,6 +122,8 @@ func (d *Database) BulkInsert(ctx context.Context, bc BulkCopy, rows iter.Seq2[[
 		return 0, unsupportedf("gosmo: bulk insert into %s: a bulk copy cannot be scripted — its rows are a TDS stream, not T-SQL", target)
 	}
 
+	ctx, release := d.server.bound(ctx)
+	defer release()
 	conn, err := d.server.db.Conn(ctx)
 	if err != nil {
 		return 0, fmt.Errorf("gosmo: acquire connection: %w", err)

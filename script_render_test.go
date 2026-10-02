@@ -20,12 +20,12 @@ func TestScriptedCreateSchemaAndProcedureEachOpenABatch(t *testing.T) {
 	if _, err := d.CreateStoredProcedure(ctx, CreateStoredProcedureRequest{Schema: "sales", Name: "usp_x", Body: "AS\nSELECT 1"}); err != nil {
 		t.Fatalf("CreateStoredProcedure: %v", err)
 	}
-	if len(script.Entries) != 2 {
-		t.Fatalf("Entries = %d, want 2", len(script.Entries))
+	if script.Len() != 2 {
+		t.Fatalf("Entries = %d, want 2", script.Len())
 	}
 	want := "USE [App'DB];\nGO\n" +
-		script.Entries[0].SQL + "\nGO\n\n" +
-		script.Entries[1].SQL + "\nGO\n"
+		script.Entries()[0].SQL + "\nGO\n\n" +
+		script.Entries()[1].SQL + "\nGO\n"
 	if got := script.String(); got != want {
 		t.Errorf("String() =\n%s\nwant\n%s", got, want)
 	}
@@ -54,8 +54,8 @@ func TestScriptEntriesRecordWhereEachStatementRuns(t *testing.T) {
 		{Server: "SQL1", Database: "app", SQL: "CREATE USER [x]"},
 		{Server: "SQL2", SQL: "ALTER AVAILABILITY GROUP [ag] JOIN"},
 	}
-	if !slices.Equal(script.Entries, want) {
-		t.Errorf("Entries =\n%#v\nwant\n%#v", script.Entries, want)
+	if !slices.Equal(script.Entries(), want) {
+		t.Errorf("Entries =\n%#v\nwant\n%#v", script.Entries(), want)
 	}
 }
 
@@ -115,7 +115,7 @@ func TestScriptCollectorString(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			c := &ScriptCollector{Entries: tc.entries}
+			c := &ScriptCollector{entries: tc.entries}
 			if got := c.String(); got != tc.want {
 				t.Errorf("String() =\n%q\nwant\n%q", got, tc.want)
 			}

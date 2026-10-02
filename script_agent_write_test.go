@@ -76,8 +76,8 @@ func TestScriptAgentWrites(t *testing.T) {
 			}, "EXEC msdb.dbo.sp_update_jobstep @job_name = N'Nightly''Run', @step_id = 3, " +
 				"@on_success_action = 4, @on_success_step_id = 2, " +
 				"@on_fail_action = 2, @on_fail_step_id = 0"},
-		{"JobStep Delete", func(c context.Context) error {
-			return (&JobStep{job: job(), StepID: 3}).Delete(c)
+		{"JobStep Drop", func(c context.Context) error {
+			return (&JobStep{job: job(), StepID: 3}).Drop(c)
 		}, "EXEC msdb.dbo.sp_delete_jobstep @job_name = N'Nightly''Run', @step_id = 3"},
 
 		// --- Alert
@@ -111,8 +111,11 @@ func TestScriptAgentWrites(t *testing.T) {
 		{"Alert SetCategory", func(c context.Context) error {
 			return alert().SetCategory(c, "Cat'1")
 		}, "EXEC msdb.dbo.sp_update_alert @name = N'Disk''Full', @category_name = N'Cat''1'"},
-		{"Alert RemoveNotify", func(c context.Context) error {
-			return alert().RemoveNotify(c, "On'Call")
+		{"Category Drop", func(c context.Context) error {
+			return (&Server{}).CategoryRef(CategoryClassAlert, "Disk'Space").Drop(c)
+		}, "EXEC msdb.dbo.sp_delete_category @class = N'ALERT', @name = N'Disk''Space'"},
+		{"Alert RemoveNotification", func(c context.Context) error {
+			return alert().RemoveNotification(c, "On'Call")
 		}, "EXEC msdb.dbo.sp_delete_notification @alert_name = N'Disk''Full', @operator_name = N'On''Call'"},
 
 		// --- Operator

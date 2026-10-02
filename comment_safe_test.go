@@ -62,7 +62,7 @@ func TestScriptCommentsContainHostileNames(t *testing.T) {
 			return sb.String()
 		},
 		"multi-server collector": func(n string) string {
-			c := &ScriptCollector{Entries: []ScriptEntry{{Server: n, SQL: "S1"}, {Server: "other", SQL: "S2"}}}
+			c := &ScriptCollector{entries: []ScriptEntry{{Server: n, SQL: "S1"}, {Server: "other", SQL: "S2"}}}
 			return c.String()
 		},
 		"UPDATE with no updatable columns": func(n string) string {

@@ -3,6 +3,7 @@ package gosmo
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/url"
 	"strings"
 	"testing"
@@ -208,6 +209,58 @@ func TestBuildDSNIPv6InstanceWithoutPortIsAnError(t *testing.T) {
 		_, _, err := buildDSN(ConnectionOptions{Server: server})
 		if err == nil || !strings.Contains(err.Error(), "explicit port") {
 			t.Errorf("buildDSN(%q) err = %v, want an explicit-port error", server, err)
+		}
+	}
+}
+
+// TestPortReachesTheDriver: ConnectionOptions.Port dials as a port written in
+// Server would, a written one wins, and on a named instance it replaces the
+// SQL Server Browser lookup. Before Port existed, callers with a separate port
+// folded it into Server themselves, and a caller that rewrote Server (an AG
+// peer retargeted to its catalog name) lost it.
+func TestPortReachesTheDriver(t *testing.T) {
+	cases := []struct {
+		server       string
+		port         int
+		wantHost     string
+		wantInstance string
+		wantPort     uint64
+		wantBrowser  bool
+	}{
+		{"host", 1500, "host", "", 1500, false},
+		{"host", 0, "host", "", 0, false}, // the driver's default, 1433
+		{`host\SQL2017`, 55253, "host", "SQL2017", 55253, false},
+		{`host\SQL2017`, 0, "host", "SQL2017", 0, true},
+		{"host,1600", 1500, "host", "", 1600, false},
+		{`host\SQL2017,1600`, 1500, "host", "SQL2017", 1600, false},
+		{"fe80::1", 1500, "fe80::1", "", 1500, false},
+		{`fe80::1\SQLEXPRESS`, 1500, "fe80::1", "SQLEXPRESS", 1500, false},
+		{"tcp:host", 1500, "host", "", 1500, false},
+	}
+	for _, c := range cases {
+		t.Run(fmt.Sprintf("%s port %d", c.server, c.port), func(t *testing.T) {
+			opts := ConnectionOptions{Server: c.server, Port: c.port, User: "sa", Password: "p"}
+			dsn, _, err := buildDSN(opts)
+			if err != nil {
+				t.Fatalf("buildDSN: %v", err)
+			}
+			cfg, err := msdsn.Parse(dsn)
+			if err != nil {
+				t.Fatalf("msdsn.Parse(%q): %v", dsn, err)
+			}
+			if cfg.Host != c.wantHost || cfg.Instance != c.wantInstance || cfg.Port != c.wantPort {
+				t.Errorf("%q → host/instance/port = %q/%q/%d, want %q/%q/%d", dsn,
+					cfg.Host, cfg.Instance, cfg.Port, c.wantHost, c.wantInstance, c.wantPort)
+			}
+			if got := dialerFor(opts) != nil; got != c.wantBrowser {
+				t.Errorf("dialerFor Browser dialer = %v, want %v", got, c.wantBrowser)
+			}
+		})
+	}
+	for _, port := range []int{-1, 65536} {
+		_, _, err := buildDSN(ConnectionOptions{Server: "host", Port: port})
+		if err == nil || !strings.Contains(err.Error(), "out of range") {
+			t.Errorf("buildDSN(Port %d) err = %v, want out of range", port, err)
 		}
 	}
 }

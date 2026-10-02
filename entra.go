@@ -40,6 +40,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -128,8 +129,8 @@ func (c *EntraCache) Clear() {
 // are the server's to announce, and it announces them only part-way through a
 // login. So Warm first opens a login to Server and abandons it as soon as the
 // server has said them, before any token is sent; c remembers the answer per
-// Server, so later Warms for the same server skip it. That probe runs under
-// ctx and at most opts.ConnectTimeout, and its failure — an unreachable
+// Server and Port, so later Warms for the same server skip it. That probe runs
+// under ctx and at most opts.ConnectTimeout, and its failure — an unreachable
 // server, one that does not accept Entra logins — is Warm's error.
 //
 // Warm does nothing and returns nil when there is no sign-in to do: a
@@ -162,7 +163,8 @@ func (c *EntraCache) Warm(ctx context.Context, opts ConnectionOptions) error {
 // askServer returns what opts' server announces at an Entra login, probing
 // it the first time c is asked.
 func (c *EntraCache) askServer(ctx context.Context, opts ConnectionOptions, cfg *entraConfig) (serverSignIn, error) {
-	key := strings.ToLower(opts.Server)
+	// Port is part of the target: two instances may share a Server string.
+	key := strings.ToLower(opts.Server) + "\x00" + strconv.Itoa(opts.Port)
 	c.mu.Lock()
 	srv, ok := c.servers[key]
 	c.mu.Unlock()

@@ -68,7 +68,7 @@ func main() {
 	// BuildBackupStatement is the same builder Server.Backup uses, exported
 	// so a caller can show, log, or hand-edit the T-SQL first.
 	demo.Section("Generated T-SQL")
-	fmt.Println(" ", demo.Value(gosmo.BuildBackupStatement(gosmo.BackupOptions{
+	fmt.Println(" ", demo.Value(srv.BuildBackupStatement(gosmo.BackupOptions{
 		Database:    dbName,
 		Devices:     []gosmo.BackupTarget{gosmo.DiskTarget(device)},
 		Checksum:    true,

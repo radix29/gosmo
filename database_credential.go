@@ -157,7 +157,7 @@ func (d *Database) CreateDatabaseScopedCredential(ctx context.Context, spec Crea
 
 // Alter changes the credential's identity, and its secret.
 //
-// A nil secret does not leave the stored secret alone — it clears it, for
+// A nil Secret does not leave the stored secret alone — it clears it, for
 // the same reason Credential.Alter's does. ALTER DATABASE SCOPED
 // CREDENTIAL resets both halves every time and an omitted SECRET sets the
 // stored secret to NULL; there is no T-SQL form that changes the identity
@@ -165,7 +165,8 @@ func (d *Database) CreateDatabaseScopedCredential(ctx context.Context, spec Crea
 // that wants to keep one has to ask the user for it again and pass it here.
 // Both branches are deliberate: pass a pointer to the new secret to set it,
 // and nil only when clearing it is the intent.
-func (c *DatabaseScopedCredential) Alter(ctx context.Context, identity string, secret *string) error {
+func (c *DatabaseScopedCredential) Alter(ctx context.Context, o CredentialOptions) error {
+	identity, secret := o.Identity, o.Secret
 	if identity == "" {
 		return fmt.Errorf("gosmo: alter database scoped credential %q: identity is required", c.Name)
 	}

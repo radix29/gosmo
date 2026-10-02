@@ -133,7 +133,7 @@ func TestLiveExclusiveAccessFileGroupReadOnlyAfterRead(t *testing.T) {
 	for _, readOnly := range []bool{true, false} {
 		leaveTwoIdleIn(t, observer, d, ctx)
 		fctx, cancel := context.WithTimeout(ctx, exclusiveDeadline)
-		err := d.SetFileGroupReadOnly(fctx, "FG2", readOnly, TerminationNone)
+		err := d.FileGroupRef("FG2").SetReadOnly(fctx, readOnly, TerminationNone)
 		cancel()
 		if err != nil {
 			t.Fatalf("SetFileGroupReadOnly(%v) after a read: %v", readOnly, err)
@@ -219,7 +219,7 @@ func TestLiveExclusiveAccessFileGroupRollsBackAParkedSession(t *testing.T) {
 
 	fctx, cancel := context.WithTimeout(ctx, exclusiveDeadline)
 	defer cancel()
-	if err := d.SetFileGroupReadOnly(fctx, "FG2", true, TerminationRollbackImmediate); err != nil {
+	if err := d.FileGroupRef("FG2").SetReadOnly(fctx, true, TerminationRollbackImmediate); err != nil {
 		t.Fatalf("SetFileGroupReadOnly with TerminationRollbackImmediate: %v", err)
 	}
 	fgs, err := d.FileGroups(ctx)

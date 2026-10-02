@@ -79,7 +79,7 @@ func TestBackupRequiresDatabaseAndDevices(t *testing.T) {
 }
 
 func TestBuildBackupStatementDifferential(t *testing.T) {
-	got, err := BuildBackupStatement(BackupOptions{
+	got, err := (&Server{}).BuildBackupStatement(BackupOptions{
 		Database: "AdventureWorks",
 		Action:   BackupActionDifferential,
 		Devices:  []BackupTarget{DiskTarget(`/var/backups/aw_diff.bak`)},
@@ -96,7 +96,7 @@ func TestBuildBackupStatementDifferential(t *testing.T) {
 // TestBuildBackupStatementDefaultAction confirms an empty Action defaults to
 // a plain BACKUP DATABASE, with no WITH clause when no options are set.
 func TestBuildBackupStatementDefaultAction(t *testing.T) {
-	got, err := BuildBackupStatement(BackupOptions{
+	got, err := (&Server{}).BuildBackupStatement(BackupOptions{
 		Database: "AdventureWorks",
 		Devices:  []BackupTarget{DiskTarget(`/var/backups/aw.bak`)},
 	})
@@ -112,7 +112,7 @@ func TestBuildBackupStatementDefaultAction(t *testing.T) {
 // TestBuildBackupStatementLogMultiDevice covers BackupActionLog and multiple
 // striped backup devices.
 func TestBuildBackupStatementLogMultiDevice(t *testing.T) {
-	got, err := BuildBackupStatement(BackupOptions{
+	got, err := (&Server{}).BuildBackupStatement(BackupOptions{
 		Database: "AdventureWorks",
 		Action:   BackupActionLog,
 		Devices:  []BackupTarget{DiskTarget(`/var/backups/aw1.trn`), DiskTarget(`/var/backups/aw2.trn`)},
@@ -131,7 +131,7 @@ func TestBuildBackupStatementLogMultiDevice(t *testing.T) {
 // format, init, stats.
 func TestBuildBackupStatementAllOptions(t *testing.T) {
 	compressionOn := true
-	got, err := BuildBackupStatement(BackupOptions{
+	got, err := (&Server{}).BuildBackupStatement(BackupOptions{
 		Database:         "AdventureWorks",
 		Devices:          []BackupTarget{DiskTarget(`/var/backups/aw.bak`)},
 		BackupSetName:    "AW Full",
@@ -159,7 +159,7 @@ func TestBuildBackupStatementAllOptions(t *testing.T) {
 // emits NO_COMPRESSION rather than being treated as unset.
 func TestBuildBackupStatementCompressionOff(t *testing.T) {
 	compressionOff := false
-	got, err := BuildBackupStatement(BackupOptions{
+	got, err := (&Server{}).BuildBackupStatement(BackupOptions{
 		Database:    "AdventureWorks",
 		Devices:     []BackupTarget{DiskTarget(`/var/backups/aw.bak`)},
 		Compression: &compressionOff,
@@ -337,7 +337,7 @@ func TestParseInt64(t *testing.T) {
 // producing "BACKUP FILES [db] TO ..." — which the allowlist accepted and
 // SQL Server rejects.
 func TestBuildBackupStatementFiles(t *testing.T) {
-	got, err := BuildBackupStatement(BackupOptions{
+	got, err := (&Server{}).BuildBackupStatement(BackupOptions{
 		Database:   "AppDB",
 		Action:     BackupActionFiles,
 		Files:      []string{"AppDB_dat2"},
@@ -360,7 +360,7 @@ func TestBuildBackupStatementFiles(t *testing.T) {
 // loudly with neither a file nor a filegroup, rather than degrading into a
 // full BACKUP DATABASE that does far more work than asked.
 func TestBuildBackupStatementFilesNeedsATarget(t *testing.T) {
-	_, err := BuildBackupStatement(BackupOptions{
+	_, err := (&Server{}).BuildBackupStatement(BackupOptions{
 		Database: "AppDB", Action: BackupActionFiles, Devices: []BackupTarget{DiskTarget("d.bak")},
 	})
 	if err == nil {
@@ -476,7 +476,7 @@ func TestIsBackupURL(t *testing.T) {
 }
 
 func TestBuildBackupStatementToURL(t *testing.T) {
-	got, err := BuildBackupStatement(BackupOptions{
+	got, err := (&Server{}).BuildBackupStatement(BackupOptions{
 		Database: "GoTest01",
 		Devices:  []BackupTarget{DiskTarget("https://acct.blob.core.windows.net/backups/GoTest01_full.bak")},
 		CopyOnly: true,
@@ -510,7 +510,7 @@ func TestBuildRestoreStatementFromURL(t *testing.T) {
 // device is still classified on its own — the alternative, letting the first
 // device decide for the rest, hides which half of the pair is wrong.
 func TestBuildBackupStatementClassifiesEachDevice(t *testing.T) {
-	got, err := BuildBackupStatement(BackupOptions{
+	got, err := (&Server{}).BuildBackupStatement(BackupOptions{
 		Database: "GoTest01",
 		Devices: []BackupTarget{
 			DiskTarget("https://acct.blob.core.windows.net/backups/a.bak"),
@@ -585,7 +585,7 @@ func TestRestoreSideReadsNameEveryFamily(t *testing.T) {
 }
 
 func TestBuildStatementsWithCredential(t *testing.T) {
-	b, err := BuildBackupStatement(BackupOptions{
+	b, err := (&Server{}).BuildBackupStatement(BackupOptions{
 		Database:   "GoTest01",
 		Devices:    []BackupTarget{DiskTarget("https://acct.blob.core.windows.net/backups/a.bak")},
 		Credential: "AzureStorage",
@@ -776,7 +776,7 @@ func TestAFailedRestoreLeavesAnAccessModeItDidNotSet(t *testing.T) {
 // strings it could not be said at all: the name became DISK = N'devname', a
 // file of that name in the default backup directory.
 func TestBackupAndRestoreToALogicalDevice(t *testing.T) {
-	got, err := BuildBackupStatement(BackupOptions{
+	got, err := (&Server{}).BuildBackupStatement(BackupOptions{
 		Database: "AppDB",
 		Devices:  []BackupTarget{DeviceTarget("Nightly]Dev")},
 	})
@@ -800,7 +800,7 @@ func TestBackupAndRestoreToALogicalDevice(t *testing.T) {
 
 // The zero BackupTarget has no name and would render as DISK = N”.
 func TestZeroBackupTargetIsRefused(t *testing.T) {
-	if _, err := BuildBackupStatement(BackupOptions{Database: "AppDB", Devices: []BackupTarget{{}}}); err == nil {
+	if _, err := (&Server{}).BuildBackupStatement(BackupOptions{Database: "AppDB", Devices: []BackupTarget{{}}}); err == nil {
 		t.Error("backup to a zero BackupTarget built a statement, want an error")
 	}
 	if _, err := (&Server{}).BuildRestoreStatement(RestoreOptions{Database: "AppDB", Devices: []BackupTarget{DiskTarget("a.bak"), {}}}); err == nil {

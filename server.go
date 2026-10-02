@@ -24,12 +24,61 @@ type Server struct {
 	db   *sql.DB
 	info *ServerInfo
 	xe   xeCatalogCache // XEObjects & co., filled on first use
+
+	// ctx is the Server's lifetime, cancelled by Close. Every statement gosmo
+	// runs is bounded by it as well as by the caller's ctx (see bound): closing
+	// the *sql.DB alone does not stop a statement in flight, which would keep
+	// its session — and whatever it locks — on the server after Close.
+	ctx    context.Context
+	cancel context.CancelFunc
 }
 
-// Close releases all resources held by the server connection pool.
-func (s *Server) Close() error { return s.db.Close() }
+// newServer is the one constructor, so every Server has its lifetime.
+func newServer(db *sql.DB) *Server {
+	ctx, cancel := context.WithCancel(context.Background())
+	return &Server{db: db, ctx: ctx, cancel: cancel}
+}
 
-// DB returns the underlying *sql.DB for ad-hoc queries.
+// Close cancels every statement still running through s, then closes the
+// pool. Work a caller rooted in Context stops with it.
+func (s *Server) Close() error {
+	if s.cancel != nil {
+		s.cancel()
+	}
+	return s.db.Close()
+}
+
+// Context is cancelled by Close. A caller's own background work that should
+// end with the connection — a timer, a poll loop, a statement run on DB()
+// directly — derives its context from it; gosmo's own methods need no such
+// care, since each is bounded by it already. Never nil: Background for a nil
+// Server or one built without Connect or NewServer, which nothing closes.
+func (s *Server) Context() context.Context {
+	if s == nil || s.ctx == nil {
+		return context.Background()
+	}
+	return s.ctx
+}
+
+// bound is ctx, also cancelled when s closes; release frees the link and must
+// be called once the statement is done — for a read returning rows, when the
+// rows close (dbRows does it). A Server built without newServer (a test's
+// bare literal) has no lifetime, and ctx is returned as is.
+func (s *Server) bound(ctx context.Context) (_ context.Context, release func()) {
+	if s.ctx == nil {
+		return ctx, func() {}
+	}
+	ctx, cancel := context.WithCancel(ctx)
+	stop := context.AfterFunc(s.ctx, cancel)
+	return ctx, func() {
+		stop()
+		cancel()
+	}
+}
+
+// DB returns the underlying *sql.DB for ad-hoc queries. A statement run on
+// it is bounded only by the context it is given; derive that from Context
+// for it to stop at Close.
 func (s *Server) DB() *sql.DB { return s.db }
 
 // Info returns server metadata (version, edition, paths ...) as read once, at
@@ -90,6 +139,7 @@ func (s *Server) CurrentDatabase(ctx context.Context) (string, error) {
 // authenticated as (SUSER_NAME()) — the real login behind the
 // connection, which for Windows/Entra auth differs from whatever was
 // passed as ConnectionOptions.User (often empty for those methods).
+// Info().Login holds the same answer from the connect, without a round trip.
 func (s *Server) CurrentLogin(ctx context.Context) (string, error) {
 	var name string
 	if err := s.queryRowScan(ctx, "SELECT SUSER_NAME()", nil, &name); err != nil {
@@ -317,10 +367,16 @@ ELSE IF DB_ID(%s) IS NOT NULL ALTER DATABASE %s SET MULTI_USER`,
 // single read is idempotent, so it's always safe to re-run on a fresh
 // connection; unlike Database.query, there's no USE to redo first, since a
 // Server-scoped query never targets a specific database.
-func (s *Server) query(ctx context.Context, q string, args ...any) (*sql.Rows, error) {
-	return withRetry(ctx, func() (*sql.Rows, error) {
+func (s *Server) query(ctx context.Context, q string, args ...any) (*dbRows, error) {
+	ctx, release := s.bound(ctx)
+	rows, err := withRetry(ctx, func() (*sql.Rows, error) {
 		return s.db.QueryContext(ctx, q, args...)
 	})
+	if err != nil {
+		release()
+		return nil, err
+	}
+	return &dbRows{Rows: rows, release: release}, nil
 }
 
 // queryRow runs a server-scoped, single-row read and hands the result to
@@ -334,6 +390,8 @@ func (s *Server) query(ctx context.Context, q string, args ...any) (*sql.Rows, e
 // agent_schedule.go/agent_alert.go/agent_operator.go) — a closure around
 // that call instead.
 func (s *Server) queryRow(ctx context.Context, scan func(*sql.Row) error, q string, args ...any) error {
+	ctx, release := s.bound(ctx)
+	defer release()
 	_, err := withRetry(ctx, func() (struct{}, error) {
 		return struct{}{}, scan(s.db.QueryRowContext(ctx, q, args...))
 	})
@@ -362,6 +420,8 @@ func (s *Server) queryRowScan(ctx context.Context, q string, args []any, dest ..
 // It does not handle Scripting(ctx) or observe: a caller's scripted text
 // differs from what it runs (a named result column), so the caller does both.
 func (s *Server) execScan(ctx context.Context, stmt string, dest ...any) error {
+	ctx, release := s.bound(ctx)
+	defer release()
 	return withAllMessages(s.db.QueryRowContext(ctx, stmt).Scan(dest...))
 }
 
@@ -391,16 +451,17 @@ func (s *Server) loadInfo(ctx context.Context) error {
 		@@VERSION,
 		SERVERPROPERTY('InstanceDefaultDataPath'),
 		SERVERPROPERTY('InstanceDefaultLogPath'),
-		SERVERPROPERTY('InstanceDefaultBackupPath')`
+		SERVERPROPERTY('InstanceDefaultBackupPath'),
+		SUSER_NAME()`
 
 	info := &ServerInfo{}
 	var isClustered, isHADR, isSingleUser, engineEdition sql.NullInt64
-	var osVer, dataPath, logPath, backupPath sql.NullString
+	var osVer, dataPath, logPath, backupPath, login sql.NullString
 
 	if err := s.queryRowScan(ctx, q, nil,
 		&info.Name, &info.Edition, &info.ProductVersion, &info.ProductLevel,
 		&info.Collation, &isClustered, &isHADR, &isSingleUser, &engineEdition, &osVer,
-		&dataPath, &logPath, &backupPath,
+		&dataPath, &logPath, &backupPath, &login,
 	); err != nil {
 		return fmt.Errorf("gosmo: load server info: %w", err)
 	}
@@ -425,6 +486,7 @@ func (s *Server) loadInfo(ctx context.Context) error {
 	info.DefaultDataPath = dataPath.String
 	info.DefaultLogPath = logPath.String
 	info.DefaultBackupPath = backupPath.String
+	info.Login = login.String
 
 	parts := strings.SplitN(info.ProductVersion, ".", 4)
 	if len(parts) >= 3 {

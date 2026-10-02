@@ -90,7 +90,7 @@ func TestAlterCredentialSecretClause(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx, col := WithScript(context.Background())
 			c := (&Server{}).CredentialRef("app_cred")
-			if err := c.Alter(ctx, `DOMAIN\svc`, tc.secret); err != nil {
+			if err := c.Alter(ctx, CredentialOptions{Identity: `DOMAIN\svc`, Secret: tc.secret}); err != nil {
 				t.Fatalf("Alter: %v", err)
 			}
 			if len(col.Statements()) != 1 {
@@ -105,7 +105,7 @@ func TestAlterCredentialSecretClause(t *testing.T) {
 
 func TestAlterCredentialRequiresIdentity(t *testing.T) {
 	ctx, col := WithScript(context.Background())
-	if err := (&Server{}).CredentialRef("app_cred").Alter(ctx, "", nil); err == nil {
+	if err := (&Server{}).CredentialRef("app_cred").Alter(ctx, CredentialOptions{Identity: "", Secret: nil}); err == nil {
 		t.Error("an empty identity was accepted")
 	}
 	if len(col.Statements()) != 0 {
@@ -154,7 +154,7 @@ func TestAlterCredentialDoesNotMirrorUnderScript(t *testing.T) {
 	ctx, _ := WithScript(context.Background())
 	c := (&Server{}).CredentialRef("app_cred")
 	c.Identity = "old"
-	if err := c.Alter(ctx, "new", nil); err != nil {
+	if err := c.Alter(ctx, CredentialOptions{Identity: "new", Secret: nil}); err != nil {
 		t.Fatalf("Alter: %v", err)
 	}
 	if c.Identity != "old" {

@@ -16,6 +16,9 @@ classDiagram
         +GrowthKB int64
         +GrowthPercent int
         +IsPercentGrowth bool
+        +Database() *Database
+        +Alter(m) error
+        +Drop() error
     }
 
     class DatabaseFileSpec {

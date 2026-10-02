@@ -3,7 +3,10 @@
 // tables, schemas, users, logins, indexes, stored procedures, and more.
 package gosmo
 
-import "time"
+import (
+	"strings"
+	"time"
+)
 
 // ============================================================
 // Enums
@@ -326,6 +329,7 @@ type ColumnDefault struct {
 
 // FileGroup represents a SQL Server filegroup.
 type FileGroup struct {
+	db   *Database
 	Name string
 
 	// Type is sys.filegroups.type_desc: "ROWS_FILEGROUP",
@@ -354,6 +358,9 @@ const (
 // data files, which take neither SIZE nor FILEGROWTH (SQL Server error 5509)
 // and whose FILENAME is a directory rather than a file.
 func (fg *FileGroup) IsFileStream() bool { return fg.Type == FileStreamFileGroup }
+
+// Database returns the database the filegroup belongs to.
+func (fg *FileGroup) Database() *Database { return fg.db }
 
 // DatabaseFile represents a single data or log file.
 type DatabaseFile struct {
@@ -417,6 +424,12 @@ type ServerInfo struct {
 	DefaultDataPath   string
 	DefaultLogPath    string
 	DefaultBackupPath string
+
+	// Login is SUSER_NAME() as the connect saw it: the login the pool's
+	// sessions authenticate as, which for Windows and Entra sign-ins is not
+	// what ConnectionOptions.User held (often empty). CurrentLogin reads it
+	// again. Empty if the server returned NULL.
+	Login string
 }
 
 // IsAzure reports whether the connected instance is one of the Azure-hosted
@@ -425,6 +438,23 @@ type ServerInfo struct {
 // a Managed Instance) and is not the feature level; read it for display only.
 func (i *ServerInfo) IsAzure() bool {
 	return i != nil && EngineEdition(i.EngineEdition).IsAzure()
+}
+
+// IsWindows reports whether the server host uses Windows path conventions.
+// Platform is the direct answer; for an instance that reported none, or an
+// Azure one, the default backup path decides, a Windows path being
+// recognizable by its backslashes. A nil ServerInfo is not Windows.
+func (i *ServerInfo) IsWindows() bool {
+	if i == nil {
+		return false
+	}
+	switch i.Platform {
+	case "Windows":
+		return true
+	case "Linux":
+		return false
+	}
+	return strings.Contains(i.DefaultBackupPath, `\`)
 }
 
 // BackupInfo holds metadata about a specific database backup.

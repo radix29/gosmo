@@ -97,7 +97,7 @@ func TestBulkInsertRefusesUnderWithScript(t *testing.T) {
 	if !errors.Is(err, ErrUnsupported) {
 		t.Fatalf("BulkInsert under WithScript = %v, want an ErrUnsupported error", err)
 	}
-	if n != 0 || len(c.Entries) != 0 {
-		t.Errorf("BulkInsert under WithScript copied %d rows and collected %v, want neither", n, c.Entries)
+	if n != 0 || c.Len() != 0 {
+		t.Errorf("BulkInsert under WithScript copied %d rows and collected %v, want neither", n, c.Entries())
 	}
 }

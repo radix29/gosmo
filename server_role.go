@@ -91,7 +91,7 @@ func (s *Server) ServerRoleByName(ctx context.Context, name string) (*ServerRole
 // server at all — unlike ServerRoleByName, it doesn't
 // verify the role exists or populate ID/IsFixedRole/Owner/Members/SID/
 // CreateDate/ModifyDate (they stay at their zero value). Every write method
-// on *ServerRole (Drop, Rename, SetOwner) only ever
+// on *ServerRole (Drop, Rename, SetOwner, AddMember, RemoveMember) only ever
 // needs the role's name, never those cached fields, so this is sufficient for
 // issuing further ALTER-style calls against a role the caller already knows
 // exists — most commonly one it just created in the same operation. See
@@ -156,21 +156,21 @@ ORDER  BY m.name`
 	})
 }
 
-// AddServerRoleMember adds member (a login or another server role, by
-// name) to a server role.
-func (s *Server) AddServerRoleMember(ctx context.Context, roleName, memberName string) error {
-	q := fmt.Sprintf("ALTER SERVER ROLE %s ADD MEMBER %s", quoteIdent(roleName), quoteIdent(memberName))
-	if err := s.exec(ctx, q); err != nil {
-		return fmt.Errorf("gosmo: add %q to server role %q: %w", memberName, roleName, err)
+// AddMember adds member (a login or another server role, by name) to the
+// role.
+func (r *ServerRole) AddMember(ctx context.Context, member string) error {
+	q := fmt.Sprintf("ALTER SERVER ROLE %s ADD MEMBER %s", quoteIdent(r.Name), quoteIdent(member))
+	if err := r.server.exec(ctx, q); err != nil {
+		return fmt.Errorf("gosmo: add %q to server role %q: %w", member, r.Name, err)
 	}
 	return nil
 }
 
-// RemoveServerRoleMember removes member from a server role.
-func (s *Server) RemoveServerRoleMember(ctx context.Context, roleName, memberName string) error {
-	q := fmt.Sprintf("ALTER SERVER ROLE %s DROP MEMBER %s", quoteIdent(roleName), quoteIdent(memberName))
-	if err := s.exec(ctx, q); err != nil {
-		return fmt.Errorf("gosmo: remove %q from server role %q: %w", memberName, roleName, err)
+// RemoveMember removes member from the role.
+func (r *ServerRole) RemoveMember(ctx context.Context, member string) error {
+	q := fmt.Sprintf("ALTER SERVER ROLE %s DROP MEMBER %s", quoteIdent(r.Name), quoteIdent(member))
+	if err := r.server.exec(ctx, q); err != nil {
+		return fmt.Errorf("gosmo: remove %q from server role %q: %w", member, r.Name, err)
 	}
 	return nil
 }

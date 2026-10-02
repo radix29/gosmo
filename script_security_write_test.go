@@ -50,11 +50,11 @@ func TestScriptSecurityWrites(t *testing.T) {
 			return errOnly(scriptTestDB().CreateUser(c, CreateUserRequest{Name: "a@contoso.com", Kind: UserFromExternalProvider,
 				ObjectID: "0000-o'id", DefaultSchema: "dbo"}))
 		}, scriptUsePrefix + "CREATE USER [a@contoso.com] FROM EXTERNAL PROVIDER WITH OBJECT_ID = N'0000-o''id', DEFAULT_SCHEMA = [dbo]"},
-		{"AddRoleMember", func(c context.Context) error {
-			return scriptTestDB().AddRoleMember(c, "db_own]er", "o'brien")
+		{"Role AddMember", func(c context.Context) error {
+			return scriptTestDB().RoleRef("db_own]er").AddMember(c, "o'brien")
 		}, scriptUsePrefix + "ALTER ROLE [db_own]]er] ADD MEMBER [o'brien]"},
-		{"RemoveRoleMember", func(c context.Context) error {
-			return scriptTestDB().RemoveRoleMember(c, "db_own]er", "o'brien")
+		{"Role RemoveMember", func(c context.Context) error {
+			return scriptTestDB().RoleRef("db_own]er").RemoveMember(c, "o'brien")
 		}, scriptUsePrefix + "ALTER ROLE [db_own]]er] DROP MEMBER [o'brien]"},
 		{"SetOwner", func(c context.Context) error {
 			return scriptTestDB().SetOwner(c, "o'brien")

@@ -53,10 +53,16 @@ func liveReorderJob(t *testing.T, srv *Server, ctx context.Context) (*Job, func(
 		{Name: "three", Subsystem: "TSQL", Command: "SELECT 3", OnSuccessAction: 3, OnFailAction: goToStepAction, OnFailStepID: 1},
 		{Name: "four", Subsystem: "TSQL", Command: "SELECT 4", OnSuccessAction: 1, OnFailAction: 2},
 	}
-	for _, req := range steps {
-		if err := j.AddStep(ctx, req); err != nil {
+	for i, req := range steps {
+		st, err := j.AddStep(ctx, req)
+		if err != nil {
 			drop()
 			t.Fatalf("add step %q: %v", req.Name, err)
+		}
+		// AddStep reads the step back: the appended one is numbered last.
+		if st.Name != req.Name || st.StepID != i+1 || st.Subsystem != req.Subsystem {
+			drop()
+			t.Fatalf("AddStep(%q) returned %+v, want step %d of that name", req.Name, st, i+1)
 		}
 	}
 	return j, drop

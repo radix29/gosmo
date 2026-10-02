@@ -9,8 +9,9 @@ classDiagram
         Acquires *sql.Conn from pool.
         Executes USE db, retried on a
         transient failure. Runs callback
-        fn(*sql.Conn) — NOT retried, since
-        fn is the caller's actual write.
+        fn(ctx, *sql.Conn) — NOT retried,
+        since fn is the caller's actual write.
+        ctx is bounded by Server.bound.
         Releases conn via defer.
         Used by Database.exec.
     }
@@ -19,12 +20,24 @@ classDiagram
         <<internal type>>
         -Rows *sql.Rows
         -conn *sql.Conn
+        -release func()
         +Close() error
-        Closes Rows then the conn pinned
-        for them. *sql.Rows.Close alone
-        leaves the conn checked out of the
-        pool forever. Returned by
-        Database.query().
+        Closes Rows, then the conn pinned
+        for them (nil for a server-scoped
+        read), then the read's link to the
+        Server's lifetime. *sql.Rows.Close
+        alone leaves the conn checked out of
+        the pool forever. Returned by
+        Database.query() and Server.query().
+    }
+
+    class bound {
+        <<internal helper>>
+        Server.bound(ctx) ctx, release
+        ctx also cancelled by Server.Close,
+        so a statement in flight stops with
+        the pool rather than holding its
+        session. Every helper here takes it.
     }
 
     class DatabaseQueryRow {
@@ -189,7 +202,8 @@ classDiagram
 
     class ScriptCollector {
         -mu sync.Mutex
-        +Entries []ScriptEntry
+        +Entries() []ScriptEntry
+        +Len() int
         +Statements() []string
         +String() string
         +WithScript(ctx) *ScriptCollector
@@ -211,7 +225,8 @@ classDiagram
         Each entry records Server, Database and
         the bare SQL; String() renders them with
         USE/GO and per-instance headers.
-        Entries is mutex-guarded: one collector
+        The entries are mutex-guarded, read
+        through Entries() and Len(): one collector
         may be shared across goroutines.
     }
 
@@ -230,6 +245,10 @@ classDiagram
     Database ..> withRetry : reads retried via
     Server ..> ServerQuery : reads run via
     Server ..> withRetry : reads retried via
+    bound <.. withConn : ctx from
+    bound <.. dbRows : released by Close
+    bound <.. ServerQuery : ctx from
+    bound <.. DatabaseQueryRow : ctx from
     withRetry <.. withConn : acquire+USE retried by
     withRetry <.. dbRows : acquire+USE+query retried by
     withRetry <.. DatabaseQueryRow : whole scan retried by

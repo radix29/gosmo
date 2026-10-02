@@ -127,6 +127,8 @@ classDiagram
         +Rename(newName) error
         +Drop() error
         +SetOwner(newOwner) error
+        +AddMember(member) error
+        +RemoveMember(member) error
     }
 
     class RoleMember {
@@ -141,6 +143,10 @@ classDiagram
         +IsReadOnly bool
         +Files []DatabaseFile
         +IsFileStream() bool
+        +Database() *Database
+        +Drop() error
+        +SetDefault() error
+        +SetReadOnly(ro, term) error
         Type is sys.filegroups.type_desc —
         ROWS_FILEGROUP, FILESTREAM_DATA_FILEGROUP or
         MEMORY_OPTIMIZED_DATA_FILEGROUP. ADD FILE has
@@ -176,6 +182,8 @@ classDiagram
         +Rename(newName) error
         +Drop() error
         +SetOwner(newOwner) error
+        +AddMember(member) error
+        +RemoveMember(member) error
     }
 
     class LinkedServer {

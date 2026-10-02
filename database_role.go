@@ -146,22 +146,23 @@ ORDER  BY m.name`
 	})
 }
 
-// AddRoleMember adds a user to a database role.
-func (d *Database) AddRoleMember(ctx context.Context, roleName, memberName string) error {
-	if _, err := d.exec(ctx,
-		fmt.Sprintf("ALTER ROLE %s ADD MEMBER %s", quoteIdent(roleName), quoteIdent(memberName)),
+// AddMember adds member (a user or another database role, by name) to the
+// role.
+func (r *DatabaseRole) AddMember(ctx context.Context, member string) error {
+	if _, err := r.db.exec(ctx,
+		fmt.Sprintf("ALTER ROLE %s ADD MEMBER %s", quoteIdent(r.Name), quoteIdent(member)),
 	); err != nil {
-		return fmt.Errorf("gosmo: add %q to role %q: %w", memberName, roleName, err)
+		return fmt.Errorf("gosmo: add %q to role %q: %w", member, r.Name, err)
 	}
 	return nil
 }
 
-// RemoveRoleMember removes a user from a database role.
-func (d *Database) RemoveRoleMember(ctx context.Context, roleName, memberName string) error {
-	if _, err := d.exec(ctx,
-		fmt.Sprintf("ALTER ROLE %s DROP MEMBER %s", quoteIdent(roleName), quoteIdent(memberName)),
+// RemoveMember removes member from the role.
+func (r *DatabaseRole) RemoveMember(ctx context.Context, member string) error {
+	if _, err := r.db.exec(ctx,
+		fmt.Sprintf("ALTER ROLE %s DROP MEMBER %s", quoteIdent(r.Name), quoteIdent(member)),
 	); err != nil {
-		return fmt.Errorf("gosmo: remove %q from role %q: %w", memberName, roleName, err)
+		return fmt.Errorf("gosmo: remove %q from role %q: %w", member, r.Name, err)
 	}
 	return nil
 }

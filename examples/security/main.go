@@ -99,7 +99,7 @@ func main() {
 
 	// -- Database roles ----------------------------------------------------
 	demo.Section("Database role membership")
-	demo.Must(db.AddRoleMember(ctx, "db_datareader", userName))
+	demo.Must(db.RoleRef("db_datareader").AddMember(ctx, userName))
 	demo.Must(user.AddToRole(ctx, "db_denydatawriter"))
 	for _, r := range demo.Value(db.DatabaseRoles(ctx)) {
 		if contains(r.Members, userName) {
