@@ -5,6 +5,7 @@ import (
 	"database/sql/driver"
 	"fmt"
 	"iter"
+	"strings"
 
 	mssql "github.com/microsoft/go-mssqldb"
 )
@@ -99,6 +100,13 @@ func SliceRows(rows [][]any) iter.Seq2[[]any, error] {
 //
 // Cancelling ctx stops the load; the count of rows copied before cancellation
 // is returned alongside the error.
+//
+// Under WithScript it refuses with an ErrUnsupported error before touching
+// the server: the rows travel as a TDS bulk-load stream, not T-SQL, so there
+// is no statement to collect, and loading them anyway would make a scripted
+// call write. A statement observer (WithStatementObserver) is told of a
+// completed load as an "INSERT BULK … -- n rows" entry — a record of what
+// happened, not a runnable statement.
 func (d *Database) BulkInsert(ctx context.Context, bc BulkCopy, rows iter.Seq2[[]any, error]) (int64, error) {
 	if bc.Table == "" {
 		return 0, fmt.Errorf("gosmo: bulk insert: no destination table")
@@ -110,6 +118,9 @@ func (d *Database) BulkInsert(ctx context.Context, bc BulkCopy, rows iter.Seq2[[
 		return 0, err
 	}
 	target := qualifiedName(bc.Schema, bc.Table)
+	if Scripting(ctx) {
+		return 0, unsupportedf("gosmo: bulk insert into %s: a bulk copy cannot be scripted — its rows are a TDS stream, not T-SQL", target)
+	}
 
 	conn, err := d.server.db.Conn(ctx)
 	if err != nil {
@@ -167,5 +178,14 @@ func (d *Database) BulkInsert(ctx context.Context, bc BulkCopy, rows iter.Seq2[[
 	if copied, err := res.RowsAffected(); err == nil {
 		n = copied
 	}
+	cols := make([]string, len(bc.Columns))
+	for i, c := range bc.Columns {
+		cols[i] = quoteIdent(c)
+	}
+	observe(ctx, ScriptEntry{
+		Server:   scriptServerName(ctx, d.server),
+		Database: d.Name,
+		SQL:      fmt.Sprintf("INSERT BULK %s (%s) -- %d rows", target, strings.Join(cols, ", "), n),
+	})
 	return n, nil
 }

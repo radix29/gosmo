@@ -229,6 +229,22 @@ func (d *Database) UserDefinedTableTypeRef(schema, name string) *UserDefinedTabl
 	return &UserDefinedTableType{db: d, Schema: schema, Name: name}
 }
 
+// typeTable addresses the type's internal table as a *Table, so the table
+// readers serve it: its indexes and check constraints hang off
+// TypeTableObjectID exactly as its columns do. Unexported because an Index
+// or CheckConstraint handle on it names the type where DDL expects a table —
+// its writes would address an object that does not exist.
+func (t *UserDefinedTableType) typeTable() *Table {
+	return &Table{db: t.db, ObjectID: t.TypeTableObjectID, Schema: t.Schema, Name: t.Name}
+}
+
+// errNoTypeTable is what a read through TypeTableObjectID returns for a type
+// built by hand rather than read from the catalog.
+func (t *UserDefinedTableType) errNoTypeTable() error {
+	return notFoundf("gosmo: user-defined table type %s in %q has no internal table id — read it with UserDefinedTableTypeByName",
+		t.FullName(), t.db.Name)
+}
+
 // Columns returns the table type's columns in ordinal order.
 //
 // The columns are read through TypeTableObjectID, the internal table
@@ -239,8 +255,7 @@ func (d *Database) UserDefinedTableTypeRef(schema, name string) *UserDefinedTabl
 // and gets a not-found error rather than an empty list.
 func (t *UserDefinedTableType) Columns(ctx context.Context) ([]*Column, error) {
 	if t.TypeTableObjectID == 0 {
-		return nil, notFoundf("gosmo: user-defined table type %s in %q has no internal table id — read it with UserDefinedTableTypeByName",
-			t.FullName(), t.db.Name)
+		return nil, t.errNoTypeTable()
 	}
 	q := t.db.columnSelect() + `
 WHERE  c.object_id = @p1

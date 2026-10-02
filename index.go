@@ -823,11 +823,15 @@ GROUP  BY ds.name, ds.type, pf.name, i.object_id, i.index_id`
 		info.PartitionScheme = fgOrPS
 	}
 
+	// The DMV returns one row per partition and allocation unit; the record
+	// size is the leaf's in-row one, averaged over partitions by record
+	// count. TOP 1 without the filter picked an arbitrary row — on a table
+	// with (max) columns often the LOB unit's, ~100x the real figure.
 	avgQ := `
-SELECT TOP 1 s.avg_record_size_in_bytes
+SELECT SUM(s.avg_record_size_in_bytes * s.record_count) / NULLIF(SUM(s.record_count), 0)
 FROM   sys.indexes i
 CROSS  APPLY sys.dm_db_index_physical_stats(DB_ID(), i.object_id, i.index_id, NULL, 'SAMPLED') s
-WHERE  ` + target + ` AND s.index_level = 0`
+WHERE  ` + target + ` AND s.index_level = 0 AND s.alloc_unit_type_desc = N'IN_ROW_DATA'`
 	var avg sql.NullFloat64
 	if err := db.queryRow(ctx, func(row *sql.Row) error { return row.Scan(&avg) }, avgQ, idx.Name); err == nil {
 		info.AvgRecordSize = avg.Float64
@@ -865,10 +869,9 @@ ORDER  BY a.type_desc`
 // FragmentationLimited; page density is only populated by SAMPLED or
 // DETAILED (LIMITED always reports 0, same as the underlying DMV).
 //
-// The DMV is applied to the index sys.indexes finds by name rather than
-// called with OBJECT_ID directly: a name that resolves to nothing then
-// yields no row, where a NULL object_id passed to the DMV would mean every
-// object in the database.
+// A partitioned index reports one row for all its partitions; see
+// fragmentationSelect for how they are combined, and why the DMV is reached
+// through sys.indexes.
 func (idx *Index) Fragmentation(ctx context.Context, mode FragmentationMode) (*IndexFragmentation, error) {
 	if mode == "" {
 		mode = FragmentationLimited
@@ -879,25 +882,57 @@ func (idx *Index) Fragmentation(ctx context.Context, mode FragmentationMode) (*I
 		return nil, fmt.Errorf("gosmo: fragmentation for index %q: invalid mode %q (must be LIMITED, SAMPLED, or DETAILED)", idx.Name, mode)
 	}
 
-	q := fmt.Sprintf(`
-SELECT i.name, s.index_id,
-       s.avg_fragmentation_in_percent,
-       s.page_count,
-       s.fragment_count,
-       s.avg_page_space_used_in_percent
-FROM   sys.indexes i
-CROSS  APPLY sys.dm_db_index_physical_stats(DB_ID(), i.object_id, i.index_id, NULL, N'%s') s
-WHERE  i.object_id = OBJECT_ID(N'%s') AND i.name = @p1 AND s.index_level = 0`,
-		mode, escapeSingle(idx.table.FullName()))
+	q := fragmentationSelect(mode) + fmt.Sprintf(`
+WHERE  i.object_id = OBJECT_ID(N'%s') AND i.name = @p1
+GROUP  BY i.name, i.index_id`, escapeSingle(idx.table.FullName()))
 
-	f := &IndexFragmentation{}
-	var density sql.NullFloat64
+	var f *IndexFragmentation
 	if err := idx.table.db.queryRow(ctx, func(row *sql.Row) error {
-		return row.Scan(&f.IndexName, &f.IndexID, &f.AvgFragmentationPct, &f.PageCount, &f.FragmentCount, &density)
+		var err error
+		f, err = scanFragmentation(row.Scan)
+		return err
 	}, q, idx.Name); err != nil {
 		return nil, fmt.Errorf("gosmo: fragmentation for index %q: %w", idx.Name, err)
 	}
-	f.AvgPageSpaceUsedPct = density.Float64
+	return f, nil
+}
+
+// fragmentationSelect is the SELECT ... FROM shared by Index.Fragmentation
+// and Table.FragmentationStats, for the caller to finish with a WHERE on
+// sys.indexes i and GROUP BY i.name, i.index_id. mode must already be
+// validated — the DMV takes no parameter for it.
+//
+// The DMV is applied to the indexes sys.indexes finds rather than called
+// with OBJECT_ID directly: a name that resolves to nothing then yields no
+// row, where a NULL object_id passed to the DMV means every object in the
+// database (quoting.go names the hazard).
+//
+// The DMV returns one row per partition, allocation unit and (DETAILED)
+// level. Only the leaf's IN_ROW_DATA rows describe the index's own pages —
+// a LOB_DATA row reports 0% fragmentation for a table with (max) columns —
+// so those are kept, and the partitions are folded into one row: page and
+// fragment counts summed, the percentages weighted by page count. It is an
+// OUTER APPLY so an index with no such row (a columnstore with no delta
+// store) still reports, as zeros. fragment_count is NULL in SAMPLED mode for
+// a heap and avg_page_space_used_in_percent in LIMITED mode, hence ISNULL.
+func fragmentationSelect(mode FragmentationMode) string {
+	return fmt.Sprintf(`
+SELECT i.name, i.index_id,
+       ISNULL(SUM(s.avg_fragmentation_in_percent * s.page_count) / NULLIF(SUM(s.page_count), 0), 0),
+       ISNULL(SUM(s.page_count), 0),
+       ISNULL(SUM(s.fragment_count), 0),
+       ISNULL(SUM(s.avg_page_space_used_in_percent * s.page_count) / NULLIF(SUM(s.page_count), 0), 0)
+FROM   sys.indexes i
+OUTER  APPLY (SELECT d.avg_fragmentation_in_percent, d.page_count, d.fragment_count, d.avg_page_space_used_in_percent
+              FROM   sys.dm_db_index_physical_stats(DB_ID(), i.object_id, i.index_id, NULL, N'%s') d
+              WHERE  d.index_level = 0 AND d.alloc_unit_type_desc = N'IN_ROW_DATA') s`, mode)
+}
+
+func scanFragmentation(scan func(...any) error) (*IndexFragmentation, error) {
+	f := &IndexFragmentation{}
+	if err := scan(&f.IndexName, &f.IndexID, &f.AvgFragmentationPct, &f.PageCount, &f.FragmentCount, &f.AvgPageSpaceUsedPct); err != nil {
+		return nil, err
+	}
 	return f, nil
 }
 
@@ -954,11 +989,10 @@ ORDER  BY xi.name`
 	})
 }
 
-// IndexFragmentation holds fragmentation statistics for one index.
-// AvgPageSpaceUsedPct is only populated when the DMV ran in SAMPLED or
-// DETAILED mode (see Index.Fragmentation's mode parameter);
-// Table.FragmentationStats's own LIMITED-mode query leaves it zero,
-// matching the underlying DMV.
+// IndexFragmentation holds fragmentation statistics for one index, its
+// partitions combined (see fragmentationSelect). AvgPageSpaceUsedPct is only
+// populated in SAMPLED or DETAILED mode; LIMITED leaves it zero, as the
+// underlying DMV does.
 type IndexFragmentation struct {
 	IndexName           string
 	IndexID             int
@@ -977,8 +1011,9 @@ const (
 	FragmentationDetailed FragmentationMode = "DETAILED"
 )
 
-// FragmentationStats returns fragmentation info for all indexes on the table.
-// An empty mode is FragmentationLimited.
+// FragmentationStats returns fragmentation info for all indexes on the table,
+// one row per index, most fragmented first. An empty mode is
+// FragmentationLimited. A name that resolves to no table returns no rows.
 func (t *Table) FragmentationStats(ctx context.Context, mode FragmentationMode) ([]*IndexFragmentation, error) {
 	if mode == "" {
 		mode = FragmentationLimited
@@ -991,24 +1026,11 @@ func (t *Table) FragmentationStats(ctx context.Context, mode FragmentationMode) 
 		return nil, fmt.Errorf("gosmo: fragmentation stats: invalid mode %q (must be LIMITED, SAMPLED, or DETAILED)", mode)
 	}
 
-	q := fmt.Sprintf(`
-SELECT i.name, s.index_id,
-       s.avg_fragmentation_in_percent,
-       s.page_count,
-       s.fragment_count
-FROM   sys.dm_db_index_physical_stats(DB_ID(), OBJECT_ID(N'%s'), NULL, NULL, N'%s') s
-JOIN   sys.indexes i ON i.object_id = s.object_id AND i.index_id = s.index_id
-WHERE  s.index_id > 0
-ORDER  BY s.avg_fragmentation_in_percent DESC`,
-		escapeSingle(t.FullName()), mode)
+	q := fragmentationSelect(mode) + fmt.Sprintf(`
+WHERE  i.object_id = OBJECT_ID(N'%s') AND i.index_id > 0
+GROUP  BY i.name, i.index_id
+ORDER  BY 3 DESC, i.name`, escapeSingle(t.FullName()))
 
 	rows, err := t.db.query(ctx, q)
-	return scanRows(rows, err, fmt.Sprintf("fragmentation stats for %s", t.FullName()), func(scan func(...any) error) (*IndexFragmentation, error) {
-		f := &IndexFragmentation{}
-		if err := scan(&f.IndexName, &f.IndexID,
-			&f.AvgFragmentationPct, &f.PageCount, &f.FragmentCount); err != nil {
-			return nil, err
-		}
-		return f, nil
-	})
+	return scanRows(rows, err, fmt.Sprintf("fragmentation stats for %s", t.FullName()), scanFragmentation)
 }

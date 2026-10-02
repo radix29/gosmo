@@ -136,6 +136,26 @@ than failing:
 - A disabled **clustered** index is recreated and then disabled, as the
   source is — which takes the replayed table offline, faithfully.
 
+## CLR modules: listed, not scripted
+
+Since 2026-10-02 (gossms review plan T31) `UserDefinedFunctions` lists CLR
+scalar and table-valued functions (`FS`/`FT`, `FunctionType.IsCLR`), and
+`ScriptFunction`, `ScriptStoredProcedure` and `ScriptTrigger` refuse a CLR
+module's CREATE or ALTER with `ErrUnsupported` instead of "not found"; its
+DROP still scripts. `live_clr_function_test.go` loads
+`testdata/clr/w7clr.dll` for this.
+
+Left undone:
+
+- **The CLR CREATE itself** — `CREATE FUNCTION … RETURNS … AS EXTERNAL NAME
+  [assembly].[class].[method]` from `sys.parameters`, the RETURNS table's
+  columns and `sys.assembly_modules`. The test assembly is enough to replay
+  one.
+- **CLR stored procedures (`PC`) and CLR triggers (`TA`) are still missing
+  from `StoredProcedures` and the trigger listings**, which `JOIN
+  sys.sql_modules`; only the scripter's lookup was widened. The same `LEFT
+  JOIN` as functions would list them.
+
 ## Keys `FROM PROVIDER` have never executed
 
 `CreateAsymmetricKeyRequest.FromProvider` and `CreateSymmetricKeyRequest.FromProvider`

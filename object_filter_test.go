@@ -108,6 +108,16 @@ func TestObjectFilterClause(t *testing.T) {
 			wantArgs: []any{day(2026, 8, 20)},
 		},
 		{
+			// The calendar date in Day's own zone, sent at +00:00: go-mssqldb
+			// sends a datetimeoffset, so midnight at +10:00 matched from 14:00
+			// the day before (T24).
+			name: "a criterion's zone is discarded",
+			filter: ObjectFilter{Created: []DateCriterion{{Op: DateOn,
+				Day: time.Date(2026, 8, 20, 1, 0, 0, 0, time.FixedZone("", 10*3600))}}},
+			wantSQL:  " AND t.create_date >= @p1 AND t.create_date < @p2",
+			wantArgs: []any{day(2026, 8, 20), day(2026, 8, 21)},
+		},
+		{
 			name:     "memory optimized true",
 			filter:   ObjectFilter{MemoryOptimized: &yes},
 			wantSQL:  " AND t.is_memory_optimized = @p1",

@@ -28,31 +28,34 @@ type moduleKind struct {
 
 var (
 	moduleView = moduleKind{"VIEW", "view", `
-SELECT m.definition, m.uses_ansi_nulls, m.uses_quoted_identifier
+SELECT m.definition, m.uses_ansi_nulls, m.uses_quoted_identifier, CAST(0 AS bit)
 FROM   sys.views v
 JOIN   sys.sql_modules m ON m.object_id = v.object_id
 WHERE  SCHEMA_NAME(v.schema_id) = @p1 AND v.name = @p2`, false}
 
 	moduleProcedure = moduleKind{"PROCEDURE", "stored procedure", `
-SELECT m.definition, m.uses_ansi_nulls, m.uses_quoted_identifier
+SELECT m.definition, ISNULL(m.uses_ansi_nulls, 0), ISNULL(m.uses_quoted_identifier, 0),
+       CAST(CASE WHEN m.object_id IS NULL THEN 1 ELSE 0 END AS bit)
 FROM   sys.procedures p
-JOIN   sys.sql_modules m ON m.object_id = p.object_id
+LEFT   JOIN sys.sql_modules m ON m.object_id = p.object_id
 WHERE  SCHEMA_NAME(p.schema_id) = @p1 AND p.name = @p2`, true}
 
 	moduleFunction = moduleKind{"FUNCTION", "function", `
-SELECT m.definition, m.uses_ansi_nulls, m.uses_quoted_identifier
+SELECT m.definition, ISNULL(m.uses_ansi_nulls, 0), ISNULL(m.uses_quoted_identifier, 0),
+       CAST(CASE WHEN m.object_id IS NULL THEN 1 ELSE 0 END AS bit)
 FROM   sys.objects o
-JOIN   sys.sql_modules m ON m.object_id = o.object_id
+LEFT   JOIN sys.sql_modules m ON m.object_id = o.object_id
 WHERE  SCHEMA_NAME(o.schema_id) = @p1 AND o.name = @p2
-  AND  o.type IN ('FN','TF','IF')`, true}
+  AND  o.type IN ('FN','TF','IF','FS','FT')`, true}
 
 	// A trigger's own schema is its parent table's — sys.triggers has no
 	// schema_id of its own.
 	moduleTrigger = moduleKind{"TRIGGER", "trigger", `
-SELECT m.definition, m.uses_ansi_nulls, m.uses_quoted_identifier
+SELECT m.definition, ISNULL(m.uses_ansi_nulls, 0), ISNULL(m.uses_quoted_identifier, 0),
+       CAST(CASE WHEN m.object_id IS NULL THEN 1 ELSE 0 END AS bit)
 FROM   sys.triggers tr
 JOIN   sys.objects o     ON o.object_id = tr.parent_id
-JOIN   sys.sql_modules m ON m.object_id = tr.object_id
+LEFT   JOIN sys.sql_modules m ON m.object_id = tr.object_id
 WHERE  SCHEMA_NAME(o.schema_id) = @p1 AND tr.name = @p2`, false}
 )
 
@@ -64,20 +67,26 @@ WHERE  SCHEMA_NAME(o.schema_id) = @p1 AND tr.name = @p2`, false}
 // than a script: envelopeErr discards the DROP it has already written, which
 // would otherwise have left DROP AND CREATE a script that drops the module
 // and does not put it back. DROP alone needs no definition, never reads it,
-// and still works on one.
+// and still works on one. A CLR procedure, function or trigger has no
+// sys.sql_modules row at all; it is found through the LEFT JOIN and refused
+// with ErrUnsupported, where a JOIN reported an object the caller can see in
+// the listing as not found.
 func (sc *Scripter) scriptModule(ctx context.Context, k moduleKind, schema, name string) (string, error) {
 	drop := fmt.Sprintf("DROP %s IF EXISTS %s;\nGO\n", k.keyword, qualifiedName(schema, name))
 	return sc.opts.envelopeErr(drop, "", func(sb *strings.Builder) error {
 		var def sql.NullString
-		var ansiNulls, quotedIdent bool
+		var ansiNulls, quotedIdent, clr bool
 		err := sc.db.queryRow(ctx, func(row *sql.Row) error {
-			return row.Scan(&def, &ansiNulls, &quotedIdent)
+			return row.Scan(&def, &ansiNulls, &quotedIdent, &clr)
 		}, k.query, schema, name)
 		if err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				return notFoundf("gosmo: %s %s not found", k.noun, qualifiedName(schema, name))
 			}
 			return err
+		}
+		if clr {
+			return unsupportedf("gosmo: script %s %s: a CLR %s has no T-SQL definition to script", k.noun, qualifiedName(schema, name), k.noun)
 		}
 		if !def.Valid {
 			return fmt.Errorf("gosmo: script %s %s: definition is not readable (encrypted)", k.noun, qualifiedName(schema, name))

@@ -1,6 +1,9 @@
 package gosmo
 
-import "testing"
+import (
+	"errors"
+	"testing"
+)
 
 func TestBulkOptionsDriverMapping(t *testing.T) {
 	got := BulkOptions{
@@ -80,5 +83,21 @@ func TestBulkInsertRejectsNoColumns(t *testing.T) {
 	d := &Database{}
 	if _, err := d.BulkInsert(t.Context(), BulkCopy{Table: "t"}, SliceRows(nil)); err == nil {
 		t.Fatal("want error when Columns is empty, got nil")
+	}
+}
+
+// A bulk load has no T-SQL form, so under WithScript there is nothing to
+// collect — and before T22 it loaded the rows anyway, so a caller asking for
+// a script got a write. It refuses before reaching for a connection, which a
+// zero-value Database does not have.
+func TestBulkInsertRefusesUnderWithScript(t *testing.T) {
+	ctx, c := WithScript(t.Context())
+	d := &Database{Name: "app"}
+	n, err := d.BulkInsert(ctx, BulkCopy{Schema: "dbo", Table: "t", Columns: []string{"a"}}, SliceRows([][]any{{1}}))
+	if !errors.Is(err, ErrUnsupported) {
+		t.Fatalf("BulkInsert under WithScript = %v, want an ErrUnsupported error", err)
+	}
+	if n != 0 || len(c.Entries) != 0 {
+		t.Errorf("BulkInsert under WithScript copied %d rows and collected %v, want neither", n, c.Entries)
 	}
 }

@@ -21,7 +21,9 @@ package gosmo
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
+	"slices"
 	"strings"
 )
 
@@ -95,9 +97,11 @@ func nullClause(nullable bool) string {
 // ScriptUserDefinedTableType generates the CREATE (or DROP) script for one
 // table type.
 //
-// The columns are read only for a verb that emits a CREATE: a DROP names the
+// The shape is read only for a verb that emits a CREATE: a DROP names the
 // type and nothing else, and a caller scripting a drop should not pay for the
-// column read or fail on it.
+// reads or fail on them. The shape is the columns, the PRIMARY KEY, UNIQUE
+// and CHECK constraints and the indexes — all on the type's internal table —
+// plus the database collation, against which a column's COLLATE is decided.
 func (sc *Scripter) ScriptUserDefinedTableType(ctx context.Context, schema, name string) (string, error) {
 	if err := requireSchema("script user defined table type", schema, name); err != nil {
 		return "", err
@@ -106,36 +110,91 @@ func (sc *Scripter) ScriptUserDefinedTableType(ctx context.Context, schema, name
 	if err != nil {
 		return "", err
 	}
-	var cols []*Column
+	var p tableTypeScriptParts
 	if sc.opts.verb() != ScriptDrop {
-		if cols, err = t.Columns(ctx); err != nil {
+		if p, err = readTableTypeScriptParts(ctx, t); err != nil {
 			return "", err
 		}
 	}
-	return buildUserDefinedTableTypeScript(t, cols, sc.opts), nil
+	return buildUserDefinedTableTypeScript(t, p, sc.opts), nil
+}
+
+// tableTypeScriptParts is what a table type's CREATE is built from.
+type tableTypeScriptParts struct {
+	cols        []*Column
+	indexes     []*Index
+	checks      []*CheckConstraint
+	dbCollation string
+}
+
+// readTableTypeScriptParts reads a table type's shape through its internal
+// table, one query per kind — none inside another's row loop.
+func readTableTypeScriptParts(ctx context.Context, t *UserDefinedTableType) (tableTypeScriptParts, error) {
+	var p tableTypeScriptParts
+	if t.TypeTableObjectID == 0 {
+		return p, t.errNoTypeTable()
+	}
+	var err error
+	if p.cols, err = t.Columns(ctx); err != nil {
+		return p, err
+	}
+	tbl := t.typeTable()
+	if p.indexes, err = tbl.Indexes(ctx); err != nil {
+		return p, err
+	}
+	if p.checks, err = tbl.CheckConstraints(ctx); err != nil {
+		return p, err
+	}
+	err = t.db.queryRow(ctx, func(row *sql.Row) error { return row.Scan(&p.dbCollation) },
+		`SELECT ISNULL(CONVERT(sysname, DATABASEPROPERTYEX(DB_NAME(), 'Collation')), '')`)
+	if err != nil {
+		return p, fmt.Errorf("gosmo: read the collation of %q: %w", t.db.Name, err)
+	}
+	return p, nil
 }
 
 // buildUserDefinedTableTypeScript assembles one table type's script.
 //
+// The elements follow the CREATE TYPE grammar's order: columns, then the
+// PRIMARY KEY and UNIQUE constraints, CHECK constraints and named indexes.
+// None of the constraints takes a name — the grammar has no CONSTRAINT
+// clause here (Msg 156), and the catalog's names are generated off the
+// internal table's — so each is written bare, at table level; a
+// column-level CHECK means the same there.
+//
 // A memory-optimized table type must be created WITH (MEMORY_OPTIMIZED = ON)
-// and must carry an index — the server refuses one without — so the clause
-// is emitted whenever the flag is set, and the index the type really has is
-// left to the reader as a comment rather than guessed at: a table type's
-// indexes hang off its internal table id, which gosmo does not read.
-func buildUserDefinedTableTypeScript(t *UserDefinedTableType, cols []*Column, opts ScriptOptions) string {
+// and must carry an index — the server refuses one without — which its
+// primary key or a named index supplies.
+func buildUserDefinedTableTypeScript(t *UserDefinedTableType, p tableTypeScriptParts, opts ScriptOptions) string {
 	fullName := qualifiedName(t.Schema, t.Name)
 	drop := fmt.Sprintf("DROP TYPE IF EXISTS %s;\nGO\n", fullName)
 	guard := fmt.Sprintf("IF TYPE_ID(N'%s') IS NULL\n", escapeSingle(fullName))
 	return opts.envelope(drop, guard, func(sb *strings.Builder) {
-		fmt.Fprintf(sb, "CREATE TYPE %s AS TABLE (\n", fullName)
-		for i, col := range cols {
-			sb.WriteString("    ")
-			sb.WriteString(tableTypeColumn(col))
-			if i != len(cols)-1 {
-				sb.WriteString(",")
-			}
-			sb.WriteString("\n")
+		var elems, keys, checks, indexes []string
+		for _, col := range p.cols {
+			elems = append(elems, tableTypeColumn(col, p.dbCollation))
 		}
+		for _, idx := range p.indexes {
+			switch s := tableTypeIndex(idx, t.IsMemoryOptimized); {
+			case idx.IsPrimaryKey || idx.IsUniqueConstraint:
+				keys = append(keys, s)
+			default:
+				indexes = append(indexes, s)
+			}
+		}
+		for _, ck := range p.checks {
+			checks = append(checks, "CHECK "+ck.Definition)
+		}
+		// Each group is sorted by its text: the catalog orders them by
+		// generated names and by index ids the CREATE assigned, so a type
+		// replayed from its own script would otherwise script differently.
+		// "PRIMARY" sorts before "UNIQUE", and order is not meaningful within
+		// a group.
+		for _, g := range [][]string{keys, checks, indexes} {
+			slices.Sort(g)
+			elems = append(elems, g...)
+		}
+		fmt.Fprintf(sb, "CREATE TYPE %s AS TABLE (\n    %s\n", fullName, strings.Join(elems, ",\n    "))
 		if t.IsMemoryOptimized {
 			sb.WriteString(")\nWITH (MEMORY_OPTIMIZED = ON);\nGO\n")
 			return
@@ -144,25 +203,63 @@ func buildUserDefinedTableTypeScript(t *UserDefinedTableType, cols []*Column, op
 	})
 }
 
-// tableTypeColumn renders one column of a table type, in the same shape
-// buildTableScript renders a table's.
-func tableTypeColumn(col *Column) string {
-	if col.IsComputed && col.ComputedText != "" {
-		return fmt.Sprintf("%s AS %s", quoteIdent(col.Name), col.ComputedText)
-	}
-	var sb strings.Builder
-	fmt.Fprintf(&sb, "%s %s", quoteIdent(col.Name), col.TypeString())
-	if col.IsIdentity {
-		fmt.Fprintf(&sb, " IDENTITY(%s,%s)", col.IdentitySeed, col.IdentityIncrement)
-	}
-	fmt.Fprintf(&sb, " %s", nullClause(col.IsNullable))
-	if col.DefaultValue != nil {
+// tableTypeColumn renders one column of a table type as tableColumnDefinition
+// renders a table's, except for its default.
+func tableTypeColumn(col *Column, dbCollation string) string {
+	bare := *col
+	bare.DefaultValue = nil
+	def := tableColumnDefinition(&bare, dbCollation)
+	if col.DefaultValue != nil && !col.IsComputed {
 		// A table type's default has no constraint name to keep: the name
 		// belongs to the internal table, and naming it in the CREATE would
 		// collide the second time the script runs.
-		fmt.Fprintf(&sb, " DEFAULT %s", col.DefaultValue.Definition)
+		def += " DEFAULT " + col.DefaultValue.Definition
 	}
-	return sb.String()
+	return def
+}
+
+// tableTypeIndex renders a table type's PRIMARY KEY, UNIQUE constraint or
+// named INDEX. A memory-optimized type's takes memoryOptimizedIndexSpec's
+// form and none of a disk index's options; a disk type's takes only
+// IGNORE_DUP_KEY — CREATE TYPE refuses every other index option (Msg 155).
+// INCLUDE and a filter are written as the source has them: INCLUDE parses on
+// 17 but not on 13 or 14, so a type that has one came from a server that
+// takes it.
+func tableTypeIndex(idx *Index, memoryOptimized bool) string {
+	var head string
+	switch {
+	case idx.IsPrimaryKey:
+		head = "PRIMARY KEY "
+	case idx.IsUniqueConstraint:
+		head = "UNIQUE "
+	default:
+		head = "INDEX " + quoteIdent(idx.Name) + " "
+		if idx.IsUnique && !memoryOptimized {
+			head += "UNIQUE "
+		}
+	}
+	if memoryOptimized {
+		return head + memoryOptimizedIndexSpec(idx)
+	}
+	clust := "NONCLUSTERED"
+	if idx.IsClustered {
+		clust = "CLUSTERED"
+	}
+	s := fmt.Sprintf("%s%s (%s)", head, clust, indexColumnList(idx.KeyColumns))
+	if len(idx.IncludedColumns) > 0 {
+		names := make([]string, len(idx.IncludedColumns))
+		for i, c := range idx.IncludedColumns {
+			names[i] = c.ref()
+		}
+		s += " INCLUDE (" + strings.Join(names, ", ") + ")"
+	}
+	if idx.FilterDefinition != "" {
+		s += " WHERE " + idx.FilterDefinition
+	}
+	if idx.IgnoreDupKey {
+		s += " WITH (IGNORE_DUP_KEY = ON)"
+	}
+	return s
 }
 
 // ============================================================

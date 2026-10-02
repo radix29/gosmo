@@ -92,7 +92,8 @@ type groupSizesFunc func() (map[int]int, error)
 
 // schedulerGroupSizes is s's groupSizesFunc: Server.Schedulers counted per
 // group, read at most once. A permission refusal becomes ErrUnsupported
-// naming the permission; any other failure is returned as is.
+// naming the permission, with the server's error still reachable through
+// it; any other failure is returned as is.
 func schedulerGroupSizes(ctx context.Context, s *Server) groupSizesFunc {
 	var sizes map[int]int
 	var err error
@@ -105,7 +106,7 @@ func schedulerGroupSizes(ctx context.Context, s *Server) groupSizesFunc {
 		var scheds []Scheduler
 		if scheds, err = s.Schedulers(ctx); err != nil {
 			if se, ok := AsSQLError(err); ok && (se.Number == 297 || se.Number == 300) {
-				err = unsupportedf("mapping affinity beyond processor group 0 reads sys.dm_os_schedulers, which needs VIEW SERVER STATE (VIEW SERVER PERFORMANCE STATE from SQL Server 2022): %v", err)
+				err = unsupportedf("mapping affinity beyond processor group 0 reads sys.dm_os_schedulers, which needs VIEW SERVER STATE (VIEW SERVER PERFORMANCE STATE from SQL Server 2022): %w", err)
 			}
 			return nil, err
 		}

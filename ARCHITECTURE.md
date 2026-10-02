@@ -363,7 +363,7 @@ The instance and database halves pair up: `ServerResourceStat` and
 | Bulk table/view + column snapshot | `db.Catalog(ctx)` (user objects) / `db.SystemCatalog(ctx)` (`sys` schema); `Catalog.Functions` holds the table-valued functions (`IF`/`TF`/`FT`) and their result columns, kept out of `Objects` |
 | `Database.Views`                | `db.Views(ctx)` / `db.ViewRef(schema, name)` (no-I/O handle) / `v.Drop(ctx)` / `v.Triggers(ctx)` |
 | `Database.StoredProcedures`     | `db.StoredProcedures(ctx)` / `db.StoredProcedureByName(ctx, schema, name)` / `db.StoredProcedureRef(schema, name)` (no-I/O handle) / `db.CreateStoredProcedure(ctx, req)` / `p.Drop(ctx)` |
-| `Database.UserDefinedFunctions` | `db.UserDefinedFunctions(ctx)` / `db.UserDefinedFunctionRef(schema, name)` (no-I/O handle) / `f.Drop(ctx)` |
+| `Database.UserDefinedFunctions` | `db.UserDefinedFunctions(ctx)` (T-SQL and CLR; `f.FuncType` is a `FunctionType` — `IsScalar()`, `IsCLR()`) / `db.UserDefinedFunctionRef(schema, name)` (no-I/O handle) / `f.Drop(ctx)` |
 | System Views/Procedures/Functions | `db.SystemViews(ctx)` / `db.SystemStoredProcedures(ctx)` / `db.SystemFunctions(ctx)` |
 | `Database.Schemas`              | `db.Schemas(ctx)` / `db.SchemaByName(ctx, name)` / `db.SchemaRef(name)` / `db.CreateSchema(ctx, req)` / `schema.ObjectCount(ctx)` / `schema.ObjectCountsByType(ctx)` |
 | `Database.Users`                | `db.Users(ctx)` / `db.UserByName(ctx, name)` / `db.UserRef(name)` (no-I/O handle) / `db.CreateUser(ctx, gosmo.CreateUserRequest{Name, Kind, ...})` — for login, with password (contained), without login, Windows, certificate, asymmetric key, external provider |
@@ -1106,7 +1106,7 @@ ddl, _ := sc.ScriptCertificate(ctx, "AppCert")   // FROM BINARY: the public cert
 ddl, _ := sc.ScriptAsymmetricKey(ctx, "AppKey")  // WITH ALGORITHM: a new key pair, not this one
 ddl, _ := sc.ScriptSymmetricKey(ctx, "AppSymKey") // WITH ALGORITHM + every ENCRYPTION BY: a new key, passwords as placeholders
 ddl, _ := sc.ScriptUserDefinedDataType(ctx, "dbo", "PhoneNumber")
-ddl, _ := sc.ScriptUserDefinedTableType(ctx, "dbo", "OrderLines")
+ddl, _ := sc.ScriptUserDefinedTableType(ctx, "dbo", "OrderLines") // keys, checks, indexes and COLLATE too
 ddl, _ := sc.ScriptClrType(ctx, "dbo", "Point")
 ddl, _ := sc.ScriptXMLSchemaCollection(ctx, "dbo", "InvoiceSchema")
 ddl, _ := sc.ScriptRule(ctx, "dbo", "PositiveRule")
@@ -1266,7 +1266,11 @@ when the capture spans more than one. `Statements()` gives each entry as a
 standalone script instead. `WithScriptServer(ctx, name)` relabels captures
 issued through a handle on one instance but meant for another — scripting an
 availability group secondary's `JOIN` without connecting to it. Read methods
-are unaffected — only the two exec chokepoints consult the collector.
+are unaffected — only the two exec chokepoints consult the collector. The
+one write that bypasses them is `Database.BulkInsert`: its rows are a TDS
+bulk-load stream with no T-SQL form, so under `WithScript` it refuses with
+an `ErrUnsupported` error rather than load anything, and an observer is told
+of a completed load as an `INSERT BULK … -- n rows` entry.
 
 `WithStatementObserver(ctx, fn)` is the executing twin, hooked at the same
 chokepoints: `fn` receives the `ScriptEntry` of every statement a write ran
@@ -1285,10 +1289,10 @@ to any caller mirroring a write into its own state: under `WithScript` the
 write returns success without the server ever seeing it, so a rename
 followed by a re-read *by the new name* finds nothing. gosmo honours this
 for its own cached state too — a scripted `Rename`/`Enable`/`SetOwner`
-leaves the object it was called on unchanged. The lookup-free handles
-(`srv.DatabaseRef(name)`, `srv.LoginRef(name)`, `srv.AlertRef(name)`, `srv.JobRef(name)`,
-`srv.OperatorRef(name)`, `srv.ScheduleRef(name)`, `srv.ServerRoleRef(name)`,
-`srv.ConfigurationRef(name)`, `db.UserRef(name)`, `t.StatisticRef(name)`) exist for the same reason: an
+leaves the object it was called on unchanged. The lookup-free `…Ref` handles
+(`srv.DatabaseRef(name)`, `srv.LoginRef(name)`, `db.UserRef(name)`,
+`t.StatisticRef(name)` and the rest — `CLAUDE.md`'s `Ref` bullet lists
+every family) exist for the same reason: an
 object whose `CREATE` was only collected can't be found by a `...ByName`
 query, and the `Create*` methods return one of these handles under
 `WithScript`.
@@ -1589,7 +1593,8 @@ file. There is no way to null the step's database through msdb at all.
 #### Shared schedules
 
 A schedule is an object in its own right, shared by any number of jobs —
-`Job.AddSchedule` creates one and attaches it in a single step, while
+`Job.AddSchedule` creates one from the same `CreateScheduleRequest` and
+attaches it in a single step, while
 `AttachSchedule`/`DetachSchedule` wire up (or unwire) one that already
 exists without creating or deleting it.
 
@@ -2278,7 +2283,7 @@ the prologue is retried; whatever the caller goes on to run is not.
 
 ## Security
 
-- **Passwords are escaped, never spliced in raw.** `CreateLogin` and `ChangePassword` quote the password as an `N'...'` literal through the same `QuoteLiteral` escaping every other string literal in the package uses, so it's injection-proof regardless of password content.
+- **Passwords are escaped, never spliced in raw.** `CreateLogin` and `ChangePassword` quote the password as an `N'...'` literal through the same `QuoteLiteral` escaping every other string literal in the package uses, so it's injection-proof regardless of password content. `HASHED` is emitted only for `CreateLoginRequest.PasswordHash` (a hash SQL Server produced, rendered as a `0x…` binary literal), never for a cleartext password.
 - **Connection lifetimes are correctly scoped.** `Database.query` returns a `*dbRows` that owns both the `*sql.Rows` and the `*sql.Conn` pinned to run its `USE`, closing both together — `*sql.Rows.Close` on its own would leave that connection checked out of the pool for good.
 - **Values that can't be parameterized are validated by shape or allowlist.** DDL can't parameterize keyword or literal arguments, so anything spliced into one is checked first: recovery models, data types, and backup actions against their known sets; partition function boundary values against the shape of a well-formed SQL Server literal; Query Store mode keywords and index data-compression settings against their allowlists.
 - **One shared quoting implementation.** `QuoteName` and `QuoteLiteral` wrap the driver's own `TSQLQuoter` (`QuoteLiteral` adding the `N` prefix, so a literal is never varchar), so gosmo's internal identifier/literal escaping — and any caller or downstream consumer (e.g. gossms) building its own DDL — go through the same tested implementation rather than a hand-rolled one.

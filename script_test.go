@@ -414,12 +414,16 @@ func TestScriptedAgentCreatesReturnNameOnlyHandles(t *testing.T) {
 		if j == nil || j.Name != "nightly reindex" {
 			t.Fatalf("returned job = %+v, want a handle named \"nightly reindex\"", j)
 		}
-		// sp_add_job and sp_add_jobserver, then the dependent step.
+		// sp_add_job and sp_add_jobserver as one atomic batch (T30), then
+		// the dependent step.
 		if err := j.AddStep(ctx, JobStepRequest{Name: "step 1", Subsystem: "TSQL", Command: "SELECT 1"}); err != nil {
 			t.Fatalf("AddStep under WithScript: %v", err)
 		}
-		if len(script.Statements()) != 3 || !strings.Contains(script.Statements()[2], "sp_add_jobstep") {
-			t.Errorf("Statements = %v, want sp_add_job, sp_add_jobserver, sp_add_jobstep", script.Statements())
+		st := script.Statements()
+		if len(st) != 2 || !strings.HasPrefix(st[0], "SET XACT_ABORT ON;") ||
+			!strings.Contains(st[0], "sp_add_job ") || !strings.Contains(st[0], "sp_add_jobserver ") ||
+			!strings.Contains(st[1], "sp_add_jobstep") {
+			t.Errorf("Statements = %v, want sp_add_job and sp_add_jobserver in one atomic batch, then sp_add_jobstep", st)
 		}
 	})
 

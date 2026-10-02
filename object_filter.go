@@ -38,8 +38,10 @@ type TextCriterion struct {
 	Value string
 }
 
-// DateCriterion is one comparison against a creation date. Day's time of day
-// is ignored.
+// DateCriterion is one comparison against a creation date. Only Day's
+// calendar date, read in its own Location, is used: it names a day of the
+// server's local calendar — the one create_date is stored in — whatever zone
+// Day carries. Its time of day is ignored.
 type DateCriterion struct {
 	Op  DateOp
 	Day time.Time
@@ -136,7 +138,11 @@ func (f ObjectFilter) clause(cols filterColumns, nextArg int) (string, []any) {
 			if c.Day.IsZero() {
 				continue
 			}
-			day := time.Date(c.Day.Year(), c.Day.Month(), c.Day.Day(), 0, 0, 0, 0, c.Day.Location())
+			// In UTC, not Day's own zone: go-mssqldb sends a time.Time as
+			// datetimeoffset, and comparing create_date (a zone-less
+			// datetime, promoted at +00:00) against one at another offset
+			// shifts the window by that offset (T24).
+			day := time.Date(c.Day.Year(), c.Day.Month(), c.Day.Day(), 0, 0, 0, 0, time.UTC)
 			next := day.AddDate(0, 0, 1)
 			switch c.Op {
 			case DateBefore:

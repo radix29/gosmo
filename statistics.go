@@ -33,6 +33,11 @@ type Statistic struct {
 
 // statisticSelect is shared by Statistics and StatisticByName
 // so a statistic carries the same fields however it was fetched.
+//
+// dm_db_stats_properties is OUTER APPLYed: it returns no row to a caller who
+// can see the statistic in sys.stats (VIEW DEFINITION) but may not read it,
+// and a CROSS APPLY dropped such a statistic from the list altogether. Its
+// properties then read as zero, as they do for a statistic never computed.
 const statisticSelect = `
 SELECT s.name, s.stats_id,
        s.auto_created, s.user_created,
@@ -41,7 +46,7 @@ SELECT s.name, s.stats_id,
        sp.steps, sp.unfiltered_rows,
        s.no_recompute, s.is_incremental, sp.modification_counter
 FROM   sys.stats s
-CROSS  APPLY sys.dm_db_stats_properties(s.object_id, s.stats_id) sp
+OUTER  APPLY sys.dm_db_stats_properties(s.object_id, s.stats_id) sp
 WHERE  s.object_id = @p1`
 
 // Statistics returns all statistics objects for the table.

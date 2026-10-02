@@ -351,11 +351,12 @@ type RestoreOptions struct {
 	// RESTORE arrives, and a reconnecting application takes it and fails the
 	// restore with "Exclusive access could not be obtained".
 	//
-	// An online database is set SINGLE_USER WITH ROLLBACK IMMEDIATE and put
-	// back to MULTI_USER after the RESTORE whenever it is still online and
-	// read-write — which also repairs it when the RESTORE fails; Restore
-	// repairs it again, off the caller's cancellation, if the batch itself
-	// was cut short. A database that does not exist yet or is RESTORING has
+	// An online database is set SINGLE_USER WITH ROLLBACK IMMEDIATE and,
+	// when that succeeded, put back to MULTI_USER after the RESTORE whenever
+	// it is still online and read-write — which also repairs it when the
+	// RESTORE fails, since a refused RESTORE does not end the batch; Restore
+	// repairs it again, off the caller's cancellation, only if the batch
+	// itself was cut short. A database that does not exist yet or is RESTORING has
 	// nobody to close and is left alone. One in STANDBY refuses the ALTER
 	// but can have readers, so its sessions are killed instead and no access
 	// mode is changed. A Managed Instance refuses SET SINGLE_USER, so
@@ -416,10 +417,14 @@ func (s *Server) Restore(ctx context.Context, opts RestoreOptions) error {
 	if err != nil {
 		// The batch's own MULTI_USER does not run when the batch is cut
 		// short — a cancel or an expired deadline, the likeliest ways for a
-		// long restore to fail. Best effort: a database left RESTORING, or
-		// never created, refuses it, and the restore's error is what the
-		// caller is told about.
-		if opts.CloseExistingConnections && !s.refusesSingleUser() {
+		// long restore to fail. Only then: a failed RESTORE is
+		// statement-level (Msg 3201/3013 at severity 16, probed on 17 and
+		// 13), so the batch has already released what it took, and a
+		// repair after any error would flip a database deliberately left
+		// RESTRICTED_USER to MULTI_USER (see batchCutShort). Best effort: a
+		// database left RESTORING, or never created, refuses it, and the
+		// restore's error is what the caller is told about.
+		if opts.CloseExistingConnections && batchCutShort(err) && !s.refusesSingleUser() {
 			_ = s.restoreMultiUser(ctx, opts.Database)
 		}
 		return fmt.Errorf("gosmo: restore %q: %w", opts.Database, err)
@@ -545,7 +550,7 @@ func buildRestoreStatement(opts RestoreOptions, killSessions bool) (string, erro
 IF %[1]s
 BEGIN
     ALTER DATABASE %[2]s SET SINGLE_USER WITH ROLLBACK IMMEDIATE;
-    SET @closed = 1;
+    IF @@ERROR = 0 SET @closed = 1;
 END
 ELSE IF %[4]s
 BEGIN

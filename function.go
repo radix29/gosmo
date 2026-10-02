@@ -13,16 +13,43 @@ import (
 type UserDefinedFunction struct {
 	db *Database
 
-	ObjectID   int
-	Schema     string
-	Name       string
-	FuncType   string // "FN" scalar, "TF" multi-statement table-valued, "IF" inline table-valued
+	ObjectID int
+	Schema   string
+	Name     string
+	FuncType FunctionType
+	// Definition is the T-SQL module text; empty for a CLR function, which
+	// has none.
 	Definition string
 	CreateDate time.Time
 	ModifyDate time.Time
 }
 
-// UserDefinedFunctions returns all UDFs in the database.
+// FunctionType is a function's sys.objects type: the three T-SQL forms and
+// the two CLR ones. A CLR aggregate (AF) is not one — CREATE AGGREGATE makes
+// it and DROP AGGREGATE removes it.
+type FunctionType string
+
+const (
+	FunctionTypeScalar      FunctionType = "FN" // T-SQL scalar
+	FunctionTypeInlineTable FunctionType = "IF" // T-SQL inline table-valued
+	FunctionTypeTable       FunctionType = "TF" // T-SQL multi-statement table-valued
+	FunctionTypeCLRScalar   FunctionType = "FS" // CLR scalar
+	FunctionTypeCLRTable    FunctionType = "FT" // CLR table-valued
+)
+
+// IsScalar reports a function that returns a value, T-SQL or CLR — the one
+// a call selects rather than selects from.
+func (t FunctionType) IsScalar() bool {
+	return t == FunctionTypeScalar || t == FunctionTypeCLRScalar
+}
+
+// IsCLR reports a function implemented in an assembly, with no T-SQL
+// definition.
+func (t FunctionType) IsCLR() bool {
+	return t == FunctionTypeCLRScalar || t == FunctionTypeCLRTable
+}
+
+// UserDefinedFunctions returns all UDFs in the database, T-SQL and CLR.
 func (d *Database) UserDefinedFunctions(ctx context.Context) ([]*UserDefinedFunction, error) {
 	return d.userDefinedFunctionsWhere(ctx, "", nil)
 }
@@ -39,8 +66,8 @@ func (d *Database) userDefinedFunctionsWhere(ctx context.Context, where string, 
 SELECT o.object_id, SCHEMA_NAME(o.schema_id), o.name, o.type,
        ISNULL(m.definition,''), o.create_date, o.modify_date
 FROM   sys.objects o
-JOIN   sys.sql_modules m ON m.object_id = o.object_id
-WHERE  o.type IN ('FN','TF','IF') AND o.is_ms_shipped = 0 ` + where + `
+LEFT   JOIN sys.sql_modules m ON m.object_id = o.object_id
+WHERE  o.type IN ('FN','TF','IF','FS','FT') AND o.is_ms_shipped = 0 ` + where + `
 ORDER  BY SCHEMA_NAME(o.schema_id), o.name`
 
 	rows, err := d.query(ctx, q, args...)
@@ -50,7 +77,7 @@ ORDER  BY SCHEMA_NAME(o.schema_id), o.name`
 			&f.Definition, &f.CreateDate, &f.ModifyDate); err != nil {
 			return nil, err
 		}
-		f.FuncType = strings.TrimSpace(f.FuncType)
+		f.FuncType = FunctionType(strings.TrimSpace(string(f.FuncType)))
 		return f, nil
 	})
 }
@@ -62,10 +89,10 @@ ORDER  BY SCHEMA_NAME(o.schema_id), o.name`
 // Reads sys.all_objects rather than sys.objects for the same reason
 // SystemViews reads sys.all_objects instead of sys.views: shipped
 // objects are invisible through the non-"all_" catalog views. Restricted to
-// the same type set as UserDefinedFunctions ('FN'/'TF'/'IF') —
-// aggregate ('AF') and CLR scalar ('FS') functions are excluded, matching that
-// same scope. The "sys" schema is identical in every database on a server, so
-// this only needs loading once per connection.
+// the three T-SQL types ('FN'/'TF'/'IF'): the shipped functions are T-SQL,
+// and aggregates ('AF') are not functions DROP FUNCTION removes. The "sys"
+// schema is identical in every database on a server, so this only needs
+// loading once per connection.
 func (d *Database) SystemFunctions(ctx context.Context) ([]*UserDefinedFunction, error) {
 	return d.systemFunctionsWhere(ctx, "", nil)
 }
@@ -93,7 +120,7 @@ ORDER  BY o.name`
 			&f.Definition, &f.CreateDate, &f.ModifyDate); err != nil {
 			return nil, err
 		}
-		f.FuncType = strings.TrimSpace(f.FuncType)
+		f.FuncType = FunctionType(strings.TrimSpace(string(f.FuncType)))
 		return f, nil
 	})
 }
@@ -109,7 +136,7 @@ func (d *Database) UserDefinedFunctionRef(schema, name string) *UserDefinedFunct
 func (f *UserDefinedFunction) Database() *Database { return f.db }
 
 // Drop drops the function — scalar, inline table-valued or multi-statement
-// table-valued alike, all of which DROP FUNCTION removes. A function that
+// table-valued, T-SQL or CLR alike, all of which DROP FUNCTION removes. A function that
 // isn't there is the server's error, not a silent success — see the note on
 // Table.Drop.
 func (f *UserDefinedFunction) Drop(ctx context.Context) error {

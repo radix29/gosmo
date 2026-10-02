@@ -388,7 +388,8 @@ func (j *Job) SetDeleteLevel(ctx context.Context, level NotifyLevel) error {
 // not have any job server or servers defined") or let an alert target it
 // (sp_update_alert/sp_add_alert: "cannot be used by an alert"). Multi-server
 // (MSX/TSX) target-server selection is out of scope here, so "(local)" is the
-// only target.
+// only target. The two procedures run as one atomicBatch, so a refused
+// sp_add_jobserver leaves no half-made job behind under the requested name.
 func (s *Server) CreateJob(ctx context.Context, req CreateJobRequest) (*Job, error) {
 	if req.Name == "" {
 		return nil, fmt.Errorf("gosmo: create job: name is required")
@@ -405,34 +406,68 @@ func (s *Server) CreateJob(ctx context.Context, req CreateJobRequest) (*Job, err
 	if req.OwnerLogin != "" {
 		q += fmt.Sprintf(", @owner_login_name = N'%s'", escapeSingle(req.OwnerLogin))
 	}
-	if err := s.exec(ctx, q); err != nil {
-		return nil, fmt.Errorf("gosmo: create job %q: %w", req.Name, err)
-	}
 	enlistQ := fmt.Sprintf("EXEC msdb.dbo.sp_add_jobserver @job_name = N'%s', @server_name = N'(local)'", escapeSingle(req.Name))
-	if err := s.exec(ctx, enlistQ); err != nil {
-		return nil, fmt.Errorf("gosmo: enlist job %q on local server: %w", req.Name, err)
+	if err := s.exec(ctx, atomicBatch([]string{q, enlistQ})); err != nil {
+		return nil, fmt.Errorf("gosmo: create job %q: %w", req.Name, err)
 	}
 	return createdObject(ctx, s.JobRef(req.Name), func() (*Job, error) {
 		return s.JobByName(ctx, req.Name)
 	})
 }
 
-// AddSchedule attaches a schedule to the job.
-func (j *Job) AddSchedule(ctx context.Context, req JobScheduleRequest) error {
-	q := fmt.Sprintf(
-		"EXEC msdb.dbo.sp_add_jobschedule @job_name = N'%s', @name = N'%s', "+
-			"@enabled = %d, @freq_type = %d, @freq_interval = %d, "+
-			"@freq_subday_type = %d, @freq_subday_interval = %d, "+
-			"@active_start_time = %d, @active_end_time = %d",
-		escapeSingle(j.Name), escapeSingle(req.Name),
-		boolToInt(req.Enabled), req.FreqType, req.FreqInterval,
-		req.FreqSubdayType, req.FreqSubdayInterval,
-		req.ActiveStartTime, req.ActiveEndTime,
-	)
-	if err := j.server.exec(ctx, q); err != nil {
-		return fmt.Errorf("gosmo: add schedule %q to job %q: %w", req.Name, j.Name, err)
+// AddSchedule creates a schedule and attaches it to the job in one step
+// (sp_add_jobschedule), as opposed to AttachSchedule, which attaches an
+// existing shared one. It takes the same request as Server.CreateSchedule,
+// so every recurrence the catalog can hold is expressible: a weekly or
+// monthly schedule needs FreqRecurrenceFactor ≥ 1 (Msg 14278 otherwise), and
+// a FreqMonthlyRelative one FreqRelativeInterval too.
+//
+// sp_add_jobschedule has no owner parameter — it gives the schedule the job's
+// owner — so an OwnerLoginName is applied by sp_update_schedule in the same
+// atomicBatch, and a refused owner leaves no schedule behind.
+//
+// Schedule names are not unique, so the result is the job's newest schedule
+// of that name: the one just created.
+func (j *Job) AddSchedule(ctx context.Context, req CreateScheduleRequest) (*Schedule, error) {
+	if req.Name == "" {
+		return nil, fmt.Errorf("gosmo: add schedule to job %q: name is required", j.Name)
 	}
-	return nil
+	add := fmt.Sprintf("EXEC msdb.dbo.sp_add_jobschedule @job_name = N'%s', @name = N'%s', %s",
+		escapeSingle(j.Name), escapeSingle(req.Name), req.frequencyArgs())
+	q := add
+	if req.OwnerLoginName != "" {
+		q = atomicBatch([]string{
+			"DECLARE @schedule_id int",
+			add + ", @schedule_id = @schedule_id OUTPUT",
+			fmt.Sprintf("EXEC msdb.dbo.sp_update_schedule @schedule_id = @schedule_id, @owner_login_name = N'%s'",
+				escapeSingle(req.OwnerLoginName)),
+		})
+	}
+	if err := j.server.exec(ctx, q); err != nil {
+		return nil, fmt.Errorf("gosmo: add schedule %q to job %q: %w", req.Name, j.Name, err)
+	}
+	return createdObject(ctx, j.server.ScheduleRef(req.Name), func() (*Schedule, error) {
+		return j.newestSchedule(ctx, req.Name)
+	})
+}
+
+// newestSchedule returns the job's most recently created schedule named
+// name. The job is matched by name, so a JobRef handle (JobID zero) works.
+func (j *Job) newestSchedule(ctx context.Context, name string) (*Schedule, error) {
+	q := "SELECT TOP (1) " + scheduleColumns + " " + scheduleFrom + `
+JOIN   msdb.dbo.sysjobschedules js ON js.schedule_id = sch.schedule_id
+JOIN   msdb.dbo.sysjobs j ON j.job_id = js.job_id
+WHERE  j.name = @p1 AND sch.name = @p2
+ORDER  BY sch.schedule_id DESC`
+
+	var sch *Schedule
+	err := j.server.queryRow(ctx, func(row *sql.Row) error {
+		var scanErr error
+		sch, scanErr = scanSchedule(j.server, row.Scan)
+		return scanErr
+	}, q, j.Name, name)
+	return foundRow(sch, err, notFoundf("gosmo: schedule %q not found on job %q", name, j.Name),
+		fmt.Sprintf("read schedule %q of job %q", name, j.Name))
 }
 
 // CreateJobRequest describes a new SQL Server Agent job.
@@ -443,19 +478,4 @@ type CreateJobRequest struct {
 	Category   string
 	OwnerLogin string
 	Enabled    bool
-}
-
-// JobScheduleRequest describes a schedule to attach to a job.
-type JobScheduleRequest struct {
-	Name    string
-	Enabled bool
-	// FreqType: 1=once, 4=daily, 8=weekly, 16=monthly, 64=when agent starts.
-	FreqType     int
-	FreqInterval int
-	// FreqSubdayType: 1=once, 2=seconds, 4=minutes, 8=hours.
-	FreqSubdayType     int
-	FreqSubdayInterval int
-	// ActiveStartTime and ActiveEndTime are HHMMSS integers, e.g. 23000 = 02:30:00.
-	ActiveStartTime int
-	ActiveEndTime   int
 }

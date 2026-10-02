@@ -54,7 +54,7 @@ func schemaCapabilityQuery(first int, perms []string) (string, []any) {
 
 // objectCapabilityQuery builds the OBJECT-scope block: one row per object the
 // login has an explicit permission on or owns, tagged "O:<permission>" with
-// the object as "schema.object" and 1 for held, 0 for denied.
+// the object as ObjectKey spells it and 1 for held, 0 for denied.
 //
 // It is a catalog read rather than a HAS_PERMS_BY_NAME probe because that
 // function answers for one securable per call — a query per object, which is
@@ -72,7 +72,7 @@ func schemaCapabilityQuery(first int, perms []string) (string, []any) {
 //     it in reports a grant on one column as a grant on the table and a DENY
 //     on one column as a DENY on all of them; dropping it instead leaves the
 //     wider grant to answer for a column SQL Server refuses. Column rows are
-//     tagged "C:" and keyed "schema.object.column" — see
+//     tagged "C:" and keyed as ColumnKey spells it — see
 //     DatabaseCapabilities.ColumnPermissions.
 //   - The sys.objects half is not redundant with the permissions half: an
 //     object's owner holds implicit CONTROL and has *no* permission row at
@@ -87,11 +87,11 @@ func objectCapabilityQuery(first int, perms []string) (string, []any) {
 	for i, n := range perms {
 		args[i] = n
 	}
-	return `SELECT CONCAT('O:', n.v), CONCAT(SCHEMA_NAME(o.schema_id), '.', o.name), 1
+	return `SELECT CONCAT('O:', n.v), CONCAT(SCHEMA_NAME(o.schema_id), NCHAR(0), o.name), 1
 	FROM sys.objects AS o CROSS JOIN (VALUES ` + valuesList(first, len(perms)) + `) AS n(v)
 	WHERE o.principal_id IN (SELECT id FROM cap_me)
 UNION ALL
-	SELECT CONCAT('O:', n.v), CONCAT(OBJECT_SCHEMA_NAME(p.major_id), '.', OBJECT_NAME(p.major_id)),
+	SELECT CONCAT('O:', n.v), CONCAT(OBJECT_SCHEMA_NAME(p.major_id), NCHAR(0), OBJECT_NAME(p.major_id)),
 	       CASE WHEN p.state IN ('D') THEN 0 ELSE 1 END
 	FROM sys.database_permissions AS p CROSS JOIN (VALUES ` + valuesList(first, len(perms)) + `) AS n(v)
 	WHERE p.class = 1 AND p.minor_id = 0
@@ -99,8 +99,8 @@ UNION ALL
 	  AND p.permission_name IN (n.v, 'CONTROL')
 	  AND OBJECT_NAME(p.major_id) IS NOT NULL
 UNION ALL
-	SELECT CONCAT('C:', n.v), CONCAT(OBJECT_SCHEMA_NAME(p.major_id), '.', OBJECT_NAME(p.major_id),
-	                                 '.', COL_NAME(p.major_id, p.minor_id)),
+	SELECT CONCAT('C:', n.v), CONCAT(OBJECT_SCHEMA_NAME(p.major_id), NCHAR(0), OBJECT_NAME(p.major_id),
+	                                 NCHAR(0), COL_NAME(p.major_id, p.minor_id)),
 	       CASE WHEN p.state IN ('D') THEN 0 ELSE 1 END
 	FROM sys.database_permissions AS p CROSS JOIN (VALUES ` + valuesList(first, len(perms)) + `) AS n(v)
 	WHERE p.class = 1 AND p.minor_id > 0
@@ -246,12 +246,12 @@ func securableCapabilityQuery(first int, perms []string) (string, []any) {
 	FROM sys.assemblies AS a CROSS JOIN (VALUES ` + vals + `) AS n(v)
 	WHERE a.is_user_defined = 1
 UNION ALL
-	SELECT CONCAT('K:', n.v), CONCAT('TYPE::', SCHEMA_NAME(t.schema_id), '.', t.name),
+	SELECT CONCAT('K:', n.v), CONCAT('TYPE::', SCHEMA_NAME(t.schema_id), NCHAR(0), t.name),
 	       HAS_PERMS_BY_NAME(QUOTENAME(SCHEMA_NAME(t.schema_id)) + '.' + QUOTENAME(t.name), 'TYPE', n.v)
 	FROM sys.types AS t CROSS JOIN (VALUES ` + vals + `) AS n(v)
 	WHERE t.is_user_defined = 1
 UNION ALL
-	SELECT CONCAT('K:', n.v), CONCAT('XML SCHEMA COLLECTION::', SCHEMA_NAME(x.schema_id), '.', x.name),
+	SELECT CONCAT('K:', n.v), CONCAT('XML SCHEMA COLLECTION::', SCHEMA_NAME(x.schema_id), NCHAR(0), x.name),
 	       HAS_PERMS_BY_NAME(QUOTENAME(SCHEMA_NAME(x.schema_id)) + '.' + QUOTENAME(x.name), 'XML SCHEMA COLLECTION', n.v)
 	FROM sys.xml_schema_collections AS x CROSS JOIN (VALUES ` + vals + `) AS n(v)
 	WHERE x.schema_id <> SCHEMA_ID('sys')

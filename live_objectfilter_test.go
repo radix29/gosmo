@@ -171,6 +171,12 @@ func TestLiveObjectFilterMatchesTheCallerSideAnswer(t *testing.T) {
 			{"after that day", DateCriterion{Op: DateAfter, Day: today}, 0},
 			{"after yesterday", DateCriterion{Op: DateAfter, Day: today.AddDate(0, 0, -1)}, len(all)},
 			{"before tomorrow", DateCriterion{Op: DateBefore, Day: today.AddDate(0, 0, 1)}, len(all)},
+			// T24: the day is the calendar date whatever zone it carries.
+			// Sent in its own zone, +14:00 missed everything created after
+			// 10:00 and -12:00 everything before 12:00, so one of the two
+			// fails at any time of day against the old code.
+			{"that day at +14:00", DateCriterion{Op: DateOn, Day: inZone(today, 14)}, len(all)},
+			{"that day at -12:00", DateCriterion{Op: DateOn, Day: inZone(today, -12)}, len(all)},
 		} {
 			t.Run(c.name, func(t *testing.T) {
 				got, err := d.TablesFiltered(ctx, ObjectFilter{Created: []DateCriterion{c.crit}})
@@ -330,4 +336,9 @@ func TestLiveObjectFilterAcrossEveryFamily(t *testing.T) {
 			}
 		})
 	}
+}
+
+// inZone is t's calendar date at noon in a fixed zone hours east of UTC.
+func inZone(t time.Time, hours int) time.Time {
+	return time.Date(t.Year(), t.Month(), t.Day(), 12, 0, 0, 0, time.FixedZone("", hours*3600))
 }

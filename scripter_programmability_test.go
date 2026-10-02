@@ -50,7 +50,7 @@ func TestBuildUserDefinedTableTypeScriptColumnsAndMemoryOptimized(t *testing.T) 
 		{Name: "label", DataType: DataTypeNVarChar, MaxLength: 100, IsNullable: true},
 	}
 
-	got := buildUserDefinedTableTypeScript(tt, cols, DefaultScriptOptions())
+	got := buildUserDefinedTableTypeScript(tt, tableTypeScriptParts{cols: cols}, DefaultScriptOptions())
 	if !strings.Contains(got, "CREATE TYPE [dbo].[IDList] AS TABLE (") {
 		t.Errorf("table type not scripted AS TABLE:\n%s", got)
 	}
@@ -62,8 +62,60 @@ func TestBuildUserDefinedTableTypeScriptColumnsAndMemoryOptimized(t *testing.T) 
 	}
 
 	tt.IsMemoryOptimized = true
-	if got := buildUserDefinedTableTypeScript(tt, cols, DefaultScriptOptions()); !strings.Contains(got, "WITH (MEMORY_OPTIMIZED = ON);") {
+	if got := buildUserDefinedTableTypeScript(tt, tableTypeScriptParts{cols: cols}, DefaultScriptOptions()); !strings.Contains(got, "WITH (MEMORY_OPTIMIZED = ON);") {
 		t.Errorf("memory-optimized table type loses its clause:\n%s", got)
+	}
+}
+
+// TestBuildUserDefinedTableTypeScriptKeepsConstraintsAndIndexes pins T12: a
+// table type's keys, checks, indexes and non-default collation are part of
+// its CREATE, written bare (CREATE TYPE takes no constraint names) and in
+// the grammar's order.
+func TestBuildUserDefinedTableTypeScriptKeepsConstraintsAndIndexes(t *testing.T) {
+	tt := &UserDefinedTableType{Schema: "dbo", Name: "Lines"}
+	p := tableTypeScriptParts{
+		dbCollation: "SQL_Latin1_General_CP1_CI_AS",
+		cols: []*Column{
+			{Name: "id", DataType: DataTypeInt},
+			{Name: "code", DataType: DataTypeVarChar, MaxLength: 10, IsNullable: true, Collation: "Latin1_General_BIN2"},
+			{Name: "qty", DataType: DataTypeInt, IsNullable: true, Collation: "",
+				DefaultValue: &ColumnDefault{Name: "DF__TT_Lines__qty", Definition: "((1))"}},
+		},
+		indexes: []*Index{
+			{Name: "PK__TT_Lines", IsPrimaryKey: true, IsUnique: true, IsClustered: true, IgnoreDupKey: true,
+				KeyColumns: []IndexColumn{{Name: "id", Descending: true}}},
+			{Name: "ix_qty", KeyColumns: []IndexColumn{{Name: "qty"}},
+				IncludedColumns: []IndexColumn{{Name: "code", IsIncluded: true}}, FilterDefinition: "([qty]>(0))"},
+			{Name: "UQ__TT_Lines", IsUniqueConstraint: true, IsUnique: true, KeyColumns: []IndexColumn{{Name: "code"}}},
+		},
+		checks: []*CheckConstraint{{Name: "CK__TT_Lines", Definition: "([qty]>(0))", Column: "qty"}},
+	}
+	got := buildUserDefinedTableTypeScript(tt, p, DefaultScriptOptions())
+	want := `CREATE TYPE [dbo].[Lines] AS TABLE (
+    [id] int NOT NULL,
+    [code] varchar(10) COLLATE Latin1_General_BIN2 NULL,
+    [qty] int NULL DEFAULT ((1)),
+    PRIMARY KEY CLUSTERED ([id] DESC) WITH (IGNORE_DUP_KEY = ON),
+    UNIQUE NONCLUSTERED ([code] ASC),
+    CHECK ([qty]>(0)),
+    INDEX [ix_qty] NONCLUSTERED ([qty] ASC) INCLUDE ([code]) WHERE ([qty]>(0))
+);`
+	if !strings.Contains(got, want) {
+		t.Errorf("table type script:\n%s\nwant it to contain:\n%s", got, want)
+	}
+	if strings.Contains(got, "CONSTRAINT") {
+		t.Errorf("CREATE TYPE takes no constraint names (Msg 156):\n%s", got)
+	}
+
+	tt.IsMemoryOptimized = true
+	p = tableTypeScriptParts{
+		cols: []*Column{{Name: "id", DataType: DataTypeInt}},
+		indexes: []*Index{{Name: "PK__TT", IsPrimaryKey: true, IsUnique: true, Type: IndexTypeNonClusteredHash,
+			BucketCount: 1024, KeyColumns: []IndexColumn{{Name: "id"}}}},
+	}
+	got = buildUserDefinedTableTypeScript(tt, p, DefaultScriptOptions())
+	if !strings.Contains(got, "PRIMARY KEY NONCLUSTERED HASH ([id]) WITH (BUCKET_COUNT = 1024)\n)\nWITH (MEMORY_OPTIMIZED = ON);") {
+		t.Errorf("memory-optimized table type loses its index:\n%s", got)
 	}
 }
 

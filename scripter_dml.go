@@ -74,8 +74,9 @@ func (sc *Scripter) ScriptExecute(ctx context.Context, schema, name string) (str
 
 // ScriptFunctionCall generates a call template for a function: a SELECT of a
 // scalar function's result, or a SELECT from a table-valued one. funcType is
-// the UserDefinedFunction.FuncType — "FN", "IF" or "TF".
-func (sc *Scripter) ScriptFunctionCall(ctx context.Context, schema, name, funcType string) (string, error) {
+// the UserDefinedFunction.FuncType; a CLR function is called the same way as
+// its T-SQL counterpart.
+func (sc *Scripter) ScriptFunctionCall(ctx context.Context, schema, name string, funcType FunctionType) (string, error) {
 	if err := requireSchema("script function call", schema, name); err != nil {
 		return "", err
 	}
@@ -223,13 +224,13 @@ func buildExecuteScript(schema, name string, params []*Parameter) string {
 // buildFunctionCallScript assembles the call template for a function. A
 // scalar function is selected as a value; a table-valued one is selected
 // from, which is the only form that parses.
-func buildFunctionCallScript(schema, name, funcType string, params []*Parameter) string {
+func buildFunctionCallScript(schema, name string, funcType FunctionType, params []*Parameter) string {
 	args := make([]string, len(params))
 	for i, p := range params {
 		args[i] = fmt.Sprintf("<%s, %s,>", strings.TrimPrefix(p.Name, "@"), p.TypeString())
 	}
 	call := fmt.Sprintf("%s(%s)", qualifiedName(schema, name), strings.Join(args, ", "))
-	if strings.EqualFold(funcType, "FN") {
+	if funcType.IsScalar() {
 		return fmt.Sprintf("SELECT %s AS N'%s';\nGO\n", call, escapeSingle(name))
 	}
 	return fmt.Sprintf("SELECT *\nFROM   %s;\nGO\n", call)

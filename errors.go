@@ -56,13 +56,13 @@ func (e *notFoundError) Unwrap() []error {
 	return []error{ErrNotFound, e.also}
 }
 
-// notFoundf builds a not-found error whose message is exactly format/args.
 // ErrSchemaRequired is wrapped by every call given a schema-scoped name with
 // an empty schema. Nothing defaults it: dbo and the caller's own default
 // schema are both plausible readings, and guessing wrong addresses — or
 // drops — a different object.
 var ErrSchemaRequired = errors.New("schema is required")
 
+// notFoundf builds a not-found error whose message is exactly format/args.
 func notFoundf(format string, args ...any) error {
 	return &notFoundError{msg: fmt.Sprintf(format, args...)}
 }
@@ -99,29 +99,53 @@ func unsupportedVersionf(format string, args ...any) error {
 	return &unsupportedVersionError{msg: fmt.Sprintf(format, args...)}
 }
 
-// ErrUnsupported reports an object gosmo refuses to script because it cannot
-// express it faithfully — an external table, a FileTable, a ledger table, a
-// table with Always Encrypted columns. The refusal comes before any text is
-// produced: a script that recreates something *different* under the same name
-// is worse than none, and under DROP AND CREATE it drops the object and never
-// recreates it.
+// ErrUnsupported reports a request gosmo refuses because it has no faithful
+// form for it, decided before any text is produced or statement sent:
+//
+//   - a script of an object it cannot express — an external table, a
+//     FileTable, a ledger table, a table with Always Encrypted columns, a CLR
+//     module's CREATE, a pool affinity it cannot map to scheduler ids, or a
+//     DROP of what cannot be dropped (a built-in Resource Governor pool or
+//     group, the Resource Governor or Database Mail configuration). A script
+//     that recreates something *different* under the same name is worse than
+//     none, and under DROP AND CREATE it drops the object and never recreates
+//     it;
+//   - Database.BulkInsert under WithScript: a bulk load has no T-SQL form to
+//     collect;
+//   - a read with no form for its input: Server.EventFiles given a blob URL,
+//     which cannot be listed.
 //
 // It is not ErrUnsupportedVersion: the server is not too old for anything,
-// the scripter simply has no form for the object.
+// gosmo simply has no form for the request.
 var ErrUnsupported = errors.New("not supported by the scripter")
 
 // unsupportedError carries its own message and reaches ErrUnsupported through
-// the chain.
-type unsupportedError struct{ msg string }
+// the chain — and, when its format wrapped one with %w, the cause too.
+type unsupportedError struct {
+	msg   string
+	cause error // the fmt.Errorf result when it wraps something, else nil
+}
 
 func (e *unsupportedError) Error() string { return e.msg }
 
-func (e *unsupportedError) Unwrap() error { return ErrUnsupported }
+func (e *unsupportedError) Unwrap() []error {
+	if e.cause == nil {
+		return []error{ErrUnsupported}
+	}
+	return []error{ErrUnsupported, e.cause}
+}
 
-// unsupportedf builds a scripter refusal whose message is exactly
-// format/args.
+// unsupportedf builds a refusal whose message is exactly format/args. A %w in
+// format keeps that error reachable through errors.Is and errors.As, as
+// fmt.Errorf would.
 func unsupportedf(format string, args ...any) error {
-	return &unsupportedError{msg: fmt.Sprintf(format, args...)}
+	err := fmt.Errorf(format, args...)
+	e := &unsupportedError{msg: err.Error()}
+	switch err.(type) {
+	case interface{ Unwrap() error }, interface{ Unwrap() []error }:
+		e.cause = err
+	}
+	return e
 }
 
 // ============================================================

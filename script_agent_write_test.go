@@ -52,12 +52,18 @@ func TestScriptAgentWrites(t *testing.T) {
 			return job().SetDeleteLevel(c, NotifyOnFailure)
 		}, "EXEC msdb.dbo.sp_update_job @job_name = N'Nightly''Run', @delete_level = 2"},
 		{"Job AddSchedule", func(c context.Context) error {
-			return job().AddSchedule(c, JobScheduleRequest{
-				Name: "Daily'2am", Enabled: true,
-				FreqType: 4, FreqInterval: 1, FreqSubdayType: 1,
-				ActiveStartTime: 20000,
+			_, err := job().AddSchedule(c, CreateScheduleRequest{
+				Name: "Weekly'2am", Enabled: true,
+				FreqType: FreqWeekly, FreqInterval: WeekdayMonday | WeekdayFriday, FreqRecurrenceFactor: 1,
+				FreqSubdayType: SubdayOnce, ActiveStartTime: 20000,
+				ActiveStartDate: time.Date(2026, 10, 2, 0, 0, 0, 0, time.UTC),
 			})
-		}, "EXEC msdb.dbo.sp_add_jobschedule @job_name = N'Nightly''Run', @name = N'Daily''2am', @enabled = 1, @freq_type = 4, @freq_interval = 1, @freq_subday_type = 1, @freq_subday_interval = 0, @active_start_time = 20000, @active_end_time = 0"},
+			return err
+		}, "EXEC msdb.dbo.sp_add_jobschedule @job_name = N'Nightly''Run', @name = N'Weekly''2am', @enabled = 1, " +
+			"@freq_type = 8, @freq_interval = 34, @freq_subday_type = 1, @freq_subday_interval = 0, " +
+			"@freq_relative_interval = 0, @freq_recurrence_factor = 1, " +
+			"@active_start_date = 20261002, @active_end_date = 99991231, " +
+			"@active_start_time = 20000, @active_end_time = 0"},
 		{"Job DetachSchedule", func(c context.Context) error {
 			return job().DetachSchedule(c, "Daily'2am")
 		}, "EXEC msdb.dbo.sp_detach_schedule @job_name = N'Nightly''Run', @schedule_name = N'Daily''2am'"},

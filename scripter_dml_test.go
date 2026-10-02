@@ -106,13 +106,16 @@ func TestParameterTypeStringQualifiesUserDefinedTypes(t *testing.T) {
 func TestBuildFunctionCallScriptShapeFollowsFunctionType(t *testing.T) {
 	params := []*Parameter{{Name: "@id", Ordinal: 1, DataType: DataTypeInt}}
 
-	scalar := buildFunctionCallScript("dbo", "fn_Total", "FN", params)
-	if !strings.Contains(scalar, "SELECT [dbo].[fn_Total](<id, int,>)") {
-		t.Errorf("scalar function call wrong:\n%s", scalar)
+	// A CLR scalar function (FS) is a value too: selected from, it is Msg 208.
+	for _, ft := range []FunctionType{FunctionTypeScalar, FunctionTypeCLRScalar} {
+		scalar := buildFunctionCallScript("dbo", "fn_Total", ft, params)
+		if !strings.Contains(scalar, "SELECT [dbo].[fn_Total](<id, int,>)") || strings.Contains(scalar, "FROM") {
+			t.Errorf("%s function call wrong:\n%s", ft, scalar)
+		}
 	}
 
 	// A table-valued function can only be selected *from*.
-	for _, ft := range []string{"IF", "TF"} {
+	for _, ft := range []FunctionType{FunctionTypeInlineTable, FunctionTypeTable, FunctionTypeCLRTable} {
 		tvf := buildFunctionCallScript("dbo", "fn_Rows", ft, params)
 		if !strings.Contains(tvf, "FROM   [dbo].[fn_Rows](<id, int,>)") {
 			t.Errorf("%s function call wrong:\n%s", ft, tvf)

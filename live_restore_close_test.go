@@ -96,6 +96,26 @@ func TestLiveRestoreCloseExistingConnections(t *testing.T) {
 		}
 	})
 
+	// Restore repairs MULTI_USER from Go only when the batch was cut short
+	// (T21). That is safe only because a RESTORE the server refuses is
+	// statement-level: the batch goes on to its own release. Were it
+	// batch-aborting, as a failed DROP DATABASE is, this database would be
+	// left SINGLE_USER.
+	t.Run("a refused restore is released by its own batch", func(t *testing.T) {
+		missing := liveBackupPath(t, srv, ctx, name+"_missing.bak")
+		err := srv.Restore(ctx, RestoreOptions{Database: name, Devices: []BackupTarget{DiskTarget(missing)},
+			Replace: true, Recovery: RestoreWithRecovery, CloseExistingConnections: true})
+		if err == nil {
+			t.Fatal("restored from a backup file that does not exist")
+		}
+		if batchCutShort(err) {
+			t.Fatalf("the refusal reads as a batch cut short, so this does not test the batch's own release: %v", err)
+		}
+		if st, access := state(t, name); st != "ONLINE" || access != "MULTI_USER" {
+			t.Errorf("after a refused restore the database is %s / %s, want ONLINE / MULTI_USER", st, access)
+		}
+	})
+
 	t.Run("NORECOVERY skips the release it would be refused", func(t *testing.T) {
 		if err := restore(RestoreOptions{Recovery: RestoreWithNoRecovery, CloseExistingConnections: true}); err != nil {
 			t.Fatalf("restore: %v", err)

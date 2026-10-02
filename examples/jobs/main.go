@@ -132,12 +132,12 @@ func main() {
 	// creates a schedule owned by that job; Server.CreateSchedule creates a
 	// shared schedule that Job.AttachSchedule can bind to several jobs.
 	demo.Section("Schedules")
-	demo.Must(job.AddSchedule(ctx, gosmo.JobScheduleRequest{
+	demo.Value(job.AddSchedule(ctx, gosmo.CreateScheduleRequest{
 		Name:               "every 15 minutes",
 		Enabled:            true,
-		FreqType:           4, // daily
+		FreqType:           gosmo.FreqDaily,
 		FreqInterval:       1,
-		FreqSubdayType:     4, // minutes
+		FreqSubdayType:     gosmo.SubdayMinutes,
 		FreqSubdayInterval: 15,
 		ActiveStartTime:    0,      // 00:00:00
 		ActiveEndTime:      235959, // 23:59:59

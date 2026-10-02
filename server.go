@@ -73,8 +73,10 @@ func (s *Server) DefaultPaths(ctx context.Context) (DefaultPaths, error) {
 func (s *Server) Name() string { return s.info.Name }
 
 // CurrentDatabase returns the name of the database the connection is
-// currently in — the login's default database when ConnectionOptions.Database
-// was left empty at connect time, or whatever a session-level USE has since
+// currently in: ConnectionOptions.Database at Connect, "master" when that was
+// left empty (applyDefaults fills it in, so the login's default database is
+// not used); for a Server built by NewServer over a pool whose DSN names no
+// database, the login's default; or whatever a session-level USE has since
 // switched to.
 func (s *Server) CurrentDatabase(ctx context.Context) (string, error) {
 	var name string

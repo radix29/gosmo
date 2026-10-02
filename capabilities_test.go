@@ -617,7 +617,7 @@ func TestTheObjectProbeAsksAboutEveryObjectInOnePass(t *testing.T) {
 	}
 	// The permission in the kind column, the object in the name column, as
 	// scanCapabilityRows reads them.
-	if !strings.Contains(q, "SELECT CONCAT('O:', n.v), CONCAT(SCHEMA_NAME(o.schema_id), '.', o.name)") {
+	if !strings.Contains(q, "SELECT CONCAT('O:', n.v), CONCAT(SCHEMA_NAME(o.schema_id), NCHAR(0), o.name)") {
 		t.Errorf("the object block's columns are the wrong way round:\n%s", q)
 	}
 	if !strings.Contains(capabilityPrincipalCTE, "JOIN cap_me ON rm.member_principal_id = cap_me.id") {
@@ -634,8 +634,8 @@ func TestAnObjectPermissionIsAdditiveNotAWithholdingTest(t *testing.T) {
 	c := &DatabaseCapabilities{
 		Accessible: true,
 		ObjectPermissions: map[string]map[string]CapabilityState{
-			"dbo.Granted": {"ALTER": CapabilityGranted},
-			"dbo.Denied":  {"ALTER": CapabilityDenied},
+			"dbo\x00Granted": {"ALTER": CapabilityGranted},
+			"dbo\x00Denied":  {"ALTER": CapabilityDenied},
 		},
 	}
 	if !c.HasOnObject("dbo", "Granted", "ALTER") {
@@ -661,13 +661,13 @@ func TestADenyOnAnObjectSurvivesAGrant(t *testing.T) {
 		objects := map[string]map[string]CapabilityState{}
 		for _, answer := range order {
 			st, _ := capabilityStateOf(sql.NullInt64{Int64: answer, Valid: true})
-			if objects["dbo.T"] == nil {
-				objects["dbo.T"] = map[string]CapabilityState{}
+			if objects["dbo\x00T"] == nil {
+				objects["dbo\x00T"] = map[string]CapabilityState{}
 			}
-			if objects["dbo.T"]["ALTER"] == CapabilityDenied {
+			if objects["dbo\x00T"]["ALTER"] == CapabilityDenied {
 				continue
 			}
-			objects["dbo.T"]["ALTER"] = st
+			objects["dbo\x00T"]["ALTER"] = st
 		}
 		c := &DatabaseCapabilities{Accessible: true, ObjectPermissions: objects}
 		if c.HasOnObject("dbo", "T", "ALTER") {
@@ -685,8 +685,8 @@ func TestDeniedOnObjectReportsOnlyAnExplicitDeny(t *testing.T) {
 	c := &DatabaseCapabilities{
 		Accessible: true,
 		ObjectPermissions: map[string]map[string]CapabilityState{
-			"dbo.Granted": {"ALTER": CapabilityGranted},
-			"dbo.Denied":  {"ALTER": CapabilityDenied},
+			"dbo\x00Granted": {"ALTER": CapabilityGranted},
+			"dbo\x00Denied":  {"ALTER": CapabilityDenied},
 		},
 	}
 	if !c.DeniedOnObject("dbo", "Denied", "ALTER") {
@@ -750,9 +750,9 @@ func TestDatabaseCapabilitiesReadColumnPermissionsApartFromTheirTable(t *testing
 	srv := capServer(t, &capScript{
 		dbAccess: int64(1),
 		dbRows: [][]driver.Value{
-			{"O:ALTER", "dbo.Patients", int64(1)},
-			{"C:ALTER", "dbo.Patients.SSN", int64(0)},
-			{"C:ALTER", "dbo.Patients.Notes", int64(1)},
+			{"O:ALTER", "dbo\x00Patients", int64(1)},
+			{"C:ALTER", "dbo\x00Patients\x00SSN", int64(0)},
+			{"C:ALTER", "dbo\x00Patients\x00Notes", int64(1)},
 		},
 	})
 
@@ -806,8 +806,8 @@ func TestADenyOnAColumnSurvivesAGrantAndIsNamedStably(t *testing.T) {
 		srv := capServer(t, &capScript{
 			dbAccess: int64(1),
 			dbRows: [][]driver.Value{
-				{"C:ALTER", "dbo.Patients.SSN", order[0]},
-				{"C:ALTER", "dbo.Patients.SSN", order[1]},
+				{"C:ALTER", "dbo\x00Patients\x00SSN", order[0]},
+				{"C:ALTER", "dbo\x00Patients\x00SSN", order[1]},
 			},
 		})
 		c, err := srv.DatabaseRef("HealthClinic").Capabilities(context.Background())
@@ -822,9 +822,9 @@ func TestADenyOnAColumnSurvivesAGrantAndIsNamedStably(t *testing.T) {
 	c := &DatabaseCapabilities{
 		Accessible: true,
 		ColumnPermissions: map[string]map[string]CapabilityState{
-			"dbo.Patients.SSN":    {"ALTER": CapabilityDenied},
-			"dbo.Patients.Notes":  {"ALTER": CapabilityDenied},
-			"dbo.Patients.Amount": {"ALTER": CapabilityGranted},
+			"dbo\x00Patients\x00SSN":    {"ALTER": CapabilityDenied},
+			"dbo\x00Patients\x00Notes":  {"ALTER": CapabilityDenied},
+			"dbo\x00Patients\x00Amount": {"ALTER": CapabilityGranted},
 		},
 	}
 	for range 20 {
@@ -1002,7 +1002,7 @@ func TestDatabaseCapabilitiesReadDatabaseDenialsApartFromTheProbe(t *testing.T) 
 			{"P", "ALTER", int64(0)},
 			{"P", "CONTROL", int64(0)},
 			{"D:ALTER", "HealthClinic", int64(0)},
-			{"O:ALTER", "dbo.Patient", int64(1)},
+			{"O:ALTER", "dbo\x00Patient", int64(1)},
 		},
 	})
 
@@ -1449,9 +1449,9 @@ func TestTheSecurableBlockAsksPerSecurable(t *testing.T) {
 	for _, want := range []struct{ frag, why string }{
 		{"SELECT CONCAT('K:', n.v), CONCAT('ASSEMBLY::', a.name),", "the permission rides in kind and the key in name"},
 		{"HAS_PERMS_BY_NAME(QUOTENAME(a.name), 'ASSEMBLY', n.v)", "an assembly is asked as class ASSEMBLY, quoted"},
-		{"CONCAT('TYPE::', SCHEMA_NAME(t.schema_id), '.', t.name)", "a type is keyed as DatabaseSecurableKey spells it"},
+		{"CONCAT('TYPE::', SCHEMA_NAME(t.schema_id), NCHAR(0), t.name)", "a type is keyed as DatabaseSecurableKey spells it"},
 		{"HAS_PERMS_BY_NAME(QUOTENAME(SCHEMA_NAME(t.schema_id)) + '.' + QUOTENAME(t.name), 'TYPE', n.v)", "a type is asked as class TYPE, each part quoted"},
-		{"CONCAT('XML SCHEMA COLLECTION::', SCHEMA_NAME(x.schema_id), '.', x.name)", "a collection is keyed as DatabaseSecurableKey spells it"},
+		{"CONCAT('XML SCHEMA COLLECTION::', SCHEMA_NAME(x.schema_id), NCHAR(0), x.name)", "a collection is keyed as DatabaseSecurableKey spells it"},
 		{"'XML SCHEMA COLLECTION', n.v)", "a collection is asked as its own class"},
 		{"WHERE t.is_user_defined = 1", "the built-in types are not asked about"},
 		{"WHERE a.is_user_defined = 1", "the system assembly is not asked about"},
@@ -1476,8 +1476,8 @@ func TestTheSecurableBlockAsksPerSecurable(t *testing.T) {
 		want         string
 	}{
 		{DatabaseSecurableAssembly, "", "a1", "ASSEMBLY::a1"},
-		{DatabaseSecurableType, "dbo", "Phone", "TYPE::dbo.Phone"},
-		{DatabaseSecurableXMLSchemaCollection, "Sales", "Doc", "XML SCHEMA COLLECTION::Sales.Doc"},
+		{DatabaseSecurableType, "dbo", "Phone", "TYPE::dbo\x00Phone"},
+		{DatabaseSecurableXMLSchemaCollection, "Sales", "Doc", "XML SCHEMA COLLECTION::Sales\x00Doc"},
 		{DatabaseSecurableSymmetricKey, "", "k1", "SYMMETRIC KEY::k1"},
 		{DatabaseSecurableCertificate, "", "c1", "CERTIFICATE::c1"},
 		{DatabaseSecurableAsymmetricKey, "", "a1", "ASYMMETRIC KEY::a1"},
@@ -1498,8 +1498,8 @@ func TestDatabaseCapabilitiesReadSecurableAnswersByKind(t *testing.T) {
 		dbAccess: int64(1),
 		dbRows: [][]driver.Value{
 			{"P", "CONTROL", int64(0)},
-			{"K:CONTROL", "TYPE::dbo.x", int64(1)},
-			{"K:CONTROL", "XML SCHEMA COLLECTION::dbo.x", int64(0)},
+			{"K:CONTROL", "TYPE::dbo\x00x", int64(1)},
+			{"K:CONTROL", "XML SCHEMA COLLECTION::dbo\x00x", int64(0)},
 			{"K:CONTROL", "ASSEMBLY::a1", int64(1)},
 			// NULL: not a state, and so not a denial.
 			{"K:CONTROL", "ASSEMBLY::a2", nil},
@@ -1552,7 +1552,7 @@ func TestPermitsOnSecurableFailsOpenOnlyWhereNothingWasMeasured(t *testing.T) {
 		t.Error("a nil capability set did not fail open on a securable")
 	}
 	c := &DatabaseCapabilities{Accessible: true, SecurablePermissions: map[string]map[string]CapabilityState{
-		"TYPE::dbo.x": {"CONTROL": CapabilityDenied},
+		"TYPE::dbo\x00x": {"CONTROL": CapabilityDenied},
 	}}
 	if c.PermitsOnSecurable(DatabaseSecurableType, "dbo", "x", "CONTROL") {
 		t.Error("a measured 0 permitted")
@@ -1561,9 +1561,37 @@ func TestPermitsOnSecurableFailsOpenOnlyWhereNothingWasMeasured(t *testing.T) {
 		t.Error("a securable with no row withheld; unknown must fail open")
 	}
 	shut := &DatabaseCapabilities{SecurablePermissions: map[string]map[string]CapabilityState{
-		"TYPE::dbo.x": {"CONTROL": CapabilityGranted},
+		"TYPE::dbo\x00x": {"CONTROL": CapabilityGranted},
 	}}
 	if shut.PermitsOnSecurable(DatabaseSecurableType, "dbo", "x", "CONTROL") {
 		t.Error("an inaccessible database still permitted a securable-scoped action")
+	}
+}
+
+// TestCapabilityKeysKeepDottedNamesApart pins T26: a dot is legal in any
+// bracketed name, so the keys join their parts with one that is not, and
+// [a.b].[c] never answers for [a].[b.c].
+func TestCapabilityKeysKeepDottedNamesApart(t *testing.T) {
+	if ObjectKey("a.b", "c") == ObjectKey("a", "b.c") {
+		t.Error("ObjectKey collides for a dotted schema and a dotted object")
+	}
+	if ColumnKey("a.b", "c", "d") == ColumnKey("a", "b.c", "d") || ColumnKey("a", "b", "c.d") == ColumnKey("a", "b.c", "d") {
+		t.Error("ColumnKey collides on a dotted part")
+	}
+	if DatabaseSecurableKey(DatabaseSecurableType, "a.b", "c") == DatabaseSecurableKey(DatabaseSecurableType, "a", "b.c") {
+		t.Error("DatabaseSecurableKey collides for a dotted schema and a dotted type")
+	}
+	c := &DatabaseCapabilities{
+		ObjectPermissions: map[string]map[string]CapabilityState{ObjectKey("a.b", "c"): {"ALTER": CapabilityDenied}},
+		ColumnPermissions: map[string]map[string]CapabilityState{ColumnKey("a.b", "c", "x"): {"ALTER": CapabilityDenied}},
+	}
+	if c.DeniedOnObject("a", "b.c", "ALTER") {
+		t.Error("[a].[b.c] read [a.b].[c]'s DENY")
+	}
+	if col, ok := c.DeniedOnAnyColumn("a", "b.c", "ALTER"); ok {
+		t.Errorf("[a].[b.c] read [a.b].[c]'s column DENY on %q", col)
+	}
+	if col, ok := c.DeniedOnAnyColumn("a.b", "c", "ALTER"); !ok || col != "x" {
+		t.Errorf("DeniedOnAnyColumn([a.b].[c]) = %q, %v; want x, true", col, ok)
 	}
 }

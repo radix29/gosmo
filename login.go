@@ -528,27 +528,38 @@ func (s *Server) LoginRef(name string) *Login {
 }
 
 // CreateLogin creates a login. With no CreateLoginRequest.Source, an empty
-// password means a Windows login (FROM WINDOWS) and a non-empty one a SQL
-// login; set Source to create any of the other kinds. It returns the login
+// password (and no PasswordHash) means a Windows login (FROM WINDOWS) and a
+// non-empty one a SQL login; set Source to create any of the other kinds. It returns the login
 // read back from the catalog — or, under Scripting(ctx), the LoginRef handle,
 // since nothing ran.
 //
 // Security: the password is never string-concatenated raw into the SQL text
 // — it's quoted via QuoteLiteral (N'...', doubling any embedded quote),
-// the same escaping every other literal in this package uses. HASHED is
-// deliberately not used here: it tells SQL Server the value is already one of
-// its own password-hash formats, not a cleartext password, so passing an
-// arbitrary hex encoding of the cleartext under HASHED either fails outright
-// or creates a login nothing can ever authenticate as.
+// the same escaping every other literal in this package uses. HASHED is used
+// only for CreateLoginRequest.PasswordHash, never for Password: it tells SQL
+// Server the value is already one of its own password-hash formats, not a
+// cleartext password, so passing an arbitrary hex encoding of the cleartext
+// under HASHED either fails outright or creates a login nothing can ever
+// authenticate as.
 //
-// DefaultDatabase reaches an external-provider login through a following
-// ALTER LOGIN: OBJECT_ID is the only WITH option FROM EXTERNAL PROVIDER
-// accepts, and DEFAULT_DATABASE alongside it does not parse. A
-// certificate- or asymmetric-key-mapped login cannot have one at all —
+// Every option a source's CREATE LOGIN accepts goes in its one WITH list, so
+// a login is never created first under the server's defaults and corrected
+// afterwards: CHECK_POLICY defaults to ON, so a weak password with the policy
+// off has to be refused-or-accepted by the CREATE itself (Msg 15118
+// otherwise, on Linux too).
+//
+// DefaultDatabase and DefaultLanguage reach an external-provider login
+// through a following ALTER LOGIN: OBJECT_ID is the only WITH option FROM
+// EXTERNAL PROVIDER accepts, and DEFAULT_DATABASE alongside it does not
+// parse. A certificate- or asymmetric-key-mapped login cannot have either at
+// all —
 // SQL Server rejects DEFAULT_DATABASE for those in both CREATE and ALTER
 // ("Cannot use the parameter DEFAULT_DATABASE for a certificate or
 // asymmetric key login", verified live) — so asking for one is an error
-// rather than a statement the server will refuse.
+// rather than a statement the server will refuse. The CREATE and that ALTER
+// run as one atomicBatch, so a refused ALTER leaves no login behind —
+// except on Azure SQL Database, where CREATE LOGIN must be alone in its
+// batch, so there they stay two statements.
 func (s *Server) CreateLogin(ctx context.Context, req CreateLoginRequest) (*Login, error) {
 	name, password, opts := req.Name, req.Password, &req
 	if name == "" {
@@ -557,25 +568,41 @@ func (s *Server) CreateLogin(ctx context.Context, req CreateLoginRequest) (*Logi
 
 	src := opts.Source
 	if src == LoginSourceAuto {
-		if password == "" {
+		if password == "" && opts.PasswordHash == nil {
 			src = LoginSourceWindows
 		} else {
 			src = LoginSourceSQL
 		}
 	}
-	stmt, alterDefaultDB, err := createLoginStatement(name, password, src, opts)
+	stmt, alterDefaults, err := createLoginStatement(name, password, src, opts)
 	if err != nil {
 		return nil, fmt.Errorf("gosmo: create login %q: %w", name, err)
 	}
-	if err := s.exec(ctx, stmt); err != nil {
-		return nil, fmt.Errorf("gosmo: create login %q: %w", name, err)
-	}
-	if alterDefaultDB {
-		q := fmt.Sprintf("ALTER LOGIN %s WITH DEFAULT_DATABASE = %s",
-			quoteIdent(name), quoteIdent(opts.DefaultDatabase))
-		if err := s.exec(ctx, q); err != nil {
-			return nil, fmt.Errorf("gosmo: create login %q: set default database: %w", name, err)
+	stmts := []string{stmt}
+	if alterDefaults {
+		var set []string
+		if opts.DefaultDatabase != "" {
+			set = append(set, "DEFAULT_DATABASE = "+quoteIdent(opts.DefaultDatabase))
 		}
+		if opts.DefaultLanguage != "" {
+			set = append(set, "DEFAULT_LANGUAGE = "+quoteIdent(opts.DefaultLanguage))
+		}
+		stmts = append(stmts, fmt.Sprintf("ALTER LOGIN %s WITH %s", quoteIdent(name), strings.Join(set, ", ")))
+	}
+	switch {
+	case len(stmts) == 1:
+		err = s.exec(ctx, stmt)
+	case s.info != nil && EngineEdition(s.info.EngineEdition) == EngineAzureSQLDatabase:
+		for _, q := range stmts {
+			if err = s.exec(ctx, q); err != nil {
+				break
+			}
+		}
+	default:
+		err = s.exec(ctx, atomicBatch(stmts))
+	}
+	if err != nil {
+		return nil, fmt.Errorf("gosmo: create login %q: %w", name, err)
 	}
 	return createdObject(ctx, s.LoginRef(name), func() (*Login, error) {
 		return s.LoginByName(ctx, name)
@@ -583,20 +610,38 @@ func (s *Server) CreateLogin(ctx context.Context, req CreateLoginRequest) (*Logi
 }
 
 // createLoginStatement builds the CREATE LOGIN statement for one resolved
-// source, and reports whether DefaultDatabase still has to be applied by a
-// following ALTER LOGIN — CERTIFICATE and ASYMMETRIC KEY take no WITH option
-// list in CREATE LOGIN and EXTERNAL PROVIDER takes only OBJECT_ID, so naming
-// DEFAULT_DATABASE there is a syntax error. A mapped login has no default database at all; see
-// CreateLogin.
+// source, and reports whether DefaultDatabase or DefaultLanguage still has to
+// be applied by a following ALTER LOGIN — CERTIFICATE and ASYMMETRIC KEY take
+// no WITH option list in CREATE LOGIN and EXTERNAL PROVIDER takes only
+// OBJECT_ID, so naming DEFAULT_DATABASE there is a syntax error. A mapped
+// login has no default database or language at all; see CreateLogin.
+//
+// The combinations SQL Server refuses are refused here first, so a caller
+// learns of them before anything runs (each verified live on 17,
+// 2026-10-02): CHECK_EXPIRATION = ON with CHECK_POLICY = OFF (Msg 15122,
+// which MUST_CHANGE's implied CHECK_EXPIRATION = ON hits too), MUST_CHANGE
+// with HASHED (Msg 33010), and SID or CREDENTIAL on a Windows login (a
+// syntax error: <windows_options> is DEFAULT_DATABASE and DEFAULT_LANGUAGE
+// only).
 func createLoginStatement(name, password string, src LoginSource, opts *CreateLoginRequest) (string, bool, error) {
-	if src != LoginSourceSQL && password != "" {
+	isSQL := src == LoginSourceSQL
+	if !isSQL && (password != "" || opts.PasswordHash != nil) {
 		return "", false, fmt.Errorf("a %s login takes no password", src)
 	}
-	if opts.MustChange && src != LoginSourceSQL {
+	if opts.MustChange && !isSQL {
 		return "", false, fmt.Errorf("MustChange applies to a SQL login only, not a %s login", src)
 	}
-	if opts.DefaultDatabase != "" && (src == LoginSourceCertificate || src == LoginSourceAsymmetricKey) {
-		return "", false, fmt.Errorf("a %s login cannot have a default database", src)
+	if !isSQL && (opts.CheckPolicy != nil || opts.CheckExpiration != nil) {
+		return "", false, fmt.Errorf("CheckPolicy and CheckExpiration apply to a SQL login only, not a %s login", src)
+	}
+	if !isSQL && opts.SID != nil {
+		return "", false, fmt.Errorf("SID applies to a SQL login only, not a %s login", src)
+	}
+	if !isSQL && opts.Credential != "" {
+		return "", false, fmt.Errorf("a credential maps to a SQL login only, not a %s login", src)
+	}
+	if (opts.DefaultDatabase != "" || opts.DefaultLanguage != "") && (src == LoginSourceCertificate || src == LoginSourceAsymmetricKey) {
+		return "", false, fmt.Errorf("a %s login cannot have a default database or language", src)
 	}
 	if opts.ObjectID != "" && src != LoginSourceExternalProvider {
 		return "", false, fmt.Errorf("ObjectID applies to an external provider login only, not a %s login", src)
@@ -607,24 +652,48 @@ func createLoginStatement(name, password string, src LoginSource, opts *CreateLo
 
 	switch src {
 	case LoginSourceSQL:
-		if password == "" {
+		policyOff := opts.CheckPolicy != nil && !*opts.CheckPolicy
+		switch {
+		case password == "" && opts.PasswordHash == nil:
 			return "", false, fmt.Errorf("a SQL login requires a password")
+		case password != "" && opts.PasswordHash != nil:
+			return "", false, fmt.Errorf("a SQL login takes Password or PasswordHash, not both")
+		case opts.MustChange && opts.PasswordHash != nil:
+			return "", false, fmt.Errorf("MustChange cannot be combined with PasswordHash")
+		case opts.MustChange && (policyOff || (opts.CheckExpiration != nil && !*opts.CheckExpiration)):
+			return "", false, fmt.Errorf("MustChange requires CheckPolicy and CheckExpiration on")
+		case policyOff && opts.CheckExpiration != nil && *opts.CheckExpiration:
+			return "", false, fmt.Errorf("CheckExpiration cannot be on when CheckPolicy is off")
 		}
-		fmt.Fprintf(&sb, " WITH PASSWORD = %s", QuoteLiteral(password))
+		if opts.PasswordHash != nil {
+			fmt.Fprintf(&sb, " WITH PASSWORD = %s HASHED", binaryLiteral(opts.PasswordHash))
+		} else {
+			fmt.Fprintf(&sb, " WITH PASSWORD = %s", QuoteLiteral(password))
+		}
+		checkExpiration := opts.CheckExpiration
 		if opts.MustChange {
 			// MUST_CHANGE requires CHECK_EXPIRATION = ON (and CHECK_POLICY =
 			// ON, already the server default) — SQL Server rejects
 			// MUST_CHANGE otherwise.
-			sb.WriteString(" MUST_CHANGE, CHECK_EXPIRATION = ON")
+			sb.WriteString(" MUST_CHANGE")
+			checkExpiration = new(true)
 		}
-		if opts.DefaultDatabase != "" {
-			fmt.Fprintf(&sb, ", DEFAULT_DATABASE = %s", quoteIdent(opts.DefaultDatabase))
+		if opts.SID != nil {
+			fmt.Fprintf(&sb, ", SID = %s", binaryLiteral(opts.SID))
+		}
+		writeLoginDefaults(&sb, ", ", opts)
+		if checkExpiration != nil {
+			sb.WriteString(", CHECK_EXPIRATION = " + onOff(*checkExpiration))
+		}
+		if opts.CheckPolicy != nil {
+			sb.WriteString(", CHECK_POLICY = " + onOff(*opts.CheckPolicy))
+		}
+		if opts.Credential != "" {
+			fmt.Fprintf(&sb, ", CREDENTIAL = %s", quoteIdent(opts.Credential))
 		}
 	case LoginSourceWindows:
 		sb.WriteString(" FROM WINDOWS")
-		if opts.DefaultDatabase != "" {
-			fmt.Fprintf(&sb, " WITH DEFAULT_DATABASE = %s", quoteIdent(opts.DefaultDatabase))
-		}
+		writeLoginDefaults(&sb, " WITH ", opts)
 	case LoginSourceExternalProvider:
 		sb.WriteString(" FROM EXTERNAL PROVIDER")
 		if opts.ObjectID != "" {
@@ -634,7 +703,7 @@ func createLoginStatement(name, password string, src LoginSource, opts *CreateLo
 			// here and stays on the following ALTER LOGIN.
 			fmt.Fprintf(&sb, " WITH OBJECT_ID = %s", QuoteLiteral(opts.ObjectID))
 		}
-		return sb.String(), opts.DefaultDatabase != "", nil
+		return sb.String(), opts.DefaultDatabase != "" || opts.DefaultLanguage != "", nil
 	case LoginSourceCertificate:
 		if opts.CertificateName == "" {
 			return "", false, fmt.Errorf("a certificate login requires CertificateName")
@@ -651,6 +720,19 @@ func createLoginStatement(name, password string, src LoginSource, opts *CreateLo
 		return "", false, fmt.Errorf("unknown login source %d", int(src))
 	}
 	return sb.String(), false, nil
+}
+
+// writeLoginDefaults appends DEFAULT_DATABASE and DEFAULT_LANGUAGE, the first
+// of them introduced by lead (", " after a PASSWORD clause, " WITH " for a
+// Windows login, whose CREATE has no other option).
+func writeLoginDefaults(sb *strings.Builder, lead string, opts *CreateLoginRequest) {
+	if opts.DefaultDatabase != "" {
+		fmt.Fprintf(sb, "%sDEFAULT_DATABASE = %s", lead, quoteIdent(opts.DefaultDatabase))
+		lead = ", "
+	}
+	if opts.DefaultLanguage != "" {
+		fmt.Fprintf(sb, "%sDEFAULT_LANGUAGE = %s", lead, quoteIdent(opts.DefaultLanguage))
+	}
 }
 
 // LoginSource names what a new login authenticates from — the FROM clause of
@@ -704,11 +786,43 @@ func (src LoginSource) String() string {
 type CreateLoginRequest struct {
 	Name string
 	// Password is the SQL login's password. With Source left at
-	// LoginSourceAuto, an empty one means a Windows login.
+	// LoginSourceAuto, an empty one (and no PasswordHash) means a Windows
+	// login.
 	Password string
 
+	// PasswordHash is a SQL login's password as SQL Server's own hash — the
+	// varbinary LOGINPROPERTY(name, 'PasswordHash') returns — emitted as
+	// PASSWORD = 0x... HASHED. It re-creates a login elsewhere (an AG
+	// secondary, a migration target) able to authenticate with the same
+	// password, and implies a SQL login under LoginSourceAuto. Mutually
+	// exclusive with Password and with MustChange.
+	PasswordHash []byte
+
 	DefaultDatabase string
+	// DefaultLanguage is the login's DEFAULT_LANGUAGE, by name or alias;
+	// empty leaves the server default. A certificate- or asymmetric-key
+	// login cannot have one.
+	DefaultLanguage string
 	MustChange      bool
+
+	// CheckPolicy and CheckExpiration are a SQL login's CHECK_POLICY and
+	// CHECK_EXPIRATION; nil omits the option, so the server default applies
+	// (policy ON, expiration OFF). CheckExpiration on with CheckPolicy off is
+	// refused, as SQL Server refuses it; MustChange implies CheckExpiration
+	// on and is refused with either one explicitly off.
+	CheckPolicy     *bool
+	CheckExpiration *bool
+
+	// SID is the SQL login's security identifier, for re-creating a login
+	// whose database users must keep mapping to it (an AG secondary, a
+	// restored database); nil lets the server generate one. SQL logins
+	// only — a Windows login's SID is its Windows one.
+	SID []byte
+
+	// Credential is a server credential to map to the SQL login
+	// (CREDENTIAL = ...). SQL logins only: CREATE LOGIN ... FROM WINDOWS
+	// does not take it, though Login.MapCredential can add one afterwards.
+	Credential string
 
 	// Source selects what the login authenticates from. The zero value
 	// (LoginSourceAuto) keeps CreateLogin's original behaviour: a SQL login

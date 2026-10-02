@@ -147,7 +147,7 @@ func scanCapabilityRows(rows *sql.Rows, into capabilityDest) error {
 				recordSecurableState(into.objects, name, strings.TrimPrefix(kind, "O:"), st)
 			}
 		case strings.HasPrefix(kind, "C:"):
-			// The column block, keyed "schema.object.column". It is kept apart
+			// The column block, keyed as ColumnKey spells it. It is kept apart
 			// from the object map because a column row answers for the column
 			// alone — see DatabaseCapabilities.ColumnPermissions.
 			if st, ok := capabilityStateOf(answer); ok {

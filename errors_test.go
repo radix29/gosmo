@@ -215,3 +215,25 @@ func TestWithAllMessagesDropsInformationalMessages(t *testing.T) {
 		t.Errorf("Error() = %q\nwant the real cause kept", got)
 	}
 }
+
+// TestUnsupportedKeepsAWrappedCause: a refusal built from another error with
+// %w — schedulerGroupSizes' permission refusal — still answers errors.As for
+// the server's error, and errors.Is for ErrUnsupported; one built without %w
+// reaches the sentinel alone.
+func TestUnsupportedKeepsAWrappedCause(t *testing.T) {
+	cause := mssql.Error{Number: 300, Class: 14, Message: "VIEW SERVER STATE permission was denied"}
+	err := unsupportedf("mapping affinity needs VIEW SERVER STATE: %w", cause)
+	if !errors.Is(err, ErrUnsupported) {
+		t.Error("lost ErrUnsupported")
+	}
+	if se, ok := AsSQLError(err); !ok || se.Number != 300 {
+		t.Errorf("AsSQLError = %v, %v; want the wrapped Msg 300", se, ok)
+	}
+	if want := "mapping affinity needs VIEW SERVER STATE: " + cause.Error(); err.Error() != want {
+		t.Errorf("message = %q, want %q", err.Error(), want)
+	}
+	plain := unsupportedf("gosmo: script %s: no form", "x")
+	if !errors.Is(plain, ErrUnsupported) || errors.Is(plain, ErrNotFound) {
+		t.Errorf("plain refusal reaches the wrong sentinels: %v", plain)
+	}
+}

@@ -187,30 +187,38 @@ type CreateScheduleRequest struct {
 	OwnerLoginName  string
 }
 
-// CreateSchedule creates a new shared schedule via sp_add_schedule. The
-// returned Schedule is not yet attached to any job — see Job.AttachSchedule.
-func (s *Server) CreateSchedule(ctx context.Context, req CreateScheduleRequest) (*Schedule, error) {
-	if req.Name == "" {
-		return nil, fmt.Errorf("gosmo: create schedule: name is required")
-	}
+// frequencyArgs renders every field but the name and owner as the
+// parameters sp_add_schedule and sp_add_jobschedule share, from @enabled to
+// @active_end_time.
+func (req CreateScheduleRequest) frequencyArgs() string {
 	startDate := timeToYYYYMMDD(req.ActiveStartDate)
 	if startDate == 0 {
 		startDate = timeToYYYYMMDD(time.Now())
 	}
-	q := fmt.Sprintf(
-		"EXEC msdb.dbo.sp_add_schedule @schedule_name = N'%s', @enabled = %d, "+
+	return fmt.Sprintf(
+		"@enabled = %d, "+
 			"@freq_type = %d, @freq_interval = %d, "+
 			"@freq_subday_type = %d, @freq_subday_interval = %d, "+
 			"@freq_relative_interval = %d, @freq_recurrence_factor = %d, "+
 			"@active_start_date = %d, @active_end_date = %d, "+
 			"@active_start_time = %d, @active_end_time = %d",
-		escapeSingle(req.Name), boolToInt(req.Enabled),
+		boolToInt(req.Enabled),
 		int(req.FreqType), req.FreqInterval,
 		int(req.FreqSubdayType), req.FreqSubdayInterval,
 		req.FreqRelativeInterval, req.FreqRecurrenceFactor,
 		startDate, scheduleEndDateRaw(req.ActiveEndDate),
 		req.ActiveStartTime, req.ActiveEndTime,
 	)
+}
+
+// CreateSchedule creates a new shared schedule via sp_add_schedule. The
+// returned Schedule is not yet attached to any job — see Job.AttachSchedule.
+func (s *Server) CreateSchedule(ctx context.Context, req CreateScheduleRequest) (*Schedule, error) {
+	if req.Name == "" {
+		return nil, fmt.Errorf("gosmo: create schedule: name is required")
+	}
+	q := fmt.Sprintf("EXEC msdb.dbo.sp_add_schedule @schedule_name = N'%s', %s",
+		escapeSingle(req.Name), req.frequencyArgs())
 	if req.OwnerLoginName != "" {
 		q += fmt.Sprintf(", @owner_login_name = N'%s'", escapeSingle(req.OwnerLoginName))
 	}

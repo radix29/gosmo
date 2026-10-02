@@ -115,7 +115,7 @@ type DatabaseCapabilities struct {
 	// map withholds an action the server allows.
 	ExplicitPrincipalPermissions map[string]map[string]CapabilityState
 
-	// ObjectPermissions maps "schema.object" to the state of each name in
+	// ObjectPermissions maps ObjectKey(schema, object) to the state of each name in
 	// ProbedObjectPermissions on it. Read it through HasOnObject.
 	//
 	// Unlike the other three maps this one is *sparse*: it holds a row only
@@ -125,7 +125,7 @@ type DatabaseCapabilities struct {
 	// the database as permitted. HasOnObject is the only safe test.
 	ObjectPermissions map[string]map[string]CapabilityState
 
-	// ColumnPermissions maps "schema.object.column" to the state of each name
+	// ColumnPermissions maps ColumnKey(schema, object, column) to the state of each name
 	// in ProbedObjectPermissions that was granted or denied on that column.
 	// Read it through HasOnColumn/DeniedOnColumn/DeniedOnAnyColumn.
 	//
@@ -290,8 +290,8 @@ func (c *DatabaseCapabilities) DeniedOnPrincipal(principal, name string) bool {
 }
 
 // ObjectKey is the key ObjectPermissions is indexed by: the schema and object
-// name joined with a dot, unquoted, exactly as the probe records them.
-func ObjectKey(schema, object string) string { return schema + "." + object }
+// name, unquoted, joined with keySep exactly as the probe records them.
+func ObjectKey(schema, object string) string { return schema + keySep + object }
 
 // ObjectPermission returns the state of one OBJECT-scope permission on the
 // named object. An object with no explicit grant, deny or distinct owner is
@@ -348,9 +348,9 @@ func (c *DatabaseCapabilities) DeniedOnObject(schema, object, name string) bool 
 }
 
 // ColumnKey is the key ColumnPermissions is indexed by: the schema, object and
-// column joined with dots, unquoted, exactly as the probe records them.
+// column, unquoted, joined with keySep exactly as the probe records them.
 func ColumnKey(schema, object, column string) string {
-	return schema + "." + object + "." + column
+	return schema + keySep + object + keySep + column
 }
 
 // ColumnPermission returns the state of one OBJECT-scope permission recorded
@@ -394,7 +394,7 @@ func (c *DatabaseCapabilities) DeniedOnAnyColumn(schema, object, name string) (s
 	if c == nil {
 		return "", false
 	}
-	prefix := ObjectKey(schema, object) + "."
+	prefix := ObjectKey(schema, object) + keySep
 	// The lowest name rather than the first the map yields: a caller that puts
 	// the column in a message would otherwise show a different one each time
 	// two of them are denied.

@@ -445,10 +445,17 @@ const (
 	DatabaseSecurableAsymmetricKey DatabaseSecurableKind = "ASYMMETRIC KEY"
 )
 
+// keySep joins the parts of a schema-qualified capability key: NUL, which
+// SQL Server refuses in an identifier (Msg 1055), where a dot is legal in any
+// bracketed name — joined with one, ObjectKey("a.b", "c") and
+// ObjectKey("a", "b.c") were the same key, and a DENY on one object answered
+// for the other. The probe query writes it as NCHAR(0).
+const keySep = "\x00"
+
 // DatabaseSecurableKey is the key SecurablePermissions is indexed by: the kind
-// and the securable joined with "::", the securable being "schema.name" for a
-// type or a collection and the bare name for an assembly, a certificate or a
-// key, whose schema is "".
+// and the securable joined with "::", the securable being schema and name
+// joined with keySep for a type or a collection and the bare name for an
+// assembly, a certificate or a key, whose schema is "".
 //
 // The kind is part of the key for ServerSecurableKey's reason: types and XML
 // schema collections live in separate namespaces, so dbo.x can be both, and
@@ -457,5 +464,5 @@ func DatabaseSecurableKey(kind DatabaseSecurableKind, schema, name string) strin
 	if schema == "" {
 		return string(kind) + "::" + name
 	}
-	return string(kind) + "::" + schema + "." + name
+	return string(kind) + "::" + schema + keySep + name
 }

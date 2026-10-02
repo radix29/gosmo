@@ -666,7 +666,7 @@ func TestBuildRestoreStatementClosesConnectionsInTheSameBatch(t *testing.T) {
 		"IF " + online + "\n" +
 		"BEGIN\n" +
 		"    ALTER DATABASE [App'DB] SET SINGLE_USER WITH ROLLBACK IMMEDIATE;\n" +
-		"    SET @closed = 1;\n" +
+		"    IF @@ERROR = 0 SET @closed = 1;\n" +
 		"END\n" +
 		"ELSE IF " + standby + "\n" +
 		"BEGIN\n" +
@@ -735,15 +735,27 @@ func TestARestoreCutShortIsPutBackToMultiUser(t *testing.T) {
 
 // Without CloseExistingConnections nothing set the access mode, so a failed
 // restore must not touch it — nor on a Managed Instance, where none was set.
+// Nor after an ordinary server error (T21): a refused RESTORE is
+// statement-level, so the batch ran to its own release, and a repair from here
+// would flip a database deliberately left RESTRICTED_USER to MULTI_USER —
+// Drop and Detach already gated it on batchCutShort, Restore did not.
 func TestAFailedRestoreLeavesAnAccessModeItDidNotSet(t *testing.T) {
 	for _, c := range []struct {
-		name  string
-		mi    bool
-		close bool
-	}{{"no close", false, false}, {"managed instance", true, true}} {
+		name   string
+		mi     bool
+		close  bool
+		server bool
+	}{
+		{"no close", false, false, false},
+		{"managed instance", true, true, false},
+		{"server error, batch ran to its end", false, true, true},
+	} {
 		s := detServer(t)
 		if c.mi {
 			s.info = &ServerInfo{EngineEdition: int(EngineAzureManagedInst)}
+		}
+		if c.server {
+			detFailOn("RESTORE DATABASE")
 		}
 		detLog.mu.Lock()
 		detLog.failOn = "RESTORE DATABASE"

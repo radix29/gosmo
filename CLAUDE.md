@@ -135,7 +135,7 @@ exercise the write, drop them; never mutate pre-existing objects.
   a script is about to *create* (a New-X dialog's Script Changes). `WithScript`
   alone is not that case: it intercepts writes only, so by-name reads still hit
   the server.
-  - Sixty-one families pair this way: `DatabaseRef`, `LoginRef`, `TableRef`,
+  - These families pair this way: `DatabaseRef`, `LoginRef`, `TableRef`,
     the four Agent ones, the audit/credential/trigger/snapshot/plan-guide/
     backup-device/AG families, `ServerRoleRef`, `UserRef`, `StatisticRef`,
     `IndexRef`, `ConfigurationRef`, `CertificateRef`, `AsymmetricKeyRef`,
@@ -144,8 +144,10 @@ exercise the write, drop them; never mutate pre-existing objects.
     XML schema collection, partition, Always Encrypted key, assembly, `RoleRef`,
     external-resource and Service Broker families, and `ViewRef`,
     `StoredProcedureRef`, `UserDefinedFunctionRef`, `TriggerRef`, the three
-    Resource Governor families and `MailAccountRef`, `MailProfileRef`. Every other
-    by-name lookup is `*ByName` with no handle.
+    Resource Governor families and `MailAccountRef`, `MailProfileRef`. Two
+    singletons have a handle with no name: `MasterKeyRef` and
+    `ResourceGovernorRef`, read by `MasterKey` and `ResourceGovernor`. Every
+    other by-name lookup is `*ByName` with no handle.
   - A schema-scoped handle takes its schema as given and refuses an empty one
     on write (`ErrSchemaRequired` via `requireSchema`).
   - `Endpoint` deliberately has no handle: `IsSystem` derives from a scanned
