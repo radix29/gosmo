@@ -130,11 +130,11 @@ func (s *Server) CategoryByName(ctx context.Context, class CategoryClass, name s
 	if !validCategoryClass(class) {
 		return nil, fmt.Errorf("gosmo: find category %q: unrecognized category class %q", name, class)
 	}
-	c := s.CategoryRef(class, name)
+	c := &Category{server: s, Class: class}
 	err := s.queryRowScan(ctx, `
-SELECT category_id
+SELECT category_id, name
 FROM   msdb.dbo.syscategories
-WHERE  category_class = @p1 AND name = @p2`, []any{class.code(), name}, &c.ID)
+WHERE  category_class = @p1 AND name = @p2`, []any{class.code(), name}, &c.ID, &c.Name)
 	return foundRow(c, err, notFoundf("gosmo: %s category %q not found", class, name), fmt.Sprintf("find %s category %q", class, name))
 }
 

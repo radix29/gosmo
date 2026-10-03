@@ -283,6 +283,45 @@ func (o *rgOptions) affinity(word string, a *PoolAffinity) error {
 	return nil
 }
 
+// create creates a pool of the kind and returns it read back, or, under
+// Scripting(ctx), ref. render is the options' WITH list.
+func (k *poolKind[P]) create(ctx context.Context, s *Server, name string, render func() (*rgOptions, error), ref P) (P, error) {
+	if strings.TrimSpace(name) == "" {
+		return nil, fmt.Errorf("gosmo: create %s: pool has no name", k.noun)
+	}
+	w, err := render()
+	if err != nil {
+		return nil, fmt.Errorf("gosmo: create %s %q: %w", k.noun, name, err)
+	}
+	if err := s.exec(ctx, "CREATE "+k.ddl+" "+quoteIdent(name)+w.with()); err != nil {
+		return nil, fmt.Errorf("gosmo: create %s %q: %w", k.noun, name, err)
+	}
+	return createdObject(ctx, ref, func() (P, error) { return k.byName(ctx, s, name) })
+}
+
+// alter issues one ALTER with render's WITH list, or nothing when it is
+// empty, and reports whether it ran — the caller mirrors the options then.
+func (k *poolKind[P]) alter(ctx context.Context, s *Server, name string, render func() (*rgOptions, error)) (bool, error) {
+	w, err := render()
+	if err != nil {
+		return false, fmt.Errorf("gosmo: alter %s %q: %w", k.noun, name, err)
+	}
+	if len(w.parts) == 0 {
+		return false, nil
+	}
+	if err := s.exec(ctx, "ALTER "+k.ddl+" "+quoteIdent(name)+w.with()); err != nil {
+		return false, fmt.Errorf("gosmo: alter %s %q: %w", k.noun, name, err)
+	}
+	return true, nil
+}
+
+func (k *poolKind[P]) drop(ctx context.Context, s *Server, name string) error {
+	if err := s.exec(ctx, "DROP "+k.ddl+" "+quoteIdent(name)); err != nil {
+		return fmt.Errorf("gosmo: drop %s %q: %w", k.noun, name, err)
+	}
+	return nil
+}
+
 // ResourcePoolOptions is the WITH list of CREATE and ALTER RESOURCE POOL. A
 // nil field is left out — at the server default on create, unchanged on
 // alter; a non-nil one is sent even when it holds the default.
@@ -308,7 +347,7 @@ func (o ResourcePoolOptions) render() (*rgOptions, error) {
 	w.int("MAX_MEMORY_PERCENT", o.MaxMemoryPercent)
 	w.int("MIN_IOPS_PER_VOLUME", o.MinIOPSPerVolume)
 	w.int("MAX_IOPS_PER_VOLUME", o.MaxIOPSPerVolume)
-	return w, w.affinity("SCHEDULER", o.Affinity)
+	return w, w.affinity(resourcePoolKind.affinityWord, o.Affinity)
 }
 
 // CreateResourcePoolRequest describes a new resource pool.
@@ -329,34 +368,15 @@ func (s *Server) ResourcePoolRef(name string) *ResourcePool {
 // under Scripting(ctx), the ResourcePoolRef handle. The pool is not in force
 // until ResourceGovernor.Reconfigure.
 func (s *Server) CreateResourcePool(ctx context.Context, req CreateResourcePoolRequest) (*ResourcePool, error) {
-	if strings.TrimSpace(req.Name) == "" {
-		return nil, fmt.Errorf("gosmo: create resource pool: pool has no name")
-	}
-	w, err := req.Options.render()
-	if err != nil {
-		return nil, fmt.Errorf("gosmo: create resource pool %q: %w", req.Name, err)
-	}
-	if err := s.exec(ctx, "CREATE RESOURCE POOL "+quoteIdent(req.Name)+w.with()); err != nil {
-		return nil, fmt.Errorf("gosmo: create resource pool %q: %w", req.Name, err)
-	}
-	return createdObject(ctx, s.ResourcePoolRef(req.Name), func() (*ResourcePool, error) {
-		return s.ResourcePoolByName(ctx, req.Name)
-	})
+	return resourcePoolKind.create(ctx, s, req.Name, req.Options.render, s.ResourcePoolRef(req.Name))
 }
 
 // Alter applies every option set on o in one ALTER RESOURCE POOL. An empty
 // o issues nothing. Pending until ResourceGovernor.Reconfigure. Affinity is
 // not mirrored onto p (see PoolAffinity).
 func (p *ResourcePool) Alter(ctx context.Context, o ResourcePoolOptions) error {
-	w, err := o.render()
-	if err != nil {
-		return fmt.Errorf("gosmo: alter resource pool %q: %w", p.Name, err)
-	}
-	if len(w.parts) == 0 {
-		return nil
-	}
-	if err := p.server.exec(ctx, "ALTER RESOURCE POOL "+quoteIdent(p.Name)+w.with()); err != nil {
-		return fmt.Errorf("gosmo: alter resource pool %q: %w", p.Name, err)
+	if ran, err := resourcePoolKind.alter(ctx, p.server, p.Name, o.render); !ran {
+		return err
 	}
 	setPtrIfApplied(ctx, &p.MinCPUPercent, o.MinCPUPercent)
 	setPtrIfApplied(ctx, &p.MaxCPUPercent, o.MaxCPUPercent)
@@ -371,10 +391,7 @@ func (p *ResourcePool) Alter(ctx context.Context, o ResourcePoolOptions) error {
 // Drop drops the pool. The server refuses while any workload group still
 // uses it (Msg 10916), and always for internal and default.
 func (p *ResourcePool) Drop(ctx context.Context) error {
-	if err := p.server.exec(ctx, "DROP RESOURCE POOL "+quoteIdent(p.Name)); err != nil {
-		return fmt.Errorf("gosmo: drop resource pool %q: %w", p.Name, err)
-	}
-	return nil
+	return resourcePoolKind.drop(ctx, p.server, p.Name)
 }
 
 // -- Workload groups -------------------------------------------------------------
@@ -575,7 +592,7 @@ func (o ExternalResourcePoolOptions) render() (*rgOptions, error) {
 	w.int("MAX_CPU_PERCENT", o.MaxCPUPercent)
 	w.int("MAX_MEMORY_PERCENT", o.MaxMemoryPercent)
 	w.int("MAX_PROCESSES", o.MaxProcesses)
-	return w, w.affinity("CPU", o.Affinity)
+	return w, w.affinity(externalPoolKind.affinityWord, o.Affinity)
 }
 
 // CreateExternalResourcePoolRequest describes a new external resource pool.
@@ -594,34 +611,15 @@ func (s *Server) ExternalResourcePoolRef(name string) *ExternalResourcePool {
 // CreateExternalResourcePool creates an external resource pool and returns
 // it read back, or, under Scripting(ctx), the ExternalResourcePoolRef handle.
 func (s *Server) CreateExternalResourcePool(ctx context.Context, req CreateExternalResourcePoolRequest) (*ExternalResourcePool, error) {
-	if strings.TrimSpace(req.Name) == "" {
-		return nil, fmt.Errorf("gosmo: create external resource pool: pool has no name")
-	}
-	w, err := req.Options.render()
-	if err != nil {
-		return nil, fmt.Errorf("gosmo: create external resource pool %q: %w", req.Name, err)
-	}
-	if err := s.exec(ctx, "CREATE EXTERNAL RESOURCE POOL "+quoteIdent(req.Name)+w.with()); err != nil {
-		return nil, fmt.Errorf("gosmo: create external resource pool %q: %w", req.Name, err)
-	}
-	return createdObject(ctx, s.ExternalResourcePoolRef(req.Name), func() (*ExternalResourcePool, error) {
-		return s.ExternalResourcePoolByName(ctx, req.Name)
-	})
+	return externalPoolKind.create(ctx, s, req.Name, req.Options.render, s.ExternalResourcePoolRef(req.Name))
 }
 
 // Alter applies every option set on o in one ALTER EXTERNAL RESOURCE POOL.
 // An empty o issues nothing. The default external pool accepts it. Affinity
 // is not mirrored onto p (see PoolAffinity).
 func (p *ExternalResourcePool) Alter(ctx context.Context, o ExternalResourcePoolOptions) error {
-	w, err := o.render()
-	if err != nil {
-		return fmt.Errorf("gosmo: alter external resource pool %q: %w", p.Name, err)
-	}
-	if len(w.parts) == 0 {
-		return nil
-	}
-	if err := p.server.exec(ctx, "ALTER EXTERNAL RESOURCE POOL "+quoteIdent(p.Name)+w.with()); err != nil {
-		return fmt.Errorf("gosmo: alter external resource pool %q: %w", p.Name, err)
+	if ran, err := externalPoolKind.alter(ctx, p.server, p.Name, o.render); !ran {
+		return err
 	}
 	setPtrIfApplied(ctx, &p.MaxCPUPercent, o.MaxCPUPercent)
 	setPtrIfApplied(ctx, &p.MaxMemoryPercent, o.MaxMemoryPercent)
@@ -632,8 +630,5 @@ func (p *ExternalResourcePool) Alter(ctx context.Context, o ExternalResourcePool
 // Drop drops the external pool. The server refuses for default, and while a
 // workload group still uses the pool.
 func (p *ExternalResourcePool) Drop(ctx context.Context) error {
-	if err := p.server.exec(ctx, "DROP EXTERNAL RESOURCE POOL "+quoteIdent(p.Name)); err != nil {
-		return fmt.Errorf("gosmo: drop external resource pool %q: %w", p.Name, err)
-	}
-	return nil
+	return externalPoolKind.drop(ctx, p.server, p.Name)
 }

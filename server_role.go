@@ -59,7 +59,7 @@ func (s *Server) ServerRoles(ctx context.Context) ([]*ServerRole, error) {
 // never needs them.
 func (s *Server) ServerRoleByName(ctx context.Context, name string) (*ServerRole, error) {
 	q := `
-	SELECT r.principal_id, r.is_fixed_role, ISNULL(p.name, ''),
+	SELECT r.name, r.principal_id, r.is_fixed_role, ISNULL(p.name, ''),
 	       r.sid, r.create_date, r.modify_date,
 	       ` + jsonList("m.name", `
         FROM   sys.server_role_members rm
@@ -69,10 +69,10 @@ func (s *Server) ServerRoleByName(ctx context.Context, name string) (*ServerRole
 	LEFT JOIN sys.server_principals p ON p.principal_id = r.owning_principal_id
 	WHERE r.type = 'R' AND r.name = @p1`
 
-	r := &ServerRole{server: s, Name: name}
+	r := &ServerRole{server: s}
 	var members sql.NullString
 	if err := s.queryRowScan(ctx, q, []any{name},
-		&r.ID, &r.IsFixedRole, &r.Owner, &r.SID, &r.CreateDate, &r.ModifyDate, &members,
+		&r.Name, &r.ID, &r.IsFixedRole, &r.Owner, &r.SID, &r.CreateDate, &r.ModifyDate, &members,
 	); err != nil {
 		return nil, rowErr(err, notFoundf("gosmo: server role %q not found", name), fmt.Sprintf("find server role %q", name))
 	}

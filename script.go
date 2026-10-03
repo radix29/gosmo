@@ -515,14 +515,14 @@ func isIdentByte(c byte) bool {
 // away rather than the server failing. That and the BEGIN/COMMIT around the
 // statements apply outside InTransaction only: inside one, the bare ROLLBACK
 // in the CATCH would end the caller's transaction too, and XACT_ABORT would
-// stay on for the rest of it — so execAtomic sends atomicTxBatch there. A cancelled context sends an attention,
-// which aborts the running statement and, with XACT_ABORT off, leaves the
-// transaction open — and a write here runs on a deadline (see
-// objectWriteTimeout on the gossms side), so that is not a remote case. It
-// does not leak onto the next user of the pooled connection: go-mssqldb sets
-// the TDS reset-connection bit on the first packet after database/sql hands
-// the connection back out, which restores every SET option to its login
-// default and rolls back anything still open.
+// stay on for the rest of it — so execAtomic sends atomicTxBatch there. A
+// cancelled context sends an attention, which aborts the running statement
+// and, with XACT_ABORT off, leaves the transaction open — and a write here
+// runs on a deadline (see objectWriteTimeout on the gossms side), so that is
+// not a remote case. It does not leak onto the next user of the pooled
+// connection: go-mssqldb sets the TDS reset-connection bit on the first
+// packet after database/sql hands the connection back out, which restores
+// every SET option to its login default and rolls back anything still open.
 //
 // THROW, not a RAISERROR of our own, so the caller is given msdb's message
 // about what actually went wrong instead of a generic one.

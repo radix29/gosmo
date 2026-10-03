@@ -194,6 +194,36 @@ func refuseSystemDrop(opts ScriptOptions, kind, name string) error {
 	return nil
 }
 
+// script scripts p with w, its non-default options, plus its stored
+// affinity: an ALTER (or comment) for a built-in pool, else the CREATE/DROP
+// envelope.
+func (k *poolKind[P]) script(p P, w *rgOptions, opts ScriptOptions, sizes groupSizesFunc) (string, error) {
+	name := p.poolName()
+	groups, masks := p.affinity()
+	aff, err := affinityList(fmt.Sprintf("%s %q", k.noun, name), groups, masks, sizes)
+	if err != nil {
+		return "", err
+	}
+	if aff != "" {
+		w.raw("AFFINITY " + k.affinityWord + " = (" + aff + ")")
+	}
+	if p.IsSystem() {
+		if err := refuseSystemDrop(opts, k.noun, name); err != nil {
+			return "", err
+		}
+		var sb strings.Builder
+		systemRGScript(&sb, "ALTER "+k.ddl, k.noun, name, w, "")
+		return sb.String(), nil
+	}
+	drop := fmt.Sprintf("IF EXISTS (SELECT 1 FROM %s WHERE name = N'%s')\n    DROP %s %s;\nGO\n",
+		k.view, escapeSingle(name), k.ddl, quoteIdent(name))
+	guard := fmt.Sprintf("IF NOT EXISTS (SELECT 1 FROM %s WHERE name = N'%s')\n",
+		k.view, escapeSingle(name))
+	return opts.envelope(drop, guard, func(sb *strings.Builder) {
+		fmt.Fprintf(sb, "CREATE %s %s%s;\nGO\n%s", k.ddl, quoteIdent(name), w.with(), rgReconfigureNote)
+	}), nil
+}
+
 // -- Resource pools --------------------------------------------------------------
 
 // ScriptResourcePool generates the CREATE (or DROP) script for one resource
@@ -230,32 +260,7 @@ func (p *ResourcePool) nonDefaultOptions() ResourcePoolOptions {
 
 func buildResourcePoolScript(p *ResourcePool, opts ScriptOptions, sizes groupSizesFunc) (string, error) {
 	w, _ := p.nonDefaultOptions().render() // no Affinity set: cannot fail
-	groups, masks := make([]int, len(p.Affinity)), make([]int64, len(p.Affinity))
-	for i, a := range p.Affinity {
-		groups[i], masks[i] = a.ProcessorGroup, a.SchedulerMask
-	}
-	aff, err := affinityList(fmt.Sprintf("resource pool %q", p.Name), groups, masks, sizes)
-	if err != nil {
-		return "", err
-	}
-	if aff != "" {
-		w.raw("AFFINITY SCHEDULER = (" + aff + ")")
-	}
-	if p.IsSystem() {
-		if err := refuseSystemDrop(opts, "resource pool", p.Name); err != nil {
-			return "", err
-		}
-		var sb strings.Builder
-		systemRGScript(&sb, "ALTER RESOURCE POOL", "resource pool", p.Name, w, "")
-		return sb.String(), nil
-	}
-	drop := fmt.Sprintf("IF EXISTS (SELECT 1 FROM sys.resource_governor_resource_pools WHERE name = N'%s')\n    DROP RESOURCE POOL %s;\nGO\n",
-		escapeSingle(p.Name), quoteIdent(p.Name))
-	guard := fmt.Sprintf("IF NOT EXISTS (SELECT 1 FROM sys.resource_governor_resource_pools WHERE name = N'%s')\n",
-		escapeSingle(p.Name))
-	return opts.envelope(drop, guard, func(sb *strings.Builder) {
-		fmt.Fprintf(sb, "CREATE RESOURCE POOL %s%s;\nGO\n%s", quoteIdent(p.Name), w.with(), rgReconfigureNote)
-	}), nil
+	return resourcePoolKind.script(p, w, opts, sizes)
 }
 
 // -- Workload groups -------------------------------------------------------------
@@ -364,30 +369,5 @@ func (p *ExternalResourcePool) nonDefaultOptions() ExternalResourcePoolOptions {
 
 func buildExternalResourcePoolScript(p *ExternalResourcePool, opts ScriptOptions, sizes groupSizesFunc) (string, error) {
 	w, _ := p.nonDefaultOptions().render() // no Affinity set: cannot fail
-	groups, masks := make([]int, len(p.Affinity)), make([]int64, len(p.Affinity))
-	for i, a := range p.Affinity {
-		groups[i], masks[i] = a.ProcessorGroup, a.CPUMask
-	}
-	aff, err := affinityList(fmt.Sprintf("external resource pool %q", p.Name), groups, masks, sizes)
-	if err != nil {
-		return "", err
-	}
-	if aff != "" {
-		w.raw("AFFINITY CPU = (" + aff + ")")
-	}
-	if p.IsSystem() {
-		if err := refuseSystemDrop(opts, "external resource pool", p.Name); err != nil {
-			return "", err
-		}
-		var sb strings.Builder
-		systemRGScript(&sb, "ALTER EXTERNAL RESOURCE POOL", "external resource pool", p.Name, w, "")
-		return sb.String(), nil
-	}
-	drop := fmt.Sprintf("IF EXISTS (SELECT 1 FROM sys.resource_governor_external_resource_pools WHERE name = N'%s')\n    DROP EXTERNAL RESOURCE POOL %s;\nGO\n",
-		escapeSingle(p.Name), quoteIdent(p.Name))
-	guard := fmt.Sprintf("IF NOT EXISTS (SELECT 1 FROM sys.resource_governor_external_resource_pools WHERE name = N'%s')\n",
-		escapeSingle(p.Name))
-	return opts.envelope(drop, guard, func(sb *strings.Builder) {
-		fmt.Fprintf(sb, "CREATE EXTERNAL RESOURCE POOL %s%s;\nGO\n%s", quoteIdent(p.Name), w.with(), rgReconfigureNote)
-	}), nil
+	return externalPoolKind.script(p, w, opts, sizes)
 }

@@ -429,8 +429,8 @@ func (t *Table) Drop(ctx context.Context, cascade bool) error {
 }
 
 // dropTableCascadeStmts is the cascade drop of the table qn (already
-// bracket-quoted), run as one atomicBatch: every incoming foreign key, then
-// the table, or neither.
+// bracket-quoted), run as one execAtomic write: every incoming foreign key,
+// then the table, or neither.
 //
 // It was two execs, and the DROP TABLE failing after the first had committed
 // — a schema-bound view on the table (Msg 3729), a permission the second
@@ -440,7 +440,7 @@ func (t *Table) Drop(ctx context.Context, cascade bool) error {
 // The key drop runs as its own dynamic SQL through EXEC(N'…'), so its
 // DECLARE @sql is scoped to that inner batch: a batch-scoped DECLARE would
 // collide with itself when a ScriptCollector concatenates two of these (see
-// atomicBatch). atomicBatch takes no parameters, so the table name is inlined
+// atomicBatch). execAtomic takes no parameters, so the table name is inlined
 // as a literal — escaped once for OBJECT_ID's literal and once more for the
 // EXEC string around it.
 func dropTableCascadeStmts(qn string) []string {

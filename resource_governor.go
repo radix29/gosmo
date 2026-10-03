@@ -135,6 +135,115 @@ FROM   sys.dm_resource_governor_configuration`, nil,
 		"read resource governor status")
 }
 
+// -- Pool kinds ------------------------------------------------------------------
+
+// poolKind is what a resource pool and an external resource pool differ by in
+// the code they share — the DDL noun, the catalog views and their columns,
+// the affinity word — so that one implementation reads, creates, alters,
+// drops and scripts both. P is the pool type the kind builds.
+type poolKind[P rgPool] struct {
+	noun         string // "resource pool", in errors and script comments
+	ddl          string // "RESOURCE POOL", after CREATE/ALTER/DROP
+	view         string // the catalog view, for the script's existence guard
+	selectSQL    string // the pool read, view included, no WHERE
+	scan         func(*Server, func(...any) error) (P, error)
+	affinitySQL  string // pool id, processor group and mask, ordered
+	affinityWord string // SCHEDULER or CPU, in AFFINITY ... = (ids)
+}
+
+// rgPool is what the shared pool code needs of either pool type.
+type rgPool interface {
+	*ResourcePool | *ExternalResourcePool
+	poolID() int
+	poolName() string
+	IsSystem() bool
+	// affinity returns the stored affinity as parallel group/mask slices.
+	affinity() (groups []int, masks []int64)
+	addAffinity(group int, mask int64)
+}
+
+var resourcePoolKind = &poolKind[*ResourcePool]{
+	noun:      "resource pool",
+	ddl:       "RESOURCE POOL",
+	view:      "sys.resource_governor_resource_pools",
+	selectSQL: resourcePoolSelect,
+	scan:      scanResourcePool,
+	affinitySQL: `
+SELECT pool_id, processor_group, scheduler_mask
+FROM   sys.resource_governor_resource_pool_affinity
+ORDER  BY pool_id, processor_group`,
+	affinityWord: "SCHEDULER",
+}
+
+var externalPoolKind = &poolKind[*ExternalResourcePool]{
+	noun:      "external resource pool",
+	ddl:       "EXTERNAL RESOURCE POOL",
+	view:      "sys.resource_governor_external_resource_pools",
+	selectSQL: externalResourcePoolSelect,
+	scan:      scanExternalResourcePool,
+	affinitySQL: `
+SELECT external_pool_id, processor_group, cpu_mask
+FROM   sys.resource_governor_external_resource_pool_affinity
+ORDER  BY external_pool_id, processor_group`,
+	affinityWord: "CPU",
+}
+
+// list reads every pool of the kind, ordered by name, affinity attached.
+func (k *poolKind[P]) list(ctx context.Context, s *Server) ([]P, error) {
+	what := "list " + k.noun + "s"
+	rows, err := s.query(ctx, k.selectSQL+`
+ORDER  BY name`)
+	pools, err := scanRows(rows, err, what, func(scan func(...any) error) (P, error) {
+		return k.scan(s, scan)
+	})
+	if err != nil {
+		return nil, err
+	}
+	if err := k.attachAffinity(ctx, s, pools, what); err != nil {
+		return nil, err
+	}
+	return pools, nil
+}
+
+// byName reads one pool of the kind, affinity attached, or a not-found error.
+func (k *poolKind[P]) byName(ctx context.Context, s *Server, name string) (P, error) {
+	what := fmt.Sprintf("read %s %q", k.noun, name)
+	p, err := readByName(ctx, s, k.scan, k.selectSQL+`
+WHERE  name = @p1`, []any{name}, notFoundf("gosmo: %s %q not found", k.noun, name), what)
+	if err != nil {
+		return nil, err
+	}
+	if err := k.attachAffinity(ctx, s, []P{p}, what); err != nil {
+		return nil, err
+	}
+	return p, nil
+}
+
+// attachAffinity fills each pool's Affinity from one read of the kind's
+// affinity view, grouped here rather than queried per pool.
+func (k *poolKind[P]) attachAffinity(ctx context.Context, s *Server, pools []P, what string) error {
+	if len(pools) == 0 {
+		return nil
+	}
+	byID := make(map[int]P, len(pools))
+	for _, p := range pools {
+		byID[p.poolID()] = p
+	}
+	rows, err := s.query(ctx, k.affinitySQL)
+	_, err = scanRows(rows, err, what, func(scan func(...any) error) (struct{}, error) {
+		var id, group int
+		var mask int64
+		if err := scan(&id, &group, &mask); err != nil {
+			return struct{}{}, err
+		}
+		if p, ok := byID[id]; ok {
+			p.addAffinity(group, mask)
+		}
+		return struct{}{}, nil
+	})
+	return err
+}
+
 // -- Resource pools --------------------------------------------------------------
 
 // ResourcePool mirrors a row of sys.resource_governor_resource_pools, the
@@ -173,6 +282,21 @@ func (p *ResourcePool) Server() *Server { return p.server }
 // altered either.
 func (p *ResourcePool) IsSystem() bool { return p.ID > 0 && p.ID <= systemResourceGovernorMaxID }
 
+func (p *ResourcePool) poolID() int      { return p.ID }
+func (p *ResourcePool) poolName() string { return p.Name }
+
+func (p *ResourcePool) affinity() ([]int, []int64) {
+	groups, masks := make([]int, len(p.Affinity)), make([]int64, len(p.Affinity))
+	for i, a := range p.Affinity {
+		groups[i], masks[i] = a.ProcessorGroup, a.SchedulerMask
+	}
+	return groups, masks
+}
+
+func (p *ResourcePool) addAffinity(group int, mask int64) {
+	p.Affinity = append(p.Affinity, ResourcePoolAffinity{ProcessorGroup: group, SchedulerMask: mask})
+}
+
 const resourcePoolSelect = `
 SELECT pool_id, name, min_cpu_percent, max_cpu_percent, cap_cpu_percent,
        min_memory_percent, max_memory_percent,
@@ -183,40 +307,14 @@ FROM   sys.resource_governor_resource_pools`
 // result means the login cannot see the catalog (VIEW ANY DEFINITION), since
 // internal and default always exist.
 func (s *Server) ResourcePools(ctx context.Context) ([]*ResourcePool, error) {
-	rows, err := s.query(ctx, resourcePoolSelect+`
-ORDER  BY name`)
-	pools, err := scanRows(rows, err, "list resource pools", func(scan func(...any) error) (*ResourcePool, error) {
-		return scanResourcePool(s, scan)
-	})
-	if err != nil {
-		return nil, err
-	}
-	if err := s.attachPoolAffinity(ctx, pools, "list resource pools"); err != nil {
-		return nil, err
-	}
-	return pools, nil
+	return resourcePoolKind.list(ctx, s)
 }
 
 // ResourcePoolByName returns one resource pool with every field populated, or
 // a not-found error (errors.Is ErrNotFound) when there is none by that name
 // or the login cannot see it.
 func (s *Server) ResourcePoolByName(ctx context.Context, name string) (*ResourcePool, error) {
-	var p *ResourcePool
-	err := s.queryRow(ctx, func(row *sql.Row) error {
-		var err error
-		p, err = scanResourcePool(s, row.Scan)
-		return err
-	}, resourcePoolSelect+`
-WHERE  name = @p1`, name)
-	what := fmt.Sprintf("read resource pool %q", name)
-	p, err = foundRow(p, err, notFoundf("gosmo: resource pool %q not found", name), what)
-	if err != nil {
-		return nil, err
-	}
-	if err := s.attachPoolAffinity(ctx, []*ResourcePool{p}, what); err != nil {
-		return nil, err
-	}
-	return p, nil
+	return resourcePoolKind.byName(ctx, s, name)
 }
 
 func scanResourcePool(s *Server, scan func(...any) error) (*ResourcePool, error) {
@@ -227,34 +325,6 @@ func scanResourcePool(s *Server, scan func(...any) error) (*ResourcePool, error)
 		return nil, err
 	}
 	return p, nil
-}
-
-// attachPoolAffinity fills Affinity on pools from one read of the affinity
-// view, grouped here rather than queried per pool.
-func (s *Server) attachPoolAffinity(ctx context.Context, pools []*ResourcePool, what string) error {
-	if len(pools) == 0 {
-		return nil
-	}
-	byID := make(map[int]*ResourcePool, len(pools))
-	for _, p := range pools {
-		byID[p.ID] = p
-	}
-	rows, err := s.query(ctx, `
-SELECT pool_id, processor_group, scheduler_mask
-FROM   sys.resource_governor_resource_pool_affinity
-ORDER  BY pool_id, processor_group`)
-	_, err = scanRows(rows, err, what, func(scan func(...any) error) (struct{}, error) {
-		var id int
-		var a ResourcePoolAffinity
-		if err := scan(&id, &a.ProcessorGroup, &a.SchedulerMask); err != nil {
-			return struct{}{}, err
-		}
-		if p := byID[id]; p != nil {
-			p.Affinity = append(p.Affinity, a)
-		}
-		return struct{}{}, nil
-	})
-	return err
 }
 
 // ResourcePoolStats is one pool's runtime state, from
@@ -517,6 +587,21 @@ func (p *ExternalResourcePool) IsSystem() bool {
 	return p.ID > 0 && p.ID <= systemResourceGovernorMaxID
 }
 
+func (p *ExternalResourcePool) poolID() int      { return p.ID }
+func (p *ExternalResourcePool) poolName() string { return p.Name }
+
+func (p *ExternalResourcePool) affinity() ([]int, []int64) {
+	groups, masks := make([]int, len(p.Affinity)), make([]int64, len(p.Affinity))
+	for i, a := range p.Affinity {
+		groups[i], masks[i] = a.ProcessorGroup, a.CPUMask
+	}
+	return groups, masks
+}
+
+func (p *ExternalResourcePool) addAffinity(group int, mask int64) {
+	p.Affinity = append(p.Affinity, ExternalResourcePoolAffinity{ProcessorGroup: group, CPUMask: mask})
+}
+
 const externalResourcePoolSelect = `
 SELECT external_pool_id, name, max_cpu_percent, max_memory_percent, max_processes, version
 FROM   sys.resource_governor_external_resource_pools`
@@ -524,39 +609,13 @@ FROM   sys.resource_governor_external_resource_pools`
 // ExternalResourcePools returns every external resource pool. An empty result
 // means the login cannot see the catalog, since default always exists.
 func (s *Server) ExternalResourcePools(ctx context.Context) ([]*ExternalResourcePool, error) {
-	rows, err := s.query(ctx, externalResourcePoolSelect+`
-ORDER  BY name`)
-	pools, err := scanRows(rows, err, "list external resource pools", func(scan func(...any) error) (*ExternalResourcePool, error) {
-		return scanExternalResourcePool(s, scan)
-	})
-	if err != nil {
-		return nil, err
-	}
-	if err := s.attachExternalPoolAffinity(ctx, pools, "list external resource pools"); err != nil {
-		return nil, err
-	}
-	return pools, nil
+	return externalPoolKind.list(ctx, s)
 }
 
 // ExternalResourcePoolByName returns one external resource pool with every
 // field populated, or a not-found error (errors.Is ErrNotFound).
 func (s *Server) ExternalResourcePoolByName(ctx context.Context, name string) (*ExternalResourcePool, error) {
-	var p *ExternalResourcePool
-	err := s.queryRow(ctx, func(row *sql.Row) error {
-		var err error
-		p, err = scanExternalResourcePool(s, row.Scan)
-		return err
-	}, externalResourcePoolSelect+`
-WHERE  name = @p1`, name)
-	what := fmt.Sprintf("read external resource pool %q", name)
-	p, err = foundRow(p, err, notFoundf("gosmo: external resource pool %q not found", name), what)
-	if err != nil {
-		return nil, err
-	}
-	if err := s.attachExternalPoolAffinity(ctx, []*ExternalResourcePool{p}, what); err != nil {
-		return nil, err
-	}
-	return p, nil
+	return externalPoolKind.byName(ctx, s, name)
 }
 
 func scanExternalResourcePool(s *Server, scan func(...any) error) (*ExternalResourcePool, error) {
@@ -565,31 +624,4 @@ func scanExternalResourcePool(s *Server, scan func(...any) error) (*ExternalReso
 		return nil, err
 	}
 	return p, nil
-}
-
-// attachExternalPoolAffinity is attachPoolAffinity for external pools.
-func (s *Server) attachExternalPoolAffinity(ctx context.Context, pools []*ExternalResourcePool, what string) error {
-	if len(pools) == 0 {
-		return nil
-	}
-	byID := make(map[int]*ExternalResourcePool, len(pools))
-	for _, p := range pools {
-		byID[p.ID] = p
-	}
-	rows, err := s.query(ctx, `
-SELECT external_pool_id, processor_group, cpu_mask
-FROM   sys.resource_governor_external_resource_pool_affinity
-ORDER  BY external_pool_id, processor_group`)
-	_, err = scanRows(rows, err, what, func(scan func(...any) error) (struct{}, error) {
-		var id int
-		var a ExternalResourcePoolAffinity
-		if err := scan(&id, &a.ProcessorGroup, &a.CPUMask); err != nil {
-			return struct{}{}, err
-		}
-		if p := byID[id]; p != nil {
-			p.Affinity = append(p.Affinity, a)
-		}
-		return struct{}{}, nil
-	})
-	return err
 }

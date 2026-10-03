@@ -46,7 +46,7 @@ ORDER  BY name`
 // them.
 func (d *Database) UserByName(ctx context.Context, name string) (*User, error) {
 	const q = `
-SELECT dp.principal_id, dp.type_desc, dp.default_schema_name,
+SELECT dp.name, dp.principal_id, dp.type_desc, dp.default_schema_name,
        dp.create_date, dp.modify_date, dp.authentication_type_desc, dp.sid,
        sp.name, sp.is_disabled,
        CASE dp.type WHEN 'C' THEN (SELECT TOP 1 c.name  FROM sys.certificates    c  WHERE c.sid  = dp.sid)
@@ -56,11 +56,11 @@ FROM   sys.database_principals dp
 LEFT   JOIN sys.server_principals sp ON sp.sid = dp.sid
 WHERE  dp.type IN ` + userTypes + ` AND dp.name = @p1`
 
-	u := &User{db: d, Name: name}
+	u := &User{db: d}
 	var defSchema, authType, loginName, mapped sql.NullString
 	var loginDisabled sql.NullBool
 	err := d.queryRow(ctx, func(row *sql.Row) error {
-		return row.Scan(&u.ID, &u.UserType, &defSchema, &u.CreateDate, &u.ModifyDate,
+		return row.Scan(&u.Name, &u.ID, &u.UserType, &defSchema, &u.CreateDate, &u.ModifyDate,
 			&authType, &u.SID, &loginName, &loginDisabled, &mapped)
 	}, q, name)
 	if err != nil {

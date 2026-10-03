@@ -393,7 +393,7 @@ func (j *Job) SetDeleteLevel(ctx context.Context, level NotifyLevel) error {
 // not have any job server or servers defined") or let an alert target it
 // (sp_update_alert/sp_add_alert: "cannot be used by an alert"). Multi-server
 // (MSX/TSX) target-server selection is out of scope here, so "(local)" is the
-// only target. The two procedures run as one atomicBatch, so a refused
+// only target. The two procedures run as one execAtomic write, so a refused
 // sp_add_jobserver leaves no half-made job behind under the requested name.
 func (s *Server) CreateJob(ctx context.Context, req CreateJobRequest) (*Job, error) {
 	if req.Name == "" {
@@ -429,7 +429,7 @@ func (s *Server) CreateJob(ctx context.Context, req CreateJobRequest) (*Job, err
 //
 // sp_add_jobschedule has no owner parameter — it gives the schedule the job's
 // owner — so an OwnerLoginName is applied by sp_update_schedule in the same
-// atomicBatch, and a refused owner leaves no schedule behind.
+// execAtomic write, and a refused owner leaves no schedule behind.
 //
 // Schedule names are not unique, so the result is the job's newest schedule
 // of that name: the one just created.

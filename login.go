@@ -599,7 +599,7 @@ func (s *Server) LoginRef(name string) *Login {
 // ("Cannot use the parameter DEFAULT_DATABASE for a certificate or
 // asymmetric key login", verified live) — so asking for one is an error
 // rather than a statement the server will refuse. The CREATE and that ALTER
-// run as one atomicBatch, so a refused ALTER leaves no login behind —
+// run as one execAtomic write, so a refused ALTER leaves no login behind —
 // except on Azure SQL Database, where CREATE LOGIN must be alone in its
 // batch, so there they stay two statements.
 func (s *Server) CreateLogin(ctx context.Context, req CreateLoginRequest) (*Login, error) {

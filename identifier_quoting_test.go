@@ -340,3 +340,28 @@ func TestQuoteLiteralIsUnicode(t *testing.T) {
 		t.Errorf("RestoreFromSnapshot: %s — the snapshot name is not an N'…' literal", got)
 	}
 }
+
+// The fragmentation mode is formatted into the DMV call, not bound, so
+// normalize is the only thing between a caller's string and the query text.
+func TestFragmentationModeNormalize(t *testing.T) {
+	for in, want := range map[FragmentationMode]FragmentationMode{
+		"":                    FragmentationLimited,
+		FragmentationLimited:  FragmentationLimited,
+		FragmentationSampled:  FragmentationSampled,
+		FragmentationDetailed: FragmentationDetailed,
+	} {
+		if got, err := in.normalize(); err != nil || got != want {
+			t.Errorf("normalize(%q) = %q, %v; want %q", in, got, err, want)
+		}
+	}
+	for _, in := range []FragmentationMode{"limited", "FAST", "LIMITED') --"} {
+		if got, err := in.normalize(); err == nil {
+			t.Errorf("normalize(%q) = %q, want an error", in, got)
+		}
+	}
+	tbl := &Table{db: &Database{Name: "d"}, Schema: "dbo", Name: "t"}
+	if _, err := tbl.FragmentationStats(context.Background(), "x"); err == nil ||
+		err.Error() != `gosmo: fragmentation stats: invalid mode "x" (must be LIMITED, SAMPLED, or DETAILED)` {
+		t.Errorf("FragmentationStats with a bad mode: err = %v", err)
+	}
+}

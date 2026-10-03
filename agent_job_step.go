@@ -139,7 +139,7 @@ func (j *Job) addStepAt(ctx context.Context, req JobStepRequest, stepID int) (*J
 // addStepStmt renders the sp_add_jobstep call. stepID > 0 inserts at that
 // position; 0 appends. Split out from addStepAt so ReorderSteps can
 // collect the statement into its transactional batch instead of issuing it —
-// see atomicBatch.
+// see execAtomic.
 func addStepStmt(jobName string, req JobStepRequest, stepID int) string {
 	q := fmt.Sprintf(
 		"EXEC msdb.dbo.sp_add_jobstep @job_name = N'%s', @step_name = N'%s', "+
@@ -353,7 +353,7 @@ const goToStepAction = 4
 //
 // The delete and the insert are one transactional batch, because a failure
 // between them would leave the step deleted and its definition nowhere but in
-// gosmo's memory. See atomicBatch.
+// gosmo's memory. See execAtomic.
 //
 // "Go to step N" references follow the steps they name. sp_add_jobstep
 // remaps them on insert, but sp_delete_jobstep does not — it resets a
@@ -394,7 +394,7 @@ func moveOrder(stepID, newStepID int) func(n int) []int {
 // All of it goes to the server as a single transactional batch, so the job is
 // either in the requested order or in the order it started in, and never in
 // the state between a step's delete and its re-insert — where the step exists
-// nowhere but in this function. See atomicBatch.
+// nowhere but in this function. See execAtomic.
 //
 // The step listing that decides all this is read outside the transaction, so
 // a concurrent edit of the same job is still last-writer-wins; the batch
@@ -429,7 +429,7 @@ func (j *Job) ReorderSteps(ctx context.Context, order func(n int) []int) error {
 	// failure there loses it for good. The reference-repair pass below is just
 	// as unskippable — sp_delete_jobstep resets a reference to the step it
 	// deleted, so a reorder that stops before the repair leaves the job's
-	// control flow silently rewritten to "quit with success". See atomicBatch.
+	// control flow silently rewritten to "quit with success". See execAtomic.
 	var stmts []string
 
 	for target := 0; target < len(want); target++ {

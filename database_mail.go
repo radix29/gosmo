@@ -179,13 +179,7 @@ func (s *Server) MailAccounts(ctx context.Context) ([]*MailAccount, error) {
 // MailAccountByName returns one Database Mail account; a missing one is an
 // error wrapping ErrNotFound.
 func (s *Server) MailAccountByName(ctx context.Context, name string) (*MailAccount, error) {
-	var a *MailAccount
-	err := s.queryRow(ctx, func(row *sql.Row) error {
-		var err error
-		a, err = scanMailAccount(s, row.Scan)
-		return err
-	}, mailAccountQuery+" WHERE a.name = @p1", name)
-	return foundRow(a, err,
+	return readByName(ctx, s, scanMailAccount, mailAccountQuery+" WHERE a.name = @p1", []any{name},
 		notFoundf("gosmo: mail account %q not found", name),
 		fmt.Sprintf("read mail account %q", name))
 }

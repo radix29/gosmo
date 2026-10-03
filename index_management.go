@@ -443,13 +443,9 @@ ORDER  BY a.type_desc`
 // fragmentationSelect for how they are combined, and why the DMV is reached
 // through sys.indexes.
 func (idx *Index) Fragmentation(ctx context.Context, mode FragmentationMode) (*IndexFragmentation, error) {
-	if mode == "" {
-		mode = FragmentationLimited
-	}
-	switch mode {
-	case FragmentationLimited, FragmentationSampled, FragmentationDetailed:
-	default:
-		return nil, fmt.Errorf("gosmo: fragmentation for index %q: invalid mode %q (must be LIMITED, SAMPLED, or DETAILED)", idx.Name, mode)
+	mode, err := mode.normalize()
+	if err != nil {
+		return nil, fmt.Errorf("gosmo: fragmentation for index %q: %w", idx.Name, err)
 	}
 
 	q := fragmentationSelect(mode) + fmt.Sprintf(`
@@ -469,8 +465,8 @@ GROUP  BY i.name, i.index_id`, escapeSingle(idx.table.FullName()))
 
 // fragmentationSelect is the SELECT ... FROM shared by Index.Fragmentation
 // and Table.FragmentationStats, for the caller to finish with a WHERE on
-// sys.indexes i and GROUP BY i.name, i.index_id. mode must already be
-// validated — the DMV takes no parameter for it.
+// sys.indexes i and GROUP BY i.name, i.index_id. mode must already have been
+// through FragmentationMode.normalize — the DMV takes no parameter for it.
 //
 // The DMV is applied to the indexes sys.indexes finds rather than called
 // with OBJECT_ID directly: a name that resolves to nothing then yields no
@@ -584,19 +580,28 @@ const (
 	FragmentationDetailed FragmentationMode = "DETAILED"
 )
 
+// normalize returns m with the empty mode defaulted to FragmentationLimited,
+// or an error for any other value outside the three constants.
+// sys.dm_db_index_physical_stats takes no parameter for the mode, so
+// fragmentationSelect formats it into the query: this check is what keeps
+// that safe.
+func (m FragmentationMode) normalize() (FragmentationMode, error) {
+	switch m {
+	case "":
+		return FragmentationLimited, nil
+	case FragmentationLimited, FragmentationSampled, FragmentationDetailed:
+		return m, nil
+	}
+	return "", fmt.Errorf("invalid mode %q (must be LIMITED, SAMPLED, or DETAILED)", m)
+}
+
 // FragmentationStats returns fragmentation info for all indexes on the table,
 // one row per index, most fragmented first. An empty mode is
 // FragmentationLimited. A name that resolves to no table returns no rows.
 func (t *Table) FragmentationStats(ctx context.Context, mode FragmentationMode) ([]*IndexFragmentation, error) {
-	if mode == "" {
-		mode = FragmentationLimited
-	}
-	// sys.dm_db_index_physical_stats does not accept parameters for the mode string;
-	// validate it here to prevent injection.
-	switch mode {
-	case FragmentationLimited, FragmentationSampled, FragmentationDetailed:
-	default:
-		return nil, fmt.Errorf("gosmo: fragmentation stats: invalid mode %q (must be LIMITED, SAMPLED, or DETAILED)", mode)
+	mode, err := mode.normalize()
+	if err != nil {
+		return nil, fmt.Errorf("gosmo: fragmentation stats: %w", err)
 	}
 
 	q := fragmentationSelect(mode) + fmt.Sprintf(`

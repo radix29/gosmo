@@ -7,6 +7,7 @@ import "strings"
 // (…_BIN, …_BIN2) one. Matched by whole "_"-separated token, so a collation
 // whose name merely contains the letters is not mistaken for one. An empty
 // collation — not read — ignores case, the default every install ships with.
+// It answers for case alone; see SameName for what it does not model.
 //
 // The collation to pass is the one of the scope a name lives in: the
 // server's (ServerInfo.Collation) for logins, databases and other server
@@ -25,6 +26,11 @@ func CollationIgnoresCase(collation string) bool {
 // equal ignoring case when CollationIgnoresCase(collation), byte-equal
 // otherwise. On a case-sensitive collation `Sales` and `sales` are two
 // objects, and folding them would treat a new one as the existing other.
+//
+// It compares case only. Accent, kana and width sensitivity are not
+// modelled, so under an _AI collation (`café`/`cafe`), or the kana- and
+// width-insensitive defaults (fullwidth `ａ`/`a`), two names it calls
+// different can be one object to the server.
 func SameName(collation, a, b string) bool {
 	if CollationIgnoresCase(collation) {
 		return strings.EqualFold(a, b)
