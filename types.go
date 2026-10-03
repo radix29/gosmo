@@ -344,7 +344,7 @@ type FileGroup struct {
 	// FILESTREAM filegroup, both true.
 	IsDefault  bool
 	IsReadOnly bool
-	Files      []DatabaseFile
+	Files      []DatabaseFile // empty for a filegroup with no files yet
 }
 
 // Filegroup type_desc values, as sys.filegroups reports them.

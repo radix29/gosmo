@@ -231,14 +231,23 @@ func (sc *ServerScripter) ScriptServerTrigger(ctx context.Context, name string) 
 	if err != nil {
 		return "", err
 	}
+	if t.Definition == "" && sc.opts.verb() != ScriptDrop {
+		// As ScriptDatabaseTrigger: a CLR trigger's CREATE is rebuilt from
+		// the catalog, into this call's own read.
+		def, err := sc.server.clrServerTrigger(ctx, name)
+		if err != nil {
+			return "", fmt.Errorf("gosmo: script server trigger %q: %w", name, err)
+		}
+		t.Definition = def
+	}
 	return buildServerTriggerScript(t, sc.opts)
 }
 
 // buildServerTriggerScript assembles one server trigger's script from the
 // definition sys.server_sql_modules stores.
 //
-// A trigger with no readable definition — encrypted, or CLR, which has no row
-// in that view at all — is an error rather than an empty CREATE half: emitting
+// A trigger with no readable definition — encrypted; a CLR one's is rebuilt by
+// ScriptServerTrigger — is an error rather than an empty CREATE half: emitting
 // nothing produces a script that drops the trigger and does not put it back.
 // IncludeIfNotExists is not honoured because CREATE TRIGGER must be the first
 // statement in its batch, the same reason scriptModule ignores it.
@@ -246,7 +255,7 @@ func buildServerTriggerScript(t *ServerTrigger, opts ScriptOptions) (string, err
 	drop := fmt.Sprintf("DROP TRIGGER IF EXISTS %s ON ALL SERVER;\nGO\n", quoteIdent(t.Name))
 	return opts.envelopeErr(drop, "", func(sb *strings.Builder) error {
 		if strings.TrimSpace(t.Definition) == "" {
-			return fmt.Errorf("gosmo: script server trigger %q: definition is not readable (encrypted or CLR)", t.Name)
+			return fmt.Errorf("gosmo: script server trigger %q: definition is not readable (encrypted)", t.Name)
 		}
 		def := t.Definition
 		if opts.verb() == ScriptAlter {

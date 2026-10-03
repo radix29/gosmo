@@ -93,3 +93,44 @@ func TestFileGroupsCarryTheirType(t *testing.T) {
 		t.Errorf("FileGroups query does not read type_desc:\n%s", sql)
 	}
 }
+
+// TestFileGroupsListAnEmptyFilegroup pins B18 (gossms): a filegroup with no
+// files is listed, with no Files.
+//
+// FileGroups once inner-joined sys.database_files, so ALTER DATABASE ADD
+// FILEGROUP's result had no row — and a filegroup only REMOVE FILEGROUP can
+// act on (it must be empty) never reached a caller that could remove it.
+// The fake answers what the LEFT JOIN returns for one: a filegroup row whose
+// file columns are all NULL.
+func TestFileGroupsListAnEmptyFilegroup(t *testing.T) {
+	cols := []string{
+		"name", "type_desc", "is_default", "is_read_only",
+		"file_name", "physical_name", "size", "max_size", "growth",
+		"is_percent_growth", "is_primary",
+	}
+	rows := [][]driver.Value{
+		{"archive", RowsFileGroup, false, false,
+			nil, nil, nil, nil, nil, nil, false},
+		{"PRIMARY", RowsFileGroup, true, false,
+			"appdb", `C:\data\appdb.mdf`, int64(8192), int64(-1), int64(10), true, true},
+	}
+	d := qsRecDB(t, 17, cols, rows)
+
+	fgs, err := d.FileGroups(context.Background())
+	if err != nil {
+		t.Fatalf("FileGroups: %v", err)
+	}
+	if len(fgs) != 2 {
+		t.Fatalf("got %d filegroups, want 2 (the empty one included)", len(fgs))
+	}
+	if fg := fgs[0]; fg.Name != "archive" || len(fg.Files) != 0 {
+		t.Errorf("fgs[0] = %q with %d files, want archive with none", fg.Name, len(fg.Files))
+	}
+	if fg := fgs[1]; fg.Name != "PRIMARY" || len(fg.Files) != 1 ||
+		fg.Files[0].Name != "appdb" || fg.Files[0].GrowthType != "PERCENT" || !fg.Files[0].IsPrimaryFile {
+		t.Errorf("fgs[1] = %+v, want PRIMARY with its one percent-growth primary file", fg)
+	}
+	if sql := qsRec.last(t).sql; !strings.Contains(sql, "LEFT   JOIN sys.database_files") {
+		t.Errorf("FileGroups query does not outer-join the files:\n%s", sql)
+	}
+}

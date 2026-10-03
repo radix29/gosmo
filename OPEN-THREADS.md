@@ -136,25 +136,20 @@ than failing:
 - A disabled **clustered** index is recreated and then disabled, as the
   source is — which takes the replayed table offline, faithfully.
 
-## CLR modules: listed, not scripted
+## CLR modules: what the rebuilt CREATE leaves out
 
-Since 2026-10-02 (gossms review plan T31) `UserDefinedFunctions` lists CLR
-scalar and table-valued functions (`FS`/`FT`, `FunctionType.IsCLR`), and
-`ScriptFunction`, `ScriptStoredProcedure` and `ScriptTrigger` refuse a CLR
-module's CREATE or ALTER with `ErrUnsupported` instead of "not found"; its
-DROP still scripts. `live_clr_function_test.go` loads
-`testdata/clr/w7clr.dll` for this.
+Since 2026-10-03 a CLR procedure, function, DML, database or server trigger
+scripts its CREATE/ALTER, rebuilt from the catalog (`scripter_module_clr.go`);
+`TestLiveCLRModulesScriptRoundTrip` replays each kind on 13, 14 and 17.
+Knowingly not reproduced:
 
-Left undone:
-
-- **The CLR CREATE itself** — `CREATE FUNCTION … RETURNS … AS EXTERNAL NAME
-  [assembly].[class].[method]` from `sys.parameters`, the RETURNS table's
-  columns and `sys.assembly_modules`. The test assembly is enough to replay
-  one.
-- **CLR stored procedures (`PC`) and CLR triggers (`TA`) are still missing
-  from `StoredProcedures` and the trigger listings**, which `JOIN
-  sys.sql_modules`; only the scripter's lookup was widened. The same `LEFT
-  JOIN` as functions would list them.
+- A **`COLLATE`** on a string column of a CLR table function's `RETURNS
+  TABLE` — the replayed column takes the database default.
+- **Parameter defaults** of a type other than int or nvarchar were never
+  replayed: the test assembly's methods take only `SqlInt32` and
+  `SqlString`. `clrParameterSelect` converts float, money, date/time and
+  binary defaults in a round-tripping style; `TestCLRDefaultLiteral` pins
+  only the quoting.
 
 ## Keys `FROM PROVIDER` have never executed
 

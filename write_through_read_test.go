@@ -4,6 +4,7 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"go/types"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -23,6 +24,11 @@ import (
 // A temp table or table variable written inside a read is fine — it is the
 // read's own scratch, gone with the connection — so INSERT/UPDATE/DELETE on a
 // #name or @name are not counted.
+//
+// Identifiers resolve through go/types over this package's own declarations:
+// every import is an empty stub, so nothing waits on type-checking the
+// driver, and the type errors that leaves are ignored. A const, var or local
+// holding SQL is declared here, so it resolves all the same.
 func TestNoWriteGoesThroughARetryingRead(t *testing.T) {
 	write := regexp.MustCompile(`(?i)\bEXEC(?:UTE)?\s+(?:\S+\.)?sp_(?:send|add|update|delete)\w*` +
 		`|\bINSERT\s+[^\s#@(]` +
@@ -45,7 +51,7 @@ func TestNoWriteGoesThroughARetryingRead(t *testing.T) {
 		if strings.HasSuffix(name, "_test.go") {
 			continue
 		}
-		f, err := parser.ParseFile(fset, name, nil, 0)
+		f, err := parser.ParseFile(fset, name, nil, parser.SkipObjectResolution)
 		if err != nil {
 			t.Fatalf("parse %s: %v", name, err)
 		}
@@ -55,30 +61,41 @@ func TestNoWriteGoesThroughARetryingRead(t *testing.T) {
 		t.Fatal("no source files checked; the glob is wrong and this test proves nothing")
 	}
 
-	// Package-level consts and vars, for an identifier the parser's file-scope
-	// resolution can't follow into another file.
-	pkgValues := map[string]ast.Expr{}
+	info := &types.Info{Defs: map[*ast.Ident]types.Object{}, Uses: map[*ast.Ident]types.Object{}}
+	conf := types.Config{Importer: stubImporter{}, Error: func(error) {}}
+	conf.Check("github.com/radix29/gosmo", fset, parsed, info)
+
+	// The value each const, var or := local was declared with, package-level
+	// or local, by object.
+	values := map[types.Object]ast.Expr{}
 	for _, f := range parsed {
-		for _, d := range f.Decls {
-			g, ok := d.(*ast.GenDecl)
-			if !ok {
-				continue
-			}
-			for _, s := range g.Specs {
-				if vs, ok := s.(*ast.ValueSpec); ok {
-					for i, n := range vs.Names {
-						if i < len(vs.Values) {
-							pkgValues[n.Name] = vs.Values[i]
+		ast.Inspect(f, func(n ast.Node) bool {
+			switch d := n.(type) {
+			case *ast.ValueSpec:
+				for i, name := range d.Names {
+					if o := info.Defs[name]; o != nil && i < len(d.Values) {
+						values[o] = d.Values[i]
+					}
+				}
+			case *ast.AssignStmt:
+				if d.Tok != token.DEFINE || len(d.Lhs) != len(d.Rhs) {
+					return true
+				}
+				for i, lhs := range d.Lhs {
+					if id, ok := lhs.(*ast.Ident); ok {
+						if o := info.Defs[id]; o != nil {
+							values[o] = d.Rhs[i]
 						}
 					}
 				}
 			}
-		}
+			return true
+		})
 	}
 
 	// literals collects the string literals expr is built from.
-	var literals func(expr ast.Node, seen map[*ast.Object]bool) []string
-	literals = func(expr ast.Node, seen map[*ast.Object]bool) []string {
+	var literals func(expr ast.Node, seen map[types.Object]bool) []string
+	literals = func(expr ast.Node, seen map[types.Object]bool) []string {
 		var out []string
 		ast.Inspect(expr, func(n ast.Node) bool {
 			switch n := n.(type) {
@@ -89,29 +106,13 @@ func TestNoWriteGoesThroughARetryingRead(t *testing.T) {
 					}
 				}
 			case *ast.Ident:
-				if n.Obj == nil {
-					if v, ok := pkgValues[n.Name]; ok {
-						out = append(out, literals(v, seen)...)
-					}
+				o := info.Uses[n]
+				if o == nil || seen[o] {
 					return true
 				}
-				if seen[n.Obj] {
-					return true
-				}
-				seen[n.Obj] = true
-				switch d := n.Obj.Decl.(type) {
-				case *ast.ValueSpec:
-					for i, name := range d.Names {
-						if name.Name == n.Name && i < len(d.Values) {
-							out = append(out, literals(d.Values[i], seen)...)
-						}
-					}
-				case *ast.AssignStmt:
-					for i, lhs := range d.Lhs {
-						if id, ok := lhs.(*ast.Ident); ok && id.Name == n.Name && i < len(d.Rhs) {
-							out = append(out, literals(d.Rhs[i], seen)...)
-						}
-					}
+				seen[o] = true
+				if v, ok := values[o]; ok {
+					out = append(out, literals(v, seen)...)
 				}
 			}
 			return true
@@ -135,7 +136,7 @@ func TestNoWriteGoesThroughARetryingRead(t *testing.T) {
 				return true
 			}
 			calls++
-			for _, lit := range literals(call.Args[i], map[*ast.Object]bool{}) {
+			for _, lit := range literals(call.Args[i], map[types.Object]bool{}) {
 				if m := write.FindString(noise.ReplaceAllString(lit, "$1 ")); m != "" {
 					t.Errorf("%s: %s is handed SQL containing %q — a retried read runs a write twice; use exec, or execScan for a write that reads a value back",
 						fset.Position(call.Pos()), sel.Sel.Name, m)
@@ -147,4 +148,14 @@ func TestNoWriteGoesThroughARetryingRead(t *testing.T) {
 	if calls == 0 {
 		t.Fatal("no read-helper calls found; the helper names are wrong and this test proves nothing")
 	}
+}
+
+// stubImporter hands back an empty package for every import: the check needs
+// only the package's own declarations resolved.
+type stubImporter struct{}
+
+func (stubImporter) Import(path string) (*types.Package, error) {
+	p := types.NewPackage(path, filepath.Base(path))
+	p.MarkComplete()
+	return p, nil
 }

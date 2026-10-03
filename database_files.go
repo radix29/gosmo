@@ -2,6 +2,7 @@ package gosmo
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"strings"
 )
@@ -299,7 +300,9 @@ func (d *Database) FileGroupRef(name string) *FileGroup {
 	return &FileGroup{db: d, Name: name}
 }
 
-// FileGroups returns all filegroups and their files.
+// FileGroups returns all filegroups and their files, including a filegroup
+// with no files (its Files is empty) — the state ALTER DATABASE ADD FILEGROUP
+// leaves one in, and the only state REMOVE FILEGROUP accepts.
 func (d *Database) FileGroups(ctx context.Context) ([]*FileGroup, error) {
 	const q = `
 SELECT fg.name, fg.type_desc, fg.is_default, fg.is_read_only,
@@ -307,7 +310,7 @@ SELECT fg.name, fg.type_desc, fg.is_default, fg.is_read_only,
        df.is_percent_growth,
        CASE WHEN df.file_id = 1 THEN 1 ELSE 0 END AS is_primary
 FROM   sys.filegroups fg
-JOIN   sys.database_files df ON df.data_space_id = fg.data_space_id
+LEFT   JOIN sys.database_files df ON df.data_space_id = fg.data_space_id
 ORDER  BY fg.name, df.file_id`
 
 	rows, err := d.query(ctx, q)
@@ -320,26 +323,34 @@ ORDER  BY fg.name, df.file_id`
 	var order []string
 	for rows.Next() {
 		var fgName, fgType string
-		var fgDefault, fgReadOnly, isPctGrowth, isPrimary bool
-		f := DatabaseFile{}
+		var fgDefault, fgReadOnly, isPrimary bool
+		// The file columns are NULL on the one row an empty filegroup gets
+		// from the LEFT JOIN.
+		var fName, fPath sql.NullString
+		var fSize, fMaxSize, fGrowth sql.NullInt64
+		var isPctGrowth sql.NullBool
 		if err := rows.Scan(&fgName, &fgType, &fgDefault, &fgReadOnly,
-			&f.Name, &f.PhysicalName, &f.Size, &f.MaxSize, &f.Growth,
+			&fName, &fPath, &fSize, &fMaxSize, &fGrowth,
 			&isPctGrowth, &isPrimary); err != nil {
 			return nil, fmt.Errorf("gosmo: list filegroups: %w", err)
 		}
-		if isPctGrowth {
-			f.GrowthType = "PERCENT"
-		} else {
-			f.GrowthType = "KB"
-		}
-		f.IsPrimaryFile = isPrimary
-		f.FileGroupName = fgName
 
 		fg, ok := fgMap[fgName]
 		if !ok {
 			fg = &FileGroup{db: d, Name: fgName, Type: fgType, IsDefault: fgDefault, IsReadOnly: fgReadOnly}
 			fgMap[fgName] = fg
 			order = append(order, fgName)
+		}
+		if !fName.Valid {
+			continue
+		}
+		f := DatabaseFile{
+			Name: fName.String, PhysicalName: fPath.String,
+			Size: fSize.Int64, MaxSize: fMaxSize.Int64, Growth: fGrowth.Int64,
+			GrowthType: "KB", IsPrimaryFile: isPrimary, FileGroupName: fgName,
+		}
+		if isPctGrowth.Bool {
+			f.GrowthType = "PERCENT"
 		}
 		fg.Files = append(fg.Files, f)
 	}

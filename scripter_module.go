@@ -27,21 +27,21 @@ type moduleKind struct {
 
 var (
 	moduleView = moduleKind{"VIEW", "view", `
-SELECT m.definition, m.uses_ansi_nulls, m.uses_quoted_identifier, CAST(0 AS bit)
+SELECT m.definition, m.uses_ansi_nulls, m.uses_quoted_identifier, CAST(0 AS bit), v.object_id
 FROM   sys.views v
 JOIN   sys.sql_modules m ON m.object_id = v.object_id
 WHERE  SCHEMA_NAME(v.schema_id) = @p1 AND v.name = @p2`, false}
 
 	moduleProcedure = moduleKind{"PROCEDURE", "stored procedure", `
 SELECT m.definition, ISNULL(m.uses_ansi_nulls, 0), ISNULL(m.uses_quoted_identifier, 0),
-       CAST(CASE WHEN m.object_id IS NULL THEN 1 ELSE 0 END AS bit)
+       CAST(CASE WHEN m.object_id IS NULL THEN 1 ELSE 0 END AS bit), p.object_id
 FROM   sys.procedures p
 LEFT   JOIN sys.sql_modules m ON m.object_id = p.object_id
 WHERE  SCHEMA_NAME(p.schema_id) = @p1 AND p.name = @p2`, true}
 
 	moduleFunction = moduleKind{"FUNCTION", "function", `
 SELECT m.definition, ISNULL(m.uses_ansi_nulls, 0), ISNULL(m.uses_quoted_identifier, 0),
-       CAST(CASE WHEN m.object_id IS NULL THEN 1 ELSE 0 END AS bit)
+       CAST(CASE WHEN m.object_id IS NULL THEN 1 ELSE 0 END AS bit), o.object_id
 FROM   sys.objects o
 LEFT   JOIN sys.sql_modules m ON m.object_id = o.object_id
 WHERE  SCHEMA_NAME(o.schema_id) = @p1 AND o.name = @p2
@@ -51,7 +51,7 @@ WHERE  SCHEMA_NAME(o.schema_id) = @p1 AND o.name = @p2
 	// schema_id of its own.
 	moduleTrigger = moduleKind{"TRIGGER", "trigger", `
 SELECT m.definition, ISNULL(m.uses_ansi_nulls, 0), ISNULL(m.uses_quoted_identifier, 0),
-       CAST(CASE WHEN m.object_id IS NULL THEN 1 ELSE 0 END AS bit)
+       CAST(CASE WHEN m.object_id IS NULL THEN 1 ELSE 0 END AS bit), tr.object_id
 FROM   sys.triggers tr
 JOIN   sys.objects o     ON o.object_id = tr.parent_id
 LEFT   JOIN sys.sql_modules m ON m.object_id = tr.object_id
@@ -67,23 +67,35 @@ WHERE  SCHEMA_NAME(o.schema_id) = @p1 AND tr.name = @p2`, false}
 // would otherwise have left DROP AND CREATE a script that drops the module
 // and does not put it back. DROP alone needs no definition, never reads it,
 // and still works on one. A CLR procedure, function or trigger has no
-// sys.sql_modules row at all; it is found through the LEFT JOIN and refused
-// with ErrUnsupported, where a JOIN reported an object the caller can see in
-// the listing as not found.
+// sys.sql_modules row at all; it is found through the LEFT JOIN (a JOIN
+// reported an object the caller can see in the listing as not found) and its
+// CREATE is rebuilt from the catalog by clrSchemaModule. It carries no SET
+// options: they govern T-SQL compilation, and a CLR module has none.
 func (sc *Scripter) scriptModule(ctx context.Context, k moduleKind, schema, name string) (string, error) {
 	drop := fmt.Sprintf("DROP %s IF EXISTS %s;\nGO\n", k.keyword, qualifiedName(schema, name))
 	return sc.opts.envelopeErr(drop, "", func(sb *strings.Builder) error {
 		var def sql.NullString
 		var ansiNulls, quotedIdent, clr bool
+		var objectID int
 		err := sc.db.queryRow(ctx, func(row *sql.Row) error {
-			return row.Scan(&def, &ansiNulls, &quotedIdent, &clr)
+			return row.Scan(&def, &ansiNulls, &quotedIdent, &clr, &objectID)
 		}, k.query, schema, name)
 		if err != nil {
 			return rowErr(err, notFoundf("gosmo: %s %s not found", k.noun, qualifiedName(schema, name)),
 				fmt.Sprintf("script %s %s", k.noun, qualifiedName(schema, name)))
 		}
 		if clr {
-			return unsupportedf("gosmo: script %s %s: a CLR %s has no T-SQL definition to script", k.noun, qualifiedName(schema, name), k.noun)
+			m, err := sc.db.clrSchemaModule(ctx, k.keyword, objectID, schema, name)
+			if err != nil {
+				return fmt.Errorf("gosmo: script %s %s: %w", k.noun, qualifiedName(schema, name), err)
+			}
+			text := renderCLRModule(m)
+			if sc.opts.verb() == ScriptAlter {
+				text = alterModuleDefinition(text)
+			}
+			sb.WriteString(text)
+			sb.WriteString("\nGO\n")
+			return nil
 		}
 		if !def.Valid {
 			return fmt.Errorf("gosmo: script %s %s: definition is not readable (encrypted)", k.noun, qualifiedName(schema, name))
@@ -349,14 +361,24 @@ func (sc *Scripter) ScriptDatabaseTrigger(ctx context.Context, name string) (str
 	if err != nil {
 		return "", err
 	}
+	if t.Definition == "" && sc.opts.verb() != ScriptDrop {
+		// A CLR trigger has no stored definition; its CREATE is rebuilt from
+		// the catalog and scripted as if it were the stored one. t is this
+		// call's own read, so filling in its Definition changes no caller's.
+		def, err := sc.db.clrDatabaseTrigger(ctx, name)
+		if err != nil {
+			return "", fmt.Errorf("gosmo: script database trigger %q: %w", name, err)
+		}
+		t.Definition = def
+	}
 	return buildDatabaseTriggerScript(t, sc.opts)
 }
 
 // buildDatabaseTriggerScript assembles one database trigger's script from the
 // definition sys.sql_modules stores.
 //
-// A trigger with no readable definition — encrypted, or CLR, which has no row
-// in that view at all — is an error rather than an empty CREATE half: emitting
+// A trigger with no readable definition — encrypted; a CLR one's is rebuilt by
+// ScriptDatabaseTrigger — is an error rather than an empty CREATE half: emitting
 // nothing produces a script that drops the trigger and does not put it back.
 // IncludeIfNotExists is not honoured because CREATE TRIGGER must be the first
 // statement in its batch, the same reason scriptModule ignores it. Both are
@@ -366,7 +388,7 @@ func buildDatabaseTriggerScript(t *DatabaseTrigger, opts ScriptOptions) (string,
 	drop := fmt.Sprintf("DROP TRIGGER IF EXISTS %s ON DATABASE;\nGO\n", quoteIdent(t.Name))
 	return opts.envelopeErr(drop, "", func(sb *strings.Builder) error {
 		if strings.TrimSpace(t.Definition) == "" {
-			return fmt.Errorf("gosmo: script database trigger %q: definition is not readable (encrypted or CLR)", t.Name)
+			return fmt.Errorf("gosmo: script database trigger %q: definition is not readable (encrypted)", t.Name)
 		}
 		def := t.Definition
 		if opts.verb() == ScriptAlter {

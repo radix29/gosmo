@@ -71,16 +71,17 @@ type SchemaObjectCounts struct {
 // ObjectCount's total, itemized. It is a separate method rather than a
 // widening of ObjectCount because the two do not agree: ObjectCount is one
 // COUNT over sys.objects, while each count here reproduces the predicate of
-// the listing it stands in for, down to the sys.sql_modules join that keeps
-// a CLR or extended procedure out of the stored-procedure count.
+// the listing it stands in for — CLR procedures (PC) and CLR functions
+// (FS/FT) included, since StoredProcedures and UserDefinedFunctions list
+// them. None joins sys.sql_modules: a CLR module has no row there, so a join
+// would make a schema's count lower than its Object Explorer folder.
 //
 // One round trip of six scalar subqueries rather than a single GROUP BY over
 // sys.objects: the counts have to match what Views,
 // StoredProcedures, UserDefinedFunctions, Synonyms,
 // Sequences and TablesBySchema would each have returned, and
-// those differ in more than the type code — three join sys.sql_modules, two
-// do not filter is_ms_shipped, and synonyms and sequences have catalog views
-// of their own. A schema that does not exist yields zeros, not an error,
+// those differ in more than the type code — two do not filter is_ms_shipped,
+// and synonyms and sequences have catalog views of their own. A schema that does not exist yields zeros, not an error,
 // because SCHEMA_ID returns NULL for it.
 func (s *Schema) ObjectCountsByType(ctx context.Context) (SchemaObjectCounts, error) {
 	const q = `
@@ -89,14 +90,11 @@ SELECT
   (SELECT COUNT(*) FROM sys.tables t
    WHERE  t.schema_id = @sid AND t.is_ms_shipped = 0),
   (SELECT COUNT(*) FROM sys.views v
-   JOIN   sys.sql_modules m ON m.object_id = v.object_id
    WHERE  v.schema_id = @sid AND v.is_ms_shipped = 0),
   (SELECT COUNT(*) FROM sys.procedures p
-   JOIN   sys.sql_modules m ON m.object_id = p.object_id
    WHERE  p.schema_id = @sid AND p.is_ms_shipped = 0),
   (SELECT COUNT(*) FROM sys.objects o
-   JOIN   sys.sql_modules m ON m.object_id = o.object_id
-   WHERE  o.schema_id = @sid AND o.type IN ('FN','TF','IF') AND o.is_ms_shipped = 0),
+   WHERE  o.schema_id = @sid AND o.type IN ('FN','TF','IF','FS','FT') AND o.is_ms_shipped = 0),
   (SELECT COUNT(*) FROM sys.synonyms sy WHERE sy.schema_id = @sid),
   (SELECT COUNT(*) FROM sys.sequences sq WHERE sq.schema_id = @sid)`
 

@@ -112,10 +112,6 @@ func TestLiveHandleWrites(t *testing.T) {
 		if err := d.AddFileGroup(ctx, "HW'FG"); err != nil {
 			t.Fatalf("AddFileGroup: %v", err)
 		}
-		if err := d.AddFile(ctx, DatabaseFileSpec{Name: "hw_dat", FileGroup: "HW'FG",
-			Path: dir + "gosmo_handle_writes_live_hw.ndf", SizeKB: 8192}); err != nil {
-			t.Fatalf("AddFile: %v", err)
-		}
 
 		fileNamed := func(name string) *DatabaseFileInfo {
 			fs, err := d.Files(ctx)
@@ -140,6 +136,19 @@ func TestLiveHandleWrites(t *testing.T) {
 				}
 			}
 			return nil
+		}
+
+		// A filegroup with no files is listed (B18): FileGroups once
+		// inner-joined the files, so this one had no row until AddFile.
+		if got := group(); got == nil || len(got.Files) != 0 {
+			t.Fatalf("FileGroups after AddFileGroup = %+v, want HW'FG with no files", got)
+		}
+		if err := d.AddFile(ctx, DatabaseFileSpec{Name: "hw_dat", FileGroup: "HW'FG",
+			Path: dir + "gosmo_handle_writes_live_hw.ndf", SizeKB: 8192}); err != nil {
+			t.Fatalf("AddFile: %v", err)
+		}
+		if got := group(); got == nil || len(got.Files) != 1 {
+			t.Fatalf("FileGroups after AddFile = %+v, want HW'FG with one file", got)
 		}
 
 		f := d.FileRef("hw_dat")
@@ -182,6 +191,9 @@ func TestLiveHandleWrites(t *testing.T) {
 		}
 		if got := fileNamed("hw'dat2"); got != nil {
 			t.Fatalf("file still there after Drop: %+v", got)
+		}
+		if got := group(); got == nil || len(got.Files) != 0 {
+			t.Fatalf("FileGroups after the file Drop = %+v, want HW'FG listed with no files", got)
 		}
 		if err := d.FileGroupRef("HW'FG").Drop(ctx); err != nil {
 			t.Fatalf("filegroup Drop: %v", err)
