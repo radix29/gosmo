@@ -175,10 +175,13 @@ type DetachedDatabase struct {
 	Files     []*DetachedFile
 }
 
-// LogFiles returns the log files of the detached database, and DataFiles the
-// rest. Attach's two interesting subsets, so a caller building a file list
-// does not re-derive the status bit.
-func (d *DetachedDatabase) LogFiles() []*DetachedFile  { return d.filesWhere(true) }
+// LogFiles returns the log files of the detached database. With DataFiles,
+// these are Attach's two interesting subsets, so a caller building a file
+// list does not re-derive the status bit.
+func (d *DetachedDatabase) LogFiles() []*DetachedFile { return d.filesWhere(true) }
+
+// DataFiles returns every file of the detached database that is not a log
+// file: the primary data file and every secondary.
 func (d *DetachedDatabase) DataFiles() []*DetachedFile { return d.filesWhere(false) }
 
 // PrimaryFile returns the database's primary data file — the one whose path
@@ -316,21 +319,8 @@ func markLogByExtension(files []*DetachedFile) {
 		}
 	}
 	for _, f := range files {
-		if strings.EqualFold(pathExt(f.PhysicalName), ".ldf") {
+		if strings.EqualFold(ServerPathExt(f.PhysicalName), ".ldf") {
 			f.IsLog = true
 		}
 	}
-}
-
-// pathExt is filepath.Ext for a path in the *server's* rules, not the
-// caller's: the separator differs, but an extension is the tail after the
-// last dot in the last segment either way.
-func pathExt(p string) string {
-	if i := strings.LastIndexAny(p, `/\`); i >= 0 {
-		p = p[i+1:]
-	}
-	if i := strings.LastIndex(p, "."); i >= 0 {
-		return p[i:]
-	}
-	return ""
 }

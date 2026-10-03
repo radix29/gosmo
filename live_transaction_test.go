@@ -167,3 +167,140 @@ func TestLiveInTransaction(t *testing.T) {
 		}
 	})
 }
+
+// TestLiveInTransactionAtomicWrite: a multi-statement write (execAtomic)
+// inside InTransaction. Its failure leaves the caller's transaction open,
+// XACT_ABORT off and the statements before it uncommitted; an fn that
+// tolerates the failure gets a refused COMMIT, not the half-done write.
+func TestLiveInTransactionAtomicWrite(t *testing.T) {
+	db, ctx, done := liveDB(t)
+	t.Cleanup(done) // registered first, so it runs after every drop below
+
+	srv, err := NewServer(ctx, db)
+	if err != nil {
+		t.Fatalf("NewServer: %v", err)
+	}
+	t.Cleanup(func() { srv.Close() })
+
+	const table, job, other = "tempdb.dbo.gosmo_live_tx_atomic", "gosmo_live_tx_atomic_job", "gosmo_live_tx_atomic_job2"
+	dropJob := func(name string) string {
+		return "IF EXISTS (SELECT 1 FROM msdb.dbo.sysjobs WHERE name = N'" + name + "') EXEC msdb.dbo.sp_delete_job @job_name = N'" + name + "'"
+	}
+	for _, stmt := range []string{
+		"DROP TABLE IF EXISTS " + table, dropJob(job), dropJob(other),
+	} {
+		t.Cleanup(func() {
+			if _, err := db.ExecContext(context.Background(), stmt); err != nil {
+				t.Errorf("cleanup %s: %v", stmt, err)
+			}
+		})
+		if _, err := db.ExecContext(ctx, stmt); err != nil {
+			t.Fatalf("%s: %v", stmt, err)
+		}
+	}
+	if _, err := db.ExecContext(ctx, "CREATE TABLE "+table+" (n int NOT NULL)"); err != nil {
+		t.Fatalf("create table: %v", err)
+	}
+	j, err := srv.CreateJob(ctx, CreateJobRequest{Name: job})
+	if err != nil {
+		t.Fatalf("create job: %v", err)
+	}
+	insert := func(ctx context.Context, n string) {
+		t.Helper()
+		if _, err := srv.DatabaseRef("tempdb").exec(ctx, "INSERT INTO "+table+" VALUES ("+n+")"); err != nil {
+			t.Fatalf("insert: %v", err)
+		}
+	}
+	rows := func() int {
+		t.Helper()
+		var n int
+		if err := db.QueryRowContext(ctx, "SELECT COUNT(*) FROM "+table).Scan(&n); err != nil {
+			t.Fatalf("count: %v", err)
+		}
+		return n
+	}
+	schedules := func() int {
+		t.Helper()
+		var n int
+		if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM msdb.dbo.sysjobschedules js
+			JOIN msdb.dbo.sysjobs j ON j.job_id = js.job_id WHERE j.name = @p1`, job).Scan(&n); err != nil {
+			t.Fatalf("count schedules: %v", err)
+		}
+		return n
+	}
+	// sp_add_jobschedule succeeds, then sp_update_schedule refuses the owner:
+	// the failure comes after a statement of the write has already run.
+	badSchedule := CreateScheduleRequest{Name: "gosmo_live_tx_atomic_sched", FreqType: 1, OwnerLoginName: "gosmo_no_such_login"}
+
+	t.Run("failure keeps the caller's transaction", func(t *testing.T) {
+		err := srv.InTransaction(ctx, func(ctx context.Context) error {
+			insert(ctx, "1")
+			_, err := srv.CreateJob(ctx, CreateJobRequest{Name: job}) // a duplicate
+			if err == nil {
+				t.Error("CreateJob of a duplicate name succeeded")
+			}
+			var trancount, options int
+			if err := srv.queryRowScan(ctx, "SELECT @@TRANCOUNT, @@OPTIONS", nil, &trancount, &options); err != nil {
+				t.Fatalf("read session state: %v", err)
+			}
+			if trancount != 1 {
+				t.Errorf("@@TRANCOUNT after the failed write = %d, want 1: the write ended the caller's transaction", trancount)
+			}
+			if options&16384 != 0 {
+				t.Error("XACT_ABORT is on after the failed write")
+			}
+			return err
+		})
+		if err == nil {
+			t.Fatal("InTransaction returned nil")
+		}
+		if n := rows(); n != 0 {
+			t.Errorf("%d rows committed, want the insert before the failure rolled back", n)
+		}
+	})
+
+	t.Run("a tolerated failure refuses COMMIT", func(t *testing.T) {
+		err := srv.InTransaction(ctx, func(ctx context.Context) error {
+			insert(ctx, "1")
+			if _, err := j.AddSchedule(ctx, badSchedule); err == nil {
+				t.Error("AddSchedule with an unknown owner succeeded")
+			}
+			insert(ctx, "2")
+			return nil
+		})
+		if err == nil {
+			t.Fatal("InTransaction committed after a failed atomic write")
+		}
+		if n := rows(); n != 0 {
+			t.Errorf("%d rows committed, want none", n)
+		}
+		if n := schedules(); n != 0 {
+			t.Errorf("%d schedules committed, want the half-done AddSchedule rolled back", n)
+		}
+	})
+
+	t.Run("success commits", func(t *testing.T) {
+		if err := srv.InTransaction(ctx, func(ctx context.Context) error {
+			insert(ctx, "1")
+			_, err := srv.CreateJob(ctx, CreateJobRequest{Name: other})
+			return err
+		}); err != nil {
+			t.Fatalf("InTransaction: %v", err)
+		}
+		if n := rows(); n != 1 {
+			t.Errorf("%d rows committed, want 1", n)
+		}
+		if _, err := srv.JobByName(ctx, other); err != nil {
+			t.Errorf("job created inside the transaction: %v", err)
+		}
+	})
+
+	t.Run("outside a transaction the failure still rolls back", func(t *testing.T) {
+		if _, err := j.AddSchedule(ctx, badSchedule); err == nil {
+			t.Error("AddSchedule with an unknown owner succeeded")
+		}
+		if n := schedules(); n != 0 {
+			t.Errorf("%d schedules left behind, want none", n)
+		}
+	})
+}

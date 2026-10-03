@@ -223,12 +223,15 @@ func (l *Login) SetDefaultDatabase(ctx context.Context, name string) error {
 	return nil
 }
 
-// SetDefaultLanguage changes the login's default language.
+// SetDefaultLanguage changes the login's default language. lang is mirrored
+// onto DefaultLanguage as given, so pass the language's name rather than an
+// alias for the handle to read as the catalog does.
 func (l *Login) SetDefaultLanguage(ctx context.Context, lang string) error {
 	q := fmt.Sprintf("ALTER LOGIN %s WITH DEFAULT_LANGUAGE = %s", quoteIdent(l.Name), quoteIdent(lang))
 	if err := l.server.exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: set default language for login %q to %q: %w", l.Name, lang, err)
 	}
+	setIfApplied(ctx, &l.DefaultLanguage, lang)
 	return nil
 }
 
@@ -248,6 +251,8 @@ func (l *Login) SetPasswordPolicy(ctx context.Context, checkPolicy, checkExpirat
 	if err := l.server.exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: set password policy for login %q: %w", l.Name, err)
 	}
+	setIfApplied(ctx, &l.IsPolicyChecked, checkPolicy)
+	setIfApplied(ctx, &l.IsExpirationChecked, checkExpiration)
 	return nil
 }
 
@@ -266,6 +271,9 @@ func (l *Login) ChangePassword(ctx context.Context, newPassword string, opts Cha
 	stmt := buildChangePasswordStatement(l.Name, newPassword, opts.MustChange, opts.Unlock)
 	if err := l.server.execPasswords(ctx, stmt, newPassword); err != nil {
 		return fmt.Errorf("gosmo: change password for login %q: %w", l.Name, err)
+	}
+	if opts.MustChange {
+		setIfApplied(ctx, &l.IsExpirationChecked, true)
 	}
 	return nil
 }
@@ -469,8 +477,12 @@ func (l *Login) userMappingsIn(ctx context.Context, db *Database) ([]*LoginUserM
 	return out, nil
 }
 
-// MapToDatabase creates a user for this login in the named database
-// (CREATE USER ... FOR LOGIN).
+// MapToDatabase creates userName in the named database for this login
+// (CREATE USER ... FOR LOGIN) and returns nothing of it: read the user back
+// with Database.UserByName if the caller needs it. The database is read by
+// name first (DatabaseByName), so a missing or inaccessible one fails before
+// anything is written. defaultSchema "" omits DEFAULT_SCHEMA, leaving the
+// server's default (dbo).
 func (l *Login) MapToDatabase(ctx context.Context, dbName, userName, defaultSchema string) error {
 	d, err := l.server.DatabaseByName(ctx, dbName)
 	if err != nil {
@@ -629,7 +641,7 @@ func (s *Server) CreateLogin(ctx context.Context, req CreateLoginRequest) (*Logi
 			}
 		}
 	default:
-		err = s.execPasswords(ctx, atomicBatch(stmts), password)
+		err = s.execPasswordsAtomic(ctx, stmts, password)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("gosmo: create login %q: %w", name, err)

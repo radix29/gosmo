@@ -346,13 +346,13 @@ func (s *Server) EventFiles(ctx context.Context, pathPattern string) ([]string, 
 	if strings.Contains(pathPattern, "://") {
 		return nil, unsupportedf("gosmo: %s: a URL cannot be listed", what)
 	}
-	dir, glob := splitServerPath(pathPattern)
+	dir, glob := ServerPathDir(pathPattern), ServerPathBase(pathPattern)
 	if dir == "" {
 		var errorLog sql.NullString
 		if err := s.queryRowScan(ctx, "SELECT CAST(SERVERPROPERTY('ErrorLogFileName') AS nvarchar(4000))", nil, &errorLog); err != nil {
 			return nil, fmt.Errorf("gosmo: %s: %w", what, err)
 		}
-		dir, _ = splitServerPath(errorLog.String)
+		dir = ServerPathDir(errorLog.String)
 		if dir == "" {
 			return nil, fmt.Errorf("gosmo: %s: the server reports no error-log directory", what)
 		}
@@ -369,17 +369,6 @@ func (s *Server) EventFiles(ctx context.Context, pathPattern string) ([]string, 
 	}
 	slices.SortFunc(out, func(a, b string) int { return strings.Compare(strings.ToLower(a), strings.ToLower(b)) })
 	return out, nil
-}
-
-// splitServerPath splits a server-side path at its last separator, / or \
-// (the server's convention is not the client's): "C:\x\s*.xel" is "C:\x",
-// "s*.xel"; a bare name has no directory.
-func splitServerPath(p string) (dir, name string) {
-	i := strings.LastIndexAny(p, `/\`)
-	if i < 0 {
-		return "", p
-	}
-	return p[:i], p[i+1:]
 }
 
 // matchWildcardFold matches name against a pattern whose only wildcard is *,

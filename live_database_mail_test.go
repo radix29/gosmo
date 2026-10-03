@@ -310,19 +310,29 @@ SELECT @id`, liveMailProfile).Scan(&id); err != nil {
 		t.Errorf("MailItems(Before = a second later) = %v; want the item kept", err)
 	}
 
-	events, err := srv.MailEvents(ctx, MailEventFilter{MailItemID: id})
-	if err != nil {
-		t.Fatalf("MailEvents: %v", err)
-	}
+	// DatabaseMail.exe marks the item failed and logs the error event as two
+	// writes, and not always in that order: one run on 17 read the item failed
+	// with no event logged yet. So the event gets its own short wait.
+	var events []*MailEvent
 	var sawError bool
-	for _, e := range events {
-		if e.MailItemID != id {
-			t.Errorf("MailEvents(item %d) returned event %d of item %d", id, e.LogID, e.MailItemID)
+	for deadline := time.Now().Add(30 * time.Second); ; {
+		events, err = srv.MailEvents(ctx, MailEventFilter{MailItemID: id})
+		if err != nil {
+			t.Fatalf("MailEvents: %v", err)
 		}
-		if e.EventType == MailEventError && e.Description != "" && e.LogDate.After(time.Time{}) {
-			sawError = true
-			t.Logf("error event: %.200s", e.Description)
+		for _, e := range events {
+			if e.MailItemID != id {
+				t.Errorf("MailEvents(item %d) returned event %d of item %d", id, e.LogID, e.MailItemID)
+			}
+			if !sawError && e.EventType == MailEventError && e.Description != "" && e.LogDate.After(time.Time{}) {
+				sawError = true
+				t.Logf("error event: %.200s", e.Description)
+			}
 		}
+		if sawError || time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(time.Second)
 	}
 	if !sawError {
 		t.Errorf("MailEvents(item %d) = %d events, none an error with a description", id, len(events))
@@ -595,6 +605,17 @@ EXEC sp_configure 'show advanced options', %d; RECONFIGURE;`, adv))
 	}
 	if got, want := profileAccounts(liveMailProfile), []string{renamed + "@1", liveMailWindows + "@2"}; !slices.Equal(got, want) {
 		t.Errorf("profile accounts after reorder = %v, want %v", got, want)
+	}
+	if fresh, err := srv.MailProfileByName(ctx, liveMailProfile); err != nil {
+		t.Errorf("MailProfileByName: %v", err)
+	} else if len(p.Accounts) != len(fresh.Accounts) {
+		t.Errorf("the handle's accounts = %d, want the %d read back", len(p.Accounts), len(fresh.Accounts))
+	} else {
+		for i, a := range p.Accounts {
+			if *a != *fresh.Accounts[i] {
+				t.Errorf("the handle's account %d = %+v, want %+v", i, *a, *fresh.Accounts[i])
+			}
+		}
 	}
 	// All or nothing: a missing account fails the batch and leaves the list.
 	if err := p.SetAccounts(ctx, []string{liveMailAnon, "gosmo_live_mail_absent"}); err == nil {

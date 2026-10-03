@@ -465,7 +465,7 @@ func (j *Job) ReorderSteps(ctx context.Context, order func(n int) []int) error {
 	if len(stmts) == 0 {
 		return nil
 	}
-	if err := j.server.exec(ctx, atomicBatch(stmts)); err != nil {
+	if err := j.server.execAtomic(ctx, stmts); err != nil {
 		return fmt.Errorf("gosmo: reorder steps of job %q: %w", j.Name, err)
 	}
 	return nil

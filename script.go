@@ -512,7 +512,10 @@ func isIdentByte(c byte) bool {
 // is the same collision bindScriptArgs describes for a second DECLARE @p1.
 //
 // SET XACT_ABORT ON is what rolls the transaction back when the *client* goes
-// away rather than the server failing. A cancelled context sends an attention,
+// away rather than the server failing. That and the BEGIN/COMMIT around the
+// statements apply outside InTransaction only: inside one, the bare ROLLBACK
+// in the CATCH would end the caller's transaction too, and XACT_ABORT would
+// stay on for the rest of it — so execAtomic sends atomicTxBatch there. A cancelled context sends an attention,
 // which aborts the running statement and, with XACT_ABORT off, leaves the
 // transaction open — and a write here runs on a deadline (see
 // objectWriteTimeout on the gossms side), so that is not a remote case. It
@@ -533,6 +536,54 @@ func atomicBatch(stmts []string) string {
 	b.WriteString("COMMIT TRANSACTION;\nEND TRY\nBEGIN CATCH\n" +
 		"IF @@TRANCOUNT > 0 ROLLBACK TRANSACTION;\nTHROW;\nEND CATCH;")
 	return b.String()
+}
+
+// atomicTxBatch is atomicBatch's form inside InTransaction: the statements in
+// one batch that stops at the first failure and throws its error, with no
+// transaction statements and no SET of its own. The caller's transaction is
+// what makes them all-or-nothing, and serverTx.fail is what stops a failure
+// that fn swallows from committing the statements before it.
+func atomicTxBatch(stmts []string) string {
+	var b strings.Builder
+	b.WriteString("BEGIN TRY\n")
+	for _, stmt := range stmts {
+		b.WriteString(stmt)
+		b.WriteString(";\n")
+	}
+	b.WriteString("END TRY\nBEGIN CATCH\nTHROW;\nEND CATCH;")
+	return b.String()
+}
+
+// execAtomic runs stmts as one write that applies all of them or none:
+// atomicBatch on its own, atomicTxBatch inside InTransaction on s. Under
+// WithScript it is always atomicBatch — a script has no outer transaction,
+// even when the context it was collected under has one.
+func (s *Server) execAtomic(ctx context.Context, stmts []string) error {
+	return s.execPasswordsAtomic(ctx, stmts)
+}
+
+// execPasswordsAtomic is execAtomic for statements whose secrets are all
+// passwords (see execPasswords).
+func (s *Server) execPasswordsAtomic(ctx context.Context, stmts []string, passwords ...string) error {
+	t := txFrom(ctx, s)
+	if t == nil || Scripting(ctx) {
+		return s.execPasswords(ctx, atomicBatch(stmts), passwords...)
+	}
+	err := s.execPasswords(ctx, atomicTxBatch(stmts), passwords...)
+	t.fail(err)
+	return err
+}
+
+// execAtomic is Server.execAtomic for a database-scoped write.
+func (d *Database) execAtomic(ctx context.Context, stmts []string) error {
+	t := txFrom(ctx, d.server)
+	if t == nil || Scripting(ctx) {
+		_, err := d.exec(ctx, atomicBatch(stmts))
+		return err
+	}
+	_, err := d.exec(ctx, atomicTxBatch(stmts))
+	t.fail(err)
+	return err
 }
 
 // placeholderPat matches the driver's positional parameter placeholders

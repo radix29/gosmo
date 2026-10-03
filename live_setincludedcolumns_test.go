@@ -107,6 +107,9 @@ func TestLiveSetIncludedColumnsKeepsEveryOption(t *testing.T) {
 		if got := includedNames(after); !slices.Equal(got, []string{"C", "D"}) {
 			t.Errorf("included = %v, want [C D]", got)
 		}
+		if got := includedNames(before); !slices.Equal(got, []string{"C", "D"}) {
+			t.Errorf("the handle's included columns = %v, want [C D] mirrored", got)
+		}
 	})
 
 	t.Run("a disabled index stays disabled", func(t *testing.T) {

@@ -32,6 +32,7 @@ type serverTx struct {
 	mu      sync.Mutex
 	away    bool         // a database-scoped statement has switched the session from home
 	pending []heldReport // statement-observer reports held until COMMIT
+	failed  error        // the first atomic write that failed; see fail
 }
 
 // heldReport is a report held back from a statement observer until the
@@ -79,6 +80,15 @@ func txFrom(ctx context.Context, s *Server) *serverTx {
 //     Name) has done so before COMMIT, and a rollback does not undo it.
 //     After a failed InTransaction, read the objects again.
 //
+// A write made of several statements that otherwise runs all-or-nothing on
+// its own (CreateJob, Job.ReorderSteps, MailProfile.SetAccounts, CreateLogin
+// with defaults, a cascading Table.Drop, …) runs inside the transaction
+// without one of its own. If it fails, the transaction cannot commit: fn
+// returning nil — having tolerated that error — still rolls back, and
+// InTransaction returns the write's error. Otherwise the statements before
+// the failing one would commit, the half-done write those methods exist to
+// prevent.
+//
 // A statement observer (WithStatementObserver) on fn's context hears of each
 // statement after COMMIT succeeds, in order, and of none on a rollback: it
 // only ever reports what is in force.
@@ -123,6 +133,12 @@ func (s *Server) InTransaction(ctx context.Context, fn func(ctx context.Context)
 	if err := fn(context.WithValue(ctx, txCtxKey{}, t)); err != nil {
 		return err
 	}
+	t.mu.Lock()
+	failed := t.failed
+	t.mu.Unlock()
+	if failed != nil {
+		return fmt.Errorf("gosmo: commit transaction: refused, a write inside it failed: %w", failed)
+	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("gosmo: commit transaction: %w", withAllMessages(err))
 	}
@@ -155,6 +171,20 @@ func (t *serverTx) serverConn(ctx context.Context) (sqlConn, error) {
 func (t *serverTx) leftHome() {
 	t.mu.Lock()
 	t.away = true
+	t.mu.Unlock()
+}
+
+// fail records err, when non-nil, as an atomic write's failure inside t,
+// after which InTransaction rolls back instead of committing. Only the first
+// is kept: it is the one the rest followed from.
+func (t *serverTx) fail(err error) {
+	if err == nil {
+		return
+	}
+	t.mu.Lock()
+	if t.failed == nil {
+		t.failed = err
+	}
 	t.mu.Unlock()
 }
 

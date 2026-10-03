@@ -37,6 +37,9 @@ func TestRenderCLRModule(t *testing.T) {
 		{"database trigger", method(clrModule{keyword: "TRIGGER", name: "[ddl]", on: "DATABASE",
 			executeAs: "N'runner'", events: []string{"CREATE_TABLE"}}),
 			"CREATE TRIGGER [ddl] ON DATABASE\nWITH EXECUTE AS N'runner'\nAFTER CREATE_TABLE\nAS EXTERNAL NAME [w7clr].[W7Clr].[Twice];"},
+		{"trigger on an event group", method(clrModule{keyword: "TRIGGER", name: "[ddl]", on: "ALL SERVER",
+			events: []string{"DDL_LOGIN_EVENTS", "CREATE_DATABASE"}}),
+			"CREATE TRIGGER [ddl] ON ALL SERVER\nAFTER DDL_LOGIN_EVENTS, CREATE_DATABASE\nAS EXTERNAL NAME [w7clr].[W7Clr].[Twice];"},
 		{"class in a namespace", clrModule{keyword: "PROCEDURE", name: "[dbo].[p]", assembly: "a]b", class: "Ns.Cls", method: "M"},
 			"CREATE PROCEDURE [dbo].[p]\nAS EXTERNAL NAME [a]]b].[Ns.Cls].[M];"},
 	}

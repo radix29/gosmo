@@ -163,6 +163,27 @@ func TestRestoreRelocationSuppliesAnExtension(t *testing.T) {
 	})
 }
 
+// A FILESTREAM container (S) and a legacy full-text catalog (F) are
+// directories: renamed, they get no extension — not .ndf, and not whatever
+// follows a dot in the original directory name.
+func TestRestoreRelocationDirectoriesGetNoExtension(t *testing.T) {
+	files := []*BackupFile{
+		{LogicalName: "AppDB_fs", PhysicalName: `D:\SQL\DATA\AppDB_fs`, Type: "S"},
+		{LogicalName: "AppDB_ft", PhysicalName: `D:\SQL\FTData\AppDB.ft`, Type: "F"},
+	}
+	r := RestoreRelocation{DefaultDataDir: `D:\SQL\DATA`, DefaultLogDir: `D:\SQL\LOG`}
+	assertMoves(t, r.Moves(files, "AppDB", "Copy"), []RelocateFile{
+		{LogicalName: "AppDB_fs", PhysicalName: `D:\SQL\DATA\Copy_AppDB_fs`},
+		{LogicalName: "AppDB_ft", PhysicalName: `D:\SQL\DATA\Copy_AppDB_ft`},
+	})
+	// A same-name restore keeps the directory's own name.
+	r.Mode = RelocateToFolders
+	assertMoves(t, r.Moves(files, "AppDB", "AppDB"), []RelocateFile{
+		{LogicalName: "AppDB_fs", PhysicalName: `D:\SQL\DATA\AppDB_fs`},
+		{LogicalName: "AppDB_ft", PhysicalName: `D:\SQL\DATA\AppDB.ft`},
+	})
+}
+
 // NeedsFileList decides whether a caller runs RESTORE FILELISTONLY at all, so
 // it has to agree with Moves: a plan that would move files must not have its
 // file list skipped.

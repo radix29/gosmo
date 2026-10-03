@@ -419,15 +419,18 @@ func (t *Table) Drop(ctx context.Context, cascade bool) error {
 		}
 		return nil
 	}
-	if _, err := t.exec(ctx, dropTableCascadeBatch(qn)); err != nil {
+	if err := requireSchema("write to table", t.Schema, t.Name); err != nil {
+		return err
+	}
+	if err := t.db.execAtomic(ctx, dropTableCascadeStmts(qn)); err != nil {
 		return fmt.Errorf("gosmo: drop table %s with its incoming foreign keys: %w", qn, err)
 	}
 	return nil
 }
 
-// dropTableCascadeBatch renders the cascade drop of the table qn (already
-// bracket-quoted) as one atomicBatch: every incoming foreign key, then the
-// table, or neither.
+// dropTableCascadeStmts is the cascade drop of the table qn (already
+// bracket-quoted), run as one atomicBatch: every incoming foreign key, then
+// the table, or neither.
 //
 // It was two execs, and the DROP TABLE failing after the first had committed
 // — a schema-bound view on the table (Msg 3729), a permission the second
@@ -440,7 +443,7 @@ func (t *Table) Drop(ctx context.Context, cascade bool) error {
 // atomicBatch). atomicBatch takes no parameters, so the table name is inlined
 // as a literal — escaped once for OBJECT_ID's literal and once more for the
 // EXEC string around it.
-func dropTableCascadeBatch(qn string) string {
+func dropTableCascadeStmts(qn string) []string {
 	dropFKs := `DECLARE @sql NVARCHAR(MAX) = N'';
 SELECT @sql += N'ALTER TABLE ' + QUOTENAME(SCHEMA_NAME(fk.schema_id)) +
                N'.' + QUOTENAME(OBJECT_NAME(fk.parent_object_id)) +
@@ -448,10 +451,10 @@ SELECT @sql += N'ALTER TABLE ' + QUOTENAME(SCHEMA_NAME(fk.schema_id)) +
 FROM   sys.foreign_keys fk
 WHERE  fk.referenced_object_id = OBJECT_ID(` + QuoteLiteral(qn) + `);
 IF LEN(@sql) > 0 EXEC sp_executesql @sql;`
-	return atomicBatch([]string{
+	return []string{
 		"EXEC(" + QuoteLiteral(dropFKs) + ")",
 		"DROP TABLE " + qn,
-	})
+	}
 }
 
 // Rename renames the table (sp_rename's 'OBJECT' class). newName is a bare

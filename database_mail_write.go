@@ -499,7 +499,8 @@ func (p *MailProfile) SetAccountSequence(ctx context.Context, account string, se
 // SetAccounts makes accounts the profile's account list, in failover order
 // (sequence 1..n): it reads the profile's current links, then removes,
 // renumbers and adds in one all-or-nothing batch. A list that already
-// matches issues nothing.
+// matches issues nothing. Accounts is then read back, since a newly linked
+// account's id is the server's to tell.
 //
 // The read goes to the server under WithScript too. For a profile the same
 // script is about to create it finds no links, so the script adds every
@@ -511,26 +512,39 @@ func (p *MailProfile) SetAccounts(ctx context.Context, accounts []string) error 
 			return fmt.Errorf("gosmo: %s: account %q is listed twice", what, name)
 		}
 	}
+	current, err := p.links(ctx, what)
+	if err != nil {
+		return err
+	}
+	stmts := mailSetAccountsStmts(p.Name, current, accounts)
+	if len(stmts) > 0 {
+		if err := p.server.execAtomic(ctx, stmts); err != nil {
+			return fmt.Errorf("gosmo: %s: %w", what, err)
+		}
+		if Scripting(ctx) {
+			return nil
+		}
+		if current, err = p.links(ctx, what); err != nil {
+			return err
+		}
+	}
+	setIfApplied(ctx, &p.Accounts, current)
+	return nil
+}
+
+// links reads the profile's account links from the server, in failover
+// order.
+func (p *MailProfile) links(ctx context.Context, what string) ([]*MailProfileAccount, error) {
 	rows, err := p.server.query(ctx, mailProfileAccountQuery+`
 JOIN   msdb.dbo.sysmail_profile p ON p.profile_id = pa.profile_id
-WHERE  p.name = @p1`, p.Name)
-	current, err := scanRows(rows, err, what, func(scan func(...any) error) (*MailProfileAccount, error) {
+WHERE  p.name = @p1
+ORDER  BY pa.sequence_number`, p.Name)
+	return scanRows(rows, err, what, func(scan func(...any) error) (*MailProfileAccount, error) {
 		var profileID int
 		pa := &MailProfileAccount{}
 		err := scan(&profileID, &pa.AccountID, &pa.AccountName, &pa.SequenceNumber)
 		return pa, err
 	})
-	if err != nil {
-		return err
-	}
-	stmts := mailSetAccountsStmts(p.Name, current, accounts)
-	if len(stmts) == 0 {
-		return nil
-	}
-	if err := p.server.exec(ctx, atomicBatch(stmts)); err != nil {
-		return fmt.Errorf("gosmo: %s: %w", what, err)
-	}
-	return nil
 }
 
 // mailSetAccountsStmts is the diff from current to want: removals first,

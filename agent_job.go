@@ -412,7 +412,7 @@ func (s *Server) CreateJob(ctx context.Context, req CreateJobRequest) (*Job, err
 		q += fmt.Sprintf(", @owner_login_name = N'%s'", escapeSingle(req.OwnerLogin))
 	}
 	enlistQ := fmt.Sprintf("EXEC msdb.dbo.sp_add_jobserver @job_name = N'%s', @server_name = N'(local)'", escapeSingle(req.Name))
-	if err := s.exec(ctx, atomicBatch([]string{q, enlistQ})); err != nil {
+	if err := s.execAtomic(ctx, []string{q, enlistQ}); err != nil {
 		return nil, fmt.Errorf("gosmo: create job %q: %w", req.Name, err)
 	}
 	return createdObject(ctx, s.JobRef(req.Name), func() (*Job, error) {
@@ -439,16 +439,18 @@ func (j *Job) AddSchedule(ctx context.Context, req CreateScheduleRequest) (*Sche
 	}
 	add := fmt.Sprintf("EXEC msdb.dbo.sp_add_jobschedule @job_name = N'%s', @name = N'%s', %s",
 		escapeSingle(j.Name), escapeSingle(req.Name), req.frequencyArgs())
-	q := add
-	if req.OwnerLoginName != "" {
-		q = atomicBatch([]string{
+	var err error
+	if req.OwnerLoginName == "" {
+		err = j.server.exec(ctx, add)
+	} else {
+		err = j.server.execAtomic(ctx, []string{
 			"DECLARE @schedule_id int",
 			add + ", @schedule_id = @schedule_id OUTPUT",
 			fmt.Sprintf("EXEC msdb.dbo.sp_update_schedule @schedule_id = @schedule_id, @owner_login_name = N'%s'",
 				escapeSingle(req.OwnerLoginName)),
 		})
 	}
-	if err := j.server.exec(ctx, q); err != nil {
+	if err != nil {
 		return nil, fmt.Errorf("gosmo: add schedule %q to job %q: %w", req.Name, j.Name, err)
 	}
 	return createdObject(ctx, j.server.ScheduleRef(req.Name), func() (*Schedule, error) {

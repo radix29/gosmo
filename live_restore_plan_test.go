@@ -50,7 +50,7 @@ func TestLiveRestorePlanWithFileAndMove(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DefaultPaths: %v", err)
 	}
-	extra := joinServerPath(paths.Data, name+"_extra.ndf")
+	extra := JoinServerPath(paths.Data, name+"_extra.ndf")
 	if _, err := db.ExecContext(ctx, "ALTER DATABASE ["+name+"] ADD FILE (NAME = N'extra', FILENAME = N'"+extra+"')"); err != nil {
 		t.Fatalf("add file: %v", err)
 	}
@@ -143,5 +143,87 @@ func TestLiveRestorePlanWithFileAndMove(t *testing.T) {
 	}
 	if cols, err := cdb.TableRef("dbo", "t").StatisticRef("ix_a").Columns(ctx); err != nil || len(cols) != 1 || cols[0] != "a" {
 		t.Errorf("StatisticRef Columns on a TableRef = %v, %v; want [a]", cols, err)
+	}
+}
+
+// TestLiveRestorePlanFilestreamContainer: a database restored under a new
+// name gets its FILESTREAM container at "<target>_<logical>" — a directory
+// with no data file's extension — and the RESTORE accepts that path.
+func TestLiveRestorePlanFilestreamContainer(t *testing.T) {
+	db, ctx, done := liveDB(t)
+	defer done()
+	var fsLevel int
+	if err := db.QueryRowContext(ctx, "SELECT CONVERT(int, ISNULL(SERVERPROPERTY('FilestreamEffectiveLevel'), 0))").Scan(&fsLevel); err != nil {
+		t.Fatal(err)
+	}
+	if fsLevel < 2 {
+		t.Skip("FILESTREAM is not enabled for file I/O on this instance")
+	}
+
+	const name, copyName = "gosmo_restore_fs_live", "gosmo_restore_fs_live_copy"
+	_, drop := liveScratchDB(t, db, ctx, name)
+	defer drop()
+	_, dropCopy := liveScratchDB(t, db, ctx, copyName)
+	dropCopy() // only its cleanup is wanted: the restore creates it
+	defer dropCopy()
+	srv, err := NewServer(ctx, db)
+	if err != nil {
+		t.Fatalf("NewServer: %v", err)
+	}
+	if srv.refusesSingleUser() {
+		t.Skip("a Managed Instance restores FROM URL only")
+	}
+	paths, err := srv.DefaultPaths(ctx)
+	if err != nil {
+		t.Fatalf("DefaultPaths: %v", err)
+	}
+	for _, s := range []string{
+		"ALTER DATABASE [" + name + "] ADD FILEGROUP FSG CONTAINS FILESTREAM",
+		"ALTER DATABASE [" + name + "] ADD FILE (NAME = N'fs', FILENAME = N'" + JoinServerPath(paths.Data, name+"_fs") + "') TO FILEGROUP FSG",
+	} {
+		if _, err := db.ExecContext(ctx, s); err != nil {
+			t.Fatalf("%s: %v", s, err)
+		}
+	}
+
+	device := liveBackupPath(t, srv, ctx, name+".bak")
+	defer db.ExecContext(context.Background(), "EXEC master.dbo.xp_delete_files @FilePath = N'"+device+"'")
+	defer db.ExecContext(context.Background(), "EXEC msdb.dbo.sp_delete_database_backuphistory @database_name = N'"+name+"'")
+	targets := []BackupTarget{DiskTarget(device)}
+	if err := srv.Backup(ctx, BackupOptions{Database: name, Devices: targets, Init: true}); err != nil {
+		t.Fatalf("backup: %v", err)
+	}
+	headers, err := srv.BackupHeaders(ctx, targets...)
+	if err != nil || len(headers) != 1 {
+		t.Fatalf("BackupHeaders: %d sets, %v", len(headers), err)
+	}
+	files, err := srv.BackupFileList(ctx, headers[0].SetNumber(), targets...)
+	if err != nil {
+		t.Fatalf("BackupFileList: %v", err)
+	}
+	opts := RestoreOptions{Database: copyName, Devices: targets, Recovery: RestoreWithRecovery}
+	opts.FromHeader(headers[0], files, RestoreRelocation{DefaultDataDir: paths.Data, DefaultLogDir: paths.Log})
+	want := JoinServerPath(paths.Data, copyName+"_fs")
+	planned := false
+	for _, m := range opts.RelocateFiles {
+		if m.LogicalName == "fs" {
+			planned = true
+			if m.PhysicalName != want {
+				t.Errorf("container planned at %q, want %q", m.PhysicalName, want)
+			}
+		}
+	}
+	if !planned {
+		t.Fatalf("no MOVE for the container: %+v", opts.RelocateFiles)
+	}
+	if err := srv.Restore(ctx, opts); err != nil {
+		t.Fatalf("restore as %s: %v", copyName, err)
+	}
+	var got string
+	if err := db.QueryRowContext(ctx, "SELECT physical_name FROM sys.master_files WHERE database_id = DB_ID(@p1) AND name = N'fs'", copyName).Scan(&got); err != nil {
+		t.Fatalf("read the copy's container: %v", err)
+	}
+	if !strings.EqualFold(got, want) {
+		t.Errorf("the copy's container is at %q, want %q", got, want)
 	}
 }

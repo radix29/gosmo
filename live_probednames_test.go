@@ -30,12 +30,23 @@ func TestLiveEveryProbedPermissionNameIsOneTheServerDefines(t *testing.T) {
 		t.Fatalf("Capabilities: %v", err)
 	}
 	// VIEW SERVER PERFORMANCE STATE and VIEW SERVER SECURITY STATE are the
-	// two rights SQL Server 2022 split VIEW SERVER STATE into; an older
-	// instance does not define them, which is not a typo in the list. They are
-	// probed as alternatives to the wide right, which exists everywhere.
+	// two rights SQL Server 2022 split VIEW SERVER STATE into, and the nine
+	// granular event-session names the ones it split ALTER ANY EVENT SESSION
+	// into; an older instance does not define them, which is not a typo in the
+	// list. They are probed as alternatives to the wide rights, which exist
+	// everywhere.
 	since2022 := map[string]bool{
-		"VIEW SERVER PERFORMANCE STATE": true,
-		"VIEW SERVER SECURITY STATE":    true,
+		"VIEW SERVER PERFORMANCE STATE":       true,
+		"VIEW SERVER SECURITY STATE":          true,
+		"CREATE ANY EVENT SESSION":            true,
+		"DROP ANY EVENT SESSION":              true,
+		"ALTER ANY EVENT SESSION OPTION":      true,
+		"ALTER ANY EVENT SESSION ADD EVENT":   true,
+		"ALTER ANY EVENT SESSION DROP EVENT":  true,
+		"ALTER ANY EVENT SESSION ADD TARGET":  true,
+		"ALTER ANY EVENT SESSION DROP TARGET": true,
+		"ALTER ANY EVENT SESSION ENABLE":      true,
+		"ALTER ANY EVENT SESSION DISABLE":     true,
 	}
 	major := srv.serverMajorVersion()
 	for _, name := range ProbedServerPermissions {

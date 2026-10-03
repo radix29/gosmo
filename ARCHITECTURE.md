@@ -358,6 +358,7 @@ The instance and database halves pair up: `ServerResourceStat` and
 | SMO equivalent                  | gosmo                                       |
 | ------------------------------- | ------------------------------------------- |
 | Catalog row fields               | `db.Name` / `db.ID` / `db.State` / `db.RecoveryModel` / `db.CompatibilityLevel` / `db.Collation` / `db.IsReadOnly` / `db.CreateDate` / `db.SourceDatabaseID` — exported fields, like every other type's; a `DatabaseRef` handle carries only `Name` |
+| Do two names match?              | `gosmo.SameName(collation, a, b)` / `gosmo.CollationIgnoresCase(collation)` — by the scope's collation token (`CS`, `BIN`, `BIN2` compare exactly); no query |
 | Is a system database             | `db.IsSystem()` — derived from `db.ID`, so false on a `DatabaseRef` handle, `master` included |
 | Is a database snapshot           | `db.IsSnapshot()` — derived from `db.SourceDatabaseID`; see [Database snapshots](#database-snapshots) |
 | Parent server                    | `db.Server()` — a back-pointer, so still a method |
@@ -1336,6 +1337,12 @@ an error, a panic or cancellation rolls back.
 - A nested call on the same `Server` joins; on another it refuses. Under
   `WithScript` it only runs `fn`, adding no `BEGIN TRANSACTION`.
 - Receiver mirroring (`setIfApplied`) is not undone by a rollback: re-read.
+- **Multi-statement writes** (`execAtomic`: `CreateJob`, `ReorderSteps`,
+  `SetAccounts`, `CreateLogin` with defaults, `AddSchedule` with an owner,
+  cascading `Table.Drop`) drop their own `BEGIN TRANSACTION`/`XACT_ABORT`
+  inside one — a bare `ROLLBACK` there would end the caller's transaction. One
+  that fails marks the transaction, and `InTransaction` then refuses to
+  COMMIT even when `fn` swallowed the error.
 - Live (17): a rolled-back `ALTER RESOURCE GOVERNOR WITH (CLASSIFIER_FUNCTION
   …)` still sets `is_reconfiguration_pending`; pool and group DDL does not.
 
@@ -1951,7 +1958,8 @@ Server-scope DDL and LOGON triggers — SSMS's Server Objects → Triggers.
 
 A different family from `db.Triggers(ctx)`, which reads DML triggers on a table.
 A trigger declared `FOR` a whole event group lists that group's individual
-events in `Events`, which is what the catalog records. `Definition` is empty
+events in `Events`, which is what the catalog records; a CLR trigger's script
+names the group as declared. `Definition` is empty
 for an encrypted trigger and for a CLR one, which has no row in
 `sys.server_sql_modules` at all.
 
@@ -2013,6 +2021,7 @@ SSMS's file-browse dialogs.
 | Browse a server-side folder   | `srv.EnumFileSystem(ctx, path)` → `[]*FileSystemEntry` |
 | Drive list in a browse dialog | `srv.FixedDrives(ctx)` → `[]*FixedDrive`        |
 | Does this path exist?         | `srv.FileSystemExists(ctx, path)` → `(exists, isDirectory bool, err error)` |
+| Split or join a server path   | `gosmo.JoinServerPath(dir, file)` / `ServerPathDir` / `ServerPathBase` / `ServerPathExt` — no query |
 
 Every path here is interpreted by the **server**, not by the process calling
 gosmo — routinely two different machines with different path conventions,
@@ -2023,6 +2032,12 @@ back to `xp_dirtree` / `xp_fixeddrives` otherwise. The fallback reports no
 `Size` and no `LastModified`; an instance whose version gosmo has not
 established takes it, since `xp_dirtree` exists everywhere and the DMV does
 not.
+
+The path functions follow the same rule without a query: they split on
+either separator and join with the one `dir` already uses, never with the
+client's `path/filepath`. `JoinServerPath` keeps a `dir` that already ends
+in a separator as it is, so a root (`C:\`, `/`, `\\host\share\`) joins
+exactly.
 
 ### Bulk copy
 

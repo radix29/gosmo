@@ -172,13 +172,18 @@ WHERE  am.object_id = @p1`, objectID)
 	return nil
 }
 
-// clrEvents reads a trigger's events, in the catalog's event-type order.
+// clrEvents reads a trigger's events as it was declared, in the catalog's
+// event-type order. The catalog holds one row per member event of a declared
+// group, each naming the group (the declared one, not an inner group nested
+// in it), so a trigger FOR DDL_TABLE_EVENTS is rebuilt FOR that group rather
+// than its three members — and keeps firing for events later added to it.
 func clrEvents(ctx context.Context, q catalogQuerier, objectID int, events string) ([]string, error) {
 	rows, err := q.query(ctx, `
-SELECT te.type_desc
+SELECT COALESCE(te.event_group_type_desc, te.type_desc)
 FROM   `+events+` te
 WHERE  te.object_id = @p1
-ORDER  BY te.type`, objectID)
+GROUP  BY COALESCE(te.event_group_type_desc, te.type_desc)
+ORDER  BY MIN(te.type)`, objectID)
 	return scanRows(rows, err, "", func(scan func(...any) error) (string, error) {
 		var e string
 		err := scan(&e)

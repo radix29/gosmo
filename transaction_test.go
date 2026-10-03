@@ -2,8 +2,12 @@ package gosmo
 
 import (
 	"context"
+	"database/sql"
+	"database/sql/driver"
 	"errors"
 	"slices"
+	"strings"
+	"sync"
 	"testing"
 )
 
@@ -62,5 +66,106 @@ func TestInTransactionRefusesOwnSessionMethods(t *testing.T) {
 	progress := func(int, string) {}
 	if err := s.Backup(ctx, BackupOptions{Database: "db", Devices: []BackupTarget{DiskTarget("x.bak")}, Progress: progress}); !errors.Is(err, ErrUnsupported) {
 		t.Errorf("Backup with progress: %v, want ErrUnsupported", err)
+	}
+}
+
+// txRecDriver records every statement, BEGIN, COMMIT and ROLLBACK it is
+// handed, answers any query with one row "master", and fails a statement
+// containing "FAIL".
+type txRecDriver struct {
+	mu  sync.Mutex
+	log []string
+}
+
+func (d *txRecDriver) add(s string) {
+	d.mu.Lock()
+	d.log = append(d.log, s)
+	d.mu.Unlock()
+}
+
+func (d *txRecDriver) Open(string) (driver.Conn, error)             { return txRecConn{d}, nil }
+func (d *txRecDriver) Connect(context.Context) (driver.Conn, error) { return txRecConn{d}, nil }
+func (d *txRecDriver) Driver() driver.Driver                        { return d }
+
+type txRecConn struct{ d *txRecDriver }
+
+func (c txRecConn) Prepare(string) (driver.Stmt, error) { return nil, driver.ErrSkip }
+func (c txRecConn) Close() error                        { return nil }
+func (c txRecConn) Begin() (driver.Tx, error)           { c.d.add("BEGIN"); return txRecTx(c), nil }
+func (c txRecConn) ExecContext(_ context.Context, q string, _ []driver.NamedValue) (driver.Result, error) {
+	c.d.add(q)
+	if strings.Contains(q, "FAIL") {
+		return nil, errors.New("refused")
+	}
+	return driver.ResultNoRows, nil
+}
+func (c txRecConn) QueryContext(_ context.Context, q string, _ []driver.NamedValue) (driver.Rows, error) {
+	c.d.add(q)
+	return &captureRows{rows: [][]driver.Value{{"master"}}}, nil
+}
+
+type txRecTx txRecConn
+
+func (t txRecTx) Commit() error   { t.d.add("COMMIT"); return nil }
+func (t txRecTx) Rollback() error { t.d.add("ROLLBACK"); return nil }
+
+// execAtomic sends atomicBatch on its own and under WithScript — inside a
+// transaction's context too, since a script has no outer transaction — and
+// atomicTxBatch, with no transaction statements of its own, inside
+// InTransaction.
+func TestExecAtomicForm(t *testing.T) {
+	stmts := []string{"EXEC dbo.one", "EXEC dbo.two"}
+	rec := &txRecDriver{}
+	s := &Server{db: sql.OpenDB(rec)}
+	defer s.db.Close()
+	ctx := context.Background()
+
+	if err := s.execAtomic(ctx, stmts); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.InTransaction(ctx, func(ctx context.Context) error {
+		sctx, col := WithScript(ctx)
+		if err := s.execAtomic(sctx, stmts); err != nil {
+			return err
+		}
+		if got := col.Statements(); !slices.Equal(got, []string{atomicBatch(stmts)}) {
+			t.Errorf("captured inside a transaction %q, want atomicBatch", got)
+		}
+		return s.execAtomic(ctx, stmts)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{atomicBatch(stmts), "BEGIN", "SELECT DB_NAME()", atomicTxBatch(stmts), "COMMIT"}
+	if !slices.Equal(rec.log, want) {
+		t.Errorf("sent:\n%q\nwant:\n%q", rec.log, want)
+	}
+	for _, bad := range []string{"TRANSACTION", "XACT_ABORT"} {
+		if strings.Contains(atomicTxBatch(stmts), bad) {
+			t.Errorf("atomicTxBatch holds %s:\n%s", bad, atomicTxBatch(stmts))
+		}
+	}
+	if !strings.HasPrefix(atomicTxBatch(stmts), "BEGIN TRY\nEXEC dbo.one;\nEXEC dbo.two;\n") ||
+		!strings.HasSuffix(atomicTxBatch(stmts), "BEGIN CATCH\nTHROW;\nEND CATCH;") {
+		t.Errorf("atomicTxBatch:\n%s", atomicTxBatch(stmts))
+	}
+}
+
+// An atomic write that fails inside InTransaction refuses the COMMIT even
+// when fn tolerates the error: the statements before the failing one are in
+// the transaction, and committing them is the half-done write.
+func TestInTransactionRefusesCommitAfterAtomicFailure(t *testing.T) {
+	rec := &txRecDriver{}
+	s := &Server{db: sql.OpenDB(rec)}
+	defer s.db.Close()
+	var inner error
+	err := s.InTransaction(context.Background(), func(ctx context.Context) error {
+		inner = s.execAtomic(ctx, []string{"EXEC dbo.one", "FAIL"})
+		return nil
+	})
+	if inner == nil || err == nil || !errors.Is(err, inner) {
+		t.Fatalf("InTransaction = %v after the write failed with %v, want that error", err, inner)
+	}
+	if slices.Contains(rec.log, "COMMIT") || !slices.Contains(rec.log, "ROLLBACK") {
+		t.Errorf("sent %q, want a ROLLBACK and no COMMIT", rec.log)
 	}
 }

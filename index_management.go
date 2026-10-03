@@ -279,6 +279,7 @@ func (idx *Index) SetIncludedColumns(ctx context.Context, columns []string) erro
 	if _, err := idx.table.exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: set included columns on index %q: %w", idx.Name, err)
 	}
+	setIfApplied(ctx, &idx.IncludedColumns, next.IncludedColumns)
 	return nil
 }
 

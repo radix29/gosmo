@@ -105,7 +105,7 @@ func (r RestoreRelocation) NeedsFileList(source, target string) bool {
 	case RelocateNone:
 		return false
 	default:
-		return !sameDatabaseName(r.Collation, source, target)
+		return !SameName(r.Collation, source, target)
 	}
 }
 
@@ -118,7 +118,9 @@ func (r RestoreRelocation) NeedsFileList(source, target string) bool {
 // so the copy cannot collide with the original database's files, while a
 // same-name restore keeps the backup's file names and changes only the
 // directory. A file with no extension gets .ldf for the log and .ndf
-// otherwise.
+// otherwise — except a FILESTREAM container (type S) or a legacy full-text
+// catalog (F), which is a directory: a renamed one is "<target>_<logical>",
+// with no extension, so it does not pass for a data file.
 func (r RestoreRelocation) Moves(files []*BackupFile, source, target string) []RelocateFile {
 	if !r.NeedsFileList(source, target) {
 		return nil
@@ -132,24 +134,27 @@ func (r RestoreRelocation) Moves(files []*BackupFile, source, target string) []R
 			logDir = r.LogDir
 		}
 	}
-	renamed := !sameDatabaseName(r.Collation, source, target)
+	renamed := !SameName(r.Collation, source, target)
 
 	var moves []RelocateFile
 	for _, f := range files {
-		dir, ext := dataDir, serverPathExt(f.PhysicalName)
-		if f.Type == "L" {
+		dir, ext := dataDir, ServerPathExt(f.PhysicalName)
+		switch {
+		case f.Type == "S" || f.Type == "F":
+			ext = ""
+		case f.Type == "L":
 			dir = logDir
 			if ext == "" {
 				ext = ".ldf"
 			}
-		} else if ext == "" {
+		case ext == "":
 			ext = ".ndf"
 		}
-		name := serverPathBase(f.PhysicalName)
+		name := ServerPathBase(f.PhysicalName)
 		if renamed {
 			name = target + "_" + f.LogicalName + ext
 		}
-		moves = append(moves, RelocateFile{LogicalName: f.LogicalName, PhysicalName: joinServerPath(dir, name)})
+		moves = append(moves, RelocateFile{LogicalName: f.LogicalName, PhysicalName: JoinServerPath(dir, name)})
 	}
 	return moves
 }
@@ -161,37 +166,4 @@ func (r RestoreRelocation) Moves(files []*BackupFile, source, target string) []R
 func (o *RestoreOptions) FromHeader(h *BackupHeader, files []*BackupFile, r RestoreRelocation) {
 	o.FileNumber = h.SetNumber()
 	o.RelocateFiles = r.Moves(files, h.DatabaseName, o.Database)
-}
-
-// sameDatabaseName reports whether a and b name one database under the
-// server collation: case-blind unless the collation is a CS or binary one.
-// Matched by whole "_"-separated token, so a collation whose name merely
-// contains the letters is not mistaken for one.
-func sameDatabaseName(collation, a, b string) bool {
-	for tok := range strings.SplitSeq(strings.ToUpper(collation), "_") {
-		switch tok {
-		case "CS", "BIN", "BIN2":
-			return a == b
-		}
-	}
-	return strings.EqualFold(a, b)
-}
-
-// serverPathBase returns the file-name part of a path on the server, which
-// may use either separator whatever the client's OS.
-func serverPathBase(path string) string {
-	if i := strings.LastIndexAny(path, `/\`); i >= 0 {
-		return path[i+1:]
-	}
-	return path
-}
-
-// serverPathExt returns the extension (".mdf") of a server path's file
-// name, or "" if it has none.
-func serverPathExt(path string) string {
-	base := serverPathBase(path)
-	if i := strings.LastIndex(base, "."); i > 0 {
-		return base[i:]
-	}
-	return ""
 }

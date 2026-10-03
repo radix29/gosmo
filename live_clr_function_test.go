@@ -177,6 +177,11 @@ func TestLiveCLRModulesScriptRoundTrip(t *testing.T) {
 		`CREATE TRIGGER clr_ddl ON DATABASE WITH EXECUTE AS N'clr_runner' FOR CREATE_TABLE, DROP_TABLE
 		 AS EXTERNAL NAME w7clr.W7Clr.Noop`,
 		`DISABLE TRIGGER clr_ddl ON DATABASE`,
+		// Declared on an event group plus one event: scripted back as
+		// declared, not as the group's member events.
+		`CREATE TRIGGER clr_ddl_grp ON DATABASE FOR DDL_TABLE_EVENTS, CREATE_VIEW
+		 AS EXTERNAL NAME w7clr.W7Clr.Noop`,
+		`DISABLE TRIGGER clr_ddl_grp ON DATABASE`,
 	)
 
 	// A server trigger's assembly must be in master.
@@ -185,14 +190,16 @@ func TestLiveCLRModulesScriptRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	const srvAsm, srvTrg = "gosmo_w7clr_live", "gosmo_clr_srv_live"
+	const srvAsm, srvTrg, srvGrp = "gosmo_w7clr_live", "gosmo_clr_srv_live", "gosmo_clr_srv_grp_live"
 	liveExecIn(t, master, ctx,
 		`IF EXISTS (SELECT 1 FROM sys.server_triggers WHERE name = N'`+srvTrg+`') DROP TRIGGER `+srvTrg+` ON ALL SERVER`,
+		`IF EXISTS (SELECT 1 FROM sys.server_triggers WHERE name = N'`+srvGrp+`') DROP TRIGGER `+srvGrp+` ON ALL SERVER`,
 		`IF EXISTS (SELECT 1 FROM sys.assemblies WHERE name = N'`+srvAsm+`') DROP ASSEMBLY `+srvAsm)
 	liveCLRAssembly(t, db, ctx, master, srvAsm)
 	t.Cleanup(func() {
 		c := context.Background()
 		master.exec(c, `IF EXISTS (SELECT 1 FROM sys.server_triggers WHERE name = N'`+srvTrg+`') DROP TRIGGER `+srvTrg+` ON ALL SERVER`)
+		master.exec(c, `IF EXISTS (SELECT 1 FROM sys.server_triggers WHERE name = N'`+srvGrp+`') DROP TRIGGER `+srvGrp+` ON ALL SERVER`)
 		if _, err := master.exec(c, `DROP ASSEMBLY `+srvAsm); err != nil {
 			t.Errorf("drop the master assembly: %v", err)
 		}
@@ -201,7 +208,9 @@ func TestLiveCLRModulesScriptRoundTrip(t *testing.T) {
 	// enabled" off fails the statement it fires on.
 	liveExecIn(t, master, ctx,
 		`CREATE TRIGGER `+srvTrg+` ON ALL SERVER FOR ALTER_SERVER_AUDIT AS EXTERNAL NAME `+srvAsm+`.W7Clr.Noop`,
-		`DISABLE TRIGGER `+srvTrg+` ON ALL SERVER`)
+		`DISABLE TRIGGER `+srvTrg+` ON ALL SERVER`,
+		`CREATE TRIGGER `+srvGrp+` ON ALL SERVER FOR DDL_LOGIN_EVENTS AS EXTERNAL NAME `+srvAsm+`.W7Clr.Noop`,
+		`DISABLE TRIGGER `+srvGrp+` ON ALL SERVER`)
 
 	sc := func(v ScriptVerb) *Scripter { return NewScripter(d, ScriptOptions{Verb: v}) }
 	ssc := func(v ScriptVerb) *ServerScripter { return NewServerScripter(srv, ScriptOptions{Verb: v}) }
@@ -233,6 +242,12 @@ func TestLiveCLRModulesScriptRoundTrip(t *testing.T) {
 		{"server trigger", func(v ScriptVerb) (string, error) { return ssc(v).ScriptServerTrigger(ctx, srvTrg) },
 			`DROP TRIGGER ` + srvTrg + ` ON ALL SERVER`, master,
 			[]string{"ON ALL SERVER", "AFTER ALTER_SERVER_AUDIT", "[" + srvAsm + "].[W7Clr].[Noop]", "DISABLE TRIGGER"}},
+		{"database trigger on an event group", func(v ScriptVerb) (string, error) { return sc(v).ScriptDatabaseTrigger(ctx, "clr_ddl_grp") },
+			`DROP TRIGGER clr_ddl_grp ON DATABASE`, d,
+			[]string{"AFTER DDL_TABLE_EVENTS, CREATE_VIEW\n"}},
+		{"server trigger on an event group", func(v ScriptVerb) (string, error) { return ssc(v).ScriptServerTrigger(ctx, srvGrp) },
+			`DROP TRIGGER ` + srvGrp + ` ON ALL SERVER`, master,
+			[]string{"AFTER DDL_LOGIN_EVENTS\n"}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

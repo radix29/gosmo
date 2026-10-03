@@ -727,25 +727,7 @@ func defaultPrimaryFile(name string, info *ServerInfo) (*DatabaseFileSpec, error
 	if info == nil || info.DefaultDataPath == "" {
 		return nil, fmt.Errorf("a log file needs a data file beside it, and the instance reports no default data path to place one in")
 	}
-	return &DatabaseFileSpec{Name: name, Path: joinServerPath(info.DefaultDataPath, name+".mdf")}, nil
-}
-
-// joinServerPath appends file to dir, a directory on the server's own file
-// system — so the separator is the one dir already uses, not the client's.
-// SERVERPROPERTY('InstanceDefaultDataPath') ends in one, but a caller-supplied
-// directory may not. An empty dir — no default directory known — leaves file
-// bare, for the server to place.
-func joinServerPath(dir, file string) string {
-	if dir == "" {
-		return file
-	}
-	if strings.HasSuffix(dir, `\`) || strings.HasSuffix(dir, "/") {
-		return dir + file
-	}
-	if strings.Contains(dir, `\`) {
-		return dir + `\` + file
-	}
-	return dir + "/" + file
+	return &DatabaseFileSpec{Name: name, Path: JoinServerPath(info.DefaultDataPath, name+".mdf")}, nil
 }
 
 // buildCreateDatabaseStatement builds the CREATE DATABASE statement for

@@ -222,14 +222,3 @@ func (s *Server) FileSystemExists(ctx context.Context, path string) (exists, isD
 	}
 	return fileExists.Int64 == 1 || isDir.Int64 == 1, isDir.Int64 == 1, nil
 }
-
-// serverPathSeparator returns the separator a server-side path uses — a
-// backslash for Windows paths, "/" otherwise. Deciding from the path itself
-// rather than from runtime.GOOS is what keeps a Linux client correct against
-// a Windows server and vice versa.
-func serverPathSeparator(path string) string {
-	if strings.Contains(path, `\`) {
-		return `\`
-	}
-	return "/"
-}
