@@ -3,7 +3,6 @@ package gosmo
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"fmt"
 	"time"
 )
@@ -477,14 +476,9 @@ ORDER  BY s.name`)
 // It returns an error satisfying errors.Is(err, ErrNotFound) when the database
 // has no such schema.
 func (d *Database) SchemaByName(ctx context.Context, name string) (*Schema, error) {
-	var sc *Schema
-	err := d.queryRow(ctx, func(row *sql.Row) error {
-		var err error
-		sc, err = scanSchema(d, row.Scan)
-		return err
-	}, schemaSelect+`
-WHERE  s.name = @p1`, name)
-	return foundRow(sc, err, notFoundf("gosmo: schema %q not found in %q", name, d.Name), fmt.Sprintf("find schema %q in %q", name, d.Name))
+	return readByName(ctx, d, scanSchema, schemaSelect+`
+WHERE  s.name = @p1`, []any{name},
+		notFoundf("gosmo: schema %q not found in %q", name, d.Name), fmt.Sprintf("find schema %q in %q", name, d.Name))
 }
 
 // SchemaRef returns a lightweight handle for a schema by name, without
@@ -624,19 +618,9 @@ func (d *Database) TableByName(ctx context.Context, schema, name string) (*Table
 WHERE  SCHEMA_NAME(t.schema_id) = @p1
   AND  t.name                   = @p2`
 
-	var t *Table
-	err := d.queryRow(ctx, func(row *sql.Row) error {
-		var err error
-		t, err = scanTable(d, row.Scan)
-		return err
-	}, q, schema, name)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, notFoundf("gosmo: table %s not found in %q", qualifiedName(schema, name), d.Name)
-		}
-		return nil, err
-	}
-	return t, nil
+	return readByName(ctx, d, scanTable, q, []any{schema, name},
+		notFoundf("gosmo: table %s not found in %q", qualifiedName(schema, name), d.Name),
+		fmt.Sprintf("find table %s in %q", qualifiedName(schema, name), d.Name))
 }
 
 // -- Drop and rename -----------------------------------------------------------

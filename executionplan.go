@@ -2,6 +2,7 @@ package gosmo
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"time"
 )
@@ -37,20 +38,88 @@ type ExecutionPlan struct {
 // the same distinction.
 const ShowplanColumn = "Microsoft SQL Server 2005 XML Showplan"
 
+// PlanMode selects which execution plan a capture asks the server for.
+type PlanMode int
+
+const (
+	// PlanEstimated is SET SHOWPLAN_XML ON: the server compiles each batch
+	// and returns its plan instead of running it.
+	PlanEstimated PlanMode = iota + 1
+
+	// PlanActual is SET STATISTICS XML ON: each statement really runs, and
+	// its plan follows its own results as one more result set.
+	PlanActual
+)
+
+// String is the mode's name in an error message: "estimated" or "actual".
+func (m PlanMode) String() string {
+	switch m {
+	case PlanEstimated:
+		return "estimated"
+	case PlanActual:
+		return "actual"
+	}
+	return fmt.Sprintf("PlanMode(%d)", int(m))
+}
+
+func (m PlanMode) setOption() string {
+	if m == PlanEstimated {
+		return "SHOWPLAN_XML"
+	}
+	return "STATISTICS XML"
+}
+
+// planStopTimeout bounds the SET ... OFF that ends a plan capture.
+const planStopTimeout = 5 * time.Second
+
+// StartPlanCapture switches mode's SET option on for the session behind conn
+// — a *sql.Conn or *sql.Tx, since the option is per session and a pooled
+// *sql.DB would hand the next statement another one — and returns stop, which
+// switches it off again. A caller defers stop on every exit: a session left
+// under SHOWPLAN_XML compiles everything it is sent afterwards and runs
+// nothing.
+//
+// stop runs detached from ctx's cancellation, keeping its values: a cancelled
+// run is the likeliest one to need it. planStopTimeout bounds how long an
+// unresponsive connection can hold it, which context.Background() would not.
+//
+// Both errors read "gosmo: enable|disable <mode> execution plan capture: ...".
+// An error enabling the capture means nothing was switched on, and stop is
+// nil.
+func StartPlanCapture(ctx context.Context, conn interface {
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+}, mode PlanMode) (stop func() error, err error) {
+	if mode != PlanEstimated && mode != PlanActual {
+		return nil, fmt.Errorf("gosmo: start plan capture: unknown mode %v", mode)
+	}
+	set := "SET " + mode.setOption()
+	if _, err := conn.ExecContext(ctx, set+" ON"); err != nil {
+		return nil, fmt.Errorf("gosmo: enable %s execution plan capture: %w", mode, err)
+	}
+	return func() error {
+		sctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), planStopTimeout)
+		defer cancel()
+		if _, err := conn.ExecContext(sctx, set+" OFF"); err != nil {
+			return fmt.Errorf("gosmo: disable %s execution plan capture: %w", mode, err)
+		}
+		return nil
+	}, nil
+}
+
 // EstimatedPlan captures sql's estimated execution plan without running it
 // (SET SHOWPLAN_XML ON) — SSMS's "Display Estimated Execution Plan".
 func (d *Database) EstimatedPlan(ctx context.Context, sqlText string) (*ExecutionPlan, error) {
-	return d.capturePlan(ctx, "SHOWPLAN_XML", sqlText)
+	return d.capturePlan(ctx, PlanEstimated, sqlText)
 }
 
 // ActualPlan executes sql and captures its actual execution plan
 // (SET STATISTICS XML ON) — SSMS's "Include Actual Execution Plan". Unlike
 // EstimatedPlan, this runs the statement.
 func (d *Database) ActualPlan(ctx context.Context, sqlText string) (*ExecutionPlan, error) {
-	return d.capturePlan(ctx, "STATISTICS XML", sqlText)
+	return d.capturePlan(ctx, PlanActual, sqlText)
 }
 
-// capturePlan runs sqlText with the given SET option on, then collects every
+// capturePlan runs sqlText with mode's capture on, then collects every
 // plan document it finds: both SHOWPLAN_XML (whose result sets are the only
 // ones, since no statement runs) and STATISTICS XML (an extra result set
 // appended after each statement's own) name the plan column ShowplanColumn.
@@ -63,23 +132,16 @@ func (d *Database) ActualPlan(ctx context.Context, sqlText string) (*ExecutionPl
 // document per executed statement in a set of its own. A server that ever
 // split a set across rows would lose all but one plan to an overwriting
 // scan, so the loop stays.
-func (d *Database) capturePlan(ctx context.Context, setOpt, sqlText string) (*ExecutionPlan, error) {
+func (d *Database) capturePlan(ctx context.Context, mode PlanMode, sqlText string) (*ExecutionPlan, error) {
 	var plans []string
 	err := d.withConn(ctx, func(ctx context.Context, conn sqlConn) error {
-		if _, err := conn.ExecContext(ctx, "SET "+setOpt+" ON"); err != nil {
-			return fmt.Errorf("gosmo: enable %s: %w", setOpt, err)
+		stop, err := StartPlanCapture(ctx, conn, mode)
+		if err != nil {
+			return err
 		}
-		// Cleanup must still run (and return conn to the pool in a known
-		// state) even if ctx is already canceled by the time capturePlan
-		// returns — context.WithoutCancel keeps ctx's values without its
-		// cancellation, and the timeout bounds how long a genuinely
-		// unresponsive connection can block it, unlike context.Background()
-		// which never times out.
-		defer func() {
-			cctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
-			defer cancel()
-			conn.ExecContext(cctx, "SET "+setOpt+" OFF")
-		}()
+		// conn goes back to the pool in a known state even when ctx is
+		// already cancelled; a failed stop has nothing left to report to.
+		defer stop()
 
 		rows, err := conn.QueryContext(ctx, sqlText)
 		if err != nil {

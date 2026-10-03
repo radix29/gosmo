@@ -8,7 +8,6 @@ package gosmo
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -287,17 +286,10 @@ func (s *Server) JobByName(ctx context.Context, name string) (*Job, error) {
 	const q = jobSelect + `
 WHERE  j.name = @p1`
 
-	var j *Job
-	err := s.queryRow(ctx, func(row *sql.Row) error {
-		var err error
-		j, err = scanJob(s, row.Scan)
-		return err
-	}, q, name)
+	j, err := readByName(ctx, s, scanJob, q, []any{name},
+		notFoundf("gosmo: agent job %q not found", name), "job by name")
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, notFoundf("gosmo: agent job %q not found", name)
-		}
-		return nil, fmt.Errorf("gosmo: job by name: %w", err)
+		return nil, err
 	}
 	s.applyJobStates(ctx, j)
 	return j, nil
@@ -473,13 +465,8 @@ JOIN   msdb.dbo.sysjobs j ON j.job_id = js.job_id
 WHERE  j.name = @p1 AND sch.name = @p2
 ORDER  BY sch.schedule_id DESC`
 
-	var sch *Schedule
-	err := j.server.queryRow(ctx, func(row *sql.Row) error {
-		var scanErr error
-		sch, scanErr = scanSchedule(j.server, row.Scan)
-		return scanErr
-	}, q, j.Name, name)
-	return foundRow(sch, err, notFoundf("gosmo: schedule %q not found on job %q", name, j.Name),
+	return readByName(ctx, j.server, scanSchedule, q, []any{j.Name, name},
+		notFoundf("gosmo: schedule %q not found on job %q", name, j.Name),
 		fmt.Sprintf("read schedule %q of job %q", name, j.Name))
 }
 

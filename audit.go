@@ -104,14 +104,9 @@ ORDER  BY a.name`)
 // not-found error (errors.Is ErrNotFound) when the server has none by that
 // name.
 func (s *Server) ServerAuditByName(ctx context.Context, name string) (*ServerAudit, error) {
-	var a *ServerAudit
-	err := s.queryRow(ctx, func(row *sql.Row) error {
-		var err error
-		a, err = scanServerAudit(s, row.Scan)
-		return err
-	}, serverAuditSelect+`
-WHERE  a.name = @p1`, name)
-	return foundRow(a, err, notFoundf("gosmo: server audit %q not found", name), fmt.Sprintf("read server audit %q", name))
+	return readByName(ctx, s, scanServerAudit, serverAuditSelect+`
+WHERE  a.name = @p1`, []any{name},
+		notFoundf("gosmo: server audit %q not found", name), fmt.Sprintf("read server audit %q", name))
 }
 
 // ServerAuditRef returns a lightweight handle for a server audit by name, without
@@ -173,11 +168,9 @@ func (a *ServerAudit) Status(ctx context.Context) (*ServerAuditStatus, error) {
 SELECT status_desc, status_time, audit_file_path, audit_file_size
 FROM   sys.dm_server_audit_status
 WHERE  name = @p1`, a.Name)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, notFoundf("gosmo: server audit %q has no runtime status", a.Name)
-	}
 	if err != nil {
-		return nil, fmt.Errorf("gosmo: read server audit %q status: %w", a.Name, err)
+		return nil, rowErr(err, notFoundf("gosmo: server audit %q has no runtime status", a.Name),
+			fmt.Sprintf("read server audit %q status", a.Name))
 	}
 	st.AuditFilePath, st.AuditFileSize = path.String, size.Int64
 	return st, nil
@@ -347,11 +340,9 @@ func (a *ServerAudit) isEnabled(ctx context.Context) (bool, error) {
 	err := a.server.queryRow(ctx, func(row *sql.Row) error {
 		return row.Scan(&enabled)
 	}, "SELECT is_state_enabled FROM sys.server_audits WHERE name = @p1", a.Name)
-	if errors.Is(err, sql.ErrNoRows) {
-		return false, notFoundf("gosmo: server audit %q not found", a.Name)
-	}
 	if err != nil {
-		return false, err
+		return false, rowErr(err, notFoundf("gosmo: server audit %q not found", a.Name),
+			fmt.Sprintf("read state of server audit %q", a.Name))
 	}
 	return enabled.Bool, nil
 }

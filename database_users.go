@@ -3,7 +3,6 @@ package gosmo
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"fmt"
 	"strings"
 )
@@ -65,10 +64,8 @@ WHERE  dp.type IN ` + userTypes + ` AND dp.name = @p1`
 			&authType, &u.SID, &loginName, &loginDisabled, &mapped)
 	}, q, name)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, notFoundf("gosmo: database user %q not found in %q", name, d.Name)
-		}
-		return nil, fmt.Errorf("gosmo: find database user %q in %q: %w", name, d.Name, err)
+		return nil, rowErr(err, notFoundf("gosmo: database user %q not found in %q", name, d.Name),
+			fmt.Sprintf("find database user %q in %q", name, d.Name))
 	}
 	u.DefaultSchema = defSchema.String
 	u.AuthType = authType.String

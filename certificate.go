@@ -124,14 +124,9 @@ ORDER  BY c.name`)
 // answered absence with (nil, nil); a caller about to create a certificate
 // branches on errors.Is(err, ErrNotFound) instead.
 func (d *Database) CertificateByName(ctx context.Context, name string) (*Certificate, error) {
-	var c *Certificate
-	err := d.queryRow(ctx, func(row *sql.Row) error {
-		var err error
-		c, err = scanCertificate(d, row.Scan)
-		return err
-	}, certificateSelect+`
-WHERE  c.name = @p1`, name)
-	return foundRow(c, err, notFoundf("gosmo: certificate %s not found in %q", quoteIdent(name), d.Name),
+	return readByName(ctx, d, scanCertificate, certificateSelect+`
+WHERE  c.name = @p1`, []any{name},
+		notFoundf("gosmo: certificate %s not found in %q", quoteIdent(name), d.Name),
 		fmt.Sprintf("read certificate %q in %q", name, d.Name))
 }
 

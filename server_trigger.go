@@ -73,14 +73,9 @@ ORDER  BY tr.name`)
 // or a not-found error (errors.Is ErrNotFound) when the server has none by
 // that name.
 func (s *Server) ServerTriggerByName(ctx context.Context, name string) (*ServerTrigger, error) {
-	var t *ServerTrigger
-	err := s.queryRow(ctx, func(row *sql.Row) error {
-		var err error
-		t, err = scanServerTrigger(s, row.Scan)
-		return err
-	}, serverTriggerSelect+`
-   AND tr.name = @p1`, name)
-	return foundRow(t, err, notFoundf("gosmo: server trigger %q not found", name), fmt.Sprintf("read server trigger %q", name))
+	return readByName(ctx, s, scanServerTrigger, serverTriggerSelect+`
+   AND tr.name = @p1`, []any{name},
+		notFoundf("gosmo: server trigger %q not found", name), fmt.Sprintf("read server trigger %q", name))
 }
 
 // ServerTriggerRef returns a lightweight handle for a server trigger by name,

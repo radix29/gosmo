@@ -66,14 +66,9 @@ ORDER  BY c.name`)
 // populated, or a not-found error (errors.Is ErrNotFound) when the database
 // has none by that name.
 func (d *Database) DatabaseScopedCredentialByName(ctx context.Context, name string) (*DatabaseScopedCredential, error) {
-	var c *DatabaseScopedCredential
-	err := d.queryRow(ctx, func(row *sql.Row) error {
-		var err error
-		c, err = scanDatabaseScopedCredential(d, row.Scan)
-		return err
-	}, databaseScopedCredentialSelect+`
-WHERE  c.name = @p1`, name)
-	return foundRow(c, err, notFoundf("gosmo: database scoped credential %q not found in %q", name, d.Name), fmt.Sprintf("read database scoped credential %q in %q", name, d.Name))
+	return readByName(ctx, d, scanDatabaseScopedCredential, databaseScopedCredentialSelect+`
+WHERE  c.name = @p1`, []any{name},
+		notFoundf("gosmo: database scoped credential %q not found in %q", name, d.Name), fmt.Sprintf("read database scoped credential %q in %q", name, d.Name))
 }
 
 // DatabaseScopedCredentialRef returns a lightweight handle for a credential by

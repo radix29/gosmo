@@ -62,14 +62,9 @@ ORDER  BY name`)
 
 // ColumnMasterKeyByName returns one column master key by name.
 func (d *Database) ColumnMasterKeyByName(ctx context.Context, name string) (*ColumnMasterKey, error) {
-	var k *ColumnMasterKey
-	err := d.queryRow(ctx, func(row *sql.Row) error {
-		var err error
-		k, err = scanColumnMasterKey(d, row.Scan)
-		return err
-	}, d.columnMasterKeySelect()+`
-WHERE  name = @p1`, name)
-	return foundRow(k, err, notFoundf("gosmo: column master key %q not found in %q", name, d.Name), fmt.Sprintf("find column master key %q in %q", name, d.Name))
+	return readByName(ctx, d, scanColumnMasterKey, d.columnMasterKeySelect()+`
+WHERE  name = @p1`, []any{name},
+		notFoundf("gosmo: column master key %q not found in %q", name, d.Name), fmt.Sprintf("find column master key %q in %q", name, d.Name))
 }
 
 // ColumnMasterKeyRef returns a lightweight handle for a column master key by name, without

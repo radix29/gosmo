@@ -72,14 +72,9 @@ ORDER  BY c.name`)
 // not-found error (errors.Is ErrNotFound) when the server has none by that
 // name.
 func (s *Server) CredentialByName(ctx context.Context, name string) (*Credential, error) {
-	var c *Credential
-	err := s.queryRow(ctx, func(row *sql.Row) error {
-		var err error
-		c, err = scanCredential(s, row.Scan)
-		return err
-	}, credentialSelect+`
-WHERE  c.name = @p1`, name)
-	return foundRow(c, err, notFoundf("gosmo: credential %q not found", name), fmt.Sprintf("read credential %q", name))
+	return readByName(ctx, s, scanCredential, credentialSelect+`
+WHERE  c.name = @p1`, []any{name},
+		notFoundf("gosmo: credential %q not found", name), fmt.Sprintf("read credential %q", name))
 }
 
 // CredentialRef returns a lightweight handle for a credential by name, without

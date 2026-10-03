@@ -3,7 +3,6 @@ package gosmo
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -140,18 +139,12 @@ ORDER  BY s.name`)
 // DatabaseAuditSpecificationByName returns one specification with every field
 // populated, or a not-found error (errors.Is ErrNotFound).
 func (d *Database) DatabaseAuditSpecificationByName(ctx context.Context, name string) (*DatabaseAuditSpecification, error) {
-	var spec *DatabaseAuditSpecification
-	err := d.queryRow(ctx, func(row *sql.Row) error {
-		var err error
-		spec, err = scanDatabaseAuditSpecification(d, row.Scan)
-		return err
-	}, databaseAuditSpecificationSelect+`
-WHERE  s.name = @p1`, name)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, notFoundf("gosmo: database audit specification %q not found in %q", name, d.Name)
-	}
+	spec, err := readByName(ctx, d, scanDatabaseAuditSpecification, databaseAuditSpecificationSelect+`
+WHERE  s.name = @p1`, []any{name},
+		notFoundf("gosmo: database audit specification %q not found in %q", name, d.Name),
+		fmt.Sprintf("read database audit specification %q in %q", name, d.Name))
 	if err != nil {
-		return nil, fmt.Errorf("gosmo: read database audit specification %q in %q: %w", name, d.Name, err)
+		return nil, err
 	}
 	byID := map[int]*DatabaseAuditSpecification{spec.SpecificationID: spec}
 	if err := d.loadAuditSpecificationDetails(ctx, byID, spec.SpecificationID); err != nil {
@@ -456,11 +449,9 @@ func (spec *DatabaseAuditSpecification) isEnabled(ctx context.Context) (bool, er
 	err := spec.db.queryRow(ctx, func(row *sql.Row) error {
 		return row.Scan(&enabled)
 	}, "SELECT is_state_enabled FROM sys.database_audit_specifications WHERE name = @p1", spec.Name)
-	if errors.Is(err, sql.ErrNoRows) {
-		return false, notFoundf("gosmo: database audit specification %q not found in %q", spec.Name, spec.db.Name)
-	}
 	if err != nil {
-		return false, err
+		return false, rowErr(err, notFoundf("gosmo: database audit specification %q not found in %q", spec.Name, spec.db.Name),
+			fmt.Sprintf("read state of database audit specification %q", spec.Name))
 	}
 	return enabled.Bool, nil
 }

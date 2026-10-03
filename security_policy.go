@@ -7,7 +7,6 @@ package gosmo
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"fmt"
 )
 
@@ -87,19 +86,13 @@ func (d *Database) SecurityPolicyByName(ctx context.Context, schema, name string
 	if err := requireSchema("security policy by name", schema, name); err != nil {
 		return nil, err
 	}
-	var p *SecurityPolicy
-	err := d.queryRow(ctx, func(row *sql.Row) error {
-		var err error
-		p, err = scanSecurityPolicy(d, row.Scan)
-		return err
-	}, securityPolicySelect+`
+	p, err := readByName(ctx, d, scanSecurityPolicy, securityPolicySelect+`
 WHERE  SCHEMA_NAME(sp.schema_id) = @p1
-  AND  sp.name                   = @p2`, schema, name)
+  AND  sp.name                   = @p2`, []any{schema, name},
+		notFoundf("gosmo: security policy %s not found in %q", qualifiedName(schema, name), d.Name),
+		fmt.Sprintf("find security policy %s in %q", qualifiedName(schema, name), d.Name))
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, notFoundf("gosmo: security policy %s not found in %q", qualifiedName(schema, name), d.Name)
-		}
-		return nil, fmt.Errorf("gosmo: find security policy %s in %q: %w", qualifiedName(schema, name), d.Name, err)
+		return nil, err
 	}
 	if err := d.loadSecurityPredicates(ctx, p); err != nil {
 		return nil, err

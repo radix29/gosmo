@@ -21,7 +21,6 @@ package gosmo
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"fmt"
 	"strings"
 )
@@ -200,19 +199,9 @@ func (s *Server) AvailabilityGroupByName(ctx context.Context, name string) (*Ava
 	LEFT JOIN sys.dm_hadr_availability_group_states gs ON gs.group_id = ag.group_id
 	WHERE ag.name = @p1`
 
-	var ag *AvailabilityGroup
-	err := s.queryRow(ctx, func(row *sql.Row) error {
-		var scanErr error
-		ag, scanErr = s.scanAvailabilityGroup(row.Scan)
-		return scanErr
-	}, q, name)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, notFoundfAlso(sql.ErrNoRows, "gosmo: availability group %q not found", name)
-		}
-		return nil, fmt.Errorf("gosmo: availability group %q: %w", name, err)
-	}
-	return ag, nil
+	return readByName(ctx, s, (*Server).scanAvailabilityGroup, q, []any{name},
+		notFoundfAlso(sql.ErrNoRows, "gosmo: availability group %q not found", name),
+		fmt.Sprintf("availability group %q", name))
 }
 
 // -- Group settings --------------------------------------------------------

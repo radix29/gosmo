@@ -71,14 +71,9 @@ ORDER  BY tr.name`)
 // field populated, or a not-found error (errors.Is ErrNotFound) when the
 // database has none by that name.
 func (d *Database) DatabaseTriggerByName(ctx context.Context, name string) (*DatabaseTrigger, error) {
-	var t *DatabaseTrigger
-	err := d.queryRow(ctx, func(row *sql.Row) error {
-		var err error
-		t, err = scanDatabaseTrigger(d, row.Scan)
-		return err
-	}, databaseTriggerSelect+`
-   AND tr.name = @p1`, name)
-	return foundRow(t, err, notFoundf("gosmo: database trigger %q not found in %q", name, d.Name), fmt.Sprintf("read database trigger %q in %q", name, d.Name))
+	return readByName(ctx, d, scanDatabaseTrigger, databaseTriggerSelect+`
+   AND tr.name = @p1`, []any{name},
+		notFoundf("gosmo: database trigger %q not found in %q", name, d.Name), fmt.Sprintf("read database trigger %q in %q", name, d.Name))
 }
 
 // DatabaseTriggerRef returns a lightweight handle for a database-scope DDL

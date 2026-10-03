@@ -2,7 +2,6 @@ package gosmo
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"strings"
 )
@@ -86,14 +85,9 @@ ORDER  BY k.name`)
 // ErrNotFound when the database has none by that name. Until 2026-09-22 it
 // answered absence with (nil, nil), as CertificateByName did.
 func (d *Database) AsymmetricKeyByName(ctx context.Context, name string) (*AsymmetricKey, error) {
-	var k *AsymmetricKey
-	err := d.queryRow(ctx, func(row *sql.Row) error {
-		var err error
-		k, err = scanAsymmetricKey(d, row.Scan)
-		return err
-	}, asymmetricKeySelect+`
-WHERE  k.name = @p1`, name)
-	return foundRow(k, err, notFoundf("gosmo: asymmetric key %s not found in %q", quoteIdent(name), d.Name),
+	return readByName(ctx, d, scanAsymmetricKey, asymmetricKeySelect+`
+WHERE  k.name = @p1`, []any{name},
+		notFoundf("gosmo: asymmetric key %s not found in %q", quoteIdent(name), d.Name),
 		fmt.Sprintf("read asymmetric key %q in %q", name, d.Name))
 }
 

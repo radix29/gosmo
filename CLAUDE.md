@@ -71,9 +71,11 @@ exercise the write, drop them; never mutate pre-existing objects.
 - **Row iteration.** Every `query` gets `defer rows.Close()` and a checked
   `rows.Err()`; it and every `rows.Scan` wrap with the *same* message as the
   query error (else a mid-iteration failure surfaces as a bare `context
-  deadline exceeded`). List reads use `scanRows` (`helpers.go`); by-name reads
-  end in `foundRow` (`sql.ErrNoRows` → `notFoundf`). Hand-roll only for shapes
-  they don't fit. Shared scan helpers (`scanColumns`, `scanExtProps`,
+  deadline exceeded`). List reads use `scanRows` (`helpers.go`); a by-name
+  read whose row a family `scanX(owner, scan)` builds is `readByName`, any
+  other single-row read ends in `foundRow`, or `rowErr` when it fills in more
+  after the row (`sql.ErrNoRows` → `notFoundf`). Hand-roll only where no row
+  is not an error. Shared scan helpers (`scanColumns`, `scanExtProps`,
   `scanEffectivePermissions`, `securityPredicates`, `indexColumns`,
   `execWithProgress`) return bare errors on purpose; their callers wrap.
 - **Quoting** — `quoting.go`'s doc comments are the authority. `QuoteName`/

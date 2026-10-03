@@ -29,6 +29,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -333,6 +334,21 @@ var sweepMustCall = []string{
 	// asserted against the sweep's own inline function and a system DMF.
 	"Database.Catalog",
 	"Database.SystemCatalog",
+
+	// Server activity and tempdb usage: the DMV reads an activity monitor
+	// samples, moved here from gossms so this sweep runs them on every major.
+	"Server.HasViewServerState",
+	"Server.PerformanceCounters",
+	"Server.WaitStats",
+	"Server.FileIOStats",
+	"Server.MemoryClerks",
+	"Server.Schedulers",
+	"Server.RequestActivity",
+	"Server.HostCPU",
+	"Server.TempDBSpace",
+	"Server.TempDBFiles",
+	"Server.TempDBObjects",
+	"Server.TempDBSessions",
 }
 
 // checkCoverage fails on any sweepMustCall entry no label matched. It runs
@@ -879,6 +895,12 @@ func sweepQueryStoreReports(sw *sweep, d *Database) {
 	})
 	sw.call("Database.QueryStoreQueryText", func() error {
 		_, _, err := d.QueryStoreQueryText(sw.ctx, queryID)
+		// With the fallback id there is no row to find, and saying so is
+		// the statement working: the one reader here that refuses absence
+		// rather than returning an empty list.
+		if errors.Is(err, ErrNotFound) {
+			return nil
+		}
 		return err
 	})
 	sw.call("Database.QueryStoreWaitCategories", func() error {
@@ -1100,6 +1122,30 @@ func sweepServerCalls(sw *sweep, srv *Server, info *ServerInfo) {
 	sw.call("Server.FileSystemExists", func() error {
 		_, _, err := srv.FileSystemExists(sw.ctx, path)
 		return err
+	})
+
+	// PerformanceCounters takes its filter, so the reflective half skips it.
+	// Swept both ways: unfiltered proves the view's columns, filtered the
+	// parameterised IN lists.
+	sw.call("Server.PerformanceCounters", func() error {
+		all, err := srv.PerformanceCounters(sw.ctx, nil, nil)
+		if err == nil && len(all) == 0 {
+			err = fmt.Errorf("no counters at all — the view is empty to this login")
+		}
+		return err
+	})
+	sw.call("Server.PerformanceCounters(filtered)", func() error {
+		names := []string{"Batch Requests/sec", "Transactions/sec"}
+		got, err := srv.PerformanceCounters(sw.ctx, names, []string{"", "_Total"})
+		if err != nil {
+			return err
+		}
+		for _, name := range names {
+			if !slices.ContainsFunc(got, func(c PerformanceCounter) bool { return c.Counter == name }) {
+				return fmt.Errorf("filtered read has no %q row among %d", name, len(got))
+			}
+		}
+		return nil
 	})
 
 	// Resource Governor. default exists in all three catalogs on every

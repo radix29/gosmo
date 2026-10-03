@@ -401,14 +401,9 @@ ORDER  BY g.name`, p.ID)
 // name or the login cannot see it. Group names are unique server-wide, not
 // per pool.
 func (s *Server) WorkloadGroupByName(ctx context.Context, name string) (*WorkloadGroup, error) {
-	var g *WorkloadGroup
-	err := s.queryRow(ctx, func(row *sql.Row) error {
-		var err error
-		g, err = scanWorkloadGroup(s, row.Scan)
-		return err
-	}, s.workloadGroupSelect()+`
-WHERE  g.name = @p1`, name)
-	return foundRow(g, err, notFoundf("gosmo: workload group %q not found", name), fmt.Sprintf("read workload group %q", name))
+	return readByName(ctx, s, scanWorkloadGroup, s.workloadGroupSelect()+`
+WHERE  g.name = @p1`, []any{name},
+		notFoundf("gosmo: workload group %q not found", name), fmt.Sprintf("read workload group %q", name))
 }
 
 func scanWorkloadGroup(s *Server, scan func(...any) error) (*WorkloadGroup, error) {

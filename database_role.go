@@ -3,7 +3,6 @@ package gosmo
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"fmt"
 	"time"
 )
@@ -75,10 +74,8 @@ WHERE  r.type = 'R' AND r.name = @p1`
 		return row.Scan(&r.Name, &r.ID, &r.IsFixedRole, &r.Owner, &r.SID, &r.CreateDate, &r.ModifyDate, &members)
 	}, q, name)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, notFoundf("gosmo: database role %q not found in %q", name, d.Name)
-		}
-		return nil, fmt.Errorf("gosmo: find database role %q in %q: %w", name, d.Name, err)
+		return nil, rowErr(err, notFoundf("gosmo: database role %q not found in %q", name, d.Name),
+			fmt.Sprintf("find database role %q in %q", name, d.Name))
 	}
 	if r.Members, err = decodeJSONList(members); err != nil {
 		return nil, err

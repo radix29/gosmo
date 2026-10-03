@@ -13,7 +13,6 @@ package gosmo
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"time"
 )
@@ -124,14 +123,9 @@ ORDER  BY g.name`
 // not-found error (errors.Is ErrNotFound) when the database has none by that
 // name.
 func (d *Database) PlanGuideByName(ctx context.Context, name string) (*PlanGuide, error) {
-	var g *PlanGuide
-	err := d.queryRow(ctx, func(row *sql.Row) error {
-		var err error
-		g, err = scanPlanGuide(d, row.Scan)
-		return err
-	}, planGuideSelect+`
-WHERE  g.name = @p1`, name)
-	return foundRow(g, err, notFoundf("gosmo: plan guide %q not found in %q", name, d.Name), fmt.Sprintf("read plan guide %q in %q", name, d.Name))
+	return readByName(ctx, d, scanPlanGuide, planGuideSelect+`
+WHERE  g.name = @p1`, []any{name},
+		notFoundf("gosmo: plan guide %q not found in %q", name, d.Name), fmt.Sprintf("read plan guide %q in %q", name, d.Name))
 }
 
 // PlanGuideRef returns a lightweight handle for a plan guide by name, without

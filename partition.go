@@ -97,14 +97,9 @@ ORDER  BY pf.name`)
 
 // PartitionFunctionByName returns one partition function by name.
 func (d *Database) PartitionFunctionByName(ctx context.Context, name string) (*PartitionFunction, error) {
-	var pf *PartitionFunction
-	err := d.queryRow(ctx, func(row *sql.Row) error {
-		var err error
-		pf, err = scanPartitionFunction(d, row.Scan)
-		return err
-	}, partitionFunctionSelect+`
-WHERE  pf.name = @p1`, name)
-	return foundRow(pf, err, notFoundf("gosmo: partition function %q not found in %q", name, d.Name), fmt.Sprintf("find partition function %q in %q", name, d.Name))
+	return readByName(ctx, d, scanPartitionFunction, partitionFunctionSelect+`
+WHERE  pf.name = @p1`, []any{name},
+		notFoundf("gosmo: partition function %q not found in %q", name, d.Name), fmt.Sprintf("find partition function %q in %q", name, d.Name))
 }
 
 // PartitionFunctionRef returns a lightweight handle for a partition function by name, without
@@ -272,14 +267,9 @@ ORDER  BY ps.name`)
 
 // PartitionSchemeByName returns one partition scheme by name.
 func (d *Database) PartitionSchemeByName(ctx context.Context, name string) (*PartitionScheme, error) {
-	var ps *PartitionScheme
-	err := d.queryRow(ctx, func(row *sql.Row) error {
-		var err error
-		ps, err = scanPartitionScheme(d, row.Scan)
-		return err
-	}, partitionSchemeSelect+`
-WHERE  ps.name = @p1`, name)
-	return foundRow(ps, err, notFoundf("gosmo: partition scheme %q not found in %q", name, d.Name), fmt.Sprintf("find partition scheme %q in %q", name, d.Name))
+	return readByName(ctx, d, scanPartitionScheme, partitionSchemeSelect+`
+WHERE  ps.name = @p1`, []any{name},
+		notFoundf("gosmo: partition scheme %q not found in %q", name, d.Name), fmt.Sprintf("find partition scheme %q in %q", name, d.Name))
 }
 
 // PartitionSchemeRef returns a lightweight handle for a partition scheme by name, without

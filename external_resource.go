@@ -22,7 +22,6 @@ package gosmo
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"strings"
 )
@@ -119,14 +118,9 @@ ORDER  BY s.name`
 // ExternalDataSourceByName returns one external data source, or a not-found
 // error (errors.Is ErrNotFound) when the database has none by that name.
 func (d *Database) ExternalDataSourceByName(ctx context.Context, name string) (*ExternalDataSource, error) {
-	var s *ExternalDataSource
-	err := d.queryRow(ctx, func(row *sql.Row) error {
-		var err error
-		s, err = scanExternalDataSource(d, row.Scan)
-		return err
-	}, d.externalDataSourceSelect()+`
-WHERE  s.name = @p1`, name)
-	return foundRow(s, err, notFoundf("gosmo: external data source %q not found in %q", name, d.Name), fmt.Sprintf("read external data source %q in %q", name, d.Name))
+	return readByName(ctx, d, scanExternalDataSource, d.externalDataSourceSelect()+`
+WHERE  s.name = @p1`, []any{name},
+		notFoundf("gosmo: external data source %q not found in %q", name, d.Name), fmt.Sprintf("read external data source %q in %q", name, d.Name))
 }
 
 // ExternalDataSourceRef returns a lightweight handle for an external data source by name, without
@@ -227,14 +221,9 @@ ORDER  BY f.name`
 // ExternalFileFormatByName returns one external file format, or a not-found
 // error (errors.Is ErrNotFound) when the database has none by that name.
 func (d *Database) ExternalFileFormatByName(ctx context.Context, name string) (*ExternalFileFormat, error) {
-	var f *ExternalFileFormat
-	err := d.queryRow(ctx, func(row *sql.Row) error {
-		var err error
-		f, err = scanExternalFileFormat(d, row.Scan)
-		return err
-	}, d.externalFileFormatSelect()+`
-WHERE  f.name = @p1`, name)
-	return foundRow(f, err, notFoundf("gosmo: external file format %q not found in %q", name, d.Name), fmt.Sprintf("read external file format %q in %q", name, d.Name))
+	return readByName(ctx, d, scanExternalFileFormat, d.externalFileFormatSelect()+`
+WHERE  f.name = @p1`, []any{name},
+		notFoundf("gosmo: external file format %q not found in %q", name, d.Name), fmt.Sprintf("read external file format %q in %q", name, d.Name))
 }
 
 // ExternalFileFormatRef returns a lightweight handle for an external file format by name, without
@@ -338,14 +327,9 @@ func (d *Database) ExternalLibraryByName(ctx context.Context, name string) (*Ext
 	if err := d.requireExternalLibraries(); err != nil {
 		return nil, err
 	}
-	var l *ExternalLibrary
-	err := d.queryRow(ctx, func(row *sql.Row) error {
-		var err error
-		l, err = scanExternalLibrary(d, row.Scan)
-		return err
-	}, externalLibrarySelect+`
-WHERE  l.name = @p1`, name)
-	return foundRow(l, err, notFoundf("gosmo: external library %q not found in %q", name, d.Name), fmt.Sprintf("read external library %q in %q", name, d.Name))
+	return readByName(ctx, d, scanExternalLibrary, externalLibrarySelect+`
+WHERE  l.name = @p1`, []any{name},
+		notFoundf("gosmo: external library %q not found in %q", name, d.Name), fmt.Sprintf("read external library %q in %q", name, d.Name))
 }
 
 // ExternalLibraryRef returns a lightweight handle for an external library by name, without

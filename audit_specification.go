@@ -3,7 +3,6 @@ package gosmo
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -71,14 +70,9 @@ ORDER  BY s.name`)
 // ServerAuditSpecificationByName returns one specification with every field
 // populated, or a not-found error (errors.Is ErrNotFound).
 func (s *Server) ServerAuditSpecificationByName(ctx context.Context, name string) (*ServerAuditSpecification, error) {
-	var spec *ServerAuditSpecification
-	err := s.queryRow(ctx, func(row *sql.Row) error {
-		var err error
-		spec, err = scanServerAuditSpecification(s, row.Scan)
-		return err
-	}, serverAuditSpecificationSelect+`
-WHERE  s.name = @p1`, name)
-	return foundRow(spec, err, notFoundf("gosmo: server audit specification %q not found", name), fmt.Sprintf("read server audit specification %q", name))
+	return readByName(ctx, s, scanServerAuditSpecification, serverAuditSpecificationSelect+`
+WHERE  s.name = @p1`, []any{name},
+		notFoundf("gosmo: server audit specification %q not found", name), fmt.Sprintf("read server audit specification %q", name))
 }
 
 // ServerAuditSpecificationRef returns a lightweight handle by name, without
@@ -252,11 +246,9 @@ func (spec *ServerAuditSpecification) isEnabled(ctx context.Context) (bool, erro
 	err := spec.server.queryRow(ctx, func(row *sql.Row) error {
 		return row.Scan(&enabled)
 	}, "SELECT is_state_enabled FROM sys.server_audit_specifications WHERE name = @p1", spec.Name)
-	if errors.Is(err, sql.ErrNoRows) {
-		return false, notFoundf("gosmo: server audit specification %q not found", spec.Name)
-	}
 	if err != nil {
-		return false, err
+		return false, rowErr(err, notFoundf("gosmo: server audit specification %q not found", spec.Name),
+			fmt.Sprintf("read state of server audit specification %q", spec.Name))
 	}
 	return enabled.Bool, nil
 }

@@ -113,14 +113,9 @@ func (d *Database) UserDefinedDataTypeByName(ctx context.Context, schema, name s
 	if err := requireSchema("user defined data type by name", schema, name); err != nil {
 		return nil, err
 	}
-	var t *UserDefinedDataType
-	err := d.queryRow(ctx, func(row *sql.Row) error {
-		var err error
-		t, err = scanUserDefinedDataType(d, row.Scan)
-		return err
-	}, userDefinedDataTypeSelect+`
-   AND SCHEMA_NAME(t.schema_id) = @p1 AND t.name = @p2`, schema, name)
-	return foundRow(t, err, notFoundf("gosmo: user-defined data type %s not found in %q", qualifiedName(schema, name), d.Name), fmt.Sprintf("read user-defined data type %s in %q", qualifiedName(schema, name), d.Name))
+	return readByName(ctx, d, scanUserDefinedDataType, userDefinedDataTypeSelect+`
+   AND SCHEMA_NAME(t.schema_id) = @p1 AND t.name = @p2`, []any{schema, name},
+		notFoundf("gosmo: user-defined data type %s not found in %q", qualifiedName(schema, name), d.Name), fmt.Sprintf("read user-defined data type %s in %q", qualifiedName(schema, name), d.Name))
 }
 
 // UserDefinedDataTypeRef returns a lightweight handle for an alias type by name, without
@@ -204,14 +199,9 @@ func (d *Database) UserDefinedTableTypeByName(ctx context.Context, schema, name 
 	if err := requireSchema("user defined table type by name", schema, name); err != nil {
 		return nil, err
 	}
-	var t *UserDefinedTableType
-	err := d.queryRow(ctx, func(row *sql.Row) error {
-		var err error
-		t, err = scanUserDefinedTableType(d, row.Scan)
-		return err
-	}, userDefinedTableTypeSelect+`
-   AND SCHEMA_NAME(tt.schema_id) = @p1 AND tt.name = @p2`, schema, name)
-	return foundRow(t, err, notFoundf("gosmo: user-defined table type %s not found in %q", qualifiedName(schema, name), d.Name), fmt.Sprintf("read user-defined table type %s in %q", qualifiedName(schema, name), d.Name))
+	return readByName(ctx, d, scanUserDefinedTableType, userDefinedTableTypeSelect+`
+   AND SCHEMA_NAME(tt.schema_id) = @p1 AND tt.name = @p2`, []any{schema, name},
+		notFoundf("gosmo: user-defined table type %s not found in %q", qualifiedName(schema, name), d.Name), fmt.Sprintf("read user-defined table type %s in %q", qualifiedName(schema, name), d.Name))
 }
 
 // UserDefinedTableTypeRef returns a lightweight handle for a table type by name, without
@@ -352,14 +342,9 @@ func (d *Database) ClrTypeByName(ctx context.Context, schema, name string) (*Clr
 	if err := requireSchema("clr type by name", schema, name); err != nil {
 		return nil, err
 	}
-	var t *ClrType
-	err := d.queryRow(ctx, func(row *sql.Row) error {
-		var err error
-		t, err = scanClrType(d, row.Scan)
-		return err
-	}, clrTypeSelect+`
-   AND SCHEMA_NAME(t.schema_id) = @p1 AND t.name = @p2`, schema, name)
-	return foundRow(t, err, notFoundf("gosmo: CLR type %s not found in %q", qualifiedName(schema, name), d.Name), fmt.Sprintf("read CLR type %s in %q", qualifiedName(schema, name), d.Name))
+	return readByName(ctx, d, scanClrType, clrTypeSelect+`
+   AND SCHEMA_NAME(t.schema_id) = @p1 AND t.name = @p2`, []any{schema, name},
+		notFoundf("gosmo: CLR type %s not found in %q", qualifiedName(schema, name), d.Name), fmt.Sprintf("read CLR type %s in %q", qualifiedName(schema, name), d.Name))
 }
 
 // ClrTypeRef returns a lightweight handle for a CLR type by name, without
@@ -482,14 +467,9 @@ func (d *Database) XMLSchemaCollectionByName(ctx context.Context, schema, name s
 	if err := requireSchema("XML schema collection by name", schema, name); err != nil {
 		return nil, err
 	}
-	var c *XMLSchemaCollection
-	err := d.queryRow(ctx, func(row *sql.Row) error {
-		var err error
-		c, err = scanXMLSchemaCollection(d, row.Scan)
-		return err
-	}, xmlSchemaCollectionSelect+`
-   AND SCHEMA_NAME(x.schema_id) = @p1 AND x.name = @p2`, schema, name)
-	return foundRow(c, err, notFoundf("gosmo: XML schema collection %s not found in %q", qualifiedName(schema, name), d.Name), fmt.Sprintf("read XML schema collection %s in %q", qualifiedName(schema, name), d.Name))
+	return readByName(ctx, d, scanXMLSchemaCollection, xmlSchemaCollectionSelect+`
+   AND SCHEMA_NAME(x.schema_id) = @p1 AND x.name = @p2`, []any{schema, name},
+		notFoundf("gosmo: XML schema collection %s not found in %q", qualifiedName(schema, name), d.Name), fmt.Sprintf("read XML schema collection %s in %q", qualifiedName(schema, name), d.Name))
 }
 
 // XMLSchemaCollectionRef returns a lightweight handle for an XML schema collection by name, without

@@ -12,7 +12,6 @@ package gosmo
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"strings"
 	"time"
@@ -94,14 +93,9 @@ ORDER  BY d.name`
 // database that exists but is not a snapshot is not found either — the
 // predicate is part of what is being asked.
 func (s *Server) DatabaseSnapshotByName(ctx context.Context, name string) (*DatabaseSnapshot, error) {
-	var snap *DatabaseSnapshot
-	err := s.queryRow(ctx, func(row *sql.Row) error {
-		var err error
-		snap, err = scanDatabaseSnapshot(s, row.Scan)
-		return err
-	}, databaseSnapshotSelect+`
-   AND d.name = @p1`, name)
-	return foundRow(snap, err, notFoundf("gosmo: database snapshot %q not found", name), fmt.Sprintf("read database snapshot %q", name))
+	return readByName(ctx, s, scanDatabaseSnapshot, databaseSnapshotSelect+`
+   AND d.name = @p1`, []any{name},
+		notFoundf("gosmo: database snapshot %q not found", name), fmt.Sprintf("read database snapshot %q", name))
 }
 
 // SnapshotsOf returns the snapshots taken of one source database.

@@ -2,7 +2,6 @@ package gosmo
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"strings"
 	"time"
@@ -143,13 +142,8 @@ func (s *Server) Schedules(ctx context.Context) ([]*Schedule, error) {
 func (s *Server) ScheduleByName(ctx context.Context, name string) (*Schedule, error) {
 	q := "SELECT " + scheduleColumns + " " + scheduleFrom + " WHERE sch.name = @p1"
 
-	var sch *Schedule
-	err := s.queryRow(ctx, func(row *sql.Row) error {
-		var scanErr error
-		sch, scanErr = scanSchedule(s, row.Scan)
-		return scanErr
-	}, q, name)
-	return foundRow(sch, err, notFoundf("gosmo: schedule %q not found", name), "schedule by name")
+	return readByName(ctx, s, scanSchedule, q, []any{name},
+		notFoundf("gosmo: schedule %q not found", name), "schedule by name")
 }
 
 // ScheduleRef returns a lightweight handle for a shared schedule by name,

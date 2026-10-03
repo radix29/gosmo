@@ -34,7 +34,6 @@ package gosmo
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"fmt"
 )
 
@@ -169,14 +168,9 @@ ORDER  BY mt.name`
 // MessageTypeByName returns one message type, or a not-found error
 // (errors.Is ErrNotFound) when the database has none by that name.
 func (d *Database) MessageTypeByName(ctx context.Context, name string) (*MessageType, error) {
-	var mt *MessageType
-	err := d.queryRow(ctx, func(row *sql.Row) error {
-		var err error
-		mt, err = scanMessageType(d, row.Scan)
-		return err
-	}, messageTypeSelect+`
-WHERE  mt.name = @p1`, name)
-	return foundRow(mt, err, notFoundf("gosmo: message type %q not found in %q", name, d.Name), fmt.Sprintf("read message type %q in %q", name, d.Name))
+	return readByName(ctx, d, scanMessageType, messageTypeSelect+`
+WHERE  mt.name = @p1`, []any{name},
+		notFoundf("gosmo: message type %q not found in %q", name, d.Name), fmt.Sprintf("read message type %q in %q", name, d.Name))
 }
 
 // MessageTypeRef returns a lightweight handle for a message type by name, without
@@ -383,11 +377,9 @@ func (d *Database) ContractByName(ctx context.Context, name string) (*ServiceCon
 		return row.Scan(&c.ContractID, &c.Name, &c.Owner)
 	}, contractSelect+`
 WHERE  c.name = @p1`, name)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, notFoundf("gosmo: contract %q not found in %q", name, d.Name)
-	}
 	if err != nil {
-		return nil, fmt.Errorf("gosmo: read contract %q in %q: %w", name, d.Name, err)
+		return nil, rowErr(err, notFoundf("gosmo: contract %q not found in %q", name, d.Name),
+			fmt.Sprintf("read contract %q in %q", name, d.Name))
 	}
 	c.IsSystemObject = c.ContractID < firstUserBrokerID
 
@@ -574,11 +566,9 @@ func (d *Database) BrokerServiceByName(ctx context.Context, name string) (*Broke
 		return row.Scan(&s.ServiceID, &s.Name, &s.Owner, &s.QueueSchema, &s.QueueName)
 	}, serviceSelect+`
 WHERE  s.name = @p1`, name)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, notFoundf("gosmo: service %q not found in %q", name, d.Name)
-	}
 	if err != nil {
-		return nil, fmt.Errorf("gosmo: read service %q in %q: %w", name, d.Name, err)
+		return nil, rowErr(err, notFoundf("gosmo: service %q not found in %q", name, d.Name),
+			fmt.Sprintf("read service %q in %q", name, d.Name))
 	}
 	s.IsSystemObject = s.ServiceID < firstUserBrokerID
 

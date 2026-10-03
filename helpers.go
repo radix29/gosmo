@@ -57,14 +57,45 @@ func scanRows[T any, R rowSource](rows R, err error, what string, scan func(scan
 // notFound (built with notFoundf, so errors.Is ErrNotFound), any other error
 // is wrapped "gosmo: <what>: %w", and otherwise v is the result.
 func foundRow[T any](v T, err error, notFound error, what string) (T, error) {
-	var zero T
-	if errors.Is(err, sql.ErrNoRows) {
-		return zero, notFound
-	}
 	if err != nil {
-		return zero, fmt.Errorf("gosmo: %s: %w", what, err)
+		var zero T
+		return zero, rowErr(err, notFound, what)
 	}
 	return v, nil
+}
+
+// rowErr is foundRow's error half, for a read that goes on to fill in more
+// after the row: sql.ErrNoRows becomes notFound, anything else is wrapped
+// "gosmo: <what>: %w", and nil stays nil. A caller passes it a non-nil err
+// (`if err != nil { return nil, rowErr(...) }`), so the not-found error is
+// built only on the path that needs it.
+func rowErr(err error, notFound error, what string) error {
+	if errors.Is(err, sql.ErrNoRows) {
+		return notFound
+	}
+	if err != nil {
+		return fmt.Errorf("gosmo: %s: %w", what, err)
+	}
+	return nil
+}
+
+// rowQuerier is what a single-row read runs on: *Server or *Database, whose
+// queryRow each retry, bind and transaction rule already lives in.
+type rowQuerier interface {
+	queryRow(ctx context.Context, scan func(*sql.Row) error, q string, args ...any) error
+}
+
+// readByName is a whole single-row read by name: q runs on o, the family's
+// scanX(o, scan) builds the result, and foundRow's tail applies — no row is
+// notFound, any other error is wrapped "gosmo: <what>: %w".
+func readByName[O rowQuerier, T any](ctx context.Context, o O, scan func(O, func(...any) error) (T, error), q string, args []any, notFound error, what string) (T, error) {
+	var v T
+	err := o.queryRow(ctx, func(row *sql.Row) error {
+		var err error
+		v, err = scan(o, row.Scan)
+		return err
+	}, q, args...)
+	return foundRow(v, err, notFound, what)
 }
 
 // createdObject is the tail of every Create*: it returns what was created.

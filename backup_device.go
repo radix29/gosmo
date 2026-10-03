@@ -67,14 +67,9 @@ ORDER  BY name`)
 // a not-found error (errors.Is ErrNotFound) when the server has none by that
 // name.
 func (s *Server) BackupDeviceByName(ctx context.Context, name string) (*BackupDevice, error) {
-	var d *BackupDevice
-	err := s.queryRow(ctx, func(row *sql.Row) error {
-		var err error
-		d, err = scanBackupDevice(s, row.Scan)
-		return err
-	}, backupDeviceSelect+`
-WHERE  name = @p1`, name)
-	return foundRow(d, err, notFoundf("gosmo: backup device %q not found", name), fmt.Sprintf("read backup device %q", name))
+	return readByName(ctx, s, scanBackupDevice, backupDeviceSelect+`
+WHERE  name = @p1`, []any{name},
+		notFoundf("gosmo: backup device %q not found", name), fmt.Sprintf("read backup device %q", name))
 }
 
 // BackupDeviceRef returns a lightweight handle for a backup device by name,

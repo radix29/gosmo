@@ -163,14 +163,9 @@ ORDER  BY r.name`
 // RouteByName returns one route, or a not-found error (errors.Is
 // ErrNotFound) when the database has none by that name.
 func (d *Database) RouteByName(ctx context.Context, name string) (*Route, error) {
-	var r *Route
-	err := d.queryRow(ctx, func(row *sql.Row) error {
-		var err error
-		r, err = scanRoute(d, row.Scan)
-		return err
-	}, routeSelect+`
-WHERE  r.name = @p1`, name)
-	return foundRow(r, err, notFoundf("gosmo: route %q not found in %q", name, d.Name), fmt.Sprintf("read route %q in %q", name, d.Name))
+	return readByName(ctx, d, scanRoute, routeSelect+`
+WHERE  r.name = @p1`, []any{name},
+		notFoundf("gosmo: route %q not found in %q", name, d.Name), fmt.Sprintf("read route %q in %q", name, d.Name))
 }
 
 // RouteRef returns a lightweight handle for a route by name, without
@@ -384,14 +379,9 @@ ORDER  BY b.name`
 // not-found error (errors.Is ErrNotFound) when the database has none by that
 // name.
 func (d *Database) RemoteServiceBindingByName(ctx context.Context, name string) (*RemoteServiceBinding, error) {
-	var b *RemoteServiceBinding
-	err := d.queryRow(ctx, func(row *sql.Row) error {
-		var err error
-		b, err = scanRemoteServiceBinding(d, row.Scan)
-		return err
-	}, remoteServiceBindingSelect+`
-WHERE  b.name = @p1`, name)
-	return foundRow(b, err, notFoundf("gosmo: remote service binding %q not found in %q", name, d.Name), fmt.Sprintf("read remote service binding %q in %q", name, d.Name))
+	return readByName(ctx, d, scanRemoteServiceBinding, remoteServiceBindingSelect+`
+WHERE  b.name = @p1`, []any{name},
+		notFoundf("gosmo: remote service binding %q not found in %q", name, d.Name), fmt.Sprintf("read remote service binding %q in %q", name, d.Name))
 }
 
 // RemoteServiceBindingRef returns a lightweight handle for a remote service binding by name, without
@@ -494,14 +484,9 @@ ORDER  BY p.name`
 // BrokerPriorityByName returns one conversation priority, or a not-found
 // error (errors.Is ErrNotFound) when the database has none by that name.
 func (d *Database) BrokerPriorityByName(ctx context.Context, name string) (*BrokerPriority, error) {
-	var p *BrokerPriority
-	err := d.queryRow(ctx, func(row *sql.Row) error {
-		var err error
-		p, err = scanBrokerPriority(d, row.Scan)
-		return err
-	}, brokerPrioritySelect+`
-WHERE  p.name = @p1`, name)
-	return foundRow(p, err, notFoundf("gosmo: broker priority %q not found in %q", name, d.Name), fmt.Sprintf("read broker priority %q in %q", name, d.Name))
+	return readByName(ctx, d, scanBrokerPriority, brokerPrioritySelect+`
+WHERE  p.name = @p1`, []any{name},
+		notFoundf("gosmo: broker priority %q not found in %q", name, d.Name), fmt.Sprintf("read broker priority %q in %q", name, d.Name))
 }
 
 // BrokerPriorityRef returns a lightweight handle for a conversation priority by name, without

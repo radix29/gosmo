@@ -2,7 +2,6 @@ package gosmo
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"strings"
 	"time"
@@ -171,13 +170,8 @@ func (s *Server) AlertRef(name string) *Alert {
 func (s *Server) AlertByName(ctx context.Context, name string) (*Alert, error) {
 	q := "SELECT " + alertColumns + " " + alertFrom + " WHERE a.name = @p1"
 
-	var a *Alert
-	err := s.queryRow(ctx, func(row *sql.Row) error {
-		var scanErr error
-		a, scanErr = scanAlert(s, row.Scan)
-		return scanErr
-	}, q, name)
-	return foundRow(a, err, notFoundf("gosmo: alert %q not found", name), "alert by name")
+	return readByName(ctx, s, scanAlert, q, []any{name},
+		notFoundf("gosmo: alert %q not found", name), "alert by name")
 }
 
 // CreateAlertRequest describes a new SQL Server event alert.

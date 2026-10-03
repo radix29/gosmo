@@ -2,7 +2,6 @@ package gosmo
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"time"
 )
@@ -87,13 +86,8 @@ func (s *Server) OperatorRef(name string) *Operator {
 func (s *Server) OperatorByName(ctx context.Context, name string) (*Operator, error) {
 	q := "SELECT " + operatorColumns + " " + operatorFrom + " WHERE o.name = @p1"
 
-	var o *Operator
-	err := s.queryRow(ctx, func(row *sql.Row) error {
-		var scanErr error
-		o, scanErr = scanOperator(s, row.Scan)
-		return scanErr
-	}, q, name)
-	return foundRow(o, err, notFoundf("gosmo: operator %q not found", name), "operator by name")
+	return readByName(ctx, s, scanOperator, q, []any{name},
+		notFoundf("gosmo: operator %q not found", name), "operator by name")
 }
 
 // CreateOperatorRequest describes a new SQL Server Agent operator.

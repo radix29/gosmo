@@ -339,8 +339,10 @@ The instance and database halves pair up: `ServerResourceStat` and
 | Files of one database, in any state | `srv.DatabaseFiles(ctx, name)` — reads `sys.master_files`, so it answers for an OFFLINE / RECOVERY_PENDING / SUSPECT database that `db.Files(ctx)` cannot `USE` |
 | Live memory stats        | `srv.MemoryStats(ctx)`                        |
 | Languages                | `srv.Languages(ctx)`                          |
-| Processors / NUMA topology | `srv.ProcessorInfo(ctx)`; `srv.Schedulers(ctx)` — the visible schedulers with CPU, NUMA node and processor group (what `PoolAffinity` names; VIEW SERVER STATE) |
+| Processors / NUMA topology | `srv.ProcessorInfo(ctx)`; `srv.Schedulers(ctx)` — the visible schedulers with CPU, NUMA node and processor group (what `PoolAffinity` names) and each one's current load (VIEW SERVER STATE) |
 | Disk volumes              | `srv.DiskVolumes(ctx)`                        |
+| Activity readings (activity monitor) | `srv.HasViewServerState(ctx)` first, then `srv.PerformanceCounters(ctx, counters, instances)` (instance prefix stripped; decode by `CounterType`), `WaitStats`, `FileIOStats`, `MemoryClerks`, `RequestActivity`, `HostCPU` — raw cumulative or current figures, no rates (`server_activity.go`) |
+| tempdb usage              | `srv.TempDBSpace(ctx)` / `TempDBFiles` / `TempDBObjects` (by `TempDBObjectKind`) / `TempDBSessions` (`tempdb_usage.go`) |
 | `Server.EnumDirectories` / `EnumFiles` | `srv.EnumFileSystem(ctx, path)` / `srv.FixedDrives(ctx)` / `srv.FileSystemExists(ctx, path)` — see [Server filesystem](#server-filesystem) |
 | Host OS family            | `srv.Info().Platform` (`"Windows"` / `"Linux"`, from `@@VERSION`) |
 | `Server.AvailabilityGroups` | `srv.AvailabilityGroups(ctx)` / `srv.AvailabilityGroupRef(name)` (no-I/O handle) / `srv.AvailabilityGroupByName(ctx, name)` — see [Always On](#always-on-availability-groups) |
@@ -757,6 +759,7 @@ an unescaped filter for `pct_1` also matches `pct1100`.
 | Actual execution plan        | `db.ActualPlan(ctx, sql)` (`SET STATISTICS XML`, statement runs)|
 | Every plan a multi-statement batch produced | `plan.All` (`plan.XML` is the last of them) |
 | Recognising a plan result set in a caller's own batch | `gosmo.ShowplanColumn` (a one-column set with this name is a plan, not data) |
+| Capturing plans around a caller's own batches | `stop, err := gosmo.StartPlanCapture(ctx, conn, gosmo.PlanEstimated\|PlanActual)`; `defer stop()` (switches it off even after ctx is cancelled) |
 
 Every `Grant|Deny|Revoke...` method, at all five scopes (object, column,
 schema, database, server), takes a `PermissionOptions` as its last argument;

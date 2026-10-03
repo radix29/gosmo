@@ -634,10 +634,7 @@ func (s *Server) DatabaseByName(ctx context.Context, name string) (*Database, er
 		&compatLevel, &collation, &d.IsReadOnly, &d.CreateDate,
 		&d.SourceDatabaseID,
 	); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, notFoundf("gosmo: database %q not found", name)
-		}
-		return nil, fmt.Errorf("gosmo: database by name: %w", err)
+		return nil, rowErr(err, notFoundf("gosmo: database %q not found", name), "database by name")
 	}
 	d.State = state.String
 	d.RecoveryModel = RecoveryModel(recovery.String)

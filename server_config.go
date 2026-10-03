@@ -3,7 +3,6 @@ package gosmo
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"fmt"
 	"strings"
 )
@@ -66,10 +65,7 @@ WHERE  name = @p1`
 		&c.ConfigID, &c.Name, &c.Value, &c.ValueInUse,
 		&c.Minimum, &c.Maximum, &c.IsDynamic, &c.IsAdvanced, &desc,
 	); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, notFoundf("gosmo: configuration option %q not found", name)
-		}
-		return nil, fmt.Errorf("gosmo: configuration by name: %w", err)
+		return nil, rowErr(err, notFoundf("gosmo: configuration option %q not found", name), "configuration by name")
 	}
 	c.Description = desc.String
 	return c, nil
@@ -332,22 +328,36 @@ type Scheduler struct {
 	// IsOnline is false for a scheduler the server's own affinity mask
 	// leaves out (VISIBLE OFFLINE). A pool can still name it.
 	IsOnline bool
+
+	// The scheduler's load at the moment of the read. RunnableTasks are
+	// waiting for it — CPU pressure — and WorkQueue are queued for a worker
+	// it does not have yet. LoadFactor is the engine's own measure, the one
+	// it places new tasks by.
+	RunnableTasks int
+	CurrentTasks  int
+	ActiveWorkers int
+	WorkQueue     int
+	LoadFactor    int
 }
 
 // Schedulers returns the instance's visible schedulers in id order — hidden
-// (system) ones and the dedicated admin connection's are left out. Needs
+// (system) ones and the dedicated admin connection's are left out — each with
+// its current load. Only the online ones run user work. Needs
 // VIEW SERVER STATE (VIEW SERVER PERFORMANCE STATE from SQL Server 2022);
 // without it the server refuses the read.
 func (s *Server) Schedulers(ctx context.Context) ([]Scheduler, error) {
 	rows, err := s.query(ctx, `
-SELECT s.scheduler_id, s.cpu_id, s.parent_node_id, n.processor_group, s.is_online
+SELECT s.scheduler_id, s.cpu_id, s.parent_node_id, n.processor_group, s.is_online,
+       s.runnable_tasks_count, s.current_tasks_count, s.active_workers_count,
+       s.work_queue_count, s.load_factor
 FROM   sys.dm_os_schedulers s
 JOIN   sys.dm_os_nodes n ON n.node_id = s.parent_node_id
 WHERE  s.status IN (N'VISIBLE ONLINE', N'VISIBLE OFFLINE')
 ORDER  BY s.scheduler_id`)
 	return scanRows(rows, err, "list schedulers", func(scan func(...any) error) (Scheduler, error) {
 		var sc Scheduler
-		err := scan(&sc.ID, &sc.CPUID, &sc.NUMANode, &sc.ProcessorGroup, &sc.IsOnline)
+		err := scan(&sc.ID, &sc.CPUID, &sc.NUMANode, &sc.ProcessorGroup, &sc.IsOnline,
+			&sc.RunnableTasks, &sc.CurrentTasks, &sc.ActiveWorkers, &sc.WorkQueue, &sc.LoadFactor)
 		return sc, err
 	})
 }

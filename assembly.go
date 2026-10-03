@@ -115,14 +115,9 @@ ORDER  BY a.name`
 // AssemblyByName returns one assembly, or a not-found error (errors.Is
 // ErrNotFound) when the database has none by that name.
 func (d *Database) AssemblyByName(ctx context.Context, name string) (*Assembly, error) {
-	var a *Assembly
-	err := d.queryRow(ctx, func(row *sql.Row) error {
-		var err error
-		a, err = scanAssembly(d, row.Scan)
-		return err
-	}, assemblySelect+`
-WHERE  a.name = @p1`, name)
-	return foundRow(a, err, notFoundf("gosmo: assembly %q not found in %q", name, d.Name), fmt.Sprintf("read assembly %q in %q", name, d.Name))
+	return readByName(ctx, d, scanAssembly, assemblySelect+`
+WHERE  a.name = @p1`, []any{name},
+		notFoundf("gosmo: assembly %q not found in %q", name, d.Name), fmt.Sprintf("read assembly %q in %q", name, d.Name))
 }
 
 // AssemblyRef returns a lightweight handle for an assembly by name, without

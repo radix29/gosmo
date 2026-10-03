@@ -179,14 +179,9 @@ func (d *Database) BrokerQueueByName(ctx context.Context, schema, name string) (
 	if err := requireSchema("broker queue by name", schema, name); err != nil {
 		return nil, err
 	}
-	var bq *BrokerQueue
-	err := d.queryRow(ctx, func(row *sql.Row) error {
-		var err error
-		bq, err = scanBrokerQueue(d, row.Scan)
-		return err
-	}, queueSelect+`
-WHERE  SCHEMA_NAME(q.schema_id) = @p1 AND q.name = @p2`, schema, name)
-	return foundRow(bq, err, notFoundf("gosmo: queue %s not found in %q", qualifiedName(schema, name), d.Name), fmt.Sprintf("read queue %s in %q", qualifiedName(schema, name), d.Name))
+	return readByName(ctx, d, scanBrokerQueue, queueSelect+`
+WHERE  SCHEMA_NAME(q.schema_id) = @p1 AND q.name = @p2`, []any{schema, name},
+		notFoundf("gosmo: queue %s not found in %q", qualifiedName(schema, name), d.Name), fmt.Sprintf("read queue %s in %q", qualifiedName(schema, name), d.Name))
 }
 
 // BrokerQueueRef returns a lightweight handle for a Service Broker queue by name, without

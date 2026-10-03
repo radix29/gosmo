@@ -410,14 +410,9 @@ ORDER  BY e.name`)
 // EndpointByName returns one endpoint, or a not-found error (errors.Is
 // ErrNotFound) when the server has none by that name.
 func (s *Server) EndpointByName(ctx context.Context, name string) (*Endpoint, error) {
-	var e *Endpoint
-	err := s.queryRow(ctx, func(row *sql.Row) error {
-		var err error
-		e, err = scanEndpoint(s, row.Scan)
-		return err
-	}, endpointSelect+`
-WHERE  e.name = @p1`, name)
-	return foundRow(e, err, notFoundf("gosmo: endpoint %q not found", name), fmt.Sprintf("read endpoint %q", name))
+	return readByName(ctx, s, scanEndpoint, endpointSelect+`
+WHERE  e.name = @p1`, []any{name},
+		notFoundf("gosmo: endpoint %q not found", name), fmt.Sprintf("read endpoint %q", name))
 }
 
 func scanEndpoint(s *Server, scan func(...any) error) (*Endpoint, error) {

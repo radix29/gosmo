@@ -3,7 +3,6 @@ package gosmo
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"fmt"
 )
 
@@ -80,10 +79,8 @@ WHERE  name = @p1`
 		)
 	}, q, d.Name)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, notFoundf("gosmo: database %q not found", d.Name)
-		}
-		return nil, fmt.Errorf("gosmo: database options for %q: %w", d.Name, err)
+		return nil, rowErr(err, notFoundf("gosmo: database %q not found", d.Name),
+			fmt.Sprintf("database options for %q", d.Name))
 	}
 	o.Owner = owner.String
 	if isLocalCursor {

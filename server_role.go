@@ -3,7 +3,6 @@ package gosmo
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"fmt"
 	"time"
 )
@@ -75,10 +74,7 @@ func (s *Server) ServerRoleByName(ctx context.Context, name string) (*ServerRole
 	if err := s.queryRowScan(ctx, q, []any{name},
 		&r.ID, &r.IsFixedRole, &r.Owner, &r.SID, &r.CreateDate, &r.ModifyDate, &members,
 	); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, notFoundf("gosmo: server role %q not found", name)
-		}
-		return nil, fmt.Errorf("gosmo: find server role %q: %w", name, err)
+		return nil, rowErr(err, notFoundf("gosmo: server role %q not found", name), fmt.Sprintf("find server role %q", name))
 	}
 	var err error
 	if r.Members, err = decodeJSONList(members); err != nil {

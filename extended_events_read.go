@@ -459,11 +459,9 @@ WHERE  s.name = @p1 AND t.target_name = N'ring_buffer'`, sc.dmSessions, sc.dmTar
 		}
 		return rows.Err()
 	}()
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, notFoundf("gosmo: event session %q has no running ring_buffer target", es.Name)
-	}
 	if err != nil {
-		return nil, fmt.Errorf("gosmo: read event session %q ring buffer: %w", es.Name, err)
+		return nil, rowErr(err, notFoundf("gosmo: event session %q has no running ring_buffer target", es.Name),
+			fmt.Sprintf("read event session %q ring buffer", es.Name))
 	}
 	rb, err := DecodeRingBuffer([]byte(data.String))
 	if err != nil {

@@ -3,7 +3,6 @@ package gosmo
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"fmt"
 	"regexp"
 	"strings"
@@ -80,10 +79,8 @@ func (sc *Scripter) scriptModule(ctx context.Context, k moduleKind, schema, name
 			return row.Scan(&def, &ansiNulls, &quotedIdent, &clr)
 		}, k.query, schema, name)
 		if err != nil {
-			if errors.Is(err, sql.ErrNoRows) {
-				return notFoundf("gosmo: %s %s not found", k.noun, qualifiedName(schema, name))
-			}
-			return err
+			return rowErr(err, notFoundf("gosmo: %s %s not found", k.noun, qualifiedName(schema, name)),
+				fmt.Sprintf("script %s %s", k.noun, qualifiedName(schema, name)))
 		}
 		if clr {
 			return unsupportedf("gosmo: script %s %s: a CLR %s has no T-SQL definition to script", k.noun, qualifiedName(schema, name), k.noun)

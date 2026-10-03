@@ -169,3 +169,67 @@ func TestCapturePlanErrorsWhenNoPlanCameBack(t *testing.T) {
 		t.Fatal("want an error when no showplan set came back, got nil")
 	}
 }
+
+// execRecorder records the statements StartPlanCapture sends, failing the
+// ones fail names, and whether each one's context was already done.
+type execRecorder struct {
+	stmts   []string
+	ctxErrs []error
+	fail    map[string]error
+}
+
+func (r *execRecorder) ExecContext(ctx context.Context, query string, _ ...any) (sql.Result, error) {
+	r.stmts = append(r.stmts, query)
+	r.ctxErrs = append(r.ctxErrs, ctx.Err())
+	return nil, r.fail[query]
+}
+
+func TestStartPlanCaptureSwitchesTheOptionOnAndOff(t *testing.T) {
+	for _, c := range []struct {
+		mode    PlanMode
+		on, off string
+	}{
+		{PlanEstimated, "SET SHOWPLAN_XML ON", "SET SHOWPLAN_XML OFF"},
+		{PlanActual, "SET STATISTICS XML ON", "SET STATISTICS XML OFF"},
+	} {
+		ctx, cancel := context.WithCancel(context.Background())
+		r := &execRecorder{}
+		stop, err := StartPlanCapture(ctx, r, c.mode)
+		if err != nil {
+			t.Fatalf("%v: %v", c.mode, err)
+		}
+		// A cancelled run is the one that most needs the option off again.
+		cancel()
+		if err := stop(); err != nil {
+			t.Fatalf("%v stop: %v", c.mode, err)
+		}
+		if got := strings.Join(r.stmts, "; "); got != c.on+"; "+c.off {
+			t.Errorf("%v sent %q", c.mode, got)
+		}
+		if err := r.ctxErrs[1]; err != nil {
+			t.Errorf("%v: stop ran under a done context: %v", c.mode, err)
+		}
+	}
+}
+
+func TestStartPlanCaptureReportsBothFailures(t *testing.T) {
+	boom := io.ErrUnexpectedEOF
+	r := &execRecorder{fail: map[string]error{"SET SHOWPLAN_XML ON": boom}}
+	stop, err := StartPlanCapture(context.Background(), r, PlanEstimated)
+	if stop != nil || err == nil || err.Error() != "gosmo: enable estimated execution plan capture: unexpected EOF" {
+		t.Fatalf("enable failure: stop non-nil %v, err %v", stop != nil, err)
+	}
+
+	r = &execRecorder{fail: map[string]error{"SET STATISTICS XML OFF": boom}}
+	stop, err = StartPlanCapture(context.Background(), r, PlanActual)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := stop(); err == nil || err.Error() != "gosmo: disable actual execution plan capture: unexpected EOF" {
+		t.Fatalf("disable failure: %v", err)
+	}
+
+	if _, err := StartPlanCapture(context.Background(), &execRecorder{}, 0); err == nil {
+		t.Fatal("mode 0 was accepted")
+	}
+}

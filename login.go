@@ -3,7 +3,6 @@ package gosmo
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -192,10 +191,8 @@ WHERE  sp.name = @p1`
 		)
 	}, q, l.Name)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, notFoundf("gosmo: login %q not found", l.Name)
-		}
-		return nil, fmt.Errorf("gosmo: login details for %q: %w", l.Name, err)
+		return nil, rowErr(err, notFoundf("gosmo: login %q not found", l.Name),
+			fmt.Sprintf("login details for %q", l.Name))
 	}
 	det.IsLocked = isLocked != 0
 	det.IsExpired = isExpired != 0
@@ -542,19 +539,8 @@ func (s *Server) Logins(ctx context.Context) ([]*Login, error) {
 
 // LoginByName returns a single server-level login by name.
 func (s *Server) LoginByName(ctx context.Context, name string) (*Login, error) {
-	var l *Login
-	err := s.queryRow(ctx, func(row *sql.Row) error {
-		var err error
-		l, err = scanLogin(s, row.Scan)
-		return err
-	}, loginSelect+" AND sp.name = @p1", name)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, notFoundf("gosmo: login %q not found", name)
-		}
-		return nil, fmt.Errorf("gosmo: find login %q: %w", name, err)
-	}
-	return l, nil
+	return readByName(ctx, s, scanLogin, loginSelect+" AND sp.name = @p1", []any{name},
+		notFoundf("gosmo: login %q not found", name), fmt.Sprintf("find login %q", name))
 }
 
 // LoginRef returns a lightweight handle for name without querying the server
