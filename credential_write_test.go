@@ -83,7 +83,7 @@ func TestAlterCredentialSecretClause(t *testing.T) {
 		{
 			name:   "a set secret is written",
 			secret: &secret,
-			want:   `ALTER CREDENTIAL [app_cred] WITH IDENTITY = N'DOMAIN\svc', SECRET = N'hunter2'`,
+			want:   `ALTER CREDENTIAL [app_cred] WITH IDENTITY = N'DOMAIN\svc', SECRET = N'<insert secret here>'`,
 		},
 	}
 	for _, tc := range cases {
@@ -170,7 +170,7 @@ func TestBuildCredentialScriptCarriesASecretPlaceholder(t *testing.T) {
 
 	// Emitting no SECRET clause would produce a script that silently creates
 	// the credential without one.
-	if !strings.Contains(got, "SECRET = N'"+credentialSecretPlaceholder+"'") {
+	if !strings.Contains(got, "SECRET = N'"+SecretPlaceholder+"'") {
 		t.Errorf("script has no secret placeholder:\n%s", got)
 	}
 	if !strings.Contains(got, "cannot be read from the server") {

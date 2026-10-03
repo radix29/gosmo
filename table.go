@@ -40,10 +40,10 @@ type Table struct {
 //
 // That is the limit of what this handle is for: the methods it serves are the
 // name-only ones, which name the table in the statement text (DropConstraint,
-// Rename, the ALTER-style writes). Every method that queries by ObjectID —
-// Columns, Indexes, Statistics, Triggers, Partitions, the size and detail
-// reads — would find object 0 and return nothing, so those need a Table from
-// Tables/TableByName instead.
+// Rename, the ALTER-style writes, FragmentationStats, CountWhere). Every
+// method that queries by ObjectID — Columns, Indexes, Statistics, Triggers,
+// Partitions, the size and detail reads — refuses it with ErrHandleNotLoaded
+// (see requireLoaded), so those need a Table from Tables/TableByName instead.
 //
 // Like Server.DatabaseRef, it is also the only form that works before the
 // table exists — a CREATE TABLE a WithScript context merely collected is not
@@ -64,6 +64,17 @@ func (t *Table) exec(ctx context.Context, q string, args ...any) (sql.Result, er
 		return nil, err
 	}
 	return t.db.exec(ctx, q, args...)
+}
+
+// requireLoaded refuses a read keyed by ObjectID on a table that has none —
+// a TableRef handle. Until it existed such a read asked for object 0 and
+// answered with an empty list, which a caller could not tell from a table
+// that really has no columns or indexes.
+func (t *Table) requireLoaded(what string) error {
+	if t.ObjectID == 0 {
+		return fmt.Errorf("gosmo: %s %s: %w", what, t.FullName(), ErrHandleNotLoaded)
+	}
+	return nil
 }
 
 // FullName returns [Schema].[Name].
@@ -91,6 +102,9 @@ type TableDetail struct {
 
 // Detail returns TableDetail for the table.
 func (t *Table) Detail(ctx context.Context) (*TableDetail, error) {
+	if err := t.requireLoaded("table detail for"); err != nil {
+		return nil, err
+	}
 	d := &TableDetail{}
 	if err := t.db.queryRow(ctx, func(row *sql.Row) error {
 		return row.Scan(
@@ -285,6 +299,9 @@ LEFT   JOIN (
 
 // Columns returns all columns for this table in ordinal order.
 func (t *Table) Columns(ctx context.Context) ([]*Column, error) {
+	if err := t.requireLoaded("list columns for"); err != nil {
+		return nil, err
+	}
 	q := t.db.columnSelect() + `
 WHERE  c.object_id = @p1
 ORDER  BY c.column_id`
@@ -495,6 +512,9 @@ WHERE  fk.parent_object_id = @p1`
 
 // ForeignKeys returns all foreign keys on the table.
 func (t *Table) ForeignKeys(ctx context.Context) ([]*ForeignKey, error) {
+	if err := t.requireLoaded("list foreign keys for"); err != nil {
+		return nil, err
+	}
 	rows, err := t.db.query(ctx, foreignKeySelect+`
 ORDER  BY fk.name`, t.ObjectID)
 	return scanRows(rows, err, fmt.Sprintf("list foreign keys for %s", t.FullName()), func(scan func(...any) error) (*ForeignKey, error) {
@@ -507,6 +527,9 @@ ORDER  BY fk.name`, t.ObjectID)
 // It returns an error satisfying errors.Is(err, ErrNotFound) when the table
 // has no such foreign key.
 func (t *Table) ForeignKeyByName(ctx context.Context, name string) (*ForeignKey, error) {
+	if err := t.requireLoaded(fmt.Sprintf("find foreign key %q on", name)); err != nil {
+		return nil, err
+	}
 	var fk *ForeignKey
 	err := t.db.queryRow(ctx, func(row *sql.Row) error {
 		var err error
@@ -553,6 +576,9 @@ type CheckConstraint struct {
 
 // CheckConstraints returns all CHECK constraints on the table.
 func (t *Table) CheckConstraints(ctx context.Context) ([]*CheckConstraint, error) {
+	if err := t.requireLoaded("list check constraints for"); err != nil {
+		return nil, err
+	}
 	const q = `
 SELECT cc.name, cc.definition, cc.is_disabled, ISNULL(c.name, ''),
        cc.is_not_trusted, cc.is_not_for_replication
@@ -578,6 +604,9 @@ ORDER  BY cc.name`
 
 // Triggers returns all DML triggers attached to this table.
 func (t *Table) Triggers(ctx context.Context) ([]*Trigger, error) {
+	if err := t.requireLoaded("list triggers for"); err != nil {
+		return nil, err
+	}
 	return t.db.triggersWhere(ctx, "AND tr.parent_id = @p1", []any{t.ObjectID})
 }
 
@@ -780,6 +809,9 @@ func (t *Table) Truncate(ctx context.Context) error {
 
 // RowCount returns the approximate row count using partition statistics.
 func (t *Table) RowCount(ctx context.Context) (int64, error) {
+	if err := t.requireLoaded("row count for"); err != nil {
+		return 0, err
+	}
 	var n int64
 	if err := t.db.queryRow(ctx, func(row *sql.Row) error { return row.Scan(&n) }, `
 SELECT SUM(p.rows)

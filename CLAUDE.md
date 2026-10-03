@@ -111,6 +111,10 @@ exercise the write, drop them; never mutate pre-existing objects.
     `.IsEnabled`) goes through `setIfApplied`, never direct assignment.
   - Bound parameters in a captured statement are substituted to literals
     (`bindScriptArgs`) — nothing binds `@p1` in a query editor.
+  - A write that sends a secret (password, credential secret, key source)
+    goes through `execSecret`/`execPasswords`, never plain `exec`, and gets a
+    row in `secret_redaction_test.go` — captures and observers carry a
+    placeholder (`WithScriptSecrets` opts a capture back in).
 - **Every `Create*` is `CreateX(ctx, CreateXRequest) (*X, error)`.** The
   request is a value; the result comes back through `createdObject` (the `XRef`
   handle under `Scripting(ctx)` or when the new row isn't visible). A type keeps

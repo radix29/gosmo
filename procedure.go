@@ -158,7 +158,6 @@ type StoredProcedure struct {
 	ObjectID   int
 	Schema     string
 	Name       string
-	Definition string
 	CreateDate time.Time
 	ModifyDate time.Time
 }
@@ -187,9 +186,8 @@ var procedureFilterColumns = filterColumns{
 func (d *Database) storedProceduresWhere(ctx context.Context, where string, args []any) ([]*StoredProcedure, error) {
 	q := `
 SELECT p.object_id, SCHEMA_NAME(p.schema_id), p.name,
-       ISNULL(m.definition,''), p.create_date, p.modify_date
+       p.create_date, p.modify_date
 FROM   sys.procedures p
-JOIN   sys.sql_modules m ON m.object_id = p.object_id
 WHERE  p.is_ms_shipped = 0 ` + where + `
 ORDER  BY SCHEMA_NAME(p.schema_id), p.name`
 
@@ -197,7 +195,7 @@ ORDER  BY SCHEMA_NAME(p.schema_id), p.name`
 	return scanRows(rows, err, fmt.Sprintf("list stored procs in %q", d.Name), func(scan func(...any) error) (*StoredProcedure, error) {
 		p := &StoredProcedure{db: d}
 		if err := scan(&p.ObjectID, &p.Schema, &p.Name,
-			&p.Definition, &p.CreateDate, &p.ModifyDate); err != nil {
+			&p.CreateDate, &p.ModifyDate); err != nil {
 			return nil, err
 		}
 		return p, nil
@@ -277,9 +275,8 @@ func (d *Database) SystemStoredProceduresFiltered(ctx context.Context, filter Ob
 func (d *Database) systemStoredProceduresWhere(ctx context.Context, where string, args []any) ([]*StoredProcedure, error) {
 	q := `
 SELECT o.object_id, SCHEMA_NAME(o.schema_id), o.name,
-       ISNULL(m.definition,''), o.create_date, o.modify_date
+       o.create_date, o.modify_date
 FROM   sys.all_objects o
-LEFT JOIN sys.all_sql_modules m ON m.object_id = o.object_id
 WHERE  o.type IN ('P','PC') AND o.is_ms_shipped = 1 AND SCHEMA_NAME(o.schema_id) = 'sys' ` + where + `
 ORDER  BY o.name`
 
@@ -287,7 +284,7 @@ ORDER  BY o.name`
 	return scanRows(rows, err, fmt.Sprintf("list system stored procs in %q", d.Name), func(scan func(...any) error) (*StoredProcedure, error) {
 		p := &StoredProcedure{db: d}
 		if err := scan(&p.ObjectID, &p.Schema, &p.Name,
-			&p.Definition, &p.CreateDate, &p.ModifyDate); err != nil {
+			&p.CreateDate, &p.ModifyDate); err != nil {
 			return nil, err
 		}
 		return p, nil
@@ -392,6 +389,13 @@ func (d *Database) StoredProcedureRef(schema, name string) *StoredProcedure {
 
 // Database returns the database the stored procedure belongs to.
 func (p *StoredProcedure) Database() *Database { return p.db }
+
+// Definition returns the procedure's T-SQL text: "" for an encrypted or CLR
+// procedure, ErrNotFound when there is no such procedure. Listings do not
+// carry it; this reads it by name, so a StoredProcedureRef is enough.
+func (p *StoredProcedure) Definition(ctx context.Context) (string, error) {
+	return p.db.moduleDefinition(ctx, "stored procedure", "o.type IN ('P','PC')", p.Schema, p.Name)
+}
 
 // Drop drops the stored procedure. A stored procedure that isn't there is the server's
 // error, not a silent success — see the note on Table.Drop.

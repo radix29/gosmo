@@ -16,7 +16,7 @@ import (
 // and SetMailConfiguration send, built by the same functions.
 //
 // An account's password cannot be read, so an account with Basic
-// authentication scripts @password = N'<password>' under a comment saying
+// authentication scripts @password = N'<insert password here>' under a comment saying
 // so, as SSMS does.
 //
 // IncludeIfNotExists guards each procedure call with its own existence test:

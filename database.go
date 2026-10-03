@@ -69,9 +69,19 @@ func (d *Database) Server() *Server { return d.server }
 // is not retried: fn is the caller's actual write, and blindly re-running
 // it on a fresh connection after a partial failure could re-apply side
 // effects that already took hold.
-func (d *Database) withConn(ctx context.Context, fn func(context.Context, *sql.Conn) error) error {
+//
+// Inside InTransaction it is the transaction's session, switched the same way,
+// and nothing is retried: a fresh connection is outside the transaction.
+func (d *Database) withConn(ctx context.Context, fn func(context.Context, sqlConn) error) error {
 	ctx, release := d.server.bound(ctx)
 	defer release()
+	if t := txFrom(ctx, d.server); t != nil {
+		t.leftHome()
+		if err := d.use(ctx, t.tx); err != nil {
+			return err
+		}
+		return withAllMessages(fn(ctx, t.tx))
+	}
 	conn, err := withRetry(ctx, func() (*sql.Conn, error) {
 		conn, err := d.server.db.Conn(ctx)
 		if err != nil {
@@ -101,11 +111,27 @@ func (scriptResult) LastInsertId() (int64, error) { return 0, nil }
 func (scriptResult) RowsAffected() (int64, error) { return 0, nil }
 
 func (d *Database) exec(ctx context.Context, q string, args ...any) (sql.Result, error) {
+	return d.execShown(ctx, q, q, args...)
+}
+
+// execSecret is Server.execSecret for a database-scoped statement: stmt runs,
+// shown is what an observer sees and a WithScript collector captures.
+func (d *Database) execSecret(ctx context.Context, stmt, shown string) (sql.Result, error) {
+	return d.execShown(ctx, stmt, shown)
+}
+
+// execPasswords is execSecret for a statement whose secrets are all
+// passwords.
+func (d *Database) execPasswords(ctx context.Context, stmt string, passwords ...string) (sql.Result, error) {
+	return d.execSecret(ctx, stmt, redactSecrets(stmt, PasswordPlaceholder, passwords...))
+}
+
+func (d *Database) execShown(ctx context.Context, q, shown string, args ...any) (sql.Result, error) {
 	if c, ok := scriptFrom(ctx); ok {
 		// Parameters are substituted into the text, not dropped: a captured
 		// statement is run by hand in a query editor, where nothing binds
 		// @p1 — see bindScriptArgs.
-		bound, err := bindScriptArgs(q, args)
+		bound, err := bindScriptArgs(capturedForm(ctx, q, shown), args)
 		if err != nil {
 			return nil, err
 		}
@@ -119,17 +145,17 @@ func (d *Database) exec(ctx context.Context, q string, args ...any) (sql.Result,
 		return scriptResult{}, nil
 	}
 	var res sql.Result
-	err := d.withConn(ctx, func(ctx context.Context, c *sql.Conn) error {
+	err := d.withConn(ctx, func(ctx context.Context, c sqlConn) error {
 		var e error
 		res, e = c.ExecContext(ctx, q, args...)
 		return e
 	})
 	if err == nil && observerFrom(ctx) != nil {
-		sent, berr := bindScriptArgs(q, args)
+		sent, berr := bindScriptArgs(shown, args)
 		if berr != nil {
-			sent = q
+			sent = shown
 		}
-		observe(ctx, ScriptEntry{Server: scriptServerName(ctx, d.server), Database: d.Name, SQL: sent})
+		observe(ctx, d.server, ScriptEntry{Server: scriptServerName(ctx, d.server), Database: d.Name, SQL: sent})
 	}
 	return res, err
 }
@@ -161,7 +187,7 @@ func (r *dbRows) Close() error {
 
 // use switches conn to d's database on its own, with the error every
 // database-scoped call has always reported for a database it cannot enter.
-func (d *Database) use(ctx context.Context, conn *sql.Conn) error {
+func (d *Database) use(ctx context.Context, conn sqlConn) error {
 	if _, err := conn.ExecContext(ctx, "USE "+quoteIdent(d.Name)); err != nil {
 		return fmt.Errorf("gosmo: USE %s: %w", d.Name, err)
 	}
@@ -195,6 +221,14 @@ func (d *Database) query(ctx context.Context, q string, args ...any) (*dbRows, e
 	// A single read is idempotent, so a transient failure (dropped pooled
 	// connection, etc.) is retried on a fresh connection.
 	ctx, release := d.server.bound(ctx)
+	if t := txFrom(ctx, d.server); t != nil {
+		rows, err := d.queryOn(ctx, t, q, args...)
+		if err != nil {
+			release()
+			return nil, err
+		}
+		return &dbRows{Rows: rows, release: release}, nil
+	}
 	rows, err := withRetry(ctx, func() (*dbRows, error) {
 		conn, err := d.server.db.Conn(ctx)
 		if err != nil {
@@ -224,6 +258,20 @@ func (d *Database) query(ctx context.Context, q string, args ...any) (*dbRows, e
 	return rows, err
 }
 
+// queryOn is query inside InTransaction: on the transaction's session, with
+// the same fallback to two statements, and never retried.
+func (d *Database) queryOn(ctx context.Context, t *serverTx, q string, args ...any) (*sql.Rows, error) {
+	t.leftHome()
+	rows, err := t.tx.QueryContext(ctx, d.useBatch(q), args...)
+	if err != nil && ctx.Err() == nil {
+		if err := d.use(ctx, t.tx); err != nil {
+			return nil, err
+		}
+		rows, err = t.tx.QueryContext(ctx, q, args...)
+	}
+	return rows, withAllMessages(err)
+}
+
 // queryRow acquires a connection, switches it to d's database (USE), runs
 // q, and hands the resulting row to scan — retrying the whole acquire+USE+
 // scan sequence as one unit on a transient connection failure, same as
@@ -240,6 +288,17 @@ func (d *Database) query(ctx context.Context, q string, args ...any) (*dbRows, e
 func (d *Database) queryRow(ctx context.Context, scan func(*sql.Row) error, q string, args ...any) error {
 	ctx, release := d.server.bound(ctx)
 	defer release()
+	if t := txFrom(ctx, d.server); t != nil {
+		t.leftHome()
+		row := t.tx.QueryRowContext(ctx, d.useBatch(q), args...)
+		if row.Err() != nil && ctx.Err() == nil {
+			if err := d.use(ctx, t.tx); err != nil {
+				return err
+			}
+			row = t.tx.QueryRowContext(ctx, q, args...)
+		}
+		return withAllMessages(scan(row))
+	}
 	_, err := withRetry(ctx, func() (struct{}, error) {
 		conn, err := d.server.db.Conn(ctx)
 		if err != nil {

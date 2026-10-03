@@ -14,7 +14,7 @@ func TestBuildMailAccountScript(t *testing.T) {
 		"IF NOT EXISTS (SELECT 1 FROM msdb.dbo.sysmail_account WHERE name = N'ops')\n" +
 		"EXEC msdb.dbo.sysmail_add_account_sp @account_name = N'ops', @email_address = N'ops@example.com', " +
 		"@mailserver_name = N'smtp', @port = 25, @enable_ssl = 0, @use_default_credentials = 0, " +
-		"@username = N'u', @password = N'<password>';\nGO\n" +
+		"@username = N'u', @password = N'<insert password here>';\nGO\n" +
 		"EXEC msdb.dbo.sysmail_update_account_sp @account_name = N'ops', @timeout = 30, @no_credential_change = 1;\nGO\n"
 	if got != want {
 		t.Errorf("got\n%s\nwant\n%s", got, want)

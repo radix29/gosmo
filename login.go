@@ -267,7 +267,7 @@ func (l *Login) SetPasswordPolicy(ctx context.Context, checkPolicy, checkExpirat
 // (clear a lockout); the zero value changes the password alone.
 func (l *Login) ChangePassword(ctx context.Context, newPassword string, opts ChangePasswordOptions) error {
 	stmt := buildChangePasswordStatement(l.Name, newPassword, opts.MustChange, opts.Unlock)
-	if err := l.server.exec(ctx, stmt); err != nil {
+	if err := l.server.execPasswords(ctx, stmt, newPassword); err != nil {
 		return fmt.Errorf("gosmo: change password for login %q: %w", l.Name, err)
 	}
 	return nil
@@ -348,83 +348,105 @@ type LoginUserMapping struct {
 // same way). A cancelled context is not skipped — it ends the scan and is
 // returned.
 //
-// The skip covers a database whose query never opened. Once its rows are
-// being read, a failure ends the scan with an error instead: those rows are
-// already in the result, so skipping would return a short list and call it
-// success.
+// It is two round trips whatever the database count: the database list,
+// then one batch that reads every ONLINE database in turn, each inside its
+// own TRY/CATCH — the per-database skip, made server-side. The read runs
+// as dynamic SQL in the database (EXEC [db].sys.sp_executesql), so a
+// database that cannot be entered fails at that EXEC, inside the TRY,
+// rather than at the batch's compile. A per-database query each was the
+// shape until 2026-10-03; fanning those across a worker pool was tried
+// and measured slower (2026-08-14), since every worker on a cold pool
+// pays a full login handshake.
+//
+// A failure reading the batch's rows is not skipped: rows already read are
+// in the result, so skipping would return a short list and call it success.
 func (l *Login) UserMappings(ctx context.Context) ([]*LoginUserMapping, error) {
 	dbs, err := l.server.Databases(ctx)
 	if err != nil {
 		return nil, err
 	}
-
-	// One query per database, serially. Fanning these across a worker pool
-	// was tried and measured slower against a 46-database instance
-	// (2026-08-14): Database.query pins a pooled connection of its own, and
-	// on a pool with nothing idle each worker pays a full TCP+TLS+login
-	// handshake, which costs far more than the query latency it overlaps.
-	var out []*LoginUserMapping
+	var sb strings.Builder
+	sb.WriteString("SET NOCOUNT ON;\nDECLARE @q nvarchar(max) = " + QuoteLiteral(userMappingsQuery) + ";\n")
+	n := 0
 	for _, db := range dbs {
 		if db.State != "ONLINE" {
 			continue
 		}
-		ms, err := l.userMappingsIn(ctx, db, true)
+		fmt.Fprintf(&sb, "BEGIN TRY EXEC %s.sys.sp_executesql @q, N'@p1 varbinary(85)', @p1 = @sid; END TRY BEGIN CATCH END CATCH;\n",
+			quoteIdent(db.Name))
+		n++
+	}
+	if n == 0 {
+		return nil, nil
+	}
+	// The SID goes in as @sid, renamed for the batch: @p1 is the name each
+	// database's query binds it under.
+	q := "DECLARE @sid varbinary(85) = @p1;\n" + sb.String()
+	rows, err := l.server.query(ctx, q, l.SID)
+	if err != nil {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		return nil, fmt.Errorf("gosmo: user mappings for login %q: %w", l.Name, err)
+	}
+	defer rows.Close()
+
+	var out []*LoginUserMapping
+	for {
+		ms, err := scanUserMappings(rows)
 		if err != nil {
-			return nil, err
+			if ctx.Err() != nil {
+				return nil, ctx.Err()
+			}
+			return nil, fmt.Errorf("gosmo: user mappings for login %q: %w", l.Name, err)
 		}
 		out = append(out, ms...)
+		if !rows.NextResultSet() {
+			break
+		}
+	}
+	if err := rows.Err(); err != nil {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		return nil, fmt.Errorf("gosmo: user mappings for login %q: %w", l.Name, err)
 	}
 	return out, nil
 }
 
 // userMappingsQuery reads a login's user in the current database with one row
 // per role it is a member of — none when it is in no role, hence the LEFT
-// JOINs — ordered so userMappingsIn can group the rows in Go.
+// JOINs — ordered so scanUserMappings can group the rows in Go. The database
+// is a column, so rows from several databases group apart however they are
+// split into result sets.
 //
 // The roles were a comma-joined string (STUFF ... FOR XML PATH) split back
 // apart on ", " until 2026-09-23, which split a role whose name held a comma
 // into two roles that do not exist.
 const userMappingsQuery = `
-SELECT dp.principal_id, dp.name, ISNULL(dp.default_schema_name, ''), r.name
+SELECT DB_NAME(), dp.principal_id, dp.name, ISNULL(dp.default_schema_name, ''), r.name
 FROM   sys.database_principals dp
 LEFT   JOIN sys.database_role_members rm ON rm.member_principal_id = dp.principal_id
 LEFT   JOIN sys.database_principals r ON r.principal_id = rm.role_principal_id
 WHERE  dp.sid = @p1
 ORDER  BY dp.principal_id, r.name`
 
-// userMappingsIn reads one database's mapping for l. With skipUnreachable a
-// database whose query would not open reads as (nil, nil) — the skip
-// UserMappings documents; without it that failure is returned, for a caller
-// asking about one database by name.
-func (l *Login) userMappingsIn(ctx context.Context, db *Database, skipUnreachable bool) ([]*LoginUserMapping, error) {
-	rows, err := db.query(ctx, userMappingsQuery, l.SID)
-	if err != nil {
-		// Skipping an unreachable database is the point of this scan, but a
-		// cancelled context is not one of those — every remaining database
-		// would fail the same way, so the scan stops instead of issuing a
-		// doomed query per database.
-		if ctx.Err() != nil {
-			return nil, ctx.Err()
-		}
-		if skipUnreachable {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("gosmo: user mappings for login %q in %q: %w", l.Name, db.Name, err)
-	}
-	defer rows.Close()
-
+// scanUserMappings drains the current result set of userMappingsQuery rows,
+// grouping a user's role rows into one mapping. It leaves rows open for a
+// next result set and returns bare errors; its callers wrap.
+func scanUserMappings(rows rowSource) ([]*LoginUserMapping, error) {
 	var out []*LoginUserMapping
 	var last *LoginUserMapping
 	lastID := -1
 	for rows.Next() {
+		var dbName, user, schema string
 		var id int
-		var user, schema string
 		var role sql.NullString
-		if err := rows.Scan(&id, &user, &schema, &role); err != nil {
-			return nil, fmt.Errorf("gosmo: user mappings for login %q in %q: %w", l.Name, db.Name, err)
+		if err := rows.Scan(&dbName, &id, &user, &schema, &role); err != nil {
+			return nil, err
 		}
-		if last == nil || id != lastID {
-			last = &LoginUserMapping{Database: db.Name, User: user, DefaultSchema: schema}
+		if last == nil || id != lastID || dbName != last.Database {
+			last = &LoginUserMapping{Database: dbName, User: user, DefaultSchema: schema}
 			lastID = id
 			out = append(out, last)
 		}
@@ -432,15 +454,19 @@ func (l *Login) userMappingsIn(ctx context.Context, db *Database, skipUnreachabl
 			last.Roles = append(last.Roles, role.String)
 		}
 	}
-	if err := rows.Err(); err != nil {
-		if ctx.Err() != nil {
-			return nil, ctx.Err()
-		}
-		// Not skipped, unlike a failure to *open* the query above. By here
-		// this database's rows are already built, so continuing would return a
-		// silently short list and report success — the same failure the Scan
-		// arm above aborts on, and the reason the skip stops at the query
-		// boundary rather than covering iteration too.
+	return out, rows.Err()
+}
+
+// userMappingsIn reads one database's mapping for l, for a caller asking
+// about that database by name: a failure is returned, not skipped.
+func (l *Login) userMappingsIn(ctx context.Context, db *Database) ([]*LoginUserMapping, error) {
+	rows, err := db.query(ctx, userMappingsQuery, l.SID)
+	if err != nil {
+		return nil, fmt.Errorf("gosmo: user mappings for login %q in %q: %w", l.Name, db.Name, err)
+	}
+	defer rows.Close()
+	out, err := scanUserMappings(rows)
+	if err != nil {
 		return nil, fmt.Errorf("gosmo: user mappings for login %q in %q: %w", l.Name, db.Name, err)
 	}
 	return out, nil
@@ -465,7 +491,7 @@ func (l *Login) UnmapFromDatabase(ctx context.Context, dbName string) error {
 	if err != nil {
 		return err
 	}
-	mappings, err := l.userMappingsIn(ctx, d, false)
+	mappings, err := l.userMappingsIn(ctx, d)
 	if err != nil {
 		return err
 	}
@@ -609,15 +635,15 @@ func (s *Server) CreateLogin(ctx context.Context, req CreateLoginRequest) (*Logi
 	}
 	switch {
 	case len(stmts) == 1:
-		err = s.exec(ctx, stmt)
+		err = s.execPasswords(ctx, stmt, password)
 	case s.info != nil && EngineEdition(s.info.EngineEdition) == EngineAzureSQLDatabase:
 		for _, q := range stmts {
-			if err = s.exec(ctx, q); err != nil {
+			if err = s.execPasswords(ctx, q, password); err != nil {
 				break
 			}
 		}
 	default:
-		err = s.exec(ctx, atomicBatch(stmts))
+		err = s.execPasswords(ctx, atomicBatch(stmts), password)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("gosmo: create login %q: %w", name, err)

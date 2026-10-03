@@ -15,15 +15,15 @@ func TestUserMappingsGroupRolesWithoutSplittingNames(t *testing.T) {
 	db := tbl.db
 	captured.reset(cannedRow{
 		match: "sys.database_role_members rm",
-		cols:  []string{"principal_id", "name", "default_schema_name", "role"},
+		cols:  []string{"db", "principal_id", "name", "default_schema_name", "role"},
 		rows: [][]driver.Value{
-			{int64(5), "app", "dbo", "db_datareader"},
-			{int64(5), "app", "dbo", "readers, and writers"},
-			{int64(9), "app_alias", "", nil},
+			{db.Name, int64(5), "app", "dbo", "db_datareader"},
+			{db.Name, int64(5), "app", "dbo", "readers, and writers"},
+			{db.Name, int64(9), "app_alias", "", nil},
 		},
 	})
 	l := &Login{server: db.server, Name: "app", SID: []byte{1}}
-	got, err := l.userMappingsIn(t.Context(), db, false)
+	got, err := l.userMappingsIn(t.Context(), db)
 	if err != nil {
 		t.Fatalf("userMappingsIn: %v", err)
 	}

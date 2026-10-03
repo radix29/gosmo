@@ -131,8 +131,10 @@ func withOpen(stmt, openPassword string) string {
 }
 
 // exec runs one master key statement, opened by openPassword when set.
-func (m *MasterKey) exec(ctx context.Context, what, stmt, openPassword string) error {
-	if _, err := m.db.exec(ctx, withOpen(stmt, openPassword)); err != nil {
+// passwords are the ones stmt itself carries, redacted with openPassword from
+// what is captured or observed.
+func (m *MasterKey) exec(ctx context.Context, what, stmt, openPassword string, passwords ...string) error {
+	if _, err := m.db.execPasswords(ctx, withOpen(stmt, openPassword), append(passwords, openPassword)...); err != nil {
 		return fmt.Errorf("gosmo: %s the master key in %q: %w", what, m.db.Name, err)
 	}
 	return nil
@@ -153,7 +155,7 @@ func (m *MasterKey) Regenerate(ctx context.Context, password string, force bool,
 		stmt += "FORCE "
 	}
 	stmt += "REGENERATE WITH ENCRYPTION BY PASSWORD = " + QuoteLiteral(password)
-	return m.exec(ctx, "regenerate", stmt, openPassword)
+	return m.exec(ctx, "regenerate", stmt, openPassword, password)
 }
 
 // AddEncryption adds an encryption by the service master key or by a
@@ -164,7 +166,7 @@ func (m *MasterKey) AddEncryption(ctx context.Context, enc MasterKeyEncryptor, o
 	if err != nil {
 		return fmt.Errorf("gosmo: add encryption to the master key in %q: %w", m.db.Name, err)
 	}
-	return m.exec(ctx, "add encryption to", "ALTER MASTER KEY ADD ENCRYPTION BY "+c, openPassword)
+	return m.exec(ctx, "add encryption to", "ALTER MASTER KEY ADD ENCRYPTION BY "+c, openPassword, enc.Password)
 }
 
 // DropEncryption removes an encryption. The server refuses to remove the
@@ -175,7 +177,7 @@ func (m *MasterKey) DropEncryption(ctx context.Context, enc MasterKeyEncryptor, 
 	if err != nil {
 		return fmt.Errorf("gosmo: drop encryption from the master key in %q: %w", m.db.Name, err)
 	}
-	return m.exec(ctx, "drop encryption from", "ALTER MASTER KEY DROP ENCRYPTION BY "+c, openPassword)
+	return m.exec(ctx, "drop encryption from", "ALTER MASTER KEY DROP ENCRYPTION BY "+c, openPassword, enc.Password)
 }
 
 // Backup exports the key to a file on the *server's* filesystem, encrypted by
@@ -190,7 +192,7 @@ func (m *MasterKey) Backup(ctx context.Context, file, encryptionPassword, openPa
 	}
 	stmt := "BACKUP MASTER KEY TO FILE = " + QuoteLiteral(file) +
 		" ENCRYPTION BY PASSWORD = " + QuoteLiteral(encryptionPassword)
-	return m.exec(ctx, "back up", stmt, openPassword)
+	return m.exec(ctx, "back up", stmt, openPassword, encryptionPassword)
 }
 
 // Drop deletes the master key. The server refuses while any certificate or

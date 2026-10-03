@@ -215,7 +215,7 @@ func (d *Database) CreateAsymmetricKey(ctx context.Context, spec CreateAsymmetri
 	if err != nil {
 		return nil, fmt.Errorf("gosmo: create asymmetric key in %q: %w", d.Name, err)
 	}
-	if _, err := d.exec(ctx, stmt); err != nil {
+	if _, err := d.execPasswords(ctx, stmt, spec.EncryptionPassword); err != nil {
 		return nil, fmt.Errorf("gosmo: create asymmetric key %q in %q: %w", spec.Name, d.Name, err)
 	}
 	return createdObject(ctx, d.AsymmetricKeyRef(spec.Name), func() (*AsymmetricKey, error) {

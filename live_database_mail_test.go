@@ -682,7 +682,7 @@ EXEC sp_configure 'show advanced options', %d; RECONFIGURE;`, adv))
 	if err != nil {
 		t.Fatalf("ScriptMailAccount: %v", err)
 	}
-	if strings.Contains(acctScript, "other") || !strings.Contains(acctScript, "@password = N'<password>'") {
+	if strings.Contains(acctScript, "other") || !strings.Contains(acctScript, "@password = N'<insert password here>'") {
 		t.Errorf("account script carries a password or lacks the placeholder:\n%s", acctScript)
 	}
 	profScript, err := sc.ScriptMailProfile(ctx, liveMailProfile)
@@ -834,9 +834,9 @@ AND description NOT LIKE N'DatabaseMail process is %'`, startLog) == 0 {
 		t.Errorf("grants survived the profile's drop: %v", gs)
 	}
 
-	runScript(t, srv, strings.ReplaceAll(allScript, mailPasswordPlaceholder, "other"))
+	runScript(t, srv, strings.ReplaceAll(allScript, PasswordPlaceholder, "other"))
 	// Run again: every statement is guarded, so a second run is a no-op.
-	runScript(t, srv, strings.ReplaceAll(allScript, mailPasswordPlaceholder, "other"))
+	runScript(t, srv, strings.ReplaceAll(allScript, PasswordPlaceholder, "other"))
 	after, err := srv.MailAccounts(ctx)
 	if err != nil {
 		t.Fatalf("MailAccounts after the script: %v", err)

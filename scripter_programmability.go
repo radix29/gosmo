@@ -356,11 +356,11 @@ func (sc *Scripter) ScriptRule(ctx context.Context, schema, name string) (string
 	if err := requireSchema("script rule", schema, name); err != nil {
 		return "", err
 	}
-	r, err := sc.db.RuleByName(ctx, schema, name)
+	def, err := sc.db.RuleRef(schema, name).Definition(ctx)
 	if err != nil {
 		return "", err
 	}
-	return buildBoundObjectScript("RULE", r.Schema, r.Name, r.Definition, sc.opts), nil
+	return buildBoundObjectScript("RULE", schema, name, def, sc.opts), nil
 }
 
 // ScriptDefault generates the CREATE (or DROP) script for one standalone
@@ -369,11 +369,11 @@ func (sc *Scripter) ScriptDefault(ctx context.Context, schema, name string) (str
 	if err := requireSchema("script default", schema, name); err != nil {
 		return "", err
 	}
-	df, err := sc.db.DefaultByName(ctx, schema, name)
+	def, err := sc.db.DefaultRef(schema, name).Definition(ctx)
 	if err != nil {
 		return "", err
 	}
-	return buildBoundObjectScript("DEFAULT", df.Schema, df.Name, df.Definition, sc.opts), nil
+	return buildBoundObjectScript("DEFAULT", schema, name, def, sc.opts), nil
 }
 
 // buildBoundObjectScript assembles a rule's or a default's script — one
@@ -407,7 +407,7 @@ func buildBoundObjectScript(keyword, schema, name, definition string, opts Scrip
 // generated script. The bytes run to megabytes and are not what a reader of
 // a script wants pasted into a query window, so the CREATE carries a
 // placeholder that cannot be mistaken for a real assembly — the same
-// treatment, and for the same reason, as credentialSecretPlaceholder.
+// treatment, and for the same reason, as SecretPlaceholder.
 const assemblyBinaryPlaceholder = "0x00 /* <replace with the assembly binary, or a FROM '<path>' clause> */"
 
 // ScriptAssembly generates the CREATE (or DROP) script for one CLR assembly.

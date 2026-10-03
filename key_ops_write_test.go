@@ -56,8 +56,8 @@ func TestCertificateBackupRemoveKeyAndOwner(t *testing.T) {
 	)
 	assertStatements(t, got, []string{
 		useAppDB + `BACKUP CERTIFICATE [c]]1] TO FILE = N'C:\b\it''s.cer'`,
-		useAppDB + `BACKUP CERTIFICATE [c]]1] TO FILE = N'C:\b\c.cer' WITH PRIVATE KEY (FILE = N'C:\b\c.pvk', ENCRYPTION BY PASSWORD = N'enc')`,
-		useAppDB + `BACKUP CERTIFICATE [c]]1] TO FILE = N'C:\b\c.cer' WITH PRIVATE KEY (FILE = N'C:\b\c.pvk', ENCRYPTION BY PASSWORD = N'enc', DECRYPTION BY PASSWORD = N'd''ec')`,
+		useAppDB + `BACKUP CERTIFICATE [c]]1] TO FILE = N'C:\b\c.cer' WITH PRIVATE KEY (FILE = N'C:\b\c.pvk', ENCRYPTION BY PASSWORD = N'<insert password here>')`,
+		useAppDB + `BACKUP CERTIFICATE [c]]1] TO FILE = N'C:\b\c.cer' WITH PRIVATE KEY (FILE = N'C:\b\c.pvk', ENCRYPTION BY PASSWORD = N'<insert password here>', DECRYPTION BY PASSWORD = N'<insert password here>')`,
 		useAppDB + "ALTER CERTIFICATE [c]]1] REMOVE PRIVATE KEY",
 		useAppDB + "ALTER AUTHORIZATION ON CERTIFICATE::[c]]1] TO [u]]1]",
 	})
@@ -164,7 +164,7 @@ func TestProviderKeyStatementsReject(t *testing.T) {
 func TestMasterKeyWrites(t *testing.T) {
 	m := (&Server{}).DatabaseRef("AppDB").MasterKeyRef()
 	opened := func(stmt string) string {
-		return useAppDB + "BEGIN TRY\nOPEN MASTER KEY DECRYPTION BY PASSWORD = N'op';\n" + stmt + ";\nCLOSE MASTER KEY;\n" +
+		return useAppDB + "BEGIN TRY\nOPEN MASTER KEY DECRYPTION BY PASSWORD = N'<insert password here>';\n" + stmt + ";\nCLOSE MASTER KEY;\n" +
 			"END TRY\nBEGIN CATCH\n" +
 			"IF EXISTS (SELECT 1 FROM sys.openkeys WHERE database_id = DB_ID() AND key_name = N'##MS_DatabaseMasterKey##')\n" +
 			"    CLOSE MASTER KEY;\nTHROW;\nEND CATCH;"
@@ -188,13 +188,13 @@ func TestMasterKeyWrites(t *testing.T) {
 		m.Drop,
 	)
 	assertStatements(t, got, []string{
-		useAppDB + "ALTER MASTER KEY REGENERATE WITH ENCRYPTION BY PASSWORD = N'new'",
-		opened("ALTER MASTER KEY FORCE REGENERATE WITH ENCRYPTION BY PASSWORD = N'new'"),
+		useAppDB + "ALTER MASTER KEY REGENERATE WITH ENCRYPTION BY PASSWORD = N'<insert password here>'",
+		opened("ALTER MASTER KEY FORCE REGENERATE WITH ENCRYPTION BY PASSWORD = N'<insert password here>'"),
 		opened("ALTER MASTER KEY ADD ENCRYPTION BY SERVICE MASTER KEY"),
 		useAppDB + "ALTER MASTER KEY DROP ENCRYPTION BY SERVICE MASTER KEY",
-		useAppDB + "ALTER MASTER KEY ADD ENCRYPTION BY PASSWORD = N'p''2'",
-		useAppDB + "ALTER MASTER KEY DROP ENCRYPTION BY PASSWORD = N'p2'",
-		useAppDB + `BACKUP MASTER KEY TO FILE = N'C:\b\dmk.key' ENCRYPTION BY PASSWORD = N'enc'`,
+		useAppDB + "ALTER MASTER KEY ADD ENCRYPTION BY PASSWORD = N'<insert password here>'",
+		useAppDB + "ALTER MASTER KEY DROP ENCRYPTION BY PASSWORD = N'<insert password here>'",
+		useAppDB + `BACKUP MASTER KEY TO FILE = N'C:\b\dmk.key' ENCRYPTION BY PASSWORD = N'<insert password here>'`,
 		useAppDB + "DROP MASTER KEY",
 	})
 }
@@ -250,7 +250,7 @@ func TestSignatureWrites(t *testing.T) {
 		func(ctx context.Context) error { return d.DropSignature(ctx, "dbo", "f", asym, true) },
 	)
 	assertStatements(t, got, []string{
-		useAppDB + "ADD SIGNATURE TO [dbo].[p]]1] BY CERTIFICATE [c] WITH PASSWORD = N'p''w'",
+		useAppDB + "ADD SIGNATURE TO [dbo].[p]]1] BY CERTIFICATE [c] WITH PASSWORD = N'<insert password here>'",
 		useAppDB + "ADD COUNTER SIGNATURE TO [dbo].[f] BY ASYMMETRIC KEY [a]",
 		useAppDB + "DROP SIGNATURE FROM [dbo].[p]]1] BY CERTIFICATE [c]",
 		useAppDB + "DROP COUNTER SIGNATURE FROM [dbo].[f] BY ASYMMETRIC KEY [a]",

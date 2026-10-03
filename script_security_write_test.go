@@ -127,7 +127,7 @@ func TestScriptSecurityWrites(t *testing.T) {
 			// rather than cleartext.
 			"Login ChangePassword", func(c context.Context) error {
 				return login().ChangePassword(c, "p'wd", ChangePasswordOptions{})
-			}, "ALTER LOGIN [o'brien] WITH PASSWORD = N'p''wd'"},
+			}, "ALTER LOGIN [o'brien] WITH PASSWORD = N'<insert password here>'"},
 		{
 			// MUST_CHANGE and UNLOCK follow the password space-separated —
 			// they are password-clause modifiers, not comma-separated set
@@ -135,7 +135,7 @@ func TestScriptSecurityWrites(t *testing.T) {
 			// the comma.
 			"Login ChangePassword with options", func(c context.Context) error {
 				return login().ChangePassword(c, "p'wd", ChangePasswordOptions{MustChange: true, Unlock: true})
-			}, "ALTER LOGIN [o'brien] WITH PASSWORD = N'p''wd' MUST_CHANGE UNLOCK, CHECK_EXPIRATION = ON"},
+			}, "ALTER LOGIN [o'brien] WITH PASSWORD = N'<insert password here>' MUST_CHANGE UNLOCK, CHECK_EXPIRATION = ON"},
 		{"Login MapCredential", func(c context.Context) error {
 			return login().MapCredential(c, "cred]1")
 		}, "ALTER LOGIN [o'brien] ADD CREDENTIAL [cred]]1]"},
@@ -172,7 +172,7 @@ func TestScriptSecurityWrites(t *testing.T) {
 		}, scriptUsePrefix + "CREATE CERTIFICATE [Cert]]1] AUTHORIZATION [o'brien] WITH SUBJECT = N'gossms o''brien'"},
 		{"CreateMasterKey", func(c context.Context) error {
 			return errOnly(scriptTestDB().CreateMasterKey(c, CreateMasterKeyRequest{Password: "p'wd"}))
-		}, scriptUsePrefix + "CREATE MASTER KEY ENCRYPTION BY PASSWORD = N'p''wd'"},
+		}, scriptUsePrefix + "CREATE MASTER KEY ENCRYPTION BY PASSWORD = N'<insert password here>'"},
 		{"CreateColumnMasterKey with a signature", func(c context.Context) error {
 			return errOnly(scriptTestDB().CreateColumnMasterKey(c, CreateColumnMasterKeyRequest{Name: "CMK]1", KeyStoreProvider: "MSSQL_CERTIFICATE_STORE", KeyPath: "CurrentUser/my/a'b", Signature: []byte{0x0a, 0xff}}))
 		}, scriptUsePrefix + `

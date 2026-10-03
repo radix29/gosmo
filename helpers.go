@@ -77,13 +77,15 @@ func foundRow[T any](v T, err error, notFound error, what string) (T, error) {
 // catalog row from a principal with no permission on it, and the one that
 // created an object is not always one that can see it afterwards. Reporting
 // that as an error would tell the caller a create that happened had failed.
+// The same holds for a read-back refused with ErrHandleNotLoaded: CreateIndex
+// on a TableRef is a valid write, and only its read-back needs an ObjectID.
 // Any other read error is returned as is.
 func createdObject[T any](ctx context.Context, handle T, read func() (T, error)) (T, error) {
 	if Scripting(ctx) {
 		return handle, nil
 	}
 	v, err := read()
-	if errors.Is(err, ErrNotFound) {
+	if errors.Is(err, ErrNotFound) || errors.Is(err, ErrHandleNotLoaded) {
 		return handle, nil
 	}
 	return v, err
@@ -182,3 +184,35 @@ func likeEscape(s string) string { return likeEscaper.Replace(s) }
 // likeEscaper is built once: a strings.Replacer is safe for concurrent use and
 // compiles its lookup on first use, which a per-call one paid every time.
 var likeEscaper = strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`, `[`, `\[`)
+
+// moduleDefinition is the read behind every module's Definition(ctx): the
+// T-SQL text of the schema-scoped object [schema].[name], if it is one of the
+// kinds kind (a predicate on sys.all_objects o) admits. It reads by name, so
+// a Ref handle is enough.
+//
+// Listings carry no definition — a module's text can be megabytes, and the
+// sys schema alone ships about 1,400 procedures — so this is the one place
+// it is read.
+//
+// An object that is not there, or is of another kind (a table named like the
+// view asked for), is ErrNotFound. One that is there with no readable text —
+// encrypted, or CLR, which has no module — is "", not an error: OBJECT_DEFINITION
+// is NULL for both. sys.all_objects rather than sys.objects, so a system
+// module in the sys schema is found too.
+func (d *Database) moduleDefinition(ctx context.Context, what, kind, schema, name string) (string, error) {
+	if err := requireSchema("read "+what+" definition", schema, name); err != nil {
+		return "", err
+	}
+	q := `
+SELECT OBJECT_DEFINITION(o.object_id)
+FROM   sys.all_objects o
+WHERE  o.object_id = OBJECT_ID(@p1) AND ` + kind
+
+	var def sql.NullString
+	err := d.queryRow(ctx, func(row *sql.Row) error {
+		return row.Scan(&def)
+	}, q, qualifiedName(schema, name))
+	return foundRow(def.String, err,
+		notFoundf("gosmo: %s %s not found in %q", what, qualifiedName(schema, name), d.Name),
+		fmt.Sprintf("read %s %s definition in %q", what, qualifiedName(schema, name), d.Name))
+}

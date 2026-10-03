@@ -12,12 +12,11 @@ import (
 type Trigger struct {
 	db *Database
 
-	Name       string
-	TableName  string
-	Schema     string
-	IsEnabled  bool
-	Events     []string
-	Definition string
+	Name      string
+	TableName string
+	Schema    string
+	IsEnabled bool
+	Events    []string
 }
 
 // Triggers returns all DML triggers in the database.
@@ -31,11 +30,9 @@ SELECT tr.name, OBJECT_NAME(tr.parent_id), SCHEMA_NAME(o.schema_id),
        tr.is_disabled,
        ` + jsonList("te.type_desc", `
         FROM   sys.trigger_events te
-        WHERE  te.object_id = tr.object_id`, "") + ` AS events,
-       ISNULL(m.definition, '')
+        WHERE  te.object_id = tr.object_id`, "") + ` AS events
 FROM   sys.triggers tr
 JOIN   sys.objects o   ON o.object_id  = tr.parent_id
-JOIN   sys.sql_modules m ON m.object_id = tr.object_id
 WHERE  tr.is_ms_shipped = 0 AND tr.parent_class = 1 ` + where + `
 ORDER  BY tr.name`
 
@@ -45,7 +42,7 @@ ORDER  BY tr.name`
 		var events sql.NullString
 		var isDisabled bool
 		if err := scan(&t.Name, &t.TableName, &t.Schema, &isDisabled,
-			&events, &t.Definition); err != nil {
+			&events); err != nil {
 			return nil, err
 		}
 		t.IsEnabled = !isDisabled
@@ -67,6 +64,13 @@ func (d *Database) TriggerRef(schema, name string) *Trigger {
 
 // Database returns the database the trigger belongs to.
 func (t *Trigger) Database() *Database { return t.db }
+
+// Definition returns the trigger's T-SQL text: "" for an encrypted or CLR
+// trigger, ErrNotFound when there is no such DML trigger. Listings do not
+// carry it; this reads it by name, so a TriggerRef is enough.
+func (t *Trigger) Definition(ctx context.Context) (string, error) {
+	return t.db.moduleDefinition(ctx, "trigger", "o.type IN ('TR','TA')", t.Schema, t.Name)
+}
 
 // Drop drops the trigger. A trigger that isn't there is the server's error,
 // not a silent success — see the note on Table.Drop.

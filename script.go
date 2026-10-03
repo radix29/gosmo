@@ -152,6 +152,11 @@ func scriptUse(db string) string {
 //
 // Read methods are unaffected: only the exec chokepoints
 // (Server.exec, Database.exec) consult the collector.
+//
+// A secret a write carries — a password, a credential's secret, a key
+// source and identity value — is captured as PasswordPlaceholder,
+// SecretPlaceholder, KeySourcePlaceholder or IdentityValuePlaceholder, unless
+// ctx also carries WithScriptSecrets.
 func WithScript(ctx context.Context) (context.Context, *ScriptCollector) {
 	c := &ScriptCollector{}
 	return context.WithValue(ctx, scriptCtxKey{}, c), c
@@ -240,7 +245,9 @@ type observerCtxKey struct{}
 // synchronises fn itself. An observer already on ctx keeps firing, before fn.
 //
 // The entry's SQL is the statement as sent, with bound parameters substituted
-// as WithScript would render them (the unbound text if they cannot be).
+// as WithScript would render them (the unbound text if they cannot be), and
+// any secret replaced by its placeholder as WithScript replaces it —
+// WithScriptSecrets does not change that.
 //
 // The two halves of a window a write opens and closes around itself — an
 // audit disabled for an ALTER and re-enabled after it, a database put back to
@@ -274,8 +281,14 @@ func unobserved(ctx context.Context) context.Context {
 	return context.WithValue(ctx, observerCtxKey{}, (func(ScriptEntry))(nil))
 }
 
-// observe reports e to ctx's statement observer, if there is one.
-func observe(ctx context.Context, e ScriptEntry) {
+// observe reports e, a statement that ran through s, to ctx's statement
+// observer, if there is one — at once, or once the transaction commits when it
+// ran inside InTransaction.
+func observe(ctx context.Context, s *Server, e ScriptEntry) {
+	if t := txFrom(ctx, s); t != nil {
+		t.hold(ctx, e)
+		return
+	}
 	if fn := observerFrom(ctx); fn != nil {
 		fn(e)
 	}
@@ -292,36 +305,193 @@ func scriptFrom(ctx context.Context) (*ScriptCollector, bool) {
 // this package builds one via QuoteName/QuoteLiteral/escapeSingle before
 // reaching here, since none of these are parameterizable DDL/EXEC calls.
 func (s *Server) exec(ctx context.Context, stmt string) error {
-	if c, ok := scriptFrom(ctx); ok {
-		c.append(ScriptEntry{Server: scriptServerName(ctx, s), SQL: stmt})
-		return nil
-	}
-	ctx, release := s.bound(ctx)
-	defer release()
-	if _, err := s.db.ExecContext(ctx, stmt); err != nil {
-		return withAllMessages(err)
-	}
-	observe(ctx, ScriptEntry{Server: scriptServerName(ctx, s), SQL: stmt})
-	return nil
+	return s.execSecret(ctx, stmt, stmt)
 }
 
 // execSecret is exec for a statement carrying a secret: stmt, with the
 // secret, is what runs; shown, the same statement with a placeholder in its
-// place, is all a WithScript collector or a statement observer ever sees. A
-// Database Mail account's password is the case — a captured script is shown
-// to a person and an observer is an audit trail, and neither may carry it.
+// place (see redactSecrets), is what a statement observer sees and — unless
+// ctx carries WithScriptSecrets — what a WithScript collector captures.
+// Every password, credential secret and key source a write sends goes
+// through here or Database.execSecret: a captured script is shown to a
+// person and an observer is an audit trail, and neither may carry one.
 func (s *Server) execSecret(ctx context.Context, stmt, shown string) error {
 	if c, ok := scriptFrom(ctx); ok {
-		c.append(ScriptEntry{Server: scriptServerName(ctx, s), SQL: shown})
+		c.append(ScriptEntry{Server: scriptServerName(ctx, s), SQL: capturedForm(ctx, stmt, shown)})
 		return nil
 	}
 	ctx, release := s.bound(ctx)
 	defer release()
-	if _, err := s.db.ExecContext(ctx, stmt); err != nil {
+	var conn sqlConn = s.db
+	if t := txFrom(ctx, s); t != nil {
+		c, err := t.serverConn(ctx)
+		if err != nil {
+			return err
+		}
+		conn = c
+	}
+	if _, err := conn.ExecContext(ctx, stmt); err != nil {
 		return withAllMessages(err)
 	}
-	observe(ctx, ScriptEntry{Server: scriptServerName(ctx, s), SQL: shown})
+	observe(ctx, s, ScriptEntry{Server: scriptServerName(ctx, s), SQL: shown})
 	return nil
+}
+
+// execPasswords is execSecret for a statement whose secrets are all
+// passwords.
+func (s *Server) execPasswords(ctx context.Context, stmt string, passwords ...string) error {
+	return s.execSecret(ctx, stmt, redactSecrets(stmt, PasswordPlaceholder, passwords...))
+}
+
+// scriptSecretsKey marks a context from WithScriptSecrets.
+type scriptSecretsKey struct{}
+
+// WithScriptSecrets returns a derived context under which a WithScript
+// collector captures the secrets a write carries — passwords, credential
+// secrets, key sources and identity values — as they would be sent, instead
+// of the placeholders it captures by default (PasswordPlaceholder and the
+// rest). It is for a caller that hands the script to a
+// machine to run, not to a person to read.
+//
+// A statement observer is unaffected: it always sees the placeholders, since
+// it fires for statements that really ran and is the natural place for an
+// audit trail. Outside WithScript the context has no effect.
+func WithScriptSecrets(ctx context.Context) context.Context {
+	return context.WithValue(ctx, scriptSecretsKey{}, true)
+}
+
+// capturedForm is what a WithScript collector records for a statement that
+// runs as stmt and is shown as shown.
+func capturedForm(ctx context.Context, stmt, shown string) string {
+	if keep, _ := ctx.Value(scriptSecretsKey{}).(bool); keep {
+		return stmt
+	}
+	return shown
+}
+
+// The placeholders a captured or observed statement carries in place of a
+// secret, and a generated script in place of one no catalog view exposes —
+// a credential's secret, a key's or a Database Mail account's password — so a
+// captured write and a generated script agree. A script carries a
+// placeholder rather than leaving the clause out because the clause's absence
+// means something else: a credential with no secret, a key protected by the
+// master key instead of a password. A placeholder cannot be mistaken for a
+// real value, and fails loudly if run unreplaced.
+const (
+	PasswordPlaceholder  = "<insert password here>"
+	SecretPlaceholder    = "<insert secret here>"
+	KeySourcePlaceholder = "<insert key source here>"
+
+	// IdentityValuePlaceholder stands in for a symmetric key's
+	// IDENTITY_VALUE. Not a secret alone, but with the KEY_SOURCE it is what
+	// re-creates the key, so the pair is redacted together.
+	IdentityValuePlaceholder = "<insert identity value here>"
+)
+
+// redactSecrets returns stmt with every string literal whose value is one of
+// secrets replaced by a literal of placeholder — the shown form execSecret
+// reports. Empty secrets are ignored: an empty literal is no secret, and
+// replacing it would rewrite every empty literal in the statement.
+//
+// It replaces whole literals, found by scanning stmt, rather than doing a
+// text replace of QuoteLiteral(secret). A text replace matches inside other
+// literals and tears them apart — the literal of the secret
+//
+//	a
+//
+// is a prefix of the literal of a file path a'b:
+//
+//	N'a'
+//	N'a''b'
+//
+// — and a secret that is a prefix of another redacts the longer one only
+// partly. The scan skips [identifiers], "identifiers" and comments, where a
+// quote opens nothing. A literal elsewhere in the statement that happens to
+// equal a secret is redacted too; that costs a reader a value, never a secret.
+func redactSecrets(stmt, placeholder string, secrets ...string) string {
+	var out strings.Builder
+	last := 0
+	literal := func(open, quote int) int {
+		v, end := scanQuoted(stmt, quote, '\'')
+		if v != "" && slices.Contains(secrets, v) {
+			out.WriteString(stmt[last:open])
+			out.WriteString(QuoteLiteral(placeholder))
+			last = end
+		}
+		return end
+	}
+	for i := 0; i < len(stmt); {
+		switch c := stmt[i]; {
+		case c == '\'':
+			i = literal(i, i)
+		case isIdentByte(c):
+			// A whole word at a time, so only a lone N opens a Unicode
+			// literal — not the last letter of a word that ends in one.
+			j := i
+			for j < len(stmt) && isIdentByte(stmt[j]) {
+				j++
+			}
+			if j == i+1 && (c == 'N' || c == 'n') && j < len(stmt) && stmt[j] == '\'' {
+				j = literal(i, j)
+			}
+			i = j
+		case c == '[':
+			_, i = scanQuoted(stmt, i, ']')
+		case c == '"':
+			_, i = scanQuoted(stmt, i, '"')
+		case strings.HasPrefix(stmt[i:], "--"):
+			if j := strings.IndexByte(stmt[i:], '\n'); j >= 0 {
+				i += j
+			} else {
+				i = len(stmt)
+			}
+		case strings.HasPrefix(stmt[i:], "/*"):
+			depth, j := 1, i+2
+			for j < len(stmt) && depth > 0 {
+				switch {
+				case strings.HasPrefix(stmt[j:], "/*"):
+					depth, j = depth+1, j+2
+				case strings.HasPrefix(stmt[j:], "*/"):
+					depth, j = depth-1, j+2
+				default:
+					j++
+				}
+			}
+			i = j
+		default:
+			i++
+		}
+	}
+	if last == 0 {
+		return stmt
+	}
+	out.WriteString(stmt[last:])
+	return out.String()
+}
+
+// scanQuoted reads a span opened at stmt[open] and closed by closer, where a
+// doubled closer is an escaped one — a 'literal', a [name] or a "name". It
+// returns the unescaped content and the index just past the closer (or the
+// end of stmt, for a span left open).
+func scanQuoted(stmt string, open int, closer byte) (string, int) {
+	var val strings.Builder
+	for j := open + 1; j < len(stmt); j++ {
+		if stmt[j] == closer {
+			if j+1 < len(stmt) && stmt[j+1] == closer {
+				val.WriteByte(closer)
+				j++
+				continue
+			}
+			return val.String(), j + 1
+		}
+		val.WriteByte(stmt[j])
+	}
+	return val.String(), len(stmt)
+}
+
+func isIdentByte(c byte) bool {
+	return c == '_' || c == '@' || c == '#' || c == '$' ||
+		'0' <= c && c <= '9' || 'a' <= c && c <= 'z' || 'A' <= c && c <= 'Z'
 }
 
 // atomicBatch renders stmts as one batch that applies all of them or none.

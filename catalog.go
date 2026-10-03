@@ -116,20 +116,38 @@ func (d *Database) SystemCatalog(ctx context.Context) (*Catalog, error) {
 // and where clauses (fixed, package-internal constants — never
 // caller-supplied) select the rows: where for Objects, fnWhere for
 // Functions.
+//
+// It is one batch of four result sets — objects, their columns, functions,
+// their columns — in one round trip on one connection, where it was four.
 func (d *Database) catalog(ctx context.Context, objectsView, columnsView, where, fnWhere string) (*Catalog, error) {
-	objects, err := d.catalogObjects(ctx, objectsView, where)
+	q := catalogObjectsSelect(objectsView, where) + ";\n" +
+		catalogColumnsSelect(objectsView, columnsView, where) + ";\n" +
+		catalogObjectsSelect(objectsView, fnWhere) + ";\n" +
+		catalogColumnsSelect(objectsView, columnsView, fnWhere)
+
+	rows, err := d.query(ctx, q)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("gosmo: load catalog for %q: %w", d.Name, err)
 	}
-	if err := d.catalogColumns(ctx, objects, objectsView, columnsView, where); err != nil {
-		return nil, err
-	}
-	functions, err := d.catalogObjects(ctx, objectsView, fnWhere)
-	if err != nil {
-		return nil, err
-	}
-	if err := d.catalogColumns(ctx, functions, objectsView, columnsView, fnWhere); err != nil {
-		return nil, err
+	defer rows.Close()
+
+	var objects, functions []CatalogObject
+	for i, read := range []func() error{
+		func() (err error) { objects, err = scanCatalogObjects(rows); return err },
+		func() error { return scanCatalogColumns(rows, objects) },
+		func() (err error) { functions, err = scanCatalogObjects(rows); return err },
+		func() error { return scanCatalogColumns(rows, functions) },
+	} {
+		if i > 0 && !rows.NextResultSet() {
+			err := rows.Err()
+			if err == nil {
+				err = fmt.Errorf("result set %d of 4 is missing", i+1)
+			}
+			return nil, fmt.Errorf("gosmo: load catalog for %q: %w", d.Name, err)
+		}
+		if err := read(); err != nil {
+			return nil, fmt.Errorf("gosmo: load catalog for %q: %w", d.Name, err)
+		}
 	}
 	// Most system functions return a shape decided at run time and record
 	// no columns; one that records none is no use to a caller binding a
@@ -160,39 +178,20 @@ func catalogObjectType(typeCode string) CatalogObjectType {
 	return CatalogTable
 }
 
-// catalogObjects loads every object matching where (no columns yet),
+// catalogObjectsSelect selects every object matching where (no columns),
 // sorted by schema then name.
-func (d *Database) catalogObjects(ctx context.Context, objectsView, where string) ([]CatalogObject, error) {
-	q := fmt.Sprintf(`
+func catalogObjectsSelect(objectsView, where string) string {
+	return fmt.Sprintf(`
 SELECT o.object_id, SCHEMA_NAME(o.schema_id), o.name, o.type
 FROM   %s o
 WHERE  %s
 ORDER  BY SCHEMA_NAME(o.schema_id), o.name`, objectsView, where)
-
-	rows, err := d.query(ctx, q)
-	return scanRows(rows, err, fmt.Sprintf("load catalog for %q", d.Name), func(scan func(...any) error) (CatalogObject, error) {
-		var o CatalogObject
-		var typeCode string
-		if err := scan(&o.ObjectID, &o.Schema, &o.Name, &typeCode); err != nil {
-			return CatalogObject{}, err
-		}
-		// sys.objects.type is CHAR(2): 'U'/'V' come back space-padded
-		// ("U ", "V "), so this must trim before comparing.
-		o.Type = catalogObjectType(strings.TrimSpace(typeCode))
-		return o, nil
-	})
 }
 
-// catalogColumns loads every column of every object matching where in
-// one query and distributes them into the matching CatalogObject by
-// object_id.
-func (d *Database) catalogColumns(ctx context.Context, objects []CatalogObject, objectsView, columnsView, where string) error {
-	byID := make(map[int]*CatalogObject, len(objects))
-	for i := range objects {
-		byID[objects[i].ObjectID] = &objects[i]
-	}
-
-	q := fmt.Sprintf(`
+// catalogColumnsSelect selects every column of every object matching where,
+// ordered by object.
+func catalogColumnsSelect(objectsView, columnsView, where string) string {
+	return fmt.Sprintf(`
 SELECT c.object_id, c.name, tp.name,
        c.max_length, c.precision, c.scale, c.is_nullable
 FROM   %s c
@@ -200,26 +199,45 @@ JOIN   sys.types tp ON tp.user_type_id = c.user_type_id
 JOIN   %s o ON o.object_id = c.object_id
 WHERE  %s
 ORDER  BY c.object_id, c.column_id`, columnsView, objectsView, where)
+}
 
-	rows, err := d.query(ctx, q)
-	if err != nil {
-		return fmt.Errorf("gosmo: load catalog columns for %q: %w", d.Name, err)
+// scanCatalogObjects drains the current result set of catalogObjectsSelect
+// rows. It leaves rows open for the next result set, and returns bare errors:
+// catalog wraps them.
+func scanCatalogObjects(rows *dbRows) ([]CatalogObject, error) {
+	var out []CatalogObject
+	for rows.Next() {
+		var o CatalogObject
+		var typeCode string
+		if err := rows.Scan(&o.ObjectID, &o.Schema, &o.Name, &typeCode); err != nil {
+			return nil, err
+		}
+		// sys.objects.type is CHAR(2): 'U'/'V' come back space-padded
+		// ("U ", "V "), so this must trim before comparing.
+		o.Type = catalogObjectType(strings.TrimSpace(typeCode))
+		out = append(out, o)
 	}
-	defer rows.Close()
+	return out, rows.Err()
+}
 
+// scanCatalogColumns drains the current result set of catalogColumnsSelect
+// rows into the matching CatalogObject by object_id. Bare errors, as
+// scanCatalogObjects.
+func scanCatalogColumns(rows *dbRows, objects []CatalogObject) error {
+	byID := make(map[int]*CatalogObject, len(objects))
+	for i := range objects {
+		byID[objects[i].ObjectID] = &objects[i]
+	}
 	for rows.Next() {
 		var objectID int
 		var col CatalogColumn
 		if err := rows.Scan(&objectID, &col.Name, &col.DataType,
 			&col.MaxLength, &col.Precision, &col.Scale, &col.IsNullable); err != nil {
-			return fmt.Errorf("gosmo: load catalog columns for %q: %w", d.Name, err)
+			return err
 		}
 		if o, ok := byID[objectID]; ok {
 			o.Columns = append(o.Columns, col)
 		}
 	}
-	if err := rows.Err(); err != nil {
-		return fmt.Errorf("gosmo: load catalog columns for %q: %w", d.Name, err)
-	}
-	return nil
+	return rows.Err()
 }

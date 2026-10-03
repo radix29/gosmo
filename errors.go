@@ -63,6 +63,13 @@ func (e *notFoundError) Unwrap() []error {
 // drops — a different object.
 var ErrSchemaRequired = errors.New("schema is required")
 
+// ErrHandleNotLoaded is wrapped by every read keyed by a catalog id the
+// receiver does not have — a Table from Database.TableRef, whose ObjectID is
+// zero. The read would otherwise ask for object 0 and get back an empty
+// result indistinguishable from a table with no columns, indexes or rows.
+// Read the table with Database.TableByName (or Tables) instead.
+var ErrHandleNotLoaded = errors.New("handle not loaded: read it by name first")
+
 // notFoundf builds a not-found error whose message is exactly format/args.
 func notFoundf(format string, args ...any) error {
 	return &notFoundError{msg: fmt.Sprintf(format, args...)}

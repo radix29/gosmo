@@ -49,6 +49,9 @@ ORDER  BY ec.name`
 // to ask, so the answer there is an empty list rather than an error.
 // https://learn.microsoft.com/sql/relational-databases/tables/graph-edge-constraints
 func (t *Table) EdgeConstraints(ctx context.Context) ([]*EdgeConstraint, error) {
+	if err := t.requireLoaded("list edge constraints for"); err != nil {
+		return nil, err
+	}
 	if m := t.db.serverMajorVersion(); m != 0 && m < int(SQLServer2019) {
 		return nil, nil
 	}

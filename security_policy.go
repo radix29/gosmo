@@ -66,13 +66,18 @@ ORDER  BY sp.name`)
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("gosmo: list security policies: %w", err)
 	}
-	// The predicates are loaded after the row scan, not inside it: each
-	// policy needs its own query, and running one while the outer rows are
-	// still open would hold two statements on the same connection.
+	if len(policies) == 0 {
+		return policies, nil
+	}
+	// Every policy's predicates in one query, grouped here, after the row
+	// scan — not one query per policy, and never one while the outer rows
+	// are still open.
+	byPolicy, err := d.securityPredicates(ctx, "")
+	if err != nil {
+		return nil, fmt.Errorf("gosmo: list security policies: predicates in %q: %w", d.Name, err)
+	}
 	for _, p := range policies {
-		if err := d.loadSecurityPredicates(ctx, p); err != nil {
-			return nil, err
-		}
+		p.Predicates = byPolicy[p.ObjectID]
 	}
 	return policies, nil
 }
@@ -112,41 +117,44 @@ func scanSecurityPolicy(d *Database, scan func(...any) error) (*SecurityPolicy, 
 }
 
 func (d *Database) loadSecurityPredicates(ctx context.Context, p *SecurityPolicy) error {
-	preds, err := d.securityPredicates(ctx, p.ObjectID)
+	byPolicy, err := d.securityPredicates(ctx, "AND spr.object_id = @p1", p.ObjectID)
 	if err != nil {
 		return fmt.Errorf("gosmo: predicates of security policy %q in %q: %w", p.Name, d.Name, err)
 	}
-	p.Predicates = preds
+	p.Predicates = byPolicy[p.ObjectID]
 	return nil
 }
 
-func (d *Database) securityPredicates(ctx context.Context, policyObjectID int) ([]*SecurityPredicate, error) {
-	const q = `
-SELECT spr.predicate_type_desc, spr.predicate_definition,
+// securityPredicates reads the predicates where admits (an extra predicate
+// on spr, or "" for every policy's), grouped by the policy's object_id.
+func (d *Database) securityPredicates(ctx context.Context, where string, args ...any) (map[int][]*SecurityPredicate, error) {
+	q := `
+SELECT spr.object_id, spr.predicate_type_desc, spr.predicate_definition,
        SCHEMA_NAME(t.schema_id), t.name, spr.operation_desc
 FROM   sys.security_predicates spr
 JOIN   sys.tables t ON t.object_id = spr.target_object_id
-WHERE  spr.object_id = @p1
-ORDER  BY spr.predicate_type_desc`
+WHERE  1 = 1 ` + where + `
+ORDER  BY spr.object_id, spr.predicate_type_desc`
 
-	rows, err := d.query(ctx, q, policyObjectID)
+	rows, err := d.query(ctx, q, args...)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	var preds []*SecurityPredicate
+	byPolicy := map[int][]*SecurityPredicate{}
 	for rows.Next() {
+		var policyID int
 		p := &SecurityPredicate{}
 		var op sql.NullString
-		if err := rows.Scan(&p.PredicateType, &p.PredicateDefinition,
+		if err := rows.Scan(&policyID, &p.PredicateType, &p.PredicateDefinition,
 			&p.TargetSchema, &p.TargetTable, &op); err != nil {
 			return nil, err
 		}
 		p.Operation = op.String
-		preds = append(preds, p)
+		byPolicy[policyID] = append(byPolicy[policyID], p)
 	}
-	return preds, rows.Err()
+	return byPolicy, rows.Err()
 }
 
 // Enable enables the security policy.

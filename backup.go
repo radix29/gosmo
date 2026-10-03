@@ -84,10 +84,13 @@ func (s *Server) Backup(ctx context.Context, opts BackupOptions) error {
 		}
 		return nil
 	}
+	if err := refuseInTx(ctx, s, "backup with progress"); err != nil {
+		return err
+	}
 	if err := s.execWithProgress(ctx, sqlText, opts.Progress); err != nil {
 		return fmt.Errorf("gosmo: backup %q: %w", opts.Database, err)
 	}
-	observe(ctx, ScriptEntry{Server: scriptServerName(ctx, s), SQL: sqlText})
+	observe(ctx, s, ScriptEntry{Server: scriptServerName(ctx, s), SQL: sqlText})
 	return nil
 }
 
@@ -420,10 +423,12 @@ func (s *Server) Restore(ctx context.Context, opts RestoreOptions) error {
 
 	if opts.Progress == nil || Scripting(ctx) {
 		err = s.exec(ctx, sqlText)
+	} else if err = refuseInTx(ctx, s, "restore with progress"); err != nil {
+		return err
 	} else {
 		err = s.execWithProgress(ctx, sqlText, opts.Progress)
 		if err == nil {
-			observe(ctx, ScriptEntry{Server: scriptServerName(ctx, s), SQL: sqlText})
+			observe(ctx, s, ScriptEntry{Server: scriptServerName(ctx, s), SQL: sqlText})
 		}
 	}
 	if err != nil {

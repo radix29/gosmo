@@ -136,7 +136,7 @@ func (spec CreateDatabaseScopedCredentialRequest) createDatabaseScopedCredential
 	stmt := fmt.Sprintf("CREATE DATABASE SCOPED CREDENTIAL %s WITH IDENTITY = N'%s'",
 		quoteIdent(spec.Name), escapeSingle(spec.Identity))
 	if spec.Secret != "" {
-		stmt += fmt.Sprintf(", SECRET = N'%s'", escapeSingle(spec.Secret))
+		stmt += ", SECRET = " + QuoteLiteral(spec.Secret)
 	}
 	return stmt, nil
 }
@@ -147,7 +147,7 @@ func (d *Database) CreateDatabaseScopedCredential(ctx context.Context, spec Crea
 	if err != nil {
 		return nil, fmt.Errorf("gosmo: create database scoped credential: %w", err)
 	}
-	if _, err := d.exec(ctx, stmt); err != nil {
+	if _, err := d.execSecret(ctx, stmt, redactSecrets(stmt, SecretPlaceholder, spec.Secret)); err != nil {
 		return nil, fmt.Errorf("gosmo: create database scoped credential %q in %q: %w", spec.Name, d.Name, err)
 	}
 	return createdObject(ctx, d.DatabaseScopedCredentialRef(spec.Name), func() (*DatabaseScopedCredential, error) {
@@ -172,10 +172,12 @@ func (c *DatabaseScopedCredential) Alter(ctx context.Context, o CredentialOption
 	}
 	stmt := fmt.Sprintf("ALTER DATABASE SCOPED CREDENTIAL %s WITH IDENTITY = N'%s'",
 		quoteIdent(c.Name), escapeSingle(identity))
+	shown := stmt
 	if secret != nil {
-		stmt += fmt.Sprintf(", SECRET = N'%s'", escapeSingle(*secret))
+		stmt += ", SECRET = " + QuoteLiteral(*secret)
+		shown = redactSecrets(stmt, SecretPlaceholder, *secret)
 	}
-	if _, err := c.db.exec(ctx, stmt); err != nil {
+	if _, err := c.db.execSecret(ctx, stmt, shown); err != nil {
 		return fmt.Errorf("gosmo: alter database scoped credential %q in %q: %w", c.Name, c.db.Name, err)
 	}
 	setIfApplied(ctx, &c.Identity, identity)

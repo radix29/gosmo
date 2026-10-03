@@ -2,7 +2,6 @@ package gosmo
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"time"
 )
@@ -66,7 +65,7 @@ func (d *Database) ActualPlan(ctx context.Context, sqlText string) (*ExecutionPl
 // scan, so the loop stays.
 func (d *Database) capturePlan(ctx context.Context, setOpt, sqlText string) (*ExecutionPlan, error) {
 	var plans []string
-	err := d.withConn(ctx, func(ctx context.Context, conn *sql.Conn) error {
+	err := d.withConn(ctx, func(ctx context.Context, conn sqlConn) error {
 		if _, err := conn.ExecContext(ctx, "SET "+setOpt+" ON"); err != nil {
 			return fmt.Errorf("gosmo: enable %s: %w", setOpt, err)
 		}

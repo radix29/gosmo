@@ -93,12 +93,12 @@ func TestLiveScriptedFamiliesRecreateTheirObjects(t *testing.T) {
 			t.Fatalf("ScriptRule: %v", err)
 		}
 		liveRunScript(t, dst, ctx, script)
-		r, err := dst.RuleByName(ctx, "dbo", "scr_rule")
+		def, err := dst.RuleRef("dbo", "scr_rule").Definition(ctx)
 		if err != nil {
 			t.Fatalf("the scripted rule is not there: %v", err)
 		}
-		if !strings.Contains(r.Definition, "@value") {
-			t.Errorf("recreated rule definition = %q", r.Definition)
+		if !strings.Contains(def, "@value") {
+			t.Errorf("recreated rule definition = %q", def)
 		}
 	})
 

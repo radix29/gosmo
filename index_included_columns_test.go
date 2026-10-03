@@ -1,6 +1,7 @@
 package gosmo
 
 import (
+	"errors"
 	"strings"
 	"testing"
 )
@@ -161,8 +162,8 @@ func TestSetIncludedColumnsAndScriptAgree(t *testing.T) {
 func TestIncludedColumnsRefusesAHandle(t *testing.T) {
 	tbl := captureTable(t)
 	err := tbl.IndexRef("IX").SetIncludedColumns(t.Context(), []string{"c"})
-	if err == nil || !strings.Contains(err.Error(), "IndexByName") {
-		t.Errorf("SetIncludedColumns on a handle = %v, want an error pointing at IndexByName", err)
+	if !errors.Is(err, ErrHandleNotLoaded) {
+		t.Errorf("SetIncludedColumns on a handle = %v, want ErrHandleNotLoaded", err)
 	}
 	if q := captured.find("CREATE"); q != "" {
 		t.Errorf("refused but still executed: %s", q)

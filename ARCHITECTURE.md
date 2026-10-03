@@ -316,7 +316,7 @@ The instance and database halves pair up: `ServerResourceStat` and
 | Active sessions         | `srv.ActiveSessions(ctx, includeSystem)`        |
 | Kill session            | `srv.KillSession(ctx, id)`                      |
 | Error log               | `srv.ReadLog(ctx, logType, n)` / `srv.ReadLogFiltered(ctx, logType, n, search)` / `srv.EnumErrorLogs(ctx, logType)` / `srv.CycleLog(ctx, logType)` — see [Error log](#error-log) |
-| Database Mail           | `srv.MailAccounts(ctx)` / `srv.MailAccountByName(ctx, name)` / `srv.MailProfiles(ctx)` / `srv.MailProfileByName(ctx, name)` (each with its ordered `Accounts`) / `srv.MailPrincipalProfiles(ctx)` (SID 0x00 = public) / `srv.MailConfiguration(ctx)` / `srv.MailStatus(ctx)` (`MailDisabled` while 'Database Mail XPs' is 0, not an error) / `srv.MailQueues(ctx)` (VIEW SERVER STATE) / `srv.MailItems(ctx, gosmo.MailItemFilter{...})` / `srv.MailItemByID(ctx, id)` / `srv.MailEvents(ctx, gosmo.MailEventFilter{...})`. Writes: `srv.CreateMailAccount(ctx, req)` / `MailAccountRef(name).Alter(ctx, gosmo.MailAccountOptions{...})` (nil `Credentials` keeps the stored user and password) / `.Drop(ctx)`; `srv.CreateMailProfile(ctx, req)` / `MailProfileRef(name).Alter` / `.Drop` / `.SetAccounts(ctx, ordered)` / `.Grant(ctx, principal, isDefault)` / `.SetGrantDefault` / `.Revoke`; `srv.SetMailConfiguration(ctx, opts)`; `srv.StartDatabaseMail(ctx)` / `StopDatabaseMail`; `srv.SendMail(ctx, gosmo.MailMessage{Profile, To, Subject, Body})` → mailitem_id (never retried); `srv.DeleteMailItems(ctx, before, status)` / `DeleteMailLog(ctx, before, eventType)`. The log also reads as `ReadLog(ctx, gosmo.ErrorLogDatabaseMail, 0)`. Scripts: `ScriptMailAccount` / `ScriptMailProfile` / `ScriptDatabaseMail`, the password as `<password>` (also under `WithScript` and to a statement observer) — msdb permission, not sysadmin; see `database_mail.go`, `database_mail_write.go` |
+| Database Mail           | `srv.MailAccounts(ctx)` / `srv.MailAccountByName(ctx, name)` / `srv.MailProfiles(ctx)` / `srv.MailProfileByName(ctx, name)` (each with its ordered `Accounts`) / `srv.MailPrincipalProfiles(ctx)` (SID 0x00 = public) / `srv.MailConfiguration(ctx)` / `srv.MailStatus(ctx)` (`MailDisabled` while 'Database Mail XPs' is 0, not an error) / `srv.MailQueues(ctx)` (VIEW SERVER STATE) / `srv.MailItems(ctx, gosmo.MailItemFilter{...})` / `srv.MailItemByID(ctx, id)` / `srv.MailEvents(ctx, gosmo.MailEventFilter{...})`. Writes: `srv.CreateMailAccount(ctx, req)` / `MailAccountRef(name).Alter(ctx, gosmo.MailAccountOptions{...})` (nil `Credentials` keeps the stored user and password) / `.Drop(ctx)`; `srv.CreateMailProfile(ctx, req)` / `MailProfileRef(name).Alter` / `.Drop` / `.SetAccounts(ctx, ordered)` / `.Grant(ctx, principal, isDefault)` / `.SetGrantDefault` / `.Revoke`; `srv.SetMailConfiguration(ctx, opts)`; `srv.StartDatabaseMail(ctx)` / `StopDatabaseMail`; `srv.SendMail(ctx, gosmo.MailMessage{Profile, To, Subject, Body})` → mailitem_id (never retried); `srv.DeleteMailItems(ctx, before, status)` / `DeleteMailLog(ctx, before, eventType)`. The log also reads as `ReadLog(ctx, gosmo.ErrorLogDatabaseMail, 0)`. Scripts: `ScriptMailAccount` / `ScriptMailProfile` / `ScriptDatabaseMail`, the password as `<insert password here>` (also under `WithScript` and to a statement observer) — msdb permission, not sysadmin; see `database_mail.go`, `database_mail_write.go` |
 | Create login (safe)     | `srv.CreateLogin(ctx, gosmo.CreateLoginRequest{Name, Password, Source, ...})` — SQL, Windows, external provider, certificate or asymmetric key |
 | Authentication mode     | `srv.SecurityInfo(ctx)`                       |
 | Server-level permissions | `srv.ServerPermissions(ctx)` / `srv.Grant\|Deny\|RevokeServerPermission(ctx, ...)` / `srv.ServerPermissionNames()` |
@@ -366,6 +366,7 @@ The instance and database halves pair up: `ServerResourceStat` and
 | `Database.StoredProcedures`     | `db.StoredProcedures(ctx)` / `db.StoredProcedureByName(ctx, schema, name)` / `db.StoredProcedureRef(schema, name)` (no-I/O handle) / `db.CreateStoredProcedure(ctx, req)` / `p.Drop(ctx)` |
 | `Database.UserDefinedFunctions` | `db.UserDefinedFunctions(ctx)` (T-SQL and CLR; `f.FuncType` is a `FunctionType` — `IsScalar()`, `IsCLR()`) / `db.UserDefinedFunctionRef(schema, name)` (no-I/O handle) / `f.Drop(ctx)` |
 | System Views/Procedures/Functions | `db.SystemViews(ctx)` / `db.SystemStoredProcedures(ctx)` / `db.SystemFunctions(ctx)` |
+| A module's T-SQL text           | `v.Definition(ctx)` / `p.Definition(ctx)` / `f.Definition(ctx)` / `tr.Definition(ctx)` (DML trigger) / `r.Definition(ctx)` / `df.Definition(ctx)` — read by name, so a `Ref` handle is enough; `""` for an encrypted or CLR module, `ErrNotFound` for a missing one or one of another kind. Listings and `*ByName` carry no text: the `sys` schema alone ships about 1,400 procedures |
 | `Database.Schemas`              | `db.Schemas(ctx)` / `db.SchemaByName(ctx, name)` / `db.SchemaRef(name)` / `db.CreateSchema(ctx, req)` / `schema.ObjectCount(ctx)` / `schema.ObjectCountsByType(ctx)` |
 | `Database.Users`                | `db.Users(ctx)` / `db.UserByName(ctx, name)` / `db.UserRef(name)` (no-I/O handle) / `db.CreateUser(ctx, gosmo.CreateUserRequest{Name, Kind, ...})` — for login, with password (contained), without login, Windows, certificate, asymmetric key, external provider |
 | Database user administration    | `user.Rename(ctx, newName)` / `user.SetDefaultSchema(ctx, schemaName)` / `user.SetLogin(ctx, loginName)` |
@@ -905,8 +906,8 @@ since SQL Server 2008 in favour of `CHECK` and `DEFAULT` constraints.
 | User-Defined Types (CLR)      | `db.ClrTypes(ctx)` / `db.ClrTypeByName(ctx, schema, name)` — `.Assembly` / `.AssemblyClass` name the implementation |
 | System Data Types             | `db.SystemDataTypes(ctx)` — the connected instance's own list, not a hard-coded one |
 | XML Schema Collections        | `db.XMLSchemaCollections(ctx)` / `...ByName(ctx, schema, name)` / `c.Definition(ctx)` (`XML_SCHEMA_NAMESPACE`) |
-| Rules                         | `db.Rules(ctx)` / `db.RuleByName(ctx, schema, name)` → `*Rule` (`.Definition`) |
-| Defaults                      | `db.Defaults(ctx)` / `db.DefaultByName(ctx, schema, name)` → `*Default` (`.Definition`) |
+| Rules                         | `db.Rules(ctx)` / `db.RuleByName(ctx, schema, name)` → `*Rule` / `r.Definition(ctx)` |
+| Defaults                      | `db.Defaults(ctx)` / `db.DefaultByName(ctx, schema, name)` → `*Default` / `df.Definition(ctx)` |
 
 | Operation        | Alias type | Table / CLR type | XML schema collection | Rule / default |
 | ---------------- | ---------- | ---------------- | --------------------- | -------------- |
@@ -1279,6 +1280,19 @@ chokepoints: `fn` receives the `ScriptEntry` of every statement a write ran
 them reached the server before one failed. It never fires under `WithScript`,
 nor for a failed statement, and runs on the goroutine that issued the write.
 
+**Secrets are redacted from both.** A password, credential secret, key
+source or identity value a write sends reaches the server and nothing else:
+the captured and observed copies carry `gosmo.PasswordPlaceholder` (`<insert
+password here>`), `SecretPlaceholder`, `KeySourcePlaceholder` or
+`IdentityValuePlaceholder` (a symmetric key's `IDENTITY_VALUE`: with the key
+source it re-creates the key) in its place — the same placeholders the
+scripters emit for a secret the catalog never exposes.
+`gosmo.WithScriptSecrets(ctx)` keeps the real values in a `WithScript`
+capture, for a script a machine runs rather than a person reads; observers
+are redacted regardless. Every such write goes through `execSecret`
+(`script.go`, and `Database.execSecret`), which replaces whole literals
+(`redactSecrets`), and `secret_redaction_test.go` lists every one.
+
 Bound parameters are substituted into the captured text as literals, since
 a script pasted into a query editor has nothing to bind `@p1` to, and
 `ExecProc` is captured as the `EXEC` form it would run — inputs as literals,
@@ -1297,6 +1311,30 @@ every family) exist for the same reason: an
 object whose `CREATE` was only collected can't be found by a `...ByName`
 query, and the `Create*` methods return one of these handles under
 `WithScript`.
+
+### Several writes as one transaction (`InTransaction`)
+
+`srv.InTransaction(ctx, fn)` begins one transaction and hands `fn` a context
+carrying it; every chokepoint (`Server.exec`/`query`/`queryRow`/`execScan`,
+`Database.withConn`/`query`/`queryRow`) runs on it when the context's
+transaction is on the same `Server`, never retried. `fn`'s nil commits;
+an error, a panic or cancellation rolls back.
+
+- **Reads go through it too** — a read on another session of a catalog row
+  the transaction changed would wait on its own locks. A database-scoped
+  statement leaves the session in its database, so the next server-scoped
+  one switches back to the one the transaction began in.
+- **Observers hear after COMMIT**, in order, and nothing on a rollback.
+- **Refused inside** (`ErrUnsupported`): the paths that need a session of
+  their own — Backup/Restore with progress, `BulkInsert`, the two
+  effective-permission impersonations. Statements SQL Server refuses in a
+  user transaction fail as they would by hand (Msg 574 for `ALTER RESOURCE
+  GOVERNOR RECONFIGURE`/`DISABLE`, which therefore run after it).
+- A nested call on the same `Server` joins; on another it refuses. Under
+  `WithScript` it only runs `fn`, adding no `BEGIN TRANSACTION`.
+- Receiver mirroring (`setIfApplied`) is not undone by a rollback: re-read.
+- Live (17): a rolled-back `ALTER RESOURCE GOVERNOR WITH (CLASSIFIER_FUNCTION
+  …)` still sets `is_reconfiguration_pending`; pool and group DDL does not.
 
 ### Backup & Restore
 
@@ -2111,6 +2149,18 @@ Every call that takes a schema-scoped name refuses an empty schema with
 any write on `db.TableRef("", "t")`) alike. An empty schema once meant dbo to
 some calls and the caller's own default schema to others; either default
 addresses the wrong object for some caller.
+
+### `ErrHandleNotLoaded`
+
+A read keyed by a catalog id the receiver lacks — every `ObjectID`-keyed
+`Table` read (`Columns`, `Indexes`, `Statistics`, `Triggers`, `RowCount`,
+`Detail`, `SpaceUsed`, …) on a `db.TableRef` handle — refuses with
+`ErrHandleNotLoaded` before any query. It used to ask for object 0 and answer
+with an empty result, indistinguishable from a real empty table. The
+name-keyed reads (`FragmentationStats`, `Index.StorageInfo`,
+`Statistic.Columns`/`Histogram`) and every write still work from a handle; a
+`Create*` whose read-back is refused returns the new object's handle, as
+`createdObject` does for one the caller cannot see.
 
 ### `ErrUnsupportedVersion`
 

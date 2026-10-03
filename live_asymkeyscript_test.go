@@ -58,10 +58,10 @@ func TestLiveAsymmetricKeyCreateScriptDrop(t *testing.T) {
 		t.Fatalf("ScriptAsymmetricKey: %v", err)
 	}
 	t.Logf("script:\n%s", script)
-	if !strings.Contains(script, "NEW key pair") || !strings.Contains(script, keyPasswordPlaceholder) {
+	if !strings.Contains(script, "NEW key pair") || !strings.Contains(script, PasswordPlaceholder) {
 		t.Errorf("script does not say it makes a new key pair, or lacks the password placeholder:\n%s", script)
 	}
-	script = strings.ReplaceAll(script, keyPasswordPlaceholder, pass)
+	script = strings.ReplaceAll(script, PasswordPlaceholder, pass)
 	for _, batch := range splitGoBatches(script) {
 		if _, err := dst.exec(ctx, batch); err != nil {
 			t.Fatalf("run script in %s: %v\n%s", dst.Name, err, batch)

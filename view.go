@@ -15,7 +15,6 @@ type View struct {
 	ObjectID   int
 	Schema     string
 	Name       string
-	Definition string
 	CreateDate time.Time
 	ModifyDate time.Time
 }
@@ -43,9 +42,8 @@ var viewFilterColumns = filterColumns{
 func (d *Database) viewsWhere(ctx context.Context, where string, args []any) ([]*View, error) {
 	q := `
 SELECT v.object_id, SCHEMA_NAME(v.schema_id), v.name,
-       ISNULL(m.definition,''), v.create_date, v.modify_date
+       v.create_date, v.modify_date
 FROM   sys.views v
-JOIN   sys.sql_modules m ON m.object_id = v.object_id
 WHERE  v.is_ms_shipped = 0 ` + where + `
 ORDER  BY SCHEMA_NAME(v.schema_id), v.name`
 
@@ -53,7 +51,7 @@ ORDER  BY SCHEMA_NAME(v.schema_id), v.name`
 	return scanRows(rows, err, fmt.Sprintf("list views in %q", d.Name), func(scan func(...any) error) (*View, error) {
 		v := &View{db: d}
 		if err := scan(&v.ObjectID, &v.Schema, &v.Name,
-			&v.Definition, &v.CreateDate, &v.ModifyDate); err != nil {
+			&v.CreateDate, &v.ModifyDate); err != nil {
 			return nil, err
 		}
 		return v, nil
@@ -83,9 +81,8 @@ func (d *Database) SystemViewsFiltered(ctx context.Context, filter ObjectFilter)
 func (d *Database) systemViewsWhere(ctx context.Context, where string, args []any) ([]*View, error) {
 	q := `
 SELECT o.object_id, SCHEMA_NAME(o.schema_id), o.name,
-       ISNULL(m.definition,''), o.create_date, o.modify_date
+       o.create_date, o.modify_date
 FROM   sys.all_objects o
-LEFT JOIN sys.all_sql_modules m ON m.object_id = o.object_id
 WHERE  o.type = 'V' AND o.is_ms_shipped = 1 AND SCHEMA_NAME(o.schema_id) = 'sys' ` + where + `
 ORDER  BY o.name`
 
@@ -93,7 +90,7 @@ ORDER  BY o.name`
 	return scanRows(rows, err, fmt.Sprintf("list system views in %q", d.Name), func(scan func(...any) error) (*View, error) {
 		v := &View{db: d}
 		if err := scan(&v.ObjectID, &v.Schema, &v.Name,
-			&v.Definition, &v.CreateDate, &v.ModifyDate); err != nil {
+			&v.CreateDate, &v.ModifyDate); err != nil {
 			return nil, err
 		}
 		return v, nil
@@ -139,6 +136,13 @@ func (d *Database) ViewRef(schema, name string) *View {
 
 // Database returns the database the view belongs to.
 func (v *View) Database() *Database { return v.db }
+
+// Definition returns the view's T-SQL text: "" for an encrypted view,
+// ErrNotFound when there is no such view. Listings do not carry it; this
+// reads it by name, so a ViewRef is enough.
+func (v *View) Definition(ctx context.Context) (string, error) {
+	return v.db.moduleDefinition(ctx, "view", "o.type = 'V'", v.Schema, v.Name)
+}
 
 // Drop drops the view. A view that isn't there is the server's
 // error, not a silent success — see the note on Table.Drop.

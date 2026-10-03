@@ -261,9 +261,9 @@ func TestSymmetricKeyWritesUnderScript(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	openK := "OPEN SYMMETRIC KEY [k] DECRYPTION BY PASSWORD = N'old';\n"
+	openK := "OPEN SYMMETRIC KEY [k] DECRYPTION BY PASSWORD = N'<insert password here>';\n"
 	want := []string{
-		useAppDB + "CREATE SYMMETRIC KEY [k] WITH ALGORITHM = AES_256 ENCRYPTION BY PASSWORD = N'old'",
+		useAppDB + "CREATE SYMMETRIC KEY [k] WITH ALGORITHM = AES_256 ENCRYPTION BY PASSWORD = N'<insert password here>'",
 		useAppDB + "BEGIN TRY\n" + openK +
 			"ALTER SYMMETRIC KEY [k] ADD ENCRYPTION BY CERTIFICATE [c];\n" +
 			"CLOSE SYMMETRIC KEY [k];\n" +
@@ -275,7 +275,7 @@ func TestSymmetricKeyWritesUnderScript(t *testing.T) {
 			"CLOSE SYMMETRIC KEY [p];\nCLOSE SYMMETRIC KEY [g];\nCLOSE SYMMETRIC KEY [k];\n" +
 			"END TRY\nBEGIN CATCH\n" + catchClose("p") + catchClose("g") + catchClose("k") + "THROW;\nEND CATCH;",
 		useAppDB + "BEGIN TRY\n" + openK +
-			"ALTER SYMMETRIC KEY [k] DROP ENCRYPTION BY PASSWORD = N'old';\n" +
+			"ALTER SYMMETRIC KEY [k] DROP ENCRYPTION BY PASSWORD = N'<insert password here>';\n" +
 			"CLOSE SYMMETRIC KEY [k];\n" +
 			"END TRY\nBEGIN CATCH\n" + catchClose("k") + "THROW;\nEND CATCH;",
 		useAppDB + "DROP SYMMETRIC KEY [k]",

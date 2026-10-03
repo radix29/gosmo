@@ -169,6 +169,9 @@ func (c IndexColumn) ref() string {
 // 42 round trips across 21 connections — with the outer one held throughout,
 // which is the shape that exhausts a pool rather than merely being slow.
 func (t *Table) Indexes(ctx context.Context) ([]*Index, error) {
+	if err := t.requireLoaded("list indexes for"); err != nil {
+		return nil, err
+	}
 	indexes, err := t.indexList(ctx, "")
 	if err != nil {
 		return nil, fmt.Errorf("gosmo: list indexes for %s: %w", t.FullName(), err)
@@ -191,6 +194,9 @@ func (t *Table) Indexes(ctx context.Context) ([]*Index, error) {
 // has no such index. Two queries, the same shape as Indexes — see its
 // comment for why the columns are not fetched inside the index scan.
 func (t *Table) IndexByName(ctx context.Context, name string) (*Index, error) {
+	if err := t.requireLoaded(fmt.Sprintf("find index %q on", name)); err != nil {
+		return nil, err
+	}
 	indexes, err := t.indexList(ctx, " AND i.name = @p2", name)
 	if err != nil {
 		return nil, fmt.Errorf("gosmo: find index %q on %s: %w", name, t.FullName(), err)
@@ -362,10 +368,14 @@ ORDER  BY i.index_id`
 // table — which is why it is a query of its own rather than a field of the
 // index list, whose `i.type > 0` filter has no heap in it.
 //
-// A table with no row there at all — a Database.TableRef handle, whose ObjectID
-// is zero, or a memory-optimized table — reads as the zero DataSpace and no
-// error: absence means "no filegroup to name", not a failure.
+// A table with no row there — a memory-optimized table — reads as the zero
+// DataSpace and no error: absence means "no filegroup to name", not a
+// failure. A Database.TableRef handle has no ObjectID to read by and is
+// refused with ErrHandleNotLoaded.
 func (t *Table) DataSpace(ctx context.Context) (DataSpace, error) {
+	if err := t.requireLoaded("data space of"); err != nil {
+		return DataSpace{}, err
+	}
 	q := `
 SELECT ` + dataSpaceColumns + `
 FROM   sys.indexes i
@@ -720,7 +730,7 @@ func (idx *Index) IncludedColumnsSupported() error {
 	switch {
 	case idx.Type == "":
 		// An IndexRef handle: nothing was read, so nothing can be restated.
-		return errors.New("the index's properties were not read — use Table.IndexByName, not IndexRef")
+		return fmt.Errorf("the index's properties were not read — an IndexRef: %w", ErrHandleNotLoaded)
 	case idx.Type != IndexTypeNonClustered:
 		return fmt.Errorf("not supported for a %s index", idx.Type)
 	case idx.IsPrimaryKey:
@@ -966,6 +976,9 @@ type XMLIndex struct {
 // XMLIndexes returns the XML indexes on the table, primary and secondary, in
 // name order.
 func (t *Table) XMLIndexes(ctx context.Context) ([]*XMLIndex, error) {
+	if err := t.requireLoaded("xml indexes on"); err != nil {
+		return nil, err
+	}
 	const q = `
 SELECT xi.name, xi.index_id, ISNULL(xi.secondary_type_desc, ''), c.name, ISNULL(p.name, ''),
        CAST(CASE WHEN xi.xml_index_type = 0 THEN 1 ELSE 0 END AS bit),

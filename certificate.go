@@ -256,7 +256,7 @@ func (d *Database) CreateCertificate(ctx context.Context, spec CreateCertificate
 	if err != nil {
 		return nil, fmt.Errorf("gosmo: create certificate in %q: %w", d.Name, err)
 	}
-	if _, err := d.exec(ctx, stmt); err != nil {
+	if _, err := d.execPasswords(ctx, stmt, spec.EncryptionPassword); err != nil {
 		return nil, fmt.Errorf("gosmo: create certificate %q in %q: %w", spec.Name, d.Name, err)
 	}
 	return createdObject(ctx, d.CertificateRef(spec.Name), func() (*Certificate, error) {
@@ -320,7 +320,7 @@ func (c *Certificate) Backup(ctx context.Context, spec CertificateBackupSpec) er
 	if err != nil {
 		return fmt.Errorf("gosmo: back up certificate %q in %q: %w", c.Name, c.db.Name, err)
 	}
-	if _, err := c.db.exec(ctx, stmt); err != nil {
+	if _, err := c.db.execPasswords(ctx, stmt, spec.EncryptionPassword, spec.DecryptionPassword); err != nil {
 		return fmt.Errorf("gosmo: back up certificate %q in %q: %w", c.Name, c.db.Name, err)
 	}
 	return nil
@@ -396,7 +396,7 @@ func (d *Database) CreateMasterKey(ctx context.Context, req CreateMasterKeyReque
 	if req.Password == "" {
 		return nil, fmt.Errorf("gosmo: create master key in %q: empty password", d.Name)
 	}
-	if _, err := d.exec(ctx, "CREATE MASTER KEY ENCRYPTION BY PASSWORD = "+QuoteLiteral(req.Password)); err != nil {
+	if _, err := d.execPasswords(ctx, "CREATE MASTER KEY ENCRYPTION BY PASSWORD = "+QuoteLiteral(req.Password), req.Password); err != nil {
 		return nil, fmt.Errorf("gosmo: create master key in %q: %w", d.Name, err)
 	}
 	if Scripting(ctx) {

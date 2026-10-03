@@ -107,7 +107,7 @@ func TestMailPasswordNeverCapturedOrObserved(t *testing.T) {
 			t.Fatalf("%s under WithScript: %v", name, err)
 		}
 		script := col.String()
-		if strings.Contains(script, "s3cr3t") || !strings.Contains(script, "@password = N'<password>'") {
+		if strings.Contains(script, "s3cr3t") || !strings.Contains(script, "@password = N'<insert password here>'") {
 			t.Errorf("%s: captured script %q; want the placeholder and not the password", name, script)
 		}
 
@@ -124,7 +124,7 @@ func TestMailPasswordNeverCapturedOrObserved(t *testing.T) {
 				t.Errorf("%s: observer saw the password: %q", name, e.SQL)
 			}
 		}
-		if len(*got) == 0 || !strings.Contains((*got)[0].SQL, "<password>") {
+		if len(*got) == 0 || !strings.Contains((*got)[0].SQL, PasswordPlaceholder) {
 			t.Errorf("%s: observed %q; want the placeholder form", name, observedSQL(*got))
 		}
 	}

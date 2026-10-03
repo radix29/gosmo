@@ -233,7 +233,7 @@ func (d *Database) AddSignature(ctx context.Context, schema, module string, by S
 	}
 	stmt, err := signatureStatement(true, schema, module, by, counter)
 	if err == nil {
-		_, err = d.exec(ctx, stmt)
+		_, err = d.execPasswords(ctx, stmt, by.Password)
 	}
 	if err != nil {
 		return fmt.Errorf("gosmo: sign %s in %q: %w", qualifiedName(schema, module), d.Name, err)

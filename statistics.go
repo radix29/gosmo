@@ -51,6 +51,9 @@ WHERE  s.object_id = @p1`
 
 // Statistics returns all statistics objects for the table.
 func (t *Table) Statistics(ctx context.Context) ([]*Statistic, error) {
+	if err := t.requireLoaded("statistics for"); err != nil {
+		return nil, err
+	}
 	rows, err := t.db.query(ctx, statisticSelect+`
 ORDER  BY s.name`, t.ObjectID)
 	return scanRows(rows, err, fmt.Sprintf("statistics for %s", t.FullName()), func(scan func(...any) error) (*Statistic, error) {
@@ -63,6 +66,9 @@ ORDER  BY s.name`, t.ObjectID)
 // It returns an error satisfying errors.Is(err, ErrNotFound) when the table
 // has no such statistic.
 func (t *Table) StatisticByName(ctx context.Context, name string) (*Statistic, error) {
+	if err := t.requireLoaded(fmt.Sprintf("find statistic %q on", name)); err != nil {
+		return nil, err
+	}
 	var st *Statistic
 	err := t.db.queryRow(ctx, func(row *sql.Row) error {
 		var err error
@@ -268,15 +274,21 @@ func buildCreateStatisticStatement(tableName string, req CreateStatisticRequest)
 // Columns returns this statistic's columns, in stat-column order. The
 // leading column is what the statistic's histogram is built on; every
 // column contributes to its density vector.
+//
+// The statistic is found by its table's name and its own, like Header and
+// Histogram, so it works from a StatisticRef on a TableRef. It read by
+// ObjectID and StatID until 2026-10-03, so from a handle it found nothing
+// and answered with no columns, although this doc already promised it.
 func (st *Statistic) Columns(ctx context.Context) ([]string, error) {
-	const q = `
+	q := fmt.Sprintf(`
 SELECT c.name
-FROM   sys.stats_columns sc
+FROM   sys.stats s
+JOIN   sys.stats_columns sc ON sc.object_id = s.object_id AND sc.stats_id = s.stats_id
 JOIN   sys.columns c ON c.object_id = sc.object_id AND c.column_id = sc.column_id
-WHERE  sc.object_id = @p1 AND sc.stats_id = @p2
-ORDER  BY sc.stats_column_id`
+WHERE  s.object_id = OBJECT_ID(N'%s') AND s.name = @p1
+ORDER  BY sc.stats_column_id`, escapeSingle(st.table.FullName()))
 
-	rows, err := st.table.db.query(ctx, q, st.table.ObjectID, st.StatID)
+	rows, err := st.table.db.query(ctx, q, st.Name)
 	return scanRows(rows, err, fmt.Sprintf("columns for statistic %q", st.Name), func(scan func(...any) error) (string, error) {
 		var name string
 		if err := scan(&name); err != nil {

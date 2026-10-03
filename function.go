@@ -13,13 +13,10 @@ import (
 type UserDefinedFunction struct {
 	db *Database
 
-	ObjectID int
-	Schema   string
-	Name     string
-	FuncType FunctionType
-	// Definition is the T-SQL module text; empty for a CLR function, which
-	// has none.
-	Definition string
+	ObjectID   int
+	Schema     string
+	Name       string
+	FuncType   FunctionType
 	CreateDate time.Time
 	ModifyDate time.Time
 }
@@ -64,9 +61,8 @@ func (d *Database) UserDefinedFunctionsFiltered(ctx context.Context, filter Obje
 func (d *Database) userDefinedFunctionsWhere(ctx context.Context, where string, args []any) ([]*UserDefinedFunction, error) {
 	q := `
 SELECT o.object_id, SCHEMA_NAME(o.schema_id), o.name, o.type,
-       ISNULL(m.definition,''), o.create_date, o.modify_date
+       o.create_date, o.modify_date
 FROM   sys.objects o
-LEFT   JOIN sys.sql_modules m ON m.object_id = o.object_id
 WHERE  o.type IN ('FN','TF','IF','FS','FT') AND o.is_ms_shipped = 0 ` + where + `
 ORDER  BY SCHEMA_NAME(o.schema_id), o.name`
 
@@ -74,7 +70,7 @@ ORDER  BY SCHEMA_NAME(o.schema_id), o.name`
 	return scanRows(rows, err, fmt.Sprintf("list UDFs in %q", d.Name), func(scan func(...any) error) (*UserDefinedFunction, error) {
 		f := &UserDefinedFunction{db: d}
 		if err := scan(&f.ObjectID, &f.Schema, &f.Name, &f.FuncType,
-			&f.Definition, &f.CreateDate, &f.ModifyDate); err != nil {
+			&f.CreateDate, &f.ModifyDate); err != nil {
 			return nil, err
 		}
 		f.FuncType = FunctionType(strings.TrimSpace(string(f.FuncType)))
@@ -107,9 +103,8 @@ func (d *Database) SystemFunctionsFiltered(ctx context.Context, filter ObjectFil
 func (d *Database) systemFunctionsWhere(ctx context.Context, where string, args []any) ([]*UserDefinedFunction, error) {
 	q := `
 SELECT o.object_id, SCHEMA_NAME(o.schema_id), o.name, o.type,
-       ISNULL(m.definition,''), o.create_date, o.modify_date
+       o.create_date, o.modify_date
 FROM   sys.all_objects o
-LEFT JOIN sys.all_sql_modules m ON m.object_id = o.object_id
 WHERE  o.type IN ('FN','TF','IF') AND o.is_ms_shipped = 1 AND SCHEMA_NAME(o.schema_id) = 'sys' ` + where + `
 ORDER  BY o.name`
 
@@ -117,7 +112,7 @@ ORDER  BY o.name`
 	return scanRows(rows, err, fmt.Sprintf("list system UDFs in %q", d.Name), func(scan func(...any) error) (*UserDefinedFunction, error) {
 		f := &UserDefinedFunction{db: d}
 		if err := scan(&f.ObjectID, &f.Schema, &f.Name, &f.FuncType,
-			&f.Definition, &f.CreateDate, &f.ModifyDate); err != nil {
+			&f.CreateDate, &f.ModifyDate); err != nil {
 			return nil, err
 		}
 		f.FuncType = FunctionType(strings.TrimSpace(string(f.FuncType)))
@@ -134,6 +129,13 @@ func (d *Database) UserDefinedFunctionRef(schema, name string) *UserDefinedFunct
 
 // Database returns the database the function belongs to.
 func (f *UserDefinedFunction) Database() *Database { return f.db }
+
+// Definition returns the function's T-SQL text: "" for an encrypted or CLR
+// function, ErrNotFound when there is no such function. Listings do not
+// carry it; this reads it by name, so a UserDefinedFunctionRef is enough.
+func (f *UserDefinedFunction) Definition(ctx context.Context) (string, error) {
+	return f.db.moduleDefinition(ctx, "function", "o.type IN ('FN','TF','IF','FS','FT')", f.Schema, f.Name)
+}
 
 // Drop drops the function — scalar, inline table-valued or multi-statement
 // table-valued, T-SQL or CLR alike, all of which DROP FUNCTION removes. A function that

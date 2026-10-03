@@ -403,13 +403,6 @@ func backupDeviceKeyword(typeDesc string) BackupDeviceType {
 	}
 }
 
-// credentialSecretPlaceholder stands in for the secret in a generated script.
-// The stored secret is not readable through any catalog view, and emitting no
-// SECRET clause at all would produce a script that silently creates the
-// credential without one — so the script carries a placeholder that cannot be
-// mistaken for a real value, and says so.
-const credentialSecretPlaceholder = "<insert secret here>"
-
 // buildCredentialScript assembles one credential's script. DROP CREDENTIAL has
 // no IF EXISTS form, so the drop is guarded with a sys.credentials lookup the
 // way a server role's is guarded with SUSER_ID.
@@ -424,7 +417,7 @@ func buildCredentialScript(c *Credential, opts ScriptOptions) string {
 				escapeSingle(c.Name))
 		}
 		fmt.Fprintf(sb, "CREATE CREDENTIAL %s WITH IDENTITY = N'%s', SECRET = N'%s'",
-			quoteIdent(c.Name), escapeSingle(c.Identity), credentialSecretPlaceholder)
+			quoteIdent(c.Name), escapeSingle(c.Identity), SecretPlaceholder)
 		if c.CryptographicProvider != "" {
 			fmt.Fprintf(sb, " FOR CRYPTOGRAPHIC PROVIDER %s", quoteIdent(c.CryptographicProvider))
 		}

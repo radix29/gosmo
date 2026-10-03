@@ -120,7 +120,7 @@ func TestLiveSymmetricKeyReadScript(t *testing.T) {
 		if !strings.Contains(script, "NEW key") {
 			t.Errorf("%s: script does not say it makes a new key", n)
 		}
-		script = strings.ReplaceAll(script, keyPasswordPlaceholder, pass)
+		script = strings.ReplaceAll(script, PasswordPlaceholder, pass)
 		for _, batch := range splitGoBatches(script) {
 			if n == "child" {
 				batch = openParent + batch + "\nCLOSE SYMMETRIC KEY sk_parent;"

@@ -122,6 +122,9 @@ func (d *Database) BulkInsert(ctx context.Context, bc BulkCopy, rows iter.Seq2[[
 		return 0, unsupportedf("gosmo: bulk insert into %s: a bulk copy cannot be scripted — its rows are a TDS stream, not T-SQL", target)
 	}
 
+	if err := refuseInTx(ctx, d.server, "bulk insert into "+target); err != nil {
+		return 0, err
+	}
 	ctx, release := d.server.bound(ctx)
 	defer release()
 	conn, err := d.server.db.Conn(ctx)
@@ -184,7 +187,7 @@ func (d *Database) BulkInsert(ctx context.Context, bc BulkCopy, rows iter.Seq2[[
 	for i, c := range bc.Columns {
 		cols[i] = quoteIdent(c)
 	}
-	observe(ctx, ScriptEntry{
+	observe(ctx, d.server, ScriptEntry{
 		Server:   scriptServerName(ctx, d.server),
 		Database: d.Name,
 		SQL:      fmt.Sprintf("INSERT BULK %s (%s) -- %d rows", target, strings.Join(cols, ", "), n),

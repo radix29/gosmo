@@ -35,10 +35,12 @@ import (
 // not a back-pointer, so neither is checked here.
 
 // parentAccessorExceptions lists types that deliberately do not expose their
-// back-pointer, with the reason. It is empty: every type with the field exposes
+// back-pointer, with the reason. Every exported type with the field exposes
 // it, and an entry here is a claim that a caller holding the child must not
 // be able to reach its parent.
-var parentAccessorExceptions = map[string]string{}
+var parentAccessorExceptions = map[string]string{
+	"serverTx": "unexported InTransaction state, never handed to a caller; the field is the identity txFrom matches, not a parent",
+}
 
 func TestEveryParentBackPointerHasItsAccessor(t *testing.T) {
 	fset := token.NewFileSet()

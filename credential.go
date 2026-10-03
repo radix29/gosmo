@@ -142,7 +142,7 @@ func (spec CreateCredentialRequest) createCredentialStatement() (string, error) 
 	stmt := fmt.Sprintf("CREATE CREDENTIAL %s WITH IDENTITY = N'%s'",
 		quoteIdent(spec.Name), escapeSingle(spec.Identity))
 	if spec.Secret != "" {
-		stmt += fmt.Sprintf(", SECRET = N'%s'", escapeSingle(spec.Secret))
+		stmt += ", SECRET = " + QuoteLiteral(spec.Secret)
 	}
 	// FOR CRYPTOGRAPHIC PROVIDER follows the whole WITH clause; it is not
 	// another comma-separated option inside it.
@@ -158,7 +158,7 @@ func (s *Server) CreateCredential(ctx context.Context, spec CreateCredentialRequ
 	if err != nil {
 		return nil, fmt.Errorf("gosmo: create credential: %w", err)
 	}
-	if err := s.exec(ctx, stmt); err != nil {
+	if err := s.execSecret(ctx, stmt, redactSecrets(stmt, SecretPlaceholder, spec.Secret)); err != nil {
 		return nil, fmt.Errorf("gosmo: create credential %q: %w", spec.Name, err)
 	}
 	return createdObject(ctx, s.CredentialRef(spec.Name), func() (*Credential, error) {
@@ -190,10 +190,12 @@ func (c *Credential) Alter(ctx context.Context, o CredentialOptions) error {
 	}
 	stmt := fmt.Sprintf("ALTER CREDENTIAL %s WITH IDENTITY = N'%s'",
 		quoteIdent(c.Name), escapeSingle(identity))
+	shown := stmt
 	if secret != nil {
-		stmt += fmt.Sprintf(", SECRET = N'%s'", escapeSingle(*secret))
+		stmt += ", SECRET = " + QuoteLiteral(*secret)
+		shown = redactSecrets(stmt, SecretPlaceholder, *secret)
 	}
-	if err := c.server.exec(ctx, stmt); err != nil {
+	if err := c.server.execSecret(ctx, stmt, shown); err != nil {
 		return fmt.Errorf("gosmo: alter credential %q: %w", c.Name, err)
 	}
 	setIfApplied(ctx, &c.Identity, identity)

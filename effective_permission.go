@@ -104,6 +104,11 @@ FROM   fn_my_permissions(@p1, '%s')
 ORDER  BY entity_name, subentity_name, permission_name;
 REVERT;`, escapeSingle(principal), class)
 
+	// readImpersonated may have to discard the session, which a transaction's
+	// cannot be.
+	if err := refuseInTx(ctx, d.server, what); err != nil {
+		return nil, err
+	}
 	// A nil securable binds @p1 as NULL, which is what fn_my_permissions
 	// wants for a scope that names none.
 	rows, err := d.query(ctx, q, securable)
@@ -147,6 +152,9 @@ REVERT;`, escapeSingle(login))
 
 	// Pinned rather than read off the pool, so readImpersonated can discard
 	// the one connection the impersonation ran on.
+	if err := refuseInTx(ctx, s, fmt.Sprintf("effective server permissions for %q", login)); err != nil {
+		return nil, err
+	}
 	ctx, release := s.bound(ctx)
 	defer release()
 	rows, err := withRetry(ctx, func() (*dbRows, error) {

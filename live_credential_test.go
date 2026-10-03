@@ -105,7 +105,7 @@ func TestLiveCredentialCreateAlterReadDrop(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ScriptCredential: %v", err)
 	}
-	if !strings.Contains(script, credentialSecretPlaceholder) {
+	if !strings.Contains(script, SecretPlaceholder) {
 		t.Errorf("script carries no secret placeholder:\n%s", script)
 	}
 	if !strings.Contains(script, `GOSMO\third_account`) {

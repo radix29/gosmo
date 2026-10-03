@@ -29,7 +29,6 @@ type Rule struct {
 	Name       string
 	Schema     string
 	ObjectID   int
-	Definition string
 	CreateDate time.Time
 	ModifyDate time.Time
 }
@@ -40,6 +39,13 @@ func (r *Rule) FullName() string { return qualifiedName(r.Schema, r.Name) }
 // Database returns the database the rule belongs to.
 func (r *Rule) Database() *Database { return r.db }
 
+// Definition returns the rule's text — the CREATE RULE statement as the
+// server stores it — or "" for an encrypted one, and ErrNotFound when there
+// is no such rule. Listings do not carry it; a RuleRef is enough.
+func (r *Rule) Definition(ctx context.Context) (string, error) {
+	return r.db.moduleDefinition(ctx, "rule", "o.type = 'R'", r.Schema, r.Name)
+}
+
 // Default mirrors a sys.objects row of type 'D' with parent_object_id = 0 —
 // a CREATE DEFAULT object, not a default constraint. Table default
 // constraints reach a caller through Column.DefaultValue.
@@ -49,7 +55,6 @@ type Default struct {
 	Name       string
 	Schema     string
 	ObjectID   int
-	Definition string
 	CreateDate time.Time
 	ModifyDate time.Time
 }
@@ -60,20 +65,22 @@ func (df *Default) FullName() string { return qualifiedName(df.Schema, df.Name) 
 // Database returns the database the default belongs to.
 func (df *Default) Database() *Database { return df.db }
 
+// Definition returns the default's text — the CREATE DEFAULT statement as
+// the server stores it — or "" for an encrypted one, and ErrNotFound when
+// there is no such standalone default (a default constraint is not one).
+// Listings do not carry it; a DefaultRef is enough.
+func (df *Default) Definition(ctx context.Context) (string, error) {
+	return df.db.moduleDefinition(ctx, "default", "o.type = 'D' AND o.parent_object_id = 0", df.Schema, df.Name)
+}
+
 // boundObjectSelect builds the SELECT both families use. typeCode is the
 // sys.objects type ('R' or 'D') and extra is the additional predicate that
 // separates a standalone default from a default constraint.
-//
-// The join to sys.sql_modules is a LEFT join even though every rule and
-// default has a module: an encrypted one has a row with a NULL definition,
-// and an inner join plus a bare scan would drop the object from the listing
-// entirely rather than showing it with no text.
 func boundObjectSelect(typeCode, extra string) string {
 	return `
 SELECT o.name, SCHEMA_NAME(o.schema_id), o.object_id,
-       ISNULL(m.definition, ''), o.create_date, o.modify_date
+       o.create_date, o.modify_date
 FROM   sys.objects o
-LEFT   JOIN sys.sql_modules m ON m.object_id = o.object_id
 WHERE  o.type = '` + typeCode + `'` + extra
 }
 
@@ -98,7 +105,7 @@ ORDER  BY SCHEMA_NAME(o.schema_id), o.name`
 	return scanRows(rows, err, fmt.Sprintf("list rules in %q", d.Name), func(scan func(...any) error) (*Rule, error) {
 		r := &Rule{db: d}
 		if err := scan(&r.Name, &r.Schema, &r.ObjectID,
-			&r.Definition, &r.CreateDate, &r.ModifyDate); err != nil {
+			&r.CreateDate, &r.ModifyDate); err != nil {
 			return nil, err
 		}
 		return r, nil
@@ -114,7 +121,7 @@ func (d *Database) RuleByName(ctx context.Context, schema, name string) (*Rule, 
 	r := &Rule{db: d}
 	err := d.queryRow(ctx, func(row *sql.Row) error {
 		return row.Scan(&r.Name, &r.Schema, &r.ObjectID,
-			&r.Definition, &r.CreateDate, &r.ModifyDate)
+			&r.CreateDate, &r.ModifyDate)
 	}, ruleSelect+`
    AND SCHEMA_NAME(o.schema_id) = @p1 AND o.name = @p2`, schema, name)
 	return foundRow(r, err, notFoundf("gosmo: rule %s not found in %q", qualifiedName(schema, name), d.Name), fmt.Sprintf("read rule %s in %q", qualifiedName(schema, name), d.Name))
@@ -161,7 +168,7 @@ ORDER  BY SCHEMA_NAME(o.schema_id), o.name`
 	return scanRows(rows, err, fmt.Sprintf("list defaults in %q", d.Name), func(scan func(...any) error) (*Default, error) {
 		df := &Default{db: d}
 		if err := scan(&df.Name, &df.Schema, &df.ObjectID,
-			&df.Definition, &df.CreateDate, &df.ModifyDate); err != nil {
+			&df.CreateDate, &df.ModifyDate); err != nil {
 			return nil, err
 		}
 		return df, nil
@@ -177,7 +184,7 @@ func (d *Database) DefaultByName(ctx context.Context, schema, name string) (*Def
 	df := &Default{db: d}
 	err := d.queryRow(ctx, func(row *sql.Row) error {
 		return row.Scan(&df.Name, &df.Schema, &df.ObjectID,
-			&df.Definition, &df.CreateDate, &df.ModifyDate)
+			&df.CreateDate, &df.ModifyDate)
 	}, defaultSelect+`
    AND SCHEMA_NAME(o.schema_id) = @p1 AND o.name = @p2`, schema, name)
 	return foundRow(df, err, notFoundf("gosmo: default %s not found in %q", qualifiedName(schema, name), d.Name), fmt.Sprintf("read default %s in %q", qualifiedName(schema, name), d.Name))

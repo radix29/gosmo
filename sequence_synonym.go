@@ -252,7 +252,7 @@ func (seq *Sequence) NextValue(ctx context.Context) (int64, error) {
 		return 0, err
 	}
 	var val int64
-	err := seq.db.withConn(ctx, func(ctx context.Context, conn *sql.Conn) error {
+	err := seq.db.withConn(ctx, func(ctx context.Context, conn sqlConn) error {
 		return conn.QueryRowContext(ctx,
 			fmt.Sprintf("SELECT NEXT VALUE FOR %s", qualifiedName(seq.Schema, seq.Name)),
 		).Scan(&val)

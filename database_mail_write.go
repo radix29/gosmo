@@ -53,16 +53,13 @@ import (
 // # The password in a script
 //
 // Under WithScript, and to a statement observer, a password is
-// mailPasswordPlaceholder — the statement that runs carries the real one, the
-// captured and observed copies never do. The scripter writes the same
-// placeholder, since the stored password cannot be read.
+// PasswordPlaceholder — the statement that runs carries the real one, the
+// captured and observed copies never do (unless WithScriptSecrets asks for
+// it). The scripter writes the same placeholder, since the stored password
+// cannot be read.
 
-// mailPasswordPlaceholder stands in for an account password in every
-// captured, observed or scripted statement — SSMS's own placeholder.
-const mailPasswordPlaceholder = "<password>"
-
-// mailPasswordNote precedes a statement carrying mailPasswordPlaceholder.
-const mailPasswordNote = "-- The account's password cannot be scripted. Replace <password> before running.\n"
+// mailPasswordNote precedes a statement carrying PasswordPlaceholder.
+const mailPasswordNote = "-- The account's password cannot be scripted. Replace " + PasswordPlaceholder + " before running.\n"
 
 // procArgs accumulates the "@name = value" arguments of one EXEC.
 type procArgs struct{ parts []string }
@@ -147,7 +144,7 @@ func (c MailCredentials) validate() error {
 }
 
 // render adds the credential arguments twice over: to run, with the
-// password, and to show, with mailPasswordPlaceholder.
+// password, and to show, with PasswordPlaceholder.
 func (c MailCredentials) render(run, shown *procArgs) {
 	for _, a := range []*procArgs{run, shown} {
 		a.bit("@use_default_credentials", c.Authentication == MailAuthWindows)
@@ -156,7 +153,7 @@ func (c MailCredentials) render(run, shown *procArgs) {
 		run.str("@username", c.UserName)
 		shown.str("@username", c.UserName)
 		run.str("@password", c.Password)
-		shown.str("@password", mailPasswordPlaceholder)
+		shown.str("@password", PasswordPlaceholder)
 	}
 }
 
@@ -792,7 +789,7 @@ func (s *Server) SendMail(ctx context.Context, m MailMessage) (int, error) {
 	if err := s.execScan(ctx, stmt+";\nSELECT @mailitem_id;", &id); err != nil {
 		return 0, fmt.Errorf("gosmo: send mail: %w", classifyMailSendError(err))
 	}
-	observe(ctx, ScriptEntry{Server: scriptServerName(ctx, s), SQL: stmt + ";\nSELECT @mailitem_id AS mailitem_id;"})
+	observe(ctx, s, ScriptEntry{Server: scriptServerName(ctx, s), SQL: stmt + ";\nSELECT @mailitem_id AS mailitem_id;"})
 	return id, nil
 }
 

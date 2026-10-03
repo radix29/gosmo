@@ -82,7 +82,7 @@ func TestAlterDatabaseScopedCredentialSecretClause(t *testing.T) {
 		{
 			name:   "a set secret is written",
 			secret: &secret,
-			want:   useAppDB + `ALTER DATABASE SCOPED CREDENTIAL [app_cred] WITH IDENTITY = N'Managed Identity', SECRET = N'sv=2019'`,
+			want:   useAppDB + `ALTER DATABASE SCOPED CREDENTIAL [app_cred] WITH IDENTITY = N'Managed Identity', SECRET = N'<insert secret here>'`,
 		},
 	}
 	for _, tc := range cases {
@@ -172,7 +172,7 @@ func TestBuildDatabaseScopedCredentialScriptCarriesASecretPlaceholder(t *testing
 
 	// Emitting no SECRET clause would produce a script that silently creates
 	// the credential without one.
-	if !strings.Contains(got, "SECRET = N'"+credentialSecretPlaceholder+"'") {
+	if !strings.Contains(got, "SECRET = N'"+SecretPlaceholder+"'") {
 		t.Errorf("script has no secret placeholder:\n%s", got)
 	}
 	if !strings.Contains(got, "cannot be read from the server") {

@@ -393,6 +393,23 @@ func (dec SymmetricKeyDecryptor) clause() (string, error) {
 	return "", fmt.Errorf("a symmetric key cannot be opened by %q", dec.Kind)
 }
 
+// passwords are every password e carries, its own and its Open chain's —
+// what a write using it redacts from what is captured or observed.
+func (e SymmetricKeyEncryptor) passwords() []string {
+	return append([]string{e.Password}, e.Open.passwords()...)
+}
+
+// passwords are every password dec's chain carries; nil for a nil dec. The
+// chain is walked no deeper than maxKeyChain, as keyOpens.add refuses one
+// longer.
+func (dec *SymmetricKeyDecryptor) passwords() []string {
+	var out []string
+	for d, n := dec, 0; d != nil && n < maxKeyChain; d, n = d.Open, n+1 {
+		out = append(out, d.Password)
+	}
+	return out
+}
+
 // keyOpens collects the OPEN SYMMETRIC KEY statements a write needs, each
 // key's parent before the key, each key once. Opening a key twice is harmless
 // but closing it twice is Msg 15315, so the dedupe is what keeps the CLOSEs
@@ -592,7 +609,14 @@ func (d *Database) CreateSymmetricKey(ctx context.Context, spec CreateSymmetricK
 	if err != nil {
 		return nil, fmt.Errorf("gosmo: create symmetric key in %q: %w", d.Name, err)
 	}
-	if _, err := d.exec(ctx, stmt); err != nil {
+	var passwords []string
+	for _, e := range spec.Encryptions {
+		passwords = append(passwords, e.passwords()...)
+	}
+	shown := redactSecrets(stmt, PasswordPlaceholder, passwords...)
+	shown = redactSecrets(shown, KeySourcePlaceholder, spec.KeySource)
+	shown = redactSecrets(shown, IdentityValuePlaceholder, spec.IdentityValue)
+	if _, err := d.execSecret(ctx, stmt, shown); err != nil {
 		return nil, fmt.Errorf("gosmo: create symmetric key %q in %q: %w", spec.Name, d.Name, err)
 	}
 	return createdObject(ctx, d.SymmetricKeyRef(spec.Name), func() (*SymmetricKey, error) {
@@ -653,7 +677,7 @@ func (k *SymmetricKey) AddEncryption(ctx context.Context, enc SymmetricKeyEncryp
 	if err != nil {
 		return fmt.Errorf("gosmo: add encryption to symmetric key %q in %q: %w", k.Name, k.db.Name, err)
 	}
-	if _, err := k.db.exec(ctx, stmt); err != nil {
+	if _, err := k.db.execPasswords(ctx, stmt, append(enc.passwords(), dec.passwords()...)...); err != nil {
 		return fmt.Errorf("gosmo: add encryption to symmetric key %q in %q: %w", k.Name, k.db.Name, err)
 	}
 	return nil
@@ -671,7 +695,7 @@ func (k *SymmetricKey) DropEncryption(ctx context.Context, enc SymmetricKeyEncry
 	if err != nil {
 		return fmt.Errorf("gosmo: drop encryption from symmetric key %q in %q: %w", k.Name, k.db.Name, err)
 	}
-	if _, err := k.db.exec(ctx, stmt); err != nil {
+	if _, err := k.db.execPasswords(ctx, stmt, append(enc.passwords(), dec.passwords()...)...); err != nil {
 		return fmt.Errorf("gosmo: drop encryption from symmetric key %q in %q: %w", k.Name, k.db.Name, err)
 	}
 	return nil

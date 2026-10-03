@@ -364,6 +364,9 @@ type PartitionInfo struct {
 // A non-partitioned table still returns exactly one row (partition number 1),
 // same as sys.partitions itself.
 func (t *Table) Partitions(ctx context.Context) ([]*PartitionInfo, error) {
+	if err := t.requireLoaded("partitions for"); err != nil {
+		return nil, err
+	}
 	const q = `
 SELECT p.partition_number, p.rows, p.data_compression_desc
 FROM   sys.partitions p
@@ -399,6 +402,9 @@ type TableSpaceInfo struct {
 
 // SpaceUsed returns space usage for the table.
 func (t *Table) SpaceUsed(ctx context.Context) (*TableSpaceInfo, error) {
+	if err := t.requireLoaded("space used for"); err != nil {
+		return nil, err
+	}
 	const q = `
 SELECT
     SUM(a.total_pages) * 8 AS reserved_kb,

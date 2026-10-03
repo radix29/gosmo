@@ -87,7 +87,7 @@ func TestLiveAPIPass(t *testing.T) {
 	})
 
 	t.Run("datetime2(0) and decimal(p,0)", func(t *testing.T) {
-		_, err := d.CreateTable(ctx, CreateTableRequest{Schema: "dbo", Name: "Scales", Columns: []ColumnDefinition{
+		scales, err := d.CreateTable(ctx, CreateTableRequest{Schema: "dbo", Name: "Scales", Columns: []ColumnDefinition{
 			{Name: "D0", DataType: DataTypeDatetime2, Scale: new(0), IsNullable: true},
 			{Name: "T0", DataType: DataTypeTime, Scale: new(0), IsNullable: true},
 			{Name: "N0", DataType: DataTypeDecimal, Precision: new(10), Scale: new(0), IsNullable: true},
@@ -95,9 +95,15 @@ func TestLiveAPIPass(t *testing.T) {
 		if err != nil {
 			t.Fatalf("CreateTable: %v", err)
 		}
-		cols, err := d.TableRef("dbo", "Scales").Columns(ctx)
+		// The created table, not a TableRef: Columns reads by ObjectID, and
+		// until ErrHandleNotLoaded a handle answered with no columns, so this
+		// loop checked nothing.
+		cols, err := scales.Columns(ctx)
 		if err != nil {
 			t.Fatalf("Columns: %v", err)
+		}
+		if len(cols) != 3 {
+			t.Fatalf("Columns = %d, want 3", len(cols))
 		}
 		for _, c := range cols {
 			if c.Scale != 0 {
@@ -198,7 +204,7 @@ func TestLiveAPIPass(t *testing.T) {
 		if err != nil {
 			t.Fatalf("LoginByName: %v", err)
 		}
-		ms, err := l.userMappingsIn(ctx, d, false)
+		ms, err := l.userMappingsIn(ctx, d)
 		if err != nil || len(ms) != 1 {
 			t.Fatalf("userMappingsIn = %+v, %v; want one mapping", ms, err)
 		}
@@ -208,7 +214,7 @@ func TestLiveAPIPass(t *testing.T) {
 		if err := l.UnmapFromDatabase(ctx, dbName); err != nil {
 			t.Fatalf("UnmapFromDatabase: %v", err)
 		}
-		if ms, err := l.userMappingsIn(ctx, d, false); err != nil || len(ms) != 0 {
+		if ms, err := l.userMappingsIn(ctx, d); err != nil || len(ms) != 0 {
 			t.Errorf("after UnmapFromDatabase: %+v, %v; want no mapping", ms, err)
 		}
 	})

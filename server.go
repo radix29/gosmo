@@ -369,9 +369,20 @@ ELSE IF DB_ID(%s) IS NOT NULL ALTER DATABASE %s SET MULTI_USER`,
 // Server-scoped query never targets a specific database.
 func (s *Server) query(ctx context.Context, q string, args ...any) (*dbRows, error) {
 	ctx, release := s.bound(ctx)
-	rows, err := withRetry(ctx, func() (*sql.Rows, error) {
-		return s.db.QueryContext(ctx, q, args...)
-	})
+	var rows *sql.Rows
+	var err error
+	if t := txFrom(ctx, s); t != nil {
+		// Never retried: a fresh connection is outside the transaction.
+		var conn sqlConn
+		if conn, err = t.serverConn(ctx); err == nil {
+			rows, err = conn.QueryContext(ctx, q, args...)
+			err = withAllMessages(err)
+		}
+	} else {
+		rows, err = withRetry(ctx, func() (*sql.Rows, error) {
+			return s.db.QueryContext(ctx, q, args...)
+		})
+	}
 	if err != nil {
 		release()
 		return nil, err
@@ -392,6 +403,13 @@ func (s *Server) query(ctx context.Context, q string, args ...any) (*dbRows, err
 func (s *Server) queryRow(ctx context.Context, scan func(*sql.Row) error, q string, args ...any) error {
 	ctx, release := s.bound(ctx)
 	defer release()
+	if t := txFrom(ctx, s); t != nil {
+		conn, err := t.serverConn(ctx)
+		if err != nil {
+			return err
+		}
+		return withAllMessages(scan(conn.QueryRowContext(ctx, q, args...)))
+	}
 	_, err := withRetry(ctx, func() (struct{}, error) {
 		return struct{}{}, scan(s.db.QueryRowContext(ctx, q, args...))
 	})
@@ -422,7 +440,15 @@ func (s *Server) queryRowScan(ctx context.Context, q string, args []any, dest ..
 func (s *Server) execScan(ctx context.Context, stmt string, dest ...any) error {
 	ctx, release := s.bound(ctx)
 	defer release()
-	return withAllMessages(s.db.QueryRowContext(ctx, stmt).Scan(dest...))
+	var conn sqlConn = s.db
+	if t := txFrom(ctx, s); t != nil {
+		c, err := t.serverConn(ctx)
+		if err != nil {
+			return err
+		}
+		conn = c
+	}
+	return withAllMessages(conn.QueryRowContext(ctx, stmt).Scan(dest...))
 }
 
 // loadInfo populates s.info. It runs two statements rather than one, and the
@@ -710,8 +736,12 @@ func defaultPrimaryFile(name string, info *ServerInfo) (*DatabaseFileSpec, error
 // joinServerPath appends file to dir, a directory on the server's own file
 // system — so the separator is the one dir already uses, not the client's.
 // SERVERPROPERTY('InstanceDefaultDataPath') ends in one, but a caller-supplied
-// directory may not.
+// directory may not. An empty dir — no default directory known — leaves file
+// bare, for the server to place.
 func joinServerPath(dir, file string) string {
+	if dir == "" {
+		return file
+	}
 	if strings.HasSuffix(dir, `\`) || strings.HasSuffix(dir, "/") {
 		return dir + file
 	}

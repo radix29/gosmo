@@ -154,7 +154,9 @@ func init() { sql.Register("capture", captureDriver{}) }
 
 // captureTable returns a Table wired to the capture driver, named so that
 // both its schema and its name contain a '.' — the case that distinguishes a
-// bracket-quoted qualified name from a raw one.
+// bracket-quoted qualified name from a raw one. It stands for a table read
+// from the catalog, so it carries an ObjectID: a TableRef's reads are refused
+// (ErrHandleNotLoaded) before they reach the driver.
 func captureTable(t *testing.T) *Table {
 	t.Helper()
 	db, err := sql.Open("capture", "")
@@ -164,7 +166,7 @@ func captureTable(t *testing.T) *Table {
 	t.Cleanup(func() { db.Close() })
 	captured.reset()
 	srv := &Server{db: db}
-	return &Table{db: &Database{server: srv, Name: "testdb"}, Schema: "my.schema", Name: "Sales.Archive"}
+	return &Table{db: &Database{server: srv, Name: "testdb"}, ObjectID: 1, Schema: "my.schema", Name: "Sales.Archive"}
 }
 
 // A qualified name embedded in a T-SQL string literal must be bracket-quoted
@@ -194,6 +196,24 @@ func TestFragmentationQueriesBracketQuoteTheObjectName(t *testing.T) {
 		q := captured.find("dm_db_index_physical_stats")
 		if q == "" {
 			t.Fatal("no dm_db_index_physical_stats statement was generated")
+		}
+		if strings.Contains(q, badName) {
+			t.Errorf("generated SQL uses the unbracketed name %s:\n%s", badName, q)
+		}
+		if !strings.Contains(q, wantName) {
+			t.Errorf("generated SQL does not contain %s:\n%s", wantName, q)
+		}
+	})
+
+	// Not a fragmentation query, but the same literal: Columns finds its
+	// statistic by name so that it works from a StatisticRef on a TableRef.
+	t.Run("Statistic.Columns", func(t *testing.T) {
+		tbl := captureTable(t)
+		_, _ = tbl.StatisticRef("st_pad").Columns(context.Background())
+
+		q := captured.find("stats_columns")
+		if q == "" {
+			t.Fatal("no stats_columns statement was generated")
 		}
 		if strings.Contains(q, badName) {
 			t.Errorf("generated SQL uses the unbracketed name %s:\n%s", badName, q)

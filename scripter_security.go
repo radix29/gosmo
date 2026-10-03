@@ -205,7 +205,7 @@ func (sc *Scripter) ScriptDatabaseScopedCredential(ctx context.Context, name str
 // credential's script.
 //
 // The secret is not readable through any catalog view, so the script carries
-// credentialSecretPlaceholder and says so — the same treatment, and for the
+// SecretPlaceholder and says so — the same treatment, and for the
 // same reason, as buildCredentialScript's. Emitting no SECRET clause at all
 // would produce a script that silently creates the credential without one.
 // DROP DATABASE SCOPED CREDENTIAL has no IF EXISTS form, so the drop is
@@ -222,7 +222,7 @@ func buildDatabaseScopedCredentialScript(c *DatabaseScopedCredential, opts Scrip
 				escapeSingle(c.Name))
 		}
 		fmt.Fprintf(sb, "CREATE DATABASE SCOPED CREDENTIAL %s WITH IDENTITY = N'%s', SECRET = N'%s';\nGO\n",
-			quoteIdent(c.Name), escapeSingle(c.Identity), credentialSecretPlaceholder)
+			quoteIdent(c.Name), escapeSingle(c.Identity), SecretPlaceholder)
 	})
 }
 
@@ -301,12 +301,6 @@ func (sc *Scripter) ScriptAsymmetricKey(ctx context.Context, name string) (strin
 	return buildAsymmetricKeyScript(k, sc.opts), nil
 }
 
-// keyPasswordPlaceholder stands in for a key's protecting password in a
-// generated script: no catalog view exposes it, and a script that silently
-// switched the key to master-key protection would be wrong in a way nobody
-// sees until the master key is missing.
-const keyPasswordPlaceholder = "<insert password here>"
-
 // buildAsymmetricKeyScript assembles one asymmetric key's script. DROP
 // ASYMMETRIC KEY has no IF EXISTS form, so the drop is guarded with a
 // sys.asymmetric_keys lookup.
@@ -344,7 +338,7 @@ func buildAsymmetricKeyScript(k *AsymmetricKey, opts ScriptOptions) string {
 		sb.WriteString("\n    WITH ALGORITHM = ")
 		sb.WriteString(alg)
 		if k.PvtKeyEncryptionType == "ENCRYPTED_BY_PASSWORD" {
-			sb.WriteString("\n    ENCRYPTION BY PASSWORD = N'" + keyPasswordPlaceholder + "'")
+			sb.WriteString("\n    ENCRYPTION BY PASSWORD = N'" + PasswordPlaceholder + "'")
 		}
 		sb.WriteString(";\nGO\n")
 	})
@@ -383,7 +377,7 @@ func buildSymmetricKeyScript(k *SymmetricKey, opts ScriptOptions) string {
 		for _, e := range k.Encryptions {
 			switch e.Kind {
 			case SymmetricKeyByPassword:
-				items = append(items, "PASSWORD = N'"+keyPasswordPlaceholder+"'")
+				items = append(items, "PASSWORD = N'"+PasswordPlaceholder+"'")
 			case SymmetricKeyByCertificate, SymmetricKeyByAsymmetricKey, SymmetricKeyBySymmetricKey:
 				n := "<" + strings.ToLower(string(e.Kind)) + " name>"
 				if e.Name != "" {
@@ -405,7 +399,7 @@ func buildSymmetricKeyScript(k *SymmetricKey, opts ScriptOptions) string {
 			"   both to the WITH clause with their original values.")
 		if len(k.Encryptions) == 0 && k.ProviderType == "" {
 			sb.WriteString("\n   No encryption of the original could be read; the one below is a placeholder.")
-			items = append(items, "PASSWORD = N'"+keyPasswordPlaceholder+"'")
+			items = append(items, "PASSWORD = N'"+PasswordPlaceholder+"'")
 		}
 		for _, p := range parents {
 			sb.WriteString("\n   ")

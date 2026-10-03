@@ -189,7 +189,7 @@ func (d *Database) CreateUser(ctx context.Context, req CreateUserRequest) (*User
 				req.Name, d.Name, containment)
 		}
 	}
-	if _, err := d.exec(ctx, stmt); err != nil {
+	if _, err := d.execPasswords(ctx, stmt, req.Password); err != nil {
 		return nil, fmt.Errorf("gosmo: create user %q: %w", req.Name, err)
 	}
 	return createdObject(ctx, d.UserRef(req.Name), func() (*User, error) {
