@@ -1,6 +1,9 @@
 package gosmo
 
-import "strings"
+import (
+	"fmt"
+	"strings"
+)
 
 // ============================================================
 // Restore planning: which set, and where its files go
@@ -121,6 +124,19 @@ func (r RestoreRelocation) NeedsFileList(source, target string) bool {
 // otherwise — except a FILESTREAM container (type S) or a legacy full-text
 // catalog (F), which is a directory: a renamed one is "<target>_<logical>",
 // with no extension, so it does not pass for a data file.
+//
+// Two adjustments keep every path one the server can create. A character no
+// Windows file name may hold (`\ / : * ? " < > |`, a control character) is
+// replaced with "_": a logical or database name is a sysname and may hold
+// any of them, and in a minted name a separator makes a subdirectory and a
+// colon an NTFS stream (Msg 3634, access denied). And two files landing on
+// one path — same-named files from two source directories relocated into
+// one folder, or two names alike once replaced — are told apart as
+// "name_2.ndf", "name_3.ndf", …: SQL Server refuses the restore otherwise
+// (Msg 3176, "is claimed by"). Both rules are the stricter Windows ones on
+// every platform, and paths are compared case-insensitively, so a name
+// minted for one host still fits another. Only the physical name changes;
+// the MOVE clause still addresses the file by its logical name.
 func (r RestoreRelocation) Moves(files []*BackupFile, source, target string) []RelocateFile {
 	if !r.NeedsFileList(source, target) {
 		return nil
@@ -137,6 +153,7 @@ func (r RestoreRelocation) Moves(files []*BackupFile, source, target string) []R
 	renamed := !SameName(r.Collation, source, target)
 
 	var moves []RelocateFile
+	taken := map[string]bool{}
 	for _, f := range files {
 		dir, ext := dataDir, ServerPathExt(f.PhysicalName)
 		switch {
@@ -153,10 +170,30 @@ func (r RestoreRelocation) Moves(files []*BackupFile, source, target string) []R
 		name := ServerPathBase(f.PhysicalName)
 		if renamed {
 			name = target + "_" + f.LogicalName + ext
+		} else if ext != "" {
+			ext = ServerPathExt(name) // the kept name's own, if any
 		}
-		moves = append(moves, RelocateFile{LogicalName: f.LogicalName, PhysicalName: JoinServerPath(dir, name)})
+		stem := fileNameSafe(strings.TrimSuffix(name, ext))
+		path := JoinServerPath(dir, stem+ext)
+		// NameKey under the empty (case-insensitive) collation folds case.
+		for n := 2; taken[NameKey("", path)]; n++ {
+			path = JoinServerPath(dir, fmt.Sprintf("%s_%d%s", stem, n, ext))
+		}
+		taken[NameKey("", path)] = true
+		moves = append(moves, RelocateFile{LogicalName: f.LogicalName, PhysicalName: path})
 	}
 	return moves
+}
+
+// fileNameSafe replaces each character a Windows file name cannot hold with
+// "_".
+func fileNameSafe(name string) string {
+	return strings.Map(func(r rune) rune {
+		if r < 0x20 || strings.ContainsRune(`\/:*?"<>|`, r) {
+			return '_'
+		}
+		return r
+	}, name)
 }
 
 // FromHeader points o at backup set h: WITH FILE = h.SetNumber(), and the

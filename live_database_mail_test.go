@@ -624,6 +624,24 @@ EXEC sp_configure 'show advanced options', %d; RECONFIGURE;`, adv))
 	if got, want := profileAccounts(liveMailProfile), []string{renamed + "@1", liveMailWindows + "@2"}; !slices.Equal(got, want) {
 		t.Errorf("a failed SetAccounts changed the list to %v, want %v", got, want)
 	}
+	// sysmail matches names under the server's collation: on a case-insensitive
+	// one a differently cased spelling is the existing link (nothing to send),
+	// and two spellings of one account are refused before the server is asked.
+	if CollationIgnoresCase(srv.Info().Collation) {
+		sctx, col := WithScript(ctx)
+		if err := p.SetAccounts(sctx, []string{strings.ToUpper(renamed), strings.ToUpper(liveMailWindows)}); err != nil {
+			t.Errorf("SetAccounts (recased): %v", err)
+		} else if stmts := col.Statements(); len(stmts) != 0 {
+			t.Errorf("SetAccounts with the current list recased would send %q, want nothing", stmts)
+		}
+		err := p.SetAccounts(ctx, []string{renamed, strings.ToUpper(renamed)})
+		if err == nil || !strings.Contains(err.Error(), "is listed twice") {
+			t.Errorf("SetAccounts with one account in two casings: err %v, want the listed-twice refusal", err)
+		}
+		if got, want := profileAccounts(liveMailProfile), []string{renamed + "@1", liveMailWindows + "@2"}; !slices.Equal(got, want) {
+			t.Errorf("the recased SetAccounts calls changed the list to %v, want %v", got, want)
+		}
+	}
 	if err := p.AddAccount(ctx, liveMailAnon, 9); err != nil {
 		t.Fatalf("AddAccount: %v", err)
 	}

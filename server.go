@@ -88,6 +88,15 @@ func (s *Server) DB() *sql.DB { return s.db }
 // caller is about to write files to.
 func (s *Server) Info() *ServerInfo { return s.info }
 
+// collation is the server's collation, or "" (case-insensitive, per
+// CollationIgnoresCase) when the server info was never read.
+func (s *Server) collation() string {
+	if s.info == nil {
+		return ""
+	}
+	return s.info.Collation
+}
+
 // DefaultPaths is the instance's default directories for new data, log and
 // backup files.
 type DefaultPaths struct {

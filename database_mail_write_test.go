@@ -198,7 +198,7 @@ func TestMailSetAccountsDiff(t *testing.T) {
 		{AccountName: "b", SequenceNumber: 2},
 		{AccountName: "c", SequenceNumber: 7},
 	}
-	got := mailSetAccountsStmts("p", cur, []string{"c", "a", "d"})
+	got := mailSetAccountsStmts("", "p", cur, []string{"c", "a", "d"})
 	want := []string{
 		"EXEC msdb.dbo.sysmail_delete_profileaccount_sp @profile_name = N'p', @account_name = N'b'",
 		"EXEC msdb.dbo.sysmail_update_profileaccount_sp @profile_name = N'p', @account_name = N'c', @sequence_number = 1",
@@ -208,8 +208,47 @@ func TestMailSetAccountsDiff(t *testing.T) {
 	if !slices.Equal(got, want) {
 		t.Errorf("got  %q\nwant %q", got, want)
 	}
-	if got := mailSetAccountsStmts("p", cur[:2], []string{"a", "b"}); len(got) != 0 {
+	if got := mailSetAccountsStmts("", "p", cur[:2], []string{"a", "b"}); len(got) != 0 {
 		t.Errorf("an unchanged list issued %q", got)
+	}
+}
+
+// sysmail matches account names under the server's collation, so the diff
+// must too: on a case-insensitive server "smtp1" is the existing "SMTP1"
+// link, not a remove and re-add; on a case-sensitive one it is another
+// account.
+func TestMailSetAccountsDiffFollowsCollation(t *testing.T) {
+	cur := []*MailProfileAccount{{AccountName: "SMTP1", SequenceNumber: 1}}
+	if got := mailSetAccountsStmts("SQL_Latin1_General_CP1_CI_AS", "p", cur, []string{"smtp1"}); len(got) != 0 {
+		t.Errorf("CI: a differently cased existing link issued %q", got)
+	}
+	got := mailSetAccountsStmts("Latin1_General_CS_AS", "p", cur, []string{"smtp1"})
+	want := []string{
+		"EXEC msdb.dbo.sysmail_delete_profileaccount_sp @profile_name = N'p', @account_name = N'SMTP1'",
+		"EXEC msdb.dbo.sysmail_add_profileaccount_sp @profile_name = N'p', @account_name = N'smtp1', @sequence_number = 1",
+	}
+	if !slices.Equal(got, want) {
+		t.Errorf("CS: got  %q\nwant %q", got, want)
+	}
+}
+
+// A list naming one account twice in two casings is refused before anything
+// is read or sent on a case-insensitive server, and allowed on a
+// case-sensitive one.
+func TestMailSetAccountsRefusesCaseDuplicate(t *testing.T) {
+	ctx, col := WithScript(context.Background())
+	s := captureServer(t, 17)
+	s.info.Collation = "SQL_Latin1_General_CP1_CI_AS"
+	err := s.MailProfileRef("p").SetAccounts(ctx, []string{"a", "A"})
+	if err == nil || !strings.Contains(err.Error(), `account "A" is listed twice`) {
+		t.Fatalf("CI: err %v, want the listed-twice refusal", err)
+	}
+	if len(col.Statements()) != 0 || captured.count("") != 0 {
+		t.Errorf("CI: the refusal sent %q / %q", col.Statements(), captured.find(""))
+	}
+	s.info.Collation = "Latin1_General_CS_AS"
+	if err := s.MailProfileRef("p").SetAccounts(ctx, []string{"a", "A"}); err != nil {
+		t.Errorf("CS: %v", err)
 	}
 }
 

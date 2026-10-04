@@ -184,6 +184,53 @@ func TestRestoreRelocationDirectoriesGetNoExtension(t *testing.T) {
 	})
 }
 
+// Same-named files from two source directories, relocated into one folder,
+// would both be claimed for one path — the restore fails Msg 3176 — so the
+// second is told apart, and a third, case-insensitively. A file in another
+// folder (the log) is not counted against them.
+func TestRestoreRelocationDeduplicatesPaths(t *testing.T) {
+	files := []*BackupFile{
+		{LogicalName: "AppDB", PhysicalName: `D:\SQL\AppDB.mdf`, Type: "D"},
+		{LogicalName: "d1", PhysicalName: `D:\fg1\data.ndf`, Type: "D"},
+		{LogicalName: "d2", PhysicalName: `E:\fg2\data.ndf`, Type: "D"},
+		{LogicalName: "d3", PhysicalName: `F:\fg3\DATA.NDF`, Type: "D"},
+		{LogicalName: "fs", PhysicalName: `G:\fs\data`, Type: "S"},
+		{LogicalName: "fs2", PhysicalName: `H:\fs\data`, Type: "S"},
+		{LogicalName: "AppDB_log", PhysicalName: `L:\data.ndf`, Type: "L"},
+	}
+	r := RestoreRelocation{Mode: RelocateToFolders, DataDir: `C:\Data`, LogDir: `C:\Log`}
+	assertMoves(t, r.Moves(files, "AppDB", "AppDB"), []RelocateFile{
+		{LogicalName: "AppDB", PhysicalName: `C:\Data\AppDB.mdf`},
+		{LogicalName: "d1", PhysicalName: `C:\Data\data.ndf`},
+		{LogicalName: "d2", PhysicalName: `C:\Data\data_2.ndf`},
+		{LogicalName: "d3", PhysicalName: `C:\Data\DATA_3.NDF`},
+		{LogicalName: "fs", PhysicalName: `C:\Data\data`},
+		{LogicalName: "fs2", PhysicalName: `C:\Data\data_2`},
+		{LogicalName: "AppDB_log", PhysicalName: `C:\Log\data.ndf`},
+	})
+}
+
+// A logical or database name is a sysname and may hold characters no Windows
+// file name can: in a minted name a separator would make a subdirectory and a
+// colon an NTFS stream (Msg 3634). Each becomes "_" in the physical name
+// only — the MOVE clause still names the logical file — and two names alike
+// once replaced are told apart.
+func TestRestoreRelocationReplacesInvalidFileNameCharacters(t *testing.T) {
+	files := []*BackupFile{
+		{LogicalName: `a:b`, PhysicalName: `D:\SQL\x.ndf`, Type: "D"},
+		{LogicalName: `a?b`, PhysicalName: `D:\SQL\y.ndf`, Type: "D"},
+		{LogicalName: `p/q\r`, PhysicalName: "/var/opt/mssql/data/z.ndf", Type: "D"},
+		{LogicalName: "t\tab*<>|\"", PhysicalName: `D:\SQL\w.ndf`, Type: "D"},
+	}
+	r := RestoreRelocation{DefaultDataDir: `C:\Data`, DefaultLogDir: `C:\Log`}
+	assertMoves(t, r.Moves(files, "AppDB", "Co:py"), []RelocateFile{
+		{LogicalName: `a:b`, PhysicalName: `C:\Data\Co_py_a_b.ndf`},
+		{LogicalName: `a?b`, PhysicalName: `C:\Data\Co_py_a_b_2.ndf`},
+		{LogicalName: `p/q\r`, PhysicalName: `C:\Data\Co_py_p_q_r.ndf`},
+		{LogicalName: "t\tab*<>|\"", PhysicalName: `C:\Data\Co_py_t_ab_____.ndf`},
+	})
+}
+
 // NeedsFileList decides whether a caller runs RESTORE FILELISTONLY at all, so
 // it has to agree with Moves: a plan that would move files must not have its
 // file list skipped.

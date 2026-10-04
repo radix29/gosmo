@@ -143,8 +143,14 @@ func main() {
 		ActiveEndTime:      235959, // 23:59:59
 	}))
 
-	if existing, err := srv.ScheduleByName(ctx, scheduleName); err == nil {
-		demo.Must(existing.Drop(ctx))
+	// Schedule names are not unique, so an interrupted earlier run can leave
+	// several leftovers named alike — and ScheduleByName answers ErrAmbiguous
+	// for those rather than pick one. List them instead, and drop each by its
+	// id (Drop keys on Schedule.ID), sparing any another job still uses.
+	for _, s := range demo.Value(srv.Schedules(ctx)) {
+		if s.Name == scheduleName && len(demo.Value(s.Jobs(ctx))) == 0 {
+			demo.Must(s.Drop(ctx))
+		}
 	}
 	shared := demo.Value(srv.CreateSchedule(ctx, gosmo.CreateScheduleRequest{
 		Name:                 scheduleName,

@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"slices"
 	"strings"
 	"time"
 )
@@ -515,16 +514,20 @@ func (p *MailProfile) SetAccountSequence(ctx context.Context, account string, se
 // account — which is what that script needs.
 func (p *MailProfile) SetAccounts(ctx context.Context, accounts []string) error {
 	what := fmt.Sprintf("set accounts of mail profile %q", p.Name)
-	for i, name := range accounts {
-		if slices.Contains(accounts[:i], name) {
+	collation := p.server.collation()
+	seen := map[string]bool{}
+	for _, name := range accounts {
+		k := NameKey(collation, name)
+		if seen[k] {
 			return fmt.Errorf("gosmo: %s: account %q is listed twice", what, name)
 		}
+		seen[k] = true
 	}
 	current, err := p.links(ctx, what)
 	if err != nil {
 		return err
 	}
-	stmts := mailSetAccountsStmts(p.Name, current, accounts)
+	stmts := mailSetAccountsStmts(collation, p.Name, current, accounts)
 	if len(stmts) > 0 {
 		if err := p.server.execAtomic(ctx, stmts); err != nil {
 			return fmt.Errorf("gosmo: %s: %w", what, err)
@@ -556,20 +559,28 @@ ORDER  BY pa.sequence_number`, p.Name)
 }
 
 // mailSetAccountsStmts is the diff from current to want: removals first,
-// then renumbering in place, then additions.
-func mailSetAccountsStmts(profile string, current []*MailProfileAccount, want []string) []string {
+// then renumbering in place, then additions. Names are matched under msdb's
+// collation — the server's — as sysmail does, so a want spelled "smtp1" for
+// a link to "SMTP1" on a case-insensitive server is that link, not a remove
+// and re-add.
+func mailSetAccountsStmts(collation, profile string, current []*MailProfileAccount, want []string) []string {
+	wanted := map[string]bool{}
+	for _, name := range want {
+		wanted[NameKey(collation, name)] = true
+	}
 	var stmts []string
 	have := map[string]int{}
 	for _, pa := range current {
-		have[pa.AccountName] = pa.SequenceNumber
-		if !slices.Contains(want, pa.AccountName) {
+		k := NameKey(collation, pa.AccountName)
+		have[k] = pa.SequenceNumber
+		if !wanted[k] {
 			stmts = append(stmts, mailProfileAccountStmt("sysmail_delete_profileaccount_sp", profile, pa.AccountName, nil))
 		}
 	}
 	var adds []string
 	for i, name := range want {
 		seq := i + 1
-		old, ok := have[name]
+		old, ok := have[NameKey(collation, name)]
 		switch {
 		case !ok:
 			adds = append(adds, mailProfileAccountStmt("sysmail_add_profileaccount_sp", profile, name, &seq))
