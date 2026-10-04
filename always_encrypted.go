@@ -410,10 +410,14 @@ func (cek *ColumnEncryptionKey) DropValue(ctx context.Context, masterKeyName str
 	}
 	// Not mirrored under WithScript, as in AddValue above.
 	if !Scripting(ctx) {
-		cek.Values = slices.DeleteFunc(cek.Values, func(v *ColumnEncryptionKeyValue) bool {
-			return strings.EqualFold(v.MasterKeyName, masterKeyName)
-		})
-		cek.reseatSummary()
+		// Only matchName's pick: in a case-sensitive database cmk and CMK are
+		// two master keys, and a case-blind delete dropped both values from
+		// the mirror. Ambiguous or absent leaves Values alone — the write
+		// succeeded, and the caller re-reads.
+		if dropped, err := matchName(cek.Values, masterKeyName, func(v *ColumnEncryptionKeyValue) string { return v.MasterKeyName }); err == nil {
+			cek.Values = slices.DeleteFunc(cek.Values, func(v *ColumnEncryptionKeyValue) bool { return v == dropped })
+			cek.reseatSummary()
+		}
 	}
 	return nil
 }

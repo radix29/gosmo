@@ -112,6 +112,9 @@ type useDriverState struct {
 	failBatch error // returned for a useBatch statement
 	failUse   error // returned for a bare USE
 	failQuery error // returned for the bare query
+	// batchErr, when set, decides a useBatch statement's error from its text
+	// before failBatch does — a model of the server rather than a fixed reply.
+	batchErr func(q string) error
 }
 
 var useState *useDriverState
@@ -130,7 +133,12 @@ func (c *useConn) record(q string) error {
 	useState.mu.Lock()
 	defer useState.mu.Unlock()
 	useState.stmts = append(useState.stmts, q)
-	if _, _, ok := splitUseBatch(q); ok {
+	if _, rest, ok := splitUseBatch(q); ok {
+		if useState.batchErr != nil {
+			if err := useState.batchErr(rest); err != nil {
+				return err
+			}
+		}
 		return useState.failBatch
 	}
 	if strings.HasPrefix(q, "USE ") {

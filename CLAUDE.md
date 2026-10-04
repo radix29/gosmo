@@ -53,6 +53,10 @@ exercise the write, drop them; never mutate pre-existing objects.
 - **A live test closes its connection with `t.Cleanup`, never `defer`,** when
   it drops objects in a `t.Cleanup` — a deferred close runs first and every
   drop fails silently.
+- **After a change to quoting, `NameKey` or script-text rewriting**
+  (`bindScriptArgs`, `alterModuleDefinition`, `ParseServerAddress`), run
+  `go test -run XXX -fuzz FuzzNames -fuzztime 60s -fuzzminimizetime 0`; a
+  crasher's `testdata/fuzz/` file stays as the regression seed.
 - Build and test **here** before relying on a change from gossms — a gossms
   build compiles only the packages it imports.
 
@@ -87,11 +91,21 @@ exercise the write, drop them; never mutate pre-existing objects.
   NULL — and a NULL `object_id` means "every object" to
   `sys.dm_db_index_physical_stats`. `identifier_quoting_test.go` pins it.
   Prefer a query parameter where the server accepts one.
+- **A name built-in compared with a parameter is collated**:
+  `SCHEMA_NAME(x.schema_id) COLLATE DATABASE_DEFAULT = @p1`. A `USE d; …`
+  batch binds its parameters in the starting database's collation, so the
+  bare form fails Msg 468 and costs three round trips (`useBatch`).
+  `collation_lookup_test.go` enforces it, `filterColumns` maps included.
 - **A name or stored value written into a script comment is wrapped**:
   `commentSafe` inside `--` (a line break ends the comment), `blockCommentSafe`
   inside `/* */` (`*/` closes it, `/*` nests and swallows the rest). Either
   way the remainder runs as T-SQL. `comment_safe_test.go` lists every site;
   a new one goes there too.
+- **A name that came from the catalog is matched exactly.** Picking one of
+  several fetched rows by name goes through `matchName` (`helpers.go`):
+  exact first, a single case-insensitive match only as the fallback, several
+  `ErrAmbiguous`. A bare `strings.EqualFold` takes the wrong sibling in a
+  `_CS_` database (`IX_a`/`ix_A`); comparing two catalog names is `==`.
 - **Never query inside a `rows.Next()` loop.** `Database.query` pins its own
   pooled connection and `USE` (`Database.useBatch`), so per-row lookups hold
   the outer connection while acquiring more — pool exhaustion. Fetch children

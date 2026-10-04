@@ -460,6 +460,10 @@ func TestTableStorageClauses(t *testing.T) {
 		{"lob elsewhere", tableScriptParts{cols: lob, ds: DataSpace{Name: "PRIMARY", IsDefaultFileGroup: true},
 			table: tableScriptOptions{LobDataSpace: "FG2", LobIsFileGroup: true}}, " TEXTIMAGE_ON [FG2]"},
 		// lob_data_space_id outlives the last LOB column (Msg 1709 otherwise).
+		// Two filegroups in a _CS_ database: fg and FG are not the same one,
+		// and the recreated table's LOB data would land on fg without it.
+		{"lob on a filegroup differing only in case", tableScriptParts{cols: lob, ds: DataSpace{Name: "fg"},
+			table: tableScriptOptions{LobDataSpace: "FG", LobIsFileGroup: true}}, " TEXTIMAGE_ON [FG]"},
 		{"no lob column left", tableScriptParts{cols: noLob, ds: DataSpace{Name: "PRIMARY"},
 			table: tableScriptOptions{LobDataSpace: "FG2", LobIsFileGroup: true}}, ""},
 		{"partitioned", tableScriptParts{cols: lob, ds: DataSpace{Name: "ps", IsPartitionScheme: true, PartitionColumn: "c"},

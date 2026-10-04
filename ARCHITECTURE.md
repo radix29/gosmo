@@ -1096,7 +1096,7 @@ ddl, _ := sc.ScriptFunction(ctx, "dbo", "MyFunc")
 ddl, _ := sc.ScriptTrigger(ctx, "dbo", "MyTrigger")   // a CLR procedure, function or trigger: rebuilt AS EXTERNAL NAME from the catalog
 ddl, _ := sc.ScriptIndex(ctx, "dbo", "MyTable", "IX_MyTable_a")
 ddl, _ := sc.ScriptCheckConstraint(ctx, "dbo", "MyTable", "CK_MyTable_a")
-ddl, _ := sc.ScriptForeignKey(ctx, "dbo", "MyTable", "FK_MyTable_Other")
+ddl, _ := sc.ScriptForeignKey(ctx, "dbo", "MyTable", "FK_MyTable_Other") // these three: exact name first, see matchName
 ddl, _ := sc.ScriptStatistic(ctx, "dbo", "MyTable", "st_MyTable_a") // filter, NORECOMPUTE, INCREMENTAL kept
 ddl, _ := sc.ScriptSequence(ctx, "dbo", "MySeq")
 ddl, _ := sc.ScriptSynonym(ctx, "dbo", "MySyn")
@@ -1342,7 +1342,7 @@ an error, a panic or cancellation rolls back.
 - Receiver mirroring (`setIfApplied`) is not undone by a rollback: re-read.
 - **Multi-statement writes** (`execAtomic`: `CreateJob`, `ReorderSteps`,
   `SetAccounts`, `CreateLogin` with defaults, `AddSchedule` with an owner,
-  cascading `Table.Drop`) drop their own `BEGIN TRANSACTION`/`XACT_ABORT`
+  `CreateMailAccount` with a timeout, cascading `Table.Drop`) drop their own `BEGIN TRANSACTION`/`XACT_ABORT`
   inside one — a bare `ROLLBACK` there would end the caller's transaction. One
   that fails marks the transaction, and `InTransaction` then refuses to
   COMMIT even when `fn` swallowed the error.
@@ -1662,8 +1662,9 @@ refuses a by-name `sp_attach_schedule`, `sp_update_schedule` or
 `schedule_id` is the identity: `ScheduleByID` reads by it, `ScheduleByName`
 returns an error wrapping `ErrAmbiguous` for a shared name rather than an
 arbitrary match, `CreateSchedule` reads back the schedule it made through
-`sp_add_schedule`'s `@schedule_id OUTPUT`, and every write sends
-`@schedule_id` whenever the `*Schedule` carries one.
+`sp_add_schedule`'s `@schedule_id OUTPUT` — `AddSchedule` likewise through
+`sp_add_jobschedule`'s, its fallback handle carrying the id — and every write
+sends `@schedule_id` whenever the `*Schedule` carries one.
 
 ```go
 sched, _ := srv.CreateSchedule(ctx, gosmo.CreateScheduleRequest{

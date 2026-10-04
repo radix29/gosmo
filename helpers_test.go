@@ -1,6 +1,9 @@
 package gosmo
 
-import "testing"
+import (
+	"errors"
+	"testing"
+)
 
 func TestQuoteIdent(t *testing.T) {
 	cases := []struct {
@@ -96,3 +99,28 @@ func TestQualifiedName(t *testing.T) {
 // errOnly drops a Create*'s returned object, for a test that only asserts on
 // the error or on the statement it scripted.
 func errOnly[T any](_ T, err error) error { return err }
+
+// matchName: an exact match wins, a single case-insensitive one is the
+// fallback, and several case-insensitive ones with no exact one are refused
+// rather than resolved to whichever came first.
+func TestMatchName(t *testing.T) {
+	key := func(s string) string { return s }
+	for _, tc := range []struct {
+		items []string
+		name  string
+		want  string
+		err   error
+	}{
+		{[]string{"IX_a", "ix_A"}, "ix_A", "ix_A", nil},
+		{[]string{"IX_a", "ix_A"}, "IX_a", "IX_a", nil},
+		{[]string{"IX_a", "ix_A"}, "ix_a", "", ErrAmbiguous},
+		{[]string{"IX_a", "other"}, "ix_a", "IX_a", nil},
+		{[]string{"IX_a"}, "IX_b", "", ErrNotFound},
+		{nil, "x", "", ErrNotFound},
+	} {
+		got, err := matchName(tc.items, tc.name, key)
+		if got != tc.want || !errors.Is(err, tc.err) || (tc.err == nil) != (err == nil) {
+			t.Errorf("matchName(%q, %q) = %q, %v; want %q, %v", tc.items, tc.name, got, err, tc.want, tc.err)
+		}
+	}
+}

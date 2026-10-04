@@ -155,6 +155,6 @@ func (d *Database) TableChangeTrackingFor(ctx context.Context, schema, name stri
 	err := d.queryRow(ctx, func(row *sql.Row) error {
 		return row.Scan(&t.Schema, &t.Name, &t.Enabled, &t.TrackColumnsUpdated)
 	}, tableChangeTrackingSelect+`
-       AND SCHEMA_NAME(t.schema_id) = @p1 AND t.name = @p2`, schema, name)
+       AND SCHEMA_NAME(t.schema_id) COLLATE DATABASE_DEFAULT = @p1 AND t.name = @p2`, schema, name)
 	return foundRow(t, err, notFoundf("gosmo: table %s.%s not found in %q", schema, name, d.Name), fmt.Sprintf("change tracking for %s.%s in %q", schema, name, d.Name))
 }

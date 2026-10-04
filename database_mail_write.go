@@ -232,11 +232,19 @@ func (s *Server) CreateMailAccount(ctx context.Context, req CreateMailAccountReq
 	if err := req.Credentials.validate(); err != nil {
 		return nil, fmt.Errorf("gosmo: create mail account %q: %w", req.Name, err)
 	}
+	// With a timeout the account is two statements — the add procedure takes
+	// no @timeout — sent as one atomic batch: one at a time, a failed second
+	// left the account created behind an error, and the caller's retry then
+	// failed "already exists".
 	run, shown := mailAccountCreateStmts(req)
-	for i := range run {
-		if err := s.execSecret(ctx, run[i], shown[i]); err != nil {
-			return nil, fmt.Errorf("gosmo: create mail account %q: %w", req.Name, err)
-		}
+	var err error
+	if len(run) == 1 {
+		err = s.execSecret(ctx, run[0], shown[0])
+	} else {
+		err = s.execSecretAtomic(ctx, run, shown)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("gosmo: create mail account %q: %w", req.Name, err)
 	}
 	return createdObject(ctx, s.MailAccountRef(req.Name), func() (*MailAccount, error) {
 		return s.MailAccountByName(ctx, req.Name)

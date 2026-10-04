@@ -410,3 +410,37 @@ func TestScheduleProceduresAddressByKey(t *testing.T) {
 		}
 	}
 }
+
+// AddSchedule reads its schedule back by the id sp_add_jobschedule hands
+// back, and the handle it returns when that read finds nothing carries the
+// id: a name-only handle's Drop addresses the schedule by name and fails
+// Msg 14371 once another schedule shares it. The owner form is one atomic
+// batch with the id selected after it.
+func TestAddScheduleReturnsAHandleAddressedByID(t *testing.T) {
+	for _, owner := range []string{"", "ops"} {
+		s := captureServer(t, 17)
+		captured.reset(cannedRow{match: "sp_add_jobschedule", cols: []string{"id"}, row: []driver.Value{int64(42)}})
+		sch, err := s.JobRef("J").AddSchedule(t.Context(), CreateScheduleRequest{
+			Name: "Daily", FreqType: FreqDaily, FreqInterval: 1, OwnerLoginName: owner})
+		if err != nil {
+			t.Fatalf("owner %q: AddSchedule: %v", owner, err)
+		}
+		if sch.ID != 42 {
+			t.Fatalf("owner %q: AddSchedule handle ID = %d, want 42", owner, sch.ID)
+		}
+		batch := captured.find("sp_add_jobschedule")
+		if !strings.Contains(batch, "@schedule_id = @schedule_id OUTPUT") || !strings.HasSuffix(batch, "SELECT @schedule_id;") {
+			t.Errorf("owner %q: statement does not capture the id:\n%s", owner, batch)
+		}
+		if atomic := strings.HasPrefix(batch, "SET XACT_ABORT ON;"); atomic != (owner != "") {
+			t.Errorf("owner %q: atomic batch = %v:\n%s", owner, atomic, batch)
+		}
+		ctx, col := WithScript(t.Context())
+		if err := sch.Drop(ctx); err != nil {
+			t.Fatalf("Drop: %v", err)
+		}
+		if got := col.String(); !strings.Contains(got, "sp_delete_schedule @schedule_id = 42") {
+			t.Errorf("owner %q: Drop through the returned handle = %q, want it addressed by id", owner, got)
+		}
+	}
+}

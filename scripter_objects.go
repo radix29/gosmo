@@ -2,6 +2,7 @@ package gosmo
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math/big"
 	"strings"
@@ -28,12 +29,26 @@ func (sc *Scripter) ScriptIndex(ctx context.Context, schema, table, name string)
 	if err != nil {
 		return "", err
 	}
-	for _, idx := range indexes {
-		if strings.EqualFold(idx.Name, name) {
-			return buildIndexScript(idx, qualifiedName(schema, table), sc.opts), nil
-		}
+	idx, err := tableChild("index", indexes, schema, table, name, func(x *Index) string { return x.Name })
+	if err != nil {
+		return "", err
 	}
-	return "", notFoundf("gosmo: index %s on %s not found", quoteIdent(name), qualifiedName(schema, table))
+	return buildIndexScript(idx, qualifiedName(schema, table), sc.opts), nil
+}
+
+// tableChild picks the table child the Scripter was asked for by matchName:
+// the name an Object Explorer node carries is the exact catalog name, and in
+// a case-sensitive database a case-blind match can script a sibling instead.
+func tableChild[T any](kind string, items []T, schema, table, name string, key func(T) string) (T, error) {
+	v, err := matchName(items, name, key)
+	if errors.Is(err, ErrAmbiguous) {
+		return v, fmt.Errorf("gosmo: %s %s on %s: %w: two or more differ from it only in case, give the exact name",
+			kind, quoteIdent(name), qualifiedName(schema, table), ErrAmbiguous)
+	}
+	if err != nil {
+		return v, notFoundf("gosmo: %s %s on %s not found", kind, quoteIdent(name), qualifiedName(schema, table))
+	}
+	return v, nil
 }
 
 // buildIndexScript assembles one index's script from metadata already read.
@@ -86,12 +101,11 @@ func (sc *Scripter) ScriptCheckConstraint(ctx context.Context, schema, table, na
 	if err != nil {
 		return "", err
 	}
-	for _, ck := range checks {
-		if strings.EqualFold(ck.Name, name) {
-			return buildCheckConstraintScript(ck, qualifiedName(schema, table), sc.opts), nil
-		}
+	ck, err := tableChild("check constraint", checks, schema, table, name, func(x *CheckConstraint) string { return x.Name })
+	if err != nil {
+		return "", err
 	}
-	return "", notFoundf("gosmo: check constraint %s on %s not found", quoteIdent(name), qualifiedName(schema, table))
+	return buildCheckConstraintScript(ck, qualifiedName(schema, table), sc.opts), nil
 }
 
 // buildCheckConstraintScript assembles one CHECK constraint's script.
@@ -206,12 +220,11 @@ func (sc *Scripter) ScriptForeignKey(ctx context.Context, schema, table, name st
 	if err != nil {
 		return "", err
 	}
-	for _, fk := range fks {
-		if strings.EqualFold(fk.Name, name) {
-			return buildForeignKeyScript(fk, qualifiedName(schema, table), sc.opts), nil
-		}
+	fk, err := tableChild("foreign key", fks, schema, table, name, func(x *ForeignKey) string { return x.Name })
+	if err != nil {
+		return "", err
 	}
-	return "", notFoundf("gosmo: foreign key %s on %s not found", quoteIdent(name), qualifiedName(schema, table))
+	return buildForeignKeyScript(fk, qualifiedName(schema, table), sc.opts), nil
 }
 
 // buildForeignKeyScript assembles one foreign key's script, reusing the same

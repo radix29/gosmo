@@ -221,7 +221,10 @@ func (d *Database) use(ctx context.Context, conn sqlConn) error {
 // take the collation of the database the batch started in, so where that
 // differs from d's, a parameter compared with a built-in's result
 // (SCHEMA_NAME(x) = @p1, both collation-coercible) fails Msg 468 in the batch
-// and works alone — see recheckUse.
+// and works alone. So such a comparison carries COLLATE DATABASE_DEFAULT on
+// the built-in's side (a catalog column, implicit, needs nothing), which
+// TestNoNameBuiltinComparesWithAParameterUncollated enforces; recheckUse is
+// the safety net for one it misses, at three round trips.
 func (d *Database) useBatch(q string) string {
 	return "USE " + quoteIdent(d.Name) + "; IF @@ERROR <> 0 RETURN; " + q
 }
@@ -239,8 +242,9 @@ const msgCollationConflict = 468
 //
 // The exception is rerun: a collation conflict may be the batch's own doing
 // (see useBatch), and the session is now in d, so q must run again alone —
-// what every failing read did before 2026-10-04, which hid it. A by-name
-// lookup in a case-sensitive database fails without this.
+// what every failing read did before 2026-10-04, which hid it. Every
+// comparison gosmo's own queries make is collated (see useBatch), so this is
+// only the net for one written otherwise.
 func (d *Database) recheckUse(ctx context.Context, conn sqlConn, err error) (useErr error, rerun bool) {
 	if ctx.Err() != nil {
 		return nil, false
@@ -605,7 +609,7 @@ func (d *Database) TablesFiltered(ctx context.Context, filter ObjectFilter) ([]*
 // aliases it.
 var tableFilterColumns = filterColumns{
 	name:            "t.name",
-	schema:          "SCHEMA_NAME(t.schema_id)",
+	schema:          "SCHEMA_NAME(t.schema_id) COLLATE DATABASE_DEFAULT",
 	created:         "t.create_date",
 	memoryOptimized: "t.is_memory_optimized",
 }
@@ -615,7 +619,7 @@ func (d *Database) TablesBySchema(ctx context.Context, schema string) ([]*Table,
 	if err := requireSchema("tables by schema", schema, schema); err != nil {
 		return nil, err
 	}
-	return d.tablesWhere(ctx, userTablesClause+" AND SCHEMA_NAME(t.schema_id) = @p1", []any{schema})
+	return d.tablesWhere(ctx, userTablesClause+" AND SCHEMA_NAME(t.schema_id) COLLATE DATABASE_DEFAULT = @p1", []any{schema})
 }
 
 // tableSelect is the SELECT list every Table listing shares, version-gated:
@@ -669,8 +673,8 @@ func (d *Database) TableByName(ctx context.Context, schema, name string) (*Table
 		return nil, err
 	}
 	q := d.tableSelect() + `
-WHERE  SCHEMA_NAME(t.schema_id) = @p1
-  AND  t.name                   = @p2`
+WHERE  SCHEMA_NAME(t.schema_id) COLLATE DATABASE_DEFAULT = @p1
+  AND  t.name                                           = @p2`
 
 	return readByName(ctx, d, scanTable, q, []any{schema, name},
 		notFoundf("gosmo: table %s not found in %q", qualifiedName(schema, name), d.Name),

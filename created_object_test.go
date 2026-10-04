@@ -76,7 +76,7 @@ func TestNewByNameLookups(t *testing.T) {
 	if _, err := tbl.db.StoredProcedureByName(context.Background(), "dbo", "usp_x"); !errors.Is(err, ErrNotFound) {
 		t.Errorf("StoredProcedureByName on no rows: err = %v, want ErrNotFound", err)
 	}
-	if q := captured.find("FROM   sys.procedures"); !strings.Contains(q, "SCHEMA_NAME(p.schema_id) = @p1 AND p.name = @p2") {
+	if q := captured.find("FROM   sys.procedures"); !strings.Contains(q, "SCHEMA_NAME(p.schema_id) COLLATE DATABASE_DEFAULT = @p1 AND p.name = @p2") {
 		t.Errorf("StoredProcedureByName query = %q, want it narrowed by schema and name", q)
 	}
 

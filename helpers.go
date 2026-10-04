@@ -122,6 +122,39 @@ func createdObject[T any](ctx context.Context, handle T, read func() (T, error))
 	return v, err
 }
 
+// matchName picks the item whose key is name. A name read from the catalog
+// matches exactly, so an exact match always wins; failing that, a single
+// case-insensitive match is taken, so a caller typing ix_a still finds IX_A
+// on the default case-insensitive collation. Two or more case-insensitive
+// matches and no exact one is ErrAmbiguous — in a _CS_ database IX_a and ix_A
+// are two indexes, and taking either would script, alter or drop the wrong
+// one. None is ErrNotFound. Both are returned bare: the caller names what it
+// was looking for.
+//
+// Exact-first needs no collation, so it is right on a Ref handle too, whose
+// Collation is empty.
+func matchName[T any](items []T, name string, key func(T) string) (T, error) {
+	var zero, folded T
+	n := 0
+	for _, it := range items {
+		k := key(it)
+		if k == name {
+			return it, nil
+		}
+		if strings.EqualFold(k, name) {
+			folded = it
+			n++
+		}
+	}
+	switch n {
+	case 0:
+		return zero, ErrNotFound
+	case 1:
+		return folded, nil
+	}
+	return zero, ErrAmbiguous
+}
+
 // quoteIdent wraps a SQL Server identifier in square brackets, escaping any
 // embedded closing brackets. Thin internal alias for the exported QuoteName
 // (see quoting.go) so the many internal call sites stay terse.

@@ -35,7 +35,7 @@ func (d *Database) ViewsFiltered(ctx context.Context, filter ObjectFilter) ([]*V
 // it. There is no memory-optimized column outside sys.tables.
 var viewFilterColumns = filterColumns{
 	name:    "v.name",
-	schema:  "SCHEMA_NAME(v.schema_id)",
+	schema:  "SCHEMA_NAME(v.schema_id) COLLATE DATABASE_DEFAULT",
 	created: "v.create_date",
 }
 
@@ -101,7 +101,7 @@ ORDER  BY o.name`
 // listings the three System* families share.
 var allObjectsFilterColumns = filterColumns{
 	name:    "o.name",
-	schema:  "SCHEMA_NAME(o.schema_id)",
+	schema:  "SCHEMA_NAME(o.schema_id) COLLATE DATABASE_DEFAULT",
 	created: "o.create_date",
 }
 

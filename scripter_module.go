@@ -30,21 +30,21 @@ var (
 SELECT m.definition, m.uses_ansi_nulls, m.uses_quoted_identifier, CAST(0 AS bit), v.object_id
 FROM   sys.views v
 JOIN   sys.sql_modules m ON m.object_id = v.object_id
-WHERE  SCHEMA_NAME(v.schema_id) = @p1 AND v.name = @p2`, false}
+WHERE  SCHEMA_NAME(v.schema_id) COLLATE DATABASE_DEFAULT = @p1 AND v.name = @p2`, false}
 
 	moduleProcedure = moduleKind{"PROCEDURE", "stored procedure", `
 SELECT m.definition, ISNULL(m.uses_ansi_nulls, 0), ISNULL(m.uses_quoted_identifier, 0),
        CAST(CASE WHEN m.object_id IS NULL THEN 1 ELSE 0 END AS bit), p.object_id
 FROM   sys.procedures p
 LEFT   JOIN sys.sql_modules m ON m.object_id = p.object_id
-WHERE  SCHEMA_NAME(p.schema_id) = @p1 AND p.name = @p2`, true}
+WHERE  SCHEMA_NAME(p.schema_id) COLLATE DATABASE_DEFAULT = @p1 AND p.name = @p2`, true}
 
 	moduleFunction = moduleKind{"FUNCTION", "function", `
 SELECT m.definition, ISNULL(m.uses_ansi_nulls, 0), ISNULL(m.uses_quoted_identifier, 0),
        CAST(CASE WHEN m.object_id IS NULL THEN 1 ELSE 0 END AS bit), o.object_id
 FROM   sys.objects o
 LEFT   JOIN sys.sql_modules m ON m.object_id = o.object_id
-WHERE  SCHEMA_NAME(o.schema_id) = @p1 AND o.name = @p2
+WHERE  SCHEMA_NAME(o.schema_id) COLLATE DATABASE_DEFAULT = @p1 AND o.name = @p2
   AND  o.type IN ('FN','TF','IF','FS','FT')`, true}
 
 	// A trigger's own schema is its parent table's — sys.triggers has no
@@ -55,7 +55,7 @@ SELECT m.definition, ISNULL(m.uses_ansi_nulls, 0), ISNULL(m.uses_quoted_identifi
 FROM   sys.triggers tr
 JOIN   sys.objects o     ON o.object_id = tr.parent_id
 LEFT   JOIN sys.sql_modules m ON m.object_id = tr.object_id
-WHERE  SCHEMA_NAME(o.schema_id) = @p1 AND tr.name = @p2`, false}
+WHERE  SCHEMA_NAME(o.schema_id) COLLATE DATABASE_DEFAULT = @p1 AND tr.name = @p2`, false}
 )
 
 // scriptModule renders one sys.sql_modules-backed object. CREATE and ALTER
@@ -307,7 +307,7 @@ FROM   sys.triggers tr
 JOIN   sys.objects o ON o.object_id = tr.parent_id
 LEFT   JOIN sys.trigger_events te
        ON  te.object_id = tr.object_id AND (te.is_first = 1 OR te.is_last = 1)
-WHERE  SCHEMA_NAME(o.schema_id) = @p1 AND tr.name = @p2
+WHERE  SCHEMA_NAME(o.schema_id) COLLATE DATABASE_DEFAULT = @p1 AND tr.name = @p2
 ORDER  BY te.type`
 	type orderRow struct {
 		parent, event string

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"database/sql/driver"
+	"fmt"
 	"io"
 	"strings"
 	"sync"
@@ -25,12 +26,12 @@ func (c *captureConn) Close() error                              { return nil }
 func (c *captureConn) Begin() (driver.Tx, error)                 { return nil, driver.ErrSkip }
 
 func (c *captureConn) ExecContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Result, error) {
-	captured.add(query)
+	captured.add(query, args)
 	return driver.ResultNoRows, nil
 }
 
 func (c *captureConn) QueryContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Rows, error) {
-	captured.add(query)
+	captured.add(query, args)
 	return captured.replyFor(query), nil
 }
 
@@ -95,13 +96,19 @@ func tableMetadataRow(schema, name string) cannedRow {
 type captureLog struct {
 	mu     sync.Mutex
 	qs     []string
+	args   [][]any // args[i] is what qs[i] was sent with
 	canned []cannedRow
 }
 
-func (l *captureLog) add(q string) {
+func (l *captureLog) add(q string, args []driver.NamedValue) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.qs = append(l.qs, q)
+	vals := make([]any, len(args))
+	for i, a := range args {
+		vals[i] = a.Value
+	}
+	l.args = append(l.args, vals)
 }
 
 // replyFor returns the canned reply for q, or an empty result set.
@@ -119,7 +126,7 @@ func (l *captureLog) replyFor(q string) *captureRows {
 func (l *captureLog) reset(canned ...cannedRow) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	l.qs = nil
+	l.qs, l.args = nil, nil
 	l.canned = canned
 }
 
@@ -133,6 +140,19 @@ func (l *captureLog) find(needle string) string {
 		}
 	}
 	return ""
+}
+
+// findArgs returns the first captured statement containing needle and the
+// arguments it was sent with.
+func (l *captureLog) findArgs(needle string) (string, []any) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	for i, q := range l.qs {
+		if strings.Contains(q, needle) {
+			return q, l.args[i]
+		}
+	}
+	return "", nil
 }
 
 // count returns how many captured statements contain needle.
@@ -169,43 +189,63 @@ func captureTable(t *testing.T) *Table {
 	return &Table{db: &Database{server: srv, Name: "testdb"}, ObjectID: 1, Schema: "my.schema", Name: "Sales.Archive"}
 }
 
-// A qualified name embedded in a T-SQL string literal must be bracket-quoted
-// inside the literal: OBJECT_ID(N'[dbo].[Sales.Archive]'), never
-// OBJECT_ID(N'dbo.Sales.Archive'). Unbracketed, SQL Server reads a name
-// containing '.' as a multi-part name and resolves it to the wrong object or
-// to NULL — and a NULL object_id means "every object in the database" to
-// sys.dm_db_index_physical_stats, so the unbracketed form returns plausible
-// stats for the wrong tables rather than failing. Verified against SQL Server
-// 17.0.4055.5: the Table.FragmentationStats shape below silently returned
-// every index in the database, the Index.Fragmentation shape errored with
-// 2561 ("Parameter 3 is incorrect for this statement"), and the scripter's
-// OBJECT_ID existence guards inverted.
+// A qualified name handed to OBJECT_ID must be bracket-quoted:
+// [dbo].[Sales.Archive], never dbo.Sales.Archive. Unbracketed, SQL Server
+// reads a name containing '.' as a multi-part name and resolves it to the
+// wrong object or to NULL — and a NULL object_id means "every object in the
+// database" to sys.dm_db_index_physical_stats, so the unbracketed form
+// returns plausible stats for the wrong tables rather than failing. Verified
+// against SQL Server 17.0.4055.5: the Table.FragmentationStats shape below
+// silently returned every index in the database, the Index.Fragmentation
+// shape errored with 2561 ("Parameter 3 is incorrect for this statement"),
+// and the scripter's OBJECT_ID existence guards inverted.
+//
+// The fragmentation and storage reads bind the name (H7, review plan
+// 2026-10-04): one plan for every table, not one per name. Statistic.Columns
+// still builds it into a literal, which then needs escapeSingle as well.
 func TestFragmentationQueriesBracketQuoteTheObjectName(t *testing.T) {
 	const (
+		wantArg  = `[my.schema].[Sales.Archive]`
 		wantName = `OBJECT_ID(N'[my.schema].[Sales.Archive]')`
 		badName  = `OBJECT_ID(N'my.schema.Sales.Archive')`
 	)
 
+	// bound checks that the statement containing needle passes the table to
+	// OBJECT_ID as parameter n, bracket-quoted, and has it nowhere in its text.
+	bound := func(t *testing.T, needle string, n int) {
+		t.Helper()
+		q, args := captured.findArgs(needle)
+		if q == "" {
+			t.Fatalf("no %s statement was generated", needle)
+		}
+		if want := fmt.Sprintf("OBJECT_ID(@p%d)", n); !strings.Contains(q, want) {
+			t.Errorf("generated SQL does not contain %s:\n%s", want, q)
+		}
+		if strings.Contains(q, "Sales.Archive") {
+			t.Errorf("generated SQL interpolates the table name:\n%s", q)
+		}
+		if len(args) < n || args[n-1] != wantArg {
+			t.Errorf("args = %q, want @p%d = %q", args, n, wantArg)
+		}
+	}
+
 	t.Run("Index.Fragmentation", func(t *testing.T) {
 		tbl := captureTable(t)
-		idx := tbl.IndexRef("IX_pad")
 		// The capture driver returns no rows, so this errors; the statement it
 		// generated on the way is what's under test.
-		_, _ = idx.Fragmentation(context.Background(), FragmentationSampled)
-
-		q := captured.find("dm_db_index_physical_stats")
-		if q == "" {
-			t.Fatal("no dm_db_index_physical_stats statement was generated")
-		}
-		if strings.Contains(q, badName) {
-			t.Errorf("generated SQL uses the unbracketed name %s:\n%s", badName, q)
-		}
-		if !strings.Contains(q, wantName) {
-			t.Errorf("generated SQL does not contain %s:\n%s", wantName, q)
-		}
+		_, _ = tbl.IndexRef("IX_pad").Fragmentation(context.Background(), FragmentationSampled)
+		bound(t, "dm_db_index_physical_stats", 2)
 	})
 
-	// Not a fragmentation query, but the same literal: Columns finds its
+	t.Run("Index.StorageInfo", func(t *testing.T) {
+		tbl := captureTable(t)
+		// The header read finds no row and stops there; it is the one the
+		// other two share their target with.
+		_, _ = tbl.IndexRef("IX_pad").StorageInfo(context.Background())
+		bound(t, "sys.data_spaces", 2)
+	})
+
+	// Not a fragmentation query, but the same name: Columns finds its
 	// statistic by name so that it works from a StatisticRef on a TableRef.
 	t.Run("Statistic.Columns", func(t *testing.T) {
 		tbl := captureTable(t)
@@ -226,23 +266,13 @@ func TestFragmentationQueriesBracketQuoteTheObjectName(t *testing.T) {
 	t.Run("Table.FragmentationStats", func(t *testing.T) {
 		tbl := captureTable(t)
 		_, _ = tbl.FragmentationStats(context.Background(), "LIMITED")
-
-		q := captured.find("dm_db_index_physical_stats")
-		if q == "" {
-			t.Fatal("no dm_db_index_physical_stats statement was generated")
-		}
-		if strings.Contains(q, badName) {
-			t.Errorf("generated SQL uses the unbracketed name %s:\n%s", badName, q)
-		}
-		if !strings.Contains(q, wantName) {
-			t.Errorf("generated SQL does not contain %s:\n%s", wantName, q)
-		}
+		bound(t, "dm_db_index_physical_stats", 1)
 	})
 }
 
-// A name containing a single quote must still be escaped for the literal it
-// sits in, on top of being bracket-quoted — the two are independent.
-func TestFragmentationQueryEscapesQuoteInObjectName(t *testing.T) {
+// A name containing a single quote is bound as it is: escaping belongs to a
+// literal, and a bound name has none — an escaped one would name another table.
+func TestFragmentationQueryBindsQuoteInObjectNameUnescaped(t *testing.T) {
 	db, err := sql.Open("capture", "")
 	if err != nil {
 		t.Fatalf("sql.Open: %v", err)
@@ -253,13 +283,13 @@ func TestFragmentationQueryEscapesQuoteInObjectName(t *testing.T) {
 	tbl := &Table{db: &Database{server: &Server{db: db}, Name: "testdb"}, Schema: "dbo", Name: "O'Brien.Log"}
 	_, _ = tbl.FragmentationStats(context.Background(), "LIMITED")
 
-	q := captured.find("dm_db_index_physical_stats")
+	q, args := captured.findArgs("dm_db_index_physical_stats")
 	if q == "" {
 		t.Fatal("no dm_db_index_physical_stats statement was generated")
 	}
-	const want = `OBJECT_ID(N'[dbo].[O''Brien.Log]')`
-	if !strings.Contains(q, want) {
-		t.Errorf("generated SQL does not contain %s:\n%s", want, q)
+	const want = `[dbo].[O'Brien.Log]`
+	if len(args) != 1 || args[0] != want {
+		t.Errorf("args = %q, want [%q]", args, want)
 	}
 }
 

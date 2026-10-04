@@ -3,6 +3,7 @@ package gosmo
 import (
 	"context"
 	"database/sql"
+	"slices"
 	"testing"
 )
 
@@ -84,5 +85,33 @@ func TestColumnEncryptionKeySummaryFollowsTheValues(t *testing.T) {
 	if cek.MasterKeyName != "" || cek.EncryptionAlgorithm != "" {
 		t.Errorf("with no values left, summary = %q/%q, want both empty",
 			cek.MasterKeyName, cek.EncryptionAlgorithm)
+	}
+}
+
+// In a case-sensitive database cmk and CMK are two column master keys. The
+// mirror once deleted every value whose master key matched case-blindly, so
+// dropping one value left the key with none.
+func TestColumnEncryptionKeyDropValueMirrorsOnlyTheOneDropped(t *testing.T) {
+	ctx := context.Background()
+	for _, tc := range []struct {
+		drop string
+		want []string
+	}{
+		{"cmk", []string{"CMK"}},
+		{"CMK", []string{"cmk"}},
+		{"Cmk", []string{"cmk", "CMK"}}, // ambiguous: the write ran, the mirror waits for a re-read
+	} {
+		cek := captureCEK(t)
+		cek.Values = []*ColumnEncryptionKeyValue{{MasterKeyName: "cmk"}, {MasterKeyName: "CMK"}}
+		if err := cek.DropValue(ctx, tc.drop); err != nil {
+			t.Fatalf("DropValue(%q): %v", tc.drop, err)
+		}
+		var got []string
+		for _, v := range cek.Values {
+			got = append(got, v.MasterKeyName)
+		}
+		if !slices.Equal(got, tc.want) {
+			t.Errorf("DropValue(%q): Values = %q, want %q", tc.drop, got, tc.want)
+		}
 	}
 }

@@ -574,6 +574,44 @@ func (s *Server) execPasswordsAtomic(ctx context.Context, stmts []string, passwo
 	return err
 }
 
+// execSecretAtomic is execAtomic for statements carrying a secret that
+// textual redaction cannot find, or need not: the batch runs from run and is
+// observed and captured from shown, statement for statement (see
+// execSecret). CreateMailAccount with a timeout is the case — its builder
+// renders both halves already.
+func (s *Server) execSecretAtomic(ctx context.Context, run, shown []string) error {
+	t := txFrom(ctx, s)
+	if t == nil || Scripting(ctx) {
+		return s.execSecret(ctx, atomicBatch(run), atomicBatch(shown))
+	}
+	err := s.execSecret(ctx, atomicTxBatch(run), atomicTxBatch(shown))
+	t.fail(err)
+	return err
+}
+
+// execAtomicScan is execAtomic for a write that reads a value back: stmts
+// run as one atomic batch, as execAtomic sends it, followed by read — a
+// SELECT of a variable the batch DECLAREd, which is batch-scoped and so
+// survives END CATCH — whose one row is scanned into dest. Like execScan it
+// is never retried, and it does not handle Scripting(ctx): the caller
+// collects its own form. It observes the batch it ran.
+func (s *Server) execAtomicScan(ctx context.Context, stmts []string, read string, dest ...any) error {
+	t := txFrom(ctx, s)
+	batch := atomicBatch(stmts)
+	if t != nil {
+		batch = atomicTxBatch(stmts)
+	}
+	batch += "\n" + read
+	err := s.execScan(ctx, batch, dest...)
+	if t != nil {
+		t.fail(err)
+	}
+	if err == nil {
+		observe(ctx, s, ScriptEntry{Server: scriptServerName(ctx, s), SQL: batch})
+	}
+	return err
+}
+
 // execAtomic is Server.execAtomic for a database-scoped write.
 func (d *Database) execAtomic(ctx context.Context, stmts []string) error {
 	t := txFrom(ctx, d.server)

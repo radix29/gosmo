@@ -62,9 +62,9 @@ func TestLiveHandleFold(t *testing.T) {
 		t.Helper()
 		var n int
 		err := d.queryRow(ctx, func(r *sql.Row) error { return r.Scan(&n) }, `
-SELECT (SELECT COUNT(*) FROM sys.objects WHERE SCHEMA_NAME(schema_id) = @p1 AND name = @p2)
-     + (SELECT COUNT(*) FROM sys.types WHERE is_user_defined = 1 AND SCHEMA_NAME(schema_id) = @p1 AND name = @p2)
-     + (SELECT COUNT(*) FROM sys.xml_schema_collections WHERE SCHEMA_NAME(schema_id) = @p1 AND name = @p2)`, schema, name)
+SELECT (SELECT COUNT(*) FROM sys.objects WHERE SCHEMA_NAME(schema_id) COLLATE DATABASE_DEFAULT = @p1 AND name = @p2)
+     + (SELECT COUNT(*) FROM sys.types WHERE is_user_defined = 1 AND SCHEMA_NAME(schema_id) COLLATE DATABASE_DEFAULT = @p1 AND name = @p2)
+     + (SELECT COUNT(*) FROM sys.xml_schema_collections WHERE SCHEMA_NAME(schema_id) COLLATE DATABASE_DEFAULT = @p1 AND name = @p2)`, schema, name)
 		if err != nil {
 			t.Fatalf("look up [%s].[%s]: %v", schema, name, err)
 		}

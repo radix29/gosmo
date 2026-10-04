@@ -355,7 +355,8 @@ type IndexStorageInfo struct {
 // it, so both work from an IndexRef handle — whose table may itself be a
 // TableRef with no ObjectID.
 func (idx *Index) StorageInfo(ctx context.Context) (*IndexStorageInfo, error) {
-	target := fmt.Sprintf("i.object_id = OBJECT_ID(N'%s') AND i.name = @p1", escapeSingle(idx.table.FullName()))
+	const target = "i.object_id = OBJECT_ID(@p2) AND i.name = @p1"
+	table := idx.table.FullName()
 	headerQ := `
 SELECT
     ds.name, ds.type,
@@ -383,7 +384,7 @@ GROUP  BY ds.name, ds.type, pf.name, i.object_id, i.index_id`
 	err := db.queryRow(ctx, func(row *sql.Row) error {
 		return row.Scan(&fgOrPS, &dsType, &info.PartitionScheme, &info.PartitionColumn,
 			&info.RowCount, &info.UsedKB, &info.ReservedKB)
-	}, headerQ, idx.Name)
+	}, headerQ, idx.Name, table)
 	if err != nil {
 		return nil, fmt.Errorf("gosmo: storage info for index %q: %w", idx.Name, err)
 	}
@@ -403,7 +404,7 @@ FROM   sys.indexes i
 CROSS  APPLY sys.dm_db_index_physical_stats(DB_ID(), i.object_id, i.index_id, NULL, 'SAMPLED') s
 WHERE  ` + target + ` AND s.index_level = 0 AND s.alloc_unit_type_desc = N'IN_ROW_DATA'`
 	var avg sql.NullFloat64
-	if err := db.queryRow(ctx, func(row *sql.Row) error { return row.Scan(&avg) }, avgQ, idx.Name); err == nil {
+	if err := db.queryRow(ctx, func(row *sql.Row) error { return row.Scan(&avg) }, avgQ, idx.Name, table); err == nil {
 		info.AvgRecordSize = avg.Float64
 	}
 
@@ -415,7 +416,7 @@ JOIN   sys.allocation_units a ON a.container_id = p.partition_id
 WHERE  ` + target + `
 GROUP  BY a.type_desc
 ORDER  BY a.type_desc`
-	rows, err := db.query(ctx, allocQ, idx.Name)
+	rows, err := db.query(ctx, allocQ, idx.Name, table)
 	if err != nil {
 		return nil, fmt.Errorf("gosmo: allocation units for index %q: %w", idx.Name, err)
 	}
@@ -448,16 +449,16 @@ func (idx *Index) Fragmentation(ctx context.Context, mode FragmentationMode) (*I
 		return nil, fmt.Errorf("gosmo: fragmentation for index %q: %w", idx.Name, err)
 	}
 
-	q := fragmentationSelect(mode) + fmt.Sprintf(`
-WHERE  i.object_id = OBJECT_ID(N'%s') AND i.name = @p1
-GROUP  BY i.name, i.index_id`, escapeSingle(idx.table.FullName()))
+	q := fragmentationSelect(mode) + `
+WHERE  i.object_id = OBJECT_ID(@p2) AND i.name = @p1
+GROUP  BY i.name, i.index_id`
 
 	var f *IndexFragmentation
 	if err := idx.table.db.queryRow(ctx, func(row *sql.Row) error {
 		var err error
 		f, err = scanFragmentation(row.Scan)
 		return err
-	}, q, idx.Name); err != nil {
+	}, q, idx.Name, idx.table.FullName()); err != nil {
 		return nil, fmt.Errorf("gosmo: fragmentation for index %q: %w", idx.Name, err)
 	}
 	return f, nil
@@ -604,11 +605,11 @@ func (t *Table) FragmentationStats(ctx context.Context, mode FragmentationMode) 
 		return nil, fmt.Errorf("gosmo: fragmentation stats: %w", err)
 	}
 
-	q := fragmentationSelect(mode) + fmt.Sprintf(`
-WHERE  i.object_id = OBJECT_ID(N'%s') AND i.index_id > 0
+	q := fragmentationSelect(mode) + `
+WHERE  i.object_id = OBJECT_ID(@p1) AND i.index_id > 0
 GROUP  BY i.name, i.index_id
-ORDER  BY 3 DESC, i.name`, escapeSingle(t.FullName()))
+ORDER  BY 3 DESC, i.name`
 
-	rows, err := t.db.query(ctx, q)
+	rows, err := t.db.query(ctx, q, t.FullName())
 	return scanRows(rows, err, fmt.Sprintf("fragmentation stats for %s", t.FullName()), scanFragmentation)
 }

@@ -83,8 +83,8 @@ func (d *Database) SequenceByName(ctx context.Context, schema, name string) (*Se
 		return nil, err
 	}
 	return readByName(ctx, d, scanSequence, d.sequenceSelect()+`
-WHERE  SCHEMA_NAME(s.schema_id) = @p1
-  AND  s.name                   = @p2`, []any{schema, name},
+WHERE  SCHEMA_NAME(s.schema_id) COLLATE DATABASE_DEFAULT = @p1
+  AND  s.name                                            = @p2`, []any{schema, name},
 		notFoundf("gosmo: sequence %s not found in %q", qualifiedName(schema, name), d.Name),
 		fmt.Sprintf("find sequence %s in %q", qualifiedName(schema, name), d.Name))
 }
@@ -297,8 +297,8 @@ func (d *Database) SynonymByName(ctx context.Context, schema, name string) (*Syn
 		return nil, err
 	}
 	return readByName(ctx, d, scanSynonym, synonymSelect+`
-WHERE  SCHEMA_NAME(schema_id) = @p1
-  AND  name                   = @p2`, []any{schema, name},
+WHERE  SCHEMA_NAME(schema_id) COLLATE DATABASE_DEFAULT = @p1
+  AND  name                                            = @p2`, []any{schema, name},
 		notFoundf("gosmo: synonym %s not found in %q", qualifiedName(schema, name), d.Name),
 		fmt.Sprintf("find synonym %s in %q", qualifiedName(schema, name), d.Name))
 }

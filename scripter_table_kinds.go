@@ -231,7 +231,7 @@ func tableStorageClauses(p tableScriptParts) string {
 	var sb strings.Builder
 	o := p.table
 	if o.LobDataSpace != "" && o.LobIsFileGroup && p.ds.Name != "" && !p.ds.IsPartitionScheme &&
-		!strings.EqualFold(o.LobDataSpace, p.ds.Name) && hasLOBColumn(p.cols) {
+		o.LobDataSpace != p.ds.Name && hasLOBColumn(p.cols) {
 		fmt.Fprintf(&sb, " TEXTIMAGE_ON %s", quoteIdent(o.LobDataSpace))
 	}
 	if o.FileStreamDataSpace != "" && hasFileStreamColumn(p.cols) {

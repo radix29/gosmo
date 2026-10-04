@@ -123,7 +123,7 @@ func (d *Database) RuleByName(ctx context.Context, schema, name string) (*Rule, 
 		return row.Scan(&r.Name, &r.Schema, &r.ObjectID,
 			&r.CreateDate, &r.ModifyDate)
 	}, ruleSelect+`
-   AND SCHEMA_NAME(o.schema_id) = @p1 AND o.name = @p2`, schema, name)
+   AND SCHEMA_NAME(o.schema_id) COLLATE DATABASE_DEFAULT = @p1 AND o.name = @p2`, schema, name)
 	return foundRow(r, err, notFoundf("gosmo: rule %s not found in %q", qualifiedName(schema, name), d.Name), fmt.Sprintf("read rule %s in %q", qualifiedName(schema, name), d.Name))
 }
 
@@ -186,7 +186,7 @@ func (d *Database) DefaultByName(ctx context.Context, schema, name string) (*Def
 		return row.Scan(&df.Name, &df.Schema, &df.ObjectID,
 			&df.CreateDate, &df.ModifyDate)
 	}, defaultSelect+`
-   AND SCHEMA_NAME(o.schema_id) = @p1 AND o.name = @p2`, schema, name)
+   AND SCHEMA_NAME(o.schema_id) COLLATE DATABASE_DEFAULT = @p1 AND o.name = @p2`, schema, name)
 	return foundRow(df, err, notFoundf("gosmo: default %s not found in %q", qualifiedName(schema, name), d.Name), fmt.Sprintf("read default %s in %q", qualifiedName(schema, name), d.Name))
 }
 

@@ -114,7 +114,7 @@ func (d *Database) UserDefinedDataTypeByName(ctx context.Context, schema, name s
 		return nil, err
 	}
 	return readByName(ctx, d, scanUserDefinedDataType, userDefinedDataTypeSelect+`
-   AND SCHEMA_NAME(t.schema_id) = @p1 AND t.name = @p2`, []any{schema, name},
+   AND SCHEMA_NAME(t.schema_id) COLLATE DATABASE_DEFAULT = @p1 AND t.name = @p2`, []any{schema, name},
 		notFoundf("gosmo: user-defined data type %s not found in %q", qualifiedName(schema, name), d.Name), fmt.Sprintf("read user-defined data type %s in %q", qualifiedName(schema, name), d.Name))
 }
 
@@ -200,7 +200,7 @@ func (d *Database) UserDefinedTableTypeByName(ctx context.Context, schema, name 
 		return nil, err
 	}
 	return readByName(ctx, d, scanUserDefinedTableType, userDefinedTableTypeSelect+`
-   AND SCHEMA_NAME(tt.schema_id) = @p1 AND tt.name = @p2`, []any{schema, name},
+   AND SCHEMA_NAME(tt.schema_id) COLLATE DATABASE_DEFAULT = @p1 AND tt.name = @p2`, []any{schema, name},
 		notFoundf("gosmo: user-defined table type %s not found in %q", qualifiedName(schema, name), d.Name), fmt.Sprintf("read user-defined table type %s in %q", qualifiedName(schema, name), d.Name))
 }
 
@@ -343,7 +343,7 @@ func (d *Database) ClrTypeByName(ctx context.Context, schema, name string) (*Clr
 		return nil, err
 	}
 	return readByName(ctx, d, scanClrType, clrTypeSelect+`
-   AND SCHEMA_NAME(t.schema_id) = @p1 AND t.name = @p2`, []any{schema, name},
+   AND SCHEMA_NAME(t.schema_id) COLLATE DATABASE_DEFAULT = @p1 AND t.name = @p2`, []any{schema, name},
 		notFoundf("gosmo: CLR type %s not found in %q", qualifiedName(schema, name), d.Name), fmt.Sprintf("read CLR type %s in %q", qualifiedName(schema, name), d.Name))
 }
 
@@ -468,7 +468,7 @@ func (d *Database) XMLSchemaCollectionByName(ctx context.Context, schema, name s
 		return nil, err
 	}
 	return readByName(ctx, d, scanXMLSchemaCollection, xmlSchemaCollectionSelect+`
-   AND SCHEMA_NAME(x.schema_id) = @p1 AND x.name = @p2`, []any{schema, name},
+   AND SCHEMA_NAME(x.schema_id) COLLATE DATABASE_DEFAULT = @p1 AND x.name = @p2`, []any{schema, name},
 		notFoundf("gosmo: XML schema collection %s not found in %q", qualifiedName(schema, name), d.Name), fmt.Sprintf("read XML schema collection %s in %q", qualifiedName(schema, name), d.Name))
 }
 

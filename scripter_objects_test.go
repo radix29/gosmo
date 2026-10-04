@@ -1,6 +1,7 @@
 package gosmo
 
 import (
+	"errors"
 	"strings"
 	"testing"
 )
@@ -203,5 +204,39 @@ func TestBuildStatisticScriptKeepsFilterAndOptions(t *testing.T) {
 	}
 	if strings.Contains(got, "CREATE") {
 		t.Errorf("DROP script carries a CREATE:\n%s", got)
+	}
+}
+
+// The Scripter's index, check-constraint and foreign-key lookups go through
+// matchName: in a _CS_ database a table can hold IX_a and ix_A, and the name
+// an Object Explorer node carries is exact. A case-blind first match scripted
+// — and a DROP-and-CREATE then dropped — the sibling.
+func TestScriptTableChildPicksTheExactName(t *testing.T) {
+	idx := []*Index{{Name: "IX_a"}, {Name: "ix_A"}}
+	ck := []*CheckConstraint{{Name: "CK_x"}, {Name: "ck_X"}}
+	fk := []*ForeignKey{{Name: "FK_p"}, {Name: "fk_P"}}
+	check := func(kind string, got string, err error, want string) {
+		t.Helper()
+		if err != nil || got != want {
+			t.Errorf("%s: got %q, %v; want %q", kind, got, err, want)
+		}
+	}
+	for i := range 2 {
+		gi, err := tableChild("index", idx, "dbo", "T", idx[i].Name, func(x *Index) string { return x.Name })
+		check("index", gi.Name, err, idx[i].Name)
+		gc, err := tableChild("check constraint", ck, "dbo", "T", ck[i].Name, func(x *CheckConstraint) string { return x.Name })
+		check("check constraint", gc.Name, err, ck[i].Name)
+		gf, err := tableChild("foreign key", fk, "dbo", "T", fk[i].Name, func(x *ForeignKey) string { return x.Name })
+		check("foreign key", gf.Name, err, fk[i].Name)
+	}
+	if _, err := tableChild("index", idx, "dbo", "T", "ix_a", func(x *Index) string { return x.Name }); !errors.Is(err, ErrAmbiguous) {
+		t.Errorf("a name two indexes match case-blindly: err %v, want ErrAmbiguous", err)
+	}
+	if _, err := tableChild("index", idx[:1], "dbo", "T", "ix_a", func(x *Index) string { return x.Name }); err != nil {
+		t.Errorf("a name one index matches case-blindly: %v, want it found", err)
+	}
+	if _, err := tableChild("index", idx, "dbo", "T", "nope", func(x *Index) string { return x.Name }); !errors.Is(err, ErrNotFound) ||
+		!strings.Contains(err.Error(), "index [nope] on [dbo].[T] not found") {
+		t.Errorf("no match: err %v, want the not-found message", err)
 	}
 }

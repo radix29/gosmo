@@ -194,3 +194,59 @@ func TestLiveSharedScheduleNames(t *testing.T) {
 		t.Errorf("ScheduleByName after dropping the second = %+v, %v; want %d", only, err, first.ID)
 	}
 }
+
+// TestLiveAddScheduleSharedName pins H5 (gossms
+// docs/review-plan-2026-10-04.md): AddSchedule reads back the schedule it
+// made by the id sp_add_jobschedule returns, so two schedules of one name on
+// one job come back as two handles, and detaching and dropping the first by
+// its handle leaves the second. Before, the handle was the job's newest schedule of that
+// name, or a name-only handle msdb refuses (Msg 14371) once the name is shared.
+//
+//	go test -tags livedb . -run TestLiveAddScheduleSharedName -v -livedb '...'
+func TestLiveAddScheduleSharedName(t *testing.T) {
+	db, ctx, done := liveDB(t)
+	defer done()
+	srv := &Server{db: db}
+
+	const (
+		jobName = "gosmo_live_h5_job"
+		dup     = "gosmo_live_h5_dup"
+	)
+	drop := func() {
+		srv.exec(context.Background(), "IF EXISTS (SELECT 1 FROM msdb.dbo.sysjobs WHERE name = N'"+jobName+"') "+
+			"EXEC msdb.dbo.sp_delete_job @job_name = N'"+jobName+"', @delete_unused_schedule = 1")
+	}
+	drop()
+	// Deferred, not t.Cleanup: see TestLiveJobAddScheduleRecurrences.
+	defer drop()
+
+	j, err := srv.CreateJob(ctx, CreateJobRequest{Name: jobName})
+	if err != nil {
+		t.Fatalf("CreateJob: %v", err)
+	}
+	req := CreateScheduleRequest{Name: dup, Enabled: true, FreqType: FreqDaily, FreqInterval: 1, FreqSubdayType: SubdayOnce}
+	first, err := j.AddSchedule(ctx, req)
+	if err != nil {
+		t.Fatalf("AddSchedule first: %v", err)
+	}
+	req.OwnerLoginName = "sa" // the atomic branch
+	second, err := j.AddSchedule(ctx, req)
+	if err != nil {
+		t.Fatalf("AddSchedule second (with owner): %v", err)
+	}
+	if first.ID == 0 || second.ID == 0 || first.ID == second.ID {
+		t.Fatalf("AddSchedule ids = %d, %d; want two distinct ids", first.ID, second.ID)
+	}
+	// msdb refuses to drop an attached schedule (Msg 14372), and detaching
+	// by a name two of the job's schedules share is ambiguous too.
+	if err := j.DetachSchedule(ctx, first); err != nil {
+		t.Fatalf("DetachSchedule first by its handle: %v", err)
+	}
+	if err := first.Drop(ctx); err != nil {
+		t.Fatalf("Drop first by its handle: %v", err)
+	}
+	left, err := j.Schedules(ctx)
+	if err != nil || len(left) != 1 || left[0].ID != second.ID {
+		t.Errorf("job schedules after dropping the first = %v, %v; want only %d", left, err, second.ID)
+	}
+}

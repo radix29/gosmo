@@ -28,19 +28,20 @@ func TestMailAccountStatementShapes(t *testing.T) {
 		}, []string{"EXEC msdb.dbo.sysmail_add_account_sp @account_name = N'ops', @email_address = N'ops@example.com', " +
 			"@mailserver_name = N'smtp.example.com', @enable_ssl = 0, @use_default_credentials = 0"}},
 		// No @timeout on the add procedure: a timeout is a second statement,
-		// which keeps the credential.
+		// which keeps the credential — sent with the add as one atomic batch,
+		// so a failed update leaves no account behind.
 		{"create windows with timeout", func(ctx context.Context) error {
 			_, err := s.CreateMailAccount(ctx, CreateMailAccountRequest{
 				Name: "o'ps", EmailAddress: "ops@example.com", DisplayName: "Ops", ReplyToAddress: "r@example.com",
 				Description: "d", ServerName: "smtp", Port: 587, EnableSSL: true, Timeout: 30,
 				Credentials: MailCredentials{Authentication: MailAuthWindows, UserName: "ignored"}})
 			return err
-		}, []string{
+		}, []string{atomicBatch([]string{
 			"EXEC msdb.dbo.sysmail_add_account_sp @account_name = N'o''ps', @email_address = N'ops@example.com', " +
 				"@display_name = N'Ops', @replyto_address = N'r@example.com', @description = N'd', " +
 				"@mailserver_name = N'smtp', @port = 587, @enable_ssl = 1, @use_default_credentials = 1",
 			"EXEC msdb.dbo.sysmail_update_account_sp @account_name = N'o''ps', @timeout = 30, @no_credential_change = 1",
-		}},
+		})}},
 		// Alter with no Credentials must keep the stored ones: an omitted
 		// @username alone would drop them.
 		{"alter keeps credentials", func(ctx context.Context) error {
@@ -316,5 +317,27 @@ func TestSendMailIsNotRetried(t *testing.T) {
 	}
 	if n := eofQueries.Load(); n != 1 {
 		t.Errorf("sp_send_dbmail sent %d times, want 1", n)
+	}
+}
+
+// With a timeout an account is two statements, sent as one atomic batch that
+// runs with the password and is observed with the placeholder: one at a
+// time, a failed update left the account behind an error.
+func TestMailAccountWithTimeoutIsOneAtomicBatch(t *testing.T) {
+	s := captureServer(t, 17)
+	ctx, got := observed(t.Context())
+	_, err := s.CreateMailAccount(ctx, CreateMailAccountRequest{Name: "a", EmailAddress: "a@b", ServerName: "x", Timeout: 30,
+		Credentials: MailCredentials{Authentication: MailAuthBasic, UserName: "u", Password: "s3cr3t"}})
+	if err != nil {
+		t.Fatalf("CreateMailAccount: %v", err)
+	}
+	ran := captured.find("sysmail_add_account_sp")
+	if !strings.HasPrefix(ran, "SET XACT_ABORT ON;") || !strings.Contains(ran, "sysmail_update_account_sp") ||
+		!strings.Contains(ran, "N's3cr3t'") || captured.count("sysmail_update_account_sp") != 1 {
+		t.Errorf("ran %q; want one atomic batch with the add, the update and the password", ran)
+	}
+	if len(*got) != 1 || strings.Contains((*got)[0].SQL, "s3cr3t") || !strings.Contains((*got)[0].SQL, PasswordPlaceholder) ||
+		!strings.HasPrefix((*got)[0].SQL, "SET XACT_ABORT ON;") {
+		t.Errorf("observed %q; want the one batch with the placeholder", observedSQL(*got))
 	}
 }

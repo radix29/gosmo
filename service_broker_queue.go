@@ -180,7 +180,7 @@ func (d *Database) BrokerQueueByName(ctx context.Context, schema, name string) (
 		return nil, err
 	}
 	return readByName(ctx, d, scanBrokerQueue, queueSelect+`
-WHERE  SCHEMA_NAME(q.schema_id) = @p1 AND q.name = @p2`, []any{schema, name},
+WHERE  SCHEMA_NAME(q.schema_id) COLLATE DATABASE_DEFAULT = @p1 AND q.name = @p2`, []any{schema, name},
 		notFoundf("gosmo: queue %s not found in %q", qualifiedName(schema, name), d.Name), fmt.Sprintf("read queue %s in %q", qualifiedName(schema, name), d.Name))
 }
 

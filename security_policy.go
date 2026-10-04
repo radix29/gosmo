@@ -87,8 +87,8 @@ func (d *Database) SecurityPolicyByName(ctx context.Context, schema, name string
 		return nil, err
 	}
 	p, err := readByName(ctx, d, scanSecurityPolicy, securityPolicySelect+`
-WHERE  SCHEMA_NAME(sp.schema_id) = @p1
-  AND  sp.name                   = @p2`, []any{schema, name},
+WHERE  SCHEMA_NAME(sp.schema_id) COLLATE DATABASE_DEFAULT = @p1
+  AND  sp.name                                           = @p2`, []any{schema, name},
 		notFoundf("gosmo: security policy %s not found in %q", qualifiedName(schema, name), d.Name),
 		fmt.Sprintf("find security policy %s in %q", qualifiedName(schema, name), d.Name))
 	if err != nil {

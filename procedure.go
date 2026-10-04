@@ -179,7 +179,7 @@ func (d *Database) StoredProceduresFiltered(ctx context.Context, filter ObjectFi
 // storedProceduresWhere aliases it.
 var procedureFilterColumns = filterColumns{
 	name:    "p.name",
-	schema:  "SCHEMA_NAME(p.schema_id)",
+	schema:  "SCHEMA_NAME(p.schema_id) COLLATE DATABASE_DEFAULT",
 	created: "p.create_date",
 }
 
@@ -211,7 +211,7 @@ func (d *Database) StoredProcedureByName(ctx context.Context, schema, name strin
 	if err := requireSchema("stored procedure by name", schema, name); err != nil {
 		return nil, err
 	}
-	procs, err := d.storedProceduresWhere(ctx, "AND SCHEMA_NAME(p.schema_id) = @p1 AND p.name = @p2", []any{schema, name})
+	procs, err := d.storedProceduresWhere(ctx, "AND SCHEMA_NAME(p.schema_id) COLLATE DATABASE_DEFAULT = @p1 AND p.name = @p2", []any{schema, name})
 	if err != nil {
 		return nil, fmt.Errorf("gosmo: find stored procedure %s in %q: %w", qualifiedName(schema, name), d.Name, err)
 	}

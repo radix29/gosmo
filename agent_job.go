@@ -431,45 +431,49 @@ func (s *Server) CreateJob(ctx context.Context, req CreateJobRequest) (*Job, err
 // owner — so an OwnerLoginName is applied by sp_update_schedule in the same
 // execAtomic write, and a refused owner leaves no schedule behind.
 //
-// Schedule names are not unique, so the result is the job's newest schedule
-// of that name: the one just created.
+// The new schedule_id comes back through sp_add_jobschedule's OUTPUT
+// parameter and the schedule is read back by it, as CreateSchedule does:
+// schedule names are not unique, and a handle without the id addresses the
+// schedule by name, which fails Msg 14371 once another shares it. When the
+// read finds nothing (a creator who cannot see msdb's row) the ScheduleRef
+// handle still carries the id. The write is never retried. Under
+// Scripting(ctx) the plain statements are collected and the result is the
+// ScheduleRef handle, with no id.
 func (j *Job) AddSchedule(ctx context.Context, req CreateScheduleRequest) (*Schedule, error) {
 	if req.Name == "" {
 		return nil, fmt.Errorf("gosmo: add schedule to job %q: name is required", j.Name)
 	}
 	add := fmt.Sprintf("EXEC msdb.dbo.sp_add_jobschedule @job_name = N'%s', @name = N'%s', %s",
 		escapeSingle(j.Name), escapeSingle(req.Name), req.frequencyArgs())
+	stmts := []string{"DECLARE @schedule_id int", add + ", @schedule_id = @schedule_id OUTPUT"}
+	if req.OwnerLoginName != "" {
+		stmts = append(stmts, fmt.Sprintf("EXEC msdb.dbo.sp_update_schedule @schedule_id = @schedule_id, @owner_login_name = N'%s'",
+			escapeSingle(req.OwnerLoginName)))
+	}
+	const read = "SELECT @schedule_id;"
 	var err error
-	if req.OwnerLoginName == "" {
+	var id int
+	switch {
+	case Scripting(ctx) && req.OwnerLoginName == "":
 		err = j.server.exec(ctx, add)
-	} else {
-		err = j.server.execAtomic(ctx, []string{
-			"DECLARE @schedule_id int",
-			add + ", @schedule_id = @schedule_id OUTPUT",
-			fmt.Sprintf("EXEC msdb.dbo.sp_update_schedule @schedule_id = @schedule_id, @owner_login_name = N'%s'",
-				escapeSingle(req.OwnerLoginName)),
-		})
+	case Scripting(ctx):
+		err = j.server.execAtomic(ctx, stmts)
+	case req.OwnerLoginName == "":
+		stmt := strings.Join(stmts, ";\n") + ";\n" + read
+		if err = j.server.execScan(ctx, stmt, &id); err == nil {
+			observe(ctx, j.server, ScriptEntry{Server: scriptServerName(ctx, j.server), SQL: stmt})
+		}
+	default:
+		err = j.server.execAtomicScan(ctx, stmts, read, &id)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("gosmo: add schedule %q to job %q: %w", req.Name, j.Name, err)
 	}
-	return createdObject(ctx, j.server.ScheduleRef(req.Name), func() (*Schedule, error) {
-		return j.newestSchedule(ctx, req.Name)
+	handle := j.server.ScheduleRef(req.Name)
+	handle.ID = id
+	return createdObject(ctx, handle, func() (*Schedule, error) {
+		return j.server.ScheduleByID(ctx, id)
 	})
-}
-
-// newestSchedule returns the job's most recently created schedule named
-// name. The job is matched by name, so a JobRef handle (JobID zero) works.
-func (j *Job) newestSchedule(ctx context.Context, name string) (*Schedule, error) {
-	q := "SELECT TOP (1) " + scheduleColumns + " " + scheduleFrom + `
-JOIN   msdb.dbo.sysjobschedules js ON js.schedule_id = sch.schedule_id
-JOIN   msdb.dbo.sysjobs j ON j.job_id = js.job_id
-WHERE  j.name = @p1 AND sch.name = @p2
-ORDER  BY sch.schedule_id DESC`
-
-	return readByName(ctx, j.server, scanSchedule, q, []any{j.Name, name},
-		notFoundf("gosmo: schedule %q not found on job %q", name, j.Name),
-		fmt.Sprintf("read schedule %q of job %q", name, j.Name))
 }
 
 // CreateJobRequest describes a new SQL Server Agent job.
