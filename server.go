@@ -593,21 +593,21 @@ func platformFromVersionString(v string) string {
 
 // Databases returns all user-accessible databases on the server.
 func (s *Server) Databases(ctx context.Context) ([]*Database, error) {
-	const q = `
+	q := `
 	SELECT name, database_id, state_desc, recovery_model_desc,
-	       compatibility_level, collation_name, is_read_only, create_date,
-	       ISNULL(source_database_id, 0)
+	       compatibility_level, collation_name, ` + catalogCollationExpr(s.serverMajorVersion()) + `,
+	       is_read_only, create_date, ISNULL(source_database_id, 0)
 	FROM sys.databases
 	ORDER BY name`
 
 	rows, err := s.query(ctx, q)
 	return scanRows(rows, err, "list databases", func(scan func(...any) error) (*Database, error) {
 		d := &Database{server: s}
-		var state, recovery, collation sql.NullString
+		var state, recovery, collation, catalogCollation sql.NullString
 		var compatLevel sql.NullInt64
 		if err := scan(
 			&d.Name, &d.ID, &state, &recovery,
-			&compatLevel, &collation, &d.IsReadOnly, &d.CreateDate,
+			&compatLevel, &collation, &catalogCollation, &d.IsReadOnly, &d.CreateDate,
 			&d.SourceDatabaseID,
 		); err != nil {
 			return nil, err
@@ -616,8 +616,28 @@ func (s *Server) Databases(ctx context.Context) ([]*Database, error) {
 		d.RecoveryModel = RecoveryModel(recovery.String)
 		d.CompatibilityLevel = CompatibilityLevel(compatLevel.Int64)
 		d.Collation = collation.String
+		d.CatalogCollation = catalogCollation.String
 		return d, nil
 	})
+}
+
+// containedCatalogCollation is the fixed collation of a partially contained
+// database's catalog, whatever its data collation.
+const containedCatalogCollation = "Latin1_General_100_CI_AS_KS_WS_SC"
+
+// catalogCollationExpr is the sys.databases expression for
+// Database.CatalogCollation. catalog_collation_type_desc names the collation
+// outright when it is not the database's own — "Latin1_General_100_CI_AS_KS_WS_SC"
+// for a contained database, "SQL_Latin1_General_CP1_CI_AS" for an Azure SQL
+// Database created WITH CATALOG_COLLATION — and says DATABASE_DEFAULT
+// otherwise. The column is 2019+ (2017 lacks it, probed 2026-10-04), so older
+// instances fall back to containment, the only way one of them has a catalog
+// collation of its own.
+func catalogCollationExpr(major int) string {
+	desc := colSince(major, SQLServer2019, "catalog_collation_type_desc", "CAST(NULL AS nvarchar(60))")
+	return `CASE WHEN ` + desc + ` NOT IN ('DATABASE_DEFAULT', 'NOT_APPLICABLE') THEN ` + desc + `
+	            WHEN containment = 1 THEN N'` + containedCatalogCollation + `'
+	            ELSE collation_name END`
 }
 
 // DatabaseByName returns a single database by name, querying sys.databases
@@ -627,20 +647,20 @@ func (s *Server) Databases(ctx context.Context) ([]*Database, error) {
 // only need a handle to issue further ALTER-style calls against a database you
 // already know exists. The two are not interchangeable — see DatabaseRef.
 func (s *Server) DatabaseByName(ctx context.Context, name string) (*Database, error) {
-	const q = `
+	q := `
 	SELECT name, database_id, state_desc, recovery_model_desc,
-	       compatibility_level, collation_name, is_read_only, create_date,
-	       ISNULL(source_database_id, 0)
+	       compatibility_level, collation_name, ` + catalogCollationExpr(s.serverMajorVersion()) + `,
+	       is_read_only, create_date, ISNULL(source_database_id, 0)
 	FROM sys.databases
 	WHERE name = @p1`
 
 	d := &Database{server: s}
-	var state, recovery, collation sql.NullString
+	var state, recovery, collation, catalogCollation sql.NullString
 	var compatLevel sql.NullInt64
 
 	if err := s.queryRowScan(ctx, q, []any{name},
 		&d.Name, &d.ID, &state, &recovery,
-		&compatLevel, &collation, &d.IsReadOnly, &d.CreateDate,
+		&compatLevel, &collation, &catalogCollation, &d.IsReadOnly, &d.CreateDate,
 		&d.SourceDatabaseID,
 	); err != nil {
 		return nil, rowErr(err, notFoundf("gosmo: database %q not found", name), "database by name")
@@ -649,6 +669,7 @@ func (s *Server) DatabaseByName(ctx context.Context, name string) (*Database, er
 	d.RecoveryModel = RecoveryModel(recovery.String)
 	d.CompatibilityLevel = CompatibilityLevel(compatLevel.Int64)
 	d.Collation = collation.String
+	d.CatalogCollation = catalogCollation.String
 	return d, nil
 }
 

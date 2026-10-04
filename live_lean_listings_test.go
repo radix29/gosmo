@@ -1,7 +1,7 @@
 //go:build livedb
 
 // Live verification of the lean listings (T52, T53): module listings carry
-// no text and Definition(ctx) reads it by name; Catalog is one batch of four
+// no text and Definition(ctx) reads it by name; Catalog is one batch of five
 // result sets; SecurityPolicies reads every predicate in one query; and
 // UserMappings reads every database in one batch, skipping one it cannot
 // enter.

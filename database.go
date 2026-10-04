@@ -29,6 +29,15 @@ type Database struct {
 	IsReadOnly         bool
 	CreateDate         time.Time
 
+	// CatalogCollation is the collation the database compares its object
+	// names under — Collation, except in a partially contained database
+	// (always Latin1_General_100_CI_AS_KS_WS_SC, case-insensitive) and an
+	// Azure SQL Database created WITH CATALOG_COLLATION. A caller deciding
+	// whether two names inside the database are the same wants this, not
+	// Collation: on a contained _CS_ database "dbo.ORDERS" resolves to
+	// dbo.Orders. Empty on a DatabaseRef handle, like Collation.
+	CatalogCollation string
+
 	// SourceDatabaseID is sys.databases.source_database_id: the database a
 	// snapshot was taken of, and 0 on every database that is not one. It
 	// backs IsSnapshot, which is how a caller building a tree keeps a

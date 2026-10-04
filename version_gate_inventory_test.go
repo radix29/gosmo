@@ -70,6 +70,9 @@ var gatedColumns = []gatedColumn{
 	// sys.indexes — OPTIMIZE_FOR_SEQUENTIAL_KEY, 2019.
 	{"indexes", "optimize_for_sequential_key", "i.optimize_for_sequential_key", SQLServer2019, false, ""},
 
+	// sys.databases — the catalog collation, 2019 (Azure SQL Database's CATALOG_COLLATION).
+	{"databases", "catalog_collation_type_desc", "catalog_collation_type_desc", SQLServer2019, false, ""},
+
 	// sys.tables — ledger tables, 2022.
 	{"tables", "ledger_type_desc", "t.ledger_type_desc", SQLServer2022, false, ""},
 	{"tables", "ledger_type", "t.ledger_type", SQLServer2022, false, ""},
