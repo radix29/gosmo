@@ -155,6 +155,9 @@ exercise the write, drop them; never mutate pre-existing objects.
     singletons have a handle with no name: `MasterKeyRef` and
     `ResourceGovernorRef`, read by `MasterKey` and `ResourceGovernor`. Every
     other by-name lookup is `*ByName` with no handle.
+  - **Agent schedule names are not unique** — address a schedule by its
+    `schedule_id` (`ScheduleByID`, `Schedule.key`), never by name where an
+    id is in hand. `ScheduleByName` returns `ErrAmbiguous` for a shared name.
   - A schema-scoped handle takes its schema as given and refuses an empty one
     on write (`ErrSchemaRequired` via `requireSchema`).
   - `Endpoint` deliberately has no handle: `IsSystem` derives from a scanned

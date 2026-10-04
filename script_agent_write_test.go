@@ -64,8 +64,19 @@ func TestScriptAgentWrites(t *testing.T) {
 			"@freq_relative_interval = 0, @freq_recurrence_factor = 1, " +
 			"@active_start_date = 20261002, @active_end_date = 99991231, " +
 			"@active_start_time = 20000, @active_end_time = 0"},
-		{"Job DetachSchedule", func(c context.Context) error {
-			return job().DetachSchedule(c, "Daily'2am")
+		// Schedule names are not unique (J1), so a schedule with an ID is
+		// addressed by it; only a ScheduleRef, which has none, by name.
+		{"Job AttachSchedule by id", func(c context.Context) error {
+			return job().AttachSchedule(c, schedule())
+		}, "EXEC msdb.dbo.sp_attach_schedule @job_name = N'Nightly''Run', @schedule_id = 7"},
+		{"Job AttachSchedule from a Ref", func(c context.Context) error {
+			return job().AttachSchedule(c, (&Server{}).ScheduleRef("Daily'2am"))
+		}, "EXEC msdb.dbo.sp_attach_schedule @job_name = N'Nightly''Run', @schedule_name = N'Daily''2am'"},
+		{"Job DetachSchedule by id", func(c context.Context) error {
+			return job().DetachSchedule(c, schedule())
+		}, "EXEC msdb.dbo.sp_detach_schedule @job_name = N'Nightly''Run', @schedule_id = 7"},
+		{"Job DetachSchedule from a Ref", func(c context.Context) error {
+			return job().DetachSchedule(c, (&Server{}).ScheduleRef("Daily'2am"))
 		}, "EXEC msdb.dbo.sp_detach_schedule @job_name = N'Nightly''Run', @schedule_name = N'Daily''2am'"},
 		{
 			// sp_update_jobstep names only the four flow parameters; every
@@ -163,6 +174,11 @@ func TestScriptAgentWrites(t *testing.T) {
 		{"Schedule Drop", func(c context.Context) error {
 			return schedule().Drop(c)
 		}, "EXEC msdb.dbo.sp_delete_schedule @schedule_id = 7"},
+		// @schedule_id = 0 names no schedule; a Ref drops by name, as Alter
+		// addresses it.
+		{"Schedule Drop from a Ref addresses by name", func(c context.Context) error {
+			return (&Server{}).ScheduleRef("Daily'2am").Drop(c)
+		}, "EXEC msdb.dbo.sp_delete_schedule @schedule_name = N'Daily''2am'"},
 		{"Schedule SetFrequency", func(c context.Context) error {
 			return schedule().SetFrequency(c, ScheduleFrequency{
 				FreqType: 8, FreqInterval: 2, FreqSubdayType: 4,

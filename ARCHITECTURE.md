@@ -358,7 +358,7 @@ The instance and database halves pair up: `ServerResourceStat` and
 | SMO equivalent                  | gosmo                                       |
 | ------------------------------- | ------------------------------------------- |
 | Catalog row fields               | `db.Name` / `db.ID` / `db.State` / `db.RecoveryModel` / `db.CompatibilityLevel` / `db.Collation` / `db.IsReadOnly` / `db.CreateDate` / `db.SourceDatabaseID` — exported fields, like every other type's; a `DatabaseRef` handle carries only `Name` |
-| Do two names match?              | `gosmo.SameName(collation, a, b)` / `gosmo.CollationIgnoresCase(collation)` — by the scope's collation token (`CS`, `BIN`, `BIN2` compare exactly); no query |
+| Do two names match?              | `gosmo.SameName(collation, a, b)` / `gosmo.CollationIgnoresCase(collation)`; map key: `gosmo.NameKey(collation, name)` — by the scope's collation token (`CS`, `BIN`, `BIN2` compare exactly); no query |
 | Is a system database             | `db.IsSystem()` — derived from `db.ID`, so false on a `DatabaseRef` handle, `master` included |
 | Is a database snapshot           | `db.IsSnapshot()` — derived from `db.SourceDatabaseID`; see [Database snapshots](#database-snapshots) |
 | Parent server                    | `db.Server()` — a back-pointer, so still a method |
@@ -1327,7 +1327,10 @@ an error, a panic or cancellation rolls back.
 - **Reads go through it too** — a read on another session of a catalog row
   the transaction changed would wait on its own locks. A database-scoped
   statement leaves the session in its database, so the next server-scoped
-  one switches back to the one the transaction began in.
+  one switches back to the one the transaction began in. The transaction
+  tracks the database its session is in (`serverTx.current`): a write skips
+  its `USE` when already there, and a failed statement (or a server
+  permission's `USE master`) forgets it, so the next one re-sends `USE`.
 - **Observers hear after COMMIT**, in order, and nothing on a rollback.
 - **Refused inside** (`ErrUnsupported`): the paths that need a session of
   their own — Backup/Restore with progress, `BulkInsert`, the two
@@ -1520,7 +1523,9 @@ err := srv.SetAgentMailSettings(ctx, gosmo.AgentMailChanges{
 Agent counterparts of `srv.DatabaseRef`/`srv.LoginRef`. Every write method on
 those types addresses its object by name, so a handle is enough to keep
 operating on one you already know exists; the `...ByName` form is what
-queries `msdb` and populates the cached fields. `WithScript` intercepts
+queries `msdb` and populates the cached fields. Schedules are the exception:
+their names are not unique, so a schedule with an ID is addressed by it
+(see Shared schedules below) and only a `ScheduleRef` falls back to its name. `WithScript` intercepts
 writes only, so a `...ByName` read under it still reaches the server; the
 handle is what `CreateJob`/`CreateAlert`/`CreateOperator`/`CreateSchedule`
 return there, since an object whose `CREATE` was only collected is not in
@@ -1560,7 +1565,8 @@ empty `Changes` emits nothing at all, rather than a parameterless
 for the reason `ScheduleFrequency` already states: `freq_interval`'s meaning
 depends on `freq_type`, so half a frequency is not one. It addresses the
 schedule by `@schedule_id`, falling back to `@name` when the receiver has no
-ID — so a schedule is writable from a no-I/O `ScheduleRef` handle.
+ID — so a schedule is writable from a no-I/O `ScheduleRef` handle. `Drop`,
+`Job.AttachSchedule` and `Job.DetachSchedule` key the same way.
 
 The per-property setters are not deprecated —
 `Enable()`/`Disable()`/`Rename()` read better than a struct literal for a
@@ -1647,6 +1653,18 @@ attaches it in a single step, while
 `AttachSchedule`/`DetachSchedule` wire up (or unwire) one that already
 exists without creating or deleting it.
 
+**Schedule names are not unique.** `msdb.dbo.sysschedules.name` has no
+constraint, and SSMS's New Job ▸ Schedules makes one schedule per job, so
+several jobs scheduled "Daily" mean several schedules named `Daily`. msdb
+refuses a by-name `sp_attach_schedule`, `sp_update_schedule` or
+`sp_delete_schedule` that matches more than one (Msg 14371);
+`sp_detach_schedule` resolves the name within the job only. So the
+`schedule_id` is the identity: `ScheduleByID` reads by it, `ScheduleByName`
+returns an error wrapping `ErrAmbiguous` for a shared name rather than an
+arbitrary match, `CreateSchedule` reads back the schedule it made through
+`sp_add_schedule`'s `@schedule_id OUTPUT`, and every write sends
+`@schedule_id` whenever the `*Schedule` carries one.
+
 ```go
 sched, _ := srv.CreateSchedule(ctx, gosmo.CreateScheduleRequest{
     Name:            "Weeknights at 2am",
@@ -1658,7 +1676,7 @@ sched, _ := srv.CreateSchedule(ctx, gosmo.CreateScheduleRequest{
     ActiveStartTime: 20000, // HHMMSS — 02:00:00
 })
 
-job.AttachSchedule(ctx, sched.Name)
+job.AttachSchedule(ctx, sched) // by sched.ID
 // "Occurs every week on Monday, Tuesday, Wednesday, Thursday, Friday at
 // 02:00:00. Schedule is active from 2026-07-28."
 fmt.Println(sched.Description())
@@ -2158,6 +2176,14 @@ external, FileTable, ledger, Always Encrypted — with an error wrapping
 `ErrUnsupported`, before any text is produced. It is not
 `ErrUnsupportedVersion`: nothing is wrong with the server's version.
 
+### `ErrAmbiguous`
+
+A by-name lookup whose name the catalog does not keep unique, and which
+matched more than one object, returns an error wrapping `ErrAmbiguous`
+instead of one of the matches — a write keyed by an arbitrary match's id
+lands on an object the caller never meant. `ScheduleByName` is the one such
+lookup; its error names `ScheduleByID`.
+
 ### `ErrSchemaRequired`
 
 Every call that takes a schema-scoped name refuses an empty schema with
@@ -2355,6 +2381,7 @@ straight to the pool.
 | `Database.withConn`    | Acquires a `*sql.Conn` and runs `USE <db>` (retried), then hands it to a callback (not retried — the callback is the caller's write), releasing the conn on return. |
 | `Database.query`       | Returns `*dbRows`, whose `Close()` closes the rows **and** the conn pinned for them. `*sql.Rows.Close` alone would leak that conn out of the pool permanently. |
 | `Database.queryRow`    | Takes a `func(*sql.Row) error` scan callback and runs acquire + `USE` + scan as one retried unit. The scan has to be inside it: `QueryRowContext` never returns an error, so a scan run afterwards would never be retried. |
+| `Database.useBatch` / `batchErr` | A read sends `USE` and the query as one guarded batch — one round trip. A failed batch runs `USE` alone once to tell the halves apart: its error if it fails (`gosmo: USE x:`), else the batch's own; the query never runs twice. |
 | `Database.exec`        | Thin wrapper over `withConn` for non-SELECT statements; also where `WithScript` intercepts database-scoped writes. |
 | `Server.query`         | Server-scoped rows-returning read, retried — no `USE`, so a plain `*sql.Rows` is enough.    |
 | `Server.queryRow`      | Server-scoped single-row read, same scan-callback shape and reason as `Database.queryRow`.   |

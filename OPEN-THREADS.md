@@ -203,6 +203,32 @@ and mutation-check it: swap a parameter name or drop a `dbo` default in the
 source and confirm the new case fails. A case built from the same constant the
 code uses proves nothing.
 
+## By-name lookups in a database collated unlike the login's default cost three round trips
+
+A database-scoped read goes as one `USE d; …` batch (`useBatch`). Its
+parameters take the collation of the database the batch *started* in, so
+`SCHEMA_NAME(x) = @p1` (or `OBJECT_NAME`, `TYPE_NAME`, … — both sides
+collation-coercible) fails Msg 468 wherever `d`'s collation differs from the
+session's starting database. `recheckUse` re-runs the query alone on a 468,
+which is correct but costs batch + `USE` + query — what every such lookup
+cost before 2026-10-04, when a blanket replay hid the conflict. The fix is
+per query: `COLLATE DATABASE_DEFAULT` on the built-in's side, or comparing a
+catalog column (`s.name`, implicit, beats the parameter) instead. About 20
+sites by grep (`(SCHEMA_NAME|OBJECT_NAME|TYPE_NAME|…)\(…\) = @p`); not swept,
+since the grep misses reversed and multi-line comparisons and the replay keeps
+every one of them correct. Pinned live by
+`TestLiveScriptLookupsHonourCollation`, offline by
+`TestDatabaseReadReRunsACollationConflictAlone`.
+
+## Agent schedules are addressed by id — settled, do not re-raise
+
+Schedule names are not unique in msdb (`ARCHITECTURE.md` § Shared schedules).
+`ScheduleByName` refuses a shared name with `ErrAmbiguous`; every write sends
+`@schedule_id` when the handle has one, and only a `ScheduleRef` falls back
+to the name. Do not "simplify" a schedule write back to `@schedule_name` —
+`TestScheduleProceduresAddressByKey` fails on it, and msdb answers Msg 14371
+as soon as two schedules share the name.
+
 ## The two DDL-trigger files stay near-identical — settled, do not re-raise
 
 `database_trigger.go` and `server_trigger.go` duplicate roughly thirty lines:

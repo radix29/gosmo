@@ -378,11 +378,7 @@ func (sch *Schedule) Alter(ctx context.Context, ch ScheduleChanges) error {
 	if p.empty() {
 		return nil
 	}
-	key := fmt.Sprintf("@schedule_id = %d", sch.ID)
-	if sch.ID == 0 {
-		key = fmt.Sprintf("@name = N'%s'", escapeSingle(sch.Name))
-	}
-	q := p.statement("sp_update_schedule", key)
+	q := p.statement("sp_update_schedule", sch.key("@name"))
 	if err := sch.server.exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: alter schedule %q: %w", sch.Name, err)
 	}

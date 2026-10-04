@@ -29,8 +29,14 @@ type serverTx struct {
 	// switches back first (see serverConn).
 	home string
 
-	mu      sync.Mutex
-	away    bool         // a database-scoped statement has switched the session from home
+	mu sync.Mutex
+	// current is the database the session is known to be in, "" when that
+	// is unknown. It starts at home; a successful USE sets it, and a failed
+	// statement that ran in or after one clears it. A database-scoped write
+	// skips its USE when the session is already there, so ten writes in one
+	// database cost one USE rather than ten. Names compare exactly: a
+	// differently cased name costs a redundant USE, never a wrong database.
+	current string
 	pending []heldReport // statement-observer reports held until COMMIT
 	failed  error        // the first atomic write that failed; see fail
 }
@@ -121,6 +127,7 @@ func (s *Server) InTransaction(ctx context.Context, fn func(ctx context.Context)
 		_ = tx.Rollback()
 		return fmt.Errorf("gosmo: begin transaction: %w", withAllMessages(err))
 	}
+	t.current = t.home
 
 	committed := false
 	defer func() {
@@ -153,25 +160,35 @@ func (s *Server) InTransaction(ctx context.Context, fn func(ctx context.Context)
 // transaction, first switched back to the database it began in if a
 // database-scoped statement left it elsewhere.
 func (t *serverTx) serverConn(ctx context.Context) (sqlConn, error) {
-	t.mu.Lock()
-	away := t.away
-	t.mu.Unlock()
-	if away && t.home != "" {
+	if t.home != "" && !t.in(t.home) {
 		if _, err := t.tx.ExecContext(ctx, "USE "+quoteIdent(t.home)); err != nil {
+			t.lost()
 			return nil, fmt.Errorf("gosmo: USE %s: %w", t.home, err)
 		}
-		t.mu.Lock()
-		t.away = false
-		t.mu.Unlock()
+		t.at(t.home)
 	}
 	return t.tx, nil
 }
 
-// leftHome records that a database-scoped statement switched the session.
-func (t *serverTx) leftHome() {
+// in reports whether the session is known to be in database db.
+func (t *serverTx) in(db string) bool {
 	t.mu.Lock()
-	t.away = true
+	defer t.mu.Unlock()
+	return t.current != "" && t.current == db
+}
+
+// at records that a USE of db succeeded.
+func (t *serverTx) at(db string) {
+	t.mu.Lock()
+	t.current = db
 	t.mu.Unlock()
+}
+
+// lost records that the session's database is no longer known: a statement
+// that may have switched it failed, or one switched it behind gosmo's back
+// (the USE master of a server permission). The next statement sends its USE.
+func (t *serverTx) lost() {
+	t.at("")
 }
 
 // fail records err, when non-nil, as an atomic write's failure inside t,

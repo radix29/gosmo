@@ -2,7 +2,6 @@ package gosmo
 
 import (
 	"context"
-	"database/sql/driver"
 	"net"
 	"strconv"
 	"sync/atomic"
@@ -184,7 +183,7 @@ func TestPoolConnectorWrapsOnlyTheBrowserCase(t *testing.T) {
 		if err != nil {
 			t.Fatalf("buildConnector(%q): %v", server, err)
 		}
-		var dc driver.Connector = poolConnector(connector, opts)
+		dc := poolConnector(connector, opts)
 		if _, ok := dc.(evictingConnector); ok != wrapped {
 			t.Errorf("poolConnector(%q) wrapped = %v, want %v", server, ok, wrapped)
 		}

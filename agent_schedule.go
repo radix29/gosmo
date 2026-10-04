@@ -138,27 +138,65 @@ func (s *Server) Schedules(ctx context.Context) ([]*Schedule, error) {
 	})
 }
 
-// ScheduleByName returns a single schedule by name.
+// ScheduleByName returns the schedule named name.
+//
+// Schedule names are not unique — msdb puts no constraint on
+// sysschedules.name — so a name two or more schedules share returns an error
+// wrapping ErrAmbiguous rather than one of them: a write through an arbitrary
+// match would change or drop a different schedule from the one meant. A
+// caller holding a schedule_id (a list row, an Object Explorer node) reads
+// with ScheduleByID instead.
 func (s *Server) ScheduleByName(ctx context.Context, name string) (*Schedule, error) {
-	q := "SELECT " + scheduleColumns + " " + scheduleFrom + " WHERE sch.name = @p1"
+	q := "SELECT TOP (2) " + scheduleColumns + " " + scheduleFrom + " WHERE sch.name = @p1 ORDER BY sch.schedule_id"
 
-	return readByName(ctx, s, scanSchedule, q, []any{name},
-		notFoundf("gosmo: schedule %q not found", name), "schedule by name")
+	rows, err := s.query(ctx, q, name)
+	found, err := scanRows(rows, err, "schedule by name", func(scan func(...any) error) (*Schedule, error) {
+		return scanSchedule(s, scan)
+	})
+	switch {
+	case err != nil:
+		return nil, err
+	case len(found) == 0:
+		return nil, notFoundf("gosmo: schedule %q not found", name)
+	case len(found) > 1:
+		return nil, fmt.Errorf("gosmo: schedule %q: %w: two or more schedules share it, use ScheduleByID", name, ErrAmbiguous)
+	}
+	return found[0], nil
+}
+
+// ScheduleByID returns the schedule whose msdb schedule_id is id — the one
+// lookup that always names exactly one schedule (see ScheduleByName).
+func (s *Server) ScheduleByID(ctx context.Context, id int) (*Schedule, error) {
+	q := "SELECT " + scheduleColumns + " " + scheduleFrom + " WHERE sch.schedule_id = @p1"
+
+	return readByName(ctx, s, scanSchedule, q, []any{id},
+		notFoundf("gosmo: schedule id %d not found", id), "schedule by id")
 }
 
 // ScheduleRef returns a lightweight handle for a shared schedule by name,
 // without querying msdb — the schedule-side counterpart of Server.DatabaseRef.
 // ID, FreqType, ActiveStartDate and every other cached field stay at their
-// zero value; ScheduleByName is what populates them.
+// zero value; ScheduleByID or ScheduleByName is what populates them.
 //
-// Every write method on *Schedule that addresses the schedule by name
-// (Job.AttachSchedule/DetachSchedule take the name directly) works from
-// this handle. It is also the form to use when there is nothing to read
-// yet: under a WithScript-derived context, ScheduleByName's lookup is
-// a real read, so a schedule whose sp_add_schedule was merely collected is
-// not there to find.
+// Every write method works from this handle: with no ID, each addresses the
+// schedule by name (Alter, Drop, Job.AttachSchedule/DetachSchedule), which
+// msdb refuses (Msg 14371) once two schedules share it. It is the form to use
+// when there is nothing to read yet: under a WithScript-derived context,
+// ScheduleByName's lookup is a real read, so a schedule whose sp_add_schedule
+// was merely collected is not there to find.
 func (s *Server) ScheduleRef(name string) *Schedule {
 	return &Schedule{server: s, Name: name}
+}
+
+// key renders the argument that addresses sch in an msdb schedule procedure:
+// @schedule_id where sch has one, since names are not unique, else nameParam
+// (@schedule_name, or sp_update_schedule's @name) — the only key a
+// ScheduleRef carries.
+func (sch *Schedule) key(nameParam string) string {
+	if sch.ID != 0 {
+		return fmt.Sprintf("@schedule_id = %d", sch.ID)
+	}
+	return fmt.Sprintf("%s = N'%s'", nameParam, escapeSingle(sch.Name))
 }
 
 // CreateScheduleRequest describes a new shared schedule.
@@ -207,6 +245,12 @@ func (req CreateScheduleRequest) frequencyArgs() string {
 
 // CreateSchedule creates a new shared schedule via sp_add_schedule. The
 // returned Schedule is not yet attached to any job — see Job.AttachSchedule.
+//
+// The new schedule_id comes back through sp_add_schedule's OUTPUT parameter
+// and the schedule is read back by it, since another schedule may already
+// have the name. The statement is never retried (execScan). Under
+// Scripting(ctx) the plain sp_add_schedule is collected and the result is the
+// ScheduleRef handle.
 func (s *Server) CreateSchedule(ctx context.Context, req CreateScheduleRequest) (*Schedule, error) {
 	if req.Name == "" {
 		return nil, fmt.Errorf("gosmo: create schedule: name is required")
@@ -216,11 +260,22 @@ func (s *Server) CreateSchedule(ctx context.Context, req CreateScheduleRequest) 
 	if req.OwnerLoginName != "" {
 		q += fmt.Sprintf(", @owner_login_name = N'%s'", escapeSingle(req.OwnerLoginName))
 	}
-	if err := s.exec(ctx, q); err != nil {
+	if Scripting(ctx) {
+		if err := s.exec(ctx, q); err != nil {
+			return nil, fmt.Errorf("gosmo: create schedule %q: %w", req.Name, err)
+		}
+		return s.ScheduleRef(req.Name), nil
+	}
+	stmt := "DECLARE @schedule_id int;\n" + q + ", @schedule_id = @schedule_id OUTPUT;\nSELECT @schedule_id;"
+	var id int
+	if err := s.execScan(ctx, stmt, &id); err != nil {
 		return nil, fmt.Errorf("gosmo: create schedule %q: %w", req.Name, err)
 	}
-	return createdObject(ctx, s.ScheduleRef(req.Name), func() (*Schedule, error) {
-		return s.ScheduleByName(ctx, req.Name)
+	observe(ctx, s, ScriptEntry{Server: scriptServerName(ctx, s), SQL: stmt})
+	handle := s.ScheduleRef(req.Name)
+	handle.ID = id
+	return createdObject(ctx, handle, func() (*Schedule, error) {
+		return s.ScheduleByID(ctx, id)
 	})
 }
 
@@ -273,9 +328,10 @@ func (sch *Schedule) SetOwner(ctx context.Context, loginName string) error {
 
 // Drop deletes the schedule via sp_delete_schedule. SQL Server refuses the
 // call (returning a wrapped SQLError) if the schedule is still attached to
-// one or more jobs — detach it first via Job.DetachSchedule.
+// one or more jobs — detach it first via Job.DetachSchedule. A ScheduleRef
+// (no ID) is dropped by name.
 func (sch *Schedule) Drop(ctx context.Context) error {
-	q := fmt.Sprintf("EXEC msdb.dbo.sp_delete_schedule @schedule_id = %d", sch.ID)
+	q := "EXEC msdb.dbo.sp_delete_schedule " + sch.key("@schedule_name")
 	if err := sch.server.exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: drop schedule %q: %w", sch.Name, err)
 	}
@@ -319,23 +375,25 @@ ORDER  BY sch.name`
 
 // AttachSchedule attaches an existing shared schedule to the job — as
 // opposed to AddSchedule, which creates a brand-new schedule and attaches
-// it in one step.
-func (j *Job) AttachSchedule(ctx context.Context, scheduleName string) error {
-	q := fmt.Sprintf("EXEC msdb.dbo.sp_attach_schedule @job_name = N'%s', @schedule_name = N'%s'",
-		escapeSingle(j.Name), escapeSingle(scheduleName))
+// it in one step. sch is addressed by its ID, or by name when it has none (a
+// ScheduleRef), which msdb refuses once two schedules share the name.
+func (j *Job) AttachSchedule(ctx context.Context, sch *Schedule) error {
+	q := fmt.Sprintf("EXEC msdb.dbo.sp_attach_schedule @job_name = N'%s', %s",
+		escapeSingle(j.Name), sch.key("@schedule_name"))
 	if err := j.server.exec(ctx, q); err != nil {
-		return fmt.Errorf("gosmo: attach schedule %q to job %q: %w", scheduleName, j.Name, err)
+		return fmt.Errorf("gosmo: attach schedule %q to job %q: %w", sch.Name, j.Name, err)
 	}
 	return nil
 }
 
 // DetachSchedule detaches a schedule from the job without deleting the
-// schedule itself (it may still be shared by other jobs).
-func (j *Job) DetachSchedule(ctx context.Context, scheduleName string) error {
-	q := fmt.Sprintf("EXEC msdb.dbo.sp_detach_schedule @job_name = N'%s', @schedule_name = N'%s'",
-		escapeSingle(j.Name), escapeSingle(scheduleName))
+// schedule itself (it may still be shared by other jobs). sch is addressed
+// as AttachSchedule addresses it.
+func (j *Job) DetachSchedule(ctx context.Context, sch *Schedule) error {
+	q := fmt.Sprintf("EXEC msdb.dbo.sp_detach_schedule @job_name = N'%s', %s",
+		escapeSingle(j.Name), sch.key("@schedule_name"))
 	if err := j.server.exec(ctx, q); err != nil {
-		return fmt.Errorf("gosmo: detach schedule %q from job %q: %w", scheduleName, j.Name, err)
+		return fmt.Errorf("gosmo: detach schedule %q from job %q: %w", sch.Name, j.Name, err)
 	}
 	return nil
 }

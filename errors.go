@@ -32,7 +32,8 @@ import (
 //     AvailabilityGroupByName, CertificateByName, AsymmetricKeyByName,
 //     SymmetricKeyByName and the scripter's lookups among them — returns an
 //     error wrapping ErrNotFound. CertificateByName and AsymmetricKeyByName
-//     answered (nil, nil) instead until 2026-09-22.
+//     answered (nil, nil) instead until 2026-09-22. ScheduleByName also
+//     returns ErrAmbiguous for a name two schedules share.
 //   - AgentInfo reports an unreachable Agent as a populated value
 //     (StatusText "Unknown"), not an error.
 //
@@ -56,6 +57,18 @@ func (e *notFoundError) Unwrap() []error {
 	}
 	return []error{ErrNotFound, e.also}
 }
+
+// ErrAmbiguous is wrapped by a by-name lookup whose name the catalog does not
+// keep unique and which matched more than one object, so a caller can tell
+// "pick by id" from "not there" (ErrNotFound) with errors.Is.
+//
+// Returning one of the matches instead would be wrong: a write keyed by its
+// id then lands on whichever row the server happened to return first.
+// ScheduleByName is the case — msdb.dbo.sysschedules.name has no unique
+// constraint, and SSMS's New Job ▸ Schedules makes one schedule per job, so
+// several jobs scheduled "Daily" mean several schedules named Daily. Its
+// error names ScheduleByID, the lookup that is always exact.
+var ErrAmbiguous = errors.New("ambiguous name")
 
 // ErrSchemaRequired is wrapped by every call given a schema-scoped name with
 // an empty schema. Nothing defaults it: dbo and the caller's own default

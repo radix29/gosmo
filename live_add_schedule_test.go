@@ -4,6 +4,7 @@ package gosmo
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 )
@@ -94,5 +95,102 @@ func TestLiveJobAddScheduleRecurrences(t *testing.T) {
 	}
 	if len(scheds) != 2 {
 		t.Errorf("job schedules = %v, want the weekly and monthly ones only — a refused owner left one behind", names)
+	}
+}
+
+// TestLiveSharedScheduleNames pins J1 against msdb: two schedules may share a
+// name, and every by-name procedure but sp_detach_schedule (which resolves
+// within the job) then refuses it with Msg 14371. ScheduleByName reports the
+// ambiguity, ScheduleByID reads the right one, CreateSchedule reads back the
+// schedule it made rather than the older namesake, and attach, detach,
+// disable and drop by handle each touch only their own schedule.
+//
+//	go test -tags livedb . -run TestLiveSharedScheduleNames -v -livedb '...'
+func TestLiveSharedScheduleNames(t *testing.T) {
+	db, ctx, done := liveDB(t)
+	defer done()
+	srv := &Server{db: db}
+
+	const (
+		jobName = "gossms_j1_job"
+		dup     = "gossms_j1_dup"
+	)
+	drop := func() {
+		bg := context.Background()
+		srv.exec(bg, "IF EXISTS (SELECT 1 FROM msdb.dbo.sysjobs WHERE name = N'"+jobName+"') "+
+			"EXEC msdb.dbo.sp_delete_job @job_name = N'"+jobName+"', @delete_unused_schedule = 0")
+		srv.exec(bg, "DECLARE @i int; WHILE 1 = 1 BEGIN SET @i = NULL; "+
+			"SELECT TOP (1) @i = schedule_id FROM msdb.dbo.sysschedules WHERE name = N'"+dup+"'; "+
+			"IF @i IS NULL BREAK; EXEC msdb.dbo.sp_delete_schedule @schedule_id = @i, @force_delete = 1; END")
+	}
+	drop()
+	// Deferred, not t.Cleanup: a cleanup runs after the deferred done() has
+	// closed the pool, and the drop then fails silently.
+	defer drop()
+
+	req := CreateScheduleRequest{Name: dup, Enabled: true, FreqType: FreqDaily, FreqInterval: 1, FreqSubdayType: SubdayOnce}
+	first, err := srv.CreateSchedule(ctx, req)
+	if err != nil {
+		t.Fatalf("CreateSchedule first: %v", err)
+	}
+	second, err := srv.CreateSchedule(ctx, req)
+	if err != nil {
+		t.Fatalf("CreateSchedule second: %v", err)
+	}
+	if first.ID == 0 || second.ID == 0 || first.ID == second.ID {
+		t.Fatalf("CreateSchedule ids = %d, %d; want two distinct ids", first.ID, second.ID)
+	}
+
+	if _, err := srv.ScheduleByName(ctx, dup); !errors.Is(err, ErrAmbiguous) {
+		t.Errorf("ScheduleByName(shared) err = %v, want ErrAmbiguous", err)
+	}
+	got, err := srv.ScheduleByID(ctx, second.ID)
+	if err != nil || got.ID != second.ID || got.Name != dup {
+		t.Errorf("ScheduleByID(%d) = %+v, %v", second.ID, got, err)
+	}
+	if _, err := srv.ScheduleByID(ctx, -1); !errors.Is(err, ErrNotFound) {
+		t.Errorf("ScheduleByID(-1) err = %v, want ErrNotFound", err)
+	}
+
+	// The by-name form is what msdb refuses; pin that the reason for all of
+	// this is real on this server.
+	if err := srv.JobRef(jobName).AttachSchedule(ctx, srv.ScheduleRef(dup)); err == nil {
+		t.Error("attach by a shared name succeeded; msdb was expected to refuse it (Msg 14371)")
+	}
+
+	j, err := srv.CreateJob(ctx, CreateJobRequest{Name: jobName})
+	if err != nil {
+		t.Fatalf("CreateJob: %v", err)
+	}
+	if err := j.AttachSchedule(ctx, second); err != nil {
+		t.Fatalf("AttachSchedule by handle: %v", err)
+	}
+	attached, err := j.Schedules(ctx)
+	if err != nil || len(attached) != 1 || attached[0].ID != second.ID {
+		t.Fatalf("job schedules after attach = %v, %v; want only %d", attached, err, second.ID)
+	}
+	if err := j.DetachSchedule(ctx, second); err != nil {
+		t.Fatalf("DetachSchedule by handle: %v", err)
+	}
+	if attached, err := j.Schedules(ctx); err != nil || len(attached) != 0 {
+		t.Errorf("job schedules after detach = %v, %v; want none", attached, err)
+	}
+
+	if err := second.Disable(ctx); err != nil {
+		t.Fatalf("Disable second: %v", err)
+	}
+	if f, err := srv.ScheduleByID(ctx, first.ID); err != nil || !f.Enabled {
+		t.Errorf("first schedule after disabling the second = %+v, %v; want still enabled", f, err)
+	}
+
+	if err := second.Drop(ctx); err != nil {
+		t.Fatalf("Drop second: %v", err)
+	}
+	if _, err := srv.ScheduleByID(ctx, second.ID); !errors.Is(err, ErrNotFound) {
+		t.Errorf("second after Drop: err = %v, want ErrNotFound", err)
+	}
+	only, err := srv.ScheduleByName(ctx, dup)
+	if err != nil || only.ID != first.ID {
+		t.Errorf("ScheduleByName after dropping the second = %+v, %v; want %d", only, err, first.ID)
 	}
 }

@@ -169,3 +169,77 @@ func TestInTransactionRefusesCommitAfterAtomicFailure(t *testing.T) {
 		t.Errorf("sent %q, want a ROLLBACK and no COMMIT", rec.log)
 	}
 }
+
+// Inside a transaction the session's database is tracked, so a database-scoped
+// write sends its USE only when the session is not already there: once for
+// many writes in one database, again after a server-scoped statement took it
+// home, after a failure, and after a server permission's USE master.
+func TestInTransactionSendsUSEOnlyWhenMoving(t *testing.T) {
+	cases := []struct {
+		name string
+		fn   func(ctx context.Context, s *Server) error
+		want []string
+	}{
+		{"same database", func(ctx context.Context, s *Server) error {
+			d := s.DatabaseRef("app")
+			for _, w := range []string{"W1", "W2", "W3"} {
+				if _, err := d.exec(ctx, w); err != nil {
+					return err
+				}
+			}
+			return nil
+		}, []string{"USE [app]", "W1", "W2", "W3"}},
+		{"home database", func(ctx context.Context, s *Server) error {
+			_, err := s.DatabaseRef("master").exec(ctx, "W1")
+			return err
+		}, []string{"W1"}},
+		{"alternating", func(ctx context.Context, s *Server) error {
+			d := s.DatabaseRef("app")
+			_, _ = d.exec(ctx, "W1")
+			_ = s.exec(ctx, "S1")
+			_ = s.exec(ctx, "S2")
+			_, err := d.exec(ctx, "W2")
+			return err
+		}, []string{"USE [app]", "W1", "USE [master]", "S1", "S2", "USE [app]", "W2"}},
+		{"failure then write", func(ctx context.Context, s *Server) error {
+			d := s.DatabaseRef("app")
+			_, _ = d.exec(ctx, "W1")
+			_, _ = d.exec(ctx, "FAIL")
+			_, err := d.exec(ctx, "W2")
+			return err
+		}, []string{"USE [app]", "W1", "FAIL", "USE [app]", "W2"}},
+		{"read then write", func(ctx context.Context, s *Server) error {
+			d := s.DatabaseRef("app")
+			rows, err := d.query(ctx, "R1")
+			if err != nil {
+				return err
+			}
+			rows.Close()
+			_, err = d.exec(ctx, "W1")
+			return err
+		}, []string{"USE [app]; IF @@ERROR <> 0 RETURN; R1", "W1"}},
+		{"server permission", func(ctx context.Context, s *Server) error {
+			if err := s.GrantServerPermission(ctx, "CONNECT SQL", "l", PermissionOptions{}); err != nil {
+				return err
+			}
+			_, err := s.DatabaseRef("master").exec(ctx, "W1")
+			return err
+		}, []string{"USE master; GRANT CONNECT SQL TO [l]", "USE [master]", "W1"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := &txRecDriver{}
+			s := &Server{db: sql.OpenDB(rec)}
+			defer s.db.Close()
+			if err := s.InTransaction(context.Background(), func(ctx context.Context) error {
+				return tc.fn(ctx, s)
+			}); err != nil {
+				t.Fatal(err)
+			}
+			want := append(append([]string{"BEGIN", "SELECT DB_NAME()"}, tc.want...), "COMMIT")
+			if !slices.Equal(rec.log, want) {
+				t.Errorf("sent:\n%q\nwant:\n%q", rec.log, want)
+			}
+		})
+	}
+}

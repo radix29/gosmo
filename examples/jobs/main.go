@@ -156,7 +156,7 @@ func main() {
 		ActiveStartTime:      23000, // 02:30:00 as HHMMSS
 	}))
 	defer func() { _ = shared.Drop(ctx) }()
-	demo.Must(job.AttachSchedule(ctx, scheduleName))
+	demo.Must(job.AttachSchedule(ctx, shared))
 
 	for _, s := range demo.Value(job.Schedules(ctx)) {
 		// Description renders the freq_* cluster the way SSMS's schedule

@@ -307,7 +307,13 @@ func (s *Server) serverPermission(ctx context.Context, verb string, permission S
 	if err != nil {
 		return err
 	}
-	if err := s.exec(ctx, "USE master; "+stmt); err != nil {
+	err = s.exec(ctx, "USE master; "+stmt)
+	if t := txFrom(ctx, s); t != nil {
+		// No pool reset inside a transaction: the session stays in master,
+		// which the transaction's USE tracking has to hear of.
+		t.lost()
+	}
+	if err != nil {
 		return fmt.Errorf("gosmo: %s %s %s %q: %w", lower, permission, fromOrTo(verb), principal, err)
 	}
 	return nil

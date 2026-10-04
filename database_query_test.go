@@ -6,9 +6,12 @@ import (
 	"database/sql/driver"
 	"errors"
 	"io"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
+
+	mssql "github.com/microsoft/go-mssqldb"
 )
 
 // -- fake driver: just enough to exercise Database.query's acquire/USE/query
@@ -192,7 +195,7 @@ func TestDatabaseReadIsOneBatch(t *testing.T) {
 // A batch whose USE fails must still report the error every database-scoped
 // call always has — wrapped as a USE failure, with the server's own error
 // reachable underneath — which the batch cannot tell apart from a failure in
-// the query. So a failing batch is replayed as the two statements.
+// the query. So a failing batch runs the USE alone to tell them apart.
 func TestDatabaseReadReportsAFailedUseAsBefore(t *testing.T) {
 	d := useTestDB(t)
 	serverErr := errors.New("Database 'App]DB' does not exist. (911)")
@@ -223,5 +226,96 @@ func TestDatabaseReadReportsAFailedQueryAsBefore(t *testing.T) {
 		if err == nil || err.Error() != serverErr.Error() {
 			t.Errorf("%s error = %v, want the query's own %q", name, err, serverErr)
 		}
+	}
+}
+
+// A failing read costs two round trips, never three, and the query runs once:
+// the batch, then the USE alone to tell which half failed. A read that
+// succeeds is the batch alone.
+func TestDatabaseReadFailureRunsQueryOnce(t *testing.T) {
+	const bare = "SELECT name FROM sys.tables"
+	cases := []struct {
+		name               string
+		failUse, failQuery bool
+	}{
+		{"success", false, false},
+		{"USE fails", true, false},
+		{"query fails", false, true},
+		{"both fail", true, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			d := useTestDB(t)
+			serverErr := errors.New("refused")
+			if tc.failUse {
+				useState.failUse = serverErr
+			}
+			if tc.failUse || tc.failQuery {
+				useState.failBatch = serverErr
+			}
+			for name, read := range map[string]func() error{
+				"query": func() error {
+					rows, err := d.query(context.Background(), bare)
+					if err == nil {
+						rows.Close()
+					}
+					return err
+				},
+				"queryRow": func() error {
+					var s string
+					return d.queryRow(context.Background(), func(r *sql.Row) error { return r.Scan(&s) }, bare)
+				},
+			} {
+				useState.stmts = nil
+				err := read()
+				want := 2
+				if !tc.failUse && !tc.failQuery {
+					want = 1
+				}
+				if len(useState.stmts) != want {
+					t.Errorf("%s sent %d statements %q, want %d", name, len(useState.stmts), useState.stmts, want)
+				}
+				if slices.Contains(useState.stmts, bare) {
+					t.Errorf("%s ran the query again on its own: %q", name, useState.stmts)
+				}
+				if (err != nil) != (tc.failUse || tc.failQuery) {
+					t.Errorf("%s error = %v", name, err)
+				}
+			}
+		})
+	}
+}
+
+// A collation conflict can be the batch's own doing: its parameters take the
+// collation of the database the batch started in, not d's. So after the USE
+// alone succeeds, a 468 runs the query again on its own — once — and that
+// read's result is the read's. Live, a by-name lookup in a case-sensitive
+// database is the case (TestLiveScriptLookupsHonourCollation).
+func TestDatabaseReadReRunsACollationConflictAlone(t *testing.T) {
+	const bare = "SELECT name FROM sys.tables"
+	d := useTestDB(t)
+	useState.failBatch = mssql.Error{Number: 468, Message: "Cannot resolve the collation conflict"}
+	qErr, rowErr := readBoth(d)
+	for name, err := range map[string]error{"query": qErr, "queryRow": rowErr} {
+		if err != nil {
+			t.Errorf("%s error = %v, want the bare query's success", name, err)
+		}
+	}
+	want := []string{d.useBatch(bare), "USE [App]]DB]", bare}
+	if got := useState.stmts; !slices.Equal(got, slices.Concat(want, want)) {
+		t.Errorf("statements = %q, want %q twice", got, want)
+	}
+
+	// The same conflict from the bare query is the read's error, not a loop.
+	useState.stmts = nil
+	useState.failQuery = useState.failBatch
+	qErr, rowErr = readBoth(d)
+	for name, err := range map[string]error{"query": qErr, "queryRow": rowErr} {
+		if me, ok := errors.AsType[mssql.Error](err); !ok || me.Number != 468 {
+			t.Errorf("%s error = %v, want the bare query's 468", name, err)
+		}
+	}
+	if len(useState.stmts) != 6 {
+		t.Errorf("statements = %q, want three per read", useState.stmts)
 	}
 }

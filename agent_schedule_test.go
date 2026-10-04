@@ -1,6 +1,15 @@
 package gosmo
 
 import (
+	"context"
+	"database/sql"
+	"database/sql/driver"
+	"errors"
+	"io"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 )
@@ -287,6 +296,117 @@ func TestEveryNText(t *testing.T) {
 	for _, c := range cases {
 		if got := everyNText(c.n, c.unit); got != c.want {
 			t.Errorf("everyNText(%d, %q) = %q, want %q", c.n, c.unit, got, c.want)
+		}
+	}
+}
+
+// scheduleRowsDriver answers every query with n identical schedule rows, so
+// ScheduleByName sees a name held by n schedules.
+type scheduleRowsDriver struct{}
+
+func (scheduleRowsDriver) Open(dsn string) (driver.Conn, error) {
+	n, err := strconv.Atoi(dsn)
+	return &scheduleRowsConn{n: n}, err
+}
+
+type scheduleRowsConn struct{ n int }
+
+func (*scheduleRowsConn) Prepare(string) (driver.Stmt, error) { return nil, driver.ErrSkip }
+func (*scheduleRowsConn) Close() error                        { return nil }
+func (*scheduleRowsConn) Begin() (driver.Tx, error)           { return nil, driver.ErrSkip }
+
+func (c *scheduleRowsConn) QueryContext(context.Context, string, []driver.NamedValue) (driver.Rows, error) {
+	return &scheduleRows{left: c.n}, nil
+}
+
+type scheduleRows struct{ left int }
+
+func (*scheduleRows) Columns() []string { return make([]string, 16) }
+func (*scheduleRows) Close() error      { return nil }
+func (r *scheduleRows) Next(dest []driver.Value) error {
+	if r.left == 0 {
+		return io.EOF
+	}
+	r.left--
+	stamp := time.Date(2026, time.October, 4, 0, 0, 0, 0, time.UTC)
+	copy(dest, []driver.Value{
+		int64(10 + r.left), "Daily", true, int64(FreqDaily), int64(1),
+		int64(SubdayOnce), int64(0), int64(0),
+		int64(0), int64(20261004), int64(noEndDateYYYYMMDD),
+		int64(10000), int64(235959),
+		stamp, stamp, "sa",
+	})
+	return nil
+}
+
+func init() { sql.Register("fakeschedulerows", scheduleRowsDriver{}) }
+
+// msdb does not keep schedule names unique (J1). ScheduleByName used to
+// return whichever row came first, and a Drop or Alter keyed by that row's
+// id then hit a schedule the caller never meant. A shared name is
+// ErrAmbiguous now, distinct from ErrNotFound.
+func TestScheduleByNameRefusesASharedName(t *testing.T) {
+	for _, tc := range []struct {
+		rows                 int
+		wantAmbig, wantNotFd bool
+	}{{0, false, true}, {1, false, false}, {2, true, false}} {
+		db, err := sql.Open("fakeschedulerows", strconv.Itoa(tc.rows))
+		if err != nil {
+			t.Fatalf("sql.Open: %v", err)
+		}
+		sch, err := (&Server{db: db}).ScheduleByName(context.Background(), "Daily")
+		db.Close()
+		if got := errors.Is(err, ErrAmbiguous); got != tc.wantAmbig {
+			t.Errorf("%d rows: errors.Is(%v, ErrAmbiguous) = %v, want %v", tc.rows, err, got, tc.wantAmbig)
+		}
+		if got := errors.Is(err, ErrNotFound); got != tc.wantNotFd {
+			t.Errorf("%d rows: errors.Is(%v, ErrNotFound) = %v, want %v", tc.rows, err, got, tc.wantNotFd)
+		}
+		if tc.rows == 1 && (err != nil || sch == nil || sch.ID != 10) {
+			t.Errorf("1 row: ScheduleByName = %+v, %v; want schedule 10", sch, err)
+		}
+		if tc.wantAmbig && !strings.Contains(err.Error(), "ScheduleByID") {
+			t.Errorf("ambiguous error %q does not point at ScheduleByID", err)
+		}
+	}
+}
+
+// Every statement that names an existing schedule — attach, detach, update,
+// delete — must address it through Schedule.key, which sends @schedule_id
+// whenever the handle has one. A by-name form written inline compiles, passes
+// every rendered-statement test that uses a Ref, and fails with Msg 14371 on
+// any server where two schedules share the name.
+func TestScheduleProceduresAddressByKey(t *testing.T) {
+	procs := []string{"sp_attach_schedule", "sp_detach_schedule", "sp_update_schedule", "sp_delete_schedule"}
+	files, err := filepath.Glob("*.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range files {
+		if strings.HasSuffix(f, "_test.go") {
+			continue
+		}
+		src, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		lines := strings.Split(string(src), "\n")
+		for i, line := range lines {
+			if strings.HasPrefix(strings.TrimSpace(line), "//") {
+				continue
+			}
+			for _, p := range procs {
+				if !strings.Contains(line, p) {
+					continue
+				}
+				stmt := line
+				if i+1 < len(lines) {
+					stmt += lines[i+1]
+				}
+				if !strings.Contains(stmt, "sch.key(") && !strings.Contains(stmt, "@schedule_id") {
+					t.Errorf("%s:%d: %s does not address the schedule through Schedule.key: %s", f, i+1, p, strings.TrimSpace(line))
+				}
+			}
 		}
 	}
 }

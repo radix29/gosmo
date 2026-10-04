@@ -3,8 +3,11 @@ package gosmo
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"time"
+
+	mssql "github.com/microsoft/go-mssqldb"
 )
 
 // Database mirrors Microsoft.SqlServer.Management.Smo.Database.
@@ -75,11 +78,18 @@ func (d *Database) withConn(ctx context.Context, fn func(context.Context, sqlCon
 	ctx, release := d.server.bound(ctx)
 	defer release()
 	if t := txFrom(ctx, d.server); t != nil {
-		t.leftHome()
-		if err := d.use(ctx, t.tx); err != nil {
-			return err
+		if !t.in(d.Name) {
+			if err := d.use(ctx, t.tx); err != nil {
+				t.lost()
+				return err
+			}
+			t.at(d.Name)
 		}
-		return withAllMessages(fn(ctx, t.tx))
+		err := withAllMessages(fn(ctx, t.tx))
+		if err != nil {
+			t.lost()
+		}
+		return err
 	}
 	conn, err := withRetry(ctx, func() (*sql.Conn, error) {
 		conn, err := d.server.db.Conn(ctx)
@@ -207,9 +217,39 @@ func (d *Database) use(ctx context.Context, conn sqlConn) error {
 // The prefix shares q's first line, so every line number an error in q
 // reports is the one q alone reported. Statements after a USE are compiled in
 // the database it switched to; verified on 2016, 2017, 2025 and Managed
-// Instance, parameterised and not.
+// Instance, parameterised and not. The parameters are the exception: they
+// take the collation of the database the batch started in, so where that
+// differs from d's, a parameter compared with a built-in's result
+// (SCHEMA_NAME(x) = @p1, both collation-coercible) fails Msg 468 in the batch
+// and works alone — see recheckUse.
 func (d *Database) useBatch(q string) string {
 	return "USE " + quoteIdent(d.Name) + "; IF @@ERROR <> 0 RETURN; " + q
+}
+
+// msgCollationConflict is Msg 468, "Cannot resolve the collation conflict".
+const msgCollationConflict = 468
+
+// recheckUse tells the two halves of a useBatch read that failed with err
+// apart. A USE failure is reported as one, so the USE runs again alone: if it
+// fails, useErr is its error and is the read's. If it succeeds, the query
+// half failed and err is already the query's own, with its own line numbers
+// (see useBatch) — the query is not run a second time, since a lock timeout
+// or a late overflow would cost twice, and only a failing read pays the one
+// extra round trip.
+//
+// The exception is rerun: a collation conflict may be the batch's own doing
+// (see useBatch), and the session is now in d, so q must run again alone —
+// what every failing read did before 2026-10-04, which hid it. A by-name
+// lookup in a case-sensitive database fails without this.
+func (d *Database) recheckUse(ctx context.Context, conn sqlConn, err error) (useErr error, rerun bool) {
+	if ctx.Err() != nil {
+		return nil, false
+	}
+	if uerr := d.use(ctx, conn); uerr != nil {
+		return uerr, false
+	}
+	me, ok := errors.AsType[mssql.Error](err)
+	return nil, ok && me.Number == msgCollationConflict
 }
 
 func (d *Database) query(ctx context.Context, q string, args ...any) (*dbRows, error) {
@@ -234,16 +274,12 @@ func (d *Database) query(ctx context.Context, q string, args ...any) (*dbRows, e
 			return nil, fmt.Errorf("gosmo: acquire connection: %w", err)
 		}
 		rows, err := conn.QueryContext(ctx, d.useBatch(q), args...)
-		if err != nil && ctx.Err() == nil {
-			// Either half of the batch may have failed, and which one decides
-			// the error — a USE failure is reported as one — so the failure
-			// is reproduced the way it always was, one statement at a time.
-			// Only a failing read pays for this.
-			if err := d.use(ctx, conn); err != nil {
-				conn.Close()
-				return nil, err
+		if err != nil {
+			if uerr, rerun := d.recheckUse(ctx, conn, err); uerr != nil {
+				err = uerr
+			} else if rerun {
+				rows, err = conn.QueryContext(ctx, q, args...)
 			}
-			rows, err = conn.QueryContext(ctx, q, args...)
 		}
 		if err != nil {
 			conn.Close()
@@ -258,17 +294,25 @@ func (d *Database) query(ctx context.Context, q string, args ...any) (*dbRows, e
 }
 
 // queryOn is query inside InTransaction: on the transaction's session, with
-// the same fallback to two statements, and never retried.
+// the same error report (recheckUse), and never retried. The batch's USE is
+// free, so it is sent even when the session is already in d.
 func (d *Database) queryOn(ctx context.Context, t *serverTx, q string, args ...any) (*sql.Rows, error) {
-	t.leftHome()
 	rows, err := t.tx.QueryContext(ctx, d.useBatch(q), args...)
-	if err != nil && ctx.Err() == nil {
-		if err := d.use(ctx, t.tx); err != nil {
-			return nil, err
+	if err != nil {
+		t.lost()
+		uerr, rerun := d.recheckUse(ctx, t.tx, err)
+		if uerr != nil {
+			return nil, withAllMessages(uerr)
 		}
-		rows, err = t.tx.QueryContext(ctx, q, args...)
+		if !rerun {
+			return nil, withAllMessages(err)
+		}
+		if rows, err = t.tx.QueryContext(ctx, q, args...); err != nil {
+			return nil, withAllMessages(err)
+		}
 	}
-	return rows, withAllMessages(err)
+	t.at(d.Name)
+	return rows, nil
 }
 
 // queryRow acquires a connection, switches it to d's database (USE), runs
@@ -280,21 +324,28 @@ func (d *Database) queryOn(ctx context.Context, t *serverTx, q string, args ...a
 // to scan later would let withRetry see a nil error and return before the
 // failure that only surfaces at Scan time, silently skipping the retry.
 //
-// The USE and q go as one batch (see useBatch). A failed USE surfaces in
-// Row.Err before scan sees the row, and that is where the batch falls back to
-// the two statements, as query does — scan never sees a USE failure, which it
-// could otherwise wrap or map to something else.
+// The USE and q go as one batch (see useBatch). A failed batch surfaces in
+// Row.Err before scan sees the row, and that is where recheckUse tells the two
+// halves apart, as query does — scan never sees a USE failure, which it could
+// otherwise wrap or map to something else, and sees the batch's own failed
+// row for a failure in q.
 func (d *Database) queryRow(ctx context.Context, scan func(*sql.Row) error, q string, args ...any) error {
 	ctx, release := d.server.bound(ctx)
 	defer release()
 	if t := txFrom(ctx, d.server); t != nil {
-		t.leftHome()
 		row := t.tx.QueryRowContext(ctx, d.useBatch(q), args...)
-		if row.Err() != nil && ctx.Err() == nil {
-			if err := d.use(ctx, t.tx); err != nil {
-				return err
+		if err := row.Err(); err != nil {
+			t.lost()
+			uerr, rerun := d.recheckUse(ctx, t.tx, err)
+			if uerr != nil {
+				return uerr
 			}
-			row = t.tx.QueryRowContext(ctx, q, args...)
+			if rerun {
+				row = t.tx.QueryRowContext(ctx, q, args...)
+			}
+		}
+		if row.Err() == nil {
+			t.at(d.Name)
 		}
 		return withAllMessages(scan(row))
 	}
@@ -305,11 +356,14 @@ func (d *Database) queryRow(ctx context.Context, scan func(*sql.Row) error, q st
 		}
 		defer conn.Close()
 		row := conn.QueryRowContext(ctx, d.useBatch(q), args...)
-		if row.Err() != nil && ctx.Err() == nil {
-			if err := d.use(ctx, conn); err != nil {
-				return struct{}{}, err
+		if err := row.Err(); err != nil {
+			uerr, rerun := d.recheckUse(ctx, conn, err)
+			if uerr != nil {
+				return struct{}{}, uerr
 			}
-			row = conn.QueryRowContext(ctx, q, args...)
+			if rerun {
+				row = conn.QueryRowContext(ctx, q, args...)
+			}
 		}
 		return struct{}{}, scan(row)
 	})
