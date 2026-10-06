@@ -44,6 +44,7 @@ flowchart TB
         N21["21 · The master key, module signatures, and EKM keys"]
         N22["22 · Resource Governor"]
         N23["23 · Database Mail"]
+        N24["24 · Extended Events"]
     end
     subgraph A8["Azure instance resources"]
         direction TB
@@ -59,6 +60,7 @@ flowchart TB
     N02 -- "exposes the Azure instance views" --> N19
     N02 -- "owns the Resource Governor configuration" --> N22
     N02 -- "owns Database Mail in msdb" --> N23
+    N02 -- "owns Extended Events sessions" --> N24
     N05 -- "writes through withConn, captured by ScriptCollector" --> N07
     N05 -- "has files, options, catalog, Query Store" --> N08
     N05 -- "filters listings and answers permissions" --> N09
@@ -91,3 +93,4 @@ flowchart TB
     click N21 href "diagram/21-master-key-and-signatures.mmd"
     click N22 href "diagram/22-resource-governor.mmd"
     click N23 href "diagram/23-database-mail.mmd"
+    click N24 href "diagram/24-extended-events.mmd"

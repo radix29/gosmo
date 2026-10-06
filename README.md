@@ -72,8 +72,9 @@ pool.
 Every object family SSMS shows, read and — where it makes sense — written:
 
 - **Server** — info, configuration, logins and server roles, permissions and
-  the connected login's capabilities, sessions, Database Mail, linked
-  servers, the error log, the server filesystem, memory and processor DMVs.
+  the connected login's capabilities, sessions, Database Mail, Resource
+  Governor, Extended Events, linked servers, the error log, the server
+  filesystem, memory, processor, activity and tempdb DMVs.
 - **Database** — files and filegroups, `ALTER DATABASE` options, scoped
   configurations, space and disk usage, change tracking, users, roles,
   schemas, permissions down to column scope, detach/attach, snapshots.
@@ -85,7 +86,7 @@ Every object family SSMS shows, read and — where it makes sense — written:
   defaults, CLR assemblies, plan guides, external data sources, file formats
   and libraries.
 - **Backup & restore** — to disk, to a logical device, or to Azure Storage,
-  with headers, history, file lists and progress callbacks.
+  with headers, history, file lists, restore planning and progress callbacks.
 - **Service Broker** — message types, contracts, queues, services, routes,
   remote service bindings and broker priorities, with queue and route
   settings.
@@ -105,6 +106,8 @@ Every object family SSMS shows, read and — where it makes sense — written:
   of the above, and `WithScript`, which collects the statements a write
   *would* run instead of running them.
 
+`srv.InTransaction` runs several writes as one transaction.
+
 Every method that touches the database takes a `context.Context` first, and
 has that one form. Every `Create*` takes a request value and returns the
 object it created.
@@ -112,7 +115,7 @@ object it created.
 handle carrying only the name. Catalog state is exported fields, and every
 object reaches its parent through `Server()` or `Database()`.
 
-The full API map — twenty-one Mermaid class diagrams in [`diagram/`](diagram/)
+The full API map — twenty-three Mermaid class diagrams in [`diagram/`](diagram/)
 under a master map, and a feature map giving gosmo's name for each SMO one —
 is in [`ARCHITECTURE.md`](ARCHITECTURE.md).
 
@@ -151,7 +154,7 @@ wrapping the driver's own. The detail is in
 | Document | |
 | --- | --- |
 | [`ARCHITECTURE.md`](ARCHITECTURE.md) | The API map, the feature map, errors, authentication and the connection internals |
-| [`diagram/`](diagram/) | The class map — `00-map.mmd` plus twenty-one Mermaid class diagrams, one per group of types |
+| [`diagram/`](diagram/) | The class map — `00-map.mmd` plus twenty-three Mermaid class diagrams, one per group of types |
 | [`RELEASE.md`](RELEASE.md) | What changed in the current release |
 | [`CHANGELOG.md`](CHANGELOG.md) | The full history, from `v0.0.4` |
 | [`examples/README.md`](examples/README.md) | What each runnable example covers |

@@ -1,0 +1,187 @@
+classDiagram
+
+    %% =========================================================
+    %% Extended Events — sessions, targets and their data
+    %% (extended_events.go model and catalog, extended_events_script.go DDL,
+    %% extended_events_read.go target readers, extended_events_templates.go)
+    %% =========================================================
+
+    class EventSession {
+        -server *Server
+        -db *Database
+        +ID int
+        +Name string
+        +StartupState bool
+        +IsRunning bool
+        +DroppedEvents int64
+        +RetentionMode string
+        +MaxDispatchLatency time.Duration
+        +MaxMemory int
+        +MaxEventSize int
+        +MemoryPartitionMode string
+        +TrackCausality bool
+        +MaxDuration time.Duration
+        +Events []SessionEvent
+        +Targets []SessionTarget
+        +Server() *Server
+        +Database() *Database
+        +Spec() EventSessionSpec
+        +Status(ctx) *EventSessionStatus
+        +Start(ctx) error
+        +Stop(ctx) error
+        +Alter(ctx, EventSessionSpec) error
+        +AddTarget(ctx, SessionTarget) error
+        +Drop(ctx) error
+        +Target(name) SessionTarget
+        +EventFilePattern() string
+        +ReadRingBuffer(ctx) *RingBufferData
+    }
+
+    class EventSessionSpec {
+        +Name string
+        +Events []SessionEvent
+        +Targets []SessionTarget
+        +RetentionMode string
+        +MaxDispatchLatency time.Duration
+        +MaxMemory int
+        +MaxEventSize int
+        +MemoryPartitionMode string
+        +TrackCausality bool
+        +StartupState bool
+        +MaxDuration time.Duration
+    }
+
+    class SessionEvent {
+        +Package string
+        +Name string
+        +Predicate string
+        +Actions []string
+        +Fields []SessionField
+        +QualifiedName() string
+    }
+
+    class SessionTarget {
+        +Package string
+        +Name string
+        +Fields []SessionField
+        +QualifiedName() string
+        +Field(name) string, bool
+    }
+
+    class SessionField {
+        +Name string
+        +Value string
+        +IsString bool
+        +Validate() error
+    }
+
+    class EventSessionStatus {
+        +CreateTime time.Time
+        +DroppedEvents int64
+        +DroppedBuffers int64
+        +Targets []EventTargetStatus
+    }
+
+    class EventTargetStatus {
+        +Package string
+        +Name string
+        +ExecutionCount int64
+        +CurrentFile string
+        +TotalEventsProcessed int64
+        +EventCount int64
+        +DroppedCount int64
+        +Truncated bool
+    }
+
+    class XEvent {
+        +Name string
+        +Package string
+        +Timestamp time.Time
+        +Seq uint64
+        +Fields []XEValue
+        +Actions []XEValue
+        +Field(name) XEValue, bool
+        +Action(name) XEValue, bool
+    }
+
+    class XEValue {
+        +Name string
+        +Type string
+        +Value string
+        +Text string
+        +IsXML bool
+    }
+
+    class RingBufferData {
+        +Events []XEvent
+        +TotalEventsProcessed int64
+        +EventCount int64
+        +DroppedCount int64
+        +MemoryUsed int64
+        +Truncated bool
+    }
+
+    class EventFileCursor {
+        +File string
+        +Offset int64
+        +IsZero() bool
+    }
+
+    class XESessionTemplate {
+        +Name string
+        +Category string
+        +Description string
+        +Spec func() EventSessionSpec
+    }
+
+    class XEPackage {
+        +Name string
+        +GUID string
+        +Description string
+        +Capabilities string
+    }
+
+    class XEObject {
+        +Package string
+        +Name string
+        +Kind string
+        +Description string
+        +Channel string
+        +Keyword string
+        +TypeName string
+    }
+
+    class XEObjectColumn {
+        +Name string
+        +ColumnID int
+        +TypeName string
+        +ColumnType string
+        +Mandatory bool
+    }
+
+    class XEMapValue {
+        +Key int
+        +Value string
+    }
+
+    Server "1" --> "*" EventSession : EventSessions / EventSessionByName / EventSessionRef
+    Database "1" --> "*" EventSession : Azure SQL Database scope
+    Server ..> EventSession : CreateEventSession(EventSessionSpec)
+    EventSession ..> EventSessionSpec : Spec / Alter
+    EventSession *-- SessionEvent : Events
+    EventSession *-- SessionTarget : Targets
+    SessionEvent *-- SessionField : Fields
+    SessionTarget *-- SessionField : Fields
+    EventSession ..> EventSessionStatus : Status
+    EventSessionStatus *-- EventTargetStatus : Targets
+    Server ..> XEvent : ReadEventFile(pattern, EventFileCursor, max)
+    Server ..> EventFileCursor : returns the next cursor
+    EventSession ..> RingBufferData : ReadRingBuffer
+    RingBufferData *-- XEvent : Events
+    XEvent *-- XEValue : Fields / Actions
+    XESessionTemplate ..> EventSessionSpec : Spec()
+    Server ..> XEPackage : XEPackages
+    Server ..> XEObject : XEObjects(kind)
+    Server ..> XEObjectColumn : XEObjectColumns
+    Server ..> XEMapValue : XEMapValues
+    Scripter ..> EventSession : ScriptEventSession

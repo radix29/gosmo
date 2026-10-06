@@ -4,6 +4,60 @@ All notable changes to gosmo are documented here, newest first, from
 `v0.0.4` onward — this is the history. `RELEASE.md` carries the current
 release only, as a short summary of the entry below it.
 
+## v0.0.16
+
+Three new families — Extended Events, Resource Governor and Database Mail —
+plus transactions, restore planning and server-activity reads. The breaking
+changes finish the v0.0.15 pass: writes on files, filegroups, role members,
+Agent steps, categories and schedules move onto their handles. Each
+**Migrating** note says what a caller rewrites.
+
+### Added
+
+- **Extended Events** (`extended_events.go`, `extended_events_read.go`, `extended_events_script.go`, `extended_events_templates.go`) — `Server.EventSessions`/`EventSessionByName`/`EventSessionRef`/`CreateEventSession(EventSessionSpec)`, the same four on `Database` for Azure SQL Database, and on a session `Spec`, `Status`, `Start`, `Stop`, `Alter` (the minimal ADD/DROP diff against the catalog), `AddTarget` and `Drop`. `ReadEventFile` resumes from an `EventFileCursor` (`ErrEventFileGone` when a rollover deleted the file), `ReadRingBuffer` returns decoded `XEvent`s, and `DecodeEventXML`/`DecodeRingBuffer` decode XML a caller already holds. `XEPackages`/`XEObjects`/`XEObjectColumns`/`XEMapValues` read the event, action and target library (cached per `Server`). `XEProfilerStandard`, `XEProfilerTSQL` and `XESessionTemplates` carry SSMS's definitions; `ScriptEventSession` scripts a session. Live data is polled from a target, never from the undocumented XE stream.
+- **Resource Governor** (`resource_governor.go`, `resource_governor_write.go`, `scripter_resource_governor.go`) — `Server.ResourceGovernor`, `ResourceGovernorStatus` (in force, with the pending-reconfigure flag), `ResourcePools`, `WorkloadGroups`, `ExternalResourcePools` with `ByName` forms, and `ResourcePoolStats`/`WorkloadGroupStats`. Writes: `Create*`, `Alter` and `Drop` on each, a pool's `Affinity` (`AFFINITY SCHEDULER`/`CPU`, `NUMANODE`, `AUTO`) and, on `ResourceGovernorRef()`, `SetClassifier`, `SetMaxOutstandingIOPerVolume`, `Reconfigure`, `Enable`, `Disable` and `ResetStatistics`. No write reconfigures by itself. `ClassifierFunctionCandidates` lists what can be a classifier. The scripter emits only options that differ from the defaults. Affinity beyond processor group 0 goes through `Server.Schedulers`.
+- **Database Mail** (`database_mail.go`, `database_mail_write.go`, `scripter_database_mail.go`) — accounts, profiles with their ordered accounts, profile security (`MailPrincipalProfiles`; SID `0x00` is public), `MailConfiguration`, `MailStatus`, `MailQueues`, `MailItems`/`MailItemByID` and `MailEvents`, with filters. Writes: `CreateMailAccount`/`CreateMailProfile`, `Alter`/`Drop` on each handle, `SetAccounts`, `Grant`/`SetGrantDefault`/`Revoke`, `SetMailConfiguration`, `StartDatabaseMail`/`StopDatabaseMail`, `DeleteMailItems`/`DeleteMailLog` and `SendMail(MailMessage)`, which returns the `mailitem_id` and is never retried. `ScriptMailAccount`/`ScriptMailProfile`/`ScriptDatabaseMail` write the password as a placeholder. `ErrMailProfileInvalid`, `ErrMailNoDefaultProfile`, `ErrMailStopped` and `ErrMailXPsDisabled` name the refusals.
+- **`Server.InTransaction(ctx, fn)`** (`transaction.go`) — several writes as one transaction on one session; `fn`'s nil commits, an error, a panic or cancellation rolls back. A nested call on the same `Server` joins; the paths that need a session of their own (`Backup`/`Restore` with progress, `BulkInsert`, the effective-permission impersonations) are refused with `ErrUnsupported`. Observers hear after `COMMIT`. Multi-statement writes (`CreateJob`, `ReorderSteps`, `SetAccounts`, cascading `Table.Drop`) join it instead of opening their own.
+- **Restore planning** (`restore_plan.go`) — `BackupHeader.SetNumber`, `BackupInfo.SetNumber`/`Restorable`, `BackupSetAt`, `RestoreRelocation` (`Moves`, `NeedsFileList`) and `RestoreOptions.FromHeader`, so a client picks the set and the file placement by the rules the server enforces. `Server.BuildBackupStatement` joins `BuildRestoreStatement` as a method.
+- **Server activity and tempdb** (`server_activity.go`, `tempdb_usage.go`) — `HasViewServerState`, `PerformanceCounters` (decode by `CounterType`), `WaitStats`, `FileIOStats`, `MemoryClerks`, `RequestActivity`, `HostCPU`, and `TempDBSpace`/`TempDBFiles`/`TempDBObjects`/`TempDBSessions`. Raw readings; rates are the caller's.
+- **CLR modules script** (`scripter_module_clr.go`) — CLR procedures, functions and triggers (database and server) are rebuilt from the catalog, with default parameter values; `UserDefinedFunction.FuncType` is a `FunctionType` (`IsScalar`, `IsCLR`) and CLR functions are listed.
+- **Module text by name** — `Definition(ctx)` on procedures and functions beside the existing view, trigger, rule and default forms.
+- **Table-valued functions and user-defined aggregates in `Catalog`** — `Catalog.Functions` (`IF`/`TF`/`FT`, with result columns) and `Catalog.Aggregates` (`CatalogAggregate`), kept out of `Objects`.
+- **Agent** — `Server.AgentMailSettings`/`SetAgentMailSettings`, `ScheduleByID`, `Job.IsSystem`, `Category.Server`/`CategoryRef`, and `Job.AddSchedule` returns the `*Schedule` it made.
+- **Linked servers** — `LinkedServerDatabases` and `LinkedServerCatalog` read a remote SQL Server's catalog through `OPENQUERY`.
+- **Names that follow the collation** (`collation.go`) — `CollationIgnoresCase`, `SameName` and `NameKey` compare and key names the way the scope's collation does; `Database.CallerDefaultSchema` reads the caller's default schema.
+- **Error classification** — `ClassifyRefusal` (`RefusalKind`), `IsPermissionDenied`, `IsMissingOrDenied` and `IsAlreadyExists`, keyed on the error number, never the wording. `ErrAmbiguous` for a name the catalog does not make unique.
+- **Quoting** — `QuoteNameIfNeeded`, `UnquoteName`, `IsReservedKeyword` (pinned against the parser by a live test) and `QuoteAnsiLiteral`.
+- **Scripting** — `WithScriptSecrets` shows real secrets in a capture (an observer always sees placeholders), `ScriptCollector.Entries`/`Len`, `float16` vector and 2022 external-table options, `StartPlanCapture` (`PlanMode`), `Server.Context()` (cancelled by `Close`, which now stops every statement in flight), `ServerInfo.IsWindows`, `JoinServerPath`/`ServerPathBase`/`ServerPathDir`/`ServerPathExt`, `DatabaseFileInfo`/`FileGroup` `Database()`, `ConnectionOptions.ConnectionString(maskSecrets)`, `DetachedDatabase.LogFiles`, `Certificate.IsExpired`, `Login.IsSystem`/`IsSQLLogin`, `QueryStoreInfo.IsReadable`.
+
+### Changed
+
+- **Breaking: file and filegroup writes are on the handle.** `AlterFile`, `RemoveFile`, `RemoveFileGroup`, `SetDefaultFileGroup` and `SetFileGroupReadOnly` on `Database` are now `FileRef(n).Alter`/`Drop` and `FileGroupRef(n).Drop`/`SetDefault`/`SetReadOnly`. **Migrating:** call the method on the handle; `Files` and `FileGroups` return the same handles, populated.
+- **Breaking: role membership is on the role.** `Database.AddRoleMember`/`RemoveRoleMember` are `DatabaseRole.AddMember`/`RemoveMember`; `ServerRole` gains the same pair. **Migrating:** `db.RoleRef(r).AddMember(ctx, m)`.
+- **Breaking: Agent writes follow the handle shape.** `Job.AddStep`/`InsertStep` return the `*JobStep`; `JobStep.Delete` is `Drop`; `Alert.RemoveNotify` is `RemoveNotification`; `Server.DeleteCategory` is `Category.Drop`; `JobScheduleRequest` is `CreateScheduleRequest`; `AttachSchedule`/`DetachSchedule` take the `*Schedule`, not its name. **Migrating:** attach by `ScheduleByID`, which is unambiguous.
+- **Breaking: `Credential.Alter` and `DatabaseScopedCredential.Alter` take `CredentialOptions`** instead of `(identity, secret)`.
+- **Breaking: `BuildBackupStatement` is `Server.BuildBackupStatement`**, as `BuildRestoreStatement` already was.
+- **Breaking: `ObjectKey` and catalog keys use a separator no name can hold**, so `a.b` in schema `x` and `a` in schema `x.b` no longer collide. **Migrating:** build keys with `ObjectKey`, never by concatenation.
+- **A by-name lookup returns the catalog's spelling** on a case-insensitive server, not the one the caller typed (`UserByName` included).
+- **`ScheduleByName` refuses a name two schedules share** with `ErrAmbiguous`; use `ScheduleByID`.
+- **Login setters mirror their fields**, so a handle read before a write shows the new value without a reload.
+- **Multi-statement writes are all-or-nothing** (`execAtomic`) — `CreateJob`, `ReorderSteps`, `SetAccounts`, `CreateLogin` with defaults, `AddSchedule` with an owner, `CreateMailAccount` with a timeout and cascading `Table.Drop` run in one transaction, and a failure leaves nothing behind.
+- **Name comparisons in gosmo's queries use `COLLATE DATABASE_DEFAULT`** where a schema name meets a catalog column, so a case-sensitive database no longer raises a collation conflict.
+- **A statement runs `USE` only when the session is in another database**, and a failed `USE` is reported as itself, not as the query's failure.
+- Dependencies: `shopspring/decimal` v1.5.0, `azure-sdk-for-go` internal v1.13.0.
+
+### Fixed
+
+- **Case-sensitive databases and collation conflicts** — name lookups, `Scripter` table children whose names differ only by case, and schema comparisons failed or returned the wrong object.
+- **Script of a table-valued function or a schema-bound dependent** — a table-valued function listed as a table; `DROP TABLE` did not name the schema-bound modules in its way; `ScriptTable` read dependents it only needed to drop.
+- **A foreign key referencing a table was scripted wrongly on `DROP`.**
+- **Hostile names in script comments** — the scripter now writes a name into a comment safely.
+- **`Index.Fragmentation` and `Table.FragmentationStats`** accepted any mode string; `FragmentationMode` is now normalised.
+- **A restore moved files into a name the server could not create** — a Windows path with `\ / : * ? " < > |`, or a set number that did not match its `FILELISTONLY`.
+- **Mail profile accounts** compared names without the server's collation.
+- **A secret reached a captured script** — `redactSecrets` now replaces whole literals, so a password that contains a quote is still hidden.
+- **A write that reads a value back could be retried** — `execScan` runs it once, and a test pins that no write goes through `query`/`queryRow*`.
+
 ## v0.0.15
 
 A consolidation release: the API now has one shape everywhere, and most of

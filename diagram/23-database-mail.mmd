@@ -133,5 +133,5 @@ classDiagram
     MailAccount ..> MailCredentials : CreateMailAccountRequest / MailAccountOptions
     Server ..> MailConfiguration : SetMailConfiguration(MailConfigurationOptions)
     Server ..> MailState : StartDatabaseMail / StopDatabaseMail
-    Server ..> MailItem : SendTestMail → mailitem_id / DeleteMailItems
+    Server ..> MailItem : SendMail(MailMessage) → mailitem_id / DeleteMailItems
     Server ..> MailEvent : DeleteMailLog / ReadLog(ErrorLogDatabaseMail)

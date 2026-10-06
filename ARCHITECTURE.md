@@ -13,7 +13,7 @@ release and `CHANGELOG.md` the history.
 
 - [Version gating](#version-gating) — how a column or statement newer than the
   floor is handled, and how each gate is pinned.
-- [Architecture](#architecture) — the master map, and the twenty-one Mermaid
+- [Architecture](#architecture) — the master map, and the twenty-three Mermaid
   class diagrams in [`diagram/`](diagram/) that cover every type gosmo
   exports.
 - [Feature map](#feature-map) — SMO's names against gosmo's, family by family,
@@ -56,9 +56,9 @@ correctly for its own major.
 
 ## Architecture
 
-The class map is **twenty-three Mermaid diagrams in [`diagram/`](diagram/)** — the
-master map below, and twenty-two class diagrams, one per group of types. It is
-one map, not twenty-three: an edge that crosses files is drawn in the file that
+The class map is **twenty-four Mermaid diagrams in [`diagram/`](diagram/)** — the
+master map below, and twenty-three class diagrams, one per group of types. It is
+one map, not twenty-four: an edge that crosses files is drawn in the file that
 defines the class it points *into*, where the other end shows up as a bare
 box (`Server --> AvailabilityGroup` lives in
 [`16-availability-groups.mmd`](diagram/16-availability-groups.mmd)).
@@ -125,6 +125,7 @@ flowchart TB
         N21["21 · The master key, module signatures, and EKM keys"]
         N22["22 · Resource Governor"]
         N23["23 · Database Mail"]
+        N24["24 · Extended Events"]
     end
     subgraph A8["Azure instance resources"]
         direction TB
@@ -140,6 +141,7 @@ flowchart TB
     N02 -- "exposes the Azure instance views" --> N19
     N02 -- "owns the Resource Governor configuration" --> N22
     N02 -- "owns Database Mail in msdb" --> N23
+    N02 -- "owns Extended Events sessions" --> N24
     N05 -- "writes through withConn, captured by ScriptCollector" --> N07
     N05 -- "has files, options, catalog, Query Store" --> N08
     N05 -- "filters listings and answers permissions" --> N09
@@ -172,6 +174,7 @@ flowchart TB
     click N21 href "diagram/21-master-key-and-signatures.mmd"
     click N22 href "diagram/22-resource-governor.mmd"
     click N23 href "diagram/23-database-mail.mmd"
+    click N24 href "diagram/24-extended-events.mmd"
 ```
 
 ### Connecting and the `Server` object
@@ -266,6 +269,7 @@ server's own filesystem.
 | [`21-master-key-and-signatures.mmd`](diagram/21-master-key-and-signatures.mmd) | The database master key and its encryptions, module signatures and their signers, certificate backup, and the EKM `FROM PROVIDER` half of a key spec. |
 | [`22-resource-governor.mmd`](diagram/22-resource-governor.mmd) | The user-configurable Resource Governor: its stored and effective configuration, resource pools, workload groups, external pools, and their runtime statistics. |
 | [`23-database-mail.mmd`](diagram/23-database-mail.mmd) | Database Mail: accounts, profiles and their ordered accounts, profile security, system parameters, status and queues, mail items and the mail log; their writes and scripts. |
+| [`24-extended-events.mmd`](diagram/24-extended-events.mmd) | Extended Events: sessions with their events and targets, session specs and templates, live status, event-file and ring-buffer readers, and the package/object library; their writes and scripts. |
 
 ### Azure instance resources
 
