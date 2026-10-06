@@ -765,6 +765,7 @@ an unescaped filter for `pct_1` also matches `pct1100`.
 | Every plan a multi-statement batch produced | `plan.All` (`plan.XML` is the last of them) |
 | Recognising a plan result set in a caller's own batch | `gosmo.ShowplanColumn` (a one-column set with this name is a plan, not data) |
 | Capturing plans around a caller's own batches | `stop, err := gosmo.StartPlanCapture(ctx, conn, gosmo.PlanEstimated\|PlanActual)`; `defer stop()` (switches it off even after ctx is cancelled) |
+| Live Query Statistics (another session's running statement) | `srv.QueryProfiles(ctx, sessionID)` — `sys.dm_exec_query_profiles`, one row per operator per thread; `srv.InFlightPlan(ctx, sessionID)` — `sys.dm_exec_query_statistics_xml`, the showplan with counters so far (`ErrNotFound` when idle). Poll from another connection; the watched session must be profiled (`StartPlanCapture(…, PlanActual)`, or 2019+'s lightweight profiling). VIEW SERVER STATE (`query_profile.go`) |
 
 Every `Grant|Deny|Revoke...` method, at all five scopes (object, column,
 schema, database, server), takes a `PermissionOptions` as its last argument;

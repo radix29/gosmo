@@ -349,6 +349,12 @@ var sweepMustCall = []string{
 	"Server.TempDBFiles",
 	"Server.TempDBObjects",
 	"Server.TempDBSessions",
+
+	// Phase 5 item 25a: the Live Query Statistics reads. Both take a session,
+	// so they are driven by hand against an idle one;
+	// live_query_profile_test.go is where they meet a running statement.
+	"Server.QueryProfiles",
+	"Server.InFlightPlan",
 }
 
 // checkCoverage fails on any sweepMustCall entry no label matched. It runs
@@ -1146,6 +1152,21 @@ func sweepServerCalls(sw *sweep, srv *Server, info *ServerInfo) {
 			}
 		}
 		return nil
+	})
+
+	// Live Query Statistics, against session 1 — a system session that runs
+	// nothing profiled, so no profile rows and a not-found plan are the
+	// queries having run.
+	sw.call("Server.QueryProfiles", func() error {
+		_, err := srv.QueryProfiles(sw.ctx, 1)
+		return err
+	})
+	sw.call("Server.InFlightPlan", func() error {
+		_, err := srv.InFlightPlan(sw.ctx, 1)
+		if errors.Is(err, ErrNotFound) {
+			return nil
+		}
+		return err
 	})
 
 	// Resource Governor. default exists in all three catalogs on every
