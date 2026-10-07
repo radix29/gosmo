@@ -1464,6 +1464,15 @@ func TestTheSecurableBlockAsksPerSecurable(t *testing.T) {
 		{"CONCAT('ASYMMETRIC KEY::', k.name)", "an asymmetric key is keyed as DatabaseSecurableKey spells it"},
 		{"HAS_PERMS_BY_NAME(QUOTENAME(k.name), 'ASYMMETRIC KEY', n.v)", "an asymmetric key is asked as its own class, quoted"},
 		{"FROM sys.asymmetric_keys AS k CROSS JOIN", "asymmetric keys are read from their own view"},
+		{"CONCAT('FULLTEXT CATALOG::', f.name)", "a full-text catalog is keyed as DatabaseSecurableKey spells it"},
+		{"HAS_PERMS_BY_NAME(QUOTENAME(f.name), 'FULLTEXT CATALOG', n.v)", "a full-text catalog is asked as its own class, quoted"},
+		{"FROM sys.fulltext_catalogs AS f CROSS JOIN", "full-text catalogs are read from their own view"},
+		{"CONCAT('FULLTEXT STOPLIST::', s.name)", "a stoplist is keyed as DatabaseSecurableKey spells it"},
+		{"HAS_PERMS_BY_NAME(QUOTENAME(s.name), 'FULLTEXT STOPLIST', n.v)", "a stoplist is asked as its own class, quoted"},
+		{"FROM sys.fulltext_stoplists AS s CROSS JOIN", "stoplists are read from their own view"},
+		{"CONCAT('SEARCH PROPERTY LIST::', p.name)", "a search property list is keyed as DatabaseSecurableKey spells it"},
+		{"HAS_PERMS_BY_NAME(QUOTENAME(p.name), 'SEARCH PROPERTY LIST', n.v)", "a search property list is asked as its own class, quoted"},
+		{"FROM sys.registered_search_property_lists AS p CROSS JOIN", "search property lists are read from their own view"},
 	} {
 		if !strings.Contains(q, want.frag) {
 			t.Errorf("the securable block is missing %q — %s:\n%s", want.frag, want.why, q)
@@ -1481,6 +1490,9 @@ func TestTheSecurableBlockAsksPerSecurable(t *testing.T) {
 		{DatabaseSecurableSymmetricKey, "", "k1", "SYMMETRIC KEY::k1"},
 		{DatabaseSecurableCertificate, "", "c1", "CERTIFICATE::c1"},
 		{DatabaseSecurableAsymmetricKey, "", "a1", "ASYMMETRIC KEY::a1"},
+		{DatabaseSecurableFullTextCatalog, "", "f1", "FULLTEXT CATALOG::f1"},
+		{DatabaseSecurableFullTextStoplist, "", "s1", "FULLTEXT STOPLIST::s1"},
+		{DatabaseSecurableSearchPropertyList, "", "p1", "SEARCH PROPERTY LIST::p1"},
 	} {
 		if got := DatabaseSecurableKey(tc.kind, tc.schema, tc.name); got != tc.want {
 			t.Errorf("DatabaseSecurableKey(%s, %q, %q) = %q, want %q", tc.kind, tc.schema, tc.name, got, tc.want)
@@ -1508,6 +1520,10 @@ func TestDatabaseCapabilitiesReadSecurableAnswersByKind(t *testing.T) {
 			{"K:CONTROL", "CERTIFICATE::k", int64(1)},
 			{"K:CONTROL", "ASYMMETRIC KEY::k", int64(0)},
 			{"K:CONTROL", "SYMMETRIC KEY::k", int64(1)},
+			// So do the three full-text families.
+			{"K:CONTROL", "FULLTEXT CATALOG::k", int64(1)},
+			{"K:CONTROL", "FULLTEXT STOPLIST::k", int64(0)},
+			{"K:CONTROL", "SEARCH PROPERTY LIST::k", int64(1)},
 		},
 	})
 	c, err := srv.DatabaseRef("HealthClinic").Capabilities(context.Background())
@@ -1535,6 +1551,14 @@ func TestDatabaseCapabilitiesReadSecurableAnswersByKind(t *testing.T) {
 	if c.HasOnSecurable(DatabaseSecurableAsymmetricKey, "", "k", "CONTROL") ||
 		c.PermitsOnSecurable(DatabaseSecurableAsymmetricKey, "", "k", "CONTROL") {
 		t.Error("the asymmetric key read the same-named certificate's answer")
+	}
+	if !c.HasOnSecurable(DatabaseSecurableFullTextCatalog, "", "k", "CONTROL") ||
+		!c.HasOnSecurable(DatabaseSecurableSearchPropertyList, "", "k", "CONTROL") {
+		t.Error("a full-text catalog's or a search property list's CONTROL did not read back")
+	}
+	if c.HasOnSecurable(DatabaseSecurableFullTextStoplist, "", "k", "CONTROL") ||
+		c.PermitsOnSecurable(DatabaseSecurableFullTextStoplist, "", "k", "CONTROL") {
+		t.Error("the stoplist read a same-named full-text securable's answer")
 	}
 	if c.Allows("CONTROL") {
 		t.Error("a securable row overwrote the database-scope CONTROL")

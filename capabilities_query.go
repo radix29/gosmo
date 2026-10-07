@@ -209,9 +209,10 @@ func explicitPrincipalCapabilityQuery(first int, perms []string) (string, []any)
 	  AND USER_NAME(p.major_id) IS NOT NULL`, args
 }
 
-// securableCapabilityQuery builds the class 5/6/10/24/25/26 block: one row per
-// assembly, user-defined type, XML schema collection, symmetric key,
-// certificate and asymmetric key per probed permission,
+// securableCapabilityQuery builds the class 5/6/10/23/24/25/26/29/31 block: one
+// row per assembly, user-defined type, XML schema collection, symmetric key,
+// certificate, asymmetric key, full-text catalog, full-text stoplist and
+// search property list per probed permission,
 // tagged "K:<permission>" with the securable as DatabaseSecurableKey spells it.
 //
 // It asks HAS_PERMS_BY_NAME where the object block reads the catalog, and has
@@ -234,7 +235,9 @@ func explicitPrincipalCapabilityQuery(first int, perms []string) (string, []any)
 //     thirty-odd built-in types per database. The ##...## certificates and
 //     keys SQL Server creates for itself — the database master key among
 //     them — are skipped by name, as Certificates and AsymmetricKeys skip
-//     them.
+//     them. The full-text views need no filter: the system stoplist has no
+//     row in sys.fulltext_stoplists, and catalogs and property lists are all
+//     user-made.
 func securableCapabilityQuery(first int, perms []string) (string, []any) {
 	args := make([]any, len(perms))
 	for i, n := range perms {
@@ -269,7 +272,19 @@ UNION ALL
 	SELECT CONCAT('K:', n.v), CONCAT('ASYMMETRIC KEY::', k.name),
 	       HAS_PERMS_BY_NAME(QUOTENAME(k.name), 'ASYMMETRIC KEY', n.v)
 	FROM sys.asymmetric_keys AS k CROSS JOIN (VALUES ` + vals + `) AS n(v)
-	WHERE k.name NOT LIKE '##%'`, args
+	WHERE k.name NOT LIKE '##%'
+UNION ALL
+	SELECT CONCAT('K:', n.v), CONCAT('FULLTEXT CATALOG::', f.name),
+	       HAS_PERMS_BY_NAME(QUOTENAME(f.name), 'FULLTEXT CATALOG', n.v)
+	FROM sys.fulltext_catalogs AS f CROSS JOIN (VALUES ` + vals + `) AS n(v)
+UNION ALL
+	SELECT CONCAT('K:', n.v), CONCAT('FULLTEXT STOPLIST::', s.name),
+	       HAS_PERMS_BY_NAME(QUOTENAME(s.name), 'FULLTEXT STOPLIST', n.v)
+	FROM sys.fulltext_stoplists AS s CROSS JOIN (VALUES ` + vals + `) AS n(v)
+UNION ALL
+	SELECT CONCAT('K:', n.v), CONCAT('SEARCH PROPERTY LIST::', p.name),
+	       HAS_PERMS_BY_NAME(QUOTENAME(p.name), 'SEARCH PROPERTY LIST', n.v)
+	FROM sys.registered_search_property_lists AS p CROSS JOIN (VALUES ` + vals + `) AS n(v)`, args
 }
 
 // explicitServerCapabilityQuery builds the server-scope catalog block: one row

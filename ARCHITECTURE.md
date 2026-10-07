@@ -1847,7 +1847,19 @@ writes carry one and nothing else does. **None of the writes may run in a user
 transaction** — keep them out of `Server.Transaction`. **A script's ADDs are
 guarded one by one**: adding a word the stoplist already has fails (Msg 30033),
 so a re-run would stop at the first. No family has `DROP … IF EXISTS`; the
-DROP script tests the catalog view instead.
+DROP script tests the catalog view instead. **Who may drop one** is
+`DatabaseCapabilities`' to answer: `ALTER ANY FULLTEXT CATALOG` (one right for
+all three families, in `ProbedDatabasePermissions`) or `CONTROL` on the
+catalog, stoplist or list itself — `DatabaseSecurableFullTextCatalog`,
+`…FullTextStoplist`, `…SearchPropertyList` (classes 23, 29, 31) in the
+per-securable block, which reads 1 for its owner. **Who may create and alter
+one** (2026-10-08, majors 14 and 17): `CREATE FULLTEXT CATALOG` (in
+`ProbedDatabasePermissions`) creates all three; the effective `ALTER` on the
+securable runs its ALTERs, except `AS DEFAULT`, which needs `ALTER ANY
+FULLTEXT CATALOG`; and `REFERENCES` on it (in `ProbedSecurablePermissions`)
+is what naming it in a full-text index needs beside `ALTER` on the table —
+`ALTER` on the database and `ALTER ANY FULLTEXT CATALOG` read 0 for it and are
+refused.
 
 ### Certificates and the database master key
 

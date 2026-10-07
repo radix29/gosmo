@@ -277,6 +277,20 @@ var ProbedDatabasePermissions = []string{
 	"ALTER ANY CERTIFICATE",
 	"ALTER ANY ASYMMETRIC KEY",
 	"ALTER ANY SYMMETRIC KEY",
+	// Full-text catalogs, stoplists and search property lists, one right for
+	// all three families. Probed with WITHOUT LOGIN users on majors 14 and 17
+	// (2026-10-07, identical): it permits DROP FULLTEXT CATALOG, DROP FULLTEXT
+	// STOPLIST and DROP SEARCH PROPERTY LIST, and makes every row of each
+	// visible; ALTER and CONTROL on the database and db_ddladmin read 1 for it
+	// and drop too, ALTER ANY SCHEMA and CREATE FULLTEXT CATALOG neither.
+	"ALTER ANY FULLTEXT CATALOG",
+	// What CREATE FULLTEXT CATALOG, CREATE FULLTEXT STOPLIST and CREATE
+	// SEARCH PROPERTY LIST check — one right for all three (2026-10-08,
+	// majors 14 and 17, identical). It reads 1 under ALTER ANY FULLTEXT
+	// CATALOG, ALTER and CONTROL on the database and db_ddladmin, each of
+	// which creates too; it alone creates an empty one or a copy of the
+	// system stoplist, not a copy of another stoplist or list.
+	"CREATE FULLTEXT CATALOG",
 	"SELECT",
 	"INSERT",
 	"UPDATE",
@@ -353,8 +367,9 @@ var ProbedPrincipalPermissions = []string{
 
 // ProbedSecurablePermissions are the permissions DatabaseCapabilities probes on
 // every assembly (class 5), user-defined type (class 6), XML schema collection
-// (class 10), symmetric key (class 24), certificate (class 25) and asymmetric
-// key (class 26) in the database, once per securable.
+// (class 10), full-text catalog (class 23), symmetric key (class 24),
+// certificate (class 25), asymmetric key (class 26), full-text stoplist (class
+// 29) and search property list (class 31) in the database, once per securable.
 //
 // This block is asked with HAS_PERMS_BY_NAME, as class 108 is, rather than
 // read out of the catalog, and the answer it gives is the one no catalog row
@@ -393,26 +408,54 @@ var ProbedPrincipalPermissions = []string{
 // it. CONTROL on a certificate or asymmetric key is also what a symmetric key
 // needs to be opened with it, or to DROP ENCRYPTION BY it.
 //
+// The three full-text families answer exactly as the certificate does
+// (2026-10-07, majors 14 and 17, identical): CONTROL on the catalog, stoplist
+// or property list, or its ownership, permits the DROP with no database-scope
+// right; ALTER ANY FULLTEXT CATALOG, ALTER on the database and db_ddladmin
+// drop too and read 0 here; ALTER and TAKE OWNERSHIP on the securable permit
+// nothing, DENY ALTER refuses nothing, and DENY CONTROL hides it.
+//
 // ALTER on a symmetric key is the exact answer for ALTER SYMMETRIC KEY ... ADD
 // / DROP ENCRYPTION (2026-09-22, majors 13 and 17, identical): the statement
 // goes through exactly when the effective ALTER reads 1 — under ALTER on the
 // key alone, ALTER ANY SYMMETRIC KEY, or ownership — and is refused (Msg
 // 15151) when it reads 0, which includes CONTROL on the key with ALTER denied
 // and VIEW DEFINITION alone. CONTROL is not a stand-in for it in either
-// direction. ALTER is asked of all six classes, since the block binds one list;
-// on the other five it is read by nothing.
+// direction. ALTER and REFERENCES are asked of all nine classes, since the
+// block binds one list; on the classes below that do not read them they are
+// read by nothing.
 //
 // There is no catalog block for the DENY direction, and that is SQL Server's
-// doing rather than an omission: DENY CONTROL on any of the six — to the
+// doing rather than an omission: DENY CONTROL on any of the nine — to the
 // user or to public — withholds VIEW DEFINITION with it, and the securable
 // disappears from sys.assemblies, sys.types, sys.xml_schema_collections,
-// sys.certificates, sys.asymmetric_keys or sys.symmetric_keys for that
-// principal (verified on the same three majors; for certificates on
-// 2026-09-22). A listing built from those views never shows it, so there is
-// nothing for a gate to withhold.
+// sys.certificates, sys.asymmetric_keys, sys.symmetric_keys,
+// sys.fulltext_catalogs, sys.fulltext_stoplists or
+// sys.registered_search_property_lists for that principal (verified on the
+// same three majors; for certificates on 2026-09-22, for the full-text
+// families on 14 and 17 on 2026-10-07). A listing built from those views never
+// shows it, so there is nothing for a gate to withhold.
+//
+// ALTER on a full-text catalog, stoplist or property list is the exact
+// answer for its ALTER statements (2026-10-08, majors 14 and 17, identical):
+// REBUILD and REORGANIZE, ADD/DROP of a stopword, ADD/DROP of a property all
+// go through when the effective ALTER reads 1 — under ALTER or CONTROL on
+// the securable, ALTER ANY FULLTEXT CATALOG, ALTER or CONTROL on the
+// database, or db_ddladmin — and are refused when it reads 0. AS DEFAULT is
+// not among them: it needs ALTER ANY FULLTEXT CATALOG, and ALTER on the
+// catalog alone is refused it (Msg 7666).
+//
+// REFERENCES is what naming one in a full-text index checks: CREATE FULLTEXT
+// INDEX … ON <catalog>, and STOPLIST = <stoplist> or SEARCH PROPERTY LIST =
+// <list> in a CREATE or ALTER FULLTEXT INDEX, each beside ALTER on the table
+// (same probe). It reads 1 under REFERENCES or CONTROL on the securable,
+// REFERENCES or CONTROL on the database and db_ddladmin — and 0 under ALTER
+// on the database or ALTER ANY FULLTEXT CATALOG, which are refused (Msg 7666,
+// 30023, 30025) however much ALTER on the table they hold.
 var ProbedSecurablePermissions = []string{
 	"CONTROL",
 	"ALTER",
+	"REFERENCES",
 }
 
 // DatabaseSecurableKind is the kind of database securable
@@ -443,6 +486,19 @@ const (
 	// DatabaseSecurableAsymmetricKey is an asymmetric key — class 26,
 	// schemaless.
 	DatabaseSecurableAsymmetricKey DatabaseSecurableKind = "ASYMMETRIC KEY"
+
+	// DatabaseSecurableFullTextCatalog is a full-text catalog — class 23,
+	// schemaless.
+	DatabaseSecurableFullTextCatalog DatabaseSecurableKind = "FULLTEXT CATALOG"
+
+	// DatabaseSecurableFullTextStoplist is a user-defined full-text stoplist —
+	// class 29, schemaless. The system stoplist has no row and is not asked
+	// about.
+	DatabaseSecurableFullTextStoplist DatabaseSecurableKind = "FULLTEXT STOPLIST"
+
+	// DatabaseSecurableSearchPropertyList is a search property list — class 31,
+	// schemaless.
+	DatabaseSecurableSearchPropertyList DatabaseSecurableKind = "SEARCH PROPERTY LIST"
 )
 
 // keySep joins the parts of a schema-qualified capability key: NUL, which
@@ -455,7 +511,7 @@ const keySep = "\x00"
 // DatabaseSecurableKey is the key SecurablePermissions is indexed by: the kind
 // and the securable joined with "::", the securable being schema and name
 // joined with keySep for a type or a collection and the bare name for an
-// assembly, a certificate or a key, whose schema is "".
+// assembly, a certificate, a key or a full-text family, whose schema is "".
 //
 // The kind is part of the key for ServerSecurableKey's reason: types and XML
 // schema collections live in separate namespaces, so dbo.x can be both, and

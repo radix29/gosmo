@@ -661,6 +661,14 @@ const (
 
 // StartPopulation starts a population and returns; it runs in the
 // background (Populations and the index's PopulateStatus follow it).
+// While a population is running the server ignores the request with an
+// informational message and no error ("is ignored because a population is
+// currently active"), so a nil error does not mean one started — compare
+// CrawlStart before and after, which the server stamps before the
+// statement returns (seen on 17, 2026-10-07). Under AUTO change tracking
+// that is always the answer to FULL and INCREMENTAL: the DMV keeps an AUTO
+// population listed while PopulateStatus reads idle (14 and 17,
+// 2026-10-08); MANUAL and OFF start one.
 func (i *FullTextIndex) StartPopulation(ctx context.Context, kind FullTextPopulationKind) error {
 	switch kind {
 	case FullTextPopulationFull, FullTextPopulationIncremental, FullTextPopulationUpdate:
@@ -671,7 +679,10 @@ func (i *FullTextIndex) StartPopulation(ctx context.Context, kind FullTextPopula
 		"START "+string(kind)+" POPULATION")
 }
 
-// StopPopulation stops the running population.
+// StopPopulation stops the running population. Only under OFF change
+// tracking: under AUTO or MANUAL the server ignores it with an
+// informational message and no error (AUTO: "Stop crawl request is
+// ignored"), and the population runs on (seen on 17, 2026-10-07).
 func (i *FullTextIndex) StopPopulation(ctx context.Context) error {
 	return i.alter(ctx, "stop population of the full-text index on", "STOP POPULATION")
 }
