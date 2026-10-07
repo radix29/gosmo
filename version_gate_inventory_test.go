@@ -147,6 +147,11 @@ var gatedColumns = []gatedColumn{
 	{"resource_governor_workload_groups", "group_max_tempdb_data_percent", "g.group_max_tempdb_data_percent", SQLServer2025, false, ""},
 	{"resource_governor_workload_groups", "group_max_tempdb_data_mb", "g.group_max_tempdb_data_mb", SQLServer2025, false, ""},
 
+	// sys.fulltext_indexes — index_version, 2025's version-2 word breakers.
+	// Confirmed on the catalog: absent on 13.0.6500.1 and 14.0.2130.4,
+	// present on 17.0.1135.8.
+	{"fulltext_indexes", "index_version", "fi.index_version", SQLServer2025, false, ""},
+
 	// Service Broker has no entry here, deliberately — see
 	// TestServiceBrokerReadsNeedNoVersionGate below.
 }

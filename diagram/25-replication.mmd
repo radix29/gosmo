@@ -2,9 +2,10 @@ classDiagram
 
     %% =========================================================
     %% Replication, read-only (replication.go,
-    %% replication_subscription.go): the distributor and publisher
-    %% configuration, publications with their articles and
-    %% subscriptions, and the subscriptions held here
+    %% replication_subscription.go, replication_monitor.go): the
+    %% distributor and publisher configuration, publications with their
+    %% articles and subscriptions, the subscriptions held here, and the
+    %% Replication Monitor reads at a distributor
     %% =========================================================
 
     class ReplicationInfo {
@@ -15,14 +16,112 @@ classDiagram
         +DistributionDatabases []DistributionDatabase
         +Publishers []DistributionPublisher
         +Databases []ReplicationDatabase
+        +DistributorDetailsHidden bool
         Zero, not an error, with nothing configured.
     }
 
     class DistributionDatabase {
+        -srv *Server
         +Name string
         +MinRetentionHours int
         +MaxRetentionHours int
         +HistoryRetentionHours int
+        +Server() *Server
+        +CanMonitor() bool
+        +MonitorPublications() []MonitorPublication
+        +MonitorSubscriptions() []MonitorSubscription
+        +Agents() []*ReplicationAgent
+        +Errors(id) []ReplicationError
+    }
+
+    class MonitorPublisher {
+        +Name string
+        +DistributionDB string
+        +Status ReplAgentStatus
+        +Warning MonitorWarning
+        +PublicationCount int
+    }
+
+    class MonitorPublication {
+        +Publisher string
+        +PublisherDB string
+        +Publication string
+        +Type PublicationType
+        +Status ReplAgentStatus
+        +Warning MonitorWarning
+        +WorstLatency *int
+        +SnapshotAgent string
+        +LogReaderAgent string
+        and latency, thresholds, run speed
+    }
+
+    class MonitorSubscription {
+        +Subscriber string
+        +SubscriberDB string
+        +Publication string
+        +Type SubscriptionType
+        +Status ReplAgentStatus
+        +Warning MonitorWarning
+        +Latency *int
+        +DistributionAgent string
+        +MergeAgent string
+        and expiration, merge performance
+    }
+
+    class ReplicationAgent {
+        -dd *DistributionDatabase
+        +Kind ReplAgentKind
+        +Name string
+        +Publisher string
+        +Publication string
+        +Subscriber string
+        +Status ReplAgentStatus
+        +LastStart time.Time
+        +LastAction string
+        +ErrorID int
+        and delivery figures
+        +DistributionDatabase() *DistributionDatabase
+        +Sessions(hours, errorsOnly) []ReplAgentSession
+        +SessionActions(session) []ReplAgentAction
+    }
+
+    class ReplAgentSession {
+        +Status ReplAgentStatus
+        +Start time.Time
+        +End time.Time
+        +LastAction string
+        +ErrorID int
+    }
+
+    class ReplAgentAction {
+        +Status ReplAgentStatus
+        +Time time.Time
+        +Message string
+        +ErrorID int
+    }
+
+    class ReplicationError {
+        +Time time.Time
+        +SourceName string
+        +Code string
+        +Text string
+        +XactSeqno string
+        +CommandID int
+    }
+
+    class ReplAgentStatus {
+        <<enumeration>>
+        NeverRun
+        Started
+        Succeeded
+        InProgress
+        Idle
+        Retrying
+        Failed
+    }
+
+    class MonitorWarning {
+        +Warnings() []string
     }
 
     class DistributionPublisher {
@@ -136,3 +235,13 @@ classDiagram
     LocalSubscription --> PublicationType
     Subscription --> SubscriptionType
     LocalSubscription --> SubscriptionType
+    Server ..> DistributionDatabase : DistributionDatabaseRef
+    Server ..> MonitorPublisher : MonitorPublishers
+    DistributionDatabase ..> MonitorPublication : MonitorPublications
+    DistributionDatabase ..> MonitorSubscription : MonitorSubscriptions
+    DistributionDatabase "1" --> "*" ReplicationAgent : Agents
+    ReplicationAgent ..> ReplAgentSession : Sessions
+    ReplAgentSession ..> ReplAgentAction : SessionActions
+    DistributionDatabase ..> ReplicationError : Errors
+    ReplicationAgent --> ReplAgentStatus
+    MonitorSubscription --> MonitorWarning

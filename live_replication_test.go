@@ -52,6 +52,9 @@ func TestLiveReplicationInfo(t *testing.T) {
 	if !flags[replFixtureTranDB].Published || !flags[replFixtureMergeDB].MergePublished || !flags["distribution"].Distribution {
 		t.Errorf("Databases = %+v", info.Databases)
 	}
+	if info.DistributorDetailsHidden {
+		t.Error("DistributorDetailsHidden for sysadmin")
+	}
 	if !flags[replFixtureTranDB].Readable || !flags[replFixtureMergeDB].Readable {
 		t.Errorf("published databases not Readable to sysadmin: %+v", info.Databases)
 	}

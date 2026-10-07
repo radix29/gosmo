@@ -108,6 +108,10 @@ func (sw *sweep) call(label string, fn func() error) {
 		// database is created (3 s on a Managed Instance, 2026-09-10), and the
 		// sweep's database is seconds old, so an empty view is a race rather
 		// than a defect. The query ran, which is what is being swept.
+	case strings.HasPrefix(label, "Table.FullTextIndex") && errors.Is(err, ErrNotFound):
+		// Only dbo.sweep_parent has a full-text index (and only where the
+		// component is installed); every other table answering "none" is
+		// the read working.
 	default:
 		sw.failed = append(sw.failed, fmt.Sprintf("%s: %v", label, err))
 	}
@@ -368,6 +372,20 @@ var sweepMustCall = []string{
 	"Database.Publications",
 	"Database.LocalSubscriptions",
 	"Database.PublicationByName",
+	// Replication Monitor: MonitorPublishers is reflective and must read as
+	// none on a non-distributor. The distribution-database reads need a
+	// distributor, so they are swept only where there is one;
+	// live_replication_monitor_test.go runs them against the fixture.
+	"Server.MonitorPublishers",
+	// Full-text (W14). The child reads need the component, so only the
+	// listings and Server.FullTextInfo are swept on every instance;
+	// live_fulltext_test.go runs the rest against its own objects.
+	"Server.FullTextInfo",
+	"Database.FullTextCatalogs",
+	"Database.FullTextStoplists",
+	"Database.SearchPropertyLists",
+	"Database.FullTextIndexes",
+	"Table.FullTextIndex",
 }
 
 // checkCoverage fails on any sweepMustCall entry no label matched. It runs
@@ -482,6 +500,22 @@ var sweepSchema = []string{
 	`SELECT COUNT(*) FROM dbo.sweep_parent WHERE name = N'one'`,
 }
 
+// sweepFullTextSchema is one of each full-text object, for an instance with
+// the component. Stoplist and property-list statements must end in a
+// semicolon (Msg 10736 otherwise).
+var sweepFullTextSchema = []string{
+	`CREATE FULLTEXT CATALOG sweep_ftc AS DEFAULT`,
+	`CREATE FULLTEXT STOPLIST sweep_sl;`,
+	`ALTER FULLTEXT STOPLIST sweep_sl ADD 'sweep' LANGUAGE 1033;`,
+	`CREATE SEARCH PROPERTY LIST sweep_spl;`,
+	`ALTER SEARCH PROPERTY LIST sweep_spl ADD 'Title' WITH (PROPERTY_SET_GUID = 'F29F85E0-4FF9-1068-AB91-08002B27B3D9', PROPERTY_INT_ID = 2);`,
+	// sweep_parent's primary key has a generated name.
+	`DECLARE @sql nvarchar(max) = N'CREATE FULLTEXT INDEX ON dbo.sweep_parent (name LANGUAGE 1033) KEY INDEX ' +
+	   (SELECT QUOTENAME(name) FROM sys.indexes WHERE object_id = OBJECT_ID(N'dbo.sweep_parent') AND is_primary_key = 1) +
+	   N' WITH CHANGE_TRACKING = MANUAL, STOPLIST = sweep_sl, SEARCH PROPERTY LIST = sweep_spl';
+	 EXEC (@sql)`,
+}
+
 func TestLiveVersionSweep(t *testing.T) {
 	checkSkipList(t)
 
@@ -520,6 +554,17 @@ func TestLiveVersionSweep(t *testing.T) {
 			// A setup statement the instance rejects is itself a version
 			// finding, but the sweep still has to run: report and continue.
 			t.Errorf("scratch schema %.70q: %v", strings.Join(strings.Fields(stmt), " "), err)
+		}
+	}
+
+	// Full-text objects need the component (not on win10cli\SQL2016, nor on
+	// Linux without mssql-server-fts); without it the full-text reads are
+	// swept against empty catalogs.
+	if fi, err := srv.FullTextInfo(ctx); err == nil && fi.Installed {
+		for _, stmt := range sweepFullTextSchema {
+			if _, err := d.exec(ctx, stmt); err != nil {
+				t.Errorf("scratch full-text schema %.70q: %v", strings.Join(strings.Fields(stmt), " "), err)
+			}
 		}
 	}
 
@@ -587,6 +632,7 @@ func TestLiveVersionSweep(t *testing.T) {
 	sweepQueryStoreReports(sw, d)
 	sweepKeys(sw, d)
 	sweepScripter(sw, d)
+	sweepFullText(sw, d)
 	sweepServerCalls(sw, srv, info)
 
 	sw.checkCoverage()
@@ -628,6 +674,58 @@ func sweepTableKinds(sw *sweep, d *Database) {
 // which is created here because Azure SQL Managed Instance refuses the
 // statement (Msg 41906) and the listing must still be swept there, with no
 // row and no failure.
+// sweepFullText drives the full-text reads that take more than a context:
+// the by-name finders and each object's children. The listings themselves
+// are reflective. With the component missing the lists are empty, and only
+// the listings and the not-found finders run.
+func sweepFullText(sw *sweep, d *Database) {
+	ctx := sw.ctx
+	if cats, err := d.FullTextCatalogs(ctx); err == nil {
+		for _, c := range cats {
+			sw.call("Database.FullTextCatalogByName("+c.Name+")", func() error {
+				_, err := d.FullTextCatalogByName(ctx, c.Name)
+				return err
+			})
+			sw.call("FullTextCatalog.Indexes("+c.Name+")", func() error {
+				_, err := c.Indexes(ctx)
+				return err
+			})
+		}
+	}
+	if lists, err := d.FullTextStoplists(ctx); err == nil {
+		for _, l := range lists {
+			sw.call("Database.FullTextStoplistByName("+l.Name+")", func() error {
+				_, err := d.FullTextStoplistByName(ctx, l.Name)
+				return err
+			})
+			sw.call("FullTextStoplist.Stopwords("+l.Name+")", func() error {
+				_, err := l.Stopwords(ctx)
+				return err
+			})
+		}
+	}
+	if lists, err := d.SearchPropertyLists(ctx); err == nil {
+		for _, l := range lists {
+			sw.call("Database.SearchPropertyListByName("+l.Name+")", func() error {
+				_, err := d.SearchPropertyListByName(ctx, l.Name)
+				return err
+			})
+			sw.call("SearchPropertyList.Properties("+l.Name+")", func() error {
+				_, err := l.Properties(ctx)
+				return err
+			})
+		}
+	}
+	if idx, err := d.FullTextIndexes(ctx); err == nil {
+		for _, i := range idx {
+			sw.call("FullTextIndex.Populations("+i.FullName()+")", func() error {
+				_, err := i.Populations(ctx)
+				return err
+			})
+		}
+	}
+}
+
 func sweepServiceBroker(sw *sweep, d *Database) {
 	bindingCreated := true
 	if _, err := d.exec(sw.ctx, `CREATE REMOTE SERVICE BINDING sweep_rsb
@@ -1201,6 +1299,27 @@ func sweepServerCalls(sw *sweep, srv *Server, info *ServerInfo) {
 			})
 			sw.call("Publication.Subscriptions("+label+")", func() error {
 				_, err := p.Subscriptions(sw.ctx)
+				return err
+			})
+		}
+	}
+	if info, err := srv.ReplicationInfo(sw.ctx); err == nil {
+		for i := range info.DistributionDatabases {
+			dd := &info.DistributionDatabases[i]
+			sw.call("DistributionDatabase.CanMonitor("+dd.Name+")", func() error {
+				_, err := dd.CanMonitor(sw.ctx)
+				return err
+			})
+			sw.call("DistributionDatabase.MonitorPublications("+dd.Name+")", func() error {
+				_, err := dd.MonitorPublications(sw.ctx)
+				return err
+			})
+			sw.call("DistributionDatabase.MonitorSubscriptions("+dd.Name+")", func() error {
+				_, err := dd.MonitorSubscriptions(sw.ctx)
+				return err
+			})
+			sw.call("DistributionDatabase.Agents("+dd.Name+")", func() error {
+				_, err := dd.Agents(sw.ctx)
 				return err
 			})
 		}

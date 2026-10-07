@@ -127,6 +127,7 @@ flowchart TB
         N23["23 · Database Mail"]
         N24["24 · Extended Events"]
         N25["25 · Replication"]
+        N26["26 · Full-Text Search"]
     end
     subgraph A8["Azure instance resources"]
         direction TB
@@ -144,6 +145,7 @@ flowchart TB
     N02 -- "owns Database Mail in msdb" --> N23
     N02 -- "owns Extended Events sessions" --> N24
     N02 -- "reads the replication configuration" --> N25
+    N02 -- "reads the full-text component" --> N26
     N05 -- "writes through withConn, captured by ScriptCollector" --> N07
     N05 -- "has files, options, catalog, Query Store" --> N08
     N05 -- "filters listings and answers permissions" --> N09
@@ -154,6 +156,7 @@ flowchart TB
     N05 -- "owns the master key and module signatures" --> N21
     N05 -- "exposes its own Azure resource views" --> N19
     N05 -- "holds publications and local subscriptions" --> N25
+    N05 -- "holds full-text catalogs, stoplists and indexes" --> N26
     click N01 href "diagram/01-connection-options.mmd"
     click N02 href "diagram/02-server.mmd"
     click N03 href "diagram/03-server-info-and-authentication.mmd"
@@ -179,6 +182,7 @@ flowchart TB
     click N23 href "diagram/23-database-mail.mmd"
     click N24 href "diagram/24-extended-events.mmd"
     click N25 href "diagram/25-replication.mmd"
+    click N26 href "diagram/26-fulltext.mmd"
 ```
 
 ### Connecting and the `Server` object
@@ -274,7 +278,8 @@ server's own filesystem.
 | [`22-resource-governor.mmd`](diagram/22-resource-governor.mmd) | The user-configurable Resource Governor: its stored and effective configuration, resource pools, workload groups, external pools, and their runtime statistics. |
 | [`23-database-mail.mmd`](diagram/23-database-mail.mmd) | Database Mail: accounts, profiles and their ordered accounts, profile security, system parameters, status and queues, mail items and the mail log; their writes and scripts. |
 | [`24-extended-events.mmd`](diagram/24-extended-events.mmd) | Extended Events: sessions with their events and targets, session specs and templates, live status, event-file and ring-buffer readers, and the package/object library; their writes and scripts. |
-| [`25-replication.mmd`](diagram/25-replication.mmd) | Replication, read-only: the distributor and publisher configuration, publications with their articles and publisher-side subscriptions, and the subscriptions databases here hold. |
+| [`25-replication.mmd`](diagram/25-replication.mmd) | Replication, read-only: the distributor and publisher configuration, publications with their articles and publisher-side subscriptions, the subscriptions databases here hold, and the Replication Monitor reads (publishers, publications, subscriptions, agents, sessions, errors). |
+| [`26-fulltext.mmd`](diagram/26-fulltext.mmd) | Full-Text Search: the instance's component (languages, document types), a database's catalogs, stoplists and search property lists, and full-text indexes with their columns and running populations; each family's `Ref` handle, create request and writes. |
 
 ### Azure instance resources
 
@@ -1132,6 +1137,10 @@ ddl, _ := sc.ScriptPlanGuide(ctx, "PG_OrderLookup")
 ddl, _ := sc.ScriptExternalDataSource(ctx, "HadoopCluster")
 ddl, _ := sc.ScriptExternalFileFormat(ctx, "CsvFormat")
 ddl, _ := sc.ScriptExternalLibrary(ctx, "randomForest")
+ddl, _ := sc.ScriptFullTextCatalog(ctx, "DocsCatalog")
+ddl, _ := sc.ScriptFullTextStoplist(ctx, "LegalWords")   // CREATE + one ADD per word, each guarded
+ddl, _ := sc.ScriptSearchPropertyList(ctx, "DocProps")   // CREATE + one ADD per property, each guarded
+ddl, _ := sc.ScriptFullTextIndex(ctx, "dbo", "Docs")     // + DISABLE when the index is disabled
 ddl, _ := sc.ScriptDatabase(ctx)
 
 // Logins and server roles belong to no database, so they have their own
@@ -1769,8 +1778,9 @@ authentication — each instance needs the others' public **certificates**.
 
 ### Replication (read-only)
 
-What SSMS's Replication folder shows; nothing here configures replication
-(`replication.go`, `replication_subscription.go`).
+What SSMS's Replication folder and Replication Monitor show; nothing here
+configures replication (`replication.go`, `replication_subscription.go`,
+`replication_monitor.go`).
 
 | SSMS equivalent                     | gosmo                                                        |
 | ----------------------------------- | ------------------------------------------------------------ |
@@ -1779,6 +1789,11 @@ What SSMS's Replication folder shows; nothing here configures replication
 | Publication › Articles              | `pub.Articles(ctx)` → `[]*Article` (source, destination, row filter, `SchemaOption.Options()`) |
 | Publication › Subscriptions         | `pub.Subscriptions(ctx)` → `[]*Subscription`, as the publisher records them |
 | Local Subscriptions                 | `srv.LocalSubscriptions(ctx)` / `db.LocalSubscriptions(ctx)` → `[]*LocalSubscription`, from the subscriber's own tables |
+| Replication Monitor › publishers    | `srv.MonitorPublishers(ctx)` → `[]MonitorPublisher` (`sp_replmonitorhelppublisher`; none on a non-distributor) |
+| Replication Monitor › publications / subscriptions | `dd.MonitorPublications(ctx)` / `dd.MonitorSubscriptions(ctx)` → status, `MonitorWarning`, latency, thresholds, performance (`sp_replmonitorhelppublication` / `…subscription`), on a `*DistributionDatabase` from `ReplicationInfo`, or `srv.DistributionDatabaseRef(name)` for a login that cannot read msdb's distributor tables (`DistributorDetailsHidden`; the names are in `ReplicationInfo.Databases`) |
+| Replication Monitor › agents, history | `dd.Agents(ctx)` → `[]*ReplicationAgent` with the last run; `agent.Sessions(ctx, hours, errorsOnly)` / `agent.SessionActions(ctx, session)` (`sp_MSenum_*`, `_s`, `_sd`) |
+| Error details                       | `dd.Errors(ctx, id)` → `[]ReplicationError` (`sp_MSget_repl_error`) |
+| Monitor rights                      | `dd.CanMonitor(ctx)` — sysadmin, or db_owner/`replmonitor` in the distribution database |
 
 **Every read finds nothing, without an error, where replication made no
 tables** — each asks `OBJECT_ID` before naming one. Azure SQL Database is
@@ -1786,6 +1801,53 @@ refused (`ErrUnsupportedVersion`). `sys.databases.is_subscribed` stays 0 for
 a pull subscriber, so local subscriptions are found by the subscriber tables a
 database holds, not by that flag. Server names compare case-insensitively:
 replication stores each row with whatever spelling `@@SERVERNAME` had.
+
+**The monitor reads go through procedures, never the `MS*` tables**:
+`replmonitor` has no `SELECT` on `MS*_agents`/`_history`, only the procedures
+that check the role themselves. Their result sets are read by column name
+(`namedRow`), and the `sp_MSenum_*` times arrive as
+`fn_replformatdatetime` text (`parseReplTime`).
+
+### Full-Text Search
+
+What SSMS shows under a database's Storage › Full Text Catalogs / Full Text
+Stoplists / Search Property Lists, and of a table's full-text index
+(`fulltext.go` reads, `fulltext_write.go` writes, `scripter_fulltext.go`
+scripts). Each family has a `Ref` handle — `db.FullTextCatalogRef(name)`,
+`db.FullTextStoplistRef(name)`, `db.SearchPropertyListRef(name)`,
+`tbl.FullTextIndexRef()` (a table has at most one; works from a `TableRef`) —
+and every write addresses its object by name, so a handle is enough.
+
+| SSMS equivalent                     | gosmo                                                        |
+| ----------------------------------- | ------------------------------------------------------------ |
+| Is Full-Text installed; `sp_fulltext_service` settings | `srv.FullTextInfo(ctx)` → `Installed`, `LoadOSResources`, `VerifySignature`, `UpgradeOption`, `Languages` (`sys.fulltext_languages`), `DocumentTypes` (`sys.fulltext_document_types`) |
+| Full Text Catalogs                  | `db.FullTextCatalogs(ctx)` / `db.FullTextCatalogByName(ctx, name)` → `[]*FullTextCatalog` with the `FULLTEXTCATALOGPROPERTY` counters (items, unique keys, size, populate status, merge, last population) |
+| Catalog › Tables/Views              | `cat.Indexes(ctx)` → `[]*FullTextIndex` |
+| Full Text Stoplists                 | `db.FullTextStoplists(ctx)` / `db.FullTextStoplistByName(ctx, name)`; `list.Stopwords(ctx)` → `[]FullTextStopword` |
+| Search Property Lists               | `db.SearchPropertyLists(ctx)` / `db.SearchPropertyListByName(ctx, name)`; `list.Properties(ctx)` → `[]SearchProperty` |
+| Table › Full-Text index › Properties | `tbl.FullTextIndex(ctx)` (`ErrNotFound` without one; a `TableRef` is refused) / `db.FullTextIndexes(ctx)` → key index, catalog, filegroup, change tracking, stoplist (`StoplistKind` Off/System/User), property list, `IndexVersion` (2025), last crawl, the `OBJECTPROPERTYEX` `TableFulltext*` counters, `Columns` |
+| Population in progress              | `idx.Populations(ctx)` → `[]FullTextPopulation` (`sys.dm_fts_index_population`) |
+| New Full-Text Catalog               | `db.CreateFullTextCatalog(ctx, CreateFullTextCatalogRequest{Name, AccentSensitive *bool, IsDefault, Owner})` |
+| Catalog › Rebuild / Optimize / default / owner / Delete | `cat.Rebuild(ctx, accentSensitive *bool)`, `cat.Reorganize(ctx)`, `cat.SetDefault(ctx)`, `cat.SetOwner(ctx, o)`, `cat.Drop(ctx)` |
+| New Full-Text Stoplist              | `db.CreateFullTextStoplist(ctx, CreateFullTextStoplistRequest{Name, FromSystem \| From [+ FromDatabase], Owner})` |
+| Stoplist › words / owner / Delete   | `list.AddStopword(ctx, word, language)`, `DropStopword`, `DropLanguageStopwords(ctx, language)`, `DropAllStopwords`, `SetOwner`, `Drop` — a language is an LCID (`"1033"`, `"0x0409"`, `"0"` neutral) or a name |
+| New Search Property List            | `db.CreateSearchPropertyList(ctx, CreateSearchPropertyListRequest{Name, From [+ FromDatabase], Owner})` |
+| Property list › properties / owner / Delete | `pl.AddProperty(ctx, SearchProperty{Name, SetGUID, IntID, Description})`, `pl.DropProperty(ctx, name)`, `SetOwner`, `Drop` |
+| Table › Full-Text index › Define    | `tbl.CreateFullTextIndex(ctx, CreateFullTextIndexRequest{Columns []FullTextIndexColumnSpec, KeyIndex, Catalog, FileGroup, ChangeTracking, NoPopulation, StoplistOff \| Stoplist, SearchPropertyList})` |
+| Full-Text index › Enable/Disable, Track Changes, columns, stoplist, property list | `idx.Enable`, `Disable`, `SetChangeTracking(ctx, ct)`, `AddColumn(ctx, spec, noPopulation)`, `DropColumn(ctx, name, noPopulation)`, `SetStoplist(ctx, kind, name)`, `SetSearchPropertyList(ctx, name)` (`""` is OFF) |
+| Start Full/Incremental Population, Apply Tracked Changes, Stop | `idx.StartPopulation(ctx, FullTextPopulationFull \| Incremental \| Update)`, `StopPopulation`, `PausePopulation`, `ResumePopulation`, `Drop` |
+
+**An instance without the component reads empty, not failed** — the catalog
+views exist either way, and `FullTextInfo.Installed` is what tells "none" from
+"can't have any". **`Populations` is a separate read** because the DMV needs
+VIEW SERVER STATE (VIEW SERVER PERFORMANCE STATE from 2022): folded into the
+index read it would fail the index for every other login. **A stoplist or
+search property list statement must end in a semicolon** (Msg 10736), so those
+writes carry one and nothing else does. **None of the writes may run in a user
+transaction** — keep them out of `Server.Transaction`. **A script's ADDs are
+guarded one by one**: adding a word the stoplist already has fails (Msg 30033),
+so a re-run would stop at the first. No family has `DROP … IF EXISTS`; the
+DROP script tests the catalog view instead.
 
 ### Certificates and the database master key
 
@@ -2455,7 +2517,8 @@ and audit specifications (server and database), credentials (server and
 database scoped), server triggers, database DDL triggers, error log, server
 filesystem, Azure instance and per-database resources, database snapshots,
 table kinds, the Programmability families (types, rules, defaults, assemblies,
-plan guides), external resources, the Service Broker families and replication.
+plan guides), external resources, the Service Broker families, replication
+and full-text search.
 
 The class diagrams need the same treatment. They live in `diagram/`, one
 `.mmd` file per group of types, and § Architecture above links every one of

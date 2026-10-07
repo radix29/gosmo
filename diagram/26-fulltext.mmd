@@ -1,0 +1,143 @@
+classDiagram
+
+    %% =========================================================
+    %% Full-Text Search (fulltext.go reads, fulltext_write.go writes):
+    %% the instance's component, a database's catalogs, stoplists and
+    %% search property lists, and full-text indexes with their columns
+    %% and running populations
+    %% =========================================================
+
+    class FullTextInfo {
+        +Installed bool
+        +LoadOSResources bool
+        +VerifySignature bool
+        +UpgradeOption FullTextUpgradeOption
+        +Languages []FullTextLanguage
+        +DocumentTypes []FullTextDocumentType
+    }
+
+    class FullTextCatalog {
+        -db *Database
+        +ID int
+        +Name string
+        +IsDefault bool
+        +AccentSensitive bool
+        +Owner string
+        +IndexCount int
+        +ItemCount int
+        +UniqueKeyCount int
+        +SizeMB int
+        +PopulateStatus FullTextCatalogPopulateStatus
+        +MergeInProgress bool
+        +LastPopulated time.Time
+        +Database() *Database
+        +Indexes() []*FullTextIndex
+        +Rebuild(accentSensitive) error
+        +Reorganize() error
+        +SetDefault() error
+        +SetOwner(owner) error
+        +Drop() error
+    }
+
+    class FullTextStoplist {
+        -db *Database
+        +ID int
+        +Name string
+        +Owner string
+        +Database() *Database
+        +Stopwords() []FullTextStopword
+        +AddStopword(word, language) error
+        +DropStopword(word, language) error
+        +DropLanguageStopwords(language) error
+        +DropAllStopwords() error
+        +SetOwner(owner) error
+        +Drop() error
+    }
+
+    class SearchPropertyList {
+        -db *Database
+        +ID int
+        +Name string
+        +Owner string
+        +Database() *Database
+        +Properties() []SearchProperty
+        +AddProperty(SearchProperty) error
+        +DropProperty(name) error
+        +SetOwner(owner) error
+        +Drop() error
+    }
+
+    class FullTextIndex {
+        -db *Database
+        +ObjectID int
+        +Schema string
+        +Table string
+        +KeyIndex string
+        +Catalog string
+        +IsEnabled bool
+        +ChangeTracking FullTextChangeTracking
+        +StoplistKind FullTextStoplistKind
+        +Stoplist string
+        +SearchPropertyList string
+        +IndexVersion int
+        +ItemCount int
+        +PendingChanges int
+        +PopulateStatus FullTextTablePopulateStatus
+        +Columns []FullTextIndexColumn
+        +Database() *Database
+        +Populations() []FullTextPopulation
+        +Enable() error
+        +Disable() error
+        +AddColumn(FullTextIndexColumnSpec, noPopulation) error
+        +DropColumn(name, noPopulation) error
+        +SetChangeTracking(FullTextChangeTracking) error
+        +SetStoplist(FullTextStoplistKind, name) error
+        +SetSearchPropertyList(name) error
+        +StartPopulation(FullTextPopulationKind) error
+        +StopPopulation() error
+        +PausePopulation() error
+        +ResumePopulation() error
+        +Drop() error
+        index_version gated on 2025.
+    }
+
+    class FullTextIndexColumn {
+        +Name string
+        +TypeColumn string
+        +LanguageID int
+        +StatisticalSemantics bool
+    }
+
+    class FullTextPopulation {
+        +Type string
+        +Status string
+        +StartTime time.Time
+        +RangeCount int
+        +RangesDone int
+        Needs VIEW SERVER STATE.
+    }
+
+    class FullTextStoplistKind {
+        <<enumeration>>
+        Off
+        System
+        User
+    }
+
+    Server ..> FullTextInfo : FullTextInfo
+    FullTextInfo *-- FullTextLanguage
+    FullTextInfo *-- FullTextDocumentType
+    Database "1" --> "*" FullTextCatalog : FullTextCatalogs / FullTextCatalogByName
+    Database "1" --> "*" FullTextStoplist : FullTextStoplists / FullTextStoplistByName
+    Database "1" --> "*" SearchPropertyList : SearchPropertyLists / SearchPropertyListByName
+    Database "1" --> "*" FullTextIndex : FullTextIndexes
+    Database ..> FullTextCatalog : FullTextCatalogRef / CreateFullTextCatalog
+    Database ..> FullTextStoplist : FullTextStoplistRef / CreateFullTextStoplist
+    Database ..> SearchPropertyList : SearchPropertyListRef / CreateSearchPropertyList
+    Table ..> FullTextIndex : FullTextIndex / FullTextIndexRef / CreateFullTextIndex
+    FullTextCatalog ..> FullTextIndex : Indexes
+    FullTextStoplist *-- FullTextStopword
+    SearchPropertyList *-- SearchProperty
+    FullTextIndex *-- FullTextIndexColumn
+    FullTextIndex ..> FullTextPopulation : Populations
+    FullTextIndex --> FullTextStoplistKind

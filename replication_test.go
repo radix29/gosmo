@@ -5,6 +5,7 @@ import (
 	"errors"
 	"slices"
 	"testing"
+	"time"
 )
 
 // The fixture's Customer article carries 0x30073 (seen on 2025): every bit
@@ -77,5 +78,70 @@ func TestReplicationEnumStrings(t *testing.T) {
 		if got := v.String(); got != want {
 			t.Errorf("SubscriptionType(%d) = %q, want %q", int(v), got, want)
 		}
+	}
+}
+
+func TestMonitorWarningWarnings(t *testing.T) {
+	got := MonitorWarning(2 | 32).Warnings()
+	want := []string{"Latency exceeds the threshold", "Merge run duration exceeds the threshold (slow link)"}
+	if !slices.Equal(got, want) {
+		t.Errorf("Warnings() = %q, want %q", got, want)
+	}
+	if got := MonitorWarning(128 | 1).Warnings(); len(got) != 2 || got[1] != "warning 128" {
+		t.Errorf("undocumented bit: Warnings() = %q", got)
+	}
+	if got := MonitorWarning(0).Warnings(); got != nil {
+		t.Errorf("zero: Warnings() = %q, want none", got)
+	}
+}
+
+// The status codes are sqlrepl.h's, shared by the history tables and the
+// monitor procedures; pinned by name so a reordered const block fails here.
+func TestReplAgentStatusCodes(t *testing.T) {
+	for code, want := range map[int]string{
+		0: "Never run", 1: "Started", 2: "Succeeded", 3: "In progress", 4: "Idle", 5: "Retrying", 6: "Failed",
+		7: "ReplAgentStatus(7)",
+	} {
+		if got := ReplAgentStatus(code).String(); got != want {
+			t.Errorf("ReplAgentStatus(%d) = %q, want %q", code, got, want)
+		}
+	}
+	for k, want := range map[ReplAgentKind]string{
+		ReplSnapshotAgent: "Snapshot Agent", ReplLogReaderAgent: "Log Reader Agent",
+		ReplDistributionAgent: "Distribution Agent", ReplMergeAgent: "Merge Agent",
+	} {
+		if got := k.String(); got != want {
+			t.Errorf("ReplAgentKind(%d) = %q, want %q", int(k), got, want)
+		}
+		if replAgentProc(k) == "" {
+			t.Errorf("%v has no sp_MSenum procedure", k)
+		}
+	}
+	for code, want := range map[int]PublicationType{0: PublicationTransactional, 1: PublicationSnapshot, 2: PublicationMerge} {
+		if got := monitorPublicationType(code); got != want {
+			t.Errorf("monitorPublicationType(%d) = %v, want %v", code, got, want)
+		}
+	}
+}
+
+// sp_MSenum_* return times as sys.fn_replformatdatetime text.
+func TestParseReplTime(t *testing.T) {
+	got := parseReplTime("20261006 23:52:38.673")
+	want := time.Date(2026, 10, 6, 23, 52, 38, 673_000_000, time.UTC)
+	if !got.Equal(want) || got.Location() != time.UTC {
+		t.Errorf("parseReplTime = %v, want %v", got, want)
+	}
+	if !parseReplTime("").IsZero() || !parseReplTime("garbage").IsZero() {
+		t.Error("unparseable text should read as the zero time")
+	}
+	if s := want.Format(replTimeLayout); s != "20261006 23:52:38.673" {
+		t.Errorf("format = %q", s)
+	}
+}
+
+func TestMonitorPublishersRefusedOnAzureSQLDatabase(t *testing.T) {
+	s := &Server{info: &ServerInfo{EngineEdition: int(EngineAzureSQLDatabase)}}
+	if _, err := s.MonitorPublishers(context.Background()); !errors.Is(err, ErrUnsupportedVersion) {
+		t.Errorf("MonitorPublishers: err = %v, want ErrUnsupportedVersion", err)
 	}
 }

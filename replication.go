@@ -44,10 +44,11 @@ import (
 // Managed Instance can publish and distribute and reads like any other.
 //
 // Rights: the server reads need none beyond VIEW ANY DATABASE; the msdb
-// distributor tables are readable by sysadmin and by members of the
-// distribution database's replmonitor role, and a database's replication
-// tables by any user of that database. A read refused for a permission
-// returns the server's error.
+// distributor tables are readable by sysadmin only (not replmonitor, seen on
+// 2025), so ReplicationInfo skips them for anyone else
+// (DistributorDetailsHidden); a database's replication tables are readable by
+// any user of that database. A read refused for a permission returns the
+// server's error.
 
 // refuseAzureReplication refuses what on Azure SQL Database, which has no
 // replication catalog: it can only be a push subscriber, and keeps no
@@ -79,12 +80,20 @@ type ReplicationInfo struct {
 	IsDistributor bool
 	// IsPublisher is true when the local distributor has this instance
 	// registered as a publisher (sp_adddistpublisher), or, with a remote
-	// distributor, when a database here is published — which of the remote
-	// distributor's publishers this instance is cannot be read from here.
+	// distributor or msdb's MSdistpublishers unreadable, when a database
+	// here is published — which of the remote distributor's publishers this
+	// instance is cannot be read from here.
 	IsPublisher bool
 
-	DistributionDatabases []DistributionDatabase
-	Publishers            []DistributionPublisher
+	// DistributionDatabases and Publishers are msdb's MSdistributiondbs and
+	// MSdistpublishers, which only sysadmin may read (replmonitor may not:
+	// seen on 2025). DistributorDetailsHidden says they were not readable
+	// and are empty for that reason; the distribution databases' names are
+	// still in Databases (Distribution), which DistributionDatabaseRef
+	// turns into handles for the monitor reads.
+	DistributionDatabases    []DistributionDatabase
+	Publishers               []DistributionPublisher
+	DistributorDetailsHidden bool
 
 	// Databases lists the databases with a replication role, in name order:
 	// published for snapshot/transactional, for merge, or a distribution
@@ -94,8 +103,11 @@ type ReplicationInfo struct {
 }
 
 // DistributionDatabase is one distribution database at this distributor,
-// from msdb.dbo.MSdistributiondbs.
+// from msdb.dbo.MSdistributiondbs. Its Replication Monitor reads are
+// replication_monitor.go's.
 type DistributionDatabase struct {
+	srv *Server
+
 	Name string
 	// The transaction retention window in hours: commands are kept at least
 	// MinRetentionHours, and deleted once older than MaxRetentionHours even
@@ -104,6 +116,15 @@ type DistributionDatabase struct {
 	MaxRetentionHours int
 	// HistoryRetentionHours is how long agent history is kept.
 	HistoryRetentionHours int
+}
+
+// DistributionDatabaseRef is a handle on the distribution database name at
+// this instance, for the monitor reads (replication_monitor.go). It issues no
+// query: its retention fields are zero. ReplicationInfo's
+// DistributionDatabases are the populated form, but only sysadmin can read
+// them; the names are in ReplicationInfo.Databases for anyone.
+func (s *Server) DistributionDatabaseRef(name string) *DistributionDatabase {
+	return &DistributionDatabase{srv: s, Name: name}
 }
 
 // DistributionPublisher is one publisher registered at this distributor,
@@ -146,20 +167,32 @@ func (s *Server) ReplicationInfo(ctx context.Context) (*ReplicationInfo, error) 
 	}
 	info := &ReplicationInfo{}
 	var distributor sql.NullString
-	var hasDistDBs, hasDistPublishers bool
+	var hasDistDBs, hasDistPublishers, canReadDistDBs, canReadDistPublishers bool
 	// sp_get_distributor would answer the first two, but the shape of its
 	// result set differs between versions; sys.servers is what it reads.
+	// The msdb tables are asked about twice: whether they exist, and whether
+	// this login may read them — a refused SELECT would fail the whole read.
 	err := s.queryRowScan(ctx, `
 SELECT (SELECT TOP (1) data_source FROM sys.servers WHERE is_distributor = 1),
        CAST(CASE WHEN EXISTS (SELECT 1 FROM sys.databases WHERE is_distributor = 1) THEN 1 ELSE 0 END AS bit),
        CAST(CASE WHEN OBJECT_ID(N'msdb.dbo.MSdistributiondbs', N'U') IS NULL THEN 0 ELSE 1 END AS bit),
-       CAST(CASE WHEN OBJECT_ID(N'msdb.dbo.MSdistpublishers', N'U') IS NULL THEN 0 ELSE 1 END AS bit)`, nil,
-		&distributor, &info.IsDistributor, &hasDistDBs, &hasDistPublishers)
+       CAST(CASE WHEN OBJECT_ID(N'msdb.dbo.MSdistpublishers', N'U') IS NULL THEN 0 ELSE 1 END AS bit),
+       CAST(ISNULL(HAS_PERMS_BY_NAME(N'msdb.dbo.MSdistributiondbs', N'OBJECT', N'SELECT'), 0) AS bit),
+       CAST(ISNULL(HAS_PERMS_BY_NAME(N'msdb.dbo.MSdistpublishers', N'OBJECT', N'SELECT'), 0) AS bit)`, nil,
+		&distributor, &info.IsDistributor, &hasDistDBs, &hasDistPublishers, &canReadDistDBs, &canReadDistPublishers)
 	if err != nil {
 		return nil, fmt.Errorf("gosmo: %s: %w", what, err)
 	}
 	info.DistributorConfigured = distributor.Valid
 	info.Distributor = distributor.String
+	// To a login that may not read them the tables are invisible too, so
+	// OBJECT_ID is NULL: at a distributor, where they always exist, that is
+	// the same answer as a refused SELECT.
+	if info.IsDistributor && (!canReadDistDBs || !canReadDistPublishers) {
+		info.DistributorDetailsHidden = true
+	}
+	hasDistDBs = hasDistDBs && canReadDistDBs
+	hasDistPublishers = hasDistPublishers && canReadDistPublishers
 
 	if info.IsDistributor && hasDistDBs {
 		rows, err := s.query(ctx, `
@@ -167,7 +200,7 @@ SELECT name, min_distretention, max_distretention, history_retention
 FROM   msdb.dbo.MSdistributiondbs
 ORDER  BY name`)
 		info.DistributionDatabases, err = scanRows(rows, err, "read distribution databases", func(scan func(...any) error) (DistributionDatabase, error) {
-			var d DistributionDatabase
+			d := DistributionDatabase{srv: s}
 			err := scan(&d.Name, &d.MinRetentionHours, &d.MaxRetentionHours, &d.HistoryRetentionHours)
 			return d, err
 		})
@@ -212,7 +245,7 @@ ORDER  BY name`)
 	if err != nil {
 		return nil, err
 	}
-	if info.DistributorConfigured && !info.IsDistributor {
+	if info.DistributorConfigured && (!info.IsDistributor || !hasDistPublishers) {
 		for _, d := range info.Databases {
 			if d.Published || d.MergePublished {
 				info.IsPublisher = true

@@ -46,6 +46,7 @@ flowchart TB
         N23["23 · Database Mail"]
         N24["24 · Extended Events"]
         N25["25 · Replication"]
+        N26["26 · Full-Text Search"]
     end
     subgraph A8["Azure instance resources"]
         direction TB
@@ -63,6 +64,7 @@ flowchart TB
     N02 -- "owns Database Mail in msdb" --> N23
     N02 -- "owns Extended Events sessions" --> N24
     N02 -- "reads the replication configuration" --> N25
+    N02 -- "reads the full-text component" --> N26
     N05 -- "writes through withConn, captured by ScriptCollector" --> N07
     N05 -- "has files, options, catalog, Query Store" --> N08
     N05 -- "filters listings and answers permissions" --> N09
@@ -73,6 +75,7 @@ flowchart TB
     N05 -- "owns the master key and module signatures" --> N21
     N05 -- "exposes its own Azure resource views" --> N19
     N05 -- "holds publications and local subscriptions" --> N25
+    N05 -- "holds full-text catalogs, stoplists and indexes" --> N26
     click N01 href "diagram/01-connection-options.mmd"
     click N02 href "diagram/02-server.mmd"
     click N03 href "diagram/03-server-info-and-authentication.mmd"
@@ -98,3 +101,4 @@ flowchart TB
     click N23 href "diagram/23-database-mail.mmd"
     click N24 href "diagram/24-extended-events.mmd"
     click N25 href "diagram/25-replication.mmd"
+    click N26 href "diagram/26-fulltext.mmd"

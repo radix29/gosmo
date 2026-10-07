@@ -165,7 +165,9 @@ exercise the write, drop them; never mutate pre-existing objects.
     XML schema collection, partition, Always Encrypted key, assembly, `RoleRef`,
     external-resource and Service Broker families, and `ViewRef`,
     `StoredProcedureRef`, `UserDefinedFunctionRef`, `TriggerRef`, the three
-    Resource Governor families and `MailAccountRef`, `MailProfileRef`. Two
+    Resource Governor families, `MailAccountRef`, `MailProfileRef` and the
+    four full-text ones (`FullTextCatalogRef`, `FullTextStoplistRef`,
+    `SearchPropertyListRef`, `Table.FullTextIndexRef`). Two
     singletons have a handle with no name: `MasterKeyRef` and
     `ResourceGovernorRef`, read by `MasterKey` and `ResourceGovernor`. Every
     other by-name lookup is `*ByName` with no handle.

@@ -113,6 +113,9 @@ var goldenQueries = []goldenQuery{
 	{"workload_groups", []string{"resource_governor_workload_groups"}, nil, func(m int) string {
 		return (&Server{info: &ServerInfo{VersionMajor: m}}).workloadGroupSelect()
 	}},
+	{"fulltext_indexes", []string{"fulltext_indexes"}, nil, func(m int) string {
+		return dbAtMajor(m).fullTextIndexSelect("")
+	}},
 }
 
 // renderGolden is the file's whole text: every major, in order, under a header
