@@ -355,6 +355,19 @@ var sweepMustCall = []string{
 	// live_query_profile_test.go is where they meet a running statement.
 	"Server.QueryProfiles",
 	"Server.InFlightPlan",
+
+	// Phase 5 item 26: replication. The ctx-only reads are reflective and
+	// find nothing on an instance without replication — which is the case
+	// they must survive. PublicationByName is driven by hand. Articles and
+	// Subscriptions need a publication, so they are swept only where one
+	// exists and are not listed here; live_replication_test.go runs them
+	// against the fixture.
+	"Server.ReplicationInfo",
+	"Server.LocalPublications",
+	"Server.LocalSubscriptions",
+	"Database.Publications",
+	"Database.LocalSubscriptions",
+	"Database.PublicationByName",
 }
 
 // checkCoverage fails on any sweepMustCall entry no label matched. It runs
@@ -1168,6 +1181,30 @@ func sweepServerCalls(sw *sweep, srv *Server, info *ServerInfo) {
 		}
 		return err
 	})
+
+	// Replication. master publishes nothing, so not-found is the read having
+	// run; every publication there is has its articles and subscriptions
+	// read.
+	sw.call("Database.PublicationByName", func() error {
+		_, err := srv.DatabaseRef("master").PublicationByName(sw.ctx, "gosmo_sweep_no_such_publication")
+		if errors.Is(err, ErrNotFound) {
+			return nil
+		}
+		return err
+	})
+	if pubs, err := srv.LocalPublications(sw.ctx); err == nil {
+		for _, p := range pubs {
+			label := p.Database().Name + ":" + p.Name
+			sw.call("Publication.Articles("+label+")", func() error {
+				_, err := p.Articles(sw.ctx)
+				return err
+			})
+			sw.call("Publication.Subscriptions("+label+")", func() error {
+				_, err := p.Subscriptions(sw.ctx)
+				return err
+			})
+		}
+	}
 
 	// Resource Governor. default exists in all three catalogs on every
 	// instance, so each finder has a row to find.

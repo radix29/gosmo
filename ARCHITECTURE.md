@@ -126,6 +126,7 @@ flowchart TB
         N22["22 · Resource Governor"]
         N23["23 · Database Mail"]
         N24["24 · Extended Events"]
+        N25["25 · Replication"]
     end
     subgraph A8["Azure instance resources"]
         direction TB
@@ -142,6 +143,7 @@ flowchart TB
     N02 -- "owns the Resource Governor configuration" --> N22
     N02 -- "owns Database Mail in msdb" --> N23
     N02 -- "owns Extended Events sessions" --> N24
+    N02 -- "reads the replication configuration" --> N25
     N05 -- "writes through withConn, captured by ScriptCollector" --> N07
     N05 -- "has files, options, catalog, Query Store" --> N08
     N05 -- "filters listings and answers permissions" --> N09
@@ -151,6 +153,7 @@ flowchart TB
     N05 -- "owns database audit specifications" --> N17
     N05 -- "owns the master key and module signatures" --> N21
     N05 -- "exposes its own Azure resource views" --> N19
+    N05 -- "holds publications and local subscriptions" --> N25
     click N01 href "diagram/01-connection-options.mmd"
     click N02 href "diagram/02-server.mmd"
     click N03 href "diagram/03-server-info-and-authentication.mmd"
@@ -175,6 +178,7 @@ flowchart TB
     click N22 href "diagram/22-resource-governor.mmd"
     click N23 href "diagram/23-database-mail.mmd"
     click N24 href "diagram/24-extended-events.mmd"
+    click N25 href "diagram/25-replication.mmd"
 ```
 
 ### Connecting and the `Server` object
@@ -270,6 +274,7 @@ server's own filesystem.
 | [`22-resource-governor.mmd`](diagram/22-resource-governor.mmd) | The user-configurable Resource Governor: its stored and effective configuration, resource pools, workload groups, external pools, and their runtime statistics. |
 | [`23-database-mail.mmd`](diagram/23-database-mail.mmd) | Database Mail: accounts, profiles and their ordered accounts, profile security, system parameters, status and queues, mail items and the mail log; their writes and scripts. |
 | [`24-extended-events.mmd`](diagram/24-extended-events.mmd) | Extended Events: sessions with their events and targets, session specs and templates, live status, event-file and ring-buffer readers, and the package/object library; their writes and scripts. |
+| [`25-replication.mmd`](diagram/25-replication.mmd) | Replication, read-only: the distributor and publisher configuration, publications with their articles and publisher-side subscriptions, and the subscriptions databases here hold. |
 
 ### Azure instance resources
 
@@ -1762,6 +1767,26 @@ instance must have a **database mirroring endpoint** started with `CONNECT`
 granted to the other instances' service accounts, and — for certificate
 authentication — each instance needs the others' public **certificates**.
 
+### Replication (read-only)
+
+What SSMS's Replication folder shows; nothing here configures replication
+(`replication.go`, `replication_subscription.go`).
+
+| SSMS equivalent                     | gosmo                                                        |
+| ----------------------------------- | ------------------------------------------------------------ |
+| Distributor / publisher configuration | `srv.ReplicationInfo(ctx)` — distributor, distribution databases (`msdb..MSdistributiondbs`), registered publishers (`MSdistpublishers`), published and distribution databases |
+| Local Publications                  | `srv.LocalPublications(ctx)` / `db.Publications(ctx)` / `db.PublicationByName(ctx, name)` → `[]*Publication` (snapshot, transactional, peer-to-peer, merge) |
+| Publication › Articles              | `pub.Articles(ctx)` → `[]*Article` (source, destination, row filter, `SchemaOption.Options()`) |
+| Publication › Subscriptions         | `pub.Subscriptions(ctx)` → `[]*Subscription`, as the publisher records them |
+| Local Subscriptions                 | `srv.LocalSubscriptions(ctx)` / `db.LocalSubscriptions(ctx)` → `[]*LocalSubscription`, from the subscriber's own tables |
+
+**Every read finds nothing, without an error, where replication made no
+tables** — each asks `OBJECT_ID` before naming one. Azure SQL Database is
+refused (`ErrUnsupportedVersion`). `sys.databases.is_subscribed` stays 0 for
+a pull subscriber, so local subscriptions are found by the subscriber tables a
+database holds, not by that flag. Server names compare case-insensitively:
+replication stores each row with whatever spelling `@@SERVERNAME` had.
+
 ### Certificates and the database master key
 
 | SSMS equivalent                  | gosmo                                                    |
@@ -2430,7 +2455,7 @@ and audit specifications (server and database), credentials (server and
 database scoped), server triggers, database DDL triggers, error log, server
 filesystem, Azure instance and per-database resources, database snapshots,
 table kinds, the Programmability families (types, rules, defaults, assemblies,
-plan guides), external resources and the Service Broker families.
+plan guides), external resources, the Service Broker families and replication.
 
 The class diagrams need the same treatment. They live in `diagram/`, one
 `.mmd` file per group of types, and § Architecture above links every one of

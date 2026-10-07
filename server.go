@@ -593,32 +593,41 @@ func platformFromVersionString(v string) string {
 
 // Databases returns all user-accessible databases on the server.
 func (s *Server) Databases(ctx context.Context) ([]*Database, error) {
-	q := `
+	rows, err := s.query(ctx, s.databaseSelect()+`
+	ORDER BY name`)
+	return scanRows(rows, err, "list databases", func(scan func(...any) error) (*Database, error) {
+		return scanDatabase(s, scan)
+	})
+}
+
+// databaseSelect is the sys.databases read a populated *Database is built
+// from, without its WHERE or ORDER BY; scanDatabase reads its row.
+func (s *Server) databaseSelect() string {
+	return `
 	SELECT name, database_id, state_desc, recovery_model_desc,
 	       compatibility_level, collation_name, ` + catalogCollationExpr(s.serverMajorVersion()) + `,
 	       is_read_only, create_date, ISNULL(source_database_id, 0)
-	FROM sys.databases
-	ORDER BY name`
+	FROM sys.databases`
+}
 
-	rows, err := s.query(ctx, q)
-	return scanRows(rows, err, "list databases", func(scan func(...any) error) (*Database, error) {
-		d := &Database{server: s}
-		var state, recovery, collation, catalogCollation sql.NullString
-		var compatLevel sql.NullInt64
-		if err := scan(
-			&d.Name, &d.ID, &state, &recovery,
-			&compatLevel, &collation, &catalogCollation, &d.IsReadOnly, &d.CreateDate,
-			&d.SourceDatabaseID,
-		); err != nil {
-			return nil, err
-		}
-		d.State = state.String
-		d.RecoveryModel = RecoveryModel(recovery.String)
-		d.CompatibilityLevel = CompatibilityLevel(compatLevel.Int64)
-		d.Collation = collation.String
-		d.CatalogCollation = catalogCollation.String
-		return d, nil
-	})
+// scanDatabase builds a *Database from one databaseSelect row.
+func scanDatabase(s *Server, scan func(...any) error) (*Database, error) {
+	d := &Database{server: s}
+	var state, recovery, collation, catalogCollation sql.NullString
+	var compatLevel sql.NullInt64
+	if err := scan(
+		&d.Name, &d.ID, &state, &recovery,
+		&compatLevel, &collation, &catalogCollation, &d.IsReadOnly, &d.CreateDate,
+		&d.SourceDatabaseID,
+	); err != nil {
+		return nil, err
+	}
+	d.State = state.String
+	d.RecoveryModel = RecoveryModel(recovery.String)
+	d.CompatibilityLevel = CompatibilityLevel(compatLevel.Int64)
+	d.Collation = collation.String
+	d.CatalogCollation = catalogCollation.String
+	return d, nil
 }
 
 // containedCatalogCollation is the fixed collation of a partially contained
@@ -647,30 +656,9 @@ func catalogCollationExpr(major int) string {
 // only need a handle to issue further ALTER-style calls against a database you
 // already know exists. The two are not interchangeable — see DatabaseRef.
 func (s *Server) DatabaseByName(ctx context.Context, name string) (*Database, error) {
-	q := `
-	SELECT name, database_id, state_desc, recovery_model_desc,
-	       compatibility_level, collation_name, ` + catalogCollationExpr(s.serverMajorVersion()) + `,
-	       is_read_only, create_date, ISNULL(source_database_id, 0)
-	FROM sys.databases
-	WHERE name = @p1`
-
-	d := &Database{server: s}
-	var state, recovery, collation, catalogCollation sql.NullString
-	var compatLevel sql.NullInt64
-
-	if err := s.queryRowScan(ctx, q, []any{name},
-		&d.Name, &d.ID, &state, &recovery,
-		&compatLevel, &collation, &catalogCollation, &d.IsReadOnly, &d.CreateDate,
-		&d.SourceDatabaseID,
-	); err != nil {
-		return nil, rowErr(err, notFoundf("gosmo: database %q not found", name), "database by name")
-	}
-	d.State = state.String
-	d.RecoveryModel = RecoveryModel(recovery.String)
-	d.CompatibilityLevel = CompatibilityLevel(compatLevel.Int64)
-	d.Collation = collation.String
-	d.CatalogCollation = catalogCollation.String
-	return d, nil
+	return readByName(ctx, s, scanDatabase, s.databaseSelect()+`
+	WHERE name = @p1`, []any{name},
+		notFoundf("gosmo: database %q not found", name), "database by name")
 }
 
 // DatabaseRef returns a lightweight handle for name without querying the

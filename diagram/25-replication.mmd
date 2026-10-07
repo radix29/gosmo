@@ -1,0 +1,138 @@
+classDiagram
+
+    %% =========================================================
+    %% Replication, read-only (replication.go,
+    %% replication_subscription.go): the distributor and publisher
+    %% configuration, publications with their articles and
+    %% subscriptions, and the subscriptions held here
+    %% =========================================================
+
+    class ReplicationInfo {
+        +DistributorConfigured bool
+        +Distributor string
+        +IsDistributor bool
+        +IsPublisher bool
+        +DistributionDatabases []DistributionDatabase
+        +Publishers []DistributionPublisher
+        +Databases []ReplicationDatabase
+        Zero, not an error, with nothing configured.
+    }
+
+    class DistributionDatabase {
+        +Name string
+        +MinRetentionHours int
+        +MaxRetentionHours int
+        +HistoryRetentionHours int
+    }
+
+    class DistributionPublisher {
+        +Name string
+        +DistributionDatabase string
+        +WorkingDirectory string
+        +WindowsAuth bool
+        +Active bool
+        +PublisherType string
+    }
+
+    class ReplicationDatabase {
+        +Name string
+        +Published bool
+        +MergePublished bool
+        +Distribution bool
+        +Readable bool
+    }
+
+    class Publication {
+        -db *Database
+        +Name string
+        +Description string
+        +Type PublicationType
+        +Active bool
+        +Retention int
+        +RetentionUnit string
+        +SyncMethod string
+        +AllowPush bool
+        +AllowPull bool
+        +AllowAnonymous bool
+        and the snapshot, transactional and merge options
+        +Database() *Database
+        +Articles() []*Article
+        +Subscriptions() []*Subscription
+    }
+
+    class Article {
+        -pub *Publication
+        +Name string
+        +Type string
+        +TypeCode int
+        +SchemaOnly bool
+        +SourceSchema string
+        +SourceObject string
+        +DestinationOwner string
+        +DestinationObject string
+        +Filter string
+        +PreCreationCommand string
+        +SchemaOption SchemaOption
+        +Description string
+        +Publication() *Publication
+    }
+
+    class SchemaOption {
+        +Options() []string
+    }
+
+    class Subscription {
+        -pub *Publication
+        +Subscriber string
+        +SubscriberDB string
+        +Type SubscriptionType
+        +Status string
+        +SyncType string
+        merge only: SubscriberType, Priority, LastSync*
+        +Publication() *Publication
+    }
+
+    class LocalSubscription {
+        -db *Database
+        +Publisher string
+        +PublisherDB string
+        +Publication string
+        +PublicationType PublicationType
+        +Type SubscriptionType
+        +Distributor string
+        +LastSyncTime time.Time
+        +AgentJob string
+        merge only: SubscriberType, LastSyncStatus
+        +Database() *Database
+    }
+
+    class PublicationType {
+        <<enumeration>>
+        Transactional
+        Snapshot
+        PeerToPeer
+        Merge
+    }
+
+    class SubscriptionType {
+        <<enumeration>>
+        Push
+        Pull
+        Anonymous
+    }
+
+    Server ..> ReplicationInfo : ReplicationInfo
+    ReplicationInfo *-- DistributionDatabase
+    ReplicationInfo *-- DistributionPublisher
+    ReplicationInfo *-- ReplicationDatabase
+    Server ..> Publication : LocalPublications
+    Database "1" --> "*" Publication : Publications / PublicationByName
+    Publication "1" --> "*" Article : Articles
+    Article --> SchemaOption
+    Publication "1" --> "*" Subscription : Subscriptions
+    Server ..> LocalSubscription : LocalSubscriptions
+    Database "1" --> "*" LocalSubscription : LocalSubscriptions
+    Publication --> PublicationType
+    LocalSubscription --> PublicationType
+    Subscription --> SubscriptionType
+    LocalSubscription --> SubscriptionType
