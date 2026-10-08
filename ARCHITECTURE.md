@@ -1594,7 +1594,9 @@ for the reason `ScheduleFrequency` already states: `freq_interval`'s meaning
 depends on `freq_type`, so half a frequency is not one. It addresses the
 schedule by `@schedule_id`, falling back to `@name` when the receiver has no
 ID — so a schedule is writable from a no-I/O `ScheduleRef` handle. `Drop`,
-`Job.AttachSchedule` and `Job.DetachSchedule` key the same way.
+`Job.AttachSchedule` and `Job.DetachSchedule` key the same way. The one
+read keyed by id, `Schedule.Jobs`, looks the id up through `ScheduleByName`
+on a `ScheduleRef` instead, so a shared name is `ErrAmbiguous`, not "no jobs".
 
 The per-property setters are not deprecated —
 `Enable()`/`Disable()`/`Rename()` read better than a struct literal for a

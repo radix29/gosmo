@@ -199,6 +199,21 @@ func (sch *Schedule) key(nameParam string) string {
 	return fmt.Sprintf("%s = N'%s'", nameParam, escapeSingle(sch.Name))
 }
 
+// id returns the schedule's schedule_id, looking it up by name on a
+// ScheduleRef rather than binding 0, which answers "no children". The id is
+// not cached on the handle. A name no schedule or several schedules hold is
+// ScheduleByName's ErrNotFound or ErrAmbiguous.
+func (sch *Schedule) id(ctx context.Context) (int, error) {
+	if sch.ID != 0 {
+		return sch.ID, nil
+	}
+	found, err := sch.server.ScheduleByName(ctx, sch.Name)
+	if err != nil {
+		return 0, err
+	}
+	return found.ID, nil
+}
+
 // CreateScheduleRequest describes a new shared schedule.
 type CreateScheduleRequest struct {
 	Name                 string
@@ -209,7 +224,9 @@ type CreateScheduleRequest struct {
 	FreqSubdayInterval   int
 	FreqRelativeInterval int
 	FreqRecurrenceFactor int
-	// ActiveStartDate defaults to today if the zero Time.
+	// ActiveStartDate defaults to the server's today if the zero Time:
+	// @active_start_date is left out and msdb fills it in, so a client in
+	// another time zone than the server cannot shift it by a day.
 	ActiveStartDate time.Time
 	// ActiveEndDate means "no end date" if the zero Time.
 	ActiveEndDate time.Time
@@ -221,18 +238,20 @@ type CreateScheduleRequest struct {
 
 // frequencyArgs renders every field but the name and owner as the
 // parameters sp_add_schedule and sp_add_jobschedule share, from @enabled to
-// @active_end_time.
+// @active_end_time. A zero ActiveStartDate omits @active_start_date, whose
+// NULL default both procedures turn into the server's today — the client's
+// time.Now() would be a different date either side of the server's midnight.
 func (req CreateScheduleRequest) frequencyArgs() string {
-	startDate := timeToYYYYMMDD(req.ActiveStartDate)
-	if startDate == 0 {
-		startDate = timeToYYYYMMDD(time.Now())
+	startDate := ""
+	if !req.ActiveStartDate.IsZero() {
+		startDate = fmt.Sprintf("@active_start_date = %d, ", timeToYYYYMMDD(req.ActiveStartDate))
 	}
 	return fmt.Sprintf(
 		"@enabled = %d, "+
 			"@freq_type = %d, @freq_interval = %d, "+
 			"@freq_subday_type = %d, @freq_subday_interval = %d, "+
 			"@freq_relative_interval = %d, @freq_recurrence_factor = %d, "+
-			"@active_start_date = %d, @active_end_date = %d, "+
+			"%s@active_end_date = %d, "+
 			"@active_start_time = %d, @active_end_time = %d",
 		boolToInt(req.Enabled),
 		int(req.FreqType), req.FreqInterval,
@@ -346,7 +365,8 @@ func (sch *Schedule) Drop(ctx context.Context) error {
 // Jobs returns every job this schedule is attached to — a "referenced by"
 // list. Only JobID/Name/IsEnabled are populated on each returned Job (not
 // its activity/history joins), enough for a reference list without the
-// extra round trips Server.Jobs pays for.
+// extra round trips Server.Jobs pays for. On a ScheduleRef the schedule_id is
+// looked up by name first, so a name two schedules share is ErrAmbiguous.
 func (sch *Schedule) Jobs(ctx context.Context) ([]*Job, error) {
 	const q = `
 SELECT CONVERT(varchar(36), j.job_id), j.name, j.enabled
@@ -355,7 +375,11 @@ JOIN   msdb.dbo.sysjobschedules js ON js.job_id = j.job_id
 WHERE  js.schedule_id = @p1
 ORDER  BY j.name`
 
-	rows, err := sch.server.query(ctx, q, sch.ID)
+	id, err := sch.id(ctx)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := sch.server.query(ctx, q, id)
 	return scanRows(rows, err, fmt.Sprintf("jobs for schedule %q", sch.Name), func(scan func(...any) error) (*Job, error) {
 		j := &Job{server: sch.server}
 		if err := scan(&j.JobID, &j.Name, &j.IsEnabled); err != nil {

@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 // A TableRef carries no ObjectID, and every read keyed by one used to ask for
@@ -188,5 +189,56 @@ func TestLoginRefReadsLookUpTheSID(t *testing.T) {
 				t.Errorf("missing login: err = %v, want ErrNotFound", err)
 			}
 		})
+	}
+}
+
+// A ScheduleRef carries no schedule_id, and Schedule.Jobs used to bind 0 and
+// answer "attached to no jobs". It now looks the id up by name; a name two
+// schedules share is ErrAmbiguous and a missing one ErrNotFound, as
+// ScheduleByName reports them.
+func TestScheduleRefJobsLooksUpTheScheduleID(t *testing.T) {
+	stamp := time.Date(2026, time.October, 9, 0, 0, 0, 0, time.UTC)
+	row := func(id int64) []driver.Value {
+		return []driver.Value{
+			id, "Daily", true, int64(FreqDaily), int64(1),
+			int64(SubdayOnce), int64(0), int64(0),
+			int64(0), int64(20261009), int64(noEndDateYYYYMMDD),
+			int64(0), int64(235959),
+			stamp, stamp, "sa",
+		}
+	}
+	cols := make([]string, 16)
+
+	d := qsRecDB(t, 17, cols, [][]driver.Value{row(42)})
+	_, _ = d.server.ScheduleRef("Daily").Jobs(t.Context()) // the job row does not scan; only the SQL matters
+	calls := qsRec.recorded()
+	if len(calls) < 2 {
+		t.Fatalf("got %d statements, want the id lookup and the read", len(calls))
+	}
+	if !strings.Contains(calls[0].sql, "WHERE sch.name = @p1") || !slices.Equal(calls[0].args, []any{"Daily"}) {
+		t.Errorf("first statement is not the schedule lookup by name: %s %v", calls[0].sql, calls[0].args)
+	}
+	if !strings.Contains(calls[1].sql, "js.schedule_id = @p1") || !slices.Equal(calls[1].args, []any{int64(42)}) {
+		t.Errorf("read = %s %v, want the looked-up schedule_id 42", calls[1].sql, calls[1].args)
+	}
+
+	d = qsRecDB(t, 17, cols, [][]driver.Value{row(42), row(43)})
+	if _, err := d.server.ScheduleRef("Daily").Jobs(t.Context()); !errors.Is(err, ErrAmbiguous) {
+		t.Errorf("shared name: err = %v, want ErrAmbiguous", err)
+	}
+	if n := len(qsRec.recorded()); n != 1 {
+		t.Errorf("shared name: %d statements, want only the lookup", n)
+	}
+
+	d = qsRecDB(t, 17, cols, nil)
+	if _, err := d.server.ScheduleRef("gone").Jobs(t.Context()); !errors.Is(err, ErrNotFound) {
+		t.Errorf("missing schedule: err = %v, want ErrNotFound", err)
+	}
+
+	// A loaded schedule is read by its own id, with no lookup.
+	d = qsRecDB(t, 17, nil, nil)
+	_, _ = (&Schedule{server: d.server, ID: 7, Name: "Daily"}).Jobs(t.Context())
+	if calls := qsRec.recorded(); len(calls) != 1 || !slices.Equal(calls[0].args, []any{int64(7)}) {
+		t.Errorf("loaded schedule: statements = %v, want one read bound to 7", calls)
 	}
 }

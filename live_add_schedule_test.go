@@ -140,6 +140,11 @@ func TestLiveSharedScheduleNames(t *testing.T) {
 	if first.ID == 0 || second.ID == 0 || first.ID == second.ID {
 		t.Fatalf("CreateSchedule ids = %d, %d; want two distinct ids", first.ID, second.ID)
 	}
+	// L6: a zero ActiveStartDate is left to sp_add_schedule, which stores
+	// the server's today, not the client's.
+	if today := liveServerToday(t, ctx, srv); !first.ActiveStartDate.Equal(today) {
+		t.Errorf("CreateSchedule with no start date: active_start_date = %v, want the server's today %v", first.ActiveStartDate, today)
+	}
 
 	if _, err := srv.ScheduleByName(ctx, dup); !errors.Is(err, ErrAmbiguous) {
 		t.Errorf("ScheduleByName(shared) err = %v, want ErrAmbiguous", err)
@@ -169,6 +174,14 @@ func TestLiveSharedScheduleNames(t *testing.T) {
 	if err != nil || len(attached) != 1 || attached[0].ID != second.ID {
 		t.Fatalf("job schedules after attach = %v, %v; want only %d", attached, err, second.ID)
 	}
+	// L4: Jobs on a handle reads by its id; on a ScheduleRef it looks the id
+	// up by name, which a shared name makes ambiguous rather than "no jobs".
+	if jobs, err := second.Jobs(ctx); err != nil || len(jobs) != 1 || jobs[0].Name != jobName {
+		t.Errorf("second.Jobs = %v, %v; want only %s", jobs, err, jobName)
+	}
+	if _, err := srv.ScheduleRef(dup).Jobs(ctx); !errors.Is(err, ErrAmbiguous) {
+		t.Errorf("ScheduleRef(shared).Jobs err = %v, want ErrAmbiguous", err)
+	}
 	if err := j.DetachSchedule(ctx, second); err != nil {
 		t.Fatalf("DetachSchedule by handle: %v", err)
 	}
@@ -193,6 +206,27 @@ func TestLiveSharedScheduleNames(t *testing.T) {
 	if err != nil || only.ID != first.ID {
 		t.Errorf("ScheduleByName after dropping the second = %+v, %v; want %d", only, err, first.ID)
 	}
+
+	if err := j.AttachSchedule(ctx, first); err != nil {
+		t.Fatalf("AttachSchedule first: %v", err)
+	}
+	if jobs, err := srv.ScheduleRef(dup).Jobs(ctx); err != nil || len(jobs) != 1 || jobs[0].Name != jobName {
+		t.Errorf("ScheduleRef(now unique).Jobs = %v, %v; want only %s", jobs, err, jobName)
+	}
+	if _, err := srv.ScheduleRef("gossms_j1_no_such_schedule").Jobs(ctx); !errors.Is(err, ErrNotFound) {
+		t.Errorf("ScheduleRef(missing).Jobs err = %v, want ErrNotFound", err)
+	}
+}
+
+// liveServerToday is the server's GETDATE() date, as ActiveStartDate decodes
+// a sysschedules date (UTC midnight).
+func liveServerToday(t *testing.T, ctx context.Context, srv *Server) time.Time {
+	t.Helper()
+	var today int
+	if err := srv.queryRowScan(ctx, "SELECT CONVERT(int, CONVERT(char(8), GETDATE(), 112))", nil, &today); err != nil {
+		t.Fatalf("read the server's date: %v", err)
+	}
+	return yyyymmddToTime(today)
 }
 
 // TestLiveAddScheduleSharedName pins H5 (gossms
@@ -236,6 +270,14 @@ func TestLiveAddScheduleSharedName(t *testing.T) {
 	}
 	if first.ID == 0 || second.ID == 0 || first.ID == second.ID {
 		t.Fatalf("AddSchedule ids = %d, %d; want two distinct ids", first.ID, second.ID)
+	}
+	// L6: sp_add_jobschedule, on both branches, defaults the start date to
+	// the server's today.
+	today := liveServerToday(t, ctx, srv)
+	for _, sch := range []*Schedule{first, second} {
+		if !sch.ActiveStartDate.Equal(today) {
+			t.Errorf("AddSchedule %d with no start date: active_start_date = %v, want the server's today %v", sch.ID, sch.ActiveStartDate, today)
+		}
 	}
 	// msdb refuses to drop an attached schedule (Msg 14372), and detaching
 	// by a name two of the job's schedules share is ambiguous too.

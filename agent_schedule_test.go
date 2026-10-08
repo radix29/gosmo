@@ -444,3 +444,23 @@ func TestAddScheduleReturnsAHandleAddressedByID(t *testing.T) {
 		}
 	}
 }
+
+// A zero ActiveStartDate used to send the client's time.Now() date, a day off
+// the server's either side of its midnight. It is now left out, and both
+// sp_add_schedule and sp_add_jobschedule default it to the server's today
+// (probed on majors 13, 14 and 17). A set date is still sent.
+func TestFrequencyArgsOmitsAZeroStartDate(t *testing.T) {
+	req := CreateScheduleRequest{Name: "n", Enabled: true, FreqType: FreqDaily, FreqInterval: 1}
+	if got := req.frequencyArgs(); strings.Contains(got, "@active_start_date") {
+		t.Errorf("zero start date: frequencyArgs = %q, want no @active_start_date", got)
+	}
+	want := "@freq_recurrence_factor = 0, @active_end_date = 99991231, "
+	if got := req.frequencyArgs(); !strings.Contains(got, want) {
+		t.Errorf("zero start date: frequencyArgs = %q, want it to contain %q", got, want)
+	}
+	req.ActiveStartDate = time.Date(2026, 10, 2, 0, 0, 0, 0, time.UTC)
+	want = "@freq_recurrence_factor = 0, @active_start_date = 20261002, @active_end_date = 99991231, "
+	if got := req.frequencyArgs(); !strings.Contains(got, want) {
+		t.Errorf("set start date: frequencyArgs = %q, want it to contain %q", got, want)
+	}
+}
