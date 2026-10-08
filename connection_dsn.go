@@ -412,6 +412,23 @@ var reservedDSNKeys = map[string]bool{
 // unless the caller wants the dial bounded differently from the login.
 var overridableDSNKeys = map[string]bool{"dial timeout": true}
 
+// adoDSNSynonyms maps the ADO.NET spelling of a driver parameter that no
+// ConnectionOptions field controls to the key the driver reads. go-mssqldb
+// translates these only in the key=value DSN form; in the sqlserver:// URL
+// gosmo builds, "application intent=ReadOnly" is an unknown key the driver
+// ignores without error, so the SSMS spelling would silently not route to a
+// readable secondary. The driver's own map is unexported, so
+// TestExtraParamsADOSynonymsMatchTheDriver pins this one against it.
+var adoDSNSynonyms = map[string]string{
+	"application intent":        "applicationintent",
+	"multi subnet failover":     "multisubnetfailover",
+	"failover partner":          "failoverpartner",
+	"failover partner spn":      "failoverpartnerspn",
+	"server certificate":        "servercertificate",
+	"wsid":                      "workstation id",
+	"column encryption setting": "columnencryption",
+}
+
 // ExtraParamError is the error Connect and ConnectionString return for a
 // ConnectionOptions.ExtraParams entry they refuse. Key is the name as the
 // caller gave it.
@@ -434,12 +451,17 @@ func (e *ExtraParamError) Error() string {
 // krb5-* family), a key q already carries, and a key given more than one
 // value or given twice in different case — the driver itself rejects the
 // last two with a message that does not say where the duplicate came from.
-// Every refusal is an *ExtraParamError.
+// An ADO.NET synonym (adoDSNSynonyms) is written under the driver's key, so it
+// beside its canonical spelling counts as the same key twice. Every refusal is
+// an *ExtraParamError.
 func mergeExtraParams(q, extra url.Values) error {
 	const reserved = "is set through a ConnectionOptions field, not ExtraParams"
 	seen := make(map[string]bool, len(extra))
 	for k, vs := range extra {
 		key := strings.ToLower(strings.TrimSpace(k))
+		if canonical, ok := adoDSNSynonyms[key]; ok {
+			key = canonical
+		}
 		switch {
 		case key == "":
 			return &ExtraParamError{Key: k, reason: "has an empty name"}

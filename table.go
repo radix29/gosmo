@@ -379,9 +379,9 @@ func (d *Database) CreateTable(ctx context.Context, req CreateTableRequest) (*Ta
 	} else {
 		// trim the trailing comma from the last column line
 		s := sb.String()
-		if i := strings.LastIndex(s, ",\n"); i >= 0 {
+		if before, _, found := strings.CutLast(s, ",\n"); found {
 			sb.Reset()
-			sb.WriteString(s[:i])
+			sb.WriteString(before)
 			sb.WriteString("\n")
 		}
 	}

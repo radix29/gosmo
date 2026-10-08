@@ -608,11 +608,9 @@ func canonicalAuthority(authority string) string {
 // splitSTSURL splits the STS URL a server announces
 // ("https://login.windows.net/<tenant>") into its authority and tenant.
 func splitSTSURL(stsURL string) (authority, tenant string) {
-	i := strings.LastIndexByte(stsURL, '/')
-	if i < 0 {
-		return stsURL, ""
-	}
-	return stsURL[:i], stsURL[i+1:]
+	// CutLast returns (stsURL, "") when there is no '/'.
+	authority, tenant, _ = strings.CutLast(stsURL, "/")
+	return authority, tenant
 }
 
 // token returns an access token for cfg at a server that announced serverSPN

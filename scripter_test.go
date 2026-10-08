@@ -76,7 +76,7 @@ func scriptTestTable() (cols []*Column, indexes []*Index, fks []*ForeignKey) {
 func splitBatches(script string) []string {
 	var batches []string
 	var cur []string
-	for _, line := range strings.Split(script, "\n") {
+	for line := range strings.SplitSeq(script, "\n") {
 		if strings.TrimSpace(line) == "GO" {
 			batches = append(batches, strings.Join(cur, "\n"))
 			cur = nil
@@ -99,7 +99,7 @@ func TestBuildTableScriptKeepsBlocksInsideOneBatch(t *testing.T) {
 
 	for i, batch := range splitBatches(script) {
 		begins, ends := 0, 0
-		for _, line := range strings.Split(batch, "\n") {
+		for line := range strings.SplitSeq(batch, "\n") {
 			switch strings.TrimSpace(line) {
 			case "BEGIN":
 				begins++

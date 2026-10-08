@@ -97,11 +97,11 @@ func splitUseBatch(q string) (use, rest string, ok bool) {
 	if !strings.HasPrefix(q, "USE ") {
 		return "", q, false
 	}
-	i := strings.Index(q, guard)
-	if i < 0 {
+	before, after, ok := strings.Cut(q, guard)
+	if !ok {
 		return "", q, false
 	}
-	return q[:i], q[i+len(guard):], true
+	return before, after, true
 }
 
 // -- useDriver: records every statement and fails the ones a test names ------

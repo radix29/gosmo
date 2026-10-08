@@ -437,7 +437,7 @@ func (j *Job) ReorderSteps(ctx context.Context, order func(n int) []int) error {
 	// control flow silently rewritten to "quit with success". See execAtomic.
 	var stmts []string
 
-	for target := 0; target < len(want); target++ {
+	for target := range want {
 		if current[target] == want[target] {
 			continue
 		}

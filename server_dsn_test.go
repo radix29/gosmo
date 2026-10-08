@@ -2,9 +2,11 @@ package gosmo
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"net/url"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -483,4 +485,115 @@ func TestConnectionStringReportsConnectsErrors(t *testing.T) {
 	if strings.Contains(got, "hunter2") || strings.Contains(got, "tok") {
 		t.Errorf("token-provider DSN %q carries credentials the provider path never sends", got)
 	}
+}
+
+// TestExtraParamsADOSynonymsMatchTheDriver gives ExtraParams every keyword
+// Microsoft.Data.SqlClient documents and requires the driver to read gosmo's
+// URL exactly as it reads the same keyword appended to the key=value form,
+// where go-mssqldb applies its (unexported) ADO.NET synonym map. The URL form
+// does not translate synonyms, so before adoDSNSynonyms "Application
+// Intent=ReadOnly" parsed without error and without effect. A synonym a
+// future driver adds to a keyword listed here fails this test instead of
+// silently diverging. Keywords reservedDSNKeys refuses are skipped: they never
+// reach the DSN.
+func TestExtraParamsADOSynonymsMatchTheDriver(t *testing.T) {
+	keywords := []string{
+		"Addr", "Address", "App", "Application Intent", "ApplicationIntent", "Application Name",
+		"Async", "Asynchronous Processing", "Attestation Protocol", "AttachDBFilename",
+		"Authentication", "Column Encryption Setting", "Command Timeout",
+		"Connect Retry Count", "ConnectRetryCount", "Connect Retry Interval", "ConnectRetryInterval",
+		"Connect Timeout", "Connection Lifetime", "Connection Timeout", "Context Connection",
+		"Current Language", "Data Source", "Database", "Enclave Attestation Url", "Encrypt",
+		"Enlist", "Extended Properties", "Failover Partner", "Failover Partner SPN",
+		"FailoverPartnerSPN", "Host Name In Certificate", "HostNameInCertificate",
+		"Initial Catalog", "Initial File Name", "Integrated Security", "IP Address Preference",
+		"IPAddressPreference", "Language", "Load Balance Timeout", "Max Pool Size",
+		"Min Pool Size", "Multiple Active Result Sets", "MultipleActiveResultSets",
+		"Multi Subnet Failover", "MultiSubnetFailover", "Net", "Network Address",
+		"Network Library", "Packet Size", "Password", "Persist Security Info",
+		"PersistSecurityInfo", "Pool Blocking Period", "PoolBlockingPeriod", "Pooling", "PWD",
+		"Replication", "Server", "Server Certificate", "ServerCertificate", "Server SPN",
+		"ServerSPN", "Timeout", "Transaction Binding", "Trust Server Certificate",
+		"TrustServerCertificate", "Trusted_Connection", "Type System Version", "UID", "User",
+		"User ID", "User Instance", "Workstation ID", "WSID",
+	}
+	// A value that moves the driver's Config off its default where it reads
+	// the key at all. "server certificate" names a missing file, so the driver
+	// fails to parse it — in both forms, if both read it.
+	sample := map[string]string{
+		"application intent": "ReadOnly", "applicationintent": "ReadOnly",
+		"column encryption setting": "Enabled",
+		"failover partner":          "fp,1500", "failover partner spn": "MSSQLSvc/fp",
+		"failoverpartnerspn":    "MSSQLSvc/fp",
+		"multi subnet failover": "false", "multisubnetfailover": "false",
+		"server certificate": "/nonexistent/gosmo-test.pem", "servercertificate": "/nonexistent/gosmo-test.pem",
+		"workstation id": "ws1", "wsid": "ws1", "packet size": "8192",
+	}
+	base := ConnectionOptions{Server: "myserver", Database: "db", User: "sa", Password: "p"}
+	applyDefaults(&base)
+	baseDSN, _, err := buildDSN(base)
+	if err != nil {
+		t.Fatalf("buildDSN: %v", err)
+	}
+	baseCfg, err := msdsn.Parse(baseDSN)
+	if err != nil {
+		t.Fatalf("msdsn.Parse(%q): %v", baseDSN, err)
+	}
+	var ado strings.Builder
+	for k, v := range baseCfg.Parameters {
+		fmt.Fprintf(&ado, "%s=%s;", k, adoQuote(v))
+	}
+
+	for _, kw := range keywords {
+		val, ok := sample[strings.ToLower(kw)]
+		if !ok {
+			val = "1"
+		}
+		opts := base
+		opts.ExtraParams = url.Values{kw: {val}}
+		dsn, _, err := buildDSN(opts)
+		if pe, ok := errors.AsType[*ExtraParamError](err); ok && pe.Reserved {
+			continue
+		} else if err != nil {
+			t.Errorf("%s: buildDSN: %v", kw, err)
+			continue
+		}
+		urlCfg, urlErr := msdsn.Parse(dsn)
+		adoCfg, adoErr := msdsn.Parse(ado.String() + kw + "=" + adoQuote(val))
+		switch {
+		case (urlErr == nil) != (adoErr == nil):
+			t.Errorf("%s=%s: driver parse error differs: URL form %v, key=value form %v", kw, val, urlErr, adoErr)
+		case urlErr == nil:
+			if u, a := comparableConfig(urlCfg), comparableConfig(adoCfg); !reflect.DeepEqual(u, a) {
+				t.Errorf("%s=%s: driver reads the URL form as\n%+v\nbut the key=value form as\n%+v", kw, val, u, a)
+			}
+		}
+	}
+
+	// A synonym beside its canonical spelling is one key given twice.
+	opts := base
+	opts.ExtraParams = url.Values{"Application Intent": {"ReadOnly"}, "ApplicationIntent": {"ReadWrite"}}
+	if _, _, err := buildDSN(opts); err == nil || !strings.Contains(err.Error(), "more than once") {
+		t.Errorf("synonym and canonical key together: err = %v, want \"given more than once\"", err)
+	}
+}
+
+func adoQuote(v string) string {
+	if strings.ContainsAny(v, `;"`) {
+		return `"` + strings.ReplaceAll(v, `"`, `""`) + `"`
+	}
+	return v
+}
+
+// comparableConfig drops the msdsn.Config fields that differ between two
+// parses of the same settings: the random ActivityID, the TLS config (its
+// pointer and callbacks; ServerName and InsecureSkipVerify are kept) and the
+// raw Parameters map, whose keys follow the DSN spelling.
+func comparableConfig(c msdsn.Config) msdsn.Config {
+	c.ActivityID = nil
+	c.Parameters = nil
+	if c.TLSConfig != nil {
+		c.TLSConfig = &tls.Config{ServerName: c.TLSConfig.ServerName, InsecureSkipVerify: c.TLSConfig.InsecureSkipVerify}
+	}
+	return c
 }

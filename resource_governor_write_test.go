@@ -292,7 +292,7 @@ func TestIDRanges(t *testing.T) {
 		"7 7 6":     "6 TO 7",
 	} {
 		var ids []int
-		for _, f := range strings.Fields(in) {
+		for f := range strings.FieldsSeq(in) {
 			var n int
 			fmt.Sscan(f, &n)
 			ids = append(ids, n)

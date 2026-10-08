@@ -478,15 +478,15 @@ func (o *keyOpens) wrap(stmt string) string {
 	}
 	b.WriteString(stmt)
 	b.WriteString(";\n")
-	for i := len(o.names) - 1; i >= 0; i-- {
+	for _, v := range slices.Backward(o.names) {
 		b.WriteString("CLOSE SYMMETRIC KEY ")
-		b.WriteString(quoteIdent(o.names[i]))
+		b.WriteString(quoteIdent(v))
 		b.WriteString(";\n")
 	}
 	b.WriteString("END TRY\nBEGIN CATCH\n")
-	for i := len(o.names) - 1; i >= 0; i-- {
+	for _, v := range slices.Backward(o.names) {
 		fmt.Fprintf(&b, "IF EXISTS (SELECT 1 FROM sys.openkeys WHERE database_id = DB_ID() AND key_name = N'%s')\n"+
-			"    CLOSE SYMMETRIC KEY %s;\n", escapeSingle(o.names[i]), quoteIdent(o.names[i]))
+			"    CLOSE SYMMETRIC KEY %s;\n", escapeSingle(v), quoteIdent(v))
 	}
 	b.WriteString("THROW;\nEND CATCH;")
 	return b.String()

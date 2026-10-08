@@ -368,12 +368,7 @@ func mentionsBigintWaitColumn(term string) bool {
 // as a failed report rather than a missing menu entry.
 func TestQueryStoreMetricsOmitsMetricsTheInstanceLacks(t *testing.T) {
 	has := func(ms []QSMetric, m QSMetric) bool {
-		for _, x := range ms {
-			if x == m {
-				return true
-			}
-		}
-		return false
+		return slices.Contains(ms, m)
 	}
 
 	d2016 := &Database{Name: "appdb", server: &Server{info: &ServerInfo{VersionMajor: int(SQLServer2016)}}}

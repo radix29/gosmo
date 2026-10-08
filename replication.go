@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 )
 
 // ============================================================
@@ -378,12 +379,13 @@ var mergeRetentionUnits = map[int]string{0: "day", 1: "week", 2: "month", 3: "ye
 // replTables reports which of names exist as tables in d, in order — the
 // replication tables are created only when replication needs them.
 func (d *Database) replTables(ctx context.Context, what string, names ...string) ([]bool, error) {
-	q := "SELECT "
+	var q strings.Builder
+	q.WriteString("SELECT ")
 	for i := range names {
 		if i > 0 {
-			q += ", "
+			q.WriteString(", ")
 		}
-		q += fmt.Sprintf("CAST(CASE WHEN OBJECT_ID(@p%d, N'U') IS NULL THEN 0 ELSE 1 END AS bit)", i+1)
+		fmt.Fprintf(&q, "CAST(CASE WHEN OBJECT_ID(@p%d, N'U') IS NULL THEN 0 ELSE 1 END AS bit)", i+1)
 	}
 	args := make([]any, len(names))
 	have := make([]bool, len(names))
@@ -392,7 +394,7 @@ func (d *Database) replTables(ctx context.Context, what string, names ...string)
 		args[i] = "dbo." + n
 		dest[i] = &have[i]
 	}
-	err := d.queryRow(ctx, func(row *sql.Row) error { return row.Scan(dest...) }, q, args...)
+	err := d.queryRow(ctx, func(row *sql.Row) error { return row.Scan(dest...) }, q.String(), args...)
 	if err != nil {
 		return nil, fmt.Errorf("gosmo: %s: %w", what, err)
 	}

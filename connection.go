@@ -265,7 +265,9 @@ type ConnectionOptions struct {
 	// no ConnectionOptions field — "packet size", "ApplicationIntent",
 	// "MultiSubnetFailover", "dial timeout", "keepalive" and the like. Keys are
 	// case-insensitive, as the driver reads them; each key takes exactly one
-	// value.
+	// value. The ADO.NET spellings SSMS uses ("Application Intent", "Multi
+	// Subnet Failover", "Failover Partner", "WSID", …) are accepted and written
+	// under the driver's key; giving both spellings of one key is refused.
 	//
 	// A parameter that a ConnectionOptions field controls is refused, never
 	// merged: server, port, database, user id and password, app name,

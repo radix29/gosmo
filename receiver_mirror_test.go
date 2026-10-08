@@ -83,8 +83,8 @@ func TestEverySetterMirrorsItsField(t *testing.T) {
 	var mirrors func(key string, seen map[string]bool) bool
 	mirrors = func(key string, seen map[string]bool) bool {
 		fd, typ := funcs[key], ""
-		if i := strings.IndexByte(key, '.'); i >= 0 {
-			fd, typ = methods[key], key[:i]
+		if before, _, ok := strings.Cut(key, "."); ok {
+			fd, typ = methods[key], before
 		}
 		if fd == nil || seen[key] {
 			return false

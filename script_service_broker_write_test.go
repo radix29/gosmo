@@ -14,9 +14,6 @@ import (
 	"testing"
 )
 
-func boolPtr(b bool) *bool      { return &b }
-func intPtr(i int) *int         { return &i }
-func strPtr(s string) *string   { return &s }
 func upper(s string) string     { return strings.ToUpper(s) }
 func contains(s, x string) bool { return strings.Contains(s, x) }
 
@@ -26,7 +23,7 @@ func TestScriptedQueueAndRouteAlters(t *testing.T) {
 		{
 			name: "queue status alone",
 			call: func(ctx context.Context) error {
-				return db.BrokerQueueRef("Sales.Archive", "o'brien").Alter(ctx, QueueSettings{Status: boolPtr(false)})
+				return db.BrokerQueueRef("Sales.Archive", "o'brien").Alter(ctx, QueueSettings{Status: new(false)})
 			},
 			want: scriptUsePrefix + "ALTER QUEUE [Sales.Archive].[o'brien]\n    WITH STATUS = OFF",
 		},
@@ -34,9 +31,9 @@ func TestScriptedQueueAndRouteAlters(t *testing.T) {
 			name: "queue every setting at once",
 			call: func(ctx context.Context) error {
 				return db.BrokerQueueRef("dbo", "a]b").Alter(ctx, QueueSettings{
-					Status:                boolPtr(true),
-					Retention:             boolPtr(true),
-					PoisonMessageHandling: boolPtr(false),
+					Status:                new(true),
+					Retention:             new(true),
+					PoisonMessageHandling: new(false),
 					Activation: &QueueActivation{
 						Enabled:         true,
 						ProcedureSchema: "Sales.Archive",
@@ -89,7 +86,7 @@ func TestScriptedQueueAndRouteAlters(t *testing.T) {
 		{
 			name: "route address alone",
 			call: func(ctx context.Context) error {
-				return db.RouteRef("o'brien").Alter(ctx, RouteSettings{Address: strPtr("TCP://host:4022")})
+				return db.RouteRef("o'brien").Alter(ctx, RouteSettings{Address: new("TCP://host:4022")})
 			},
 			want: scriptUsePrefix + "ALTER ROUTE [o'brien]\n    WITH ADDRESS = N'TCP://host:4022'",
 		},
@@ -97,11 +94,11 @@ func TestScriptedQueueAndRouteAlters(t *testing.T) {
 			name: "route every setting at once",
 			call: func(ctx context.Context) error {
 				return db.RouteRef("a]b").Alter(ctx, RouteSettings{
-					RemoteService:   strPtr("//app/o'brien"),
-					BrokerInstance:  strPtr("AAAA-BBBB"),
-					LifetimeSeconds: intPtr(600),
-					Address:         strPtr("TCP://host:4022"),
-					MirrorAddress:   strPtr("TCP://host2:4022"),
+					RemoteService:   new("//app/o'brien"),
+					BrokerInstance:  new("AAAA-BBBB"),
+					LifetimeSeconds: new(600),
+					Address:         new("TCP://host:4022"),
+					MirrorAddress:   new("TCP://host2:4022"),
 				})
 			},
 			want: scriptUsePrefix + "ALTER ROUTE [a]]b]\n" +
@@ -154,15 +151,15 @@ func TestQueueAndRouteAltersRefuseWhatTheServerWould(t *testing.T) {
 		// so an empty string must not be sent as one.
 		{"route address cleared",
 			func(ctx context.Context) error {
-				return scriptTestDB().RouteRef("r").Alter(ctx, RouteSettings{Address: strPtr("")})
+				return scriptTestDB().RouteRef("r").Alter(ctx, RouteSettings{Address: new("")})
 			}, "ADDRESS is empty"},
 		{"route broker instance cleared",
 			func(ctx context.Context) error {
-				return scriptTestDB().RouteRef("r").Alter(ctx, RouteSettings{BrokerInstance: strPtr("")})
+				return scriptTestDB().RouteRef("r").Alter(ctx, RouteSettings{BrokerInstance: new("")})
 			}, "BROKER_INSTANCE is empty"},
 		{"route lifetime cleared",
 			func(ctx context.Context) error {
-				return scriptTestDB().RouteRef("r").Alter(ctx, RouteSettings{LifetimeSeconds: intPtr(0)})
+				return scriptTestDB().RouteRef("r").Alter(ctx, RouteSettings{LifetimeSeconds: new(0)})
 			}, "LIFETIME must be 1 or more"},
 	}
 	for _, c := range cases {
@@ -190,7 +187,7 @@ func TestScriptedQueueAlterDoesNotMirrorOntoTheReceiver(t *testing.T) {
 		ActivationExecuteAs: "dbo"}
 
 	ctx, script := WithScript(context.Background())
-	if err := q.Alter(ctx, QueueSettings{Status: boolPtr(false)}); err != nil {
+	if err := q.Alter(ctx, QueueSettings{Status: new(false)}); err != nil {
 		t.Fatalf("scripted alter: %v", err)
 	}
 	if !q.IsReceiveEnabled || !q.IsEnqueueEnabled {
@@ -212,7 +209,7 @@ func TestQueueAlterMirrorsBothStatusHalves(t *testing.T) {
 	// would be updated after a real exec. setIfApplied is keyed on the
 	// context, so the two halves are exercised separately: above for the
 	// scripted case, here for the applied one.
-	mirrorQueueSettings(context.Background(), q, QueueSettings{Status: boolPtr(false)})
+	mirrorQueueSettings(context.Background(), q, QueueSettings{Status: new(false)})
 	if q.IsReceiveEnabled || q.IsEnqueueEnabled {
 		t.Errorf("STATUS = OFF left the receiver at receive=%v enqueue=%v; ALTER QUEUE "+
 			"clears both halves together", q.IsReceiveEnabled, q.IsEnqueueEnabled)
@@ -300,7 +297,7 @@ func TestScriptedServiceBrokerDrops(t *testing.T) {
 		// above: it must address the route by its own name.
 		{"Route.Alter", func(ctx context.Context) error {
 			return (&Route{db: db, Name: "a]b"}).Alter(ctx,
-				RouteSettings{Address: strPtr("TCP://host:4022")})
+				RouteSettings{Address: new("TCP://host:4022")})
 		}, scriptUsePrefix + "ALTER ROUTE [a]]b]\n    WITH ADDRESS = N'TCP://host:4022'"},
 	})
 }
@@ -313,8 +310,8 @@ func TestScriptedRouteAlterDoesNotMirrorOntoTheReceiver(t *testing.T) {
 
 	ctx, script := WithScript(context.Background())
 	err := r.Alter(ctx, RouteSettings{
-		Address:       strPtr("TCP://new:4022"),
-		RemoteService: strPtr("//app/new"),
+		Address:       new("TCP://new:4022"),
+		RemoteService: new("//app/new"),
 	})
 	if err != nil {
 		t.Fatalf("scripted alter: %v", err)
