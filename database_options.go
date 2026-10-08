@@ -41,6 +41,13 @@ type DatabaseOptions struct {
 	IsTrustworthy         bool
 	IsBrokerEnabled       bool
 	IsEncrypted           bool
+
+	// FILESTREAM's database-level options (sys.database_filestream_options):
+	// NonTransactedAccess is "OFF", "READ_ONLY" or "FULL", and
+	// DirectoryName is "" while none is set. Both are present whether or not
+	// the database has a FILESTREAM filegroup.
+	NonTransactedAccess string
+	DirectoryName       string
 }
 
 // Options returns the database's ALTER DATABASE SET options.
@@ -50,17 +57,19 @@ type DatabaseOptions struct {
 // catalog-view columns, not per-database data.
 func (d *Database) Options(ctx context.Context) (*DatabaseOptions, error) {
 	const q = `
-SELECT SUSER_SNAME(owner_sid), page_verify_option_desc, user_access_desc,
-       containment_desc, is_local_cursor_default, snapshot_isolation_state_desc,
-       is_auto_close_on, is_auto_shrink_on, is_auto_create_stats_on,
-       is_auto_update_stats_on, is_auto_update_stats_async_on,
-       is_ansi_null_default_on, is_ansi_nulls_on, is_ansi_padding_on,
-       is_ansi_warnings_on, is_arithabort_on, is_concat_null_yields_null_on,
-       is_numeric_roundabort_on, is_quoted_identifier_on, is_recursive_triggers_on,
-       is_cursor_close_on_commit_on, is_read_committed_snapshot_on,
-       is_trustworthy_on, is_broker_enabled, is_encrypted
-FROM   sys.databases
-WHERE  name = @p1`
+SELECT SUSER_SNAME(d.owner_sid), d.page_verify_option_desc, d.user_access_desc,
+       d.containment_desc, d.is_local_cursor_default, d.snapshot_isolation_state_desc,
+       d.is_auto_close_on, d.is_auto_shrink_on, d.is_auto_create_stats_on,
+       d.is_auto_update_stats_on, d.is_auto_update_stats_async_on,
+       d.is_ansi_null_default_on, d.is_ansi_nulls_on, d.is_ansi_padding_on,
+       d.is_ansi_warnings_on, d.is_arithabort_on, d.is_concat_null_yields_null_on,
+       d.is_numeric_roundabort_on, d.is_quoted_identifier_on, d.is_recursive_triggers_on,
+       d.is_cursor_close_on_commit_on, d.is_read_committed_snapshot_on,
+       d.is_trustworthy_on, d.is_broker_enabled, d.is_encrypted,
+       ISNULL(fo.non_transacted_access_desc, 'OFF'), ISNULL(fo.directory_name, '')
+FROM   sys.databases d
+LEFT   JOIN sys.database_filestream_options fo ON fo.database_id = d.database_id
+WHERE  d.name = @p1`
 
 	o := &DatabaseOptions{}
 	var owner sql.NullString
@@ -76,6 +85,7 @@ WHERE  name = @p1`
 			&o.NumericRoundAbort, &o.QuotedIdentifier, &o.RecursiveTriggers,
 			&o.CursorCloseOnCommit, &o.ReadCommittedSnapshot,
 			&o.IsTrustworthy, &o.IsBrokerEnabled, &o.IsEncrypted,
+			&o.NonTransactedAccess, &o.DirectoryName,
 		)
 	}, q, d.Name)
 	if err != nil {

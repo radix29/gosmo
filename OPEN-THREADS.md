@@ -139,26 +139,42 @@ than failing:
 - A disabled **clustered** index is recreated and then disabled, as the
   source is — which takes the replayed table offline, faithfully.
 
-## Scripter fidelity: `ScriptDatabase` is a name and four settings
+## Scripter fidelity: what `ScriptDatabase` still leaves out
 
-`ScriptDatabase` emits `CREATE DATABASE [name] COLLATE …` plus the recovery
-model and compatibility level, and since 2026-10-08 (gossms review plan G8)
-honours `Verb`: a guarded `DROP DATABASE` after `USE [master]`, or both
-(`TestLiveScriptDatabaseDropAndCreateRuns`). It recreates a database of that
-name, not a copy of this one. Knowingly left out, each of which a replay
-silently gets wrong rather than refuses:
+`ScriptDatabase` emits `CREATE DATABASE [name]` with its containment, file
+layout, collation and `WITH FILESTREAM (NON_TRANSACTED_ACCESS,
+DIRECTORY_NAME)`, then the recovery model, compatibility level, empty and
+read-only filegroups, the options that differ from a new database's
+(`AUTO_CLOSE`/`AUTO_SHRINK`/`AUTO_CREATE_STATISTICS`/`AUTO_UPDATE_STATISTICS
+[_ASYNC]`, `PAGE_VERIFY`, `TRUSTWORTHY`, `READ_COMMITTED_SNAPSHOT`,
+`ALLOW_SNAPSHOT_ISOLATION`, change tracking), and always Query Store (its
+default depends on the replaying instance) and the owner. The layout
+(2026-10-08, gossms fix plan 1) is every filegroup's files with name,
+`FILENAME`, `SIZE`, `MAXSIZE` and `FILEGROWTH`; the options (2026-10-08, fix
+plan 2) are read with `Options`, `ChangeTracking` and `QueryStore`.
+`TestLiveScriptDatabaseFileLayoutRoundTrips` and
+`TestLiveScriptDatabaseOptionsRoundTrip` replay the script under a new name
+and compare the catalog (green on 13, 14, 17; FILESTREAM only on 17).
+Knowingly left out, each of which a replay silently gets wrong rather than
+refuses:
 
-- **Files and filegroups** — no `ON PRIMARY (…)`/`LOG ON (…)`, so the
-  replay takes the instance's default paths and sizes and has only PRIMARY;
-  a FILESTREAM or memory-optimized filegroup is not recreated, and neither
-  are the tables that need one.
-- **Every other option** — containment, `READ_COMMITTED_SNAPSHOT`,
-  snapshot isolation, `AUTO_*`, page verify, Query Store, change tracking,
-  trustworthy, owner, and the rest of `sys.databases`.
-
-SSMS's Script Database writes all of these from SMO's object model. Building
-them belongs here, from `Files`/`FileGroups` and the `sys.databases` row,
-before any caller is told the script round-trips.
+- **`CONTAINMENT = PARTIAL` has never run live**: "contained database
+  authentication" is off on all three instances, and the test skips it rather
+  than change server configuration. Unit-tested only.
+- **The rest of `sys.databases`**: the ANSI/`ARITHABORT`/`QUOTED_IDENTIFIER`
+  family, `CURSOR_DEFAULT`, `RECURSIVE_TRIGGERS`, `DB_CHAINING`, `ENABLE_BROKER`,
+  `PARAMETERIZATION`, `DELAYED_DURABILITY`, `TARGET_RECOVERY_TIME`,
+  accelerated database recovery, ledger, database-scoped configurations,
+  `user_access`, read-only and encryption (TDE). Each is one more `onOff`
+  line in `writeDatabaseSettings` where `DatabaseOptions` already reads it.
+- **Defaults are as shipped**, not the source's `model`: a replay on an
+  instance whose `model` was changed gets that `model`'s value for every
+  option at its shipped default.
+- **A database snapshot** scripts as an ordinary `CREATE DATABASE` over its
+  sparse files' paths, not `AS SNAPSHOT OF`.
+- **The paths and FILESTREAM directory name are the source's own**: replayed
+  on the same instance under the same name after a DROP that is right; as a
+  copy, the caller edits them.
 
 ## `ScriptTable` is 8–11 round trips — considered, not batched
 

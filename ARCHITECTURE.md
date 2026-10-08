@@ -1149,7 +1149,7 @@ ddl, _ := sc.ScriptFullTextCatalog(ctx, "DocsCatalog")
 ddl, _ := sc.ScriptFullTextStoplist(ctx, "LegalWords")   // CREATE + one ADD per word, each guarded
 ddl, _ := sc.ScriptSearchPropertyList(ctx, "DocProps")   // CREATE + one ADD per property, each guarded
 ddl, _ := sc.ScriptFullTextIndex(ctx, "dbo", "Docs")     // + DISABLE when the index is disabled
-ddl, _ := sc.ScriptDatabase(ctx)
+ddl, _ := sc.ScriptDatabase(ctx)                         // files, filegroups, log, options; reads through USE
 
 // Logins and server roles belong to no database, so they have their own
 // scripter.

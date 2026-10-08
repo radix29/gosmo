@@ -188,21 +188,38 @@ func (d *Database) SetQueryStoreOptions(ctx context.Context, opts QueryStoreOpti
 		return nil
 	}
 
-	if !queryStoreOperationModes[opts.DesiredState] {
-		return invalidf("gosmo: set query store options on %q: unrecognized operation mode %q", d.Name, opts.DesiredState)
-	}
-	if !queryStoreCaptureModes[opts.CaptureMode] {
-		return invalidf("gosmo: set query store options on %q: unrecognized capture mode %q", d.Name, opts.CaptureMode)
-	}
-	if !queryStoreCleanupModes[opts.SizeCleanupMode] {
-		return invalidf("gosmo: set query store options on %q: unrecognized size cleanup mode %q", d.Name, opts.SizeCleanupMode)
-	}
 	// WAIT_STATS_CAPTURE_MODE is SQL Server 2017 and later. Below it the
 	// setting does not exist — the read has no column to report and returns
 	// "" — so the clause is omitted rather than sent and rejected.
 	waitStats := d.serverMajorVersion() == 0 || d.serverMajorVersion() >= int(SQLServer2017)
+	withs, err := queryStoreOnOptions(opts, waitStats)
+	if err != nil {
+		return fmt.Errorf("gosmo: set query store options on %q: %w", d.Name, err)
+	}
+
+	q := fmt.Sprintf("ALTER DATABASE %s SET QUERY_STORE = ON (%s)", quoteIdent(d.Name), withs)
+	if err := d.server.exec(ctx, q); err != nil {
+		return fmt.Errorf("gosmo: set query store options on %q: %w", d.Name, err)
+	}
+	return nil
+}
+
+// queryStoreOnOptions is the option list inside SET QUERY_STORE = ON (…) for
+// opts, shared by SetQueryStoreOptions and the database scripter so the two
+// never spell it differently. waitStats says whether the instance has
+// WAIT_STATS_CAPTURE_MODE. Every keyword is checked against its constants.
+func queryStoreOnOptions(opts QueryStoreOptions, waitStats bool) (string, error) {
+	if !queryStoreOperationModes[opts.DesiredState] {
+		return "", invalidf("unrecognized operation mode %q", opts.DesiredState)
+	}
+	if !queryStoreCaptureModes[opts.CaptureMode] {
+		return "", invalidf("unrecognized capture mode %q", opts.CaptureMode)
+	}
+	if !queryStoreCleanupModes[opts.SizeCleanupMode] {
+		return "", invalidf("unrecognized size cleanup mode %q", opts.SizeCleanupMode)
+	}
 	if waitStats && !queryStoreWaitStatsModes[opts.WaitStatsCaptureMode] {
-		return invalidf("gosmo: set query store options on %q: unrecognized wait stats capture mode %q", d.Name, opts.WaitStatsCaptureMode)
+		return "", invalidf("unrecognized wait stats capture mode %q", opts.WaitStatsCaptureMode)
 	}
 
 	withs := []string{
@@ -228,11 +245,7 @@ func (d *Database) SetQueryStoreOptions(ctx context.Context, opts QueryStoreOpti
 		))
 	}
 
-	q := fmt.Sprintf("ALTER DATABASE %s SET QUERY_STORE = ON (%s)", quoteIdent(d.Name), strings.Join(withs, ", "))
-	if err := d.server.exec(ctx, q); err != nil {
-		return fmt.Errorf("gosmo: set query store options on %q: %w", d.Name, err)
-	}
-	return nil
+	return strings.Join(withs, ", "), nil
 }
 
 // FlushQueryStore forces Query Store to persist its in-memory data to disk

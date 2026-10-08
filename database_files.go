@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"math"
 	"strings"
 )
 
@@ -152,13 +153,13 @@ func (d *Database) AddFile(ctx context.Context, spec DatabaseFileSpec) error {
 // never drift apart.
 func writeFileSizeClauses(sb *strings.Builder, spec DatabaseFileSpec) {
 	if spec.SizeKB > 0 {
-		fmt.Fprintf(sb, ", SIZE = %dKB", spec.SizeKB)
+		fmt.Fprintf(sb, ", SIZE = %s", fileSizeLiteral(spec.SizeKB))
 	}
 	switch {
 	case spec.MaxSizeKB < 0:
 		sb.WriteString(", MAXSIZE = UNLIMITED")
 	case spec.MaxSizeKB > 0:
-		fmt.Fprintf(sb, ", MAXSIZE = %dKB", spec.MaxSizeKB)
+		fmt.Fprintf(sb, ", MAXSIZE = %s", fileSizeLiteral(spec.MaxSizeKB))
 	}
 	switch {
 	case spec.DisableGrowth:
@@ -166,8 +167,19 @@ func writeFileSizeClauses(sb *strings.Builder, spec DatabaseFileSpec) {
 	case spec.GrowthPercent > 0:
 		fmt.Fprintf(sb, ", FILEGROWTH = %d%%", spec.GrowthPercent)
 	case spec.GrowthKB > 0:
-		fmt.Fprintf(sb, ", FILEGROWTH = %dKB", spec.GrowthKB)
+		fmt.Fprintf(sb, ", FILEGROWTH = %s", fileSizeLiteral(spec.GrowthKB))
 	}
+}
+
+// fileSizeLiteral writes a size in KB, or in MB from 2 TB up: the number is
+// parsed as an int, so a log's default MAXSIZE of 2 TB as 2147483648KB is
+// Msg 102. Above that a size not a whole number of MB is rounded up — the
+// server rounds to its 8 KB pages anyway, and only past 2 TB does it arise.
+func fileSizeLiteral(kb int64) string {
+	if kb <= math.MaxInt32 {
+		return fmt.Sprintf("%dKB", kb)
+	}
+	return fmt.Sprintf("%dMB", (kb+1023)/1024)
 }
 
 // buildFileDefClause renders a "( NAME = ..., FILENAME = ..., ... )" file

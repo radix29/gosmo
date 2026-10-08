@@ -43,7 +43,7 @@ func TestScriptCommentsContainHostileNames(t *testing.T) {
 			sc := scripterOverDatabase(n)
 			sc.opts.IncludeHeaders = true
 			sc.db.server.info = &ServerInfo{ProductVersion: n}
-			s, err := sc.scriptDatabaseFrom(sc.db)
+			s, err := sc.scriptDatabaseFrom(sc.db, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
