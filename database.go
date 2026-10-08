@@ -404,15 +404,15 @@ type SpaceInfo struct {
 func (d *Database) SpaceUsed(ctx context.Context) (SpaceInfo, error) {
 	const q = `
 SELECT
-    SUM(size) * 8.0 / 1024                                                   AS total_mb,
-    SUM(CASE WHEN type_desc <> 'LOG' THEN size ELSE 0 END) * 8.0 / 1024     AS data_mb,
-    SUM(CASE WHEN type_desc =  'LOG' THEN size ELSE 0 END) * 8.0 / 1024     AS log_mb,
+    SUM(CAST(size AS bigint)) * 8.0 / 1024                                          AS total_mb,
+    SUM(CASE WHEN type_desc <> 'LOG' THEN CAST(size AS bigint) ELSE 0 END) * 8.0 / 1024 AS data_mb,
+    SUM(CASE WHEN type_desc =  'LOG' THEN CAST(size AS bigint) ELSE 0 END) * 8.0 / 1024 AS log_mb,
     SUM(CASE WHEN type_desc <> 'LOG'
-             THEN size - CAST(FILEPROPERTY(name, 'SpaceUsed') AS INT)
-             ELSE 0 END) * 8.0 / 1024                                       AS unallocated_mb,
+             THEN CAST(size AS bigint) - CAST(FILEPROPERTY(name, 'SpaceUsed') AS INT)
+             ELSE 0 END) * 8.0 / 1024                                          AS unallocated_mb,
     SUM(CASE WHEN type_desc = 'LOG'
-             THEN size - CAST(FILEPROPERTY(name, 'SpaceUsed') AS INT)
-             ELSE 0 END) * 8.0 / 1024                                       AS avail_log_mb
+             THEN CAST(size AS bigint) - CAST(FILEPROPERTY(name, 'SpaceUsed') AS INT)
+             ELSE 0 END) * 8.0 / 1024                                          AS avail_log_mb
 FROM sys.database_files`
 
 	var si SpaceInfo
@@ -487,13 +487,13 @@ SELECT
     a.data_mb, a.index_mb, a.unused_mb
 FROM (
     SELECT
-        SUM(CASE WHEN type_desc <> 'LOG' THEN size ELSE 0 END) * 8.0 / 1024 AS data_files_mb,
-        SUM(CASE WHEN type_desc =  'LOG' THEN size ELSE 0 END) * 8.0 / 1024 AS log_files_mb,
+        SUM(CASE WHEN type_desc <> 'LOG' THEN CAST(size AS bigint) ELSE 0 END) * 8.0 / 1024 AS data_files_mb,
+        SUM(CASE WHEN type_desc =  'LOG' THEN CAST(size AS bigint) ELSE 0 END) * 8.0 / 1024 AS log_files_mb,
         SUM(CASE WHEN type_desc <> 'LOG'
-                 THEN size - CAST(FILEPROPERTY(name, 'SpaceUsed') AS INT)
+                 THEN CAST(size AS bigint) - CAST(FILEPROPERTY(name, 'SpaceUsed') AS INT)
                  ELSE 0 END) * 8.0 / 1024                                   AS unallocated_mb,
         SUM(CASE WHEN type_desc = 'LOG'
-                 THEN size - CAST(FILEPROPERTY(name, 'SpaceUsed') AS INT)
+                 THEN CAST(size AS bigint) - CAST(FILEPROPERTY(name, 'SpaceUsed') AS INT)
                  ELSE 0 END) * 8.0 / 1024                                   AS avail_log_mb
     FROM sys.database_files
 ) f
@@ -581,7 +581,7 @@ type CreateSchemaRequest struct {
 // since nothing ran.
 func (d *Database) CreateSchema(ctx context.Context, req CreateSchemaRequest) (*Schema, error) {
 	if req.Name == "" {
-		return nil, fmt.Errorf("gosmo: create schema: name is required")
+		return nil, invalidf("gosmo: create schema: name is required")
 	}
 	q := "CREATE SCHEMA " + quoteIdent(req.Name)
 	if req.Owner != "" {
@@ -701,7 +701,7 @@ WHERE  SCHEMA_NAME(t.schema_id) COLLATE DATABASE_DEFAULT = @p1
 func (d *Database) Drop(ctx context.Context, force bool) error {
 	s, name := d.server, d.Name
 	if name == "" {
-		return fmt.Errorf("gosmo: drop database: name is required")
+		return invalidf("gosmo: drop database: name is required")
 	}
 	s.releaseIdle(ctx)
 	drop := fmt.Sprintf("DROP DATABASE %s", quoteIdent(name))
@@ -761,7 +761,7 @@ func (d *Database) Rename(ctx context.Context, newName string, force bool) error
 func (d *Database) rename(ctx context.Context, newName string, force bool) error {
 	s, oldName := d.server, d.Name
 	if oldName == "" || newName == "" {
-		return fmt.Errorf("gosmo: rename database: both names are required")
+		return invalidf("gosmo: rename database: both names are required")
 	}
 	q := fmt.Sprintf("ALTER DATABASE %s MODIFY NAME = %s", quoteIdent(oldName), quoteIdent(newName))
 	s.releaseIdle(ctx)

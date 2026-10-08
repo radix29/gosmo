@@ -131,6 +131,11 @@ func (t *ServerTrigger) Disable(ctx context.Context) error {
 	return t.setEnabled(ctx, false)
 }
 
+// SetEnabled is Enable when on is true and Disable otherwise.
+func (t *ServerTrigger) SetEnabled(ctx context.Context, on bool) error {
+	return t.setEnabled(ctx, on)
+}
+
 func (t *ServerTrigger) setEnabled(ctx context.Context, enabled bool) error {
 	verb := "DISABLE"
 	if enabled {

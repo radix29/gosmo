@@ -126,19 +126,19 @@ type CreateAvailabilityGroupRequest struct {
 // withClause renders one replica's WITH (...) body.
 func (spec AvailabilityReplicaSpec) withClause() (string, error) {
 	if strings.TrimSpace(spec.ServerName) == "" {
-		return "", fmt.Errorf("replica has no server name")
+		return "", invalidf("replica has no server name")
 	}
 	if strings.TrimSpace(spec.EndpointURL) == "" {
-		return "", fmt.Errorf("replica %q has no endpoint URL", spec.ServerName)
+		return "", invalidf("replica %q has no endpoint URL", spec.ServerName)
 	}
 
 	availability := upperKeyword(cmp.Or(spec.AvailabilityMode, AvailabilitySynchronousCommit))
 	if !availabilityModes[availability] {
-		return "", fmt.Errorf("replica %q: unrecognized availability mode %q", spec.ServerName, spec.AvailabilityMode)
+		return "", invalidf("replica %q: unrecognized availability mode %q", spec.ServerName, spec.AvailabilityMode)
 	}
 	failover := upperKeyword(cmp.Or(spec.FailoverMode, FailoverManual))
 	if !failoverModes[failover] {
-		return "", fmt.Errorf("replica %q: unrecognized failover mode %q", spec.ServerName, spec.FailoverMode)
+		return "", invalidf("replica %q: unrecognized failover mode %q", spec.ServerName, spec.FailoverMode)
 	}
 
 	parts := []string{
@@ -149,13 +149,13 @@ func (spec AvailabilityReplicaSpec) withClause() (string, error) {
 	if spec.SeedingMode != "" {
 		seeding := upperKeyword(spec.SeedingMode)
 		if !seedingModes[seeding] {
-			return "", fmt.Errorf("replica %q: unrecognized seeding mode %q", spec.ServerName, spec.SeedingMode)
+			return "", invalidf("replica %q: unrecognized seeding mode %q", spec.ServerName, spec.SeedingMode)
 		}
 		parts = append(parts, "SEEDING_MODE = "+string(seeding))
 	}
 	if spec.BackupPriority >= 0 {
 		if spec.BackupPriority > 100 {
-			return "", fmt.Errorf("replica %q: backup priority %d out of range 0-100", spec.ServerName, spec.BackupPriority)
+			return "", invalidf("replica %q: backup priority %d out of range 0-100", spec.ServerName, spec.BackupPriority)
 		}
 		parts = append(parts, fmt.Sprintf("BACKUP_PRIORITY = %d", spec.BackupPriority))
 	}
@@ -165,7 +165,7 @@ func (spec AvailabilityReplicaSpec) withClause() (string, error) {
 	if spec.PrimaryRoleAllowConnections != "" {
 		v := upperKeyword(spec.PrimaryRoleAllowConnections)
 		if !primaryRoleConnections[v] {
-			return "", fmt.Errorf("replica %q: unrecognized primary role connections %q", spec.ServerName, spec.PrimaryRoleAllowConnections)
+			return "", invalidf("replica %q: unrecognized primary role connections %q", spec.ServerName, spec.PrimaryRoleAllowConnections)
 		}
 		parts = append(parts, "PRIMARY_ROLE (ALLOW_CONNECTIONS = "+string(v)+")")
 	}
@@ -174,7 +174,7 @@ func (spec AvailabilityReplicaSpec) withClause() (string, error) {
 	if spec.SecondaryRoleAllowConnections != "" {
 		v := upperKeyword(spec.SecondaryRoleAllowConnections)
 		if !secondaryRoleConnections[v] {
-			return "", fmt.Errorf("replica %q: unrecognized secondary role connections %q", spec.ServerName, spec.SecondaryRoleAllowConnections)
+			return "", invalidf("replica %q: unrecognized secondary role connections %q", spec.ServerName, spec.SecondaryRoleAllowConnections)
 		}
 		secondary = append(secondary, "ALLOW_CONNECTIONS = "+string(v))
 	}
@@ -191,30 +191,30 @@ func (spec AvailabilityReplicaSpec) withClause() (string, error) {
 // createStatement builds the whole CREATE AVAILABILITY GROUP statement.
 func (req CreateAvailabilityGroupRequest) createStatement() (string, error) {
 	if strings.TrimSpace(req.Name) == "" {
-		return "", fmt.Errorf("availability group has no name")
+		return "", invalidf("availability group has no name")
 	}
 	if len(req.Replicas) == 0 {
-		return "", fmt.Errorf("availability group %q has no replicas", req.Name)
+		return "", invalidf("availability group %q has no replicas", req.Name)
 	}
 
 	var options []string
 	if req.ClusterType != "" {
 		clusterType := upperKeyword(req.ClusterType)
 		if !clusterTypes[clusterType] {
-			return "", fmt.Errorf("unrecognized cluster type %q", req.ClusterType)
+			return "", invalidf("unrecognized cluster type %q", req.ClusterType)
 		}
 		options = append(options, "CLUSTER_TYPE = "+string(clusterType))
 	}
 	if req.AutomatedBackupPreference != "" {
 		pref := upperKeyword(req.AutomatedBackupPreference)
 		if !backupPreferences[pref] {
-			return "", fmt.Errorf("unrecognized automated backup preference %q", req.AutomatedBackupPreference)
+			return "", invalidf("unrecognized automated backup preference %q", req.AutomatedBackupPreference)
 		}
 		options = append(options, "AUTOMATED_BACKUP_PREFERENCE = "+string(pref))
 	}
 	if req.FailureConditionLevel != 0 {
 		if req.FailureConditionLevel < 1 || req.FailureConditionLevel > 5 {
-			return "", fmt.Errorf("failure condition level %d out of range 1-5", req.FailureConditionLevel)
+			return "", invalidf("failure condition level %d out of range 1-5", req.FailureConditionLevel)
 		}
 		options = append(options, fmt.Sprintf("FAILURE_CONDITION_LEVEL = %d", req.FailureConditionLevel))
 	}
@@ -250,7 +250,7 @@ func (req CreateAvailabilityGroupRequest) createStatement() (string, error) {
 		names := make([]string, 0, len(req.Databases))
 		for _, name := range req.Databases {
 			if strings.TrimSpace(name) == "" {
-				return "", fmt.Errorf("availability group %q has an empty database name", req.Name)
+				return "", invalidf("availability group %q has an empty database name", req.Name)
 			}
 			names = append(names, quoteIdent(name))
 		}

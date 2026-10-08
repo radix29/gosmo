@@ -73,9 +73,11 @@ func main() {
 	}
 
 	// VIEW SERVER STATE is what a monitoring login needs before
-	// Server.Info() or the session DMVs work for it.
-	demo.Must(srv.GrantServerPermission(ctx, "VIEW SERVER STATE", loginName, gosmo.PermissionOptions{}))
-	demo.Must(srv.DenyServerPermission(ctx, "ALTER ANY LINKED SERVER", loginName, gosmo.PermissionOptions{}))
+	// Server.Info() or the session DMVs work for it. Every GRANT, DENY and
+	// REVOKE is one ApplyPermission call; the Securable says what it is on.
+	serverScope := gosmo.Securable{Class: gosmo.SecurableServer}
+	demo.Must(srv.ApplyPermission(ctx, gosmo.VerbGrant, serverScope, gosmo.ServerPermission("VIEW SERVER STATE"), loginName, gosmo.PermissionOptions{}))
+	demo.Must(srv.ApplyPermission(ctx, gosmo.VerbDeny, serverScope, gosmo.ServerPermission("ALTER ANY LINKED SERVER"), loginName, gosmo.PermissionOptions{}))
 	for _, p := range demo.Value(srv.ServerPermissions(ctx)) {
 		if strings.EqualFold(p.Principal, loginName) {
 			fmt.Printf("  %-6s %-28s to %s\n", p.State, p.Permission, p.Principal)
@@ -118,10 +120,11 @@ func main() {
 	// ownership already implies control — so testing against dbo makes a
 	// working grant look broken.
 	demo.Section("Object, schema and database permissions")
-	demo.Must(db.GrantPermission(ctx, "Reporting", "Revenue", gosmo.PermSelect, userName, gosmo.PermissionOptions{}))
-	demo.Must(db.DenyPermission(ctx, "Reporting", "Revenue", gosmo.PermUpdate, userName, gosmo.PermissionOptions{}))
-	demo.Must(db.GrantSchemaPermission(ctx, "Reporting", gosmo.PermView, userName, gosmo.PermissionOptions{}))
-	demo.Must(db.GrantDatabasePermission(ctx, "VIEW DATABASE STATE", userName, gosmo.PermissionOptions{}))
+	revenue := gosmo.Securable{Class: gosmo.SecurableTable, Schema: "Reporting", Name: "Revenue"}
+	demo.Must(db.ApplyPermission(ctx, gosmo.VerbGrant, revenue, gosmo.PermSelect, userName, gosmo.PermissionOptions{}))
+	demo.Must(db.ApplyPermission(ctx, gosmo.VerbDeny, revenue, gosmo.PermUpdate, userName, gosmo.PermissionOptions{}))
+	demo.Must(db.ApplyPermission(ctx, gosmo.VerbGrant, gosmo.Securable{Class: gosmo.SecurableSchema, Name: "Reporting"}, gosmo.PermView, userName, gosmo.PermissionOptions{}))
+	demo.Must(db.ApplyPermission(ctx, gosmo.VerbGrant, gosmo.Securable{Class: gosmo.SecurableDatabase}, gosmo.DatabasePermission("VIEW DATABASE STATE"), userName, gosmo.PermissionOptions{}))
 
 	fmt.Println("  one securable, every principal — Permissions():")
 	for _, p := range demo.Value(db.Permissions(ctx, "Reporting", "Revenue")) {
@@ -139,7 +142,7 @@ func main() {
 
 	// -- Revoking ----------------------------------------------------------
 	demo.Section("Revoke")
-	demo.Must(db.RevokePermission(ctx, "Reporting", "Revenue", gosmo.PermUpdate, userName, gosmo.PermissionOptions{}))
+	demo.Must(db.ApplyPermission(ctx, gosmo.VerbRevoke, revenue, gosmo.PermUpdate, userName, gosmo.PermissionOptions{}))
 	fmt.Printf("  after revoke, %d entries remain on Reporting.Revenue\n",
 		len(demo.Value(db.Permissions(ctx, "Reporting", "Revenue"))))
 
@@ -159,7 +162,7 @@ func main() {
 	// still mapped to it, and the deferred login drop runs before the
 	// deferred database drop.
 	demo.Must(user.Drop(ctx))
-	demo.Must(srv.RevokeServerPermission(ctx, "VIEW SERVER STATE", loginName, gosmo.PermissionOptions{}))
+	demo.Must(srv.ApplyPermission(ctx, gosmo.VerbRevoke, serverScope, gosmo.ServerPermission("VIEW SERVER STATE"), loginName, gosmo.PermissionOptions{}))
 	demo.Must(login.RemoveServerRoleMember(ctx, "dbcreator"))
 }
 

@@ -48,6 +48,8 @@ classDiagram
         +RenameColumn(name, newName) error
         +DropConstraint(name) error
         +RenameConstraint(name, newName) error
+        +ChangeTracking() *TableChangeTracking
+        +SetChangeTracking(enable, trackColumns) error
     }
 
     class Column {

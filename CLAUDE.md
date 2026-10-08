@@ -67,7 +67,10 @@ exercise the write, drop them; never mutate pre-existing objects.
   state take no context. Do not reintroduce a context-free form (the old pairs
   were 707 untested delegates, one miswired to a sibling).
 - **Errors** wrap with `%w`, prefixed `gosmo: ` + the attempted operation:
-  `fmt.Errorf("gosmo: drop statistic %q: %w", st.Name, err)`.
+  `fmt.Errorf("gosmo: drop statistic %q: %w", st.Name, err)`. An error that
+  wraps nothing is a refusal: `invalidf` for the caller's arguments
+  (`ErrInvalidRequest`), `unsupportedf` when gosmo has no form for the request
+  (`ErrUnsupported`) — `invalid_request_test.go` enforces it.
 - **A write never goes through `query`/`queryRow*`** — they retry
   (`withRetry`), and a write retried after a broken connection runs twice. A
   write that reads a value back (an `OUTPUT` parameter) uses `execScan`.
@@ -111,6 +114,10 @@ exercise the write, drop them; never mutate pre-existing objects.
   the outer connection while acquiring more — pool exhaustion. Fetch children
   in one query ordered by parent id and group in Go (`Table.Indexes`: 42 round
   trips → 2).
+- **A per-database batch names `sp_executesql` through a variable**
+  (`perDatabaseExec`): a literal `EXEC [db].sys.sp_executesql` is resolved at
+  compile, so one database that cannot be entered (Msg 924) fails the whole
+  batch before its TRY runs — hidden while the plan is cached.
 - **Zoneless server clocks are `time.UTC`, never `time.Local`** — go-mssqldb
   returns `datetime` in UTC, so hand-decoded values (`parseSQLAgentDate`,
   error-log lines) must match or they are off by the client's offset.
@@ -174,6 +181,12 @@ exercise the write, drop them; never mutate pre-existing objects.
   - **Agent schedule names are not unique** — address a schedule by its
     `schedule_id` (`ScheduleByID`, `Schedule.key`), never by name where an
     id is in hand. `ScheduleByName` returns `ErrAmbiguous` for a shared name.
+  - **A child read keyed by a catalog id the handle lacks** refuses it with
+    `ErrHandleNotLoaded` before any query (`requireID`; `Table.requireLoaded`)
+    — or, where the id is one cheap lookup by name away (`Job.id`,
+    `Login.identity`), looks it up without caching it on the handle. Never
+    query with the zero id: it answers "no children". A new such read gets a
+    row in `handle_not_loaded_test.go`.
   - A schema-scoped handle takes its schema as given and refuses an empty one
     on write (`ErrSchemaRequired` via `requireSchema`).
   - `Endpoint` deliberately has no handle: `IsSystem` derives from a scanned

@@ -28,8 +28,8 @@ func TestParseSQLAgentDateMidnight(t *testing.T) {
 
 // A decoded msdb integer pair and the same instant read from a real datetime
 // column must land on the same time.Time. go-mssqldb hands a datetime back in
-// UTC, so parseSQLAgentDate has to as well — otherwise Job.LastRunDate (from
-// ja.last_executed_step_date, a datetime) and JobStep.LastRunDate (from the
+// UTC, so parseSQLAgentDate has to as well — otherwise Job.NextRunDate (from
+// ja.next_scheduled_run_date, a datetime) and Job.LastRunDate (from the
 // integer columns) differ by the client's UTC offset while showing the same
 // digits.
 func TestParseSQLAgentDateMatchesDatetimeColumn(t *testing.T) {
@@ -228,8 +228,8 @@ type jobRows struct{ done bool }
 func (r *jobRows) Columns() []string {
 	return []string{"job_id", "name", "description", "enabled", "category", "owner",
 		"date_created", "date_modified", "start_step_id", "delete_level",
-		"notify_level_email", "notify_operator", "last_run", "last_outcome",
-		"last_duration", "next_run", "job_state"}
+		"notify_level_email", "notify_operator", "last_run_date", "last_run_time",
+		"last_outcome", "last_duration", "next_run", "job_state"}
 }
 func (*jobRows) Close() error { return nil }
 func (r *jobRows) Next(dest []driver.Value) error {
@@ -239,14 +239,13 @@ func (r *jobRows) Next(dest []driver.Value) error {
 	r.done = true
 	created := time.Date(2026, time.March, 1, 9, 0, 0, 0, time.UTC)
 	modified := time.Date(2026, time.April, 2, 10, 30, 0, 0, time.UTC)
-	lastRun := time.Date(2026, time.April, 3, 1, 0, 0, 0, time.UTC)
 	nextRun := time.Date(2026, time.April, 4, 1, 0, 0, 0, time.UTC)
 	for i, v := range []driver.Value{
 		"7F1E0C2A-0000-0000-0000-000000000001", "Nightly reindex", "rebuilds every index",
 		true, "Database Maintenance", "sa",
 		created, modified, int64(3),
 		int64(NotifyOnFailure), int64(NotifyOnComplete), "dba_pager",
-		lastRun, int64(JobOutcomeSucceeded), int64(10230), nextRun, int64(4),
+		int64(20260403), int64(10000), int64(JobOutcomeSucceeded), int64(10230), nextRun, int64(4),
 	} {
 		dest[i] = v
 	}
@@ -320,5 +319,27 @@ func TestJobsAndJobByNameDecodeTheSameRowIdentically(t *testing.T) {
 	}
 	if *byName != want {
 		t.Errorf("JobByName =\n%+v\nwant\n%+v", *byName, want)
+	}
+}
+
+// TestJobHistoryBreaksTiesOnInstanceID pins the history tiebreak: a run's
+// step-0 outcome row has the same run_date/run_time as its first step, so
+// ordering by time alone returned the two in either order.
+func TestJobHistoryBreaksTiesOnInstanceID(t *testing.T) {
+	d := qsRecDB(t, 17, nil, nil)
+	reads := map[string]func() error{
+		"Job.History": func() error {
+			_, err := (&Job{server: d.server, JobID: "J", Name: "j"}).History(t.Context(), 0)
+			return err
+		},
+		"Server.JobHistory": func() error { _, err := d.server.JobHistory(t.Context(), 0); return err },
+	}
+	for name, run := range reads {
+		if err := run(); err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if q := qsRec.last(t).sql; !strings.Contains(q, "run_time DESC, ") || !strings.Contains(q, "instance_id DESC") {
+			t.Errorf("%s does not break run-time ties on instance_id:\n%s", name, q)
+		}
 	}
 }

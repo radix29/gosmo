@@ -1,7 +1,6 @@
 package gosmo
 
 import (
-	"fmt"
 	"strings"
 )
 
@@ -44,10 +43,10 @@ type ProviderKey struct {
 // key family's own.
 func (p *ProviderKey) clauses() (from string, opts []string, err error) {
 	if strings.TrimSpace(p.Provider) == "" {
-		return "", nil, fmt.Errorf("no cryptographic provider named")
+		return "", nil, invalidf("no cryptographic provider named")
 	}
 	if strings.TrimSpace(p.KeyName) == "" {
-		return "", nil, fmt.Errorf("no provider key name")
+		return "", nil, invalidf("no provider key name")
 	}
 	opts = []string{"PROVIDER_KEY_NAME = " + QuoteLiteral(p.KeyName)}
 	switch p.Disposition {
@@ -55,7 +54,7 @@ func (p *ProviderKey) clauses() (from string, opts []string, err error) {
 	case ProviderCreateNew, ProviderOpenExisting:
 		opts = append(opts, "CREATION_DISPOSITION = "+string(p.Disposition))
 	default:
-		return "", nil, fmt.Errorf("unknown creation disposition %q", p.Disposition)
+		return "", nil, invalidf("unknown creation disposition %q", p.Disposition)
 	}
 	return " FROM PROVIDER " + quoteIdent(p.Provider), opts, nil
 }

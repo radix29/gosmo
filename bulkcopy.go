@@ -109,10 +109,10 @@ func SliceRows(rows [][]any) iter.Seq2[[]any, error] {
 // happened, not a runnable statement.
 func (d *Database) BulkInsert(ctx context.Context, bc BulkCopy, rows iter.Seq2[[]any, error]) (int64, error) {
 	if bc.Table == "" {
-		return 0, fmt.Errorf("gosmo: bulk insert: no destination table")
+		return 0, invalidf("gosmo: bulk insert: no destination table")
 	}
 	if len(bc.Columns) == 0 {
-		return 0, fmt.Errorf("gosmo: bulk insert into %q: no columns specified", bc.Table)
+		return 0, invalidf("gosmo: bulk insert into %q: no columns specified", bc.Table)
 	}
 	if err := requireSchema("bulk insert into", bc.Schema, bc.Table); err != nil {
 		return 0, err
@@ -163,7 +163,7 @@ func (d *Database) BulkInsert(ctx context.Context, bc BulkCopy, rows iter.Seq2[[
 		}
 		if len(row) != len(bc.Columns) {
 			discard()
-			return n, fmt.Errorf("gosmo: bulk insert into %s: row %d has %d values, want %d",
+			return n, invalidf("gosmo: bulk insert into %s: row %d has %d values, want %d",
 				target, n, len(row), len(bc.Columns))
 		}
 		if _, err := stmt.ExecContext(ctx, row...); err != nil {

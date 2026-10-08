@@ -224,7 +224,7 @@ func main() {
 		RetentionPeriod: 2,
 		RetentionUnit:   "DAYS",
 	}))
-	demo.Must(db.SetTableChangeTracking(ctx, "dbo", "Ledger", true, true))
+	demo.Must(db.TableRef("dbo", "Ledger").SetChangeTracking(ctx, true, true))
 	ct := demo.Value(db.ChangeTracking(ctx))
 	fmt.Printf("  database: enabled=%t auto_cleanup=%t retention=%d %s\n",
 		ct.Enabled, ct.AutoCleanup, ct.RetentionPeriod, ct.RetentionUnit)

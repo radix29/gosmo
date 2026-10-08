@@ -66,13 +66,13 @@ func TestLiveKeyOps(t *testing.T) {
 
 	// -- Signatures, by a master-key certificate, a password certificate (its
 	// password), and an asymmetric key; then read three ways.
-	if err := d.AddSignature(ctx, "dbo", "p1", Signer{Kind: SignerCertificate, Name: "c1"}, false); err != nil {
+	if err := d.StoredProcedureRef("dbo", "p1").AddSignature(ctx, Signer{Kind: SignerCertificate, Name: "c1"}, false); err != nil {
 		t.Fatal(err)
 	}
-	if err := d.AddSignature(ctx, "dbo", "p1", Signer{Kind: SignerCertificate, Name: "c2", Password: cp}, false); err != nil {
+	if err := d.StoredProcedureRef("dbo", "p1").AddSignature(ctx, Signer{Kind: SignerCertificate, Name: "c2", Password: cp}, false); err != nil {
 		t.Fatal(err)
 	}
-	if err := d.AddSignature(ctx, "dbo", "f1", Signer{Kind: SignerAsymmetricKey, Name: "a1"}, true); err != nil {
+	if err := d.UserDefinedFunctionRef("dbo", "f1").AddSignature(ctx, Signer{Kind: SignerAsymmetricKey, Name: "a1"}, true); err != nil {
 		t.Fatal(err)
 	}
 	all, err := d.ModuleSignatures(ctx)
@@ -104,13 +104,13 @@ func TestLiveKeyOps(t *testing.T) {
 	if by, err := d.AsymmetricKeyRef("a1").SignedModules(ctx); err != nil || len(by) != 1 || by[0].Module != "f1" || !by[0].Counter {
 		t.Errorf("a1.SignedModules = %v, %v", by, err)
 	}
-	if err := d.AddSignature(ctx, "dbo", "p1", Signer{Kind: SignerCertificate, Name: "c1"}, false); liveMsg(err) != 15557 {
+	if err := d.StoredProcedureRef("dbo", "p1").AddSignature(ctx, Signer{Kind: SignerCertificate, Name: "c1"}, false); liveMsg(err) != 15557 {
 		t.Errorf("a second signature by c1: %v, want Msg 15557", err)
 	}
-	if err := d.DropSignature(ctx, "dbo", "p1", Signer{Kind: SignerCertificate, Name: "c2", Password: "ignored"}, false); err != nil {
+	if err := d.StoredProcedureRef("dbo", "p1").DropSignature(ctx, Signer{Kind: SignerCertificate, Name: "c2", Password: "ignored"}, false); err != nil {
 		t.Fatal(err)
 	}
-	if err := d.DropSignature(ctx, "dbo", "f1", Signer{Kind: SignerAsymmetricKey, Name: "a1"}, true); err != nil {
+	if err := d.UserDefinedFunctionRef("dbo", "f1").DropSignature(ctx, Signer{Kind: SignerAsymmetricKey, Name: "a1"}, true); err != nil {
 		t.Fatal(err)
 	}
 	if on, _ := d.SignaturesOn(ctx, "dbo", "p1"); len(on) != 1 || on[0].Signer != "c1" {

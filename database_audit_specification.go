@@ -342,11 +342,11 @@ func (a DatabaseAuditAction) clause() (string, error) {
 	}
 	keyword, ok := auditSecurableClasses[class]
 	if !ok {
-		return "", fmt.Errorf("invalid audit securable class %q", a.ClassDesc)
+		return "", invalidf("invalid audit securable class %q", a.ClassDesc)
 	}
 	class = keyword
 	if strings.TrimSpace(a.ObjectName) == "" {
-		return "", fmt.Errorf("audit action %s names no securable", a.ActionName)
+		return "", invalidf("audit action %s names no securable", a.ActionName)
 	}
 	principal := a.Principal
 	if strings.TrimSpace(principal) == "" {
@@ -380,10 +380,10 @@ func databaseAuditClauses(verb string, groups []string, actions []DatabaseAuditA
 
 func (spec CreateDatabaseAuditSpecificationRequest) createStatement() (string, error) {
 	if strings.TrimSpace(spec.Name) == "" {
-		return "", fmt.Errorf("database audit specification has no name")
+		return "", invalidf("database audit specification has no name")
 	}
 	if strings.TrimSpace(spec.AuditName) == "" {
-		return "", fmt.Errorf("database audit specification %q names no audit", spec.Name)
+		return "", invalidf("database audit specification %q names no audit", spec.Name)
 	}
 	stmt := fmt.Sprintf("CREATE DATABASE AUDIT SPECIFICATION %s\nFOR SERVER AUDIT %s",
 		quoteIdent(spec.Name), quoteIdent(spec.AuditName))
@@ -426,6 +426,11 @@ func (spec *DatabaseAuditSpecification) Enable(ctx context.Context) error {
 // Disable turns the specification off (STATE = OFF).
 func (spec *DatabaseAuditSpecification) Disable(ctx context.Context) error {
 	return spec.setEnabled(ctx, false)
+}
+
+// SetEnabled is Enable when on is true and Disable otherwise.
+func (spec *DatabaseAuditSpecification) SetEnabled(ctx context.Context, on bool) error {
+	return spec.setEnabled(ctx, on)
 }
 
 func (spec *DatabaseAuditSpecification) setEnabled(ctx context.Context, on bool) error {
@@ -549,7 +554,7 @@ func (spec *DatabaseAuditSpecification) alterActions(ctx context.Context, verb s
 // The specification is disabled for the duration and restored afterwards.
 func (spec *DatabaseAuditSpecification) SetAudit(ctx context.Context, auditName string) error {
 	if strings.TrimSpace(auditName) == "" {
-		return fmt.Errorf("gosmo: alter database audit specification %q: audit name is empty", spec.Name)
+		return invalidf("gosmo: alter database audit specification %q: audit name is empty", spec.Name)
 	}
 	stmt := fmt.Sprintf("ALTER DATABASE AUDIT SPECIFICATION %s\nFOR SERVER AUDIT %s",
 		quoteIdent(spec.Name), quoteIdent(auditName))

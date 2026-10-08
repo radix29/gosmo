@@ -100,9 +100,7 @@ classDiagram
         +SecurityInfo() *ServerSecurityInfo
         +ServerPermissions() []*ServerPermissionEntry
         +EffectiveServerPermissions(login) []*EffectivePermission
-        +GrantServerPermission(perm ServerPermission, principal, opts) error
-        +DenyServerPermission(perm ServerPermission, principal, opts) error
-        +RevokeServerPermission(perm ServerPermission, principal, opts) error
+        +ApplyPermission(verb, sec Securable, perm, principal, opts) error
         +ServerPermissionNames() []string
         +Credentials() []*Credential
         +CredentialByName(name) *Credential

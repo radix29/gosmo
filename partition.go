@@ -167,14 +167,14 @@ type CreatePartitionFunctionRequest struct {
 // CreatePartitionFunction creates a partition function.
 func (d *Database) CreatePartitionFunction(ctx context.Context, req CreatePartitionFunctionRequest) (*PartitionFunction, error) {
 	if len(req.Boundaries) == 0 {
-		return nil, fmt.Errorf("gosmo: create partition function: at least one boundary required")
+		return nil, invalidf("gosmo: create partition function: at least one boundary required")
 	}
 	if !validDataType(req.InputType) {
-		return nil, fmt.Errorf("gosmo: create partition function %q: unrecognized data type %q", req.Name, req.InputType)
+		return nil, invalidf("gosmo: create partition function %q: unrecognized data type %q", req.Name, req.InputType)
 	}
 	for _, b := range req.Boundaries {
 		if !validPartitionBoundary(b) {
-			return nil, fmt.Errorf("gosmo: create partition function %q: invalid boundary literal %q", req.Name, b)
+			return nil, invalidf("gosmo: create partition function %q: invalid boundary literal %q", req.Name, b)
 		}
 	}
 	side := "LEFT"
@@ -208,7 +208,7 @@ func (pf *PartitionFunction) Drop(ctx context.Context) error {
 // SplitRange adds a new boundary value to the partition function.
 func (pf *PartitionFunction) SplitRange(ctx context.Context, value string) error {
 	if !validPartitionBoundary(value) {
-		return fmt.Errorf("gosmo: split range on %q: invalid boundary literal %q", pf.Name, value)
+		return invalidf("gosmo: split range on %q: invalid boundary literal %q", pf.Name, value)
 	}
 	_, err := pf.db.exec(ctx,
 		fmt.Sprintf("ALTER PARTITION FUNCTION %s() SPLIT RANGE (%s)", quoteIdent(pf.Name), value))
@@ -221,7 +221,7 @@ func (pf *PartitionFunction) SplitRange(ctx context.Context, value string) error
 // MergeRange removes a boundary value from the partition function.
 func (pf *PartitionFunction) MergeRange(ctx context.Context, value string) error {
 	if !validPartitionBoundary(value) {
-		return fmt.Errorf("gosmo: merge range on %q: invalid boundary literal %q", pf.Name, value)
+		return invalidf("gosmo: merge range on %q: invalid boundary literal %q", pf.Name, value)
 	}
 	_, err := pf.db.exec(ctx,
 		fmt.Sprintf("ALTER PARTITION FUNCTION %s() MERGE RANGE (%s)", quoteIdent(pf.Name), value))
@@ -311,7 +311,7 @@ type CreatePartitionSchemeRequest struct {
 // Scripting(ctx), the PartitionSchemeRef handle, since nothing ran.
 func (d *Database) CreatePartitionScheme(ctx context.Context, req CreatePartitionSchemeRequest) (*PartitionScheme, error) {
 	if len(req.FileGroups) == 0 {
-		return nil, fmt.Errorf("gosmo: create partition scheme: at least one filegroup required")
+		return nil, invalidf("gosmo: create partition scheme: at least one filegroup required")
 	}
 	fgs := make([]string, len(req.FileGroups))
 	for i, fg := range req.FileGroups {

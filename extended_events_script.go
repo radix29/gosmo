@@ -112,7 +112,7 @@ var xeNumericValue = regexp.MustCompile(`(?i)^([+-]?(\d+(\.\d*)?|\.\d+)(e[+-]?\d
 // typed.
 func (f SessionField) Validate() error {
 	if !f.IsString && !xeNumericValue.MatchString(f.Value) {
-		return fmt.Errorf("field %s: value %q is not a number", f.Name, f.Value)
+		return invalidf("field %s: value %q is not a number", f.Name, f.Value)
 	}
 	return nil
 }
@@ -218,19 +218,19 @@ func (spec EventSessionSpec) createOptions() []string {
 
 func (spec EventSessionSpec) validate() error {
 	if strings.TrimSpace(spec.Name) == "" {
-		return fmt.Errorf("event session has no name")
+		return invalidf("event session has no name")
 	}
 	if len(spec.Events) == 0 {
-		return fmt.Errorf("event session %q has no events", spec.Name)
+		return invalidf("event session %q has no events", spec.Name)
 	}
 	for _, e := range spec.Events {
 		if e.Package == "" || e.Name == "" {
-			return fmt.Errorf("event session %q: event %q has no package or name", spec.Name, e.QualifiedName())
+			return invalidf("event session %q: event %q has no package or name", spec.Name, e.QualifiedName())
 		}
 	}
 	for _, t := range spec.Targets {
 		if t.Package == "" || t.Name == "" {
-			return fmt.Errorf("event session %q: target %q has no package or name", spec.Name, t.QualifiedName())
+			return invalidf("event session %q: target %q has no package or name", spec.Name, t.QualifiedName())
 		}
 	}
 	if err := spec.checkFields(); err != nil {
@@ -323,7 +323,7 @@ func (es *EventSession) setState(ctx context.Context, start bool) error {
 // session's other targets are left as they are.
 func (es *EventSession) AddTarget(ctx context.Context, t SessionTarget) error {
 	if t.Package == "" || t.Name == "" {
-		return fmt.Errorf("gosmo: add target to event session %q: target %q has no package or name", es.Name, t.QualifiedName())
+		return invalidf("gosmo: add target to event session %q: target %q has no package or name", es.Name, t.QualifiedName())
 	}
 	if err := checkFields("target "+t.QualifiedName(), t.Fields); err != nil {
 		return fmt.Errorf("gosmo: add target to event session %q: %w", es.Name, err)

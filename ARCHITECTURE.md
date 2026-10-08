@@ -333,8 +333,8 @@ The instance and database halves pair up: `ServerResourceStat` and
 | Database Mail           | `srv.MailAccounts(ctx)` / `srv.MailAccountByName(ctx, name)` / `srv.MailProfiles(ctx)` / `srv.MailProfileByName(ctx, name)` (each with its ordered `Accounts`) / `srv.MailPrincipalProfiles(ctx)` (SID 0x00 = public) / `srv.MailConfiguration(ctx)` / `srv.MailStatus(ctx)` (`MailDisabled` while 'Database Mail XPs' is 0, not an error) / `srv.MailQueues(ctx)` (VIEW SERVER STATE) / `srv.MailItems(ctx, gosmo.MailItemFilter{...})` / `srv.MailItemByID(ctx, id)` / `srv.MailEvents(ctx, gosmo.MailEventFilter{...})`. Writes: `srv.CreateMailAccount(ctx, req)` / `MailAccountRef(name).Alter(ctx, gosmo.MailAccountOptions{...})` (nil `Credentials` keeps the stored user and password) / `.Drop(ctx)`; `srv.CreateMailProfile(ctx, req)` / `MailProfileRef(name).Alter` / `.Drop` / `.SetAccounts(ctx, ordered)` / `.Grant(ctx, principal, isDefault)` / `.SetGrantDefault` / `.Revoke`; `srv.SetMailConfiguration(ctx, opts)`; `srv.StartDatabaseMail(ctx)` / `StopDatabaseMail`; `srv.SendMail(ctx, gosmo.MailMessage{Profile, To, Subject, Body})` → mailitem_id (never retried); `srv.DeleteMailItems(ctx, before, status)` / `DeleteMailLog(ctx, before, eventType)`. The log also reads as `ReadLog(ctx, gosmo.ErrorLogDatabaseMail, 0)`. Scripts: `ScriptMailAccount` / `ScriptMailProfile` / `ScriptDatabaseMail`, the password as `<insert password here>` (also under `WithScript` and to a statement observer) — msdb permission, not sysadmin; see `database_mail.go`, `database_mail_write.go` |
 | Create login (safe)     | `srv.CreateLogin(ctx, gosmo.CreateLoginRequest{Name, Password, Source, ...})` — SQL, Windows, external provider, certificate or asymmetric key |
 | Authentication mode     | `srv.SecurityInfo(ctx)`                       |
-| Server-level permissions | `srv.ServerPermissions(ctx)` / `srv.Grant\|Deny\|RevokeServerPermission(ctx, ...)` / `srv.ServerPermissionNames()` |
-| Server permissions with modifiers | the same methods' `opts gosmo.PermissionOptions` — `WITH GRANT OPTION`, `CASCADE`, `GRANT OPTION FOR`; the zero value is the plain statement |
+| Server-level permissions | `srv.ServerPermissions(ctx)` / `srv.ApplyPermission(ctx, verb, gosmo.Securable{Class: gosmo.SecurableServer}, perm, principal, opts)` / `srv.ServerPermissionNames()` |
+| Server permissions with modifiers | `ApplyPermission`'s `opts gosmo.PermissionOptions` — `WITH GRANT OPTION`, `CASCADE`, `GRANT OPTION FOR`; the zero value is the plain statement |
 | Effective server permissions | `srv.EffectiveServerPermissions(ctx, login)` (`EXECUTE AS LOGIN` + `fn_my_permissions`) |
 | Credentials              | `srv.Credentials(ctx)` / `srv.CredentialByName(ctx, name)` / `srv.CredentialRef(name)` (no-I/O handle) / `srv.CreateCredential(ctx, spec)` / `cred.Alter(ctx, gosmo.CredentialOptions{Identity, Secret})` / `cred.Drop(ctx)` — see [Credentials](#credentials) |
 | Cryptographic providers  | `srv.CryptographicProviders(ctx)`             |
@@ -413,7 +413,7 @@ The instance and database halves pair up: `ServerResourceStat` and
 | `Database.AsymmetricKeys`       | `db.AsymmetricKeys(ctx)` / `db.AsymmetricKeyByName(ctx, name)` / `db.AsymmetricKeyRef(name)` / `db.CreateAsymmetricKey(ctx, req)` / `key.Drop(ctx)` — generated keys only; every import form reads the server's own filesystem or an EKM provider |
 | `Database.SymmetricKeys`        | `db.SymmetricKeys(ctx)` / `db.SymmetricKeyByName(ctx, name)` / `db.SymmetricKeyRef(name)` / `db.CreateSymmetricKey(ctx, req)` / `key.AddEncryption(ctx, enc, dec)` / `key.DropEncryption(ctx, enc, dec)` / `key.Drop(ctx)` — each key with its `Encryptions` (certificate / asymmetric key / symmetric key / password), the master key excluded |
 | Database master key             | `db.HasMasterKey(ctx)` / `db.CreateMasterKey(ctx, gosmo.CreateMasterKeyRequest{Password})` / `db.MasterKey(ctx)` / `db.MasterKeyRef()` — see [Certificates](#certificates-and-the-database-master-key) |
-| Module signatures               | `db.ModuleSignatures(ctx)` / `db.SignaturesOn(ctx, schema, module)` / `db.SignableModules(ctx)` / `db.AddSignature(ctx, ...)` / `db.DropSignature(ctx, ...)` / `cert.SignedModules(ctx)` / `key.SignedModules(ctx)` |
+| Module signatures               | `db.ModuleSignatures(ctx)` / `db.SignaturesOn(ctx, schema, module)` / `db.SignableModules(ctx)` / `proc.AddSignature(ctx, ...)` / `.DropSignature(ctx, ...)` on a `StoredProcedure`, `UserDefinedFunction` or `Trigger` handle / `cert.SignedModules(ctx)` / `key.SignedModules(ctx)` |
 | Column master keys              | `db.ColumnMasterKeys(ctx)` / `db.ColumnMasterKeyByName(ctx, name)` / `db.ColumnMasterKeyRef(name)` / `db.CreateColumnMasterKey(ctx, gosmo.CreateColumnMasterKeyRequest{Name, KeyStoreProvider, KeyPath, Signature})` — a `Signature` makes it allow enclave computations |
 | Column encryption keys          | `db.ColumnEncryptionKeys(ctx)` / `db.ColumnEncryptionKeyByName(ctx, name)` / `db.ColumnEncryptionKeyRef(name)` / `db.CreateColumnEncryptionKey(ctx, gosmo.CreateColumnEncryptionKeyRequest{Name, Values})` / `cek.AddValue(ctx, value)` / `cek.DropValue(ctx, masterKeyName)` — the two halves of a master-key rotation |
 | Security policies (RLS)         | `db.SecurityPolicies(ctx)` / `db.SecurityPolicyByName(ctx, schema, name)` |
@@ -440,8 +440,8 @@ The instance and database halves pair up: `ServerResourceStat` and
 | Filegroup default / read-only   | `fg.SetDefault(ctx)` / `fg.SetReadOnly(ctx, ro, term)` — `TerminationRollbackImmediate` kills the database's sessions in the same batch, since `MODIFY FILEGROUP` ignores `WITH ROLLBACK IMMEDIATE` |
 | CREATE DATABASE file placement  | `CreateDatabaseRequest.PrimaryFile` / `.LogFile` (`*DatabaseFileSpec`) |
 | Change tracking                 | `db.ChangeTracking(ctx)` / `db.SetChangeTracking(ctx, info)` |
-| Table change tracking           | `db.TableChangeTracking(ctx)` / `db.TableChangeTrackingFor(ctx, schema, name)` / `db.SetTableChangeTracking(ctx, ...)` |
-| Database-level permissions      | `db.DatabasePermissions(ctx)` / `db.Grant\|Deny\|RevokeDatabasePermission(ctx, ...)` |
+| Table change tracking           | `db.TableChangeTracking(ctx)` / `db.TableRef(schema, name).ChangeTracking(ctx)` / `.SetChangeTracking(ctx, enable, trackColumns)` |
+| Database-level permissions      | `db.DatabasePermissions(ctx)` / `db.ApplyPermission(ctx, verb, gosmo.Securable{Class: gosmo.SecurableDatabase}, perm, principal, opts)` |
 
 ### Table
 
@@ -762,14 +762,13 @@ an unescaped filter for `pct_1` also matches `pct1100`.
 | Object search                | `db.Search(ctx, pattern)`                                      |
 | Securable search (for a permissions picker) | `db.FindSecurables(ctx, gosmo.SecurableSearch{Name: ..., Limit: ...})` → `[]SecurableRef` (schemas, tables, views) |
 | Object permissions           | `db.Permissions(ctx, schema, name)`                            |
-| Grant / deny / revoke        | `db.GrantPermission(ctx, ...)` / `db.DenyPermission(ctx, ...)` / `db.RevokePermission(ctx, ...)` |
+| Grant / deny / revoke (any securable in a database) | `db.ApplyPermission(ctx, gosmo.VerbGrant\|VerbDeny\|VerbRevoke, gosmo.Securable{Class, Schema, Name, Columns}, perm, principal, opts)` — tables, views, schemas, procedures, scalar / inline / multi-statement functions, sequences, synonyms, types, certificates |
 | Schema permissions            | `db.SchemaPermissions(ctx, schema)`                            |
-| Grant / deny / revoke (schema) | `db.GrantSchemaPermission(ctx, ...)` / `db.DenySchemaPermission(ctx, ...)` / `db.RevokeSchemaPermission(ctx, ...)` |
 | Every securable one principal holds | `db.PermissionsForPrincipal(ctx, principal)`             |
 | Column permissions           | `db.ColumnPermissions(ctx, schema, name)` / `db.ColumnPermissionsForPrincipal(ctx, principal)` |
-| Grant / deny / revoke (column) | `db.Grant\|Deny\|RevokeColumnPermission(ctx, schema, name, perm, cols, principal, opts)` |
+| Grant / deny / revoke (column) | `ApplyPermission` with `Securable.Columns` set on a `SecurableTable` or `SecurableView` |
 | Effective permissions        | `db.EffectivePermissions(ctx, principal)` / `db.EffectiveObjectPermissions(ctx, schema, name, principal)` / `db.EffectiveSchemaPermissions(ctx, schema, principal)` |
-| Permission-name catalogs (for pickers) | `gosmo.ObjectPermissionNames()` / `SchemaPermissionNames()` / `DatabasePermissionNames()` / `ServerPermissionNames()` / `ColumnPermissionNames()` |
+| Permission-name catalogs (for pickers) | `class.PermissionNames()` for any `gosmo.SecurableClass`; also `gosmo.ObjectPermissionNames()` (tables) / `SchemaPermissionNames()` / `DatabasePermissionNames()` / `ServerPermissionNames()` / `ColumnPermissionNames()` |
 | Estimated execution plan     | `db.EstimatedPlan(ctx, sql)` (`SET SHOWPLAN_XML`, statement not run) |
 | Actual execution plan        | `db.ActualPlan(ctx, sql)` (`SET STATISTICS XML`, statement runs)|
 | Every plan a multi-statement batch produced | `plan.All` (`plan.XML` is the last of them) |
@@ -777,24 +776,33 @@ an unescaped filter for `pct_1` also matches `pct1100`.
 | Capturing plans around a caller's own batches | `stop, err := gosmo.StartPlanCapture(ctx, conn, gosmo.PlanEstimated\|PlanActual)`; `defer stop()` (switches it off even after ctx is cancelled) |
 | Live Query Statistics (another session's running statement) | `srv.QueryProfiles(ctx, sessionID)` — `sys.dm_exec_query_profiles`, one row per operator per thread; `srv.InFlightPlan(ctx, sessionID)` — `sys.dm_exec_query_statistics_xml`, the showplan with counters so far (`ErrNotFound` when idle). Poll from another connection; the watched session must be profiled (`StartPlanCapture(…, PlanActual)`, or 2019+'s lightweight profiling). VIEW SERVER STATE (`query_profile.go`) |
 
-Every `Grant|Deny|Revoke...` method, at all five scopes (object, column,
-schema, database, server), takes a `PermissionOptions` as its last argument;
-the zero value renders the plain statement. There is one method per verb and
-scope — the `...WithOptions` twins were merged into them on 2026-09-23 — so
-one renderer and one set of error strings. Database- and server-scoped
-permission names are typed, `gosmo.DatabasePermission` and
-`gosmo.ServerPermission`, as object-scoped ones are `gosmo.ObjectPermission`.
+Every GRANT, DENY and REVOKE is one `ApplyPermission` call: `Server`'s for
+`SecurableServer`, `Database`'s for every other class. The `Securable`'s class
+decides the ON clause and which permission names are accepted (each class has
+its own allowlist, probed live on 2016 and 2025 — EXECUTE on a procedure but
+not on a table, INSERT on an inline function but not on a multi-statement
+one); anything else is refused with `ErrInvalidRequest` before it is sent.
+`PermissionOptions` is the last argument, and its zero value renders the plain
+statement. The eighteen `Grant`/`Deny`/`Revoke…Permission` methods (and
+`User.Grant`/`Deny`/`Revoke`) it replaced were removed on 2026-10-08.
 
 ```go
+orders := gosmo.Securable{Class: gosmo.SecurableTable, Schema: "dbo", Name: "Orders"}
+
 // WITH GRANT OPTION, and the CASCADE that taking such a grant back requires.
-db.GrantPermission(ctx, "dbo", "Orders", gosmo.PermSelect, "app_reader",
+db.ApplyPermission(ctx, gosmo.VerbGrant, orders, gosmo.PermSelect, "app_reader",
     gosmo.PermissionOptions{WithGrantOption: true})
-db.RevokePermission(ctx, "dbo", "Orders", gosmo.PermSelect, "app_reader",
+db.ApplyPermission(ctx, gosmo.VerbRevoke, orders, gosmo.PermSelect, "app_reader",
     gosmo.PermissionOptions{Cascade: true})
 
 // Downgrade WITH GRANT OPTION back to a plain GRANT (REVOKE GRANT OPTION FOR).
-db.RevokePermission(ctx, "dbo", "Orders", gosmo.PermSelect, "app_reader",
+db.ApplyPermission(ctx, gosmo.VerbRevoke, orders, gosmo.PermSelect, "app_reader",
     gosmo.PermissionOptions{GrantOptionOnly: true})
+
+// EXECUTE on a procedure.
+db.ApplyPermission(ctx, gosmo.VerbGrant,
+    gosmo.Securable{Class: gosmo.SecurableProcedure, Schema: "dbo", Name: "usp_Report"},
+    gosmo.PermExecute, "app_reader", gosmo.PermissionOptions{})
 ```
 
 A modifier the verb has no form for is rejected rather than quietly dropped —
@@ -925,8 +933,8 @@ since SQL Server 2008 in favour of `CHECK` and `DEFAULT` constraints.
 | User-Defined Types (CLR)      | `db.ClrTypes(ctx)` / `db.ClrTypeByName(ctx, schema, name)` — `.Assembly` / `.AssemblyClass` name the implementation |
 | System Data Types             | `db.SystemDataTypes(ctx)` — the connected instance's own list, not a hard-coded one |
 | XML Schema Collections        | `db.XMLSchemaCollections(ctx)` / `...ByName(ctx, schema, name)` / `c.Definition(ctx)` (`XML_SCHEMA_NAMESPACE`) |
-| Rules                         | `db.Rules(ctx)` / `db.RuleByName(ctx, schema, name)` → `*Rule` / `r.Definition(ctx)` |
-| Defaults                      | `db.Defaults(ctx)` / `db.DefaultByName(ctx, schema, name)` → `*Default` / `df.Definition(ctx)` |
+| Rules                         | `db.Rules(ctx)` / `db.RuleByName(ctx, schema, name)` → `*Rule` / `r.Definition(ctx)`; `db.RuleDefinitions(ctx)` is every rule's text in one round trip, keyed by `ObjectID` |
+| Defaults                      | `db.Defaults(ctx)` / `db.DefaultByName(ctx, schema, name)` → `*Default` / `df.Definition(ctx)`; `db.DefaultDefinitions(ctx)` likewise |
 
 | Operation        | Alias type | Table / CLR type | XML schema collection | Rule / default |
 | ---------------- | ---------- | ---------------- | --------------------- | -------------- |
@@ -1271,7 +1279,8 @@ that already exist): `WithScript` captures the exact statement(s) a set of
 ```go
 ctx, script := gosmo.WithScript(context.Background())
 
-srv.GrantServerPermission(ctx, "CONNECT SQL", "app_user", gosmo.PermissionOptions{})
+srv.ApplyPermission(ctx, gosmo.VerbGrant, gosmo.Securable{Class: gosmo.SecurableServer},
+    gosmo.ServerPermission("CONNECT SQL"), "app_user", gosmo.PermissionOptions{})
 db.SetDatabaseOption(ctx, gosmo.DBOptAutoShrink, "ON", gosmo.TerminationNone)
 
 fmt.Print(script.String()) // never executed against the server
@@ -1595,6 +1604,12 @@ category is sent as what each class accepts (`agentCategoryTarget`):
 `[Uncategorized]` for an alert or operator, `[DEFAULT]` for a job, mirrored
 as the `[Uncategorized (Local)]` msdb then reports.
 
+`SetEnabled(ctx, on)` is `Enable` or `Disable` picked by a flag, for a caller
+that holds the wanted state (a menu toggle, a checkbox). Every handle with the
+pair has it except `Index` and `ResourceGovernor`, whose `Enable` is more than
+a flag — a rebuild, and a `RECONFIGURE` that applies every pending change.
+`set_enabled_test.go` pins each to the statement of the call it stands for.
+
 #### Jobs and steps
 
 ```go
@@ -1876,7 +1891,7 @@ refused.
 | Remove a private key             | `cert.RemovePrivateKey(ctx)` / `asymKey.RemovePrivateKey(ctx)` — irreversible; there is no `BACKUP ASYMMETRIC KEY` |
 | Change owner                     | `cert.SetOwner(ctx, u)` / `asymKey.SetOwner(ctx, u)` / `symKey.SetOwner(ctx, u)` — `ALTER AUTHORIZATION`, which drops the object's explicit permissions |
 | Keys held by an EKM provider     | `CreateAsymmetricKeyRequest.FromProvider` / `CreateSymmetricKeyRequest.FromProvider` (`gosmo.ProviderKey`) — not run live; no test instance has a provider |
-| Module signatures                | `db.AddSignature(ctx, schema, module, gosmo.Signer{...}, counter)` / `db.DropSignature(ctx, ...)` / `db.SignaturesOn(ctx, schema, module)` / `cert.SignedModules(ctx)` / `asymKey.SignedModules(ctx)` |
+| Module signatures                | `db.StoredProcedureRef(schema, module).AddSignature(ctx, gosmo.Signer{...}, counter)` (also `UserDefinedFunctionRef`, `TriggerRef`) / `.DropSignature(ctx, ...)` / `db.SignaturesOn(ctx, schema, module)` / `cert.SignedModules(ctx)` / `asymKey.SignedModules(ctx)` |
 | Export the public certificate    | `cert.Encoded(ctx)` → `[]byte` (`CERTENCODED`)               |
 | Import it on another instance    | `CreateCertificateRequest.FromBinary` (`CREATE CERTIFICATE ... FROM BINARY`, every supported version) |
 | New / drop asymmetric key        | `db.CreateAsymmetricKey(ctx, gosmo.CreateAsymmetricKeyRequest{...})` (generated: `WITH ALGORITHM`) / `key.Drop(ctx)` |
@@ -2281,6 +2296,19 @@ external, FileTable, ledger, Always Encrypted — with an error wrapping
 `ErrUnsupported`, before any text is produced. It is not
 `ErrUnsupportedVersion`: nothing is wrong with the server's version.
 
+### `ErrInvalidRequest`
+
+A call refused for its own arguments — a required name left empty, a value
+outside its allowlist or range, options that exclude each other, a
+permission the securable's class does not take — wraps `ErrInvalidRequest`,
+decided before any statement is sent. Retrying it, or asking another server,
+gives the same answer: the request has to change. It is distinct from
+`ErrUnsupported` (the request is fine; gosmo has no form for it) and from
+`ErrSchemaRequired`, which an empty schema wraps instead. Message text is
+unchanged by the sentinel. `invalid_request_test.go` fails on any
+`fmt.Errorf` that wraps nothing and is not on its list of refusals about the
+server's state.
+
 ### `ErrAmbiguous`
 
 A by-name lookup whose name the catalog does not keep unique, and which
@@ -2513,7 +2541,7 @@ the prologue is retried; whatever the caller goes on to run is not.
 - **Connection lifetimes are correctly scoped.** `Database.query` returns a `*dbRows` that owns both the `*sql.Rows` and the `*sql.Conn` pinned to run its `USE`, closing both together — `*sql.Rows.Close` on its own would leave that connection checked out of the pool for good. Every statement is also bounded by the `Server`'s lifetime (`Server.bound`): `Close` cancels `Server.Context()` and with it each statement in flight, which closing the `*sql.DB` alone leaves running — and its session on the server.
 - **Values that can't be parameterized are validated by shape or allowlist.** DDL can't parameterize keyword or literal arguments, so anything spliced into one is checked first: recovery models, data types, and backup actions against their known sets; partition function boundary values against the shape of a well-formed SQL Server literal; Query Store mode keywords and index data-compression settings against their allowlists.
 - **One shared quoting implementation.** `QuoteName` and `QuoteLiteral` wrap the driver's own `TSQLQuoter` (`QuoteLiteral` adding the `N` prefix, so a literal is never varchar), so gosmo's internal identifier/literal escaping — and any caller or downstream consumer (e.g. gossms) building its own DDL — go through the same tested implementation rather than a hand-rolled one. Beside them: `QuoteNameIfNeeded` (brackets only a name that is not an ASCII regular identifier or is a reserved keyword — for text a person reads), `UnquoteName` (the inverse of `QuoteName` for one part), `IsReservedKeyword` (the documented list, pinned against the parser by `TestLiveReservedKeywords`), and `QuoteAnsiLiteral` (a varchar `'…'`, for an Extended Events `ansi_string` predicate).
-- **Permission and SET-option names are allowlisted, not interpolated.** `GRANT`/`DENY`/`REVOKE` and `ALTER DATABASE ... SET` are DDL and can't parameterize their keyword arguments; every method that accepts one (`GrantServerPermission`, `GrantPermission`, `GrantDatabasePermission`, `SetDatabaseOption`, ...) rejects any name not on its allowlist instead of splicing caller input directly into the statement.
+- **Permission and SET-option names are allowlisted, not interpolated.** `GRANT`/`DENY`/`REVOKE` and `ALTER DATABASE ... SET` are DDL and can't parameterize their keyword arguments; every method that accepts one (`ApplyPermission`, per securable class; `SetDatabaseOption`, ...) rejects any name not on its allowlist instead of splicing caller input directly into the statement.
 
 ---
 

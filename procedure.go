@@ -113,7 +113,7 @@ func (d *Database) ExecProc(ctx context.Context, schema, name string, params ...
 		return ProcResult{}, err
 	}
 	if name == "" {
-		return ProcResult{}, fmt.Errorf("gosmo: exec proc: no procedure name")
+		return ProcResult{}, invalidf("gosmo: exec proc: no procedure name")
 	}
 	proc := qualifiedName(schema, name)
 
@@ -234,7 +234,7 @@ type CreateStoredProcedureRequest struct {
 // its schema and name, since nothing ran.
 func (d *Database) CreateStoredProcedure(ctx context.Context, req CreateStoredProcedureRequest) (*StoredProcedure, error) {
 	if req.Name == "" {
-		return nil, fmt.Errorf("gosmo: create stored procedure: name is required")
+		return nil, invalidf("gosmo: create stored procedure: name is required")
 	}
 	schema := req.Schema
 	if err := requireSchema("create stored procedure", schema, req.Name); err != nil {

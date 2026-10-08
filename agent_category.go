@@ -92,7 +92,7 @@ func (s *Server) CategoryRef(class CategoryClass, name string) *Category {
 // Categories returns every category of the given class.
 func (s *Server) Categories(ctx context.Context, class CategoryClass) ([]*Category, error) {
 	if !validCategoryClass(class) {
-		return nil, fmt.Errorf("gosmo: list categories: unrecognized category class %q", class)
+		return nil, invalidf("gosmo: list categories: unrecognized category class %q", class)
 	}
 	const q = `
 SELECT category_id, name
@@ -128,7 +128,7 @@ func addCategoryType(class CategoryClass) string {
 // such category.
 func (s *Server) CategoryByName(ctx context.Context, class CategoryClass, name string) (*Category, error) {
 	if !validCategoryClass(class) {
-		return nil, fmt.Errorf("gosmo: find category %q: unrecognized category class %q", name, class)
+		return nil, invalidf("gosmo: find category %q: unrecognized category class %q", name, class)
 	}
 	c := &Category{server: s, Class: class}
 	err := s.queryRowScan(ctx, `
@@ -149,7 +149,7 @@ type CreateCategoryRequest struct {
 // and name, since nothing ran.
 func (s *Server) CreateCategory(ctx context.Context, req CreateCategoryRequest) (*Category, error) {
 	if !validCategoryClass(req.Class) {
-		return nil, fmt.Errorf("gosmo: create category: unrecognized category class %q", req.Class)
+		return nil, invalidf("gosmo: create category: unrecognized category class %q", req.Class)
 	}
 	q := fmt.Sprintf("EXEC msdb.dbo.sp_add_category @class = N'%s', @type = N'%s', @name = N'%s'",
 		string(req.Class), addCategoryType(req.Class), escapeSingle(req.Name))
@@ -164,7 +164,7 @@ func (s *Server) CreateCategory(ctx context.Context, req CreateCategoryRequest) 
 // Drop deletes the category via sp_delete_category.
 func (c *Category) Drop(ctx context.Context) error {
 	if !validCategoryClass(c.Class) {
-		return fmt.Errorf("gosmo: drop category %q: unrecognized category class %q", c.Name, c.Class)
+		return invalidf("gosmo: drop category %q: unrecognized category class %q", c.Name, c.Class)
 	}
 	q := fmt.Sprintf("EXEC msdb.dbo.sp_delete_category @class = N'%s', @name = N'%s'",
 		string(c.Class), escapeSingle(c.Name))

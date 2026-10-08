@@ -6,10 +6,12 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestQueryProfilesScanEveryColumn(t *testing.T) {
-	row := []driver.Value{int64(1), []byte{0x06, 0x01}, int64(46), int64(-1),
+	login := time.Date(2026, 10, 8, 9, 30, 0, 0, time.UTC)
+	row := []driver.Value{int64(1), login, []byte{0x06, 0x01}, int64(46), int64(-1),
 		int64(9), int64(2), "Table Spool",
 		int64(10), int64(11), int64(12), int64(13), int64(14),
 		int64(15), int64(16), int64(17), int64(18), int64(19), int64(20),
@@ -23,7 +25,7 @@ func TestQueryProfilesScanEveryColumn(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := QueryProfile{RequestID: 1, PlanHandle: []byte{0x06, 0x01}, StatementStart: 46, StatementEnd: -1,
+	want := QueryProfile{RequestID: 1, SessionLoginTime: login, PlanHandle: []byte{0x06, 0x01}, StatementStart: 46, StatementEnd: -1,
 		NodeID: 9, ThreadID: 2, PhysicalOperator: "Table Spool",
 		RowCount: 10, EstimateRowCount: 11, RewindCount: 12, RebindCount: 13, EndOfScanCount: 14,
 		FirstActiveTime: 15, LastActiveTime: 16, OpenTime: 17, FirstRowTime: 18, LastRowTime: 19, CloseTime: 20,
@@ -45,10 +47,44 @@ func TestQueryProfilesScanEveryColumn(t *testing.T) {
 }
 
 func TestQueryProfilesOfAnIdleSessionAreEmpty(t *testing.T) {
-	s, _ := activityServer(t, activityReply{key: "dm_exec_query_profiles", cols: cols(35)})
+	s, _ := activityServer(t, activityReply{key: "dm_exec_query_profiles", cols: cols(36)})
 	got, err := s.QueryProfiles(t.Context(), 61)
 	if err != nil || len(got) != 0 {
 		t.Errorf("QueryProfiles = %v, %v; want none and no error", got, err)
+	}
+}
+
+// A session that ended between the reads leaves the LEFT JOIN's login_time
+// NULL: zero, not a scan error.
+func TestQueryProfilesOfAnEndedSessionHaveNoLoginTime(t *testing.T) {
+	row := make([]driver.Value, 36)
+	row[0], row[2], row[7] = int64(1), []byte{0x06}, "Sort"
+	for i := range row {
+		if row[i] == nil && i != 1 {
+			row[i] = int64(0)
+		}
+	}
+	s, _ := activityServer(t, activityReply{key: "dm_exec_query_profiles", cols: cols(len(row)), rows: [][]driver.Value{row}})
+	got, err := s.QueryProfiles(t.Context(), 61)
+	if err != nil || len(got) != 1 || !got[0].SessionLoginTime.IsZero() {
+		t.Errorf("QueryProfiles = %+v, %v; want one row with a zero login time", got, err)
+	}
+}
+
+func TestSessionLoginTime(t *testing.T) {
+	login := time.Date(2026, 10, 8, 9, 30, 0, 0, time.UTC)
+	s, c := activityServer(t, activityReply{key: "dm_exec_sessions", cols: cols(1), rows: [][]driver.Value{{login}}})
+	got, err := s.SessionLoginTime(t.Context(), 61)
+	if err != nil || !got.Equal(login) {
+		t.Errorf("SessionLoginTime = %v, %v; want %v", got, err, login)
+	}
+	if len(c.args) != 1 || c.args[0].Value != int64(61) {
+		t.Errorf("args = %v, want the session id alone", c.args)
+	}
+
+	s, _ = activityServer(t, activityReply{key: "dm_exec_sessions", cols: cols(1)})
+	if _, err := s.SessionLoginTime(t.Context(), 61); !errors.Is(err, ErrNotFound) {
+		t.Errorf("SessionLoginTime of a session that does not exist: %v, want ErrNotFound", err)
 	}
 }
 

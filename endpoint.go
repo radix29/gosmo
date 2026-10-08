@@ -174,27 +174,27 @@ var (
 // was asked for.
 func (spec CreateDatabaseMirroringEndpointRequest) normalized() (CreateDatabaseMirroringEndpointRequest, error) {
 	if strings.TrimSpace(spec.Name) == "" {
-		return spec, fmt.Errorf("endpoint has no name")
+		return spec, invalidf("endpoint has no name")
 	}
 	if spec.Port == 0 {
 		spec.Port = 5022
 	}
 	if spec.Port < 1 || spec.Port > 65535 {
-		return spec, fmt.Errorf("endpoint port %d out of range 1-65535", spec.Port)
+		return spec, invalidf("endpoint port %d out of range 1-65535", spec.Port)
 	}
 	spec.Role = strings.ToUpper(orElse(spec.Role, "ALL"))
 	if !endpointRoles[spec.Role] {
-		return spec, fmt.Errorf("unrecognized endpoint role %q", spec.Role)
+		return spec, invalidf("unrecognized endpoint role %q", spec.Role)
 	}
 	spec.Encryption = strings.ToUpper(orElse(spec.Encryption, "REQUIRED"))
 	if !endpointEncryption[spec.Encryption] {
-		return spec, fmt.Errorf("unrecognized endpoint encryption %q", spec.Encryption)
+		return spec, invalidf("unrecognized endpoint encryption %q", spec.Encryption)
 	}
 	spec.EncryptionAlgorithm = strings.ToUpper(spec.EncryptionAlgorithm)
 	// Empty still means "omit the sub-clause"; anything else is checked, like
 	// Role and Encryption above.
 	if spec.EncryptionAlgorithm != "" && !endpointAlgorithms[spec.EncryptionAlgorithm] {
-		return spec, fmt.Errorf("unrecognized endpoint encryption algorithm %q", spec.EncryptionAlgorithm)
+		return spec, invalidf("unrecognized endpoint encryption algorithm %q", spec.EncryptionAlgorithm)
 	}
 	spec.Authentication = orElse(spec.Authentication, "WINDOWS NEGOTIATE")
 	return spec, nil
@@ -302,7 +302,7 @@ func (e *DatabaseMirroringEndpoint) Drop(ctx context.Context) error {
 // replicas' service accounts open a connection to it.
 func (e *DatabaseMirroringEndpoint) GrantConnect(ctx context.Context, login string) error {
 	if strings.TrimSpace(login) == "" {
-		return fmt.Errorf("gosmo: grant connect on endpoint %q: empty login", e.Name)
+		return invalidf("gosmo: grant connect on endpoint %q: empty login", e.Name)
 	}
 	if err := e.server.exec(ctx, fmt.Sprintf("GRANT CONNECT ON ENDPOINT::%s TO %s",
 		quoteIdent(e.Name), quoteIdent(login))); err != nil {
@@ -449,7 +449,7 @@ func (e *Endpoint) SetState(ctx context.Context, state EndpointState) error {
 	switch state {
 	case EndpointStarted, EndpointStopped, EndpointDisabled:
 	default:
-		return fmt.Errorf("gosmo: set state of endpoint %q: unknown state %q", e.Name, state)
+		return invalidf("gosmo: set state of endpoint %q: unknown state %q", e.Name, state)
 	}
 	stmt := fmt.Sprintf("ALTER ENDPOINT %s STATE = %s", quoteIdent(e.Name), state)
 	if err := e.server.exec(ctx, stmt); err != nil {

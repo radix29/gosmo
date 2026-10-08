@@ -132,20 +132,27 @@ func NewScripter(db *Database, opts ScriptOptions) *Scripter {
 // Database
 // ============================================================
 
-// ScriptDatabase generates a CREATE DATABASE script for the attached database.
+// ScriptDatabase generates the database's script under the options' Verb:
+// CREATE DATABASE with its recovery model and compatibility level, the DROP
+// DATABASE that removes it, or both. ScriptAlter falls back to the CREATE,
+// as it does for every object without an ALTER that restates it.
+//
+// The CREATE carries the name, collation, recovery model and compatibility
+// level only — no file layout and no other options — so it recreates a
+// database of that name, not a copy of this one.
 //
 // The context is not decoration. Alone among the Script* methods this one
 // renders from the Database's own cached metadata rather than querying, and a
 // Database from Server.DatabaseRef(name) carries none — it is a bare handle
 // by design. Rendering that handle emitted "SET RECOVERY ;" and
 // "COMPATIBILITY_LEVEL = 0", neither of which is valid T-SQL, so a handle with
-// no recovery model is refilled from sys.databases first. Each line is still
-// guarded on its own value: a refresh that cannot run leaves the script short
-// a setting, which is recoverable, rather than syntactically broken, which is
-// not.
+// no recovery model is refilled from sys.databases first — unless the script
+// is a DROP alone, which needs only the name. Each line is still guarded on
+// its own value: a refresh that cannot run leaves the script short a setting,
+// which is recoverable, rather than syntactically broken, which is not.
 func (sc *Scripter) ScriptDatabase(ctx context.Context) (string, error) {
 	d := sc.db
-	if d.RecoveryModel == "" || d.CompatibilityLevel == 0 {
+	if sc.opts.verb() != ScriptDrop && (d.RecoveryModel == "" || d.CompatibilityLevel == 0) {
 		full, err := d.server.DatabaseByName(ctx, d.Name)
 		if err != nil {
 			return "", fmt.Errorf("gosmo: script database %q: %w", d.Name, err)
@@ -157,6 +164,10 @@ func (sc *Scripter) ScriptDatabase(ctx context.Context) (string, error) {
 
 // scriptDatabaseFrom renders the script from d's metadata, with no reads of
 // its own.
+//
+// The DROP switches to master first: DROP DATABASE fails on the database the
+// session is in, and a script of a database is most often run from it. With
+// IncludeIfNotExists it is guarded by DB_ID, as the CREATE is.
 func (sc *Scripter) scriptDatabaseFrom(d *Database) (string, error) {
 	var sb strings.Builder
 	if sc.opts.IncludeHeaders {
@@ -168,26 +179,33 @@ func (sc *Scripter) scriptDatabaseFrom(d *Database) (string, error) {
 		}
 		fmt.Fprintf(&sb, "/* Database: %s  Version: %s */\n\n", blockCommentSafe(d.Name), blockCommentSafe(version))
 	}
+	drop := "USE [master];\nGO\n"
 	if sc.opts.IncludeIfNotExists {
-		fmt.Fprintf(&sb, "IF DB_ID(N'%s') IS NULL\nBEGIN\n    ", escapeSingle(d.Name))
+		drop += fmt.Sprintf("IF DB_ID(N'%s') IS NOT NULL\n    ", escapeSingle(d.Name))
 	}
-	fmt.Fprintf(&sb, "CREATE DATABASE %s", quoteIdent(d.Name))
-	if d.Collation != "" {
-		fmt.Fprintf(&sb, " COLLATE %s", d.Collation)
-	}
-	sb.WriteString(";\n")
-	if sc.opts.IncludeIfNotExists {
-		sb.WriteString("END\nGO\n\n")
-	} else {
-		sb.WriteString("GO\n\n")
-	}
-	if d.RecoveryModel != "" {
-		fmt.Fprintf(&sb, "ALTER DATABASE %s SET RECOVERY %s;\nGO\n",
-			quoteIdent(d.Name), d.RecoveryModel)
-	}
-	if d.CompatibilityLevel != 0 {
-		fmt.Fprintf(&sb, "ALTER DATABASE %s SET COMPATIBILITY_LEVEL = %d;\nGO\n",
-			quoteIdent(d.Name), d.CompatibilityLevel)
-	}
+	drop += fmt.Sprintf("DROP DATABASE %s;\nGO\n", quoteIdent(d.Name))
+	sb.WriteString(sc.opts.envelope(drop, "", func(sb *strings.Builder) {
+		if sc.opts.IncludeIfNotExists {
+			fmt.Fprintf(sb, "IF DB_ID(N'%s') IS NULL\nBEGIN\n    ", escapeSingle(d.Name))
+		}
+		fmt.Fprintf(sb, "CREATE DATABASE %s", quoteIdent(d.Name))
+		if d.Collation != "" {
+			fmt.Fprintf(sb, " COLLATE %s", d.Collation)
+		}
+		sb.WriteString(";\n")
+		if sc.opts.IncludeIfNotExists {
+			sb.WriteString("END\nGO\n\n")
+		} else {
+			sb.WriteString("GO\n\n")
+		}
+		if d.RecoveryModel != "" {
+			fmt.Fprintf(sb, "ALTER DATABASE %s SET RECOVERY %s;\nGO\n",
+				quoteIdent(d.Name), d.RecoveryModel)
+		}
+		if d.CompatibilityLevel != 0 {
+			fmt.Fprintf(sb, "ALTER DATABASE %s SET COMPATIBILITY_LEVEL = %d;\nGO\n",
+				quoteIdent(d.Name), d.CompatibilityLevel)
+		}
+	}))
 	return sb.String(), nil
 }

@@ -53,8 +53,8 @@ func TestEmptySchemaIsRefused(t *testing.T) {
 		{"View.Rename", func(c context.Context, d *Database) error { return d.ViewRef("", "a").Rename(c, "b") }},
 		{"Transfer source", func(c context.Context, d *Database) error { return d.TableRef("", "t").Transfer(c, "archive") }},
 		{"Transfer target", func(c context.Context, d *Database) error { return d.TableRef("dbo", "t").Transfer(c, "") }},
-		{"GrantPermission", func(c context.Context, d *Database) error {
-			return d.GrantPermission(c, "", "t", PermSelect, "u", PermissionOptions{})
+		{"ApplyPermission Grant", func(c context.Context, d *Database) error {
+			return d.ApplyPermission(c, VerbGrant, Securable{Class: SecurableTable, Schema: "", Name: "t"}, PermSelect, "u", PermissionOptions{})
 		}},
 		{"BrokerQueue.Alter activation procedure", func(c context.Context, d *Database) error {
 			return d.BrokerQueueRef("dbo", "q").Alter(c, QueueSettings{Activation: &QueueActivation{ProcedureName: "p"}})

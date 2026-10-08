@@ -168,7 +168,7 @@ type CreateAsymmetricKeyRequest struct {
 // spec.
 func (spec CreateAsymmetricKeyRequest) createAsymmetricKeyStatement() (string, error) {
 	if strings.TrimSpace(spec.Name) == "" {
-		return "", fmt.Errorf("asymmetric key has no name")
+		return "", invalidf("asymmetric key has no name")
 	}
 	stmt := "CREATE ASYMMETRIC KEY " + quoteIdent(spec.Name)
 	if spec.Authorization != "" {
@@ -176,12 +176,12 @@ func (spec CreateAsymmetricKeyRequest) createAsymmetricKeyStatement() (string, e
 	}
 	if p := spec.FromProvider; p != nil {
 		if spec.EncryptionPassword != "" {
-			return "", fmt.Errorf("asymmetric key %q is held by a provider, so it takes no password", spec.Name)
+			return "", invalidf("asymmetric key %q is held by a provider, so it takes no password", spec.Name)
 		}
 		var opts []string
 		if spec.Algorithm != "" || p.Disposition != ProviderOpenExisting {
 			if !spec.Algorithm.valid() {
-				return "", fmt.Errorf("asymmetric key %q: unknown algorithm %q", spec.Name, spec.Algorithm)
+				return "", invalidf("asymmetric key %q: unknown algorithm %q", spec.Name, spec.Algorithm)
 			}
 			opts = append(opts, "ALGORITHM = "+string(spec.Algorithm))
 		}
@@ -192,7 +192,7 @@ func (spec CreateAsymmetricKeyRequest) createAsymmetricKeyStatement() (string, e
 		return stmt + from + " WITH " + strings.Join(append(opts, popts...), ", "), nil
 	}
 	if !spec.Algorithm.valid() {
-		return "", fmt.Errorf("asymmetric key %q: unknown algorithm %q", spec.Name, spec.Algorithm)
+		return "", invalidf("asymmetric key %q: unknown algorithm %q", spec.Name, spec.Algorithm)
 	}
 	stmt += " WITH ALGORITHM = " + string(spec.Algorithm)
 	if spec.EncryptionPassword != "" {

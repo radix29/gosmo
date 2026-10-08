@@ -101,6 +101,27 @@ func TestSetIncludedColumnsKeepsADisabledIndexDisabled(t *testing.T) {
 	}
 }
 
+// Enable (a rebuild) clears the handle's IsDisabled. Left set, the next
+// SetIncludedColumns on the same handle appended a DISABLE and switched the
+// index off again right after the caller had enabled it.
+func TestEnableThenSetIncludedColumnsLeavesTheIndexEnabled(t *testing.T) {
+	tbl := captureTable(t)
+	idx := onTable(tbl, fullyOptionedIndex())
+	idx.IsDisabled = true
+	if err := idx.Enable(t.Context()); err != nil {
+		t.Fatalf("Enable: %v", err)
+	}
+	if idx.IsDisabled {
+		t.Fatal("IsDisabled still true after Enable")
+	}
+	if err := idx.SetIncludedColumns(t.Context(), []string{"c"}); err != nil {
+		t.Fatalf("SetIncludedColumns: %v", err)
+	}
+	if q := captured.find("DROP_EXISTING"); strings.Contains(q, "DISABLE") {
+		t.Errorf("SetIncludedColumns after Enable re-disables the index:\n%s", q)
+	}
+}
+
 // Only a rowstore nonclustered index backing no constraint has an INCLUDE
 // list that CREATE ... DROP_EXISTING can change. Every other kind is refused
 // before anything is sent, with an error naming what the index is.

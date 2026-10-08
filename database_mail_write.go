@@ -135,11 +135,11 @@ func (c MailCredentials) validate() error {
 		// The procedure trims the user name and treats '' as NULL, which
 		// would store an anonymous account instead.
 		if strings.TrimSpace(c.UserName) == "" {
-			return fmt.Errorf("basic authentication needs a user name")
+			return invalidf("basic authentication needs a user name")
 		}
 		return nil
 	}
-	return fmt.Errorf("unknown authentication %v", c.Authentication)
+	return invalidf("unknown authentication %v", c.Authentication)
 }
 
 // render adds the credential arguments twice over: to run, with the
@@ -222,11 +222,11 @@ func mailAccountCreateStmts(req CreateMailAccountRequest) (run, shown []string) 
 func (s *Server) CreateMailAccount(ctx context.Context, req CreateMailAccountRequest) (*MailAccount, error) {
 	switch {
 	case strings.TrimSpace(req.Name) == "":
-		return nil, fmt.Errorf("gosmo: create mail account: account has no name")
+		return nil, invalidf("gosmo: create mail account: account has no name")
 	case strings.TrimSpace(req.EmailAddress) == "":
-		return nil, fmt.Errorf("gosmo: create mail account %q: account has no e-mail address", req.Name)
+		return nil, invalidf("gosmo: create mail account %q: account has no e-mail address", req.Name)
 	case strings.TrimSpace(req.ServerName) == "":
-		return nil, fmt.Errorf("gosmo: create mail account %q: account has no mail server", req.Name)
+		return nil, invalidf("gosmo: create mail account %q: account has no mail server", req.Name)
 	}
 	if err := req.Credentials.validate(); err != nil {
 		return nil, fmt.Errorf("gosmo: create mail account %q: %w", req.Name, err)
@@ -331,7 +331,7 @@ func (a *MailAccount) Alter(ctx context.Context, o MailAccountOptions) error {
 		return nil
 	}
 	if o.Name != nil && strings.TrimSpace(*o.Name) == "" {
-		return fmt.Errorf("gosmo: alter mail account %q: new name is empty", a.Name)
+		return invalidf("gosmo: alter mail account %q: new name is empty", a.Name)
 	}
 	if o.Credentials != nil {
 		if err := o.Credentials.validate(); err != nil {
@@ -400,7 +400,7 @@ func (s *Server) MailProfileRef(name string) *MailProfile {
 // back, or, under Scripting(ctx), the MailProfileRef handle.
 func (s *Server) CreateMailProfile(ctx context.Context, req CreateMailProfileRequest) (*MailProfile, error) {
 	if strings.TrimSpace(req.Name) == "" {
-		return nil, fmt.Errorf("gosmo: create mail profile: profile has no name")
+		return nil, invalidf("gosmo: create mail profile: profile has no name")
 	}
 	if err := s.exec(ctx, mailProfileCreateStmt(req.Name, req.Description)); err != nil {
 		return nil, fmt.Errorf("gosmo: create mail profile %q: %w", req.Name, err)
@@ -433,7 +433,7 @@ func (p *MailProfile) Alter(ctx context.Context, o MailProfileOptions) error {
 		return nil
 	}
 	if o.Name != nil && strings.TrimSpace(*o.Name) == "" {
-		return fmt.Errorf("gosmo: alter mail profile %q: new name is empty", p.Name)
+		return invalidf("gosmo: alter mail profile %q: new name is empty", p.Name)
 	}
 	var a procArgs
 	if o.Name != nil {
@@ -519,7 +519,7 @@ func (p *MailProfile) SetAccounts(ctx context.Context, accounts []string) error 
 	for _, name := range accounts {
 		k := NameKey(collation, name)
 		if seen[k] {
-			return fmt.Errorf("gosmo: %s: account %q is listed twice", what, name)
+			return invalidf("gosmo: %s: account %q is listed twice", what, name)
 		}
 		seen[k] = true
 	}
@@ -695,7 +695,7 @@ func (o MailConfigurationOptions) stmts() []string {
 // only a parameter msdb already has a row for.
 func (s *Server) SetMailConfiguration(ctx context.Context, o MailConfigurationOptions) error {
 	if o.LoggingLevel != nil && (*o.LoggingLevel < MailLoggingNormal || *o.LoggingLevel > MailLoggingVerbose) {
-		return fmt.Errorf("gosmo: set mail configuration: logging level %d is not 1, 2 or 3", int(*o.LoggingLevel))
+		return invalidf("gosmo: set mail configuration: logging level %d is not 1, 2 or 3", int(*o.LoggingLevel))
 	}
 	for _, stmt := range o.stmts() {
 		if err := s.exec(ctx, stmt); err != nil {
@@ -805,7 +805,7 @@ func classifyMailSendError(err error) error {
 // statement is recorded and the id is 0.
 func (s *Server) SendMail(ctx context.Context, m MailMessage) (int, error) {
 	if strings.TrimSpace(m.To) == "" {
-		return 0, fmt.Errorf("gosmo: send mail: no recipient")
+		return 0, invalidf("gosmo: send mail: no recipient")
 	}
 	var a procArgs
 	a.strSet("@profile_name", m.Profile)

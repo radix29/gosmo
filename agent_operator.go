@@ -87,7 +87,7 @@ func (s *Server) OperatorByName(ctx context.Context, name string) (*Operator, er
 	q := "SELECT " + operatorColumns + " " + operatorFrom + " WHERE o.name = @p1"
 
 	return readByName(ctx, s, scanOperator, q, []any{name},
-		notFoundf("gosmo: operator %q not found", name), "operator by name")
+		notFoundf("gosmo: operator %q not found", name), fmt.Sprintf("read operator %q", name))
 }
 
 // CreateOperatorRequest describes a new SQL Server Agent operator.
@@ -101,7 +101,7 @@ type CreateOperatorRequest struct {
 // CreateOperator creates a new operator via sp_add_operator.
 func (s *Server) CreateOperator(ctx context.Context, req CreateOperatorRequest) (*Operator, error) {
 	if req.Name == "" {
-		return nil, fmt.Errorf("gosmo: create operator: name is required")
+		return nil, invalidf("gosmo: create operator: name is required")
 	}
 	q := fmt.Sprintf("EXEC msdb.dbo.sp_add_operator @name = N'%s', @enabled = %d",
 		escapeSingle(req.Name), boolToInt(req.Enabled))
@@ -129,6 +129,11 @@ func (o *Operator) Enable(ctx context.Context) error { return o.setEnabled(ctx, 
 
 // Disable disables the operator.
 func (o *Operator) Disable(ctx context.Context) error { return o.setEnabled(ctx, false) }
+
+// SetEnabled is Enable when on is true and Disable otherwise.
+func (o *Operator) SetEnabled(ctx context.Context, on bool) error {
+	return o.setEnabled(ctx, on)
+}
 
 func (o *Operator) setEnabled(ctx context.Context, on bool) error {
 	return o.Alter(ctx, OperatorChanges{Enabled: &on})
@@ -165,6 +170,9 @@ type AlertNotificationRef struct {
 
 // NotifyingAlerts returns every alert configured to notify this operator.
 func (o *Operator) NotifyingAlerts(ctx context.Context) ([]*AlertNotificationRef, error) {
+	if err := requireID(fmt.Sprintf("notifying alerts for operator %q", o.Name), o.ID != 0); err != nil {
+		return nil, err
+	}
 	const q = `
 SELECT a.name, n.notification_method
 FROM   msdb.dbo.sysnotifications n
@@ -195,6 +203,9 @@ type JobNotificationRef struct {
 // completion (sysjobs.notify_email_operator_id) — distinct from
 // NotifyingAlerts, which covers alert-triggered notifications.
 func (o *Operator) NotifyingJobs(ctx context.Context) ([]*JobNotificationRef, error) {
+	if err := requireID(fmt.Sprintf("notifying jobs for operator %q", o.Name), o.ID != 0); err != nil {
+		return nil, err
+	}
 	const q = `
 SELECT name, notify_level_email
 FROM   msdb.dbo.sysjobs

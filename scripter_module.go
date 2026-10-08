@@ -116,6 +116,8 @@ func (sc *Scripter) scriptModule(ctx context.Context, k moduleKind, schema, name
 			sb.WriteString(float16Note(names))
 		case usesFloat16Vector(def.String):
 			sb.WriteString(float16DefinitionNote)
+		case buildsFloat16Vector(def.String):
+			sb.WriteString(float16DynamicNote)
 		}
 		sb.WriteString(moduleSetOptions(ansiNulls, quotedIdent))
 		sb.WriteString(text)
@@ -163,7 +165,8 @@ var float16VectorType = regexp.MustCompile(`(?i)(?:^|[^\w@#$])vector\s*\(\s*\d+\
 // It is a lexical scan, not a parse: scriptCodeSpans drops comments, string
 // literals and quoted identifiers, each replaced by a space since the server
 // treats a comment between two tokens as whitespace. The type spelled inside
-// dynamic SQL is a string literal, and is not found.
+// dynamic SQL is a string literal, and is not found: buildsFloat16Vector
+// looks there.
 func usesFloat16Vector(def string) bool {
 	var code strings.Builder
 	for _, sp := range scriptCodeSpans(def) {
@@ -171,6 +174,51 @@ func usesFloat16Vector(def string) bool {
 		code.WriteByte(' ')
 	}
 	return float16VectorType.MatchString(code.String())
+}
+
+// executesDynamicSQL matches EXEC, EXECUTE or sp_executesql as a word.
+var executesDynamicSQL = regexp.MustCompile(`(?i)(?:^|[^\w@#$])(?:exec(?:ute)?|sp_executesql)(?:[^\w@#$]|$)`)
+
+// buildsFloat16Vector reports whether a definition that executes dynamic SQL
+// spells vector(n, float16) inside a string literal, as code of that literal
+// (not in its comments or strings) or, nested, inside a literal it executes
+// in turn. Unlike usesFloat16Vector's case the CREATE replays with
+// PREVIEW_FEATURES off; the module fails with Msg 195 when it runs the batch.
+//
+// It is conservative, not a parse: any EXEC in the code — a procedure call
+// too — admits every literal of the definition, since the batch is usually
+// assigned to a variable before it is executed. A false positive costs a
+// comment. A batch whose type name is split across concatenated literals is
+// not found.
+func buildsFloat16Vector(def string) bool {
+	spans := scriptCodeSpans(def)
+	var code strings.Builder
+	for _, sp := range spans {
+		code.WriteString(def[sp.start:sp.end])
+		code.WriteByte(' ')
+	}
+	if !executesDynamicSQL.MatchString(code.String()) {
+		return false
+	}
+	// A doubled quote splits one literal into adjacent skipped spans with no
+	// code between them (scriptCodeSpans); they are rejoined before the
+	// literal is unescaped, or a nested 'string' would be read as code.
+	for i := 0; i < len(spans); i++ {
+		from := spans[i].prev
+		if spans[i].start == from || def[from] != '\'' {
+			continue
+		}
+		for i+1 < len(spans) && spans[i].start == spans[i].end &&
+			spans[i+1].start > spans[i+1].prev && def[spans[i+1].prev] == '\'' {
+			i++
+		}
+		lit := def[from:spans[i].start]
+		text := strings.ReplaceAll(strings.TrimSuffix(lit[1:], "'"), "''", "'")
+		if usesFloat16Vector(text) || buildsFloat16Vector(text) {
+			return true
+		}
+	}
+	return false
 }
 
 // moduleSetOptions renders the two SET options a module is compiled under,

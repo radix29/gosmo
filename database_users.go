@@ -204,23 +204,23 @@ func (s *Server) everyDatabaseContained() bool {
 // createUserStatement validates req and builds its CREATE USER statement.
 func createUserStatement(req CreateUserRequest) (string, error) {
 	if req.Name == "" {
-		return "", fmt.Errorf("user name is required")
+		return "", invalidf("user name is required")
 	}
 	k := req.Kind
 	// Each optional field against the kinds that have a clause for it.
 	switch {
 	case req.Login != "" && k != UserForLogin && k != UserWindows:
-		return "", fmt.Errorf("a %s user takes no login", k)
+		return "", invalidf("a %s user takes no login", k)
 	case req.Password != "" && k != UserWithPassword:
-		return "", fmt.Errorf("a %s user takes no password", k)
+		return "", invalidf("a %s user takes no password", k)
 	case req.Certificate != "" && k != UserFromCertificate:
-		return "", fmt.Errorf("a %s user maps to no certificate", k)
+		return "", invalidf("a %s user maps to no certificate", k)
 	case req.AsymmetricKey != "" && k != UserFromAsymmetricKey:
-		return "", fmt.Errorf("a %s user maps to no asymmetric key", k)
+		return "", invalidf("a %s user maps to no asymmetric key", k)
 	case req.ObjectID != "" && k != UserFromExternalProvider:
-		return "", fmt.Errorf("ObjectID applies to an external provider user only, not a %s user", k)
+		return "", invalidf("ObjectID applies to an external provider user only, not a %s user", k)
 	case req.DefaultSchema != "" && (k == UserFromCertificate || k == UserFromAsymmetricKey):
-		return "", fmt.Errorf("a %s user cannot have a default schema", k)
+		return "", invalidf("a %s user cannot have a default schema", k)
 	}
 
 	var opts []string
@@ -231,14 +231,14 @@ func createUserStatement(req CreateUserRequest) (string, error) {
 		// []" — a statement the server rejects with a message naming an empty
 		// login the caller never typed.
 		if req.Login == "" {
-			return "", fmt.Errorf("login name is required")
+			return "", invalidf("login name is required")
 		}
 		stmt += " FOR LOGIN " + quoteIdent(req.Login)
 	case UserWithoutLogin:
 		stmt += " WITHOUT LOGIN"
 	case UserWithPassword:
 		if req.Password == "" {
-			return "", fmt.Errorf("a contained user requires a password")
+			return "", invalidf("a contained user requires a password")
 		}
 		opts = append(opts, "PASSWORD = "+QuoteLiteral(req.Password))
 	case UserWindows:
@@ -247,12 +247,12 @@ func createUserStatement(req CreateUserRequest) (string, error) {
 		}
 	case UserFromCertificate:
 		if req.Certificate == "" {
-			return "", fmt.Errorf("a certificate-mapped user requires Certificate")
+			return "", invalidf("a certificate-mapped user requires Certificate")
 		}
 		stmt += " FROM CERTIFICATE " + quoteIdent(req.Certificate)
 	case UserFromAsymmetricKey:
 		if req.AsymmetricKey == "" {
-			return "", fmt.Errorf("an asymmetric-key-mapped user requires AsymmetricKey")
+			return "", invalidf("an asymmetric-key-mapped user requires AsymmetricKey")
 		}
 		stmt += " FROM ASYMMETRIC KEY " + quoteIdent(req.AsymmetricKey)
 	case UserFromExternalProvider:
@@ -261,7 +261,7 @@ func createUserStatement(req CreateUserRequest) (string, error) {
 			opts = append(opts, "OBJECT_ID = "+QuoteLiteral(req.ObjectID))
 		}
 	default:
-		return "", fmt.Errorf("unknown user kind %s", k)
+		return "", invalidf("unknown user kind %s", k)
 	}
 	if req.DefaultSchema != "" {
 		opts = append(opts, "DEFAULT_SCHEMA = "+quoteIdent(req.DefaultSchema))

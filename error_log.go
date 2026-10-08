@@ -110,7 +110,7 @@ type ErrorLogFile struct {
 // returns the Agent family's current log last, not first.
 func (s *Server) EnumErrorLogs(ctx context.Context, logType ErrorLogType) ([]*ErrorLogFile, error) {
 	if !logType.valid() {
-		return nil, fmt.Errorf("gosmo: enumerate error logs: unknown log type %d", int(logType))
+		return nil, invalidf("gosmo: enumerate error logs: unknown log type %d", int(logType))
 	}
 	if logType == ErrorLogDatabaseMail {
 		return s.enumMailLog(ctx)
@@ -193,7 +193,7 @@ func (f LogSearch) empty() bool {
 // delegates to.
 func (s *Server) ReadLogFiltered(ctx context.Context, logType ErrorLogType, logNumber int, search LogSearch) ([]*ErrorLogEntry, error) {
 	if !logType.valid() {
-		return nil, fmt.Errorf("gosmo: read error log: unknown log type %d", int(logType))
+		return nil, invalidf("gosmo: read error log: unknown log type %d", int(logType))
 	}
 	if logType == ErrorLogDatabaseMail {
 		return s.readMailLog(ctx, logNumber, search)
@@ -282,11 +282,11 @@ var cycleLogStatements = map[ErrorLogType]string{
 // Database Mail log cannot be cycled; DeleteMailLog purges it.
 func (s *Server) CycleLog(ctx context.Context, logType ErrorLogType) error {
 	if logType == ErrorLogDatabaseMail {
-		return fmt.Errorf("gosmo: cycle %s log: it has no archives to cycle into; purge it with DeleteMailLog", logType)
+		return invalidf("gosmo: cycle %s log: it has no archives to cycle into; purge it with DeleteMailLog", logType)
 	}
 	stmt, ok := cycleLogStatements[logType]
 	if !ok {
-		return fmt.Errorf("gosmo: cycle error log: unknown log type %d", int(logType))
+		return invalidf("gosmo: cycle error log: unknown log type %d", int(logType))
 	}
 	if err := s.exec(ctx, stmt); err != nil {
 		return fmt.Errorf("gosmo: cycle %s error log: %w", logType, err)
@@ -329,7 +329,7 @@ func (s *Server) enumMailLog(ctx context.Context) ([]*ErrorLogFile, error) {
 func (s *Server) readMailLog(ctx context.Context, logNumber int, search LogSearch) ([]*ErrorLogEntry, error) {
 	what := fmt.Sprintf("read %s log %d", ErrorLogDatabaseMail, logNumber)
 	if logNumber != 0 {
-		return nil, fmt.Errorf("gosmo: %s: the Database Mail log has only log 0", what)
+		return nil, invalidf("gosmo: %s: the Database Mail log has only log 0", what)
 	}
 	var where []string
 	var args []any

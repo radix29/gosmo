@@ -2,7 +2,9 @@ package gosmo
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
+	"time"
 )
 
 // ============================================================
@@ -46,6 +48,12 @@ import (
 // timestamps and are only comparable with each other.
 type QueryProfile struct {
 	RequestID int
+	// SessionLoginTime is when the session the row belongs to logged in, zero
+	// when the session ended between the reads. A session id is reused once
+	// its session ends, so a watcher that holds one across many reads compares
+	// this with the login time it started from (SessionLoginTime) to tell its
+	// session from a later one given the same id.
+	SessionLoginTime time.Time
 	// PlanHandle and StatementStart/StatementEnd (byte offsets into the
 	// batch text, StatementEnd -1 for "to the end") identify the statement
 	// these counters belong to; they change when a batch moves on to its
@@ -104,7 +112,7 @@ func (s *Server) QueryProfiles(ctx context.Context, sessionID int) ([]QueryProfi
 	// The I/O and object columns are NULL for an operator that has none,
 	// observed on 2025; the rest have always been filled in.
 	rows, err := s.query(ctx, `
-SELECT p.request_id, p.plan_handle,
+SELECT p.request_id, s.login_time, p.plan_handle,
        ISNULL(r.statement_start_offset, 0), ISNULL(r.statement_end_offset, -1),
        p.node_id, p.thread_id, p.physical_operator_name,
        p.row_count, p.estimate_row_count, p.rewind_count, p.rebind_count, p.end_of_scan_count,
@@ -121,11 +129,14 @@ SELECT p.request_id, p.plan_handle,
 FROM   sys.dm_exec_query_profiles AS p
 LEFT   JOIN sys.dm_exec_requests AS r
          ON r.session_id = p.session_id AND r.request_id = p.request_id
+LEFT   JOIN sys.dm_exec_sessions AS s
+         ON s.session_id = p.session_id
 WHERE  p.session_id = @p1
 ORDER  BY p.request_id, p.node_id, p.thread_id`, sessionID)
 	return scanRows(rows, err, fmt.Sprintf("read query profiles of session %d", sessionID), func(scan func(...any) error) (QueryProfile, error) {
 		var p QueryProfile
-		err := scan(&p.RequestID, &p.PlanHandle, &p.StatementStart, &p.StatementEnd,
+		var login sql.NullTime
+		err := scan(&p.RequestID, &login, &p.PlanHandle, &p.StatementStart, &p.StatementEnd,
 			&p.NodeID, &p.ThreadID, &p.PhysicalOperator,
 			&p.RowCount, &p.EstimateRowCount, &p.RewindCount, &p.RebindCount, &p.EndOfScanCount,
 			&p.FirstActiveTime, &p.LastActiveTime, &p.OpenTime,
@@ -137,8 +148,23 @@ ORDER  BY p.request_id, p.node_id, p.thread_id`, sessionID)
 			&p.LobLogicalReads, &p.LobPhysicalReads, &p.LobReadAheads,
 			&p.SegmentReads, &p.SegmentSkips,
 			&p.ActualReadRowCount, &p.EstimatedReadRowCount)
+		p.SessionLoginTime = login.Time
 		return p, err
 	})
+}
+
+// SessionLoginTime returns when sessionID logged in, from
+// sys.dm_exec_sessions: what pins a session, since its id is reused once it
+// ends. It returns an ErrNotFound error when no such session exists. Rights
+// as QueryProfiles; without VIEW SERVER STATE a login sees its own sessions
+// only, so another's reads as not found.
+func (s *Server) SessionLoginTime(ctx context.Context, sessionID int) (time.Time, error) {
+	var t time.Time
+	err := s.queryRowScan(ctx, `
+SELECT login_time FROM sys.dm_exec_sessions WHERE session_id = @p1`, []any{sessionID}, &t)
+	return foundRow(t, err,
+		notFoundf("gosmo: session %d does not exist", sessionID),
+		fmt.Sprintf("read login time of session %d", sessionID))
 }
 
 // InFlightPlan is the showplan of the statement a session is running now,

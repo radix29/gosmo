@@ -136,8 +136,6 @@ classDiagram
         +ModuleSignatures() []*ModuleSignature
         +SignaturesOn(schema, module) []*ModuleSignature
         +SignableModules() []*SignableModule
-        +AddSignature(schema, module, by, counter) error
-        +DropSignature(schema, module, by, counter) error
         +ColumnMasterKeys() []*ColumnMasterKey
         +ColumnMasterKeyByName(name) *ColumnMasterKey
         +ColumnMasterKeyRef(name) *ColumnMasterKey
@@ -199,34 +197,21 @@ classDiagram
         +ChangeTracking() *ChangeTrackingInfo
         +SetChangeTracking(info) error
         +TableChangeTracking() []*TableChangeTracking
-        +TableChangeTrackingFor(schema, name) *TableChangeTracking
-        +SetTableChangeTracking(schema, name, enable, cols) error
         +Dependencies(schema, name) []*Dependency
         +Dependents(schema, name) []*Dependency
         +Search(pattern) []*SearchResult
         +FindSecurables(search) []SecurableRef
         +ObjectColumns(schema, name) []*Column
         +Permissions(schema, name) []*PermissionEntry
-        +GrantPermission(schema, name, perm, principal, opts) error
-        +DenyPermission(schema, name, perm, principal, opts) error
-        +RevokePermission(schema, name, perm, principal, opts) error
+        +ApplyPermission(verb, sec Securable, perm, principal, opts) error
         +PermissionsForPrincipal(principal) []*PrincipalSecurable
         +ColumnPermissions(schema, name) []*ColumnPermissionEntry
         +ColumnPermissionsForPrincipal(principal) []*ColumnPermissionEntry
-        +GrantColumnPermission(schema, name, perm, cols, principal, opts) error
-        +DenyColumnPermission(schema, name, perm, cols, principal, opts) error
-        +RevokeColumnPermission(schema, name, perm, cols, principal, opts) error
         +EffectivePermissions(principal) []*EffectivePermission
         +EffectiveObjectPermissions(schema, name, principal) []*EffectivePermission
         +EffectiveSchemaPermissions(schema, principal) []*EffectivePermission
         +SchemaPermissions(schema) []*PermissionEntry
-        +GrantSchemaPermission(schema, perm, principal, opts) error
-        +DenySchemaPermission(schema, perm, principal, opts) error
-        +RevokeSchemaPermission(schema, perm, principal, opts) error
         +DatabasePermissions() []*DatabasePermissionEntry
-        +GrantDatabasePermission(perm DatabasePermission, principal, opts) error
-        +DenyDatabasePermission(perm DatabasePermission, principal, opts) error
-        +RevokeDatabasePermission(perm DatabasePermission, principal, opts) error
         +EstimatedPlan(sql) *ExecutionPlan
         +ActualPlan(sql) *ExecutionPlan
         +ExecProc(schema, name, params) ProcResult

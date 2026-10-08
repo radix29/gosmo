@@ -161,7 +161,7 @@ func (d *Database) CreateSequence(ctx context.Context, req CreateSequenceRequest
 		req.DataType = DataTypeBigInt
 	}
 	if !validDataType(req.DataType) {
-		return nil, fmt.Errorf("gosmo: create sequence %q: unrecognized data type %q", req.Name, req.DataType)
+		return nil, invalidf("gosmo: create sequence %q: unrecognized data type %q", req.Name, req.DataType)
 	}
 	schema := req.Schema
 	if err := requireSchema("create sequence", schema, req.Name); err != nil {
@@ -373,7 +373,7 @@ func (d *Database) CreateSynonym(ctx context.Context, req CreateSynonymRequest) 
 		return nil, err
 	}
 	if !validQualifiedObjectName(req.BaseObject) {
-		return nil, fmt.Errorf("gosmo: create synonym %s: invalid base object %q", qualifiedName(schema, req.Name), req.BaseObject)
+		return nil, invalidf("gosmo: create synonym %s: invalid base object %q", qualifiedName(schema, req.Name), req.BaseObject)
 	}
 	_, err := d.exec(ctx,
 		fmt.Sprintf("CREATE SYNONYM %s FOR %s", qualifiedName(schema, req.Name), req.BaseObject))

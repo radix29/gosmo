@@ -141,7 +141,7 @@ func (s *Server) EffectiveServerPermissions(ctx context.Context, login string) (
 	// case for the restricted logins this call is most useful on. Verified
 	// live 2026-08-05: identical statement, master vs. such a database,
 	// succeeds and fails respectively. Same prefix and same reasoning as
-	// Server.GrantServerPermission.
+	// Server.ApplyPermission.
 	q := fmt.Sprintf(`
 USE master;
 EXECUTE AS LOGIN = N'%s';

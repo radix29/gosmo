@@ -9,18 +9,28 @@ import (
 	"testing"
 )
 
-// countingConn is a pooled connection that only records being closed.
-type countingConn struct{ closed *atomic.Int32 }
+// countingConn is a pooled connection that only records being closed, and
+// runs onClose (if set) once it has.
+type countingConn struct{ f *countingConnector }
 
 func (c countingConn) Prepare(string) (driver.Stmt, error) { return nil, driver.ErrSkip }
-func (c countingConn) Close() error                        { c.closed.Add(1); return nil }
-func (c countingConn) Begin() (driver.Tx, error)           { return nil, driver.ErrSkip }
+func (c countingConn) Close() error {
+	c.f.closed.Add(1)
+	if c.f.onClose != nil {
+		c.f.onClose()
+	}
+	return nil
+}
+func (c countingConn) Begin() (driver.Tx, error) { return nil, driver.ErrSkip }
 
-type countingConnector struct{ dialed, closed atomic.Int32 }
+type countingConnector struct {
+	dialed, closed atomic.Int32
+	onClose        func()
+}
 
 func (f *countingConnector) Connect(context.Context) (driver.Conn, error) {
 	f.dialed.Add(1)
-	return countingConn{closed: &f.closed}, nil
+	return countingConn{f: f}, nil
 }
 func (f *countingConnector) Driver() driver.Driver { return fakeAcquireDriver{} }
 
@@ -73,6 +83,55 @@ func TestReleaseIdleConnectionsClosesEveryIdleConnection(t *testing.T) {
 	c.Close()
 	if got := db.Stats().Idle; got != 1 {
 		t.Errorf("idle after a later use = %d, want 1 — the pool's idle limit changed", got)
+	}
+}
+
+// An idle connection another goroutine takes while the release is running is
+// not replaced by a dial: the loop re-reads the idle count before each take.
+// It once ran the count read on entry, so each connection taken elsewhere
+// cost a fresh dial here whose only use was to be closed.
+func TestReleaseIdleConnectionsDoesNotDialForConnectionsTakenElsewhere(t *testing.T) {
+	fc := &countingConnector{}
+	db := sql.OpenDB(fc)
+	defer db.Close()
+	db.SetMaxIdleConns(5)
+	ctx := t.Context()
+
+	var held []*sql.Conn
+	for range 3 {
+		c, err := db.Conn(ctx)
+		if err != nil {
+			t.Fatalf("Conn: %v", err)
+		}
+		held = append(held, c)
+	}
+	for _, c := range held {
+		c.Close()
+	}
+
+	// When the release discards its first connection, "another goroutine"
+	// takes the other two idle ones.
+	var taken []*sql.Conn
+	fc.onClose = func() {
+		fc.onClose = nil
+		for range 2 {
+			c, err := db.Conn(ctx)
+			if err != nil {
+				t.Errorf("Conn: %v", err)
+				return
+			}
+			taken = append(taken, c)
+		}
+	}
+	s := &Server{db: db}
+	if err := s.ReleaseIdleConnections(ctx); err != nil {
+		t.Fatalf("ReleaseIdleConnections: %v", err)
+	}
+	for _, c := range taken {
+		c.Close()
+	}
+	if got := fc.dialed.Load(); got != 3 {
+		t.Errorf("dialed %d times, want 3 — a connection taken elsewhere was replaced by a dial", got)
 	}
 }
 

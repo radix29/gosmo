@@ -157,6 +157,9 @@ type AssemblyFile struct {
 // Files returns the files registered with the assembly, without their
 // contents.
 func (a *Assembly) Files(ctx context.Context) ([]*AssemblyFile, error) {
+	if err := requireID(fmt.Sprintf("list files of assembly %q in %q", a.Name, a.db.Name), a.AssemblyID != 0); err != nil {
+		return nil, err
+	}
 	const q = `
 SELECT ISNULL(f.name, ''), f.file_id, ISNULL(DATALENGTH(f.content), 0)
 FROM   sys.assembly_files f
@@ -176,6 +179,9 @@ ORDER  BY f.file_id`
 // FileContent returns the bytes of one of the assembly's files. fileID 1 is
 // the assembly binary.
 func (a *Assembly) FileContent(ctx context.Context, fileID int) ([]byte, error) {
+	if err := requireID(fmt.Sprintf("read file %d of assembly %q in %q", fileID, a.Name, a.db.Name), a.AssemblyID != 0); err != nil {
+		return nil, err
+	}
 	const q = `
 SELECT f.content
 FROM   sys.assembly_files f
@@ -218,6 +224,9 @@ func (m *AssemblyModule) FullName() string { return qualifiedName(m.Schema, m.Na
 // entry point, so it comes back as the empty string rather than failing the
 // scan.
 func (a *Assembly) Modules(ctx context.Context) ([]*AssemblyModule, error) {
+	if err := requireID(fmt.Sprintf("list modules of assembly %q in %q", a.Name, a.db.Name), a.AssemblyID != 0); err != nil {
+		return nil, err
+	}
 	const q = `
 SELECT am.object_id, SCHEMA_NAME(o.schema_id), o.name, RTRIM(o.type),
        ISNULL(am.assembly_class, ''), ISNULL(am.assembly_method, '')

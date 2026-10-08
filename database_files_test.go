@@ -58,14 +58,14 @@ func TestNormalizeFileGrowth(t *testing.T) {
 func TestFileGroupsCarryTheirType(t *testing.T) {
 	cols := []string{
 		"name", "type_desc", "is_default", "is_read_only",
-		"file_name", "physical_name", "size", "max_size", "growth",
-		"is_percent_growth", "is_primary",
+		"file_id", "file_name", "physical_name", "file_type", "state", "size", "max_size", "growth",
+		"is_percent_growth",
 	}
 	rows := [][]driver.Value{
 		{"PRIMARY", RowsFileGroup, true, false,
-			"appdb", `C:\data\appdb.mdf`, int64(8192), int64(-1), int64(65536), false, true},
+			int64(1), "appdb", `C:\data\appdb.mdf`, "ROWS", "ONLINE", int64(8192), int64(-1), int64(65536), false},
 		{"fsdata", FileStreamFileGroup, true, false,
-			"appdb_fs", `C:\data\appdb_fs`, int64(0), int64(-1), int64(0), false, false},
+			int64(65537), "appdb_fs", `C:\data\appdb_fs`, "FILESTREAM", "ONLINE", int64(0), int64(-1), int64(0), false},
 	}
 	d := qsRecDB(t, 17, cols, rows)
 
@@ -105,14 +105,14 @@ func TestFileGroupsCarryTheirType(t *testing.T) {
 func TestFileGroupsListAnEmptyFilegroup(t *testing.T) {
 	cols := []string{
 		"name", "type_desc", "is_default", "is_read_only",
-		"file_name", "physical_name", "size", "max_size", "growth",
-		"is_percent_growth", "is_primary",
+		"file_id", "file_name", "physical_name", "file_type", "state", "size", "max_size", "growth",
+		"is_percent_growth",
 	}
 	rows := [][]driver.Value{
 		{"archive", RowsFileGroup, false, false,
-			nil, nil, nil, nil, nil, nil, false},
+			nil, nil, nil, nil, nil, nil, nil, nil, nil},
 		{"PRIMARY", RowsFileGroup, true, false,
-			"appdb", `C:\data\appdb.mdf`, int64(8192), int64(-1), int64(10), true, true},
+			int64(1), "appdb", `C:\data\appdb.mdf`, "ROWS", "ONLINE", int64(8192), int64(-1), int64(10), true},
 	}
 	d := qsRecDB(t, 17, cols, rows)
 
@@ -127,10 +127,81 @@ func TestFileGroupsListAnEmptyFilegroup(t *testing.T) {
 		t.Errorf("fgs[0] = %q with %d files, want archive with none", fg.Name, len(fg.Files))
 	}
 	if fg := fgs[1]; fg.Name != "PRIMARY" || len(fg.Files) != 1 ||
-		fg.Files[0].Name != "appdb" || fg.Files[0].GrowthType != "PERCENT" || !fg.Files[0].IsPrimaryFile {
+		fg.Files[0].Name != "appdb" || !fg.Files[0].IsPercentGrowth || !fg.Files[0].IsPrimaryFile() ||
+		fg.Files[0].FileGroup != "PRIMARY" || fg.Files[0].Database() != d {
 		t.Errorf("fgs[1] = %+v, want PRIMARY with its one percent-growth primary file", fg)
 	}
 	if sql := qsRec.last(t).sql; !strings.Contains(sql, "LEFT   JOIN sys.database_files") {
 		t.Errorf("FileGroups query does not outer-join the files:\n%s", sql)
+	}
+}
+
+// TestFileGroupsReportMaxSizeAndGrowthInKB pins the units of a filegroup's
+// files: sys.database_files.max_size and growth are 8 KB pages, and
+// FileGroups once passed them through under the "KB" label, so every max
+// size and fixed growth read eight times too small. A percentage growth
+// stays a percentage, and -1 stays "unlimited".
+func TestFileGroupsReportMaxSizeAndGrowthInKB(t *testing.T) {
+	cols := []string{
+		"name", "type_desc", "is_default", "is_read_only",
+		"file_id", "file_name", "physical_name", "file_type", "state", "size", "max_size", "growth",
+		"is_percent_growth",
+	}
+	rows := [][]driver.Value{
+		{"PRIMARY", RowsFileGroup, true, false,
+			int64(1), "appdb", `C:\data\appdb.mdf`, "ROWS", "ONLINE", int64(8192), int64(1280), int64(8192), false},
+		{"PRIMARY", RowsFileGroup, true, false,
+			int64(3), "appdb2", `C:\data\appdb2.ndf`, "ROWS", "ONLINE", int64(8192), int64(-1), int64(10), true},
+	}
+	d := qsRecDB(t, 17, cols, rows)
+
+	fgs, err := d.FileGroups(context.Background())
+	if err != nil {
+		t.Fatalf("FileGroups: %v", err)
+	}
+	if len(fgs) != 1 || len(fgs[0].Files) != 2 {
+		t.Fatalf("got %+v, want PRIMARY with two files", fgs)
+	}
+	if f := fgs[0].Files[0]; f.MaxSizeKB != 10240 || f.IsPercentGrowth || f.GrowthKB != 65536 || f.SizeKB != 8192 {
+		t.Errorf("appdb = %+v, want MaxSize 10240 KB, Growth 65536 KB", f)
+	}
+	if f := fgs[0].Files[1]; f.MaxSizeKB != -1 || !f.IsPercentGrowth || f.GrowthPercent != 10 || f.GrowthKB != 0 || f.IsPrimaryFile() {
+		t.Errorf("appdb2 = %+v, want MaxSize -1 (unlimited), Growth 10 PERCENT", f)
+	}
+}
+
+// TestFileSizesAreSummedInBigint pins the casts that keep a large file from
+// failing every file read with Msg 8115 (arithmetic overflow converting
+// expression to data type int): size is an int count of 8 KB pages, so
+// size * 8 overflows at 2 TiB in one file and SUM(size) at 16 TiB in all. A
+// file that large is not practical to create on a test server, so this
+// asserts the emitted SQL instead.
+func TestFileSizesAreSummedInBigint(t *testing.T) {
+	cols := []string{"a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k"}
+	d := qsRecDB(t, 17, cols, nil)
+	ctx := context.Background()
+
+	reads := []struct {
+		name string
+		run  func() error
+	}{
+		{"Files", func() error { _, err := d.Files(ctx); return err }},
+		{"DatabaseFiles", func() error { _, err := d.server.DatabaseFiles(ctx, "appdb"); return err }},
+		{"FileGroups", func() error { _, err := d.FileGroups(ctx); return err }},
+		{"SpaceUsed", func() error { _, err := d.SpaceUsed(ctx); return err }},
+		{"DiskUsage", func() error { _, err := d.DiskUsage(ctx); return err }},
+	}
+	for _, r := range reads {
+		_ = r.run() // the fake has no rows for the single-row reads; only the SQL matters
+		sql := qsRec.last(t).sql
+		norm := strings.Join(strings.Fields(sql), " ")
+		for _, bad := range []string{"size * 8", "SUM(size)", "THEN size ", "THEN size-"} {
+			if strings.Contains(norm, bad) {
+				t.Errorf("%s still computes on the int column (%q):\n%s", r.name, bad, sql)
+			}
+		}
+		if !strings.Contains(sql, "CAST(") || !strings.Contains(sql, "size AS bigint)") {
+			t.Errorf("%s does not widen size to bigint:\n%s", r.name, sql)
+		}
 	}
 }

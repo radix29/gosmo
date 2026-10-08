@@ -90,7 +90,7 @@ func StartPlanCapture(ctx context.Context, conn interface {
 	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
 }, mode PlanMode) (stop func() error, err error) {
 	if mode != PlanEstimated && mode != PlanActual {
-		return nil, fmt.Errorf("gosmo: start plan capture: unknown mode %v", mode)
+		return nil, invalidf("gosmo: start plan capture: unknown mode %v", mode)
 	}
 	set := "SET " + mode.setOption()
 	if _, err := conn.ExecContext(ctx, set+" ON"); err != nil {

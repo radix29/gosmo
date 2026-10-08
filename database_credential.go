@@ -122,10 +122,10 @@ type CreateDatabaseScopedCredentialRequest struct {
 // CREDENTIAL, validating the spec.
 func (spec CreateDatabaseScopedCredentialRequest) createDatabaseScopedCredentialStatement() (string, error) {
 	if strings.TrimSpace(spec.Name) == "" {
-		return "", fmt.Errorf("database scoped credential has no name")
+		return "", invalidf("database scoped credential has no name")
 	}
 	if spec.Identity == "" {
-		return "", fmt.Errorf("database scoped credential %q has no identity", spec.Name)
+		return "", invalidf("database scoped credential %q has no identity", spec.Name)
 	}
 
 	stmt := fmt.Sprintf("CREATE DATABASE SCOPED CREDENTIAL %s WITH IDENTITY = N'%s'",
@@ -163,7 +163,7 @@ func (d *Database) CreateDatabaseScopedCredential(ctx context.Context, spec Crea
 func (c *DatabaseScopedCredential) Alter(ctx context.Context, o CredentialOptions) error {
 	identity, secret := o.Identity, o.Secret
 	if identity == "" {
-		return fmt.Errorf("gosmo: alter database scoped credential %q: identity is required", c.Name)
+		return invalidf("gosmo: alter database scoped credential %q: identity is required", c.Name)
 	}
 	stmt := fmt.Sprintf("ALTER DATABASE SCOPED CREDENTIAL %s WITH IDENTITY = N'%s'",
 		quoteIdent(c.Name), escapeSingle(identity))

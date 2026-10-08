@@ -121,7 +121,7 @@ func (idx *Index) SetOptions(ctx context.Context, opts IndexSetOptions) error {
 		}
 	}
 	if len(set) == 0 {
-		return fmt.Errorf("gosmo: set options on index %q: no option given", idx.Name)
+		return invalidf("gosmo: set options on index %q: no option given", idx.Name)
 	}
 	q := fmt.Sprintf("ALTER INDEX %s SET (%s)", idx.target(), strings.Join(set, ", "))
 	if _, err := idx.table.exec(ctx, q); err != nil {
@@ -221,7 +221,7 @@ type IndexRebuildOptions struct {
 // only for the options opts sets.
 func (idx *Index) Rebuild(ctx context.Context, opts IndexRebuildOptions) error {
 	if opts.DataCompression != "" && !opts.DataCompression.valid() {
-		return fmt.Errorf("gosmo: rebuild index %q: invalid data compression %q (must be NONE, ROW, PAGE, COLUMNSTORE, or COLUMNSTORE_ARCHIVE)", idx.Name, opts.DataCompression)
+		return invalidf("gosmo: rebuild index %q: invalid data compression %q (must be NONE, ROW, PAGE, COLUMNSTORE, or COLUMNSTORE_ARCHIVE)", idx.Name, opts.DataCompression)
 	}
 
 	var withParts []string
@@ -241,6 +241,10 @@ func (idx *Index) Rebuild(ctx context.Context, opts IndexRebuildOptions) error {
 	if _, err := idx.table.exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: rebuild index %q: %w", idx.Name, err)
 	}
+	// A rebuild is what enables a disabled index (Enable is this call). Left
+	// set, the stale flag made a later SetIncludedColumns on the same handle
+	// re-disable the index it reissues.
+	setIfApplied(ctx, &idx.IsDisabled, false)
 	return nil
 }
 
@@ -593,7 +597,7 @@ func (m FragmentationMode) normalize() (FragmentationMode, error) {
 	case FragmentationLimited, FragmentationSampled, FragmentationDetailed:
 		return m, nil
 	}
-	return "", fmt.Errorf("invalid mode %q (must be LIMITED, SAMPLED, or DETAILED)", m)
+	return "", invalidf("invalid mode %q (must be LIMITED, SAMPLED, or DETAILED)", m)
 }
 
 // FragmentationStats returns fragmentation info for all indexes on the table,

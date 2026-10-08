@@ -234,6 +234,14 @@ func TestLiveLeanListings(t *testing.T) {
 		if got := summary(ms); !slices.Equal(got, want) {
 			t.Errorf("mappings = %q, want %q", got, want)
 		}
+		// Over a list the caller already has, only those databases are read.
+		ms, err = l.UserMappingsIn(ctx, []*Database{d, d3})
+		if err != nil {
+			t.Fatalf("UserMappingsIn: %v", err)
+		}
+		if got := summary(ms); !slices.Equal(got, []string{want[1], want[2]}) {
+			t.Errorf("UserMappingsIn(live, live3) = %q, want %q", got, []string{want[1], want[2]})
+		}
 
 		// A database held in SINGLE_USER by another connection is ONLINE but
 		// cannot be entered (Msg 924): the batch's TRY/CATCH skips it.
@@ -249,7 +257,19 @@ func TestLiveLeanListings(t *testing.T) {
 			t.Fatalf("hold gosmo_lean_live3: %v", err)
 		}
 		ms, err = l.UserMappings(ctx)
+		// perDatabaseBatch, behind LocalPublications and LocalSubscriptions,
+		// skips the held database the same way.
+		got, berr := perDatabaseBatch(ctx, d.Server(), "batch", []*Database{d, d2, d3},
+			`SELECT DB_NAME() AS probe, 1`,
+			func(kind string, scan func(...any) error) (string, error) {
+				var one int
+				return kind, scan(&one)
+			},
+			func(string, *Database) {})
 		holder.Close()
+		if berr != nil || len(got) != 2 {
+			t.Errorf("perDatabaseBatch with a database held = %v, %v; want two probe rows", got, berr)
+		}
 		db.ExecContext(context.Background(), "ALTER DATABASE [gosmo_lean_live3] SET MULTI_USER")
 		if err != nil {
 			t.Fatalf("UserMappings with a database held: %v", err)

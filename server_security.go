@@ -70,7 +70,7 @@ ORDER  BY pr.name, sp.permission_name`
 // SQL Server accepts in a GRANT/DENY/REVOKE ... statement. Permission
 // names can't be identifier-quoted (QuoteName would wrap them in brackets
 // SQL Server doesn't expect here) or passed as query parameters (GRANT is
-// DDL), so Grant/Deny/RevokeServerPermission reject anything not in this
+// DDL), so ApplyPermission rejects anything not in this
 // list rather than splicing caller input directly into the statement.
 var serverPermissionNames = map[ServerPermission]bool{
 	"ADMINISTER BULK OPERATIONS":      true,

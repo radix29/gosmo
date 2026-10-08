@@ -20,21 +20,21 @@ func TestValidServerPermission(t *testing.T) {
 	}
 }
 
-func TestGrantServerPermissionRejectsUnknownPermission(t *testing.T) {
+func TestApplyPermissionGrantServerRejectsUnknownPermission(t *testing.T) {
 	s := &Server{}
-	err := s.GrantServerPermission(t.Context(), "CONTROL SERVER; DROP DATABASE master; --", "attacker", PermissionOptions{})
+	err := s.ApplyPermission(t.Context(), VerbGrant, Securable{Class: SecurableServer}, ServerPermission("CONTROL SERVER; DROP DATABASE master; --"), "attacker", PermissionOptions{})
 	if err == nil {
-		t.Fatal("GrantServerPermission accepted an unrecognized permission name, want an error")
+		t.Fatal("ApplyPermission Grant Server accepted an unrecognized permission name, want an error")
 	}
 }
 
-func TestDenyAndRevokeServerPermissionRejectUnknownPermission(t *testing.T) {
+func TestApplyPermissionDenyAndRevokeServerRejectUnknownPermission(t *testing.T) {
 	s := &Server{}
-	if err := s.DenyServerPermission(t.Context(), "NOT A REAL PERMISSION", "sa", PermissionOptions{}); err == nil {
-		t.Error("DenyServerPermission accepted an unrecognized permission, want an error")
+	if err := s.ApplyPermission(t.Context(), VerbDeny, Securable{Class: SecurableServer}, ServerPermission("NOT A REAL PERMISSION"), "sa", PermissionOptions{}); err == nil {
+		t.Error("ApplyPermission Deny Server accepted an unrecognized permission, want an error")
 	}
-	if err := s.RevokeServerPermission(t.Context(), "NOT A REAL PERMISSION", "sa", PermissionOptions{}); err == nil {
-		t.Error("RevokeServerPermission accepted an unrecognized permission, want an error")
+	if err := s.ApplyPermission(t.Context(), VerbRevoke, Securable{Class: SecurableServer}, ServerPermission("NOT A REAL PERMISSION"), "sa", PermissionOptions{}); err == nil {
+		t.Error("ApplyPermission Revoke Server accepted an unrecognized permission, want an error")
 	}
 }
 
@@ -50,11 +50,11 @@ func TestValidDatabasePermission(t *testing.T) {
 	}
 }
 
-func TestGrantDatabasePermissionRejectsUnknownPermission(t *testing.T) {
+func TestApplyPermissionGrantDatabaseRejectsUnknownPermission(t *testing.T) {
 	d := &Database{Name: "appdb", server: &Server{}}
-	err := d.GrantDatabasePermission(t.Context(), "CONTROL; DROP TABLE Users; --", "attacker", PermissionOptions{})
+	err := d.ApplyPermission(t.Context(), VerbGrant, Securable{Class: SecurableDatabase}, DatabasePermission("CONTROL; DROP TABLE Users; --"), "attacker", PermissionOptions{})
 	if err == nil {
-		t.Fatal("GrantDatabasePermission accepted an unrecognized permission name, want an error")
+		t.Fatal("ApplyPermission Grant Database accepted an unrecognized permission name, want an error")
 	}
 }
 

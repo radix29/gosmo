@@ -268,7 +268,7 @@ func scanColumns(rows *sql.Rows) ([]*Column, error) {
 // constraint, for those.
 func (t *Table) AlterColumn(ctx context.Context, col ColumnDefinition) error {
 	if col.Name == "" {
-		return fmt.Errorf("gosmo: alter column: name is required")
+		return invalidf("gosmo: alter column: name is required")
 	}
 	if err := checkColumnDefinition(col); err != nil {
 		return fmt.Errorf("gosmo: alter column %q: %w", col.Name, err)
@@ -297,7 +297,7 @@ func (t *Table) AlterColumn(ctx context.Context, col ColumnDefinition) error {
 // column goes with it and is not recoverable.
 func (t *Table) DropColumn(ctx context.Context, name string) error {
 	if name == "" {
-		return fmt.Errorf("gosmo: drop column on %s: name is required", t.FullName())
+		return invalidf("gosmo: drop column on %s: name is required", t.FullName())
 	}
 	if _, err := t.exec(ctx,
 		fmt.Sprintf("ALTER TABLE %s DROP COLUMN %s", t.FullName(), quoteIdent(name))); err != nil {
@@ -319,7 +319,7 @@ func (t *Table) DropColumn(ctx context.Context, name string) error {
 // while @objname must be the three-part table.column form, which this builds.
 func (t *Table) RenameColumn(ctx context.Context, name, newName string) error {
 	if name == "" || newName == "" {
-		return fmt.Errorf("gosmo: rename column on %s: both names are required", t.FullName())
+		return invalidf("gosmo: rename column on %s: both names are required", t.FullName())
 	}
 	objName := t.FullName() + "." + quoteIdent(name)
 	if _, err := t.exec(ctx,
@@ -380,45 +380,45 @@ func colTypeSQL(col ColumnDefinition) string {
 // off a vector, and a vector without dimensions does not parse (Msg 2715).
 func checkColumnDefinition(col ColumnDefinition) error {
 	if !validDataType(col.DataType) {
-		return fmt.Errorf("unrecognized data type %q", col.DataType)
+		return invalidf("unrecognized data type %q", col.DataType)
 	}
 	if col.DataType != DataTypeXML &&
 		(col.XMLSchemaCollectionSchema != "" || col.XMLSchemaCollection != "" || col.IsXMLDocument) {
-		return fmt.Errorf("%s takes no XML schema collection", col.DataType)
+		return invalidf("%s takes no XML schema collection", col.DataType)
 	}
 	if col.DataType != DataTypeVector && (col.VectorDimensions != 0 || col.VectorBaseType != "") {
-		return fmt.Errorf("%s takes no vector dimensions or base type", col.DataType)
+		return invalidf("%s takes no vector dimensions or base type", col.DataType)
 	}
 	switch col.DataType {
 	case DataTypeXML:
 		switch {
 		case col.XMLSchemaCollection == "" && (col.XMLSchemaCollectionSchema != "" || col.IsXMLDocument):
-			return fmt.Errorf("an xml schema or DOCUMENT facet needs a schema collection")
+			return invalidf("an xml schema or DOCUMENT facet needs a schema collection")
 		case col.XMLSchemaCollection != "" && col.XMLSchemaCollectionSchema == "":
 			return fmt.Errorf("xml schema collection %q: %w", col.XMLSchemaCollection, ErrSchemaRequired)
 		}
 	case DataTypeVector:
 		if col.VectorDimensions <= 0 {
-			return fmt.Errorf("a vector needs a positive number of dimensions")
+			return invalidf("a vector needs a positive number of dimensions")
 		}
 		switch strings.ToLower(col.VectorBaseType) {
 		case "", "float32", "float16":
 		default:
-			return fmt.Errorf("unrecognized vector base type %q", col.VectorBaseType)
+			return invalidf("unrecognized vector base type %q", col.VectorBaseType)
 		}
 	}
 	switch col.DataType {
 	case DataTypeDecimal, DataTypeNumeric:
 		if col.Scale != nil && col.Precision == nil {
-			return fmt.Errorf("a %s scale needs a precision", col.DataType)
+			return invalidf("a %s scale needs a precision", col.DataType)
 		}
 	case DataTypeDatetime2, DataTypeTime, DataTypeDatetimeOffset:
 		if col.Precision != nil {
-			return fmt.Errorf("%s takes a scale, not a precision", col.DataType)
+			return invalidf("%s takes a scale, not a precision", col.DataType)
 		}
 	default:
 		if col.Precision != nil || col.Scale != nil {
-			return fmt.Errorf("%s takes no precision or scale", col.DataType)
+			return invalidf("%s takes no precision or scale", col.DataType)
 		}
 	}
 	return nil

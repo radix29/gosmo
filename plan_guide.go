@@ -178,6 +178,14 @@ func (g *PlanGuide) Disable(ctx context.Context) error {
 	return nil
 }
 
+// SetEnabled is Enable when on is true and Disable otherwise.
+func (g *PlanGuide) SetEnabled(ctx context.Context, on bool) error {
+	if on {
+		return g.Enable(ctx)
+	}
+	return g.Disable(ctx)
+}
+
 // Drop drops the plan guide.
 func (g *PlanGuide) Drop(ctx context.Context) error {
 	return g.controlPlanGuide(ctx, "DROP", "drop")

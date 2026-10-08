@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"database/sql/driver"
 	"io"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -94,6 +95,13 @@ func (l *qsRecLog) last(t *testing.T) qsRecCall {
 		t.Fatal("no statement reached the driver")
 	}
 	return l.calls[len(l.calls)-1]
+}
+
+// recorded returns a copy of every statement recorded since the last reset.
+func (l *qsRecLog) recorded() []qsRecCall {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return slices.Clone(l.calls)
 }
 
 type qsRecRows struct {

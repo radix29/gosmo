@@ -67,8 +67,15 @@ func (l *Login) IsSQLLogin() bool { return l.LoginType == "SQL_LOGIN" }
 // explicitly because the connection may be in any database. MappedObject is
 // left empty, without an error, when nothing matches — the mapped object can
 // have been dropped out from under the login.
+//
+// On a LoginRef the SID and type are looked up by name first.
 func (l *Login) ResolveMapping(ctx context.Context) error {
-	switch l.LoginType {
+	what := fmt.Sprintf("resolve mapping for login %q", l.Name)
+	sid, loginType, err := l.identity(ctx, what)
+	if err != nil {
+		return err
+	}
+	switch loginType {
 	case "CERTIFICATE_MAPPED_LOGIN", "ASYMMETRIC_KEY_MAPPED_LOGIN":
 	default:
 		return nil
@@ -78,8 +85,8 @@ SELECT ISNULL((SELECT TOP 1 name FROM master.sys.certificates    WHERE sid = @p1
        ISNULL((SELECT TOP 1 name FROM master.sys.asymmetric_keys WHERE sid = @p1), ''))`
 
 	var name string
-	if err := l.server.queryRowScan(ctx, q, []any{l.SID}, &name); err != nil {
-		return fmt.Errorf("gosmo: resolve mapping for login %q: %w", l.Name, err)
+	if err := l.server.queryRowScan(ctx, q, []any{sid}, &name); err != nil {
+		return fmt.Errorf("gosmo: %s: %w", what, err)
 	}
 	l.MappedObject = name
 	return nil
@@ -94,6 +101,14 @@ func (l *Login) Disable(ctx context.Context) error {
 	return nil
 }
 
+// SetEnabled is Enable when on is true and Disable otherwise.
+func (l *Login) SetEnabled(ctx context.Context, on bool) error {
+	if on {
+		return l.Enable(ctx)
+	}
+	return l.Disable(ctx)
+}
+
 // Enable enables the login.
 func (l *Login) Enable(ctx context.Context) error {
 	if err := l.server.exec(ctx, "ALTER LOGIN "+quoteIdent(l.Name)+" ENABLE"); err != nil {
@@ -106,7 +121,7 @@ func (l *Login) Enable(ctx context.Context) error {
 // Drop drops the login from the server.
 func (l *Login) Drop(ctx context.Context) error {
 	if l.Name == "" {
-		return fmt.Errorf("gosmo: drop login: name is required")
+		return invalidf("gosmo: drop login: name is required")
 	}
 	if err := l.server.exec(ctx, fmt.Sprintf("DROP LOGIN %s", quoteIdent(l.Name))); err != nil {
 		return fmt.Errorf("gosmo: drop login %q: %w", l.Name, err)
@@ -356,29 +371,53 @@ type LoginUserMapping struct {
 // It is two round trips whatever the database count: the database list,
 // then one batch that reads every ONLINE database in turn, each inside its
 // own TRY/CATCH — the per-database skip, made server-side. The read runs
-// as dynamic SQL in the database (EXEC [db].sys.sp_executesql), so a
-// database that cannot be entered fails at that EXEC, inside the TRY,
-// rather than at the batch's compile. A per-database query each was the
+// as dynamic SQL in the database (its sp_executesql, named through a
+// variable — perDatabaseExec says why), so a database that cannot be
+// entered fails at that EXEC, inside the TRY, rather than at the batch's
+// compile. A per-database query each was the
 // shape until 2026-10-03; fanning those across a worker pool was tried
 // and measured slower (2026-08-14), since every worker on a cold pool
 // pays a full login handshake.
 //
 // A failure reading the batch's rows is not skipped: rows already read are
 // in the result, so skipping would return a short list and call it success.
+//
+// On a LoginRef the SID is looked up by name first.
 func (l *Login) UserMappings(ctx context.Context) ([]*LoginUserMapping, error) {
+	sid, _, err := l.identity(ctx, fmt.Sprintf("user mappings for login %q", l.Name))
+	if err != nil {
+		return nil, err
+	}
 	dbs, err := l.server.Databases(ctx)
 	if err != nil {
 		return nil, err
 	}
+	return l.userMappingsBatch(ctx, sid, dbs)
+}
+
+// UserMappingsIn is UserMappings over databases the caller has already
+// listed — a User Mapping page that shows every database reads the list once
+// for both, so the mappings are one round trip (two on a LoginRef, whose SID
+// is looked up first). A database in dbs that is not ONLINE, or that cannot
+// be read, is skipped as UserMappings skips it.
+func (l *Login) UserMappingsIn(ctx context.Context, dbs []*Database) ([]*LoginUserMapping, error) {
+	sid, _, err := l.identity(ctx, fmt.Sprintf("user mappings for login %q", l.Name))
+	if err != nil {
+		return nil, err
+	}
+	return l.userMappingsBatch(ctx, sid, dbs)
+}
+
+// userMappingsBatch is the batch UserMappings and UserMappingsIn share.
+func (l *Login) userMappingsBatch(ctx context.Context, sid []byte, dbs []*Database) ([]*LoginUserMapping, error) {
 	var sb strings.Builder
-	sb.WriteString("SET NOCOUNT ON;\nDECLARE @q nvarchar(max) = " + QuoteLiteral(userMappingsQuery) + ";\n")
+	sb.WriteString("SET NOCOUNT ON;\nDECLARE @proc nvarchar(300), @q nvarchar(max) = " + QuoteLiteral(userMappingsQuery) + ";\n")
 	n := 0
 	for _, db := range dbs {
 		if db.State != "ONLINE" {
 			continue
 		}
-		fmt.Fprintf(&sb, "BEGIN TRY EXEC %s.sys.sp_executesql @q, N'@p1 varbinary(85)', @p1 = @sid; END TRY BEGIN CATCH END CATCH;\n",
-			quoteIdent(db.Name))
+		sb.WriteString(perDatabaseExec(db.Name, ", N'@p1 varbinary(85)', @p1 = @sid"))
 		n++
 	}
 	if n == 0 {
@@ -387,7 +426,7 @@ func (l *Login) UserMappings(ctx context.Context) ([]*LoginUserMapping, error) {
 	// The SID goes in as @sid, renamed for the batch: @p1 is the name each
 	// database's query binds it under.
 	q := "DECLARE @sid varbinary(85) = @p1;\n" + sb.String()
-	rows, err := l.server.query(ctx, q, l.SID)
+	rows, err := l.server.query(ctx, q, sid)
 	if err != nil {
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
@@ -465,7 +504,11 @@ func scanUserMappings(rows rowSource) ([]*LoginUserMapping, error) {
 // userMappingsIn reads one database's mapping for l, for a caller asking
 // about that database by name: a failure is returned, not skipped.
 func (l *Login) userMappingsIn(ctx context.Context, db *Database) ([]*LoginUserMapping, error) {
-	rows, err := db.query(ctx, userMappingsQuery, l.SID)
+	sid, _, err := l.identity(ctx, fmt.Sprintf("user mappings for login %q in %q", l.Name, db.Name))
+	if err != nil {
+		return nil, err
+	}
+	rows, err := db.query(ctx, userMappingsQuery, sid)
 	if err != nil {
 		return nil, fmt.Errorf("gosmo: user mappings for login %q in %q: %w", l.Name, db.Name, err)
 	}
@@ -495,6 +538,7 @@ func (l *Login) MapToDatabase(ctx context.Context, dbName, userName, defaultSche
 // UnmapFromDatabase drops this login's mapped user in the named database.
 // It reads that database's mapping alone: UserMappings would query every
 // database on the server to find the one whose name it was already given.
+// On a LoginRef the SID is looked up by name first.
 func (l *Login) UnmapFromDatabase(ctx context.Context, dbName string) error {
 	d, err := l.server.DatabaseByName(ctx, dbName)
 	if err != nil {
@@ -558,15 +602,38 @@ func (s *Server) LoginByName(ctx context.Context, name string) (*Login, error) {
 // LoginRef returns a lightweight handle for name without querying the server
 // at all — unlike LoginByName, it doesn't verify the
 // login exists or populate SID/LoginType/IsDisabled/etc. (they stay at
-// their zero value). Every write method on *Login (AddServerRoleMember,
-// Disable, ChangePassword, ...) only ever needs the login's
-// name, never those cached fields, so this is sufficient for issuing
-// further ALTER-style calls against a login the caller already knows
-// exists — most commonly one it just created in the same operation. See
-// Server.DatabaseRef's doc comment for why this also matters under a
+// their zero value). The ALTER-style writes on *Login (AddServerRoleMember,
+// Disable, ChangePassword, ...) name the login and need nothing else, so
+// this is sufficient for issuing them against a login the caller already
+// knows exists — most commonly one it just created in the same operation.
+// See Server.DatabaseRef's doc comment for why this also matters under a
 // WithScript-derived context.
+//
+// The reads keyed by SID or login type (UserMappings, ResolveMapping, and
+// UnmapFromDatabase, a write that reads the mapping first) look both up by
+// name on this handle — one extra round trip, and a not-found error for a
+// login that does not exist, rather than an empty result.
 func (s *Server) LoginRef(name string) *Login {
 	return &Login{server: s, Name: name}
+}
+
+// identity returns the login's SID and type_desc: the fields when the login
+// was read (SID is never empty on a read login), else looked up by name. The
+// handle is not updated — a read must not write to a receiver another
+// goroutine may be reading.
+func (l *Login) identity(ctx context.Context, what string) ([]byte, string, error) {
+	if l.SID != nil {
+		return l.SID, l.LoginType, nil
+	}
+	var sid []byte
+	var loginType string
+	err := l.server.queryRowScan(ctx, `
+SELECT sid, type_desc FROM sys.server_principals
+WHERE  name = @p1 AND type IN ('S','U','G','E','X','C','K')`, []any{l.Name}, &sid, &loginType)
+	if err != nil {
+		return nil, "", rowErr(err, notFoundf("gosmo: login %q not found", l.Name), what)
+	}
+	return sid, loginType, nil
 }
 
 // CreateLogin creates a login. With no CreateLoginRequest.Source, an empty
@@ -605,7 +672,7 @@ func (s *Server) LoginRef(name string) *Login {
 func (s *Server) CreateLogin(ctx context.Context, req CreateLoginRequest) (*Login, error) {
 	name, password, opts := req.Name, req.Password, &req
 	if name == "" {
-		return nil, fmt.Errorf("gosmo: create login: name is required")
+		return nil, invalidf("gosmo: create login: name is required")
 	}
 
 	src := opts.Source
@@ -668,25 +735,25 @@ func (s *Server) CreateLogin(ctx context.Context, req CreateLoginRequest) (*Logi
 func createLoginStatement(name, password string, src LoginSource, opts *CreateLoginRequest) (string, bool, error) {
 	isSQL := src == LoginSourceSQL
 	if !isSQL && (password != "" || opts.PasswordHash != nil) {
-		return "", false, fmt.Errorf("a %s login takes no password", src)
+		return "", false, invalidf("a %s login takes no password", src)
 	}
 	if opts.MustChange && !isSQL {
-		return "", false, fmt.Errorf("MustChange applies to a SQL login only, not a %s login", src)
+		return "", false, invalidf("MustChange applies to a SQL login only, not a %s login", src)
 	}
 	if !isSQL && (opts.CheckPolicy != nil || opts.CheckExpiration != nil) {
-		return "", false, fmt.Errorf("CheckPolicy and CheckExpiration apply to a SQL login only, not a %s login", src)
+		return "", false, invalidf("CheckPolicy and CheckExpiration apply to a SQL login only, not a %s login", src)
 	}
 	if !isSQL && opts.SID != nil {
-		return "", false, fmt.Errorf("SID applies to a SQL login only, not a %s login", src)
+		return "", false, invalidf("SID applies to a SQL login only, not a %s login", src)
 	}
 	if !isSQL && opts.Credential != "" {
-		return "", false, fmt.Errorf("a credential maps to a SQL login only, not a %s login", src)
+		return "", false, invalidf("a credential maps to a SQL login only, not a %s login", src)
 	}
 	if (opts.DefaultDatabase != "" || opts.DefaultLanguage != "") && (src == LoginSourceCertificate || src == LoginSourceAsymmetricKey) {
-		return "", false, fmt.Errorf("a %s login cannot have a default database or language", src)
+		return "", false, invalidf("a %s login cannot have a default database or language", src)
 	}
 	if opts.ObjectID != "" && src != LoginSourceExternalProvider {
-		return "", false, fmt.Errorf("ObjectID applies to an external provider login only, not a %s login", src)
+		return "", false, invalidf("ObjectID applies to an external provider login only, not a %s login", src)
 	}
 
 	var sb strings.Builder
@@ -697,15 +764,15 @@ func createLoginStatement(name, password string, src LoginSource, opts *CreateLo
 		policyOff := opts.CheckPolicy != nil && !*opts.CheckPolicy
 		switch {
 		case password == "" && opts.PasswordHash == nil:
-			return "", false, fmt.Errorf("a SQL login requires a password")
+			return "", false, invalidf("a SQL login requires a password")
 		case password != "" && opts.PasswordHash != nil:
-			return "", false, fmt.Errorf("a SQL login takes Password or PasswordHash, not both")
+			return "", false, invalidf("a SQL login takes Password or PasswordHash, not both")
 		case opts.MustChange && opts.PasswordHash != nil:
-			return "", false, fmt.Errorf("MustChange cannot be combined with PasswordHash")
+			return "", false, invalidf("MustChange cannot be combined with PasswordHash")
 		case opts.MustChange && (policyOff || (opts.CheckExpiration != nil && !*opts.CheckExpiration)):
-			return "", false, fmt.Errorf("MustChange requires CheckPolicy and CheckExpiration on")
+			return "", false, invalidf("MustChange requires CheckPolicy and CheckExpiration on")
 		case policyOff && opts.CheckExpiration != nil && *opts.CheckExpiration:
-			return "", false, fmt.Errorf("CheckExpiration cannot be on when CheckPolicy is off")
+			return "", false, invalidf("CheckExpiration cannot be on when CheckPolicy is off")
 		}
 		if opts.PasswordHash != nil {
 			fmt.Fprintf(&sb, " WITH PASSWORD = %s HASHED", binaryLiteral(opts.PasswordHash))
@@ -748,18 +815,18 @@ func createLoginStatement(name, password string, src LoginSource, opts *CreateLo
 		return sb.String(), opts.DefaultDatabase != "" || opts.DefaultLanguage != "", nil
 	case LoginSourceCertificate:
 		if opts.CertificateName == "" {
-			return "", false, fmt.Errorf("a certificate login requires CertificateName")
+			return "", false, invalidf("a certificate login requires CertificateName")
 		}
 		fmt.Fprintf(&sb, " FROM CERTIFICATE %s", quoteIdent(opts.CertificateName))
 		return sb.String(), false, nil
 	case LoginSourceAsymmetricKey:
 		if opts.AsymmetricKeyName == "" {
-			return "", false, fmt.Errorf("an asymmetric key login requires AsymmetricKeyName")
+			return "", false, invalidf("an asymmetric key login requires AsymmetricKeyName")
 		}
 		fmt.Fprintf(&sb, " FROM ASYMMETRIC KEY %s", quoteIdent(opts.AsymmetricKeyName))
 		return sb.String(), false, nil
 	default:
-		return "", false, fmt.Errorf("unknown login source %d", int(src))
+		return "", false, invalidf("unknown login source %d", int(src))
 	}
 	return sb.String(), false, nil
 }

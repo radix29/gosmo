@@ -128,10 +128,10 @@ type CreateCredentialRequest struct {
 // createCredentialStatement builds CREATE CREDENTIAL, validating the spec.
 func (spec CreateCredentialRequest) createCredentialStatement() (string, error) {
 	if strings.TrimSpace(spec.Name) == "" {
-		return "", fmt.Errorf("credential has no name")
+		return "", invalidf("credential has no name")
 	}
 	if spec.Identity == "" {
-		return "", fmt.Errorf("credential %q has no identity", spec.Name)
+		return "", invalidf("credential %q has no identity", spec.Name)
 	}
 
 	stmt := fmt.Sprintf("CREATE CREDENTIAL %s WITH IDENTITY = N'%s'",
@@ -181,7 +181,7 @@ type CredentialOptions struct {
 func (c *Credential) Alter(ctx context.Context, o CredentialOptions) error {
 	identity, secret := o.Identity, o.Secret
 	if identity == "" {
-		return fmt.Errorf("gosmo: alter credential %q: identity is required", c.Name)
+		return invalidf("gosmo: alter credential %q: identity is required", c.Name)
 	}
 	stmt := fmt.Sprintf("ALTER CREDENTIAL %s WITH IDENTITY = N'%s'",
 		quoteIdent(c.Name), escapeSingle(identity))

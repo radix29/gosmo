@@ -50,7 +50,7 @@ func (d *Database) renameSchemaObject(ctx context.Context, what, class, schema, 
 		return err
 	}
 	if newName == "" {
-		return fmt.Errorf("gosmo: rename %s %s: new name is required", what, qualifiedName(schema, oldName))
+		return invalidf("gosmo: rename %s %s: new name is required", what, qualifiedName(schema, oldName))
 	}
 	if _, err := d.exec(ctx,
 		"EXEC sp_rename @objname = @p1, @newname = @p2, @objtype = N'"+class+"'",
@@ -110,7 +110,7 @@ func (d *Database) refuseSameSchemaTransfer(ctx context.Context, what, targetSch
 		}
 	}
 	if same {
-		return fmt.Errorf("gosmo: transfer %s %s: it is already in schema %s", what, qualifiedName(schema, name), quoteIdent(schema))
+		return invalidf("gosmo: transfer %s %s: it is already in schema %s", what, qualifiedName(schema, name), quoteIdent(schema))
 	}
 	return nil
 }

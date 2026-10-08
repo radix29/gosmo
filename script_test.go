@@ -14,8 +14,8 @@ func TestWithScriptCapturesServerWriteWithoutExecuting(t *testing.T) {
 	s := &Server{}
 	ctx, script := WithScript(context.Background())
 
-	if err := s.GrantServerPermission(ctx, "CONNECT SQL", "app_user", PermissionOptions{}); err != nil {
-		t.Fatalf("GrantServerPermission under WithScript: %v", err)
+	if err := s.ApplyPermission(ctx, VerbGrant, Securable{Class: SecurableServer}, ServerPermission("CONNECT SQL"), "app_user", PermissionOptions{}); err != nil {
+		t.Fatalf("ApplyPermission Grant Server under WithScript: %v", err)
 	}
 
 	if len(script.Statements()) != 1 {
@@ -30,8 +30,8 @@ func TestWithScriptCapturesDatabaseWriteWithoutExecuting(t *testing.T) {
 	d := &Database{server: &Server{}, Name: "AppDB"}
 	ctx, script := WithScript(context.Background())
 
-	if err := d.GrantDatabasePermission(ctx, "SELECT", "app_user", PermissionOptions{}); err != nil {
-		t.Fatalf("GrantDatabasePermission under WithScript: %v", err)
+	if err := d.ApplyPermission(ctx, VerbGrant, Securable{Class: SecurableDatabase}, DatabasePermission("SELECT"), "app_user", PermissionOptions{}); err != nil {
+		t.Fatalf("ApplyPermission Grant Database under WithScript: %v", err)
 	}
 
 	if len(script.Statements()) != 1 {
@@ -50,10 +50,10 @@ func TestWithScriptCollectorsAreIndependent(t *testing.T) {
 	ctx1, script1 := WithScript(context.Background())
 	ctx2, script2 := WithScript(context.Background())
 
-	if err := s.GrantServerPermission(ctx1, "CONNECT SQL", "a", PermissionOptions{}); err != nil {
+	if err := s.ApplyPermission(ctx1, VerbGrant, Securable{Class: SecurableServer}, ServerPermission("CONNECT SQL"), "a", PermissionOptions{}); err != nil {
 		t.Fatalf("grant under ctx1: %v", err)
 	}
-	if err := s.GrantServerPermission(ctx2, "CONNECT SQL", "b", PermissionOptions{}); err != nil {
+	if err := s.ApplyPermission(ctx2, VerbGrant, Securable{Class: SecurableServer}, ServerPermission("CONNECT SQL"), "b", PermissionOptions{}); err != nil {
 		t.Fatalf("grant under ctx2: %v", err)
 	}
 
@@ -325,7 +325,7 @@ func TestBindScriptArgsScriptsAnEmptyBinaryAsTheEmptyLiteral(t *testing.T) {
 
 // TestServerScopePermissionsScriptTheUsePrefix pins that a captured
 // server-scope grant carries "USE master" — the statement SQL Server needs
-// before it will accept one at all. See GrantServerPermission on why
+// before it will accept one at all. See Server.ApplyPermission on why
 // the prefix form is safe against the connection pool.
 func TestServerScopePermissionsScriptTheUsePrefix(t *testing.T) {
 	s := &Server{}
@@ -335,13 +335,13 @@ func TestServerScopePermissionsScriptTheUsePrefix(t *testing.T) {
 		want string
 	}{
 		{"grant", func(ctx context.Context) error {
-			return s.GrantServerPermission(ctx, "CONNECT SQL", "app_user", PermissionOptions{})
+			return s.ApplyPermission(ctx, VerbGrant, Securable{Class: SecurableServer}, ServerPermission("CONNECT SQL"), "app_user", PermissionOptions{})
 		}, "GRANT CONNECT SQL TO [app_user]"},
 		{"deny", func(ctx context.Context) error {
-			return s.DenyServerPermission(ctx, "CONNECT SQL", "app_user", PermissionOptions{})
+			return s.ApplyPermission(ctx, VerbDeny, Securable{Class: SecurableServer}, ServerPermission("CONNECT SQL"), "app_user", PermissionOptions{})
 		}, "DENY CONNECT SQL TO [app_user]"},
 		{"revoke", func(ctx context.Context) error {
-			return s.RevokeServerPermission(ctx, "CONNECT SQL", "app_user", PermissionOptions{})
+			return s.ApplyPermission(ctx, VerbRevoke, Securable{Class: SecurableServer}, ServerPermission("CONNECT SQL"), "app_user", PermissionOptions{})
 		}, "REVOKE CONNECT SQL FROM [app_user]"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
@@ -368,8 +368,8 @@ func TestServerScopePermissionsScriptTheUsePrefix(t *testing.T) {
 // connected.
 func TestServerPermissionRejectedBeforeConnecting(t *testing.T) {
 	s := &Server{}
-	if err := s.GrantServerPermission(context.Background(), "DROP TABLE x", "app_user", PermissionOptions{}); err == nil {
-		t.Error("GrantServerPermission accepted an unrecognized permission")
+	if err := s.ApplyPermission(context.Background(), VerbGrant, Securable{Class: SecurableServer}, ServerPermission("DROP TABLE x"), "app_user", PermissionOptions{}); err == nil {
+		t.Error("ApplyPermission Grant Server accepted an unrecognized permission")
 	}
 }
 

@@ -136,6 +136,13 @@ func TestLiveTreeFamiliesReadTheirCatalog(t *testing.T) {
 		if !strings.Contains(def, "CREATE DEFAULT") {
 			t.Errorf("definition = %q, want the CREATE DEFAULT text", def)
 		}
+		all, err := d.DefaultDefinitions(ctx)
+		if err != nil {
+			t.Fatalf("DefaultDefinitions: %v", err)
+		}
+		if len(all) != 1 || all[defs[0].ObjectID] != def {
+			t.Errorf("DefaultDefinitions = %v, want only fam_default's text keyed by %d", all, defs[0].ObjectID)
+		}
 
 		if _, err := d.DefaultByName(ctx, "dbo", "DF_fam_child_amount"); !errors.Is(err, ErrNotFound) {
 			t.Errorf("DefaultByName on a default constraint: err = %v, want ErrNotFound", err)
@@ -159,6 +166,13 @@ func TestLiveTreeFamiliesReadTheirCatalog(t *testing.T) {
 		}
 		if !strings.Contains(def, "CREATE RULE") {
 			t.Errorf("definition = %q, want the CREATE RULE text", def)
+		}
+		all, err := d.RuleDefinitions(ctx)
+		if err != nil {
+			t.Fatalf("RuleDefinitions: %v", err)
+		}
+		if len(all) != 1 || all[rules[0].ObjectID] != def {
+			t.Errorf("RuleDefinitions = %v, want only fam_rule's text keyed by %d", all, rules[0].ObjectID)
 		}
 	})
 }

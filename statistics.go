@@ -131,7 +131,7 @@ func scanStatistic(t *Table, scan func(...any) error) (*Statistic, error) {
 // server's default sampling).
 func checkSamplePct(op string, samplePct int) error {
 	if samplePct < 0 || samplePct > 100 {
-		return fmt.Errorf("gosmo: %s: sample percentage %d out of range (0-100)", op, samplePct)
+		return invalidf("gosmo: %s: sample percentage %d out of range (0-100)", op, samplePct)
 	}
 	return nil
 }
@@ -230,16 +230,16 @@ func (t *Table) CreateStatistic(ctx context.Context, req CreateStatisticRequest)
 // statement can be pinned without a server.
 func buildCreateStatisticStatement(tableName string, req CreateStatisticRequest) (string, error) {
 	if req.Name == "" {
-		return "", fmt.Errorf("gosmo: create statistic: name is required")
+		return "", invalidf("gosmo: create statistic: name is required")
 	}
 	if len(req.Columns) == 0 {
-		return "", fmt.Errorf("gosmo: create statistic: at least one column required")
+		return "", invalidf("gosmo: create statistic: at least one column required")
 	}
 	if err := checkSamplePct("create statistic "+req.Name, req.SamplePercent); err != nil {
 		return "", err
 	}
 	if req.FullScan && req.SamplePercent > 0 {
-		return "", fmt.Errorf("gosmo: create statistic %q: a full scan and a sample percentage are alternatives", req.Name)
+		return "", invalidf("gosmo: create statistic %q: a full scan and a sample percentage are alternatives", req.Name)
 	}
 
 	quotedCols := make([]string, len(req.Columns))

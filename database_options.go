@@ -189,10 +189,10 @@ func isSimpleSetValue(s string) bool {
 // Server.ReleaseIdleConnections). The other options take it too.
 func (d *Database) SetDatabaseOption(ctx context.Context, opt DatabaseOption, value string, term Termination) error {
 	if !validDatabaseOption(opt) {
-		return fmt.Errorf("gosmo: set database option: unrecognized option %q", opt)
+		return invalidf("gosmo: set database option: unrecognized option %q", opt)
 	}
 	if !isSimpleSetValue(value) {
-		return fmt.Errorf("gosmo: set database option %s: invalid value %q", opt, value)
+		return invalidf("gosmo: set database option %s: invalid value %q", opt, value)
 	}
 	with, err := term.withClause()
 	if err != nil {

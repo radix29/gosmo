@@ -110,7 +110,7 @@ func (s *Server) BuildBackupStatement(opts BackupOptions) (string, error) {
 // buildBackupStatement is Server.BuildBackupStatement.
 func buildBackupStatement(opts BackupOptions) (string, error) {
 	if opts.Database == "" {
-		return "", fmt.Errorf("gosmo: backup: database name is required")
+		return "", invalidf("gosmo: backup: database name is required")
 	}
 	if err := checkTargets("backup", opts.Devices); err != nil {
 		return "", err
@@ -119,7 +119,7 @@ func buildBackupStatement(opts BackupOptions) (string, error) {
 		opts.Action = BackupActionDatabase
 	}
 	if !validBackupAction(opts.Action) {
-		return "", fmt.Errorf("gosmo: backup: unrecognized action %q", opts.Action)
+		return "", invalidf("gosmo: backup: unrecognized action %q", opts.Action)
 	}
 
 	// Neither DIFFERENTIAL nor FILES is its own BACKUP verb: a differential is
@@ -198,7 +198,7 @@ func buildBackupStatement(opts BackupOptions) (string, error) {
 // more work than the caller asked for rather than failing.
 func backupFileSpec(verb string, files, fileGroups []string) (string, error) {
 	if len(files) == 0 && len(fileGroups) == 0 {
-		return "", fmt.Errorf("gosmo: %s: action %s needs at least one file or filegroup", verb, BackupActionFiles)
+		return "", invalidf("gosmo: %s: action %s needs at least one file or filegroup", verb, BackupActionFiles)
 	}
 	parts := make([]string, 0, len(files)+len(fileGroups))
 	for _, f := range files {

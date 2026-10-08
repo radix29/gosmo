@@ -305,11 +305,11 @@ func (o QueryStoreReportOptions) resolve() (qsReportSpec, error) {
 	}
 	m, ok := qsMetric(o.Metric)
 	if !ok {
-		return qsReportSpec{}, fmt.Errorf("gosmo: query store report: unknown metric %q", o.Metric)
+		return qsReportSpec{}, invalidf("gosmo: query store report: unknown metric %q", o.Metric)
 	}
 	s, ok := qsStatistic(o.Statistic)
 	if !ok {
-		return qsReportSpec{}, fmt.Errorf("gosmo: query store report: unknown statistic %q", o.Statistic)
+		return qsReportSpec{}, invalidf("gosmo: query store report: unknown statistic %q", o.Statistic)
 	}
 	if o.To.IsZero() {
 		o.To = time.Now()

@@ -185,6 +185,87 @@ type LocalSubscription struct {
 // Database returns the subscription database.
 func (l *LocalSubscription) Database() *Database { return l.db }
 
+// The two local-subscription reads, shared by Database.LocalSubscriptions
+// and Server.LocalSubscriptions: a select list and the FROM through ORDER BY.
+//
+// MSsubscription_properties holds a pull subscription's settings; a database
+// with push subscriptions only has none, so without it (withProps false) the
+// two columns it supplies read NULL and there is no join.
+func localTranSubscriptionColumns(withProps bool) string {
+	props := `CAST(NULL AS int), CAST(NULL AS sysname)`
+	if withProps {
+		props = `p.publication_type, p.distributor`
+	}
+	return `s.publisher, s.publisher_db, s.publication, s.subscription_type,
+       ISNULL(s.description, N''), s.time, ISNULL(s.distribution_agent, N''),
+       s.independent_agent, s.update_mode, ` + props
+}
+
+func localTranSubscriptionFrom(withProps bool) string {
+	join := ``
+	if withProps {
+		join = `
+LEFT   JOIN dbo.MSsubscription_properties AS p
+         ON p.publisher = s.publisher AND p.publisher_db = s.publisher_db AND p.publication = s.publication`
+	}
+	return `
+FROM   dbo.MSreplication_subscriptions AS s` + join + `
+ORDER  BY s.publisher, s.publisher_db, s.publication`
+}
+
+// The merge read: the subscribing database's own row is the one naming it;
+// the publisher's row beside it has subid = pubid. A publication the
+// database itself publishes (republishing) is its own, not a subscription.
+const (
+	localMergeSubscriptionColumns = `p.publisher, p.publisher_db, p.name, s.subscription_type, ISNULL(s.description, N''),
+       s.last_sync_date, ISNULL(p.distributor, N''), s.subscriber_type,
+       ISNULL(s.last_sync_status, 0), ISNULL(s.last_sync_summary, N'')`
+	localMergeSubscriptionFrom = `
+FROM   dbo.sysmergesubscriptions AS s
+JOIN   dbo.sysmergepublications AS p ON p.pubid = s.pubid
+WHERE  s.subid <> s.pubid
+  AND  s.db_name = DB_NAME() AND UPPER(s.subscriber_server) = UPPER(@@SERVERNAME)
+  AND  NOT (p.publisher_db = DB_NAME() AND UPPER(p.publisher) = UPPER(@@SERVERNAME))
+ORDER  BY p.publisher, p.publisher_db, p.name`
+)
+
+// scanLocalTranSubscription reads one localTranSubscriptionColumns row.
+func scanLocalTranSubscription(d *Database, scan func(...any) error) (*LocalSubscription, error) {
+	l := &LocalSubscription{db: d}
+	var subType int
+	var last sql.NullTime
+	var pubType sql.NullInt32
+	var distributor sql.NullString
+	if err := scan(&l.Publisher, &l.PublisherDB, &l.Publication, &subType,
+		&l.Description, &last, &l.AgentJob,
+		&l.IndependentAgent, &l.UpdateMode, &pubType, &distributor); err != nil {
+		return nil, err
+	}
+	l.Type = SubscriptionType(subType)
+	l.LastSyncTime = last.Time
+	l.Distributor = distributor.String
+	if pubType.Valid && pubType.Int32 == 1 {
+		l.PublicationType = PublicationSnapshot
+	}
+	return l, nil
+}
+
+// scanLocalMergeSubscription reads one localMergeSubscriptionColumns row.
+func scanLocalMergeSubscription(d *Database, scan func(...any) error) (*LocalSubscription, error) {
+	l := &LocalSubscription{db: d, PublicationType: PublicationMerge}
+	var subType, subscriberType int
+	var last sql.NullTime
+	if err := scan(&l.Publisher, &l.PublisherDB, &l.Publication, &subType, &l.Description,
+		&last, &l.Distributor, &subscriberType,
+		&l.LastSyncStatus, &l.LastSyncSummary); err != nil {
+		return nil, err
+	}
+	l.Type = SubscriptionType(subType)
+	l.LastSyncTime = last.Time
+	l.SubscriberType = mergeSubscriberTypes[subscriberType]
+	return l, nil
+}
+
 // LocalSubscriptions returns the subscriptions d holds, snapshot and
 // transactional first, then merge, each in publisher, database and
 // publication order. A database that subscribes to nothing returns none and
@@ -201,40 +282,10 @@ func (d *Database) LocalSubscriptions(ctx context.Context) ([]*LocalSubscription
 	}
 	var out []*LocalSubscription
 	if have[0] {
-		// MSsubscription_properties holds a pull subscription's settings;
-		// without one (push only) the join has nothing to find.
-		props := `CAST(NULL AS int), CAST(NULL AS sysname)`
-		join := ``
-		if have[1] {
-			props = `p.publication_type, p.distributor`
-			join = `
-LEFT   JOIN dbo.MSsubscription_properties AS p
-         ON p.publisher = s.publisher AND p.publisher_db = s.publisher_db AND p.publication = s.publication`
-		}
-		rows, err := d.query(ctx, `
-SELECT s.publisher, s.publisher_db, s.publication, s.subscription_type,
-       ISNULL(s.description, N''), s.time, ISNULL(s.distribution_agent, N''),
-       s.independent_agent, s.update_mode, `+props+`
-FROM   dbo.MSreplication_subscriptions AS s`+join+`
-ORDER  BY s.publisher, s.publisher_db, s.publication`)
+		q := "SELECT " + localTranSubscriptionColumns(have[1]) + localTranSubscriptionFrom(have[1])
+		rows, err := d.query(ctx, q)
 		subs, err := scanRows(rows, err, what, func(scan func(...any) error) (*LocalSubscription, error) {
-			l := &LocalSubscription{db: d}
-			var subType int
-			var last sql.NullTime
-			var pubType sql.NullInt32
-			var distributor sql.NullString
-			if err := scan(&l.Publisher, &l.PublisherDB, &l.Publication, &subType,
-				&l.Description, &last, &l.AgentJob,
-				&l.IndependentAgent, &l.UpdateMode, &pubType, &distributor); err != nil {
-				return nil, err
-			}
-			l.Type = SubscriptionType(subType)
-			l.LastSyncTime = last.Time
-			l.Distributor = distributor.String
-			if pubType.Valid && pubType.Int32 == 1 {
-				l.PublicationType = PublicationSnapshot
-			}
-			return l, nil
+			return scanLocalTranSubscription(d, scan)
 		})
 		if err != nil {
 			return nil, err
@@ -242,32 +293,9 @@ ORDER  BY s.publisher, s.publisher_db, s.publication`)
 		out = append(out, subs...)
 	}
 	if have[2] && have[3] {
-		// d's own row is the one naming d; the publisher's row beside it
-		// has subid = pubid. A publication d itself publishes (republishing)
-		// is d's, not a subscription.
-		rows, err := d.query(ctx, `
-SELECT p.publisher, p.publisher_db, p.name, s.subscription_type, ISNULL(s.description, N''),
-       s.last_sync_date, ISNULL(p.distributor, N''), s.subscriber_type,
-       ISNULL(s.last_sync_status, 0), ISNULL(s.last_sync_summary, N'')
-FROM   dbo.sysmergesubscriptions AS s
-JOIN   dbo.sysmergepublications AS p ON p.pubid = s.pubid
-WHERE  s.subid <> s.pubid
-  AND  s.db_name = DB_NAME() AND UPPER(s.subscriber_server) = UPPER(@@SERVERNAME)
-  AND  NOT (p.publisher_db = DB_NAME() AND UPPER(p.publisher) = UPPER(@@SERVERNAME))
-ORDER  BY p.publisher, p.publisher_db, p.name`)
+		rows, err := d.query(ctx, "SELECT "+localMergeSubscriptionColumns+localMergeSubscriptionFrom)
 		subs, err := scanRows(rows, err, what, func(scan func(...any) error) (*LocalSubscription, error) {
-			l := &LocalSubscription{db: d, PublicationType: PublicationMerge}
-			var subType, subscriberType int
-			var last sql.NullTime
-			if err := scan(&l.Publisher, &l.PublisherDB, &l.Publication, &subType, &l.Description,
-				&last, &l.Distributor, &subscriberType,
-				&l.LastSyncStatus, &l.LastSyncSummary); err != nil {
-				return nil, err
-			}
-			l.Type = SubscriptionType(subType)
-			l.LastSyncTime = last.Time
-			l.SubscriberType = mergeSubscriberTypes[subscriberType]
-			return l, nil
+			return scanLocalMergeSubscription(d, scan)
 		})
 		if err != nil {
 			return nil, err
@@ -284,7 +312,10 @@ ORDER  BY p.publisher, p.publisher_db, p.name`)
 //
 // sys.databases.is_subscribed does not say which databases to look in (see
 // the top of this file), so the candidates are those holding a subscriber
-// table at all.
+// table at all. It is two round trips whatever their count: the candidates,
+// then one batch reading each inside its own TRY/CATCH (perDatabaseBatch). It
+// was up to three per database until 2026-10-08, and a database that failed
+// part-way failed the whole listing.
 func (s *Server) LocalSubscriptions(ctx context.Context) ([]*LocalSubscription, error) {
 	const what = "list local subscriptions"
 	if err := s.refuseAzureReplication(what); err != nil {
@@ -301,13 +332,23 @@ func (s *Server) LocalSubscriptions(ctx context.Context) ([]*LocalSubscription, 
 	if err != nil {
 		return nil, err
 	}
-	var out []*LocalSubscription
-	for _, d := range dbs {
-		subs, err := d.LocalSubscriptions(ctx)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, subs...)
-	}
-	return out, nil
+	// The IFs stand in for replTables, as in Server.LocalPublications.
+	return perDatabaseBatch(ctx, s, what, dbs, `
+IF OBJECT_ID(N'dbo.MSreplication_subscriptions', N'U') IS NOT NULL
+BEGIN
+    IF OBJECT_ID(N'dbo.MSsubscription_properties', N'U') IS NOT NULL
+        SELECT DB_NAME() AS tran_subscription, `+localTranSubscriptionColumns(true)+localTranSubscriptionFrom(true)+`;
+    ELSE
+        SELECT DB_NAME() AS tran_subscription, `+localTranSubscriptionColumns(false)+localTranSubscriptionFrom(false)+`;
+END
+IF OBJECT_ID(N'dbo.sysmergesubscriptions', N'U') IS NOT NULL
+   AND OBJECT_ID(N'dbo.sysmergepublications', N'U') IS NOT NULL
+    SELECT DB_NAME() AS merge_subscription, `+localMergeSubscriptionColumns+localMergeSubscriptionFrom+`;`,
+		func(kind string, scan func(...any) error) (*LocalSubscription, error) {
+			if kind == "merge_subscription" {
+				return scanLocalMergeSubscription(nil, scan)
+			}
+			return scanLocalTranSubscription(nil, scan)
+		},
+		func(l *LocalSubscription, d *Database) { l.db = d })
 }

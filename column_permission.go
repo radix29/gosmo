@@ -44,11 +44,6 @@ var columnPermissionNames = map[ObjectPermission]bool{
 	PermSelect: true, PermUpdate: true, PermReferences: true,
 }
 
-// validColumnPermission reports whether permission has a column-level form.
-func validColumnPermission(permission ObjectPermission) bool {
-	return columnPermissionNames[permission]
-}
-
 // ColumnPermissionNames returns every permission name GRANT/DENY/REVOKE
 // accepts on a column, sorted — the catalog a column-permissions grid
 // enumerates, the way ObjectPermissionNames is the catalog for the whole
@@ -123,59 +118,4 @@ func (d *Database) scanColumnPermissions(ctx context.Context, q, what string, ar
 		e.State = PermissionState(state)
 		return e, nil
 	})
-}
-
-// GrantColumnPermission grants permission on the named columns of
-// schema.name to principal. Passing several columns renders the one
-// statement SQL Server accepts for them — GRANT SELECT (a, b) ON ... — not
-// one statement per column.
-//
-// opts adds the WITH GRANT OPTION modifiers; the zero value is the plain statement.
-func (d *Database) GrantColumnPermission(ctx context.Context, schema, name string, permission ObjectPermission, columns []string, principal string, opts PermissionOptions) error {
-	if err := requireSchema("grant column permission", schema, name); err != nil {
-		return err
-	}
-	if err := requireColumns("grant", columns); err != nil {
-		return err
-	}
-	return d.objectPermission(ctx, "GRANT", schema, name, permission, columns, principal, opts)
-}
-
-// DenyColumnPermission denies permission on the named columns of
-// schema.name to principal.
-//
-// opts adds the CASCADE modifiers; the zero value is the plain statement.
-func (d *Database) DenyColumnPermission(ctx context.Context, schema, name string, permission ObjectPermission, columns []string, principal string, opts PermissionOptions) error {
-	if err := requireSchema("deny column permission", schema, name); err != nil {
-		return err
-	}
-	if err := requireColumns("deny", columns); err != nil {
-		return err
-	}
-	return d.objectPermission(ctx, "DENY", schema, name, permission, columns, principal, opts)
-}
-
-// RevokeColumnPermission revokes permission on the named columns of
-// schema.name from principal.
-//
-// opts adds the CASCADE and GRANT OPTION FOR modifiers; the zero value is the plain statement.
-func (d *Database) RevokeColumnPermission(ctx context.Context, schema, name string, permission ObjectPermission, columns []string, principal string, opts PermissionOptions) error {
-	if err := requireSchema("revoke column permission", schema, name); err != nil {
-		return err
-	}
-	if err := requireColumns("revoke", columns); err != nil {
-		return err
-	}
-	return d.objectPermission(ctx, "REVOKE", schema, name, permission, columns, principal, opts)
-}
-
-// requireColumns rejects an empty column list rather than letting it render
-// as an object-level statement — a caller that meant "the whole table" has
-// the plain Grant/Deny/RevokePermission trio to say so, and silently
-// widening a column grant to the object is the wrong direction to guess in.
-func requireColumns(verb string, columns []string) error {
-	if len(columns) == 0 {
-		return fmt.Errorf("gosmo: %s column permission: no columns named", verb)
-	}
-	return nil
 }

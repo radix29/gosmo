@@ -220,7 +220,7 @@ func routeSettingClauses(s RouteSettings) ([]string, error) {
 			return nil
 		}
 		if *v == "" {
-			return fmt.Errorf("%s is empty, and ALTER ROUTE cannot clear a setting: "+
+			return invalidf("%s is empty, and ALTER ROUTE cannot clear a setting: "+
 				"the server refuses an empty value and NULL does not parse", keyword)
 		}
 		clauses = append(clauses, keyword+" = "+QuoteLiteral(*v))
@@ -234,7 +234,7 @@ func routeSettingClauses(s RouteSettings) ([]string, error) {
 	}
 	if s.LifetimeSeconds != nil {
 		if *s.LifetimeSeconds < 1 {
-			return nil, fmt.Errorf("LifetimeSeconds is %d; LIFETIME must be 1 or more, "+
+			return nil, invalidf("LifetimeSeconds is %d; LIFETIME must be 1 or more, "+
 				"and a route's lifetime cannot be cleared by an ALTER", *s.LifetimeSeconds)
 		}
 		clauses = append(clauses, fmt.Sprintf("LIFETIME = %d", *s.LifetimeSeconds))

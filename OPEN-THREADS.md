@@ -107,8 +107,11 @@ names it in a leading comment and deliberately does not set it
 a local variable, a table variable's or `RETURNS` table's column, a `CAST` in
 a view — gets it too, unnamed: a lexical scan of the definition that skips
 comments, strings and quoted identifiers (`usesFloat16Vector`, 2026-10-02).
-The type spelled inside **dynamic SQL** is a string literal and still gets
-none.
+A module that spells it only in **dynamic SQL** gets a note of its own
+(`buildsFloat16Vector`, 2026-10-08): its CREATE replays with the setting off,
+and running it fails with Msg 195 (`TestLiveFloat16DynamicSQLScript`). Any
+EXEC admits every literal, so a false positive is possible; a type name split
+across concatenated literals is not found.
 
 The 2026-09-24 fix-plan pass (G7–G10) added Always Encrypted columns, ledger
 tables, FileTables and external tables. **Refused, not scripted** (an
@@ -136,20 +139,40 @@ than failing:
 - A disabled **clustered** index is recreated and then disabled, as the
   source is — which takes the replayed table offline, faithfully.
 
-## CLR modules: what the rebuilt CREATE leaves out
+## Scripter fidelity: `ScriptDatabase` is a name and four settings
 
-Since 2026-10-03 a CLR procedure, function, DML, database or server trigger
-scripts its CREATE/ALTER, rebuilt from the catalog (`scripter_module_clr.go`);
-`TestLiveCLRModulesScriptRoundTrip` replays each kind on 13, 14 and 17.
-Knowingly not reproduced:
+`ScriptDatabase` emits `CREATE DATABASE [name] COLLATE …` plus the recovery
+model and compatibility level, and since 2026-10-08 (gossms review plan G8)
+honours `Verb`: a guarded `DROP DATABASE` after `USE [master]`, or both
+(`TestLiveScriptDatabaseDropAndCreateRuns`). It recreates a database of that
+name, not a copy of this one. Knowingly left out, each of which a replay
+silently gets wrong rather than refuses:
 
-- A **`COLLATE`** on a string column of a CLR table function's `RETURNS
-  TABLE` — the replayed column takes the database default.
-- **Parameter defaults** of a type other than int or nvarchar were never
-  replayed: the test assembly's methods take only `SqlInt32` and
-  `SqlString`. `clrParameterSelect` converts float, money, date/time and
-  binary defaults in a round-tripping style; `TestCLRDefaultLiteral` pins
-  only the quoting.
+- **Files and filegroups** — no `ON PRIMARY (…)`/`LOG ON (…)`, so the
+  replay takes the instance's default paths and sizes and has only PRIMARY;
+  a FILESTREAM or memory-optimized filegroup is not recreated, and neither
+  are the tables that need one.
+- **Every other option** — containment, `READ_COMMITTED_SNAPSHOT`,
+  snapshot isolation, `AUTO_*`, page verify, Query Store, change tracking,
+  trustworthy, owner, and the rest of `sys.databases`.
+
+SSMS's Script Database writes all of these from SMO's object model. Building
+them belongs here, from `Files`/`FileGroups` and the `sys.databases` row,
+before any caller is told the script round-trips.
+
+## `ScriptTable` is 8–11 round trips — considered, not batched
+
+gossms review plan G15 (2026-10-08) batched `LocalPublications`,
+`LocalSubscriptions` and `UserMappingsIn` into one round trip after the
+database list (`perDatabaseBatch`). `ScriptTable` was looked at in the same
+pass and left alone: it reads through the public `TableByName`,
+`scriptOptions`, `Columns`, `Indexes` (two queries), `ForeignKeys`,
+`CheckConstraints`, `DataSpace` and, by kind, `EdgeConstraints` and the
+schema-bound/referencing reads a DROP needs. Batching means splitting each into
+a select list and a scanner and reading them as one multi-result-set batch, as
+`Database.catalog` does — every family's scan code moves, for one
+user-triggered script per table. Worth doing only if a whole-database script
+(every table in a loop) is built; then batch per database, not per table.
 
 ## Keys `FROM PROVIDER` have never executed
 

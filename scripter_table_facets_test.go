@@ -199,3 +199,38 @@ func TestUsesFloat16Vector(t *testing.T) {
 		t.Errorf("note = %q", float16DefinitionNote)
 	}
 }
+
+// A float16 vector spelled in dynamic SQL is found in a definition that
+// executes some: in the literal's code, nested a level down, in a batch
+// assigned to a variable first. Not in a plain string with no EXEC, nor in the
+// dynamic batch's own comment or string.
+func TestBuildsFloat16Vector(t *testing.T) {
+	for _, c := range []struct {
+		name, def string
+		want      bool
+	}{
+		{"EXEC literal", "CREATE PROCEDURE p AS EXEC (N'DECLARE @v vector(4, float16)')", true},
+		{"EXECUTE literal", "CREATE PROCEDURE p AS EXECUTE ('DECLARE @v VECTOR(4,FLOAT16)')", true},
+		{"sp_executesql", "CREATE PROCEDURE p AS EXEC sys.sp_executesql N'SELECT CAST(@x AS vector(2, float16))', N'@x nvarchar(20)', @x = N'[1,2]'", true},
+		{"via a variable", "CREATE PROCEDURE p AS DECLARE @s nvarchar(max) = N'DECLARE @v vector(4, float16);'; EXEC (@s)", true},
+		{"after a doubled quote", "CREATE PROCEDURE p AS EXEC (N'SELECT N''it''''s''; DECLARE @v vector(4, float16)')", true},
+		{"nested dynamic SQL", "CREATE PROCEDURE p AS EXEC (N'EXEC (N''DECLARE @v vector(4, float16)'')')", true},
+		{"comment inside the batch's code span", "CREATE PROCEDURE p AS EXEC (N'DECLARE @v vector/* c */(4, float16)')", true},
+
+		{"plain string, no EXEC", "CREATE PROCEDURE p AS SELECT N'DECLARE @v vector(4, float16)'", false},
+		{"EXEC in a comment only", "CREATE PROCEDURE p AS /* EXEC */ SELECT N'vector(4, float16)'", false},
+		{"executed batch's comment", "CREATE PROCEDURE p AS EXEC (N'SELECT 1 -- vector(4, float16)')", false},
+		{"executed batch's string", "CREATE PROCEDURE p AS EXEC (N'SELECT N''vector(4, float16)''')", false},
+		{"float32", "CREATE PROCEDURE p AS EXEC (N'DECLARE @v vector(4, float32)')", false},
+		{"longer word than EXEC", "CREATE PROCEDURE p AS SELECT executed, @exec FROM t WHERE x = N'vector(4, float16)'", false},
+		{"split across literals", "CREATE PROCEDURE p AS EXEC (N'DECLARE @v vector(4, ' + N'float16)')", false},
+	} {
+		if got := buildsFloat16Vector(c.def); got != c.want {
+			t.Errorf("%s: buildsFloat16Vector(%q) = %v, want %v", c.name, c.def, got, c.want)
+		}
+	}
+	if !strings.HasPrefix(float16DynamicNote, "-- The definition's dynamic SQL uses vector(n, float16)") ||
+		!strings.HasSuffix(float16DynamicNote, "--   ALTER DATABASE SCOPED CONFIGURATION SET PREVIEW_FEATURES = ON;\n") {
+		t.Errorf("note = %q", float16DynamicNote)
+	}
+}

@@ -257,3 +257,54 @@ func TestLiveFloat16DefinitionScript(t *testing.T) {
 		t.Errorf("replayed modules = %q, want %q", got, want)
 	}
 }
+
+// A module that spells float16 only in dynamic SQL gets the dynamic-SQL note,
+// and the note's claim holds: with PREVIEW_FEATURES off in the target the
+// script replays, and running the module fails with Msg 195. Turned on, it
+// runs.
+func TestLiveFloat16DynamicSQLScript(t *testing.T) {
+	db, ctx, done := liveDB(t)
+	t.Cleanup(done)
+	if major := liveServer(t, db, ctx).serverMajorVersion(); major != 0 && major < int(SQLServer2025) {
+		t.Skipf("major %d has no vector type", major)
+	}
+
+	src, dropSrc := liveScratchDB(t, db, ctx, "gosmo_f16x_src")
+	t.Cleanup(dropSrc)
+	dst, dropDst := liveScratchDB(t, db, ctx, "gosmo_f16x_dst")
+	t.Cleanup(dropDst)
+	liveExecIn(t, src, ctx,
+		`CREATE PROCEDURE dbo.Dyn AS
+		 DECLARE @s nvarchar(max) = N'DECLARE @h vector(2, float16) = ''[1,2]''; SELECT 1 AS ok;';
+		 EXEC sys.sp_executesql @s`,
+	)
+
+	opts := DefaultScriptOptions()
+	opts.IncludeHeaders = false
+	script, err := NewScripter(src, opts).ScriptStoredProcedure(ctx, "dbo", "Dyn")
+	if err != nil {
+		t.Fatalf("script Dyn: %v", err)
+	}
+	if !strings.HasPrefix(script, float16DynamicNote) {
+		t.Fatalf("the script does not open with the dynamic-SQL note:\n%s", script)
+	}
+
+	livePinnedRun(t, db, ctx, dst.Name, script)
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		t.Fatalf("pin a connection: %v", err)
+	}
+	defer conn.Close()
+	if _, err := conn.ExecContext(ctx, "USE "+quoteIdent(dst.Name)); err != nil {
+		t.Fatalf("USE %s: %v", dst.Name, err)
+	}
+	_, runErr := conn.ExecContext(ctx, "EXEC dbo.Dyn")
+	msErr, ok := errors.AsType[mssql.Error](runErr)
+	if !ok || !slices.ContainsFunc(msErr.All, func(e mssql.Error) bool { return e.Number == 195 }) {
+		t.Fatalf("running the replayed module with PREVIEW_FEATURES off: got %v, want Msg 195", runErr)
+	}
+	liveExecIn(t, dst, ctx, `ALTER DATABASE SCOPED CONFIGURATION SET PREVIEW_FEATURES = ON`)
+	if got := liveRowsAsStrings(t, dst, ctx, "EXEC dbo.Dyn"); !slices.Equal(got, []string{"ok=1"}) {
+		t.Errorf("with PREVIEW_FEATURES on, the module returns %q", got)
+	}
+}

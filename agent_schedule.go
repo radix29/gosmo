@@ -170,7 +170,7 @@ func (s *Server) ScheduleByID(ctx context.Context, id int) (*Schedule, error) {
 	q := "SELECT " + scheduleColumns + " " + scheduleFrom + " WHERE sch.schedule_id = @p1"
 
 	return readByName(ctx, s, scanSchedule, q, []any{id},
-		notFoundf("gosmo: schedule id %d not found", id), "schedule by id")
+		notFoundf("gosmo: schedule id %d not found", id), fmt.Sprintf("read schedule id %d", id))
 }
 
 // ScheduleRef returns a lightweight handle for a shared schedule by name,
@@ -253,7 +253,7 @@ func (req CreateScheduleRequest) frequencyArgs() string {
 // ScheduleRef handle.
 func (s *Server) CreateSchedule(ctx context.Context, req CreateScheduleRequest) (*Schedule, error) {
 	if req.Name == "" {
-		return nil, fmt.Errorf("gosmo: create schedule: name is required")
+		return nil, invalidf("gosmo: create schedule: name is required")
 	}
 	q := fmt.Sprintf("EXEC msdb.dbo.sp_add_schedule @schedule_name = N'%s', %s",
 		escapeSingle(req.Name), req.frequencyArgs())
@@ -289,6 +289,11 @@ func (sch *Schedule) Enable(ctx context.Context) error { return sch.setEnabled(c
 
 // Disable disables the schedule.
 func (sch *Schedule) Disable(ctx context.Context) error { return sch.setEnabled(ctx, false) }
+
+// SetEnabled is Enable when on is true and Disable otherwise.
+func (sch *Schedule) SetEnabled(ctx context.Context, on bool) error {
+	return sch.setEnabled(ctx, on)
+}
 
 func (sch *Schedule) setEnabled(ctx context.Context, on bool) error {
 	return sch.Alter(ctx, ScheduleChanges{Enabled: &on})
@@ -360,15 +365,21 @@ ORDER  BY j.name`
 	})
 }
 
-// Schedules returns every schedule attached to the job.
+// Schedules returns every schedule attached to the job. On a JobRef the job
+// is looked up by name first (see Server.JobRef).
 func (j *Job) Schedules(ctx context.Context) ([]*Schedule, error) {
 	q := "SELECT " + scheduleColumns + " " + scheduleFrom + `
 JOIN   msdb.dbo.sysjobschedules js ON js.schedule_id = sch.schedule_id
 WHERE  js.job_id = @p1
 ORDER  BY sch.name`
 
-	rows, err := j.server.query(ctx, q, j.JobID)
-	return scanRows(rows, err, fmt.Sprintf("schedules for job %q", j.Name), func(scan func(...any) error) (*Schedule, error) {
+	what := fmt.Sprintf("schedules for job %q", j.Name)
+	id, err := j.id(ctx, what)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := j.server.query(ctx, q, id)
+	return scanRows(rows, err, what, func(scan func(...any) error) (*Schedule, error) {
 		return scanSchedule(j.server, scan)
 	})
 }

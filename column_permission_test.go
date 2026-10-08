@@ -4,8 +4,7 @@ import "testing"
 
 func TestGrantColumnPermissionRendersOneStatementForAllColumns(t *testing.T) {
 	d, ctx, script := scriptedDB(t)
-	err := d.GrantColumnPermission(ctx, "dbo", "Employees", PermSelect,
-		[]string{"FirstName", "LastName"}, "app_reader", PermissionOptions{})
+	err := d.ApplyPermission(ctx, VerbGrant, Securable{Class: SecurableTable, Schema: "dbo", Name: "Employees", Columns: []string{"FirstName", "LastName"}}, PermSelect, "app_reader", PermissionOptions{})
 	if err != nil {
 		t.Fatalf("grant: %v", err)
 	}
@@ -17,8 +16,7 @@ func TestGrantColumnPermissionRendersOneStatementForAllColumns(t *testing.T) {
 
 func TestColumnPermissionWithGrantOption(t *testing.T) {
 	d, ctx, script := scriptedDB(t)
-	err := d.GrantColumnPermission(ctx, "dbo", "Employees", PermUpdate,
-		[]string{"Salary"}, "hr_role", PermissionOptions{WithGrantOption: true})
+	err := d.ApplyPermission(ctx, VerbGrant, Securable{Class: SecurableTable, Schema: "dbo", Name: "Employees", Columns: []string{"Salary"}}, PermUpdate, "hr_role", PermissionOptions{WithGrantOption: true})
 	if err != nil {
 		t.Fatalf("grant: %v", err)
 	}
@@ -30,8 +28,7 @@ func TestColumnPermissionWithGrantOption(t *testing.T) {
 
 func TestRevokeColumnPermissionUsesFrom(t *testing.T) {
 	d, ctx, script := scriptedDB(t)
-	err := d.RevokeColumnPermission(ctx, "dbo", "Employees", PermSelect,
-		[]string{"Salary"}, "app_reader", PermissionOptions{})
+	err := d.ApplyPermission(ctx, VerbRevoke, Securable{Class: SecurableTable, Schema: "dbo", Name: "Employees", Columns: []string{"Salary"}}, PermSelect, "app_reader", PermissionOptions{})
 	if err != nil {
 		t.Fatalf("revoke: %v", err)
 	}
@@ -46,8 +43,7 @@ func TestRevokeColumnPermissionUsesFrom(t *testing.T) {
 // identifier in this package.
 func TestColumnPermissionQuotesColumnNames(t *testing.T) {
 	d, ctx, script := scriptedDB(t)
-	err := d.GrantColumnPermission(ctx, "dbo", "T", PermSelect,
-		[]string{"od]d name"}, "app_reader", PermissionOptions{})
+	err := d.ApplyPermission(ctx, VerbGrant, Securable{Class: SecurableTable, Schema: "dbo", Name: "T", Columns: []string{"od]d name"}}, PermSelect, "app_reader", PermissionOptions{})
 	if err != nil {
 		t.Fatalf("grant: %v", err)
 	}
@@ -61,12 +57,10 @@ func TestColumnPermissionQuotesColumnNames(t *testing.T) {
 // must be refused here rather than by SQL Server's syntax error.
 func TestColumnPermissionRejectsNonColumnPermission(t *testing.T) {
 	d, ctx, script := scriptedDB(t)
-	if err := d.GrantColumnPermission(ctx, "dbo", "T", PermDelete,
-		[]string{"c"}, "app_reader", PermissionOptions{}); err == nil {
+	if err := d.ApplyPermission(ctx, VerbGrant, Securable{Class: SecurableTable, Schema: "dbo", Name: "T", Columns: []string{"c"}}, PermDelete, "app_reader", PermissionOptions{}); err == nil {
 		t.Error("DELETE was accepted as a column permission, want an error")
 	}
-	if err := d.GrantColumnPermission(ctx, "dbo", "T", PermControl,
-		[]string{"c"}, "app_reader", PermissionOptions{}); err == nil {
+	if err := d.ApplyPermission(ctx, VerbGrant, Securable{Class: SecurableTable, Schema: "dbo", Name: "T", Columns: []string{"c"}}, PermControl, "app_reader", PermissionOptions{}); err == nil {
 		t.Error("CONTROL was accepted as a column permission, want an error")
 	}
 	if len(script.Statements()) != 0 {
@@ -74,13 +68,11 @@ func TestColumnPermissionRejectsNonColumnPermission(t *testing.T) {
 	}
 }
 
-// An empty column list must not quietly widen into an object-level grant.
+// An empty, non-nil column list must not quietly widen into an
+// object-level grant; nil is how a caller says "the whole object".
 func TestColumnPermissionRejectsEmptyColumnList(t *testing.T) {
 	d, ctx, script := scriptedDB(t)
-	if err := d.GrantColumnPermission(ctx, "dbo", "T", PermSelect, nil, "app_reader", PermissionOptions{}); err == nil {
-		t.Error("an empty column list was accepted, want an error")
-	}
-	if err := d.RevokeColumnPermission(ctx, "dbo", "T", PermSelect, []string{}, "app_reader", PermissionOptions{}); err == nil {
+	if err := d.ApplyPermission(ctx, VerbRevoke, Securable{Class: SecurableTable, Schema: "dbo", Name: "T", Columns: []string{}}, PermSelect, "app_reader", PermissionOptions{}); err == nil {
 		t.Error("an empty column list was accepted on revoke, want an error")
 	}
 	if len(script.Statements()) != 0 {
@@ -106,7 +98,7 @@ func TestColumnPermissionNames(t *testing.T) {
 // acquires a column list by accident.
 func TestObjectPermissionHasNoColumnList(t *testing.T) {
 	d, ctx, script := scriptedDB(t)
-	if err := d.GrantPermission(ctx, "dbo", "Employees", PermSelect, "app_reader", PermissionOptions{}); err != nil {
+	if err := d.ApplyPermission(ctx, VerbGrant, Securable{Class: SecurableTable, Schema: "dbo", Name: "Employees"}, PermSelect, "app_reader", PermissionOptions{}); err != nil {
 		t.Fatalf("grant: %v", err)
 	}
 	want := "GRANT SELECT ON [dbo].[Employees] TO [app_reader]"

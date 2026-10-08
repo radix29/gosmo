@@ -54,7 +54,7 @@ type DetachOptions struct {
 func (d *Database) Detach(ctx context.Context, opts DetachOptions) error {
 	s, name := d.server, d.Name
 	if name == "" {
-		return fmt.Errorf("gosmo: detach database: name is required")
+		return invalidf("gosmo: detach database: name is required")
 	}
 	s.releaseIdle(ctx)
 	detach := fmt.Sprintf(
@@ -120,10 +120,10 @@ type AttachSpec struct {
 // AttachDatabase attaches a set of database files to the instance.
 func (s *Server) AttachDatabase(ctx context.Context, spec AttachSpec) error {
 	if spec.Name == "" {
-		return fmt.Errorf("gosmo: attach database: name is required")
+		return invalidf("gosmo: attach database: name is required")
 	}
 	if len(spec.Files) == 0 {
-		return fmt.Errorf("gosmo: attach database %q: at least one file is required", spec.Name)
+		return invalidf("gosmo: attach database %q: at least one file is required", spec.Name)
 	}
 	if err := s.exec(ctx, buildAttachStatement(spec)); err != nil {
 		return fmt.Errorf("gosmo: attach database %q: %w", spec.Name, err)
@@ -230,7 +230,7 @@ func (d *DetachedDatabase) filesWhere(isLog bool) []*DetachedFile {
 // still attach: AttachSpec takes the paths directly.
 func (s *Server) DetachedDatabaseInfo(ctx context.Context, primaryFilePath string) (*DetachedDatabase, error) {
 	if strings.TrimSpace(primaryFilePath) == "" {
-		return nil, fmt.Errorf("gosmo: detached database info: a primary file path is required")
+		return nil, invalidf("gosmo: detached database info: a primary file path is required")
 	}
 	d := &DetachedDatabase{}
 	if err := s.readDetachedProperties(ctx, primaryFilePath, d); err != nil {

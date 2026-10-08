@@ -130,7 +130,7 @@ func (d *Database) EnclaveComputationsSupported() bool {
 // parser rejects. Ask EnclaveComputationsSupported first.
 func (d *Database) CreateColumnMasterKey(ctx context.Context, req CreateColumnMasterKeyRequest) (*ColumnMasterKey, error) {
 	if req.Name == "" {
-		return nil, fmt.Errorf("gosmo: create column master key: name is required")
+		return nil, invalidf("gosmo: create column master key: name is required")
 	}
 	enclave := ""
 	if len(req.Signature) > 0 {
@@ -338,14 +338,14 @@ type CreateColumnEncryptionKeyRequest struct {
 func (d *Database) CreateColumnEncryptionKey(ctx context.Context, req CreateColumnEncryptionKeyRequest) (*ColumnEncryptionKey, error) {
 	name, values := req.Name, req.Values
 	if name == "" {
-		return nil, fmt.Errorf("gosmo: create column encryption key: name is required")
+		return nil, invalidf("gosmo: create column encryption key: name is required")
 	}
 	if len(values) == 0 {
-		return nil, fmt.Errorf("gosmo: create column encryption key %q: at least one encrypted value is required", name)
+		return nil, invalidf("gosmo: create column encryption key %q: at least one encrypted value is required", name)
 	}
 	for i, v := range values {
 		if missing := v.missing(); missing != "" {
-			return nil, fmt.Errorf("gosmo: create column encryption key %q: value %d has %s", name, i+1, missing)
+			return nil, invalidf("gosmo: create column encryption key %q: value %d has %s", name, i+1, missing)
 		}
 	}
 
@@ -375,7 +375,7 @@ func (d *Database) CreateColumnEncryptionKey(ctx context.Context, req CreateColu
 // can generate it, and the server stores it without checking it.
 func (cek *ColumnEncryptionKey) AddValue(ctx context.Context, value ColumnEncryptionKeyValue) error {
 	if missing := value.missing(); missing != "" {
-		return fmt.Errorf("gosmo: add value to column encryption key %q: the value has %s", cek.Name, missing)
+		return invalidf("gosmo: add value to column encryption key %q: the value has %s", cek.Name, missing)
 	}
 	stmt := fmt.Sprintf("ALTER COLUMN ENCRYPTION KEY %s\nADD VALUE\n%s",
 		quoteIdent(cek.Name), value.valueClause())
@@ -401,7 +401,7 @@ func (cek *ColumnEncryptionKey) AddValue(ctx context.Context, value ColumnEncryp
 // not restated.
 func (cek *ColumnEncryptionKey) DropValue(ctx context.Context, masterKeyName string) error {
 	if masterKeyName == "" {
-		return fmt.Errorf("gosmo: drop value from column encryption key %q: the column master key name is required", cek.Name)
+		return invalidf("gosmo: drop value from column encryption key %q: the column master key name is required", cek.Name)
 	}
 	stmt := fmt.Sprintf("ALTER COLUMN ENCRYPTION KEY %s\nDROP VALUE\n(\n    COLUMN_MASTER_KEY = %s\n)",
 		quoteIdent(cek.Name), quoteIdent(masterKeyName))

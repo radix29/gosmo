@@ -69,10 +69,10 @@ func (d *Database) DatabaseScopedConfigs(ctx context.Context) ([]*DatabaseScoped
 // order can be asserted without a server.
 func buildScopedConfigStatement(name, value string, forSecondary bool) (string, error) {
 	if !isSimpleIdentifier(name) {
-		return "", fmt.Errorf("gosmo: set database scoped configuration: invalid name %q", name)
+		return "", invalidf("gosmo: set database scoped configuration: invalid name %q", name)
 	}
 	if !isSimpleSetValue(value) {
-		return "", fmt.Errorf("gosmo: set database scoped configuration %s: invalid value %q", name, value)
+		return "", invalidf("gosmo: set database scoped configuration %s: invalid value %q", name, value)
 	}
 	scope := ""
 	if forSecondary {

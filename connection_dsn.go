@@ -25,7 +25,7 @@ var unsupportedProtocols = map[string]string{
 // Entra methods, "sqlserver" (the base connector) for everything else.
 func buildDSN(opts ConnectionOptions) (dsn, driverName string, err error) {
 	if opts.Server == "" {
-		return "", "", fmt.Errorf("gosmo: ConnectionOptions.Server is required")
+		return "", "", invalidf("gosmo: ConnectionOptions.Server is required")
 	}
 
 	// A named instance can't be embedded directly in url.URL.Host — a
@@ -45,7 +45,7 @@ func buildDSN(opts ConnectionOptions) (dsn, driverName string, err error) {
 
 		fv, ok := fedauthValue[opts.Auth]
 		if !ok {
-			return "", "", fmt.Errorf("gosmo: unsupported auth method %d", opts.Auth)
+			return "", "", invalidf("gosmo: unsupported auth method %d", opts.Auth)
 		}
 		q.Set("fedauth", fv)
 
@@ -233,7 +233,7 @@ func checkEntraFields(opts ConnectionOptions) error {
 		}
 	}
 	if missing != "" {
-		return fmt.Errorf("gosmo: %s requires %s", opts.Auth, missing)
+		return invalidf("gosmo: %s requires %s", opts.Auth, missing)
 	}
 	return nil
 }
@@ -259,7 +259,7 @@ func hasExtraParam(extra url.Values, key string) bool {
 func entraClientAtTenant(opts ConnectionOptions) (string, error) {
 	if at := strings.IndexByte(opts.User, '@'); at >= 1 && at < len(opts.User)-1 {
 		if tenant := opts.User[at+1:]; opts.TenantID != "" && !strings.EqualFold(tenant, opts.TenantID) {
-			return "", fmt.Errorf("gosmo: %s: User %q names tenant %q, but TenantID is %q",
+			return "", invalidf("gosmo: %s: User %q names tenant %q, but TenantID is %q",
 				opts.Auth, opts.User, tenant, opts.TenantID)
 		}
 		return opts.User, nil
@@ -323,7 +323,7 @@ func commonDSNValues(opts ConnectionOptions) url.Values {
 // band by the connector rather than through the DSN.
 func baseDSN(opts ConnectionOptions) (string, error) {
 	if opts.Server == "" {
-		return "", fmt.Errorf("gosmo: ConnectionOptions.Server is required")
+		return "", invalidf("gosmo: ConnectionOptions.Server is required")
 	}
 	dialHost, instance, err := dsnHost(opts)
 	if err != nil {
@@ -359,10 +359,10 @@ func baseDSN(opts ConnectionOptions) (string, error) {
 func dsnHost(opts ConnectionOptions) (host, instance string, err error) {
 	server := opts.Server
 	if proto, _ := splitProtocolPrefix(server); unsupportedProtocols[proto] != "" {
-		return "", "", fmt.Errorf("gosmo: server %q: %s", server, unsupportedProtocols[proto])
+		return "", "", invalidf("gosmo: server %q: %s", server, unsupportedProtocols[proto])
 	}
 	if opts.Port < 0 || opts.Port > 65535 {
-		return "", "", fmt.Errorf("gosmo: ConnectionOptions.Port %d out of range 0-65535", opts.Port)
+		return "", "", invalidf("gosmo: ConnectionOptions.Port %d out of range 0-65535", opts.Port)
 	}
 	host, instance, port := opts.address()
 	if strings.ContainsRune(host, ':') {
@@ -371,7 +371,7 @@ func dsnHost(opts ConnectionOptions) (host, instance string, err error) {
 		}
 		if port == 0 {
 			if instance != "" {
-				return "", "", fmt.Errorf("gosmo: server %q: an IPv6 address with a named instance needs "+
+				return "", "", invalidf("gosmo: server %q: an IPv6 address with a named instance needs "+
 					"an explicit port (%s\\%s,<port>)", server, strings.Trim(host, "[]"), instance)
 			}
 			port = 1433

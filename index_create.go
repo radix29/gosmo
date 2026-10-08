@@ -301,10 +301,10 @@ func floatLiteral(v float64) string {
 // column number.
 func (req CreateIndexRequest) validate() error {
 	fail := func(format string, args ...any) error {
-		return fmt.Errorf("gosmo: create index %q: %s", req.Name, fmt.Sprintf(format, args...))
+		return invalidf("gosmo: create index %q: %s", req.Name, fmt.Sprintf(format, args...))
 	}
 	if req.Name == "" {
-		return fmt.Errorf("gosmo: create index: name is required")
+		return invalidf("gosmo: create index: name is required")
 	}
 
 	rowstore := req.Type == "" || req.Type == IndexTypeClustered || req.Type == IndexTypeNonClustered

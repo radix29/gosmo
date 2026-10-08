@@ -2,7 +2,9 @@ package gosmo
 
 import (
 	"context"
+	"database/sql/driver"
 	"errors"
+	"maps"
 	"strings"
 	"testing"
 )
@@ -80,4 +82,38 @@ func TestModuleDefinitionReadsByName(t *testing.T) {
 			t.Error("a statement was sent for an empty schema")
 		}
 	})
+}
+
+// TestBoundObjectDefinitionsReadEveryRowAtOnce pins RuleDefinitions and
+// DefaultDefinitions: one statement for the whole family, the defaults one
+// restricted to standalone defaults, and a NULL text (encrypted, or not
+// visible) read as "" the way Definition reports it.
+func TestBoundObjectDefinitionsReadEveryRowAtOnce(t *testing.T) {
+	ctx := context.Background()
+	for name, tc := range map[string]struct {
+		read func(*Database) (map[int]string, error)
+		kind string
+	}{
+		"Rule":    {func(d *Database) (map[int]string, error) { return d.RuleDefinitions(ctx) }, "o.type = 'R'"},
+		"Default": {func(d *Database) (map[int]string, error) { return d.DefaultDefinitions(ctx) }, "o.type = 'D' AND o.parent_object_id = 0"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			d := captureDatabase(t)
+			captured.reset(cannedRow{match: "OBJECT_DEFINITION", cols: []string{"object_id", "def"},
+				rows: [][]driver.Value{{int64(7), "CREATE x AS 1"}, {int64(9), nil}}})
+			got, err := tc.read(d)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if want := map[int]string{7: "CREATE x AS 1", 9: ""}; !maps.Equal(got, want) {
+				t.Errorf("definitions = %v, want %v", got, want)
+			}
+			if n := captured.count("OBJECT_DEFINITION"); n != 1 {
+				t.Fatalf("%d OBJECT_DEFINITION statements, want 1", n)
+			}
+			if q := captured.find("OBJECT_DEFINITION"); !strings.Contains(q, tc.kind) {
+				t.Errorf("statement is not restricted to %s:\n%s", tc.kind, q)
+			}
+		})
+	}
 }

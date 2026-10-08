@@ -263,6 +263,9 @@ func (d *Database) QueueMessageCounts(ctx context.Context) (map[int]int64, error
 // It needs VIEW DATABASE STATE, and returns 0 with no error for a queue whose
 // internal table has no statistics row yet.
 func (q *BrokerQueue) MessageCount(ctx context.Context) (int64, error) {
+	if err := requireID(fmt.Sprintf("read message count of queue %s in %q", q.FullName(), q.db.Name), q.ObjectID != 0); err != nil {
+		return 0, err
+	}
 	var count sql.NullInt64
 	err := q.db.queryRow(ctx, func(row *sql.Row) error {
 		return row.Scan(&count)
@@ -427,7 +430,7 @@ func queueSettingClauses(s QueueSettings) ([]string, error) {
 				"the server refuses an ACTIVATION block without a procedure")
 		}
 		if a.MaxQueueReaders < 0 || a.MaxQueueReaders > 32767 {
-			return nil, fmt.Errorf("QueueActivation.MaxQueueReaders is %d, "+
+			return nil, invalidf("QueueActivation.MaxQueueReaders is %d, "+
 				"outside MAX_QUEUE_READERS' range of 0 to 32767", a.MaxQueueReaders)
 		}
 		if a.ProcedureSchema == "" {

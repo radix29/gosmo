@@ -33,6 +33,12 @@ func FuzzNames(f *testing.F) {
 			t.Fatalf("QuoteNameIfNeeded(%q) = %q: neither bare nor QuoteName", s, q)
 		}
 		UnquoteName(s)
+		if s != "" {
+			if got, err := SplitName(QuoteName(s) + "." + QuoteName(s)); err != nil || len(got) != 2 || got[0] != s || got[1] != s {
+				t.Fatalf("SplitName of %q quoted twice = %q, %v", s, got, err)
+			}
+		}
+		SplitName(s)
 
 		key := NameKey("", s)
 		if NameKey("", key) != key {

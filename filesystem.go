@@ -52,7 +52,7 @@ type FixedDrive struct {
 // fail.
 func (s *Server) EnumFileSystem(ctx context.Context, path string) ([]*FileSystemEntry, error) {
 	if strings.TrimSpace(path) == "" {
-		return nil, fmt.Errorf("gosmo: enumerate filesystem: empty path")
+		return nil, invalidf("gosmo: enumerate filesystem: empty path")
 	}
 	if !s.EnumFileSystemIsLegacy() {
 		return s.enumFileSystemDMF(ctx, path)

@@ -65,6 +65,9 @@ type AvailabilityDatabase struct {
 // cluster-wide metadata, so a database appears even on a replica that has not
 // finished seeding it — with empty state rather than being silently missing.
 func (ag *AvailabilityGroup) Databases(ctx context.Context) ([]*AvailabilityDatabase, error) {
+	if err := requireID(fmt.Sprintf("list databases of availability group %q", ag.Name), ag.ID != ""); err != nil {
+		return nil, err
+	}
 	s := ag.server
 
 	major := s.serverMajorVersion()
@@ -142,7 +145,7 @@ func (ag *AvailabilityGroup) Databases(ctx context.Context) ([]*AvailabilityData
 // JoinDatabase called against it.
 func (ag *AvailabilityGroup) AddDatabase(ctx context.Context, name string) error {
 	if strings.TrimSpace(name) == "" {
-		return fmt.Errorf("gosmo: add database to availability group %q: empty database name", ag.Name)
+		return invalidf("gosmo: add database to availability group %q: empty database name", ag.Name)
 	}
 	if err := ag.alter(ctx, "ADD DATABASE "+quoteIdent(name)); err != nil {
 		return fmt.Errorf("gosmo: add database %q to availability group %q: %w", name, ag.Name, err)
@@ -160,7 +163,7 @@ func (ag *AvailabilityGroup) AddDatabase(ctx context.Context, name string) error
 // to find one — verified against SQL Server 2025.
 func (ag *AvailabilityGroup) RemoveDatabase(ctx context.Context, name string) error {
 	if strings.TrimSpace(name) == "" {
-		return fmt.Errorf("gosmo: remove database from availability group %q: empty database name", ag.Name)
+		return invalidf("gosmo: remove database from availability group %q: empty database name", ag.Name)
 	}
 	if err := ag.alter(ctx, "REMOVE DATABASE "+quoteIdent(name)); err != nil {
 		return fmt.Errorf("gosmo: remove database %q from availability group %q: %w", name, ag.Name, err)
@@ -188,7 +191,7 @@ func (ag *AvailabilityGroup) alterDatabaseHADR(ctx context.Context, name, clause
 // replica; an AUTOMATIC one joins itself as part of seeding.
 func (ag *AvailabilityGroup) JoinDatabase(ctx context.Context, name string) error {
 	if strings.TrimSpace(name) == "" {
-		return fmt.Errorf("gosmo: join database to availability group %q: empty database name", ag.Name)
+		return invalidf("gosmo: join database to availability group %q: empty database name", ag.Name)
 	}
 	if err := ag.alterDatabaseHADR(ctx, name, "AVAILABILITY GROUP = "+quoteIdent(ag.Name)); err != nil {
 		return fmt.Errorf("gosmo: join database %q to availability group %q: %w", name, ag.Name, err)
@@ -204,7 +207,7 @@ func (ag *AvailabilityGroup) JoinDatabase(ctx context.Context, name string) erro
 // it on every other replica.
 func (ag *AvailabilityGroup) UnjoinDatabase(ctx context.Context, name string) error {
 	if strings.TrimSpace(name) == "" {
-		return fmt.Errorf("gosmo: unjoin database from availability group %q: empty database name", ag.Name)
+		return invalidf("gosmo: unjoin database from availability group %q: empty database name", ag.Name)
 	}
 	if err := ag.alterDatabaseHADR(ctx, name, "OFF"); err != nil {
 		return fmt.Errorf("gosmo: unjoin database %q from availability group %q: %w", name, ag.Name, err)
@@ -221,7 +224,7 @@ func (ag *AvailabilityGroup) UnjoinDatabase(ctx context.Context, name string) er
 // the log drive.
 func (ag *AvailabilityGroup) SuspendDatabase(ctx context.Context, name string) error {
 	if strings.TrimSpace(name) == "" {
-		return fmt.Errorf("gosmo: suspend database in availability group %q: empty database name", ag.Name)
+		return invalidf("gosmo: suspend database in availability group %q: empty database name", ag.Name)
 	}
 	if err := ag.alterDatabaseHADR(ctx, name, "SUSPEND"); err != nil {
 		return fmt.Errorf("gosmo: suspend database %q in availability group %q: %w", name, ag.Name, err)
@@ -233,7 +236,7 @@ func (ag *AvailabilityGroup) SuspendDatabase(ctx context.Context, name string) e
 // SuspendDatabase used.
 func (ag *AvailabilityGroup) ResumeDatabase(ctx context.Context, name string) error {
 	if strings.TrimSpace(name) == "" {
-		return fmt.Errorf("gosmo: resume database in availability group %q: empty database name", ag.Name)
+		return invalidf("gosmo: resume database in availability group %q: empty database name", ag.Name)
 	}
 	if err := ag.alterDatabaseHADR(ctx, name, "RESUME"); err != nil {
 		return fmt.Errorf("gosmo: resume database %q in availability group %q: %w", name, ag.Name, err)

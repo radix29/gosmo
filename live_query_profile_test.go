@@ -104,6 +104,21 @@ func TestLiveQueryProfiles(t *testing.T) {
 		time.Sleep(250 * time.Millisecond)
 	}
 
+	t.Run("session login time pins the session", func(t *testing.T) {
+		login, err := srv.SessionLoginTime(ctx, spid)
+		if err != nil || login.IsZero() {
+			t.Fatalf("SessionLoginTime = %v, %v; want the session's login time", login, err)
+		}
+		for _, p := range profiles {
+			if !p.SessionLoginTime.Equal(login) {
+				t.Errorf("node %d: SessionLoginTime %v, want the session's %v", p.NodeID, p.SessionLoginTime, login)
+			}
+		}
+		if _, err := srv.SessionLoginTime(ctx, 32767); !errors.Is(err, ErrNotFound) {
+			t.Errorf("SessionLoginTime of a session that does not exist: %v, want ErrNotFound", err)
+		}
+	})
+
 	t.Run("profiles mid-statement", func(t *testing.T) {
 		nodes := map[int]bool{}
 		var sawScan bool

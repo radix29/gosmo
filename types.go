@@ -344,7 +344,11 @@ type FileGroup struct {
 	// FILESTREAM filegroup, both true.
 	IsDefault  bool
 	IsReadOnly bool
-	Files      []DatabaseFile // empty for a filegroup with no files yet
+	// Files are the filegroup's files as Database.Files reads them, in
+	// file_id order; empty for a filegroup with no files yet. FileGroup and
+	// every size field are filled in, so a file found here and the same file
+	// from Files compare equal field for field.
+	Files []*DatabaseFileInfo
 }
 
 // Filegroup type_desc values, as sys.filegroups reports them.
@@ -361,18 +365,6 @@ func (fg *FileGroup) IsFileStream() bool { return fg.Type == FileStreamFileGroup
 
 // Database returns the database the filegroup belongs to.
 func (fg *FileGroup) Database() *Database { return fg.db }
-
-// DatabaseFile represents a single data or log file.
-type DatabaseFile struct {
-	Name          string
-	PhysicalName  string
-	Size          int64  // in KB
-	MaxSize       int64  // in KB; -1 = unlimited
-	GrowthType    string // "KB" | "PERCENT"
-	Growth        int64
-	IsPrimaryFile bool
-	FileGroupName string
-}
 
 // ServerInfo holds basic information about the connected SQL Server instance.
 type ServerInfo struct {

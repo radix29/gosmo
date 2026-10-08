@@ -83,7 +83,6 @@ classDiagram
 
     Database --> MasterKey : MasterKey / MasterKeyRef
     Database --> ModuleSignature : ModuleSignatures / SignaturesOn
-    Database ..> Signer : AddSignature / DropSignature
     Database --> SignableModule : SignableModules
     Certificate --> ModuleSignature : SignedModules
     AsymmetricKey --> ModuleSignature : SignedModules

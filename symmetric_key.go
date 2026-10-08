@@ -359,16 +359,16 @@ func (e SymmetricKeyEncryptor) clause() (string, error) {
 	switch e.Kind {
 	case SymmetricKeyByPassword:
 		if e.Password == "" {
-			return "", fmt.Errorf("encryption by password has no password")
+			return "", invalidf("encryption by password has no password")
 		}
 		return "PASSWORD = " + QuoteLiteral(e.Password), nil
 	case SymmetricKeyByCertificate, SymmetricKeyByAsymmetricKey, SymmetricKeyBySymmetricKey:
 		if strings.TrimSpace(e.Name) == "" {
-			return "", fmt.Errorf("encryption by %s has no name", strings.ToLower(string(e.Kind)))
+			return "", invalidf("encryption by %s has no name", strings.ToLower(string(e.Kind)))
 		}
 		return string(e.Kind) + " " + quoteIdent(e.Name), nil
 	}
-	return "", fmt.Errorf("a symmetric key cannot be encrypted by %q", e.Kind)
+	return "", invalidf("a symmetric key cannot be encrypted by %q", e.Kind)
 }
 
 // clause renders the decryptor as an OPEN SYMMETRIC KEY ... DECRYPTION BY
@@ -377,12 +377,12 @@ func (dec SymmetricKeyDecryptor) clause() (string, error) {
 	switch dec.Kind {
 	case SymmetricKeyByPassword:
 		if dec.Password == "" {
-			return "", fmt.Errorf("decryption by password has no password")
+			return "", invalidf("decryption by password has no password")
 		}
 		return "PASSWORD = " + QuoteLiteral(dec.Password), nil
 	case SymmetricKeyByCertificate, SymmetricKeyByAsymmetricKey, SymmetricKeyBySymmetricKey:
 		if strings.TrimSpace(dec.Name) == "" {
-			return "", fmt.Errorf("decryption by %s has no name", strings.ToLower(string(dec.Kind)))
+			return "", invalidf("decryption by %s has no name", strings.ToLower(string(dec.Kind)))
 		}
 		s := string(dec.Kind) + " " + quoteIdent(dec.Name)
 		if dec.Password != "" && dec.Kind != SymmetricKeyBySymmetricKey {
@@ -390,7 +390,7 @@ func (dec SymmetricKeyDecryptor) clause() (string, error) {
 		}
 		return s, nil
 	}
-	return "", fmt.Errorf("a symmetric key cannot be opened by %q", dec.Kind)
+	return "", invalidf("a symmetric key cannot be opened by %q", dec.Kind)
 }
 
 // passwords are every password e carries, its own and its Open chain's —
@@ -529,16 +529,16 @@ type CreateSymmetricKeyRequest struct {
 // spec.
 func (spec CreateSymmetricKeyRequest) createSymmetricKeyStatement() (string, error) {
 	if strings.TrimSpace(spec.Name) == "" {
-		return "", fmt.Errorf("symmetric key has no name")
+		return "", invalidf("symmetric key has no name")
 	}
 	if spec.FromProvider != nil {
 		return spec.createProviderSymmetricKeyStatement()
 	}
 	if !spec.Algorithm.valid() {
-		return "", fmt.Errorf("symmetric key %q: unknown algorithm %q", spec.Name, spec.Algorithm)
+		return "", invalidf("symmetric key %q: unknown algorithm %q", spec.Name, spec.Algorithm)
 	}
 	if len(spec.Encryptions) == 0 {
-		return "", fmt.Errorf("symmetric key %q has no encryption", spec.Name)
+		return "", invalidf("symmetric key %q has no encryption", spec.Name)
 	}
 	var (
 		opens keyOpens
@@ -574,10 +574,10 @@ func (spec CreateSymmetricKeyRequest) createSymmetricKeyStatement() (string, err
 func (spec CreateSymmetricKeyRequest) createProviderSymmetricKeyStatement() (string, error) {
 	p := spec.FromProvider
 	if len(spec.Encryptions) > 0 {
-		return "", fmt.Errorf("symmetric key %q is held by a provider, so it takes no encryption", spec.Name)
+		return "", invalidf("symmetric key %q is held by a provider, so it takes no encryption", spec.Name)
 	}
 	if spec.KeySource != "" || spec.IdentityValue != "" {
-		return "", fmt.Errorf("symmetric key %q is held by a provider, so it takes no KEY_SOURCE or IDENTITY_VALUE", spec.Name)
+		return "", invalidf("symmetric key %q is held by a provider, so it takes no KEY_SOURCE or IDENTITY_VALUE", spec.Name)
 	}
 	stmt := "CREATE SYMMETRIC KEY " + quoteIdent(spec.Name)
 	if spec.Authorization != "" {
@@ -586,7 +586,7 @@ func (spec CreateSymmetricKeyRequest) createProviderSymmetricKeyStatement() (str
 	var opts []string
 	if spec.Algorithm != "" || p.Disposition != ProviderOpenExisting {
 		if !spec.Algorithm.valid() {
-			return "", fmt.Errorf("symmetric key %q: unknown algorithm %q", spec.Name, spec.Algorithm)
+			return "", invalidf("symmetric key %q: unknown algorithm %q", spec.Name, spec.Algorithm)
 		}
 		opts = append(opts, "ALGORITHM = "+string(spec.Algorithm))
 	}

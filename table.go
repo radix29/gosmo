@@ -337,13 +337,13 @@ type ColumnDefinition struct {
 // CreateTable creates a table from a CreateTableRequest.
 func (d *Database) CreateTable(ctx context.Context, req CreateTableRequest) (*Table, error) {
 	if req.Name == "" {
-		return nil, fmt.Errorf("gosmo: create table: name is required")
+		return nil, invalidf("gosmo: create table: name is required")
 	}
 	if err := requireSchema("create table", req.Schema, req.Name); err != nil {
 		return nil, err
 	}
 	if len(req.Columns) == 0 {
-		return nil, fmt.Errorf("gosmo: create table: at least one column is required")
+		return nil, invalidf("gosmo: create table: at least one column is required")
 	}
 	for _, col := range req.Columns {
 		if err := checkColumnDefinition(col); err != nil {
@@ -594,7 +594,7 @@ func (t *Table) DropConstraint(ctx context.Context, name string) error {
 // index's name in sys.indexes.
 func (t *Table) RenameConstraint(ctx context.Context, name, newName string) error {
 	if name == "" || newName == "" {
-		return fmt.Errorf("gosmo: rename constraint on %s: both names are required", t.FullName())
+		return invalidf("gosmo: rename constraint on %s: both names are required", t.FullName())
 	}
 	if err := t.db.renameSchemaObject(ctx, "constraint", renameObjectClass, t.Schema, name, newName); err != nil {
 		return err

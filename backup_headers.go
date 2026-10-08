@@ -139,11 +139,11 @@ func (t BackupTarget) IsDevice() bool { return t.logical }
 // zero BackupTarget, which would render as DISK = N”.
 func checkTargets(verb string, targets []BackupTarget) error {
 	if len(targets) == 0 {
-		return fmt.Errorf("gosmo: %s: at least one device is required", verb)
+		return invalidf("gosmo: %s: at least one device is required", verb)
 	}
 	for i, t := range targets {
 		if t.name == "" {
-			return fmt.Errorf("gosmo: %s: device %d has no name", verb, i+1)
+			return invalidf("gosmo: %s: device %d has no name", verb, i+1)
 		}
 	}
 	return nil

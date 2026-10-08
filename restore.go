@@ -159,7 +159,7 @@ func (s *Server) BuildRestoreStatement(opts RestoreOptions) (string, error) {
 // killSessions is set.
 func buildRestoreStatement(opts RestoreOptions, killSessions bool) (string, error) {
 	if opts.Database == "" {
-		return "", fmt.Errorf("gosmo: restore: database name is required")
+		return "", invalidf("gosmo: restore: database name is required")
 	}
 	if err := checkTargets("restore", opts.Devices); err != nil {
 		return "", err
@@ -168,13 +168,13 @@ func buildRestoreStatement(opts RestoreOptions, killSessions bool) (string, erro
 		opts.Action = BackupActionDatabase
 	}
 	if !validBackupAction(opts.Action) {
-		return "", fmt.Errorf("gosmo: restore: unrecognized action %q", opts.Action)
+		return "", invalidf("gosmo: restore: unrecognized action %q", opts.Action)
 	}
 	if !restoreRecoveryNames[opts.Recovery] {
-		return "", fmt.Errorf("gosmo: restore: unrecognized recovery %q", opts.Recovery)
+		return "", invalidf("gosmo: restore: unrecognized recovery %q", opts.Recovery)
 	}
 	if (opts.Recovery == RestoreWithStandBy) != (opts.StandByFile != "") {
-		return "", fmt.Errorf("gosmo: restore: a standby file goes with, and only with, RestoreWithStandBy")
+		return "", invalidf("gosmo: restore: a standby file goes with, and only with, RestoreWithStandBy")
 	}
 
 	// FILES is not a RESTORE verb any more than it is a BACKUP one — see

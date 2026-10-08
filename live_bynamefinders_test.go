@@ -5,7 +5,7 @@
 // PartitionSchemeByName, SecurityPolicyByName,
 // ColumnMasterKeyByName and ColumnEncryptionKeyByName, then
 // SchemaByName, IndexByName, StatisticByName,
-// ForeignKeyByName and TableChangeTrackingFor.
+// ForeignKeyByName and Table.ChangeTracking.
 //
 // Only the server can say whether these queries run at all, and whether each
 // returns the same object its listing does — the point of adding them was to
@@ -399,7 +399,7 @@ func TestLiveSchemaAndTableChildFindersMatchTheirListings(t *testing.T) {
 			if want == nil {
 				t.Fatalf("listing did not include app.%s", name)
 			}
-			got, err := d.TableChangeTrackingFor(ctx, "app", name)
+			got, err := d.TableRef("app", name).ChangeTracking(ctx)
 			if err != nil {
 				t.Fatalf("by name app.%s: %v", name, err)
 			}
@@ -436,7 +436,7 @@ func TestLiveSchemaAndTableChildFindersMatchTheirListings(t *testing.T) {
 				return err
 			},
 			"TableChangeTracking": func() error {
-				_, err := d.TableChangeTrackingFor(ctx, "app", "nope")
+				_, err := d.TableRef("app", "nope").ChangeTracking(ctx)
 				return err
 			},
 		}

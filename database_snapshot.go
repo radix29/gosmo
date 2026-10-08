@@ -198,10 +198,10 @@ func snapshotFilePath(physical, snapshotName string) string {
 // lookup would be a real query against a database that does not exist.
 func (s *Server) CreateDatabaseSnapshot(ctx context.Context, req CreateDatabaseSnapshotRequest) (*DatabaseSnapshot, error) {
 	if req.Name == "" {
-		return nil, fmt.Errorf("gosmo: create database snapshot: name is required")
+		return nil, invalidf("gosmo: create database snapshot: name is required")
 	}
 	if req.SourceDatabase == "" {
-		return nil, fmt.Errorf("gosmo: create database snapshot %q: source database is required", req.Name)
+		return nil, invalidf("gosmo: create database snapshot %q: source database is required", req.Name)
 	}
 
 	files := req.Files
@@ -217,7 +217,7 @@ func (s *Server) CreateDatabaseSnapshot(ctx context.Context, req CreateDatabaseS
 	fmt.Fprintf(&sb, "CREATE DATABASE %s ON", QuoteName(req.Name))
 	for i, f := range files {
 		if f.LogicalName == "" || f.FileName == "" {
-			return nil, fmt.Errorf("gosmo: create database snapshot %q: file %d needs both a logical name and a path", req.Name, i+1)
+			return nil, invalidf("gosmo: create database snapshot %q: file %d needs both a logical name and a path", req.Name, i+1)
 		}
 		if i > 0 {
 			sb.WriteString(",")

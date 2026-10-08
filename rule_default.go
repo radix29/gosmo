@@ -89,8 +89,42 @@ WHERE  o.type = '` + typeCode + `'` + extra
 // shape, not caller input.
 var (
 	ruleSelect    = boundObjectSelect("R", "")
-	defaultSelect = boundObjectSelect("D", " AND o.parent_object_id = 0")
+	defaultSelect = boundObjectSelect("D", standaloneDefault)
 )
+
+// standaloneDefault is the predicate that keeps default constraints out of a
+// type 'D' read (see the top of this file).
+const standaloneDefault = " AND o.parent_object_id = 0"
+
+// boundObjectDefinitions reads the text of every rule or standalone default
+// (typeCode and extra as boundObjectSelect) in one round trip, keyed by
+// object_id. NULL — an encrypted object, or one the login may not see — is
+// "", as Definition reports it.
+func (d *Database) boundObjectDefinitions(ctx context.Context, what, typeCode, extra string) (map[int]string, error) {
+	q := `
+SELECT o.object_id, OBJECT_DEFINITION(o.object_id)
+FROM   sys.objects o
+WHERE  o.type = '` + typeCode + `'` + extra
+
+	type objectText struct {
+		id  int
+		def sql.NullString
+	}
+	rows, err := d.query(ctx, q)
+	texts, err := scanRows(rows, err, fmt.Sprintf("read %s definitions in %q", what, d.Name), func(scan func(...any) error) (objectText, error) {
+		var t objectText
+		err := scan(&t.id, &t.def)
+		return t, err
+	})
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[int]string, len(texts))
+	for _, t := range texts {
+		out[t.id] = t.def.String
+	}
+	return out, nil
+}
 
 // ============================================================
 // Rules
@@ -110,6 +144,14 @@ ORDER  BY SCHEMA_NAME(o.schema_id), o.name`
 		}
 		return r, nil
 	})
+}
+
+// RuleDefinitions returns the text of every rule in the database in one
+// round trip, keyed by Rule.ObjectID: for a listing that shows each rule's
+// text, where Definition would cost a round trip per row. A rule created
+// since Rules was read may be in it, and one dropped since is not.
+func (d *Database) RuleDefinitions(ctx context.Context) (map[int]string, error) {
+	return d.boundObjectDefinitions(ctx, "rule", "R", "")
 }
 
 // RuleByName returns one rule, or a not-found error (errors.Is ErrNotFound)
@@ -173,6 +215,12 @@ ORDER  BY SCHEMA_NAME(o.schema_id), o.name`
 		}
 		return df, nil
 	})
+}
+
+// DefaultDefinitions is RuleDefinitions for the standalone defaults, keyed
+// by Default.ObjectID. Default constraints are not in it.
+func (d *Database) DefaultDefinitions(ctx context.Context) (map[int]string, error) {
+	return d.boundObjectDefinitions(ctx, "default", "D", standaloneDefault)
 }
 
 // DefaultByName returns one standalone default, or a not-found error

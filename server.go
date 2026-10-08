@@ -306,13 +306,21 @@ func batchCutShort(err error) bool {
 //
 // Connections checked out at the time are untouched, and the pool
 // configuration is not changed: each idle connection is taken and discarded.
-// One that another goroutine takes first costs a fresh dial here instead,
-// which is discarded the same way. Under WithScript it does nothing.
+// The idle count is read again before each take, so connections another
+// goroutine takes first end the loop early instead of each costing a fresh
+// dial that is only discarded (database/sql has no take-only-if-idle, so a
+// take racing between the read and Conn can still dial one); and the count
+// read on entry bounds it, so a pool other goroutines keep refilling cannot
+// hold it. Under WithScript it does
+// nothing.
 func (s *Server) ReleaseIdleConnections(ctx context.Context) error {
 	if Scripting(ctx) {
 		return nil
 	}
 	for range s.db.Stats().Idle {
+		if s.db.Stats().Idle == 0 {
+			break
+		}
 		conn, err := s.db.Conn(ctx)
 		if err != nil {
 			return fmt.Errorf("gosmo: release idle connections: %w", err)
@@ -658,7 +666,7 @@ func catalogCollationExpr(major int) string {
 func (s *Server) DatabaseByName(ctx context.Context, name string) (*Database, error) {
 	return readByName(ctx, s, scanDatabase, s.databaseSelect()+`
 	WHERE name = @p1`, []any{name},
-		notFoundf("gosmo: database %q not found", name), "database by name")
+		notFoundf("gosmo: database %q not found", name), fmt.Sprintf("read database %q", name))
 }
 
 // DatabaseRef returns a lightweight handle for name without querying the
@@ -689,13 +697,13 @@ func (s *Server) DatabaseRef(name string) *Database {
 func (s *Server) CreateDatabase(ctx context.Context, req CreateDatabaseRequest) (*Database, error) {
 	name, opts := req.Name, &req
 	if name == "" {
-		return nil, fmt.Errorf("gosmo: create database: name is required")
+		return nil, invalidf("gosmo: create database: name is required")
 	}
 	if opts.RecoveryModel != "" && !validRecoveryModel(opts.RecoveryModel) {
-		return nil, fmt.Errorf("gosmo: create database %q: unrecognized recovery model %q", name, opts.RecoveryModel)
+		return nil, invalidf("gosmo: create database %q: unrecognized recovery model %q", name, opts.RecoveryModel)
 	}
 	if opts.Collation != "" && !isSimpleIdentifier(opts.Collation) {
-		return nil, fmt.Errorf("gosmo: create database %q: invalid collation %q", name, opts.Collation)
+		return nil, invalidf("gosmo: create database %q: invalid collation %q", name, opts.Collation)
 	}
 
 	if opts.LogFile != nil && opts.PrimaryFile == nil {

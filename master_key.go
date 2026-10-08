@@ -98,13 +98,13 @@ type MasterKeyEncryptor struct {
 func (e MasterKeyEncryptor) clause() (string, error) {
 	switch {
 	case e.ServiceMasterKey && e.Password != "":
-		return "", fmt.Errorf("an encryption is by the service master key or by a password, not both")
+		return "", invalidf("an encryption is by the service master key or by a password, not both")
 	case e.ServiceMasterKey:
 		return "SERVICE MASTER KEY", nil
 	case e.Password != "":
 		return "PASSWORD = " + QuoteLiteral(e.Password), nil
 	}
-	return "", fmt.Errorf("no encryption named")
+	return "", invalidf("no encryption named")
 }
 
 // withOpen wraps stmt in OPEN MASTER KEY / CLOSE MASTER KEY when
@@ -148,7 +148,7 @@ func (m *MasterKey) exec(ctx context.Context, what, stmt, openPassword string, p
 // key.
 func (m *MasterKey) Regenerate(ctx context.Context, password string, force bool, openPassword string) error {
 	if password == "" {
-		return fmt.Errorf("gosmo: regenerate the master key in %q: empty password", m.db.Name)
+		return invalidf("gosmo: regenerate the master key in %q: empty password", m.db.Name)
 	}
 	stmt := "ALTER MASTER KEY "
 	if force {
@@ -185,10 +185,10 @@ func (m *MasterKey) DropEncryption(ctx context.Context, enc MasterKeyEncryptor, 
 // SQL Server service account.
 func (m *MasterKey) Backup(ctx context.Context, file, encryptionPassword, openPassword string) error {
 	if strings.TrimSpace(file) == "" {
-		return fmt.Errorf("gosmo: back up the master key in %q: no file", m.db.Name)
+		return invalidf("gosmo: back up the master key in %q: no file", m.db.Name)
 	}
 	if encryptionPassword == "" {
-		return fmt.Errorf("gosmo: back up the master key in %q: empty password", m.db.Name)
+		return invalidf("gosmo: back up the master key in %q: empty password", m.db.Name)
 	}
 	stmt := "BACKUP MASTER KEY TO FILE = " + QuoteLiteral(file) +
 		" ENCRYPTION BY PASSWORD = " + QuoteLiteral(encryptionPassword)

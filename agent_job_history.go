@@ -11,7 +11,13 @@ import (
 )
 
 // History returns the execution history (most recent first).
-// Pass limit=0 to use the default of 100 rows.
+// Pass limit=0 to use the default of 100 rows. On a JobRef the job is looked
+// up by name first (see Server.JobRef).
+//
+// instance_id breaks ties: a run's step-0 (job outcome) row carries the run's
+// start time, the same run_date/run_time as its first step, so without it
+// the two came back in either order. Agent writes the outcome row last, so
+// it sorts first, above the steps it summarises.
 func (j *Job) History(ctx context.Context, limit int) ([]*JobHistoryEntry, error) {
 	if limit <= 0 {
 		limit = 100
@@ -22,10 +28,15 @@ SELECT TOP %d
        run_status, ISNULL(message, ''), step_id, step_name
 FROM   msdb.dbo.sysjobhistory
 WHERE  job_id = @p1
-ORDER  BY run_date DESC, run_time DESC`, limit)
+ORDER  BY run_date DESC, run_time DESC, instance_id DESC`, limit)
 
-	rows, err := j.server.query(ctx, q, j.JobID)
-	return scanRows(rows, err, fmt.Sprintf("history for job %q", j.Name), func(scan func(...any) error) (*JobHistoryEntry, error) {
+	what := fmt.Sprintf("history for job %q", j.Name)
+	id, err := j.id(ctx, what)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := j.server.query(ctx, q, id)
+	return scanRows(rows, err, what, func(scan func(...any) error) (*JobHistoryEntry, error) {
 		h := &JobHistoryEntry{}
 		var runDate, runTime, runDur int
 		if err := scan(&runDate, &runTime, &runDur,
@@ -53,7 +64,7 @@ SELECT TOP %d
 FROM   msdb.dbo.sysjobhistory h
 JOIN   msdb.dbo.sysjobs j ON j.job_id = h.job_id
 WHERE  h.step_id = 0
-ORDER  BY h.run_date DESC, h.run_time DESC`, limit)
+ORDER  BY h.run_date DESC, h.run_time DESC, h.instance_id DESC`, limit)
 
 	rows, err := s.query(ctx, q)
 	return scanRows(rows, err, "job history", func(scan func(...any) error) (*JobHistoryEntry, error) {
@@ -90,7 +101,7 @@ type JobHistoryEntry struct {
 // server clock is decoded (see ErrorLogEntry.Date), and the one go-mssqldb
 // already uses for real datetime columns. Stamping time.Local instead would
 // make these values silently uncomparable with the datetime-derived ones
-// beside them, such as Job.LastRunDate, by the client's UTC offset.
+// beside them, such as Job.NextRunDate, by the client's UTC offset.
 func parseSQLAgentDate(runDate, runTime int) time.Time {
 	y := runDate / 10000
 	m := (runDate % 10000) / 100

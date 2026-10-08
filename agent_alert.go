@@ -171,7 +171,7 @@ func (s *Server) AlertByName(ctx context.Context, name string) (*Alert, error) {
 	q := "SELECT " + alertColumns + " " + alertFrom + " WHERE a.name = @p1"
 
 	return readByName(ctx, s, scanAlert, q, []any{name},
-		notFoundf("gosmo: alert %q not found", name), "alert by name")
+		notFoundf("gosmo: alert %q not found", name), fmt.Sprintf("read alert %q", name))
 }
 
 // CreateAlertRequest describes a new SQL Server event alert.
@@ -192,7 +192,7 @@ type CreateAlertRequest struct {
 // CreateAlert creates a new SQL Server event alert via sp_add_alert.
 func (s *Server) CreateAlert(ctx context.Context, req CreateAlertRequest) (*Alert, error) {
 	if req.Name == "" {
-		return nil, fmt.Errorf("gosmo: create alert: name is required")
+		return nil, invalidf("gosmo: create alert: name is required")
 	}
 	q := fmt.Sprintf(
 		"EXEC msdb.dbo.sp_add_alert @name = N'%s', @message_id = %d, @severity = %d, "+
@@ -227,6 +227,11 @@ func (a *Alert) Enable(ctx context.Context) error { return a.setEnabled(ctx, tru
 
 // Disable disables the alert.
 func (a *Alert) Disable(ctx context.Context) error { return a.setEnabled(ctx, false) }
+
+// SetEnabled is Enable when on is true and Disable otherwise.
+func (a *Alert) SetEnabled(ctx context.Context, on bool) error {
+	return a.setEnabled(ctx, on)
+}
 
 func (a *Alert) setEnabled(ctx context.Context, on bool) error {
 	return a.Alter(ctx, AlertChanges{Enabled: &on})
@@ -312,6 +317,9 @@ func (a *Alert) RemoveNotification(ctx context.Context, operatorName string) err
 
 // Notifications returns every operator notified by this alert.
 func (a *Alert) Notifications(ctx context.Context) ([]*AlertNotification, error) {
+	if err := requireID(fmt.Sprintf("notifications for alert %q", a.Name), a.ID != 0); err != nil {
+		return nil, err
+	}
 	const q = `
 SELECT o.name, n.notification_method
 FROM   msdb.dbo.sysnotifications n

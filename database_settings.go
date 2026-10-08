@@ -10,12 +10,12 @@ import (
 // SetRecoveryModel changes the database recovery model.
 func (d *Database) SetRecoveryModel(ctx context.Context, model RecoveryModel) error {
 	if !validRecoveryModel(model) {
-		return fmt.Errorf("gosmo: set recovery model: unrecognized recovery model %q", model)
+		return invalidf("gosmo: set recovery model of %q: unrecognized recovery model %q", d.Name, model)
 	}
 	if err := d.server.exec(ctx,
 		fmt.Sprintf("ALTER DATABASE %s SET RECOVERY %s", quoteIdent(d.Name), model),
 	); err != nil {
-		return fmt.Errorf("gosmo: set recovery model: %w", err)
+		return fmt.Errorf("gosmo: set recovery model of %q: %w", d.Name, err)
 	}
 	setIfApplied(ctx, &d.RecoveryModel, model)
 	return nil
@@ -26,7 +26,7 @@ func (d *Database) SetCompatibilityLevel(ctx context.Context, level Compatibilit
 	if err := d.server.exec(ctx,
 		fmt.Sprintf("ALTER DATABASE %s SET COMPATIBILITY_LEVEL = %d", quoteIdent(d.Name), level),
 	); err != nil {
-		return fmt.Errorf("gosmo: set compatibility level: %w", err)
+		return fmt.Errorf("gosmo: set compatibility level of %q: %w", d.Name, err)
 	}
 	setIfApplied(ctx, &d.CompatibilityLevel, level)
 	return nil
@@ -57,7 +57,7 @@ func (t Termination) withClause() (string, error) {
 	case TerminationRollbackImmediate:
 		return " WITH ROLLBACK IMMEDIATE", nil
 	}
-	return "", fmt.Errorf("unrecognized termination %d", t)
+	return "", invalidf("unrecognized termination %d", t)
 }
 
 // SetReadOnly sets the database to read-only or read-write. Either needs
@@ -71,13 +71,13 @@ func (d *Database) SetReadOnly(ctx context.Context, readOnly bool, term Terminat
 	}
 	with, err := term.withClause()
 	if err != nil {
-		return fmt.Errorf("gosmo: set read-only %v: %w", readOnly, err)
+		return fmt.Errorf("gosmo: set read-only %v on %q: %w", readOnly, d.Name, err)
 	}
 	d.server.releaseIdle(ctx)
 	if err := d.server.exec(ctx,
 		fmt.Sprintf("ALTER DATABASE %s SET %s%s", quoteIdent(d.Name), mode, with),
 	); err != nil {
-		return fmt.Errorf("gosmo: set read-only %v: %w", readOnly, err)
+		return fmt.Errorf("gosmo: set read-only %v on %q: %w", readOnly, d.Name, err)
 	}
 	setIfApplied(ctx, &d.IsReadOnly, readOnly)
 	return nil
@@ -107,12 +107,12 @@ var userAccessModes = map[UserAccess]bool{
 // new mode are rolled back immediately, matching SSMS's own behavior.
 func (d *Database) SetUserAccess(ctx context.Context, mode UserAccess) error {
 	if !userAccessModes[mode] {
-		return fmt.Errorf("gosmo: set user access: unrecognized mode %q", mode)
+		return invalidf("gosmo: set user access on %q: unrecognized mode %q", d.Name, mode)
 	}
 	if err := d.server.exec(ctx,
 		fmt.Sprintf("ALTER DATABASE %s SET %s WITH ROLLBACK IMMEDIATE", quoteIdent(d.Name), mode),
 	); err != nil {
-		return fmt.Errorf("gosmo: set user access %s: %w", mode, err)
+		return fmt.Errorf("gosmo: set user access %s on %q: %w", mode, d.Name, err)
 	}
 	return nil
 }
@@ -125,7 +125,7 @@ func (d *Database) SetOffline(ctx context.Context) error {
 	if err := d.server.exec(ctx,
 		fmt.Sprintf("ALTER DATABASE %s SET OFFLINE WITH ROLLBACK IMMEDIATE", quoteIdent(d.Name)),
 	); err != nil {
-		return fmt.Errorf("gosmo: set offline: %w", err)
+		return fmt.Errorf("gosmo: set %q offline: %w", d.Name, err)
 	}
 	setIfApplied(ctx, &d.State, "OFFLINE")
 	return nil
@@ -136,7 +136,7 @@ func (d *Database) SetOnline(ctx context.Context) error {
 	if err := d.server.exec(ctx,
 		fmt.Sprintf("ALTER DATABASE %s SET ONLINE", quoteIdent(d.Name)),
 	); err != nil {
-		return fmt.Errorf("gosmo: set online: %w", err)
+		return fmt.Errorf("gosmo: set %q online: %w", d.Name, err)
 	}
 	setIfApplied(ctx, &d.State, "ONLINE")
 	return nil

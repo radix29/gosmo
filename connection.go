@@ -334,7 +334,7 @@ func Connect(ctx context.Context, opts ConnectionOptions) (*Server, error) {
 // instance.
 func NewServer(ctx context.Context, db *sql.DB) (*Server, error) {
 	if db == nil {
-		return nil, fmt.Errorf("gosmo: new server: db is nil")
+		return nil, invalidf("gosmo: new server: db is nil")
 	}
 	s := newServer(db)
 	if err := s.loadInfo(ctx); err != nil {

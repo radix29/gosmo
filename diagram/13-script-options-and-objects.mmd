@@ -80,6 +80,8 @@ classDiagram
         +Drop() error
         +Rename(newName) error
         +Transfer(targetSchema) error
+        +AddSignature(by Signer, counter) error
+        +DropSignature(by Signer, counter) error
     }
 
     class UserDefinedFunction {
@@ -95,6 +97,8 @@ classDiagram
         +Drop() error
         +Rename(newName) error
         +Transfer(targetSchema) error
+        +AddSignature(by Signer, counter) error
+        +DropSignature(by Signer, counter) error
     }
 
     class User {
@@ -141,7 +145,7 @@ classDiagram
         +Type string
         +IsDefault bool
         +IsReadOnly bool
-        +Files []DatabaseFile
+        +Files []*DatabaseFileInfo
         +IsFileStream() bool
         +Database() *Database
         +Drop() error
@@ -166,6 +170,8 @@ classDiagram
         +Database() *Database
         +Drop() error
         +Rename(newName) error
+        +AddSignature(by Signer, counter) error
+        +DropSignature(by Signer, counter) error
         No Transfer: a trigger moves with its table.
     }
 

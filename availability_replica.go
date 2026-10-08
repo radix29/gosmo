@@ -72,6 +72,9 @@ func (r *AvailabilityReplica) Server() *Server { return r.server }
 
 // Replicas returns every replica in the group, ordered by server name.
 func (ag *AvailabilityGroup) Replicas(ctx context.Context) ([]*AvailabilityReplica, error) {
+	if err := requireID(fmt.Sprintf("list replicas of availability group %q", ag.Name), ag.ID != ""); err != nil {
+		return nil, err
+	}
 	s := ag.server
 
 	major := s.serverMajorVersion()
@@ -252,7 +255,7 @@ func upperKeyword[K ~string](v K) K { return K(strings.ToUpper(string(v))) }
 // that is the syntax ALTER requires — so escapeSingle is what protects it.
 func (r *AvailabilityReplica) modifyReplica(ctx context.Context, with string) error {
 	if r.server == nil || r.GroupName == "" {
-		return fmt.Errorf("gosmo: modify replica %q: replica did not come from AvailabilityGroup.Replicas", r.ReplicaServerName)
+		return invalidf("gosmo: modify replica %q: replica did not come from AvailabilityGroup.Replicas", r.ReplicaServerName)
 	}
 	return r.server.exec(ctx, fmt.Sprintf(
 		"ALTER AVAILABILITY GROUP %s MODIFY REPLICA ON N'%s' WITH (%s)",
@@ -264,7 +267,7 @@ func (r *AvailabilityReplica) modifyReplica(ctx context.Context, with string) er
 func setReplicaKeyword[K ~string](ctx context.Context, r *AvailabilityReplica, what, option string, value K, allowed map[K]bool, dst *K) error {
 	value = upperKeyword(value)
 	if !allowed[value] {
-		return fmt.Errorf("gosmo: set %s: unrecognized value %q", what, value)
+		return invalidf("gosmo: set %s: unrecognized value %q", what, value)
 	}
 	if err := r.modifyReplica(ctx, option+" = "+string(value)); err != nil {
 		return fmt.Errorf("gosmo: set %s of replica %q: %w", what, r.ReplicaServerName, err)
@@ -301,7 +304,7 @@ func (r *AvailabilityReplica) SetSeedingMode(ctx context.Context, mode SeedingMo
 func (r *AvailabilityReplica) SetPrimaryRoleAllowConnections(ctx context.Context, mode AllowConnections) error {
 	mode = upperKeyword(mode)
 	if !primaryRoleConnections[mode] {
-		return fmt.Errorf("gosmo: set primary role connections: unrecognized value %q", mode)
+		return invalidf("gosmo: set primary role connections: unrecognized value %q", mode)
 	}
 	if err := r.modifyReplica(ctx, "PRIMARY_ROLE (ALLOW_CONNECTIONS = "+string(mode)+")"); err != nil {
 		return fmt.Errorf("gosmo: set primary role connections of replica %q: %w", r.ReplicaServerName, err)
@@ -315,7 +318,7 @@ func (r *AvailabilityReplica) SetPrimaryRoleAllowConnections(ctx context.Context
 func (r *AvailabilityReplica) SetSecondaryRoleAllowConnections(ctx context.Context, mode AllowConnections) error {
 	mode = upperKeyword(mode)
 	if !secondaryRoleConnections[mode] {
-		return fmt.Errorf("gosmo: set secondary role connections: unrecognized value %q", mode)
+		return invalidf("gosmo: set secondary role connections: unrecognized value %q", mode)
 	}
 	if err := r.modifyReplica(ctx, "SECONDARY_ROLE (ALLOW_CONNECTIONS = "+string(mode)+")"); err != nil {
 		return fmt.Errorf("gosmo: set secondary role connections of replica %q: %w", r.ReplicaServerName, err)
@@ -329,7 +332,7 @@ func (r *AvailabilityReplica) SetSecondaryRoleAllowConnections(ctx context.Conte
 // 5-second floor; below about 10 seconds a busy system reports false failures.
 func (r *AvailabilityReplica) SetSessionTimeout(ctx context.Context, seconds int) error {
 	if seconds < 5 {
-		return fmt.Errorf("gosmo: set session timeout: %d s is below the 5 s minimum", seconds)
+		return invalidf("gosmo: set session timeout: %d s is below the 5 s minimum", seconds)
 	}
 	if err := r.modifyReplica(ctx, fmt.Sprintf("SESSION_TIMEOUT = %d", seconds)); err != nil {
 		return fmt.Errorf("gosmo: set session timeout of replica %q: %w", r.ReplicaServerName, err)
@@ -343,7 +346,7 @@ func (r *AvailabilityReplica) SetSessionTimeout(ctx context.Context, seconds int
 // the value behind SSMS's "Exclude Replica" checkbox.
 func (r *AvailabilityReplica) SetBackupPriority(ctx context.Context, priority int) error {
 	if priority < 0 || priority > 100 {
-		return fmt.Errorf("gosmo: set backup priority: %d out of range 0-100", priority)
+		return invalidf("gosmo: set backup priority: %d out of range 0-100", priority)
 	}
 	if err := r.modifyReplica(ctx, fmt.Sprintf("BACKUP_PRIORITY = %d", priority)); err != nil {
 		return fmt.Errorf("gosmo: set backup priority of replica %q: %w", r.ReplicaServerName, err)
@@ -403,7 +406,7 @@ func formatRoutingList(list [][]string) (string, error) {
 		names := make([]string, 0, len(set))
 		for _, name := range set {
 			if strings.TrimSpace(name) == "" {
-				return "", fmt.Errorf("routing list contains an empty replica name")
+				return "", invalidf("routing list contains an empty replica name")
 			}
 			names = append(names, QuoteLiteral(name))
 		}
@@ -479,7 +482,7 @@ func removeReplicaClause(serverName string) string {
 // verified against SQL Server 2025.
 func (ag *AvailabilityGroup) RemoveReplica(ctx context.Context, serverName string) error {
 	if strings.TrimSpace(serverName) == "" {
-		return fmt.Errorf("gosmo: remove replica from availability group %q: empty replica name", ag.Name)
+		return invalidf("gosmo: remove replica from availability group %q: empty replica name", ag.Name)
 	}
 	if err := ag.alter(ctx, removeReplicaClause(serverName)); err != nil {
 		return fmt.Errorf("gosmo: remove replica %q from availability group %q: %w", serverName, ag.Name, err)
@@ -492,7 +495,7 @@ func (ag *AvailabilityGroup) RemoveReplica(ctx context.Context, serverName strin
 // Run against the primary.
 func (r *AvailabilityReplica) Drop(ctx context.Context) error {
 	if r.server == nil || r.GroupName == "" {
-		return fmt.Errorf("gosmo: drop replica %q: replica did not come from AvailabilityGroup.Replicas", r.ReplicaServerName)
+		return invalidf("gosmo: drop replica %q: replica did not come from AvailabilityGroup.Replicas", r.ReplicaServerName)
 	}
 	if err := r.server.exec(ctx, fmt.Sprintf("ALTER AVAILABILITY GROUP %s %s",
 		quoteIdent(r.GroupName), removeReplicaClause(r.ReplicaServerName))); err != nil {

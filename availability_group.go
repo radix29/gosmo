@@ -251,7 +251,7 @@ var backupPreferences = map[BackupPreference]bool{
 func (ag *AvailabilityGroup) SetAutomatedBackupPreference(ctx context.Context, pref BackupPreference) error {
 	pref = upperKeyword(pref)
 	if !backupPreferences[pref] {
-		return fmt.Errorf("gosmo: set automated backup preference: unrecognized preference %q", pref)
+		return invalidf("gosmo: set automated backup preference: unrecognized preference %q", pref)
 	}
 	if err := ag.alterSet(ctx, "AUTOMATED_BACKUP_PREFERENCE = "+string(pref)); err != nil {
 		return fmt.Errorf("gosmo: set automated backup preference of availability group %q: %w", ag.Name, err)
@@ -265,7 +265,7 @@ func (ag *AvailabilityGroup) SetAutomatedBackupPreference(ctx context.Context, p
 // internal error).
 func (ag *AvailabilityGroup) SetFailureConditionLevel(ctx context.Context, level int) error {
 	if level < 1 || level > 5 {
-		return fmt.Errorf("gosmo: set failure condition level: level %d out of range 1-5", level)
+		return invalidf("gosmo: set failure condition level: level %d out of range 1-5", level)
 	}
 	if err := ag.alterSet(ctx, fmt.Sprintf("FAILURE_CONDITION_LEVEL = %d", level)); err != nil {
 		return fmt.Errorf("gosmo: set failure condition level of availability group %q: %w", ag.Name, err)
@@ -279,7 +279,7 @@ func (ag *AvailabilityGroup) SetFailureConditionLevel(ctx context.Context, level
 // enforces a 15000 ms floor.
 func (ag *AvailabilityGroup) SetHealthCheckTimeout(ctx context.Context, ms int) error {
 	if ms < 15000 {
-		return fmt.Errorf("gosmo: set health check timeout: %d ms is below the 15000 ms minimum", ms)
+		return invalidf("gosmo: set health check timeout: %d ms is below the 15000 ms minimum", ms)
 	}
 	if err := ag.alterSet(ctx, fmt.Sprintf("HEALTH_CHECK_TIMEOUT = %d", ms)); err != nil {
 		return fmt.Errorf("gosmo: set health check timeout of availability group %q: %w", ag.Name, err)
@@ -322,7 +322,7 @@ func (ag *AvailabilityGroup) SetDTCSupport(ctx context.Context, perDB bool) erro
 // live group.
 func (ag *AvailabilityGroup) SetRequiredSynchronizedSecondariesToCommit(ctx context.Context, n int) error {
 	if n < 0 {
-		return fmt.Errorf("gosmo: set required synchronized secondaries to commit: %d is negative", n)
+		return invalidf("gosmo: set required synchronized secondaries to commit: %d is negative", n)
 	}
 	if err := ag.alterSet(ctx, fmt.Sprintf("REQUIRED_SYNCHRONIZED_SECONDARIES_TO_COMMIT = %d", n)); err != nil {
 		return fmt.Errorf("gosmo: set required synchronized secondaries to commit of availability group %q: %w", ag.Name, err)

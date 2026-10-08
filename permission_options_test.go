@@ -25,8 +25,7 @@ func onlyStatement(t *testing.T, script *ScriptCollector) string {
 
 func TestPermissionOptionsRenderWithGrantOption(t *testing.T) {
 	d, ctx, script := scriptedDB(t)
-	err := d.GrantPermission(ctx, "dbo", "Orders", PermSelect, "app_reader",
-		PermissionOptions{WithGrantOption: true})
+	err := d.ApplyPermission(ctx, VerbGrant, Securable{Class: SecurableTable, Schema: "dbo", Name: "Orders"}, PermSelect, "app_reader", PermissionOptions{WithGrantOption: true})
 	if err != nil {
 		t.Fatalf("grant: %v", err)
 	}
@@ -40,8 +39,7 @@ func TestPermissionOptionsRenderRevokeGrantOptionFor(t *testing.T) {
 	d, ctx, script := scriptedDB(t)
 	// GRANT OPTION FOR always carries CASCADE — SQL Server rejects it
 	// without one, so it must not depend on the caller also setting Cascade.
-	err := d.RevokePermission(ctx, "dbo", "Orders", PermSelect, "app_reader",
-		PermissionOptions{GrantOptionOnly: true})
+	err := d.ApplyPermission(ctx, VerbRevoke, Securable{Class: SecurableTable, Schema: "dbo", Name: "Orders"}, PermSelect, "app_reader", PermissionOptions{GrantOptionOnly: true})
 	if err != nil {
 		t.Fatalf("revoke: %v", err)
 	}
@@ -53,8 +51,7 @@ func TestPermissionOptionsRenderRevokeGrantOptionFor(t *testing.T) {
 
 func TestPermissionOptionsRenderDenyCascade(t *testing.T) {
 	d, ctx, script := scriptedDB(t)
-	err := d.DenySchemaPermission(ctx, "sales", PermSelect, "app_reader",
-		PermissionOptions{Cascade: true})
+	err := d.ApplyPermission(ctx, VerbDeny, Securable{Class: SecurableSchema, Name: "sales"}, PermSelect, "app_reader", PermissionOptions{Cascade: true})
 	if err != nil {
 		t.Fatalf("deny: %v", err)
 	}
@@ -70,16 +67,13 @@ func TestPermissionOptionsRenderDenyCascade(t *testing.T) {
 func TestPermissionOptionsRejectMismatchedModifier(t *testing.T) {
 	d, ctx, script := scriptedDB(t)
 
-	if err := d.DenyPermission(ctx, "dbo", "Orders", PermSelect, "app_reader",
-		PermissionOptions{WithGrantOption: true}); err == nil {
+	if err := d.ApplyPermission(ctx, VerbDeny, Securable{Class: SecurableTable, Schema: "dbo", Name: "Orders"}, PermSelect, "app_reader", PermissionOptions{WithGrantOption: true}); err == nil {
 		t.Error("DENY accepted WITH GRANT OPTION, want an error")
 	}
-	if err := d.GrantPermission(ctx, "dbo", "Orders", PermSelect, "app_reader",
-		PermissionOptions{Cascade: true}); err == nil {
+	if err := d.ApplyPermission(ctx, VerbGrant, Securable{Class: SecurableTable, Schema: "dbo", Name: "Orders"}, PermSelect, "app_reader", PermissionOptions{Cascade: true}); err == nil {
 		t.Error("GRANT accepted CASCADE, want an error")
 	}
-	if err := d.GrantPermission(ctx, "dbo", "Orders", PermSelect, "app_reader",
-		PermissionOptions{GrantOptionOnly: true}); err == nil {
+	if err := d.ApplyPermission(ctx, VerbGrant, Securable{Class: SecurableTable, Schema: "dbo", Name: "Orders"}, PermSelect, "app_reader", PermissionOptions{GrantOptionOnly: true}); err == nil {
 		t.Error("GRANT accepted GRANT OPTION FOR, want an error")
 	}
 	if len(script.Statements()) != 0 {
@@ -90,8 +84,7 @@ func TestPermissionOptionsRejectMismatchedModifier(t *testing.T) {
 func TestServerPermissionWithModifierKeepsUseMasterPrefix(t *testing.T) {
 	ctx, script := WithScript(context.Background())
 	s := &Server{}
-	if err := s.GrantServerPermission(ctx, "VIEW SERVER STATE", "app_login",
-		PermissionOptions{WithGrantOption: true}); err != nil {
+	if err := s.ApplyPermission(ctx, VerbGrant, Securable{Class: SecurableServer}, ServerPermission("VIEW SERVER STATE"), "app_login", PermissionOptions{WithGrantOption: true}); err != nil {
 		t.Fatalf("grant: %v", err)
 	}
 	if len(script.Statements()) != 1 {
@@ -105,16 +98,14 @@ func TestServerPermissionWithModifierKeepsUseMasterPrefix(t *testing.T) {
 
 func TestPermissionWithModifierStillRejectsUnknownPermission(t *testing.T) {
 	d, ctx, _ := scriptedDB(t)
-	if err := d.GrantPermission(ctx, "dbo", "Orders",
-		ObjectPermission("SELECT; DROP TABLE Orders; --"), "attacker", PermissionOptions{}); err == nil {
+	if err := d.ApplyPermission(ctx, VerbGrant, Securable{Class: SecurableTable, Schema: "dbo", Name: "Orders"}, ObjectPermission("SELECT; DROP TABLE Orders; --"), "attacker", PermissionOptions{}); err == nil {
 		t.Error("an unrecognized permission name was accepted, want an error")
 	}
-	if err := d.GrantDatabasePermission(ctx, "CONTROL; DROP DATABASE appdb; --",
-		"attacker", PermissionOptions{}); err == nil {
+	if err := d.ApplyPermission(ctx, VerbGrant, Securable{Class: SecurableDatabase}, DatabasePermission("CONTROL; DROP DATABASE appdb; --"), "attacker", PermissionOptions{}); err == nil {
 		t.Error("an unrecognized database permission name was accepted, want an error")
 	}
 	s := &Server{}
-	if err := s.RevokeServerPermission(ctx, "NOT REAL", "sa", PermissionOptions{}); err == nil {
+	if err := s.ApplyPermission(ctx, VerbRevoke, Securable{Class: SecurableServer}, ServerPermission("NOT REAL"), "sa", PermissionOptions{}); err == nil {
 		t.Error("an unrecognized server permission name was accepted, want an error")
 	}
 }

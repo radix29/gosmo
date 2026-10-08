@@ -223,6 +223,21 @@ func requireSchema(what, schema, name string) error {
 	return nil
 }
 
+// requireID refuses a read keyed by a catalog id the receiver does not have
+// (ok false) — a …Ref handle, whose id is zero. Without it the read asks for
+// id 0 and answers with an empty list, or a confusing server error, which a
+// caller cannot tell from an object that really has no children. Table has
+// its own form, requireLoaded.
+//
+// what is the operation with the object named, as the read's other errors
+// carry it ("list files of assembly \"a\" in \"db\"").
+func requireID(what string, ok bool) error {
+	if !ok {
+		return fmt.Errorf("gosmo: %s: %w", what, ErrHandleNotLoaded)
+	}
+	return nil
+}
+
 // qualifiedName returns [schema].[name], or just [name] when schema is empty.
 // Most callers get schema from an exported method's parameter, and the naive
 // form emits "[].[name]" for an empty one — which OBJECT_ID resolves to NULL,
@@ -279,4 +294,86 @@ WHERE  o.object_id = OBJECT_ID(@p1) AND ` + kind
 	return foundRow(def.String, err,
 		notFoundf("gosmo: %s %s not found in %q", what, qualifiedName(schema, name), d.Name),
 		fmt.Sprintf("read %s %s definition in %q", what, qualifiedName(schema, name), d.Name))
+}
+
+// perDatabaseBatch runs q in each of dbs in one round trip: every database's
+// run is that database's sp_executesql inside its own TRY/CATCH, so a
+// database that cannot be entered or read is skipped server-side rather than
+// failing the whole listing — the shape Login.UserMappings has. See
+// perDatabaseExec for why the procedure is named through a variable. Each of q's result
+// sets starts with DB_NAME(), under a column alias naming what the set holds.
+// read builds one value from a row, given that alias and a scan that fills
+// the row's remaining columns; attach then gives it the row's database. The
+// values come back in dbs order, then in the order q produces them.
+//
+// A failure reading the rows is not skipped: rows already read would be
+// returned as a short list called success.
+func perDatabaseBatch[T any](ctx context.Context, s *Server, what string, dbs []*Database, q string,
+	read func(kind string, scan func(...any) error) (T, error), attach func(T, *Database)) ([]T, error) {
+	if len(dbs) == 0 {
+		return nil, nil
+	}
+	byName := make(map[string]*Database, len(dbs))
+	var sb strings.Builder
+	sb.WriteString("SET NOCOUNT ON;\nDECLARE @proc nvarchar(300), @q nvarchar(max) = " + QuoteLiteral(q) + ";\n")
+	for _, d := range dbs {
+		byName[d.Name] = d
+		sb.WriteString(perDatabaseExec(d.Name, ""))
+	}
+	wrap := func(err error) error {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		return fmt.Errorf("gosmo: %s: %w", what, err)
+	}
+	rows, err := s.query(ctx, sb.String())
+	if err != nil {
+		return nil, wrap(err)
+	}
+	defer rows.Close()
+	var out []T
+	for {
+		cols, err := rows.Columns()
+		if err != nil {
+			return nil, wrap(err)
+		}
+		for rows.Next() {
+			var dbName string
+			v, err := read(cols[0], func(dest ...any) error {
+				return rows.Scan(append([]any{&dbName}, dest...)...)
+			})
+			if err != nil {
+				return nil, wrap(err)
+			}
+			d := byName[dbName]
+			if d == nil {
+				return nil, wrap(fmt.Errorf("a result set names database %q, which was not asked for", dbName))
+			}
+			attach(v, d)
+			out = append(out, v)
+		}
+		if !rows.NextResultSet() {
+			break
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, wrap(err)
+	}
+	return out, nil
+}
+
+// perDatabaseExec is one database's step of a per-database batch: @q run by
+// that database's sp_executesql, with args (", N'@p1 …', @p1 = …" or "")
+// appended, inside a TRY/CATCH that skips the database on any error. The
+// batch declares @proc nvarchar(300) and @q.
+//
+// The procedure is named through @proc, not written EXEC [db].sys.sp_executesql:
+// a literal three-part name is resolved when the batch compiles, so a database
+// that cannot be entered — held in SINGLE_USER by another session, Msg 924 —
+// fails the whole batch before any TRY runs. EXEC @proc resolves the name
+// when that statement executes, inside its TRY (probed on 2025, 2026-10-08).
+// The literal form passed a live test only while the batch's plan was cached.
+func perDatabaseExec(database, args string) string {
+	return "BEGIN TRY SET @proc = " + QuoteLiteral(quoteIdent(database)+".sys.sp_executesql") +
+		"; EXEC @proc @q" + args + "; END TRY BEGIN CATCH END CATCH;\n"
 }

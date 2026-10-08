@@ -106,3 +106,64 @@ func TestScriptDatabaseHeaderNamesTheVersion(t *testing.T) {
 		t.Errorf("header lost the product version:\n%s", got)
 	}
 }
+
+// Verb used to be ignored here: a DROP came back as a CREATE, which run
+// as a "drop this" script fails on an existing database at best.
+func TestScriptDatabaseHonoursVerb(t *testing.T) {
+	cases := []struct {
+		verb     ScriptVerb
+		guard    bool
+		want     []string
+		wantNone []string
+	}{
+		{ScriptDrop, false,
+			[]string{"USE [master];\nGO\nDROP DATABASE [O'Brien];\nGO\n"},
+			[]string{"CREATE DATABASE", "SET RECOVERY"}},
+		{ScriptDrop, true,
+			[]string{"IF DB_ID(N'O''Brien') IS NOT NULL\n    DROP DATABASE [O'Brien];"},
+			[]string{"CREATE DATABASE"}},
+		{ScriptDropAndCreate, true,
+			[]string{"DROP DATABASE [O'Brien];", "IF DB_ID(N'O''Brien') IS NULL\nBEGIN\n    CREATE DATABASE [O'Brien]", "SET RECOVERY FULL"},
+			nil},
+		{ScriptAlter, false,
+			[]string{"CREATE DATABASE [O'Brien]"},
+			[]string{"DROP DATABASE"}},
+	}
+	for _, tc := range cases {
+		sc := scripterOverDatabase("O'Brien")
+		sc.opts.Verb = tc.verb
+		sc.opts.IncludeIfNotExists = tc.guard
+		got, err := sc.ScriptDatabase(t.Context())
+		if err != nil {
+			t.Fatalf("verb %d: %v", tc.verb, err)
+		}
+		for _, w := range tc.want {
+			if !strings.Contains(got, w) {
+				t.Errorf("verb %d guard %v: missing %q in:\n%s", tc.verb, tc.guard, w, got)
+			}
+		}
+		for _, w := range tc.wantNone {
+			if strings.Contains(got, w) {
+				t.Errorf("verb %d guard %v: unexpected %q in:\n%s", tc.verb, tc.guard, w, got)
+			}
+		}
+		if tc.verb == ScriptDropAndCreate && strings.Index(got, "DROP DATABASE") > strings.Index(got, "CREATE DATABASE") {
+			t.Errorf("DROP AND CREATE puts the CREATE first:\n%s", got)
+		}
+	}
+}
+
+// A DROP needs only the name, so a bare DatabaseRef handle scripts one with
+// no server to refresh from.
+func TestScriptDatabaseDropNeedsNoRefresh(t *testing.T) {
+	opts := DefaultScriptOptions()
+	opts.Verb = ScriptDrop
+	opts.IncludeHeaders = false
+	got, err := NewScripter((&Server{}).DatabaseRef("Sales"), opts).ScriptDatabase(t.Context())
+	if err != nil {
+		t.Fatalf("ScriptDatabase: %v", err)
+	}
+	if !strings.Contains(got, "DROP DATABASE [Sales];") {
+		t.Errorf("no DROP:\n%s", got)
+	}
+}

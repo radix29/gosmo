@@ -16,6 +16,7 @@
 package gosmo
 
 import (
+	"errors"
 	"strings"
 	"testing"
 )
@@ -93,5 +94,62 @@ func TestLiveScriptDatabaseFromABareHandle(t *testing.T) {
 	}
 	if replayed.RecoveryModel != RecoveryModelBulkLogged {
 		t.Errorf("replayed recovery model = %q, want BULK_LOGGED", replayed.RecoveryModel)
+	}
+}
+
+// A DROP AND CREATE script of a database runs: the guarded DROP removes it
+// (from master, which the script switches to), and the CREATE puts it back
+// with its recovery model. Run twice, so the guards are exercised both ways.
+func TestLiveScriptDatabaseDropAndCreateRuns(t *testing.T) {
+	db, ctx, done := liveDB(t)
+	defer done()
+
+	const name = "gosmo_scriptdb_drop_live"
+	d, drop := liveScratchDB(t, db, ctx, name)
+	defer drop()
+	if _, err := db.ExecContext(ctx, "ALTER DATABASE ["+name+"] SET RECOVERY SIMPLE"); err != nil {
+		t.Fatalf("set recovery: %v", err)
+	}
+
+	opts := DefaultScriptOptions()
+	opts.IncludeHeaders = false
+	opts.Verb = ScriptDropAndCreate
+	script, err := NewScripter(d.server.DatabaseRef(name), opts).ScriptDatabase(ctx)
+	if err != nil {
+		t.Fatalf("ScriptDatabase: %v", err)
+	}
+	for range 2 {
+		for _, batch := range strings.Split(script, "\nGO") {
+			if strings.TrimSpace(batch) == "" {
+				continue
+			}
+			if _, err := db.ExecContext(ctx, batch); err != nil {
+				t.Fatalf("running %.60q: %v", strings.TrimSpace(batch), err)
+			}
+		}
+	}
+	got, err := d.server.DatabaseByName(ctx, name)
+	if err != nil {
+		t.Fatalf("database after the script: %v", err)
+	}
+	if got.RecoveryModel != RecoveryModelSimple {
+		t.Errorf("recovery model = %q, want SIMPLE", got.RecoveryModel)
+	}
+
+	opts.Verb = ScriptDrop
+	dropScript, err := NewScripter(d.server.DatabaseRef(name), opts).ScriptDatabase(ctx)
+	if err != nil {
+		t.Fatalf("ScriptDatabase DROP: %v", err)
+	}
+	for _, batch := range strings.Split(dropScript, "\nGO") {
+		if strings.TrimSpace(batch) == "" {
+			continue
+		}
+		if _, err := db.ExecContext(ctx, batch); err != nil {
+			t.Fatalf("running %.60q: %v", strings.TrimSpace(batch), err)
+		}
+	}
+	if _, err := d.server.DatabaseByName(ctx, name); !errors.Is(err, ErrNotFound) {
+		t.Errorf("after the DROP script, DatabaseByName = %v, want ErrNotFound", err)
 	}
 }

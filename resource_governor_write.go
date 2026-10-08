@@ -254,11 +254,11 @@ type PoolAffinity struct {
 // item renders the AFFINITY item, word being SCHEDULER or CPU.
 func (a *PoolAffinity) item(word string) (string, error) {
 	if len(a.Schedulers) > 0 && len(a.NUMANodes) > 0 {
-		return "", fmt.Errorf("affinity names both %s ids and NUMA nodes; set one", strings.ToLower(word))
+		return "", invalidf("affinity names both %s ids and NUMA nodes; set one", strings.ToLower(word))
 	}
 	for _, id := range slices.Concat(a.Schedulers, a.NUMANodes) {
 		if id < 0 {
-			return "", fmt.Errorf("affinity id %d is negative", id)
+			return "", invalidf("affinity id %d is negative", id)
 		}
 	}
 	switch {
@@ -287,7 +287,7 @@ func (o *rgOptions) affinity(word string, a *PoolAffinity) error {
 // Scripting(ctx), ref. render is the options' WITH list.
 func (k *poolKind[P]) create(ctx context.Context, s *Server, name string, render func() (*rgOptions, error), ref P) (P, error) {
 	if strings.TrimSpace(name) == "" {
-		return nil, fmt.Errorf("gosmo: create %s: pool has no name", k.noun)
+		return nil, invalidf("gosmo: create %s: pool has no name", k.noun)
 	}
 	w, err := render()
 	if err != nil {
@@ -432,7 +432,7 @@ func (o WorkloadGroupOptions) render(major int) (*rgOptions, string, error) {
 		switch imp := strings.ToUpper(string(*o.Importance)); imp {
 		case "LOW", "MEDIUM", "HIGH":
 		default:
-			return nil, "", fmt.Errorf("importance %q is not Low, Medium or High", *o.Importance)
+			return nil, "", invalidf("importance %q is not Low, Medium or High", *o.Importance)
 		}
 	}
 	if v := o.RequestMaxMemoryGrantPercent; v != nil && *v != float64(int64(*v)) &&
@@ -443,7 +443,7 @@ func (o WorkloadGroupOptions) render(major int) (*rgOptions, string, error) {
 	}
 	if (o.GroupMaxTempdbDataPercent != nil && o.ClearGroupMaxTempdbDataPercent) ||
 		(o.GroupMaxTempdbDataMB != nil && o.ClearGroupMaxTempdbDataMB) {
-		return nil, "", fmt.Errorf("a tempdb limit is both set and cleared")
+		return nil, "", invalidf("a tempdb limit is both set and cleared")
 	}
 	if (o.GroupMaxTempdbDataPercent != nil || o.GroupMaxTempdbDataMB != nil ||
 		o.ClearGroupMaxTempdbDataPercent || o.ClearGroupMaxTempdbDataMB) &&
@@ -504,7 +504,7 @@ func (s *Server) WorkloadGroupRef(name string) *WorkloadGroup {
 // ResourceGovernor.Reconfigure.
 func (s *Server) CreateWorkloadGroup(ctx context.Context, req CreateWorkloadGroupRequest) (*WorkloadGroup, error) {
 	if strings.TrimSpace(req.Name) == "" {
-		return nil, fmt.Errorf("gosmo: create workload group: group has no name")
+		return nil, invalidf("gosmo: create workload group: group has no name")
 	}
 	w, using, err := req.Options.render(s.serverMajorVersion())
 	if err != nil {

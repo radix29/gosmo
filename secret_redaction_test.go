@@ -97,7 +97,7 @@ func secretWrites() []secretWrite {
 				SymmetricKeyDecryptor{Kind: SymmetricKeyByPassword, Password: pw("open")})
 		}},
 		{"AddSignature", []string{pw("sig")}, func(ctx context.Context, s *Server) error {
-			return db(s).AddSignature(ctx, "dbo", "p", Signer{Kind: SignerCertificate, Name: "c", Password: pw("sig")}, false)
+			return db(s).StoredProcedureRef("dbo", "p").AddSignature(ctx, Signer{Kind: SignerCertificate, Name: "c", Password: pw("sig")}, false)
 		}},
 		{"CreateMailAccount", []string{pw("mail")}, func(ctx context.Context, s *Server) error {
 			return errOnly(s.CreateMailAccount(ctx, CreateMailAccountRequest{Name: "a", EmailAddress: "a@b", ServerName: "x",

@@ -266,6 +266,9 @@ func (d *Database) FullTextCatalogByName(ctx context.Context, name string) (*Ful
 // Indexes returns the full-text indexes the catalog holds — SSMS's catalog
 // Properties › Tables/Views — in table order.
 func (c *FullTextCatalog) Indexes(ctx context.Context) ([]*FullTextIndex, error) {
+	if err := requireID(fmt.Sprintf("read full-text indexes of catalog %q in database %q", c.Name, c.db.Name), c.ID != 0); err != nil {
+		return nil, err
+	}
 	return c.db.fullTextIndexesWhere(ctx,
 		fmt.Sprintf("read full-text indexes of catalog %q in database %q", c.Name, c.db.Name),
 		"WHERE fi.fulltext_catalog_id = @p1", c.ID)
@@ -325,6 +328,9 @@ func (d *Database) FullTextStoplistByName(ctx context.Context, name string) (*Fu
 // Stopwords returns the stoplist's words, by language then word.
 func (l *FullTextStoplist) Stopwords(ctx context.Context) ([]FullTextStopword, error) {
 	what := fmt.Sprintf("read stopwords of full-text stoplist %q in database %q", l.Name, l.db.Name)
+	if err := requireID(what, l.ID != 0); err != nil {
+		return nil, err
+	}
 	rows, err := l.db.query(ctx, `
 SELECT stopword, language, language_id
 FROM   sys.fulltext_stopwords
@@ -395,6 +401,9 @@ func (d *Database) SearchPropertyListByName(ctx context.Context, name string) (*
 // Properties returns the list's properties in name order.
 func (p *SearchPropertyList) Properties(ctx context.Context) ([]SearchProperty, error) {
 	what := fmt.Sprintf("read properties of search property list %q in database %q", p.Name, p.db.Name)
+	if err := requireID(what, p.ID != 0); err != nil {
+		return nil, err
+	}
 	rows, err := p.db.query(ctx, `
 SELECT property_name, CONVERT(nchar(36), property_set_guid), property_int_id,
        ISNULL(property_description, N''), property_id
@@ -678,6 +687,9 @@ func (t *Table) FullTextIndex(ctx context.Context) (*FullTextIndex, error) {
 // returned. The index's own read does not depend on this one.
 func (i *FullTextIndex) Populations(ctx context.Context) ([]FullTextPopulation, error) {
 	what := fmt.Sprintf("read full-text populations of %s in database %q", i.FullName(), i.db.Name)
+	if err := requireID(what, i.ObjectID != 0); err != nil {
+		return nil, err
+	}
 	rows, err := i.db.query(ctx, `
 SELECT population_type_description, status_description, ISNULL(completion_type_description, N''),
        ISNULL(queued_population_type_description, N''), start_time,

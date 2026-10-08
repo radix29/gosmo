@@ -93,6 +93,81 @@ func UnquoteName(name string) string {
 	return strings.ReplaceAll(inner, closer+closer, closer)
 }
 
+// SplitName splits a multi-part name the way T-SQL reads one — "dbo.t",
+// "[my.db].dbo.[a]]b]", `"x"."y"`, "db..t", "srv.db.dbo.t" — into its parts,
+// outermost first, each unquoted as UnquoteName would. A dot inside brackets
+// or double quotes is part of the name, white space around a part or a dot is
+// ignored ("dbo . t"), and an omitted middle part ("db..t") comes back as "".
+//
+// It returns an error for what is not one name of at most four parts: an
+// unterminated quote, a bracket or quote inside a bare part, white space
+// inside one ("dbo t"), an empty first or last part, or more than four parts.
+// A bare part is otherwise taken as written — it need not be a regular
+// identifier, since the caller quotes each part with QuoteName.
+func SplitName(name string) ([]string, error) {
+	fail := func(why string) ([]string, error) {
+		return nil, invalidf("gosmo: %q is not a multi-part name: %s", name, why)
+	}
+	isSpace := func(c byte) bool { return c == ' ' || c == '\t' || c == '\r' || c == '\n' }
+	var parts []string
+	i := 0
+	for {
+		for i < len(name) && isSpace(name[i]) {
+			i++
+		}
+		var part strings.Builder
+		switch {
+		case i < len(name) && (name[i] == '[' || name[i] == '"'):
+			closer := name[i]
+			if closer == '[' {
+				closer = ']'
+			}
+			i++
+			for {
+				j := strings.IndexByte(name[i:], closer)
+				if j < 0 {
+					return fail("unterminated " + string(closer))
+				}
+				part.WriteString(name[i : i+j])
+				i += j + 1
+				if i < len(name) && name[i] == closer {
+					part.WriteByte(closer)
+					i++
+					continue
+				}
+				break
+			}
+		default:
+			start := i
+			for i < len(name) && name[i] != '.' && !isSpace(name[i]) {
+				if c := name[i]; c == '[' || c == ']' || c == '"' {
+					return fail("a bracket or quote inside an unquoted part")
+				}
+				i++
+			}
+			part.WriteString(name[start:i])
+		}
+		parts = append(parts, part.String())
+		for i < len(name) && isSpace(name[i]) {
+			i++
+		}
+		if i == len(name) {
+			break
+		}
+		if name[i] != '.' {
+			return fail("text after a part that is not a '.'")
+		}
+		i++
+	}
+	switch {
+	case len(parts) > 4:
+		return fail("more than four parts")
+	case parts[0] == "" || parts[len(parts)-1] == "":
+		return fail("an empty first or last part")
+	}
+	return parts, nil
+}
+
 // IsReservedKeyword reports whether word, in any case, is one of SQL Server's
 // reserved keywords — the words that cannot stand as an identifier without
 // [brackets] or "double quotes". It is the list Microsoft documents

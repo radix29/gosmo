@@ -273,13 +273,13 @@ func (spec ServerAuditSpec) auditWithClause() string {
 // createServerAuditStatement builds CREATE SERVER AUDIT, validating the spec.
 func (spec ServerAuditSpec) createServerAuditStatement() (string, error) {
 	if strings.TrimSpace(spec.Name) == "" {
-		return "", fmt.Errorf("server audit has no name")
+		return "", invalidf("server audit has no name")
 	}
 	if spec.Type == "" {
-		return "", fmt.Errorf("server audit %q has no destination", spec.Name)
+		return "", invalidf("server audit %q has no destination", spec.Name)
 	}
 	if strings.EqualFold(spec.Type, AuditToFile) && spec.FilePath == "" {
-		return "", fmt.Errorf("server audit %q has no file path", spec.Name)
+		return "", invalidf("server audit %q has no file path", spec.Name)
 	}
 
 	stmt := "CREATE SERVER AUDIT " + quoteIdent(spec.Name) +
@@ -313,6 +313,11 @@ func (a *ServerAudit) Enable(ctx context.Context) error { return a.setStateNamed
 
 // Disable turns the audit off (STATE = OFF).
 func (a *ServerAudit) Disable(ctx context.Context) error { return a.setStateNamed(ctx, a.Name, false) }
+
+// SetEnabled is Enable when on is true and Disable otherwise.
+func (a *ServerAudit) SetEnabled(ctx context.Context, on bool) error {
+	return a.setStateNamed(ctx, a.Name, on)
+}
 
 // setStateNamed toggles the state of the audit addressed by name, which
 // is not always a.Name: Rename restores the state after MODIFY NAME has
@@ -481,7 +486,7 @@ func (a *ServerAudit) Alter(ctx context.Context, spec ServerAuditSpec) error {
 // and a re-enable on that same context never reaches the server.
 func (a *ServerAudit) Rename(ctx context.Context, newName string) error {
 	if strings.TrimSpace(newName) == "" {
-		return fmt.Errorf("gosmo: rename server audit %q: new name is empty", a.Name)
+		return invalidf("gosmo: rename server audit %q: new name is empty", a.Name)
 	}
 	window, inWindow := a.auditWindow(ctx)
 	restore := false

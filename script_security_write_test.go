@@ -73,15 +73,18 @@ func TestScriptSecurityWrites(t *testing.T) {
 		{"User SetLogin", func(c context.Context) error {
 			return user().SetLogin(c, `DOM\o]b`)
 		}, scriptUsePrefix + `ALTER USER [o'brien] WITH LOGIN = [DOM\o]]b]`},
-		{"User Grant", func(c context.Context) error {
-			return user().Grant(c, PermSelect, "dbo", "Sales.Archive")
-		}, scriptUsePrefix + "GRANT SELECT ON [dbo].[Sales.Archive] TO [o'brien]"},
-		{"User Deny", func(c context.Context) error {
-			return user().Deny(c, PermSelect, "dbo", "Sales.Archive")
-		}, scriptUsePrefix + "DENY SELECT ON [dbo].[Sales.Archive] TO [o'brien]"},
-		{"User Revoke", func(c context.Context) error {
-			return user().Revoke(c, PermSelect, "dbo", "Sales.Archive")
-		}, scriptUsePrefix + "REVOKE SELECT ON [dbo].[Sales.Archive] FROM [o'brien]"},
+		{"ApplyPermission EXECUTE on a procedure", func(c context.Context) error {
+			return scriptTestDB().ApplyPermission(c, VerbGrant, Securable{Class: SecurableProcedure, Schema: "dbo", Name: "Sales.Archive"}, PermExecute, "o'brien", PermissionOptions{})
+		}, scriptUsePrefix + "GRANT EXECUTE ON [dbo].[Sales.Archive] TO [o'brien]"},
+		{"ApplyPermission on a type", func(c context.Context) error {
+			return scriptTestDB().ApplyPermission(c, VerbDeny, Securable{Class: SecurableUserType, Schema: "dbo", Name: "Pho]ne"}, PermReferences, "o'brien", PermissionOptions{})
+		}, scriptUsePrefix + "DENY REFERENCES ON TYPE::[dbo].[Pho]]ne] TO [o'brien]"},
+		{"ApplyPermission on a certificate", func(c context.Context) error {
+			return scriptTestDB().ApplyPermission(c, VerbRevoke, Securable{Class: SecurableCertificate, Name: "Ce]rt"}, PermControl, "o'brien", PermissionOptions{})
+		}, scriptUsePrefix + "REVOKE CONTROL ON CERTIFICATE::[Ce]]rt] FROM [o'brien]"},
+		{"ApplyPermission on a sequence", func(c context.Context) error {
+			return scriptTestDB().ApplyPermission(c, VerbGrant, Securable{Class: SecurableSequence, Schema: "dbo", Name: "Seq"}, PermUpdate, "o'brien", PermissionOptions{})
+		}, scriptUsePrefix + "GRANT UPDATE ON [dbo].[Seq] TO [o'brien]"},
 
 		// --- Login
 		{"Schema Drop", func(c context.Context) error {
@@ -260,29 +263,29 @@ func TestScriptPermissionOptionWrites(t *testing.T) {
 	revokeGrantOption := PermissionOptions{Cascade: true, GrantOptionOnly: true}
 
 	runScriptCases(t, []scriptCase{
-		{"GrantSchemaPermission with options", func(c context.Context) error {
-			return scriptTestDB().GrantSchemaPermission(c, "sa]les", PermSelect, "o'brien", withGrant)
+		{"ApplyPermission Grant Schema with options", func(c context.Context) error {
+			return scriptTestDB().ApplyPermission(c, VerbGrant, Securable{Class: SecurableSchema, Name: "sa]les"}, PermSelect, "o'brien", withGrant)
 		}, scriptUsePrefix + "GRANT SELECT ON SCHEMA::[sa]]les] TO [o'brien] WITH GRANT OPTION"},
-		{"RevokeSchemaPermission with options", func(c context.Context) error {
-			return scriptTestDB().RevokeSchemaPermission(c, "sa]les", PermSelect, "o'brien", revokeGrantOption)
+		{"ApplyPermission Revoke Schema with options", func(c context.Context) error {
+			return scriptTestDB().ApplyPermission(c, VerbRevoke, Securable{Class: SecurableSchema, Name: "sa]les"}, PermSelect, "o'brien", revokeGrantOption)
 		}, scriptUsePrefix + "REVOKE GRANT OPTION FOR SELECT ON SCHEMA::[sa]]les] FROM [o'brien] CASCADE"},
-		{"DenyDatabasePermission with options", func(c context.Context) error {
-			return scriptTestDB().DenyDatabasePermission(c, "CREATE TABLE", "o'brien", cascadeOnly)
+		{"ApplyPermission Deny Database with options", func(c context.Context) error {
+			return scriptTestDB().ApplyPermission(c, VerbDeny, Securable{Class: SecurableDatabase}, DatabasePermission("CREATE TABLE"), "o'brien", cascadeOnly)
 		}, scriptUsePrefix + "DENY CREATE TABLE TO [o'brien] CASCADE"},
-		{"RevokeDatabasePermission with options", func(c context.Context) error {
-			return scriptTestDB().RevokeDatabasePermission(c, "CREATE TABLE", "o'brien", revokeGrantOption)
+		{"ApplyPermission Revoke Database with options", func(c context.Context) error {
+			return scriptTestDB().ApplyPermission(c, VerbRevoke, Securable{Class: SecurableDatabase}, DatabasePermission("CREATE TABLE"), "o'brien", revokeGrantOption)
 		}, scriptUsePrefix + "REVOKE GRANT OPTION FOR CREATE TABLE FROM [o'brien] CASCADE"},
-		{"DenyServerPermission with options", func(c context.Context) error {
-			return (&Server{}).DenyServerPermission(c, "VIEW SERVER STATE", "o'brien", cascadeOnly)
+		{"ApplyPermission Deny Server with options", func(c context.Context) error {
+			return (&Server{}).ApplyPermission(c, VerbDeny, Securable{Class: SecurableServer}, ServerPermission("VIEW SERVER STATE"), "o'brien", cascadeOnly)
 		}, "USE master; DENY VIEW SERVER STATE TO [o'brien] CASCADE"},
-		{"DenyColumnPermission", func(c context.Context) error {
-			return scriptTestDB().DenyColumnPermission(c, "dbo", "Sales.Archive", PermSelect, []string{"a]b", "c'd"}, "o'brien", PermissionOptions{})
+		{"ApplyPermission Deny Column", func(c context.Context) error {
+			return scriptTestDB().ApplyPermission(c, VerbDeny, Securable{Class: SecurableTable, Schema: "dbo", Name: "Sales.Archive", Columns: []string{"a]b", "c'd"}}, PermSelect, "o'brien", PermissionOptions{})
 		}, scriptUsePrefix + "DENY SELECT ([a]]b], [c'd]) ON [dbo].[Sales.Archive] TO [o'brien]"},
-		{"DenyColumnPermission with options", func(c context.Context) error {
-			return scriptTestDB().DenyColumnPermission(c, "dbo", "Sales.Archive", PermSelect, []string{"a]b"}, "o'brien", cascadeOnly)
+		{"ApplyPermission Deny Column with options", func(c context.Context) error {
+			return scriptTestDB().ApplyPermission(c, VerbDeny, Securable{Class: SecurableTable, Schema: "dbo", Name: "Sales.Archive", Columns: []string{"a]b"}}, PermSelect, "o'brien", cascadeOnly)
 		}, scriptUsePrefix + "DENY SELECT ([a]]b]) ON [dbo].[Sales.Archive] TO [o'brien] CASCADE"},
-		{"RevokeColumnPermission with options", func(c context.Context) error {
-			return scriptTestDB().RevokeColumnPermission(c, "dbo", "Sales.Archive", PermSelect, []string{"a]b"}, "o'brien", revokeGrantOption)
+		{"ApplyPermission Revoke Column with options", func(c context.Context) error {
+			return scriptTestDB().ApplyPermission(c, VerbRevoke, Securable{Class: SecurableTable, Schema: "dbo", Name: "Sales.Archive", Columns: []string{"a]b"}}, PermSelect, "o'brien", revokeGrantOption)
 		}, scriptUsePrefix + "REVOKE GRANT OPTION FOR SELECT ([a]]b]) ON [dbo].[Sales.Archive] FROM [o'brien] CASCADE"},
 	})
 }

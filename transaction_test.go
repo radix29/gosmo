@@ -219,7 +219,7 @@ func TestInTransactionSendsUSEOnlyWhenMoving(t *testing.T) {
 			return err
 		}, []string{"USE [app]; IF @@ERROR <> 0 RETURN; R1", "W1"}},
 		{"server permission", func(ctx context.Context, s *Server) error {
-			if err := s.GrantServerPermission(ctx, "CONNECT SQL", "l", PermissionOptions{}); err != nil {
+			if err := s.ApplyPermission(ctx, VerbGrant, Securable{Class: SecurableServer}, ServerPermission("CONNECT SQL"), "l", PermissionOptions{}); err != nil {
 				return err
 			}
 			_, err := s.DatabaseRef("master").exec(ctx, "W1")

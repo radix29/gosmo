@@ -38,6 +38,10 @@ type DatabaseFileInfo struct {
 // Database returns the database the file belongs to.
 func (f *DatabaseFileInfo) Database() *Database { return f.db }
 
+// IsPrimaryFile reports whether this is the database's primary data file —
+// file_id 1, the one holding the database's startup information.
+func (f *DatabaseFileInfo) IsPrimaryFile() bool { return f.FileID == 1 }
+
 // FileRef returns a lightweight handle for a database file by logical name,
 // without querying the catalog — the counterpart of Server.DatabaseRef.
 // Every field but the name stays at its zero value; Files is what populates
@@ -51,7 +55,7 @@ func (d *Database) Files(ctx context.Context) ([]*DatabaseFileInfo, error) {
 	const q = `
 SELECT df.file_id, df.name, df.physical_name, df.type_desc,
        ISNULL(fg.name, ''), df.state_desc,
-       df.size * 8, df.max_size, df.growth, df.is_percent_growth
+       CAST(df.size AS bigint) * 8, df.max_size, df.growth, df.is_percent_growth
 FROM   sys.database_files df
 LEFT   JOIN sys.filegroups fg ON fg.data_space_id = df.data_space_id
 ORDER  BY df.type_desc, df.file_id`
@@ -84,7 +88,7 @@ ORDER  BY df.type_desc, df.file_id`
 func (s *Server) DatabaseFiles(ctx context.Context, database string) ([]*DatabaseFileInfo, error) {
 	const q = `
 SELECT mf.file_id, mf.name, mf.physical_name, mf.type_desc, mf.state_desc,
-       mf.size * 8, mf.max_size, mf.growth, mf.is_percent_growth
+       CAST(mf.size AS bigint) * 8, mf.max_size, mf.growth, mf.is_percent_growth
 FROM   sys.master_files mf
 WHERE  mf.database_id = DB_ID(@p1)
 ORDER  BY mf.type_desc, mf.file_id`
@@ -181,10 +185,10 @@ func buildFileDefClause(spec DatabaseFileSpec) string {
 // a server.
 func buildAddFileStatement(dbName string, spec DatabaseFileSpec) (string, error) {
 	if spec.Name == "" {
-		return "", fmt.Errorf("gosmo: add file: name is required")
+		return "", invalidf("gosmo: add file: name is required")
 	}
 	if spec.Path == "" {
-		return "", fmt.Errorf("gosmo: add file: path is required")
+		return "", invalidf("gosmo: add file: path is required")
 	}
 	isLog := spec.Type == "LOG"
 	clause := "ADD FILE"
@@ -249,7 +253,7 @@ func (f *DatabaseFileInfo) Alter(ctx context.Context, m FileModify) error {
 // statement for the given changes, or "" if m carries no actual change.
 func buildAlterFileStatement(dbName, name string, m FileModify) (string, error) {
 	if name == "" {
-		return "", fmt.Errorf("gosmo: alter file: name is required")
+		return "", invalidf("gosmo: alter file: name is required")
 	}
 	props := []string{"NAME = " + quoteIdent(name)}
 	if m.NewName != "" {
@@ -306,9 +310,8 @@ func (d *Database) FileGroupRef(name string) *FileGroup {
 func (d *Database) FileGroups(ctx context.Context) ([]*FileGroup, error) {
 	const q = `
 SELECT fg.name, fg.type_desc, fg.is_default, fg.is_read_only,
-       df.name, df.physical_name, df.size * 8, df.max_size, df.growth,
-       df.is_percent_growth,
-       CASE WHEN df.file_id = 1 THEN 1 ELSE 0 END AS is_primary
+       df.file_id, df.name, df.physical_name, df.type_desc, df.state_desc,
+       CAST(df.size AS bigint) * 8, df.max_size, df.growth, df.is_percent_growth
 FROM   sys.filegroups fg
 LEFT   JOIN sys.database_files df ON df.data_space_id = fg.data_space_id
 ORDER  BY fg.name, df.file_id`
@@ -323,15 +326,16 @@ ORDER  BY fg.name, df.file_id`
 	var order []string
 	for rows.Next() {
 		var fgName, fgType string
-		var fgDefault, fgReadOnly, isPrimary bool
+		var fgDefault, fgReadOnly bool
 		// The file columns are NULL on the one row an empty filegroup gets
 		// from the LEFT JOIN.
-		var fName, fPath sql.NullString
+		var fID sql.NullInt64
+		var fName, fPath, fType, fState sql.NullString
 		var fSize, fMaxSize, fGrowth sql.NullInt64
 		var isPctGrowth sql.NullBool
 		if err := rows.Scan(&fgName, &fgType, &fgDefault, &fgReadOnly,
-			&fName, &fPath, &fSize, &fMaxSize, &fGrowth,
-			&isPctGrowth, &isPrimary); err != nil {
+			&fID, &fName, &fPath, &fType, &fState, &fSize, &fMaxSize, &fGrowth,
+			&isPctGrowth); err != nil {
 			return nil, fmt.Errorf("gosmo: list filegroups: %w", err)
 		}
 
@@ -344,14 +348,15 @@ ORDER  BY fg.name, df.file_id`
 		if !fName.Valid {
 			continue
 		}
-		f := DatabaseFile{
-			Name: fName.String, PhysicalName: fPath.String,
-			Size: fSize.Int64, MaxSize: fMaxSize.Int64, Growth: fGrowth.Int64,
-			GrowthType: "KB", IsPrimaryFile: isPrimary, FileGroupName: fgName,
+		f := &DatabaseFileInfo{
+			db: d, FileID: int(fID.Int64), Name: fName.String, PhysicalName: fPath.String,
+			Type: fType.String, FileGroup: fgName, State: fState.String,
+			SizeKB: fSize.Int64, IsPercentGrowth: isPctGrowth.Bool,
 		}
-		if isPctGrowth.Bool {
-			f.GrowthType = "PERCENT"
-		}
+		// max_size and growth are 8 KB pages (growth a percentage when
+		// is_percent_growth); normalizeFileGrowth turns them into KB, as
+		// Files does.
+		f.MaxSizeKB, f.GrowthKB, f.GrowthPercent = normalizeFileGrowth(fMaxSize.Int64, fGrowth.Int64, isPctGrowth.Bool)
 		fg.Files = append(fg.Files, f)
 	}
 	if err := rows.Err(); err != nil {

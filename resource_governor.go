@@ -457,6 +457,9 @@ ORDER  BY p.name, g.name`)
 // WorkloadGroups returns the workload groups that use this pool, ordered by
 // name.
 func (p *ResourcePool) WorkloadGroups(ctx context.Context) ([]*WorkloadGroup, error) {
+	if err := requireID(fmt.Sprintf("list workload groups of resource pool %q", p.Name), p.ID != 0); err != nil {
+		return nil, err
+	}
 	rows, err := p.server.query(ctx, p.server.workloadGroupSelect()+`
 WHERE  g.pool_id = @p1
 ORDER  BY g.name`, p.ID)

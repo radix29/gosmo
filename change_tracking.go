@@ -71,7 +71,7 @@ func (d *Database) SetChangeTracking(ctx context.Context, info ChangeTrackingInf
 			unit = ChangeTrackingDays
 		}
 		if !changeTrackingRetentionUnits[unit] {
-			return fmt.Errorf("gosmo: set change tracking: unrecognized retention unit %q", unit)
+			return invalidf("gosmo: set change tracking: unrecognized retention unit %q", unit)
 		}
 		autoCleanup := "OFF"
 		if info.AutoCleanup {
@@ -86,13 +86,13 @@ func (d *Database) SetChangeTracking(ctx context.Context, info ChangeTrackingInf
 	return nil
 }
 
-// SetTableChangeTracking enables or disables change tracking on one
-// table. trackColumns is ignored when enable is false.
-func (d *Database) SetTableChangeTracking(ctx context.Context, schema, name string, enable, trackColumns bool) error {
-	if err := requireSchema("set table change tracking", schema, name); err != nil {
+// SetChangeTracking enables or disables change tracking on the table.
+// trackColumns is ignored when enable is false. A TableRef is enough.
+func (t *Table) SetChangeTracking(ctx context.Context, enable, trackColumns bool) error {
+	if err := requireSchema("set table change tracking", t.Schema, t.Name); err != nil {
 		return err
 	}
-	ref := qualifiedName(schema, name)
+	ref := qualifiedName(t.Schema, t.Name)
 	var q string
 	if !enable {
 		q = fmt.Sprintf("ALTER TABLE %s DISABLE CHANGE_TRACKING", ref)
@@ -103,7 +103,7 @@ func (d *Database) SetTableChangeTracking(ctx context.Context, schema, name stri
 		}
 		q = fmt.Sprintf("ALTER TABLE %s ENABLE CHANGE_TRACKING WITH (TRACK_COLUMNS_UPDATED = %s)", ref, track)
 	}
-	if _, err := d.exec(ctx, q); err != nil {
+	if _, err := t.db.exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: set change tracking on %s: %w", ref, err)
 	}
 	return nil
@@ -117,8 +117,8 @@ type TableChangeTracking struct {
 	TrackColumnsUpdated bool
 }
 
-// tableChangeTrackingSelect is shared by TableChangeTracking and
-// TableChangeTrackingFor. The LEFT JOIN is what makes a table with
+// tableChangeTrackingSelect is shared by Database.TableChangeTracking and
+// Table.ChangeTracking. The LEFT JOIN is what makes a table with
 // tracking switched off still produce a row.
 const tableChangeTrackingSelect = `
 SELECT SCHEMA_NAME(t.schema_id), t.name,
@@ -142,19 +142,21 @@ ORDER  BY SCHEMA_NAME(t.schema_id), t.name`)
 	})
 }
 
-// TableChangeTrackingFor returns change tracking state for one user table.
+// ChangeTracking returns the table's change tracking state; it reads by
+// name, so a TableRef is enough.
 //
 // A table that exists but has tracking switched off is not an error — it
 // comes back with Enabled false. The error satisfies errors.Is(err,
 // ErrNotFound) only when the database has no such user table.
-func (d *Database) TableChangeTrackingFor(ctx context.Context, schema, name string) (*TableChangeTracking, error) {
-	if err := requireSchema("table change tracking for", schema, name); err != nil {
+func (t *Table) ChangeTracking(ctx context.Context) (*TableChangeTracking, error) {
+	if err := requireSchema("table change tracking for", t.Schema, t.Name); err != nil {
 		return nil, err
 	}
-	t := &TableChangeTracking{}
+	d := t.db
+	ct := &TableChangeTracking{}
 	err := d.queryRow(ctx, func(row *sql.Row) error {
-		return row.Scan(&t.Schema, &t.Name, &t.Enabled, &t.TrackColumnsUpdated)
+		return row.Scan(&ct.Schema, &ct.Name, &ct.Enabled, &ct.TrackColumnsUpdated)
 	}, tableChangeTrackingSelect+`
-       AND SCHEMA_NAME(t.schema_id) COLLATE DATABASE_DEFAULT = @p1 AND t.name = @p2`, schema, name)
-	return foundRow(t, err, notFoundf("gosmo: table %s.%s not found in %q", schema, name, d.Name), fmt.Sprintf("change tracking for %s.%s in %q", schema, name, d.Name))
+       AND SCHEMA_NAME(t.schema_id) COLLATE DATABASE_DEFAULT = @p1 AND t.name = @p2`, t.Schema, t.Name)
+	return foundRow(ct, err, notFoundf("gosmo: table %s.%s not found in %q", t.Schema, t.Name, d.Name), fmt.Sprintf("change tracking for %s.%s in %q", t.Schema, t.Name, d.Name))
 }

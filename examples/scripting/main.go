@@ -130,7 +130,7 @@ END`,
 			{Name: "ArchivedAt", DataType: gosmo.DataTypeDatetime2, Scale: new(0), IsNullable: false},
 		},
 	}))
-	demo.Must(pending.GrantDatabasePermission(ctx, "SELECT", "public", gosmo.PermissionOptions{}))
+	demo.Must(pending.ApplyPermission(ctx, gosmo.VerbGrant, gosmo.Securable{Class: gosmo.SecurableDatabase}, gosmo.DatabasePermission("SELECT"), "public", gosmo.PermissionOptions{}))
 	demo.Must(pending.SetDatabaseOption(ctx, gosmo.DBOptAutoShrink, "OFF", gosmo.TerminationNone))
 	demo.Must(pending.SetRecoveryModel(ctx, gosmo.RecoveryModelBulkLogged))
 

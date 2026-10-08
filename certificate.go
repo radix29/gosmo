@@ -210,13 +210,13 @@ type CreateCertificateRequest struct {
 // createCertificateStatement builds CREATE CERTIFICATE, validating the spec.
 func (spec CreateCertificateRequest) createCertificateStatement() (string, error) {
 	if strings.TrimSpace(spec.Name) == "" {
-		return "", fmt.Errorf("certificate has no name")
+		return "", invalidf("certificate has no name")
 	}
 	if len(spec.FromBinary) > 0 && spec.Subject != "" {
-		return "", fmt.Errorf("certificate %q gives both a subject and an encoded certificate to import", spec.Name)
+		return "", invalidf("certificate %q gives both a subject and an encoded certificate to import", spec.Name)
 	}
 	if len(spec.FromBinary) == 0 && spec.Subject == "" {
-		return "", fmt.Errorf("certificate %q has neither a subject nor an encoded certificate to import", spec.Name)
+		return "", invalidf("certificate %q has neither a subject nor an encoded certificate to import", spec.Name)
 	}
 
 	stmt := "CREATE CERTIFICATE " + quoteIdent(spec.Name)
@@ -225,7 +225,7 @@ func (spec CreateCertificateRequest) createCertificateStatement() (string, error
 	}
 	if len(spec.FromBinary) > 0 {
 		if spec.EncryptionPassword != "" || !spec.StartDate.IsZero() || !spec.ExpiryDate.IsZero() {
-			return "", fmt.Errorf("certificate %q is imported, so it takes no password or validity dates of its own", spec.Name)
+			return "", invalidf("certificate %q is imported, so it takes no password or validity dates of its own", spec.Name)
 		}
 		return stmt + " FROM BINARY = " + binaryLiteral(spec.FromBinary), nil
 	}
@@ -286,17 +286,17 @@ type CertificateBackupSpec struct {
 // backupStatement builds BACKUP CERTIFICATE, validating the spec.
 func (c *Certificate) backupStatement(spec CertificateBackupSpec) (string, error) {
 	if strings.TrimSpace(spec.File) == "" {
-		return "", fmt.Errorf("no file to back up to")
+		return "", invalidf("no file to back up to")
 	}
 	stmt := "BACKUP CERTIFICATE " + quoteIdent(c.Name) + " TO FILE = " + QuoteLiteral(spec.File)
 	if spec.PrivateKeyFile == "" {
 		if spec.EncryptionPassword != "" || spec.DecryptionPassword != "" {
-			return "", fmt.Errorf("a password was given but no private key file")
+			return "", invalidf("a password was given but no private key file")
 		}
 		return stmt, nil
 	}
 	if spec.EncryptionPassword == "" {
-		return "", fmt.Errorf("the private key file needs a password to encrypt it with")
+		return "", invalidf("the private key file needs a password to encrypt it with")
 	}
 	stmt += " WITH PRIVATE KEY (FILE = " + QuoteLiteral(spec.PrivateKeyFile) +
 		", ENCRYPTION BY PASSWORD = " + QuoteLiteral(spec.EncryptionPassword)
@@ -389,7 +389,7 @@ type CreateMasterKeyRequest struct {
 // handle, since nothing ran.
 func (d *Database) CreateMasterKey(ctx context.Context, req CreateMasterKeyRequest) (*MasterKey, error) {
 	if req.Password == "" {
-		return nil, fmt.Errorf("gosmo: create master key in %q: empty password", d.Name)
+		return nil, invalidf("gosmo: create master key in %q: empty password", d.Name)
 	}
 	if _, err := d.execPasswords(ctx, "CREATE MASTER KEY ENCRYPTION BY PASSWORD = "+QuoteLiteral(req.Password), req.Password); err != nil {
 		return nil, fmt.Errorf("gosmo: create master key in %q: %w", d.Name, err)

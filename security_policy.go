@@ -172,6 +172,14 @@ func (p *SecurityPolicy) Disable(ctx context.Context) error {
 	return nil
 }
 
+// SetEnabled is Enable when on is true and Disable otherwise.
+func (p *SecurityPolicy) SetEnabled(ctx context.Context, on bool) error {
+	if on {
+		return p.Enable(ctx)
+	}
+	return p.Disable(ctx)
+}
+
 // Drop drops the security policy. A policy that isn't there is the server's
 // error, not a silent success — see the note on Table.Drop.
 func (p *SecurityPolicy) Drop(ctx context.Context) error {

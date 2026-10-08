@@ -123,10 +123,10 @@ type CreateBackupDeviceRequest struct {
 func (s *Server) CreateBackupDevice(ctx context.Context, req CreateBackupDeviceRequest) (*BackupDevice, error) {
 	name, devType, physicalName := req.Name, req.Type, req.PhysicalName
 	if strings.TrimSpace(name) == "" {
-		return nil, fmt.Errorf("gosmo: create backup device: device has no name")
+		return nil, invalidf("gosmo: create backup device: device has no name")
 	}
 	if physicalName == "" {
-		return nil, fmt.Errorf("gosmo: create backup device %q: physical name is required", name)
+		return nil, invalidf("gosmo: create backup device %q: physical name is required", name)
 	}
 	if devType == "" {
 		devType = BackupDeviceDisk

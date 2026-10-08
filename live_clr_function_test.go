@@ -163,9 +163,27 @@ func TestLiveCLRModulesScriptRoundTrip(t *testing.T) {
 		 AS EXTERNAL NAME w7clr.W7Clr.Twice`,
 		`CREATE FUNCTION dbo.clr_seq(@c int) RETURNS TABLE (n int) ORDER (n DESC)
 		 AS EXTERNAL NAME w7clr.W7Clr.Seq`,
+		// A string column collated other than the database default keeps its
+		// COLLATE. CREATE checks the fill-row method's signature against the
+		// column list (Msg 6208, 6258), hence SeqS's one SqlString.
+		`CREATE FUNCTION dbo.clr_seq_s(@c int) RETURNS TABLE (s nvarchar(20) COLLATE Latin1_General_BIN2)
+		 AS EXTERNAL NAME w7clr.W7Clr.SeqS`,
 		`CREATE PROCEDURE dbo.clr_echo @x int = NULL, @s nvarchar(20) = N'it''s', @y int OUTPUT
 		 WITH EXECUTE AS N'clr_runner'
 		 AS EXTERNAL NAME w7clr.W7Clr.Echo`,
+		// One default per type clrParameterSelect converts, each a value its
+		// text form could lose: float and real digits past the 15th and 7th,
+		// money's fourth decimal, fractional seconds, a non-zero offset, a
+		// binary(n) padded to its length.
+		`CREATE PROCEDURE dbo.clr_kinds
+		     @f float = 0.1, @r real = 0.1, @m money = -922337203685477.5808, @sm smallmoney = 1.2345,
+		     @dt datetime = '2026-10-03T12:34:56.997', @sdt smalldatetime = '2026-10-03T12:34:00',
+		     @d date = '2026-10-03', @t time = '12:34:56.1234567', @dt2 datetime2 = '2026-10-03T12:34:56.1234567',
+		     @dto datetimeoffset = '2026-10-03T12:34:56.1234567+02:00',
+		     @vb varbinary(8) = 0x0A0B, @b binary(4) = 0x0A0B, @g uniqueidentifier = '6F9619FF-8B86-D011-B42D-00C04FC964FF',
+		     @bit bit = 1, @dec decimal(10, 3) = 12.345, @big bigint = 9007199254740993,
+		     @tiny tinyint = 255, @small smallint = -32768, @nc nchar(3) = NULL
+		 AS EXTERNAL NAME w7clr.W7Clr.Kinds`,
 		`CREATE TRIGGER dbo.clr_trg ON dbo.clr_t AFTER INSERT, DELETE NOT FOR REPLICATION
 		 AS EXTERNAL NAME w7clr.W7Clr.Noop`,
 		`CREATE TRIGGER dbo.clr_vtrg ON dbo.clr_v INSTEAD OF UPDATE
@@ -227,9 +245,26 @@ func TestLiveCLRModulesScriptRoundTrip(t *testing.T) {
 		{"table function", func(v ScriptVerb) (string, error) { return sc(v).ScriptFunction(ctx, "dbo", "clr_seq") },
 			`DROP FUNCTION dbo.clr_seq`, d,
 			[]string{"(@c int)", "RETURNS TABLE (\n    [n] int\n)", "ORDER ([n] DESC)"}},
+		{"table function with a collated column", func(v ScriptVerb) (string, error) { return sc(v).ScriptFunction(ctx, "dbo", "clr_seq_s") },
+			`DROP FUNCTION dbo.clr_seq_s`, d,
+			[]string{"RETURNS TABLE (\n    [s] nvarchar(20) COLLATE Latin1_General_BIN2\n)"}},
 		{"procedure", func(v ScriptVerb) (string, error) { return sc(v).ScriptStoredProcedure(ctx, "dbo", "clr_echo") },
 			`DROP PROCEDURE dbo.clr_echo`, d,
 			[]string{"@x int = NULL", "@s nvarchar(20) = N'it''s'", "@y int OUTPUT", "WITH EXECUTE AS N'clr_runner'"}},
+		{"procedure with a default of each type", func(v ScriptVerb) (string, error) { return sc(v).ScriptStoredProcedure(ctx, "dbo", "clr_kinds") },
+			`DROP PROCEDURE dbo.clr_kinds`, d,
+			// The real widens to the float's 17 digits; it reads back as the
+			// same real.
+			[]string{"@f float = 1.0000000000000001e-001", "@r real = 1.0000000149011612e-001",
+				"@m money = -922337203685477.5808", "@sm smallmoney = 1.2345",
+				"@dt datetime = N'2026-10-03T12:34:56.997'", "@sdt smalldatetime = N'2026-10-03T12:34:00'",
+				"@d date = N'2026-10-03'", "@t time(7) = N'12:34:56.1234567'",
+				"@dt2 datetime2(7) = N'2026-10-03T12:34:56.1234567'",
+				"@dto datetimeoffset(7) = N'2026-10-03T12:34:56.1234567+02:00'",
+				"@vb varbinary(8) = 0x0A0B", "@b binary(4) = 0x0A0B0000",
+				"@g uniqueidentifier = N'6F9619FF-8B86-D011-B42D-00C04FC964FF'", "@bit bit = 1",
+				"@dec decimal(10,3) = 12.345", "@big bigint = 9007199254740993",
+				"@tiny tinyint = 255", "@small smallint = -32768", "@nc nchar(3) = NULL"}},
 		{"DML trigger", func(v ScriptVerb) (string, error) { return sc(v).ScriptTrigger(ctx, "dbo", "clr_trg") },
 			`DROP TRIGGER dbo.clr_trg`, d,
 			[]string{"ON [dbo].[clr_t]", "AFTER INSERT, DELETE", "NOT FOR REPLICATION", "DISABLE TRIGGER [dbo].[clr_trg]"}},

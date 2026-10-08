@@ -101,7 +101,7 @@ func (s *Server) ServerRoleRef(name string) *ServerRole {
 // role, is refused by the server, not here.
 func (r *ServerRole) Drop(ctx context.Context) error {
 	if r.Name == "" {
-		return fmt.Errorf("gosmo: drop server role: name is required")
+		return invalidf("gosmo: drop server role: name is required")
 	}
 	if err := r.server.exec(ctx, "DROP SERVER ROLE "+quoteIdent(r.Name)); err != nil {
 		return fmt.Errorf("gosmo: drop server role %q: %w", r.Name, err)

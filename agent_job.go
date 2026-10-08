@@ -69,7 +69,11 @@ const jobStateColumns = `(job_id                UNIQUEIDENTIFIER NOT NULL,
 // returns no rows, so this returns an empty map and no error, and
 // applyJobStates overlays nothing (measured on SQL Server 2025 for Linux,
 // 2026-09-03, by live_jobstate_test.go). The error return is for the other
-// case, a caller the procedure refuses.
+// case, a caller the procedure refuses — which is every non-sysadmin:
+// xp_sqlagent_enum_jobs carries no grants, and only msdb's signed procedures
+// reach it, so a direct call fails Msg 229 even for a SQLAgentReaderRole
+// member (measured on 17.0, 2026-10-08). The @all/@owner arguments therefore
+// only ever run for a sysadmin.
 func (s *Server) jobStates(ctx context.Context) (map[string]JobState, error) {
 	q := `
 SET NOCOUNT ON;
@@ -179,7 +183,7 @@ func (j *Job) Server() *Server { return j.server }
 // is ordinary administration.
 func (j *Job) IsSystem() bool { return strings.HasPrefix(j.Name, "syspolicy_") }
 
-// jobSelect is the 17-column select list and the five joins both job reads
+// jobSelect is the 18-column select list and the five joins both job reads
 // share; each caller appends its own ORDER BY or WHERE. Written once because
 // the select list *is* what makes a *Job complete — a column added, or an
 // ISNULL corrected, in one copy and not the other made Jobs and JobByName
@@ -190,7 +194,7 @@ SELECT CONVERT(varchar(36), j.job_id), j.name, ISNULL(j.description,''),
        j.enabled, ISNULL(c.name,''), ISNULL(l.name,''),
        j.date_created, j.date_modified, j.start_step_id,
        j.delete_level, j.notify_level_email, ISNULL(no.name,''),
-       ja.last_executed_step_date,
+       ISNULL(js.last_run_date, 0), ISNULL(js.last_run_time, 0),
        ISNULL(js.last_run_outcome, 5),
        ISNULL(js.last_run_duration, 0),
        ja.next_scheduled_run_date,
@@ -213,20 +217,23 @@ LEFT   JOIN msdb.dbo.sysjobservers js
 // value on top where it has one.
 func scanJob(s *Server, scan func(dest ...any) error) (*Job, error) {
 	j := &Job{server: s}
-	var lastRun, nextRun sql.NullTime
+	var nextRun sql.NullTime
+	var lastRunDate, lastRunTime int
 	var lastOutcome, jobState, lastDuration sql.NullInt64
 	if err := scan(
 		&j.JobID, &j.Name, &j.Description,
 		&j.IsEnabled, &j.Category, &j.OwnerLoginName,
 		&j.DateCreated, &j.DateModified, &j.StartStepID,
 		&j.DeleteLevel, &j.NotifyLevelEmail, &j.NotifyEmailOperatorName,
-		&lastRun, &lastOutcome, &lastDuration, &nextRun, &jobState,
+		&lastRunDate, &lastRunTime, &lastOutcome, &lastDuration, &nextRun, &jobState,
 	); err != nil {
 		return nil, err
 	}
-	if lastRun.Valid {
-		j.LastRunDate = lastRun.Time
-	}
+	// The last run comes from sysjobservers, the row Outcome and Duration
+	// come from, not sysjobactivity.last_executed_step_date: that is the
+	// start of the last *step*, and is NULL in the session row an Agent
+	// restart opens, so every job read as never run until it ran again.
+	j.LastRunDate = parseSQLAgentDateOrZero(lastRunDate, lastRunTime)
 	if nextRun.Valid {
 		j.NextRunDate = nextRun.Time
 	}
@@ -271,14 +278,33 @@ ORDER  BY j.name`
 // LastRunOutcome and every other cached field stay at their zero value;
 // JobByName is what populates them.
 //
-// Every write method on *Job builds its statement from Name alone
-// (AddStep, AttachSchedule, Start, Rename, ...), so this handle is enough
-// to keep operating on a job the caller already knows exists — and is the
-// form to use when there is nothing to read yet: under a WithScript-derived
-// context, JobByName's lookup is a real read and a job whose
-// sp_add_job was merely collected is not there to find.
+// The writes on *Job that address the job by @job_name (AddStep,
+// AttachSchedule, Start, Rename, ...) build their statement from Name alone,
+// so this handle is enough to keep operating on a job the caller already
+// knows exists — and is the form to use when there is nothing to read yet:
+// under a WithScript-derived context, JobByName's lookup is a real read and a
+// job whose sp_add_job was merely collected is not there to find.
+//
+// The per-job reads keyed by job_id (Steps, History, Schedules, and
+// ReorderSteps, a write that lists the steps first) look the id up by name
+// on this handle — one extra round trip, and a not-found error for a job
+// that does not exist, rather than an empty list.
 func (s *Server) JobRef(name string) *Job {
 	return &Job{server: s, Name: name}
+}
+
+// id returns the job's job_id: JobID when the job was read, else looked up by
+// name, which msdb keeps unique (sp_add_job refuses a duplicate, Msg 14261).
+// The handle is not updated — a read must not write to a receiver another
+// goroutine may be reading.
+func (j *Job) id(ctx context.Context, what string) (string, error) {
+	if j.JobID != "" {
+		return j.JobID, nil
+	}
+	var id string
+	err := j.server.queryRowScan(ctx, `
+SELECT CONVERT(varchar(36), job_id) FROM msdb.dbo.sysjobs WHERE name = @p1`, []any{j.Name}, &id)
+	return foundRow(id, err, notFoundf("gosmo: agent job %q not found", j.Name), what)
 }
 
 // JobByName returns a single job by name using a direct parameterised query.
@@ -287,7 +313,7 @@ func (s *Server) JobByName(ctx context.Context, name string) (*Job, error) {
 WHERE  j.name = @p1`
 
 	j, err := readByName(ctx, s, scanJob, q, []any{name},
-		notFoundf("gosmo: agent job %q not found", name), "job by name")
+		notFoundf("gosmo: agent job %q not found", name), fmt.Sprintf("read agent job %q", name))
 	if err != nil {
 		return nil, err
 	}
@@ -321,6 +347,11 @@ func (j *Job) Enable(ctx context.Context) error { return j.setEnabled(ctx, true)
 
 // Disable disables the job.
 func (j *Job) Disable(ctx context.Context) error { return j.setEnabled(ctx, false) }
+
+// SetEnabled is Enable when on is true and Disable otherwise.
+func (j *Job) SetEnabled(ctx context.Context, on bool) error {
+	return j.setEnabled(ctx, on)
+}
 
 func (j *Job) setEnabled(ctx context.Context, on bool) error {
 	return j.Alter(ctx, JobChanges{Enabled: &on})
@@ -397,7 +428,7 @@ func (j *Job) SetDeleteLevel(ctx context.Context, level NotifyLevel) error {
 // sp_add_jobserver leaves no half-made job behind under the requested name.
 func (s *Server) CreateJob(ctx context.Context, req CreateJobRequest) (*Job, error) {
 	if req.Name == "" {
-		return nil, fmt.Errorf("gosmo: create job: name is required")
+		return nil, invalidf("gosmo: create job: name is required")
 	}
 	category := req.Category
 	if category == "" {
@@ -441,7 +472,7 @@ func (s *Server) CreateJob(ctx context.Context, req CreateJobRequest) (*Job, err
 // ScheduleRef handle, with no id.
 func (j *Job) AddSchedule(ctx context.Context, req CreateScheduleRequest) (*Schedule, error) {
 	if req.Name == "" {
-		return nil, fmt.Errorf("gosmo: add schedule to job %q: name is required", j.Name)
+		return nil, invalidf("gosmo: add schedule to job %q: name is required", j.Name)
 	}
 	add := fmt.Sprintf("EXEC msdb.dbo.sp_add_jobschedule @job_name = N'%s', @name = N'%s', %s",
 		escapeSingle(j.Name), escapeSingle(req.Name), req.frequencyArgs())

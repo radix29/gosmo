@@ -437,6 +437,14 @@ func float16Note(names []string) string {
 // uses the type where nothing catalogs it by name (usesFloat16Vector).
 var float16DefinitionNote = previewFeaturesComment("The definition uses vector(n, float16),")
 
+// float16DynamicNote is the comment for a module that spells the type only in
+// dynamic SQL (buildsFloat16Vector): the script replays, the module fails
+// when it runs the batch.
+var float16DynamicNote = "-- The definition's dynamic SQL uses vector(n, float16), a SQL Server 2025\n" +
+	"-- preview feature. The module fails with Msg 195 when it runs it unless\n" +
+	"-- the target database enables it:\n" +
+	"--   ALTER DATABASE SCOPED CONFIGURATION SET PREVIEW_FEATURES = ON;\n"
+
 // previewFeaturesComment completes the PREVIEW_FEATURES comment after lead,
 // which must already be comment-safe.
 func previewFeaturesComment(lead string) string {

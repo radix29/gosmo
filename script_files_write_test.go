@@ -83,11 +83,11 @@ func TestScriptDatabaseOptionWrites(t *testing.T) {
 		{"SetDatabaseScopedConfig for secondary", func(c context.Context) error {
 			return scriptTestDB().SetDatabaseScopedConfig(c, "LEGACY_CARDINALITY_ESTIMATION", "ON", true)
 		}, scriptUsePrefix + "ALTER DATABASE SCOPED CONFIGURATION FOR SECONDARY SET LEGACY_CARDINALITY_ESTIMATION = ON"},
-		{"SetTableChangeTracking on with columns", func(c context.Context) error {
-			return scriptTestDB().SetTableChangeTracking(c, "dbo", "Sales.Archive", true, true)
+		{"Table.SetChangeTracking on with columns", func(c context.Context) error {
+			return scriptTestDB().TableRef("dbo", "Sales.Archive").SetChangeTracking(c, true, true)
 		}, scriptUsePrefix + "ALTER TABLE [dbo].[Sales.Archive] ENABLE CHANGE_TRACKING WITH (TRACK_COLUMNS_UPDATED = ON)"},
-		{"SetTableChangeTracking off", func(c context.Context) error {
-			return scriptTestDB().SetTableChangeTracking(c, "dbo", "Sales.Archive", false, false)
+		{"Table.SetChangeTracking off", func(c context.Context) error {
+			return scriptTestDB().TableRef("dbo", "Sales.Archive").SetChangeTracking(c, false, false)
 		}, scriptUsePrefix + "ALTER TABLE [dbo].[Sales.Archive] DISABLE CHANGE_TRACKING"},
 	})
 }

@@ -189,20 +189,20 @@ func (d *Database) SetQueryStoreOptions(ctx context.Context, opts QueryStoreOpti
 	}
 
 	if !queryStoreOperationModes[opts.DesiredState] {
-		return fmt.Errorf("gosmo: set query store options on %q: unrecognized operation mode %q", d.Name, opts.DesiredState)
+		return invalidf("gosmo: set query store options on %q: unrecognized operation mode %q", d.Name, opts.DesiredState)
 	}
 	if !queryStoreCaptureModes[opts.CaptureMode] {
-		return fmt.Errorf("gosmo: set query store options on %q: unrecognized capture mode %q", d.Name, opts.CaptureMode)
+		return invalidf("gosmo: set query store options on %q: unrecognized capture mode %q", d.Name, opts.CaptureMode)
 	}
 	if !queryStoreCleanupModes[opts.SizeCleanupMode] {
-		return fmt.Errorf("gosmo: set query store options on %q: unrecognized size cleanup mode %q", d.Name, opts.SizeCleanupMode)
+		return invalidf("gosmo: set query store options on %q: unrecognized size cleanup mode %q", d.Name, opts.SizeCleanupMode)
 	}
 	// WAIT_STATS_CAPTURE_MODE is SQL Server 2017 and later. Below it the
 	// setting does not exist — the read has no column to report and returns
 	// "" — so the clause is omitted rather than sent and rejected.
 	waitStats := d.serverMajorVersion() == 0 || d.serverMajorVersion() >= int(SQLServer2017)
 	if waitStats && !queryStoreWaitStatsModes[opts.WaitStatsCaptureMode] {
-		return fmt.Errorf("gosmo: set query store options on %q: unrecognized wait stats capture mode %q", d.Name, opts.WaitStatsCaptureMode)
+		return invalidf("gosmo: set query store options on %q: unrecognized wait stats capture mode %q", d.Name, opts.WaitStatsCaptureMode)
 	}
 
 	withs := []string{

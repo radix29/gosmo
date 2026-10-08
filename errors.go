@@ -78,9 +78,12 @@ var ErrSchemaRequired = errors.New("schema is required")
 
 // ErrHandleNotLoaded is wrapped by every read keyed by a catalog id the
 // receiver does not have — a Table from Database.TableRef, whose ObjectID is
-// zero. The read would otherwise ask for object 0 and get back an empty
-// result indistinguishable from a table with no columns, indexes or rows.
-// Read the table with Database.TableByName (or Tables) instead.
+// zero, or any other …Ref handle whose child reads key on an id (an
+// assembly's files, an alert's notifications, an availability group's
+// replicas). The read would otherwise ask for object 0 and get back an empty
+// result indistinguishable from an object with no children. Read the object
+// with its *ByName lookup (or the listing) instead. Job and Login child reads
+// are not refused: they look the id up by name themselves.
 var ErrHandleNotLoaded = errors.New("handle not loaded: read it by name first")
 
 // notFoundf builds a not-found error whose message is exactly format/args.
@@ -138,7 +141,7 @@ func unsupportedVersionf(format string, args ...any) error {
 //
 // It is not ErrUnsupportedVersion: the server is not too old for anything,
 // gosmo simply has no form for the request.
-var ErrUnsupported = errors.New("not supported by the scripter")
+var ErrUnsupported = errors.New("not supported")
 
 // unsupportedError carries its own message and reaches ErrUnsupported through
 // the chain — and, when its format wrapped one with %w, the cause too.
@@ -162,6 +165,47 @@ func (e *unsupportedError) Unwrap() []error {
 func unsupportedf(format string, args ...any) error {
 	err := fmt.Errorf(format, args...)
 	e := &unsupportedError{msg: err.Error()}
+	switch err.(type) {
+	case interface{ Unwrap() error }, interface{ Unwrap() []error }:
+		e.cause = err
+	}
+	return e
+}
+
+// ErrInvalidRequest reports a call gosmo refused because of its own
+// arguments, before any statement was sent: a permission name no allowlist
+// holds for the securable, a modifier the verb has no form for, an empty
+// column list, a value that cannot be written safely. The request is wrong as
+// asked; retrying it, or asking another server, gives the same answer.
+//
+// It is distinct from ErrUnsupported, where the request is well formed but
+// gosmo has no faithful form for it, and from ErrSchemaRequired, which a
+// missing schema wraps instead. The message text is unchanged by the
+// sentinel.
+var ErrInvalidRequest = errors.New("invalid request")
+
+// invalidRequestError carries its own message and reaches ErrInvalidRequest
+// through the chain, the way unsupportedError does for ErrUnsupported.
+type invalidRequestError struct {
+	msg   string
+	cause error // the fmt.Errorf result when it wraps something, else nil
+}
+
+func (e *invalidRequestError) Error() string { return e.msg }
+
+func (e *invalidRequestError) Unwrap() []error {
+	if e.cause == nil {
+		return []error{ErrInvalidRequest}
+	}
+	return []error{ErrInvalidRequest, e.cause}
+}
+
+// invalidf builds a refusal of the caller's arguments whose message is
+// exactly format/args. A %w in format keeps that error reachable, as
+// fmt.Errorf would.
+func invalidf(format string, args ...any) error {
+	err := fmt.Errorf(format, args...)
+	e := &invalidRequestError{msg: err.Error()}
 	switch err.(type) {
 	case interface{ Unwrap() error }, interface{ Unwrap() []error }:
 		e.cause = err

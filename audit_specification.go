@@ -152,13 +152,13 @@ type CreateServerAuditSpecificationRequest struct {
 // rather than trusted.
 func validateAuditActionGroup(group string) error {
 	if group == "" {
-		return fmt.Errorf("empty audit action group")
+		return invalidf("empty audit action group")
 	}
 	for _, r := range group {
 		switch {
 		case r >= 'A' && r <= 'Z', r >= 'a' && r <= 'z', r >= '0' && r <= '9', r == '_':
 		default:
-			return fmt.Errorf("invalid audit action group %q", group)
+			return invalidf("invalid audit action group %q", group)
 		}
 	}
 	return nil
@@ -177,10 +177,10 @@ func auditActionGroupClauses(verb string, groups []string) (string, error) {
 
 func (spec CreateServerAuditSpecificationRequest) createStatement() (string, error) {
 	if strings.TrimSpace(spec.Name) == "" {
-		return "", fmt.Errorf("server audit specification has no name")
+		return "", invalidf("server audit specification has no name")
 	}
 	if strings.TrimSpace(spec.AuditName) == "" {
-		return "", fmt.Errorf("server audit specification %q names no audit", spec.Name)
+		return "", invalidf("server audit specification %q names no audit", spec.Name)
 	}
 	stmt := fmt.Sprintf("CREATE SERVER AUDIT SPECIFICATION %s\nFOR SERVER AUDIT %s",
 		quoteIdent(spec.Name), quoteIdent(spec.AuditName))
@@ -223,6 +223,11 @@ func (spec *ServerAuditSpecification) Enable(ctx context.Context) error {
 // Disable turns the specification off (STATE = OFF).
 func (spec *ServerAuditSpecification) Disable(ctx context.Context) error {
 	return spec.setEnabled(ctx, false)
+}
+
+// SetEnabled is Enable when on is true and Disable otherwise.
+func (spec *ServerAuditSpecification) SetEnabled(ctx context.Context, on bool) error {
+	return spec.setEnabled(ctx, on)
 }
 
 func (spec *ServerAuditSpecification) setEnabled(ctx context.Context, on bool) error {
@@ -340,7 +345,7 @@ func (spec *ServerAuditSpecification) alterActionGroups(ctx context.Context, ver
 // The specification is disabled for the duration and restored afterwards.
 func (spec *ServerAuditSpecification) SetAudit(ctx context.Context, auditName string) error {
 	if strings.TrimSpace(auditName) == "" {
-		return fmt.Errorf("gosmo: alter server audit specification %q: audit name is empty", spec.Name)
+		return invalidf("gosmo: alter server audit specification %q: audit name is empty", spec.Name)
 	}
 	stmt := fmt.Sprintf("ALTER SERVER AUDIT SPECIFICATION %s\nFOR SERVER AUDIT %s",
 		quoteIdent(spec.Name), quoteIdent(auditName))

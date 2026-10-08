@@ -1,6 +1,10 @@
 package gosmo
 
-import "testing"
+import (
+	"slices"
+	"strings"
+	"testing"
+)
 
 func TestQuoteNameIfNeeded(t *testing.T) {
 	for _, tc := range []struct{ in, want string }{
@@ -76,5 +80,49 @@ func TestQuoteAnsiLiteral(t *testing.T) {
 	}
 	if got := QuoteLiteral("it's"); got != "N'it''s'" {
 		t.Errorf("QuoteLiteral = %s", got)
+	}
+}
+
+func TestSplitName(t *testing.T) {
+	for _, tc := range []struct {
+		in   string
+		want []string
+	}{
+		{"t", []string{"t"}},
+		{"dbo.t", []string{"dbo", "t"}},
+		{"[dbo].[t]", []string{"dbo", "t"}},
+		{"[my.schema].[a.b]", []string{"my.schema", "a.b"}},
+		{"[a]]b].[c]]]]d]", []string{"a]b", "c]]d"}},
+		{`"x"."y"`, []string{"x", "y"}},
+		{`"a""b".c`, []string{`a"b`, "c"}},
+		{`["x"].c`, []string{`"x"`, "c"}},
+		{`"[x]".c`, []string{"[x]", "c"}},
+		{" dbo . t ", []string{"dbo", "t"}},
+		{"db..t", []string{"db", "", "t"}},
+		{"srv.db.dbo.t", []string{"srv", "db", "dbo", "t"}},
+		{`DOMAIN\user`, []string{`DOMAIN\user`}},
+		{"[ spaced ]", []string{" spaced "}},
+	} {
+		got, err := SplitName(tc.in)
+		if err != nil || !slices.Equal(got, tc.want) {
+			t.Errorf("SplitName(%q) = %q, %v; want %q", tc.in, got, err, tc.want)
+		}
+	}
+	for _, in := range []string{
+		"", " ", ".", "dbo.", ".t", "a.b.c.d.e", "[dbo", `"dbo`, "[a]b]", "dbo t",
+		"a[b]", `a"b`, "a]b", "[a]x", "[a].[b] c", "[]",
+	} {
+		if got, err := SplitName(in); err == nil {
+			t.Errorf("SplitName(%q) = %q, want an error", in, got)
+		}
+	}
+	for _, parts := range [][]string{{"a]b", "c.d"}, {`"q"`, "[x]", " s "}, {"x"}} {
+		quoted := make([]string, len(parts))
+		for i, p := range parts {
+			quoted[i] = QuoteName(p)
+		}
+		if got, err := SplitName(strings.Join(quoted, ".")); err != nil || !slices.Equal(got, parts) {
+			t.Errorf("SplitName of quoted %q = %q, %v", parts, got, err)
+		}
 	}
 }

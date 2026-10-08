@@ -399,6 +399,86 @@ func (d *Database) replTables(ctx context.Context, what string, names ...string)
 	return have, nil
 }
 
+// The two publication reads, shared by Database.Publications and
+// Server.LocalPublications: a select list, and the FROM through ORDER BY.
+// The merge read leaves out a subscriber's copy of a publication it receives
+// — a row naming another publisher or database.
+const (
+	tranPublicationColumns = `pubid, name, ISNULL(description, N''), repl_freq, options, status, retention, sync_method,
+       ISNULL(allow_push, 0), ISNULL(allow_pull, 0), ISNULL(allow_anonymous, 0),
+       ISNULL(allow_subscription_copy, 0), CAST(ISNULL(replicate_ddl, 0) AS int),
+       ISNULL(snapshot_in_defaultfolder, 1), ISNULL(alt_snapshot_folder, N''), ISNULL(compress_snapshot, 0),
+       ISNULL(pre_snapshot_script, N''), ISNULL(post_snapshot_script, N''),
+       ISNULL(immediate_sync, 0), ISNULL(independent_agent, 0), ISNULL(allow_initialize_from_backup, 0),
+       ISNULL(allow_queued_tran, 0), ISNULL(allow_sync_tran, 0)`
+	tranPublicationFrom = `
+FROM   dbo.syspublications
+ORDER  BY name`
+	mergePublicationColumns = `CONVERT(nchar(36), pubid), name, ISNULL(description, N''), status, ISNULL(retention, 0),
+       ISNULL(retention_period_unit, 0), ISNULL(sync_mode, 0),
+       ISNULL(allow_push, 0), ISNULL(allow_pull, 0), ISNULL(allow_anonymous, 0),
+       ISNULL(allow_subscription_copy, 0), CAST(ISNULL(replicate_ddl, 0) AS int),
+       ISNULL(snapshot_in_defaultfolder, 1), ISNULL(alt_snapshot_folder, N''), ISNULL(compress_snapshot, 0),
+       ISNULL(pre_snapshot_script, N''), ISNULL(post_snapshot_script, N''),
+       ISNULL(backward_comp_level, 0), CAST(ISNULL(allow_web_synchronization, 0) AS int),
+       CAST(ISNULL(use_partition_groups, 0) AS int), ISNULL(centralized_conflicts, 0), ISNULL(conflict_retention, 0)`
+	mergePublicationFrom = `
+FROM   dbo.sysmergepublications
+WHERE  publisher_db = DB_NAME() AND UPPER(publisher) = UPPER(@@SERVERNAME)
+ORDER  BY name`
+)
+
+// scanTranPublication reads one tranPublicationColumns row.
+func scanTranPublication(d *Database, scan func(...any) error) (*Publication, error) {
+	p := &Publication{db: d, RetentionUnit: "hour"}
+	var freq, options, status, method, replicateDDL int
+	if err := scan(&p.pubID, &p.Name, &p.Description, &freq, &options, &status, &p.Retention, &method,
+		&p.AllowPush, &p.AllowPull, &p.AllowAnonymous, &p.AllowSubscriptionCopy, &replicateDDL,
+		&p.SnapshotInDefaultFolder, &p.AltSnapshotFolder, &p.CompressSnapshot,
+		&p.PreSnapshotScript, &p.PostSnapshotScript,
+		&p.ImmediateSync, &p.IndependentAgent, &p.AllowInitializeFromBackup,
+		&p.AllowQueuedUpdates, &p.AllowImmediateUpdates); err != nil {
+		return nil, err
+	}
+	switch {
+	case freq == 1:
+		p.Type = PublicationSnapshot
+	case options&0x1 != 0:
+		p.Type = PublicationPeerToPeer
+	default:
+		p.Type = PublicationTransactional
+	}
+	p.Active = status == 1
+	p.SyncMethod = syncMethodNames[method]
+	p.ReplicateDDL = replicateDDL != 0
+	return p, nil
+}
+
+// scanMergePublication reads one mergePublicationColumns row.
+func scanMergePublication(d *Database, scan func(...any) error) (*Publication, error) {
+	p := &Publication{db: d, Type: PublicationMerge}
+	var status, unit, mode int
+	var replicateDDL, webSync, partitionGroups int
+	if err := scan(&p.mergeID, &p.Name, &p.Description, &status, &p.Retention,
+		&unit, &mode,
+		&p.AllowPush, &p.AllowPull, &p.AllowAnonymous, &p.AllowSubscriptionCopy, &replicateDDL,
+		&p.SnapshotInDefaultFolder, &p.AltSnapshotFolder, &p.CompressSnapshot,
+		&p.PreSnapshotScript, &p.PostSnapshotScript,
+		&p.CompatibilityLevel, &webSync, &partitionGroups,
+		&p.CentralizedConflicts, &p.ConflictRetention); err != nil {
+		return nil, err
+	}
+	p.Active = status == 1
+	p.RetentionUnit = mergeRetentionUnits[unit]
+	p.SyncMethod = syncMethodNames[mode]
+	p.ReplicateDDL = replicateDDL != 0
+	p.AllowWebSync = webSync != 0
+	// use_partition_groups is NULL until the snapshot decides it,
+	// and -1 where it is not possible.
+	p.UsePartitionGroups = partitionGroups > 0
+	return p, nil
+}
+
 // Publications returns the publications d publishes, transactional and
 // snapshot first, then merge, each in name order. A database that publishes
 // nothing returns none and no error.
@@ -417,39 +497,9 @@ func (d *Database) Publications(ctx context.Context) ([]*Publication, error) {
 	}
 	var out []*Publication
 	if have[0] {
-		rows, err := d.query(ctx, `
-SELECT pubid, name, ISNULL(description, N''), repl_freq, options, status, retention, sync_method,
-       ISNULL(allow_push, 0), ISNULL(allow_pull, 0), ISNULL(allow_anonymous, 0),
-       ISNULL(allow_subscription_copy, 0), CAST(ISNULL(replicate_ddl, 0) AS int),
-       ISNULL(snapshot_in_defaultfolder, 1), ISNULL(alt_snapshot_folder, N''), ISNULL(compress_snapshot, 0),
-       ISNULL(pre_snapshot_script, N''), ISNULL(post_snapshot_script, N''),
-       ISNULL(immediate_sync, 0), ISNULL(independent_agent, 0), ISNULL(allow_initialize_from_backup, 0),
-       ISNULL(allow_queued_tran, 0), ISNULL(allow_sync_tran, 0)
-FROM   dbo.syspublications
-ORDER  BY name`)
+		rows, err := d.query(ctx, "SELECT "+tranPublicationColumns+tranPublicationFrom)
 		pubs, err := scanRows(rows, err, what, func(scan func(...any) error) (*Publication, error) {
-			p := &Publication{db: d, RetentionUnit: "hour"}
-			var freq, options, status, method, replicateDDL int
-			if err := scan(&p.pubID, &p.Name, &p.Description, &freq, &options, &status, &p.Retention, &method,
-				&p.AllowPush, &p.AllowPull, &p.AllowAnonymous, &p.AllowSubscriptionCopy, &replicateDDL,
-				&p.SnapshotInDefaultFolder, &p.AltSnapshotFolder, &p.CompressSnapshot,
-				&p.PreSnapshotScript, &p.PostSnapshotScript,
-				&p.ImmediateSync, &p.IndependentAgent, &p.AllowInitializeFromBackup,
-				&p.AllowQueuedUpdates, &p.AllowImmediateUpdates); err != nil {
-				return nil, err
-			}
-			switch {
-			case freq == 1:
-				p.Type = PublicationSnapshot
-			case options&0x1 != 0:
-				p.Type = PublicationPeerToPeer
-			default:
-				p.Type = PublicationTransactional
-			}
-			p.Active = status == 1
-			p.SyncMethod = syncMethodNames[method]
-			p.ReplicateDDL = replicateDDL != 0
-			return p, nil
+			return scanTranPublication(d, scan)
 		})
 		if err != nil {
 			return nil, err
@@ -457,40 +507,9 @@ ORDER  BY name`)
 		out = append(out, pubs...)
 	}
 	if have[1] {
-		rows, err := d.query(ctx, `
-SELECT CONVERT(nchar(36), pubid), name, ISNULL(description, N''), status, ISNULL(retention, 0),
-       ISNULL(retention_period_unit, 0), ISNULL(sync_mode, 0),
-       ISNULL(allow_push, 0), ISNULL(allow_pull, 0), ISNULL(allow_anonymous, 0),
-       ISNULL(allow_subscription_copy, 0), CAST(ISNULL(replicate_ddl, 0) AS int),
-       ISNULL(snapshot_in_defaultfolder, 1), ISNULL(alt_snapshot_folder, N''), ISNULL(compress_snapshot, 0),
-       ISNULL(pre_snapshot_script, N''), ISNULL(post_snapshot_script, N''),
-       ISNULL(backward_comp_level, 0), CAST(ISNULL(allow_web_synchronization, 0) AS int),
-       CAST(ISNULL(use_partition_groups, 0) AS int), ISNULL(centralized_conflicts, 0), ISNULL(conflict_retention, 0)
-FROM   dbo.sysmergepublications
-WHERE  publisher_db = DB_NAME() AND UPPER(publisher) = UPPER(@@SERVERNAME)
-ORDER  BY name`)
+		rows, err := d.query(ctx, "SELECT "+mergePublicationColumns+mergePublicationFrom)
 		pubs, err := scanRows(rows, err, what, func(scan func(...any) error) (*Publication, error) {
-			p := &Publication{db: d, Type: PublicationMerge}
-			var status, unit, mode int
-			var replicateDDL, webSync, partitionGroups int
-			if err := scan(&p.mergeID, &p.Name, &p.Description, &status, &p.Retention,
-				&unit, &mode,
-				&p.AllowPush, &p.AllowPull, &p.AllowAnonymous, &p.AllowSubscriptionCopy, &replicateDDL,
-				&p.SnapshotInDefaultFolder, &p.AltSnapshotFolder, &p.CompressSnapshot,
-				&p.PreSnapshotScript, &p.PostSnapshotScript,
-				&p.CompatibilityLevel, &webSync, &partitionGroups,
-				&p.CentralizedConflicts, &p.ConflictRetention); err != nil {
-				return nil, err
-			}
-			p.Active = status == 1
-			p.RetentionUnit = mergeRetentionUnits[unit]
-			p.SyncMethod = syncMethodNames[mode]
-			p.ReplicateDDL = replicateDDL != 0
-			p.AllowWebSync = webSync != 0
-			// use_partition_groups is NULL until the snapshot decides it,
-			// and -1 where it is not possible.
-			p.UsePartitionGroups = partitionGroups > 0
-			return p, nil
+			return scanMergePublication(d, scan)
 		})
 		if err != nil {
 			return nil, err
@@ -517,6 +536,11 @@ func (d *Database) PublicationByName(ctx context.Context, name string) (*Publica
 // on the instance — SSMS's Replication › Local Publications — in database
 // order, then as Database.Publications orders them. A published database
 // that cannot be read (offline, or the login has no access) is skipped.
+//
+// It is two round trips whatever the database count: the published
+// databases, then one batch reading each of them inside its own TRY/CATCH
+// (perDatabaseBatch). It was three per database until 2026-10-08, and a
+// database that failed part-way failed the whole listing.
 func (s *Server) LocalPublications(ctx context.Context) ([]*Publication, error) {
 	const what = "list local publications"
 	if err := s.refuseAzureReplication(what); err != nil {
@@ -532,15 +556,20 @@ func (s *Server) LocalPublications(ctx context.Context) ([]*Publication, error) 
 	if err != nil {
 		return nil, err
 	}
-	var out []*Publication
-	for _, d := range dbs {
-		pubs, err := d.Publications(ctx)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, pubs...)
-	}
-	return out, nil
+	// The IFs stand in for replTables: a database has neither table until it
+	// publishes, and each SELECT compiles only when its IF lets it run.
+	return perDatabaseBatch(ctx, s, what, dbs, `
+IF OBJECT_ID(N'dbo.syspublications', N'U') IS NOT NULL
+    SELECT DB_NAME() AS tran_publication, `+tranPublicationColumns+tranPublicationFrom+`;
+IF OBJECT_ID(N'dbo.sysmergepublications', N'U') IS NOT NULL
+    SELECT DB_NAME() AS merge_publication, `+mergePublicationColumns+mergePublicationFrom+`;`,
+		func(kind string, scan func(...any) error) (*Publication, error) {
+			if kind == "merge_publication" {
+				return scanMergePublication(nil, scan)
+			}
+			return scanTranPublication(nil, scan)
+		},
+		func(p *Publication, d *Database) { p.db = d })
 }
 
 // -- Articles ------------------------------------------------------------------

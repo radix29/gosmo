@@ -118,7 +118,7 @@ func TestByNameLookupsAreOneStatementAcrossCollations(t *testing.T) {
 		"ClrTypeByName":                  func(d *Database) error { _, err := d.ClrTypeByName(ctx, "Sales", "c"); return err },
 		"XMLSchemaCollectionByName":      func(d *Database) error { _, err := d.XMLSchemaCollectionByName(ctx, "Sales", "x"); return err },
 		"SecurityPolicyByName":           func(d *Database) error { _, err := d.SecurityPolicyByName(ctx, "Sales", "sp"); return err },
-		"TableChangeTrackingFor":         func(d *Database) error { _, err := d.TableChangeTrackingFor(ctx, "Sales", "t"); return err },
+		"Table.ChangeTracking":           func(d *Database) error { _, err := d.TableRef("Sales", "t").ChangeTracking(ctx); return err },
 		"Scripter.ScriptView":            func(d *Database) error { _, err := sc(d).ScriptView(ctx, "Sales", "v"); return err },
 		"Scripter.ScriptStoredProcedure": func(d *Database) error { _, err := sc(d).ScriptStoredProcedure(ctx, "Sales", "p"); return err },
 		"Scripter.ScriptFunction":        func(d *Database) error { _, err := sc(d).ScriptFunction(ctx, "Sales", "f"); return err },

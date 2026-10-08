@@ -243,24 +243,40 @@ func TestSignatureWrites(t *testing.T) {
 	cert := Signer{Kind: SignerCertificate, Name: "c", Password: "p'w"}
 	asym := Signer{Kind: SignerAsymmetricKey, Name: "a"}
 	got := capture(t,
-		func(ctx context.Context) error { return d.AddSignature(ctx, "dbo", "p]1", cert, false) },
-		func(ctx context.Context) error { return d.AddSignature(ctx, "dbo", "f", asym, true) },
+		func(ctx context.Context) error {
+			return d.StoredProcedureRef("dbo", "p]1").AddSignature(ctx, cert, false)
+		},
+		func(ctx context.Context) error {
+			return d.UserDefinedFunctionRef("dbo", "f").AddSignature(ctx, asym, true)
+		},
 		// DROP takes no password, even when the signer has one.
-		func(ctx context.Context) error { return d.DropSignature(ctx, "dbo", "p]1", cert, false) },
-		func(ctx context.Context) error { return d.DropSignature(ctx, "dbo", "f", asym, true) },
+		func(ctx context.Context) error {
+			return d.StoredProcedureRef("dbo", "p]1").DropSignature(ctx, cert, false)
+		},
+		func(ctx context.Context) error {
+			return d.UserDefinedFunctionRef("dbo", "f").DropSignature(ctx, asym, true)
+		},
+		func(ctx context.Context) error {
+			return d.TriggerRef("sales", "trg").AddSignature(ctx, asym, false)
+		},
+		func(ctx context.Context) error {
+			return d.TriggerRef("sales", "trg").DropSignature(ctx, asym, false)
+		},
 	)
 	assertStatements(t, got, []string{
 		useAppDB + "ADD SIGNATURE TO [dbo].[p]]1] BY CERTIFICATE [c] WITH PASSWORD = N'<insert password here>'",
 		useAppDB + "ADD COUNTER SIGNATURE TO [dbo].[f] BY ASYMMETRIC KEY [a]",
 		useAppDB + "DROP SIGNATURE FROM [dbo].[p]]1] BY CERTIFICATE [c]",
 		useAppDB + "DROP COUNTER SIGNATURE FROM [dbo].[f] BY ASYMMETRIC KEY [a]",
+		useAppDB + "ADD SIGNATURE TO [sales].[trg] BY ASYMMETRIC KEY [a]",
+		useAppDB + "DROP SIGNATURE FROM [sales].[trg] BY ASYMMETRIC KEY [a]",
 	})
 
 	ctx, col := WithScript(context.Background())
 	for _, err := range []error{
-		d.AddSignature(ctx, "dbo", "", cert, false),
-		d.AddSignature(ctx, "dbo", "p", Signer{Kind: "SYMMETRIC KEY", Name: "s"}, false),
-		d.AddSignature(ctx, "dbo", "p", Signer{Kind: SignerCertificate}, false),
+		d.StoredProcedureRef("dbo", "").AddSignature(ctx, cert, false),
+		d.StoredProcedureRef("dbo", "p").AddSignature(ctx, Signer{Kind: "SYMMETRIC KEY", Name: "s"}, false),
+		d.StoredProcedureRef("dbo", "p").AddSignature(ctx, Signer{Kind: SignerCertificate}, false),
 	} {
 		if err == nil {
 			t.Error("an invalid signature write was accepted")

@@ -161,23 +161,19 @@ ORDER  BY dp.class_desc, schema_name, object_name, dp.permission_name`
 // objectPermissionNames allowlists every object-scoped permission name SQL
 // Server accepts in a GRANT/DENY/REVOKE ... statement — see
 // serverPermissionNames (server_security.go) for why an allowlist rather
-// than quoting. This is the set valid on tables/views specifically — GRANT
-// EXECUTE on a table fails with "Granted or revoked privilege EXECUTE is
-// not compatible with object". A future stored-procedure/function
-// securable would need its own set (EXECUTE applies there, REFERENCES does
-// not).
+// than quoting. This is the set valid on a table — GRANT EXECUTE on one
+// fails with "Granted or revoked privilege EXECUTE is not compatible with
+// object". Every other class has its own set beside ApplyPermission
+// (permission_options.go); a view's is this one less VIEW CHANGE TRACKING.
 var objectPermissionNames = map[ObjectPermission]bool{
 	PermAlter: true, PermControl: true, PermDelete: true,
 	PermInsert: true, PermReferences: true, PermSelect: true, PermTakeOwnership: true,
 	PermUpdate: true, PermView: true, PermViewChangeTracking: true,
 }
 
-// validObjectPermission reports whether name is a recognized object-scoped
-// permission name.
-func validObjectPermission(name ObjectPermission) bool { return objectPermissionNames[name] }
-
 // ObjectPermissionNames returns every object-scoped permission name
-// GRANT/DENY/REVOKE accepts on a table or view, sorted — see
+// GRANT/DENY/REVOKE accepts on a table, sorted (SecurableView.PermissionNames
+// is a view's) — see
 // ServerPermissionNames for what it's used for.
 func ObjectPermissionNames() []string {
 	names := make([]string, 0, len(objectPermissionNames))
@@ -203,10 +199,6 @@ var schemaPermissionNames = map[ObjectPermission]bool{
 	PermInsert: true, PermReferences: true, PermSelect: true, PermTakeOwnership: true,
 	PermUpdate: true, PermView: true, PermViewChangeTracking: true,
 }
-
-// validSchemaPermission reports whether name is a recognized schema-scoped
-// permission name.
-func validSchemaPermission(name ObjectPermission) bool { return schemaPermissionNames[name] }
 
 // SchemaPermissionNames returns every schema-scoped permission name
 // GRANT/DENY/REVOKE accepts ON SCHEMA::x, sorted — see ObjectPermissionNames

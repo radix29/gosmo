@@ -24,9 +24,9 @@ import (
 // legal only while its signature is unchanged, and scripting the same object
 // guarantees that.
 //
-// A table function's ORDER hint is reproduced (sys.function_order_columns).
-// A COLLATE on a string column of its RETURNS TABLE is not: the column takes
-// the database default on replay.
+// A table function's ORDER hint is reproduced (sys.function_order_columns),
+// and so is a COLLATE on a string column of its RETURNS TABLE, written — as
+// a table's column — only where it differs from the database default.
 
 // clrModule is everything one CLR module's CREATE says, read from the
 // catalog. renderCLRModule turns it into the statement.
@@ -195,7 +195,9 @@ ORDER  BY MIN(te.type)`, objectID)
 // scalar function's return type — included. The default is converted to text
 // by its own base type, in a style that converts back to the same value:
 // binary as 0x…, float and real with every digit, money with four decimals,
-// date and time types in ISO 8601.
+// date and time types in ISO 8601 — datetimeoffset with its own offset, as
+// style 126 keeps it (127 shifts to UTC and writes Z, so +02:00 replayed as
+// +00:00).
 const clrParameterSelect = `
 SELECT p.parameter_id, p.name, tp.name, p.max_length, p.precision, p.scale,
        SCHEMA_NAME(tp.schema_id), tp.is_user_defined, p.is_output, p.has_default_value,
@@ -212,7 +214,7 @@ SELECT p.parameter_id, p.name, tp.name, p.max_length, p.precision, p.scale,
          WHEN N'datetime'       THEN CONVERT(nvarchar(max), CAST(p.default_value AS datetime), 126)
          WHEN N'smalldatetime'  THEN CONVERT(nvarchar(max), CAST(p.default_value AS datetime), 126)
          WHEN N'datetime2'      THEN CONVERT(nvarchar(max), CAST(p.default_value AS datetime2(7)), 126)
-         WHEN N'datetimeoffset' THEN CONVERT(nvarchar(max), CAST(p.default_value AS datetimeoffset(7)), 127)
+         WHEN N'datetimeoffset' THEN CONVERT(nvarchar(max), CAST(p.default_value AS datetimeoffset(7)), 126)
          ELSE CONVERT(nvarchar(max), p.default_value)
        END
 FROM   sys.parameters p
@@ -298,18 +300,19 @@ WHERE  tr.object_id = @p1`, objectID)
 	// A table function: no parameter 0, a result set in sys.columns.
 	rows, err = d.query(ctx, `
 SELECT c.name, tp.name, c.max_length, c.precision, c.scale,
-       SCHEMA_NAME(tp.schema_id), tp.is_user_defined
+       SCHEMA_NAME(tp.schema_id), tp.is_user_defined, ISNULL(c.collation_name, N''),
+       ISNULL(CONVERT(sysname, DATABASEPROPERTYEX(DB_NAME(), 'Collation')), N'')
 FROM   sys.columns c
 JOIN   sys.types tp ON tp.user_type_id = c.user_type_id
 WHERE  c.object_id = @p1
 ORDER  BY c.column_id`, objectID)
 	m.table, err = scanRows(rows, err, "", func(scan func(...any) error) (string, error) {
-		var colName, typeName, typeSchema string
+		var colName, typeName, typeSchema, collation, dbCollation string
 		var maxLength, precision, scale int
 		var userDefined bool
-		err := scan(&colName, &typeName, &maxLength, &precision, &scale, &typeSchema, &userDefined)
-		return quoteIdent(colName) + " " + catalogType{dt: DataType(typeName), typeSchema: typeSchema, userDefined: userDefined,
-			maxLength: maxLength, precision: precision, scale: scale}.String(), err
+		err := scan(&colName, &typeName, &maxLength, &precision, &scale, &typeSchema, &userDefined, &collation, &dbCollation)
+		return clrTableColumn(colName, catalogType{dt: DataType(typeName), typeSchema: typeSchema, userDefined: userDefined,
+			maxLength: maxLength, precision: precision, scale: scale}.String(), collation, dbCollation), err
 	})
 	if err != nil {
 		return m, err
@@ -331,6 +334,19 @@ ORDER  BY oc.order_column_id`, objectID)
 		return quoteIdent(colName) + dir, err
 	})
 	return m, err
+}
+
+// clrTableColumn renders one column of a CLR table function's RETURNS
+// TABLE: "[name] type", plus a COLLATE clause where the column's collation
+// differs from the database default dbCollation — the rule a table's column
+// follows (tableColumnDefinition). Without it a replayed string column takes
+// the database default.
+func clrTableColumn(name, typ, collation, dbCollation string) string {
+	s := quoteIdent(name) + " " + typ
+	if collation != "" && dbCollation != "" && !strings.EqualFold(collation, dbCollation) {
+		s += " COLLATE " + collation
+	}
+	return s
 }
 
 // clrDatabaseTrigger reads a CLR database-scope DDL trigger's CREATE, or ""

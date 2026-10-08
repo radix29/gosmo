@@ -204,10 +204,10 @@ func (d *Database) CreateFullTextStoplist(ctx context.Context, req CreateFullTex
 
 func createFullTextStoplistStatement(req CreateFullTextStoplistRequest) (string, error) {
 	if req.FromSystem && req.From != "" {
-		return "", fmt.Errorf("gosmo: create full-text stoplist %q: FromSystem and From are exclusive", req.Name)
+		return "", invalidf("gosmo: create full-text stoplist %q: FromSystem and From are exclusive", req.Name)
 	}
 	if req.FromDatabase != "" && req.From == "" {
-		return "", fmt.Errorf("gosmo: create full-text stoplist %q: FromDatabase needs From", req.Name)
+		return "", invalidf("gosmo: create full-text stoplist %q: FromDatabase needs From", req.Name)
 	}
 	var sb strings.Builder
 	sb.WriteString("CREATE FULLTEXT STOPLIST " + quoteIdent(req.Name))
@@ -325,7 +325,7 @@ func (d *Database) CreateSearchPropertyList(ctx context.Context, req CreateSearc
 
 func createSearchPropertyListStatement(req CreateSearchPropertyListRequest) (string, error) {
 	if req.FromDatabase != "" && req.From == "" {
-		return "", fmt.Errorf("gosmo: create search property list %q: FromDatabase needs From", req.Name)
+		return "", invalidf("gosmo: create search property list %q: FromDatabase needs From", req.Name)
 	}
 	var sb strings.Builder
 	sb.WriteString("CREATE SEARCH PROPERTY LIST " + quoteIdent(req.Name))
@@ -456,11 +456,11 @@ type CreateFullTextIndexRequest struct {
 func (req CreateFullTextIndexRequest) validate(table string) error {
 	switch {
 	case req.KeyIndex == "":
-		return fmt.Errorf("gosmo: create full-text index on %s: a key index is required", table)
+		return invalidf("gosmo: create full-text index on %s: a key index is required", table)
 	case req.StoplistOff && req.Stoplist != "":
-		return fmt.Errorf("gosmo: create full-text index on %s: StoplistOff and Stoplist are exclusive", table)
+		return invalidf("gosmo: create full-text index on %s: StoplistOff and Stoplist are exclusive", table)
 	case req.NoPopulation && req.ChangeTracking != FullTextChangeTrackingOff:
-		return fmt.Errorf("gosmo: create full-text index on %s: NoPopulation needs ChangeTracking OFF", table)
+		return invalidf("gosmo: create full-text index on %s: NoPopulation needs ChangeTracking OFF", table)
 	}
 	if err := validChangeTracking(req.ChangeTracking, true); err != nil {
 		return fmt.Errorf("gosmo: create full-text index on %s: %w", table, err)
@@ -477,7 +477,7 @@ func validChangeTracking(ct FullTextChangeTracking, emptyOK bool) error {
 			return nil
 		}
 	}
-	return fmt.Errorf("unknown change tracking %q", ct)
+	return invalidf("unknown change tracking %q", ct)
 }
 
 // CreateFullTextIndex creates the table's full-text index (CREATE FULLTEXT
@@ -578,6 +578,14 @@ func (i *FullTextIndex) Disable(ctx context.Context) error {
 	return nil
 }
 
+// SetEnabled is Enable when on is true and Disable otherwise.
+func (i *FullTextIndex) SetEnabled(ctx context.Context, on bool) error {
+	if on {
+		return i.Enable(ctx)
+	}
+	return i.Disable(ctx)
+}
+
 // AddColumn adds a column to the index. The server repopulates unless
 // noPopulation is set.
 func (i *FullTextIndex) AddColumn(ctx context.Context, col FullTextIndexColumnSpec, noPopulation bool) error {
@@ -617,11 +625,11 @@ func (i *FullTextIndex) SetStoplist(ctx context.Context, kind FullTextStoplistKi
 		term, name = "SYSTEM", ""
 	case FullTextStoplistUser:
 		if name == "" {
-			return fmt.Errorf("gosmo: set stoplist of the full-text index on %s: a user stoplist needs a name", i.FullName())
+			return invalidf("gosmo: set stoplist of the full-text index on %s: a user stoplist needs a name", i.FullName())
 		}
 		term = quoteIdent(name)
 	default:
-		return fmt.Errorf("gosmo: set stoplist of the full-text index on %s: unknown kind %v", i.FullName(), kind)
+		return invalidf("gosmo: set stoplist of the full-text index on %s: unknown kind %v", i.FullName(), kind)
 	}
 	if err := i.alter(ctx, "set stoplist of the full-text index on", "SET STOPLIST = "+term); err != nil {
 		return err
@@ -673,7 +681,7 @@ func (i *FullTextIndex) StartPopulation(ctx context.Context, kind FullTextPopula
 	switch kind {
 	case FullTextPopulationFull, FullTextPopulationIncremental, FullTextPopulationUpdate:
 	default:
-		return fmt.Errorf("gosmo: start population of the full-text index on %s: unknown kind %q", i.FullName(), kind)
+		return invalidf("gosmo: start population of the full-text index on %s: unknown kind %q", i.FullName(), kind)
 	}
 	return i.alter(ctx, "start "+strings.ToLower(string(kind))+" population of the full-text index on",
 		"START "+string(kind)+" POPULATION")

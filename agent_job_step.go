@@ -52,14 +52,20 @@ func (j *Job) scanStep(scan func(...any) error) (*JobStep, error) {
 	return s, nil
 }
 
-// Steps returns all steps defined for the job, ordered by step_id.
+// Steps returns all steps defined for the job, ordered by step_id. On a
+// JobRef the job is looked up by name first (see Server.JobRef).
 func (j *Job) Steps(ctx context.Context) ([]*JobStep, error) {
 	const q = stepSelect + `
 WHERE  s.job_id = @p1
 ORDER  BY s.step_id`
 
-	rows, err := j.server.query(ctx, q, j.JobID)
-	return scanRows(rows, err, fmt.Sprintf("steps for job %q", j.Name), j.scanStep)
+	what := fmt.Sprintf("steps for job %q", j.Name)
+	id, err := j.id(ctx, what)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := j.server.query(ctx, q, id)
+	return scanRows(rows, err, what, j.scanStep)
 }
 
 // stepByName reads one step back by name. msdb keeps step names unique
@@ -98,7 +104,7 @@ func (j *Job) AddStep(ctx context.Context, req JobStepRequest) (*JobStep, error)
 // references itself.
 func (j *Job) InsertStep(ctx context.Context, req JobStepRequest, stepID int) (*JobStep, error) {
 	if stepID < 1 {
-		return nil, fmt.Errorf("gosmo: insert step %q into job %q: step id must be 1 or more", req.Name, j.Name)
+		return nil, invalidf("gosmo: insert step %q into job %q: step id must be 1 or more", req.Name, j.Name)
 	}
 	return j.addStepAt(ctx, req, stepID)
 }
@@ -126,7 +132,7 @@ func stepExtraArgs(req JobStepRequest) string {
 
 func (j *Job) addStepAt(ctx context.Context, req JobStepRequest, stepID int) (*JobStep, error) {
 	if req.Name == "" {
-		return nil, fmt.Errorf("gosmo: add step: name is required")
+		return nil, invalidf("gosmo: add step: name is required")
 	}
 	if err := j.server.exec(ctx, addStepStmt(j.Name, req, stepID)); err != nil {
 		return nil, fmt.Errorf("gosmo: add step %q to job %q: %w", req.Name, j.Name, err)
@@ -176,7 +182,7 @@ func (s *JobStep) Alter(ctx context.Context, req JobStepRequest) error {
 	// @step_name with a server-side error, and the local field writes at the
 	// end of this method would otherwise blank out s.Name on the way past.
 	if req.Name == "" {
-		return fmt.Errorf("gosmo: alter step: name is required")
+		return invalidf("gosmo: alter step: name is required")
 	}
 	q := fmt.Sprintf(
 		"EXEC msdb.dbo.sp_update_jobstep @job_name = N'%s', @step_id = %d, "+
@@ -400,8 +406,7 @@ func moveOrder(stepID, newStepID int) func(n int) []int {
 // a concurrent edit of the same job is still last-writer-wins; the batch
 // makes the reorder atomic, not serializable.
 //
-// The job must have been read with JobByName: the step listing is by job_id,
-// which a bare Server.JobRef handle does not carry.
+// On a Server.JobRef handle the step listing looks the job up by name first.
 func (j *Job) ReorderSteps(ctx context.Context, order func(n int) []int) error {
 	steps, err := j.Steps(ctx)
 	if err != nil {
@@ -475,15 +480,15 @@ func (j *Job) ReorderSteps(ctx context.Context, order func(n int) []int) error {
 // duplicate or a missing id would delete a step and never put it back.
 func checkReorder(want []int, n int) error {
 	if len(want) != n {
-		return fmt.Errorf("order has %d steps, the job has %d", len(want), n)
+		return invalidf("order has %d steps, the job has %d", len(want), n)
 	}
 	seen := make(map[int]bool, n)
 	for _, id := range want {
 		if id < 1 || id > n {
-			return fmt.Errorf("step id %d is outside 1..%d", id, n)
+			return invalidf("step id %d is outside 1..%d", id, n)
 		}
 		if seen[id] {
-			return fmt.Errorf("step id %d appears twice", id)
+			return invalidf("step id %d appears twice", id)
 		}
 		seen[id] = true
 	}

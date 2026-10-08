@@ -10,6 +10,7 @@
 package gosmo
 
 import (
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -80,6 +81,32 @@ func TestLiveReplicationPublications(t *testing.T) {
 	for _, want := range []string{replFixtureMergeDB + ":" + replFixtureMergePub, replFixtureTranDB + ":" + replFixtureTranPub} {
 		if !slices.Contains(names, want) {
 			t.Errorf("LocalPublications = %v, missing %s", names, want)
+		}
+	}
+	// The one-batch read returns what reading each database on its own does,
+	// field for field and in the same order.
+	var each []*Publication
+	seenDB := map[string]bool{}
+	for _, p := range all {
+		if seenDB[p.Database().Name] {
+			continue
+		}
+		seenDB[p.Database().Name] = true
+		pubs, err := p.Database().Publications(ctx)
+		if err != nil {
+			t.Fatalf("Publications(%s): %v", p.Database().Name, err)
+		}
+		each = append(each, pubs...)
+	}
+	if len(each) != len(all) {
+		t.Fatalf("LocalPublications = %d, per-database reads = %d", len(all), len(each))
+	}
+	for i := range all {
+		if all[i].Database() != each[i].Database() {
+			t.Errorf("publication %d: database %p vs %p", i, all[i].Database(), each[i].Database())
+		}
+		if !reflect.DeepEqual(*all[i], *each[i]) {
+			t.Errorf("publication %d differs:\n batch %+v\n each  %+v", i, *all[i], *each[i])
 		}
 	}
 
@@ -184,6 +211,28 @@ func TestLiveReplicationLocalSubscriptions(t *testing.T) {
 	}
 	if tran == nil || merge == nil {
 		t.Fatalf("LocalSubscriptions = %+v, want both fixture subscriptions in %s", all, replFixtureSubDB)
+	}
+	// The one-batch read returns what reading each database on its own does.
+	var each []*LocalSubscription
+	seenDB := map[string]bool{}
+	for _, l := range all {
+		if seenDB[l.Database().Name] {
+			continue
+		}
+		seenDB[l.Database().Name] = true
+		subs, err := l.Database().LocalSubscriptions(ctx)
+		if err != nil {
+			t.Fatalf("LocalSubscriptions(%s): %v", l.Database().Name, err)
+		}
+		each = append(each, subs...)
+	}
+	if len(each) != len(all) {
+		t.Fatalf("Server.LocalSubscriptions = %d, per-database reads = %d", len(all), len(each))
+	}
+	for i := range all {
+		if !reflect.DeepEqual(*all[i], *each[i]) {
+			t.Errorf("subscription %d differs:\n batch %+v\n each  %+v", i, *all[i], *each[i])
+		}
 	}
 	for _, l := range all {
 		if l.Database().Name == replFixtureMergeDB {
