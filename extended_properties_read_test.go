@@ -3,6 +3,7 @@ package gosmo
 import (
 	"context"
 	"database/sql"
+	"database/sql/driver"
 	"strings"
 	"testing"
 )
@@ -83,6 +84,72 @@ func TestExtendedPropertiesReadNullsAnUnusedLevel(t *testing.T) {
 			for _, bad := range tc.bad {
 				if strings.Contains(q, bad) {
 					t.Errorf("statement:\n%s\nmust not contain %s — an absent level is NULL, not an empty literal", q, bad)
+				}
+			}
+		})
+	}
+}
+
+// -- NULL values ---------------------------------------------------------------
+
+// extPropDriver replays name/value rows for both extended-property reads.
+type extPropDriver struct{}
+
+var extPropRows [][]driver.Value
+
+func (extPropDriver) Open(string) (driver.Conn, error) { return extPropConn{}, nil }
+
+type extPropConn struct{}
+
+func (extPropConn) Prepare(string) (driver.Stmt, error) { return nil, driver.ErrSkip }
+func (extPropConn) Close() error                        { return nil }
+func (extPropConn) Begin() (driver.Tx, error)           { return nil, driver.ErrSkip }
+
+func (extPropConn) QueryContext(context.Context, string, []driver.NamedValue) (driver.Rows, error) {
+	return &detRows{cols: []string{"name", "value"}, rows: extPropRows}, nil
+}
+
+func init() { sql.Register("extprops", extPropDriver{}) }
+
+// sp_addextendedproperty's @value defaults to NULL, and both reads' value
+// column is nullable. Scanned into a string, one such property failed the
+// whole read ("converting NULL to string is unsupported") — and with it the
+// Extended Properties page of every dialog carrying one.
+func TestExtendedPropertiesReadANullValue(t *testing.T) {
+	extPropRows = [][]driver.Value{
+		{"MS_Description", "orders"},
+		{"x", nil},
+	}
+	db, err := sql.Open("extprops", "")
+	if err != nil {
+		t.Fatalf("sql.Open: %v", err)
+	}
+	t.Cleanup(func() { db.Close() })
+	d := &Database{server: &Server{db: db}, Name: "testdb"}
+	ctx := context.Background()
+
+	reads := map[string]func() ([]*ExtendedProperty, error){
+		"DatabaseExtendedProperties": func() ([]*ExtendedProperty, error) { return d.DatabaseExtendedProperties(ctx) },
+		"ExtendedProperties": func() ([]*ExtendedProperty, error) {
+			return d.ExtendedProperties(ctx, ExtendedPropertyLevel{Level0Type: "SCHEMA", Level0Name: "dbo"})
+		},
+	}
+	for name, read := range reads {
+		t.Run(name, func(t *testing.T) {
+			props, err := read()
+			if err != nil {
+				t.Fatalf("%s: %v", name, err)
+			}
+			want := []ExtendedProperty{
+				{Name: "MS_Description", Value: "orders"},
+				{Name: "x", Value: "", IsNull: true},
+			}
+			if len(props) != len(want) {
+				t.Fatalf("got %d properties, want %d", len(props), len(want))
+			}
+			for i, p := range props {
+				if *p != want[i] {
+					t.Errorf("property %d = %+v, want %+v", i, *p, want[i])
 				}
 			}
 		})

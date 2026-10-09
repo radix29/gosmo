@@ -2,6 +2,7 @@ package gosmo
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 )
 
@@ -10,9 +11,15 @@ import (
 // ============================================================
 
 // ExtendedProperty mirrors a row from sys.extended_properties.
+//
+// The value column is nullable — sp_addextendedproperty's @value defaults to
+// NULL — so a property added without one comes back with Value "" and IsNull
+// set. Scanning it into a plain string instead failed the whole read, and with
+// it every Extended Properties page listing the object.
 type ExtendedProperty struct {
-	Name  string
-	Value string
+	Name   string
+	Value  string
+	IsNull bool // the stored value is NULL; Value is ""
 }
 
 // ExtendedPropertyLevel identifies the object level for an extended property.
@@ -150,10 +157,14 @@ EXEC sp_dropextendedproperty
 func scanExtProps(rows *dbRows) ([]*ExtendedProperty, error) {
 	var props []*ExtendedProperty
 	for rows.Next() {
-		p := &ExtendedProperty{}
-		if err := rows.Scan(&p.Name, &p.Value); err != nil {
+		var (
+			p     = &ExtendedProperty{}
+			value sql.NullString
+		)
+		if err := rows.Scan(&p.Name, &value); err != nil {
 			return nil, err
 		}
+		p.Value, p.IsNull = value.String, !value.Valid
 		props = append(props, p)
 	}
 	return props, rows.Err()

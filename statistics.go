@@ -4,8 +4,11 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
+
+	mssql "github.com/microsoft/go-mssqldb"
 )
 
 // ============================================================
@@ -432,30 +435,112 @@ func (st *Statistic) Histogram(ctx context.Context) ([]*StatisticHistogramStep, 
 		escapeSingle(st.table.FullName()), escapeSingle(st.Name))
 
 	rows, err := st.table.db.query(ctx, q)
+	var key histogramKeyType
+	if err == nil {
+		if key, err = histogramKeyTypeOf(rows); err != nil {
+			rows.Close()
+		}
+	}
 	return scanRows(rows, err, fmt.Sprintf("histogram for %q", st.Name), func(scan func(...any) error) (*StatisticHistogramStep, error) {
 		var rangeHiKey any
 		s := &StatisticHistogramStep{}
 		if err := scan(&rangeHiKey, &s.RangeRows, &s.EqRows, &s.DistinctRangeRows, &s.AvgRangeRows); err != nil {
 			return nil, err
 		}
-		s.RangeHighKey = formatHistogramKey(rangeHiKey)
+		s.RangeHighKey = key.format(rangeHiKey)
 		return s, nil
 	})
 }
 
-// formatHistogramKey renders a RANGE_HI_KEY value as text. A NULL key (the
-// histogram's step for NULL values, when the leading column is nullable) is
-// "NULL", and a binary-typed key is 0x-hex — both would otherwise render as
-// Go's own "%v" artifacts ("<nil>", a decimal byte list).
-func formatHistogramKey(v any) string {
-	switch k := v.(type) {
+// histogramKeyType is RANGE_HI_KEY's SQL type, which follows the statistic's
+// leading key column: the Go value the driver hands back for it does not say
+// enough on its own to render it.
+type histogramKeyType struct {
+	name  string // DatabaseTypeName, upper case: "DECIMAL", "DATETIME2", ...
+	scale int64  // fractional-second digits, for the types that have them
+}
+
+func histogramKeyTypeOf(rows *dbRows) (histogramKeyType, error) {
+	cts, err := rows.ColumnTypes()
+	if err != nil || len(cts) == 0 {
+		return histogramKeyType{}, err
+	}
+	k := histogramKeyType{name: strings.ToUpper(cts[0].DatabaseTypeName())}
+	if _, scale, ok := cts[0].DecimalSize(); ok {
+		k.scale = scale
+	}
+	return k, nil
+}
+
+// format renders a RANGE_HI_KEY value as text, the way the server would
+// print it. A NULL key (the histogram's step for NULL values, when the
+// leading column is nullable) is "NULL" and a binary key is 0x-hex — both
+// would otherwise render as Go's own "%v" artifacts ("<nil>", a decimal byte
+// list).
+//
+// The rest is go-mssqldb's representation, not the value's: decimal, numeric
+// and money arrive as the digits' bytes (shown as hex, 0x3132332E3435 for
+// 123.45), a uniqueidentifier as its 16 bytes in wire order (shown as hex
+// with the first three groups reversed), every date/time type as a time.Time
+// in UTC ("2026-01-02 03:04:05 +0000 UTC" for a datetime2(0)), and a real
+// widened to float64 (0.10000000149011612), a bit as Go's true/false.
+func (k histogramKeyType) format(v any) string {
+	switch v := v.(type) {
 	case nil:
 		return "NULL"
 	case []byte:
-		return binaryLiteral(k)
+		switch k.name {
+		case "DECIMAL", "NUMERIC", "MONEY", "SMALLMONEY":
+			return string(v)
+		case "UNIQUEIDENTIFIER":
+			var u mssql.UniqueIdentifier
+			if u.Scan(v) == nil {
+				return u.String()
+			}
+		}
+		return binaryLiteral(v)
+	case time.Time:
+		if layout := k.timeLayout(); layout != "" {
+			return v.Format(layout)
+		}
+		return v.String()
+	case float64:
+		if k.name == "REAL" {
+			return strconv.FormatFloat(v, 'g', -1, 32)
+		}
+		return strconv.FormatFloat(v, 'g', -1, 64)
+	case bool:
+		if v {
+			return "1"
+		}
+		return "0"
 	default:
-		return fmt.Sprintf("%v", k)
+		return fmt.Sprintf("%v", v)
 	}
+}
+
+// timeLayout is the layout a date/time key prints in: the type's own fields,
+// with as many fractional-second digits as its scale.
+func (k histogramKeyType) timeLayout() string {
+	frac := ""
+	if k.scale > 0 {
+		frac = "." + strings.Repeat("0", int(min(k.scale, 9)))
+	}
+	switch k.name {
+	case "DATE":
+		return "2006-01-02"
+	case "TIME":
+		return "15:04:05" + frac
+	case "SMALLDATETIME":
+		return "2006-01-02 15:04:05"
+	case "DATETIME":
+		return "2006-01-02 15:04:05.000"
+	case "DATETIME2":
+		return "2006-01-02 15:04:05" + frac
+	case "DATETIMEOFFSET":
+		return "2006-01-02 15:04:05" + frac + " -07:00"
+	}
+	return ""
 }
 
 // Rename renames the statistic using sp_rename.

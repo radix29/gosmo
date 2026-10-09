@@ -152,7 +152,9 @@ type LoginDetails struct {
 	MustChangePassword  bool
 	IsPolicyChecked     bool
 	IsExpirationChecked bool
-	PasswordLastSet     time.Time
+	// PasswordLastSet is when the password was last set, or the zero Time
+	// if none is recorded (see loginPropertyTime).
+	PasswordLastSet time.Time
 	// LastLogin is best-effort: it reflects the most recent session found
 	// in sys.dm_exec_sessions, which only holds currently-connected (or
 	// very recently disconnected) sessions, not full login history. It is
@@ -160,7 +162,8 @@ type LoginDetails struct {
 	LastLogin        time.Time
 	BadPasswordCount int
 	// BadPasswordTime is the last failed-login attempt time, or the zero
-	// Time if none is recorded.
+	// Time if none is recorded — never the server's 1900-01-01 sentinel
+	// (see loginPropertyTime).
 	BadPasswordTime time.Time
 	DefaultLanguage string
 	CredentialName  string
@@ -212,10 +215,22 @@ WHERE  sp.name = @p1`
 	det.IsLocked = isLocked != 0
 	det.IsExpired = isExpired != 0
 	det.MustChangePassword = isMustChange != 0
-	det.PasswordLastSet = pwdLastSet.Time
+	det.PasswordLastSet = loginPropertyTime(pwdLastSet)
 	det.LastLogin = lastLogin.Time
-	det.BadPasswordTime = badPasswordTime.Time
+	det.BadPasswordTime = loginPropertyTime(badPasswordTime)
 	return det, nil
+}
+
+// loginPropertyTime decodes a LOGINPROPERTY date. For "never" the server
+// answers not NULL but its 1900-01-01 sentinel, shifted by the server's UTC
+// offset (1900-01-01 02:00 on a UTC+2 host, the day before west of UTC) — so
+// anything before 1900-01-02 is the zero Time, as NULL is. Passed through, it
+// reached the Status page as a real "last bad password" date.
+func loginPropertyTime(t sql.NullTime) time.Time {
+	if !t.Valid || t.Time.Before(time.Date(1900, 1, 2, 0, 0, 0, 0, time.UTC)) {
+		return time.Time{}
+	}
+	return t.Time
 }
 
 // Rename changes the login's name.
