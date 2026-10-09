@@ -1446,7 +1446,8 @@ for _, b := range history {
 		targets[i] = gosmo.DiskTarget(d)
 	}
 	err = srv.VerifyBackup(ctx, targets...)
-	// ...RestoreOptions{Devices: targets, FileNumber: b.Position}
+	// ...RestoreOptions{Devices: targets, FileNumber: b.Position,
+	//     Action: b.SetType.RestoreVerb()} — RESTORE LOG for a log set
 }
 ```
 

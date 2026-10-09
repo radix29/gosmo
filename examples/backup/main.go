@@ -121,7 +121,7 @@ func main() {
 	demo.Section("Backup sets on the device (RESTORE HEADERONLY)")
 	for _, h := range demo.Value(srv.BackupHeaders(ctx, gosmo.DiskTarget(device))) {
 		fmt.Printf("  pos=%d  %-24s type=%-6s size=%.1f MB  %s\n",
-			h.Position, h.BackupName, h.BackupType,
+			h.Position, h.BackupName, h.SetType,
 			float64(h.BackupSize)/(1024*1024), h.BackupFinish.Format(time.RFC3339))
 	}
 
@@ -138,7 +138,7 @@ func main() {
 	demo.Section("Backup history for " + dbName)
 	for _, b := range demo.Value(srv.BackupHistory(ctx, dbName)) {
 		fmt.Printf("  %-6s %s  %.1f MB  -> %s\n",
-			b.BackupType, b.BackupFinish.Format(time.RFC3339),
+			b.SetType, b.BackupFinish.Format(time.RFC3339),
 			float64(b.BackupSize)/(1024*1024), b.DeviceName)
 	}
 

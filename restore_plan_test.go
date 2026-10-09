@@ -251,10 +251,10 @@ func TestNeedsFileListAgreesWithMoves(t *testing.T) {
 // itself records, not the device's first.
 func TestRestoreOptionsFromHeader(t *testing.T) {
 	o := RestoreOptions{Database: "AppDB"}
-	o.FromHeader(&BackupHeader{Position: 3, DatabaseName: "Other"}, backupSetFiles(),
+	o.FromHeader(&BackupHeader{Position: 3, DatabaseName: "Other", SetType: BackupSetDatabase}, backupSetFiles(),
 		RestoreRelocation{DefaultDataDir: `C:\Data`, DefaultLogDir: `C:\Log`})
-	if o.FileNumber != 3 {
-		t.Errorf("FileNumber = %d, want 3", o.FileNumber)
+	if o.FileNumber != 3 || o.Action != BackupActionDatabase {
+		t.Errorf("FileNumber = %d, Action = %q; want 3, DATABASE", o.FileNumber, o.Action)
 	}
 	// Other restored as AppDB is a rename.
 	assertMoves(t, o.RelocateFiles, []RelocateFile{
@@ -276,5 +276,36 @@ func TestRestoreOptionsFromHeader(t *testing.T) {
 	o.FromHeader(&BackupHeader{Position: 1, DatabaseName: "AppDB"}, nil, RestoreRelocation{})
 	if o.FileNumber != 0 || o.RelocateFiles != nil {
 		t.Errorf("set 1 under its own name = FILE %d, %d moves; want no clause and none", o.FileNumber, len(o.RelocateFiles))
+	}
+}
+
+// A log set restores with RESTORE LOG — RESTORE DATABASE of one is refused —
+// and, like a differential, onto files an earlier restore placed, so neither
+// gets MOVE clauses even when the target is renamed. An Action the caller set
+// beforehand does not survive.
+func TestRestoreOptionsFromHeaderFollowsTheSetType(t *testing.T) {
+	reloc := RestoreRelocation{DefaultDataDir: `C:\Data`, DefaultLogDir: `C:\Log`}
+	for _, c := range []struct {
+		setType BackupSetType
+		verb    string
+		moves   bool
+	}{
+		{BackupSetLog, "RESTORE LOG [AppDB]", false},
+		{BackupSetDifferential, "RESTORE DATABASE [AppDB]", false},
+		{BackupSetDifferentialPartial, "RESTORE DATABASE [AppDB]", false},
+		{BackupSetPartial, "RESTORE DATABASE [AppDB]", true},
+	} {
+		o := RestoreOptions{Database: "AppDB", Action: BackupActionFiles, Devices: []BackupTarget{DiskTarget(`E:\b\all.bak`)}}
+		o.FromHeader(&BackupHeader{Position: 2, DatabaseName: "Other", SetType: c.setType}, backupSetFiles(), reloc)
+		stmt, err := buildRestoreStatement(o, false)
+		if err != nil {
+			t.Fatalf("%s: buildRestoreStatement: %v", c.setType, err)
+		}
+		if !strings.HasPrefix(stmt, c.verb+"\n") || !strings.Contains(stmt, "FILE = 2") {
+			t.Errorf("%s: statement does not start %q with FILE = 2:\n%s", c.setType, c.verb, stmt)
+		}
+		if got := strings.Contains(stmt, "MOVE"); got != c.moves {
+			t.Errorf("%s: MOVE clauses = %v, want %v:\n%s", c.setType, got, c.moves, stmt)
+		}
 	}
 }

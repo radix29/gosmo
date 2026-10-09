@@ -276,7 +276,7 @@ SELECT ISNULL(bs.database_name,''), ISNULL(bs.name,''), ISNULL(bs.description,''
        ISNULL(bs.server_name,''),
        ISNULL(bs.database_version,0), ISNULL(bs.compatibility_level,0),
        ISNULL(bs.position,0), ISNULL(bs.backup_set_id,0), ISNULL(bs.media_set_id,0),
-       ISNULL(bms.mirror_count,1)
+       ISNULL(bms.mirror_count,1), ISNULL(bs.is_copy_only,0)
 FROM   msdb.dbo.backupset bs
 JOIN   msdb.dbo.backupmediafamily bmf ON bmf.media_set_id = bs.media_set_id AND bmf.mirror = 0
 LEFT JOIN msdb.dbo.backupmediaset bms ON bms.media_set_id = bs.media_set_id
@@ -308,12 +308,14 @@ func (s *Server) BackupHistory(ctx context.Context, databaseName string) ([]*Bac
 		var dbName, setName, desc, bType, device, user, server sql.NullString
 		var start, finish sql.NullTime
 		var size, dbVersion, compat, position, setID, mediaSetID, mirrors sql.NullInt64
+		var copyOnly sql.NullBool
 		if err := scan(
 			&dbName, &setName, &desc, &bType,
 			&start, &finish, &size,
 			&device, &user, &server,
 			&dbVersion, &compat,
 			&position, &setID, &mediaSetID, &mirrors,
+			&copyOnly,
 		); err != nil {
 			return nil, err
 		}
@@ -326,16 +328,8 @@ func (s *Server) BackupHistory(ctx context.Context, databaseName string) ([]*Bac
 		b.CompatibilityLevel = CompatibilityLevel(compat.Int64)
 		b.Position, b.BackupSetID, b.MediaSetID = int(position.Int64), setID.Int64, int(mediaSetID.Int64)
 		b.MirrorCount = max(int(mirrors.Int64), 1)
-		switch bType.String {
-		case "D":
-			b.BackupType = BackupActionDatabase
-		case "I":
-			b.BackupType = BackupActionDifferential
-		case "L":
-			b.BackupType = BackupActionLog
-		case "F":
-			b.BackupType = BackupActionFiles
-		}
+		b.SetType = backupSetTypeFromHistory(bType.String)
+		b.IsCopyOnly = copyOnly.Bool
 		return b, nil
 	})
 	if err != nil {

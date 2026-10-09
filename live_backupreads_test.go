@@ -98,11 +98,11 @@ func TestLiveBackupReads(t *testing.T) {
 		for i, want := range []struct {
 			name     string
 			database string
-			action   BackupAction
+			setType  BackupSetType
 		}{
-			{"set one", first.Name, BackupActionDatabase},
-			{"set two", second.Name, BackupActionDatabase},
-			{"set three", first.Name, BackupActionLog},
+			{"set one", first.Name, BackupSetDatabase},
+			{"set two", second.Name, BackupSetDatabase},
+			{"set three", first.Name, BackupSetLog},
 		} {
 			h := headers[i]
 			if h.Position != i+1 {
@@ -112,8 +112,8 @@ func TestLiveBackupReads(t *testing.T) {
 				t.Errorf("set %d = %q of %q, want %q of %q", i+1,
 					h.BackupName, h.DatabaseName, want.name, want.database)
 			}
-			if h.BackupType != want.action {
-				t.Errorf("set %d BackupType = %v, want %v", i+1, h.BackupType, want.action)
+			if h.SetType != want.setType {
+				t.Errorf("set %d SetType = %v, want %v", i+1, h.SetType, want.setType)
 			}
 			if h.BackupSize <= 0 {
 				t.Errorf("set %d BackupSize = %d, want a real size", i+1, h.BackupSize)
@@ -156,9 +156,9 @@ func TestLiveBackupReads(t *testing.T) {
 				len(history), first.Name)
 		}
 		// Newest first, and the log backup was taken last.
-		if history[0].BackupType != BackupActionLog || history[1].BackupType != BackupActionDatabase {
+		if history[0].SetType != BackupSetLog || history[1].SetType != BackupSetDatabase {
 			t.Errorf("history types = %v, %v; want the log backup first (newest) then the full one",
-				history[0].BackupType, history[1].BackupType)
+				history[0].SetType, history[1].SetType)
 		}
 		if history[0].BackupFinish.Before(history[1].BackupFinish) {
 			t.Errorf("history is oldest-first: %v then %v", history[0].BackupFinish, history[1].BackupFinish)

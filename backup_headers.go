@@ -18,7 +18,7 @@ import (
 type BackupHeader struct {
 	BackupName           string
 	Description          string
-	BackupType           BackupAction
+	SetType              BackupSetType
 	Position             int
 	DatabaseName         string
 	ServerName           string
@@ -212,7 +212,7 @@ func (s *Server) BackupHeaders(ctx context.Context, targets ...BackupTarget) ([]
 		headers = append(headers, &BackupHeader{
 			BackupName:           nr.str("BackupName"),
 			Description:          nr.str("BackupDescription"),
-			BackupType:           backupTypeFromHeader(nr.intv("BackupType")),
+			SetType:              backupSetTypeFromHeader(nr.intv("BackupType")),
 			Position:             nr.intv("Position"),
 			DatabaseName:         nr.str("DatabaseName"),
 			ServerName:           nr.str("ServerName"),
@@ -233,21 +233,6 @@ func (s *Server) BackupHeaders(ctx context.Context, targets ...BackupTarget) ([]
 		return nil, fmt.Errorf("gosmo: read backup header %q: %w", device, err)
 	}
 	return headers, nil
-}
-
-// backupTypeFromHeader maps RESTORE HEADERONLY's numeric BackupType column
-// to a BackupAction.
-func backupTypeFromHeader(n int) BackupAction {
-	switch n {
-	case 2:
-		return BackupActionLog
-	case 4, 6:
-		return BackupActionFiles
-	case 5:
-		return BackupActionDifferential
-	default: // 1 = full database; 7/8 (partial) have no closer mapping
-		return BackupActionDatabase
-	}
 }
 
 // backupFileListQuery builds the RESTORE FILELISTONLY statement reading the

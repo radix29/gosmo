@@ -289,6 +289,97 @@ var backupActionNames = map[BackupAction]bool{
 // validBackupAction reports whether a is a recognized backup/restore action.
 func validBackupAction(a BackupAction) bool { return backupActionNames[a] }
 
+// BackupSetType is what a backup set holds, as RESTORE HEADERONLY and msdb's
+// backupset record it — seven kinds, against BackupAction's four ways of
+// writing one. It replaced a BackupAction field on BackupHeader and
+// BackupInfo on 2026-10-09: that field could not name a partial,
+// differential-file or differential-partial set, and read them as a full
+// (or, for msdb's G/P/Q, as the empty value every caller labelled "Full"), so
+// a differential was offered for restore as a full backup.
+//
+// The zero value is a type gosmo does not recognise, or one not recorded.
+type BackupSetType string
+
+const (
+	BackupSetDatabase            BackupSetType = "Database"             // header 1, msdb D
+	BackupSetLog                 BackupSetType = "Log"                  // header 2, msdb L
+	BackupSetFile                BackupSetType = "File"                 // header 4, msdb F
+	BackupSetDifferential        BackupSetType = "Differential"         // header 5, msdb I
+	BackupSetDifferentialFile    BackupSetType = "Differential File"    // header 6, msdb G
+	BackupSetPartial             BackupSetType = "Partial"              // header 7, msdb P
+	BackupSetDifferentialPartial BackupSetType = "Differential Partial" // header 8, msdb Q
+)
+
+// backupSetTypeFromHeader maps RESTORE HEADERONLY's numeric BackupType
+// column; 3 is unassigned.
+func backupSetTypeFromHeader(n int) BackupSetType {
+	switch n {
+	case 1:
+		return BackupSetDatabase
+	case 2:
+		return BackupSetLog
+	case 4:
+		return BackupSetFile
+	case 5:
+		return BackupSetDifferential
+	case 6:
+		return BackupSetDifferentialFile
+	case 7:
+		return BackupSetPartial
+	case 8:
+		return BackupSetDifferentialPartial
+	}
+	return ""
+}
+
+// backupSetTypeFromHistory maps msdb.dbo.backupset.type.
+func backupSetTypeFromHistory(letter string) BackupSetType {
+	switch letter {
+	case "D":
+		return BackupSetDatabase
+	case "L":
+		return BackupSetLog
+	case "F":
+		return BackupSetFile
+	case "I":
+		return BackupSetDifferential
+	case "G":
+		return BackupSetDifferentialFile
+	case "P":
+		return BackupSetPartial
+	case "Q":
+		return BackupSetDifferentialPartial
+	}
+	return ""
+}
+
+// IsDifferential reports whether the set holds only the extents changed since
+// its base — a differential of the database, of files, or of a partial
+// backup. Restoring one needs that base restored first, WITH NORECOVERY.
+func (t BackupSetType) IsDifferential() bool {
+	return t == BackupSetDifferential || t == BackupSetDifferentialFile || t == BackupSetDifferentialPartial
+}
+
+// RestoreVerb is the RestoreOptions.Action that restores a set of this type:
+// BackupActionLog for a log backup, BackupActionDatabase for every other —
+// differential, file and partial sets are all read by RESTORE DATABASE.
+// RESTORE DATABASE of a log backup is refused by the server.
+func (t BackupSetType) RestoreVerb() BackupAction {
+	if t == BackupSetLog {
+		return BackupActionLog
+	}
+	return BackupActionDatabase
+}
+
+// PlacesFiles reports whether restoring a set of this type lays the
+// database's files down, so that MOVE clauses decide where: a full or partial
+// backup, the first set of a restore sequence. Every other set is restored
+// onto files an earlier restore already placed. The zero value counts as
+// placing files, so a set of an unrecognised type is planned as a full one.
+func (t BackupSetType) PlacesFiles() bool {
+	return t == BackupSetDatabase || t == BackupSetPartial || t == ""
+}
+
 // RestoreRecovery is the state a restore leaves the database in: RESTORE's
 // RECOVERY, NORECOVERY and STANDBY, which are one choice rather than three
 // independent settings. They were three RestoreOptions fields until
@@ -454,10 +545,14 @@ type BackupInfo struct {
 	DatabaseName  string
 	BackupSetName string
 	Description   string
-	BackupType    BackupAction
-	BackupStart   time.Time
-	BackupFinish  time.Time
-	BackupSize    int64
+	SetType       BackupSetType
+	// IsCopyOnly marks a COPY_ONLY backup, taken outside the backup
+	// sequence: a copy-only full is no differential's base, and a copy-only
+	// log does not truncate the log.
+	IsCopyOnly   bool
+	BackupStart  time.Time
+	BackupFinish time.Time
+	BackupSize   int64
 	// DeviceName is Devices[0], kept for the common single-file backup.
 	DeviceName string
 	// Devices is every media family the set was written to, in

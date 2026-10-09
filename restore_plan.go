@@ -196,11 +196,22 @@ func fileNameSafe(name string) string {
 	}, name)
 }
 
-// FromHeader points o at backup set h: WITH FILE = h.SetNumber(), and the
-// MOVE clauses r builds from files, which must be h's own RESTORE
-// FILELISTONLY (Server.BackupFileList with h.SetNumber()). o.Database is the
-// target the moves are planned for, so set it first.
+// FromHeader points o at backup set h: the verb its type restores with
+// (h.SetType.RestoreVerb(), replacing any o.Action), WITH FILE =
+// h.SetNumber(), and — for a set that places the database's files
+// (h.SetType.PlacesFiles()) — the MOVE clauses r builds from files, which
+// must be h's own RESTORE FILELISTONLY (Server.BackupFileList with
+// h.SetNumber()). A log or differential set is restored onto files an
+// earlier restore placed, so it gets no MOVE clauses and files may be nil.
+// o.Database is the target the moves are planned for, so set it first.
+//
+// Until 2026-10-09 the verb was left to the caller, and gossms's Restore
+// dialog, which never set it, sent RESTORE DATABASE for a log backup.
 func (o *RestoreOptions) FromHeader(h *BackupHeader, files []*BackupFile, r RestoreRelocation) {
+	o.Action = h.SetType.RestoreVerb()
 	o.FileNumber = h.SetNumber()
-	o.RelocateFiles = r.Moves(files, h.DatabaseName, o.Database)
+	o.RelocateFiles = nil
+	if h.SetType.PlacesFiles() {
+		o.RelocateFiles = r.Moves(files, h.DatabaseName, o.Database)
+	}
 }

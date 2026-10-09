@@ -35,7 +35,7 @@ func (r *histRows) Columns() []string {
 		"backup_start_date", "backup_finish_date", "backup_size",
 		"physical_device_name", "user_name", "server_name",
 		"database_version", "compatibility_level",
-		"position", "backup_set_id", "media_set_id", "mirror_count"}
+		"position", "backup_set_id", "media_set_id", "mirror_count", "is_copy_only"}
 }
 func (r *histRows) Close() error { return nil }
 func (r *histRows) Next(dest []driver.Value) error {
@@ -57,11 +57,11 @@ func TestBackupHistoryScansNullColumns(t *testing.T) {
 	finished := time.Date(2026, 9, 8, 22, 5, 0, 0, time.UTC)
 	drv := &histDriver{rows: [][]driver.Value{
 		// Everything NULL — the automated-backup row.
-		{nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil},
+		{nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil},
 		// A populated row, to prove the values still arrive.
 		{"GoTest01", "set", "desc", "D", finished, finished, int64(2048),
 			"https://example.blob.core.windows.net/b/GoTest01.bak", "testgo", "t-qmi-01",
-			int64(957), int64(170), int64(1), int64(9), int64(4), int64(1)},
+			int64(957), int64(170), int64(1), int64(9), int64(4), int64(1), true},
 	}}
 	sql.Register("fakebackuphistory", drv)
 
@@ -91,14 +91,14 @@ func TestBackupHistoryScansNullColumns(t *testing.T) {
 		t.Errorf("all-NULL row numbers not zero: %+v", *null)
 	}
 	// A NULL type must not masquerade as a full backup.
-	if null.BackupType != "" {
-		t.Errorf("all-NULL row BackupType = %q, want empty", null.BackupType)
+	if null.SetType != "" || null.IsCopyOnly {
+		t.Errorf("all-NULL row SetType = %q, IsCopyOnly = %v; want empty, false", null.SetType, null.IsCopyOnly)
 	}
 
 	got := hist[1]
 	if got.DatabaseName != "GoTest01" || got.UserName != "testgo" || got.ServerName != "t-qmi-01" ||
 		got.BackupSize != 2048 || got.DatabaseVersion != 957 || got.CompatibilityLevel != 170 ||
-		got.BackupType != BackupActionDatabase || !got.BackupFinish.Equal(finished) {
+		got.SetType != BackupSetDatabase || !got.IsCopyOnly || !got.BackupFinish.Equal(finished) {
 		t.Errorf("populated row lost values: %+v", *got)
 	}
 }
@@ -109,8 +109,8 @@ func TestBackupHistoryScansNullColumns(t *testing.T) {
 func TestBackupHistoryQueryWrapsEveryNullableColumn(t *testing.T) {
 	list := selectList(t, backupHistorySelect)
 	exprs := selectExprs(t, list)
-	if len(exprs) != 16 {
-		t.Fatalf("select list has %d expressions, want 16 — the scan passes 16 destinations", len(exprs))
+	if len(exprs) != 17 {
+		t.Fatalf("select list has %d expressions, want 17 — the scan passes 17 destinations", len(exprs))
 	}
 	for i, e := range exprs {
 		// The two dates are deliberately unwrapped: a zero Time says
@@ -134,7 +134,7 @@ func TestBackupHistoryGroupsStripedFamilies(t *testing.T) {
 	at := func(m int) time.Time { return time.Date(2026, 9, 24, 10, m, 0, 0, time.UTC) }
 	row := func(finish time.Time, device string, position, setID, mediaSetID int64) []driver.Value {
 		return []driver.Value{"GoTest01", "", "", "D", finish, finish, int64(1024),
-			device, "sa", "srv", int64(957), int64(160), position, setID, mediaSetID, int64(1)}
+			device, "sa", "srv", int64(957), int64(160), position, setID, mediaSetID, int64(1), false}
 	}
 	drv := &histDriver{rows: [][]driver.Value{
 		// Newest: striped over two files.

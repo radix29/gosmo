@@ -173,22 +173,45 @@ func TestBuildBackupStatementCompressionOff(t *testing.T) {
 	}
 }
 
-func TestBackupTypeFromHeader(t *testing.T) {
+// Every set type, from both sources. Partial, differential-file and
+// differential-partial sets used to read as a full backup (header 6/7/8 as
+// Files/Database, msdb's G/P/Q as the empty value labelled "Full"), so a
+// differential was offered for restore as a full one.
+func TestBackupSetTypeDecoding(t *testing.T) {
 	cases := []struct {
-		n    int
-		want BackupAction
+		header       int
+		letter       string
+		want         BackupSetType
+		differential bool
+		verb         BackupAction
+		placesFiles  bool
 	}{
-		{1, BackupActionDatabase},
-		{2, BackupActionLog},
-		{4, BackupActionFiles},
-		{5, BackupActionDifferential},
-		{6, BackupActionFiles},
-		{7, BackupActionDatabase}, // partial — no closer mapping, falls to default
-		{8, BackupActionDatabase},
+		{1, "D", BackupSetDatabase, false, BackupActionDatabase, true},
+		{2, "L", BackupSetLog, false, BackupActionLog, false},
+		{4, "F", BackupSetFile, false, BackupActionDatabase, false},
+		{5, "I", BackupSetDifferential, true, BackupActionDatabase, false},
+		{6, "G", BackupSetDifferentialFile, true, BackupActionDatabase, false},
+		{7, "P", BackupSetPartial, false, BackupActionDatabase, true},
+		{8, "Q", BackupSetDifferentialPartial, true, BackupActionDatabase, false},
+		// Unassigned and unrecorded: not named, and planned as a full set.
+		{3, "", "", false, BackupActionDatabase, true},
+		{0, "X", "", false, BackupActionDatabase, true},
 	}
 	for _, c := range cases {
-		if got := backupTypeFromHeader(c.n); got != c.want {
-			t.Errorf("backupTypeFromHeader(%d) = %q, want %q", c.n, got, c.want)
+		if got := backupSetTypeFromHeader(c.header); got != c.want {
+			t.Errorf("header %d = %q, want %q", c.header, got, c.want)
+		}
+		if got := backupSetTypeFromHistory(c.letter); got != c.want {
+			t.Errorf("msdb %q = %q, want %q", c.letter, got, c.want)
+		}
+		if got := c.want.IsDifferential(); got != c.differential {
+			t.Errorf("%q.IsDifferential() = %v", c.want, got)
+		}
+		if got := c.want.RestoreVerb(); got != c.verb {
+			t.Errorf("%q.RestoreVerb() = %q, want %q", c.want, got, c.verb)
+		}
+		if got := c.want.PlacesFiles(); got != c.placesFiles {
+			t.Errorf("%q.PlacesFiles() = %v", c.want, got)
 		}
 	}
 }
