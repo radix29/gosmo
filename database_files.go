@@ -272,13 +272,13 @@ func buildAlterFileStatement(dbName, name string, m FileModify) (string, error) 
 		props = append(props, "NEWNAME = "+quoteIdent(m.NewName))
 	}
 	if m.SizeKB > 0 {
-		props = append(props, fmt.Sprintf("SIZE = %dKB", m.SizeKB))
+		props = append(props, "SIZE = "+fileSizeLiteral(m.SizeKB))
 	}
 	switch {
 	case m.MaxSizeKB < 0:
 		props = append(props, "MAXSIZE = UNLIMITED")
 	case m.MaxSizeKB > 0:
-		props = append(props, fmt.Sprintf("MAXSIZE = %dKB", m.MaxSizeKB))
+		props = append(props, "MAXSIZE = "+fileSizeLiteral(m.MaxSizeKB))
 	}
 	switch {
 	case m.DisableGrowth:
@@ -286,7 +286,7 @@ func buildAlterFileStatement(dbName, name string, m FileModify) (string, error) 
 	case m.GrowthPercent > 0:
 		props = append(props, fmt.Sprintf("FILEGROWTH = %d%%", m.GrowthPercent))
 	case m.GrowthKB > 0:
-		props = append(props, fmt.Sprintf("FILEGROWTH = %dKB", m.GrowthKB))
+		props = append(props, "FILEGROWTH = "+fileSizeLiteral(m.GrowthKB))
 	}
 	if len(props) == 1 {
 		return "", nil // only the identifying NAME — nothing to change

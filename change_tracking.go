@@ -62,28 +62,46 @@ var changeTrackingRetentionUnits = map[ChangeTrackingUnit]bool{
 // for the database. info.RetentionUnit defaults to ChangeTrackingDays when
 // empty.
 func (d *Database) SetChangeTracking(ctx context.Context, info ChangeTrackingInfo) error {
-	var q string
-	if !info.Enabled {
-		q = fmt.Sprintf("ALTER DATABASE %s SET CHANGE_TRACKING = OFF", quoteIdent(d.Name))
-	} else {
-		unit := info.RetentionUnit
-		if unit == "" {
-			unit = ChangeTrackingDays
-		}
-		if !changeTrackingRetentionUnits[unit] {
-			return invalidf("gosmo: set change tracking: unrecognized retention unit %q", unit)
-		}
-		autoCleanup := "OFF"
-		if info.AutoCleanup {
-			autoCleanup = "ON"
-		}
-		q = fmt.Sprintf("ALTER DATABASE %s SET CHANGE_TRACKING = ON (CHANGE_RETENTION = %d %s, AUTO_CLEANUP = %s)",
-			quoteIdent(d.Name), info.RetentionPeriod, unit, autoCleanup)
+	q, err := buildSetChangeTrackingStatement(d.Name, info)
+	if err != nil {
+		return err
 	}
 	if err := d.server.exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: set change tracking on %q: %w", d.Name, err)
 	}
 	return nil
+}
+
+// buildSetChangeTrackingStatement renders SetChangeTracking's batch.
+//
+// Enabling branches on the server, not in Go: SET CHANGE_TRACKING = ON on a
+// database already tracked is Msg 5088 ("already enabled"), and the form that
+// changes retention or auto cleanup there — SET CHANGE_TRACKING (...) without
+// "= ON" — is refused on an untracked one. Deciding in the batch needs no
+// read first, so a WithScript capture is the same statement execution runs.
+// Accepted inside IF on 13, 14 and 17, and under a login holding only ALTER
+// on the database (the catalog view shows it its own database's row).
+func buildSetChangeTrackingStatement(dbName string, info ChangeTrackingInfo) (string, error) {
+	db := quoteIdent(dbName)
+	if !info.Enabled {
+		return fmt.Sprintf("ALTER DATABASE %s SET CHANGE_TRACKING = OFF", db), nil
+	}
+	unit := info.RetentionUnit
+	if unit == "" {
+		unit = ChangeTrackingDays
+	}
+	if !changeTrackingRetentionUnits[unit] {
+		return "", invalidf("gosmo: set change tracking: unrecognized retention unit %q", unit)
+	}
+	autoCleanup := "OFF"
+	if info.AutoCleanup {
+		autoCleanup = "ON"
+	}
+	opts := fmt.Sprintf("(CHANGE_RETENTION = %d %s, AUTO_CLEANUP = %s)", info.RetentionPeriod, unit, autoCleanup)
+	return fmt.Sprintf(`IF EXISTS (SELECT 1 FROM sys.change_tracking_databases WHERE database_id = DB_ID(%s))
+    ALTER DATABASE %s SET CHANGE_TRACKING %s;
+ELSE
+    ALTER DATABASE %s SET CHANGE_TRACKING = ON %s;`, QuoteLiteral(dbName), db, opts, db, opts), nil
 }
 
 // SetChangeTracking enables or disables change tracking on the table.

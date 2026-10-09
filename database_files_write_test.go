@@ -93,6 +93,22 @@ func TestBuildAlterFileStatement(t *testing.T) {
 			m:    FileModify{DisableGrowth: true, GrowthKB: 4096, GrowthPercent: 10},
 			want: "ALTER DATABASE [appdb] MODIFY FILE (NAME = [appdb], FILEGROWTH = 0)",
 		},
+		// The server parses the number as an int: 2147483648KB is Msg 102.
+		{
+			name: "just under 2 TB stays in KB",
+			m:    FileModify{SizeKB: 2147483647, MaxSizeKB: 2147483647, GrowthKB: 2147483647},
+			want: "ALTER DATABASE [appdb] MODIFY FILE (NAME = [appdb], SIZE = 2147483647KB, MAXSIZE = 2147483647KB, FILEGROWTH = 2147483647KB)",
+		},
+		{
+			name: "2 TB and up switches to MB",
+			m:    FileModify{SizeKB: 2147483648, MaxSizeKB: 2147483648, GrowthKB: 2147483648},
+			want: "ALTER DATABASE [appdb] MODIFY FILE (NAME = [appdb], SIZE = 2097152MB, MAXSIZE = 2097152MB, FILEGROWTH = 2097152MB)",
+		},
+		{
+			name: "a non-MB value above 2 TB rounds up",
+			m:    FileModify{MaxSizeKB: 2147483649},
+			want: "ALTER DATABASE [appdb] MODIFY FILE (NAME = [appdb], MAXSIZE = 2097153MB)",
+		},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
