@@ -167,8 +167,9 @@ type LoginDetails struct {
 	BadPasswordTime time.Time
 	DefaultLanguage string
 	CredentialName  string
-	// ConnectSQLState is "GRANT", "DENY", or "" (default/unset) for the
-	// login's explicit CONNECT SQL server permission.
+	// ConnectSQLState is "GRANT", "GRANT_WITH_GRANT_OPTION", "DENY", or ""
+	// (default/unset) for the login's explicit CONNECT SQL server permission
+	// — sys.server_permissions.state_desc as read.
 	ConnectSQLState string
 }
 

@@ -502,20 +502,39 @@ func (d *Database) errWaitStatsUnsupported() error {
 	return unsupportedVersionf("gosmo: query store wait statistics in %q: requires SQL Server 2017 or later", d.Name)
 }
 
-// qsWaitFrom is the join both wait reports read. The runtime-stats join is
-// what supplies count_executions: sys.query_store_wait_stats has no execution
-// count of its own, so an average wait per execution cannot be computed from
-// it alone. Joining on all three of plan, interval and execution type is what
-// keeps that a one-to-one match rather than a fan-out.
-const qsWaitFrom = `
-FROM   sys.query_store_wait_stats             AS ws
+// qsWaitFrom is the join both wait reports read, over ws, the wait-stats
+// source. The runtime-stats join is what supplies count_executions:
+// sys.query_store_wait_stats has no execution count of its own, so an average
+// wait per execution cannot be computed from it alone. Joining on all three of
+// plan, interval and execution type is one-to-one only per wait category —
+// the view holds one row per category as well — so a report that groups
+// across categories must pass qsWaitStatsAcrossCategories, not the bare view,
+// or every execution is counted once per category it waited in.
+func qsWaitFrom(ws string) string {
+	return fmt.Sprintf(`
+FROM   %s AS ws
 JOIN   sys.query_store_plan                   AS p   ON p.plan_id = ws.plan_id
 JOIN   sys.query_store_query                  AS q   ON q.query_id = p.query_id
 JOIN   sys.query_store_query_text             AS qt  ON qt.query_text_id = q.query_text_id
 JOIN   sys.query_store_runtime_stats_interval AS rsi ON rsi.runtime_stats_interval_id = ws.runtime_stats_interval_id
 LEFT JOIN sys.query_store_runtime_stats       AS rs  ON rs.plan_id = ws.plan_id
                                                     AND rs.runtime_stats_interval_id = ws.runtime_stats_interval_id
-                                                    AND rs.execution_type = ws.execution_type`
+                                                    AND rs.execution_type = ws.execution_type`, ws)
+}
+
+// qsWaitStats is the wait-stats source for a report that keeps categories
+// apart: one row per plan, interval, execution type and category.
+const qsWaitStats = `sys.query_store_wait_stats`
+
+// qsWaitStatsAcrossCategories folds every category into one row per plan,
+// interval and execution type, so it meets its runtime-stats row exactly
+// once. Only the total survives the fold: min, max and stdev are measured per
+// category, and nothing records a per-execution wait across categories to
+// take them over — QueryStoreWaitingQueries refuses those statistics here.
+const qsWaitStatsAcrossCategories = `(SELECT plan_id, runtime_stats_interval_id, execution_type,
+               SUM(total_query_wait_time_ms) AS total_query_wait_time_ms
+        FROM   sys.query_store_wait_stats
+        GROUP BY plan_id, runtime_stats_interval_id, execution_type)`
 
 // QueryStoreWaitCategories totals wait time by category — the top half of
 // SSMS's Query Wait Statistics view.
@@ -539,7 +558,7 @@ func (d *Database) QueryStoreWaitCategories(ctx context.Context, opts QueryStore
 %s
 %s
 GROUP BY ws.wait_category_desc
-ORDER BY value DESC`, top, sp.stat.wait("ws", "rs"), qsWaitFrom, sp.window(&a, sp.opts.From, sp.opts.To))
+ORDER BY value DESC`, top, sp.stat.wait("ws", "rs"), qsWaitFrom(qsWaitStats), sp.window(&a, sp.opts.From, sp.opts.To))
 
 	rows, err := d.query(ctx, q, a.args...)
 	return scanRows(rows, err, fmt.Sprintf("query store wait categories in %q", d.Name), func(scan func(...any) error) (*QSWaitStat, error) {
@@ -558,7 +577,10 @@ ORDER BY value DESC`, top, sp.stat.wait("ws", "rs"), qsWaitFrom, sp.window(&a, s
 //
 // category is a sys.query_store_wait_stats wait_category_desc value — one of
 // the Category strings QueryStoreWaitCategories returned. An empty
-// category covers every one of them. Values are milliseconds.
+// category covers every one of them, each query's waits summed across
+// categories; only QSStatAvg and QSStatTotal are defined then — Min, Max and
+// Std dev are per-category measurements — and the others return an error
+// wrapping ErrInvalidRequest. Values are milliseconds.
 func (d *Database) QueryStoreWaitingQueries(ctx context.Context, category string, opts QueryStoreReportOptions) ([]*QSQueryStat, error) {
 	if !d.QueryStoreWaitStatsSupported() {
 		return nil, d.errWaitStatsUnsupported()
@@ -566,6 +588,14 @@ func (d *Database) QueryStoreWaitingQueries(ctx context.Context, category string
 	sp, err := opts.resolve()
 	if err != nil {
 		return nil, err
+	}
+	ws := qsWaitStats
+	if category == "" {
+		ws = qsWaitStatsAcrossCategories
+		if s := sp.stat.Statistic; s != QSStatAvg && s != QSStatTotal {
+			return nil, invalidf("gosmo: query store waiting queries in %q: statistic %q is per wait category; name a category or use %q or %q",
+				d.Name, s, QSStatAvg, QSStatTotal)
+		}
 	}
 	var a qsArgs
 	top := a.add(sp.opts.Top)
@@ -588,7 +618,7 @@ func (d *Database) QueryStoreWaitingQueries(ctx context.Context, category string
 %s
 %s
 %s
-ORDER BY value DESC`, top, qsObjectName, sp.stat.wait("ws", "rs"), qsWaitFrom, where, qsQueryGroupBy)
+ORDER BY value DESC`, top, qsObjectName, sp.stat.wait("ws", "rs"), qsWaitFrom(ws), where, qsQueryGroupBy)
 
 	rows, err := d.query(ctx, q, a.args...)
 	if err != nil {

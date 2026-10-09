@@ -18,7 +18,10 @@ package gosmo
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
+	"math"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -368,5 +371,127 @@ func TestLiveQueryStoreQueryTextRoundTrips(t *testing.T) {
 
 	if _, _, err := d.QueryStoreQueryText(ctx, 999999999); err == nil {
 		t.Error("a query id Query Store does not hold returned no error")
+	}
+}
+
+// TestLiveQueryStoreWaitingQueriesAcrossCategoriesCountsEachExecutionOnce
+// runs one statement that waits in two categories — blocked on a row lock,
+// then its 4-MB result read slowly enough to stall the network buffer — and
+// checks the all-category report against sys.query_store_runtime_stats.
+// Joined per category, as it once was, the statement's executions came back
+// doubled and its average wait halved.
+func TestLiveQueryStoreWaitingQueriesAcrossCategoriesCountsEachExecutionOnce(t *testing.T) {
+	db, ctx, done := liveDBTimeout(t, 3*time.Minute)
+	defer done()
+	_, d, drop := qsLiveSetup(t, db, ctx)
+	defer drop()
+	if !d.QueryStoreWaitStatsSupported() {
+		t.Skip("wait statistics need SQL Server 2017")
+	}
+
+	conns := make([]*sql.Conn, 2)
+	for i := range conns {
+		c, err := db.Conn(ctx)
+		if err != nil {
+			t.Fatalf("conn: %v", err)
+		}
+		defer c.Close()
+		if _, err := c.ExecContext(ctx, "USE ["+qsLiveDBName+"]"); err != nil {
+			t.Fatalf("USE: %v", err)
+		}
+		conns[i] = c
+	}
+	blocker, reader := conns[0], conns[1]
+
+	const probe = `SELECT /* k4_probe */ id, pad FROM dbo.qs_probe`
+	const runs = 3
+	for range runs {
+		if _, err := blocker.ExecContext(ctx, "BEGIN TRAN; UPDATE dbo.qs_probe SET val = val WHERE id = 1"); err != nil {
+			t.Fatalf("lock a row: %v", err)
+		}
+		released := make(chan error, 1)
+		go func() {
+			time.Sleep(300 * time.Millisecond)
+			_, err := blocker.ExecContext(ctx, "COMMIT")
+			released <- err
+		}()
+		rows, err := reader.QueryContext(ctx, probe)
+		if err != nil {
+			t.Fatalf("probe: %v", err)
+		}
+		for n := 0; rows.Next(); n++ {
+			if n%500 == 0 {
+				time.Sleep(10 * time.Millisecond)
+			}
+		}
+		if err := rows.Err(); err != nil {
+			t.Fatalf("probe rows: %v", err)
+		}
+		rows.Close()
+		if err := <-released; err != nil {
+			t.Fatalf("commit: %v", err)
+		}
+	}
+	if err := d.FlushQueryStore(ctx); err != nil {
+		t.Fatalf("FlushQueryStore: %v", err)
+	}
+
+	// The truth, read without the report's join: executions of the plans that
+	// recorded a wait, and their wait total over every category.
+	var queryID, execs, categories int64
+	var totalWait float64
+	err := reader.QueryRowContext(ctx, `
+SELECT q.query_id,
+       (SELECT SUM(rs.count_executions)
+        FROM   sys.query_store_runtime_stats AS rs
+        JOIN   sys.query_store_plan AS p ON p.plan_id = rs.plan_id
+        WHERE  p.query_id = q.query_id
+          AND  EXISTS (SELECT 1 FROM sys.query_store_wait_stats AS ws
+                       WHERE ws.plan_id = rs.plan_id
+                         AND ws.runtime_stats_interval_id = rs.runtime_stats_interval_id
+                         AND ws.execution_type = rs.execution_type)),
+       (SELECT COUNT(DISTINCT ws.wait_category)
+        FROM   sys.query_store_wait_stats AS ws
+        JOIN   sys.query_store_plan AS p ON p.plan_id = ws.plan_id
+        WHERE  p.query_id = q.query_id),
+       (SELECT CAST(SUM(ws.total_query_wait_time_ms) AS float)
+        FROM   sys.query_store_wait_stats AS ws
+        JOIN   sys.query_store_plan AS p ON p.plan_id = ws.plan_id
+        WHERE  p.query_id = q.query_id)
+FROM   sys.query_store_query AS q
+JOIN   sys.query_store_query_text AS qt ON qt.query_text_id = q.query_text_id
+WHERE  qt.query_sql_text LIKE N'%k4[_]probe%'
+  AND  qt.query_sql_text NOT LIKE N'%query_store%'`).Scan(&queryID, &execs, &categories, &totalWait)
+	if err != nil {
+		t.Fatalf("read the probe's runtime stats: %v", err)
+	}
+	t.Logf("probe query %d: %d executions with waits, %d categories, %.0f ms waited", queryID, execs, categories, totalWait)
+	if categories < 2 {
+		t.Fatalf("the probe waited in %d categories; the test needs two to show a fan-out", categories)
+	}
+
+	from, to := qsLiveWindow()
+	for _, st := range []QSStatistic{QSStatAvg, QSStatTotal} {
+		got, err := d.QueryStoreWaitingQueries(ctx, "", QueryStoreReportOptions{Statistic: st, From: from, To: to, Top: 100})
+		if err != nil {
+			t.Fatalf("%s across every category: %v", st, err)
+		}
+		i := slices.IndexFunc(got, func(s *QSQueryStat) bool { return s.QueryID == queryID })
+		if i < 0 {
+			t.Fatalf("%s: the probe query is not in the report", st)
+		}
+		if got[i].ExecCount != execs {
+			t.Errorf("%s: exec count %d, want %d", st, got[i].ExecCount, execs)
+		}
+		want := totalWait
+		if st == QSStatAvg {
+			want /= float64(execs)
+		}
+		if math.Abs(got[i].Value-want) > 1e-6*math.Max(1, want) {
+			t.Errorf("%s: value %.3f, want %.3f", st, got[i].Value, want)
+		}
+	}
+	if _, err := d.QueryStoreWaitingQueries(ctx, "", QueryStoreReportOptions{Statistic: QSStatMax, From: from, To: to}); !errors.Is(err, ErrInvalidRequest) {
+		t.Errorf("Max across every category: err = %v, want ErrInvalidRequest", err)
 	}
 }

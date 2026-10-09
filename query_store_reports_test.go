@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"database/sql/driver"
+	"errors"
 	"io"
 	"slices"
 	"strings"
@@ -807,6 +808,53 @@ func TestQueryStoreWaitingQueriesFiltersByCategoryOnlyWhenGivenOne(t *testing.T)
 	}
 	if call := qsRec.last(t); strings.Contains(call.sql, "wait_category_desc =") {
 		t.Errorf("an empty category still produced a category predicate:\n%s", call.sql)
+	}
+}
+
+// TestQueryStoreWaitingQueriesAcrossCategoriesDoesNotFanOut pins the
+// empty-category form to wait stats folded per plan, interval and execution
+// type before the runtime-stats join. sys.query_store_wait_stats holds a row
+// per category, so joining it bare and grouping by query counted each
+// execution once per category it waited in — inflating exec_count and
+// deflating Avg by that factor. The per-category forms keep the bare view,
+// where the join is one-to-one.
+func TestQueryStoreWaitingQueriesAcrossCategoriesDoesNotFanOut(t *testing.T) {
+	opts := QueryStoreReportOptions{From: qsFrom, To: qsTo}
+	for _, st := range []QSStatistic{QSStatAvg, QSStatTotal} {
+		opts.Statistic = st
+		d := qsRecDB(t, 17, nil, nil)
+		if _, err := d.QueryStoreWaitingQueries(context.Background(), "", opts); err != nil {
+			t.Fatalf("%s across every category: %v", st, err)
+		}
+		got := qsRec.last(t).sql
+		if !strings.Contains(got, "GROUP BY plan_id, runtime_stats_interval_id, execution_type)") ||
+			strings.Contains(got, "sys.query_store_wait_stats AS ws") {
+			t.Errorf("%s: wait stats are joined per category, not folded first:\n%s", st, got)
+		}
+	}
+
+	for _, st := range []QSStatistic{QSStatMin, QSStatMax, QSStatStdDev} {
+		opts.Statistic = st
+		d := qsRecDB(t, 17, nil, nil)
+		_, err := d.QueryStoreWaitingQueries(context.Background(), "", opts)
+		if !errors.Is(err, ErrInvalidRequest) {
+			t.Errorf("%s across every category: err = %v, want ErrInvalidRequest", st, err)
+		}
+		if len(qsRec.calls) != 0 {
+			t.Errorf("%s across every category still sent a statement", st)
+		}
+		// Named, the category keeps the statistic.
+		if _, err := d.QueryStoreWaitingQueries(context.Background(), "CPU", opts); err != nil {
+			t.Errorf("%s in one category: %v", st, err)
+		}
+	}
+
+	d := qsRecDB(t, 17, nil, nil)
+	if _, err := d.QueryStoreWaitCategories(context.Background(), opts); err != nil {
+		t.Fatalf("wait categories: %v", err)
+	}
+	if got := qsRec.last(t).sql; !strings.Contains(got, "sys.query_store_wait_stats AS ws") {
+		t.Errorf("wait categories no longer read the view per category:\n%s", got)
 	}
 }
 
