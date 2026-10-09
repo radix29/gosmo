@@ -99,8 +99,8 @@ func (j *Job) AddStep(ctx context.Context, req JobStepRequest) (*JobStep, error)
 //
 // The renumbering is msdb's, and it carries every other step's "go to step N"
 // reference with it — verified against SQL Server 2025. sp_delete_jobstep is
-// not symmetrical about this: it clears a reference to a step at or after the
-// one deleted instead of following it, which is why ReorderSteps repairs
+// not symmetrical about this: it follows a reference to a later step but
+// resets one to the step deleted, which is why ReorderSteps repairs
 // references itself.
 func (j *Job) InsertStep(ctx context.Context, req JobStepRequest, stepID int) (*JobStep, error) {
 	if stepID < 1 {
@@ -348,6 +348,10 @@ func setFlowStmt(jobName string, stepID, onSuccessAction, onSuccessStepID, onFai
 // Every other value ignores the accompanying step id.
 const goToStepAction = 4
 
+// goToNextStepAction is on_success_action / on_fail_action's "go to the next
+// step".
+const goToNextStepAction = 3
+
 // MoveStep moves one step to another position, which is what "move up"
 // and "move down" in a job's step list amount to.
 //
@@ -362,9 +366,10 @@ const goToStepAction = 4
 // gosmo's memory. See execAtomic.
 //
 // "Go to step N" references follow the steps they name. sp_add_jobstep
-// remaps them on insert, but sp_delete_jobstep does not — it resets a
-// reference to a step at or after the deleted one to "quit with success",
-// silently (verified against SQL Server 2025). So every reference is written
+// remaps them on insert, and sp_delete_jobstep remaps a reference to a later
+// step, but it resets a reference to the deleted step itself — on success to
+// "quit with success", on failure to "quit with failure" — silently (read
+// from msdb's procedure text, SQL Server 2025). So every reference is written
 // back afterwards from the pre-move reading, mapped through the move. A
 // reference that pointed at the moved step still points at it; one that
 // pointed at a step the move shifted follows that step.
@@ -434,7 +439,7 @@ func (j *Job) ReorderSteps(ctx context.Context, order func(n int) []int) error {
 	// failure there loses it for good. The reference-repair pass below is just
 	// as unskippable — sp_delete_jobstep resets a reference to the step it
 	// deleted, so a reorder that stops before the repair leaves the job's
-	// control flow silently rewritten to "quit with success". See execAtomic.
+	// control flow silently rewritten to "quit". See execAtomic.
 	var stmts []string
 
 	for target := range want {
@@ -445,9 +450,15 @@ func (j *Job) ReorderSteps(ctx context.Context, order func(n int) []int) error {
 		s := byID[want[target]]
 		stmts = append(stmts, deleteStepStmt(j.Name, from+1))
 		current = slices.Delete(current, from, from+1)
-		// References are repaired in one pass at the end, so the step goes
-		// back with the flow it had; only its position is being decided here.
-		stmts = append(stmts, addStepStmt(j.Name, stepRequestFrom(s, s.OnSuccessStepID, s.OnFailStepID), target+1))
+		// References are repaired in one pass at the end, which covers every
+		// step with a "go to step N" action, so the step goes back with each
+		// such action as "go to the next step" and the repair writes the
+		// real target. Re-adding it with its original target instead is
+		// refused whenever that number is the step's new position:
+		// sp_verify_jobstep raises Msg 14235 for a step that goes to itself,
+		// and moving "three, on failure go to step 1" to the top is exactly
+		// that — the whole reorder rolled back for a legitimate order.
+		stmts = append(stmts, addStepStmt(j.Name, reAddRequest(s), target+1))
 		current = slices.Insert(current, target, want[target])
 	}
 
@@ -550,19 +561,27 @@ type JobStepRequest struct {
 	OSRunPriority      int
 }
 
-// stepRequestFrom builds the request that recreates s exactly, which is what
-// a move has to pass to sp_add_jobstep: every column msdb would otherwise
-// default away. onSuccessStepID and onFailStepID are given rather than taken
-// from s, because a move renumbers what a "go to step N" reference means.
-func stepRequestFrom(s *JobStep, onSuccessStepID, onFailStepID int) JobStepRequest {
-	return JobStepRequest{
+// reAddRequest builds the request ReorderSteps re-adds a moved step with:
+// every column msdb would otherwise default away, because sp_add_jobstep
+// creates a fresh row — except its flow. A "go to step N" action goes back as
+// "go to the next step", which sp_verify_jobstep accepts at any position, and
+// every step id as 0: the numbers are what the move changes, and the repair
+// pass writes the real action and target once every step is in place.
+func reAddRequest(s *JobStep) JobStepRequest {
+	req := JobStepRequest{
 		Name: s.Name, Subsystem: s.Subsystem, Command: s.Command, Database: s.Database,
-		OnSuccessAction: s.OnSuccessAction, OnSuccessStepID: onSuccessStepID,
-		OnFailAction: s.OnFailAction, OnFailStepID: onFailStepID,
+		OnSuccessAction: s.OnSuccessAction, OnFailAction: s.OnFailAction,
 		RetryAttempts: s.RetryAttempts, RetryInterval: s.RetryInterval,
 		OutputFileName: s.OutputFileName, Flags: s.Flags,
 		ProxyName: s.ProxyName, AdditionalParameters: s.AdditionalParameters,
 		Server: s.Server, DatabaseUserName: s.DatabaseUserName,
 		CmdExecSuccessCode: s.CmdExecSuccessCode, OSRunPriority: s.OSRunPriority,
 	}
+	if req.OnSuccessAction == goToStepAction {
+		req.OnSuccessAction = goToNextStepAction
+	}
+	if req.OnFailAction == goToStepAction {
+		req.OnFailAction = goToNextStepAction
+	}
+	return req
 }

@@ -5,11 +5,11 @@
 // Two things here can only be established against a server, and both were
 // (2026-08-23, SQL Server 2025 on win10cli): sp_add_jobstep with @step_id
 // inserts at that position, renumbering the later steps and following their
-// "go to step N" references; sp_delete_jobstep does not follow them, it
-// silently resets a reference to a step at or after the deleted one to "quit
-// with success". A move is a delete plus an insert, so the second is what the
-// reference-repair pass exists for — and a test that only checked the step
-// order would pass with that pass deleted.
+// "go to step N" references; sp_delete_jobstep follows a reference to a later
+// step but silently resets one to the deleted step to "quit" (corrected
+// 2026-10-09 from msdb's procedure text). A move is a delete plus an insert,
+// so the second is what the reference-repair pass exists for — and a test
+// that only checked the step order would pass with that pass deleted.
 //
 //	go test -tags livedb . -run TestLiveJobReorder -v \
 //	  -livedb 'sqlserver://sa:PASS@host?TrustServerCertificate=true'
@@ -99,7 +99,7 @@ func TestLiveJobReorderMovesTheStepAndKeepsItsDefinition(t *testing.T) {
 	// Step 2 is the one carrying the columns a re-add would default away, so
 	// it has to be the step that moves: a move only rewrites the step it
 	// moves, and asserting on a step that merely shifted passes with the
-	// definition dropped (found by deleting Flags from stepRequestFrom,
+	// definition dropped (found by deleting Flags from what is now reAddRequest,
 	// 2026-08-23).
 	// one, two, three, four -> two, one, three, four.
 	if err := j.MoveStep(ctx, 2, 1); err != nil {
@@ -172,6 +172,41 @@ func TestLiveJobReorderFollowsGoToStepReferences(t *testing.T) {
 	if three.OnFailAction != goToStepAction || three.OnFailStepID != one.StepID {
 		t.Errorf("step %q on failure = action %d step %d, want action 4 step %d (%q)",
 			three.Name, three.OnFailAction, three.OnFailStepID, one.StepID, one.Name)
+	}
+}
+
+// A move onto the number a step's own "go to step N" names. "three" fails to
+// step 1; moved to the top it is step 1, and re-adding it with that target is
+// refused by sp_verify_jobstep (Msg 14235), rolling the whole reorder back.
+func TestLiveJobReorderMovesAStepOntoItsOwnTarget(t *testing.T) {
+	db, ctx, done := liveDB(t)
+	defer done()
+	srv := &Server{db: db}
+	j, drop := liveReorderJob(t, srv, ctx)
+	defer drop()
+
+	// one, two, three, four -> three, one, two, four
+	if err := j.MoveStep(ctx, 3, 1); err != nil {
+		t.Fatalf("move step 3 to 1: %v", err)
+	}
+	steps, err := j.Steps(ctx)
+	if err != nil {
+		t.Fatalf("steps: %v", err)
+	}
+	if got, want := stepNames(steps), []string{"three", "one", "two", "four"}; !equalStrings(got, want) {
+		t.Fatalf("order = %v, want %v", got, want)
+	}
+	one, three := byName(t, steps, "one"), byName(t, steps, "three")
+	if three.OnSuccessAction != 3 {
+		t.Errorf("step %q on success = action %d, want 3 (next step), as created", three.Name, three.OnSuccessAction)
+	}
+	if three.OnFailAction != goToStepAction || three.OnFailStepID != one.StepID {
+		t.Errorf("step %q on failure = action %d step %d, want action 4 step %d (%q)",
+			three.Name, three.OnFailAction, three.OnFailStepID, one.StepID, one.Name)
+	}
+	if one.OnSuccessAction != goToStepAction || one.OnSuccessStepID != three.StepID {
+		t.Errorf("step %q on success = action %d step %d, want action 4 step %d (%q)",
+			one.Name, one.OnSuccessAction, one.OnSuccessStepID, three.StepID, three.Name)
 	}
 }
 

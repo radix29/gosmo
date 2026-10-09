@@ -115,7 +115,7 @@ func TestReorderStepsIsOneAtomicBatch(t *testing.T) {
 // the step being deleted, so the repair pass is not a tidy-up after the
 // reorder — it is part of it. Committing the moves and then repairing would
 // leave a window, and a failure in it, with the job's control flow rewritten
-// to "quit with success" and nothing to say so.
+// to "quit" and nothing to say so.
 //
 // Pinned by position: the repair has to be *before* the COMMIT.
 func TestReorderStepsRepairsReferencesInsideTheSameTransaction(t *testing.T) {
@@ -144,6 +144,37 @@ func TestReorderStepsRepairsReferencesInsideTheSameTransaction(t *testing.T) {
 	}
 	if n := captured.count("sp_update_jobstep"); n != 1 {
 		t.Errorf("%d statements mention sp_update_jobstep, want 1 (inside the batch)", n)
+	}
+}
+
+// TestReorderStepsReAddsWithoutGoToStep. sp_verify_jobstep refuses a step
+// whose "go to step N" names its own number (Msg 14235), so a moved step
+// re-added with its original target is refused whenever that target equals
+// its new position — "three, on failure go to step 1" moved to the top. The
+// re-add therefore never carries action 4; the repair pass writes it.
+func TestReorderStepsReAddsWithoutGoToStep(t *testing.T) {
+	steps := plainSteps(3)
+	steps[2].OnSuccessAction, steps[2].OnSuccessStepID = goToStepAction, 1
+	steps[2].OnFailAction, steps[2].OnFailStepID = goToStepAction, 2
+
+	j := captureJob(t, steps...)
+	if err := j.MoveStep(t.Context(), 3, 1); err != nil {
+		t.Fatalf("MoveStep: %v", err)
+	}
+
+	batch := captured.find("sp_delete_jobstep")
+	add := batch[strings.Index(batch, "sp_add_jobstep"):]
+	add = add[:strings.Index(add, ";")]
+	for _, bad := range []string{"@on_success_action = 4", "@on_fail_action = 4"} {
+		if strings.Contains(add, bad) {
+			t.Errorf("the re-add carries %q, which msdb refuses when the target is the new position:\n%s", bad, add)
+		}
+	}
+	// The repair writes the real flow: c is now step 1, a (was 1) step 2,
+	// b (was 2) step 3.
+	want := "@step_id = 1, @on_success_action = 4, @on_success_step_id = 2, @on_fail_action = 4, @on_fail_step_id = 3"
+	if !strings.Contains(batch, want) {
+		t.Errorf("the repair does not restore the moved step's flow (%q):\n%s", want, batch)
 	}
 }
 
