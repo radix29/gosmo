@@ -2572,6 +2572,15 @@ hands back a dead one — the protection `Database.withConn` gives gosmo's
 own reads, which `database/sql` does not extend to a pinned conn. Only
 the prologue is retried; whatever the caller goes on to run is not.
 
+A pool `Connect` opens dials through `retargetingConnector`
+(`connection_retarget.go`), not the driver connector directly: a login names
+its database and is refused (Msg 4060) once that database is gone, so a
+`Drop`, `Detach`, `SetOffline` or `Rename` of the pool's own login database
+moves the pool — to master, or to the new name — and releases idle sessions.
+`Server.InitialDatabase` reports where the pool logs in now, for a caller
+cloning the options for another connection. A `NewServer` pool is never
+moved.
+
 ---
 
 ## Security

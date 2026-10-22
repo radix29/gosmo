@@ -240,7 +240,7 @@ func TestScriptServerLevelWrites(t *testing.T) {
 				Devices:  []BackupTarget{DiskTarget(`C:\bak\a'1.bak`)},
 				Replace:  true,
 			})
-		}, "RESTORE DATABASE [App'DB]\nFROM DISK = N'C:\\bak\\a''1.bak'\nWITH REPLACE"},
+		}, "USE [master];\nRESTORE DATABASE [App'DB]\nFROM DISK = N'C:\\bak\\a''1.bak'\nWITH REPLACE"},
 	})
 }
 

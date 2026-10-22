@@ -94,6 +94,17 @@ func TestScriptCollectorString(t *testing.T) {
 			"S0\nGO\n\nUSE [a];\nGO\nS1\nGO\n\nUSE [master];\nGO\nDROP DATABASE [a]\nGO\n",
 		},
 		{
+			// An entry that starts from master itself (fromMaster) gets no
+			// second USE [master] ahead of it.
+			"an entry already starting from master is not switched again",
+			[]ScriptEntry{
+				{Database: "a", SQL: "S1"},
+				{SQL: "USE [master];\nDROP DATABASE [a]"},
+				{Database: "a", SQL: "S2"},
+			},
+			"USE [a];\nGO\nS1\nGO\n\nUSE [master];\nDROP DATABASE [a]\nGO\n\nUSE [a];\nGO\nS2\nGO\n",
+		},
+		{
 			"one instance gets no header",
 			[]ScriptEntry{{Server: "SQL1", SQL: "S1"}, {Server: "SQL1", SQL: "S2"}},
 			"S1\nGO\n\nS2\nGO\n",

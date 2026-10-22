@@ -128,7 +128,11 @@ func (c *ScriptCollector) String() string {
 			b.WriteString(scriptUse(e.Database))
 			cur = e.Database
 		case e.Database == "" && cur != "":
-			b.WriteString(scriptUse("master"))
+			// An entry that starts from master itself (fromMaster) needs
+			// no second USE.
+			if !strings.HasPrefix(e.SQL, fromMaster("")) {
+				b.WriteString(scriptUse("master"))
+			}
 			cur = ""
 		}
 		b.WriteString(e.SQL)

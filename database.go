@@ -732,6 +732,9 @@ WHERE  SCHEMA_NAME(t.schema_id) COLLATE DATABASE_DEFAULT = @p1
 // SQL Server deletes only the files of a database it has open: dropping an
 // OFFLINE database leaves its data and log files on disk, an EMERGENCY one its
 // log file, and one in STANDBY its undo file (probed on 17).
+//
+// Dropping the database this Server's pool logs in to moves the pool to
+// master (see InitialDatabase).
 func (d *Database) Drop(ctx context.Context, term Termination) error {
 	s, name := d.server, d.Name
 	if name == "" {
@@ -743,23 +746,24 @@ func (d *Database) Drop(ctx context.Context, term Termination) error {
 	force := term == TerminationRollbackImmediate
 	s.releaseIdle(ctx)
 	drop := fmt.Sprintf("DROP DATABASE %s", quoteIdent(name))
+	// Every form starts from master: see fromMaster.
 	switch {
 	case !force:
 		// Nothing here set the access mode, so nothing is repaired: a
 		// MULTI_USER on the way out would silently undo a RESTRICTED_USER or
 		// SINGLE_USER the database was deliberately left in.
-		if _, err := s.exec(ctx, drop); err != nil {
+		if _, err := s.exec(ctx, fromMaster(drop)); err != nil {
 			return fmt.Errorf("gosmo: drop database %q: %w", name, err)
 		}
 	case s.refusesSingleUser():
 		// One batch for the same reason as exclusiveBatch: a session that
 		// reconnects between the KILLs and the DROP makes the DROP fail.
-		if _, err := s.exec(ctx, killDatabaseSessionsBatch(name)+";\n"+drop+";"); err != nil {
+		if _, err := s.exec(ctx, fromMaster(killDatabaseSessionsBatch(name)+";\n"+drop+";")); err != nil {
 			return fmt.Errorf("gosmo: drop database %q: %w", name, err)
 		}
 	default:
 		mode := s.accessModeBefore(ctx, name)
-		if _, err := s.exec(ctx, exclusiveBatch(name, drop)); err != nil {
+		if _, err := s.exec(ctx, fromMaster(exclusiveBatch(name, drop))); err != nil {
 			// The drop can genuinely fail after the alter succeeded — the
 			// database belongs to an availability group, the login may set
 			// state but not drop — and the batch puts it back to the access
@@ -771,6 +775,7 @@ func (d *Database) Drop(ctx context.Context, term Termination) error {
 			return fmt.Errorf("gosmo: drop database %q: %w", name, err)
 		}
 	}
+	s.leftLoginDatabase(ctx, name, "master")
 	return nil
 }
 
@@ -789,11 +794,13 @@ func (d *Database) Drop(ctx context.Context, term Termination) error {
 // either way (see ReleaseIdleConnections).
 //
 // The new name is mirrored onto the receiver (through setIfApplied, so not
-// under WithScript).
+// under WithScript), and onto the pool's login database when it is this one
+// (see InitialDatabase).
 func (d *Database) Rename(ctx context.Context, newName string, term Termination) error {
 	if err := d.rename(ctx, newName, term); err != nil {
 		return err
 	}
+	d.server.leftLoginDatabase(ctx, d.Name, newName)
 	setIfApplied(ctx, &d.Name, newName)
 	return nil
 }

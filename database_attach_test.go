@@ -202,7 +202,12 @@ func detFailOn(needle string) {
 // mode only a database the batch set SINGLE_USER and that is still there,
 // before re-raising. A trailing repair after op does not run — a failed DROP
 // DATABASE or sp_detach_db aborts the batch (probed) — so the repair must be
-// in the CATCH.
+// in the CATCH. It opens with USE [master] (fromMaster): from a session in
+// the database, the DROP or detach fails even once SINGLE_USER is taken.
+// fromMasterPrefix is what fromMaster puts ahead of a statement, written out
+// rather than taken from the function, so a change to it fails the tests.
+const fromMasterPrefix = "USE [master];\n"
+
 func assertExclusiveBatch(t *testing.T, stmt, db, op string) {
 	t.Helper()
 	capture := strings.Index(stmt, "DECLARE @access nvarchar(60) = (SELECT user_access_desc FROM sys.databases WHERE name = N'")
@@ -221,8 +226,8 @@ func assertExclusiveBatch(t *testing.T, stmt, db, op string) {
 			break
 		}
 	}
-	if capture != 0 {
-		t.Errorf("batch does not open by capturing the access mode:\n%s", stmt)
+	if capture != len(fromMasterPrefix) || !strings.HasPrefix(stmt, fromMasterPrefix) {
+		t.Errorf("batch does not open with USE [master], then by capturing the access mode:\n%s", stmt)
 	}
 	if !strings.HasSuffix(stmt, "END CATCH;") {
 		t.Errorf("something follows the CATCH, which a failed op never reaches:\n%s", stmt)

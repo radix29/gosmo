@@ -291,11 +291,14 @@ type ConnectionOptions struct {
 func Connect(ctx context.Context, opts ConnectionOptions) (*Server, error) {
 	applyDefaults(&opts)
 
-	connector, err := buildConnector(opts)
+	if opts.EntraCache == nil {
+		opts.EntraCache = NewEntraCache()
+	}
+	login, err := newRetargetingConnector(opts)
 	if err != nil {
 		return nil, err
 	}
-	pool := sql.OpenDB(poolConnector(connector, opts))
+	pool := sql.OpenDB(login)
 
 	// Pool tuning
 	if opts.MaxOpenConns > 0 {
@@ -313,6 +316,7 @@ func Connect(ctx context.Context, opts ConnectionOptions) (*Server, error) {
 	}
 
 	s := newServer(pool)
+	s.login = login
 	if err = s.loadInfo(ctx); err != nil {
 		s.Close()
 		return nil, err

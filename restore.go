@@ -161,8 +161,17 @@ func (s *Server) Restore(ctx context.Context, opts RestoreOptions) error {
 // this is a Server method: until 2026-09-23 a package-level
 // BuildRestoreStatement sat beside this one and always wrote the SINGLE_USER
 // form, which a Managed Instance fails.
+//
+// The result starts with USE [master] (see fromMaster): a RESTORE run from
+// a session in the database it restores fails Msg 3102 — the session gossms
+// and the like hold when their connection names that database, and a query
+// window opened on it, where the scripted form is run.
 func (s *Server) BuildRestoreStatement(opts RestoreOptions) (string, error) {
-	return buildRestoreStatement(opts, s.refusesSingleUser())
+	stmt, err := buildRestoreStatement(opts, s.refusesSingleUser())
+	if err != nil {
+		return "", err
+	}
+	return fromMaster(stmt), nil
 }
 
 // buildRestoreStatement is Server.BuildRestoreStatement, closing existing
