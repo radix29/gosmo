@@ -8,21 +8,6 @@ import (
 	"strings"
 )
 
-// SecurableRef names one securable below the database a permission can be
-// granted on. Type is the class ApplyPermission takes for it, as
-// PrincipalSecurable reports it; Schema is empty for a class that is not
-// schema-scoped (a schema, a certificate).
-//
-// This is deliberately just the identity of the securable, not the object:
-// a permissions UI listing candidates to grant on needs the name and the
-// type and nothing else, and loading Table or View values for thousands of
-// candidates to show a picker is work no caller wants.
-type SecurableRef struct {
-	Type   SecurableClass
-	Schema string
-	Name   string
-}
-
 // SecurableSearch narrows FindSecurables.
 //
 // Name is matched case-insensitively as a substring of the securable's
@@ -92,13 +77,20 @@ var findSecurablesRank = func() string {
 
 // FindSecurables returns the securables below the database matching search:
 // schemas, every object kind ApplyPermission takes, user types and
-// certificates (other than the server's own ## ones).
+// certificates (other than the server's own ## ones). Each is the Securable
+// ApplyPermission takes for it, with Columns nil; Schema is empty for a
+// class that is not schema-scoped (a schema, a certificate).
+//
+// It returns just the identity of each securable, not the object: a
+// permissions picker needs the name and the class and nothing else, and
+// loading Table or View values for thousands of candidates is work no caller
+// wants.
 //
 // One query over the catalog, for a caller that needs candidates matching
 // what the user typed rather than the whole catalog — a database with
 // thousands of tables makes "list everything and filter in the client" both
 // slow to open and useless as a picker.
-func (d *Database) FindSecurables(ctx context.Context, search SecurableSearch) ([]SecurableRef, error) {
+func (d *Database) FindSecurables(ctx context.Context, search SecurableSearch) ([]Securable, error) {
 	top := ""
 	if search.Limit > 0 {
 		top = "TOP (@p2) "
@@ -116,10 +108,10 @@ ORDER  BY ` + findSecurablesRank + `, x.qualified`
 	}
 
 	rows, err := d.query(ctx, q, args...)
-	return scanRows(rows, err, fmt.Sprintf("find securables in %q", d.Name), func(scan func(...any) error) (SecurableRef, error) {
-		var r SecurableRef
-		if err := scan(&r.Type, &r.Schema, &r.Name); err != nil {
-			return SecurableRef{}, err
+	return scanRows(rows, err, fmt.Sprintf("find securables in %q", d.Name), func(scan func(...any) error) (Securable, error) {
+		var r Securable
+		if err := scan(&r.Class, &r.Schema, &r.Name); err != nil {
+			return Securable{}, err
 		}
 		return r, nil
 	})

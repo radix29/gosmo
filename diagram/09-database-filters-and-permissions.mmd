@@ -230,10 +230,11 @@ classDiagram
         +Limit int
     }
 
-    class SecurableRef {
-        +Type SecurableClass
+    class Securable {
+        +Class SecurableClass
         +Schema string
         +Name string
+        +Columns []string
     }
 
     %% =========================================================
@@ -291,8 +292,8 @@ classDiagram
     Database "1" --> "*" PrincipalSecurable : PermissionsForPrincipal() returns
     Database "1" --> "*" ColumnPermissionEntry : ColumnPermissions() returns
     Database "1" --> "*" EffectivePermission : EffectivePermissions() returns
-    Database "1" --> "*" SecurableRef : FindSecurables() returns
-    SecurableSearch ..> SecurableRef : narrows FindSecurables()
+    Database "1" --> "*" Securable : FindSecurables() returns
+    SecurableSearch ..> Securable : narrows FindSecurables()
     Database ..> BulkCopy : bulk-loads via
     Database ..> ProcParam : executes procs with
     Database --> ProcResult : returns

@@ -75,8 +75,8 @@ classDiagram
         +SetEmailAddress(addr) error
         +SetCategory(category) error
         +Alter(ch OperatorChanges) error
-        +NotifyingAlerts() []*AlertNotificationRef
-        +NotifyingJobs() []*JobNotificationRef
+        +NotifyingAlerts() []*OperatorAlert
+        +NotifyingJobs() []*OperatorJob
         +Drop() error
     }
 
@@ -99,12 +99,12 @@ classDiagram
         +Profile *string
     }
 
-    class AlertNotificationRef {
+    class OperatorAlert {
         +AlertName string
         +Method NotificationMethod
     }
 
-    class JobNotificationRef {
+    class OperatorJob {
         +JobName string
         +Level NotifyLevel
     }
@@ -253,7 +253,7 @@ classDiagram
     Schedule --> ScheduleFreqType : recurs per
     Schedule --> ScheduleSubdayType : repeats per
     Alert "1" --> "*" AlertNotification : notifies via
-    Operator "1" --> "*" AlertNotificationRef : notified by
-    Operator "1" --> "*" JobNotificationRef : emailed by
+    Operator "1" --> "*" OperatorAlert : notified by
+    Operator "1" --> "*" OperatorJob : emailed by
     AlertNotification --> NotificationMethod : delivered by
     Category --> CategoryClass : classified by

@@ -313,9 +313,6 @@ func (a *Alert) RemoveNotification(ctx context.Context, operatorName string) err
 
 // Notifications returns every operator notified by this alert.
 func (a *Alert) Notifications(ctx context.Context) ([]*AlertNotification, error) {
-	if err := requireID(fmt.Sprintf("notifications for alert %q", a.Name), a.ID != 0); err != nil {
-		return nil, err
-	}
 	const q = `
 SELECT o.name, n.notification_method
 FROM   msdb.dbo.sysnotifications n
@@ -323,15 +320,30 @@ JOIN   msdb.dbo.sysoperators o ON o.id = n.operator_id
 WHERE  n.alert_id = @p1
 ORDER  BY o.name`
 
-	rows, err := a.server.query(ctx, q, a.ID)
-	return scanRows(rows, err, fmt.Sprintf("notifications for alert %q", a.Name), func(scan func(...any) error) (*AlertNotification, error) {
-		n := &AlertNotification{}
-		var method int
-		if err := scan(&n.OperatorName, &method); err != nil {
-			return nil, err
+	return notificationRows(ctx, a.server, fmt.Sprintf("notifications for alert %q", a.Name), q, a.ID,
+		func(name string, code int) *AlertNotification {
+			return &AlertNotification{OperatorName: name, Method: NotificationMethod(code)}
+		})
+}
+
+// notificationRows is the shared body of the three "who notifies whom" reads
+// (Alert.Notifications, Operator.NotifyingAlerts, Operator.NotifyingJobs):
+// q selects a name and an integer code for one msdb id (@p1), and build turns
+// each pair into a row. id 0 — a handle that was never read — is refused with
+// requireID. what names the operation, as the read's errors carry it.
+func notificationRows[T any](ctx context.Context, s *Server, what, q string, id int, build func(name string, code int) T) ([]T, error) {
+	if err := requireID(what, id != 0); err != nil {
+		return nil, err
+	}
+	rows, err := s.query(ctx, q, id)
+	return scanRows(rows, err, what, func(scan func(...any) error) (T, error) {
+		var name string
+		var code int
+		if err := scan(&name, &code); err != nil {
+			var zero T
+			return zero, err
 		}
-		n.Method = NotificationMethod(method)
-		return n, nil
+		return build(name, code), nil
 	})
 }
 

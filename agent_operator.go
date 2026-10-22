@@ -158,17 +158,15 @@ func (o *Operator) Drop(ctx context.Context) error {
 	return nil
 }
 
-// AlertNotificationRef describes one alert configured to notify an operator.
-type AlertNotificationRef struct {
+// OperatorAlert is one alert configured to notify an operator, as
+// NotifyingAlerts lists it.
+type OperatorAlert struct {
 	AlertName string
 	Method    NotificationMethod
 }
 
 // NotifyingAlerts returns every alert configured to notify this operator.
-func (o *Operator) NotifyingAlerts(ctx context.Context) ([]*AlertNotificationRef, error) {
-	if err := requireID(fmt.Sprintf("notifying alerts for operator %q", o.Name), o.ID != 0); err != nil {
-		return nil, err
-	}
+func (o *Operator) NotifyingAlerts(ctx context.Context) ([]*OperatorAlert, error) {
 	const q = `
 SELECT a.name, n.notification_method
 FROM   msdb.dbo.sysnotifications n
@@ -176,21 +174,15 @@ JOIN   msdb.dbo.sysalerts a ON a.id = n.alert_id
 WHERE  n.operator_id = @p1
 ORDER  BY a.name`
 
-	rows, err := o.server.query(ctx, q, o.ID)
-	return scanRows(rows, err, fmt.Sprintf("notifying alerts for operator %q", o.Name), func(scan func(...any) error) (*AlertNotificationRef, error) {
-		r := &AlertNotificationRef{}
-		var method int
-		if err := scan(&r.AlertName, &method); err != nil {
-			return nil, err
-		}
-		r.Method = NotificationMethod(method)
-		return r, nil
-	})
+	return notificationRows(ctx, o.server, fmt.Sprintf("notifying alerts for operator %q", o.Name), q, o.ID,
+		func(name string, code int) *OperatorAlert {
+			return &OperatorAlert{AlertName: name, Method: NotificationMethod(code)}
+		})
 }
 
-// JobNotificationRef describes one job configured to email an operator on
-// completion.
-type JobNotificationRef struct {
+// OperatorJob is one job configured to email an operator on completion, as
+// NotifyingJobs lists it.
+type OperatorJob struct {
 	JobName string
 	Level   NotifyLevel
 }
@@ -198,24 +190,15 @@ type JobNotificationRef struct {
 // NotifyingJobs returns every job configured to email this operator on
 // completion (sysjobs.notify_email_operator_id) — distinct from
 // NotifyingAlerts, which covers alert-triggered notifications.
-func (o *Operator) NotifyingJobs(ctx context.Context) ([]*JobNotificationRef, error) {
-	if err := requireID(fmt.Sprintf("notifying jobs for operator %q", o.Name), o.ID != 0); err != nil {
-		return nil, err
-	}
+func (o *Operator) NotifyingJobs(ctx context.Context) ([]*OperatorJob, error) {
 	const q = `
 SELECT name, notify_level_email
 FROM   msdb.dbo.sysjobs
 WHERE  notify_email_operator_id = @p1
 ORDER  BY name`
 
-	rows, err := o.server.query(ctx, q, o.ID)
-	return scanRows(rows, err, fmt.Sprintf("notifying jobs for operator %q", o.Name), func(scan func(...any) error) (*JobNotificationRef, error) {
-		r := &JobNotificationRef{}
-		var level int
-		if err := scan(&r.JobName, &level); err != nil {
-			return nil, err
-		}
-		r.Level = NotifyLevel(level)
-		return r, nil
-	})
+	return notificationRows(ctx, o.server, fmt.Sprintf("notifying jobs for operator %q", o.Name), q, o.ID,
+		func(name string, code int) *OperatorJob {
+			return &OperatorJob{JobName: name, Level: NotifyLevel(code)}
+		})
 }

@@ -116,13 +116,15 @@ func TestLivePermissionsForPrincipalEveryClass(t *testing.T) {
 			t.Fatal(err)
 		}
 		for _, g := range grants[1:] { // the schema is dbo, not a pfp_ name
-			want := SecurableRef{Type: g.sec.Class, Schema: g.sec.Schema, Name: g.sec.Name}
-			if !slices.Contains(got, want) {
+			want := Securable{Class: g.sec.Class, Schema: g.sec.Schema, Name: g.sec.Name}
+			if !slices.ContainsFunc(got, func(s Securable) bool {
+				return s.Class == want.Class && s.Schema == want.Schema && s.Name == want.Name && s.Columns == nil
+			}) {
 				t.Errorf("%+v not found in %+v", want, got)
 			}
 		}
 		for i := 1; i < len(got); i++ {
-			if slices.Index(securableSearchOrder, got[i-1].Type) > slices.Index(securableSearchOrder, got[i].Type) {
+			if slices.Index(securableSearchOrder, got[i-1].Class) > slices.Index(securableSearchOrder, got[i].Class) {
 				t.Errorf("%+v listed before %+v", got[i-1], got[i])
 			}
 		}

@@ -103,8 +103,8 @@ exercise the write, drop them; never mutate pre-existing objects.
   authority. The text layer (quoting, comment safety, the `tsql.Spans`
   lexical scanner) lives in package `tsql`, which may import only the
   standard library (`TestImportsOnlyStdlib`); the root's `QuoteName`/
-  `QuoteLiteral`/`QuoteAnsiLiteral`/`UnquoteName` forward to it. `QuoteName`/
-  `qualifiedName` bracket an identifier; `QuoteLiteral` builds a whole literal;
+  `QualifiedName`/`QuoteLiteral`/`QuoteAnsiLiteral`/`UnquoteName` forward to
+  it. `QuoteName`/`qualifiedName` bracket an identifier; `QuoteLiteral` builds a whole literal;
   `escapeSingle` (`helpers.go`) escapes inside quotes already in the format
   string. An identifier *inside* a literal (`OBJECT_ID`, `DBCC
   SHOW_STATISTICS`, `fn_listextendedproperty`) needs both:
@@ -221,6 +221,8 @@ exercise the write, drop them; never mutate pre-existing objects.
     `s.Database("x").State()` compiling into a silent zero value. Doc comments
     in `server_databases.go`/`login.go` are authoritative; `go doc
     gosmo.Server.DatabaseRef`.
+  - **A result row is never named `…Ref`** — it has nothing to look up
+    (`OperatorAlert`, not `AlertNotificationRef`).
 
 ## Open threads
 

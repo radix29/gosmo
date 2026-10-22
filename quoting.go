@@ -9,8 +9,8 @@ import (
 // quoting.go centralises T-SQL identifier and literal quoting, so gosmo, its
 // callers, and gossms share one implementation instead of each hand-rolling
 // bracket/quote escaping. The text rules live in the driver-free tsql
-// package; QuoteName, UnquoteName, QuoteLiteral and QuoteAnsiLiteral here
-// forward to it, so a caller may import either.
+// package; QuoteName, QualifiedName, UnquoteName, QuoteLiteral and
+// QuoteAnsiLiteral here forward to it, so a caller may import either.
 
 // QuoteName wraps a SQL Server identifier in square brackets, doubling any
 // embedded closing bracket — T-SQL's QUOTENAME(). It quotes the whole string
@@ -18,6 +18,12 @@ import (
 // is tsql.QuoteName.
 func QuoteName(name string) string {
 	return tsql.QuoteName(name)
+}
+
+// QualifiedName returns [schema].[name], or just [name] when schema is
+// empty, never "[].[name]". It is tsql.QualifiedName.
+func QualifiedName(schema, name string) string {
+	return tsql.QualifiedName(schema, name)
 }
 
 // QuoteNameIfNeeded returns name as it stands when SQL Server would read it

@@ -14,6 +14,17 @@ func QuoteName(name string) string {
 	return "[" + strings.ReplaceAll(name, "]", "]]") + "]"
 }
 
+// QualifiedName returns [schema].[name], each part quoted with QuoteName, or
+// just [name] when schema is empty. The empty case is the point: the naive
+// QuoteName(schema)+"."+QuoteName(name) emits "[].[name]", which OBJECT_ID
+// resolves to NULL, so a caller gets an empty result rather than an error.
+func QualifiedName(schema, name string) string {
+	if schema == "" {
+		return QuoteName(name)
+	}
+	return QuoteName(schema) + "." + QuoteName(name)
+}
+
 // UnquoteName undoes QuoteName for one name part: "[a]]b]" is "a]b", and a
 // double-quoted identifier, `"a""b"`, is `a"b`. Anything else — a bare name,
 // or one whose brackets don't match — comes back unchanged. It does not split

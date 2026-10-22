@@ -232,12 +232,10 @@ func requireID(what string, ok bool) error {
 // qualifiedName returns [schema].[name], or just [name] when schema is empty.
 // Most callers get schema from an exported method's parameter, and the naive
 // form emits "[].[name]" for an empty one — which OBJECT_ID resolves to NULL,
-// so the caller gets an empty result set rather than an error.
+// so the caller gets an empty result set rather than an error. It is
+// QualifiedName, kept short for the many call sites here.
 func qualifiedName(schema, name string) string {
-	if schema == "" {
-		return quoteIdent(name)
-	}
-	return quoteIdent(schema) + "." + quoteIdent(name)
+	return QualifiedName(schema, name)
 }
 
 // likeEscape escapes T-SQL LIKE wildcard characters (%, _, [) in s so it can

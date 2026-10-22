@@ -205,7 +205,7 @@ classDiagram
         +Dependencies(schema, name) []*Dependency
         +Dependents(schema, name) []*Dependency
         +Search(pattern) []*SearchResult
-        +FindSecurables(search) []SecurableRef
+        +FindSecurables(search) []Securable
         +ObjectColumns(schema, name) []*Column
         +Permissions(schema, name) []*PermissionEntry
         +ApplyPermission(verb, sec Securable, perm, principal, opts) error

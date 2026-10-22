@@ -3,6 +3,7 @@ package gosmo
 import (
 	"database/sql/driver"
 	"fmt"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -130,8 +131,8 @@ func TestFindSecurablesSearchesEveryClass(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []SecurableRef{{SecurableSchema, "", "sales"}, {SecurableProcedure, "dbo", "p"}, {SecurableCertificate, "", "ce"}}
-	if !slices.Equal(got, want) {
+	want := []Securable{{Class: SecurableSchema, Name: "sales"}, {Class: SecurableProcedure, Schema: "dbo", Name: "p"}, {Class: SecurableCertificate, Name: "ce"}}
+	if !reflect.DeepEqual(got, want) {
 		t.Errorf("FindSecurables = %+v, want %+v", got, want)
 	}
 
