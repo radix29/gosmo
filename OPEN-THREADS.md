@@ -19,7 +19,9 @@ The target is **SQL Server 2016 SP1 and later**. SP1 rather than RTM because
 it calls every read gosmo exposes and reports what the server rejects. Run it
 on the *oldest* instance available after any query change. A query naming a
 column the instance lacks fails the whole read, and `go test ./...` says
-nothing.
+nothing. Its reflective half (`versionsweep_reflect_test.go`) runs each call
+under `WithScript`, so a ctx-only write missing from `sweepSkip` fails as
+"wrote under the sweep" instead of running against the instance.
 
 A sweep of 0 failures is not proof on its own — it passes just as happily if a
 read was never reached. When re-verifying, confirm the reads were actually

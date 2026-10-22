@@ -28,7 +28,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"reflect"
 	"slices"
 	"sort"
 	"strings"
@@ -36,174 +35,13 @@ import (
 	"time"
 )
 
-// sweepSkip names the methods the sweep must not call because they write.
-// The list is a heuristic kept here, in the test, rather than in a shared
-// helper: a method classified wrongly has to be visible at the point it is
-// skipped. Keys are "<type>.<method>".
-//
-// Every entry is checked against a real method below, so a renamed or deleted
-// method fails the test instead of silently un-skipping — or silently
-// skipping nothing.
-var sweepSkip = map[string]string{
-	"Server.CycleErrorLog":          "rolls the error log over",
-	"Database.ClearQueryStore":      "discards the query store's contents",
-	"Database.FlushQueryStore":      "forces a query store write",
-	"Database.SetOffline":           "takes the database offline",
-	"Database.SetOnline":            "brings the database online",
-	"Database.RecoverFromRestoring": "runs recovery on a RESTORING database",
-	"Table.Truncate":                "deletes every row",
-	"Statistic.Drop":                "drops the statistic",
-	"Index.Disable":                 "disables the index",
-	"Index.Drop":                    "drops the index",
-	"Index.Enable":                  "rebuilds the index",
-	"Index.Reorganize":              "reorganizes the index",
-	"Login.Disable":                 "disables the login",
-	"Login.Drop":                    "drops the login",
-	"Login.Enable":                  "enables the login",
-	"Job.Disable":                   "disables the job",
-	"Job.Drop":                      "drops the job",
-	"Job.Enable":                    "enables the job",
-	"Job.Stop":                      "stops a running job",
-	"ResourcePool.Drop":             "drops the pool (refused for the built-in ones, which are all a pristine instance has)",
-	"Server.StartDatabaseMail":      "starts the Database Mail queue",
-	"Server.StopDatabaseMail":       "stops the Database Mail queue",
-}
-
-// sweep records what ran and what failed, so the result is one report rather
-// than a stream of failures in call order.
-type sweep struct {
-	t       *testing.T
-	ctx     context.Context
-	calls   int
-	failed  []string
-	refused []string        // gosmo's own version refusals; expected, not failures
-	called  map[string]bool // every label reached, for the coverage check below
-}
-
-// call runs one read and records its outcome. A panic is recorded like an
-// error: the sweep's value is in reaching the end of the list.
-func (sw *sweep) call(label string, fn func() error) {
-	sw.calls++
-	if sw.called == nil {
-		sw.called = map[string]bool{}
-	}
-	sw.called[label] = true
-	err := func() (err error) {
-		defer func() {
-			if r := recover(); r != nil {
-				err = fmt.Errorf("panic: %v", r)
-			}
-		}()
-		return fn()
-	}()
-	switch {
-	case err == nil:
-	case errors.Is(err, ErrUnsupportedVersion):
-		// gosmo declining a feature the instance is too old for is the gate
-		// working, not a defect — the whole point of running the sweep on the
-		// oldest instance available. Counted separately so an old major can
-		// still be 0 failures.
-		sw.refused = append(sw.refused, fmt.Sprintf("%s: %v", label, err))
-	case strings.HasPrefix(label, "Database.LatestResourceStats") && errors.Is(err, ErrNotFound):
-		// sys.dm_db_resource_stats gains its first row a few seconds after a
-		// database is created (3 s on a Managed Instance, 2026-09-10), and the
-		// sweep's database is seconds old, so an empty view is a race rather
-		// than a defect. The query ran, which is what is being swept.
-	case strings.HasPrefix(label, "Table.FullTextIndex") && errors.Is(err, ErrNotFound):
-		// Only dbo.sweep_parent has a full-text index (and only where the
-		// component is installed); every other table answering "none" is
-		// the read working.
-	case strings.HasPrefix(label, "Database.EncryptionKey") && errors.Is(err, ErrNotFound):
-		// The sweep's database is not TDE-encrypted, so "no key" is the
-		// read working.
-	default:
-		sw.failed = append(sw.failed, fmt.Sprintf("%s: %v", label, err))
-	}
-}
-
-// reflectSweep calls every exported XxxContext(ctx) (…, error) method on recv
-// that sweepSkip does not name — and every Xxx(ctx, q) whose q is one of
-// sweepZeroQueries, with q's zero value, which asks for everything. Methods
-// taking other arguments beyond the context are driven by hand further down;
-// this half is what keeps a newly added listing covered without anyone
-// remembering to add it here.
-func (sw *sweep) reflectSweep(typeName, instance string, recv any) {
-	ctxT := reflect.TypeOf((*context.Context)(nil)).Elem()
-	errT := reflect.TypeOf((*error)(nil)).Elem()
-	rv := reflect.ValueOf(recv)
-	rt := rv.Type()
-	ctxV := reflect.ValueOf(sw.ctx)
-
-	for i := 0; i < rt.NumMethod(); i++ {
-		m := rt.Method(i)
-		ft := m.Type
-		if ft.NumIn() < 2 || ft.In(1) != ctxT {
-			continue
-		}
-		args := []reflect.Value{rv, ctxV}
-		if ft.NumIn() == 3 && slices.Contains(sweepZeroQueries, ft.In(2)) {
-			args = append(args, reflect.Zero(ft.In(2)))
-		} else if ft.NumIn() != 2 {
-			continue
-		}
-		if ft.NumOut() == 0 || ft.Out(ft.NumOut()-1) != errT {
-			continue
-		}
-		if _, skip := sweepSkip[typeName+"."+m.Name]; skip {
-			continue
-		}
-		label := fmt.Sprintf("%s.%s [%s]", typeName, m.Name, instance)
-		sw.call(label, func() error {
-			out := m.Func.Call(args)
-			if e := out[len(out)-1].Interface(); e != nil {
-				return e.(error)
-			}
-			return nil
-		})
-	}
-}
-
-// sweepZeroQueries are the listing arguments whose zero value means "all",
-// so a listing taking one is as reachable by reflection as a ctx-only one.
-var sweepZeroQueries = []reflect.Type{
-	reflect.TypeOf(ObjectFilter{}),
-	reflect.TypeOf(TableQuery{}),
-}
-
-// checkSkipList fails on an entry naming a method that no longer exists, so
-// the exclusions cannot rot into a list of names that skip nothing.
-func checkSkipList(t *testing.T) {
-	t.Helper()
-	types := map[string]reflect.Type{
-		"Server":    reflect.TypeOf(&Server{}),
-		"Database":  reflect.TypeOf(&Database{}),
-		"Table":     reflect.TypeOf(&Table{}),
-		"Index":     reflect.TypeOf(&Index{}),
-		"Statistic": reflect.TypeOf(&Statistic{}),
-		"Login":     reflect.TypeOf(&Login{}),
-		"Job":       reflect.TypeOf(&Job{}),
-
-		"ResourcePool": reflect.TypeOf(&ResourcePool{}),
-	}
-	for key := range sweepSkip {
-		typeName, method, ok := strings.Cut(key, ".")
-		rt := types[typeName]
-		if !ok || rt == nil {
-			t.Errorf("sweepSkip key %q names no swept type", key)
-			continue
-		}
-		if _, found := rt.MethodByName(method); !found {
-			t.Errorf("sweepSkip names %s, which %s does not have — stale exclusion", key, rt)
-		}
-	}
-}
-
 // sweepMustCall names the reads that Phase 3's eight new object families
 // added. Every one is listed by hand, because the thing this guards against
 // is precisely the read that quietly stops being swept: the reflective half
 // covers a listing only for as long as it stays an exported
-// XxxContext(ctx) (…, error) on a type reflectSweep is pointed at, and a
-// listing given a filter argument, moved to another receiver or renamed
+// Xxx(ctx) (…, error) on a type reflectSweep is pointed at, and a
+// listing given an argument sweepZeroQueries lacks, moved to another receiver
+// or renamed
 // leaves no trace when it drops out. A sweep that reports "0 failures"
 // because it made the call and a sweep that reports it because it never made
 // the call read identically otherwise.
