@@ -63,16 +63,16 @@ func TestLiveInTransactionMSDB(t *testing.T) {
 		var inside int
 		reached := false
 		err := srv.InTransaction(ctx, func(ctx context.Context) error {
-			if _, err := srv.CreateMailAccount(ctx, CreateMailAccountRequest{
+			if _, err := srv.Mail().CreateAccount(ctx, CreateMailAccountRequest{
 				Name: liveTxMailAccount, EmailAddress: "dba@example.com", ServerName: "192.0.2.1", Timeout: 30,
 				Credentials: MailCredentials{Authentication: MailAuthBasic, UserName: "mailer", Password: "P@ssw0rd_gosmo_tx"},
 			}); err != nil {
 				return err
 			}
-			if _, err := srv.CreateMailProfile(ctx, CreateMailProfileRequest{Name: liveTxMailProfile}); err != nil {
+			if _, err := srv.Mail().CreateProfile(ctx, CreateMailProfileRequest{Name: liveTxMailProfile}); err != nil {
 				return err
 			}
-			if err := srv.MailProfileRef(liveTxMailProfile).AddAccount(ctx, liveTxMailAccount, 1); err != nil {
+			if err := srv.Mail().ProfileRef(liveTxMailProfile).AddAccount(ctx, liveTxMailAccount, 1); err != nil {
 				return err
 			}
 			if err := srv.queryRow(ctx, func(r *sql.Row) error { return r.Scan(&inside) }, `SELECT COUNT(*) FROM sys.credentials`); err != nil {
@@ -80,7 +80,7 @@ func TestLiveInTransactionMSDB(t *testing.T) {
 			}
 			reached = true
 			// Fails: there is no such account.
-			return srv.MailProfileRef(liveTxMailProfile).AddAccount(ctx, "gosmo_live_tx_no_such_account", 2)
+			return srv.Mail().ProfileRef(liveTxMailProfile).AddAccount(ctx, "gosmo_live_tx_no_such_account", 2)
 		})
 		if err == nil || !reached {
 			t.Fatalf("the transaction ended before its last statement, or that succeeded: %v", err)
@@ -88,10 +88,10 @@ func TestLiveInTransactionMSDB(t *testing.T) {
 		if inside != before+1 {
 			t.Errorf("credentials inside the transaction = %d, want %d — the premise that the password is a credential", inside, before+1)
 		}
-		if _, err := srv.MailAccountByName(ctx, liveTxMailAccount); !errors.Is(err, ErrNotFound) {
+		if _, err := srv.Mail().AccountByName(ctx, liveTxMailAccount); !errors.Is(err, ErrNotFound) {
 			t.Errorf("the account survived the rollback: %v", err)
 		}
-		if _, err := srv.MailProfileByName(ctx, liveTxMailProfile); !errors.Is(err, ErrNotFound) {
+		if _, err := srv.Mail().ProfileByName(ctx, liveTxMailProfile); !errors.Is(err, ErrNotFound) {
 			t.Errorf("the profile survived the rollback: %v", err)
 		}
 		if got := credentials(); got != before {

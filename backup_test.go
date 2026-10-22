@@ -230,7 +230,7 @@ func TestBuildRestoreStatement(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuildRestoreStatement: %v", err)
 	}
-	want := "RESTORE DATABASE [AW_Restore]\n" +
+	want := fromMasterPrefix + "RESTORE DATABASE [AW_Restore]\n" +
 		"FROM DISK = N'/var/backups/aw.bak'\n" +
 		"WITH MOVE N'AW_Data' TO N'/data/AW_Restore_Data.mdf',\n" +
 		"     RECOVERY,\n" +
@@ -252,7 +252,7 @@ func TestBuildRestoreStatementNoRecovery(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuildRestoreStatement: %v", err)
 	}
-	want := "RESTORE DATABASE [AW_Restore]\nFROM DISK = N'/var/backups/aw.bak'\nWITH NORECOVERY"
+	want := fromMasterPrefix + "RESTORE DATABASE [AW_Restore]\nFROM DISK = N'/var/backups/aw.bak'\nWITH NORECOVERY"
 	if got != want {
 		t.Errorf("BuildRestoreStatement =\n%q\nwant\n%q", got, want)
 	}
@@ -273,7 +273,7 @@ func TestBuildRestoreStatementStandbyChecksumStopAt(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuildRestoreStatement: %v", err)
 	}
-	want := "RESTORE DATABASE [AW_Restore]\n" +
+	want := fromMasterPrefix + "RESTORE DATABASE [AW_Restore]\n" +
 		"FROM DISK = N'/var/backups/aw.bak'\n" +
 		"WITH STANDBY = N'/var/backups/aw_undo.bak',\n" +
 		"     CHECKSUM,\n" +
@@ -322,7 +322,7 @@ func TestBuildRestoreStatementNoOptions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuildRestoreStatement: %v", err)
 	}
-	want := "RESTORE DATABASE [AW_Restore]\nFROM DISK = N'/var/backups/aw.bak'"
+	want := fromMasterPrefix + "RESTORE DATABASE [AW_Restore]\nFROM DISK = N'/var/backups/aw.bak'"
 	if got != want {
 		t.Errorf("BuildRestoreStatement =\n%q\nwant\n%q", got, want)
 	}
@@ -427,7 +427,7 @@ func TestBuildRestoreStatementFiles(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuildRestoreStatement: %v", err)
 	}
-	if !strings.HasPrefix(got, "RESTORE DATABASE [AppDB] FILE = N'AppDB_dat2'\nFROM ") {
+	if !strings.HasPrefix(got, fromMasterPrefix+"RESTORE DATABASE [AppDB] FILE = N'AppDB_dat2'\nFROM ") {
 		t.Errorf("(&Server{}).BuildRestoreStatement() = %q", got)
 	}
 	if strings.Contains(got, "RESTORE FILES") {
@@ -660,7 +660,7 @@ func TestBuildRestoreStatementRecoveryIsOneChoice(t *testing.T) {
 			}
 			continue
 		}
-		want := strings.ReplaceAll("RESTORE DATABASE [AppDB]\nFROM DISK = N'd.bak'"+c.want, `\n`, "\n")
+		want := fromMasterPrefix + strings.ReplaceAll("RESTORE DATABASE [AppDB]\nFROM DISK = N'd.bak'"+c.want, `\n`, "\n")
 		if err != nil || got != want {
 			t.Errorf("%s: got %q, %v; want %q", c.name, got, err, want)
 		}
@@ -689,7 +689,7 @@ func TestBuildRestoreStatementClosesConnectionsInTheSameBatch(t *testing.T) {
 	online := "EXISTS (SELECT 1 FROM sys.databases WHERE name = N'App''DB' AND state = 0 AND is_in_standby = 0)"
 	standby := "EXISTS (SELECT 1 FROM sys.databases WHERE name = N'App''DB' AND state = 0 AND is_in_standby = 1)"
 	stillSingle := "EXISTS (SELECT 1 FROM sys.databases WHERE name = N'App''DB' AND state = 0 AND is_in_standby = 0 AND user_access_desc = N'SINGLE_USER')"
-	want := "DECLARE @access nvarchar(60) = (SELECT user_access_desc FROM sys.databases WHERE name = N'App''DB');\n" +
+	want := fromMasterPrefix + "DECLARE @access nvarchar(60) = (SELECT user_access_desc FROM sys.databases WHERE name = N'App''DB');\n" +
 		"DECLARE @closed bit = 0;\n" +
 		"IF " + online + "\n" +
 		"BEGIN\n" +
@@ -720,7 +720,7 @@ func TestServerBuildRestoreStatementKillsSessionsOnAManagedInstance(t *testing.T
 	if err != nil {
 		t.Fatalf("BuildRestoreStatement: %v", err)
 	}
-	if !strings.HasPrefix(got, killDatabaseSessionsBatch("AppDB")+";\n") ||
+	if !strings.HasPrefix(got, fromMasterPrefix+killDatabaseSessionsBatch("AppDB")+";\n") ||
 		!strings.HasSuffix(got, "RESTORE DATABASE [AppDB]\nFROM DISK = N'd.bak';") {
 		t.Errorf("Managed Instance statement =\n%s\nwant the KILL batch then the RESTORE", got)
 	}
@@ -843,7 +843,7 @@ func TestBackupAndRestoreToALogicalDevice(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuildRestoreStatement: %v", err)
 	}
-	if want := "RESTORE DATABASE [AppDB]\nFROM [Nightly]]Dev]"; got != want {
+	if want := fromMasterPrefix + "RESTORE DATABASE [AppDB]\nFROM [Nightly]]Dev]"; got != want {
 		t.Errorf("restore = %q, want %q", got, want)
 	}
 }

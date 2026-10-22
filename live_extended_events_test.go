@@ -68,7 +68,7 @@ func dropXESessionAfter(t *testing.T, s *Server, db *sql.DB, name string) {
 func deleteXEFiles(t *testing.T, s *Server, db *sql.DB, name string) {
 	t.Helper()
 	ctx := context.Background()
-	files, err := s.EventFiles(ctx, name+"*.xel")
+	files, err := s.XEvents().Files(ctx, name+"*.xel")
 	if err != nil || len(files) == 0 {
 		if err != nil && !errors.Is(err, ErrUnsupported) {
 			t.Logf("cleanup: listing %s*.xel: %v", name, err)
@@ -94,7 +94,7 @@ SELECT CAST(CASE WHEN OBJECT_ID(N'master.sys.xp_delete_files') IS NULL THEN 0 EL
 			t.Logf("cleanup: delete %s: %v", f, err)
 		}
 	}
-	if left, err := s.EventFiles(ctx, name+"*.xel"); err == nil && len(left) > 0 {
+	if left, err := s.XEvents().Files(ctx, name+"*.xel"); err == nil && len(left) > 0 {
 		t.Logf("cleanup: left behind (no xp_delete_files, xp_cmdshell off): %q", left)
 	}
 }
@@ -162,9 +162,9 @@ func TestLiveEventSessionLifecycle(t *testing.T) {
 	if azure {
 		spec.Targets = spec.Targets[:1]
 	}
-	es, err := s.CreateEventSession(ctx, spec)
+	es, err := s.XEvents().CreateSession(ctx, spec)
 	if err != nil {
-		t.Fatalf("CreateEventSession: %v", err)
+		t.Fatalf("XEvents.CreateSession: %v", err)
 	}
 	if es.IsRunning || es.MaxDispatchLatency != time.Second || es.MaxMemory != 4096 ||
 		es.RetentionMode != XERetentionAllowSingleEventLoss || es.MemoryPartitionMode != XEPartitionNone {
@@ -249,10 +249,10 @@ func TestLiveEventSessionLifecycle(t *testing.T) {
 	want.Events = append(want.Events, SessionEvent{Package: "sqlserver", Name: "error_reported",
 		Predicate: fmt.Sprintf("([sqlserver].[session_id]=(%d))", spid)})
 	want.MaxDispatchLatency = 2 * time.Second
-	if err := s.EventSessionRef(name).Alter(ctx, want); err != nil {
+	if err := s.XEvents().SessionRef(name).Alter(ctx, want); err != nil {
 		t.Fatalf("Alter: %v", err)
 	}
-	got, err := s.EventSessionByName(ctx, name)
+	got, err := s.XEvents().SessionByName(ctx, name)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -276,7 +276,7 @@ func TestLiveEventSessionLifecycle(t *testing.T) {
 	if err := got.Drop(ctx); err != nil {
 		t.Fatalf("Drop: %v", err)
 	}
-	if _, err := s.EventSessionByName(ctx, name); !errors.Is(err, ErrNotFound) {
+	if _, err := s.XEvents().SessionByName(ctx, name); !errors.Is(err, ErrNotFound) {
 		t.Errorf("session still there after Drop: %v", err)
 	}
 }
@@ -292,8 +292,8 @@ func checkLiveEventFile(t *testing.T, s *Server, ctx context.Context, es *EventS
 	var evs []XEvent
 	var cur EventFileCursor
 	for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); time.Sleep(500 * time.Millisecond) {
-		if evs, cur, err = s.ReadEventFile(ctx, pattern, EventFileCursor{}, 0); err != nil {
-			t.Fatalf("ReadEventFile: %v", err)
+		if evs, cur, err = s.XEvents().ReadFile(ctx, pattern, EventFileCursor{}, 0); err != nil {
+			t.Fatalf("XEvents.ReadFile: %v", err)
 		}
 		if hasMarker(evs) {
 			break
@@ -302,9 +302,9 @@ func checkLiveEventFile(t *testing.T, s *Server, ctx context.Context, es *EventS
 	if !hasMarker(evs) || cur.IsZero() {
 		t.Fatalf("marker never reached the event file (%d events, cursor %+v)", len(evs), cur)
 	}
-	again, cur2, err := s.ReadEventFile(ctx, pattern, cur, 0)
+	again, cur2, err := s.XEvents().ReadFile(ctx, pattern, cur, 0)
 	if err != nil {
-		t.Fatalf("ReadEventFile from cursor: %v", err)
+		t.Fatalf("XEvents.ReadFile from cursor: %v", err)
 	}
 	if hasMarker(again) {
 		t.Errorf("a read from the cursor returned the marker again (%d events)", len(again))
@@ -328,13 +328,13 @@ func TestLiveEventSessionAlterOnlyEvent(t *testing.T) {
 		return SessionEvent{Package: "sqlserver", Name: "sql_batch_completed",
 			Predicate: fmt.Sprintf("([sqlserver].[session_id]=(%d))", spid)}
 	}
-	es, err := s.CreateEventSession(ctx, EventSessionSpec{
+	es, err := s.XEvents().CreateSession(ctx, EventSessionSpec{
 		Name:    name,
 		Events:  []SessionEvent{event(1)},
 		Targets: []SessionTarget{{Package: "package0", Name: XETargetRingBuffer}},
 	})
 	if err != nil {
-		t.Fatalf("CreateEventSession: %v", err)
+		t.Fatalf("XEvents.CreateSession: %v", err)
 	}
 
 	for i, running := range []bool{false, true} {
@@ -348,7 +348,7 @@ func TestLiveEventSessionAlterOnlyEvent(t *testing.T) {
 		if err := es.Alter(ctx, want); err != nil {
 			t.Fatalf("Alter (running %v): %v", running, err)
 		}
-		got, err := s.EventSessionByName(ctx, name)
+		got, err := s.XEvents().SessionByName(ctx, name)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -368,7 +368,7 @@ func TestLiveEventSessionScriptRoundTrip(t *testing.T) {
 	s, db, ctx := liveXEServer(t)
 	sc := NewServerScripter(s, ScriptOptions{})
 
-	health, err := s.EventSessionByName(ctx, "system_health")
+	health, err := s.XEvents().SessionByName(ctx, "system_health")
 	if err != nil {
 		t.Fatalf("system_health: %v", err)
 	}
@@ -389,7 +389,7 @@ func TestLiveEventSessionScriptRoundTrip(t *testing.T) {
 			}
 		}
 	}
-	if _, err := s.CreateEventSession(ctx, spec); err != nil {
+	if _, err := s.XEvents().CreateSession(ctx, spec); err != nil {
 		t.Fatalf("create system_health copy: %v", err)
 	}
 
@@ -397,7 +397,7 @@ func TestLiveEventSessionScriptRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ScriptEventSession: %v", err)
 	}
-	if err := s.EventSessionRef(name).Drop(ctx); err != nil {
+	if err := s.XEvents().SessionRef(name).Drop(ctx); err != nil {
 		t.Fatal(err)
 	}
 	for _, batch := range strings.Split(first, "\nGO\n") {
@@ -415,7 +415,7 @@ func TestLiveEventSessionScriptRoundTrip(t *testing.T) {
 	if first != second {
 		t.Errorf("script did not round-trip:\n%s\n---\n%s", first, second)
 	}
-	copied, err := s.EventSessionByName(ctx, name)
+	copied, err := s.XEvents().SessionByName(ctx, name)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -445,15 +445,15 @@ func TestLiveEventSessionScriptRoundTrip(t *testing.T) {
 func TestLiveXECatalog(t *testing.T) {
 	s, _, ctx := liveXEServer(t)
 
-	pkgs, err := s.XEPackages(ctx)
+	pkgs, err := s.XEvents().Packages(ctx)
 	if err != nil || !slices.ContainsFunc(pkgs, func(p XEPackage) bool { return p.Name == "package0" }) {
-		t.Errorf("XEPackages: %d, %v", len(pkgs), err)
+		t.Errorf("XEvents.Packages: %d, %v", len(pkgs), err)
 	}
 	if slices.ContainsFunc(pkgs, func(p XEPackage) bool { return p.Name == "SecAudit" }) {
 		t.Error("a private package was listed")
 	}
 
-	events, err := s.XEObjects(ctx, XEObjectEvent)
+	events, err := s.XEvents().Objects(ctx, XEObjectEvent)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -462,7 +462,7 @@ func TestLiveXECatalog(t *testing.T) {
 		t.Errorf("sql_batch_completed = %+v (of %d events)", events, len(events))
 	}
 
-	cols, err := s.XEObjectColumns(ctx, "package0", "event_file")
+	cols, err := s.XEvents().ObjectColumns(ctx, "package0", "event_file")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -472,13 +472,13 @@ func TestLiveXECatalog(t *testing.T) {
 		t.Errorf("event_file columns = %+v", cols)
 	}
 
-	waits, err := s.XEMapValues(ctx, "sqlos", "wait_types")
+	waits, err := s.XEvents().MapValues(ctx, "sqlos", "wait_types")
 	if err != nil || !slices.ContainsFunc(waits, func(v XEMapValue) bool { return v.Value == "WAITFOR" }) {
 		t.Errorf("wait_types: %d values, %v", len(waits), err)
 	}
 
 	// Every session on the instance reads, with its children.
-	all, err := s.EventSessions(ctx)
+	all, err := s.XEvents().Sessions(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -492,7 +492,7 @@ func TestLiveXECatalog(t *testing.T) {
 // throwaway name with a target added, checks the catalog reads it back as
 // written, starts it and sees a batch arrive — the templates' events, actions
 // and predicate are ones this server accepts. Then AddTarget on the running
-// session, EventFiles listing its file, and ReadEventFile refusing a cursor
+// session, XEvents.Files listing its file, and XEvents.ReadFile refusing a cursor
 // into a file that is not there as ErrEventFileGone.
 func TestLiveXEProfilerTemplates(t *testing.T) {
 	s, db, ctx := liveXEServer(t)
@@ -513,9 +513,9 @@ func TestLiveXEProfilerTemplates(t *testing.T) {
 			if azure {
 				spec.Targets = []SessionTarget{RingBufferTarget(0)}
 			}
-			es, err := s.CreateEventSession(ctx, spec)
+			es, err := s.XEvents().CreateSession(ctx, spec)
 			if err != nil {
-				t.Fatalf("CreateEventSession: %v", err)
+				t.Fatalf("XEvents.CreateSession: %v", err)
 			}
 			want := &EventSession{Name: spec.Name, Events: spec.Events, Targets: spec.Targets,
 				RetentionMode: spec.RetentionMode, MaxDispatchLatency: time.Second, MaxMemory: spec.MaxMemory,
@@ -557,9 +557,9 @@ func TestLiveXEProfilerTemplates(t *testing.T) {
 			checkLiveEventFile(t, s, ctx, es, hasMarker)
 
 			pattern, _ := es.EventFilePattern()
-			files, err := s.EventFiles(ctx, pattern)
+			files, err := s.XEvents().Files(ctx, pattern)
 			if err != nil {
-				t.Fatalf("EventFiles: %v", err)
+				t.Fatalf("XEvents.Files: %v", err)
 			}
 			st, err := es.Status(ctx)
 			if err != nil {
@@ -572,18 +572,18 @@ func TestLiveXEProfilerTemplates(t *testing.T) {
 				}
 			}
 			if len(files) == 0 || !strings.EqualFold(files[len(files)-1], current) {
-				t.Errorf("EventFiles = %q, want the current file %q last", files, current)
+				t.Errorf("XEvents.Files = %q, want the current file %q last", files, current)
 			}
 
 			gone := EventFileCursor{File: current[:len(current)-4] + "9.xel", Offset: 84480}
-			if _, _, err := s.ReadEventFile(ctx, pattern, gone, 0); !errors.Is(err, ErrEventFileGone) {
+			if _, _, err := s.XEvents().ReadFile(ctx, pattern, gone, 0); !errors.Is(err, ErrEventFileGone) {
 				t.Errorf("a cursor into a missing file: %v, want ErrEventFileGone", err)
 			}
 
 			if err := es.AddTarget(ctx, RingBufferTarget(1024)); err != nil {
 				t.Fatalf("AddTarget on a running session: %v", err)
 			}
-			got, err := s.EventSessionByName(ctx, tc.name)
+			got, err := s.XEvents().SessionByName(ctx, tc.name)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -601,7 +601,7 @@ func TestLiveXEProfilerTemplates(t *testing.T) {
 // the dialog leaves such events out.
 func TestLiveXESessionTemplates(t *testing.T) {
 	s, db, ctx := liveXEServer(t)
-	events, err := s.XEObjects(ctx, XEObjectEvent)
+	events, err := s.XEvents().Objects(ctx, XEObjectEvent)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -616,9 +616,9 @@ func TestLiveXESessionTemplates(t *testing.T) {
 			}
 			dropXESessionAfter(t, s, db, name)
 			spec.Name = name
-			es, err := s.CreateEventSession(ctx, spec)
+			es, err := s.XEvents().CreateSession(ctx, spec)
 			if err != nil {
-				t.Fatalf("CreateEventSession: %v", err)
+				t.Fatalf("XEvents.CreateSession: %v", err)
 			}
 			want := &EventSession{Name: name, Events: spec.Events, Targets: spec.Targets,
 				RetentionMode: spec.RetentionMode, MaxDispatchLatency: spec.MaxDispatchLatency, MaxMemory: spec.MaxMemory,

@@ -99,8 +99,8 @@ func secretWrites() []secretWrite {
 		{"AddSignature", []string{pw("sig")}, func(ctx context.Context, s *Server) error {
 			return db(s).StoredProcedureRef("dbo", "p").AddSignature(ctx, Signer{Kind: SignerCertificate, Name: "c", Password: pw("sig")}, PlainSignature)
 		}},
-		{"CreateMailAccount", []string{pw("mail")}, func(ctx context.Context, s *Server) error {
-			return errOnly(s.CreateMailAccount(ctx, CreateMailAccountRequest{Name: "a", EmailAddress: "a@b", ServerName: "x",
+		{"Mail.CreateAccount", []string{pw("mail")}, func(ctx context.Context, s *Server) error {
+			return errOnly(s.Mail().CreateAccount(ctx, CreateMailAccountRequest{Name: "a", EmailAddress: "a@b", ServerName: "x",
 				Credentials: MailCredentials{Authentication: MailAuthBasic, UserName: "u", Password: pw("mail")}}))
 		}},
 	}

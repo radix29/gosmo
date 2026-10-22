@@ -23,8 +23,8 @@ import (
 // (sys.database_event_sessions, ON DATABASE), with the same shape under
 // different view names. An EventSession carries its scope — Database() is nil
 // for a server-scoped one — and every read and write picks its views and its
-// ON clause from it (xeScope). Server.EventSessions lists the server's,
-// Database.EventSessions a database's.
+// ON clause from it (xeScope). s.XEvents().Sessions lists the server's,
+// d.XEvents().Sessions a database's.
 //
 // # Permissions
 //
@@ -235,45 +235,53 @@ func (es *EventSession) exec(ctx context.Context, stmt string) error {
 
 // -- Lookups --------------------------------------------------------------------
 
-// EventSessions returns every server-scoped event session, with its events
+// XEvents is Extended Events in one scope: a server's sessions, or — from
+// Database.XEvents — an Azure SQL Database's database-scoped ones, plus the
+// server's catalog of what a session can collect and its event-file reader.
+// It is a value handle and issues no query of its own, so XEvents() is free
+// and never fails. Only the session methods follow the scope; the catalog and
+// event-file reads are always the server's.
+type XEvents struct {
+	server *Server
+	db     *Database // nil for the server scope
+}
+
+// XEvents returns the handle to the server's Extended Events.
+func (s *Server) XEvents() XEvents { return XEvents{server: s} }
+
+// XEvents returns the handle to the database's Extended Events — Azure SQL
+// Database's database-scoped sessions. Off Azure the session views do not
+// exist, and every session read and write through it refuses with an
+// ErrUnsupportedVersion error.
+func (d *Database) XEvents() XEvents { return XEvents{server: d.server, db: d} }
+
+// Server returns the server the handle reads through.
+func (x XEvents) Server() *Server { return x.server }
+
+// Database returns the database of a database-scoped handle, nil for the
+// server's.
+func (x XEvents) Database() *Database { return x.db }
+
+// Sessions returns every event session of the handle's scope, with its events
 // and targets, ordered by name.
-func (s *Server) EventSessions(ctx context.Context) ([]*EventSession, error) {
-	return readEventSessions(ctx, s.EventSessionRef(""), "")
+func (x XEvents) Sessions(ctx context.Context) ([]*EventSession, error) {
+	return readEventSessions(ctx, x.SessionRef(""), "")
 }
 
-// EventSessionByName returns one server-scoped event session with every field
-// populated, or a not-found error (errors.Is ErrNotFound).
-func (s *Server) EventSessionByName(ctx context.Context, name string) (*EventSession, error) {
-	return eventSessionByName(ctx, s.EventSessionRef(name))
-}
-
-// EventSessionRef returns a lightweight handle for a server-scoped event
-// session by name, without querying the catalog — the session-side
-// counterpart of Server.DatabaseRef. Every cached field stays at its zero
-// value (IsRunning is false whatever the server says); EventSessionByName is
-// what populates them. Every write addresses the session by name, so the
-// handle is enough to start, stop, alter or drop one.
-func (s *Server) EventSessionRef(name string) *EventSession {
-	return &EventSession{server: s, Name: name}
-}
-
-// EventSessions returns the database's database-scoped event sessions — Azure
-// SQL Database's kind. Off Azure the views do not exist, and this (like every
-// database-scoped read and write) refuses with an ErrUnsupportedVersion error.
-func (d *Database) EventSessions(ctx context.Context) ([]*EventSession, error) {
-	return readEventSessions(ctx, d.EventSessionRef(""), "")
-}
-
-// EventSessionByName returns one database-scoped event session, or a
+// SessionByName returns one event session with every field populated, or a
 // not-found error (errors.Is ErrNotFound).
-func (d *Database) EventSessionByName(ctx context.Context, name string) (*EventSession, error) {
-	return eventSessionByName(ctx, d.EventSessionRef(name))
+func (x XEvents) SessionByName(ctx context.Context, name string) (*EventSession, error) {
+	return eventSessionByName(ctx, x.SessionRef(name))
 }
 
-// EventSessionRef returns a lookup-free handle for a database-scoped event
-// session, as Server.EventSessionRef does for a server-scoped one.
-func (d *Database) EventSessionRef(name string) *EventSession {
-	return &EventSession{server: d.server, db: d, Name: name}
+// SessionRef returns a lightweight handle for an event session by name, in the
+// handle's scope, without querying the catalog — the session-side counterpart
+// of Server.DatabaseRef. Every cached field stays at its zero value (IsRunning
+// is false whatever the server says); SessionByName is what populates them.
+// Every write addresses the session by name, so the handle is enough to start,
+// stop, alter or drop one.
+func (x XEvents) SessionRef(name string) *EventSession {
+	return &EventSession{server: x.server, db: x.db, Name: name}
 }
 
 func eventSessionByName(ctx context.Context, ref *EventSession) (*EventSession, error) {
@@ -547,15 +555,20 @@ ORDER  BY t.target_name`, sc.dmSessions, sc.dmTargets), es.Name)
 
 // -- What can be collected --------------------------------------------------------
 
-// XE object kinds, as sys.dm_xe_objects.object_type records them.
+// XEObjectKind is an XE object kind, as sys.dm_xe_objects.object_type records
+// it. It is not validated: a kind with no constant here passes through to
+// XEvents.Objects, and comes back from it, as the server spells it.
+type XEObjectKind string
+
+// XE object kinds.
 const (
-	XEObjectEvent       = "event"
-	XEObjectAction      = "action"
-	XEObjectTarget      = "target"
-	XEObjectPredSource  = "pred_source"
-	XEObjectPredCompare = "pred_compare"
-	XEObjectMap         = "map"
-	XEObjectType        = "type"
+	XEObjectEvent       XEObjectKind = "event"
+	XEObjectAction      XEObjectKind = "action"
+	XEObjectTarget      XEObjectKind = "target"
+	XEObjectPredSource  XEObjectKind = "pred_source"
+	XEObjectPredCompare XEObjectKind = "pred_compare"
+	XEObjectMap         XEObjectKind = "map"
+	XEObjectType        XEObjectKind = "type"
 )
 
 // XEPackage is a row of sys.dm_xe_packages.
@@ -571,7 +584,7 @@ type XEPackage struct {
 type XEObject struct {
 	Package      string
 	Name         string
-	Kind         string // an XEObject* constant
+	Kind         XEObjectKind
 	Description  string
 	Capabilities string // capabilities_desc
 
@@ -651,9 +664,10 @@ func xeCached[T any](s *Server, key string, load func() ([]T, error)) ([]T, erro
 	return slices.Clone(out), nil
 }
 
-// XEPackages returns the non-private XE packages. The answer is cached on the
+// Packages returns the non-private XE packages. The answer is cached on the
 // Server — see xeCatalogCache.
-func (s *Server) XEPackages(ctx context.Context) ([]XEPackage, error) {
+func (x XEvents) Packages(ctx context.Context) ([]XEPackage, error) {
+	s := x.server
 	return xeCached(s, "packages", func() ([]XEPackage, error) {
 		rows, err := s.query(ctx, `
 SELECT name, CONVERT(varchar(36), guid), ISNULL(description, N''), ISNULL(capabilities_desc, N'')
@@ -668,8 +682,7 @@ ORDER  BY name`)
 	})
 }
 
-// XEObjects returns the non-private objects of one kind (an XEObject*
-// constant), ordered by package and name — for events, with their channel and
+// Objects returns the non-private objects of one kind, ordered by package and name — for events, with their channel and
 // keyword. Private objects and those of private packages are left out, as
 // SSMS leaves them out: the engine refuses to add them to a session. Cached
 // per Server.
@@ -680,8 +693,9 @@ ORDER  BY name`)
 // The DMVs have no indexes, and the optimizer's nested loops over them took
 // 7 s for the event list; OPTION (HASH JOIN) takes 0.4 s (major 17,
 // 2026-09-29).
-func (s *Server) XEObjects(ctx context.Context, kind string) ([]XEObject, error) {
-	return xeCached(s, "objects:"+kind, func() ([]XEObject, error) {
+func (x XEvents) Objects(ctx context.Context, kind XEObjectKind) ([]XEObject, error) {
+	s := x.server
+	return xeCached(s, "objects:"+string(kind), func() ([]XEObject, error) {
 		rows, err := s.query(ctx, `
 SELECT p.name, o.name, o.object_type, ISNULL(o.description, N''),
        ISNULL(o.capabilities_desc, N''),
@@ -704,7 +718,7 @@ WHERE  o.object_type = @p1
   AND  ISNULL(o.capabilities, 0) & 1 = 0
   AND  ISNULL(p.capabilities, 0) & 1 = 0
 ORDER  BY p.name, o.name
-OPTION (HASH JOIN)`, kind)
+OPTION (HASH JOIN)`, string(kind))
 		return scanRows(rows, err, fmt.Sprintf("list XE %s objects", kind), func(scan func(...any) error) (XEObject, error) {
 			var o XEObject
 			err := scan(&o.Package, &o.Name, &o.Kind, &o.Description, &o.Capabilities, &o.Channel, &o.Keyword, &o.TypeName)
@@ -713,11 +727,12 @@ OPTION (HASH JOIN)`, kind)
 	})
 }
 
-// XEObjectColumns returns an object's columns — an event's fields (data and
+// ObjectColumns returns an object's columns — an event's fields (data and
 // customizable) or a target's parameters with their defaults — ordered by
-// column id. pkg and object name the object as XEObjects returns it; where
+// column id. pkg and object name the object as XEvents.Objects returns it; where
 // several same-named packages define it, the first is used. Cached per Server.
-func (s *Server) XEObjectColumns(ctx context.Context, pkg, object string) ([]XEObjectColumn, error) {
+func (x XEvents) ObjectColumns(ctx context.Context, pkg, object string) ([]XEObjectColumn, error) {
+	s := x.server
 	return xeCached(s, "columns:"+pkg+"."+object, func() ([]XEObjectColumn, error) {
 		rows, err := s.query(ctx, `
 SELECT c.name, c.column_id, c.type_name, c.column_type, ISNULL(c.column_value, N''),
@@ -740,11 +755,12 @@ ORDER  BY c.column_id`, pkg, object)
 	})
 }
 
-// XEMapValues returns one map's key/text pairs, ordered by key. Map names
+// MapValues returns one map's key/text pairs, ordered by key. Map names
 // repeat across packages (a dozen define keyword_map), so pkg picks one; a
 // map-typed event field's type_package is the package to pass. Cached per
 // Server.
-func (s *Server) XEMapValues(ctx context.Context, pkg, name string) ([]XEMapValue, error) {
+func (x XEvents) MapValues(ctx context.Context, pkg, name string) ([]XEMapValue, error) {
+	s := x.server
 	return xeCached(s, "map:"+pkg+"."+name, func() ([]XEMapValue, error) {
 		rows, err := s.query(ctx, `
 SELECT DISTINCT m.map_key, m.map_value

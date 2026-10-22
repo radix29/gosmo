@@ -174,6 +174,19 @@ exercise the write, drop them; never mutate pre-existing objects.
   `Table.Name`, `Database.State`). Only derivations (`Database.IsSystem`,
   `IsSnapshot`) and back-pointers stay methods. Don't add an accessor over a
   scanned field.
+- **A whole feature behind a shared name prefix is a facet**, not a run of
+  prefixed methods on `Database`/`Server`: a value handle holding only the
+  parent, returned by a no-context, no-I/O method named for the feature, whose
+  methods drop the prefix — `d.QueryStore().TopResourceQueries(ctx, opts)`,
+  not `d.QueryStoreTopResourceQueries`. A facet changes nothing about
+  lookups, `Ref` semantics or `WithScript`; its result and option types keep
+  their names (`QSQueryStat`). Three exist: `d.QueryStore()` (the pilot,
+  2026-10-22), `s.Mail()` and `XEvents()` — on both `Server` and `Database`,
+  one type whose session methods follow the scope it came from, the way
+  `EventSession` does. Agent (`Jobs`, `Alerts`, …) reads well unprefixed and
+  stays on `Server`. A facet type holding a `ctx`-only read is
+  pointed at by `reflectSweep` in `live_versionsweep_test.go`, and its
+  `ctx`-only writes go in `sweepSkip`.
 - **Every type holding a parent exposes it** as `Database() *Database` or
   `Server() *Server` — one line, no context, never another name (`Server.DB()`
   is the `*sql.DB` pool). `parent_accessor_wiring_test.go` enforces it;
@@ -192,12 +205,12 @@ exercise the write, drop them; never mutate pre-existing objects.
     backup-device/AG families, `ServerRoleRef`, `UserRef`, `StatisticRef`,
     `IndexRef`, `ConfigurationRef`, `CertificateRef`, `AsymmetricKeyRef`,
     `FileRef`, `FileGroupRef`, `CategoryRef`,
-    `SymmetricKeyRef`, `EventSessionRef` (server and database), the schema,
+    `SymmetricKeyRef`, `XEvents.SessionRef` (server and database), the schema,
     sequence, synonym, rule, default, three type,
     XML schema collection, partition, Always Encrypted key, assembly, `RoleRef`,
     external-resource and Service Broker families, and `ViewRef`,
     `StoredProcedureRef`, `UserDefinedFunctionRef`, `TriggerRef`, the three
-    Resource Governor families, `MailAccountRef`, `MailProfileRef` and the
+    Resource Governor families, `Mail.AccountRef`, `Mail.ProfileRef` and the
     four full-text ones (`FullTextCatalogRef`, `FullTextStoplistRef`,
     `SearchPropertyListRef`, `Table.FullTextIndexRef`). Two
     singletons have a handle with no name: `MasterKeyRef` and

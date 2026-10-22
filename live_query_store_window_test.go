@@ -37,7 +37,7 @@ WHERE OBJECT_NAME(q.object_id) = 'qs_probe_read'`); err != nil {
 		Metric: QSMetricCPUTime, From: first.Add(time.Millisecond), To: time.Now().Add(time.Hour),
 	}
 
-	top, err := d.QueryStoreTopResourceQueries(ctx, opts)
+	top, err := d.QueryStore().TopResourceQueries(ctx, opts)
 	if err != nil {
 		t.Fatalf("top resource queries: %v", err)
 	}
@@ -51,7 +51,7 @@ WHERE OBJECT_NAME(q.object_id) = 'qs_probe_read'`); err != nil {
 		t.Errorf("probe ExecCount = %d with From inside its first interval, want all 40 executions", execs)
 	}
 
-	intervals, err := d.QueryStoreOverallConsumption(ctx, opts)
+	intervals, err := d.QueryStore().OverallConsumption(ctx, opts)
 	if err != nil {
 		t.Fatalf("overall consumption: %v", err)
 	}
@@ -76,7 +76,7 @@ WHERE OBJECT_NAME(q.object_id) = 'qs_probe_read'`); err != nil {
 		t.Fatalf("probe query id: %v", err)
 	}
 	now := time.Now()
-	plans, err := d.QueryStorePlans(ctx, queryID, QueryStoreReportOptions{
+	plans, err := d.QueryStore().Plans(ctx, queryID, QueryStoreReportOptions{
 		Metric: QSMetricCPUTime, From: now.Add(-48 * time.Hour), To: now.Add(-24 * time.Hour),
 	})
 	if err != nil {

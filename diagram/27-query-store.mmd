@@ -1,0 +1,159 @@
+classDiagram
+
+    %% =========================================================
+    %% Query Store: the facet, its options, and its reports
+    %% =========================================================
+
+    class QueryStore {
+        <<facet>>
+        +Database() *Database
+        +Options() *QueryStoreInfo
+        +SetOptions(opts) error
+        +Flush() error
+        +Clear() error
+        +TopResourceQueries(opts) []*QSQueryStat
+        +RegressedQueries(opts) []*QSQueryStat
+        +HighVariationQueries(opts) []*QSQueryStat
+        +ForcedPlanQueries(opts) []*QSQueryStat
+        +OverallConsumption(opts) []*QSIntervalStat
+        +TrackedQuery(queryID, opts) []*QSPlanIntervalStat
+        +WaitCategories(opts) []*QSWaitStat
+        +WaitingQueries(category QSWaitCategory, opts) []*QSQueryStat
+        +Plans(queryID, opts) []*QSPlan
+        +QueryText(queryID) (string, string)
+        +ForcePlan(queryID, planID) error
+        +UnforcePlan(queryID, planID) error
+        +Metrics() []QSMetric
+        +WaitStatsSupported() bool
+    }
+
+    class QueryStoreInfo {
+        +DesiredState QueryStoreState
+        +ActualState QueryStoreState
+        +ReadOnlyReason int
+        +CurrentStorageMB int64
+        +MaxStorageMB int64
+        +CaptureMode QueryStoreCaptureMode
+        +SizeCleanupMode QueryStoreCleanupMode
+        +StaleThresholdDays int
+        +WaitStatsCaptureMode QueryStoreWaitStatsMode
+    }
+
+    class QueryStoreReportOptions {
+        +Metric QSMetric
+        +Statistic QSStatistic
+        +From time.Time
+        +To time.Time
+        +BaselineFrom time.Time
+        +BaselineTo time.Time
+        +Top int
+        +MinExecCount int64
+        +QueryIDs []int64
+        +MinRegressionPct float64
+        +IncludeInternal bool
+    }
+
+    class QSMetric {
+        <<enumeration>>
+        QSMetricDuration
+        QSMetricCPUTime
+        QSMetricLogicalReads
+        QSMetricLogicalWrites
+        QSMetricPhysicalReads
+        QSMetricCLRTime
+        QSMetricDOP
+        QSMetricMemory
+        QSMetricRowCount
+        QSMetricLogMemory
+        QSMetricTempDBMemory
+    }
+
+    class QSStatistic {
+        <<enumeration>>
+        QSStatAvg
+        QSStatMin
+        QSStatMax
+        QSStatTotal
+        QSStatStdDev
+    }
+
+    class QSUnit {
+        <<enumeration>>
+        QSUnitCount
+        QSUnitMicroseconds
+        QSUnitPages
+        QSUnitBytes
+        QSUnitMilliseconds
+        Query Store stores raw engine units.
+        QSMetricUnit(m) reports which.
+    }
+
+    class QSQueryStat {
+        +QueryID int64
+        +QueryText string
+        +ObjectName string
+        +ExecCount int64
+        +PlanCount int
+        +ForcedPlanID int64
+        +LastExecutionTime time.Time
+        +Value float64
+        +BaselineValue float64
+        +Regression float64
+        +Variation float64
+    }
+
+    class QSPlan {
+        +PlanID int64
+        +QueryID int64
+        +IsForced bool
+        +ForceFailureCount int64
+        +LastForceFailureReason string
+        +QueryPlanXML string
+        +ExecCount int64
+        +Value float64
+    }
+
+    class QSIntervalStat {
+        +StartTime time.Time
+        +EndTime time.Time
+        +ExecCount int64
+        +Value float64
+    }
+
+    class QSPlanIntervalStat {
+        +PlanID int64
+        +StartTime time.Time
+        +EndTime time.Time
+        +ExecCount int64
+        +Value float64
+    }
+
+    class QSWaitStat {
+        +Category QSWaitCategory
+        +ExecCount int64
+        +Value float64
+    }
+
+    class QSWaitCategory {
+        <<enumeration>>
+        QSWaitAllCategories
+        QSWaitCPU
+        QSWaitLock
+        QSWaitBufferIO
+        one constant per documented wait_category_desc, unknown ones passed through
+    }
+
+    %% =========================================================
+    %% Relationships
+    %% =========================================================
+    Database --> QueryStore : QueryStore()
+    QueryStore --> QueryStoreInfo : has
+    QueryStore --> QSQueryStat : reports
+    QueryStore --> QSPlan : reports
+    QueryStore --> QSIntervalStat : reports
+    QueryStore --> QSPlanIntervalStat : reports
+    QueryStore --> QSWaitStat : reports
+    QueryStoreReportOptions --> QSMetric : ranks by
+    QueryStoreReportOptions --> QSStatistic : aggregated with
+    QSMetric ..> QSUnit : measured in
+    QSWaitStat --> QSWaitCategory : grouped by

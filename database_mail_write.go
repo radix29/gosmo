@@ -20,13 +20,13 @@ import (
 // authentication stores its password as a server credential, so creating
 // one, or changing its user name or password, also needs ALTER ANY
 // CREDENTIAL (Msg 15247), which CONTROL SERVER implies and db_owner does not.
-// A DatabaseMailUserRole member can SendMail through a profile granted to
-// it and DeleteMailItems its own items; nothing else.
+// A DatabaseMailUserRole member can Mail.Send through a profile granted to
+// it and Mail.DeleteItems its own items; nothing else.
 //
 // # 'Database Mail XPs'
 //
 // With the option at 0 every configuration write here still works; only
-// StartDatabaseMail, StopDatabaseMail and SendMail are refused (Msg
+// Mail.Start, Mail.Stop and Mail.Send are refused (Msg
 // 15281).
 //
 // # What the procedures do that a caller would not guess
@@ -178,15 +178,16 @@ type CreateMailAccountRequest struct {
 	Credentials MailCredentials
 }
 
-// MailAccountRef returns a handle for a Database Mail account by name,
-// without reading msdb. Every field but Name is zero; MailAccountByName is
+// AccountRef returns a handle for a Database Mail account by name,
+// without reading msdb. Every field but Name is zero; Mail.AccountByName is
 // what populates them. Alter and Drop address the account by name, so the
 // handle is enough for both.
-func (s *Server) MailAccountRef(name string) *MailAccount {
+func (dm Mail) AccountRef(name string) *MailAccount {
+	s := dm.server
 	return &MailAccount{server: s, Name: name}
 }
 
-// mailAccountCreateStmts renders CreateMailAccount's statements: each to
+// mailAccountCreateStmts renders Mail.CreateAccount's statements: each to
 // run, and as shown (password replaced).
 func mailAccountCreateStmts(req CreateMailAccountRequest) (run, shown []string) {
 	var r, sh procArgs
@@ -215,11 +216,12 @@ func mailAccountCreateStmts(req CreateMailAccountRequest) (run, shown []string) 
 	return run, shown
 }
 
-// CreateMailAccount creates a Database Mail account and returns it read
-// back, or, under Scripting(ctx), the MailAccountRef handle. With Basic
+// CreateAccount creates a Database Mail account and returns it read
+// back, or, under Scripting(ctx), the Mail.AccountRef handle. With Basic
 // authentication the password is stored as a server credential, which needs
 // ALTER ANY CREDENTIAL besides the msdb rights.
-func (s *Server) CreateMailAccount(ctx context.Context, req CreateMailAccountRequest) (*MailAccount, error) {
+func (dm Mail) CreateAccount(ctx context.Context, req CreateMailAccountRequest) (*MailAccount, error) {
+	s := dm.server
 	switch {
 	case strings.TrimSpace(req.Name) == "":
 		return nil, invalidf("gosmo: create mail account: account has no name")
@@ -245,8 +247,8 @@ func (s *Server) CreateMailAccount(ctx context.Context, req CreateMailAccountReq
 	if err != nil {
 		return nil, fmt.Errorf("gosmo: create mail account %q: %w", req.Name, err)
 	}
-	return createdObject(ctx, s.MailAccountRef(req.Name), func() (*MailAccount, error) {
-		return s.MailAccountByName(ctx, req.Name)
+	return createdObject(ctx, s.Mail().AccountRef(req.Name), func() (*MailAccount, error) {
+		return s.Mail().AccountByName(ctx, req.Name)
 	})
 }
 
@@ -388,25 +390,27 @@ type CreateMailProfileRequest struct {
 	Description string
 }
 
-// MailProfileRef returns a handle for a Database Mail profile by name,
-// without reading msdb. Every field but Name is zero; MailProfileByName is
+// ProfileRef returns a handle for a Database Mail profile by name,
+// without reading msdb. Every field but Name is zero; Mail.ProfileByName is
 // what populates them. Every write addresses the profile by name, so the
 // handle is enough for all of them.
-func (s *Server) MailProfileRef(name string) *MailProfile {
+func (dm Mail) ProfileRef(name string) *MailProfile {
+	s := dm.server
 	return &MailProfile{server: s, Name: name}
 }
 
-// CreateMailProfile creates a Database Mail profile and returns it read
-// back, or, under Scripting(ctx), the MailProfileRef handle.
-func (s *Server) CreateMailProfile(ctx context.Context, req CreateMailProfileRequest) (*MailProfile, error) {
+// CreateProfile creates a Database Mail profile and returns it read
+// back, or, under Scripting(ctx), the Mail.ProfileRef handle.
+func (dm Mail) CreateProfile(ctx context.Context, req CreateMailProfileRequest) (*MailProfile, error) {
+	s := dm.server
 	if strings.TrimSpace(req.Name) == "" {
 		return nil, invalidf("gosmo: create mail profile: profile has no name")
 	}
 	if _, err := s.exec(ctx, mailProfileCreateStmt(req.Name, req.Description)); err != nil {
 		return nil, fmt.Errorf("gosmo: create mail profile %q: %w", req.Name, err)
 	}
-	return createdObject(ctx, s.MailProfileRef(req.Name), func() (*MailProfile, error) {
-		return s.MailProfileByName(ctx, req.Name)
+	return createdObject(ctx, s.Mail().ProfileRef(req.Name), func() (*MailProfile, error) {
+		return s.Mail().ProfileByName(ctx, req.Name)
 	})
 }
 

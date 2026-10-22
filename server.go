@@ -23,7 +23,11 @@ import (
 type Server struct {
 	db   *sql.DB
 	info *ServerInfo
-	xe   xeCatalogCache // XEObjects & co., filled on first use
+	xe   xeCatalogCache // XEvents.Objects & co., filled on first use
+
+	// login is the pool's connector when Connect opened it, nil for
+	// NewServer; see InitialDatabase.
+	login *retargetingConnector
 
 	// ctx is the Server's lifetime, cancelled by Close. Every statement gosmo
 	// runs is bounded by it as well as by the caller's ctx (see bound): closing
@@ -166,6 +170,27 @@ func (s *Server) CurrentLogin(ctx context.Context) (string, error) {
 // forced drop that led with it failed before reaching the DROP at all.
 func (s *Server) refusesSingleUser() bool {
 	return s.info != nil && EngineEdition(s.info.EngineEdition) == EngineAzureManagedInst
+}
+
+// fromMaster prefixes stmt with USE [master] in the same batch, for a
+// statement that fails while the session issuing it is in the database it
+// names. A pooled connection is reset on checkout to the DSN's database
+// (ConnectionOptions.Database), so with a connection opened on Sales, a DROP
+// DATABASE [Sales] ran from inside Sales and failed Msg 3702 — even after
+// SET SINGLE_USER, which makes the executing session the single user, and
+// killDatabaseSessionsBatch skips @@SPID. The USE lasts only until the pool
+// resets the connection again (a server-scope GRANT does the same, see
+// Server.ApplyPermission), and
+// it is what makes the captured script runnable from a query window sitting in
+// the database, as SSMS's own scripts are.
+//
+// Probed on 17 and 13 from a session in the database (2026-10-22): DROP
+// DATABASE (3702), RESTORE from a backup or a snapshot (3102) and
+// sp_detach_db (3703) fail there; ALTER DATABASE … MODIFY NAME, SET
+// OFFLINE, SET READ_ONLY and MODIFY FILEGROUP … READ_ONLY succeed, and are
+// sent as they are.
+func fromMaster(stmt string) string {
+	return "USE [master];\n" + stmt
 }
 
 // killDatabaseSessionsBatch KILLs every other user session in the database

@@ -234,7 +234,7 @@ func main() {
 
 	// -- Query Store -------------------------------------------------------
 	demo.Section("Query Store")
-	demo.Must(db.SetQueryStoreOptions(ctx, gosmo.QueryStoreOptions{
+	demo.Must(db.QueryStore().SetOptions(ctx, gosmo.QueryStoreOptions{
 		DesiredState:         "READ_WRITE",
 		MaxStorageMB:         256,
 		CaptureMode:          "AUTO",
@@ -245,12 +245,12 @@ func main() {
 		MaxPlansPerQuery:     200,
 		WaitStatsCaptureMode: "ON",
 	}))
-	qs := demo.Value(db.QueryStore(ctx))
+	qs := demo.Value(db.QueryStore().Options(ctx))
 	fmt.Printf("  desired=%s actual=%s storage=%d/%d MB capture=%s wait_stats=%s\n",
 		qs.DesiredState, qs.ActualState, qs.CurrentStorageMB, qs.MaxStorageMB,
 		qs.CaptureMode, qs.WaitStatsCaptureMode)
-	demo.Must(db.FlushQueryStore(ctx))
-	demo.Must(db.ClearQueryStore(ctx))
+	demo.Must(db.QueryStore().Flush(ctx))
+	demo.Must(db.QueryStore().Clear(ctx))
 	fmt.Println("  flushed and cleared")
 
 	// -- Server-wide storage ------------------------------------------------

@@ -5,6 +5,33 @@ classDiagram
     %% database_mail_write.go writes, scripter_database_mail.go scripts)
     %% =========================================================
 
+    class Mail {
+        <<facet>>
+        +Server() *Server
+        +Accounts() []*MailAccount
+        +AccountByName(name) *MailAccount
+        +AccountRef(name) *MailAccount
+        +CreateAccount(req) *MailAccount
+        +Profiles() []*MailProfile
+        +ProfileByName(name) *MailProfile
+        +ProfileRef(name) *MailProfile
+        +CreateProfile(req) *MailProfile
+        +PrincipalProfiles() []*MailPrincipalProfile
+        +Configuration() *MailConfiguration
+        +SetConfiguration(opts) error
+        +Status() MailState
+        +Start() error
+        +Stop() error
+        +Queues() []*MailQueue
+        +Visibility() MailVisibility
+        +Items(filter) []*MailItem
+        +ItemByID(id) *MailItem
+        +DeleteItems(before, status) error
+        +Events(filter) []*MailEvent
+        +DeleteLog(before, eventType) error
+        +Send(MailMessage) int
+    }
+
     class MailAccount {
         -server *Server
         +AccountID int
@@ -116,22 +143,24 @@ classDiagram
         +AccountID int
     }
 
-    Server "1" --> "*" MailAccount : MailAccounts / MailAccountByName
-    Server "1" --> "*" MailProfile : MailProfiles / MailProfileByName
+    Server --> Mail : Mail()
+    Mail "1" --> "*" MailAccount : Accounts / AccountByName
+    Mail "1" --> "*" MailProfile : Profiles / ProfileByName
     MailProfile *-- MailProfileAccount : Accounts
     MailProfileAccount --> MailAccount : AccountID
-    Server "1" --> "*" MailPrincipalProfile : MailPrincipalProfiles
+    Mail "1" --> "*" MailPrincipalProfile : PrincipalProfiles
     MailPrincipalProfile --> MailProfile : ProfileID
-    Server ..> MailConfiguration : MailConfiguration
-    Server ..> MailState : MailStatus
-    Server ..> MailQueue : MailQueues
-    Server ..> MailItem : MailItems(MailItemFilter) / MailItemByID
-    Server ..> MailEvent : MailEvents(MailEventFilter)
+    Mail ..> MailConfiguration : Configuration
+    Mail ..> MailState : Status
+    Mail ..> MailQueue : Queues
+    Mail ..> MailItem : Items(MailItemFilter) / ItemByID
+    Mail ..> MailEvent : Events(MailEventFilter)
     MailEvent --> MailItem : MailItemID
-    Server ..> MailAccount : CreateMailAccount / MailAccountRef
-    Server ..> MailProfile : CreateMailProfile / MailProfileRef
+    Mail ..> MailAccount : CreateAccount / AccountRef
+    Mail ..> MailProfile : CreateProfile / ProfileRef
     MailAccount ..> MailCredentials : CreateMailAccountRequest / MailAccountOptions
-    Server ..> MailConfiguration : SetMailConfiguration(MailConfigurationOptions)
-    Server ..> MailState : StartDatabaseMail / StopDatabaseMail
-    Server ..> MailItem : SendMail(MailMessage) → mailitem_id / DeleteMailItems
-    Server ..> MailEvent : DeleteMailLog / ReadLog(ErrorLogDatabaseMail)
+    Mail ..> MailConfiguration : SetConfiguration(MailConfigurationOptions)
+    Mail ..> MailState : Start / Stop
+    Mail ..> MailItem : Send(MailMessage) → mailitem_id / DeleteItems
+    Mail ..> MailEvent : DeleteLog
+    Server ..> MailEvent : ReadLog(ErrorLogDatabaseMail)

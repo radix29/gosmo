@@ -122,13 +122,15 @@ func (d *Database) SetUserAccess(ctx context.Context, mode UserAccess) error {
 // SetOffline takes the database offline.
 //
 // Existing connections are rolled back immediately, matching SSMS's Object
-// Explorer "Take Database Offline" behavior.
+// Explorer "Take Database Offline" behavior. Taking offline the database this
+// Server's pool logs in to moves the pool to master (see InitialDatabase).
 func (d *Database) SetOffline(ctx context.Context) error {
 	if _, err := d.server.exec(ctx,
 		fmt.Sprintf("ALTER DATABASE %s SET OFFLINE WITH ROLLBACK IMMEDIATE", quoteIdent(d.Name)),
 	); err != nil {
 		return fmt.Errorf("gosmo: set %q offline: %w", d.Name, err)
 	}
+	d.server.leftLoginDatabase(ctx, d.Name, "master")
 	setIfApplied(ctx, &d.State, "OFFLINE")
 	return nil
 }

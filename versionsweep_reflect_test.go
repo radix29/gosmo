@@ -23,8 +23,8 @@ import (
 // skipping nothing.
 var sweepSkip = map[string]string{
 	"Server.CycleErrorLog":          "rolls the error log over",
-	"Database.ClearQueryStore":      "discards the query store's contents",
-	"Database.FlushQueryStore":      "forces a query store write",
+	"QueryStore.Clear":              "discards the query store's contents",
+	"QueryStore.Flush":              "forces a query store write",
 	"Database.SetOffline":           "takes the database offline",
 	"Database.SetOnline":            "brings the database online",
 	"Database.RecoverFromRestoring": "runs recovery on a RESTORING database",
@@ -42,8 +42,8 @@ var sweepSkip = map[string]string{
 	"Job.Enable":                    "enables the job",
 	"Job.Stop":                      "stops a running job",
 	"ResourcePool.Drop":             "drops the pool (refused for the built-in ones, which are all a pristine instance has)",
-	"Server.StartDatabaseMail":      "starts the Database Mail queue",
-	"Server.StopDatabaseMail":       "stops the Database Mail queue",
+	"Mail.Start":                    "starts the Database Mail queue",
+	"Mail.Stop":                     "stops the Database Mail queue",
 }
 
 // sweep records what ran and what failed, so the result is one report rather
@@ -165,13 +165,15 @@ var sweepZeroQueries = []reflect.Type{
 func checkSkipList(t *testing.T) {
 	t.Helper()
 	types := map[string]reflect.Type{
-		"Server":    reflect.TypeOf(&Server{}),
-		"Database":  reflect.TypeOf(&Database{}),
-		"Table":     reflect.TypeOf(&Table{}),
-		"Index":     reflect.TypeOf(&Index{}),
-		"Statistic": reflect.TypeOf(&Statistic{}),
-		"Login":     reflect.TypeOf(&Login{}),
-		"Job":       reflect.TypeOf(&Job{}),
+		"Server":     reflect.TypeOf(&Server{}),
+		"Database":   reflect.TypeOf(&Database{}),
+		"Table":      reflect.TypeOf(&Table{}),
+		"Index":      reflect.TypeOf(&Index{}),
+		"Statistic":  reflect.TypeOf(&Statistic{}),
+		"Login":      reflect.TypeOf(&Login{}),
+		"Job":        reflect.TypeOf(&Job{}),
+		"QueryStore": reflect.TypeOf(QueryStore{}),
+		"Mail":       reflect.TypeOf(Mail{}),
 
 		"ResourcePool": reflect.TypeOf(&ResourcePool{}),
 	}

@@ -30,7 +30,7 @@ type MailConfigurationOptions struct {
 }
 
 // stmts renders one sysmail_configure_sp per set parameter, in the order
-// MailConfiguration lists them.
+// Mail.Configuration lists them.
 func (o MailConfigurationOptions) stmts() []string {
 	var stmts []string
 	param := func(name, v string) {
@@ -60,10 +60,11 @@ func (o MailConfigurationOptions) stmts() []string {
 	return stmts
 }
 
-// SetMailConfiguration writes every parameter set on o, one
+// SetConfiguration writes every parameter set on o, one
 // sysmail_configure_sp each. The procedure validates nothing and updates
 // only a parameter msdb already has a row for.
-func (s *Server) SetMailConfiguration(ctx context.Context, o MailConfigurationOptions) error {
+func (dm Mail) SetConfiguration(ctx context.Context, o MailConfigurationOptions) error {
+	s := dm.server
 	if o.LoggingLevel != nil && (*o.LoggingLevel < MailLoggingNormal || *o.LoggingLevel > MailLoggingVerbose) {
 		return invalidf("gosmo: set mail configuration: logging level %d is not 1, 2 or 3", int(*o.LoggingLevel))
 	}
@@ -79,27 +80,29 @@ func (s *Server) SetMailConfiguration(ctx context.Context, o MailConfigurationOp
 // Start, stop, send
 // ============================================================
 
-// StartDatabaseMail starts the mail queue (sysmail_start_sp). It does not
+// Start starts the mail queue (sysmail_start_sp). It does not
 // start DatabaseMail.exe — the first queued message does. Refused while
 // 'Database Mail XPs' is 0.
-func (s *Server) StartDatabaseMail(ctx context.Context) error {
+func (dm Mail) Start(ctx context.Context) error {
+	s := dm.server
 	if _, err := s.exec(ctx, "EXEC msdb.dbo.sysmail_start_sp"); err != nil {
 		return fmt.Errorf("gosmo: start database mail: %w", err)
 	}
 	return nil
 }
 
-// StopDatabaseMail stops the mail queue (sysmail_stop_sp). Mail is not
+// Stop stops the mail queue (sysmail_stop_sp). Mail is not
 // queued meanwhile: sp_send_dbmail refuses it, Msg 14641 (probed on 17).
 // Refused while 'Database Mail XPs' is 0.
-func (s *Server) StopDatabaseMail(ctx context.Context) error {
+func (dm Mail) Stop(ctx context.Context) error {
+	s := dm.server
 	if _, err := s.exec(ctx, "EXEC msdb.dbo.sysmail_stop_sp"); err != nil {
 		return fmt.Errorf("gosmo: stop database mail: %w", err)
 	}
 	return nil
 }
 
-// MailMessage is one plain-text message for SendMail. An empty Profile
+// MailMessage is one plain-text message for Mail.Send. An empty Profile
 // sends through the caller's default profile, or the public default — what a
 // DatabaseMailUserRole member, who cannot list profiles, passes. To is
 // sp_send_dbmail's @recipients: one or more addresses separated by ';'.
@@ -110,7 +113,7 @@ type MailMessage struct {
 	Body    string
 }
 
-// The refusals SendMail reports through errors.Is, each the server error
+// The refusals Mail.Send reports through errors.Is, each the server error
 // sp_send_dbmail raises for it, captured live on 17 (2026-10-01). The server's
 // own text — "profile name is not valid" — names nothing a user can act on;
 // these let a caller say what to do instead. The SQL Server error stays
@@ -163,8 +166,8 @@ func classifyMailSendError(err error) error {
 	return err
 }
 
-// SendMail queues m through sp_send_dbmail and returns its mailitem_id, for
-// MailItemByID and MailEvents to follow.
+// Send queues m through sp_send_dbmail and returns its mailitem_id, for
+// Mail.ItemByID and Mail.Events to follow.
 //
 // A refusal sp_send_dbmail is known to raise wraps ErrMailProfileInvalid,
 // ErrMailNoDefaultProfile, ErrMailStopped or ErrMailXPsDisabled.
@@ -173,7 +176,8 @@ func classifyMailSendError(err error) error {
 // polling. It is never retried (execScan): a connection lost after the
 // server queued the message would queue it again. Under Scripting(ctx) the
 // statement is recorded and the id is 0.
-func (s *Server) SendMail(ctx context.Context, m MailMessage) (int, error) {
+func (dm Mail) Send(ctx context.Context, m MailMessage) (int, error) {
+	s := dm.server
 	if strings.TrimSpace(m.To) == "" {
 		return 0, invalidf("gosmo: send mail: no recipient")
 	}
@@ -200,12 +204,13 @@ func (s *Server) SendMail(ctx context.Context, m MailMessage) (int, error) {
 // Purging items and the log
 // ============================================================
 
-// DeleteMailItems deletes mail items requested before before and, when
+// DeleteItems deletes mail items requested before before and, when
 // status is set, in that state — sysmail_delete_mailitems_sp, which needs at
 // least one of the two (Msg 14608 otherwise) and logs an information row
 // counting what it deleted. A DatabaseMailUserRole member deletes only their
 // own items.
-func (s *Server) DeleteMailItems(ctx context.Context, before time.Time, status MailSentStatus) error {
+func (dm Mail) DeleteItems(ctx context.Context, before time.Time, status MailSentStatus) error {
+	s := dm.server
 	var a procArgs
 	if !before.IsZero() {
 		a.raw("@sent_before", mailDateLiteral(before))
@@ -219,11 +224,12 @@ func (s *Server) DeleteMailItems(ctx context.Context, before time.Time, status M
 	return nil
 }
 
-// DeleteMailLog deletes Database Mail log rows logged before before and,
+// DeleteLog deletes Database Mail log rows logged before before and,
 // when eventType is set, of that type — sysmail_delete_log_sp. Both zero
 // deletes the whole log. Purge items first and the log last: the item purge
 // logs a row of its own.
-func (s *Server) DeleteMailLog(ctx context.Context, before time.Time, eventType MailEventType) error {
+func (dm Mail) DeleteLog(ctx context.Context, before time.Time, eventType MailEventType) error {
+	s := dm.server
 	var a procArgs
 	if !before.IsZero() {
 		a.raw("@logged_before", mailDateLiteral(before))

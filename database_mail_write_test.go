@@ -15,14 +15,14 @@ import (
 
 func TestMailAccountStatementShapes(t *testing.T) {
 	s := &Server{}
-	acct := s.MailAccountRef("ops]x")
+	acct := s.Mail().AccountRef("ops]x")
 	cases := []struct {
 		name  string
 		write func(ctx context.Context) error
 		want  []string
 	}{
 		{"create anonymous", func(ctx context.Context) error {
-			_, err := s.CreateMailAccount(ctx, CreateMailAccountRequest{
+			_, err := s.Mail().CreateAccount(ctx, CreateMailAccountRequest{
 				Name: "ops", EmailAddress: "ops@example.com", ServerName: "smtp.example.com"})
 			return err
 		}, []string{"EXEC msdb.dbo.sysmail_add_account_sp @account_name = N'ops', @email_address = N'ops@example.com', " +
@@ -31,7 +31,7 @@ func TestMailAccountStatementShapes(t *testing.T) {
 		// which keeps the credential — sent with the add as one atomic batch,
 		// so a failed update leaves no account behind.
 		{"create windows with timeout", func(ctx context.Context) error {
-			_, err := s.CreateMailAccount(ctx, CreateMailAccountRequest{
+			_, err := s.Mail().CreateAccount(ctx, CreateMailAccountRequest{
 				Name: "o'ps", EmailAddress: "ops@example.com", DisplayName: "Ops", ReplyToAddress: "r@example.com",
 				Description: "d", ServerName: "smtp", Port: 587, EnableSSL: true, Timeout: 30,
 				Credentials: MailCredentials{Authentication: MailAuthWindows, UserName: "ignored"}})
@@ -77,12 +77,12 @@ func TestMailAccountRefusals(t *testing.T) {
 		"basic without user": {Name: "a", EmailAddress: "a@b", ServerName: "x", Credentials: MailCredentials{Authentication: MailAuthBasic, Password: "p"}},
 	} {
 		ctx, col := WithScript(context.Background())
-		if _, err := s.CreateMailAccount(ctx, req); err == nil || len(col.Statements()) != 0 {
+		if _, err := s.Mail().CreateAccount(ctx, req); err == nil || len(col.Statements()) != 0 {
 			t.Errorf("%s: err %v, statements %q; want a refusal before any statement", name, err, col.Statements())
 		}
 	}
 	ctx, col := WithScript(context.Background())
-	if err := s.MailAccountRef("a").Alter(ctx, MailAccountOptions{Name: new(" ")}); err == nil || len(col.Statements()) != 0 {
+	if err := s.Mail().AccountRef("a").Alter(ctx, MailAccountOptions{Name: new(" ")}); err == nil || len(col.Statements()) != 0 {
 		t.Errorf("rename to blank: err %v, statements %q", err, col.Statements())
 	}
 }
@@ -94,12 +94,12 @@ func TestMailPasswordNeverCapturedOrObserved(t *testing.T) {
 	basic := MailCredentials{Authentication: MailAuthBasic, UserName: " smtp_user ", Password: secret}
 	writes := map[string]func(ctx context.Context, s *Server) error{
 		"create": func(ctx context.Context, s *Server) error {
-			_, err := s.CreateMailAccount(ctx, CreateMailAccountRequest{
+			_, err := s.Mail().CreateAccount(ctx, CreateMailAccountRequest{
 				Name: "a", EmailAddress: "a@b", ServerName: "x", Credentials: basic})
 			return err
 		},
 		"alter": func(ctx context.Context, s *Server) error {
-			return s.MailAccountRef("a").Alter(ctx, MailAccountOptions{Credentials: &basic})
+			return s.Mail().AccountRef("a").Alter(ctx, MailAccountOptions{Credentials: &basic})
 		},
 	}
 	for name, write := range writes {
@@ -133,14 +133,14 @@ func TestMailPasswordNeverCapturedOrObserved(t *testing.T) {
 
 func TestMailProfileStatementShapes(t *testing.T) {
 	s := &Server{}
-	p := s.MailProfileRef("alerts")
+	p := s.Mail().ProfileRef("alerts")
 	cases := []struct {
 		name  string
 		write func(ctx context.Context) error
 		want  []string
 	}{
 		{"create", func(ctx context.Context) error {
-			_, err := s.CreateMailProfile(ctx, CreateMailProfileRequest{Name: "alerts", Description: "d"})
+			_, err := s.Mail().CreateProfile(ctx, CreateMailProfileRequest{Name: "alerts", Description: "d"})
 			return err
 		}, []string{"EXEC msdb.dbo.sysmail_add_profile_sp @profile_name = N'alerts', @description = N'd'"}},
 		{"describe", func(ctx context.Context) error {
@@ -177,13 +177,13 @@ func TestMailProfileStatementShapes(t *testing.T) {
 // Grant mirrors the public grant onto the profile, and a scripted one does
 // not.
 func TestMailProfileGrantMirrorsPublic(t *testing.T) {
-	p := (&Server{}).MailProfileRef("alerts")
+	p := (&Server{}).Mail().ProfileRef("alerts")
 	ctx, _ := WithScript(context.Background())
 	if err := p.Grant(ctx, MailPublicPrincipal, MailDefaultProfile); err != nil || p.IsPublic || p.IsDefault {
 		t.Errorf("scripted Grant: err %v, IsPublic %v, IsDefault %v; want nothing mirrored", err, p.IsPublic, p.IsDefault)
 	}
 	s := captureServer(t, 17)
-	p = s.MailProfileRef("alerts")
+	p = s.Mail().ProfileRef("alerts")
 	if err := p.Grant(context.Background(), MailPublicPrincipal, MailDefaultProfile); err != nil || !p.IsPublic || !p.IsDefault {
 		t.Errorf("Grant: err %v, IsPublic %v, IsDefault %v; want both set", err, p.IsPublic, p.IsDefault)
 	}
@@ -239,7 +239,7 @@ func TestMailSetAccountsRefusesCaseDuplicate(t *testing.T) {
 	ctx, col := WithScript(context.Background())
 	s := captureServer(t, 17)
 	s.info.Collation = "SQL_Latin1_General_CP1_CI_AS"
-	err := s.MailProfileRef("p").SetAccounts(ctx, []string{"a", "A"})
+	err := s.Mail().ProfileRef("p").SetAccounts(ctx, []string{"a", "A"})
 	if err == nil || !strings.Contains(err.Error(), `account "A" is listed twice`) {
 		t.Fatalf("CI: err %v, want the listed-twice refusal", err)
 	}
@@ -247,7 +247,7 @@ func TestMailSetAccountsRefusesCaseDuplicate(t *testing.T) {
 		t.Errorf("CI: the refusal sent %q / %q", col.Statements(), captured.find(""))
 	}
 	s.info.Collation = "Latin1_General_CS_AS"
-	if err := s.MailProfileRef("p").SetAccounts(ctx, []string{"a", "A"}); err != nil {
+	if err := s.Mail().ProfileRef("p").SetAccounts(ctx, []string{"a", "A"}); err != nil {
 		t.Errorf("CS: %v", err)
 	}
 }
@@ -256,7 +256,7 @@ func TestMailSetAccountsRefusesCaseDuplicate(t *testing.T) {
 func TestMailSetAccountsIsAtomic(t *testing.T) {
 	ctx, col := WithScript(context.Background())
 	s := captureServer(t, 17)
-	if err := s.MailProfileRef("p").SetAccounts(ctx, []string{"a", "b"}); err != nil {
+	if err := s.Mail().ProfileRef("p").SetAccounts(ctx, []string{"a", "b"}); err != nil {
 		t.Fatalf("SetAccounts: %v", err)
 	}
 	stmts := col.Statements()
@@ -264,7 +264,7 @@ func TestMailSetAccountsIsAtomic(t *testing.T) {
 		strings.Count(stmts[0], "sysmail_add_profileaccount_sp") != 2 {
 		t.Errorf("SetAccounts on a profile with no links = %q; want one atomic batch adding both", stmts)
 	}
-	if err := s.MailProfileRef("p").SetAccounts(ctx, []string{"a", "a"}); err == nil {
+	if err := s.Mail().ProfileRef("p").SetAccounts(ctx, []string{"a", "a"}); err == nil {
 		t.Error("SetAccounts with a duplicate returned no error")
 	}
 }
@@ -278,24 +278,24 @@ func TestMailServerStatementShapes(t *testing.T) {
 		want  []string
 	}{
 		{"configure", func(ctx context.Context) error {
-			return s.SetMailConfiguration(ctx, MailConfigurationOptions{
+			return s.Mail().SetConfiguration(ctx, MailConfigurationOptions{
 				AccountRetryAttempts: new(0), LoggingLevel: new(MailLoggingVerbose), ProhibitedExtensions: new("exe,dll")})
 		}, []string{
 			"EXEC msdb.dbo.sysmail_configure_sp @parameter_name = N'AccountRetryAttempts', @parameter_value = N'0'",
 			"EXEC msdb.dbo.sysmail_configure_sp @parameter_name = N'LoggingLevel', @parameter_value = N'3'",
 			"EXEC msdb.dbo.sysmail_configure_sp @parameter_name = N'ProhibitedExtensions', @parameter_value = N'exe,dll'",
 		}},
-		{"start", s.StartDatabaseMail, []string{"EXEC msdb.dbo.sysmail_start_sp"}},
-		{"stop", s.StopDatabaseMail, []string{"EXEC msdb.dbo.sysmail_stop_sp"}},
+		{"start", s.Mail().Start, []string{"EXEC msdb.dbo.sysmail_start_sp"}},
+		{"stop", s.Mail().Stop, []string{"EXEC msdb.dbo.sysmail_stop_sp"}},
 		{"send", func(ctx context.Context) error {
-			_, err := s.SendMail(ctx, MailMessage{To: "a@b", Subject: "Database Mail Test", Body: "it's a test"})
+			_, err := s.Mail().Send(ctx, MailMessage{To: "a@b", Subject: "Database Mail Test", Body: "it's a test"})
 			return err
 		}, []string{"DECLARE @mailitem_id int;\nEXEC msdb.dbo.sp_send_dbmail @recipients = N'a@b', " +
 			"@subject = N'Database Mail Test', @body = N'it''s a test', @mailitem_id = @mailitem_id OUTPUT;\n" +
 			"SELECT @mailitem_id AS mailitem_id;"}},
-		{"purge items", func(ctx context.Context) error { return s.DeleteMailItems(ctx, before, MailFailed) },
+		{"purge items", func(ctx context.Context) error { return s.Mail().DeleteItems(ctx, before, MailFailed) },
 			[]string{"EXEC msdb.dbo.sysmail_delete_mailitems_sp @sent_before = '2026-10-01T13:04:05.000', @sent_status = N'failed'"}},
-		{"purge log", func(ctx context.Context) error { return s.DeleteMailLog(ctx, time.Time{}, "") },
+		{"purge log", func(ctx context.Context) error { return s.Mail().DeleteLog(ctx, time.Time{}, "") },
 			[]string{"EXEC msdb.dbo.sysmail_delete_log_sp"}},
 	}
 	for _, c := range cases {
@@ -306,7 +306,7 @@ func TestMailServerStatementShapes(t *testing.T) {
 		})
 	}
 	ctx, col := WithScript(context.Background())
-	if err := s.SetMailConfiguration(ctx, MailConfigurationOptions{LoggingLevel: new(MailLoggingLevel(4))}); err == nil || len(col.Statements()) != 0 {
+	if err := s.Mail().SetConfiguration(ctx, MailConfigurationOptions{LoggingLevel: new(MailLoggingLevel(4))}); err == nil || len(col.Statements()) != 0 {
 		t.Errorf("logging level 4: err %v, statements %q; want a refusal", err, col.Statements())
 	}
 }
@@ -337,7 +337,7 @@ func (eofConn) QueryContext(context.Context, string, []driver.NamedValue) (drive
 func init() { sql.Register("eofafterrun", eofDriver{}) }
 
 // A send is a write, so a connection lost after the server queued the message
-// must not be retried: SendMail ran through the retrying read helper and
+// must not be retried: Mail.Send ran through the retrying read helper and
 // a broken connection queued the message up to three times.
 func TestSendMailIsNotRetried(t *testing.T) {
 	db, err := sql.Open("eofafterrun", "")
@@ -350,7 +350,7 @@ func TestSendMailIsNotRetried(t *testing.T) {
 	}
 	eofQueries.Store(0)
 	s := &Server{db: db}
-	_, err = s.SendMail(context.Background(), MailMessage{To: "a@b", Subject: "s", Body: "b"})
+	_, err = s.Mail().Send(context.Background(), MailMessage{To: "a@b", Subject: "s", Body: "b"})
 	if !errors.Is(err, io.EOF) {
 		t.Errorf("err = %v, want the io.EOF surfaced", err)
 	}
@@ -365,10 +365,10 @@ func TestSendMailIsNotRetried(t *testing.T) {
 func TestMailAccountWithTimeoutIsOneAtomicBatch(t *testing.T) {
 	s := captureServer(t, 17)
 	ctx, got := observed(t.Context())
-	_, err := s.CreateMailAccount(ctx, CreateMailAccountRequest{Name: "a", EmailAddress: "a@b", ServerName: "x", Timeout: 30,
+	_, err := s.Mail().CreateAccount(ctx, CreateMailAccountRequest{Name: "a", EmailAddress: "a@b", ServerName: "x", Timeout: 30,
 		Credentials: MailCredentials{Authentication: MailAuthBasic, UserName: "u", Password: "s3cr3t"}})
 	if err != nil {
-		t.Fatalf("CreateMailAccount: %v", err)
+		t.Fatalf("Mail.CreateAccount: %v", err)
 	}
 	ran := captured.find("sysmail_add_account_sp")
 	if !strings.HasPrefix(ran, "SET XACT_ABORT ON;") || !strings.Contains(ran, "sysmail_update_account_sp") ||

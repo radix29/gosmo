@@ -53,6 +53,9 @@ type DetachOptions struct {
 // released first (see ReleaseIdleConnections) — without that, a read of the
 // database moments earlier made even a detach nobody else was using fail
 // Msg 3703.
+//
+// Detaching the database this Server's pool logs in to moves the pool to
+// master (see InitialDatabase).
 func (d *Database) Detach(ctx context.Context, opts DetachOptions) error {
 	s, name := d.server, d.Name
 	if name == "" {
@@ -66,21 +69,23 @@ func (d *Database) Detach(ctx context.Context, opts DetachOptions) error {
 		sqlTextBool(!opts.DropFullTextIndexFile),
 	)
 	if !opts.DropConnections {
-		if _, err := s.exec(ctx, detach); err != nil {
+		if _, err := s.exec(ctx, fromMaster(detach)); err != nil {
 			return fmt.Errorf("gosmo: detach database %q: %w", name, err)
 		}
+		s.leftLoginDatabase(ctx, name, "master")
 		return nil
 	}
 	// One batch — see exclusiveBatch — which also puts a database whose
 	// detach failed back to the access mode it had. A batch cut short may
 	// not have got that far.
 	mode := s.accessModeBefore(ctx, name)
-	if _, err := s.exec(ctx, exclusiveBatch(name, detach)); err != nil {
+	if _, err := s.exec(ctx, fromMaster(exclusiveBatch(name, detach))); err != nil {
 		if batchCutShort(err) {
 			_ = s.restoreAccessMode(ctx, name, mode)
 		}
 		return fmt.Errorf("gosmo: detach database %q: %w", name, err)
 	}
+	s.leftLoginDatabase(ctx, name, "master")
 	return nil
 }
 

@@ -259,7 +259,7 @@ func TestDropStatements(t *testing.T) {
 			write: func(ctx context.Context, d *Database) error {
 				return (&DatabaseSnapshot{server: d.server, Name: "AppDB_snap]1"}).Drop(ctx)
 			},
-			want: "DROP DATABASE [AppDB_snap]]1]",
+			want: "USE [master];\nDROP DATABASE [AppDB_snap]]1]",
 		},
 		{
 			name: "DatabaseRole.Drop delegates to the database",
@@ -434,6 +434,46 @@ func TestServerLevelDropAndRenameStatements(t *testing.T) {
 			all := strings.Join(script.Statements(), "\n")
 			if !strings.Contains(all, tc.want) {
 				t.Errorf("captured script missing %q:\n%s", tc.want, all)
+			}
+		})
+	}
+}
+
+// TestExclusiveDatabaseWritesStartFromMaster pins the USE [master] that
+// fromMaster puts ahead of the writes that fail from a session in the database
+// they name — the session a pooled connection opened on that database is reset
+// into — and its absence from Rename, which succeeds there (probed on 17 and
+// 13). Exact statements: a prefix check would pass a USE of the wrong database.
+func TestExclusiveDatabaseWritesStartFromMaster(t *testing.T) {
+	cases := []struct {
+		name  string
+		write func(context.Context, *Server) error
+		want  string
+	}{
+		{"Database.Drop", func(ctx context.Context, s *Server) error {
+			return s.DatabaseRef("App]DB").Drop(ctx, TerminationNone)
+		}, "USE [master];\nDROP DATABASE [App]]DB]"},
+		{"Database.Detach", func(ctx context.Context, s *Server) error {
+			return s.DatabaseRef("App'DB").Detach(ctx, DetachOptions{})
+		}, "USE [master];\nEXEC master.dbo.sp_detach_db @dbname = N'App''DB', @skipchecks = 'true', @keepfulltextindexfile = 'true'"},
+		{"Server.RestoreFromSnapshot", func(ctx context.Context, s *Server) error {
+			return s.RestoreFromSnapshot(ctx, "App]DB", "snap'1")
+		}, "USE [master];\nRESTORE DATABASE [App]]DB] FROM DATABASE_SNAPSHOT = N'snap''1'"},
+		{"DatabaseSnapshot.Restore", func(ctx context.Context, s *Server) error {
+			return (&DatabaseSnapshot{server: s, Name: "snap1", SourceDatabase: "AppDB"}).Restore(ctx)
+		}, "USE [master];\nRESTORE DATABASE [AppDB] FROM DATABASE_SNAPSHOT = N'snap1'"},
+		{"Database.Rename stays in place", func(ctx context.Context, s *Server) error {
+			return s.DatabaseRef("AppDB").Rename(ctx, "AppDB2", TerminationNone)
+		}, "ALTER DATABASE [AppDB] MODIFY NAME = [AppDB2]"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, script := WithScript(context.Background())
+			if err := tc.write(ctx, &Server{}); err != nil {
+				t.Fatalf("%s under WithScript: %v", tc.name, err)
+			}
+			if got := script.Statements(); len(got) != 1 || got[0] != tc.want {
+				t.Errorf("captured %q\nwant [%q]", got, tc.want)
 			}
 		})
 	}
@@ -831,7 +871,7 @@ func TestAForcedDropOnAManagedInstanceKillsSessionsInsteadOfSingleUser(t *testin
 		// One batch: a session reconnecting between the KILLs and the DROP
 		// fails the DROP (S8).
 		stmts := detLog.statements()
-		if len(stmts) != 1 || !strings.Contains(stmts[0], "DB_ID(N'appdb')") ||
+		if len(stmts) != 1 || !strings.HasPrefix(stmts[0], fromMasterPrefix+"DECLARE @db int = DB_ID(N'appdb')") ||
 			!strings.HasSuffix(stmts[0], "END;\nDROP DATABASE [appdb];") ||
 			strings.Index(stmts[0], "KILL") > strings.Index(stmts[0], "DROP DATABASE") {
 			t.Errorf("fail=%v: statements %v, want the session KILL batch then DROP DATABASE, as one", fail, stmts)

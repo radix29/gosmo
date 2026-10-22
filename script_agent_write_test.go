@@ -205,8 +205,8 @@ func TestScriptServerLevelWrites(t *testing.T) {
 		{"KillSession", func(c context.Context) error {
 			return (&Server{}).KillSession(c, 57)
 		}, "KILL 57"},
-		{"SendMail", func(c context.Context) error {
-			_, err := (&Server{}).SendMail(c, MailMessage{Profile: "Prof'ile", To: "o'brien@example.com", Subject: "Sub'ject", Body: "Bo'dy"})
+		{"Mail.Send", func(c context.Context) error {
+			_, err := (&Server{}).Mail().Send(c, MailMessage{Profile: "Prof'ile", To: "o'brien@example.com", Subject: "Sub'ject", Body: "Bo'dy"})
 			return err
 		}, "DECLARE @mailitem_id int;\nEXEC msdb.dbo.sp_send_dbmail @profile_name = N'Prof''ile', @recipients = N'o''brien@example.com', " +
 			"@subject = N'Sub''ject', @body = N'Bo''dy', @mailitem_id = @mailitem_id OUTPUT;\nSELECT @mailitem_id AS mailitem_id;"},
@@ -240,7 +240,7 @@ func TestScriptServerLevelWrites(t *testing.T) {
 				Devices:  []BackupTarget{DiskTarget(`C:\bak\a'1.bak`)},
 				Replace:  true,
 			})
-		}, "RESTORE DATABASE [App'DB]\nFROM DISK = N'C:\\bak\\a''1.bak'\nWITH REPLACE"},
+		}, "USE [master];\nRESTORE DATABASE [App'DB]\nFROM DISK = N'C:\\bak\\a''1.bak'\nWITH REPLACE"},
 	})
 }
 

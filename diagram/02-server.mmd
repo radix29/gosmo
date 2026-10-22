@@ -81,8 +81,8 @@ classDiagram
         +EnumFileSystemIsLegacy() bool
         +FixedDrives() []*FixedDrive
         +FileSystemExists(path) bool
-        +MailProfiles() []*MailProfile
-        +SendMail(profile, recipients, subject, body) error
+        +Mail() Mail
+        +XEvents() XEvents
         +Backup(opts) error
         +Restore(opts) error
         +BuildBackupStatement(opts) string

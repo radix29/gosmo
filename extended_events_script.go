@@ -270,19 +270,12 @@ func (spec EventSessionSpec) createStatement(sc xeScope) (string, error) {
 
 // -- Writes -------------------------------------------------------------------------
 
-// CreateEventSession creates a server-scoped event session. It is created
-// stopped, which is what CREATE EVENT SESSION does; use Start to run it.
-func (s *Server) CreateEventSession(ctx context.Context, spec EventSessionSpec) (*EventSession, error) {
-	return createEventSession(ctx, s.EventSessionRef(spec.Name), spec, func() (*EventSession, error) {
-		return s.EventSessionByName(ctx, spec.Name)
-	})
-}
-
-// CreateEventSession creates a database-scoped event session (Azure SQL
-// Database).
-func (d *Database) CreateEventSession(ctx context.Context, spec EventSessionSpec) (*EventSession, error) {
-	return createEventSession(ctx, d.EventSessionRef(spec.Name), spec, func() (*EventSession, error) {
-		return d.EventSessionByName(ctx, spec.Name)
+// CreateSession creates an event session in the handle's scope. It is
+// created stopped, which is what CREATE EVENT SESSION does; use Start to run
+// it.
+func (x XEvents) CreateSession(ctx context.Context, spec EventSessionSpec) (*EventSession, error) {
+	return createEventSession(ctx, x.SessionRef(spec.Name), spec, func() (*EventSession, error) {
+		return x.SessionByName(ctx, spec.Name)
 	})
 }
 
@@ -536,7 +529,7 @@ func (es *EventSession) refLike() *EventSession {
 // ScriptEventSession generates the CREATE (or DROP) script for one
 // server-scoped event session.
 func (sc *ServerScripter) ScriptEventSession(ctx context.Context, name string) (string, error) {
-	es, err := sc.server.EventSessionByName(ctx, name)
+	es, err := sc.server.XEvents().SessionByName(ctx, name)
 	if err != nil {
 		return "", err
 	}
@@ -546,7 +539,7 @@ func (sc *ServerScripter) ScriptEventSession(ctx context.Context, name string) (
 // ScriptEventSession generates the CREATE (or DROP) script for one
 // database-scoped event session.
 func (sc *Scripter) ScriptEventSession(ctx context.Context, name string) (string, error) {
-	es, err := sc.db.EventSessionByName(ctx, name)
+	es, err := sc.db.XEvents().SessionByName(ctx, name)
 	if err != nil {
 		return "", err
 	}

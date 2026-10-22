@@ -128,7 +128,11 @@ func (c *ScriptCollector) String() string {
 			b.WriteString(scriptUse(e.Database))
 			cur = e.Database
 		case e.Database == "" && cur != "":
-			b.WriteString(scriptUse("master"))
+			// An entry that starts from master itself (fromMaster) needs
+			// no second USE.
+			if !strings.HasPrefix(e.SQL, fromMaster("")) {
+				b.WriteString(scriptUse("master"))
+			}
 			cur = ""
 		}
 		b.WriteString(e.SQL)
@@ -532,7 +536,7 @@ func (s *Server) execPasswordsAtomic(ctx context.Context, stmts []string, passwo
 // execSecretAtomic is execAtomic for statements carrying a secret that
 // textual redaction cannot find, or need not: the batch runs from run and is
 // observed and captured from shown, statement for statement (see
-// execSecret). CreateMailAccount with a timeout is the case — its builder
+// execSecret). Mail.CreateAccount with a timeout is the case — its builder
 // renders both halves already.
 func (s *Server) execSecretAtomic(ctx context.Context, run, shown []string) error {
 	t := txFrom(ctx, s)
