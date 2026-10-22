@@ -173,7 +173,7 @@ func TestQueryStoreOptionsSelectGatesItsLateColumns(t *testing.T) {
 			t.Errorf("major %d names %d of the four capture_policy_* columns, want %d", c.major, named, c.wantPolicy)
 		}
 		if got := len(selectExprs(t, selectList(t, q))); got != 16 {
-			t.Errorf("major %d selects %d expressions, want 16 — QueryStore scans 16 destinations", c.major, got)
+			t.Errorf("major %d selects %d expressions, want 16 — QueryStore.Options scans 16 destinations", c.major, got)
 		}
 	}
 }
@@ -300,7 +300,7 @@ func TestQueryStorePlansQueryGatesThePlanForcingTypeColumn(t *testing.T) {
 			t.Errorf("major %d groups by a constant: %q", c.major, groupBy)
 		}
 		if got := len(selectExprs(t, selectList(t, q))); got != 14 {
-			t.Errorf("major %d selects %d expressions, want 14 — QueryStorePlans scans 14 destinations", c.major, got)
+			t.Errorf("major %d selects %d expressions, want 14 — QueryStore.Plans scans 14 destinations", c.major, got)
 		}
 	}
 }
@@ -369,8 +369,8 @@ func TestAzureMajorIsZeroSoEveryGateTreatsItAsNewest(t *testing.T) {
 	}
 
 	d := &Database{Name: "GoTest01", server: s}
-	if !d.QueryStoreWaitStatsSupported() {
-		t.Error("QueryStoreWaitStatsSupported() = false on MI, which has sys.query_store_wait_stats")
+	if !d.QueryStore().WaitStatsSupported() {
+		t.Error("QueryStore.WaitStatsSupported() = false on MI, which has sys.query_store_wait_stats")
 	}
 	for _, c := range []struct {
 		what string

@@ -83,11 +83,11 @@ func TestTargetBuilders(t *testing.T) {
 
 func TestAddTargetStatement(t *testing.T) {
 	ctx, col := WithScript(context.Background())
-	es := (&Server{}).EventSessionRef("s]1")
+	es := (&Server{}).XEvents().SessionRef("s]1")
 	if err := es.AddTarget(ctx, EventFileTarget("s1", 0, 0)); err != nil {
 		t.Fatal(err)
 	}
-	if err := (&Server{info: &ServerInfo{EngineEdition: int(EngineAzureSQLDatabase)}}).DatabaseRef("AppDB").EventSessionRef("d").AddTarget(ctx, RingBufferTarget(0)); err != nil {
+	if err := (&Server{info: &ServerInfo{EngineEdition: int(EngineAzureSQLDatabase)}}).DatabaseRef("AppDB").XEvents().SessionRef("d").AddTarget(ctx, RingBufferTarget(0)); err != nil {
 		t.Fatal(err)
 	}
 	want := []string{

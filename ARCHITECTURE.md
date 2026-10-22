@@ -40,7 +40,7 @@ Columns and syntax added after the floor are gated rather than assumed —
 `colSince` substitutes a typed literal for a column the instance lacks, so
 a caller gets a zero value instead of a failed read, and a statement an
 older parser rejects is refused before it is sent (see
-`Database.EnclaveComputationsSupported`, `Database.QueryStoreWaitStatsSupported`),
+`Database.EnclaveComputationsSupported`, `QueryStore.WaitStatsSupported`),
 wrapping `ErrUnsupportedVersion`. An instance whose version was never read
 is treated as newest.
 
@@ -101,8 +101,9 @@ flowchart TB
     end
     subgraph A4["A database: files, options, catalog, and permissions"]
         direction TB
-        N08["08 · Files, options, catalog, and Query Store"]
+        N08["08 · Files, options, and catalog"]
         N09["09 · Filters, permissions, and execution"]
+        N27["27 · Query Store"]
     end
     subgraph A5["Tables, their children, and the object families"]
         direction TB
@@ -142,12 +143,14 @@ flowchart TB
     N02 -- "owns endpoints and server audits" --> N17
     N02 -- "exposes the Azure instance views" --> N19
     N02 -- "owns the Resource Governor configuration" --> N22
-    N02 -- "owns Database Mail in msdb" --> N23
-    N02 -- "owns Extended Events sessions" --> N24
+    N02 -- "exposes the Database Mail facet" --> N23
+    N02 -- "exposes the Extended Events facet" --> N24
     N02 -- "reads the replication configuration" --> N25
     N02 -- "reads the full-text component" --> N26
     N05 -- "writes through withConn, captured by ScriptCollector" --> N07
-    N05 -- "has files, options, catalog, Query Store" --> N08
+    N05 -- "has files, options, catalog" --> N08
+    N05 -- "exposes the Query Store facet" --> N27
+    N05 -- "exposes database-scoped Extended Events" --> N24
     N05 -- "filters listings and answers permissions" --> N09
     N05 -- "contains tables and indexes" --> N10
     N05 -- "contains the object families" --> N13
@@ -183,6 +186,7 @@ flowchart TB
     click N24 href "diagram/24-extended-events.mmd"
     click N25 href "diagram/25-replication.mmd"
     click N26 href "diagram/26-fulltext.mmd"
+    click N27 href "diagram/27-query-store.mmd"
 ```
 
 ### Connecting and the `Server` object
@@ -234,8 +238,9 @@ column-level and effective permissions.
 
 | Diagram | Holds |
 | --- | --- |
-| [`08-database-files-and-catalog.mmd`](diagram/08-database-files-and-catalog.mmd) | Files and filegroups, `ALTER DATABASE` options, change tracking, the bulk catalog snapshot, Query Store, detach/attach, scoped configuration, dependencies and search. |
+| [`08-database-files-and-catalog.mmd`](diagram/08-database-files-and-catalog.mmd) | Files and filegroups, `ALTER DATABASE` options, change tracking, the bulk catalog snapshot, detach/attach, scoped configuration, dependencies and search. |
 | [`09-database-filters-and-permissions.mmd`](diagram/09-database-filters-and-permissions.mmd) | `ObjectFilter` and its criteria, database capabilities, disk usage, execution plans, the whole permissions surface, bulk copy, and stored-procedure execution. |
+| [`27-query-store.mmd`](diagram/27-query-store.mmd) | Query Store: the `QueryStore` facet `Database.QueryStore()` returns (options, the seven SSMS reports, plans, plan forcing), the report options and their metric/statistic/unit enums, the result rows, and `QSWaitCategory`. |
 
 ### Tables, their children, and the object families
 
@@ -331,7 +336,7 @@ The instance and database halves pair up: `ServerResourceStat` and
 | Own blocked requests    | `srv.BlockedRequests(ctx, os.Getpid())` — this client's pooled sessions waiting on another, with the blocker |
 | Kill session            | `srv.KillSession(ctx, id)`                      |
 | Error log               | `srv.ReadLog(ctx, logType, n, search)` (zero `LogSearch` = whole file) / `srv.EnumErrorLogs(ctx, logType)` / `srv.CycleLog(ctx, logType)` — see [Error log](#error-log) |
-| Database Mail           | `srv.MailAccounts(ctx)` / `srv.MailAccountByName(ctx, name)` / `srv.MailProfiles(ctx)` / `srv.MailProfileByName(ctx, name)` (each with its ordered `Accounts`) / `srv.MailPrincipalProfiles(ctx)` (SID 0x00 = public) / `srv.MailConfiguration(ctx)` / `srv.MailStatus(ctx)` (`MailDisabled` while 'Database Mail XPs' is 0, not an error) / `srv.MailQueues(ctx)` (VIEW SERVER STATE) / `srv.MailItems(ctx, gosmo.MailItemFilter{...})` / `srv.MailItemByID(ctx, id)` / `srv.MailEvents(ctx, gosmo.MailEventFilter{...})`. Writes: `srv.CreateMailAccount(ctx, req)` / `MailAccountRef(name).Alter(ctx, gosmo.MailAccountOptions{...})` (nil `Credentials` keeps the stored user and password) / `.Drop(ctx)`; `srv.CreateMailProfile(ctx, req)` / `MailProfileRef(name).Alter` / `.Drop` / `.SetAccounts(ctx, ordered)` / `.Grant(ctx, principal, gosmo.MailDefaultProfile)` (or `MailNotDefaultProfile`) / `.SetGrantDefault` / `.Revoke`; `srv.SetMailConfiguration(ctx, opts)`; `srv.StartDatabaseMail(ctx)` / `StopDatabaseMail`; `srv.SendMail(ctx, gosmo.MailMessage{Profile, To, Subject, Body})` → mailitem_id (never retried); `srv.DeleteMailItems(ctx, before, status)` / `DeleteMailLog(ctx, before, eventType)`. The log also reads as `ReadLog(ctx, gosmo.ErrorLogDatabaseMail, 0, gosmo.LogSearch{})`. Scripts: `ScriptMailAccount` / `ScriptMailProfile` / `ScriptDatabaseMail`, the password as `<insert password here>` (also under `WithScript` and to a statement observer) — msdb permission, not sysadmin; see `database_mail.go`, `database_mail_write.go`, `database_mail_service.go` |
+| Database Mail           | `srv.Mail().Accounts(ctx)` / `srv.Mail().AccountByName(ctx, name)` / `srv.Mail().Profiles(ctx)` / `srv.Mail().ProfileByName(ctx, name)` (each with its ordered `Accounts`) / `srv.Mail().PrincipalProfiles(ctx)` (SID 0x00 = public) / `srv.Mail().Configuration(ctx)` / `srv.Mail().Status(ctx)` (`MailDisabled` while 'Database Mail XPs' is 0, not an error) / `srv.Mail().Queues(ctx)` (VIEW SERVER STATE) / `srv.Mail().Items(ctx, gosmo.MailItemFilter{...})` / `srv.Mail().ItemByID(ctx, id)` / `srv.Mail().Events(ctx, gosmo.MailEventFilter{...})`. Writes: `srv.Mail().CreateAccount(ctx, req)` / `srv.Mail().AccountRef(name).Alter(ctx, gosmo.MailAccountOptions{...})` (nil `Credentials` keeps the stored user and password) / `.Drop(ctx)`; `srv.Mail().CreateProfile(ctx, req)` / `srv.Mail().ProfileRef(name).Alter` / `.Drop` / `.SetAccounts(ctx, ordered)` / `.Grant(ctx, principal, gosmo.MailDefaultProfile)` (or `MailNotDefaultProfile`) / `.SetGrantDefault` / `.Revoke`; `srv.Mail().SetConfiguration(ctx, opts)`; `srv.Mail().Start(ctx)` / `.Stop(ctx)`; `srv.Mail().Send(ctx, gosmo.MailMessage{Profile, To, Subject, Body})` → mailitem_id (never retried); `srv.Mail().DeleteItems(ctx, before, status)` / `.DeleteLog(ctx, before, eventType)`. The log also reads as `ReadLog(ctx, gosmo.ErrorLogDatabaseMail, 0, gosmo.LogSearch{})`. Scripts: `ScriptMailAccount` / `ScriptMailProfile` / `ScriptDatabaseMail`, the password as `<insert password here>` (also under `WithScript` and to a statement observer) — msdb permission, not sysadmin; see `database_mail.go`, `database_mail_write.go`, `database_mail_service.go` |
 | Create login (safe)     | `srv.CreateLogin(ctx, gosmo.CreateLoginRequest{Name, Password, Source, ...})` — SQL, Windows, external provider, certificate or asymmetric key |
 | Authentication mode     | `srv.SecurityInfo(ctx)`                       |
 | Server-level permissions | `srv.ServerPermissions(ctx)` / `srv.ApplyPermission(ctx, verb, gosmo.Securable{Class: gosmo.SecurableServer}, perm, principal, opts)` / `srv.ServerPermissionNames()` |
@@ -343,7 +348,7 @@ The instance and database halves pair up: `ServerResourceStat` and
 | Server audit specifications | `srv.ServerAuditSpecifications(ctx)` / `...ByName(ctx, name)` / `srv.ServerAuditSpecificationRef(name)` (no-I/O handle) / `srv.CreateServerAuditSpecification(ctx, spec)` |
 | Audit action groups      | `srv.AuditActionGroups(ctx)` / `srv.DatabaseAuditActionGroups(ctx)` / `srv.DatabaseAuditActions(ctx)` |
 | Resource Governor        | `srv.ResourceGovernor(ctx)` (stored) / `srv.ResourceGovernorStatus(ctx)` (in force, pending flag; VIEW SERVER STATE) / `srv.ResourcePools(ctx)` / `srv.ResourcePoolByName(ctx, name)` / `pool.WorkloadGroups(ctx)` / `srv.WorkloadGroups(ctx)` / `srv.WorkloadGroupByName(ctx, name)` / `srv.ExternalResourcePools(ctx)` / `srv.ExternalResourcePoolByName(ctx, name)` / `srv.ResourcePoolStats(ctx)` / `srv.WorkloadGroupStats(ctx)` — the catalog reads return nothing, not an error, without VIEW ANY DEFINITION; see `resource_governor.go`. Writes: `srv.CreateResourcePool` / `CreateWorkloadGroup` / `CreateExternalResourcePool(ctx, req)`, `.Alter(ctx, …Options)` / `.Drop(ctx)` on each (`…Ref(name)` handles; a pool's `Affinity *PoolAffinity` writes AFFINITY SCHEDULER/CPU, NUMANODE or AUTO, ids from `srv.Schedulers`), and on `srv.ResourceGovernorRef()`: `SetClassifier` / `SetMaxOutstandingIOPerVolume` / `Reconfigure` (also enables) / `Enable` / `Disable` / `ResetStatistics`; `srv.ClassifierFunctionCandidates(ctx)`. No write reconfigures on its own — see `resource_governor_write.go` |
-| Extended Events sessions | `srv.EventSessions(ctx)` / `srv.EventSessionByName(ctx, name)` / `srv.EventSessionRef(name)` (no-I/O handle) / `srv.CreateEventSession(ctx, spec)` — see [Extended Events](#extended-events) |
+| Extended Events sessions | `srv.XEvents().Sessions(ctx)` / `srv.XEvents().SessionByName(ctx, name)` / `srv.XEvents().SessionRef(name)` (no-I/O handle) / `srv.XEvents().CreateSession(ctx, spec)` — see [Extended Events](#extended-events) |
 | Backup devices           | `srv.BackupDevices(ctx)` / `srv.BackupDeviceByName(ctx, name)` / `srv.BackupDeviceRef(name)` (no-I/O handle) / `srv.CreateBackupDevice(ctx, gosmo.CreateBackupDeviceRequest{Name, Type, PhysicalName})` / `dev.Drop(ctx, gosmo.KeepDeviceFile)` (or `DeleteDeviceFile`) / `dev.Headers(ctx)` |
 | Endpoints (all protocols) | `srv.Endpoints(ctx)` / `srv.EndpointByName(ctx, name)` / `ep.SetState(ctx, state)` / `ep.Drop(ctx)` / `ep.MirroringDetail(ctx)` / `ep.ServiceBrokerDetail(ctx)` — see [Endpoints](#endpoints) |
 | Server DDL / logon triggers | `srv.ServerTriggers(ctx)` / `srv.ServerTriggerByName(ctx, name)` / `srv.ServerTriggerRef(name)` (no-I/O handle) / `tr.Enable(ctx)` / `tr.Disable(ctx)` / `tr.Drop(ctx)` |
@@ -431,11 +436,11 @@ The instance and database halves pair up: `ServerResourceStat` and
 | Change ownership                | `db.SetOwner(ctx, principal)`                    |
 | Database Scoped Configuration   | `db.DatabaseScopedConfigs(ctx)` / `db.SetDatabaseScopedConfig(ctx, name, value, gosmo.ScopedConfigPrimary)` (or `ScopedConfigSecondary`) |
 | Transparent data encryption     | `db.EncryptionKey(ctx)` — the TDE key from `sys.dm_database_encryption_keys` (VIEW SERVER STATE), its algorithm and the server certificate or asymmetric key protecting it; `ErrNotFound` when there is none |
-| Query Store                     | `db.QueryStore(ctx)` / `db.SetQueryStoreOptions(ctx, opts)` / `db.FlushQueryStore(ctx)` / `db.ClearQueryStore(ctx)` |
-| Query Store reports (SSMS's seven views) | `db.QueryStoreTopResourceQueries(ctx, opts)` / `.QueryStoreRegressedQueries(opts)` / `.QueryStoreHighVariationQueries(opts)` / `.QueryStoreForcedPlanQueries(opts)` / `.QueryStoreOverallConsumption(opts)` / `.QueryStoreTrackedQuery(queryID, opts)` / `.QueryStoreWaitCategories(opts)` + `.QueryStoreWaitingQueries(category, opts)` |
-| Query Store plans and plan XML  | `db.QueryStorePlans(ctx, queryID, opts)` / `db.QueryStoreQueryText(ctx, queryID)` |
-| Force / unforce a plan          | `db.QueryStoreForcePlan(ctx, queryID, planID)` / `db.QueryStoreUnforcePlan(ctx, queryID, planID)` |
-| What a report can rank by       | `db.QueryStoreMetrics()` / `gosmo.QSStatistics()` / `gosmo.QSMetricUnit(m)` — metrics are version-gated, and `db.QueryStoreWaitStatsSupported()` gates the two wait reports (2017+) |
+| Query Store                     | `qs := db.QueryStore()` (a no-I/O facet) → `qs.Options(ctx)` / `qs.SetOptions(ctx, opts)` / `qs.Flush(ctx)` / `qs.Clear(ctx)` |
+| Query Store reports (SSMS's seven views) | `qs.TopResourceQueries(ctx, opts)` / `.RegressedQueries(opts)` / `.HighVariationQueries(opts)` / `.ForcedPlanQueries(opts)` / `.OverallConsumption(opts)` / `.TrackedQuery(queryID, opts)` / `.WaitCategories(opts)` + `.WaitingQueries(category, opts)` (`QSWaitCategory`) |
+| Query Store plans and plan XML  | `qs.Plans(ctx, queryID, opts)` / `qs.QueryText(ctx, queryID)` |
+| Force / unforce a plan          | `qs.ForcePlan(ctx, queryID, planID)` / `qs.UnforcePlan(ctx, queryID, planID)` |
+| What a report can rank by       | `qs.Metrics()` / `gosmo.QSStatistics()` / `gosmo.QSMetricUnit(m)` — metrics are version-gated, and `qs.WaitStatsSupported()` gates the two wait reports (2017+) |
 | Every file, incl. log           | `db.Files(ctx)`                                |
 | Add / alter / remove file       | `db.AddFile(ctx, spec)` / `db.FileRef(name).Alter(ctx, m)` / `db.FileRef(name).Drop(ctx)` — `Files` returns the same handles, populated |
 | Shrink database / file          | `db.Shrink(ctx, gosmo.ShrinkDatabaseOptions{...})` (DBCC SHRINKDATABASE; zero value is the bare form) / `db.FileRef(name).Shrink(ctx, gosmo.ShrinkFileOptions{...})` (DBCC SHRINKFILE: target MB — 0 sent as 1 unless `SendZeroTarget` —, `TRUNCATEONLY`, `NOTRUNCATE`, `EMPTYFILE`; returns the DBCC row as `ShrinkResult`); `Wait` adds `WAIT_AT_LOW_PRIORITY`, 2022+ (`ServerInfo.SupportsShrinkLowPriority`). `Files` fills `SpaceUsedKB` |
@@ -835,23 +840,23 @@ opts := gosmo.QueryStoreReportOptions{
     From:      time.Now().Add(-24 * time.Hour),
     Top:       25,
 }
-rows, _ := db.QueryStoreTopResourceQueries(ctx, opts)
-plans, _ := db.QueryStorePlans(ctx, rows[0].QueryID, opts)
-db.QueryStoreForcePlan(ctx, rows[0].QueryID, plans[0].PlanID)
+rows, _ := db.QueryStore().TopResourceQueries(ctx, opts)
+plans, _ := db.QueryStore().Plans(ctx, rows[0].QueryID, opts)
+db.QueryStore().ForcePlan(ctx, rows[0].QueryID, plans[0].PlanID)
 ```
 
 | SSMS view                    | gosmo                                              |
 | ---------------------------- | -------------------------------------------------- |
-| Top Resource Consuming Queries | `db.QueryStoreTopResourceQueries(ctx, opts)` → `[]*QSQueryStat` |
-| Regressed Queries            | `db.QueryStoreRegressedQueries(ctx, opts)`               |
-| Queries With High Variation  | `db.QueryStoreHighVariationQueries(ctx, opts)`           |
-| Queries With Forced Plans    | `db.QueryStoreForcedPlanQueries(ctx, opts)`              |
-| Overall Resource Consumption | `db.QueryStoreOverallConsumption(ctx, opts)` → `[]*QSIntervalStat` |
-| Tracked Queries              | `db.QueryStoreTrackedQuery(ctx, queryID, opts)` → `[]*QSPlanIntervalStat` |
-| Query Wait Statistics        | `db.QueryStoreWaitCategories(ctx, opts)` → `[]*QSWaitStat`, then `db.QueryStoreWaitingQueries(ctx, category, opts)` |
-| The plans of one query       | `db.QueryStorePlans(ctx, queryID, opts)` → `[]*QSPlan` (`.QueryPlanXML`) |
-| The statement behind a row   | `db.QueryStoreQueryText(ctx, queryID)`                   |
-| Force / unforce a plan       | `db.QueryStoreForcePlan(ctx, queryID, planID)` / `db.QueryStoreUnforcePlan(ctx, queryID, planID)` |
+| Top Resource Consuming Queries | `db.QueryStore().TopResourceQueries(ctx, opts)` → `[]*QSQueryStat` |
+| Regressed Queries            | `db.QueryStore().RegressedQueries(ctx, opts)`               |
+| Queries With High Variation  | `db.QueryStore().HighVariationQueries(ctx, opts)`           |
+| Queries With Forced Plans    | `db.QueryStore().ForcedPlanQueries(ctx, opts)`              |
+| Overall Resource Consumption | `db.QueryStore().OverallConsumption(ctx, opts)` → `[]*QSIntervalStat` |
+| Tracked Queries              | `db.QueryStore().TrackedQuery(ctx, queryID, opts)` → `[]*QSPlanIntervalStat` |
+| Query Wait Statistics        | `db.QueryStore().WaitCategories(ctx, opts)` → `[]*QSWaitStat`, then `db.QueryStore().WaitingQueries(ctx, category, opts)` |
+| The plans of one query       | `db.QueryStore().Plans(ctx, queryID, opts)` → `[]*QSPlan` (`.QueryPlanXML`) |
+| The statement behind a row   | `db.QueryStore().QueryText(ctx, queryID)`                   |
+| Force / unforce a plan       | `db.QueryStore().ForcePlan(ctx, queryID, planID)` / `db.QueryStore().UnforcePlan(ctx, queryID, planID)` |
 
 `Metric` and `Statistic` pick what rows are ranked by; empty means average
 duration. `From`/`To` bound the window half-open, a zero `To` meaning now and
@@ -862,8 +867,8 @@ the four per-query reports, and `Top` caps every one of them.
 **Query Store stores raw engine units, not display ones** — durations in
 microseconds, I/O and memory in 8-KB pages, waits in milliseconds — so
 `gosmo.QSMetricUnit(m)` reports which, and a caller formatting a value has to
-ask. `db.QueryStoreMetrics()` returns the metrics the connected instance
-supports and `db.QueryStoreWaitStatsSupported()` gates the two wait reports,
+ask. `db.QueryStore().Metrics()` returns the metrics the connected instance
+supports and `db.QueryStore().WaitStatsSupported()` gates the two wait reports,
 which need SQL Server 2017. A database with Query Store turned off is not an
 error: the catalog views exist and are empty, so every report returns no
 rows.
@@ -1404,7 +1409,7 @@ an error, a panic or cancellation rolls back.
 - Receiver mirroring (`setIfApplied`) is not undone by a rollback: re-read.
 - **Multi-statement writes** (`execAtomic`: `CreateJob`, `ReorderSteps`,
   `SetAccounts`, `CreateLogin` with defaults, `AddSchedule` with an owner,
-  `CreateMailAccount` with a timeout, cascading `Table.Drop`) drop their own `BEGIN TRANSACTION`/`XACT_ABORT`
+  `Mail.CreateAccount` with a timeout, cascading `Table.Drop`) drop their own `BEGIN TRANSACTION`/`XACT_ABORT`
   inside one — a bare `ROLLBACK` there would end the caller's transaction. One
   that fails marks the transaction, and `InTransaction` then refuses to
   COMMIT even when `fn` swallowed the error.
@@ -2060,21 +2065,21 @@ specs, New Session templates, target builders).
 
 | SSMS equivalent                  | gosmo                                                      |
 | -------------------------------- | ---------------------------------------------------------- |
-| Extended Events → Sessions       | `srv.EventSessions(ctx)` / `srv.EventSessionByName(ctx, name)` / `srv.EventSessionRef(name)` (no-I/O handle) — each with its `Events` and `Targets` |
-| New session                      | `srv.CreateEventSession(ctx, gosmo.EventSessionSpec{...})`   |
+| Extended Events → Sessions       | `srv.XEvents().Sessions(ctx)` / `srv.XEvents().SessionByName(ctx, name)` / `srv.XEvents().SessionRef(name)` (no-I/O handle) — each with its `Events` and `Targets` |
+| New session                      | `srv.XEvents().CreateSession(ctx, gosmo.EventSessionSpec{...})`   |
 | Properties → OK                  | `es.Alter(ctx, spec)` — the minimal ADD/DROP diff against the catalog; start from `es.Spec()` |
 | Start / Stop / Delete            | `es.Start(ctx)` / `es.Stop(ctx)` / `es.Drop(ctx)`              |
 | Running state, dropped events, current file | `es.Status(ctx)` → `*EventSessionStatus`            |
 | Script Session as CREATE         | `NewServerScripter(srv, opts).ScriptEventSession(ctx, name)`   |
-| View Target Data (event_file)    | `srv.ReadEventFile(ctx, es.EventFilePattern(), cursor, max)` — incremental by `EventFileCursor` |
+| View Target Data (event_file)    | `srv.XEvents().ReadFile(ctx, es.EventFilePattern(), cursor, max)` — incremental by `EventFileCursor` |
 | View Target Data (ring_buffer)   | `es.ReadRingBuffer(ctx)` → `*RingBufferData`                  |
-| The .xel files of an event_file  | `srv.EventFiles(ctx, pattern)` — oldest first, via `EnumFileSystem`; a cursor into a file rollover deleted fails `errors.Is(err, gosmo.ErrEventFileGone)` |
+| The .xel files of an event_file  | `srv.XEvents().Files(ctx, pattern)` — oldest first, via `EnumFileSystem`; a cursor into a file rollover deleted fails `errors.Is(err, gosmo.ErrEventFileGone)` |
 | Add a target                     | `es.AddTarget(ctx, gosmo.EventFileTarget(name, mb, files))` / `gosmo.RingBufferTarget(kb)` — no stop needed |
 | XEvent Profiler (Standard / TSQL) | `gosmo.XEProfilerStandard()` / `gosmo.XEProfilerTSQL()` — SSMS's definitions as specs, no target |
 | New Session → Template           | `gosmo.XESessionTemplates()` — name, category, description and a fresh nameless spec each; reconstructed, not copied from SSMS's .xml files, and each checked live to read back unchanged |
 | Event XML a caller already holds | `gosmo.DecodeEventXML(b)` / `gosmo.DecodeRingBuffer(b)`         |
-| The event / action / target library | `srv.XEPackages(ctx)` / `srv.XEObjects(ctx, kind)` (a pred_source's value type in `TypeName`) / `srv.XEObjectColumns(ctx, pkg, obj)` / `srv.XEMapValues(ctx, pkg, map)` — cached per `Server` |
-| Azure SQL Database (database-scoped) | `db.EventSessions(ctx)` / `db.EventSessionByName` / `db.EventSessionRef` / `db.CreateEventSession` — the same type, `es.Database()` non-nil, `ON DATABASE` |
+| The event / action / target library | `srv.XEvents().Packages(ctx)` / `srv.XEvents().Objects(ctx, kind)` (a pred_source's value type in `TypeName`) / `srv.XEvents().ObjectColumns(ctx, pkg, obj)` / `srv.XEvents().MapValues(ctx, pkg, map)` — cached per `Server` |
+| Azure SQL Database (database-scoped) | `db.XEvents().Sessions(ctx)` / `.SessionByName` / `.SessionRef` / `.CreateSession` — the same facet type, `es.Database()` non-nil, `ON DATABASE` |
 
 **Live data is polled from a target**, never read from the XE stream SSMS
 uses (`sys.fn_MSxe_read_event_stream` is undocumented, and so is its binary
@@ -2279,7 +2284,7 @@ text, keyed on error numbers so they hold on a server of any language:
   `MissingOrDenied` to either half — the server withholds which on purpose.
 - `IsAlreadyExists(err)` — a CREATE refused because the name is taken
   (1801, 1913, 2714, 15023, 15025), in any message of the batch.
-- `SendMail`'s known refusals wrap `ErrMailProfileInvalid`,
+- `Mail.Send`'s known refusals wrap `ErrMailProfileInvalid`,
   `ErrMailNoDefaultProfile`, `ErrMailStopped` and `ErrMailXPsDisabled`.
 
 ### `ErrNotFound`
@@ -2386,7 +2391,7 @@ naming syntax the caller never wrote
 case). It is only for that: a missing *column* is gated instead, so the read
 returns a zero value rather than an error. Where a caller can ask in
 advance, it should — `db.EnclaveComputationsSupported()`,
-`db.QueryStoreWaitStatsSupported()`, `db.QueryStoreMetrics()` — and hide the
+`db.QueryStore().WaitStatsSupported()`, `db.QueryStore().Metrics()` — and hide the
 option rather than let it fail on submit.
 
 ---

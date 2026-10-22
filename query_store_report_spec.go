@@ -87,10 +87,11 @@ func qsMetric(m QSMetric) (qsMetricDef, bool) {
 	return qsMetricDef{}, false
 }
 
-// QueryStoreMetrics returns every metric a Query Store report can rank by, in SSMS's
+// Metrics returns every metric a Query Store report can rank by, in SSMS's
 // display order. Metrics the instance is too old to have are left out, so a
 // caller building a selector from this never offers one that cannot be read.
-func (d *Database) QueryStoreMetrics() []QSMetric {
+func (qs QueryStore) Metrics() []QSMetric {
+	d := qs.db
 	out := make([]QSMetric, 0, len(qsMetricDefs))
 	for _, def := range qsMetricDefs {
 		// An unread version offers everything rather than nothing, and lets
@@ -125,7 +126,7 @@ const (
 // runtime renders the aggregate over a sys.query_store_runtime_stats alias
 // and a metric column stem; wait renders it over sys.query_store_wait_stats,
 // whose columns are named differently and which has no execution count of its
-// own (see QueryStoreWaitCategories).
+// own (see QueryStore.WaitCategories).
 //
 // Both are functions rather than format strings so the substitution order is
 // the compiler's problem, not a reviewer's.
@@ -244,11 +245,11 @@ type QueryStoreReportOptions struct {
 	From, To time.Time
 
 	// BaselineFrom and BaselineTo bound the comparison window
-	// QueryStoreRegressedQueries measures regression against, and are
+	// QueryStore.RegressedQueries measures regression against, and are
 	// ignored by every other report. Zero means the window of the same length
 	// immediately before From. Intervals overlapping it count as for From and
 	// To, except that one overlapping [From, To) as well counts in the
-	// reported window only — see QueryStoreRegressedQueries.
+	// reported window only — see QueryStore.RegressedQueries.
 	BaselineFrom, BaselineTo time.Time
 
 	// Top caps how many rows come back. Zero means QSDefaultTop.
@@ -263,8 +264,8 @@ type QueryStoreReportOptions struct {
 	// ranking the whole database — what the Tracked Queries view reads, where
 	// the caller already knows which queries it is following. Empty means
 	// every query. Honoured by the four per-query reports; ignored by the
-	// reports whose rows are not queries (QueryStoreOverallConsumption,
-	// QueryStoreWaitCategories) and by QueryStorePlans, which
+	// reports whose rows are not queries (QueryStore.OverallConsumption,
+	// QueryStore.WaitCategories) and by QueryStore.Plans, which
 	// names the one query it is about.
 	//
 	// Top still applies: a caller asking for more ids than Top gets the
@@ -385,7 +386,7 @@ func (sp qsReportSpec) window(a *qsArgs, from, to time.Time) string {
 
 // queryFilter renders the Options.QueryIDs restriction as further predicates
 // for the window's WHERE, or nothing when there is no list. Appended by the
-// per-query reports only: QueryStorePlans names its own query, and
+// per-query reports only: QueryStore.Plans names its own query, and
 // adding a second id predicate there would answer nothing for any query the
 // caller had not also listed.
 func (sp qsReportSpec) queryFilter(a *qsArgs) string {

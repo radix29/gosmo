@@ -23,7 +23,7 @@ import (
 type Server struct {
 	db   *sql.DB
 	info *ServerInfo
-	xe   xeCatalogCache // XEObjects & co., filled on first use
+	xe   xeCatalogCache // XEvents.Objects & co., filled on first use
 
 	// login is the pool's connector when Connect opened it, nil for
 	// NewServer; see InitialDatabase.

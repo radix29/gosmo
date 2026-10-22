@@ -205,7 +205,7 @@ WITH (EVENT_RETENTION_MODE=ALLOW_SINGLE_EVENT_LOSS,MAX_DISPATCH_LATENCY=3 SECOND
 
 func TestEventSessionStateAndDropStatements(t *testing.T) {
 	ctx, col := WithScript(context.Background())
-	es := (&Server{}).EventSessionRef("s]1")
+	es := (&Server{}).XEvents().SessionRef("s]1")
 	if err := es.Start(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -216,7 +216,7 @@ func TestEventSessionStateAndDropStatements(t *testing.T) {
 		t.Fatal(err)
 	}
 	azure := &Server{info: &ServerInfo{EngineEdition: int(EngineAzureSQLDatabase)}}
-	db := azure.DatabaseRef("AppDB").EventSessionRef("d")
+	db := azure.DatabaseRef("AppDB").XEvents().SessionRef("d")
 	if err := db.Start(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -244,20 +244,20 @@ func TestDatabaseScopedEventSessionsRefusedOffAzure(t *testing.T) {
 	for _, edition := range []EngineEdition{EngineEnterprise, EngineStandard, 0} {
 		s := &Server{info: &ServerInfo{EngineEdition: int(edition), VersionMajor: 17}}
 		d := s.DatabaseRef("AppDB")
-		es := d.EventSessionRef("d")
+		es := d.XEvents().SessionRef("d")
 		spec := EventSessionSpec{Name: "d", Events: []SessionEvent{{Package: "sqlserver", Name: "sql_batch_completed"}}}
 		for name, call := range map[string]func() error{
-			"EventSessions":      func() error { _, err := d.EventSessions(ctx); return err },
-			"EventSessionByName": func() error { _, err := d.EventSessionByName(ctx, "d"); return err },
-			"CreateEventSession": func() error { _, err := d.CreateEventSession(ctx, spec); return err },
-			"Status":             func() error { _, err := es.Status(ctx); return err },
-			"ReadRingBuffer":     func() error { _, err := es.ReadRingBuffer(ctx); return err },
-			"Start":              func() error { return es.Start(ctx) },
-			"Stop":               func() error { return es.Stop(ctx) },
-			"AddTarget":          func() error { return es.AddTarget(ctx, RingBufferTarget(0)) },
-			"Drop":               func() error { return es.Drop(ctx) },
-			"Alter":              func() error { return es.Alter(ctx, spec) },
-			"ScriptEventSession": func() error { _, err := NewScripter(d, ScriptOptions{}).ScriptEventSession(ctx, "d"); return err },
+			"XEvents.Sessions":      func() error { _, err := d.XEvents().Sessions(ctx); return err },
+			"XEvents.SessionByName": func() error { _, err := d.XEvents().SessionByName(ctx, "d"); return err },
+			"XEvents.CreateSession": func() error { _, err := d.XEvents().CreateSession(ctx, spec); return err },
+			"Status":                func() error { _, err := es.Status(ctx); return err },
+			"ReadRingBuffer":        func() error { _, err := es.ReadRingBuffer(ctx); return err },
+			"Start":                 func() error { return es.Start(ctx) },
+			"Stop":                  func() error { return es.Stop(ctx) },
+			"AddTarget":             func() error { return es.AddTarget(ctx, RingBufferTarget(0)) },
+			"Drop":                  func() error { return es.Drop(ctx) },
+			"Alter":                 func() error { return es.Alter(ctx, spec) },
+			"ScriptEventSession":    func() error { _, err := NewScripter(d, ScriptOptions{}).ScriptEventSession(ctx, "d"); return err },
 		} {
 			if err := call(); !errors.Is(err, ErrUnsupportedVersion) {
 				t.Errorf("edition %d: %s: err = %v, want ErrUnsupportedVersion", edition, name, err)
@@ -329,7 +329,7 @@ func xeCanned(match string, rows ...[]driver.Value) cannedRow {
 	return cannedRow{match: match, cols: make([]string, len(rows[0])), rows: rows}
 }
 
-// eventSessionRows cans the five catalog reads behind EventSessionByName for
+// eventSessionRows cans the five catalog reads behind XEvents.SessionByName for
 // one session named s.
 func eventSessionRows(running bool) []cannedRow {
 	return []cannedRow{
@@ -347,7 +347,7 @@ func eventSessionRows(running bool) []cannedRow {
 func TestEventSessionByNameAssemblesChildren(t *testing.T) {
 	s := captureServer(t, 17)
 	captured.reset(eventSessionRows(true)...)
-	es, err := s.EventSessionByName(t.Context(), "s")
+	es, err := s.XEvents().SessionByName(t.Context(), "s")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -366,7 +366,7 @@ func TestEventSessionByNameAssemblesChildren(t *testing.T) {
 	}
 
 	captured.reset()
-	if _, err := s.EventSessionByName(t.Context(), "missing"); !errors.Is(err, ErrNotFound) {
+	if _, err := s.XEvents().SessionByName(t.Context(), "missing"); !errors.Is(err, ErrNotFound) {
 		t.Errorf("missing session: %v", err)
 	}
 }
@@ -396,12 +396,12 @@ func TestAlterStopsARunningSessionOnlyForOptions(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			s := captureServer(t, 17)
 			captured.reset(eventSessionRows(tc.running)...)
-			cur, err := s.EventSessionByName(t.Context(), "s")
+			cur, err := s.XEvents().SessionByName(t.Context(), "s")
 			if err != nil {
 				t.Fatal(err)
 			}
 			ctx, col := WithScript(t.Context())
-			if err := s.EventSessionRef("s").Alter(ctx, tc.spec(cur.Spec())); err != nil {
+			if err := s.XEvents().SessionRef("s").Alter(ctx, tc.spec(cur.Spec())); err != nil {
 				t.Fatal(err)
 			}
 			if got := col.Statements(); strings.Join(got, "|") != strings.Join(tc.want, "|") {
@@ -443,16 +443,16 @@ func TestXECatalogIsCachedPerServer(t *testing.T) {
 	captured.reset(xeCanned("FROM   sys.dm_xe_objects o", []driver.Value{
 		"sqlserver", "rpc_completed", "event", "desc", "", "Analytic", "execution", ""}))
 	for range 3 {
-		objs, err := s.XEObjects(t.Context(), XEObjectEvent)
+		objs, err := s.XEvents().Objects(t.Context(), XEObjectEvent)
 		if err != nil || len(objs) != 1 || objs[0].Channel != "Analytic" {
-			t.Fatalf("XEObjects = %+v, %v", objs, err)
+			t.Fatalf("XEvents.Objects = %+v, %v", objs, err)
 		}
 		objs[0].Name = "mutated"
 	}
 	if n := captured.count("sys.dm_xe_objects o"); n != 1 {
 		t.Errorf("catalog read %d times, want 1", n)
 	}
-	if _, err := s.XEObjects(t.Context(), XEObjectTarget); err != nil {
+	if _, err := s.XEvents().Objects(t.Context(), XEObjectTarget); err != nil {
 		t.Fatal(err)
 	}
 	if n := captured.count("sys.dm_xe_objects o"); n != 2 {
@@ -460,7 +460,7 @@ func TestXECatalogIsCachedPerServer(t *testing.T) {
 	}
 }
 
-// EventFiles lists a relative pattern in the error-log directory, keeps only
+// XEvents.Files lists a relative pattern in the error-log directory, keeps only
 // the files the pattern matches (case aside), and sorts them oldest first
 // whatever order the listing came in.
 func TestEventFilesListsTheMatchingFilesInReadOrder(t *testing.T) {
@@ -474,7 +474,7 @@ func TestEventFilesListsTheMatchingFilesInReadOrder(t *testing.T) {
 			dmf("zz_0_300.xel", false), dmf("ZZ_0_100.XEL", false), dmf("zz_0_200.xel", false),
 			dmf("zz_sub.xel", true), dmf("zz_0_150.txt", false), dmf("other_0_1.xel", false)),
 	)
-	got, err := s.EventFiles(t.Context(), "zz*.xel")
+	got, err := s.XEvents().Files(t.Context(), "zz*.xel")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -489,14 +489,14 @@ func TestEventFilesListsTheMatchingFilesInReadOrder(t *testing.T) {
 	// A pattern with a directory lists that directory, and asks nothing of
 	// the error log.
 	captured.reset(xeCanned("sys.dm_os_enumerate_filesystem", dmf("zz_0_1.xel", false)))
-	if _, err := s.EventFiles(t.Context(), `/var/opt/mssql/log/zz*.xel`); err != nil {
+	if _, err := s.XEvents().Files(t.Context(), `/var/opt/mssql/log/zz*.xel`); err != nil {
 		t.Fatal(err)
 	}
 	if captured.count("ErrorLogFileName") != 0 {
 		t.Error("an absolute pattern read the error-log directory")
 	}
 
-	if _, err := s.EventFiles(t.Context(), "https://acct.blob.core.windows.net/xe/zz*.xel"); !errors.Is(err, ErrUnsupported) {
+	if _, err := s.XEvents().Files(t.Context(), "https://acct.blob.core.windows.net/xe/zz*.xel"); !errors.Is(err, ErrUnsupported) {
 		t.Errorf("a URL: %v, want ErrUnsupported", err)
 	}
 }
@@ -537,7 +537,7 @@ func (c *xeFailConn) QueryContext(context.Context, string, []driver.NamedValue) 
 func init() { sql.Register("xefail", xeFailDriver{}) }
 
 // A cursor into a file rollover has deleted is refused with Msg 25722, which
-// ReadEventFile names ErrEventFileGone; the same refusal of a read from the
+// XEvents.ReadFile names ErrEventFileGone; the same refusal of a read from the
 // start is not that — there was no cursor to lose.
 func TestReadEventFileNamesAFileRolloverDeleted(t *testing.T) {
 	db, err := sql.Open("xefail", "")
@@ -548,7 +548,7 @@ func TestReadEventFileNamesAFileRolloverDeleted(t *testing.T) {
 	s := &Server{db: db, info: &ServerInfo{VersionMajor: 17}}
 	xeFailWith = mssql.Error{Number: 25722, Class: 16, Message: `The offset 84480 is invalid for log file "C:\log\zz_0_1.xel".`}
 
-	_, cur, err := s.ReadEventFile(t.Context(), "zz*.xel", EventFileCursor{File: `C:\log\zz_0_1.xel`, Offset: 84480}, 0)
+	_, cur, err := s.XEvents().ReadFile(t.Context(), "zz*.xel", EventFileCursor{File: `C:\log\zz_0_1.xel`, Offset: 84480}, 0)
 	if !errors.Is(err, ErrEventFileGone) {
 		t.Fatalf("err = %v, want ErrEventFileGone", err)
 	}
@@ -558,11 +558,11 @@ func TestReadEventFileNamesAFileRolloverDeleted(t *testing.T) {
 	if cur.File != `C:\log\zz_0_1.xel` {
 		t.Errorf("cursor moved to %+v on a failed read", cur)
 	}
-	if _, _, err := s.ReadEventFile(t.Context(), "zz*.xel", EventFileCursor{}, 0); err == nil || errors.Is(err, ErrEventFileGone) {
+	if _, _, err := s.XEvents().ReadFile(t.Context(), "zz*.xel", EventFileCursor{}, 0); err == nil || errors.Is(err, ErrEventFileGone) {
 		t.Errorf("from the start: %v", err)
 	}
 	xeFailWith = mssql.Error{Number: 208, Class: 16, Message: "Invalid object name"}
-	if _, _, err := s.ReadEventFile(t.Context(), "zz*.xel", EventFileCursor{File: "f", Offset: 1}, 0); errors.Is(err, ErrEventFileGone) {
+	if _, _, err := s.XEvents().ReadFile(t.Context(), "zz*.xel", EventFileCursor{File: "f", Offset: 1}, 0); errors.Is(err, ErrEventFileGone) {
 		t.Error("another error read as a rolled-over file")
 	}
 }
@@ -596,7 +596,7 @@ func TestNonStringFieldValuesAreChecked(t *testing.T) {
 	}
 
 	ctx, col := WithScript(t.Context())
-	es := (&Server{}).EventSessionRef("s")
+	es := (&Server{}).XEvents().SessionRef("s")
 	if err := es.Alter(ctx, spec); err == nil {
 		t.Error("alter: want an error")
 	}

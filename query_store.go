@@ -14,6 +14,19 @@ import (
 // Properties > Query Store page)
 // ============================================================
 
+// QueryStore is a database's Query Store: its options, its reports and plan
+// forcing. It is a value handle over the database and issues no query of its
+// own, so d.QueryStore() is free and never fails; every method reads or
+// writes through the database it came from, exactly as a method on Database
+// would.
+type QueryStore struct{ db *Database }
+
+// QueryStore returns the handle to the database's Query Store.
+func (d *Database) QueryStore() QueryStore { return QueryStore{db: d} }
+
+// Database returns the database this Query Store belongs to.
+func (qs QueryStore) Database() *Database { return qs.db }
+
 // QueryStoreState is Query Store's operation mode, spelled as ALTER DATABASE
 // SET QUERY_STORE takes it and sys.database_query_store_options reports it.
 type QueryStoreState string
@@ -108,8 +121,9 @@ SELECT desired_state_desc, actual_state_desc, readonly_reason,
 FROM   sys.database_query_store_options`
 }
 
-// QueryStore returns the database's Query Store configuration and state.
-func (d *Database) QueryStore(ctx context.Context) (*QueryStoreInfo, error) {
+// Options returns the database's Query Store configuration and state.
+func (qs QueryStore) Options(ctx context.Context) (*QueryStoreInfo, error) {
+	d := qs.db
 	q := d.queryStoreOptionsSelect()
 
 	// The four capture_policy_* columns are NULL whenever query capture
@@ -137,7 +151,7 @@ func (d *Database) QueryStore(ctx context.Context) (*QueryStoreInfo, error) {
 	return info, nil
 }
 
-// QueryStoreOptions holds the settings SetQueryStoreOptions writes via
+// QueryStoreOptions holds the settings QueryStore.SetOptions writes via
 // ALTER DATABASE ... SET QUERY_STORE = ON (...). DesiredState of "OFF"
 // turns Query Store off and ignores every other field.
 type QueryStoreOptions struct {
@@ -183,12 +197,13 @@ var (
 	queryStoreWaitStatsModes = map[QueryStoreWaitStatsMode]bool{QueryStoreWaitStatsOff: true, QueryStoreWaitStatsOn: true}
 )
 
-// SetQueryStoreOptions turns Query Store on (reconfiguring it) or off.
+// SetOptions turns Query Store on (reconfiguring it) or off.
 //
 // Like SetRecoveryModel, this is an ALTER DATABASE statement naming the
 // database explicitly, so it runs through d.server.exec rather than
 // d.exec.
-func (d *Database) SetQueryStoreOptions(ctx context.Context, opts QueryStoreOptions) error {
+func (qs QueryStore) SetOptions(ctx context.Context, opts QueryStoreOptions) error {
+	d := qs.db
 	if opts.DesiredState == QueryStoreOff {
 		if _, err := d.server.exec(ctx,
 			fmt.Sprintf("ALTER DATABASE %s SET QUERY_STORE = OFF", quoteIdent(d.Name)),
@@ -215,7 +230,7 @@ func (d *Database) SetQueryStoreOptions(ctx context.Context, opts QueryStoreOpti
 }
 
 // queryStoreOnOptions is the option list inside SET QUERY_STORE = ON (…) for
-// opts, shared by SetQueryStoreOptions and the database scripter so the two
+// opts, shared by QueryStore.SetOptions and the database scripter so the two
 // never spell it differently. waitStats says whether the instance has
 // WAIT_STATS_CAPTURE_MODE. Every keyword is checked against its constants.
 func queryStoreOnOptions(opts QueryStoreOptions, waitStats bool) (string, error) {
@@ -276,18 +291,20 @@ func queryStoreOnOptions(opts QueryStoreOptions, waitStats bool) (string, error)
 	return strings.Join(withs, ", "), nil
 }
 
-// FlushQueryStore forces Query Store to persist its in-memory data to disk
+// Flush forces Query Store to persist its in-memory data to disk
 // immediately (SSMS's "Flush Data" action), via sys.sp_query_store_flush_db.
-func (d *Database) FlushQueryStore(ctx context.Context) error {
+func (qs QueryStore) Flush(ctx context.Context) error {
+	d := qs.db
 	if _, err := d.exec(ctx, "EXEC sys.sp_query_store_flush_db"); err != nil {
 		return fmt.Errorf("gosmo: flush query store on %q: %w", d.Name, err)
 	}
 	return nil
 }
 
-// ClearQueryStore discards all captured Query Store data (SSMS's "Clear
+// Clear discards all captured Query Store data (SSMS's "Clear
 // Query Store" action) without changing its configuration.
-func (d *Database) ClearQueryStore(ctx context.Context) error {
+func (qs QueryStore) Clear(ctx context.Context) error {
+	d := qs.db
 	if _, err := d.server.exec(ctx,
 		fmt.Sprintf("ALTER DATABASE %s SET QUERY_STORE CLEAR", quoteIdent(d.Name)),
 	); err != nil {

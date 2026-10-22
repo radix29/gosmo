@@ -267,6 +267,39 @@ What to check when one exists: that `FROM EXTERNAL PROVIDER WITH OBJECT_ID =
 …, DEFAULT_SCHEMA = …` parses in that order, and that an Entra login takes
 `DEFAULT_LANGUAGE` through `ALTER LOGIN` as it does `DEFAULT_DATABASE`.
 
+## Idle pooled connections camp in the last database read — not investigated
+
+`Database.query`/`queryRow` send `USE [db]; …` on a pooled connection
+(`useBatch`), and the connection goes back to the pool still in `db`: the
+driver resets it only on the next checkout. Until then it holds a shared
+database lock, so *someone else's* `RESTORE`, `SET OFFLINE` (no ROLLBACK) or
+`SET SINGLE_USER` fails "Exclusive access could not be obtained", and an
+`AUTO_CLOSE` database never closes. `ReleaseIdleConnections` covers only this
+`Server`'s own exclusive writes.
+
+Mitigated, not fixed: gossms sets `ConnMaxIdleTime` to 60 s (gossms
+`internal/db/connection.go`, `connMaxIdleTime`), against the 5-minute default
+here; the idle connection is gone 60 s after the read (measured on SQL2017,
+2026-10-22) at ~25 ms of re-login on the next read.
+
+The fix would be to run database-scoped reads as `EXEC @proc` with `@proc =
+N'[db].sys.sp_executesql'`, so the session never leaves its initial database —
+and with it most of `releaseIdle`'s reason to exist. Before anyone tries it,
+prove it against three rules in `CLAUDE.md` § Conventions:
+
+- the Msg 924 compile-time resolution of a literal `[db].sys.sp_executesql`
+  (hence the variable, as `perDatabaseExec` does);
+- the plan-cache database-id trap ("Read another database's catalog under
+  `USE [db]`") — check whether a cached plan under `[db].sys.sp_executesql`
+  keeps its database id across a drop/recreate the way an ad-hoc `[db].sys.…`
+  plan does;
+- parameter collation: inside `[db].sys.sp_executesql` parameters bind in the
+  target's collation, which may make the `COLLATE DATABASE_DEFAULT` rule
+  unnecessary there, or break a comparison that relies on it.
+
+It touches every database-scoped read, so `TestLiveVersionSweep` on 13 and
+the collation tests are the minimum gate.
+
 ## Agent schedules are addressed by id — settled, do not re-raise
 
 Schedule names are not unique in msdb (`ARCHITECTURE.md` § Shared schedules).

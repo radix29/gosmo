@@ -38,10 +38,10 @@ func TestUnrecognizedModeIsRefused(t *testing.T) {
 			return d.SetDatabaseScopedConfig(ctx, "MAXDOP", "4", bad)
 		},
 		"MailProfile.Grant": func(ctx context.Context, d *Database) error {
-			return d.server.MailProfileRef("p").Grant(ctx, "app", bad)
+			return d.server.Mail().ProfileRef("p").Grant(ctx, "app", bad)
 		},
 		"MailProfile.SetGrantDefault": func(ctx context.Context, d *Database) error {
-			return d.server.MailProfileRef("p").SetGrantDefault(ctx, "app", bad)
+			return d.server.Mail().ProfileRef("p").SetGrantDefault(ctx, "app", bad)
 		},
 		"MasterKey.Regenerate": func(ctx context.Context, d *Database) error {
 			return d.MasterKeyRef().Regenerate(ctx, "pw", bad, "")

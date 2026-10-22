@@ -12,8 +12,8 @@ import (
 
 // scripter_database_mail.go scripts Database Mail accounts, profiles and
 // the whole configuration as the sysmail_* procedure calls that create them —
-// the same statements CreateMailAccount, CreateMailProfile, AddAccount, Grant
-// and SetMailConfiguration send, built by the same functions.
+// the same statements Mail.CreateAccount, Mail.CreateProfile, AddAccount, Grant
+// and Mail.SetConfiguration send, built by the same functions.
 //
 // An account's password cannot be read, so an account with Basic
 // authentication scripts @password = N'<insert password here>' under a comment saying
@@ -44,7 +44,7 @@ func mailStmt(sb *strings.Builder, opts ScriptOptions, guard, stmt string) {
 // ScriptMailAccount generates the CREATE (or DROP) script for one Database
 // Mail account.
 func (sc *ServerScripter) ScriptMailAccount(ctx context.Context, name string) (string, error) {
-	a, err := sc.server.MailAccountByName(ctx, name)
+	a, err := sc.server.Mail().AccountByName(ctx, name)
 	if err != nil {
 		return "", err
 	}
@@ -96,11 +96,11 @@ func writeMailAccountCreate(sb *strings.Builder, a *MailAccount, opts ScriptOpti
 // Mail profile: the profile, its accounts in their stored sequence, and its
 // grants. The accounts themselves are not scripted with it and must exist.
 func (sc *ServerScripter) ScriptMailProfile(ctx context.Context, name string) (string, error) {
-	p, err := sc.server.MailProfileByName(ctx, name)
+	p, err := sc.server.Mail().ProfileByName(ctx, name)
 	if err != nil {
 		return "", err
 	}
-	grants, err := sc.server.MailPrincipalProfiles(ctx)
+	grants, err := sc.server.Mail().PrincipalProfiles(ctx)
 	if err != nil {
 		return "", err
 	}
@@ -160,19 +160,19 @@ func (sc *ServerScripter) ScriptDatabaseMail(ctx context.Context) (string, error
 	if v := sc.opts.verb(); v == ScriptDrop || v == ScriptDropAndCreate {
 		return "", unsupportedf("gosmo: script database mail: the configuration cannot be dropped")
 	}
-	accts, err := sc.server.MailAccounts(ctx)
+	accts, err := sc.server.Mail().Accounts(ctx)
 	if err != nil {
 		return "", err
 	}
-	profiles, err := sc.server.MailProfiles(ctx)
+	profiles, err := sc.server.Mail().Profiles(ctx)
 	if err != nil {
 		return "", err
 	}
-	grants, err := sc.server.MailPrincipalProfiles(ctx)
+	grants, err := sc.server.Mail().PrincipalProfiles(ctx)
 	if err != nil {
 		return "", err
 	}
-	cfg, err := sc.server.MailConfiguration(ctx)
+	cfg, err := sc.server.Mail().Configuration(ctx)
 	if err != nil {
 		return "", err
 	}

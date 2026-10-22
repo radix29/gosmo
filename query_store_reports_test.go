@@ -279,7 +279,7 @@ func TestQSWaitStatisticDefsArePinnedByName(t *testing.T) {
 // bigint, and count_executions is bigint too, so dividing one sum by the
 // other is integer division: SQL Server truncates it and reports nothing.
 // Every wait category averaging under a millisecond per execution then comes
-// back as 0, and QueryStoreWaitCategories's ORDER BY value DESC ties
+// back as 0, and QueryStore.WaitCategories's ORDER BY value DESC ties
 // all of them — the ranking the report exists for becomes arbitrary. Avg
 // shipped that way.
 //
@@ -373,7 +373,7 @@ func TestQueryStoreMetricsOmitsMetricsTheInstanceLacks(t *testing.T) {
 	}
 
 	d2016 := &Database{Name: "appdb", server: &Server{info: &ServerInfo{VersionMajor: int(SQLServer2016)}}}
-	got := d2016.QueryStoreMetrics()
+	got := d2016.QueryStore().Metrics()
 	if has(got, QSMetricLogMemory) || has(got, QSMetricTempDBMemory) {
 		t.Errorf("a 2016 instance was offered a 2017-only metric: %v", got)
 	}
@@ -382,14 +382,14 @@ func TestQueryStoreMetricsOmitsMetricsTheInstanceLacks(t *testing.T) {
 	}
 
 	d2017 := &Database{Name: "appdb", server: &Server{info: &ServerInfo{VersionMajor: int(SQLServer2017)}}}
-	if got := d2017.QueryStoreMetrics(); !has(got, QSMetricLogMemory) {
+	if got := d2017.QueryStore().Metrics(); !has(got, QSMetricLogMemory) {
 		t.Errorf("a 2017 instance was not offered Log memory used: %v", got)
 	}
 
 	// A Server whose version was never read must not be narrowed to nothing:
 	// the query is a better authority than a version we do not have.
 	unknown := &Database{Name: "appdb", server: &Server{}}
-	if got := unknown.QueryStoreMetrics(); len(got) != len(qsMetricDefs) {
+	if got := unknown.QueryStore().Metrics(); len(got) != len(qsMetricDefs) {
 		t.Errorf("an instance of unknown version was offered %d of %d metrics", len(got), len(qsMetricDefs))
 	}
 }
@@ -454,22 +454,22 @@ func TestQueryStoreReportRejectsUnknownMetricOrStatistic(t *testing.T) {
 	d := &Database{Name: "appdb", server: &Server{}}
 	inject := "cpu_time) FROM sys.query_store_query; DROP TABLE dbo.Secrets; --"
 
-	if _, err := d.QueryStoreTopResourceQueries(t.Context(), QueryStoreReportOptions{Metric: QSMetric(inject)}); err == nil {
+	if _, err := d.QueryStore().TopResourceQueries(t.Context(), QueryStoreReportOptions{Metric: QSMetric(inject)}); err == nil {
 		t.Error("an unknown metric was accepted")
 	}
-	if _, err := d.QueryStoreTopResourceQueries(t.Context(), QueryStoreReportOptions{Statistic: QSStatistic(inject)}); err == nil {
+	if _, err := d.QueryStore().TopResourceQueries(t.Context(), QueryStoreReportOptions{Statistic: QSStatistic(inject)}); err == nil {
 		t.Error("an unknown statistic was accepted")
 	}
 	// Every report resolves through the same path; check one of each shape so
 	// a new report that forgot to call resolve is caught.
-	if _, err := d.QueryStoreOverallConsumption(t.Context(), QueryStoreReportOptions{Metric: QSMetric(inject)}); err == nil {
+	if _, err := d.QueryStore().OverallConsumption(t.Context(), QueryStoreReportOptions{Metric: QSMetric(inject)}); err == nil {
 		t.Error("an unknown metric was accepted by Overall Resource Consumption")
 	}
-	if _, err := d.QueryStoreRegressedQueries(t.Context(), QueryStoreReportOptions{Metric: QSMetric(inject)}); err == nil {
+	if _, err := d.QueryStore().RegressedQueries(t.Context(), QueryStoreReportOptions{Metric: QSMetric(inject)}); err == nil {
 		t.Error("an unknown metric was accepted by Regressed Queries")
 	}
-	if _, err := d.QueryStorePlans(t.Context(), 1, QueryStoreReportOptions{Metric: QSMetric(inject)}); err == nil {
-		t.Error("an unknown metric was accepted by QueryStorePlans")
+	if _, err := d.QueryStore().Plans(t.Context(), 1, QueryStoreReportOptions{Metric: QSMetric(inject)}); err == nil {
+		t.Error("an unknown metric was accepted by QueryStore.Plans")
 	}
 }
 
@@ -489,7 +489,7 @@ var (
 // rejecting.
 func TestQueryStoreTopResourceQueriesBindsItsParametersInOrder(t *testing.T) {
 	d := qsRecDB(t, 17, nil, nil)
-	_, err := d.QueryStoreTopResourceQueries(context.Background(), QueryStoreReportOptions{
+	_, err := d.QueryStore().TopResourceQueries(context.Background(), QueryStoreReportOptions{
 		Metric: QSMetricCPUTime, From: qsFrom, To: qsTo, Top: 10, MinExecCount: 5,
 	})
 	if err != nil {
@@ -527,7 +527,7 @@ func TestQueryStoreRegressedQueriesBindsBothWindowsSeparately(t *testing.T) {
 	baseFrom := baseTo.Add(-2 * time.Hour)
 
 	d := qsRecDB(t, 17, nil, nil)
-	_, err := d.QueryStoreRegressedQueries(context.Background(), QueryStoreReportOptions{
+	_, err := d.QueryStore().RegressedQueries(context.Background(), QueryStoreReportOptions{
 		Metric: QSMetricCPUTime, From: qsFrom, To: qsTo,
 		BaselineFrom: baseFrom, BaselineTo: baseTo, Top: 10,
 	})
@@ -562,13 +562,13 @@ func TestQueryStoreRegressedQueriesBindsBothWindowsSeparately(t *testing.T) {
 }
 
 // TestQueryStorePlansFiltersTheWindowInTheJoinNotTheWhere pins the one
-// structural decision in QueryStorePlans. Moving the interval
+// structural decision in QueryStore.Plans. Moving the interval
 // predicate into the WHERE turns the LEFT JOIN back into an inner one, and
 // the plan that did not run in the window — very often the good plan a user
 // opened the report to force back — disappears from the list.
 func TestQueryStorePlansFiltersTheWindowInTheJoinNotTheWhere(t *testing.T) {
 	d := qsRecDB(t, 17, nil, nil)
-	if _, err := d.QueryStorePlans(context.Background(), 42, QueryStoreReportOptions{
+	if _, err := d.QueryStore().Plans(context.Background(), 42, QueryStoreReportOptions{
 		Metric: QSMetricCPUTime, From: qsFrom, To: qsTo,
 	}); err != nil {
 		t.Fatalf("query store plans: %v", err)
@@ -602,7 +602,7 @@ func TestQueryStorePlansFiltersTheWindowInTheJoinNotTheWhere(t *testing.T) {
 // query's.
 func TestQueryStoreForcedPlanQueriesFiltersInHaving(t *testing.T) {
 	d := qsRecDB(t, 17, nil, nil)
-	if _, err := d.QueryStoreForcedPlanQueries(context.Background(), QueryStoreReportOptions{
+	if _, err := d.QueryStore().ForcedPlanQueries(context.Background(), QueryStoreReportOptions{
 		Metric: QSMetricCPUTime, From: qsFrom, To: qsTo,
 	}); err != nil {
 		t.Fatalf("forced plan queries: %v", err)
@@ -624,7 +624,7 @@ func TestQueryStoreForcedPlanQueriesFiltersInHaving(t *testing.T) {
 // whether or not it is unstable.
 func TestQueryStoreHighVariationRanksByCoefficientOfVariation(t *testing.T) {
 	d := qsRecDB(t, 17, nil, nil)
-	if _, err := d.QueryStoreHighVariationQueries(context.Background(), QueryStoreReportOptions{
+	if _, err := d.QueryStore().HighVariationQueries(context.Background(), QueryStoreReportOptions{
 		Metric: QSMetricCPUTime, Statistic: QSStatAvg, From: qsFrom, To: qsTo,
 	}); err != nil {
 		t.Fatalf("high variation queries: %v", err)
@@ -660,7 +660,7 @@ func TestQueryStoreQueryStatScanMapsEveryColumn(t *testing.T) {
 	}
 	d := qsRecDB(t, 17, cols, [][]driver.Value{row})
 
-	stats, err := d.QueryStoreTopResourceQueries(context.Background(),
+	stats, err := d.QueryStore().TopResourceQueries(context.Background(),
 		QueryStoreReportOptions{From: qsFrom, To: qsTo})
 	if err != nil {
 		t.Fatalf("top resource queries: %v", err)
@@ -707,7 +707,7 @@ func TestQueryStoreQueryStatScanTakesNullsAsZero(t *testing.T) {
 		nil, nil, nil, nil, int64(0), nil, nil}
 	d := qsRecDB(t, 17, cols, [][]driver.Value{row})
 
-	stats, err := d.QueryStoreTopResourceQueries(context.Background(),
+	stats, err := d.QueryStore().TopResourceQueries(context.Background(),
 		QueryStoreReportOptions{From: qsFrom, To: qsTo})
 	if err != nil {
 		t.Fatalf("a row with no forced plan and no executions failed to scan: %v", err)
@@ -740,10 +740,10 @@ func TestQueryStoreForcePlanScriptsTheProcedureAndItsArguments(t *testing.T) {
 		want string
 	}{
 		{"force", func(d *Database, ctx context.Context) error {
-			return d.QueryStoreForcePlan(ctx, 42, 7)
+			return d.QueryStore().ForcePlan(ctx, 42, 7)
 		}, "EXEC sys.sp_query_store_force_plan @query_id = 42, @plan_id = 7"},
 		{"unforce", func(d *Database, ctx context.Context) error {
-			return d.QueryStoreUnforcePlan(ctx, 42, 7)
+			return d.QueryStore().UnforcePlan(ctx, 42, 7)
 		}, "EXEC sys.sp_query_store_unforce_plan @query_id = 42, @plan_id = 7"},
 	}
 	for _, tt := range tests {
@@ -774,13 +774,13 @@ func TestQueryStoreForcePlanScriptsTheProcedureAndItsArguments(t *testing.T) {
 // sys.query_store_wait_stats".
 func TestQueryStoreWaitReportsAreVersionGated(t *testing.T) {
 	old := qsRecDB(t, int(SQLServer2016), nil, nil)
-	if old.QueryStoreWaitStatsSupported() {
+	if old.QueryStore().WaitStatsSupported() {
 		t.Error("wait statistics reported as supported on SQL Server 2016")
 	}
-	if _, err := old.QueryStoreWaitCategories(context.Background(), QueryStoreReportOptions{}); err == nil {
+	if _, err := old.QueryStore().WaitCategories(context.Background(), QueryStoreReportOptions{}); err == nil {
 		t.Error("wait categories ran against SQL Server 2016")
 	}
-	if _, err := old.QueryStoreWaitingQueries(context.Background(), "CPU", QueryStoreReportOptions{}); err == nil {
+	if _, err := old.QueryStore().WaitingQueries(context.Background(), QSWaitCPU, QueryStoreReportOptions{}); err == nil {
 		t.Error("waiting queries ran against SQL Server 2016")
 	}
 	if len(qsRec.calls) != 0 {
@@ -788,10 +788,10 @@ func TestQueryStoreWaitReportsAreVersionGated(t *testing.T) {
 	}
 
 	newer := qsRecDB(t, int(SQLServer2017), nil, nil)
-	if !newer.QueryStoreWaitStatsSupported() {
+	if !newer.QueryStore().WaitStatsSupported() {
 		t.Error("wait statistics reported as unsupported on SQL Server 2017")
 	}
-	if _, err := newer.QueryStoreWaitCategories(context.Background(), QueryStoreReportOptions{}); err != nil {
+	if _, err := newer.QueryStore().WaitCategories(context.Background(), QueryStoreReportOptions{}); err != nil {
 		t.Errorf("wait categories on SQL Server 2017: %v", err)
 	}
 }
@@ -801,7 +801,7 @@ func TestQueryStoreWaitReportsAreVersionGated(t *testing.T) {
 // empty string", which would silently return nothing.
 func TestQueryStoreWaitingQueriesFiltersByCategoryOnlyWhenGivenOne(t *testing.T) {
 	d := qsRecDB(t, 17, nil, nil)
-	if _, err := d.QueryStoreWaitingQueries(context.Background(), "CPU",
+	if _, err := d.QueryStore().WaitingQueries(context.Background(), QSWaitCPU,
 		QueryStoreReportOptions{From: qsFrom, To: qsTo, Top: 10}); err != nil {
 		t.Fatalf("waiting queries: %v", err)
 	}
@@ -814,7 +814,7 @@ func TestQueryStoreWaitingQueriesFiltersByCategoryOnlyWhenGivenOne(t *testing.T)
 	}
 
 	d = qsRecDB(t, 17, nil, nil)
-	if _, err := d.QueryStoreWaitingQueries(context.Background(), "",
+	if _, err := d.QueryStore().WaitingQueries(context.Background(), QSWaitAllCategories,
 		QueryStoreReportOptions{From: qsFrom, To: qsTo, Top: 10}); err != nil {
 		t.Fatalf("waiting queries across every category: %v", err)
 	}
@@ -835,7 +835,7 @@ func TestQueryStoreWaitingQueriesAcrossCategoriesDoesNotFanOut(t *testing.T) {
 	for _, st := range []QSStatistic{QSStatAvg, QSStatTotal} {
 		opts.Statistic = st
 		d := qsRecDB(t, 17, nil, nil)
-		if _, err := d.QueryStoreWaitingQueries(context.Background(), "", opts); err != nil {
+		if _, err := d.QueryStore().WaitingQueries(context.Background(), QSWaitAllCategories, opts); err != nil {
 			t.Fatalf("%s across every category: %v", st, err)
 		}
 		got := qsRec.last(t).sql
@@ -848,7 +848,7 @@ func TestQueryStoreWaitingQueriesAcrossCategoriesDoesNotFanOut(t *testing.T) {
 	for _, st := range []QSStatistic{QSStatMin, QSStatMax, QSStatStdDev} {
 		opts.Statistic = st
 		d := qsRecDB(t, 17, nil, nil)
-		_, err := d.QueryStoreWaitingQueries(context.Background(), "", opts)
+		_, err := d.QueryStore().WaitingQueries(context.Background(), QSWaitAllCategories, opts)
 		if !errors.Is(err, ErrInvalidRequest) {
 			t.Errorf("%s across every category: err = %v, want ErrInvalidRequest", st, err)
 		}
@@ -856,13 +856,13 @@ func TestQueryStoreWaitingQueriesAcrossCategoriesDoesNotFanOut(t *testing.T) {
 			t.Errorf("%s across every category still sent a statement", st)
 		}
 		// Named, the category keeps the statistic.
-		if _, err := d.QueryStoreWaitingQueries(context.Background(), "CPU", opts); err != nil {
+		if _, err := d.QueryStore().WaitingQueries(context.Background(), QSWaitCPU, opts); err != nil {
 			t.Errorf("%s in one category: %v", st, err)
 		}
 	}
 
 	d := qsRecDB(t, 17, nil, nil)
-	if _, err := d.QueryStoreWaitCategories(context.Background(), opts); err != nil {
+	if _, err := d.QueryStore().WaitCategories(context.Background(), opts); err != nil {
 		t.Fatalf("wait categories: %v", err)
 	}
 	if got := qsRec.last(t).sql; !strings.Contains(got, "sys.query_store_wait_stats AS ws") {
@@ -876,7 +876,7 @@ func TestQueryStoreWaitingQueriesAcrossCategoriesDoesNotFanOut(t *testing.T) {
 // an otherwise quiet database.
 func TestQueryStoreReportsExcludeInternalQueriesUnlessAsked(t *testing.T) {
 	d := qsRecDB(t, 17, nil, nil)
-	if _, err := d.QueryStoreTopResourceQueries(context.Background(),
+	if _, err := d.QueryStore().TopResourceQueries(context.Background(),
 		QueryStoreReportOptions{From: qsFrom, To: qsTo}); err != nil {
 		t.Fatalf("top resource queries: %v", err)
 	}
@@ -885,7 +885,7 @@ func TestQueryStoreReportsExcludeInternalQueriesUnlessAsked(t *testing.T) {
 	}
 
 	d = qsRecDB(t, 17, nil, nil)
-	if _, err := d.QueryStoreTopResourceQueries(context.Background(),
+	if _, err := d.QueryStore().TopResourceQueries(context.Background(),
 		QueryStoreReportOptions{From: qsFrom, To: qsTo, IncludeInternal: true}); err != nil {
 		t.Fatalf("top resource queries: %v", err)
 	}
@@ -907,7 +907,7 @@ func TestQueryStoreRegressionThresholdIsBoundAndOnlyAppliedWhenAsked(t *testing.
 	}
 
 	d := qsRecDB(t, 17, nil, nil)
-	if _, err := d.QueryStoreRegressedQueries(context.Background(), opts); err != nil {
+	if _, err := d.QueryStore().RegressedQueries(context.Background(), opts); err != nil {
 		t.Fatalf("regressed queries: %v", err)
 	}
 	if sql := qsRec.last(t).sql; strings.Contains(sql, "b.value > 0") {
@@ -916,7 +916,7 @@ func TestQueryStoreRegressionThresholdIsBoundAndOnlyAppliedWhenAsked(t *testing.
 
 	opts.MinRegressionPct = 25
 	d = qsRecDB(t, 17, nil, nil)
-	if _, err := d.QueryStoreRegressedQueries(context.Background(), opts); err != nil {
+	if _, err := d.QueryStore().RegressedQueries(context.Background(), opts); err != nil {
 		t.Fatalf("regressed queries: %v", err)
 	}
 	call := qsRec.last(t)
@@ -950,15 +950,15 @@ func TestQueryStoreRegressionThresholdIsIgnoredByTheOtherReports(t *testing.T) {
 	opts := QueryStoreReportOptions{From: qsFrom, To: qsTo, MinRegressionPct: 25}
 	for name, run := range map[string]func(*Database) error{
 		"top resource": func(d *Database) error {
-			_, err := d.QueryStoreTopResourceQueries(context.Background(), opts)
+			_, err := d.QueryStore().TopResourceQueries(context.Background(), opts)
 			return err
 		},
 		"high variation": func(d *Database) error {
-			_, err := d.QueryStoreHighVariationQueries(context.Background(), opts)
+			_, err := d.QueryStore().HighVariationQueries(context.Background(), opts)
 			return err
 		},
 		"forced plans": func(d *Database) error {
-			_, err := d.QueryStoreForcedPlanQueries(context.Background(), opts)
+			_, err := d.QueryStore().ForcedPlanQueries(context.Background(), opts)
 			return err
 		},
 	} {
@@ -978,7 +978,7 @@ func TestQueryStoreRegressionThresholdIsIgnoredByTheOtherReports(t *testing.T) {
 // and a list numbered ahead of the range would bind a query id to a time.
 func TestQueryStoreQueryIDsAreBoundInWindowOrder(t *testing.T) {
 	d := qsRecDB(t, 17, nil, nil)
-	if _, err := d.QueryStoreTopResourceQueries(context.Background(),
+	if _, err := d.QueryStore().TopResourceQueries(context.Background(),
 		QueryStoreReportOptions{From: qsFrom, To: qsTo, Top: 10, QueryIDs: []int64{7, 9}}); err != nil {
 		t.Fatalf("top resource queries: %v", err)
 	}
@@ -999,7 +999,7 @@ func TestQueryStoreQueryIDsAreBoundInWindowOrder(t *testing.T) {
 	// No ids: no predicate at all, rather than an empty IN () that no server
 	// parses.
 	d = qsRecDB(t, 17, nil, nil)
-	if _, err := d.QueryStoreTopResourceQueries(context.Background(),
+	if _, err := d.QueryStore().TopResourceQueries(context.Background(),
 		QueryStoreReportOptions{From: qsFrom, To: qsTo}); err != nil {
 		t.Fatalf("top resource queries: %v", err)
 	}
@@ -1016,7 +1016,7 @@ func TestQueryStoreRegressedQueriesBindsTheIDListPerWindow(t *testing.T) {
 	baseTo := qsFrom
 	baseFrom := baseTo.Add(-2 * time.Hour)
 	d := qsRecDB(t, 17, nil, nil)
-	if _, err := d.QueryStoreRegressedQueries(context.Background(), QueryStoreReportOptions{
+	if _, err := d.QueryStore().RegressedQueries(context.Background(), QueryStoreReportOptions{
 		From: qsFrom, To: qsTo, BaselineFrom: baseFrom, BaselineTo: baseTo, Top: 10,
 		QueryIDs: []int64{7},
 	}); err != nil {
@@ -1047,11 +1047,11 @@ func TestTheSingleQueryReadsIgnoreTheQueryIDList(t *testing.T) {
 	opts := QueryStoreReportOptions{From: qsFrom, To: qsTo, QueryIDs: []int64{7, 9}}
 	for name, run := range map[string]func(*Database) error{
 		"plans": func(d *Database) error {
-			_, err := d.QueryStorePlans(context.Background(), 42, opts)
+			_, err := d.QueryStore().Plans(context.Background(), 42, opts)
 			return err
 		},
 		"tracked query": func(d *Database) error {
-			_, err := d.QueryStoreTrackedQuery(context.Background(), 42, opts)
+			_, err := d.QueryStore().TrackedQuery(context.Background(), 42, opts)
 			return err
 		},
 	} {

@@ -6,6 +6,22 @@ classDiagram
     %% extended_events_read.go target readers, extended_events_templates.go)
     %% =========================================================
 
+    class XEvents {
+        <<facet>>
+        +Server() *Server
+        +Database() *Database
+        +Sessions() []*EventSession
+        +SessionByName(name) *EventSession
+        +SessionRef(name) *EventSession
+        +CreateSession(spec) *EventSession
+        +Packages() []XEPackage
+        +Objects(kind XEObjectKind) []XEObject
+        +ObjectColumns(pkg, object) []XEObjectColumn
+        +MapValues(pkg, name) []XEMapValue
+        +Files(pattern) []string
+        +ReadFile(pattern, cursor, max) []XEvent
+    }
+
     class EventSession {
         -server *Server
         -db *Database
@@ -144,7 +160,7 @@ classDiagram
     class XEObject {
         +Package string
         +Name string
-        +Kind string
+        +Kind XEObjectKind
         +Description string
         +Channel string
         +Keyword string
@@ -164,9 +180,10 @@ classDiagram
         +Value string
     }
 
-    Server "1" --> "*" EventSession : EventSessions / EventSessionByName / EventSessionRef
-    Database "1" --> "*" EventSession : Azure SQL Database scope
-    Server ..> EventSession : CreateEventSession(EventSessionSpec)
+    Server --> XEvents : XEvents()
+    Database --> XEvents : XEvents(), Azure SQL Database scope
+    XEvents "1" --> "*" EventSession : Sessions / SessionByName / SessionRef
+    XEvents ..> EventSession : CreateSession(EventSessionSpec)
     EventSession ..> EventSessionSpec : Spec / Alter
     EventSession *-- SessionEvent : Events
     EventSession *-- SessionTarget : Targets
@@ -174,14 +191,14 @@ classDiagram
     SessionTarget *-- SessionField : Fields
     EventSession ..> EventSessionStatus : Status
     EventSessionStatus *-- EventTargetStatus : Targets
-    Server ..> XEvent : ReadEventFile(pattern, EventFileCursor, max)
-    Server ..> EventFileCursor : returns the next cursor
+    XEvents ..> XEvent : ReadFile(pattern, EventFileCursor, max)
+    XEvents ..> EventFileCursor : returns the next cursor
     EventSession ..> RingBufferData : ReadRingBuffer
     RingBufferData *-- XEvent : Events
     XEvent *-- XEValue : Fields / Actions
     XESessionTemplate ..> EventSessionSpec : Spec()
-    Server ..> XEPackage : XEPackages
-    Server ..> XEObject : XEObjects(kind)
-    Server ..> XEObjectColumn : XEObjectColumns
-    Server ..> XEMapValue : XEMapValues
+    XEvents ..> XEPackage : Packages
+    XEvents ..> XEObject : Objects(kind)
+    XEvents ..> XEObjectColumn : ObjectColumns
+    XEvents ..> XEMapValue : MapValues
     Scripter ..> EventSession : ScriptEventSession

@@ -232,7 +232,7 @@ type EventFileCursor struct {
 // IsZero reports whether the cursor is at the start.
 func (c EventFileCursor) IsZero() bool { return c.File == "" }
 
-// ReadEventFile reads the events of the .xel files matching pathPattern that
+// ReadFile reads the events of the .xel files matching pathPattern that
 // come after cursor, and returns them with the cursor to pass next time.
 //
 // pathPattern is what fn_xe_file_target_read_file takes: a path with a
@@ -250,7 +250,8 @@ func (c EventFileCursor) IsZero() bool { return c.File == "" }
 // A cursor naming a file that rollover has since deleted is refused by the
 // server, and the error is ErrEventFileGone (errors.Is); start again from the
 // zero cursor, which reads from the oldest file still there.
-func (s *Server) ReadEventFile(ctx context.Context, pathPattern string, cursor EventFileCursor, max int) ([]XEvent, EventFileCursor, error) {
+func (x XEvents) ReadFile(ctx context.Context, pathPattern string, cursor EventFileCursor, max int) ([]XEvent, EventFileCursor, error) {
+	s := x.server
 	what := fmt.Sprintf("read event file %q", pathPattern)
 	var file, offset any // NULL, NULL for the start
 	if !cursor.IsZero() {
@@ -303,14 +304,14 @@ FROM   sys.fn_xe_file_target_read_file(@p1, NULL, @p2, @p3)`, pathPattern, file,
 	return out, next, nil
 }
 
-// ErrEventFileGone is ReadEventFile refusing a cursor whose file is no longer
+// ErrEventFileGone is XEvents.ReadFile refusing a cursor whose file is no longer
 // there — rollover deleted it (max_rollover_files) between two reads, or it
 // was deleted by hand.
 var ErrEventFileGone = errors.New("the event file the cursor points into no longer exists")
 
 // msgXEInvalidOffset is the server's refusal of a cursor: "The offset %d is
 // invalid for log file %s" — raised for an offset that is not a buffer
-// boundary too, which a cursor ReadEventFile returned never is, so for gosmo's
+// boundary too, which a cursor XEvents.ReadFile returned never is, so for gosmo's
 // cursors it means the file is gone (verified on major 13: a missing file
 // with a valid offset is refused with it).
 const msgXEInvalidOffset = 25722
@@ -330,8 +331,8 @@ func eventFileReadError(what string, cursor EventFileCursor, err error) error {
 	return fmt.Errorf("gosmo: %s: %w", what, err)
 }
 
-// EventFiles lists the .xel files on the server that pathPattern matches —
-// ReadEventFile's pattern, EventFilePattern's form — oldest first, which is
+// Files lists the .xel files on the server that pathPattern matches —
+// XEvents.ReadFile's pattern, EventFilePattern's form — oldest first, which is
 // the order the server reads them in (the rollover number in each name grows
 // with time). A relative pattern is resolved against the error-log directory,
 // as the server resolves the target's filename.
@@ -340,8 +341,9 @@ func eventFileReadError(what string, cursor EventFileCursor, err error) error {
 // answers a login that is not sysadmin with no rows, and a blob URL (Azure)
 // cannot be listed at all — ErrUnsupported. An empty result therefore means
 // "nothing known", not "no files"; a caller reading the files falls back to
-// ReadEventFile with the pattern.
-func (s *Server) EventFiles(ctx context.Context, pathPattern string) ([]string, error) {
+// XEvents.ReadFile with the pattern.
+func (x XEvents) Files(ctx context.Context, pathPattern string) ([]string, error) {
+	s := x.server
 	what := fmt.Sprintf("list event files %q", pathPattern)
 	if strings.Contains(pathPattern, "://") {
 		return nil, unsupportedf("gosmo: %s: a URL cannot be listed", what)
@@ -396,12 +398,12 @@ func matchWildcardFold(pattern, name string) bool {
 	return strings.HasSuffix(name, last)
 }
 
-// EventFilePattern returns the pattern ReadEventFile takes for the session's
+// EventFilePattern returns the pattern XEvents.ReadFile takes for the session's
 // event_file target: its filename with the extension replaced by *.xel, which
 // matches the rollover files the server names <stem>_0_<n>.xel. A relative
 // filename stays relative — the server resolves both the target's and the
 // read's against the error-log directory. It needs the session's targets, so
-// a Ref handle has none; read the session with EventSessionByName first.
+// a Ref handle has none; read the session with XEvents.SessionByName first.
 func (es *EventSession) EventFilePattern() (string, error) {
 	t, ok := es.Target(XETargetEventFile)
 	if !ok {

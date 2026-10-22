@@ -29,10 +29,10 @@ const (
 	ErrorLogAgent ErrorLogType = 2
 	// ErrorLogDatabaseMail is the Database Mail log (sysmail_event_log). It
 	// has one "file", number 0, and cannot be cycled — rows are purged with
-	// DeleteMailLog instead. An entry's Process is the event type
+	// Mail.DeleteLog instead. An entry's Process is the event type
 	// ("error", "information" …) and its Text the event's description. A
 	// DatabaseMailUserRole member sees only the events of its own mail items
-	// (see Server.MailVisibility); DeleteMailLog purges the table.
+	// (see Mail.Visibility); Mail.DeleteLog purges the table.
 	ErrorLogDatabaseMail ErrorLogType = 3
 )
 
@@ -274,10 +274,10 @@ var cycleLogStatements = map[ErrorLogType]string{
 // holding as many as it is configured to keep.
 //
 // Cycling the Agent log requires SQL Server Agent to be running. The
-// Database Mail log cannot be cycled; DeleteMailLog purges it.
+// Database Mail log cannot be cycled; Mail.DeleteLog purges it.
 func (s *Server) CycleLog(ctx context.Context, logType ErrorLogType) error {
 	if logType == ErrorLogDatabaseMail {
-		return invalidf("gosmo: cycle %s log: it has no archives to cycle into; purge it with DeleteMailLog", logType)
+		return invalidf("gosmo: cycle %s log: it has no archives to cycle into; purge it with Mail.DeleteLog", logType)
 	}
 	stmt, ok := cycleLogStatements[logType]
 	if !ok {
@@ -334,7 +334,7 @@ func (s *Server) readMailLog(ctx context.Context, logNumber int, search LogSearc
 			where = append(where, fmt.Sprintf("CHARINDEX(@p%d, ISNULL(description, N'') COLLATE Latin1_General_CI_AS) > 0", len(args)))
 		}
 	}
-	// datetime, not datetime2, for MailItems' reason: an entry's own Date
+	// datetime, not datetime2, for Mail.Items' reason: an entry's own Date
 	// must bound it inclusively.
 	if !search.From.IsZero() {
 		args = append(args, search.From)

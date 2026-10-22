@@ -296,7 +296,7 @@ func readDatabaseLayout(ctx context.Context, d *Database) (*databaseLayout, erro
 	if l.ct, err = d.ChangeTracking(ctx); err != nil {
 		return nil, err
 	}
-	if l.qs, err = d.QueryStore(ctx); err != nil {
+	if l.qs, err = d.QueryStore().Options(ctx); err != nil {
 		return nil, err
 	}
 	if l.scoped, err = d.DatabaseScopedConfigs(ctx); err != nil {

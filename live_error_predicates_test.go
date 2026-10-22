@@ -89,11 +89,11 @@ func TestLiveErrorPredicates(t *testing.T) {
 	if xps == 0 {
 		want = ErrMailXPsDisabled
 	}
-	_, err = srv.SendMail(ctx, MailMessage{Profile: "gosmo_live_errpred_no_such_profile", To: "nobody@example.com", Subject: "x", Body: "x"})
+	_, err = srv.Mail().Send(ctx, MailMessage{Profile: "gosmo_live_errpred_no_such_profile", To: "nobody@example.com", Subject: "x", Body: "x"})
 	if !errors.Is(err, want) {
-		t.Errorf("SendMail with Database Mail XPs = %d: errors.Is(%v, %v) = false", xps, err, want)
+		t.Errorf("Mail.Send with Database Mail XPs = %d: errors.Is(%v, %v) = false", xps, err, want)
 	}
 	if _, ok := AsSQLError(err); !ok {
-		t.Errorf("SendMail: the SQL error is no longer reachable: %v", err)
+		t.Errorf("Mail.Send: the SQL error is no longer reachable: %v", err)
 	}
 }

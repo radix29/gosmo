@@ -178,22 +178,8 @@ classDiagram
         +PersistentVersionStoreFileGroup() string
         +DatabaseScopedConfigs() []*DatabaseScopedConfig
         +SetDatabaseScopedConfig(name, value, replica ScopedConfigReplica) error
-        +QueryStore() *QueryStoreInfo
-        +SetQueryStoreOptions(opts) error
-        +FlushQueryStore() error
-        +ClearQueryStore() error
-        +QueryStoreTopResourceQueries(opts) []*QSQueryStat
-        +QueryStoreRegressedQueries(opts) []*QSQueryStat
-        +QueryStoreHighVariationQueries(opts) []*QSQueryStat
-        +QueryStoreForcedPlanQueries(opts) []*QSQueryStat
-        +QueryStoreOverallConsumption(opts) []*QSIntervalStat
-        +QueryStoreTrackedQuery(queryID, opts) []*QSPlanIntervalStat
-        +QueryStoreWaitCategories(opts) []*QSWaitStat
-        +QueryStoreWaitingQueries(category, opts) []*QSQueryStat
-        +QueryStorePlans(queryID, opts) []*QSPlan
-        +QueryStoreQueryText(queryID) (string, string)
-        +QueryStoreForcePlan(queryID, planID) error
-        +QueryStoreUnforcePlan(queryID, planID) error
+        +QueryStore() QueryStore
+        +XEvents() XEvents
         +Files() []*DatabaseFileInfo
         +FileRef(name) *DatabaseFileInfo
         +AddFile(spec) error

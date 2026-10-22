@@ -21,13 +21,13 @@ import (
 //   - msdb db_owner or CONTROL SERVER reads everything: accounts, profiles,
 //     principal profiles, configuration, status, every item and event (the
 //     last two through the base tables — see "Items and events" below).
-//   - DatabaseMailUserRole alone reads MailStatus, its own MailItems and the
-//     MailEvents of those items only. The account, profile, principal-profile
+//   - DatabaseMailUserRole alone reads Mail.Status, its own Mail.Items and the
+//     Mail.Events of those items only. The account, profile, principal-profile
 //     and configuration reads fail Msg 229 for it — and the reads here never
 //     join an item or event to a profile, so the role's reads stay readable.
 //   - msdb db_datareader reads every item and event, and nothing else here.
 //   - Any other login, guest included, gets Msg 229 from every read.
-//   - MailQueues needs VIEW SERVER STATE besides (VIEW SERVER PERFORMANCE
+//   - Mail.Queues needs VIEW SERVER STATE besides (VIEW SERVER PERFORMANCE
 //     STATE on 2022 and later), Msg 300 without it.
 //
 // Errors pass through unchanged, so a caller tells "not visible" from a
@@ -36,7 +36,7 @@ import (
 // # Database Mail XPs
 //
 // With the 'Database Mail XPs' option at 0 every read here still works
-// except the status procedure, which is refused (Msg 15281). MailStatus
+// except the status procedure, which is refused (Msg 15281). Mail.Status
 // therefore reads the option first and answers MailDisabled rather than an
 // error.
 //
@@ -46,7 +46,7 @@ import (
 // IS_SRVROLEMEMBER('sysadmin'): every other login sees only the items it
 // sent and those items' events — not even the log's own start/stop events,
 // which name no item. So CONTROL SERVER and msdb db_owner, who configure
-// everything, would see almost nothing. MailItems, MailItemByID, MailEvents
+// everything, would see almost nothing. Mail.Items, Mail.ItemByID, Mail.Events
 // and the ErrorLogDatabaseMail family therefore read the undocumented base
 // tables, sysmail_mailitems and sysmail_log, when the caller is not
 // sysadmin but may SELECT them (HAS_PERMS_BY_NAME, so a DENY counts), and
@@ -55,13 +55,25 @@ import (
 // choice is made server-side in one batch: a statement SQL Server does not
 // run is not permission-checked, so the role member's batch naming the
 // table does not fail. The base-table read decodes sent_status and
-// event_type as the views do (probed on 17, 2026-10-01). MailVisibility
+// event_type as the views do (probed on 17, 2026-10-01). Mail.Visibility
 // says which the caller got.
 //
 // # Versions
 //
 // The sysmail_* tables, views and procedures are one implementation from 13
 // through 17, Windows and Linux; nothing here is gated.
+
+// Mail is the server's Database Mail: its accounts, profiles, configuration,
+// queue, items and log. It is a value handle over the server and issues no
+// query of its own, so s.Mail() is free and never fails; every method reads
+// or writes through the server it came from.
+type Mail struct{ server *Server }
+
+// Mail returns the handle to the server's Database Mail.
+func (s *Server) Mail() Mail { return Mail{server: s} }
+
+// Server returns the server the handle came from.
+func (dm Mail) Server() *Server { return dm.server }
 
 // ============================================================
 // Accounts
@@ -168,17 +180,19 @@ func scanMailAccount(s *Server, scan func(...any) error) (*MailAccount, error) {
 	return a, err
 }
 
-// MailAccounts returns every Database Mail account, by name.
-func (s *Server) MailAccounts(ctx context.Context) ([]*MailAccount, error) {
+// Accounts returns every Database Mail account, by name.
+func (dm Mail) Accounts(ctx context.Context) ([]*MailAccount, error) {
+	s := dm.server
 	rows, err := s.query(ctx, mailAccountQuery+" ORDER BY a.name")
 	return scanRows(rows, err, "list mail accounts", func(scan func(...any) error) (*MailAccount, error) {
 		return scanMailAccount(s, scan)
 	})
 }
 
-// MailAccountByName returns one Database Mail account; a missing one is an
+// AccountByName returns one Database Mail account; a missing one is an
 // error wrapping ErrNotFound.
-func (s *Server) MailAccountByName(ctx context.Context, name string) (*MailAccount, error) {
+func (dm Mail) AccountByName(ctx context.Context, name string) (*MailAccount, error) {
+	s := dm.server
 	return readByName(ctx, s, scanMailAccount, mailAccountQuery+" WHERE a.name = @p1", []any{name},
 		notFoundf("gosmo: mail account %q not found", name),
 		fmt.Sprintf("read mail account %q", name))
@@ -199,7 +213,7 @@ type MailProfile struct {
 
 	// IsPublic reports a grant to public (principal_sid 0x00); IsDefault
 	// reports that grant is the public default profile. Private grants are
-	// MailPrincipalProfiles.
+	// Mail.PrincipalProfiles.
 	IsPublic  bool
 	IsDefault bool
 
@@ -235,16 +249,18 @@ SELECT pa.profile_id, pa.account_id, a.name, ISNULL(pa.sequence_number, 0)
 FROM   msdb.dbo.sysmail_profileaccount pa
 JOIN   msdb.dbo.sysmail_account a ON a.account_id = pa.account_id`
 
-// MailProfiles returns all Database Mail profiles from msdb, by name, each
+// Profiles returns all Database Mail profiles from msdb, by name, each
 // with its accounts. Two round trips: the profiles, then every
 // profile-account row grouped in Go.
-func (s *Server) MailProfiles(ctx context.Context) ([]*MailProfile, error) {
+func (dm Mail) Profiles(ctx context.Context) ([]*MailProfile, error) {
+	s := dm.server
 	return s.mailProfiles(ctx, "list mail profiles", "", nil)
 }
 
-// MailProfileByName returns one Database Mail profile with its accounts; a
+// ProfileByName returns one Database Mail profile with its accounts; a
 // missing one is an error wrapping ErrNotFound.
-func (s *Server) MailProfileByName(ctx context.Context, name string) (*MailProfile, error) {
+func (dm Mail) ProfileByName(ctx context.Context, name string) (*MailProfile, error) {
+	s := dm.server
 	ps, err := s.mailProfiles(ctx, fmt.Sprintf("read mail profile %q", name), " WHERE p.name = @p1", []any{name})
 	if err != nil {
 		return nil, err
@@ -329,9 +345,10 @@ func (pp *MailPrincipalProfile) IsPublic() bool {
 	return len(pp.PrincipalSID) == 1 && pp.PrincipalSID[0] == 0
 }
 
-// MailPrincipalProfiles returns every profile grant, public's included, by
+// PrincipalProfiles returns every profile grant, public's included, by
 // profile then principal name.
-func (s *Server) MailPrincipalProfiles(ctx context.Context) ([]*MailPrincipalProfile, error) {
+func (dm Mail) PrincipalProfiles(ctx context.Context) ([]*MailPrincipalProfile, error) {
+	s := dm.server
 	const q = `
 SELECT pp.profile_id, p.name, pp.principal_sid,
        CASE WHEN pp.principal_sid = 0x00 THEN N'public' ELSE ISNULL(dp.name, N'') END,
@@ -392,8 +409,9 @@ type MailConfiguration struct {
 	ProhibitedExtensions string
 }
 
-// MailConfiguration reads Database Mail's system parameters.
-func (s *Server) MailConfiguration(ctx context.Context) (*MailConfiguration, error) {
+// Configuration reads Database Mail's system parameters.
+func (dm Mail) Configuration(ctx context.Context) (*MailConfiguration, error) {
+	s := dm.server
 	type param struct{ name, value string }
 	rows, err := s.query(ctx, `
 SELECT paramname, ISNULL(paramvalue, N'') FROM msdb.dbo.sysmail_configuration`)
@@ -472,11 +490,12 @@ func (st MailState) String() string {
 	return fmt.Sprintf("MailState(%d)", int(st))
 }
 
-// MailStatus reports whether Database Mail is disabled, stopped or started.
+// Status reports whether Database Mail is disabled, stopped or started.
 // The 'Database Mail XPs' check and sysmail_help_status_sp run in one batch,
 // and the procedure only when the option is on, so a disabled server answers
 // MailDisabled rather than Msg 15281.
-func (s *Server) MailStatus(ctx context.Context) (MailState, error) {
+func (dm Mail) Status(ctx context.Context) (MailState, error) {
+	s := dm.server
 	const q = `
 IF EXISTS (SELECT 1 FROM sys.configurations
            WHERE name = N'Database Mail XPs' AND CAST(value_in_use AS int) = 1)
@@ -512,10 +531,11 @@ type MailQueue struct {
 	LastActivated   time.Time
 }
 
-// MailQueues reads the two mail queues' lengths and monitor state. It needs
+// Queues reads the two mail queues' lengths and monitor state. It needs
 // VIEW SERVER STATE (the procedure reads sys.dm_broker_queue_monitors) and
 // fails Msg 300 without it.
-func (s *Server) MailQueues(ctx context.Context) ([]*MailQueue, error) {
+func (dm Mail) Queues(ctx context.Context) ([]*MailQueue, error) {
+	s := dm.server
 	rows, err := s.query(ctx, "EXEC msdb.dbo.sysmail_help_queue_sp")
 	return scanRows(rows, err, "read mail queues", func(scan func(...any) error) (*MailQueue, error) {
 		q := &MailQueue{}
@@ -573,7 +593,7 @@ type MailItem struct {
 	LastModified time.Time
 }
 
-// MailItemFilter narrows MailItems. The zero value reads the newest
+// MailItemFilter narrows Mail.Items. The zero value reads the newest
 // mailRowLimit items of any status.
 type MailItemFilter struct {
 	// Status keeps only items in this state; empty keeps all.
@@ -639,18 +659,19 @@ func mailSourceBatch(table string, q func(source string) string, base, view stri
 // reads return: everything, or only its own items and their events (see
 // "Items and events" above).
 type MailVisibility struct {
-	// AllItems is true when MailItems and MailItemByID see every login's
+	// AllItems is true when Mail.Items and Mail.ItemByID see every login's
 	// items.
 	AllItems bool
-	// AllEvents is true when MailEvents and the ErrorLogDatabaseMail family
+	// AllEvents is true when Mail.Events and the ErrorLogDatabaseMail family
 	// see the whole log.
 	AllEvents bool
 }
 
-// MailVisibility reports what the caller's item and event reads return — the
+// Visibility reports what the caller's item and event reads return — the
 // same test those reads branch on, so a caller saying "only your items"
 // says what the reads did.
-func (s *Server) MailVisibility(ctx context.Context) (MailVisibility, error) {
+func (dm Mail) Visibility(ctx context.Context) (MailVisibility, error) {
+	s := dm.server
 	var v MailVisibility
 	q := "SELECT CAST(CASE WHEN ISNULL(IS_SRVROLEMEMBER(N'sysadmin'), 0) = 1 OR (" + mailReadsBase("sysmail_mailitems") + ") THEN 1 ELSE 0 END AS bit), " +
 		"CAST(CASE WHEN ISNULL(IS_SRVROLEMEMBER(N'sysadmin'), 0) = 1 OR (" + mailReadsBase("sysmail_log") + ") THEN 1 ELSE 0 END AS bit)"
@@ -676,11 +697,12 @@ func scanMailItem(scan func(...any) error) (*MailItem, error) {
 	return m, nil
 }
 
-// MailItems reads mail items, newest first. A login that may read neither
+// Items reads mail items, newest first. A login that may read neither
 // sysmail_mailitems nor every row of sysmail_allitems — a
 // DatabaseMailUserRole member — sees only the items it sent (see "Items and
 // events" above; MailVisibility).
-func (s *Server) MailItems(ctx context.Context, f MailItemFilter) ([]*MailItem, error) {
+func (dm Mail) Items(ctx context.Context, f MailItemFilter) ([]*MailItem, error) {
+	s := dm.server
 	var where []string
 	var args []any
 	if f.Status != "" {
@@ -708,10 +730,11 @@ func (s *Server) MailItems(ctx context.Context, f MailItemFilter) ([]*MailItem, 
 	})
 }
 
-// MailItemByID reads one mail item — what a caller polls after a send to
+// ItemByID reads one mail item — what a caller polls after a send to
 // learn whether it went. A missing or invisible item is an error wrapping
 // ErrNotFound.
-func (s *Server) MailItemByID(ctx context.Context, id int) (*MailItem, error) {
+func (dm Mail) ItemByID(ctx context.Context, id int) (*MailItem, error) {
+	s := dm.server
 	var m *MailItem
 	err := s.queryRow(ctx, func(row *sql.Row) error {
 		var err error
@@ -751,7 +774,7 @@ type MailEvent struct {
 	LastModUser  string
 }
 
-// MailEventFilter narrows MailEvents. The zero value reads the newest
+// MailEventFilter narrows Mail.Events. The zero value reads the newest
 // mailRowLimit events.
 type MailEventFilter struct {
 	// MailItemID keeps the events of one item; 0 keeps all.
@@ -765,10 +788,11 @@ type MailEventFilter struct {
 	Max int
 }
 
-// MailEvents reads the Database Mail log, newest first. A
+// Events reads the Database Mail log, newest first. A
 // DatabaseMailUserRole member sees only the events of its own items (see
 // "Items and events" above; MailVisibility).
-func (s *Server) MailEvents(ctx context.Context, f MailEventFilter) ([]*MailEvent, error) {
+func (dm Mail) Events(ctx context.Context, f MailEventFilter) ([]*MailEvent, error) {
+	s := dm.server
 	var where []string
 	var args []any
 	if f.MailItemID != 0 {
@@ -781,7 +805,7 @@ func (s *Server) MailEvents(ctx context.Context, f MailEventFilter) ([]*MailEven
 	}
 	if !f.Before.IsZero() {
 		args = append(args, f.Before)
-		where = append(where, fmt.Sprintf("log_date < CAST(@p%d AS datetime)", len(args))) // as MailItems' Before
+		where = append(where, fmt.Sprintf("log_date < CAST(@p%d AS datetime)", len(args))) // as Mail.Items' Before
 	}
 	q := mailEventsQuery(func(source string) string {
 		return fmt.Sprintf(`SELECT TOP (%d) log_id, event_type, log_date, ISNULL(description, N''),

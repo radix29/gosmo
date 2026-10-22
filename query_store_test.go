@@ -46,7 +46,7 @@ func TestQueryStoreWaitStatsModeAllowlist(t *testing.T) {
 }
 
 // TestSetQueryStoreOptionsRejectsUnknownValues confirms each of the four
-// free-text fields is validated before SetQueryStoreOptions ever
+// free-text fields is validated before QueryStore.SetOptions ever
 // builds the ALTER DATABASE statement — an injection payload in any one of
 // them must be rejected end-to-end, not just against the allowlist map in
 // isolation above.
@@ -75,8 +75,8 @@ func TestSetQueryStoreOptionsRejectsUnknownValues(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			d := &Database{Name: "appdb", server: &Server{}}
-			if err := d.SetQueryStoreOptions(t.Context(), tt.opts); err == nil {
-				t.Errorf("SetQueryStoreOptions accepted an injection payload in %s, want an error", tt.name)
+			if err := d.QueryStore().SetOptions(t.Context(), tt.opts); err == nil {
+				t.Errorf("QueryStore.SetOptions accepted an injection payload in %s, want an error", tt.name)
 			}
 		})
 	}
@@ -117,7 +117,7 @@ func TestSetQueryStoreOptionsStatement(t *testing.T) {
 	d := &Database{server: &Server{}, Name: "AppDB"}
 	ctx, script := WithScript(context.Background())
 
-	if err := d.SetQueryStoreOptions(ctx, QueryStoreOptions{
+	if err := d.QueryStore().SetOptions(ctx, QueryStoreOptions{
 		DesiredState:         "READ_WRITE",
 		MaxStorageMB:         256,
 		CaptureMode:          "AUTO",
@@ -128,7 +128,7 @@ func TestSetQueryStoreOptionsStatement(t *testing.T) {
 		MaxPlansPerQuery:     200,
 		WaitStatsCaptureMode: "ON",
 	}); err != nil {
-		t.Fatalf("SetQueryStoreOptions under WithScript: %v", err)
+		t.Fatalf("QueryStore.SetOptions under WithScript: %v", err)
 	}
 	if len(script.Statements()) != 1 {
 		t.Fatalf("Statements = %d, want 1", len(script.Statements()))
@@ -157,11 +157,11 @@ func TestSetQueryStoreOptionsOffIgnoresTheRest(t *testing.T) {
 	d := &Database{server: &Server{}, Name: "AppDB"}
 	ctx, script := WithScript(context.Background())
 
-	if err := d.SetQueryStoreOptions(ctx, QueryStoreOptions{
+	if err := d.QueryStore().SetOptions(ctx, QueryStoreOptions{
 		DesiredState: "OFF",
 		MaxStorageMB: 512, // ignored
 	}); err != nil {
-		t.Fatalf("SetQueryStoreOptions under WithScript: %v", err)
+		t.Fatalf("QueryStore.SetOptions under WithScript: %v", err)
 	}
 	want := "ALTER DATABASE [AppDB] SET QUERY_STORE = OFF"
 	if len(script.Statements()) != 1 || script.Statements()[0] != want {
@@ -189,8 +189,8 @@ func TestSetQueryStoreOptionsOmitsWaitStatsBefore2017(t *testing.T) {
 
 		// The 2016 read returns "" for a column that does not exist; that must
 		// not be rejected as an unrecognized mode.
-		if err := d.SetQueryStoreOptions(ctx, opts); err != nil {
-			t.Fatalf("SetQueryStoreOptions: %v", err)
+		if err := d.QueryStore().SetOptions(ctx, opts); err != nil {
+			t.Fatalf("QueryStore.SetOptions: %v", err)
 		}
 		if len(script.Statements()) != 1 {
 			t.Fatalf("Statements = %d, want 1", len(script.Statements()))
@@ -207,8 +207,8 @@ func TestSetQueryStoreOptionsOmitsWaitStatsBefore2017(t *testing.T) {
 
 			o := opts
 			o.WaitStatsCaptureMode = "ON"
-			if err := d.SetQueryStoreOptions(ctx, o); err != nil {
-				t.Fatalf("SetQueryStoreOptions: %v", err)
+			if err := d.QueryStore().SetOptions(ctx, o); err != nil {
+				t.Fatalf("QueryStore.SetOptions: %v", err)
 			}
 			if !strings.Contains(script.Statements()[0], "WAIT_STATS_CAPTURE_MODE = ON") {
 				t.Errorf("major %d dropped WAIT_STATS_CAPTURE_MODE:\n%s", major, script.Statements()[0])
@@ -224,7 +224,7 @@ func TestSetQueryStoreOptionsOmitsWaitStatsBefore2017(t *testing.T) {
 
 		o := opts
 		o.WaitStatsCaptureMode = "ON) --"
-		if err := d.SetQueryStoreOptions(ctx, o); err == nil {
+		if err := d.QueryStore().SetOptions(ctx, o); err == nil {
 			t.Error("2017 accepted an unrecognized wait stats capture mode, want an error")
 		}
 	})
@@ -242,7 +242,7 @@ func TestSetQueryStoreOptionsRefusesOutOfRangeValues(t *testing.T) {
 	d := &Database{server: &Server{}, Name: "AppDB"}
 	set := func(o QueryStoreOptions) ([]string, error) {
 		ctx, script := WithScript(context.Background())
-		err := d.SetQueryStoreOptions(ctx, o)
+		err := d.QueryStore().SetOptions(ctx, o)
 		return script.Statements(), err
 	}
 	for _, edit := range []func(*QueryStoreOptions){

@@ -189,17 +189,17 @@ var sweepMustCall = []string{
 
 	// Phase 5 item 24: Database Mail. The six ctx-only reads are reflective;
 	// the finders and the filtered item/event reads are driven by hand.
-	"Server.MailAccounts",
-	"Server.MailAccountByName",
-	"Server.MailProfiles",
-	"Server.MailProfileByName",
-	"Server.MailPrincipalProfiles",
-	"Server.MailConfiguration",
-	"Server.MailStatus",
-	"Server.MailQueues",
-	"Server.MailItems",
-	"Server.MailItemByID",
-	"Server.MailEvents",
+	"Mail.Accounts",
+	"Mail.AccountByName",
+	"Mail.Profiles",
+	"Mail.ProfileByName",
+	"Mail.PrincipalProfiles",
+	"Mail.Configuration",
+	"Mail.Status",
+	"Mail.Queues",
+	"Mail.Items",
+	"Mail.ItemByID",
+	"Mail.Events",
 
 	// Table-valued function result shapes in the bulk catalog snapshots,
 	// asserted against the sweep's own inline function and a system DMF.
@@ -439,6 +439,10 @@ func TestLiveVersionSweep(t *testing.T) {
 
 	sw.reflectSweep("Server", srv.Name(), srv)
 	sw.reflectSweep("Database", d.Name, d)
+	sw.reflectSweep("QueryStore", d.Name, d.QueryStore())
+	sw.reflectSweep("Mail", srv.Name(), srv.Mail())
+	sw.reflectSweep("XEvents", srv.Name(), srv.XEvents())
+	sw.reflectSweep("XEvents", d.Name, d.XEvents()) // refused off Azure
 
 	// Tables, and everything reached through one. Both scratch tables are
 	// swept rather than the first: a read that ignores the object it was
@@ -845,40 +849,40 @@ func sweepQueryStoreReports(sw *sweep, d *Database) {
 	// exercises the statement — the sweep asks whether the query runs on this
 	// version, not whether the row exists.
 	queryID := int64(1)
-	if top, err := d.QueryStoreTopResourceQueries(sw.ctx, opts); err == nil && len(top) > 0 {
+	if top, err := d.QueryStore().TopResourceQueries(sw.ctx, opts); err == nil && len(top) > 0 {
 		queryID = top[0].QueryID
 	}
 
-	sw.call("Database.QueryStoreTopResourceQueries", func() error {
-		_, err := d.QueryStoreTopResourceQueries(sw.ctx, opts)
+	sw.call("QueryStore.TopResourceQueries", func() error {
+		_, err := d.QueryStore().TopResourceQueries(sw.ctx, opts)
 		return err
 	})
-	sw.call("Database.QueryStoreForcedPlanQueries", func() error {
-		_, err := d.QueryStoreForcedPlanQueries(sw.ctx, opts)
+	sw.call("QueryStore.ForcedPlanQueries", func() error {
+		_, err := d.QueryStore().ForcedPlanQueries(sw.ctx, opts)
 		return err
 	})
-	sw.call("Database.QueryStoreHighVariationQueries", func() error {
-		_, err := d.QueryStoreHighVariationQueries(sw.ctx, opts)
+	sw.call("QueryStore.HighVariationQueries", func() error {
+		_, err := d.QueryStore().HighVariationQueries(sw.ctx, opts)
 		return err
 	})
-	sw.call("Database.QueryStoreRegressedQueries", func() error {
-		_, err := d.QueryStoreRegressedQueries(sw.ctx, opts)
+	sw.call("QueryStore.RegressedQueries", func() error {
+		_, err := d.QueryStore().RegressedQueries(sw.ctx, opts)
 		return err
 	})
-	sw.call("Database.QueryStoreOverallConsumption", func() error {
-		_, err := d.QueryStoreOverallConsumption(sw.ctx, opts)
+	sw.call("QueryStore.OverallConsumption", func() error {
+		_, err := d.QueryStore().OverallConsumption(sw.ctx, opts)
 		return err
 	})
-	sw.call("Database.QueryStoreTrackedQuery", func() error {
-		_, err := d.QueryStoreTrackedQuery(sw.ctx, queryID, opts)
+	sw.call("QueryStore.TrackedQuery", func() error {
+		_, err := d.QueryStore().TrackedQuery(sw.ctx, queryID, opts)
 		return err
 	})
-	sw.call("Database.QueryStorePlans", func() error {
-		_, err := d.QueryStorePlans(sw.ctx, queryID, opts)
+	sw.call("QueryStore.Plans", func() error {
+		_, err := d.QueryStore().Plans(sw.ctx, queryID, opts)
 		return err
 	})
-	sw.call("Database.QueryStoreQueryText", func() error {
-		_, _, err := d.QueryStoreQueryText(sw.ctx, queryID)
+	sw.call("QueryStore.QueryText", func() error {
+		_, _, err := d.QueryStore().QueryText(sw.ctx, queryID)
 		// With the fallback id there is no row to find, and saying so is
 		// the statement working: the one reader here that refuses absence
 		// rather than returning an empty list.
@@ -887,12 +891,12 @@ func sweepQueryStoreReports(sw *sweep, d *Database) {
 		}
 		return err
 	})
-	sw.call("Database.QueryStoreWaitCategories", func() error {
-		_, err := d.QueryStoreWaitCategories(sw.ctx, opts)
+	sw.call("QueryStore.WaitCategories", func() error {
+		_, err := d.QueryStore().WaitCategories(sw.ctx, opts)
 		return err
 	})
-	sw.call("Database.QueryStoreWaitingQueries", func() error {
-		_, err := d.QueryStoreWaitingQueries(sw.ctx, "CPU", opts)
+	sw.call("QueryStore.WaitingQueries", func() error {
+		_, err := d.QueryStore().WaitingQueries(sw.ctx, QSWaitCPU, opts)
 		return err
 	})
 }
@@ -1224,24 +1228,24 @@ func sweepServerCalls(sw *sweep, srv *Server, info *ServerInfo) {
 		}
 		return err
 	}
-	sw.call("Server.MailAccountByName", func() error {
-		_, err := srv.MailAccountByName(sw.ctx, "sweep_absent")
+	sw.call("Mail.AccountByName", func() error {
+		_, err := srv.Mail().AccountByName(sw.ctx, "sweep_absent")
 		return notFound(err)
 	})
-	sw.call("Server.MailProfileByName", func() error {
-		_, err := srv.MailProfileByName(sw.ctx, "sweep_absent")
+	sw.call("Mail.ProfileByName", func() error {
+		_, err := srv.Mail().ProfileByName(sw.ctx, "sweep_absent")
 		return notFound(err)
 	})
-	sw.call("Server.MailItemByID", func() error {
-		_, err := srv.MailItemByID(sw.ctx, -1)
+	sw.call("Mail.ItemByID", func() error {
+		_, err := srv.Mail().ItemByID(sw.ctx, -1)
 		return notFound(err)
 	})
-	sw.call("Server.MailItems", func() error {
-		_, err := srv.MailItems(sw.ctx, MailItemFilter{Status: MailFailed, Before: time.Now(), Max: 5})
+	sw.call("Mail.Items", func() error {
+		_, err := srv.Mail().Items(sw.ctx, MailItemFilter{Status: MailFailed, Before: time.Now(), Max: 5})
 		return err
 	})
-	sw.call("Server.MailEvents", func() error {
-		_, err := srv.MailEvents(sw.ctx, MailEventFilter{MailItemID: 1, EventType: MailEventError, Before: time.Now(), Max: 5})
+	sw.call("Mail.Events", func() error {
+		_, err := srv.Mail().Events(sw.ctx, MailEventFilter{MailItemID: 1, EventType: MailEventError, Before: time.Now(), Max: 5})
 		return err
 	})
 

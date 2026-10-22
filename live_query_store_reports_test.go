@@ -101,9 +101,9 @@ func qsLiveSetup(t *testing.T, db *sql.DB, ctx context.Context) (*Server, *Datab
 		run(fmt.Sprintf("EXEC dbo.qs_probe_read %d", i))
 	}
 	// Query Store writes asynchronously; nothing is readable until it flushes.
-	if err := d.FlushQueryStore(ctx); err != nil {
+	if err := d.QueryStore().Flush(ctx); err != nil {
 		drop()
-		t.Fatalf("FlushQueryStore: %v", err)
+		t.Fatalf("QueryStore.Flush: %v", err)
 	}
 	return srv, d, drop
 }
@@ -127,17 +127,17 @@ func TestLiveQueryStoreEveryMetricAndStatisticParses(t *testing.T) {
 	defer drop()
 
 	from, to := qsLiveWindow()
-	for _, m := range d.QueryStoreMetrics() {
+	for _, m := range d.QueryStore().Metrics() {
 		for _, s := range QSStatistics() {
 			t.Run(string(m)+"/"+string(s), func(t *testing.T) {
 				opts := QueryStoreReportOptions{Metric: m, Statistic: s, From: from, To: to}
-				if _, err := d.QueryStoreTopResourceQueries(ctx, opts); err != nil {
+				if _, err := d.QueryStore().TopResourceQueries(ctx, opts); err != nil {
 					t.Errorf("top resource queries: %v", err)
 				}
-				if _, err := d.QueryStoreHighVariationQueries(ctx, opts); err != nil {
+				if _, err := d.QueryStore().HighVariationQueries(ctx, opts); err != nil {
 					t.Errorf("high variation queries: %v", err)
 				}
-				if _, err := d.QueryStoreOverallConsumption(ctx, opts); err != nil {
+				if _, err := d.QueryStore().OverallConsumption(ctx, opts); err != nil {
 					t.Errorf("overall consumption: %v", err)
 				}
 			})
@@ -171,7 +171,7 @@ func TestLiveQueryStoreEveryReportReturnsTheWorkload(t *testing.T) {
 		return nil
 	}
 
-	top, err := d.QueryStoreTopResourceQueries(ctx, opts)
+	top, err := d.QueryStore().TopResourceQueries(ctx, opts)
 	if err != nil {
 		t.Fatalf("top resource queries: %v", err)
 	}
@@ -192,14 +192,14 @@ func TestLiveQueryStoreEveryReportReturnsTheWorkload(t *testing.T) {
 		t.Errorf("probe PlanCount = %d, want the 2 plans the workload forced by adding an index", probe.PlanCount)
 	}
 
-	if _, err := d.QueryStoreHighVariationQueries(ctx, opts); err != nil {
+	if _, err := d.QueryStore().HighVariationQueries(ctx, opts); err != nil {
 		t.Errorf("high variation queries: %v", err)
 	}
-	if _, err := d.QueryStoreRegressedQueries(ctx, opts); err != nil {
+	if _, err := d.QueryStore().RegressedQueries(ctx, opts); err != nil {
 		t.Errorf("regressed queries: %v", err)
 	}
 
-	intervals, err := d.QueryStoreOverallConsumption(ctx, opts)
+	intervals, err := d.QueryStore().OverallConsumption(ctx, opts)
 	if err != nil {
 		t.Fatalf("overall consumption: %v", err)
 	}
@@ -215,7 +215,7 @@ func TestLiveQueryStoreEveryReportReturnsTheWorkload(t *testing.T) {
 		}
 	}
 
-	tracked, err := d.QueryStoreTrackedQuery(ctx, probe.QueryID, opts)
+	tracked, err := d.QueryStore().TrackedQuery(ctx, probe.QueryID, opts)
 	if err != nil {
 		t.Fatalf("tracked query: %v", err)
 	}
@@ -223,11 +223,11 @@ func TestLiveQueryStoreEveryReportReturnsTheWorkload(t *testing.T) {
 		t.Error("Tracked Queries returned no series for the probe query")
 	}
 
-	if !d.QueryStoreWaitStatsSupported() {
+	if !d.QueryStore().WaitStatsSupported() {
 		t.Log("wait statistics unsupported on this instance — skipping both wait reports")
 		return
 	}
-	cats, err := d.QueryStoreWaitCategories(ctx, opts)
+	cats, err := d.QueryStore().WaitCategories(ctx, opts)
 	if err != nil {
 		t.Fatalf("wait categories: %v", err)
 	}
@@ -235,11 +235,11 @@ func TestLiveQueryStoreEveryReportReturnsTheWorkload(t *testing.T) {
 		t.Log("no wait categories recorded for the workload — the query parsed but had nothing to report")
 	}
 	for _, c := range cats {
-		if _, err := d.QueryStoreWaitingQueries(ctx, c.Category, opts); err != nil {
+		if _, err := d.QueryStore().WaitingQueries(ctx, c.Category, opts); err != nil {
 			t.Errorf("waiting queries in %q: %v", c.Category, err)
 		}
 	}
-	if _, err := d.QueryStoreWaitingQueries(ctx, "", opts); err != nil {
+	if _, err := d.QueryStore().WaitingQueries(ctx, QSWaitAllCategories, opts); err != nil {
 		t.Errorf("waiting queries across every category: %v", err)
 	}
 }
@@ -259,7 +259,7 @@ func TestLiveQueryStoreForceAndUnforcePlan(t *testing.T) {
 	from, to := qsLiveWindow()
 	opts := QueryStoreReportOptions{Metric: QSMetricCPUTime, From: from, To: to}
 
-	top, err := d.QueryStoreTopResourceQueries(ctx, opts)
+	top, err := d.QueryStore().TopResourceQueries(ctx, opts)
 	if err != nil {
 		t.Fatalf("top resource queries: %v", err)
 	}
@@ -274,7 +274,7 @@ func TestLiveQueryStoreForceAndUnforcePlan(t *testing.T) {
 		t.Fatal("the probe query is not in Query Store — nothing to force")
 	}
 
-	plans, err := d.QueryStorePlans(ctx, queryID, opts)
+	plans, err := d.QueryStore().Plans(ctx, queryID, opts)
 	if err != nil {
 		t.Fatalf("query store plans: %v", err)
 	}
@@ -293,11 +293,11 @@ func TestLiveQueryStoreForceAndUnforcePlan(t *testing.T) {
 	// Force the *second* plan, not the first: forcing plans[0] would pass
 	// against an implementation that ignores the plan id it was handed.
 	target := plans[1]
-	if err := d.QueryStoreForcePlan(ctx, queryID, target.PlanID); err != nil {
+	if err := d.QueryStore().ForcePlan(ctx, queryID, target.PlanID); err != nil {
 		t.Fatalf("force plan %d: %v", target.PlanID, err)
 	}
 
-	after, err := d.QueryStorePlans(ctx, queryID, opts)
+	after, err := d.QueryStore().Plans(ctx, queryID, opts)
 	if err != nil {
 		t.Fatalf("query store plans after forcing: %v", err)
 	}
@@ -310,7 +310,7 @@ func TestLiveQueryStoreForceAndUnforcePlan(t *testing.T) {
 		}
 	}
 
-	forced, err := d.QueryStoreForcedPlanQueries(ctx, opts)
+	forced, err := d.QueryStore().ForcedPlanQueries(ctx, opts)
 	if err != nil {
 		t.Fatalf("forced plan queries: %v", err)
 	}
@@ -327,10 +327,10 @@ func TestLiveQueryStoreForceAndUnforcePlan(t *testing.T) {
 		t.Errorf("Queries With Forced Plans did not list query %d after its plan was forced", queryID)
 	}
 
-	if err := d.QueryStoreUnforcePlan(ctx, queryID, target.PlanID); err != nil {
+	if err := d.QueryStore().UnforcePlan(ctx, queryID, target.PlanID); err != nil {
 		t.Fatalf("unforce plan %d: %v", target.PlanID, err)
 	}
-	final, err := d.QueryStorePlans(ctx, queryID, opts)
+	final, err := d.QueryStore().Plans(ctx, queryID, opts)
 	if err != nil {
 		t.Fatalf("query store plans after unforcing: %v", err)
 	}
@@ -351,25 +351,25 @@ func TestLiveQueryStoreQueryTextRoundTrips(t *testing.T) {
 
 	from, to := qsLiveWindow()
 	opts := QueryStoreReportOptions{From: from, To: to}
-	top, err := d.QueryStoreTopResourceQueries(ctx, opts)
+	top, err := d.QueryStore().TopResourceQueries(ctx, opts)
 	if err != nil {
 		t.Fatalf("top resource queries: %v", err)
 	}
 	if len(top) == 0 {
 		t.Fatal("no queries in Query Store")
 	}
-	text, object, err := d.QueryStoreQueryText(ctx, top[0].QueryID)
+	text, object, err := d.QueryStore().QueryText(ctx, top[0].QueryID)
 	if err != nil {
 		t.Fatalf("query text: %v", err)
 	}
 	if text != top[0].QueryText {
-		t.Errorf("QueryStoreQueryText = %q, but the report reported %q", text, top[0].QueryText)
+		t.Errorf("QueryStore.QueryText = %q, but the report reported %q", text, top[0].QueryText)
 	}
 	if object != top[0].ObjectName {
 		t.Errorf("object name = %q, but the report reported %q", object, top[0].ObjectName)
 	}
 
-	if _, _, err := d.QueryStoreQueryText(ctx, 999999999); err == nil {
+	if _, _, err := d.QueryStore().QueryText(ctx, 999999999); err == nil {
 		t.Error("a query id Query Store does not hold returned no error")
 	}
 }
@@ -385,7 +385,7 @@ func TestLiveQueryStoreWaitingQueriesAcrossCategoriesCountsEachExecutionOnce(t *
 	defer done()
 	_, d, drop := qsLiveSetup(t, db, ctx)
 	defer drop()
-	if !d.QueryStoreWaitStatsSupported() {
+	if !d.QueryStore().WaitStatsSupported() {
 		t.Skip("wait statistics need SQL Server 2017")
 	}
 
@@ -432,8 +432,8 @@ func TestLiveQueryStoreWaitingQueriesAcrossCategoriesCountsEachExecutionOnce(t *
 			t.Fatalf("commit: %v", err)
 		}
 	}
-	if err := d.FlushQueryStore(ctx); err != nil {
-		t.Fatalf("FlushQueryStore: %v", err)
+	if err := d.QueryStore().Flush(ctx); err != nil {
+		t.Fatalf("QueryStore.Flush: %v", err)
 	}
 
 	// The truth, read without the report's join: executions of the plans that
@@ -472,7 +472,7 @@ WHERE  qt.query_sql_text LIKE N'%k4[_]probe%'
 
 	from, to := qsLiveWindow()
 	for _, st := range []QSStatistic{QSStatAvg, QSStatTotal} {
-		got, err := d.QueryStoreWaitingQueries(ctx, "", QueryStoreReportOptions{Statistic: st, From: from, To: to, Top: 100})
+		got, err := d.QueryStore().WaitingQueries(ctx, QSWaitAllCategories, QueryStoreReportOptions{Statistic: st, From: from, To: to, Top: 100})
 		if err != nil {
 			t.Fatalf("%s across every category: %v", st, err)
 		}
@@ -491,7 +491,7 @@ WHERE  qt.query_sql_text LIKE N'%k4[_]probe%'
 			t.Errorf("%s: value %.3f, want %.3f", st, got[i].Value, want)
 		}
 	}
-	if _, err := d.QueryStoreWaitingQueries(ctx, "", QueryStoreReportOptions{Statistic: QSStatMax, From: from, To: to}); !errors.Is(err, ErrInvalidRequest) {
+	if _, err := d.QueryStore().WaitingQueries(ctx, QSWaitAllCategories, QueryStoreReportOptions{Statistic: QSStatMax, From: from, To: to}); !errors.Is(err, ErrInvalidRequest) {
 		t.Errorf("Max across every category: err = %v, want ErrInvalidRequest", err)
 	}
 }

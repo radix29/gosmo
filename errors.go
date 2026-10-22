@@ -136,7 +136,7 @@ func unsupportedVersionf(format string, args ...any) error {
 //     it;
 //   - Database.BulkInsert under WithScript: a bulk load has no T-SQL form to
 //     collect;
-//   - a read with no form for its input: Server.EventFiles given a blob URL,
+//   - a read with no form for its input: XEvents.Files given a blob URL,
 //     which cannot be listed.
 //
 // It is not ErrUnsupportedVersion: the server is not too old for anything,

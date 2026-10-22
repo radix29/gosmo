@@ -20,8 +20,9 @@ flowchart TB
     end
     subgraph A4["A database: files, options, catalog, and permissions"]
         direction TB
-        N08["08 · Files, options, catalog, and Query Store"]
+        N08["08 · Files, options, and catalog"]
         N09["09 · Filters, permissions, and execution"]
+        N27["27 · Query Store"]
     end
     subgraph A5["Tables, their children, and the object families"]
         direction TB
@@ -61,12 +62,14 @@ flowchart TB
     N02 -- "owns endpoints and server audits" --> N17
     N02 -- "exposes the Azure instance views" --> N19
     N02 -- "owns the Resource Governor configuration" --> N22
-    N02 -- "owns Database Mail in msdb" --> N23
-    N02 -- "owns Extended Events sessions" --> N24
+    N02 -- "exposes the Database Mail facet" --> N23
+    N02 -- "exposes the Extended Events facet" --> N24
     N02 -- "reads the replication configuration" --> N25
     N02 -- "reads the full-text component" --> N26
     N05 -- "writes through withConn, captured by ScriptCollector" --> N07
-    N05 -- "has files, options, catalog, Query Store" --> N08
+    N05 -- "has files, options, catalog" --> N08
+    N05 -- "exposes the Query Store facet" --> N27
+    N05 -- "exposes database-scoped Extended Events" --> N24
     N05 -- "filters listings and answers permissions" --> N09
     N05 -- "contains tables and indexes" --> N10
     N05 -- "contains the object families" --> N13
@@ -102,3 +105,4 @@ flowchart TB
     click N24 href "diagram/24-extended-events.mmd"
     click N25 href "diagram/25-replication.mmd"
     click N26 href "diagram/26-fulltext.mmd"
+    click N27 href "diagram/27-query-store.mmd"
