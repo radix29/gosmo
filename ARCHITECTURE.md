@@ -2563,17 +2563,17 @@ straight to the pool.
 | `Server.query`         | Server-scoped rows-returning read, retried — no `USE`, so a plain `*sql.Rows` is enough.    |
 | `Server.queryRow`      | Server-scoped single-row read, same scan-callback shape and reason as `Database.queryRow`.   |
 | `Server.queryRowScan`  | `queryRow` convenience for a plain `row.Scan(dest...)`, sparing the caller a closure.        |
-| `withRetry`            | Retries each of the read helpers above up to 3 times (linear backoff) on a transient/dropped-connection failure — reads only, since retrying is only safe when the operation is idempotent. |
+| `withRetry`            | Retries each of the read helpers above up to 3 times (linear backoff) on an `IsTransient` failure — a dropped connection, a deadlock victim (Msg 1205) or an Azure SQL transient error — reads only, since retrying is only safe when the operation is idempotent, and never inside `InTransaction`, where a 1205 has already rolled the transaction back. |
 
-`gosmo.IsRetryable(err)` exposes the same transient-failure test
-`withRetry` uses, for callers running their own statements outside
-gosmo's query helpers.
+`gosmo.IsTransient(err)` exposes the test `withRetry` uses, for callers
+running their own idempotent reads outside gosmo's query helpers.
+`gosmo.IsRetryable(err)` is its narrower half: the connection failed.
 
 `gosmo.AcquireConn(ctx, db, database)` is the pinned-connection
 counterpart, for a caller that runs a whole script or session on one
 `*sql.Conn` of its own: it acquires, runs the `USE`/`SELECT 1` prologue,
-and retries on a fresh connection under the same budget when the pool
-hands back a dead one — the protection `Database.withConn` gives gosmo's
+and retries on a fresh connection under the same budget and rule when
+the pool hands back a dead one — the protection `Database.withConn` gives gosmo's
 own reads, which `database/sql` does not extend to a pinned conn. Only
 the prologue is retried; whatever the caller goes on to run is not.
 
