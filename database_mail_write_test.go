@@ -45,18 +45,18 @@ func TestMailAccountStatementShapes(t *testing.T) {
 		// Alter with no Credentials must keep the stored ones: an omitted
 		// @username alone would drop them.
 		{"alter keeps credentials", func(ctx context.Context) error {
-			return acct.Alter(ctx, MailAccountOptions{Port: new(25), DisplayName: new("")})
+			return acct.Alter(ctx, MailAccountChanges{Port: new(25), DisplayName: new("")})
 		}, []string{"EXEC msdb.dbo.sysmail_update_account_sp @account_name = N'ops]x', @display_name = N'', " +
 			"@port = 25, @no_credential_change = 1"}},
 		{"alter to anonymous", func(ctx context.Context) error {
-			return acct.Alter(ctx, MailAccountOptions{Credentials: &MailCredentials{Authentication: MailAuthAnonymous}})
+			return acct.Alter(ctx, MailAccountChanges{Credentials: &MailCredentials{Authentication: MailAuthAnonymous}})
 		}, []string{"EXEC msdb.dbo.sysmail_update_account_sp @account_name = N'ops]x', @use_default_credentials = 0"}},
 		{"alter rename", func(ctx context.Context) error {
-			return acct.Alter(ctx, MailAccountOptions{Name: new("ops2")})
+			return acct.Alter(ctx, MailAccountChanges{Name: new("ops2")})
 		}, []string{"DECLARE @account_id int = (SELECT account_id FROM msdb.dbo.sysmail_account WHERE name = N'ops]x');\n" +
 			"IF @account_id IS NULL RAISERROR(14607, 16, 1, 'account') ELSE " +
 			"EXEC msdb.dbo.sysmail_update_account_sp @account_id = @account_id, @account_name = N'ops2', @no_credential_change = 1"}},
-		{"alter nothing", func(ctx context.Context) error { return acct.Alter(ctx, MailAccountOptions{}) }, nil},
+		{"alter nothing", func(ctx context.Context) error { return acct.Alter(ctx, MailAccountChanges{}) }, nil},
 		{"drop", acct.Drop, []string{"EXEC msdb.dbo.sysmail_delete_account_sp @account_name = N'ops]x'"}},
 	}
 	for _, c := range cases {
@@ -82,7 +82,7 @@ func TestMailAccountRefusals(t *testing.T) {
 		}
 	}
 	ctx, col := WithScript(context.Background())
-	if err := s.Mail().AccountRef("a").Alter(ctx, MailAccountOptions{Name: new(" ")}); err == nil || len(col.Statements()) != 0 {
+	if err := s.Mail().AccountRef("a").Alter(ctx, MailAccountChanges{Name: new(" ")}); err == nil || len(col.Statements()) != 0 {
 		t.Errorf("rename to blank: err %v, statements %q", err, col.Statements())
 	}
 }
@@ -99,7 +99,7 @@ func TestMailPasswordNeverCapturedOrObserved(t *testing.T) {
 			return err
 		},
 		"alter": func(ctx context.Context, s *Server) error {
-			return s.Mail().AccountRef("a").Alter(ctx, MailAccountOptions{Credentials: &basic})
+			return s.Mail().AccountRef("a").Alter(ctx, MailAccountChanges{Credentials: &basic})
 		},
 	}
 	for name, write := range writes {
@@ -144,10 +144,10 @@ func TestMailProfileStatementShapes(t *testing.T) {
 			return err
 		}, []string{"EXEC msdb.dbo.sysmail_add_profile_sp @profile_name = N'alerts', @description = N'd'"}},
 		{"describe", func(ctx context.Context) error {
-			return p.Alter(ctx, MailProfileOptions{Description: new("")})
+			return p.Alter(ctx, MailProfileChanges{Description: new("")})
 		}, []string{"EXEC msdb.dbo.sysmail_update_profile_sp @profile_name = N'alerts', @description = N''"}},
 		{"rename", func(ctx context.Context) error {
-			return p.Alter(ctx, MailProfileOptions{Name: new("pages")})
+			return p.Alter(ctx, MailProfileChanges{Name: new("pages")})
 		}, []string{"DECLARE @profile_id int = (SELECT profile_id FROM msdb.dbo.sysmail_profile WHERE name = N'alerts');\n" +
 			"IF @profile_id IS NULL RAISERROR(14607, 16, 1, 'profile') ELSE " +
 			"EXEC msdb.dbo.sysmail_update_profile_sp @profile_id = @profile_id, @profile_name = N'pages'"}},

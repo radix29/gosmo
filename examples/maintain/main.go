@@ -51,8 +51,8 @@ func main() {
 		GrowthKB:  4 * 1024,
 		MaxSizeKB: -1, // UNLIMITED
 	}))
-	// Zero-valued FileModify fields are left alone; this only resizes.
-	demo.Must(db.FileRef(dbName+"_archive").Alter(ctx, gosmo.FileModify{SizeKB: 16 * 1024}))
+	// Zero-valued DatabaseFileChanges fields are left alone; this only resizes.
+	demo.Must(db.FileRef(dbName+"_archive").Alter(ctx, gosmo.DatabaseFileChanges{SizeKB: 16 * 1024}))
 	for _, fg := range demo.Value(db.FileGroups(ctx)) {
 		fmt.Printf("  filegroup %-10s default=%-5t readonly=%-5t files=%d\n",
 			fg.Name, fg.IsDefault, fg.IsReadOnly, len(fg.Files))

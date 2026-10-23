@@ -72,6 +72,11 @@ var sweepMustCall = []string{
 	"Database.AssemblyByName",
 	"Assembly.Files/Modules",
 
+	// Module finders (C4), driven by hand against the fixture's dbo.sweep_fn
+	// and dbo.trg_sweep_child.
+	"Database.UserDefinedFunctionByName",
+	"Database.TriggerByName",
+
 	// Rules and defaults.
 	"Database.Rules",
 	"Database.RuleByName",
@@ -745,6 +750,20 @@ func sweepProgrammability(sw *sweep, d *Database) {
 	})
 	sw.call("Database.XMLSchemaCollectionByName", func() error {
 		_, err := d.XMLSchemaCollectionByName(sw.ctx, "dbo", "sweep_xsd")
+		return err
+	})
+	sw.call("Database.UserDefinedFunctionByName", func() error {
+		f, err := d.UserDefinedFunctionByName(sw.ctx, "dbo", "sweep_fn")
+		if err == nil && f.FuncType != FunctionTypeScalar {
+			err = fmt.Errorf("dbo.sweep_fn FuncType = %q, want %q", f.FuncType, FunctionTypeScalar)
+		}
+		return err
+	})
+	sw.call("Database.TriggerByName", func() error {
+		tr, err := d.TriggerByName(sw.ctx, "dbo", "trg_sweep_child")
+		if err == nil && (tr.TableName != "sweep_child" || !slices.Equal(tr.Events, []string{"INSERT"})) {
+			err = fmt.Errorf("dbo.trg_sweep_child = %+v, want on sweep_child for INSERT", tr)
+		}
 		return err
 	})
 	sw.call("Database.RuleByName", func() error {

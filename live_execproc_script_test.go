@@ -41,6 +41,9 @@ func liveDBTimeout(t *testing.T, timeout time.Duration) (*sql.DB, context.Contex
 	if *liveDSN == "" {
 		t.Skip("no -livedb DSN given")
 	}
+	if *liveProcReads {
+		setProcReads(t, true)
+	}
 	db, err := sql.Open("sqlserver", *liveDSN)
 	if err != nil {
 		t.Fatalf("open: %v", err)

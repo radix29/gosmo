@@ -165,8 +165,14 @@ exercise the write, drop them; never mutate pre-existing objects.
     placeholder (`WithScriptSecrets` opts a capture back in).
 - **Every `Create*` is `CreateX(ctx, CreateXRequest) (*X, error)`.** The
   request is a value; the result comes back through `createdObject` (the `XRef`
-  handle under `Scripting(ctx)` or when the new row isn't visible). A type keeps
-  a `Spec` name only if a non-create method takes it too (`ServerAuditSpec`).
+  handle under `Scripting(ctx)` or when the new row isn't visible). A full
+  description that `Alter` takes too is an `XDefinition`
+  (`ServerAuditDefinition`), not a request.
+- **An `Alter` argument whose unset fields mean "leave as stored" is
+  `XChanges`** (`JobChanges`, `QueueChanges`, `DatabaseFileChanges`) — not
+  `Options`/`Settings`. A shared CREATE-and-ALTER `WITH` list
+  (`ResourcePoolOptions`) or a T-SQL `SET (…)` mirror (`QueryStoreOptions`)
+  is not a patch and keeps its name.
 - **A write on an existing object is a method on its handle** —
   `db.ViewRef(s, n).Drop(ctx)`, `t.Rename(ctx, n)` — never
   `Parent.VerbX(ctx, name, …)`. A new family gets its `Ref` and writes together.

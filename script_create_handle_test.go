@@ -18,7 +18,7 @@ import (
 func TestScriptedCreatesEmitOneStatement(t *testing.T) {
 	runScriptCases(t, []scriptCase{
 		{"CreateServerAudit", func(c context.Context) error {
-			_, err := (&Server{}).CreateServerAudit(c, ServerAuditSpec{
+			_, err := (&Server{}).CreateServerAudit(c, ServerAuditDefinition{
 				Name: "aud]1", Type: AuditToSecurityLog, OnFailure: AuditFailureContinue,
 			})
 			return err
@@ -62,7 +62,7 @@ func TestScriptedCreatesReturnANamedHandle(t *testing.T) {
 	ctx, _ := WithScript(context.Background())
 	srv := &Server{}
 
-	audit, err := srv.CreateServerAudit(ctx, ServerAuditSpec{
+	audit, err := srv.CreateServerAudit(ctx, ServerAuditDefinition{
 		Name: "aud]1", Type: AuditToSecurityLog,
 	})
 	if err != nil {

@@ -361,7 +361,7 @@ const (
 type QueueActivation struct {
 	// Enabled is ACTIVATION's own STATUS. False keeps the procedure, the
 	// reader count and the principal on the queue and stops the broker
-	// starting it — use QueueSettings.DropActivation to remove it instead.
+	// starting it — use QueueChanges.DropActivation to remove it instead.
 	Enabled bool
 
 	// ProcedureSchema and ProcedureName name the activation procedure,
@@ -377,12 +377,12 @@ type QueueActivation struct {
 	ExecuteAs string
 }
 
-// QueueSettings is what ALTER QUEUE can change. A nil field leaves that
+// QueueChanges is what ALTER QUEUE can change. A nil field leaves that
 // setting exactly as it is — the statement omits the clause, and SQL Server
 // changes nothing it is not told about.
 //
 // At least one field must be set: ALTER QUEUE with no clause does not parse.
-type QueueSettings struct {
+type QueueChanges struct {
 	// Status is the queue's STATUS. False takes the queue out of service:
 	// the server clears the enqueue *and* receive halves together, so a
 	// queue with Status false reads back false on both IsEnqueueEnabled and
@@ -412,7 +412,7 @@ type QueueSettings struct {
 // cannot be a statement. Every refusal here is one the server would give
 // anyway, raised before a round trip and naming the field rather than the
 // generated SQL.
-func queueSettingClauses(s QueueSettings) ([]string, error) {
+func queueSettingClauses(s QueueChanges) ([]string, error) {
 	if s.Activation != nil && s.DropActivation {
 		return nil, invalidf("the Activation and DropActivation settings are mutually exclusive; " +
 			"one statement cannot both restate and drop the ACTIVATION block")
@@ -480,8 +480,8 @@ func queueExecuteAsValue(executeAs string) string {
 // between them.
 //
 // The fields it changed are mirrored onto the receiver — see
-// mirrorQueueSettings, which is also where EXECUTE AS SELF's one exception is.
-func (q *BrokerQueue) Alter(ctx context.Context, s QueueSettings) error {
+// mirrorQueueChanges, which is also where EXECUTE AS SELF's one exception is.
+func (q *BrokerQueue) Alter(ctx context.Context, s QueueChanges) error {
 	if err := requireSchema("alter broker queue", q.Schema, q.Name); err != nil {
 		return err
 	}
@@ -494,15 +494,15 @@ func (q *BrokerQueue) Alter(ctx context.Context, s QueueSettings) error {
 	if _, err := q.db.exec(ctx, stmt); err != nil {
 		return fmt.Errorf("gosmo: alter queue %s: %w", qualifiedName(q.Schema, q.Name), err)
 	}
-	mirrorQueueSettings(ctx, q, s)
+	mirrorQueueChanges(ctx, q, s)
 	return nil
 }
 
-// mirrorQueueSettings copies the settings an ALTER applied onto the queue.
+// mirrorQueueChanges copies the settings an ALTER applied onto the queue.
 // Every write goes through setIfApplied, which does nothing under WithScript:
 // there the statement was collected and never ran, so the server's queue
 // still has what it had.
-func mirrorQueueSettings(ctx context.Context, q *BrokerQueue, s QueueSettings) {
+func mirrorQueueChanges(ctx context.Context, q *BrokerQueue, s QueueChanges) {
 	if s.Status != nil {
 		// One STATUS moves both halves, because the server moves both.
 		setIfApplied(ctx, &q.IsEnqueueEnabled, *s.Status)

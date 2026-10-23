@@ -57,7 +57,7 @@ func TestEmptySchemaIsRefused(t *testing.T) {
 			return d.ApplyPermission(c, VerbGrant, Securable{Class: SecurableTable, Schema: "", Name: "t"}, PermSelect, "u", PermissionOptions{})
 		}},
 		{"BrokerQueue.Alter activation procedure", func(c context.Context, d *Database) error {
-			return d.BrokerQueueRef("dbo", "q").Alter(c, QueueSettings{Activation: &QueueActivation{ProcedureName: "p"}})
+			return d.BrokerQueueRef("dbo", "q").Alter(c, QueueChanges{Activation: &QueueActivation{ProcedureName: "p"}})
 		}},
 
 		{"CreateTable", func(c context.Context, d *Database) error {
@@ -80,6 +80,10 @@ func TestEmptySchemaIsRefused(t *testing.T) {
 		{"StoredProcedureByName", func(c context.Context, d *Database) error {
 			return errOnly(d.StoredProcedureByName(c, "", "p"))
 		}},
+		{"UserDefinedFunctionByName", func(c context.Context, d *Database) error {
+			return errOnly(d.UserDefinedFunctionByName(c, "", "f"))
+		}},
+		{"TriggerByName", func(c context.Context, d *Database) error { return errOnly(d.TriggerByName(c, "", "tr")) }},
 		{"ScriptTable", func(c context.Context, d *Database) error {
 			return errOnly(NewScripter(d, ScriptOptions{}).ScriptTable(c, "", "t"))
 		}},

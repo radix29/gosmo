@@ -2,6 +2,7 @@ package gosmo
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"time"
 )
@@ -84,6 +85,26 @@ func scanFunction(d *Database, scan func(...any) error) (*UserDefinedFunction, e
 func (d *Database) SystemFunctions(ctx context.Context, filter ObjectFilter) ([]*UserDefinedFunction, error) {
 	where, args := filter.clause(moduleFilterColumns, 1)
 	return moduleListWhere(ctx, d, "system UDFs", systemFunctions, functionExtra, where, args, scanFunction)
+}
+
+// UserDefinedFunctionByName returns one user-defined function, T-SQL or
+// CLR, by schema and name.
+//
+// It returns an error satisfying errors.Is(err, ErrNotFound) when the
+// database has no such function.
+func (d *Database) UserDefinedFunctionByName(ctx context.Context, schema, name string) (*UserDefinedFunction, error) {
+	if err := requireSchema("function by name", schema, name); err != nil {
+		return nil, err
+	}
+	fns, err := moduleListWhere(ctx, d, "UDFs", userFunctions, functionExtra,
+		"AND SCHEMA_NAME(o.schema_id) COLLATE DATABASE_DEFAULT = @p1 AND o.name = @p2", []any{schema, name}, scanFunction)
+	if err != nil {
+		return nil, fmt.Errorf("gosmo: find function %s in %q: %w", qualifiedName(schema, name), d.Name, err)
+	}
+	if len(fns) == 0 {
+		return nil, notFoundf("gosmo: function %s not found in %q", qualifiedName(schema, name), d.Name)
+	}
+	return fns[0], nil
 }
 
 // UserDefinedFunctionRef returns a lightweight handle for the function [schema].[name] — no

@@ -253,10 +253,11 @@ func buildAddFileStatement(dbName string, spec DatabaseFileSpec) (string, error)
 	return sb.String(), nil
 }
 
-// FileModify holds the fields to change on an existing file via
-// DatabaseFileInfo.Alter.
-// Zero-valued fields are left unchanged; NewName renames the file.
-type FileModify struct {
+// DatabaseFileChanges holds the fields to change on an existing file via
+// DatabaseFileInfo.Alter. Unlike the pointer-field …Changes types, a
+// zero-valued field here is what means "leave as stored" (hence
+// DisableGrowth, since GrowthKB = 0 cannot say it); NewName renames the file.
+type DatabaseFileChanges struct {
 	NewName       string
 	SizeKB        int64
 	GrowthKB      int64
@@ -276,9 +277,9 @@ type FileModify struct {
 	MaxSizeKB     int64 // -1 = UNLIMITED
 }
 
-// Alter changes the file's name, size, growth, or max size. A FileModify
+// Alter changes the file's name, size, growth, or max size. A DatabaseFileChanges
 // that changes nothing issues no statement.
-func (f *DatabaseFileInfo) Alter(ctx context.Context, m FileModify) error {
+func (f *DatabaseFileInfo) Alter(ctx context.Context, m DatabaseFileChanges) error {
 	stmt, err := buildAlterFileStatement(f.db.Name, f.Name, m)
 	if err != nil {
 		return err
@@ -297,7 +298,7 @@ func (f *DatabaseFileInfo) Alter(ctx context.Context, m FileModify) error {
 
 // buildAlterFileStatement builds the ALTER DATABASE ... MODIFY FILE
 // statement for the given changes, or "" if m carries no actual change.
-func buildAlterFileStatement(dbName, name string, m FileModify) (string, error) {
+func buildAlterFileStatement(dbName, name string, m DatabaseFileChanges) (string, error) {
 	if name == "" {
 		return "", invalidf("gosmo: alter file: name is required")
 	}

@@ -179,7 +179,7 @@ func (d *Database) RouteRef(name string) *Route {
 	return &Route{db: d, Name: name}
 }
 
-// RouteSettings is what ALTER ROUTE can change. A nil field leaves that
+// RouteChanges is what ALTER ROUTE can change. A nil field leaves that
 // setting exactly as it is — the statement omits the clause.
 //
 // **There is no way to clear a setting a route already has.** `= NULL` is a
@@ -190,7 +190,7 @@ func (d *Database) RouteRef(name string) *Route {
 // value here rather than sending a statement the server will refuse.
 //
 // At least one field must be set: ALTER ROUTE with no clause does not parse.
-type RouteSettings struct {
+type RouteChanges struct {
 	// RemoteService is SERVICE_NAME, the service the route carries messages
 	// to. It is matched case-sensitively by the broker, byte for byte, even
 	// on a case-insensitive collation.
@@ -212,7 +212,7 @@ type RouteSettings struct {
 
 // routeSettingClauses renders the WITH clauses, or reports why the settings
 // cannot be a statement.
-func routeSettingClauses(s RouteSettings) ([]string, error) {
+func routeSettingClauses(s RouteChanges) ([]string, error) {
 	var clauses []string
 	add := func(keyword string, v *string) error {
 		if v == nil {
@@ -261,7 +261,7 @@ func routeSettingClauses(s RouteSettings) ([]string, error) {
 // so under WithScript — where nothing ran — the route does not start
 // claiming state the server does not have. Expires is mirrored as "now plus
 // the lifetime", which is what the server computes, to within the round trip.
-func (r *Route) Alter(ctx context.Context, s RouteSettings) error {
+func (r *Route) Alter(ctx context.Context, s RouteChanges) error {
 	clauses, err := routeSettingClauses(s)
 	if err != nil {
 		return fmt.Errorf("gosmo: alter route %q: %w", r.Name, err)

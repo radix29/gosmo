@@ -247,6 +247,18 @@ func (d *Database) useBatch(q string) string {
 	return "USE " + quoteIdent(d.Name) + "; IF @@ERROR <> 0 RETURN; " + q
 }
 
+// readCall is the query text and arguments a pooled read sends for q: useBatch,
+// or procRead while procReads is set and it can declare args. proc reports
+// the latter, whose errors are q's own and need no recheckUse.
+func (d *Database) readCall(q string, args []any) (query string, qargs []any, proc bool) {
+	if procReads {
+		if query, qargs, ok := d.procRead(q, args); ok {
+			return query, qargs, true
+		}
+	}
+	return d.useBatch(q), args, false
+}
+
 // msgCollationConflict is Msg 468, "Cannot resolve the collation conflict".
 const msgCollationConflict = 468
 
@@ -295,8 +307,9 @@ func (d *Database) query(ctx context.Context, q string, args ...any) (*dbRows, e
 		if err != nil {
 			return nil, fmt.Errorf("gosmo: acquire connection: %w", err)
 		}
-		rows, err := conn.QueryContext(ctx, d.useBatch(q), args...)
-		if err != nil {
+		query, qargs, proc := d.readCall(q, args)
+		rows, err := conn.QueryContext(ctx, query, qargs...)
+		if err != nil && !proc {
 			if uerr, rerun := d.recheckUse(ctx, conn, err); uerr != nil {
 				err = uerr
 			} else if rerun {
@@ -381,8 +394,9 @@ func (d *Database) queryRow(ctx context.Context, scan func(*sql.Row) error, q st
 			return struct{}{}, fmt.Errorf("gosmo: acquire connection: %w", err)
 		}
 		defer conn.Close()
-		row := conn.QueryRowContext(ctx, d.useBatch(q), args...)
-		if err := row.Err(); err != nil {
+		query, qargs, proc := d.readCall(q, args)
+		row := conn.QueryRowContext(ctx, query, qargs...)
+		if err := row.Err(); err != nil && !proc {
 			uerr, rerun := d.recheckUse(ctx, conn, err)
 			if uerr != nil {
 				return struct{}{}, uerr

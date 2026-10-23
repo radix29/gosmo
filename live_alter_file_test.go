@@ -20,7 +20,7 @@ func TestLiveAlterFileMaxSizeOfTwoTerabytes(t *testing.T) {
 	defer drop()
 
 	const twoTB = int64(2) << 30 // KB
-	if err := d.FileRef(name).Alter(ctx, FileModify{MaxSizeKB: twoTB}); err != nil {
+	if err := d.FileRef(name).Alter(ctx, DatabaseFileChanges{MaxSizeKB: twoTB}); err != nil {
 		t.Fatalf("Alter MaxSizeKB 2 TB: %v", err)
 	}
 	var pages int64
@@ -45,10 +45,10 @@ func TestLiveShrinkFile(t *testing.T) {
 	defer drop()
 
 	f := d.FileRef(name)
-	if err := f.Alter(ctx, FileModify{SizeKB: 64 * 1024}); err != nil {
+	if err := f.Alter(ctx, DatabaseFileChanges{SizeKB: 64 * 1024}); err != nil {
 		t.Fatalf("grow to 64 MB: %v", err)
 	}
-	if err := f.Alter(ctx, FileModify{SizeKB: 16 * 1024}); err == nil {
+	if err := f.Alter(ctx, DatabaseFileChanges{SizeKB: 16 * 1024}); err == nil {
 		t.Fatal("MODIFY FILE to a smaller size succeeded; Shrink would be unneeded")
 	}
 	res, err := f.Shrink(ctx, ShrinkFileOptions{TargetMB: new(int64(16))})
@@ -101,7 +101,7 @@ func TestLiveShrinkFileToZeroGoesBelowTheCreationSize(t *testing.T) {
 		t.Fatalf("read creation size: %v", err)
 	}
 	f := d.FileRef(name)
-	if err := f.Alter(ctx, FileModify{SizeKB: 20 * 1024}); err != nil {
+	if err := f.Alter(ctx, DatabaseFileChanges{SizeKB: 20 * 1024}); err != nil {
 		t.Fatalf("grow to 20 MB: %v", err)
 	}
 	res, err := f.Shrink(ctx, ShrinkFileOptions{TargetMB: new(int64(0))})

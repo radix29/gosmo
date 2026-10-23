@@ -54,6 +54,27 @@ ORDER  BY tr.name`
 	})
 }
 
+// TriggerByName returns one DML trigger by schema and name. schema is the
+// trigger's own schema, which is the schema of the table or view it is
+// defined on.
+//
+// It returns an error satisfying errors.Is(err, ErrNotFound) when the
+// database has no such DML trigger.
+func (d *Database) TriggerByName(ctx context.Context, schema, name string) (*Trigger, error) {
+	if err := requireSchema("trigger by name", schema, name); err != nil {
+		return nil, err
+	}
+	trs, err := d.triggersWhere(ctx,
+		"AND SCHEMA_NAME(o.schema_id) COLLATE DATABASE_DEFAULT = @p1 AND tr.name = @p2", []any{schema, name})
+	if err != nil {
+		return nil, fmt.Errorf("gosmo: find trigger %s in %q: %w", qualifiedName(schema, name), d.Name, err)
+	}
+	if len(trs) == 0 {
+		return nil, notFoundf("gosmo: trigger %s not found in %q", qualifiedName(schema, name), d.Name)
+	}
+	return trs[0], nil
+}
+
 // TriggerRef returns a lightweight handle for the DML trigger [schema].[name]
 // — no query; every field but Schema and Name is zero. schema is the
 // trigger's own schema, which is the schema of the table or view it is

@@ -33,7 +33,7 @@ func TestFileAndFileGroupRefsCarryTheirDatabase(t *testing.T) {
 func TestFileHandleWritesMirrorOnlyWhenApplied(t *testing.T) {
 	ctx, _ := WithScript(context.Background())
 	f := scriptTestDB().FileRef("AppDat")
-	if err := f.Alter(ctx, FileModify{NewName: "AppDat2"}); err != nil {
+	if err := f.Alter(ctx, DatabaseFileChanges{NewName: "AppDat2"}); err != nil {
 		t.Fatalf("Alter under WithScript: %v", err)
 	}
 	fg := scriptTestDB().FileGroupRef("FG2")
@@ -49,7 +49,7 @@ func TestFileHandleWritesMirrorOnlyWhenApplied(t *testing.T) {
 
 	d := &Database{server: captureServer(t, 17), Name: "App"}
 	f = d.FileRef("AppDat")
-	if err := f.Alter(t.Context(), FileModify{NewName: "AppDat2"}); err != nil {
+	if err := f.Alter(t.Context(), DatabaseFileChanges{NewName: "AppDat2"}); err != nil {
 		t.Fatalf("Alter: %v", err)
 	}
 	fg = d.FileGroupRef("FG2")

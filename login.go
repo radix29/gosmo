@@ -129,13 +129,13 @@ func (l *Login) Drop(ctx context.Context) error {
 	return nil
 }
 
-// AddServerRoleMember adds this login to a server role.
-func (l *Login) AddServerRoleMember(ctx context.Context, roleName string) error {
+// AddToServerRole adds this login to a server role.
+func (l *Login) AddToServerRole(ctx context.Context, roleName string) error {
 	return l.server.ServerRoleRef(roleName).AddMember(ctx, l.Name)
 }
 
-// RemoveServerRoleMember removes this login from a server role.
-func (l *Login) RemoveServerRoleMember(ctx context.Context, roleName string) error {
+// RemoveFromServerRole removes this login from a server role.
+func (l *Login) RemoveFromServerRole(ctx context.Context, roleName string) error {
 	return l.server.ServerRoleRef(roleName).RemoveMember(ctx, l.Name)
 }
 
@@ -488,7 +488,7 @@ func (s *Server) LoginByName(ctx context.Context, name string) (*Login, error) {
 // LoginRef returns a lightweight handle for name without querying the server
 // at all — unlike LoginByName, it doesn't verify the
 // login exists or populate SID/LoginType/IsDisabled/etc. (they stay at
-// their zero value). The ALTER-style writes on *Login (AddServerRoleMember,
+// their zero value). The ALTER-style writes on *Login (AddToServerRole,
 // Disable, ChangePassword, ...) name the login and need nothing else, so
 // this is sufficient for issuing them against a login the caller already
 // knows exists — most commonly one it just created in the same operation.

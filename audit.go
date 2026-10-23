@@ -185,8 +185,8 @@ WHERE  name = @p1`, a.Name)
 
 // -- Writes ----------------------------------------------------------------------
 
-// ServerAuditSpec describes a server audit to create or alter.
-type ServerAuditSpec struct {
+// ServerAuditDefinition describes a server audit to create or alter.
+type ServerAuditDefinition struct {
 	Name string
 
 	// Type is the destination: AuditToFile, AuditToApplicationLog or
@@ -232,7 +232,7 @@ func auditFailureKeyword(f string) string {
 
 // auditTargetClause builds the "TO …" half, empty when the spec names no
 // destination.
-func (spec ServerAuditSpec) auditTargetClause() string {
+func (spec ServerAuditDefinition) auditTargetClause() string {
 	if spec.Type == "" {
 		return ""
 	}
@@ -269,7 +269,7 @@ func (spec ServerAuditSpec) auditTargetClause() string {
 }
 
 // auditWithClause builds the "WITH (…)" half.
-func (spec ServerAuditSpec) auditWithClause() string {
+func (spec ServerAuditDefinition) auditWithClause() string {
 	opts := []string{fmt.Sprintf("QUEUE_DELAY = %d", spec.QueueDelay)}
 	if spec.OnFailure != "" {
 		opts = append(opts, "ON_FAILURE = "+auditFailureKeyword(spec.OnFailure))
@@ -278,7 +278,7 @@ func (spec ServerAuditSpec) auditWithClause() string {
 }
 
 // createServerAuditStatement builds CREATE SERVER AUDIT, validating the spec.
-func (spec ServerAuditSpec) createServerAuditStatement() (string, error) {
+func (spec ServerAuditDefinition) createServerAuditStatement() (string, error) {
 	if strings.TrimSpace(spec.Name) == "" {
 		return "", invalidf("server audit has no name")
 	}
@@ -299,7 +299,7 @@ func (spec ServerAuditSpec) createServerAuditStatement() (string, error) {
 
 // CreateServerAudit creates a server audit. It is created disabled, which is
 // what CREATE SERVER AUDIT does; use Enable to turn it on.
-func (s *Server) CreateServerAudit(ctx context.Context, spec ServerAuditSpec) (*ServerAudit, error) {
+func (s *Server) CreateServerAudit(ctx context.Context, spec ServerAuditDefinition) (*ServerAudit, error) {
 	stmt, err := spec.createServerAuditStatement()
 	if err != nil {
 		return nil, fmt.Errorf("gosmo: create server audit: %w", err)
@@ -453,7 +453,7 @@ func restoreWindow(ctx context.Context, enable func(context.Context) error) erro
 // Apply failed on it. There is no form that changes one setting while leaving
 // an existing predicate alone, so a caller changing anything else must carry
 // the current predicate forward in the spec.
-func (spec ServerAuditSpec) alterServerAuditStatements(name string) []string {
+func (spec ServerAuditDefinition) alterServerAuditStatements(name string) []string {
 	stmt := "ALTER SERVER AUDIT " + quoteIdent(name) +
 		spec.auditTargetClause() + spec.auditWithClause()
 	if spec.Predicate != "" {
@@ -470,7 +470,7 @@ func (spec ServerAuditSpec) alterServerAuditStatements(name string) []string {
 // Renaming is not part of this: ALTER SERVER AUDIT ... MODIFY NAME is a
 // statement of its own and cannot be combined with any other clause, so it is
 // Rename's job.
-func (a *ServerAudit) Alter(ctx context.Context, spec ServerAuditSpec) error {
+func (a *ServerAudit) Alter(ctx context.Context, spec ServerAuditDefinition) error {
 	return a.withAuditDisabled(ctx, func(ctx context.Context) error {
 		for _, stmt := range spec.alterServerAuditStatements(a.Name) {
 			if _, err := a.server.exec(ctx, stmt); err != nil {

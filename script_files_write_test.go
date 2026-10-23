@@ -39,7 +39,7 @@ func TestScriptFileAndFileGroupWrites(t *testing.T) {
 			})
 		}, `ALTER DATABASE [App'DB] ADD LOG FILE (NAME = [AppLog2], FILENAME = N'C:\d\l2.ldf', SIZE = 1024KB, MAXSIZE = 102400KB, FILEGROWTH = 10%)`},
 		{"File Alter", func(c context.Context) error {
-			return scriptTestDB().FileRef("App]Dat2").Alter(c, FileModify{
+			return scriptTestDB().FileRef("App]Dat2").Alter(c, DatabaseFileChanges{
 				NewName: "New'Name", SizeKB: 16384, GrowthPercent: 25, MaxSizeKB: -1,
 			})
 		}, `ALTER DATABASE [App'DB] MODIFY FILE (NAME = [App]]Dat2], NEWNAME = [New'Name], SIZE = 16384KB, MAXSIZE = UNLIMITED, FILEGROWTH = 25%)`},
@@ -70,8 +70,8 @@ func TestScriptFileAndFileGroupWrites(t *testing.T) {
 // returns without executing anything.
 func TestAlterFileWithNoChangeScriptsNothing(t *testing.T) {
 	ctx, script := WithScript(context.Background())
-	if err := scriptTestDB().FileRef("AppDat").Alter(ctx, FileModify{}); err != nil {
-		t.Fatalf("Alter with an empty FileModify: %v", err)
+	if err := scriptTestDB().FileRef("AppDat").Alter(ctx, DatabaseFileChanges{}); err != nil {
+		t.Fatalf("Alter with an empty DatabaseFileChanges: %v", err)
 	}
 	if len(script.Statements()) != 0 {
 		t.Errorf("Statements = %q, want none", script.Statements())

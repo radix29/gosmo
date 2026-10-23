@@ -152,7 +152,7 @@ func TestLiveHandleWrites(t *testing.T) {
 		}
 
 		f := d.FileRef("hw_dat")
-		if err := f.Alter(ctx, FileModify{NewName: "hw'dat2", SizeKB: 16384}); err != nil {
+		if err := f.Alter(ctx, DatabaseFileChanges{NewName: "hw'dat2", SizeKB: 16384}); err != nil {
 			t.Fatalf("Alter: %v", err)
 		}
 		if f.Name != "hw'dat2" {

@@ -252,10 +252,10 @@ func (dm Mail) CreateAccount(ctx context.Context, req CreateMailAccountRequest) 
 	})
 }
 
-// MailAccountOptions is a change to an account. A nil field is left as
+// MailAccountChanges is a change to an account. A nil field is left as
 // stored; a non-nil one is sent even when it holds the stored value. An
 // empty string clears a display name, reply-to address or description.
-type MailAccountOptions struct {
+type MailAccountChanges struct {
 	// Name renames the account.
 	Name           *string
 	EmailAddress   *string
@@ -275,7 +275,7 @@ type MailAccountOptions struct {
 	Credentials *MailCredentials
 }
 
-func (o MailAccountOptions) empty() bool {
+func (o MailAccountChanges) empty() bool {
 	return o.Name == nil && o.EmailAddress == nil && o.DisplayName == nil &&
 		o.ReplyToAddress == nil && o.Description == nil && o.ServerName == nil &&
 		o.Port == nil && o.EnableSSL == nil && o.Timeout == nil && o.Credentials == nil
@@ -285,7 +285,7 @@ func (o MailAccountOptions) empty() bool {
 // rename identifies the account by id — the procedure takes @account_name as
 // the new name when @account_id is given — read in the same batch, so a
 // name-only handle can rename too.
-func mailAccountAlterStmt(name string, o MailAccountOptions) (run, shown string) {
+func mailAccountAlterStmt(name string, o MailAccountChanges) (run, shown string) {
 	var r, sh procArgs
 	for _, a := range []*procArgs{&r, &sh} {
 		if o.Name != nil {
@@ -328,7 +328,7 @@ func mailAccountAlterStmt(name string, o MailAccountOptions) (run, shown string)
 // ANY DEFINITION) nothing, and writes back the NULL it read as the account's
 // credential_id: the call succeeds and the account keeps its user name but
 // loses its password (gossms W14, msdb db_owner on 17).
-func (a *MailAccount) Alter(ctx context.Context, o MailAccountOptions) error {
+func (a *MailAccount) Alter(ctx context.Context, o MailAccountChanges) error {
 	if o.empty() {
 		return nil
 	}
@@ -421,9 +421,9 @@ func mailProfileCreateStmt(name, description string) string {
 	return p.exec("sysmail_add_profile_sp")
 }
 
-// MailProfileOptions is a change to a profile. A nil field is left as
+// MailProfileChanges is a change to a profile. A nil field is left as
 // stored; an empty Description clears it.
-type MailProfileOptions struct {
+type MailProfileChanges struct {
 	// Name renames the profile.
 	Name        *string
 	Description *string
@@ -432,7 +432,7 @@ type MailProfileOptions struct {
 // Alter applies every field set on o in one sysmail_update_profile_sp. An
 // empty o issues nothing. A rename identifies the profile by id, read in the
 // same batch, as MailAccount.Alter does.
-func (p *MailProfile) Alter(ctx context.Context, o MailProfileOptions) error {
+func (p *MailProfile) Alter(ctx context.Context, o MailProfileChanges) error {
 	if o.Name == nil && o.Description == nil {
 		return nil
 	}
