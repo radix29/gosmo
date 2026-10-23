@@ -138,6 +138,11 @@ func (s *Server) Restore(ctx context.Context, opts RestoreOptions) error {
 		}
 		return fmt.Errorf("gosmo: restore %q: %w", opts.Database, err)
 	}
+	// RESTORING refuses every login (Msg 927), and the reset of a pooled
+	// session in it.
+	if opts.Recovery == RestoreWithNoRecovery {
+		s.leftLoginDatabase(ctx, opts.Database, "master")
+	}
 	return nil
 }
 

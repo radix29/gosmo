@@ -10,6 +10,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
@@ -221,30 +222,32 @@ func TestEntraCacheRenewsAnExpiringToken(t *testing.T) {
 // sign-in gives up when its own context ends, rather than waiting out a
 // sign-in that may take minutes.
 func TestEntraTokenWaitHonoursContext(t *testing.T) {
-	fc := newFakeCache()
-	fc.cred.gate = make(chan struct{})
-	cfg := mustEntraConfig(t, ConnectionOptions{Server: "a.database.windows.net", Auth: AuthEntraInteractive})
+	synctest.Test(t, func(t *testing.T) {
+		fc := newFakeCache()
+		fc.cred.gate = make(chan struct{})
+		cfg := mustEntraConfig(t, ConnectionOptions{Server: "a.database.windows.net", Auth: AuthEntraInteractive})
 
-	first := make(chan error, 1)
-	go func() {
-		_, err := fc.token(context.Background(), cfg, testSPN, testSTS)
-		first <- err
-	}()
-	for fc.cred.calls.Load() == 0 {
-		time.Sleep(time.Millisecond)
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
-	defer cancel()
-	if _, err := fc.token(ctx, cfg, testSPN, testSTS); !errors.Is(err, context.DeadlineExceeded) {
-		t.Errorf("waiter err = %v, want context.DeadlineExceeded", err)
-	}
-	close(fc.cred.gate)
-	if err := <-first; err != nil {
-		t.Errorf("first sign-in: %v", err)
-	}
-	if n := fc.cred.calls.Load(); n != 1 {
-		t.Errorf("tokens fetched = %d, want 1", n)
-	}
+		first := make(chan error, 1)
+		go func() {
+			_, err := fc.token(context.Background(), cfg, testSPN, testSTS)
+			first <- err
+		}()
+		// Wait returns once the first sign-in is parked on the gate, holding the
+		// credential; the 20 ms below is the bubble's fake clock, so exact.
+		synctest.Wait()
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+		defer cancel()
+		if _, err := fc.token(ctx, cfg, testSPN, testSTS); !errors.Is(err, context.DeadlineExceeded) {
+			t.Errorf("waiter err = %v, want context.DeadlineExceeded", err)
+		}
+		close(fc.cred.gate)
+		if err := <-first; err != nil {
+			t.Errorf("first sign-in: %v", err)
+		}
+		if n := fc.cred.calls.Load(); n != 1 {
+			t.Errorf("tokens fetched = %d, want 1", n)
+		}
+	})
 }
 
 // TestEntraCredentialSpecPerMethod: each method reaches the azidentity

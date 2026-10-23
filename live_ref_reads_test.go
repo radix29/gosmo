@@ -32,7 +32,7 @@ func TestLiveRefReadsJob(t *testing.T) {
 	t.Cleanup(func() { _ = s.JobRef(jobName).Drop(context.Background()) })
 	ref := s.JobRef(jobName)
 	for _, n := range []string{"a", "b"} {
-		if _, err := ref.AddStep(ctx, JobStepRequest{Name: n, Subsystem: "TSQL", Command: "SELECT 1",
+		if _, err := ref.AddStep(ctx, JobStepDefinition{Name: n, Subsystem: "TSQL", Command: "SELECT 1",
 			OnSuccessAction: 3, OnFailAction: 2}); err != nil {
 			t.Fatalf("AddStep %s: %v", n, err)
 		}

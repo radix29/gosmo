@@ -283,7 +283,8 @@ func (ag *AvailabilityGroup) JoinDatabase(ctx context.Context, name string) erro
 //
 // Run against the secondary. This is the per-secondary counterpart of
 // RemoveDatabase: it takes one copy out of the group and leaves the database in
-// it on every other replica.
+// it on every other replica. Unjoining the database this Server's pool logs in
+// to moves the pool to master (see InitialDatabase).
 func (ag *AvailabilityGroup) UnjoinDatabase(ctx context.Context, name string) error {
 	if strings.TrimSpace(name) == "" {
 		return invalidf("gosmo: unjoin database from availability group %q: empty database name", ag.Name)
@@ -291,6 +292,7 @@ func (ag *AvailabilityGroup) UnjoinDatabase(ctx context.Context, name string) er
 	if err := ag.alterDatabaseHADR(ctx, name, "OFF"); err != nil {
 		return fmt.Errorf("gosmo: unjoin database %q from availability group %q: %w", name, ag.Name, err)
 	}
+	ag.server.leftLoginDatabase(ctx, name, "master")
 	return nil
 }
 

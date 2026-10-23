@@ -107,6 +107,11 @@ var userAccessModes = map[UserAccess]bool{
 // SINGLE_USER, or RESTRICTED_USER — SSMS's Database Properties > Options
 // "Restrict access" setting). Existing connections that would violate the
 // new mode are rolled back immediately, matching SSMS's own behavior.
+//
+// SINGLE_USER on the database this Server's pool logs in to moves the pool to
+// master (see InitialDatabase): the session that ran the ALTER is the one
+// user, and every other login is refused (Msg 924) — including, once that
+// session idles out of the pool, the one that would set MULTI_USER back.
 func (d *Database) SetUserAccess(ctx context.Context, mode UserAccess) error {
 	if !userAccessModes[mode] {
 		return invalidf("gosmo: set user access on %q: unrecognized mode %q", d.Name, mode)
@@ -115,6 +120,9 @@ func (d *Database) SetUserAccess(ctx context.Context, mode UserAccess) error {
 		fmt.Sprintf("ALTER DATABASE %s SET %s WITH ROLLBACK IMMEDIATE", quoteIdent(d.Name), mode),
 	); err != nil {
 		return fmt.Errorf("gosmo: set user access %s on %q: %w", mode, d.Name, err)
+	}
+	if mode == UserAccessSingle {
+		d.server.leftLoginDatabase(ctx, d.Name, "master")
 	}
 	return nil
 }

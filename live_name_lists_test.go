@@ -99,9 +99,9 @@ func TestLiveNameListsSurviveTheirSeparator(t *testing.T) {
 	if !slices.Equal(role.Members, []string{"r, x"}) {
 		t.Errorf("role members = %q, want [r, x]", role.Members)
 	}
-	roles, err := src.DatabaseRoles(ctx)
+	roles, err := src.Roles(ctx)
 	if err != nil {
-		t.Fatalf("DatabaseRoles: %v", err)
+		t.Fatalf("Roles: %v", err)
 	}
 	for _, r := range roles {
 		if r.Name == "app_role" && !slices.Equal(r.Members, []string{"r, x"}) {

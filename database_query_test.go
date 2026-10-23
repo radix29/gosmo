@@ -104,6 +104,27 @@ func splitUseBatch(q string) (use, rest string, ok bool) {
 	return before, after, true
 }
 
+// unwrapProcRead undoes Database.procRead for a fake driver: the database the
+// call runs in (bracketed, as a USE names it), the query it carries and that
+// query's own arguments, numbered from 1 again. ok is false for a statement
+// that is not one, and for recheckEntry's empty call, which carries no query
+// worth recording.
+func unwrapProcRead(q string, args []driver.NamedValue) (db, inner string, innerArgs []driver.NamedValue, ok bool) {
+	db, found := strings.CutSuffix(q, ".sys.sp_executesql")
+	if !found || len(args) == 0 {
+		return "", q, args, false
+	}
+	inner, _ = args[0].Value.(string)
+	if len(args) > 2 {
+		innerArgs = make([]driver.NamedValue, len(args)-2)
+		for i, a := range args[2:] {
+			a.Ordinal = i + 1
+			innerArgs[i] = a
+		}
+	}
+	return db, inner, innerArgs, true
+}
+
 // -- useDriver: records every statement and fails the ones a test names ------
 
 type useDriverState struct {
@@ -111,7 +132,8 @@ type useDriverState struct {
 	stmts     []string
 	failBatch error // returned for a useBatch statement
 	failUse   error // returned for a bare USE
-	failQuery error // returned for the bare query
+	failQuery error // returned for the bare query, and for procRead's call
+	failEntry error // returned for recheckEntry's empty call of sp_executesql
 	// batchErr, when set, decides a useBatch statement's error from its text
 	// before failBatch does — a model of the server rather than a fixed reply.
 	batchErr func(q string) error
@@ -127,7 +149,14 @@ type useConn struct{}
 
 func (c *useConn) Prepare(string) (driver.Stmt, error) { return nil, driver.ErrSkip }
 func (c *useConn) Close() error                        { return nil }
-func (c *useConn) Begin() (driver.Tx, error)           { return nil, driver.ErrSkip }
+func (c *useConn) Begin() (driver.Tx, error)           { return useTx{}, nil }
+
+// useTx is a transaction that does nothing, so a read can run inside
+// InTransaction — the one place useBatch still goes.
+type useTx struct{}
+
+func (useTx) Commit() error   { return nil }
+func (useTx) Rollback() error { return nil }
 
 func (c *useConn) record(q string) error {
 	useState.mu.Lock()
@@ -148,6 +177,15 @@ func (c *useConn) record(q string) error {
 }
 
 func (c *useConn) ExecContext(_ context.Context, q string, _ []driver.NamedValue) (driver.Result, error) {
+	if strings.HasSuffix(q, ".sys.sp_executesql") {
+		useState.mu.Lock()
+		useState.stmts = append(useState.stmts, q)
+		useState.mu.Unlock()
+		if useState.failEntry != nil {
+			return nil, useState.failEntry
+		}
+		return driver.ResultNoRows, nil
+	}
 	if err := c.record(q); err != nil {
 		return nil, err
 	}
@@ -177,7 +215,10 @@ func useTestDB(t *testing.T) *Database {
 // readBoth runs one read through query and one through queryRow, returning
 // their errors.
 func readBoth(d *Database) (qErr, rowErr error) {
-	ctx := context.Background()
+	return readBothCtx(context.Background(), d)
+}
+
+func readBothCtx(ctx context.Context, d *Database) (qErr, rowErr error) {
 	rows, err := d.query(ctx, "SELECT name FROM sys.tables")
 	if err == nil {
 		rows.Close()
@@ -186,12 +227,29 @@ func readBoth(d *Database) (qErr, rowErr error) {
 	return err, d.queryRow(ctx, func(r *sql.Row) error { return r.Scan(&name) }, "SELECT name FROM sys.tables")
 }
 
-// A read is one round trip: the switch to the database and the query go as
-// one batch, guarded so a failed USE stops it, with the query on the batch's
-// first line so its error line numbers are unchanged.
+// readBothInTx is readBoth inside InTransaction, the one place a read still
+// goes as a useBatch. set arms the failures once the transaction has begun,
+// so its own SELECT DB_NAME() is not failed, and the statements are recorded
+// from there. InTransaction's own result is not the test's: a failed read
+// leaves it refusing to commit.
+func readBothInTx(d *Database, set func()) (qErr, rowErr error) {
+	_ = d.server.InTransaction(context.Background(), func(ctx context.Context) error {
+		useState.stmts = nil
+		if set != nil {
+			set()
+		}
+		qErr, rowErr = readBothCtx(ctx, d)
+		return nil
+	})
+	return qErr, rowErr
+}
+
+// A read inside InTransaction is one round trip: the switch to the database
+// and the query go as one batch, guarded so a failed USE stops it, with the
+// query on the batch's first line so its error line numbers are unchanged.
 func TestDatabaseReadIsOneBatch(t *testing.T) {
 	d := useTestDB(t)
-	if qErr, rowErr := readBoth(d); qErr != nil || rowErr != nil {
+	if qErr, rowErr := readBothInTx(d, nil); qErr != nil || rowErr != nil {
 		t.Fatalf("query: %v, queryRow: %v", qErr, rowErr)
 	}
 	want := "USE [App]]DB]; IF @@ERROR <> 0 RETURN; SELECT name FROM sys.tables"
@@ -207,9 +265,7 @@ func TestDatabaseReadIsOneBatch(t *testing.T) {
 func TestDatabaseReadReportsAFailedUseAsBefore(t *testing.T) {
 	d := useTestDB(t)
 	serverErr := errors.New("Database 'App]DB' does not exist. (911)")
-	useState.failBatch, useState.failUse = serverErr, serverErr
-
-	qErr, rowErr := readBoth(d)
+	qErr, rowErr := readBothInTx(d, func() { useState.failBatch, useState.failUse = serverErr, serverErr })
 	for name, err := range map[string]error{"query": qErr, "queryRow": rowErr} {
 		if err == nil || err.Error() != "gosmo: USE App]DB: "+serverErr.Error() || !errors.Is(err, serverErr) {
 			t.Errorf("%s error = %v, want %q wrapping the server's", name, err, "gosmo: USE App]DB: "+serverErr.Error())
@@ -227,9 +283,7 @@ func TestDatabaseReadReportsAFailedUseAsBefore(t *testing.T) {
 func TestDatabaseReadReportsAFailedQueryAsBefore(t *testing.T) {
 	d := useTestDB(t)
 	serverErr := errors.New("Invalid column name 'x'. (207)")
-	useState.failBatch, useState.failQuery = serverErr, serverErr
-
-	qErr, rowErr := readBoth(d)
+	qErr, rowErr := readBothInTx(d, func() { useState.failBatch, useState.failQuery = serverErr, serverErr })
 	for name, err := range map[string]error{"query": qErr, "queryRow": rowErr} {
 		if err == nil || err.Error() != serverErr.Error() {
 			t.Errorf("%s error = %v, want the query's own %q", name, err, serverErr)
@@ -237,9 +291,9 @@ func TestDatabaseReadReportsAFailedQueryAsBefore(t *testing.T) {
 	}
 }
 
-// A failing read costs two round trips, never three, and the query runs once:
-// the batch, then the USE alone to tell which half failed. A read that
-// succeeds is the batch alone.
+// A failing read inside InTransaction costs two round trips, never three, and
+// the query runs once: the batch, then the USE alone to tell which half
+// failed. A read that succeeds is the batch alone.
 func TestDatabaseReadFailureRunsQueryOnce(t *testing.T) {
 	const bare = "SELECT name FROM sys.tables"
 	cases := []struct {
@@ -255,27 +309,35 @@ func TestDatabaseReadFailureRunsQueryOnce(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			d := useTestDB(t)
 			serverErr := errors.New("refused")
-			if tc.failUse {
-				useState.failUse = serverErr
+			arm := func() {
+				if tc.failUse {
+					useState.failUse = serverErr
+				}
+				if tc.failUse || tc.failQuery {
+					useState.failBatch = serverErr
+				}
 			}
-			if tc.failUse || tc.failQuery {
-				useState.failBatch = serverErr
-			}
-			for name, read := range map[string]func() error{
-				"query": func() error {
-					rows, err := d.query(context.Background(), bare)
+			for name, read := range map[string]func(ctx context.Context) error{
+				"query": func(ctx context.Context) error {
+					rows, err := d.query(ctx, bare)
 					if err == nil {
 						rows.Close()
 					}
 					return err
 				},
-				"queryRow": func() error {
+				"queryRow": func(ctx context.Context) error {
 					var s string
-					return d.queryRow(context.Background(), func(r *sql.Row) error { return r.Scan(&s) }, bare)
+					return d.queryRow(ctx, func(r *sql.Row) error { return r.Scan(&s) }, bare)
 				},
 			} {
-				useState.stmts = nil
-				err := read()
+				useState.failUse, useState.failBatch = nil, nil
+				var err error
+				_ = d.server.InTransaction(context.Background(), func(ctx context.Context) error {
+					useState.stmts = nil
+					arm()
+					err = read(ctx)
+					return nil
+				})
 				want := 2
 				if !tc.failUse && !tc.failQuery {
 					want = 1
@@ -295,15 +357,15 @@ func TestDatabaseReadFailureRunsQueryOnce(t *testing.T) {
 }
 
 // A collation conflict can be the batch's own doing: its parameters take the
-// collation of the database the batch started in, not d's. So after the USE
-// alone succeeds, a 468 runs the query again on its own — once — and that
-// read's result is the read's. Live, a by-name lookup in a case-sensitive
-// database is the case (TestLiveScriptLookupsHonourCollation).
+// collation of the database the batch started in, not d's. So inside
+// InTransaction, after the USE alone succeeds, a 468 runs the query again on
+// its own — once — and that read's result is the read's. A pooled read
+// (procRead) binds its parameters in d and never sees it.
 func TestDatabaseReadReRunsACollationConflictAlone(t *testing.T) {
 	const bare = "SELECT name FROM sys.tables"
 	d := useTestDB(t)
-	useState.failBatch = mssql.Error{Number: 468, Message: "Cannot resolve the collation conflict"}
-	qErr, rowErr := readBoth(d)
+	conflict := mssql.Error{Number: 468, Message: "Cannot resolve the collation conflict"}
+	qErr, rowErr := readBothInTx(d, func() { useState.failBatch = conflict })
 	for name, err := range map[string]error{"query": qErr, "queryRow": rowErr} {
 		if err != nil {
 			t.Errorf("%s error = %v, want the bare query's success", name, err)
@@ -315,9 +377,7 @@ func TestDatabaseReadReRunsACollationConflictAlone(t *testing.T) {
 	}
 
 	// The same conflict from the bare query is the read's error, not a loop.
-	useState.stmts = nil
-	useState.failQuery = useState.failBatch
-	qErr, rowErr = readBoth(d)
+	qErr, rowErr = readBothInTx(d, func() { useState.failBatch, useState.failQuery = conflict, conflict })
 	for name, err := range map[string]error{"query": qErr, "queryRow": rowErr} {
 		if me, ok := errors.AsType[mssql.Error](err); !ok || me.Number != 468 {
 			t.Errorf("%s error = %v, want the bare query's 468", name, err)
@@ -325,5 +385,20 @@ func TestDatabaseReadReRunsACollationConflictAlone(t *testing.T) {
 	}
 	if len(useState.stmts) != 6 {
 		t.Errorf("statements = %q, want three per read", useState.stmts)
+	}
+}
+
+// A refusal inside InTransaction has already ended the transaction, so the
+// USE recheckUse sends never reaches the server: the driver answers it with
+// its own Number 0. The read then reports the server's refusal, not that.
+func TestDatabaseReadInAnAbortedTransactionKeepsTheServersError(t *testing.T) {
+	d := useTestDB(t)
+	refused := mssql.Error{Number: 911, Message: "Database 'App]DB' does not exist."}
+	aborted := mssql.Error{Number: 0, Message: "server does not have an active transaction"}
+	qErr, rowErr := readBothInTx(d, func() { useState.failBatch, useState.failUse = refused, aborted })
+	for name, err := range map[string]error{"query": qErr, "queryRow": rowErr} {
+		if me, ok := errors.AsType[mssql.Error](err); !ok || me.Number != 911 {
+			t.Errorf("%s error = %v, want the server's 911", name, err)
+		}
 	}
 }

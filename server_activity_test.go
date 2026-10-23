@@ -26,6 +26,7 @@ type activityConnector struct {
 	replies []activityReply
 
 	mu    sync.Mutex
+	db    string // the database a procRead call ran in, or ""
 	query string
 	args  []driver.NamedValue
 }
@@ -42,8 +43,12 @@ func (*activityConn) Close() error                        { return nil }
 func (*activityConn) Begin() (driver.Tx, error)           { return nil, driver.ErrSkip }
 
 func (cn *activityConn) QueryContext(_ context.Context, q string, args []driver.NamedValue) (driver.Rows, error) {
+	db, inner, innerArgs, ok := unwrapProcRead(q, args)
+	if ok {
+		q, args = inner, innerArgs
+	}
 	cn.c.mu.Lock()
-	cn.c.query, cn.c.args = q, args
+	cn.c.db, cn.c.query, cn.c.args = db, q, args
 	cn.c.mu.Unlock()
 	for _, r := range cn.c.replies {
 		if strings.Contains(q, r.key) {
@@ -253,8 +258,8 @@ func TestTempDBReadsConvertPagesToMB(t *testing.T) {
 		t.Errorf("TempDBFiles = %+v (a percentage growth must stay a percentage)", files)
 	}
 	// FILEPROPERTY answers for the current database only.
-	if q := c.query; !strings.HasPrefix(q, "USE [tempdb];") {
-		t.Errorf("TempDBFiles ran %q, want it in tempdb", q)
+	if c.db != "[tempdb]" {
+		t.Errorf("TempDBFiles ran %q in %q, want it in tempdb", c.query, c.db)
 	}
 
 	objs, err := s.TempDBObjects(ctx)

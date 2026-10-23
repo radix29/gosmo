@@ -505,7 +505,7 @@ func buildServerAuditScript(a *ServerAudit, opts ScriptOptions) string {
 		escapeSingle(a.Name), quoteIdent(a.Name), quoteIdent(a.Name))
 	return opts.envelope(drop, "", func(sb *strings.Builder) {
 
-		spec := ServerAuditSpec{
+		spec := ServerAuditDefinition{
 			Name:             a.Name,
 			Type:             a.Type,
 			QueueDelay:       a.QueueDelay,

@@ -319,13 +319,13 @@ The instance and database halves pair up: `ServerResourceStat` and
 | Connection lifetime      | `srv.Context()` — cancelled by `srv.Close()`, which also stops every gosmo statement in flight; derive work run on `srv.DB()` from it |
 | `Server.Logins`         | `srv.Logins(ctx)` / `srv.LoginByName(ctx, name)` / `srv.LoginRef(name)` (no-I/O handle) |
 | `Server.Roles`          | `srv.ServerRoles(ctx)` / `srv.ServerRoleByName(ctx, name)` / `srv.ServerRoleRef(name)` (no-I/O handle) / `srv.ServerRoleMembers(ctx, role)`; writes on the handle — `role.AddMember(ctx, member)` / `role.RemoveMember(ctx, member)` |
-| Server role administration | `role.Rename(ctx, newName)` / `role.SetOwner(ctx, owner)` / `srv.Add\|RemoveServerRoleMember(ctx, role, member)` |
+| Server role administration | `role.Rename(ctx, newName)` / `role.SetOwner(ctx, owner)` / `role.AddMember\|RemoveMember(ctx, member)` / `login.AddToServerRole\|RemoveFromServerRole(ctx, role)` |
 | Drop a server role      | `srv.ServerRoleRef(name).Drop(ctx)` / `role.Drop(ctx)`  |
 | Drop a database         | `srv.DatabaseRef(name).Drop(ctx, term)` / `db.Drop(ctx, term)` — `gosmo.TerminationRollbackImmediate` closes other connections first |
 | Rename a database       | `srv.DatabaseRef(old).Rename(ctx, new, term)` / `db.Rename(ctx, new, term)` — `gosmo.TerminationRollbackImmediate` puts it in single-user mode first |
 | Detach a database       | `srv.DatabaseRef(name).Detach(ctx, gosmo.DetachOptions{...})` — leaves the files on disk; a detach that fails after `DropConnections` is put back to the access mode it had |
-| Free the pool's own sessions from a database | `srv.ReleaseIdleConnections(ctx)` — closes idle pooled connections, which otherwise sit inside the last database they read and block an exclusive-access statement (detach, rename, drop, `SET READ_ONLY`, RCSI, filegroup read-only — each of which calls it itself) |
-| Attach a database       | `srv.AttachDatabase(ctx, gosmo.AttachSpec{Name, Files, Owner, RebuildLog})` — the name need not be the one it was detached under |
+| Free the pool's own sessions from a database | `srv.ReleaseIdleConnections(ctx)` — closes idle pooled connections, which otherwise sit inside the last database they wrote to (a read never enters one: `procRead`) and block an exclusive-access statement (detach, rename, drop, `SET READ_ONLY`, RCSI, filegroup read-only — each of which calls it itself) |
+| Attach a database       | `srv.AttachDatabase(ctx, gosmo.AttachDatabaseRequest{Name, Files, Owner, RebuildLog})` → `*Database` (read back; the `DatabaseRef` under `Scripting`) — the name need not be the one it was detached under |
 | Read a detached file    | `srv.DetachedDatabaseInfo(ctx, primaryFilePath)` → `*DetachedDatabase` (`.Name`, `.Files`, `.DataFiles()`, `.LogFiles()`) — the only way to learn a detached database's other files |
 | Database snapshots      | `srv.DatabaseSnapshots(ctx)` / `srv.DatabaseSnapshotByName(ctx, name)` / `srv.DatabaseSnapshotRef(name)` (no-I/O handle) / `srv.SnapshotsOf(ctx, database)` / `srv.CreateDatabaseSnapshot(ctx, req)` / `srv.RestoreFromSnapshot(ctx, database, snapshot)` — see [Database snapshots](#database-snapshots) |
 | `Server.LinkedServers`  | `srv.LinkedServers(ctx)` (`DataAccess` = `is_data_access_enabled`); through one, `srv.LinkedServerDatabases(ctx, ls)` / `srv.LinkedServerCatalog(ctx, ls, db)` — `Catalog`'s snapshot read from the remote's own sys views via `OPENQUERY`, SQL Server remotes only (see `linked_server.go`) |
@@ -336,7 +336,7 @@ The instance and database halves pair up: `ServerResourceStat` and
 | Own blocked requests    | `srv.BlockedRequests(ctx, os.Getpid())` — this client's pooled sessions waiting on another, with the blocker |
 | Kill session            | `srv.KillSession(ctx, id)`                      |
 | Error log               | `srv.ReadLog(ctx, logType, n, search)` (zero `LogSearch` = whole file) / `srv.EnumErrorLogs(ctx, logType)` / `srv.CycleLog(ctx, logType)` — see [Error log](#error-log) |
-| Database Mail           | `srv.Mail().Accounts(ctx)` / `srv.Mail().AccountByName(ctx, name)` / `srv.Mail().Profiles(ctx)` / `srv.Mail().ProfileByName(ctx, name)` (each with its ordered `Accounts`) / `srv.Mail().PrincipalProfiles(ctx)` (SID 0x00 = public) / `srv.Mail().Configuration(ctx)` / `srv.Mail().Status(ctx)` (`MailDisabled` while 'Database Mail XPs' is 0, not an error) / `srv.Mail().Queues(ctx)` (VIEW SERVER STATE) / `srv.Mail().Items(ctx, gosmo.MailItemFilter{...})` / `srv.Mail().ItemByID(ctx, id)` / `srv.Mail().Events(ctx, gosmo.MailEventFilter{...})`. Writes: `srv.Mail().CreateAccount(ctx, req)` / `srv.Mail().AccountRef(name).Alter(ctx, gosmo.MailAccountOptions{...})` (nil `Credentials` keeps the stored user and password) / `.Drop(ctx)`; `srv.Mail().CreateProfile(ctx, req)` / `srv.Mail().ProfileRef(name).Alter` / `.Drop` / `.SetAccounts(ctx, ordered)` / `.Grant(ctx, principal, gosmo.MailDefaultProfile)` (or `MailNotDefaultProfile`) / `.SetGrantDefault` / `.Revoke`; `srv.Mail().SetConfiguration(ctx, opts)`; `srv.Mail().Start(ctx)` / `.Stop(ctx)`; `srv.Mail().Send(ctx, gosmo.MailMessage{Profile, To, Subject, Body})` → mailitem_id (never retried); `srv.Mail().DeleteItems(ctx, before, status)` / `.DeleteLog(ctx, before, eventType)`. The log also reads as `ReadLog(ctx, gosmo.ErrorLogDatabaseMail, 0, gosmo.LogSearch{})`. Scripts: `ScriptMailAccount` / `ScriptMailProfile` / `ScriptDatabaseMail`, the password as `<insert password here>` (also under `WithScript` and to a statement observer) — msdb permission, not sysadmin; see `database_mail.go`, `database_mail_write.go`, `database_mail_service.go` |
+| Database Mail           | `srv.Mail().Accounts(ctx)` / `srv.Mail().AccountByName(ctx, name)` / `srv.Mail().Profiles(ctx)` / `srv.Mail().ProfileByName(ctx, name)` (each with its ordered `Accounts`) / `srv.Mail().PrincipalProfiles(ctx)` (SID 0x00 = public) / `srv.Mail().Configuration(ctx)` / `srv.Mail().Status(ctx)` (`MailDisabled` while 'Database Mail XPs' is 0, not an error) / `srv.Mail().Queues(ctx)` (VIEW SERVER STATE) / `srv.Mail().Items(ctx, gosmo.MailItemFilter{...})` / `srv.Mail().ItemByID(ctx, id)` / `srv.Mail().Events(ctx, gosmo.MailEventFilter{...})`. Writes: `srv.Mail().CreateAccount(ctx, req)` / `srv.Mail().AccountRef(name).Alter(ctx, gosmo.MailAccountChanges{...})` (nil `Credentials` keeps the stored user and password) / `.Drop(ctx)`; `srv.Mail().CreateProfile(ctx, req)` / `srv.Mail().ProfileRef(name).Alter` / `.Drop` / `.SetAccounts(ctx, ordered)` / `.Grant(ctx, principal, gosmo.MailDefaultProfile)` (or `MailNotDefaultProfile`) / `.SetGrantDefault` / `.Revoke`; `srv.Mail().SetConfiguration(ctx, opts)`; `srv.Mail().Start(ctx)` / `.Stop(ctx)`; `srv.Mail().Send(ctx, gosmo.MailMessage{Profile, To, Subject, Body})` → mailitem_id (never retried); `srv.Mail().DeleteItems(ctx, before, status)` / `.DeleteLog(ctx, before, eventType)`. The log also reads as `ReadLog(ctx, gosmo.ErrorLogDatabaseMail, 0, gosmo.LogSearch{})`. Scripts: `ScriptMailAccount` / `ScriptMailProfile` / `ScriptDatabaseMail`, the password as `<insert password here>` (also under `WithScript` and to a statement observer) — msdb permission, not sysadmin; see `database_mail.go`, `database_mail_write.go`, `database_mail_service.go` |
 | Create login (safe)     | `srv.CreateLogin(ctx, gosmo.CreateLoginRequest{Name, Password, Source, ...})` — SQL, Windows, external provider, certificate or asymmetric key |
 | Authentication mode     | `srv.SecurityInfo(ctx)`                       |
 | Server-level permissions | `srv.ServerPermissions(ctx)` / `srv.ApplyPermission(ctx, verb, gosmo.Securable{Class: gosmo.SecurableServer}, perm, principal, opts)` / `srv.ServerPermissionNames()` |
@@ -387,17 +387,17 @@ The instance and database halves pair up: `ServerResourceStat` and
 | Bulk table/view + column snapshot | `db.Catalog(ctx)` (user objects) / `db.SystemCatalog(ctx)` (`sys` schema); `Catalog.Functions` holds the table-valued functions (`IF`/`TF`/`FT`) and their result columns, kept out of `Objects`; `Catalog.Aggregates` the user-defined (CLR, `AF`) aggregates and their return types |
 | `Database.Views`                | `db.Views(ctx, f)` / `db.ViewByName(ctx, schema, name)` / `db.ViewRef(schema, name)` (no-I/O handle) / `v.Drop(ctx)` / `v.Triggers(ctx)` / `v.Columns(ctx)`; an indexed view's `v.Indexes` / `IndexByName` / `IndexRef` / `CreateIndex` / `RebuildAllIndexes` and `v.Statistics` / `StatisticByName` / `StatisticRef` / `CreateStatistic` / `UpdateAllStatistics` — a table's, through a carrier `Table`; the results answer `View()`, and `Table()` nil (see `view_indexes.go`) |
 | `Database.StoredProcedures`     | `db.StoredProcedures(ctx, f)` / `db.StoredProcedureByName(ctx, schema, name)` / `db.StoredProcedureRef(schema, name)` (no-I/O handle) / `db.CreateStoredProcedure(ctx, req)` / `p.Drop(ctx)` |
-| `Database.UserDefinedFunctions` | `db.UserDefinedFunctions(ctx, f)` (T-SQL and CLR; `f.FuncType` is a `FunctionType` — `IsScalar()`, `IsCLR()`) / `db.UserDefinedFunctionRef(schema, name)` (no-I/O handle) / `f.Drop(ctx)` |
+| `Database.UserDefinedFunctions` | `db.UserDefinedFunctions(ctx, f)` (T-SQL and CLR; `f.FuncType` is a `FunctionType` — `IsScalar()`, `IsCLR()`) / `db.UserDefinedFunctionByName(ctx, schema, name)` / `db.UserDefinedFunctionRef(schema, name)` (no-I/O handle) / `f.Drop(ctx)` |
 | System Views/Procedures/Functions | `db.SystemViews(ctx, f)` / `db.SystemStoredProcedures(ctx, f)` / `db.SystemFunctions(ctx, f)` |
 | A module's T-SQL text           | `v.Definition(ctx)` / `p.Definition(ctx)` / `f.Definition(ctx)` / `tr.Definition(ctx)` (DML trigger) / `r.Definition(ctx)` / `df.Definition(ctx)` — read by name, so a `Ref` handle is enough; `""` for an encrypted or CLR module, `ErrNotFound` for a missing one or one of another kind. Listings and `*ByName` carry no text: the `sys` schema alone ships about 1,400 procedures |
 | `Database.Schemas`              | `db.Schemas(ctx)` / `db.SchemaByName(ctx, name)` / `db.SchemaRef(name)` / `db.CreateSchema(ctx, req)` / `schema.ObjectCount(ctx)` / `schema.ObjectCountsByType(ctx)` |
 | `Database.Users`                | `db.Users(ctx)` / `db.UserByName(ctx, name)` / `db.UserRef(name)` (no-I/O handle) / `db.CreateUser(ctx, gosmo.CreateUserRequest{Name, Kind, ...})` — for login, with password (contained), without login, Windows, certificate, asymmetric key, external provider |
 | Database user administration    | `user.Rename(ctx, newName)` / `user.SetDefaultSchema(ctx, schemaName)` / `user.SetLogin(ctx, loginName)` |
 | `Database.AuditSpecifications`  | `db.DatabaseAuditSpecifications(ctx)` / `...ByName(ctx, name)` / `db.DatabaseAuditSpecificationRef(name)` (no-I/O handle) / `db.CreateDatabaseAuditSpecification(ctx, spec)` |
-| `Database.Roles`                | `db.DatabaseRoles(ctx)` / `db.RoleByName(ctx, name)` / `db.RoleRef(name)` (no-I/O handle) / `db.RoleMembers(ctx, roleName)`; writes on the handle — `role.AddMember(ctx, member)` / `role.RemoveMember(ctx, member)` |
+| `Database.Roles`                | `db.Roles(ctx)` / `db.RoleByName(ctx, name)` / `db.RoleRef(name)` (no-I/O handle) / `db.RoleMembers(ctx, roleName)`; writes on the handle — `role.AddMember(ctx, member)` / `role.RemoveMember(ctx, member)` |
 | Database role administration    | `role.Rename(ctx, newName)` / `role.SetOwner(ctx, newOwner)` / `role.Drop(ctx)` / `db.RoleRef(name).Drop(ctx)` |
 | `Database.FileGroups`           | `db.FileGroups(ctx)` — `fg.Type` is the `type_desc` (ROWS / FILESTREAM / MEMORY_OPTIMIZED), `fg.IsFileStream()` the common test |
-| `Database.Triggers`             | `db.Triggers(ctx)` / `db.ObjectTriggers(ctx, schema, name)` (one table or view, by name) / `db.TriggerRef(schema, name)` (no-I/O handle) / `tr.Drop(ctx)` / `tr.Rename(ctx, newName)` |
+| `Database.Triggers`             | `db.Triggers(ctx)` / `db.ObjectTriggers(ctx, schema, name)` (one table or view, by name) / `db.TriggerByName(ctx, schema, name)` (the trigger's own schema = its parent's) / `db.TriggerRef(schema, name)` (no-I/O handle) / `tr.Drop(ctx)` / `tr.Rename(ctx, newName)` |
 | Database-scope DDL triggers     | `db.DatabaseTriggers(ctx)` / `db.DatabaseTriggerByName(ctx, name)` / `db.DatabaseTriggerRef(name)` (no-I/O handle) / `tr.Enable(ctx)` / `tr.Disable(ctx)` / `tr.Drop(ctx)` — see [Database DDL triggers](#database-ddl-triggers) |
 | `Database.Sequences`            | `db.Sequences(ctx)` / `db.SequenceByName(ctx, schema, name)` / `db.SequenceRef(schema, name).Drop(ctx)` |
 | `Database.Synonyms`             | `db.Synonyms(ctx)` / `db.SynonymByName(ctx, schema, name)` / `db.SynonymRef(schema, name).Drop(ctx)` |
@@ -588,8 +588,8 @@ instance is too old for is refused with `ErrUnsupportedVersion`.
 | `srv.CreateLogin(ctx, req)` |
 | `login.ChangePassword(ctx, newPassword, gosmo.ChangePasswordOptions{MustChange, Unlock})` |
 | `login.Enable(ctx)` / `login.Disable(ctx)`   |
-| `login.AddServerRoleMember(ctx, role)`       |
-| `login.RemoveServerRoleMember(ctx, role)`    |
+| `login.AddToServerRole(ctx, role)`         |
+| `login.RemoveFromServerRole(ctx, role)`    |
 | `login.Drop(ctx)`                          |
 | `login.Rename(ctx, newName)`                 |
 | `login.SetDefaultDatabase(ctx, name)` / `login.SetDefaultLanguage(ctx, name)` |
@@ -878,7 +878,7 @@ rows.
 | SSMS equivalent                    | gosmo                                              |
 | ---------------------------------- | -------------------------------------------------- |
 | Tasks → Detach                     | `db.Detach(ctx, gosmo.DetachOptions{...})` |
-| Databases → Attach                 | `srv.AttachDatabase(ctx, gosmo.AttachSpec{Name, Files, Owner, RebuildLog})` |
+| Databases → Attach                 | `srv.AttachDatabase(ctx, gosmo.AttachDatabaseRequest{Name, Files, Owner, RebuildLog})` → `*Database` |
 | The Attach dialog's file list      | `srv.DetachedDatabaseInfo(ctx, primaryFilePath)` → `*DetachedDatabase` |
 | The paths to detach from           | `srv.DatabaseFiles(ctx, name)` — reads `sys.master_files`, so it answers for a database `db.Files(ctx)` cannot `USE` |
 
@@ -1051,8 +1051,8 @@ are the ones that change in operation rather than at design time.
 | Routes                   | `db.Routes(ctx)` / `db.RouteByName(ctx, name)` / `r.Drop(ctx)` / `db.RouteRef(name).Drop(ctx)` |
 | Remote Service Bindings  | `db.RemoteServiceBindings(ctx)` / `db.RemoteServiceBindingByName(ctx, name)` / `b.Drop(ctx)` / `db.RemoteServiceBindingRef(name).Drop(ctx)` |
 | Broker Priorities        | `db.BrokerPriorities(ctx)` / `db.BrokerPriorityByName(ctx, name)` / `p.Drop(ctx)` / `db.BrokerPriorityRef(name).Drop(ctx)` |
-| Queue Properties (write)  | `q.Alter(ctx, QueueSettings{…})` / `db.BrokerQueueRef(schema, name).Alter(ctx, s)` / `q.Transfer(ctx, targetSchema)` |
-| Route Properties (write)  | `r.Alter(ctx, RouteSettings{…})` / `db.RouteRef(name).Alter(ctx, s)` |
+| Queue Properties (write)  | `q.Alter(ctx, QueueChanges{…})` / `db.BrokerQueueRef(schema, name).Alter(ctx, s)` / `q.Transfer(ctx, targetSchema)` |
+| Route Properties (write)  | `r.Alter(ctx, RouteChanges{…})` / `db.RouteRef(name).Alter(ctx, s)` |
 | A queue's message counts | `db.QueueMessageCounts(ctx)` → `map[objectID]int64`, or `q.MessageCount(ctx)` |
 | A queue's activation state | `db.QueueMonitors(ctx)` → `[]*QueueMonitor` |
 
@@ -1088,7 +1088,7 @@ for both `WELL_FORMED_XML` and `VALID_XML WITH SCHEMA COLLECTION`, and only
 bits, not one column — both set is `SENT BY ANY`.
 
 **The two writes take a nil field to mean "leave this alone"**, so a page
-sends only what changed. `QueueSettings` is `Status`, `Retention`,
+sends only what changed. `QueueChanges` is `Status`, `Retention`,
 `PoisonMessageHandling`, `Activation` and `DropActivation`; one `STATUS` moves
 the enqueue and receive halves together, because the server moves both.
 `QueueActivation` is restated in full rather than field by field: enabling
@@ -1099,7 +1099,7 @@ all four to hand (`ActivationProcedureSchema`/`Name` are resolved through
 server resolves it to the principal running the statement — so the receiver
 keeps the principal it had and only a re-read can say which it became.
 
-`RouteSettings` **cannot clear anything**: `= NULL` is a parse error on every
+`RouteChanges` **cannot clear anything**: `= NULL` is a parse error on every
 clause, an empty `BROKER_INSTANCE` or `MIRROR_ADDRESS` is refused, and
 `LIFETIME` must be 1 or more. gosmo refuses those up front rather than
 sending a statement the server will reject; a route that has to lose a
@@ -1656,7 +1656,7 @@ a flag — a rebuild, and a `RECONFIGURE` that applies every pending change.
 
 ```go
 job, _ := srv.CreateJob(ctx, gosmo.CreateJobRequest{Name: "NightlyBackup", Enabled: true})
-step, _ := job.AddStep(ctx, gosmo.JobStepRequest{ // read back: step.StepID is its number
+step, _ := job.AddStep(ctx, gosmo.JobStepDefinition{ // read back: step.StepID is its number
     Name:            "Run backup",
     Subsystem:       "TSQL",
     Command:         "EXEC dbo.RunNightlyBackup",
@@ -1669,11 +1669,11 @@ job.Start(ctx, step.Name)
 
 // Edit or remove a step in place.
 steps, _ := job.Steps(ctx)
-steps[0].Alter(ctx, gosmo.JobStepRequest{ /* ... */ })
+steps[0].Alter(ctx, gosmo.JobStepDefinition{ /* ... */ })
 steps[0].Drop(ctx)
 
 // Reorder them: insert at a position, move one step, or reorder the lot.
-job.InsertStep(ctx, gosmo.JobStepRequest{ /* ... */ }, 2)
+job.InsertStep(ctx, gosmo.JobStepDefinition{ /* ... */ }, 2)
 job.MoveStep(ctx, 3, 1)
 job.ReorderSteps(ctx, func(n int) []int { return []int{3, 1, 2} })
 
@@ -1715,7 +1715,7 @@ Agent stopped, and for a login with neither `sysadmin` nor
 `JobStateUnknown` is what a multi-server job Agent does not run itself
 reports.
 
-`JobStepRequest`'s two string fields read an empty value differently, because
+`JobStepDefinition`'s two string fields read an empty value differently, because
 msdb does: an empty `Database` means "leave the step's database alone"
 (`sp_update_jobstep` accepts `N''` for `@database_name` and changes nothing),
 while an empty `OutputFileName` is sent and *does* clear the step's output
@@ -2009,7 +2009,7 @@ is the destination — a file, the Windows Application log or the Security log
 | SSMS equivalent                | gosmo                                                      |
 | ------------------------------ | ---------------------------------------------------------- |
 | Security → Audits              | `srv.ServerAudits(ctx)` / `srv.ServerAuditByName(ctx, name)` / `srv.ServerAuditRef(name)` (no-I/O handle) |
-| New audit                      | `srv.CreateServerAudit(ctx, gosmo.ServerAuditSpec{...})`         |
+| New audit                      | `srv.CreateServerAudit(ctx, gosmo.ServerAuditDefinition{...})`         |
 | Alter / rename / drop          | `a.Alter(ctx, spec)` / `a.Rename(ctx, newName)` / `a.Drop(ctx)`          |
 | Enable / disable               | `a.Enable(ctx)` / `a.Disable(ctx)`                               |
 | Is it running, and to which file | `a.Status(ctx)` → `*ServerAuditStatus`                       |
@@ -2066,8 +2066,8 @@ specs, New Session templates, target builders).
 | SSMS equivalent                  | gosmo                                                      |
 | -------------------------------- | ---------------------------------------------------------- |
 | Extended Events → Sessions       | `srv.XEvents().Sessions(ctx)` / `srv.XEvents().SessionByName(ctx, name)` / `srv.XEvents().SessionRef(name)` (no-I/O handle) — each with its `Events` and `Targets` |
-| New session                      | `srv.XEvents().CreateSession(ctx, gosmo.EventSessionSpec{...})`   |
-| Properties → OK                  | `es.Alter(ctx, spec)` — the minimal ADD/DROP diff against the catalog; start from `es.Spec()` |
+| New session                      | `srv.XEvents().CreateSession(ctx, gosmo.EventSessionDefinition{...})`   |
+| Properties → OK                  | `es.Alter(ctx, spec)` — the minimal ADD/DROP diff against the catalog; start from `es.Definition()` |
 | Start / Stop / Delete            | `es.Start(ctx)` / `es.Stop(ctx)` / `es.Drop(ctx)`              |
 | Running state, dropped events, current file | `es.Status(ctx)` → `*EventSessionStatus`            |
 | Script Session as CREATE         | `NewServerScripter(srv, opts).ScriptEventSession(ctx, name)`   |
@@ -2093,10 +2093,10 @@ failure path too — the audit's disable window. Adding and dropping events and
 targets needs no stop, but events and targets cannot share one statement, so
 `Alter` emits one per group.
 
-`EventSessionSpec`'s zero values: `RetentionMode`, `MaxDispatchLatency`,
+`EventSessionDefinition`'s zero values: `RetentionMode`, `MaxDispatchLatency`,
 `MaxMemory` and `MemoryPartitionMode` at zero mean "server default" on a create
 and "leave alone" on an alter; INFINITE latency is `gosmo.XEInfinite`, which
-is what a catalog 0 reads as through `es.Spec()`.
+is what a catalog 0 reads as through `es.Definition()`.
 
 ### Credentials
 
@@ -2557,31 +2557,37 @@ straight to the pool.
 | ---------------------- | ------------------------------------------------------------------------------------------- |
 | `Database.withConn`    | Acquires a `*sql.Conn` and runs `USE <db>` (retried), then hands it to a callback (not retried — the callback is the caller's write), releasing the conn on return. |
 | `Database.query`       | Returns `*dbRows`, whose `Close()` closes the rows **and** the conn pinned for them. `*sql.Rows.Close` alone would leak that conn out of the pool permanently. |
-| `Database.queryRow`    | Takes a `func(*sql.Row) error` scan callback and runs acquire + `USE` + scan as one retried unit. The scan has to be inside it: `QueryRowContext` never returns an error, so a scan run afterwards would never be retried. |
-| `Database.useBatch` / `batchErr` | A read sends `USE` and the query as one guarded batch — one round trip. A failed batch runs `USE` alone once to tell the halves apart: its error if it fails (`gosmo: USE x:`), else the batch's own; the query never runs twice. |
+| `Database.queryRow`    | Takes a `func(*sql.Row) error` scan callback and runs acquire + query + scan as one retried unit. The scan has to be inside it: `QueryRowContext` never returns an error, so a scan run afterwards would never be retried. |
+| `Database.procRead` / `recheckEntry` | A pooled read (`query`, `queryRow`) is an RPC call of `[db].sys.sp_executesql` with the query, its declarations and its arguments: it runs in `db` and the session never leaves its login database, so no idle connection holds a lock on `db` afterwards. A call failing with a can't-enter number (`cannotEnterErrors`) makes one empty call of `db`'s `sp_executesql`: its error if it fails (`gosmo: USE x:`), else the read's own. An argument `procParamType` cannot declare fails the read (`ErrUnsupported`). |
+| `Database.useBatch` / `recheckUse` | A read inside `InTransaction` sends `USE` and the query as one guarded batch — one round trip — and the session stays in `db`. A failed batch runs `USE` alone once to tell the halves apart: its error if it fails (`gosmo: USE x:`), else the batch's own; the query never runs twice. |
 | `Database.exec`        | Thin wrapper over `withConn` for non-SELECT statements; also where `WithScript` intercepts database-scoped writes. |
 | `Server.query`         | Server-scoped rows-returning read, retried — no `USE`, so a plain `*sql.Rows` is enough.    |
 | `Server.queryRow`      | Server-scoped single-row read, same scan-callback shape and reason as `Database.queryRow`.   |
 | `Server.queryRowScan`  | `queryRow` convenience for a plain `row.Scan(dest...)`, sparing the caller a closure.        |
-| `withRetry`            | Retries each of the read helpers above up to 3 times (linear backoff) on a transient/dropped-connection failure — reads only, since retrying is only safe when the operation is idempotent. |
+| `withRetry`            | Retries each of the read helpers above up to 3 times (linear backoff) on an `IsTransient` failure — a dropped connection, a deadlock victim (Msg 1205) or an Azure SQL transient error — reads only, since retrying is only safe when the operation is idempotent, and never inside `InTransaction`, where a 1205 has already rolled the transaction back. |
 
-`gosmo.IsRetryable(err)` exposes the same transient-failure test
-`withRetry` uses, for callers running their own statements outside
-gosmo's query helpers.
+`gosmo.IsTransient(err)` exposes the test `withRetry` uses, for callers
+running their own idempotent reads outside gosmo's query helpers.
+`gosmo.IsRetryable(err)` is its narrower half: the connection failed.
 
 `gosmo.AcquireConn(ctx, db, database)` is the pinned-connection
 counterpart, for a caller that runs a whole script or session on one
 `*sql.Conn` of its own: it acquires, runs the `USE`/`SELECT 1` prologue,
-and retries on a fresh connection under the same budget when the pool
-hands back a dead one — the protection `Database.withConn` gives gosmo's
+and retries on a fresh connection under the same budget and rule when
+the pool hands back a dead one — the protection `Database.withConn` gives gosmo's
 own reads, which `database/sql` does not extend to a pinned conn. Only
 the prologue is retried; whatever the caller goes on to run is not.
 
 A pool `Connect` opens dials through `retargetingConnector`
 (`connection_retarget.go`), not the driver connector directly: a login names
-its database and is refused (Msg 4060) once that database is gone, so a
-`Drop`, `Detach`, `SetOffline` or `Rename` of the pool's own login database
-moves the pool — to master, or to the new name — and releases idle sessions.
+its database and is refused (Msg 4063, or 4060) once that database cannot be
+opened, so a `Drop`, `Detach`, `SetOffline`, `Rename`, NORECOVERY `Restore`,
+SINGLE_USER `SetUserAccess` or `UnjoinDatabase` of the pool's own login
+database moves the pool — to master, or to the new name — and releases idle
+sessions. A cause gosmo cannot predict (another session's write) is caught
+when it happens: once `Connect` has returned, a dial the login database
+refuses moves the pool to master and dials again (not on Azure SQL Database,
+whose master cannot reach the other databases). The pool never moves back.
 `Server.InitialDatabase` reports where the pool logs in now, for a caller
 cloning the options for another connection. A `NewServer` pool is never
 moved.

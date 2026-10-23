@@ -1,7 +1,7 @@
 //go:build livedb
 
 // Live verification of the two halves of exclusive access (review plan S1 and
-// S11): a Server's own idle sessions, left inside a database by the reads just
+// S11): a Server's own idle sessions, left inside a database by the writes just
 // before, no longer block a statement that needs the database to itself; and
 // TerminationRollbackImmediate gets past somebody else's.
 //
@@ -59,31 +59,32 @@ func liveObserver(t *testing.T, ctx context.Context) *sql.DB {
 	return db
 }
 
-// leaveTwoIdleIn reads d on two connections at once, so the pool ends up with
-// two idle sessions inside it. One is not enough to show the bug: the pool
-// hands the next statement that same connection, whose session reset takes it
-// out of the database first. The failure needs the statement to get a
-// different connection from the one parked in the database — which is what
-// happens as soon as reads overlap, as gossms's do.
+// leaveTwoIdleIn runs a database-scoped statement on two connections at once,
+// so the pool ends up with two idle sessions inside d. One is not enough to
+// show the bug: the pool hands the next statement that same connection, whose
+// session reset takes it out of the database first. The failure needs the
+// statement to get a different connection from the one parked in the
+// database — which is what happens as soon as statements overlap, as
+// gossms's do. A read no longer parks a session (procRead); a write still
+// does, through withConn's USE, so that is what this overlaps.
 func leaveTwoIdleIn(t *testing.T, observer *sql.DB, d *Database, ctx context.Context) {
 	t.Helper()
-	held, err := d.query(ctx, "SELECT 1")
+	err := d.withConn(ctx, func(ctx context.Context, _ sqlConn) error {
+		_, err := d.exec(ctx, "DECLARE @parked int") // a second connection, while the first is held
+		return err
+	})
 	if err != nil {
-		t.Fatalf("first read: %v", err)
+		t.Fatalf("overlapping statements: %v", err)
 	}
-	if _, err := d.Files(ctx); err != nil {
-		held.Close()
-		t.Fatalf("Files: %v", err)
-	}
-	held.Close()
 	if n := ownSessionsIn(t, observer, ctx, d.Name); n < 2 {
-		t.Fatalf("%d idle sessions left in the database after two overlapping reads, want 2 — the precondition this test exists for did not hold", n)
+		t.Fatalf("%d idle sessions left in the database after two overlapping statements, want 2 — the precondition this test exists for did not hold", n)
 	}
 }
 
-// The probe that found S1: a read leaves an idle session in the database, and
+// The probe that found S1: a read left an idle session in the database, and
 // a detach without DropConnections through the same pool then failed Msg 3703
-// "currently in use" — against a database nobody else was using.
+// "currently in use" — against a database nobody else was using. Reads no
+// longer park one (procRead); writes still do (leaveTwoIdleIn).
 func TestLiveExclusiveAccessDetachAfterRead(t *testing.T) {
 	db, ctx, done := liveDB(t)
 	defer done()
@@ -96,7 +97,7 @@ func TestLiveExclusiveAccessDetachAfterRead(t *testing.T) {
 	dctx, cancel := context.WithTimeout(ctx, exclusiveDeadline)
 	defer cancel()
 	if err := srv.DatabaseRef(detLiveName).Detach(dctx, DetachOptions{}); err != nil {
-		t.Fatalf("Detach without DropConnections after a read: %v", err)
+		t.Fatalf("Detach without DropConnections with own sessions parked in it: %v", err)
 	}
 	if databaseExists(t, db, ctx, detLiveName) {
 		t.Fatal("the database is still attached after a detach that reported success")
@@ -126,7 +127,8 @@ func liveFileGroupDB(t *testing.T, db *sql.DB, ctx context.Context, name string)
 }
 
 // The same shape for a filegroup: MODIFY FILEGROUP ... READ_ONLY after a read
-// of the database waited behind the reading pool's own idle session.
+// of the database waited behind the reading pool's own idle session. Reads no
+// longer park one (procRead); writes still do (leaveTwoIdleIn).
 func TestLiveExclusiveAccessFileGroupReadOnlyAfterRead(t *testing.T) {
 	db, ctx, done := liveDB(t)
 	defer done()
@@ -140,7 +142,7 @@ func TestLiveExclusiveAccessFileGroupReadOnlyAfterRead(t *testing.T) {
 		err := d.FileGroupRef("FG2").SetReadOnly(fctx, readOnly, TerminationNone)
 		cancel()
 		if err != nil {
-			t.Fatalf("SetFileGroupReadOnly(%v) after a read: %v", readOnly, err)
+			t.Fatalf("SetFileGroupReadOnly(%v) with own sessions parked: %v", readOnly, err)
 		}
 	}
 }
@@ -267,7 +269,7 @@ func TestLiveExclusiveAccessContainment(t *testing.T) {
 	err := d.SetDatabaseOption(ictx, DBOptContainment, "PARTIAL", TerminationNone)
 	cancel()
 	if !containmentApplied(err) {
-		t.Fatalf("CONTAINMENT after a read, TerminationNone: %v — an own idle session blocked it", err)
+		t.Fatalf("CONTAINMENT with own sessions parked, TerminationNone: %v — an own idle session blocked it", err)
 	}
 
 	conn := park(t, observer, ctx, d.Name)

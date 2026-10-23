@@ -77,10 +77,10 @@ func TestJobStepNameRequired(t *testing.T) {
 		call func() error
 	}{
 		{"Job.AddStep", func() error {
-			return errOnly((&Job{}).AddStep(t.Context(), JobStepRequest{Command: "SELECT 1"}))
+			return errOnly((&Job{}).AddStep(t.Context(), JobStepDefinition{Command: "SELECT 1"}))
 		}},
 		{"JobStep.Alter", func() error {
-			return (&JobStep{}).Alter(t.Context(), JobStepRequest{Command: "SELECT 1"})
+			return (&JobStep{}).Alter(t.Context(), JobStepDefinition{Command: "SELECT 1"})
 		}},
 	}
 	for _, c := range cases {
@@ -101,7 +101,7 @@ func TestJobStepNameRequired(t *testing.T) {
 // in-memory fields.
 func TestJobStepUpdateLeavesFieldsAloneOnRejection(t *testing.T) {
 	s := &JobStep{Name: "Load staging", Subsystem: "TSQL", Command: "EXEC dbo.Load"}
-	if err := s.Alter(t.Context(), JobStepRequest{Command: "SELECT 1"}); err == nil {
+	if err := s.Alter(t.Context(), JobStepDefinition{Command: "SELECT 1"}); err == nil {
 		t.Fatal("Update with an empty Name = nil, want an error")
 	}
 	if s.Name != "Load staging" || s.Subsystem != "TSQL" || s.Command != "EXEC dbo.Load" {

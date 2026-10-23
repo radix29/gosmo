@@ -58,7 +58,7 @@ func TestLiveServerAuditLifecycle(t *testing.T) {
 	dropAudit(t, db, ctx, name, specName)
 	defer dropAudit(t, db, ctx, name, specName)
 
-	a, err := s.CreateServerAudit(ctx, ServerAuditSpec{
+	a, err := s.CreateServerAudit(ctx, ServerAuditDefinition{
 		Name: name, Type: AuditToFile, FilePath: auditDir,
 		MaxFileSize: 10, MaxRolloverFiles: 3, QueueDelay: 1000,
 		OnFailure: AuditFailureContinue,
@@ -94,7 +94,7 @@ func TestLiveServerAuditLifecycle(t *testing.T) {
 	// The point of the whole exercise: an ALTER on an enabled audit is
 	// refused by the server, so Alter has to disable it and put it
 	// back. Doing it on the enabled audit is what proves the dance.
-	if err := a.Alter(ctx, ServerAuditSpec{
+	if err := a.Alter(ctx, ServerAuditDefinition{
 		Name: name, Type: AuditToFile, FilePath: auditDir,
 		MaxFileSize: 20, MaxRolloverFiles: 5, QueueDelay: 2000,
 		OnFailure: AuditFailureContinue,
@@ -117,7 +117,7 @@ func TestLiveServerAuditLifecycle(t *testing.T) {
 	// WHERE combined with WITH(...) is a syntax error the server only reports
 	// at execution, and every statement-shape test passed while a Properties
 	// page Apply failed on it.
-	if err := again.Alter(ctx, ServerAuditSpec{
+	if err := again.Alter(ctx, ServerAuditDefinition{
 		Name: name, Type: AuditToFile, FilePath: auditDir, QueueDelay: 2000,
 		OnFailure: AuditFailureContinue,
 	}); err != nil {
@@ -209,7 +209,7 @@ func TestLiveAuditScriptsRunAsGenerated(t *testing.T) {
 	dropAudit(t, db, ctx, name, specName)
 	defer dropAudit(t, db, ctx, name, specName)
 
-	a, err := s.CreateServerAudit(ctx, ServerAuditSpec{
+	a, err := s.CreateServerAudit(ctx, ServerAuditDefinition{
 		Name: name, Type: AuditToFile, FilePath: auditDir, QueueDelay: 1000,
 		OnFailure: AuditFailureContinue, Predicate: "server_principal_name <> N'nobody'",
 	})
@@ -294,7 +294,7 @@ func TestLiveRenamingAnEnabledAudit(t *testing.T) {
 	cleanup()
 	defer cleanup()
 
-	a, err := s.CreateServerAudit(ctx, ServerAuditSpec{
+	a, err := s.CreateServerAudit(ctx, ServerAuditDefinition{
 		Name: from, Type: AuditToApplicationLog,
 		QueueDelay: 1000, OnFailure: AuditFailureContinue,
 	})

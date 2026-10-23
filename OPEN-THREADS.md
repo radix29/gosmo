@@ -267,38 +267,51 @@ What to check when one exists: that `FROM EXTERNAL PROVIDER WITH OBJECT_ID =
 …, DEFAULT_SCHEMA = …` parses in that order, and that an Entra login takes
 `DEFAULT_LANGUAGE` through `ALTER LOGIN` as it does `DEFAULT_DATABASE`.
 
-## Idle pooled connections camp in the last database read — not investigated
+## Idle pooled connections camp in the last database written to
 
-`Database.query`/`queryRow` send `USE [db]; …` on a pooled connection
-(`useBatch`), and the connection goes back to the pool still in `db`: the
-driver resets it only on the next checkout. Until then it holds a shared
-database lock, so *someone else's* `RESTORE`, `SET OFFLINE` (no ROLLBACK) or
-`SET SINGLE_USER` fails "Exclusive access could not be obtained", and an
-`AUTO_CLOSE` database never closes. `ReleaseIdleConnections` covers only this
-`Server`'s own exclusive writes.
+**Reads fixed 2026-10-23 (`procRead`, `proc_read.go`).** A pooled
+`Database.query`/`queryRow` is an RPC call of `[db].sys.sp_executesql`, so
+the session never leaves its login database. Before, it sent `USE [db]; …`
+(`useBatch`) and went back to the pool still in `db`, holding a shared
+database lock until the next checkout reset it: someone else's `RESTORE`,
+`SET OFFLINE` (no ROLLBACK) or `SET SINGLE_USER` failed "Exclusive access
+could not be obtained", and an `AUTO_CLOSE` database never closed. Only a read
+inside `InTransaction` still uses `useBatch`, since that session is meant to
+stay in `db`.
 
-Mitigated, not fixed: gossms sets `ConnMaxIdleTime` to 60 s (gossms
-`internal/db/connection.go`, `connMaxIdleTime`), against the 5-minute default
-here; the idle connection is gone 60 s after the read (measured on SQL2017,
-2026-10-22) at ~25 ms of re-login on the next read.
+Evidence, on 13, 14 and 17: the five `live_proc_read_test.go` tests (no
+session left behind; another session's `RESTORE … WITH REPLACE` straight after
+a read succeeds where `useBatch` fails Msg 3101; 911/924/942 refuse the read;
+reads stay right across a database-id swap; parameters bind in `db`'s
+collation, where `useBatch` fails Msg 468 uncollated), `TestLiveVersionSweep`,
+the collation tests and the whole `livedb` suite on procRead. A can't-enter
+error keeps its `gosmo: USE db:` prefix through `recheckEntry`. The id-swap
+test's control, a literal `[db].sys.…` read from master, did **not** reproduce
+the plan-cache trap of `CLAUDE.md` § Read another database's catalog (why is
+unknown), so procRead is shown to read the right database after a swap, but
+the test cannot show it would have caught the trap.
 
-The fix would be to run database-scoped reads as `EXEC @proc` with `@proc =
-N'[db].sys.sp_executesql'`, so the session never leaves its initial database —
-and with it most of `releaseIdle`'s reason to exist. Before anyone tries it,
-prove it against three rules in `CLAUDE.md` § Conventions:
+**Writes still camp.** `Database.withConn` (every `Database.exec`) runs `USE`
+and leaves its session in `db`. `ReleaseIdleConnections` covers this
+`Server`'s own exclusive writes (`live_release_idle_test.go` now parks
+sessions through writes), and gossms keeps `ConnMaxIdleTime` at 60 s against
+the 5-minute default (`internal/db/connection.go`, `connMaxIdleTime`). Moving
+writes to the same RPC form is possible but untried: a write's `SET` options,
+`ExecProc`'s named RPC and the transaction path all need checking first.
 
-- the Msg 924 compile-time resolution of a literal `[db].sys.sp_executesql`
-  (hence the variable, as `perDatabaseExec` does);
-- the plan-cache database-id trap ("Read another database's catalog under
-  `USE [db]`") — check whether a cached plan under `[db].sys.sp_executesql`
-  keeps its database id across a drop/recreate the way an ad-hoc `[db].sys.…`
-  plan does;
-- parameter collation: inside `[db].sys.sp_executesql` parameters bind in the
-  target's collation, which may make the `COLLATE DATABASE_DEFAULT` rule
-  unnecessary there, or break a comparison that relies on it.
+## Three live tests fail on `HEAD`, unrelated to their area's recent work
 
-It touches every database-scoped read, so `TestLiveVersionSweep` on 13 and
-the collation tests are the minimum gate.
+Found 2026-10-23 running the whole `livedb` suite; each fails the same on a
+clean export of `HEAD` 225fb48. Unfixed.
+
+- `TestLiveBackupSetTypes` (13, 14, 17): `BuildRestoreStatement` now starts
+  `USE [master];`, and the test still wants the statement to start
+  `RESTORE LOG`. Most likely the test is stale; confirm the prefix is meant.
+- `TestLiveWrongValuesFileUnits` (13, 14, 17): `FileGroups`' file reports
+  `SpaceUsedKB` 0 where `Files` reports 2624 for the same file.
+- `TestLiveScriptTableKinds` (13, 14 only, intermittent): the
+  memory-optimized tables' replay fails Msg 701, "insufficient system memory
+  in resource pool 'default'": the host's free memory, not gosmo.
 
 ## Agent schedules are addressed by id — settled, do not re-raise
 

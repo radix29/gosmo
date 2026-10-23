@@ -567,7 +567,7 @@ EXEC sp_configure 'show advanced options', %d; RECONFIGURE;`, adv))
 	// Alter without Credentials keeps the user name and credential — the
 	// trap: an omitted @username alone drops them.
 	credID := b.CredentialID
-	if err := srv.Mail().AccountRef(liveMailBasic).Alter(ctx, MailAccountOptions{Port: new(2), DisplayName: new("")}); err != nil {
+	if err := srv.Mail().AccountRef(liveMailBasic).Alter(ctx, MailAccountChanges{Port: new(2), DisplayName: new("")}); err != nil {
 		t.Fatalf("Alter(port, display name): %v", err)
 	}
 	if got := account(liveMailBasic); got.Port != 2 || got.DisplayName != "" || got.UserName != "gosmo_smtp_user" ||
@@ -575,7 +575,7 @@ EXEC sp_configure 'show advanced options', %d; RECONFIGURE;`, adv))
 		t.Errorf("after Alter(port, display name) the account reads %+v; want the credential and the rest kept", *got)
 	}
 	// Rename through a name-only handle, then new credentials on it.
-	if err := srv.Mail().AccountRef(liveMailBasic).Alter(ctx, MailAccountOptions{Name: new(renamed),
+	if err := srv.Mail().AccountRef(liveMailBasic).Alter(ctx, MailAccountChanges{Name: new(renamed),
 		Credentials: &MailCredentials{Authentication: MailAuthBasic, UserName: "gosmo_smtp_user2", Password: "other"}}); err != nil {
 		t.Fatalf("Alter(rename, credentials): %v", err)
 	}
@@ -585,7 +585,7 @@ EXEC sp_configure 'show advanced options', %d; RECONFIGURE;`, adv))
 	if _, err := srv.Mail().AccountByName(ctx, liveMailBasic); !errors.Is(err, ErrNotFound) {
 		t.Errorf("the old name still resolves: %v", err)
 	}
-	if err := srv.Mail().AccountRef("gosmo_live_mail_absent").Alter(ctx, MailAccountOptions{Name: new("x")}); err == nil {
+	if err := srv.Mail().AccountRef("gosmo_live_mail_absent").Alter(ctx, MailAccountChanges{Name: new("x")}); err == nil {
 		t.Error("renaming a missing account returned no error")
 	}
 
@@ -692,18 +692,18 @@ EXEC sp_configure 'show advanced options', %d; RECONFIGURE;`, adv))
 		t.Error("Grant to a principal with no msdb user returned no error")
 	}
 
-	if err := p.Alter(ctx, MailProfileOptions{Name: new(renamedProfile), Description: new("")}); err != nil {
+	if err := p.Alter(ctx, MailProfileChanges{Name: new(renamedProfile), Description: new("")}); err != nil {
 		t.Fatalf("profile Alter(rename): %v", err)
 	}
 	if got, err := srv.Mail().ProfileByName(ctx, renamedProfile); err != nil || got.Description != "" || !got.IsDefault || len(got.Accounts) != 2 {
 		t.Errorf("renamed profile reads %+v, %v; want its links and grants kept", got, err)
 	}
-	if err := p.Alter(ctx, MailProfileOptions{Name: new(liveMailProfile), Description: new("gosmo live profile")}); err != nil {
+	if err := p.Alter(ctx, MailProfileChanges{Name: new(liveMailProfile), Description: new("gosmo live profile")}); err != nil {
 		t.Fatalf("profile Alter(rename back): %v", err)
 	}
 
 	// -- System parameters -----------------------------------------------------------------
-	if err := srv.Mail().SetConfiguration(ctx, MailConfigurationOptions{
+	if err := srv.Mail().SetConfiguration(ctx, MailConfigurationChanges{
 		AccountRetryAttempts: new(0), LoggingLevel: new(MailLoggingVerbose)}); err != nil {
 		t.Fatalf("Mail.SetConfiguration: %v", err)
 	}

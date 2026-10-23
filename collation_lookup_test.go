@@ -111,6 +111,8 @@ func TestByNameLookupsAreOneStatementAcrossCollations(t *testing.T) {
 			return err
 		},
 		"StoredProcedureByName":          func(d *Database) error { _, err := d.StoredProcedureByName(ctx, "Sales", "p"); return err },
+		"UserDefinedFunctionByName":      func(d *Database) error { _, err := d.UserDefinedFunctionByName(ctx, "Sales", "f"); return err },
+		"TriggerByName":                  func(d *Database) error { _, err := d.TriggerByName(ctx, "Sales", "tr"); return err },
 		"BrokerQueueByName":              func(d *Database) error { _, err := d.BrokerQueueByName(ctx, "Sales", "q"); return err },
 		"RuleByName":                     func(d *Database) error { _, err := d.RuleByName(ctx, "Sales", "r"); return err },
 		"DefaultByName":                  func(d *Database) error { _, err := d.DefaultByName(ctx, "Sales", "df"); return err },

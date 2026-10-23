@@ -65,48 +65,48 @@ func TestBuildAddFileStatementRequiresNameAndPath(t *testing.T) {
 func TestBuildAlterFileStatement(t *testing.T) {
 	cases := []struct {
 		name string
-		m    FileModify
+		m    DatabaseFileChanges
 		want string
 	}{
 		{
 			name: "rename and resize",
-			m:    FileModify{NewName: "appdb2", SizeKB: 65536, MaxSizeKB: 131072},
+			m:    DatabaseFileChanges{NewName: "appdb2", SizeKB: 65536, MaxSizeKB: 131072},
 			want: "ALTER DATABASE [appdb] MODIFY FILE (NAME = [appdb], NEWNAME = [appdb2], SIZE = 65536KB, MAXSIZE = 131072KB)",
 		},
 		{
 			name: "unlimited max size, percent growth",
-			m:    FileModify{MaxSizeKB: -1, GrowthPercent: 15},
+			m:    DatabaseFileChanges{MaxSizeKB: -1, GrowthPercent: 15},
 			want: "ALTER DATABASE [appdb] MODIFY FILE (NAME = [appdb], MAXSIZE = UNLIMITED, FILEGROWTH = 15%)",
 		},
 		{
 			name: "growth in KB rather than percent",
-			m:    FileModify{GrowthKB: 4096},
+			m:    DatabaseFileChanges{GrowthKB: 4096},
 			want: "ALTER DATABASE [appdb] MODIFY FILE (NAME = [appdb], FILEGROWTH = 4096KB)",
 		},
 		{
 			name: "autogrowth off",
-			m:    FileModify{DisableGrowth: true},
+			m:    DatabaseFileChanges{DisableGrowth: true},
 			want: "ALTER DATABASE [appdb] MODIFY FILE (NAME = [appdb], FILEGROWTH = 0)",
 		},
 		{
 			name: "autogrowth off beats a growth amount left set",
-			m:    FileModify{DisableGrowth: true, GrowthKB: 4096, GrowthPercent: 10},
+			m:    DatabaseFileChanges{DisableGrowth: true, GrowthKB: 4096, GrowthPercent: 10},
 			want: "ALTER DATABASE [appdb] MODIFY FILE (NAME = [appdb], FILEGROWTH = 0)",
 		},
 		// The server parses the number as an int: 2147483648KB is Msg 102.
 		{
 			name: "just under 2 TB stays in KB",
-			m:    FileModify{SizeKB: 2147483647, MaxSizeKB: 2147483647, GrowthKB: 2147483647},
+			m:    DatabaseFileChanges{SizeKB: 2147483647, MaxSizeKB: 2147483647, GrowthKB: 2147483647},
 			want: "ALTER DATABASE [appdb] MODIFY FILE (NAME = [appdb], SIZE = 2147483647KB, MAXSIZE = 2147483647KB, FILEGROWTH = 2147483647KB)",
 		},
 		{
 			name: "2 TB and up switches to MB",
-			m:    FileModify{SizeKB: 2147483648, MaxSizeKB: 2147483648, GrowthKB: 2147483648},
+			m:    DatabaseFileChanges{SizeKB: 2147483648, MaxSizeKB: 2147483648, GrowthKB: 2147483648},
 			want: "ALTER DATABASE [appdb] MODIFY FILE (NAME = [appdb], SIZE = 2097152MB, MAXSIZE = 2097152MB, FILEGROWTH = 2097152MB)",
 		},
 		{
 			name: "a non-MB value above 2 TB rounds up",
-			m:    FileModify{MaxSizeKB: 2147483649},
+			m:    DatabaseFileChanges{MaxSizeKB: 2147483649},
 			want: "ALTER DATABASE [appdb] MODIFY FILE (NAME = [appdb], MAXSIZE = 2097153MB)",
 		},
 	}
@@ -124,17 +124,17 @@ func TestBuildAlterFileStatement(t *testing.T) {
 }
 
 func TestBuildAlterFileStatementNoOpWhenNothingChanges(t *testing.T) {
-	got, err := buildAlterFileStatement("appdb", "appdb", FileModify{})
+	got, err := buildAlterFileStatement("appdb", "appdb", DatabaseFileChanges{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if got != "" {
-		t.Errorf("no-op FileModify produced a statement: %q, want \"\"", got)
+		t.Errorf("no-op DatabaseFileChanges produced a statement: %q, want \"\"", got)
 	}
 }
 
 func TestBuildAlterFileStatementRequiresName(t *testing.T) {
-	if _, err := buildAlterFileStatement("appdb", "", FileModify{SizeKB: 1}); err == nil {
+	if _, err := buildAlterFileStatement("appdb", "", DatabaseFileChanges{SizeKB: 1}); err == nil {
 		t.Error("missing name: want an error, got nil")
 	}
 }
@@ -145,14 +145,14 @@ func TestBuildAlterFileStatementRequiresName(t *testing.T) {
 // FILEGROWTH = 0 whenever growth is zero — would write autogrowth off on
 // every ALTER that only meant to resize.
 func TestDisableGrowthIsNotTheZeroValue(t *testing.T) {
-	resize, err := buildAlterFileStatement("appdb", "appdb", FileModify{SizeKB: 65536})
+	resize, err := buildAlterFileStatement("appdb", "appdb", DatabaseFileChanges{SizeKB: 65536})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if strings.Contains(resize, "FILEGROWTH") {
 		t.Errorf("a zero GrowthKB emitted a FILEGROWTH clause: %q", resize)
 	}
-	off, err := buildAlterFileStatement("appdb", "appdb", FileModify{DisableGrowth: true})
+	off, err := buildAlterFileStatement("appdb", "appdb", DatabaseFileChanges{DisableGrowth: true})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

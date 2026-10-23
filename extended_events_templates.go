@@ -29,7 +29,7 @@ const xeProfilerNotSystem = "([package0].[equal_boolean]([sqlserver].[is_system]
 // gosmo does not (see extended_events_read.go). A caller that will read what
 // it collects adds an EventFileTarget or a RingBufferTarget, and will usually
 // rename it too, rather than altering a copy SSMS itself may reuse.
-func XEProfilerStandard() EventSessionSpec {
+func XEProfilerStandard() EventSessionDefinition {
 	conn := []string{"package0.event_sequence", "sqlserver.client_app_name", "sqlserver.client_pid",
 		"sqlserver.nt_username", "sqlserver.server_principal_name", "sqlserver.session_id"}
 	stmt := []string{"package0.event_sequence", "sqlserver.client_app_name", "sqlserver.client_pid",
@@ -50,7 +50,7 @@ func XEProfilerStandard() EventSessionSpec {
 // XEProfilerTSQL returns SSMS's XEvent Profiler "TSQL" session: the text of
 // every batch and RPC as it starts, with the logins and logouts around them,
 // from user sessions. Target and naming as for XEProfilerStandard.
-func XEProfilerTSQL() EventSessionSpec {
+func XEProfilerTSQL() EventSessionDefinition {
 	acts := []string{"package0.event_sequence", "sqlserver.client_app_name", "sqlserver.client_pid",
 		"sqlserver.database_id", "sqlserver.database_name", "sqlserver.nt_username", "sqlserver.session_id"}
 	return xeProfilerSpec(XEProfilerTSQLName, []SessionEvent{
@@ -65,11 +65,11 @@ func XEProfilerTSQL() EventSessionSpec {
 // xeProfilerSpec wraps the Profiler's events in SSMS's session options.
 // Each event gets its own copy of the action list, so a caller appending to
 // one event's actions does not reach the others.
-func xeProfilerSpec(name string, events []SessionEvent) EventSessionSpec {
+func xeProfilerSpec(name string, events []SessionEvent) EventSessionDefinition {
 	for i := range events {
 		events[i].Actions = slices.Clone(events[i].Actions)
 	}
-	return EventSessionSpec{
+	return EventSessionDefinition{
 		Name:                name,
 		Events:              events,
 		RetentionMode:       XERetentionAllowSingleEventLoss,
@@ -110,13 +110,13 @@ func RingBufferTarget(maxMemoryKB int) SessionTarget {
 // -- New Session templates ----------------------------------------------------
 
 // XESessionTemplate is one ready-made definition a New Session dialog offers
-// under Template, as SSMS's does. Spec returns a fresh copy each call, with no
+// under Template, as SSMS's does. Definition returns a fresh copy each call, with no
 // name and no target: the dialog supplies both.
 type XESessionTemplate struct {
 	Name        string
 	Category    string // the group SSMS lists it under
 	Description string
-	Spec        func() EventSessionSpec
+	Definition  func() EventSessionDefinition
 }
 
 // Predicates the templates share, in the form the catalog stores them, so a
@@ -151,8 +151,8 @@ func xeQueryActions() []string {
 
 // xeTemplateSpec wraps events in the options the New Session templates share:
 // SSMS's defaults, spelled out, so a session created from one says what it is.
-func xeTemplateSpec(causality bool, events ...SessionEvent) EventSessionSpec {
-	return EventSessionSpec{
+func xeTemplateSpec(causality bool, events ...SessionEvent) EventSessionDefinition {
+	return EventSessionDefinition{
 		Events:              events,
 		RetentionMode:       XERetentionAllowSingleEventLoss,
 		MaxDispatchLatency:  30 * time.Second,
@@ -171,21 +171,21 @@ func xeTemplateSpec(causality bool, events ...SessionEvent) EventSessionSpec {
 // and none was at hand — so they are gosmo's definitions, each checked live to
 // create and to read back unchanged (TestLiveXESessionTemplates).
 func XESessionTemplates() []XESessionTemplate {
-	profiler := func(f func() EventSessionSpec) func() EventSessionSpec {
-		return func() EventSessionSpec {
+	profiler := func(f func() EventSessionDefinition) func() EventSessionDefinition {
+		return func() EventSessionDefinition {
 			s := f()
 			s.Name = ""
 			return s
 		}
 	}
 	return []XESessionTemplate{
-		{Name: "Standard", Category: "XEvent Profiler", Spec: profiler(XEProfilerStandard),
+		{Name: "Standard", Category: "XEvent Profiler", Definition: profiler(XEProfilerStandard),
 			Description: "Logins, logouts and every completed batch and RPC from user sessions — the XEvent Profiler's Standard session."},
-		{Name: "TSQL", Category: "XEvent Profiler", Spec: profiler(XEProfilerTSQL),
+		{Name: "TSQL", Category: "XEvent Profiler", Definition: profiler(XEProfilerTSQL),
 			Description: "The text of every batch and RPC as it starts, with logins and logouts — the XEvent Profiler's TSQL session."},
 		{Name: "Connection Tracking", Category: "System Monitoring",
 			Description: "Logins, logouts and failed logins (error 18456), with the client that made them.",
-			Spec: func() EventSessionSpec {
+			Definition: func() EventSessionDefinition {
 				acts := []string{"package0.event_sequence", "sqlserver.client_app_name", "sqlserver.client_hostname",
 					"sqlserver.client_pid", "sqlserver.nt_username", "sqlserver.server_principal_name", "sqlserver.session_id"}
 				return xeTemplateSpec(false,
@@ -197,7 +197,7 @@ func XESessionTemplates() []XESessionTemplate {
 			}},
 		{Name: "Count Query Locks", Category: "Locks and Blocks",
 			Description: "Counts the locks each query takes in user databases, in a histogram bucketed by query hash.",
-			Spec: func() EventSessionSpec {
+			Definition: func() EventSessionDefinition {
 				s := xeTemplateSpec(false,
 					SessionEvent{Package: "sqlserver", Name: "lock_acquired", Actions: []string{"sqlserver.query_hash"},
 						Predicate: xeAnd(xeNotSystem, xeUserDatabase)})
@@ -210,14 +210,14 @@ func XESessionTemplates() []XESessionTemplate {
 			}},
 		{Name: "Deadlocks", Category: "Locks and Blocks",
 			Description: "Every deadlock graph the server reports, as the xml_deadlock_report event carries it.",
-			Spec: func() EventSessionSpec {
+			Definition: func() EventSessionDefinition {
 				return xeTemplateSpec(false,
 					SessionEvent{Package: "sqlserver", Name: "xml_deadlock_report",
 						Actions: []string{"package0.event_sequence", "sqlserver.database_name", "sqlserver.server_principal_name"}})
 			}},
 		{Name: "Query Batch Tracking", Category: "Query Execution",
 			Description: "Every completed batch and RPC from user sessions, with attentions and the errors they raised.",
-			Spec: func() EventSessionSpec {
+			Definition: func() EventSessionDefinition {
 				return xeTemplateSpec(false,
 					SessionEvent{Package: "sqlserver", Name: "attention", Actions: xeQueryActions(), Predicate: xeNotSystem},
 					SessionEvent{Package: "sqlserver", Name: "error_reported", Actions: xeQueryActions(),
@@ -228,7 +228,7 @@ func XESessionTemplates() []XESessionTemplate {
 			}},
 		{Name: "Query Detail Tracking", Category: "Query Execution",
 			Description: "Batches and RPCs with every statement and module they ran, from user sessions, tied together by causality tracking.",
-			Spec: func() EventSessionSpec {
+			Definition: func() EventSessionDefinition {
 				return xeTemplateSpec(true,
 					SessionEvent{Package: "sqlserver", Name: "attention", Actions: xeQueryActions(), Predicate: xeNotSystem},
 					SessionEvent{Package: "sqlserver", Name: "error_reported", Actions: xeQueryActions(),
@@ -242,7 +242,7 @@ func XESessionTemplates() []XESessionTemplate {
 			}},
 		{Name: "Query Wait Statistics", Category: "Query Execution",
 			Description: "Every wait a user session finished, with the batches and RPCs it belonged to (causality tracking).",
-			Spec: func() EventSessionSpec {
+			Definition: func() EventSessionDefinition {
 				return xeTemplateSpec(true,
 					SessionEvent{Package: "sqlos", Name: "wait_info", Actions: xeQueryActions(),
 						Predicate: xeAnd(xeNotSystem, xeWaitEnded, xeWaitedAtAll)},

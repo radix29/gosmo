@@ -67,14 +67,22 @@ func (c *mapConn) enter(q string) string {
 	return q
 }
 
-func (c *mapConn) record(q string, args []driver.NamedValue) string {
-	rest := c.enter(q)
+func (c *mapConn) record(q string, args []driver.NamedValue) (rest string, restArgs []driver.NamedValue, db string) {
+	// A procRead call runs in its database for that call only: the session
+	// stays where it was.
+	if db, inner, innerArgs, ok := unwrapProcRead(q, args); ok {
+		mapLog.mu.Lock()
+		mapLog.stmts = append(mapLog.stmts, mapStmt{db: db, q: inner, args: innerArgs})
+		mapLog.mu.Unlock()
+		return inner, innerArgs, db
+	}
+	rest = c.enter(q)
 	if rest != "" {
 		mapLog.mu.Lock()
 		mapLog.stmts = append(mapLog.stmts, mapStmt{db: c.db, q: rest, args: args})
 		mapLog.mu.Unlock()
 	}
-	return rest
+	return rest, args, c.db
 }
 
 func (c *mapConn) ExecContext(_ context.Context, q string, args []driver.NamedValue) (driver.Result, error) {
@@ -83,7 +91,7 @@ func (c *mapConn) ExecContext(_ context.Context, q string, args []driver.NamedVa
 }
 
 func (c *mapConn) QueryContext(_ context.Context, q string, args []driver.NamedValue) (driver.Rows, error) {
-	rest := c.record(q, args)
+	rest, args, db := c.record(q, args)
 	mapLog.mu.Lock()
 	defer mapLog.mu.Unlock()
 	arg := func() any {
@@ -116,7 +124,7 @@ func (c *mapConn) QueryContext(_ context.Context, q string, args []driver.NamedV
 		if !bytes.Equal(sid, mapTestSID) {
 			return &detRows{cols: make([]string, 5)}, nil
 		}
-		return &detRows{cols: make([]string, 5), rows: mapLog.mappings[strings.Trim(c.db, "[]")]}, nil
+		return &detRows{cols: make([]string, 5), rows: mapLog.mappings[strings.Trim(db, "[]")]}, nil
 	}
 	// Anything else — CreateUser's read-back among them — finds nothing.
 	return &detRows{cols: make([]string, 1)}, nil

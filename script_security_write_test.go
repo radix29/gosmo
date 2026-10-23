@@ -105,11 +105,11 @@ func TestScriptSecurityWrites(t *testing.T) {
 		{"Login Disable", func(c context.Context) error {
 			return login().Disable(c)
 		}, "ALTER LOGIN [o'brien] DISABLE"},
-		{"Login AddServerRoleMember", func(c context.Context) error {
-			return login().AddServerRoleMember(c, "sys]admin")
+		{"Login AddToServerRole", func(c context.Context) error {
+			return login().AddToServerRole(c, "sys]admin")
 		}, "ALTER SERVER ROLE [sys]]admin] ADD MEMBER [o'brien]"},
-		{"Login RemoveServerRoleMember", func(c context.Context) error {
-			return login().RemoveServerRoleMember(c, "sys]admin")
+		{"Login RemoveFromServerRole", func(c context.Context) error {
+			return login().RemoveFromServerRole(c, "sys]admin")
 		}, "ALTER SERVER ROLE [sys]]admin] DROP MEMBER [o'brien]"},
 		{"Login SetDefaultDatabase", func(c context.Context) error {
 			return login().SetDefaultDatabase(c, "App'DB")

@@ -34,10 +34,10 @@ import (
 
 // XEInfinite is MaxDispatchLatency's INFINITE, which the catalog stores as 0.
 // A spec's zero MaxDispatchLatency means "the server default" instead — see
-// EventSessionSpec.
+// EventSessionDefinition.
 const XEInfinite time.Duration = -1
 
-// EventSessionSpec describes an event session to create, or the whole desired
+// EventSessionDefinition describes an event session to create, or the whole desired
 // state of one to alter to.
 //
 // The options follow one rule for their zero values: those with no
@@ -45,7 +45,7 @@ const XEInfinite time.Duration = -1
 // MemoryPartitionMode — mean "server default" on a create and "leave alone" on
 // an alter. The rest are compared and written literally: MaxEventSize 0 is no
 // large-event buffer, MaxDuration 0 UNLIMITED, and the two flags OFF.
-type EventSessionSpec struct {
+type EventSessionDefinition struct {
 	Name    string
 	Events  []SessionEvent
 	Targets []SessionTarget
@@ -64,14 +64,14 @@ type EventSessionSpec struct {
 	MaxDuration time.Duration
 }
 
-// Spec returns the session's definition as a spec — the round trip the
+// Definition returns the session's definition — the round trip the
 // scripter and a Properties dialog both start from.
-func (es *EventSession) Spec() EventSessionSpec {
+func (es *EventSession) Definition() EventSessionDefinition {
 	latency := es.MaxDispatchLatency
 	if latency == 0 {
 		latency = XEInfinite
 	}
-	return EventSessionSpec{
+	return EventSessionDefinition{
 		Name:                es.Name,
 		Events:              slices.Clone(es.Events),
 		Targets:             slices.Clone(es.Targets),
@@ -128,7 +128,7 @@ func checkFields(owner string, fields []SessionField) error {
 }
 
 // checkFields runs the package-level check over every event and target.
-func (spec EventSessionSpec) checkFields() error {
+func (spec EventSessionDefinition) checkFields() error {
 	for _, e := range spec.Events {
 		if err := checkFields("event "+e.QualifiedName(), e.Fields); err != nil {
 			return err
@@ -193,7 +193,7 @@ func durationKeyword(d time.Duration) string {
 // createOptions lists the WITH options of a create, in SSMS's order. An
 // option at its "server default" zero is left out; MAX_DURATION only when set,
 // so a spec that does not use it stays valid on a pre-2025 server.
-func (spec EventSessionSpec) createOptions() []string {
+func (spec EventSessionDefinition) createOptions() []string {
 	var opts []string
 	if spec.MaxMemory > 0 {
 		opts = append(opts, fmt.Sprintf("MAX_MEMORY=%d KB", spec.MaxMemory))
@@ -216,7 +216,7 @@ func (spec EventSessionSpec) createOptions() []string {
 	return opts
 }
 
-func (spec EventSessionSpec) validate() error {
+func (spec EventSessionDefinition) validate() error {
 	if strings.TrimSpace(spec.Name) == "" {
 		return invalidf("event session has no name")
 	}
@@ -242,7 +242,7 @@ func (spec EventSessionSpec) validate() error {
 // createStatement builds CREATE EVENT SESSION in SSMS's layout: events
 // comma-separated, then targets comma-separated, no comma between the two
 // lists.
-func (spec EventSessionSpec) createStatement(sc xeScope) (string, error) {
+func (spec EventSessionDefinition) createStatement(sc xeScope) (string, error) {
 	if err := spec.validate(); err != nil {
 		return "", err
 	}
@@ -273,13 +273,13 @@ func (spec EventSessionSpec) createStatement(sc xeScope) (string, error) {
 // CreateSession creates an event session in the handle's scope. It is
 // created stopped, which is what CREATE EVENT SESSION does; use Start to run
 // it.
-func (x XEvents) CreateSession(ctx context.Context, spec EventSessionSpec) (*EventSession, error) {
+func (x XEvents) CreateSession(ctx context.Context, spec EventSessionDefinition) (*EventSession, error) {
 	return createEventSession(ctx, x.SessionRef(spec.Name), spec, func() (*EventSession, error) {
 		return x.SessionByName(ctx, spec.Name)
 	})
 }
 
-func createEventSession(ctx context.Context, ref *EventSession, spec EventSessionSpec, read func() (*EventSession, error)) (*EventSession, error) {
+func createEventSession(ctx context.Context, ref *EventSession, spec EventSessionDefinition, read func() (*EventSession, error)) (*EventSession, error) {
 	stmt, err := spec.createStatement(ref.scope())
 	if err != nil {
 		return nil, fmt.Errorf("gosmo: create event session: %w", err)
@@ -351,11 +351,11 @@ type eventSessionAlter struct {
 //   - one in both that differs (predicate, actions, fields) is dropped and
 //     re-added, there being no ALTER of an event in place;
 //   - an option is written only when it changes, and the spec's "server
-//     default" zeros leave it alone (EventSessionSpec).
+//     default" zeros leave it alone (EventSessionDefinition).
 //
 // Events are matched by package.name, targets likewise; a session cannot hold
 // two of either with one name.
-func (spec EventSessionSpec) alterStatements(cur *EventSession) eventSessionAlter {
+func (spec EventSessionDefinition) alterStatements(cur *EventSession) eventSessionAlter {
 	head := fmt.Sprintf("ALTER EVENT SESSION %s %s", quoteIdent(cur.Name), cur.scope().on)
 	var out eventSessionAlter
 
@@ -418,7 +418,7 @@ func (spec EventSessionSpec) alterStatements(cur *EventSession) eventSessionAlte
 	if spec.RetentionMode != "" && !strings.EqualFold(spec.RetentionMode, cur.RetentionMode) {
 		opts = append(opts, "EVENT_RETENTION_MODE="+spec.RetentionMode)
 	}
-	if spec.MaxDispatchLatency != 0 && spec.MaxDispatchLatency != cur.Spec().MaxDispatchLatency {
+	if spec.MaxDispatchLatency != 0 && spec.MaxDispatchLatency != cur.Definition().MaxDispatchLatency {
 		opts = append(opts, "MAX_DISPATCH_LATENCY="+latencyKeyword(spec.MaxDispatchLatency))
 	}
 	if spec.MaxEventSize != cur.MaxEventSize {
@@ -482,7 +482,7 @@ func fieldsEqual(a, b []SessionField) bool {
 //
 // The statements are not one transaction — the server runs event-session DDL
 // outside any — so a failure part-way leaves the groups before it applied.
-func (es *EventSession) Alter(ctx context.Context, spec EventSessionSpec) error {
+func (es *EventSession) Alter(ctx context.Context, spec EventSessionDefinition) error {
 	if err := spec.checkFields(); err != nil {
 		return fmt.Errorf("gosmo: alter event session %q: %w", es.Name, err)
 	}
@@ -555,7 +555,7 @@ func buildEventSessionScript(es *EventSession, opts ScriptOptions) (string, erro
 	drop := fmt.Sprintf("IF EXISTS (%s)\n    DROP EVENT SESSION %s %s;\nGO\n", exists, quoteIdent(es.Name), sc.on)
 	guard := fmt.Sprintf("IF NOT EXISTS (%s)\n", exists)
 	return opts.envelopeErr(drop, guard, func(sb *strings.Builder) error {
-		create, err := es.Spec().createStatement(sc)
+		create, err := es.Definition().createStatement(sc)
 		if err != nil {
 			return fmt.Errorf("gosmo: script event session %q: %w", es.Name, err)
 		}

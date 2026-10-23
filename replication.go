@@ -537,7 +537,7 @@ func (d *Database) PublicationByName(ctx context.Context, name string) (*Publica
 // LocalPublications returns the publications of every published database
 // on the instance — SSMS's Replication › Local Publications — in database
 // order, then as Database.Publications orders them. A published database
-// that cannot be read (offline, or the login has no access) is skipped.
+// that cannot be entered (offline, or the login has no access) is skipped.
 //
 // It is two round trips whatever the database count: the published
 // databases, then one batch reading each of them inside its own TRY/CATCH

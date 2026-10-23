@@ -31,6 +31,9 @@ func (c *captureConn) ExecContext(ctx context.Context, query string, args []driv
 }
 
 func (c *captureConn) QueryContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Rows, error) {
+	if _, inner, innerArgs, ok := unwrapProcRead(query, args); ok {
+		query, args = inner, innerArgs
+	}
 	captured.add(query, args)
 	return captured.replyFor(query), nil
 }

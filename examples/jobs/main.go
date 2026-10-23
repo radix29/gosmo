@@ -89,7 +89,7 @@ func main() {
 	// 2=quit reporting failure, 3=go to the next step, 4=go to step N (in
 	// which case set OnSuccessStepID/OnFailStepID).
 	demo.Section("Steps")
-	demo.Value(job.AddStep(ctx, gosmo.JobStepRequest{
+	demo.Value(job.AddStep(ctx, gosmo.JobStepDefinition{
 		Name:            "Check free space",
 		Subsystem:       "TSQL",
 		Database:        "master",
@@ -100,7 +100,7 @@ func main() {
 		RetryAttempts:   2,
 		RetryInterval:   1, // minutes
 	}))
-	demo.Value(job.AddStep(ctx, gosmo.JobStepRequest{
+	demo.Value(job.AddStep(ctx, gosmo.JobStepDefinition{
 		Name:            "Cycle the error log",
 		Subsystem:       "TSQL",
 		Database:        "master",
@@ -109,7 +109,7 @@ func main() {
 		OnFailAction:    4,
 		OnFailStepID:    3,
 	}))
-	demo.Value(job.AddStep(ctx, gosmo.JobStepRequest{
+	demo.Value(job.AddStep(ctx, gosmo.JobStepDefinition{
 		Name:            "Failure handler",
 		Subsystem:       "TSQL",
 		Database:        "master",

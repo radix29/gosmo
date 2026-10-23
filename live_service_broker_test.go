@@ -538,7 +538,7 @@ func TestLiveServiceBrokerFamiliesRoundTrip(t *testing.T) {
 		// trip a Properties page makes: the two unquoted halves of the
 		// procedure and the principal come straight off the read.
 		off, on := false, true
-		err = q.Alter(ctx, QueueSettings{
+		err = q.Alter(ctx, QueueChanges{
 			Status:                &off,
 			Retention:             &off,
 			PoisonMessageHandling: &on,
@@ -587,7 +587,7 @@ func TestLiveServiceBrokerFamiliesRoundTrip(t *testing.T) {
 
 		// ACTIVATION (DROP) removes the block outright, where STATUS = OFF
 		// only stopped it.
-		if err := q.Alter(ctx, QueueSettings{DropActivation: true}); err != nil {
+		if err := q.Alter(ctx, QueueChanges{DropActivation: true}); err != nil {
 			t.Fatalf("Alter(DropActivation): %v", err)
 		}
 		after, err = src.BrokerQueueByName(ctx, "dbo", "sb_live_queue")
@@ -600,7 +600,7 @@ func TestLiveServiceBrokerFamiliesRoundTrip(t *testing.T) {
 		}
 
 		// Put it back the way the rest of the test found it.
-		if err := q.Alter(ctx, QueueSettings{
+		if err := q.Alter(ctx, QueueChanges{
 			Status:                &on,
 			Retention:             &on,
 			PoisonMessageHandling: &off,
@@ -621,7 +621,7 @@ func TestLiveServiceBrokerFamiliesRoundTrip(t *testing.T) {
 
 		// EXECUTE AS SELF is the one value that does not round-trip: the
 		// server resolves it to the principal running the statement.
-		if err := q.Alter(ctx, QueueSettings{
+		if err := q.Alter(ctx, QueueChanges{
 			Activation: &QueueActivation{
 				Enabled: true, ProcedureSchema: "dbo", ProcedureName: "usp_sb_activate",
 				MaxQueueReaders: 3, ExecuteAs: QueueExecuteAsSelf,
@@ -645,7 +645,7 @@ func TestLiveServiceBrokerFamiliesRoundTrip(t *testing.T) {
 			t.Fatalf("RouteByName: %v", err)
 		}
 		addr, lifetime := "TCP://sb3.invalid:4022", 600
-		if err := r.Alter(ctx, RouteSettings{
+		if err := r.Alter(ctx, RouteChanges{
 			Address: &addr, LifetimeSeconds: &lifetime,
 		}); err != nil {
 			t.Fatalf("Alter: %v", err)

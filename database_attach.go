@@ -98,8 +98,8 @@ func sqlTextBool(v bool) string {
 	return "'false'"
 }
 
-// AttachSpec describes one database to attach.
-type AttachSpec struct {
+// AttachDatabaseRequest describes one database to attach.
+type AttachDatabaseRequest struct {
 	// Name is what the database is attached as. It need not be the name it
 	// was detached under — DetachedDatabase.Name reports that one.
 	Name string
@@ -125,30 +125,34 @@ type AttachSpec struct {
 	RebuildLog bool
 }
 
-// AttachDatabase attaches a set of database files to the instance.
-func (s *Server) AttachDatabase(ctx context.Context, spec AttachSpec) error {
-	if spec.Name == "" {
-		return invalidf("gosmo: attach database: name is required")
+// AttachDatabase attaches a set of database files to the instance, and
+// returns the database read back from sys.databases — or, under
+// Scripting(ctx), the DatabaseRef handle, since nothing ran.
+func (s *Server) AttachDatabase(ctx context.Context, req AttachDatabaseRequest) (*Database, error) {
+	if req.Name == "" {
+		return nil, invalidf("gosmo: attach database: name is required")
 	}
-	if len(spec.Files) == 0 {
-		return invalidf("gosmo: attach database %q: at least one file is required", spec.Name)
+	if len(req.Files) == 0 {
+		return nil, invalidf("gosmo: attach database %q: at least one file is required", req.Name)
 	}
-	if _, err := s.exec(ctx, buildAttachStatement(spec)); err != nil {
-		return fmt.Errorf("gosmo: attach database %q: %w", spec.Name, err)
+	if _, err := s.exec(ctx, buildAttachStatement(req)); err != nil {
+		return nil, fmt.Errorf("gosmo: attach database %q: %w", req.Name, err)
 	}
-	if spec.Owner != "" {
+	if req.Owner != "" {
 		if _, err := s.exec(ctx, fmt.Sprintf("ALTER AUTHORIZATION ON DATABASE::%s TO %s",
-			quoteIdent(spec.Name), quoteIdent(spec.Owner))); err != nil {
-			return fmt.Errorf("gosmo: set owner of attached database %q: %w", spec.Name, err)
+			quoteIdent(req.Name), quoteIdent(req.Owner))); err != nil {
+			return nil, fmt.Errorf("gosmo: set owner of attached database %q: %w", req.Name, err)
 		}
 	}
-	return nil
+	return createdObject(ctx, s.DatabaseRef(req.Name), func() (*Database, error) {
+		return s.DatabaseByName(ctx, req.Name)
+	})
 }
 
 // buildAttachStatement builds the CREATE DATABASE ... FOR ATTACH statement.
 // Unexported and side-effect-free so it is unit-testable without a server,
 // mirroring buildCreateDatabaseStatement.
-func buildAttachStatement(spec AttachSpec) string {
+func buildAttachStatement(spec AttachDatabaseRequest) string {
 	clauses := make([]string, 0, len(spec.Files))
 	for _, f := range spec.Files {
 		clauses = append(clauses, fmt.Sprintf("  (FILENAME = %s)", QuoteLiteral(f)))
@@ -235,7 +239,7 @@ func (d *DetachedDatabase) filesWhere(isLog bool) []*DetachedFile {
 // primary file, and SQL Server has no documented way to read them back. The
 // undocumented DBCC CHECKPRIMARYFILE is what SMO — and therefore SSMS —
 // uses, and it needs the rights DBCC needs. A caller that cannot run it can
-// still attach: AttachSpec takes the paths directly.
+// still attach: AttachDatabaseRequest takes the paths directly.
 func (s *Server) DetachedDatabaseInfo(ctx context.Context, primaryFilePath string) (*DetachedDatabase, error) {
 	if strings.TrimSpace(primaryFilePath) == "" {
 		return nil, invalidf("gosmo: detached database info: a primary file path is required")

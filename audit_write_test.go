@@ -49,7 +49,10 @@ func (*auditConn) ExecContext(_ context.Context, q string, _ []driver.NamedValue
 	return driver.ResultNoRows, nil
 }
 
-func (*auditConn) QueryContext(_ context.Context, q string, _ []driver.NamedValue) (driver.Rows, error) {
+func (*auditConn) QueryContext(_ context.Context, q string, args []driver.NamedValue) (driver.Rows, error) {
+	if _, inner, _, ok := unwrapProcRead(q, args); ok {
+		q = inner
+	}
 	if strings.Contains(q, "is_state_enabled") {
 		rows := [][]driver.Value{{auditCurrent.enabled}}
 		if auditCurrent.missing {
@@ -109,37 +112,37 @@ func TestServerAuditStateStatements(t *testing.T) {
 func TestCreateServerAuditStatement(t *testing.T) {
 	for _, tc := range []struct {
 		name string
-		spec ServerAuditSpec
+		spec ServerAuditDefinition
 		want []string
 		bad  bool
 	}{
 		{name: "file target",
-			spec: ServerAuditSpec{Name: "a'b", Type: AuditToFile, FilePath: `C:\it's`,
+			spec: ServerAuditDefinition{Name: "a'b", Type: AuditToFile, FilePath: `C:\it's`,
 				MaxFileSize: 10, MaxRolloverFiles: 3, QueueDelay: 1000, OnFailure: AuditFailureContinue},
 			want: []string{"CREATE SERVER AUDIT [a'b]", "TO FILE", `FILEPATH = N'C:\it''s'`,
 				"MAXSIZE = 10 MB", "MAX_ROLLOVER_FILES = 3", "RESERVE_DISK_SPACE = OFF",
 				"QUEUE_DELAY = 1000", "ON_FAILURE = CONTINUE"}},
 		{name: "unlimited size and rollover",
-			spec: ServerAuditSpec{Name: "a", Type: AuditToFile, FilePath: `C:\x`,
+			spec: ServerAuditDefinition{Name: "a", Type: AuditToFile, FilePath: `C:\x`,
 				MaxRolloverFiles: AuditUnlimited},
 			want: []string{"MAXSIZE = UNLIMITED", "MAX_ROLLOVER_FILES = UNLIMITED"}},
 		{name: "max files wins over rollover",
-			spec: ServerAuditSpec{Name: "a", Type: AuditToFile, FilePath: `C:\x`,
+			spec: ServerAuditDefinition{Name: "a", Type: AuditToFile, FilePath: `C:\x`,
 				MaxFiles: 7, MaxRolloverFiles: AuditUnlimited},
 			want: []string{"MAX_FILES = 7"}},
 		{name: "application log",
-			spec: ServerAuditSpec{Name: "a", Type: AuditToApplicationLog, OnFailure: AuditFailureShutdown},
+			spec: ServerAuditDefinition{Name: "a", Type: AuditToApplicationLog, OnFailure: AuditFailureShutdown},
 			want: []string{"TO APPLICATION_LOG", "ON_FAILURE = SHUTDOWN"}},
 		{name: "security log and fail operation",
-			spec: ServerAuditSpec{Name: "a", Type: AuditToSecurityLog, OnFailure: AuditFailureFailOp},
+			spec: ServerAuditDefinition{Name: "a", Type: AuditToSecurityLog, OnFailure: AuditFailureFailOp},
 			want: []string{"TO SECURITY_LOG", "ON_FAILURE = FAIL_OPERATION"}},
 		{name: "predicate",
-			spec: ServerAuditSpec{Name: "a", Type: AuditToSecurityLog,
+			spec: ServerAuditDefinition{Name: "a", Type: AuditToSecurityLog,
 				Predicate: "server_principal_name <> N'sa'"},
 			want: []string{"WHERE server_principal_name <> N'sa'"}},
-		{name: "no name", spec: ServerAuditSpec{Type: AuditToSecurityLog}, bad: true},
-		{name: "no destination", spec: ServerAuditSpec{Name: "a"}, bad: true},
-		{name: "file with no path", spec: ServerAuditSpec{Name: "a", Type: AuditToFile}, bad: true},
+		{name: "no name", spec: ServerAuditDefinition{Type: AuditToSecurityLog}, bad: true},
+		{name: "no destination", spec: ServerAuditDefinition{Name: "a"}, bad: true},
+		{name: "file with no path", spec: ServerAuditDefinition{Name: "a", Type: AuditToFile}, bad: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got, err := tc.spec.createServerAuditStatement()
@@ -190,7 +193,7 @@ func TestAlteringAnAuditTurnsItOffAndBackOn(t *testing.T) {
 			srv := auditServer(t, &auditScript{enabled: tc.enabled})
 			ctx, col := WithScript(context.Background())
 			a := srv.ServerAuditRef("a")
-			if err := a.Alter(ctx, ServerAuditSpec{Name: "a", QueueDelay: 2000}); err != nil {
+			if err := a.Alter(ctx, ServerAuditDefinition{Name: "a", QueueDelay: 2000}); err != nil {
 				t.Fatalf("Alter: %v", err)
 			}
 			got := make([]string, 0, len(col.Statements()))
@@ -238,7 +241,7 @@ func TestDroppingAnEnabledAuditDisablesItFirst(t *testing.T) {
 func TestAlteringAMissingAuditIsNotFound(t *testing.T) {
 	srv := auditServer(t, &auditScript{missing: true})
 	ctx, col := WithScript(context.Background())
-	err := srv.ServerAuditRef("gone").Alter(ctx, ServerAuditSpec{Name: "gone"})
+	err := srv.ServerAuditRef("gone").Alter(ctx, ServerAuditDefinition{Name: "gone"})
 	if !errors.Is(err, ErrNotFound) {
 		t.Fatalf("got %v, want a not-found error", err)
 	}
@@ -251,7 +254,7 @@ func TestAlteringAMissingAuditIsNotFound(t *testing.T) {
 // answers "Incorrect syntax near 'REMOVE'", which is how a Properties page
 // Apply failed live after every unit test here passed.
 func TestClearingAPredicateIsItsOwnStatement(t *testing.T) {
-	stmts := ServerAuditSpec{Name: "a", QueueDelay: 1000}.alterServerAuditStatements("a")
+	stmts := ServerAuditDefinition{Name: "a", QueueDelay: 1000}.alterServerAuditStatements("a")
 	if len(stmts) != 2 {
 		t.Fatalf("got %d statements, want the settings ALTER and a separate REMOVE WHERE: %v", len(stmts), stmts)
 	}
@@ -262,7 +265,7 @@ func TestClearingAPredicateIsItsOwnStatement(t *testing.T) {
 		t.Errorf("the clearing statement is %q", stmts[1])
 	}
 
-	stmts = ServerAuditSpec{Name: "a", Predicate: "1 = 1"}.alterServerAuditStatements("a")
+	stmts = ServerAuditDefinition{Name: "a", Predicate: "1 = 1"}.alterServerAuditStatements("a")
 	if len(stmts) != 1 || !strings.Contains(stmts[0], "WHERE 1 = 1") || strings.Contains(stmts[0], "REMOVE") {
 		t.Errorf("a predicate must be written in one statement, not removed: %v", stmts)
 	}
@@ -312,7 +315,7 @@ func TestAuditWithDisabledOpensOneWindow(t *testing.T) {
 	ctx, col := WithScript(context.Background())
 	a := srv.ServerAuditRef("old")
 	err := a.WithDisabled(ctx, func(ctx context.Context) error {
-		if err := a.Alter(ctx, ServerAuditSpec{
+		if err := a.Alter(ctx, ServerAuditDefinition{
 			Name: "old", Type: AuditToApplicationLog, QueueDelay: 1000,
 			OnFailure: AuditFailureContinue,
 		}); err != nil {

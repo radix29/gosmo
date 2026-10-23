@@ -2,6 +2,10 @@ package gosmo
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
+	"slices"
+	"strings"
 	"testing"
 )
 
@@ -121,6 +125,41 @@ func TestMatchName(t *testing.T) {
 		got, err := matchName(tc.items, tc.name, key)
 		if got != tc.want || !errors.Is(err, tc.err) || (tc.err == nil) != (err == nil) {
 			t.Errorf("matchName(%q, %q) = %q, %v; want %q, %v", tc.items, tc.name, got, err, tc.want, tc.err)
+		}
+	}
+}
+
+// Every per-database step re-raises an error that is not a can't-enter one:
+// an empty CATCH turned a broken query into "no rows in that database".
+func TestPerDatabaseExecReraisesQueryErrors(t *testing.T) {
+	got := perDatabaseExec("a]b", ", N'@p1 int', @p1 = @x")
+	want := "BEGIN TRY SET @proc = N'[a]]b].sys.sp_executesql'; EXEC @proc @q, N'@p1 int', @p1 = @x; END TRY " +
+		"BEGIN CATCH IF ERROR_NUMBER() NOT IN (" + perDatabaseSkipErrors + ") THROW; END CATCH;\n"
+	if got != want {
+		t.Errorf("perDatabaseExec =\n%s\nwant\n%s", got, want)
+	}
+	for _, n := range []string{"207", "208", "468", "102"} {
+		if slices.Contains(strings.Split(perDatabaseSkipErrors, ", "), n) {
+			t.Errorf("perDatabaseSkipErrors skips Msg %s, a fault in the query", n)
+		}
+	}
+	files, err := filepath.Glob("*.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range files {
+		if strings.HasSuffix(f, "_test.go") {
+			continue
+		}
+		src, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		// killDatabaseSessionsBatch's empty CATCH around a KILL is deliberate.
+		for line := range strings.Lines(string(src)) {
+			if strings.Contains(line, "sp_executesql") && strings.Contains(line, "BEGIN CATCH END CATCH") {
+				t.Errorf("%s: an sp_executesql with an empty CATCH; a per-database step goes through perDatabaseExec:\n%s", f, line)
+			}
 		}
 	}
 }

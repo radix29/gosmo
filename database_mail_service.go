@@ -17,9 +17,9 @@ import (
 // System parameters
 // ============================================================
 
-// MailConfigurationOptions is a change to the system parameters. A nil
+// MailConfigurationChanges is a change to the system parameters. A nil
 // field is left as stored.
-type MailConfigurationOptions struct {
+type MailConfigurationChanges struct {
 	AccountRetryAttempts           *int
 	AccountRetryDelay              *int
 	DatabaseMailExeMinimumLifeTime *int
@@ -31,7 +31,7 @@ type MailConfigurationOptions struct {
 
 // stmts renders one sysmail_configure_sp per set parameter, in the order
 // Mail.Configuration lists them.
-func (o MailConfigurationOptions) stmts() []string {
+func (o MailConfigurationChanges) stmts() []string {
 	var stmts []string
 	param := func(name, v string) {
 		var a procArgs
@@ -63,7 +63,7 @@ func (o MailConfigurationOptions) stmts() []string {
 // SetConfiguration writes every parameter set on o, one
 // sysmail_configure_sp each. The procedure validates nothing and updates
 // only a parameter msdb already has a row for.
-func (dm Mail) SetConfiguration(ctx context.Context, o MailConfigurationOptions) error {
+func (dm Mail) SetConfiguration(ctx context.Context, o MailConfigurationChanges) error {
 	s := dm.server
 	if o.LoggingLevel != nil && (*o.LoggingLevel < MailLoggingNormal || *o.LoggingLevel > MailLoggingVerbose) {
 		return invalidf("gosmo: set mail configuration: logging level %d is not 1, 2 or 3", int(*o.LoggingLevel))

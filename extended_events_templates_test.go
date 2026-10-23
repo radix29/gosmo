@@ -114,7 +114,7 @@ func TestXESessionTemplates(t *testing.T) {
 			t.Errorf("template %+v: duplicate or unlabelled", tpl)
 		}
 		seen[tpl.Name] = true
-		a := tpl.Spec()
+		a := tpl.Definition()
 		if a.Name != "" {
 			t.Errorf("%s: spec named %q", tpl.Name, a.Name)
 		}
@@ -123,7 +123,7 @@ func TestXESessionTemplates(t *testing.T) {
 			t.Errorf("%s: %v", tpl.Name, err)
 		}
 		a.Events[0].Actions = append(a.Events[0].Actions[:0], "mutated")
-		if b := tpl.Spec(); len(b.Events[0].Actions) > 0 && b.Events[0].Actions[0] == "mutated" {
+		if b := tpl.Definition(); len(b.Events[0].Actions) > 0 && b.Events[0].Actions[0] == "mutated" {
 			t.Errorf("%s: two calls share an action slice", tpl.Name)
 		}
 	}

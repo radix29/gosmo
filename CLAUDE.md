@@ -114,8 +114,9 @@ exercise the write, drop them; never mutate pre-existing objects.
   Prefer a query parameter where the server accepts one.
 - **A name built-in compared with a parameter is collated**:
   `SCHEMA_NAME(x.schema_id) COLLATE DATABASE_DEFAULT = @p1`. A `USE d; …`
-  batch binds its parameters in the starting database's collation, so the
-  bare form fails Msg 468 and costs three round trips (`useBatch`).
+  batch — a read inside `InTransaction` (`useBatch`) — binds its parameters
+  in the starting database's collation, so the bare form fails Msg 468 and
+  costs three round trips. A pooled read (`procRead`) binds them in `d`.
   `collation_lookup_test.go` enforces it, `filterColumns` maps included.
 - **A name or stored value written into a script comment is wrapped**:
   `tsql.CommentSafe` inside `--` (a line break ends the comment),
@@ -129,14 +130,17 @@ exercise the write, drop them; never mutate pre-existing objects.
   `ErrAmbiguous`. A bare `strings.EqualFold` takes the wrong sibling in a
   `_CS_` database (`IX_a`/`ix_A`); comparing two catalog names is `==`.
 - **Never query inside a `rows.Next()` loop.** `Database.query` pins its own
-  pooled connection and `USE` (`Database.useBatch`), so per-row lookups hold
+  pooled connection (`dbRows`), so per-row lookups hold
   the outer connection while acquiring more — pool exhaustion. Fetch children
   in one query ordered by parent id and group in Go (`Table.Indexes`: 42 round
   trips → 2).
 - **A per-database batch names `sp_executesql` through a variable**
   (`perDatabaseExec`): a literal `EXEC [db].sys.sp_executesql` is resolved at
   compile, so one database that cannot be entered (Msg 924) fails the whole
-  batch before its TRY runs — hidden while the plan is cached.
+  batch before its TRY runs — hidden while the plan is cached. Its CATCH skips
+  only a can't-enter error (`perDatabaseSkipErrors`); anything else, a fault
+  in the query above all, is the read's failure — an empty CATCH hid broken
+  queries from `TestLiveVersionSweep`.
 - **Gate a version only through `version_gate.go`** — `colSince`/`bitSince`
   for a column, `atLeast`/`before` (on `Server`/`Database`, or
   `majorAtLeast`/`majorBefore` on a `major int`) for everything else. Major 0
@@ -165,8 +169,14 @@ exercise the write, drop them; never mutate pre-existing objects.
     placeholder (`WithScriptSecrets` opts a capture back in).
 - **Every `Create*` is `CreateX(ctx, CreateXRequest) (*X, error)`.** The
   request is a value; the result comes back through `createdObject` (the `XRef`
-  handle under `Scripting(ctx)` or when the new row isn't visible). A type keeps
-  a `Spec` name only if a non-create method takes it too (`ServerAuditSpec`).
+  handle under `Scripting(ctx)` or when the new row isn't visible). A full
+  description that `Alter` takes too is an `XDefinition`
+  (`ServerAuditDefinition`), not a request.
+- **An `Alter` argument whose unset fields mean "leave as stored" is
+  `XChanges`** (`JobChanges`, `QueueChanges`, `DatabaseFileChanges`) — not
+  `Options`/`Settings`. A shared CREATE-and-ALTER `WITH` list
+  (`ResourcePoolOptions`) or a T-SQL `SET (…)` mirror (`QueryStoreOptions`)
+  is not a patch and keeps its name.
 - **A write on an existing object is a method on its handle** —
   `db.ViewRef(s, n).Drop(ctx)`, `t.Rename(ctx, n)` — never
   `Parent.VerbX(ctx, name, …)`. A new family gets its `Ref` and writes together.

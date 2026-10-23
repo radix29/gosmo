@@ -25,8 +25,8 @@ type DatabaseRole struct {
 // Database returns the database the role belongs to.
 func (r *DatabaseRole) Database() *Database { return r.db }
 
-// DatabaseRoles returns all roles defined in the database.
-func (d *Database) DatabaseRoles(ctx context.Context) ([]*DatabaseRole, error) {
+// Roles returns all roles defined in the database.
+func (d *Database) Roles(ctx context.Context) ([]*DatabaseRole, error) {
 	q := `
 SELECT r.name, r.principal_id, r.is_fixed_role, p.name AS owner,
        ` + jsonList("m.name", `
@@ -54,7 +54,7 @@ ORDER  BY r.name`
 }
 
 // RoleByName returns a single database role by name, with its principal
-// detail (SID, create/modify dates) filled in — DatabaseRoles
+// detail (SID, create/modify dates) filled in — Roles
 // leaves these out since Object Explorer's tree listing never needs them.
 func (d *Database) RoleByName(ctx context.Context, name string) (*DatabaseRole, error) {
 	q := `
@@ -122,7 +122,7 @@ type RoleMember struct {
 }
 
 // RoleMembers returns the direct members of a database role, with each
-// member's principal type — DatabaseRoles/RoleByName only
+// member's principal type — Roles/RoleByName only
 // return member names, concatenated, with no type.
 func (d *Database) RoleMembers(ctx context.Context, roleName string) ([]*RoleMember, error) {
 	const q = `

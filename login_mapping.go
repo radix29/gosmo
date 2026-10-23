@@ -23,7 +23,8 @@ type LoginUserMapping struct {
 // build a full "all databases, mapped or not" view. Databases that are
 // offline, or that the login can't currently reach, are skipped rather
 // than failing the whole scan (SSMS's own User Mapping page behaves the
-// same way). A cancelled context is not skipped — it ends the scan and is
+// same way); any other error in a database fails it, so a broken read is not
+// shown as "unmapped". A cancelled context is not skipped — it ends the scan and is
 // returned.
 //
 // It is two round trips whatever the database count: the database list,
@@ -50,26 +51,27 @@ func (l *Login) UserMappings(ctx context.Context) ([]*LoginUserMapping, error) {
 	if err != nil {
 		return nil, err
 	}
-	return l.userMappingsBatch(ctx, sid, dbs)
+	return l.userMappingsBatch(ctx, userMappingsQuery, sid, dbs)
 }
 
 // UserMappingsIn is UserMappings over databases the caller has already
 // listed — a User Mapping page that shows every database reads the list once
 // for both, so the mappings are one round trip (two on a LoginRef, whose SID
 // is looked up first). A database in dbs that is not ONLINE, or that cannot
-// be read, is skipped as UserMappings skips it.
+// be entered, is skipped as UserMappings skips it.
 func (l *Login) UserMappingsIn(ctx context.Context, dbs []*Database) ([]*LoginUserMapping, error) {
 	sid, _, err := l.identity(ctx, fmt.Sprintf("user mappings for login %q", l.Name))
 	if err != nil {
 		return nil, err
 	}
-	return l.userMappingsBatch(ctx, sid, dbs)
+	return l.userMappingsBatch(ctx, userMappingsQuery, sid, dbs)
 }
 
-// userMappingsBatch is the batch UserMappings and UserMappingsIn share.
-func (l *Login) userMappingsBatch(ctx context.Context, sid []byte, dbs []*Database) ([]*LoginUserMapping, error) {
+// userMappingsBatch is the batch UserMappings and UserMappingsIn share: q is
+// userMappingsQuery, a parameter only so a live test can break it.
+func (l *Login) userMappingsBatch(ctx context.Context, q string, sid []byte, dbs []*Database) ([]*LoginUserMapping, error) {
 	var sb strings.Builder
-	sb.WriteString("SET NOCOUNT ON;\nDECLARE @proc nvarchar(300), @q nvarchar(max) = " + QuoteLiteral(userMappingsQuery) + ";\n")
+	sb.WriteString("SET NOCOUNT ON;\nDECLARE @proc nvarchar(300), @q nvarchar(max) = " + QuoteLiteral(q) + ";\n")
 	n := 0
 	for _, db := range dbs {
 		if db.State != DatabaseOnline {
@@ -83,8 +85,8 @@ func (l *Login) userMappingsBatch(ctx context.Context, sid []byte, dbs []*Databa
 	}
 	// The SID goes in as @sid, renamed for the batch: @p1 is the name each
 	// database's query binds it under.
-	q := "DECLARE @sid varbinary(85) = @p1;\n" + sb.String()
-	rows, err := l.server.query(ctx, q, sid)
+	batch := "DECLARE @sid varbinary(85) = @p1;\n" + sb.String()
+	rows, err := l.server.query(ctx, batch, sid)
 	if err != nil {
 		if ctx.Err() != nil {
 			return nil, ctx.Err()

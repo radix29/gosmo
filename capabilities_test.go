@@ -170,6 +170,11 @@ func (c *capConn) QueryContext(_ context.Context, q string, args []driver.NamedV
 	if use, rest, ok := splitUseBatch(q); ok {
 		capCurrent.uses = append(capCurrent.uses, use)
 		q = rest
+	} else if db, inner, innerArgs, ok := unwrapProcRead(q, args); ok {
+		// A procRead call runs in db without a USE; record it as one, which
+		// is what uses asserts on: the database each read ran in.
+		capCurrent.uses = append(capCurrent.uses, "USE "+db)
+		q, args = inner, innerArgs
 	}
 	switch {
 	case strings.Contains(q, "HAS_DBACCESS"):

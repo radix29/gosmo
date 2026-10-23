@@ -131,7 +131,7 @@ func TestStatementObserverSkipsWindowBrackets(t *testing.T) {
 				return nil
 			}})
 			ctx, got := observed(context.Background())
-			err := srv.ServerAuditRef("a").Alter(ctx, ServerAuditSpec{Name: "a", QueueDelay: 2000})
+			err := srv.ServerAuditRef("a").Alter(ctx, ServerAuditDefinition{Name: "a", QueueDelay: 2000})
 			if (err != nil) != tc.failAlter {
 				t.Fatalf("Alter: %v", err)
 			}
