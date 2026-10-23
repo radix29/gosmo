@@ -101,8 +101,8 @@ SELECT CAST(CASE WHEN OBJECT_ID(N'master.sys.xp_delete_files') IS NULL THEN 0 EL
 
 // normalizedSpec compares two sessions' definitions ignoring order, which the
 // catalog does not promise to keep.
-func normalizedSpec(es *EventSession) EventSessionSpec {
-	spec := es.Spec()
+func normalizedSpec(es *EventSession) EventSessionDefinition {
+	spec := es.Definition()
 	spec.Name = ""
 	for i := range spec.Events {
 		spec.Events[i].Actions = sortedFold(spec.Events[i].Actions)
@@ -116,7 +116,7 @@ func normalizedSpec(es *EventSession) EventSessionSpec {
 	return spec
 }
 
-func specString(s EventSessionSpec) string { return fmt.Sprintf("%+v", s) }
+func specString(s EventSessionDefinition) string { return fmt.Sprintf("%+v", s) }
 
 func TestLiveEventSessionLifecycle(t *testing.T) {
 	s, db, ctx := liveXEServer(t)
@@ -135,7 +135,7 @@ func TestLiveEventSessionLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	spec := EventSessionSpec{
+	spec := EventSessionDefinition{
 		Name: name,
 		Events: []SessionEvent{{
 			Package: "sqlserver", Name: "sql_batch_completed",
@@ -245,7 +245,7 @@ func TestLiveEventSessionLifecycle(t *testing.T) {
 
 	// Alter while running: an event added in place, an option through the
 	// stop window. The session must come out running.
-	want := es.Spec()
+	want := es.Definition()
 	want.Events = append(want.Events, SessionEvent{Package: "sqlserver", Name: "error_reported",
 		Predicate: fmt.Sprintf("([sqlserver].[session_id]=(%d))", spid)})
 	want.MaxDispatchLatency = 2 * time.Second
@@ -328,7 +328,7 @@ func TestLiveEventSessionAlterOnlyEvent(t *testing.T) {
 		return SessionEvent{Package: "sqlserver", Name: "sql_batch_completed",
 			Predicate: fmt.Sprintf("([sqlserver].[session_id]=(%d))", spid)}
 	}
-	es, err := s.XEvents().CreateSession(ctx, EventSessionSpec{
+	es, err := s.XEvents().CreateSession(ctx, EventSessionDefinition{
 		Name:    name,
 		Events:  []SessionEvent{event(1)},
 		Targets: []SessionTarget{{Package: "package0", Name: XETargetRingBuffer}},
@@ -343,7 +343,7 @@ func TestLiveEventSessionAlterOnlyEvent(t *testing.T) {
 				t.Fatalf("Start: %v", err)
 			}
 		}
-		want := es.Spec()
+		want := es.Definition()
 		want.Events = []SessionEvent{event(10 + i)}
 		if err := es.Alter(ctx, want); err != nil {
 			t.Fatalf("Alter (running %v): %v", running, err)
@@ -374,7 +374,7 @@ func TestLiveEventSessionScriptRoundTrip(t *testing.T) {
 	}
 	const name = "gossms_test_xe_health_copy"
 	dropXESessionAfter(t, s, db, name)
-	spec := health.Spec()
+	spec := health.Definition()
 	spec.Name = name
 	spec.StartupState = false
 	// The copy writes its own file, so a later read of system_health's never
@@ -499,7 +499,7 @@ func TestLiveXEProfilerTemplates(t *testing.T) {
 	azure := s.Info().IsAzure()
 	for _, tc := range []struct {
 		name string
-		spec EventSessionSpec
+		spec EventSessionDefinition
 	}{
 		{"gossms_test_xe_prof_std", XEProfilerStandard()},
 		{"gossms_test_xe_prof_tsql", XEProfilerTSQL()},
@@ -608,7 +608,7 @@ func TestLiveXESessionTemplates(t *testing.T) {
 	for i, tpl := range XESessionTemplates() {
 		name := fmt.Sprintf("gossms_test_xe_tpl_%d", i)
 		t.Run(tpl.Name, func(t *testing.T) {
-			spec := tpl.Spec()
+			spec := tpl.Definition()
 			for _, e := range spec.Events {
 				if !slices.ContainsFunc(events, func(o XEObject) bool { return o.QualifiedName() == e.QualifiedName() }) {
 					t.Skipf("%s is not on this instance", e.QualifiedName())

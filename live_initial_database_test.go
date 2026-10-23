@@ -131,7 +131,7 @@ func TestLiveInitialDatabaseDetach(t *testing.T) {
 				t.Fatal("Detach returned nil, but the database is still attached")
 			}
 			// Attached back, so the cleanup's DROP deletes the files.
-			if err := admin.AttachDatabase(ctx, AttachSpec{Name: initDBLiveName, Files: files}); err != nil {
+			if _, err := admin.AttachDatabase(ctx, AttachDatabaseRequest{Name: initDBLiveName, Files: files}); err != nil {
 				t.Fatalf("attach back: %v", err)
 			}
 		})

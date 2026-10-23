@@ -703,7 +703,7 @@ EXEC sp_configure 'show advanced options', %d; RECONFIGURE;`, adv))
 	}
 
 	// -- System parameters -----------------------------------------------------------------
-	if err := srv.Mail().SetConfiguration(ctx, MailConfigurationOptions{
+	if err := srv.Mail().SetConfiguration(ctx, MailConfigurationChanges{
 		AccountRetryAttempts: new(0), LoggingLevel: new(MailLoggingVerbose)}); err != nil {
 		t.Fatalf("Mail.SetConfiguration: %v", err)
 	}

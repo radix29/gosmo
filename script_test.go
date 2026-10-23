@@ -432,7 +432,7 @@ func TestScriptedAgentCreatesReturnNameOnlyHandles(t *testing.T) {
 		}
 		// sp_add_job and sp_add_jobserver as one atomic batch (T30), then
 		// the dependent step.
-		step, err := j.AddStep(ctx, JobStepRequest{Name: "step 1", Subsystem: "TSQL", Command: "SELECT 1"})
+		step, err := j.AddStep(ctx, JobStepDefinition{Name: "step 1", Subsystem: "TSQL", Command: "SELECT 1"})
 		if err != nil {
 			t.Fatalf("AddStep under WithScript: %v", err)
 		}

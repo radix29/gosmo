@@ -70,11 +70,11 @@ func TestFileHandleWritesMirrorOnlyWhenApplied(t *testing.T) {
 func TestScriptedStepAddsReturnAHandle(t *testing.T) {
 	ctx, script := WithScript(context.Background())
 	j := (&Server{}).JobRef("Nightly")
-	added, err := j.AddStep(ctx, JobStepRequest{Name: "a", Subsystem: "TSQL", Command: "SELECT 1"})
+	added, err := j.AddStep(ctx, JobStepDefinition{Name: "a", Subsystem: "TSQL", Command: "SELECT 1"})
 	if err != nil {
 		t.Fatalf("AddStep: %v", err)
 	}
-	inserted, err := j.InsertStep(ctx, JobStepRequest{Name: "b", Subsystem: "TSQL", Command: "SELECT 2"}, 1)
+	inserted, err := j.InsertStep(ctx, JobStepDefinition{Name: "b", Subsystem: "TSQL", Command: "SELECT 2"}, 1)
 	if err != nil {
 		t.Fatalf("InsertStep: %v", err)
 	}

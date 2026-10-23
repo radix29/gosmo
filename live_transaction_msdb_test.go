@@ -104,8 +104,8 @@ func TestLiveInTransactionMSDB(t *testing.T) {
 		if err != nil {
 			t.Fatalf("CreateJob: %v", err)
 		}
-		step := func(name, command string) JobStepRequest {
-			return JobStepRequest{Name: name, Subsystem: "TSQL", Command: command, OnSuccessAction: 1, OnFailAction: 2}
+		step := func(name, command string) JobStepDefinition {
+			return JobStepDefinition{Name: name, Subsystem: "TSQL", Command: command, OnSuccessAction: 1, OnFailAction: 2}
 		}
 		for _, name := range []string{"first", "second"} {
 			if _, err := j.AddStep(ctx, step(name, "SELECT N'"+name+"'")); err != nil {
@@ -126,7 +126,7 @@ func TestLiveInTransactionMSDB(t *testing.T) {
 			}
 			reached = true
 			// Fails: no such subsystem.
-			_, err = j.AddStep(ctx, JobStepRequest{Name: "third", Subsystem: "NoSuchSubsystem", Command: "x", OnSuccessAction: 1, OnFailAction: 2})
+			_, err = j.AddStep(ctx, JobStepDefinition{Name: "third", Subsystem: "NoSuchSubsystem", Command: "x", OnSuccessAction: 1, OnFailAction: 2})
 			return err
 		})
 		if err == nil || !reached {

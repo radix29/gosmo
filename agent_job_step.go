@@ -89,7 +89,7 @@ WHERE  j.name = @p1 AND s.step_name = @p2`
 // AddStep appends a T-SQL or other subsystem step to the job, and returns it
 // read back from msdb — or, under Scripting(ctx), a handle carrying only the
 // job and the step's name, since nothing ran and its number is not known.
-func (j *Job) AddStep(ctx context.Context, req JobStepRequest) (*JobStep, error) {
+func (j *Job) AddStep(ctx context.Context, req JobStepDefinition) (*JobStep, error) {
 	return j.addStepAt(ctx, req, 0)
 }
 
@@ -102,7 +102,7 @@ func (j *Job) AddStep(ctx context.Context, req JobStepRequest) (*JobStep, error)
 // not symmetrical about this: it follows a reference to a later step but
 // resets one to the step deleted, which is why ReorderSteps repairs
 // references itself.
-func (j *Job) InsertStep(ctx context.Context, req JobStepRequest, stepID int) (*JobStep, error) {
+func (j *Job) InsertStep(ctx context.Context, req JobStepDefinition, stepID int) (*JobStep, error) {
 	if stepID < 1 {
 		return nil, invalidf("gosmo: insert step %q into job %q: step id must be 1 or more", req.Name, j.Name)
 	}
@@ -112,7 +112,7 @@ func (j *Job) InsertStep(ctx context.Context, req JobStepRequest, stepID int) (*
 // stepExtraArgs renders the parameters both sp_add_jobstep and
 // sp_update_jobstep take and that a plain edit leaves alone: the ones a move
 // has to carry so a re-added step is the step it was.
-func stepExtraArgs(req JobStepRequest) string {
+func stepExtraArgs(req JobStepDefinition) string {
 	q := fmt.Sprintf(", @flags = %d, @cmdexec_success_code = %d, @os_run_priority = %d",
 		req.Flags, req.CmdExecSuccessCode, req.OSRunPriority)
 	if req.ProxyName != "" {
@@ -130,7 +130,7 @@ func stepExtraArgs(req JobStepRequest) string {
 	return q
 }
 
-func (j *Job) addStepAt(ctx context.Context, req JobStepRequest, stepID int) (*JobStep, error) {
+func (j *Job) addStepAt(ctx context.Context, req JobStepDefinition, stepID int) (*JobStep, error) {
 	if req.Name == "" {
 		return nil, invalidf("gosmo: add step: name is required")
 	}
@@ -146,7 +146,7 @@ func (j *Job) addStepAt(ctx context.Context, req JobStepRequest, stepID int) (*J
 // position; 0 appends. Split out from addStepAt so ReorderSteps can
 // collect the statement into its transactional batch instead of issuing it —
 // see execAtomic.
-func addStepStmt(jobName string, req JobStepRequest, stepID int) string {
+func addStepStmt(jobName string, req JobStepDefinition, stepID int) string {
 	q := fmt.Sprintf(
 		"EXEC msdb.dbo.sp_add_jobstep @job_name = N'%s', @step_name = N'%s', "+
 			"@subsystem = N'%s', @command = N'%s', "+
@@ -177,7 +177,7 @@ func addStepStmt(jobName string, req JobStepRequest, stepID int) string {
 }
 
 // Alter replaces the step's definition via sp_update_jobstep.
-func (s *JobStep) Alter(ctx context.Context, req JobStepRequest) error {
+func (s *JobStep) Alter(ctx context.Context, req JobStepDefinition) error {
 	// Same guard as Job.AddStep: sp_update_jobstep rejects an empty
 	// @step_name with a server-side error, and the local field writes at the
 	// end of this method would otherwise blank out s.Name on the way past.
@@ -358,7 +358,7 @@ const goToNextStepAction = 3
 // msdb has no procedure that renumbers a step in place, so the move is a
 // delete followed by an insert at the target position — which is why the
 // step's whole definition has to survive the round trip, and why JobStep and
-// JobStepRequest model every sysjobsteps column that sp_add_jobstep can set
+// JobStepDefinition model every sysjobsteps column that sp_add_jobstep can set
 // rather than the handful a step form edits.
 //
 // The delete and the insert are one transactional batch, because a failure
@@ -541,9 +541,9 @@ func checkReorder(want []int, n int) error {
 	return nil
 }
 
-// JobStepRequest describes a step to add to, or replace the definition of
+// JobStepDefinition describes a step to add to, or replace the definition of
 // (see JobStep.Alter), a job.
-type JobStepRequest struct {
+type JobStepDefinition struct {
 	Name      string
 	Subsystem string // "TSQL" is the most common value
 	Command   string
@@ -602,8 +602,8 @@ type JobStepRequest struct {
 // "go to the next step", which sp_verify_jobstep accepts at any position, and
 // every step id as 0: the numbers are what the move changes, and the repair
 // pass writes the real action and target once every step is in place.
-func reAddRequest(s *JobStep) JobStepRequest {
-	req := JobStepRequest{
+func reAddRequest(s *JobStep) JobStepDefinition {
+	req := JobStepDefinition{
 		Name: s.Name, Subsystem: s.Subsystem, Command: s.Command, Database: s.Database,
 		OnSuccessAction: s.OnSuccessAction, OnFailAction: s.OnFailAction,
 		RetryAttempts: s.RetryAttempts, RetryInterval: s.RetryInterval,

@@ -112,13 +112,12 @@ func (sw *sweep) call(label string, fn func() error) {
 // a Database.Checkpoint, a Table.Rebuild — would otherwise run the first
 // time the sweep met a real server, which may be the AG cluster.
 func (sw *sweep) reflectSweep(typeName, instance string, recv any) {
-	ctxT := reflect.TypeOf((*context.Context)(nil)).Elem()
-	errT := reflect.TypeOf((*error)(nil)).Elem()
+	ctxT := reflect.TypeFor[context.Context]()
+	errT := reflect.TypeFor[error]()
 	rv := reflect.ValueOf(recv)
 	rt := rv.Type()
 
-	for i := 0; i < rt.NumMethod(); i++ {
-		m := rt.Method(i)
+	for m := range rt.Methods() {
 		ft := m.Type
 		if ft.NumIn() < 2 || ft.In(1) != ctxT {
 			continue
@@ -156,8 +155,8 @@ func (sw *sweep) reflectSweep(typeName, instance string, recv any) {
 // sweepZeroQueries are the listing arguments whose zero value means "all",
 // so a listing taking one is as reachable by reflection as a ctx-only one.
 var sweepZeroQueries = []reflect.Type{
-	reflect.TypeOf(ObjectFilter{}),
-	reflect.TypeOf(TableQuery{}),
+	reflect.TypeFor[ObjectFilter](),
+	reflect.TypeFor[TableQuery](),
 }
 
 // checkSkipList fails on an entry naming a method that no longer exists, so
@@ -165,17 +164,17 @@ var sweepZeroQueries = []reflect.Type{
 func checkSkipList(t *testing.T) {
 	t.Helper()
 	types := map[string]reflect.Type{
-		"Server":     reflect.TypeOf(&Server{}),
-		"Database":   reflect.TypeOf(&Database{}),
-		"Table":      reflect.TypeOf(&Table{}),
-		"Index":      reflect.TypeOf(&Index{}),
-		"Statistic":  reflect.TypeOf(&Statistic{}),
-		"Login":      reflect.TypeOf(&Login{}),
-		"Job":        reflect.TypeOf(&Job{}),
-		"QueryStore": reflect.TypeOf(QueryStore{}),
-		"Mail":       reflect.TypeOf(Mail{}),
+		"Server":     reflect.TypeFor[*Server](),
+		"Database":   reflect.TypeFor[*Database](),
+		"Table":      reflect.TypeFor[*Table](),
+		"Index":      reflect.TypeFor[*Index](),
+		"Statistic":  reflect.TypeFor[*Statistic](),
+		"Login":      reflect.TypeFor[*Login](),
+		"Job":        reflect.TypeFor[*Job](),
+		"QueryStore": reflect.TypeFor[QueryStore](),
+		"Mail":       reflect.TypeFor[Mail](),
 
-		"ResourcePool": reflect.TypeOf(&ResourcePool{}),
+		"ResourcePool": reflect.TypeFor[*ResourcePool](),
 	}
 	for key := range sweepSkip {
 		typeName, method, ok := strings.Cut(key, ".")

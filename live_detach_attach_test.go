@@ -51,7 +51,7 @@ func detLiveSetup(t *testing.T, db *sql.DB, ctx context.Context) (*Server, []str
 		if _, err := db.ExecContext(c, "SELECT 1 FROM sys.databases WHERE name = N'"+detLiveName+"'"); err == nil {
 			var n int
 			if db.QueryRowContext(c, "SELECT COUNT(*) FROM sys.databases WHERE name = N'"+detLiveName+"'").Scan(&n) == nil && n == 0 {
-				_ = srv.AttachDatabase(c, AttachSpec{Name: detLiveName, Files: files})
+				_, _ = srv.AttachDatabase(c, AttachDatabaseRequest{Name: detLiveName, Files: files})
 			}
 		}
 		db.ExecContext(c, "ALTER DATABASE ["+detLiveName+"] SET SINGLE_USER WITH ROLLBACK IMMEDIATE")
@@ -147,7 +147,8 @@ func TestLiveDetachAttachRoundTrip(t *testing.T) {
 		paths = append(paths, f.PhysicalName)
 	}
 	const attachedAs = detLiveName + "_2"
-	if err := srv.AttachDatabase(ctx, AttachSpec{Name: attachedAs, Files: paths}); err != nil {
+	attached, err := srv.AttachDatabase(ctx, AttachDatabaseRequest{Name: attachedAs, Files: paths})
+	if err != nil {
 		t.Fatalf("AttachDatabase: %v", err)
 	}
 	defer func() {
@@ -158,6 +159,10 @@ func TestLiveDetachAttachRoundTrip(t *testing.T) {
 
 	if !databaseExists(t, db, ctx, attachedAs) {
 		t.Fatal("the database is not on the instance after an attach that reported success")
+	}
+	// The handle is read back, not a Ref: a Ref's ID is zero.
+	if attached.Name != attachedAs || attached.ID == 0 {
+		t.Errorf("AttachDatabase returned %q id %d, want %q read back from sys.databases", attached.Name, attached.ID, attachedAs)
 	}
 	var state string
 	if err := db.QueryRowContext(ctx, "SELECT state_desc FROM sys.databases WHERE name = @p1", attachedAs).Scan(&state); err != nil {
@@ -194,7 +199,7 @@ func TestLiveDetachUpdateStatisticsIsAccepted(t *testing.T) {
 	if databaseExists(t, db, ctx, detLiveName) {
 		t.Fatal("the database is still attached")
 	}
-	if err := srv.AttachDatabase(ctx, AttachSpec{Name: detLiveName, Files: files}); err != nil {
+	if _, err := srv.AttachDatabase(ctx, AttachDatabaseRequest{Name: detLiveName, Files: files}); err != nil {
 		t.Fatalf("re-attach: %v", err)
 	}
 }

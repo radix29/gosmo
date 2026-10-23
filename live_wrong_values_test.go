@@ -96,11 +96,11 @@ func TestLiveWrongValuesAgentJob(t *testing.T) {
 		t.Fatalf("CreateJob: %v", err)
 	}
 	t.Cleanup(func() { _ = s.JobRef(jobName).Drop(context.Background()) })
-	if _, err := j.AddStep(ctx, JobStepRequest{Name: "wait", Subsystem: "TSQL",
+	if _, err := j.AddStep(ctx, JobStepDefinition{Name: "wait", Subsystem: "TSQL",
 		Command: "WAITFOR DELAY '00:00:03'", OnSuccessAction: 3, OnFailAction: 2}); err != nil {
 		t.Fatalf("AddStep wait: %v", err)
 	}
-	if _, err := j.AddStep(ctx, JobStepRequest{Name: "done", Subsystem: "TSQL",
+	if _, err := j.AddStep(ctx, JobStepDefinition{Name: "done", Subsystem: "TSQL",
 		Command: "SELECT 1", OnSuccessAction: 1, OnFailAction: 2}); err != nil {
 		t.Fatalf("AddStep done: %v", err)
 	}

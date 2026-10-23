@@ -204,8 +204,8 @@ func buildDatabaseMailScript(accts []*MailAccount, profiles []*MailProfile, gran
 }
 
 // options is every parameter of c, set — what restores it in full.
-func (c *MailConfiguration) options() MailConfigurationOptions {
-	return MailConfigurationOptions{
+func (c *MailConfiguration) options() MailConfigurationChanges {
+	return MailConfigurationChanges{
 		AccountRetryAttempts:           new(c.AccountRetryAttempts),
 		AccountRetryDelay:              new(c.AccountRetryDelay),
 		DatabaseMailExeMinimumLifeTime: new(c.DatabaseMailExeMinimumLifeTime),

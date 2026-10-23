@@ -389,19 +389,19 @@ func TestDetachRequiresAName(t *testing.T) {
 func TestBuildAttachStatement(t *testing.T) {
 	cases := []struct {
 		name string
-		spec AttachSpec
+		spec AttachDatabaseRequest
 		want string
 	}{
 		{
 			name: "primary file only",
-			spec: AttachSpec{Name: "appdb", Files: []string{`C:\Data\appdb.mdf`}},
+			spec: AttachDatabaseRequest{Name: "appdb", Files: []string{`C:\Data\appdb.mdf`}},
 			want: "CREATE DATABASE [appdb] ON\n" +
 				"  (FILENAME = N'C:\\Data\\appdb.mdf')\n" +
 				"FOR ATTACH",
 		},
 		{
 			name: "data, secondary and log, in the order given",
-			spec: AttachSpec{Name: "appdb", Files: []string{
+			spec: AttachDatabaseRequest{Name: "appdb", Files: []string{
 				`C:\Data\appdb.mdf`, `C:\Data\appdb_2.ndf`, `C:\Log\appdb_log.ldf`}},
 			want: "CREATE DATABASE [appdb] ON\n" +
 				"  (FILENAME = N'C:\\Data\\appdb.mdf'),\n" +
@@ -411,14 +411,14 @@ func TestBuildAttachStatement(t *testing.T) {
 		},
 		{
 			name: "no log file: rebuild one",
-			spec: AttachSpec{Name: "appdb", Files: []string{`/var/opt/mssql/data/appdb.mdf`}, RebuildLog: true},
+			spec: AttachDatabaseRequest{Name: "appdb", Files: []string{`/var/opt/mssql/data/appdb.mdf`}, RebuildLog: true},
 			want: "CREATE DATABASE [appdb] ON\n" +
 				"  (FILENAME = N'/var/opt/mssql/data/appdb.mdf')\n" +
 				"FOR ATTACH_REBUILD_LOG",
 		},
 		{
 			name: "a bracket in the name and a quote in the path are both escaped",
-			spec: AttachSpec{Name: "od]d", Files: []string{`C:\it's\a.mdf`}},
+			spec: AttachDatabaseRequest{Name: "od]d", Files: []string{`C:\it's\a.mdf`}},
 			want: "CREATE DATABASE [od]]d] ON\n" +
 				"  (FILENAME = N'C:\\it''s\\a.mdf')\n" +
 				"FOR ATTACH",
@@ -437,21 +437,24 @@ func TestBuildAttachStatement(t *testing.T) {
 // database that is not attached yet, so the order is not cosmetic.
 func TestAttachSetsTheOwnerAfterCreating(t *testing.T) {
 	s := detServer(t)
-	err := s.AttachDatabase(context.Background(), AttachSpec{
+	_, err := s.AttachDatabase(context.Background(), AttachDatabaseRequest{
 		Name: "appdb", Files: []string{`C:\Data\appdb.mdf`}, Owner: "sa",
 	})
 	if err != nil {
 		t.Fatalf("AttachDatabase: %v", err)
 	}
 	stmts := detLog.statements()
-	if len(stmts) != 2 {
-		t.Fatalf("got %d statements, want the attach and the ownership change: %v", len(stmts), stmts)
+	if len(stmts) != 3 {
+		t.Fatalf("got %d statements, want the attach, the ownership change and the read-back: %v", len(stmts), stmts)
 	}
 	if !strings.HasPrefix(stmts[0], "CREATE DATABASE") {
 		t.Errorf("first statement is %q, want the attach", stmts[0])
 	}
 	if want := "ALTER AUTHORIZATION ON DATABASE::[appdb] TO [sa]"; stmts[1] != want {
 		t.Errorf("second statement is %q, want %q", stmts[1], want)
+	}
+	if !strings.Contains(stmts[2], "FROM sys.databases") {
+		t.Errorf("third statement is %q, want the read-back from sys.databases", stmts[2])
 	}
 }
 
@@ -460,7 +463,7 @@ func TestAttachSetsTheOwnerAfterCreating(t *testing.T) {
 // AUTHORIZATION would fail for a login that may not transfer ownership.
 func TestAttachWithNoOwnerLeavesOwnershipAlone(t *testing.T) {
 	s := detServer(t)
-	if err := s.AttachDatabase(context.Background(), AttachSpec{
+	if _, err := s.AttachDatabase(context.Background(), AttachDatabaseRequest{
 		Name: "appdb", Files: []string{`C:\Data\appdb.mdf`},
 	}); err != nil {
 		t.Fatalf("AttachDatabase: %v", err)
@@ -474,10 +477,10 @@ func TestAttachWithNoOwnerLeavesOwnershipAlone(t *testing.T) {
 
 func TestAttachRequiresANameAndAtLeastOneFile(t *testing.T) {
 	s := detServer(t)
-	if err := s.AttachDatabase(context.Background(), AttachSpec{Files: []string{"a.mdf"}}); err == nil {
+	if _, err := s.AttachDatabase(context.Background(), AttachDatabaseRequest{Files: []string{"a.mdf"}}); err == nil {
 		t.Error("attaching with no name returned no error")
 	}
-	if err := s.AttachDatabase(context.Background(), AttachSpec{Name: "appdb"}); err == nil {
+	if _, err := s.AttachDatabase(context.Background(), AttachDatabaseRequest{Name: "appdb"}); err == nil {
 		t.Error("attaching with no files returned no error")
 	}
 	if n := len(detLog.statements()); n != 0 {
@@ -497,7 +500,7 @@ func TestDetachAndAttachAreScriptable(t *testing.T) {
 	if err := s.DatabaseRef("appdb").Detach(ctx, DetachOptions{DropConnections: true, UpdateStatistics: true}); err != nil {
 		t.Fatalf("scripted detach: %v", err)
 	}
-	if err := s.AttachDatabase(ctx, AttachSpec{
+	if _, err := s.AttachDatabase(ctx, AttachDatabaseRequest{
 		Name: "appdb2", Files: []string{`C:\Data\appdb.mdf`}, Owner: "sa",
 	}); err != nil {
 		t.Fatalf("scripted attach: %v", err)

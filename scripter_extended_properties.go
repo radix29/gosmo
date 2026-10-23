@@ -268,9 +268,9 @@ func (sc *Scripter) renderExtendedProperties(props []scriptedExtProp, skip func(
 func extendedPropertyStatement(p scriptedExtProp, guard bool) string {
 	l := p.level
 	levels := []string{l.Level0Type, l.Level0Name, l.Level1Type, l.Level1Name, l.Level2Type, l.Level2Name}
-	var args string
+	var args strings.Builder
 	for i := 0; i < len(levels) && levels[i] != ""; i += 2 {
-		args += fmt.Sprintf(", @level%[1]dtype = %[2]s, @level%[1]dname = %[3]s", i/2, QuoteLiteral(levels[i]), QuoteLiteral(levels[i+1]))
+		fmt.Fprintf(&args, ", @level%[1]dtype = %[2]s, @level%[1]dname = %[3]s", i/2, QuoteLiteral(levels[i]), QuoteLiteral(levels[i+1]))
 	}
 
 	var sb strings.Builder
@@ -309,7 +309,7 @@ func extendedPropertyStatement(p scriptedExtProp, guard bool) string {
 		fmt.Fprintf(&sb, "IF NOT EXISTS (SELECT 1 FROM sys.fn_listextendedproperty(%s, %s))\n    ",
 			QuoteLiteral(p.name), strings.Join(lits, ", "))
 	}
-	fmt.Fprintf(&sb, "EXEC sys.sp_addextendedproperty @name = %s, @value = %s%s;\nGO\n", QuoteLiteral(p.name), value, args)
+	fmt.Fprintf(&sb, "EXEC sys.sp_addextendedproperty @name = %s, @value = %s%s;\nGO\n", QuoteLiteral(p.name), value, args.String())
 	return sb.String()
 }
 

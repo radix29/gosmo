@@ -44,7 +44,7 @@ func liveReorderJob(t *testing.T, srv *Server, ctx context.Context) (*Job, func(
 		drop()
 		t.Fatalf("job by name: %v", err)
 	}
-	steps := []JobStepRequest{
+	steps := []JobStepDefinition{
 		// Step 1 sends the run on to step 3, which is what has to still be
 		// true — pointing at the same *step* — after the reorder.
 		{Name: "one", Subsystem: "TSQL", Command: "SELECT 1", OnSuccessAction: goToStepAction, OnSuccessStepID: 3, OnFailAction: 2},

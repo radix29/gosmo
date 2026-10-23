@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql/driver"
 	"errors"
+	"slices"
 	"strings"
 	"sync"
 
@@ -130,10 +131,8 @@ func loginDatabaseRefused(err error) bool {
 		return false
 	}
 	for _, e := range append([]mssql.Error{me}, me.All...) {
-		for _, n := range loginRefusalNumbers {
-			if e.Number == n {
-				return true
-			}
+		if slices.Contains(loginRefusalNumbers, e.Number) {
+			return true
 		}
 	}
 	return false

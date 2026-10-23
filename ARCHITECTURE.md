@@ -325,7 +325,7 @@ The instance and database halves pair up: `ServerResourceStat` and
 | Rename a database       | `srv.DatabaseRef(old).Rename(ctx, new, term)` / `db.Rename(ctx, new, term)` — `gosmo.TerminationRollbackImmediate` puts it in single-user mode first |
 | Detach a database       | `srv.DatabaseRef(name).Detach(ctx, gosmo.DetachOptions{...})` — leaves the files on disk; a detach that fails after `DropConnections` is put back to the access mode it had |
 | Free the pool's own sessions from a database | `srv.ReleaseIdleConnections(ctx)` — closes idle pooled connections, which otherwise sit inside the last database they wrote to (a read never enters one: `procRead`) and block an exclusive-access statement (detach, rename, drop, `SET READ_ONLY`, RCSI, filegroup read-only — each of which calls it itself) |
-| Attach a database       | `srv.AttachDatabase(ctx, gosmo.AttachSpec{Name, Files, Owner, RebuildLog})` — the name need not be the one it was detached under |
+| Attach a database       | `srv.AttachDatabase(ctx, gosmo.AttachDatabaseRequest{Name, Files, Owner, RebuildLog})` → `*Database` (read back; the `DatabaseRef` under `Scripting`) — the name need not be the one it was detached under |
 | Read a detached file    | `srv.DetachedDatabaseInfo(ctx, primaryFilePath)` → `*DetachedDatabase` (`.Name`, `.Files`, `.DataFiles()`, `.LogFiles()`) — the only way to learn a detached database's other files |
 | Database snapshots      | `srv.DatabaseSnapshots(ctx)` / `srv.DatabaseSnapshotByName(ctx, name)` / `srv.DatabaseSnapshotRef(name)` (no-I/O handle) / `srv.SnapshotsOf(ctx, database)` / `srv.CreateDatabaseSnapshot(ctx, req)` / `srv.RestoreFromSnapshot(ctx, database, snapshot)` — see [Database snapshots](#database-snapshots) |
 | `Server.LinkedServers`  | `srv.LinkedServers(ctx)` (`DataAccess` = `is_data_access_enabled`); through one, `srv.LinkedServerDatabases(ctx, ls)` / `srv.LinkedServerCatalog(ctx, ls, db)` — `Catalog`'s snapshot read from the remote's own sys views via `OPENQUERY`, SQL Server remotes only (see `linked_server.go`) |
@@ -878,7 +878,7 @@ rows.
 | SSMS equivalent                    | gosmo                                              |
 | ---------------------------------- | -------------------------------------------------- |
 | Tasks → Detach                     | `db.Detach(ctx, gosmo.DetachOptions{...})` |
-| Databases → Attach                 | `srv.AttachDatabase(ctx, gosmo.AttachSpec{Name, Files, Owner, RebuildLog})` |
+| Databases → Attach                 | `srv.AttachDatabase(ctx, gosmo.AttachDatabaseRequest{Name, Files, Owner, RebuildLog})` → `*Database` |
 | The Attach dialog's file list      | `srv.DetachedDatabaseInfo(ctx, primaryFilePath)` → `*DetachedDatabase` |
 | The paths to detach from           | `srv.DatabaseFiles(ctx, name)` — reads `sys.master_files`, so it answers for a database `db.Files(ctx)` cannot `USE` |
 
@@ -1656,7 +1656,7 @@ a flag — a rebuild, and a `RECONFIGURE` that applies every pending change.
 
 ```go
 job, _ := srv.CreateJob(ctx, gosmo.CreateJobRequest{Name: "NightlyBackup", Enabled: true})
-step, _ := job.AddStep(ctx, gosmo.JobStepRequest{ // read back: step.StepID is its number
+step, _ := job.AddStep(ctx, gosmo.JobStepDefinition{ // read back: step.StepID is its number
     Name:            "Run backup",
     Subsystem:       "TSQL",
     Command:         "EXEC dbo.RunNightlyBackup",
@@ -1669,11 +1669,11 @@ job.Start(ctx, step.Name)
 
 // Edit or remove a step in place.
 steps, _ := job.Steps(ctx)
-steps[0].Alter(ctx, gosmo.JobStepRequest{ /* ... */ })
+steps[0].Alter(ctx, gosmo.JobStepDefinition{ /* ... */ })
 steps[0].Drop(ctx)
 
 // Reorder them: insert at a position, move one step, or reorder the lot.
-job.InsertStep(ctx, gosmo.JobStepRequest{ /* ... */ }, 2)
+job.InsertStep(ctx, gosmo.JobStepDefinition{ /* ... */ }, 2)
 job.MoveStep(ctx, 3, 1)
 job.ReorderSteps(ctx, func(n int) []int { return []int{3, 1, 2} })
 
@@ -1715,7 +1715,7 @@ Agent stopped, and for a login with neither `sysadmin` nor
 `JobStateUnknown` is what a multi-server job Agent does not run itself
 reports.
 
-`JobStepRequest`'s two string fields read an empty value differently, because
+`JobStepDefinition`'s two string fields read an empty value differently, because
 msdb does: an empty `Database` means "leave the step's database alone"
 (`sp_update_jobstep` accepts `N''` for `@database_name` and changes nothing),
 while an empty `OutputFileName` is sent and *does* clear the step's output
@@ -2066,8 +2066,8 @@ specs, New Session templates, target builders).
 | SSMS equivalent                  | gosmo                                                      |
 | -------------------------------- | ---------------------------------------------------------- |
 | Extended Events → Sessions       | `srv.XEvents().Sessions(ctx)` / `srv.XEvents().SessionByName(ctx, name)` / `srv.XEvents().SessionRef(name)` (no-I/O handle) — each with its `Events` and `Targets` |
-| New session                      | `srv.XEvents().CreateSession(ctx, gosmo.EventSessionSpec{...})`   |
-| Properties → OK                  | `es.Alter(ctx, spec)` — the minimal ADD/DROP diff against the catalog; start from `es.Spec()` |
+| New session                      | `srv.XEvents().CreateSession(ctx, gosmo.EventSessionDefinition{...})`   |
+| Properties → OK                  | `es.Alter(ctx, spec)` — the minimal ADD/DROP diff against the catalog; start from `es.Definition()` |
 | Start / Stop / Delete            | `es.Start(ctx)` / `es.Stop(ctx)` / `es.Drop(ctx)`              |
 | Running state, dropped events, current file | `es.Status(ctx)` → `*EventSessionStatus`            |
 | Script Session as CREATE         | `NewServerScripter(srv, opts).ScriptEventSession(ctx, name)`   |
@@ -2093,10 +2093,10 @@ failure path too — the audit's disable window. Adding and dropping events and
 targets needs no stop, but events and targets cannot share one statement, so
 `Alter` emits one per group.
 
-`EventSessionSpec`'s zero values: `RetentionMode`, `MaxDispatchLatency`,
+`EventSessionDefinition`'s zero values: `RetentionMode`, `MaxDispatchLatency`,
 `MaxMemory` and `MemoryPartitionMode` at zero mean "server default" on a create
 and "leave alone" on an alter; INFINITE latency is `gosmo.XEInfinite`, which
-is what a catalog 0 reads as through `es.Spec()`.
+is what a catalog 0 reads as through `es.Definition()`.
 
 ### Credentials
 

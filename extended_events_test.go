@@ -159,7 +159,7 @@ var fileTarget = SessionTarget{Package: "package0", Name: "event_file", Fields: 
 }}
 
 func TestCreateEventSessionStatement(t *testing.T) {
-	spec := EventSessionSpec{
+	spec := EventSessionDefinition{
 		Name:               "odd]name",
 		Events:             []SessionEvent{batchEvent, {Package: "sqlserver", Name: "rpc_completed"}},
 		Targets:            []SessionTarget{fileTarget, {Package: "package0", Name: "ring_buffer"}},
@@ -191,7 +191,7 @@ WITH (EVENT_RETENTION_MODE=ALLOW_SINGLE_EVENT_LOSS,MAX_DISPATCH_LATENCY=3 SECOND
 		}
 	}
 
-	for _, bad := range []EventSessionSpec{
+	for _, bad := range []EventSessionDefinition{
 		{Events: []SessionEvent{batchEvent}},
 		{Name: "no events"},
 		{Name: "x", Events: []SessionEvent{{Name: "no_package"}}},
@@ -245,7 +245,7 @@ func TestDatabaseScopedEventSessionsRefusedOffAzure(t *testing.T) {
 		s := &Server{info: &ServerInfo{EngineEdition: int(edition), VersionMajor: 17}}
 		d := s.DatabaseRef("AppDB")
 		es := d.XEvents().SessionRef("d")
-		spec := EventSessionSpec{Name: "d", Events: []SessionEvent{{Package: "sqlserver", Name: "sql_batch_completed"}}}
+		spec := EventSessionDefinition{Name: "d", Events: []SessionEvent{{Package: "sqlserver", Name: "sql_batch_completed"}}}
 		for name, call := range map[string]func() error{
 			"XEvents.Sessions":      func() error { _, err := d.XEvents().Sessions(ctx); return err },
 			"XEvents.SessionByName": func() error { _, err := d.XEvents().SessionByName(ctx, "d"); return err },
@@ -283,13 +283,13 @@ func TestAlterEventSessionDiff(t *testing.T) {
 	}
 
 	// Nothing changed: actions in another order and case are the same set.
-	same := cur.Spec()
+	same := cur.Definition()
 	same.Events[0].Actions = []string{"SQLSERVER.sql_text", "package0.event_sequence"}
 	if d := same.alterStatements(cur); len(d.statements) != 0 || d.stoppedOnly != "" {
 		t.Errorf("no-op diff = %+v", d)
 	}
 
-	want := cur.Spec()
+	want := cur.Definition()
 	want.Events = []SessionEvent{
 		batchEvent, // unchanged
 		{Package: "sqlos", Name: "wait_info", Actions: []string{"sqlserver.sql_text"}}, // changed
@@ -316,7 +316,7 @@ func TestAlterEventSessionDiff(t *testing.T) {
 	}
 
 	// The spec's "server default" zeros leave the session's values alone.
-	zero := cur.Spec()
+	zero := cur.Definition()
 	zero.RetentionMode, zero.MaxDispatchLatency, zero.MaxMemory, zero.MemoryPartitionMode = "", 0, 0, ""
 	if d := zero.alterStatements(cur); d.stoppedOnly != "" {
 		t.Errorf("zero options altered: %q", d.stoppedOnly)
@@ -378,18 +378,18 @@ func TestAlterStopsARunningSessionOnlyForOptions(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
 		running bool
-		spec    func(EventSessionSpec) EventSessionSpec
+		spec    func(EventSessionDefinition) EventSessionDefinition
 		want    []string
 	}{
-		{"running, option", true, func(s EventSessionSpec) EventSessionSpec { s.MaxMemory = 8192; return s }, []string{
+		{"running, option", true, func(s EventSessionDefinition) EventSessionDefinition { s.MaxMemory = 8192; return s }, []string{
 			"ALTER EVENT SESSION [s] ON SERVER STATE = STOP",
 			"ALTER EVENT SESSION [s] ON SERVER\nWITH (MAX_MEMORY=8192 KB)",
 			"ALTER EVENT SESSION [s] ON SERVER STATE = START",
 		}},
-		{"stopped, option", false, func(s EventSessionSpec) EventSessionSpec { s.MaxMemory = 8192; return s }, []string{
+		{"stopped, option", false, func(s EventSessionDefinition) EventSessionDefinition { s.MaxMemory = 8192; return s }, []string{
 			"ALTER EVENT SESSION [s] ON SERVER\nWITH (MAX_MEMORY=8192 KB)",
 		}},
-		{"running, startup state only", true, func(s EventSessionSpec) EventSessionSpec { s.StartupState = true; return s }, []string{
+		{"running, startup state only", true, func(s EventSessionDefinition) EventSessionDefinition { s.StartupState = true; return s }, []string{
 			"ALTER EVENT SESSION [s] ON SERVER\nWITH (STARTUP_STATE=ON)",
 		}},
 	} {
@@ -401,7 +401,7 @@ func TestAlterStopsARunningSessionOnlyForOptions(t *testing.T) {
 				t.Fatal(err)
 			}
 			ctx, col := WithScript(t.Context())
-			if err := s.XEvents().SessionRef("s").Alter(ctx, tc.spec(cur.Spec())); err != nil {
+			if err := s.XEvents().SessionRef("s").Alter(ctx, tc.spec(cur.Definition())); err != nil {
 				t.Fatal(err)
 			}
 			if got := col.Statements(); strings.Join(got, "|") != strings.Join(tc.want, "|") {
@@ -589,7 +589,7 @@ func TestNonStringFieldValuesAreChecked(t *testing.T) {
 
 	bad := SessionEvent{Package: "sqlserver", Name: "sql_batch_completed",
 		Fields: []SessionField{{Name: "collect_batch_text", Value: "1),x=(2"}}}
-	spec := EventSessionSpec{Name: "s", Events: []SessionEvent{bad}}
+	spec := EventSessionDefinition{Name: "s", Events: []SessionEvent{bad}}
 	if _, err := spec.createStatement(xeServerScope); err == nil ||
 		!strings.Contains(err.Error(), "event sqlserver.sql_batch_completed: field collect_batch_text") {
 		t.Errorf("create: got %v", err)

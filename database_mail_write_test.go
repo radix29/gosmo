@@ -278,7 +278,7 @@ func TestMailServerStatementShapes(t *testing.T) {
 		want  []string
 	}{
 		{"configure", func(ctx context.Context) error {
-			return s.Mail().SetConfiguration(ctx, MailConfigurationOptions{
+			return s.Mail().SetConfiguration(ctx, MailConfigurationChanges{
 				AccountRetryAttempts: new(0), LoggingLevel: new(MailLoggingVerbose), ProhibitedExtensions: new("exe,dll")})
 		}, []string{
 			"EXEC msdb.dbo.sysmail_configure_sp @parameter_name = N'AccountRetryAttempts', @parameter_value = N'0'",
@@ -306,7 +306,7 @@ func TestMailServerStatementShapes(t *testing.T) {
 		})
 	}
 	ctx, col := WithScript(context.Background())
-	if err := s.Mail().SetConfiguration(ctx, MailConfigurationOptions{LoggingLevel: new(MailLoggingLevel(4))}); err == nil || len(col.Statements()) != 0 {
+	if err := s.Mail().SetConfiguration(ctx, MailConfigurationChanges{LoggingLevel: new(MailLoggingLevel(4))}); err == nil || len(col.Statements()) != 0 {
 		t.Errorf("logging level 4: err %v, statements %q; want a refusal", err, col.Statements())
 	}
 }

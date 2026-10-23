@@ -230,14 +230,14 @@ func TestLiveHandleWrites(t *testing.T) {
 			t.Fatalf("CreateJob: %v", err)
 		}
 		j := srv.JobRef(job) // a Ref on purpose: the read-back matches by job name
-		a, err := j.AddStep(ctx, JobStepRequest{Name: "a'1", Subsystem: "TSQL", Command: "SELECT 1", OnSuccessAction: 1, OnFailAction: 2})
+		a, err := j.AddStep(ctx, JobStepDefinition{Name: "a'1", Subsystem: "TSQL", Command: "SELECT 1", OnSuccessAction: 1, OnFailAction: 2})
 		if err != nil {
 			t.Fatalf("AddStep: %v", err)
 		}
 		if a.StepID != 1 || a.Name != "a'1" || a.Command != "SELECT 1" {
 			t.Fatalf("AddStep returned %+v, want step 1 a'1 read back", a)
 		}
-		b, err := j.InsertStep(ctx, JobStepRequest{Name: "b", Subsystem: "TSQL", Command: "SELECT 2", OnSuccessAction: 3, OnFailAction: 2}, 1)
+		b, err := j.InsertStep(ctx, JobStepDefinition{Name: "b", Subsystem: "TSQL", Command: "SELECT 2", OnSuccessAction: 3, OnFailAction: 2}, 1)
 		if err != nil {
 			t.Fatalf("InsertStep: %v", err)
 		}
