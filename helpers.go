@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 )
 
@@ -333,8 +334,9 @@ ORDER  BY ` + order
 
 // perDatabaseBatch runs q in each of dbs in one round trip: every database's
 // run is that database's sp_executesql inside its own TRY/CATCH, so a
-// database that cannot be entered or read is skipped server-side rather than
-// failing the whole listing — the shape Login.UserMappings has. See
+// database that cannot be entered is skipped server-side rather than failing
+// the whole listing — the shape Login.UserMappings has. Any other error, q's
+// own included, fails the batch. See
 // perDatabaseExec for why the procedure is named through a variable. Each of q's result
 // sets starts with DB_NAME(), under a column alias naming what the set holds.
 // read builds one value from a row, given that alias and a scan that fills
@@ -399,8 +401,15 @@ func perDatabaseBatch[T any](ctx context.Context, s *Server, what string, dbs []
 
 // perDatabaseExec is one database's step of a per-database batch: @q run by
 // that database's sp_executesql, with args (", N'@p1 …', @p1 = …" or "")
-// appended, inside a TRY/CATCH that skips the database on any error. The
-// batch declares @proc nvarchar(300) and @q.
+// appended, inside a TRY/CATCH that skips the database when it cannot be
+// entered (perDatabaseSkipErrors) and re-raises anything else. The batch
+// declares @proc nvarchar(300) and @q.
+//
+// The CATCH sees q's own faults too — a compile error inside sp_executesql
+// (a column missing on an older major, Msg 207; a collation conflict, 468)
+// lands in the caller's TRY — so an empty CATCH turned a broken query into
+// "no rows in that database", and TestLiveVersionSweep could not see it. The
+// THROW ends the batch with the real error, which the caller wraps.
 //
 // The procedure is named through @proc, not written EXEC [db].sys.sp_executesql:
 // a literal three-part name is resolved when the batch compiles, so a database
@@ -410,5 +419,28 @@ func perDatabaseBatch[T any](ctx context.Context, s *Server, what string, dbs []
 // The literal form passed a live test only while the batch's plan was cached.
 func perDatabaseExec(database, args string) string {
 	return "BEGIN TRY SET @proc = " + QuoteLiteral(quoteIdent(database)+".sys.sp_executesql") +
-		"; EXEC @proc @q" + args + "; END TRY BEGIN CATCH END CATCH;\n"
+		"; EXEC @proc @q" + args + "; END TRY BEGIN CATCH IF ERROR_NUMBER() NOT IN (" +
+		perDatabaseSkipErrors + ") THROW; END CATCH;\n"
 }
+
+// cannotEnterErrors are the errors that mean a database could not be
+// entered. Probed live on 2016, 2017 and 2025 (2026-10-23): 942 OFFLINE; 924
+// SINGLE_USER held by another session; 927 RESTORING; 916 no access (also a
+// non-sysadmin facing RESTRICTED_USER or EMERGENCY); 911 dropped or renamed
+// since it was listed. Taken from the documentation, not reproducible on a
+// test instance: 922 recovering, 926 SUSPECT, 945 files inaccessible, 952 in
+// transition, 976 and 978 a non-readable AG secondary, 40613 Azure database
+// unavailable. A per-database batch skips a database on one
+// (perDatabaseSkipErrors), and recheckEntry decides from one whether a read's
+// own database refused it.
+var cannotEnterErrors = []int32{911, 916, 922, 924, 926, 927, 942, 945, 952, 976, 978, 40613}
+
+// perDatabaseSkipErrors is cannotEnterErrors as the list a per-database
+// batch's CATCH skips.
+var perDatabaseSkipErrors = func() string {
+	nums := make([]string, len(cannotEnterErrors))
+	for i, n := range cannotEnterErrors {
+		nums[i] = strconv.Itoa(int(n))
+	}
+	return strings.Join(nums, ", ")
+}()

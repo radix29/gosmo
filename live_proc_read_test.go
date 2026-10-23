@@ -1,16 +1,14 @@
 //go:build livedb
 
-// Live proof for the A1 spike (OPEN-THREADS.md § Idle pooled connections camp
-// in the last database read): a database-scoped read sent as an RPC call of
-// [db].sys.sp_executesql (procRead) against the USE batch it would replace
-// (useBatch). Each test runs both paths, so a test that passes for procRead
-// and fails for useBatch shows it can see the difference it claims.
+// Live proof for procRead (OPEN-THREADS.md § Idle pooled connections camp in
+// the last database written to): a database-scoped read sent as an RPC call of
+// [db].sys.sp_executesql, which every pooled read is, against the USE batch
+// it replaced (useBatch, sent here by hand on a pooled connection). Each test
+// runs both, so a test that passes for procRead and fails for useBatch shows
+// it can see the difference it claims.
 //
 //	go test -tags livedb . -run TestLiveProcRead -v \
 //	  -livedb 'sqlserver://sa:PASS@host?TrustServerCertificate=true'
-//
-// -procreads runs the rest of the live suite (TestLiveVersionSweep, the
-// collation tests) on procRead too.
 //
 // Creates, backs up, restores and drops gosmo_a1_* databases, and deletes the
 // backup file it wrote.
@@ -20,7 +18,6 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"flag"
 	"slices"
 	"testing"
 	"time"
@@ -28,14 +25,19 @@ import (
 	mssql "github.com/microsoft/go-mssqldb"
 )
 
-var liveProcReads = flag.Bool("procreads", false, "run live reads through procRead (the A1 spike) instead of useBatch")
-
-// setProcReads sets procReads for the rest of t.
-func setProcReads(t *testing.T, on bool) {
-	t.Helper()
-	was := procReads
-	procReads = on
-	t.Cleanup(func() { procReads = was })
+// readRow is a database-scoped queryRow by either path: d.queryRow
+// (procRead), or, with proc false, q as a useBatch on a pooled connection, as
+// every pooled read went before 2026-10-23 — the control.
+func readRow(ctx context.Context, proc bool, d *Database, scan func(*sql.Row) error, q string, args ...any) error {
+	if proc {
+		return d.queryRow(ctx, scan, q, args...)
+	}
+	conn, err := d.server.db.Conn(ctx)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	return scan(conn.QueryRowContext(ctx, d.useBatch(q), args...))
 }
 
 // liveSecondDB is a second pool on the live DSN: another session, which
@@ -78,28 +80,29 @@ func TestLiveProcReadLeavesSessionInLoginDatabase(t *testing.T) {
 	other := liveSecondDB(t)
 
 	d, drop := liveScratchDB(t, db, ctx, "gosmo_a1_home")
-	t.Cleanup(drop)
+	defer drop() // not t.Cleanup: done closes db first, and the drop fails silently
 
 	for _, proc := range []bool{true, false} {
-		setProcReads(t, proc)
 		var in string
-		if err := d.queryRow(ctx, func(r *sql.Row) error { return r.Scan(&in) }, `SELECT DB_NAME()`); err != nil {
+		if err := readRow(ctx, proc, d, func(r *sql.Row) error { return r.Scan(&in) }, `SELECT DB_NAME()`); err != nil {
 			t.Fatalf("%s: read: %v", pathName(proc), err)
 		}
 		if in != d.Name {
 			t.Errorf("%s: read ran in %q, want %q", pathName(proc), in, d.Name)
 		}
-		// query too, whose connection is released by rows.Close.
-		rows, err := d.query(ctx, `SELECT name FROM sys.objects WHERE object_id = @p1`, 3)
-		if err != nil {
-			t.Fatalf("%s: query: %v", pathName(proc), err)
+		if proc {
+			// query too, whose connection is released by rows.Close.
+			rows, err := d.query(ctx, `SELECT name FROM sys.objects WHERE object_id = @p1`, 3)
+			if err != nil {
+				t.Fatalf("query: %v", err)
+			}
+			for rows.Next() {
+			}
+			if err := rows.Err(); err != nil {
+				t.Fatalf("rows: %v", err)
+			}
+			rows.Close()
 		}
-		for rows.Next() {
-		}
-		if err := rows.Err(); err != nil {
-			t.Fatalf("%s: rows: %v", pathName(proc), err)
-		}
-		rows.Close()
 
 		n := sessionsIn(t, ctx, other, d.Name)
 		t.Logf("%s: %d idle session(s) left in %s", pathName(proc), n, d.Name)
@@ -121,7 +124,7 @@ func TestLiveProcReadDoesNotBlockRestore(t *testing.T) {
 	other := liveSecondDB(t)
 
 	d, drop := liveScratchDB(t, db, ctx, "gosmo_a1_restore")
-	t.Cleanup(drop)
+	defer drop()
 
 	const bak = "gosmo_a1_restore.bak" // the instance's default backup directory
 	if _, err := other.ExecContext(ctx, `BACKUP DATABASE [gosmo_a1_restore] TO DISK = N'`+bak+`' WITH INIT, COPY_ONLY`); err != nil {
@@ -141,9 +144,8 @@ WHERE s.database_name = N'gosmo_a1_restore' ORDER BY s.backup_finish_date DESC`)
 	})
 
 	for _, proc := range []bool{true, false} {
-		setProcReads(t, proc)
 		var n int
-		if err := d.queryRow(ctx, func(r *sql.Row) error { return r.Scan(&n) }, `SELECT COUNT(*) FROM sys.objects`); err != nil {
+		if err := readRow(ctx, proc, d, func(r *sql.Row) error { return r.Scan(&n) }, `SELECT COUNT(*) FROM sys.objects`); err != nil {
 			t.Fatalf("%s: read: %v", pathName(proc), err)
 		}
 		_, err := other.ExecContext(ctx, `RESTORE DATABASE [gosmo_a1_restore] FROM DISK = @p1 WITH REPLACE`, file)
@@ -171,17 +173,13 @@ func TestLiveProcReadRefusesADatabaseItCannotEnter(t *testing.T) {
 	other := liveSecondDB(t)
 
 	d, drop := liveScratchDB(t, db, ctx, "gosmo_a1_enter")
-	t.Cleanup(drop)
+	defer drop()
 	missing := d.server.DatabaseRef("gosmo_a1_missing")
 
-	read := func(target *Database) error {
-		var in string
-		return target.queryRow(ctx, func(r *sql.Row) error { return r.Scan(&in) }, `SELECT DB_NAME()`)
-	}
 	report := func(what string, target *Database) {
 		for _, proc := range []bool{true, false} {
-			setProcReads(t, proc)
-			err := read(target)
+			var in string
+			err := readRow(ctx, proc, target, func(r *sql.Row) error { return r.Scan(&in) }, `SELECT DB_NAME()`)
 			num := 0
 			if me, ok := errors.AsType[mssql.Error](err); ok {
 				num = int(me.Number)
@@ -227,7 +225,12 @@ func TestLiveProcReadRefusesADatabaseItCannotEnter(t *testing.T) {
 func TestLiveProcReadSurvivesAnIdSwap(t *testing.T) {
 	db, ctx, done := liveDBTimeout(t, 3*time.Minute)
 	defer done()
-	setProcReads(t, true)
+	var drops []func()
+	defer func() {
+		for _, drop := range drops {
+			drop()
+		}
+	}()
 
 	names := []string{"gosmo_a1_swap_x", "gosmo_a1_swap_y"}
 	const q = `SELECT DB_NAME(), (SELECT TOP (1) name FROM sys.tables WHERE name LIKE N'marker%')`
@@ -249,7 +252,7 @@ func TestLiveProcReadSurvivesAnIdSwap(t *testing.T) {
 		ds := map[string]*Database{}
 		for _, n := range order {
 			d, drop := liveScratchDB(t, db, ctx, n)
-			t.Cleanup(drop)
+			drops = append(drops, drop)
 			liveExecIn(t, d, ctx, `CREATE TABLE dbo.marker_`+round+` (id int)`)
 			ds[n] = d
 		}
@@ -286,7 +289,7 @@ func TestLiveProcReadSurvivesAnIdSwap(t *testing.T) {
 	after := ids()
 	t.Logf("ids before %v, after %v", before, after)
 	if after[names[0]] != before[names[1]] || after[names[1]] != before[names[0]] {
-		t.Logf("the ids did not swap: this run proves nothing about the trap")
+		t.Errorf("the ids did not swap (a leftover database?): the test cannot see the trap")
 	}
 	read(ds, "second")
 }
@@ -307,13 +310,12 @@ func TestLiveProcReadParameterCollation(t *testing.T) {
 		coll = "Latin1_General_100_CI_AI"
 	}
 	d, drop := liveScratchDBCollated(t, db, ctx, "gosmo_a1_coll", coll)
-	t.Cleanup(drop)
+	defer drop()
 	liveExecIn(t, d, ctx, `CREATE TABLE dbo.Mixed (id int)`)
 
 	for _, proc := range []bool{true, false} {
-		setProcReads(t, proc)
 		var pc string
-		if err := d.queryRow(ctx, func(r *sql.Row) error { return r.Scan(&pc) },
+		if err := readRow(ctx, proc, d, func(r *sql.Row) error { return r.Scan(&pc) },
 			`SELECT CAST(SQL_VARIANT_PROPERTY(CAST(@p1 AS sql_variant), 'Collation') AS nvarchar(128))`, "x"); err != nil {
 			t.Fatalf("%s: parameter collation: %v", pathName(proc), err)
 		}
@@ -336,9 +338,9 @@ func TestLiveProcReadParameterCollation(t *testing.T) {
 		for _, q := range []string{bare, collated} {
 			text, args := d.useBatch(q), []any{"dbo", "Mixed"}
 			if proc {
-				var ok bool
-				if text, args, ok = d.procRead(q, args); !ok {
-					t.Fatal("procRead declined string arguments")
+				var err error
+				if text, args, err = d.procRead(q, args); err != nil {
+					t.Fatalf("procRead declined string arguments: %v", err)
 				}
 			}
 			var n int

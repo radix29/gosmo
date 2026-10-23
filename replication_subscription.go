@@ -307,8 +307,8 @@ func (d *Database) LocalSubscriptions(ctx context.Context) ([]*LocalSubscription
 
 // LocalSubscriptions returns the subscriptions held by every database on
 // the instance, in database order, then as Database.LocalSubscriptions
-// orders them. A database that cannot be read (offline, or the login has no
-// access) is skipped.
+// orders them. A database that cannot be entered (offline, or the login has
+// no access) is skipped.
 //
 // sys.databases.is_subscribed does not say which databases to look in (see
 // the top of this file), so the candidates are those holding a subscriber

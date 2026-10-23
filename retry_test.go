@@ -182,7 +182,10 @@ func (c deadlockConn) ExecContext(_ context.Context, q string, _ []driver.NamedV
 	}
 	return driver.ResultNoRows, nil
 }
-func (c deadlockConn) QueryContext(_ context.Context, q string, _ []driver.NamedValue) (driver.Rows, error) {
+func (c deadlockConn) QueryContext(_ context.Context, q string, args []driver.NamedValue) (driver.Rows, error) {
+	if _, inner, _, ok := unwrapProcRead(q, args); ok {
+		q = inner
+	}
 	if err := c.d.try(q); err != nil {
 		return nil, err
 	}

@@ -49,7 +49,10 @@ func (*auditConn) ExecContext(_ context.Context, q string, _ []driver.NamedValue
 	return driver.ResultNoRows, nil
 }
 
-func (*auditConn) QueryContext(_ context.Context, q string, _ []driver.NamedValue) (driver.Rows, error) {
+func (*auditConn) QueryContext(_ context.Context, q string, args []driver.NamedValue) (driver.Rows, error) {
+	if _, inner, _, ok := unwrapProcRead(q, args); ok {
+		q = inner
+	}
 	if strings.Contains(q, "is_state_enabled") {
 		rows := [][]driver.Value{{auditCurrent.enabled}}
 		if auditCurrent.missing {

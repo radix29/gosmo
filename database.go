@@ -222,8 +222,10 @@ func (d *Database) use(ctx context.Context, conn sqlConn) error {
 }
 
 // useBatch is q preceded by the switch to d's database, as one batch — a read
-// then costs one round trip rather than two, which is 41 ms per read against
-// an Azure SQL Managed Instance and 1.3 ms on a LAN.
+// inside InTransaction then costs one round trip rather than two, which is
+// 41 ms per read against an Azure SQL Managed Instance and 1.3 ms on a LAN.
+// A pooled read goes through procRead instead, which never leaves the
+// session in d; a transaction's session is meant to (serverTx.at).
 //
 // The guard is what makes one batch safe. A USE that fails (a missing,
 // offline or inaccessible database: 911, 942, 916) raises its error and the
@@ -247,18 +249,6 @@ func (d *Database) useBatch(q string) string {
 	return "USE " + quoteIdent(d.Name) + "; IF @@ERROR <> 0 RETURN; " + q
 }
 
-// readCall is the query text and arguments a pooled read sends for q: useBatch,
-// or procRead while procReads is set and it can declare args. proc reports
-// the latter, whose errors are q's own and need no recheckUse.
-func (d *Database) readCall(q string, args []any) (query string, qargs []any, proc bool) {
-	if procReads {
-		if query, qargs, ok := d.procRead(q, args); ok {
-			return query, qargs, true
-		}
-	}
-	return d.useBatch(q), args, false
-}
-
 // msgCollationConflict is Msg 468, "Cannot resolve the collation conflict".
 const msgCollationConflict = 468
 
@@ -280,6 +270,14 @@ func (d *Database) recheckUse(ctx context.Context, conn sqlConn, err error) (use
 		return nil, false
 	}
 	if uerr := d.use(ctx, conn); uerr != nil {
+		// Number 0 is the driver's own report that the failure already ended
+		// the transaction the read ran in (go-mssqldb's
+		// checkServerAbortedTransaction): the USE never reached the server,
+		// so it tells the halves apart no more, and err — the server's own
+		// 911, 942 or 916 — is the better report (TestLiveUseBatch).
+		if me, ok := errors.AsType[mssql.Error](uerr); ok && me.Number == 0 {
+			return nil, false
+		}
 		return uerr, false
 	}
 	me, ok := errors.AsType[mssql.Error](err)
@@ -289,8 +287,8 @@ func (d *Database) recheckUse(ctx context.Context, conn sqlConn, err error) (use
 func (d *Database) query(ctx context.Context, q string, args ...any) (*dbRows, error) {
 	// For queries that return rows we cannot use withConn (the conn would be
 	// released before the caller finishes iterating). Instead we acquire a
-	// dedicated conn, switch DB, run the query, and return the rows wrapped
-	// with that conn — the caller's defer rows.Close() releases both.
+	// dedicated conn, run the query in d through procRead, and return the rows
+	// wrapped with that conn — the caller's defer rows.Close() releases both.
 	// A single read is idempotent, so a transient failure (dropped pooled
 	// connection, etc.) is retried on a fresh connection.
 	ctx, release := d.server.bound(ctx)
@@ -302,21 +300,21 @@ func (d *Database) query(ctx context.Context, q string, args ...any) (*dbRows, e
 		}
 		return &dbRows{Rows: rows, release: release}, nil
 	}
+	query, qargs, err := d.procRead(q, args)
+	if err != nil {
+		release()
+		return nil, err
+	}
 	rows, err := withRetry(ctx, func() (*dbRows, error) {
 		conn, err := d.server.db.Conn(ctx)
 		if err != nil {
 			return nil, fmt.Errorf("gosmo: acquire connection: %w", err)
 		}
-		query, qargs, proc := d.readCall(q, args)
 		rows, err := conn.QueryContext(ctx, query, qargs...)
-		if err != nil && !proc {
-			if uerr, rerun := d.recheckUse(ctx, conn, err); uerr != nil {
-				err = uerr
-			} else if rerun {
-				rows, err = conn.QueryContext(ctx, q, args...)
-			}
-		}
 		if err != nil {
+			if uerr := d.recheckEntry(ctx, conn, err); uerr != nil {
+				err = uerr
+			}
 			conn.Close()
 			return nil, err
 		}
@@ -354,20 +352,20 @@ func (d *Database) queryOn(ctx context.Context, t *serverTx, q string, args ...a
 	return rows, nil
 }
 
-// queryRow acquires a connection, switches it to d's database (USE), runs
-// q, and hands the resulting row to scan — retrying the whole acquire+USE+
-// scan sequence as one unit on a transient connection failure, same as
+// queryRow acquires a connection, runs q in d's database (procRead), and
+// hands the resulting row to scan — retrying the whole acquire+query+scan
+// sequence as one unit on a transient connection failure, same as
 // Server.queryRow and for the same reason: QueryRowContext itself never
 // returns an error, only Scan does, so scan has to run inside the retried
 // closure to be covered by it at all. Handing the caller a live *sql.Row
 // to scan later would let withRetry see a nil error and return before the
 // failure that only surfaces at Scan time, silently skipping the retry.
 //
-// The USE and q go as one batch (see useBatch). A failed batch surfaces in
-// Row.Err before scan sees the row, and that is where recheckUse tells the two
-// halves apart, as query does — scan never sees a USE failure, which it could
-// otherwise wrap or map to something else, and sees the batch's own failed
-// row for a failure in q.
+// A failed call surfaces in Row.Err before scan sees the row, and that is
+// where recheckEntry (or, inside InTransaction, recheckUse) tells d's refusal
+// from q's own failure, as query does — scan never sees a USE failure, which
+// it could otherwise wrap or map to something else, and sees the call's own
+// failed row for a failure in q.
 func (d *Database) queryRow(ctx context.Context, scan func(*sql.Row) error, q string, args ...any) error {
 	ctx, release := d.server.bound(ctx)
 	defer release()
@@ -388,21 +386,20 @@ func (d *Database) queryRow(ctx context.Context, scan func(*sql.Row) error, q st
 		}
 		return withAllMessages(scan(row))
 	}
-	_, err := withRetry(ctx, func() (struct{}, error) {
+	query, qargs, err := d.procRead(q, args)
+	if err != nil {
+		return err
+	}
+	_, err = withRetry(ctx, func() (struct{}, error) {
 		conn, err := d.server.db.Conn(ctx)
 		if err != nil {
 			return struct{}{}, fmt.Errorf("gosmo: acquire connection: %w", err)
 		}
 		defer conn.Close()
-		query, qargs, proc := d.readCall(q, args)
 		row := conn.QueryRowContext(ctx, query, qargs...)
-		if err := row.Err(); err != nil && !proc {
-			uerr, rerun := d.recheckUse(ctx, conn, err)
-			if uerr != nil {
+		if err := row.Err(); err != nil {
+			if uerr := d.recheckEntry(ctx, conn, err); uerr != nil {
 				return struct{}{}, uerr
-			}
-			if rerun {
-				row = conn.QueryRowContext(ctx, q, args...)
 			}
 		}
 		return struct{}{}, scan(row)

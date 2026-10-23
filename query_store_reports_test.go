@@ -36,6 +36,9 @@ func (c *qsRecConn) ExecContext(_ context.Context, q string, args []driver.Named
 }
 
 func (c *qsRecConn) QueryContext(_ context.Context, q string, args []driver.NamedValue) (driver.Rows, error) {
+	if _, inner, innerArgs, ok := unwrapProcRead(q, args); ok {
+		q, args = inner, innerArgs
+	}
 	qsRec.add(q, args)
 	return qsRec.reply(), nil
 }
