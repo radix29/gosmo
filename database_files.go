@@ -14,10 +14,8 @@ import (
 // ============================================================
 
 // DatabaseFileInfo describes a single database file, including log files —
-// unlike FileGroups (database.go), which only sees files
-// that belong to a filegroup and so omits the log. Sizes are normalized to
-// KB (FileGroups's MaxSize/Growth fields are not, for backward
-// compatibility with existing callers).
+// unlike FileGroups, which only sees files that belong to a filegroup and so
+// omits the log. Sizes are normalized to KB.
 //
 // It is also the handle file writes go through: Alter and Drop address the
 // file by Name alone, so Database.FileRef is enough for either.
@@ -36,17 +34,18 @@ type DatabaseFileInfo struct {
 	SizeKB int64
 	// SizeOnDiskKB is the space the file occupies on disk
 	// (sys.dm_io_virtual_file_stats.size_on_disk_bytes), filled by
-	// Server.DatabaseFiles only. 0 means unknown: Database.Files does not
-	// read it, the login lacks VIEW SERVER STATE (VIEW SERVER PERFORMANCE
-	// STATE from 2022), or the database is not online.
+	// Server.DatabaseFiles only. 0 means unknown: Database.Files and
+	// FileGroups do not read it, the login lacks VIEW SERVER STATE (VIEW
+	// SERVER PERFORMANCE STATE from 2022), or the database is not online.
 	SizeOnDiskKB int64
 	// SpaceUsedKB is the space allocated inside the file
 	// (FILEPROPERTY(name, 'SpaceUsed')) — SizeKB less it is what a shrink
 	// can give back, and it is the smallest size a shrink can reach. Filled
-	// by Database.Files only. 0 means unknown: the other reads do not fill
-	// it, FILEPROPERTY answers NULL without the permission to see the
-	// file, and a FILESTREAM container has no pages to count. A ROWS or LOG
-	// file always holds at least its header pages.
+	// by Database.Files and FileGroups. 0 means unknown:
+	// Server.DatabaseFiles does not fill it, FILEPROPERTY answers NULL
+	// without the permission to see the file, and a FILESTREAM container has
+	// no pages to count. A ROWS or LOG file always holds at least its header
+	// pages.
 	SpaceUsedKB     int64
 	MaxSizeKB       int64 // -1 = unlimited
 	GrowthKB        int64 // 0 when IsPercentGrowth is true
@@ -354,66 +353,44 @@ func (d *Database) FileGroupRef(name string) *FileGroup {
 // FileGroups returns all filegroups and their files, including a filegroup
 // with no files (its Files is empty) — the state ALTER DATABASE ADD FILEGROUP
 // leaves one in, and the only state REMOVE FILEGROUP accepts.
+//
+// The files are Files' own, grouped in Go, so a file found here and the same
+// file from Files are filled by one scanner and agree field for field. This
+// read once joined sys.database_files itself and never read FILEPROPERTY, so
+// every file's SpaceUsedKB here was 0 (TestLiveWrongValuesFileUnits).
 func (d *Database) FileGroups(ctx context.Context) ([]*FileGroup, error) {
 	const q = `
-SELECT fg.name, fg.type_desc, fg.is_default, fg.is_read_only,
-       df.file_id, df.name, df.physical_name, df.type_desc, df.state_desc,
-       CAST(df.size AS bigint) * 8, df.max_size, df.growth, df.is_percent_growth
+SELECT fg.name, fg.type_desc, fg.is_default, fg.is_read_only
 FROM   sys.filegroups fg
-LEFT   JOIN sys.database_files df ON df.data_space_id = fg.data_space_id
-ORDER  BY fg.name, df.file_id`
+ORDER  BY fg.name`
 
 	rows, err := d.query(ctx, q)
+	fgs, err := scanRows(rows, err, "list filegroups", func(scan func(...any) error) (*FileGroup, error) {
+		fg := &FileGroup{db: d}
+		if err := scan(&fg.Name, &fg.Type, &fg.IsDefault, &fg.IsReadOnly); err != nil {
+			return nil, err
+		}
+		return fg, nil
+	})
 	if err != nil {
-		return nil, fmt.Errorf("gosmo: list filegroups: %w", err)
+		return nil, err
 	}
-	defer rows.Close()
-
-	fgMap := make(map[string]*FileGroup)
-	var order []string
-	for rows.Next() {
-		var fgName string
-		var fgType FileGroupType
-		var fgDefault, fgReadOnly bool
-		// The file columns are NULL on the one row an empty filegroup gets
-		// from the LEFT JOIN.
-		var fID sql.NullInt64
-		var fName, fPath, fType, fState sql.NullString
-		var fSize, fMaxSize, fGrowth sql.NullInt64
-		var isPctGrowth sql.NullBool
-		if err := rows.Scan(&fgName, &fgType, &fgDefault, &fgReadOnly,
-			&fID, &fName, &fPath, &fType, &fState, &fSize, &fMaxSize, &fGrowth,
-			&isPctGrowth); err != nil {
-			return nil, fmt.Errorf("gosmo: list filegroups: %w", err)
-		}
-
-		fg, ok := fgMap[fgName]
-		if !ok {
-			fg = &FileGroup{db: d, Name: fgName, Type: fgType, IsDefault: fgDefault, IsReadOnly: fgReadOnly}
-			fgMap[fgName] = fg
-			order = append(order, fgName)
-		}
-		if !fName.Valid {
-			continue
-		}
-		f := &DatabaseFileInfo{
-			db: d, FileID: int(fID.Int64), Name: fName.String, PhysicalName: fPath.String,
-			Type: FileType(fType.String), FileGroup: fgName, State: FileState(fState.String),
-			SizeKB: fSize.Int64, IsPercentGrowth: isPctGrowth.Bool,
-		}
-		// max_size and growth are 8 KB pages (growth a percentage when
-		// is_percent_growth); normalizeFileGrowth turns them into KB, as
-		// Files does.
-		f.MaxSizeKB, f.GrowthKB, f.GrowthPercent = normalizeFileGrowth(fMaxSize.Int64, fGrowth.Int64, isPctGrowth.Bool)
-		fg.Files = append(fg.Files, f)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("gosmo: list filegroups: %w", err)
+	files, err := d.Files(ctx)
+	if err != nil {
+		return nil, err
 	}
 
-	fgs := make([]*FileGroup, 0, len(order))
-	for _, n := range order {
-		fgs = append(fgs, fgMap[n])
+	byName := make(map[string]*FileGroup, len(fgs))
+	for _, fg := range fgs {
+		byName[fg.Name] = fg
+	}
+	// Files is in type_desc, file_id order, and a filegroup's files share one
+	// type, so each group's come out in file_id order. A log file's FileGroup
+	// is "", which names no filegroup.
+	for _, f := range files {
+		if fg := byName[f.FileGroup]; fg != nil {
+			fg.Files = append(fg.Files, f)
+		}
 	}
 	return fgs, nil
 }
@@ -491,7 +468,10 @@ func (fg *FileGroup) SetReadOnly(ctx context.Context, readOnly bool, term Termin
 // normalizeFileGrowth converts sys.database_files' raw max_size/growth
 // columns (8KB pages, or a percentage when isPercentGrowth) into the KB/
 // percent units DatabaseFileInfo exposes. maxSizePages preserves the -1
-// "unlimited" sentinel rather than multiplying it into nonsense.
+// "unlimited" sentinel rather than multiplying it into nonsense. Only -1 maps
+// to unlimited: a log set to MAXSIZE = UNLIMITED is stored as 268435456 pages
+// and reads as 2097152 MB, as SSMS 21 shows it (gossms docs/decisions.md
+// § By design).
 func normalizeFileGrowth(maxSizePages, growthRaw int64, isPercentGrowth bool) (maxSizeKB, growthKB int64, growthPercent int) {
 	if maxSizePages < 0 {
 		maxSizeKB = -1

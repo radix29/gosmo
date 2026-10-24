@@ -104,25 +104,33 @@ ELSE
     ALTER DATABASE %s SET CHANGE_TRACKING = ON %s;`, QuoteLiteral(dbName), db, opts, db, opts), nil
 }
 
-// SetChangeTracking enables or disables change tracking on the table.
-// trackColumns is ignored when enable is false. A TableRef is enough.
+// TableChangeTrackingOptions is what Table.SetChangeTracking sets.
+// TrackColumnsUpdated (TRACK_COLUMNS_UPDATED) is ignored when Enabled is
+// false.
+type TableChangeTrackingOptions struct {
+	Enabled             bool
+	TrackColumnsUpdated bool
+}
+
+// SetChangeTracking enables or disables change tracking on the table. A
+// TableRef is enough.
 //
-// Enabling a table already tracked with the same trackColumns is a no-op.
-// Changing trackColumns on a tracked table has no ALTER of its own — ENABLE
+// Enabling a table already tracked with the same TrackColumnsUpdated is a
+// no-op. Changing TrackColumnsUpdated on a tracked table has no ALTER of its own — ENABLE
 // there is Msg 4996 ("already enabled") — so it disables and re-enables
 // tracking, all or nothing. That resets the table's tracking: its change
 // history is discarded and CHANGE_TRACKING_MIN_VALID_VERSION moves past
 // every version a client holds, so each client must reinitialise.
-func (t *Table) SetChangeTracking(ctx context.Context, enable, trackColumns bool) error {
+func (t *Table) SetChangeTracking(ctx context.Context, opts TableChangeTrackingOptions) error {
 	if err := requireSchema("set table change tracking", t.Schema, t.Name); err != nil {
 		return err
 	}
 	ref := qualifiedName(t.Schema, t.Name)
 	var err error
-	if !enable {
+	if !opts.Enabled {
 		_, err = t.db.exec(ctx, fmt.Sprintf("ALTER TABLE %s DISABLE CHANGE_TRACKING", ref))
 	} else {
-		err = t.db.execAtomic(ctx, enableTableChangeTrackingStatements(ref, trackColumns))
+		err = t.db.execAtomic(ctx, enableTableChangeTrackingStatements(ref, opts.TrackColumnsUpdated))
 	}
 	if err != nil {
 		return fmt.Errorf("gosmo: set change tracking on %s: %w", ref, err)

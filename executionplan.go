@@ -134,7 +134,16 @@ func (d *Database) ActualPlan(ctx context.Context, sqlText string) (*ExecutionPl
 // scan, so the loop stays.
 func (d *Database) capturePlan(ctx context.Context, mode PlanMode, sqlText string) (*ExecutionPlan, error) {
 	var plans []string
-	err := d.withConn(ctx, func(ctx context.Context, conn sqlConn) error {
+	// The capture is a SET on the session, so the session is switched to d
+	// for the batch rather than the batch sent into d (execIn) — and switched
+	// back after, by withSessionIn.
+	inSession := func(ctx context.Context, fn func(context.Context, sqlConn) error) error {
+		if txFrom(ctx, d.server) != nil {
+			return d.withConn(ctx, fn)
+		}
+		return d.withSessionIn(ctx, func(ctx context.Context, c *sql.Conn) error { return fn(ctx, c) })
+	}
+	err := inSession(ctx, func(ctx context.Context, conn sqlConn) error {
 		stop, err := StartPlanCapture(ctx, conn, mode)
 		if err != nil {
 			return err

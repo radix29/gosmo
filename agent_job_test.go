@@ -343,3 +343,18 @@ func TestJobHistoryBreaksTiesOnInstanceID(t *testing.T) {
 		}
 	}
 }
+
+// TestJobHistoryNamesTheJob: Job.History used to leave JobName "", a zero a
+// caller merging histories cannot tell from a nameless job.
+func TestJobHistoryNamesTheJob(t *testing.T) {
+	d := qsRecDB(t, 17, strings.Fields("date time dur status msg step name"), [][]driver.Value{
+		{int64(20261024), int64(10000), int64(5), int64(1), "ok", int64(0), "(Job outcome)"},
+	})
+	hist, err := (&Job{server: d.server, JobID: "J", Name: "Nightly"}).History(t.Context(), 0)
+	if err != nil || len(hist) != 1 {
+		t.Fatalf("History = %v, %v", hist, err)
+	}
+	if hist[0].JobName != "Nightly" {
+		t.Errorf("JobName = %q, want %q", hist[0].JobName, "Nightly")
+	}
+}

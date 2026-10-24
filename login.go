@@ -266,20 +266,27 @@ func (l *Login) SetDefaultLanguage(ctx context.Context, lang string) error {
 	return nil
 }
 
+// PasswordPolicy is what Login.SetPasswordPolicy sets: CHECK_POLICY and
+// CHECK_EXPIRATION.
+type PasswordPolicy struct {
+	CheckPolicy     bool
+	CheckExpiration bool
+}
+
 // SetPasswordPolicy sets the login's CHECK_POLICY and CHECK_EXPIRATION
-// flags. checkExpiration with checkPolicy off is refused before anything is
+// flags. CheckExpiration with CheckPolicy off is refused before anything is
 // sent, as SQL Server refuses it (Msg 15122). Turning either off on a login
 // whose password must change at next login fails Msg 15128 on the server —
 // that state needs a read, so it is not pre-validated here.
-func (l *Login) SetPasswordPolicy(ctx context.Context, checkPolicy, checkExpiration bool) error {
-	if checkExpiration && !checkPolicy {
+func (l *Login) SetPasswordPolicy(ctx context.Context, p PasswordPolicy) error {
+	if p.CheckExpiration && !p.CheckPolicy {
 		return invalidf("gosmo: set password policy for login %q: CheckExpiration cannot be on when CheckPolicy is off", l.Name)
 	}
 	policy, expiration := "OFF", "OFF"
-	if checkPolicy {
+	if p.CheckPolicy {
 		policy = "ON"
 	}
-	if checkExpiration {
+	if p.CheckExpiration {
 		expiration = "ON"
 	}
 	q := fmt.Sprintf("ALTER LOGIN %s WITH CHECK_POLICY = %s, CHECK_EXPIRATION = %s",
@@ -287,8 +294,8 @@ func (l *Login) SetPasswordPolicy(ctx context.Context, checkPolicy, checkExpirat
 	if _, err := l.server.exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: set password policy for login %q: %w", l.Name, err)
 	}
-	setIfApplied(ctx, &l.IsPolicyChecked, checkPolicy)
-	setIfApplied(ctx, &l.IsExpirationChecked, checkExpiration)
+	setIfApplied(ctx, &l.IsPolicyChecked, p.CheckPolicy)
+	setIfApplied(ctx, &l.IsExpirationChecked, p.CheckExpiration)
 	return nil
 }
 

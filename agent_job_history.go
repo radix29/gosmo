@@ -37,7 +37,7 @@ ORDER  BY run_date DESC, run_time DESC, instance_id DESC`, limit)
 	}
 	rows, err := j.server.query(ctx, q, id)
 	return scanRows(rows, err, what, func(scan func(...any) error) (*JobHistoryEntry, error) {
-		h := &JobHistoryEntry{}
+		h := &JobHistoryEntry{JobName: j.Name}
 		var runDate, runTime, runDur int
 		if err := scan(&runDate, &runTime, &runDur,
 			&h.Outcome, &h.Message, &h.StepID, &h.StepName); err != nil {
@@ -82,9 +82,6 @@ ORDER  BY h.run_date DESC, h.run_time DESC, h.instance_id DESC`, limit)
 
 // JobHistoryEntry represents one row from msdb.dbo.sysjobhistory.
 type JobHistoryEntry struct {
-	// JobName is only populated by Server.JobHistory (the cross-job
-	// history query); it's left "" by Job.History, whose caller already
-	// knows which job it asked about.
 	JobName  string
 	RunDate  time.Time
 	Duration time.Duration

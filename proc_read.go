@@ -21,8 +21,9 @@ import (
 // next checkout reset it, and someone else's RESTORE, SET OFFLINE or SET
 // SINGLE_USER failed "Exclusive access could not be obtained" meanwhile
 // (live_proc_read_test.go). Every pooled Database.query and queryRow goes
-// this way; only a read inside InTransaction, whose session is meant to stay
-// where it is, keeps useBatch.
+// this way, and so does every pooled write (execIn, live_proc_write_test.go);
+// only a call inside InTransaction, whose session is meant to stay where it
+// is, is sent in a session switched to d.
 //
 // An RPC names its procedure when it runs, not when a batch compiles, so the
 // Msg 924 trap that makes perDatabaseExec name the procedure through @proc
@@ -31,7 +32,7 @@ import (
 // does not arise either.
 //
 // An argument type procParamType does not declare is a programming error, and
-// the read fails with it (ErrUnsupported): there is no fallback to useBatch.
+// the call fails with it (ErrUnsupported): there is no fallback to a USE.
 func (d *Database) procRead(q string, args []any) (query string, rpcArgs []any, err error) {
 	query = quoteIdent(d.Name) + ".sys.sp_executesql"
 	if len(args) == 0 {
@@ -41,7 +42,7 @@ func (d *Database) procRead(q string, args []any) (query string, rpcArgs []any, 
 	for i, a := range args {
 		t, ok := procParamType(a)
 		if !ok {
-			return "", nil, unsupportedf("gosmo: read in %s: argument %d is a %T, which procRead cannot declare", d.Name, i+1, a)
+			return "", nil, unsupportedf("gosmo: call in %s: argument %d is a %T, which procRead cannot declare", d.Name, i+1, a)
 		}
 		decls[i] = fmt.Sprintf("@p%d %s", i+1, t)
 	}
@@ -61,7 +62,7 @@ func procParamType(a any) (string, bool) {
 	case nil:
 		return "nvarchar(1)", true
 	case string:
-		if len(utf16.Encode([]rune(v))) > 4000 {
+		if utf16Longer(v, 4000) {
 			return "nvarchar(max)", true
 		}
 		return "nvarchar(4000)", true
@@ -85,6 +86,23 @@ func procParamType(a any) (string, bool) {
 		return "datetimeoffset(7)", true
 	}
 	return "", false
+}
+
+// utf16Longer reports whether s is more than n UTF-16 code units, the length
+// nvarchar counts, without allocating. UTF-8 is never shorter than UTF-16 in
+// code units (an invalid byte decodes to U+FFFD, one unit for one byte), so a
+// string of at most n bytes decides it unread.
+func utf16Longer(s string, n int) bool {
+	if len(s) <= n {
+		return false
+	}
+	units := 0
+	for _, r := range s {
+		if units += utf16.RuneLen(r); units > n {
+			return true
+		}
+	}
+	return false
 }
 
 // recheckEntry tells a procRead failure whose number says a database could

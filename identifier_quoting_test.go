@@ -26,6 +26,9 @@ func (c *captureConn) Close() error                              { return nil }
 func (c *captureConn) Begin() (driver.Tx, error)                 { return nil, driver.ErrSkip }
 
 func (c *captureConn) ExecContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Result, error) {
+	if _, inner, innerArgs, ok := unwrapProcRead(query, args); ok {
+		query, args = inner, innerArgs
+	}
 	captured.add(query, args)
 	return driver.ResultNoRows, nil
 }

@@ -18,8 +18,8 @@ import (
 )
 
 // Files, FileGroups, DatabaseFiles, SpaceUsed and DiskUsage all run with the
-// bigint casts, and FileGroups reports max size and growth in the same KB as
-// Files.
+// bigint casts, and a file FileGroups returns equals the same file from Files,
+// with the SpaceUsedKB FileGroups once left at 0.
 func TestLiveWrongValuesFileUnits(t *testing.T) {
 	db, ctx, done := liveDB(t)
 	t.Cleanup(done)
@@ -70,8 +70,15 @@ MODIFY FILE (NAME = N'gosmo_wrong_values_files', MAXSIZE = 100MB, FILEGROWTH = 6
 		t.Errorf("Files: MaxSizeKB %d, GrowthKB %d; want 102400, 65536", info.MaxSizeKB, info.GrowthKB)
 	}
 	// One type now, so the file FileGroups returns must equal the one Files
-	// returns field for field.
-	if *file != *info {
+	// returns field for field — except SpaceUsedKB, which a fresh database's
+	// background allocation moves between the two reads (2944 KB, then 3136,
+	// on 17). FileGroups once left it 0, which is what the check catches.
+	if file.SpaceUsedKB <= 0 {
+		t.Errorf("FileGroups file SpaceUsedKB = %d, want the space FILEPROPERTY reports", file.SpaceUsedKB)
+	}
+	got, want := *file, *info
+	got.SpaceUsedKB, want.SpaceUsedKB = 0, 0
+	if got != want {
 		t.Errorf("FileGroups file = %+v, want the Files values %+v", *file, *info)
 	}
 }

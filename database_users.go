@@ -17,61 +17,80 @@ import (
 // Instance among them.
 const userTypes = `('S','U','G','E','X','C','K')`
 
-// Users returns all database users.
-func (d *Database) Users(ctx context.Context) ([]*User, error) {
-	const q = `
-SELECT name, principal_id, type_desc, default_schema_name,
-       create_date, modify_date, authentication_type_desc
-FROM   sys.database_principals
-WHERE  type IN ` + userTypes + `
-ORDER  BY name`
-
-	rows, err := d.query(ctx, q)
-	return scanRows(rows, err, fmt.Sprintf("list users in %q", d.Name), func(scan func(...any) error) (*User, error) {
-		u := &User{db: d}
-		var defSchema, authType sql.NullString
-		if err := scan(&u.Name, &u.ID, &u.UserType, &defSchema,
-			&u.CreateDate, &u.ModifyDate, &authType); err != nil {
-			return nil, err
-		}
-		u.DefaultSchema = defSchema.String
-		u.AuthType = authType.String
-		return u, nil
-	})
-}
-
-// UserByName returns a single database user by name, with its SID, matching
-// server login (if any) and mapped certificate or asymmetric key filled in —
-// Users leaves these out since Object Explorer's tree listing never needs
-// them.
-func (d *Database) UserByName(ctx context.Context, name string) (*User, error) {
-	const q = `
+// userSelect is the column list and FROM clause both user reads share, so
+// every field a User declares is filled by both. loginJoin is the
+// sys.server_principals match, or the empty string to leave LoginName and
+// LoginDisabled zero.
+func userSelect(loginJoin bool) string {
+	login, join := "CAST(NULL AS sysname), CAST(NULL AS bit)", ""
+	if loginJoin {
+		login, join = "sp.name, sp.is_disabled", "\nLEFT   JOIN sys.server_principals sp ON sp.sid = dp.sid"
+	}
+	return `
 SELECT dp.name, dp.principal_id, dp.type_desc, dp.default_schema_name,
        dp.create_date, dp.modify_date, dp.authentication_type_desc, dp.sid,
-       sp.name, sp.is_disabled,
+       ` + login + `,
        CASE dp.type WHEN 'C' THEN (SELECT TOP 1 c.name  FROM sys.certificates    c  WHERE c.sid  = dp.sid)
                     WHEN 'K' THEN (SELECT TOP 1 ak.name FROM sys.asymmetric_keys ak WHERE ak.sid = dp.sid)
        END
-FROM   sys.database_principals dp
-LEFT   JOIN sys.server_principals sp ON sp.sid = dp.sid
-WHERE  dp.type IN ` + userTypes + ` AND dp.name = @p1`
+FROM   sys.database_principals dp` + join
+}
 
-	u := &User{db: d}
+// scanUser scans one userSelect row into u.
+func scanUser(scan func(...any) error, u *User) error {
 	var defSchema, authType, loginName, mapped sql.NullString
 	var loginDisabled sql.NullBool
-	err := d.queryRow(ctx, func(row *sql.Row) error {
-		return row.Scan(&u.Name, &u.ID, &u.UserType, &defSchema, &u.CreateDate, &u.ModifyDate,
-			&authType, &u.SID, &loginName, &loginDisabled, &mapped)
-	}, q, name)
-	if err != nil {
-		return nil, rowErr(err, notFoundf("gosmo: database user %q not found in %q", name, d.Name),
-			fmt.Sprintf("find database user %q in %q", name, d.Name))
+	if err := scan(&u.Name, &u.ID, &u.UserType, &defSchema, &u.CreateDate, &u.ModifyDate,
+		&authType, &u.SID, &loginName, &loginDisabled, &mapped); err != nil {
+		return err
 	}
 	u.DefaultSchema = defSchema.String
 	u.AuthType = authType.String
 	u.LoginName = loginName.String
 	u.LoginDisabled = loginDisabled.Bool
 	u.MappedObject = mapped.String
+	return nil
+}
+
+// Users returns all database users, with the same fields UserByName fills —
+// except LoginName and LoginDisabled on Azure SQL Database, where a user
+// database cannot see sys.server_principals and both stay zero.
+func (d *Database) Users(ctx context.Context) ([]*User, error) {
+	q := userSelect(!d.serverIsAzureSQLDatabase()) + `
+WHERE  dp.type IN ` + userTypes + `
+ORDER  BY dp.name`
+
+	rows, err := d.query(ctx, q)
+	return scanRows(rows, err, fmt.Sprintf("list users in %q", d.Name), func(scan func(...any) error) (*User, error) {
+		u := &User{db: d}
+		if err := scanUser(scan, u); err != nil {
+			return nil, err
+		}
+		return u, nil
+	})
+}
+
+// serverIsAzureSQLDatabase reports whether d is on Azure SQL Database, whose
+// user databases cannot see sys.server_principals.
+func (d *Database) serverIsAzureSQLDatabase() bool {
+	i := d.serverInfo()
+	return i != nil && EngineEdition(i.EngineEdition) == EngineAzureSQLDatabase
+}
+
+// UserByName returns a single database user by name, with its SID, matching
+// server login (if any) and mapped certificate or asymmetric key filled in.
+func (d *Database) UserByName(ctx context.Context, name string) (*User, error) {
+	q := userSelect(true) + `
+WHERE  dp.type IN ` + userTypes + ` AND dp.name = @p1`
+
+	u := &User{db: d}
+	err := d.queryRow(ctx, func(row *sql.Row) error {
+		return scanUser(row.Scan, u)
+	}, q, name)
+	if err != nil {
+		return nil, rowErr(err, notFoundf("gosmo: database user %q not found in %q", name, d.Name),
+			fmt.Sprintf("find database user %q in %q", name, d.Name))
+	}
 	return u, nil
 }
 

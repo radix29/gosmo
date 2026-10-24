@@ -82,7 +82,7 @@ func TestLiveTableChangeTrackingTrackColumnsFlip(t *testing.T) {
 	} {
 		insert(i)
 		before := minValid()
-		if err := tbl.SetChangeTracking(ctx, step.enable, step.cols); err != nil {
+		if err := tbl.SetChangeTracking(ctx, TableChangeTrackingOptions{Enabled: step.enable, TrackColumnsUpdated: step.cols}); err != nil {
 			t.Fatalf("step %d SetChangeTracking(%v, %v): %v", i, step.enable, step.cols, err)
 		}
 		got, err := tbl.ChangeTracking(ctx)

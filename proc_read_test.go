@@ -113,3 +113,28 @@ func TestPooledReadRefusesAnUndeclarableArgument(t *testing.T) {
 		t.Errorf("statements = %q, want none", useState.stmts)
 	}
 }
+
+// A string is nvarchar(4000) up to 4000 UTF-16 code units, which nvarchar
+// counts, not bytes or runes: a surrogate pair is two units in four bytes, and
+// a three-byte rune is one.
+func TestProcParamTypeCountsUTF16Units(t *testing.T) {
+	const pair, bmp = "😀", "€" // 2 units / 4 bytes, 1 unit / 3 bytes
+	cases := []struct {
+		name, s, want string
+	}{
+		{"4000 ASCII", strings.Repeat("x", 4000), "nvarchar(4000)"},
+		{"4001 ASCII", strings.Repeat("x", 4001), "nvarchar(max)"},
+		{"4000 units of pairs", strings.Repeat(pair, 2000), "nvarchar(4000)"},
+		{"4001 units, pairs and one more", strings.Repeat(pair, 2000) + "x", "nvarchar(max)"},
+		{"4002 units of pairs", strings.Repeat(pair, 2001), "nvarchar(max)"},
+		{"4000 three-byte runes", strings.Repeat(bmp, 4000), "nvarchar(4000)"},
+		{"4001 three-byte runes", strings.Repeat(bmp, 4001), "nvarchar(max)"},
+		{"4001 invalid bytes", strings.Repeat("\xff", 4001), "nvarchar(max)"},
+		{"empty", "", "nvarchar(4000)"},
+	}
+	for _, tc := range cases {
+		if got, ok := procParamType(tc.s); !ok || got != tc.want {
+			t.Errorf("%s: procParamType = %q, %v, want %q", tc.name, got, ok, tc.want)
+		}
+	}
+}

@@ -246,6 +246,13 @@ exercise the write, drop them; never mutate pre-existing objects.
     gosmo.Server.DatabaseRef`.
   - **A result row is never named `…Ref`** — it has nothing to look up
     (`OperatorAlert`, not `AlertNotificationRef`).
+- **Every read returning a type fills every field it declares** — the same
+  trap as a `Ref` read for data, in result types several reads return. Where a
+  read cannot (the server hides the source), the field's doc names that read
+  and the zero must not be a plausible value. A new field only one of several
+  reads fills is a bug. `Users`/`UserByName` share one select (`userSelect`,
+  pinned by `TestUsersFillsWhatUserByNameFills`); `DatabaseFiles` is the
+  documented exception for a database that cannot be entered.
 
 ## Open threads
 

@@ -5,15 +5,16 @@ classDiagram
     %% =========================================================
 
     class withConn {
-        <<internal helper>>
-        Acquires *sql.Conn from pool.
-        Executes USE db, retried on a
-        transient failure. Runs callback
-        fn(ctx, *sql.Conn) — NOT retried,
-        since fn is the caller's actual write.
-        ctx is bounded by Server.bound.
-        Releases conn via defer.
-        Used by Database.exec.
+        <<internal helpers>>
+        withConn: acquires a conn (retried),
+        runs fn NOT retried — the write.
+        execIn: a write as an RPC call of
+        [db].sys.sp_executesql (procRead's
+        form), so the session never leaves
+        its login database. Used by exec.
+        withSessionIn: USE db, fn, USE back
+        (plans, bulk copy). In a transaction:
+        the tx session, switched by USE.
     }
 
     class dbRows {
@@ -43,7 +44,8 @@ classDiagram
     class DatabaseQueryRow {
         <<internal helper>>
         Database.queryRow(ctx, scan, q, args)
-        Acquires conn, runs USE, hands the row
+        Acquires conn, runs q in db (procRead),
+        hands the row
         to scan — all inside one retry unit.
         scan must run inside it: QueryRowContext
         never errors, only Scan does.
@@ -249,8 +251,8 @@ classDiagram
     bound <.. dbRows : released by Close
     bound <.. ServerQuery : ctx from
     bound <.. DatabaseQueryRow : ctx from
-    withRetry <.. withConn : acquire+USE retried by
-    withRetry <.. dbRows : acquire+USE+query retried by
+    withRetry <.. withConn : acquire retried by
+    withRetry <.. dbRows : acquire+query retried by
     withRetry <.. DatabaseQueryRow : whole scan retried by
     withRetry <.. ServerQuery : whole scan retried by
     withRetry <.. IsRetryable : same failure test as

@@ -2,6 +2,7 @@ package gosmo
 
 import (
 	"context"
+	"database/sql"
 	"database/sql/driver"
 	"fmt"
 	"iter"
@@ -125,17 +126,32 @@ func (d *Database) BulkInsert(ctx context.Context, bc BulkCopy, rows iter.Seq2[[
 	if err := refuseInTx(ctx, d.server, "bulk insert into "+target); err != nil {
 		return 0, err
 	}
-	ctx, release := d.server.bound(ctx)
-	defer release()
-	conn, err := d.server.db.Conn(ctx)
+	// INSERT BULK names the table in the session's database, so the session
+	// is switched to d for the load and back after (withSessionIn).
+	var n int64
+	err := d.withSessionIn(ctx, func(ctx context.Context, conn *sql.Conn) error {
+		var err error
+		n, err = bc.load(ctx, conn, target, rows)
+		return err
+	})
 	if err != nil {
-		return 0, fmt.Errorf("gosmo: acquire connection: %w", err)
+		return n, err
 	}
-	defer conn.Close()
-	if _, err := conn.ExecContext(ctx, "USE "+quoteIdent(d.Name)); err != nil {
-		return 0, fmt.Errorf("gosmo: USE %s: %w", d.Name, err)
+	cols := make([]string, len(bc.Columns))
+	for i, c := range bc.Columns {
+		cols[i] = quoteIdent(c)
 	}
+	observe(ctx, d.server, ScriptEntry{
+		Server:   scriptServerName(ctx, d.server),
+		Database: d.Name,
+		SQL:      fmt.Sprintf("INSERT BULK %s (%s) -- %d rows", target, strings.Join(cols, ", "), n),
+	})
+	return n, nil
+}
 
+// load is BulkInsert's copy on conn, a session switched to the target's
+// database. It returns the rows copied, the server's count once flushed.
+func (bc *BulkCopy) load(ctx context.Context, conn *sql.Conn, target string, rows iter.Seq2[[]any, error]) (int64, error) {
 	// mssql.CopyIn encodes the target and options into an "INSERTBULK ..."
 	// statement that the driver turns into a streaming bulk-copy session; the
 	// statement must live on this one pinned connection for the load to work.
@@ -183,14 +199,5 @@ func (d *Database) BulkInsert(ctx context.Context, bc BulkCopy, rows iter.Seq2[[
 	if copied, err := res.RowsAffected(); err == nil {
 		n = copied
 	}
-	cols := make([]string, len(bc.Columns))
-	for i, c := range bc.Columns {
-		cols[i] = quoteIdent(c)
-	}
-	observe(ctx, d.server, ScriptEntry{
-		Server:   scriptServerName(ctx, d.server),
-		Database: d.Name,
-		SQL:      fmt.Sprintf("INSERT BULK %s (%s) -- %d rows", target, strings.Join(cols, ", "), n),
-	})
 	return n, nil
 }

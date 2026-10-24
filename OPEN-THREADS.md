@@ -267,7 +267,7 @@ What to check when one exists: that `FROM EXTERNAL PROVIDER WITH OBJECT_ID =
 …, DEFAULT_SCHEMA = …` parses in that order, and that an Entra login takes
 `DEFAULT_LANGUAGE` through `ALTER LOGIN` as it does `DEFAULT_DATABASE`.
 
-## Idle pooled connections camp in the last database written to
+## Idle pooled connections camp in the last database written to (fixed)
 
 **Reads fixed 2026-10-23 (`procRead`, `proc_read.go`).** A pooled
 `Database.query`/`queryRow` is an RPC call of `[db].sys.sp_executesql`, so
@@ -291,27 +291,54 @@ the plan-cache trap of `CLAUDE.md` § Read another database's catalog (why is
 unknown), so procRead is shown to read the right database after a swap, but
 the test cannot show it would have caught the trap.
 
-**Writes still camp.** `Database.withConn` (every `Database.exec`) runs `USE`
-and leaves its session in `db`. `ReleaseIdleConnections` covers this
-`Server`'s own exclusive writes (`live_release_idle_test.go` now parks
-sessions through writes), and gossms keeps `ConnMaxIdleTime` at 60 s against
-the 5-minute default (`internal/db/connection.go`, `connMaxIdleTime`). Moving
-writes to the same RPC form is possible but untried: a write's `SET` options,
-`ExecProc`'s named RPC and the transaction path all need checking first.
+**Writes fixed 2026-10-24 (`execIn`, `database.go`).** A pooled
+`Database.exec` is the same RPC call, in `procRead`'s form, never retried;
+`ExecProc` calls `[db].[schema].[proc]`; `Sequence.NextValue` and
+`DatabaseFileInfo.Shrink` go through `execIn` too. `capturePlan` and
+`BulkInsert`, which need a session in `db` across calls, switch it with `USE`
+and back (`withSessionIn`), discarding a session that cannot switch back.
+Inside `InTransaction` everything still runs on the transaction's session
+switched to `db`; `InTransaction` now switches it home before COMMIT or
+ROLLBACK (`goHome`), where before it went back to the pool still in `db`.
 
-## Three live tests fail on `HEAD`, unrelated to their area's recent work
+Evidence, on 13, 14 and 17: the five rules mirrored for writes in
+`live_proc_write_test.go`, each against a hand-switched `USE` control (no
+session left behind where `USE` leaves one; a `RESTORE … WITH REPLACE`
+straight after a write succeeds where `USE` fails Msg 3101; 911/924/942
+refuse the write as `gosmo: USE db:` and nothing lands in `master`; writes
+land right across an id swap; parameters bind in `db`'s collation where a
+`USE` batch fails Msg 468), plus `TestLiveProcWriteShapes`: `CREATE
+SCHEMA/VIEW/PROCEDURE/FUNCTION/TRIGGER/SEQUENCE` each open their batch inside
+the call, `RowsAffected` comes back, `execAtomic` commits and rolls back with
+the statement's own error (Msg 544, no 266), `ExecProc` returns OUTPUT and the
+return status and runs `sys.sp_rename` in `db`, a `SET` in a write ends with
+the call, and plans and bulk copy leave no session behind.
 
-Found 2026-10-23 running the whole `livedb` suite; each fails the same on a
-clean export of `HEAD` 225fb48. Unfixed.
+What can still park a session in a database: a connection a caller switched
+with `AcquireConn` and closed back into the same pool (gossms's query panels
+discard theirs). `ReleaseIdleConnections` still frees those before this
+`Server`'s exclusive writes (`live_release_idle_test.go` parks sessions that
+way now). gossms dropped its 60 s `ConnMaxIdleTime` for gosmo's default.
+## `TestLiveScriptTableKinds` fails Msg 701 on 13 and 14, intermittently
 
-- `TestLiveBackupSetTypes` (13, 14, 17): `BuildRestoreStatement` now starts
-  `USE [master];`, and the test still wants the statement to start
-  `RESTORE LOG`. Most likely the test is stale; confirm the prefix is meant.
-- `TestLiveWrongValuesFileUnits` (13, 14, 17): `FileGroups`' file reports
-  `SpaceUsedKB` 0 where `Files` reports 2624 for the same file.
-- `TestLiveScriptTableKinds` (13, 14 only, intermittent): the
-  memory-optimized tables' replay fails Msg 701, "insufficient system memory
-  in resource pool 'default'": the host's free memory, not gosmo.
+Found 2026-10-23 running the whole `livedb` suite. The memory-optimized
+tables' replay fails Msg 701, "insufficient system memory in resource pool
+'default'": the host's free memory, not gosmo.
+
+On 13 (2026-10-24) the same pressure also failed `TestLiveScriptFidelity`,
+`TestLiveTableDropNamesSchemaBoundModules` and
+`TestLiveScriptDatabaseOptionsRoundTrip` late in a full-suite run; each passed
+run alone straight after.
+
+## `TestLiveWrongValuesAgentJob` orders History by the second, flakily
+
+Seen 2026-10-24 on 13 and 14, on `HEAD` as well as with A1: `History step ids
+[2 1 0], want [2 0 1]` about one run in four. The test assumes step 1 starts
+in the same second as the job, so `instance_id` puts the outcome row above
+it; when step 1 starts a second later its `run_time` sorts it first. `History`
+orders by `run_date, run_time, instance_id`, which is right; the test's
+expectation is what needs fixing (accept either order of the two rows when
+their times differ, or compare by `instance_id` alone).
 
 ## Agent schedules are addressed by id — settled, do not re-raise
 

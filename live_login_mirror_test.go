@@ -46,7 +46,7 @@ func TestLiveLoginSettersMirror(t *testing.T) {
 		t.Fatalf("SetDefaultDatabase: %v", err)
 	}
 	check("SetDefaultDatabase")
-	if err := l.SetPasswordPolicy(ctx, true, false); err != nil {
+	if err := l.SetPasswordPolicy(ctx, PasswordPolicy{CheckPolicy: true}); err != nil {
 		t.Fatalf("SetPasswordPolicy: %v", err)
 	}
 	check("SetPasswordPolicy")
