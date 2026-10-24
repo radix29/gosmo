@@ -126,8 +126,8 @@ type User struct {
 	ModifyDate    time.Time
 	SID           []byte
 	// LoginName is the server login this user's SID matches, or empty if
-	// none does — only populated by UserByName (Users's
-	// tree-listing query doesn't join sys.server_principals). A blank
+	// none does. Users leaves it empty on Azure SQL Database, where a user
+	// database cannot see sys.server_principals. A blank
 	// LoginName is ambiguous by itself: check AuthType too. A genuine
 	// CREATE USER ... WITHOUT LOGIN reports AuthType "NONE", while a user
 	// created FOR LOGIN whose login was later dropped keeps AuthType
@@ -137,8 +137,8 @@ type User struct {
 	LoginDisabled bool
 	// MappedObject is the certificate or asymmetric key in this database a
 	// CERTIFICATE_MAPPED_USER / ASYMMETRIC_KEY_MAPPED_USER maps to, matched
-	// by SID. Populated by UserByName only, and empty when the object has
-	// been dropped out from under the user.
+	// by SID, and empty when the object has been dropped out from under the
+	// user.
 	MappedObject string
 }
 

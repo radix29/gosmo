@@ -102,7 +102,7 @@ func TestScriptDatabaseOptionWrites(t *testing.T) {
 			return scriptTestDB().SetDatabaseScopedConfig(c, "LEGACY_CARDINALITY_ESTIMATION", "ON", ScopedConfigSecondary)
 		}, scriptUsePrefix + "ALTER DATABASE SCOPED CONFIGURATION FOR SECONDARY SET LEGACY_CARDINALITY_ESTIMATION = ON"},
 		{"Table.SetChangeTracking on with columns", func(c context.Context) error {
-			return scriptTestDB().TableRef("dbo", "Sales.Archive").SetChangeTracking(c, true, true)
+			return scriptTestDB().TableRef("dbo", "Sales.Archive").SetChangeTracking(c, TableChangeTrackingOptions{Enabled: true, TrackColumnsUpdated: true})
 		}, scriptUsePrefix + atomicBatchText(
 			"IF EXISTS (SELECT 1 FROM sys.change_tracking_tables WHERE object_id = OBJECT_ID(N'[dbo].[Sales.Archive]') AND is_track_columns_updated_on = 0)\n"+
 				"    ALTER TABLE [dbo].[Sales.Archive] DISABLE CHANGE_TRACKING",
@@ -112,14 +112,14 @@ func TestScriptDatabaseOptionWrites(t *testing.T) {
 		// so a TRACK_COLUMNS_UPDATED change disables and re-enables, all or
 		// nothing; the name is a literal inside OBJECT_ID.
 		{"Table.SetChangeTracking on without columns", func(c context.Context) error {
-			return scriptTestDB().TableRef("dbo", "o'b").SetChangeTracking(c, true, false)
+			return scriptTestDB().TableRef("dbo", "o'b").SetChangeTracking(c, TableChangeTrackingOptions{Enabled: true})
 		}, scriptUsePrefix + atomicBatchText(
 			"IF EXISTS (SELECT 1 FROM sys.change_tracking_tables WHERE object_id = OBJECT_ID(N'[dbo].[o''b]') AND is_track_columns_updated_on = 1)\n"+
 				"    ALTER TABLE [dbo].[o'b] DISABLE CHANGE_TRACKING",
 			"IF NOT EXISTS (SELECT 1 FROM sys.change_tracking_tables WHERE object_id = OBJECT_ID(N'[dbo].[o''b]'))\n"+
 				"    ALTER TABLE [dbo].[o'b] ENABLE CHANGE_TRACKING WITH (TRACK_COLUMNS_UPDATED = OFF)")},
 		{"Table.SetChangeTracking off", func(c context.Context) error {
-			return scriptTestDB().TableRef("dbo", "Sales.Archive").SetChangeTracking(c, false, false)
+			return scriptTestDB().TableRef("dbo", "Sales.Archive").SetChangeTracking(c, TableChangeTrackingOptions{})
 		}, scriptUsePrefix + "ALTER TABLE [dbo].[Sales.Archive] DISABLE CHANGE_TRACKING"},
 	})
 }

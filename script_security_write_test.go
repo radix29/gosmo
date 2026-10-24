@@ -118,7 +118,7 @@ func TestScriptSecurityWrites(t *testing.T) {
 			return login().SetDefaultLanguage(c, "us_english")
 		}, "ALTER LOGIN [o'brien] WITH DEFAULT_LANGUAGE = [us_english]"},
 		{"Login SetPasswordPolicy", func(c context.Context) error {
-			return login().SetPasswordPolicy(c, true, false)
+			return login().SetPasswordPolicy(c, PasswordPolicy{CheckPolicy: true})
 		}, "ALTER LOGIN [o'brien] WITH CHECK_POLICY = ON, CHECK_EXPIRATION = OFF"},
 		{"Login Rename", func(c context.Context) error {
 			return login().Rename(c, "o]b")

@@ -62,7 +62,7 @@ func main() {
 	// Passwords are always escaped into an N'...' literal, never spliced in
 	// raw, so any password content is safe.
 	demo.Must(login.ChangePassword(ctx, "An0ther-Str0ng-Pa55!", gosmo.ChangePasswordOptions{}))
-	demo.Must(login.SetPasswordPolicy(ctx, true, false))
+	demo.Must(login.SetPasswordPolicy(ctx, gosmo.PasswordPolicy{CheckPolicy: true}))
 	demo.Must(login.SetDefaultLanguage(ctx, "us_english"))
 
 	// -- Server roles and permissions -------------------------------------

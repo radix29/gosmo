@@ -448,7 +448,7 @@ The instance and database halves pair up: `ServerResourceStat` and
 | Filegroup default / read-only   | `fg.SetDefault(ctx)` / `fg.SetReadOnly(ctx, ro, term)` — `TerminationRollbackImmediate` kills the database's sessions in the same batch, since `MODIFY FILEGROUP` ignores `WITH ROLLBACK IMMEDIATE` |
 | CREATE DATABASE file placement  | `CreateDatabaseRequest.PrimaryFile` / `.LogFile` (`*DatabaseFileSpec`) |
 | Change tracking                 | `db.ChangeTracking(ctx)` / `db.SetChangeTracking(ctx, info)` |
-| Table change tracking           | `db.TableChangeTracking(ctx)` / `db.TableRef(schema, name).ChangeTracking(ctx)` / `.SetChangeTracking(ctx, enable, trackColumns)` |
+| Table change tracking           | `db.TableChangeTracking(ctx)` / `db.TableRef(schema, name).ChangeTracking(ctx)` / `.SetChangeTracking(ctx, gosmo.TableChangeTrackingOptions{Enabled, TrackColumnsUpdated})` |
 | Database-level permissions      | `db.DatabasePermissions(ctx)` / `db.ApplyPermission(ctx, verb, gosmo.Securable{Class: gosmo.SecurableDatabase}, perm, principal, opts)` |
 
 ### Table
@@ -593,7 +593,7 @@ instance is too old for is refused with `ErrUnsupportedVersion`.
 | `login.Drop(ctx)`                          |
 | `login.Rename(ctx, newName)`                 |
 | `login.SetDefaultDatabase(ctx, name)` / `login.SetDefaultLanguage(ctx, name)` |
-| `login.SetPasswordPolicy(ctx, checkPolicy, checkExpiration)` |
+| `login.SetPasswordPolicy(ctx, gosmo.PasswordPolicy{CheckPolicy, CheckExpiration})` |
 | `login.MapCredential(ctx, name)` / `login.UnmapCredential(ctx, name)` |
 | `login.Details(ctx)` — locked/expired/policy/last-login status |
 | `login.ResolveMapping(ctx)` — fills `login.MappedObject` for a certificate- or asymmetric-key-mapped login |

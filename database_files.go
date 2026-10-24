@@ -468,7 +468,10 @@ func (fg *FileGroup) SetReadOnly(ctx context.Context, readOnly bool, term Termin
 // normalizeFileGrowth converts sys.database_files' raw max_size/growth
 // columns (8KB pages, or a percentage when isPercentGrowth) into the KB/
 // percent units DatabaseFileInfo exposes. maxSizePages preserves the -1
-// "unlimited" sentinel rather than multiplying it into nonsense.
+// "unlimited" sentinel rather than multiplying it into nonsense. Only -1 maps
+// to unlimited: a log set to MAXSIZE = UNLIMITED is stored as 268435456 pages
+// and reads as 2097152 MB, as SSMS 21 shows it (gossms docs/decisions.md
+// § By design).
 func normalizeFileGrowth(maxSizePages, growthRaw int64, isPercentGrowth bool) (maxSizeKB, growthKB int64, growthPercent int) {
 	if maxSizePages < 0 {
 		maxSizeKB = -1

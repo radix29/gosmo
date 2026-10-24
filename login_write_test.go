@@ -139,12 +139,12 @@ func TestChangePasswordRefusesWhatTheServerRefuses(t *testing.T) {
 		}
 	}
 	ctx, script := WithScript(context.Background())
-	err := (&Login{server: &Server{}, Name: "app"}).SetPasswordPolicy(ctx, false, true)
+	err := (&Login{server: &Server{}, Name: "app"}).SetPasswordPolicy(ctx, PasswordPolicy{CheckExpiration: true})
 	if !errors.Is(err, ErrInvalidRequest) {
-		t.Errorf("SetPasswordPolicy(false, true): err = %v, want ErrInvalidRequest", err)
+		t.Errorf("SetPasswordPolicy(expiration without policy): err = %v, want ErrInvalidRequest", err)
 	}
 	if len(script.Statements()) != 0 {
-		t.Errorf("SetPasswordPolicy(false, true): sent %q", script.Statements())
+		t.Errorf("SetPasswordPolicy(expiration without policy): sent %q", script.Statements())
 	}
 }
 
