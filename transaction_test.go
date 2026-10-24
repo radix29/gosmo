@@ -188,7 +188,7 @@ func TestInTransactionSendsUSEOnlyWhenMoving(t *testing.T) {
 				}
 			}
 			return nil
-		}, []string{"USE [app]", "W1", "W2", "W3"}},
+		}, []string{"USE [app]", "W1", "W2", "W3", "USE [master]"}},
 		{"home database", func(ctx context.Context, s *Server) error {
 			_, err := s.DatabaseRef("master").exec(ctx, "W1")
 			return err
@@ -200,14 +200,14 @@ func TestInTransactionSendsUSEOnlyWhenMoving(t *testing.T) {
 			_, _ = s.exec(ctx, "S2")
 			_, err := d.exec(ctx, "W2")
 			return err
-		}, []string{"USE [app]", "W1", "USE [master]", "S1", "S2", "USE [app]", "W2"}},
+		}, []string{"USE [app]", "W1", "USE [master]", "S1", "S2", "USE [app]", "W2", "USE [master]"}},
 		{"failure then write", func(ctx context.Context, s *Server) error {
 			d := s.DatabaseRef("app")
 			_, _ = d.exec(ctx, "W1")
 			_, _ = d.exec(ctx, "FAIL")
 			_, err := d.exec(ctx, "W2")
 			return err
-		}, []string{"USE [app]", "W1", "FAIL", "USE [app]", "W2"}},
+		}, []string{"USE [app]", "W1", "FAIL", "USE [app]", "W2", "USE [master]"}},
 		{"read then write", func(ctx context.Context, s *Server) error {
 			d := s.DatabaseRef("app")
 			rows, err := d.query(ctx, "R1")
@@ -217,7 +217,7 @@ func TestInTransactionSendsUSEOnlyWhenMoving(t *testing.T) {
 			rows.Close()
 			_, err = d.exec(ctx, "W1")
 			return err
-		}, []string{"USE [app]; IF @@ERROR <> 0 RETURN; R1", "W1"}},
+		}, []string{"USE [app]; IF @@ERROR <> 0 RETURN; R1", "W1", "USE [master]"}},
 		{"server permission", func(ctx context.Context, s *Server) error {
 			if err := s.ApplyPermission(ctx, VerbGrant, Securable{Class: SecurableServer}, ServerPermission("CONNECT SQL"), "l", PermissionOptions{}); err != nil {
 				return err

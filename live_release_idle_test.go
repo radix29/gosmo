@@ -59,32 +59,38 @@ func liveObserver(t *testing.T, ctx context.Context) *sql.DB {
 	return db
 }
 
-// leaveTwoIdleIn runs a database-scoped statement on two connections at once,
-// so the pool ends up with two idle sessions inside d. One is not enough to
+// leaveTwoIdleIn switches two connections to d at once and returns both, so
+// the pool ends up with two idle sessions inside d. One is not enough to
 // show the bug: the pool hands the next statement that same connection, whose
 // session reset takes it out of the database first. The failure needs the
 // statement to get a different connection from the one parked in the
 // database — which is what happens as soon as statements overlap, as
-// gossms's do. A read no longer parks a session (procRead); a write still
-// does, through withConn's USE, so that is what this overlaps.
+// gossms's do. gosmo's own reads and writes no longer park a session
+// (procRead, execIn); a session switched with AcquireConn and closed still
+// does, so two of those, held at once, are what this parks.
 func leaveTwoIdleIn(t *testing.T, observer *sql.DB, d *Database, ctx context.Context) {
 	t.Helper()
-	err := d.withConn(ctx, func(ctx context.Context, _ sqlConn) error {
-		_, err := d.exec(ctx, "DECLARE @parked int") // a second connection, while the first is held
-		return err
-	})
-	if err != nil {
-		t.Fatalf("overlapping statements: %v", err)
+	var conns []*sql.Conn
+	for range 2 {
+		conn, err := AcquireConn(ctx, d.server.db, d.Name)
+		if err != nil {
+			t.Fatalf("park a session: %v", err)
+		}
+		conns = append(conns, conn)
+	}
+	for _, c := range conns {
+		c.Close()
 	}
 	if n := ownSessionsIn(t, observer, ctx, d.Name); n < 2 {
-		t.Fatalf("%d idle sessions left in the database after two overlapping statements, want 2 — the precondition this test exists for did not hold", n)
+		t.Fatalf("%d idle sessions left in the database after two overlapping sessions, want 2 — the precondition this test exists for did not hold", n)
 	}
 }
 
 // The probe that found S1: a read left an idle session in the database, and
 // a detach without DropConnections through the same pool then failed Msg 3703
 // "currently in use" — against a database nobody else was using. Reads no
-// longer park one (procRead); writes still do (leaveTwoIdleIn).
+// longer park one (procRead), nor do writes (execIn); a session switched
+// with AcquireConn still does (leaveTwoIdleIn).
 func TestLiveExclusiveAccessDetachAfterRead(t *testing.T) {
 	db, ctx, done := liveDB(t)
 	defer done()
@@ -128,7 +134,8 @@ func liveFileGroupDB(t *testing.T, db *sql.DB, ctx context.Context, name string)
 
 // The same shape for a filegroup: MODIFY FILEGROUP ... READ_ONLY after a read
 // of the database waited behind the reading pool's own idle session. Reads no
-// longer park one (procRead); writes still do (leaveTwoIdleIn).
+// longer park one (procRead), nor do writes (execIn); a session switched
+// with AcquireConn still does (leaveTwoIdleIn).
 func TestLiveExclusiveAccessFileGroupReadOnlyAfterRead(t *testing.T) {
 	db, ctx, done := liveDB(t)
 	defer done()

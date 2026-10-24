@@ -139,8 +139,8 @@ func (f *DatabaseFileInfo) Shrink(ctx context.Context, opts ShrinkFileOptions) (
 	var dbID, fileID int
 	var r ShrinkResult
 	var current, minimum int64
-	err = f.db.withConn(ctx, func(ctx context.Context, c sqlConn) error {
-		return c.QueryRowContext(ctx, stmt).Scan(&dbID, &fileID, &current, &minimum, &r.UsedPages, &r.EstimatedPages)
+	err = f.db.execIn(ctx, stmt, nil, func(ctx context.Context, c sqlConn, q string, args []any) error {
+		return c.QueryRowContext(ctx, q, args...).Scan(&dbID, &fileID, &current, &minimum, &r.UsedPages, &r.EstimatedPages)
 	})
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return ShrinkResult{}, fmt.Errorf("gosmo: shrink file %q in %q: %w", f.Name, f.db.Name, err)

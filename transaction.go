@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"sync"
+	"time"
 )
 
 // sqlConn is what a statement runs on: a pinned *sql.Conn, or the *sql.Tx of
@@ -135,6 +136,7 @@ func (s *Server) InTransaction(ctx context.Context, fn func(ctx context.Context)
 		if !committed {
 			// Rollback's error is not the caller's: the transaction is gone
 			// either way, and a session that broke takes it with it.
+			t.goHome(bctx)
 			_ = tx.Rollback()
 		}
 	}()
@@ -147,6 +149,7 @@ func (s *Server) InTransaction(ctx context.Context, fn func(ctx context.Context)
 	if failed != nil {
 		return fmt.Errorf("gosmo: commit transaction: refused, a write inside it failed: %w", failed)
 	}
+	t.goHome(bctx)
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("gosmo: commit transaction: %w", withAllMessages(err))
 	}
@@ -170,6 +173,28 @@ func (t *serverTx) serverConn(ctx context.Context) (sqlConn, error) {
 	}
 	return t.tx, nil
 }
+
+// goHome switches the session back to the database the transaction began in,
+// if a database-scoped statement left it elsewhere, before COMMIT or ROLLBACK
+// hands the connection back to the pool: left in d, it would hold a shared
+// lock on d until its next checkout, as a pooled call no longer does (see
+// Database.withConn's section). Best effort, and bounded by txHomeTimeout
+// even after ctx ends: a failure changes nothing about the transaction's
+// outcome, and once database/sql has rolled back a cancelled transaction
+// itself, the connection is already gone.
+func (t *serverTx) goHome(ctx context.Context) {
+	if t.home == "" || t.in(t.home) {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), txHomeTimeout)
+	defer cancel()
+	if _, err := t.tx.ExecContext(ctx, "USE "+quoteIdent(t.home)); err == nil {
+		t.at(t.home)
+	}
+}
+
+// txHomeTimeout bounds goHome's USE.
+const txHomeTimeout = 2 * time.Second
 
 // in reports whether the session is known to be in database db.
 func (t *serverTx) in(db string) bool {

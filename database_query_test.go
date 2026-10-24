@@ -230,17 +230,21 @@ func readBothCtx(ctx context.Context, d *Database) (qErr, rowErr error) {
 // readBothInTx is readBoth inside InTransaction, the one place a read still
 // goes as a useBatch. set arms the failures once the transaction has begun,
 // so its own SELECT DB_NAME() is not failed, and the statements are recorded
-// from there. InTransaction's own result is not the test's: a failed read
+// from there to the end of fn — not the USE that takes the session home
+// before COMMIT. InTransaction's own result is not the test's: a failed read
 // leaves it refusing to commit.
 func readBothInTx(d *Database, set func()) (qErr, rowErr error) {
+	var sent []string
 	_ = d.server.InTransaction(context.Background(), func(ctx context.Context) error {
 		useState.stmts = nil
 		if set != nil {
 			set()
 		}
 		qErr, rowErr = readBothCtx(ctx, d)
+		sent = slices.Clone(useState.stmts)
 		return nil
 	})
+	useState.stmts = sent
 	return qErr, rowErr
 }
 
@@ -332,12 +336,15 @@ func TestDatabaseReadFailureRunsQueryOnce(t *testing.T) {
 			} {
 				useState.failUse, useState.failBatch = nil, nil
 				var err error
+				var sent []string
 				_ = d.server.InTransaction(context.Background(), func(ctx context.Context) error {
 					useState.stmts = nil
 					arm()
 					err = read(ctx)
+					sent = slices.Clone(useState.stmts)
 					return nil
 				})
+				useState.stmts = sent
 				want := 2
 				if !tc.failUse && !tc.failQuery {
 					want = 1

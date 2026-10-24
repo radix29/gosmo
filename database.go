@@ -3,6 +3,7 @@ package gosmo
 import (
 	"context"
 	"database/sql"
+	"database/sql/driver"
 	"errors"
 	"fmt"
 	"time"
@@ -77,20 +78,24 @@ func (d *Database) IsSnapshot() bool { return d.SourceDatabaseID != 0 }
 func (d *Database) Server() *Server { return d.server }
 
 // -- Connection helpers --------------------------------------------------------
-// These acquire a dedicated connection from the pool, switch to the correct
-// database via USE, run the statement, then return the connection to the pool.
-// This is safe under connection pooling because we hold the *sql.Conn for the
-// entire duration of the call.
+// A pooled call never leaves its session in d. A read (procRead) and a write
+// (execIn) are RPC calls of d's own sp_executesql, and ExecProc names its
+// procedure with d's name; only what needs a session switched to d for more
+// than one call (capturePlan, a bulk copy) switches it, through withSessionIn,
+// and switches it back. A session left in d went back to the pool holding a
+// shared lock on d until the next checkout reset it, and someone else's
+// RESTORE, SET OFFLINE or SET SINGLE_USER failed "Exclusive access could not
+// be obtained" meanwhile (live_proc_read_test.go, live_proc_write_test.go).
 
-// withConn acquires a connection and switches it to d's database (USE) —
-// both idempotent and safe to retry against a fresh connection on a
-// transient failure (a dropped pooled connection, etc.), same as
-// query/queryRow's own acquire step below — before handing it to fn, which
-// is not retried: fn is the caller's actual write, and blindly re-running
-// it on a fresh connection after a partial failure could re-apply side
-// effects that already took hold.
+// withConn hands fn a connection to run a statement on that names d itself —
+// a procRead call, or ExecProc's three-part procedure name. Acquiring is
+// idempotent and safe to retry against a fresh connection on a transient
+// failure (a dropped pooled connection, etc.), same as query/queryRow's own
+// acquire step below; fn is not retried: fn is the caller's actual write, and
+// blindly re-running it on a fresh connection after a partial failure could
+// re-apply side effects that already took hold.
 //
-// Inside InTransaction it is the transaction's session, switched the same way,
+// Inside InTransaction it is the transaction's session, switched to d (USE),
 // and nothing is retried: a fresh connection is outside the transaction.
 func (d *Database) withConn(ctx context.Context, fn func(context.Context, sqlConn) error) error {
 	ctx, release := d.server.bound(ctx)
@@ -114,10 +119,6 @@ func (d *Database) withConn(ctx context.Context, fn func(context.Context, sqlCon
 		if err != nil {
 			return nil, fmt.Errorf("gosmo: acquire connection: %w", err)
 		}
-		if err := d.use(ctx, conn); err != nil {
-			conn.Close()
-			return nil, err
-		}
 		return conn, nil
 	})
 	if err != nil {
@@ -126,6 +127,81 @@ func (d *Database) withConn(ctx context.Context, fn func(context.Context, sqlCon
 	defer conn.Close()
 	return withAllMessages(fn(ctx, conn))
 }
+
+// execIn runs one statement q in d, never retried: fn gets the connection and
+// the form of q to send there with its arguments. On a pooled connection that
+// is procRead's RPC call of [d].sys.sp_executesql, so the session stays in its
+// login database, and a failure recheckEntry finds was d refusing the call is
+// reported as the USE failure it always was. Inside InTransaction it is q
+// itself, on the transaction's session switched to d.
+//
+// The statement is a batch of its own inside sp_executesql, so a CREATE VIEW,
+// PROCEDURE, FUNCTION, TRIGGER or SCHEMA still opens its batch, and a SET in
+// it ends with the call. A USE in it would not (see queryOn) — no write sends
+// one.
+func (d *Database) execIn(ctx context.Context, q string, args []any, fn func(ctx context.Context, c sqlConn, q string, args []any) error) error {
+	if txFrom(ctx, d.server) != nil {
+		return d.withConn(ctx, func(ctx context.Context, c sqlConn) error { return fn(ctx, c, q, args) })
+	}
+	call, cargs, err := d.procRead(q, args)
+	if err != nil {
+		return err
+	}
+	return d.withConn(ctx, func(ctx context.Context, c sqlConn) error {
+		err := fn(ctx, c, call, cargs)
+		if err != nil {
+			if uerr := d.recheckEntry(ctx, c, err); uerr != nil {
+				return uerr
+			}
+		}
+		return err
+	})
+}
+
+// withSessionIn is withConn for fn that needs its session in d across several
+// calls — SET SHOWPLAN_XML around a batch, a bulk copy. A pooled session is
+// switched to d first (the switch retried with the acquire, as AcquireConn's
+// is) and back to the database it came from afterwards, so it goes back to
+// the pool where it started. A session that cannot be switched back is
+// discarded rather than pooled. It refuses inside InTransaction, whose
+// session is already switched: a caller that may run there uses withConn
+// then (capturePlan).
+func (d *Database) withSessionIn(ctx context.Context, fn func(context.Context, *sql.Conn) error) error {
+	if txFrom(ctx, d.server) != nil {
+		return unsupportedf("gosmo: %s: a call that holds its own session cannot run inside InTransaction", d.Name)
+	}
+	ctx, release := d.server.bound(ctx)
+	defer release()
+	var home string
+	conn, err := withRetry(ctx, func() (*sql.Conn, error) {
+		conn, err := d.server.db.Conn(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("gosmo: acquire connection: %w", err)
+		}
+		if err := conn.QueryRowContext(ctx, "DECLARE @home sysname = DB_NAME(); "+d.useBatch("SELECT @home")).Scan(&home); err != nil {
+			conn.Close()
+			return nil, fmt.Errorf("gosmo: USE %s: %w", d.Name, err)
+		}
+		return conn, nil
+	})
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	defer func() {
+		// A background context: ctx may be why fn returned, and a session
+		// left in d must not reach the pool either way.
+		bg, cancel := context.WithTimeout(context.WithoutCancel(ctx), switchBackTimeout)
+		defer cancel()
+		if _, err := conn.ExecContext(bg, "USE "+quoteIdent(home)); err != nil {
+			_ = conn.Raw(func(any) error { return driver.ErrBadConn })
+		}
+	}()
+	return withAllMessages(fn(ctx, conn))
+}
+
+// switchBackTimeout bounds withSessionIn's USE back to the login database.
+const switchBackTimeout = 10 * time.Second
 
 // scriptResult is the sql.Result stand-in returned to callers of exec when
 // a ScriptCollector is capturing statements instead of running them — its
@@ -162,7 +238,7 @@ func (d *Database) execShown(ctx context.Context, q, shown string, args ...any) 
 		if err != nil {
 			return nil, err
 		}
-		// The real path below always runs q after a USE — captured
+		// The real path below always runs q in d (execIn) — captured
 		// statements need that made explicit, since the script may be
 		// handed to a session scoped to a different database (or none).
 		// The entry records the database rather than prefixing a USE:
@@ -172,7 +248,7 @@ func (d *Database) execShown(ctx context.Context, q, shown string, args ...any) 
 		return scriptResult{}, nil
 	}
 	var res sql.Result
-	err := d.withConn(ctx, func(ctx context.Context, c sqlConn) error {
+	err := d.execIn(ctx, q, args, func(ctx context.Context, c sqlConn, q string, args []any) error {
 		var e error
 		res, e = c.ExecContext(ctx, q, args...)
 		return e

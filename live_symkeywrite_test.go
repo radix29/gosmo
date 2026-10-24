@@ -4,6 +4,7 @@ package gosmo
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"strings"
 	"sync"
@@ -154,8 +155,12 @@ func TestLiveSymmetricKeyWrites(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	call, cargs, err := d.procRead(stmt, nil) // as d.exec sends it
+	if err != nil {
+		t.Fatal(err)
+	}
 	err = d.withConn(ctx, func(ctx context.Context, c sqlConn) error {
-		_, err := c.ExecContext(ctx, stmt)
+		_, err := c.ExecContext(ctx, call, cargs...)
 		if liveMsg(err) != 15558 {
 			t.Errorf("dropping the last encryption: %v, want Msg 15558", err)
 		}
@@ -197,13 +202,13 @@ func TestLiveSymmetricKeyWrites(t *testing.T) {
 		t.Errorf("shared key GUIDs %v / %v (%v, %v), want equal", g1, g2, err1, err2)
 	}
 	var plain string
-	err = d.withConn(ctx, func(ctx context.Context, c sqlConn) error {
+	err = d.withSessionIn(ctx, func(ctx context.Context, c *sql.Conn) error {
 		var cipher []byte
 		if err := c.QueryRowContext(ctx, "OPEN SYMMETRIC KEY shared DECRYPTION BY PASSWORD = N'"+pass+"'; "+
 			"SELECT ENCRYPTBYKEY(KEY_GUID('shared'), N'secret'); CLOSE SYMMETRIC KEY shared;").Scan(&cipher); err != nil {
 			return err
 		}
-		return d2.withConn(ctx, func(ctx context.Context, c2 sqlConn) error {
+		return d2.withSessionIn(ctx, func(ctx context.Context, c2 *sql.Conn) error {
 			return c2.QueryRowContext(ctx, "OPEN SYMMETRIC KEY shared DECRYPTION BY PASSWORD = N'"+pass+"'; "+
 				"SELECT CONVERT(nvarchar(20), DECRYPTBYKEY(@p1)); CLOSE SYMMETRIC KEY shared;", cipher).Scan(&plain)
 		})

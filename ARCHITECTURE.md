@@ -324,7 +324,7 @@ The instance and database halves pair up: `ServerResourceStat` and
 | Drop a database         | `srv.DatabaseRef(name).Drop(ctx, term)` / `db.Drop(ctx, term)` — `gosmo.TerminationRollbackImmediate` closes other connections first |
 | Rename a database       | `srv.DatabaseRef(old).Rename(ctx, new, term)` / `db.Rename(ctx, new, term)` — `gosmo.TerminationRollbackImmediate` puts it in single-user mode first |
 | Detach a database       | `srv.DatabaseRef(name).Detach(ctx, gosmo.DetachOptions{...})` — leaves the files on disk; a detach that fails after `DropConnections` is put back to the access mode it had |
-| Free the pool's own sessions from a database | `srv.ReleaseIdleConnections(ctx)` — closes idle pooled connections, which otherwise sit inside the last database they wrote to (a read never enters one: `procRead`) and block an exclusive-access statement (detach, rename, drop, `SET READ_ONLY`, RCSI, filegroup read-only — each of which calls it itself) |
+| Free the pool's own sessions from a database | `srv.ReleaseIdleConnections(ctx)` — closes idle pooled connections, so none blocks an exclusive-access statement (detach, rename, drop, `SET READ_ONLY`, RCSI, filegroup read-only — each of which calls it itself) from inside the database. gosmo's own reads and writes never leave one there (`procRead`, `execIn`); a session a caller switched with `AcquireConn` and returned to the same pool does |
 | Attach a database       | `srv.AttachDatabase(ctx, gosmo.AttachDatabaseRequest{Name, Files, Owner, RebuildLog})` → `*Database` (read back; the `DatabaseRef` under `Scripting`) — the name need not be the one it was detached under |
 | Read a detached file    | `srv.DetachedDatabaseInfo(ctx, primaryFilePath)` → `*DetachedDatabase` (`.Name`, `.Files`, `.DataFiles()`, `.LogFiles()`) — the only way to learn a detached database's other files |
 | Database snapshots      | `srv.DatabaseSnapshots(ctx)` / `srv.DatabaseSnapshotByName(ctx, name)` / `srv.DatabaseSnapshotRef(name)` (no-I/O handle) / `srv.SnapshotsOf(ctx, database)` / `srv.CreateDatabaseSnapshot(ctx, req)` / `srv.RestoreFromSnapshot(ctx, database, snapshot)` — see [Database snapshots](#database-snapshots) |
@@ -1398,6 +1398,9 @@ an error, a panic or cancellation rolls back.
   tracks the database its session is in (`serverTx.current`): a write skips
   its `USE` when already there, and a failed statement (or a server
   permission's `USE master`) forgets it, so the next one re-sends `USE`.
+  Before COMMIT or ROLLBACK it switches back to the database it began in
+  (`goHome`, best effort), so the connection does not go back to the pool
+  holding a lock on another — as no pooled call does (`execIn`).
 - **Observers hear after COMMIT**, in order, and nothing on a rollback.
 - **Refused inside** (`ErrUnsupported`): the paths that need a session of
   their own — Backup/Restore with progress, `BulkInsert`, the two
@@ -2548,19 +2551,23 @@ spellings dial alike.
 
 ## Connection helpers (internal)
 
-A `Database`-scoped call has to run `USE <db>` on the same connection as
-its statement, so it can't use the pool directly — it pins a `*sql.Conn`
-for the duration. `Server`-scoped calls have no `USE` to redo and go
-straight to the pool.
+A `Database`-scoped call runs in `<db>` without ever leaving its pooled
+session there: a read or a write is an RPC call of `[db].sys.sp_executesql`
+(`procRead`), so it pins a `*sql.Conn` only for the call's duration (and
+the rows'). A session left in `db` held a shared lock on it until the next
+checkout, and someone else's `RESTORE`, `SET OFFLINE` or `SET SINGLE_USER`
+failed meanwhile. `Server`-scoped calls go straight to the pool.
 
 | Helper                 | Purpose                                                                                     |
 | ---------------------- | ------------------------------------------------------------------------------------------- |
-| `Database.withConn`    | Acquires a `*sql.Conn` and runs `USE <db>` (retried), then hands it to a callback (not retried — the callback is the caller's write), releasing the conn on return. |
+| `Database.withConn`    | Acquires a `*sql.Conn` (retried) and hands it to a callback that names `db` itself — `execIn`'s call, `ExecProc`'s `[db].[schema].[proc]` (not retried — the callback is the caller's write), releasing the conn on return. Inside `InTransaction` the conn is the transaction's, switched with `USE`. |
+| `Database.execIn`      | A pooled write is an RPC call of `[db].sys.sp_executesql`, in `procRead`'s form, never retried; a can't-enter failure goes through `recheckEntry` as a read's does. Its statement is a batch of its own, so a `CREATE VIEW`/`PROCEDURE`/`SCHEMA` still opens it, and a `SET` in it ends with the call. Also the path of `Sequence.NextValue` and `DatabaseFileInfo.Shrink`, whose writes return a row. |
+| `Database.withSessionIn` | For a callback that needs its session in `db` across calls — `capturePlan`'s `SET SHOWPLAN_XML`/`STATISTICS XML`, `BulkInsert`'s `INSERT BULK`: `USE db` (retried with the acquire), the callback, then `USE` back to the login database; a session that cannot switch back is discarded, not pooled. |
 | `Database.query`       | Returns `*dbRows`, whose `Close()` closes the rows **and** the conn pinned for them. `*sql.Rows.Close` alone would leak that conn out of the pool permanently. |
 | `Database.queryRow`    | Takes a `func(*sql.Row) error` scan callback and runs acquire + query + scan as one retried unit. The scan has to be inside it: `QueryRowContext` never returns an error, so a scan run afterwards would never be retried. |
 | `Database.procRead` / `recheckEntry` | A pooled read (`query`, `queryRow`) is an RPC call of `[db].sys.sp_executesql` with the query, its declarations and its arguments: it runs in `db` and the session never leaves its login database, so no idle connection holds a lock on `db` afterwards. A call failing with a can't-enter number (`cannotEnterErrors`) makes one empty call of `db`'s `sp_executesql`: its error if it fails (`gosmo: USE x:`), else the read's own. An argument `procParamType` cannot declare fails the read (`ErrUnsupported`). |
 | `Database.useBatch` / `recheckUse` | A read inside `InTransaction` sends `USE` and the query as one guarded batch — one round trip — and the session stays in `db`. A failed batch runs `USE` alone once to tell the halves apart: its error if it fails (`gosmo: USE x:`), else the batch's own; the query never runs twice. |
-| `Database.exec`        | Thin wrapper over `withConn` for non-SELECT statements; also where `WithScript` intercepts database-scoped writes. |
+| `Database.exec`        | Thin wrapper over `execIn` for non-SELECT statements; also where `WithScript` intercepts database-scoped writes. |
 | `Server.query`         | Server-scoped rows-returning read, retried — no `USE`, so a plain `*sql.Rows` is enough.    |
 | `Server.queryRow`      | Server-scoped single-row read, same scan-callback shape and reason as `Database.queryRow`.   |
 | `Server.queryRowScan`  | `queryRow` convenience for a plain `row.Scan(dest...)`, sparing the caller a closure.        |
@@ -2574,7 +2581,7 @@ running their own idempotent reads outside gosmo's query helpers.
 counterpart, for a caller that runs a whole script or session on one
 `*sql.Conn` of its own: it acquires, runs the `USE`/`SELECT 1` prologue,
 and retries on a fresh connection under the same budget and rule when
-the pool hands back a dead one — the protection `Database.withConn` gives gosmo's
+the pool hands back a dead one — the protection `withRetry` gives gosmo's
 own reads, which `database/sql` does not extend to a pinned conn. Only
 the prologue is retried; whatever the caller goes on to run is not.
 

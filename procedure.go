@@ -135,7 +135,11 @@ func (d *Database) ExecProc(ctx context.Context, schema, name string, params ...
 	}
 
 	// The driver runs a bare procedure name with named args as an RPC, which
-	// is what makes OUTPUT parameters and the return status available.
+	// is what makes OUTPUT parameters and the return status available. The
+	// name carries d's, so the procedure runs in d and the session stays in
+	// its login database (see withConn) — a procedure runs in the database
+	// it belongs to, sys ones in the database named, so a session switched to
+	// d calls the same one.
 	args := make([]any, 0, len(params)+1)
 	for _, p := range params {
 		args = append(args, p.arg())
@@ -143,9 +147,19 @@ func (d *Database) ExecProc(ctx context.Context, schema, name string, params ...
 	var status mssql.ReturnStatus
 	args = append(args, &status)
 
-	if _, err := d.exec(ctx, proc, args...); err != nil {
+	err := d.withConn(ctx, func(ctx context.Context, c sqlConn) error {
+		_, err := c.ExecContext(ctx, quoteIdent(d.Name)+"."+proc, args...)
+		if err != nil && txFrom(ctx, d.server) == nil {
+			if uerr := d.recheckEntry(ctx, c, err); uerr != nil {
+				return uerr
+			}
+		}
+		return err
+	})
+	if err != nil {
 		return ProcResult{}, fmt.Errorf("gosmo: exec proc %s: %w", proc, err)
 	}
+	observe(ctx, d.server, ScriptEntry{Server: scriptServerName(ctx, d.server), Database: d.Name, SQL: proc})
 	return ProcResult{ReturnStatus: int32(status)}, nil
 }
 

@@ -234,22 +234,21 @@ func (seq *Sequence) Restart(ctx context.Context, value int64) error {
 
 // NextValue retrieves the next value from the sequence.
 //
-// This deliberately uses withConn, not queryRow: "NEXT VALUE FOR" advances the
+// This deliberately uses execIn, not queryRow: "NEXT VALUE FOR" advances the
 // sequence as a side effect of being read, so it isn't safe to retry —
 // unlike every other queryRow caller in this package, re-running it on a fresh
-// connection after a transient failure could silently skip a value. withConn
-// still retries the acquire+USE step (safe, nothing server-side has happened
+// connection after a transient failure could silently skip a value. execIn
+// still retries the acquire step (safe, nothing server-side has happened
 // yet), just not the query itself.
 func (seq *Sequence) NextValue(ctx context.Context) (int64, error) {
 	if err := requireSchema("next value for", seq.Schema, seq.Name); err != nil {
 		return 0, err
 	}
 	var val int64
-	err := seq.db.withConn(ctx, func(ctx context.Context, conn sqlConn) error {
-		return conn.QueryRowContext(ctx,
-			fmt.Sprintf("SELECT NEXT VALUE FOR %s", qualifiedName(seq.Schema, seq.Name)),
-		).Scan(&val)
-	})
+	err := seq.db.execIn(ctx, "SELECT NEXT VALUE FOR "+qualifiedName(seq.Schema, seq.Name), nil,
+		func(ctx context.Context, conn sqlConn, q string, args []any) error {
+			return conn.QueryRowContext(ctx, q, args...).Scan(&val)
+		})
 	if err != nil {
 		return 0, fmt.Errorf("gosmo: next value for %s: %w", qualifiedName(seq.Schema, seq.Name), err)
 	}

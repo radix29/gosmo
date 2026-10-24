@@ -39,7 +39,10 @@ func (*auditConn) Prepare(string) (driver.Stmt, error) { return nil, driver.ErrS
 func (*auditConn) Close() error                        { return nil }
 func (*auditConn) Begin() (driver.Tx, error)           { return nil, driver.ErrSkip }
 
-func (*auditConn) ExecContext(_ context.Context, q string, _ []driver.NamedValue) (driver.Result, error) {
+func (*auditConn) ExecContext(_ context.Context, q string, args []driver.NamedValue) (driver.Result, error) {
+	if _, inner, _, ok := unwrapProcRead(q, args); ok {
+		q = inner
+	}
 	auditCurrent.execs = append(auditCurrent.execs, q)
 	if auditCurrent.onExec != nil {
 		if err := auditCurrent.onExec(q); err != nil {

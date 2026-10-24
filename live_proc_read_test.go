@@ -59,13 +59,15 @@ func pathName(proc bool) string {
 	return "useBatch"
 }
 
-// sessionsIn counts the sessions other than other's own whose current
-// database is name.
+// sessionsIn counts the user sessions other than other's own whose current
+// database is name. A system task can sit in a new database too (17's
+// PVS_PREALLOCATOR, an ADR thread), and counting it failed a check that
+// gosmo left nothing behind.
 func sessionsIn(t *testing.T, ctx context.Context, other *sql.DB, name string) int {
 	t.Helper()
 	var n int
 	if err := other.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM sys.dm_exec_sessions WHERE database_id = DB_ID(@p1) AND session_id <> @@SPID`,
+		`SELECT COUNT(*) FROM sys.dm_exec_sessions WHERE is_user_process = 1 AND database_id = DB_ID(@p1) AND session_id <> @@SPID`,
 		name).Scan(&n); err != nil {
 		t.Fatalf("count sessions in %s: %v", name, err)
 	}
