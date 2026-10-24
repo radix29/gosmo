@@ -120,7 +120,10 @@ func TestLiveBackupSetTypes(t *testing.T) {
 		t.Fatalf("BuildRestoreStatement: %v", err)
 	}
 	t.Logf("%s", stmt)
-	if !strings.HasPrefix(stmt, "RESTORE LOG ") || strings.Contains(stmt, "MOVE") {
+	// The statement runs from master by design (fromMaster), so the RESTORE
+	// is what follows the USE.
+	body, ok := strings.CutPrefix(stmt, fromMaster(""))
+	if !ok || !strings.HasPrefix(body, "RESTORE LOG ") || strings.Contains(body, "MOVE") {
 		t.Errorf("the log set's statement is not a RESTORE LOG without MOVEs:\n%s", stmt)
 	}
 	if err := srv.Restore(ctx, opts); err != nil {

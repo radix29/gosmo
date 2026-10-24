@@ -299,19 +299,11 @@ the 5-minute default (`internal/db/connection.go`, `connMaxIdleTime`). Moving
 writes to the same RPC form is possible but untried: a write's `SET` options,
 `ExecProc`'s named RPC and the transaction path all need checking first.
 
-## Three live tests fail on `HEAD`, unrelated to their area's recent work
+## `TestLiveScriptTableKinds` fails Msg 701 on 13 and 14, intermittently
 
-Found 2026-10-23 running the whole `livedb` suite; each fails the same on a
-clean export of `HEAD` 225fb48. Unfixed.
-
-- `TestLiveBackupSetTypes` (13, 14, 17): `BuildRestoreStatement` now starts
-  `USE [master];`, and the test still wants the statement to start
-  `RESTORE LOG`. Most likely the test is stale; confirm the prefix is meant.
-- `TestLiveWrongValuesFileUnits` (13, 14, 17): `FileGroups`' file reports
-  `SpaceUsedKB` 0 where `Files` reports 2624 for the same file.
-- `TestLiveScriptTableKinds` (13, 14 only, intermittent): the
-  memory-optimized tables' replay fails Msg 701, "insufficient system memory
-  in resource pool 'default'": the host's free memory, not gosmo.
+Found 2026-10-23 running the whole `livedb` suite. The memory-optimized
+tables' replay fails Msg 701, "insufficient system memory in resource pool
+'default'": the host's free memory, not gosmo.
 
 ## Agent schedules are addressed by id — settled, do not re-raise
 

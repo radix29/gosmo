@@ -40,7 +40,7 @@ func (c *qsRecConn) QueryContext(_ context.Context, q string, args []driver.Name
 		q, args = inner, innerArgs
 	}
 	qsRec.add(q, args)
-	return qsRec.reply(), nil
+	return qsRec.reply(q), nil
 }
 
 // qsRecCall is one statement the driver was handed, with its parameters in
@@ -53,6 +53,16 @@ type qsRecCall struct {
 type qsRecLog struct {
 	mu    sync.Mutex
 	calls []qsRecCall
+	cols  []string
+	rows  [][]driver.Value
+	// routes answer a query containing their match with their own result,
+	// for a read that issues more than one query; the first match wins, and
+	// anything unmatched gets cols/rows.
+	routes []qsRecRoute
+}
+
+type qsRecRoute struct {
+	match string
 	cols  []string
 	rows  [][]driver.Value
 }
@@ -76,16 +86,29 @@ func (l *qsRecLog) add(q string, args []driver.NamedValue) {
 	l.calls = append(l.calls, qsRecCall{sql: q, args: vals})
 }
 
-func (l *qsRecLog) reply() *qsRecRows {
+func (l *qsRecLog) reply(q string) *qsRecRows {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	for _, r := range l.routes {
+		if strings.Contains(q, r.match) {
+			return &qsRecRows{cols: r.cols, rows: r.rows}
+		}
+	}
 	return &qsRecRows{cols: l.cols, rows: l.rows}
 }
 
 func (l *qsRecLog) reset(cols []string, rows [][]driver.Value) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	l.calls, l.cols, l.rows = nil, cols, rows
+	l.calls, l.cols, l.rows, l.routes = nil, cols, rows, nil
+}
+
+// route makes every later query containing match answer cols/rows, until the
+// next reset.
+func (l *qsRecLog) route(match string, cols []string, rows [][]driver.Value) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.routes = append(l.routes, qsRecRoute{match: match, cols: cols, rows: rows})
 }
 
 // last returns the most recent recorded statement, failing the test if

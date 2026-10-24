@@ -47,6 +47,19 @@ func TestNormalizeFileGrowth(t *testing.T) {
 	}
 }
 
+// fileGroupsDB returns a Database over the recording driver whose
+// sys.filegroups read answers groups (name, type_desc, is_default,
+// is_read_only) and whose Files read answers files, in Files' column order.
+func fileGroupsDB(t *testing.T, groups, files [][]driver.Value) *Database {
+	t.Helper()
+	d := qsRecDB(t, 17, []string{"name", "type_desc", "is_default", "is_read_only"}, groups)
+	qsRec.route("sys.database_files df", []string{
+		"file_id", "name", "physical_name", "type_desc", "filegroup", "state_desc",
+		"size", "max_size", "growth", "is_percent_growth", "space_used",
+	}, files)
+	return d
+}
+
 // TestFileGroupsCarryTheirType pins sys.filegroups.type_desc through to
 // FileGroup.Type and IsFileStream.
 //
@@ -56,18 +69,13 @@ func TestNormalizeFileGrowth(t *testing.T) {
 // SQL Server refuses with error 5509 — measured against a real FILESTREAM
 // database, 2026-09-05.
 func TestFileGroupsCarryTheirType(t *testing.T) {
-	cols := []string{
-		"name", "type_desc", "is_default", "is_read_only",
-		"file_id", "file_name", "physical_name", "file_type", "state", "size", "max_size", "growth",
-		"is_percent_growth",
-	}
-	rows := [][]driver.Value{
-		{"PRIMARY", RowsFileGroup, true, false,
-			int64(1), "appdb", `C:\data\appdb.mdf`, "ROWS", "ONLINE", int64(8192), int64(-1), int64(65536), false},
-		{"fsdata", FileStreamFileGroup, true, false,
-			int64(65537), "appdb_fs", `C:\data\appdb_fs`, "FILESTREAM", "ONLINE", int64(0), int64(-1), int64(0), false},
-	}
-	d := qsRecDB(t, 17, cols, rows)
+	d := fileGroupsDB(t, [][]driver.Value{
+		{"PRIMARY", RowsFileGroup, true, false},
+		{"fsdata", FileStreamFileGroup, true, false},
+	}, [][]driver.Value{
+		{int64(65537), "appdb_fs", `C:\data\appdb_fs`, "FILESTREAM", "fsdata", "ONLINE", int64(0), int64(-1), int64(0), false, int64(0)},
+		{int64(1), "appdb", `C:\data\appdb.mdf`, "ROWS", "PRIMARY", "ONLINE", int64(65536), int64(-1), int64(8192), false, int64(2048)},
+	})
 
 	fgs, err := d.FileGroups(context.Background())
 	if err != nil {
@@ -89,7 +97,7 @@ func TestFileGroupsCarryTheirType(t *testing.T) {
 	// The column has to be selected, not merely scanned into: a query that
 	// stopped reading type_desc would leave every group's Type empty and
 	// IsFileStream false, which reads as "no FILESTREAM filegroup here".
-	if sql := qsRec.last(t).sql; !strings.Contains(sql, "type_desc") {
+	if sql := qsRec.recorded()[0].sql; !strings.Contains(sql, "fg.type_desc") {
 		t.Errorf("FileGroups query does not read type_desc:\n%s", sql)
 	}
 }
@@ -99,22 +107,16 @@ func TestFileGroupsCarryTheirType(t *testing.T) {
 //
 // FileGroups once inner-joined sys.database_files, so ALTER DATABASE ADD
 // FILEGROUP's result had no row — and a filegroup only REMOVE FILEGROUP can
-// act on (it must be empty) never reached a caller that could remove it.
-// The fake answers what the LEFT JOIN returns for one: a filegroup row whose
-// file columns are all NULL.
+// act on (it must be empty) never reached a caller that could remove it. The
+// log file, in no filegroup, is attached to none.
 func TestFileGroupsListAnEmptyFilegroup(t *testing.T) {
-	cols := []string{
-		"name", "type_desc", "is_default", "is_read_only",
-		"file_id", "file_name", "physical_name", "file_type", "state", "size", "max_size", "growth",
-		"is_percent_growth",
-	}
-	rows := [][]driver.Value{
-		{"archive", RowsFileGroup, false, false,
-			nil, nil, nil, nil, nil, nil, nil, nil, nil},
-		{"PRIMARY", RowsFileGroup, true, false,
-			int64(1), "appdb", `C:\data\appdb.mdf`, "ROWS", "ONLINE", int64(8192), int64(-1), int64(10), true},
-	}
-	d := qsRecDB(t, 17, cols, rows)
+	d := fileGroupsDB(t, [][]driver.Value{
+		{"archive", RowsFileGroup, false, false},
+		{"PRIMARY", RowsFileGroup, true, false},
+	}, [][]driver.Value{
+		{int64(2), "appdb_log", `C:\data\appdb.ldf`, "LOG", "", "ONLINE", int64(8192), int64(268435456), int64(10), true, int64(512)},
+		{int64(1), "appdb", `C:\data\appdb.mdf`, "ROWS", "PRIMARY", "ONLINE", int64(65536), int64(-1), int64(10), true, int64(2048)},
+	})
 
 	fgs, err := d.FileGroups(context.Background())
 	if err != nil {
@@ -131,42 +133,46 @@ func TestFileGroupsListAnEmptyFilegroup(t *testing.T) {
 		fg.Files[0].FileGroup != "PRIMARY" || fg.Files[0].Database() != d {
 		t.Errorf("fgs[1] = %+v, want PRIMARY with its one percent-growth primary file", fg)
 	}
-	if sql := qsRec.last(t).sql; !strings.Contains(sql, "LEFT   JOIN sys.database_files") {
-		t.Errorf("FileGroups query does not outer-join the files:\n%s", sql)
-	}
 }
 
-// TestFileGroupsReportMaxSizeAndGrowthInKB pins the units of a filegroup's
-// files: sys.database_files.max_size and growth are 8 KB pages, and
-// FileGroups once passed them through under the "KB" label, so every max
-// size and fixed growth read eight times too small. A percentage growth
-// stays a percentage, and -1 stays "unlimited".
-func TestFileGroupsReportMaxSizeAndGrowthInKB(t *testing.T) {
-	cols := []string{
-		"name", "type_desc", "is_default", "is_read_only",
-		"file_id", "file_name", "physical_name", "file_type", "state", "size", "max_size", "growth",
-		"is_percent_growth",
-	}
-	rows := [][]driver.Value{
-		{"PRIMARY", RowsFileGroup, true, false,
-			int64(1), "appdb", `C:\data\appdb.mdf`, "ROWS", "ONLINE", int64(8192), int64(1280), int64(8192), false},
-		{"PRIMARY", RowsFileGroup, true, false,
-			int64(3), "appdb2", `C:\data\appdb2.ndf`, "ROWS", "ONLINE", int64(8192), int64(-1), int64(10), true},
-	}
-	d := qsRecDB(t, 17, cols, rows)
+// TestFileGroupsFilesAreFilesOwn pins B2 of the 2026-10-24 review: a file
+// FileGroups returns equals the same file from Files, field for field.
+//
+// FileGroups once read the files itself and never read FILEPROPERTY, so
+// every file's SpaceUsedKB was 0 here and not in Files — the zero looked like
+// data (TestLiveWrongValuesFileUnits). The units ride along: max_size and
+// growth are 8 KB pages, once passed through under the "KB" label, so every
+// max size and fixed growth read eight times too small.
+func TestFileGroupsFilesAreFilesOwn(t *testing.T) {
+	d := fileGroupsDB(t, [][]driver.Value{
+		{"PRIMARY", RowsFileGroup, true, false},
+	}, [][]driver.Value{
+		{int64(1), "appdb", `C:\data\appdb.mdf`, "ROWS", "PRIMARY", "ONLINE", int64(65536), int64(1280), int64(8192), false, int64(3072)},
+		{int64(3), "appdb2", `C:\data\appdb2.ndf`, "ROWS", "PRIMARY", "ONLINE", int64(65536), int64(-1), int64(10), true, int64(1024)},
+	})
+	ctx := context.Background()
 
-	fgs, err := d.FileGroups(context.Background())
+	fgs, err := d.FileGroups(ctx)
 	if err != nil {
 		t.Fatalf("FileGroups: %v", err)
 	}
 	if len(fgs) != 1 || len(fgs[0].Files) != 2 {
 		t.Fatalf("got %+v, want PRIMARY with two files", fgs)
 	}
-	if f := fgs[0].Files[0]; f.MaxSizeKB != 10240 || f.IsPercentGrowth || f.GrowthKB != 65536 || f.SizeKB != 8192 {
-		t.Errorf("appdb = %+v, want MaxSize 10240 KB, Growth 65536 KB", f)
+	if f := fgs[0].Files[0]; f.MaxSizeKB != 10240 || f.IsPercentGrowth || f.GrowthKB != 65536 || f.SizeKB != 65536 || f.SpaceUsedKB != 3072 {
+		t.Errorf("appdb = %+v, want MaxSize 10240 KB, Growth 65536 KB, SpaceUsed 3072 KB", f)
 	}
 	if f := fgs[0].Files[1]; f.MaxSizeKB != -1 || !f.IsPercentGrowth || f.GrowthPercent != 10 || f.GrowthKB != 0 || f.IsPrimaryFile() {
 		t.Errorf("appdb2 = %+v, want MaxSize -1 (unlimited), Growth 10 PERCENT", f)
+	}
+	files, err := d.Files(ctx)
+	if err != nil {
+		t.Fatalf("Files: %v", err)
+	}
+	for i, f := range fgs[0].Files {
+		if *f != *files[i] {
+			t.Errorf("FileGroups file %d = %+v, want the Files values %+v", i, *f, *files[i])
+		}
 	}
 }
 
