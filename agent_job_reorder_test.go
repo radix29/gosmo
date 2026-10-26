@@ -211,7 +211,7 @@ func TestReorderStepsKeepsTheStartStep(t *testing.T) {
 			if err := j.MoveStep(t.Context(), c.from, c.to); err != nil {
 				t.Fatalf("MoveStep: %v", err)
 			}
-			batch := captured.find("sp_delete_jobstep")
+			batch := captured.findBound("sp_delete_jobstep")
 			if c.want == "" {
 				if strings.Contains(batch, "sp_update_job ") {
 					t.Errorf("the start step did not move, yet the batch rewrites it:\n%s", batch)

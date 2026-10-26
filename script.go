@@ -308,9 +308,10 @@ func scriptFrom(ctx context.Context) (*ScriptCollector, bool) {
 // Database.exec, every database-scoped one) funnels through. It has
 // Database.exec's shape, so a write moving between scopes keeps its call:
 // args bind @p1, @p2, … and are substituted into the text a WithScript
-// collector captures or an observer sees (see bindScriptArgs). Most callers
-// pass none — their statement is DDL or an EXEC built complete via
-// QuoteName/QuoteLiteral/escapeSingle, since those are not parameterizable.
+// collector captures or an observer sees (see bindScriptArgs). DDL cannot
+// take a parameter, so its callers pass none and build the statement complete
+// via QuoteName/QuoteLiteral/escapeSingle; a procedure's arguments can, and
+// the Agent procedures bind theirs (boundArgs).
 func (s *Server) exec(ctx context.Context, q string, args ...any) (sql.Result, error) {
 	return s.execShown(ctx, q, q, args...)
 }
@@ -515,9 +516,17 @@ func atomicTxBatch(stmts []string) string {
 // execAtomic runs stmts as one write that applies all of them or none:
 // atomicBatch on its own, atomicTxBatch inside InTransaction on s. Under
 // WithScript it is always atomicBatch — a script has no outer transaction,
-// even when the context it was collected under has one.
-func (s *Server) execAtomic(ctx context.Context, stmts []string) error {
-	return s.execPasswordsAtomic(ctx, stmts)
+// even when the context it was collected under has one. args bind the
+// batch's @p1, @p2, … as exec's do, numbered across every statement.
+func (s *Server) execAtomic(ctx context.Context, stmts []string, args ...any) error {
+	t := txFrom(ctx, s)
+	if t == nil || Scripting(ctx) {
+		_, err := s.exec(ctx, atomicBatch(stmts), args...)
+		return err
+	}
+	_, err := s.exec(ctx, atomicTxBatch(stmts), args...)
+	t.fail(err)
+	return err
 }
 
 // execPasswordsAtomic is execAtomic for statements whose secrets are all
@@ -552,24 +561,36 @@ func (s *Server) execSecretAtomic(ctx context.Context, run, shown []string) erro
 // execAtomicScan is execAtomic for a write that reads a value back: stmts
 // run as one atomic batch, as execAtomic sends it, followed by read — a
 // SELECT of a variable the batch DECLAREd, which is batch-scoped and so
-// survives END CATCH — whose one row is scanned into dest. Like execScan it
-// is never retried, and it does not handle Scripting(ctx): the caller
-// collects its own form. It observes the batch it ran.
-func (s *Server) execAtomicScan(ctx context.Context, stmts []string, read string, dest ...any) error {
+// survives END CATCH — whose one row is scanned into dest. args bind the
+// batch's placeholders, as execAtomic's do. Like execScan it is never
+// retried, and it does not handle Scripting(ctx): the caller collects its own
+// form. It observes the batch it ran, with args bound into its text.
+func (s *Server) execAtomicScan(ctx context.Context, stmts []string, read string, args []any, dest ...any) error {
 	t := txFrom(ctx, s)
 	batch := atomicBatch(stmts)
 	if t != nil {
 		batch = atomicTxBatch(stmts)
 	}
 	batch += "\n" + read
-	err := s.execScan(ctx, batch, dest...)
+	err := s.execScan(ctx, batch, args, dest...)
 	if t != nil {
 		t.fail(err)
 	}
 	if err == nil {
-		observe(ctx, s, ScriptEntry{Server: scriptServerName(ctx, s), SQL: batch})
+		observeBound(ctx, s, batch, args)
 	}
 	return err
+}
+
+// observeBound is observe for a statement that ran with args through a path
+// other than exec (execScan, execAtomicScan): the observer sees args bound
+// into its text, as exec's observer does. Text that cannot be bound is
+// observed as it ran.
+func observeBound(ctx context.Context, s *Server, stmt string, args []any) {
+	if bound, err := bindScriptArgs(stmt, args); err == nil {
+		stmt = bound
+	}
+	observe(ctx, s, ScriptEntry{Server: scriptServerName(ctx, s), SQL: stmt})
 }
 
 // execAtomic is Server.execAtomic for a database-scoped write.

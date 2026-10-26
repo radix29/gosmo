@@ -58,17 +58,17 @@ func TestParseSQLAgentDateOrZero(t *testing.T) {
 	}
 }
 
-// TestAlertSetJobResponseClearsWithAnEmptyName pins the sentinel that clears
+// TestAlertJobResponseClearsWithAnEmptyName pins the sentinel that clears
 // an alert's job response. sp_update_alert maps an empty @job_name to a
 // job_id of 0x00; any placeholder name — [UNSPECIFIED] was the one shipped
 // here — is looked up as a real job and fails with "The specified @job_name
 // does not exist".
-func TestAlertSetJobResponseClearsWithAnEmptyName(t *testing.T) {
+func TestAlertJobResponseClearsWithAnEmptyName(t *testing.T) {
 	a := &Alert{server: &Server{}, Name: "Disk full", JobName: "Nightly"}
 	ctx, script := WithScript(context.Background())
 
-	if err := a.SetJobResponse(ctx, ""); err != nil {
-		t.Fatalf("SetJobResponse under WithScript: %v", err)
+	if err := a.Alter(ctx, AlertChanges{JobName: new("")}); err != nil {
+		t.Fatalf("Alter under WithScript: %v", err)
 	}
 	if len(script.Statements()) != 1 {
 		t.Fatalf("Statements = %d, want 1", len(script.Statements()))
@@ -83,13 +83,13 @@ func TestAlertSetJobResponseClearsWithAnEmptyName(t *testing.T) {
 	}
 }
 
-// TestAlertSetJobResponseNamesTheJob pins the ordinary case alongside it.
-func TestAlertSetJobResponseNamesTheJob(t *testing.T) {
+// TestAlertJobResponseNamesTheJob pins the ordinary case alongside it.
+func TestAlertJobResponseNamesTheJob(t *testing.T) {
 	a := &Alert{server: &Server{}, Name: "Disk full"}
 	ctx, script := WithScript(context.Background())
 
-	if err := a.SetJobResponse(ctx, "Nightly O'Brien"); err != nil {
-		t.Fatalf("SetJobResponse under WithScript: %v", err)
+	if err := a.Alter(ctx, AlertChanges{JobName: new("Nightly O'Brien")}); err != nil {
+		t.Fatalf("Alter under WithScript: %v", err)
 	}
 	want := "EXEC msdb.dbo.sp_update_alert @name = N'Disk full', @job_name = N'Nightly O''Brien'"
 	if len(script.Statements()) != 1 || script.Statements()[0] != want {

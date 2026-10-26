@@ -136,25 +136,28 @@ func TestDropStepAddressesTheStepItWasCalledOn(t *testing.T) {
 		t.Fatalf("Drop: %v", err)
 	}
 
-	got := captured.find("sp_delete_jobstep")
+	got := captured.findBound("sp_delete_jobstep")
 	want := "EXEC msdb.dbo.sp_delete_jobstep @job_name = N'nightly', @step_id = 3"
 	if got != want {
 		t.Errorf("statement =\n%s\nwant\n%s", got, want)
 	}
 }
 
-// A job name carrying an apostrophe is escaped, not concatenated. Job names are
-// user text and reach this statement as a literal.
-func TestDropStepEscapesTheJobName(t *testing.T) {
+// A job name carrying an apostrophe is bound, not concatenated: job names are
+// user text, and the statement holds only its placeholder.
+func TestDropStepBindsTheJobName(t *testing.T) {
 	s := captureStepJob(t, "Bob's nightly", 1)
 
 	if err := s.Drop(t.Context()); err != nil {
 		t.Fatalf("Drop: %v", err)
 	}
 
-	if got, want := captured.find("sp_delete_jobstep"),
-		"EXEC msdb.dbo.sp_delete_jobstep @job_name = N'Bob''s nightly', @step_id = 1"; got != want {
-		t.Errorf("statement =\n%s\nwant\n%s", got, want)
+	q, args := captured.findArgs("sp_delete_jobstep")
+	if want := "EXEC msdb.dbo.sp_delete_jobstep @job_name = @p1, @step_id = 1"; q != want {
+		t.Errorf("statement =\n%s\nwant\n%s", q, want)
+	}
+	if len(args) != 1 || args[0] != "Bob's nightly" {
+		t.Errorf("args = %q, want the job name as given", args)
 	}
 }
 
@@ -180,7 +183,7 @@ func TestEveryStepDeleteRendersTheSameCall(t *testing.T) {
 	if viaStep != viaNumber {
 		t.Errorf("JobStep.Drop sends\n%s\nand Job.deleteStepAt sends\n%s", viaStep, viaNumber)
 	}
-	if got := deleteStepStmt("nightly", 2); got != viaStep {
+	if got := deleteStepStmt("@p1", 2); got != viaStep {
 		t.Errorf("the reorder batch collects\n%s\nand a delete sends\n%s", got, viaStep)
 	}
 }

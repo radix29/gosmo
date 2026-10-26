@@ -323,11 +323,11 @@ WHERE  j.name = @p1`
 
 // Start starts the job, optionally from a specific step name.
 func (j *Job) Start(ctx context.Context, stepName string) error {
-	q := fmt.Sprintf("EXEC msdb.dbo.sp_start_job @job_name = N'%s'", escapeSingle(j.Name))
+	q, args := "EXEC msdb.dbo.sp_start_job @job_name = @p1", []any{j.Name}
 	if stepName != "" {
-		q += fmt.Sprintf(", @step_name = N'%s'", escapeSingle(stepName))
+		q, args = q+", @step_name = @p2", append(args, stepName)
 	}
-	if _, err := j.server.exec(ctx, q); err != nil {
+	if _, err := j.server.exec(ctx, q, args...); err != nil {
 		return fmt.Errorf("gosmo: start job %q: %w", j.Name, err)
 	}
 	return nil
@@ -335,8 +335,7 @@ func (j *Job) Start(ctx context.Context, stepName string) error {
 
 // Stop stops a running job.
 func (j *Job) Stop(ctx context.Context) error {
-	q := fmt.Sprintf("EXEC msdb.dbo.sp_stop_job @job_name = N'%s'", escapeSingle(j.Name))
-	if _, err := j.server.exec(ctx, q); err != nil {
+	if _, err := j.server.exec(ctx, "EXEC msdb.dbo.sp_stop_job @job_name = @p1", j.Name); err != nil {
 		return fmt.Errorf("gosmo: stop job %q: %w", j.Name, err)
 	}
 	return nil
@@ -355,8 +354,7 @@ func (j *Job) SetEnabled(ctx context.Context, on bool) error {
 
 // Drop drops the agent job.
 func (j *Job) Drop(ctx context.Context) error {
-	q := fmt.Sprintf("EXEC msdb.dbo.sp_delete_job @job_name = N'%s'", escapeSingle(j.Name))
-	if _, err := j.server.exec(ctx, q); err != nil {
+	if _, err := j.server.exec(ctx, "EXEC msdb.dbo.sp_delete_job @job_name = @p1", j.Name); err != nil {
 		return fmt.Errorf("gosmo: drop job %q: %w", j.Name, err)
 	}
 	return nil
@@ -365,52 +363,6 @@ func (j *Job) Drop(ctx context.Context) error {
 // Rename changes the job's name.
 func (j *Job) Rename(ctx context.Context, newName string) error {
 	return j.Alter(ctx, JobChanges{Name: &newName})
-}
-
-// SetDescription changes the job's description.
-func (j *Job) SetDescription(ctx context.Context, desc string) error {
-	return j.Alter(ctx, JobChanges{Description: &desc})
-}
-
-// SetCategory reassigns the job's category. category == "" moves it back to
-// the default category, sent as msdb's [DEFAULT] sentinel and mirrored as
-// the [Uncategorized (Local)] the catalog then reports — see
-// agentCategoryTarget.
-func (j *Job) SetCategory(ctx context.Context, category string) error {
-	return j.Alter(ctx, JobChanges{Category: &category})
-}
-
-// SetOwner reassigns the job's owner login.
-func (j *Job) SetOwner(ctx context.Context, loginName string) error {
-	return j.Alter(ctx, JobChanges{OwnerLogin: &loginName})
-}
-
-// SetStartStep changes which step the job begins execution from.
-func (j *Job) SetStartStep(ctx context.Context, stepID int) error {
-	return j.Alter(ctx, JobChanges{StartStepID: &stepID})
-}
-
-// SetEmailNotify sets which operator is emailed on job completion, and
-// under what condition. operatorName == "" leaves the currently configured
-// operator unchanged (SQL Server has no documented "clear to none" value
-// for sp_update_job's @notify_email_operator_name; pair with
-// NotifyNever to stop emailing without needing to clear it).
-//
-// A level set on a job with no operator does not stick: msdb stores
-// notify_level_email as 0 and reports no error, since a level with nobody to
-// mail is meaningless to it. Verified on SQL Server 17.0.1135.8, 2026-09-17,
-// and the batched Job.Alter behaves the same way.
-func (j *Job) SetEmailNotify(ctx context.Context, operatorName string, level NotifyLevel) error {
-	ch := JobChanges{NotifyLevelEmail: &level}
-	if operatorName != "" {
-		ch.NotifyEmailOperatorName = &operatorName
-	}
-	return j.Alter(ctx, ch)
-}
-
-// SetDeleteLevel sets the job's automatic-delete condition.
-func (j *Job) SetDeleteLevel(ctx context.Context, level NotifyLevel) error {
-	return j.Alter(ctx, JobChanges{DeleteLevel: &level})
 }
 
 // CreateJob creates a new SQL Server Agent job.
@@ -430,16 +382,17 @@ func (s *Server) CreateJob(ctx context.Context, req CreateJobRequest) (*Job, err
 	if category == "" {
 		category = "[Uncategorized (Local)]"
 	}
+	// @p1, the job name, serves both procedures.
+	args := []any{req.Name, req.Description, category}
 	q := fmt.Sprintf(
-		"EXEC msdb.dbo.sp_add_job @job_name = N'%s', @description = N'%s', @category_name = N'%s', @enabled = %d",
-		escapeSingle(req.Name), escapeSingle(req.Description),
-		escapeSingle(category), boolToInt(req.Enabled),
+		"EXEC msdb.dbo.sp_add_job @job_name = @p1, @description = @p2, @category_name = @p3, @enabled = %d",
+		boolToInt(req.Enabled),
 	)
 	if req.OwnerLogin != "" {
-		q += fmt.Sprintf(", @owner_login_name = N'%s'", escapeSingle(req.OwnerLogin))
+		q, args = q+", @owner_login_name = @p4", append(args, req.OwnerLogin)
 	}
-	enlistQ := fmt.Sprintf("EXEC msdb.dbo.sp_add_jobserver @job_name = N'%s', @server_name = N'(local)'", escapeSingle(req.Name))
-	if err := s.execAtomic(ctx, []string{q, enlistQ}); err != nil {
+	const enlistQ = "EXEC msdb.dbo.sp_add_jobserver @job_name = @p1, @server_name = N'(local)'"
+	if err := s.execAtomic(ctx, []string{q, enlistQ}, args...); err != nil {
 		return nil, fmt.Errorf("gosmo: create job %q: %w", req.Name, err)
 	}
 	return createdObject(ctx, s.JobRef(req.Name), func() (*Job, error) {
@@ -470,28 +423,28 @@ func (j *Job) AddSchedule(ctx context.Context, req CreateScheduleRequest) (*Sche
 	if req.Name == "" {
 		return nil, invalidf("gosmo: add schedule to job %q: name is required", j.Name)
 	}
-	add := fmt.Sprintf("EXEC msdb.dbo.sp_add_jobschedule @job_name = N'%s', @name = N'%s', %s",
-		escapeSingle(j.Name), escapeSingle(req.Name), req.frequencyArgs())
+	args := []any{j.Name, req.Name}
+	add := "EXEC msdb.dbo.sp_add_jobschedule @job_name = @p1, @name = @p2, " + req.frequencyArgs()
 	stmts := []string{"DECLARE @schedule_id int", add + ", @schedule_id = @schedule_id OUTPUT"}
 	if req.OwnerLoginName != "" {
-		stmts = append(stmts, fmt.Sprintf("EXEC msdb.dbo.sp_update_schedule @schedule_id = @schedule_id, @owner_login_name = N'%s'",
-			escapeSingle(req.OwnerLoginName)))
+		stmts = append(stmts, "EXEC msdb.dbo.sp_update_schedule @schedule_id = @schedule_id, @owner_login_name = @p3")
+		args = append(args, req.OwnerLoginName)
 	}
 	const read = "SELECT @schedule_id;"
 	var err error
 	var id int
 	switch {
 	case Scripting(ctx) && req.OwnerLoginName == "":
-		_, err = j.server.exec(ctx, add)
+		_, err = j.server.exec(ctx, add, args...)
 	case Scripting(ctx):
-		err = j.server.execAtomic(ctx, stmts)
+		err = j.server.execAtomic(ctx, stmts, args...)
 	case req.OwnerLoginName == "":
 		stmt := strings.Join(stmts, ";\n") + ";\n" + read
-		if err = j.server.execScan(ctx, stmt, &id); err == nil {
-			observe(ctx, j.server, ScriptEntry{Server: scriptServerName(ctx, j.server), SQL: stmt})
+		if err = j.server.execScan(ctx, stmt, args, &id); err == nil {
+			observeBound(ctx, j.server, stmt, args)
 		}
 	default:
-		err = j.server.execAtomicScan(ctx, stmts, read, &id)
+		err = j.server.execAtomicScan(ctx, stmts, read, args, &id)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("gosmo: add schedule %q to job %q: %w", req.Name, j.Name, err)

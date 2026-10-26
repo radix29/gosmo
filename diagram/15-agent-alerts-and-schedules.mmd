@@ -26,12 +26,6 @@ classDiagram
         +Enable() error
         +Disable() error
         +Rename(newName) error
-        +SetTrigger(errorNumber, severity) error
-        +SetDatabase(dbName) error
-        +SetDelay(d) error
-        +SetNotificationMessage(msg) error
-        +SetJobResponse(jobName) error
-        +SetCategory(category) error
         +Alter(ch AlertChanges) error
         +Notifications() []*AlertNotification
         +Notify(operator, method) error
@@ -72,8 +66,6 @@ classDiagram
         +Enable() error
         +Disable() error
         +Rename(newName) error
-        +SetEmailAddress(addr) error
-        +SetCategory(category) error
         +Alter(ch OperatorChanges) error
         +NotifyingAlerts() []*OperatorAlert
         +NotifyingJobs() []*OperatorJob
@@ -131,9 +123,6 @@ classDiagram
         +Enable() error
         +Disable() error
         +Rename(newName) error
-        +SetOwner(login) error
-        +SetFrequency(f) error
-        +SetActiveRange(startDate, endDate, startTime, endTime) error
         +Alter(ch ScheduleChanges) error
         +Jobs() []*Job
         +Drop() error
@@ -155,9 +144,7 @@ classDiagram
         +Range *ScheduleActiveRange
         +OwnerLogin *string
         Addressed by @name when the receiver
-        has no ID, so it works from ScheduleRef
-        where the per-property setters, keyed
-        on @schedule_id, do not.
+        has no ID, so it works from ScheduleRef.
     }
 
     class ScheduleActiveRange {
@@ -245,10 +232,10 @@ classDiagram
     Job "1" --> "*" Schedule : attached to
     Job --> JobState : CurrentState is
     Job --> NotifyLevel : notified per
-    Schedule --> ScheduleFrequency : SetFrequency() accepts
     Alert --> AlertChanges : Alter() accepts
     Operator --> OperatorChanges : Alter() accepts
     Schedule --> ScheduleChanges : Alter() accepts
+    ScheduleChanges --> ScheduleFrequency : Frequency is
     ScheduleChanges --> ScheduleActiveRange : Range is
     Schedule --> ScheduleFreqType : recurs per
     Schedule --> ScheduleSubdayType : repeats per

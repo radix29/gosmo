@@ -4,18 +4,18 @@ package gosmo
 // writes: one Changes struct and one Alter method per family, each emitting
 // a single sp_update_* call naming only the parameters the caller set.
 //
-// The per-property setters in agent_job.go, agent_alert.go,
-// agent_operator.go and agent_schedule.go stay — they are the right shape
-// for a single change, and Enable/Disable/Rename read better than a struct
-// literal — but each is a one-line wrapper over Alter, so there is one
-// statement builder, one escaping path and one receiver update per family.
-// (They were once hand-rolled copies, and the job copy and Alter both missed
-// the empty-category mapping the alert and operator paths had: a cleared job
-// category was mirrored as "" while msdb reported [Uncategorized (Local)].) What they are not is the right shape for a Properties dialog
-// applying five edits at once: msdb's sp_update_* procedures take every
-// updatable parameter in one call, and SMO's own shape is
-// set-properties-then-Alter(), so five setters is four round trips more
-// than the server asked for.
+// Alter is the one way to change these properties. Rename, Enable, Disable
+// and SetEnabled stay beside it — they read better than a struct literal —
+// and each is a one-line wrapper over Alter, so there is one statement
+// builder, one binding path and one receiver update per family. The other
+// per-property setters (Job.SetOwner, Alert.SetTrigger, Schedule.SetFrequency
+// and the rest) were removed on 2026-10-26: each was a second spelling of one
+// Changes field, and five of them for a Properties dialog's five edits were
+// four round trips more than msdb's sp_update_* procedures, which take every
+// updatable parameter in one call, asked for. (They had begun as hand-rolled
+// copies, and the job copy and Alter both missed the empty-category mapping
+// the alert and operator paths had: a cleared job category was mirrored as ""
+// while msdb reported [Uncategorized (Local)].)
 //
 // A nil field means "leave this alone" — the distinction a zero value
 // cannot make, since 0, "" and false are all values these parameters
@@ -30,16 +30,18 @@ import (
 )
 
 // agentParams accumulates the "@param = value" fragments of one sp_update_*
-// call, in the order they were added. Every sp_* parameter here is a
-// literal — msdb takes names, not identifiers, so escapeSingle is the whole
-// defense and there is nothing to bracket-quote.
+// call, in the order they were added. A string parameter is bound (args): msdb
+// takes names, not identifiers, so there is nothing to bracket-quote, and a
+// bound value needs no escaping. The key the caller renders binds through the
+// same args, and the call is sent with args.vals.
 type agentParams struct {
 	parts []string
+	args  boundArgs
 }
 
-// str appends a string parameter as N'...', with its apostrophes doubled.
+// str appends a bound string parameter.
 func (p *agentParams) str(name, v string) {
-	p.parts = append(p.parts, fmt.Sprintf("%s = N'%s'", name, escapeSingle(v)))
+	p.parts = append(p.parts, name+" = "+p.args.str(v))
 }
 
 // num appends a numeric parameter.
@@ -68,7 +70,6 @@ func (p *agentParams) statement(proc, key string) string {
 // Job.Alter. A nil field is left unchanged; a non-nil one is sent even when
 // it holds the zero value.
 //
-// The fields mirror the per-property setters one for one —
 // Name is sp_update_job's @new_name, as Job.Rename sends it.
 type JobChanges struct {
 	Name        *string
@@ -79,12 +80,16 @@ type JobChanges struct {
 	OwnerLogin  *string
 	Enabled     *bool
 	StartStepID *int
-	// NotifyLevelEmail and NotifyEmailOperatorName are what
-	// Job.SetEmailNotify sets together. SQL Server has no documented "clear
-	// to none" value for @notify_email_operator_name, so leave the operator
-	// nil to keep the configured one and pair NotifyNever with it to stop
-	// the mail — see Job.SetEmailNotify, which also records that a level
-	// set on a job with no operator is silently stored as 0.
+	// NotifyLevelEmail and NotifyEmailOperatorName are set together: which
+	// operator is emailed on completion, and when. SQL Server has no
+	// documented "clear to none" value for @notify_email_operator_name, so
+	// leave the operator nil to keep the configured one and send NotifyNever
+	// to stop the mail.
+	//
+	// A level set on a job with no operator does not stick: msdb stores
+	// notify_level_email as 0 and reports no error, since a level with nobody
+	// to mail is meaningless to it (verified on SQL Server 17.0.1135.8,
+	// 2026-09-17).
 	NotifyLevelEmail        *NotifyLevel
 	NotifyEmailOperatorName *string
 	DeleteLevel             *NotifyLevel
@@ -130,8 +135,8 @@ func (j *Job) Alter(ctx context.Context, ch JobChanges) error {
 	if p.empty() {
 		return nil
 	}
-	q := p.statement("sp_update_job", fmt.Sprintf("@job_name = N'%s'", escapeSingle(j.Name)))
-	if _, err := j.server.exec(ctx, q); err != nil {
+	q := p.statement("sp_update_job", "@job_name = "+p.args.str(j.Name))
+	if _, err := j.server.exec(ctx, q, p.args.vals...); err != nil {
 		return fmt.Errorf("gosmo: alter job %q: %w", j.Name, err)
 	}
 	setPtrIfApplied(ctx, &j.Description, ch.Description)
@@ -159,23 +164,33 @@ func (j *Job) Alter(ctx context.Context, ch JobChanges) error {
 type AlertChanges struct {
 	Name    *string
 	Enabled *bool
-	// ErrorNumber and Severity are the mutually exclusive triggers
-	// Alert.SetTrigger sets together — setting one without sending 0 for
-	// the other leaves the other in place, which is how msdb behaves and
-	// not what SetTrigger does.
-	ErrorNumber           *int
-	Severity              *int
-	DatabaseName          *string
+	// ErrorNumber and Severity are the mutually exclusive triggers: what
+	// raises the alert, a specific error number or a severity level. Set both,
+	// with 0 for whichever is not in use — setting one alone leaves the other
+	// in place, which is how msdb behaves.
+	ErrorNumber *int
+	Severity    *int
+	// DatabaseName scopes the alert to one database, "" to all of them.
+	DatabaseName *string
+	// DelayBetweenResponses is the minimum delay between repeated
+	// responses, sent in whole seconds.
 	DelayBetweenResponses *time.Duration
-	NotificationMessage   *string
+	// NotificationMessage is the extra text appended to the notification.
+	NotificationMessage *string
 	// IncludeEventDescriptionIn is msdb's channel bitmask — see the field
 	// of the same name on Alert.
 	IncludeEventDescriptionIn *int
 	// Category set to "" clears the category, sent as the real
-	// [Uncategorized] — see Alert.SetCategory for why an empty name will
-	// not do.
+	// [Uncategorized]: sp_update_alert rejects an empty name outright ("The
+	// specified @category_name ('') does not exist"), and [Uncategorized] is
+	// what an alert created with no category holds in
+	// msdb.dbo.syscategories.
 	Category *string
-	// JobName set to "" clears the job response — see Alert.SetJobResponse.
+	// JobName is the job run in response to the alert; "" clears it. An
+	// empty @job_name is sp_update_alert's own sentinel for "no job
+	// response" — it maps N'' to a job_id of 0x00 before sp_verify_alert
+	// would otherwise reject the name for not matching a job. Anything else,
+	// a placeholder like [UNSPECIFIED] included, fails as a missing job.
 	JobName *string
 }
 
@@ -222,8 +237,8 @@ func (a *Alert) Alter(ctx context.Context, ch AlertChanges) error {
 	if p.empty() {
 		return nil
 	}
-	q := p.statement("sp_update_alert", fmt.Sprintf("@name = N'%s'", escapeSingle(a.Name)))
-	if _, err := a.server.exec(ctx, q); err != nil {
+	q := p.statement("sp_update_alert", "@name = "+p.args.str(a.Name))
+	if _, err := a.server.exec(ctx, q, p.args.vals...); err != nil {
 		return fmt.Errorf("gosmo: alter alert %q: %w", a.Name, err)
 	}
 	setPtrIfApplied(ctx, &a.Enabled, ch.Enabled)
@@ -255,7 +270,9 @@ type OperatorChanges struct {
 	PagerAddress   *string
 	NetSendAddress *string
 	// Category set to "" clears the category, sent as the real
-	// [Uncategorized] — see Operator.SetCategory.
+	// [Uncategorized] for the reason AlertChanges.Category is:
+	// sp_update_operator's category check (sp_verify_category, shared with
+	// sp_update_alert) rejects an empty name outright.
 	Category *string
 }
 
@@ -290,8 +307,8 @@ func (o *Operator) Alter(ctx context.Context, ch OperatorChanges) error {
 	if p.empty() {
 		return nil
 	}
-	q := p.statement("sp_update_operator", fmt.Sprintf("@name = N'%s'", escapeSingle(o.Name)))
-	if _, err := o.server.exec(ctx, q); err != nil {
+	q := p.statement("sp_update_operator", "@name = "+p.args.str(o.Name))
+	if _, err := o.server.exec(ctx, q, p.args.vals...); err != nil {
 		return fmt.Errorf("gosmo: alter operator %q: %w", o.Name, err)
 	}
 	setPtrIfApplied(ctx, &o.Enabled, ch.Enabled)
@@ -312,8 +329,8 @@ func (o *Operator) Alter(ctx context.Context, ch OperatorChanges) error {
 
 // ScheduleActiveRange is the Duration section of a schedule: the date range
 // it is active over, plus the daily HHMMSS time-of-day window it may fire
-// within. It is what Schedule.SetActiveRange takes as four arguments, in
-// the form ScheduleChanges carries. A zero EndDate means "no end date".
+// within, as ScheduleChanges.Range carries it. A zero EndDate means "no end
+// date".
 //
 // A zero StartDate or EndTime is sent as 0, which msdb treats as "unchanged"
 // and "end of day (235959)" respectively (probed on SQL Server 2025); after
@@ -375,16 +392,15 @@ func (ch ScheduleChanges) params() *agentParams {
 // The schedule is addressed by @schedule_id where the receiver has one,
 // because msdb allows two schedules to share a name and sp_update_schedule
 // refuses a @name that matches more than one. A handle from Server.ScheduleRef
-// has no ID, so it is addressed by @name instead — which is what makes the
-// batched form usable under WithScript, where the per-property setters, keyed
-// on an ID a Ref does not carry, are not.
+// has no ID, so it is addressed by @name instead — which is what makes it
+// usable from a ScheduleRef under WithScript, with no read to find the ID.
 func (sch *Schedule) Alter(ctx context.Context, ch ScheduleChanges) error {
 	p := ch.params()
 	if p.empty() {
 		return nil
 	}
-	q := p.statement("sp_update_schedule", sch.key("@name"))
-	if _, err := sch.server.exec(ctx, q); err != nil {
+	q := p.statement("sp_update_schedule", sch.key(&p.args, "@name"))
+	if _, err := sch.server.exec(ctx, q, p.args.vals...); err != nil {
 		return fmt.Errorf("gosmo: alter schedule %q: %w", sch.Name, err)
 	}
 	setPtrIfApplied(ctx, &sch.Enabled, ch.Enabled)

@@ -1642,10 +1642,15 @@ ID — so a schedule is writable from a no-I/O `ScheduleRef` handle. `Drop`,
 read keyed by id, `Schedule.Jobs`, looks the id up through `ScheduleByName`
 on a `ScheduleRef` instead, so a shared name is `ErrAmbiguous`, not "no jobs".
 
-The per-property setters are not deprecated —
-`Enable()`/`Disable()`/`Rename()` read better than a struct literal for a
-single edit — but each is a one-line wrapper over its family's `Alter`, so
-there is one statement builder and one receiver mirror per family. An empty
+`Alter` is the one spelling of these writes. `Enable()`/`Disable()`/
+`SetEnabled()`/`Rename()` stay beside it — they read better than a struct
+literal for a single edit — and each is a one-line wrapper over its family's
+`Alter`, so there is one statement builder and one receiver mirror per
+family. The other per-property setters (`Job.SetOwner`, `Alert.SetTrigger`,
+`Schedule.SetFrequency` and the rest) were removed on 2026-10-26: each was a
+second spelling of one `Changes` field. Every string argument is bound
+(`boundArgs`), not spliced: a captured or observed statement shows it as
+`N'...'` again. An empty
 category is sent as what each class accepts (`agentCategoryTarget`):
 `[Uncategorized]` for an alert or operator, `[DEFAULT]` for a job, mirrored
 as the `[Uncategorized (Local)]` msdb then reports.
@@ -1668,7 +1673,10 @@ step, _ := job.AddStep(ctx, gosmo.JobStepDefinition{ // read back: step.StepID i
     OnSuccessAction: 1,
     OnFailAction:    2,
 })
-job.SetEmailNotify(ctx, "DBA on call", gosmo.NotifyOnFailure)
+job.Alter(ctx, gosmo.JobChanges{ // every sp_update_job change in one call
+    NotifyEmailOperatorName: new("DBA on call"),
+    NotifyLevelEmail:        new(gosmo.NotifyOnFailure),
+})
 job.Start(ctx, step.Name)
 
 // Edit or remove a step in place.
@@ -1780,7 +1788,7 @@ alert, _ := srv.CreateAlert(ctx, gosmo.CreateAlertRequest{
     Severity: 17,
 })
 alert.Notify(ctx, op.Name, gosmo.NotifyMethodEmail)
-alert.SetJobResponse(ctx, "NightlyBackup") // run a job in response
+alert.Alter(ctx, gosmo.AlertChanges{JobName: new("NightlyBackup")}) // run a job in response
 
 // The "referenced by" direction, for an operator's properties page.
 alerts, _ := op.NotifyingAlerts(ctx)

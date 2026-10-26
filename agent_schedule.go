@@ -191,12 +191,12 @@ func (s *Server) ScheduleRef(name string) *Schedule {
 // key renders the argument that addresses sch in an msdb schedule procedure:
 // @schedule_id where sch has one, since names are not unique, else nameParam
 // (@schedule_name, or sp_update_schedule's @name) — the only key a
-// ScheduleRef carries.
-func (sch *Schedule) key(nameParam string) string {
+// ScheduleRef carries — with the name bound through args.
+func (sch *Schedule) key(args *boundArgs, nameParam string) string {
 	if sch.ID != 0 {
 		return fmt.Sprintf("@schedule_id = %d", sch.ID)
 	}
-	return fmt.Sprintf("%s = N'%s'", nameParam, escapeSingle(sch.Name))
+	return nameParam + " = " + args.str(sch.Name)
 }
 
 // id returns the schedule's schedule_id, looking it up by name on a
@@ -275,23 +275,24 @@ func (s *Server) CreateSchedule(ctx context.Context, req CreateScheduleRequest) 
 	if req.Name == "" {
 		return nil, invalidf("gosmo: create schedule: name is required")
 	}
-	q := fmt.Sprintf("EXEC msdb.dbo.sp_add_schedule @schedule_name = N'%s', %s",
-		escapeSingle(req.Name), req.frequencyArgs())
+	var args boundArgs
+	q := fmt.Sprintf("EXEC msdb.dbo.sp_add_schedule @schedule_name = %s, %s",
+		args.str(req.Name), req.frequencyArgs())
 	if req.OwnerLoginName != "" {
-		q += fmt.Sprintf(", @owner_login_name = N'%s'", escapeSingle(req.OwnerLoginName))
+		q += ", @owner_login_name = " + args.str(req.OwnerLoginName)
 	}
 	if Scripting(ctx) {
-		if _, err := s.exec(ctx, q); err != nil {
+		if _, err := s.exec(ctx, q, args.vals...); err != nil {
 			return nil, fmt.Errorf("gosmo: create schedule %q: %w", req.Name, err)
 		}
 		return s.ScheduleRef(req.Name), nil
 	}
 	stmt := "DECLARE @schedule_id int;\n" + q + ", @schedule_id = @schedule_id OUTPUT;\nSELECT @schedule_id;"
 	var id int
-	if err := s.execScan(ctx, stmt, &id); err != nil {
+	if err := s.execScan(ctx, stmt, args.vals, &id); err != nil {
 		return nil, fmt.Errorf("gosmo: create schedule %q: %w", req.Name, err)
 	}
-	observe(ctx, s, ScriptEntry{Server: scriptServerName(ctx, s), SQL: stmt})
+	observeBound(ctx, s, stmt, args.vals)
 	handle := s.ScheduleRef(req.Name)
 	handle.ID = id
 	return createdObject(ctx, handle, func() (*Schedule, error) {
@@ -328,32 +329,14 @@ type ScheduleFrequency struct {
 	FreqRecurrenceFactor int
 }
 
-// SetFrequency replaces the schedule's frequency definition.
-func (sch *Schedule) SetFrequency(ctx context.Context, f ScheduleFrequency) error {
-	return sch.Alter(ctx, ScheduleChanges{Frequency: &f})
-}
-
-// SetActiveRange changes the schedule's Duration section: the date range
-// it's active over, plus the daily time-of-day window (HHMMSS) it can fire
-// within. A zero endDate means "no end date".
-func (sch *Schedule) SetActiveRange(ctx context.Context, startDate, endDate time.Time, startTime, endTime int) error {
-	return sch.Alter(ctx, ScheduleChanges{Range: &ScheduleActiveRange{
-		StartDate: startDate, EndDate: endDate, StartTime: startTime, EndTime: endTime,
-	}})
-}
-
-// SetOwner reassigns the schedule's owner login.
-func (sch *Schedule) SetOwner(ctx context.Context, loginName string) error {
-	return sch.Alter(ctx, ScheduleChanges{OwnerLogin: &loginName})
-}
-
 // Drop deletes the schedule via sp_delete_schedule. SQL Server refuses the
 // call (returning a wrapped SQLError) if the schedule is still attached to
 // one or more jobs — detach it first via Job.DetachSchedule. A ScheduleRef
 // (no ID) is dropped by name.
 func (sch *Schedule) Drop(ctx context.Context) error {
-	q := "EXEC msdb.dbo.sp_delete_schedule " + sch.key("@schedule_name")
-	if _, err := sch.server.exec(ctx, q); err != nil {
+	var args boundArgs
+	q := "EXEC msdb.dbo.sp_delete_schedule " + sch.key(&args, "@schedule_name")
+	if _, err := sch.server.exec(ctx, q, args.vals...); err != nil {
 		return fmt.Errorf("gosmo: drop schedule %q: %w", sch.Name, err)
 	}
 	return nil
@@ -410,9 +393,9 @@ ORDER  BY sch.name`
 // it in one step. sch is addressed by its ID, or by name when it has none (a
 // ScheduleRef), which msdb refuses once two schedules share the name.
 func (j *Job) AttachSchedule(ctx context.Context, sch *Schedule) error {
-	q := fmt.Sprintf("EXEC msdb.dbo.sp_attach_schedule @job_name = N'%s', %s",
-		escapeSingle(j.Name), sch.key("@schedule_name"))
-	if _, err := j.server.exec(ctx, q); err != nil {
+	var args boundArgs
+	q := "EXEC msdb.dbo.sp_attach_schedule @job_name = " + args.str(j.Name) + ", " + sch.key(&args, "@schedule_name")
+	if _, err := j.server.exec(ctx, q, args.vals...); err != nil {
 		return fmt.Errorf("gosmo: attach schedule %q to job %q: %w", sch.Name, j.Name, err)
 	}
 	return nil
@@ -422,9 +405,9 @@ func (j *Job) AttachSchedule(ctx context.Context, sch *Schedule) error {
 // schedule itself (it may still be shared by other jobs). sch is addressed
 // as AttachSchedule addresses it.
 func (j *Job) DetachSchedule(ctx context.Context, sch *Schedule) error {
-	q := fmt.Sprintf("EXEC msdb.dbo.sp_detach_schedule @job_name = N'%s', %s",
-		escapeSingle(j.Name), sch.key("@schedule_name"))
-	if _, err := j.server.exec(ctx, q); err != nil {
+	var args boundArgs
+	q := "EXEC msdb.dbo.sp_detach_schedule @job_name = " + args.str(j.Name) + ", " + sch.key(&args, "@schedule_name")
+	if _, err := j.server.exec(ctx, q, args.vals...); err != nil {
 		return fmt.Errorf("gosmo: detach schedule %q from job %q: %w", sch.Name, j.Name, err)
 	}
 	return nil

@@ -579,7 +579,7 @@ func (s *Server) queryRowScan(ctx context.Context, q string, args []any, dest ..
 //
 // It does not handle Scripting(ctx) or observe: a caller's scripted text
 // differs from what it runs (a named result column), so the caller does both.
-func (s *Server) execScan(ctx context.Context, stmt string, dest ...any) error {
+func (s *Server) execScan(ctx context.Context, stmt string, args []any, dest ...any) error {
 	ctx, release := s.bound(ctx)
 	defer release()
 	var conn sqlConn = s.db
@@ -590,7 +590,7 @@ func (s *Server) execScan(ctx context.Context, stmt string, dest ...any) error {
 		}
 		conn = c
 	}
-	return withAllMessages(conn.QueryRowContext(ctx, stmt).Scan(dest...))
+	return withAllMessages(conn.QueryRowContext(ctx, stmt, args...).Scan(dest...))
 }
 
 // loadInfo populates s.info. It runs two statements rather than one, and the

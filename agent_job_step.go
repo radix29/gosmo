@@ -111,21 +111,22 @@ func (j *Job) InsertStep(ctx context.Context, req JobStepDefinition, stepID int)
 
 // stepExtraArgs renders the parameters both sp_add_jobstep and
 // sp_update_jobstep take and that a plain edit leaves alone: the ones a move
-// has to carry so a re-added step is the step it was.
-func stepExtraArgs(req JobStepDefinition) string {
+// has to carry so a re-added step is the step it was. Its strings bind
+// through args.
+func stepExtraArgs(args *boundArgs, req JobStepDefinition) string {
 	q := fmt.Sprintf(", @flags = %d, @cmdexec_success_code = %d, @os_run_priority = %d",
 		req.Flags, req.CmdExecSuccessCode, req.OSRunPriority)
 	if req.ProxyName != "" {
-		q += fmt.Sprintf(", @proxy_name = N'%s'", escapeSingle(req.ProxyName))
+		q += ", @proxy_name = " + args.str(req.ProxyName)
 	}
 	if req.AdditionalParameters != "" {
-		q += fmt.Sprintf(", @additional_parameters = N'%s'", escapeSingle(req.AdditionalParameters))
+		q += ", @additional_parameters = " + args.str(req.AdditionalParameters)
 	}
 	if req.Server != "" {
-		q += fmt.Sprintf(", @server = N'%s'", escapeSingle(req.Server))
+		q += ", @server = " + args.str(req.Server)
 	}
 	if req.DatabaseUserName != "" {
-		q += fmt.Sprintf(", @database_user_name = N'%s'", escapeSingle(req.DatabaseUserName))
+		q += ", @database_user_name = " + args.str(req.DatabaseUserName)
 	}
 	return q
 }
@@ -134,7 +135,9 @@ func (j *Job) addStepAt(ctx context.Context, req JobStepDefinition, stepID int) 
 	if req.Name == "" {
 		return nil, invalidf("gosmo: add step: name is required")
 	}
-	if _, err := j.server.exec(ctx, addStepStmt(j.Name, req, stepID)); err != nil {
+	var args boundArgs
+	q := addStepStmt(&args, args.str(j.Name), req, stepID)
+	if _, err := j.server.exec(ctx, q, args.vals...); err != nil {
 		return nil, fmt.Errorf("gosmo: add step %q to job %q: %w", req.Name, j.Name, err)
 	}
 	return createdObject(ctx, &JobStep{job: j, StepID: stepID, Name: req.Name}, func() (*JobStep, error) {
@@ -145,27 +148,28 @@ func (j *Job) addStepAt(ctx context.Context, req JobStepDefinition, stepID int) 
 // addStepStmt renders the sp_add_jobstep call. stepID > 0 inserts at that
 // position; 0 appends. Split out from addStepAt so ReorderSteps can
 // collect the statement into its transactional batch instead of issuing it —
-// see execAtomic.
-func addStepStmt(jobName string, req JobStepDefinition, stepID int) string {
+// see execAtomic. job is the job name's placeholder, bound once per batch by
+// the caller; the step's own strings bind through args.
+func addStepStmt(args *boundArgs, job string, req JobStepDefinition, stepID int) string {
 	q := fmt.Sprintf(
-		"EXEC msdb.dbo.sp_add_jobstep @job_name = N'%s', @step_name = N'%s', "+
-			"@subsystem = N'%s', @command = N'%s', "+
+		"EXEC msdb.dbo.sp_add_jobstep @job_name = %s, @step_name = %s, "+
+			"@subsystem = %s, @command = %s, "+
 			"@on_success_action = %d, @on_success_step_id = %d, "+
 			"@on_fail_action = %d, @on_fail_step_id = %d, "+
 			"@retry_attempts = %d, @retry_interval = %d",
-		escapeSingle(jobName), escapeSingle(req.Name),
-		escapeSingle(req.Subsystem), escapeSingle(req.Command),
+		job, args.str(req.Name),
+		args.str(req.Subsystem), args.str(req.Command),
 		req.OnSuccessAction, req.OnSuccessStepID,
 		req.OnFailAction, req.OnFailStepID,
 		req.RetryAttempts, req.RetryInterval,
 	)
 	if req.Database != "" {
-		q += fmt.Sprintf(", @database_name = N'%s'", escapeSingle(req.Database))
+		q += ", @database_name = " + args.str(req.Database)
 	}
 	if req.OutputFileName != "" {
-		q += fmt.Sprintf(", @output_file_name = N'%s'", escapeSingle(req.OutputFileName))
+		q += ", @output_file_name = " + args.str(req.OutputFileName)
 	}
-	q += stepExtraArgs(req)
+	q += stepExtraArgs(args, req)
 	if stepID > 0 {
 		// Insertion, not append: sp_add_jobstep renumbers every later step
 		// and follows their "go to step N" references, which is what makes a
@@ -184,14 +188,15 @@ func (s *JobStep) Alter(ctx context.Context, req JobStepDefinition) error {
 	if req.Name == "" {
 		return invalidf("gosmo: alter step: name is required")
 	}
+	var args boundArgs
 	q := fmt.Sprintf(
-		"EXEC msdb.dbo.sp_update_jobstep @job_name = N'%s', @step_id = %d, "+
-			"@step_name = N'%s', @subsystem = N'%s', @command = N'%s', "+
+		"EXEC msdb.dbo.sp_update_jobstep @job_name = %s, @step_id = %d, "+
+			"@step_name = %s, @subsystem = %s, @command = %s, "+
 			"@on_success_action = %d, @on_success_step_id = %d, "+
 			"@on_fail_action = %d, @on_fail_step_id = %d, "+
 			"@retry_attempts = %d, @retry_interval = %d",
-		escapeSingle(s.job.Name), s.StepID,
-		escapeSingle(req.Name), escapeSingle(req.Subsystem), escapeSingle(req.Command),
+		args.str(s.job.Name), s.StepID,
+		args.str(req.Name), args.str(req.Subsystem), args.str(req.Command),
 		req.OnSuccessAction, req.OnSuccessStepID,
 		req.OnFailAction, req.OnFailStepID,
 		req.RetryAttempts, req.RetryInterval,
@@ -205,14 +210,14 @@ func (s *JobStep) Alter(ctx context.Context, req JobStepDefinition) error {
 	// JobStep would report a database the server never stopped using.
 	sendDatabase := req.Database != ""
 	if sendDatabase {
-		q += fmt.Sprintf(", @database_name = N'%s'", escapeSingle(req.Database))
+		q += ", @database_name = " + args.str(req.Database)
 	}
 	// @output_file_name, unlike @database_name, does honour N'': it nulls the
 	// column. It is therefore always sent, so blanking the field in a caller's
 	// form actually clears the step's output file instead of silently keeping
 	// the old path while the JobStep claimed it was gone.
-	q += fmt.Sprintf(", @output_file_name = N'%s'", escapeSingle(req.OutputFileName))
-	if _, err := s.job.server.exec(ctx, q); err != nil {
+	q += ", @output_file_name = " + args.str(req.OutputFileName)
+	if _, err := s.job.server.exec(ctx, q, args.vals...); err != nil {
 		return fmt.Errorf("gosmo: alter step %q of job %q: %w", req.Name, s.job.Name, err)
 	}
 	// Not mirrored under WithScript — nothing reached the server, so the step
@@ -244,17 +249,17 @@ func (s *JobStep) Drop(ctx context.Context) error {
 // *JobStep for it, for a caller holding a step number rather than the step.
 // JobStep.Drop is this with the number taken off the step.
 func (j *Job) deleteStepAt(ctx context.Context, stepID int) error {
-	if _, err := j.server.exec(ctx, deleteStepStmt(j.Name, stepID)); err != nil {
+	if _, err := j.server.exec(ctx, deleteStepStmt("@p1", stepID), j.Name); err != nil {
 		return fmt.Errorf("gosmo: delete step %d of job %q: %w", stepID, j.Name, err)
 	}
 	return nil
 }
 
-// deleteStepStmt renders the sp_delete_jobstep call. See addStepStmt for why
-// it is separable from the method that issues it.
-func deleteStepStmt(jobName string, stepID int) string {
-	return fmt.Sprintf("EXEC msdb.dbo.sp_delete_jobstep @job_name = N'%s', @step_id = %d",
-		escapeSingle(jobName), stepID)
+// deleteStepStmt renders the sp_delete_jobstep call, job being the job
+// name's placeholder. See addStepStmt for why it is separable from the method
+// that issues it.
+func deleteStepStmt(job string, stepID int) string {
+	return fmt.Sprintf("EXEC msdb.dbo.sp_delete_jobstep @job_name = %s, @step_id = %d", job, stepID)
 }
 
 // JobStep represents one step of an agent job.
@@ -320,8 +325,8 @@ type JobStep struct {
 // reorder, where rewriting the whole definition would be both wasteful and a
 // chance to lose a column the request does not model.
 func (s *JobStep) SetFlow(ctx context.Context, onSuccessAction, onSuccessStepID, onFailAction, onFailStepID int) error {
-	q := setFlowStmt(s.job.Name, s.StepID, onSuccessAction, onSuccessStepID, onFailAction, onFailStepID)
-	if _, err := s.job.server.exec(ctx, q); err != nil {
+	q := setFlowStmt("@p1", s.StepID, onSuccessAction, onSuccessStepID, onFailAction, onFailStepID)
+	if _, err := s.job.server.exec(ctx, q, s.job.Name); err != nil {
 		return fmt.Errorf("gosmo: set flow of step %q of job %q: %w", s.Name, s.job.Name, err)
 	}
 	if !Scripting(ctx) {
@@ -332,14 +337,15 @@ func (s *JobStep) SetFlow(ctx context.Context, onSuccessAction, onSuccessStepID,
 }
 
 // setFlowStmt renders the sp_update_jobstep call SetFlow issues. Every other
-// parameter is omitted, which sp_update_jobstep reads as "leave alone". See
-// addStepStmt for why it is separable from the method that issues it.
-func setFlowStmt(jobName string, stepID, onSuccessAction, onSuccessStepID, onFailAction, onFailStepID int) string {
+// parameter is omitted, which sp_update_jobstep reads as "leave alone". job
+// is the job name's placeholder. See addStepStmt for why it is separable from
+// the method that issues it.
+func setFlowStmt(job string, stepID, onSuccessAction, onSuccessStepID, onFailAction, onFailStepID int) string {
 	return fmt.Sprintf(
-		"EXEC msdb.dbo.sp_update_jobstep @job_name = N'%s', @step_id = %d, "+
+		"EXEC msdb.dbo.sp_update_jobstep @job_name = %s, @step_id = %d, "+
 			"@on_success_action = %d, @on_success_step_id = %d, "+
 			"@on_fail_action = %d, @on_fail_step_id = %d",
-		escapeSingle(jobName), stepID,
+		job, stepID,
 		onSuccessAction, onSuccessStepID, onFailAction, onFailStepID,
 	)
 }
@@ -447,6 +453,8 @@ func (j *Job) ReorderSteps(ctx context.Context, order func(n int) []int) error {
 	// deleted, so a reorder that stops before the repair leaves the job's
 	// control flow silently rewritten to "quit". See execAtomic.
 	var stmts []string
+	var args boundArgs
+	job := args.str(j.Name)
 
 	for target := range want {
 		if current[target] == want[target] {
@@ -454,7 +462,7 @@ func (j *Job) ReorderSteps(ctx context.Context, order func(n int) []int) error {
 		}
 		from := slices.Index(current, want[target])
 		s := byID[want[target]]
-		stmts = append(stmts, deleteStepStmt(j.Name, from+1))
+		stmts = append(stmts, deleteStepStmt(job, from+1))
 		current = slices.Delete(current, from, from+1)
 		// References are repaired in one pass at the end, which covers every
 		// step with a "go to step N" action, so the step goes back with each
@@ -464,7 +472,7 @@ func (j *Job) ReorderSteps(ctx context.Context, order func(n int) []int) error {
 		// sp_verify_jobstep raises Msg 14235 for a step that goes to itself,
 		// and moving "three, on failure go to step 1" to the top is exactly
 		// that — the whole reorder rolled back for a legitimate order.
-		stmts = append(stmts, addStepStmt(j.Name, reAddRequest(s), target+1))
+		stmts = append(stmts, addStepStmt(&args, job, reAddRequest(s), target+1))
 		current = slices.Insert(current, target, want[target])
 	}
 
@@ -479,7 +487,7 @@ func (j *Job) ReorderSteps(ctx context.Context, order func(n int) []int) error {
 		if s.OnSuccessAction != goToStepAction && s.OnFailAction != goToStepAction {
 			continue
 		}
-		stmts = append(stmts, setFlowStmt(j.Name, position[id],
+		stmts = append(stmts, setFlowStmt(job, position[id],
 			s.OnSuccessAction, position[s.OnSuccessStepID],
 			s.OnFailAction, position[s.OnFailStepID]))
 	}
@@ -495,9 +503,9 @@ func (j *Job) ReorderSteps(ctx context.Context, order func(n int) []int) error {
 		return err
 	}
 	if to, ok := position[start]; ok && to != start {
-		stmts = append(stmts, setStartStepStmt(j.Name, to))
+		stmts = append(stmts, setStartStepStmt(job, to))
 	}
-	if err := j.server.execAtomic(ctx, stmts); err != nil {
+	if err := j.server.execAtomic(ctx, stmts, args.vals...); err != nil {
 		return fmt.Errorf("gosmo: reorder steps of job %q: %w", j.Name, err)
 	}
 	return nil
@@ -515,11 +523,10 @@ func (j *Job) startStepID(ctx context.Context) (int, error) {
 }
 
 // setStartStepStmt renders the sp_update_job call that points the job's
-// start at stepID. See addStepStmt for why it is separable from the method
-// that issues it.
-func setStartStepStmt(jobName string, stepID int) string {
-	return fmt.Sprintf("EXEC msdb.dbo.sp_update_job @job_name = N'%s', @start_step_id = %d",
-		escapeSingle(jobName), stepID)
+// start at stepID, job being the job name's placeholder. See addStepStmt for
+// why it is separable from the method that issues it.
+func setStartStepStmt(job string, stepID int) string {
+	return fmt.Sprintf("EXEC msdb.dbo.sp_update_job @job_name = %s, @start_step_id = %d", job, stepID)
 }
 
 // checkReorder insists the requested order is a permutation of 1..n. A

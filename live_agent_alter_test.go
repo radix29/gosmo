@@ -8,15 +8,14 @@ import (
 	"time"
 )
 
-// TestLiveAgentSettersClearCategory pins what the per-property setters
-// send, now that each wraps Alter, against msdb itself: an emptied category
-// is accepted for every class and reads back as the name the receiver
-// mirrors. Jobs are the case this exists for — they are sent [DEFAULT],
+// TestLiveAgentAlterClearsCategory pins what Alter sends against msdb
+// itself: an emptied category is accepted for every class and reads back as
+// the name the receiver mirrors. Jobs are the case this exists for — they are sent [DEFAULT],
 // not the [Uncategorized] alerts and operators take, and must read back as
 // [Uncategorized (Local)] on the receiver as well as on the server.
 //
-//	go test -tags livedb . -run TestLiveAgentSettersClearCategory -v -livedb '...'
-func TestLiveAgentSettersClearCategory(t *testing.T) {
+//	go test -tags livedb . -run TestLiveAgentAlterClearsCategory -v -livedb '...'
+func TestLiveAgentAlterClearsCategory(t *testing.T) {
 	db, ctx, done := liveDB(t)
 	defer done()
 	srv := &Server{db: db}
@@ -44,16 +43,16 @@ func TestLiveAgentSettersClearCategory(t *testing.T) {
 	defer drop()
 
 	// Job: a real category, then back to none, then a rename and a disable
-	// through the wrappers.
+	// through the wrappers that remain.
 	j, err := srv.CreateJob(ctx, CreateJobRequest{Name: jobName, Enabled: true})
 	if err != nil {
 		t.Fatalf("CreateJob: %v", err)
 	}
-	if err := j.SetCategory(ctx, "Database Maintenance"); err != nil {
-		t.Fatalf("Job.SetCategory(Database Maintenance): %v", err)
+	if err := j.Alter(ctx, JobChanges{Category: new("Database Maintenance")}); err != nil {
+		t.Fatalf("Job.Alter(Category: Database Maintenance): %v", err)
 	}
-	if err := j.SetCategory(ctx, ""); err != nil {
-		t.Fatalf(`Job.SetCategory(""): %v`, err)
+	if err := j.Alter(ctx, JobChanges{Category: new("")}); err != nil {
+		t.Fatalf(`Job.Alter(Category: ""): %v`, err)
 	}
 	if err := j.Rename(ctx, jobRenamed); err != nil {
 		t.Fatalf("Job.Rename: %v", err)
@@ -77,11 +76,11 @@ func TestLiveAgentSettersClearCategory(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateAlert: %v", err)
 	}
-	if err := a.SetCategory(ctx, ""); err != nil {
-		t.Fatalf(`Alert.SetCategory(""): %v`, err)
+	if err := a.Alter(ctx, AlertChanges{Category: new("")}); err != nil {
+		t.Fatalf(`Alert.Alter(Category: ""): %v`, err)
 	}
-	if err := a.SetDelay(ctx, 90*time.Second); err != nil {
-		t.Fatalf("Alert.SetDelay: %v", err)
+	if err := a.Alter(ctx, AlertChanges{DelayBetweenResponses: new(90 * time.Second)}); err != nil {
+		t.Fatalf("Alert.Alter(DelayBetweenResponses): %v", err)
 	}
 	gotA, err := srv.AlertByName(ctx, alertName)
 	if err != nil {
@@ -95,11 +94,11 @@ func TestLiveAgentSettersClearCategory(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateOperator: %v", err)
 	}
-	if err := o.SetCategory(ctx, ""); err != nil {
-		t.Fatalf(`Operator.SetCategory(""): %v`, err)
+	if err := o.Alter(ctx, OperatorChanges{Category: new("")}); err != nil {
+		t.Fatalf(`Operator.Alter(Category: ""): %v`, err)
 	}
-	if err := o.SetEmailAddress(ctx, "k2@example.com"); err != nil {
-		t.Fatalf("Operator.SetEmailAddress: %v", err)
+	if err := o.Alter(ctx, OperatorChanges{EmailAddress: new("k2@example.com")}); err != nil {
+		t.Fatalf("Operator.Alter(EmailAddress): %v", err)
 	}
 	gotO, err := srv.OperatorByName(ctx, operatorNam)
 	if err != nil {
