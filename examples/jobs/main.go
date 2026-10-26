@@ -123,8 +123,11 @@ func main() {
 	}
 
 	// -- Notification ------------------------------------------------------
-	demo.Must(job.SetEmailNotify(ctx, operatorName, gosmo.NotifyOnFailure))
-	demo.Must(job.SetDeleteLevel(ctx, gosmo.NotifyNever))
+	demo.Must(job.Alter(ctx, gosmo.JobChanges{
+		NotifyEmailOperatorName: new(operatorName),
+		NotifyLevelEmail:        new(gosmo.NotifyOnFailure),
+		DeleteLevel:             new(gosmo.NotifyNever),
+	}))
 
 	// -- Schedules ---------------------------------------------------------
 	//
@@ -221,7 +224,7 @@ func main() {
 	}))
 	defer func() { _ = alert.Drop(ctx) }()
 	demo.Must(alert.Notify(ctx, operatorName, gosmo.NotifyMethodEmail))
-	demo.Must(alert.SetJobResponse(ctx, jobName))
+	demo.Must(alert.Alter(ctx, gosmo.AlertChanges{JobName: new(jobName)}))
 
 	for _, n := range demo.Value(alert.Notifications(ctx)) {
 		fmt.Printf("  notifies %s via %s\n", n.OperatorName, n.Method)
@@ -233,7 +236,7 @@ func main() {
 
 	// The alert has to stop pointing at the job before the job can be
 	// dropped; deferred cleanup runs in reverse order, so undo it here.
-	demo.Must(alert.SetJobResponse(ctx, ""))
+	demo.Must(alert.Alter(ctx, gosmo.AlertChanges{JobName: new("")}))
 
 	// -- Everything on the instance ---------------------------------------
 	demo.Section("All jobs")

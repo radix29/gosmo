@@ -334,6 +334,7 @@ The instance and database halves pair up: `ServerResourceStat` and
 | `Server.JobServer` (Agent) | see [SQL Server Agent](#sql-server-agent) below |
 | Active sessions         | `srv.ActiveSessions(ctx, gosmo.UserSessionsOnly)` (or `AllSessions`) |
 | Own blocked requests    | `srv.BlockedRequests(ctx, os.Getpid())` — this client's pooled sessions waiting on another, with the blocker |
+| One session             | `srv.SessionByID(ctx, id)`                      |
 | Kill session            | `srv.KillSession(ctx, id)`                      |
 | Error log               | `srv.ReadLog(ctx, logType, n, search)` (zero `LogSearch` = whole file) / `srv.EnumErrorLogs(ctx, logType)` / `srv.CycleLog(ctx, logType)` — see [Error log](#error-log) |
 | Database Mail           | `srv.Mail().Accounts(ctx)` / `srv.Mail().AccountByName(ctx, name)` / `srv.Mail().Profiles(ctx)` / `srv.Mail().ProfileByName(ctx, name)` (each with its ordered `Accounts`) / `srv.Mail().PrincipalProfiles(ctx)` (SID 0x00 = public) / `srv.Mail().Configuration(ctx)` / `srv.Mail().Status(ctx)` (`MailDisabled` while 'Database Mail XPs' is 0, not an error) / `srv.Mail().Queues(ctx)` (VIEW SERVER STATE) / `srv.Mail().Items(ctx, gosmo.MailItemFilter{...})` / `srv.Mail().ItemByID(ctx, id)` / `srv.Mail().Events(ctx, gosmo.MailEventFilter{...})`. Writes: `srv.Mail().CreateAccount(ctx, req)` / `srv.Mail().AccountRef(name).Alter(ctx, gosmo.MailAccountChanges{...})` (nil `Credentials` keeps the stored user and password) / `.Drop(ctx)`; `srv.Mail().CreateProfile(ctx, req)` / `srv.Mail().ProfileRef(name).Alter` / `.Drop` / `.SetAccounts(ctx, ordered)` / `.Grant(ctx, principal, gosmo.MailDefaultProfile)` (or `MailNotDefaultProfile`) / `.SetGrantDefault` / `.Revoke`; `srv.Mail().SetConfiguration(ctx, opts)`; `srv.Mail().Start(ctx)` / `.Stop(ctx)`; `srv.Mail().Send(ctx, gosmo.MailMessage{Profile, To, Subject, Body})` → mailitem_id (never retried); `srv.Mail().DeleteItems(ctx, before, status)` / `.DeleteLog(ctx, before, eventType)`. The log also reads as `ReadLog(ctx, gosmo.ErrorLogDatabaseMail, 0, gosmo.LogSearch{})`. Scripts: `ScriptMailAccount` / `ScriptMailProfile` / `ScriptDatabaseMail`, the password as `<insert password here>` (also under `WithScript` and to a statement observer) — msdb permission, not sysadmin; see `database_mail.go`, `database_mail_write.go`, `database_mail_service.go` |
@@ -397,7 +398,7 @@ The instance and database halves pair up: `ServerResourceStat` and
 | `Database.Roles`                | `db.Roles(ctx)` / `db.RoleByName(ctx, name)` / `db.RoleRef(name)` (no-I/O handle) / `db.RoleMembers(ctx, roleName)`; writes on the handle — `role.AddMember(ctx, member)` / `role.RemoveMember(ctx, member)` |
 | Database role administration    | `role.Rename(ctx, newName)` / `role.SetOwner(ctx, newOwner)` / `role.Drop(ctx)` / `db.RoleRef(name).Drop(ctx)` |
 | `Database.FileGroups`           | `db.FileGroups(ctx)` — `fg.Type` is the `type_desc` (ROWS / FILESTREAM / MEMORY_OPTIMIZED), `fg.IsFileStream()` the common test |
-| `Database.Triggers`             | `db.Triggers(ctx)` / `db.ObjectTriggers(ctx, schema, name)` (one table or view, by name) / `db.TriggerByName(ctx, schema, name)` (the trigger's own schema = its parent's) / `db.TriggerRef(schema, name)` (no-I/O handle) / `tr.Drop(ctx)` / `tr.Rename(ctx, newName)` |
+| `Database.Triggers`             | `db.Triggers(ctx)` / `db.ObjectTriggers(ctx, schema, name)` (one table or view, by name) / `db.TriggerByName(ctx, schema, name)` (the trigger's own schema = its parent's) / `db.TriggerRef(schema, name)` (no-I/O handle) / `tr.Drop(ctx)` / `tr.Rename(ctx, newName)` / `tr.Enable(ctx)` / `tr.Disable(ctx)` / `tr.SetEnabled(ctx, on)` (a `TriggerRef` looks up the parent it names) |
 | Database-scope DDL triggers     | `db.DatabaseTriggers(ctx)` / `db.DatabaseTriggerByName(ctx, name)` / `db.DatabaseTriggerRef(name)` (no-I/O handle) / `tr.Enable(ctx)` / `tr.Disable(ctx)` / `tr.Drop(ctx)` — see [Database DDL triggers](#database-ddl-triggers) |
 | `Database.Sequences`            | `db.Sequences(ctx)` / `db.SequenceByName(ctx, schema, name)` / `db.SequenceRef(schema, name).Drop(ctx)` |
 | `Database.Synonyms`             | `db.Synonyms(ctx)` / `db.SynonymByName(ctx, schema, name)` / `db.SynonymRef(schema, name).Drop(ctx)` |
@@ -1641,10 +1642,15 @@ ID — so a schedule is writable from a no-I/O `ScheduleRef` handle. `Drop`,
 read keyed by id, `Schedule.Jobs`, looks the id up through `ScheduleByName`
 on a `ScheduleRef` instead, so a shared name is `ErrAmbiguous`, not "no jobs".
 
-The per-property setters are not deprecated —
-`Enable()`/`Disable()`/`Rename()` read better than a struct literal for a
-single edit — but each is a one-line wrapper over its family's `Alter`, so
-there is one statement builder and one receiver mirror per family. An empty
+`Alter` is the one spelling of these writes. `Enable()`/`Disable()`/
+`SetEnabled()`/`Rename()` stay beside it — they read better than a struct
+literal for a single edit — and each is a one-line wrapper over its family's
+`Alter`, so there is one statement builder and one receiver mirror per
+family. The other per-property setters (`Job.SetOwner`, `Alert.SetTrigger`,
+`Schedule.SetFrequency` and the rest) were removed on 2026-10-26: each was a
+second spelling of one `Changes` field. Every string argument is bound
+(`boundArgs`), not spliced: a captured or observed statement shows it as
+`N'...'` again. An empty
 category is sent as what each class accepts (`agentCategoryTarget`):
 `[Uncategorized]` for an alert or operator, `[DEFAULT]` for a job, mirrored
 as the `[Uncategorized (Local)]` msdb then reports.
@@ -1667,7 +1673,10 @@ step, _ := job.AddStep(ctx, gosmo.JobStepDefinition{ // read back: step.StepID i
     OnSuccessAction: 1,
     OnFailAction:    2,
 })
-job.SetEmailNotify(ctx, "DBA on call", gosmo.NotifyOnFailure)
+job.Alter(ctx, gosmo.JobChanges{ // every sp_update_job change in one call
+    NotifyEmailOperatorName: new("DBA on call"),
+    NotifyLevelEmail:        new(gosmo.NotifyOnFailure),
+})
 job.Start(ctx, step.Name)
 
 // Edit or remove a step in place.
@@ -1779,7 +1788,7 @@ alert, _ := srv.CreateAlert(ctx, gosmo.CreateAlertRequest{
     Severity: 17,
 })
 alert.Notify(ctx, op.Name, gosmo.NotifyMethodEmail)
-alert.SetJobResponse(ctx, "NightlyBackup") // run a job in response
+alert.Alter(ctx, gosmo.AlertChanges{JobName: new("NightlyBackup")}) // run a job in response
 
 // The "referenced by" direction, for an operator's properties page.
 alerts, _ := op.NotifyingAlerts(ctx)
@@ -2314,7 +2323,7 @@ actually stopped it.
 Two conventions coexist, deliberately:
 
 - Most by-name lookups — `LoginByName`, `DatabaseByName`, `TableByName`,
-  `UserByName`, `RoleByName`, `AgentJobByName`, `AlertByName`,
+  `UserByName`, `RoleByName`, `JobByName`, `AlertByName`,
   `OperatorByName`, `ScheduleByName`, `ServerRoleByName`,
   `ConfigurationByName`, `AvailabilityGroupByName`, `CertificateByName`,
   `AsymmetricKeyByName`, `SymmetricKeyByName`, and the Scripter's lookups —

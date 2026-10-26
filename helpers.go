@@ -175,6 +175,24 @@ func escapeSingle(s string) string {
 	return strings.ReplaceAll(s, "'", "''")
 }
 
+// boundArgs numbers the bound arguments of one statement or batch: each str
+// records v and returns its placeholder, @p1 upward, for the caller to write
+// where the literal would go; vals is what exec then binds. A batch of several
+// statements shares one, so the numbering runs across all of them.
+//
+// It is for a procedure's string arguments — msdb's Agent procedures above
+// all — which bind where DDL cannot: no hand-escaping, and one plan however
+// the names vary. A captured or observed statement carries each value back as
+// N'...' (bindScriptArgs), the text the hand-escaped form had. Integers stay
+// literals: they come from Go ints, with nothing to escape, and each bound one
+// would spend a parameter of the 2,100 a batch may carry.
+type boundArgs struct{ vals []any }
+
+func (b *boundArgs) str(v string) string {
+	b.vals = append(b.vals, v)
+	return "@p" + strconv.Itoa(len(b.vals))
+}
+
 // nullableStr returns a T-SQL NULL literal or a quoted N'...' string.
 func nullableStr(s string) string {
 	if s == "" {

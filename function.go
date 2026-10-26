@@ -49,7 +49,7 @@ func (t FunctionType) IsCLR() bool {
 // UserDefinedFunctions returns the UDFs, T-SQL and CLR, an ObjectFilter
 // matches, narrowed by the server. The zero ObjectFilter returns every one.
 func (d *Database) UserDefinedFunctions(ctx context.Context, filter ObjectFilter) ([]*UserDefinedFunction, error) {
-	where, args := filter.clause(moduleFilterColumns, 1)
+	where, args := filter.clause(moduleFilterColumns)
 	return moduleListWhere(ctx, d, "UDFs", userFunctions, functionExtra, where, args, scanFunction)
 }
 
@@ -83,7 +83,7 @@ func scanFunction(d *Database, scan func(...any) error) (*UserDefinedFunction, e
 // schema is identical in every database on a server, so this only needs
 // loading once per connection. The zero ObjectFilter returns every one.
 func (d *Database) SystemFunctions(ctx context.Context, filter ObjectFilter) ([]*UserDefinedFunction, error) {
-	where, args := filter.clause(moduleFilterColumns, 1)
+	where, args := filter.clause(moduleFilterColumns)
 	return moduleListWhere(ctx, d, "system UDFs", systemFunctions, functionExtra, where, args, scanFunction)
 }
 

@@ -193,7 +193,7 @@ func (qs QueryStore) TopResourceQueries(ctx context.Context, opts QueryStoreRepo
 	}
 	var a qsArgs
 	top := a.add(sp.opts.Top)
-	q := "SELECT TOP (" + top + ") " + qsQueryColumns(sp.value("rs"), "CAST(0 AS float)") +
+	q := "SELECT TOP (" + top + ") " + qsQueryColumns(sp.value(), "CAST(0 AS float)") +
 		qsRuntimeFrom + "\n" + sp.window(&a, sp.opts.From, sp.opts.To) + sp.queryFilter(&a) + "\n" + qsQueryGroupBy + sp.having(&a) +
 		"\nORDER BY value DESC"
 
@@ -230,7 +230,7 @@ func (qs QueryStore) ForcedPlanQueries(ctx context.Context, opts QueryStoreRepor
 	} else {
 		having += "\n   AND MAX(CAST(p.is_forced_plan AS int)) = 1"
 	}
-	q := "SELECT TOP (" + top + ") " + qsQueryColumns(sp.value("rs"), "CAST(0 AS float)") +
+	q := "SELECT TOP (" + top + ") " + qsQueryColumns(sp.value(), "CAST(0 AS float)") +
 		qsRuntimeFrom + "\n" + sp.window(&a, sp.opts.From, sp.opts.To) + sp.queryFilter(&a) + "\n" + qsQueryGroupBy + having +
 		"\nORDER BY value DESC"
 
@@ -266,7 +266,7 @@ func (qs QueryStore) HighVariationQueries(ctx context.Context, opts QueryStoreRe
 
 	var a qsArgs
 	top := a.add(sp.opts.Top)
-	q := "SELECT TOP (" + top + ") " + qsQueryColumns(sp.value("rs"), variation) +
+	q := "SELECT TOP (" + top + ") " + qsQueryColumns(sp.value(), variation) +
 		qsRuntimeFrom + "\n" + sp.window(&a, sp.opts.From, sp.opts.To) + sp.queryFilter(&a) + "\n" + qsQueryGroupBy + sp.having(&a) +
 		"\nORDER BY variation DESC"
 
@@ -324,7 +324,7 @@ func (qs QueryStore) RegressedQueries(ctx context.Context, opts QueryStoreReport
     %s
     %s
     %s%s
-)`, name, qsObjectName, sp.value("rs"), strings.TrimPrefix(qsRuntimeFrom, "\n"),
+)`, name, qsObjectName, sp.value(), strings.TrimPrefix(qsRuntimeFrom, "\n"),
 			sp.window(&a, from, to)+exclude()+sp.queryFilter(&a), qsQueryGroupBy, sp.having(&a))
 	}
 
@@ -388,7 +388,7 @@ func (qs QueryStore) OverallConsumption(ctx context.Context, opts QueryStoreRepo
 %s
 %s
 GROUP BY rsi.runtime_stats_interval_id, rsi.start_time, rsi.end_time
-ORDER BY rsi.start_time`, sp.value("rs"), qsRuntimeFrom, sp.window(&a, sp.opts.From, sp.opts.To))
+ORDER BY rsi.start_time`, sp.value(), qsRuntimeFrom, sp.window(&a, sp.opts.From, sp.opts.To))
 
 	rows, err := d.query(ctx, q, a.args...)
 	return scanRows(rows, err, fmt.Sprintf("overall resource consumption in %q", d.Name), func(scan func(...any) error) (*QSIntervalStat, error) {
@@ -424,7 +424,7 @@ func (qs QueryStore) TrackedQuery(ctx context.Context, queryID int64, opts Query
   AND q.query_id = %s
 GROUP BY p.plan_id, rsi.runtime_stats_interval_id, rsi.start_time, rsi.end_time
 ORDER BY p.plan_id, rsi.start_time`,
-		sp.value("rs"), qsRuntimeFrom, sp.window(&a, sp.opts.From, sp.opts.To), a.add(queryID))
+		sp.value(), qsRuntimeFrom, sp.window(&a, sp.opts.From, sp.opts.To), a.add(queryID))
 
 	rows, err := d.query(ctx, q, a.args...)
 	return scanRows(rows, err, fmt.Sprintf("tracked query %d in %q", queryID, d.Name), func(scan func(...any) error) (*QSPlanIntervalStat, error) {
@@ -505,7 +505,7 @@ func (qs QueryStore) Plans(ctx context.Context, queryID int64, opts QueryStoreRe
 		return nil, err
 	}
 	var a qsArgs
-	q := d.queryStorePlansQuery(sp.value("rs"), a.add(sp.opts.From), a.add(sp.opts.To), a.add(queryID))
+	q := d.queryStorePlansQuery(sp.value(), a.add(sp.opts.From), a.add(sp.opts.To), a.add(queryID))
 
 	rows, err := d.query(ctx, q, a.args...)
 	return scanRows(rows, err, fmt.Sprintf("query store plans for query %d in %q", queryID, d.Name), func(scan func(...any) error) (*QSPlan, error) {

@@ -485,6 +485,13 @@ type ActiveSession struct {
 	BlockingSessionID int
 	WaitType          string
 	WaitTimeMS        int64
+	// HostProcessID is the client's process id as reported at login
+	// (go-mssqldb sends os.Getpid()), 0 for a system session.
+	// FromCallerHost reports that the session's client named the reading
+	// connection's own host (host_name = HOST_NAME()). Together they pick out
+	// one client process's sessions, as BlockedRequests does.
+	HostProcessID  int
+	FromCallerHost bool
 }
 
 // SessionScope says which sessions Server.ActiveSessions returns.
@@ -510,45 +517,71 @@ func (s *Server) ActiveSessions(ctx context.Context, scope SessionScope) ([]*Act
 	default:
 		return nil, invalidf("gosmo: active sessions: unrecognized session scope %d", scope)
 	}
-	q := fmt.Sprintf(`
-SELECT s.session_id, ISNULL(s.login_name, ''), ISNULL(s.host_name, ''), ISNULL(s.program_name, ''),
+	q := `
+SELECT ` + activeSessionColumns + `
+` + activeSessionFrom + `
+WHERE  s.session_id != @@SPID ` + sysFilter + `
+ORDER  BY s.session_id`
+
+	rows, err := s.query(ctx, q)
+	return scanRows(rows, err, "active sessions", func(scan func(...any) error) (*ActiveSession, error) {
+		return scanActiveSession(s, scan)
+	})
+}
+
+// SessionByID reads one session — the caller's own included, unlike
+// ActiveSessions — with ErrNotFound when no session has that id: it has
+// ended, or the login lacks VIEW SERVER STATE and sees only its own.
+func (s *Server) SessionByID(ctx context.Context, sessionID int) (*ActiveSession, error) {
+	q := "SELECT " + activeSessionColumns + "\n" + activeSessionFrom + "\nWHERE  s.session_id = @p1"
+	return readByName(ctx, s, scanActiveSession, q, []any{sessionID},
+		notFoundf("gosmo: session %d not found", sessionID), fmt.Sprintf("read session %d", sessionID))
+}
+
+// activeSessionColumns and activeSessionFrom are the ActiveSession read,
+// scanned by scanActiveSession.
+const activeSessionColumns = `s.session_id, ISNULL(s.login_name, ''), ISNULL(s.host_name, ''), ISNULL(s.program_name, ''),
        DB_NAME(s.database_id), s.status,
        s.cpu_time, s.memory_usage, s.total_elapsed_time,
        CONVERT(VARCHAR(30), s.last_request_start_time, 121),
        ISNULL(SUBSTRING(t.text, 1, 512), ''),
-       `+sessionBlockerID+`,
-       `+sessionBlockerWaitType+`,
-       `+sessionBlockerWaitMS+`
-FROM   sys.dm_exec_sessions s
-LEFT   JOIN sys.dm_exec_requests r ON r.session_id = s.session_id`+sessionBlockerJoin+`
-OUTER  APPLY sys.dm_exec_sql_text(r.sql_handle) t
-WHERE  s.session_id != @@SPID %s
-ORDER  BY s.session_id`, sysFilter)
+       ` + sessionBlockerID + `,
+       ` + sessionBlockerWaitType + `,
+       ` + sessionBlockerWaitMS + `,
+       ISNULL(s.host_process_id, 0),
+       CAST(CASE WHEN s.host_name = HOST_NAME() THEN 1 ELSE 0 END AS bit)`
 
-	rows, err := s.query(ctx, q)
-	return scanRows(rows, err, "active sessions", func(scan func(...any) error) (*ActiveSession, error) {
-		as := &ActiveSession{}
-		var dbName, waitType, lastReq, cmd, status sql.NullString
-		if err := scan(
-			&as.SessionID, &as.LoginName, &as.HostName, &as.ProgramName,
-			&dbName, &status,
-			&as.CPUTime, &as.MemoryUsage, &as.TotalElapsedMS,
-			&lastReq, &cmd,
-			&as.BlockingSessionID, &waitType, &as.WaitTimeMS,
-		); err != nil {
-			return nil, err
-		}
-		as.DatabaseName = dbName.String
-		as.Status = status.String
-		as.LastRequestStart = lastReq.String
-		as.CommandText = cmd.String
-		as.WaitType = waitType.String
-		return as, nil
-	})
+const activeSessionFrom = `FROM   sys.dm_exec_sessions s
+LEFT   JOIN sys.dm_exec_requests r ON r.session_id = s.session_id` + sessionBlockerJoin + `
+OUTER  APPLY sys.dm_exec_sql_text(r.sql_handle) t`
+
+func scanActiveSession(_ *Server, scan func(...any) error) (*ActiveSession, error) {
+	as := &ActiveSession{}
+	var dbName, waitType, lastReq, cmd, status sql.NullString
+	if err := scan(
+		&as.SessionID, &as.LoginName, &as.HostName, &as.ProgramName,
+		&dbName, &status,
+		&as.CPUTime, &as.MemoryUsage, &as.TotalElapsedMS,
+		&lastReq, &cmd,
+		&as.BlockingSessionID, &waitType, &as.WaitTimeMS,
+		&as.HostProcessID, &as.FromCallerHost,
+	); err != nil {
+		return nil, err
+	}
+	as.DatabaseName = dbName.String
+	as.Status = status.String
+	as.LastRequestStart = lastReq.String
+	as.CommandText = cmd.String
+	as.WaitType = waitType.String
+	return as, nil
 }
 
-// KillSession terminates a session by session ID.
+// KillSession terminates a session by session ID. A sessionID below 1 is
+// refused with ErrInvalidRequest before anything is sent.
 func (s *Server) KillSession(ctx context.Context, sessionID int) error {
+	if sessionID <= 0 {
+		return invalidf("gosmo: kill session %d: a session ID is positive", sessionID)
+	}
 	if _, err := s.exec(ctx, fmt.Sprintf("KILL %d", sessionID)); err != nil {
 		return fmt.Errorf("gosmo: kill session %d: %w", sessionID, err)
 	}

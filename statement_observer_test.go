@@ -2,6 +2,7 @@ package gosmo
 
 import (
 	"context"
+	"database/sql/driver"
 	"errors"
 	"slices"
 	"strings"
@@ -162,5 +163,42 @@ func TestStatementObserverChains(t *testing.T) {
 	}
 	if len(*outer) != 1 || len(*inner) != 1 {
 		t.Errorf("outer saw %d, inner saw %d, want 1 each", len(*outer), len(*inner))
+	}
+}
+
+// A write that reads a value back runs through execScan or execAtomicScan,
+// not exec, and binds its strings all the same: the observer is shown them
+// bound back in, as exec's observer is, never the bare @p1 that nothing in
+// a query editor would bind. CreateSchedule (execScan) and AddSchedule with
+// an owner (execAtomicScan) are the two.
+func TestObserverSeesBoundTextFromTheScanWrites(t *testing.T) {
+	srv := captureServer(t, 17)
+	captured.reset(cannedRow{match: "sp_add", cols: []string{"id"}, row: []driver.Value{int64(9)}})
+	var seen []string
+	ctx := WithStatementObserver(t.Context(), func(e ScriptEntry) { seen = append(seen, e.SQL) })
+
+	if _, err := srv.CreateSchedule(ctx, CreateScheduleRequest{Name: "Daily'2am", FreqType: FreqDaily, FreqInterval: 1}); err != nil {
+		t.Fatalf("CreateSchedule: %v", err)
+	}
+	job := &Job{server: srv, Name: "Nightly'Run"}
+	if _, err := job.AddSchedule(ctx, CreateScheduleRequest{Name: "Weekly'2am", FreqType: FreqDaily, FreqInterval: 1, OwnerLoginName: "o'brien"}); err != nil {
+		t.Fatalf("AddSchedule: %v", err)
+	}
+	wants := [][]string{
+		{"@schedule_name = N'Daily''2am'"},
+		{"@job_name = N'Nightly''Run'", "@name = N'Weekly''2am'", "@owner_login_name = N'o''brien'"},
+	}
+	if len(seen) != len(wants) {
+		t.Fatalf("observed %d statements, want %d: %q", len(seen), len(wants), seen)
+	}
+	for i, want := range wants {
+		for _, w := range want {
+			if !strings.Contains(seen[i], w) {
+				t.Errorf("observed statement %d lacks %q:\n%s", i, w, seen[i])
+			}
+		}
+		if strings.Contains(seen[i], "@p1") {
+			t.Errorf("observed statement %d carries an unbound placeholder:\n%s", i, seen[i])
+		}
 	}
 }

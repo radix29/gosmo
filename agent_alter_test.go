@@ -54,9 +54,6 @@ func TestScriptAgentAlterWrites(t *testing.T) {
 		{"Job Alter clears the category as [DEFAULT]", func(c context.Context) error {
 			return job().Alter(c, JobChanges{Category: new("")})
 		}, "EXEC msdb.dbo.sp_update_job @job_name = N'Nightly''Run', @category_name = N'[DEFAULT]'"},
-		{"Job SetCategory clears the category as [DEFAULT]", func(c context.Context) error {
-			return job().SetCategory(c, "")
-		}, "EXEC msdb.dbo.sp_update_job @job_name = N'Nightly''Run', @category_name = N'[DEFAULT]'"},
 
 		{"Alert Alter, trigger and delay", func(c context.Context) error {
 			return alert().Alter(c, AlertChanges{
@@ -207,8 +204,8 @@ func TestAgentAlterMirrorsOnlyWhatItSet(t *testing.T) {
 	// An emptied category mirrors the name msdb stores, not the sentinel
 	// sent: [DEFAULT] resolves to [Uncategorized (Local)] for a job.
 	jr := &Job{server: &Server{db: db}, Name: "Nightly'Run", Category: "Cat"}
-	if err := jr.SetCategory(context.Background(), ""); err != nil {
-		t.Fatalf("Job.SetCategory: %v", err)
+	if err := jr.Alter(context.Background(), JobChanges{Category: new("")}); err != nil {
+		t.Fatalf("Job.Alter: %v", err)
 	}
 	if jr.Category != "[Uncategorized (Local)]" {
 		t.Errorf("Job.Category = %q, want %q", jr.Category, "[Uncategorized (Local)]")

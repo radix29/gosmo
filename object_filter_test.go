@@ -143,7 +143,7 @@ func TestObjectFilterClause(t *testing.T) {
 		},
 	} {
 		t.Run(c.name, func(t *testing.T) {
-			sql, args := c.filter.clause(testFilterCols, 1)
+			sql, args := c.filter.clause(testFilterCols)
 			if sql != c.wantSQL {
 				t.Errorf("sql  = %q\nwant = %q", sql, c.wantSQL)
 			}
@@ -166,22 +166,12 @@ func TestObjectFilterClauseDropsWhatTheFamilyLacks(t *testing.T) {
 		Name:            []TextCriterion{{Op: TextContains, Value: "v"}},
 		MemoryOptimized: &yes,
 	}
-	sql, args := f.clause(moduleFilterColumns, 1)
+	sql, args := f.clause(moduleFilterColumns)
 	if strings.Contains(sql, "memory") {
 		t.Errorf("sql = %q, want no memory-optimized term for a view", sql)
 	}
 	if len(args) != 1 {
 		t.Errorf("args = %#v, want only the name pattern", args)
-	}
-}
-
-// The parameter numbering has to start where the caller's own arguments end,
-// or a listing that already binds @p1 gets its argument shadowed.
-func TestObjectFilterClauseStartsAtTheGivenParameter(t *testing.T) {
-	f := ObjectFilter{Name: []TextCriterion{{Op: TextEquals, Value: "Orders"}}}
-	sql, _ := f.clause(testFilterCols, 3)
-	if !strings.Contains(sql, "@p3") {
-		t.Errorf("sql = %q, want it to bind @p3", sql)
 	}
 }
 

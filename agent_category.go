@@ -151,9 +151,11 @@ func (s *Server) CreateCategory(ctx context.Context, req CreateCategoryRequest) 
 	if !validCategoryClass(req.Class) {
 		return nil, invalidf("gosmo: create category: unrecognized category class %q", req.Class)
 	}
-	q := fmt.Sprintf("EXEC msdb.dbo.sp_add_category @class = N'%s', @type = N'%s', @name = N'%s'",
-		string(req.Class), addCategoryType(req.Class), escapeSingle(req.Name))
-	if _, err := s.exec(ctx, q); err != nil {
+	// The class and type are validCategoryClass's allowlisted words; only the
+	// name is the caller's.
+	q := fmt.Sprintf("EXEC msdb.dbo.sp_add_category @class = N'%s', @type = N'%s', @name = @p1",
+		string(req.Class), addCategoryType(req.Class))
+	if _, err := s.exec(ctx, q, req.Name); err != nil {
 		return nil, fmt.Errorf("gosmo: create category %q (%s): %w", req.Name, req.Class, err)
 	}
 	return createdObject(ctx, s.CategoryRef(req.Class, req.Name), func() (*Category, error) {
@@ -166,9 +168,8 @@ func (c *Category) Drop(ctx context.Context) error {
 	if !validCategoryClass(c.Class) {
 		return invalidf("gosmo: drop category %q: unrecognized category class %q", c.Name, c.Class)
 	}
-	q := fmt.Sprintf("EXEC msdb.dbo.sp_delete_category @class = N'%s', @name = N'%s'",
-		string(c.Class), escapeSingle(c.Name))
-	if _, err := c.server.exec(ctx, q); err != nil {
+	q := fmt.Sprintf("EXEC msdb.dbo.sp_delete_category @class = N'%s', @name = @p1", string(c.Class))
+	if _, err := c.server.exec(ctx, q, c.Name); err != nil {
 		return fmt.Errorf("gosmo: drop category %q (%s): %w", c.Name, c.Class, err)
 	}
 	return nil

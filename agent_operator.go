@@ -103,15 +103,16 @@ func (s *Server) CreateOperator(ctx context.Context, req CreateOperatorRequest) 
 	if req.Name == "" {
 		return nil, invalidf("gosmo: create operator: name is required")
 	}
-	q := fmt.Sprintf("EXEC msdb.dbo.sp_add_operator @name = N'%s', @enabled = %d",
-		escapeSingle(req.Name), boolToInt(req.Enabled))
+	var args boundArgs
+	q := fmt.Sprintf("EXEC msdb.dbo.sp_add_operator @name = %s, @enabled = %d",
+		args.str(req.Name), boolToInt(req.Enabled))
 	if req.EmailAddress != "" {
-		q += fmt.Sprintf(", @email_address = N'%s'", escapeSingle(req.EmailAddress))
+		q += ", @email_address = " + args.str(req.EmailAddress)
 	}
 	if req.Category != "" {
-		q += fmt.Sprintf(", @category_name = N'%s'", escapeSingle(req.Category))
+		q += ", @category_name = " + args.str(req.Category)
 	}
-	if _, err := s.exec(ctx, q); err != nil {
+	if _, err := s.exec(ctx, q, args.vals...); err != nil {
 		return nil, fmt.Errorf("gosmo: create operator %q: %w", req.Name, err)
 	}
 	return createdObject(ctx, s.OperatorRef(req.Name), func() (*Operator, error) {
@@ -135,24 +136,9 @@ func (o *Operator) SetEnabled(ctx context.Context, on bool) error {
 	return o.Alter(ctx, OperatorChanges{Enabled: &on})
 }
 
-// SetEmailAddress changes the operator's email address.
-func (o *Operator) SetEmailAddress(ctx context.Context, addr string) error {
-	return o.Alter(ctx, OperatorChanges{EmailAddress: &addr})
-}
-
-// SetCategory reassigns the operator's category. category == "" clears it —
-// sent as the real [Uncategorized] category, for the same reason
-// Alert.SetCategory does: sp_update_operator's category check
-// (sp_verify_category, shared with sp_update_alert) rejects an empty name
-// outright.
-func (o *Operator) SetCategory(ctx context.Context, category string) error {
-	return o.Alter(ctx, OperatorChanges{Category: &category})
-}
-
 // Drop deletes the operator via sp_delete_operator.
 func (o *Operator) Drop(ctx context.Context) error {
-	q := fmt.Sprintf("EXEC msdb.dbo.sp_delete_operator @name = N'%s'", escapeSingle(o.Name))
-	if _, err := o.server.exec(ctx, q); err != nil {
+	if _, err := o.server.exec(ctx, "EXEC msdb.dbo.sp_delete_operator @name = @p1", o.Name); err != nil {
 		return fmt.Errorf("gosmo: drop operator %q: %w", o.Name, err)
 	}
 	return nil

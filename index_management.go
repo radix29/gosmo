@@ -51,7 +51,7 @@ func (idx *Index) Reorganize(ctx context.Context) error {
 		return err
 	}
 	q := fmt.Sprintf("ALTER INDEX %s REORGANIZE", idx.target())
-	if _, err := idx.on().exec(ctx, q); err != nil {
+	if err := idx.on().exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: reorganize index %q: %w", idx.Name, err)
 	}
 	return nil
@@ -63,7 +63,7 @@ func (idx *Index) Disable(ctx context.Context) error {
 		return err
 	}
 	q := fmt.Sprintf("ALTER INDEX %s DISABLE", idx.target())
-	if _, err := idx.on().exec(ctx, q); err != nil {
+	if err := idx.on().exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: disable index %q: %w", idx.Name, err)
 	}
 	setIfApplied(ctx, &idx.IsDisabled, true)
@@ -79,7 +79,7 @@ func (idx *Index) Enable(ctx context.Context) error {
 // Drop drops the index.
 func (idx *Index) Drop(ctx context.Context) error {
 	q := fmt.Sprintf("DROP INDEX %s", idx.target())
-	if _, err := idx.on().exec(ctx, q); err != nil {
+	if err := idx.on().exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: drop index %q: %w", idx.Name, err)
 	}
 	return nil
@@ -91,7 +91,7 @@ func (t *Table) RebuildAllIndexes(ctx context.Context, fillFactor int) error {
 	if fillFactor > 0 {
 		q += fmt.Sprintf(" WITH (FILLFACTOR = %d)", fillFactor)
 	}
-	if _, err := t.exec(ctx, q); err != nil {
+	if err := t.exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: rebuild all indexes on %s: %w", t.FullName(), err)
 	}
 	return nil
@@ -153,7 +153,7 @@ func (idx *Index) SetOptions(ctx context.Context, opts IndexSetOptions) error {
 		return invalidf("gosmo: set options on index %q: a %s index takes none of IGNORE_DUP_KEY, ALLOW_ROW_LOCKS, ALLOW_PAGE_LOCKS", idx.Name, idx.Type)
 	}
 	q := fmt.Sprintf("ALTER INDEX %s SET (%s)", idx.target(), strings.Join(set, ", "))
-	if _, err := idx.on().exec(ctx, q); err != nil {
+	if err := idx.on().exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: set options on index %q: %w", idx.Name, err)
 	}
 	return nil
@@ -164,7 +164,7 @@ func (idx *Index) SetOptions(ctx context.Context, opts IndexSetOptions) error {
 // backing index's name in sys.indexes.
 func (idx *Index) Rename(ctx context.Context, newName string) error {
 	objName := idx.on().FullName() + "." + quoteIdent(idx.Name)
-	if _, err := idx.on().exec(ctx,
+	if err := idx.on().exec(ctx,
 		"EXEC sp_rename @objname = @p1, @newname = @p2, @objtype = N'INDEX'",
 		objName, newName,
 	); err != nil {
@@ -340,7 +340,7 @@ func (idx *Index) Rebuild(ctx context.Context, opts IndexRebuildOptions) error {
 	if len(withParts) > 0 {
 		q += " WITH (" + strings.Join(withParts, ", ") + ")"
 	}
-	if _, err := idx.on().exec(ctx, q); err != nil {
+	if err := idx.on().exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: rebuild index %q: %w", idx.Name, err)
 	}
 	// A rebuild is what enables a disabled index (Enable is this call). Left
@@ -382,7 +382,7 @@ func (idx *Index) SetIncludedColumns(ctx context.Context, columns []string) erro
 	if idx.IsDisabled {
 		q += fmt.Sprintf(";\nALTER INDEX %s DISABLE", idx.target())
 	}
-	if _, err := idx.on().exec(ctx, q); err != nil {
+	if err := idx.on().exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: set included columns on index %q: %w", idx.Name, err)
 	}
 	setIfApplied(ctx, &idx.IncludedColumns, next.IncludedColumns)
@@ -424,7 +424,7 @@ func (idx *Index) UpdateStatistics(ctx context.Context, samplePct int) error {
 		return err
 	}
 	q := fmt.Sprintf("UPDATE STATISTICS %s (%s) WITH %s", idx.on().FullName(), quoteIdent(idx.Name), sampleClause(samplePct))
-	if _, err := idx.on().exec(ctx, q); err != nil {
+	if err := idx.on().exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: update statistics for index %q: %w", idx.Name, err)
 	}
 	return nil

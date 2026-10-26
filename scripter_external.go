@@ -97,7 +97,7 @@ func buildExternalDataSourceScript(s *ExternalDataSource, opts ScriptOptions) st
 		if strings.EqualFold(s.Pushdown, "OFF") && pushdownLocation(s.Location) {
 			opt.addKeyword("PUSHDOWN", "OFF")
 		}
-		sb.WriteString(opt.render("    "))
+		sb.WriteString(opt.render())
 
 		sb.WriteString(");\nGO\n")
 	})
@@ -161,7 +161,7 @@ func buildExternalFileFormatScript(f *ExternalFileFormat, opts ScriptOptions) st
 
 		outer.addLiteral("SERDE_METHOD", f.SerDeMethod)
 		outer.addLiteral("DATA_COMPRESSION", f.DataCompression)
-		sb.WriteString(outer.render("    "))
+		sb.WriteString(outer.render())
 
 		sb.WriteString(");\nGO\n")
 	})
@@ -249,12 +249,13 @@ func (c *clauseList) addRaw(text string) { c.parts = append(c.parts, text) }
 
 func (c *clauseList) empty() bool { return len(c.parts) == 0 }
 
-// render lays the options out one per line at the given indent, comma
+// render lays the options out one per line, indented four spaces, comma
 // separated, with a trailing newline.
-func (c *clauseList) render(indent string) string {
+func (c *clauseList) render() string {
 	if c.empty() {
 		return ""
 	}
+	const indent = "    "
 	return indent + strings.Join(c.parts, ",\n"+indent) + "\n"
 }
 

@@ -117,7 +117,7 @@ func (t *Table) CreateIndex(ctx context.Context, req CreateIndexRequest) (*Index
 	if err != nil {
 		return nil, err
 	}
-	if _, err := t.exec(ctx, stmt); err != nil {
+	if err := t.exec(ctx, stmt); err != nil {
 		return nil, fmt.Errorf("gosmo: create index %q on %s: %w", req.Name, t.FullName(), err)
 	}
 	return createdObject(ctx, t.IndexRef(req.Name), func() (*Index, error) {

@@ -44,7 +44,7 @@ func (sc *Scripter) ScriptUserDefinedDataType(ctx context.Context, schema, name 
 		return "", err
 	}
 	return sc.withExtendedPropertiesAt(ctx, buildUserDefinedDataTypeScript(t, sc.opts), "type "+qualifiedName(t.Schema, t.Name),
-		6, t.UserTypeID, 0, ExtendedPropertyLevel{Level0Type: "SCHEMA", Level0Name: t.Schema, Level1Type: "TYPE", Level1Name: t.Name})
+		6, t.UserTypeID, ExtendedPropertyLevel{Level0Type: "SCHEMA", Level0Name: t.Schema, Level1Type: "TYPE", Level1Name: t.Name})
 }
 
 // buildUserDefinedDataTypeScript assembles one alias type's script.
@@ -122,7 +122,7 @@ func (sc *Scripter) ScriptUserDefinedTableType(ctx context.Context, schema, name
 		}
 	}
 	script, err := sc.withExtendedPropertiesAt(ctx, buildUserDefinedTableTypeScript(t, p, sc.opts), "type "+t.FullName(),
-		6, t.UserTypeID, 0, ExtendedPropertyLevel{Level0Type: "SCHEMA", Level0Name: t.Schema, Level1Type: "TYPE", Level1Name: t.Name})
+		6, t.UserTypeID, ExtendedPropertyLevel{Level0Type: "SCHEMA", Level0Name: t.Schema, Level1Type: "TYPE", Level1Name: t.Name})
 	if err != nil || !sc.wantsExtendedProperties() {
 		return script, err
 	}
@@ -337,7 +337,7 @@ func (sc *Scripter) ScriptXMLSchemaCollection(ctx context.Context, schema, name 
 		}
 	}
 	return sc.withExtendedPropertiesAt(ctx, buildXMLSchemaCollectionScript(c, def, sc.opts),
-		"XML schema collection "+qualifiedName(c.Schema, c.Name), 10, c.CollectionID, 0,
+		"XML schema collection "+qualifiedName(c.Schema, c.Name), 10, c.CollectionID,
 		ExtendedPropertyLevel{Level0Type: "SCHEMA", Level0Name: c.Schema, Level1Type: "XML SCHEMA COLLECTION", Level1Name: c.Name})
 }
 

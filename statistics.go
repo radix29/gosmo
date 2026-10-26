@@ -177,7 +177,7 @@ func (st *Statistic) Update(ctx context.Context, samplePct int) error {
 	// UPDATE STATISTICS does not support parameterised stat names.
 	q := fmt.Sprintf("UPDATE STATISTICS %s %s WITH %s",
 		st.on().FullName(), quoteIdent(st.Name), option)
-	if _, err := st.on().exec(ctx, q); err != nil {
+	if err := st.on().exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: update statistic %q: %w", st.Name, err)
 	}
 	return nil
@@ -189,7 +189,7 @@ func (st *Statistic) Drop(ctx context.Context) error {
 	// DROP STATISTICS syntax: schema.table.stat (not quoted as one unit)
 	q := fmt.Sprintf("DROP STATISTICS %s.%s.%s",
 		quoteIdent(st.on().Schema), quoteIdent(st.on().Name), quoteIdent(st.Name))
-	if _, err := st.on().exec(ctx, q); err != nil {
+	if err := st.on().exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: drop statistic %q: %w", st.Name, err)
 	}
 	return nil
@@ -201,7 +201,7 @@ func (t *Table) UpdateAllStatistics(ctx context.Context, samplePct int) error {
 		return err
 	}
 	option := sampleClause(samplePct)
-	if _, err := t.exec(ctx, fmt.Sprintf("UPDATE STATISTICS %s WITH %s", t.FullName(), option)); err != nil {
+	if err := t.exec(ctx, fmt.Sprintf("UPDATE STATISTICS %s WITH %s", t.FullName(), option)); err != nil {
 		return fmt.Errorf("gosmo: update all statistics on %s: %w", t.FullName(), err)
 	}
 	return nil
@@ -237,7 +237,7 @@ func (t *Table) CreateStatistic(ctx context.Context, req CreateStatisticRequest)
 	if err != nil {
 		return nil, err
 	}
-	if _, err := t.exec(ctx, q); err != nil {
+	if err := t.exec(ctx, q); err != nil {
 		return nil, fmt.Errorf("gosmo: create statistic %q: %w", req.Name, err)
 	}
 	return createdObject(ctx, t.StatisticRef(req.Name), func() (*Statistic, error) {
@@ -563,7 +563,7 @@ func (k histogramKeyType) timeLayout() string {
 // Rename renames the statistic using sp_rename.
 func (st *Statistic) Rename(ctx context.Context, newName string) error {
 	objName := st.on().FullName() + "." + quoteIdent(st.Name)
-	if _, err := st.on().exec(ctx,
+	if err := st.on().exec(ctx,
 		"EXEC sp_rename @objname = @p1, @newname = @p2, @objtype = N'STATISTICS'",
 		objName, newName,
 	); err != nil {

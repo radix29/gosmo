@@ -661,7 +661,7 @@ func (sc *Scripter) ScriptDatabaseTrigger(ctx context.Context, name string) (str
 		return "", err
 	}
 	return sc.withExtendedPropertiesAt(ctx, script, fmt.Sprintf("database trigger %q", t.Name),
-		1, t.ObjectID, 0, ExtendedPropertyLevel{Level0Type: "TRIGGER", Level0Name: t.Name})
+		1, t.ObjectID, ExtendedPropertyLevel{Level0Type: "TRIGGER", Level0Name: t.Name})
 }
 
 // buildDatabaseTriggerScript assembles one database trigger's script from the

@@ -262,7 +262,7 @@ func (sc *Scripter) ScriptSequence(ctx context.Context, schema, name string) (st
 		return "", err
 	}
 	return sc.withExtendedPropertiesAt(ctx, buildSequenceScript(seq, sc.opts), "sequence "+qualifiedName(seq.Schema, seq.Name),
-		1, seq.ObjectID, 0, ExtendedPropertyLevel{Level0Type: "SCHEMA", Level0Name: seq.Schema, Level1Type: "SEQUENCE", Level1Name: seq.Name})
+		1, seq.ObjectID, ExtendedPropertyLevel{Level0Type: "SCHEMA", Level0Name: seq.Schema, Level1Type: "SEQUENCE", Level1Name: seq.Name})
 }
 
 // buildSequenceScript assembles one sequence's script. START WITH is the
@@ -374,7 +374,7 @@ func (sc *Scripter) ScriptSynonym(ctx context.Context, schema, name string) (str
 		return "", err
 	}
 	return sc.withExtendedPropertiesAt(ctx, buildSynonymScript(syn, sc.opts), "synonym "+qualifiedName(syn.Schema, syn.Name),
-		1, syn.ObjectID, 0, ExtendedPropertyLevel{Level0Type: "SCHEMA", Level0Name: syn.Schema, Level1Type: "SYNONYM", Level1Name: syn.Name})
+		1, syn.ObjectID, ExtendedPropertyLevel{Level0Type: "SCHEMA", Level0Name: syn.Schema, Level1Type: "SYNONYM", Level1Name: syn.Name})
 }
 
 // buildSynonymScript assembles one synonym's script. BaseObject comes from
@@ -397,7 +397,7 @@ func (sc *Scripter) ScriptPartitionFunction(ctx context.Context, name string) (s
 		return "", err
 	}
 	return sc.withExtendedPropertiesAt(ctx, buildPartitionFunctionScript(pf, sc.opts), fmt.Sprintf("partition function %q", pf.Name),
-		21, pf.FunctionID, 0, ExtendedPropertyLevel{Level0Type: "PARTITION FUNCTION", Level0Name: pf.Name})
+		21, pf.FunctionID, ExtendedPropertyLevel{Level0Type: "PARTITION FUNCTION", Level0Name: pf.Name})
 }
 
 // buildPartitionFunctionScript assembles one partition function's script.
@@ -427,7 +427,7 @@ func (sc *Scripter) ScriptPartitionScheme(ctx context.Context, name string) (str
 	// A scheme is a data space: its properties are class 20, a filegroup's
 	// class, keyed by data_space_id.
 	return sc.withExtendedPropertiesAt(ctx, buildPartitionSchemeScript(ps, sc.opts), fmt.Sprintf("partition scheme %q", ps.Name),
-		20, ps.SchemeID, 0, ExtendedPropertyLevel{Level0Type: "PARTITION SCHEME", Level0Name: ps.Name})
+		20, ps.SchemeID, ExtendedPropertyLevel{Level0Type: "PARTITION SCHEME", Level0Name: ps.Name})
 }
 
 // buildPartitionSchemeScript assembles one partition scheme's script.

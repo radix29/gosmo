@@ -194,12 +194,13 @@ func (sc *Scripter) scriptExtendedProperties(ctx context.Context, objectID int, 
 }
 
 // scriptExtendedPropertiesAt is scriptExtendedProperties for one
-// extendedPropertiesAt entry.
-func (sc *Scripter) scriptExtendedPropertiesAt(ctx context.Context, class, majorID, minorID int, level ExtendedPropertyLevel) (string, error) {
+// extendedPropertiesAt entry: a whole securable (minor_id 0), never a column
+// or parameter of one.
+func (sc *Scripter) scriptExtendedPropertiesAt(ctx context.Context, class, majorID int, level ExtendedPropertyLevel) (string, error) {
 	if !sc.wantsExtendedProperties() {
 		return "", nil
 	}
-	props, err := sc.db.extendedPropertiesAt(ctx, class, majorID, minorID, level)
+	props, err := sc.db.extendedPropertiesAt(ctx, class, majorID, 0, level)
 	if err != nil {
 		return "", err
 	}
@@ -209,9 +210,9 @@ func (sc *Scripter) scriptExtendedPropertiesAt(ctx context.Context, class, major
 // withExtendedPropertiesAt appends to script, the script of one securable,
 // the properties scriptExtendedPropertiesAt reads for it; what names the
 // securable in an error ("sequence [dbo].[s]").
-func (sc *Scripter) withExtendedPropertiesAt(ctx context.Context, script, what string, class, majorID, minorID int,
+func (sc *Scripter) withExtendedPropertiesAt(ctx context.Context, script, what string, class, majorID int,
 	level ExtendedPropertyLevel) (string, error) {
-	props, err := sc.scriptExtendedPropertiesAt(ctx, class, majorID, minorID, level)
+	props, err := sc.scriptExtendedPropertiesAt(ctx, class, majorID, level)
 	if err != nil {
 		return "", fmt.Errorf("gosmo: script %s: %w", what, err)
 	}

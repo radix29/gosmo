@@ -193,7 +193,7 @@ func (dm Mail) Send(ctx context.Context, m MailMessage) (int, error) {
 		return 0, nil
 	}
 	var id int
-	if err := s.execScan(ctx, stmt+";\nSELECT @mailitem_id;", &id); err != nil {
+	if err := s.execScan(ctx, stmt+";\nSELECT @mailitem_id;", nil, &id); err != nil {
 		return 0, fmt.Errorf("gosmo: send mail: %w", classifyMailSendError(err))
 	}
 	observe(ctx, s, ScriptEntry{Server: scriptServerName(ctx, s), SQL: stmt + ";\nSELECT @mailitem_id AS mailitem_id;"})

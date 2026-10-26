@@ -161,6 +161,19 @@ func (l *captureLog) findArgs(needle string) (string, []any) {
 	return "", nil
 }
 
+// findBound returns the first captured statement containing needle with its
+// arguments bound into the text (bindScriptArgs), as a script would show it —
+// for a test that pins the whole statement a bound write amounts to. A bind
+// failure is returned as the text, which no expected statement matches.
+func (l *captureLog) findBound(needle string) string {
+	q, args := l.findArgs(needle)
+	bound, err := bindScriptArgs(q, args)
+	if err != nil {
+		return "bind: " + err.Error()
+	}
+	return bound
+}
+
 // count returns how many captured statements contain needle.
 func (l *captureLog) count(needle string) int {
 	l.mu.Lock()
