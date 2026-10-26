@@ -300,3 +300,52 @@ func TestIdentityColumnRefusedWhenInvalid(t *testing.T) {
 		}
 	}
 }
+
+// TestScriptTriggerEnableDisable pins the DML trigger toggle: the trigger and
+// the table or view it is on, both in the trigger's schema.
+func TestScriptTriggerEnableDisable(t *testing.T) {
+	tr := func() *Trigger {
+		return &Trigger{db: scriptTestDB(), Schema: "Sales.Archive", Name: "tr]1", TableName: "o'brien"}
+	}
+	runScriptCases(t, []scriptCase{
+		{"Enable", func(c context.Context) error { return tr().Enable(c) },
+			scriptUsePrefix + "ENABLE TRIGGER [Sales.Archive].[tr]]1] ON [Sales.Archive].[o'brien]"},
+		{"Disable", func(c context.Context) error { return tr().Disable(c) },
+			scriptUsePrefix + "DISABLE TRIGGER [Sales.Archive].[tr]]1] ON [Sales.Archive].[o'brien]"},
+	})
+}
+
+// A TriggerRef has no TableName, and the toggle statement must name the
+// parent. It looks the parent up by schema and name — never caching it on
+// the handle — and a trigger that is not there is ErrNotFound with no
+// write sent.
+func TestTriggerRefSetEnabledLooksUpTheParent(t *testing.T) {
+	s := captureServer(t, 17)
+	captured.reset(cannedRow{match: "FROM   sys.triggers tr", cols: []string{"name"}, row: []driver.Value{"o'brien"}})
+	d := &Database{server: s, Name: "appdb"}
+	h := d.TriggerRef("Sales.Archive", "tr1")
+	if err := h.Disable(t.Context()); err != nil {
+		t.Fatalf("Disable: %v", err)
+	}
+	q, args := captured.findArgs("FROM   sys.triggers tr")
+	if q == "" || len(args) != 2 || args[0] != "Sales.Archive" || args[1] != "tr1" {
+		t.Errorf("parent lookup = %q %v, want one by schema and name", q, args)
+	}
+	if got := captured.find("DISABLE TRIGGER"); !strings.HasSuffix(got, "DISABLE TRIGGER [Sales.Archive].[tr1] ON [Sales.Archive].[o'brien]") {
+		t.Errorf("write = %q, want it ON the looked-up parent", got)
+	}
+	if h.TableName != "" {
+		t.Errorf("TableName = %q, want the lookup left uncached", h.TableName)
+	}
+	if h.IsEnabled {
+		t.Error("IsEnabled = true after Disable")
+	}
+
+	captured.reset()
+	if err := d.TriggerRef("dbo", "gone").Enable(t.Context()); !errors.Is(err, ErrNotFound) {
+		t.Errorf("missing trigger: err = %v, want ErrNotFound", err)
+	}
+	if captured.count("ENABLE TRIGGER") != 0 {
+		t.Error("a write was sent for a trigger the lookup did not find")
+	}
+}

@@ -167,10 +167,13 @@ classDiagram
         +Schema string
         +IsEnabled bool
         +Events []string
-        +Definition string
         +Database() *Database
+        +Definition() string
         +Drop() error
         +Rename(newName) error
+        +Enable() error
+        +Disable() error
+        +SetEnabled(on) error
         +AddSignature(by Signer, kind SignatureKind) error
         +DropSignature(by Signer, kind SignatureKind) error
         No Transfer: a trigger moves with its table.

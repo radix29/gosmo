@@ -31,6 +31,7 @@ func TestSetEnabledIsEnableOrDisable(t *testing.T) {
 		"DatabaseAuditSpecification": func() enabler { return scriptTestDB().DatabaseAuditSpecificationRef("sp]1") },
 		"DatabaseTrigger":            func() enabler { return scriptTestDB().DatabaseTriggerRef("tr]1") },
 		"ServerTrigger":              func() enabler { return srv.ServerTriggerRef("tr]1") },
+		"Trigger":                    func() enabler { return &Trigger{db: scriptTestDB(), Schema: "dbo", Name: "tr]1", TableName: "o'brien"} },
 		"SecurityPolicy":             func() enabler { return &SecurityPolicy{db: scriptTestDB(), Schema: "Se]c", Name: "sp'1"} },
 		"PlanGuide":                  func() enabler { return &PlanGuide{db: scriptTestDB(), Name: "PG_o'brien"} },
 		"Login":                      func() enabler { return &Login{server: srv, Name: "o'brien"} },

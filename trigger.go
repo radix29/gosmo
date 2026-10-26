@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 )
 
 // -- Triggers ------------------------------------------------------------------
@@ -110,4 +111,59 @@ func (t *Trigger) Rename(ctx context.Context, newName string) error {
 	}
 	setIfApplied(ctx, &t.Name, newName)
 	return nil
+}
+
+// Enable enables the trigger.
+func (t *Trigger) Enable(ctx context.Context) error {
+	return t.SetEnabled(ctx, true)
+}
+
+// Disable disables the trigger, leaving its definition in place.
+func (t *Trigger) Disable(ctx context.Context) error {
+	return t.SetEnabled(ctx, false)
+}
+
+// SetEnabled is Enable when on is true and Disable otherwise. The statement
+// names the table or view the trigger is on; a TriggerRef, which has no
+// TableName, looks it up by name first (ErrNotFound when there is no such
+// DML trigger) without caching it on the handle.
+func (t *Trigger) SetEnabled(ctx context.Context, on bool) error {
+	verb := "DISABLE"
+	if on {
+		verb = "ENABLE"
+	}
+	what := fmt.Sprintf("%s trigger %s in %q", strings.ToLower(verb), qualifiedName(t.Schema, t.Name), t.db.Name)
+	if err := requireSchema(strings.ToLower(verb)+" trigger", t.Schema, t.Name); err != nil {
+		return err
+	}
+	parent, err := t.parentName(ctx, what)
+	if err != nil {
+		return err
+	}
+	stmt := fmt.Sprintf("%s TRIGGER %s ON %s", verb, qualifiedName(t.Schema, t.Name), qualifiedName(t.Schema, parent))
+	if _, err := t.db.exec(ctx, stmt); err != nil {
+		return fmt.Errorf("gosmo: %s: %w", what, err)
+	}
+	setIfApplied(ctx, &t.IsEnabled, on)
+	return nil
+}
+
+// parentName is the table or view the trigger is on: TableName when the
+// handle was read from the catalog, else one lookup by name. A DML trigger's
+// schema is its parent's, so the schema predicate is on the parent.
+func (t *Trigger) parentName(ctx context.Context, what string) (string, error) {
+	if t.TableName != "" {
+		return t.TableName, nil
+	}
+	const q = `
+SELECT p.name
+FROM   sys.triggers tr
+JOIN   sys.objects p ON p.object_id = tr.parent_id
+WHERE  tr.parent_class = 1 AND SCHEMA_NAME(p.schema_id) COLLATE DATABASE_DEFAULT = @p1 AND tr.name = @p2`
+	var parent string
+	err := t.db.queryRow(ctx, func(row *sql.Row) error {
+		return row.Scan(&parent)
+	}, q, t.Schema, t.Name)
+	return foundRow(parent, err,
+		notFoundf("gosmo: trigger %s not found in %q", qualifiedName(t.Schema, t.Name), t.db.Name), what)
 }

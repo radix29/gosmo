@@ -2,7 +2,9 @@ package gosmo
 
 import (
 	"context"
+	"database/sql/driver"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -123,5 +125,38 @@ func TestReplicationAgentSessionsFilter(t *testing.T) {
 		if len(call.args) != 3 || call.args[2] != int64(want) {
 			t.Errorf("Sessions(%d) bound %v, want @session_type %d", filter, call.args, want)
 		}
+	}
+}
+
+// TestSessionByID: the session is bound, not spliced; the caller's own is not
+// filtered out (Kill Process must recognise it); the client process columns
+// land in their fields; and no row is ErrNotFound.
+func TestSessionByID(t *testing.T) {
+	cols := make([]string, 16)
+	for i := range cols {
+		cols[i] = fmt.Sprintf("c%d", i)
+	}
+	row := []driver.Value{int64(57), "app", "ws1", "prog", "appdb", "sleeping",
+		int64(0), int64(0), int64(0), nil, "", int64(0), "", int64(0), int64(4242), true}
+	d := qsRecDB(t, 17, cols, [][]driver.Value{row})
+	as, err := d.server.SessionByID(context.Background(), 57)
+	if err != nil {
+		t.Fatalf("SessionByID: %v", err)
+	}
+	call := qsRec.last(t)
+	if len(call.args) != 1 || call.args[0] != int64(57) {
+		t.Errorf("bound %v, want the session id 57", call.args)
+	}
+	if strings.Contains(call.sql, "@@SPID") {
+		t.Errorf("SessionByID leaves out the caller's own session:\n%s", call.sql)
+	}
+	if as.SessionID != 57 || as.LoginName != "app" || as.HostName != "ws1" || as.DatabaseName != "appdb" ||
+		as.HostProcessID != 4242 || !as.FromCallerHost {
+		t.Errorf("SessionByID read %+v", *as)
+	}
+
+	d = qsRecDB(t, 17, cols, nil)
+	if _, err := d.server.SessionByID(context.Background(), 58); !errors.Is(err, ErrNotFound) {
+		t.Errorf("SessionByID of an ended session: %v, want ErrNotFound", err)
 	}
 }

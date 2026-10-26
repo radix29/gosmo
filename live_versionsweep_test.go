@@ -231,6 +231,8 @@ var sweepMustCall = []string{
 	// live_query_profile_test.go is where they meet a running statement.
 	"Server.QueryProfiles",
 	"Server.InFlightPlan",
+	// The confirmation read before Kill Process; takes a session id.
+	"Server.SessionByID",
 
 	// Phase 5 item 26: replication. The ctx-only reads are reflective and
 	// find nothing on an instance without replication — which is the case
@@ -1167,6 +1169,15 @@ func sweepServerCalls(sw *sweep, srv *Server, info *ServerInfo) {
 		if errors.Is(err, ErrNotFound) {
 			return nil
 		}
+		return err
+	})
+	// The sweep's own session: always there, so a not-found is a failure.
+	sw.call("Server.SessionByID", func() error {
+		var spid int
+		if err := srv.DB().QueryRowContext(sw.ctx, "SELECT @@SPID").Scan(&spid); err != nil {
+			return err
+		}
+		_, err := srv.SessionByID(sw.ctx, spid)
 		return err
 	})
 

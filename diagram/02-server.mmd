@@ -70,6 +70,7 @@ classDiagram
         +CreateCategory(req) *Category
         +CategoryRef(class, name) *Category
         +ActiveSessions(scope SessionScope) []*ActiveSession
+        +SessionByID(id) *ActiveSession
         +KillSession(id) error
         +EnumErrorLogs(logType) []*ErrorLogFile
         +ReadLog(logType, n) []*ErrorLogEntry
