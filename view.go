@@ -26,7 +26,7 @@ type View struct {
 // Views returns the views an ObjectFilter matches, narrowed by the server
 // rather than by the caller. The zero ObjectFilter returns every view.
 func (d *Database) Views(ctx context.Context, filter ObjectFilter) ([]*View, error) {
-	where, args := filter.clause(moduleFilterColumns, 1)
+	where, args := filter.clause(moduleFilterColumns)
 	return moduleListWhere(ctx, d, "views", userViews, viewExtra, where, args, scanView)
 }
 
@@ -83,7 +83,7 @@ WHERE  SCHEMA_NAME(o.schema_id) COLLATE DATABASE_DEFAULT = @p1
 // defined identically in every database on a server, so a caller only needs to
 // load this once per connection. The zero ObjectFilter returns every one.
 func (d *Database) SystemViews(ctx context.Context, filter ObjectFilter) ([]*View, error) {
-	where, args := filter.clause(moduleFilterColumns, 1)
+	where, args := filter.clause(moduleFilterColumns)
 	return moduleListWhere(ctx, d, "system views", systemViews, viewExtra, where, args, scanView)
 }
 

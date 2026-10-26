@@ -211,7 +211,7 @@ func (sc *Scripter) ScriptDatabase(ctx context.Context) (string, error) {
 		}
 		// A snapshot's are its source's, and it is read-only.
 		if layout.snapshotOf == "" {
-			if layout.extProps, err = sc.scriptExtendedPropertiesAt(ctx, 0, 0, 0, ExtendedPropertyLevel{}); err != nil {
+			if layout.extProps, err = sc.scriptExtendedPropertiesAt(ctx, 0, 0, ExtendedPropertyLevel{}); err != nil {
 				return "", fmt.Errorf("gosmo: script database %q: %w", d.Name, err)
 			}
 		}

@@ -717,7 +717,7 @@ func (d *Database) Tables(ctx context.Context, q TableQuery) ([]*Table, error) {
 			return nil, err
 		}
 	}
-	where, args := q.Filter.clause(tableFilterColumns, 1)
+	where, args := q.Filter.clause(tableFilterColumns)
 	return d.tablesWhere(ctx, kindClause(d.serverMajorVersion(), q.Kind)+" "+where, args)
 }
 

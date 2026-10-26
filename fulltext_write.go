@@ -490,7 +490,7 @@ func (t *Table) CreateFullTextIndex(ctx context.Context, req CreateFullTextIndex
 	if err := req.validate(t.FullName()); err != nil {
 		return nil, err
 	}
-	if _, err := t.exec(ctx, createFullTextIndexStatement(t.FullName(), req)); err != nil {
+	if err := t.exec(ctx, createFullTextIndexStatement(t.FullName(), req)); err != nil {
 		return nil, fmt.Errorf("gosmo: create full-text index on %s: %w", t.FullName(), err)
 	}
 	return createdObject(ctx, t.FullTextIndexRef(), func() (*FullTextIndex, error) {

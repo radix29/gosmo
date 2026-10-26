@@ -356,7 +356,7 @@ func (t *Table) AlterColumn(ctx context.Context, col ColumnDefinition) error {
 	}
 
 	if current.mask == "" {
-		_, err = t.exec(ctx, sb.String())
+		err = t.exec(ctx, sb.String())
 	} else {
 		err = t.db.execAtomic(ctx, []string{sb.String(),
 			fmt.Sprintf("ALTER TABLE %s ALTER COLUMN %s ADD MASKED WITH (FUNCTION = %s)",
@@ -409,7 +409,7 @@ func (t *Table) DropColumn(ctx context.Context, name string) error {
 	if name == "" {
 		return invalidf("gosmo: drop column on %s: name is required", t.FullName())
 	}
-	if _, err := t.exec(ctx,
+	if err := t.exec(ctx,
 		fmt.Sprintf("ALTER TABLE %s DROP COLUMN %s", t.FullName(), quoteIdent(name))); err != nil {
 		return fmt.Errorf("gosmo: drop column %q on %s: %w", name, t.FullName(), err)
 	}
@@ -432,7 +432,7 @@ func (t *Table) RenameColumn(ctx context.Context, name, newName string) error {
 		return invalidf("gosmo: rename column on %s: both names are required", t.FullName())
 	}
 	objName := t.FullName() + "." + quoteIdent(name)
-	if _, err := t.exec(ctx,
+	if err := t.exec(ctx,
 		"EXEC sp_rename @objname = @p1, @newname = @p2, @objtype = N'COLUMN'",
 		objName, newName,
 	); err != nil {

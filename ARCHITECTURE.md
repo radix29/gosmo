@@ -2314,7 +2314,7 @@ actually stopped it.
 Two conventions coexist, deliberately:
 
 - Most by-name lookups — `LoginByName`, `DatabaseByName`, `TableByName`,
-  `UserByName`, `RoleByName`, `AgentJobByName`, `AlertByName`,
+  `UserByName`, `RoleByName`, `JobByName`, `AlertByName`,
   `OperatorByName`, `ScheduleByName`, `ServerRoleByName`,
   `ConfigurationByName`, `AvailabilityGroupByName`, `CertificateByName`,
   `AsymmetricKeyByName`, `SymmetricKeyByName`, and the Scripter's lookups —

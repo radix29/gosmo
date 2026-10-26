@@ -337,8 +337,9 @@ func (o QueryStoreReportOptions) resolve() (qsReportSpec, error) {
 	return qsReportSpec{metric: m, stat: s, opts: o}, nil
 }
 
-// value renders the ranked expression over the runtime-stats alias rs.
-func (sp qsReportSpec) value(rs string) string { return sp.stat.runtime(rs, sp.metric.column) }
+// value renders the ranked expression over the runtime-stats alias rs, which
+// every report query gives sys.query_store_runtime_stats.
+func (sp qsReportSpec) value() string { return sp.stat.runtime("rs", sp.metric.column) }
 
 // qsArgs accumulates positional query parameters. Queries here are built by
 // concatenation, so the parameter numbers have to follow the text rather than

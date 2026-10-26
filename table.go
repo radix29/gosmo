@@ -59,11 +59,12 @@ func (d *Database) TableRef(schema, name string) *Table {
 // the table by FullName, and a table with no schema — only a TableRef can be
 // one — would name it unqualified, resolving through the caller's default
 // schema. It is refused here instead; see requireSchema.
-func (t *Table) exec(ctx context.Context, q string, args ...any) (sql.Result, error) {
+func (t *Table) exec(ctx context.Context, q string, args ...any) error {
 	if err := requireSchema("write to table", t.Schema, t.Name); err != nil {
-		return nil, err
+		return err
 	}
-	return t.db.exec(ctx, q, args...)
+	_, err := t.db.exec(ctx, q, args...)
+	return err
 }
 
 // requireLoaded refuses a read keyed by ObjectID on a table that has none —
@@ -456,7 +457,7 @@ func (t *Table) Drop(ctx context.Context, mode TableDropMode) error {
 	qn := t.FullName()
 	switch mode {
 	case DropTableOnly:
-		if _, err := t.exec(ctx, "DROP TABLE "+qn); err != nil {
+		if err := t.exec(ctx, "DROP TABLE "+qn); err != nil {
 			return fmt.Errorf("gosmo: drop table %s: %w", qn, err)
 		}
 		return nil
@@ -525,7 +526,7 @@ func (t *Table) Transfer(ctx context.Context, targetSchema string) error {
 
 // Truncate empties the table (TRUNCATE TABLE).
 func (t *Table) Truncate(ctx context.Context) error {
-	if _, err := t.exec(ctx, "TRUNCATE TABLE "+t.FullName()); err != nil {
+	if err := t.exec(ctx, "TRUNCATE TABLE "+t.FullName()); err != nil {
 		return fmt.Errorf("gosmo: truncate %s: %w", t.FullName(), err)
 	}
 	return nil
@@ -643,7 +644,7 @@ func (t *Table) CheckWhereSyntax(ctx context.Context, predicate string) error {
 // constraint and needs Index.Drop instead.
 func (t *Table) DropConstraint(ctx context.Context, name string) error {
 	q := fmt.Sprintf("ALTER TABLE %s DROP CONSTRAINT %s", t.FullName(), quoteIdent(name))
-	if _, err := t.exec(ctx, q); err != nil {
+	if err := t.exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: drop constraint %q on %s: %w", name, t.FullName(), err)
 	}
 	return nil

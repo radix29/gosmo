@@ -18,6 +18,9 @@ import (
 // DDL trigger has nothing to put in: it has no parent object, so no schema
 // either. ServerTriggers reads sys.server_triggers, a different view
 // altogether. Everything here addresses the trigger by bare name, ON DATABASE.
+
+// DatabaseTrigger mirrors a row of sys.triggers with parent_class = 0 — a DDL
+// trigger defined ON DATABASE.
 type DatabaseTrigger struct {
 	db *Database
 

@@ -83,8 +83,8 @@ type filterColumns struct {
 
 // clause builds the SQL fragment and parameters for f against one family's
 // columns. The fragment is a series of " AND (...)" terms, so it appends to a
-// query that already has a WHERE; nextArg is the number of the first free
-// parameter (queries here are positional, @p1 upward).
+// query that already has a WHERE. Its parameters are numbered from @p1, so the
+// query must bind none of its own.
 //
 // Two rules decide whether pushing a filter down is safe at all, and both are
 // implemented here rather than left to the caller:
@@ -99,13 +99,12 @@ type filterColumns struct {
 //
 // Dates compare as half-open day ranges for the same reason DateOp documents:
 // the column is a timestamp and the criterion is a day.
-func (f ObjectFilter) clause(cols filterColumns, nextArg int) (string, []any) {
+func (f ObjectFilter) clause(cols filterColumns) (string, []any) {
 	var b strings.Builder
 	var args []any
 	arg := func(v any) string {
 		args = append(args, v)
-		n := nextArg + len(args) - 1
-		return fmt.Sprintf("@p%d", n)
+		return fmt.Sprintf("@p%d", len(args))
 	}
 
 	text := func(col string, criteria []TextCriterion) {

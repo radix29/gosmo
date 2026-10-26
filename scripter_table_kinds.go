@@ -373,7 +373,7 @@ func buildFileTableScript(schema, name, dbName string, p tableScriptParts, opts 
 		}
 		if !with.empty() {
 			sb.WriteString("\nWITH (\n")
-			sb.WriteString(with.render("    "))
+			sb.WriteString(with.render())
 			sb.WriteString(")")
 		}
 		sb.WriteString(";\nGO\n\n")
@@ -480,7 +480,7 @@ func buildExternalTableScript(schema, name, dbName string, p tableScriptParts, d
 			sb.WriteString("\n")
 		}
 		sb.WriteString(")\nWITH (\n")
-		sb.WriteString(with.render("    "))
+		sb.WriteString(with.render())
 		sb.WriteString(");\nGO\n")
 	})
 }
