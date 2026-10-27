@@ -703,4 +703,14 @@ type BackupInfo struct {
 	ServerName         string
 	DatabaseVersion    int
 	CompatibilityLevel CompatibilityLevel
+	// FirstLSN and LastLSN bound the log the set holds. A log backup's
+	// FirstLSN is the LastLSN of the log backup before it, which is how a log
+	// chain is followed (PlanRestore). Both are msdb's numeric(25,0) as
+	// decimal text, "" when NULL: compare them with CompareLSN, never as
+	// strings.
+	FirstLSN, LastLSN string
+	// BackupSetGUID is msdb's backup_set_uuid for the set. DifferentialBaseGUID
+	// is, for a differential, the BackupSetGUID of the full backup it was
+	// taken against — the only full it restores onto — and "" otherwise.
+	BackupSetGUID, DifferentialBaseGUID string
 }

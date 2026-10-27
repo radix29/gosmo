@@ -1,9 +1,12 @@
 package gosmo
 
 import (
+	"errors"
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 // The Files Included preview, the MOVE clauses and the RESTORE itself all
@@ -306,6 +309,161 @@ func TestRestoreOptionsFromHeaderFollowsTheSetType(t *testing.T) {
 		}
 		if got := strings.Contains(stmt, "MOVE"); got != c.moves {
 			t.Errorf("%s: MOVE clauses = %v, want %v:\n%s", c.setType, got, c.moves, stmt)
+		}
+	}
+}
+
+// planHistory is a history for PlanRestore: a full at 01:00, a differential
+// on it at 03:00, and logs every two hours from 02:00 that chain from the
+// full — newest first, as BackupHistory returns it.
+func planHistory() []*BackupInfo {
+	at := func(h int) time.Time { return time.Date(2026, 10, 27, h, 0, 0, 0, time.UTC) }
+	set := func(id int64, t BackupSetType, h int, first, last string) *BackupInfo {
+		return &BackupInfo{BackupSetID: id, SetType: t, BackupFinish: at(h), DeviceName: "x.bak",
+			Devices: []string{"x.bak"}, FirstLSN: first, LastLSN: last, BackupSetGUID: fmt.Sprint("guid-", id)}
+	}
+	full := set(1, BackupSetDatabase, 1, "100", "120")
+	diff := set(3, BackupSetDifferential, 3, "300", "320")
+	diff.DifferentialBaseGUID = full.BackupSetGUID
+	return []*BackupInfo{
+		set(5, BackupSetLog, 6, "400", "500"),
+		set(4, BackupSetLog, 4, "200", "400"),
+		diff,
+		set(2, BackupSetLog, 2, "90", "200"),
+		full,
+	}
+}
+
+func planIDs(p *RestorePlan) []int64 {
+	var ids []int64
+	for _, b := range p.Sets {
+		ids = append(ids, b.BackupSetID)
+	}
+	return ids
+}
+
+// The plan is the full, its newest differential, then the logs that continue
+// from the differential — not the log the differential already covers.
+func TestPlanRestoreFullDiffLogs(t *testing.T) {
+	p, err := PlanRestore(planHistory(), RestorePlanOptions{})
+	if err != nil {
+		t.Fatalf("PlanRestore: %v", err)
+	}
+	if got := planIDs(p); !slices.Equal(got, []int64{1, 3, 4, 5}) || p.TailLog {
+		t.Errorf("plan = %v (tail %v), want [1 3 4 5] and no tail", got, p.TailLog)
+	}
+
+	// A tail log follows a chain that reaches the newest log.
+	p, err = PlanRestore(planHistory(), RestorePlanOptions{TailLog: true})
+	if err != nil || !p.TailLog {
+		t.Fatalf("TailLog: plan %+v, err %v; want TailLog set", p, err)
+	}
+}
+
+// A point in time picks the backups finished by it, and stops at the first
+// log finished after it — the log holding the point.
+func TestPlanRestoreStopAt(t *testing.T) {
+	at := func(h, m int) *time.Time { t := time.Date(2026, 10, 27, h, m, 0, 0, time.UTC); return &t }
+	cases := []struct {
+		stop *time.Time
+		want []int64
+	}{
+		{at(1, 30), []int64{1, 2}},       // before the differential: full, first log
+		{at(3, 30), []int64{1, 3, 4}},    // after it: the differential, then the log holding 03:30
+		{at(4, 0), []int64{1, 3, 4, 5}},  // a log finished exactly at the point does not hold it
+		{at(5, 59), []int64{1, 3, 4, 5}}, // inside the last log
+	}
+	for _, c := range cases {
+		p, err := PlanRestore(planHistory(), RestorePlanOptions{StopAt: c.stop, TailLog: true})
+		if err != nil {
+			t.Errorf("StopAt %v: %v", c.stop, err)
+			continue
+		}
+		// Inside the chain: the tail log is not restored, even when offered.
+		if got := planIDs(p); !slices.Equal(got, c.want) || p.TailLog {
+			t.Errorf("StopAt %v: plan %v (tail %v), want %v and no tail", c.stop, got, p.TailLog, c.want)
+		}
+	}
+
+	// The zone is ignored: 03:30 at UTC-5 is still 03:30 on the server's clock.
+	z := time.Date(2026, 10, 27, 3, 30, 0, 0, time.FixedZone("x", -5*3600))
+	if p, err := PlanRestore(planHistory(), RestorePlanOptions{StopAt: &z}); err != nil || !slices.Equal(planIDs(p), []int64{1, 3, 4}) {
+		t.Errorf("zoned StopAt: plan %v, err %v; want [1 3 4]", p, err)
+	}
+
+	// Past the newest log: only a tail log reaches it.
+	if _, err := PlanRestore(planHistory(), RestorePlanOptions{StopAt: at(7, 0)}); !errors.Is(err, ErrInvalidRequest) ||
+		!strings.Contains(err.Error(), "tail-log") {
+		t.Errorf("StopAt past the chain: err = %v, want ErrInvalidRequest naming the tail log", err)
+	}
+	p, err := PlanRestore(planHistory(), RestorePlanOptions{StopAt: at(7, 0), TailLog: true})
+	if err != nil || !p.TailLog || !slices.Equal(planIDs(p), []int64{1, 3, 4, 5}) {
+		t.Errorf("StopAt in the tail: plan %+v, err %v; want [1 3 4 5] and the tail", p, err)
+	}
+
+	// Before any full backup.
+	if _, err := PlanRestore(planHistory(), RestorePlanOptions{StopAt: at(0, 30)}); !errors.Is(err, ErrNotFound) {
+		t.Errorf("StopAt before the full: err = %v, want ErrNotFound", err)
+	}
+}
+
+// A gap ends the chain: without a point in time the plan restores up to it;
+// a point past it, or a tail log after it, is refused.
+func TestPlanRestoreBrokenChain(t *testing.T) {
+	hist := slices.DeleteFunc(planHistory(), func(b *BackupInfo) bool { return b.BackupSetID == 4 })
+	p, err := PlanRestore(hist, RestorePlanOptions{})
+	if err != nil || !slices.Equal(planIDs(p), []int64{1, 3}) {
+		t.Errorf("gap: plan %v, err %v; want [1 3]", p, err)
+	}
+	stop := time.Date(2026, 10, 27, 5, 0, 0, 0, time.UTC)
+	if _, err := PlanRestore(hist, RestorePlanOptions{StopAt: &stop}); !errors.Is(err, ErrInvalidRequest) ||
+		!strings.Contains(err.Error(), "breaks") {
+		t.Errorf("StopAt past a gap: err = %v, want ErrInvalidRequest naming the break", err)
+	}
+	if _, err := PlanRestore(hist, RestorePlanOptions{TailLog: true}); !errors.Is(err, ErrInvalidRequest) {
+		t.Errorf("tail after a gap: err = %v, want ErrInvalidRequest", err)
+	}
+}
+
+// What PlanRestore leaves out: a COPY_ONLY log (not in the chain), a
+// differential on another full, any differential on a COPY_ONLY full, a set no
+// RESTORE can name, and an unfinished one.
+func TestPlanRestoreSkips(t *testing.T) {
+	hist := planHistory()
+	copyLog := &BackupInfo{BackupSetID: 9, SetType: BackupSetLog, IsCopyOnly: true, DeviceName: "c.trn",
+		BackupFinish: hist[0].BackupFinish.Add(time.Hour), FirstLSN: "500", LastLSN: "600"}
+	noDevice := &BackupInfo{BackupSetID: 10, SetType: BackupSetDatabase,
+		BackupFinish: hist[0].BackupFinish.Add(time.Hour)}
+	running := &BackupInfo{BackupSetID: 11, SetType: BackupSetDatabase, DeviceName: "r.bak"}
+	otherDiff := &BackupInfo{BackupSetID: 12, SetType: BackupSetDifferential, DeviceName: "o.bak",
+		BackupFinish: hist[0].BackupFinish, DifferentialBaseGUID: "guid-other", FirstLSN: "450", LastLSN: "460"}
+	hist = append([]*BackupInfo{copyLog, noDevice, running, otherDiff}, hist...)
+	p, err := PlanRestore(hist, RestorePlanOptions{TailLog: true})
+	if err != nil || !slices.Equal(planIDs(p), []int64{1, 3, 4, 5}) || !p.TailLog {
+		t.Errorf("plan %+v, err %v; want [1 3 4 5] and the tail", p, err)
+	}
+
+	hist = planHistory()
+	hist[len(hist)-1].IsCopyOnly = true
+	if p, err := PlanRestore(hist, RestorePlanOptions{}); err != nil || !slices.Equal(planIDs(p), []int64{1, 2, 4, 5}) {
+		t.Errorf("COPY_ONLY full: plan %v, err %v; want [1 2 4 5], no differential", p, err)
+	}
+}
+
+func TestCompareLSN(t *testing.T) {
+	cases := []struct {
+		a, b string
+		want int
+	}{
+		{"41000000012300001", "41000000012300001", 0},
+		{"9", "10", -1}, // by length, not text
+		{"0010", "10", 0},
+		{"", "1", -1},
+		{"1234567890123456789012345", "999999999999999999999999", 1}, // past int64
+	}
+	for _, c := range cases {
+		if got := CompareLSN(c.a, c.b); got != c.want {
+			t.Errorf("CompareLSN(%q, %q) = %d, want %d", c.a, c.b, got, c.want)
 		}
 	}
 }

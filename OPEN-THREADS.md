@@ -340,6 +340,17 @@ orders by `run_date, run_time, instance_id`, which is right; the test's
 expectation is what needs fixing (accept either order of the two rows when
 their times differ, or compare by `instance_id` alone).
 
+## Live tests leave their backup files behind on 13 and 14
+
+Found 2026-10-27 on win10cli\SQL2016. Ten `live_*_test.go` files delete the
+backup files they wrote with `EXEC master.dbo.xp_delete_files`, which only
+SQL Server 2019 (15) and later have. On 13 and 14 the call fails, the
+cleanup ignores the error, and every run leaves its `.bak`/`.trn` files in
+the default data folder (`TestLiveRestoreChain`'s five and
+`TestLiveRestorePlanWithFileAndMove`'s one were removed by hand).
+`master.sys.xp_delete_file 0, N'<file>'` — singular, every version — deletes
+one backup file (it checks the file is one) and is the likely replacement.
+
 ## Agent schedules are addressed by id — settled, do not re-raise
 
 Schedule names are not unique in msdb (`ARCHITECTURE.md` § Shared schedules).

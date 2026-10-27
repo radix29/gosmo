@@ -1,8 +1,11 @@
 package gosmo
 
 import (
+	"cmp"
 	"fmt"
+	"slices"
 	"strings"
+	"time"
 )
 
 // ============================================================
@@ -214,4 +217,164 @@ func (o *RestoreOptions) FromHeader(h *BackupHeader, files []*BackupFile, r Rest
 	if h.SetType.PlacesFiles() {
 		o.RelocateFiles = r.Moves(files, h.DatabaseName, o.Database)
 	}
+}
+
+// ============================================================
+// Restore sequence: which sets, from backup history
+// ============================================================
+
+// RestorePlanOptions shapes PlanRestore.
+type RestorePlanOptions struct {
+	// StopAt is the point in time to restore to, the server's wall clock as
+	// RestoreOptions.StopAt reads it, or nil for the end of the log chain.
+	// It is compared with BackupInfo.BackupFinish, which msdb records on the
+	// same clock; only the date and time fields count, never the Location.
+	StopAt *time.Time
+	// TailLog says the caller backs up the tail of the log (BackupOptions.
+	// NoRecovery) and restores it after the plan's sets. The chain must then
+	// reach the newest log backup in history — a tail log follows nothing
+	// else — and a StopAt past that log is the tail's to reach, not an error.
+	TailLog bool
+}
+
+// RestorePlan is the backup sets a restore applies, in order.
+type RestorePlan struct {
+	// Sets is one full database backup, then at most one differential
+	// taken against it, then the log backups that follow on, unbroken.
+	// Every set but the last is restored WITH NORECOVERY.
+	Sets []*BackupInfo
+	// TailLog reports that the caller's tail-log backup is restored after
+	// Sets: RestorePlanOptions.TailLog was set and StopAt, if any, is not
+	// inside Sets. When StopAt falls inside a log in Sets, the tail log is
+	// not restored — the database stops before it — and this is false.
+	TailLog bool
+}
+
+// PlanRestore picks, from a database's backup history (Server.BackupHistory),
+// the sets that restore it to opts.StopAt, or as far as the log chain runs —
+// SSMS's Restore Database plan:
+//
+//   - the newest full database backup finished by StopAt;
+//   - the newest differential taken against that full (its
+//     DifferentialBaseGUID) and finished by StopAt — none for a COPY_ONLY
+//     full, which is no differential's base;
+//   - then every log backup that continues the chain from there — the first
+//     holds the base's LastLSN, each next starts at the last one's LastLSN —
+//     up to and including the first that finished after StopAt, the log
+//     holding the point. COPY_ONLY logs are not in the chain.
+//
+// A gap in the chain ends it. A StopAt the chain does not reach — past a gap,
+// or past the newest log — is refused (ErrInvalidRequest), unless the gap is
+// only the tail of the log and opts.TailLog says the caller backs it up. With
+// no full backup to start from the result is ErrNotFound. Sets no RESTORE
+// can name (BackupInfo.Restorable) and file, filegroup and partial backups
+// are ignored.
+//
+// A log backup is chosen by when it finished, which is not quite when its
+// last record was logged: a STOPAT a moment before a log backup finished can
+// fall after its LastLSN, and SQL Server then leaves the database RESTORING
+// ("too early to apply") rather than recovering it. Restoring the next log,
+// or the tail, recovers it.
+func PlanRestore(history []*BackupInfo, opts RestorePlanOptions) (*RestorePlan, error) {
+	var stop time.Time
+	if opts.StopAt != nil {
+		stop = wallClock(*opts.StopAt)
+	}
+	by := func(t time.Time) bool { return opts.StopAt == nil || !wallClock(t).After(stop) }
+	newest := func(a, b *BackupInfo) int {
+		return cmp.Or(a.BackupFinish.Compare(b.BackupFinish), cmp.Compare(a.BackupSetID, b.BackupSetID))
+	}
+	var fulls, diffs, logs []*BackupInfo
+	for _, b := range history {
+		if !b.Restorable() || b.BackupFinish.IsZero() {
+			continue
+		}
+		switch b.SetType {
+		case BackupSetDatabase:
+			if by(b.BackupFinish) {
+				fulls = append(fulls, b)
+			}
+		case BackupSetDifferential:
+			if by(b.BackupFinish) {
+				diffs = append(diffs, b)
+			}
+		case BackupSetLog:
+			if !b.IsCopyOnly && b.FirstLSN != "" && b.LastLSN != "" {
+				logs = append(logs, b)
+			}
+		}
+	}
+	if len(fulls) == 0 {
+		if opts.StopAt != nil {
+			return nil, notFoundf("gosmo: plan restore: no full database backup finished by %s", stop.Format(time.DateTime))
+		}
+		return nil, notFoundf("gosmo: plan restore: no full database backup in the history")
+	}
+	full := slices.MaxFunc(fulls, newest)
+	plan := &RestorePlan{Sets: []*BackupInfo{full}}
+
+	diffs = slices.DeleteFunc(diffs, func(d *BackupInfo) bool {
+		return full.IsCopyOnly || full.BackupSetGUID == "" || d.DifferentialBaseGUID != full.BackupSetGUID
+	})
+	if len(diffs) > 0 {
+		plan.Sets = append(plan.Sets, slices.MaxFunc(diffs, newest))
+	}
+
+	// The chain: the first log holds the base's last LSN, each next one
+	// starts where the last ended.
+	base := plan.Sets[len(plan.Sets)-1]
+	slices.SortStableFunc(logs, func(a, b *BackupInfo) int {
+		return cmp.Or(CompareLSN(a.FirstLSN, b.FirstLSN), newest(a, b))
+	})
+	end, reached := base.LastLSN, false
+	for end != "" && !reached {
+		i := slices.IndexFunc(logs, func(l *BackupInfo) bool {
+			return CompareLSN(l.FirstLSN, end) <= 0 && CompareLSN(end, l.LastLSN) < 0
+		})
+		if i < 0 {
+			break
+		}
+		plan.Sets = append(plan.Sets, logs[i])
+		end = logs[i].LastLSN
+		reached = opts.StopAt != nil && wallClock(logs[i].BackupFinish).After(stop)
+	}
+	last := plan.Sets[len(plan.Sets)-1]
+	atEnd := !slices.ContainsFunc(logs, func(l *BackupInfo) bool { return CompareLSN(l.LastLSN, end) > 0 })
+	if reached {
+		return plan, nil
+	}
+	if opts.TailLog {
+		if !atEnd {
+			return nil, invalidf("gosmo: plan restore: the log chain breaks after the %s backup finished %s, so a tail-log backup cannot follow it",
+				strings.ToLower(string(last.SetType)), last.BackupFinish.Format(time.DateTime))
+		}
+		plan.TailLog = true
+		return plan, nil
+	}
+	if opts.StopAt != nil {
+		why := "take a tail-log backup to reach it"
+		if !atEnd {
+			why = "the log chain breaks after it"
+		}
+		return nil, invalidf("gosmo: plan restore: %s is after the last backup in the chain, the %s backup finished %s; %s",
+			stop.Format(time.DateTime), strings.ToLower(string(last.SetType)), last.BackupFinish.Format(time.DateTime), why)
+	}
+	return plan, nil
+}
+
+// wallClock is t's date and time fields read in UTC, so two times compare by
+// what their clocks say whatever Location each carries: msdb's datetimes
+// arrive zoneless (UTC) and a caller's StopAt may be in any zone.
+func wallClock(t time.Time) time.Time {
+	return time.Date(t.Year(), t.Month(), t.Day(), t.Hour(), t.Minute(), t.Second(), t.Nanosecond(), time.UTC)
+}
+
+// CompareLSN compares two log sequence numbers in msdb's decimal form
+// (numeric(25,0), as BackupInfo carries them): -1, 0 or +1 as a is less than,
+// equal to or greater than b. An LSN has up to 25 digits — more than an
+// int64 holds — so it is compared as text, by length and then digit by
+// digit; leading zeros are ignored and "" is the smallest.
+func CompareLSN(a, b string) int {
+	a, b = strings.TrimLeft(a, "0"), strings.TrimLeft(b, "0")
+	return cmp.Or(cmp.Compare(len(a), len(b)), strings.Compare(a, b))
 }

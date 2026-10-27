@@ -2,6 +2,7 @@ package gosmo
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -123,6 +124,37 @@ func TestBuildBackupStatementLogMultiDevice(t *testing.T) {
 	want := "BACKUP LOG [AdventureWorks] TO DISK = N'/var/backups/aw1.trn', DISK = N'/var/backups/aw2.trn'"
 	if got != want {
 		t.Errorf("BuildBackupStatement =\n%q\nwant\n%q", got, want)
+	}
+}
+
+// A tail-log backup: NO_TRUNCATE and NORECOVERY on a BACKUP LOG, refused on
+// any other action — NORECOVERY on a BACKUP DATABASE is a syntax SQL Server
+// accepts but means nothing, and the caller asked for a tail log.
+func TestBuildBackupStatementTailLog(t *testing.T) {
+	got, err := (&Server{}).BuildBackupStatement(BackupOptions{
+		Database:   "AdventureWorks",
+		Action:     BackupActionLog,
+		Devices:    []BackupTarget{DiskTarget(`/var/backups/aw_tail.trn`)},
+		Init:       true,
+		NoTruncate: true,
+		NoRecovery: true,
+	})
+	if err != nil {
+		t.Fatalf("BuildBackupStatement: %v", err)
+	}
+	want := "BACKUP LOG [AdventureWorks] TO DISK = N'/var/backups/aw_tail.trn' WITH INIT, NO_TRUNCATE, NORECOVERY"
+	if got != want {
+		t.Errorf("BuildBackupStatement =\n%q\nwant\n%q", got, want)
+	}
+
+	for _, action := range []BackupAction{"", BackupActionDatabase, BackupActionDifferential} {
+		for _, opts := range []BackupOptions{{NoRecovery: true}, {NoTruncate: true}} {
+			opts.Database, opts.Action = "AdventureWorks", action
+			opts.Devices = []BackupTarget{DiskTarget(`/var/backups/aw.bak`)}
+			if _, err := (&Server{}).BuildBackupStatement(opts); !errors.Is(err, ErrInvalidRequest) {
+				t.Errorf("action %q with %+v: err = %v, want ErrInvalidRequest", action, opts, err)
+			}
+		}
 	}
 }
 

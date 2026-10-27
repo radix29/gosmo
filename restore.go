@@ -348,7 +348,10 @@ SELECT ISNULL(bs.database_name,''), ISNULL(bs.name,''), ISNULL(bs.description,''
        ISNULL(bs.server_name,''),
        ISNULL(bs.database_version,0), ISNULL(bs.compatibility_level,0),
        ISNULL(bs.position,0), ISNULL(bs.backup_set_id,0), ISNULL(bs.media_set_id,0),
-       ISNULL(bms.mirror_count,1), ISNULL(bs.is_copy_only,0)
+       ISNULL(bms.mirror_count,1), ISNULL(bs.is_copy_only,0),
+       ISNULL(CONVERT(varchar(40), bs.first_lsn),''), ISNULL(CONVERT(varchar(40), bs.last_lsn),''),
+       ISNULL(CONVERT(varchar(36), bs.backup_set_uuid),''),
+       ISNULL(CONVERT(varchar(36), bs.differential_base_guid),'')
 FROM   msdb.dbo.backupset bs
 JOIN   msdb.dbo.backupmediafamily bmf ON bmf.media_set_id = bs.media_set_id AND bmf.mirror = 0
 LEFT JOIN msdb.dbo.backupmediaset bms ON bms.media_set_id = bs.media_set_id
@@ -381,6 +384,7 @@ func (s *Server) BackupHistory(ctx context.Context, databaseName string) ([]*Bac
 		var start, finish sql.NullTime
 		var size, dbVersion, compat, position, setID, mediaSetID, mirrors sql.NullInt64
 		var copyOnly sql.NullBool
+		var firstLSN, lastLSN, setGUID, baseGUID sql.NullString
 		if err := scan(
 			&dbName, &setName, &desc, &bType,
 			&start, &finish, &size,
@@ -388,6 +392,7 @@ func (s *Server) BackupHistory(ctx context.Context, databaseName string) ([]*Bac
 			&dbVersion, &compat,
 			&position, &setID, &mediaSetID, &mirrors,
 			&copyOnly,
+			&firstLSN, &lastLSN, &setGUID, &baseGUID,
 		); err != nil {
 			return nil, err
 		}
@@ -402,6 +407,8 @@ func (s *Server) BackupHistory(ctx context.Context, databaseName string) ([]*Bac
 		b.MirrorCount = max(int(mirrors.Int64), 1)
 		b.SetType = backupSetTypeFromHistory(bType.String)
 		b.IsCopyOnly = copyOnly.Bool
+		b.FirstLSN, b.LastLSN = firstLSN.String, lastLSN.String
+		b.BackupSetGUID, b.DifferentialBaseGUID = setGUID.String, baseGUID.String
 		return b, nil
 	})
 	if err != nil {

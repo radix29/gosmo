@@ -1141,6 +1141,7 @@ ddl, _ := sc.ScriptSynonym(ctx, "dbo", "MySyn")
 ddl, _ := sc.ScriptSchema(ctx, "sales")
 ddl, _ := sc.ScriptUser(ctx, "app_user")                 // an orphaned user: FOR LOGIN of its own name, under a comment saying so
 ddl, _ := sc.ScriptDatabaseRole(ctx, "app_rw")
+ddl, _ := sc.ScriptDatabaseSecurity(ctx)                 // owner, roles, users, schemas, memberships, grants: re-runnable, names no database
 ddl, _ := sc.ScriptPartitionFunction(ctx, "pfMonthly")
 ddl, _ := sc.ScriptPartitionScheme(ctx, "psMonthly")
 ddl, _ := sc.ScriptSecurityPolicy(ctx, "sec", "TenantFilter")
@@ -1492,6 +1493,23 @@ for _, b := range history {
 	// ...RestoreOptions{Devices: targets, FileNumber: b.Position,
 	//     Action: b.SetType.RestoreVerb()} — RESTORE LOG for a log set
 }
+
+// SSMS's restore plan: the newest full, its newest differential (matched by
+// DifferentialBaseGUID), then the log backups that chain on from it by LSN
+// (FirstLSN/LastLSN, compared with CompareLSN) — up to the log holding
+// StopAt, the server's wall clock. A StopAt the chain cannot reach is
+// refused before anything is written.
+plan, err := gosmo.PlanRestore(history, gosmo.RestorePlanOptions{
+	StopAt:  &stopAt,
+	TailLog: true, // the tail is backed up next, and restored after plan.Sets
+})
+// The tail-log backup: BACKUP LOG ... WITH NORECOVERY leaves the database
+// RESTORING, so nothing commits after it. NoTruncate is the form for a
+// damaged database. Both are BackupActionLog only.
+srv.Backup(ctx, gosmo.BackupOptions{Database: "MyDB", Action: gosmo.BackupActionLog,
+	Devices: []gosmo.BackupTarget{gosmo.DiskTarget(`C:\Backups\MyDB_tail.trn`)}, NoRecovery: true})
+// Restore plan.Sets in order WITH NORECOVERY, StopAt on each log, then the
+// tail (when plan.TailLog) — the last of them WITH RECOVERY.
 ```
 
 #### Backing up to Azure Storage

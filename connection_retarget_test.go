@@ -53,6 +53,10 @@ func TestWriteOnLoginDatabaseMovesThePool(t *testing.T) {
 			return s.Restore(ctx, RestoreOptions{Database: "Sales",
 				Devices: []BackupTarget{DiskTarget("x.bak")}, Recovery: RestoreWithNoRecovery})
 		}, "master"},
+		{"tail-log Backup NORECOVERY", func(ctx context.Context, s *Server) error {
+			return s.Backup(ctx, BackupOptions{Database: "Sales", Action: BackupActionLog,
+				Devices: []BackupTarget{DiskTarget("x.trn")}, NoRecovery: true})
+		}, "master"},
 		{"SetUserAccess SINGLE_USER", func(ctx context.Context, s *Server) error {
 			return s.DatabaseRef("Sales").SetUserAccess(ctx, UserAccessSingle)
 		}, "master"},
@@ -104,6 +108,10 @@ func TestWriteThatKeepsLoginDatabaseOpenable(t *testing.T) {
 		"Restore STANDBY": func(ctx context.Context, s *Server) error {
 			return s.Restore(ctx, RestoreOptions{Database: "Sales",
 				Devices: []BackupTarget{DiskTarget("x.bak")}, Recovery: RestoreWithStandBy, StandByFile: "x.tuf"})
+		},
+		"Backup LOG": func(ctx context.Context, s *Server) error {
+			return s.Backup(ctx, BackupOptions{Database: "Sales", Action: BackupActionLog,
+				Devices: []BackupTarget{DiskTarget("x.trn")}})
 		},
 		"SetUserAccess MULTI_USER": func(ctx context.Context, s *Server) error {
 			return s.DatabaseRef("Sales").SetUserAccess(ctx, UserAccessMulti)

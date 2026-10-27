@@ -104,6 +104,13 @@ func TestScriptCommentsContainHostileNames(t *testing.T) {
 		"orphaned user note": func(n string) string {
 			return buildUserScript(&User{Name: n, AuthType: "INSTANCE"}, DefaultScriptOptions())
 		},
+		"database security header": func(n string) string {
+			return buildDatabaseSecurityScript(n, &databaseSecurity{})
+		},
+		"database security unscriptable permission": func(n string) string {
+			return buildDatabaseSecurityScript("d", &databaseSecurity{grants: []securityGrant{
+				{grantee: n, state: "G", permission: n, class: 99, classDesc: n}}})
+		},
 	}
 	for site, script := range sites {
 		for _, n := range hostileNames {

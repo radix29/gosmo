@@ -49,6 +49,18 @@ type BackupOptions struct {
 	Format bool
 	// Init overwrites existing backup sets on the media.
 	Init bool
+	// NoRecovery backs up the tail of the log and leaves the database
+	// RESTORING (WITH NORECOVERY): the tail-log backup taken before a
+	// restore over the database, so no transaction committed since the last
+	// log backup is lost and none can be committed after it. Action
+	// BackupActionLog only.
+	NoRecovery bool
+	// NoTruncate backs up the log of a database that is damaged or cannot
+	// be brought online (WITH NO_TRUNCATE), the tail-log form for a database
+	// whose data files are lost. It does not truncate the log and tolerates
+	// missing metadata, so the backup may be incomplete. Action
+	// BackupActionLog only.
+	NoTruncate bool
 	// Stats controls progress reporting frequency (e.g. 10 = every 10%).
 	// If Progress is set and Stats is left at 0, it defaults to 10 so
 	// percent-complete messages actually get emitted.
@@ -81,15 +93,20 @@ func (s *Server) Backup(ctx context.Context, opts BackupOptions) error {
 		if _, err := s.exec(ctx, sqlText); err != nil {
 			return fmt.Errorf("gosmo: backup %q: %w", opts.Database, err)
 		}
-		return nil
+	} else {
+		if err := refuseInTx(ctx, s, "backup with progress"); err != nil {
+			return err
+		}
+		if err := s.execWithProgress(ctx, sqlText, opts.Progress); err != nil {
+			return fmt.Errorf("gosmo: backup %q: %w", opts.Database, err)
+		}
+		observe(ctx, s, ScriptEntry{Server: scriptServerName(ctx, s), SQL: sqlText})
 	}
-	if err := refuseInTx(ctx, s, "backup with progress"); err != nil {
-		return err
+	// A tail-log backup WITH NORECOVERY leaves the database RESTORING, which
+	// refuses every login (Msg 927) — as Restore's NORECOVERY does.
+	if opts.NoRecovery {
+		s.leftLoginDatabase(ctx, opts.Database, "master")
 	}
-	if err := s.execWithProgress(ctx, sqlText, opts.Progress); err != nil {
-		return fmt.Errorf("gosmo: backup %q: %w", opts.Database, err)
-	}
-	observe(ctx, s, ScriptEntry{Server: scriptServerName(ctx, s), SQL: sqlText})
 	return nil
 }
 
@@ -120,6 +137,9 @@ func buildBackupStatement(opts BackupOptions) (string, error) {
 	}
 	if !validBackupAction(opts.Action) {
 		return "", invalidf("gosmo: backup: unrecognized action %q", opts.Action)
+	}
+	if (opts.NoRecovery || opts.NoTruncate) && opts.Action != BackupActionLog {
+		return "", invalidf("gosmo: backup: NORECOVERY and NO_TRUNCATE are tail-log options, and the action is %s", opts.Action)
 	}
 
 	// Neither DIFFERENTIAL nor FILES is its own BACKUP verb: a differential is
@@ -178,6 +198,12 @@ func buildBackupStatement(opts BackupOptions) (string, error) {
 	}
 	if opts.Init {
 		withs = append(withs, "INIT")
+	}
+	if opts.NoTruncate {
+		withs = append(withs, "NO_TRUNCATE")
+	}
+	if opts.NoRecovery {
+		withs = append(withs, "NORECOVERY")
 	}
 	if opts.Stats > 0 {
 		withs = append(withs, fmt.Sprintf("STATS = %d", opts.Stats))

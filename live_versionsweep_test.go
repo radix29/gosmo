@@ -996,6 +996,7 @@ func sweepScripter(sw *sweep, d *Database) {
 	str("ScriptSchema", func() (string, error) { return sc.ScriptSchema(sw.ctx, "app") })
 	str("ScriptUser", func() (string, error) { return sc.ScriptUser(sw.ctx, "sweep_user") })
 	str("ScriptDatabaseRole", func() (string, error) { return sc.ScriptDatabaseRole(sw.ctx, "sweep_role") })
+	str("ScriptDatabaseSecurity", func() (string, error) { return sc.ScriptDatabaseSecurity(sw.ctx) })
 	str("ScriptSecurityPolicy", func() (string, error) {
 		return sc.ScriptSecurityPolicy(sw.ctx, "app", "sweep_policy")
 	})
