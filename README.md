@@ -78,7 +78,8 @@ Every object family SSMS shows, read and — where it makes sense — written:
 - **Database** — files and filegroups, `ALTER DATABASE` options, scoped
   configurations, space and disk usage, change tracking, users, roles,
   schemas, permissions down to column scope (`ApplyPermission`),
-  detach/attach, snapshots.
+  detach/attach, snapshots, shrink, and security scripting
+  (`ScriptDatabaseSecurity`).
 - **Objects** — tables (with system, FileTable, external and graph tables as
   their own listings), columns, indexes, keys, constraints, statistics,
   partitions, views, procedures, functions, sequences, synonyms, triggers at
@@ -87,7 +88,8 @@ Every object family SSMS shows, read and — where it makes sense — written:
   defaults, CLR assemblies, plan guides, external data sources, file formats
   and libraries.
 - **Backup & restore** — to disk, to a logical device, or to Azure Storage,
-  with headers, history, file lists, restore planning and progress callbacks.
+  with headers, history, file lists, restore planning (`PlanRestore` picks the
+  full, differential and log sets for a point in time) and progress callbacks.
 - **Service Broker** — message types, contracts, queues, services, routes,
   remote service bindings and broker priorities, with queue and route
   settings.
@@ -99,7 +101,7 @@ Every object family SSMS shows, read and — where it makes sense — written:
 - **Security** — audits and audit specifications at both scopes, credentials
   at both scopes, endpoints, certificates, asymmetric and symmetric keys,
   column encryption.
-- **Query Store** — its options and all seven report views.
+- **Query Store** — its options and all seven report views, on `Database.QueryStore()`.
 - **Full-Text Search** — catalogs, stoplists, search property lists and
   full-text indexes with their populations, read, written and scripted.
 - **Replication** — distributor and publisher configuration, publications,
@@ -122,7 +124,7 @@ object it created.
 handle carrying only the name. Catalog state is exported fields, and every
 object reaches its parent through `Server()` or `Database()`.
 
-The full API map — twenty-three Mermaid class diagrams in [`diagram/`](diagram/)
+The full API map — twenty-seven Mermaid class diagrams in [`diagram/`](diagram/)
 under a master map, and a feature map giving gosmo's name for each SMO one —
 is in [`ARCHITECTURE.md`](ARCHITECTURE.md).
 
@@ -162,7 +164,7 @@ pinned to the driver's own and importable without the driver as
 | Document | |
 | --- | --- |
 | [`ARCHITECTURE.md`](ARCHITECTURE.md) | The API map, the feature map, errors, authentication and the connection internals |
-| [`diagram/`](diagram/) | The class map — `00-map.mmd` plus twenty-three Mermaid class diagrams, one per group of types |
+| [`diagram/`](diagram/) | The class map — `00-map.mmd` plus twenty-seven Mermaid class diagrams, one per group of types |
 | [`RELEASE.md`](RELEASE.md) | What changed in the current release |
 | [`CHANGELOG.md`](CHANGELOG.md) | The full history, from `v0.0.4` |
 | [`examples/README.md`](examples/README.md) | What each runnable example covers |

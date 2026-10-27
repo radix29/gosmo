@@ -4,6 +4,64 @@ All notable changes to gosmo are documented here, newest first, from
 `v0.0.4` onward — this is the history. `RELEASE.md` carries the current
 release only, as a short summary of the entry below it.
 
+## v0.1.1
+
+A hardening and tidy-up release. Related methods move onto small handle types
+(`Database.QueryStore()`, `Server.Mail()`, `Server.XEvents()`), the many
+`Foo`/`FooFiltered` listing pairs collapse into one method taking an
+`ObjectFilter`, and request types are named for what they do (`…Definition`,
+`…Changes`). The connection pool now follows a database that is dropped,
+detached or renamed, reads retry deadlocks and Azure's transient errors, and
+a restore sequence can be planned from backup history. Those renames are the
+breaking changes; each **Migrating** note says what a caller rewrites.
+
+### Added
+
+- **Database shrink** (`shrink.go`) — `Database.Shrink(ShrinkDatabaseOptions)` runs `DBCC SHRINKDATABASE`; `DatabaseFileInfo.Shrink(ShrinkFileOptions)` runs `DBCC SHRINKFILE` and returns a `ShrinkResult` (where the shrink stopped). `ShrinkTruncate` and `ShrinkWait` select `TRUNCATEONLY`/`NOTRUNCATE` and `WAIT_AT_LOW_PRIORITY`; `ServerInfo.SupportsShrinkLowPriority` says whether the instance takes the latter.
+- **Restore planning** (`restore_plan.go`) — `PlanRestore(history, RestorePlanOptions)` picks, from `BackupInfo` history, the full backup, the differential taken against it and the unbroken log chain that reach a point in time, and returns a `RestorePlan` (`Sets`, `TailLog`). `BackupInfo` gains `FirstLSN`, `LastLSN`, `BackupSetGUID` and `DifferentialBaseGUID`; `CompareLSN` orders two LSNs.
+- **`Scripter.ScriptDatabaseSecurity`** — one idempotent script of a database's roles, application roles, users, schemas, memberships, ownership and permissions (`scripter_database_security.go`).
+- **Indexed views** (`view_indexes.go`) — `View.Columns`, `Indexes`, `IndexByName`, `IndexRef`, `CreateIndex`, `RebuildAllIndexes`, `Statistics`, `StatisticByName`, `StatisticRef`, `CreateStatistic` and `UpdateAllStatistics`; `Index.View()` and `Statistic.View()` return the owning view. `Database.ViewByName`.
+- **Index options** — `XML_COMPRESSION` (SQL Server 2022) and `STATISTICS_INCREMENTAL` in index scripts; `Index.DataCompression()` and `XMLCompression()`; `PartitionOptions` carries both per partition.
+- **Lookups** — `Database.TriggerByName`, `UserDefinedFunctionByName`, `Server.SessionByID`, `Server.InitialDatabase`, `QualifiedName`.
+- **`Trigger.Enable`, `Disable` and `SetEnabled`.**
+- **Transient-error rule** — `IsTransient(err)` is `IsRetryable` plus deadlock victims (Msg 1205) and Azure SQL's transient errors; gosmo's reads and `AcquireConn` retry on it.
+- **Typed enums** — `DatabaseState`, `FileType`, `FileState`, `FileGroupType`, `PrincipalType`, `AuditStatus`, `BackupFileType`, `XEObjectKind`, `QSWaitCategory`, and the availability-group states (`SynchronizationState`, `ReplicaRole`, `ReplicaOperationalState`, `ReplicaConnectedState`, `RecoveryHealth`, `SynchronizationHealth`).
+- **`ServerInfo.Supported`** — whether the instance is at or above the supported floor.
+- **`PasswordPolicy`**, **`TableChangeTrackingOptions`** and **`TableQuery`** option types for the calls that took positional booleans or parallel methods.
+
+### Changed
+
+- **Breaking: handle types group related methods.** **Migrating:**
+  - Query Store: `Database.QueryStore()` returns a `QueryStore` handle; `Database.QueryStoreTopResourceQueries(…)` → `Database.QueryStore().TopResourceQueries(…)`, likewise `ForcedPlanQueries`, `HighVariationQueries`, `RegressedQueries`, `OverallConsumption`, `TrackedQuery`, `Plans`, `QueryText`, `WaitStatsSupported`, `WaitCategories`, `WaitingQueries`, `ForcePlan`, `UnforcePlan`; the old `QueryStore()` read is `QueryStore().Options()`, `SetQueryStoreOptions` is `SetOptions`, `FlushQueryStore`/`ClearQueryStore` are `Flush`/`Clear`, `QueryStoreMetrics` is `Metrics`.
+  - Database Mail: `Server.MailAccounts()` → `Server.Mail().Accounts()`; the same for `AccountByName`, `AccountRef`, `Profiles`, `ProfileByName`, `ProfileRef`, `PrincipalProfiles`, `Configuration`, `Status`, `Queues`, `Visibility`, `Items`, `ItemByID`, `Events`, `CreateAccount`, `CreateProfile`; `SetMailConfiguration`, `StartDatabaseMail`, `StopDatabaseMail`, `SendMail`, `DeleteMailItems`, `DeleteMailLog` → `Mail().SetConfiguration`, `Start`, `Stop`, `Send`, `DeleteItems`, `DeleteLog`.
+  - Extended Events: `Server.EventSessions()` / `Database.EventSessions()` → `Server.XEvents().Sessions()` / `Database.XEvents().Sessions()`; `EventSessionByName`, `EventSessionRef`, `CreateEventSession` → `SessionByName`, `SessionRef`, `CreateSession`; `XEPackages`, `XEObjects`, `XEObjectColumns`, `XEMapValues`, `ReadEventFile`, `EventFiles` → `Packages`, `Objects`, `ObjectColumns`, `MapValues`, `ReadFile`, `Files`. `XEObjects` takes an `XEObjectKind`.
+- **Breaking: one listing method per family, taking an `ObjectFilter`.** **Migrating:** `Tables()` → `Tables(TableQuery{})`; `TablesFiltered(f)` → `Tables(TableQuery{Filter: f})`; `TablesOfKind(k)` / `TablesOfKindFiltered(k, f)` → `Tables(TableQuery{Kind: k, Filter: f})`; `Views`, `SystemViews`, `StoredProcedures`, `SystemStoredProcedures`, `UserDefinedFunctions` and `SystemFunctions` take the filter directly (a zero `ObjectFilter{}` for all), and their `…Filtered` twins are gone.
+- **Breaking: request types renamed.** **Migrating:** `JobStepRequest` → `JobStepDefinition`; `EventSessionSpec` → `EventSessionDefinition` (and `EventSession.Spec()` → `Definition()`); `ServerAuditSpec` → `ServerAuditDefinition`; `AttachSpec` → `AttachDatabaseRequest`; `FileModify` → `DatabaseFileChanges`; `QueueSettings` → `QueueChanges`; `RouteSettings` → `RouteChanges`; `MailAccountOptions` → `MailAccountChanges`; `MailProfileOptions` → `MailProfileChanges`; `MailConfigurationOptions` → `MailConfigurationChanges`; `AlertNotificationRef` → `OperatorAlert`; `JobNotificationRef` → `OperatorJob`; `SecurableRef` → `Securable`.
+- **Breaking: signatures.**
+  - `AttachDatabase(AttachDatabaseRequest)` returns the attached `*Database`.
+  - `Table.SetChangeTracking(TableChangeTrackingOptions)` replaces the two booleans.
+  - `Login.SetPasswordPolicy(PasswordPolicy)` replaces `checkPolicy, checkExpiration`.
+  - `Server.ReadLog(logType, n, LogSearch)` takes the search; `ReadLogFiltered` is gone (pass a zero `LogSearch` for all entries).
+  - `DatabaseFileInfo.Shrink(ShrinkFileOptions)` returns a `ShrinkResult`, not a size.
+  - `Login.AddServerRoleMember` / `RemoveServerRoleMember` → `AddToServerRole` / `RemoveFromServerRole`; `Database.DatabaseRoles` → `Roles`.
+- **Breaking: removed** — the agent per-property setters (`Job.SetDescription`, `SetCategory`, `SetOwner`, `SetStartStep`, `SetEmailNotify`, `SetDeleteLevel`; `Alert.SetTrigger`, `SetDatabase`, `SetDelay`, `SetNotificationMessage`, `SetCategory`, `SetJobResponse`; `Operator.SetEmailAddress`, `SetCategory`; `Schedule.SetFrequency`, `SetActiveRange`, `SetOwner`) in favour of `Job.Alter(JobChanges)` and its `Alert`, `Operator` and `Schedule` twins, which already existed; and the generic helper `Ptr`.
+- **Typed fields** — database, file and filegroup states and types, and principal types, are named string types instead of `string`; comparing against the constants (`DatabaseOnline`, `FileRows`, `PrincipalSQLLogin`, …) still works.
+- **Error messages carry the `gosmo: ` prefix once**: an exported method returns its error as it got it, and a helper whose caller wraps leaves the prefix off.
+- **Version checks** go through `majorAtLeast`/`majorBefore`; an Azure edition and an unread version count as newest, and bit columns missing below their version read `false` (`bitSince`).
+- Dependencies: `golang.org/x/net` v0.62.0.
+
+### Fixed
+
+- **A connection pool followed a dropped, detached or renamed database into an error.** The pool's connector now retargets to the login database (or `master`) when the current one goes away, and a drop or restore runs from `master`; `Connect` falls back to it when the configured initial database refuses the login.
+- **A write inside `InTransaction` left the session in another database** after commit or rollback; the session returns to its home database.
+- **A database access refusal stopped a login-to-user mapping scan** over every database; the refused one is reported and the rest are read. A user read that hit access contention is retried.
+- **A pooled read or write held a lock on its database.** It switched the session with `USE`, so a concurrent `RESTORE`, `SET OFFLINE` or `SET SINGLE_USER` failed with "Exclusive access could not be obtained"; it now runs as an RPC of that database's own `sp_executesql` and the session stays in its login database. An argument type the RPC cannot declare is `ErrUnsupported`, not a fallback.
+- **Statements with bound text** — Agent job, alert and schedule writes, and `Mail.Send` — bind their values as parameters instead of splicing them into the statement, and the statement observer shows the bound text.
+- **Deadlock victims and Azure transient errors** failed reads that are safe to run again; they are retried (see `IsTransient`).
+- **Query Store option writes** are validated by shape, closing an injection path through a crafted value.
+- **`Sequence.NextValue` was retried after a transient failure**, which could skip a value; only acquiring the connection is retried now.
+- **Version gates**: reflective tests now sweep every write for its guard; columns and syntax newer than the floor are gated consistently across indexes, tables and statistics.
+
 ## v0.1.0
 
 The first minor release. Scripting is broader (extended properties, indexed

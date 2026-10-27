@@ -13,7 +13,7 @@ release and `CHANGELOG.md` the history.
 
 - [Version gating](#version-gating) — how a column or statement newer than the
   floor is handled, and how each gate is pinned.
-- [Architecture](#architecture) — the master map, and the twenty-three Mermaid
+- [Architecture](#architecture) — the master map, and the twenty-seven Mermaid
   class diagrams in [`diagram/`](diagram/) that cover every type gosmo
   exports.
 - [Feature map](#feature-map) — SMO's names against gosmo's, family by family,
@@ -56,9 +56,9 @@ correctly for its own major.
 
 ## Architecture
 
-The class map is **twenty-four Mermaid diagrams in [`diagram/`](diagram/)** — the
-master map below, and twenty-three class diagrams, one per group of types. It is
-one map, not twenty-four: an edge that crosses files is drawn in the file that
+The class map is **twenty-eight Mermaid diagrams in [`diagram/`](diagram/)** — the
+master map below, and twenty-seven class diagrams, one per group of types. It is
+one map, not twenty-eight: an edge that crosses files is drawn in the file that
 defines the class it points *into*, where the other end shows up as a bare
 box (`Server --> AvailabilityGroup` lives in
 [`16-availability-groups.mmd`](diagram/16-availability-groups.mmd)).
