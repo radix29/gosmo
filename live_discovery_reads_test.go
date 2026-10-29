@@ -2,7 +2,7 @@
 
 // Live verification of the discovery reads gossms's command line (phase 3)
 // added: ObjectByName/ObjectsNamed, SearchDefinitions, SearchColumns,
-// Table/View.IndexUsage and Server.DatabaseSizes.
+// Table/View.IndexUsage, Server.DatabaseSizes and ReturnType.
 //
 //	go test -tags livedb . -run TestLiveDiscoveryReads -v \
 //	  -livedb 'sqlserver://sa:PASS@host?TrustServerCertificate=true'
@@ -36,7 +36,28 @@ func TestLiveDiscoveryReads(t *testing.T) {
 		"CREATE PROCEDURE Sales.p_needle AS SELECT 'needle_50%' AS x",
 		"CREATE PROCEDURE Sales.p_other AS SELECT 'needle150x' AS x",
 		"CREATE PROCEDURE Sales.p_secret WITH ENCRYPTION AS SELECT 'needle_50%' AS x",
+		"CREATE FUNCTION Sales.f_scalar (@a int) RETURNS decimal(9,2) AS BEGIN RETURN @a END",
+		"CREATE FUNCTION Sales.f_inline (@a int) RETURNS TABLE AS RETURN SELECT @a AS a",
 	)
+
+	t.Run("ReturnType", func(t *testing.T) {
+		rt, err := d.ReturnType(ctx, "Sales", "f_scalar")
+		if err != nil {
+			t.Fatalf("ReturnType(f_scalar): %v", err)
+		}
+		if rt == nil || rt.TypeString() != "decimal(9,2)" || rt.Name != "" || rt.Ordinal != 0 {
+			t.Errorf("ReturnType(f_scalar) = %+v, want decimal(9,2)", rt)
+		}
+		for _, name := range []string{"f_inline", "p_needle", "nope"} {
+			if rt, err := d.ReturnType(ctx, "Sales", name); err != nil || rt != nil {
+				t.Errorf("ReturnType(%s) = %+v, %v; want nil, nil", name, rt, err)
+			}
+		}
+		// Parameters still leaves the return value out.
+		if ps, err := d.Parameters(ctx, "Sales", "f_scalar"); err != nil || len(ps) != 1 || ps[0].Name != "@a" {
+			t.Errorf("Parameters(f_scalar) = %+v, %v; want only @a", ps, err)
+		}
+	})
 
 	t.Run("ObjectByName", func(t *testing.T) {
 		o, err := d.ObjectByName(ctx, "Sales", "Customer")

@@ -314,25 +314,49 @@ func (d *Database) Parameters(ctx context.Context, schema, name string) ([]*Para
 		return nil, err
 	}
 	rows, err := d.query(ctx, d.parameterSelect(), schema, name)
-	return scanRows(rows, err, fmt.Sprintf("list parameters of %s", qualifiedName(schema, name)), func(scan func(...any) error) (*Parameter, error) {
-		p := &Parameter{}
-		var typeName string
-		if err := scan(&p.Name, &p.Ordinal, &typeName,
-			&p.MaxLength, &p.Precision, &p.Scale, &p.IsOutput, &p.HasDefault,
-			&p.TypeSchema, &p.IsUserDefinedType,
-			&p.XMLSchemaCollectionSchema, &p.XMLSchemaCollection, &p.IsXMLDocument,
-			&p.VectorDimensions, &p.VectorBaseType); err != nil {
-			return nil, err
-		}
-		p.DataType = DataType(typeName)
-		return p, nil
-	})
+	return scanRows(rows, err, fmt.Sprintf("list parameters of %s", qualifiedName(schema, name)), scanParameter)
+}
+
+// ReturnType returns the type a scalar function returns — sys.parameters'
+// parameter_id 0, which has no name and Ordinal 0 — as a Parameter whose
+// TypeString renders it. It is nil, with no error, for an object that
+// returns no scalar: a stored procedure, a table-valued function, or no
+// object at all (as Parameters answers no rows).
+func (d *Database) ReturnType(ctx context.Context, schema, name string) (*Parameter, error) {
+	if err := requireSchema("return type", schema, name); err != nil {
+		return nil, err
+	}
+	rows, err := d.query(ctx, d.parameterQuery("p.parameter_id = 0"), schema, name)
+	ps, err := scanRows(rows, err, fmt.Sprintf("read the return type of %s", qualifiedName(schema, name)), scanParameter)
+	if err != nil || len(ps) == 0 {
+		return nil, err
+	}
+	return ps[0], nil
+}
+
+// scanParameter builds one Parameter from a parameterQuery row.
+func scanParameter(scan func(...any) error) (*Parameter, error) {
+	p := &Parameter{}
+	var typeName string
+	if err := scan(&p.Name, &p.Ordinal, &typeName,
+		&p.MaxLength, &p.Precision, &p.Scale, &p.IsOutput, &p.HasDefault,
+		&p.TypeSchema, &p.IsUserDefinedType,
+		&p.XMLSchemaCollectionSchema, &p.XMLSchemaCollection, &p.IsXMLDocument,
+		&p.VectorDimensions, &p.VectorBaseType); err != nil {
+		return nil, err
+	}
+	p.DataType = DataType(typeName)
+	return p, nil
 }
 
 // parameterSelect is Parameters' query. The vector_* columns are SQL Server
 // 2025's, with the vector type; the typed-xml ones predate gosmo's floor.
 // https://learn.microsoft.com/sql/relational-databases/system-catalog-views/sys-parameters-transact-sql
-func (d *Database) parameterSelect() string {
+func (d *Database) parameterSelect() string { return d.parameterQuery("p.parameter_id > 0") }
+
+// parameterQuery is the sys.parameters select of the object @p1.@p2,
+// narrowed by which (a predicate on parameter_id).
+func (d *Database) parameterQuery(which string) string {
 	major := d.serverMajorVersion()
 	return `
 SELECT p.name, p.parameter_id, tp.name,
@@ -347,7 +371,7 @@ JOIN   sys.types tp ON tp.user_type_id = p.user_type_id
 LEFT   JOIN sys.xml_schema_collections xsc
        ON  xsc.xml_collection_id = NULLIF(p.xml_collection_id, 0)
 WHERE  p.object_id = OBJECT_ID(QUOTENAME(@p1) + N'.' + QUOTENAME(@p2))
-  AND  p.parameter_id > 0
+  AND  ` + which + `
 ORDER  BY p.parameter_id`
 }
 
