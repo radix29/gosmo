@@ -138,6 +138,11 @@ func unsupportedVersionf(format string, args ...any) error {
 //     type the login cannot see (Column.IsTypeHidden), or of a sequence over
 //     such a type (Sequence.IsTypeHidden): only the base type is known, and
 //     replaying it would build a different object;
+//   - a script that needs a definition the login cannot read: a module's
+//     text, a table's default, check or computed-column expression, or a
+//     filtered index's or statistic's predicate, all NULL without VIEW
+//     DEFINITION. These also wrap ErrDefinitionHidden; an
+//     encrypted module's does not;
 //   - Database.BulkInsert under WithScript: a bulk load has no T-SQL form to
 //     collect;
 //   - a read with no form for its input: XEvents.Files given a blob URL,
@@ -146,6 +151,16 @@ func unsupportedVersionf(format string, args ...any) error {
 // It is not ErrUnsupportedVersion: the server is not too old for anything,
 // gosmo simply has no form for the request.
 var ErrUnsupported = errors.New("not supported")
+
+// ErrDefinitionHidden reports a script refused because the login cannot see
+// a definition it needs: SQL Server answers NULL for a module's text, and for
+// a default's, check's, computed column's or filter's expression, without VIEW
+// DEFINITION on the object (or its schema or database) — SELECT or EXECUTE
+// alone does not give it. Every such refusal also wraps ErrUnsupported, so it
+// is a permission gap a caller can name, not a different kind of refusal; an
+// encrypted module, whose text no permission reveals, wraps ErrUnsupported
+// only.
+var ErrDefinitionHidden = errors.New("definition not visible to the login")
 
 // unsupportedError carries its own message and reaches ErrUnsupported through
 // the chain — and, when its format wrapped one with %w, the cause too.

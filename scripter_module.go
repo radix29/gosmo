@@ -128,7 +128,7 @@ func (sc *Scripter) writeModuleDefinition(ctx context.Context, sb *strings.Build
 		return nil
 	}
 	if !def.Valid {
-		return unsupportedf("gosmo: script %s %s: definition is not readable (encrypted)", k.noun, qualifiedName(schema, name))
+		return sc.db.hiddenModuleRefusal(ctx, k, schema, name, objectID)
 	}
 	text := renameModuleHeader(def.String, k.keyword, schema, name)
 	if sc.opts.verb() == ScriptAlter {
@@ -154,6 +154,26 @@ func (sc *Scripter) writeModuleDefinition(ctx context.Context, sb *strings.Build
 	sb.WriteString(text)
 	sb.WriteString("\nGO\n")
 	return nil
+}
+
+// hiddenModuleRefusal is the refusal for a module whose definition read NULL:
+// it is encrypted, which no permission reveals, or the login lacks VIEW
+// DEFINITION on it — which EXECUTE or SELECT alone leaves out, and a script
+// must not call encryption. OBJECTPROPERTY needs only the object to be
+// visible, as it is here, so one more read tells the two apart; it is made
+// only on this path.
+func (d *Database) hiddenModuleRefusal(ctx context.Context, k moduleKind, schema, name string, objectID int) error {
+	var encrypted sql.NullInt64
+	err := d.queryRow(ctx, func(row *sql.Row) error { return row.Scan(&encrypted) },
+		`SELECT OBJECTPROPERTY(@p1, 'IsEncrypted')`, objectID)
+	if err != nil {
+		return fmt.Errorf("gosmo: script %s %s: %w", k.noun, qualifiedName(schema, name), err)
+	}
+	if encrypted.Valid && encrypted.Int64 == 1 {
+		return unsupportedf("gosmo: script %s %s: definition is not readable (encrypted)", k.noun, qualifiedName(schema, name))
+	}
+	return unsupportedf("gosmo: script %s %s: %w; it needs VIEW DEFINITION on it",
+		k.noun, qualifiedName(schema, name), ErrDefinitionHidden)
 }
 
 // float16Parameters lists [schema].[name]'s vector(n, float16) parameters,

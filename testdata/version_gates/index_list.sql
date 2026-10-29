@@ -2,7 +2,7 @@
 
 SELECT i.name, i.index_id, i.type_desc, i.is_unique, i.is_primary_key,
        i.is_unique_constraint, i.is_disabled, i.is_hypothetical, i.fill_factor,
-       ISNULL(i.filter_definition, ''),
+       CASE WHEN i.has_filter = 1 AND i.filter_definition IS NULL THEN NULL ELSE ISNULL(i.filter_definition, '') END,
        i.is_padded, i.ignore_dup_key, i.allow_row_locks, i.allow_page_locks,
        (SELECT pp.partition_number AS n, pp.data_compression_desc AS c, CAST(0 AS bit) AS x
         FROM sys.partitions pp WHERE pp.object_id = i.object_id AND pp.index_id = i.index_id
@@ -44,7 +44,7 @@ WHERE  i.object_id = @p1 AND i.type > 0
 
 SELECT i.name, i.index_id, i.type_desc, i.is_unique, i.is_primary_key,
        i.is_unique_constraint, i.is_disabled, i.is_hypothetical, i.fill_factor,
-       ISNULL(i.filter_definition, ''),
+       CASE WHEN i.has_filter = 1 AND i.filter_definition IS NULL THEN NULL ELSE ISNULL(i.filter_definition, '') END,
        i.is_padded, i.ignore_dup_key, i.allow_row_locks, i.allow_page_locks,
        (SELECT pp.partition_number AS n, pp.data_compression_desc AS c, CAST(0 AS bit) AS x
         FROM sys.partitions pp WHERE pp.object_id = i.object_id AND pp.index_id = i.index_id
@@ -86,7 +86,7 @@ WHERE  i.object_id = @p1 AND i.type > 0
 
 SELECT i.name, i.index_id, i.type_desc, i.is_unique, i.is_primary_key,
        i.is_unique_constraint, i.is_disabled, i.is_hypothetical, i.fill_factor,
-       ISNULL(i.filter_definition, ''),
+       CASE WHEN i.has_filter = 1 AND i.filter_definition IS NULL THEN NULL ELSE ISNULL(i.filter_definition, '') END,
        i.is_padded, i.ignore_dup_key, i.allow_row_locks, i.allow_page_locks,
        (SELECT pp.partition_number AS n, pp.data_compression_desc AS c, CAST(0 AS bit) AS x
         FROM sys.partitions pp WHERE pp.object_id = i.object_id AND pp.index_id = i.index_id
@@ -128,7 +128,7 @@ WHERE  i.object_id = @p1 AND i.type > 0
 
 SELECT i.name, i.index_id, i.type_desc, i.is_unique, i.is_primary_key,
        i.is_unique_constraint, i.is_disabled, i.is_hypothetical, i.fill_factor,
-       ISNULL(i.filter_definition, ''),
+       CASE WHEN i.has_filter = 1 AND i.filter_definition IS NULL THEN NULL ELSE ISNULL(i.filter_definition, '') END,
        i.is_padded, i.ignore_dup_key, i.allow_row_locks, i.allow_page_locks,
        (SELECT pp.partition_number AS n, pp.data_compression_desc AS c, pp.xml_compression AS x
         FROM sys.partitions pp WHERE pp.object_id = i.object_id AND pp.index_id = i.index_id
@@ -170,7 +170,7 @@ WHERE  i.object_id = @p1 AND i.type > 0
 
 SELECT i.name, i.index_id, i.type_desc, i.is_unique, i.is_primary_key,
        i.is_unique_constraint, i.is_disabled, i.is_hypothetical, i.fill_factor,
-       ISNULL(i.filter_definition, ''),
+       CASE WHEN i.has_filter = 1 AND i.filter_definition IS NULL THEN NULL ELSE ISNULL(i.filter_definition, '') END,
        i.is_padded, i.ignore_dup_key, i.allow_row_locks, i.allow_page_locks,
        (SELECT pp.partition_number AS n, pp.data_compression_desc AS c, pp.xml_compression AS x
         FROM sys.partitions pp WHERE pp.object_id = i.object_id AND pp.index_id = i.index_id
