@@ -412,6 +412,7 @@ The instance and database halves pair up: `ServerResourceStat` and
 | Rename a schema-scoped object | `x.Rename(ctx, newName)` on its handle — table, view, procedure, function, trigger, sequence, synonym, rule, default, alias type; a constraint is `t.RenameConstraint(ctx, name, newName)` |
 | Move an object to another schema | `x.Transfer(ctx, targetSchema)` on its handle — `ALTER SCHEMA ... TRANSFER`, which `sp_rename` cannot do; every family above but the trigger, plus the table and CLR types, XML schema collections and queues |
 | Parameters of a procedure or function | `db.Parameters(ctx, schema, name)` → `[]*Parameter` |
+| Return type of a scalar function | `db.ReturnType(ctx, schema, name)` → `*Parameter` (nil for a procedure or table-valued function) |
 | Filtered listings                | every listing above that takes an `ObjectFilter` `f` (a zero one narrows nothing) — see [Filtering a listing](#filtering-a-listing) |
 | What may this login do here?     | `db.Capabilities(ctx)` → `*DatabaseCapabilities` |
 | Partition functions             | `db.PartitionFunctions(ctx)` / `db.PartitionFunctionByName(ctx, name)` / `db.PartitionFunctionRef(name)` |
