@@ -33,11 +33,23 @@ func TestWithScriptApplyConfigurationBatchShape(t *testing.T) {
 		"name = N'show advanced options' AND value_in_use = 0",
 		"is_advanced = 1 AND name IN (N'max degree of parallelism', N'cost threshold for parallelism')",
 		"EXEC sys.sp_configure N'show advanced options', 1;",
+		"BEGIN TRY",
 		"RECONFIGURE;",
+		"BEGIN CATCH",
+		"EXEC sys.sp_configure N'show advanced options', @show_advanced_value;",
+		"THROW;",
 		"SET @show_advanced_enabled = 1;",
 		"EXEC sys.sp_configure N'max degree of parallelism', 4;",
 		"EXEC sys.sp_configure N'cost threshold for parallelism', 50;",
+		// A refused RECONFIGURE (Msg 5807) ends the batch: the CATCH puts
+		// show advanced options back before rethrowing (found live on 13).
+		"BEGIN TRY",
 		"RECONFIGURE;",
+		"BEGIN CATCH",
+		"IF @show_advanced_enabled = 1",
+		"EXEC sys.sp_configure N'show advanced options', @show_advanced_value;",
+		"THROW;",
+		"END CATCH;",
 		"IF @show_advanced_enabled = 1",
 		// N7 (review plan 2026-10-13): the configured value read first, not
 		// 0 — a pending sp_configure of 1 has value_in_use 0 too.

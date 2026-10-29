@@ -2231,6 +2231,14 @@ server rather than in the caller is what makes the current log usable on a
 busy instance, where it runs to tens of thousands of entries. A zero
 `LogSearch` reads the whole file.
 
+`xp_readerrorlog` is sysadmin's alone (Msg 229 for securityadmin and VIEW
+SERVER STATE alike, verified on 13, 14 and 17). On that refusal `ReadLog`
+reads through `sp_readerrorlog`, which admits securityadmin, VIEW SERVER
+STATE and (2022 on) VIEW ANY ERROR LOG but passes on only the two strings,
+so the date bounds are applied in Go, inclusive and cut to the second as the
+server cuts them. Without any of those the error is `PermissionDenied`
+(Msg 27219).
+
 ### Server filesystem
 
 SMO's `Server.EnumDirectories`/`EnumFiles`, and the fixed-drive list behind

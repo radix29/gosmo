@@ -105,6 +105,11 @@ var ProbedServerPermissions = []string{
 	"ALTER ANY EVENT SESSION ENABLE",
 	"ALTER ANY EVENT SESSION DISABLE",
 	"ALTER ANY AVAILABILITY GROUP",
+	// The 2022 right sp_readerrorlog admits beside securityadmin and VIEW
+	// SERVER STATE (ReadLog's fallback). VIEW SERVER STATE does not imply it
+	// (HAS_PERMS_BY_NAME reads 0 under it alone, major 17, 2026-10-29); on
+	// 2016–2019 it answers NULL, which reads as CapabilityUnknown.
+	"VIEW ANY ERROR LOG",
 }
 
 // ProbedServerSecurablePermissions are the permissions Capabilities reads
@@ -251,6 +256,10 @@ var ProbedDatabasePermissions = []string{
 	// name is defined on SQL Server too (majors 13 and 17), so it probes
 	// cleanly everywhere.
 	"ALTER ANY DATABASE EVENT SESSION",
+	// What ALTER DATABASE SCOPED CONFIGURATION checks; ALTER and CONTROL on
+	// the database cover it, it does not cover ALTER (majors 13, 14 and 17,
+	// 2026-10-29).
+	"ALTER ANY DATABASE SCOPED CONFIGURATION",
 	// Service Broker. Each of these five is enough on its own to ALTER and
 	// DROP its family — probed with WITHOUT LOGIN users on majors 13, 14 and
 	// 17, which answered identically — so none of them is paired with ALTER

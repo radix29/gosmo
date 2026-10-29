@@ -13,6 +13,8 @@
 package gosmo
 
 import (
+	"context"
+	"database/sql"
 	"strings"
 	"testing"
 	"time"
@@ -90,5 +92,60 @@ func TestLiveReadLogFiltered(t *testing.T) {
 	}
 	if len(andRead) != 0 {
 		t.Errorf("two search strings returned %d entries; they are AND-ed, so an impossible pair matches nothing", len(andRead))
+	}
+}
+
+// TestLiveReadLogWithoutSysadmin is the fallback: xp_readerrorlog is
+// sysadmin's alone, so a login with VIEW SERVER STATE reads through
+// sp_readerrorlog, the dates applied in Go, and gets what sysadmin's
+// server-filtered read gets; a login with none of sp_readerrorlog's
+// permissions is refused, PermissionDenied (Msg 27219).
+func TestLiveReadLogWithoutSysadmin(t *testing.T) {
+	db, ctx, done := liveDB(t)
+	t.Cleanup(done)
+	s := &Server{db: db}
+	const login, pass = "gosmo_live_readlog", "Pw!gosmo_live_readlog1"
+	c := context.Background()
+	db.ExecContext(c, "IF SUSER_ID(N'"+login+"') IS NOT NULL DROP LOGIN ["+login+"]")
+	if _, err := db.ExecContext(ctx, "CREATE LOGIN ["+login+"] WITH PASSWORD = N'"+pass+"', CHECK_POLICY = OFF"); err != nil {
+		t.Fatalf("create login: %v", err)
+	}
+	t.Cleanup(func() { db.ExecContext(c, "DROP LOGIN ["+login+"]") })
+	pool, err := sql.Open("sqlserver", liveRestrictedDSN(t, login, pass))
+	if err != nil {
+		t.Fatalf("open as %s: %v", login, err)
+	}
+	t.Cleanup(func() { pool.Close() })
+	restricted := &Server{db: pool}
+
+	_, err = restricted.ReadLog(ctx, ErrorLogSQLServer, 0, LogSearch{})
+	if se, ok := AsSQLError(err); !IsPermissionDenied(err) || !ok || se.Number != 27219 {
+		t.Fatalf("no permission: %v, want PermissionDenied Msg 27219", err)
+	}
+
+	if _, err := db.ExecContext(ctx, "GRANT VIEW SERVER STATE TO ["+login+"]"); err != nil {
+		t.Fatalf("grant: %v", err)
+	}
+	all, err := s.ReadLog(ctx, ErrorLogSQLServer, 1, LogSearch{})
+	if err != nil || len(all) < 3 {
+		t.Skipf("archive 1: %d entries, %v", len(all), err)
+	}
+	// A range inside archive 1, which no longer grows: its middle third.
+	search := LogSearch{From: all[len(all)/3].Date, To: all[2*len(all)/3].Date}
+	want, err := s.ReadLog(ctx, ErrorLogSQLServer, 1, search)
+	if err != nil {
+		t.Fatalf("sysadmin read: %v", err)
+	}
+	got, err := restricted.ReadLog(ctx, ErrorLogSQLServer, 1, search)
+	if err != nil {
+		t.Fatalf("VIEW SERVER STATE read: %v", err)
+	}
+	if len(got) != len(want) || len(got) == 0 {
+		t.Fatalf("VIEW SERVER STATE read %d entries, sysadmin %d", len(got), len(want))
+	}
+	for i := range got {
+		if !got[i].Date.Equal(want[i].Date) || got[i].Text != want[i].Text || got[i].Process != want[i].Process {
+			t.Fatalf("entry %d: %+v, sysadmin %+v", i, got[i], want[i])
+		}
 	}
 }
