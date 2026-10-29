@@ -1,0 +1,108 @@
+# sys.configurations names on SQL Server 17.0.1145.4 (win10cli), one per line.
+# Read 2026-10-29; refresh with: SELECT name FROM sys.configurations ORDER BY name
+access check cache bucket count
+access check cache quota
+Ad Hoc Distributed Queries
+ADR cleaner lock timeout (s)
+ADR cleaner retry timeout (min)
+ADR Cleaner Thread Count
+ADR Preallocation Factor
+affinity I/O mask
+affinity mask
+affinity64 I/O mask
+affinity64 mask
+Agent XPs
+allow filesystem enumeration
+allow polybase export
+allow server scoped db credentials
+allow updates
+automatic soft-NUMA disabled
+availability group commit time (ms)
+backup checksum default
+backup compression algorithm
+backup compression default
+blocked process threshold (s)
+c2 audit mode
+clr enabled
+clr strict security
+column encryption enclave type
+common criteria compliance enabled
+contained database authentication
+cost threshold for parallelism
+cross db ownership chaining
+cursor threshold
+Data processed daily limit in TB
+Data processed monthly limit in TB
+Data processed weekly limit in TB
+Database Mail XPs
+default full-text language
+default language
+default trace enabled
+disallow results from triggers
+EKM provider enabled
+external AI runtimes enabled
+external rest endpoint enabled
+external scripts enabled
+external xtp dll gen util enabled
+filestream access level
+fill factor (%)
+ft crawl bandwidth (max)
+ft crawl bandwidth (min)
+ft notify bandwidth (max)
+ft notify bandwidth (min)
+hadoop connectivity
+hardware offload config
+hardware offload enabled
+hardware offload mode
+index create memory (KB)
+in-doubt xact resolution
+lightweight pooling
+locks
+max degree of parallelism
+max full-text crawl range
+max RPC request params (KB)
+max server memory (MB)
+max server tiered memory (MB)
+max text repl size (B)
+max UCS send boxcars
+max worker threads
+media retention
+min memory per query (KB)
+min server memory (MB)
+nested triggers
+network packet size (B)
+Ole Automation Procedures
+open objects
+openrowset auto_create_statistics
+optimize for ad hoc workloads
+PH timeout (s)
+polybase enabled
+polybase network encryption
+precompute rank
+priority boost
+query governor cost limit
+query wait (s)
+recovery interval (min)
+remote access
+remote admin connections
+remote data archive
+remote login timeout (s)
+remote proc trans
+remote query timeout (s)
+Replication XPs
+scan for startup procs
+server trigger recursion
+set working set size
+show advanced options
+SLOG memory quota (%)
+SMO and DMO XPs
+suppress recovery model errors
+tempdb metadata memory-optimized
+tiered memory enabled
+transform noise words
+two digit year cutoff
+user connections
+user options
+version high part of SQL Server
+version low part of SQL Server
+xp_cmdshell

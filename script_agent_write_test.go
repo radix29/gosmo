@@ -320,7 +320,7 @@ func runBoundCases(t *testing.T, cases []scriptCase, sent map[string]string, can
 	}
 }
 
-// TestScriptServerLevelWrites pins the two server-scoped writes that reach
+// TestScriptServerLevelWrites pins the server-scoped writes that reach
 // neither a database nor msdb's agent tables, plus the endpoint statements.
 func TestScriptServerLevelWrites(t *testing.T) {
 	endpoint := func() *DatabaseMirroringEndpoint {
@@ -331,6 +331,12 @@ func TestScriptServerLevelWrites(t *testing.T) {
 		{"KillSession", func(c context.Context) error {
 			return (&Server{}).KillSession(c, 57)
 		}, "KILL 57"},
+		{"SetTraceFlag on", func(c context.Context) error {
+			return (&Server{}).SetTraceFlag(c, 7745, true)
+		}, "DBCC TRACEON(7745, -1) WITH NO_INFOMSGS"},
+		{"SetTraceFlag off", func(c context.Context) error {
+			return (&Server{}).SetTraceFlag(c, 7745, false)
+		}, "DBCC TRACEOFF(7745, -1) WITH NO_INFOMSGS"},
 		{"Mail.Send", func(c context.Context) error {
 			_, err := (&Server{}).Mail().Send(c, MailMessage{Profile: "Prof'ile", To: "o'brien@example.com", Subject: "Sub'ject", Body: "Bo'dy"})
 			return err

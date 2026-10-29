@@ -175,6 +175,7 @@ func TestArgumentRefusalsWrapErrInvalidRequest(t *testing.T) {
 		{"replica setting", (&AvailabilityReplica{server: s, ReplicaServerName: "x"}).SetBackupPriority(ctx, 1),
 			`gosmo: set backup priority of replica "x": replica did not come from AvailabilityGroup.Replicas`},
 		{"kill session", s.KillSession(ctx, 0), "gosmo: kill session 0: a session ID is positive"},
+		{"trace flag", s.SetTraceFlag(ctx, 0, true), "gosmo: TRACEON 0: a trace flag is positive"},
 	}
 	for _, tc := range cases {
 		if !errors.Is(tc.err, ErrInvalidRequest) {

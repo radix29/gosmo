@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"strings"
+	"time"
 )
 
 // ============================================================
@@ -23,6 +24,23 @@ type ConfigurationOption struct {
 	IsDynamic   bool // true = change takes effect without a restart
 	IsAdvanced  bool
 	Description string
+
+	// Default is the option's engine default on this server's major version
+	// — the value a bare installation of the engine carries, not Setup's
+	// recommendation (max degree of parallelism 0, max server memory
+	// 2147483647; see configDefaults for the source). HasDefault is false,
+	// and Default 0, where gosmo has no default to give: Azure, a major
+	// newer than the table, and an option it does not list (one a CU added,
+	// or the engine-written version parts). Configurations and
+	// ConfigurationByName fill both; a ConfigurationRef handle leaves them
+	// zero.
+	//
+	// A self-configuring option's default is 0 ("the server decides"),
+	// which lies below the Minimum sys.configurations reports for it (locks
+	// 5000, max worker threads 128, index create memory (KB) 704) and which
+	// sp_configure accepts all the same. A range check must let 0 through.
+	Default    int64
+	HasDefault bool
 }
 
 // Server returns the server the configuration option belongs to.
@@ -47,6 +65,7 @@ ORDER  BY name`
 			return nil, err
 		}
 		c.Description = desc.String
+		c.fillDefault()
 		return c, nil
 	})
 }
@@ -68,6 +87,7 @@ WHERE  name = @p1`
 		return nil, rowErr(err, notFoundf("gosmo: configuration option %q not found", name), "configuration by name")
 	}
 	c.Description = desc.String
+	c.fillDefault()
 	return c, nil
 }
 
@@ -384,6 +404,33 @@ ORDER  BY s.scheduler_id`)
 			&sc.RunnableTasks, &sc.CurrentTasks, &sc.ActiveWorkers, &sc.WorkQueue, &sc.LoadFactor)
 		return sc, err
 	})
+}
+
+// ============================================================
+// Start time
+// ============================================================
+
+// StartTime returns when the instance last started
+// (sys.dm_os_sys_info.sqlserver_start_time) — the server's local wall clock
+// carried in UTC, as every zoneless server time is — and how long ago that
+// was by the server's own clock. Uptime comes from the server because the
+// start time is not a real UTC instant: subtracting it from the client's
+// clock is off by the server's UTC offset and any clock skew.
+//
+// Needs VIEW SERVER STATE (VIEW SERVER PERFORMANCE STATE from SQL Server
+// 2022); without it the server refuses the read. tempdb's create_date needs
+// no permission but trails the start by however long recovery took, so it is
+// not used.
+func (s *Server) StartTime(ctx context.Context) (start time.Time, uptime time.Duration, err error) {
+	const q = `
+SELECT sqlserver_start_time,
+       DATEDIFF_BIG(millisecond, sqlserver_start_time, SYSDATETIME())
+FROM   sys.dm_os_sys_info`
+	var ms int64
+	if err := s.queryRowScan(ctx, q, nil, &start, &ms); err != nil {
+		return time.Time{}, 0, fmt.Errorf("gosmo: server start time: %w", err)
+	}
+	return start, time.Duration(ms) * time.Millisecond, nil
 }
 
 // ============================================================
