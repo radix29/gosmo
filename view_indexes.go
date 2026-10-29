@@ -54,6 +54,12 @@ func (v *View) Indexes(ctx context.Context) ([]*Index, error) {
 	return indexes, err
 }
 
+// IndexUsage returns the usage counters of the indexed view's indexes — see
+// Table.IndexUsage. A view that is not indexed has none.
+func (v *View) IndexUsage(ctx context.Context) ([]*IndexUsage, error) {
+	return v.carrier().IndexUsage(ctx)
+}
+
 // IndexByName returns one index on the view by name, with its columns — see
 // Table.IndexByName.
 func (v *View) IndexByName(ctx context.Context, name string) (*Index, error) {

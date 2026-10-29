@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"strings"
+	"time"
 )
 
 // -- Index management ----------------------------------------------------------
@@ -718,4 +719,69 @@ ORDER  BY 3 DESC, i.name`
 
 	rows, err := t.db.query(ctx, q, t.FullName())
 	return scanRows(rows, err, fmt.Sprintf("fragmentation stats for %s", t.FullName()), scanFragmentation)
+}
+
+// IndexUsage is one index's row of sys.dm_db_index_usage_stats: how often
+// user queries have read and maintained it since the server started (or the
+// database came online). An index no query has touched since then has zero
+// counts and zero times.
+type IndexUsage struct {
+	IndexName string // "" for a heap (IndexID 0)
+	IndexID   int
+	// UsageVisible is false when the login may not read the DMV (it needs
+	// VIEW SERVER STATE, or VIEW SERVER PERFORMANCE STATE on 2022 and later):
+	// the counts are then zero and the times zero because they were not read,
+	// not because the index is unused.
+	UsageVisible bool
+	UserSeeks    int64
+	UserScans    int64
+	UserLookups  int64
+	UserUpdates  int64
+	// The last user read or write of each kind; zero when there was none (or
+	// UsageVisible is false).
+	LastUserSeek   time.Time
+	LastUserScan   time.Time
+	LastUserLookup time.Time
+	LastUserUpdate time.Time
+}
+
+// IndexUsage returns the usage counters of every index on the table, the heap
+// included, in index_id order. Like FragmentationStats it names the table, so
+// a TableRef is enough, and a name that resolves to no table returns no rows.
+//
+// The DMV is refused outright without the permission (Msg 300), which would
+// cost the index list too, so the batch asks first and reads every index with
+// UsageVisible false instead — Server.DatabaseFiles' pattern.
+func (t *Table) IndexUsage(ctx context.Context) ([]*IndexUsage, error) {
+	const cols = `
+SELECT ISNULL(i.name, N''), i.index_id, `
+	const from = `
+FROM   sys.indexes i`
+	const where = `
+WHERE  i.object_id = OBJECT_ID(@p1) AND i.is_hypothetical = 0
+ORDER  BY i.index_id`
+	const q = `
+IF HAS_PERMS_BY_NAME(NULL, NULL, 'VIEW SERVER STATE') = 1
+   OR HAS_PERMS_BY_NAME(NULL, NULL, 'VIEW SERVER PERFORMANCE STATE') = 1` + cols + `CAST(1 AS bit),
+       ISNULL(u.user_seeks, 0), ISNULL(u.user_scans, 0), ISNULL(u.user_lookups, 0), ISNULL(u.user_updates, 0),
+       u.last_user_seek, u.last_user_scan, u.last_user_lookup, u.last_user_update` + from + `
+LEFT   JOIN sys.dm_db_index_usage_stats u
+       ON  u.database_id = DB_ID() AND u.object_id = i.object_id AND u.index_id = i.index_id` + where + `
+ELSE` + cols + `CAST(0 AS bit),
+       CAST(0 AS bigint), CAST(0 AS bigint), CAST(0 AS bigint), CAST(0 AS bigint),
+       CAST(NULL AS datetime), CAST(NULL AS datetime), CAST(NULL AS datetime), CAST(NULL AS datetime)` + from + where
+
+	rows, err := t.db.query(ctx, q, t.FullName())
+	return scanRows(rows, err, fmt.Sprintf("index usage for %s", t.FullName()), func(scan func(...any) error) (*IndexUsage, error) {
+		u := &IndexUsage{}
+		var seek, scanned, lookup, update sql.NullTime
+		if err := scan(&u.IndexName, &u.IndexID, &u.UsageVisible,
+			&u.UserSeeks, &u.UserScans, &u.UserLookups, &u.UserUpdates,
+			&seek, &scanned, &lookup, &update); err != nil {
+			return nil, err
+		}
+		u.LastUserSeek, u.LastUserScan = seek.Time, scanned.Time
+		u.LastUserLookup, u.LastUserUpdate = lookup.Time, update.Time
+		return u, nil
+	})
 }

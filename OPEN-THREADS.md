@@ -369,6 +369,19 @@ Exported types and signatures stay the same; the write tests pin the
 statements. About 60 lines, no bug — do it only alongside another change in
 those files.
 
+## A database-scoped read wraps the `gosmo: USE` error a second time
+
+Found 2026-10-29 from gossms's `db info` (a login with no user in the
+database): `SpaceUsed` answered `gosmo: space used: gosmo: USE HealthClinic:
+mssql: … not able to access the database … (916)`. `Database.queryRow`/`query`
+already return the can't-enter failure prefixed (`proc_read.go`, `database.go`),
+and `SpaceUsed`'s `fmt.Errorf("gosmo: space used: %w")` adds a second prefix.
+`TestNoWrapOfAnAlreadyPrefixedError` misses it because the prefixed return is
+inside the query helpers' error path, not a `return` the test follows. Likely
+every `d.query`/`d.queryRow` caller that wraps does the same; the fix is in
+the helpers (return the bare error and let callers name the operation) or
+the test, not per call site.
+
 ## Agent schedules are addressed by id — settled, do not re-raise
 
 Schedule names are not unique in msdb (`ARCHITECTURE.md` § Shared schedules).
