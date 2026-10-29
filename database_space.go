@@ -187,11 +187,13 @@ type TableSize struct {
 	Name     string
 	// Rows is the heap's or clustered index's row count, summed over
 	// partitions — for a memory-optimized table, over index_id 0, 1 and 5,
-	// as sp_spaceused counts it.
+	// as sp_spaceused counts it from 2017. 2016's sp_spaceused has no
+	// memory-optimized branch and prints 0 rows for one (its
+	// dm_db_partition_stats row_count); this is still the row count.
 	Rows int64
 	// IsMemoryOptimized marks a memory-optimized table. sp_spaceused prints
-	// NULL for its four sizes, so they are 0 here and mean "not reported",
-	// never "empty".
+	// NULL for its four sizes (2016's prints 0 KB, read from no pages), so
+	// they are 0 here and mean "not reported", never "empty".
 	IsMemoryOptimized bool
 	ReservedKB        int64
 	DataKB            int64
