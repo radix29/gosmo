@@ -435,6 +435,95 @@ ORDER BY vs.volume_mount_point`
 	})
 }
 
+// Plausible reports whether the volume's figures can be shown: a total above
+// zero and no more available than the total. A host reporting a volume it
+// does not own answers otherwise — an Azure Managed Instance gives C:\ a
+// total of 192 MB and 65,344 MB available — and "65,344 MB free of 192 MB"
+// is worse than saying nothing.
+func (v DiskVolumeInfo) Plausible() bool { return plausibleVolume(v.TotalMB, v.AvailableMB) }
+
+// FileVolume is the storage volume one database file sits on, as
+// sys.dm_os_volume_stats reports it for that file — the file-to-volume
+// mapping DiskVolumes groups away.
+type FileVolume struct {
+	DatabaseID   int
+	FileID       int
+	PhysicalName string // the file's path (sys.master_files)
+	// MountPoint and VolumeName are as DiskVolumeInfo's: either or both
+	// can be empty on a containerized host.
+	MountPoint     string
+	VolumeName     string
+	TotalBytes     int64
+	AvailableBytes int64
+}
+
+// Plausible is DiskVolumeInfo.Plausible for one file's volume figures.
+func (v FileVolume) Plausible() bool {
+	return plausibleVolume(float64(v.TotalBytes), float64(v.AvailableBytes))
+}
+
+// plausibleVolume is the one rule both volume shapes follow.
+func plausibleVolume(total, available float64) bool {
+	return total > 0 && available <= total
+}
+
+// FileVolumes returns the volume behind every database file on the server,
+// one row per file (sys.master_files × sys.dm_os_volume_stats), ordered by
+// database_id and file_id.
+//
+// The DMV needs VIEW SERVER STATE (VIEW SERVER PERFORMANCE STATE from 2022)
+// and is refused outright without it (Msg 300). FileVolumes asks first, as
+// DatabaseFiles does, and answers visible=false with no rows instead of an
+// error, so a caller can say which permission is missing. Rows are returned
+// as the host reports them; filter with Plausible before showing figures.
+func (s *Server) FileVolumes(ctx context.Context) (vols []FileVolume, visible bool, err error) {
+	// The permission is the first column, so the ELSE branch's single row
+	// says "hidden" — no rows at all from the first branch is a host whose
+	// DMV answered nothing, which is visible and empty.
+	const q = `
+IF HAS_PERMS_BY_NAME(NULL, NULL, 'VIEW SERVER STATE') = 1
+   OR HAS_PERMS_BY_NAME(NULL, NULL, 'VIEW SERVER PERFORMANCE STATE') = 1
+    SELECT CAST(1 AS bit), mf.database_id, mf.file_id, mf.physical_name,
+           vs.volume_mount_point, vs.logical_volume_name, vs.total_bytes, vs.available_bytes
+    FROM   sys.master_files mf
+    CROSS  APPLY sys.dm_os_volume_stats(mf.database_id, mf.file_id) vs
+    ORDER  BY mf.database_id, mf.file_id
+ELSE
+    SELECT CAST(0 AS bit), NULL, NULL, NULL, NULL, NULL, NULL, NULL`
+
+	rows, err := s.query(ctx, q)
+	visible = true
+	list, err := scanRows(rows, err, "file volumes", func(scan func(...any) error) (*FileVolume, error) {
+		var shown bool
+		var dbID, fileID sql.NullInt32
+		var path, mount, name sql.NullString
+		var total, avail sql.NullInt64
+		if err := scan(&shown, &dbID, &fileID, &path, &mount, &name, &total, &avail); err != nil {
+			return nil, err
+		}
+		if !shown {
+			visible = false
+			return nil, nil
+		}
+		return &FileVolume{
+			DatabaseID: int(dbID.Int32), FileID: int(fileID.Int32), PhysicalName: path.String,
+			MountPoint: mount.String, VolumeName: name.String,
+			TotalBytes: total.Int64, AvailableBytes: avail.Int64,
+		}, nil
+	})
+	if err != nil {
+		return nil, false, err
+	}
+	if !visible {
+		return nil, false, nil
+	}
+	vols = make([]FileVolume, len(list))
+	for i, v := range list {
+		vols[i] = *v
+	}
+	return vols, true, nil
+}
+
 // ============================================================
 // Languages
 // ============================================================

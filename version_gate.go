@@ -70,6 +70,23 @@ func majorKnownAtLeast(major int, v ServerVersion) bool {
 	return major != 0 && major >= int(v)
 }
 
+// buildAtLeast is majorAtLeast for a feature that arrived in a service pack of
+// an older major rather than with a major: true when the instance is a later
+// major than v, or v itself at build or later. An unread version, an Azure
+// edition and a nil ServerInfo count as newest, as majorAtLeast does.
+//
+// It is the one place a build number decides a gate. The floor rule (never
+// gate at or below 2016) is about majors: gosmo supports 2016 from SP1
+// (minimumServerBuild), so a feature SP2 added — sys.dm_db_log_info, 13.0.5026
+// — is a gate inside the supported range, not below it.
+func buildAtLeast(info *ServerInfo, v ServerVersion, build int) bool {
+	major := info.featureMajor()
+	if !majorAtLeast(major, v) {
+		return false
+	}
+	return major != int(v) || info.VersionBuild >= build
+}
+
 // atLeast reports whether the connected instance is v or later, with an
 // unread version and Azure counting as newest (majorAtLeast).
 func (s *Server) atLeast(v ServerVersion) bool { return majorAtLeast(s.serverMajorVersion(), v) }

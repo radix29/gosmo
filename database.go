@@ -545,6 +545,9 @@ FROM sys.database_files`
 // (IAM, boot page, allocation bitmaps), which belong to no allocation unit.
 // Read the parts against each other, not against DataFilesMB — that is how
 // the SSMS report presents them too.
+//
+// These are not sp_spaceused's figures — SpaceReport is the read that
+// matches that procedure, and its doc says where the two differ.
 type DiskUsage struct {
 	// DataFilesMB and LogFilesMB are the on-disk sizes of the ROWS and LOG
 	// files respectively — DataFilesMB + LogFilesMB is the database's

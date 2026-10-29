@@ -364,6 +364,7 @@ The instance and database halves pair up: `ServerResourceStat` and
 | Languages                | `srv.Languages(ctx)`                          |
 | Processors / NUMA topology | `srv.ProcessorInfo(ctx)`; `srv.Schedulers(ctx)` — the visible schedulers with CPU, NUMA node and processor group (what `PoolAffinity` names) and each one's current load (VIEW SERVER STATE) |
 | Disk volumes              | `srv.DiskVolumes(ctx)`                        |
+| The volume behind each database file | `srv.FileVolumes(ctx)` → `[]FileVolume{DatabaseID, FileID, PhysicalName, MountPoint, VolumeName, TotalBytes, AvailableBytes}, visible` — one row per file; without VIEW SERVER STATE `visible` is false and no error. `FileVolume.Plausible()` / `DiskVolumeInfo.Plausible()` drop a host's nonsense figures (total 0, available > total) |
 | Activity readings (activity monitor) | `srv.HasViewServerState(ctx)` first, then `srv.PerformanceCounters(ctx, counters, instances)` (instance prefix stripped; decode by `CounterType`), `WaitStats`, `FileIOStats`, `MemoryClerks`, `RequestActivity`, `HostCPU` — raw cumulative or current figures, no rates (`server_activity.go`) |
 | tempdb usage              | `srv.TempDBSpace(ctx)` / `TempDBFiles` / `TempDBObjects` (by `TempDBObjectKind`) / `TempDBSessions` (`tempdb_usage.go`) |
 | `Server.EnumDirectories` / `EnumFiles` | `srv.EnumFileSystem(ctx, path)` / `srv.FixedDrives(ctx)` / `srv.FileSystemExists(ctx, path)` — see [Server filesystem](#server-filesystem) |
@@ -432,6 +433,8 @@ The instance and database halves pair up: `ServerResourceStat` and
 | `Database.CompatibilityLevel`   | `db.SetCompatibilityLevel(ctx, level)`           |
 | Space used                      | `db.SpaceUsed(ctx)`                            |
 | Disk usage report               | `db.DiskUsage(ctx)` — data/index/unused/unallocated against the file totals, and the log's used/unused split, in MB |
+| `sp_spaceused` figures, exactly | `db.SpaceReport(ctx)` (database: size, unallocated, reserved/data/index/unused, file sizes and used, in KB) / `db.TableSizes(ctx)` (every table: schema, name, rows, reserved/data/index/unused, one round trip) — the procedure's arithmetic per version, unlike `SpaceUsed`/`DiskUsage`/`TableSpaceUsedAll`, whose split differs (`database_space.go`) |
+| Log usage, reuse wait, VLFs     | `db.LogSpace(ctx)` — `dm_db_log_space_usage` + `log_reuse_wait_desc` + `dm_db_log_info` counts (2016 SP2+, else `VLFsKnown` false); needs VIEW SERVER STATE |
 | Azure per-database resources    | `db.ResourceStats(ctx, max)` / `db.LatestResourceStats(ctx)` / `db.ResourceGovernance(ctx)` — see [Azure instance resources](#azure-instance-resources) |
 | Every table's row count / space used, in one query | `db.TableRowCounts(ctx)` / `db.TableSpaceUsedAll(ctx)` (keyed by `object_id`) |
 | ALTER DATABASE SET options      | `db.Options(ctx)` / `db.SetDatabaseOption(ctx, opt, value, term)` — `term` is the `WITH` clause: `gosmo.TerminationNone` waits for other sessions, `gosmo.TerminationRollbackImmediate` rolls them back |
