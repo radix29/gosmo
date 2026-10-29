@@ -60,6 +60,12 @@ func (v *View) IndexUsage(ctx context.Context) ([]*IndexUsage, error) {
 	return v.carrier().IndexUsage(ctx)
 }
 
+// FragmentationStats returns the fragmentation of the indexed view's indexes
+// — see Table.FragmentationStats. A view that is not indexed has none.
+func (v *View) FragmentationStats(ctx context.Context, mode FragmentationMode) ([]*IndexFragmentation, error) {
+	return v.carrier().FragmentationStats(ctx, mode)
+}
+
 // IndexByName returns one index on the view by name, with its columns — see
 // Table.IndexByName.
 func (v *View) IndexByName(ctx context.Context, name string) (*Index, error) {

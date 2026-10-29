@@ -475,7 +475,7 @@ The instance and database halves pair up: `ServerResourceStat` and
 | Space used (`sp_spaceused`-style) | `t.SpaceUsed(ctx)` (all tables at once: `db.TableSpaceUsedAll(ctx)`) |
 | Truncate              | `t.Truncate(ctx)`                     |
 | Drop / rename / move  | `t.Drop(ctx, gosmo.DropTableOnly)` (or `DropTableCascade`) / `t.Rename(ctx, newName)` / `t.Transfer(ctx, targetSchema)` |
-| Fragmentation         | `t.FragmentationStats(ctx, mode)`       |
+| Fragmentation         | `t.FragmentationStats(ctx, mode)` / `v.FragmentationStats(ctx, mode)` (an indexed view) |
 | Index usage (seeks, scans, lookups, updates) | `t.IndexUsage(ctx)` / `v.IndexUsage(ctx)` — `sys.dm_db_index_usage_stats`; without VIEW SERVER STATE every row reads `UsageVisible` false |
 | Rebuild all indexes   | `t.RebuildAllIndexes(ctx, fillFactor)`  |
 | Update all statistics | `t.UpdateAllStatistics(ctx, samplePct)` |

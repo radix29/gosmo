@@ -163,6 +163,10 @@ func TestLiveDiscoveryReads(t *testing.T) {
 		if err != nil || len(vu) != 1 || vu[0].IndexName != "CIX_vCustomer" {
 			t.Errorf("View.IndexUsage = %+v, %v; want CIX_vCustomer", vu, err)
 		}
+		vf, err := v.FragmentationStats(ctx, FragmentationLimited)
+		if err != nil || len(vf) != 1 || vf[0].IndexName != "CIX_vCustomer" {
+			t.Errorf("View.FragmentationStats = %+v, %v; want CIX_vCustomer", vf, err)
+		}
 		if got, err := d.TableRef("dbo", "nope").IndexUsage(ctx); err != nil || len(got) != 0 {
 			t.Errorf("IndexUsage(missing) = %v, %v; want no rows", got, err)
 		}
