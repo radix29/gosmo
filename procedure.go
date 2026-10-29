@@ -284,6 +284,10 @@ type Parameter struct {
 	// executing user's default schema, so TypeString qualifies it.
 	TypeSchema        string
 	IsUserDefinedType bool
+	// IsTypeHidden is Column.IsTypeHidden's: a user-defined type the login
+	// cannot see, DataType its base system type ("" for a CLR type),
+	// TypeSchema "".
+	IsTypeHidden bool
 
 	// XMLSchemaCollectionSchema, XMLSchemaCollection, IsXMLDocument,
 	// VectorDimensions and VectorBaseType are the typed-xml and vector
@@ -300,7 +304,7 @@ type Parameter struct {
 // schema-qualified and carries no length.
 func (p *Parameter) TypeString() string {
 	return catalogType{
-		dt: p.DataType, typeSchema: p.TypeSchema, userDefined: p.IsUserDefinedType,
+		dt: p.DataType, typeSchema: p.TypeSchema, userDefined: p.IsUserDefinedType, hidden: p.IsTypeHidden,
 		maxLength: p.MaxLength, precision: p.Precision, scale: p.Scale,
 		xmlSchema: p.XMLSchemaCollectionSchema, xmlCollection: p.XMLSchemaCollection, xmlDocument: p.IsXMLDocument,
 		vectorDimensions: p.VectorDimensions, vectorBaseType: p.VectorBaseType,
@@ -342,7 +346,7 @@ func scanParameter(scan func(...any) error) (*Parameter, error) {
 		&p.MaxLength, &p.Precision, &p.Scale, &p.IsOutput, &p.HasDefault,
 		&p.TypeSchema, &p.IsUserDefinedType,
 		&p.XMLSchemaCollectionSchema, &p.XMLSchemaCollection, &p.IsXMLDocument,
-		&p.VectorDimensions, &p.VectorBaseType); err != nil {
+		&p.VectorDimensions, &p.VectorBaseType, &p.IsTypeHidden); err != nil {
 		return nil, err
 	}
 	p.DataType = DataType(typeName)
@@ -359,15 +363,16 @@ func (d *Database) parameterSelect() string { return d.parameterQuery("p.paramet
 func (d *Database) parameterQuery(which string) string {
 	major := d.serverMajorVersion()
 	return `
-SELECT p.name, p.parameter_id, tp.name,
+SELECT p.name, p.parameter_id, ` + typeNameSQL("p") + `,
        p.max_length, p.precision, p.scale,
        p.is_output, p.has_default_value,
-       SCHEMA_NAME(tp.schema_id), tp.is_user_defined,
+       ISNULL(SCHEMA_NAME(tp.schema_id), N''), ISNULL(tp.is_user_defined, CAST(1 AS bit)),
        ISNULL(SCHEMA_NAME(xsc.schema_id), ''), ISNULL(xsc.name, ''), p.is_xml_document,
        ` + colSince(major, SQLServer2025, "ISNULL(p.vector_dimensions, 0)", "CAST(0 AS int)") + `,
-       ` + colSince(major, SQLServer2025, "ISNULL(p.vector_base_type_desc, '')", "CAST('' AS nvarchar(60))") + `
+       ` + colSince(major, SQLServer2025, "ISNULL(p.vector_base_type_desc, '')", "CAST('' AS nvarchar(60))") + `,
+       ` + typeHiddenSQL + `
 FROM   sys.parameters p
-JOIN   sys.types tp ON tp.user_type_id = p.user_type_id
+LEFT   JOIN sys.types tp ON tp.user_type_id = p.user_type_id
 LEFT   JOIN sys.xml_schema_collections xsc
        ON  xsc.xml_collection_id = NULLIF(p.xml_collection_id, 0)
 WHERE  p.object_id = OBJECT_ID(QUOTENAME(@p1) + N'.' + QUOTENAME(@p2))

@@ -134,6 +134,10 @@ func unsupportedVersionf(format string, args ...any) error {
 //     that recreates something *different* under the same name is worse than
 //     none, and under DROP AND CREATE it drops the object and never recreates
 //     it;
+//   - a script of a table or table type with a column whose user-defined
+//     type the login cannot see (Column.IsTypeHidden), or of a sequence over
+//     such a type (Sequence.IsTypeHidden): only the base type is known, and
+//     replaying it would build a different object;
 //   - Database.BulkInsert under WithScript: a bulk load has no T-SQL form to
 //     collect;
 //   - a read with no form for its input: XEvents.Files given a blob URL,

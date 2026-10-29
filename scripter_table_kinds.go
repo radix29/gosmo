@@ -33,6 +33,21 @@ func (o tableScriptOptions) refusal(fullName string) error {
 	return unsupportedf("gosmo: script table %s: %s cannot be scripted", fullName, kind)
 }
 
+// hiddenTypeRefusal refuses to script what (a table or table type) when one
+// of its columns has a type the login cannot see (Column.IsTypeHidden): the
+// script could only name the base type, and the replay would build a
+// different table under the same name. The login needs a permission on the
+// type — REFERENCES, or VIEW DEFINITION on it or its schema.
+func hiddenTypeRefusal(what string, cols []*Column) error {
+	for _, c := range cols {
+		if c.IsTypeHidden {
+			return unsupportedf("gosmo: script %s: column %s has a user-defined type the login cannot see; "+
+				"it needs REFERENCES or VIEW DEFINITION on the type", what, quoteIdent(c.Name))
+		}
+	}
+	return nil
+}
+
 // ledgerOptions returns a ledger table's entries for CREATE TABLE's WITH
 // clause, or nil for a table that is not one. An updatable ledger table is
 // system-versioned into its history table — sys.tables reports it with

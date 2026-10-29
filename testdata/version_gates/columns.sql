@@ -1,7 +1,7 @@
 -- major 13
 
 SELECT c.name, c.column_id,
-       tp.name,
+       ISNULL(tp.name, ISNULL(TYPE_NAME(c.system_type_id), N'')),
        c.max_length, c.precision, c.scale,
        c.is_nullable, c.is_identity, c.is_computed,
        ISNULL(cc.definition, ''),
@@ -9,7 +9,7 @@ SELECT c.name, c.column_id,
        c.is_rowguidcol, ISNULL(c.collation_name, ''),
        CONVERT(nvarchar(40), ic.seed_value), CONVERT(nvarchar(40), ic.increment_value),
        CAST(CASE WHEN pk.column_id IS NOT NULL THEN 1 ELSE 0 END AS BIT),
-       SCHEMA_NAME(tp.schema_id), tp.is_user_defined,
+       SCHEMA_NAME(tp.schema_id), ISNULL(tp.is_user_defined, CAST(1 AS bit)),
        ISNULL(cc.is_persisted, 0), ISNULL(ic.is_not_for_replication, 0),
        c.is_sparse, c.is_column_set,
        ISNULL(mc.masking_function, ''),
@@ -21,13 +21,15 @@ SELECT c.name, c.column_id,
        CAST(0 AS int),
        CAST('' AS nvarchar(60)),
        ISNULL(SCHEMA_NAME(br.schema_id), ''), ISNULL(br.name, ''),
-       ISNULL(SCHEMA_NAME(bd.schema_id), ''), ISNULL(bd.name, '')
+       ISNULL(SCHEMA_NAME(bd.schema_id), ''), ISNULL(bd.name, ''),
+       CAST(CASE WHEN tp.user_type_id IS NULL THEN 1 ELSE 0 END AS bit)
 FROM   sys.columns c
-JOIN   sys.types tp ON tp.user_type_id = c.user_type_id
+LEFT   JOIN sys.types tp ON tp.user_type_id = c.user_type_id
 LEFT   JOIN sys.objects br
-       ON  br.object_id = NULLIF(c.rule_object_id, tp.rule_object_id)
+       ON  br.object_id = NULLIF(c.rule_object_id, tp.rule_object_id) AND tp.user_type_id IS NOT NULL
 LEFT   JOIN sys.objects bd
        ON  bd.object_id = NULLIF(c.default_object_id, tp.default_object_id) AND bd.parent_object_id = 0
+       AND tp.user_type_id IS NOT NULL
 LEFT   JOIN sys.xml_schema_collections xsc
        ON  xsc.xml_collection_id = NULLIF(c.xml_collection_id, 0)
 LEFT   JOIN sys.column_encryption_keys cek
@@ -49,7 +51,7 @@ LEFT   JOIN (
 -- major 14
 
 SELECT c.name, c.column_id,
-       tp.name,
+       ISNULL(tp.name, ISNULL(TYPE_NAME(c.system_type_id), N'')),
        c.max_length, c.precision, c.scale,
        c.is_nullable, c.is_identity, c.is_computed,
        ISNULL(cc.definition, ''),
@@ -57,7 +59,7 @@ SELECT c.name, c.column_id,
        c.is_rowguidcol, ISNULL(c.collation_name, ''),
        CONVERT(nvarchar(40), ic.seed_value), CONVERT(nvarchar(40), ic.increment_value),
        CAST(CASE WHEN pk.column_id IS NOT NULL THEN 1 ELSE 0 END AS BIT),
-       SCHEMA_NAME(tp.schema_id), tp.is_user_defined,
+       SCHEMA_NAME(tp.schema_id), ISNULL(tp.is_user_defined, CAST(1 AS bit)),
        ISNULL(cc.is_persisted, 0), ISNULL(ic.is_not_for_replication, 0),
        c.is_sparse, c.is_column_set,
        ISNULL(mc.masking_function, ''),
@@ -69,13 +71,15 @@ SELECT c.name, c.column_id,
        CAST(0 AS int),
        CAST('' AS nvarchar(60)),
        ISNULL(SCHEMA_NAME(br.schema_id), ''), ISNULL(br.name, ''),
-       ISNULL(SCHEMA_NAME(bd.schema_id), ''), ISNULL(bd.name, '')
+       ISNULL(SCHEMA_NAME(bd.schema_id), ''), ISNULL(bd.name, ''),
+       CAST(CASE WHEN tp.user_type_id IS NULL THEN 1 ELSE 0 END AS bit)
 FROM   sys.columns c
-JOIN   sys.types tp ON tp.user_type_id = c.user_type_id
+LEFT   JOIN sys.types tp ON tp.user_type_id = c.user_type_id
 LEFT   JOIN sys.objects br
-       ON  br.object_id = NULLIF(c.rule_object_id, tp.rule_object_id)
+       ON  br.object_id = NULLIF(c.rule_object_id, tp.rule_object_id) AND tp.user_type_id IS NOT NULL
 LEFT   JOIN sys.objects bd
        ON  bd.object_id = NULLIF(c.default_object_id, tp.default_object_id) AND bd.parent_object_id = 0
+       AND tp.user_type_id IS NOT NULL
 LEFT   JOIN sys.xml_schema_collections xsc
        ON  xsc.xml_collection_id = NULLIF(c.xml_collection_id, 0)
 LEFT   JOIN sys.column_encryption_keys cek
@@ -97,7 +101,7 @@ LEFT   JOIN (
 -- major 15
 
 SELECT c.name, c.column_id,
-       tp.name,
+       ISNULL(tp.name, ISNULL(TYPE_NAME(c.system_type_id), N'')),
        c.max_length, c.precision, c.scale,
        c.is_nullable, c.is_identity, c.is_computed,
        ISNULL(cc.definition, ''),
@@ -105,7 +109,7 @@ SELECT c.name, c.column_id,
        c.is_rowguidcol, ISNULL(c.collation_name, ''),
        CONVERT(nvarchar(40), ic.seed_value), CONVERT(nvarchar(40), ic.increment_value),
        CAST(CASE WHEN pk.column_id IS NOT NULL THEN 1 ELSE 0 END AS BIT),
-       SCHEMA_NAME(tp.schema_id), tp.is_user_defined,
+       SCHEMA_NAME(tp.schema_id), ISNULL(tp.is_user_defined, CAST(1 AS bit)),
        ISNULL(cc.is_persisted, 0), ISNULL(ic.is_not_for_replication, 0),
        c.is_sparse, c.is_column_set,
        ISNULL(mc.masking_function, ''),
@@ -117,13 +121,15 @@ SELECT c.name, c.column_id,
        CAST(0 AS int),
        CAST('' AS nvarchar(60)),
        ISNULL(SCHEMA_NAME(br.schema_id), ''), ISNULL(br.name, ''),
-       ISNULL(SCHEMA_NAME(bd.schema_id), ''), ISNULL(bd.name, '')
+       ISNULL(SCHEMA_NAME(bd.schema_id), ''), ISNULL(bd.name, ''),
+       CAST(CASE WHEN tp.user_type_id IS NULL THEN 1 ELSE 0 END AS bit)
 FROM   sys.columns c
-JOIN   sys.types tp ON tp.user_type_id = c.user_type_id
+LEFT   JOIN sys.types tp ON tp.user_type_id = c.user_type_id
 LEFT   JOIN sys.objects br
-       ON  br.object_id = NULLIF(c.rule_object_id, tp.rule_object_id)
+       ON  br.object_id = NULLIF(c.rule_object_id, tp.rule_object_id) AND tp.user_type_id IS NOT NULL
 LEFT   JOIN sys.objects bd
        ON  bd.object_id = NULLIF(c.default_object_id, tp.default_object_id) AND bd.parent_object_id = 0
+       AND tp.user_type_id IS NOT NULL
 LEFT   JOIN sys.xml_schema_collections xsc
        ON  xsc.xml_collection_id = NULLIF(c.xml_collection_id, 0)
 LEFT   JOIN sys.column_encryption_keys cek
@@ -145,7 +151,7 @@ LEFT   JOIN (
 -- major 16
 
 SELECT c.name, c.column_id,
-       tp.name,
+       ISNULL(tp.name, ISNULL(TYPE_NAME(c.system_type_id), N'')),
        c.max_length, c.precision, c.scale,
        c.is_nullable, c.is_identity, c.is_computed,
        ISNULL(cc.definition, ''),
@@ -153,7 +159,7 @@ SELECT c.name, c.column_id,
        c.is_rowguidcol, ISNULL(c.collation_name, ''),
        CONVERT(nvarchar(40), ic.seed_value), CONVERT(nvarchar(40), ic.increment_value),
        CAST(CASE WHEN pk.column_id IS NOT NULL THEN 1 ELSE 0 END AS BIT),
-       SCHEMA_NAME(tp.schema_id), tp.is_user_defined,
+       SCHEMA_NAME(tp.schema_id), ISNULL(tp.is_user_defined, CAST(1 AS bit)),
        ISNULL(cc.is_persisted, 0), ISNULL(ic.is_not_for_replication, 0),
        c.is_sparse, c.is_column_set,
        ISNULL(mc.masking_function, ''),
@@ -165,13 +171,15 @@ SELECT c.name, c.column_id,
        CAST(0 AS int),
        CAST('' AS nvarchar(60)),
        ISNULL(SCHEMA_NAME(br.schema_id), ''), ISNULL(br.name, ''),
-       ISNULL(SCHEMA_NAME(bd.schema_id), ''), ISNULL(bd.name, '')
+       ISNULL(SCHEMA_NAME(bd.schema_id), ''), ISNULL(bd.name, ''),
+       CAST(CASE WHEN tp.user_type_id IS NULL THEN 1 ELSE 0 END AS bit)
 FROM   sys.columns c
-JOIN   sys.types tp ON tp.user_type_id = c.user_type_id
+LEFT   JOIN sys.types tp ON tp.user_type_id = c.user_type_id
 LEFT   JOIN sys.objects br
-       ON  br.object_id = NULLIF(c.rule_object_id, tp.rule_object_id)
+       ON  br.object_id = NULLIF(c.rule_object_id, tp.rule_object_id) AND tp.user_type_id IS NOT NULL
 LEFT   JOIN sys.objects bd
        ON  bd.object_id = NULLIF(c.default_object_id, tp.default_object_id) AND bd.parent_object_id = 0
+       AND tp.user_type_id IS NOT NULL
 LEFT   JOIN sys.xml_schema_collections xsc
        ON  xsc.xml_collection_id = NULLIF(c.xml_collection_id, 0)
 LEFT   JOIN sys.column_encryption_keys cek
@@ -193,7 +201,7 @@ LEFT   JOIN (
 -- major 17
 
 SELECT c.name, c.column_id,
-       tp.name,
+       ISNULL(tp.name, ISNULL(TYPE_NAME(c.system_type_id), N'')),
        c.max_length, c.precision, c.scale,
        c.is_nullable, c.is_identity, c.is_computed,
        ISNULL(cc.definition, ''),
@@ -201,7 +209,7 @@ SELECT c.name, c.column_id,
        c.is_rowguidcol, ISNULL(c.collation_name, ''),
        CONVERT(nvarchar(40), ic.seed_value), CONVERT(nvarchar(40), ic.increment_value),
        CAST(CASE WHEN pk.column_id IS NOT NULL THEN 1 ELSE 0 END AS BIT),
-       SCHEMA_NAME(tp.schema_id), tp.is_user_defined,
+       SCHEMA_NAME(tp.schema_id), ISNULL(tp.is_user_defined, CAST(1 AS bit)),
        ISNULL(cc.is_persisted, 0), ISNULL(ic.is_not_for_replication, 0),
        c.is_sparse, c.is_column_set,
        ISNULL(mc.masking_function, ''),
@@ -213,13 +221,15 @@ SELECT c.name, c.column_id,
        ISNULL(c.vector_dimensions, 0),
        ISNULL(c.vector_base_type_desc, ''),
        ISNULL(SCHEMA_NAME(br.schema_id), ''), ISNULL(br.name, ''),
-       ISNULL(SCHEMA_NAME(bd.schema_id), ''), ISNULL(bd.name, '')
+       ISNULL(SCHEMA_NAME(bd.schema_id), ''), ISNULL(bd.name, ''),
+       CAST(CASE WHEN tp.user_type_id IS NULL THEN 1 ELSE 0 END AS bit)
 FROM   sys.columns c
-JOIN   sys.types tp ON tp.user_type_id = c.user_type_id
+LEFT   JOIN sys.types tp ON tp.user_type_id = c.user_type_id
 LEFT   JOIN sys.objects br
-       ON  br.object_id = NULLIF(c.rule_object_id, tp.rule_object_id)
+       ON  br.object_id = NULLIF(c.rule_object_id, tp.rule_object_id) AND tp.user_type_id IS NOT NULL
 LEFT   JOIN sys.objects bd
        ON  bd.object_id = NULLIF(c.default_object_id, tp.default_object_id) AND bd.parent_object_id = 0
+       AND tp.user_type_id IS NOT NULL
 LEFT   JOIN sys.xml_schema_collections xsc
        ON  xsc.xml_collection_id = NULLIF(c.xml_collection_id, 0)
 LEFT   JOIN sys.column_encryption_keys cek

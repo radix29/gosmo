@@ -257,13 +257,15 @@ type CheckConstraint struct {
 	IsNotForReplication bool
 }
 
-// CheckConstraints returns all CHECK constraints on the table.
+// CheckConstraints returns all CHECK constraints on the table. Definition is
+// "" where the login cannot see it: sys.check_constraints.definition is NULL
+// without VIEW DEFINITION on the table, which SELECT alone does not give.
 func (t *Table) CheckConstraints(ctx context.Context) ([]*CheckConstraint, error) {
 	if err := t.requireLoaded("list check constraints for"); err != nil {
 		return nil, err
 	}
 	const q = `
-SELECT cc.name, cc.definition, cc.is_disabled, ISNULL(c.name, ''),
+SELECT cc.name, ISNULL(cc.definition, ''), cc.is_disabled, ISNULL(c.name, ''),
        cc.is_not_trusted, cc.is_not_for_replication
 FROM   sys.check_constraints cc
 LEFT   JOIN sys.columns c

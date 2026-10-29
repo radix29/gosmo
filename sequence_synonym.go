@@ -28,6 +28,12 @@ type Sequence struct {
 	// qualify with it, or a re-run resolves the alias against the executing
 	// principal's default schema instead.
 	DataTypeSchema string
+	// IsTypeHidden is true when DataType is a user-defined alias type the
+	// login cannot see (no REFERENCES or VIEW DEFINITION on it): DataType is
+	// then its base system type and DataTypeSchema "". Without the type
+	// LEFT JOINed, such a sequence was left out of Sequences altogether.
+	// ScriptSequence refuses it — the script could only name the base type.
+	IsTypeHidden bool
 	// Precision and Scale are the declared type's, from sys.sequences; they
 	// matter for a decimal/numeric sequence, whose bare type name means
 	// (18,0).
@@ -114,7 +120,7 @@ func scanSequence(d *Database, scan func(...any) error) (*Sequence, error) {
 		&seq.StartValue, &seq.Increment,
 		&seq.MinValue, &seq.MaxValue,
 		&seq.IsCycling, &seq.IsCached, &seq.CacheSize,
-		&seq.CurrentValue, &lastUsed,
+		&seq.CurrentValue, &lastUsed, &seq.IsTypeHidden,
 	); err != nil {
 		return nil, err
 	}
@@ -128,16 +134,17 @@ func scanSequence(d *Database, scan func(...any) error) (*Sequence, error) {
 func (d *Database) sequenceSelect() string {
 	return `
 SELECT s.name, SCHEMA_NAME(s.schema_id), s.object_id,
-       tp.name, SCHEMA_NAME(tp.schema_id), s.precision, s.scale,
+       ` + typeNameSQL("s") + `, ISNULL(SCHEMA_NAME(tp.schema_id), N''), s.precision, s.scale,
        CONVERT(nvarchar(40), s.start_value),
        CONVERT(nvarchar(40), s.increment),
        CONVERT(nvarchar(40), s.minimum_value),
        CONVERT(nvarchar(40), s.maximum_value),
        s.is_cycling, s.is_cached, ISNULL(s.cache_size, 0),
        CONVERT(nvarchar(40), s.current_value),
-       ` + colSince(d.serverMajorVersion(), SQLServer2017, "CONVERT(nvarchar(40), s.last_used_value)", "CAST(NULL AS nvarchar(40))") + `
+       ` + colSince(d.serverMajorVersion(), SQLServer2017, "CONVERT(nvarchar(40), s.last_used_value)", "CAST(NULL AS nvarchar(40))") + `,
+       ` + typeHiddenSQL + `
 FROM   sys.sequences s
-JOIN   sys.types tp ON tp.user_type_id = s.user_type_id`
+LEFT   JOIN sys.types tp ON tp.user_type_id = s.user_type_id`
 }
 
 // CreateSequenceRequest describes a new sequence.

@@ -599,3 +599,36 @@ func (d *Database) Capabilities(ctx context.Context) (*DatabaseCapabilities, err
 	}
 	return c, nil
 }
+
+// DatabaseAccess reports HAS_DBACCESS for every database the login can see,
+// keyed by database_id — what DatabaseCapabilities.Accessible answers for
+// one database, for the whole instance in one round trip, where
+// Capabilities costs a probe per database.
+//
+// True means the login can open the database now. A database that is not
+// ONLINE reads false for every login, sysadmin included (verified on majors
+// 14 and 17, 2026-10-29), and so does one the login has no user in; a
+// database HAS_DBACCESS answers NULL for is absent from the map.
+func (s *Server) DatabaseAccess(ctx context.Context) (map[int]bool, error) {
+	const q = `SELECT database_id, CAST(HAS_DBACCESS(name) AS bit) FROM sys.databases`
+	rows, err := s.query(ctx, q)
+	type access struct {
+		id int
+		ok sql.NullBool
+	}
+	list, err := scanRows(rows, err, "read database access", func(scan func(...any) error) (access, error) {
+		var r access
+		err := scan(&r.id, &r.ok)
+		return r, err
+	})
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[int]bool, len(list))
+	for _, r := range list {
+		if r.ok.Valid {
+			out[r.id] = r.ok.Bool
+		}
+	}
+	return out, nil
+}

@@ -77,6 +77,10 @@ func TestLiveEveryProbedPermissionNameIsOneTheServerDefines(t *testing.T) {
 			t.Logf("database permission %q is 2017+; major %d does not define it", name, major)
 			continue
 		}
+		if name == "VIEW DATABASE PERFORMANCE STATE" && !hasColumnSince(major, SQLServer2022) {
+			t.Logf("database permission %q is 2022-only; major %d does not define it", name, major)
+			continue
+		}
 		if got := dcaps.Permission(name); got == CapabilityUnknown {
 			t.Errorf("database permission %q reads %v — the instance does not define that name, "+
 				"so it gates nothing", name, got)

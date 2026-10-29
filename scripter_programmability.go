@@ -152,6 +152,9 @@ func readTableTypeScriptParts(ctx context.Context, t *UserDefinedTableType) (tab
 	if p.cols, err = t.Columns(ctx); err != nil {
 		return p, err
 	}
+	if err := hiddenTypeRefusal("table type "+qualifiedName(t.Schema, t.Name), p.cols); err != nil {
+		return p, err
+	}
 	tbl := t.typeTable()
 	if p.indexes, err = tbl.Indexes(ctx); err != nil {
 		return p, err

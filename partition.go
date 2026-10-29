@@ -56,7 +56,7 @@ func (pf *PartitionFunction) Database() *Database { return pf.db }
 // WHERE.
 var partitionFunctionSelect = `
 SELECT pf.name, pf.function_id, pf.fanout - 1,
-       tp.name AS input_type, pp.max_length, pp.precision, pp.scale,
+       ` + typeNameSQL("pp") + ` AS input_type, pp.max_length, pp.precision, pp.scale,
        pf.boundary_value_on_right,
        ` + jsonRows(`b.t, CASE
                  -- Style 1 keeps the 0x prefix. Style 126 — right for a
@@ -84,7 +84,10 @@ SELECT pf.name, pf.function_id, pf.fanout - 1,
         WHERE  prv.function_id = pf.function_id`, "prv.boundary_id") + ` AS boundaries
 FROM   sys.partition_functions pf
 JOIN   sys.partition_parameters pp ON pp.function_id = pf.function_id
-JOIN   sys.types tp ON tp.user_type_id = pp.user_type_id`
+-- A partition function takes only system types (an alias or CLR type is
+-- refused, Msg 7704), which every login sees; the LEFT JOIN and
+-- typeNameSQL keep it listed all the same, as every other type read does.
+LEFT   JOIN sys.types tp ON tp.user_type_id = pp.user_type_id`
 
 // PartitionFunctions returns all partition functions in the database.
 func (d *Database) PartitionFunctions(ctx context.Context) ([]*PartitionFunction, error) {
