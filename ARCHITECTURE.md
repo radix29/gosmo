@@ -2386,6 +2386,19 @@ external, FileTable, ledger, Always Encrypted — with an error wrapping
 `ErrUnsupported`, before any text is produced. It is not
 `ErrUnsupportedVersion`: nothing is wrong with the server's version.
 
+### `ErrDefinitionHidden`
+
+A script that needs a definition the login cannot read — a module's text, a
+table's (or table type's) default, check or computed-column expression, or a
+filtered index's or statistic's predicate (`Index.IsFilterHidden`,
+`Statistic.HasFilter` with an empty `FilterDef`), each NULL without VIEW
+DEFINITION — is refused with an error wrapping both `ErrDefinitionHidden` and
+`ErrUnsupported`, rather than written with the expression missing (`DEFAULT`
+followed by nothing), the column turned plain or the index unfiltered. DROP restates nothing and is not refused by it. A module whose text
+reads NULL is checked with `OBJECTPROPERTY(…, 'IsEncrypted')`: an encrypted
+one, whose text no permission reveals, wraps `ErrUnsupported` alone, so a
+caller can tell "grant VIEW DEFINITION" from "cannot be scripted".
+
 ### `ErrInvalidRequest`
 
 A call refused for its own arguments — a required name left empty, a value

@@ -34,6 +34,10 @@ func (sc *Scripter) ScriptIndex(ctx context.Context, schema, table, name string)
 	if err != nil {
 		return "", err
 	}
+	if err := hiddenDefinitionRefusal("index "+quoteIdent(idx.Name)+" on "+qualifiedName(schema, table),
+		sc.opts.verb(), nil, []*Index{idx}, nil); err != nil {
+		return "", err
+	}
 	// The table's own data space decides whether the index needs its ON
 	// clause (indexDataSpaceClause).
 	tableDS, err := t.DataSpace(ctx)
@@ -183,6 +187,12 @@ func (sc *Scripter) ScriptStatistic(ctx context.Context, schema, table, name str
 	}
 	var cols []string
 	if v := sc.opts.verb(); v != ScriptDrop {
+		// A filter without VIEW DEFINITION reads NULL while has_filter
+		// stays set: recreated unfiltered it would be a different statistic.
+		if st.HasFilter && st.FilterDef == "" {
+			return "", unsupportedf("gosmo: script statistic %q on %s: its filter: %w; it needs VIEW DEFINITION on the table",
+				name, t.FullName(), ErrDefinitionHidden)
+		}
 		if cols, err = st.Columns(ctx); err != nil {
 			return "", err
 		}

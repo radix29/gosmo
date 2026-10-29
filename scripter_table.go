@@ -66,6 +66,9 @@ func (sc *Scripter) ScriptTable(ctx context.Context, schema, name string) (strin
 	if p.checks, err = t.CheckConstraints(ctx); err != nil {
 		return "", err
 	}
+	if err := hiddenDefinitionRefusal("table "+t.FullName(), sc.opts.verb(), p.cols, p.indexes, p.checks); err != nil {
+		return "", err
+	}
 	// The table's own ON clause comes from its heap or clustered index, and
 	// a heap is not in the index list at all — see Table.DataSpace.
 	if p.ds, err = t.DataSpace(ctx); err != nil {

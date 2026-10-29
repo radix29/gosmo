@@ -69,7 +69,12 @@ type Index struct {
 	KeyColumns       []IndexColumn
 	IncludedColumns  []IndexColumn
 	FilterDefinition string
-	DataSpace        DataSpace
+	// IsFilterHidden is a filtered index whose predicate the login cannot
+	// read: sys.indexes.filter_definition is NULL without VIEW DEFINITION,
+	// while has_filter still says there is one. FilterDefinition is then ""
+	// and the index is not to be restated as unfiltered.
+	IsFilterHidden bool
+	DataSpace      DataSpace
 
 	// IsPrimaryXML, PrimaryXMLIndex and SecondaryXMLType describe an XML
 	// index (sys.xml_indexes), as CreateIndexRequest's fields of the same
@@ -280,7 +285,7 @@ func (t *Table) indexListSelect() string {
 	return `
 SELECT i.name, i.index_id, i.type_desc, i.is_unique, i.is_primary_key,
        i.is_unique_constraint, i.is_disabled, i.is_hypothetical, i.fill_factor,
-       ISNULL(i.filter_definition, ''),
+       CASE WHEN i.has_filter = 1 AND i.filter_definition IS NULL THEN NULL ELSE ISNULL(i.filter_definition, '') END,
        i.is_padded, i.ignore_dup_key, i.allow_row_locks, i.allow_page_locks,
        ` + partitionCompressionList(t.db.serverMajorVersion(), "i.object_id", "i.index_id") + `,
        ` + dataSpaceColumns + `,
@@ -327,12 +332,12 @@ ORDER  BY i.index_id`
 	var indexes []*Index
 	for rows.Next() {
 		idx := &Index{table: t}
-		var typeDesc, compression sql.NullString
+		var typeDesc, compression, filter sql.NullString
 		var secondary, tessellation string
 		var xmin, ymin, xmax, ymax sql.NullFloat64
 		if err := rows.Scan(&idx.Name, &idx.IndexID, &typeDesc,
 			&idx.IsUnique, &idx.IsPrimaryKey, &idx.IsUniqueConstraint,
-			&idx.IsDisabled, &idx.IsHypothetical, &idx.FillFactor, &idx.FilterDefinition,
+			&idx.IsDisabled, &idx.IsHypothetical, &idx.FillFactor, &filter,
 			&idx.IsPadded, &idx.IgnoreDupKey, &idx.AllowRowLocks, &idx.AllowPageLocks,
 			&compression,
 			&idx.DataSpace.Name, &idx.DataSpace.IsPartitionScheme,
@@ -347,6 +352,7 @@ ORDER  BY i.index_id`
 			&idx.CellsPerObject); err != nil {
 			return nil, err
 		}
+		idx.FilterDefinition, idx.IsFilterHidden = filter.String, !filter.Valid
 		idx.SecondaryXMLType = XMLSecondaryIndexType(secondary)
 		idx.Tessellation = SpatialTessellation(tessellation)
 		if xmin.Valid && ymin.Valid && xmax.Valid && ymax.Valid {
