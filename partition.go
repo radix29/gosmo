@@ -443,6 +443,10 @@ WHERE  p.object_id = @p1`
 // A table with no allocated pages at all has no row in sys.partitions to
 // aggregate and is therefore absent from the map, not present with zeroes —
 // callers should treat a missing key as "no space used".
+//
+// The split is by allocation-unit type, not sp_spaceused's: TableSizes is
+// the read whose figures match `sp_spaceused <table>`, and the two disagree
+// by design on LOB pages, used versus data pages, and XML index tables.
 func (d *Database) TableSpaceUsedAll(ctx context.Context) (map[int]*TableSpaceInfo, error) {
 	// Same joins and aggregates as Table.SpaceUsed, grouped by object
 	// instead of filtered to one. The filegroup is a LEFT JOIN rather than
