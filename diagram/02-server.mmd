@@ -96,6 +96,7 @@ classDiagram
         +BackupDeviceRef(name) *BackupDevice
         +CreateBackupDevice(req) *BackupDevice
         +DatabaseFiles(database) []*DatabaseFileInfo
+        +DatabaseSizes() map[int]DatabaseSize
         +DatabaseRecoveryStatuses() []*DatabaseRecoveryStatus
         +Capabilities() *Capabilities
         +SecurityInfo() *ServerSecurityInfo

@@ -191,6 +191,10 @@ classDiagram
         +Dependencies(schema, name) []*Dependency
         +Dependents(schema, name) []*Dependency
         +Search(pattern) []*SearchResult
+        +SearchDefinitions(pattern) []*SearchResult
+        +SearchColumns(pattern) []*ColumnSearchResult
+        +ObjectByName(schema, name) *ObjectInfo
+        +ObjectsNamed(name) []*ObjectInfo
         +FindSecurables(search) []Securable
         +ObjectColumns(schema, name) []*Column
         +Permissions(schema, name) []*PermissionEntry

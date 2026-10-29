@@ -84,6 +84,7 @@ func TestEmptySchemaIsRefused(t *testing.T) {
 			return errOnly(d.UserDefinedFunctionByName(c, "", "f"))
 		}},
 		{"TriggerByName", func(c context.Context, d *Database) error { return errOnly(d.TriggerByName(c, "", "tr")) }},
+		{"ObjectByName", func(c context.Context, d *Database) error { return errOnly(d.ObjectByName(c, "", "o")) }},
 		{"ScriptTable", func(c context.Context, d *Database) error {
 			return errOnly(NewScripter(d, ScriptOptions{}).ScriptTable(c, "", "t"))
 		}},

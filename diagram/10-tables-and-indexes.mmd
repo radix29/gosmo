@@ -38,6 +38,7 @@ classDiagram
         +Rename(newName) error
         +Transfer(targetSchema) error
         +FragmentationStats(mode) []*IndexFragmentation
+        +IndexUsage() []*IndexUsage
         +RebuildAllIndexes(fillFactor) error
         +UpdateAllStatistics(samplePct) error
         +CreateIndex(req) *Index

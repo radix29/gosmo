@@ -357,6 +357,7 @@ The instance and database halves pair up: `ServerResourceStat` and
 | Azure resource history           | `srv.ServerResourceStats(ctx, max)` / `srv.LatestServerResourceStats(ctx)` — `sys.server_resource_stats`, one row per 15-second window |
 | Azure resource limits            | `srv.InstanceResourceGovernance(ctx)` / `srv.OSJobObject(ctx)` — see [Azure instance resources](#azure-instance-resources) |
 | Azure per-database limits        | `srv.UserDBResourceGovernance(ctx)` — one row per database on the instance, from wherever the connection is |
+| Allocated size of every database, data and log | `srv.DatabaseSizes(ctx)` → `map[database_id]DatabaseSize{DataKB, LogKB}` — one `sys.master_files` read, any state; a database the login cannot see is absent |
 | Files of one database, in any state | `srv.DatabaseFiles(ctx, name)` — reads `sys.master_files`, so it answers for an OFFLINE / RECOVERY_PENDING / SUSPECT database that `db.Files(ctx)` cannot `USE` |
 | Live memory stats        | `srv.MemoryStats(ctx)`                        |
 | Languages                | `srv.Languages(ctx)`                          |
@@ -474,6 +475,7 @@ The instance and database halves pair up: `ServerResourceStat` and
 | Truncate              | `t.Truncate(ctx)`                     |
 | Drop / rename / move  | `t.Drop(ctx, gosmo.DropTableOnly)` (or `DropTableCascade`) / `t.Rename(ctx, newName)` / `t.Transfer(ctx, targetSchema)` |
 | Fragmentation         | `t.FragmentationStats(ctx, mode)`       |
+| Index usage (seeks, scans, lookups, updates) | `t.IndexUsage(ctx)` / `v.IndexUsage(ctx)` — `sys.dm_db_index_usage_stats`; without VIEW SERVER STATE every row reads `UsageVisible` false |
 | Rebuild all indexes   | `t.RebuildAllIndexes(ctx, fillFactor)`  |
 | Update all statistics | `t.UpdateAllStatistics(ctx, samplePct)` |
 | Create index          | `t.CreateIndex(ctx, req)` — every index type, see below |
@@ -770,7 +772,8 @@ an unescaped filter for `pct_1` also matches `pct1100`.
 | --------------------------- | ---------------------------------------------------------- |
 | Object dependencies (uses)  | `db.Dependencies(ctx, schema, name)` — an unqualified (caller-dependent) reference is resolved by name and flagged `IsCallerDependent` |
 | Object dependencies (used by) | `db.Dependents(ctx, schema, name)`                            |
-| Object search                | `db.Search(ctx, pattern)`                                      |
+| Object search                | `db.Search(ctx, pattern)` (names) / `db.SearchDefinitions(ctx, pattern)` (module text) / `db.SearchColumns(ctx, pattern)` (table and view columns) |
+| Object of any kind by name   | `db.ObjectByName(ctx, schema, name)` → `*ObjectInfo` (`sys.objects`: id, type, parent) / `db.ObjectsNamed(ctx, name)` (every schema) |
 | Securable search (for a permissions picker) | `db.FindSecurables(ctx, gosmo.SecurableSearch{Name: ..., Limit: ...})` → `[]Securable` (`Columns` nil) (schemas, objects, types, certificates) |
 | Object permissions           | `db.Permissions(ctx, schema, name)`                            |
 | Grant / deny / revoke (any securable in a database) | `db.ApplyPermission(ctx, gosmo.VerbGrant\|VerbDeny\|VerbRevoke, gosmo.Securable{Class, Schema, Name, Columns}, perm, principal, opts)` — tables, views, schemas, procedures, scalar / inline / multi-statement functions, sequences, synonyms, types, certificates |
