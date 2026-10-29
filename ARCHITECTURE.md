@@ -329,7 +329,7 @@ The instance and database halves pair up: `ServerResourceStat` and
 | Read a detached file    | `srv.DetachedDatabaseInfo(ctx, primaryFilePath)` → `*DetachedDatabase` (`.Name`, `.Files`, `.DataFiles()`, `.LogFiles()`) — the only way to learn a detached database's other files |
 | Database snapshots      | `srv.DatabaseSnapshots(ctx)` / `srv.DatabaseSnapshotByName(ctx, name)` / `srv.DatabaseSnapshotRef(name)` (no-I/O handle) / `srv.SnapshotsOf(ctx, database)` / `srv.CreateDatabaseSnapshot(ctx, req)` / `srv.RestoreFromSnapshot(ctx, database, snapshot)` — see [Database snapshots](#database-snapshots) |
 | `Server.LinkedServers`  | `srv.LinkedServers(ctx)` (`DataAccess` = `is_data_access_enabled`); through one, `srv.LinkedServerDatabases(ctx, ls)` / `srv.LinkedServerCatalog(ctx, ls, db)` — `Catalog`'s snapshot read from the remote's own sys views via `OPENQUERY`, SQL Server remotes only (see `linked_server.go`) |
-| `Server.Configuration`  | `srv.Configurations(ctx)` / `srv.ConfigurationByName(ctx, name)` / `srv.ConfigurationRef(name)` (no-I/O handle) |
+| `Server.Configuration`  | `srv.Configurations(ctx)` / `srv.ConfigurationByName(ctx, name)` / `srv.ConfigurationRef(name)` (no-I/O handle). Both reads fill `Default`/`HasDefault`: the **engine** default for the server's major from a per-major table (13–17, `server_config_defaults.go`), not Setup's recommendation; `HasDefault` false on Azure, a newer major, or an option the table omits. A self-configuring option's default 0 lies below its reported `Minimum` |
 | Change sp_configure options | `srv.ApplyConfiguration(ctx, []gosmo.ConfigChange{{Name, Value}}, gosmo.ConfigApplyOptions{Override})` — one batch: turns `show advanced options` on for it when needed and puts it back, one `RECONFIGURE`. `ConfigurationOption.SetValue` is the bare `sp_configure`, which fails Msg 15123 for an advanced option while `show advanced options` is 0 |
 | `Server.JobServer` (Agent) | see [SQL Server Agent](#sql-server-agent) below |
 | Active sessions         | `srv.ActiveSessions(ctx, gosmo.UserSessionsOnly)` (or `AllSessions`) |
@@ -361,6 +361,8 @@ The instance and database halves pair up: `ServerResourceStat` and
 | Which databases the login can open | `srv.DatabaseAccess(ctx)` → `map[database_id]bool` — `HAS_DBACCESS` for the whole instance in one read (a database not ONLINE reads false for everyone); `db.Capabilities(ctx).Accessible` is the same answer for one database |
 | Files of one database, in any state | `srv.DatabaseFiles(ctx, name)` — reads `sys.master_files`, so it answers for an OFFLINE / RECOVERY_PENDING / SUSPECT database that `db.Files(ctx)` cannot `USE` |
 | Live memory stats        | `srv.MemoryStats(ctx)`                        |
+| Instance start and uptime | `srv.StartTime(ctx)` → start (server-local, carried in UTC), uptime by the server's own clock (VIEW SERVER STATE) |
+| Trace flags              | `srv.TraceFlags(ctx)` → `[]TraceFlag{Flag, Global, Session}` (DBCC TRACESTATUS(-1)); `srv.SetTraceFlag(ctx, flag, on)` — always global, sysadmin, lost at restart; a startup-only flag is ignored without an error, so read `TraceFlags` after (`server_traceflag.go`) |
 | Languages                | `srv.Languages(ctx)`                          |
 | Processors / NUMA topology | `srv.ProcessorInfo(ctx)`; `srv.Schedulers(ctx)` — the visible schedulers with CPU, NUMA node and processor group (what `PoolAffinity` names) and each one's current load (VIEW SERVER STATE) |
 | Disk volumes              | `srv.DiskVolumes(ctx)`                        |
