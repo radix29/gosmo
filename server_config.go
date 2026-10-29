@@ -196,10 +196,17 @@ const showAdvancedOptions = "show advanced options"
 // A change to "show advanced options" itself wins over step 4: it is applied
 // after every other change and nothing is restored afterwards.
 //
-// The batch has no TRY/CATCH: an sp_configure that fails (an unknown name, a
-// value out of range) does not stop the rest, so the RECONFIGURE still
+// An sp_configure that fails (an unknown name, a value out of range, an
+// option the edition lacks) does not stop the rest, so the RECONFIGURE still
 // installs every change that was accepted and step 4 still runs. The error
-// returned names every failure. An empty changes is a no-op.
+// returned names every failure. A refused RECONFIGURE (Msg 5807, a value
+// outside the recommended range without Override) is different: it ends the
+// batch, leaving every change configured but not running. So each RECONFIGURE
+// that follows step 1 sits in TRY/CATCH, and the CATCH puts "show advanced
+// options" back to its configured value before rethrowing — not running
+// either, since its own RECONFIGURE would be refused the same way, but
+// pending with the rest rather than left on for good (found live on 13: the
+// option stayed 1/1). An empty changes is a no-op.
 func (s *Server) ApplyConfiguration(ctx context.Context, changes []ConfigChange, opts ConfigApplyOptions) error {
 	if len(changes) == 0 {
 		return nil
@@ -240,7 +247,13 @@ IF EXISTS (SELECT 1 FROM sys.configurations WHERE name = N'%[1]s' AND value_in_u
    AND EXISTS (SELECT 1 FROM sys.configurations WHERE is_advanced = 1 AND name IN (%[2]s))
 BEGIN
     EXEC sys.sp_configure N'%[1]s', 1;
-    %[3]s;
+    BEGIN TRY
+        %[3]s;
+    END TRY
+    BEGIN CATCH
+        EXEC sys.sp_configure N'%[1]s', @show_advanced_value;
+        THROW;
+    END CATCH;
     SET @show_advanced_enabled = 1;
 END;
 `, showAdvancedOptions, strings.Join(names, ", "), reconfigure)
@@ -248,15 +261,23 @@ END;
 	for _, c := range ordered {
 		fmt.Fprintf(&b, "EXEC sys.sp_configure N'%s', %d;\n", escapeSingle(c.Name), c.Value)
 	}
-	b.WriteString(reconfigure)
-	b.WriteString(";")
 	if enable && showAdvanced == nil {
-		fmt.Fprintf(&b, `
+		fmt.Fprintf(&b, `BEGIN TRY
+    %[2]s;
+END TRY
+BEGIN CATCH
+    IF @show_advanced_enabled = 1
+        EXEC sys.sp_configure N'%[1]s', @show_advanced_value;
+    THROW;
+END CATCH;
 IF @show_advanced_enabled = 1
 BEGIN
-    EXEC sys.sp_configure N'%s', @show_advanced_value;
-    %s;
+    EXEC sys.sp_configure N'%[1]s', @show_advanced_value;
+    %[2]s;
 END;`, showAdvancedOptions, reconfigure)
+	} else {
+		b.WriteString(reconfigure)
+		b.WriteString(";")
 	}
 	return b.String()
 }

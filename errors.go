@@ -409,6 +409,8 @@ const (
 //	916   The server principal "…" is not able to access the database "…"
 //	2571  User '…' does not have permission to run DBCC TRACEON (or another
 //	      DBCC that needs sysadmin)
+//	27219 Caller does not have permissions to execute the stored procedure
+//	      (sp_readerrorlog without securityadmin or VIEW SERVER STATE)
 //	1088  Cannot find the object "…" because it does not exist or you do not
 //	      have permissions
 //	3701  Cannot drop the table '…', because it does not exist or …
@@ -421,7 +423,7 @@ const (
 var refusalNumbers = map[int32]RefusalKind{
 	229: PermissionDenied, 230: PermissionDenied, 262: PermissionDenied,
 	297: PermissionDenied, 300: PermissionDenied, 916: PermissionDenied,
-	2571: PermissionDenied,
+	2571: PermissionDenied, 27219: PermissionDenied,
 
 	1088: MissingOrDenied,
 	3701: MissingOrDenied, 5011: MissingOrDenied,

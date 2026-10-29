@@ -3,9 +3,15 @@ package gosmo
 import (
 	"context"
 	"database/sql"
+	"database/sql/driver"
+	"io"
 	"reflect"
+	"strings"
+	"sync"
 	"testing"
 	"time"
+
+	mssql "github.com/microsoft/go-mssqldb"
 )
 
 func TestErrorLogTypeString(t *testing.T) {
@@ -227,5 +233,175 @@ func TestReadErrorLogCall(t *testing.T) {
 	// The log number and family reach the statement as themselves.
 	if call, _ := readErrorLogCall(ErrorLogAgent, 3, LogSearch{}); call != "EXEC xp_readerrorlog 3, 2" {
 		t.Errorf("agent archive call = %q", call)
+	}
+}
+
+// TestReadErrorLogProcCall pins sp_readerrorlog's form: the log number and
+// family, then the two search strings or nothing — it takes no dates.
+func TestReadErrorLogProcCall(t *testing.T) {
+	from := time.Date(2026, 8, 20, 0, 0, 0, 0, time.UTC)
+	for _, c := range []struct {
+		name     string
+		search   LogSearch
+		wantCall string
+		wantArgs []any
+	}{
+		{name: "no search", wantCall: "EXEC sp_readerrorlog 0, 1"},
+		{name: "dates alone pass nothing", search: LogSearch{From: from}, wantCall: "EXEC sp_readerrorlog 0, 1"},
+		{
+			name:     "the second string alone keeps the first NULL",
+			search:   LogSearch{Text2: "failed", From: from},
+			wantCall: "EXEC sp_readerrorlog 0, 1, @p1, @p2",
+			wantArgs: []any{sql.NullString{}, sql.NullString{String: "failed", Valid: true}},
+		},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			call, args := readErrorLogProcCall(ErrorLogSQLServer, 0, c.search)
+			if call != c.wantCall {
+				t.Errorf("call = %q, want %q", call, c.wantCall)
+			}
+			if !reflect.DeepEqual(args, c.wantArgs) {
+				t.Errorf("args = %#v, want %#v", args, c.wantArgs)
+			}
+		})
+	}
+	if call, _ := readErrorLogProcCall(ErrorLogAgent, 3, LogSearch{}); call != "EXEC sp_readerrorlog 3, 2" {
+		t.Errorf("agent archive call = %q", call)
+	}
+}
+
+// TestFilterLogDates: both bounds inclusive and cut to the second, as
+// xp_readerrorlog reads them (verified live: an entry at .270 is outside a
+// To of the same second, inside a From of it).
+func TestFilterLogDates(t *testing.T) {
+	at := func(sec, ms int) time.Time { return time.Date(2026, 10, 29, 18, 20, sec, ms*1e6, time.UTC) }
+	entries := func() []*ErrorLogEntry {
+		return []*ErrorLogEntry{{Date: at(32, 900)}, {Date: at(33, 0)}, {Date: at(33, 270)}, {Date: at(34, 0)}, {Date: at(35, 10)}}
+	}
+	dates := func(es []*ErrorLogEntry) []time.Time {
+		var out []time.Time
+		for _, e := range es {
+			out = append(out, e.Date)
+		}
+		return out
+	}
+	for _, c := range []struct {
+		name     string
+		from, to time.Time
+		want     []time.Time
+	}{
+		{"open", time.Time{}, time.Time{}, []time.Time{at(32, 900), at(33, 0), at(33, 270), at(34, 0), at(35, 10)}},
+		{"from inclusive, cut to the second", at(33, 500), time.Time{}, []time.Time{at(33, 0), at(33, 270), at(34, 0), at(35, 10)}},
+		{"to inclusive at the second", time.Time{}, at(34, 0), []time.Time{at(32, 900), at(33, 0), at(33, 270), at(34, 0)}},
+		{"to cut to the second", time.Time{}, at(33, 999), []time.Time{at(32, 900), at(33, 0)}},
+		{"both", at(33, 0), at(34, 0), []time.Time{at(33, 0), at(33, 270), at(34, 0)}},
+	} {
+		if got := dates(filterLogDates(entries(), c.from, c.to)); !reflect.DeepEqual(got, c.want) {
+			t.Errorf("%s: %v, want %v", c.name, got, c.want)
+		}
+	}
+}
+
+// logReadScript is what the errorlogread driver answers: xp_readerrorlog
+// refused (Msg 229) unless sysadmin, sp_readerrorlog refused (Msg 27219)
+// when denied, else the rows; calls records each statement.
+type logReadScript struct {
+	sysadmin, denied bool
+	rows             [][]driver.Value
+	mu               sync.Mutex
+	calls            []string
+}
+
+var logReadScripts sync.Map // DSN → *logReadScript
+
+type logReadDriver struct{}
+
+func (logReadDriver) Open(name string) (driver.Conn, error) {
+	s, _ := logReadScripts.Load(name)
+	return &logReadConn{s.(*logReadScript)}, nil
+}
+
+type logReadConn struct{ s *logReadScript }
+
+func (c *logReadConn) Prepare(string) (driver.Stmt, error) { return nil, driver.ErrSkip }
+func (c *logReadConn) Close() error                        { return nil }
+func (c *logReadConn) Begin() (driver.Tx, error)           { return nil, driver.ErrSkip }
+
+func (c *logReadConn) QueryContext(_ context.Context, q string, _ []driver.NamedValue) (driver.Rows, error) {
+	c.s.mu.Lock()
+	c.s.calls = append(c.s.calls, q)
+	c.s.mu.Unlock()
+	switch {
+	case strings.HasPrefix(q, "EXEC xp_readerrorlog") && !c.s.sysadmin:
+		return nil, mssql.Error{Number: 229, Class: 14,
+			Message: "The EXECUTE permission was denied on the object 'xp_readerrorlog', database 'mssqlsystemresource', schema 'sys'."}
+	case strings.HasPrefix(q, "EXEC sp_readerrorlog") && c.s.denied:
+		return nil, mssql.Error{Number: 27219, Class: 16, Message: "Caller does not have permissions to execute the stored procedure."}
+	}
+	return &logReadRows{rows: c.s.rows}, nil
+}
+
+type logReadRows struct{ rows [][]driver.Value }
+
+func (r *logReadRows) Columns() []string { return []string{"LogDate", "ProcessInfo", "Text"} }
+func (r *logReadRows) Close() error      { return nil }
+func (r *logReadRows) Next(dest []driver.Value) error {
+	if len(r.rows) == 0 {
+		return io.EOF
+	}
+	copy(dest, r.rows[0])
+	r.rows = r.rows[1:]
+	return nil
+}
+
+func init() { sql.Register("errorlogread", logReadDriver{}) }
+
+// TestReadLogFallsBackToSpReadErrorLog: a login refused xp_readerrorlog reads
+// through sp_readerrorlog, the dates applied in Go; a sysadmin never calls
+// it; a login refused both gets the second refusal, PermissionDenied.
+func TestReadLogFallsBackToSpReadErrorLog(t *testing.T) {
+	at := func(h int) time.Time { return time.Date(2026, 10, 29, h, 0, 0, 0, time.UTC) }
+	rows := [][]driver.Value{{at(8), "Server", "a"}, {at(10), "spid9s", "b"}, {at(12), "Logon", "c"}}
+	search := LogSearch{Text1: "x", From: at(9), To: at(11)}
+	read := func(name string, s *logReadScript) ([]*ErrorLogEntry, error) {
+		t.Helper()
+		logReadScripts.Store(name, s)
+		db, err := sql.Open("errorlogread", name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { db.Close() })
+		return (&Server{db: db}).ReadLog(context.Background(), ErrorLogSQLServer, 2, search)
+	}
+
+	s := &logReadScript{rows: rows}
+	got, err := read("fallback", s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].Text != "b" || got[0].Process != "spid9s" {
+		t.Errorf("entries %+v, want only b (the dates applied in Go)", got)
+	}
+	wantCalls := []string{"EXEC xp_readerrorlog 2, 1, @p1, @p2, @p3, @p4", "EXEC sp_readerrorlog 2, 1, @p1, @p2"}
+	if !reflect.DeepEqual(s.calls, wantCalls) {
+		t.Errorf("calls %q, want %q", s.calls, wantCalls)
+	}
+
+	// A sysadmin: one call, the server's filter (this fake applies none).
+	s = &logReadScript{sysadmin: true, rows: rows}
+	if got, err = read("sysadmin", s); err != nil || len(got) != 3 || len(s.calls) != 1 {
+		t.Errorf("sysadmin: %d entries, %v, calls %q", len(got), err, s.calls)
+	}
+
+	s = &logReadScript{denied: true, rows: rows}
+	_, err = read("denied", s)
+	if !IsPermissionDenied(err) {
+		t.Fatalf("refused both: %v, want PermissionDenied", err)
+	}
+	if se, ok := AsSQLError(err); !ok || se.Number != 27219 {
+		t.Errorf("refused both: %v, want Msg 27219", err)
+	}
+	if !strings.HasPrefix(err.Error(), "gosmo: read SQL Server error log 2: ") {
+		t.Errorf("error %q lacks the operation prefix", err)
 	}
 }

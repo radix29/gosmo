@@ -47,6 +47,7 @@ func TestLiveEveryProbedPermissionNameIsOneTheServerDefines(t *testing.T) {
 		"ALTER ANY EVENT SESSION DROP TARGET": true,
 		"ALTER ANY EVENT SESSION ENABLE":      true,
 		"ALTER ANY EVENT SESSION DISABLE":     true,
+		"VIEW ANY ERROR LOG":                  true,
 	}
 	major := srv.serverMajorVersion()
 	for _, name := range ProbedServerPermissions {
