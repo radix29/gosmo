@@ -222,6 +222,12 @@ var ProbedDatabasePermissions = []string{
 	"ALTER",
 	"VIEW DEFINITION",
 	"VIEW DATABASE STATE",
+	// The narrower right SQL Server 2022 split out of VIEW DATABASE STATE
+	// (sys.dm_db_index_physical_stats and the other performance DMVs accept
+	// either), probed beside the wide one as VIEW SERVER PERFORMANCE STATE is
+	// at server scope. On 2016–2019 HAS_PERMS_BY_NAME answers NULL for it,
+	// which reads as CapabilityUnknown — only the wide name decides there.
+	"VIEW DATABASE PERFORMANCE STATE",
 	"BACKUP DATABASE",
 	"BACKUP LOG",
 	"CREATE TABLE",

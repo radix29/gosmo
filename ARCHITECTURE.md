@@ -358,6 +358,7 @@ The instance and database halves pair up: `ServerResourceStat` and
 | Azure resource limits            | `srv.InstanceResourceGovernance(ctx)` / `srv.OSJobObject(ctx)` — see [Azure instance resources](#azure-instance-resources) |
 | Azure per-database limits        | `srv.UserDBResourceGovernance(ctx)` — one row per database on the instance, from wherever the connection is |
 | Allocated size of every database, data and log | `srv.DatabaseSizes(ctx)` → `map[database_id]DatabaseSize{DataKB, LogKB}` — one `sys.master_files` read, any state; a database the login cannot see is absent |
+| Which databases the login can open | `srv.DatabaseAccess(ctx)` → `map[database_id]bool` — `HAS_DBACCESS` for the whole instance in one read (a database not ONLINE reads false for everyone); `db.Capabilities(ctx).Accessible` is the same answer for one database |
 | Files of one database, in any state | `srv.DatabaseFiles(ctx, name)` — reads `sys.master_files`, so it answers for an OFFLINE / RECOVERY_PENDING / SUSPECT database that `db.Files(ctx)` cannot `USE` |
 | Live memory stats        | `srv.MemoryStats(ctx)`                        |
 | Languages                | `srv.Languages(ctx)`                          |

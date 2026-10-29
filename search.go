@@ -78,18 +78,22 @@ type ColumnSearchResult struct {
 	// A typed xml reads as xml and a vector without its dimensions: the facets
 	// are Column.TypeString's, from Table.Columns.
 	DataType string
+	// IsTypeHidden is Column.IsTypeHidden's: DataType is the base system type
+	// ("" for a CLR type) of a user-defined type the login cannot see.
+	IsTypeHidden bool
 }
 
 // SearchColumns finds the columns of user tables and views whose name
 // contains pattern, under Search's matching rule, ordered by schema, object
 // and column position.
 func (d *Database) SearchColumns(ctx context.Context, pattern string) ([]*ColumnSearchResult, error) {
-	const q = `
+	q := `
 SELECT SCHEMA_NAME(o.schema_id), o.name, o.type_desc, c.name,
-       tp.name, c.max_length, c.precision, c.scale, SCHEMA_NAME(tp.schema_id), tp.is_user_defined
+       ` + typeNameSQL("c") + `, c.max_length, c.precision, c.scale,
+       ISNULL(SCHEMA_NAME(tp.schema_id), N''), ISNULL(tp.is_user_defined, CAST(1 AS bit)), ` + typeHiddenSQL + `
 FROM   sys.columns c
 JOIN   sys.objects o ON o.object_id = c.object_id
-JOIN   sys.types tp ON tp.user_type_id = c.user_type_id
+LEFT   JOIN sys.types tp ON tp.user_type_id = c.user_type_id
 WHERE  o.type IN ('U','V')
 AND    LOWER(c.name) LIKE '%' + LOWER(@p1) + '%' ESCAPE '\'
 ORDER  BY SCHEMA_NAME(o.schema_id), o.name, c.column_id`
@@ -100,11 +104,11 @@ ORDER  BY SCHEMA_NAME(o.schema_id), o.name, c.column_id`
 		var ct catalogType
 		var dt string
 		if err := scan(&r.Schema, &r.Object, &r.TypeDesc, &r.Column,
-			&dt, &ct.maxLength, &ct.precision, &ct.scale, &ct.typeSchema, &ct.userDefined); err != nil {
+			&dt, &ct.maxLength, &ct.precision, &ct.scale, &ct.typeSchema, &ct.userDefined, &ct.hidden); err != nil {
 			return nil, err
 		}
 		ct.dt = DataType(dt)
-		r.DataType = ct.String()
+		r.DataType, r.IsTypeHidden = ct.String(), ct.hidden
 		return r, nil
 	})
 }

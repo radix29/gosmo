@@ -39,6 +39,12 @@ type Column struct {
 	// when it is not qualified, so TypeString qualifies it.
 	TypeSchema        string
 	IsUserDefinedType bool
+	// IsTypeHidden is set when the column's type is a user-defined type the
+	// login cannot see — it holds no permission on the type. DataType is then
+	// the base system type ("" for a CLR type), TypeSchema is "",
+	// IsUserDefinedType is true, and BoundRule/BoundDefault are "" (a binding
+	// cannot be told from the type's). Scripting such a column is refused.
+	IsTypeHidden bool
 	// IsPersisted is sys.computed_columns.is_persisted; false for a column
 	// that is not computed.
 	IsPersisted bool
@@ -134,12 +140,16 @@ const (
 // is_dropped_ledger_column 2022's, with ledger tables, and the vector_*
 // columns 2025's, with the vector type. The Always Encrypted and typed-xml
 // columns are older than gosmo's 2016 floor and need no gate.
+// The type is LEFT JOINed (typeNameSQL): an inner join dropped the column of
+// a type the login cannot see. Such a column binds nothing here — its type's
+// rule_object_id is unknown, so the column's own binding cannot be told from
+// the type's.
 // https://learn.microsoft.com/sql/relational-databases/system-catalog-views/sys-columns-transact-sql
 func (d *Database) columnSelect() string {
 	major := d.serverMajorVersion()
 	return `
 SELECT c.name, c.column_id,
-       tp.name,
+       ` + typeNameSQL("c") + `,
        c.max_length, c.precision, c.scale,
        c.is_nullable, c.is_identity, c.is_computed,
        ISNULL(cc.definition, ''),
@@ -147,7 +157,7 @@ SELECT c.name, c.column_id,
        c.is_rowguidcol, ISNULL(c.collation_name, ''),
        CONVERT(nvarchar(40), ic.seed_value), CONVERT(nvarchar(40), ic.increment_value),
        CAST(CASE WHEN pk.column_id IS NOT NULL THEN 1 ELSE 0 END AS BIT),
-       SCHEMA_NAME(tp.schema_id), tp.is_user_defined,
+       SCHEMA_NAME(tp.schema_id), ISNULL(tp.is_user_defined, CAST(1 AS bit)),
        ISNULL(cc.is_persisted, 0), ISNULL(ic.is_not_for_replication, 0),
        c.is_sparse, c.is_column_set,
        ISNULL(mc.masking_function, ''),
@@ -159,13 +169,15 @@ SELECT c.name, c.column_id,
        ` + colSince(major, SQLServer2025, "ISNULL(c.vector_dimensions, 0)", "CAST(0 AS int)") + `,
        ` + colSince(major, SQLServer2025, "ISNULL(c.vector_base_type_desc, '')", "CAST('' AS nvarchar(60))") + `,
        ISNULL(SCHEMA_NAME(br.schema_id), ''), ISNULL(br.name, ''),
-       ISNULL(SCHEMA_NAME(bd.schema_id), ''), ISNULL(bd.name, '')
+       ISNULL(SCHEMA_NAME(bd.schema_id), ''), ISNULL(bd.name, ''),
+       ` + typeHiddenSQL + `
 FROM   sys.columns c
-JOIN   sys.types tp ON tp.user_type_id = c.user_type_id
+LEFT   JOIN sys.types tp ON tp.user_type_id = c.user_type_id
 LEFT   JOIN sys.objects br
-       ON  br.object_id = NULLIF(c.rule_object_id, tp.rule_object_id)
+       ON  br.object_id = NULLIF(c.rule_object_id, tp.rule_object_id) AND tp.user_type_id IS NOT NULL
 LEFT   JOIN sys.objects bd
        ON  bd.object_id = NULLIF(c.default_object_id, tp.default_object_id) AND bd.parent_object_id = 0
+       AND tp.user_type_id IS NOT NULL
 LEFT   JOIN sys.xml_schema_collections xsc
        ON  xsc.xml_collection_id = NULLIF(c.xml_collection_id, 0)
 LEFT   JOIN sys.column_encryption_keys cek
@@ -271,6 +283,7 @@ func scanColumns(rows *sql.Rows) ([]*Column, error) {
 			&col.XMLSchemaCollectionSchema, &col.XMLSchemaCollection, &col.IsXMLDocument,
 			&col.VectorDimensions, &col.VectorBaseType,
 			&col.BoundRuleSchema, &col.BoundRule, &col.BoundDefaultSchema, &col.BoundDefault,
+			&col.IsTypeHidden,
 		); err != nil {
 			return nil, err
 		}

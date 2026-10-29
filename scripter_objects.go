@@ -261,6 +261,10 @@ func (sc *Scripter) ScriptSequence(ctx context.Context, schema, name string) (st
 	if err != nil {
 		return "", err
 	}
+	if seq.IsTypeHidden {
+		return "", unsupportedf("gosmo: script sequence %s: its user-defined type is one the login cannot see; "+
+			"it needs REFERENCES or VIEW DEFINITION on the type", qualifiedName(seq.Schema, seq.Name))
+	}
 	return sc.withExtendedPropertiesAt(ctx, buildSequenceScript(seq, sc.opts), "sequence "+qualifiedName(seq.Schema, seq.Name),
 		1, seq.ObjectID, ExtendedPropertyLevel{Level0Type: "SCHEMA", Level0Name: seq.Schema, Level1Type: "SEQUENCE", Level1Name: seq.Name})
 }

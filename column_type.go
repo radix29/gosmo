@@ -17,21 +17,49 @@ import (
 // ([dbo].[Phone]), and never given a length: an alias type's length is part
 // of its own definition, and an unqualified name resolves against the
 // executing user's default schema — a different type, or none.
+//
+// A type the login cannot see (IsTypeHidden) renders as its base system type
+// with the column's length — nvarchar(25) for a hidden alias of it — or ""
+// for a hidden CLR type: the storage, not the declared type, so it is for
+// display only and never scripted.
 func (col *Column) TypeString() string {
 	return catalogType{
-		dt: col.DataType, typeSchema: col.TypeSchema, userDefined: col.IsUserDefinedType,
+		dt: col.DataType, typeSchema: col.TypeSchema, userDefined: col.IsUserDefinedType, hidden: col.IsTypeHidden,
 		maxLength: col.MaxLength, precision: col.Precision, scale: col.Scale,
 		xmlSchema: col.XMLSchemaCollectionSchema, xmlCollection: col.XMLSchemaCollection, xmlDocument: col.IsXMLDocument,
 		vectorDimensions: col.VectorDimensions, vectorBaseType: col.VectorBaseType,
 	}.String()
 }
 
+// A user-defined type is visible only to a login holding a permission on it
+// (or owning it): for anyone else its sys.types row and TYPE_NAME are NULL,
+// although the column or parameter itself shows. So every read of a column's
+// or parameter's type LEFT JOINs sys.types tp — an inner join dropped the
+// column, and Table.Columns returned 4 of a table's 5 for a db_datareader
+// login — and names the type through typeNameSQL and typeHiddenSQL. The base
+// system type is always visible, so a hidden alias type reads as its storage
+// type; a hidden CLR type has no base name and reads "".
+
+// typeNameSQL is the type name of alias's (a sys.columns or sys.parameters
+// row's) user_type_id: sys.types' name, or the base system type's when the
+// type is hidden.
+func typeNameSQL(alias string) string {
+	return "ISNULL(tp.name, ISNULL(TYPE_NAME(" + alias + ".system_type_id), N''))"
+}
+
+// typeHiddenSQL is 1 when tp, LEFT JOINed on the user_type_id, found no row:
+// the type is a user-defined one the login cannot see.
+const typeHiddenSQL = "CAST(CASE WHEN tp.user_type_id IS NULL THEN 1 ELSE 0 END AS bit)"
+
 // catalogType is a data type as sys.columns and sys.parameters describe it,
 // shared by Column.TypeString and Parameter.TypeString.
 type catalogType struct {
-	dt                          DataType
-	typeSchema                  string
-	userDefined                 bool
+	dt          DataType
+	typeSchema  string
+	userDefined bool
+	// hidden is a user-defined type the login cannot see; dt is then its
+	// base system type (typeNameSQL).
+	hidden                      bool
 	maxLength, precision, scale int
 	// xmlSchema and xmlCollection name a typed xml's schema collection;
 	// xmlDocument is its DOCUMENT facet.
@@ -52,6 +80,10 @@ const defaultVectorBaseType = "float32"
 // script.
 func (t catalogType) String() string {
 	switch {
+	case t.hidden && t.dt == "":
+		return ""
+	case t.hidden:
+		return TypeString(t.dt, t.maxLength, t.precision, t.scale)
 	case t.userDefined:
 		return qualifiedName(t.typeSchema, string(t.dt))
 	case t.dt == DataTypeXML && t.xmlCollection != "":

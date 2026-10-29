@@ -2,13 +2,14 @@
 
 // Live verification of the discovery reads gossms's command line (phase 3)
 // added: ObjectByName/ObjectsNamed, SearchDefinitions, SearchColumns,
-// Table/View.IndexUsage, Server.DatabaseSizes and ReturnType.
+// Table/View.IndexUsage, Server.DatabaseSizes, Server.DatabaseAccess and
+// ReturnType.
 //
 //	go test -tags livedb . -run TestLiveDiscoveryReads -v \
 //	  -livedb 'sqlserver://sa:PASS@host?TrustServerCertificate=true'
 //
-// Creates and drops two throwaway databases (one case-sensitive); touches
-// nothing else.
+// Creates and drops three throwaway databases (one case-sensitive, one set
+// OFFLINE) and two logins; touches nothing else.
 package gosmo
 
 import (
@@ -225,6 +226,52 @@ func TestLiveDiscoveryReads(t *testing.T) {
 		}
 		if _, ok := sizes[1]; !ok {
 			t.Error("DatabaseSizes has no master")
+		}
+	})
+
+	t.Run("DatabaseAccess", func(t *testing.T) {
+		off, dropOff := liveScratchDB(t, db, ctx, "gosmo_discovery_offline")
+		defer dropOff()
+		if _, err := db.ExecContext(ctx, "ALTER DATABASE ["+off.Name+"] SET OFFLINE WITH ROLLBACK IMMEDIATE"); err != nil {
+			t.Fatalf("set offline: %v", err)
+		}
+		defer db.ExecContext(ctx, "ALTER DATABASE ["+off.Name+"] SET ONLINE")
+		access, err := d.Server().DatabaseAccess(ctx)
+		if err != nil {
+			t.Fatalf("DatabaseAccess: %v", err)
+		}
+		if !access[1] || !access[d.ID] {
+			t.Errorf("DatabaseAccess as sysadmin: master %v, %s %v, want both true", access[1], d.Name, access[d.ID])
+		}
+		if got, ok := access[off.ID]; !ok || got {
+			t.Errorf("DatabaseAccess[OFFLINE %s] = %v (present %v), want false", off.Name, got, ok)
+		}
+
+		const login, pass = "gosmo_discovery_noaccess", "Na!7xQ#2dKz9"
+		if _, err := db.ExecContext(ctx, "CREATE LOGIN "+login+" WITH PASSWORD = N'"+pass+"', CHECK_POLICY = OFF"); err != nil {
+			t.Fatalf("create login: %v", err)
+		}
+		defer db.ExecContext(ctx, "DROP LOGIN "+login)
+		u, err := url.Parse(*liveDSN)
+		if err != nil {
+			t.Fatalf("parse DSN: %v", err)
+		}
+		u.User = url.UserPassword(login, pass)
+		ldb, err := sql.Open("sqlserver", u.String())
+		if err != nil {
+			t.Fatalf("open as %s: %v", login, err)
+		}
+		defer ldb.Close()
+		lsrv := liveServer(t, ldb, ctx)
+		la, err := lsrv.DatabaseAccess(ctx)
+		if err != nil {
+			t.Fatalf("DatabaseAccess as %s: %v", login, err)
+		}
+		if !la[1] {
+			t.Errorf("DatabaseAccess as %s: master false, want true (guest)", login)
+		}
+		if got, ok := la[d.ID]; !ok || got {
+			t.Errorf("DatabaseAccess as %s: %s = %v (present %v), want false — no user there", login, d.Name, got, ok)
 		}
 	})
 }

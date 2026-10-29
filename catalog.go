@@ -38,6 +38,9 @@ type CatalogColumn struct {
 	Precision  int
 	Scale      int
 	IsNullable bool
+	// IsTypeHidden is Column.IsTypeHidden's: DataType is the base system type
+	// ("" for a CLR type) of a user-defined type the login cannot see.
+	IsTypeHidden bool
 }
 
 // CatalogObject is one table, view or table-valued function and its columns,
@@ -228,10 +231,10 @@ ORDER  BY SCHEMA_NAME(o.schema_id), o.name`, objectsView, where)
 // ordered by object.
 func catalogColumnsSelect(objectsView, columnsView, where string) string {
 	return fmt.Sprintf(`
-SELECT c.object_id, c.name, tp.name,
-       c.max_length, c.precision, c.scale, c.is_nullable
+SELECT c.object_id, c.name, `+typeNameSQL("c")+`,
+       c.max_length, c.precision, c.scale, c.is_nullable, `+typeHiddenSQL+`
 FROM   %s c
-JOIN   sys.types tp ON tp.user_type_id = c.user_type_id
+LEFT   JOIN sys.types tp ON tp.user_type_id = c.user_type_id
 JOIN   %s o ON o.object_id = c.object_id
 WHERE  %s
 ORDER  BY c.object_id, c.column_id`, columnsView, objectsView, where)
@@ -242,11 +245,11 @@ ORDER  BY c.object_id, c.column_id`, columnsView, objectsView, where)
 // then name.
 func catalogAggregatesSelect(objectsView, parametersView, where string) string {
 	return fmt.Sprintf(`
-SELECT o.object_id, SCHEMA_NAME(o.schema_id), o.name, tp.name,
-       p.max_length, p.precision, p.scale
+SELECT o.object_id, SCHEMA_NAME(o.schema_id), o.name, `+typeNameSQL("p")+`,
+       p.max_length, p.precision, p.scale, `+typeHiddenSQL+`
 FROM   %s o
 JOIN   %s p ON p.object_id = o.object_id AND p.parameter_id = 0
-JOIN   sys.types tp ON tp.user_type_id = p.user_type_id
+LEFT   JOIN sys.types tp ON tp.user_type_id = p.user_type_id
 WHERE  %s
 ORDER  BY SCHEMA_NAME(o.schema_id), o.name`, objectsView, parametersView, where)
 }
@@ -282,7 +285,7 @@ func scanCatalogColumns(rows *dbRows, objects []CatalogObject) error {
 		var objectID int
 		var col CatalogColumn
 		if err := rows.Scan(&objectID, &col.Name, &col.DataType,
-			&col.MaxLength, &col.Precision, &col.Scale, &col.IsNullable); err != nil {
+			&col.MaxLength, &col.Precision, &col.Scale, &col.IsNullable, &col.IsTypeHidden); err != nil {
 			return err
 		}
 		if o, ok := byID[objectID]; ok {
@@ -299,7 +302,7 @@ func scanCatalogAggregates(rows *dbRows) ([]CatalogAggregate, error) {
 	for rows.Next() {
 		var a CatalogAggregate
 		if err := rows.Scan(&a.ObjectID, &a.Schema, &a.Name, &a.Returns.DataType,
-			&a.Returns.MaxLength, &a.Returns.Precision, &a.Returns.Scale); err != nil {
+			&a.Returns.MaxLength, &a.Returns.Precision, &a.Returns.Scale, &a.Returns.IsTypeHidden); err != nil {
 			return nil, err
 		}
 		out = append(out, a)
