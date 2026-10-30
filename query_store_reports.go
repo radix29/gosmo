@@ -676,7 +676,10 @@ func (qs QueryStore) WaitingQueries(ctx context.Context, category QSWaitCategory
        COALESCE(SUM(rs.count_executions), 0)                  AS exec_count,
        COUNT(DISTINCT p.plan_id)                              AS plan_count,
        MAX(CASE WHEN p.is_forced_plan = 1 THEN p.plan_id END) AS forced_plan_id,
-       MAX(rsi.end_time)                                      AS last_execution_time,
+       -- The runtime row's own time, as every other report reads it; the
+       -- interval's end (which can lie in the future) only when the LEFT
+       -- JOIN found none.
+       COALESCE(MAX(rs.last_execution_time), MAX(rsi.end_time)) AS last_execution_time,
        %s AS value,
        CAST(0 AS float) AS baseline_value,
        0                AS baseline_exec_count,

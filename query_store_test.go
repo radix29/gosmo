@@ -286,3 +286,13 @@ func TestSetQueryStoreOptionsRefusesOutOfRangeValues(t *testing.T) {
 		t.Errorf("QueryStoreIntervalMinutes() = %v", got)
 	}
 }
+
+// master and tempdb have no row in sys.database_query_store_options: not
+// found, not a bare sql.ErrNoRows.
+func TestQueryStoreOptionsWithNoRowIsNotFound(t *testing.T) {
+	d := qsRecDB(t, 16, []string{"desired_state_desc"}, nil)
+	_, err := d.QueryStore().Options(context.Background())
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("err = %v, want ErrNotFound", err)
+	}
+}

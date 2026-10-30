@@ -121,7 +121,9 @@ SELECT desired_state_desc, actual_state_desc, readonly_reason,
 FROM   sys.database_query_store_options`
 }
 
-// Options returns the database's Query Store configuration and state.
+// Options returns the database's Query Store configuration and state. A
+// database that cannot have a Query Store (master, tempdb) has no row: an
+// error wrapping ErrNotFound.
 func (qs QueryStore) Options(ctx context.Context) (*QueryStoreInfo, error) {
 	d := qs.db
 	q := d.queryStoreOptionsSelect()
@@ -142,7 +144,10 @@ func (qs QueryStore) Options(ctx context.Context) (*QueryStoreInfo, error) {
 			&execCount, &compileCPU, &execCPU, &staleHours,
 		)
 	}, q); err != nil {
-		return nil, fmt.Errorf("gosmo: query store options for %q: %w", d.Name, err)
+		// No row is a database Query Store cannot be enabled in: master and
+		// tempdb have none.
+		return nil, rowErr(err, notFoundf("gosmo: query store options for %q: the database has no Query Store", d.Name),
+			fmt.Sprintf("query store options for %q", d.Name))
 	}
 	info.CapturePolicyExecCount = int(execCount.Int64)
 	info.CapturePolicyCompileCPUMs = compileCPU.Int64
