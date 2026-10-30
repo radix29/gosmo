@@ -52,6 +52,7 @@ classDiagram
         +JobRef(name) *Job
         +CreateJob(req) *Job
         +JobHistory(limit) []*JobHistoryEntry
+        +SearchJobHistory(filter) []*JobHistoryEntry
         +Alerts() []*Alert
         +EventAlerts() []*Alert
         +AlertByName(name) *Alert
@@ -85,6 +86,7 @@ classDiagram
         +Mail() Mail
         +XEvents() XEvents
         +Backup(opts) error
+        +LastBackups() []*DatabaseLastBackups
         +Restore(opts) error
         +BuildBackupStatement(opts) string
         +BuildRestoreStatement(opts) string

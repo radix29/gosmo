@@ -40,6 +40,7 @@ classDiagram
         +FragmentationStats(mode) []*IndexFragmentation
         +IndexUsage() []*IndexUsage
         +RebuildAllIndexes(fillFactor) error
+        +RebuildAllIndexesWith(opts) error
         +UpdateAllStatistics(samplePct) error
         +CreateIndex(req) *Index
         +CreateStatistic(req) *Statistic

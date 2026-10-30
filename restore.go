@@ -331,15 +331,16 @@ func (s *Server) releaseAfterRestore(ctx context.Context, name string, mode User
 	return err
 }
 
-// backupHistorySelect is the msdb read behind BackupHistory, at package
-// scope so TestBackupHistoryQueryWrapsEveryNullableColumn can check that every
+// backupHistorySelect is the msdb read behind BackupHistory and LastBackups
+// (which put their own WHERE after it), at package scope so
+// TestBackupHistoryQueryWrapsEveryNullableColumn can check that every
 // nullable column is still wrapped.
 //
 // backupmediafamily has one row per media family *and* per mirror, so the
 // join returns a striped set once per stripe. Only the first mirror is read
-// (any mirror is a complete copy), and BackupHistory folds the families back
-// into one BackupInfo per set — which is why the ORDER BY keeps a set's rows
-// together, in family order.
+// (any mirror is a complete copy), and groupBackupFamilies folds the families
+// back into one BackupInfo per set — which is why each ORDER BY keeps a set's
+// rows together, in family order.
 const backupHistorySelect = `
 SELECT ISNULL(bs.database_name,''), ISNULL(bs.name,''), ISNULL(bs.description,''),
        ISNULL(bs.type,''),
@@ -354,9 +355,7 @@ SELECT ISNULL(bs.database_name,''), ISNULL(bs.name,''), ISNULL(bs.description,''
        ISNULL(CONVERT(varchar(36), bs.differential_base_guid),'')
 FROM   msdb.dbo.backupset bs
 JOIN   msdb.dbo.backupmediafamily bmf ON bmf.media_set_id = bs.media_set_id AND bmf.mirror = 0
-LEFT JOIN msdb.dbo.backupmediaset bms ON bms.media_set_id = bs.media_set_id
-WHERE  bs.database_name = @p1
-ORDER  BY bs.backup_finish_date DESC, bs.backup_set_id DESC, bmf.family_sequence_number`
+LEFT JOIN msdb.dbo.backupmediaset bms ON bms.media_set_id = bs.media_set_id`
 
 // BackupHistory returns the backup history for a database from msdb, newest
 // first, one BackupInfo per backup set whatever number of files it was striped
@@ -377,44 +376,128 @@ ORDER  BY bs.backup_finish_date DESC, bs.backup_set_id DESC, bmf.family_sequence
 // column this list forgets to wrap. Do not narrow either half back because a
 // particular server populates the columns.
 func (s *Server) BackupHistory(ctx context.Context, databaseName string) ([]*BackupInfo, error) {
-	rows, err := s.query(ctx, backupHistorySelect, databaseName)
-	perFamily, err := scanRows(rows, err, fmt.Sprintf("backup history for %q", databaseName), func(scan func(...any) error) (*BackupInfo, error) {
-		b := &BackupInfo{}
-		var dbName, setName, desc, bType, device, user, server sql.NullString
-		var start, finish sql.NullTime
-		var size, dbVersion, compat, position, setID, mediaSetID, mirrors sql.NullInt64
-		var copyOnly sql.NullBool
-		var firstLSN, lastLSN, setGUID, baseGUID sql.NullString
-		if err := scan(
-			&dbName, &setName, &desc, &bType,
-			&start, &finish, &size,
-			&device, &user, &server,
-			&dbVersion, &compat,
-			&position, &setID, &mediaSetID, &mirrors,
-			&copyOnly,
-			&firstLSN, &lastLSN, &setGUID, &baseGUID,
-		); err != nil {
-			return nil, err
-		}
-		b.DatabaseName, b.BackupSetName, b.Description = dbName.String, setName.String, desc.String
-		b.BackupStart, b.BackupFinish = start.Time, finish.Time
-		b.BackupSize = size.Int64
-		b.DeviceName, b.UserName, b.ServerName = device.String, user.String, server.String
-		b.Devices = []string{device.String}
-		b.DatabaseVersion = int(dbVersion.Int64)
-		b.CompatibilityLevel = CompatibilityLevel(compat.Int64)
-		b.Position, b.BackupSetID, b.MediaSetID = int(position.Int64), setID.Int64, int(mediaSetID.Int64)
-		b.MirrorCount = max(int(mirrors.Int64), 1)
-		b.SetType = backupSetTypeFromHistory(bType.String)
-		b.IsCopyOnly = copyOnly.Bool
-		b.FirstLSN, b.LastLSN = firstLSN.String, lastLSN.String
-		b.BackupSetGUID, b.DifferentialBaseGUID = setGUID.String, baseGUID.String
-		return b, nil
-	})
+	rows, err := s.query(ctx, backupHistorySelect+`
+WHERE  bs.database_name = @p1
+ORDER  BY bs.backup_finish_date DESC, bs.backup_set_id DESC, bmf.family_sequence_number`, databaseName)
+	perFamily, err := scanRows(rows, err, fmt.Sprintf("backup history for %q", databaseName), scanBackupInfo)
 	if err != nil {
 		return nil, err
 	}
 	return groupBackupFamilies(perFamily), nil
+}
+
+// scanBackupInfo reads one backupHistorySelect row — see BackupHistory for
+// why every column goes through a sql.Null* destination.
+func scanBackupInfo(scan func(...any) error) (*BackupInfo, error) {
+	b := &BackupInfo{}
+	var dbName, setName, desc, bType, device, user, server sql.NullString
+	var start, finish sql.NullTime
+	var size, dbVersion, compat, position, setID, mediaSetID, mirrors sql.NullInt64
+	var copyOnly sql.NullBool
+	var firstLSN, lastLSN, setGUID, baseGUID sql.NullString
+	if err := scan(
+		&dbName, &setName, &desc, &bType,
+		&start, &finish, &size,
+		&device, &user, &server,
+		&dbVersion, &compat,
+		&position, &setID, &mediaSetID, &mirrors,
+		&copyOnly,
+		&firstLSN, &lastLSN, &setGUID, &baseGUID,
+	); err != nil {
+		return nil, err
+	}
+	b.DatabaseName, b.BackupSetName, b.Description = dbName.String, setName.String, desc.String
+	b.BackupStart, b.BackupFinish = start.Time, finish.Time
+	b.BackupSize = size.Int64
+	b.DeviceName, b.UserName, b.ServerName = device.String, user.String, server.String
+	b.Devices = []string{device.String}
+	b.DatabaseVersion = int(dbVersion.Int64)
+	b.CompatibilityLevel = CompatibilityLevel(compat.Int64)
+	b.Position, b.BackupSetID, b.MediaSetID = int(position.Int64), setID.Int64, int(mediaSetID.Int64)
+	b.MirrorCount = max(int(mirrors.Int64), 1)
+	b.SetType = backupSetTypeFromHistory(bType.String)
+	b.IsCopyOnly = copyOnly.Bool
+	b.FirstLSN, b.LastLSN = firstLSN.String, lastLSN.String
+	b.BackupSetGUID, b.DifferentialBaseGUID = setGUID.String, baseGUID.String
+	return b, nil
+}
+
+// DatabaseLastBackups is one database's most recent backup of each kind, as
+// msdb recorded them. A nil backup is none in msdb: never taken, or its
+// history deleted (sp_delete_backuphistory, a restored msdb).
+type DatabaseLastBackups struct {
+	DatabaseName  string
+	RecoveryModel RecoveryModel
+	// Full is the last full database backup, Differential the last
+	// differential and Log the last log backup. A copy-only backup counts
+	// (BackupInfo.IsCopyOnly says which it was): it restores like any other,
+	// though it is no differential's base.
+	Full, Differential, Log *BackupInfo
+}
+
+// LastBackups returns, for every database on the instance but tempdb and the
+// database snapshots (neither can be backed up), its last full, differential
+// and log backup, in database name order — the "when was each database last
+// backed up" check, in two round trips whatever the number of databases. A
+// database with no backup in msdb is listed with nil backups, which is the
+// point: BackupHistory per database can only show backups that exist.
+//
+// msdb keys its history by database name, so a database dropped and
+// recreated under the same name shows its predecessor's backups, as SSMS
+// does. File, filegroup and partial backups are not read.
+func (s *Server) LastBackups(ctx context.Context) ([]*DatabaseLastBackups, error) {
+	const dbs = `
+SELECT name, recovery_model_desc
+FROM   sys.databases
+WHERE  database_id <> 2 AND source_database_id IS NULL
+ORDER  BY name`
+	rows, err := s.query(ctx, dbs)
+	out, err := scanRows(rows, err, "last backups", func(scan func(...any) error) (*DatabaseLastBackups, error) {
+		l := &DatabaseLastBackups{}
+		var model sql.NullString
+		if err := scan(&l.DatabaseName, &model); err != nil {
+			return nil, err
+		}
+		l.RecoveryModel = RecoveryModel(model.String)
+		return l, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	// The newest set of each kind per database name, its families in order.
+	rows, err = s.query(ctx, backupHistorySelect+`
+WHERE  bs.backup_set_id IN (
+       SELECT backup_set_id
+       FROM  (SELECT backup_set_id,
+                     ROW_NUMBER() OVER (PARTITION BY database_name, type
+                                        ORDER BY backup_finish_date DESC, backup_set_id DESC) AS rn
+              FROM   msdb.dbo.backupset
+              WHERE  type IN ('D', 'I', 'L')) AS newest
+       WHERE  rn = 1)
+ORDER  BY bs.backup_set_id, bmf.family_sequence_number`)
+	perFamily, err := scanRows(rows, err, "last backups", scanBackupInfo)
+	if err != nil {
+		return nil, err
+	}
+	byName := make(map[string]*DatabaseLastBackups, len(out))
+	for _, l := range out {
+		byName[l.DatabaseName] = l
+	}
+	for _, b := range groupBackupFamilies(perFamily) {
+		l := byName[b.DatabaseName]
+		if l == nil {
+			continue // a dropped database's history
+		}
+		switch b.SetType {
+		case BackupSetDatabase:
+			l.Full = b
+		case BackupSetDifferential:
+			l.Differential = b
+		case BackupSetLog:
+			l.Log = b
+		}
+	}
+	return out, nil
 }
 
 // groupBackupFamilies folds BackupHistory's one-row-per-media-family read into
