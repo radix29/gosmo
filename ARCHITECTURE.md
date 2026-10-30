@@ -454,6 +454,9 @@ The instance and database halves pair up: `ServerResourceStat` and
 | Every file, incl. log           | `db.Files(ctx)`                                |
 | Add / alter / remove file       | `db.AddFile(ctx, spec)` / `db.FileRef(name).Alter(ctx, m)` / `db.FileRef(name).Drop(ctx)` — `Files` returns the same handles, populated |
 | Shrink database / file          | `db.Shrink(ctx, gosmo.ShrinkDatabaseOptions{...})` (DBCC SHRINKDATABASE; zero value is the bare form) / `db.FileRef(name).Shrink(ctx, gosmo.ShrinkFileOptions{...})` (DBCC SHRINKFILE: target MB — 0 sent as 1 unless `SendZeroTarget` —, `TRUNCATEONLY`, `NOTRUNCATE`, `EMPTYFILE`; returns the DBCC row as `ShrinkResult`); `Wait` adds `WAIT_AT_LOW_PRIORITY`, 2022+ (`ServerInfo.SupportsShrinkLowPriority`). `Files` fills `SpaceUsedKB` |
+| Consistency check               | `db.CheckDB(ctx, gosmo.CheckDBOptions{...})` — DBCC CHECKDB `WITH NO_INFOMSGS, ALL_ERRORMSGS, TABLERESULTS` (`PhysicalOnly`, `NoIndex`, `ExtendedLogicalChecks`, `DataPurity`, `MaxDOP`); the rows as `[]*CheckDBError`, none for a clean database, `IsSummary()` for 8989/8990. Never retried; no REPAIR option |
+| Fragmentation, every index      | `db.FragmentationStats(ctx, mode, minPct, minPages)` — one `dm_db_index_physical_stats` scan of the database, filtered on the server, as `[]*DatabaseIndexFragmentation` (an `IndexFragmentation` plus schema, object, index type) |
+| Update stale statistics         | `db.UpdateStatistics(ctx, resample)` — `sys.sp_updatestats` |
 | Add / remove filegroup          | `db.AddFileGroup(ctx, name)` / `db.FileGroupRef(name).Drop(ctx)` — `FileGroups` returns the same handles, populated |
 | Filegroup default / read-only   | `fg.SetDefault(ctx)` / `fg.SetReadOnly(ctx, ro, term)` — `TerminationRollbackImmediate` kills the database's sessions in the same batch, since `MODIFY FILEGROUP` ignores `WITH ROLLBACK IMMEDIATE` |
 | CREATE DATABASE file placement  | `CreateDatabaseRequest.PrimaryFile` / `.LogFile` (`*DatabaseFileSpec`) |
@@ -484,7 +487,7 @@ The instance and database halves pair up: `ServerResourceStat` and
 | Drop / rename / move  | `t.Drop(ctx, gosmo.DropTableOnly)` (or `DropTableCascade`) / `t.Rename(ctx, newName)` / `t.Transfer(ctx, targetSchema)` |
 | Fragmentation         | `t.FragmentationStats(ctx, mode)` / `v.FragmentationStats(ctx, mode)` (an indexed view) |
 | Index usage (seeks, scans, lookups, updates) | `t.IndexUsage(ctx)` / `v.IndexUsage(ctx)` — `sys.dm_db_index_usage_stats`; without VIEW SERVER STATE every row reads `UsageVisible` false |
-| Rebuild all indexes   | `t.RebuildAllIndexes(ctx, fillFactor)`  |
+| Rebuild all indexes   | `t.RebuildAllIndexes(ctx, fillFactor)` / `t.RebuildAllIndexesWith(ctx, gosmo.IndexRebuildOptions{...})` (every rebuild option: fill factor, pad index, compression, `Online`, `MaxDOP`) |
 | Update all statistics | `t.UpdateAllStatistics(ctx, samplePct)` |
 | Create index          | `t.CreateIndex(ctx, req)` — every index type, see below |
 | Alter column          | `t.AlterColumn(ctx, col)`               |
@@ -1505,6 +1508,10 @@ for _, b := range history {
 	//     Action: b.SetType.RestoreVerb()} — RESTORE LOG for a log set
 }
 
+// Every database's last full, differential and log backup at once; a nil
+// one is none in msdb, so a database never backed up is listed too.
+last, _ := srv.LastBackups(ctx)
+
 // SSMS's restore plan: the newest full, its newest differential (matched by
 // DifferentialBaseGUID), then the log backups that chain on from it by LSN
 // (FirstLSN/LastLSN, compared with CompareLSN) — up to the log holding
@@ -1721,6 +1728,9 @@ job.ReorderSteps(ctx, func(n int) []int { return []int{3, 1, 2} })
 // History, per job or across every job at once.
 entries, _ := job.History(ctx, 50)
 recent, _ := srv.JobHistory(ctx, 200)
+failed, _ := srv.SearchJobHistory(ctx, gosmo.JobHistoryFilter{
+	Since: since, Outcomes: []gosmo.JobOutcome{gosmo.JobOutcomeFailed},
+})
 ```
 
 `JobStep.LastRunDate` is when the step last ran (zero — test with `IsZero()` —

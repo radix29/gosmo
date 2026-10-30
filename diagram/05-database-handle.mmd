@@ -156,6 +156,9 @@ classDiagram
         +RecoveryStatus() *DatabaseRecoveryStatus
         +SpaceUsed() SpaceInfo
         +Shrink(opts) error
+        +CheckDB(opts) []*CheckDBError
+        +FragmentationStats(mode, minPct, minPages) []*DatabaseIndexFragmentation
+        +UpdateStatistics(resample) error
         +DiskUsage() DiskUsage
         +ResourceStats(max) []*DatabaseResourceStat
         +LatestResourceStats() *DatabaseResourceStat

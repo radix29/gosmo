@@ -87,11 +87,29 @@ func (idx *Index) Drop(ctx context.Context) error {
 }
 
 // RebuildAllIndexes rebuilds all indexes on the table (ALTER INDEX ALL ... REBUILD).
+// RebuildAllIndexesWith takes every rebuild option, not only a fill factor.
 func (t *Table) RebuildAllIndexes(ctx context.Context, fillFactor int) error {
 	q := fmt.Sprintf("ALTER INDEX ALL ON %s REBUILD", t.FullName())
 	if fillFactor > 0 {
 		q += fmt.Sprintf(" WITH (FILLFACTOR = %d)", fillFactor)
 	}
+	if err := t.exec(ctx, q); err != nil {
+		return fmt.Errorf("gosmo: rebuild all indexes on %s: %w", t.FullName(), err)
+	}
+	return nil
+}
+
+// RebuildAllIndexesWith rebuilds every index on the table (ALTER INDEX ALL
+// ... REBUILD) with a WITH clause only for the options opts sets — Rebuild's
+// options, for the whole table. Unlike Rebuild it knows no index's type, so
+// an option one of the table's indexes refuses (FILLFACTOR on a columnstore,
+// ONLINE on an edition without online index operations) is left for the server to refuse.
+func (t *Table) RebuildAllIndexesWith(ctx context.Context, opts IndexRebuildOptions) error {
+	with, err := opts.withClause()
+	if err != nil {
+		return fmt.Errorf("gosmo: rebuild all indexes on %s: %w", t.FullName(), err)
+	}
+	q := fmt.Sprintf("ALTER INDEX ALL ON %s REBUILD", t.FullName()) + with
 	if err := t.exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: rebuild all indexes on %s: %w", t.FullName(), err)
 	}
@@ -267,6 +285,49 @@ type IndexRebuildOptions struct {
 	// DataCompression is the compression to rebuild with. Empty keeps the
 	// index's current setting.
 	DataCompression DataCompression
+	// Online rebuilds while the table stays readable and writable
+	// (ONLINE = ON), at the cost of a longer rebuild. Online index operations
+	// are an Enterprise, Developer and Azure feature: other editions refuse
+	// the option (Msg 1712), which is left for the server to say. False sends
+	// nothing — an offline rebuild, the server's default.
+	Online bool
+	// MaxDOP caps the rebuild's parallelism (MAXDOP = n). Zero sends nothing,
+	// so the server's own setting applies; 1 rebuilds serially.
+	MaxDOP int
+}
+
+// withClause renders the options as REBUILD's " WITH (...)", or "" when opts
+// sets nothing, refusing values the server would.
+func (opts IndexRebuildOptions) withClause() (string, error) {
+	if opts.DataCompression != "" && !opts.DataCompression.valid() {
+		return "", invalidf("invalid data compression %q (must be NONE, ROW, PAGE, COLUMNSTORE, or COLUMNSTORE_ARCHIVE)", opts.DataCompression)
+	}
+	if opts.FillFactor < 0 || opts.FillFactor > 100 {
+		return "", invalidf("fill factor %d out of range (1-100)", opts.FillFactor)
+	}
+	if opts.MaxDOP < 0 || opts.MaxDOP > 64 {
+		return "", invalidf("MAXDOP %d out of range (1-64)", opts.MaxDOP)
+	}
+	var withParts []string
+	if opts.PadIndex != nil {
+		withParts = append(withParts, "PAD_INDEX = "+onOffKeyword(*opts.PadIndex))
+	}
+	if opts.FillFactor > 0 {
+		withParts = append(withParts, fmt.Sprintf("FILLFACTOR = %d", opts.FillFactor))
+	}
+	if opts.DataCompression != "" {
+		withParts = append(withParts, "DATA_COMPRESSION = "+string(opts.DataCompression))
+	}
+	if opts.Online {
+		withParts = append(withParts, "ONLINE = ON")
+	}
+	if opts.MaxDOP > 0 {
+		withParts = append(withParts, fmt.Sprintf("MAXDOP = %d", opts.MaxDOP))
+	}
+	if len(withParts) == 0 {
+		return "", nil
+	}
+	return " WITH (" + strings.Join(withParts, ", ") + ")", nil
 }
 
 // refuseAlterIndex refuses any ALTER INDEX on a memory-optimized table's
@@ -306,8 +367,9 @@ func (idx *Index) refuseHypothetical(verb string) error {
 // one. On a memory-optimized table's index every rebuild is refused (see
 // refuseAlterIndex).
 func (idx *Index) Rebuild(ctx context.Context, opts IndexRebuildOptions) error {
-	if opts.DataCompression != "" && !opts.DataCompression.valid() {
-		return invalidf("gosmo: rebuild index %q: invalid data compression %q (must be NONE, ROW, PAGE, COLUMNSTORE, or COLUMNSTORE_ARCHIVE)", idx.Name, opts.DataCompression)
+	with, err := opts.withClause()
+	if err != nil {
+		return fmt.Errorf("gosmo: rebuild index %q: %w", idx.Name, err)
 	}
 	if err := idx.refuseAlterIndex("rebuild"); err != nil {
 		return err
@@ -327,20 +389,7 @@ func (idx *Index) Rebuild(ctx context.Context, opts IndexRebuildOptions) error {
 		}
 	}
 
-	var withParts []string
-	if opts.PadIndex != nil {
-		withParts = append(withParts, "PAD_INDEX = "+onOffKeyword(*opts.PadIndex))
-	}
-	if opts.FillFactor > 0 {
-		withParts = append(withParts, fmt.Sprintf("FILLFACTOR = %d", opts.FillFactor))
-	}
-	if opts.DataCompression != "" {
-		withParts = append(withParts, "DATA_COMPRESSION = "+string(opts.DataCompression))
-	}
-	q := fmt.Sprintf("ALTER INDEX %s REBUILD", idx.target())
-	if len(withParts) > 0 {
-		q += " WITH (" + strings.Join(withParts, ", ") + ")"
-	}
+	q := fmt.Sprintf("ALTER INDEX %s REBUILD", idx.target()) + with
 	if err := idx.on().exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: rebuild index %q: %w", idx.Name, err)
 	}

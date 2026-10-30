@@ -7,6 +7,7 @@ package gosmo
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -52,21 +53,86 @@ ORDER  BY run_date DESC, run_time DESC, instance_id DESC`, limit)
 // JobHistory returns the most recent job-level history entries (step_id =
 // 0, i.e. the overall outcome of each run rather than a single step's)
 // across every job, most recent first. Pass limit=0 for the default of 100
-// rows.
+// rows. SearchJobHistory narrows the same read by job, time and outcome.
 func (s *Server) JobHistory(ctx context.Context, limit int) ([]*JobHistoryEntry, error) {
+	return s.SearchJobHistory(ctx, JobHistoryFilter{Max: limit})
+}
+
+// JobHistoryFilter narrows Server.SearchJobHistory. The zero value reads the
+// newest 100 job outcome rows of every job.
+type JobHistoryFilter struct {
+	// JobName keeps one job's rows, matched exactly as msdb compares names;
+	// empty keeps every job's. A name no job has returns no rows.
+	JobName string
+	// Since and Until bound the run's start time, inclusive: Since keeps
+	// runs that started at or after it, Until runs that started at or before
+	// it; zero leaves that end open. msdb records the server's wall clock
+	// with no zone, and JobHistoryEntry.RunDate carries it stamped UTC (see
+	// parseSQLAgentDate): a bound is compared the same way, by its UTC
+	// fields, so pass a value built that way — a RunDate, or a server-local
+	// time put in time.UTC.
+	Since, Until time.Time
+	// Outcomes keeps rows with one of these outcomes; empty keeps all.
+	// {JobOutcomeFailed} is "the runs that failed".
+	Outcomes []JobOutcome
+	// IncludeSteps adds each run's step rows to its job outcome row
+	// (step_id 0), which is all that is read without it.
+	IncludeSteps bool
+	// Max caps the rows read, newest first; 0 or less means 100.
+	Max int
+}
+
+// SearchJobHistory returns msdb.dbo.sysjobhistory rows across every job (or
+// the one f names), newest first, narrowed by f — the instance-wide read that
+// finds a failure even when a later run of the same job succeeded, which
+// Job.LastRunOutcome cannot.
+func (s *Server) SearchJobHistory(ctx context.Context, f JobHistoryFilter) ([]*JobHistoryEntry, error) {
+	limit := f.Max
 	if limit <= 0 {
 		limit = 100
+	}
+	var where []string
+	var args []any
+	arg := func(v any) string {
+		args = append(args, v)
+		return fmt.Sprintf("@p%d", len(args))
+	}
+	if !f.IncludeSteps {
+		where = append(where, "h.step_id = 0")
+	}
+	if f.JobName != "" {
+		where = append(where, "j.name = "+arg(f.JobName))
+	}
+	if !f.Since.IsZero() {
+		d, t := sqlAgentDateTime(f.Since)
+		pd, pt := arg(d), arg(t)
+		where = append(where, fmt.Sprintf("(h.run_date > %s OR (h.run_date = %s AND h.run_time >= %s))", pd, pd, pt))
+	}
+	if !f.Until.IsZero() {
+		d, t := sqlAgentDateTime(f.Until)
+		pd, pt := arg(d), arg(t)
+		where = append(where, fmt.Sprintf("(h.run_date < %s OR (h.run_date = %s AND h.run_time <= %s))", pd, pd, pt))
+	}
+	if len(f.Outcomes) > 0 {
+		in := make([]string, len(f.Outcomes))
+		for i, o := range f.Outcomes {
+			in[i] = arg(int(o))
+		}
+		where = append(where, "h.run_status IN ("+strings.Join(in, ", ")+")")
+	}
+	cond := ""
+	if len(where) > 0 {
+		cond = "\nWHERE  " + strings.Join(where, "\n  AND  ")
 	}
 	q := fmt.Sprintf(`
 SELECT TOP %d
        j.name, h.run_date, h.run_time, h.run_duration,
        h.run_status, ISNULL(h.message, ''), h.step_id, h.step_name
 FROM   msdb.dbo.sysjobhistory h
-JOIN   msdb.dbo.sysjobs j ON j.job_id = h.job_id
-WHERE  h.step_id = 0
-ORDER  BY h.run_date DESC, h.run_time DESC, h.instance_id DESC`, limit)
+JOIN   msdb.dbo.sysjobs j ON j.job_id = h.job_id%s
+ORDER  BY h.run_date DESC, h.run_time DESC, h.instance_id DESC`, limit, cond)
 
-	rows, err := s.query(ctx, q)
+	rows, err := s.query(ctx, q, args...)
 	return scanRows(rows, err, "job history", func(scan func(...any) error) (*JobHistoryEntry, error) {
 		h := &JobHistoryEntry{}
 		var runDate, runTime, runDur int
@@ -78,6 +144,13 @@ ORDER  BY h.run_date DESC, h.run_time DESC, h.instance_id DESC`, limit)
 		h.Duration = parseSQLAgentDuration(runDur)
 		return h, nil
 	})
+}
+
+// sqlAgentDateTime is parseSQLAgentDate's inverse: t's UTC fields as msdb's
+// YYYYMMDD and HHMMSS integers.
+func sqlAgentDateTime(t time.Time) (date, clock int) {
+	t = t.UTC()
+	return t.Year()*10000 + int(t.Month())*100 + t.Day(), t.Hour()*10000 + t.Minute()*100 + t.Second()
 }
 
 // JobHistoryEntry represents one row from msdb.dbo.sysjobhistory.

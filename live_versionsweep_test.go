@@ -224,6 +224,11 @@ var sweepMustCall = []string{
 	"Server.TempDBSpace",
 	"Server.TempDBFiles",
 
+	// The maintenance reads (gossms phase 8.a).
+	"Database.FragmentationStats",
+	"Server.LastBackups",
+	"Server.SearchJobHistory",
+
 	// The plan cache and the filtered event_file read (gossms phase 7.a).
 	"Server.TopQueries",
 	"Server.TopQueries(database)",
@@ -511,6 +516,7 @@ func TestLiveVersionSweep(t *testing.T) {
 	}
 
 	sweepTableKinds(sw, d)
+	sweepMaintenanceReads(sw, d)
 	sweepProgrammability(sw, d)
 	sweepServiceBroker(sw, d)
 	sweepQueryStoreReports(sw, d)
@@ -546,6 +552,26 @@ func sweepTableKinds(sw *sweep, d *Database) {
 			return err
 		})
 	}
+}
+
+// sweepMaintenanceReads drives the reads gossms phase 8.a added, which take
+// arguments the reflective half has no value for.
+func sweepMaintenanceReads(sw *sweep, d *Database) {
+	sw.call("Database.FragmentationStats", func() error {
+		_, err := d.FragmentationStats(sw.ctx, FragmentationSampled, 0, 0)
+		return err
+	})
+	sw.call("Server.LastBackups", func() error {
+		_, err := d.Server().LastBackups(sw.ctx)
+		return err
+	})
+	sw.call("Server.SearchJobHistory", func() error {
+		_, err := d.Server().SearchJobHistory(sw.ctx, JobHistoryFilter{
+			JobName: "gosmo_sweep_no_such_job", Since: time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC),
+			Until: time.Now().UTC(), Outcomes: []JobOutcome{JobOutcomeFailed}, IncludeSteps: true, Max: 5,
+		})
+		return err
+	})
 }
 
 // sweepServiceBroker drives the Service Broker by-name finders and the two

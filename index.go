@@ -361,28 +361,8 @@ ORDER  BY i.index_id`
 		if idx.Partitions, err = decodePartitionCompression(compression); err != nil {
 			return nil, err
 		}
-		switch desc := strings.TrimSpace(typeDesc.String); desc {
-		case "CLUSTERED":
-			idx.Type = IndexTypeClustered
-			idx.IsClustered = true
-		case "NONCLUSTERED":
-			idx.Type = IndexTypeNonClustered
-		case "XML":
-			idx.Type = IndexTypeXML
-		case "SPATIAL":
-			idx.Type = IndexTypeSpatial
-		case "CLUSTERED COLUMNSTORE":
-			idx.Type = IndexTypeClusteredColumnStore
-			idx.IsClustered = true
-		case "NONCLUSTERED COLUMNSTORE":
-			idx.Type = IndexTypeColumnStore
-		default:
-			// A type_desc with no case here — NONCLUSTERED HASH, whose
-			// verbatim text is IndexTypeNonClusteredHash, or a type a newer
-			// SQL Server adds — is carried through as the server's own text rather than left
-			// empty, so a caller displays the real type instead of nothing.
-			idx.Type = IndexType(desc)
-		}
+		idx.Type = indexTypeFromDesc(typeDesc.String)
+		idx.IsClustered = idx.Type == IndexTypeClustered || idx.Type == IndexTypeClusteredColumnStore
 		indexes = append(indexes, idx)
 	}
 	return indexes, rows.Err()
@@ -475,4 +455,27 @@ SELECT ic.index_id, c.name, ic.is_descending_key, ic.is_included_column,
 FROM   sys.index_columns ic
 JOIN   sys.columns c ON c.object_id = ic.object_id AND c.column_id = ic.column_id
 WHERE  ic.object_id = @p1`
+}
+
+// indexTypeFromDesc maps sys.indexes.type_desc to an IndexType. A type_desc
+// with no case here — NONCLUSTERED HASH, whose verbatim text is
+// IndexTypeNonClusteredHash, or a type a newer SQL Server adds — is carried
+// through as the server's own text rather than left empty, so a caller
+// displays the real type instead of nothing.
+func indexTypeFromDesc(desc string) IndexType {
+	switch desc = strings.TrimSpace(desc); desc {
+	case "CLUSTERED":
+		return IndexTypeClustered
+	case "NONCLUSTERED":
+		return IndexTypeNonClustered
+	case "XML":
+		return IndexTypeXML
+	case "SPATIAL":
+		return IndexTypeSpatial
+	case "CLUSTERED COLUMNSTORE":
+		return IndexTypeClusteredColumnStore
+	case "NONCLUSTERED COLUMNSTORE":
+		return IndexTypeColumnStore
+	}
+	return IndexType(desc)
 }
