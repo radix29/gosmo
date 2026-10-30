@@ -634,14 +634,40 @@ type ActiveSession struct {
 	MemoryUsage      int64
 	TotalElapsedMS   int64
 	LastRequestStart string
-	CommandText      string
+	// CommandText is the batch of the request the session is running now, its
+	// first 512 characters; empty for a session running nothing.
+	CommandText string
+	// RecentText is the batch the session's connection sent last
+	// (dm_exec_connections.most_recent_sql_handle), its first 512
+	// characters — in the server's auto-parameterized form when it
+	// parameterized it ((@1 int)UPDATE [t] set [v] = @1 …): for a running
+	// session usually CommandText's batch, and for
+	// an idle one the only text there is — an idle head blocker holding an
+	// open transaction shows here what opened it. Empty for a session with no
+	// connection (a system session) or whose batch has left the cache.
+	RecentText string
+	// Command is the running request's command (SELECT, UPDATE, AWAITING
+	// COMMAND…), empty for a session running nothing.
+	Command string
+	// OpenTransactionCount is the session's open transactions — nonzero for an
+	// idle session is a transaction left open, the usual head blocker.
+	OpenTransactionCount int
+	// Reads, Writes and LogicalReads are the session's totals since it
+	// logged in, as CPUTime is: physical reads, writes and logical reads.
+	Reads        int64
+	Writes       int64
+	LogicalReads int64
 	// BlockingSessionID is the session a request of this one is blocked by,
 	// 0 for none — a parallel request's blocked worker counts
-	// (sessionBlockerJoin). WaitType and WaitTimeMS are that worker's wait
-	// when it is one, else the request's.
+	// (sessionBlockerJoin). WaitType, WaitTimeMS and WaitResource are that
+	// worker's wait when it is one, else the request's; WaitResource is the
+	// lock or page waited on (KEY: 5:72057594043236352 (8194443284a0)), in
+	// dm_os_waiting_tasks' wording for a parallel worker's wait
+	// (sessionBlockerWaitResource), empty for none.
 	BlockingSessionID int
 	WaitType          string
 	WaitTimeMS        int64
+	WaitResource      string
 	// HostProcessID is the client's process id as reported at login
 	// (go-mssqldb sends os.Getpid()), 0 for a system session.
 	// FromCallerHost reports that the session's client named the reading
@@ -702,15 +728,26 @@ const activeSessionColumns = `s.session_id, ISNULL(s.login_name, ''), ISNULL(s.h
        s.cpu_time, s.memory_usage, s.total_elapsed_time,
        CONVERT(VARCHAR(30), s.last_request_start_time, 121),
        ISNULL(SUBSTRING(t.text, 1, 512), ''),
+       ISNULL(SUBSTRING(rt.text, 1, 512), ''),
+       ISNULL(r.command, N''),
+       s.open_transaction_count, s.reads, s.writes, s.logical_reads,
        ` + sessionBlockerID + `,
        ` + sessionBlockerWaitType + `,
        ` + sessionBlockerWaitMS + `,
+       ` + sessionBlockerWaitResource + `,
        ISNULL(s.host_process_id, 0),
        CAST(CASE WHEN s.host_name = HOST_NAME() THEN 1 ELSE 0 END AS bit)`
 
+// activeSessionFrom takes a MARS session's most recently read connection for
+// RecentText: each logical connection has its own row and handle.
 const activeSessionFrom = `FROM   sys.dm_exec_sessions s
 LEFT   JOIN sys.dm_exec_requests r ON r.session_id = s.session_id` + sessionBlockerJoin + `
-OUTER  APPLY sys.dm_exec_sql_text(r.sql_handle) t`
+OUTER  APPLY sys.dm_exec_sql_text(r.sql_handle) t
+OUTER  APPLY (SELECT TOP (1) c.most_recent_sql_handle
+              FROM   sys.dm_exec_connections c
+              WHERE  c.session_id = s.session_id
+              ORDER  BY c.last_read DESC) AS rc
+OUTER  APPLY sys.dm_exec_sql_text(rc.most_recent_sql_handle) rt`
 
 func scanActiveSession(_ *Server, scan func(...any) error) (*ActiveSession, error) {
 	as := &ActiveSession{}
@@ -719,8 +756,9 @@ func scanActiveSession(_ *Server, scan func(...any) error) (*ActiveSession, erro
 		&as.SessionID, &as.LoginName, &as.HostName, &as.ProgramName,
 		&dbName, &status,
 		&as.CPUTime, &as.MemoryUsage, &as.TotalElapsedMS,
-		&lastReq, &cmd,
-		&as.BlockingSessionID, &waitType, &as.WaitTimeMS,
+		&lastReq, &cmd, &as.RecentText, &as.Command,
+		&as.OpenTransactionCount, &as.Reads, &as.Writes, &as.LogicalReads,
+		&as.BlockingSessionID, &waitType, &as.WaitTimeMS, &as.WaitResource,
 		&as.HostProcessID, &as.FromCallerHost,
 	); err != nil {
 		return nil, err

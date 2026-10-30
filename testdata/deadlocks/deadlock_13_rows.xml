@@ -1,0 +1,45 @@
+<deadlock>
+ <victim-list>
+  <victimProcess id="process1984fd8c8c8"/>
+ </victim-list>
+ <process-list>
+  <process id="process1984fd8c8c8" taskpriority="0" logused="212" waitresource="KEY: 2:288230444435374080 (8194443284a0)" waittime="3493" ownerId="6112289" transactionname="user_transaction" lasttranstarted="2026-10-30T10:00:32.023" XDES="0x1985425d900" lockMode="X" schedulerid="4" kpid="3816" status="suspended" spid="55" sbid="0" ecid="0" priority="0" trancount="2" lastbatchstarted="2026-10-30T10:00:32.020" lastbatchcompleted="2026-10-30T10:00:32.020" lastattention="1900-01-01T00:00:00.020" clientapp="go-mssqldb" hostname="ubudev" hostpid="498637" loginname="sa" isolationlevel="read committed (2)" xactid="6112289" currentdb="1" currentdbname="master" lockTimeout="4294967295" clientoption1="671088672" clientoption2="128056">
+   <executionStack>
+    <frame procname="adhoc" line="1" stmtstart="38" stmtend="168" sqlhandle="0x02000000506d512d496ebd7d5a1d9ed73295bb36d77c4eea0000000000000000000000000000000000000000">
+unknown    </frame>
+    <frame procname="adhoc" line="1" stmtend="116" sqlhandle="0x020000006ed87c2523c42cdfc777998a5ffaef77c62ecbac0000000000000000000000000000000000000000">
+unknown    </frame>
+   </executionStack>
+   <inputbuf>
+UPDATE ##gosmo_live_dl_998432_rows_b SET v = 9 WHERE id = 1   </inputbuf>
+  </process>
+  <process id="process19855e21848" taskpriority="0" logused="212" waitresource="KEY: 2:216172850356486144 (8194443284a0)" waittime="2492" ownerId="6112291" transactionname="user_transaction" lasttranstarted="2026-10-30T10:00:32.023" XDES="0x1984bf4b900" lockMode="X" schedulerid="3" kpid="7844" status="suspended" spid="56" sbid="0" ecid="0" priority="0" trancount="2" lastbatchstarted="2026-10-30T10:00:33.023" lastbatchcompleted="2026-10-30T10:00:32.020" lastattention="1900-01-01T00:00:00.020" clientapp="go-mssqldb" hostname="ubudev" hostpid="498637" loginname="sa" isolationlevel="read committed (2)" xactid="6112291" currentdb="1" currentdbname="master" lockTimeout="4294967295" clientoption1="671088672" clientoption2="128056">
+   <executionStack>
+    <frame procname="adhoc" line="1" stmtstart="38" stmtend="168" sqlhandle="0x020000009531d433889d33c011bad6205f56768ecfbf3eff0000000000000000000000000000000000000000">
+unknown    </frame>
+    <frame procname="adhoc" line="1" stmtend="116" sqlhandle="0x02000000fb137d1f6132fa2812bcdde739c63b896b7989910000000000000000000000000000000000000000">
+unknown    </frame>
+   </executionStack>
+   <inputbuf>
+UPDATE ##gosmo_live_dl_998432_rows_a SET v = 9 WHERE id = 1   </inputbuf>
+  </process>
+ </process-list>
+ <resource-list>
+  <keylock hobtid="288230444435374080" dbid="2" objectname="tempdb.dbo.##gosmo_live_dl_998432_rows_b" indexname="PK__##gosmo___3213E83F1B741FE7" id="lock198525c5380" mode="X" associatedObjectId="288230444435374080">
+   <owner-list>
+    <owner id="process19855e21848" mode="X"/>
+   </owner-list>
+   <waiter-list>
+    <waiter id="process1984fd8c8c8" mode="X" requestType="wait"/>
+   </waiter-list>
+  </keylock>
+  <keylock hobtid="216172850356486144" dbid="2" objectname="tempdb.dbo.##gosmo_live_dl_998432_rows_a" indexname="PK__##gosmo___3213E83FE7A7D0BD" id="lock1984e529c00" mode="X" associatedObjectId="216172850356486144">
+   <owner-list>
+    <owner id="process1984fd8c8c8" mode="X"/>
+   </owner-list>
+   <waiter-list>
+    <waiter id="process19855e21848" mode="X" requestType="wait"/>
+   </waiter-list>
+  </keylock>
+ </resource-list>
+</deadlock>
