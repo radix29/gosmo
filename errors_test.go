@@ -268,7 +268,7 @@ func TestClassifyRefusalReadsTheFirstMessage(t *testing.T) {
 // filters: an informational message, a message with no text and a non-SQL
 // error are never refusals.
 func TestClassifyRefusalKinds(t *testing.T) {
-	for _, n := range []int32{229, 230, 262, 297, 300, 916, 2571, 5304, 27219} {
+	for _, n := range []int32{229, 230, 262, 297, 300, 916, 2571, 5304, 6102, 27219} {
 		if k, _ := ClassifyRefusal(mssql.Error{Number: n, Class: 14, Message: "x"}); k != PermissionDenied {
 			t.Errorf("Msg %d = %v, want PermissionDenied", n, k)
 		}

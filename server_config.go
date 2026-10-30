@@ -688,6 +688,21 @@ type ActiveSession struct {
 	// one client process's sessions, as BlockedRequests does.
 	HostProcessID  int
 	FromCallerHost bool
+	// IsUserProcess is dm_exec_sessions.is_user_process: false for SQL
+	// Server's internal sessions, which KILL refuses (Msg 6107).
+	IsUserProcess bool
+	// RequestCPUTime, RequestElapsedMS, RequestReads, RequestWrites and
+	// RequestLogicalReads are the running request's (dm_exec_requests), 0
+	// for a session running nothing. The session's own counters (CPUTime,
+	// TotalElapsedMS, Reads, Writes, LogicalReads) are updated only when a
+	// request ends, so they leave the running one out — a query blocked for
+	// minutes shows 0 there (found live): the session's figure including
+	// the running request is the sum of the two.
+	RequestCPUTime      int64
+	RequestElapsedMS    int64
+	RequestReads        int64
+	RequestWrites       int64
+	RequestLogicalReads int64
 }
 
 // SessionScope says which sessions Server.ActiveSessions returns.
@@ -749,7 +764,10 @@ const activeSessionColumns = `s.session_id, ISNULL(s.login_name, ''), ISNULL(s.h
        ` + sessionBlockerWaitMS + `,
        ` + sessionBlockerWaitResource + `,
        ISNULL(s.host_process_id, 0),
-       CAST(CASE WHEN s.host_name = HOST_NAME() THEN 1 ELSE 0 END AS bit)`
+       CAST(CASE WHEN s.host_name = HOST_NAME() THEN 1 ELSE 0 END AS bit),
+       s.is_user_process,
+       ISNULL(r.cpu_time, 0), ISNULL(r.total_elapsed_time, 0),
+       ISNULL(r.reads, 0), ISNULL(r.writes, 0), ISNULL(r.logical_reads, 0)`
 
 // activeSessionFrom takes a MARS session's most recently read connection for
 // RecentText: each logical connection has its own row and handle.
@@ -772,7 +790,9 @@ func scanActiveSession(_ *Server, scan func(...any) error) (*ActiveSession, erro
 		&lastReq, &cmd, &as.RecentText, &as.Command,
 		&as.OpenTransactionCount, &as.Reads, &as.Writes, &as.LogicalReads,
 		&as.BlockingSessionID, &waitType, &as.WaitTimeMS, &as.WaitResource,
-		&as.HostProcessID, &as.FromCallerHost,
+		&as.HostProcessID, &as.FromCallerHost, &as.IsUserProcess,
+		&as.RequestCPUTime, &as.RequestElapsedMS,
+		&as.RequestReads, &as.RequestWrites, &as.RequestLogicalReads,
 	); err != nil {
 		return nil, err
 	}

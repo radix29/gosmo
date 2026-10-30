@@ -134,6 +134,15 @@ func TestLiveMonitorIdleHeadBlocker(t *testing.T) {
 	if !strings.Contains(w.RecentText, tag) {
 		t.Errorf("waiter: RecentText %q, want its own batch", w.RecentText)
 	}
+	// The waiter's request has been running (blocked) for a while; the
+	// session's own counters leave a running request out, so only the
+	// request's elapsed time shows it. The idle head has no request.
+	if w.RequestElapsedMS <= 0 {
+		t.Errorf("waiter: RequestElapsedMS %d, want the blocked request's running time", w.RequestElapsedMS)
+	}
+	if h.RequestElapsedMS != 0 || h.RequestCPUTime != 0 {
+		t.Errorf("idle head: request counters %d ms / %d ms cpu, want 0", h.RequestElapsedMS, h.RequestCPUTime)
+	}
 
 	// SessionByID shares the read and fills the same fields.
 	byID, err := srv.SessionByID(ctx, waiterID)

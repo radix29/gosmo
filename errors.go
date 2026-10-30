@@ -427,6 +427,8 @@ const (
 //	5304  Bulk copy failed. User does not have ALTER TABLE permission on
 //	      table '…' (a bulk load that neither checks constraints nor fires
 //	      triggers, on a table that has them)
+//	6102  User does not have permission to use the KILL statement (KILL
+//	      without ALTER ANY CONNECTION)
 //	27219 Caller does not have permissions to execute the stored procedure
 //	      (sp_readerrorlog without securityadmin or VIEW SERVER STATE)
 //	1088  Cannot find the object "…" because it does not exist or you do not
@@ -441,7 +443,7 @@ const (
 var refusalNumbers = map[int32]RefusalKind{
 	229: PermissionDenied, 230: PermissionDenied, 262: PermissionDenied,
 	297: PermissionDenied, 300: PermissionDenied, 916: PermissionDenied,
-	2571: PermissionDenied, 5304: PermissionDenied, 27219: PermissionDenied,
+	2571: PermissionDenied, 5304: PermissionDenied, 6102: PermissionDenied, 27219: PermissionDenied,
 
 	1088: MissingOrDenied,
 	3701: MissingOrDenied, 5011: MissingOrDenied,
