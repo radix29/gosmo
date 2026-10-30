@@ -229,7 +229,7 @@ func TestLiveEventSessionLifecycle(t *testing.T) {
 		case XETargetEventFile:
 			sawFile = azure || strings.Contains(tg.CurrentFile, name) && strings.HasSuffix(strings.ToLower(tg.CurrentFile), ".xel")
 		case XETargetRingBuffer:
-			sawRing = tg.TotalEventsProcessed > 0 && tg.Package == "package0"
+			sawRing = tg.TotalEventsProcessed > 0 && tg.EventCount > 0 && tg.Package == "package0"
 		}
 	}
 	if azure {

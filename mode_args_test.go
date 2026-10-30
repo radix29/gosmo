@@ -130,16 +130,18 @@ func TestReplicationAgentSessionsFilter(t *testing.T) {
 
 // TestSessionByID: the session is bound, not spliced; the caller's own is not
 // filtered out (Kill Process must recognise it); the client process and
-// monitor columns land in their fields; and no row is ErrNotFound.
+// monitor columns land in their fields, the running request's counters
+// apart from the session's; and no row is ErrNotFound.
 func TestSessionByID(t *testing.T) {
-	cols := make([]string, 23)
+	cols := make([]string, 29)
 	for i := range cols {
 		cols[i] = fmt.Sprintf("c%d", i)
 	}
 	row := []driver.Value{int64(57), "app", "ws1", "prog", "appdb", "sleeping",
 		int64(0), int64(0), int64(0), nil, "", "BEGIN TRAN; UPDATE t", "AWAITING COMMAND",
 		int64(1), int64(2), int64(3), int64(4),
-		int64(60), "LCK_M_U", int64(5), "KEY: 5:1 (ab)", int64(4242), true}
+		int64(60), "LCK_M_U", int64(5), "KEY: 5:1 (ab)", int64(4242), true, true,
+		int64(11), int64(12), int64(13), int64(14), int64(15)}
 	d := qsRecDB(t, 17, cols, [][]driver.Value{row})
 	as, err := d.server.SessionByID(context.Background(), 57)
 	if err != nil {
@@ -153,10 +155,12 @@ func TestSessionByID(t *testing.T) {
 		t.Errorf("SessionByID leaves out the caller's own session:\n%s", call.sql)
 	}
 	if as.SessionID != 57 || as.LoginName != "app" || as.HostName != "ws1" || as.DatabaseName != "appdb" ||
-		as.HostProcessID != 4242 || !as.FromCallerHost ||
+		as.HostProcessID != 4242 || !as.FromCallerHost || !as.IsUserProcess ||
 		as.RecentText != "BEGIN TRAN; UPDATE t" || as.Command != "AWAITING COMMAND" ||
 		as.OpenTransactionCount != 1 || as.Reads != 2 || as.Writes != 3 || as.LogicalReads != 4 ||
-		as.BlockingSessionID != 60 || as.WaitType != "LCK_M_U" || as.WaitTimeMS != 5 || as.WaitResource != "KEY: 5:1 (ab)" {
+		as.BlockingSessionID != 60 || as.WaitType != "LCK_M_U" || as.WaitTimeMS != 5 || as.WaitResource != "KEY: 5:1 (ab)" ||
+		as.RequestCPUTime != 11 || as.RequestElapsedMS != 12 || as.RequestReads != 13 ||
+		as.RequestWrites != 14 || as.RequestLogicalReads != 15 {
 		t.Errorf("SessionByID read %+v", *as)
 	}
 
