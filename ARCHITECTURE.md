@@ -332,7 +332,8 @@ The instance and database halves pair up: `ServerResourceStat` and
 | `Server.Configuration`  | `srv.Configurations(ctx)` / `srv.ConfigurationByName(ctx, name)` / `srv.ConfigurationRef(name)` (no-I/O handle). Both reads fill `Default`/`HasDefault`: the **engine** default for the server's major from a per-major table (13–17, `server_config_defaults.go`), not Setup's recommendation; `HasDefault` false on Azure, a newer major, or an option the table omits. A self-configuring option's default 0 lies below its reported `Minimum` |
 | Change sp_configure options | `srv.ApplyConfiguration(ctx, []gosmo.ConfigChange{{Name, Value}}, gosmo.ConfigApplyOptions{Override})` — one batch: turns `show advanced options` on for it when needed and puts it back, one `RECONFIGURE`. `ConfigurationOption.SetValue` is the bare `sp_configure`, which fails Msg 15123 for an advanced option while `show advanced options` is 0 |
 | `Server.JobServer` (Agent) | see [SQL Server Agent](#sql-server-agent) below |
-| Active sessions         | `srv.ActiveSessions(ctx, gosmo.UserSessionsOnly)` (or `AllSessions`) |
+| Active sessions         | `srv.ActiveSessions(ctx, gosmo.UserSessionsOnly)` (or `AllSessions`) — with the blocker and wait (`WaitResource`), open transactions, session I/O totals, the running `Command`, and `RecentText` (the connection's last batch: what an idle head blocker ran) |
+| Plan cache: top statements | `srv.TopQueries(ctx, gosmo.TopQueriesOptions{By, Average, Top, Database})` → `[]*CachedQueryStat` (`dm_exec_query_stats`, ranked before text and database are looked up); one statement's plan `srv.CachedPlan(ctx, planHandle, stmtStart, stmtEnd)` (`dm_exec_text_query_plan`, `ErrNotFound` once evicted) — VIEW SERVER STATE (`plan_cache.go`) |
 | Own blocked requests    | `srv.BlockedRequests(ctx, os.Getpid())` — this client's pooled sessions waiting on another, with the blocker |
 | One session             | `srv.SessionByID(ctx, id)`                      |
 | Kill session            | `srv.KillSession(ctx, id)`                      |
@@ -2112,6 +2113,8 @@ specs, New Session templates, target builders).
 | Running state, dropped events, current file | `es.Status(ctx)` → `*EventSessionStatus`            |
 | Script Session as CREATE         | `NewServerScripter(srv, opts).ScriptEventSession(ctx, name)`   |
 | View Target Data (event_file)    | `srv.XEvents().ReadFile(ctx, es.EventFilePattern(), cursor, max)` — incremental by `EventFileCursor` |
+| One event out of a busy file set (system_health's deadlocks) | `srv.XEvents().ReadFileEvents(ctx, pattern, cursor, max, []string{"xml_deadlock_report"})` — filtered by the server on `object_name` |
+| A deadlock graph                 | `gosmo.DecodeDeadlockReport(b)` → `*DeadlockReport` (victims, processes with their frames, resources with owners and waiters) — an `xml_report` value or an `.xdl` file (`deadlock_report.go`) |
 | View Target Data (ring_buffer)   | `es.ReadRingBuffer(ctx)` → `*RingBufferData`                  |
 | The .xel files of an event_file  | `srv.XEvents().Files(ctx, pattern)` — oldest first, via `EnumFileSystem`; a cursor into a file rollover deleted fails `errors.Is(err, gosmo.ErrEventFileGone)` |
 | Add a target                     | `es.AddTarget(ctx, gosmo.EventFileTarget(name, mb, files))` / `gosmo.RingBufferTarget(kb)` — no stop needed |

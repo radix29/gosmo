@@ -1,0 +1,105 @@
+<deadlock>
+ <victim-list>
+  <victimProcess id="process198583ccca8"/>
+ </victim-list>
+ <process-list>
+  <process id="process198583ccca8" taskpriority="0" logused="212" waitresource="PAGE: 2:4:8932 " waittime="3171" ownerId="6129633" transactionname="user_transaction" lasttranstarted="2026-10-30T10:00:39.717" XDES="0x1984b5e5900" lockMode="S" schedulerid="2" kpid="10656" status="suspended" spid="57" sbid="0" ecid="4" priority="0" trancount="0" lastbatchstarted="2026-10-30T10:00:39.723" lastbatchcompleted="2026-10-30T10:00:39.720" lastattention="1900-01-01T00:00:00.720" clientapp="go-mssqldb" hostname="ubudev" hostpid="498637" isolationlevel="read committed (2)" xactid="6129633" currentdb="1" currentdbname="master" lockTimeout="4294967295" clientoption1="671088672" clientoption2="128056">
+   <executionStack>
+    <frame procname="adhoc" line="1" stmtend="266" sqlhandle="0x02000000bb5ce22a7bc459734ac4bf88384b6ef91769ba8f0000000000000000000000000000000000000000">
+unknown    </frame>
+   </executionStack>
+   <inputbuf>
+SELECT COUNT(*) FROM ##gosmo_live_dl_998432_parallel_b WHERE pad &lt;&gt; &apos;z&apos; OPTION (MAXDOP 4, USE HINT(&apos;ENABLE_PARALLEL_PLAN_PREFERENCE&apos;))   </inputbuf>
+  </process>
+  <process id="process19858af3088" taskpriority="0" logused="212" waitresource="PAGE: 2:5:8436 " waittime="2042" ownerId="6129635" transactionname="user_transaction" lasttranstarted="2026-10-30T10:00:39.720" XDES="0x1984d5e1c10" lockMode="S" schedulerid="3" kpid="5340" status="suspended" spid="58" sbid="0" ecid="3" priority="0" trancount="0" lastbatchstarted="2026-10-30T10:00:40.713" lastbatchcompleted="2026-10-30T10:00:39.720" lastattention="1900-01-01T00:00:00.720" clientapp="go-mssqldb" hostname="ubudev" hostpid="498637" isolationlevel="read committed (2)" xactid="6129635" currentdb="1" currentdbname="master" lockTimeout="4294967295" clientoption1="671088672" clientoption2="128056">
+   <executionStack>
+    <frame procname="adhoc" line="1" stmtend="266" sqlhandle="0x020000006fb37123364e4d372e7725f5ecf3616d91f2540b0000000000000000000000000000000000000000">
+unknown    </frame>
+   </executionStack>
+   <inputbuf>
+SELECT COUNT(*) FROM ##gosmo_live_dl_998432_parallel_a WHERE pad &lt;&gt; &apos;z&apos; OPTION (MAXDOP 4, USE HINT(&apos;ENABLE_PARALLEL_PLAN_PREFERENCE&apos;))   </inputbuf>
+  </process>
+  <process id="process19858af2ca8" taskpriority="0" logused="10000" waittime="3160" schedulerid="3" kpid="3304" status="suspended" spid="57" sbid="0" ecid="2" priority="0" trancount="0" lastbatchstarted="2026-10-30T10:00:39.723" lastbatchcompleted="2026-10-30T10:00:39.720" lastattention="1900-01-01T00:00:00.720" clientapp="go-mssqldb" hostname="ubudev" hostpid="498637" isolationlevel="read committed (2)" xactid="6129633" currentdb="1" currentdbname="master" lockTimeout="4294967295" clientoption1="671088672" clientoption2="128056">
+   <executionStack>
+    <frame procname="adhoc" line="1" stmtend="266" sqlhandle="0x02000000bb5ce22a7bc459734ac4bf88384b6ef91769ba8f0000000000000000000000000000000000000000">
+unknown    </frame>
+   </executionStack>
+   <inputbuf>
+SELECT COUNT(*) FROM ##gosmo_live_dl_998432_parallel_b WHERE pad &lt;&gt; &apos;z&apos; OPTION (MAXDOP 4, USE HINT(&apos;ENABLE_PARALLEL_PLAN_PREFERENCE&apos;))   </inputbuf>
+  </process>
+  <process id="process19855e21848" taskpriority="0" logused="10000" waittime="2061" schedulerid="3" kpid="7844" status="suspended" spid="58" sbid="0" ecid="0" priority="0" trancount="1" lastbatchstarted="2026-10-30T10:00:40.713" lastbatchcompleted="2026-10-30T10:00:39.720" lastattention="1900-01-01T00:00:00.720" clientapp="go-mssqldb" hostname="ubudev" hostpid="498637" loginname="sa" isolationlevel="read committed (2)" xactid="6129635" currentdb="1" currentdbname="master" lockTimeout="4294967295" clientoption1="671088672" clientoption2="128056">
+   <executionStack>
+    <frame procname="adhoc" line="1" stmtend="266" sqlhandle="0x020000006fb37123364e4d372e7725f5ecf3616d91f2540b0000000000000000000000000000000000000000">
+unknown    </frame>
+   </executionStack>
+   <inputbuf>
+SELECT COUNT(*) FROM ##gosmo_live_dl_998432_parallel_a WHERE pad &lt;&gt; &apos;z&apos; OPTION (MAXDOP 4, USE HINT(&apos;ENABLE_PARALLEL_PLAN_PREFERENCE&apos;))   </inputbuf>
+  </process>
+  <process id="process1984fd8c8c8" taskpriority="0" logused="10000" waittime="3181" schedulerid="4" kpid="3816" status="suspended" spid="57" sbid="0" ecid="0" priority="0" trancount="1" lastbatchstarted="2026-10-30T10:00:39.723" lastbatchcompleted="2026-10-30T10:00:39.720" lastattention="1900-01-01T00:00:00.720" clientapp="go-mssqldb" hostname="ubudev" hostpid="498637" loginname="sa" isolationlevel="read committed (2)" xactid="6129633" currentdb="1" currentdbname="master" lockTimeout="4294967295" clientoption1="671088672" clientoption2="128056">
+   <executionStack>
+    <frame procname="adhoc" line="1" stmtend="266" sqlhandle="0x02000000bb5ce22a7bc459734ac4bf88384b6ef91769ba8f0000000000000000000000000000000000000000">
+unknown    </frame>
+   </executionStack>
+   <inputbuf>
+SELECT COUNT(*) FROM ##gosmo_live_dl_998432_parallel_b WHERE pad &lt;&gt; &apos;z&apos; OPTION (MAXDOP 4, USE HINT(&apos;ENABLE_PARALLEL_PLAN_PREFERENCE&apos;))   </inputbuf>
+  </process>
+  <process id="process19865371468" taskpriority="0" logused="10000" waittime="3161" schedulerid="1" kpid="10160" status="suspended" spid="57" sbid="0" ecid="3" priority="0" trancount="0" lastbatchstarted="2026-10-30T10:00:39.723" lastbatchcompleted="2026-10-30T10:00:39.720" lastattention="1900-01-01T00:00:00.720" clientapp="go-mssqldb" hostname="ubudev" hostpid="498637" isolationlevel="read committed (2)" xactid="6129633" currentdb="1" currentdbname="master" lockTimeout="4294967295" clientoption1="671088672" clientoption2="128056">
+   <executionStack>
+    <frame procname="adhoc" line="1" stmtend="266" sqlhandle="0x02000000bb5ce22a7bc459734ac4bf88384b6ef91769ba8f0000000000000000000000000000000000000000">
+unknown    </frame>
+   </executionStack>
+   <inputbuf>
+SELECT COUNT(*) FROM ##gosmo_live_dl_998432_parallel_b WHERE pad &lt;&gt; &apos;z&apos; OPTION (MAXDOP 4, USE HINT(&apos;ENABLE_PARALLEL_PLAN_PREFERENCE&apos;))   </inputbuf>
+  </process>
+ </process-list>
+ <resource-list>
+  <pagelock fileid="4" pageid="8932" dbid="2" subresource="FULL" objectname="tempdb.dbo.##gosmo_live_dl_998432_parallel_b" id="lock1985556b980" mode="IX" associatedObjectId="432345632593149952">
+   <owner-list>
+    <owner id="process19855e21848" mode="IX"/>
+   </owner-list>
+   <waiter-list>
+    <waiter id="process198583ccca8" mode="S" requestType="wait"/>
+   </waiter-list>
+  </pagelock>
+  <pagelock fileid="5" pageid="8436" dbid="2" subresource="FULL" objectname="tempdb.dbo.##gosmo_live_dl_998432_parallel_a" id="lock1984ce3dd00" mode="IX" associatedObjectId="360288038514262016">
+   <owner-list>
+    <owner id="process1984fd8c8c8" mode="IX"/>
+   </owner-list>
+   <waiter-list>
+    <waiter id="process19858af3088" mode="S" requestType="wait"/>
+   </waiter-list>
+  </pagelock>
+  <exchangeEvent id="Port19860884300" WaitType="e_waitPortOpen" waiterType="Producer" nodeId="3" tid="1" ownerActivity="notYetOpened" waiterActivity="waitForAllOwnersToOpen">
+   <owner-list>
+    <owner id="process19865371468"/>
+   </owner-list>
+   <waiter-list>
+    <waiter id="process19858af2ca8"/>
+   </waiter-list>
+  </exchangeEvent>
+  <exchangeEvent id="Port19860884400" WaitType="e_waitPortOpen" waiterType="Coordinator" nodeId="3" tid="0" ownerActivity="notYetOpened" waiterActivity="waitForAllOwnersToOpen">
+   <owner-list>
+    <owner id="process19858af3088"/>
+   </owner-list>
+   <waiter-list>
+    <waiter id="process19855e21848"/>
+   </waiter-list>
+  </exchangeEvent>
+  <exchangeEvent id="Port19860884300" WaitType="e_waitPortOpen" waiterType="Coordinator" nodeId="3" tid="0" ownerActivity="notYetOpened" waiterActivity="waitForAllOwnersToOpen">
+   <owner-list>
+    <owner id="process19858af2ca8"/>
+   </owner-list>
+   <waiter-list>
+    <waiter id="process1984fd8c8c8"/>
+   </waiter-list>
+  </exchangeEvent>
+  <exchangeEvent id="Port19860884300" WaitType="e_waitPortOpen" waiterType="Producer" nodeId="3" tid="2" ownerActivity="notYetOpened" waiterActivity="waitForAllOwnersToOpen">
+   <owner-list>
+    <owner id="process198583ccca8"/>
+   </owner-list>
+   <waiter-list>
+    <waiter id="process19865371468"/>
+   </waiter-list>
+  </exchangeEvent>
+ </resource-list>
+</deadlock>

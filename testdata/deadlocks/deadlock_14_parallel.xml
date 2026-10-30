@@ -1,0 +1,89 @@
+<deadlock>
+ <victim-list>
+  <victimProcess id="process119e440f468"/>
+ </victim-list>
+ <process-list>
+  <process id="process119e440f468" taskpriority="0" logused="212" waitresource="PAGE: 2:4:612 " waittime="4824" ownerId="7080624" transactionname="user_transaction" lasttranstarted="2026-10-30T10:00:52.037" XDES="0x119ebc8f980" lockMode="S" schedulerid="3" kpid="7172" status="suspended" spid="61" sbid="0" ecid="1" priority="0" trancount="0" lastbatchstarted="2026-10-30T10:00:53.027" lastbatchcompleted="2026-10-30T10:00:52.033" lastattention="1900-01-01T00:00:00.033" clientapp="go-mssqldb" hostname="ubudev" hostpid="498638" isolationlevel="read committed (2)" xactid="7080624" currentdb="1" lockTimeout="4294967295" clientoption1="671088672" clientoption2="128056">
+   <executionStack>
+    <frame procname="adhoc" line="1" stmtend="266" sqlhandle="0x02000000c53519098f91384566146e5e06cdc8a212ffc99c0000000000000000000000000000000000000000">
+unknown    </frame>
+   </executionStack>
+   <inputbuf>
+SELECT COUNT(*) FROM ##gosmo_live_dl_aeb8f2_parallel_a WHERE pad &lt;&gt; &apos;z&apos; OPTION (MAXDOP 4, USE HINT(&apos;ENABLE_PARALLEL_PLAN_PREFERENCE&apos;))   </inputbuf>
+  </process>
+  <process id="process119e1595848" taskpriority="0" logused="212" waitresource="PAGE: 2:3:2764 " waittime="5893" ownerId="7080614" transactionname="user_transaction" lasttranstarted="2026-10-30T10:00:52.027" XDES="0x119eb935980" lockMode="S" schedulerid="1" kpid="5832" status="suspended" spid="60" sbid="0" ecid="3" priority="0" trancount="0" lastbatchstarted="2026-10-30T10:00:52.033" lastbatchcompleted="2026-10-30T10:00:52.030" lastattention="1900-01-01T00:00:00.030" clientapp="go-mssqldb" hostname="ubudev" hostpid="498638" isolationlevel="read committed (2)" xactid="7080614" currentdb="1" lockTimeout="4294967295" clientoption1="671088672" clientoption2="128056">
+   <executionStack>
+    <frame procname="adhoc" line="1" stmtend="266" sqlhandle="0x02000000e3855a03dfb566eb6e9ff413b39fec1fdd82e5750000000000000000000000000000000000000000">
+unknown    </frame>
+   </executionStack>
+   <inputbuf>
+SELECT COUNT(*) FROM ##gosmo_live_dl_aeb8f2_parallel_b WHERE pad &lt;&gt; &apos;z&apos; OPTION (MAXDOP 4, USE HINT(&apos;ENABLE_PARALLEL_PLAN_PREFERENCE&apos;))   </inputbuf>
+  </process>
+  <process id="process119e7729468" taskpriority="0" logused="10000" waittime="5938" schedulerid="4" kpid="7704" status="suspended" spid="60" sbid="0" ecid="0" priority="0" trancount="1" lastbatchstarted="2026-10-30T10:00:52.033" lastbatchcompleted="2026-10-30T10:00:52.030" lastattention="1900-01-01T00:00:00.030" clientapp="go-mssqldb" hostname="ubudev" hostpid="498638" loginname="sa" isolationlevel="read committed (2)" xactid="7080614" currentdb="1" lockTimeout="4294967295" clientoption1="671088672" clientoption2="128056">
+   <executionStack>
+    <frame procname="adhoc" line="1" stmtend="266" sqlhandle="0x02000000e3855a03dfb566eb6e9ff413b39fec1fdd82e5750000000000000000000000000000000000000000">
+unknown    </frame>
+   </executionStack>
+   <inputbuf>
+SELECT COUNT(*) FROM ##gosmo_live_dl_aeb8f2_parallel_b WHERE pad &lt;&gt; &apos;z&apos; OPTION (MAXDOP 4, USE HINT(&apos;ENABLE_PARALLEL_PLAN_PREFERENCE&apos;))   </inputbuf>
+  </process>
+  <process id="process119e440f848" taskpriority="0" logused="10000" waittime="5863" schedulerid="3" kpid="8364" status="suspended" spid="60" sbid="0" ecid="1" priority="0" trancount="0" lastbatchstarted="2026-10-30T10:00:52.033" lastbatchcompleted="2026-10-30T10:00:52.030" lastattention="1900-01-01T00:00:00.030" clientapp="go-mssqldb" hostname="ubudev" hostpid="498638" isolationlevel="read committed (2)" xactid="7080614" currentdb="1" lockTimeout="4294967295" clientoption1="671088672" clientoption2="128056">
+   <executionStack>
+    <frame procname="adhoc" line="1" stmtend="266" sqlhandle="0x02000000e3855a03dfb566eb6e9ff413b39fec1fdd82e5750000000000000000000000000000000000000000">
+unknown    </frame>
+   </executionStack>
+   <inputbuf>
+SELECT COUNT(*) FROM ##gosmo_live_dl_aeb8f2_parallel_b WHERE pad &lt;&gt; &apos;z&apos; OPTION (MAXDOP 4, USE HINT(&apos;ENABLE_PARALLEL_PLAN_PREFERENCE&apos;))   </inputbuf>
+  </process>
+  <process id="process119e1595c28" taskpriority="0" logused="10000" waittime="4885" schedulerid="1" kpid="5464" status="suspended" spid="61" sbid="0" ecid="0" priority="0" trancount="1" lastbatchstarted="2026-10-30T10:00:53.027" lastbatchcompleted="2026-10-30T10:00:52.033" lastattention="1900-01-01T00:00:00.033" clientapp="go-mssqldb" hostname="ubudev" hostpid="498638" loginname="sa" isolationlevel="read committed (2)" xactid="7080624" currentdb="1" lockTimeout="4294967295" clientoption1="671088672" clientoption2="128056">
+   <executionStack>
+    <frame procname="adhoc" line="1" stmtend="266" sqlhandle="0x02000000c53519098f91384566146e5e06cdc8a212ffc99c0000000000000000000000000000000000000000">
+unknown    </frame>
+   </executionStack>
+   <inputbuf>
+SELECT COUNT(*) FROM ##gosmo_live_dl_aeb8f2_parallel_a WHERE pad &lt;&gt; &apos;z&apos; OPTION (MAXDOP 4, USE HINT(&apos;ENABLE_PARALLEL_PLAN_PREFERENCE&apos;))   </inputbuf>
+  </process>
+ </process-list>
+ <resource-list>
+  <pagelock fileid="4" pageid="612" dbid="2" subresource="FULL" objectname="tempdb.dbo.##gosmo_live_dl_aeb8f2_parallel_a" id="lock119dec5e480" mode="IX" associatedObjectId="1873497498443972608">
+   <owner-list>
+    <owner id="process119e7729468" mode="IX"/>
+   </owner-list>
+   <waiter-list>
+    <waiter id="process119e440f468" mode="S" requestType="wait"/>
+   </waiter-list>
+  </pagelock>
+  <pagelock fileid="3" pageid="2764" dbid="2" subresource="FULL" objectname="tempdb.dbo.##gosmo_live_dl_aeb8f2_parallel_b" id="lock119e8e67f00" mode="IX" associatedObjectId="1945555092522860544">
+   <owner-list>
+    <owner id="process119e1595c28" mode="IX"/>
+   </owner-list>
+   <waiter-list>
+    <waiter id="process119e1595848" mode="S" requestType="wait"/>
+   </waiter-list>
+  </pagelock>
+  <exchangeEvent id="Port119f5970300" WaitType="e_waitPortOpen" nodeId="3">
+   <owner-list>
+    <owner id="process119e440f848"/>
+   </owner-list>
+   <waiter-list>
+    <waiter id="process119e7729468"/>
+   </waiter-list>
+  </exchangeEvent>
+  <exchangeEvent id="Port119f5970300" WaitType="e_waitPortOpen" nodeId="3">
+   <owner-list>
+    <owner id="process119e1595848"/>
+   </owner-list>
+   <waiter-list>
+    <waiter id="process119e440f848"/>
+   </waiter-list>
+  </exchangeEvent>
+  <exchangeEvent id="Port119f5970400" WaitType="e_waitPortOpen" nodeId="3">
+   <owner-list>
+    <owner id="process119e440f468"/>
+   </owner-list>
+   <waiter-list>
+    <waiter id="process119e1595c28"/>
+   </waiter-list>
+  </exchangeEvent>
+ </resource-list>
+</deadlock>
