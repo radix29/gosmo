@@ -5,7 +5,7 @@
 // sys.configurations, Server.StartTime against its clock, and
 // Server.TraceFlags/SetTraceFlag on a harmless flag.
 //
-//	go test -tags livedb . -run 'TestLive(ConfigurationDefaults|StartTime|TraceFlags)' -v \
+//	go test -tags livedb . -run 'TestLive(ConfigurationDefaults|StartTime|CurrentTime|TraceFlags)' -v \
 //	  -livedb 'sqlserver://sa:PASS@host/sql2016?TrustServerCertificate=true&encrypt=false'
 //
 // The defaults test changes nothing; it logs the options the table has no
@@ -97,6 +97,33 @@ func TestLiveStartTime(t *testing.T) {
 		t.Errorf("start time in %v, want UTC (the zoneless convention)", start.Location())
 	}
 	t.Logf("started %s, up %s", start.Format(time.DateTime), uptime.Round(time.Second))
+}
+
+func TestLiveCurrentTime(t *testing.T) {
+	db, ctx, done := liveDB(t)
+	defer done()
+	srv, err := NewServer(ctx, db)
+	if err != nil {
+		t.Fatalf("NewServer: %v", err)
+	}
+	now, err := srv.CurrentTime(ctx)
+	if err != nil {
+		t.Fatalf("CurrentTime: %v", err)
+	}
+	var utc time.Time
+	var offsetMin int
+	if err := db.QueryRowContext(ctx, `SELECT SYSUTCDATETIME(), DATEPART(TZOFFSET, SYSDATETIMEOFFSET())`).Scan(&utc, &offsetMin); err != nil {
+		t.Fatal(err)
+	}
+	// SYSUTCDATETIME is zoneless, so it arrives as UTC: the same instant as
+	// CurrentTime, give or take the round trip.
+	if d := utc.Sub(now); d < 0 || d > 10*time.Second {
+		t.Errorf("CurrentTime %v is %v away from SYSUTCDATETIME %v", now, d, utc)
+	}
+	if _, off := now.Zone(); off != offsetMin*60 {
+		t.Errorf("CurrentTime's offset %ds, want the server's %d min", off, offsetMin)
+	}
+	t.Logf("server now %s", now.Format(time.RFC3339))
 }
 
 func TestLiveTraceFlags(t *testing.T) {

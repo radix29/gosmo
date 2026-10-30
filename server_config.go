@@ -454,6 +454,19 @@ FROM   sys.dm_os_sys_info`
 	return start, time.Duration(ms) * time.Millisecond, nil
 }
 
+// CurrentTime returns the server's clock now (SYSDATETIMEOFFSET), in a fixed
+// zone at the server's UTC offset — unlike the zoneless server times, a real
+// instant. Its Location is how a caller turns a server-local wall clock into
+// an instant, and back: the offset is today's, so a time on the other side of
+// a daylight-saving change is an hour out. Needs no permission.
+func (s *Server) CurrentTime(ctx context.Context) (time.Time, error) {
+	var now time.Time
+	if err := s.queryRowScan(ctx, `SELECT SYSDATETIMEOFFSET()`, nil, &now); err != nil {
+		return time.Time{}, fmt.Errorf("gosmo: server current time: %w", err)
+	}
+	return now, nil
+}
+
 // ============================================================
 // Disk volumes
 // ============================================================
