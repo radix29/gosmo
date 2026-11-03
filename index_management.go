@@ -116,6 +116,16 @@ func (t *Table) RebuildAllIndexesWith(ctx context.Context, opts IndexRebuildOpti
 	return nil
 }
 
+// ReorganizeAllIndexes reorganizes every index on the table (ALTER INDEX
+// ALL ... REORGANIZE): Index.Reorganize for the whole table, in one
+// statement. A reorganize is always online and takes no options.
+func (t *Table) ReorganizeAllIndexes(ctx context.Context) error {
+	if err := t.exec(ctx, fmt.Sprintf("ALTER INDEX ALL ON %s REORGANIZE", t.FullName())); err != nil {
+		return fmt.Errorf("gosmo: reorganize all indexes on %s: %w", t.FullName(), err)
+	}
+	return nil
+}
+
 // onOffKeyword renders a bool as the ON/OFF keyword ALTER INDEX SET/REBUILD
 // WITH options expect.
 func onOffKeyword(b bool) string {
@@ -755,6 +765,12 @@ func (m FragmentationMode) normalize() (FragmentationMode, error) {
 // FragmentationStats returns fragmentation info for all indexes on the table,
 // one row per index, most fragmented first. An empty mode is
 // FragmentationLimited. A name that resolves to no table returns no rows.
+//
+// A disabled index is left out, as Database.FragmentationStats leaves it out:
+// it has no data, and the DMV called with its index_id refuses the whole
+// statement (Msg 2530, "The index … is disabled"), so one disabled index
+// failed the read of every other (found by gossms maint index-rebuild,
+// 2026-11-03).
 func (t *Table) FragmentationStats(ctx context.Context, mode FragmentationMode) ([]*IndexFragmentation, error) {
 	mode, err := mode.normalize()
 	if err != nil {
@@ -762,7 +778,7 @@ func (t *Table) FragmentationStats(ctx context.Context, mode FragmentationMode) 
 	}
 
 	q := fragmentationSelect(mode) + `
-WHERE  i.object_id = OBJECT_ID(@p1) AND i.index_id > 0 AND i.is_hypothetical = 0
+WHERE  i.object_id = OBJECT_ID(@p1) AND i.index_id > 0 AND i.is_hypothetical = 0 AND i.is_disabled = 0
 GROUP  BY i.name, i.index_id
 ORDER  BY 3 DESC, i.name`
 

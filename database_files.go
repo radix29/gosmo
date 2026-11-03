@@ -185,6 +185,43 @@ GROUP  BY mf.database_id`
 	return out, nil
 }
 
+// InstanceFile is one database file as the server-wide catalog
+// (sys.master_files) records it: which database holds which path.
+type InstanceFile struct {
+	DatabaseID   int
+	DatabaseName string // DB_NAME at the read; "" for a database dropped meanwhile
+	FileID       int
+	Name         string // the logical name
+	PhysicalName string
+	Type         FileType
+}
+
+// InstanceFiles returns every database file on the instance, in database_id
+// and file_id order — one sys.master_files read, so it answers for a
+// database in any state (DatabaseFiles' reason) and for all of them in one
+// round trip. It is the read that tells whether a path is already taken: a
+// RESTORE or CREATE DATABASE onto a file another database holds fails only
+// once it reaches the server (Msg 1834, 3156, 5170).
+//
+// Metadata visibility applies as in DatabaseSizes: without VIEW ANY
+// DEFINITION, CREATE DATABASE or ALTER ANY DATABASE only the login's own
+// databases' files are listed. A login that can create a database sees them
+// all.
+func (s *Server) InstanceFiles(ctx context.Context) ([]*InstanceFile, error) {
+	const q = `
+SELECT mf.database_id, ISNULL(DB_NAME(mf.database_id), N''), mf.file_id, mf.name,
+       mf.physical_name, mf.type_desc
+FROM   sys.master_files mf
+ORDER  BY mf.database_id, mf.file_id`
+
+	rows, err := s.query(ctx, q)
+	return scanRows(rows, err, "list instance files", func(scan func(...any) error) (*InstanceFile, error) {
+		f := &InstanceFile{}
+		err := scan(&f.DatabaseID, &f.DatabaseName, &f.FileID, &f.Name, &f.PhysicalName, &f.Type)
+		return f, err
+	})
+}
+
 // DatabaseFileSpec describes a file to add via AddFile, or one of CREATE
 // DATABASE's file definitions.
 type DatabaseFileSpec struct {

@@ -233,6 +233,9 @@ var sweepMustCall = []string{
 	"Server.LastBackups",
 	"Server.SearchJobHistory",
 
+	// The restore target-collision read (gossms phase 8.j).
+	"Server.InstanceFiles",
+
 	// The plan cache and the filtered event_file read (gossms phase 7.a).
 	"Server.TopQueries",
 	"Server.TopQueries(database)",
@@ -568,6 +571,10 @@ func sweepMaintenanceReads(sw *sweep, d *Database) {
 	})
 	sw.call("Server.LastBackups", func() error {
 		_, err := d.Server().LastBackups(sw.ctx)
+		return err
+	})
+	sw.call("Server.InstanceFiles", func() error {
+		_, err := d.Server().InstanceFiles(sw.ctx)
 		return err
 	})
 	sw.call("Server.SearchJobHistory", func() error {

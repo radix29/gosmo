@@ -118,3 +118,44 @@ func TestLiveDatabaseFilesForAnUnknownDatabaseIsEmpty(t *testing.T) {
 		t.Errorf("got %d files for a database that does not exist: %+v", len(got), got)
 	}
 }
+
+// TestLiveInstanceFilesAgreesWithDatabaseFiles pins the instance-wide read
+// against the per-database one for the throwaway database: the same files,
+// paths and types, under the database's own name.
+func TestLiveInstanceFilesAgreesWithDatabaseFiles(t *testing.T) {
+	db, ctx, done := liveDB(t)
+	defer done()
+	srv, _, drop := detLiveSetup(t, db, ctx)
+	defer drop()
+
+	want, err := srv.DatabaseFiles(ctx, detLiveName)
+	if err != nil {
+		t.Fatalf("DatabaseFiles: %v", err)
+	}
+	all, err := srv.InstanceFiles(ctx)
+	if err != nil {
+		t.Fatalf("InstanceFiles: %v", err)
+	}
+	var got []*InstanceFile
+	for _, f := range all {
+		if f.DatabaseName == detLiveName {
+			got = append(got, f)
+		}
+	}
+	if len(got) != len(want) {
+		t.Fatalf("InstanceFiles has %d files of %s, DatabaseFiles %d", len(got), detLiveName, len(want))
+	}
+	byID := map[int]*DatabaseFileInfo{}
+	for _, w := range want {
+		byID[w.FileID] = w
+	}
+	for _, g := range got {
+		w := byID[g.FileID]
+		if w == nil || g.Name != w.Name || g.PhysicalName != w.PhysicalName || g.Type != w.Type {
+			t.Errorf("file %d: InstanceFiles %+v, DatabaseFiles %+v", g.FileID, *g, w)
+		}
+	}
+	if !strings.Contains(strings.ToLower(all[0].DatabaseName), "master") {
+		t.Errorf("first file is %q's, want master's (database_id order)", all[0].DatabaseName)
+	}
+}

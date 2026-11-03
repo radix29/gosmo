@@ -34,6 +34,7 @@ var sweepSkip = map[string]string{
 	"Index.Drop":                    "drops the index",
 	"Index.Enable":                  "rebuilds the index",
 	"Index.Reorganize":              "reorganizes the index",
+	"Table.ReorganizeAllIndexes":    "reorganizes every index on the table",
 	"Login.Disable":                 "disables the login",
 	"Login.Drop":                    "drops the login",
 	"Login.Enable":                  "enables the login",

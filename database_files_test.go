@@ -256,3 +256,36 @@ func TestDatabaseFilesReadsSizeOnDisk(t *testing.T) {
 		t.Errorf("both branches must filter to the one database:\n%s", sql)
 	}
 }
+
+// TestInstanceFilesReadsEveryDatabaseFromMasterFiles pins InstanceFiles'
+// shape: the server-wide catalog (not a per-database read), every database
+// (no WHERE), and the row scanned into the fields a collision check needs.
+func TestInstanceFilesReadsEveryDatabaseFromMasterFiles(t *testing.T) {
+	cols := []string{"a", "b", "c", "d", "e", "f"}
+	rows := [][]driver.Value{
+		{int64(1), "master", int64(1), "master", `C:\data\master.mdf`, "ROWS"},
+		{int64(7), "", int64(2), "gone_log", `/var/opt/mssql/data/gone.ldf`, "LOG"},
+	}
+	d := qsRecDB(t, 17, cols, rows)
+
+	files, err := d.server.InstanceFiles(context.Background())
+	if err != nil {
+		t.Fatalf("InstanceFiles: %v", err)
+	}
+	sql := qsRec.last(t).sql
+	if !strings.Contains(sql, "sys.master_files") || strings.Contains(sql, "WHERE") {
+		t.Errorf("not an instance-wide master_files read:\n%s", sql)
+	}
+	want := []InstanceFile{
+		{DatabaseID: 1, DatabaseName: "master", FileID: 1, Name: "master", PhysicalName: `C:\data\master.mdf`, Type: "ROWS"},
+		{DatabaseID: 7, FileID: 2, Name: "gone_log", PhysicalName: "/var/opt/mssql/data/gone.ldf", Type: "LOG"},
+	}
+	if len(files) != len(want) {
+		t.Fatalf("got %d files, want %d", len(files), len(want))
+	}
+	for i := range want {
+		if *files[i] != want[i] {
+			t.Errorf("file %d = %+v, want %+v", i, *files[i], want[i])
+		}
+	}
+}

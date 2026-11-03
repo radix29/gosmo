@@ -147,6 +147,34 @@ func TestServerInfoSupportsBackupCompression(t *testing.T) {
 	}
 }
 
+// TestServerInfoSupportsOnlineIndexOperations pins the edition matrix:
+// answering true on Standard sends an ONLINE rebuild the server refuses with
+// Msg 1712; false on Developer or Azure hides a supported option.
+func TestServerInfoSupportsOnlineIndexOperations(t *testing.T) {
+	for _, tc := range []struct {
+		engine  EngineEdition
+		edition string
+		want    bool
+	}{
+		{EngineEnterprise, "Enterprise Edition (64-bit)", true},
+		{EngineEnterprise, "Developer Edition (64-bit)", true},
+		{EngineStandard, "Standard Edition (64-bit)", false},
+		{EngineStandard, "Web Edition (64-bit)", false},
+		{EngineExpress, "Express Edition (64-bit)", false},
+		{EngineAzureSQLDatabase, "SQL Azure", true},
+		{EngineAzureManagedInst, "SQL Azure", true},
+		{EngineAzureSQLEdge, "Azure SQL Edge", false},
+	} {
+		info := &ServerInfo{EngineEdition: int(tc.engine), Edition: tc.edition}
+		if got := info.SupportsOnlineIndexOperations(); got != tc.want {
+			t.Errorf("%d %q: SupportsOnlineIndexOperations = %v, want %v", tc.engine, tc.edition, got, tc.want)
+		}
+	}
+	if !(*ServerInfo)(nil).SupportsOnlineIndexOperations() {
+		t.Error("a nil ServerInfo refuses ONLINE; unknown must fail open")
+	}
+}
+
 // TestServerInfoSupported pins the floor at 2016 SP1 (13.0.4001). Answering
 // false on Azure — whose Managed Instance reports VersionMajor 12 — or on an
 // unread version would warn on every such connection.

@@ -286,6 +286,10 @@ func TestFragmentationQueriesBracketQuoteTheObjectName(t *testing.T) {
 		tbl := captureTable(t)
 		_, _ = tbl.FragmentationStats(context.Background(), "LIMITED")
 		bound(t, "dm_db_index_physical_stats", 1)
+		// A disabled index fails the DMV for every index (Msg 2530).
+		if q := captured.find("dm_db_index_physical_stats"); !strings.Contains(q, "i.is_disabled = 0") {
+			t.Errorf("a disabled index is not left out:\n%s", q)
+		}
 	})
 }
 

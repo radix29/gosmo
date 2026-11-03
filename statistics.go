@@ -183,6 +183,61 @@ func (st *Statistic) Update(ctx context.Context, samplePct int) error {
 	return nil
 }
 
+// StatisticsUpdateOptions shapes the WITH clause of an UPDATE STATISTICS
+// made by Table.UpdateStatisticsWith, View.UpdateStatisticsWith and
+// Statistic.UpdateWith. At most one is set; the zero value sends no WITH at
+// all, so the server samples as it chooses — what a bare UPDATE STATISTICS
+// does, and what the samplePct methods cannot ask for (their 0 is a
+// FULLSCAN).
+type StatisticsUpdateOptions struct {
+	// FullScan reads every row (WITH FULLSCAN).
+	FullScan bool
+	// SamplePercent reads that percentage of the rows (WITH SAMPLE n
+	// PERCENT), 1-100. Zero sends nothing.
+	SamplePercent int
+	// Resample keeps each statistic's last sample rate (WITH RESAMPLE).
+	Resample bool
+}
+
+// withClause renders o as UPDATE STATISTICS's " WITH ...", or "" when o is
+// the zero value, refusing what the server would.
+func (o StatisticsUpdateOptions) withClause() (string, error) {
+	if o.SamplePercent < 0 || o.SamplePercent > 100 {
+		return "", invalidf("sample percentage %d out of range (1-100)", o.SamplePercent)
+	}
+	set := 0
+	for _, b := range []bool{o.FullScan, o.SamplePercent > 0, o.Resample} {
+		if b {
+			set++
+		}
+	}
+	switch {
+	case set > 1:
+		return "", invalidf("FULLSCAN, SAMPLE and RESAMPLE are alternatives; set one")
+	case o.FullScan:
+		return " WITH FULLSCAN", nil
+	case o.SamplePercent > 0:
+		return fmt.Sprintf(" WITH SAMPLE %d PERCENT", o.SamplePercent), nil
+	case o.Resample:
+		return " WITH RESAMPLE", nil
+	}
+	return "", nil
+}
+
+// UpdateWith updates this statistic with the sampling opts asks for — see
+// StatisticsUpdateOptions; its zero value lets the server choose the sample.
+func (st *Statistic) UpdateWith(ctx context.Context, opts StatisticsUpdateOptions) error {
+	with, err := opts.withClause()
+	if err != nil {
+		return fmt.Errorf("gosmo: update statistic %q: %w", st.Name, err)
+	}
+	q := fmt.Sprintf("UPDATE STATISTICS %s %s", st.on().FullName(), quoteIdent(st.Name)) + with
+	if err := st.on().exec(ctx, q); err != nil {
+		return fmt.Errorf("gosmo: update statistic %q: %w", st.Name, err)
+	}
+	return nil
+}
+
 // Drop drops this statistic.
 // Correct T-SQL syntax: DROP STATISTICS table_name.stat_name
 func (st *Statistic) Drop(ctx context.Context) error {
@@ -202,6 +257,20 @@ func (t *Table) UpdateAllStatistics(ctx context.Context, samplePct int) error {
 	}
 	option := sampleClause(samplePct)
 	if err := t.exec(ctx, fmt.Sprintf("UPDATE STATISTICS %s WITH %s", t.FullName(), option)); err != nil {
+		return fmt.Errorf("gosmo: update all statistics on %s: %w", t.FullName(), err)
+	}
+	return nil
+}
+
+// UpdateStatisticsWith updates every statistic on the table with the
+// sampling opts asks for (UPDATE STATISTICS table [WITH ...]) — see
+// StatisticsUpdateOptions; its zero value lets the server choose the sample.
+func (t *Table) UpdateStatisticsWith(ctx context.Context, opts StatisticsUpdateOptions) error {
+	with, err := opts.withClause()
+	if err != nil {
+		return fmt.Errorf("gosmo: update all statistics on %s: %w", t.FullName(), err)
+	}
+	if err := t.exec(ctx, "UPDATE STATISTICS "+t.FullName()+with); err != nil {
 		return fmt.Errorf("gosmo: update all statistics on %s: %w", t.FullName(), err)
 	}
 	return nil

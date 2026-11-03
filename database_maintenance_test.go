@@ -13,7 +13,8 @@ import (
 
 // TestScriptMaintenanceWrites pins the statements gossms phase 8.a added: the
 // rebuild's ONLINE and MAXDOP, the whole-table rebuild with every option,
-// sp_updatestats and DBCC CHECKDB. See script_write_common_test.go.
+// sp_updatestats and DBCC CHECKDB — and 8.k's: the whole-object reorganize,
+// the view's whole-object forms and UPDATE STATISTICS's sampling choices. See script_write_common_test.go.
 func TestScriptMaintenanceWrites(t *testing.T) {
 	table := func() *Table { return &Table{db: scriptTestDB(), Schema: "dbo", Name: "Sales.Archive"} }
 	d := scriptTestDB
@@ -28,6 +29,33 @@ func TestScriptMaintenanceWrites(t *testing.T) {
 		{"Table RebuildAllIndexesWith no options", func(c context.Context) error {
 			return table().RebuildAllIndexesWith(c, IndexRebuildOptions{})
 		}, scriptUsePrefix + "ALTER INDEX ALL ON [dbo].[Sales.Archive] REBUILD"},
+		{"Table ReorganizeAllIndexes", func(c context.Context) error {
+			return table().ReorganizeAllIndexes(c)
+		}, scriptUsePrefix + "ALTER INDEX ALL ON [dbo].[Sales.Archive] REORGANIZE"},
+		{"View RebuildAllIndexesWith", func(c context.Context) error {
+			return scriptTestDB().ViewRef("dbo", "vSales").RebuildAllIndexesWith(c, IndexRebuildOptions{MaxDOP: 2})
+		}, scriptUsePrefix + "ALTER INDEX ALL ON [dbo].[vSales] REBUILD WITH (MAXDOP = 2)"},
+		{"View ReorganizeAllIndexes", func(c context.Context) error {
+			return scriptTestDB().ViewRef("dbo", "vSales").ReorganizeAllIndexes(c)
+		}, scriptUsePrefix + "ALTER INDEX ALL ON [dbo].[vSales] REORGANIZE"},
+		{"Table UpdateStatisticsWith server sample", func(c context.Context) error {
+			return table().UpdateStatisticsWith(c, StatisticsUpdateOptions{})
+		}, scriptUsePrefix + "UPDATE STATISTICS [dbo].[Sales.Archive]"},
+		{"Table UpdateStatisticsWith fullscan", func(c context.Context) error {
+			return table().UpdateStatisticsWith(c, StatisticsUpdateOptions{FullScan: true})
+		}, scriptUsePrefix + "UPDATE STATISTICS [dbo].[Sales.Archive] WITH FULLSCAN"},
+		{"Table UpdateStatisticsWith resample", func(c context.Context) error {
+			return table().UpdateStatisticsWith(c, StatisticsUpdateOptions{Resample: true})
+		}, scriptUsePrefix + "UPDATE STATISTICS [dbo].[Sales.Archive] WITH RESAMPLE"},
+		{"View UpdateStatisticsWith sample", func(c context.Context) error {
+			return scriptTestDB().ViewRef("dbo", "vSales").UpdateStatisticsWith(c, StatisticsUpdateOptions{SamplePercent: 30})
+		}, scriptUsePrefix + "UPDATE STATISTICS [dbo].[vSales] WITH SAMPLE 30 PERCENT"},
+		{"Statistic UpdateWith server sample", func(c context.Context) error {
+			return table().StatisticRef("IX]x").UpdateWith(c, StatisticsUpdateOptions{})
+		}, scriptUsePrefix + "UPDATE STATISTICS [dbo].[Sales.Archive] [IX]]x]"},
+		{"Statistic UpdateWith sample", func(c context.Context) error {
+			return table().StatisticRef("IX").UpdateWith(c, StatisticsUpdateOptions{SamplePercent: 5})
+		}, scriptUsePrefix + "UPDATE STATISTICS [dbo].[Sales.Archive] [IX] WITH SAMPLE 5 PERCENT"},
 		{"Database UpdateStatistics", func(c context.Context) error {
 			return d().UpdateStatistics(c, false)
 		}, scriptUsePrefix + "EXEC sys.sp_updatestats"},
@@ -60,6 +88,9 @@ func TestMaintenanceRefusals(t *testing.T) {
 		"rebuild all negative maxdop":     tbl.RebuildAllIndexesWith(ctx, IndexRebuildOptions{MaxDOP: -1}),
 		"rebuild all fill factor 101":     tbl.RebuildAllIndexesWith(ctx, IndexRebuildOptions{FillFactor: 101}),
 		"rebuild all bad compression":     tbl.RebuildAllIndexesWith(ctx, IndexRebuildOptions{DataCompression: "ZIP"}),
+		"stats fullscan + sample":         tbl.UpdateStatisticsWith(ctx, StatisticsUpdateOptions{FullScan: true, SamplePercent: 10}),
+		"stats sample + resample":         tbl.StatisticRef("s").UpdateWith(ctx, StatisticsUpdateOptions{SamplePercent: 10, Resample: true}),
+		"stats sample over 100":           tbl.UpdateStatisticsWith(ctx, StatisticsUpdateOptions{SamplePercent: 101}),
 		"fragmentation bad mode":          errOnly(d.FragmentationStats(ctx, "FAST", 0, 0)),
 		"fragmentation pct over 100":      errOnly(d.FragmentationStats(ctx, "", 101, 0)),
 		"fragmentation negative pages":    errOnly(d.FragmentationStats(ctx, "", 0, -1)),

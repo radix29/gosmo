@@ -93,6 +93,18 @@ func (v *View) RebuildAllIndexes(ctx context.Context, fillFactor int) error {
 	return v.carrier().RebuildAllIndexes(ctx, fillFactor)
 }
 
+// RebuildAllIndexesWith rebuilds every index on the view with opts — see
+// Table.RebuildAllIndexesWith.
+func (v *View) RebuildAllIndexesWith(ctx context.Context, opts IndexRebuildOptions) error {
+	return v.carrier().RebuildAllIndexesWith(ctx, opts)
+}
+
+// ReorganizeAllIndexes reorganizes every index on the view — see
+// Table.ReorganizeAllIndexes.
+func (v *View) ReorganizeAllIndexes(ctx context.Context) error {
+	return v.carrier().ReorganizeAllIndexes(ctx)
+}
+
 // Statistics returns the view's statistics objects — see Table.Statistics.
 // Only an indexed view has any.
 func (v *View) Statistics(ctx context.Context) ([]*Statistic, error) {
@@ -127,4 +139,10 @@ func (v *View) CreateStatistic(ctx context.Context, req CreateStatisticRequest) 
 // Table.UpdateAllStatistics.
 func (v *View) UpdateAllStatistics(ctx context.Context, samplePct int) error {
 	return v.carrier().UpdateAllStatistics(ctx, samplePct)
+}
+
+// UpdateStatisticsWith updates every statistic on the view with the sampling
+// opts asks for — see Table.UpdateStatisticsWith.
+func (v *View) UpdateStatisticsWith(ctx context.Context, opts StatisticsUpdateOptions) error {
+	return v.carrier().UpdateStatisticsWith(ctx, opts)
 }

@@ -4,7 +4,8 @@
 // added: Database.CheckDB against a clean and a deliberately corrupted
 // database, Database.FragmentationStats against Table.FragmentationStats,
 // the ONLINE/MAXDOP rebuild, sp_updatestats, Server.LastBackups and
-// Server.SearchJobHistory.
+// Server.SearchJobHistory; and what phase 8.k added (the whole-object
+// reorganize and view forms, UPDATE STATISTICS's sampling forms).
 //
 //	go test -tags livedb . -run TestLiveMaintenance -v \
 //	  -livedb 'sqlserver://sa:PASS@host?TrustServerCertificate=true'
@@ -158,6 +159,94 @@ func TestLiveMaintenanceUpdateStatistics(t *testing.T) {
 		}
 		if after := statsDate(t); !after.After(before) {
 			t.Errorf("UpdateStatistics(%v): STATS_DATE %v did not move from %v", resample, after, before)
+		}
+	}
+}
+
+// TestLiveMaintenanceWholeObjectForms covers what gossms phase 8.k added:
+// a table's fragmentation read with a disabled index on it (Msg 2530 failed
+// the whole read), the whole-table and whole-view reorganize and rebuild,
+// and UPDATE STATISTICS's sampling forms, on the table, a view and one
+// statistic.
+func TestLiveMaintenanceWholeObjectForms(t *testing.T) {
+	db, ctx, done := liveDBTimeout(t, 3*time.Minute)
+	t.Cleanup(done)
+	d, tbl := liveMaintFixture(t, db, ctx)
+	liveExecIn(t, d, ctx,
+		"CREATE INDEX ix_off ON dbo.t (id) INCLUDE (v)",
+		"ALTER INDEX ix_off ON dbo.t DISABLE",
+		`EXEC (N'CREATE VIEW dbo.vt WITH SCHEMABINDING AS SELECT LEFT(v, 1) AS k, COUNT_BIG(*) AS n FROM dbo.t GROUP BY LEFT(v, 1)')`,
+		"CREATE UNIQUE CLUSTERED INDEX cix_vt ON dbo.vt (k)")
+
+	rows, err := tbl.FragmentationStats(ctx, FragmentationLimited)
+	if err != nil {
+		t.Fatalf("Table.FragmentationStats with a disabled index: %v", err)
+	}
+	if slices.ContainsFunc(rows, func(r *IndexFragmentation) bool { return r.IndexName == "ix_off" }) ||
+		!slices.ContainsFunc(rows, func(r *IndexFragmentation) bool { return r.IndexName == "ix_v" }) {
+		t.Errorf("rows %+v: want ix_v, not the disabled ix_off", rows)
+	}
+
+	if err := tbl.ReorganizeAllIndexes(ctx); err != nil {
+		t.Errorf("Table.ReorganizeAllIndexes (a disabled index on it): %v", err)
+	}
+	v, err := d.ViewByName(ctx, "dbo", "vt")
+	if err != nil {
+		t.Fatalf("ViewByName: %v", err)
+	}
+	if err := v.RebuildAllIndexesWith(ctx, IndexRebuildOptions{Online: true, MaxDOP: 1}); err != nil {
+		t.Errorf("View.RebuildAllIndexesWith: %v", err)
+	}
+	if err := v.ReorganizeAllIndexes(ctx); err != nil {
+		t.Errorf("View.ReorganizeAllIndexes: %v", err)
+	}
+
+	// rows_sampled says which sample each form took.
+	sampled := func(t *testing.T, obj, stat string) (int64, int64, time.Time) {
+		t.Helper()
+		var n, of int64
+		var at time.Time
+		if err := d.queryRow(ctx, func(r *sql.Row) error { return r.Scan(&n, &of, &at) }, `
+SELECT sp.rows_sampled, sp.rows, sp.last_updated FROM sys.stats s
+CROSS APPLY sys.dm_db_stats_properties(s.object_id, s.stats_id) sp
+WHERE s.object_id = OBJECT_ID(@p1) AND s.name = @p2`, obj, stat); err != nil {
+			t.Fatalf("stats properties of %s.%s: %v", obj, stat, err)
+		}
+		return n, of, at
+	}
+	for _, c := range []struct {
+		name   string
+		opts   StatisticsUpdateOptions
+		check  func(n, of int64) bool
+		target string
+	}{
+		{"fullscan", StatisticsUpdateOptions{FullScan: true}, func(n, of int64) bool { return n == of }, "table"},
+		{"sample 1 percent", StatisticsUpdateOptions{SamplePercent: 1}, func(n, of int64) bool { return n > 0 }, "table"},
+		{"resample", StatisticsUpdateOptions{Resample: true}, func(n, of int64) bool { return n > 0 }, "statistic"},
+		{"server's sample", StatisticsUpdateOptions{}, func(n, of int64) bool { return n > 0 }, "statistic"},
+		{"view fullscan", StatisticsUpdateOptions{FullScan: true}, func(n, of int64) bool { return n == of }, "view"},
+	} {
+		obj, stat := "dbo.t", "ix_v"
+		if c.target == "view" {
+			obj, stat = "dbo.vt", "cix_vt"
+		}
+		_, _, before := sampled(t, obj, stat)
+		time.Sleep(1100 * time.Millisecond)
+		switch c.target {
+		case "table":
+			err = tbl.UpdateStatisticsWith(ctx, c.opts)
+		case "view":
+			err = v.UpdateStatisticsWith(ctx, c.opts)
+		default:
+			err = tbl.StatisticRef(stat).UpdateWith(ctx, c.opts)
+		}
+		if err != nil {
+			t.Errorf("%s: %v", c.name, err)
+			continue
+		}
+		n, of, at := sampled(t, obj, stat)
+		if !at.After(before) || !c.check(n, of) {
+			t.Errorf("%s: last_updated %v (was %v), %d of %d rows sampled", c.name, at, before, n, of)
 		}
 	}
 }

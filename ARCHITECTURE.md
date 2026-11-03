@@ -361,6 +361,7 @@ The instance and database halves pair up: `ServerResourceStat` and
 | Allocated size of every database, data and log | `srv.DatabaseSizes(ctx)` → `map[database_id]DatabaseSize{DataKB, LogKB}` — one `sys.master_files` read, any state; a database the login cannot see is absent |
 | Which databases the login can open | `srv.DatabaseAccess(ctx)` → `map[database_id]bool` — `HAS_DBACCESS` for the whole instance in one read (a database not ONLINE reads false for everyone); `db.Capabilities(ctx).Accessible` is the same answer for one database |
 | Files of one database, in any state | `srv.DatabaseFiles(ctx, name)` — reads `sys.master_files`, so it answers for an OFFLINE / RECOVERY_PENDING / SUSPECT database that `db.Files(ctx)` cannot `USE` |
+| Every database file on the instance (whose path is taken) | `srv.InstanceFiles(ctx)` → `[]*InstanceFile{DatabaseID, DatabaseName, FileID, Name, PhysicalName, Type}` — one `sys.master_files` read, any state |
 | Live memory stats        | `srv.MemoryStats(ctx)`                        |
 | Instance start and uptime | `srv.StartTime(ctx)` → start (server-local, carried in UTC), uptime by the server's own clock (VIEW SERVER STATE) |
 | Trace flags              | `srv.TraceFlags(ctx)` → `[]TraceFlag{Flag, Global, Session}` (DBCC TRACESTATUS(-1)); `srv.SetTraceFlag(ctx, flag, on)` — always global, sysadmin, lost at restart; a startup-only flag is ignored without an error, so read `TraceFlags` after (`server_traceflag.go`) |
@@ -489,7 +490,8 @@ The instance and database halves pair up: `ServerResourceStat` and
 | Fragmentation         | `t.FragmentationStats(ctx, mode)` / `v.FragmentationStats(ctx, mode)` (an indexed view) |
 | Index usage (seeks, scans, lookups, updates) | `t.IndexUsage(ctx)` / `v.IndexUsage(ctx)` — `sys.dm_db_index_usage_stats`; without VIEW SERVER STATE every row reads `UsageVisible` false |
 | Rebuild all indexes   | `t.RebuildAllIndexes(ctx, fillFactor)` / `t.RebuildAllIndexesWith(ctx, gosmo.IndexRebuildOptions{...})` (every rebuild option: fill factor, pad index, compression, `Online`, `MaxDOP`) |
-| Update all statistics | `t.UpdateAllStatistics(ctx, samplePct)` |
+| Reorganize all indexes | `t.ReorganizeAllIndexes(ctx)` / `v.ReorganizeAllIndexes(ctx)` — `ALTER INDEX ALL … REORGANIZE` (`v.RebuildAllIndexesWith` too) |
+| Update all statistics | `t.UpdateAllStatistics(ctx, samplePct)` (0 is `FULLSCAN`) / `t.UpdateStatisticsWith(ctx, gosmo.StatisticsUpdateOptions{FullScan, SamplePercent, Resample})` — the zero value sends no WITH, so the server picks the sample; `v.UpdateStatisticsWith` for an indexed view |
 | Create index          | `t.CreateIndex(ctx, req)` — every index type, see below |
 | Alter column          | `t.AlterColumn(ctx, col)`               |
 | Drop / rename a column | `t.DropColumn(ctx, name)` / `t.RenameColumn(ctx, name, newName)` |
@@ -593,7 +595,7 @@ instance is too old for is refused with `ErrUnsupportedVersion`.
 | ... density vector             | `st.DensityVector(ctx)` → `[]*StatisticDensity` |
 | ... histogram                  | `st.Histogram(ctx)` → `[]*StatisticHistogramStep` |
 | One statistic by name          | `t.StatisticByName(ctx, name)` / `t.StatisticRef(name)` (no-I/O handle) |
-| Update / drop                  | `st.Update(ctx, samplePct)` / `st.Drop(ctx)`      |
+| Update / drop                  | `st.Update(ctx, samplePct)` / `st.UpdateWith(ctx, gosmo.StatisticsUpdateOptions{...})` (zero value: the server's sample) / `st.Drop(ctx)` |
 | Rename                         | `st.Rename(ctx, newName)`                      |
 
 ### Login
