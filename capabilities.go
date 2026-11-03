@@ -230,6 +230,13 @@ var ProbedDatabasePermissions = []string{
 	"CREATE FUNCTION",
 	"CREATE SCHEMA",
 	"CREATE ROLE",
+	// CREATE SYNONYM needs this *and* ALTER on the target schema (the
+	// schema probe's ALTER): each alone is refused, Msg 262 without it and
+	// Msg 2760 without the schema half. ALTER and CONTROL on the database
+	// and db_ddladmin read 1 for both and create; ALTER ANY SCHEMA reads 0
+	// here and is refused. Probed with WITHOUT LOGIN users on majors 13 and
+	// 17, 2026-11-03, identical.
+	"CREATE SYNONYM",
 	"ALTER ANY USER",
 	"ALTER ANY ROLE",
 	"ALTER ANY APPLICATION ROLE",
