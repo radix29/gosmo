@@ -308,8 +308,17 @@ var ProbedDatabasePermissions = []string{
 // the one it is asked about, so a principal holding CONTROL on the schema, or
 // ALTER ANY SCHEMA, or db_owner, answers 1 for ALTER without any of them being
 // asked separately.
+//
+// CREATE SEQUENCE is the other: it is granted on a schema, not the database
+// (there is no database-scope CREATE SEQUENCE), and on its own it permits
+// CREATE SEQUENCE in that schema without ALTER on it. ALTER and CONTROL on the
+// schema, ALTER ANY SCHEMA, db_ddladmin and ALTER or CONTROL on the database
+// each read 1 for it; a schema-scope DENY CREATE SEQUENCE reads 0 beside ALTER
+// on the schema and is refused (Msg 15247). Probed on majors 13 and 17,
+// 2026-11-03.
 var ProbedSchemaPermissions = []string{
 	"ALTER",
+	"CREATE SEQUENCE",
 }
 
 // ProbedObjectPermissions are the OBJECT-scope permissions

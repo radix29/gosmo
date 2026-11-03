@@ -41,6 +41,9 @@ func TestEmptySchemaIsRefused(t *testing.T) {
 			return d.XMLSchemaCollectionRef("", "x").Drop(c)
 		}},
 		{"Sequence handle Restart", func(c context.Context, d *Database) error { return d.SequenceRef("", "s").Restart(c, 1) }},
+		{"Sequence handle Alter", func(c context.Context, d *Database) error {
+			return d.SequenceRef("", "s").Alter(c, SequenceChanges{Cycle: new(true)})
+		}},
 
 		// A TableRef's writes all go through Table.exec.
 		{"Table handle DropColumn", func(c context.Context, d *Database) error { return d.TableRef("", "t").DropColumn(c, "c") }},

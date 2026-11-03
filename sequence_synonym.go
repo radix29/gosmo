@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"regexp"
 	"strconv"
+	"strings"
 )
 
 // ============================================================
@@ -142,9 +143,13 @@ JOIN   sys.types tp ON tp.user_type_id = s.user_type_id`
 
 // CreateSequenceRequest describes a new sequence.
 type CreateSequenceRequest struct {
-	Schema     string
-	Name       string
-	DataType   DataType // defaults to bigint
+	Schema   string
+	Name     string
+	DataType DataType // defaults to bigint
+	// Precision is a decimal or numeric sequence's precision, 1 to 38, written
+	// as (Precision, 0): a sequence's scale is always 0. Zero leaves the bare
+	// type name, which the server reads as (18, 0). Refused for any other type.
+	Precision  int
 	StartValue int64
 	Increment  int64
 	MinValue   *int64
@@ -165,8 +170,18 @@ func (d *Database) CreateSequence(ctx context.Context, req CreateSequenceRequest
 	if err := requireSchema("create sequence", schema, req.Name); err != nil {
 		return nil, err
 	}
+	typeName := string(req.DataType)
+	if req.Precision != 0 {
+		if req.DataType != DataTypeDecimal && req.DataType != DataTypeNumeric {
+			return nil, invalidf("gosmo: create sequence %q: a precision applies only to decimal and numeric, not %q", req.Name, req.DataType)
+		}
+		if req.Precision < 1 || req.Precision > 38 {
+			return nil, invalidf("gosmo: create sequence %q: precision %d is outside 1 to 38", req.Name, req.Precision)
+		}
+		typeName = fmt.Sprintf("%s(%d, 0)", req.DataType, req.Precision)
+	}
 
-	q := fmt.Sprintf("CREATE SEQUENCE %s AS %s", qualifiedName(schema, req.Name), req.DataType)
+	q := fmt.Sprintf("CREATE SEQUENCE %s AS %s", qualifiedName(schema, req.Name), typeName)
 	q += fmt.Sprintf(" START WITH %d INCREMENT BY %d", req.StartValue, req.Increment)
 	if req.MinValue != nil {
 		q += fmt.Sprintf(" MINVALUE %d", *req.MinValue)
@@ -229,6 +244,128 @@ func (seq *Sequence) Restart(ctx context.Context, value int64) error {
 	setIfApplied(ctx, &seq.StartValue, v)
 	setIfApplied(ctx, &seq.CurrentValue, v)
 	setIfApplied(ctx, &seq.LastUsedValue, "")
+	return nil
+}
+
+// SequenceCache is an ALTER SEQUENCE CACHE clause.
+type SequenceCache struct {
+	// Enabled false is NO CACHE; Size is then ignored.
+	Enabled bool
+	// Size is CACHE n. Zero, with Enabled, is a bare CACHE: the server picks
+	// the size, and sys.sequences reads cache_size NULL (CacheSize 0).
+	Size int
+}
+
+// SequenceChanges is what ALTER SEQUENCE can change. A nil field leaves that
+// setting as stored: the statement omits its clause. The data type and the
+// start value have no ALTER; RestartWith moves the start value with the
+// current one.
+//
+// The values are int64, CreateSequenceRequest's, so a decimal(38, 0)
+// sequence's range past it cannot be written; an unset field is not touched,
+// whatever the sequence holds.
+type SequenceChanges struct {
+	// RestartWith is RESTART WITH n: the next value handed out is n.
+	RestartWith *int64
+	// Increment is INCREMENT BY n, never 0.
+	Increment *int64
+	// MinValue and MaxValue are MINVALUE n and MAXVALUE n. The catalog always
+	// holds a concrete bound (NO MINVALUE stores the type's), so a change
+	// always names one.
+	MinValue *int64
+	MaxValue *int64
+	// Cycle is CYCLE or NO CYCLE.
+	Cycle *bool
+	// Cache is CACHE [n] or NO CACHE.
+	Cache *SequenceCache
+}
+
+// clauses renders ch's clauses in the statement's documented order, or
+// refuses what the server would. An empty slice means nothing was set.
+func (ch SequenceChanges) clauses() ([]string, error) {
+	var c []string
+	if ch.RestartWith != nil {
+		c = append(c, fmt.Sprintf("RESTART WITH %d", *ch.RestartWith))
+	}
+	if ch.Increment != nil {
+		if *ch.Increment == 0 {
+			return nil, invalidf("the increment is 0; a sequence must move")
+		}
+		c = append(c, fmt.Sprintf("INCREMENT BY %d", *ch.Increment))
+	}
+	if ch.MinValue != nil {
+		c = append(c, fmt.Sprintf("MINVALUE %d", *ch.MinValue))
+	}
+	if ch.MaxValue != nil {
+		c = append(c, fmt.Sprintf("MAXVALUE %d", *ch.MaxValue))
+	}
+	if ch.MinValue != nil && ch.MaxValue != nil && *ch.MinValue >= *ch.MaxValue {
+		return nil, invalidf("the minimum value %d is not below the maximum %d", *ch.MinValue, *ch.MaxValue)
+	}
+	if ch.Cycle != nil {
+		if *ch.Cycle {
+			c = append(c, "CYCLE")
+		} else {
+			c = append(c, "NO CYCLE")
+		}
+	}
+	if k := ch.Cache; k != nil {
+		switch {
+		case !k.Enabled:
+			c = append(c, "NO CACHE")
+		case k.Size < 0:
+			return nil, invalidf("the cache size is %d; it must be positive", k.Size)
+		case k.Size == 0:
+			c = append(c, "CACHE")
+		default:
+			c = append(c, fmt.Sprintf("CACHE %d", k.Size))
+		}
+	}
+	return c, nil
+}
+
+// Alter applies every setting on ch in one ALTER SEQUENCE. An empty
+// SequenceChanges is a no-op and issues nothing. Restart is its RestartWith
+// alone.
+func (seq *Sequence) Alter(ctx context.Context, ch SequenceChanges) error {
+	if err := requireSchema("alter sequence", seq.Schema, seq.Name); err != nil {
+		return err
+	}
+	clauses, err := ch.clauses()
+	if err != nil {
+		return fmt.Errorf("gosmo: alter sequence %s: %w", qualifiedName(seq.Schema, seq.Name), err)
+	}
+	if len(clauses) == 0 {
+		return nil
+	}
+	q := "ALTER SEQUENCE " + qualifiedName(seq.Schema, seq.Name) + " " + strings.Join(clauses, " ")
+	if _, err := seq.db.exec(ctx, q); err != nil {
+		return fmt.Errorf("gosmo: alter sequence %s: %w", qualifiedName(seq.Schema, seq.Name), err)
+	}
+	str := func(p *int64) *string {
+		if p == nil {
+			return nil
+		}
+		return new(strconv.FormatInt(*p, 10))
+	}
+	if v := str(ch.RestartWith); v != nil {
+		// As Restart: the start value moves too, and last_used_value clears.
+		setIfApplied(ctx, &seq.StartValue, *v)
+		setIfApplied(ctx, &seq.CurrentValue, *v)
+		setIfApplied(ctx, &seq.LastUsedValue, "")
+	}
+	setPtrIfApplied(ctx, &seq.Increment, str(ch.Increment))
+	setPtrIfApplied(ctx, &seq.MinValue, str(ch.MinValue))
+	setPtrIfApplied(ctx, &seq.MaxValue, str(ch.MaxValue))
+	setPtrIfApplied(ctx, &seq.IsCycling, ch.Cycle)
+	if k := ch.Cache; k != nil {
+		setIfApplied(ctx, &seq.IsCached, k.Enabled)
+		size := 0
+		if k.Enabled {
+			size = k.Size
+		}
+		setIfApplied(ctx, &seq.CacheSize, size)
+	}
 	return nil
 }
 
