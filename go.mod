@@ -5,7 +5,7 @@ go 1.27
 toolchain go1.27.3
 
 require (
-	github.com/Azure/azure-sdk-for-go/sdk/azcore v1.23.3
+	github.com/Azure/azure-sdk-for-go/sdk/azcore v1.24.0
 	github.com/Azure/azure-sdk-for-go/sdk/azidentity v1.15.0
 	github.com/golang-sql/sqlexp v0.1.0
 	github.com/microsoft/go-mssqldb v1.11.2
