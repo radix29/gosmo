@@ -4,6 +4,33 @@ All notable changes to gosmo are documented here, newest first, from
 `v0.0.4` onward — this is the history. `RELEASE.md` carries the current
 release only, as a short summary of the entry below it.
 
+## v0.1.2
+
+A small additive release for gossms v0.1.2's creation dialogs: database roles,
+application roles and sequences gain create and alter calls, and the
+capability probe learns the permissions those dialogs gate on. No breaking
+changes.
+
+### Added
+
+- **`Database.CreateRole(CreateRoleRequest{Name, Owner})`** runs `CREATE ROLE`, optionally with `AUTHORIZATION`, and returns the role read back from the catalog (the `RoleRef` handle under `Scripting`).
+- **Application roles** (`application_role.go`) — `ApplicationRole` with `Database.ApplicationRoles`, `ApplicationRoleByName` (`ErrNotFound` when absent), `ApplicationRoleRef` (no-I/O handle) and `CreateApplicationRole(CreateApplicationRoleRequest)`; on the handle `Rename`, `SetDefaultSchema`, `ChangePassword` and `Drop`. The password goes through `QuoteLiteral` and a capture or observer sees a placeholder; an empty password is refused.
+- **`Sequence.Alter(SequenceChanges)`** — one `ALTER SEQUENCE` for `RestartWith`, `Increment`, `MinValue`, `MaxValue`, `Cycle` and `Cache` (`SequenceCache{Enabled, Size}`); a nil field is left as stored, an empty value issues nothing, and a zero increment or `MinValue >= MaxValue` is refused.
+- **`CreateSequenceRequest.Precision`** (1 to 38) for `decimal` and `numeric` sequences; any other type with a precision is refused.
+- **Capability probes** — `CREATE ROLE`, `CREATE SYNONYM` (needs `ALTER` on the target schema too), `CREATE SEQUENCE` (a schema-scope permission) and `ALTER ANY APPLICATION ROLE`, with the probed behavior on majors 13 and 17 documented in `capabilities.go`.
+
+### Changed
+
+- `ScriptDatabaseSecurity` lists application roles through the public `ApplicationRoles`; the private row type is gone.
+- Database and server DDL trigger scripts are assembled by one `buildDDLTriggerScript`; the output is unchanged.
+- `Rules` and `Defaults` listings and their `…ByName` finders share `scanRule` and `scanDefault`.
+- Dependencies: `azcore` v1.24.0, `go.yaml.in/yaml` v3.0.6.
+- Documentation: `ARCHITECTURE.md` feature map, `README.md` and the class diagrams (`05`, `13`) cover roles, application roles and sequences; `OPEN-THREADS.md` records that the two audit-specification scopes duplicate their write mechanics.
+
+### Fixed
+
+- Nothing user-visible.
+
 ## v0.1.1
 
 A hardening and tidy-up release. Related methods move onto small handle types

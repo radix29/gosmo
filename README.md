@@ -77,7 +77,7 @@ Every object family SSMS shows, read and — where it makes sense — written:
   filesystem, memory, processor, activity and tempdb DMVs.
 - **Database** — files and filegroups, `ALTER DATABASE` options, scoped
   configurations, space and disk usage, change tracking, users, roles,
-  schemas, permissions down to column scope (`ApplyPermission`),
+  application roles, schemas, permissions down to column scope (`ApplyPermission`),
   detach/attach, snapshots, shrink, and security scripting
   (`ScriptDatabaseSecurity`).
 - **Objects** — tables (with system, FileTable, external and graph tables as
