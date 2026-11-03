@@ -665,36 +665,50 @@ func (sc *Scripter) ScriptDatabaseTrigger(ctx context.Context, name string) (str
 }
 
 // buildDatabaseTriggerScript assembles one database trigger's script from the
-// definition sys.sql_modules stores.
+// definition sys.sql_modules stores, through buildDDLTriggerScript.
+func buildDatabaseTriggerScript(t *DatabaseTrigger, opts ScriptOptions) (string, error) {
+	return buildDDLTriggerScript(ddlTriggerScript{kind: "database", scope: "DATABASE", name: t.Name, definition: t.Definition,
+		isCLR: t.IsCLR, ansiNulls: t.UsesANSINulls, quotedIdentifier: t.UsesQuotedIdentifier, enabled: t.IsEnabled}, opts)
+}
+
+// ddlTriggerScript is what buildDDLTriggerScript needs of a DatabaseTrigger or
+// a ServerTrigger. The two types stay separate (server_trigger.go says why);
+// their scripts differ only in kind, which names the trigger in the error, and
+// scope, the ON clause.
+type ddlTriggerScript struct {
+	kind, scope, name, definition               string
+	isCLR, ansiNulls, quotedIdentifier, enabled bool
+}
+
+// buildDDLTriggerScript assembles a database or server trigger's script.
 //
 // A trigger with no readable definition — encrypted; a CLR one's is rebuilt by
-// ScriptDatabaseTrigger — is an error rather than an empty CREATE half: emitting
-// nothing produces a script that drops the trigger and does not put it back.
-// IncludeIfNotExists is not honoured because CREATE TRIGGER must be the first
-// statement in its batch, the same reason scriptModule ignores it. Both are
-// buildServerTriggerScript's reasoning, unchanged; only the scope clause
-// differs.
+// ScriptDatabaseTrigger/ScriptServerTrigger — is an error rather than an empty
+// CREATE half: emitting nothing produces a script that drops the trigger and
+// does not put it back. IncludeIfNotExists is not honoured because CREATE
+// TRIGGER must be the first statement in its batch, the same reason
+// scriptModule ignores it.
 //
 // The definition is preceded by the SET options it was created under, as
 // every module's is (moduleSetOptions) — except a CLR trigger's, which has
 // no T-SQL to compile.
-func buildDatabaseTriggerScript(t *DatabaseTrigger, opts ScriptOptions) (string, error) {
-	drop := fmt.Sprintf("DROP TRIGGER IF EXISTS %s ON DATABASE;\nGO\n", quoteIdent(t.Name))
+func buildDDLTriggerScript(t ddlTriggerScript, opts ScriptOptions) (string, error) {
+	drop := fmt.Sprintf("DROP TRIGGER IF EXISTS %s ON %s;\nGO\n", quoteIdent(t.name), t.scope)
 	return opts.envelopeErr(drop, "", func(sb *strings.Builder) error {
-		if strings.TrimSpace(t.Definition) == "" {
-			return unsupportedf("gosmo: script database trigger %q: definition is not readable (encrypted)", t.Name)
+		if strings.TrimSpace(t.definition) == "" {
+			return unsupportedf("gosmo: script %s trigger %q: definition is not readable (encrypted)", t.kind, t.name)
 		}
-		def := t.Definition
+		def := t.definition
 		if opts.verb() == ScriptAlter {
 			def = alterModuleDefinition(def)
 		}
-		if !t.IsCLR {
-			sb.WriteString(moduleSetOptions(t.UsesANSINulls, t.UsesQuotedIdentifier))
+		if !t.isCLR {
+			sb.WriteString(moduleSetOptions(t.ansiNulls, t.quotedIdentifier))
 		}
 		sb.WriteString(def)
 		sb.WriteString("\nGO\n")
-		if !t.IsEnabled {
-			fmt.Fprintf(sb, "DISABLE TRIGGER %s ON DATABASE;\nGO\n", quoteIdent(t.Name))
+		if !t.enabled {
+			fmt.Fprintf(sb, "DISABLE TRIGGER %s ON %s;\nGO\n", quoteIdent(t.name), t.scope)
 		}
 		return nil
 	})

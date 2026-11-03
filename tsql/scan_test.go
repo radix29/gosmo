@@ -120,7 +120,7 @@ func FuzzSpans(f *testing.F) {
 func legacySkipped(q string) []bool {
 	skipped := make([]bool, len(q))
 	for i := 0; i < len(q); {
-		j := i
+		var j int
 		switch {
 		case q[i] == '\'' || q[i] == '"' || q[i] == '[':
 			closer := q[i]

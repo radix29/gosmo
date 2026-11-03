@@ -137,13 +137,19 @@ ORDER  BY SCHEMA_NAME(o.schema_id), o.name`
 
 	rows, err := d.query(ctx, q)
 	return scanRows(rows, err, fmt.Sprintf("list rules in %q", d.Name), func(scan func(...any) error) (*Rule, error) {
-		r := &Rule{db: d}
-		if err := scan(&r.Name, &r.Schema, &r.ObjectID,
-			&r.CreateDate, &r.ModifyDate); err != nil {
-			return nil, err
-		}
-		return r, nil
+		return scanRule(d, scan)
 	})
+}
+
+// scanRule builds a Rule from one ruleSelect row: the listing and RuleByName
+// share it.
+func scanRule(d *Database, scan func(...any) error) (*Rule, error) {
+	r := &Rule{db: d}
+	if err := scan(&r.Name, &r.Schema, &r.ObjectID,
+		&r.CreateDate, &r.ModifyDate); err != nil {
+		return nil, err
+	}
+	return r, nil
 }
 
 // RuleDefinitions returns the text of every rule in the database in one
@@ -160,13 +166,10 @@ func (d *Database) RuleByName(ctx context.Context, schema, name string) (*Rule, 
 	if err := requireSchema("rule by name", schema, name); err != nil {
 		return nil, err
 	}
-	r := &Rule{db: d}
-	err := d.queryRow(ctx, func(row *sql.Row) error {
-		return row.Scan(&r.Name, &r.Schema, &r.ObjectID,
-			&r.CreateDate, &r.ModifyDate)
-	}, ruleSelect+`
-   AND SCHEMA_NAME(o.schema_id) COLLATE DATABASE_DEFAULT = @p1 AND o.name = @p2`, schema, name)
-	return foundRow(r, err, notFoundf("gosmo: rule %s not found in %q", qualifiedName(schema, name), d.Name), fmt.Sprintf("read rule %s in %q", qualifiedName(schema, name), d.Name))
+	return readByName(ctx, d, scanRule, ruleSelect+`
+   AND SCHEMA_NAME(o.schema_id) COLLATE DATABASE_DEFAULT = @p1 AND o.name = @p2`, []any{schema, name},
+		notFoundf("gosmo: rule %s not found in %q", qualifiedName(schema, name), d.Name),
+		fmt.Sprintf("read rule %s in %q", qualifiedName(schema, name), d.Name))
 }
 
 // RuleRef returns a lightweight handle for a rule by name, without
@@ -208,13 +211,19 @@ ORDER  BY SCHEMA_NAME(o.schema_id), o.name`
 
 	rows, err := d.query(ctx, q)
 	return scanRows(rows, err, fmt.Sprintf("list defaults in %q", d.Name), func(scan func(...any) error) (*Default, error) {
-		df := &Default{db: d}
-		if err := scan(&df.Name, &df.Schema, &df.ObjectID,
-			&df.CreateDate, &df.ModifyDate); err != nil {
-			return nil, err
-		}
-		return df, nil
+		return scanDefault(d, scan)
 	})
+}
+
+// scanDefault builds a Default from one defaultSelect row: the listing and
+// DefaultByName share it.
+func scanDefault(d *Database, scan func(...any) error) (*Default, error) {
+	df := &Default{db: d}
+	if err := scan(&df.Name, &df.Schema, &df.ObjectID,
+		&df.CreateDate, &df.ModifyDate); err != nil {
+		return nil, err
+	}
+	return df, nil
 }
 
 // DefaultDefinitions is RuleDefinitions for the standalone defaults, keyed
@@ -229,13 +238,10 @@ func (d *Database) DefaultByName(ctx context.Context, schema, name string) (*Def
 	if err := requireSchema("default by name", schema, name); err != nil {
 		return nil, err
 	}
-	df := &Default{db: d}
-	err := d.queryRow(ctx, func(row *sql.Row) error {
-		return row.Scan(&df.Name, &df.Schema, &df.ObjectID,
-			&df.CreateDate, &df.ModifyDate)
-	}, defaultSelect+`
-   AND SCHEMA_NAME(o.schema_id) COLLATE DATABASE_DEFAULT = @p1 AND o.name = @p2`, schema, name)
-	return foundRow(df, err, notFoundf("gosmo: default %s not found in %q", qualifiedName(schema, name), d.Name), fmt.Sprintf("read default %s in %q", qualifiedName(schema, name), d.Name))
+	return readByName(ctx, d, scanDefault, defaultSelect+`
+   AND SCHEMA_NAME(o.schema_id) COLLATE DATABASE_DEFAULT = @p1 AND o.name = @p2`, []any{schema, name},
+		notFoundf("gosmo: default %s not found in %q", qualifiedName(schema, name), d.Name),
+		fmt.Sprintf("read default %s in %q", qualifiedName(schema, name), d.Name))
 }
 
 // DefaultRef returns a lightweight handle for a standalone default by name, without

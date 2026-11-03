@@ -288,34 +288,10 @@ func (sc *ServerScripter) ScriptServerTrigger(ctx context.Context, name string) 
 }
 
 // buildServerTriggerScript assembles one server trigger's script from the
-// definition sys.server_sql_modules stores.
-//
-// A trigger with no readable definition — encrypted; a CLR one's is rebuilt by
-// ScriptServerTrigger — is an error rather than an empty CREATE half: emitting
-// nothing produces a script that drops the trigger and does not put it back.
-// IncludeIfNotExists is not honoured because CREATE TRIGGER must be the first
-// statement in its batch, the same reason scriptModule ignores it. The SET
-// options precede the definition as in buildDatabaseTriggerScript.
+// definition sys.server_sql_modules stores, through buildDDLTriggerScript.
 func buildServerTriggerScript(t *ServerTrigger, opts ScriptOptions) (string, error) {
-	drop := fmt.Sprintf("DROP TRIGGER IF EXISTS %s ON ALL SERVER;\nGO\n", quoteIdent(t.Name))
-	return opts.envelopeErr(drop, "", func(sb *strings.Builder) error {
-		if strings.TrimSpace(t.Definition) == "" {
-			return unsupportedf("gosmo: script server trigger %q: definition is not readable (encrypted)", t.Name)
-		}
-		def := t.Definition
-		if opts.verb() == ScriptAlter {
-			def = alterModuleDefinition(def)
-		}
-		if !t.IsCLR {
-			sb.WriteString(moduleSetOptions(t.UsesANSINulls, t.UsesQuotedIdentifier))
-		}
-		sb.WriteString(def)
-		sb.WriteString("\nGO\n")
-		if !t.IsEnabled {
-			fmt.Fprintf(sb, "DISABLE TRIGGER %s ON ALL SERVER;\nGO\n", quoteIdent(t.Name))
-		}
-		return nil
-	})
+	return buildDDLTriggerScript(ddlTriggerScript{kind: "server", scope: "ALL SERVER", name: t.Name, definition: t.Definition,
+		isCLR: t.IsCLR, ansiNulls: t.UsesANSINulls, quotedIdentifier: t.UsesQuotedIdentifier, enabled: t.IsEnabled}, opts)
 }
 
 // ScriptEndpoint generates the CREATE (or DROP) script for one endpoint.
