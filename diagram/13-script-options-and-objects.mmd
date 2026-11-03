@@ -141,6 +141,19 @@ classDiagram
         +Type string
     }
 
+    class ApplicationRole {
+        +Name string
+        +DefaultSchema string
+        +PrincipalID int
+        +CreateDate time.Time
+        +ModifyDate time.Time
+        +Database() *Database
+        +Rename(newName) error
+        +SetDefaultSchema(schemaName) error
+        +ChangePassword(newPassword) error
+        +Drop() error
+    }
+
     class FileGroup {
         +Name string
         +Type string
@@ -217,6 +230,7 @@ classDiagram
     Database "1" --> "*" Schema : contains
     Database "1" --> "*" User : contains
     Database "1" --> "*" DatabaseRole : contains
+    Database "1" --> "*" ApplicationRole : contains
     Database "1" --> "*" Trigger : contains
     Database "1" --> "*" RoleMember : RoleMembers() returns
     Table "1" --> "*" Trigger : has

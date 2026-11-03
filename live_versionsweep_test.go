@@ -77,6 +77,10 @@ var sweepMustCall = []string{
 	"Database.UserDefinedFunctionByName",
 	"Database.TriggerByName",
 
+	// Application roles: the listing is reflective, the finder by hand.
+	"Database.ApplicationRoles",
+	"Database.ApplicationRoleByName",
+
 	// Rules and defaults.
 	"Database.Rules",
 	"Database.RuleByName",
@@ -364,6 +368,7 @@ var sweepSchema = []string{
 	`CREATE SYMMETRIC KEY sweep_symkey WITH ALGORITHM = AES_256
 	   ENCRYPTION BY CERTIFICATE sweep_cert, PASSWORD = N'Sw33p!Sym#Pass'`,
 	`CREATE ROLE sweep_role`,
+	`CREATE APPLICATION ROLE sweep_approle WITH PASSWORD = N'Sw33p!App#Pass', DEFAULT_SCHEMA = app`,
 	`CREATE USER sweep_user WITHOUT LOGIN`,
 	`ALTER ROLE sweep_role ADD MEMBER sweep_user`,
 	`EXEC sp_addextendedproperty @name = N'sweep_prop', @value = N'sweep'`,
@@ -774,6 +779,13 @@ func sweepProgrammability(sw *sweep, d *Database) {
 	})
 	sw.call("Database.DefaultByName", func() error {
 		_, err := d.DefaultByName(sw.ctx, "dbo", "sweep_default")
+		return err
+	})
+	sw.call("Database.ApplicationRoleByName", func() error {
+		r, err := d.ApplicationRoleByName(sw.ctx, "sweep_approle")
+		if err == nil && r.DefaultSchema != "app" {
+			err = fmt.Errorf("sweep_approle DefaultSchema = %q, want app", r.DefaultSchema)
+		}
 		return err
 	})
 	sw.call("Database.PlanGuideByName", func() error {

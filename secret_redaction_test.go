@@ -49,6 +49,13 @@ func secretWrites() []secretWrite {
 		{"CreateUser with password", []string{pw("user")}, func(ctx context.Context, s *Server) error {
 			return errOnly(db(s).CreateUser(ctx, CreateUserRequest{Name: "u", Kind: UserWithPassword, Password: pw("user")}))
 		}},
+		{"CreateApplicationRole", []string{pw("approle")}, func(ctx context.Context, s *Server) error {
+			return errOnly(db(s).CreateApplicationRole(ctx, CreateApplicationRoleRequest{Name: "a", Password: pw("approle"),
+				DefaultSchema: "dbo"}))
+		}},
+		{"ApplicationRole.ChangePassword", []string{pw("approle")}, func(ctx context.Context, s *Server) error {
+			return db(s).ApplicationRoleRef("a").ChangePassword(ctx, pw("approle"))
+		}},
 		{"CreateCertificate", []string{pw("cert")}, func(ctx context.Context, s *Server) error {
 			return errOnly(db(s).CreateCertificate(ctx, CreateCertificateRequest{Name: "c", Subject: "s",
 				EncryptionPassword: pw("cert")}))

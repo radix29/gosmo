@@ -217,7 +217,7 @@ exercise the write, drop them; never mutate pre-existing objects.
     `FileRef`, `FileGroupRef`, `CategoryRef`,
     `SymmetricKeyRef`, `XEvents.SessionRef` (server and database), the schema,
     sequence, synonym, rule, default, three type,
-    XML schema collection, partition, Always Encrypted key, assembly, `RoleRef`,
+    XML schema collection, partition, Always Encrypted key, assembly, `RoleRef`, `ApplicationRoleRef`,
     external-resource and Service Broker families, and `ViewRef`,
     `StoredProcedureRef`, `UserDefinedFunctionRef`, `TriggerRef`, the three
     Resource Governor families, `Mail.AccountRef`, `Mail.ProfileRef` and the

@@ -18,7 +18,7 @@ func TestBuildDatabaseSecurityScript(t *testing.T) {
 			{Name: "readers", ID: 5, Owner: "dbo", Members: []string{"app", "nobody"}},
 			{Name: "writers", ID: 6, Owner: "app"},
 		},
-		appRoles: []applicationRole{{name: "ar", defaultSchema: "sales"}},
+		appRoles: []*ApplicationRole{{Name: "ar", DefaultSchema: "sales"}},
 		users: []*User{
 			{Name: "dbo", ID: 1, AuthType: "INSTANCE", LoginName: "sa"},
 			{Name: "guest", ID: 2, AuthType: "NONE"},

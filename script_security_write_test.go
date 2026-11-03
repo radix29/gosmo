@@ -2,6 +2,7 @@ package gosmo
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 )
@@ -31,6 +32,28 @@ func TestScriptSecurityWrites(t *testing.T) {
 		{"CreateRole without an owner", func(c context.Context) error {
 			return errOnly(scriptTestDB().CreateRole(c, CreateRoleRequest{Name: "ro]le"}))
 		}, scriptUsePrefix + "CREATE ROLE [ro]]le]"},
+		// The password cases capture with WithScriptSecrets so the literal's
+		// escaping is pinned; the redaction itself is secret_redaction_test.go's.
+		{"CreateApplicationRole", func(c context.Context) error {
+			return errOnly(scriptTestDB().CreateApplicationRole(WithScriptSecrets(c),
+				CreateApplicationRoleRequest{Name: "ap]p", Password: "pa'ss", DefaultSchema: "sa]les"}))
+		}, scriptUsePrefix + "CREATE APPLICATION ROLE [ap]]p] WITH PASSWORD = N'pa''ss', DEFAULT_SCHEMA = [sa]]les]"},
+		{"CreateApplicationRole without a default schema", func(c context.Context) error {
+			return errOnly(scriptTestDB().CreateApplicationRole(WithScriptSecrets(c),
+				CreateApplicationRoleRequest{Name: "ap]p", Password: "pa'ss"}))
+		}, scriptUsePrefix + "CREATE APPLICATION ROLE [ap]]p] WITH PASSWORD = N'pa''ss'"},
+		{"ApplicationRole Rename", func(c context.Context) error {
+			return scriptTestDB().ApplicationRoleRef("ap]p").Rename(c, "o'brien")
+		}, scriptUsePrefix + "ALTER APPLICATION ROLE [ap]]p] WITH NAME = [o'brien]"},
+		{"ApplicationRole SetDefaultSchema", func(c context.Context) error {
+			return scriptTestDB().ApplicationRoleRef("ap]p").SetDefaultSchema(c, "sa]les")
+		}, scriptUsePrefix + "ALTER APPLICATION ROLE [ap]]p] WITH DEFAULT_SCHEMA = [sa]]les]"},
+		{"ApplicationRole ChangePassword", func(c context.Context) error {
+			return scriptTestDB().ApplicationRoleRef("ap]p").ChangePassword(WithScriptSecrets(c), "pa'ss")
+		}, scriptUsePrefix + "ALTER APPLICATION ROLE [ap]]p] WITH PASSWORD = N'pa''ss'"},
+		{"ApplicationRole Drop", func(c context.Context) error {
+			return scriptTestDB().ApplicationRoleRef("ap]p").Drop(c)
+		}, scriptUsePrefix + "DROP APPLICATION ROLE [ap]]p]"},
 		{"CreateUser", func(c context.Context) error {
 			return errOnly(scriptTestDB().CreateUser(c, CreateUserRequest{Name: "o'brien", Login: `DOM\o]b`, DefaultSchema: "sa]les"}))
 		}, scriptUsePrefix + `CREATE USER [o'brien] FOR LOGIN [DOM\o]]b] WITH DEFAULT_SCHEMA = [sa]]les]`},
@@ -342,6 +365,38 @@ func TestCreateUserRefusesWhatItsKindCannotCarry(t *testing.T) {
 			}
 			if !strings.Contains(err.Error(), c.want) {
 				t.Errorf("error = %v, want it to contain %q", err, c.want)
+			}
+			if len(script.Statements()) != 0 {
+				t.Errorf("Statements = %q, want none", script.Statements())
+			}
+		})
+	}
+}
+
+// TestApplicationRoleRefusesAnEmptyPassword pins the guards on the two
+// writes that send a password: QuoteLiteral("") is N”, which the server
+// takes or refuses depending on the host's password policy — CREATE
+// APPLICATION ROLE has no form without one, so gosmo refuses it everywhere.
+func TestApplicationRoleRefusesAnEmptyPassword(t *testing.T) {
+	for _, c := range []struct {
+		name, want string
+		call       func(context.Context) error
+	}{
+		{"create with no name", "name is required", func(ctx context.Context) error {
+			return errOnly(scriptTestDB().CreateApplicationRole(ctx, CreateApplicationRoleRequest{Password: "p"}))
+		}},
+		{"create with no password", "password is required", func(ctx context.Context) error {
+			return errOnly(scriptTestDB().CreateApplicationRole(ctx, CreateApplicationRoleRequest{Name: "app"}))
+		}},
+		{"change to no password", "password is required", func(ctx context.Context) error {
+			return scriptTestDB().ApplicationRoleRef("app").ChangePassword(ctx, "")
+		}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			ctx, script := WithScript(context.Background())
+			err := c.call(ctx)
+			if !errors.Is(err, ErrInvalidRequest) || !strings.Contains(err.Error(), c.want) {
+				t.Errorf("error = %v, want ErrInvalidRequest containing %q", err, c.want)
 			}
 			if len(script.Statements()) != 0 {
 				t.Errorf("Statements = %q, want none", script.Statements())

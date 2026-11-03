@@ -58,7 +58,7 @@ func (sc *Scripter) ScriptDatabaseSecurity(ctx context.Context) (string, error) 
 	if sec.roles, err = d.Roles(ctx); err != nil {
 		return "", err
 	}
-	if sec.appRoles, err = d.applicationRoles(ctx); err != nil {
+	if sec.appRoles, err = d.ApplicationRoles(ctx); err != nil {
 		return "", err
 	}
 	if sec.users, err = d.Users(ctx); err != nil {
@@ -79,33 +79,10 @@ type databaseSecurity struct {
 	owner    string // "" when the owner's login is not visible here
 	ownerSID []byte
 	roles    []*DatabaseRole
-	appRoles []applicationRole
+	appRoles []*ApplicationRole
 	users    []*User
 	schemas  []*Schema
 	grants   []securityGrant
-}
-
-// applicationRole is one sys.database_principals row of type 'A'.
-type applicationRole struct {
-	name, defaultSchema string
-}
-
-// applicationRoles lists the database's application roles.
-func (d *Database) applicationRoles(ctx context.Context) ([]applicationRole, error) {
-	rows, err := d.query(ctx, `
-SELECT name, default_schema_name
-FROM   sys.database_principals
-WHERE  type = 'A'
-ORDER  BY name`)
-	return scanRows(rows, err, fmt.Sprintf("list application roles in %q", d.Name), func(scan func(...any) error) (applicationRole, error) {
-		var r applicationRole
-		var schema sql.NullString
-		if err := scan(&r.name, &schema); err != nil {
-			return r, err
-		}
-		r.defaultSchema = schema.String
-		return r, nil
-	})
 }
 
 // securityGrant is one explicit sys.database_permissions row with its
@@ -290,9 +267,9 @@ func buildDatabaseSecurityScript(dbName string, sec *databaseSecurity) string {
 	section("Application roles")
 	for _, r := range sec.appRoles {
 		fmt.Fprintf(&sb, "IF DATABASE_PRINCIPAL_ID(N'%s') IS NULL\nCREATE APPLICATION ROLE %s WITH PASSWORD = N'%s'",
-			escapeSingle(r.name), quoteIdent(r.name), PasswordPlaceholder)
-		if r.defaultSchema != "" {
-			sb.WriteString(", DEFAULT_SCHEMA = " + quoteIdent(r.defaultSchema))
+			escapeSingle(r.Name), quoteIdent(r.Name), PasswordPlaceholder)
+		if r.DefaultSchema != "" {
+			sb.WriteString(", DEFAULT_SCHEMA = " + quoteIdent(r.DefaultSchema))
 		}
 		sb.WriteString(";  -- set the real password\nGO\n")
 	}

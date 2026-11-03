@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"strings"
 	"testing"
 )
 
@@ -48,6 +49,10 @@ func TestLiveCreateReturnsTheCreatedObject(t *testing.T) {
 
 	r, err := d.CreateRole(ctx, CreateRoleRequest{Name: "sales_readers", Owner: "dbo"})
 	check("CreateRole", err, err == nil && r.ID != 0 && r.Owner == "dbo")
+
+	ar, err := d.CreateApplicationRole(ctx, CreateApplicationRoleRequest{Name: "sales_app",
+		Password: "Cr!" + strings.Repeat("x9", 8), DefaultSchema: "sales"})
+	check("CreateApplicationRole", err, err == nil && ar.PrincipalID != 0 && ar.DefaultSchema == "sales")
 
 	tbl, err := d.CreateTable(ctx, CreateTableRequest{Schema: "sales", Name: "t",
 		Columns: []ColumnDefinition{{Name: "a", DataType: DataTypeInt}}})
