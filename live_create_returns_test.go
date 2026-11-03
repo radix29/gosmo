@@ -46,6 +46,9 @@ func TestLiveCreateReturnsTheCreatedObject(t *testing.T) {
 	s, err := d.CreateSchema(ctx, CreateSchemaRequest{Name: "sales"})
 	check("CreateSchema", err, err == nil && s.ID != 0)
 
+	r, err := d.CreateRole(ctx, CreateRoleRequest{Name: "sales_readers", Owner: "dbo"})
+	check("CreateRole", err, err == nil && r.ID != 0 && r.Owner == "dbo")
+
 	tbl, err := d.CreateTable(ctx, CreateTableRequest{Schema: "sales", Name: "t",
 		Columns: []ColumnDefinition{{Name: "a", DataType: DataTypeInt}}})
 	check("CreateTable", err, err == nil && tbl.ObjectID != 0)

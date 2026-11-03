@@ -229,6 +229,7 @@ var ProbedDatabasePermissions = []string{
 	"CREATE PROCEDURE",
 	"CREATE FUNCTION",
 	"CREATE SCHEMA",
+	"CREATE ROLE",
 	"ALTER ANY USER",
 	"ALTER ANY ROLE",
 	"ALTER ANY SCHEMA",

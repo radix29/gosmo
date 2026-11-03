@@ -62,6 +62,7 @@ classDiagram
         +DatabaseRoles() []*DatabaseRole
         +RoleByName(name) *DatabaseRole
         +RoleRef(name) *DatabaseRole
+        +CreateRole(req) *DatabaseRole
         +RoleMembers(role) []*RoleMember
         +FileGroups() []*FileGroup
         +Triggers() []*Trigger

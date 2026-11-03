@@ -95,6 +95,32 @@ func (d *Database) RoleRef(name string) *DatabaseRole {
 	return &DatabaseRole{db: d, Name: name}
 }
 
+// CreateRoleRequest describes a new database role.
+type CreateRoleRequest struct {
+	Name string
+	// Owner is the AUTHORIZATION principal (a user or another role); empty
+	// leaves it to the server (dbo for a member of db_owner, else the caller).
+	Owner string
+}
+
+// CreateRole creates a new database role, and returns it read back from the
+// catalog — or, under Scripting(ctx), the RoleRef handle, since nothing ran.
+func (d *Database) CreateRole(ctx context.Context, req CreateRoleRequest) (*DatabaseRole, error) {
+	if req.Name == "" {
+		return nil, invalidf("gosmo: create database role: name is required")
+	}
+	q := "CREATE ROLE " + quoteIdent(req.Name)
+	if req.Owner != "" {
+		q += " AUTHORIZATION " + quoteIdent(req.Owner)
+	}
+	if _, err := d.exec(ctx, q); err != nil {
+		return nil, fmt.Errorf("gosmo: create database role %q: %w", req.Name, err)
+	}
+	return createdObject(ctx, d.RoleRef(req.Name), func() (*DatabaseRole, error) {
+		return d.RoleByName(ctx, req.Name)
+	})
+}
+
 // Rename changes the database role's name.
 func (r *DatabaseRole) Rename(ctx context.Context, newName string) error {
 	q := fmt.Sprintf("ALTER ROLE %s WITH NAME = %s", quoteIdent(r.Name), quoteIdent(newName))

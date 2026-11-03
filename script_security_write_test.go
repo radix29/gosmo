@@ -25,6 +25,12 @@ func TestScriptSecurityWrites(t *testing.T) {
 		{"CreateSchema without an owner", func(c context.Context) error {
 			return errOnly(scriptTestDB().CreateSchema(c, CreateSchemaRequest{Name: "sa]les"}))
 		}, scriptUsePrefix + "CREATE SCHEMA [sa]]les]"},
+		{"CreateRole", func(c context.Context) error {
+			return errOnly(scriptTestDB().CreateRole(c, CreateRoleRequest{Name: "ro]le", Owner: "o'brien"}))
+		}, scriptUsePrefix + "CREATE ROLE [ro]]le] AUTHORIZATION [o'brien]"},
+		{"CreateRole without an owner", func(c context.Context) error {
+			return errOnly(scriptTestDB().CreateRole(c, CreateRoleRequest{Name: "ro]le"}))
+		}, scriptUsePrefix + "CREATE ROLE [ro]]le]"},
 		{"CreateUser", func(c context.Context) error {
 			return errOnly(scriptTestDB().CreateUser(c, CreateUserRequest{Name: "o'brien", Login: `DOM\o]b`, DefaultSchema: "sa]les"}))
 		}, scriptUsePrefix + `CREATE USER [o'brien] FOR LOGIN [DOM\o]]b] WITH DEFAULT_SCHEMA = [sa]]les]`},
