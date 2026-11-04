@@ -141,6 +141,87 @@ ELSE` + cols + `CAST(NULL AS bigint)` + from + where
 	})
 }
 
+// DatabaseSize is one database's allocated file size, data and log apart.
+type DatabaseSize struct {
+	DataKB int64 // every file but the log: rows, FILESTREAM, full-text
+	LogKB  int64
+}
+
+// DatabaseSizes returns every visible database's allocated size, keyed by
+// database_id — one sys.master_files read for the whole instance, so it
+// answers for a database in any state (DatabaseFiles' reason), where a
+// per-database SpaceUsed needs each one ONLINE and a round trip apiece.
+//
+// The sizes are what master_files records: tempdb's are its startup sizes,
+// not its current ones, and a snapshot's are its source's (the sparse
+// files' real usage is DatabaseFiles' SizeOnDiskKB). A database the login cannot see — master_files
+// needs VIEW ANY DEFINITION, CREATE DATABASE or ALTER ANY DATABASE — is absent
+// from the map, not an error.
+func (s *Server) DatabaseSizes(ctx context.Context) (map[int]DatabaseSize, error) {
+	const q = `
+SELECT mf.database_id,
+       SUM(CASE WHEN mf.type = 1 THEN 0 ELSE CAST(mf.size AS bigint) END) * 8,
+       SUM(CASE WHEN mf.type = 1 THEN CAST(mf.size AS bigint) ELSE 0 END) * 8
+FROM   sys.master_files mf
+GROUP  BY mf.database_id`
+
+	rows, err := s.query(ctx, q)
+	type sized struct {
+		id   int
+		size DatabaseSize
+	}
+	list, err := scanRows(rows, err, "list database sizes", func(scan func(...any) error) (sized, error) {
+		var r sized
+		err := scan(&r.id, &r.size.DataKB, &r.size.LogKB)
+		return r, err
+	})
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[int]DatabaseSize, len(list))
+	for _, r := range list {
+		out[r.id] = r.size
+	}
+	return out, nil
+}
+
+// InstanceFile is one database file as the server-wide catalog
+// (sys.master_files) records it: which database holds which path.
+type InstanceFile struct {
+	DatabaseID   int
+	DatabaseName string // DB_NAME at the read; "" for a database dropped meanwhile
+	FileID       int
+	Name         string // the logical name
+	PhysicalName string
+	Type         FileType
+}
+
+// InstanceFiles returns every database file on the instance, in database_id
+// and file_id order — one sys.master_files read, so it answers for a
+// database in any state (DatabaseFiles' reason) and for all of them in one
+// round trip. It is the read that tells whether a path is already taken: a
+// RESTORE or CREATE DATABASE onto a file another database holds fails only
+// once it reaches the server (Msg 1834, 3156, 5170).
+//
+// Metadata visibility applies as in DatabaseSizes: without VIEW ANY
+// DEFINITION, CREATE DATABASE or ALTER ANY DATABASE only the login's own
+// databases' files are listed. A login that can create a database sees them
+// all.
+func (s *Server) InstanceFiles(ctx context.Context) ([]*InstanceFile, error) {
+	const q = `
+SELECT mf.database_id, ISNULL(DB_NAME(mf.database_id), N''), mf.file_id, mf.name,
+       mf.physical_name, mf.type_desc
+FROM   sys.master_files mf
+ORDER  BY mf.database_id, mf.file_id`
+
+	rows, err := s.query(ctx, q)
+	return scanRows(rows, err, "list instance files", func(scan func(...any) error) (*InstanceFile, error) {
+		f := &InstanceFile{}
+		err := scan(&f.DatabaseID, &f.DatabaseName, &f.FileID, &f.Name, &f.PhysicalName, &f.Type)
+		return f, err
+	})
+}
+
 // DatabaseFileSpec describes a file to add via AddFile, or one of CREATE
 // DATABASE's file definitions.
 type DatabaseFileSpec struct {

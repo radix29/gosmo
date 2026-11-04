@@ -1,0 +1,181 @@
+<deadlock>
+ <victim-list>
+  <victimProcess id="process1d3b8ad2478"/>
+ </victim-list>
+ <process-list>
+  <process id="process1d3b8ad2478" taskpriority="0" logused="212" waitresource="PAGE: 2:4:1836 " waittime="1195" ownerId="79813515" transactionname="user_transaction" lasttranstarted="2026-10-30T10:00:42.493" XDES="0x1d388052750" lockMode="S" schedulerid="4" kpid="2520" status="suspended" spid="54" sbid="0" ecid="1" priority="0" trancount="0" lastbatchstarted="2026-10-30T10:00:42.843" lastbatchcompleted="2026-10-30T10:00:42.697" lastattention="1900-01-01T00:00:00.697" clientapp="go-mssqldb" hostname="ubudev" hostpid="498632" isolationlevel="read committed (2)" xactid="79813515" currentdb="1" currentdbname="master" lockTimeout="4294967295" clientoption1="671088672" clientoption2="128056">
+   <executionStack>
+    <frame procname="adhoc" line="1" stmtend="266" sqlhandle="0x02000000a7a1571d9c8a27146346e80817f2d45b24d485e10000000000000000000000000000000000000000">
+unknown    </frame>
+   </executionStack>
+   <stackFrames>
+      <frame id="00" address="0x7FFF2B5B0D04" pdb="ntdll.pdb" age="1" guid="04C5C5EC-E061-86DC-9D01-011641414FE6" module="ntdll" rva="0xA0D04" /><frame id="01" address="0x7FFF29344249" pdb="kernelbase.pdb" age="1" guid="EDAA0BFC-C407-6EB8-942D-C1F254AD656F" module="kernelbase" rva="0x124249" /><frame id="02" address="0x7FFEF591AA1A" pdb="SqlDK.pdb" age="2" guid="6AA889B8-6A28-48AD-9510-D73B1F3EDAD0" module="SqlDK" rva="0xAA1A" /><frame id="03" address="0x7FFEF591AAE9" pdb="SqlDK.pdb" age="2" guid="6AA889B8-6A28-48AD-9510-D73B1F3EDAD0" module="SqlDK" rva="0xAAE9" /><frame id="04" address="0x7FFEF5912DFC" pdb="SqlDK.pdb" age="2" guid="6AA889B8-6A28-48AD-9510-D73B1F3EDAD0" module="SqlDK" rva="0x2DFC" /><frame id="05" address="0x7FFEF5911B7F" pdb="SqlDK.pdb" age="2" guid="6AA889B8-6A28-48AD-9510-D73B1F3EDAD0" module="SqlDK" rva="0x1B7F" /><frame id="06" address="0x7FFEF5913CF6" pdb="SqlDK.pdb" age="2" guid="6AA889B8-6A28-48AD-9510-D73B1F3EDAD0" module="SqlDK" rva="0x3CF6" /><frame id="07" address="0x7FFEF8E6B0CA" pdb="sqlmin.pdb" age="2" guid="11E6091A-C106-4BAA-89FD-055FD19E9973" module="sqlmin" rva="0x9B0CA" /><frame id="08" address="0x7FFEF8E6AE30" pdb="sqlmin.pdb" age="2" guid="11E6091A-C106-4BAA-89FD-055FD19E9973" module="sqlmin" rva="0x9AE30" /><frame id="09" address="0x7FFEF8DE192D" pdb="sqlmin.pdb" age="2" guid="11E6091A-C106-4BAA-89FD-055FD19E9973" module="sqlmin" rva="0x1192D" /><frame id="10" address="0x7FFEF8E02620" pdb="sqlmin.pdb" age="2" guid="11E6091A-C106-4BAA-89FD-055FD19E9973" module="sqlmin" rva="0x32620" /><frame id="11" address="0x7FFEF8F83EAA" pdb="sqlmin.pdb" age="2" guid="11E6091A-C106-4BAA-89FD-055FD19E9973" module="sqlmin" rva="0x1B3EAA" /><frame id="12" address="0x7FFEF8DE2436" pdb="sqlmin.pdb" age="2" guid="11E6091A-C106-4BAA-89FD-055FD19E9973" module="sqlmin" rva="0x12436" /><frame id="13" address="0x7FFEF8DE0828" pdb="sqlmin.pdb" age="2" guid="11E6091A-C106-4BAA-89FD-055FD19E9973" module="sqlmin" rva="0x10828" /><frame id="14" address="0x7FFEFA0E909A" pdb="sqlmin.pdb" age="2" guid="11E6091A-C106-4BAA-89FD-055FD19E9973" module="sqlmin" rva="0x131909A" /><frame id="15" address="0x7FFEF9303B43" pdb="sqlmin.pdb" age="2" guid="11E6091A-C106-4BAA-89FD-055FD19E9973" module="sqlmin" rva="0x533B43" /><frame id="16" address="0x7FFEF932C23A" pdb="sqlmin.pdb" age="2" guid="11E6091A-C106-4BAA-89FD-055FD19E9973" module="sqlmin" rva="0x55C23A" /><frame id="17" address="0x7FFEF90315B3" pdb="sqlmin.pdb" age="2" guid="11E6091A-C106-4BAA-89FD-055FD19E9973" module="sqlmin" rva="0x2615B3" /><frame id="18" address="0x7FFEF9031653" pdb="sqlmin.pdb" age="2" guid="11E6091A-C106-4BAA-89FD-055FD19E9973" module="sqlmin" rva="0x261653" /><frame id="19" address="0x7FFEF93150A4" pdb="sqlmin.pdb" age="2" guid="11E6091A-C106-4BAA-89FD-055FD19E9973" module="sqlmin" rva="0x5450A4" /><frame id="20" address="0x7FFEF91FF2C8" pdb="sqlmin.pdb" age="2" guid="11E6091A-C106-4BAA-89FD-055FD19E9973" module="sqlmin" rva="0x42F2C8" /><frame id="21" address="0x7FFEF90B37AE" pdb="sqlmin.pdb" age="2" guid="11E6091A-C106-4BAA-89FD-055FD19E9973" module="sqlmin" rva="0x2E37AE" /><frame id="22" address="0x7FFEF90B35A5" pdb="sqlmin.pdb" age="2" guid="11E6091A-C106-4BAA-89FD-055FD19E9973" module="sqlmin" rva="0x2E35A5" /><frame id="23" address="0x7FFEF90A9B4F" pdb="sqlmin.pdb" age="2" guid="11E6091A-C106-4BAA-89FD-055FD19E9973" module="sqlmin" rva="0x2D9B4F" /><frame id="24" address="0x7FFEF90A94F8" pdb="sqlmin.pdb" age="2" guid="11E6091A-C106-4BAA-89FD-055FD19E9973" module="sqlmin" rva="0x2D94F8" /><frame id="25" address="0x7FFEF90A9D5D" pdb="sqlmin.pdb" age="2" guid="11E6091A-C106-4BAA-89FD-055FD19E9973" module="sqlmin" rva="0x2D9D5D" /><frame id="26" address="0x7FFEF9DBEFE5" pdb="sqlmin.pdb" age="2" guid="11E6091A-C106-4BAA-89FD-055FD19E9973" module="sqlmin" rva="0xFEEFE5" /><frame id="27" address="0x7FFEF90A85FC" pdb="sqlmin.pdb" age="2" guid="11E6091A-C106-4BAA-89FD-055FD19E9973" module="sqlmin" rva="0x2D85FC" /><frame id="28" address="0x7FFEF907910D" pdb="sqlmin.pdb" age="2" guid="11E6091A-C106-4BAA-89FD-055FD19E9973" module="sqlmin" rva="0x2A910D" /><frame id="29" address="0x7FFEF8F268FE" pdb="sqlmin.pdb" age="2" guid="11E6091A-C106-4BAA-89FD-055FD19E9973" module="sqlmin" rva="0x1568FE" /><frame id="30" address="0x7FFEF8F6954A" pdb="sqlmin.pdb" age="2" guid="11E6091A-C106-4BAA-89FD-055FD19E9973" module="sqlmin" rva="0x19954A" /><frame id="31" address="0x7FFEF8F69A77" pdb="sqlmin.pdb" age="2" guid="11E6091A-C106-4BAA-89FD-055FD19E9973" module="sqlmin" rva="0x199A77" /><frame id="32" address="0x7FFEF8F6A504" pdb="sqlmin.pdb" age="2" guid="11E6091A-C106-4BAA-89FD-055FD19E9973" module="sqlmin" rva="0x19A504" /><frame id="33" address="0x7FFEF59190C5" pdb="SqlDK.pdb" age="2" guid="6AA889B8-6A28-48AD-9510-D73B1F3EDAD0" module="SqlDK" rva="0x90C5" /><frame id="34" address="0x7FFEF59199F0" pdb="SqlDK.pdb" age="2" guid="6AA889B8-6A28-48AD-9510-D73B1F3EDAD0" module="SqlDK" rva="0x99F0" /><frame id="35" address="0x7FFEF5919423" pdb="SqlDK.pdb" age="2" guid="6AA889B8-6A28-48AD-9510-D73B1F3EDAD0" module="SqlDK" rva="0x9423" /><frame id="36" address="0x7FFEF593EDA8" pdb="SqlDK.pdb" age="2" guid="6AA889B8-6A28-48AD-9510-D73B1F3EDAD0" module="SqlDK" rva="0x2EDA8" /><frame id="37" address="0x7FFEF593FACC" pdb="SqlDK.pdb" age="2" guid="6AA889B8-6A28-48AD-9510-D73B1F3EDAD0" module="SqlDK" rva="0x2FACC" /><frame id="38" address="0x7FFEF5940026" pdb="SqlDK.pdb" age="2" guid="6AA889B8-6A28-48AD-9510-D73B1F3EDAD0" module="SqlDK" rva="0x30026" /><frame id="39" address="0x7FFEF593FD3B" pdb="SqlDK.pdb" age="2" guid="6AA889B8-6A28-48AD-9510-D73B1F3EDAD0" module="SqlDK" rva="0x2FD3B" />
+      </stackFrames>
+   <inputbuf>
+SELECT COUNT(*) FROM ##gosmo_live_dl_30e174_parallel_b WHERE pad &lt;&gt; &apos;z&apos; OPTION (MAXDOP 4, USE HINT(&apos;ENABLE_PARALLEL_PLAN_PREFERENCE&apos;))   </inputbuf>
+  </process>
+  <process id="process1d39bb0b828" taskpriority="0" logused="212" waitresource="PAGE: 2:4:740 " waittime="251" ownerId="79813543" transactionname="user_transaction" lasttranstarted="2026-10-30T10:00:42.700" XDES="0x1d403bfa040" lockMode="S" schedulerid="1" kpid="6980" status="suspended" spid="56" sbid="0" ecid="3" priority="0" trancount="0" lastbatchstarted="2026-10-30T10:00:43.853" lastbatchcompleted="2026-10-30T10:00:42.840" lastattention="1900-01-01T00:00:00.840" clientapp="go-mssqldb" hostname="ubudev" hostpid="498632" isolationlevel="read committed (2)" xactid="79813543" currentdb="1" currentdbname="master" lockTimeout="4294967295" clientoption1="671088672" clientoption2="128056">
+   <executionStack>
+    <frame procname="adhoc" line="1" stmtend="266" sqlhandle="0x0200000017396c225f97908f7bdf4d7a000926affa2f5fa40000000000000000000000000000000000000000">
+unknown    </frame>
+   </executionStack>
+   <stackFrames>
+      <frame id="00" address="0x7FFF2B5B0D04" pdb="ntdll.pdb" age="1" guid="04C5C5EC-E061-86DC-9D01-011641414FE6" module="ntdll" rva="0xA0D04" /><frame id="01" address="0x7FFF29344249" pdb="kernelbase.pdb" age="1" guid="EDAA0BFC-C407-6EB8-942D-C1F254AD656F" module="kernelbase" rva="0x124249" /><frame id="02" address="0x7FFEF591AA1A" pdb="SqlDK.pdb" age="2" guid="6AA889B8-6A28-48AD-9510-D73B1F3EDAD0" module="SqlDK" rva="0xAA1A" /><frame id="03" address="0x7FFEF591AAE9" pdb="SqlDK.pdb" age="2" guid="6AA889B8-6A28-48AD-9510-D73B1F3EDAD0" module="SqlDK" rva="0xAAE9" /><frame id="04" address="0x7FFEF5912DFC" pdb="SqlDK.pdb" age="2" guid="6AA889B8-6A28-48AD-9510-D73B1F3EDAD0" module="SqlDK" rva="0x2DFC" /><frame id="05" address="0x7FFEF5911B7F" pdb="SqlDK.pdb" age="2" guid="6AA889B8-6A28-48AD-9510-D73B1F3EDAD0" module="SqlDK" rva="0x1B7F" /><frame id="06" address="0x7FFEF5913CF6" pdb="SqlDK.pdb" age="2" guid="6AA889B8-6A28-48AD-9510-D73B1F3EDAD0" module="SqlDK" rva="0x3CF6" /><frame id="07" address="0x7FFEF8E6B0CA" pdb="sqlmin.pdb" age="2" guid="11E6091A-C106-4BAA-89FD-055FD19E9973" module="sqlmin" rva="0x9B0CA" /><frame id="08" address="0x7FFEF8E6AE30" pdb="sqlmin.pdb" age="2" guid="11E6091A-C106-4BAA-89FD-055FD19E9973" module="sqlmin" rva="0x9AE30" /><frame id="09" address="0x7FFEF8DE192D" pdb="sqlmin.pdb" age="2" guid="11E6091A-C106-4BAA-89FD-055FD19E9973" module="sqlmin" rva="0x1192D" /><frame id="10" address="0x7FFEF8E02620" pdb="sqlmin.pdb" age="2" guid="11E6091A-C106-4BAA-89FD-055FD19E9973" module="sqlmin" rva="0x32620" /><frame id="11" address="0x7FFEF8F83EAA" pdb="sqlmin.pdb" age="2" guid="11E6091A-C106-4BAA-89FD-055FD19E9973" module="sqlmin" rva="0x1B3EAA" /><frame id="12" address="0x7FFEF8DE2436" pdb="sqlmin.pdb" age="2" guid="11E6091A-C106-4BAA-89FD-055FD19E9973" module="sqlmin" rva="0x12436" /><frame id="13" address="0x7FFEF8DE0828" pdb="sqlmin.pdb" age="2" guid="11E6091A-C106-4BAA-89FD-055FD19E9973" module="sqlmin" rva="0x10828" /><frame id="14" address="0x7FFEFA0E909A" pdb="sqlmin.pdb" age="2" guid="11E6091A-C106-4BAA-89FD-055FD19E9973" module="sqlmin" rva="0x131909A" /><frame id="15" address="0x7FFEF9303B43" pdb="sqlmin.pdb" age="2" guid="11E6091A-C106-4BAA-89FD-055FD19E9973" module="sqlmin" rva="0x533B43" /><frame id="16" address="0x7FFEF932C23A" pdb="sqlmin.pdb" age="2" guid="11E6091A-C106-4BAA-89FD-055FD19E9973" module="sqlmin" rva="0x55C23A" /><frame id="17" address="0x7FFEF90315B3" pdb="sqlmin.pdb" age="2" guid="11E6091A-C106-4BAA-89FD-055FD19E9973" module="sqlmin" rva="0x2615B3" /><frame id="18" address="0x7FFEF9031653" pdb="sqlmin.pdb" age="2" guid="11E6091A-C106-4BAA-89FD-055FD19E9973" module="sqlmin" rva="0x261653" /><frame id="19" address="0x7FFEF93150A4" pdb="sqlmin.pdb" age="2" guid="11E6091A-C106-4BAA-89FD-055FD19E9973" module="sqlmin" rva="0x5450A4" /><frame id="20" address="0x7FFEF91FF2C8" pdb="sqlmin.pdb" age="2" guid="11E6091A-C106-4BAA-89FD-055FD19E9973" module="sqlmin" rva="0x42F2C8" /><frame id="21" address="0x7FFEF90B37AE" pdb="sqlmin.pdb" age="2" guid="11E6091A-C106-4BAA-89FD-055FD19E9973" module="sqlmin" rva="0x2E37AE" /><frame id="22" address="0x7FFEF90B35A5" pdb="sqlmin.pdb" age="2" guid="11E6091A-C106-4BAA-89FD-055FD19E9973" module="sqlmin" rva="0x2E35A5" /><frame id="23" address="0x7FFEF90A9B4F" pdb="sqlmin.pdb" age="2" guid="11E6091A-C106-4BAA-89FD-055FD19E9973" module="sqlmin" rva="0x2D9B4F" /><frame id="24" address="0x7FFEF90A94F8" pdb="sqlmin.pdb" age="2" guid="11E6091A-C106-4BAA-89FD-055FD19E9973" module="sqlmin" rva="0x2D94F8" /><frame id="25" address="0x7FFEF90A9D5D" pdb="sqlmin.pdb" age="2" guid="11E6091A-C106-4BAA-89FD-055FD19E9973" module="sqlmin" rva="0x2D9D5D" /><frame id="26" address="0x7FFEF9DBEFE5" pdb="sqlmin.pdb" age="2" guid="11E6091A-C106-4BAA-89FD-055FD19E9973" module="sqlmin" rva="0xFEEFE5" /><frame id="27" address="0x7FFEF90A85FC" pdb="sqlmin.pdb" age="2" guid="11E6091A-C106-4BAA-89FD-055FD19E9973" module="sqlmin" rva="0x2D85FC" /><frame id="28" address="0x7FFEF907910D" pdb="sqlmin.pdb" age="2" guid="11E6091A-C106-4BAA-89FD-055FD19E9973" module="sqlmin" rva="0x2A910D" /><frame id="29" address="0x7FFEF8F268FE" pdb="sqlmin.pdb" age="2" guid="11E6091A-C106-4BAA-89FD-055FD19E9973" module="sqlmin" rva="0x1568FE" /><frame id="30" address="0x7FFEF8F6954A" pdb="sqlmin.pdb" age="2" guid="11E6091A-C106-4BAA-89FD-055FD19E9973" module="sqlmin" rva="0x19954A" /><frame id="31" address="0x7FFEF8F69A77" pdb="sqlmin.pdb" age="2" guid="11E6091A-C106-4BAA-89FD-055FD19E9973" module="sqlmin" rva="0x199A77" /><frame id="32" address="0x7FFEF8F6A504" pdb="sqlmin.pdb" age="2" guid="11E6091A-C106-4BAA-89FD-055FD19E9973" module="sqlmin" rva="0x19A504" /><frame id="33" address="0x7FFEF59190C5" pdb="SqlDK.pdb" age="2" guid="6AA889B8-6A28-48AD-9510-D73B1F3EDAD0" module="SqlDK" rva="0x90C5" /><frame id="34" address="0x7FFEF59199F0" pdb="SqlDK.pdb" age="2" guid="6AA889B8-6A28-48AD-9510-D73B1F3EDAD0" module="SqlDK" rva="0x99F0" /><frame id="35" address="0x7FFEF5919423" pdb="SqlDK.pdb" age="2" guid="6AA889B8-6A28-48AD-9510-D73B1F3EDAD0" module="SqlDK" rva="0x9423" /><frame id="36" address="0x7FFEF593EDA8" pdb="SqlDK.pdb" age="2" guid="6AA889B8-6A28-48AD-9510-D73B1F3EDAD0" module="SqlDK" rva="0x2EDA8" /><frame id="37" address="0x7FFEF593FACC" pdb="SqlDK.pdb" age="2" guid="6AA889B8-6A28-48AD-9510-D73B1F3EDAD0" module="SqlDK" rva="0x2FACC" /><frame id="38" address="0x7FFEF5940026" pdb="SqlDK.pdb" age="2" guid="6AA889B8-6A28-48AD-9510-D73B1F3EDAD0" module="SqlDK" rva="0x30026" /><frame id="39" address="0x7FFEF593FD3B" pdb="SqlDK.pdb" age="2" guid="6AA889B8-6A28-48AD-9510-D73B1F3EDAD0" module="SqlDK" rva="0x2FD3B" />
+      </stackFrames>
+   <inputbuf>
+SELECT COUNT(*) FROM ##gosmo_live_dl_30e174_parallel_a WHERE pad &lt;&gt; &apos;z&apos; OPTION (MAXDOP 4, USE HINT(&apos;ENABLE_PARALLEL_PLAN_PREFERENCE&apos;))   </inputbuf>
+  </process>
+  <process id="process1d3b00e2c58" taskpriority="0" logused="10000" waittime="262" schedulerid="1" kpid="10408" status="suspended" spid="56" sbid="0" ecid="0" priority="0" trancount="1" lastbatchstarted="2026-10-30T10:00:43.853" lastbatchcompleted="2026-10-30T10:00:42.840" lastattention="1900-01-01T00:00:00.840" clientapp="go-mssqldb" hostname="ubudev" hostpid="498632" loginname="sa" isolationlevel="read committed (2)" xactid="79813543" currentdb="1" currentdbname="master" lockTimeout="4294967295" clientoption1="671088672" clientoption2="128056">
+   <executionStack>
+    <frame procname="adhoc" line="1" stmtend="266" sqlhandle="0x0200000017396c225f97908f7bdf4d7a000926affa2f5fa40000000000000000000000000000000000000000">
+unknown    </frame>
+   </executionStack>
+   <inputbuf>
+SELECT COUNT(*) FROM ##gosmo_live_dl_30e174_parallel_a WHERE pad &lt;&gt; &apos;z&apos; OPTION (MAXDOP 4, USE HINT(&apos;ENABLE_PARALLEL_PLAN_PREFERENCE&apos;))   </inputbuf>
+  </process>
+  <process id="process1d407a26868" taskpriority="0" logused="10000" waittime="1211" schedulerid="1" kpid="11872" status="suspended" spid="54" sbid="0" ecid="0" priority="0" trancount="1" lastbatchstarted="2026-10-30T10:00:42.843" lastbatchcompleted="2026-10-30T10:00:42.697" lastattention="1900-01-01T00:00:00.697" clientapp="go-mssqldb" hostname="ubudev" hostpid="498632" loginname="sa" isolationlevel="read committed (2)" xactid="79813515" currentdb="1" currentdbname="master" lockTimeout="4294967295" clientoption1="671088672" clientoption2="128056">
+   <executionStack>
+    <frame procname="adhoc" line="1" stmtend="266" sqlhandle="0x02000000a7a1571d9c8a27146346e80817f2d45b24d485e10000000000000000000000000000000000000000">
+unknown    </frame>
+   </executionStack>
+   <inputbuf>
+SELECT COUNT(*) FROM ##gosmo_live_dl_30e174_parallel_b WHERE pad &lt;&gt; &apos;z&apos; OPTION (MAXDOP 4, USE HINT(&apos;ENABLE_PARALLEL_PLAN_PREFERENCE&apos;))   </inputbuf>
+  </process>
+  <process id="process1d3a37ddc18" taskpriority="0" logused="20000" waittime="1178" schedulerid="3" kpid="10316" status="suspended" spid="54" sbid="0" ecid="2" priority="0" trancount="0" lastbatchstarted="2026-10-30T10:00:42.843" lastbatchcompleted="2026-10-30T10:00:42.697" lastattention="1900-01-01T00:00:00.697" clientapp="go-mssqldb" hostname="ubudev" hostpid="498632" isolationlevel="read committed (2)" xactid="79813515" currentdb="1" currentdbname="master" lockTimeout="4294967295" clientoption1="671088672" clientoption2="128056">
+   <executionStack>
+    <frame procname="adhoc" line="1" stmtend="266" sqlhandle="0x02000000a7a1571d9c8a27146346e80817f2d45b24d485e10000000000000000000000000000000000000000">
+unknown    </frame>
+   </executionStack>
+   <inputbuf>
+SELECT COUNT(*) FROM ##gosmo_live_dl_30e174_parallel_b WHERE pad &lt;&gt; &apos;z&apos; OPTION (MAXDOP 4, USE HINT(&apos;ENABLE_PARALLEL_PLAN_PREFERENCE&apos;))   </inputbuf>
+  </process>
+  <process id="process1d40abeac58" taskpriority="0" logused="20000" waittime="242" schedulerid="4" kpid="10064" status="suspended" spid="56" sbid="0" ecid="1" priority="0" trancount="0" lastbatchstarted="2026-10-30T10:00:43.853" lastbatchcompleted="2026-10-30T10:00:42.840" lastattention="1900-01-01T00:00:00.840" clientapp="go-mssqldb" hostname="ubudev" hostpid="498632" isolationlevel="read committed (2)" xactid="79813543" currentdb="1" currentdbname="master" lockTimeout="4294967295" clientoption1="671088672" clientoption2="128056">
+   <executionStack>
+    <frame procname="adhoc" line="1" stmtend="266" sqlhandle="0x0200000017396c225f97908f7bdf4d7a000926affa2f5fa40000000000000000000000000000000000000000">
+unknown    </frame>
+   </executionStack>
+   <inputbuf>
+SELECT COUNT(*) FROM ##gosmo_live_dl_30e174_parallel_a WHERE pad &lt;&gt; &apos;z&apos; OPTION (MAXDOP 4, USE HINT(&apos;ENABLE_PARALLEL_PLAN_PREFERENCE&apos;))   </inputbuf>
+  </process>
+  <process id="process1d3af109048" taskpriority="0" logused="20000" waittime="242" schedulerid="3" kpid="11272" status="suspended" spid="56" sbid="0" ecid="2" priority="0" trancount="0" lastbatchstarted="2026-10-30T10:00:43.853" lastbatchcompleted="2026-10-30T10:00:42.840" lastattention="1900-01-01T00:00:00.840" clientapp="go-mssqldb" hostname="ubudev" hostpid="498632" isolationlevel="read committed (2)" xactid="79813543" currentdb="1" currentdbname="master" lockTimeout="4294967295" clientoption1="671088672" clientoption2="128056">
+   <executionStack>
+    <frame procname="adhoc" line="1" stmtend="266" sqlhandle="0x0200000017396c225f97908f7bdf4d7a000926affa2f5fa40000000000000000000000000000000000000000">
+unknown    </frame>
+   </executionStack>
+   <inputbuf>
+SELECT COUNT(*) FROM ##gosmo_live_dl_30e174_parallel_a WHERE pad &lt;&gt; &apos;z&apos; OPTION (MAXDOP 4, USE HINT(&apos;ENABLE_PARALLEL_PLAN_PREFERENCE&apos;))   </inputbuf>
+  </process>
+  <process id="process1d3af109828" taskpriority="0" logused="20000" waittime="242" schedulerid="2" kpid="2036" status="suspended" spid="56" sbid="0" ecid="4" priority="0" trancount="0" lastbatchstarted="2026-10-30T10:00:43.853" lastbatchcompleted="2026-10-30T10:00:42.840" lastattention="1900-01-01T00:00:00.840" clientapp="go-mssqldb" hostname="ubudev" hostpid="498632" isolationlevel="read committed (2)" xactid="79813543" currentdb="1" currentdbname="master" lockTimeout="4294967295" clientoption1="671088672" clientoption2="128056">
+   <executionStack>
+    <frame procname="adhoc" line="1" stmtend="266" sqlhandle="0x0200000017396c225f97908f7bdf4d7a000926affa2f5fa40000000000000000000000000000000000000000">
+unknown    </frame>
+   </executionStack>
+   <inputbuf>
+SELECT COUNT(*) FROM ##gosmo_live_dl_30e174_parallel_a WHERE pad &lt;&gt; &apos;z&apos; OPTION (MAXDOP 4, USE HINT(&apos;ENABLE_PARALLEL_PLAN_PREFERENCE&apos;))   </inputbuf>
+  </process>
+  <process id="process1d3bb1f1438" taskpriority="0" logused="20000" waittime="1175" schedulerid="2" kpid="9148" status="suspended" spid="54" sbid="0" ecid="3" priority="0" trancount="0" lastbatchstarted="2026-10-30T10:00:42.843" lastbatchcompleted="2026-10-30T10:00:42.697" lastattention="1900-01-01T00:00:00.697" clientapp="go-mssqldb" hostname="ubudev" hostpid="498632" isolationlevel="read committed (2)" xactid="79813515" currentdb="1" currentdbname="master" lockTimeout="4294967295" clientoption1="671088672" clientoption2="128056">
+   <executionStack>
+    <frame procname="adhoc" line="1" stmtend="266" sqlhandle="0x02000000a7a1571d9c8a27146346e80817f2d45b24d485e10000000000000000000000000000000000000000">
+unknown    </frame>
+   </executionStack>
+   <inputbuf>
+SELECT COUNT(*) FROM ##gosmo_live_dl_30e174_parallel_b WHERE pad &lt;&gt; &apos;z&apos; OPTION (MAXDOP 4, USE HINT(&apos;ENABLE_PARALLEL_PLAN_PREFERENCE&apos;))   </inputbuf>
+  </process>
+  <process id="process1d417a03c18" taskpriority="0" logused="20000" waittime="1180" schedulerid="1" kpid="7124" status="suspended" spid="54" sbid="0" ecid="4" priority="0" trancount="0" lastbatchstarted="2026-10-30T10:00:42.843" lastbatchcompleted="2026-10-30T10:00:42.697" lastattention="1900-01-01T00:00:00.697" clientapp="go-mssqldb" hostname="ubudev" hostpid="498632" isolationlevel="read committed (2)" xactid="79813515" currentdb="1" currentdbname="master" lockTimeout="4294967295" clientoption1="671088672" clientoption2="128056">
+   <executionStack>
+    <frame procname="adhoc" line="1" stmtend="266" sqlhandle="0x02000000a7a1571d9c8a27146346e80817f2d45b24d485e10000000000000000000000000000000000000000">
+unknown    </frame>
+   </executionStack>
+   <inputbuf>
+SELECT COUNT(*) FROM ##gosmo_live_dl_30e174_parallel_b WHERE pad &lt;&gt; &apos;z&apos; OPTION (MAXDOP 4, USE HINT(&apos;ENABLE_PARALLEL_PLAN_PREFERENCE&apos;))   </inputbuf>
+  </process>
+ </process-list>
+ <resource-list>
+  <pagelock fileid="4" pageid="1836" dbid="2" subresource="FULL" objectname="tempdb.dbo.##gosmo_live_dl_30e174_parallel_b" id="lock1d3cb672200" mode="IX" associatedObjectId="9151318191403302912">
+   <owner-list>
+    <owner id="process1d3b00e2c58" mode="IX"/>
+   </owner-list>
+   <waiter-list>
+    <waiter id="process1d3b8ad2478" mode="S" requestType="wait"/>
+   </waiter-list>
+  </pagelock>
+  <pagelock fileid="4" pageid="740" dbid="2" subresource="FULL" objectname="tempdb.dbo.##gosmo_live_dl_30e174_parallel_a" id="lock1d3ce93ce00" mode="IX" associatedObjectId="9079260597324414976">
+   <owner-list>
+    <owner id="process1d407a26868" mode="IX"/>
+   </owner-list>
+   <waiter-list>
+    <waiter id="process1d39bb0b828" mode="S" requestType="wait"/>
+   </waiter-list>
+  </pagelock>
+  <exchangeEvent id="Pipe1d3beaf2700" WaitType="e_waitPipeGetRow" waiterType="Coordinator" nodeId="0" tid="0" ownerActivity="sentData" waiterActivity="needMoreData" merging="false" spilling="false" waitingToClose="false">
+   <owner-list>
+    <owner id="process1d40abeac58"/>
+    <owner id="process1d3af109048"/>
+    <owner id="process1d3af109828"/>
+    <owner id="process1d39bb0b828"/>
+   </owner-list>
+   <waiter-list>
+    <waiter id="process1d3b00e2c58"/>
+   </waiter-list>
+  </exchangeEvent>
+  <exchangeEvent id="Pipe1d405622700" WaitType="e_waitPipeGetRow" waiterType="Coordinator" nodeId="0" tid="0" ownerActivity="sentData" waiterActivity="needMoreData" merging="false" spilling="false" waitingToClose="false">
+   <owner-list>
+    <owner id="process1d3b8ad2478"/>
+    <owner id="process1d3a37ddc18"/>
+    <owner id="process1d417a03c18"/>
+    <owner id="process1d3bb1f1438"/>
+   </owner-list>
+   <waiter-list>
+    <waiter id="process1d407a26868"/>
+   </waiter-list>
+  </exchangeEvent>
+  <SyncPoint id="SyncPoint1d3728d23a0" logicalOperatorType="Aggregate" physicalOperatorType="Hash Match" WaitType="HTBUILD_AGG" nodeId="2" synchronizingAt="ReadyForOutput" ownerActivity="NotYetArrived" waiterActivity="Arrived">
+   <owner-list>
+    <owner id="process1d3b8ad2478"/>
+   </owner-list>
+   <waiter-list>
+    <waiter id="process1d3a37ddc18"/>
+   </waiter-list>
+  </SyncPoint>
+  <SyncPoint id="SyncPoint1d3728d26a0" logicalOperatorType="Aggregate" physicalOperatorType="Hash Match" WaitType="HTBUILD_AGG" nodeId="2" synchronizingAt="ReadyForOutput" ownerActivity="NotYetArrived" waiterActivity="Arrived">
+   <owner-list>
+    <owner id="process1d39bb0b828"/>
+   </owner-list>
+   <waiter-list>
+    <waiter id="process1d40abeac58"/>
+   </waiter-list>
+  </SyncPoint>
+  <SyncPoint id="SyncPoint1d3728d26a0" logicalOperatorType="Aggregate" physicalOperatorType="Hash Match" WaitType="HTBUILD_AGG" nodeId="2" synchronizingAt="ReadyForOutput" ownerActivity="NotYetArrived" waiterActivity="Arrived">
+   <owner-list>
+    <owner id="process1d39bb0b828"/>
+   </owner-list>
+   <waiter-list>
+    <waiter id="process1d3af109048"/>
+   </waiter-list>
+  </SyncPoint>
+  <SyncPoint id="SyncPoint1d3728d26a0" logicalOperatorType="Aggregate" physicalOperatorType="Hash Match" WaitType="HTBUILD_AGG" nodeId="2" synchronizingAt="ReadyForOutput" ownerActivity="NotYetArrived" waiterActivity="Arrived">
+   <owner-list>
+    <owner id="process1d39bb0b828"/>
+   </owner-list>
+   <waiter-list>
+    <waiter id="process1d3af109828"/>
+   </waiter-list>
+  </SyncPoint>
+  <SyncPoint id="SyncPoint1d3728d23a0" logicalOperatorType="Aggregate" physicalOperatorType="Hash Match" WaitType="HTBUILD_AGG" nodeId="2" synchronizingAt="ReadyForOutput" ownerActivity="NotYetArrived" waiterActivity="Arrived">
+   <owner-list>
+    <owner id="process1d3b8ad2478"/>
+   </owner-list>
+   <waiter-list>
+    <waiter id="process1d3bb1f1438"/>
+   </waiter-list>
+  </SyncPoint>
+  <SyncPoint id="SyncPoint1d3728d23a0" logicalOperatorType="Aggregate" physicalOperatorType="Hash Match" WaitType="HTBUILD_AGG" nodeId="2" synchronizingAt="ReadyForOutput" ownerActivity="NotYetArrived" waiterActivity="Arrived">
+   <owner-list>
+    <owner id="process1d3b8ad2478"/>
+   </owner-list>
+   <waiter-list>
+    <waiter id="process1d417a03c18"/>
+   </waiter-list>
+  </SyncPoint>
+ </resource-list>
+</deadlock>

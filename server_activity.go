@@ -254,7 +254,7 @@ type RequestActivity struct {
 // an APPLY: an activity monitor reads this every few seconds, and each APPLY
 // would scan the DMV again.
 const sessionBlockerJoin = `
-LEFT   JOIN (SELECT session_id, blocking_session_id, wait_type, wait_duration_ms,
+LEFT   JOIN (SELECT session_id, blocking_session_id, wait_type, wait_duration_ms, resource_description,
                     ROW_NUMBER() OVER (PARTITION BY session_id
                                        ORDER BY wait_duration_ms DESC, blocking_session_id) AS rn
              FROM   sys.dm_os_waiting_tasks
@@ -262,13 +262,23 @@ LEFT   JOIN (SELECT session_id, blocking_session_id, wait_type, wait_duration_ms
                AND  blocking_session_id <> session_id) AS wb
          ON wb.session_id = r.session_id AND wb.rn = 1`
 
-// The columns sessionBlockerJoin derives: blocker, wait type and wait time,
-// zero values for a session with no request.
+// The columns sessionBlockerJoin derives: blocker, wait type, wait time and
+// the resource waited on, zero values for a session with no request.
 const (
-	sessionBlockerID       = `COALESCE(wb.blocking_session_id, NULLIF(r.blocking_session_id, r.session_id), 0)`
-	sessionBlockerWaitType = `COALESCE(wb.wait_type, r.wait_type, N'')`
-	sessionBlockerWaitMS   = `COALESCE(wb.wait_duration_ms, r.wait_time, 0)`
+	sessionBlockerID           = `COALESCE(wb.blocking_session_id, NULLIF(r.blocking_session_id, r.session_id), 0)`
+	sessionBlockerWaitType     = `COALESCE(wb.wait_type, r.wait_type, N'')`
+	sessionBlockerWaitMS       = `COALESCE(wb.wait_duration_ms, r.wait_time, 0)`
+	sessionBlockerWaitResource = `COALESCE(CASE WHEN wb.session_id IS NULL OR wb.blocking_session_id = r.blocking_session_id
+                                                 THEN NULLIF(r.wait_resource, N'') END,
+                                            wb.resource_description, N'')`
 )
+
+// sessionBlockerWaitResource prefers the request's own wait_resource (KEY:
+// 5:72057594043236352 (8194443284a0), what sp_who2 and sp_WhoIsActive show)
+// whenever the request's own task is the one blocked; only a parallel
+// request's blocked worker falls back to dm_os_waiting_tasks'
+// resource_description, which words the same lock differently (keylock
+// hobtid=… dbid=… mode=X) and is the only description of the worker's wait.
 
 // RequestActivity counts the user sessions and the requests they are running.
 func (s *Server) RequestActivity(ctx context.Context) (RequestActivity, error) {

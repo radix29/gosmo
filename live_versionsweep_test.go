@@ -227,6 +227,20 @@ var sweepMustCall = []string{
 	"Server.HostCPU",
 	"Server.TempDBSpace",
 	"Server.TempDBFiles",
+
+	// The maintenance reads (gossms phase 8.a).
+	"Database.FragmentationStats",
+	"Server.LastBackups",
+	"Server.SearchJobHistory",
+
+	// The restore target-collision read (gossms phase 8.j).
+	"Server.InstanceFiles",
+
+	// The plan cache and the filtered event_file read (gossms phase 7.a).
+	"Server.TopQueries",
+	"Server.TopQueries(database)",
+	"Server.CachedPlan",
+	"XEvents.ReadFileEvents",
 	"Server.TempDBObjects",
 	"Server.TempDBSessions",
 
@@ -510,6 +524,7 @@ func TestLiveVersionSweep(t *testing.T) {
 	}
 
 	sweepTableKinds(sw, d)
+	sweepMaintenanceReads(sw, d)
 	sweepProgrammability(sw, d)
 	sweepServiceBroker(sw, d)
 	sweepQueryStoreReports(sw, d)
@@ -545,6 +560,30 @@ func sweepTableKinds(sw *sweep, d *Database) {
 			return err
 		})
 	}
+}
+
+// sweepMaintenanceReads drives the reads gossms phase 8.a added, which take
+// arguments the reflective half has no value for.
+func sweepMaintenanceReads(sw *sweep, d *Database) {
+	sw.call("Database.FragmentationStats", func() error {
+		_, err := d.FragmentationStats(sw.ctx, FragmentationSampled, 0, 0)
+		return err
+	})
+	sw.call("Server.LastBackups", func() error {
+		_, err := d.Server().LastBackups(sw.ctx)
+		return err
+	})
+	sw.call("Server.InstanceFiles", func() error {
+		_, err := d.Server().InstanceFiles(sw.ctx)
+		return err
+	})
+	sw.call("Server.SearchJobHistory", func() error {
+		_, err := d.Server().SearchJobHistory(sw.ctx, JobHistoryFilter{
+			JobName: "gosmo_sweep_no_such_job", Since: time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC),
+			Until: time.Now().UTC(), Outcomes: []JobOutcome{JobOutcomeFailed}, IncludeSteps: true, Max: 5,
+		})
+		return err
+	})
 }
 
 // sweepServiceBroker drives the Service Broker by-name finders and the two
@@ -1182,6 +1221,40 @@ func sweepServerCalls(sw *sweep, srv *Server, info *ServerInfo) {
 		if errors.Is(err, ErrNotFound) {
 			return nil
 		}
+		return err
+	})
+	// The plan cache: the top statement's plan, which a busy enough cache
+	// still holds a moment later; a not-found is it having been evicted.
+	sw.call("Server.TopQueries", func() error {
+		qs, err := srv.TopQueries(sw.ctx, TopQueriesOptions{By: TopByLogicalReads, Average: true, Top: 1})
+		if err != nil || len(qs) == 0 {
+			return err
+		}
+		sw.call("Server.CachedPlan", func() error {
+			_, err := srv.CachedPlan(sw.ctx, qs[0].PlanHandle, qs[0].StatementStart, qs[0].StatementEnd)
+			if errors.Is(err, ErrNotFound) {
+				return nil
+			}
+			return err
+		})
+		return nil
+	})
+	sw.call("Server.TopQueries(database)", func() error {
+		_, err := srv.TopQueries(sw.ctx, TopQueriesOptions{Database: "master", Top: 5})
+		return err
+	})
+	// system_health's deadlocks, filtered by the server; none is a valid
+	// answer. Skipped where system_health has no event_file (Azure).
+	sw.call("XEvents.ReadFileEvents", func() error {
+		sh, err := srv.XEvents().SessionByName(sw.ctx, "system_health")
+		if err != nil {
+			return err
+		}
+		pattern, err := sh.EventFilePattern()
+		if err != nil {
+			return nil
+		}
+		_, _, err = srv.XEvents().ReadFileEvents(sw.ctx, pattern, EventFileCursor{}, 10, []string{"xml_deadlock_report"})
 		return err
 	})
 	// The sweep's own session: always there, so a not-found is a failure.

@@ -33,6 +33,61 @@ func (o tableScriptOptions) refusal(fullName string) error {
 	return unsupportedf("gosmo: script table %s: %s cannot be scripted", fullName, kind)
 }
 
+// hiddenTypeRefusal refuses to script what (a table or table type) when one
+// of its columns has a type the login cannot see (Column.IsTypeHidden): the
+// script could only name the base type, and the replay would build a
+// different table under the same name. The login needs a permission on the
+// type — REFERENCES, or VIEW DEFINITION on it or its schema.
+func hiddenTypeRefusal(what string, cols []*Column) error {
+	for _, c := range cols {
+		if c.IsTypeHidden {
+			return unsupportedf("gosmo: script %s: column %s has a user-defined type the login cannot see; "+
+				"it needs REFERENCES or VIEW DEFINITION on the type", what, quoteIdent(c.Name))
+		}
+	}
+	return nil
+}
+
+// hiddenDefinitionRefusal refuses to CREATE what (a table, table type or
+// index) when the login cannot read an expression the script must restate: a
+// default's, a check's, a computed column's or a filtered index's, each NULL
+// without VIEW DEFINITION. Written without it the CREATE is broken (DEFAULT
+// followed by nothing) or builds a different object (a computed column as a
+// plain one, a check dropped, an index unfiltered). DROP restates nothing, so
+// it is not refused.
+func hiddenDefinitionRefusal(what string, v ScriptVerb, cols []*Column, indexes []*Index, checks []*CheckConstraint) error {
+	if v == ScriptDrop {
+		return nil
+	}
+	hidden := ""
+	for _, c := range cols {
+		switch {
+		case c.IsComputed && c.ComputedText == "":
+			hidden = "computed column " + quoteIdent(c.Name)
+		case c.DefaultValue != nil && c.DefaultValue.Definition == "":
+			hidden = "default " + quoteIdent(c.DefaultValue.Name)
+		default:
+			continue
+		}
+		break
+	}
+	for _, idx := range indexes {
+		if hidden == "" && idx.IsFilterHidden {
+			hidden = "index " + quoteIdent(idx.Name) + "'s filter"
+		}
+	}
+	for _, ck := range checks {
+		if hidden == "" && ck.Definition == "" {
+			hidden = "check constraint " + quoteIdent(ck.Name)
+		}
+	}
+	if hidden == "" {
+		return nil
+	}
+	return unsupportedf("gosmo: script %s: %s: %w; it needs VIEW DEFINITION on the table",
+		what, hidden, ErrDefinitionHidden)
+}
+
 // ledgerOptions returns a ledger table's entries for CREATE TABLE's WITH
 // clause, or nil for a table that is not one. An updatable ledger table is
 // system-versioned into its history table — sys.tables reports it with

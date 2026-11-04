@@ -59,3 +59,34 @@ func TestSearchEscapesWildcardsInThePattern(t *testing.T) {
 			"adds are then matched as themselves", q)
 	}
 }
+
+// SearchDefinitions and SearchColumns follow Search's matching rule: both
+// sides of the LIKE lowered, and the ESCAPE clause the escaped pattern needs.
+// Each is its own statement, so each is pinned — a copy that lowered only the
+// column, or dropped the ESCAPE, would pass every test of Search.
+func TestSearchVariantsFollowSearchsMatchingRule(t *testing.T) {
+	cases := []struct {
+		name, from, want string
+		call             func(context.Context, *Database) error
+	}{
+		{"SearchDefinitions", "sys.sql_modules", `LOWER(m.definition) LIKE '%' + LOWER(@p1) + '%' ESCAPE '\'`,
+			func(c context.Context, d *Database) error { _, err := d.SearchDefinitions(c, "Pct_1"); return err }},
+		{"SearchColumns", "sys.columns", `LOWER(c.name) LIKE '%' + LOWER(@p1) + '%' ESCAPE '\'`,
+			func(c context.Context, d *Database) error { _, err := d.SearchColumns(c, "Pct_1"); return err }},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			d := captureDatabase(t)
+			if err := tc.call(context.Background(), d); err != nil {
+				t.Fatalf("%s: %v", tc.name, err)
+			}
+			q := captured.find(tc.from)
+			if q == "" {
+				t.Fatalf("no %s statement was issued", tc.from)
+			}
+			if !strings.Contains(q, tc.want) {
+				t.Errorf("statement:\n%s\nwant it to contain:\n%s", q, tc.want)
+			}
+		})
+	}
+}

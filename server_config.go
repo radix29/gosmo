@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"strings"
+	"time"
 )
 
 // ============================================================
@@ -23,6 +24,23 @@ type ConfigurationOption struct {
 	IsDynamic   bool // true = change takes effect without a restart
 	IsAdvanced  bool
 	Description string
+
+	// Default is the option's engine default on this server's major version
+	// — the value a bare installation of the engine carries, not Setup's
+	// recommendation (max degree of parallelism 0, max server memory
+	// 2147483647; see configDefaults for the source). HasDefault is false,
+	// and Default 0, where gosmo has no default to give: Azure, a major
+	// newer than the table, and an option it does not list (one a CU added,
+	// or the engine-written version parts). Configurations and
+	// ConfigurationByName fill both; a ConfigurationRef handle leaves them
+	// zero.
+	//
+	// A self-configuring option's default is 0 ("the server decides"),
+	// which lies below the Minimum sys.configurations reports for it (locks
+	// 5000, max worker threads 128, index create memory (KB) 704) and which
+	// sp_configure accepts all the same. A range check must let 0 through.
+	Default    int64
+	HasDefault bool
 }
 
 // Server returns the server the configuration option belongs to.
@@ -47,6 +65,7 @@ ORDER  BY name`
 			return nil, err
 		}
 		c.Description = desc.String
+		c.fillDefault()
 		return c, nil
 	})
 }
@@ -68,6 +87,7 @@ WHERE  name = @p1`
 		return nil, rowErr(err, notFoundf("gosmo: configuration option %q not found", name), "configuration by name")
 	}
 	c.Description = desc.String
+	c.fillDefault()
 	return c, nil
 }
 
@@ -176,10 +196,17 @@ const showAdvancedOptions = "show advanced options"
 // A change to "show advanced options" itself wins over step 4: it is applied
 // after every other change and nothing is restored afterwards.
 //
-// The batch has no TRY/CATCH: an sp_configure that fails (an unknown name, a
-// value out of range) does not stop the rest, so the RECONFIGURE still
+// An sp_configure that fails (an unknown name, a value out of range, an
+// option the edition lacks) does not stop the rest, so the RECONFIGURE still
 // installs every change that was accepted and step 4 still runs. The error
-// returned names every failure. An empty changes is a no-op.
+// returned names every failure. A refused RECONFIGURE (Msg 5807, a value
+// outside the recommended range without Override) is different: it ends the
+// batch, leaving every change configured but not running. So each RECONFIGURE
+// that follows step 1 sits in TRY/CATCH, and the CATCH puts "show advanced
+// options" back to its configured value before rethrowing — not running
+// either, since its own RECONFIGURE would be refused the same way, but
+// pending with the rest rather than left on for good (found live on 13: the
+// option stayed 1/1). An empty changes is a no-op.
 func (s *Server) ApplyConfiguration(ctx context.Context, changes []ConfigChange, opts ConfigApplyOptions) error {
 	if len(changes) == 0 {
 		return nil
@@ -220,7 +247,13 @@ IF EXISTS (SELECT 1 FROM sys.configurations WHERE name = N'%[1]s' AND value_in_u
    AND EXISTS (SELECT 1 FROM sys.configurations WHERE is_advanced = 1 AND name IN (%[2]s))
 BEGIN
     EXEC sys.sp_configure N'%[1]s', 1;
-    %[3]s;
+    BEGIN TRY
+        %[3]s;
+    END TRY
+    BEGIN CATCH
+        EXEC sys.sp_configure N'%[1]s', @show_advanced_value;
+        THROW;
+    END CATCH;
     SET @show_advanced_enabled = 1;
 END;
 `, showAdvancedOptions, strings.Join(names, ", "), reconfigure)
@@ -228,15 +261,23 @@ END;
 	for _, c := range ordered {
 		fmt.Fprintf(&b, "EXEC sys.sp_configure N'%s', %d;\n", escapeSingle(c.Name), c.Value)
 	}
-	b.WriteString(reconfigure)
-	b.WriteString(";")
 	if enable && showAdvanced == nil {
-		fmt.Fprintf(&b, `
+		fmt.Fprintf(&b, `BEGIN TRY
+    %[2]s;
+END TRY
+BEGIN CATCH
+    IF @show_advanced_enabled = 1
+        EXEC sys.sp_configure N'%[1]s', @show_advanced_value;
+    THROW;
+END CATCH;
 IF @show_advanced_enabled = 1
 BEGIN
-    EXEC sys.sp_configure N'%s', @show_advanced_value;
-    %s;
+    EXEC sys.sp_configure N'%[1]s', @show_advanced_value;
+    %[2]s;
 END;`, showAdvancedOptions, reconfigure)
+	} else {
+		b.WriteString(reconfigure)
+		b.WriteString(";")
 	}
 	return b.String()
 }
@@ -387,6 +428,46 @@ ORDER  BY s.scheduler_id`)
 }
 
 // ============================================================
+// Start time
+// ============================================================
+
+// StartTime returns when the instance last started
+// (sys.dm_os_sys_info.sqlserver_start_time) — the server's local wall clock
+// carried in UTC, as every zoneless server time is — and how long ago that
+// was by the server's own clock. Uptime comes from the server because the
+// start time is not a real UTC instant: subtracting it from the client's
+// clock is off by the server's UTC offset and any clock skew.
+//
+// Needs VIEW SERVER STATE (VIEW SERVER PERFORMANCE STATE from SQL Server
+// 2022); without it the server refuses the read. tempdb's create_date needs
+// no permission but trails the start by however long recovery took, so it is
+// not used.
+func (s *Server) StartTime(ctx context.Context) (start time.Time, uptime time.Duration, err error) {
+	const q = `
+SELECT sqlserver_start_time,
+       DATEDIFF_BIG(millisecond, sqlserver_start_time, SYSDATETIME())
+FROM   sys.dm_os_sys_info`
+	var ms int64
+	if err := s.queryRowScan(ctx, q, nil, &start, &ms); err != nil {
+		return time.Time{}, 0, fmt.Errorf("gosmo: server start time: %w", err)
+	}
+	return start, time.Duration(ms) * time.Millisecond, nil
+}
+
+// CurrentTime returns the server's clock now (SYSDATETIMEOFFSET), in a fixed
+// zone at the server's UTC offset — unlike the zoneless server times, a real
+// instant. Its Location is how a caller turns a server-local wall clock into
+// an instant, and back: the offset is today's, so a time on the other side of
+// a daylight-saving change is an hour out. Needs no permission.
+func (s *Server) CurrentTime(ctx context.Context) (time.Time, error) {
+	var now time.Time
+	if err := s.queryRowScan(ctx, `SELECT SYSDATETIMEOFFSET()`, nil, &now); err != nil {
+		return time.Time{}, fmt.Errorf("gosmo: server current time: %w", err)
+	}
+	return now, nil
+}
+
+// ============================================================
 // Disk volumes
 // ============================================================
 
@@ -435,6 +516,95 @@ ORDER BY vs.volume_mount_point`
 	})
 }
 
+// Plausible reports whether the volume's figures can be shown: a total above
+// zero and no more available than the total. A host reporting a volume it
+// does not own answers otherwise — an Azure Managed Instance gives C:\ a
+// total of 192 MB and 65,344 MB available — and "65,344 MB free of 192 MB"
+// is worse than saying nothing.
+func (v DiskVolumeInfo) Plausible() bool { return plausibleVolume(v.TotalMB, v.AvailableMB) }
+
+// FileVolume is the storage volume one database file sits on, as
+// sys.dm_os_volume_stats reports it for that file — the file-to-volume
+// mapping DiskVolumes groups away.
+type FileVolume struct {
+	DatabaseID   int
+	FileID       int
+	PhysicalName string // the file's path (sys.master_files)
+	// MountPoint and VolumeName are as DiskVolumeInfo's: either or both
+	// can be empty on a containerized host.
+	MountPoint     string
+	VolumeName     string
+	TotalBytes     int64
+	AvailableBytes int64
+}
+
+// Plausible is DiskVolumeInfo.Plausible for one file's volume figures.
+func (v FileVolume) Plausible() bool {
+	return plausibleVolume(float64(v.TotalBytes), float64(v.AvailableBytes))
+}
+
+// plausibleVolume is the one rule both volume shapes follow.
+func plausibleVolume(total, available float64) bool {
+	return total > 0 && available <= total
+}
+
+// FileVolumes returns the volume behind every database file on the server,
+// one row per file (sys.master_files × sys.dm_os_volume_stats), ordered by
+// database_id and file_id.
+//
+// The DMV needs VIEW SERVER STATE (VIEW SERVER PERFORMANCE STATE from 2022)
+// and is refused outright without it (Msg 300). FileVolumes asks first, as
+// DatabaseFiles does, and answers visible=false with no rows instead of an
+// error, so a caller can say which permission is missing. Rows are returned
+// as the host reports them; filter with Plausible before showing figures.
+func (s *Server) FileVolumes(ctx context.Context) (vols []FileVolume, visible bool, err error) {
+	// The permission is the first column, so the ELSE branch's single row
+	// says "hidden" — no rows at all from the first branch is a host whose
+	// DMV answered nothing, which is visible and empty.
+	const q = `
+IF HAS_PERMS_BY_NAME(NULL, NULL, 'VIEW SERVER STATE') = 1
+   OR HAS_PERMS_BY_NAME(NULL, NULL, 'VIEW SERVER PERFORMANCE STATE') = 1
+    SELECT CAST(1 AS bit), mf.database_id, mf.file_id, mf.physical_name,
+           vs.volume_mount_point, vs.logical_volume_name, vs.total_bytes, vs.available_bytes
+    FROM   sys.master_files mf
+    CROSS  APPLY sys.dm_os_volume_stats(mf.database_id, mf.file_id) vs
+    ORDER  BY mf.database_id, mf.file_id
+ELSE
+    SELECT CAST(0 AS bit), NULL, NULL, NULL, NULL, NULL, NULL, NULL`
+
+	rows, err := s.query(ctx, q)
+	visible = true
+	list, err := scanRows(rows, err, "file volumes", func(scan func(...any) error) (*FileVolume, error) {
+		var shown bool
+		var dbID, fileID sql.NullInt32
+		var path, mount, name sql.NullString
+		var total, avail sql.NullInt64
+		if err := scan(&shown, &dbID, &fileID, &path, &mount, &name, &total, &avail); err != nil {
+			return nil, err
+		}
+		if !shown {
+			visible = false
+			return nil, nil
+		}
+		return &FileVolume{
+			DatabaseID: int(dbID.Int32), FileID: int(fileID.Int32), PhysicalName: path.String,
+			MountPoint: mount.String, VolumeName: name.String,
+			TotalBytes: total.Int64, AvailableBytes: avail.Int64,
+		}, nil
+	})
+	if err != nil {
+		return nil, false, err
+	}
+	if !visible {
+		return nil, false, nil
+	}
+	vols = make([]FileVolume, len(list))
+	for i, v := range list {
+		vols[i] = *v
+	}
+	return vols, true, nil
+}
+
 // ============================================================
 // Languages
 // ============================================================
@@ -477,14 +647,40 @@ type ActiveSession struct {
 	MemoryUsage      int64
 	TotalElapsedMS   int64
 	LastRequestStart string
-	CommandText      string
+	// CommandText is the batch of the request the session is running now, its
+	// first 512 characters; empty for a session running nothing.
+	CommandText string
+	// RecentText is the batch the session's connection sent last
+	// (dm_exec_connections.most_recent_sql_handle), its first 512
+	// characters — in the server's auto-parameterized form when it
+	// parameterized it ((@1 int)UPDATE [t] set [v] = @1 …): for a running
+	// session usually CommandText's batch, and for
+	// an idle one the only text there is — an idle head blocker holding an
+	// open transaction shows here what opened it. Empty for a session with no
+	// connection (a system session) or whose batch has left the cache.
+	RecentText string
+	// Command is the running request's command (SELECT, UPDATE, AWAITING
+	// COMMAND…), empty for a session running nothing.
+	Command string
+	// OpenTransactionCount is the session's open transactions — nonzero for an
+	// idle session is a transaction left open, the usual head blocker.
+	OpenTransactionCount int
+	// Reads, Writes and LogicalReads are the session's totals since it
+	// logged in, as CPUTime is: physical reads, writes and logical reads.
+	Reads        int64
+	Writes       int64
+	LogicalReads int64
 	// BlockingSessionID is the session a request of this one is blocked by,
 	// 0 for none — a parallel request's blocked worker counts
-	// (sessionBlockerJoin). WaitType and WaitTimeMS are that worker's wait
-	// when it is one, else the request's.
+	// (sessionBlockerJoin). WaitType, WaitTimeMS and WaitResource are that
+	// worker's wait when it is one, else the request's; WaitResource is the
+	// lock or page waited on (KEY: 5:72057594043236352 (8194443284a0)), in
+	// dm_os_waiting_tasks' wording for a parallel worker's wait
+	// (sessionBlockerWaitResource), empty for none.
 	BlockingSessionID int
 	WaitType          string
 	WaitTimeMS        int64
+	WaitResource      string
 	// HostProcessID is the client's process id as reported at login
 	// (go-mssqldb sends os.Getpid()), 0 for a system session.
 	// FromCallerHost reports that the session's client named the reading
@@ -492,6 +688,21 @@ type ActiveSession struct {
 	// one client process's sessions, as BlockedRequests does.
 	HostProcessID  int
 	FromCallerHost bool
+	// IsUserProcess is dm_exec_sessions.is_user_process: false for SQL
+	// Server's internal sessions, which KILL refuses (Msg 6107).
+	IsUserProcess bool
+	// RequestCPUTime, RequestElapsedMS, RequestReads, RequestWrites and
+	// RequestLogicalReads are the running request's (dm_exec_requests), 0
+	// for a session running nothing. The session's own counters (CPUTime,
+	// TotalElapsedMS, Reads, Writes, LogicalReads) are updated only when a
+	// request ends, so they leave the running one out — a query blocked for
+	// minutes shows 0 there (found live): the session's figure including
+	// the running request is the sum of the two.
+	RequestCPUTime      int64
+	RequestElapsedMS    int64
+	RequestReads        int64
+	RequestWrites       int64
+	RequestLogicalReads int64
 }
 
 // SessionScope says which sessions Server.ActiveSessions returns.
@@ -545,15 +756,29 @@ const activeSessionColumns = `s.session_id, ISNULL(s.login_name, ''), ISNULL(s.h
        s.cpu_time, s.memory_usage, s.total_elapsed_time,
        CONVERT(VARCHAR(30), s.last_request_start_time, 121),
        ISNULL(SUBSTRING(t.text, 1, 512), ''),
+       ISNULL(SUBSTRING(rt.text, 1, 512), ''),
+       ISNULL(r.command, N''),
+       s.open_transaction_count, s.reads, s.writes, s.logical_reads,
        ` + sessionBlockerID + `,
        ` + sessionBlockerWaitType + `,
        ` + sessionBlockerWaitMS + `,
+       ` + sessionBlockerWaitResource + `,
        ISNULL(s.host_process_id, 0),
-       CAST(CASE WHEN s.host_name = HOST_NAME() THEN 1 ELSE 0 END AS bit)`
+       CAST(CASE WHEN s.host_name = HOST_NAME() THEN 1 ELSE 0 END AS bit),
+       s.is_user_process,
+       ISNULL(r.cpu_time, 0), ISNULL(r.total_elapsed_time, 0),
+       ISNULL(r.reads, 0), ISNULL(r.writes, 0), ISNULL(r.logical_reads, 0)`
 
+// activeSessionFrom takes a MARS session's most recently read connection for
+// RecentText: each logical connection has its own row and handle.
 const activeSessionFrom = `FROM   sys.dm_exec_sessions s
 LEFT   JOIN sys.dm_exec_requests r ON r.session_id = s.session_id` + sessionBlockerJoin + `
-OUTER  APPLY sys.dm_exec_sql_text(r.sql_handle) t`
+OUTER  APPLY sys.dm_exec_sql_text(r.sql_handle) t
+OUTER  APPLY (SELECT TOP (1) c.most_recent_sql_handle
+              FROM   sys.dm_exec_connections c
+              WHERE  c.session_id = s.session_id
+              ORDER  BY c.last_read DESC) AS rc
+OUTER  APPLY sys.dm_exec_sql_text(rc.most_recent_sql_handle) rt`
 
 func scanActiveSession(_ *Server, scan func(...any) error) (*ActiveSession, error) {
 	as := &ActiveSession{}
@@ -562,9 +787,12 @@ func scanActiveSession(_ *Server, scan func(...any) error) (*ActiveSession, erro
 		&as.SessionID, &as.LoginName, &as.HostName, &as.ProgramName,
 		&dbName, &status,
 		&as.CPUTime, &as.MemoryUsage, &as.TotalElapsedMS,
-		&lastReq, &cmd,
-		&as.BlockingSessionID, &waitType, &as.WaitTimeMS,
-		&as.HostProcessID, &as.FromCallerHost,
+		&lastReq, &cmd, &as.RecentText, &as.Command,
+		&as.OpenTransactionCount, &as.Reads, &as.Writes, &as.LogicalReads,
+		&as.BlockingSessionID, &waitType, &as.WaitTimeMS, &as.WaitResource,
+		&as.HostProcessID, &as.FromCallerHost, &as.IsUserProcess,
+		&as.RequestCPUTime, &as.RequestElapsedMS,
+		&as.RequestReads, &as.RequestWrites, &as.RequestLogicalReads,
 	); err != nil {
 		return nil, err
 	}

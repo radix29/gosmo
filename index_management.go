@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"strings"
+	"time"
 )
 
 // -- Index management ----------------------------------------------------------
@@ -86,6 +87,7 @@ func (idx *Index) Drop(ctx context.Context) error {
 }
 
 // RebuildAllIndexes rebuilds all indexes on the table (ALTER INDEX ALL ... REBUILD).
+// RebuildAllIndexesWith takes every rebuild option, not only a fill factor.
 func (t *Table) RebuildAllIndexes(ctx context.Context, fillFactor int) error {
 	q := fmt.Sprintf("ALTER INDEX ALL ON %s REBUILD", t.FullName())
 	if fillFactor > 0 {
@@ -93,6 +95,33 @@ func (t *Table) RebuildAllIndexes(ctx context.Context, fillFactor int) error {
 	}
 	if err := t.exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: rebuild all indexes on %s: %w", t.FullName(), err)
+	}
+	return nil
+}
+
+// RebuildAllIndexesWith rebuilds every index on the table (ALTER INDEX ALL
+// ... REBUILD) with a WITH clause only for the options opts sets — Rebuild's
+// options, for the whole table. Unlike Rebuild it knows no index's type, so
+// an option one of the table's indexes refuses (FILLFACTOR on a columnstore,
+// ONLINE on an edition without online index operations) is left for the server to refuse.
+func (t *Table) RebuildAllIndexesWith(ctx context.Context, opts IndexRebuildOptions) error {
+	with, err := opts.withClause()
+	if err != nil {
+		return fmt.Errorf("gosmo: rebuild all indexes on %s: %w", t.FullName(), err)
+	}
+	q := fmt.Sprintf("ALTER INDEX ALL ON %s REBUILD", t.FullName()) + with
+	if err := t.exec(ctx, q); err != nil {
+		return fmt.Errorf("gosmo: rebuild all indexes on %s: %w", t.FullName(), err)
+	}
+	return nil
+}
+
+// ReorganizeAllIndexes reorganizes every index on the table (ALTER INDEX
+// ALL ... REORGANIZE): Index.Reorganize for the whole table, in one
+// statement. A reorganize is always online and takes no options.
+func (t *Table) ReorganizeAllIndexes(ctx context.Context) error {
+	if err := t.exec(ctx, fmt.Sprintf("ALTER INDEX ALL ON %s REORGANIZE", t.FullName())); err != nil {
+		return fmt.Errorf("gosmo: reorganize all indexes on %s: %w", t.FullName(), err)
 	}
 	return nil
 }
@@ -266,6 +295,49 @@ type IndexRebuildOptions struct {
 	// DataCompression is the compression to rebuild with. Empty keeps the
 	// index's current setting.
 	DataCompression DataCompression
+	// Online rebuilds while the table stays readable and writable
+	// (ONLINE = ON), at the cost of a longer rebuild. Online index operations
+	// are an Enterprise, Developer and Azure feature: other editions refuse
+	// the option (Msg 1712), which is left for the server to say. False sends
+	// nothing — an offline rebuild, the server's default.
+	Online bool
+	// MaxDOP caps the rebuild's parallelism (MAXDOP = n). Zero sends nothing,
+	// so the server's own setting applies; 1 rebuilds serially.
+	MaxDOP int
+}
+
+// withClause renders the options as REBUILD's " WITH (...)", or "" when opts
+// sets nothing, refusing values the server would.
+func (opts IndexRebuildOptions) withClause() (string, error) {
+	if opts.DataCompression != "" && !opts.DataCompression.valid() {
+		return "", invalidf("invalid data compression %q (must be NONE, ROW, PAGE, COLUMNSTORE, or COLUMNSTORE_ARCHIVE)", opts.DataCompression)
+	}
+	if opts.FillFactor < 0 || opts.FillFactor > 100 {
+		return "", invalidf("fill factor %d out of range (1-100)", opts.FillFactor)
+	}
+	if opts.MaxDOP < 0 || opts.MaxDOP > 64 {
+		return "", invalidf("MAXDOP %d out of range (1-64)", opts.MaxDOP)
+	}
+	var withParts []string
+	if opts.PadIndex != nil {
+		withParts = append(withParts, "PAD_INDEX = "+onOffKeyword(*opts.PadIndex))
+	}
+	if opts.FillFactor > 0 {
+		withParts = append(withParts, fmt.Sprintf("FILLFACTOR = %d", opts.FillFactor))
+	}
+	if opts.DataCompression != "" {
+		withParts = append(withParts, "DATA_COMPRESSION = "+string(opts.DataCompression))
+	}
+	if opts.Online {
+		withParts = append(withParts, "ONLINE = ON")
+	}
+	if opts.MaxDOP > 0 {
+		withParts = append(withParts, fmt.Sprintf("MAXDOP = %d", opts.MaxDOP))
+	}
+	if len(withParts) == 0 {
+		return "", nil
+	}
+	return " WITH (" + strings.Join(withParts, ", ") + ")", nil
 }
 
 // refuseAlterIndex refuses any ALTER INDEX on a memory-optimized table's
@@ -305,8 +377,9 @@ func (idx *Index) refuseHypothetical(verb string) error {
 // one. On a memory-optimized table's index every rebuild is refused (see
 // refuseAlterIndex).
 func (idx *Index) Rebuild(ctx context.Context, opts IndexRebuildOptions) error {
-	if opts.DataCompression != "" && !opts.DataCompression.valid() {
-		return invalidf("gosmo: rebuild index %q: invalid data compression %q (must be NONE, ROW, PAGE, COLUMNSTORE, or COLUMNSTORE_ARCHIVE)", idx.Name, opts.DataCompression)
+	with, err := opts.withClause()
+	if err != nil {
+		return fmt.Errorf("gosmo: rebuild index %q: %w", idx.Name, err)
 	}
 	if err := idx.refuseAlterIndex("rebuild"); err != nil {
 		return err
@@ -326,20 +399,7 @@ func (idx *Index) Rebuild(ctx context.Context, opts IndexRebuildOptions) error {
 		}
 	}
 
-	var withParts []string
-	if opts.PadIndex != nil {
-		withParts = append(withParts, "PAD_INDEX = "+onOffKeyword(*opts.PadIndex))
-	}
-	if opts.FillFactor > 0 {
-		withParts = append(withParts, fmt.Sprintf("FILLFACTOR = %d", opts.FillFactor))
-	}
-	if opts.DataCompression != "" {
-		withParts = append(withParts, "DATA_COMPRESSION = "+string(opts.DataCompression))
-	}
-	q := fmt.Sprintf("ALTER INDEX %s REBUILD", idx.target())
-	if len(withParts) > 0 {
-		q += " WITH (" + strings.Join(withParts, ", ") + ")"
-	}
+	q := fmt.Sprintf("ALTER INDEX %s REBUILD", idx.target()) + with
 	if err := idx.on().exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: rebuild index %q: %w", idx.Name, err)
 	}
@@ -705,6 +765,12 @@ func (m FragmentationMode) normalize() (FragmentationMode, error) {
 // FragmentationStats returns fragmentation info for all indexes on the table,
 // one row per index, most fragmented first. An empty mode is
 // FragmentationLimited. A name that resolves to no table returns no rows.
+//
+// A disabled index is left out, as Database.FragmentationStats leaves it out:
+// it has no data, and the DMV called with its index_id refuses the whole
+// statement (Msg 2530, "The index … is disabled"), so one disabled index
+// failed the read of every other (found by gossms maint index-rebuild,
+// 2026-11-03).
 func (t *Table) FragmentationStats(ctx context.Context, mode FragmentationMode) ([]*IndexFragmentation, error) {
 	mode, err := mode.normalize()
 	if err != nil {
@@ -712,10 +778,75 @@ func (t *Table) FragmentationStats(ctx context.Context, mode FragmentationMode) 
 	}
 
 	q := fragmentationSelect(mode) + `
-WHERE  i.object_id = OBJECT_ID(@p1) AND i.index_id > 0 AND i.is_hypothetical = 0
+WHERE  i.object_id = OBJECT_ID(@p1) AND i.index_id > 0 AND i.is_hypothetical = 0 AND i.is_disabled = 0
 GROUP  BY i.name, i.index_id
 ORDER  BY 3 DESC, i.name`
 
 	rows, err := t.db.query(ctx, q, t.FullName())
 	return scanRows(rows, err, fmt.Sprintf("fragmentation stats for %s", t.FullName()), scanFragmentation)
+}
+
+// IndexUsage is one index's row of sys.dm_db_index_usage_stats: how often
+// user queries have read and maintained it since the server started (or the
+// database came online). An index no query has touched since then has zero
+// counts and zero times.
+type IndexUsage struct {
+	IndexName string // "" for a heap (IndexID 0)
+	IndexID   int
+	// UsageVisible is false when the login may not read the DMV (it needs
+	// VIEW SERVER STATE, or VIEW SERVER PERFORMANCE STATE on 2022 and later):
+	// the counts are then zero and the times zero because they were not read,
+	// not because the index is unused.
+	UsageVisible bool
+	UserSeeks    int64
+	UserScans    int64
+	UserLookups  int64
+	UserUpdates  int64
+	// The last user read or write of each kind; zero when there was none (or
+	// UsageVisible is false).
+	LastUserSeek   time.Time
+	LastUserScan   time.Time
+	LastUserLookup time.Time
+	LastUserUpdate time.Time
+}
+
+// IndexUsage returns the usage counters of every index on the table, the heap
+// included, in index_id order. Like FragmentationStats it names the table, so
+// a TableRef is enough, and a name that resolves to no table returns no rows.
+//
+// The DMV is refused outright without the permission (Msg 300), which would
+// cost the index list too, so the batch asks first and reads every index with
+// UsageVisible false instead — Server.DatabaseFiles' pattern.
+func (t *Table) IndexUsage(ctx context.Context) ([]*IndexUsage, error) {
+	const cols = `
+SELECT ISNULL(i.name, N''), i.index_id, `
+	const from = `
+FROM   sys.indexes i`
+	const where = `
+WHERE  i.object_id = OBJECT_ID(@p1) AND i.is_hypothetical = 0
+ORDER  BY i.index_id`
+	const q = `
+IF HAS_PERMS_BY_NAME(NULL, NULL, 'VIEW SERVER STATE') = 1
+   OR HAS_PERMS_BY_NAME(NULL, NULL, 'VIEW SERVER PERFORMANCE STATE') = 1` + cols + `CAST(1 AS bit),
+       ISNULL(u.user_seeks, 0), ISNULL(u.user_scans, 0), ISNULL(u.user_lookups, 0), ISNULL(u.user_updates, 0),
+       u.last_user_seek, u.last_user_scan, u.last_user_lookup, u.last_user_update` + from + `
+LEFT   JOIN sys.dm_db_index_usage_stats u
+       ON  u.database_id = DB_ID() AND u.object_id = i.object_id AND u.index_id = i.index_id` + where + `
+ELSE` + cols + `CAST(0 AS bit),
+       CAST(0 AS bigint), CAST(0 AS bigint), CAST(0 AS bigint), CAST(0 AS bigint),
+       CAST(NULL AS datetime), CAST(NULL AS datetime), CAST(NULL AS datetime), CAST(NULL AS datetime)` + from + where
+
+	rows, err := t.db.query(ctx, q, t.FullName())
+	return scanRows(rows, err, fmt.Sprintf("index usage for %s", t.FullName()), func(scan func(...any) error) (*IndexUsage, error) {
+		u := &IndexUsage{}
+		var seek, scanned, lookup, update sql.NullTime
+		if err := scan(&u.IndexName, &u.IndexID, &u.UsageVisible,
+			&u.UserSeeks, &u.UserScans, &u.UserLookups, &u.UserUpdates,
+			&seek, &scanned, &lookup, &update); err != nil {
+			return nil, err
+		}
+		u.LastUserSeek, u.LastUserScan = seek.Time, scanned.Time
+		u.LastUserLookup, u.LastUserUpdate = lookup.Time, update.Time
+		return u, nil
+	})
 }

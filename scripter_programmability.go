@@ -152,11 +152,18 @@ func readTableTypeScriptParts(ctx context.Context, t *UserDefinedTableType) (tab
 	if p.cols, err = t.Columns(ctx); err != nil {
 		return p, err
 	}
+	if err := hiddenTypeRefusal("table type "+qualifiedName(t.Schema, t.Name), p.cols); err != nil {
+		return p, err
+	}
 	tbl := t.typeTable()
 	if p.indexes, err = tbl.Indexes(ctx); err != nil {
 		return p, err
 	}
 	if p.checks, err = tbl.CheckConstraints(ctx); err != nil {
+		return p, err
+	}
+	// Read only for a verb that creates (ScriptUserDefinedTableType).
+	if err := hiddenDefinitionRefusal("table type "+qualifiedName(t.Schema, t.Name), ScriptCreate, p.cols, p.indexes, p.checks); err != nil {
 		return p, err
 	}
 	err = t.db.queryRow(ctx, func(row *sql.Row) error { return row.Scan(&p.dbCollation) },

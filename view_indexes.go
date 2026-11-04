@@ -54,6 +54,18 @@ func (v *View) Indexes(ctx context.Context) ([]*Index, error) {
 	return indexes, err
 }
 
+// IndexUsage returns the usage counters of the indexed view's indexes — see
+// Table.IndexUsage. A view that is not indexed has none.
+func (v *View) IndexUsage(ctx context.Context) ([]*IndexUsage, error) {
+	return v.carrier().IndexUsage(ctx)
+}
+
+// FragmentationStats returns the fragmentation of the indexed view's indexes
+// — see Table.FragmentationStats. A view that is not indexed has none.
+func (v *View) FragmentationStats(ctx context.Context, mode FragmentationMode) ([]*IndexFragmentation, error) {
+	return v.carrier().FragmentationStats(ctx, mode)
+}
+
 // IndexByName returns one index on the view by name, with its columns — see
 // Table.IndexByName.
 func (v *View) IndexByName(ctx context.Context, name string) (*Index, error) {
@@ -79,6 +91,18 @@ func (v *View) CreateIndex(ctx context.Context, req CreateIndexRequest) (*Index,
 // Table.RebuildAllIndexes.
 func (v *View) RebuildAllIndexes(ctx context.Context, fillFactor int) error {
 	return v.carrier().RebuildAllIndexes(ctx, fillFactor)
+}
+
+// RebuildAllIndexesWith rebuilds every index on the view with opts — see
+// Table.RebuildAllIndexesWith.
+func (v *View) RebuildAllIndexesWith(ctx context.Context, opts IndexRebuildOptions) error {
+	return v.carrier().RebuildAllIndexesWith(ctx, opts)
+}
+
+// ReorganizeAllIndexes reorganizes every index on the view — see
+// Table.ReorganizeAllIndexes.
+func (v *View) ReorganizeAllIndexes(ctx context.Context) error {
+	return v.carrier().ReorganizeAllIndexes(ctx)
 }
 
 // Statistics returns the view's statistics objects — see Table.Statistics.
@@ -115,4 +139,10 @@ func (v *View) CreateStatistic(ctx context.Context, req CreateStatisticRequest) 
 // Table.UpdateAllStatistics.
 func (v *View) UpdateAllStatistics(ctx context.Context, samplePct int) error {
 	return v.carrier().UpdateAllStatistics(ctx, samplePct)
+}
+
+// UpdateStatisticsWith updates every statistic on the view with the sampling
+// opts asks for — see Table.UpdateStatisticsWith.
+func (v *View) UpdateStatisticsWith(ctx context.Context, opts StatisticsUpdateOptions) error {
+	return v.carrier().UpdateStatisticsWith(ctx, opts)
 }

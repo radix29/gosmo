@@ -41,6 +41,7 @@ classDiagram
         +UserDefinedFunctionsFiltered(filter) []*UserDefinedFunction
         +UserDefinedFunctionRef(schema, name) *UserDefinedFunction
         +Parameters(schema, name) []*Parameter
+        +ReturnType(schema, name) *Parameter
         +SystemViews() []*View
         +SystemViewsFiltered(filter) []*View
         +SystemStoredProcedures() []*StoredProcedure
@@ -160,6 +161,9 @@ classDiagram
         +RecoveryStatus() *DatabaseRecoveryStatus
         +SpaceUsed() SpaceInfo
         +Shrink(opts) error
+        +CheckDB(opts) []*CheckDBError
+        +FragmentationStats(mode, minPct, minPages) []*DatabaseIndexFragmentation
+        +UpdateStatistics(resample) error
         +DiskUsage() DiskUsage
         +ResourceStats(max) []*DatabaseResourceStat
         +LatestResourceStats() *DatabaseResourceStat
@@ -196,6 +200,10 @@ classDiagram
         +Dependencies(schema, name) []*Dependency
         +Dependents(schema, name) []*Dependency
         +Search(pattern) []*SearchResult
+        +SearchDefinitions(pattern) []*SearchResult
+        +SearchColumns(pattern) []*ColumnSearchResult
+        +ObjectByName(schema, name) *ObjectInfo
+        +ObjectsNamed(name) []*ObjectInfo
         +FindSecurables(search) []Securable
         +ObjectColumns(schema, name) []*Column
         +Permissions(schema, name) []*PermissionEntry

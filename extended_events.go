@@ -500,8 +500,9 @@ type EventTargetStatus struct {
 // DMVs.
 //
 // The target counters are extracted from target_data server-side, so a
-// ring_buffer's up-to-4 MB payload is parsed there and never shipped for a
-// status line.
+// ring_buffer's up-to-4 MB payload is never shipped for a status line. Its
+// counters are all attributes of the root element, so only that tag is
+// parsed: casting the whole buffer to xml took 4 s for a full system_health.
 func (es *EventSession) Status(ctx context.Context) (*EventSessionStatus, error) {
 	sc := es.scope()
 	what := fmt.Sprintf("read event session %q status", es.Name)
@@ -516,7 +517,9 @@ SELECT s.create_time, s.dropped_event_count, s.dropped_buffer_count,
 FROM   %s s
 LEFT   JOIN %s t ON t.event_session_address = s.address
 LEFT   JOIN sys.dm_xe_packages p ON p.guid = t.target_package_guid
-OUTER  APPLY (SELECT TRY_CAST(t.target_data AS xml)) x(d)
+OUTER  APPLY (SELECT TRY_CAST(CASE WHEN t.target_name = N'ring_buffer'
+       THEN REPLACE(LEFT(t.target_data, CHARINDEX(N'>', t.target_data)), N'/>', N'>') + N'</RingBufferTarget>'
+       ELSE t.target_data END AS xml)) x(d)
 WHERE  s.name = @p1
 ORDER  BY t.target_name`, sc.dmSessions, sc.dmTargets), es.Name)
 	var st *EventSessionStatus

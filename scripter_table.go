@@ -36,6 +36,9 @@ func (sc *Scripter) ScriptTable(ctx context.Context, schema, name string) (strin
 	if p.cols, err = t.Columns(ctx); err != nil {
 		return "", err
 	}
+	if err := hiddenTypeRefusal("table "+t.FullName(), p.cols); err != nil {
+		return "", err
+	}
 	if v := sc.opts.verb(); !p.table.IsExternal && (v == ScriptDrop || v == ScriptDropAndCreate) {
 		if p.boundBy, err = t.schemaBoundDependents(ctx); err != nil {
 			return "", err
@@ -61,6 +64,9 @@ func (sc *Scripter) ScriptTable(ctx context.Context, schema, name string) (strin
 		return "", err
 	}
 	if p.checks, err = t.CheckConstraints(ctx); err != nil {
+		return "", err
+	}
+	if err := hiddenDefinitionRefusal("table "+t.FullName(), sc.opts.verb(), p.cols, p.indexes, p.checks); err != nil {
 		return "", err
 	}
 	// The table's own ON clause comes from its heap or clustered index, and

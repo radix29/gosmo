@@ -251,15 +251,44 @@ func (c EventFileCursor) IsZero() bool { return c.File == "" }
 // server, and the error is ErrEventFileGone (errors.Is); start again from the
 // zero cursor, which reads from the oldest file still there.
 func (x XEvents) ReadFile(ctx context.Context, pathPattern string, cursor EventFileCursor, max int) ([]XEvent, EventFileCursor, error) {
+	return x.readFile(ctx, pathPattern, cursor, max, nil)
+}
+
+// ReadFileEvents is ReadFile keeping only the events named in events
+// (xml_deadlock_report, error_reported…), filtered by the server: the rows
+// of every other event never cross the wire. That is what makes a read of
+// one event out of a busy session's files affordable — system_health, on
+// 2019 and later, keeps up to a gigabyte of them. The cursor and max work as
+// for ReadFile; a buffer holding none of the events moves no cursor, so the
+// next read starts after the last buffer that held one. An empty events
+// reads every event, as ReadFile does.
+func (x XEvents) ReadFileEvents(ctx context.Context, pathPattern string, cursor EventFileCursor, max int, events []string) ([]XEvent, EventFileCursor, error) {
+	return x.readFile(ctx, pathPattern, cursor, max, events)
+}
+
+func (x XEvents) readFile(ctx context.Context, pathPattern string, cursor EventFileCursor, max int, events []string) ([]XEvent, EventFileCursor, error) {
 	s := x.server
 	what := fmt.Sprintf("read event file %q", pathPattern)
 	var file, offset any // NULL, NULL for the start
 	if !cursor.IsZero() {
 		file, offset = cursor.File, cursor.Offset
 	}
-	rows, err := s.query(ctx, `
+	q := `
 SELECT file_name, file_offset, event_data
-FROM   sys.fn_xe_file_target_read_file(@p1, NULL, @p2, @p3)`, pathPattern, file, offset)
+FROM   sys.fn_xe_file_target_read_file(@p1, NULL, @p2, @p3)`
+	args := []any{pathPattern, file, offset}
+	if len(events) > 0 {
+		var in strings.Builder
+		for i, e := range events {
+			if i > 0 {
+				in.WriteString(", ")
+			}
+			args = append(args, e)
+			fmt.Fprintf(&in, "@p%d", len(args))
+		}
+		q += "\nWHERE  object_name COLLATE DATABASE_DEFAULT IN (" + in.String() + ")"
+	}
+	rows, err := s.query(ctx, q, args...)
 	if err != nil {
 		return nil, cursor, eventFileReadError(what, cursor, err)
 	}

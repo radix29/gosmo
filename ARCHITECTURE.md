@@ -329,10 +329,11 @@ The instance and database halves pair up: `ServerResourceStat` and
 | Read a detached file    | `srv.DetachedDatabaseInfo(ctx, primaryFilePath)` → `*DetachedDatabase` (`.Name`, `.Files`, `.DataFiles()`, `.LogFiles()`) — the only way to learn a detached database's other files |
 | Database snapshots      | `srv.DatabaseSnapshots(ctx)` / `srv.DatabaseSnapshotByName(ctx, name)` / `srv.DatabaseSnapshotRef(name)` (no-I/O handle) / `srv.SnapshotsOf(ctx, database)` / `srv.CreateDatabaseSnapshot(ctx, req)` / `srv.RestoreFromSnapshot(ctx, database, snapshot)` — see [Database snapshots](#database-snapshots) |
 | `Server.LinkedServers`  | `srv.LinkedServers(ctx)` (`DataAccess` = `is_data_access_enabled`); through one, `srv.LinkedServerDatabases(ctx, ls)` / `srv.LinkedServerCatalog(ctx, ls, db)` — `Catalog`'s snapshot read from the remote's own sys views via `OPENQUERY`, SQL Server remotes only (see `linked_server.go`) |
-| `Server.Configuration`  | `srv.Configurations(ctx)` / `srv.ConfigurationByName(ctx, name)` / `srv.ConfigurationRef(name)` (no-I/O handle) |
+| `Server.Configuration`  | `srv.Configurations(ctx)` / `srv.ConfigurationByName(ctx, name)` / `srv.ConfigurationRef(name)` (no-I/O handle). Both reads fill `Default`/`HasDefault`: the **engine** default for the server's major from a per-major table (13–17, `server_config_defaults.go`), not Setup's recommendation; `HasDefault` false on Azure, a newer major, or an option the table omits. A self-configuring option's default 0 lies below its reported `Minimum` |
 | Change sp_configure options | `srv.ApplyConfiguration(ctx, []gosmo.ConfigChange{{Name, Value}}, gosmo.ConfigApplyOptions{Override})` — one batch: turns `show advanced options` on for it when needed and puts it back, one `RECONFIGURE`. `ConfigurationOption.SetValue` is the bare `sp_configure`, which fails Msg 15123 for an advanced option while `show advanced options` is 0 |
 | `Server.JobServer` (Agent) | see [SQL Server Agent](#sql-server-agent) below |
-| Active sessions         | `srv.ActiveSessions(ctx, gosmo.UserSessionsOnly)` (or `AllSessions`) |
+| Active sessions         | `srv.ActiveSessions(ctx, gosmo.UserSessionsOnly)` (or `AllSessions`) — with the blocker and wait (`WaitResource`), open transactions, session I/O totals, the running `Command`, and `RecentText` (the connection's last batch: what an idle head blocker ran) |
+| Plan cache: top statements | `srv.TopQueries(ctx, gosmo.TopQueriesOptions{By, Average, Top, Database})` → `[]*CachedQueryStat` (`dm_exec_query_stats`, ranked before text and database are looked up); one statement's plan `srv.CachedPlan(ctx, planHandle, stmtStart, stmtEnd)` (`dm_exec_text_query_plan`, `ErrNotFound` once evicted) — VIEW SERVER STATE (`plan_cache.go`) |
 | Own blocked requests    | `srv.BlockedRequests(ctx, os.Getpid())` — this client's pooled sessions waiting on another, with the blocker |
 | One session             | `srv.SessionByID(ctx, id)`                      |
 | Kill session            | `srv.KillSession(ctx, id)`                      |
@@ -357,11 +358,17 @@ The instance and database halves pair up: `ServerResourceStat` and
 | Azure resource history           | `srv.ServerResourceStats(ctx, max)` / `srv.LatestServerResourceStats(ctx)` — `sys.server_resource_stats`, one row per 15-second window |
 | Azure resource limits            | `srv.InstanceResourceGovernance(ctx)` / `srv.OSJobObject(ctx)` — see [Azure instance resources](#azure-instance-resources) |
 | Azure per-database limits        | `srv.UserDBResourceGovernance(ctx)` — one row per database on the instance, from wherever the connection is |
+| Allocated size of every database, data and log | `srv.DatabaseSizes(ctx)` → `map[database_id]DatabaseSize{DataKB, LogKB}` — one `sys.master_files` read, any state; a database the login cannot see is absent |
+| Which databases the login can open | `srv.DatabaseAccess(ctx)` → `map[database_id]bool` — `HAS_DBACCESS` for the whole instance in one read (a database not ONLINE reads false for everyone); `db.Capabilities(ctx).Accessible` is the same answer for one database |
 | Files of one database, in any state | `srv.DatabaseFiles(ctx, name)` — reads `sys.master_files`, so it answers for an OFFLINE / RECOVERY_PENDING / SUSPECT database that `db.Files(ctx)` cannot `USE` |
+| Every database file on the instance (whose path is taken) | `srv.InstanceFiles(ctx)` → `[]*InstanceFile{DatabaseID, DatabaseName, FileID, Name, PhysicalName, Type}` — one `sys.master_files` read, any state |
 | Live memory stats        | `srv.MemoryStats(ctx)`                        |
+| Instance start and uptime | `srv.StartTime(ctx)` → start (server-local, carried in UTC), uptime by the server's own clock (VIEW SERVER STATE) |
+| Trace flags              | `srv.TraceFlags(ctx)` → `[]TraceFlag{Flag, Global, Session}` (DBCC TRACESTATUS(-1)); `srv.SetTraceFlag(ctx, flag, on)` — always global, sysadmin, lost at restart; a startup-only flag is ignored without an error, so read `TraceFlags` after (`server_traceflag.go`) |
 | Languages                | `srv.Languages(ctx)`                          |
 | Processors / NUMA topology | `srv.ProcessorInfo(ctx)`; `srv.Schedulers(ctx)` — the visible schedulers with CPU, NUMA node and processor group (what `PoolAffinity` names) and each one's current load (VIEW SERVER STATE) |
 | Disk volumes              | `srv.DiskVolumes(ctx)`                        |
+| The volume behind each database file | `srv.FileVolumes(ctx)` → `[]FileVolume{DatabaseID, FileID, PhysicalName, MountPoint, VolumeName, TotalBytes, AvailableBytes}, visible` — one row per file; without VIEW SERVER STATE `visible` is false and no error. `FileVolume.Plausible()` / `DiskVolumeInfo.Plausible()` drop a host's nonsense figures (total 0, available > total) |
 | Activity readings (activity monitor) | `srv.HasViewServerState(ctx)` first, then `srv.PerformanceCounters(ctx, counters, instances)` (instance prefix stripped; decode by `CounterType`), `WaitStats`, `FileIOStats`, `MemoryClerks`, `RequestActivity`, `HostCPU` — raw cumulative or current figures, no rates (`server_activity.go`) |
 | tempdb usage              | `srv.TempDBSpace(ctx)` / `TempDBFiles` / `TempDBObjects` (by `TempDBObjectKind`) / `TempDBSessions` (`tempdb_usage.go`) |
 | `Server.EnumDirectories` / `EnumFiles` | `srv.EnumFileSystem(ctx, path)` / `srv.FixedDrives(ctx)` / `srv.FileSystemExists(ctx, path)` — see [Server filesystem](#server-filesystem) |
@@ -412,6 +419,7 @@ The instance and database halves pair up: `ServerResourceStat` and
 | Rename a schema-scoped object | `x.Rename(ctx, newName)` on its handle — table, view, procedure, function, trigger, sequence, synonym, rule, default, alias type; a constraint is `t.RenameConstraint(ctx, name, newName)` |
 | Move an object to another schema | `x.Transfer(ctx, targetSchema)` on its handle — `ALTER SCHEMA ... TRANSFER`, which `sp_rename` cannot do; every family above but the trigger, plus the table and CLR types, XML schema collections and queues |
 | Parameters of a procedure or function | `db.Parameters(ctx, schema, name)` → `[]*Parameter` |
+| Return type of a scalar function | `db.ReturnType(ctx, schema, name)` → `*Parameter` (nil for a procedure or table-valued function) |
 | Filtered listings                | every listing above that takes an `ObjectFilter` `f` (a zero one narrows nothing) — see [Filtering a listing](#filtering-a-listing) |
 | What may this login do here?     | `db.Capabilities(ctx)` → `*DatabaseCapabilities` |
 | Partition functions             | `db.PartitionFunctions(ctx)` / `db.PartitionFunctionByName(ctx, name)` / `db.PartitionFunctionRef(name)` |
@@ -430,6 +438,8 @@ The instance and database halves pair up: `ServerResourceStat` and
 | `Database.CompatibilityLevel`   | `db.SetCompatibilityLevel(ctx, level)`           |
 | Space used                      | `db.SpaceUsed(ctx)`                            |
 | Disk usage report               | `db.DiskUsage(ctx)` — data/index/unused/unallocated against the file totals, and the log's used/unused split, in MB |
+| `sp_spaceused` figures, exactly | `db.SpaceReport(ctx)` (database: size, unallocated, reserved/data/index/unused, file sizes and used, in KB) / `db.TableSizes(ctx)` (every table: schema, name, rows, reserved/data/index/unused, one round trip) — the procedure's arithmetic per version, unlike `SpaceUsed`/`DiskUsage`/`TableSpaceUsedAll`, whose split differs (`database_space.go`) |
+| Log usage, reuse wait, VLFs     | `db.LogSpace(ctx)` — `dm_db_log_space_usage` + `log_reuse_wait_desc` + `dm_db_log_info` counts (2016 SP2+, else `VLFsKnown` false); needs VIEW SERVER STATE |
 | Azure per-database resources    | `db.ResourceStats(ctx, max)` / `db.LatestResourceStats(ctx)` / `db.ResourceGovernance(ctx)` — see [Azure instance resources](#azure-instance-resources) |
 | Every table's row count / space used, in one query | `db.TableRowCounts(ctx)` / `db.TableSpaceUsedAll(ctx)` (keyed by `object_id`) |
 | ALTER DATABASE SET options      | `db.Options(ctx)` / `db.SetDatabaseOption(ctx, opt, value, term)` — `term` is the `WITH` clause: `gosmo.TerminationNone` waits for other sessions, `gosmo.TerminationRollbackImmediate` rolls them back |
@@ -446,6 +456,9 @@ The instance and database halves pair up: `ServerResourceStat` and
 | Every file, incl. log           | `db.Files(ctx)`                                |
 | Add / alter / remove file       | `db.AddFile(ctx, spec)` / `db.FileRef(name).Alter(ctx, m)` / `db.FileRef(name).Drop(ctx)` — `Files` returns the same handles, populated |
 | Shrink database / file          | `db.Shrink(ctx, gosmo.ShrinkDatabaseOptions{...})` (DBCC SHRINKDATABASE; zero value is the bare form) / `db.FileRef(name).Shrink(ctx, gosmo.ShrinkFileOptions{...})` (DBCC SHRINKFILE: target MB — 0 sent as 1 unless `SendZeroTarget` —, `TRUNCATEONLY`, `NOTRUNCATE`, `EMPTYFILE`; returns the DBCC row as `ShrinkResult`); `Wait` adds `WAIT_AT_LOW_PRIORITY`, 2022+ (`ServerInfo.SupportsShrinkLowPriority`). `Files` fills `SpaceUsedKB` |
+| Consistency check               | `db.CheckDB(ctx, gosmo.CheckDBOptions{...})` — DBCC CHECKDB `WITH NO_INFOMSGS, ALL_ERRORMSGS, TABLERESULTS` (`PhysicalOnly`, `NoIndex`, `ExtendedLogicalChecks`, `DataPurity`, `MaxDOP`); the rows as `[]*CheckDBError`, none for a clean database, `IsSummary()` for 8989/8990. Never retried; no REPAIR option |
+| Fragmentation, every index      | `db.FragmentationStats(ctx, mode, minPct, minPages)` — one `dm_db_index_physical_stats` scan of the database, filtered on the server, as `[]*DatabaseIndexFragmentation` (an `IndexFragmentation` plus schema, object, index type) |
+| Update stale statistics         | `db.UpdateStatistics(ctx, resample)` — `sys.sp_updatestats` |
 | Add / remove filegroup          | `db.AddFileGroup(ctx, name)` / `db.FileGroupRef(name).Drop(ctx)` — `FileGroups` returns the same handles, populated |
 | Filegroup default / read-only   | `fg.SetDefault(ctx)` / `fg.SetReadOnly(ctx, ro, term)` — `TerminationRollbackImmediate` kills the database's sessions in the same batch, since `MODIFY FILEGROUP` ignores `WITH ROLLBACK IMMEDIATE` |
 | CREATE DATABASE file placement  | `CreateDatabaseRequest.PrimaryFile` / `.LogFile` (`*DatabaseFileSpec`) |
@@ -474,9 +487,11 @@ The instance and database halves pair up: `ServerResourceStat` and
 | Space used (`sp_spaceused`-style) | `t.SpaceUsed(ctx)` (all tables at once: `db.TableSpaceUsedAll(ctx)`) |
 | Truncate              | `t.Truncate(ctx)`                     |
 | Drop / rename / move  | `t.Drop(ctx, gosmo.DropTableOnly)` (or `DropTableCascade`) / `t.Rename(ctx, newName)` / `t.Transfer(ctx, targetSchema)` |
-| Fragmentation         | `t.FragmentationStats(ctx, mode)`       |
-| Rebuild all indexes   | `t.RebuildAllIndexes(ctx, fillFactor)`  |
-| Update all statistics | `t.UpdateAllStatistics(ctx, samplePct)` |
+| Fragmentation         | `t.FragmentationStats(ctx, mode)` / `v.FragmentationStats(ctx, mode)` (an indexed view) |
+| Index usage (seeks, scans, lookups, updates) | `t.IndexUsage(ctx)` / `v.IndexUsage(ctx)` — `sys.dm_db_index_usage_stats`; without VIEW SERVER STATE every row reads `UsageVisible` false |
+| Rebuild all indexes   | `t.RebuildAllIndexes(ctx, fillFactor)` / `t.RebuildAllIndexesWith(ctx, gosmo.IndexRebuildOptions{...})` (every rebuild option: fill factor, pad index, compression, `Online`, `MaxDOP`) |
+| Reorganize all indexes | `t.ReorganizeAllIndexes(ctx)` / `v.ReorganizeAllIndexes(ctx)` — `ALTER INDEX ALL … REORGANIZE` (`v.RebuildAllIndexesWith` too) |
+| Update all statistics | `t.UpdateAllStatistics(ctx, samplePct)` (0 is `FULLSCAN`) / `t.UpdateStatisticsWith(ctx, gosmo.StatisticsUpdateOptions{FullScan, SamplePercent, Resample})` — the zero value sends no WITH, so the server picks the sample; `v.UpdateStatisticsWith` for an indexed view |
 | Create index          | `t.CreateIndex(ctx, req)` — every index type, see below |
 | Alter column          | `t.AlterColumn(ctx, col)`               |
 | Drop / rename a column | `t.DropColumn(ctx, name)` / `t.RenameColumn(ctx, name, newName)` |
@@ -580,7 +595,7 @@ instance is too old for is refused with `ErrUnsupportedVersion`.
 | ... density vector             | `st.DensityVector(ctx)` → `[]*StatisticDensity` |
 | ... histogram                  | `st.Histogram(ctx)` → `[]*StatisticHistogramStep` |
 | One statistic by name          | `t.StatisticByName(ctx, name)` / `t.StatisticRef(name)` (no-I/O handle) |
-| Update / drop                  | `st.Update(ctx, samplePct)` / `st.Drop(ctx)`      |
+| Update / drop                  | `st.Update(ctx, samplePct)` / `st.UpdateWith(ctx, gosmo.StatisticsUpdateOptions{...})` (zero value: the server's sample) / `st.Drop(ctx)` |
 | Rename                         | `st.Rename(ctx, newName)`                      |
 
 ### Login
@@ -771,7 +786,8 @@ an unescaped filter for `pct_1` also matches `pct1100`.
 | --------------------------- | ---------------------------------------------------------- |
 | Object dependencies (uses)  | `db.Dependencies(ctx, schema, name)` — an unqualified (caller-dependent) reference is resolved by name and flagged `IsCallerDependent` |
 | Object dependencies (used by) | `db.Dependents(ctx, schema, name)`                            |
-| Object search                | `db.Search(ctx, pattern)`                                      |
+| Object search                | `db.Search(ctx, pattern)` (names) / `db.SearchDefinitions(ctx, pattern)` (module text) / `db.SearchColumns(ctx, pattern)` (table and view columns) |
+| Object of any kind by name   | `db.ObjectByName(ctx, schema, name)` → `*ObjectInfo` (`sys.objects`: id, type, parent) / `db.ObjectsNamed(ctx, name)` (every schema) |
 | Securable search (for a permissions picker) | `db.FindSecurables(ctx, gosmo.SecurableSearch{Name: ..., Limit: ...})` → `[]Securable` (`Columns` nil) (schemas, objects, types, certificates) |
 | Object permissions           | `db.Permissions(ctx, schema, name)`                            |
 | Grant / deny / revoke (any securable in a database) | `db.ApplyPermission(ctx, gosmo.VerbGrant\|VerbDeny\|VerbRevoke, gosmo.Securable{Class, Schema, Name, Columns}, perm, principal, opts)` — tables, views, schemas, procedures, scalar / inline / multi-statement functions, sequences, synonyms, types, certificates |
@@ -1495,6 +1511,10 @@ for _, b := range history {
 	//     Action: b.SetType.RestoreVerb()} — RESTORE LOG for a log set
 }
 
+// Every database's last full, differential and log backup at once; a nil
+// one is none in msdb, so a database never backed up is listed too.
+last, _ := srv.LastBackups(ctx)
+
 // SSMS's restore plan: the newest full, its newest differential (matched by
 // DifferentialBaseGUID), then the log backups that chain on from it by LSN
 // (FirstLSN/LastLSN, compared with CompareLSN) — up to the log holding
@@ -1711,6 +1731,9 @@ job.ReorderSteps(ctx, func(n int) []int { return []int{3, 1, 2} })
 // History, per job or across every job at once.
 entries, _ := job.History(ctx, 50)
 recent, _ := srv.JobHistory(ctx, 200)
+failed, _ := srv.SearchJobHistory(ctx, gosmo.JobHistoryFilter{
+	Since: since, Outcomes: []gosmo.JobOutcome{gosmo.JobOutcomeFailed},
+})
 ```
 
 `JobStep.LastRunDate` is when the step last ran (zero — test with `IsZero()` —
@@ -2103,6 +2126,8 @@ specs, New Session templates, target builders).
 | Running state, dropped events, current file | `es.Status(ctx)` → `*EventSessionStatus`            |
 | Script Session as CREATE         | `NewServerScripter(srv, opts).ScriptEventSession(ctx, name)`   |
 | View Target Data (event_file)    | `srv.XEvents().ReadFile(ctx, es.EventFilePattern(), cursor, max)` — incremental by `EventFileCursor` |
+| One event out of a busy file set (system_health's deadlocks) | `srv.XEvents().ReadFileEvents(ctx, pattern, cursor, max, []string{"xml_deadlock_report"})` — filtered by the server on `object_name` |
+| A deadlock graph                 | `gosmo.DecodeDeadlockReport(b)` → `*DeadlockReport` (victims, processes with their frames, resources with owners and waiters) — an `xml_report` value or an `.xdl` file (`deadlock_report.go`) |
 | View Target Data (ring_buffer)   | `es.ReadRingBuffer(ctx)` → `*RingBufferData`                  |
 | The .xel files of an event_file  | `srv.XEvents().Files(ctx, pattern)` — oldest first, via `EnumFileSystem`; a cursor into a file rollover deleted fails `errors.Is(err, gosmo.ErrEventFileGone)` |
 | Add a target                     | `es.AddTarget(ctx, gosmo.EventFileTarget(name, mb, files))` / `gosmo.RingBufferTarget(kb)` — no stop needed |
@@ -2221,6 +2246,14 @@ two alternatives, and `From`/`To` bound the entry timestamp. Filtering at the
 server rather than in the caller is what makes the current log usable on a
 busy instance, where it runs to tens of thousands of entries. A zero
 `LogSearch` reads the whole file.
+
+`xp_readerrorlog` is sysadmin's alone (Msg 229 for securityadmin and VIEW
+SERVER STATE alike, verified on 13, 14 and 17). On that refusal `ReadLog`
+reads through `sp_readerrorlog`, which admits securityadmin, VIEW SERVER
+STATE and (2022 on) VIEW ANY ERROR LOG but passes on only the two strings,
+so the date bounds are applied in Go, inclusive and cut to the second as the
+server cuts them. Without any of those the error is `PermissionDenied`
+(Msg 27219).
 
 ### Server filesystem
 
@@ -2368,6 +2401,19 @@ cannot make for it. The DDL that `Scripter` *generates* does keep
 external, FileTable, ledger, Always Encrypted — with an error wrapping
 `ErrUnsupported`, before any text is produced. It is not
 `ErrUnsupportedVersion`: nothing is wrong with the server's version.
+
+### `ErrDefinitionHidden`
+
+A script that needs a definition the login cannot read — a module's text, a
+table's (or table type's) default, check or computed-column expression, or a
+filtered index's or statistic's predicate (`Index.IsFilterHidden`,
+`Statistic.HasFilter` with an empty `FilterDef`), each NULL without VIEW
+DEFINITION — is refused with an error wrapping both `ErrDefinitionHidden` and
+`ErrUnsupported`, rather than written with the expression missing (`DEFAULT`
+followed by nothing), the column turned plain or the index unfiltered. DROP restates nothing and is not refused by it. A module whose text
+reads NULL is checked with `OBJECTPROPERTY(…, 'IsEncrypted')`: an encrypted
+one, whose text no permission reveals, wraps `ErrUnsupported` alone, so a
+caller can tell "grant VIEW DEFINITION" from "cannot be scripted".
 
 ### `ErrInvalidRequest`
 

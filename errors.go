@@ -134,6 +134,15 @@ func unsupportedVersionf(format string, args ...any) error {
 //     that recreates something *different* under the same name is worse than
 //     none, and under DROP AND CREATE it drops the object and never recreates
 //     it;
+//   - a script of a table or table type with a column whose user-defined
+//     type the login cannot see (Column.IsTypeHidden), or of a sequence over
+//     such a type (Sequence.IsTypeHidden): only the base type is known, and
+//     replaying it would build a different object;
+//   - a script that needs a definition the login cannot read: a module's
+//     text, a table's default, check or computed-column expression, or a
+//     filtered index's or statistic's predicate, all NULL without VIEW
+//     DEFINITION. These also wrap ErrDefinitionHidden; an
+//     encrypted module's does not;
 //   - Database.BulkInsert under WithScript: a bulk load has no T-SQL form to
 //     collect;
 //   - a read with no form for its input: XEvents.Files given a blob URL,
@@ -142,6 +151,16 @@ func unsupportedVersionf(format string, args ...any) error {
 // It is not ErrUnsupportedVersion: the server is not too old for anything,
 // gosmo simply has no form for the request.
 var ErrUnsupported = errors.New("not supported")
+
+// ErrDefinitionHidden reports a script refused because the login cannot see
+// a definition it needs: SQL Server answers NULL for a module's text, and for
+// a default's, check's, computed column's or filter's expression, without VIEW
+// DEFINITION on the object (or its schema or database) — SELECT or EXECUTE
+// alone does not give it. Every such refusal also wraps ErrUnsupported, so it
+// is a permission gap a caller can name, not a different kind of refusal; an
+// encrypted module, whose text no permission reveals, wraps ErrUnsupported
+// only.
+var ErrDefinitionHidden = errors.New("definition not visible to the login")
 
 // unsupportedError carries its own message and reaches ErrUnsupported through
 // the chain — and, when its format wrapped one with %w, the cause too.
@@ -403,6 +422,17 @@ const (
 //	297   The user does not have permission to perform this action
 //	300   VIEW SERVER (PERFORMANCE|SECURITY) STATE permission was denied …
 //	916   The server principal "…" is not able to access the database "…"
+//	2571  User '…' does not have permission to run DBCC TRACEON (or another
+//	      DBCC that needs sysadmin)
+//	5304  Bulk copy failed. User does not have ALTER TABLE permission on
+//	      table '…' (a bulk load that neither checks constraints nor fires
+//	      triggers, on a table that has them)
+//	6102  User does not have permission to use the KILL statement (KILL
+//	      without ALTER ANY CONNECTION)
+//	7983  User '…' does not have permission to run DBCC checkdb for database
+//	      '…' (neither sysadmin nor db_owner)
+//	27219 Caller does not have permissions to execute the stored procedure
+//	      (sp_readerrorlog without securityadmin or VIEW SERVER STATE)
 //	1088  Cannot find the object "…" because it does not exist or you do not
 //	      have permissions
 //	3701  Cannot drop the table '…', because it does not exist or …
@@ -415,6 +445,8 @@ const (
 var refusalNumbers = map[int32]RefusalKind{
 	229: PermissionDenied, 230: PermissionDenied, 262: PermissionDenied,
 	297: PermissionDenied, 300: PermissionDenied, 916: PermissionDenied,
+	2571: PermissionDenied, 5304: PermissionDenied, 6102: PermissionDenied, 7983: PermissionDenied,
+	27219: PermissionDenied,
 
 	1088: MissingOrDenied,
 	3701: MissingOrDenied, 5011: MissingOrDenied,

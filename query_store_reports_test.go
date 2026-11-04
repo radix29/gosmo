@@ -849,6 +849,20 @@ func TestQueryStoreWaitingQueriesFiltersByCategoryOnlyWhenGivenOne(t *testing.T)
 	}
 }
 
+// TestQueryStoreWaitingQueriesReadsTheRuntimeRowsLastExecution pins
+// LastExecutionTime to what every other report reads: the interval's end,
+// which it once was, lies up to an interval in the future.
+func TestQueryStoreWaitingQueriesReadsTheRuntimeRowsLastExecution(t *testing.T) {
+	d := qsRecDB(t, 17, nil, nil)
+	if _, err := d.QueryStore().WaitingQueries(context.Background(), QSWaitCPU,
+		QueryStoreReportOptions{From: qsFrom, To: qsTo}); err != nil {
+		t.Fatalf("waiting queries: %v", err)
+	}
+	if call := qsRec.last(t); !strings.Contains(call.sql, "COALESCE(MAX(rs.last_execution_time), MAX(rsi.end_time)) AS last_execution_time") {
+		t.Errorf("last_execution_time is not the runtime row's:\n%s", call.sql)
+	}
+}
+
 // TestQueryStoreWaitingQueriesAcrossCategoriesDoesNotFanOut pins the
 // empty-category form to wait stats folded per plan, interval and execution
 // type before the runtime-stats join. sys.query_store_wait_stats holds a row

@@ -49,6 +49,7 @@ func TestMaskingFunctionReadsUnescaped(t *testing.T) {
 		"", "", false,
 		int64(0), "",
 		"", "", "", "",
+		false,
 	}
 	db, err := sql.Open("maskrow", "")
 	if err != nil {

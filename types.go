@@ -639,6 +639,25 @@ func (i *ServerInfo) SupportsBackupCompression() bool {
 	return false
 }
 
+// SupportsOnlineIndexOperations reports whether the edition accepts
+// ONLINE = ON in index DDL (ALTER INDEX ... REBUILD, CREATE INDEX): Enterprise
+// and Developer (EngineEdition 3), Azure SQL Database (5) and Managed
+// Instance (8). Standard, Web and Express refuse it with Msg 1712, and so do
+// the other Azure engines. OFFLINE is accepted everywhere, so this gates only
+// asking for an online operation.
+//
+// A nil ServerInfo answers true, as SupportsBackupCompression does.
+func (i *ServerInfo) SupportsOnlineIndexOperations() bool {
+	if i == nil {
+		return true
+	}
+	switch EngineEdition(i.EngineEdition) {
+	case EngineEnterprise, EngineAzureSQLDatabase, EngineAzureManagedInst:
+		return true
+	}
+	return false
+}
+
 // SupportsShrinkLowPriority reports whether DBCC SHRINKDATABASE and DBCC
 // SHRINKFILE accept WITH WAIT_AT_LOW_PRIORITY: SQL Server 2022 (16) and
 // later, and the Azure editions, whose VersionMajor is not a feature level

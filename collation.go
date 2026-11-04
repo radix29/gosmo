@@ -1,9 +1,32 @@
 package gosmo
 
 import (
+	"context"
+	"database/sql"
+	"fmt"
 	"strings"
 	"unicode"
 )
+
+// CollationCodePage returns the code page of collation's non-Unicode types
+// (char, varchar, text) — COLLATIONPROPERTY(collation, 'CodePage'): 1252 for
+// Latin1_General_CI_AS, 65001 for a _UTF8 collation, and 0 for a
+// Unicode-only collation (Indic and others), which no char column can take.
+// A name the server does not know is ErrNotFound.
+//
+// Column.Collation and Database.Collation name the collation; a bulk load or
+// a client encoding char data itself needs its code page.
+func (s *Server) CollationCodePage(ctx context.Context, collation string) (int, error) {
+	var cp sql.NullInt32
+	if err := s.queryRowScan(ctx, "SELECT CAST(COLLATIONPROPERTY(@p1, 'CodePage') AS int)",
+		[]any{collation}, &cp); err != nil {
+		return 0, fmt.Errorf("gosmo: code page of collation %q: %w", collation, err)
+	}
+	if !cp.Valid {
+		return 0, notFoundf("gosmo: code page of collation %q: no such collation", collation)
+	}
+	return int(cp.Int32), nil
+}
 
 // CollationIgnoresCase reports whether collation compares names without
 // regard to case: every collation but a case-sensitive (…_CS_…) or binary

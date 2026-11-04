@@ -56,7 +56,7 @@ func TestLiveKillSession(t *testing.T) {
 		t.Fatalf("SessionByID(%d): %v", spid, err)
 	}
 	if as.SessionID != spid || as.ProgramName != "gosmo-kill-victim" || as.LoginName == "" ||
-		as.HostProcessID != os.Getpid() || !as.FromCallerHost || as.DatabaseName == "" {
+		as.HostProcessID != os.Getpid() || !as.FromCallerHost || !as.IsUserProcess || as.DatabaseName == "" {
 		t.Errorf("SessionByID(%d) = %+v; want this process's victim on this host", spid, *as)
 	}
 

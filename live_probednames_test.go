@@ -47,6 +47,7 @@ func TestLiveEveryProbedPermissionNameIsOneTheServerDefines(t *testing.T) {
 		"ALTER ANY EVENT SESSION DROP TARGET": true,
 		"ALTER ANY EVENT SESSION ENABLE":      true,
 		"ALTER ANY EVENT SESSION DISABLE":     true,
+		"VIEW ANY ERROR LOG":                  true,
 	}
 	major := srv.serverMajorVersion()
 	for _, name := range ProbedServerPermissions {
@@ -75,6 +76,10 @@ func TestLiveEveryProbedPermissionNameIsOneTheServerDefines(t *testing.T) {
 	for _, name := range ProbedDatabasePermissions {
 		if since2017[name] && !hasColumnSince(major, SQLServer2017) {
 			t.Logf("database permission %q is 2017+; major %d does not define it", name, major)
+			continue
+		}
+		if name == "VIEW DATABASE PERFORMANCE STATE" && !hasColumnSince(major, SQLServer2022) {
+			t.Logf("database permission %q is 2022-only; major %d does not define it", name, major)
 			continue
 		}
 		if got := dcaps.Permission(name); got == CapabilityUnknown {

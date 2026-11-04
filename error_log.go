@@ -186,6 +186,13 @@ func (f LogSearch) empty() bool {
 //
 // Which of an entry's Process and ErrorLevel is populated follows logType —
 // see ErrorLogEntry.
+//
+// A sysadmin reads through xp_readerrorlog, the date bounds applied by the
+// server. Anyone else is refused it, and reads through sp_readerrorlog
+// instead, which needs securityadmin, VIEW SERVER STATE or (SQL Server 2022
+// on) VIEW ANY ERROR LOG and filters only the text, so the whole file
+// crosses the wire when the search has dates. Without any of those, the
+// error is a PermissionDenied refusal (Msg 27219).
 func (s *Server) ReadLog(ctx context.Context, logType ErrorLogType, logNumber int, search LogSearch) ([]*ErrorLogEntry, error) {
 	if !logType.valid() {
 		return nil, invalidf("gosmo: read error log: unknown log type %d", int(logType))
@@ -194,6 +201,24 @@ func (s *Server) ReadLog(ctx context.Context, logType ErrorLogType, logNumber in
 		return s.readMailLog(ctx, logNumber, search)
 	}
 	q, args := readErrorLogCall(logType, logNumber, search)
+	entries, err := s.readLogRows(ctx, logType, logNumber, q, args)
+	if err == nil || !IsPermissionDenied(err) {
+		return entries, err
+	}
+	// xp_readerrorlog is sysadmin's alone (Msg 229 for anyone else, verified
+	// live on 13, 14 and 17); sp_readerrorlog runs it for securityadmin,
+	// VIEW SERVER STATE and, from 2022, VIEW ANY ERROR LOG. It passes on no
+	// date bounds, so those are applied here.
+	q, args = readErrorLogProcCall(logType, logNumber, search)
+	if entries, err = s.readLogRows(ctx, logType, logNumber, q, args); err != nil {
+		return nil, err
+	}
+	return filterLogDates(entries, search.From, search.To), nil
+}
+
+// readLogRows runs one xp_readerrorlog or sp_readerrorlog call and scans its
+// rows as logType's family shapes them.
+func (s *Server) readLogRows(ctx context.Context, logType ErrorLogType, logNumber int, q string, args []any) ([]*ErrorLogEntry, error) {
 	rows, err := s.query(ctx, q, args...)
 	return scanRows(rows, err, fmt.Sprintf("read %s error log %d", logType, logNumber), func(scan func(...any) error) (*ErrorLogEntry, error) {
 		e := &ErrorLogEntry{}
@@ -250,6 +275,30 @@ func readErrorLogCall(logType ErrorLogType, logNumber int, search LogSearch) (st
 		call += fmt.Sprintf(", @p%d", i+1)
 	}
 	return call, args
+}
+
+// readErrorLogProcCall is readErrorLogCall through sp_readerrorlog, which
+// takes the two search strings and no dates. Without a search string it
+// passes none, the form the procedure's own NULL test expects.
+func readErrorLogProcCall(logType ErrorLogType, logNumber int, search LogSearch) (string, []any) {
+	call := fmt.Sprintf("EXEC sp_readerrorlog %d, %d", logNumber, int(logType))
+	if search.Text1 == "" && search.Text2 == "" {
+		return call, nil
+	}
+	text := func(v string) any {
+		return sql.NullString{String: v, Valid: v != ""}
+	}
+	return call + ", @p1, @p2", []any{text(search.Text1), text(search.Text2)}
+}
+
+// filterLogDates keeps the entries from through to, both inclusive, each
+// bound to the second as xp_readerrorlog reads it (logSearchDateLayout); a
+// zero bound is open.
+func filterLogDates(entries []*ErrorLogEntry, from, to time.Time) []*ErrorLogEntry {
+	from, to = from.Truncate(time.Second), to.Truncate(time.Second)
+	return slices.DeleteFunc(entries, func(e *ErrorLogEntry) bool {
+		return (!from.IsZero() && e.Date.Before(from)) || (!to.IsZero() && e.Date.After(to))
+	})
 }
 
 // ReadErrorLog reads a SQL Server error log file.
