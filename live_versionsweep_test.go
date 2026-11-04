@@ -278,6 +278,16 @@ var sweepMustCall = []string{
 	"Database.SearchPropertyLists",
 	"Database.FullTextIndexes",
 	"Table.FullTextIndex",
+
+	// The command line's discovery reads (gossms review 2026-11-04 V1). Each
+	// takes a pattern, a name or a collation, so all six are driven by hand
+	// in sweepDiscoveryReads.
+	"Database.Search",
+	"Database.SearchDefinitions",
+	"Database.SearchColumns",
+	"Database.ObjectByName",
+	"Database.ObjectsNamed",
+	"Server.CollationCodePage",
 }
 
 // checkCoverage fails on any sweepMustCall entry no label matched. It runs
@@ -525,6 +535,7 @@ func TestLiveVersionSweep(t *testing.T) {
 
 	sweepTableKinds(sw, d)
 	sweepMaintenanceReads(sw, d)
+	sweepDiscoveryReads(sw, d)
 	sweepProgrammability(sw, d)
 	sweepServiceBroker(sw, d)
 	sweepQueryStoreReports(sw, d)
@@ -582,6 +593,61 @@ func sweepMaintenanceReads(sw *sweep, d *Database) {
 			JobName: "gosmo_sweep_no_such_job", Since: time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC),
 			Until: time.Now().UTC(), Outcomes: []JobOutcome{JobOutcomeFailed}, IncludeSteps: true, Max: 5,
 		})
+		return err
+	})
+}
+
+// sweepDiscoveryReads drives the reads the command line resolves names and
+// searches with. Each asserts the scratch schema's row as well as no error:
+// a read that finds nothing can succeed on a version whose columns it then
+// never had to map.
+func sweepDiscoveryReads(sw *sweep, d *Database) {
+	sw.call("Database.Search", func() error {
+		got, err := d.Search(sw.ctx, "SWEEP_PAR")
+		if err == nil && !slices.ContainsFunc(got, func(r *SearchResult) bool {
+			return r.Schema == "dbo" && r.Name == "sweep_parent"
+		}) {
+			err = fmt.Errorf("no dbo.sweep_parent among %d results", len(got))
+		}
+		return err
+	})
+	sw.call("Database.SearchDefinitions", func() error {
+		got, err := d.SearchDefinitions(sw.ctx, "FROM dbo.sweep_parent")
+		if err == nil && !slices.ContainsFunc(got, func(r *SearchResult) bool {
+			return r.Schema == "dbo" && r.Name == "sweep_view"
+		}) {
+			err = fmt.Errorf("no dbo.sweep_view among %d results", len(got))
+		}
+		return err
+	})
+	sw.call("Database.SearchColumns", func() error {
+		got, err := d.SearchColumns(sw.ctx, "parent_id")
+		if err == nil && !slices.ContainsFunc(got, func(r *ColumnSearchResult) bool {
+			return r.Schema == "dbo" && r.Object == "sweep_child" && r.Column == "parent_id"
+		}) {
+			err = fmt.Errorf("no dbo.sweep_child.parent_id among %d results", len(got))
+		}
+		return err
+	})
+	sw.call("Database.ObjectByName", func() error {
+		got, err := d.ObjectByName(sw.ctx, "dbo", "sweep_child")
+		if err == nil && got.Type != "U" {
+			err = fmt.Errorf("dbo.sweep_child has type %q, want U", got.Type)
+		}
+		return err
+	})
+	sw.call("Database.ObjectsNamed", func() error {
+		got, err := d.ObjectsNamed(sw.ctx, "sweep_pred")
+		if err == nil && (len(got) != 1 || got[0].Schema != "app") {
+			err = fmt.Errorf("sweep_pred resolved to %d objects, want app.sweep_pred alone", len(got))
+		}
+		return err
+	})
+	sw.call("Server.CollationCodePage", func() error {
+		cp, err := d.Server().CollationCodePage(sw.ctx, "Latin1_General_CI_AS")
+		if err == nil && cp != 1252 {
+			err = fmt.Errorf("Latin1_General_CI_AS has code page %d, want 1252", cp)
+		}
 		return err
 	})
 }

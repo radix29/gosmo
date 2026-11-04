@@ -109,18 +109,17 @@ func utf16Longer(s string, n int) bool {
 // not be entered (cannotEnterErrors) apart: d refusing the call, or q itself
 // reaching another database that refuses — the two errors are identical,
 // down to the line number. One call of d's sp_executesql with nothing in it
-// decides: if d refuses that too, useErr is its error, wrapped as the USE
-// failure every database-scoped read has always reported, and is the read's;
-// if not, useErr is nil and err is q's own. Like recheckUse it costs a round
-// trip on a failing read only, and like the read it leaves the session where
-// it was.
+// decides: if d refuses that too, useErr is its error as an EntryError, the
+// report every database-scoped call gives, and is the read's; if not, useErr
+// is nil and err is q's own. Like recheckUse it costs a round trip on a
+// failing read only, and like the read it leaves the session where it was.
 func (d *Database) recheckEntry(ctx context.Context, conn sqlConn, err error) (useErr error) {
 	me, ok := errors.AsType[mssql.Error](err)
 	if !ok || !slices.Contains(cannotEnterErrors, me.Number) || ctx.Err() != nil {
 		return nil
 	}
 	if _, perr := conn.ExecContext(ctx, quoteIdent(d.Name)+".sys.sp_executesql", "SELECT NULL"); perr != nil {
-		return fmt.Errorf("gosmo: USE %s: %w", d.Name, perr)
+		return &EntryError{Database: d.Name, Err: perr}
 	}
 	return nil
 }

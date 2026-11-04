@@ -285,7 +285,7 @@ a read succeeds where `useBatch` fails Msg 3101; 911/924/942 refuse the read;
 reads stay right across a database-id swap; parameters bind in `db`'s
 collation, where `useBatch` fails Msg 468 uncollated), `TestLiveVersionSweep`,
 the collation tests and the whole `livedb` suite on procRead. A can't-enter
-error keeps its `gosmo: USE db:` prefix through `recheckEntry`. The id-swap
+error is an `EntryError` through `recheckEntry`. The id-swap
 test's control, a literal `[db].sys.…` read from master, did **not** reproduce
 the plan-cache trap of `CLAUDE.md` § Read another database's catalog (why is
 unknown), so procRead is shown to read the right database after a swap, but
@@ -305,7 +305,7 @@ Evidence, on 13, 14 and 17: the five rules mirrored for writes in
 `live_proc_write_test.go`, each against a hand-switched `USE` control (no
 session left behind where `USE` leaves one; a `RESTORE … WITH REPLACE`
 straight after a write succeeds where `USE` fails Msg 3101; 911/924/942
-refuse the write as `gosmo: USE db:` and nothing lands in `master`; writes
+refuse the write as an `EntryError` and nothing lands in `master`; writes
 land right across an id swap; parameters bind in `db`'s collation where a
 `USE` batch fails Msg 468), plus `TestLiveProcWriteShapes`: `CREATE
 SCHEMA/VIEW/PROCEDURE/FUNCTION/TRIGGER/SEQUENCE` each open their batch inside
@@ -368,19 +368,6 @@ error; windowKey …}` that each type builds, with the shared bodies taking it.
 Exported types and signatures stay the same; the write tests pin the
 statements. About 60 lines, no bug — do it only alongside another change in
 those files.
-
-## A database-scoped read wraps the `gosmo: USE` error a second time
-
-Found 2026-10-29 from gossms's `db info` (a login with no user in the
-database): `SpaceUsed` answered `gosmo: space used: gosmo: USE HealthClinic:
-mssql: … not able to access the database … (916)`. `Database.queryRow`/`query`
-already return the can't-enter failure prefixed (`proc_read.go`, `database.go`),
-and `SpaceUsed`'s `fmt.Errorf("gosmo: space used: %w")` adds a second prefix.
-`TestNoWrapOfAnAlreadyPrefixedError` misses it because the prefixed return is
-inside the query helpers' error path, not a `return` the test follows. Likely
-every `d.query`/`d.queryRow` caller that wraps does the same; the fix is in
-the helpers (return the bare error and let callers name the operation) or
-the test, not per call site.
 
 ## Agent schedules are addressed by id — settled, do not re-raise
 

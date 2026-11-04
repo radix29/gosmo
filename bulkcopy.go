@@ -135,7 +135,9 @@ func (d *Database) BulkInsert(ctx context.Context, bc BulkCopy, rows iter.Seq2[[
 		return err
 	})
 	if err != nil {
-		return n, err
+		// load prefixes its own errors; withSessionIn's failure to enter d
+		// is left to its caller.
+		return n, prefixEntry(err, "bulk insert into "+target)
 	}
 	cols := make([]string, len(bc.Columns))
 	for i, c := range bc.Columns {

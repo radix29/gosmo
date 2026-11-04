@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
@@ -52,9 +53,9 @@ func TestPooledReadIsOneProcCall(t *testing.T) {
 }
 
 // A read whose call fails with a can't-enter error asks d once more, with an
-// empty call: d refusing that too is the USE failure every database-scoped
-// read has always reported; d answering it leaves the read's own error, which
-// was q reaching another database. Any other error is q's, with no second call.
+// empty call: d refusing that too is the EntryError every database-scoped
+// call reports; d answering it leaves the read's own error, which was q
+// reaching another database. Any other error is q's, with no second call.
 func TestPooledReadTellsARefusalFromTheQuerysOwnError(t *testing.T) {
 	const call = "[App]]DB].sys.sp_executesql"
 	refused := mssql.Error{Number: 924, Message: "Database 'App]DB' is already open and can only have one user at a time."}
@@ -81,8 +82,9 @@ func TestPooledReadTellsARefusalFromTheQuerysOwnError(t *testing.T) {
 				if !ok || me.Number != tc.wantNum {
 					t.Errorf("%s error = %v, want Msg %d underneath", name, err, tc.wantNum)
 				}
-				if got := strings.HasPrefix(err.Error(), "gosmo: USE App]DB: "); got != tc.wantUse {
-					t.Errorf("%s error = %q, USE prefix %v, want %v", name, err, got, tc.wantUse)
+				_, entry := errors.AsType[*EntryError](err)
+				if got := strings.HasPrefix(err.Error(), "cannot enter database App]DB: "); got != tc.wantUse || entry != tc.wantUse {
+					t.Errorf("%s error = %q, entry text %v, EntryError %v, want %v", name, err, got, entry, tc.wantUse)
 				}
 			}
 			if len(useState.stmts) != tc.wantStmts {
@@ -135,6 +137,67 @@ func TestProcParamTypeCountsUTF16Units(t *testing.T) {
 	for _, tc := range cases {
 		if got, ok := procParamType(tc.s); !ok || got != tc.want {
 			t.Errorf("%s: procParamType = %q, %v, want %q", tc.name, got, ok, tc.want)
+		}
+	}
+}
+
+// A database that refuses entry surfaces through an exported call as one
+// error with one "gosmo:" prefix, the call's own — every helper shape that
+// enters a database: a pooled read (query, queryRow), a procedure call, a
+// write through execIn, a session switched for a plan or a bulk copy, and
+// each inside InTransaction. It read "gosmo: space used: gosmo: USE x: …"
+// until 2026-11-04; the source scan TestNoWrapOfAnAlreadyPrefixedError cannot
+// see a prefix added inside the helpers' error path.
+func TestEntryErrorCarriesOnePrefix(t *testing.T) {
+	refused := mssql.Error{Number: 916, Message: "The server principal \"u\" is not able to access the database \"App]DB\" under the current security context."}
+	calls := map[string]func(ctx context.Context, d *Database) error{
+		"SpaceUsed": func(ctx context.Context, d *Database) error { return errOnly(d.SpaceUsed(ctx)) },
+		"Users":     func(ctx context.Context, d *Database) error { return errOnly(d.Users(ctx)) },
+		"ExecProc":  func(ctx context.Context, d *Database) error { return errOnly(d.ExecProc(ctx, "dbo", "p")) },
+		"NextValue": func(ctx context.Context, d *Database) error { return errOnly(d.SequenceRef("dbo", "s").NextValue(ctx)) },
+		"CreateSchema": func(ctx context.Context, d *Database) error {
+			return errOnly(d.CreateSchema(ctx, CreateSchemaRequest{Name: "s"}))
+		},
+		"EstimatedPlan": func(ctx context.Context, d *Database) error { return errOnly(d.EstimatedPlan(ctx, "SELECT 1")) },
+		"BulkInsert": func(ctx context.Context, d *Database) error {
+			return errOnly(d.BulkInsert(ctx, BulkCopy{Schema: "dbo", Table: "t", Columns: []string{"a"}}, SliceRows([][]any{{1}})))
+		},
+	}
+	for name, call := range calls {
+		for _, inTx := range []bool{false, true} {
+			if inTx && name == "BulkInsert" {
+				continue // refused inside InTransaction before it enters anything
+			}
+			t.Run(fmt.Sprintf("%s/inTx=%v", name, inTx), func(t *testing.T) {
+				d := useTestDB(t)
+				arm := func() {
+					useState.failQuery, useState.failEntry, useState.failUse, useState.failBatch = refused, refused, refused, refused
+				}
+				var err error
+				if inTx {
+					_ = d.server.InTransaction(context.Background(), func(ctx context.Context) error {
+						arm()
+						err = call(ctx, d)
+						return nil
+					})
+				} else {
+					arm()
+					err = call(context.Background(), d)
+				}
+				if err == nil {
+					t.Fatal("no error")
+				}
+				if !strings.HasPrefix(err.Error(), "gosmo: ") {
+					t.Errorf("%q does not begin with the call's gosmo: prefix", err)
+				}
+				checkOnePrefix(t, name, err)
+				if _, ok := errors.AsType[*EntryError](err); !ok {
+					t.Errorf("%v: want an EntryError underneath", err)
+				}
+				if me, ok := errors.AsType[mssql.Error](err); !ok || me.Number != 916 {
+					t.Errorf("%v: want Msg 916 underneath", err)
+				}
+			})
 		}
 	}
 }

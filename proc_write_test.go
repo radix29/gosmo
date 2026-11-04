@@ -150,8 +150,8 @@ func TestPooledWriteReturningARowIsOneProcCall(t *testing.T) {
 }
 
 // A write that fails because the database refused the call reports it as the
-// USE failure every database-scoped call always has; one that fails on its
-// own reports its own error — the same split recheckEntry makes for a read.
+// EntryError every database-scoped call does; one that fails on its own
+// reports its own error — the same split recheckEntry makes for a read.
 func TestPooledWriteTellsARefusalFromItsOwnError(t *testing.T) {
 	refused := mssql.Error{Number: 911, Message: "Database 'App]DB' does not exist."}
 	other := mssql.Error{Number: 942, Message: "Database 'Other' cannot be opened because it is offline."}
@@ -161,7 +161,7 @@ func TestPooledWriteTellsARefusalFromItsOwnError(t *testing.T) {
 		callErr, entErr error
 		want            string
 	}{
-		{"database refuses", refused, refused, "gosmo: USE App]DB: " + refused.Error()},
+		{"database refuses", refused, refused, "cannot enter database App]DB: " + refused.Error()},
 		{"statement reaches a refusing database", other, nil, other.Error()},
 		{"statement fails", own, nil, own.Error()},
 	} {
@@ -219,7 +219,7 @@ func TestExecProcCallsTheProcedureByThreePartName(t *testing.T) {
 	refused := mssql.Error{Number: 942, Message: "Database 'App]DB' cannot be opened because it is offline."}
 	writeState.calls, writeState.failCall, writeState.failEntry = nil, refused, refused
 	_, err := d.ExecProc(context.Background(), "dbo", "p")
-	if want := "gosmo: exec proc [dbo].[p]: gosmo: USE App]DB: " + refused.Error(); err == nil || err.Error() != want {
+	if want := "gosmo: exec proc [dbo].[p]: cannot enter database App]DB: " + refused.Error(); err == nil || err.Error() != want {
 		t.Errorf("ExecProc error = %v, want %q", err, want)
 	}
 }

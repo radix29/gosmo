@@ -2458,6 +2458,19 @@ name-keyed reads (`FragmentationStats`, `Index.StorageInfo`,
 `Create*` whose read-back is refused returns the new object's handle, as
 `createdObject` does for one the caller cannot see.
 
+### `EntryError`
+
+A database-scoped call that fails because its database cannot be entered —
+missing, offline, restoring, single-user, or refusing the login (916): the
+numbers `cannotEnterErrors` lists — returns a `*EntryError{Database, Err}`
+under the call's own prefix: `gosmo: space used: cannot enter database x:
+mssql: …`. `Err` is the server's error, so `AsSQLError` and the number still
+reach it. Every helper that enters a database reports it this way
+(`recheckEntry`, `use`, `withSessionIn`, a transaction switching home), and
+leaves the prefix to the exported call — it read `gosmo: space used: gosmo:
+USE x: …` until 2026-11-04. `TestEntryErrorCarriesOnePrefix` drives each
+helper shape through an exported call against a refusing fake.
+
 ### `ErrUnsupportedVersion`
 
 A call gosmo refuses because the connected instance is older than the
@@ -2639,8 +2652,8 @@ failed meanwhile. `Server`-scoped calls go straight to the pool.
 | `Database.withSessionIn` | For a callback that needs its session in `db` across calls — `capturePlan`'s `SET SHOWPLAN_XML`/`STATISTICS XML`, `BulkInsert`'s `INSERT BULK`: `USE db` (retried with the acquire), the callback, then `USE` back to the login database; a session that cannot switch back is discarded, not pooled. |
 | `Database.query`       | Returns `*dbRows`, whose `Close()` closes the rows **and** the conn pinned for them. `*sql.Rows.Close` alone would leak that conn out of the pool permanently. |
 | `Database.queryRow`    | Takes a `func(*sql.Row) error` scan callback and runs acquire + query + scan as one retried unit. The scan has to be inside it: `QueryRowContext` never returns an error, so a scan run afterwards would never be retried. |
-| `Database.procRead` / `recheckEntry` | A pooled read (`query`, `queryRow`) is an RPC call of `[db].sys.sp_executesql` with the query, its declarations and its arguments: it runs in `db` and the session never leaves its login database, so no idle connection holds a lock on `db` afterwards. A call failing with a can't-enter number (`cannotEnterErrors`) makes one empty call of `db`'s `sp_executesql`: its error if it fails (`gosmo: USE x:`), else the read's own. An argument `procParamType` cannot declare fails the read (`ErrUnsupported`). |
-| `Database.useBatch` / `recheckUse` | A read inside `InTransaction` sends `USE` and the query as one guarded batch — one round trip — and the session stays in `db`. A failed batch runs `USE` alone once to tell the halves apart: its error if it fails (`gosmo: USE x:`), else the batch's own; the query never runs twice. |
+| `Database.procRead` / `recheckEntry` | A pooled read (`query`, `queryRow`) is an RPC call of `[db].sys.sp_executesql` with the query, its declarations and its arguments: it runs in `db` and the session never leaves its login database, so no idle connection holds a lock on `db` afterwards. A call failing with a can't-enter number (`cannotEnterErrors`) makes one empty call of `db`'s `sp_executesql`: its error if it fails (an `EntryError`), else the read's own. An argument `procParamType` cannot declare fails the read (`ErrUnsupported`). |
+| `Database.useBatch` / `recheckUse` | A read inside `InTransaction` sends `USE` and the query as one guarded batch — one round trip — and the session stays in `db`. A failed batch runs `USE` alone once to tell the halves apart: its error if it fails (an `EntryError`), else the batch's own; the query never runs twice. |
 | `Database.exec`        | Thin wrapper over `execIn` for non-SELECT statements; also where `WithScript` intercepts database-scoped writes. |
 | `Server.query`         | Server-scoped rows-returning read, retried — no `USE`, so a plain `*sql.Rows` is enough.    |
 | `Server.queryRow`      | Server-scoped single-row read, same scan-callback shape and reason as `Database.queryRow`.   |

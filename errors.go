@@ -233,6 +233,42 @@ func invalidf(format string, args ...any) error {
 }
 
 // ============================================================
+// Database entry
+// ============================================================
+
+// EntryError reports a database-scoped call that failed because its
+// database could not be entered — missing, offline, restoring, single-user,
+// or refusing the login (916): the errors cannotEnterErrors lists. Err is the
+// server's own error, reachable with errors.Is/AsType.
+//
+// Its text carries no "gosmo:" prefix: it is a helper's error, and the
+// exported method it surfaces through adds the one prefix naming the
+// operation — "gosmo: space used: cannot enter database X: …". Until
+// 2026-11-04 it was "gosmo: USE X: …" under that prefix, which printed it
+// twice (TestEntryErrorCarriesOnePrefix).
+type EntryError struct {
+	Database string
+	Err      error
+}
+
+func (e *EntryError) Error() string {
+	return "cannot enter database " + e.Database + ": " + e.Err.Error()
+}
+
+func (e *EntryError) Unwrap() error { return e.Err }
+
+// prefixEntry gives an unwrapped EntryError the "gosmo: op:" prefix and
+// returns any other error as it is — for an exported call whose helper hands
+// back both its own already-prefixed errors and an entry failure it leaves
+// to the caller (BulkInsert over withSessionIn and load).
+func prefixEntry(err error, op string) error {
+	if _, ok := err.(*EntryError); ok {
+		return fmt.Errorf("gosmo: %s: %w", op, err)
+	}
+	return err
+}
+
+// ============================================================
 // SQL Server errors
 // ============================================================
 
