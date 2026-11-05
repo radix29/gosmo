@@ -178,18 +178,19 @@ refuses:
 
 - **TDE**: the key is read whether encryption is on or not — a key left
   behind by `SET ENCRYPTION OFF` is created without `SET ENCRYPTION ON`. Its
-  DMV needs VIEW SERVER STATE; a refusal is silent for an unencrypted
-  database, so a key left behind is not scripted without it. The protecting certificate or
+  DMV needs VIEW SERVER STATE; without it the key is not scripted, and a
+  comment says so — for an unencrypted database that the leftover key was
+  not checked (2026-11-05). The protecting certificate or
   asymmetric key is named, not scripted — it must exist, with its private
-  key, where the script runs. Without VIEW SERVER STATE the script says so in
-  a comment and leaves encryption out. `TRIPLE_DES_3KEY` and an asymmetric-key
+  key, where the script runs. `TRIPLE_DES_3KEY` and an asymmetric-key
   protector are unit-tested only.
 - **Scoped configurations** are written only where they differ from the
   default (`is_value_default`; on 2016, which lacks it, the four documented
-  defaults — any other row is skipped). A value that is not a number, 0/1 or
-  a bare keyword (Azure's `LEDGER_DIGEST_STORAGE_ENDPOINT` URL) gets a
-  comment, not a statement. The value's sql_variant base type decides its
-  spelling (`bit` → OFF/ON, an integer type → the number), the same on 2016.
+  defaults — any other row is skipped). The value's sql_variant base type
+  decides its spelling (`bit` → OFF/ON, an integer type → the number, a
+  string → a bare keyword, or an `N'…'` literal when it is not one), the same
+  on 2016. The literal form (Azure's `LEDGER_DIGEST_STORAGE_ENDPOINT` URL) is
+  unit-tested only (no Azure SQL Database).
 - **ADR's version store filegroup on 2019 and 2022 is untested**: no such
   instance exists here, and the DMV's permission differs by version (VIEW
   SERVER STATE before 2022, VIEW DATABASE PERFORMANCE STATE after).
@@ -313,14 +314,6 @@ with `AcquireConn` and closed back into the same pool (gossms's query panels
 discard theirs). `ReleaseIdleConnections` still frees those before this
 `Server`'s exclusive writes (`live_release_idle_test.go` parks sessions that
 way now). gossms dropped its 60 s `ConnMaxIdleTime` for gosmo's default.
-## `Sequence.NextValue` returns int64
-
-Every other sequence value is decimal digits (`StartValue` … `CurrentValue`,
-`CreateSequenceRequest`, `SequenceChanges`, `Restart`), so a `decimal(38,0)`
-sequence's whole range can be read and written. `NextValue` still scans into
-an `int64`, so it fails on such a sequence once its values pass bigint. No
-caller in gossms uses it; changing it to `string` is a breaking change, left
-for the next one that touches it.
 
 ## Live tests leave non-backup files on 13 and 14
 

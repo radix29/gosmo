@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"math/big"
 	"regexp"
-	"strconv"
 	"strings"
 )
 
@@ -457,7 +456,9 @@ func (seq *Sequence) Alter(ctx context.Context, ch SequenceChanges) error {
 	return nil
 }
 
-// NextValue retrieves the next value from the sequence.
+// NextValue retrieves the next value from the sequence, as decimal digits —
+// the form of every other sequence value, so a decimal(38,0) sequence's whole
+// range reads back.
 //
 // This deliberately uses execIn, not queryRow: "NEXT VALUE FOR" advances the
 // sequence as a side effect of being read, so it isn't safe to retry —
@@ -465,21 +466,24 @@ func (seq *Sequence) Alter(ctx context.Context, ch SequenceChanges) error {
 // connection after a transient failure could silently skip a value. execIn
 // still retries the acquire step (safe, nothing server-side has happened
 // yet), just not the query itself.
-func (seq *Sequence) NextValue(ctx context.Context) (int64, error) {
+func (seq *Sequence) NextValue(ctx context.Context) (string, error) {
 	if err := requireSchema("next value for", seq.Schema, seq.Name); err != nil {
-		return 0, err
+		return "", err
 	}
-	var val int64
+	// Scanned straight into a string: the driver hands a decimal back as its
+	// digits and an integer type converts, so no CONVERT is needed in the
+	// batch.
+	var val string
 	err := seq.db.execIn(ctx, "SELECT NEXT VALUE FOR "+qualifiedName(seq.Schema, seq.Name), nil,
 		func(ctx context.Context, conn sqlConn, q string, args []any) error {
 			return conn.QueryRowContext(ctx, q, args...).Scan(&val)
 		})
 	if err != nil {
-		return 0, fmt.Errorf("gosmo: next value for %s: %w", qualifiedName(seq.Schema, seq.Name), err)
+		return "", fmt.Errorf("gosmo: next value for %s: %w", qualifiedName(seq.Schema, seq.Name), err)
 	}
 	// Assigned directly, not via setIfApplied: this is the value the server
 	// just returned, and reads run against the server under WithScript too.
-	seq.CurrentValue = strconv.FormatInt(val, 10)
+	seq.CurrentValue = val
 	seq.LastUsedValue = seq.CurrentValue
 	return val, nil
 }

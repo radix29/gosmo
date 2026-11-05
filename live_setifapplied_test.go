@@ -330,8 +330,8 @@ func TestLiveScriptedSequenceRestartMirroring(t *testing.T) {
 	if err != nil {
 		t.Fatalf("next value: %v", err)
 	}
-	if next != 7777 {
-		t.Errorf("NEXT VALUE FOR returned %d, want 7777 — the restart the handle claims is not the one the server did", next)
+	if next != "7777" {
+		t.Errorf("NEXT VALUE FOR returned %s, want 7777 — the restart the handle claims is not the one the server did", next)
 	}
 }
 

@@ -20,6 +20,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"net/url"
 	"slices"
 	"strings"
 	"testing"
@@ -955,5 +956,72 @@ WHERE  d.name = @p1`, n).Scan(&s); err != nil {
 	}
 	if want, got := key(name), key(copyName); got != want || want != "0|1|AES192|"+cert {
 		t.Errorf("replayed key %q, source %q", got, want)
+	}
+}
+
+// Without VIEW SERVER STATE the encryption-key DMV is refused; for an
+// unencrypted database the script says the leftover key was not checked,
+// rather than silently dropping one SET ENCRYPTION OFF may have left, and
+// still replays.
+func TestLiveScriptDatabaseUnencryptedWithoutViewServerState(t *testing.T) {
+	db, ctx, done := liveDB(t)
+	t.Cleanup(done)
+
+	const name, copyName = "gosmo_scriptdb_novss", "gosmo_scriptdb_novss_copy"
+	const login, pass = "gosmo_scriptdb_novss_lp", "Nv!5sQ#8wKz2"
+	dropAll := func() {
+		c := context.Background()
+		for _, n := range []string{copyName, name} {
+			db.ExecContext(c, "IF DB_ID('"+n+"') IS NOT NULL DROP DATABASE ["+n+"]")
+		}
+		db.ExecContext(c, "IF SUSER_ID('"+login+"') IS NOT NULL DROP LOGIN ["+login+"]")
+	}
+	dropAll()
+	t.Cleanup(dropAll)
+	for _, q := range []string{
+		"CREATE DATABASE [" + name + "]",
+		"CREATE LOGIN [" + login + "] WITH PASSWORD = N'" + pass + "', CHECK_POLICY = OFF",
+		"USE [" + name + "]; CREATE USER [" + login + "] FOR LOGIN [" + login + "]; ALTER ROLE db_owner ADD MEMBER [" + login + "]",
+	} {
+		if _, err := db.ExecContext(ctx, q); err != nil {
+			t.Fatalf("setup %.100q: %v", q, err)
+		}
+	}
+
+	u, err := url.Parse(*liveDSN)
+	if err != nil {
+		t.Fatalf("parse DSN: %v", err)
+	}
+	u.User = url.UserPassword(login, pass)
+	ldb, err := sql.Open("sqlserver", u.String())
+	if err != nil {
+		t.Fatalf("open as %s: %v", login, err)
+	}
+	defer ldb.Close()
+	var vss int
+	if err := ldb.QueryRowContext(ctx, "SELECT HAS_PERMS_BY_NAME(NULL, NULL, 'VIEW SERVER STATE')").Scan(&vss); err != nil || vss != 0 {
+		t.Fatalf("login must lack VIEW SERVER STATE: has=%d err=%v", vss, err)
+	}
+	opts := DefaultScriptOptions()
+	opts.IncludeHeaders = false
+	script, err := NewScripter(liveServer(t, ldb, ctx).DatabaseRef(name), opts).ScriptDatabase(ctx)
+	if err != nil {
+		t.Fatalf("ScriptDatabase as %s: %v", login, err)
+	}
+	t.Logf("script:\n%s", script)
+	if !strings.Contains(script, "USE ["+name+"];\nGO\n-- Reading a leftover database encryption key needs VIEW SERVER STATE: not checked.\nUSE [master];\nGO\n") ||
+		strings.Contains(script, "CREATE DATABASE ENCRYPTION KEY") || strings.Contains(script, "SET ENCRYPTION ON") {
+		t.Fatalf("refused key read not noted for an unencrypted database")
+	}
+	if _, err := db.ExecContext(ctx, "DROP DATABASE ["+name+"]"); err != nil {
+		t.Fatalf("drop before replay: %v", err)
+	}
+	replayScript(t, ctx, db, script)
+	var encrypted bool
+	if err := db.QueryRowContext(ctx, "SELECT is_encrypted FROM sys.databases WHERE name = @p1", name).Scan(&encrypted); err != nil {
+		t.Fatalf("replayed database: %v", err)
+	}
+	if encrypted {
+		t.Error("replayed database is encrypted")
 	}
 }

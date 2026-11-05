@@ -140,8 +140,13 @@ func TestPooledWriteIsOneProcCall(t *testing.T) {
 // call.
 func TestPooledWriteReturningARowIsOneProcCall(t *testing.T) {
 	d, _ := writeTestDB(t)
-	if _, err := d.SequenceRef("dbo", "s").NextValue(context.Background()); err != nil {
+	seq := d.SequenceRef("dbo", "s")
+	v, err := seq.NextValue(context.Background())
+	if err != nil {
 		t.Fatalf("next value: %v", err)
+	}
+	if v != "7" || seq.CurrentValue != "7" || seq.LastUsedValue != "7" {
+		t.Errorf("NextValue = %q, CurrentValue %q, LastUsedValue %q, want all 7", v, seq.CurrentValue, seq.LastUsedValue)
 	}
 	want := writeCall{"[App]]DB].sys.sp_executesql", []any{"SELECT NEXT VALUE FOR [dbo].[s]"}}
 	if len(writeState.calls) != 1 || fmt.Sprint(writeState.calls[0]) != fmt.Sprint(want) {

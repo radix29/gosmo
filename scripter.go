@@ -251,8 +251,9 @@ type databaseLayout struct {
 	// picks those away from their default.
 	scoped []*DatabaseScopedConfig
 	// tde is the database's encryption key; nil when it has none, or when
-	// the read was refused, which tdeRefused records for a database with
-	// encryption on. tdeOff marks a key SET ENCRYPTION OFF left behind: it
+	// the read was refused, which tdeRefused records whether encryption is
+	// on or not (a key SET ENCRYPTION OFF left behind could be hiding).
+	// tdeOff marks a key SET ENCRYPTION OFF left behind: it
 	// is created, but encryption is not turned on.
 	tde        *DatabaseEncryptionKey
 	tdeRefused bool
@@ -311,13 +312,12 @@ func readDatabaseLayout(ctx context.Context, d *Database) (*databaseLayout, erro
 		return nil, err
 	}
 	// Whether encryption is on or not: SET ENCRYPTION OFF leaves the key
-	// behind. The DMV needs VIEW SERVER STATE; a refusal is noted only when
-	// encryption is on, so a caller without it scripts an unencrypted
-	// database exactly as before, with no comment about a key it may not
-	// have.
+	// behind. The DMV needs VIEW SERVER STATE; a refusal is noted whether
+	// encryption is on or not — silent for an unencrypted database, a key
+	// left behind would vanish from the script with nothing to say so.
 	switch l.tde, err = d.EncryptionKey(ctx); {
 	case IsPermissionDenied(err):
-		l.tde, l.tdeRefused = nil, l.opts.IsEncrypted
+		l.tde, l.tdeRefused = nil, true
 	case errors.Is(err, ErrNotFound):
 		// No key; or is_encrypted is set but the key is gone — nothing to
 		// restate either way.
@@ -777,8 +777,10 @@ func writeInDatabaseSettings(sb *strings.Builder, name string, l *databaseLayout
 			fmt.Fprintf(sb, "CREATE DATABASE ENCRYPTION KEY WITH ALGORITHM = %s ENCRYPTION BY %s;\nGO\n", alg, by)
 			encrypt = !l.tdeOff
 		}
-	} else if l.tdeRefused {
+	} else if l.tdeRefused && l.opts.IsEncrypted {
 		sb.WriteString("-- Encryption is on, and reading its key needs VIEW SERVER STATE: encryption not scripted.\n")
+	} else if l.tdeRefused {
+		sb.WriteString("-- Reading a leftover database encryption key needs VIEW SERVER STATE: not checked.\n")
 	}
 	for _, s := range scoped {
 		sb.WriteString(s)
@@ -811,8 +813,12 @@ var scopedConfigDefaults2016 = map[string]string{
 func scopedConfigStatements(l *databaseLayout) []string {
 	var out []string
 	add := func(c *DatabaseScopedConfig, raw, baseType string, replica ScopedConfigReplica) {
-		v, ok := scopedConfigValue(raw, baseType)
-		stmt, err := buildScopedConfigStatement(c.Name, v, replica)
+		v, literal, ok := scopedConfigValue(raw, baseType)
+		build := buildScopedConfigStatement
+		if literal {
+			build = scopedConfigStatement // v is a QuoteLiteral, safe as is
+		}
+		stmt, err := build(c.Name, v, replica)
 		if !ok || err != nil {
 			out = append(out, fmt.Sprintf("-- Database scoped configuration %s reports a value with no SET form: not scripted.\n", tsql.CommentSafe(c.Name)))
 			return
@@ -837,28 +843,33 @@ func scopedConfigStatements(l *databaseLayout) []string {
 
 // scopedConfigValue is raw — the value as CAST to nvarchar — as the SET
 // clause spells it, by its sql_variant base type: OFF/ON for a bit, the
-// number for an integer type, a keyword (WHEN_SUPPORTED) for a string as it
-// is. Anything else — a quoted string, a value with spaces, a type with no
-// known form — is not written (false). The type, not the option's name,
-// decides: a hand-kept list of numeric options would write a new one
-// reporting 0 or 1 as OFF/ON.
-func scopedConfigValue(raw, baseType string) (string, bool) {
+// number for an integer type, a keyword (WHEN_SUPPORTED) for a string that
+// is one, and any other string as an N'…' literal (literal true) — Azure's
+// LEDGER_DIGEST_STORAGE_ENDPOINT URL, whose SET form is documented as a
+// quoted string. An empty string, or a type with no known form, is not
+// written (ok false). The type, not the option's name, decides: a hand-kept
+// list of numeric options would write a new one reporting 0 or 1 as OFF/ON.
+func scopedConfigValue(raw, baseType string) (v string, literal, ok bool) {
 	switch baseType {
 	case "bit":
 		switch raw {
 		case "0":
-			return "OFF", true
+			return "OFF", false, true
 		case "1":
-			return "ON", true
+			return "ON", false, true
 		}
 	case "tinyint", "smallint", "int", "bigint":
 		if _, err := strconv.ParseInt(raw, 10, 64); err == nil {
-			return raw, true
+			return raw, false, true
 		}
 	case "nvarchar", "varchar", "nchar", "char", "sysname":
-		if isSimpleIdentifier(raw) && (raw[0] < '0' || raw[0] > '9') {
-			return raw, true
+		switch {
+		case raw == "":
+		case isSimpleIdentifier(raw) && (raw[0] < '0' || raw[0] > '9'):
+			return raw, false, true
+		default:
+			return tsql.QuoteLiteral(raw), true, true
 		}
 	}
-	return "", false
+	return "", false, false
 }

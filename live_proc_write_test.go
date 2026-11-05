@@ -411,8 +411,8 @@ func TestLiveProcWriteShapes(t *testing.T) {
 	exists("sys.sp_rename", "app.v2")
 
 	// Writes that return a row.
-	if v, err := d.SequenceRef("app", "s").NextValue(ctx); err != nil || v != 41 {
-		t.Errorf("NextValue = %d, %v, want 41", v, err)
+	if v, err := d.SequenceRef("app", "s").NextValue(ctx); err != nil || v != "41" {
+		t.Errorf("NextValue = %q, %v, want 41", v, err)
 	}
 	home("NextValue")
 	files, err := d.Files(ctx)

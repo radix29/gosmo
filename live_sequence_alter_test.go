@@ -139,3 +139,35 @@ func TestLiveSequencePastBigint(t *testing.T) {
 		t.Fatalf("Drop: %v", err)
 	}
 }
+
+// NextValue hands back a decimal(38, 0) sequence's values past bigint as
+// digits, and two calls are consecutive.
+func TestLiveSequenceNextValuePastBigint(t *testing.T) {
+	db, ctx, done := liveDB(t)
+	defer done()
+	d, drop := liveScratchDB(t, db, ctx, "gosmo_sequence_next_live")
+	defer drop()
+
+	const start = "100000000000000000000" // 10^20
+	seq, err := d.CreateSequence(ctx, CreateSequenceRequest{Schema: "dbo", Name: "wide", DataType: DataTypeDecimal,
+		Precision: 38, StartValue: start, Increment: "1"})
+	if err != nil {
+		t.Fatalf("CreateSequence: %v", err)
+	}
+	for _, want := range []string{start, "100000000000000000001"} {
+		got, err := seq.NextValue(ctx)
+		if err != nil {
+			t.Fatalf("NextValue: %v", err)
+		}
+		if got != want || seq.CurrentValue != want || seq.LastUsedValue != want {
+			t.Errorf("NextValue = %q (CurrentValue %q, LastUsedValue %q), want %s", got, seq.CurrentValue, seq.LastUsedValue, want)
+		}
+	}
+	read, err := d.SequenceByName(ctx, "dbo", "wide")
+	if err != nil {
+		t.Fatalf("SequenceByName: %v", err)
+	}
+	if read.CurrentValue != "100000000000000000001" {
+		t.Errorf("server current_value %s, want 100000000000000000001", read.CurrentValue)
+	}
+}
