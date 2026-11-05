@@ -84,6 +84,10 @@ var ProbedServerPermissions = []string{
 	"ALTER ANY DATABASE",
 	"ALTER ANY LOGIN",
 	"ALTER ANY SERVER ROLE",
+	// What CREATE SERVER ROLE checks; ALTER ANY SERVER ROLE implies it, and
+	// securityadmin carries neither (HAS_PERMS_BY_NAME 0, Msg 15247; majors
+	// 13 and 17, 2026-11-05).
+	"CREATE SERVER ROLE",
 	"ALTER ANY CONNECTION",
 	"ALTER ANY CREDENTIAL",
 	"ALTER ANY SERVER AUDIT",

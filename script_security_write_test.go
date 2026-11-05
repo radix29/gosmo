@@ -191,6 +191,12 @@ func TestScriptSecurityWrites(t *testing.T) {
 		{"Login Drop", func(c context.Context) error {
 			return login().Drop(c)
 		}, "DROP LOGIN [o'brien]"},
+		{"CreateServerRole", func(c context.Context) error {
+			return errOnly((&Server{}).CreateServerRole(c, CreateServerRoleRequest{Name: "ro]le", Owner: "o'brien"}))
+		}, "CREATE SERVER ROLE [ro]]le] AUTHORIZATION [o'brien]"},
+		{"CreateServerRole without an owner", func(c context.Context) error {
+			return errOnly((&Server{}).CreateServerRole(c, CreateServerRoleRequest{Name: "ro]le"}))
+		}, "CREATE SERVER ROLE [ro]]le]"},
 		{"ServerRole Rename", func(c context.Context) error {
 			return serverRole().Rename(c, "r]2")
 		}, "ALTER SERVER ROLE [ro'le] WITH NAME = [r]]2]"},

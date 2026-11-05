@@ -112,6 +112,12 @@ func TestLiveCreateReturnsTheCreatedObject(t *testing.T) {
 	}
 	check("CreateLogin", err, err == nil && len(login.SID) != 0)
 
+	srole, err := srv.CreateServerRole(ctx, CreateServerRoleRequest{Name: dbName + "_srole", Owner: dbName + "_login"})
+	if err == nil {
+		t.Cleanup(func() { _ = srv.ServerRoleRef(dbName + "_srole").Drop(context.Background()) })
+	}
+	check("CreateServerRole", err, err == nil && srole.ID != 0 && srole.Owner == dbName+"_login")
+
 	cat, err := srv.CreateCategory(ctx, CreateCategoryRequest{Class: CategoryClassJob, Name: dbName + "_cat"})
 	if err == nil {
 		t.Cleanup(func() { _ = srv.CategoryRef(CategoryClassJob, dbName+"_cat").Drop(context.Background()) })

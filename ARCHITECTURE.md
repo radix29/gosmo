@@ -320,6 +320,7 @@ The instance and database halves pair up: `ServerResourceStat` and
 | `Server.Logins`         | `srv.Logins(ctx)` / `srv.LoginByName(ctx, name)` / `srv.LoginRef(name)` (no-I/O handle) |
 | `Server.Roles`          | `srv.ServerRoles(ctx)` / `srv.ServerRoleByName(ctx, name)` / `srv.ServerRoleRef(name)` (no-I/O handle) / `srv.ServerRoleMembers(ctx, role)`; writes on the handle — `role.AddMember(ctx, member)` / `role.RemoveMember(ctx, member)` |
 | Server role administration | `role.Rename(ctx, newName)` / `role.SetOwner(ctx, owner)` / `role.AddMember\|RemoveMember(ctx, member)` / `login.AddToServerRole\|RemoveFromServerRole(ctx, role)` |
+| Create a server role    | `srv.CreateServerRole(ctx, CreateServerRoleRequest{Name, Owner})` |
 | Drop a server role      | `srv.ServerRoleRef(name).Drop(ctx)` / `role.Drop(ctx)`  |
 | Drop a database         | `srv.DatabaseRef(name).Drop(ctx, term)` / `db.Drop(ctx, term)` — `gosmo.TerminationRollbackImmediate` closes other connections first |
 | Rename a database       | `srv.DatabaseRef(old).Rename(ctx, new, term)` / `db.Rename(ctx, new, term)` — `gosmo.TerminationRollbackImmediate` puts it in single-user mode first |

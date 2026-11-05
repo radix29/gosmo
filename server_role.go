@@ -97,6 +97,33 @@ func (s *Server) ServerRoleRef(name string) *ServerRole {
 	return &ServerRole{server: s, Name: name}
 }
 
+// CreateServerRoleRequest describes a new user-defined server role.
+type CreateServerRoleRequest struct {
+	Name string
+	// Owner is the AUTHORIZATION principal (a login or another server role);
+	// empty leaves it to the server, which makes the creating login the owner.
+	Owner string
+}
+
+// CreateServerRole creates a new user-defined server role, and returns it read
+// back from the catalog — or, under Scripting(ctx), the ServerRoleRef handle,
+// since nothing ran.
+func (s *Server) CreateServerRole(ctx context.Context, req CreateServerRoleRequest) (*ServerRole, error) {
+	if req.Name == "" {
+		return nil, invalidf("gosmo: create server role: name is required")
+	}
+	q := "CREATE SERVER ROLE " + quoteIdent(req.Name)
+	if req.Owner != "" {
+		q += " AUTHORIZATION " + quoteIdent(req.Owner)
+	}
+	if _, err := s.exec(ctx, q); err != nil {
+		return nil, fmt.Errorf("gosmo: create server role %q: %w", req.Name, err)
+	}
+	return createdObject(ctx, s.ServerRoleRef(req.Name), func() (*ServerRole, error) {
+		return s.ServerRoleByName(ctx, req.Name)
+	})
+}
+
 // Drop drops this server role. A fixed role, or one that still owns another
 // role, is refused by the server, not here.
 func (r *ServerRole) Drop(ctx context.Context) error {

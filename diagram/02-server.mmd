@@ -40,6 +40,7 @@ classDiagram
         +ServerRoles() []*ServerRole
         +ServerRoleByName(name) *ServerRole
         +ServerRoleRef(name) *ServerRole
+        +CreateServerRole(req) *ServerRole
         +ServerRoleMembers(role) []*RoleMember
         +LinkedServers() []*LinkedServer
         +Configurations() []*ConfigurationOption
