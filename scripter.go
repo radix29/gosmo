@@ -283,8 +283,8 @@ func readDatabaseLayout(ctx context.Context, d *Database) (*databaseLayout, erro
 		}
 	}
 	// From inside the database, which keeps it open: one AUTO_CLOSE has
-	// closed reports NULL for several options (and its collation) at server
-	// scope.
+	// closed reports NULL for several options, its collation and its change
+	// tracking retention at server scope.
 	if l.opts, err = d.readOptions(ctx, d.queryRow); err != nil {
 		return nil, err
 	}
@@ -293,7 +293,7 @@ func readDatabaseLayout(ctx context.Context, d *Database) (*databaseLayout, erro
 			return nil, err
 		}
 	}
-	if l.ct, err = d.ChangeTracking(ctx); err != nil {
+	if l.ct, err = d.readChangeTracking(ctx, d.queryRow); err != nil {
 		return nil, err
 	}
 	if l.qs, err = d.QueryStore().Options(ctx); err != nil {

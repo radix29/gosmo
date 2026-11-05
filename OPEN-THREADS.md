@@ -156,11 +156,14 @@ written for a 2019+ source only, with `PERSISTENT_VERSION_STORE_FILEGROUP`
 when ADR is on and its version store is off `PRIMARY` (read from
 `sys.dm_tran_persistent_version_store_stats` inside the database; a refused
 read leaves a comment). A snapshot scripts as `CREATE DATABASE … ON
-(…) AS SNAPSHOT OF [source]` and nothing more. The options are read from
-inside the database: one `AUTO_CLOSE` has closed reports NULL at server
-scope for its collation, `TARGET_RECOVERY_TIME`, `DELAYED_DURABILITY` and
-ADR — `TestLiveScriptDatabaseReadsAClosedDatabaseFromInside` calls both
-reads on a closed database and fails at server scope.
+(…) AS SNAPSHOT OF [source]` and nothing more. The options and change
+tracking are read from inside the database: one `AUTO_CLOSE` has closed
+reports NULL at server scope for its collation, `TARGET_RECOVERY_TIME`,
+`DELAYED_DURABILITY`, ADR and the change tracking retention (its
+`sys.change_tracking_databases` row stays; the empty unit dropped `SET
+CHANGE_TRACKING` from about one script in four on 14, 2026-11-05) —
+`TestLiveScriptDatabaseReadsAClosedDatabaseFromInside` calls the three reads
+on a closed database and fails at server scope.
 `TestLiveScriptDatabaseFileLayoutRoundTrips`,
 `TestLiveScriptDatabaseOptionsRoundTrip`,
 `TestLiveScriptDatabaseSnapshotRoundTrips`,
@@ -190,14 +193,6 @@ refuses:
 - **ADR's version store filegroup on 2019 and 2022 is untested**: no such
   instance exists here, and the DMV's permission differs by version (VIEW
   SERVER STATE before 2022, VIEW DATABASE PERFORMANCE STATE after).
-- **`ScriptDatabase` once left out `SET CHANGE_TRACKING` on 14** although the
-  source had it on — `TestLiveScriptDatabaseOptionsRoundTrip`, 1 in 30 runs
-  (1 in 18 earlier, undiagnosed); the next 60 were green. Ruled out: the
-  server-scope `sys.change_tracking_databases` read missing a closed
-  `AUTO_CLOSE` database's row, or missing it while the database opens,
-  closes or turns `READ_ONLY` (3,000 reads, none missed). Diagnostics in
-  place: the test now names each differing field, and when the script lacks
-  change tracking it re-reads `ChangeTracking` and logs the database's state.
 - **The paths and FILESTREAM directory name are the source's own**: replayed
   on the same instance under the same name after a DROP that is right; as a
   copy, the caller edits them.
@@ -319,17 +314,6 @@ with `AcquireConn` and closed back into the same pool (gossms's query panels
 discard theirs). `ReleaseIdleConnections` still frees those before this
 `Server`'s exclusive writes (`live_release_idle_test.go` parks sessions that
 way now). gossms dropped its 60 s `ConnMaxIdleTime` for gosmo's default.
-## `TestLiveScriptTableKinds` fails Msg 701 on 13 and 14, intermittently
-
-Found 2026-10-23 running the whole `livedb` suite. The memory-optimized
-tables' replay fails Msg 701, "insufficient system memory in resource pool
-'default'": the host's free memory, not gosmo.
-
-On 13 (2026-10-24) the same pressure also failed `TestLiveScriptFidelity`,
-`TestLiveTableDropNamesSchemaBoundModules` and
-`TestLiveScriptDatabaseOptionsRoundTrip` late in a full-suite run; each passed
-run alone straight after.
-
 ## Live tests leave non-backup files on 13 and 14
 
 `liveRemoveFile` (`live_remove_file_test.go`) cannot delete a file that is

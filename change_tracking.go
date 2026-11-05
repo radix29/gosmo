@@ -34,7 +34,21 @@ type ChangeTrackingInfo struct {
 // is false (with the rest zero-valued) when change tracking has never
 // been turned on for this database — there's simply no row for it in
 // sys.change_tracking_databases, not an error.
+//
+// A database AUTO_CLOSE has closed keeps its row, but reports NULL for the
+// retention until it is next opened: Enabled is true, AutoCleanup false,
+// RetentionPeriod 0 and RetentionUnit "". ScriptDatabase reads it from
+// inside the database, which opens it — read at server scope, the empty
+// unit dropped SET CHANGE_TRACKING from about one script in four of a
+// closed database on 14.
 func (d *Database) ChangeTracking(ctx context.Context) (*ChangeTrackingInfo, error) {
+	return d.readChangeTracking(ctx, d.server.queryRow)
+}
+
+// readChangeTracking runs ChangeTracking's query through queryRow:
+// Server.queryRow for the server-scope read, Database.queryRow for one from
+// inside the database.
+func (d *Database) readChangeTracking(ctx context.Context, queryRow func(context.Context, func(*sql.Row) error, string, ...any) error) (*ChangeTrackingInfo, error) {
 	const q = `
 SELECT CASE WHEN ctd.database_id IS NOT NULL THEN 1 ELSE 0 END,
        ISNULL(ctd.is_auto_cleanup_on, 0),
@@ -45,7 +59,7 @@ LEFT   JOIN sys.change_tracking_databases ctd ON ctd.database_id = sd.database_i
 WHERE  sd.name = @p1`
 
 	info := &ChangeTrackingInfo{}
-	err := d.server.queryRow(ctx, func(row *sql.Row) error {
+	err := queryRow(ctx, func(row *sql.Row) error {
 		return row.Scan(&info.Enabled, &info.AutoCleanup, &info.RetentionPeriod, &info.RetentionUnit)
 	}, q, d.Name)
 	return foundRow(info, err, notFoundf("gosmo: database %q not found", d.Name), fmt.Sprintf("change tracking for %q", d.Name))

@@ -803,12 +803,13 @@ JOIN sys.filegroups fg ON fg.data_space_id = s.pvs_filegroup_id WHERE s.database
 	}
 }
 
-// The layout reads a database's options and collation from inside it: one
-// AUTO_CLOSE has closed reports NULL for its collation, TARGET_RECOVERY_TIME,
-// DELAYED_DURABILITY and ADR at server scope. The options round trip covers
-// the whole script, but its file reads open the database first, so this
-// calls the two in-database reads directly on a closed database. Read at
-// server scope (Options), the options half fails here.
+// The layout reads a database's options, collation and change tracking from
+// inside it: one AUTO_CLOSE has closed reports NULL for its collation,
+// TARGET_RECOVERY_TIME, DELAYED_DURABILITY, ADR and change tracking retention
+// at server scope. The options round trip covers the whole script, but its
+// file reads open the database first, so this calls the three in-database
+// reads directly on a closed database. Read at server scope (Options,
+// ChangeTracking), the options and change tracking halves fail here.
 func TestLiveScriptDatabaseReadsAClosedDatabaseFromInside(t *testing.T) {
 	db, ctx, done := liveDB(t)
 	t.Cleanup(done)
@@ -822,7 +823,8 @@ func TestLiveScriptDatabaseReadsAClosedDatabaseFromInside(t *testing.T) {
 	_, drop := liveScratchDB(t, db, ctx, name)
 	t.Cleanup(drop)
 	set := "ALTER DATABASE [" + name + "] SET "
-	setup := []string{set + "TARGET_RECOVERY_TIME = 90 SECONDS", set + "DELAYED_DURABILITY = ALLOWED", set + "AUTO_CLOSE ON"}
+	setup := []string{set + "TARGET_RECOVERY_TIME = 90 SECONDS", set + "DELAYED_DURABILITY = ALLOWED",
+		set + "CHANGE_TRACKING = ON (CHANGE_RETENTION = 5 HOURS, AUTO_CLEANUP = OFF)", set + "AUTO_CLOSE ON"}
 	if major >= 15 {
 		setup = append(setup, set+"ACCELERATED_DATABASE_RECOVERY = ON")
 	}
@@ -860,6 +862,11 @@ func TestLiveScriptDatabaseReadsAClosedDatabaseFromInside(t *testing.T) {
 	waitClosed()
 	if c, err := d.inDatabaseCollation(ctx); err != nil || c == "" {
 		t.Errorf("collation of a closed database: %q, %v", c, err)
+	}
+	waitClosed()
+	want := ChangeTrackingInfo{Enabled: true, RetentionPeriod: 5, RetentionUnit: ChangeTrackingHours}
+	if ct, err := d.readChangeTracking(ctx, d.queryRow); err != nil || *ct != want {
+		t.Errorf("change tracking of a closed database: %+v, %v; want %+v", ct, err, want)
 	}
 }
 

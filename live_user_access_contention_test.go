@@ -20,6 +20,7 @@ import (
 )
 
 func TestLiveSetUserAccessUnderContention(t *testing.T) {
+	skipSlowInShort(t)
 	db, ctx, done := liveDBTimeout(t, 3*time.Minute)
 	defer done()
 

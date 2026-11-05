@@ -19,6 +19,7 @@ import (
 )
 
 func TestLiveKillDatabaseSessionsLockWait(t *testing.T) {
+	skipSlowInShort(t)
 	db, ctx, done := liveDBTimeout(t, 3*time.Minute)
 	defer done()
 	const name = "gosmo_kill_lockwait"

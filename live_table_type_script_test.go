@@ -53,6 +53,8 @@ func TestLiveScriptTableTypeShape(t *testing.T) {
 			CHECK (id <> qty),
 			INDEX ix_qty NONCLUSTERED (qty)`+include+` WHERE qty > 0,
 			INDEX ix_note UNIQUE NONCLUSTERED (note, qty))`,
+	)
+	liveExecMemoryOptimized(t, src, ctx,
 		`CREATE TYPE dbo.tt_mo AS TABLE (
 			id int NOT NULL PRIMARY KEY NONCLUSTERED HASH WITH (BUCKET_COUNT = 1000),
 			v nvarchar(20) NOT NULL,
@@ -66,7 +68,11 @@ func TestLiveScriptTableTypeShape(t *testing.T) {
 			if err != nil {
 				t.Fatalf("ScriptUserDefinedTableType: %v", err)
 			}
-			liveRunScript(t, dst, ctx, script)
+			if name == "tt_mo" {
+				liveRunMemoryOptimizedScript(t, dst, ctx, script)
+			} else {
+				liveRunScript(t, dst, ctx, script)
+			}
 			again, err := NewScripter(dst, DefaultScriptOptions()).ScriptUserDefinedTableType(ctx, "dbo", name)
 			if err != nil {
 				t.Fatalf("script the recreated type: %v", err)

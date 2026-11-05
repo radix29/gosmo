@@ -222,21 +222,44 @@ func TestLiveMonitorTopQueriesAndCachedPlan(t *testing.T) {
 }
 
 // TestLiveMonitorDeadlocks provokes a two-session deadlock on rows and one
-// between two parallel plans, then finds both in system_health.
+// between two parallel plans, then finds both in an event file and decodes
+// them.
+//
+// The file is the test's own session's, not system_health's: system_health
+// holds events for up to its MAX_DISPATCH_LATENCY before writing them, so
+// polling it cost the suite about 2.5 minutes a run. Its own session collects
+// the same xml_deadlock_report into an event_file with a one-second latency,
+// and the read (ReadFileEvents over EventFilePattern) and decode are the same
+// code. What this gives up is proof that system_health itself records the
+// deadlock, which is the server's behavior, not gosmo's.
 func TestLiveMonitorDeadlocks(t *testing.T) {
-	db, ctx, done := liveDBTimeout(t, 5*time.Minute)
+	skipSlowInShort(t)
+	db, ctx, done := liveDBTimeout(t, 3*time.Minute)
 	t.Cleanup(done)
 	srv, err := NewServer(ctx, db)
 	if err != nil {
 		t.Fatalf("NewServer: %v", err)
 	}
-	sh, err := srv.XEvents().SessionByName(ctx, "system_health")
+	const session = "gossms_test_xe_deadlocks"
+	dropXESessionAfter(t, srv, db, session)
+	es, err := srv.XEvents().CreateSession(ctx, EventSessionDefinition{
+		Name:               session,
+		Events:             []SessionEvent{{Package: "sqlserver", Name: "xml_deadlock_report"}},
+		Targets:            []SessionTarget{EventFileTarget(session+".xel", 0, 0)},
+		MaxDispatchLatency: time.Second,
+	})
 	if err != nil {
-		t.Fatalf("system_health: %v", err)
+		t.Fatalf("XEvents.CreateSession: %v", err)
 	}
-	pattern, err := sh.EventFilePattern()
+	if err := es.Start(ctx); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if es, err = srv.XEvents().SessionByName(ctx, session); err != nil {
+		t.Fatalf("SessionByName: %v", err)
+	}
+	pattern, err := es.EventFilePattern()
 	if err != nil {
-		t.Skipf("system_health has no event_file: %v", err)
+		t.Fatalf("EventFilePattern: %v", err)
 	}
 
 	tag := fmt.Sprintf("gosmo_live_dl_%x", time.Now().UnixNano()&0xffffff)
@@ -288,10 +311,10 @@ func TestLiveMonitorDeadlocks(t *testing.T) {
 		}
 	}
 
-	// system_health dispatches within its MAX_DISPATCH_LATENCY; poll.
+	// The session dispatches within its one-second MAX_DISPATCH_LATENCY; poll.
 	found := map[string]*DeadlockReport{}
 	var raw = map[string]string{}
-	for deadline := time.Now().Add(4 * time.Minute); len(found) < len(kinds) && time.Now().Before(deadline); time.Sleep(5 * time.Second) {
+	for deadline := time.Now().Add(time.Minute); len(found) < len(kinds) && time.Now().Before(deadline); time.Sleep(time.Second) {
 		events, _, err := srv.XEvents().ReadFileEvents(ctx, pattern, EventFileCursor{}, 0, []string{"xml_deadlock_report"})
 		if err != nil {
 			t.Fatalf("ReadFileEvents: %v", err)
@@ -318,7 +341,7 @@ func TestLiveMonitorDeadlocks(t *testing.T) {
 	for _, k := range kinds {
 		r := found[k.name]
 		if r == nil {
-			t.Errorf("%s: deadlock not found in system_health", k.name)
+			t.Errorf("%s: deadlock not found in the event file", k.name)
 			continue
 		}
 		t.Logf("%s: %d victims, %d processes, %d resources", k.name, len(r.Victims), len(r.Processes), len(r.Resources))

@@ -32,6 +32,18 @@ func liveDB(t *testing.T) (*sql.DB, context.Context, func()) {
 	return liveDBTimeout(t, 60*time.Second)
 }
 
+// skipSlowInShort skips a live test that takes 15 s or more on a test
+// instance (each waits on a server timer: a lock or exclusive-access
+// deadline, a restore, a login pool's idle time, or many databases) when
+// -short is given. A quick run is then `go test -tags livedb -short`; the
+// full run and a -run that names the test leave out -short and keep it.
+func skipSlowInShort(t *testing.T) {
+	t.Helper()
+	if testing.Short() {
+		t.Skip("slow live test (15 s or more), skipped under -short")
+	}
+}
+
 // liveDBTimeout is liveDB with a longer deadline, for a test whose setup
 // alone outlasts the minute (creating databases, on Managed Instance above
 // all). Taking it here, rather than shadowing liveDB's ctx with a fresh one,

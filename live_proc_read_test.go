@@ -121,6 +121,7 @@ func TestLiveProcReadLeavesSessionInLoginDatabase(t *testing.T) {
 // succeeds straight after a gosmo read of the database. Under useBatch it fails
 // Msg 3101, "Exclusive access could not be obtained".
 func TestLiveProcReadDoesNotBlockRestore(t *testing.T) {
+	skipSlowInShort(t)
 	db, ctx, done := liveDBTimeout(t, 3*time.Minute)
 	defer done()
 	other := liveSecondDB(t)

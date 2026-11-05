@@ -148,6 +148,7 @@ IF EXISTS (SELECT 1 FROM sys.trusted_assemblies WHERE hash = @h)
 }
 
 func TestLiveCLRModulesScriptRoundTrip(t *testing.T) {
+	skipSlowInShort(t)
 	db, ctx, done := liveDBTimeout(t, 3*time.Minute)
 	t.Cleanup(done)
 

@@ -420,6 +420,7 @@ var sweepFullTextSchema = []string{
 }
 
 func TestLiveVersionSweep(t *testing.T) {
+	skipSlowInShort(t)
 	checkSkipList(t)
 
 	db, _, done := liveDB(t)
