@@ -18,7 +18,7 @@ import (
 // As with a server audit, SQL Server refuses every ALTER but the state toggle,
 // and the DROP, while the specification is enabled ("Changes to an audit
 // specification must be done while the audit specification is disabled") —
-// verified live. withSpecificationDisabled does the off/apply/on dance, and
+// verified live. auditSpecScope.withDisabled does the off/apply/on dance, and
 // restores the state on the failure path.
 
 // ServerAuditSpecification mirrors a row of sys.server_audit_specifications.
@@ -255,15 +255,49 @@ func (spec *ServerAuditSpecification) isEnabled(ctx context.Context) (bool, erro
 }
 
 // specificationDisabledKey marks a context that is already inside a disable
-// window, carrying the name of the specification that window switched off.
+// window, carrying the windowKey of the specification that window switched
+// off.
 type specificationDisabledKey struct{}
 
-// inSpecificationWindow reports whether an enclosing WithDisabled window
-// already has this specification switched off, so a nested write must not open
-// a second one.
-func (spec *ServerAuditSpecification) inSpecificationWindow(ctx context.Context) bool {
-	name, _ := ctx.Value(specificationDisabledKey{}).(string)
-	return name == spec.Name
+// auditSpecScope carries what the server and database specifications differ
+// in for the write mechanics they share — the disable window and the
+// FOR SERVER AUDIT rebind — so each body exists once. Each type builds one in
+// its scope method; the action-group writers differ more (the database scope
+// also takes per-securable actions) and stay on the types.
+type auditSpecScope struct {
+	// keyword is SERVER or DATABASE, as it appears after ALTER.
+	keyword string
+	name    string
+
+	// windowKey identifies the specification in specificationDisabledKey:
+	// the bare name for a server specification, database-qualified for a
+	// database one (DatabaseAuditSpecification.scope says why).
+	windowKey string
+
+	exec       func(ctx context.Context, stmt string) error
+	isEnabled  func(ctx context.Context) (bool, error)
+	setEnabled func(ctx context.Context, on bool) error
+}
+
+func (spec *ServerAuditSpecification) scope() auditSpecScope {
+	return auditSpecScope{
+		keyword:   "SERVER",
+		name:      spec.Name,
+		windowKey: spec.Name,
+		exec: func(ctx context.Context, stmt string) error {
+			_, err := spec.server.exec(ctx, stmt)
+			return err
+		},
+		isEnabled:  spec.isEnabled,
+		setEnabled: spec.SetEnabled,
+	}
+}
+
+// inWindow reports whether an enclosing WithDisabled window already has this
+// specification switched off, so a nested write must not open a second one.
+func (sc auditSpecScope) inWindow(ctx context.Context) bool {
+	key, _ := ctx.Value(specificationDisabledKey{}).(string)
+	return key == sc.windowKey
 }
 
 // WithDisabled runs fn with the specification disabled, restoring the state
@@ -275,36 +309,56 @@ func (spec *ServerAuditSpecification) inSpecificationWindow(ctx context.Context)
 // fn must use the context it is handed — that is what the nested writes read
 // to know the window is already open.
 func (spec *ServerAuditSpecification) WithDisabled(ctx context.Context, fn func(context.Context) error) error {
-	return spec.withSpecificationDisabled(ctx, fn)
+	return spec.scope().withDisabled(ctx, fn)
 }
 
-// withSpecificationDisabled runs fn with the specification disabled, restoring
-// the state afterwards only if it was this call that disabled it. Re-enabling
+// withDisabled runs fn with the specification disabled, restoring the state
+// afterwards only if it was this call that disabled it. Re-enabling
 // unconditionally would turn on a specification the user had deliberately left
 // off; restoring on the failure path is what keeps a failed apply from
 // silently leaving auditing switched off.
-func (spec *ServerAuditSpecification) withSpecificationDisabled(ctx context.Context, fn func(context.Context) error) error {
-	if spec.inSpecificationWindow(ctx) {
+func (sc auditSpecScope) withDisabled(ctx context.Context, fn func(context.Context) error) error {
+	if sc.inWindow(ctx) {
 		return fn(ctx)
 	}
-	enabled, err := spec.isEnabled(ctx)
+	enabled, err := sc.isEnabled(ctx)
 	if err != nil {
 		return err
 	}
-	inner := context.WithValue(ctx, specificationDisabledKey{}, spec.Name)
+	inner := context.WithValue(ctx, specificationDisabledKey{}, sc.windowKey)
 	if !enabled {
 		return fn(inner)
 	}
-	if err := spec.SetEnabled(unobserved(ctx), false); err != nil {
+	if err := sc.setEnabled(unobserved(ctx), false); err != nil {
 		return err
 	}
-	enable := func(ctx context.Context) error { return spec.SetEnabled(ctx, true) }
+	enable := func(ctx context.Context) error { return sc.setEnabled(ctx, true) }
 	if err := fn(inner); err != nil {
 		// Best effort: report the original failure, not the restore's.
 		_ = restoreWindow(ctx, enable)
 		return err
 	}
 	return restoreWindow(ctx, enable)
+}
+
+// alter runs one ALTER statement inside the disable window.
+func (sc auditSpecScope) alter(ctx context.Context, stmt string) error {
+	return sc.withDisabled(ctx, func(ctx context.Context) error {
+		if err := sc.exec(ctx, stmt); err != nil {
+			return fmt.Errorf("gosmo: alter %s audit specification %q: %w", strings.ToLower(sc.keyword), sc.name, err)
+		}
+		return nil
+	})
+}
+
+// setAudit is the body of both types' SetAudit, short of updating the
+// receiver's AuditName.
+func (sc auditSpecScope) setAudit(ctx context.Context, auditName string) error {
+	if strings.TrimSpace(auditName) == "" {
+		return invalidf("gosmo: alter %s audit specification %q: audit name is empty", strings.ToLower(sc.keyword), sc.name)
+	}
+	return sc.alter(ctx, fmt.Sprintf("ALTER %s AUDIT SPECIFICATION %s\nFOR SERVER AUDIT %s",
+		sc.keyword, quoteIdent(sc.name), quoteIdent(auditName)))
 }
 
 // AddActionGroups adds audit action groups to the specification.
@@ -327,31 +381,14 @@ func (spec *ServerAuditSpecification) alterActionGroups(ctx context.Context, ver
 	if err != nil {
 		return fmt.Errorf("gosmo: alter server audit specification %q: %w", spec.Name, err)
 	}
-	stmt := fmt.Sprintf("ALTER SERVER AUDIT SPECIFICATION %s\n    %s", quoteIdent(spec.Name), clauses)
-	return spec.withSpecificationDisabled(ctx, func(ctx context.Context) error {
-		if _, err := spec.server.exec(ctx, stmt); err != nil {
-			return fmt.Errorf("gosmo: alter server audit specification %q: %w", spec.Name, err)
-		}
-		return nil
-	})
+	return spec.scope().alter(ctx, fmt.Sprintf("ALTER SERVER AUDIT SPECIFICATION %s\n    %s", quoteIdent(spec.Name), clauses))
 }
 
 // SetAudit rebinds the specification to a different server audit.
 //
 // The specification is disabled for the duration and restored afterwards.
 func (spec *ServerAuditSpecification) SetAudit(ctx context.Context, auditName string) error {
-	if strings.TrimSpace(auditName) == "" {
-		return invalidf("gosmo: alter server audit specification %q: audit name is empty", spec.Name)
-	}
-	stmt := fmt.Sprintf("ALTER SERVER AUDIT SPECIFICATION %s\nFOR SERVER AUDIT %s",
-		quoteIdent(spec.Name), quoteIdent(auditName))
-	err := spec.withSpecificationDisabled(ctx, func(ctx context.Context) error {
-		if _, err := spec.server.exec(ctx, stmt); err != nil {
-			return fmt.Errorf("gosmo: alter server audit specification %q: %w", spec.Name, err)
-		}
-		return nil
-	})
-	if err != nil {
+	if err := spec.scope().setAudit(ctx, auditName); err != nil {
 		return err
 	}
 	setIfApplied(ctx, &spec.AuditName, auditName)

@@ -334,24 +334,6 @@ held, between them, only `gosmo_restore_close_live_undo.dat` and
 wanted. Closing this needs `xp_cmdshell` enabled for the run, which the
 tests deliberately do not do.
 
-## Audit specifications: the two scopes duplicate their write mechanics
-
-gossms review plan S3 (2026-11-03), carried here because no other change
-touched these files. `ServerAuditSpecification` (`audit_specification.go`)
-and `DatabaseAuditSpecification` (`database_audit_specification.go`) repeat
-`withSpecificationDisabled` and `SetAudit` almost line for line; the
-database half's comment already calls its copy a twin. They differ in the
-statement keyword (`SERVER`/`DATABASE`), the exec target (`spec.server.exec`
-versus the database's) and the disabled-window context key (`spec.Name`
-versus `spec.windowKey()`). The action-group writers differ more (the
-database scope also takes per-securable actions) and are out of scope.
-
-**Fix:** an unexported `auditSpecScope{keyword string; exec func(ctx, q)
-error; windowKey …}` that each type builds, with the shared bodies taking it.
-Exported types and signatures stay the same; the write tests pin the
-statements. About 60 lines, no bug — do it only alongside another change in
-those files.
-
 ## Agent schedules are addressed by id — settled, do not re-raise
 
 Schedule names are not unique in msdb (`ARCHITECTURE.md` § Shared schedules).
