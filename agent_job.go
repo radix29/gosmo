@@ -183,7 +183,8 @@ func (j *Job) Server() *Server { return j.server }
 // is ordinary administration.
 func (j *Job) IsSystem() bool { return strings.HasPrefix(j.Name, "syspolicy_") }
 
-// agentRead is the batch every job, step, history and schedule read sends:
+// agentRead is the batch every job, step, history, schedule and operator
+// read sends:
 // direct for a sysadmin, viaProcs for anyone else, decided on the server in
 // the same round trip.
 //
@@ -247,8 +248,8 @@ LEFT   JOIN msdb.dbo.sysjobservers js
 //
 //   - @act is sp_help_jobactivity: the current Agent session's
 //     sysjobactivity rows, what the direct read takes from MAX(session_id).
-//   - @op is sp_help_operator, for the e-mail operator's name: sysoperators
-//     is granted to SQLAgentOperatorRole only.
+//   - @op is sp_help_operator (operatorProcTable), for the e-mail
+//     operator's name: sysoperators is granted to SQLAgentOperatorRole only.
 //   - @srv is sp_help_jobserver per job, with the last-run details: the only
 //     route to sysjobservers.last_run_duration — sp_help_job reports the
 //     last run but not its duration.
@@ -263,13 +264,7 @@ DECLARE @act TABLE (session_id int, job_id uniqueidentifier, job_name sysname,
   message nvarchar(max), run_status int, operator_id_emailed int, operator_id_netsent int,
   operator_id_paged int);
 INSERT INTO @act EXECUTE msdb.dbo.sp_help_jobactivity;
-DECLARE @op TABLE (id int, name sysname, enabled tinyint, email_address nvarchar(max),
-  last_email_date int, last_email_time int, pager_address nvarchar(max), last_pager_date int,
-  last_pager_time int, weekday_pager_start_time int, weekday_pager_end_time int,
-  saturday_pager_start_time int, saturday_pager_end_time int, sunday_pager_start_time int,
-  sunday_pager_end_time int, pager_days tinyint, netsend_address nvarchar(max),
-  last_netsend_date int, last_netsend_time int, category_name sysname NULL);
-INSERT INTO @op EXECUTE msdb.dbo.sp_help_operator;
+` + operatorProcTable + `
 DECLARE @srv TABLE (job_id uniqueidentifier NULL, server_id int, server_name nvarchar(max),
   enlist_date datetime, last_poll_date datetime, last_run_date int, last_run_time int,
   last_run_duration int, last_run_outcome int, last_outcome_message nvarchar(max));
