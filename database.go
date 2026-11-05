@@ -132,7 +132,7 @@ func (d *Database) withConn(ctx context.Context, fn func(context.Context, sqlCon
 // the form of q to send there with its arguments. On a pooled connection that
 // is procRead's RPC call of [d].sys.sp_executesql, so the session stays in its
 // login database, and a failure recheckEntry finds was d refusing the call is
-// reported as the USE failure it always was. Inside InTransaction it is q
+// reported as the EntryError it is. Inside InTransaction it is q
 // itself, on the transaction's session switched to d.
 //
 // The statement is a batch of its own inside sp_executesql, so a CREATE VIEW,
@@ -180,7 +180,7 @@ func (d *Database) withSessionIn(ctx context.Context, fn func(context.Context, *
 		}
 		if err := conn.QueryRowContext(ctx, "DECLARE @home sysname = DB_NAME(); "+d.useBatch("SELECT @home")).Scan(&home); err != nil {
 			conn.Close()
-			return nil, fmt.Errorf("gosmo: USE %s: %w", d.Name, err)
+			return nil, &EntryError{Database: d.Name, Err: err}
 		}
 		return conn, nil
 	})
@@ -288,11 +288,11 @@ func (r *dbRows) Close() error {
 	return err
 }
 
-// use switches conn to d's database on its own, with the error every
-// database-scoped call has always reported for a database it cannot enter.
+// use switches conn to d's database on its own, reporting a database it
+// cannot enter as an EntryError, as every database-scoped call does.
 func (d *Database) use(ctx context.Context, conn sqlConn) error {
 	if _, err := conn.ExecContext(ctx, "USE "+quoteIdent(d.Name)); err != nil {
-		return fmt.Errorf("gosmo: USE %s: %w", d.Name, err)
+		return &EntryError{Database: d.Name, Err: err}
 	}
 	return nil
 }

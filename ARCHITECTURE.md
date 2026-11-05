@@ -380,6 +380,7 @@ The instance and database halves pair up: `ServerResourceStat` and
 | Log backup chain state    | `srv.DatabaseRecoveryStatuses(ctx)` / `db.RecoveryStatus(ctx)` → `*DatabaseRecoveryStatus` |
 | What may this login do?   | `srv.Capabilities(ctx)` → `*Capabilities` — see [Capabilities](#capabilities-of-the-connected-login) |
 | Wrap a `*sql.DB` you already have | `gosmo.NewServer(ctx, db)` — the inverse of `srv.DB()` |
+| Test code that calls gosmo, without a server | `f := gosmotest.New(t)`, `f.On(text, gosmotest.Rows(…))`, then `f.Server()` (one shared) or `f.Connect(ctx)` (one per dial): real gosmo over canned rows, positional in the query's SELECT order; a database read's transport (`[db].sys.sp_executesql`, a `USE` batch) is stripped before matching, and a query no rule answers fails the test naming it |
 
 ### Database
 
@@ -2297,6 +2298,18 @@ n, err := db.BulkInsert(ctx, gosmo.BulkCopy{
 }, gosmo.SliceRows(rows)) // or your own iter.Seq2[[]any, error], e.g. a CSV reader
 ```
 
+Each value is checked and converted for its column before it is sent
+(`BulkColumn.Converter`, `bulkvalue.go`), from a read of the target's
+columns in the load's session: go-mssqldb alone wraps an int too big for its
+column (300 into a tinyint loads 44), truncates a float bound for an int,
+sends a varchar's UTF-8 bytes for the server to read in the database's code
+page (`café` stored as `cafÃ©`), and drops a smalldatetime's seconds. A
+refused value is a `*BulkValueError` naming the 1-based row and the column,
+and the load copies nothing. A caller that wants to check without loading (a
+dry run) builds the `BulkColumn` itself; the converter is idempotent, so
+values it returned load unchanged. A column the catalog read does not list
+is left to the server.
+
 ### Execute stored procedures
 
 Runs a stored procedure as an RPC, so `OUTPUT` parameters and the return
@@ -2457,6 +2470,30 @@ name-keyed reads (`FragmentationStats`, `Index.StorageInfo`,
 `Statistic.Columns`/`Histogram`) and every write still work from a handle; a
 `Create*` whose read-back is refused returns the new object's handle, as
 `createdObject` does for one the caller cannot see.
+
+### `EntryError`
+
+A database-scoped call that fails because its database cannot be entered —
+missing, offline, restoring, single-user, or refusing the login (916): the
+numbers `cannotEnterErrors` lists — returns a `*EntryError{Database, Err}`
+under the call's own prefix: `gosmo: space used: cannot enter database x:
+mssql: …`. `Err` is the server's error, so `AsSQLError` and the number still
+reach it. Every helper that enters a database reports it this way
+(`recheckEntry`, `use`, `withSessionIn`, a transaction switching home), and
+leaves the prefix to the exported call — it read `gosmo: space used: gosmo:
+USE x: …` until 2026-11-04. `TestEntryErrorCarriesOnePrefix` drives each
+helper shape through an exported call against a refusing fake.
+
+### `BulkValueError`
+
+A value `BulkInsert` refuses before sending it — out of its column's range,
+too long, with more decimal places than the scale, or with a character the
+column's or the database's code page lacks — is a `*BulkValueError{Row,
+Column, Reason}` under the load's prefix: `gosmo: bulk insert into
+[dbo].[t]: row 2, column [qty]: 300 is out of range (0 to 255)`. It wraps
+`ErrInvalidRequest`. From `BulkColumn.Converter`'s function, outside a load,
+`Row` is 0, and with no `BulkColumn.Name` the message is the `Reason` alone,
+for a caller to place in its own (gossms names the file line).
 
 ### `ErrUnsupportedVersion`
 
@@ -2639,8 +2676,8 @@ failed meanwhile. `Server`-scoped calls go straight to the pool.
 | `Database.withSessionIn` | For a callback that needs its session in `db` across calls — `capturePlan`'s `SET SHOWPLAN_XML`/`STATISTICS XML`, `BulkInsert`'s `INSERT BULK`: `USE db` (retried with the acquire), the callback, then `USE` back to the login database; a session that cannot switch back is discarded, not pooled. |
 | `Database.query`       | Returns `*dbRows`, whose `Close()` closes the rows **and** the conn pinned for them. `*sql.Rows.Close` alone would leak that conn out of the pool permanently. |
 | `Database.queryRow`    | Takes a `func(*sql.Row) error` scan callback and runs acquire + query + scan as one retried unit. The scan has to be inside it: `QueryRowContext` never returns an error, so a scan run afterwards would never be retried. |
-| `Database.procRead` / `recheckEntry` | A pooled read (`query`, `queryRow`) is an RPC call of `[db].sys.sp_executesql` with the query, its declarations and its arguments: it runs in `db` and the session never leaves its login database, so no idle connection holds a lock on `db` afterwards. A call failing with a can't-enter number (`cannotEnterErrors`) makes one empty call of `db`'s `sp_executesql`: its error if it fails (`gosmo: USE x:`), else the read's own. An argument `procParamType` cannot declare fails the read (`ErrUnsupported`). |
-| `Database.useBatch` / `recheckUse` | A read inside `InTransaction` sends `USE` and the query as one guarded batch — one round trip — and the session stays in `db`. A failed batch runs `USE` alone once to tell the halves apart: its error if it fails (`gosmo: USE x:`), else the batch's own; the query never runs twice. |
+| `Database.procRead` / `recheckEntry` | A pooled read (`query`, `queryRow`) is an RPC call of `[db].sys.sp_executesql` with the query, its declarations and its arguments: it runs in `db` and the session never leaves its login database, so no idle connection holds a lock on `db` afterwards. A call failing with a can't-enter number (`cannotEnterErrors`) makes one empty call of `db`'s `sp_executesql`: its error if it fails (an `EntryError`), else the read's own. An argument `procParamType` cannot declare fails the read (`ErrUnsupported`). |
+| `Database.useBatch` / `recheckUse` | A read inside `InTransaction` sends `USE` and the query as one guarded batch — one round trip — and the session stays in `db`. A failed batch runs `USE` alone once to tell the halves apart: its error if it fails (an `EntryError`), else the batch's own; the query never runs twice. |
 | `Database.exec`        | Thin wrapper over `execIn` for non-SELECT statements; also where `WithScript` intercepts database-scoped writes. |
 | `Server.query`         | Server-scoped rows-returning read, retried — no `USE`, so a plain `*sql.Rows` is enough.    |
 | `Server.queryRow`      | Server-scoped single-row read, same scan-callback shape and reason as `Database.queryRow`.   |

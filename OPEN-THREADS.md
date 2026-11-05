@@ -285,7 +285,7 @@ a read succeeds where `useBatch` fails Msg 3101; 911/924/942 refuse the read;
 reads stay right across a database-id swap; parameters bind in `db`'s
 collation, where `useBatch` fails Msg 468 uncollated), `TestLiveVersionSweep`,
 the collation tests and the whole `livedb` suite on procRead. A can't-enter
-error keeps its `gosmo: USE db:` prefix through `recheckEntry`. The id-swap
+error is an `EntryError` through `recheckEntry`. The id-swap
 test's control, a literal `[db].sys.…` read from master, did **not** reproduce
 the plan-cache trap of `CLAUDE.md` § Read another database's catalog (why is
 unknown), so procRead is shown to read the right database after a swap, but
@@ -305,7 +305,7 @@ Evidence, on 13, 14 and 17: the five rules mirrored for writes in
 `live_proc_write_test.go`, each against a hand-switched `USE` control (no
 session left behind where `USE` leaves one; a `RESTORE … WITH REPLACE`
 straight after a write succeeds where `USE` fails Msg 3101; 911/924/942
-refuse the write as `gosmo: USE db:` and nothing lands in `master`; writes
+refuse the write as an `EntryError` and nothing lands in `master`; writes
 land right across an id swap; parameters bind in `db`'s collation where a
 `USE` batch fails Msg 468), plus `TestLiveProcWriteShapes`: `CREATE
 SCHEMA/VIEW/PROCEDURE/FUNCTION/TRIGGER/SEQUENCE` each open their batch inside
@@ -330,26 +330,17 @@ On 13 (2026-10-24) the same pressure also failed `TestLiveScriptFidelity`,
 `TestLiveScriptDatabaseOptionsRoundTrip` late in a full-suite run; each passed
 run alone straight after.
 
-## `TestLiveWrongValuesAgentJob` orders History by the second, flakily
+## Live tests leave non-backup files on 13 and 14
 
-Seen 2026-10-24 on 13 and 14, on `HEAD` as well as with A1: `History step ids
-[2 1 0], want [2 0 1]` about one run in four. The test assumes step 1 starts
-in the same second as the job, so `instance_id` puts the outcome row above
-it; when step 1 starts a second later its `run_time` sorts it first. `History`
-orders by `run_date, run_time, instance_id`, which is right; the test's
-expectation is what needs fixing (accept either order of the two rows when
-their times differ, or compare by `instance_id` alone).
-
-## Live tests leave their backup files behind on 13 and 14
-
-Found 2026-10-27 on win10cli\SQL2016. Ten `live_*_test.go` files delete the
-backup files they wrote with `EXEC master.dbo.xp_delete_files`, which only
-SQL Server 2019 (15) and later have. On 13 and 14 the call fails, the
-cleanup ignores the error, and every run leaves its `.bak`/`.trn` files in
-the default data folder (`TestLiveRestoreChain`'s five and
-`TestLiveRestorePlanWithFileAndMove`'s one were removed by hand).
-`master.sys.xp_delete_file 0, N'<file>'` — singular, every version — deletes
-one backup file (it checks the file is one) and is the likely replacement.
+`liveRemoveFile` (`live_remove_file_test.go`) cannot delete a file that is
+not a backup on 2016 or 2017 with `xp_cmdshell` off. `xp_delete_files` is
+2019+, and `xp_delete_file 0` refuses anything without a backup header. Such
+a file (a STANDBY undo `.dat`/`.tuf`, an `.xel`) is logged by name, not
+failed. On 2026-11-04 the data folders of win10cli\SQL2016 and \SQL2017
+held, between them, only `gosmo_restore_close_live_undo.dat` and
+`gossms_live_dropstate_standby.tuf`; remove them by hand on the host if
+wanted. Closing this needs `xp_cmdshell` enabled for the run, which the
+tests deliberately do not do.
 
 ## Audit specifications: the two scopes duplicate their write mechanics
 
@@ -368,19 +359,6 @@ error; windowKey …}` that each type builds, with the shared bodies taking it.
 Exported types and signatures stay the same; the write tests pin the
 statements. About 60 lines, no bug — do it only alongside another change in
 those files.
-
-## A database-scoped read wraps the `gosmo: USE` error a second time
-
-Found 2026-10-29 from gossms's `db info` (a login with no user in the
-database): `SpaceUsed` answered `gosmo: space used: gosmo: USE HealthClinic:
-mssql: … not able to access the database … (916)`. `Database.queryRow`/`query`
-already return the can't-enter failure prefixed (`proc_read.go`, `database.go`),
-and `SpaceUsed`'s `fmt.Errorf("gosmo: space used: %w")` adds a second prefix.
-`TestNoWrapOfAnAlreadyPrefixedError` misses it because the prefixed return is
-inside the query helpers' error path, not a `return` the test follows. Likely
-every `d.query`/`d.queryRow` caller that wraps does the same; the fix is in
-the helpers (return the bare error and let callers name the operation) or
-the test, not per call site.
 
 ## Agent schedules are addressed by id — settled, do not re-raise
 

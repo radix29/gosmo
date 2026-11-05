@@ -58,44 +58,17 @@ func dropXESessionAfter(t *testing.T, s *Server, db *sql.DB, name string) {
 	t.Cleanup(drop)
 }
 
-// deleteXEFiles deletes the files a dropped session's event_file wrote. T-SQL
-// has no file delete of its own, so it takes what the server offers without
-// changing its configuration: sys.xp_delete_files (2019 and later, Linux
-// included), else xp_cmdshell's del where it is already enabled. Anything
-// left is logged by name — a server offering neither (2016 and 2017 with
-// xp_cmdshell off) keeps the files, and the log says which. Runs after the
-// DROP, which closes the file the session was writing.
+// deleteXEFiles deletes the files a dropped session's event_file wrote,
+// through liveRemoveFile (which says what each server version can delete).
+// Runs after the DROP, which closes the file the session was writing.
 func deleteXEFiles(t *testing.T, s *Server, db *sql.DB, name string) {
 	t.Helper()
-	ctx := context.Background()
-	files, err := s.XEvents().Files(ctx, name+"*.xel")
-	if err != nil || len(files) == 0 {
-		if err != nil && !errors.Is(err, ErrUnsupported) {
-			t.Logf("cleanup: listing %s*.xel: %v", name, err)
-		}
-		return
-	}
-	var deleteFiles, cmdshell bool
-	if err := db.QueryRowContext(ctx, `
-SELECT CAST(CASE WHEN OBJECT_ID(N'master.sys.xp_delete_files') IS NULL THEN 0 ELSE 1 END AS bit),
-       CAST(ISNULL((SELECT value_in_use FROM sys.configurations WHERE name = N'xp_cmdshell'), 0) AS bit)`).
-		Scan(&deleteFiles, &cmdshell); err != nil {
-		t.Logf("cleanup: %v", err)
-		return
+	files, err := s.XEvents().Files(context.Background(), name+"*.xel")
+	if err != nil && !errors.Is(err, ErrUnsupported) {
+		t.Logf("cleanup: listing %s*.xel: %v", name, err)
 	}
 	for _, f := range files {
-		switch {
-		case deleteFiles:
-			_, err = db.ExecContext(ctx, "EXEC master.sys.xp_delete_files @p1", f)
-		case cmdshell:
-			_, err = db.ExecContext(ctx, "DECLARE @c nvarchar(4000) = N'del /q \"' + @p1 + N'\"'; EXEC master.sys.xp_cmdshell @c, no_output", f)
-		}
-		if err != nil {
-			t.Logf("cleanup: delete %s: %v", f, err)
-		}
-	}
-	if left, err := s.XEvents().Files(ctx, name+"*.xel"); err == nil && len(left) > 0 {
-		t.Logf("cleanup: left behind (no xp_delete_files, xp_cmdshell off): %q", left)
+		liveRemoveFile(t, db, f)
 	}
 }
 

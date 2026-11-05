@@ -57,9 +57,9 @@ func liveReadErrors(ctx context.Context, d *Database) map[string]error {
 	return out
 }
 
-// assertUseError checks err is the USE failure every database-scoped read has
-// always reported: gosmo's wrapping, and the server's error with its number
-// underneath. Inside a transaction the refusal has already ended it, so
+// assertUseError checks err is the EntryError every database-scoped read
+// reports for a database it cannot enter, with the server's error and its
+// number underneath. Inside a transaction the refusal has already ended it, so
 // recheckUse cannot run its USE and the server's error comes back unwrapped.
 func assertUseError(t *testing.T, what string, err error, dbName string, number int32) {
 	t.Helper()
@@ -74,8 +74,8 @@ func assertUseError(t *testing.T, what string, err error, dbName string, number 
 	if strings.HasPrefix(what, "in a transaction") {
 		return
 	}
-	if want := "gosmo: USE " + dbName + ": "; len(err.Error()) < len(want) || err.Error()[:len(want)] != want {
-		t.Errorf("%s: %q, want the %q prefix", what, err, want)
+	if ee, ok := errors.AsType[*EntryError](err); !ok || ee.Database != dbName {
+		t.Errorf("%s: %q, want an EntryError for %s", what, err, dbName)
 	}
 }
 

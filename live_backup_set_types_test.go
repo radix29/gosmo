@@ -46,7 +46,7 @@ func TestLiveBackupSetTypes(t *testing.T) {
 	}
 
 	device := liveBackupPath(t, srv, ctx, name+".bak")
-	defer db.ExecContext(context.Background(), "EXEC master.dbo.xp_delete_files @FilePath = N'"+device+"'")
+	defer liveRemoveFile(t, db, device)
 	to := " TO DISK = N'" + device + "' WITH "
 	sets := []struct {
 		stmt     string

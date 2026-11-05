@@ -104,7 +104,7 @@ func TestLiveLoginRefusal(t *testing.T) {
 		}
 		bak = strings.TrimRight(dir, `\/`) + sep + initDBLiveName + "_refusal.bak"
 		t.Cleanup(func() {
-			admin.exec(context.Background(), "EXEC master.sys.xp_delete_file 0, "+QuoteLiteral(bak))
+			liveRemoveFile(t, admin.db, bak)
 		})
 		return bak
 	}

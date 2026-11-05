@@ -170,8 +170,8 @@ func TestLiveProcWriteRefusesADatabaseItCannotEnter(t *testing.T) {
 				t.Errorf("%s, %s: write succeeded", what, writePath(rpc))
 				continue
 			}
-			if rpc && (num != want || !strings.HasPrefix(err.Error(), "gosmo: USE "+target.Name+": ")) {
-				t.Errorf("%s, execIn: err = %v, want Msg %d reported as gosmo: USE %s", what, err, want, target.Name)
+			if ee, ok := errors.AsType[*EntryError](err); rpc && (num != want || !ok || ee.Database != target.Name) {
+				t.Errorf("%s, execIn: err = %v, want Msg %d reported as an EntryError for %s", what, err, want, target.Name)
 			}
 		}
 		if n := strays(); n != 0 {

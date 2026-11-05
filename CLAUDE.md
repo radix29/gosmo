@@ -40,7 +40,10 @@ go vet -tags livedb ./...   # after any rename, and before a tag
 ```
 
 Plain `go`, no Makefile. `go test ./...` uses fakes (`captureConn`,
-`fakeQueryConn`) and needs no server. Real SQL behaviour must also run against
+`fakeQueryConn`) and needs no server. `gosmotest` is the exported one, for
+callers' tests (gossms's `object` commands): it is a library feature, so a
+change to how gosmo sends a database read (`procRead`, `useBatch`) must keep
+`gosmotest`'s unwrapping and `gosmotest_test.go` in step. Real SQL behaviour must also run against
 a live instance (details not in the repo; ask): create throwaway objects,
 exercise the write, drop them; never mutate pre-existing objects.
 

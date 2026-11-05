@@ -263,16 +263,17 @@ func TestDatabaseReadIsOneBatch(t *testing.T) {
 }
 
 // A batch whose USE fails must still report the error every database-scoped
-// call always has — wrapped as a USE failure, with the server's own error
-// reachable underneath — which the batch cannot tell apart from a failure in
-// the query. So a failing batch runs the USE alone to tell them apart.
+// call does — an EntryError, with the server's own error reachable
+// underneath — which the batch cannot tell apart from a failure in the
+// query. So a failing batch runs the USE alone to tell them apart.
 func TestDatabaseReadReportsAFailedUseAsBefore(t *testing.T) {
 	d := useTestDB(t)
 	serverErr := errors.New("Database 'App]DB' does not exist. (911)")
 	qErr, rowErr := readBothInTx(d, func() { useState.failBatch, useState.failUse = serverErr, serverErr })
 	for name, err := range map[string]error{"query": qErr, "queryRow": rowErr} {
-		if err == nil || err.Error() != "gosmo: USE App]DB: "+serverErr.Error() || !errors.Is(err, serverErr) {
-			t.Errorf("%s error = %v, want %q wrapping the server's", name, err, "gosmo: USE App]DB: "+serverErr.Error())
+		ee, ok := errors.AsType[*EntryError](err)
+		if !ok || ee.Database != "App]DB" || err.Error() != "cannot enter database App]DB: "+serverErr.Error() || !errors.Is(err, serverErr) {
+			t.Errorf("%s error = %v, want an EntryError %q wrapping the server's", name, err, "cannot enter database App]DB: "+serverErr.Error())
 		}
 	}
 	for _, s := range useState.stmts {

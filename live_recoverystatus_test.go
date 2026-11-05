@@ -95,7 +95,7 @@ func TestLiveRecoveryStatusTracksTheLogBackupChain(t *testing.T) {
 	}
 
 	device := liveBackupPath(t, srv, ctx, name+".bak")
-	defer db.ExecContext(context.Background(), "EXEC master.dbo.xp_delete_files @FilePath = N'"+device+"'")
+	defer liveRemoveFile(t, db, device)
 	defer db.ExecContext(context.Background(), "EXEC msdb.dbo.sp_delete_database_backuphistory @database_name = N'"+name+"'")
 
 	// A COPY_ONLY full sets no differential base and starts no chain: the

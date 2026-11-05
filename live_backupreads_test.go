@@ -55,10 +55,7 @@ func liveBackupDevice(t *testing.T, db *sql.DB, ctx context.Context, dir string,
 	}
 	return device, func() {
 		c := context.Background()
-		// xp_delete_files is best effort: the file is named and lives beside
-		// the test databases' own files, so a server without it leaves one
-		// obvious artifact rather than a mystery.
-		db.ExecContext(c, `EXEC master.sys.xp_delete_files N'`+device+`'`)
+		liveRemoveFile(t, db, device)
 		// And take this run's rows back out of msdb, so the server is left
 		// as it was found.
 		for _, d := range []*Database{first, second} {
@@ -207,8 +204,8 @@ func TestLiveBackupReads(t *testing.T) {
 	// stripe alone is refused.
 	t.Run("striped", func(t *testing.T) {
 		s1, s2 := device+".s1", device+".s2"
-		defer db.ExecContext(context.Background(), `EXEC master.sys.xp_delete_files N'`+s1+`'`)
-		defer db.ExecContext(context.Background(), `EXEC master.sys.xp_delete_files N'`+s2+`'`)
+		defer liveRemoveFile(t, db, s1)
+		defer liveRemoveFile(t, db, s2)
 		if _, err := db.ExecContext(ctx, `BACKUP DATABASE [`+second.Name+`] TO DISK = N'`+s1+`', DISK = N'`+s2+`' WITH INIT, COPY_ONLY`); err != nil {
 			t.Fatalf("striped backup: %v", err)
 		}

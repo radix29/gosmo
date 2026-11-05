@@ -167,7 +167,7 @@ func (t *serverTx) serverConn(ctx context.Context) (sqlConn, error) {
 	if t.home != "" && !t.in(t.home) {
 		if _, err := t.tx.ExecContext(ctx, "USE "+quoteIdent(t.home)); err != nil {
 			t.lost()
-			return nil, fmt.Errorf("gosmo: USE %s: %w", t.home, err)
+			return nil, &EntryError{Database: t.home, Err: err}
 		}
 		t.at(t.home)
 	}
