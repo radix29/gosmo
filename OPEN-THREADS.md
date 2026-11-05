@@ -218,7 +218,7 @@ system-defined constraints' and indexes' (AS FILETABLE names those afresh).
 A `sql_variant` base type without a case in `extPropType` is a comment, not
 a statement — none known to exist.
 
-## `ScriptTable` is 8–11 round trips — considered, not batched
+## `ScriptTable` is 8–12 round trips — considered, not batched
 
 gossms review plan G15 (2026-10-08) batched `LocalPublications`,
 `LocalSubscriptions` and `UserMappingsIn` into one round trip after the
@@ -226,8 +226,9 @@ database list (`perDatabaseBatch`). `ScriptTable` was looked at in the same
 pass and left alone: it reads through the public `TableByName`,
 `scriptOptions`, `Columns`, `Indexes` (two queries), `ForeignKeys`,
 `CheckConstraints`, `DataSpace` and, by kind, `EdgeConstraints` and the
-schema-bound/referencing reads a DROP needs — plus, since 2026-10-13, one
-for the extended properties. Batching means splitting each into
+schema-bound/referencing reads a DROP needs (with, since 2026-11-05, a
+VIEW DEFINITION probe when no dependent is listed) — plus, since 2026-10-13,
+one for the extended properties. Batching means splitting each into
 a select list and a scanner and reading them as one multi-result-set batch, as
 `Database.catalog` does — every family's scan code moves, for one
 user-triggered script per table. Worth doing only if a whole-database script

@@ -40,7 +40,7 @@ func (sc *Scripter) ScriptTable(ctx context.Context, schema, name string) (strin
 		return "", err
 	}
 	if v := sc.opts.verb(); !p.table.IsExternal && (v == ScriptDrop || v == ScriptDropAndCreate) {
-		if p.boundBy, err = t.schemaBoundDependents(ctx); err != nil {
+		if p.boundBy, p.boundByHidden, err = t.schemaBoundDependents(ctx); err != nil {
 			return "", err
 		}
 		if p.referencedBy, err = t.referencingForeignKeys(ctx); err != nil {
@@ -114,6 +114,10 @@ type tableScriptParts struct {
 	// script that has one.
 	boundBy      []schemaBoundDependent
 	referencedBy []referencingForeignKey
+	// boundByHidden is a login that could not read boundBy: without VIEW
+	// DEFINITION on the database, sys.sql_expression_dependencies shows no
+	// rows at all, so an empty boundBy says nothing.
+	boundByHidden bool
 }
 
 // tableScriptOptions is what a CREATE TABLE says about the table as a whole
@@ -307,7 +311,7 @@ func buildTableScript(schema, name, dbName string, p tableScriptParts, opts Scri
 	// switched off first. The history table is left in place, so a DROP
 	// And CREATE reattaches it by name and keeps the history.
 	var drop strings.Builder
-	drop.WriteString(schemaBoundNote(fullName, p.boundBy))
+	drop.WriteString(schemaBoundNote(fullName, p.boundBy, p.boundByHidden))
 	drop.WriteString(referencingForeignKeyNote(fullName, p.referencedBy, p.table.SystemVersioned))
 	if p.table.SystemVersioned {
 		if opts.IncludeIfNotExists {
@@ -483,7 +487,14 @@ type schemaBoundDependent struct {
 // schemaBoundDependents lists the modules schema-bound to t, other than its
 // own triggers (a natively compiled trigger is schema-bound to its table, and
 // DROP TABLE takes it along rather than refusing).
-func (t *Table) schemaBoundDependents(ctx context.Context) ([]schemaBoundDependent, error) {
+//
+// hidden reports that the login could not read them: without VIEW DEFINITION
+// on the database the view returns no rows at all (Database.HasPermission),
+// so an empty list is then no answer. Without SELECT on the view, which
+// public lacks and db_datareader has, the read is refused outright (Msg 229),
+// and that error is returned. The probe runs only when the list is empty: a
+// row at all means the permission is held.
+func (t *Table) schemaBoundDependents(ctx context.Context) (deps []schemaBoundDependent, hidden bool, err error) {
 	const q = `
 SELECT DISTINCT SCHEMA_NAME(o.schema_id), o.name, o.type_desc,
        CAST(ISNULL(m.uses_native_compilation, 0) AS bit)
@@ -494,11 +505,19 @@ WHERE  sed.referenced_id = @p1 AND sed.is_schema_bound_reference = 1
   AND  o.object_id <> @p1 AND o.parent_object_id <> @p1
 ORDER  BY 1, 2`
 	rows, err := t.db.query(ctx, q, t.ObjectID)
-	return scanRows(rows, err, fmt.Sprintf("schema-bound dependents of %s", t.FullName()), func(scan func(...any) error) (schemaBoundDependent, error) {
+	deps, err = scanRows(rows, err, fmt.Sprintf("schema-bound dependents of %s", t.FullName()), func(scan func(...any) error) (schemaBoundDependent, error) {
 		var d schemaBoundDependent
 		err := scan(&d.schema, &d.name, &d.typeDesc, &d.native)
 		return d, err
 	})
+	if err != nil || len(deps) > 0 {
+		return deps, false, err
+	}
+	visible, err := t.db.HasPermission(ctx, "VIEW DEFINITION")
+	if err != nil {
+		return nil, false, fmt.Errorf("gosmo: schema-bound dependents of %s: %w", t.FullName(), err)
+	}
+	return nil, !visible, nil
 }
 
 // schemaBoundNote is a comment ahead of a table's DROP naming the modules
@@ -509,7 +528,17 @@ ORDER  BY 1, 2`
 // it was (its DROP then fails with Msg 13552). The script names them rather
 // than dropping them: they are other objects, with their own permissions,
 // and SSMS's table script does not touch them either.
-func schemaBoundNote(fullName string, deps []schemaBoundDependent) string {
+//
+// hidden is a login that could not read them (see schemaBoundDependents):
+// the note then says so rather than going missing, which would read as
+// "nothing blocks this DROP". A comment, not a refusal: the script is still
+// right, and its CREATE half needs no such read.
+func schemaBoundNote(fullName string, deps []schemaBoundDependent, hidden bool) string {
+	if hidden {
+		return fmt.Sprintf("-- Could not check what is schema-bound to %s: without VIEW DEFINITION on\n"+
+			"-- the database, sys.sql_expression_dependencies lists nothing. A module\n"+
+			"-- schema-bound to it makes this DROP fail with Msg 3729.\n", tsql.CommentSafe(fullName))
+	}
 	if len(deps) == 0 {
 		return ""
 	}

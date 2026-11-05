@@ -338,7 +338,7 @@ func TestScripterExistenceGuardsBracketQuoteTheObjectName(t *testing.T) {
 			t.Fatalf("sql.Open: %v", err)
 		}
 		t.Cleanup(func() { db.Close() })
-		captured.reset(tableMetadataRow(schema, name))
+		captured.reset(tableMetadataRow(schema, name), viewDefinitionRow(true))
 
 		d := &Database{server: &Server{db: db}, Name: "testdb"}
 		out, err := NewScripter(d, opts).ScriptTable(context.Background(), schema, name)

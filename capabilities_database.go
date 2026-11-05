@@ -510,6 +510,27 @@ func (c *DatabaseCapabilities) Permits(name string) bool {
 	return c.Accessible && c.Allows(name)
 }
 
+// HasPermission reports whether the login holds permission on d as a whole
+// (HAS_PERMS_BY_NAME at database scope; false for a name SQL Server does not
+// know): one probe, where Capabilities reads every probed permission, role
+// and schema at once.
+//
+// The case that needs it is VIEW DEFINITION, on which
+// sys.sql_expression_dependencies and sys.dm_sql_referencing_entities are
+// all-or-nothing: a login without it database-wide — db_datareader, say —
+// reads both and gets no rows at all, even with VIEW DEFINITION on the
+// objects or their schema (checked on 17, 2026-11-05). An empty dependency
+// list means nothing until this answers true.
+func (d *Database) HasPermission(ctx context.Context, permission string) (bool, error) {
+	var held bool
+	err := d.queryRow(ctx, func(row *sql.Row) error { return row.Scan(&held) },
+		`SELECT CAST(ISNULL(HAS_PERMS_BY_NAME(DB_NAME(), 'DATABASE', @p1), 0) AS bit)`, permission)
+	if err != nil {
+		return false, fmt.Errorf("gosmo: probe %s on database %q: %w", permission, d.Name, err)
+	}
+	return held, nil
+}
+
 // Capabilities reports what the connected login may do inside d.
 //
 // Accessibility is settled first, at the *server* scope, and an inaccessible
