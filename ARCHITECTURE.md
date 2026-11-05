@@ -381,7 +381,7 @@ The instance and database halves pair up: `ServerResourceStat` and
 | Log backup chain state    | `srv.DatabaseRecoveryStatuses(ctx)` / `db.RecoveryStatus(ctx)` → `*DatabaseRecoveryStatus` |
 | What may this login do?   | `srv.Capabilities(ctx)` → `*Capabilities` — see [Capabilities](#capabilities-of-the-connected-login) |
 | Wrap a `*sql.DB` you already have | `gosmo.NewServer(ctx, db)` — the inverse of `srv.DB()` |
-| Test code that calls gosmo, without a server | `f := gosmotest.New(t)`, `f.On(text, gosmotest.Rows(…))`, then `f.Server()` (one shared) or `f.Connect(ctx)` (one per dial): real gosmo over canned rows, positional in the query's SELECT order; a database read's transport (`[db].sys.sp_executesql`, a `USE` batch) is stripped before matching, and a query no rule answers fails the test naming it |
+| Test code that calls gosmo, without a server | `f := gosmotest.New(t)`, `f.On(text, gosmotest.Rows(…))`, then `f.Server()` (one shared) or `f.Connect(ctx)` (one per dial): real gosmo over canned rows, positional in the query's SELECT order; a database read's transport (`[db].sys.sp_executesql`, a `USE` batch) is stripped before matching, and a query no rule answers fails the test naming it; a write (an Exec, or a BACKUP/RESTORE reading progress messages, `Query.Messages`) needs no rule, a bulk load is one recorded Exec per row |
 
 ### Database
 

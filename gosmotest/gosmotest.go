@@ -32,6 +32,20 @@
 // default rules, answered from Fake.Info, which a test may change before
 // its first call to Server.
 //
+// A query sent with a sqlexp.ReturnMessage — gosmo's BACKUP and RESTORE,
+// which read the server's progress messages — is a write as an Exec is
+// (Query.Messages; no rule needed), and gets its rule's answer as that
+// message stream, as go-mssqldb delivers it: the result sets in turn, or a
+// rule's Err as the stream's error messages (an mssql.Error's All one
+// message each) rather than the query's error.
+//
+// A bulk load (gosmo.Database.BulkInsert) arrives as one Exec per row, its
+// Text the driver's "INSERTBULK {…}" statement and its Args the row; a
+// rule that fails one fails the load there. The load's closing flush
+// reports the rows it was sent. The switch into the target database such a
+// call makes on its own session is answered by the Fake itself, so the
+// rows' Query.Database is the table's.
+//
 // A Fake is safe for concurrent use.
 package gosmotest
 
@@ -47,6 +61,8 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/golang-sql/sqlexp"
+	mssql "github.com/microsoft/go-mssqldb"
 	"github.com/radix29/gosmo"
 )
 
@@ -64,6 +80,7 @@ type Info struct {
 	DataPath       string
 	LogPath        string
 	BackupPath     string
+	HADREnabled    bool // SERVERPROPERTY('IsHadrEnabled'): Always On availability groups enabled
 }
 
 // DefaultInfo is a SQL Server 2022 Developer Edition on Linux, logged in as sa.
@@ -90,6 +107,9 @@ type Query struct {
 	Text     string // the statement, the transport stripped
 	Args     []any  // its parameters' values, @p1 first: an int as int64, as database/sql converts it
 	Exec     bool   // sent through Exec, not Query
+	// Messages is a query sent with a sqlexp.ReturnMessage, reading the
+	// server's messages as it runs: a BACKUP or RESTORE with progress.
+	Messages bool
 }
 
 // Arg is the value of parameter @p(i+1), nil when there are fewer.
@@ -173,11 +193,19 @@ func New(t testing.TB) *Fake {
 		{contains("SERVERPROPERTY('ServerName')"), func(Query) Result {
 			i := f.Info
 			return Result{Sets: []Set{{Rows: [][]any{{i.Name, i.Edition, i.ProductVersion, i.ProductLevel, i.Collation,
-				int64(0), int64(0), int64(0), int64(i.EngineEdition), i.Version, i.DataPath, i.LogPath, i.BackupPath, i.Login}}}}}
+				int64(0), boolInt(i.HADREnabled), int64(0), int64(i.EngineEdition), i.Version, i.DataPath, i.LogPath, i.BackupPath, i.Login}}}}}
 		}},
 		{contains("FROM   sys.dm_os_sys_info"), Rows([]any{int64(16384), int64(8)})},
 	}
 	return f
+}
+
+// boolInt is b as the INT a CAST(SERVERPROPERTY(…) AS INT) flag reads.
+func boolInt(b bool) int64 {
+	if b {
+		return 1
+	}
+	return 0
 }
 
 func contains(s string) func(Query) bool {
@@ -281,6 +309,8 @@ func (d drv) Open(string) (driver.Conn, error) { return &conn{f: d.f}, nil }
 type conn struct {
 	f  *Fake
 	db string
+	// msgq is the ReturnMessage the next query's answer goes to, if any.
+	msgq *sqlexp.ReturnMessage
 }
 
 var (
@@ -290,9 +320,14 @@ var (
 	_ driver.ConnBeginTx       = (*conn)(nil)
 )
 
-func (c *conn) Prepare(q string) (driver.Stmt, error) { return stmt{c, q}, nil }
-func (c *conn) Close() error                          { return nil }
-func (c *conn) Begin() (driver.Tx, error)             { return tx{}, nil }
+func (c *conn) Prepare(q string) (driver.Stmt, error) {
+	if strings.HasPrefix(q, bulkPrefix) {
+		return &bulkStmt{c: c, q: q}, nil
+	}
+	return stmt{c, q}, nil
+}
+func (c *conn) Close() error              { return nil }
+func (c *conn) Begin() (driver.Tx, error) { return tx{}, nil }
 func (c *conn) BeginTx(context.Context, driver.TxOptions) (driver.Tx, error) {
 	return tx{}, nil
 }
@@ -300,8 +335,15 @@ func (c *conn) BeginTx(context.Context, driver.TxOptions) (driver.Tx, error) {
 // CheckNamedValue converts an argument as database/sql's default converter
 // does, so a rule sees an int as int64 and an mssql.VarChar as its string,
 // and passes through as sent what that converter refuses (a sql.Out) rather
-// than failing the query.
+// than failing the query. A sqlexp.ReturnMessage is no argument: it is
+// where the query's answer goes (messages).
 func (c *conn) CheckNamedValue(nv *driver.NamedValue) error {
+	if m, ok := nv.Value.(*sqlexp.ReturnMessage); ok {
+		// As go-mssqldb takes it: kept for the query, not an argument.
+		sqlexp.ReturnMessageInit(m)
+		c.msgq = m
+		return driver.ErrRemoveArgument
+	}
 	if v, err := driver.DefaultParameterConverter.ConvertValue(nv.Value); err == nil {
 		nv.Value = v
 	}
@@ -309,14 +351,23 @@ func (c *conn) CheckNamedValue(nv *driver.NamedValue) error {
 }
 
 func (c *conn) QueryContext(_ context.Context, q string, args []driver.NamedValue) (driver.Rows, error) {
+	if rest, found := strings.CutPrefix(q, sessionSwitch); found {
+		return c.switchSession(rest)
+	}
+	msgq := c.msgq
+	c.msgq = nil
 	query, ok := c.unwrap(q, args)
 	if !ok {
 		return &rows{}, nil // a bare USE
 	}
+	query.Messages = msgq != nil
 	res, found := c.f.answer(query)
+	if msgq != nil {
+		return messages(msgq, res)
+	}
 	if !found {
 		c.f.t.Errorf("gosmotest: no rule answers the query %s", query)
-		return nil, fmt.Errorf("%w: %s", ErrNoRule, query)
+		res.Err = fmt.Errorf("%w: %s", ErrNoRule, query)
 	}
 	if res.Err != nil {
 		return nil, res.Err
@@ -365,6 +416,26 @@ func (c *conn) unwrap(q string, args []driver.NamedValue) (Query, bool) {
 	return Query{Database: c.db, Text: q, Args: vals}, true
 }
 
+// sessionSwitch opens the batch a call holding its own session sends to
+// move it into its database (gosmo's withSessionIn), reading back the
+// database it left: "…; USE [db]; IF @@ERROR <> 0 RETURN; SELECT @home".
+const sessionSwitch = "DECLARE @home sysname = DB_NAME(); "
+
+// switchSession moves c into the database rest's USE names and answers the
+// one it was in, master for a session that never moved.
+func (c *conn) switchSession(rest string) (driver.Rows, error) {
+	use, _, found := strings.Cut(rest, useGuard)
+	if !found || !strings.HasPrefix(use, "USE ") {
+		return nil, fmt.Errorf("gosmotest: unrecognised session switch %q", rest)
+	}
+	home := c.db
+	if home == "" {
+		home = "master"
+	}
+	c.db = unbracket(strings.TrimPrefix(use, "USE "))
+	return newRows([]Set{{Rows: [][]any{{home}}}})
+}
+
 func unbracket(name string) string { return gosmo.UnquoteName(name) }
 
 type stmt struct {
@@ -379,6 +450,82 @@ func (s stmt) Exec(args []driver.Value) (driver.Result, error) {
 }
 func (s stmt) Query(args []driver.Value) (driver.Rows, error) {
 	return s.c.QueryContext(context.Background(), s.q, named(args))
+}
+
+// messages delivers res through m as go-mssqldb does: each result set
+// announced (MsgNext) and closed (MsgNextResultSet), or the error as a
+// MsgError and the close — the last close is the one after which
+// rows.NextResultSet reports no more. The queue is bounded, so a reader
+// that drains it as it goes is fed from a goroutine.
+func messages(m *sqlexp.ReturnMessage, res Result) (driver.Rows, error) {
+	sets := res.Sets
+	if res.Err != nil {
+		sets = nil
+	}
+	r, err := newRows(sets)
+	if err != nil {
+		return nil, err
+	}
+	go func() {
+		ctx := context.Background()
+		for _, err := range streamErrors(res.Err) {
+			_ = sqlexp.ReturnMessageEnqueue(ctx, m, sqlexp.MsgError{Error: err})
+		}
+		for range sets {
+			_ = sqlexp.ReturnMessageEnqueue(ctx, m, sqlexp.MsgNext{})
+			_ = sqlexp.ReturnMessageEnqueue(ctx, m, sqlexp.MsgNextResultSet{})
+		}
+		if len(sets) == 0 {
+			_ = sqlexp.ReturnMessageEnqueue(ctx, m, sqlexp.MsgNextResultSet{})
+		}
+	}()
+	return r, nil
+}
+
+// streamErrors is err as the message stream carries it: a server error
+// with several messages (mssql.Error.All) as one message each, as the
+// server sends them; any other error as itself.
+func streamErrors(err error) []error {
+	if err == nil {
+		return nil
+	}
+	se, ok := errors.AsType[mssql.Error](err)
+	if !ok || len(se.All) == 0 {
+		return []error{err}
+	}
+	out := make([]error, len(se.All))
+	for i, e := range se.All {
+		out[i] = e
+	}
+	return out
+}
+
+// bulkPrefix opens the statement go-mssqldb's CopyIn makes for a bulk load.
+const bulkPrefix = "INSERTBULK "
+
+// bulkStmt is a prepared bulk load: each Exec with values is a row,
+// recorded and answered as any Exec; the Exec with none is the flush, which
+// reports the rows sent.
+type bulkStmt struct {
+	c    *conn
+	q    string
+	rows int64
+}
+
+func (s *bulkStmt) Close() error  { return nil }
+func (s *bulkStmt) NumInput() int { return -1 }
+func (s *bulkStmt) Exec(args []driver.Value) (driver.Result, error) {
+	if len(args) == 0 {
+		return driver.RowsAffected(s.rows), nil
+	}
+	if _, err := s.c.ExecContext(context.Background(), s.q, named(args)); err != nil {
+		return nil, err
+	}
+	s.rows++
+	return driver.RowsAffected(1), nil
+}
+func (s *bulkStmt) Query([]driver.Value) (driver.Rows, error) {
+	return nil, errors.New("gosmotest: a bulk load is not queried")
 }
 
 func named(args []driver.Value) []driver.NamedValue {

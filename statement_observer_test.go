@@ -202,3 +202,31 @@ func TestObserverSeesBoundTextFromTheScanWrites(t *testing.T) {
 		}
 	}
 }
+
+// What the observer reports for a real run, added to a collector, renders
+// as the script WithScript captures for the same writes: the dry-run
+// preview and the record of what ran compare as text.
+func TestObservedEntriesAddedRenderAsTheScriptedRun(t *testing.T) {
+	writes := func(ctx context.Context, srv *Server) {
+		t.Helper()
+		if _, err := srv.DatabaseRef("sales").exec(ctx, "EXEC sp_x @p1", "it's"); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := srv.exec(ctx, "DROP DATABASE [old]"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	srv := auditServer(t, &auditScript{})
+	sctx, scripted := WithScript(context.Background())
+	writes(sctx, srv)
+
+	ran := &ScriptCollector{}
+	writes(WithStatementObserver(context.Background(), func(e ScriptEntry) { ran.Add(e) }), srv)
+	if ran.Len() != 2 || ran.String() != scripted.String() {
+		t.Errorf("observed and added:\n%s\nscripted:\n%s", ran.String(), scripted.String())
+	}
+	ran.Add()
+	if ran.Len() != 2 {
+		t.Errorf("Add() with nothing: %d entries", ran.Len())
+	}
+}

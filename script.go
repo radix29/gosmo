@@ -63,6 +63,16 @@ func (c *ScriptCollector) append(e ScriptEntry) {
 	c.entries = append(c.entries, e)
 }
 
+// Add appends entries as if they had been captured, in order. It is for
+// statements gathered elsewhere — those a WithStatementObserver reported as
+// they ran — so String renders them as the script WithScript would have
+// produced: a dry run's preview and the real run's record compare as text.
+func (c *ScriptCollector) Add(entries ...ScriptEntry) {
+	for _, e := range entries {
+		c.append(e)
+	}
+}
+
 // Entries returns a copy of every captured entry, in capture order.
 func (c *ScriptCollector) Entries() []ScriptEntry {
 	c.mu.Lock()

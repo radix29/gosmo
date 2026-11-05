@@ -22,9 +22,10 @@ func objectRow(id int, schema, name, typ, desc string) []any {
 func TestConnectReadsInfo(t *testing.T) {
 	f := gosmotest.New(t)
 	f.Info.ProductVersion = "13.0.6300.2"
+	f.Info.HADREnabled = true
 	s := f.Server()
 	info := s.Info()
-	if info.VersionMajor != 13 || info.Login != "sa" || info.Platform != "Linux" || info.LogicalCPUCount != 8 {
+	if info.VersionMajor != 13 || info.Login != "sa" || info.Platform != "Linux" || info.LogicalCPUCount != 8 || !info.IsHADREnabled {
 		t.Errorf("info %+v", info)
 	}
 	if f.Server() != s {
@@ -159,5 +160,72 @@ func TestRowWidthIsChecked(t *testing.T) {
 	f.On("q", gosmotest.Sets(gosmotest.Set{Columns: []string{"a", "b"}, Rows: [][]any{{1}}}))
 	if _, err := f.Server().DB().QueryContext(context.Background(), "q"); err == nil || !strings.Contains(err.Error(), "row 1 has 1 values") {
 		t.Errorf("err %v", err)
+	}
+}
+
+// A bulk load is one recorded Exec per row in the table's database; the
+// flush reports the rows sent, and a rule failing a row stops the load there.
+func TestBulkInsert(t *testing.T) {
+	f := gosmotest.New(t)
+	f.On("WHERE c.object_id = OBJECT_ID(@p1)", func(q gosmotest.Query) gosmotest.Result {
+		if q.Database != "app" {
+			return gosmotest.Result{}
+		}
+		return gosmotest.Result{Sets: []gosmotest.Set{{Rows: [][]any{
+			{"id", "int", 4, 10, 0, 0, 1252}, {"name", "nvarchar", 40, 0, 0, 1252, 1252},
+		}}}}
+	})
+	rows := func(n int) func(func([]any, error) bool) {
+		return func(yield func([]any, error) bool) {
+			for i := range n {
+				if !yield([]any{int64(i + 1), fmt.Sprint("r", i+1)}, nil) {
+					return
+				}
+			}
+		}
+	}
+	bc := gosmo.BulkCopy{Schema: "dbo", Table: "t", Columns: []string{"id", "name"}}
+	n, err := f.Server().DatabaseRef("app").BulkInsert(context.Background(), bc, rows(3))
+	if err != nil || n != 3 {
+		t.Fatalf("loaded %d, %v", n, err)
+	}
+	var loaded []gosmotest.Query
+	for _, q := range f.Queries() {
+		if strings.HasPrefix(q.Text, "INSERTBULK ") {
+			loaded = append(loaded, q)
+		}
+	}
+	if len(loaded) != 3 || loaded[2].Database != "app" || !loaded[2].Exec || loaded[2].Arg(1) != "r3" {
+		t.Errorf("rows %+v", loaded)
+	}
+
+	f.OnFunc(func(q gosmotest.Query) bool { return strings.HasPrefix(q.Text, "INSERTBULK ") && q.Arg(0) == int64(2) },
+		gosmotest.Fail(mssql.Error{Number: 515, Class: 16, Message: "Cannot insert the value NULL"}))
+	n, err = f.Server().DatabaseRef("app").BulkInsert(context.Background(), bc, rows(3))
+	if se, ok := gosmo.AsSQLError(err); !ok || se.Number != 515 || n != 1 {
+		t.Errorf("failed load: %d, %v", n, err)
+	}
+}
+
+// A write that reads the server's progress messages (a BACKUP with
+// Progress) gets its answer as that stream: success, or the rule's error as
+// the server's — the cause and the closing Msg 3013 both.
+func TestProgressMessages(t *testing.T) {
+	f := gosmotest.New(t)
+	opts := gosmo.BackupOptions{Database: "app", Devices: []gosmo.BackupTarget{gosmo.DiskTarget("/b/app.bak")},
+		Progress: func(int, string) {}}
+	if err := f.Server().Backup(context.Background(), opts); err != nil {
+		t.Fatal(err)
+	}
+	last := f.Queries()[len(f.Queries())-1]
+	if last.Text != "BACKUP DATABASE [app] TO DISK = N'/b/app.bak' WITH STATS = 10" || last.Exec || !last.Messages || len(last.Args) != 0 {
+		t.Errorf("recorded %+v", last)
+	}
+
+	f.On("BACKUP DATABASE", gosmotest.Fail(mssql.Error{Number: 3013, Class: 16, Message: "BACKUP DATABASE is terminating abnormally.",
+		All: []mssql.Error{{Number: 3201, Class: 16, Message: "Cannot open backup device"}, {Number: 3013, Class: 16}}}))
+	err := f.Server().Backup(context.Background(), opts)
+	if se, ok := gosmo.AsSQLError(err); !ok || se.Number != 3013 || len(se.All) != 2 || se.All[0].Number != 3201 {
+		t.Errorf("refused backup: %v", err)
 	}
 }
