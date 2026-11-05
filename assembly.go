@@ -42,7 +42,9 @@ type Assembly struct {
 	// DEFINITION on.
 	ClrName string
 
-	// PermissionSet is the host policy, as permission_set_desc reports it.
+	// PermissionSet is the host policy, as one of the three constants above —
+	// the CREATE ASSEMBLY keyword, not permission_set_desc's SAFE_ACCESS or
+	// UNSAFE_ACCESS, which no statement accepts.
 	PermissionSet AssemblyPermissionSet
 
 	// IsVisible reports whether the assembly's routines can be bound to by
@@ -97,8 +99,22 @@ func scanAssembly(d *Database, scan func(...any) error) (*Assembly, error) {
 		&a.CreateDate, &a.ModifyDate); err != nil {
 		return nil, err
 	}
-	a.PermissionSet = AssemblyPermissionSet(permSet)
+	a.PermissionSet = assemblyPermissionSet(permSet)
 	return a, nil
+}
+
+// assemblyPermissionSet maps permission_set_desc onto the CREATE ASSEMBLY
+// keyword: the catalog says SAFE_ACCESS and UNSAFE_ACCESS, which a script
+// emitted verbatim fails to parse (Msg 102, verified on 17, 2026-11-05), and
+// which never equal AssemblySafe or AssemblyUnsafe. EXTERNAL_ACCESS is both.
+func assemblyPermissionSet(desc string) AssemblyPermissionSet {
+	switch desc {
+	case "SAFE_ACCESS":
+		return AssemblySafe
+	case "UNSAFE_ACCESS":
+		return AssemblyUnsafe
+	}
+	return AssemblyPermissionSet(desc)
 }
 
 // Assemblies returns the CLR assemblies registered in the database.

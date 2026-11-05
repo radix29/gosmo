@@ -287,7 +287,9 @@ func tableTypeIndex(idx *Index, memoryOptimized bool) string {
 // CLR types  (CREATE TYPE ... EXTERNAL NAME)
 // ============================================================
 
-// ScriptClrType generates the CREATE (or DROP) script for one CLR type.
+// ScriptClrType generates the CREATE (or DROP) script for one CLR type,
+// with its extended properties (ScriptOptions.ExtendedProperties) — class 6,
+// as an alias type's.
 func (sc *Scripter) ScriptClrType(ctx context.Context, schema, name string) (string, error) {
 	if err := requireSchema("script clr type", schema, name); err != nil {
 		return "", err
@@ -296,7 +298,8 @@ func (sc *Scripter) ScriptClrType(ctx context.Context, schema, name string) (str
 	if err != nil {
 		return "", err
 	}
-	return buildClrTypeScript(t, sc.opts), nil
+	return sc.withExtendedPropertiesAt(ctx, buildClrTypeScript(t, sc.opts), "type "+qualifiedName(t.Schema, t.Name),
+		6, t.UserTypeID, ExtendedPropertyLevel{Level0Type: "SCHEMA", Level0Name: t.Schema, Level1Type: "TYPE", Level1Name: t.Name})
 }
 
 // buildClrTypeScript assembles one CLR type's script. The CREATE names the
@@ -375,7 +378,8 @@ func xmlSchemaCollectionGuard(c *XMLSchemaCollection, sense string) string {
 // Rules and defaults
 // ============================================================
 
-// ScriptRule generates the CREATE (or DROP) script for one rule.
+// ScriptRule generates the CREATE (or DROP) script for one rule, with its
+// extended properties (ScriptOptions.ExtendedProperties).
 func (sc *Scripter) ScriptRule(ctx context.Context, schema, name string) (string, error) {
 	if err := requireSchema("script rule", schema, name); err != nil {
 		return "", err
@@ -384,11 +388,18 @@ func (sc *Scripter) ScriptRule(ctx context.Context, schema, name string) (string
 	if err != nil {
 		return "", err
 	}
-	return buildBoundObjectScript("RULE", schema, name, def, sc.opts), nil
+	return sc.withBoundObjectExtendedProperties(ctx, "RULE", schema, name, def,
+		func() (int, error) {
+			r, err := sc.db.RuleByName(ctx, schema, name)
+			if err != nil {
+				return 0, err
+			}
+			return r.ObjectID, nil
+		})
 }
 
 // ScriptDefault generates the CREATE (or DROP) script for one standalone
-// default.
+// default, with its extended properties (ScriptOptions.ExtendedProperties).
 func (sc *Scripter) ScriptDefault(ctx context.Context, schema, name string) (string, error) {
 	if err := requireSchema("script default", schema, name); err != nil {
 		return "", err
@@ -397,7 +408,33 @@ func (sc *Scripter) ScriptDefault(ctx context.Context, schema, name string) (str
 	if err != nil {
 		return "", err
 	}
-	return buildBoundObjectScript("DEFAULT", schema, name, def, sc.opts), nil
+	return sc.withBoundObjectExtendedProperties(ctx, "DEFAULT", schema, name, def,
+		func() (int, error) {
+			df, err := sc.db.DefaultByName(ctx, schema, name)
+			if err != nil {
+				return 0, err
+			}
+			return df.ObjectID, nil
+		})
+}
+
+// withBoundObjectExtendedProperties is buildBoundObjectScript's script with
+// the object's own properties (class 1) after it. objectID reads the id they
+// are keyed by, only when they are wanted: Definition reads the text alone.
+// An encrypted object's script creates nothing — it is a comment — so it
+// carries none either: each would fail, its object missing.
+func (sc *Scripter) withBoundObjectExtendedProperties(ctx context.Context, keyword, schema, name, def string,
+	objectID func() (int, error)) (string, error) {
+	script := buildBoundObjectScript(keyword, schema, name, def, sc.opts)
+	if !sc.wantsExtendedProperties() || strings.TrimSpace(def) == "" {
+		return script, nil
+	}
+	id, err := objectID()
+	if err != nil {
+		return "", err
+	}
+	return sc.withExtendedPropertiesAt(ctx, script, strings.ToLower(keyword)+" "+qualifiedName(schema, name), 1, id,
+		ExtendedPropertyLevel{Level0Type: "SCHEMA", Level0Name: schema, Level1Type: keyword, Level1Name: name})
 }
 
 // buildBoundObjectScript assembles a rule's or a default's script — one
@@ -434,13 +471,16 @@ func buildBoundObjectScript(keyword, schema, name, definition string, opts Scrip
 // treatment, and for the same reason, as SecretPlaceholder.
 const assemblyBinaryPlaceholder = "0x00 /* <replace with the assembly binary, or a FROM '<path>' clause> */"
 
-// ScriptAssembly generates the CREATE (or DROP) script for one CLR assembly.
+// ScriptAssembly generates the CREATE (or DROP) script for one CLR assembly,
+// with its extended properties (ScriptOptions.ExtendedProperties): they
+// follow the CREATE, so they run once the placeholder is filled in.
 func (sc *Scripter) ScriptAssembly(ctx context.Context, name string) (string, error) {
 	a, err := sc.db.AssemblyByName(ctx, name)
 	if err != nil {
 		return "", err
 	}
-	return buildAssemblyScript(a, sc.opts), nil
+	return sc.withExtendedPropertiesAt(ctx, buildAssemblyScript(a, sc.opts), fmt.Sprintf("assembly %q", a.Name),
+		5, a.AssemblyID, ExtendedPropertyLevel{Level0Type: "ASSEMBLY", Level0Name: a.Name})
 }
 
 // buildAssemblyScript assembles one assembly's script.
@@ -478,13 +518,15 @@ func buildAssemblyScript(a *Assembly, opts ScriptOptions) string {
 // Plan guides
 // ============================================================
 
-// ScriptPlanGuide generates the CREATE (or DROP) script for one plan guide.
+// ScriptPlanGuide generates the CREATE (or DROP) script for one plan guide,
+// with its extended properties (ScriptOptions.ExtendedProperties).
 func (sc *Scripter) ScriptPlanGuide(ctx context.Context, name string) (string, error) {
 	g, err := sc.db.PlanGuideByName(ctx, name)
 	if err != nil {
 		return "", err
 	}
-	return buildPlanGuideScript(g, sc.opts), nil
+	return sc.withExtendedPropertiesAt(ctx, buildPlanGuideScript(g, sc.opts), fmt.Sprintf("plan guide %q", g.Name),
+		27, g.PlanGuideID, ExtendedPropertyLevel{Level0Type: "PLAN GUIDE", Level0Name: g.Name})
 }
 
 // buildPlanGuideScript assembles one plan guide's script.

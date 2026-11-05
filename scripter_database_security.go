@@ -266,12 +266,7 @@ func buildDatabaseSecurityScript(dbName string, sec *databaseSecurity) string {
 
 	section("Application roles")
 	for _, r := range sec.appRoles {
-		fmt.Fprintf(&sb, "IF DATABASE_PRINCIPAL_ID(N'%s') IS NULL\nCREATE APPLICATION ROLE %s WITH PASSWORD = N'%s'",
-			escapeSingle(r.Name), quoteIdent(r.Name), PasswordPlaceholder)
-		if r.DefaultSchema != "" {
-			sb.WriteString(", DEFAULT_SCHEMA = " + quoteIdent(r.DefaultSchema))
-		}
-		sb.WriteString(";  -- set the real password\nGO\n")
+		sb.WriteString(buildApplicationRoleScript(r, opts))
 	}
 
 	section("Database users")

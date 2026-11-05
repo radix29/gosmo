@@ -343,3 +343,54 @@ CROSS  APPLY (
 	}
 	return sb.String()
 }
+
+// LogShrinkFloors returns, keyed by file_id, the smallest size in KB each log
+// file can shrink to now: the end of its last active virtual log file. A log
+// shrinks only by cutting inactive VLFs off its end, so a file whose tail VLF
+// is active stays at full size however little of it is used — SpaceUsedKB is
+// a lower bound for a log, this is the floor (live on 17: 7 MB used, an
+// active tail VLF, and DBCC SHRINKFILE (log, 1) left all 96 MB).
+//
+// A log file with no active VLF is absent from the map. Its floor is then
+// SQL Server's own minimum, two VLFs, which this read does not compute.
+//
+// It reads sys.dm_db_log_info, so it needs SQL Server 2016 SP2 (13.0.5026) or
+// later — an older build is refused with ErrUnsupported before anything is
+// sent — and VIEW SERVER STATE (VIEW SERVER PERFORMANCE STATE from 2022), as
+// LogSpace does. A VLF's end is the next VLF's start, or the file's end for
+// the last one: the DMV's vlf_size_mb is rounded to two decimals (1.93 for a
+// 1.9375 MB VLF), too coarse to add to the offset.
+func (d *Database) LogShrinkFloors(ctx context.Context) (map[int]int64, error) {
+	if !d.hasLogInfo() {
+		return nil, unsupportedf("gosmo: log shrink floors for %q need SQL Server 2016 SP2 or later (sys.dm_db_log_info)", d.Name)
+	}
+	const q = `
+SELECT v.file_id, MAX(v.vlf_end) / 1024
+FROM (
+    SELECT li.file_id, li.vlf_active,
+           LEAD(li.vlf_begin_offset, 1, CAST(df.size AS bigint) * 8192)
+               OVER (PARTITION BY li.file_id ORDER BY li.vlf_begin_offset) AS vlf_end
+    FROM   sys.dm_db_log_info(DB_ID()) li
+    JOIN   sys.database_files df ON df.file_id = li.file_id
+) v
+WHERE  v.vlf_active = 1
+GROUP  BY v.file_id`
+
+	type floor struct {
+		fileID int
+		kb     int64
+	}
+	rows, err := d.query(ctx, q)
+	floors, err := scanRows(rows, err, fmt.Sprintf("log shrink floors for %q", d.Name), func(scan func(...any) error) (floor, error) {
+		var f floor
+		return f, scan(&f.fileID, &f.kb)
+	})
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[int]int64, len(floors))
+	for _, f := range floors {
+		out[f.fileID] = f.kb
+	}
+	return out, nil
+}

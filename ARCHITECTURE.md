@@ -406,7 +406,7 @@ The instance and database halves pair up: `ServerResourceStat` and
 | `Database.AuditSpecifications`  | `db.DatabaseAuditSpecifications(ctx)` / `...ByName(ctx, name)` / `db.DatabaseAuditSpecificationRef(name)` (no-I/O handle) / `db.CreateDatabaseAuditSpecification(ctx, spec)` |
 | `Database.Roles`                | `db.Roles(ctx)` / `db.RoleByName(ctx, name)` / `db.RoleRef(name)` (no-I/O handle) / `db.RoleMembers(ctx, roleName)`; writes on the handle — `role.AddMember(ctx, member)` / `role.RemoveMember(ctx, member)` |
 | Database role administration    | `db.CreateRole(ctx, req)` / `role.Rename(ctx, newName)` / `role.SetOwner(ctx, newOwner)` / `role.Drop(ctx)` / `db.RoleRef(name).Drop(ctx)` |
-| Application roles               | `db.ApplicationRoles(ctx)` / `db.ApplicationRoleByName(ctx, name)` / `db.ApplicationRoleRef(name)` (no-I/O handle) / `db.CreateApplicationRole(ctx, req)` (password redacted in captures); writes on the handle — `ar.Rename(ctx, newName)` / `ar.SetDefaultSchema(ctx, schemaName)` / `ar.ChangePassword(ctx, newPassword)` / `ar.Drop(ctx)` |
+| Application roles               | `db.ApplicationRoles(ctx)` / `db.ApplicationRoleByName(ctx, name)` / `db.ApplicationRoleRef(name)` (no-I/O handle) / `db.CreateApplicationRole(ctx, req)` (password redacted in captures); writes on the handle — `ar.Rename(ctx, newName)` / `ar.SetDefaultSchema(ctx, schemaName)` / `ar.ChangePassword(ctx, newPassword)` / `ar.Drop(ctx)`; `sc.ScriptApplicationRole(ctx, name)` (password placeholder) |
 | `Database.FileGroups`           | `db.FileGroups(ctx)` — `fg.Type` is the `type_desc` (ROWS / FILESTREAM / MEMORY_OPTIMIZED), `fg.IsFileStream()` the common test |
 | `Database.Triggers`             | `db.Triggers(ctx)` / `db.ObjectTriggers(ctx, schema, name)` (one table or view, by name) / `db.TriggerByName(ctx, schema, name)` (the trigger's own schema = its parent's) / `db.TriggerRef(schema, name)` (no-I/O handle) / `tr.Drop(ctx)` / `tr.Rename(ctx, newName)` / `tr.Enable(ctx)` / `tr.Disable(ctx)` / `tr.SetEnabled(ctx, on)` (a `TriggerRef` looks up the parent it names) |
 | Database-scope DDL triggers     | `db.DatabaseTriggers(ctx)` / `db.DatabaseTriggerByName(ctx, name)` / `db.DatabaseTriggerRef(name)` (no-I/O handle) / `tr.Enable(ctx)` / `tr.Disable(ctx)` / `tr.Drop(ctx)` — see [Database DDL triggers](#database-ddl-triggers) |
@@ -442,6 +442,7 @@ The instance and database halves pair up: `ServerResourceStat` and
 | Disk usage report               | `db.DiskUsage(ctx)` — data/index/unused/unallocated against the file totals, and the log's used/unused split, in MB |
 | `sp_spaceused` figures, exactly | `db.SpaceReport(ctx)` (database: size, unallocated, reserved/data/index/unused, file sizes and used, in KB) / `db.TableSizes(ctx)` (every table: schema, name, rows, reserved/data/index/unused, one round trip) — the procedure's arithmetic per version, unlike `SpaceUsed`/`DiskUsage`/`TableSpaceUsedAll`, whose split differs (`database_space.go`) |
 | Log usage, reuse wait, VLFs     | `db.LogSpace(ctx)` — `dm_db_log_space_usage` + `log_reuse_wait_desc` + `dm_db_log_info` counts (2016 SP2+, else `VLFsKnown` false); needs VIEW SERVER STATE |
+| A log's real shrink floor       | `db.LogShrinkFloors(ctx)` — per log `file_id`, the end of its last active VLF in KB (`dm_db_log_info`, 2016 SP2+, else `ErrUnsupported`); needs VIEW SERVER STATE |
 | Azure per-database resources    | `db.ResourceStats(ctx, max)` / `db.LatestResourceStats(ctx)` / `db.ResourceGovernance(ctx)` — see [Azure instance resources](#azure-instance-resources) |
 | Every table's row count / space used, in one query | `db.TableRowCounts(ctx)` / `db.TableSpaceUsedAll(ctx)` (keyed by `object_id`) |
 | ALTER DATABASE SET options      | `db.Options(ctx)` / `db.SetDatabaseOption(ctx, opt, value, term)` — `term` is the `WITH` clause: `gosmo.TerminationNone` waits for other sessions, `gosmo.TerminationRollbackImmediate` rolls them back |
@@ -1279,11 +1280,14 @@ sys.sp_addextendedproperty` per property, each its own batch, to
 `ScriptTrigger`: the object's own, its columns', parameters', indexes' and —
 a table's — constraints'. One query reads them all
 (`objectExtendedProperties`). `ScriptSchema`, `ScriptDatabase`,
-`ScriptUser`, `ScriptDatabaseRole`, the alias/table type, sequence, synonym,
-XML schema collection, partition function/scheme and DDL trigger scripts
-append their own object's, read by `(class, major_id, minor_id)` at a level
-the caller names (`extendedPropertiesAt`) — the database's from inside it,
-before `READ_ONLY` would refuse them; a table type's columns' are class 8
+`ScriptUser`, `ScriptDatabaseRole`, `ScriptApplicationRole`, the alias/table/CLR type, sequence, synonym,
+XML schema collection, partition function/scheme, DDL trigger, rule, default,
+assembly, plan guide and Service Broker scripts (all but a broker priority,
+which no level names) append their own object's, read by `(class, major_id,
+minor_id)` at a level the caller names (`extendedPropertiesAt`) — the
+database's from inside it, before `READ_ONLY` would refuse them, followed by
+its filegroups' and their files' (classes 20 and 22,
+`fileLayoutExtendedProperties`); a table type's columns' are class 8
 (`typeColumnExtendedProperties`). `ScriptIndex`, `ScriptCheckConstraint` and
 `ScriptForeignKey` filter the table's read down to the one child they create
 (`withTableChildExtendedProperties`) — by level as well as name, since an

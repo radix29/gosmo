@@ -16,6 +16,7 @@ package gosmo
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -348,5 +349,124 @@ func TestLiveFileVolumesHiddenWithoutViewServerState(t *testing.T) {
 	}
 	if visible || len(vols) != 0 {
 		t.Errorf("FileVolumes = %d rows, visible %v; want none, hidden", len(vols), visible)
+	}
+}
+
+// TestLiveLogShrinkFloorIsWhereShrinkStops: a log whose tail VLF is the only
+// active one reports that VLF's end as its floor — far above its used space —
+// and DBCC SHRINKFILE to 1 MB stops exactly there.
+func TestLiveLogShrinkFloorIsWhereShrinkStops(t *testing.T) {
+	db, ctx, done := liveDBTimeout(t, 180e9)
+	t.Cleanup(done)
+	srv, err := NewServer(ctx, db)
+	if err != nil {
+		t.Fatalf("NewServer: %v", err)
+	}
+	const name = "gosmo_live_logfloor"
+	drop := func() {
+		c := context.Background()
+		db.ExecContext(c, "IF DB_ID(N'"+name+"') IS NOT NULL ALTER DATABASE ["+name+"] SET SINGLE_USER WITH ROLLBACK IMMEDIATE")
+		db.ExecContext(c, "IF DB_ID(N'"+name+"') IS NOT NULL DROP DATABASE ["+name+"]")
+	}
+	drop()
+	t.Cleanup(drop)
+	d := srv.DatabaseRef(name)
+	if !d.hasLogInfo() {
+		if _, err := d.LogShrinkFloors(ctx); !errors.Is(err, ErrUnsupported) {
+			t.Fatalf("LogShrinkFloors on %s: err = %v, want ErrUnsupported", srv.Info().ProductVersion, err)
+		}
+		t.Skipf("%s predates sys.dm_db_log_info; the refusal is checked", srv.Info().ProductVersion)
+	}
+	null := "NUL"
+	if strings.HasPrefix(srv.Info().DefaultBackupPath, "/") {
+		null = "/dev/null"
+	}
+	for _, stmt := range []string{
+		"CREATE DATABASE [" + name + "]",
+		"ALTER DATABASE [" + name + "] MODIFY FILE (NAME = N'" + name + "_log', FILEGROWTH = 8MB)",
+		"ALTER DATABASE [" + name + "] SET RECOVERY FULL",
+		"BACKUP DATABASE [" + name + "] TO DISK = N'" + null + "'",
+	} {
+		if _, err := db.ExecContext(ctx, stmt); err != nil {
+			t.Fatalf("%s: %v", stmt, err)
+		}
+	}
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		t.Fatalf("conn: %v", err)
+	}
+	t.Cleanup(func() { conn.Close() })
+	// Write until the newest VLF is the file's physical last one — a growth
+	// can add VLFs the log has not reached yet — then back the log up: only
+	// the VLF the current LSN sits in, the last one, stays active.
+	for _, stmt := range []string{
+		"USE [" + name + "]",
+		"CREATE TABLE dbo.t (i int IDENTITY, pad char(4000) NOT NULL)",
+	} {
+		if _, err := conn.ExecContext(ctx, stmt); err != nil {
+			t.Fatalf("%s: %v", stmt, err)
+		}
+	}
+	for i := 0; ; i++ {
+		if _, err := conn.ExecContext(ctx, "INSERT dbo.t (pad) SELECT TOP (200) 'x' FROM sys.all_objects"); err != nil {
+			t.Fatalf("insert: %v", err)
+		}
+		var vlfs int
+		var atTail bool
+		if err := conn.QueryRowContext(ctx, `
+SELECT (SELECT COUNT(*) FROM sys.dm_db_log_info(DB_ID())),
+       CAST(CASE WHEN newest.vlf_begin_offset = (SELECT MAX(vlf_begin_offset) FROM sys.dm_db_log_info(DB_ID())) THEN 1 ELSE 0 END AS bit)
+FROM (SELECT TOP (1) vlf_begin_offset FROM sys.dm_db_log_info(DB_ID()) ORDER BY vlf_sequence_number DESC) newest`).Scan(&vlfs, &atTail); err != nil {
+			t.Fatalf("dm_db_log_info: %v", err)
+		}
+		if atTail && vlfs >= 6 {
+			break
+		}
+		if i == 500 {
+			t.Fatalf("setup: the log's newest VLF never reached its end (%d VLFs)", vlfs)
+		}
+	}
+	// The CHECKPOINT first: 13 otherwise kept the log whole, reuse wait
+	// OLDEST_PAGE (indirect checkpoint had not caught up).
+	for _, stmt := range []string{"CHECKPOINT", "BACKUP LOG [" + name + "] TO DISK = N'" + null + "'"} {
+		if _, err := conn.ExecContext(ctx, stmt); err != nil {
+			t.Fatalf("%s: %v", stmt, err)
+		}
+	}
+	var logID int
+	var logName string
+	var sizeKB, usedKB, tailActive int64
+	if err := conn.QueryRowContext(ctx, `
+SELECT df.file_id, df.name, CAST(df.size AS bigint) * 8, CAST(FILEPROPERTY(df.name, 'SpaceUsed') AS bigint) * 8,
+       (SELECT TOP (1) CAST(li.vlf_active AS bigint) FROM sys.dm_db_log_info(DB_ID()) li
+        WHERE li.file_id = df.file_id ORDER BY li.vlf_begin_offset DESC)
+FROM sys.database_files df WHERE df.type = 1`).Scan(&logID, &logName, &sizeKB, &usedKB, &tailActive); err != nil {
+		t.Fatalf("log file: %v", err)
+	}
+	// The used-space check proves the backup truncated: a log still full
+	// would make the shrink grow it instead.
+	if tailActive != 1 || usedKB*2 > sizeKB {
+		var wait string
+		conn.QueryRowContext(ctx, "SELECT log_reuse_wait_desc FROM sys.databases WHERE database_id = DB_ID()").Scan(&wait)
+		t.Fatalf("setup: tail VLF active %d, used %d of %d KB, reuse wait %s", tailActive, usedKB, sizeKB, wait)
+	}
+
+	floors, err := d.LogShrinkFloors(ctx)
+	if err != nil {
+		t.Fatalf("LogShrinkFloors: %v", err)
+	}
+	t.Logf("log %s: size %d KB, used %d KB, floor %v", logName, sizeKB, usedKB, floors)
+	if floors[logID] != sizeKB || sizeKB <= usedKB+1024 {
+		t.Fatalf("floor %d KB, want the file's %d KB with the tail VLF active (used %d KB)", floors[logID], sizeKB, usedKB)
+	}
+	if _, err := conn.ExecContext(ctx, "DBCC SHRINKFILE (@p1, 1) WITH NO_INFOMSGS", logName); err != nil {
+		t.Fatalf("shrink: %v", err)
+	}
+	var after int64
+	if err := conn.QueryRowContext(ctx, "SELECT CAST(size AS bigint) * 8 FROM sys.database_files WHERE file_id = @p1", logID).Scan(&after); err != nil {
+		t.Fatalf("size after shrink: %v", err)
+	}
+	if after != floors[logID] {
+		t.Errorf("SHRINKFILE to 1 MB left %d KB, LogShrinkFloors said %d KB", after, floors[logID])
 	}
 }

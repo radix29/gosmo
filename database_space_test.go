@@ -4,7 +4,9 @@ import (
 	"context"
 	"database/sql"
 	"database/sql/driver"
+	"errors"
 	"io"
+	"maps"
 	"strings"
 	"testing"
 )
@@ -249,5 +251,31 @@ func TestVolumePlausible(t *testing.T) {
 		if got := (DiskVolumeInfo{TotalMB: float64(c.total), AvailableMB: float64(c.avail)}).Plausible(); got != c.want {
 			t.Errorf("DiskVolumeInfo{%d, %d}.Plausible() = %v, want %v", c.total, c.avail, got, c.want)
 		}
+	}
+}
+
+// TestLogShrinkFloorsGateAndMapping: before 2016 SP2 the read is refused with
+// ErrUnsupported and nothing is sent; from SP2 each row lands under its
+// file_id, and the batch names the DMV.
+func TestLogShrinkFloorsGateAndMapping(t *testing.T) {
+	srv := spaceServer(t, &ServerInfo{VersionMajor: 13, VersionBuild: 4001})
+	if _, err := (&Database{server: srv, Name: "d"}).LogShrinkFloors(context.Background()); !errors.Is(err, ErrUnsupported) {
+		t.Errorf("2016 SP1: err = %v, want ErrUnsupported", err)
+	}
+	if len(spaceQueries) != 0 {
+		t.Errorf("2016 SP1 sent %d queries, want none", len(spaceQueries))
+	}
+
+	srv = spaceServer(t, &ServerInfo{VersionMajor: 13, VersionBuild: 6500},
+		[]driver.Value{int64(2), int64(98304)}, []driver.Value{int64(3), int64(1024)})
+	got, err := (&Database{server: srv, Name: "d"}).LogShrinkFloors(context.Background())
+	if err != nil {
+		t.Fatalf("2016 SP3: %v", err)
+	}
+	if want := map[int]int64{2: 98304, 3: 1024}; !maps.Equal(got, want) {
+		t.Errorf("2016 SP3: floors = %v, want %v", got, want)
+	}
+	if q := strings.Join(spaceQueries, "\n"); !strings.Contains(q, "dm_db_log_info") || !strings.Contains(q, "vlf_active = 1") {
+		t.Errorf("query does not read the active VLFs:\n%s", q)
 	}
 }

@@ -63,8 +63,10 @@ type ScriptOptions struct {
 	// its columns, parameters, indexes and (a table's) constraints, as SSMS's
 	// "Script extended properties" option does, on by default there too.
 	// Applies to ScriptTable, ScriptView, ScriptStoredProcedure,
-	// ScriptFunction, ScriptTrigger, ScriptSchema and ScriptDatabase (its
-	// own, not a snapshot's); never to a DROP.
+	// ScriptFunction, ScriptTrigger, ScriptSchema, ScriptDatabase (its own
+	// and its filegroups' and files', not a snapshot's) and every other
+	// single-object script whose object can carry one — all but a broker
+	// priority; never to a DROP.
 	ExtendedProperties bool
 }
 
@@ -214,6 +216,11 @@ func (sc *Scripter) ScriptDatabase(ctx context.Context) (string, error) {
 			if layout.extProps, err = sc.scriptExtendedPropertiesAt(ctx, 0, 0, ExtendedPropertyLevel{}); err != nil {
 				return "", fmt.Errorf("gosmo: script database %q: %w", d.Name, err)
 			}
+			files, err := sc.scriptFileLayoutExtendedProperties(ctx)
+			if err != nil {
+				return "", fmt.Errorf("gosmo: script database %q: %w", d.Name, err)
+			}
+			layout.extProps += files
 		}
 	}
 	return sc.scriptDatabaseFrom(d, layout)
@@ -256,8 +263,9 @@ type databaseLayout struct {
 	pvsFileGroup string
 	pvsRefused   bool
 
-	// extProps is the database's own extended properties, rendered ("" for
-	// none, or with ScriptOptions.ExtendedProperties off).
+	// extProps is the database's own extended properties, then its
+	// filegroups' and their files', rendered ("" for none, or with
+	// ScriptOptions.ExtendedProperties off).
 	extProps string
 
 	snapshotOf    string
@@ -735,7 +743,8 @@ func writeDatabaseSettings(sb *strings.Builder, d *Database, l *databaseLayout) 
 
 // writeInDatabaseSettings writes what is set from inside the database — the
 // TDE key, the scoped configurations away from their default and the
-// database's extended properties — between USE [db] and USE [master], then
+// database's, filegroups' and files' extended properties — between USE [db]
+// and USE [master], then
 // SET ENCRYPTION ON. It runs before the owner, user access and READ_ONLY: a
 // key cannot be created in a read-only database, nor a scoped configuration
 // changed or a property added.

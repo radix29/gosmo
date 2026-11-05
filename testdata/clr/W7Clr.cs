@@ -2,7 +2,8 @@
 // get a CLR scalar (Twice) and table-valued (Seq; SeqS, one string column)
 // function, a procedure with an OUTPUT parameter (Echo), a procedure taking
 // one parameter of each type a default can have (Kinds) and a trigger (Noop)
-// that binds as a DML or a DDL trigger. Built with the .NET Framework 4 compiler every Windows SQL
+// that binds as a DML or a DDL trigger, and a user-defined type (W7Point) for
+// a CLR type to script. Built with the .NET Framework 4 compiler every Windows SQL
 // Server host has:
 //   csc.exe /nologo /target:library /out:w7clr.dll W7Clr.cs
 using System;
@@ -23,4 +24,14 @@ public static class W7Clr {
     SqlBinary vb, SqlBinary b, SqlGuid g, SqlBoolean bit, SqlDecimal dec, SqlInt64 big,
     SqlByte tiny, SqlInt16 small, SqlString nc) { }
   [SqlTrigger] public static void Noop() { }
+}
+[Serializable]
+[SqlUserDefinedType(Format.Native)]
+public struct W7Point : INullable {
+  private bool isNull;
+  private int x;
+  public bool IsNull { get { return isNull; } }
+  public static W7Point Null { get { W7Point p = new W7Point(); p.isNull = true; return p; } }
+  public override string ToString() { return isNull ? "NULL" : x.ToString(); }
+  public static W7Point Parse(SqlString s) { if (s.IsNull) return Null; W7Point p = new W7Point(); p.x = int.Parse(s.Value); return p; }
 }

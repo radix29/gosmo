@@ -205,14 +205,12 @@ schema's, a user's, a role's, an alias or table type's (and its columns'),
 a sequence's, a synonym's, an XML schema collection's, a partition
 function's and scheme's and a DDL trigger's script, and of the one index or
 constraint `ScriptIndex`, `ScriptCheckConstraint` and `ScriptForeignKey`
-create (2026-10-14).
+create (2026-10-14); since 2026-11-05 also a CLR type's, rule's, default's,
+assembly's, plan guide's, Service Broker object's, and a database script's
+filegroups' and files'.
 
-Still left out, not yet asked for: a CLR type's, rule's, default's,
-assembly's, plan guide's, Service Broker object's, filegroup's and file's.
-Each is an `extendedPropertiesAt` call at its class and level (a CLR type is
-class 6 under SCHEMA/TYPE, as an alias type is).
-
-By design: a table script leaves out its triggers' properties (it does not
+By design: a broker priority's are not scripted — no
+`sp_addextendedproperty` level names one, so it cannot have any. A table script leaves out its triggers' properties (it does not
 create the triggers — `ScriptTrigger` carries them), and a FileTable's
 system-defined constraints' and indexes' (AS FILETABLE names those afresh).
 A `sql_variant` base type without a case in `extPropType` is a comment, not

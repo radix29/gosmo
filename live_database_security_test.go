@@ -107,3 +107,59 @@ ORDER BY 1, 2, 5, 6, 4`,
 		}
 	}
 }
+
+// TestLiveScriptApplicationRoleRoundTrips replays ScriptApplicationRole's
+// CREATE into a second database and its DROP AND CREATE over that — twice,
+// since the guarded form claims to be re-runnable — with the placeholder
+// password replaced, then checks the role, its default schema and its
+// extended property came across, and that the DROP alone removes it.
+func TestLiveScriptApplicationRoleRoundTrips(t *testing.T) {
+	db, ctx, done := liveDB(t)
+	defer done()
+
+	src, dropSrc := liveScratchDB(t, db, ctx, "gosmo_approle_src")
+	defer dropSrc()
+	dst, dropDst := liveScratchDB(t, db, ctx, "gosmo_approle_dst")
+	defer dropDst()
+
+	const name = "ap]p'role"
+	liveExecIn(t, src, ctx,
+		"EXEC (N'CREATE SCHEMA sales')",
+		"CREATE APPLICATION ROLE [ap]]p'role] WITH PASSWORD = N'Sc0pe!Test#2026', DEFAULT_SCHEMA = sales",
+		"EXEC sys.sp_addextendedproperty N'MS_Description', N'the app', N'USER', N'ap]p''role'",
+	)
+	liveExecIn(t, dst, ctx, "EXEC (N'CREATE SCHEMA sales')")
+
+	script := func(verb ScriptVerb) string {
+		t.Helper()
+		opts := DefaultScriptOptions()
+		opts.Verb = verb
+		s, err := NewScripter(src, opts).ScriptApplicationRole(ctx, name)
+		if err != nil {
+			t.Fatalf("ScriptApplicationRole(%v): %v", verb, err)
+		}
+		if verb != ScriptDrop && !strings.Contains(s, PasswordPlaceholder) {
+			t.Errorf("script carries no password placeholder:\n%s", s)
+		}
+		t.Logf("verb %v:\n%s", verb, s)
+		return strings.ReplaceAll(s, "N'"+PasswordPlaceholder+"'", "N'Sc0pe!Test#2026'")
+	}
+	liveRunScript(t, dst, ctx, script(ScriptCreate))
+	liveRunScript(t, dst, ctx, script(ScriptCreate))
+	liveRunScript(t, dst, ctx, script(ScriptDropAndCreate))
+	liveRunScript(t, dst, ctx, script(ScriptDropAndCreate))
+
+	q := `SELECT dp.name, dp.type, ISNULL(dp.default_schema_name, N''), CAST(ep.value AS nvarchar(100))
+FROM sys.database_principals dp
+LEFT JOIN sys.extended_properties ep ON ep.class = 4 AND ep.major_id = dp.principal_id
+WHERE dp.type = 'A'`
+	if a, b := liveRowsAsStrings(t, src, ctx, q), liveRowsAsStrings(t, dst, ctx, q); !slices.Equal(a, b) || len(a) != 1 {
+		t.Errorf("application role differs after replay:\nsource: %v\nreplay: %v", a, b)
+	}
+
+	liveRunScript(t, dst, ctx, script(ScriptDrop))
+	liveRunScript(t, dst, ctx, script(ScriptDrop))
+	if got := liveRowsAsStrings(t, dst, ctx, q); len(got) != 0 {
+		t.Errorf("the DROP left %v", got)
+	}
+}
