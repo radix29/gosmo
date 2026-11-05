@@ -321,10 +321,7 @@ way now). gossms dropped its 60 s `ConnMaxIdleTime` for gosmo's default.
 not a backup on 2016 or 2017 with `xp_cmdshell` off. `xp_delete_files` is
 2019+, and `xp_delete_file 0` refuses anything without a backup header. Such
 a file (a STANDBY undo `.dat`/`.tuf`, an `.xel`) is logged by name, not
-failed. On 2026-11-04 the data folders of win10cli\SQL2016 and \SQL2017
-held, between them, only `gosmo_restore_close_live_undo.dat` and
-`gossms_live_dropstate_standby.tuf`; remove them by hand on the host if
-wanted. Closing this needs `xp_cmdshell` enabled for the run, which the
+failed. Closing this needs `xp_cmdshell` enabled for the run, which the
 tests deliberately do not do.
 
 ## Agent schedules are addressed by id — settled, do not re-raise
