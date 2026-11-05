@@ -380,6 +380,7 @@ The instance and database halves pair up: `ServerResourceStat` and
 | Log backup chain state    | `srv.DatabaseRecoveryStatuses(ctx)` / `db.RecoveryStatus(ctx)` → `*DatabaseRecoveryStatus` |
 | What may this login do?   | `srv.Capabilities(ctx)` → `*Capabilities` — see [Capabilities](#capabilities-of-the-connected-login) |
 | Wrap a `*sql.DB` you already have | `gosmo.NewServer(ctx, db)` — the inverse of `srv.DB()` |
+| Test code that calls gosmo, without a server | `f := gosmotest.New(t)`, `f.On(text, gosmotest.Rows(…))`, then `f.Server()` (one shared) or `f.Connect(ctx)` (one per dial): real gosmo over canned rows, positional in the query's SELECT order; a database read's transport (`[db].sys.sp_executesql`, a `USE` batch) is stripped before matching, and a query no rule answers fails the test naming it |
 
 ### Database
 
@@ -2297,6 +2298,18 @@ n, err := db.BulkInsert(ctx, gosmo.BulkCopy{
 }, gosmo.SliceRows(rows)) // or your own iter.Seq2[[]any, error], e.g. a CSV reader
 ```
 
+Each value is checked and converted for its column before it is sent
+(`BulkColumn.Converter`, `bulkvalue.go`), from a read of the target's
+columns in the load's session: go-mssqldb alone wraps an int too big for its
+column (300 into a tinyint loads 44), truncates a float bound for an int,
+sends a varchar's UTF-8 bytes for the server to read in the database's code
+page (`café` stored as `cafÃ©`), and drops a smalldatetime's seconds. A
+refused value is a `*BulkValueError` naming the 1-based row and the column,
+and the load copies nothing. A caller that wants to check without loading (a
+dry run) builds the `BulkColumn` itself; the converter is idempotent, so
+values it returned load unchanged. A column the catalog read does not list
+is left to the server.
+
 ### Execute stored procedures
 
 Runs a stored procedure as an RPC, so `OUTPUT` parameters and the return
@@ -2470,6 +2483,17 @@ reach it. Every helper that enters a database reports it this way
 leaves the prefix to the exported call — it read `gosmo: space used: gosmo:
 USE x: …` until 2026-11-04. `TestEntryErrorCarriesOnePrefix` drives each
 helper shape through an exported call against a refusing fake.
+
+### `BulkValueError`
+
+A value `BulkInsert` refuses before sending it — out of its column's range,
+too long, with more decimal places than the scale, or with a character the
+column's or the database's code page lacks — is a `*BulkValueError{Row,
+Column, Reason}` under the load's prefix: `gosmo: bulk insert into
+[dbo].[t]: row 2, column [qty]: 300 is out of range (0 to 255)`. It wraps
+`ErrInvalidRequest`. From `BulkColumn.Converter`'s function, outside a load,
+`Row` is 0, and with no `BulkColumn.Name` the message is the `Reason` alone,
+for a caller to place in its own (gossms names the file line).
 
 ### `ErrUnsupportedVersion`
 

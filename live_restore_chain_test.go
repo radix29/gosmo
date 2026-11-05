@@ -49,7 +49,7 @@ func TestLiveRestoreChain(t *testing.T) {
 		t.Helper()
 		device := liveBackupPath(t, srv, ctx, file)
 		t.Cleanup(func() {
-			db.ExecContext(context.Background(), "EXEC master.dbo.xp_delete_files @FilePath = N'"+device+"'")
+			liveRemoveFile(t, db, device)
 		})
 		opts.Database, opts.Devices, opts.Init = name, []BackupTarget{DiskTarget(device)}, true
 		if err := srv.Backup(ctx, opts); err != nil {

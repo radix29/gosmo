@@ -23,7 +23,9 @@ import (
 
 func TestLiveRestoreCloseExistingConnections(t *testing.T) {
 	db, ctx, done := liveDB(t)
-	defer done()
+	// t.Cleanup, not defer: the file removals below are cleanups that
+	// run after the drop, which releases a STANDBY undo file.
+	t.Cleanup(done)
 
 	const name, copyName = "gosmo_restore_close_live", "gosmo_restore_close_live_copy"
 	_, drop := liveScratchDB(t, db, ctx, name)
@@ -41,8 +43,8 @@ func TestLiveRestoreCloseExistingConnections(t *testing.T) {
 	if err := srv.Backup(ctx, BackupOptions{Database: name, Devices: []BackupTarget{DiskTarget(device)}, Init: true}); err != nil {
 		t.Fatalf("backup: %v", err)
 	}
-	defer db.ExecContext(context.Background(), "EXEC master.dbo.xp_delete_files @FilePath = N'"+device+"'")
-	defer db.ExecContext(context.Background(), "EXEC master.dbo.xp_delete_files @FilePath = N'"+undo+"'")
+	t.Cleanup(func() { liveRemoveFile(t, db, device) })
+	t.Cleanup(func() { liveRemoveFile(t, db, undo) })
 	defer db.ExecContext(context.Background(), "EXEC msdb.dbo.sp_delete_database_backuphistory @database_name = N'"+name+"'")
 
 	state := func(t *testing.T, db string) (string, string) {
@@ -153,7 +155,7 @@ func TestLiveRestoreCloseExistingConnections(t *testing.T) {
 
 	t.Run("a successful restore keeps the backup's access mode", func(t *testing.T) {
 		restricted := liveBackupPath(t, srv, ctx, name+"_restricted.bak")
-		defer db.ExecContext(context.Background(), "EXEC master.dbo.xp_delete_files @FilePath = N'"+restricted+"'")
+		defer liveRemoveFile(t, db, restricted)
 		setAccess(t, "RESTRICTED_USER")
 		if err := srv.Backup(ctx, BackupOptions{Database: name, Devices: []BackupTarget{DiskTarget(restricted)}, Init: true}); err != nil {
 			t.Fatalf("backup: %v", err)
@@ -242,7 +244,9 @@ func TestLiveRestoreCloseExistingConnections(t *testing.T) {
 // access could not be obtained".
 func TestLiveRestoreCloseReleasesAStandbyReader(t *testing.T) {
 	db, ctx, done := liveDB(t)
-	defer done()
+	// t.Cleanup, not defer: the file removals below are cleanups that
+	// run after the drop, which releases a STANDBY undo file.
+	t.Cleanup(done)
 
 	const name = "gosmo_restore_standby_live"
 	_, drop := liveScratchDB(t, db, ctx, name)
@@ -263,7 +267,7 @@ func TestLiveRestoreCloseReleasesAStandbyReader(t *testing.T) {
 	logDev := liveBackupPath(t, srv, ctx, name+".trn")
 	undo := liveBackupPath(t, srv, ctx, name+"_undo.dat")
 	for _, f := range []string{full, logDev, undo} {
-		defer db.ExecContext(context.Background(), "EXEC master.dbo.xp_delete_files @FilePath = N'"+f+"'")
+		t.Cleanup(func() { liveRemoveFile(t, db, f) })
 	}
 	defer db.ExecContext(context.Background(), "EXEC msdb.dbo.sp_delete_database_backuphistory @database_name = N'"+name+"'")
 

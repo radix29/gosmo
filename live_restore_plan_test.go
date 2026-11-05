@@ -38,7 +38,7 @@ func TestLiveRestorePlanWithFileAndMove(t *testing.T) {
 	}
 
 	device := liveBackupPath(t, srv, ctx, name+".bak")
-	defer db.ExecContext(context.Background(), "EXEC master.dbo.xp_delete_files @FilePath = N'"+device+"'")
+	defer liveRemoveFile(t, db, device)
 	defer db.ExecContext(context.Background(), "EXEC msdb.dbo.sp_delete_database_backuphistory @database_name = N'"+name+"'")
 	targets := []BackupTarget{DiskTarget(device)}
 
@@ -187,7 +187,7 @@ func TestLiveRestorePlanFilestreamContainer(t *testing.T) {
 	}
 
 	device := liveBackupPath(t, srv, ctx, name+".bak")
-	defer db.ExecContext(context.Background(), "EXEC master.dbo.xp_delete_files @FilePath = N'"+device+"'")
+	defer liveRemoveFile(t, db, device)
 	defer db.ExecContext(context.Background(), "EXEC msdb.dbo.sp_delete_database_backuphistory @database_name = N'"+name+"'")
 	targets := []BackupTarget{DiskTarget(device)}
 	if err := srv.Backup(ctx, BackupOptions{Database: name, Devices: targets, Init: true}); err != nil {

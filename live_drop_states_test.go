@@ -48,9 +48,7 @@ func TestLiveForcedDropDeletesADatabaseInAnyState(t *testing.T) {
 	if _, err := srv.exec(ctx, "BACKUP DATABASE "+quoteIdent(src)+" TO DISK = N'"+escapeSingle(bak)+"' WITH INIT, COPY_ONLY"); err != nil {
 		t.Fatalf("back up: %v", err)
 	}
-	// xp_delete_file (type 0: a backup file, checked by its header) is on
-	// every supported major; xp_delete_files is 2019+.
-	defer srv.exec(context.Background(), "EXEC master.dbo.xp_delete_file 0, N'"+escapeSingle(bak)+"'")
+	defer liveRemoveFile(t, db, bak)
 
 	gone := func(name string) bool {
 		var n int
@@ -84,6 +82,7 @@ func TestLiveForcedDropDeletesADatabaseInAnyState(t *testing.T) {
 			}
 		}},
 		{"gossms_live_dropstate_standby", "ONLINE STANDBY", func(t *testing.T, name string) {
+			t.Cleanup(func() { liveRemoveFile(t, db, dir+name+".tuf") })
 			if err := restore(name, "STANDBY = N'"+escapeSingle(dir+name+".tuf")+"'"); err != nil {
 				t.Fatalf("restore with standby: %v", err)
 			}

@@ -38,7 +38,7 @@ func TestLiveRecoverFromRestoring(t *testing.T) {
 	if err := srv.Backup(ctx, BackupOptions{Database: name, Devices: []BackupTarget{DiskTarget(device)}, Init: true}); err != nil {
 		t.Fatalf("backup: %v", err)
 	}
-	defer db.ExecContext(context.Background(), "EXEC master.dbo.xp_delete_files @FilePath = N'"+device+"'")
+	defer liveRemoveFile(t, db, device)
 	defer db.ExecContext(context.Background(), "EXEC msdb.dbo.sp_delete_database_backuphistory @database_name = N'"+name+"'")
 
 	if err := srv.Restore(ctx, RestoreOptions{Database: name, Devices: []BackupTarget{DiskTarget(device)},

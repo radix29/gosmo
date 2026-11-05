@@ -330,26 +330,17 @@ On 13 (2026-10-24) the same pressure also failed `TestLiveScriptFidelity`,
 `TestLiveScriptDatabaseOptionsRoundTrip` late in a full-suite run; each passed
 run alone straight after.
 
-## `TestLiveWrongValuesAgentJob` orders History by the second, flakily
+## Live tests leave non-backup files on 13 and 14
 
-Seen 2026-10-24 on 13 and 14, on `HEAD` as well as with A1: `History step ids
-[2 1 0], want [2 0 1]` about one run in four. The test assumes step 1 starts
-in the same second as the job, so `instance_id` puts the outcome row above
-it; when step 1 starts a second later its `run_time` sorts it first. `History`
-orders by `run_date, run_time, instance_id`, which is right; the test's
-expectation is what needs fixing (accept either order of the two rows when
-their times differ, or compare by `instance_id` alone).
-
-## Live tests leave their backup files behind on 13 and 14
-
-Found 2026-10-27 on win10cli\SQL2016. Ten `live_*_test.go` files delete the
-backup files they wrote with `EXEC master.dbo.xp_delete_files`, which only
-SQL Server 2019 (15) and later have. On 13 and 14 the call fails, the
-cleanup ignores the error, and every run leaves its `.bak`/`.trn` files in
-the default data folder (`TestLiveRestoreChain`'s five and
-`TestLiveRestorePlanWithFileAndMove`'s one were removed by hand).
-`master.sys.xp_delete_file 0, N'<file>'` — singular, every version — deletes
-one backup file (it checks the file is one) and is the likely replacement.
+`liveRemoveFile` (`live_remove_file_test.go`) cannot delete a file that is
+not a backup on 2016 or 2017 with `xp_cmdshell` off. `xp_delete_files` is
+2019+, and `xp_delete_file 0` refuses anything without a backup header. Such
+a file (a STANDBY undo `.dat`/`.tuf`, an `.xel`) is logged by name, not
+failed. On 2026-11-04 the data folders of win10cli\SQL2016 and \SQL2017
+held, between them, only `gosmo_restore_close_live_undo.dat` and
+`gossms_live_dropstate_standby.tuf`; remove them by hand on the host if
+wanted. Closing this needs `xp_cmdshell` enabled for the run, which the
+tests deliberately do not do.
 
 ## Audit specifications: the two scopes duplicate their write mechanics
 

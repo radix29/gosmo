@@ -1,0 +1,466 @@
+// Package gosmotest runs real gosmo code over canned rows, so a caller's
+// tests exercise gosmo's own queries, scanning, Ref semantics and errors
+// without a server.
+//
+// A Fake is a database/sql driver that answers each query from the first
+// rule whose text it contains. Wrap it with Server and call gosmo as usual:
+//
+//	f := gosmotest.New(t)
+//	f.On("FROM sys.tables", gosmotest.Rows(
+//		[]any{int64(1), "dbo", "Customer", …},
+//	))
+//	srv := f.Server()
+//	tables, err := srv.DatabaseRef("app").Tables(ctx, gosmo.TableQuery{})
+//
+// The rows are positional: each is one row of the result set exactly as the
+// server would send it, in the query's SELECT order. That is the point — a
+// gosmo change in a query's shape or its scanning fails the caller's test,
+// where a hand-written fake of the gosmo method would not notice. Read the
+// query's text in gosmo's source for the column order (a test that fails
+// prints the query it could not answer, and Queries lists every one).
+//
+// What a rule sees is the query gosmo meant, not its transport: a database
+// read sent as an RPC of [db].sys.sp_executesql, or as a "USE [db]; IF
+// @@ERROR <> 0 RETURN; …" batch inside a transaction, arrives as its inner
+// text with Query.Database set to db and Query.Args numbered from the inner
+// query's first parameter.
+//
+// A query no rule answers fails the test (t.Errorf) and returns an error to
+// gosmo, so an unexpected read is reported as one, naming the query. An
+// Exec no rule answers succeeds with no rows affected: writes are recorded,
+// not refused. The server metadata gosmo reads on connect (Server.Info) has
+// default rules, answered from Fake.Info, which a test may change before
+// its first call to Server.
+//
+// A Fake is safe for concurrent use.
+package gosmotest
+
+import (
+	"context"
+	"database/sql"
+	"database/sql/driver"
+	"errors"
+	"fmt"
+	"io"
+	"regexp"
+	"strings"
+	"sync"
+	"testing"
+
+	"github.com/radix29/gosmo"
+)
+
+// Info is the server metadata a Fake reports on connect: what
+// gosmo.Server.Info returns, and what gosmo's version gates read.
+type Info struct {
+	Name           string // SERVERPROPERTY('ServerName')
+	Edition        string
+	ProductVersion string // "16.0.4135.4": the major version gates gosmo's reads
+	ProductLevel   string
+	Collation      string
+	EngineEdition  int    // gosmo.EngineEdition: 3 Enterprise, 5 Azure SQL Database, 8 Managed Instance
+	Version        string // @@VERSION; its "on Linux" or "on Windows" sets Info.Platform
+	Login          string // SUSER_NAME()
+	DataPath       string
+	LogPath        string
+	BackupPath     string
+}
+
+// DefaultInfo is a SQL Server 2022 Developer Edition on Linux, logged in as sa.
+var DefaultInfo = Info{
+	Name:           "gosmotest",
+	Edition:        "Developer Edition (64-bit)",
+	ProductVersion: "16.0.4135.4",
+	ProductLevel:   "RTM",
+	Collation:      "SQL_Latin1_General_CP1_CI_AS",
+	EngineEdition:  3,
+	Version:        "Microsoft SQL Server 2022 (RTM-CU14) - 16.0.4135.4 (X64) Developer Edition (64-bit) on Linux (Ubuntu 22.04.4 LTS) <X64>",
+	Login:          "sa",
+	DataPath:       "/var/opt/mssql/data/",
+	LogPath:        "/var/opt/mssql/data/",
+	BackupPath:     "/var/opt/mssql/data/",
+}
+
+// Query is one statement gosmo sent, as a rule sees it and Queries records it.
+type Query struct {
+	// Database is the database the statement ran in when gosmo sent it there
+	// itself — through [db].sys.sp_executesql or a USE batch — unbracketed.
+	// "" for a statement run in the session's own database.
+	Database string
+	Text     string // the statement, the transport stripped
+	Args     []any  // its parameters' values, @p1 first: an int as int64, as database/sql converts it
+	Exec     bool   // sent through Exec, not Query
+}
+
+// Arg is the value of parameter @p(i+1), nil when there are fewer.
+func (q Query) Arg(i int) any {
+	if i < 0 || i >= len(q.Args) {
+		return nil
+	}
+	return q.Args[i]
+}
+
+// String is the query as a failure message names it.
+func (q Query) String() string {
+	var sb strings.Builder
+	if q.Database != "" {
+		fmt.Fprintf(&sb, "in [%s]: ", q.Database)
+	}
+	sb.WriteString(strings.TrimSpace(q.Text))
+	if len(q.Args) > 0 {
+		fmt.Fprintf(&sb, " %v", q.Args)
+	}
+	return sb.String()
+}
+
+// Set is one result set: its rows, and optionally its column names. A Set
+// with no Columns has as many as its first row has values (named c1, c2, …),
+// which is all database/sql needs to scan it.
+type Set struct {
+	Columns []string
+	Rows    [][]any
+}
+
+// Result is a rule's answer: the result sets, in order, or Err.
+type Result struct {
+	Sets []Set
+	Err  error
+}
+
+// A Responder answers a query a rule matched.
+type Responder func(Query) Result
+
+// Rows answers with one result set of rows.
+func Rows(rows ...[]any) Responder {
+	return func(Query) Result { return Result{Sets: []Set{{Rows: rows}}} }
+}
+
+// Sets answers with several result sets, as a batch of several SELECTs does.
+func Sets(sets ...Set) Responder {
+	return func(Query) Result { return Result{Sets: sets} }
+}
+
+// Fail answers with err: the query's failure, as the driver would return it.
+// An mssql.Error makes it the server's.
+func Fail(err error) Responder {
+	return func(Query) Result { return Result{Err: err} }
+}
+
+type rule struct {
+	match   func(Query) bool
+	respond Responder
+}
+
+// Fake is a SQL Server the test scripts. Create one with New.
+type Fake struct {
+	// Info is what the connect reads report; change it before Server.
+	Info Info
+
+	t testing.TB
+
+	mu       sync.Mutex
+	rules    []rule
+	queries  []Query
+	server   *gosmo.Server
+	defaults []rule
+}
+
+// New is a Fake for t, with DefaultInfo and no rules. Its Server is closed
+// when t ends.
+func New(t testing.TB) *Fake {
+	f := &Fake{Info: DefaultInfo, t: t}
+	f.defaults = []rule{
+		{contains("SERVERPROPERTY('ServerName')"), func(Query) Result {
+			i := f.Info
+			return Result{Sets: []Set{{Rows: [][]any{{i.Name, i.Edition, i.ProductVersion, i.ProductLevel, i.Collation,
+				int64(0), int64(0), int64(0), int64(i.EngineEdition), i.Version, i.DataPath, i.LogPath, i.BackupPath, i.Login}}}}}
+		}},
+		{contains("FROM   sys.dm_os_sys_info"), Rows([]any{int64(16384), int64(8)})},
+	}
+	return f
+}
+
+func contains(s string) func(Query) bool {
+	return func(q Query) bool { return strings.Contains(q.Text, s) }
+}
+
+// On answers every query whose text contains match with r. Rules are tried in
+// the order they were added; the first that matches answers.
+func (f *Fake) On(match string, r Responder) *Fake {
+	return f.OnFunc(contains(match), r)
+}
+
+// OnRegexp answers every query whose text matches the regular expression
+// expr with r.
+func (f *Fake) OnRegexp(expr string, r Responder) *Fake {
+	re := regexp.MustCompile(expr)
+	return f.OnFunc(func(q Query) bool { return re.MatchString(q.Text) }, r)
+}
+
+// OnFunc answers every query match accepts with r — for a rule that depends
+// on the database or the arguments as well as the text.
+func (f *Fake) OnFunc(match func(Query) bool, r Responder) *Fake {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.rules = append(f.rules, rule{match, r})
+	return f
+}
+
+// Server is a gosmo.Server over f, made on the first call (which runs the
+// connect reads) and the same one after. It is closed when the test ends.
+func (f *Fake) Server() *gosmo.Server {
+	f.t.Helper()
+	f.mu.Lock()
+	if s := f.server; s != nil {
+		f.mu.Unlock()
+		return s
+	}
+	f.mu.Unlock()
+	s, err := f.Connect(context.Background())
+	if err != nil {
+		f.t.Fatalf("gosmotest: connect: %v", err)
+	}
+	f.mu.Lock()
+	f.server = s
+	f.mu.Unlock()
+	return s
+}
+
+// Connect is a new gosmo.Server over f, as gosmo.Connect makes one per call:
+// for code that dials and closes its own connection, where Server's one
+// shared Server would be closed under the next caller. Each runs the connect
+// reads, shares f's rules and record, and is closed when the test ends if
+// the caller has not closed it.
+func (f *Fake) Connect(ctx context.Context) (*gosmo.Server, error) {
+	s, err := gosmo.NewServer(ctx, sql.OpenDB(connector{f}))
+	if err != nil {
+		return nil, err
+	}
+	f.t.Cleanup(func() { s.Close() })
+	return s, nil
+}
+
+// Queries is every statement f has been sent, in order, the connect reads
+// included.
+func (f *Fake) Queries() []Query {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]Query(nil), f.queries...)
+}
+
+// ErrNoRule is the error a query no rule answers returns to gosmo.
+var ErrNoRule = errors.New("gosmotest: no rule answers the query")
+
+// answer records q and finds its rule. ok is false when none matches.
+func (f *Fake) answer(q Query) (Result, bool) {
+	f.mu.Lock()
+	f.queries = append(f.queries, q)
+	rules := append(append([]rule(nil), f.rules...), f.defaults...)
+	f.mu.Unlock()
+	for _, r := range rules {
+		if r.match(q) {
+			return r.respond(q), true
+		}
+	}
+	return Result{}, false
+}
+
+// -- the driver -------------------------------------------------------------
+
+type connector struct{ f *Fake }
+
+func (c connector) Connect(context.Context) (driver.Conn, error) { return &conn{f: c.f}, nil }
+func (c connector) Driver() driver.Driver                        { return drv(c) }
+
+type drv struct{ f *Fake }
+
+func (d drv) Open(string) (driver.Conn, error) { return &conn{f: d.f}, nil }
+
+// conn tracks the database a USE moved it to, as a session does; a
+// procRead call runs in its database for that call only.
+type conn struct {
+	f  *Fake
+	db string
+}
+
+var (
+	_ driver.QueryerContext    = (*conn)(nil)
+	_ driver.ExecerContext     = (*conn)(nil)
+	_ driver.NamedValueChecker = (*conn)(nil)
+	_ driver.ConnBeginTx       = (*conn)(nil)
+)
+
+func (c *conn) Prepare(q string) (driver.Stmt, error) { return stmt{c, q}, nil }
+func (c *conn) Close() error                          { return nil }
+func (c *conn) Begin() (driver.Tx, error)             { return tx{}, nil }
+func (c *conn) BeginTx(context.Context, driver.TxOptions) (driver.Tx, error) {
+	return tx{}, nil
+}
+
+// CheckNamedValue converts an argument as database/sql's default converter
+// does, so a rule sees an int as int64 and an mssql.VarChar as its string,
+// and passes through as sent what that converter refuses (a sql.Out) rather
+// than failing the query.
+func (c *conn) CheckNamedValue(nv *driver.NamedValue) error {
+	if v, err := driver.DefaultParameterConverter.ConvertValue(nv.Value); err == nil {
+		nv.Value = v
+	}
+	return nil
+}
+
+func (c *conn) QueryContext(_ context.Context, q string, args []driver.NamedValue) (driver.Rows, error) {
+	query, ok := c.unwrap(q, args)
+	if !ok {
+		return &rows{}, nil // a bare USE
+	}
+	res, found := c.f.answer(query)
+	if !found {
+		c.f.t.Errorf("gosmotest: no rule answers the query %s", query)
+		return nil, fmt.Errorf("%w: %s", ErrNoRule, query)
+	}
+	if res.Err != nil {
+		return nil, res.Err
+	}
+	return newRows(res.Sets)
+}
+
+func (c *conn) ExecContext(_ context.Context, q string, args []driver.NamedValue) (driver.Result, error) {
+	query, ok := c.unwrap(q, args)
+	if !ok {
+		return driver.ResultNoRows, nil
+	}
+	query.Exec = true
+	res, _ := c.f.answer(query)
+	if res.Err != nil {
+		return nil, res.Err
+	}
+	return driver.RowsAffected(0), nil
+}
+
+const useGuard = "; IF @@ERROR <> 0 RETURN; "
+
+// unwrap strips gosmo's transport from q: a procRead RPC, a USE batch, or
+// a bare USE (which moves the session and has nothing to answer: ok false).
+func (c *conn) unwrap(q string, args []driver.NamedValue) (Query, bool) {
+	vals := make([]any, len(args))
+	for i, a := range args {
+		vals[i] = a.Value
+	}
+	if db, found := strings.CutSuffix(q, ".sys.sp_executesql"); found && len(vals) > 0 {
+		inner, _ := vals[0].(string)
+		var innerArgs []any
+		if len(vals) > 2 {
+			innerArgs = vals[2:]
+		}
+		return Query{Database: unbracket(db), Text: inner, Args: innerArgs}, true
+	}
+	if use, rest, found := strings.Cut(q, useGuard); found && strings.HasPrefix(use, "USE ") {
+		c.db = unbracket(strings.TrimPrefix(use, "USE "))
+		return Query{Database: c.db, Text: rest, Args: vals}, true
+	}
+	if strings.HasPrefix(q, "USE ") && !strings.ContainsAny(q, ";\n") {
+		c.db = unbracket(strings.TrimPrefix(q, "USE "))
+		return Query{}, false
+	}
+	return Query{Database: c.db, Text: q, Args: vals}, true
+}
+
+func unbracket(name string) string { return gosmo.UnquoteName(name) }
+
+type stmt struct {
+	c *conn
+	q string
+}
+
+func (s stmt) Close() error  { return nil }
+func (s stmt) NumInput() int { return -1 }
+func (s stmt) Exec(args []driver.Value) (driver.Result, error) {
+	return s.c.ExecContext(context.Background(), s.q, named(args))
+}
+func (s stmt) Query(args []driver.Value) (driver.Rows, error) {
+	return s.c.QueryContext(context.Background(), s.q, named(args))
+}
+
+func named(args []driver.Value) []driver.NamedValue {
+	out := make([]driver.NamedValue, len(args))
+	for i, a := range args {
+		out[i] = driver.NamedValue{Ordinal: i + 1, Value: a}
+	}
+	return out
+}
+
+type tx struct{}
+
+func (tx) Commit() error   { return nil }
+func (tx) Rollback() error { return nil }
+
+// rows serves Result.Sets, one after another.
+type rows struct {
+	sets []Set
+	cols []string
+	vals [][]driver.Value
+	at   int
+}
+
+var _ driver.RowsNextResultSet = (*rows)(nil)
+
+func newRows(sets []Set) (*rows, error) {
+	r := &rows{sets: sets}
+	if err := r.load(); err != nil {
+		return nil, err
+	}
+	return r, nil
+}
+
+// load makes sets[0] current, its values converted to the driver's types.
+func (r *rows) load() error {
+	r.cols, r.vals, r.at = nil, nil, 0
+	if len(r.sets) == 0 {
+		return nil
+	}
+	s := r.sets[0]
+	r.cols = s.Columns
+	if r.cols == nil && len(s.Rows) > 0 {
+		r.cols = make([]string, len(s.Rows[0]))
+		for i := range r.cols {
+			r.cols[i] = fmt.Sprintf("c%d", i+1)
+		}
+	}
+	for n, row := range s.Rows {
+		if len(row) != len(r.cols) {
+			return fmt.Errorf("gosmotest: row %d has %d values, the set %d columns", n+1, len(row), len(r.cols))
+		}
+		vals := make([]driver.Value, len(row))
+		for i, v := range row {
+			cv, err := driver.DefaultParameterConverter.ConvertValue(v)
+			if err != nil {
+				return fmt.Errorf("gosmotest: row %d, column %d: %w", n+1, i+1, err)
+			}
+			vals[i] = cv
+		}
+		r.vals = append(r.vals, vals)
+	}
+	return nil
+}
+
+func (r *rows) Columns() []string { return r.cols }
+func (r *rows) Close() error      { return nil }
+
+func (r *rows) Next(dest []driver.Value) error {
+	if r.at >= len(r.vals) {
+		return io.EOF
+	}
+	copy(dest, r.vals[r.at])
+	r.at++
+	return nil
+}
+
+func (r *rows) HasNextResultSet() bool { return len(r.sets) > 1 }
+
+func (r *rows) NextResultSet() error {
+	if len(r.sets) <= 1 {
+		return io.EOF
+	}
+	r.sets = r.sets[1:]
+	return r.load()
+}

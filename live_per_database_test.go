@@ -59,7 +59,7 @@ func TestLivePerDatabaseBatchSkipsOnlyUnenterable(t *testing.T) {
 	defer func() {
 		c := context.Background()
 		db.ExecContext(c, "IF DB_ID(N'"+restoring+"') IS NOT NULL DROP DATABASE ["+restoring+"]")
-		db.ExecContext(c, "EXEC master.dbo.xp_delete_file 0, N'"+device+"'")
+		liveRemoveFile(t, db, device)
 		db.ExecContext(c, "EXEC msdb.dbo.sp_delete_database_backuphistory @database_name = N'"+src.Name+"'")
 		db.ExecContext(c, "EXEC msdb.dbo.sp_delete_database_backuphistory @database_name = N'"+restoring+"'")
 	}()

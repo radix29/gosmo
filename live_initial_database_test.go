@@ -152,7 +152,7 @@ func TestLiveInitialDatabaseRestore(t *testing.T) {
 	}
 	bak := strings.TrimRight(dir, `\/`) + sep + initDBLiveName + ".bak"
 	t.Cleanup(func() {
-		admin.exec(context.Background(), "EXEC master.sys.xp_delete_file 0, "+QuoteLiteral(bak))
+		liveRemoveFile(t, admin.db, bak)
 	})
 	for _, close := range []bool{false, true} {
 		for _, progress := range []bool{false, true} {

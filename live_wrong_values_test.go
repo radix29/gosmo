@@ -149,15 +149,23 @@ WHERE  j.name = @p1 AND ja.session_id = (SELECT MAX(session_id) FROM msdb.dbo.sy
 	if err != nil {
 		t.Fatalf("History: %v", err)
 	}
-	// Step 2 started three seconds after the job, so it is newest; the
-	// outcome row and step 1 share the job's start, and instance_id puts the
-	// outcome (written last) above step 1.
-	if len(hist) != 3 || hist[0].StepID != 2 || hist[1].StepID != 0 || hist[2].StepID != 1 {
-		ids := []int{}
-		for _, h := range hist {
-			ids = append(ids, h.StepID)
-		}
-		t.Errorf("History step ids %v, want [2 0 1]", ids)
+	// History orders by run_date, run_time, instance_id, newest first. Step 2
+	// started three seconds after the job, so it is newest. The outcome row
+	// carries the job's start time and step 1 its own: when both fall in the
+	// same second, instance_id puts the outcome (written last) above step 1;
+	// when step 1 starts a second later, its time puts it first. Either is
+	// correct, so the tie-break is asserted only on a tie.
+	ids := []int{}
+	for _, h := range hist {
+		ids = append(ids, h.StepID)
+	}
+	switch {
+	case len(hist) != 3 || hist[0].StepID != 2 || hist[1].StepID+hist[2].StepID != 1:
+		t.Errorf("History step ids %v, want 2 then the outcome (0) and step 1", ids)
+	case hist[0].RunDate.Before(hist[1].RunDate) || hist[1].RunDate.Before(hist[2].RunDate):
+		t.Errorf("History step ids %v at %v, %v, %v: not newest first", ids, hist[0].RunDate, hist[1].RunDate, hist[2].RunDate)
+	case hist[1].RunDate.Equal(hist[2].RunDate) && hist[1].StepID != 0:
+		t.Errorf("History step ids %v, want [2 0 1]: the outcome and step 1 share %v, so instance_id puts the outcome first", ids, hist[1].RunDate)
 	}
 }
 

@@ -350,6 +350,7 @@ func TestLiveMaintenanceLastBackups(t *testing.T) {
 	t.Cleanup(forget)
 
 	device := liveBackupPath(t, srv, ctx, liveMaintDB+".bak")
+	t.Cleanup(func() { liveRemoveFile(t, db, device) })
 	if err := srv.Backup(ctx, BackupOptions{Database: liveMaintDB, Devices: []BackupTarget{DiskTarget(device)}, Init: true}); err != nil {
 		t.Fatalf("full backup: %v", err)
 	}
