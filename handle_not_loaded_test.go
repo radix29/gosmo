@@ -167,7 +167,7 @@ func TestJobRefReadsLookUpTheJobID(t *testing.T) {
 			if len(calls) < 2 {
 				t.Fatalf("got %d statements, want the id lookup and the read", len(calls))
 			}
-			if !strings.Contains(calls[0].sql, "msdb.dbo.sysjobs WHERE name = @p1") || !slices.Equal(calls[0].args, []any{"j"}) {
+			if !strings.Contains(calls[0].sql, "msdb.dbo.sysjobs_view WHERE name = @p1") || !slices.Equal(calls[0].args, []any{"j"}) {
 				t.Errorf("first statement is not the job_id lookup by name: %s %v", calls[0].sql, calls[0].args)
 			}
 			if !slices.Equal(calls[1].args, []any{"ID-1"}) {

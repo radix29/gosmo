@@ -12,20 +12,53 @@ import (
 	"time"
 )
 
-// stepSelect is the column list and FROM every step read shares; the caller
-// adds the WHERE. The proxy is joined by name rather than reported as an id:
-// an id means nothing to a caller, and a move that re-adds a step has to pass
-// @proxy_name back.
-const stepSelect = `
+// stepColumns is the select list every step read shares, over the s and p
+// aliases stepSelect and stepProcSelect each bind. The proxy is joined by name
+// rather than reported as an id: an id means nothing to a caller, and a move
+// that re-adds a step has to pass @proxy_name back.
+const stepColumns = `
 SELECT s.step_id, s.step_name, s.subsystem, s.command, ISNULL(s.database_name, ''),
        s.on_success_action, s.on_success_step_id, s.on_fail_action, s.on_fail_step_id,
        s.last_run_outcome, s.last_run_date, s.last_run_time, s.last_run_duration,
        s.retry_attempts, s.retry_interval, ISNULL(s.output_file_name, ''), s.flags,
        ISNULL(p.name, ''), ISNULL(s.additional_parameters, ''),
        ISNULL(s.cmdexec_success_code, 0), ISNULL(s.server, ''),
-       ISNULL(s.database_user_name, ''), ISNULL(s.os_run_priority, 0)
+       ISNULL(s.database_user_name, ''), ISNULL(s.os_run_priority, 0)`
+
+// stepSelect is a sysadmin's step read; the caller adds the WHERE.
+const stepSelect = stepColumns + `
 FROM   msdb.dbo.sysjobsteps s
 LEFT   JOIN msdb.dbo.sysproxies p ON p.proxy_id = s.proxy_id`
+
+// stepProcSelect is everyone else's (see agentRead): sp_help_jobstep for the
+// job whose id is in @job — a NULL @job, a job the login may not see, reads no
+// steps — and sp_help_proxy for the proxy names. sp_help_jobstep does not
+// return additional_parameters, so that column stays NULL, and sp_help_proxy
+// shows a SQLAgentUserRole or Reader member only the proxies granted to it;
+// see JobStep.ProxyName. The caller declares and sets @job, and adds the
+// WHERE or ORDER BY.
+const stepProcSelect = `
+DECLARE @steps TABLE (step_id int, step_name sysname, subsystem nvarchar(max),
+  command nvarchar(max), flags int, cmdexec_success_code int, on_success_action int,
+  on_success_step_id int, on_fail_action int, on_fail_step_id int, server nvarchar(max),
+  database_name nvarchar(max), database_user_name nvarchar(max), retry_attempts int,
+  retry_interval int, os_run_priority int, output_file_name nvarchar(max),
+  last_run_outcome int, last_run_duration int, last_run_retries int, last_run_date int,
+  last_run_time int, proxy_id int, additional_parameters nvarchar(max) NULL);
+IF @job IS NOT NULL
+  INSERT INTO @steps (step_id, step_name, subsystem, command, flags, cmdexec_success_code,
+                      on_success_action, on_success_step_id, on_fail_action, on_fail_step_id,
+                      server, database_name, database_user_name, retry_attempts,
+                      retry_interval, os_run_priority, output_file_name, last_run_outcome,
+                      last_run_duration, last_run_retries, last_run_date, last_run_time, proxy_id)
+  EXECUTE msdb.dbo.sp_help_jobstep @job_id = @job;
+DECLARE @proxies TABLE (proxy_id int, name sysname, credential_identity nvarchar(max),
+  enabled int, description nvarchar(max), user_sid varbinary(85),
+  credential_id int, credential_identity_exists int);
+IF EXISTS (SELECT 1 FROM @steps WHERE proxy_id IS NOT NULL)
+  INSERT INTO @proxies EXECUTE msdb.dbo.sp_help_proxy;` + stepColumns + `
+FROM   @steps s
+LEFT   JOIN @proxies p ON p.proxy_id = s.proxy_id`
 
 // scanStep scans one stepSelect row into a step of j.
 func (j *Job) scanStep(scan func(...any) error) (*JobStep, error) {
@@ -55,9 +88,11 @@ func (j *Job) scanStep(scan func(...any) error) (*JobStep, error) {
 // Steps returns all steps defined for the job, ordered by step_id. On a
 // JobRef the job is looked up by name first (see Server.JobRef).
 func (j *Job) Steps(ctx context.Context) ([]*JobStep, error) {
-	const q = stepSelect + `
+	q := agentRead(stepSelect+`
 WHERE  s.job_id = @p1
-ORDER  BY s.step_id`
+ORDER  BY s.step_id`, `
+DECLARE @job uniqueidentifier = @p1;`+stepProcSelect+`
+ORDER  BY s.step_id`)
 
 	what := fmt.Sprintf("steps for job %q", j.Name)
 	id, err := j.id(ctx, what)
@@ -72,9 +107,11 @@ ORDER  BY s.step_id`
 // within a job (sp_add_jobstep refuses a duplicate, Msg 14261), and the job
 // is matched by name, so a JobRef handle (JobID zero) works.
 func (j *Job) stepByName(ctx context.Context, name string) (*JobStep, error) {
-	const q = stepSelect + `
+	q := agentRead(stepSelect+`
 JOIN   msdb.dbo.sysjobs j ON j.job_id = s.job_id
-WHERE  j.name = @p1 AND s.step_name = @p2`
+WHERE  j.name = @p1 AND s.step_name = @p2`, `
+DECLARE @job uniqueidentifier = (SELECT job_id FROM msdb.dbo.sysjobs_view WHERE name = @p1);`+stepProcSelect+`
+WHERE  s.step_name = @p2`)
 
 	var st *JobStep
 	err := j.server.queryRow(ctx, func(row *sql.Row) error {
@@ -298,10 +335,17 @@ type JobStep struct {
 	// as-is rather than decoding it into named booleans.
 	Flags int
 	// ProxyName is the proxy account the step runs under, or "" for none
-	// (the Agent service account). Resolved from sysjobsteps.proxy_id.
+	// (the Agent service account). Resolved from sysjobsteps.proxy_id. For a
+	// login without sysadmin it is resolved through sp_help_proxy, which
+	// shows SQLAgentUserRole and Reader members only the proxies granted to
+	// them, so a step under any other proxy reads "" too. Such a login cannot
+	// edit those steps either: only an owner's own jobs are its to change,
+	// and an owner's steps can only use the proxies granted to it.
 	ProxyName string
 	// AdditionalParameters is sysjobsteps.additional_parameters, used by
-	// some subsystems and left empty by TSQL steps.
+	// some subsystems and left empty by TSQL steps. A login without sysadmin
+	// always reads "": sp_help_jobstep, its only route to the steps, does not
+	// return the column, which msdb documents as reserved.
 	AdditionalParameters string
 	// CmdExecSuccessCode is the process exit code a CmdExec step treats as
 	// success. Zero for every other subsystem, and also the CmdExec default.
@@ -513,9 +557,10 @@ func (j *Job) ReorderSteps(ctx context.Context, order func(n int) []int) error {
 
 // startStepID reads the job's start step from msdb rather than trusting
 // Job.StartStepID, which a Server.JobRef handle leaves zero and a loaded Job
-// may hold stale. The job is matched by name, as stepByName does.
+// may hold stale. The job is matched by name, as stepByName does, in
+// sysjobs_view, which the Agent roles may read and sysjobs they may not.
 func (j *Job) startStepID(ctx context.Context) (int, error) {
-	const q = `SELECT start_step_id FROM msdb.dbo.sysjobs WHERE name = @p1`
+	const q = `SELECT start_step_id FROM msdb.dbo.sysjobs_view WHERE name = @p1`
 	var start int
 	err := j.server.queryRow(ctx, func(row *sql.Row) error { return row.Scan(&start) }, q, j.Name)
 	return foundRow(start, err, notFoundf("gosmo: job %q not found", j.Name),

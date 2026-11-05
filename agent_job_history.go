@@ -11,6 +11,21 @@ import (
 	"time"
 )
 
+// historyProcTable captures sp_help_jobhistory's FULL result set in @h, under
+// sysjobhistory's own column names, for a login without sysadmin (see
+// agentRead); the caller appends the procedure's filter arguments. The
+// procedure joins sysjobs_view, so it applies the Agent roles' visibility.
+// It is handed only filters it applies exactly as the direct read's WHERE
+// does — its run_time bounds are per day, not a point in time — and the
+// outer select applies the rest, so both reads return the same rows.
+const historyProcTable = `
+DECLARE @h TABLE (instance_id int, job_id uniqueidentifier, job_name sysname, step_id int,
+  step_name sysname, sql_message_id int, sql_severity int, message nvarchar(max),
+  run_status int, run_date int, run_time int, run_duration int,
+  operator_emailed nvarchar(max), operator_netsent nvarchar(max), operator_paged nvarchar(max),
+  retries_attempted int, server nvarchar(max));
+INSERT INTO @h EXECUTE msdb.dbo.sp_help_jobhistory @mode = 'FULL'`
+
 // History returns the execution history (most recent first).
 // Pass limit=0 to use the default of 100 rows. On a JobRef the job is looked
 // up by name first (see Server.JobRef).
@@ -23,13 +38,15 @@ func (j *Job) History(ctx context.Context, limit int) ([]*JobHistoryEntry, error
 	if limit <= 0 {
 		limit = 100
 	}
-	q := fmt.Sprintf(`
+	sel := `
 SELECT TOP %d
        run_date, run_time, run_duration,
        run_status, ISNULL(message, ''), step_id, step_name
-FROM   msdb.dbo.sysjobhistory
+FROM   %s
 WHERE  job_id = @p1
-ORDER  BY run_date DESC, run_time DESC, instance_id DESC`, limit)
+ORDER  BY run_date DESC, run_time DESC, instance_id DESC`
+	q := agentRead(fmt.Sprintf(sel, limit, "msdb.dbo.sysjobhistory"),
+		historyProcTable+", @job_id = @p1;"+fmt.Sprintf(sel, limit, "@h"))
 
 	what := fmt.Sprintf("history for job %q", j.Name)
 	id, err := j.id(ctx, what)
@@ -124,13 +141,19 @@ func (s *Server) SearchJobHistory(ctx context.Context, f JobHistoryFilter) ([]*J
 	if len(where) > 0 {
 		cond = "\nWHERE  " + strings.Join(where, "\n  AND  ")
 	}
-	q := fmt.Sprintf(`
+	sel := `
 SELECT TOP %d
        j.name, h.run_date, h.run_time, h.run_duration,
        h.run_status, ISNULL(h.message, ''), h.step_id, h.step_name
-FROM   msdb.dbo.sysjobhistory h
-JOIN   msdb.dbo.sysjobs j ON j.job_id = h.job_id%s
-ORDER  BY h.run_date DESC, h.run_time DESC, h.instance_id DESC`, limit, cond)
+FROM   %s h
+JOIN   %s j ON j.job_id = h.job_id%s
+ORDER  BY h.run_date DESC, h.run_time DESC, h.instance_id DESC`
+	procArgs := ";"
+	if !f.IncludeSteps {
+		procArgs = ", @step_id = 0;"
+	}
+	q := agentRead(fmt.Sprintf(sel, limit, "msdb.dbo.sysjobhistory", "msdb.dbo.sysjobs", cond),
+		historyProcTable+procArgs+fmt.Sprintf(sel, limit, "@h", "msdb.dbo.sysjobs_view", cond))
 
 	rows, err := s.query(ctx, q, args...)
 	return scanRows(rows, err, "job history", func(scan func(...any) error) (*JobHistoryEntry, error) {

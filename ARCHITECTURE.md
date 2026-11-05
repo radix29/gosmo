@@ -410,7 +410,7 @@ The instance and database halves pair up: `ServerResourceStat` and
 | `Database.FileGroups`           | `db.FileGroups(ctx)` — `fg.Type` is the `type_desc` (ROWS / FILESTREAM / MEMORY_OPTIMIZED), `fg.IsFileStream()` the common test |
 | `Database.Triggers`             | `db.Triggers(ctx)` / `db.ObjectTriggers(ctx, schema, name)` (one table or view, by name) / `db.TriggerByName(ctx, schema, name)` (the trigger's own schema = its parent's) / `db.TriggerRef(schema, name)` (no-I/O handle) / `tr.Drop(ctx)` / `tr.Rename(ctx, newName)` / `tr.Enable(ctx)` / `tr.Disable(ctx)` / `tr.SetEnabled(ctx, on)` (a `TriggerRef` looks up the parent it names) |
 | Database-scope DDL triggers     | `db.DatabaseTriggers(ctx)` / `db.DatabaseTriggerByName(ctx, name)` / `db.DatabaseTriggerRef(name)` (no-I/O handle) / `tr.Enable(ctx)` / `tr.Disable(ctx)` / `tr.Drop(ctx)` — see [Database DDL triggers](#database-ddl-triggers) |
-| `Database.Sequences`            | `db.Sequences(ctx)` / `db.SequenceByName(ctx, schema, name)` / `db.SequenceRef(schema, name).Drop(ctx)` / `db.CreateSequence(ctx, req)` (`Precision` for decimal and numeric) / `seq.Alter(ctx, gosmo.SequenceChanges{…})` (nil field = unchanged) |
+| `Database.Sequences`            | `db.Sequences(ctx)` / `db.SequenceByName(ctx, schema, name)` / `db.SequenceRef(schema, name).Drop(ctx)` / `db.CreateSequence(ctx, req)` (`Precision` for decimal and numeric) / `seq.Alter(ctx, gosmo.SequenceChanges{…})` (unset field = unchanged; values are decimal-digit strings) / `seq.TracksLastUsedValue()` |
 | `Database.Synonyms`             | `db.Synonyms(ctx)` / `db.SynonymByName(ctx, schema, name)` / `db.SynonymRef(schema, name).Drop(ctx)` |
 | `Database.UserDefinedDataTypes` / `...TableTypes` / `...Types` (CLR) | `db.UserDefinedDataTypes(ctx)` / `db.UserDefinedTableTypes(ctx)` / `db.ClrTypes(ctx)` (each with `...ByName(ctx, schema, name)`) / `db.SystemDataTypes(ctx)` — see [Types, rules and defaults](#types-rules-and-defaults) |
 | `Database.XMLSchemaCollections` | `db.XMLSchemaCollections(ctx)` / `db.XMLSchemaCollectionByName(ctx, schema, name)` / `c.Definition(ctx)` |
@@ -639,6 +639,9 @@ if dcaps.Permits("BACKUP DATABASE") { /* offer Back Up */ }
 `ProbedDatabasePermissions` are the names that get asked about — a working
 subset chosen for what an application actually gates on, not the grantable
 catalogs `ServerPermissionNames()`/`DatabasePermissionNames()` return.
+`ProbedMasterPermissions` (CREATE DATABASE) is asked of master by the server
+probe and read through `MasterPermission(name)`: granted in master alone it
+lets the login create a database, yet `CREATE ANY DATABASE` reads 0 for it.
 
 **The answer is three-way, and that is the point.** `HAS_PERMS_BY_NAME`
 returns NULL *without raising* for a permission the instance does not define,
@@ -1766,10 +1769,22 @@ last-writer-wins: the batch makes the reorder atomic, not serializable.
 Agent keeps it in memory and msdb has no column for it, so a job the read
 does not cover falls back to a `sysjobactivity`-derived value where only
 `JobStateExecuting` and `JobStateIdle` can be told apart. That happens with
-Agent stopped, and for a login with neither `sysadmin` nor
-`SQLAgentReaderRole`; a job listing has to survive both rather than fail.
+Agent stopped, and for every login but `sysadmin` (the extended procedure has
+no grants); a job listing has to survive both rather than fail.
 `JobStateUnknown` is what a multi-server job Agent does not run itself
 reports.
+
+msdb grants its Agent roles none of the tables the job, step, history and
+schedule reads join — only `sysjobs_view`, `sysschedules_localserver_view`,
+`syscategories` and the `sp_help_*` procedures. So each of those reads is one
+batch (`agentRead`) that a sysadmin answers from the tables and anyone else
+from the procedures, their result sets captured with `INSERT ... EXECUTE` into
+table variables and joined back into the same select list; the procedures
+apply msdb's visibility (SQLAgentUserRole its own jobs, Reader and Operator
+every one). `sp_help_job` itself cannot be captured — it nests an
+`INSERT ... EXECUTE` of its own — hence `sp_help_jobserver` per job for the
+last run. A non-sysadmin's step reads no `additional_parameters`, and no proxy
+name the login is not granted (`JobStep.ProxyName`).
 
 `JobStepDefinition`'s two string fields read an empty value differently, because
 msdb does: an empty `Database` means "leave the step's database alone"

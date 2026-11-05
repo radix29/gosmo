@@ -20,9 +20,9 @@ import (
 // Agent keeps this in memory for the jobs it runs itself; msdb has no column
 // for it. Jobs and JobByName read it through jobStates and fall back to a
 // start/stop_execution_date derivation over msdb.dbo.sysjobactivity for every
-// job that read does not cover — Agent stopped, or a login with neither
-// sysadmin nor SQLAgentReaderRole — in which case only JobStateExecuting and
-// JobStateIdle can be told apart. JobStateUnknown is what a multi-server job
+// job that read does not cover — Agent stopped, or any login but sysadmin
+// (see jobStates) — in which case only JobStateExecuting and JobStateIdle can
+// be told apart. JobStateUnknown is what a multi-server job
 // Agent does not run itself reports.
 type JobState int
 
@@ -183,13 +183,39 @@ func (j *Job) Server() *Server { return j.server }
 // is ordinary administration.
 func (j *Job) IsSystem() bool { return strings.HasPrefix(j.Name, "syspolicy_") }
 
-// jobSelect is the 18-column select list and the five joins both job reads
-// share; each caller appends its own ORDER BY or WHERE. Written once because
-// the select list *is* what makes a *Job complete — a column added, or an
-// ISNULL corrected, in one copy and not the other made Jobs and JobByName
-// return differently-populated jobs for the same job, and the two copies had
-// already started to drift.
-const jobSelect = `
+// agentRead is the batch every job, step, history and schedule read sends:
+// direct for a sysadmin, viaProcs for anyone else, decided on the server in
+// the same round trip.
+//
+// msdb grants the Agent roles (SQLAgentUserRole, and through it Reader and
+// Operator) none of the tables a direct read joins — sysjobservers,
+// sysjobactivity, sysjobhistory, sysjobsteps, sysjobschedules, sysschedules,
+// sysoperators — only sysjobs_view, sysschedules_localserver_view,
+// syscategories and the sp_help_* procedures, so a direct read is Msg 229 for
+// every login but sysadmin (measured on 17.0, 2026-11-05). viaProcs reads the
+// same rows through those grants, each procedure's result set captured with
+// INSERT ... EXECUTE into a table variable and joined back into the select
+// list the direct read uses. The procedures apply msdb's own visibility:
+// SQLAgentUserRole sees the jobs it owns, Reader and Operator every job, as
+// in SSMS.
+//
+// The direct read stays for a sysadmin: it is one set-based query where
+// viaProcs runs a procedure per job, and it is what the offline tests pin.
+// sp_help_job itself cannot be captured — it runs INSERT ... EXECUTE inside
+// (sp_get_composite_job_info), and SQL Server refuses to nest one — which is
+// why viaProcs assembles a job from sp_help_jobserver and sp_help_jobactivity.
+func agentRead(direct, viaProcs string) string {
+	return "\nSET NOCOUNT ON;\nIF ISNULL(IS_SRVROLEMEMBER(N'sysadmin'), 0) = 1\nBEGIN" + direct +
+		";\nEND\nELSE\nBEGIN" + viaProcs + ";\nEND"
+}
+
+// jobColumns is the 18-column select list both job reads share, over the
+// aliases jobSelect and jobProcSelect each bind. Written once because the
+// select list *is* what makes a *Job complete — a column added, or an ISNULL
+// corrected, in one copy and not the other made Jobs and JobByName return
+// differently-populated jobs for the same job, and the two copies had already
+// started to drift.
+const jobColumns = `
 SELECT CONVERT(varchar(36), j.job_id), j.name, ISNULL(j.description,''),
        j.enabled, ISNULL(c.name,''), ISNULL(l.name,''),
        j.date_created, j.date_modified, j.start_step_id,
@@ -199,7 +225,11 @@ SELECT CONVERT(varchar(36), j.job_id), j.name, ISNULL(j.description,''),
        ISNULL(js.last_run_duration, 0),
        ja.next_scheduled_run_date,
        CASE WHEN ja.start_execution_date IS NOT NULL AND ja.stop_execution_date IS NULL
-            THEN 1 ELSE 4 END
+            THEN 1 ELSE 4 END`
+
+// jobSelect is a sysadmin's job read: jobColumns over msdb's tables. Each
+// caller appends its own ORDER BY or WHERE (see jobRead).
+const jobSelect = jobColumns + `
 FROM   msdb.dbo.sysjobs j
 LEFT   JOIN msdb.dbo.syscategories c ON c.category_id = j.category_id
 LEFT   JOIN master.sys.server_principals l ON l.sid = j.owner_sid
@@ -211,7 +241,75 @@ LEFT   JOIN msdb.dbo.sysjobservers js
        ON  js.job_id = j.job_id
        AND js.server_id = 0`
 
-// scanJob scans one row shaped like jobSelect into a new Job, decoding the
+// jobProcTables declares and fills the table variables jobProcSelect joins,
+// for the jobs the cursor's select finds; jobRead appends the caller's
+// filter to it, so only those jobs pay a sp_help_jobserver call.
+//
+//   - @act is sp_help_jobactivity: the current Agent session's
+//     sysjobactivity rows, what the direct read takes from MAX(session_id).
+//   - @op is sp_help_operator, for the e-mail operator's name: sysoperators
+//     is granted to SQLAgentOperatorRole only.
+//   - @srv is sp_help_jobserver per job, with the last-run details: the only
+//     route to sysjobservers.last_run_duration — sp_help_job reports the
+//     last run but not its duration.
+//
+// Every text column is max-sized: INSERT ... EXECUTE fails Msg 8152 on a
+// value longer than its target, where a select would have returned it.
+const jobProcTables = `
+DECLARE @act TABLE (session_id int, job_id uniqueidentifier, job_name sysname,
+  run_requested_date datetime, run_requested_source nvarchar(max), queued_date datetime,
+  start_execution_date datetime, last_executed_step_id int, last_executed_step_date datetime,
+  stop_execution_date datetime, next_scheduled_run_date datetime, job_history_id int,
+  message nvarchar(max), run_status int, operator_id_emailed int, operator_id_netsent int,
+  operator_id_paged int);
+INSERT INTO @act EXECUTE msdb.dbo.sp_help_jobactivity;
+DECLARE @op TABLE (id int, name sysname, enabled tinyint, email_address nvarchar(max),
+  last_email_date int, last_email_time int, pager_address nvarchar(max), last_pager_date int,
+  last_pager_time int, weekday_pager_start_time int, weekday_pager_end_time int,
+  saturday_pager_start_time int, saturday_pager_end_time int, sunday_pager_start_time int,
+  sunday_pager_end_time int, pager_days tinyint, netsend_address nvarchar(max),
+  last_netsend_date int, last_netsend_time int, category_name sysname NULL);
+INSERT INTO @op EXECUTE msdb.dbo.sp_help_operator;
+DECLARE @srv TABLE (job_id uniqueidentifier NULL, server_id int, server_name nvarchar(max),
+  enlist_date datetime, last_poll_date datetime, last_run_date int, last_run_time int,
+  last_run_duration int, last_run_outcome int, last_outcome_message nvarchar(max));
+DECLARE @job uniqueidentifier;
+DECLARE agent_jobs CURSOR LOCAL FAST_FORWARD FOR
+SELECT j.job_id FROM msdb.dbo.sysjobs_view j`
+
+// jobProcSelect is everyone else's job read: jobColumns over sysjobs_view and
+// the table variables jobProcTables filled. SUSER_SNAME stands in for the
+// server_principals join, which shows a non-sysadmin only its own login.
+const jobProcSelect = `;
+OPEN agent_jobs;
+FETCH NEXT FROM agent_jobs INTO @job;
+WHILE @@FETCH_STATUS = 0
+BEGIN
+  INSERT INTO @srv (server_id, server_name, enlist_date, last_poll_date, last_run_date,
+                    last_run_time, last_run_duration, last_run_outcome, last_outcome_message)
+  EXECUTE msdb.dbo.sp_help_jobserver @job_id = @job, @show_last_run_details = 1;
+  UPDATE @srv SET job_id = @job WHERE job_id IS NULL;
+  FETCH NEXT FROM agent_jobs INTO @job;
+END;
+CLOSE agent_jobs;
+DEALLOCATE agent_jobs;` + jobColumns + `
+FROM   msdb.dbo.sysjobs_view j
+LEFT   JOIN msdb.dbo.syscategories c ON c.category_id = j.category_id
+OUTER  APPLY (SELECT SUSER_SNAME(j.owner_sid) AS name) l
+LEFT   JOIN @op no ON no.id = j.notify_email_operator_id
+LEFT   JOIN @act ja ON ja.job_id = j.job_id
+LEFT   JOIN @srv js
+       ON  js.job_id = j.job_id
+       AND js.server_id = 0`
+
+// jobRead is the batch Jobs and JobByName send, tail being the ORDER BY or
+// WHERE each appends: to the direct read, to the cursor choosing the jobs
+// viaProcs reads, and to its select.
+func jobRead(tail string) string {
+	return agentRead(jobSelect+tail, jobProcTables+tail+jobProcSelect+tail)
+}
+
+// scanJob scans one row shaped like jobColumns into a new Job, decoding the
 // nullable activity columns the outer joins may not supply. CurrentState is
 // the sysjobactivity-derived fallback; applyJobStates overlays Agent's live
 // value on top where it has one.
@@ -247,12 +345,12 @@ func scanJob(s *Server, scan func(dest ...any) error) (*Job, error) {
 	return j, nil
 }
 
-// Jobs returns all SQL Server Agent jobs from msdb.
+// Jobs returns the SQL Server Agent jobs from msdb the login may see: every
+// job for sysadmin, SQLAgentReaderRole and SQLAgentOperatorRole, its own for
+// SQLAgentUserRole (see agentRead).
 func (s *Server) Jobs(ctx context.Context) ([]*Job, error) {
-	const q = jobSelect + `
-ORDER  BY j.name`
-
-	rows, err := s.query(ctx, q)
+	rows, err := s.query(ctx, jobRead(`
+ORDER  BY j.name`))
 	if err != nil {
 		return nil, fmt.Errorf("gosmo: list agent jobs: %w", err)
 	}
@@ -294,7 +392,9 @@ func (s *Server) JobRef(name string) *Job {
 }
 
 // id returns the job's job_id: JobID when the job was read, else looked up by
-// name, which msdb keeps unique (sp_add_job refuses a duplicate, Msg 14261).
+// name, which msdb keeps unique (sp_add_job refuses a duplicate, Msg 14261),
+// in sysjobs_view: every job for a sysadmin, and the Agent roles' grant — a
+// job the login may not see is not found.
 // The handle is not updated — a read must not write to a receiver another
 // goroutine may be reading.
 func (j *Job) id(ctx context.Context, what string) (string, error) {
@@ -303,14 +403,15 @@ func (j *Job) id(ctx context.Context, what string) (string, error) {
 	}
 	var id string
 	err := j.server.queryRowScan(ctx, `
-SELECT CONVERT(varchar(36), job_id) FROM msdb.dbo.sysjobs WHERE name = @p1`, []any{j.Name}, &id)
+SELECT CONVERT(varchar(36), job_id) FROM msdb.dbo.sysjobs_view WHERE name = @p1`, []any{j.Name}, &id)
 	return foundRow(id, err, notFoundf("gosmo: agent job %q not found", j.Name), what)
 }
 
-// JobByName returns a single job by name using a direct parameterised query.
+// JobByName returns a single job by name, read as Jobs reads it: a job the
+// login may not see is not found.
 func (s *Server) JobByName(ctx context.Context, name string) (*Job, error) {
-	const q = jobSelect + `
-WHERE  j.name = @p1`
+	q := jobRead(`
+WHERE  j.name = @p1`)
 
 	j, err := readByName(ctx, s, scanJob, q, []any{name},
 		notFoundf("gosmo: agent job %q not found", name), fmt.Sprintf("read agent job %q", name))

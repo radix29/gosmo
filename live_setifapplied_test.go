@@ -251,7 +251,7 @@ func TestLiveScriptedSequenceRestartMirroring(t *testing.T) {
 		t.Fatalf("open %s: %v", name, err)
 	}
 	if _, err := d.CreateSequence(ctx, CreateSequenceRequest{
-		Schema: "dbo", Name: "probe_seq", StartValue: 1, Increment: 1,
+		Schema: "dbo", Name: "probe_seq", StartValue: "1", Increment: "1",
 	}); err != nil {
 		t.Fatalf("create sequence: %v", err)
 	}
@@ -290,7 +290,7 @@ func TestLiveScriptedSequenceRestartMirroring(t *testing.T) {
 
 	// 1. Scripted: neither the handle nor the server may move.
 	sctx, script := WithScript(ctx)
-	if err := seq.Restart(sctx, before+5000); err != nil {
+	if err := seq.Restart(sctx, strconv.FormatInt(before+5000, 10)); err != nil {
 		t.Fatalf("scripted restart: %v", err)
 	}
 	if len(script.Statements()) != 1 {
@@ -320,7 +320,7 @@ func TestLiveScriptedSequenceRestartMirroring(t *testing.T) {
 	// the server actually hands out has to come from there — the whole point
 	// of the field is predicting that.
 	seq = reload()
-	if err := seq.Restart(ctx, 7777); err != nil {
+	if err := seq.Restart(ctx, "7777"); err != nil {
 		t.Fatalf("restart: %v", err)
 	}
 	if got, srvGot := cur(seq), cur(reload()); got != 7777 || srvGot != 7777 {

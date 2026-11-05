@@ -48,6 +48,7 @@ func TestProbedNameListsAreWellFormed(t *testing.T) {
 		upper bool
 	}{
 		{"ProbedServerPermissions", ProbedServerPermissions, true},
+		{"ProbedMasterPermissions", ProbedMasterPermissions, true},
 		{"ProbedDatabasePermissions", ProbedDatabasePermissions, true},
 		{"ProbedServerRoles", ProbedServerRoles, false},
 		{"ProbedDatabaseRoles", ProbedDatabaseRoles, false},
@@ -264,6 +265,38 @@ func TestServerCapabilitiesReadsAnswersByName(t *testing.T) {
 	}
 	if !c.Allows(ag) {
 		t.Errorf("Allows(%s) = false for a NULL answer", ag)
+	}
+}
+
+// TestServerCapabilitiesReadMasterApartFromTheServer: a CREATE DATABASE
+// granted in master answers 'M', and must land in MasterPermissions alone —
+// read as the server's, it would pass for CREATE ANY DATABASE, which the
+// login does not hold.
+func TestServerCapabilitiesReadMasterApartFromTheServer(t *testing.T) {
+	script := &capScript{serverRows: [][]driver.Value{
+		{"P", "CREATE ANY DATABASE", int64(0)},
+		{"M", "CREATE DATABASE", int64(1)},
+	}}
+	srv := capServer(t, script)
+	c, err := srv.Capabilities(context.Background())
+	if err != nil {
+		t.Fatalf("Capabilities: %v", err)
+	}
+	if got := c.MasterPermission("CREATE DATABASE"); got != CapabilityGranted {
+		t.Errorf("MasterPermission(CREATE DATABASE) = %v, want granted", got)
+	}
+	if got := c.Permission("CREATE DATABASE"); got != CapabilityUnknown {
+		t.Errorf("Permission(CREATE DATABASE) = %v: the master answer leaked into the server map", got)
+	}
+	if got := c.Permission("CREATE ANY DATABASE"); got != CapabilityDenied {
+		t.Errorf("CREATE ANY DATABASE = %v, want denied", got)
+	}
+	if !strings.Contains(script.srvQuery, "HAS_PERMS_BY_NAME(N'master', 'DATABASE', n.v)") {
+		t.Errorf("the server probe does not ask master:\n%s", script.srvQuery)
+	}
+	var nilCaps *Capabilities
+	if got := nilCaps.MasterPermission("CREATE DATABASE"); got != CapabilityUnknown {
+		t.Errorf("nil MasterPermission = %v, want unknown", got)
 	}
 }
 
@@ -1309,7 +1342,8 @@ func TestTheServerProbeAsksForExplicitServerDenials(t *testing.T) {
 		t.Errorf("the server catalog block does not start at @p%d:\n%s", first, q)
 	}
 	want := len(ProbedServerRoles) + len(ProbedServerPermissions) +
-		len(ProbedServerSecurablePermissions) + len(ProbedAvailabilityGroupPermissions)
+		len(ProbedServerSecurablePermissions) + len(ProbedAvailabilityGroupPermissions) +
+		len(ProbedMasterPermissions)
 	if len(script.srvArgs) != want {
 		t.Errorf("the server probe bound %d names, want %d", len(script.srvArgs), want)
 	}

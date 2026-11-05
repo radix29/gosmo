@@ -315,6 +315,15 @@ with `AcquireConn` and closed back into the same pool (gossms's query panels
 discard theirs). `ReleaseIdleConnections` still frees those before this
 `Server`'s exclusive writes (`live_release_idle_test.go` parks sessions that
 way now). gossms dropped its 60 s `ConnMaxIdleTime` for gosmo's default.
+## `Sequence.NextValue` returns int64
+
+Every other sequence value is decimal digits (`StartValue` … `CurrentValue`,
+`CreateSequenceRequest`, `SequenceChanges`, `Restart`), so a `decimal(38,0)`
+sequence's whole range can be read and written. `NextValue` still scans into
+an `int64`, so it fails on such a sequence once its values pass bigint. No
+caller in gossms uses it; changing it to `string` is a breaking change, left
+for the next one that touches it.
+
 ## Live tests leave non-backup files on 13 and 14
 
 `liveRemoveFile` (`live_remove_file_test.go`) cannot delete a file that is
