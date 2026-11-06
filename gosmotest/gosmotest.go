@@ -46,6 +46,13 @@
 // call makes on its own session is answered by the Fake itself, so the
 // rows' Query.Database is the table's.
 //
+// A statement's Query also carries the context it was issued under (Ctx) and
+// the transaction it ran in (Tx; Fake.TxLog lists their BEGIN and ends).
+// OnExec scopes a rule to writes. Result.DropConn, with Err, leaves the
+// connection invalid as a dropped link does, and Hold keeps a rule's answer
+// back until a channel is closed or the statement's context is cancelled, so
+// a test can act while a statement is in flight.
+//
 // A Fake is safe for concurrent use.
 package gosmotest
 
@@ -57,6 +64,7 @@ import (
 	"fmt"
 	"io"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -110,7 +118,49 @@ type Query struct {
 	// Messages is a query sent with a sqlexp.ReturnMessage, reading the
 	// server's messages as it runs: a BACKUP or RESTORE with progress.
 	Messages bool
+	// Ctx is the context the statement was issued under: a test asserting
+	// that a caller cancelled a read, or a Responder holding the query until
+	// it is (Hold), looks here. Nil for a statement database/sql issued
+	// without one (a prepared Stmt's Exec/Query).
+	Ctx context.Context
+	// Tx numbers the transaction the statement ran in, 1 for the Fake's
+	// first; 0 for none. TxLog lists the transactions' BEGIN and ends.
+	Tx int
 }
+
+// Bound is the statement with each @pN replaced by the literal its argument
+// would be written as — what it amounts to, as gosmo's statement observer
+// and a captured script show it. gosmo binds the string arguments of every
+// msdb Agent procedure rather than splicing them, so Text reads
+// "@job_name = @p1" and only this form says which job. A placeholder with no
+// argument, or an argument of a type with no literal here, is left as is.
+func (q Query) Bound() string {
+	if len(q.Args) == 0 {
+		return q.Text
+	}
+	return placeholder.ReplaceAllStringFunc(q.Text, func(m string) string {
+		n, err := strconv.Atoi(m[2:])
+		if err != nil || n < 1 || n > len(q.Args) {
+			return m
+		}
+		switch v := q.Args[n-1].(type) {
+		case nil:
+			return "NULL"
+		case string:
+			return "N'" + strings.ReplaceAll(v, "'", "''") + "'"
+		case bool:
+			if v {
+				return "1"
+			}
+			return "0"
+		case int64, int32, int, float64:
+			return fmt.Sprint(v)
+		}
+		return m
+	})
+}
+
+var placeholder = regexp.MustCompile(`@p([0-9]+)`)
 
 // Arg is the value of parameter @p(i+1), nil when there are fewer.
 func (q Query) Arg(i int) any {
@@ -145,6 +195,11 @@ type Set struct {
 type Result struct {
 	Sets []Set
 	Err  error
+	// DropConn, with Err, leaves the connection the statement ran on invalid
+	// (driver.Validator), as go-mssqldb reports a session killed or a link
+	// dropped mid-statement: database/sql discards it, and a caller holding
+	// the session finds it lost.
+	DropConn bool
 }
 
 // A Responder answers a query a rule matched.
@@ -166,6 +221,28 @@ func Fail(err error) Responder {
 	return func(Query) Result { return Result{Err: err} }
 }
 
+// Hold wraps r so that it answers only once release is closed, or fails with
+// the statement's context error when that is cancelled first — the way a real
+// driver answers a cancelled statement. It is how a test acts, or cancels,
+// while a read or a write is genuinely in flight: without it a Fake answers
+// instantly and every statement has finished before the test regains control.
+// Scope the rule (OnExec, a Database or Arg check in OnFunc) so only the
+// statement under test is held.
+func Hold(release <-chan struct{}, r Responder) Responder {
+	return func(q Query) Result {
+		var done <-chan struct{}
+		if q.Ctx != nil {
+			done = q.Ctx.Done()
+		}
+		select {
+		case <-release:
+			return r(q)
+		case <-done:
+			return Result{Err: q.Ctx.Err()}
+		}
+	}
+}
+
 type rule struct {
 	match   func(Query) bool
 	respond Responder
@@ -183,6 +260,8 @@ type Fake struct {
 	queries  []Query
 	server   *gosmo.Server
 	defaults []rule
+	txLog    []string
+	txSeq    int
 }
 
 // New is a Fake for t, with DefaultInfo and no rules. Its Server is closed
@@ -196,6 +275,16 @@ func New(t testing.TB) *Fake {
 				int64(0), boolInt(i.HADREnabled), int64(0), int64(i.EngineEdition), i.Version, i.DataPath, i.LogPath, i.BackupPath, i.Login}}}}}
 		}},
 		{contains("FROM   sys.dm_os_sys_info"), Rows([]any{int64(16384), int64(8)})},
+		// What gosmo's InTransaction asks as it begins, and CurrentDatabase:
+		// the session's database, master for one never moved. A test's own
+		// rule for it answers first.
+		{func(q Query) bool { return strings.TrimSpace(q.Text) == "SELECT DB_NAME()" }, func(q Query) Result {
+			db := q.Database
+			if db == "" {
+				db = "master"
+			}
+			return Result{Sets: []Set{{Rows: [][]any{{db}}}}}
+		}},
 	}
 	return f
 }
@@ -216,6 +305,13 @@ func contains(s string) func(Query) bool {
 // the order they were added; the first that matches answers.
 func (f *Fake) On(match string, r Responder) *Fake {
 	return f.OnFunc(contains(match), r)
+}
+
+// OnExec is On for a statement sent through Exec only: a write. A rule that
+// fails or holds a write this way is not consulted for a read that happens to
+// contain the same text.
+func (f *Fake) OnExec(match string, r Responder) *Fake {
+	return f.OnFunc(func(q Query) bool { return q.Exec && strings.Contains(q.Text, match) }, r)
 }
 
 // OnRegexp answers every query whose text matches the regular expression
@@ -276,6 +372,13 @@ func (f *Fake) Queries() []Query {
 	return append([]Query(nil), f.queries...)
 }
 
+// TxLog is every BEGIN, COMMIT and ROLLBACK f's connections saw, in order.
+func (f *Fake) TxLog() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.txLog...)
+}
+
 // ErrNoRule is the error a query no rule answers returns to gosmo.
 var ErrNoRule = errors.New("gosmotest: no rule answers the query")
 
@@ -311,6 +414,21 @@ type conn struct {
 	db string
 	// msgq is the ReturnMessage the next query's answer goes to, if any.
 	msgq *sqlexp.ReturnMessage
+	tx   int  // the open transaction's number, 0 for none
+	lost bool // a Result.DropConn failure ended this connection
+}
+
+// IsValid is driver.Validator: false once a DropConn failure ended c.
+func (c *conn) IsValid() bool { return !c.lost }
+
+// ResetSession is called by database/sql when c is handed back out of the
+// pool. It clears the database a USE pinned, so one caller's database-scoped
+// read cannot answer the next caller's server-scoped one — gosmo issues its
+// own USE ahead of every database-scoped read, so carrying it over could only
+// make a test pass on a query that never asked for it.
+func (c *conn) ResetSession(context.Context) error {
+	c.db = ""
+	return nil
 }
 
 var (
@@ -318,6 +436,8 @@ var (
 	_ driver.ExecerContext     = (*conn)(nil)
 	_ driver.NamedValueChecker = (*conn)(nil)
 	_ driver.ConnBeginTx       = (*conn)(nil)
+	_ driver.Validator         = (*conn)(nil)
+	_ driver.SessionResetter   = (*conn)(nil)
 )
 
 func (c *conn) Prepare(q string) (driver.Stmt, error) {
@@ -327,9 +447,18 @@ func (c *conn) Prepare(q string) (driver.Stmt, error) {
 	return stmt{c, q}, nil
 }
 func (c *conn) Close() error              { return nil }
-func (c *conn) Begin() (driver.Tx, error) { return tx{}, nil }
+func (c *conn) Begin() (driver.Tx, error) { return c.begin(), nil }
 func (c *conn) BeginTx(context.Context, driver.TxOptions) (driver.Tx, error) {
-	return tx{}, nil
+	return c.begin(), nil
+}
+
+func (c *conn) begin() driver.Tx {
+	c.f.mu.Lock()
+	defer c.f.mu.Unlock()
+	c.f.txSeq++
+	c.tx = c.f.txSeq
+	c.f.txLog = append(c.f.txLog, "BEGIN")
+	return tx{c}
 }
 
 // CheckNamedValue converts an argument as database/sql's default converter
@@ -350,7 +479,7 @@ func (c *conn) CheckNamedValue(nv *driver.NamedValue) error {
 	return nil
 }
 
-func (c *conn) QueryContext(_ context.Context, q string, args []driver.NamedValue) (driver.Rows, error) {
+func (c *conn) QueryContext(ctx context.Context, q string, args []driver.NamedValue) (driver.Rows, error) {
 	if rest, found := strings.CutPrefix(q, sessionSwitch); found {
 		return c.switchSession(rest)
 	}
@@ -361,6 +490,7 @@ func (c *conn) QueryContext(_ context.Context, q string, args []driver.NamedValu
 		return &rows{}, nil // a bare USE
 	}
 	query.Messages = msgq != nil
+	query.Ctx, query.Tx = ctx, c.tx
 	res, found := c.f.answer(query)
 	if msgq != nil {
 		return messages(msgq, res)
@@ -370,19 +500,22 @@ func (c *conn) QueryContext(_ context.Context, q string, args []driver.NamedValu
 		res.Err = fmt.Errorf("%w: %s", ErrNoRule, query)
 	}
 	if res.Err != nil {
+		c.lost = res.DropConn
 		return nil, res.Err
 	}
 	return newRows(res.Sets)
 }
 
-func (c *conn) ExecContext(_ context.Context, q string, args []driver.NamedValue) (driver.Result, error) {
+func (c *conn) ExecContext(ctx context.Context, q string, args []driver.NamedValue) (driver.Result, error) {
 	query, ok := c.unwrap(q, args)
 	if !ok {
 		return driver.ResultNoRows, nil
 	}
 	query.Exec = true
+	query.Ctx, query.Tx = ctx, c.tx
 	res, _ := c.f.answer(query)
 	if res.Err != nil {
+		c.lost = res.DropConn
 		return nil, res.Err
 	}
 	return driver.RowsAffected(0), nil
@@ -536,10 +669,18 @@ func named(args []driver.Value) []driver.NamedValue {
 	return out
 }
 
-type tx struct{}
+type tx struct{ c *conn }
 
-func (tx) Commit() error   { return nil }
-func (tx) Rollback() error { return nil }
+func (t tx) end(how string) error {
+	t.c.f.mu.Lock()
+	defer t.c.f.mu.Unlock()
+	t.c.tx = 0
+	t.c.f.txLog = append(t.c.f.txLog, how)
+	return nil
+}
+
+func (t tx) Commit() error   { return t.end("COMMIT") }
+func (t tx) Rollback() error { return t.end("ROLLBACK") }
 
 // rows serves Result.Sets, one after another.
 type rows struct {

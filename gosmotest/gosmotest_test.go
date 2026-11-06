@@ -2,6 +2,7 @@ package gosmotest_test
 
 import (
 	"context"
+	"database/sql/driver"
 	"errors"
 	"fmt"
 	"strings"
@@ -227,5 +228,74 @@ func TestProgressMessages(t *testing.T) {
 	err := f.Server().Backup(context.Background(), opts)
 	if se, ok := gosmo.AsSQLError(err); !ok || se.Number != 3013 || len(se.All) != 2 || se.All[0].Number != 3201 {
 		t.Errorf("refused backup: %v", err)
+	}
+}
+
+// A transaction's statements carry its number, and TxLog lists its ends in
+// order; a statement outside one has Tx 0. The statement's context rides
+// along.
+func TestTransactionAndContext(t *testing.T) {
+	f := gosmotest.New(t)
+	s := f.Server()
+	type key struct{}
+	ctx := context.WithValue(context.Background(), key{}, 1)
+	if err := s.KillSession(ctx, 7); err != nil {
+		t.Fatal(err)
+	}
+	err := s.InTransaction(ctx, func(ctx context.Context) error { return s.KillSession(ctx, 8) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	var kills []gosmotest.Query
+	for _, q := range f.Queries() {
+		if q.Exec && strings.HasPrefix(q.Text, "KILL") {
+			kills = append(kills, q)
+		}
+	}
+	if len(kills) != 2 || kills[0].Tx != 0 || kills[0].Ctx.Value(key{}) != 1 || kills[1].Tx != 1 || kills[1].Text != "KILL 8" {
+		t.Fatalf("kills %+v", kills)
+	}
+	if got := fmt.Sprint(f.TxLog()); got != "[BEGIN COMMIT]" {
+		t.Errorf("TxLog %v", got)
+	}
+}
+
+func TestBound(t *testing.T) {
+	q := gosmotest.Query{Text: "EXEC sp_x @a = @p1, @b = @p2, @c = @p3, @d = @p4", Args: []any{"o'k", int64(3), nil, true}}
+	if got, want := q.Bound(), "EXEC sp_x @a = N'o''k', @b = 3, @c = NULL, @d = 1"; got != want {
+		t.Errorf("Bound = %q, want %q", got, want)
+	}
+}
+
+// OnExec fails a write only; DropConn makes database/sql discard the
+// connection; Hold answers a cancelled statement with the context's error.
+func TestOnExecDropConnAndHold(t *testing.T) {
+	f := gosmotest.New(t)
+	f.OnExec("KILL 1", gosmotest.Fail(errors.New("refused")))
+	f.OnExec("KILL 2", func(gosmotest.Query) gosmotest.Result {
+		return gosmotest.Result{Err: driver.ErrBadConn, DropConn: true}
+	})
+	hold := make(chan struct{})
+	f.OnExec("KILL 4", gosmotest.Hold(hold, gosmotest.Fail(errors.New("released"))))
+	s := f.Server()
+	ctx := context.Background()
+	if err := s.KillSession(ctx, 1); err == nil || !strings.Contains(err.Error(), "refused") {
+		t.Errorf("failed write: %v", err)
+	}
+	_ = s.KillSession(ctx, 2)
+	if err := s.KillSession(ctx, 3); err != nil {
+		t.Errorf("write after a dropped connection: %v", err)
+	}
+
+	cctx, cancel := context.WithCancel(ctx)
+	done := make(chan error, 1)
+	go func() { done <- s.KillSession(cctx, 4) }()
+	cancel()
+	if err := <-done; !errors.Is(err, context.Canceled) {
+		t.Errorf("held write after cancel: %v", err)
+	}
+	close(hold)
+	if err := s.KillSession(ctx, 4); err == nil || !strings.Contains(err.Error(), "released") {
+		t.Errorf("released write: %v", err)
 	}
 }
