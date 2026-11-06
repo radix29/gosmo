@@ -248,8 +248,23 @@ func (sc *Scripter) ScriptForeignKey(ctx context.Context, schema, table, name st
 	if err != nil {
 		return "", err
 	}
-	return sc.withTableChildExtendedProperties(ctx, buildForeignKeyScript(fk, qualifiedName(schema, table), sc.opts),
+	return sc.scriptTableForeignKey(ctx, t, fk)
+}
+
+// scriptTableForeignKey is ScriptForeignKey for a key already read.
+func (sc *Scripter) scriptTableForeignKey(ctx context.Context, t *Table, fk *ForeignKey) (string, error) {
+	return sc.withTableChildExtendedProperties(ctx, buildForeignKeyScript(fk, qualifiedName(t.Schema, t.Name), sc.opts),
 		t, fk.Name, "CONSTRAINT")
+}
+
+// tableForeignKeys is t.ForeignKeys, from sc.tables when that covers t.
+func (sc *Scripter) tableForeignKeys(ctx context.Context, t *Table) ([]*ForeignKey, error) {
+	if pre := sc.tables; pre != nil {
+		if _, ok := pre.options[t.ObjectID]; ok {
+			return pre.fks[t.ObjectID], nil
+		}
+	}
+	return t.ForeignKeys(ctx)
 }
 
 // buildForeignKeyScript assembles one foreign key's script, reusing the same

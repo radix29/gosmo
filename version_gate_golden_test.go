@@ -84,6 +84,9 @@ var goldenQueries = []goldenQuery{
 		"history_retention_period", "history_retention_period_unit_desc", "rejected_row_location", "table_options", "xml_compression"}, func(m int) string {
 		return (&Table{db: dbAtMajor(m)}).scriptOptionsSelect()
 	}},
+	{"created_by_parent", []string{"tables", "views"}, []string{"ledger_type", "ledger_view_id", "is_dropped_ledger_view"}, func(m int) string {
+		return dbAtMajor(m).createdByParentSelect()
+	}},
 	{"index_list", []string{"indexes", "partitions"}, nil, func(m int) string {
 		return (&Table{db: dbAtMajor(m)}).indexListSelect()
 	}},

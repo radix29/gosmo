@@ -59,10 +59,14 @@ func (h *orderHeap) Pop() any {
 // table), since a cycle of schema-bound ones could not have been created. It
 // is broken at the lowest-ordered node whose still-unmet references are all
 // unbound, and each broken reference is returned as a warning. A stuck graph
-// with no such node is an internal error.
+// with no such node is an internal error, and so is a duplicate node key: it
+// would emit one object twice and drop the other without a trace.
 func orderObjects(nodes []orderNode, edges []orderEdge) ([]orderNode, []string, error) {
 	byKey := make(map[string]orderNode, len(nodes))
 	for _, n := range nodes {
+		if _, dup := byKey[n.key]; dup {
+			return nil, nil, fmt.Errorf("gosmo: script database objects: duplicate object key %q", n.key)
+		}
 		byKey[n.key] = n
 	}
 	waiting := make(map[string]map[string]bool, len(nodes)) // node -> unmet dep -> bound

@@ -83,6 +83,12 @@ var gatedColumns = []gatedColumn{
 	{"tables", "ledger_view_id", "(SELECT TOP (4) lv.name AS v FROM sys.columns lv WHERE lv.object_id = t.ledger_view_id ORDER BY lv.column_id DESC FOR JSON PATH)", SQLServer2022, false, ""},
 	{"columns", "is_dropped_ledger_column", "c.is_dropped_ledger_column", SQLServer2022, false, ""},
 
+	// sys.tables and sys.views — what a ledger table's CREATE creates
+	// (createdByParentSelect), 2022.
+	{"tables", "ledger_type", "t.ledger_type", SQLServer2022, false, ""},
+	{"tables", "ledger_view_id", "t.ledger_view_id", SQLServer2022, false, ""},
+	{"views", "is_dropped_ledger_view", "v.is_dropped_ledger_view", SQLServer2022, false, ""},
+
 	// sys.partitions — XML_COMPRESSION, 2022.
 	{"partitions", "xml_compression", "pp.xml_compression", SQLServer2022, false, ""},
 

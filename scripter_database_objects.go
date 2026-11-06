@@ -60,6 +60,13 @@ type ObjectScriptOptions struct {
 	// schemas are still created, as their objects need them, but under dbo:
 	// their owner may be a principal the script does not create.
 	IncludePermissions bool
+	// Progress, when set, is called once every list has been read, with done
+	// 0 and the number of ScriptedObjects the script will hold, then after
+	// each one is scripted, ending at done == total. Every list is read
+	// before the first object is scripted, so total does not change; the
+	// objects themselves are what takes the time — at least one round trip
+	// each. It is called on the caller's goroutine.
+	Progress func(done, total int)
 }
 
 // DatabaseObjectScript is the result of ScriptDatabaseObjects: the objects in
@@ -114,7 +121,8 @@ func (sc *Scripter) ScriptDatabaseObjects(ctx context.Context, o ObjectScriptOpt
 // A cycle among references SQL Server resolves late is broken and reported in
 // Warnings; schema-bound references are never broken. The Scripter's verb
 // must be ScriptCreate. Not scripted: system objects, a system-versioned
-// table's history table (its parent creates it), rules and defaults, CLR
+// or ledger table's history table and ledger view (its parent creates them),
+// rules and defaults, CLR
 // assemblies, full-text and Service Broker objects, external objects,
 // credentials, certificates and keys, and any dependency across databases. An
 // encrypted module, or one the login has no VIEW DEFINITION on, is listed as
@@ -129,23 +137,13 @@ func (sc *Scripter) ScriptDatabaseObjectList(ctx context.Context, o ObjectScript
 	s := &Scripter{db: d, opts: opts}
 	want := func(k ScriptedKind) bool { return o.Kinds == nil || slices.Contains(o.Kinds, k) }
 
-	res := &DatabaseObjectScript{}
-	add := func(obj ScriptedObject) { res.Objects = append(res.Objects, obj) }
-	// emit scripts one object; a definition that cannot be read becomes a
-	// comment rather than failing the whole database.
-	emit := func(obj ScriptedObject, gen func() (string, error)) error {
-		sql, err := gen()
-		if err != nil {
-			if !errors.Is(err, ErrUnsupported) {
-				return err
-			}
-			obj.Note = err.Error()
-			sql = "-- not scripted: " + strings.ReplaceAll(err.Error(), "\n", " ") + "\n"
-		}
-		obj.SQL = sql
-		add(obj)
-		return nil
+	// Every list is read first and every object queued in script order, so
+	// the total is known before the first object is scripted (Progress).
+	var queue []pendingObject
+	queue1 := func(obj ScriptedObject, gen func() (string, error)) {
+		queue = append(queue, pendingObject{obj, gen})
 	}
+	sqlOf := func(sql string) func() (string, error) { return func() (string, error) { return sql, nil } }
 
 	// 1. principals and schemas, partitioning.
 	var sec *databaseSecurity
@@ -156,9 +154,13 @@ func (sc *Scripter) ScriptDatabaseObjectList(ctx context.Context, o ObjectScript
 		}
 		head, _ := buildDatabaseSecurityParts(d.Name, sec)
 		if want(ScriptedPrincipals) {
-			add(ScriptedObject{Kind: ScriptedPrincipals, Name: d.Name, SQL: head})
+			queue1(ScriptedObject{Kind: ScriptedPrincipals, Name: d.Name}, sqlOf(head))
 		}
-	} else if want(ScriptedSchema) && !o.IncludePermissions {
+	}
+	// The principals block creates the schemas with their owners; without it
+	// (no IncludePermissions, or ScriptedPrincipals excluded by Kinds) they
+	// are created bare, under dbo.
+	if (sec == nil || !want(ScriptedPrincipals)) && want(ScriptedSchema) {
 		schemas, err := d.Schemas(ctx)
 		if err != nil {
 			return nil, err
@@ -171,7 +173,7 @@ func (sc *Scripter) ScriptDatabaseObjectList(ctx context.Context, o ObjectScript
 			c.Owner = "dbo"
 			opts := s.opts
 			opts.IncludeIfNotExists = true
-			add(ScriptedObject{Kind: ScriptedSchema, Name: sch.Name, SQL: buildSchemaScript(&c, opts)})
+			queue1(ScriptedObject{Kind: ScriptedSchema, Name: sch.Name}, sqlOf(buildSchemaScript(&c, opts)))
 		}
 	}
 	if want(ScriptedPartitionFunction) {
@@ -180,11 +182,8 @@ func (sc *Scripter) ScriptDatabaseObjectList(ctx context.Context, o ObjectScript
 			return nil, err
 		}
 		for _, pf := range pfs {
-			pf := pf
-			if err := emit(ScriptedObject{Kind: ScriptedPartitionFunction, Name: pf.Name},
-				func() (string, error) { return s.ScriptPartitionFunction(ctx, pf.Name) }); err != nil {
-				return nil, err
-			}
+			queue1(ScriptedObject{Kind: ScriptedPartitionFunction, Name: pf.Name},
+				func() (string, error) { return s.ScriptPartitionFunction(ctx, pf.Name) })
 		}
 	}
 	if want(ScriptedPartitionScheme) {
@@ -193,11 +192,8 @@ func (sc *Scripter) ScriptDatabaseObjectList(ctx context.Context, o ObjectScript
 			return nil, err
 		}
 		for _, ps := range pss {
-			ps := ps
-			if err := emit(ScriptedObject{Kind: ScriptedPartitionScheme, Name: ps.Name},
-				func() (string, error) { return s.ScriptPartitionScheme(ctx, ps.Name) }); err != nil {
-				return nil, err
-			}
+			queue1(ScriptedObject{Kind: ScriptedPartitionScheme, Name: ps.Name},
+				func() (string, error) { return s.ScriptPartitionScheme(ctx, ps.Name) })
 		}
 	}
 
@@ -242,7 +238,7 @@ func (sc *Scripter) ScriptDatabaseObjectList(ctx context.Context, o ObjectScript
 	for _, q := range seqs {
 		put('o', 3, ScriptedSequence, q.Schema, q.Name, func() (string, error) { return s.ScriptSequence(ctx, q.Schema, q.Name) })
 	}
-	history, err := d.historyTables(ctx)
+	byParent, err := d.createdByParent(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -252,7 +248,7 @@ func (sc *Scripter) ScriptDatabaseObjectList(ctx context.Context, o ObjectScript
 	}
 	var scriptedTables []*Table
 	for _, t := range tables {
-		if history[objectKey('o', t.Schema, t.Name)] {
+		if _, ok := byParent[objectKey('o', t.Schema, t.Name)]; ok {
 			continue
 		}
 		scriptedTables = append(scriptedTables, t)
@@ -273,7 +269,18 @@ func (sc *Scripter) ScriptDatabaseObjectList(ctx context.Context, o ObjectScript
 		return nil, err
 	}
 	for _, v := range views {
-		put('o', 6, ScriptedView, v.Schema, v.Name, func() (string, error) { return s.ScriptView(ctx, v.Schema, v.Name) })
+		gen := func() (string, error) { return s.ScriptView(ctx, v.Schema, v.Name) }
+		switch dropped, ok := byParent[objectKey('o', v.Schema, v.Name)]; {
+		case ok && dropped:
+			// Its dropped ledger table gets a refusal note; a CREATE VIEW
+			// would select from a table the replay never creates.
+			gen = func() (string, error) {
+				return "", unsupportedf("gosmo: script view %s: a dropped ledger view cannot be scripted", qualifiedName(v.Schema, v.Name))
+			}
+		case ok:
+			continue
+		}
+		put('o', 6, ScriptedView, v.Schema, v.Name, gen)
 	}
 	procs, err := d.StoredProcedures(ctx, ObjectFilter{})
 	if err != nil {
@@ -298,29 +305,26 @@ func (sc *Scripter) ScriptDatabaseObjectList(ctx context.Context, o ObjectScript
 	if err != nil {
 		return nil, err
 	}
-	res.Warnings = warnings
+	res := &DatabaseObjectScript{Warnings: warnings}
 	for _, n := range order {
 		it := items[n.key]
-		if !want(it.kind) {
-			continue
-		}
-		if err := emit(ScriptedObject{Kind: it.kind, Schema: n.schema, Name: n.name}, it.gen); err != nil {
-			return nil, err
+		if want(it.kind) {
+			queue1(ScriptedObject{Kind: it.kind, Schema: n.schema, Name: n.name}, it.gen)
 		}
 	}
 
-	// 3. what needs every table: foreign keys, then triggers.
+	// 3. what needs every table: foreign keys, then triggers. The foreign
+	// keys come from the table prefetch: a ScriptForeignKey each re-read the
+	// table and its keys, 1 + 2×keys round trips per table.
 	if want(ScriptedForeignKey) {
 		for _, t := range scriptedTables {
-			fks, err := t.ForeignKeys(ctx)
+			fks, err := s.tableForeignKeys(ctx, t)
 			if err != nil {
 				return nil, err
 			}
 			for _, fk := range fks {
-				if err := emit(ScriptedObject{Kind: ScriptedForeignKey, Schema: t.Schema, Name: fk.Name, Table: t.Name},
-					func() (string, error) { return s.ScriptForeignKey(ctx, t.Schema, t.Name, fk.Name) }); err != nil {
-					return nil, err
-				}
+				queue1(ScriptedObject{Kind: ScriptedForeignKey, Schema: t.Schema, Name: fk.Name, Table: t.Name},
+					func() (string, error) { return s.scriptTableForeignKey(ctx, t, fk) })
 			}
 		}
 	}
@@ -330,10 +334,8 @@ func (sc *Scripter) ScriptDatabaseObjectList(ctx context.Context, o ObjectScript
 			return nil, err
 		}
 		for _, tr := range trs {
-			if err := emit(ScriptedObject{Kind: ScriptedTrigger, Schema: tr.Schema, Name: tr.Name, Table: tr.TableName},
-				func() (string, error) { return s.ScriptTrigger(ctx, tr.Schema, tr.Name) }); err != nil {
-				return nil, err
-			}
+			queue1(ScriptedObject{Kind: ScriptedTrigger, Schema: tr.Schema, Name: tr.Name, Table: tr.TableName},
+				func() (string, error) { return s.ScriptTrigger(ctx, tr.Schema, tr.Name) })
 		}
 	}
 	if want(ScriptedDatabaseTrigger) {
@@ -342,45 +344,111 @@ func (sc *Scripter) ScriptDatabaseObjectList(ctx context.Context, o ObjectScript
 			return nil, err
 		}
 		for _, tr := range trs {
-			if err := emit(ScriptedObject{Kind: ScriptedDatabaseTrigger, Name: tr.Name},
-				func() (string, error) { return s.ScriptDatabaseTrigger(ctx, tr.Name) }); err != nil {
-				return nil, err
-			}
+			queue1(ScriptedObject{Kind: ScriptedDatabaseTrigger, Name: tr.Name},
+				func() (string, error) { return s.ScriptDatabaseTrigger(ctx, tr.Name) })
 		}
 	}
 
 	// 4. permissions.
 	if sec != nil && want(ScriptedPermissions) {
 		_, tail := buildDatabaseSecurityParts(d.Name, sec)
-		add(ScriptedObject{Kind: ScriptedPermissions, Name: d.Name, SQL: tail})
+		queue1(ScriptedObject{Kind: ScriptedPermissions, Name: d.Name}, sqlOf(tail))
+	}
+
+	if res.Objects, err = scriptQueue(ctx, queue, o.Progress); err != nil {
+		return nil, err
 	}
 	return res, nil
 }
 
-// objectKey identifies a node: prefix o for sys.objects, t for a type, x for
-// an XML schema collection.
-func objectKey(prefix byte, schema, name string) string {
-	return string(prefix) + ":" + schema + "." + name
+// pendingObject is one object of a database script, queued with the call
+// that scripts it.
+type pendingObject struct {
+	obj ScriptedObject
+	gen func() (string, error)
 }
 
-// historyTables is the system-versioned tables' history tables, by objectKey:
-// the parent's CREATE TABLE names one and creates it when absent.
-func (d *Database) historyTables(ctx context.Context) (map[string]bool, error) {
-	rows, err := d.query(ctx, `
-SELECT SCHEMA_NAME(schema_id), name FROM sys.tables WHERE temporal_type = 1`)
-	list, err := scanRows(rows, err, fmt.Sprintf("list history tables in %q", d.Name), func(scan func(...any) error) (string, error) {
+// scriptQueue scripts each queued object in order, reporting to progress (if
+// set) first with 0 and then after each object. An object that cannot be
+// scripted (ErrUnsupported: an encrypted module, a definition the login
+// cannot see) becomes a comment with its Note set, rather than failing the
+// whole database; any other error, and a done ctx, ends the script.
+func scriptQueue(ctx context.Context, queue []pendingObject, progress func(done, total int)) ([]ScriptedObject, error) {
+	if progress == nil {
+		progress = func(int, int) {}
+	}
+	out := make([]ScriptedObject, 0, len(queue))
+	progress(0, len(queue))
+	for _, p := range queue {
+		if err := ctx.Err(); err != nil {
+			return nil, fmt.Errorf("gosmo: script database objects: %w", err)
+		}
+		obj := p.obj
+		sql, err := p.gen()
+		if err != nil {
+			if !errors.Is(err, ErrUnsupported) {
+				return nil, err
+			}
+			obj.Note = err.Error()
+			sql = "-- not scripted: " + strings.ReplaceAll(err.Error(), "\n", " ") + "\n"
+		}
+		obj.SQL = sql
+		out = append(out, obj)
+		progress(len(out), len(queue))
+	}
+	return out, nil
+}
+
+// objectKey identifies a node: prefix o for sys.objects, t for a type, x for
+// an XML schema collection. The parts are bracket-quoted so the key is
+// injective: joined bare, [a.b].[c] and [a].[b.c] both gave "o:a.b.c", and the
+// script created one twice and the other never.
+func objectKey(prefix byte, schema, name string) string {
+	return string(prefix) + ":" + qualifiedName(schema, name)
+}
+
+// createdByParent is what another table's CREATE TABLE creates, by objectKey:
+// a system-versioned table's history table (temporal_type 1), an updatable
+// ledger table's history table (ledger_type 1 — its temporal_type is 0) and a
+// ledger table's ledger view. Scripted on their own, the history table was a
+// "not scripted" note and the ledger view a CREATE VIEW the replay refused
+// (Msg 2714: its table had already created it). The value is true for a
+// dropped ledger table's ledger view: nothing creates it, so it is noted, not
+// skipped.
+func (d *Database) createdByParent(ctx context.Context) (map[string]bool, error) {
+	rows, err := d.query(ctx, d.createdByParentSelect())
+	type row struct {
+		key     string
+		dropped bool
+	}
+	list, err := scanRows(rows, err, fmt.Sprintf("list history tables and ledger views in %q", d.Name), func(scan func(...any) error) (row, error) {
 		var s, n string
-		err := scan(&s, &n)
-		return objectKey('o', s, n), err
+		var dropped bool
+		err := scan(&s, &n, &dropped)
+		return row{objectKey('o', s, n), dropped}, err
 	})
 	if err != nil {
 		return nil, err
 	}
 	out := make(map[string]bool, len(list))
-	for _, k := range list {
-		out[k] = true
+	for _, r := range list {
+		out[r.key] = r.dropped
 	}
 	return out, nil
+}
+
+// createdByParentSelect is createdByParent's query. Ledger tables, and the
+// three columns naming them, are SQL Server 2022's.
+func (d *Database) createdByParentSelect() string {
+	major := d.serverMajorVersion()
+	return `
+SELECT SCHEMA_NAME(t.schema_id), t.name, CAST(0 AS bit)
+FROM   sys.tables t
+WHERE  t.temporal_type = 1 OR ` + colSince(major, SQLServer2022, "t.ledger_type", "CAST(0 AS tinyint)") + ` = 1
+UNION ALL
+SELECT SCHEMA_NAME(v.schema_id), v.name, ` + bitSince(major, SQLServer2022, "v.is_dropped_ledger_view") + `
+FROM   sys.views v
+WHERE  v.object_id IN (SELECT ` + colSince(major, SQLServer2022, "t.ledger_view_id", "CAST(NULL AS int)") + ` FROM sys.tables t)`
 }
 
 // dependencyOrderEdges reads every reference one object's creation needs from

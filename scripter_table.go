@@ -116,10 +116,19 @@ func (sc *Scripter) scriptTable(ctx context.Context, t *Table) (string, error) {
 // script (see ScriptOptions.ExtendedProperties). A FileTable's
 // system-defined constraints and indexes are AS FILETABLE's to create, under
 // names of the replay's own, so their properties have nothing to land on and
-// are left out with them.
+// are left out with them. So are a deferred foreign key's (DeferForeignKeys):
+// the key does not exist yet, and its own script adds them (Msg 15135 on
+// replay otherwise).
 func (sc *Scripter) withTableExtendedProperties(ctx context.Context, t *Table, p tableScriptParts, script string) (string, error) {
 	props, err := sc.scriptExtendedProperties(ctx, t.ObjectID, true, func(ep scriptedExtProp) bool {
-		return ep.level.Level2Type != "COLUMN" && slices.Contains(p.table.FileTableSystemObjects, ep.level.Level2Name)
+		if ep.level.Level2Type == "COLUMN" {
+			return false
+		}
+		if slices.Contains(p.table.FileTableSystemObjects, ep.level.Level2Name) {
+			return true
+		}
+		return sc.opts.DeferForeignKeys && ep.level.Level2Type == "CONSTRAINT" &&
+			slices.ContainsFunc(p.fks, func(fk *ForeignKey) bool { return fk.Name == ep.level.Level2Name })
 	})
 	if err != nil {
 		return "", fmt.Errorf("gosmo: script table %s: %w", t.FullName(), err)

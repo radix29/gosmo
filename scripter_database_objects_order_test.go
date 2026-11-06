@@ -99,3 +99,28 @@ func TestOrderObjectsDeterministic(t *testing.T) {
 		}
 	}
 }
+
+// A dot inside a name must not make two objects share a key: [a.b].[c] and
+// [a].[b.c] once both keyed "o:a.b.c", so one was scripted twice and the
+// other never.
+func TestObjectKeyIsInjective(t *testing.T) {
+	pairs := [][2]string{{"a.b", "c"}, {"a", "b.c"}, {"a]", "b"}, {"a", "]b"}, {"a].[b", "c"}, {"a", "b].[c"}}
+	seen := map[string][2]string{}
+	for _, p := range pairs {
+		k := objectKey('o', p[0], p[1])
+		if prev, dup := seen[k]; dup {
+			t.Errorf("objectKey(%q, %q) = objectKey(%q, %q) = %q", p[0], p[1], prev[0], prev[1], k)
+		}
+		seen[k] = p
+	}
+	if objectKey('o', "s", "n") == objectKey('t', "s", "n") {
+		t.Error("prefix ignored")
+	}
+}
+
+func TestOrderObjectsDuplicateKeyIsAnError(t *testing.T) {
+	_, _, err := orderObjects(testNodes("a", "a"), nil)
+	if err == nil || !strings.Contains(err.Error(), "duplicate") {
+		t.Errorf("err = %v", err)
+	}
+}
