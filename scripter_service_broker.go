@@ -21,6 +21,11 @@ package gosmo
 // CREATE QUEUE and CREATE BROKER PRIORITY take no AUTHORIZATION clause — a
 // queue belongs to its schema's owner and a broker priority has no owner at
 // all — so the other five are the only ones that carry the owner.
+//
+// The same six carry their extended properties (ScriptOptions.
+// ExtendedProperties): a queue's at SCHEMA/QUEUE (class 1), the others' at
+// their own level 0 (classes 15–19). A broker priority has none to carry —
+// sp_addextendedproperty has no level that names one.
 
 import (
 	"context"
@@ -70,7 +75,8 @@ func (sc *Scripter) ScriptMessageType(ctx context.Context, name string) (string,
 	if err != nil {
 		return "", err
 	}
-	return buildMessageTypeScript(mt, sc.opts), nil
+	return sc.withExtendedPropertiesAt(ctx, buildMessageTypeScript(mt, sc.opts), fmt.Sprintf("message type %q", mt.Name),
+		15, mt.MessageTypeID, ExtendedPropertyLevel{Level0Type: "MESSAGE TYPE", Level0Name: mt.Name})
 }
 
 // buildMessageTypeScript assembles one message type's script.
@@ -109,7 +115,8 @@ func (sc *Scripter) ScriptContract(ctx context.Context, name string) (string, er
 	if err != nil {
 		return "", err
 	}
-	return buildContractScript(c, sc.opts), nil
+	return sc.withExtendedPropertiesAt(ctx, buildContractScript(c, sc.opts), fmt.Sprintf("contract %q", c.Name),
+		16, c.ContractID, ExtendedPropertyLevel{Level0Type: "CONTRACT", Level0Name: c.Name})
 }
 
 // buildContractScript assembles one contract's script.
@@ -154,7 +161,8 @@ func (sc *Scripter) ScriptBrokerQueue(ctx context.Context, schema, name string) 
 	if err != nil {
 		return "", err
 	}
-	return buildBrokerQueueScript(q, sc.opts), nil
+	return sc.withExtendedPropertiesAt(ctx, buildBrokerQueueScript(q, sc.opts), "queue "+q.FullName(),
+		1, q.ObjectID, ExtendedPropertyLevel{Level0Type: "SCHEMA", Level0Name: q.Schema, Level1Type: "QUEUE", Level1Name: q.Name})
 }
 
 // buildBrokerQueueScript assembles one queue's script — the one script in
@@ -210,7 +218,8 @@ func (sc *Scripter) ScriptBrokerService(ctx context.Context, name string) (strin
 	if err != nil {
 		return "", err
 	}
-	return buildBrokerServiceScript(s, sc.opts), nil
+	return sc.withExtendedPropertiesAt(ctx, buildBrokerServiceScript(s, sc.opts), fmt.Sprintf("service %q", s.Name),
+		17, s.ServiceID, ExtendedPropertyLevel{Level0Type: "SERVICE", Level0Name: s.Name})
 }
 
 // buildBrokerServiceScript assembles one service's script.
@@ -250,7 +259,8 @@ func (sc *Scripter) ScriptRoute(ctx context.Context, name string) (string, error
 	if err != nil {
 		return "", err
 	}
-	return buildRouteScript(r, sc.opts), nil
+	return sc.withExtendedPropertiesAt(ctx, buildRouteScript(r, sc.opts), fmt.Sprintf("route %q", r.Name),
+		19, r.RouteID, ExtendedPropertyLevel{Level0Type: "ROUTE", Level0Name: r.Name})
 }
 
 // buildRouteScript assembles one route's script.
@@ -299,7 +309,8 @@ func (sc *Scripter) ScriptRemoteServiceBinding(ctx context.Context, name string)
 	if err != nil {
 		return "", err
 	}
-	return buildRemoteServiceBindingScript(b, sc.opts), nil
+	return sc.withExtendedPropertiesAt(ctx, buildRemoteServiceBindingScript(b, sc.opts), fmt.Sprintf("remote service binding %q", b.Name),
+		18, b.BindingID, ExtendedPropertyLevel{Level0Type: "REMOTE SERVICE BINDING", Level0Name: b.Name})
 }
 
 // buildRemoteServiceBindingScript assembles one binding's script.

@@ -114,6 +114,26 @@ var ProbedServerPermissions = []string{
 	// (HAS_PERMS_BY_NAME reads 0 under it alone, major 17, 2026-10-29); on
 	// 2016–2019 it answers NULL, which reads as CapabilityUnknown.
 	"VIEW ANY ERROR LOG",
+	// What EXECUTE AS LOGIN checks on every login at once; CONTROL SERVER
+	// implies it. A login may still hold IMPERSONATE on one login or user, so
+	// a 0 here is no lack of the right to impersonate a given principal.
+	"IMPERSONATE ANY LOGIN",
+}
+
+// ProbedMasterPermissions are the database permissions Capabilities asks of
+// master rather than of the server: rights SQL Server grants only in master
+// that answer for a server-wide action, read into
+// Capabilities.MasterPermissions.
+//
+// CREATE DATABASE is the one: GRANT CREATE DATABASE to a user in master lets
+// its login CREATE DATABASE and read backup media (RESTORE HEADERONLY,
+// FILELISTONLY, VERIFYONLY), yet HAS_PERMS_BY_NAME(NULL, NULL, 'CREATE ANY
+// DATABASE') reads 0 for it. The master probe reads 1 for that login, for a
+// dbcreator member, for CREATE ANY DATABASE and for a sysadmin, and 0 for a
+// login with none of them (majors 13 and 17, 2026-11-05) — so it alone
+// answers "may this login create a database".
+var ProbedMasterPermissions = []string{
+	"CREATE DATABASE",
 }
 
 // ProbedServerSecurablePermissions are the permissions Capabilities reads

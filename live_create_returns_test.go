@@ -65,7 +65,7 @@ func TestLiveCreateReturnsTheCreatedObject(t *testing.T) {
 	st, err := tbl.CreateStatistic(ctx, CreateStatisticRequest{Name: "st_a", Columns: []string{"a"}})
 	check("CreateStatistic", err, err == nil && st.StatID != 0)
 
-	seq, err := d.CreateSequence(ctx, CreateSequenceRequest{Schema: "sales", Name: "seq", StartValue: 1, Increment: 1})
+	seq, err := d.CreateSequence(ctx, CreateSequenceRequest{Schema: "sales", Name: "seq", StartValue: "1", Increment: "1"})
 	check("CreateSequence", err, err == nil && seq.ObjectID != 0)
 
 	syn, err := d.CreateSynonym(ctx, CreateSynonymRequest{Schema: "sales", Name: "syn", BaseObject: "[sales].[t]"})

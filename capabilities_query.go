@@ -398,6 +398,17 @@ const capabilityPrincipalCTE = `WITH cap_me AS (
 )
 `
 
+// masterCapabilityQuery builds the server probe's master block: one row per
+// name in ProbedMasterPermissions, tagged 'M', answered by HAS_PERMS_BY_NAME
+// on the master database whatever database the connection is in.
+func masterCapabilityQuery(first int, perms []string) (string, []any) {
+	args := make([]any, len(perms))
+	for i, n := range perms {
+		args[i] = n
+	}
+	return "SELECT 'M', n.v, HAS_PERMS_BY_NAME(N'master', 'DATABASE', n.v)" + valuesClause(first, len(perms)), args
+}
+
 // valuesList renders "(@pN),(@pN+1),..." for count parameters starting at
 // first — the placeholder list both probe blocks bind their names through.
 func valuesList(first, count int) string {

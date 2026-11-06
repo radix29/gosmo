@@ -199,7 +199,7 @@ func TestWithDisabledSharesOneWindow(t *testing.T) {
 func TestADatabaseWindowDoesNotMatchAServerWindow(t *testing.T) {
 	db := auditDatabase(t, &auditScript{enabled: true})
 	ctx := context.WithValue(context.Background(), specificationDisabledKey{}, "s")
-	if db.DatabaseAuditSpecificationRef("s").inSpecificationWindow(ctx) {
+	if db.DatabaseAuditSpecificationRef("s").scope().inWindow(ctx) {
 		t.Error("a server specification's window was taken for a database one's")
 	}
 }

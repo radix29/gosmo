@@ -95,6 +95,7 @@ func TestLiveProcWriteLeavesSessionInLoginDatabase(t *testing.T) {
 // succeeds straight after a gosmo write in the database. Under USE it fails
 // Msg 3101, "Exclusive access could not be obtained".
 func TestLiveProcWriteDoesNotBlockRestore(t *testing.T) {
+	skipSlowInShort(t)
 	db, ctx, done := liveDBTimeout(t, 3*time.Minute)
 	defer done()
 	other := liveSecondDB(t)
@@ -410,8 +411,8 @@ func TestLiveProcWriteShapes(t *testing.T) {
 	exists("sys.sp_rename", "app.v2")
 
 	// Writes that return a row.
-	if v, err := d.SequenceRef("app", "s").NextValue(ctx); err != nil || v != 41 {
-		t.Errorf("NextValue = %d, %v, want 41", v, err)
+	if v, err := d.SequenceRef("app", "s").NextValue(ctx); err != nil || v != "41" {
+		t.Errorf("NextValue = %q, %v, want 41", v, err)
 	}
 	home("NextValue")
 	files, err := d.Files(ctx)

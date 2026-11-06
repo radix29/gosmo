@@ -24,6 +24,14 @@ type Capabilities struct {
 	// ServerPermissions maps each name in ProbedServerPermissions to its state.
 	ServerPermissions map[string]CapabilityState
 
+	// MasterPermissions maps each name in ProbedMasterPermissions to its
+	// state in master — HAS_PERMS_BY_NAME(N'master', 'DATABASE', name), asked
+	// from whatever database the connection is in. Read it through
+	// MasterPermission. Kept apart from ServerPermissions because it answers
+	// at a database scope: a caller that read CREATE DATABASE there would
+	// take a master grant for a server one.
+	MasterPermissions map[string]CapabilityState
+
 	// ExplicitServerPermissions maps a server securable — keyed by
 	// ServerSecurableKey, so a login, a server role and an endpoint of the
 	// same name stay apart — to the state each name in
@@ -124,6 +132,16 @@ func (c *Capabilities) Permission(name string) CapabilityState {
 		return CapabilityUnknown
 	}
 	return c.ServerPermissions[name]
+}
+
+// MasterPermission returns the state of one permission in
+// ProbedMasterPermissions, as master answers it. A name that was never probed
+// is CapabilityUnknown.
+func (c *Capabilities) MasterPermission(name string) CapabilityState {
+	if c == nil {
+		return CapabilityUnknown
+	}
+	return c.MasterPermissions[name]
 }
 
 // Has reports that the permission is known to be held. Use it to *offer*
@@ -243,6 +261,10 @@ func (s *Server) Capabilities(ctx context.Context) (*Capabilities, error) {
 	q += "\nUNION ALL\n" + gq
 	args = append(args, gargs...)
 
+	mq, margs := masterCapabilityQuery(len(args)+1, ProbedMasterPermissions)
+	q += "\nUNION ALL\n" + mq
+	args = append(args, margs...)
+
 	rows, err := s.query(ctx, q, args...)
 	if err != nil {
 		return nil, fmt.Errorf("gosmo: read server capabilities: %w", err)
@@ -252,12 +274,14 @@ func (s *Server) Capabilities(ctx context.Context) (*Capabilities, error) {
 	c := &Capabilities{
 		ServerRoles:                  map[string]bool{},
 		ServerPermissions:            map[string]CapabilityState{},
+		MasterPermissions:            map[string]CapabilityState{},
 		ExplicitServerPermissions:    map[string]map[string]CapabilityState{},
 		AvailabilityGroupPermissions: map[string]map[string]CapabilityState{},
 	}
 	if err := scanCapabilityRows(rows.Rows, capabilityDest{
 		roles:              c.ServerRoles,
 		perms:              c.ServerPermissions,
+		master:             c.MasterPermissions,
 		explicitServer:     c.ExplicitServerPermissions,
 		availabilityGroups: c.AvailabilityGroupPermissions,
 	}); err != nil {

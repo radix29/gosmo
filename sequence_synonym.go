@@ -4,8 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"math/big"
 	"regexp"
-	"strconv"
 	"strings"
 )
 
@@ -59,7 +59,8 @@ type Sequence struct {
 	// LastUsedValue is sys.sequences.last_used_value (SQL Server 2017+):
 	// the last value handed out, "" when none has been since the sequence
 	// was created or restarted. Unlike CurrentValue it tells those two
-	// cases apart. Always "" before 2017, which has no such column.
+	// cases apart. Always "" before 2017, which has no such column:
+	// TracksLastUsedValue says which.
 	LastUsedValue string
 	// noLastUsed records that the server predates last_used_value, so an
 	// empty LastUsedValue says nothing about whether a value was handed out.
@@ -68,6 +69,13 @@ type Sequence struct {
 
 // Database returns the database the sequence belongs to.
 func (seq *Sequence) Database() *Database { return seq.db }
+
+// TracksLastUsedValue reports whether LastUsedValue is the server's answer:
+// false for a sequence read from a server before 2017, which has no
+// last_used_value, so an empty LastUsedValue there says nothing about whether
+// a value was handed out. A SequenceRef handle reads true; its LastUsedValue
+// is unread either way.
+func (seq *Sequence) TracksLastUsedValue() bool { return !seq.noLastUsed }
 
 // Sequences returns all sequences in the database.
 func (d *Database) Sequences(ctx context.Context) ([]*Sequence, error) {
@@ -149,6 +157,11 @@ LEFT   JOIN sys.types tp ON tp.user_type_id = s.user_type_id`
 }
 
 // CreateSequenceRequest describes a new sequence.
+//
+// The values are whole numbers as decimal digits, an optional sign first —
+// the form Sequence reads them in — because a decimal(38, 0) sequence ranges
+// far past int64. Anything else is refused before the round trip; whether a
+// value fits the data type is the server's to say.
 type CreateSequenceRequest struct {
 	Schema   string
 	Name     string
@@ -156,13 +169,58 @@ type CreateSequenceRequest struct {
 	// Precision is a decimal or numeric sequence's precision, 1 to 38, written
 	// as (Precision, 0): a sequence's scale is always 0. Zero leaves the bare
 	// type name, which the server reads as (18, 0). Refused for any other type.
-	Precision  int
-	StartValue int64
-	Increment  int64
-	MinValue   *int64
-	MaxValue   *int64
-	Cycle      bool
-	Cache      *int // nil = no cache; 0 = NO CACHE; >0 = cache size
+	Precision int
+	// StartValue is START WITH; "" omits it, and the server starts at
+	// MINVALUE for an ascending sequence, MAXVALUE for a descending one.
+	StartValue string
+	// Increment is INCREMENT BY, never 0; "" omits it (1).
+	Increment string
+	// MinValue and MaxValue are MINVALUE and MAXVALUE; "" is NO MINVALUE or
+	// NO MAXVALUE, the data type's bound.
+	MinValue string
+	MaxValue string
+	Cycle    bool
+	Cache    *int // nil = no cache; 0 = NO CACHE; >0 = cache size
+}
+
+// sequenceNumber parses one sequence value given as decimal digits, an
+// optional sign first. The value is written into the statement as the
+// big.Int renders it, never as given, so nothing but digits reaches the SQL.
+func sequenceNumber(field, v string) (*big.Int, error) {
+	n, ok := new(big.Int).SetString(v, 10)
+	if !ok {
+		return nil, invalidf("the %s %q is not a whole number", field, v)
+	}
+	return n, nil
+}
+
+// sequenceBounds checks what the server would refuse of a sequence's values
+// given together, each "" when not set: a zero increment, and a minimum not
+// below the maximum. The parsed values come back in the same order, nil for
+// "".
+func sequenceBounds(increment, minValue, maxValue string) (inc, lo, hi *big.Int, err error) {
+	parse := func(field, v string) (*big.Int, error) {
+		if v == "" {
+			return nil, nil
+		}
+		return sequenceNumber(field, v)
+	}
+	if inc, err = parse("increment", increment); err != nil {
+		return nil, nil, nil, err
+	}
+	if inc != nil && inc.Sign() == 0 {
+		return nil, nil, nil, invalidf("the increment is 0; a sequence must move")
+	}
+	if lo, err = parse("minimum value", minValue); err != nil {
+		return nil, nil, nil, err
+	}
+	if hi, err = parse("maximum value", maxValue); err != nil {
+		return nil, nil, nil, err
+	}
+	if lo != nil && hi != nil && lo.Cmp(hi) >= 0 {
+		return nil, nil, nil, invalidf("the minimum value %s is not below the maximum %s", lo, hi)
+	}
+	return inc, lo, hi, nil
 }
 
 // CreateSequence creates a new sequence in the database.
@@ -188,15 +246,29 @@ func (d *Database) CreateSequence(ctx context.Context, req CreateSequenceRequest
 		typeName = fmt.Sprintf("%s(%d, 0)", req.DataType, req.Precision)
 	}
 
+	inc, lo, hi, err := sequenceBounds(req.Increment, req.MinValue, req.MaxValue)
+	if err != nil {
+		return nil, fmt.Errorf("gosmo: create sequence %s: %w", qualifiedName(schema, req.Name), err)
+	}
+
 	q := fmt.Sprintf("CREATE SEQUENCE %s AS %s", qualifiedName(schema, req.Name), typeName)
-	q += fmt.Sprintf(" START WITH %d INCREMENT BY %d", req.StartValue, req.Increment)
-	if req.MinValue != nil {
-		q += fmt.Sprintf(" MINVALUE %d", *req.MinValue)
+	if req.StartValue != "" {
+		start, err := sequenceNumber("start value", req.StartValue)
+		if err != nil {
+			return nil, fmt.Errorf("gosmo: create sequence %s: %w", qualifiedName(schema, req.Name), err)
+		}
+		q += " START WITH " + start.String()
+	}
+	if inc != nil {
+		q += " INCREMENT BY " + inc.String()
+	}
+	if lo != nil {
+		q += " MINVALUE " + lo.String()
 	} else {
 		q += " NO MINVALUE"
 	}
-	if req.MaxValue != nil {
-		q += fmt.Sprintf(" MAXVALUE %d", *req.MaxValue)
+	if hi != nil {
+		q += " MAXVALUE " + hi.String()
 	} else {
 		q += " NO MAXVALUE"
 	}
@@ -213,8 +285,7 @@ func (d *Database) CreateSequence(ctx context.Context, req CreateSequenceRequest
 		q += fmt.Sprintf(" CACHE %d", *req.Cache)
 	}
 
-	_, err := d.exec(ctx, q)
-	if err != nil {
+	if _, err := d.exec(ctx, q); err != nil {
 		return nil, fmt.Errorf("gosmo: create sequence %s: %w", qualifiedName(schema, req.Name), err)
 	}
 	return createdObject(ctx, d.SequenceRef(schema, req.Name), func() (*Sequence, error) {
@@ -234,20 +305,23 @@ func (seq *Sequence) Drop(ctx context.Context) error {
 	return nil
 }
 
-// Restart restarts the sequence at the given value.
-func (seq *Sequence) Restart(ctx context.Context, value int64) error {
+// Restart restarts the sequence at the given value, a whole number as decimal
+// digits (CreateSequenceRequest's form).
+func (seq *Sequence) Restart(ctx context.Context, value string) error {
 	if err := requireSchema("restart sequence", seq.Schema, seq.Name); err != nil {
 		return err
 	}
-	_, err := seq.db.exec(ctx,
-		fmt.Sprintf("ALTER SEQUENCE %s RESTART WITH %d",
-			qualifiedName(seq.Schema, seq.Name), value))
+	n, err := sequenceNumber("restart value", value)
 	if err != nil {
+		return fmt.Errorf("gosmo: restart sequence %s: %w", qualifiedName(seq.Schema, seq.Name), err)
+	}
+	v := n.String()
+	if _, err := seq.db.exec(ctx,
+		fmt.Sprintf("ALTER SEQUENCE %s RESTART WITH %s", qualifiedName(seq.Schema, seq.Name), v)); err != nil {
 		return fmt.Errorf("gosmo: restart sequence %s: %w", qualifiedName(seq.Schema, seq.Name), err)
 	}
 	// RESTART moves start_value too and clears last_used_value, so the
 	// handle mirrors all three.
-	v := strconv.FormatInt(value, 10)
 	setIfApplied(ctx, &seq.StartValue, v)
 	setIfApplied(ctx, &seq.CurrentValue, v)
 	setIfApplied(ctx, &seq.LastUsedValue, "")
@@ -263,24 +337,23 @@ type SequenceCache struct {
 	Size int
 }
 
-// SequenceChanges is what ALTER SEQUENCE can change. A nil field leaves that
-// setting as stored: the statement omits its clause. The data type and the
-// start value have no ALTER; RestartWith moves the start value with the
-// current one.
+// SequenceChanges is what ALTER SEQUENCE can change. An unset field — nil,
+// or "" for a value — leaves that setting as stored: the statement omits its
+// clause. The data type and the start value have no ALTER; RestartWith moves
+// the start value with the current one.
 //
-// The values are int64, CreateSequenceRequest's, so a decimal(38, 0)
-// sequence's range past it cannot be written; an unset field is not touched,
-// whatever the sequence holds.
+// The values are whole numbers as decimal digits, CreateSequenceRequest's
+// form, so a decimal(38, 0) sequence's whole range can be written.
 type SequenceChanges struct {
 	// RestartWith is RESTART WITH n: the next value handed out is n.
-	RestartWith *int64
+	RestartWith string
 	// Increment is INCREMENT BY n, never 0.
-	Increment *int64
+	Increment string
 	// MinValue and MaxValue are MINVALUE n and MAXVALUE n. The catalog always
 	// holds a concrete bound (NO MINVALUE stores the type's), so a change
 	// always names one.
-	MinValue *int64
-	MaxValue *int64
+	MinValue string
+	MaxValue string
 	// Cycle is CYCLE or NO CYCLE.
 	Cycle *bool
 	// Cache is CACHE [n] or NO CACHE.
@@ -288,26 +361,34 @@ type SequenceChanges struct {
 }
 
 // clauses renders ch's clauses in the statement's documented order, or
-// refuses what the server would. An empty slice means nothing was set.
-func (ch SequenceChanges) clauses() ([]string, error) {
+// refuses what the server would. An empty slice means nothing was set. The
+// SequenceChanges returned carries each value as written into the statement,
+// for Alter to mirror.
+func (ch SequenceChanges) clauses() ([]string, SequenceChanges, error) {
 	var c []string
-	if ch.RestartWith != nil {
-		c = append(c, fmt.Sprintf("RESTART WITH %d", *ch.RestartWith))
-	}
-	if ch.Increment != nil {
-		if *ch.Increment == 0 {
-			return nil, invalidf("the increment is 0; a sequence must move")
+	if ch.RestartWith != "" {
+		n, err := sequenceNumber("restart value", ch.RestartWith)
+		if err != nil {
+			return nil, ch, err
 		}
-		c = append(c, fmt.Sprintf("INCREMENT BY %d", *ch.Increment))
+		ch.RestartWith = n.String()
+		c = append(c, "RESTART WITH "+ch.RestartWith)
 	}
-	if ch.MinValue != nil {
-		c = append(c, fmt.Sprintf("MINVALUE %d", *ch.MinValue))
+	inc, lo, hi, err := sequenceBounds(ch.Increment, ch.MinValue, ch.MaxValue)
+	if err != nil {
+		return nil, ch, err
 	}
-	if ch.MaxValue != nil {
-		c = append(c, fmt.Sprintf("MAXVALUE %d", *ch.MaxValue))
+	if inc != nil {
+		ch.Increment = inc.String()
+		c = append(c, "INCREMENT BY "+ch.Increment)
 	}
-	if ch.MinValue != nil && ch.MaxValue != nil && *ch.MinValue >= *ch.MaxValue {
-		return nil, invalidf("the minimum value %d is not below the maximum %d", *ch.MinValue, *ch.MaxValue)
+	if lo != nil {
+		ch.MinValue = lo.String()
+		c = append(c, "MINVALUE "+ch.MinValue)
+	}
+	if hi != nil {
+		ch.MaxValue = hi.String()
+		c = append(c, "MAXVALUE "+ch.MaxValue)
 	}
 	if ch.Cycle != nil {
 		if *ch.Cycle {
@@ -321,14 +402,14 @@ func (ch SequenceChanges) clauses() ([]string, error) {
 		case !k.Enabled:
 			c = append(c, "NO CACHE")
 		case k.Size < 0:
-			return nil, invalidf("the cache size is %d; it must be positive", k.Size)
+			return nil, ch, invalidf("the cache size is %d; it must be positive", k.Size)
 		case k.Size == 0:
 			c = append(c, "CACHE")
 		default:
 			c = append(c, fmt.Sprintf("CACHE %d", k.Size))
 		}
 	}
-	return c, nil
+	return c, ch, nil
 }
 
 // Alter applies every setting on ch in one ALTER SEQUENCE. An empty
@@ -338,7 +419,7 @@ func (seq *Sequence) Alter(ctx context.Context, ch SequenceChanges) error {
 	if err := requireSchema("alter sequence", seq.Schema, seq.Name); err != nil {
 		return err
 	}
-	clauses, err := ch.clauses()
+	clauses, ch, err := ch.clauses()
 	if err != nil {
 		return fmt.Errorf("gosmo: alter sequence %s: %w", qualifiedName(seq.Schema, seq.Name), err)
 	}
@@ -349,21 +430,20 @@ func (seq *Sequence) Alter(ctx context.Context, ch SequenceChanges) error {
 	if _, err := seq.db.exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: alter sequence %s: %w", qualifiedName(seq.Schema, seq.Name), err)
 	}
-	str := func(p *int64) *string {
-		if p == nil {
-			return nil
+	set := func(dst *string, v string) {
+		if v != "" {
+			setIfApplied(ctx, dst, v)
 		}
-		return new(strconv.FormatInt(*p, 10))
 	}
-	if v := str(ch.RestartWith); v != nil {
+	if v := ch.RestartWith; v != "" {
 		// As Restart: the start value moves too, and last_used_value clears.
-		setIfApplied(ctx, &seq.StartValue, *v)
-		setIfApplied(ctx, &seq.CurrentValue, *v)
+		setIfApplied(ctx, &seq.StartValue, v)
+		setIfApplied(ctx, &seq.CurrentValue, v)
 		setIfApplied(ctx, &seq.LastUsedValue, "")
 	}
-	setPtrIfApplied(ctx, &seq.Increment, str(ch.Increment))
-	setPtrIfApplied(ctx, &seq.MinValue, str(ch.MinValue))
-	setPtrIfApplied(ctx, &seq.MaxValue, str(ch.MaxValue))
+	set(&seq.Increment, ch.Increment)
+	set(&seq.MinValue, ch.MinValue)
+	set(&seq.MaxValue, ch.MaxValue)
 	setPtrIfApplied(ctx, &seq.IsCycling, ch.Cycle)
 	if k := ch.Cache; k != nil {
 		setIfApplied(ctx, &seq.IsCached, k.Enabled)
@@ -376,7 +456,9 @@ func (seq *Sequence) Alter(ctx context.Context, ch SequenceChanges) error {
 	return nil
 }
 
-// NextValue retrieves the next value from the sequence.
+// NextValue retrieves the next value from the sequence, as decimal digits —
+// the form of every other sequence value, so a decimal(38,0) sequence's whole
+// range reads back.
 //
 // This deliberately uses execIn, not queryRow: "NEXT VALUE FOR" advances the
 // sequence as a side effect of being read, so it isn't safe to retry —
@@ -384,21 +466,24 @@ func (seq *Sequence) Alter(ctx context.Context, ch SequenceChanges) error {
 // connection after a transient failure could silently skip a value. execIn
 // still retries the acquire step (safe, nothing server-side has happened
 // yet), just not the query itself.
-func (seq *Sequence) NextValue(ctx context.Context) (int64, error) {
+func (seq *Sequence) NextValue(ctx context.Context) (string, error) {
 	if err := requireSchema("next value for", seq.Schema, seq.Name); err != nil {
-		return 0, err
+		return "", err
 	}
-	var val int64
+	// Scanned straight into a string: the driver hands a decimal back as its
+	// digits and an integer type converts, so no CONVERT is needed in the
+	// batch.
+	var val string
 	err := seq.db.execIn(ctx, "SELECT NEXT VALUE FOR "+qualifiedName(seq.Schema, seq.Name), nil,
 		func(ctx context.Context, conn sqlConn, q string, args []any) error {
 			return conn.QueryRowContext(ctx, q, args...).Scan(&val)
 		})
 	if err != nil {
-		return 0, fmt.Errorf("gosmo: next value for %s: %w", qualifiedName(seq.Schema, seq.Name), err)
+		return "", fmt.Errorf("gosmo: next value for %s: %w", qualifiedName(seq.Schema, seq.Name), err)
 	}
 	// Assigned directly, not via setIfApplied: this is the value the server
 	// just returned, and reads run against the server under WithScript too.
-	seq.CurrentValue = strconv.FormatInt(val, 10)
+	seq.CurrentValue = val
 	seq.LastUsedValue = seq.CurrentValue
 	return val, nil
 }

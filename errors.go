@@ -467,6 +467,9 @@ const (
 //	      without ALTER ANY CONNECTION)
 //	7983  User '…' does not have permission to run DBCC checkdb for database
 //	      '…' (neither sysadmin nor db_owner)
+//	14393 Only owner of a job or members of role sysadmin or
+//	      SQLAgentOperatorRole can start and stop the job (sp_start_job or
+//	      sp_stop_job by a SQLAgentReaderRole member on a job it does not own)
 //	27219 Caller does not have permissions to execute the stored procedure
 //	      (sp_readerrorlog without securityadmin or VIEW SERVER STATE)
 //	1088  Cannot find the object "…" because it does not exist or you do not
@@ -482,7 +485,7 @@ var refusalNumbers = map[int32]RefusalKind{
 	229: PermissionDenied, 230: PermissionDenied, 262: PermissionDenied,
 	297: PermissionDenied, 300: PermissionDenied, 916: PermissionDenied,
 	2571: PermissionDenied, 5304: PermissionDenied, 6102: PermissionDenied, 7983: PermissionDenied,
-	27219: PermissionDenied,
+	14393: PermissionDenied, 27219: PermissionDenied,
 
 	1088: MissingOrDenied,
 	3701: MissingOrDenied, 5011: MissingOrDenied,

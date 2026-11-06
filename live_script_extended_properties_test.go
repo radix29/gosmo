@@ -14,6 +14,8 @@ package gosmo
 
 import (
 	"context"
+	"encoding/hex"
+	"os"
 	"slices"
 	"strings"
 	"testing"
@@ -207,7 +209,12 @@ func TestLiveScriptIndexedViewAndExtendedProperties(t *testing.T) {
 // liveDBSchemaExtPropsOracle is liveExtPropsOracle for the database's own
 // properties (class 0) and its schemas' (class 3).
 const liveDBSchemaExtPropsOracle = `
-SELECT ep.class, CASE ep.class WHEN 3 THEN ISNULL(SCHEMA_NAME(ep.major_id), '?') ELSE '' END AS sch, ep.minor_id,
+SELECT ep.class,
+       CASE ep.class WHEN 3  THEN ISNULL(SCHEMA_NAME(ep.major_id), '?')
+                     WHEN 20 THEN ISNULL((SELECT fg.name FROM sys.filegroups fg WHERE fg.data_space_id = ep.major_id), '?')
+                     WHEN 22 THEN ISNULL((SELECT FILEGROUP_NAME(f.data_space_id) + '.' + f.name FROM sys.database_files f
+                                          WHERE f.file_id = ep.major_id), '?')
+                     ELSE '' END AS target, ep.minor_id,
        ep.name,
        ISNULL(CONVERT(sysname, SQL_VARIANT_PROPERTY(ep.value, 'BaseType')), '') AS base,
        ISNULL(CONVERT(int, SQL_VARIANT_PROPERTY(ep.value, 'Precision')), -1) AS prec,
@@ -215,10 +222,11 @@ SELECT ep.class, CASE ep.class WHEN 3 THEN ISNULL(SCHEMA_NAME(ep.major_id), '?')
        ISNULL(CONVERT(int, SQL_VARIANT_PROPERTY(ep.value, 'MaxLength')), -1) AS len,
        ISNULL(CONVERT(varchar(max), CONVERT(varbinary(max), ep.value), 1), 'NULL') AS bytes
 FROM   sys.extended_properties ep
-WHERE  ep.class IN (0, 3)`
+WHERE  ep.class IN (0, 3, 20, 22)`
 
-// A database's and a schema's own properties round-trip through
-// ScriptDatabase and ScriptSchema. The source is READ_ONLY, so the replay
+// A database's, its filegroups', its files' and a schema's own properties
+// round-trip through ScriptDatabase and ScriptSchema — a read-only
+// filegroup's and an empty one's among them. The source is READ_ONLY, so the replay
 // fails unless the database's properties are added before its READ_ONLY.
 func TestLiveScriptDatabaseAndSchemaExtendedProperties(t *testing.T) {
 	db, ctx, done := liveDB(t)
@@ -234,6 +242,26 @@ func TestLiveScriptDatabaseAndSchemaExtendedProperties(t *testing.T) {
 	dropDBs()
 	t.Cleanup(dropDBs)
 	src, _ := liveScratchDB(t, db, ctx, name)
+	var dataPath string
+	if err := db.QueryRowContext(ctx, `SELECT CONVERT(nvarchar(260), SERVERPROPERTY('InstanceDefaultDataPath'))`).Scan(&dataPath); err != nil {
+		t.Fatal(err)
+	}
+	// The file names carry the database's, so the replay's rename moves
+	// them too.
+	liveExecIn(t, src, ctx,
+		`ALTER DATABASE [`+name+`] ADD FILEGROUP [fg'2]`,
+		`ALTER DATABASE [`+name+`] ADD FILE (NAME = N'`+name+`_f2', FILENAME = N'`+dataPath+name+`_f2.ndf') TO FILEGROUP [fg'2]`,
+		`ALTER DATABASE [`+name+`] ADD FILEGROUP fg3`,
+		`EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'primary', @level0type = N'FILEGROUP', @level0name = N'PRIMARY'`,
+		`EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'primary file', @level0type = N'FILEGROUP', @level0name = N'PRIMARY',
+		     @level1type = N'LOGICAL FILE NAME', @level1name = N'`+name+`'`,
+		`EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'fg2', @level0type = N'FILEGROUP', @level0name = N'fg''2'`,
+		`DECLARE @v sql_variant = CAST(7 AS int);
+		 EXEC sys.sp_addextendedproperty @name = N'Disk', @value = @v, @level0type = N'FILEGROUP', @level0name = N'fg''2',
+		     @level1type = N'LOGICAL FILE NAME', @level1name = N'`+name+`_f2'`,
+		`EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'empty', @level0type = N'FILEGROUP', @level0name = N'fg3'`,
+		`ALTER DATABASE [`+name+`] MODIFY FILEGROUP [fg'2] READ_ONLY`,
+	)
 	liveExecIn(t, src, ctx,
 		`CREATE SCHEMA [Sa'les]`,
 		`CREATE SCHEMA bare`,
@@ -282,8 +310,12 @@ func TestLiveScriptDatabaseAndSchemaExtendedProperties(t *testing.T) {
 		t.Helper()
 		want := liveRowsAsStrings(t, src, ctx, liveDBSchemaExtPropsOracle)
 		got := liveRowsAsStrings(t, cp, ctx, liveDBSchemaExtPropsOracle)
-		if len(want) != 5 {
-			t.Fatalf("%s: the source has %d properties, want 5", what, len(want))
+		// The copy's files are named for it.
+		for i, r := range got {
+			got[i] = strings.ReplaceAll(r, copyName, name)
+		}
+		if len(want) != 10 {
+			t.Fatalf("%s: the source has %d properties, want 10", what, len(want))
 		}
 		slices.Sort(want)
 		slices.Sort(got)
@@ -468,6 +500,155 @@ func TestLiveScriptOtherSecurablesExtendedProperties(t *testing.T) {
 	for i, s := range scriptAll(NewScripter(src, dc)) {
 		switch i {
 		case 2, 3, 7, 8, 10:
+			continue
+		}
+		livePinnedRun(t, db, ctx, dst.Name, s)
+	}
+	compare("DROP AND CREATE")
+
+	off := opts
+	off.ExtendedProperties = false
+	for _, s := range scriptAll(NewScripter(src, off)) {
+		if strings.Contains(s, "sp_addextendedproperty") {
+			t.Errorf("ExtendedProperties off, but:\n%s", s)
+		}
+	}
+}
+
+// liveRestExtPropsOracle is liveExtPropsOracle for the securables
+// TestLiveScriptRestOfSecurablesExtendedProperties scripts, each named: rules,
+// defaults and queues (class 1), assemblies (5), CLR types (6), the five
+// schemaless Service Broker families (15–19) and plan guides (27).
+const liveRestExtPropsOracle = `
+SELECT ep.class,
+       CASE ep.class
+           WHEN 1  THEN OBJECT_SCHEMA_NAME(ep.major_id) + '.' + OBJECT_NAME(ep.major_id)
+           WHEN 5  THEN (SELECT a.name FROM sys.assemblies a WHERE a.assembly_id = ep.major_id)
+           WHEN 6  THEN (SELECT SCHEMA_NAME(ty.schema_id) + '.' + ty.name FROM sys.types ty WHERE ty.user_type_id = ep.major_id)
+           WHEN 15 THEN (SELECT x.name COLLATE DATABASE_DEFAULT FROM sys.service_message_types x WHERE x.message_type_id = ep.major_id)
+           WHEN 16 THEN (SELECT x.name COLLATE DATABASE_DEFAULT FROM sys.service_contracts x WHERE x.service_contract_id = ep.major_id)
+           WHEN 17 THEN (SELECT x.name COLLATE DATABASE_DEFAULT FROM sys.services x WHERE x.service_id = ep.major_id)
+           WHEN 18 THEN (SELECT x.name COLLATE DATABASE_DEFAULT FROM sys.remote_service_bindings x WHERE x.remote_service_binding_id = ep.major_id)
+           WHEN 19 THEN (SELECT x.name COLLATE DATABASE_DEFAULT FROM sys.routes x WHERE x.route_id = ep.major_id)
+           WHEN 27 THEN (SELECT x.name FROM sys.plan_guides x WHERE x.plan_guide_id = ep.major_id)
+       END COLLATE DATABASE_DEFAULT AS target,
+       ep.name,
+       ISNULL(CONVERT(sysname, SQL_VARIANT_PROPERTY(ep.value, 'BaseType')), '') AS base,
+       ISNULL(CONVERT(varchar(max), CONVERT(varbinary(max), ep.value), 1), 'NULL') AS bytes
+FROM   sys.extended_properties ep
+WHERE  ep.class IN (1, 5, 6, 15, 16, 17, 18, 19, 27)`
+
+// The securables liveOtherExtPropsOracle's test leaves out restate their own
+// properties too: a CLR type, a rule, a default, an assembly (its script's
+// placeholder filled in with the bytes), a plan guide and the six Service
+// Broker families that can carry one. A broker priority has none to carry.
+func TestLiveScriptRestOfSecurablesExtendedProperties(t *testing.T) {
+	db, ctx, done := liveDB(t)
+	t.Cleanup(done)
+	src, dropSrc := liveScratchDB(t, db, ctx, "gosmo_extprop_rest_src")
+	t.Cleanup(dropSrc)
+	dst, dropDst := liveScratchDB(t, db, ctx, "gosmo_extprop_rest_dst")
+	t.Cleanup(dropDst)
+	liveCLRAssembly(t, db, ctx, src, "w7clr")
+	dll, err := os.ReadFile("testdata/clr/w7clr.dll")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	add := func(name, value string, levels ...string) string {
+		s := "DECLARE @v sql_variant = " + value + "; EXEC sys.sp_addextendedproperty @name = N'" + name + "', @value = @v"
+		for i := 0; i < len(levels); i += 2 {
+			s += ", @level" + string(rune('0'+i/2)) + "type = N'" + levels[i] + "', @level" + string(rune('0'+i/2)) +
+				"name = N'" + strings.ReplaceAll(levels[i+1], "'", "''") + "'"
+		}
+		return s
+	}
+	common := []string{`CREATE TABLE dbo.t (a int)`, `CREATE USER u1 WITHOUT LOGIN`}
+	liveExecIn(t, src, ctx, common...)
+	liveExecIn(t, dst, ctx, common...)
+	liveExecIn(t, src, ctx,
+		`CREATE TYPE dbo.[Pt'] EXTERNAL NAME w7clr.W7Point`,
+		`CREATE RULE dbo.[r'1] AS @v > 0`,
+		`CREATE DEFAULT dbo.d1 AS 0`,
+		`CREATE MESSAGE TYPE [mt'1] VALIDATION = NONE`,
+		`CREATE CONTRACT c1 ([mt'1] SENT BY ANY)`,
+		`CREATE QUEUE dbo.q1`,
+		`CREATE SERVICE s1 ON QUEUE dbo.q1 (c1)`,
+		`CREATE ROUTE rt1 WITH ADDRESS = 'LOCAL'`,
+		`CREATE REMOTE SERVICE BINDING rsb1 TO SERVICE 'x' WITH USER = u1`,
+		`CREATE BROKER PRIORITY bp1 FOR CONVERSATION SET (PRIORITY_LEVEL = 3)`,
+		`EXEC sp_create_plan_guide @name = N'pg''1', @stmt = N'SELECT a FROM dbo.t', @type = N'SQL',
+		     @module_or_batch = NULL, @params = NULL, @hints = N'OPTION (MAXDOP 1)'`,
+		add("MS_Description", "N'assembly'", "ASSEMBLY", "w7clr"),
+		add("MS_Description", "N'clr type, it''s'", "SCHEMA", "dbo", "TYPE", "Pt'"),
+		add("Version", "CAST(2 AS int)", "SCHEMA", "dbo", "TYPE", "Pt'"),
+		add("MS_Description", "N'rule'", "SCHEMA", "dbo", "RULE", "r'1"),
+		add("MS_Description", "N'default'", "SCHEMA", "dbo", "DEFAULT", "d1"),
+		add("MS_Description", "N'message type'", "MESSAGE TYPE", "mt'1"),
+		add("MS_Description", "N'contract'", "CONTRACT", "c1"),
+		add("MS_Description", "N'queue'", "SCHEMA", "dbo", "QUEUE", "q1"),
+		add("MS_Description", "N'service'", "SERVICE", "s1"),
+		add("MS_Description", "N'route'", "ROUTE", "rt1"),
+		add("MS_Description", "N'binding'", "REMOTE SERVICE BINDING", "rsb1"),
+		add("MS_Description", "N'plan guide'", "PLAN GUIDE", "pg'1"),
+	)
+
+	// In dependency order: the assembly before its type, a message type
+	// before its contract, the queue and contract before the service.
+	scriptAll := func(sc *Scripter) []string {
+		t.Helper()
+		var out []string
+		for _, f := range []func() (string, error){
+			func() (string, error) { return sc.ScriptAssembly(ctx, "w7clr") },
+			func() (string, error) { return sc.ScriptClrType(ctx, "dbo", "Pt'") },
+			func() (string, error) { return sc.ScriptRule(ctx, "dbo", "r'1") },
+			func() (string, error) { return sc.ScriptDefault(ctx, "dbo", "d1") },
+			func() (string, error) { return sc.ScriptMessageType(ctx, "mt'1") },
+			func() (string, error) { return sc.ScriptContract(ctx, "c1") },
+			func() (string, error) { return sc.ScriptBrokerQueue(ctx, "dbo", "q1") },
+			func() (string, error) { return sc.ScriptBrokerService(ctx, "s1") },
+			func() (string, error) { return sc.ScriptRoute(ctx, "rt1") },
+			func() (string, error) { return sc.ScriptRemoteServiceBinding(ctx, "rsb1") },
+			func() (string, error) { return sc.ScriptPlanGuide(ctx, "pg'1") },
+			func() (string, error) { return sc.ScriptBrokerPriority(ctx, "bp1") },
+		} {
+			s, err := f()
+			if err != nil {
+				t.Fatalf("script: %v", err)
+			}
+			out = append(out, strings.Replace(s, assemblyBinaryPlaceholder, "0x"+hex.EncodeToString(dll), 1))
+		}
+		return out
+	}
+	compare := func(what string) {
+		t.Helper()
+		want := liveRowsAsStrings(t, src, ctx, liveRestExtPropsOracle)
+		got := liveRowsAsStrings(t, dst, ctx, liveRestExtPropsOracle)
+		if len(want) != 12 {
+			t.Fatalf("%s: the source has %d properties, want 12:\n  %s", what, len(want), strings.Join(want, "\n  "))
+		}
+		slices.Sort(want)
+		slices.Sort(got)
+		if !slices.Equal(want, got) {
+			t.Errorf("%s: properties differ.\nsource:\n  %s\nreplay:\n  %s", what, strings.Join(want, "\n  "), strings.Join(got, "\n  "))
+		}
+	}
+
+	opts := DefaultScriptOptions()
+	opts.IncludeHeaders = false
+	for _, s := range scriptAll(NewScripter(src, opts)) {
+		livePinnedRun(t, db, ctx, dst.Name, s)
+	}
+	compare("CREATE")
+
+	// DROP AND CREATE of everything nothing else here depends on takes the
+	// properties along and puts them back: not the assembly, the message
+	// type, the contract or the queue.
+	dc := opts
+	dc.Verb = ScriptDropAndCreate
+	for i, s := range scriptAll(NewScripter(src, dc)) {
+		switch i {
+		case 0, 4, 5, 6:
 			continue
 		}
 		livePinnedRun(t, db, ctx, dst.Name, s)

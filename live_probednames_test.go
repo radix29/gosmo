@@ -61,6 +61,12 @@ func TestLiveEveryProbedPermissionNameIsOneTheServerDefines(t *testing.T) {
 		}
 	}
 
+	for _, name := range ProbedMasterPermissions {
+		if got := caps.MasterPermission(name); got == CapabilityUnknown {
+			t.Errorf("master permission %q reads %v — master does not define that name", name, got)
+		}
+	}
+
 	d, drop := liveScratchDB(t, db, ctx, "gosmo_probednames_live")
 	defer drop()
 

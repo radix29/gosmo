@@ -110,6 +110,21 @@ const scheduleColumns = `sch.schedule_id, sch.name, sch.enabled, sch.freq_type, 
 const scheduleFrom = `FROM   msdb.dbo.sysschedules sch
 LEFT   JOIN master.sys.server_principals l ON l.sid = sch.owner_sid`
 
+// scheduleProcFrom is scheduleFrom for a login without sysadmin (see
+// agentRead): sysschedules_localserver_view, which shows Reader and Operator
+// every local schedule and SQLAgentUserRole the ones it owns, and SUSER_SNAME
+// for the owner, since server_principals shows such a login only itself.
+// Unlike sysschedules it leaves out the schedules a multi-server master sent.
+const scheduleProcFrom = `FROM   msdb.dbo.sysschedules_localserver_view sch
+OUTER  APPLY (SELECT SUSER_SNAME(sch.owner_sid) AS name) l`
+
+// scheduleRead is the batch a schedule read sends: head (the SELECT and its
+// column list) and tail (the WHERE and ORDER BY) around scheduleFrom for a
+// sysadmin and scheduleProcFrom for anyone else.
+func scheduleRead(head, tail string) string {
+	return agentRead("\n"+head+" "+scheduleFrom+tail, "\n"+head+" "+scheduleProcFrom+tail)
+}
+
 // scanSchedule scans one row shaped like scheduleColumns into a new Schedule.
 func scanSchedule(s *Server, scan func(dest ...any) error) (*Schedule, error) {
 	sch := &Schedule{server: s}
@@ -128,9 +143,11 @@ func scanSchedule(s *Server, scan func(dest ...any) error) (*Schedule, error) {
 	return sch, nil
 }
 
-// Schedules returns every SQL Server Agent schedule defined on the server.
+// Schedules returns every SQL Server Agent schedule defined on the server
+// that the login may see: SQLAgentUserRole sees only its own (see
+// scheduleProcFrom).
 func (s *Server) Schedules(ctx context.Context) ([]*Schedule, error) {
-	q := "SELECT " + scheduleColumns + " " + scheduleFrom + " ORDER BY sch.name"
+	q := scheduleRead("SELECT "+scheduleColumns, " ORDER BY sch.name")
 
 	rows, err := s.query(ctx, q)
 	return scanRows(rows, err, "list schedules", func(scan func(...any) error) (*Schedule, error) {
@@ -147,7 +164,7 @@ func (s *Server) Schedules(ctx context.Context) ([]*Schedule, error) {
 // caller holding a schedule_id (a list row, an Object Explorer node) reads
 // with ScheduleByID instead.
 func (s *Server) ScheduleByName(ctx context.Context, name string) (*Schedule, error) {
-	q := "SELECT TOP (2) " + scheduleColumns + " " + scheduleFrom + " WHERE sch.name = @p1 ORDER BY sch.schedule_id"
+	q := scheduleRead("SELECT TOP (2) "+scheduleColumns, " WHERE sch.name = @p1 ORDER BY sch.schedule_id")
 
 	rows, err := s.query(ctx, q, name)
 	found, err := scanRows(rows, err, "schedule by name", func(scan func(...any) error) (*Schedule, error) {
@@ -167,7 +184,7 @@ func (s *Server) ScheduleByName(ctx context.Context, name string) (*Schedule, er
 // ScheduleByID returns the schedule whose msdb schedule_id is id — the one
 // lookup that always names exactly one schedule (see ScheduleByName).
 func (s *Server) ScheduleByID(ctx context.Context, id int) (*Schedule, error) {
-	q := "SELECT " + scheduleColumns + " " + scheduleFrom + " WHERE sch.schedule_id = @p1"
+	q := scheduleRead("SELECT "+scheduleColumns, " WHERE sch.schedule_id = @p1")
 
 	return readByName(ctx, s, scanSchedule, q, []any{id},
 		notFoundf("gosmo: schedule id %d not found", id), fmt.Sprintf("read schedule id %d", id))
@@ -348,12 +365,27 @@ func (sch *Schedule) Drop(ctx context.Context) error {
 // extra round trips Server.Jobs pays for. On a ScheduleRef the schedule_id is
 // looked up by name first, so a name two schedules share is ErrAmbiguous.
 func (sch *Schedule) Jobs(ctx context.Context) ([]*Job, error) {
-	const q = `
+	q := agentRead(`
 SELECT CONVERT(varchar(36), j.job_id), j.name, j.enabled
 FROM   msdb.dbo.sysjobs j
 JOIN   msdb.dbo.sysjobschedules js ON js.job_id = j.job_id
 WHERE  js.schedule_id = @p1
-ORDER  BY j.name`
+ORDER  BY j.name`, jobScheduleProcTable+`
+DECLARE @job uniqueidentifier;
+DECLARE agent_jobs CURSOR LOCAL FAST_FORWARD FOR SELECT job_id FROM msdb.dbo.sysjobs_view;
+OPEN agent_jobs;
+FETCH NEXT FROM agent_jobs INTO @job;
+WHILE @@FETCH_STATUS = 0
+BEGIN`+jobScheduleProcFill+`
+  FETCH NEXT FROM agent_jobs INTO @job;
+END;
+CLOSE agent_jobs;
+DEALLOCATE agent_jobs;
+SELECT CONVERT(varchar(36), j.job_id), j.name, j.enabled
+FROM   msdb.dbo.sysjobs_view j
+JOIN   @js js ON js.job_id = j.job_id
+WHERE  js.schedule_id = @p1
+ORDER  BY j.name`)
 
 	id, err := sch.id(ctx)
 	if err != nil {
@@ -369,13 +401,52 @@ ORDER  BY j.name`
 	})
 }
 
+// jobScheduleProcTable declares @js, sp_help_jobschedule's result set plus
+// the job it was read for: the only route to sysjobschedules for a login
+// without sysadmin (see agentRead). jobScheduleProcFill adds the schedules of
+// the job in @job.
+const jobScheduleProcTable = `
+DECLARE @js TABLE (schedule_id int, name sysname, enabled int, freq_type int,
+  freq_interval int, freq_subday_type int, freq_subday_interval int,
+  freq_relative_interval int, freq_recurrence_factor int, active_start_date int,
+  active_end_date int, active_start_time int, active_end_time int, date_created datetime,
+  schedule_description nvarchar(max), next_run_date int, next_run_time int,
+  schedule_uid uniqueidentifier, job_count int, job_id uniqueidentifier NULL);`
+
+const jobScheduleProcFill = `
+  INSERT INTO @js (schedule_id, name, enabled, freq_type, freq_interval, freq_subday_type,
+                   freq_subday_interval, freq_relative_interval, freq_recurrence_factor,
+                   active_start_date, active_end_date, active_start_time, active_end_time,
+                   date_created, schedule_description, next_run_date, next_run_time,
+                   schedule_uid, job_count)
+  EXECUTE msdb.dbo.sp_help_jobschedule @job_id = @job;
+  UPDATE @js SET job_id = @job WHERE job_id IS NULL;`
+
+// jobScheduleProcColumns is scheduleColumns over @js, for Job.Schedules
+// without sysadmin. sp_help_jobschedule returns neither the owner nor the
+// modify date, so those come from sysschedules_localserver_view — which
+// hides from a SQLAgentUserRole member a schedule another login owns, one a
+// sysadmin attached to its job. Such a schedule reads with no owner and its
+// creation date as ModifyDate.
+const jobScheduleProcColumns = `js.schedule_id, js.name, js.enabled, js.freq_type, js.freq_interval,
+       js.freq_subday_type, js.freq_subday_interval, js.freq_relative_interval,
+       js.freq_recurrence_factor, js.active_start_date, js.active_end_date,
+       js.active_start_time, js.active_end_time,
+       js.date_created, ISNULL(sch.date_modified, js.date_created), ISNULL(l.name, '')`
+
 // Schedules returns every schedule attached to the job. On a JobRef the job
 // is looked up by name first (see Server.JobRef).
 func (j *Job) Schedules(ctx context.Context) ([]*Schedule, error) {
-	q := "SELECT " + scheduleColumns + " " + scheduleFrom + `
+	q := agentRead("\nSELECT "+scheduleColumns+" "+scheduleFrom+`
 JOIN   msdb.dbo.sysjobschedules js ON js.schedule_id = sch.schedule_id
 WHERE  js.job_id = @p1
-ORDER  BY sch.name`
+ORDER  BY sch.name`, jobScheduleProcTable+`
+DECLARE @job uniqueidentifier = @p1;`+jobScheduleProcFill+`
+SELECT `+jobScheduleProcColumns+`
+FROM   @js js
+LEFT   JOIN msdb.dbo.sysschedules_localserver_view sch ON sch.schedule_id = js.schedule_id
+OUTER  APPLY (SELECT SUSER_SNAME(sch.owner_sid) AS name) l
+ORDER  BY js.name`)
 
 	what := fmt.Sprintf("schedules for job %q", j.Name)
 	id, err := j.id(ctx, what)

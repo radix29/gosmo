@@ -37,7 +37,13 @@ API** — gosmo has other users.
 ```
 go build ./...  &&  go test ./...  &&  gofmt -w .  &&  go vet ./...
 go vet -tags livedb ./...   # after any rename, and before a tag
+go test -tags livedb . -run '^(TestLiveA|TestLiveB)$' -livedb '<dsn>'   # the tests a change touches
+go test -tags livedb . -short -livedb '<dsn>'   # broad check: skips tests over 15 s
 ```
+
+Live runs cover what the change touches, not the whole suite: the full run is
+about 16 minutes per instance and is for a tag. A live test that takes 15 s
+or more starts with `skipSlowInShort(t)`.
 
 Plain `go`, no Makefile. `go test ./...` uses fakes (`captureConn`,
 `fakeQueryConn`) and needs no server. `gosmotest` is the exported one, for
@@ -66,6 +72,13 @@ exercise the write, drop them; never mutate pre-existing objects.
   from master** — an ad-hoc plan keeps the database id it was compiled
   against, so after a drop/recreate reassigns ids the same text reads the
   other database (a test's source and replay swapped, 2026-10-14).
+- **A script's database settings are read from inside the database**
+  (`Database.queryRow`, as `readDatabaseLayout` does): one `AUTO_CLOSE` has
+  closed keeps its catalog rows but reports NULL in many columns at server
+  scope, so a read can look complete and still drop a statement.
+- **A live test creates or replays memory-optimized objects through
+  `liveExecMemoryOptimized` / `liveRunMemoryOptimizedScript`** — Msg 701 there
+  is the host's memory and skips; anywhere else it still fails.
 - **After a change to quoting, `NameKey` or script-text rewriting**
   (`bindScriptArgs`, `alterModuleDefinition`, `ParseServerAddress`), run
   `go test -run XXX -fuzz FuzzNames -fuzztime 60s -fuzzminimizetime 0`; a

@@ -6,6 +6,7 @@ import (
 	"database/sql/driver"
 	"strings"
 	"testing"
+	"time"
 )
 
 // TestScriptExtendedPropertyWrites pins the sp_addextendedproperty family.
@@ -175,5 +176,95 @@ func TestScriptSchemaExtendedProperties(t *testing.T) {
 	if got, err := NewScripter(d, drop).ScriptSchema(ctx, "Sales"); err != nil || strings.Contains(got, "sp_addextendedproperty") ||
 		captured.count("sys.extended_properties") != 0 {
 		t.Errorf("DROP reads or restates properties (%v):\n%s", err, got)
+	}
+}
+
+// ScriptRule and ScriptDefault key their properties by the object's id (class
+// 1), read only when they are wanted, and restate them at SCHEMA/RULE or
+// SCHEMA/DEFAULT. An encrypted object's script creates nothing, so it reads
+// and restates none — each would fail, its object missing.
+func TestScriptRuleAndDefaultExtendedProperties(t *testing.T) {
+	ctx := context.Background()
+	d := captureDatabase(t)
+	for _, tc := range []struct {
+		keyword string
+		script  func(*Scripter, context.Context, string, string) (string, error)
+	}{
+		{"RULE", (*Scripter).ScriptRule},
+		{"DEFAULT", (*Scripter).ScriptDefault},
+	} {
+		canned := func(def driver.Value) []cannedRow {
+			return []cannedRow{
+				{match: "SELECT OBJECT_DEFINITION(o.object_id)\nFROM   sys.all_objects o", cols: []string{"def"}, row: []driver.Value{def}},
+				{match: "FROM   sys.objects o", cols: make([]string, 5),
+					row: []driver.Value{"r'1", "dbo", int64(42), time.Time{}, time.Time{}}},
+				{match: "FROM   sys.extended_properties ep", cols: make([]string, 6),
+					row: []driver.Value{"MS_Description", "nvarchar", int64(0), int64(0), int64(4), "it"}},
+			}
+		}
+		captured.reset(canned("CREATE " + tc.keyword + " dbo.[r'1] AS 0")...)
+		got, err := tc.script(NewScripter(d, DefaultScriptOptions()), ctx, "dbo", "r'1")
+		if err != nil {
+			t.Fatalf("%s: %v", tc.keyword, err)
+		}
+		want := "EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'it', @level0type = N'SCHEMA', @level0name = N'dbo', " +
+			"@level1type = N'" + tc.keyword + "', @level1name = N'r''1';\nGO\n"
+		if !strings.HasSuffix(got, want) {
+			t.Errorf("%s property not restated:\n%s", tc.keyword, got)
+		}
+		if _, args := captured.findArgs("FROM   sys.extended_properties ep"); len(args) != 3 ||
+			args[0] != int64(1) || args[1] != int64(42) || args[2] != int64(0) {
+			t.Errorf("%s read keyed wrong: %v", tc.keyword, args)
+		}
+
+		captured.reset(canned(nil)...)
+		got, err = tc.script(NewScripter(d, DefaultScriptOptions()), ctx, "dbo", "r'1")
+		if err != nil || strings.Contains(got, "sp_addextendedproperty") ||
+			captured.count("sys.extended_properties") != 0 || captured.count("FROM   sys.objects o") != 0 {
+			t.Errorf("%s encrypted: reads or restates properties (%v):\n%s", tc.keyword, err, got)
+		}
+
+		off := DefaultScriptOptions()
+		off.ExtendedProperties = false
+		captured.reset(canned("CREATE " + tc.keyword + " dbo.[r'1] AS 0")...)
+		if _, err := tc.script(NewScripter(d, off), ctx, "dbo", "r'1"); err != nil ||
+			captured.count("sys.extended_properties") != 0 || captured.count("FROM   sys.objects o") != 0 {
+			t.Errorf("%s with ExtendedProperties off reads the id or the properties (%v)", tc.keyword, err)
+		}
+	}
+}
+
+// A database script's filegroup properties sit at FILEGROUP level and its
+// files' at FILEGROUP/LOGICAL FILE NAME, a filegroup's own first.
+func TestScriptFileLayoutExtendedProperties(t *testing.T) {
+	ctx := context.Background()
+	d := captureDatabase(t)
+	captured.reset(cannedRow{match: "FROM   sys.extended_properties ep", cols: make([]string, 8), rows: [][]driver.Value{
+		{"PRIMARY", "", "MS_Description", "nvarchar", int64(0), int64(0), int64(4), "fg"},
+		{"PRIMARY", "Sa'les", "MS_Description", "nvarchar", int64(0), int64(0), int64(8), "file"},
+	}})
+	got, err := NewScripter(d, DefaultScriptOptions()).scriptFileLayoutExtendedProperties(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "IF NOT EXISTS (SELECT 1 FROM sys.fn_listextendedproperty(N'MS_Description', N'FILEGROUP', N'PRIMARY', NULL, NULL, NULL, NULL))\n" +
+		"    EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'fg', @level0type = N'FILEGROUP', @level0name = N'PRIMARY';\nGO\n" +
+		"IF NOT EXISTS (SELECT 1 FROM sys.fn_listextendedproperty(N'MS_Description', N'FILEGROUP', N'PRIMARY', N'LOGICAL FILE NAME', N'Sa''les', NULL, NULL))\n" +
+		"    EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = N'file', @level0type = N'FILEGROUP', @level0name = N'PRIMARY', " +
+		"@level1type = N'LOGICAL FILE NAME', @level1name = N'Sa''les';\nGO\n"
+	if got != want {
+		t.Errorf("file layout properties wrong.\n--- got ---\n%s\n--- want ---\n%s", got, want)
+	}
+	if q := captured.find("FROM   sys.extended_properties ep"); !strings.Contains(q, "ep.class IN (20, 22)") ||
+		!strings.Contains(q, "JOIN   sys.filegroups fg") {
+		t.Errorf("read not limited to filegroups and their files:\n%s", q)
+	}
+
+	drop := DefaultScriptOptions()
+	drop.Verb = ScriptDrop
+	captured.reset()
+	if got, err := NewScripter(d, drop).scriptFileLayoutExtendedProperties(ctx); err != nil || got != "" ||
+		captured.count("sys.extended_properties") != 0 {
+		t.Errorf("DROP reads or restates file layout properties (%v): %q", err, got)
 	}
 }

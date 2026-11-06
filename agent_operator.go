@@ -36,8 +36,41 @@ const operatorColumns = `o.id, o.name, o.enabled,
        ISNULL(o.last_pager_date,0), ISNULL(o.last_pager_time,0),
        ISNULL(o.last_netsend_date,0), ISNULL(o.last_netsend_time,0)`
 
+// operatorFrom is a sysadmin's operator read (see agentRead):
+// sysoperators, which msdb grants SQLAgentOperatorRole only.
 const operatorFrom = `FROM   msdb.dbo.sysoperators o
 LEFT   JOIN msdb.dbo.syscategories c ON c.category_id = o.category_id`
+
+// operatorProcTable declares @op and fills it from sp_help_operator, which
+// msdb grants SQLAgentUserRole (and through it Reader and Operator): every
+// operator, the procedure applying no per-login filter. jobProcTables
+// reads the e-mail operator's name from the same table.
+//
+// The columns are sp_help_operator's result set, the same 20 on 13.0 and
+// 17.0 (sys.dm_exec_describe_first_result_set, 2026-11-05). Every text column
+// is max-sized: INSERT ... EXECUTE fails Msg 8152 on a value longer than its
+// target, where a select would have returned it.
+const operatorProcTable = `
+DECLARE @op TABLE (id int, name sysname, enabled tinyint, email_address nvarchar(max),
+  last_email_date int, last_email_time int, pager_address nvarchar(max), last_pager_date int,
+  last_pager_time int, weekday_pager_start_time int, weekday_pager_end_time int,
+  saturday_pager_start_time int, saturday_pager_end_time int, sunday_pager_start_time int,
+  sunday_pager_end_time int, pager_days tinyint, netsend_address nvarchar(max),
+  last_netsend_date int, last_netsend_time int, category_name sysname NULL);
+INSERT INTO @op EXECUTE msdb.dbo.sp_help_operator;`
+
+// operatorProcFrom is everyone else's: operatorColumns over @op, the
+// category name the procedure already resolved standing in for the
+// syscategories join.
+const operatorProcFrom = `FROM   @op o
+OUTER  APPLY (SELECT o.category_name AS name) c`
+
+// operatorRead is the batch Operators and OperatorByName send, tail being
+// the WHERE or ORDER BY each appends to both reads.
+func operatorRead(tail string) string {
+	return agentRead("\nSELECT "+operatorColumns+" "+operatorFrom+tail,
+		operatorProcTable+"\nSELECT "+operatorColumns+" "+operatorProcFrom+tail)
+}
 
 // scanOperator scans one row shaped like operatorColumns into a new Operator.
 func scanOperator(s *Server, scan func(dest ...any) error) (*Operator, error) {
@@ -57,9 +90,11 @@ func scanOperator(s *Server, scan func(dest ...any) error) (*Operator, error) {
 	return o, nil
 }
 
-// Operators returns every SQL Server Agent operator defined on the server.
+// Operators returns every SQL Server Agent operator defined on the server,
+// to sysadmin and to every msdb Agent role (see operatorProcTable).
 func (s *Server) Operators(ctx context.Context) ([]*Operator, error) {
-	q := "SELECT " + operatorColumns + " " + operatorFrom + " ORDER BY o.name"
+	q := operatorRead(`
+ORDER  BY o.name`)
 
 	rows, err := s.query(ctx, q)
 	return scanRows(rows, err, "list operators", func(scan func(...any) error) (*Operator, error) {
@@ -82,9 +117,11 @@ func (s *Server) OperatorRef(name string) *Operator {
 	return &Operator{server: s, Name: name}
 }
 
-// OperatorByName returns a single operator by name.
+// OperatorByName returns a single operator by name, read as Operators reads
+// it.
 func (s *Server) OperatorByName(ctx context.Context, name string) (*Operator, error) {
-	q := "SELECT " + operatorColumns + " " + operatorFrom + " WHERE o.name = @p1"
+	q := operatorRead(`
+WHERE  o.name = @p1`)
 
 	return readByName(ctx, s, scanOperator, q, []any{name},
 		notFoundf("gosmo: operator %q not found", name), fmt.Sprintf("read operator %q", name))
@@ -152,6 +189,7 @@ type OperatorAlert struct {
 }
 
 // NotifyingAlerts returns every alert configured to notify this operator.
+// It needs SQLAgentOperatorRole, as Alert.Notifications does.
 func (o *Operator) NotifyingAlerts(ctx context.Context) ([]*OperatorAlert, error) {
 	const q = `
 SELECT a.name, n.notification_method
@@ -174,12 +212,18 @@ type OperatorJob struct {
 }
 
 // NotifyingJobs returns every job configured to email this operator on
-// completion (sysjobs.notify_email_operator_id) — distinct from
-// NotifyingAlerts, which covers alert-triggered notifications.
+// completion (notify_email_operator_id) — distinct from NotifyingAlerts,
+// which covers alert-triggered notifications.
+//
+// It reads sysjobs_view, granted to SQLAgentUserRole, not sysjobs, granted to
+// TargetServersRole only — which refused it to every Agent role. The view
+// applies msdb's job visibility, as Jobs does: sysadmin and
+// SQLAgentReaderRole (so Operator) see every job, anyone else the jobs it
+// owns (its definition, the same on 13.0 and 17.0, read 2026-11-05).
 func (o *Operator) NotifyingJobs(ctx context.Context) ([]*OperatorJob, error) {
 	const q = `
 SELECT name, notify_level_email
-FROM   msdb.dbo.sysjobs
+FROM   msdb.dbo.sysjobs_view
 WHERE  notify_email_operator_id = @p1
 ORDER  BY name`
 

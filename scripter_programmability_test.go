@@ -224,6 +224,19 @@ func TestBuildAssemblyScriptElidesThePayloadAndKeepsThePermissionSet(t *testing.
 	}
 }
 
+// permission_set_desc reads SAFE_ACCESS and UNSAFE_ACCESS; a script that
+// carried those verbatim failed to parse (Msg 102), and the field never
+// equalled its own constants.
+func TestAssemblyPermissionSetIsTheCreateKeyword(t *testing.T) {
+	for desc, want := range map[string]AssemblyPermissionSet{
+		"SAFE_ACCESS": AssemblySafe, "EXTERNAL_ACCESS": AssemblyExternalAccess, "UNSAFE_ACCESS": AssemblyUnsafe, "": "",
+	} {
+		if got := assemblyPermissionSet(desc); got != want {
+			t.Errorf("assemblyPermissionSet(%q) = %q, want %q", desc, got, want)
+		}
+	}
+}
+
 func TestBuildPlanGuideScriptIsAnSpCreatePlanGuideCall(t *testing.T) {
 	g := &PlanGuide{Name: "pg_orders", Scope: PlanGuideScopeObject,
 		QueryText:   "SELECT * FROM dbo.Orders WHERE id = @id",

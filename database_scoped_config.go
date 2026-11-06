@@ -91,11 +91,20 @@ const (
 // ScopedConfigSecondary unusable outright. Split out from the method so the clause
 // order can be asserted without a server.
 func buildScopedConfigStatement(name, value string, replica ScopedConfigReplica) (string, error) {
-	if !isSimpleIdentifier(name) {
-		return "", invalidf("gosmo: set database scoped configuration: invalid name %q", name)
-	}
 	if !isSimpleSetValue(value) {
 		return "", invalidf("gosmo: set database scoped configuration %s: invalid value %q", name, value)
+	}
+	return scopedConfigStatement(name, value, replica)
+}
+
+// scopedConfigStatement is buildScopedConfigStatement without the value
+// check, for a value the caller has already made safe: the scripter's
+// tsql.QuoteLiteral of a string-valued configuration (N'https://…'), which
+// isSimpleSetValue rejects for its quotes. Name and replica are still
+// validated.
+func scopedConfigStatement(name, value string, replica ScopedConfigReplica) (string, error) {
+	if !isSimpleIdentifier(name) {
+		return "", invalidf("gosmo: set database scoped configuration: invalid name %q", name)
 	}
 	scope := ""
 	switch replica {

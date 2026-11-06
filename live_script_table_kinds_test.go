@@ -92,6 +92,7 @@ ORDER  BY ec.name`
 )
 
 func TestLiveScriptTableKinds(t *testing.T) {
+	skipSlowInShort(t)
 	// Two databases with three filegroups each outlast liveDB's minute.
 	db, ctx, done := liveDBTimeout(t, 5*time.Minute)
 	defer done()
@@ -135,7 +136,7 @@ func TestLiveScriptTableKinds(t *testing.T) {
 		)
 		tables = append(tables, "LivesIn", "Knows")
 	}
-	liveExecIn(t, src, ctx,
+	liveExecMemoryOptimized(t, src, ctx,
 		`CREATE TABLE dbo.MO1 (id int NOT NULL CONSTRAINT PK_MO1 PRIMARY KEY NONCLUSTERED HASH WITH (BUCKET_COUNT = 1000),
 			v nvarchar(50) NOT NULL, w int NULL,
 			INDEX ix_v NONCLUSTERED (v DESC),
@@ -148,6 +149,8 @@ func TestLiveScriptTableKinds(t *testing.T) {
 		// is 0 or at least 60 minutes on a memory-optimized table.
 		`CREATE TABLE dbo.MO3 (id int NOT NULL CONSTRAINT PK_MO3 PRIMARY KEY NONCLUSTERED (id), v int NULL,
 			INDEX cci_MO3 CLUSTERED COLUMNSTORE WITH (COMPRESSION_DELAY = 90 MINUTES)) WITH (MEMORY_OPTIMIZED = ON)`,
+	)
+	liveExecIn(t, src, ctx,
 		"CREATE TABLE dbo.LOB1 (id int, notes nvarchar(max)) ON [PRIMARY] TEXTIMAGE_ON FG2",
 		"CREATE TABLE dbo.LOB2 (id int PRIMARY KEY, x xml) ON FG2 TEXTIMAGE_ON [PRIMARY]",
 		"CREATE TABLE dbo.LOB3 (id int, notes nvarchar(max)) ON FG2",
@@ -182,7 +185,11 @@ func TestLiveScriptTableKinds(t *testing.T) {
 			if err != nil {
 				t.Fatalf("ScriptTable %s: %v", name, err)
 			}
-			liveRunScript(t, dst, ctx, s)
+			if strings.HasPrefix(name, "MO") {
+				liveRunMemoryOptimizedScript(t, dst, ctx, s)
+			} else {
+				liveRunScript(t, dst, ctx, s)
+			}
 		}
 	}
 

@@ -121,6 +121,7 @@ func qsLiveWindow() (time.Time, time.Time) {
 // aggregate — the pooled standard deviation in particular, whose SQRT/ABS/
 // NULLIF nesting no unit test can validate.
 func TestLiveQueryStoreEveryMetricAndStatisticParses(t *testing.T) {
+	skipSlowInShort(t)
 	db, ctx, done := liveDB(t)
 	defer done()
 	_, d, drop := qsLiveSetup(t, db, ctx)

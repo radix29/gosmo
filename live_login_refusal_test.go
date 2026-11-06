@@ -83,6 +83,7 @@ func recoverProbe(admin *Server) {
 }
 
 func TestLiveLoginRefusal(t *testing.T) {
+	skipSlowInShort(t)
 	// liveDB's 60 s is too short for the idle waits here.
 	db, ctx, done := liveDBTimeout(t, 5*time.Minute)
 	t.Cleanup(done)

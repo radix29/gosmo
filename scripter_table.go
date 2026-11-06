@@ -24,23 +24,41 @@ func (sc *Scripter) ScriptTable(ctx context.Context, schema, name string) (strin
 	if err != nil {
 		return "", err
 	}
+	return sc.scriptTable(ctx, t)
+}
+
+// scriptTable is ScriptTable for a table already looked up. Its inputs come
+// from sc.tables when that covers t, and from one query each otherwise.
+func (sc *Scripter) scriptTable(ctx context.Context, t *Table) (string, error) {
+	schema, name := t.Schema, t.Name
+	var err error
 	var p tableScriptParts
+	pre := sc.tables
+	if pre != nil {
+		if _, ok := pre.options[t.ObjectID]; !ok {
+			pre = nil
+		}
+	}
 	// The table-wide options come first: they decide whether this table is
 	// one the scripter refuses, and a refusal must come before any script.
-	if p.table, err = t.scriptOptions(ctx); err != nil {
+	if pre != nil {
+		p.table = pre.options[t.ObjectID]
+	} else if p.table, err = t.scriptOptions(ctx); err != nil {
 		return "", err
 	}
 	if err := p.table.refusal(t.FullName()); err != nil {
 		return "", err
 	}
-	if p.cols, err = t.Columns(ctx); err != nil {
+	if pre != nil {
+		p.cols = pre.cols[t.ObjectID]
+	} else if p.cols, err = t.Columns(ctx); err != nil {
 		return "", err
 	}
 	if err := hiddenTypeRefusal("table "+t.FullName(), p.cols); err != nil {
 		return "", err
 	}
 	if v := sc.opts.verb(); !p.table.IsExternal && (v == ScriptDrop || v == ScriptDropAndCreate) {
-		if p.boundBy, err = t.schemaBoundDependents(ctx); err != nil {
+		if p.boundBy, p.boundByHidden, err = t.schemaBoundDependents(ctx); err != nil {
 			return "", err
 		}
 		if p.referencedBy, err = t.referencingForeignKeys(ctx); err != nil {
@@ -57,21 +75,30 @@ func (sc *Scripter) ScriptTable(ctx context.Context, schema, name string) (strin
 		}
 		return sc.withTableExtendedProperties(ctx, t, p, script)
 	}
-	if p.indexes, err = t.Indexes(ctx); err != nil {
-		return "", err
-	}
-	if p.fks, err = t.ForeignKeys(ctx); err != nil {
-		return "", err
-	}
-	if p.checks, err = t.CheckConstraints(ctx); err != nil {
-		return "", err
+	if pre != nil {
+		p.indexes, p.fks, p.checks = pre.indexes[t.ObjectID], pre.fks[t.ObjectID], pre.checks[t.ObjectID]
+		if err := t.attachSelectiveXML(ctx, p.indexes); err != nil {
+			return "", err
+		}
+	} else {
+		if p.indexes, err = t.Indexes(ctx); err != nil {
+			return "", err
+		}
+		if p.fks, err = t.ForeignKeys(ctx); err != nil {
+			return "", err
+		}
+		if p.checks, err = t.CheckConstraints(ctx); err != nil {
+			return "", err
+		}
 	}
 	if err := hiddenDefinitionRefusal("table "+t.FullName(), sc.opts.verb(), p.cols, p.indexes, p.checks); err != nil {
 		return "", err
 	}
 	// The table's own ON clause comes from its heap or clustered index, and
 	// a heap is not in the index list at all — see Table.DataSpace.
-	if p.ds, err = t.DataSpace(ctx); err != nil {
+	if pre != nil {
+		p.ds = pre.ds[t.ObjectID]
+	} else if p.ds, err = t.DataSpace(ctx); err != nil {
 		return "", err
 	}
 	if t.IsEdge {
@@ -114,6 +141,10 @@ type tableScriptParts struct {
 	// script that has one.
 	boundBy      []schemaBoundDependent
 	referencedBy []referencingForeignKey
+	// boundByHidden is a login that could not read boundBy: without VIEW
+	// DEFINITION on the database, sys.sql_expression_dependencies shows no
+	// rows at all, so an empty boundBy says nothing.
+	boundByHidden bool
 }
 
 // tableScriptOptions is what a CREATE TABLE says about the table as a whole
@@ -210,31 +241,8 @@ func (t *Table) scriptOptions(ctx context.Context) (tableScriptOptions, error) {
 		IsNode: t.IsNode, IsEdge: t.IsEdge, IsMemoryOptimized: t.IsMemoryOptimized,
 		IsFileTable: t.IsFileTable, IsExternal: t.IsExternal,
 	}
-	var heap, ledgerCols, ftObjects sql.NullString
 	if err := t.db.queryRow(ctx, func(row *sql.Row) error {
-		e := &o.External
-		if err := row.Scan(&o.SystemVersioned, &o.HistorySchema, &o.HistoryTable,
-			&o.HistoryRetentionPeriod, &o.HistoryRetentionUnit, &o.LockEscalation,
-			&o.PeriodStart, &o.PeriodEnd, &heap, &o.DatabaseCollation,
-			&o.Durability, &o.LobDataSpace, &o.LobIsFileGroup, &o.FileStreamDataSpace,
-			&o.LedgerType, &o.IsDroppedLedgerTable, &o.LedgerViewSchema, &o.LedgerViewName, &ledgerCols,
-			&o.FileTableDirectory, &o.FileTableCollation, &o.FileTableNamespaceEnabled, &ftObjects,
-			&e.DataSource, &e.FileFormat, &e.Location, &e.RejectType, &e.RejectValue, &e.RejectSampleValue,
-			&e.RemoteSchema, &e.RemoteObject, &e.Distribution, &e.ShardingColumn,
-			&e.RejectedRowLocation, &e.TableOptions); err != nil {
-			return err
-		}
-		var err error
-		if o.HeapPartitions, err = decodePartitionCompression(heap); err != nil {
-			return err
-		}
-		// Read last-first, so the four come back in view order.
-		if o.LedgerViewColumns, err = decodeJSONList(ledgerCols); err != nil {
-			return err
-		}
-		slices.Reverse(o.LedgerViewColumns)
-		o.FileTableSystemObjects, err = decodeJSONList(ftObjects)
-		return err
+		return scanTableScriptOptions(row.Scan, &o)
 	}, t.scriptOptionsSelect(), t.ObjectID); err != nil && !errors.Is(err, sql.ErrNoRows) {
 		// No row is a table dropped since it was looked up; the column and
 		// index reads beside this one answer that with empty lists, and so
@@ -242,6 +250,35 @@ func (t *Table) scriptOptions(ctx context.Context) (tableScriptOptions, error) {
 		return o, fmt.Errorf("gosmo: script options for %s: %w", t.FullName(), err)
 	}
 	return o, nil
+}
+
+// scanTableScriptOptions reads one row of scriptOptionsSelectWith(…) into o;
+// extra are the destinations of the columns that call appended.
+func scanTableScriptOptions(scan func(...any) error, o *tableScriptOptions, extra ...any) error {
+	var heap, ledgerCols, ftObjects sql.NullString
+	e := &o.External
+	if err := scan(append([]any{&o.SystemVersioned, &o.HistorySchema, &o.HistoryTable,
+		&o.HistoryRetentionPeriod, &o.HistoryRetentionUnit, &o.LockEscalation,
+		&o.PeriodStart, &o.PeriodEnd, &heap, &o.DatabaseCollation,
+		&o.Durability, &o.LobDataSpace, &o.LobIsFileGroup, &o.FileStreamDataSpace,
+		&o.LedgerType, &o.IsDroppedLedgerTable, &o.LedgerViewSchema, &o.LedgerViewName, &ledgerCols,
+		&o.FileTableDirectory, &o.FileTableCollation, &o.FileTableNamespaceEnabled, &ftObjects,
+		&e.DataSource, &e.FileFormat, &e.Location, &e.RejectType, &e.RejectValue, &e.RejectSampleValue,
+		&e.RemoteSchema, &e.RemoteObject, &e.Distribution, &e.ShardingColumn,
+		&e.RejectedRowLocation, &e.TableOptions}, extra...)...); err != nil {
+		return err
+	}
+	var err error
+	if o.HeapPartitions, err = decodePartitionCompression(heap); err != nil {
+		return err
+	}
+	// Read last-first, so the four come back in view order.
+	if o.LedgerViewColumns, err = decodeJSONList(ledgerCols); err != nil {
+		return err
+	}
+	slices.Reverse(o.LedgerViewColumns)
+	o.FileTableSystemObjects, err = decodeJSONList(ftObjects)
+	return err
 }
 
 // scriptOptionsSelect is scriptOptions' query, version-gated.
@@ -254,7 +291,11 @@ func (t *Table) scriptOptions(ctx context.Context) (tableScriptOptions, error) {
 // sys.filetables and sys.external_tables are older than gosmo's 2016 floor;
 // external_tables' rejected_row_location and table_options are 2022's.
 // https://learn.microsoft.com/sql/relational-databases/system-catalog-views/sys-tables-transact-sql
-func (t *Table) scriptOptionsSelect() string {
+func (t *Table) scriptOptionsSelect() string { return t.scriptOptionsSelectWith("", "= @p1") }
+
+// scriptOptionsSelectWith is scriptOptionsSelect with extra appended to the
+// select list and the object predicate set to object, as indexListSelectWith.
+func (t *Table) scriptOptionsSelectWith(extra, object string) string {
 	major := t.db.serverMajorVersion()
 	return `
 SELECT CAST(CASE WHEN t.temporal_type = 2 THEN 1 ELSE 0 END AS BIT),
@@ -284,7 +325,7 @@ SELECT CAST(CASE WHEN t.temporal_type = 2 THEN 1 ELSE 0 END AS BIT),
        ISNULL(et.remote_schema_name, ''), ISNULL(et.remote_object_name, ''),
        ISNULL(et.distribution_desc, ''), ISNULL(COL_NAME(et.object_id, et.sharding_col_id), ''),
        ` + colSince(major, SQLServer2022, "ISNULL(et.rejected_row_location, '')", "CAST('' AS nvarchar(4000))") + `,
-       ` + colSince(major, SQLServer2022, "ISNULL(et.table_options, '')", "CAST('' AS nvarchar(1000))") + `
+       ` + colSince(major, SQLServer2022, "ISNULL(et.table_options, '')", "CAST('' AS nvarchar(1000))") + extra + `
 FROM   sys.tables AS t
 LEFT   JOIN sys.periods p ON p.object_id = t.object_id
 LEFT   JOIN sys.data_spaces lds ON lds.data_space_id = NULLIF(t.lob_data_space_id, 0)
@@ -293,7 +334,7 @@ LEFT   JOIN sys.filetables ft ON ft.object_id = t.object_id
 LEFT   JOIN sys.external_tables et ON et.object_id = t.object_id
 LEFT   JOIN sys.external_data_sources eds ON eds.data_source_id = et.data_source_id
 LEFT   JOIN sys.external_file_formats eff ON eff.file_format_id = et.file_format_id
-WHERE  t.object_id = @p1`
+WHERE  t.object_id ` + object
 }
 
 // buildTableScript assembles the CREATE (or DROP) TABLE script from metadata
@@ -307,7 +348,7 @@ func buildTableScript(schema, name, dbName string, p tableScriptParts, opts Scri
 	// switched off first. The history table is left in place, so a DROP
 	// And CREATE reattaches it by name and keeps the history.
 	var drop strings.Builder
-	drop.WriteString(schemaBoundNote(fullName, p.boundBy))
+	drop.WriteString(schemaBoundNote(fullName, p.boundBy, p.boundByHidden))
 	drop.WriteString(referencingForeignKeyNote(fullName, p.referencedBy, p.table.SystemVersioned))
 	if p.table.SystemVersioned {
 		if opts.IncludeIfNotExists {
@@ -483,7 +524,14 @@ type schemaBoundDependent struct {
 // schemaBoundDependents lists the modules schema-bound to t, other than its
 // own triggers (a natively compiled trigger is schema-bound to its table, and
 // DROP TABLE takes it along rather than refusing).
-func (t *Table) schemaBoundDependents(ctx context.Context) ([]schemaBoundDependent, error) {
+//
+// hidden reports that the login could not read them: without VIEW DEFINITION
+// on the database the view returns no rows at all (Database.HasPermission),
+// so an empty list is then no answer. Without SELECT on the view, which
+// public lacks and db_datareader has, the read is refused outright (Msg 229),
+// and that error is returned. The probe runs only when the list is empty: a
+// row at all means the permission is held.
+func (t *Table) schemaBoundDependents(ctx context.Context) (deps []schemaBoundDependent, hidden bool, err error) {
 	const q = `
 SELECT DISTINCT SCHEMA_NAME(o.schema_id), o.name, o.type_desc,
        CAST(ISNULL(m.uses_native_compilation, 0) AS bit)
@@ -494,11 +542,19 @@ WHERE  sed.referenced_id = @p1 AND sed.is_schema_bound_reference = 1
   AND  o.object_id <> @p1 AND o.parent_object_id <> @p1
 ORDER  BY 1, 2`
 	rows, err := t.db.query(ctx, q, t.ObjectID)
-	return scanRows(rows, err, fmt.Sprintf("schema-bound dependents of %s", t.FullName()), func(scan func(...any) error) (schemaBoundDependent, error) {
+	deps, err = scanRows(rows, err, fmt.Sprintf("schema-bound dependents of %s", t.FullName()), func(scan func(...any) error) (schemaBoundDependent, error) {
 		var d schemaBoundDependent
 		err := scan(&d.schema, &d.name, &d.typeDesc, &d.native)
 		return d, err
 	})
+	if err != nil || len(deps) > 0 {
+		return deps, false, err
+	}
+	visible, err := t.db.HasPermission(ctx, "VIEW DEFINITION")
+	if err != nil {
+		return nil, false, fmt.Errorf("gosmo: schema-bound dependents of %s: %w", t.FullName(), err)
+	}
+	return nil, !visible, nil
 }
 
 // schemaBoundNote is a comment ahead of a table's DROP naming the modules
@@ -509,7 +565,17 @@ ORDER  BY 1, 2`
 // it was (its DROP then fails with Msg 13552). The script names them rather
 // than dropping them: they are other objects, with their own permissions,
 // and SSMS's table script does not touch them either.
-func schemaBoundNote(fullName string, deps []schemaBoundDependent) string {
+//
+// hidden is a login that could not read them (see schemaBoundDependents):
+// the note then says so rather than going missing, which would read as
+// "nothing blocks this DROP". A comment, not a refusal: the script is still
+// right, and its CREATE half needs no such read.
+func schemaBoundNote(fullName string, deps []schemaBoundDependent, hidden bool) string {
+	if hidden {
+		return fmt.Sprintf("-- Could not check what is schema-bound to %s: without VIEW DEFINITION on\n"+
+			"-- the database, sys.sql_expression_dependencies lists nothing. A module\n"+
+			"-- schema-bound to it makes this DROP fail with Msg 3729.\n", tsql.CommentSafe(fullName))
+	}
 	if len(deps) == 0 {
 		return ""
 	}
@@ -668,8 +734,10 @@ func writeTableDependents(sb *strings.Builder, indexes []*Index, inline map[stri
 		sb.WriteString(scriptIndex(idx, fullName, p.ds, opts))
 	}
 
-	for _, fk := range p.fks {
-		sb.WriteString(scriptForeignKey(fk, fullName, opts))
+	if !opts.DeferForeignKeys {
+		for _, fk := range p.fks {
+			sb.WriteString(scriptForeignKey(fk, fullName, opts))
+		}
 	}
 	for _, ck := range p.checks {
 		sb.WriteString(scriptCheckConstraint(ck, fullName, opts))

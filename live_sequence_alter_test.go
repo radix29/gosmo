@@ -18,9 +18,8 @@ func TestLiveSequenceAlterRoundTrip(t *testing.T) {
 	d, drop := liveScratchDB(t, db, ctx, "gosmo_sequence_alter_live")
 	defer drop()
 
-	minV, maxV := int64(-100), int64(100)
 	seq, err := d.CreateSequence(ctx, CreateSequenceRequest{Schema: "dbo", Name: "s]q", DataType: DataTypeDecimal,
-		Precision: 30, StartValue: 10, Increment: 5, MinValue: &minV, MaxValue: &maxV, Cache: new(0)})
+		Precision: 30, StartValue: "10", Increment: "5", MinValue: "-100", MaxValue: "100", Cache: new(0)})
 	if err != nil {
 		t.Fatalf("CreateSequence: %v", err)
 	}
@@ -32,8 +31,7 @@ func TestLiveSequenceAlterRoundTrip(t *testing.T) {
 		t.Fatalf("NextValue: %v", err)
 	}
 
-	newMin, newMax, inc, restart := int64(-1000), int64(1000), int64(-7), int64(50)
-	ch := SequenceChanges{RestartWith: &restart, Increment: &inc, MinValue: &newMin, MaxValue: &newMax,
+	ch := SequenceChanges{RestartWith: "50", Increment: "-7", MinValue: "-1000", MaxValue: "1000",
 		Cycle: new(true), Cache: &SequenceCache{Enabled: true, Size: 25}}
 	if err := seq.Alter(ctx, ch); err != nil {
 		t.Fatalf("Alter: %v", err)
@@ -81,5 +79,95 @@ func TestLiveSequenceAlterRoundTrip(t *testing.T) {
 	}
 	if err := seq.Drop(ctx); err != nil {
 		t.Fatalf("Drop: %v", err)
+	}
+}
+
+// A decimal(38, 0) sequence's values past bigint go through CreateSequence,
+// Alter and Restart and read back as written; last_used_value is reported
+// only where the server has it (TracksLastUsedValue).
+func TestLiveSequencePastBigint(t *testing.T) {
+	db, ctx, done := liveDB(t)
+	defer done()
+	d, drop := liveScratchDB(t, db, ctx, "gosmo_sequence_bigint_live")
+	defer drop()
+
+	const (
+		start = "9223372036854775808" // MaxInt64 + 1
+		max37 = "10000000000000000000000000000000000000"
+		min37 = "-10000000000000000000000000000000000000"
+	)
+	seq, err := d.CreateSequence(ctx, CreateSequenceRequest{Schema: "dbo", Name: "wide", DataType: DataTypeDecimal,
+		Precision: 38, StartValue: start, Increment: "1", MinValue: min37, MaxValue: max37})
+	if err != nil {
+		t.Fatalf("CreateSequence: %v", err)
+	}
+	if seq.StartValue != start || seq.MinValue != min37 || seq.MaxValue != max37 {
+		t.Errorf("created start %s min %s max %s, want %s/%s/%s", seq.StartValue, seq.MinValue, seq.MaxValue, start, min37, max37)
+	}
+	wantTracks := !d.before(SQLServer2017)
+	if seq.TracksLastUsedValue() != wantTracks || seq.LastUsedValue != "" {
+		t.Errorf("fresh: TracksLastUsedValue %v LastUsedValue %q, want %v and \"\"", seq.TracksLastUsedValue(), seq.LastUsedValue, wantTracks)
+	}
+
+	const restart = "-9223372036854775809" // MinInt64 - 1
+	if err := seq.Alter(ctx, SequenceChanges{RestartWith: restart, Increment: "-1000000000000000000000"}); err != nil {
+		t.Fatalf("Alter: %v", err)
+	}
+	read, err := d.SequenceByName(ctx, "dbo", "wide")
+	if err != nil {
+		t.Fatalf("SequenceByName: %v", err)
+	}
+	if read.StartValue != restart || read.CurrentValue != restart || read.Increment != "-1000000000000000000000" {
+		t.Errorf("after Alter: start %s current %s increment %s", read.StartValue, read.CurrentValue, read.Increment)
+	}
+	if _, err := d.exec(ctx, "SELECT NEXT VALUE FOR [dbo].[wide]"); err != nil {
+		t.Fatalf("NEXT VALUE FOR: %v", err)
+	}
+	if read, err = d.SequenceByName(ctx, "dbo", "wide"); err != nil {
+		t.Fatalf("SequenceByName: %v", err)
+	}
+	if wantLast := map[bool]string{true: restart, false: ""}[wantTracks]; read.LastUsedValue != wantLast {
+		t.Errorf("after one value: LastUsedValue %q, want %q", read.LastUsedValue, wantLast)
+	}
+	if err := read.Restart(ctx, max37); err != nil {
+		t.Fatalf("Restart: %v", err)
+	}
+	if read, err = d.SequenceByName(ctx, "dbo", "wide"); err != nil || read.CurrentValue != max37 {
+		t.Errorf("after Restart: current %v, err %v; want %s", read != nil && read.CurrentValue == max37, err, max37)
+	}
+	if err := seq.Drop(ctx); err != nil {
+		t.Fatalf("Drop: %v", err)
+	}
+}
+
+// NextValue hands back a decimal(38, 0) sequence's values past bigint as
+// digits, and two calls are consecutive.
+func TestLiveSequenceNextValuePastBigint(t *testing.T) {
+	db, ctx, done := liveDB(t)
+	defer done()
+	d, drop := liveScratchDB(t, db, ctx, "gosmo_sequence_next_live")
+	defer drop()
+
+	const start = "100000000000000000000" // 10^20
+	seq, err := d.CreateSequence(ctx, CreateSequenceRequest{Schema: "dbo", Name: "wide", DataType: DataTypeDecimal,
+		Precision: 38, StartValue: start, Increment: "1"})
+	if err != nil {
+		t.Fatalf("CreateSequence: %v", err)
+	}
+	for _, want := range []string{start, "100000000000000000001"} {
+		got, err := seq.NextValue(ctx)
+		if err != nil {
+			t.Fatalf("NextValue: %v", err)
+		}
+		if got != want || seq.CurrentValue != want || seq.LastUsedValue != want {
+			t.Errorf("NextValue = %q (CurrentValue %q, LastUsedValue %q), want %s", got, seq.CurrentValue, seq.LastUsedValue, want)
+		}
+	}
+	read, err := d.SequenceByName(ctx, "dbo", "wide")
+	if err != nil {
+		t.Fatalf("SequenceByName: %v", err)
+	}
+	if read.CurrentValue != "100000000000000000001" {
+		t.Errorf("server current_value %s, want 100000000000000000001", read.CurrentValue)
 	}
 }

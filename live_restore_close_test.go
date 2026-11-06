@@ -22,6 +22,7 @@ import (
 )
 
 func TestLiveRestoreCloseExistingConnections(t *testing.T) {
+	skipSlowInShort(t)
 	db, ctx, done := liveDB(t)
 	// t.Cleanup, not defer: the file removals below are cleanups that
 	// run after the drop, which releases a STANDBY undo file.

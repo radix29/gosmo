@@ -171,6 +171,50 @@ ORDER  BY c.column_id, ep.name`
 	})
 }
 
+// fileLayoutExtendedProperties reads the properties on the database's
+// filegroups (class 20, at FILEGROUP level) and on their files (class 22,
+// FILEGROUP/LOGICAL FILE NAME), each filegroup's own before its files'. A
+// partition scheme is a data space too, so class 20 is joined to
+// sys.filegroups rather than read whole; a log file belongs to no filegroup,
+// so sp_addextendedproperty has no level that could have given it one.
+func (d *Database) fileLayoutExtendedProperties(ctx context.Context) ([]scriptedExtProp, error) {
+	q := `
+SELECT fg.name, ISNULL(f.name, ''), ep.name,
+       ISNULL(CONVERT(sysname, SQL_VARIANT_PROPERTY(ep.value, 'BaseType')), ''),
+       ISNULL(CONVERT(int, SQL_VARIANT_PROPERTY(ep.value, 'Precision')), 0),
+       ISNULL(CONVERT(int, SQL_VARIANT_PROPERTY(ep.value, 'Scale')), 0),
+       ISNULL(CONVERT(int, SQL_VARIANT_PROPERTY(ep.value, 'MaxLength')), 0),
+       ` + extPropValueText + `
+FROM   sys.extended_properties ep
+LEFT   JOIN sys.database_files f ON ep.class = 22 AND f.file_id = ep.major_id
+JOIN   sys.filegroups fg ON fg.data_space_id = CASE ep.class WHEN 20 THEN ep.major_id ELSE f.data_space_id END
+WHERE  ep.class IN (20, 22) AND ep.minor_id = 0
+ORDER  BY fg.data_space_id, ISNULL(f.file_id, 0), ep.name`
+	rows, err := d.query(ctx, q)
+	return scanRows(rows, err, "extended properties to script", func(scan func(...any) error) (scriptedExtProp, error) {
+		p := scriptedExtProp{level: ExtendedPropertyLevel{Level0Type: "FILEGROUP"}}
+		err := scan(&p.level.Level0Name, &p.level.Level1Name, &p.name,
+			&p.baseType, &p.precision, &p.scale, &p.maxLength, &p.value)
+		if p.level.Level1Name != "" {
+			p.level.Level1Type = "LOGICAL FILE NAME"
+		}
+		return p, err
+	})
+}
+
+// scriptFileLayoutExtendedProperties renders fileLayoutExtendedProperties
+// for ScriptDatabase (see wantsExtendedProperties).
+func (sc *Scripter) scriptFileLayoutExtendedProperties(ctx context.Context) (string, error) {
+	if !sc.wantsExtendedProperties() {
+		return "", nil
+	}
+	props, err := sc.db.fileLayoutExtendedProperties(ctx)
+	if err != nil {
+		return "", err
+	}
+	return sc.renderExtendedProperties(props, nil), nil
+}
+
 // wantsExtendedProperties reports whether a script restates extended
 // properties: when the options ask for them and the script creates anything
 // — a DROP alone leaves them out.

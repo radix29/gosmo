@@ -99,7 +99,7 @@ func TestNotificationReadersMapRows(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		check(t, "sysjobs", "notify_email_operator_id")
+		check(t, "sysjobs_view", "notify_email_operator_id")
 		want := []OperatorJob{{"first", NotifyLevel(1)}, {"second", NotifyLevel(4)}}
 		if len(got) != 2 || *got[0] != want[0] || *got[1] != want[1] {
 			t.Errorf("got %v; want %v", got, want)

@@ -3,6 +3,7 @@ package gosmo
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 )
@@ -124,6 +125,13 @@ func scanAlert(s *Server, scan func(dest ...any) error) (*Alert, error) {
 }
 
 // Alerts returns every SQL Server Agent alert defined on the server.
+//
+// It needs sysadmin or SQLAgentOperatorRole: msdb grants sysalerts, and every
+// procedure that lists alerts (sp_help_alert), to SQLAgentOperatorRole only,
+// so there is no agentRead route for the Reader and User roles. Their read is
+// refused Msg 229, which errors.go classifies — IsPermissionDenied(err) is
+// true — so a caller can hide the alert list rather than report a failure,
+// as SSMS does. Job.Alerts is the read those roles do have.
 func (s *Server) Alerts(ctx context.Context) ([]*Alert, error) {
 	q := "SELECT " + alertColumns + " " + alertFrom + " ORDER BY a.name"
 
@@ -136,7 +144,8 @@ func (s *Server) Alerts(ctx context.Context) ([]*Alert, error) {
 // EventAlerts returns only plain SQL Server event alerts — the SQL-only
 // implementable subset (see Alert.IsEventAlert). WMI alerts and
 // performance-condition alerts are excluded, since they depend on non-SQL
-// subsystems.
+// subsystems. It needs what Alerts needs, and is refused the
+// same way.
 func (s *Server) EventAlerts(ctx context.Context) ([]*Alert, error) {
 	all, err := s.Alerts(ctx)
 	if err != nil {
@@ -242,6 +251,55 @@ func (a *Alert) Drop(ctx context.Context) error {
 	return nil
 }
 
+// JobAlert is one alert that responds to a job, as Job.Alerts lists it:
+// what sp_get_job_alerts reports, a summary rather than an Alert.
+type JobAlert struct {
+	ID      int
+	Name    string
+	Enabled bool
+	// IsPerformanceAlert is true for a performance-condition alert. A WMI
+	// alert reads as false, like an event alert: the procedure tells WMI
+	// apart (its type 3) only for an alert that also has a performance
+	// condition, which a WMI alert does not (its text, the same on 13.0 and
+	// 17.0, read 2026-11-05). Telling them apart needs sysalerts, which is
+	// SQLAgentOperatorRole's.
+	IsPerformanceAlert bool
+}
+
+// Alerts returns the alerts whose response runs this job, by name —
+// sysalerts.job_id, one job per alert. It reads through
+// msdb.dbo.sp_get_job_alerts, granted to SQLAgentUserRole and so to every
+// Agent role, where Server.Alerts needs SQLAgentOperatorRole; a job the
+// login may not see is not found.
+func (j *Job) Alerts(ctx context.Context) ([]*JobAlert, error) {
+	const q = `
+SET NOCOUNT ON;
+DECLARE @job uniqueidentifier = @p1;
+EXECUTE msdb.dbo.sp_get_job_alerts @job_id = @job`
+
+	what := fmt.Sprintf("alerts for job %q", j.Name)
+	id, err := j.id(ctx, what)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := j.server.query(ctx, q, id)
+	alerts, err := scanRows(rows, err, what, func(scan func(...any) error) (*JobAlert, error) {
+		a := &JobAlert{}
+		var kind int
+		if err := scan(&a.ID, &a.Name, &a.Enabled, &kind); err != nil {
+			return nil, err
+		}
+		a.IsPerformanceAlert = kind != 1
+		return a, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	// The procedure has no ORDER BY; every other alert list is by name.
+	slices.SortFunc(alerts, func(a, b *JobAlert) int { return strings.Compare(a.Name, b.Name) })
+	return alerts, nil
+}
+
 // AlertNotification describes one operator notified by an alert.
 type AlertNotification struct {
 	OperatorName string
@@ -268,7 +326,10 @@ func (a *Alert) RemoveNotification(ctx context.Context, operatorName string) err
 	return nil
 }
 
-// Notifications returns every operator notified by this alert.
+// Notifications returns every operator notified by this alert. Like
+// Server.Alerts it needs SQLAgentOperatorRole (sysnotifications, and
+// sp_help_notification, are granted to it only) and is refused Msg 229
+// below it.
 func (a *Alert) Notifications(ctx context.Context) ([]*AlertNotification, error) {
 	const q = `
 SELECT o.name, n.notification_method

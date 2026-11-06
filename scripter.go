@@ -63,9 +63,15 @@ type ScriptOptions struct {
 	// its columns, parameters, indexes and (a table's) constraints, as SSMS's
 	// "Script extended properties" option does, on by default there too.
 	// Applies to ScriptTable, ScriptView, ScriptStoredProcedure,
-	// ScriptFunction, ScriptTrigger, ScriptSchema and ScriptDatabase (its
-	// own, not a snapshot's); never to a DROP.
+	// ScriptFunction, ScriptTrigger, ScriptSchema, ScriptDatabase (its own
+	// and its filegroups' and files', not a snapshot's) and every other
+	// single-object script whose object can carry one — all but a broker
+	// priority; never to a DROP.
 	ExtendedProperties bool
+	// DeferForeignKeys leaves a table's foreign keys out of its script, for a
+	// caller emitting them afterwards as ALTER TABLE … ADD CONSTRAINT (see
+	// ScriptDatabaseObjects). Applies to ScriptTable only.
+	DeferForeignKeys bool
 }
 
 // DefaultScriptOptions returns sensible defaults.
@@ -133,6 +139,9 @@ func (o ScriptOptions) envelopeErr(drop, guard string, create func(sb *strings.B
 type Scripter struct {
 	db   *Database
 	opts ScriptOptions
+	// tables, when set, holds every table's script inputs already read — see
+	// tablePrefetch. Only ScriptDatabaseObjectList sets it.
+	tables *tablePrefetch
 }
 
 // Database returns the database the scripter scripts.
@@ -214,6 +223,11 @@ func (sc *Scripter) ScriptDatabase(ctx context.Context) (string, error) {
 			if layout.extProps, err = sc.scriptExtendedPropertiesAt(ctx, 0, 0, ExtendedPropertyLevel{}); err != nil {
 				return "", fmt.Errorf("gosmo: script database %q: %w", d.Name, err)
 			}
+			files, err := sc.scriptFileLayoutExtendedProperties(ctx)
+			if err != nil {
+				return "", fmt.Errorf("gosmo: script database %q: %w", d.Name, err)
+			}
+			layout.extProps += files
 		}
 	}
 	return sc.scriptDatabaseFrom(d, layout)
@@ -244,8 +258,9 @@ type databaseLayout struct {
 	// picks those away from their default.
 	scoped []*DatabaseScopedConfig
 	// tde is the database's encryption key; nil when it has none, or when
-	// the read was refused, which tdeRefused records for a database with
-	// encryption on. tdeOff marks a key SET ENCRYPTION OFF left behind: it
+	// the read was refused, which tdeRefused records whether encryption is
+	// on or not (a key SET ENCRYPTION OFF left behind could be hiding).
+	// tdeOff marks a key SET ENCRYPTION OFF left behind: it
 	// is created, but encryption is not turned on.
 	tde        *DatabaseEncryptionKey
 	tdeRefused bool
@@ -256,8 +271,9 @@ type databaseLayout struct {
 	pvsFileGroup string
 	pvsRefused   bool
 
-	// extProps is the database's own extended properties, rendered ("" for
-	// none, or with ScriptOptions.ExtendedProperties off).
+	// extProps is the database's own extended properties, then its
+	// filegroups' and their files', rendered ("" for none, or with
+	// ScriptOptions.ExtendedProperties off).
 	extProps string
 
 	snapshotOf    string
@@ -283,8 +299,8 @@ func readDatabaseLayout(ctx context.Context, d *Database) (*databaseLayout, erro
 		}
 	}
 	// From inside the database, which keeps it open: one AUTO_CLOSE has
-	// closed reports NULL for several options (and its collation) at server
-	// scope.
+	// closed reports NULL for several options, its collation and its change
+	// tracking retention at server scope.
 	if l.opts, err = d.readOptions(ctx, d.queryRow); err != nil {
 		return nil, err
 	}
@@ -293,7 +309,7 @@ func readDatabaseLayout(ctx context.Context, d *Database) (*databaseLayout, erro
 			return nil, err
 		}
 	}
-	if l.ct, err = d.ChangeTracking(ctx); err != nil {
+	if l.ct, err = d.readChangeTracking(ctx, d.queryRow); err != nil {
 		return nil, err
 	}
 	if l.qs, err = d.QueryStore().Options(ctx); err != nil {
@@ -303,13 +319,12 @@ func readDatabaseLayout(ctx context.Context, d *Database) (*databaseLayout, erro
 		return nil, err
 	}
 	// Whether encryption is on or not: SET ENCRYPTION OFF leaves the key
-	// behind. The DMV needs VIEW SERVER STATE; a refusal is noted only when
-	// encryption is on, so a caller without it scripts an unencrypted
-	// database exactly as before, with no comment about a key it may not
-	// have.
+	// behind. The DMV needs VIEW SERVER STATE; a refusal is noted whether
+	// encryption is on or not — silent for an unencrypted database, a key
+	// left behind would vanish from the script with nothing to say so.
 	switch l.tde, err = d.EncryptionKey(ctx); {
 	case IsPermissionDenied(err):
-		l.tde, l.tdeRefused = nil, l.opts.IsEncrypted
+		l.tde, l.tdeRefused = nil, true
 	case errors.Is(err, ErrNotFound):
 		// No key; or is_encrypted is set but the key is gone — nothing to
 		// restate either way.
@@ -735,7 +750,8 @@ func writeDatabaseSettings(sb *strings.Builder, d *Database, l *databaseLayout) 
 
 // writeInDatabaseSettings writes what is set from inside the database — the
 // TDE key, the scoped configurations away from their default and the
-// database's extended properties — between USE [db] and USE [master], then
+// database's, filegroups' and files' extended properties — between USE [db]
+// and USE [master], then
 // SET ENCRYPTION ON. It runs before the owner, user access and READ_ONLY: a
 // key cannot be created in a read-only database, nor a scoped configuration
 // changed or a property added.
@@ -768,8 +784,10 @@ func writeInDatabaseSettings(sb *strings.Builder, name string, l *databaseLayout
 			fmt.Fprintf(sb, "CREATE DATABASE ENCRYPTION KEY WITH ALGORITHM = %s ENCRYPTION BY %s;\nGO\n", alg, by)
 			encrypt = !l.tdeOff
 		}
-	} else if l.tdeRefused {
+	} else if l.tdeRefused && l.opts.IsEncrypted {
 		sb.WriteString("-- Encryption is on, and reading its key needs VIEW SERVER STATE: encryption not scripted.\n")
+	} else if l.tdeRefused {
+		sb.WriteString("-- Reading a leftover database encryption key needs VIEW SERVER STATE: not checked.\n")
 	}
 	for _, s := range scoped {
 		sb.WriteString(s)
@@ -802,8 +820,12 @@ var scopedConfigDefaults2016 = map[string]string{
 func scopedConfigStatements(l *databaseLayout) []string {
 	var out []string
 	add := func(c *DatabaseScopedConfig, raw, baseType string, replica ScopedConfigReplica) {
-		v, ok := scopedConfigValue(raw, baseType)
-		stmt, err := buildScopedConfigStatement(c.Name, v, replica)
+		v, literal, ok := scopedConfigValue(raw, baseType)
+		build := buildScopedConfigStatement
+		if literal {
+			build = scopedConfigStatement // v is a QuoteLiteral, safe as is
+		}
+		stmt, err := build(c.Name, v, replica)
 		if !ok || err != nil {
 			out = append(out, fmt.Sprintf("-- Database scoped configuration %s reports a value with no SET form: not scripted.\n", tsql.CommentSafe(c.Name)))
 			return
@@ -828,28 +850,33 @@ func scopedConfigStatements(l *databaseLayout) []string {
 
 // scopedConfigValue is raw — the value as CAST to nvarchar — as the SET
 // clause spells it, by its sql_variant base type: OFF/ON for a bit, the
-// number for an integer type, a keyword (WHEN_SUPPORTED) for a string as it
-// is. Anything else — a quoted string, a value with spaces, a type with no
-// known form — is not written (false). The type, not the option's name,
-// decides: a hand-kept list of numeric options would write a new one
-// reporting 0 or 1 as OFF/ON.
-func scopedConfigValue(raw, baseType string) (string, bool) {
+// number for an integer type, a keyword (WHEN_SUPPORTED) for a string that
+// is one, and any other string as an N'…' literal (literal true) — Azure's
+// LEDGER_DIGEST_STORAGE_ENDPOINT URL, whose SET form is documented as a
+// quoted string. An empty string, or a type with no known form, is not
+// written (ok false). The type, not the option's name, decides: a hand-kept
+// list of numeric options would write a new one reporting 0 or 1 as OFF/ON.
+func scopedConfigValue(raw, baseType string) (v string, literal, ok bool) {
 	switch baseType {
 	case "bit":
 		switch raw {
 		case "0":
-			return "OFF", true
+			return "OFF", false, true
 		case "1":
-			return "ON", true
+			return "ON", false, true
 		}
 	case "tinyint", "smallint", "int", "bigint":
 		if _, err := strconv.ParseInt(raw, 10, 64); err == nil {
-			return raw, true
+			return raw, false, true
 		}
 	case "nvarchar", "varchar", "nchar", "char", "sysname":
-		if isSimpleIdentifier(raw) && (raw[0] < '0' || raw[0] > '9') {
-			return raw, true
+		switch {
+		case raw == "":
+		case isSimpleIdentifier(raw) && (raw[0] < '0' || raw[0] > '9'):
+			return raw, false, true
+		default:
+			return tsql.QuoteLiteral(raw), true, true
 		}
 	}
-	return "", false
+	return "", false, false
 }

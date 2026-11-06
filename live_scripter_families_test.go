@@ -21,6 +21,7 @@ package gosmo
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -296,8 +297,11 @@ func TestLiveScriptedClrFamiliesReadRealCatalogRows(t *testing.T) {
 		if err != nil {
 			t.Fatalf("AssemblyByName %s: %v — every database has this assembly", name, err)
 		}
-		if a.PermissionSet == "" {
-			t.Fatal("the assembly read back with an empty permission set")
+		// The CREATE ASSEMBLY keyword, not permission_set_desc's
+		// UNSAFE_ACCESS: comparing the field with the script it is put into
+		// alone passed while the script failed to parse.
+		if !slices.Contains([]AssemblyPermissionSet{AssemblySafe, AssemblyExternalAccess, AssemblyUnsafe}, a.PermissionSet) {
+			t.Fatalf("the assembly read back with permission set %q, not a CREATE ASSEMBLY keyword", a.PermissionSet)
 		}
 		script, err := sc.ScriptAssembly(ctx, name)
 		if err != nil {

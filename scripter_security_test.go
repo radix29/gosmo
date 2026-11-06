@@ -81,6 +81,38 @@ func TestBuildDatabaseRoleScriptRestoresMembership(t *testing.T) {
 	}
 }
 
+// TestBuildApplicationRoleScript pins each verb's whole script: the password
+// is always the placeholder, and the DROP's guard requires an application
+// role, not any principal of that name.
+func TestBuildApplicationRoleScript(t *testing.T) {
+	r := &ApplicationRole{Name: "ap]p'x", DefaultSchema: "sa]les"}
+	drop := "IF EXISTS (SELECT 1 FROM sys.database_principals WHERE name = N'ap]p''x' AND type = 'A')\n" +
+		"DROP APPLICATION ROLE [ap]]p'x];\nGO\n"
+	create := "IF DATABASE_PRINCIPAL_ID(N'ap]p''x') IS NULL\n" +
+		"CREATE APPLICATION ROLE [ap]]p'x] WITH PASSWORD = N'<insert password here>', DEFAULT_SCHEMA = [sa]]les];  -- set the real password\nGO\n"
+	for _, tc := range []struct {
+		verb ScriptVerb
+		want string
+	}{
+		{ScriptCreate, create},
+		{ScriptDrop, drop},
+		{ScriptDropAndCreate, drop + "\n" + create},
+	} {
+		opts := DefaultScriptOptions()
+		opts.Verb = tc.verb
+		if got := buildApplicationRoleScript(r, opts); got != tc.want {
+			t.Errorf("verb %v:\ngot:\n%s\nwant:\n%s", tc.verb, got, tc.want)
+		}
+	}
+
+	opts := DefaultScriptOptions()
+	opts.IncludeIfNotExists = false
+	got := buildApplicationRoleScript(&ApplicationRole{Name: "a"}, opts)
+	if want := "CREATE APPLICATION ROLE [a] WITH PASSWORD = N'<insert password here>';  -- set the real password\nGO\n"; got != want {
+		t.Errorf("no default schema, unguarded:\ngot:\n%s\nwant:\n%s", got, want)
+	}
+}
+
 func TestBuildSchemaScriptGuardsWithDynamicExec(t *testing.T) {
 	// CREATE SCHEMA must be the first statement in its batch, so it cannot sit
 	// inside an IF — the guard has to run it through EXEC instead.

@@ -42,6 +42,7 @@ func liveRunScriptErrors(t *testing.T, d *Database, ctx context.Context, script 
 }
 
 func TestLiveTableDropNamesSchemaBoundModules(t *testing.T) {
+	skipSlowInShort(t)
 	db, ctx, done := liveDBTimeout(t, 3*time.Minute)
 	t.Cleanup(done)
 
@@ -54,7 +55,8 @@ func TestLiveTableDropNamesSchemaBoundModules(t *testing.T) {
 	liveAddFileGroups(t, db, ctx, d, dataPath, false)
 
 	const atomic = `BEGIN ATOMIC WITH (TRANSACTION ISOLATION LEVEL = SNAPSHOT, LANGUAGE = N'us_english')`
-	liveExecIn(t, d, ctx,
+	// The memory-optimized table and its natively compiled modules.
+	liveExecMemoryOptimized(t, d, ctx,
 		`CREATE TABLE dbo.mo (id int NOT NULL PRIMARY KEY NONCLUSTERED, v nvarchar(20) NULL) WITH (MEMORY_OPTIMIZED = ON)`,
 		`CREATE PROCEDURE dbo.p_nc @id int WITH NATIVE_COMPILATION, SCHEMABINDING AS `+atomic+`
   SELECT id, v FROM dbo.mo WHERE id = @id;
@@ -67,6 +69,8 @@ END`,
 		`CREATE TRIGGER dbo.tr_mo ON dbo.mo WITH NATIVE_COMPILATION, SCHEMABINDING AFTER INSERT AS `+atomic+`
   UPDATE dbo.mo SET v = v WHERE 1 = 0;
 END`,
+	)
+	liveExecIn(t, d, ctx,
 		`CREATE VIEW dbo.vsb WITH SCHEMABINDING AS SELECT id FROM dbo.mo`,
 		`CREATE TABLE dbo.tt (id int NOT NULL PRIMARY KEY,
   vf datetime2 GENERATED ALWAYS AS ROW START NOT NULL, vt datetime2 GENERATED ALWAYS AS ROW END NOT NULL,
@@ -127,13 +131,14 @@ END`,
 
 	// With them dropped it runs, and their own scripts put them back.
 	liveExecIn(t, d, ctx, `DROP VIEW dbo.vsb`, `DROP PROCEDURE dbo.p_nc`, `DROP FUNCTION dbo.f_nc`)
-	liveRunScript(t, d, ctx, script)
+	liveRunMemoryOptimizedScript(t, d, ctx, script)
 	if got := objectID("dbo.mo"); got == before || got == "id=<nil>" {
 		t.Fatalf("the table was not recreated: %s -> %s", before, got)
 	}
-	for _, name := range []string{"p_nc", "f_nc", "vsb"} {
-		liveRunScript(t, d, ctx, moduleScripts[name])
+	for _, name := range []string{"p_nc", "f_nc"} {
+		liveRunMemoryOptimizedScript(t, d, ctx, moduleScripts[name])
 	}
+	liveRunScript(t, d, ctx, moduleScripts["vsb"])
 	got := liveRowsAsStrings(t, d, ctx, `
 SELECT o.name, m.uses_native_compilation AS native, m.is_schema_bound AS bound
 FROM   sys.sql_modules m JOIN sys.objects o ON o.object_id = m.object_id

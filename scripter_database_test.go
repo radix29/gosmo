@@ -488,10 +488,22 @@ func TestScriptDatabaseEncryption(t *testing.T) {
 			t.Errorf("%+v: SET ENCRYPTION ON written iff a key is:\n%s", tc.key, got)
 		}
 	}
-	got = render(t, scripterOverDatabase("Sales"), &databaseLayout{opts: shippedDefaults(), tdeRefused: true})
-	if !strings.Contains(got, "-- Encryption is on, and reading its key needs VIEW SERVER STATE: encryption not scripted.\n") ||
-		strings.Contains(got, "ENCRYPTION ON") {
-		t.Errorf("refused key read not noted:\n%s", got)
+	// A refused key read is noted whether encryption is on or not: for an
+	// unencrypted database a key SET ENCRYPTION OFF left behind could hide.
+	encrypted := shippedDefaults()
+	encrypted.IsEncrypted = true
+	for _, tc := range []struct {
+		opts      *DatabaseOptions
+		want, not string
+	}{
+		{encrypted, "-- Encryption is on, and reading its key needs VIEW SERVER STATE: encryption not scripted.\n", "leftover"},
+		{shippedDefaults(), "USE [Sales];\nGO\n-- Reading a leftover database encryption key needs VIEW SERVER STATE: not checked.\nUSE [master];\nGO\n", "Encryption is on"},
+	} {
+		got = render(t, scripterOverDatabase("Sales"), &databaseLayout{opts: tc.opts, tdeRefused: true})
+		if !strings.Contains(got, tc.want) || strings.Contains(got, tc.not) || strings.Contains(got, "ENCRYPTION ON") ||
+			strings.Contains(got, "CREATE DATABASE ENCRYPTION KEY") {
+			t.Errorf("refused key read (IsEncrypted=%v) not noted as %q:\n%s", tc.opts.IsEncrypted, tc.want, got)
+		}
 	}
 	// A key SET ENCRYPTION OFF left behind is created, and encryption is
 	// left off.
@@ -523,11 +535,47 @@ func TestScriptDatabaseExtendedProperties(t *testing.T) {
 	}
 }
 
+// scopedConfigValue spells a value by its base type; a string that is not a
+// bare keyword becomes an N'…' literal with its quotes doubled, and the
+// statement built from it carries the literal unchanged.
+func TestScopedConfigValue(t *testing.T) {
+	for _, tc := range []struct {
+		raw, typ, want string
+		literal, ok    bool
+	}{
+		{"https://acct.blob.core.windows.net/ledger", "nvarchar", "N'https://acct.blob.core.windows.net/ledger'", true, true},
+		{"it's", "varchar", "N'it''s'", true, true},
+		{"a b", "nvarchar", "N'a b'", true, true},
+		{"9LIVES", "nvarchar", "N'9LIVES'", true, true},
+		{"WHEN_SUPPORTED", "nvarchar", "WHEN_SUPPORTED", false, true},
+		{"", "nvarchar", "", false, false},
+		{"8", "int", "8", false, true},
+		{"x", "int", "", false, false},
+		{"1", "bit", "ON", false, true},
+		{"0", "bit", "OFF", false, true},
+		{"1", "", "", false, false},
+	} {
+		v, literal, ok := scopedConfigValue(tc.raw, tc.typ)
+		if v != tc.want || literal != tc.literal || ok != tc.ok {
+			t.Errorf("scopedConfigValue(%q, %q) = %q, %v, %v; want %q, %v, %v",
+				tc.raw, tc.typ, v, literal, ok, tc.want, tc.literal, tc.ok)
+		}
+	}
+	got, err := scopedConfigStatement("LEDGER_DIGEST_STORAGE_ENDPOINT", "N'it''s'", ScopedConfigPrimary)
+	if want := "ALTER DATABASE SCOPED CONFIGURATION SET LEDGER_DIGEST_STORAGE_ENDPOINT = N'it''s'"; err != nil || got != want {
+		t.Errorf("scopedConfigStatement = %q, %v; want %q", got, err, want)
+	}
+	if _, err := scopedConfigStatement("X; DROP TABLE t --", "N'a'", ScopedConfigPrimary); err == nil {
+		t.Error("scopedConfigStatement accepted an injected name")
+	}
+}
+
 // Scoped configurations: only what is away from its default, by
 // is_value_default from 2017 and by the documented defaults on 2016, and a
 // secondary value whenever one is set. The value's sql_variant base type
 // decides its spelling: a bit is OFF/ON, an integer a number — so a numeric
-// option no list names (NEW_NUMERIC, reporting 1) is written as 1, not ON.
+// option no list names (NEW_NUMERIC, reporting 1) is written as 1, not ON,
+// and a string that is no keyword (a URL) as a quoted literal.
 func TestScriptDatabaseScopedConfigurations(t *testing.T) {
 	typ := func(v string) string {
 		switch v {
@@ -577,7 +625,7 @@ func TestScriptDatabaseScopedConfigurations(t *testing.T) {
 		stmt("SET NEW_NUMERIC = 1") +
 		stmt("SET OPTIMIZE_FOR_AD_HOC_WORKLOADS = ON") +
 		stmt("SET PAUSED_RESUMABLE_INDEX_ABORT_DURATION_MINUTES = 0") +
-		"-- Database scoped configuration LEDGER_DIGEST_STORAGE_ENDPOINT reports a value with no SET form: not scripted.\n" +
+		stmt("SET LEDGER_DIGEST_STORAGE_ENDPOINT = N'https://x/y'") +
 		"-- Database scoped configuration UNTYPED reports a value with no SET form: not scripted.\n" +
 		"USE [master];\nGO\n" +
 		"ALTER AUTHORIZATION ON DATABASE::[Sales]"

@@ -157,8 +157,8 @@ func main() {
 		Schema:     "dbo",
 		Name:       "InvoiceSeq",
 		DataType:   gosmo.DataTypeBigInt,
-		StartValue: 100000,
-		Increment:  1,
+		StartValue: "100000",
+		Increment:  "1",
 		Cache:      &noCache,
 	}))
 	for _, s := range demo.Value(db.Sequences(ctx)) {

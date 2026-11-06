@@ -381,7 +381,7 @@ The instance and database halves pair up: `ServerResourceStat` and
 | Log backup chain state    | `srv.DatabaseRecoveryStatuses(ctx)` / `db.RecoveryStatus(ctx)` → `*DatabaseRecoveryStatus` |
 | What may this login do?   | `srv.Capabilities(ctx)` → `*Capabilities` — see [Capabilities](#capabilities-of-the-connected-login) |
 | Wrap a `*sql.DB` you already have | `gosmo.NewServer(ctx, db)` — the inverse of `srv.DB()` |
-| Test code that calls gosmo, without a server | `f := gosmotest.New(t)`, `f.On(text, gosmotest.Rows(…))`, then `f.Server()` (one shared) or `f.Connect(ctx)` (one per dial): real gosmo over canned rows, positional in the query's SELECT order; a database read's transport (`[db].sys.sp_executesql`, a `USE` batch) is stripped before matching, and a query no rule answers fails the test naming it |
+| Test code that calls gosmo, without a server | `f := gosmotest.New(t)`, `f.On(text, gosmotest.Rows(…))`, then `f.Server()` (one shared) or `f.Connect(ctx)` (one per dial): real gosmo over canned rows, positional in the query's SELECT order; a database read's transport (`[db].sys.sp_executesql`, a `USE` batch) is stripped before matching, and a query no rule answers fails the test naming it; a write (an Exec, or a BACKUP/RESTORE reading progress messages, `Query.Messages`) needs no rule, a bulk load is one recorded Exec per row |
 
 ### Database
 
@@ -406,11 +406,11 @@ The instance and database halves pair up: `ServerResourceStat` and
 | `Database.AuditSpecifications`  | `db.DatabaseAuditSpecifications(ctx)` / `...ByName(ctx, name)` / `db.DatabaseAuditSpecificationRef(name)` (no-I/O handle) / `db.CreateDatabaseAuditSpecification(ctx, spec)` |
 | `Database.Roles`                | `db.Roles(ctx)` / `db.RoleByName(ctx, name)` / `db.RoleRef(name)` (no-I/O handle) / `db.RoleMembers(ctx, roleName)`; writes on the handle — `role.AddMember(ctx, member)` / `role.RemoveMember(ctx, member)` |
 | Database role administration    | `db.CreateRole(ctx, req)` / `role.Rename(ctx, newName)` / `role.SetOwner(ctx, newOwner)` / `role.Drop(ctx)` / `db.RoleRef(name).Drop(ctx)` |
-| Application roles               | `db.ApplicationRoles(ctx)` / `db.ApplicationRoleByName(ctx, name)` / `db.ApplicationRoleRef(name)` (no-I/O handle) / `db.CreateApplicationRole(ctx, req)` (password redacted in captures); writes on the handle — `ar.Rename(ctx, newName)` / `ar.SetDefaultSchema(ctx, schemaName)` / `ar.ChangePassword(ctx, newPassword)` / `ar.Drop(ctx)` |
+| Application roles               | `db.ApplicationRoles(ctx)` / `db.ApplicationRoleByName(ctx, name)` / `db.ApplicationRoleRef(name)` (no-I/O handle) / `db.CreateApplicationRole(ctx, req)` (password redacted in captures); writes on the handle — `ar.Rename(ctx, newName)` / `ar.SetDefaultSchema(ctx, schemaName)` / `ar.ChangePassword(ctx, newPassword)` / `ar.Drop(ctx)`; `sc.ScriptApplicationRole(ctx, name)` (password placeholder) |
 | `Database.FileGroups`           | `db.FileGroups(ctx)` — `fg.Type` is the `type_desc` (ROWS / FILESTREAM / MEMORY_OPTIMIZED), `fg.IsFileStream()` the common test |
 | `Database.Triggers`             | `db.Triggers(ctx)` / `db.ObjectTriggers(ctx, schema, name)` (one table or view, by name) / `db.TriggerByName(ctx, schema, name)` (the trigger's own schema = its parent's) / `db.TriggerRef(schema, name)` (no-I/O handle) / `tr.Drop(ctx)` / `tr.Rename(ctx, newName)` / `tr.Enable(ctx)` / `tr.Disable(ctx)` / `tr.SetEnabled(ctx, on)` (a `TriggerRef` looks up the parent it names) |
 | Database-scope DDL triggers     | `db.DatabaseTriggers(ctx)` / `db.DatabaseTriggerByName(ctx, name)` / `db.DatabaseTriggerRef(name)` (no-I/O handle) / `tr.Enable(ctx)` / `tr.Disable(ctx)` / `tr.Drop(ctx)` — see [Database DDL triggers](#database-ddl-triggers) |
-| `Database.Sequences`            | `db.Sequences(ctx)` / `db.SequenceByName(ctx, schema, name)` / `db.SequenceRef(schema, name).Drop(ctx)` / `db.CreateSequence(ctx, req)` (`Precision` for decimal and numeric) / `seq.Alter(ctx, gosmo.SequenceChanges{…})` (nil field = unchanged) |
+| `Database.Sequences`            | `db.Sequences(ctx)` / `db.SequenceByName(ctx, schema, name)` / `db.SequenceRef(schema, name).Drop(ctx)` / `db.CreateSequence(ctx, req)` (`Precision` for decimal and numeric) / `seq.Alter(ctx, gosmo.SequenceChanges{…})` (unset field = unchanged; values are decimal-digit strings) / `seq.TracksLastUsedValue()` |
 | `Database.Synonyms`             | `db.Synonyms(ctx)` / `db.SynonymByName(ctx, schema, name)` / `db.SynonymRef(schema, name).Drop(ctx)` |
 | `Database.UserDefinedDataTypes` / `...TableTypes` / `...Types` (CLR) | `db.UserDefinedDataTypes(ctx)` / `db.UserDefinedTableTypes(ctx)` / `db.ClrTypes(ctx)` (each with `...ByName(ctx, schema, name)`) / `db.SystemDataTypes(ctx)` — see [Types, rules and defaults](#types-rules-and-defaults) |
 | `Database.XMLSchemaCollections` | `db.XMLSchemaCollections(ctx)` / `db.XMLSchemaCollectionByName(ctx, schema, name)` / `c.Definition(ctx)` |
@@ -442,6 +442,7 @@ The instance and database halves pair up: `ServerResourceStat` and
 | Disk usage report               | `db.DiskUsage(ctx)` — data/index/unused/unallocated against the file totals, and the log's used/unused split, in MB |
 | `sp_spaceused` figures, exactly | `db.SpaceReport(ctx)` (database: size, unallocated, reserved/data/index/unused, file sizes and used, in KB) / `db.TableSizes(ctx)` (every table: schema, name, rows, reserved/data/index/unused, one round trip) — the procedure's arithmetic per version, unlike `SpaceUsed`/`DiskUsage`/`TableSpaceUsedAll`, whose split differs (`database_space.go`) |
 | Log usage, reuse wait, VLFs     | `db.LogSpace(ctx)` — `dm_db_log_space_usage` + `log_reuse_wait_desc` + `dm_db_log_info` counts (2016 SP2+, else `VLFsKnown` false); needs VIEW SERVER STATE |
+| A log's real shrink floor       | `db.LogShrinkFloors(ctx)` — per log `file_id`, the end of its last active VLF in KB (`dm_db_log_info`, 2016 SP2+, else `ErrUnsupported`); needs VIEW SERVER STATE |
 | Azure per-database resources    | `db.ResourceStats(ctx, max)` / `db.LatestResourceStats(ctx)` / `db.ResourceGovernance(ctx)` — see [Azure instance resources](#azure-instance-resources) |
 | Every table's row count / space used, in one query | `db.TableRowCounts(ctx)` / `db.TableSpaceUsedAll(ctx)` (keyed by `object_id`) |
 | ALTER DATABASE SET options      | `db.Options(ctx)` / `db.SetDatabaseOption(ctx, opt, value, term)` — `term` is the `WITH` clause: `gosmo.TerminationNone` waits for other sessions, `gosmo.TerminationRollbackImmediate` rolls them back |
@@ -639,6 +640,9 @@ if dcaps.Permits("BACKUP DATABASE") { /* offer Back Up */ }
 `ProbedDatabasePermissions` are the names that get asked about — a working
 subset chosen for what an application actually gates on, not the grantable
 catalogs `ServerPermissionNames()`/`DatabasePermissionNames()` return.
+`ProbedMasterPermissions` (CREATE DATABASE) is asked of master by the server
+probe and read through `MasterPermission(name)`: granted in master alone it
+lets the login create a database, yet `CREATE ANY DATABASE` reads 0 for it.
 
 **The answer is three-way, and that is the point.** `HAS_PERMS_BY_NAME`
 returns NULL *without raising* for a permission the instance does not define,
@@ -1185,6 +1189,7 @@ ddl, _ := sc.ScriptFullTextStoplist(ctx, "LegalWords")   // CREATE + one ADD per
 ddl, _ := sc.ScriptSearchPropertyList(ctx, "DocProps")   // CREATE + one ADD per property, each guarded
 ddl, _ := sc.ScriptFullTextIndex(ctx, "dbo", "Docs")     // + DISABLE when the index is disabled
 ddl, _ := sc.ScriptDatabase(ctx)                         // files, filegroups, log, options; reads through USE
+all, _ := sc.ScriptDatabaseObjects(ctx, gosmo.ObjectScriptOptions{}) // every object, dependency-ordered; FKs deferred; cycles reported
 
 // Logins and server roles belong to no database, so they have their own
 // scripter.
@@ -1276,11 +1281,14 @@ sys.sp_addextendedproperty` per property, each its own batch, to
 `ScriptTrigger`: the object's own, its columns', parameters', indexes' and —
 a table's — constraints'. One query reads them all
 (`objectExtendedProperties`). `ScriptSchema`, `ScriptDatabase`,
-`ScriptUser`, `ScriptDatabaseRole`, the alias/table type, sequence, synonym,
-XML schema collection, partition function/scheme and DDL trigger scripts
-append their own object's, read by `(class, major_id, minor_id)` at a level
-the caller names (`extendedPropertiesAt`) — the database's from inside it,
-before `READ_ONLY` would refuse them; a table type's columns' are class 8
+`ScriptUser`, `ScriptDatabaseRole`, `ScriptApplicationRole`, the alias/table/CLR type, sequence, synonym,
+XML schema collection, partition function/scheme, DDL trigger, rule, default,
+assembly, plan guide and Service Broker scripts (all but a broker priority,
+which no level names) append their own object's, read by `(class, major_id,
+minor_id)` at a level the caller names (`extendedPropertiesAt`) — the
+database's from inside it, before `READ_ONLY` would refuse them, followed by
+its filegroups' and their files' (classes 20 and 22,
+`fileLayoutExtendedProperties`); a table type's columns' are class 8
 (`typeColumnExtendedProperties`). `ScriptIndex`, `ScriptCheckConstraint` and
 `ScriptForeignKey` filter the table's read down to the one child they create
 (`withTableChildExtendedProperties`) — by level as well as name, since an
@@ -1766,10 +1774,22 @@ last-writer-wins: the batch makes the reorder atomic, not serializable.
 Agent keeps it in memory and msdb has no column for it, so a job the read
 does not cover falls back to a `sysjobactivity`-derived value where only
 `JobStateExecuting` and `JobStateIdle` can be told apart. That happens with
-Agent stopped, and for a login with neither `sysadmin` nor
-`SQLAgentReaderRole`; a job listing has to survive both rather than fail.
+Agent stopped, and for every login but `sysadmin` (the extended procedure has
+no grants); a job listing has to survive both rather than fail.
 `JobStateUnknown` is what a multi-server job Agent does not run itself
 reports.
+
+msdb grants its Agent roles none of the tables the job, step, history and
+schedule reads join — only `sysjobs_view`, `sysschedules_localserver_view`,
+`syscategories` and the `sp_help_*` procedures. So each of those reads is one
+batch (`agentRead`) that a sysadmin answers from the tables and anyone else
+from the procedures, their result sets captured with `INSERT ... EXECUTE` into
+table variables and joined back into the same select list; the procedures
+apply msdb's visibility (SQLAgentUserRole its own jobs, Reader and Operator
+every one). `sp_help_job` itself cannot be captured — it nests an
+`INSERT ... EXECUTE` of its own — hence `sp_help_jobserver` per job for the
+last run. A non-sysadmin's step reads no `additional_parameters`, and no proxy
+name the login is not granted (`JobStep.ProxyName`).
 
 `JobStepDefinition`'s two string fields read an empty value differently, because
 msdb does: an empty `Database` means "leave the step's database alone"

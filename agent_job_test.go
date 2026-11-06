@@ -188,7 +188,7 @@ func TestEveryStepDeleteRendersTheSameCall(t *testing.T) {
 	}
 }
 
-// Jobs and JobByName build their statements from one jobSelect and decode
+// Jobs and JobByName build their statements from one jobColumns and decode
 // through one scanJob. Before that they were two 895-character copies of the
 // same SELECT with two copies of the 17 scan targets below them, and had
 // already drifted by a comment; the failure that shape invites is a column
@@ -289,17 +289,20 @@ func TestJobsAndJobByNameDecodeTheSameRowIdentically(t *testing.T) {
 	if len(jobQueries) != 2 {
 		t.Fatalf("captured %d job queries, want 2", len(jobQueries))
 	}
-	listHead, _, _ := strings.Cut(jobQueries[0], "\nORDER  BY j.name")
-	nameHead, _, _ := strings.Cut(jobQueries[1], "\nWHERE  j.name = @p1")
-	if listHead != nameHead {
-		t.Errorf("Jobs and JobByName no longer share a select head:\n%s\n---\n%s", listHead, nameHead)
+	// Each read appends its tail in three places (the direct read, the
+	// non-sysadmin cursor and its select); with the tails taken out the two
+	// batches must be the same text, holding both reads of jobColumns.
+	listBody := strings.ReplaceAll(jobQueries[0], "\nORDER  BY j.name", "")
+	nameBody := strings.ReplaceAll(jobQueries[1], "\nWHERE  j.name = @p1", "")
+	if listBody != nameBody {
+		t.Errorf("Jobs and JobByName no longer share a batch:\n%s\n---\n%s", listBody, nameBody)
 	}
-	if listHead != jobSelect {
-		t.Errorf("the shared head is not jobSelect:\n%s", listHead)
+	if n := strings.Count(listBody, jobColumns); n != 2 || !strings.Contains(listBody, jobSelect) || !strings.Contains(listBody, jobProcSelect) {
+		t.Errorf("the shared batch holds jobColumns %d times, want twice, in jobSelect and jobProcSelect:\n%s", n, listBody)
 	}
 
 	// Every field the shared select list populates, so a column dropped from
-	// jobSelect fails here rather than passing as "both agree on zero".
+	// jobColumns fails here rather than passing as "both agree on zero".
 	want := Job{
 		server:                  s,
 		JobID:                   "7F1E0C2A-0000-0000-0000-000000000001",

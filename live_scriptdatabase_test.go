@@ -20,6 +20,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"net/url"
 	"slices"
 	"strings"
 	"testing"
@@ -803,12 +804,13 @@ JOIN sys.filegroups fg ON fg.data_space_id = s.pvs_filegroup_id WHERE s.database
 	}
 }
 
-// The layout reads a database's options and collation from inside it: one
-// AUTO_CLOSE has closed reports NULL for its collation, TARGET_RECOVERY_TIME,
-// DELAYED_DURABILITY and ADR at server scope. The options round trip covers
-// the whole script, but its file reads open the database first, so this
-// calls the two in-database reads directly on a closed database. Read at
-// server scope (Options), the options half fails here.
+// The layout reads a database's options, collation and change tracking from
+// inside it: one AUTO_CLOSE has closed reports NULL for its collation,
+// TARGET_RECOVERY_TIME, DELAYED_DURABILITY, ADR and change tracking retention
+// at server scope. The options round trip covers the whole script, but its
+// file reads open the database first, so this calls the three in-database
+// reads directly on a closed database. Read at server scope (Options,
+// ChangeTracking), the options and change tracking halves fail here.
 func TestLiveScriptDatabaseReadsAClosedDatabaseFromInside(t *testing.T) {
 	db, ctx, done := liveDB(t)
 	t.Cleanup(done)
@@ -822,7 +824,8 @@ func TestLiveScriptDatabaseReadsAClosedDatabaseFromInside(t *testing.T) {
 	_, drop := liveScratchDB(t, db, ctx, name)
 	t.Cleanup(drop)
 	set := "ALTER DATABASE [" + name + "] SET "
-	setup := []string{set + "TARGET_RECOVERY_TIME = 90 SECONDS", set + "DELAYED_DURABILITY = ALLOWED", set + "AUTO_CLOSE ON"}
+	setup := []string{set + "TARGET_RECOVERY_TIME = 90 SECONDS", set + "DELAYED_DURABILITY = ALLOWED",
+		set + "CHANGE_TRACKING = ON (CHANGE_RETENTION = 5 HOURS, AUTO_CLEANUP = OFF)", set + "AUTO_CLOSE ON"}
 	if major >= 15 {
 		setup = append(setup, set+"ACCELERATED_DATABASE_RECOVERY = ON")
 	}
@@ -860,6 +863,11 @@ func TestLiveScriptDatabaseReadsAClosedDatabaseFromInside(t *testing.T) {
 	waitClosed()
 	if c, err := d.inDatabaseCollation(ctx); err != nil || c == "" {
 		t.Errorf("collation of a closed database: %q, %v", c, err)
+	}
+	waitClosed()
+	want := ChangeTrackingInfo{Enabled: true, RetentionPeriod: 5, RetentionUnit: ChangeTrackingHours}
+	if ct, err := d.readChangeTracking(ctx, d.queryRow); err != nil || *ct != want {
+		t.Errorf("change tracking of a closed database: %+v, %v; want %+v", ct, err, want)
 	}
 }
 
@@ -948,5 +956,72 @@ WHERE  d.name = @p1`, n).Scan(&s); err != nil {
 	}
 	if want, got := key(name), key(copyName); got != want || want != "0|1|AES192|"+cert {
 		t.Errorf("replayed key %q, source %q", got, want)
+	}
+}
+
+// Without VIEW SERVER STATE the encryption-key DMV is refused; for an
+// unencrypted database the script says the leftover key was not checked,
+// rather than silently dropping one SET ENCRYPTION OFF may have left, and
+// still replays.
+func TestLiveScriptDatabaseUnencryptedWithoutViewServerState(t *testing.T) {
+	db, ctx, done := liveDB(t)
+	t.Cleanup(done)
+
+	const name, copyName = "gosmo_scriptdb_novss", "gosmo_scriptdb_novss_copy"
+	const login, pass = "gosmo_scriptdb_novss_lp", "Nv!5sQ#8wKz2"
+	dropAll := func() {
+		c := context.Background()
+		for _, n := range []string{copyName, name} {
+			db.ExecContext(c, "IF DB_ID('"+n+"') IS NOT NULL DROP DATABASE ["+n+"]")
+		}
+		db.ExecContext(c, "IF SUSER_ID('"+login+"') IS NOT NULL DROP LOGIN ["+login+"]")
+	}
+	dropAll()
+	t.Cleanup(dropAll)
+	for _, q := range []string{
+		"CREATE DATABASE [" + name + "]",
+		"CREATE LOGIN [" + login + "] WITH PASSWORD = N'" + pass + "', CHECK_POLICY = OFF",
+		"USE [" + name + "]; CREATE USER [" + login + "] FOR LOGIN [" + login + "]; ALTER ROLE db_owner ADD MEMBER [" + login + "]",
+	} {
+		if _, err := db.ExecContext(ctx, q); err != nil {
+			t.Fatalf("setup %.100q: %v", q, err)
+		}
+	}
+
+	u, err := url.Parse(*liveDSN)
+	if err != nil {
+		t.Fatalf("parse DSN: %v", err)
+	}
+	u.User = url.UserPassword(login, pass)
+	ldb, err := sql.Open("sqlserver", u.String())
+	if err != nil {
+		t.Fatalf("open as %s: %v", login, err)
+	}
+	defer ldb.Close()
+	var vss int
+	if err := ldb.QueryRowContext(ctx, "SELECT HAS_PERMS_BY_NAME(NULL, NULL, 'VIEW SERVER STATE')").Scan(&vss); err != nil || vss != 0 {
+		t.Fatalf("login must lack VIEW SERVER STATE: has=%d err=%v", vss, err)
+	}
+	opts := DefaultScriptOptions()
+	opts.IncludeHeaders = false
+	script, err := NewScripter(liveServer(t, ldb, ctx).DatabaseRef(name), opts).ScriptDatabase(ctx)
+	if err != nil {
+		t.Fatalf("ScriptDatabase as %s: %v", login, err)
+	}
+	t.Logf("script:\n%s", script)
+	if !strings.Contains(script, "USE ["+name+"];\nGO\n-- Reading a leftover database encryption key needs VIEW SERVER STATE: not checked.\nUSE [master];\nGO\n") ||
+		strings.Contains(script, "CREATE DATABASE ENCRYPTION KEY") || strings.Contains(script, "SET ENCRYPTION ON") {
+		t.Fatalf("refused key read not noted for an unencrypted database")
+	}
+	if _, err := db.ExecContext(ctx, "DROP DATABASE ["+name+"]"); err != nil {
+		t.Fatalf("drop before replay: %v", err)
+	}
+	replayScript(t, ctx, db, script)
+	var encrypted bool
+	if err := db.QueryRowContext(ctx, "SELECT is_encrypted FROM sys.databases WHERE name = @p1", name).Scan(&encrypted); err != nil {
+		t.Fatalf("replayed database: %v", err)
+	}
+	if encrypted {
+		t.Error("replayed database is encrypted")
 	}
 }

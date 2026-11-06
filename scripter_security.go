@@ -196,6 +196,40 @@ func buildDatabaseRoleScript(r *DatabaseRole, opts ScriptOptions) string {
 	})
 }
 
+// ScriptApplicationRole generates the CREATE (or DROP) script for one
+// application role, with its extended properties
+// (ScriptOptions.ExtendedProperties). The password cannot be read back, so
+// the CREATE carries PasswordPlaceholder on a line marked "set the real
+// password" — the form ScriptDatabaseSecurity uses for every application
+// role.
+func (sc *Scripter) ScriptApplicationRole(ctx context.Context, name string) (string, error) {
+	r, err := sc.db.ApplicationRoleByName(ctx, name)
+	if err != nil {
+		return "", err
+	}
+	// USER is the level type for any database principal (class 4), as for a
+	// database role.
+	return sc.withExtendedPropertiesAt(ctx, buildApplicationRoleScript(r, sc.opts), fmt.Sprintf("application role %q", r.Name),
+		4, r.PrincipalID, ExtendedPropertyLevel{Level0Type: "USER", Level0Name: r.Name})
+}
+
+// buildApplicationRoleScript assembles one application role's script.
+// DROP APPLICATION ROLE has no IF EXISTS form, so the DROP is guarded by a
+// catalog check that also requires type 'A': a user or role of the same name
+// is not this principal.
+func buildApplicationRoleScript(r *ApplicationRole, opts ScriptOptions) string {
+	drop := fmt.Sprintf("IF EXISTS (SELECT 1 FROM sys.database_principals WHERE name = N'%s' AND type = 'A')\n"+
+		"DROP APPLICATION ROLE %s;\nGO\n", escapeSingle(r.Name), quoteIdent(r.Name))
+	guard := fmt.Sprintf("IF DATABASE_PRINCIPAL_ID(N'%s') IS NULL\n", escapeSingle(r.Name))
+	return opts.envelope(drop, guard, func(sb *strings.Builder) {
+		fmt.Fprintf(sb, "CREATE APPLICATION ROLE %s WITH PASSWORD = N'%s'", quoteIdent(r.Name), PasswordPlaceholder)
+		if r.DefaultSchema != "" {
+			sb.WriteString(", DEFAULT_SCHEMA = " + quoteIdent(r.DefaultSchema))
+		}
+		sb.WriteString(";  -- set the real password\nGO\n")
+	})
+}
+
 // ScriptDatabaseAuditSpecification generates the CREATE (or DROP) script for
 // one database audit specification.
 func (sc *Scripter) ScriptDatabaseAuditSpecification(ctx context.Context, name string) (string, error) {

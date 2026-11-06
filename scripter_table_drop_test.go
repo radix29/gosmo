@@ -61,6 +61,23 @@ func TestTableDropNamesWhatIsSchemaBoundToIt(t *testing.T) {
 		t.Errorf("want no note with nothing schema-bound:\n%s", got)
 	}
 
+	// A login that could not read the dependents gets a note saying so: no
+	// note at all would read as nothing blocking the DROP.
+	hidden := tableScriptParts{cols: []*Column{{Name: "id", DataType: DataTypeInt}}, boundByHidden: true}
+	for _, verb := range []ScriptVerb{ScriptDrop, ScriptDropAndCreate} {
+		opts := DefaultScriptOptions()
+		opts.Verb = verb
+		got := buildTableScript("dbo", "T", "db", hidden, opts)
+		if !strings.HasPrefix(got, "-- Could not check what is schema-bound to [dbo].[T]: without VIEW DEFINITION on\n"+
+			"-- the database, sys.sql_expression_dependencies lists nothing. A module\n"+
+			"-- schema-bound to it makes this DROP fail with Msg 3729.\n") {
+			t.Errorf("verb %d: want the could-not-check note first:\n%s", verb, got)
+		}
+		if strings.Contains(got, "while these are schema-bound") {
+			t.Errorf("verb %d: want no dependents list when none could be read:\n%s", verb, got)
+		}
+	}
+
 	ft := tableScriptParts{boundBy: deps[:1]}
 	ft.table.IsFileTable = true
 	opts := DefaultScriptOptions()
@@ -131,6 +148,58 @@ func TestTableDropNamesForeignKeysReferencingIt(t *testing.T) {
 	opts.Verb = ScriptDrop
 	if got := buildFileTableScript("dbo", "F", "db", ft, opts); !strings.HasPrefix(got, "-- This DROP fails with Msg 3726") {
 		t.Errorf("want a FileTable's DROP to carry the note too:\n%s", got)
+	}
+}
+
+// viewDefinitionRow cans schemaBoundDependents' VIEW DEFINITION probe.
+func viewDefinitionRow(held bool) cannedRow {
+	return cannedRow{match: "HAS_PERMS_BY_NAME(DB_NAME(), 'DATABASE', @p1)", cols: []string{"v"}, row: []driver.Value{held}}
+}
+
+// An empty dependents list is checked against VIEW DEFINITION on the
+// database, without which sys.sql_expression_dependencies lists nothing; a
+// list with rows needs no probe.
+func TestScriptTableDropSaysWhenDependentsAreHidden(t *testing.T) {
+	dependents := cannedRow{
+		match: "sys.sql_expression_dependencies",
+		cols:  []string{"schema", "name", "type", "native"},
+		row:   []driver.Value{"dbo", "v", "VIEW", false},
+	}
+	for _, c := range []struct {
+		label    string
+		canned   []cannedRow
+		probed   bool
+		wantNote string
+	}{
+		{"hidden", []cannedRow{viewDefinitionRow(false)}, true, "-- Could not check what is schema-bound to [dbo].[mo]"},
+		{"visible, none", []cannedRow{viewDefinitionRow(true)}, true, ""},
+		{"visible, some", []cannedRow{dependents}, false, "-- This DROP fails with Msg 3729"},
+	} {
+		t.Run(c.label, func(t *testing.T) {
+			db, err := sql.Open("capture", "")
+			if err != nil {
+				t.Fatalf("sql.Open: %v", err)
+			}
+			defer db.Close()
+			captured.reset(append([]cannedRow{tableMetadataRow("dbo", "mo")}, c.canned...)...)
+			opts := DefaultScriptOptions()
+			opts.Verb = ScriptDrop
+			d := &Database{server: &Server{db: db}, Name: "testdb"}
+			got, err := NewScripter(d, opts).ScriptTable(context.Background(), "dbo", "mo")
+			if err != nil {
+				t.Fatalf("ScriptTable: %v", err)
+			}
+			if n := captured.count("HAS_PERMS_BY_NAME(DB_NAME(), 'DATABASE', @p1)"); (n == 1) != c.probed {
+				t.Errorf("probe ran %d times, want probed=%v", n, c.probed)
+			}
+			if c.wantNote == "" {
+				if strings.Contains(got, "schema-bound") {
+					t.Errorf("want no schema-bound note:\n%s", got)
+				}
+			} else if !strings.HasPrefix(got, c.wantNote) {
+				t.Errorf("want the script to open with %q:\n%s", c.wantNote, got)
+			}
+		})
 	}
 }
 

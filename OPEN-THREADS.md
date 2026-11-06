@@ -156,11 +156,14 @@ written for a 2019+ source only, with `PERSISTENT_VERSION_STORE_FILEGROUP`
 when ADR is on and its version store is off `PRIMARY` (read from
 `sys.dm_tran_persistent_version_store_stats` inside the database; a refused
 read leaves a comment). A snapshot scripts as `CREATE DATABASE … ON
-(…) AS SNAPSHOT OF [source]` and nothing more. The options are read from
-inside the database: one `AUTO_CLOSE` has closed reports NULL at server
-scope for its collation, `TARGET_RECOVERY_TIME`, `DELAYED_DURABILITY` and
-ADR — `TestLiveScriptDatabaseReadsAClosedDatabaseFromInside` calls both
-reads on a closed database and fails at server scope.
+(…) AS SNAPSHOT OF [source]` and nothing more. The options and change
+tracking are read from inside the database: one `AUTO_CLOSE` has closed
+reports NULL at server scope for its collation, `TARGET_RECOVERY_TIME`,
+`DELAYED_DURABILITY`, ADR and the change tracking retention (its
+`sys.change_tracking_databases` row stays; the empty unit dropped `SET
+CHANGE_TRACKING` from about one script in four on 14, 2026-11-05) —
+`TestLiveScriptDatabaseReadsAClosedDatabaseFromInside` calls the three reads
+on a closed database and fails at server scope.
 `TestLiveScriptDatabaseFileLayoutRoundTrips`,
 `TestLiveScriptDatabaseOptionsRoundTrip`,
 `TestLiveScriptDatabaseSnapshotRoundTrips`,
@@ -175,29 +178,22 @@ refuses:
 
 - **TDE**: the key is read whether encryption is on or not — a key left
   behind by `SET ENCRYPTION OFF` is created without `SET ENCRYPTION ON`. Its
-  DMV needs VIEW SERVER STATE; a refusal is silent for an unencrypted
-  database, so a key left behind is not scripted without it. The protecting certificate or
+  DMV needs VIEW SERVER STATE; without it the key is not scripted, and a
+  comment says so — for an unencrypted database that the leftover key was
+  not checked (2026-11-05). The protecting certificate or
   asymmetric key is named, not scripted — it must exist, with its private
-  key, where the script runs. Without VIEW SERVER STATE the script says so in
-  a comment and leaves encryption out. `TRIPLE_DES_3KEY` and an asymmetric-key
+  key, where the script runs. `TRIPLE_DES_3KEY` and an asymmetric-key
   protector are unit-tested only.
 - **Scoped configurations** are written only where they differ from the
   default (`is_value_default`; on 2016, which lacks it, the four documented
-  defaults — any other row is skipped). A value that is not a number, 0/1 or
-  a bare keyword (Azure's `LEDGER_DIGEST_STORAGE_ENDPOINT` URL) gets a
-  comment, not a statement. The value's sql_variant base type decides its
-  spelling (`bit` → OFF/ON, an integer type → the number), the same on 2016.
+  defaults — any other row is skipped). The value's sql_variant base type
+  decides its spelling (`bit` → OFF/ON, an integer type → the number, a
+  string → a bare keyword, or an `N'…'` literal when it is not one), the same
+  on 2016. The literal form (Azure's `LEDGER_DIGEST_STORAGE_ENDPOINT` URL) is
+  unit-tested only (no Azure SQL Database).
 - **ADR's version store filegroup on 2019 and 2022 is untested**: no such
   instance exists here, and the DMV's permission differs by version (VIEW
   SERVER STATE before 2022, VIEW DATABASE PERFORMANCE STATE after).
-- **`ScriptDatabase` once left out `SET CHANGE_TRACKING` on 14** although the
-  source had it on — `TestLiveScriptDatabaseOptionsRoundTrip`, 1 in 30 runs
-  (1 in 18 earlier, undiagnosed); the next 60 were green. Ruled out: the
-  server-scope `sys.change_tracking_databases` read missing a closed
-  `AUTO_CLOSE` database's row, or missing it while the database opens,
-  closes or turns `READ_ONLY` (3,000 reads, none missed). Diagnostics in
-  place: the test now names each differing field, and when the script lacks
-  change tracking it re-reads `ChangeTracking` and logs the database's state.
 - **The paths and FILESTREAM directory name are the source's own**: replayed
   on the same instance under the same name after a DROP that is right; as a
   copy, the caller edits them.
@@ -210,20 +206,18 @@ schema's, a user's, a role's, an alias or table type's (and its columns'),
 a sequence's, a synonym's, an XML schema collection's, a partition
 function's and scheme's and a DDL trigger's script, and of the one index or
 constraint `ScriptIndex`, `ScriptCheckConstraint` and `ScriptForeignKey`
-create (2026-10-14).
+create (2026-10-14); since 2026-11-05 also a CLR type's, rule's, default's,
+assembly's, plan guide's, Service Broker object's, and a database script's
+filegroups' and files'.
 
-Still left out, not yet asked for: a CLR type's, rule's, default's,
-assembly's, plan guide's, Service Broker object's, filegroup's and file's.
-Each is an `extendedPropertiesAt` call at its class and level (a CLR type is
-class 6 under SCHEMA/TYPE, as an alias type is).
-
-By design: a table script leaves out its triggers' properties (it does not
+By design: a broker priority's are not scripted — no
+`sp_addextendedproperty` level names one, so it cannot have any. A table script leaves out its triggers' properties (it does not
 create the triggers — `ScriptTrigger` carries them), and a FileTable's
 system-defined constraints' and indexes' (AS FILETABLE names those afresh).
 A `sql_variant` base type without a case in `extPropType` is a comment, not
 a statement — none known to exist.
 
-## `ScriptTable` is 8–11 round trips — considered, not batched
+## `ScriptTable` is 8–12 round trips — considered, not batched
 
 gossms review plan G15 (2026-10-08) batched `LocalPublications`,
 `LocalSubscriptions` and `UserMappingsIn` into one round trip after the
@@ -231,8 +225,9 @@ database list (`perDatabaseBatch`). `ScriptTable` was looked at in the same
 pass and left alone: it reads through the public `TableByName`,
 `scriptOptions`, `Columns`, `Indexes` (two queries), `ForeignKeys`,
 `CheckConstraints`, `DataSpace` and, by kind, `EdgeConstraints` and the
-schema-bound/referencing reads a DROP needs — plus, since 2026-10-13, one
-for the extended properties. Batching means splitting each into
+schema-bound/referencing reads a DROP needs (with, since 2026-11-05, a
+VIEW DEFINITION probe when no dependent is listed) — plus, since 2026-10-13,
+one for the extended properties. Batching means splitting each into
 a select list and a scanner and reading them as one multi-result-set batch, as
 `Database.catalog` does — every family's scan code moves, for one
 user-triggered script per table. Worth doing only if a whole-database script
@@ -319,16 +314,6 @@ with `AcquireConn` and closed back into the same pool (gossms's query panels
 discard theirs). `ReleaseIdleConnections` still frees those before this
 `Server`'s exclusive writes (`live_release_idle_test.go` parks sessions that
 way now). gossms dropped its 60 s `ConnMaxIdleTime` for gosmo's default.
-## `TestLiveScriptTableKinds` fails Msg 701 on 13 and 14, intermittently
-
-Found 2026-10-23 running the whole `livedb` suite. The memory-optimized
-tables' replay fails Msg 701, "insufficient system memory in resource pool
-'default'": the host's free memory, not gosmo.
-
-On 13 (2026-10-24) the same pressure also failed `TestLiveScriptFidelity`,
-`TestLiveTableDropNamesSchemaBoundModules` and
-`TestLiveScriptDatabaseOptionsRoundTrip` late in a full-suite run; each passed
-run alone straight after.
 
 ## Live tests leave non-backup files on 13 and 14
 
@@ -336,29 +321,8 @@ run alone straight after.
 not a backup on 2016 or 2017 with `xp_cmdshell` off. `xp_delete_files` is
 2019+, and `xp_delete_file 0` refuses anything without a backup header. Such
 a file (a STANDBY undo `.dat`/`.tuf`, an `.xel`) is logged by name, not
-failed. On 2026-11-04 the data folders of win10cli\SQL2016 and \SQL2017
-held, between them, only `gosmo_restore_close_live_undo.dat` and
-`gossms_live_dropstate_standby.tuf`; remove them by hand on the host if
-wanted. Closing this needs `xp_cmdshell` enabled for the run, which the
+failed. Closing this needs `xp_cmdshell` enabled for the run, which the
 tests deliberately do not do.
-
-## Audit specifications: the two scopes duplicate their write mechanics
-
-gossms review plan S3 (2026-11-03), carried here because no other change
-touched these files. `ServerAuditSpecification` (`audit_specification.go`)
-and `DatabaseAuditSpecification` (`database_audit_specification.go`) repeat
-`withSpecificationDisabled` and `SetAudit` almost line for line; the
-database half's comment already calls its copy a twin. They differ in the
-statement keyword (`SERVER`/`DATABASE`), the exec target (`spec.server.exec`
-versus the database's) and the disabled-window context key (`spec.Name`
-versus `spec.windowKey()`). The action-group writers differ more (the
-database scope also takes per-securable actions) and are out of scope.
-
-**Fix:** an unexported `auditSpecScope{keyword string; exec func(ctx, q)
-error; windowKey …}` that each type builds, with the shared bodies taking it.
-Exported types and signatures stay the same; the write tests pin the
-statements. About 60 lines, no bug — do it only alongside another change in
-those files.
 
 ## Agent schedules are addressed by id — settled, do not re-raise
 

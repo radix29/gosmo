@@ -21,6 +21,7 @@ import (
 type capabilityDest struct {
 	roles              map[string]bool
 	perms              map[string]CapabilityState
+	master             map[string]CapabilityState
 	explicitServer     map[string]map[string]CapabilityState
 	availabilityGroups map[string]map[string]CapabilityState
 	schemas            map[string]map[string]CapabilityState
@@ -50,6 +51,13 @@ func scanCapabilityRows(rows *sql.Rows, into capabilityDest) error {
 		case kind == "P":
 			if st, ok := capabilityStateOf(answer); ok && into.perms != nil {
 				into.perms[name] = st
+			}
+		case kind == "M":
+			// The master block — see ProbedMasterPermissions. A database
+			// probe passes a nil map and drops these rows, which it never
+			// asks for.
+			if st, ok := capabilityStateOf(answer); ok && into.master != nil {
+				into.master[name] = st
 			}
 		case strings.HasPrefix(kind, "S:"):
 			// name is the schema here, and the permission rides in kind — see

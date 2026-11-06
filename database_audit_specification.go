@@ -457,20 +457,23 @@ func (spec *DatabaseAuditSpecification) isEnabled(ctx context.Context) (bool, er
 	return enabled.Bool, nil
 }
 
-// windowKey qualifies the specification with its database, so that the
-// disable-window marker shared with the server half (specificationDisabledKey)
-// cannot confuse a database specification with a server one, or with a
-// same-named specification in another database.
-func (spec *DatabaseAuditSpecification) windowKey() string {
-	return spec.db.Name + "." + spec.Name
-}
-
-// inSpecificationWindow reports whether an enclosing WithDisabled window
-// already has this specification switched off, so a nested write must not open
-// a second one.
-func (spec *DatabaseAuditSpecification) inSpecificationWindow(ctx context.Context) bool {
-	name, _ := ctx.Value(specificationDisabledKey{}).(string)
-	return name == spec.windowKey()
+// scope builds the shared write mechanics (auditSpecScope,
+// audit_specification.go). The window key qualifies the specification with its
+// database, so that the disable-window marker shared with the server half
+// (specificationDisabledKey) cannot confuse a database specification with a
+// server one, or with a same-named specification in another database.
+func (spec *DatabaseAuditSpecification) scope() auditSpecScope {
+	return auditSpecScope{
+		keyword:   "DATABASE",
+		name:      spec.Name,
+		windowKey: spec.db.Name + "." + spec.Name,
+		exec: func(ctx context.Context, stmt string) error {
+			_, err := spec.db.exec(ctx, stmt)
+			return err
+		},
+		isEnabled:  spec.isEnabled,
+		setEnabled: spec.SetEnabled,
+	}
 }
 
 // WithDisabled runs fn with the specification disabled, restoring the state
@@ -482,36 +485,7 @@ func (spec *DatabaseAuditSpecification) inSpecificationWindow(ctx context.Contex
 // fn must use the context it is handed — that is what the nested writes read
 // to know the window is already open.
 func (spec *DatabaseAuditSpecification) WithDisabled(ctx context.Context, fn func(context.Context) error) error {
-	return spec.withSpecificationDisabled(ctx, fn)
-}
-
-// withSpecificationDisabled is the database-scope twin of the server half's
-// method of the same name (audit_specification.go), and must stay identical in
-// behaviour: restore only if this call was the one that disabled the
-// specification, and restore on the failure path too, so a failed apply cannot
-// silently leave auditing switched off.
-func (spec *DatabaseAuditSpecification) withSpecificationDisabled(ctx context.Context, fn func(context.Context) error) error {
-	if spec.inSpecificationWindow(ctx) {
-		return fn(ctx)
-	}
-	enabled, err := spec.isEnabled(ctx)
-	if err != nil {
-		return err
-	}
-	inner := context.WithValue(ctx, specificationDisabledKey{}, spec.windowKey())
-	if !enabled {
-		return fn(inner)
-	}
-	if err := spec.SetEnabled(unobserved(ctx), false); err != nil {
-		return err
-	}
-	enable := func(ctx context.Context) error { return spec.SetEnabled(ctx, true) }
-	if err := fn(inner); err != nil {
-		// Best effort: report the original failure, not the restore's.
-		_ = restoreWindow(ctx, enable)
-		return err
-	}
-	return restoreWindow(ctx, enable)
+	return spec.scope().withDisabled(ctx, fn)
 }
 
 // AddActions adds audit action groups and per-securable actions to the
@@ -536,31 +510,14 @@ func (spec *DatabaseAuditSpecification) alterActions(ctx context.Context, verb s
 	if err != nil {
 		return fmt.Errorf("gosmo: alter database audit specification %q: %w", spec.Name, err)
 	}
-	stmt := fmt.Sprintf("ALTER DATABASE AUDIT SPECIFICATION %s\n    %s", quoteIdent(spec.Name), clauses)
-	return spec.withSpecificationDisabled(ctx, func(ctx context.Context) error {
-		if _, err := spec.db.exec(ctx, stmt); err != nil {
-			return fmt.Errorf("gosmo: alter database audit specification %q: %w", spec.Name, err)
-		}
-		return nil
-	})
+	return spec.scope().alter(ctx, fmt.Sprintf("ALTER DATABASE AUDIT SPECIFICATION %s\n    %s", quoteIdent(spec.Name), clauses))
 }
 
 // SetAudit rebinds the specification to a different server audit.
 //
 // The specification is disabled for the duration and restored afterwards.
 func (spec *DatabaseAuditSpecification) SetAudit(ctx context.Context, auditName string) error {
-	if strings.TrimSpace(auditName) == "" {
-		return invalidf("gosmo: alter database audit specification %q: audit name is empty", spec.Name)
-	}
-	stmt := fmt.Sprintf("ALTER DATABASE AUDIT SPECIFICATION %s\nFOR SERVER AUDIT %s",
-		quoteIdent(spec.Name), quoteIdent(auditName))
-	err := spec.withSpecificationDisabled(ctx, func(ctx context.Context) error {
-		if _, err := spec.db.exec(ctx, stmt); err != nil {
-			return fmt.Errorf("gosmo: alter database audit specification %q: %w", spec.Name, err)
-		}
-		return nil
-	})
-	if err != nil {
+	if err := spec.scope().setAudit(ctx, auditName); err != nil {
 		return err
 	}
 	setIfApplied(ctx, &spec.AuditName, auditName)

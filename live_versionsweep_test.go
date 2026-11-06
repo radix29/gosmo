@@ -420,6 +420,7 @@ var sweepFullTextSchema = []string{
 }
 
 func TestLiveVersionSweep(t *testing.T) {
+	skipSlowInShort(t)
 	checkSkipList(t)
 
 	db, _, done := liveDB(t)
@@ -1113,6 +1114,7 @@ func sweepScripter(sw *sweep, d *Database) {
 	str("ScriptSchema", func() (string, error) { return sc.ScriptSchema(sw.ctx, "app") })
 	str("ScriptUser", func() (string, error) { return sc.ScriptUser(sw.ctx, "sweep_user") })
 	str("ScriptDatabaseRole", func() (string, error) { return sc.ScriptDatabaseRole(sw.ctx, "sweep_role") })
+	str("ScriptApplicationRole", func() (string, error) { return sc.ScriptApplicationRole(sw.ctx, "sweep_approle") })
 	str("ScriptDatabaseSecurity", func() (string, error) { return sc.ScriptDatabaseSecurity(sw.ctx) })
 	str("ScriptSecurityPolicy", func() (string, error) {
 		return sc.ScriptSecurityPolicy(sw.ctx, "app", "sweep_policy")
