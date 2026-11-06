@@ -171,7 +171,13 @@ type ForeignKey struct {
 // foreignKeySelect is shared by ForeignKeys and
 // ForeignKeyByName so a foreign key carries the same fields however
 // it was fetched.
-var foreignKeySelect = `
+var foreignKeySelect = foreignKeySelectWith("", "= @p1")
+
+// foreignKeySelectWith is foreignKeySelect with extra appended to the select
+// list and the parent-table predicate set to parent ("= @p1" for one table,
+// "IN (…)" for a batch).
+func foreignKeySelectWith(extra, parent string) string {
+	return `
 SELECT fk.name, fk.is_disabled, fk.is_not_trusted, fk.is_not_for_replication,
        fk.delete_referential_action_desc, fk.update_referential_action_desc,
        SCHEMA_NAME(rt.schema_id), rt.name,
@@ -181,17 +187,18 @@ SELECT fk.name, fk.is_disabled, fk.is_not_trusted, fk.is_not_for_replication,
                ON  c.object_id = fkc.parent_object_id
                AND c.column_id = fkc.parent_column_id
         WHERE  fkc.constraint_object_id = fk.object_id`,
-	"fkc.constraint_column_id") + `,
+		"fkc.constraint_column_id") + `,
        ` + jsonList("c.name", `
         FROM   sys.foreign_key_columns fkc
         JOIN   sys.columns c
                ON  c.object_id = fkc.referenced_object_id
                AND c.column_id = fkc.referenced_column_id
         WHERE  fkc.constraint_object_id = fk.object_id`,
-	"fkc.constraint_column_id") + `
+		"fkc.constraint_column_id") + extra + `
 FROM   sys.foreign_keys fk
 JOIN   sys.tables rt ON rt.object_id = fk.referenced_object_id
-WHERE  fk.parent_object_id = @p1`
+WHERE  fk.parent_object_id ` + parent
+}
 
 // ForeignKeys returns all foreign keys on the table.
 func (t *Table) ForeignKeys(ctx context.Context) ([]*ForeignKey, error) {
@@ -223,13 +230,13 @@ func (t *Table) ForeignKeyByName(ctx context.Context, name string) (*ForeignKey,
 	return foundRow(fk, err, notFoundf("gosmo: foreign key %q not found on %s", name, t.FullName()), fmt.Sprintf("find foreign key %q on %s", name, t.FullName()))
 }
 
-func scanForeignKey(scan func(...any) error) (*ForeignKey, error) {
+func scanForeignKey(scan func(...any) error, extra ...any) (*ForeignKey, error) {
 	fk := &ForeignKey{}
 	var cols, refCols sql.NullString
-	if err := scan(&fk.Name, &fk.IsDisabled, &fk.IsNotTrusted, &fk.IsNotForReplication,
+	if err := scan(append([]any{&fk.Name, &fk.IsDisabled, &fk.IsNotTrusted, &fk.IsNotForReplication,
 		&fk.DeleteAction, &fk.UpdateAction,
 		&fk.ReferencedSchema, &fk.ReferencedTable,
-		&cols, &refCols); err != nil {
+		&cols, &refCols}, extra...)...); err != nil {
 		return nil, err
 	}
 	var err error
@@ -264,25 +271,33 @@ func (t *Table) CheckConstraints(ctx context.Context) ([]*CheckConstraint, error
 	if err := t.requireLoaded("list check constraints for"); err != nil {
 		return nil, err
 	}
-	const q = `
+	rows, err := t.db.query(ctx, checkConstraintSelect("", "= @p1"), t.ObjectID)
+	return scanRows(rows, err, fmt.Sprintf("list check constraints for %s", t.FullName()), func(scan func(...any) error) (*CheckConstraint, error) {
+		return scanCheckConstraint(scan)
+	})
+}
+
+// checkConstraintSelect is CheckConstraints' query; extra and parent are as in
+// foreignKeySelectWith.
+func checkConstraintSelect(extra, parent string) string {
+	return `
 SELECT cc.name, ISNULL(cc.definition, ''), cc.is_disabled, ISNULL(c.name, ''),
-       cc.is_not_trusted, cc.is_not_for_replication
+       cc.is_not_trusted, cc.is_not_for_replication` + extra + `
 FROM   sys.check_constraints cc
 LEFT   JOIN sys.columns c
        ON  c.object_id  = cc.parent_object_id
        AND c.column_id  = cc.parent_column_id
-WHERE  cc.parent_object_id = @p1
+WHERE  cc.parent_object_id ` + parent + `
 ORDER  BY cc.name`
+}
 
-	rows, err := t.db.query(ctx, q, t.ObjectID)
-	return scanRows(rows, err, fmt.Sprintf("list check constraints for %s", t.FullName()), func(scan func(...any) error) (*CheckConstraint, error) {
-		cc := &CheckConstraint{}
-		if err := scan(&cc.Name, &cc.Definition, &cc.IsDisabled, &cc.Column,
-			&cc.IsNotTrusted, &cc.IsNotForReplication); err != nil {
-			return nil, err
-		}
-		return cc, nil
-	})
+func scanCheckConstraint(scan func(...any) error, extra ...any) (*CheckConstraint, error) {
+	cc := &CheckConstraint{}
+	if err := scan(append([]any{&cc.Name, &cc.Definition, &cc.IsDisabled, &cc.Column,
+		&cc.IsNotTrusted, &cc.IsNotForReplication}, extra...)...); err != nil {
+		return nil, err
+	}
+	return cc, nil
 }
 
 // -- Triggers --------------------------------------------------------------------

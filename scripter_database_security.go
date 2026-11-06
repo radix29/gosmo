@@ -42,6 +42,15 @@ import (
 // read back. A permission on a class the script cannot name is listed as a
 // comment rather than dropped.
 func (sc *Scripter) ScriptDatabaseSecurity(ctx context.Context) (string, error) {
+	sec, err := sc.readDatabaseSecurity(ctx)
+	if err != nil {
+		return "", err
+	}
+	return buildDatabaseSecurityScript(sc.db.Name, sec), nil
+}
+
+// readDatabaseSecurity reads everything ScriptDatabaseSecurity renders.
+func (sc *Scripter) readDatabaseSecurity(ctx context.Context) (*databaseSecurity, error) {
 	d := sc.db
 	var sec databaseSecurity
 	err := d.queryRow(ctx, func(row *sql.Row) error {
@@ -53,24 +62,24 @@ func (sc *Scripter) ScriptDatabaseSecurity(ctx context.Context) (string, error) 
 		return nil
 	}, `SELECT SUSER_SNAME(owner_sid), owner_sid FROM sys.databases WHERE database_id = DB_ID()`)
 	if err != nil {
-		return "", fmt.Errorf("gosmo: read the owner of %q: %w", d.Name, err)
+		return nil, fmt.Errorf("gosmo: read the owner of %q: %w", d.Name, err)
 	}
 	if sec.roles, err = d.Roles(ctx); err != nil {
-		return "", err
+		return nil, err
 	}
 	if sec.appRoles, err = d.ApplicationRoles(ctx); err != nil {
-		return "", err
+		return nil, err
 	}
 	if sec.users, err = d.Users(ctx); err != nil {
-		return "", err
+		return nil, err
 	}
 	if sec.schemas, err = d.Schemas(ctx); err != nil {
-		return "", err
+		return nil, err
 	}
 	if sec.grants, err = d.securityGrants(ctx); err != nil {
-		return "", err
+		return nil, err
 	}
-	return buildDatabaseSecurityScript(d.Name, &sec), nil
+	return &sec, nil
 }
 
 // databaseSecurity is what ScriptDatabaseSecurity reads, unfiltered:
@@ -232,6 +241,15 @@ func isServerPrincipal(id int, name string) bool {
 // buildDatabaseSecurityScript assembles ScriptDatabaseSecurity's script for
 // dbName (named in the header comment only) from what it read.
 func buildDatabaseSecurityScript(dbName string, sec *databaseSecurity) string {
+	head, tail := buildDatabaseSecurityParts(dbName, sec)
+	return head + tail
+}
+
+// buildDatabaseSecurityParts is buildDatabaseSecurityScript in two: the
+// database owner, roles, users, schemas, ownership and role memberships, and
+// the permissions section alone. A whole-database script puts the first
+// before the objects and the second after, when every securable exists.
+func buildDatabaseSecurityParts(dbName string, sec *databaseSecurity) (principalsPart, permissionsPart string) {
 	opts := ScriptOptions{IncludeIfNotExists: true}
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "/* Security of database %s. Every password below is a placeholder: the\n"+
@@ -330,6 +348,8 @@ func buildDatabaseSecurityScript(dbName string, sec *databaseSecurity) string {
 		sb.WriteString("GO\n")
 	}
 
+	principalsPart = sb.String()
+	sb.Reset()
 	section("Permissions")
 	for _, g := range sec.grants {
 		sb.WriteString(g.statement())
@@ -337,5 +357,5 @@ func buildDatabaseSecurityScript(dbName string, sec *databaseSecurity) string {
 	if len(sec.grants) > 0 {
 		sb.WriteString("GO\n")
 	}
-	return sb.String()
+	return principalsPart, sb.String()
 }

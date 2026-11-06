@@ -251,6 +251,13 @@ func (t *Table) attachIndexColumns(ctx context.Context, indexes []*Index, extra 
 	if err != nil {
 		return fmt.Errorf("gosmo: columns of indexes on %s: %w", t.FullName(), err)
 	}
+	distributeIndexColumns(indexes, cols)
+	return nil
+}
+
+// distributeIndexColumns files an object's index columns, keyed by index_id,
+// under the indexes they belong to.
+func distributeIndexColumns(indexes []*Index, cols map[int][]IndexColumn) {
 	for _, idx := range indexes {
 		var ordered []IndexColumn
 		for _, c := range cols[idx.IndexID] {
@@ -268,7 +275,6 @@ func (t *Table) attachIndexColumns(ctx context.Context, indexes []*Index, extra 
 			idx.ColumnstoreOrder = append(idx.ColumnstoreOrder, c.Name)
 		}
 	}
-	return nil
 }
 
 // indexListSelect is indexList's query up to its object filter, which the
@@ -281,7 +287,12 @@ func (t *Table) attachIndexColumns(ctx context.Context, indexes []*Index, extra 
 // STATISTICS_NORECOMPUTE and STATISTICS_INCREMENTAL live on the index's
 // statistics object, which shares the index's ID; the join is a LEFT one
 // because not every index type is guaranteed a row there.
-func (t *Table) indexListSelect() string {
+func (t *Table) indexListSelect() string { return t.indexListSelectWith("", "= @p1") }
+
+// indexListSelectWith is indexListSelect with extra appended to the select
+// list and the object predicate set to object ("= @p1", or "IN (…)" for a
+// batch over every table).
+func (t *Table) indexListSelectWith(extra, object string) string {
 	return `
 SELECT i.name, i.index_id, i.type_desc, i.is_unique, i.is_primary_key,
        i.is_unique_constraint, i.is_disabled, i.is_hypothetical, i.fill_factor,
@@ -301,7 +312,7 @@ SELECT i.name, i.index_id, i.type_desc, i.is_unique, i.is_primary_key,
        sit.bounding_box_xmin, sit.bounding_box_ymin, sit.bounding_box_xmax, sit.bounding_box_ymax,
        ISNULL(sit.level_1_grid_desc, ''), ISNULL(sit.level_2_grid_desc, ''),
        ISNULL(sit.level_3_grid_desc, ''), ISNULL(sit.level_4_grid_desc, ''),
-       ISNULL(sit.cells_per_object, 0)
+       ISNULL(sit.cells_per_object, 0)` + extra + `
 FROM   sys.indexes i
 LEFT   JOIN sys.hash_indexes h ON h.object_id = i.object_id AND h.index_id = i.index_id
 LEFT   JOIN sys.xml_indexes xi ON xi.object_id = i.object_id AND xi.index_id = i.index_id
@@ -311,7 +322,7 @@ LEFT   JOIN sys.selective_xml_index_paths sxp ON sxp.object_id = xi.object_id
 LEFT   JOIN sys.spatial_index_tessellations sit ON sit.object_id = i.object_id AND sit.index_id = i.index_id
 LEFT   JOIN sys.stats st ON st.object_id = i.object_id AND st.stats_id = i.index_id
 ` + dataSpaceJoins + `
-WHERE  i.object_id = @p1 AND i.type > 0`
+WHERE  i.object_id ` + object + ` AND i.type > 0`
 }
 
 // indexList returns the table's indexes with no columns attached,
@@ -331,41 +342,62 @@ ORDER  BY i.index_id`
 
 	var indexes []*Index
 	for rows.Next() {
-		idx := &Index{table: t}
-		var typeDesc, compression, filter sql.NullString
-		var secondary, tessellation string
-		var xmin, ymin, xmax, ymax sql.NullFloat64
-		if err := rows.Scan(&idx.Name, &idx.IndexID, &typeDesc,
-			&idx.IsUnique, &idx.IsPrimaryKey, &idx.IsUniqueConstraint,
-			&idx.IsDisabled, &idx.IsHypothetical, &idx.FillFactor, &filter,
-			&idx.IsPadded, &idx.IgnoreDupKey, &idx.AllowRowLocks, &idx.AllowPageLocks,
-			&compression,
-			&idx.DataSpace.Name, &idx.DataSpace.IsPartitionScheme,
-			&idx.DataSpace.IsDefaultFileGroup, &idx.DataSpace.PartitionColumn,
-			&idx.StatisticsNoRecompute, &idx.StatisticsIncremental, &idx.OptimizeForSequentialKey,
-			&idx.BucketCount, &idx.CompressionDelay,
-			&idx.IsPrimaryXML, &idx.PrimaryXMLIndex, &secondary,
-			&idx.IsSelectiveXML, &idx.SelectiveXMLPath,
-			&tessellation, &xmin, &ymin, &xmax, &ymax,
-			&idx.GridLevels.Level1, &idx.GridLevels.Level2,
-			&idx.GridLevels.Level3, &idx.GridLevels.Level4,
-			&idx.CellsPerObject); err != nil {
+		idx, err := scanIndex(rows.Scan, t)
+		if err != nil {
 			return nil, err
 		}
-		idx.FilterDefinition, idx.IsFilterHidden = filter.String, !filter.Valid
-		idx.SecondaryXMLType = XMLSecondaryIndexType(secondary)
-		idx.Tessellation = SpatialTessellation(tessellation)
-		if xmin.Valid && ymin.Valid && xmax.Valid && ymax.Valid {
-			idx.BoundingBox = &SpatialBoundingBox{XMin: xmin.Float64, YMin: ymin.Float64, XMax: xmax.Float64, YMax: ymax.Float64}
-		}
-		if idx.Partitions, err = decodePartitionCompression(compression); err != nil {
-			return nil, err
-		}
-		idx.Type = indexTypeFromDesc(typeDesc.String)
-		idx.IsClustered = idx.Type == IndexTypeClustered || idx.Type == IndexTypeClusteredColumnStore
 		indexes = append(indexes, idx)
 	}
 	return indexes, rows.Err()
+}
+
+// scanIndex reads one row of indexListSelectWith(…); extra are the
+// destinations of the columns that call appended.
+func scanIndex(scan func(...any) error, t *Table, extra ...any) (*Index, error) {
+	idx := &Index{table: t}
+	var typeDesc, compression, filter sql.NullString
+	var secondary, tessellation string
+	var xmin, ymin, xmax, ymax sql.NullFloat64
+	if err := scan(append([]any{&idx.Name, &idx.IndexID, &typeDesc,
+		&idx.IsUnique, &idx.IsPrimaryKey, &idx.IsUniqueConstraint,
+		&idx.IsDisabled, &idx.IsHypothetical, &idx.FillFactor, &filter,
+		&idx.IsPadded, &idx.IgnoreDupKey, &idx.AllowRowLocks, &idx.AllowPageLocks,
+		&compression,
+		&idx.DataSpace.Name, &idx.DataSpace.IsPartitionScheme,
+		&idx.DataSpace.IsDefaultFileGroup, &idx.DataSpace.PartitionColumn,
+		&idx.StatisticsNoRecompute, &idx.StatisticsIncremental, &idx.OptimizeForSequentialKey,
+		&idx.BucketCount, &idx.CompressionDelay,
+		&idx.IsPrimaryXML, &idx.PrimaryXMLIndex, &secondary,
+		&idx.IsSelectiveXML, &idx.SelectiveXMLPath,
+		&tessellation, &xmin, &ymin, &xmax, &ymax,
+		&idx.GridLevels.Level1, &idx.GridLevels.Level2,
+		&idx.GridLevels.Level3, &idx.GridLevels.Level4,
+		&idx.CellsPerObject}, extra...)...); err != nil {
+		return nil, err
+	}
+	idx.FilterDefinition, idx.IsFilterHidden = filter.String, !filter.Valid
+	idx.SecondaryXMLType = XMLSecondaryIndexType(secondary)
+	idx.Tessellation = SpatialTessellation(tessellation)
+	if xmin.Valid && ymin.Valid && xmax.Valid && ymax.Valid {
+		idx.BoundingBox = &SpatialBoundingBox{XMin: xmin.Float64, YMin: ymin.Float64, XMax: xmax.Float64, YMax: ymax.Float64}
+	}
+	var err error
+	if idx.Partitions, err = decodePartitionCompression(compression); err != nil {
+		return nil, err
+	}
+	idx.Type = indexTypeFromDesc(typeDesc.String)
+	idx.IsClustered = idx.Type == IndexTypeClustered || idx.Type == IndexTypeClusteredColumnStore
+	return idx, nil
+}
+
+// dataSpaceSelect is DataSpace's query; extra and object are as in
+// indexListSelectWith.
+func dataSpaceSelect(extra, object string) string {
+	return `
+SELECT ` + dataSpaceColumns + extra + `
+FROM   sys.indexes i
+` + dataSpaceJoins + `
+WHERE  i.object_id ` + object + ` AND i.index_id IN (0, 1)`
 }
 
 // DataSpace returns where the table itself stores its rows — the filegroup
@@ -384,11 +416,7 @@ func (t *Table) DataSpace(ctx context.Context) (DataSpace, error) {
 	if err := t.requireLoaded("data space of"); err != nil {
 		return DataSpace{}, err
 	}
-	q := `
-SELECT ` + dataSpaceColumns + `
-FROM   sys.indexes i
-` + dataSpaceJoins + `
-WHERE  i.object_id = @p1 AND i.index_id IN (0, 1)`
+	q := dataSpaceSelect("", "= @p1")
 
 	var ds DataSpace
 	err := t.db.queryRow(ctx, func(row *sql.Row) error {
@@ -421,9 +449,7 @@ WHERE  i.object_id = @p1 AND i.index_id IN (0, 1)`
 // extra is an additional predicate ANDed onto the object filter, with its
 // parameters starting at @p2 — the same contract as indexList.
 func (t *Table) indexColumns(ctx context.Context, extra string, args ...any) (map[int][]IndexColumn, error) {
-	q := t.indexColumnsSelect() + extra + `
-  AND  NOT (ic.key_ordinal = 0 AND ic.is_included_column = 0 AND ic.partition_ordinal > 0)
-ORDER  BY ic.index_id, ic.key_ordinal, ic.index_column_id`
+	q := t.indexColumnsSelect() + extra + indexColumnsTail
 
 	rows, err := t.db.query(ctx, q, append([]any{t.ObjectID}, args...)...)
 	if err != nil {
@@ -443,18 +469,28 @@ ORDER  BY ic.index_id, ic.key_ordinal, ic.index_column_id`
 	return cols, rows.Err()
 }
 
+// indexColumnsTail ends indexColumns' query; see the comment there for the
+// partitioning column it leaves out.
+const indexColumnsTail = `
+  AND  NOT (ic.key_ordinal = 0 AND ic.is_included_column = 0 AND ic.partition_ordinal > 0)
+ORDER  BY ic.index_id, ic.key_ordinal, ic.index_column_id`
+
 // indexColumnsSelect is indexColumns' query up to its object filter.
 //
 // column_store_order_ordinal is SQL Server 2022's, with ordered columnstore
 // indexes; every columnstore index on an older instance is unordered.
 // https://learn.microsoft.com/sql/relational-databases/system-catalog-views/sys-index-columns-transact-sql
-func (t *Table) indexColumnsSelect() string {
+func (t *Table) indexColumnsSelect() string { return t.indexColumnsSelectWith("", "= @p1") }
+
+// indexColumnsSelectWith is indexColumnsSelect with extra appended to the
+// select list and the object predicate set to object, as indexListSelectWith.
+func (t *Table) indexColumnsSelectWith(extra, object string) string {
 	return `
 SELECT ic.index_id, c.name, ic.is_descending_key, ic.is_included_column,
-       ` + colSince(t.db.serverMajorVersion(), SQLServer2022, "ic.column_store_order_ordinal", "CAST(0 AS tinyint)") + `
+       ` + colSince(t.db.serverMajorVersion(), SQLServer2022, "ic.column_store_order_ordinal", "CAST(0 AS tinyint)") + extra + `
 FROM   sys.index_columns ic
 JOIN   sys.columns c ON c.object_id = ic.object_id AND c.column_id = ic.column_id
-WHERE  ic.object_id = @p1`
+WHERE  ic.object_id ` + object
 }
 
 // indexTypeFromDesc maps sys.indexes.type_desc to an IndexType. A type_desc

@@ -24,16 +24,34 @@ func (sc *Scripter) ScriptTable(ctx context.Context, schema, name string) (strin
 	if err != nil {
 		return "", err
 	}
+	return sc.scriptTable(ctx, t)
+}
+
+// scriptTable is ScriptTable for a table already looked up. Its inputs come
+// from sc.tables when that covers t, and from one query each otherwise.
+func (sc *Scripter) scriptTable(ctx context.Context, t *Table) (string, error) {
+	schema, name := t.Schema, t.Name
+	var err error
 	var p tableScriptParts
+	pre := sc.tables
+	if pre != nil {
+		if _, ok := pre.options[t.ObjectID]; !ok {
+			pre = nil
+		}
+	}
 	// The table-wide options come first: they decide whether this table is
 	// one the scripter refuses, and a refusal must come before any script.
-	if p.table, err = t.scriptOptions(ctx); err != nil {
+	if pre != nil {
+		p.table = pre.options[t.ObjectID]
+	} else if p.table, err = t.scriptOptions(ctx); err != nil {
 		return "", err
 	}
 	if err := p.table.refusal(t.FullName()); err != nil {
 		return "", err
 	}
-	if p.cols, err = t.Columns(ctx); err != nil {
+	if pre != nil {
+		p.cols = pre.cols[t.ObjectID]
+	} else if p.cols, err = t.Columns(ctx); err != nil {
 		return "", err
 	}
 	if err := hiddenTypeRefusal("table "+t.FullName(), p.cols); err != nil {
@@ -57,21 +75,30 @@ func (sc *Scripter) ScriptTable(ctx context.Context, schema, name string) (strin
 		}
 		return sc.withTableExtendedProperties(ctx, t, p, script)
 	}
-	if p.indexes, err = t.Indexes(ctx); err != nil {
-		return "", err
-	}
-	if p.fks, err = t.ForeignKeys(ctx); err != nil {
-		return "", err
-	}
-	if p.checks, err = t.CheckConstraints(ctx); err != nil {
-		return "", err
+	if pre != nil {
+		p.indexes, p.fks, p.checks = pre.indexes[t.ObjectID], pre.fks[t.ObjectID], pre.checks[t.ObjectID]
+		if err := t.attachSelectiveXML(ctx, p.indexes); err != nil {
+			return "", err
+		}
+	} else {
+		if p.indexes, err = t.Indexes(ctx); err != nil {
+			return "", err
+		}
+		if p.fks, err = t.ForeignKeys(ctx); err != nil {
+			return "", err
+		}
+		if p.checks, err = t.CheckConstraints(ctx); err != nil {
+			return "", err
+		}
 	}
 	if err := hiddenDefinitionRefusal("table "+t.FullName(), sc.opts.verb(), p.cols, p.indexes, p.checks); err != nil {
 		return "", err
 	}
 	// The table's own ON clause comes from its heap or clustered index, and
 	// a heap is not in the index list at all — see Table.DataSpace.
-	if p.ds, err = t.DataSpace(ctx); err != nil {
+	if pre != nil {
+		p.ds = pre.ds[t.ObjectID]
+	} else if p.ds, err = t.DataSpace(ctx); err != nil {
 		return "", err
 	}
 	if t.IsEdge {
@@ -214,31 +241,8 @@ func (t *Table) scriptOptions(ctx context.Context) (tableScriptOptions, error) {
 		IsNode: t.IsNode, IsEdge: t.IsEdge, IsMemoryOptimized: t.IsMemoryOptimized,
 		IsFileTable: t.IsFileTable, IsExternal: t.IsExternal,
 	}
-	var heap, ledgerCols, ftObjects sql.NullString
 	if err := t.db.queryRow(ctx, func(row *sql.Row) error {
-		e := &o.External
-		if err := row.Scan(&o.SystemVersioned, &o.HistorySchema, &o.HistoryTable,
-			&o.HistoryRetentionPeriod, &o.HistoryRetentionUnit, &o.LockEscalation,
-			&o.PeriodStart, &o.PeriodEnd, &heap, &o.DatabaseCollation,
-			&o.Durability, &o.LobDataSpace, &o.LobIsFileGroup, &o.FileStreamDataSpace,
-			&o.LedgerType, &o.IsDroppedLedgerTable, &o.LedgerViewSchema, &o.LedgerViewName, &ledgerCols,
-			&o.FileTableDirectory, &o.FileTableCollation, &o.FileTableNamespaceEnabled, &ftObjects,
-			&e.DataSource, &e.FileFormat, &e.Location, &e.RejectType, &e.RejectValue, &e.RejectSampleValue,
-			&e.RemoteSchema, &e.RemoteObject, &e.Distribution, &e.ShardingColumn,
-			&e.RejectedRowLocation, &e.TableOptions); err != nil {
-			return err
-		}
-		var err error
-		if o.HeapPartitions, err = decodePartitionCompression(heap); err != nil {
-			return err
-		}
-		// Read last-first, so the four come back in view order.
-		if o.LedgerViewColumns, err = decodeJSONList(ledgerCols); err != nil {
-			return err
-		}
-		slices.Reverse(o.LedgerViewColumns)
-		o.FileTableSystemObjects, err = decodeJSONList(ftObjects)
-		return err
+		return scanTableScriptOptions(row.Scan, &o)
 	}, t.scriptOptionsSelect(), t.ObjectID); err != nil && !errors.Is(err, sql.ErrNoRows) {
 		// No row is a table dropped since it was looked up; the column and
 		// index reads beside this one answer that with empty lists, and so
@@ -246,6 +250,35 @@ func (t *Table) scriptOptions(ctx context.Context) (tableScriptOptions, error) {
 		return o, fmt.Errorf("gosmo: script options for %s: %w", t.FullName(), err)
 	}
 	return o, nil
+}
+
+// scanTableScriptOptions reads one row of scriptOptionsSelectWith(…) into o;
+// extra are the destinations of the columns that call appended.
+func scanTableScriptOptions(scan func(...any) error, o *tableScriptOptions, extra ...any) error {
+	var heap, ledgerCols, ftObjects sql.NullString
+	e := &o.External
+	if err := scan(append([]any{&o.SystemVersioned, &o.HistorySchema, &o.HistoryTable,
+		&o.HistoryRetentionPeriod, &o.HistoryRetentionUnit, &o.LockEscalation,
+		&o.PeriodStart, &o.PeriodEnd, &heap, &o.DatabaseCollation,
+		&o.Durability, &o.LobDataSpace, &o.LobIsFileGroup, &o.FileStreamDataSpace,
+		&o.LedgerType, &o.IsDroppedLedgerTable, &o.LedgerViewSchema, &o.LedgerViewName, &ledgerCols,
+		&o.FileTableDirectory, &o.FileTableCollation, &o.FileTableNamespaceEnabled, &ftObjects,
+		&e.DataSource, &e.FileFormat, &e.Location, &e.RejectType, &e.RejectValue, &e.RejectSampleValue,
+		&e.RemoteSchema, &e.RemoteObject, &e.Distribution, &e.ShardingColumn,
+		&e.RejectedRowLocation, &e.TableOptions}, extra...)...); err != nil {
+		return err
+	}
+	var err error
+	if o.HeapPartitions, err = decodePartitionCompression(heap); err != nil {
+		return err
+	}
+	// Read last-first, so the four come back in view order.
+	if o.LedgerViewColumns, err = decodeJSONList(ledgerCols); err != nil {
+		return err
+	}
+	slices.Reverse(o.LedgerViewColumns)
+	o.FileTableSystemObjects, err = decodeJSONList(ftObjects)
+	return err
 }
 
 // scriptOptionsSelect is scriptOptions' query, version-gated.
@@ -258,7 +291,11 @@ func (t *Table) scriptOptions(ctx context.Context) (tableScriptOptions, error) {
 // sys.filetables and sys.external_tables are older than gosmo's 2016 floor;
 // external_tables' rejected_row_location and table_options are 2022's.
 // https://learn.microsoft.com/sql/relational-databases/system-catalog-views/sys-tables-transact-sql
-func (t *Table) scriptOptionsSelect() string {
+func (t *Table) scriptOptionsSelect() string { return t.scriptOptionsSelectWith("", "= @p1") }
+
+// scriptOptionsSelectWith is scriptOptionsSelect with extra appended to the
+// select list and the object predicate set to object, as indexListSelectWith.
+func (t *Table) scriptOptionsSelectWith(extra, object string) string {
 	major := t.db.serverMajorVersion()
 	return `
 SELECT CAST(CASE WHEN t.temporal_type = 2 THEN 1 ELSE 0 END AS BIT),
@@ -288,7 +325,7 @@ SELECT CAST(CASE WHEN t.temporal_type = 2 THEN 1 ELSE 0 END AS BIT),
        ISNULL(et.remote_schema_name, ''), ISNULL(et.remote_object_name, ''),
        ISNULL(et.distribution_desc, ''), ISNULL(COL_NAME(et.object_id, et.sharding_col_id), ''),
        ` + colSince(major, SQLServer2022, "ISNULL(et.rejected_row_location, '')", "CAST('' AS nvarchar(4000))") + `,
-       ` + colSince(major, SQLServer2022, "ISNULL(et.table_options, '')", "CAST('' AS nvarchar(1000))") + `
+       ` + colSince(major, SQLServer2022, "ISNULL(et.table_options, '')", "CAST('' AS nvarchar(1000))") + extra + `
 FROM   sys.tables AS t
 LEFT   JOIN sys.periods p ON p.object_id = t.object_id
 LEFT   JOIN sys.data_spaces lds ON lds.data_space_id = NULLIF(t.lob_data_space_id, 0)
@@ -297,7 +334,7 @@ LEFT   JOIN sys.filetables ft ON ft.object_id = t.object_id
 LEFT   JOIN sys.external_tables et ON et.object_id = t.object_id
 LEFT   JOIN sys.external_data_sources eds ON eds.data_source_id = et.data_source_id
 LEFT   JOIN sys.external_file_formats eff ON eff.file_format_id = et.file_format_id
-WHERE  t.object_id = @p1`
+WHERE  t.object_id ` + object
 }
 
 // buildTableScript assembles the CREATE (or DROP) TABLE script from metadata
@@ -697,8 +734,10 @@ func writeTableDependents(sb *strings.Builder, indexes []*Index, inline map[stri
 		sb.WriteString(scriptIndex(idx, fullName, p.ds, opts))
 	}
 
-	for _, fk := range p.fks {
-		sb.WriteString(scriptForeignKey(fk, fullName, opts))
+	if !opts.DeferForeignKeys {
+		for _, fk := range p.fks {
+			sb.WriteString(scriptForeignKey(fk, fullName, opts))
+		}
 	}
 	for _, ck := range p.checks {
 		sb.WriteString(scriptCheckConstraint(ck, fullName, opts))

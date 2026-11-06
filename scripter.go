@@ -68,6 +68,10 @@ type ScriptOptions struct {
 	// single-object script whose object can carry one — all but a broker
 	// priority; never to a DROP.
 	ExtendedProperties bool
+	// DeferForeignKeys leaves a table's foreign keys out of its script, for a
+	// caller emitting them afterwards as ALTER TABLE … ADD CONSTRAINT (see
+	// ScriptDatabaseObjects). Applies to ScriptTable only.
+	DeferForeignKeys bool
 }
 
 // DefaultScriptOptions returns sensible defaults.
@@ -135,6 +139,9 @@ func (o ScriptOptions) envelopeErr(drop, guard string, create func(sb *strings.B
 type Scripter struct {
 	db   *Database
 	opts ScriptOptions
+	// tables, when set, holds every table's script inputs already read — see
+	// tablePrefetch. Only ScriptDatabaseObjectList sets it.
+	tables *tablePrefetch
 }
 
 // Database returns the database the scripter scripts.

@@ -145,7 +145,12 @@ const (
 // rule_object_id is unknown, so the column's own binding cannot be told from
 // the type's.
 // https://learn.microsoft.com/sql/relational-databases/system-catalog-views/sys-columns-transact-sql
-func (d *Database) columnSelect() string {
+func (d *Database) columnSelect() string { return d.columnSelectWith("") }
+
+// columnSelectWith is columnSelect with extra appended to the select list: a
+// batch over every table adds the owning object_id there, so the rows can be
+// told apart. extra "" is columnSelect itself.
+func (d *Database) columnSelectWith(extra string) string {
 	major := d.serverMajorVersion()
 	return `
 SELECT c.name, c.column_id,
@@ -170,7 +175,7 @@ SELECT c.name, c.column_id,
        ` + colSince(major, SQLServer2025, "ISNULL(c.vector_base_type_desc, '')", "CAST('' AS nvarchar(60))") + `,
        ISNULL(SCHEMA_NAME(br.schema_id), ''), ISNULL(br.name, ''),
        ISNULL(SCHEMA_NAME(bd.schema_id), ''), ISNULL(bd.name, ''),
-       ` + typeHiddenSQL + `
+       ` + typeHiddenSQL + extra + `
 FROM   sys.columns c
 LEFT   JOIN sys.types tp ON tp.user_type_id = c.user_type_id
 LEFT   JOIN sys.objects br
@@ -262,43 +267,53 @@ ORDER  BY c.column_id`
 func scanColumns(rows *sql.Rows) ([]*Column, error) {
 	var cols []*Column
 	for rows.Next() {
-		col := &Column{}
-		var compText, dcName, dcDef, collation, typeSchema sql.NullString
-		var seed, increment sql.NullString
-		if err := rows.Scan(
-			&col.Name, &col.OrdinalPosition,
-			&col.DataType, &col.MaxLength, &col.Precision, &col.Scale,
-			&col.IsNullable, &col.IsIdentity, &col.IsComputed,
-			&compText, &dcName, &dcDef,
-			&col.IsRowGUID, &collation,
-			&seed, &increment,
-			&col.IsPrimaryKey,
-			&typeSchema, &col.IsUserDefinedType,
-			&col.IsPersisted, &col.IdentityNotForReplication,
-			&col.IsSparse, &col.IsColumnSet,
-			&col.MaskingFunction,
-			&col.GeneratedAlwaysType, &col.IsHidden, &col.IsFileStream,
-			&col.GraphType, &col.IsDroppedLedgerColumn,
-			&col.ColumnEncryptionKey, &col.EncryptionType, &col.EncryptionAlgorithm,
-			&col.XMLSchemaCollectionSchema, &col.XMLSchemaCollection, &col.IsXMLDocument,
-			&col.VectorDimensions, &col.VectorBaseType,
-			&col.BoundRuleSchema, &col.BoundRule, &col.BoundDefaultSchema, &col.BoundDefault,
-			&col.IsTypeHidden,
-		); err != nil {
+		col, err := scanColumn(rows.Scan)
+		if err != nil {
 			return nil, err
 		}
-		col.MaskingFunction = strings.ReplaceAll(col.MaskingFunction, "''", "'")
-		col.ComputedText = compText.String
-		col.Collation = collation.String
-		col.TypeSchema = typeSchema.String
-		if dcName.String != "" {
-			col.DefaultValue = &ColumnDefault{Name: dcName.String, Definition: dcDef.String}
-		}
-		col.IdentitySeed = seed.String
-		col.IdentityIncrement = increment.String
 		cols = append(cols, col)
 	}
 	return cols, rows.Err()
+}
+
+// scanColumn reads one row of columnSelectWith(…); extra are the destinations
+// of the columns that call appended.
+func scanColumn(scan func(...any) error, extra ...any) (*Column, error) {
+	col := &Column{}
+	var compText, dcName, dcDef, collation, typeSchema sql.NullString
+	var seed, increment sql.NullString
+	if err := scan(append([]any{
+		&col.Name, &col.OrdinalPosition,
+		&col.DataType, &col.MaxLength, &col.Precision, &col.Scale,
+		&col.IsNullable, &col.IsIdentity, &col.IsComputed,
+		&compText, &dcName, &dcDef,
+		&col.IsRowGUID, &collation,
+		&seed, &increment,
+		&col.IsPrimaryKey,
+		&typeSchema, &col.IsUserDefinedType,
+		&col.IsPersisted, &col.IdentityNotForReplication,
+		&col.IsSparse, &col.IsColumnSet,
+		&col.MaskingFunction,
+		&col.GeneratedAlwaysType, &col.IsHidden, &col.IsFileStream,
+		&col.GraphType, &col.IsDroppedLedgerColumn,
+		&col.ColumnEncryptionKey, &col.EncryptionType, &col.EncryptionAlgorithm,
+		&col.XMLSchemaCollectionSchema, &col.XMLSchemaCollection, &col.IsXMLDocument,
+		&col.VectorDimensions, &col.VectorBaseType,
+		&col.BoundRuleSchema, &col.BoundRule, &col.BoundDefaultSchema, &col.BoundDefault,
+		&col.IsTypeHidden,
+	}, extra...)...); err != nil {
+		return nil, err
+	}
+	col.MaskingFunction = strings.ReplaceAll(col.MaskingFunction, "''", "'")
+	col.ComputedText = compText.String
+	col.Collation = collation.String
+	col.TypeSchema = typeSchema.String
+	if dcName.String != "" {
+		col.DefaultValue = &ColumnDefault{Name: dcName.String, Definition: dcDef.String}
+	}
+	col.IdentitySeed = seed.String
+	col.IdentityIncrement = increment.String
+	return col, nil
 }
 
 // AlterColumn changes an existing column's data type, nullability and/or

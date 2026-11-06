@@ -28,22 +28,24 @@ import (
 func TestEveryArgumentRefusalWrapsErrInvalidRequest(t *testing.T) {
 	// File → the start of each allowed format string.
 	allowed := map[string][]string{
-		"catalog.go":        {"result set %d of %d is missing"},
-		"certificate.go":    {"gosmo: encode certificate %q in %q: CERTENCODED returned nothing"},
-		"connection_dsn.go": {"gosmo: connection string: cannot mask an unparseable DSN"},
-		"database_mail.go":  {"gosmo: read mail status: unexpected status"},
-		"database_users.go": {"gosmo: create user %q: a user with a password needs a contained database"},
+		"catalog.go":                 {"result set %d of %d is missing"},
+		"scripter_table_prefetch.go": {"result set %d of %d is missing"},
+		"certificate.go":             {"gosmo: encode certificate %q in %q: CERTENCODED returned nothing"},
+		"connection_dsn.go":          {"gosmo: connection string: cannot mask an unparseable DSN"},
+		"database_mail.go":           {"gosmo: read mail status: unexpected status"},
+		"database_users.go":          {"gosmo: create user %q: a user with a password needs a contained database"},
 		"entra.go": {
 			"no Entra credential mapping for fedauth",
 			"the server completed a login without asking for an Entra token",
 		},
-		"errors.go":               {"", ""}, // invalidf and unsupportedf themselves
-		"executionplan.go":        {"gosmo: capture execution plan: no plan was returned"},
-		"extended_events_read.go": {"gosmo: %s: the server reports no error-log directory"},
-		"helpers.go":              {"a result set names database %q, which was not asked for"},
-		"index_management.go":     {"gosmo: partition %d listed at position %d"},
-		"scripter_index.go":       {"partition scheme %s has no partitioning column"},
-		"scripter_security.go":    {"gosmo: script database audit specification %q: it names no audit"},
+		"errors.go":                          {"", ""}, // invalidf and unsupportedf themselves
+		"executionplan.go":                   {"gosmo: capture execution plan: no plan was returned"},
+		"extended_events_read.go":            {"gosmo: %s: the server reports no error-log directory"},
+		"helpers.go":                         {"a result set names database %q, which was not asked for"},
+		"index_management.go":                {"gosmo: partition %d listed at position %d"},
+		"scripter_index.go":                  {"partition scheme %s has no partitioning column"},
+		"scripter_database_objects_order.go": {"gosmo: script database objects: a cycle of schema-bound references among %s"},
+		"scripter_security.go":               {"gosmo: script database audit specification %q: it names no audit"},
 		"scripter_server.go": {
 			"gosmo: script endpoint %q: its database mirroring detail could not be read",
 			"gosmo: script endpoint %q: its service broker detail could not be read",

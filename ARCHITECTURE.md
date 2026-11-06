@@ -1189,6 +1189,7 @@ ddl, _ := sc.ScriptFullTextStoplist(ctx, "LegalWords")   // CREATE + one ADD per
 ddl, _ := sc.ScriptSearchPropertyList(ctx, "DocProps")   // CREATE + one ADD per property, each guarded
 ddl, _ := sc.ScriptFullTextIndex(ctx, "dbo", "Docs")     // + DISABLE when the index is disabled
 ddl, _ := sc.ScriptDatabase(ctx)                         // files, filegroups, log, options; reads through USE
+all, _ := sc.ScriptDatabaseObjects(ctx, gosmo.ObjectScriptOptions{}) // every object, dependency-ordered; FKs deferred; cycles reported
 
 // Logins and server roles belong to no database, so they have their own
 // scripter.
