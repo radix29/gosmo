@@ -173,23 +173,41 @@ func TestScriptQueueCascadesNotes(t *testing.T) {
 	}
 }
 
-// A permission on an object left out becomes one comment line; the others,
-// and one on a different class with the same name, stay statements.
+// A permission on an object left out, on one the script does not list (a
+// queue) or on a class it never creates (a certificate, a message type)
+// becomes one comment line; the others, one on a different class with the
+// same name, and the database, schema and principal ones stay statements.
 func TestDatabaseSecurityPartsDropsGrantsOnMissing(t *testing.T) {
 	sec := &databaseSecurity{grants: []securityGrant{
 		{grantee: "r", state: "G", permission: "EXECUTE", class: 1, schema: "dbo", name: "enc"},
 		{grantee: "r", state: "G", permission: "SELECT", class: 1, schema: "dbo", name: "enc", column: "c"},
 		{grantee: "r", state: "G", permission: "SELECT", class: 1, schema: "dbo", name: "ok"},
+		{grantee: "r", state: "G", permission: "RECEIVE", class: 1, schema: "dbo", name: "q"},
 		{grantee: "r", state: "G", permission: "REFERENCES", class: 6, schema: "dbo", name: "enc"},
 		{grantee: "r", state: "G", permission: "REFERENCES", class: 6, schema: "dbo", name: "ty"},
+		{grantee: "r", state: "G", permission: "CONTROL", class: 25, name: "c1"},
+		{grantee: "r", state: "G", permission: "REFERENCES", class: 15, name: "mt"},
+		{grantee: "r", state: "G", permission: "CONNECT", class: 0},
+		{grantee: "r", state: "G", permission: "SELECT", class: 3, name: "s"},
+		{grantee: "r", state: "G", permission: "IMPERSONATE", class: 4, name: "u"},
 	}}
-	_, tail := buildDatabaseSecurityParts("d", sec, map[string]bool{"o:[dbo].[enc]": true, "t:[dbo].[ty]": true})
+	scope := &grantScope{
+		listed:  map[string]bool{"o:[dbo].[enc]": true, "o:[dbo].[ok]": true, "t:[dbo].[enc]": true, "t:[dbo].[ty]": true},
+		missing: map[string]bool{"o:[dbo].[enc]": true, "t:[dbo].[ty]": true},
+	}
+	_, tail := buildDatabaseSecurityParts("d", sec, scope)
 	for _, want := range []string{
 		"-- not scripted: GRANT EXECUTE ON OBJECT::[dbo].[enc] TO [r]: [dbo].[enc] is not scripted\n",
 		"-- not scripted: GRANT SELECT ON OBJECT::[dbo].[enc] ([c]) TO [r]: [dbo].[enc] is not scripted\n",
 		"\nGRANT SELECT ON OBJECT::[dbo].[ok] TO [r];\n",
+		"-- not scripted: GRANT RECEIVE ON OBJECT::[dbo].[q] TO [r]: [dbo].[q] is not scripted\n",
 		"\nGRANT REFERENCES ON TYPE::[dbo].[enc] TO [r];\n",
 		"-- not scripted: GRANT REFERENCES ON TYPE::[dbo].[ty] TO [r]: [dbo].[ty] is not scripted\n",
+		"-- not scripted: GRANT CONTROL ON CERTIFICATE::[c1] TO [r]: CERTIFICATE::[c1] is not scripted\n",
+		"-- not scripted: GRANT REFERENCES ON MESSAGE TYPE::[mt] TO [r]: MESSAGE TYPE::[mt] is not scripted\n",
+		"\nGRANT CONNECT TO [r];\n",
+		"\nGRANT SELECT ON SCHEMA::[s] TO [r];\n",
+		"\nGRANT IMPERSONATE ON USER::[u] TO [r];\n",
 	} {
 		if !strings.Contains(tail, want) {
 			t.Errorf("permissions lack %q:\n%s", want, tail)

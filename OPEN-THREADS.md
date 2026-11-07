@@ -198,6 +198,17 @@ refuses:
   on the same instance under the same name after a DROP that is right; as a
   copy, the caller edits them.
 
+## `ScriptDatabaseObjectList`: a user mapped to a certificate or key
+
+With `IncludePermissions`, the principals block scripts a certificate- or
+asymmetric-key-mapped user as `CREATE USER … FROM CERTIFICATE`/`ASYMMETRIC
+KEY`, but the whole-database script never creates certificates or keys, so
+the replay into an empty database fails on that user (and on its
+memberships and grants). Found 2026-11-07 next to the fix commenting out
+GRANTs on securables the script does not create (`grantScope`); not fixed
+or run live. Likely shape: comment the user out like those grants, and
+everything naming it.
+
 ## Scripter: extended properties beyond tables and modules
 
 `ScriptOptions.ExtendedProperties` restates the properties of every object

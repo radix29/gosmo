@@ -150,7 +150,8 @@ func (sc *Scripter) ScriptDatabaseObjects(ctx context.Context, o ObjectScriptOpt
 // ScriptCreate. Not scripted: system objects, a system-versioned or ledger
 // table's history table and ledger view (its parent creates them), CLR
 // assemblies, full-text and Service Broker objects, external objects,
-// credentials, certificates and keys, and any dependency across databases.
+// credentials, certificates and keys, and any dependency across databases;
+// a permission on one of them is a comment in the permissions too.
 func (sc *Scripter) ScriptDatabaseObjectList(ctx context.Context, o ObjectScriptOptions) (*DatabaseObjectScript, error) {
 	if sc.opts.verb() != ScriptCreate {
 		return nil, invalidf("gosmo: script database objects: only the CREATE verb is supported")
@@ -463,18 +464,24 @@ func (sc *Scripter) ScriptDatabaseObjectList(ctx context.Context, o ObjectScript
 
 	// missing is every object the script leaves out, by objectKey: the
 	// dropped ledger objects nothing creates, then whatever scriptQueue notes.
-	missing := map[string]bool{}
+	// listed is every one it lists, and what their CREATE TABLEs create.
+	missing, listed := map[string]bool{}, make(map[string]bool, len(items)+len(byParent))
 	for k, dropped := range byParent {
+		listed[k] = true
 		if dropped {
 			missing[k] = true
 		}
 	}
+	for k := range items {
+		listed[k] = true
+	}
 
-	// 4. permissions, built at their turn: a GRANT on an object left out
-	// would fail the replay (Msg 15151), so it becomes a comment.
+	// 4. permissions, built at their turn: a GRANT on a securable the script
+	// does not create would fail the replay (Msg 15151), so it becomes a
+	// comment.
 	if sec != nil && want(ScriptedPermissions) {
 		queue1(ScriptedObject{Kind: ScriptedPermissions, Name: d.Name}, func() (string, error) {
-			_, tail := buildDatabaseSecurityParts(d.Name, sec, missing)
+			_, tail := buildDatabaseSecurityParts(d.Name, sec, &grantScope{listed: listed, missing: missing})
 			return tail, nil
 		})
 	}

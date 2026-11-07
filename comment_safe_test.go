@@ -110,7 +110,7 @@ func TestScriptCommentsContainHostileNames(t *testing.T) {
 		"database security permission on an object left out": func(n string) string {
 			_, tail := buildDatabaseSecurityParts("d", &databaseSecurity{grants: []securityGrant{
 				{grantee: n, state: "G", permission: "SELECT", class: 1, schema: n, name: n}}},
-				map[string]bool{objectKey('o', n, n): true})
+				&grantScope{missing: map[string]bool{objectKey('o', n, n): true}})
 			return tail
 		},
 		"database objects note on what needs an object left out": func(n string) string {

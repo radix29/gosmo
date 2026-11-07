@@ -85,6 +85,13 @@ func TestLiveScriptDatabaseObjectsReplay(t *testing.T) {
 		`CREATE TRIGGER app.tr_enc ON app.v_enc INSTEAD OF INSERT AS SET NOCOUNT ON`,
 		`GRANT SELECT ON app.v_enc TO gosmo_objs_r`,
 		`CREATE PROCEDURE app.p_late AS SELECT id FROM app.v_enc`,
+		// Never created by the script, so their GRANTs are comments: a
+		// queue (an object it does not list) and a message type (a class
+		// outside it). Emitted, each failed the replay with Msg 15151.
+		`CREATE QUEUE app.q`,
+		`GRANT RECEIVE ON app.q TO gosmo_objs_r`,
+		`CREATE MESSAGE TYPE gosmo_objs_mt`,
+		`GRANT REFERENCES ON MESSAGE TYPE::gosmo_objs_mt TO gosmo_objs_r`,
 		// Legacy bindings: the type's and the column's scripts call
 		// sp_bindrule / sp_bindefault, so the rule and the default must be
 		// created first. Left out, the replay failed on each binding.
@@ -224,6 +231,8 @@ func TestLiveScriptDatabaseObjectsReplay(t *testing.T) {
 	for _, want := range []string{
 		"-- not scripted: GRANT EXECUTE ON OBJECT::[app].[p_enc] TO [gosmo_objs_r]: [app].[p_enc] is not scripted",
 		"-- not scripted: GRANT SELECT ON OBJECT::[app].[v_enc] TO [gosmo_objs_r]: [app].[v_enc] is not scripted",
+		"-- not scripted: GRANT RECEIVE ON OBJECT::[app].[q] TO [gosmo_objs_r]: [app].[q] is not scripted",
+		"-- not scripted: GRANT REFERENCES ON MESSAGE TYPE::[gosmo_objs_mt] TO [gosmo_objs_r]: MESSAGE TYPE::[gosmo_objs_mt] is not scripted",
 	} {
 		if !strings.Contains(perms, want) {
 			t.Errorf("permissions lack %q:\n%s", want, perms)
@@ -267,9 +276,13 @@ func TestLiveScriptDatabaseObjectsReplay(t *testing.T) {
 
 	got, want := liveCatalogFingerprint(t, dst, ctx), liveCatalogFingerprint(t, src, ctx)
 	// The dropped ledger table's objects are the ledger's record, which no
-	// script recreates; the encrypted modules and what needs them are noted.
+	// script recreates; the encrypted modules and what needs them are noted;
+	// the queue and message type are outside the script, their GRANTs
+	// comments.
+	notScripted := []string{"object SQ [app].[q] ", "perm gosmo_objs_r RECEIVE GRANT q", "perm gosmo_objs_r REFERENCES GRANT "}
 	want = slices.DeleteFunc(want, func(l string) bool {
-		return strings.Contains(l, "MSSQL_DroppedLedger") || strings.Contains(l, "_enc]") || strings.HasSuffix(l, "_enc")
+		return strings.Contains(l, "MSSQL_DroppedLedger") || strings.Contains(l, "_enc]") || strings.HasSuffix(l, "_enc") ||
+			slices.Contains(notScripted, l)
 	})
 	if len(want) < 40 {
 		t.Fatalf("fingerprint of the source has only %d lines", len(want))

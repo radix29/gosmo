@@ -224,6 +224,40 @@ func (g securityGrant) objectKey() string {
 	return ""
 }
 
+// grantScope is what a whole-database script (ScriptDatabaseObjectList)
+// creates, for its permissions section.
+type grantScope struct {
+	// listed holds the objectKey of every object, type and XML schema
+	// collection the script lists or its parent's CREATE TABLE creates;
+	// missing holds those of them it leaves out.
+	listed, missing map[string]bool
+}
+
+// leftOut reports a grant on a securable the script does not create, and
+// that securable's name; never for a nil scope. The database, its schemas
+// and principals are created by the principals block. Every other class —
+// an assembly, a certificate or key, a Service Broker or full-text object —
+// is outside a whole-database script, and so is an object it does not list
+// (a queue, an external table, a CLR type): GRANT RECEIVE on a queue failed
+// the replay with Msg 15151.
+func (sc *grantScope) leftOut(g securityGrant) (string, bool) {
+	if sc == nil {
+		return "", false
+	}
+	switch g.class {
+	case 0, 3, 4:
+		return "", false
+	case 1, 6, 10:
+		k := g.objectKey()
+		if k == "" || (sc.listed[k] && !sc.missing[k]) {
+			return "", false
+		}
+		return k[2:], true
+	}
+	on, ok := g.securable()
+	return on, ok // !ok: statement is a comment already
+}
+
 // statement renders g as its GRANT, DENY or REVOKE, or the comment listing
 // one it cannot name.
 func (g securityGrant) statement() string {
@@ -267,10 +301,10 @@ func buildDatabaseSecurityScript(dbName string, sec *databaseSecurity) string {
 // database owner, roles, users, schemas, ownership and role memberships, and
 // the permissions section alone. A whole-database script puts the first
 // before the objects and the second after, when every securable exists.
-// A permission on an object, type or XML schema collection whose objectKey
-// is in missing (nil for none) — one the script leaves out — is a comment
-// line instead: the replay would fail it (Msg 15151).
-func buildDatabaseSecurityParts(dbName string, sec *databaseSecurity, missing map[string]bool) (principalsPart, permissionsPart string) {
+// A permission on a securable the script does not create (scope nil for a
+// security-only script, which keeps them all) is a comment line instead: the
+// replay would fail it (Msg 15151).
+func buildDatabaseSecurityParts(dbName string, sec *databaseSecurity, scope *grantScope) (principalsPart, permissionsPart string) {
 	opts := ScriptOptions{IncludeIfNotExists: true}
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "/* Security of database %s. Every password below is a placeholder: the\n"+
@@ -373,9 +407,9 @@ func buildDatabaseSecurityParts(dbName string, sec *databaseSecurity, missing ma
 	sb.Reset()
 	section("Permissions")
 	for _, g := range sec.grants {
-		if k := g.objectKey(); k != "" && missing[k] {
+		if what, out := scope.leftOut(g); out {
 			fmt.Fprintf(&sb, "-- not scripted: %s\n", tsql.CommentSafe(
-				strings.TrimSuffix(g.statement(), ";\n")+": "+k[2:]+" is not scripted"))
+				strings.TrimSuffix(g.statement(), ";\n")+": "+what+" is not scripted"))
 			continue
 		}
 		sb.WriteString(g.statement())
