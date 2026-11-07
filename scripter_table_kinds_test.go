@@ -368,6 +368,34 @@ func TestBuildTableScriptGraphEdge(t *testing.T) {
 	}
 }
 
+// TestBuildTableScriptDeferReferencesLeavesOutEdgeConstraints: a database
+// script creates an edge table before its node tables when name order says
+// so, and an inline CONNECTION fails the replay (Msg 13931); under
+// DeferReferences the table's script holds neither its edge constraints nor
+// its foreign keys, which ScriptDatabaseObjectList queues after every table.
+func TestBuildTableScriptDeferReferencesLeavesOutEdgeConstraints(t *testing.T) {
+	p := tableScriptParts{
+		cols: graphTestColumns(true),
+		fks: []*ForeignKey{{Name: "FK_x", ReferencedSchema: "dbo", ReferencedTable: "Z",
+			Columns: []string{"rating"}, ReferencedColumns: []string{"id"}}},
+		ecs: []*EdgeConstraint{{Name: "EC_lives", DeleteAction: "NO_ACTION",
+			Clauses: []EdgeConnection{{"dbo", "Zperson", "dbo", "Acity"}}}},
+		table: tableScriptOptions{IsEdge: true},
+	}
+	opts := DefaultScriptOptions()
+	if script := buildTableScript("dbo", "AlivesIn", "G", p, opts); !strings.Contains(script, "CONNECTION (") ||
+		!strings.Contains(script, "FK_x") {
+		t.Fatalf("without DeferReferences the script lacks its constraints:\n%s", script)
+	}
+	opts.DeferReferences = true
+	script := buildTableScript("dbo", "AlivesIn", "G", p, opts)
+	for _, bad := range []string{"CONNECTION", "EC_lives", "FK_x"} {
+		if strings.Contains(script, bad) {
+			t.Errorf("deferred script contains %q:\n%s", bad, script)
+		}
+	}
+}
+
 // TestBuildTableScriptMemoryOptimized: a memory-optimized table scripted as
 // a disk table plus CREATE INDEX statements is refused by the server on
 // every index, and loses MEMORY_OPTIMIZED and DURABILITY besides. Its

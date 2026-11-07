@@ -88,6 +88,7 @@ var gatedColumns = []gatedColumn{
 	{"tables", "ledger_type", "t.ledger_type", SQLServer2022, false, ""},
 	{"tables", "ledger_view_id", "t.ledger_view_id", SQLServer2022, false, ""},
 	{"views", "is_dropped_ledger_view", "v.is_dropped_ledger_view", SQLServer2022, false, ""},
+	{"tables", "is_dropped_ledger_table", "p.is_dropped_ledger_table", SQLServer2022, false, ""},
 
 	// sys.partitions — XML_COMPRESSION, 2022.
 	{"partitions", "xml_compression", "pp.xml_compression", SQLServer2022, false, ""},

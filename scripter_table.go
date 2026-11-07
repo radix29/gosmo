@@ -102,7 +102,7 @@ func (sc *Scripter) scriptTable(ctx context.Context, t *Table) (string, error) {
 		return "", err
 	}
 	if t.IsEdge {
-		if p.ecs, err = t.EdgeConstraints(ctx); err != nil {
+		if p.ecs, err = sc.tableEdgeConstraints(ctx, t); err != nil {
 			return "", err
 		}
 	}
@@ -116,9 +116,10 @@ func (sc *Scripter) scriptTable(ctx context.Context, t *Table) (string, error) {
 // script (see ScriptOptions.ExtendedProperties). A FileTable's
 // system-defined constraints and indexes are AS FILETABLE's to create, under
 // names of the replay's own, so their properties have nothing to land on and
-// are left out with them. So are a deferred foreign key's (DeferForeignKeys):
+// are left out with them. So are a deferred foreign key's (DeferReferences):
 // the key does not exist yet, and its own script adds them (Msg 15135 on
-// replay otherwise).
+// replay otherwise). An edge constraint cannot carry one (Msg 15135 for every
+// level form, SQL Server 2025, 2026-11-07).
 func (sc *Scripter) withTableExtendedProperties(ctx context.Context, t *Table, p tableScriptParts, script string) (string, error) {
 	props, err := sc.scriptExtendedProperties(ctx, t.ObjectID, true, func(ep scriptedExtProp) bool {
 		if ep.level.Level2Type == "COLUMN" {
@@ -127,7 +128,7 @@ func (sc *Scripter) withTableExtendedProperties(ctx context.Context, t *Table, p
 		if slices.Contains(p.table.FileTableSystemObjects, ep.level.Level2Name) {
 			return true
 		}
-		return sc.opts.DeferForeignKeys && ep.level.Level2Type == "CONSTRAINT" &&
+		return sc.opts.DeferReferences && ep.level.Level2Type == "CONSTRAINT" &&
 			slices.ContainsFunc(p.fks, func(fk *ForeignKey) bool { return fk.Name == ep.level.Level2Name })
 	})
 	if err != nil {
@@ -743,7 +744,7 @@ func writeTableDependents(sb *strings.Builder, indexes []*Index, inline map[stri
 		sb.WriteString(scriptIndex(idx, fullName, p.ds, opts))
 	}
 
-	if !opts.DeferForeignKeys {
+	if !opts.DeferReferences {
 		for _, fk := range p.fks {
 			sb.WriteString(scriptForeignKey(fk, fullName, opts))
 		}
@@ -751,8 +752,10 @@ func writeTableDependents(sb *strings.Builder, indexes []*Index, inline map[stri
 	for _, ck := range p.checks {
 		sb.WriteString(scriptCheckConstraint(ck, fullName, opts))
 	}
-	for _, ec := range p.ecs {
-		sb.WriteString(scriptEdgeConstraint(ec, fullName, opts))
+	if !opts.DeferReferences {
+		for _, ec := range p.ecs {
+			sb.WriteString(scriptEdgeConstraint(ec, fullName, opts))
+		}
 	}
 
 	// Disabled indexes are disabled last. Disabling a clustered index takes

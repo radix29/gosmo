@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+
+	"github.com/radix29/gosmo/tsql"
 )
 
 // ============================================================
@@ -30,6 +32,7 @@ const (
 	ScriptedProcedure           ScriptedKind = "procedure"
 	ScriptedSynonym             ScriptedKind = "synonym"
 	ScriptedForeignKey          ScriptedKind = "foreign key"
+	ScriptedEdgeConstraint      ScriptedKind = "edge constraint"
 	ScriptedTrigger             ScriptedKind = "trigger"
 	ScriptedDatabaseTrigger     ScriptedKind = "database trigger"
 	ScriptedPermissions         ScriptedKind = "permissions"
@@ -40,7 +43,8 @@ type ScriptedObject struct {
 	Kind   ScriptedKind
 	Schema string // "" for an object that has none
 	Name   string
-	// Table is the table a foreign key or trigger belongs to.
+	// Table is the table a foreign key, edge constraint or trigger belongs
+	// to.
 	Table string
 	// SQL is the object's script, or — when the object cannot be scripted
 	// (an encrypted module, a definition the login cannot see) — one comment
@@ -73,8 +77,14 @@ type ObjectScriptOptions struct {
 // creation order and what the ordering had to decide.
 type DatabaseObjectScript struct {
 	Objects []ScriptedObject
-	// Warnings lists each dependency cycle that was broken, one reference
-	// each ("dependency cycle broken: a -> b").
+	// Warnings lists a degraded dependency source first (no VIEW
+	// DEFINITION on the database: "dependency order read from
+	// sys.sql_dependencies …"), then each dependency cycle that was broken,
+	// one reference each ("dependency cycle broken: a -> b"), and each
+	// scripted procedure,
+	// function or synonym naming an object the script leaves out, which SQL
+	// Server resolves only when it runs ("… references …, which is not
+	// scripted").
 	Warnings []string
 }
 
@@ -113,27 +123,39 @@ func (sc *Scripter) ScriptDatabaseObjects(ctx context.Context, o ObjectScriptOpt
 //  2. XML schema collections, types, table types, sequences, tables (without
 //     their foreign keys), functions, views, procedures and synonyms, sorted
 //     by sys.sql_expression_dependencies and the types columns and
-//     parameters use, ties by kind, schema and name;
-//  3. foreign keys (ALTER TABLE … ADD CONSTRAINT), DML triggers, database
-//     triggers;
+//     parameters use, ties by kind, schema and name. Without VIEW
+//     DEFINITION on the database that view lists nothing (or is refused),
+//     so the order is read from sys.sql_dependencies instead, which misses
+//     a reference to an object created after the module naming it; a
+//     Warning says so;
+//  3. foreign keys, then edge constraints (ALTER TABLE … ADD CONSTRAINT,
+//     once every table exists: the catalog records no dependency from an
+//     edge table to its node tables), DML triggers, database triggers;
 //  4. with IncludePermissions, the permissions.
 //
 // A cycle among references SQL Server resolves late is broken and reported in
-// Warnings; schema-bound references are never broken. The Scripter's verb
+// Warnings; schema-bound references are never broken. An object that is
+// left out — an encrypted module, or one whose definition the login cannot
+// see, is listed as a comment with its Note set — is followed by a note for
+// everything whose creation needs it, transitively: a foreign key or edge
+// constraint naming its table, a trigger on it, a table, view, table type or
+// inline function selecting from or typed by it, and any schema-bound
+// reference. A GRANT on it becomes a comment in the permissions. A
+// procedure, multi-statement or scalar function or synonym naming it is
+// still scripted (SQL Server resolves the name when it runs), with a
+// Warning. The Scripter's verb
 // must be ScriptCreate. Not scripted: system objects, a system-versioned
 // or ledger table's history table and ledger view (its parent creates them),
 // rules and defaults, CLR
 // assemblies, full-text and Service Broker objects, external objects,
-// credentials, certificates and keys, and any dependency across databases. An
-// encrypted module, or one the login has no VIEW DEFINITION on, is listed as
-// a comment.
+// credentials, certificates and keys, and any dependency across databases.
 func (sc *Scripter) ScriptDatabaseObjectList(ctx context.Context, o ObjectScriptOptions) (*DatabaseObjectScript, error) {
 	if sc.opts.verb() != ScriptCreate {
 		return nil, invalidf("gosmo: script database objects: only the CREATE verb is supported")
 	}
 	d := sc.db
 	opts := sc.opts
-	opts.DeferForeignKeys = true
+	opts.DeferReferences = true
 	s := &Scripter{db: d, opts: opts}
 	want := func(k ScriptedKind) bool { return o.Kinds == nil || slices.Contains(o.Kinds, k) }
 
@@ -141,7 +163,7 @@ func (sc *Scripter) ScriptDatabaseObjectList(ctx context.Context, o ObjectScript
 	// the total is known before the first object is scripted (Progress).
 	var queue []pendingObject
 	queue1 := func(obj ScriptedObject, gen func() (string, error)) {
-		queue = append(queue, pendingObject{obj, gen})
+		queue = append(queue, pendingObject{obj: obj, gen: gen})
 	}
 	sqlOf := func(sql string) func() (string, error) { return func() (string, error) { return sql, nil } }
 
@@ -152,7 +174,7 @@ func (sc *Scripter) ScriptDatabaseObjectList(ctx context.Context, o ObjectScript
 		if sec, err = s.readDatabaseSecurity(ctx); err != nil {
 			return nil, err
 		}
-		head, _ := buildDatabaseSecurityParts(d.Name, sec)
+		head, _ := buildDatabaseSecurityParts(d.Name, sec, nil)
 		if want(ScriptedPrincipals) {
 			queue1(ScriptedObject{Kind: ScriptedPrincipals, Name: d.Name}, sqlOf(head))
 		}
@@ -202,13 +224,18 @@ func (sc *Scripter) ScriptDatabaseObjectList(ctx context.Context, o ObjectScript
 		node orderNode
 		kind ScriptedKind
 		gen  func() (string, error)
+		// late marks an object whose CREATE does not resolve the objects
+		// its body names (deferred name resolution): a procedure, a
+		// multi-statement or scalar function, a synonym.
+		late bool
 	}
 	items := map[string]item{}
 	var nodes []orderNode
 	put := func(prefix byte, rank int, kind ScriptedKind, schema, name string, gen func() (string, error)) {
 		n := orderNode{key: objectKey(prefix, schema, name), rank: rank, schema: schema, name: name}
 		nodes = append(nodes, n)
-		items[n.key] = item{n, kind, gen}
+		late := kind == ScriptedProcedure || kind == ScriptedSynonym
+		items[n.key] = item{n, kind, gen, late}
 	}
 	xmls, err := d.XMLSchemaCollections(ctx)
 	if err != nil {
@@ -263,6 +290,14 @@ func (sc *Scripter) ScriptDatabaseObjectList(ctx context.Context, o ObjectScript
 	}
 	for _, f := range funcs {
 		put('o', 5, ScriptedFunction, f.Schema, f.Name, func() (string, error) { return s.ScriptFunction(ctx, f.Schema, f.Name) })
+		if f.FuncType != FunctionTypeInlineTable {
+			// An inline function's SELECT is compiled by its CREATE, like
+			// a view's; the other forms' bodies resolve when they run.
+			k := objectKey('o', f.Schema, f.Name)
+			it := items[k]
+			it.late = true
+			items[k] = it
+		}
 	}
 	views, err := d.Views(ctx, ObjectFilter{})
 	if err != nil {
@@ -297,7 +332,14 @@ func (sc *Scripter) ScriptDatabaseObjectList(ctx context.Context, o ObjectScript
 		put('o', 8, ScriptedSynonym, y.Schema, y.Name, func() (string, error) { return s.ScriptSynonym(ctx, y.Schema, y.Name) })
 	}
 
-	edges, err := d.dependencyOrderEdges(ctx)
+	edges, sourceWarning, err := readOrderEdges(ctx,
+		func(ctx context.Context) (bool, error) { return d.HasPermission(ctx, "VIEW DEFINITION") },
+		func(ctx context.Context) ([]orderEdge, error) {
+			return d.dependencyOrderEdges(ctx, expressionDependencyRefs)
+		},
+		func(ctx context.Context) ([]orderEdge, error) {
+			return d.dependencyOrderEdges(ctx, legacyDependencyRefs)
+		})
 	if err != nil {
 		return nil, err
 	}
@@ -306,16 +348,37 @@ func (sc *Scripter) ScriptDatabaseObjectList(ctx context.Context, o ObjectScript
 		return nil, err
 	}
 	res := &DatabaseObjectScript{Warnings: warnings}
+	if sourceWarning != "" {
+		res.Warnings = append([]string{sourceWarning}, warnings...)
+	}
+	// Every reference a CREATE resolves is a need: a schema-bound one, any
+	// from a table, view, table type or inline function, and any to a type
+	// or XML schema collection (a parameter's type is resolved too). A late
+	// object's other references are only warned about.
+	needs, lateRefs := map[string][]string{}, map[string][]string{}
+	for _, e := range edges {
+		it, ok := items[e.from]
+		if !ok || e.from == e.to {
+			continue
+		}
+		if e.bound || !it.late || e.to[0] != 'o' {
+			needs[e.from] = append(needs[e.from], e.to)
+		} else {
+			lateRefs[e.from] = append(lateRefs[e.from], e.to)
+		}
+	}
 	for _, n := range order {
 		it := items[n.key]
 		if want(it.kind) {
-			queue1(ScriptedObject{Kind: it.kind, Schema: n.schema, Name: n.name}, it.gen)
+			queue = append(queue, pendingObject{obj: ScriptedObject{Kind: it.kind, Schema: n.schema, Name: n.name},
+				gen: it.gen, key: n.key, needs: needs[n.key], late: lateRefs[n.key]})
 		}
 	}
 
-	// 3. what needs every table: foreign keys, then triggers. The foreign
-	// keys come from the table prefetch: a ScriptForeignKey each re-read the
-	// table and its keys, 1 + 2×keys round trips per table.
+	// 3. what needs every table: foreign keys, edge constraints, then
+	// triggers. The keys and edge constraints come from the table prefetch:
+	// a ScriptForeignKey each re-read the table and its keys, 1 + 2×keys
+	// round trips per table.
 	if want(ScriptedForeignKey) {
 		for _, t := range scriptedTables {
 			fks, err := s.tableForeignKeys(ctx, t)
@@ -323,8 +386,37 @@ func (sc *Scripter) ScriptDatabaseObjectList(ctx context.Context, o ObjectScript
 				return nil, err
 			}
 			for _, fk := range fks {
-				queue1(ScriptedObject{Kind: ScriptedForeignKey, Schema: t.Schema, Name: fk.Name, Table: t.Name},
-					func() (string, error) { return s.scriptTableForeignKey(ctx, t, fk) })
+				queue = append(queue, pendingObject{
+					obj:   ScriptedObject{Kind: ScriptedForeignKey, Schema: t.Schema, Name: fk.Name, Table: t.Name},
+					gen:   func() (string, error) { return s.scriptTableForeignKey(ctx, t, fk) },
+					key:   objectKey('o', t.Schema, fk.Name),
+					needs: []string{objectKey('o', t.Schema, t.Name), objectKey('o', fk.ReferencedSchema, fk.ReferencedTable)},
+				})
+			}
+		}
+	}
+	if want(ScriptedEdgeConstraint) {
+		for _, t := range scriptedTables {
+			if !t.IsEdge {
+				continue
+			}
+			ecs, err := s.tableEdgeConstraints(ctx, t)
+			if err != nil {
+				return nil, err
+			}
+			for _, ec := range ecs {
+				ecNeeds := []string{objectKey('o', t.Schema, t.Name)}
+				for _, c := range ec.Clauses {
+					ecNeeds = append(ecNeeds, objectKey('o', c.FromSchema, c.FromTable), objectKey('o', c.ToSchema, c.ToTable))
+				}
+				queue = append(queue, pendingObject{
+					obj: ScriptedObject{Kind: ScriptedEdgeConstraint, Schema: t.Schema, Name: ec.Name, Table: t.Name},
+					// No extended properties: an edge constraint cannot
+					// carry one (see withTableExtendedProperties).
+					gen:   sqlOf(scriptEdgeConstraint(ec, qualifiedName(t.Schema, t.Name), s.opts)),
+					key:   objectKey('o', t.Schema, ec.Name),
+					needs: ecNeeds,
+				})
 			}
 		}
 	}
@@ -334,8 +426,12 @@ func (sc *Scripter) ScriptDatabaseObjectList(ctx context.Context, o ObjectScript
 			return nil, err
 		}
 		for _, tr := range trs {
-			queue1(ScriptedObject{Kind: ScriptedTrigger, Schema: tr.Schema, Name: tr.Name, Table: tr.TableName},
-				func() (string, error) { return s.ScriptTrigger(ctx, tr.Schema, tr.Name) })
+			queue = append(queue, pendingObject{
+				obj:   ScriptedObject{Kind: ScriptedTrigger, Schema: tr.Schema, Name: tr.Name, Table: tr.TableName},
+				gen:   func() (string, error) { return s.ScriptTrigger(ctx, tr.Schema, tr.Name) },
+				key:   objectKey('o', tr.Schema, tr.Name),
+				needs: []string{objectKey('o', tr.Schema, tr.TableName)},
+			})
 		}
 	}
 	if want(ScriptedDatabaseTrigger) {
@@ -349,15 +445,29 @@ func (sc *Scripter) ScriptDatabaseObjectList(ctx context.Context, o ObjectScript
 		}
 	}
 
-	// 4. permissions.
-	if sec != nil && want(ScriptedPermissions) {
-		_, tail := buildDatabaseSecurityParts(d.Name, sec)
-		queue1(ScriptedObject{Kind: ScriptedPermissions, Name: d.Name}, sqlOf(tail))
+	// missing is every object the script leaves out, by objectKey: the
+	// dropped ledger objects nothing creates, then whatever scriptQueue notes.
+	missing := map[string]bool{}
+	for k, dropped := range byParent {
+		if dropped {
+			missing[k] = true
+		}
 	}
 
-	if res.Objects, err = scriptQueue(ctx, queue, o.Progress); err != nil {
+	// 4. permissions, built at their turn: a GRANT on an object left out
+	// would fail the replay (Msg 15151), so it becomes a comment.
+	if sec != nil && want(ScriptedPermissions) {
+		queue1(ScriptedObject{Kind: ScriptedPermissions, Name: d.Name}, func() (string, error) {
+			_, tail := buildDatabaseSecurityParts(d.Name, sec, missing)
+			return tail, nil
+		})
+	}
+
+	var lateWarnings []string
+	if res.Objects, lateWarnings, err = scriptQueue(ctx, queue, missing, o.Progress); err != nil {
 		return nil, err
 	}
+	res.Warnings = append(res.Warnings, lateWarnings...)
 	return res, nil
 }
 
@@ -366,6 +476,11 @@ func (sc *Scripter) ScriptDatabaseObjectList(ctx context.Context, o ObjectScript
 type pendingObject struct {
 	obj ScriptedObject
 	gen func() (string, error)
+	// key is the objectKey of what obj creates, "" when nothing can need it.
+	key string
+	// needs is the objectKeys obj cannot be created without; late is those
+	// it names but SQL Server resolves only when it runs.
+	needs, late []string
 }
 
 // scriptQueue scripts each queued object in order, reporting to progress (if
@@ -373,30 +488,68 @@ type pendingObject struct {
 // scripted (ErrUnsupported: an encrypted module, a definition the login
 // cannot see) becomes a comment with its Note set, rather than failing the
 // whole database; any other error, and a done ctx, ends the script.
-func scriptQueue(ctx context.Context, queue []pendingObject, progress func(done, total int)) ([]ScriptedObject, error) {
+//
+// missing (nil for none) holds the objectKeys of what the script leaves out.
+// scriptQueue adds each noted object's key, and an object needing a missing
+// one is noted without being scripted, its key added in turn: the queue is
+// in dependency order, so one pass carries the cascade. A scripted object
+// with a late reference to a missing one returns a warning.
+func scriptQueue(ctx context.Context, queue []pendingObject, missing map[string]bool, progress func(done, total int)) ([]ScriptedObject, []string, error) {
 	if progress == nil {
 		progress = func(int, int) {}
 	}
+	if missing == nil {
+		missing = map[string]bool{}
+	}
 	out := make([]ScriptedObject, 0, len(queue))
+	var warnings []string
 	progress(0, len(queue))
 	for _, p := range queue {
 		if err := ctx.Err(); err != nil {
-			return nil, fmt.Errorf("gosmo: script database objects: %w", err)
+			return nil, nil, fmt.Errorf("gosmo: script database objects: %w", err)
 		}
 		obj := p.obj
-		sql, err := p.gen()
+		var sql string
+		var err error
+		if i := slices.IndexFunc(p.needs, func(k string) bool { return missing[k] }); i >= 0 {
+			err = unsupportedf("gosmo: script %s %s: needs %s, which is not scripted", obj.Kind, obj.display(), p.needs[i][2:])
+		} else {
+			sql, err = p.gen()
+		}
 		if err != nil {
 			if !errors.Is(err, ErrUnsupported) {
-				return nil, err
+				return nil, nil, err
 			}
 			obj.Note = err.Error()
-			sql = "-- not scripted: " + strings.ReplaceAll(err.Error(), "\n", " ") + "\n"
+			sql = "-- not scripted: " + tsql.CommentSafe(err.Error()) + "\n"
+			if p.key != "" {
+				missing[p.key] = true
+			}
+		} else {
+			for _, k := range p.late {
+				if missing[k] {
+					warnings = append(warnings, fmt.Sprintf("%s %s references %s, which is not scripted", obj.Kind, obj.display(), k[2:]))
+				}
+			}
 		}
 		obj.SQL = sql
 		out = append(out, obj)
 		progress(len(out), len(queue))
 	}
-	return out, nil
+	return out, warnings, nil
+}
+
+// display is o's name as a script shows it: schema-qualified where it has a
+// schema, and for a foreign key, edge constraint or trigger with its table.
+func (o ScriptedObject) display() string {
+	if o.Schema == "" {
+		return quoteIdent(o.Name)
+	}
+	n := qualifiedName(o.Schema, o.Name)
+	if o.Table != "" {
+		n += " on " + qualifiedName(o.Schema, o.Table)
+	}
+	return n
 }
 
 // objectKey identifies a node: prefix o for sys.objects, t for a type, x for
@@ -413,8 +566,8 @@ func objectKey(prefix byte, schema, name string) string {
 // ledger table's ledger view. Scripted on their own, the history table was a
 // "not scripted" note and the ledger view a CREATE VIEW the replay refused
 // (Msg 2714: its table had already created it). The value is true for a
-// dropped ledger table's ledger view: nothing creates it, so it is noted, not
-// skipped.
+// dropped ledger table's ledger view and history table: nothing creates them
+// (the view is noted, not skipped), so nothing in the script may need them.
 func (d *Database) createdByParent(ctx context.Context) (map[string]bool, error) {
 	rows, err := d.query(ctx, d.createdByParentSelect())
 	type row struct {
@@ -442,7 +595,10 @@ func (d *Database) createdByParent(ctx context.Context) (map[string]bool, error)
 func (d *Database) createdByParentSelect() string {
 	major := d.serverMajorVersion()
 	return `
-SELECT SCHEMA_NAME(t.schema_id), t.name, CAST(0 AS bit)
+SELECT SCHEMA_NAME(t.schema_id), t.name,
+       CAST(CASE WHEN EXISTS (SELECT 1 FROM sys.tables p
+                              WHERE p.history_table_id = t.object_id AND ` + bitSince(major, SQLServer2022, "p.is_dropped_ledger_table") + ` = 1)
+                 THEN 1 ELSE 0 END AS bit)
 FROM   sys.tables t
 WHERE  t.temporal_type = 1 OR ` + colSince(major, SQLServer2022, "t.ledger_type", "CAST(0 AS tinyint)") + ` = 1
 UNION ALL
@@ -451,14 +607,40 @@ FROM   sys.views v
 WHERE  v.object_id IN (SELECT ` + colSince(major, SQLServer2022, "t.ledger_view_id", "CAST(NULL AS int)") + ` FROM sys.tables t)`
 }
 
-// dependencyOrderEdges reads every reference one object's creation needs from
-// another, within the database: the catalog's expression dependencies (a
-// default or check constraint counts for its table), and the types and XML
-// schema collections columns and parameters use.
-func (d *Database) dependencyOrderEdges(ctx context.Context) ([]orderEdge, error) {
-	const q = `
-SELECT 'o', SCHEMA_NAME(ro.schema_id), ro.name, x.k, x.s, x.n, x.b
-FROM (
+// legacyDependencyWarning is the Warning a script whose order came from
+// sys.sql_dependencies carries.
+const legacyDependencyWarning = "dependency order read from sys.sql_dependencies (no VIEW DEFINITION on the database): " +
+	"a reference to an object created after the module naming it is not seen"
+
+// readOrderEdges picks the source of the dependency order. Without VIEW
+// DEFINITION on the database, sys.sql_expression_dependencies returns no rows
+// and no error (db_datareader with VIEW DEFINITION on a schema), and without
+// SELECT on it, which public lacks, it is refused with Msg 229 (VIEW
+// DEFINITION alone). Either way the same login reads sys.sql_dependencies,
+// the deprecated view SQL Server still maintains (13 through 17), and the
+// result says so in a warning rather than ordering by name in silence.
+func readOrderEdges(ctx context.Context, viewDefinition func(context.Context) (bool, error),
+	expression, legacy func(context.Context) ([]orderEdge, error)) ([]orderEdge, string, error) {
+	held, err := viewDefinition(ctx)
+	if err != nil {
+		return nil, "", err
+	}
+	if held {
+		edges, err := expression(ctx)
+		if err == nil || !IsPermissionDenied(err) {
+			return edges, "", err
+		}
+	}
+	edges, err := legacy(ctx)
+	if err != nil {
+		return nil, "", err
+	}
+	return edges, legacyDependencyWarning, nil
+}
+
+// expressionDependencyRefs is dependencyOrderEdges's object, type and XML
+// schema collection references from sys.sql_expression_dependencies.
+const expressionDependencyRefs = `
     SELECT sed.referencing_id AS rid, 'o' AS k, SCHEMA_NAME(o.schema_id) AS s, o.name AS n,
            CAST(sed.is_schema_bound_reference AS int) AS b
     FROM   sys.sql_expression_dependencies sed
@@ -473,7 +655,35 @@ FROM (
     SELECT sed.referencing_id, 'x', SCHEMA_NAME(c.schema_id), c.name, CAST(sed.is_schema_bound_reference AS int)
     FROM   sys.sql_expression_dependencies sed
     JOIN   sys.xml_schema_collections c ON c.xml_collection_id = sed.referenced_id
-    WHERE  sed.referenced_class = 10 AND c.schema_id <> 4
+    WHERE  sed.referenced_class = 10 AND c.schema_id <> 4`
+
+// legacyDependencyRefs is the same from sys.sql_dependencies, one row per
+// referenced column. Its classes, checked on 13 and 17 (2026-11-07): 0 an
+// object reference, 1 a schema-bound one, 3 an XML schema collection
+// (schema-bound, a typed xml parameter's included). It records no alias type
+// at all, which the columns and parameters branches cover, and nothing for a
+// synonym or for a name that did not exist when the module was created.
+const legacyDependencyRefs = `
+    SELECT DISTINCT d.object_id AS rid, 'o' AS k, SCHEMA_NAME(o.schema_id) AS s, o.name AS n,
+           CAST(d.class AS int) AS b
+    FROM   sys.sql_dependencies d
+    JOIN   sys.objects o ON o.object_id = d.referenced_major_id
+    WHERE  d.class IN (0, 1) AND o.is_ms_shipped = 0
+    UNION ALL
+    SELECT DISTINCT d.object_id, 'x', SCHEMA_NAME(c.schema_id), c.name, 1
+    FROM   sys.sql_dependencies d
+    JOIN   sys.xml_schema_collections c ON c.xml_collection_id = d.referenced_major_id
+    WHERE  d.class = 3 AND c.schema_id <> 4`
+
+// dependencyOrderEdges reads every reference one object's creation needs from
+// another, within the database: refs, the catalog's dependencies
+// (expressionDependencyRefs or legacyDependencyRefs; a default or check
+// constraint counts for its table), and the types and XML schema
+// collections columns and parameters use.
+func (d *Database) dependencyOrderEdges(ctx context.Context, refs string) ([]orderEdge, error) {
+	q := `
+SELECT 'o', SCHEMA_NAME(ro.schema_id), ro.name, x.k, x.s, x.n, x.b
+FROM (` + refs + `
     UNION ALL
     SELECT col.object_id, 't', SCHEMA_NAME(t.schema_id), t.name, 0
     FROM   sys.columns col

@@ -206,6 +206,24 @@ func (g securityGrant) securable() (string, bool) {
 	return p + "::" + quoteIdent(g.name), true
 }
 
+// objectKey is the objectKey of g's securable when a whole-database script
+// creates it as an object (class 1), type (6) or XML schema collection (10),
+// else "".
+func (g securityGrant) objectKey() string {
+	if g.name == "" {
+		return ""
+	}
+	switch g.class {
+	case 1:
+		return objectKey('o', g.schema, g.name)
+	case 6:
+		return objectKey('t', g.schema, g.name)
+	case 10:
+		return objectKey('x', g.schema, g.name)
+	}
+	return ""
+}
+
 // statement renders g as its GRANT, DENY or REVOKE, or the comment listing
 // one it cannot name.
 func (g securityGrant) statement() string {
@@ -241,7 +259,7 @@ func isServerPrincipal(id int, name string) bool {
 // buildDatabaseSecurityScript assembles ScriptDatabaseSecurity's script for
 // dbName (named in the header comment only) from what it read.
 func buildDatabaseSecurityScript(dbName string, sec *databaseSecurity) string {
-	head, tail := buildDatabaseSecurityParts(dbName, sec)
+	head, tail := buildDatabaseSecurityParts(dbName, sec, nil)
 	return head + tail
 }
 
@@ -249,7 +267,10 @@ func buildDatabaseSecurityScript(dbName string, sec *databaseSecurity) string {
 // database owner, roles, users, schemas, ownership and role memberships, and
 // the permissions section alone. A whole-database script puts the first
 // before the objects and the second after, when every securable exists.
-func buildDatabaseSecurityParts(dbName string, sec *databaseSecurity) (principalsPart, permissionsPart string) {
+// A permission on an object, type or XML schema collection whose objectKey
+// is in missing (nil for none) — one the script leaves out — is a comment
+// line instead: the replay would fail it (Msg 15151).
+func buildDatabaseSecurityParts(dbName string, sec *databaseSecurity, missing map[string]bool) (principalsPart, permissionsPart string) {
 	opts := ScriptOptions{IncludeIfNotExists: true}
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "/* Security of database %s. Every password below is a placeholder: the\n"+
@@ -352,6 +373,11 @@ func buildDatabaseSecurityParts(dbName string, sec *databaseSecurity) (principal
 	sb.Reset()
 	section("Permissions")
 	for _, g := range sec.grants {
+		if k := g.objectKey(); k != "" && missing[k] {
+			fmt.Fprintf(&sb, "-- not scripted: %s\n", tsql.CommentSafe(
+				strings.TrimSuffix(g.statement(), ";\n")+": "+k[2:]+" is not scripted"))
+			continue
+		}
 		sb.WriteString(g.statement())
 	}
 	if len(sec.grants) > 0 {

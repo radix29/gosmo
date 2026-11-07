@@ -6,8 +6,8 @@ import (
 )
 
 // tablePrefetch is what ScriptTable reads per table — options, columns,
-// indexes with their columns, foreign keys, check constraints and the data
-// space — read for every table of a database in one round trip, keyed by
+// indexes with their columns, foreign keys, check constraints, the data
+// space and (2019+) edge constraints — read for every table of a database in one round trip, keyed by
 // object_id. ScriptDatabaseObjectList scripts every table of a database, and
 // ten reads each made the loop's cost a function of the table count, over a
 // connection per read.
@@ -22,6 +22,7 @@ type tablePrefetch struct {
 	fks     map[int][]*ForeignKey
 	checks  map[int][]*CheckConstraint
 	ds      map[int]DataSpace
+	ecs     map[int][]*EdgeConstraint
 }
 
 // The batch reads every table in the database, so it also reads the ones the
@@ -33,7 +34,8 @@ type tablePrefetch struct {
 const allTables = "IN (SELECT object_id FROM sys.tables)"
 
 // prefetchTables reads the script inputs of tables in one batch of seven
-// result sets on one connection, and nothing when there are none.
+// result sets on one connection (eight from SQL Server 2019, whose
+// sys.edge_constraints adds the edge constraints), and nothing when there are none.
 func (d *Database) prefetchTables(ctx context.Context, tables []*Table) (*tablePrefetch, error) {
 	if len(tables) == 0 {
 		return nil, nil
@@ -50,6 +52,7 @@ func (d *Database) prefetchTables(ctx context.Context, tables []*Table) (*tableP
 		fks:     map[int][]*ForeignKey{},
 		checks:  map[int][]*CheckConstraint{},
 		ds:      map[int]DataSpace{},
+		ecs:     map[int][]*EdgeConstraint{},
 	}
 	idxCols := map[int]map[int][]IndexColumn{}
 
@@ -60,6 +63,10 @@ func (d *Database) prefetchTables(ctx context.Context, tables []*Table) (*tableP
 		foreignKeySelectWith(", fk.parent_object_id", allTables) + "\nORDER  BY fk.name;\n" +
 		checkConstraintSelect(", cc.parent_object_id", allTables) + ";\n" +
 		dataSpaceSelect(", i.object_id", allTables)
+	withEdges := d.atLeast(SQLServer2019)
+	if withEdges {
+		q += ";\n" + edgeConstraintSelect(", ec.parent_object_id", allTables)
+	}
 
 	rows, err := d.query(ctx, q)
 	if err != nil {
@@ -161,6 +168,19 @@ func (d *Database) prefetchTables(ctx context.Context, tables []*Table) (*tableP
 			}
 			return rows.Err()
 		},
+	}
+	if withEdges {
+		reads = append(reads, func() error {
+			for rows.Next() {
+				var id int
+				ec, err := scanEdgeConstraint(rows.Scan, &id)
+				if err != nil {
+					return err
+				}
+				p.ecs[id] = append(p.ecs[id], ec)
+			}
+			return rows.Err()
+		})
 	}
 	for i, read := range reads {
 		if i > 0 && !rows.NextResultSet() {

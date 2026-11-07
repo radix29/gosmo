@@ -107,6 +107,21 @@ func TestScriptCommentsContainHostileNames(t *testing.T) {
 		"database security header": func(n string) string {
 			return buildDatabaseSecurityScript(n, &databaseSecurity{})
 		},
+		"database security permission on an object left out": func(n string) string {
+			_, tail := buildDatabaseSecurityParts("d", &databaseSecurity{grants: []securityGrant{
+				{grantee: n, state: "G", permission: "SELECT", class: 1, schema: n, name: n}}},
+				map[string]bool{objectKey('o', n, n): true})
+			return tail
+		},
+		"database objects note on what needs an object left out": func(n string) string {
+			out, _, err := scriptQueue(t.Context(), []pendingObject{
+				{obj: ScriptedObject{Kind: ScriptedForeignKey, Schema: n, Name: n, Table: n}, needs: []string{objectKey('o', n, n)}},
+			}, map[string]bool{objectKey('o', n, n): true}, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			return out[0].SQL
+		},
 		"database security unscriptable permission": func(n string) string {
 			return buildDatabaseSecurityScript("d", &databaseSecurity{grants: []securityGrant{
 				{grantee: n, state: "G", permission: n, class: 99, classDesc: n}}})

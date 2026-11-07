@@ -68,11 +68,12 @@ type ScriptOptions struct {
 	// single-object script whose object can carry one — all but a broker
 	// priority; never to a DROP.
 	ExtendedProperties bool
-	// DeferForeignKeys leaves a table's foreign keys, and their extended
-	// properties, out of its script, for a caller emitting them afterwards
-	// as ALTER TABLE … ADD CONSTRAINT (see ScriptDatabaseObjects). Applies
-	// to ScriptTable only.
-	DeferForeignKeys bool
+	// DeferReferences leaves what a table references other tables through —
+	// its foreign keys, with their extended properties, and (an edge
+	// table's) edge constraints — out of its script, for a caller emitting them
+	// afterwards as ALTER TABLE … ADD CONSTRAINT, once every table exists
+	// (see ScriptDatabaseObjectList). Applies to ScriptTable only.
+	DeferReferences bool
 }
 
 // DefaultScriptOptions returns sensible defaults.

@@ -257,6 +257,17 @@ func (sc *Scripter) scriptTableForeignKey(ctx context.Context, t *Table, fk *For
 		t, fk.Name, "CONSTRAINT")
 }
 
+// tableEdgeConstraints is t.EdgeConstraints, from sc.tables when that covers
+// t.
+func (sc *Scripter) tableEdgeConstraints(ctx context.Context, t *Table) ([]*EdgeConstraint, error) {
+	if pre := sc.tables; pre != nil {
+		if _, ok := pre.options[t.ObjectID]; ok {
+			return pre.ecs[t.ObjectID], nil
+		}
+	}
+	return t.EdgeConstraints(ctx)
+}
+
 // tableForeignKeys is t.ForeignKeys, from sc.tables when that covers t.
 func (sc *Scripter) tableForeignKeys(ctx context.Context, t *Table) ([]*ForeignKey, error) {
 	if pre := sc.tables; pre != nil {
