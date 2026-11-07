@@ -331,7 +331,9 @@ func logSpaceQuery(vlfs bool) string {
 	var sb strings.Builder
 	sb.WriteString(`
 SELECT ls.total_log_size_in_bytes / 1024, ls.used_log_space_in_bytes / 1024,
-       CAST(ls.used_log_space_in_percent AS float), d.log_reuse_wait_desc, ` + vlf + `
+       CAST(ls.used_log_space_in_percent AS float), d.log_reuse_wait_desc, `)
+	sb.WriteString(vlf)
+	sb.WriteString(`
 FROM   sys.dm_db_log_space_usage ls
 JOIN   sys.databases d ON d.database_id = ls.database_id`)
 	if vlfs {

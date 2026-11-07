@@ -98,7 +98,9 @@ WHERE  1 = 1`)
 		if len(values) == 0 {
 			return
 		}
-		b.WriteString("\n  AND  RTRIM(" + column + ") IN (")
+		b.WriteString("\n  AND  RTRIM(")
+		b.WriteString(column)
+		b.WriteString(") IN (")
 		for i, v := range values {
 			if i > 0 {
 				b.WriteString(", ")

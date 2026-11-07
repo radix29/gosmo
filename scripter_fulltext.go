@@ -64,7 +64,8 @@ func buildFullTextStoplistScript(l *FullTextStoplist, words []FullTextStopword, 
 	return opts.envelope(drop, "IF NOT "+exists+"\n", func(sb *strings.Builder) {
 		// Cannot fail: the request names no source.
 		create, _ := createFullTextStoplistStatement(CreateFullTextStoplistRequest{Name: l.Name, Owner: l.Owner})
-		sb.WriteString(create + "\nGO\n")
+		sb.WriteString(create)
+		sb.WriteString("\nGO\n")
 		for _, w := range words {
 			if opts.IncludeIfNotExists {
 				fmt.Fprintf(sb, "IF NOT EXISTS (SELECT 1 FROM sys.fulltext_stopwords w JOIN sys.fulltext_stoplists l ON l.stoplist_id = w.stoplist_id\n"+
@@ -99,14 +100,16 @@ func buildSearchPropertyListScript(p *SearchPropertyList, props []SearchProperty
 	return opts.envelope(drop, "IF NOT "+exists+"\n", func(sb *strings.Builder) {
 		// Cannot fail: the request names no source.
 		create, _ := createSearchPropertyListStatement(CreateSearchPropertyListRequest{Name: p.Name, Owner: p.Owner})
-		sb.WriteString(create + "\nGO\n")
+		sb.WriteString(create)
+		sb.WriteString("\nGO\n")
 		for _, prop := range props {
 			if opts.IncludeIfNotExists {
 				fmt.Fprintf(sb, "IF NOT EXISTS (SELECT 1 FROM sys.registered_search_properties sp JOIN sys.registered_search_property_lists l ON l.property_list_id = sp.property_list_id\n"+
 					"               WHERE l.name = N'%s' AND sp.property_name = N'%s')\n",
 					escapeSingle(p.Name), escapeSingle(prop.Name))
 			}
-			sb.WriteString(addSearchPropertyStatement(p.Name, prop) + "\nGO\n")
+			sb.WriteString(addSearchPropertyStatement(p.Name, prop))
+			sb.WriteString("\nGO\n")
 		}
 	})
 }
@@ -150,7 +153,8 @@ func buildFullTextIndexScript(i *FullTextIndex, opts ScriptOptions) string {
 				StatisticalSemantics: c.StatisticalSemantics,
 			})
 		}
-		sb.WriteString(createFullTextIndexStatement(i.FullName(), req) + "\nGO\n")
+		sb.WriteString(createFullTextIndexStatement(i.FullName(), req))
+		sb.WriteString("\nGO\n")
 		if !i.IsEnabled {
 			fmt.Fprintf(sb, "ALTER FULLTEXT INDEX ON %s DISABLE\nGO\n", i.FullName())
 		}

@@ -95,7 +95,8 @@ func renderCLRModule(m clrModule) string {
 	switch m.keyword {
 	case "PROCEDURE":
 		if len(params) > 0 {
-			sb.WriteString("\n    " + strings.Join(params, ",\n    "))
+			sb.WriteString("\n    ")
+			sb.WriteString(strings.Join(params, ",\n    "))
 		}
 		sb.WriteString(withClause)
 	case "FUNCTION":
@@ -110,7 +111,8 @@ func renderCLRModule(m clrModule) string {
 			fmt.Fprintf(&sb, "\nORDER (%s)", strings.Join(m.order, ", "))
 		}
 	case "TRIGGER":
-		sb.WriteString(" ON " + m.on)
+		sb.WriteString(" ON ")
+		sb.WriteString(m.on)
 		sb.WriteString(withClause)
 		timing := "AFTER"
 		if m.insteadOf {

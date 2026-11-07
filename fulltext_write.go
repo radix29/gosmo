@@ -95,15 +95,18 @@ func (d *Database) CreateFullTextCatalog(ctx context.Context, req CreateFullText
 // the scripter's CREATE shares.
 func createFullTextCatalogStatement(req CreateFullTextCatalogRequest) string {
 	var sb strings.Builder
-	sb.WriteString("CREATE FULLTEXT CATALOG " + quoteIdent(req.Name))
+	sb.WriteString("CREATE FULLTEXT CATALOG ")
+	sb.WriteString(quoteIdent(req.Name))
 	if req.AccentSensitive != nil {
-		sb.WriteString(" WITH ACCENT_SENSITIVITY = " + onOff(*req.AccentSensitive))
+		sb.WriteString(" WITH ACCENT_SENSITIVITY = ")
+		sb.WriteString(onOff(*req.AccentSensitive))
 	}
 	if req.IsDefault {
 		sb.WriteString(" AS DEFAULT")
 	}
 	if req.Owner != "" {
-		sb.WriteString(" AUTHORIZATION " + quoteIdent(req.Owner))
+		sb.WriteString(" AUTHORIZATION ")
+		sb.WriteString(quoteIdent(req.Owner))
 	}
 	return sb.String()
 }
@@ -210,17 +213,23 @@ func createFullTextStoplistStatement(req CreateFullTextStoplistRequest) (string,
 		return "", invalidf("gosmo: create full-text stoplist %q: FromDatabase needs From", req.Name)
 	}
 	var sb strings.Builder
-	sb.WriteString("CREATE FULLTEXT STOPLIST " + quoteIdent(req.Name))
+	sb.WriteString("CREATE FULLTEXT STOPLIST ")
+	sb.WriteString(quoteIdent(req.Name))
 	switch {
 	case req.FromSystem:
 		sb.WriteString(" FROM SYSTEM STOPLIST")
 	case req.FromDatabase != "":
-		sb.WriteString(" FROM " + quoteIdent(req.FromDatabase) + "." + quoteIdent(req.From))
+		sb.WriteString(" FROM ")
+		sb.WriteString(quoteIdent(req.FromDatabase))
+		sb.WriteString(".")
+		sb.WriteString(quoteIdent(req.From))
 	case req.From != "":
-		sb.WriteString(" FROM " + quoteIdent(req.From))
+		sb.WriteString(" FROM ")
+		sb.WriteString(quoteIdent(req.From))
 	}
 	if req.Owner != "" {
-		sb.WriteString(" AUTHORIZATION " + quoteIdent(req.Owner))
+		sb.WriteString(" AUTHORIZATION ")
+		sb.WriteString(quoteIdent(req.Owner))
 	}
 	sb.WriteString(";")
 	return sb.String(), nil
@@ -328,15 +337,21 @@ func createSearchPropertyListStatement(req CreateSearchPropertyListRequest) (str
 		return "", invalidf("gosmo: create search property list %q: FromDatabase needs From", req.Name)
 	}
 	var sb strings.Builder
-	sb.WriteString("CREATE SEARCH PROPERTY LIST " + quoteIdent(req.Name))
+	sb.WriteString("CREATE SEARCH PROPERTY LIST ")
+	sb.WriteString(quoteIdent(req.Name))
 	switch {
 	case req.FromDatabase != "":
-		sb.WriteString(" FROM " + quoteIdent(req.FromDatabase) + "." + quoteIdent(req.From))
+		sb.WriteString(" FROM ")
+		sb.WriteString(quoteIdent(req.FromDatabase))
+		sb.WriteString(".")
+		sb.WriteString(quoteIdent(req.From))
 	case req.From != "":
-		sb.WriteString(" FROM " + quoteIdent(req.From))
+		sb.WriteString(" FROM ")
+		sb.WriteString(quoteIdent(req.From))
 	}
 	if req.Owner != "" {
-		sb.WriteString(" AUTHORIZATION " + quoteIdent(req.Owner))
+		sb.WriteString(" AUTHORIZATION ")
+		sb.WriteString(quoteIdent(req.Owner))
 	}
 	sb.WriteString(";")
 	return sb.String(), nil
@@ -500,22 +515,33 @@ func (t *Table) CreateFullTextIndex(ctx context.Context, req CreateFullTextIndex
 
 func createFullTextIndexStatement(table string, req CreateFullTextIndexRequest) string {
 	var sb strings.Builder
-	sb.WriteString("CREATE FULLTEXT INDEX ON " + table)
+	sb.WriteString("CREATE FULLTEXT INDEX ON ")
+	sb.WriteString(table)
 	if len(req.Columns) > 0 {
 		cols := make([]string, len(req.Columns))
 		for i, c := range req.Columns {
 			cols[i] = c.clause()
 		}
-		sb.WriteString(" (" + strings.Join(cols, ", ") + ")")
+		sb.WriteString(" (")
+		sb.WriteString(strings.Join(cols, ", "))
+		sb.WriteString(")")
 	}
-	sb.WriteString(" KEY INDEX " + quoteIdent(req.KeyIndex))
+	sb.WriteString(" KEY INDEX ")
+	sb.WriteString(quoteIdent(req.KeyIndex))
 	switch {
 	case req.Catalog != "" && req.FileGroup != "":
-		sb.WriteString(" ON (" + quoteIdent(req.Catalog) + ", FILEGROUP " + quoteIdent(req.FileGroup) + ")")
+		sb.WriteString(" ON (")
+		sb.WriteString(quoteIdent(req.Catalog))
+		sb.WriteString(", FILEGROUP ")
+		sb.WriteString(quoteIdent(req.FileGroup))
+		sb.WriteString(")")
 	case req.Catalog != "":
-		sb.WriteString(" ON " + quoteIdent(req.Catalog))
+		sb.WriteString(" ON ")
+		sb.WriteString(quoteIdent(req.Catalog))
 	case req.FileGroup != "":
-		sb.WriteString(" ON (FILEGROUP " + quoteIdent(req.FileGroup) + ")")
+		sb.WriteString(" ON (FILEGROUP ")
+		sb.WriteString(quoteIdent(req.FileGroup))
+		sb.WriteString(")")
 	}
 	var with []string
 	if req.ChangeTracking != "" {
@@ -535,7 +561,9 @@ func createFullTextIndexStatement(table string, req CreateFullTextIndexRequest) 
 		with = append(with, "SEARCH PROPERTY LIST = "+quoteIdent(req.SearchPropertyList))
 	}
 	if len(with) > 0 {
-		sb.WriteString(" WITH (" + strings.Join(with, ", ") + ")")
+		sb.WriteString(" WITH (")
+		sb.WriteString(strings.Join(with, ", "))
+		sb.WriteString(")")
 	}
 	return sb.String()
 }

@@ -685,10 +685,12 @@ func createLoginStatement(name, password string, src LoginSource, opts *CreateLo
 		}
 		writeLoginDefaults(&sb, ", ", opts)
 		if checkExpiration != nil {
-			sb.WriteString(", CHECK_EXPIRATION = " + onOff(*checkExpiration))
+			sb.WriteString(", CHECK_EXPIRATION = ")
+			sb.WriteString(onOff(*checkExpiration))
 		}
 		if opts.CheckPolicy != nil {
-			sb.WriteString(", CHECK_POLICY = " + onOff(*opts.CheckPolicy))
+			sb.WriteString(", CHECK_POLICY = ")
+			sb.WriteString(onOff(*opts.CheckPolicy))
 		}
 		if opts.Credential != "" {
 			fmt.Fprintf(&sb, ", CREDENTIAL = %s", quoteIdent(opts.Credential))

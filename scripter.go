@@ -590,7 +590,8 @@ func writeCreateWithOptions(sb *strings.Builder, o *DatabaseOptions) {
 		with = append(with, "LEDGER = ON")
 	}
 	if len(with) > 0 {
-		sb.WriteString(" WITH " + strings.Join(with, ", "))
+		sb.WriteString(" WITH ")
+		sb.WriteString(strings.Join(with, ", "))
 	}
 }
 

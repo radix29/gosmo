@@ -71,7 +71,9 @@ func (l *Login) UserMappingsIn(ctx context.Context, dbs []*Database) ([]*LoginUs
 // userMappingsQuery, a parameter only so a live test can break it.
 func (l *Login) userMappingsBatch(ctx context.Context, q string, sid []byte, dbs []*Database) ([]*LoginUserMapping, error) {
 	var sb strings.Builder
-	sb.WriteString("SET NOCOUNT ON;\nDECLARE @proc nvarchar(300), @q nvarchar(max) = " + QuoteLiteral(q) + ";\n")
+	sb.WriteString("SET NOCOUNT ON;\nDECLARE @proc nvarchar(300), @q nvarchar(max) = ")
+	sb.WriteString(QuoteLiteral(q))
+	sb.WriteString(";\n")
 	n := 0
 	for _, db := range dbs {
 		if db.State != DatabaseOnline {

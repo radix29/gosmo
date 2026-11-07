@@ -370,7 +370,9 @@ func perDatabaseBatch[T any](ctx context.Context, s *Server, what string, dbs []
 	}
 	byName := make(map[string]*Database, len(dbs))
 	var sb strings.Builder
-	sb.WriteString("SET NOCOUNT ON;\nDECLARE @proc nvarchar(300), @q nvarchar(max) = " + QuoteLiteral(q) + ";\n")
+	sb.WriteString("SET NOCOUNT ON;\nDECLARE @proc nvarchar(300), @q nvarchar(max) = ")
+	sb.WriteString(QuoteLiteral(q))
+	sb.WriteString(";\n")
 	for _, d := range dbs {
 		byName[d.Name] = d
 		sb.WriteString(perDatabaseExec(d.Name, ""))

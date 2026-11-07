@@ -224,7 +224,8 @@ func buildApplicationRoleScript(r *ApplicationRole, opts ScriptOptions) string {
 	return opts.envelope(drop, guard, func(sb *strings.Builder) {
 		fmt.Fprintf(sb, "CREATE APPLICATION ROLE %s WITH PASSWORD = N'%s'", quoteIdent(r.Name), PasswordPlaceholder)
 		if r.DefaultSchema != "" {
-			sb.WriteString(", DEFAULT_SCHEMA = " + quoteIdent(r.DefaultSchema))
+			sb.WriteString(", DEFAULT_SCHEMA = ")
+			sb.WriteString(quoteIdent(r.DefaultSchema))
 		}
 		sb.WriteString(";  -- set the real password\nGO\n")
 	})

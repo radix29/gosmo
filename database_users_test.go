@@ -32,13 +32,17 @@ func TestUsersFillsWhatUserByNameFills(t *testing.T) {
 	if err != nil {
 		t.Fatalf("UserByName: %v", err)
 	}
-	if !reflect.DeepEqual(users[0], byName) {
-		t.Errorf("Users =\n%+v\nUserByName =\n%+v", *users[0], *byName)
-	}
-	v := reflect.ValueOf(*users[0])
+	v, w := reflect.ValueOf(*users[0]), reflect.ValueOf(*byName)
 	for i := range v.NumField() {
-		if f := v.Type().Field(i); f.IsExported() && v.Field(i).IsZero() {
+		f := v.Type().Field(i)
+		if !f.IsExported() {
+			continue
+		}
+		if v.Field(i).IsZero() {
 			t.Errorf("Users leaves User.%s zero on a row that has it", f.Name)
+		}
+		if got, want := v.Field(i).Interface(), w.Field(i).Interface(); !reflect.DeepEqual(got, want) {
+			t.Errorf("User.%s: Users = %+v, UserByName = %+v", f.Name, got, want)
 		}
 	}
 }

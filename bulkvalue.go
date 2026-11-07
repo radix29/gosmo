@@ -87,7 +87,9 @@ func (e *BulkValueError) Error() string {
 		fmt.Fprintf(&b, "row %d, ", e.Row)
 	}
 	if e.Column != "" {
-		b.WriteString("column " + QuoteName(e.Column) + ": ")
+		b.WriteString("column ")
+		b.WriteString(QuoteName(e.Column))
+		b.WriteString(": ")
 	}
 	b.WriteString(e.Reason)
 	return b.String()

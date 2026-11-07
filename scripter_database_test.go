@@ -258,7 +258,9 @@ func TestScriptDatabaseScriptsEveryOptionExplicitly(t *testing.T) {
 		"PAGE_VERIFY CHECKSUM", "DB_CHAINING OFF", "TARGET_RECOVERY_TIME = 60 SECONDS",
 		"DELAYED_DURABILITY = DISABLED", "ACCELERATED_DATABASE_RECOVERY = OFF", "QUERY_STORE = OFF",
 	} {
-		want.WriteString("ALTER DATABASE [Sales] SET " + c + ";\nGO\n")
+		want.WriteString("ALTER DATABASE [Sales] SET ")
+		want.WriteString(c)
+		want.WriteString(";\nGO\n")
 	}
 	want.WriteString("ALTER AUTHORIZATION ON DATABASE::[Sales] TO [sa];\nGO\n")
 	want.WriteString("ALTER DATABASE [Sales] SET MULTI_USER;\nGO\n")
