@@ -41,6 +41,20 @@ func TestOrderObjectsDependenciesFirst(t *testing.T) {
 	}
 }
 
+// A table or alias type bound to a rule or default (sp_bindrule,
+// sp_bindefault) has a bound edge to it: its script calls sp_bind*, so the
+// rule comes first whatever the names, and even when the table is in a
+// cycle that must be broken (the bound edge is never the one broken).
+func TestOrderObjectsBindingBeforeBoundObject(t *testing.T) {
+	ty := orderEdge{from: objectKey('t', "dbo", "a_qty"), to: objectKey('o', "dbo", "z_rule"), bound: true}
+	nodes := append(testNodes("b_t", "z_rule", "c_p"), orderNode{key: objectKey('t', "dbo", "a_qty"), schema: "dbo", name: "a_qty"})
+	got, _ := orderNames(t, nodes, []orderEdge{
+		edge("b_t", "z_rule", true), ty, edge("b_t", "c_p", false), edge("c_p", "b_t", false)})
+	if i, j, k := slices.Index(got, "z_rule"), slices.Index(got, "b_t"), slices.Index(got, "a_qty"); i < 0 || i > j || i > k {
+		t.Errorf("got %v, want z_rule before b_t and a_qty", got)
+	}
+}
+
 func TestOrderObjectsRankThenName(t *testing.T) {
 	nodes := []orderNode{
 		{key: "o:dbo.b", rank: 4, schema: "dbo", name: "b"},

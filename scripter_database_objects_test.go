@@ -54,6 +54,37 @@ func TestScriptQueueNilProgressAndEmpty(t *testing.T) {
 	}
 }
 
+// A rule that cannot be scripted (its definition hidden from the login)
+// notes the type and the table bound to it: each script's sp_bindrule would
+// fail the replay.
+func TestScriptQueueNotedRuleNotesWhatBindsIt(t *testing.T) {
+	ran := map[string]bool{}
+	gen := func(name string) func() (string, error) {
+		return func() (string, error) { ran[name] = true; return name + "\n", nil }
+	}
+	q := []pendingObject{
+		{obj: ScriptedObject{Kind: ScriptedRule, Schema: "dbo", Name: "r"}, key: "o:[dbo].[r]",
+			gen: func() (string, error) { return "", unsupportedf("gosmo: script rule [dbo].[r]: definition hidden") }},
+		{obj: ScriptedObject{Kind: ScriptedDefault, Schema: "dbo", Name: "d"}, key: "o:[dbo].[d]", gen: gen("d")},
+		{obj: ScriptedObject{Kind: ScriptedType, Schema: "dbo", Name: "qty"}, key: "t:[dbo].[qty]",
+			needs: []string{"o:[dbo].[r]"}, gen: gen("qty")},
+		{obj: ScriptedObject{Kind: ScriptedTable, Schema: "dbo", Name: "T"}, key: "o:[dbo].[T]",
+			needs: []string{"t:[dbo].[qty]", "o:[dbo].[d]"}, gen: gen("T")},
+		{obj: ScriptedObject{Kind: ScriptedTable, Schema: "dbo", Name: "U"}, key: "o:[dbo].[U]",
+			needs: []string{"o:[dbo].[d]"}, gen: gen("U")},
+	}
+	out, _, err := scriptQueue(context.Background(), q, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, o := range out {
+		wantNoted := o.Name == "r" || o.Name == "qty" || o.Name == "T"
+		if (o.Note != "") != wantNoted || ran[o.Name] == wantNoted {
+			t.Errorf("%s: note %q, scripted %v; want noted %v", o.Name, o.Note, ran[o.Name], wantNoted)
+		}
+	}
+}
+
 // A cancelled context stops before the next object, and any error other than
 // ErrUnsupported ends the script.
 func TestScriptQueueStops(t *testing.T) {

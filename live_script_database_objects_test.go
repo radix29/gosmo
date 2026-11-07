@@ -22,8 +22,10 @@ import (
 // (its inline CONNECTION failed the replay, Msg 13931) and, on 2022+, ledger
 // tables (their ledger view failed the replay) and encrypted modules with
 // what needs them (a view on one, a trigger on one, a GRANT on one: each
-// failed the replay) — replays the script into an empty database, and
-// compares the two catalogs.
+// failed the replay), and a rule bound to an alias type and a default bound
+// to a column (each binding failed the replay: neither was scripted) —
+// replays the script into an empty database, and compares the two catalogs,
+// bindings included.
 //
 //	go test -tags livedb . -run TestLiveScriptDatabaseObjectsReplay -v -livedb '...'
 func TestLiveScriptDatabaseObjectsReplay(t *testing.T) {
@@ -83,6 +85,15 @@ func TestLiveScriptDatabaseObjectsReplay(t *testing.T) {
 		`CREATE TRIGGER app.tr_enc ON app.v_enc INSTEAD OF INSERT AS SET NOCOUNT ON`,
 		`GRANT SELECT ON app.v_enc TO gosmo_objs_r`,
 		`CREATE PROCEDURE app.p_late AS SELECT id FROM app.v_enc`,
+		// Legacy bindings: the type's and the column's scripts call
+		// sp_bindrule / sp_bindefault, so the rule and the default must be
+		// created first. Left out, the replay failed on each binding.
+		`CREATE RULE app.r_pos AS @v > 0`,
+		`CREATE DEFAULT app.d_zero AS 0`,
+		`CREATE TYPE app.qty FROM int NOT NULL`,
+		`EXEC sp_bindrule N'app.r_pos', N'app.qty'`,
+		`CREATE TABLE app.t (id INT NOT NULL CONSTRAINT pk_t PRIMARY KEY, n INT NULL, q app.qty)`,
+		`EXEC sp_bindefault N'app.d_zero', N'app.t.n'`,
 	)
 	graph := src.atLeast(SQLServer2019)
 	if graph {
@@ -467,9 +478,10 @@ func TestLiveScriptDatabaseObjectsOrderWithoutDatabaseViewDefinition(t *testing.
 }
 
 // liveCatalogFingerprint lists the database's user objects, types, schemas,
-// foreign keys, edge constraints (2019+), indexes, module definitions and
-// grants as sorted lines. Names are QUOTENAMEd: joined bare, [a.b].[c] and
-// [a].[b.c] print alike. A graph table's GRAPH_UNIQUE_INDEX_<guid> is named
+// foreign keys, edge constraints (2019+), indexes, module definitions,
+// grants, and the rules and defaults bound to columns and types as sorted
+// lines. Names are QUOTENAMEd: joined bare, [a.b].[c] and [a].[b.c] print
+// alike. A graph table's GRAPH_UNIQUE_INDEX_<guid> is named
 // by the server afresh on every CREATE TABLE, so its suffix is dropped.
 func liveCatalogFingerprint(t *testing.T, d *Database, ctx context.Context) []string {
 	t.Helper()
@@ -491,7 +503,16 @@ FROM sys.database_permissions p JOIN sys.database_principals pr ON pr.principal_
 WHERE pr.name COLLATE DATABASE_DEFAULT LIKE 'gosmo_objs%'
 UNION ALL SELECT 'member ' + r.name COLLATE DATABASE_DEFAULT + ' ' + m.name COLLATE DATABASE_DEFAULT FROM sys.database_role_members rm
 JOIN sys.database_principals r ON r.principal_id = rm.role_principal_id JOIN sys.database_principals m ON m.principal_id = rm.member_principal_id
-WHERE r.name COLLATE DATABASE_DEFAULT LIKE 'gosmo_objs%'`)
+WHERE r.name COLLATE DATABASE_DEFAULT LIKE 'gosmo_objs%'
+UNION ALL SELECT 'bind column ' + QUOTENAME(SCHEMA_NAME(o.schema_id)) + '.' + QUOTENAME(o.name) + '.' + QUOTENAME(col.name) COLLATE DATABASE_DEFAULT
+       + ' ' + QUOTENAME(SCHEMA_NAME(r.schema_id)) + '.' + QUOTENAME(r.name) COLLATE DATABASE_DEFAULT
+FROM sys.columns col JOIN sys.objects o ON o.object_id = col.object_id
+JOIN sys.objects r ON r.object_id IN (col.rule_object_id, col.default_object_id) AND r.parent_object_id = 0
+WHERE o.is_ms_shipped = 0
+UNION ALL SELECT 'bind type ' + QUOTENAME(SCHEMA_NAME(t.schema_id)) + '.' + QUOTENAME(t.name) COLLATE DATABASE_DEFAULT
+       + ' ' + QUOTENAME(SCHEMA_NAME(r.schema_id)) + '.' + QUOTENAME(r.name) COLLATE DATABASE_DEFAULT
+FROM sys.types t JOIN sys.objects r ON r.object_id IN (t.rule_object_id, t.default_object_id) AND r.parent_object_id = 0
+WHERE t.is_user_defined = 1`)
 	out, err := scanRows(rows, err, "fingerprint", func(scan func(...any) error) (string, error) {
 		var s string
 		err := scan(&s)

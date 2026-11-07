@@ -23,6 +23,8 @@ const (
 	ScriptedPartitionFunction   ScriptedKind = "partition function"
 	ScriptedPartitionScheme     ScriptedKind = "partition scheme"
 	ScriptedXMLSchemaCollection ScriptedKind = "xml schema collection"
+	ScriptedRule                ScriptedKind = "rule"
+	ScriptedDefault             ScriptedKind = "default" // a CREATE DEFAULT object, not a default constraint
 	ScriptedType                ScriptedKind = "type"
 	ScriptedTableType           ScriptedKind = "table type"
 	ScriptedSequence            ScriptedKind = "sequence"
@@ -120,10 +122,11 @@ func (sc *Scripter) ScriptDatabaseObjects(ctx context.Context, o ObjectScriptOpt
 //
 //  1. schemas (with IncludePermissions, the principals around them),
 //     partition functions and schemes;
-//  2. XML schema collections, types, table types, sequences, tables (without
-//     their foreign keys), functions, views, procedures and synonyms, sorted
-//     by sys.sql_expression_dependencies and the types columns and
-//     parameters use, ties by kind, schema and name. Without VIEW
+//  2. XML schema collections, rules and defaults, types, table types,
+//     sequences, tables (without their foreign keys), functions, views,
+//     procedures and synonyms, sorted by sys.sql_expression_dependencies,
+//     the types columns and parameters use and the rules and defaults bound
+//     to columns and types, ties by kind, schema and name. Without VIEW
 //     DEFINITION on the database that view lists nothing (or is refused),
 //     so the order is read from sys.sql_dependencies instead, which misses
 //     a reference to an object created after the module naming it; a
@@ -139,14 +142,13 @@ func (sc *Scripter) ScriptDatabaseObjects(ctx context.Context, o ObjectScriptOpt
 // see, is listed as a comment with its Note set — is followed by a note for
 // everything whose creation needs it, transitively: a foreign key or edge
 // constraint naming its table, a trigger on it, a table, view, table type or
-// inline function selecting from or typed by it, and any schema-bound
-// reference. A GRANT on it becomes a comment in the permissions. A
-// procedure, multi-statement or scalar function or synonym naming it is
-// still scripted (SQL Server resolves the name when it runs), with a
-// Warning. The Scripter's verb
-// must be ScriptCreate. Not scripted: system objects, a system-versioned
-// or ledger table's history table and ledger view (its parent creates them),
-// rules and defaults, CLR
+// inline function selecting from or typed by it, a type or table bound to it
+// (a rule or default), and any schema-bound reference. A GRANT on it becomes
+// a comment in the permissions. A procedure, multi-statement or scalar
+// function or synonym naming it is still scripted (SQL Server resolves the
+// name when it runs), with a Warning. The Scripter's verb must be
+// ScriptCreate. Not scripted: system objects, a system-versioned or ledger
+// table's history table and ledger view (its parent creates them), CLR
 // assemblies, full-text and Service Broker objects, external objects,
 // credentials, certificates and keys, and any dependency across databases.
 func (sc *Scripter) ScriptDatabaseObjectList(ctx context.Context, o ObjectScriptOptions) (*DatabaseObjectScript, error) {
@@ -243,6 +245,20 @@ func (sc *Scripter) ScriptDatabaseObjectList(ctx context.Context, o ObjectScript
 	}
 	for _, x := range xmls {
 		put('x', 0, ScriptedXMLSchemaCollection, x.Schema, x.Name, func() (string, error) { return s.ScriptXMLSchemaCollection(ctx, x.Schema, x.Name) })
+	}
+	rules, err := d.Rules(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for _, r := range rules {
+		put('o', 0, ScriptedRule, r.Schema, r.Name, func() (string, error) { return s.ScriptRule(ctx, r.Schema, r.Name) })
+	}
+	defaults, err := d.Defaults(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for _, df := range defaults {
+		put('o', 0, ScriptedDefault, df.Schema, df.Name, func() (string, error) { return s.ScriptDefault(ctx, df.Schema, df.Name) })
 	}
 	types, err := d.UserDefinedDataTypes(ctx)
 	if err != nil {
@@ -678,8 +694,11 @@ const legacyDependencyRefs = `
 // dependencyOrderEdges reads every reference one object's creation needs from
 // another, within the database: refs, the catalog's dependencies
 // (expressionDependencyRefs or legacyDependencyRefs; a default or check
-// constraint counts for its table), and the types and XML schema
-// collections columns and parameters use.
+// constraint counts for its table), the types and XML schema collections
+// columns and parameters use, and the rule or default (sp_bindrule,
+// sp_bindefault) bound to a table's column or to an alias type. A binding is
+// bound: the type's or table's script calls sp_bind*, which fails without the
+// rule or default. A column inheriting its type's binding repeats the edge.
 func (d *Database) dependencyOrderEdges(ctx context.Context, refs string) ([]orderEdge, error) {
 	q := `
 SELECT 'o', SCHEMA_NAME(ro.schema_id), ro.name, x.k, x.s, x.n, x.b
@@ -699,6 +718,11 @@ FROM (` + refs + `
     FROM   sys.parameters p
     JOIN   sys.types t ON t.user_type_id = p.user_type_id
     WHERE  t.is_user_defined = 1
+    UNION ALL
+    SELECT col.object_id, 'o', SCHEMA_NAME(r.schema_id), r.name, 1
+    FROM   sys.columns col
+    JOIN   sys.objects r ON r.object_id IN (col.rule_object_id, col.default_object_id)
+    WHERE  r.type IN ('R', 'D') AND r.parent_object_id = 0
 ) x
 JOIN sys.objects o2 ON o2.object_id = x.rid
 JOIN sys.objects ro ON ro.object_id = CASE WHEN o2.type IN ('D', 'C') THEN o2.parent_object_id ELSE o2.object_id END
@@ -713,7 +737,12 @@ CROSS APPLY (
     UNION ALL
     SELECT 'x', SCHEMA_NAME(c.schema_id), c.name
     FROM   sys.xml_schema_collections c WHERE c.xml_collection_id = col.xml_collection_id AND c.schema_id <> 4
-) x`
+) x
+UNION ALL
+SELECT 't', SCHEMA_NAME(t.schema_id), t.name, 'o', SCHEMA_NAME(r.schema_id), r.name, 1
+FROM   sys.types t
+JOIN   sys.objects r ON r.object_id IN (t.rule_object_id, t.default_object_id)
+WHERE  t.is_user_defined = 1 AND r.type IN ('R', 'D') AND r.parent_object_id = 0`
 	rows, err := d.query(ctx, q)
 	return scanRows(rows, err, fmt.Sprintf("list dependencies in %q", d.Name), func(scan func(...any) error) (orderEdge, error) {
 		var fk, tk, fs, fn, ts, tn string
