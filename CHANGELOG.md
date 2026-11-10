@@ -4,6 +4,65 @@ All notable changes to gosmo are documented here, newest first, from
 `v0.0.4` onward — this is the history. `RELEASE.md` carries the current
 release only, as a short summary of the entry below it.
 
+## v0.2.0
+
+A feature release for gossms v0.2.0. The largest addition is whole-database
+scripting: `ScriptDatabaseObjects` scripts every object of a database in
+dependency order, deferring foreign keys and edge constraints and reporting any
+cycle, with ledger tables, rules, defaults, extended properties and
+permissions on missing objects handled. Around it come maintenance and space
+reads (`CheckDB`, `SpaceReport`, `LogSpace`, `IndexUsage`, `TopQueries`), the
+`gosmotest` package for testing code that calls gosmo without a server, and
+value-checked bulk loads. SQL Server Agent reads now work for the Agent roles
+that msdb grants no tables to. One breaking change: sequence values are
+strings. **Migrating:** the `Sequence` numeric fields and calls below take and
+return `string` (decimal digits) instead of `int64`, because a sequence of
+`decimal(38,0)` or `bigint` can exceed what a Go `int64` or a JSON number
+carries.
+
+### Added
+
+- **Whole-database scripting** (`scripter_database_objects.go`, `scripter_database_objects_order.go`, `scripter_table_prefetch.go`) — `Scripter.ScriptDatabaseObjects(ObjectScriptOptions)` returns one replayable script of every object; `ScriptDatabaseObjectList` returns the `DatabaseObjectScript{Objects, Warnings}` behind it, each `ScriptedObject` with its `ScriptedKind`, schema, name, owning table and SQL. Objects are ordered by dependency (Kahn's algorithm over `sys.sql_expression_dependencies`, falling back to `sys.sql_dependencies` without VIEW DEFINITION); foreign keys and edge constraints are created after their tables; a dependency cycle is broken and named in `Warnings`, as is a reference to an object the script leaves out. `ObjectScriptOptions` takes `Kinds`, `IncludePermissions` (the database owner, roles, users, memberships and every GRANT/DENY, principals first and permissions last) and a `Progress` callback. Table state is read in one prefetch batch.
+- **`Scripter.ScriptApplicationRole`**, and extended properties after the CREATE of application roles, assemblies, CLR types, rules, defaults, Service Broker objects and plan guides, plus the filegroups' and their files' (classes 20 and 22) in a database script.
+- **Ledger and graph scripting** — SQL Server 2022 ledger tables are scripted with their history table and ledger view; an object a parent table creates is tracked so it is not scripted twice. A GRANT on an object the script does not create is written as a comment.
+- **`Server.CreateServerRole(CreateServerRoleRequest{Name, Owner})`** and the `CREATE SERVER ROLE` capability probe.
+- **Space and log reads** (`database_space.go`) — `Database.SpaceReport` and `TableSizes` reproduce `sp_spaceused` exactly (data, index, reserved, unused, unallocated, per-table rows, memory-optimized tables flagged); `LogSpace` gives log size, used, reuse wait and VLF counts; `LogShrinkFloors` gives each log's real shrink floor.
+- **Instance-wide file and size reads** — `Server.DatabaseSizes`, `InstanceFiles`, `FileVolumes` (the volume behind each file; `FileVolume.Plausible`), `DatabaseAccess` (`HAS_DBACCESS` for every database in one read), `StartTime`, `CurrentTime` and `CollationCodePage`.
+- **Maintenance** (`database_maintenance.go`) — `Database.CheckDB(CheckDBOptions)` returning `[]*CheckDBError` (`IsSummary`), `FragmentationStats` for every index in one scan, `UpdateStatistics(resample)`; `Server.LastBackups` (each database's latest full, differential and log backup, a never-backed-up database included).
+- **Index and statistics maintenance** — `Table.RebuildAllIndexesWith` and `View.RebuildAllIndexesWith` with every rebuild option (`Online`, `MaxDOP` added to `IndexRebuildOptions`), `ReorganizeAllIndexes`, `IndexUsage` (`sys.dm_db_index_usage_stats`, `UsageVisible` false without VIEW SERVER STATE), `Statistic.UpdateWith`, `Table.UpdateStatisticsWith` and `View.UpdateStatisticsWith` with `StatisticsUpdateOptions`; `View.FragmentationStats`; `ServerInfo.SupportsOnlineIndexOperations`.
+- **Plan cache** (`plan_cache.go`) — `Server.TopQueries(TopQueriesOptions)` ranks cached statements by CPU, duration, reads, writes or executions, total or average, returning `[]*CachedQueryStat`; `Server.CachedPlan` returns one statement's plan.
+- **Deadlocks** — `DecodeDeadlockReport` turns an `xml_deadlock_report` value or `.xdl` file into a `DeadlockReport` (victims, processes with frames, resources with owners and waiters); `XEvents.ReadFileEvents` reads only the named events out of a busy file set.
+- **Search and lookup** — `Database.SearchDefinitions` (module text), `SearchColumns`, `ObjectByName` and `ObjectsNamed` (`ObjectInfo` for an object of any kind), `ReturnType` of a scalar function.
+- **Agent** — `Job.Alerts` (`JobAlert`), `Server.SearchJobHistory(JobHistoryFilter{JobName, Since, Until, Outcomes, IncludeSteps, Max})`.
+- **Trace flags and configuration defaults** — `Server.TraceFlags` and `SetTraceFlag`; `ConfigurationOption.Default` and `HasDefault` hold the engine default for the server's version, filled by both configuration reads.
+- **Sessions** — `ActiveSession` gains the running `Command`, `CommandText`, `RecentText`, `OpenTransactionCount`, and session `Reads` and `Writes`; the `KILL` permission is probed.
+- **`gosmotest`** — `gosmotest.New(t)` returns a `Fake` whose `Server()` and `Connect` run real gosmo over canned rows (`On`, `OnRegexp`, `OnFunc`, `OnExec`; responders `Rows`, `Sets`, `Fail`, `Hold`); `Queries` and `TxLog` record what ran; bulk loads, progress messages and transactions are simulated.
+- **Bulk load checking** (`bulkvalue.go`) — each value is checked and converted for its column before it is sent; `BulkColumn.Converter` exposes the check for a dry run, and a refused value is a `*BulkValueError` naming the row and column.
+- **Errors and capabilities** — `ErrDefinitionHidden` and `*EntryError{Database, Err}`; `Database.HasPermission`, `Capabilities.MasterPermission`, and probes for `ALTER ANY SERVER ROLE`, `VIEW ANY ERROR LOG`, `IMPERSONATE`, `VIEW DATABASE PERFORMANCE STATE` and `ALTER ANY DATABASE SCOPED CONFIGURATION`.
+- **`ScriptCollector.Add`** — appends statements gathered by a `WithStatementObserver`, so a dry run and the real run compare as text.
+- **Hidden-definition flags** — `Index.IsFilterHidden`, and `Column.IsTypeHidden` (also on parameters and sequences) for a user-defined type the login cannot see.
+
+### Changed
+
+- **Breaking: sequence values are strings.** `CreateSequenceRequest.StartValue`, `Increment`, `MinValue`, `MaxValue`, `SequenceChanges.RestartWith`, `Increment`, `MinValue`, `MaxValue` (and the `Sequence` fields they read back), `Sequence.Restart` and `Sequence.NextValue` use `string` instead of `int64` or `*int64`; an empty string means unset, and a value that is not a number is refused with `ErrInvalidRequest`. **Migrating:** `StartValue: 1` → `StartValue: "1"`; `RestartWith: &n` → `RestartWith: strconv.FormatInt(n, 10)`; `NextValue` returns a string, parse it with `strconv` or `big.Int`.
+- **Agent reads work for the Agent roles.** msdb grants its Agent roles none of the tables the job, step, history, schedule and operator reads join, so a sysadmin is answered from the tables and everyone else from `sysjobs_view` and the `sp_help_*` procedures, with msdb's own visibility (`SQLAgentUserRole` its own jobs, Reader and Operator every job). A non-sysadmin reads no `JobStep.AdditionalParameters`, and no `ProxyName` for a proxy it is not granted.
+- **`ReadLog` falls back to `sp_readerrorlog`** when `xp_readerrorlog` is refused, which admits `securityadmin`, `VIEW SERVER STATE` and (2022) `VIEW ANY ERROR LOG`; the date bounds are applied in Go.
+- **Hidden definitions are refused, not omitted.** A script that needs a definition the login cannot read (a module, a default, check or computed-column expression, a filtered index or statistic predicate) fails with an error wrapping `ErrDefinitionHidden` and `ErrUnsupported` instead of writing `DEFAULT` followed by nothing; tables and types with a hidden user-defined type are refused likewise, and listings of columns, parameters and sequences join `sys.types` with a left join so a hidden type no longer drops the row.
+- **Disabled indexes** are left out of the per-table index fragmentation read.
+- Server and database audit specifications share one `auditSpecScope` for their disable, alter and rebind mechanics; the generated statements are unchanged.
+- Dependencies: `golang.org/x/text` v0.44.0, `golang.org/x/sync` v0.25.0, `golang.org/x/sys` v0.50.0.
+- Documentation: `ARCHITECTURE.md` feature map and the class diagrams (`02`, `05`, `07`, `10`, `11`, `12`, `13`, `14`, `24`) cover the additions above; `OPEN-THREADS.md` records the closed-database change-tracking read and the leftover-encryption-key note.
+
+### Fixed
+
+- **Bulk loads no longer corrupt values silently.** go-mssqldb wraps an int too big for its column (300 into a `tinyint` loaded 44), truncates a float bound for an int, sends a `varchar`'s UTF-8 bytes for the server to read in the database's code page (`café` stored as `cafÃ©`) and drops a `smalldatetime`'s seconds; each is now converted or refused before the load.
+- **`ScriptDatabase` could omit `SET CHANGE_TRACKING`** (about one script in four on 14): change tracking is now read from inside the database, as the other options are.
+- **A table script placed foreign keys and edge constraints before their referenced tables**; they are now deferred, together with their extended properties, so the script replays.
+- **Sequence values beyond `int64`** no longer overflow (see Changed).
+- **`DBCC` permission denial (Msg 2571)** is recognised as `PermissionDenied`.
+- **A login without database-wide `VIEW DEFINITION`** read no dependencies at all (both dependency views are all-or-nothing) and silently ordered objects wrongly; `Database.HasPermission` now tells an empty list from a hidden one, and a schema-bound object the login cannot see is handled in a table's drop and script.
+- **An Agent job, step, history or schedule read** no longer fails for a login holding only an Agent role, which msdb grants none of the underlying tables.
+
 ## v0.1.2
 
 A small additive release for gossms v0.1.2's creation dialogs: database roles,

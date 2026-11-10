@@ -146,6 +146,7 @@ classDiagram
         +MoveStep(stepID, newStepID) error
         +ReorderSteps(order) error
         +Schedules() []*Schedule
+        +Alerts() []*JobAlert
         +AddSchedule(req) error
         +AttachSchedule(name) error
         +DetachSchedule(name) error
@@ -217,6 +218,22 @@ classDiagram
         +StepName string
     }
 
+    class JobAlert {
+        +ID int
+        +Name string
+        +Enabled bool
+        +IsPerformanceAlert bool
+    }
+
+    class JobHistoryFilter {
+        +JobName string
+        +Since time.Time
+        +Until time.Time
+        +Outcomes []JobOutcome
+        +IncludeSteps bool
+        +Max int
+    }
+
     %% =========================================================
     %% Relationships
     %% =========================================================
@@ -235,3 +252,6 @@ classDiagram
     Job "1" --> "*" JobStep : has
     Job "1" --> "*" JobHistoryEntry : History() returns
     Alert --> Job : responds by running
+    Job "1" --> "*" JobAlert : Alerts() returns
+    Server --> JobHistoryFilter : SearchJobHistory() accepts
+    Server "1" --> "*" JobHistoryEntry : SearchJobHistory() returns

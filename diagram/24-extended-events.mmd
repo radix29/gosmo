@@ -20,6 +20,7 @@ classDiagram
         +MapValues(pkg, name) []XEMapValue
         +Files(pattern) []string
         +ReadFile(pattern, cursor, max) []XEvent
+        +ReadFileEvents(pattern, cursor, max, events) []XEvent
     }
 
     class EventSession {

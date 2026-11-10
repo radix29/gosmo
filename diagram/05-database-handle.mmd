@@ -161,6 +161,11 @@ classDiagram
         +RecoveryStatus() *DatabaseRecoveryStatus
         +SpaceUsed() SpaceInfo
         +Shrink(opts) error
+        +SpaceReport() SpaceReport
+        +TableSizes() []*TableSize
+        +LogSpace() LogSpace
+        +LogShrinkFloors() map~int,int64~
+        +HasPermission(permission) bool
         +CheckDB(opts) []*CheckDBError
         +FragmentationStats(mode, minPct, minPages) []*DatabaseIndexFragmentation
         +UpdateStatistics(resample) error
@@ -222,6 +227,35 @@ classDiagram
         +BulkInsert(bc, rows) int64
     }
 
+    class SpaceReport {
+        +DataFilesKB int64
+        +LogFilesKB int64
+        +DataUsedKB int64
+        +LogUsedKB int64
+        +CheckpointFilesKB int64
+        +DatabaseSizeKB int64
+        +UnallocatedKB int64
+        sp_spaceused's figures, in KB
+    }
+
+    class TableSize {
+        +ObjectID int
+        +Schema string
+        +Name string
+        +Rows int64
+        +IsMemoryOptimized bool
+    }
+
+    class LogSpace {
+        +SizeKB int64
+        +UsedKB int64
+        +UsedPercent float64
+        +ReuseWait string
+        +VLFs int
+        +ActiveVLFs int
+        +VLFsKnown bool
+    }
+
     %% =========================================================
     %% Relationships
     class DatabaseEncryptionKey {
@@ -238,3 +272,6 @@ classDiagram
     DatabaseSnapshot --> Database : Database() opens
     ScriptCollector ..> Database : captures writes from
     Scripter --> Database : scripts objects from
+    Database --> SpaceReport : SpaceReport() returns
+    Database "1" --> "*" TableSize : TableSizes() returns
+    Database --> LogSpace : LogSpace() returns

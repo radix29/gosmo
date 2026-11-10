@@ -67,6 +67,11 @@ classDiagram
         +Rename(newName) error
         +Transfer(targetSchema) error
         +Triggers() []*Trigger
+        +IndexUsage() []*IndexUsage
+        +FragmentationStats(mode) []*IndexFragmentation
+        +RebuildAllIndexesWith(opts) error
+        +ReorganizeAllIndexes() error
+        +UpdateStatisticsWith(opts) error
     }
 
     class StoredProcedure {

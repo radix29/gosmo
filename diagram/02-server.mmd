@@ -73,6 +73,13 @@ classDiagram
         +CategoryRef(class, name) *Category
         +ActiveSessions(scope SessionScope) []*ActiveSession
         +SessionByID(id) *ActiveSession
+        +TopQueries(opts) []*CachedQueryStat
+        +CachedPlan(planHandle, stmtStart, stmtEnd) string
+        +TraceFlags() []TraceFlag
+        +SetTraceFlag(flag, on) error
+        +StartTime() (time.Time, time.Duration)
+        +CurrentTime() time.Time
+        +CollationCodePage(collation) int
         +KillSession(id) error
         +EnumErrorLogs(logType) []*ErrorLogFile
         +ReadLog(logType, n) []*ErrorLogEntry
@@ -101,6 +108,7 @@ classDiagram
         +DatabaseFiles(database) []*DatabaseFileInfo
         +DatabaseSizes() map[int]DatabaseSize
         +InstanceFiles() []*InstanceFile
+        +FileVolumes() ([]FileVolume, bool)
         +DatabaseAccess() map[int]bool
         +DatabaseRecoveryStatuses() []*DatabaseRecoveryStatus
         +Capabilities() *Capabilities
@@ -149,8 +157,47 @@ classDiagram
         +CreateDatabaseMirroringEndpoint(req) *DatabaseMirroringEndpoint
     }
 
+    class TraceFlag {
+        +Flag int
+        +Global bool
+        +Session bool
+    }
+
+    class TopQueriesOptions {
+        +By TopQueriesBy
+        +Average bool
+        +Top int
+        +Database string
+    }
+
+    class CachedQueryStat {
+        +Database string
+        +QueryHash []byte
+        +PlanHandle []byte
+        +Executions int64
+        +AvgCPUMicros() float64
+        +AvgDurationMicros() float64
+        +AvgLogicalReads() float64
+        +AvgLogicalWrites() float64
+    }
+
+    class FileVolume {
+        +DatabaseID int
+        +FileID int
+        +PhysicalName string
+        +MountPoint string
+        +VolumeName string
+        +TotalBytes int64
+        +AvailableBytes int64
+        +Plausible() bool
+    }
+
     %% =========================================================
     %% Relationships
     %% =========================================================
     ServerScripter ..> Server : scripts logins and server roles of
     ScriptCollector ..> Server : captures writes from
+    Server "1" --> "*" TraceFlag : TraceFlags() returns
+    Server --> TopQueriesOptions : TopQueries() accepts
+    Server "1" --> "*" CachedQueryStat : TopQueries() returns
+    Server "1" --> "*" FileVolume : FileVolumes() returns

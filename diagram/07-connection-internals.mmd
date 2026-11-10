@@ -121,6 +121,21 @@ classDiagram
         unreachable Agent as a value.
     }
 
+    class ErrDefinitionHidden {
+        <<sentinel>>
+        A script refused because the login
+        cannot see the definition (VIEW
+        DEFINITION). Wraps ErrUnsupported too.
+    }
+
+    class EntryError {
+        +Database string
+        +Err error
+        +Unwrap() error
+        A database-scoped call that could not
+        enter its database.
+    }
+
     class SQLError {
         +Number int32
         +State uint8
@@ -148,6 +163,7 @@ classDiagram
         +Has(name) bool
         +Allows(name) bool
         +Permission(name) CapabilityState
+        +MasterPermission(name) CapabilityState
         +InServerRole(name) bool
         +IsSysadmin() bool
         +Probed() bool

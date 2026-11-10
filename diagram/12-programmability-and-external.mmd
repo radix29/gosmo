@@ -161,6 +161,8 @@ classDiagram
         +ScriptUser(name) string
         +ScriptDatabaseRole(name) string
         +ScriptApplicationRole(name) string
+        +ScriptDatabaseObjects(opts ObjectScriptOptions) string
+        +ScriptDatabaseObjectList(opts ObjectScriptOptions) *DatabaseObjectScript
         +ScriptDatabaseSecurity() string
         +ScriptDatabaseAuditSpecification(name) string
         +ScriptDatabaseScopedCredential(name) string
@@ -210,6 +212,29 @@ classDiagram
         secret is not readable from the catalog.
     }
 
+    class ObjectScriptOptions {
+        +Kinds []ScriptedKind
+        +IncludePermissions bool
+        +Progress func(done, total int)
+    }
+
+    class ScriptedObject {
+        +Kind ScriptedKind
+        +Schema string
+        +Name string
+        +Table string
+        +SQL string
+    }
+
+    class DatabaseObjectScript {
+        +Objects []ScriptedObject
+        +Warnings []string
+        +String() string
+        Objects in dependency order; FKs and
+        edge constraints deferred; cycles
+        reported in Warnings
+    }
+
     %% =========================================================
     %% Relationships
     %% =========================================================
@@ -224,3 +249,6 @@ classDiagram
     Assembly "1" --> "*" AssemblyFile : Files() returns
     Assembly "1" --> "*" AssemblyModule : Modules() returns
     PlanGuide --> PlanGuideScope : scoped by
+    Scripter --> ObjectScriptOptions : ScriptDatabaseObjects accepts
+    Scripter --> DatabaseObjectScript : ScriptDatabaseObjectList returns
+    DatabaseObjectScript "1" --> "*" ScriptedObject : Objects

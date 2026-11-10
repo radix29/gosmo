@@ -4,32 +4,31 @@ Context for Claude Code sessions on **gosmo**.
 
 ## What this is
 
-gosmo is a pure-Go (no CGO) library mimicking SQL Server Management Objects
-(SMO) without WMI/COM, over `github.com/microsoft/go-mssqldb`. Go 1.27.
+Pure-Go (no CGO) library mimicking SQL Server Management Objects (SMO) without
+WMI/COM, over `github.com/microsoft/go-mssqldb`. Go 1.27. Module
+`github.com/radix29/gosmo`.
 
-- Module `github.com/radix29/gosmo` — https://github.com/radix29/gosmo
 - `ARCHITECTURE.md`: API map (Mermaid), feature map, errors, authentication,
   connection internals. Diagrams live in `diagram/*.mmd`; only
   `diagram/00-map.mmd` is inlined. Read § Maintaining this document before
   touching a diagram.
 - Read only what the task touches: `quoting.go`'s doc comments for anything
-  building an identifier or literal; `server_databases.go`/`login.go`'s for the
-  handle-vs-lookup pairs.
+  building an identifier or literal; `server_databases.go`/`login.go`'s for
+  handle-vs-lookup.
 
 ## This is a library, not gossms's back end
 
-**goSSMS** (`~/go/gossms`, https://github.com/radix29/gossms) is the main
-consumer, developed in the same sitting with an active `replace
-github.com/radix29/gosmo => ../gosmo`. **It is not the definition of gosmo's
-API** — gosmo has other users.
+**goSSMS** (`~/go/gossms`) is the main consumer, developed alongside via an
+active `replace github.com/radix29/gosmo => ../gosmo`. **It is not the
+definition of gosmo's API** — gosmo has other users.
 
 - **Never remove or narrow a capability because gossms doesn't call it** —
   files, exported methods/types/fields, or fields only some paths populate.
   (The 2026-09-22 removal of the context-free `Foo` delegates and `*Seq`
   iterators was a one-off author waiver, not a precedent.)
-- For unused surface the allowed moves are: make it faster, make its doc
-  accurate, or pin it with a test. Removal or narrowing — raise it instead.
-- Optimisation must preserve the API: same signature, results, errors.
+- Unused surface may be made faster, have its doc made accurate, or be pinned
+  with a test. Removal or narrowing — raise it instead.
+- Optimisation preserves the API: same signature, results, errors.
 - Adding capability for gossms is encouraged — as a library feature, not a shim.
 
 ## Build & verify
@@ -41,158 +40,148 @@ go test -tags livedb . -run '^(TestLiveA|TestLiveB)$' -livedb '<dsn>'   # the te
 go test -tags livedb . -short -livedb '<dsn>'   # broad check: skips tests over 15 s
 ```
 
-Live runs cover what the change touches, not the whole suite: the full run is
-about 16 minutes per instance and is for a tag. A live test that takes 15 s
-or more starts with `skipSlowInShort(t)`.
+Live runs cover what the change touches; the full run (~16 min per instance)
+is for a tag. A live test taking 15 s or more starts with `skipSlowInShort(t)`.
 
 Plain `go`, no Makefile. `go test ./...` uses fakes (`captureConn`,
-`fakeQueryConn`) and needs no server. `gosmotest` is the exported one, for
-callers' tests (gossms's `object` commands): it is a library feature, so a
-change to how gosmo sends a database read (`procRead`, `useBatch`) must keep
-`gosmotest`'s unwrapping and `gosmotest_test.go` in step. Real SQL behaviour must also run against
-a live instance (details not in the repo; ask): create throwaway objects,
-exercise the write, drop them; never mutate pre-existing objects.
+`fakeQueryConn`) and needs no server. `gosmotest` is exported for callers'
+tests (gossms's `object` commands): a change to how gosmo sends a database read
+(`procRead`, `useBatch`) must keep `gosmotest`'s unwrapping and
+`gosmotest_test.go` in step. Real SQL behaviour must also run against a live
+instance (details not in the repo; ask): create throwaway objects, exercise the
+write, drop them; never mutate pre-existing objects.
 
 - **`go vet ./...` does not compile the `livedb` tests** — the 2026-09-17 `Ref`
-  rename silently broke 17 of them. Hence the `-tags livedb` line above.
+  rename silently broke 17 of them. Hence the `-tags livedb` line.
 - **Every write has an offline test of its exact statement.** Add the case to
-  the matching `script_*_write_test.go` table (or `drop_rename_test.go` for a
-  one-statement drop) in the same change; a write that reads before it writes
-  uses a row-serving fake driver instead (`login_map_test.go`). Mutation-check
-  it — swap a parameter name or drop a `dbo` default in the source and confirm
-  the case fails; a case built from the constant the code uses proves nothing.
+  the matching `script_*_write_test.go` table (`drop_rename_test.go` for a
+  one-statement drop) in the same change; a write that reads first uses a
+  row-serving fake driver (`login_map_test.go`). Mutation-check it — swap a
+  parameter name or drop a `dbo` default and confirm the case fails; a case
+  built from the constant the code uses proves nothing.
 - **A DSN test asserts what the driver parses**, not only what gosmo writes
-  (four Entra methods shipped unable to connect). Go through `buildConnector`
-  and assert on `msdsn.Parse(dsn).Parameters`; `auth_test.go`'s `driverParams`
-  does both. A known unfixed bug is pinned with a `knownBroken` marker.
-- **A live test closes its connection with `t.Cleanup`, never `defer`,** when
-  it drops objects in a `t.Cleanup` — a deferred close runs first and every
-  drop fails silently.
-- **Read another database's catalog under `USE [db]`, never `[db].sys.…`
-  from master** — an ad-hoc plan keeps the database id it was compiled
-  against, so after a drop/recreate reassigns ids the same text reads the
-  other database (a test's source and replay swapped, 2026-10-14).
+  (four Entra methods shipped unable to connect): go through `buildConnector`
+  and assert on `msdsn.Parse(dsn).Parameters` (`auth_test.go`'s `driverParams`).
+  A known unfixed bug is pinned with a `knownBroken` marker.
+- **A live test closes its connection with `t.Cleanup`, never `defer`,** when it
+  drops objects in a `t.Cleanup` — a deferred close runs first and every drop
+  fails silently.
+- **Read another database's catalog under `USE [db]`, never `[db].sys.…` from
+  master** — an ad-hoc plan keeps the database id it compiled against, so after
+  a drop/recreate reassigns ids the same text reads the other database.
 - **A script's database settings are read from inside the database**
-  (`Database.queryRow`, as `readDatabaseLayout` does): one `AUTO_CLOSE` has
-  closed keeps its catalog rows but reports NULL in many columns at server
-  scope, so a read can look complete and still drop a statement.
+  (`Database.queryRow`, as `readDatabaseLayout`): a database with `AUTO_CLOSE`
+  closed reports NULL in many columns at server scope, so a read looks complete
+  yet drops a statement.
 - **A live test creates or replays memory-optimized objects through
   `liveExecMemoryOptimized` / `liveRunMemoryOptimizedScript`** — Msg 701 there
-  is the host's memory and skips; anywhere else it still fails.
+  is the host's memory and skips; elsewhere it fails.
 - **After a change to quoting, `NameKey` or script-text rewriting**
   (`bindScriptArgs`, `alterModuleDefinition`, `ParseServerAddress`), run
   `go test -run XXX -fuzz FuzzNames -fuzztime 60s -fuzzminimizetime 0`; a
   crasher's `testdata/fuzz/` file stays as the regression seed. A change to
-  the scanner (`tsql.Spans`) also runs `FuzzSpans` the same way in `./tsql`.
+  `tsql.Spans` also runs `FuzzSpans` in `./tsql`.
 - Build and test **here** before relying on a change from gossms — a gossms
   build compiles only the packages it imports.
 
 ## Conventions
 
 - **One form, context first.** Every database-touching method takes `ctx` first
-  and has no other form — no `Foo`/`FooContext` pair. Accessors over fetched
-  state take no context. Do not reintroduce a context-free form (the old pairs
-  were 707 untested delegates, one miswired to a sibling).
+  and has no other form — no `Foo`/`FooContext` pair (the old pairs were 707
+  untested delegates, one miswired). Accessors over fetched state take no ctx.
 - **Errors** wrap with `%w`, prefixed `gosmo: ` + the attempted operation:
-  `fmt.Errorf("gosmo: drop statistic %q: %w", st.Name, err)`. An error that
-  wraps nothing is a refusal: `invalidf` for the caller's arguments
+  `fmt.Errorf("gosmo: drop statistic %q: %w", st.Name, err)`. An error wrapping
+  nothing is a refusal: `invalidf` for the caller's arguments
   (`ErrInvalidRequest`), `unsupportedf` when gosmo has no form for the request
-  (`ErrUnsupported`) — `invalid_request_test.go` enforces it. The prefix
-  goes on once: an unexported helper whose caller wraps leaves it off, and a
-  caller of an exported method returns its error as is
-  (`TestNoWrapOfAnAlreadyPrefixedError`).
-- **A write never goes through `query`/`queryRow*`** — they retry
-  (`withRetry`), and a write retried after a broken connection runs twice. A
-  write that reads a value back (an `OUTPUT` parameter) uses `execScan`.
+  (`ErrUnsupported`) — `invalid_request_test.go` enforces it. The prefix goes on
+  once: an unexported helper whose caller wraps leaves it off; a caller of an
+  exported method returns its error as is (`TestNoWrapOfAnAlreadyPrefixedError`).
+- **A write never goes through `query`/`queryRow*`** — they retry (`withRetry`),
+  and a write retried after a broken connection runs twice. A write that reads a
+  value back (an `OUTPUT` parameter) uses `execScan`.
   `write_through_read_test.go` enforces it.
 - **Row iteration.** Every `query` gets `defer rows.Close()` and a checked
   `rows.Err()`; it and every `rows.Scan` wrap with the *same* message as the
-  query error (else a mid-iteration failure surfaces as a bare `context
-  deadline exceeded`). List reads use `scanRows` (`helpers.go`); a by-name
-  read whose row a family `scanX(owner, scan)` builds is `readByName`, any
-  other single-row read ends in `foundRow`, or `rowErr` when it fills in more
-  after the row (`sql.ErrNoRows` → `notFoundf`). Hand-roll only where no row
-  is not an error. Shared scan helpers (`scanColumns`, `scanExtProps`,
-  `scanEffectivePermissions`, `securityPredicates`, `indexColumns`,
-  `execWithProgress`) return bare errors on purpose; their callers wrap.
+  query error (else a mid-iteration failure surfaces as a bare `context deadline
+  exceeded`). List reads use `scanRows` (`helpers.go`); a by-name read whose row
+  a family `scanX(owner, scan)` builds is `readByName`; any other single-row read
+  ends in `foundRow`, or `rowErr` when it fills in more after the row
+  (`sql.ErrNoRows` → `notFoundf`). Hand-roll only where no row is not an error.
+  Shared scan helpers (`scanColumns`, `scanExtProps`, `scanEffectivePermissions`,
+  `securityPredicates`, `indexColumns`, `execWithProgress`) return bare errors on
+  purpose; their callers wrap.
 - **Quoting** — `quoting.go`'s and `tsql/quote.go`'s doc comments are the
-  authority. The text layer (quoting, comment safety, the `tsql.Spans`
-  lexical scanner) lives in package `tsql`, which may import only the
-  standard library (`TestImportsOnlyStdlib`); the root's `QuoteName`/
-  `QualifiedName`/`QuoteLiteral`/`QuoteAnsiLiteral`/`UnquoteName` forward to
-  it. `QuoteName`/`qualifiedName` bracket an identifier; `QuoteLiteral` builds a whole literal;
-  `escapeSingle` (`helpers.go`) escapes inside quotes already in the format
-  string. An identifier *inside* a literal (`OBJECT_ID`, `DBCC
-  SHOW_STATISTICS`, `fn_listextendedproperty`) needs both:
-  `escapeSingle(t.FullName())`. Wrong forms resolve to the wrong object or to
-  NULL — and a NULL `object_id` means "every object" to
-  `sys.dm_db_index_physical_stats`. `identifier_quoting_test.go` pins it.
-  Prefer a query parameter where the server accepts one.
+  authority. The text layer (quoting, comment safety, the `tsql.Spans` scanner)
+  lives in package `tsql`, stdlib-only (`TestImportsOnlyStdlib`); the root's
+  `QuoteName`/`QualifiedName`/`QuoteLiteral`/`QuoteAnsiLiteral`/`UnquoteName`
+  forward to it. `QuoteName`/`qualifiedName` bracket an identifier;
+  `QuoteLiteral` builds a whole literal; `escapeSingle` (`helpers.go`) escapes
+  inside quotes already in the format string. An identifier *inside* a literal
+  (`OBJECT_ID`, `DBCC SHOW_STATISTICS`, `fn_listextendedproperty`) needs both:
+  `escapeSingle(t.FullName())`. Wrong forms resolve to the wrong object or NULL —
+  and a NULL `object_id` means "every object" to `sys.dm_db_index_physical_stats`.
+  `identifier_quoting_test.go` pins it. Prefer a query parameter where accepted.
 - **A name built-in compared with a parameter is collated**:
-  `SCHEMA_NAME(x.schema_id) COLLATE DATABASE_DEFAULT = @p1`. A `USE d; …`
-  batch — a read inside `InTransaction` (`useBatch`) — binds its parameters
-  in the starting database's collation, so the bare form fails Msg 468 and
-  costs three round trips. A pooled read (`procRead`) binds them in `d`.
+  `SCHEMA_NAME(x.schema_id) COLLATE DATABASE_DEFAULT = @p1`. A `USE d; …` batch
+  (a read inside `InTransaction`, `useBatch`) binds parameters in the starting
+  database's collation, so the bare form fails Msg 468 and costs three round
+  trips; a pooled read (`procRead`) binds them in `d`.
   `collation_lookup_test.go` enforces it, `filterColumns` maps included.
 - **A name or stored value written into a script comment is wrapped**:
   `tsql.CommentSafe` inside `--` (a line break ends the comment),
-  `tsql.BlockCommentSafe` inside `/* */` (`*/` closes it, `/*` nests and
-  swallows the rest). Either
-  way the remainder runs as T-SQL. `comment_safe_test.go` lists every site;
-  a new one goes there too.
-- **A name that came from the catalog is matched exactly.** Picking one of
-  several fetched rows by name goes through `matchName` (`helpers.go`):
-  exact first, a single case-insensitive match only as the fallback, several
-  `ErrAmbiguous`. A bare `strings.EqualFold` takes the wrong sibling in a
-  `_CS_` database (`IX_a`/`ix_A`); comparing two catalog names is `==`.
+  `tsql.BlockCommentSafe` inside `/* */` (`*/` closes it, `/*` nests). Otherwise
+  the remainder runs as T-SQL. `comment_safe_test.go` lists every site; a new one
+  goes there too.
+- **A name from the catalog is matched exactly.** Picking one of several fetched
+  rows by name goes through `matchName` (`helpers.go`): exact first, a single
+  case-insensitive match only as fallback, several `ErrAmbiguous`. A bare
+  `strings.EqualFold` takes the wrong sibling in a `_CS_` database
+  (`IX_a`/`ix_A`); comparing two catalog names is `==`.
 - **Never query inside a `rows.Next()` loop.** `Database.query` pins its own
-  pooled connection (`dbRows`), so per-row lookups hold
-  the outer connection while acquiring more — pool exhaustion. Fetch children
-  in one query ordered by parent id and group in Go (`Table.Indexes`: 42 round
-  trips → 2).
+  pooled connection (`dbRows`), so per-row lookups hold the outer connection
+  while acquiring more — pool exhaustion. Fetch children in one query ordered by
+  parent id and group in Go (`Table.Indexes`: 42 round trips → 2).
 - **A per-database batch names `sp_executesql` through a variable**
-  (`perDatabaseExec`): a literal `EXEC [db].sys.sp_executesql` is resolved at
+  (`perDatabaseExec`): a literal `EXEC [db].sys.sp_executesql` resolves at
   compile, so one database that cannot be entered (Msg 924) fails the whole
   batch before its TRY runs — hidden while the plan is cached. Its CATCH skips
-  only a can't-enter error (`perDatabaseSkipErrors`); anything else, a fault
-  in the query above all, is the read's failure — an empty CATCH hid broken
-  queries from `TestLiveVersionSweep`.
-- **Gate a version only through `version_gate.go`** — `colSince`/`bitSince`
-  for a column, `atLeast`/`before` (on `Server`/`Database`, or
-  `majorAtLeast`/`majorBefore` on a `major int`) for everything else. Major 0
-  (unread, or Azure) is newest; a bare `major < int(…)` forgets that and blanked
-  AG columns on every Managed Instance. Never gate at or below 2016, the floor.
+  only a can't-enter error (`perDatabaseSkipErrors`); anything else is the read's
+  failure (an empty CATCH hid broken queries from `TestLiveVersionSweep`).
+- **Gate a version only through `version_gate.go`** — `colSince`/`bitSince` for a
+  column, `atLeast`/`before` (on `Server`/`Database`, or `majorAtLeast`/
+  `majorBefore` on a `major int`) for everything else. Major 0 (unread, or Azure)
+  is newest; a bare `major < int(…)` blanked AG columns on every Managed
+  Instance. Never gate at or below 2016, the floor.
   `TestVersionGatesGoThroughMajorAtLeast` enforces it.
 - **Zoneless server clocks are `time.UTC`, never `time.Local`** — go-mssqldb
   returns `datetime` in UTC, so hand-decoded values (`parseSQLAgentDate`,
-  error-log lines) must match or they are off by the client's offset.
+  error-log lines) must match.
 - **Files.** One per subject area (`table.go`, `index.go`, …), `helpers.go` for
-  cross-file helpers, `types.go` for shared enums. Over ~900 lines is a prompt
-  to split along existing section banners: extract by exact line range, diff
+  cross-file helpers, `types.go` for shared enums. Over ~900 lines is a prompt to
+  split along existing section banners: extract by exact line range, diff
   byte-for-byte, then delete the source.
 - **Script mode.** `WithScript` collects statements instead of executing;
-  `Scripting(ctx)` detects it. A path that *reads* to decide what to write
-  breaks under it:
+  `Scripting(ctx)` detects it. A path that *reads* to decide what to write breaks
+  under it:
   - A `Create*` reading its object back returns a name-only handle under
     `Scripting(ctx)` via `createdObject` (`helpers.go`); a new one must too.
   - A write mirroring onto the receiver (`Rename` → `.Name`, `Enable` →
     `.IsEnabled`) goes through `setIfApplied`, never direct assignment.
   - Bound parameters in a captured statement are substituted to literals
     (`bindScriptArgs`) — nothing binds `@p1` in a query editor.
-  - A write that sends a secret (password, credential secret, key source)
-    goes through `execSecret`/`execPasswords`, never plain `exec`, and gets a
-    row in `secret_redaction_test.go` — captures and observers carry a
-    placeholder (`WithScriptSecrets` opts a capture back in).
-- **Every `Create*` is `CreateX(ctx, CreateXRequest) (*X, error)`.** The
-  request is a value; the result comes back through `createdObject` (the `XRef`
-  handle under `Scripting(ctx)` or when the new row isn't visible). A full
-  description that `Alter` takes too is an `XDefinition`
-  (`ServerAuditDefinition`), not a request.
+  - A write sending a secret (password, credential secret, key source) goes
+    through `execSecret`/`execPasswords`, never plain `exec`, and gets a row in
+    `secret_redaction_test.go` — captures and observers carry a placeholder
+    (`WithScriptSecrets` opts a capture back in).
+- **Every `Create*` is `CreateX(ctx, CreateXRequest) (*X, error)`.** The request
+  is a value; the result comes back through `createdObject` (the `XRef` handle
+  under `Scripting(ctx)` or when the new row isn't visible). A full description
+  that `Alter` takes too is an `XDefinition` (`ServerAuditDefinition`).
 - **An `Alter` argument whose unset fields mean "leave as stored" is
-  `XChanges`** (`JobChanges`, `QueueChanges`, `DatabaseFileChanges`) — not
+  `XChanges`** (`JobChanges`, `QueueChanges`, `DatabaseFileChanges`), not
   `Options`/`Settings`. A shared CREATE-and-ALTER `WITH` list
-  (`ResourcePoolOptions`) or a T-SQL `SET (…)` mirror (`QueryStoreOptions`)
-  is not a patch and keeps its name.
+  (`ResourcePoolOptions`) or a T-SQL `SET (…)` mirror (`QueryStoreOptions`) is
+  not a patch and keeps its name.
 - **A write on an existing object is a method on its handle** —
   `db.ViewRef(s, n).Drop(ctx)`, `t.Rename(ctx, n)` — never
   `Parent.VerbX(ctx, name, …)`. A new family gets its `Ref` and writes together.
@@ -203,82 +192,69 @@ exercise the write, drop them; never mutate pre-existing objects.
 - **A whole feature behind a shared name prefix is a facet**, not a run of
   prefixed methods on `Database`/`Server`: a value handle holding only the
   parent, returned by a no-context, no-I/O method named for the feature, whose
-  methods drop the prefix — `d.QueryStore().TopResourceQueries(ctx, opts)`,
-  not `d.QueryStoreTopResourceQueries`. A facet changes nothing about
-  lookups, `Ref` semantics or `WithScript`; its result and option types keep
-  their names (`QSQueryStat`). Three exist: `d.QueryStore()` (the pilot,
-  2026-10-22), `s.Mail()` and `XEvents()` — on both `Server` and `Database`,
-  one type whose session methods follow the scope it came from, the way
-  `EventSession` does. Agent (`Jobs`, `Alerts`, …) reads well unprefixed and
-  stays on `Server`. A facet type holding a `ctx`-only read is
-  pointed at by `reflectSweep` in `live_versionsweep_test.go`, and its
-  `ctx`-only writes go in `sweepSkip`.
+  methods drop the prefix — `d.QueryStore().TopResourceQueries(ctx, opts)`, not
+  `d.QueryStoreTopResourceQueries`. A facet changes nothing about lookups, `Ref`
+  semantics or `WithScript`; its result and option types keep their names
+  (`QSQueryStat`). Three exist: `d.QueryStore()`, `s.Mail()` and `XEvents()` (on
+  both `Server` and `Database`: one type whose session methods follow the scope
+  it came from, like `EventSession`). Agent (`Jobs`, `Alerts`, …) stays
+  unprefixed on `Server`. A facet type holding a `ctx`-only read is pointed at by
+  `reflectSweep` in `live_versionsweep_test.go`; its `ctx`-only writes go in
+  `sweepSkip`.
 - **Every type holding a parent exposes it** as `Database() *Database` or
-  `Server() *Server` — one line, no context, never another name (`Server.DB()`
-  is the `*sql.DB` pool). `parent_accessor_wiring_test.go` enforces it;
-  deliberate omissions go in `parentAccessorExceptions` with a reason.
-- **The `Ref` suffix marks a lookup-free handle** — this bullet is the
-  authority (gossms's `CLAUDE.md`, `docs/decisions.md` and `dbOf` in
+  `Server() *Server` — one line, no context, never another name (`Server.DB()` is
+  the `*sql.DB` pool). `parent_accessor_wiring_test.go` enforces it; deliberate
+  omissions go in `parentAccessorExceptions` with a reason.
+- **The `Ref` suffix marks a lookup-free handle** — this bullet is the authority
+  (gossms's `CLAUDE.md`, `docs/decisions.md` and `dbOf` in
   `internal/tui/explorer_object_ops.go` point here). `Server.DatabaseRef(name)`
   carries only the name, no query; `Server.DatabaseByName(name)` reads the
   catalog. Not interchangeable: only the populated one answers field questions,
-  and only the handle works with nothing to read — no connection, or an object
-  a script is about to *create* (a New-X dialog's Script Changes). `WithScript`
+  and only the handle works with nothing to read — no connection, or an object a
+  script is about to *create* (a New-X dialog's Script Changes). `WithScript`
   alone is not that case: it intercepts writes only, so by-name reads still hit
   the server.
-  - These families pair this way: `DatabaseRef`, `LoginRef`, `TableRef`,
-    the four Agent ones, the audit/credential/trigger/snapshot/plan-guide/
-    backup-device/AG families, `ServerRoleRef`, `UserRef`, `StatisticRef`,
-    `IndexRef`, `ConfigurationRef`, `CertificateRef`, `AsymmetricKeyRef`,
-    `FileRef`, `FileGroupRef`, `CategoryRef`,
-    `SymmetricKeyRef`, `XEvents.SessionRef` (server and database), the schema,
-    sequence, synonym, rule, default, three type,
-    XML schema collection, partition, Always Encrypted key, assembly, `RoleRef`, `ApplicationRoleRef`,
-    external-resource and Service Broker families, and `ViewRef`,
-    `StoredProcedureRef`, `UserDefinedFunctionRef`, `TriggerRef`, the three
-    Resource Governor families, `Mail.AccountRef`, `Mail.ProfileRef` and the
-    four full-text ones (`FullTextCatalogRef`, `FullTextStoplistRef`,
-    `SearchPropertyListRef`, `Table.FullTextIndexRef`). Two
-    singletons have a handle with no name: `MasterKeyRef` and
-    `ResourceGovernorRef`, read by `MasterKey` and `ResourceGovernor`. Every
-    other by-name lookup is `*ByName` with no handle.
+  - Nearly every object family pairs `XRef` with `XByName` (list:
+    `grep -h 'func .*Ref(' *.go`; facet handles such as `Mail.AccountRef`,
+    `XEvents.SessionRef`, `Table.FullTextIndexRef` included). Two singletons have
+    a handle with no name: `MasterKeyRef` and `ResourceGovernorRef`, read by
+    `MasterKey` and `ResourceGovernor`. Every other by-name lookup is `*ByName`
+    with no handle.
   - **Agent schedule names are not unique** — address a schedule by its
-    `schedule_id` (`ScheduleByID`, `Schedule.key`), never by name where an
-    id is in hand. `ScheduleByName` returns `ErrAmbiguous` for a shared name.
+    `schedule_id` (`ScheduleByID`, `Schedule.key`) where an id is in hand.
+    `ScheduleByName` returns `ErrAmbiguous` for a shared name.
   - **A child read keyed by a catalog id the handle lacks** refuses it with
-    `ErrHandleNotLoaded` before any query (`requireID`; `Table.requireLoaded`)
-    — or, where the id is one cheap lookup by name away (`Job.id`,
-    `Login.identity`), looks it up without caching it on the handle. Never
-    query with the zero id: it answers "no children". A new such read gets a
-    row in `handle_not_loaded_test.go`.
-  - A schema-scoped handle takes its schema as given and refuses an empty one
-    on write (`ErrSchemaRequired` via `requireSchema`).
-  - `Endpoint` deliberately has no handle: `IsSystem` derives from a scanned
-    id, so a name-only handle would refuse every write (see `endpoint.go` above
+    `ErrHandleNotLoaded` before any query (`requireID`; `Table.requireLoaded`) —
+    or, where the id is one cheap lookup by name away (`Job.id`,
+    `Login.identity`), looks it up without caching it. Never query with the zero
+    id: it answers "no children". A new such read gets a row in
+    `handle_not_loaded_test.go`.
+  - A schema-scoped handle takes its schema as given and refuses an empty one on
+    write (`ErrSchemaRequired` via `requireSchema`).
+  - `Endpoint` deliberately has no handle: `IsSystem` derives from a scanned id,
+    so a name-only handle would refuse every write (see `endpoint.go` above
     `ErrSystemEndpoint`).
-  - **A new handle method takes the `Ref` suffix** — it is what stops
-    `s.Database("x").State()` compiling into a silent zero value. Doc comments
-    in `server_databases.go`/`login.go` are authoritative; `go doc
+  - **A new handle method takes the `Ref` suffix** — it stops
+    `s.Database("x").State()` compiling into a silent zero value. See `go doc
     gosmo.Server.DatabaseRef`.
   - **A result row is never named `…Ref`** — it has nothing to look up
     (`OperatorAlert`, not `AlertNotificationRef`).
-- **Every read returning a type fills every field it declares** — the same
-  trap as a `Ref` read for data, in result types several reads return. Where a
-  read cannot (the server hides the source), the field's doc names that read
-  and the zero must not be a plausible value. A new field only one of several
-  reads fills is a bug. `Users`/`UserByName` share one select (`userSelect`,
-  pinned by `TestUsersFillsWhatUserByNameFills`); `DatabaseFiles` is the
-  documented exception for a database that cannot be entered.
+- **Every read returning a type fills every field it declares.** Where a read
+  cannot (the server hides the source), the field's doc names that read and the
+  zero must not be a plausible value. A new field only one of several reads fills
+  is a bug. `Users`/`UserByName` share one select (`userSelect`, pinned by
+  `TestUsersFillsWhatUserByNameFills`); `DatabaseFiles` is the documented
+  exception for a database that cannot be entered.
 
 ## Open threads
 
-`OPEN-THREADS.md` holds work knowingly left undone and what to watch
-(azidentity's deprecated ROPC credential, the version-support gate table,
-backup `TO URL`). Deferred work, or a lesson that belongs in neither this file
-nor `ARCHITECTURE.md`, goes there — not into a commit message.
+`OPEN-THREADS.md` holds work knowingly left undone and what to watch (azidentity's
+deprecated ROPC credential, the version-support gate table, backup `TO URL`).
+Deferred work, or a lesson belonging in neither this file nor `ARCHITECTURE.md`,
+goes there — not into a commit message.
 
 ## Release
 
-`RELEASE.md` is the current release, `CHANGELOG.md` the history; don't edit
-either in a feature or fix unless asked. gossms cannot release while gosmo's
-`HEAD` is untagged — tag and push here first.
+`RELEASE.md` is the current release, `CHANGELOG.md` the history; don't edit either
+in a feature or fix unless asked. gossms cannot release while gosmo's `HEAD` is
+untagged — tag and push here first.

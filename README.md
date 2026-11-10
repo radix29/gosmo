@@ -74,12 +74,13 @@ Every object family SSMS shows, read and — where it makes sense — written:
 - **Server** — info, configuration, logins and server roles, permissions and
   the connected login's capabilities, sessions, Database Mail, Resource
   Governor, Extended Events, linked servers, the error log, the server
-  filesystem, memory, processor, activity and tempdb DMVs.
+  filesystem, memory, processor, activity and tempdb DMVs, trace flags, the plan cache
+  (`TopQueries`) and deadlock graphs.
 - **Database** — files and filegroups, `ALTER DATABASE` options, scoped
   configurations, space and disk usage, change tracking, users, roles,
   application roles, schemas, permissions down to column scope (`ApplyPermission`),
-  detach/attach, snapshots, shrink, and security scripting
-  (`ScriptDatabaseSecurity`).
+  detach/attach, snapshots, shrink, `CHECKDB`, exact `sp_spaceused` and log
+  space reports, and security scripting (`ScriptDatabaseSecurity`).
 - **Objects** — tables (with system, FileTable, external and graph tables as
   their own listings), columns, indexes, keys, constraints, statistics,
   partitions, views, procedures, functions, sequences, synonyms, triggers at
@@ -112,10 +113,12 @@ Every object family SSMS shows, read and — where it makes sense — written:
   version gating, resource history and governance limits at instance and
   database scope, and backup to URL.
 - **Scripting** — a `Scripter` that generates CREATE/ALTER/DROP DDL for any
-  of the above, and `WithScript`, which collects the statements a write
+  of the above, `ScriptDatabaseObjects` for a whole database in dependency
+  order, and `WithScript`, which collects the statements a write
   *would* run instead of running them.
 
-`srv.InTransaction` runs several writes as one transaction.
+`srv.InTransaction` runs several writes as one transaction. Code that calls
+gosmo can be tested without a server through the `gosmotest` package.
 
 Every method that touches the database takes a `context.Context` first, and
 has that one form. Every `Create*` takes a request value and returns the
