@@ -86,7 +86,10 @@ type DatabaseObjectScript struct {
 	// scripted procedure,
 	// function or synonym naming an object the script leaves out, which SQL
 	// Server resolves only when it runs ("… references …, which is not
-	// scripted").
+	// scripted"). Each is comment-safe (tsql.CommentSafe; built by
+	// warningf): it carries object names, which may hold a CR or LF, and
+	// String writes it into a -- comment, where a line break would end the
+	// comment and run the rest of the name as T-SQL.
 	Warnings []string
 }
 
@@ -95,7 +98,9 @@ type DatabaseObjectScript struct {
 func (r *DatabaseObjectScript) String() string {
 	var sb strings.Builder
 	for _, w := range r.Warnings {
-		fmt.Fprintf(&sb, "-- %s\n", strings.ReplaceAll(w, "\n", " "))
+		// Warnings are made comment-safe, but the field is exported and a
+		// caller may build one; a bare CR ends a -- comment as LF does.
+		fmt.Fprintf(&sb, "-- %s\n", tsql.CommentSafe(w))
 	}
 	for _, o := range r.Objects {
 		sb.WriteString(o.SQL)
@@ -133,8 +138,10 @@ func (sc *Scripter) ScriptDatabaseObjects(ctx context.Context, o ObjectScriptOpt
 //     Warning says so;
 //  3. foreign keys, then edge constraints (ALTER TABLE … ADD CONSTRAINT,
 //     once every table exists: the catalog records no dependency from an
-//     edge table to its node tables), DML triggers, database triggers;
-//  4. with IncludePermissions, the permissions.
+//     edge table to its node tables), DML triggers;
+//  4. with IncludePermissions, the permissions;
+//  5. database triggers, last, so they do not fire on the script's own DDL
+//     (GRANT, DENY and REVOKE are database DDL events).
 //
 // A cycle among references SQL Server resolves late is broken and reported in
 // Warnings; schema-bound references are never broken. An object that is
@@ -392,7 +399,7 @@ func (sc *Scripter) ScriptDatabaseObjectList(ctx context.Context, o ObjectScript
 		}
 	}
 
-	// 3. what needs every table: foreign keys, edge constraints, then
+	// 3. what needs every table: foreign keys, edge constraints, then DML
 	// triggers. The keys and edge constraints come from the table prefetch:
 	// a ScriptForeignKey each re-read the table and its keys, 1 + 2×keys
 	// round trips per table.
@@ -451,16 +458,6 @@ func (sc *Scripter) ScriptDatabaseObjectList(ctx context.Context, o ObjectScript
 			})
 		}
 	}
-	if want(ScriptedDatabaseTrigger) {
-		trs, err := d.DatabaseTriggers(ctx)
-		if err != nil {
-			return nil, err
-		}
-		for _, tr := range trs {
-			queue1(ScriptedObject{Kind: ScriptedDatabaseTrigger, Name: tr.Name},
-				func() (string, error) { return s.ScriptDatabaseTrigger(ctx, tr.Name) })
-		}
-	}
 
 	// missing is every object the script leaves out, by objectKey: the
 	// dropped ledger objects nothing creates, then whatever scriptQueue notes.
@@ -484,6 +481,21 @@ func (sc *Scripter) ScriptDatabaseObjectList(ctx context.Context, o ObjectScript
 			_, tail := buildDatabaseSecurityParts(d.Name, sec, &grantScope{listed: listed, missing: missing})
 			return tail, nil
 		})
+	}
+
+	// 5. database triggers, last: GRANT, DENY and REVOKE are database DDL
+	// events, so a trigger created before the permissions would fire on each
+	// of them in the replay (a "no DDL" ROLLBACK guard aborts the first, Msg
+	// 3609; an audit trigger logs them as if someone had run them).
+	if want(ScriptedDatabaseTrigger) {
+		trs, err := d.DatabaseTriggers(ctx)
+		if err != nil {
+			return nil, err
+		}
+		for _, tr := range trs {
+			queue1(ScriptedObject{Kind: ScriptedDatabaseTrigger, Name: tr.Name},
+				func() (string, error) { return s.ScriptDatabaseTrigger(ctx, tr.Name) })
+		}
 	}
 
 	var lateWarnings []string
@@ -551,7 +563,7 @@ func scriptQueue(ctx context.Context, queue []pendingObject, missing map[string]
 		} else {
 			for _, k := range p.late {
 				if missing[k] {
-					warnings = append(warnings, fmt.Sprintf("%s %s references %s, which is not scripted", obj.Kind, obj.display(), k[2:]))
+					warnings = append(warnings, warningf("%s %s references %s, which is not scripted", obj.Kind, obj.display(), k[2:]))
 				}
 			}
 		}
@@ -560,6 +572,12 @@ func scriptQueue(ctx context.Context, queue []pendingObject, missing map[string]
 		progress(len(out), len(queue))
 	}
 	return out, warnings, nil
+}
+
+// warningf formats one DatabaseObjectScript warning, comment-safe: the
+// names in it are user data, and String writes it into a -- comment.
+func warningf(format string, args ...any) string {
+	return tsql.CommentSafe(fmt.Sprintf(format, args...))
 }
 
 // display is o's name as a script shows it: schema-qualified where it has a

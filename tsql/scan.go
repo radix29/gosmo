@@ -41,8 +41,10 @@ type Span struct {
 //     "[a]]'b]" ends the identifier early and reads "'b]…" as a literal.
 //   - Block comments nest, so they are counted, not matched: the first */ of
 //     "/* a /* b */ c */" does not end it.
-//   - A -- comment ends before its newline, or runs to the end of the text
-//     when there is none; it is closed either way. A quoted span or block
+//   - A -- comment ends before its first CR or LF, or runs to the end of
+//     the text when there is none; it is closed either way. SQL Server ends
+//     the comment at a lone CR too ("SELECT 1 -- c<CR>SELECT 2" returns two
+//     result sets), so text after a bare CR is code, not comment. A quoted span or block
 //     comment left open runs to the end of the text with Closed false.
 //   - An N (either case) opens a Unicode literal only as a word of its own,
 //     not as the last letter of one: "N'x'" is a literal, "IN'x'" is the
@@ -64,7 +66,7 @@ func Spans(s string) iter.Seq[Span] {
 				sp = scanDelimited(s, i, i, SpanQuotedIdent, '"')
 			case strings.HasPrefix(s[i:], "--"):
 				sp = Span{Kind: SpanLineComment, Start: i, End: len(s), Closed: true}
-				if j := strings.IndexByte(s[i:], '\n'); j >= 0 {
+				if j := strings.IndexAny(s[i:], "\r\n"); j >= 0 {
 					sp.End = i + j
 				}
 			case strings.HasPrefix(s[i:], "/*"):

@@ -137,7 +137,7 @@ func orderObjects(nodes []orderNode, edges []orderEdge) ([]orderNode, []string, 
 			}
 			slices.Sort(broken)
 			for _, b := range broken {
-				warnings = append(warnings, fmt.Sprintf("dependency cycle broken: %s -> %s", pick.display(), b))
+				warnings = append(warnings, warningf("dependency cycle broken: %s -> %s", pick.display(), b))
 			}
 			clear(waiting[pick.key])
 			queued[pick.key] = true

@@ -136,6 +136,11 @@ func TestLiveScriptDatabaseObjectsReplay(t *testing.T) {
 		)
 	}
 
+	// Last, or it would refuse the fixture's own DDL: a "no DDL here" guard.
+	// GRANT is a database DDL event, so a replay that created it before the
+	// permissions failed the first GRANT, Msg 3609.
+	liveExecIn(t, src, ctx, `CREATE TRIGGER no_ddl ON DATABASE FOR DDL_DATABASE_LEVEL_EVENTS AS ROLLBACK`)
+
 	var progress [][2]int
 	srcScripter := NewScripter(src, DefaultScriptOptions())
 	res, err := srcScripter.ScriptDatabaseObjectList(ctx, ObjectScriptOptions{IncludePermissions: true,
@@ -197,6 +202,7 @@ func TestLiveScriptDatabaseObjectsReplay(t *testing.T) {
 	before("table type app.ids", "procedure app.p_use")
 	before("table app.a", "foreign key app.fk_a_b")
 	before("table app.b", "foreign key app.fk_a_b")
+	before("permissions .gosmo_objs_src_live", "database trigger .no_ddl")
 	if graph {
 		before("table dbo.Zperson", "edge constraint dbo.EC_lives")
 		before("table dbo.AlivesIn", "edge constraint dbo.EC_lives")
@@ -504,6 +510,8 @@ FROM sys.objects o LEFT JOIN sys.sql_modules m ON m.object_id = o.object_id
 WHERE o.is_ms_shipped = 0 AND o.type COLLATE DATABASE_DEFAULT NOT IN ('TT', 'IT', 'S')
 UNION ALL SELECT 'type ' + QUOTENAME(SCHEMA_NAME(schema_id)) + '.' + QUOTENAME(name) COLLATE DATABASE_DEFAULT + ' ' + CAST(system_type_id AS varchar) + ' ' + CAST(max_length AS varchar) + ' ' + CAST(is_nullable AS varchar)
 FROM sys.types WHERE is_user_defined = 1
+UNION ALL SELECT 'dbtrigger ' + QUOTENAME(tr.name) COLLATE DATABASE_DEFAULT + ' ' + CAST(tr.is_disabled AS varchar) + ' ' + COALESCE(CONVERT(varchar(64), HASHBYTES('SHA1', m.definition), 2), '')
+FROM sys.triggers tr LEFT JOIN sys.sql_modules m ON m.object_id = tr.object_id WHERE tr.parent_class = 0
 UNION ALL SELECT 'xml ' + QUOTENAME(SCHEMA_NAME(schema_id)) + '.' + QUOTENAME(name) COLLATE DATABASE_DEFAULT FROM sys.xml_schema_collections WHERE schema_id <> 4
 UNION ALL SELECT 'schema ' + QUOTENAME(name) COLLATE DATABASE_DEFAULT FROM sys.schemas WHERE schema_id > 4 AND schema_id < 16384
 UNION ALL SELECT 'index ' + QUOTENAME(SCHEMA_NAME(o.schema_id)) + '.' + QUOTENAME(o.name) + '.' + COALESCE(QUOTENAME(

@@ -138,3 +138,34 @@ func TestOrderObjectsDuplicateKeyIsAnError(t *testing.T) {
 		t.Errorf("err = %v", err)
 	}
 }
+
+// TestDatabaseObjectWarningsAreCommentSafe pins that the warnings hold no
+// control character where they are made, not only once String writes them:
+// Warnings is exported, and callers (gossms's CLI) print it as is.
+func TestDatabaseObjectWarningsAreCommentSafe(t *testing.T) {
+	hostile := "a\rSELECT 'injected' AS x--"
+	_, cycle := orderNames(t, testNodes(hostile, "b"),
+		[]orderEdge{edge(hostile, "b", false), edge("b", hostile, false)})
+	_, late, err := scriptQueue(t.Context(), []pendingObject{{
+		obj:  ScriptedObject{Kind: ScriptedProcedure, Schema: "dbo", Name: hostile},
+		late: []string{objectKey('o', "dbo", hostile+"2")},
+		gen:  func() (string, error) { return "SELECT 1\n", nil },
+	}}, map[string]bool{objectKey('o', "dbo", hostile+"2"): true}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	warn := append(cycle, late...)
+	if len(warn) != 2 {
+		t.Fatalf("want a cycle and a late-reference warning, got %q", warn)
+	}
+	for _, w := range warn {
+		if strings.ContainsAny(w, "\r\n") || !strings.Contains(w, "injected") {
+			t.Errorf("warning not comment-safe or lost the name: %q", w)
+		}
+	}
+	for line := range strings.Lines((&DatabaseObjectScript{Warnings: warn}).String()) {
+		if !strings.HasPrefix(line, "-- ") {
+			t.Errorf("line outside the warning comments: %q", line)
+		}
+	}
+}
