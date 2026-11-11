@@ -17,11 +17,12 @@ import (
 // Instance among them.
 const userTypes = `('S','U','G','E','X','C','K')`
 
-// userSelect is the column list and FROM clause both user reads share, so
-// every field a User declares is filled by both. loginJoin is the
-// sys.server_principals match, or the empty string to leave LoginName and
-// LoginDisabled zero.
-func userSelect(loginJoin bool) string {
+// userSelect is the column list and FROM clause every user read shares
+// (Users, UserByName, Principals), so every field a User declares is filled
+// by each. loginJoin adds the sys.server_principals match; false leaves
+// LoginName and LoginDisabled zero. extraCols, when not empty, is appended
+// after the columns scanUser reads (Principals' role columns).
+func userSelect(loginJoin bool, extraCols string) string {
 	login, join := "CAST(NULL AS sysname), CAST(NULL AS bit)", ""
 	if loginJoin {
 		login, join = "sp.name, sp.is_disabled", "\nLEFT   JOIN sys.server_principals sp ON sp.sid = dp.sid"
@@ -32,7 +33,7 @@ SELECT dp.name, dp.principal_id, dp.type_desc, dp.default_schema_name,
        ` + login + `,
        CASE dp.type WHEN 'C' THEN (SELECT TOP 1 c.name  FROM sys.certificates    c  WHERE c.sid  = dp.sid)
                     WHEN 'K' THEN (SELECT TOP 1 ak.name FROM sys.asymmetric_keys ak WHERE ak.sid = dp.sid)
-       END
+       END` + extraCols + `
 FROM   sys.database_principals dp` + join
 }
 
@@ -56,7 +57,7 @@ func scanUser(scan func(...any) error, u *User) error {
 // except LoginName and LoginDisabled on Azure SQL Database, where a user
 // database cannot see sys.server_principals and both stay zero.
 func (d *Database) Users(ctx context.Context) ([]*User, error) {
-	q := userSelect(!d.serverIsAzureSQLDatabase()) + `
+	q := userSelect(!d.serverIsAzureSQLDatabase(), "") + `
 WHERE  dp.type IN ` + userTypes + `
 ORDER  BY dp.name`
 
@@ -80,7 +81,7 @@ func (d *Database) serverIsAzureSQLDatabase() bool {
 // UserByName returns a single database user by name, with its SID, matching
 // server login (if any) and mapped certificate or asymmetric key filled in.
 func (d *Database) UserByName(ctx context.Context, name string) (*User, error) {
-	q := userSelect(true) + `
+	q := userSelect(true, "") + `
 WHERE  dp.type IN ` + userTypes + ` AND dp.name = @p1`
 
 	u := &User{db: d}

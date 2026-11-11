@@ -69,6 +69,7 @@ classDiagram
         +ApplicationRoleByName(name) *ApplicationRole
         +ApplicationRoleRef(name) *ApplicationRole
         +CreateApplicationRole(req) *ApplicationRole
+        +Principals(kinds...) *DatabasePrincipals
         +FileGroups() []*FileGroup
         +Triggers() []*Trigger
         +ObjectTriggers(schema, name) []*Trigger

@@ -67,6 +67,10 @@ var sweepMustCall = []string{
 	// version exposure as the listings above.
 	"Database.Capabilities",
 
+	// The one-read principal listing: its kinds are variadic, which the
+	// reflective half reaches only through its IsVariadic branch.
+	"Database.Principals",
+
 	// Assemblies.
 	"Database.Assemblies",
 	"Database.AssemblyByName",

@@ -2,7 +2,7 @@ module github.com/radix29/gosmo
 
 go 1.27
 
-toolchain go1.27.3
+toolchain go1.27.4
 
 require (
 	github.com/Azure/azure-sdk-for-go/sdk/azcore v1.24.0

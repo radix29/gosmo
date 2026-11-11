@@ -35,6 +35,7 @@ definition of gosmo's API** — gosmo has other users.
 
 ```
 go build ./...  &&  go test ./...  &&  gofmt -w .  &&  go vet ./...
+staticcheck ./...           # must stay clean; deadcode is not a gate here (library surface)
 go vet -tags livedb ./...   # after any rename, and before a tag
 go test -tags livedb . -run '^(TestLiveA|TestLiveB)$' -livedb '<dsn>'   # the tests a change touches
 go test -tags livedb . -short -livedb '<dsn>'   # broad check: skips tests over 15 s
