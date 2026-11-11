@@ -8,8 +8,8 @@
 //	go test -tags livedb . -run TestLiveDiscoveryReads -v \
 //	  -livedb 'sqlserver://sa:PASS@host?TrustServerCertificate=true'
 //
-// Creates and drops three throwaway databases (one case-sensitive, one set
-// OFFLINE) and two logins; touches nothing else.
+// Creates and drops four throwaway databases (one case-sensitive, one
+// Turkish, one set OFFLINE) and two logins; touches nothing else.
 package gosmo
 
 import (
@@ -288,6 +288,7 @@ func TestLiveObjectByNameCaseSensitive(t *testing.T) {
 		"CREATE SCHEMA Sales",
 		"CREATE TABLE Sales.Customer (id int)",
 		"CREATE TABLE Sales.customer (id int)",
+		"CREATE PROCEDURE Sales.p_mixed AS SELECT 'MixedNeedle' AS x",
 	)
 	o, err := d.ObjectByName(ctx, "Sales", "customer")
 	if err != nil || o.Name != "customer" {
@@ -302,5 +303,25 @@ func TestLiveObjectByNameCaseSensitive(t *testing.T) {
 	}
 	if got, err := d.SearchColumns(ctx, "ID"); err != nil || len(got) != 2 {
 		t.Errorf("SearchColumns(ID) = %v, %v; want both tables (search ignores case)", got, err)
+	}
+	if got, err := d.SearchDefinitions(ctx, "mIXEDnEEDLE"); err != nil || len(got) != 1 {
+		t.Errorf("SearchDefinitions(mIXEDnEEDLE) = %v, %v; want p_mixed (search ignores case)", got, err)
+	}
+}
+
+// SearchDefinitions compares ordinally but lowers under the database's
+// collation, so a Turkish database folds I to dotless ı — LOWER under the
+// ordinal collation folds it to i, and an ordinal compare of the raw text
+// does not fold at all.
+func TestLiveSearchDefinitionsFoldsCaseByTheDatabaseCollation(t *testing.T) {
+	db, ctx, done := liveDB(t)
+	defer done()
+
+	d, drop := liveScratchDBCollated(t, db, ctx, "gosmo_discovery_tr_live", "Turkish_100_CI_AS")
+	defer drop()
+	liveExecIn(t, d, ctx, "CREATE PROCEDURE dbo.p_season AS SELECT N'KIŞ' AS x")
+	got, err := d.SearchDefinitions(ctx, "kış")
+	if err != nil || len(got) != 1 || got[0].Name != "p_season" {
+		t.Errorf("SearchDefinitions(kış) = %v, %v; want p_season", got, err)
 	}
 }
