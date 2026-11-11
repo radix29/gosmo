@@ -109,19 +109,7 @@ type CreateServerRoleRequest struct {
 // back from the catalog — or, under Scripting(ctx), the ServerRoleRef handle,
 // since nothing ran.
 func (s *Server) CreateServerRole(ctx context.Context, req CreateServerRoleRequest) (*ServerRole, error) {
-	if req.Name == "" {
-		return nil, invalidf("gosmo: create server role: name is required")
-	}
-	q := "CREATE SERVER ROLE " + quoteIdent(req.Name)
-	if req.Owner != "" {
-		q += " AUTHORIZATION " + quoteIdent(req.Owner)
-	}
-	if _, err := s.exec(ctx, q); err != nil {
-		return nil, fmt.Errorf("gosmo: create server role %q: %w", req.Name, err)
-	}
-	return createdObject(ctx, s.ServerRoleRef(req.Name), func() (*ServerRole, error) {
-		return s.ServerRoleByName(ctx, req.Name)
-	})
+	return createOwned(ctx, s.exec, "server role", "CREATE SERVER ROLE", req.Name, req.Owner, s.ServerRoleRef(req.Name), s.ServerRoleByName)
 }
 
 // Drop drops this server role. A fixed role, or one that still owns another

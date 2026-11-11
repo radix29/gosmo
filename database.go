@@ -683,19 +683,7 @@ type CreateSchemaRequest struct {
 // back from the catalog — or, under Scripting(ctx), the SchemaRef handle,
 // since nothing ran.
 func (d *Database) CreateSchema(ctx context.Context, req CreateSchemaRequest) (*Schema, error) {
-	if req.Name == "" {
-		return nil, invalidf("gosmo: create schema: name is required")
-	}
-	q := "CREATE SCHEMA " + quoteIdent(req.Name)
-	if req.Owner != "" {
-		q += " AUTHORIZATION " + quoteIdent(req.Owner)
-	}
-	if _, err := d.exec(ctx, q); err != nil {
-		return nil, fmt.Errorf("gosmo: create schema %q: %w", req.Name, err)
-	}
-	return createdObject(ctx, d.SchemaRef(req.Name), func() (*Schema, error) {
-		return d.SchemaByName(ctx, req.Name)
-	})
+	return createOwned(ctx, d.exec, "schema", "CREATE SCHEMA", req.Name, req.Owner, d.SchemaRef(req.Name), d.SchemaByName)
 }
 
 // -- Tables --------------------------------------------------------------------

@@ -123,6 +123,27 @@ func createdObject[T any](ctx context.Context, handle T, read func() (T, error))
 	return v, err
 }
 
+// createOwned is the shared body of the CREATE … AUTHORIZATION creates —
+// CreateSchema, CreateRole, CreateServerRole: refuse an empty name, run
+// "<stmt> [name] [AUTHORIZATION [owner]]" through exec, and hand back the
+// object through createdObject. what names it in the error texts ("schema",
+// "database role", "server role"), which stay those of the three methods.
+func createOwned[T any](ctx context.Context, exec func(context.Context, string, ...any) (sql.Result, error),
+	what, stmt, name, owner string, ref T, byName func(context.Context, string) (T, error)) (T, error) {
+	var zero T
+	if name == "" {
+		return zero, invalidf("gosmo: create %s: name is required", what)
+	}
+	q := stmt + " " + quoteIdent(name)
+	if owner != "" {
+		q += " AUTHORIZATION " + quoteIdent(owner)
+	}
+	if _, err := exec(ctx, q); err != nil {
+		return zero, fmt.Errorf("gosmo: create %s %q: %w", what, name, err)
+	}
+	return createdObject(ctx, ref, func() (T, error) { return byName(ctx, name) })
+}
+
 // matchName picks the item whose key is name. A name read from the catalog
 // matches exactly, so an exact match always wins; failing that, a single
 // case-insensitive match is taken, so a caller typing ix_a still finds IX_A

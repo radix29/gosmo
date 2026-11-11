@@ -369,15 +369,17 @@ func buildCreateStatisticStatement(tableName string, req CreateStatisticRequest)
 // ObjectID and StatID until 2026-10-03, so from a handle it found nothing
 // and answered with no columns, although this doc already promised it.
 func (st *Statistic) Columns(ctx context.Context) ([]string, error) {
-	q := fmt.Sprintf(`
+	// The table is bound, not spliced into an OBJECT_ID literal: one plan for
+	// every table, as the fragmentation and storage reads (2026-11-11).
+	const q = `
 SELECT c.name
 FROM   sys.stats s
 JOIN   sys.stats_columns sc ON sc.object_id = s.object_id AND sc.stats_id = s.stats_id
 JOIN   sys.columns c ON c.object_id = sc.object_id AND c.column_id = sc.column_id
-WHERE  s.object_id = OBJECT_ID(N'%s') AND s.name = @p1
-ORDER  BY sc.stats_column_id`, escapeSingle(st.on().FullName()))
+WHERE  s.object_id = OBJECT_ID(@p2) AND s.name = @p1
+ORDER  BY sc.stats_column_id`
 
-	rows, err := st.on().db.query(ctx, q, st.Name)
+	rows, err := st.on().db.query(ctx, q, st.Name, st.on().FullName())
 	return scanRows(rows, err, fmt.Sprintf("columns for statistic %q", st.Name), func(scan func(...any) error) (string, error) {
 		var name string
 		if err := scan(&name); err != nil {
