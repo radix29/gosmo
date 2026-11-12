@@ -364,3 +364,27 @@ func TestJobHistoryNamesTheJob(t *testing.T) {
 		t.Errorf("JobName = %q, want %q", hist[0].JobName, "Nightly")
 	}
 }
+
+// TestJobStateRunning pins which states answer: only those with a certain live
+// session (or none) are known; Unknown and Suspended leave it to the server.
+func TestJobStateRunning(t *testing.T) {
+	for _, tc := range []struct {
+		state          JobState
+		running, known bool
+	}{
+		{JobStateUnknown, false, false},
+		{JobStateExecuting, true, true},
+		{JobStateWaitingForWorker, true, true},
+		{JobStateBetweenRetries, true, true},
+		{JobStateIdle, false, true},
+		{JobStateSuspended, false, false},
+		{JobStateWaitingForStepToFinish, true, true},
+		{JobStatePerformingCompletionActions, true, true},
+		{JobState(99), false, false},
+	} {
+		running, known := tc.state.Running()
+		if running != tc.running || known != tc.known {
+			t.Errorf("JobState(%d).Running() = %v, %v; want %v, %v", tc.state, running, known, tc.running, tc.known)
+		}
+	}
+}

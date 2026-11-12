@@ -416,9 +416,10 @@ func (req CreateIndexRequest) validateCompression(fail func(string, ...any) erro
 
 // validateColumnstoreOrder checks ORDER (…): columnstore only, no empty or
 // repeated name (Msg 35331), and on a nonclustered index only its own key
-// columns (Msg 1911). The repeat check is exact and the key-column one
-// case-insensitive, so a case-sensitive database's distinct columns, or a
-// differently cased key column, are left to the server.
+// columns (Msg 1911). Both checks are exact: the ORDER names and the key
+// columns are the caller's spelling of one request, so a differently cased
+// name is a mistake under a case-sensitive collation and refused here rather
+// than by the server.
 func (req CreateIndexRequest) validateColumnstoreOrder(fail func(string, ...any) error) error {
 	if len(req.ColumnstoreOrder) == 0 {
 		return nil
@@ -434,7 +435,7 @@ func (req CreateIndexRequest) validateColumnstoreOrder(fail func(string, ...any)
 			return fail("ORDER column %q appears more than once", c)
 		}
 		if req.Type == IndexTypeColumnStore && !slices.ContainsFunc(req.KeyColumns, func(k IndexColumnDef) bool {
-			return strings.EqualFold(k.Name, c)
+			return k.Name == c
 		}) {
 			return fail("ORDER column %q is not one of the nonclustered columnstore index's columns", c)
 		}

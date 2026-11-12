@@ -146,3 +146,23 @@ func TestDatabaseHandleWrites(t *testing.T) {
 		})
 	}
 }
+
+// TestSchemaIsSystem pins the schemas SQL Server creates in every database:
+// guest, INFORMATION_SCHEMA, sys and the fixed roles' — not dbo, not a user
+// schema, and not a name-only handle.
+func TestSchemaIsSystem(t *testing.T) {
+	for _, tc := range []struct {
+		id   int
+		want bool
+	}{
+		{0, false}, {1, false}, {2, true}, {3, true}, {4, true}, {5, false},
+		{16383, false}, {16384, true}, {16393, true}, {16399, true}, {16400, false},
+	} {
+		if got := (&Schema{ID: tc.id}).IsSystem(); got != tc.want {
+			t.Errorf("Schema{ID: %d}.IsSystem() = %v, want %v", tc.id, got, tc.want)
+		}
+	}
+	if (&Database{}).SchemaRef("sys").IsSystem() {
+		t.Error("SchemaRef(\"sys\").IsSystem() = true; a handle carries no ID")
+	}
+}

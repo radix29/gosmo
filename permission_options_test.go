@@ -109,3 +109,40 @@ func TestPermissionWithModifierStillRejectsUnknownPermission(t *testing.T) {
 		t.Error("an unrecognized server permission name was accepted, want an error")
 	}
 }
+
+// TestSecurableClassPermissionTypesByScope round-trips every class's
+// PermissionNames through Permission: the name is kept, and its Go type is the
+// class's scope — server, database, or object for everything below.
+func TestSecurableClassPermissionTypesByScope(t *testing.T) {
+	for _, c := range []SecurableClass{
+		SecurableServer, SecurableDatabase, SecurableSchema, SecurableTable, SecurableView,
+		SecurableProcedure, SecurableScalarFunction, SecurableInlineFunction, SecurableTableFunction,
+		SecurableSequence, SecurableSynonym, SecurableUserType, SecurableCertificate,
+	} {
+		names := c.PermissionNames()
+		if len(names) == 0 {
+			t.Errorf("%s: PermissionNames() is empty", c)
+		}
+		for _, name := range names {
+			p := c.Permission(name)
+			if p.permissionName() != name {
+				t.Errorf("%s.Permission(%q) names %q", c, name, p.permissionName())
+			}
+			var scopeOK bool
+			switch p.(type) {
+			case ServerPermission:
+				scopeOK = c == SecurableServer
+			case DatabasePermission:
+				scopeOK = c == SecurableDatabase
+			case ObjectPermission:
+				scopeOK = c != SecurableServer && c != SecurableDatabase
+			}
+			if !scopeOK {
+				t.Errorf("%s.Permission(%q) is a %T", c, name, p)
+			}
+			if !c.allows(name, false) {
+				t.Errorf("%s.Permission(%q): the class's allowlist refuses its own name", c, name)
+			}
+		}
+	}
+}

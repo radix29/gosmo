@@ -234,6 +234,21 @@ func (c SecurableClass) PermissionNames() []string {
 	return names
 }
 
+// Permission is name as the PermissionName type of the class's scope:
+// ServerPermission for SecurableServer, DatabasePermission for
+// SecurableDatabase, ObjectPermission for every other class. ApplyPermission
+// checks the name against the class's allowlist whatever its Go type, so this
+// only keeps the type honest; it does not validate name.
+func (c SecurableClass) Permission(name string) PermissionName {
+	switch c {
+	case SecurableServer:
+		return ServerPermission(name)
+	case SecurableDatabase:
+		return DatabasePermission(name)
+	}
+	return ObjectPermission(name)
+}
+
 // HasColumns reports whether a securable of the class has columns that carry
 // permissions of their own: a table, a view, or a table-valued function of
 // either kind (confirmed live on 17, 2026-10-15).

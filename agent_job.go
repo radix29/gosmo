@@ -37,6 +37,24 @@ const (
 	JobStatePerformingCompletionActions JobState = 7
 )
 
+// Running reports whether sp_start_job would refuse the job as already running
+// and sp_stop_job accept it, and whether the state knows.
+//
+// Only states with a certain live session answer. JobStateUnknown (a job Agent
+// doesn't run, or the fallback when xp_sqlagent_enum_jobs is unreachable) and
+// JobStateSuspended (sp_help_job groups it with idle, yet it holds a session)
+// return known=false, so the server decides.
+func (s JobState) Running() (running, known bool) {
+	switch s {
+	case JobStateExecuting, JobStateWaitingForWorker, JobStateBetweenRetries,
+		JobStateWaitingForStepToFinish, JobStatePerformingCompletionActions:
+		return true, true
+	case JobStateIdle:
+		return false, true
+	}
+	return false, false
+}
+
 // jobStateColumns is the result set of master.dbo.xp_sqlagent_enum_jobs, as
 // a table-variable declaration. INSERT ... EXECUTE requires the shape to
 // match the procedure's exactly, so this is copied from
