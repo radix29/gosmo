@@ -5,6 +5,7 @@ import (
 	"database/sql/driver"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 
 	mssql "github.com/microsoft/go-mssqldb"
@@ -93,6 +94,35 @@ func TestWriteOnLoginDatabaseMovesThePool(t *testing.T) {
 			}
 			if got := s.InitialDatabase(); got != "Sales" {
 				t.Errorf("under WithScript: InitialDatabase = %q, want Sales", got)
+			}
+		})
+	}
+}
+
+// Database names follow the server's collation. On a case-sensitive server
+// `Sales` and `sales` are two databases, so dropping or renaming one must not
+// move a pool that logs in to the other; under a case-insensitive one they are
+// the same database, and it must.
+func TestWriteOnLoginDatabaseFollowsServerCollation(t *testing.T) {
+	cases := []struct {
+		collation, login string
+		want             string
+	}{
+		{"Latin1_General_CS_AS", "sales", "sales"},
+		{"Latin1_General_BIN2", "sales", "sales"},
+		{"Latin1_General_CS_AS", "Sales", "master"},
+		{"SQL_Latin1_General_CP1_CI_AS", "sales", "master"},
+		{"", "sales", "master"}, // server info never read: the default ignores case
+	}
+	for _, tc := range cases {
+		t.Run(tc.collation+"/"+tc.login, func(t *testing.T) {
+			s := loginServer(t, tc.login)
+			s.login.setCollation(tc.collation)
+			if err := s.DatabaseRef("Sales").Drop(t.Context(), TerminationNone); err != nil {
+				t.Fatalf("Drop: %v", err)
+			}
+			if got := s.InitialDatabase(); got != tc.want {
+				t.Errorf("InitialDatabase = %q, want %q", got, tc.want)
 			}
 		})
 	}
@@ -217,11 +247,12 @@ func TestRefusedDialThatStaysPut(t *testing.T) {
 		{"bad password", "Sales", mssql.Error{Number: 18456}, true, 1},
 		{"network", "Sales", errors.New("dial tcp: connection refused"), true, 1},
 		{"already master", "master", mssql.Error{Number: 4060}, true, 1},
+		{"already MASTER, case-insensitive server", "MASTER", mssql.Error{Number: 4060}, true, 1},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			c, dials := fakeLoginConnector(t, tc.database, tc.err, tc.fallBack)
-			if tc.database == "master" {
+			if strings.EqualFold(tc.database, "master") {
 				// fakeLogin lets master in; make it refuse to see the error
 				// come back unretried.
 				c.cur.(*fakeLogin).database = "master!"
@@ -236,6 +267,19 @@ func TestRefusedDialThatStaysPut(t *testing.T) {
 				t.Errorf("database = %q, want %q", got, tc.database)
 			}
 		})
+	}
+}
+
+// On a case-sensitive server `MASTER` is not master: a pool logging in to a
+// database of that name, refused, moves to master like any other.
+func TestRefusedDialOnCaseSensitiveServerMovesMASTER(t *testing.T) {
+	c, dials := fakeLoginConnector(t, "MASTER", mssql.Error{Number: 4060}, true)
+	c.setCollation("Latin1_General_CS_AS")
+	if _, err := c.Connect(t.Context()); err != nil {
+		t.Fatalf("Connect = %v, want the retry on master to succeed", err)
+	}
+	if got := *dials; len(got) != 2 || got[0] != "MASTER" || got[1] != "master" {
+		t.Errorf("dials = %v, want [MASTER master]", got)
 	}
 }
 

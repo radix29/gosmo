@@ -71,7 +71,7 @@ func authorizationClause(owner string) string {
 // ScriptMessageType generates the CREATE (or DROP) script for one message
 // type.
 func (sc *Scripter) ScriptMessageType(ctx context.Context, name string) (string, error) {
-	mt, err := sc.db.MessageTypeByName(ctx, name)
+	mt, err := sc.db.ServiceBroker().MessageTypeByName(ctx, name)
 	if err != nil {
 		return "", err
 	}
@@ -111,7 +111,7 @@ func messageTypeValidationClause(mt *MessageType) string {
 // ScriptContract generates the CREATE (or DROP) script for one service
 // contract.
 func (sc *Scripter) ScriptContract(ctx context.Context, name string) (string, error) {
-	c, err := sc.db.ContractByName(ctx, name)
+	c, err := sc.db.ServiceBroker().ContractByName(ctx, name)
 	if err != nil {
 		return "", err
 	}
@@ -157,7 +157,7 @@ func (sc *Scripter) ScriptBrokerQueue(ctx context.Context, schema, name string) 
 	if err := requireSchema("script broker queue", schema, name); err != nil {
 		return "", err
 	}
-	q, err := sc.db.BrokerQueueByName(ctx, schema, name)
+	q, err := sc.db.ServiceBroker().QueueByName(ctx, schema, name)
 	if err != nil {
 		return "", err
 	}
@@ -214,7 +214,7 @@ func queueExecuteAsClause(q *BrokerQueue) string {
 
 // ScriptBrokerService generates the CREATE (or DROP) script for one service.
 func (sc *Scripter) ScriptBrokerService(ctx context.Context, name string) (string, error) {
-	s, err := sc.db.BrokerServiceByName(ctx, name)
+	s, err := sc.db.ServiceBroker().ServiceByName(ctx, name)
 	if err != nil {
 		return "", err
 	}
@@ -255,7 +255,7 @@ func buildBrokerServiceScript(s *BrokerService, opts ScriptOptions) string {
 
 // ScriptRoute generates the CREATE (or DROP) script for one route.
 func (sc *Scripter) ScriptRoute(ctx context.Context, name string) (string, error) {
-	r, err := sc.db.RouteByName(ctx, name)
+	r, err := sc.db.ServiceBroker().RouteByName(ctx, name)
 	if err != nil {
 		return "", err
 	}
@@ -305,7 +305,7 @@ func buildRouteScript(r *Route, opts ScriptOptions) string {
 // batch before anything in it runs. A caller that emits scripts into a batch
 // with other statements keeps this one in a batch of its own.
 func (sc *Scripter) ScriptRemoteServiceBinding(ctx context.Context, name string) (string, error) {
-	b, err := sc.db.RemoteServiceBindingByName(ctx, name)
+	b, err := sc.db.ServiceBroker().RemoteServiceBindingByName(ctx, name)
 	if err != nil {
 		return "", err
 	}
@@ -333,7 +333,7 @@ func buildRemoteServiceBindingScript(b *RemoteServiceBinding, opts ScriptOptions
 // ScriptBrokerPriority generates the CREATE (or DROP) script for one
 // conversation priority.
 func (sc *Scripter) ScriptBrokerPriority(ctx context.Context, name string) (string, error) {
-	p, err := sc.db.BrokerPriorityByName(ctx, name)
+	p, err := sc.db.ServiceBroker().PriorityByName(ctx, name)
 	if err != nil {
 		return "", err
 	}

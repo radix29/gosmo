@@ -321,6 +321,7 @@ func Connect(ctx context.Context, opts ConnectionOptions) (*Server, error) {
 		s.Close()
 		return nil, err
 	}
+	login.setCollation(s.info.Collation)
 	if EngineEdition(s.info.EngineEdition) != EngineAzureSQLDatabase {
 		login.enableFallBack()
 	}

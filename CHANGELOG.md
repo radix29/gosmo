@@ -4,6 +4,42 @@ All notable changes to gosmo are documented here, newest first, from
 `v0.0.4` onward — this is the history. `RELEASE.md` carries the current
 release only, as a short summary of the entry below it.
 
+## v0.3.0
+
+An API-consistency release for gossms v0.3.0. Full-text search and Service
+Broker leave `*Database` for facet handles, `d.FullText()` and
+`d.ServiceBroker()`, so their calls drop the family prefix; a few helpers
+gossms carried twice move into gosmo; and name comparisons that ignored the
+collation now follow it. **Breaking.** **Migrating:** call the moved methods on
+the facet, renamed as in the tables under Changed — e.g.
+`d.FullTextCatalogs(ctx)` becomes `d.FullText().Catalogs(ctx)` and
+`d.BrokerQueues(ctx)` becomes `d.ServiceBroker().Queues(ctx)`. Each facet's
+`Database()` returns its database. `Server.FullTextInfo`, Resource Governor
+and Backup keep their place (`CLAUDE.md` § Conventions).
+
+### Added
+
+- **`Database.Principals(ctx, kinds ...PrincipalKind)`** returns `DatabasePrincipals{Users, Roles, ApplicationRoles}` in one round trip instead of three; `PrincipalKindUser`, `PrincipalKindRole` and `PrincipalKindApplicationRole` limit the read. A role carries what `RoleByName` fills, SID and dates included.
+- **`JobState.Running() (running, known bool)`** — whether `sp_start_job` would refuse the job as already running; `JobStateUnknown` and `JobStateSuspended` answer `known=false`.
+- **`SecurableClass.Permission(name)`** — the name as the class's `PermissionName` type (`ServerPermission`, `DatabasePermission` or `ObjectPermission`).
+- **`Schema.IsSystem()`** — guest, `INFORMATION_SCHEMA`, `sys` and the fixed database roles' schemas; `dbo` is not one. Derived from `ID`, so false on a `SchemaRef` handle.
+
+### Changed
+
+- **Breaking — full-text** (`fulltext.go`, `fulltext_write.go`): `Database.FullText()` returns a `FullText` handle with `Catalogs`, `CatalogByName`, `CatalogRef`, `CreateCatalog`, `Stoplists`, `StoplistByName`, `StoplistRef`, `CreateStoplist`, `SearchPropertyLists`, `SearchPropertyListByName`, `SearchPropertyListRef`, `CreateSearchPropertyList` and `Indexes`, replacing `Database.FullTextCatalogs`, `FullTextCatalogByName`, `FullTextCatalogRef`, `CreateFullTextCatalog`, `FullTextStoplists`, `FullTextStoplistByName`, `FullTextStoplistRef`, `CreateFullTextStoplist`, `SearchPropertyLists`, `SearchPropertyListByName`, `SearchPropertyListRef`, `CreateSearchPropertyList` and `FullTextIndexes`.
+- **Breaking — Service Broker** (`service_broker*.go`): `Database.ServiceBroker()` returns a `ServiceBroker` handle with `Queues`/`QueueByName`/`QueueRef`, `Services`/`ServiceByName`/`ServiceRef`, `Priorities`/`PriorityByName`/`PriorityRef`, `MessageTypes`, `Contracts`, `Routes`, `RemoteServiceBindings` (each with `…ByName` and `…Ref`), `QueueMessageCounts` and `QueueMonitors`, replacing the `Database` methods of the same families (`BrokerQueues`, `BrokerServices`, `BrokerPriorities` and their finders lose the `Broker` prefix).
+- Script output, the version sweep (`reflectSweep`, `sweepMustCall`) and the documentation follow both facets.
+- **`SearchDefinitions`** still folds case under the database's collation but compares ordinally (`Latin1_General_100_BIN2`): about 5× faster over a large database (8.3 s → 1.6 s, 5,050 modules). What a linguistic collation treats as equal beyond case no longer matches — in an accent-insensitive database "cafe" no longer finds "café".
+- `Statistic` column reads bind the table name instead of splicing it into an `OBJECT_ID` literal: one plan for every table.
+- Schema, database-role and server-role creation share one code path; the output is unchanged.
+- Go 1.27.4 (the `toolchain` line is gone); `golang.org/x/crypto` v0.59.0.
+
+### Fixed
+
+- **Connection retargeting** compared database names case-blind: on a case-sensitive server a write to `Sales` could re-point a pool whose login database is `sales`. Names now compare under the server collation (`retargetingConnector.setCollation`, set by `Connect`). Pinned offline; not yet run against a case-sensitive server.
+- **Columnstore `ORDER`** accepted a column cased unlike its key column (the server refused it later with a less useful error); both checks are now exact.
+- **`ScriptDatabaseObjects`** scripts database DDL triggers last, after the permissions, so a replay no longer fires them on its own GRANT/DENY (a "no DDL" `ROLLBACK` guard aborted with Msg 3609). Warnings are comment-safe: a name holding a CR or LF can no longer end the `--` comment and run as T-SQL.
+
 ## v0.2.0
 
 A feature release for gossms v0.2.0. The largest addition is whole-database

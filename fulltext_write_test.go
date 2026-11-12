@@ -12,20 +12,21 @@ import (
 // one is pinned whole.
 func TestFullTextWriteStatements(t *testing.T) {
 	d := scriptTestDB
-	cat := func() *FullTextCatalog { return d().FullTextCatalogRef("ft]c") }
-	sl := func() *FullTextStoplist { return d().FullTextStoplistRef("s]l") }
-	pl := func() *SearchPropertyList { return d().SearchPropertyListRef("p]l") }
+	cat := func() *FullTextCatalog { return d().FullText().CatalogRef("ft]c") }
+	sl := func() *FullTextStoplist { return d().FullText().StoplistRef("s]l") }
+	pl := func() *SearchPropertyList { return d().FullText().SearchPropertyListRef("p]l") }
 	ix := func() *FullTextIndex { return d().TableRef("Sales.Archive", "o'brien").FullTextIndexRef() }
 	const tbl = "[Sales.Archive].[o'brien]"
 	u := scriptUsePrefix
 	runScriptCases(t, []scriptCase{
 		{"catalog create, all options", func(c context.Context) error {
-			_, err := d().CreateFullTextCatalog(c, CreateFullTextCatalogRequest{
+			_, err := d().FullText().CreateCatalog(c, CreateFullTextCatalogRequest{
 				Name: "ft]c", AccentSensitive: new(false), IsDefault: true, Owner: "o]wn"})
+
 			return err
 		}, u + "CREATE FULLTEXT CATALOG [ft]]c] WITH ACCENT_SENSITIVITY = OFF AS DEFAULT AUTHORIZATION [o]]wn]"},
 		{"catalog create, bare", func(c context.Context) error {
-			_, err := d().CreateFullTextCatalog(c, CreateFullTextCatalogRequest{Name: "ft]c"})
+			_, err := d().FullText().CreateCatalog(c, CreateFullTextCatalogRequest{Name: "ft]c"})
 			return err
 		}, u + "CREATE FULLTEXT CATALOG [ft]]c]"},
 		{"catalog rebuild", func(c context.Context) error { return cat().Rebuild(c, nil) },
@@ -42,19 +43,19 @@ func TestFullTextWriteStatements(t *testing.T) {
 			u + "DROP FULLTEXT CATALOG [ft]]c]"},
 
 		{"stoplist create empty", func(c context.Context) error {
-			_, err := d().CreateFullTextStoplist(c, CreateFullTextStoplistRequest{Name: "s]l"})
+			_, err := d().FullText().CreateStoplist(c, CreateFullTextStoplistRequest{Name: "s]l"})
 			return err
 		}, u + "CREATE FULLTEXT STOPLIST [s]]l];"},
 		{"stoplist create from system", func(c context.Context) error {
-			_, err := d().CreateFullTextStoplist(c, CreateFullTextStoplistRequest{Name: "s]l", FromSystem: true, Owner: "o]wn"})
+			_, err := d().FullText().CreateStoplist(c, CreateFullTextStoplistRequest{Name: "s]l", FromSystem: true, Owner: "o]wn"})
 			return err
 		}, u + "CREATE FULLTEXT STOPLIST [s]]l] FROM SYSTEM STOPLIST AUTHORIZATION [o]]wn];"},
 		{"stoplist create from another database", func(c context.Context) error {
-			_, err := d().CreateFullTextStoplist(c, CreateFullTextStoplistRequest{Name: "s]l", From: "Sales.Archive", FromDatabase: "o'brien"})
+			_, err := d().FullText().CreateStoplist(c, CreateFullTextStoplistRequest{Name: "s]l", From: "Sales.Archive", FromDatabase: "o'brien"})
 			return err
 		}, u + "CREATE FULLTEXT STOPLIST [s]]l] FROM [o'brien].[Sales.Archive];"},
 		{"stoplist create from local", func(c context.Context) error {
-			_, err := d().CreateFullTextStoplist(c, CreateFullTextStoplistRequest{Name: "s]l", From: "a]b"})
+			_, err := d().FullText().CreateStoplist(c, CreateFullTextStoplistRequest{Name: "s]l", From: "a]b"})
 			return err
 		}, u + "CREATE FULLTEXT STOPLIST [s]]l] FROM [a]]b];"},
 		{"stopword add by lcid", func(c context.Context) error { return sl().AddStopword(c, "o'brien", "1033") },
@@ -75,11 +76,11 @@ func TestFullTextWriteStatements(t *testing.T) {
 			u + "DROP FULLTEXT STOPLIST [s]]l];"},
 
 		{"property list create", func(c context.Context) error {
-			_, err := d().CreateSearchPropertyList(c, CreateSearchPropertyListRequest{Name: "p]l", Owner: "o]wn"})
+			_, err := d().FullText().CreateSearchPropertyList(c, CreateSearchPropertyListRequest{Name: "p]l", Owner: "o]wn"})
 			return err
 		}, u + "CREATE SEARCH PROPERTY LIST [p]]l] AUTHORIZATION [o]]wn];"},
 		{"property list create from", func(c context.Context) error {
-			_, err := d().CreateSearchPropertyList(c, CreateSearchPropertyListRequest{Name: "p]l", From: "a]b", FromDatabase: "o'brien"})
+			_, err := d().FullText().CreateSearchPropertyList(c, CreateSearchPropertyListRequest{Name: "p]l", From: "a]b", FromDatabase: "o'brien"})
 			return err
 		}, u + "CREATE SEARCH PROPERTY LIST [p]]l] FROM [o'brien].[a]]b];"},
 		{"property add", func(c context.Context) error {
@@ -172,13 +173,13 @@ func TestFullTextWriteStatements(t *testing.T) {
 func TestFullTextCreatesReturnHandlesAndScriptedWritesDoNotMirror(t *testing.T) {
 	ctx, _ := WithScript(context.Background())
 	d := scriptTestDB()
-	if c, err := d.CreateFullTextCatalog(ctx, CreateFullTextCatalogRequest{Name: "c"}); err != nil || c.Name != "c" || c.Database() != d {
-		t.Errorf("CreateFullTextCatalog = %+v, %v", c, err)
+	if c, err := d.FullText().CreateCatalog(ctx, CreateFullTextCatalogRequest{Name: "c"}); err != nil || c.Name != "c" || c.Database() != d {
+		t.Errorf("CreateCatalog = %+v, %v", c, err)
 	}
-	if l, err := d.CreateFullTextStoplist(ctx, CreateFullTextStoplistRequest{Name: "l"}); err != nil || l.Name != "l" {
-		t.Errorf("CreateFullTextStoplist = %+v, %v", l, err)
+	if l, err := d.FullText().CreateStoplist(ctx, CreateFullTextStoplistRequest{Name: "l"}); err != nil || l.Name != "l" {
+		t.Errorf("CreateStoplist = %+v, %v", l, err)
 	}
-	if p, err := d.CreateSearchPropertyList(ctx, CreateSearchPropertyListRequest{Name: "p"}); err != nil || p.Name != "p" {
+	if p, err := d.FullText().CreateSearchPropertyList(ctx, CreateSearchPropertyListRequest{Name: "p"}); err != nil || p.Name != "p" {
 		t.Errorf("CreateSearchPropertyList = %+v, %v", p, err)
 	}
 	i, err := d.TableRef("dbo", "t").CreateFullTextIndex(ctx, CreateFullTextIndexRequest{KeyIndex: "pk"})
@@ -194,7 +195,7 @@ func TestFullTextCreatesReturnHandlesAndScriptedWritesDoNotMirror(t *testing.T) 
 	if !i.IsEnabled || i.ChangeTracking != FullTextChangeTrackingAuto || i.StoplistKind != FullTextStoplistUser || i.Stoplist != "s" || i.SearchPropertyList != "p" {
 		t.Errorf("scripted writes mirrored onto the index: %+v", i)
 	}
-	c := d.FullTextCatalogRef("c")
+	c := d.FullText().CatalogRef("c")
 	_ = c.SetDefault(ctx)
 	_ = c.Rebuild(ctx, new(true))
 	if c.IsDefault || c.AccentSensitive {
@@ -236,15 +237,15 @@ func TestFullTextWritesRefuseBadRequests(t *testing.T) {
 		"drop without schema":   func() error { return d.TableRef("", "t").FullTextIndexRef().Drop(ctx) },
 		"alter without schema":  func() error { return d.TableRef("", "t").FullTextIndexRef().Enable(ctx) },
 		"stoplist from both": func() error {
-			_, err := d.CreateFullTextStoplist(ctx, CreateFullTextStoplistRequest{Name: "l", FromSystem: true, From: "x"})
+			_, err := d.FullText().CreateStoplist(ctx, CreateFullTextStoplistRequest{Name: "l", FromSystem: true, From: "x"})
 			return err
 		},
 		"stoplist database without source": func() error {
-			_, err := d.CreateFullTextStoplist(ctx, CreateFullTextStoplistRequest{Name: "l", FromDatabase: "x"})
+			_, err := d.FullText().CreateStoplist(ctx, CreateFullTextStoplistRequest{Name: "l", FromDatabase: "x"})
 			return err
 		},
 		"property list database without source": func() error {
-			_, err := d.CreateSearchPropertyList(ctx, CreateSearchPropertyListRequest{Name: "p", FromDatabase: "x"})
+			_, err := d.FullText().CreateSearchPropertyList(ctx, CreateSearchPropertyListRequest{Name: "p", FromDatabase: "x"})
 			return err
 		},
 	} {

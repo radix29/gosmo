@@ -1,6 +1,9 @@
 package version
 
-import "testing"
+import (
+	"runtime"
+	"testing"
+)
 
 func TestParsePseudoVersion(t *testing.T) {
 	tests := []struct {
@@ -63,5 +66,11 @@ func TestParsePseudoVersion(t *testing.T) {
 				t.Errorf("parsePseudoVersion(%q) date = %q, want %q", tt.v, date, tt.wantDate)
 			}
 		})
+	}
+}
+
+func TestRuntimeIsGOOSSlashGOARCH(t *testing.T) {
+	if got, want := Runtime(), runtime.GOOS+"/"+runtime.GOARCH; got != want {
+		t.Errorf("Runtime() = %q, want %q", got, want)
 	}
 }

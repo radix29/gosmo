@@ -125,14 +125,14 @@ func TestRefChildReadsAreRefused(t *testing.T) {
 		{"AvailabilityGroup.Replicas", func(c context.Context) error { return errOnly(s.AvailabilityGroupRef("ag").Replicas(c)) }},
 		{"AvailabilityGroup.Databases", func(c context.Context) error { return errOnly(s.AvailabilityGroupRef("ag").Databases(c)) }},
 		{"AvailabilityGroup.Listeners", func(c context.Context) error { return errOnly(s.AvailabilityGroupRef("ag").Listeners(c)) }},
-		{"FullTextCatalog.Indexes", func(c context.Context) error { return errOnly(d.FullTextCatalogRef("c").Indexes(c)) }},
-		{"FullTextStoplist.Stopwords", func(c context.Context) error { return errOnly(d.FullTextStoplistRef("l").Stopwords(c)) }},
-		{"SearchPropertyList.Properties", func(c context.Context) error { return errOnly(d.SearchPropertyListRef("p").Properties(c)) }},
+		{"FullTextCatalog.Indexes", func(c context.Context) error { return errOnly(d.FullText().CatalogRef("c").Indexes(c)) }},
+		{"FullTextStoplist.Stopwords", func(c context.Context) error { return errOnly(d.FullText().StoplistRef("l").Stopwords(c)) }},
+		{"SearchPropertyList.Properties", func(c context.Context) error { return errOnly(d.FullText().SearchPropertyListRef("p").Properties(c)) }},
 		{"FullTextIndex.Populations", func(c context.Context) error {
 			return errOnly(d.TableRef("dbo", "t").FullTextIndexRef().Populations(c))
 		}},
 		{"ResourcePool.WorkloadGroups", func(c context.Context) error { return errOnly(s.ResourcePoolRef("p").WorkloadGroups(c)) }},
-		{"BrokerQueue.MessageCount", func(c context.Context) error { return errOnly(d.BrokerQueueRef("dbo", "q").MessageCount(c)) }},
+		{"BrokerQueue.MessageCount", func(c context.Context) error { return errOnly(d.ServiceBroker().QueueRef("dbo", "q").MessageCount(c)) }},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

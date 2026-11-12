@@ -39,6 +39,21 @@ import (
 // else in gosmo.
 var fullTextEpoch = time.Date(1990, 1, 1, 0, 0, 0, 0, time.UTC)
 
+// FullText is a database's full-text search: its catalogs, stoplists, search
+// property lists and full-text indexes. It is a value handle over the
+// database and issues no query of its own, so d.FullText() is free and never
+// fails; every method reads or writes through the database it came from,
+// exactly as a method on Database would. The instance-level component stays
+// on Server (FullTextInfo), and a table's own index on Table
+// (FullTextIndex, FullTextIndexRef).
+type FullText struct{ db *Database }
+
+// FullText returns the handle to the database's full-text search.
+func (d *Database) FullText() FullText { return FullText{db: d} }
+
+// Database returns the database this full-text handle belongs to.
+func (ft FullText) Database() *Database { return ft.db }
+
 // -- Server: the component ----------------------------------------------------
 
 // FullTextUpgradeOption is FULLTEXTSERVICEPROPERTY('UpgradeOption'): what
@@ -216,12 +231,12 @@ type FullTextCatalog struct {
 // Database returns the database the catalog belongs to.
 func (c *FullTextCatalog) Database() *Database { return c.db }
 
-// FullTextCatalogs returns d's full-text catalogs in name order.
-func (d *Database) FullTextCatalogs(ctx context.Context) ([]*FullTextCatalog, error) {
-	what := fmt.Sprintf("read full-text catalogs of database %q", d.Name)
+// Catalogs returns the database's full-text catalogs in name order.
+func (ft FullText) Catalogs(ctx context.Context) ([]*FullTextCatalog, error) {
+	what := fmt.Sprintf("read full-text catalogs of database %q", ft.db.Name)
 	// FULLTEXTCATALOGPROPERTY returns NULL where the component is missing;
 	// PopulateCompletionAge is 0 for a catalog never populated.
-	rows, err := d.query(ctx, `
+	rows, err := ft.db.query(ctx, `
 SELECT c.fulltext_catalog_id, c.name, c.is_default, c.is_accent_sensitivity_on,
        ISNULL(USER_NAME(c.principal_id), N''), c.is_importing,
        (SELECT COUNT(*) FROM sys.fulltext_indexes i WHERE i.fulltext_catalog_id = c.fulltext_catalog_id),
@@ -234,7 +249,7 @@ SELECT c.fulltext_catalog_id, c.name, c.is_default, c.is_accent_sensitivity_on,
 FROM   sys.fulltext_catalogs c
 ORDER  BY c.name`)
 	return scanRows(rows, err, what, func(scan func(...any) error) (*FullTextCatalog, error) {
-		c := &FullTextCatalog{db: d}
+		c := &FullTextCatalog{db: ft.db}
 		var status, merge int
 		var age int64
 		if err := scan(&c.ID, &c.Name, &c.IsDefault, &c.AccentSensitive, &c.Owner, &c.IsImporting,
@@ -250,15 +265,15 @@ ORDER  BY c.name`)
 	})
 }
 
-// FullTextCatalogByName returns d's full-text catalog called name.
-func (d *Database) FullTextCatalogByName(ctx context.Context, name string) (*FullTextCatalog, error) {
-	cats, err := d.FullTextCatalogs(ctx)
+// CatalogByName returns the database's full-text catalog called name.
+func (ft FullText) CatalogByName(ctx context.Context, name string) (*FullTextCatalog, error) {
+	cats, err := ft.Catalogs(ctx)
 	if err != nil {
 		return nil, err
 	}
 	c, err := matchName(cats, name, func(c *FullTextCatalog) string { return c.Name })
 	if err != nil {
-		return nil, fmt.Errorf("gosmo: full-text catalog %q in database %q: %w", name, d.Name, err)
+		return nil, fmt.Errorf("gosmo: full-text catalog %q in database %q: %w", name, ft.db.Name, err)
 	}
 	return c, nil
 }
@@ -299,28 +314,28 @@ type FullTextStopword struct {
 	LanguageID int    // its LCID; 0 is the neutral language
 }
 
-// FullTextStoplists returns d's user-defined stoplists in name order.
-func (d *Database) FullTextStoplists(ctx context.Context) ([]*FullTextStoplist, error) {
-	what := fmt.Sprintf("read full-text stoplists of database %q", d.Name)
-	rows, err := d.query(ctx, `
+// Stoplists returns the database's user-defined stoplists in name order.
+func (ft FullText) Stoplists(ctx context.Context) ([]*FullTextStoplist, error) {
+	what := fmt.Sprintf("read full-text stoplists of database %q", ft.db.Name)
+	rows, err := ft.db.query(ctx, `
 SELECT stoplist_id, name, ISNULL(USER_NAME(principal_id), N''), create_date, modify_date
 FROM   sys.fulltext_stoplists
 ORDER  BY name`)
 	return scanRows(rows, err, what, func(scan func(...any) error) (*FullTextStoplist, error) {
-		l := &FullTextStoplist{db: d}
+		l := &FullTextStoplist{db: ft.db}
 		return l, scan(&l.ID, &l.Name, &l.Owner, &l.CreateDate, &l.ModifyDate)
 	})
 }
 
-// FullTextStoplistByName returns d's stoplist called name.
-func (d *Database) FullTextStoplistByName(ctx context.Context, name string) (*FullTextStoplist, error) {
-	lists, err := d.FullTextStoplists(ctx)
+// StoplistByName returns the database's stoplist called name.
+func (ft FullText) StoplistByName(ctx context.Context, name string) (*FullTextStoplist, error) {
+	lists, err := ft.Stoplists(ctx)
 	if err != nil {
 		return nil, err
 	}
 	l, err := matchName(lists, name, func(l *FullTextStoplist) string { return l.Name })
 	if err != nil {
-		return nil, fmt.Errorf("gosmo: full-text stoplist %q in database %q: %w", name, d.Name, err)
+		return nil, fmt.Errorf("gosmo: full-text stoplist %q in database %q: %w", name, ft.db.Name, err)
 	}
 	return l, nil
 }
@@ -372,28 +387,28 @@ type SearchProperty struct {
 	ID int
 }
 
-// SearchPropertyLists returns d's search property lists in name order.
-func (d *Database) SearchPropertyLists(ctx context.Context) ([]*SearchPropertyList, error) {
-	what := fmt.Sprintf("read search property lists of database %q", d.Name)
-	rows, err := d.query(ctx, `
+// SearchPropertyLists returns the database's search property lists in name order.
+func (ft FullText) SearchPropertyLists(ctx context.Context) ([]*SearchPropertyList, error) {
+	what := fmt.Sprintf("read search property lists of database %q", ft.db.Name)
+	rows, err := ft.db.query(ctx, `
 SELECT property_list_id, name, ISNULL(USER_NAME(principal_id), N''), create_date, modify_date
 FROM   sys.registered_search_property_lists
 ORDER  BY name`)
 	return scanRows(rows, err, what, func(scan func(...any) error) (*SearchPropertyList, error) {
-		p := &SearchPropertyList{db: d}
+		p := &SearchPropertyList{db: ft.db}
 		return p, scan(&p.ID, &p.Name, &p.Owner, &p.CreateDate, &p.ModifyDate)
 	})
 }
 
-// SearchPropertyListByName returns d's search property list called name.
-func (d *Database) SearchPropertyListByName(ctx context.Context, name string) (*SearchPropertyList, error) {
-	lists, err := d.SearchPropertyLists(ctx)
+// SearchPropertyListByName returns the database's search property list called name.
+func (ft FullText) SearchPropertyListByName(ctx context.Context, name string) (*SearchPropertyList, error) {
+	lists, err := ft.SearchPropertyLists(ctx)
 	if err != nil {
 		return nil, err
 	}
 	p, err := matchName(lists, name, func(p *SearchPropertyList) string { return p.Name })
 	if err != nil {
-		return nil, fmt.Errorf("gosmo: search property list %q in database %q: %w", name, d.Name, err)
+		return nil, fmt.Errorf("gosmo: search property list %q in database %q: %w", name, ft.db.Name, err)
 	}
 	return p, nil
 }
@@ -658,9 +673,9 @@ ORDER  BY ic.object_id, ic.column_id`, colArgs...)
 	return idx, nil
 }
 
-// FullTextIndexes returns every full-text index in d, in table order.
-func (d *Database) FullTextIndexes(ctx context.Context) ([]*FullTextIndex, error) {
-	return d.fullTextIndexesWhere(ctx, fmt.Sprintf("read full-text indexes of database %q", d.Name), "")
+// Indexes returns every full-text index in the database, in table order.
+func (ft FullText) Indexes(ctx context.Context) ([]*FullTextIndex, error) {
+	return ft.db.fullTextIndexesWhere(ctx, fmt.Sprintf("read full-text indexes of database %q", ft.db.Name), "")
 }
 
 // FullTextIndex returns the table's full-text index, or a not-found error

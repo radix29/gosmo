@@ -33,7 +33,7 @@ func TestEmptySchemaIsRefused(t *testing.T) {
 		{"Synonym handle Drop", func(c context.Context, d *Database) error { return d.SynonymRef("", "s").Drop(c) }},
 		{"Rule handle Drop", func(c context.Context, d *Database) error { return d.RuleRef("", "r").Drop(c) }},
 		{"Default handle Drop", func(c context.Context, d *Database) error { return d.DefaultRef("", "df").Drop(c) }},
-		{"BrokerQueue handle Drop", func(c context.Context, d *Database) error { return d.BrokerQueueRef("", "q").Drop(c) }},
+		{"BrokerQueue handle Drop", func(c context.Context, d *Database) error { return d.ServiceBroker().QueueRef("", "q").Drop(c) }},
 		{"alias type handle Drop", func(c context.Context, d *Database) error { return d.UserDefinedDataTypeRef("", "t").Drop(c) }},
 		{"table type handle Drop", func(c context.Context, d *Database) error { return d.UserDefinedTableTypeRef("", "t").Drop(c) }},
 		{"CLR type handle Drop", func(c context.Context, d *Database) error { return d.ClrTypeRef("", "t").Drop(c) }},
@@ -60,7 +60,7 @@ func TestEmptySchemaIsRefused(t *testing.T) {
 			return d.ApplyPermission(c, VerbGrant, Securable{Class: SecurableTable, Schema: "", Name: "t"}, PermSelect, "u", PermissionOptions{})
 		}},
 		{"BrokerQueue.Alter activation procedure", func(c context.Context, d *Database) error {
-			return d.BrokerQueueRef("dbo", "q").Alter(c, QueueChanges{Activation: &QueueActivation{ProcedureName: "p"}})
+			return d.ServiceBroker().QueueRef("dbo", "q").Alter(c, QueueChanges{Activation: &QueueActivation{ProcedureName: "p"}})
 		}},
 
 		{"CreateTable", func(c context.Context, d *Database) error {

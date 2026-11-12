@@ -46,7 +46,7 @@ func TestSchemaObjectHandleStatements(t *testing.T) {
 		{"Synonym.Transfer", func(c context.Context) error { return d.SynonymRef("dbo", "sy").Transfer(c, "arch") }, []string{"ALTER SCHEMA [arch] TRANSFER [dbo].[sy]"}},
 		{"Rule.Transfer", func(c context.Context) error { return d.RuleRef("dbo", "r").Transfer(c, "arch") }, []string{"ALTER SCHEMA [arch] TRANSFER [dbo].[r]"}},
 		{"Default.Transfer", func(c context.Context) error { return d.DefaultRef("dbo", "df").Transfer(c, "arch") }, []string{"ALTER SCHEMA [arch] TRANSFER [dbo].[df]"}},
-		{"BrokerQueue.Transfer", func(c context.Context) error { return d.BrokerQueueRef("dbo", "q").Transfer(c, "arch") }, []string{"ALTER SCHEMA [arch] TRANSFER [dbo].[q]"}},
+		{"BrokerQueue.Transfer", func(c context.Context) error { return d.ServiceBroker().QueueRef("dbo", "q").Transfer(c, "arch") }, []string{"ALTER SCHEMA [arch] TRANSFER [dbo].[q]"}},
 		{"UserDefinedDataType.Transfer", func(c context.Context) error { return d.UserDefinedDataTypeRef("dbo", "t").Transfer(c, "arch") }, []string{"ALTER SCHEMA [arch] TRANSFER TYPE::[dbo].[t]"}},
 		{"UserDefinedTableType.Transfer", func(c context.Context) error { return d.UserDefinedTableTypeRef("dbo", "t").Transfer(c, "arch") }, []string{"ALTER SCHEMA [arch] TRANSFER TYPE::[dbo].[t]"}},
 		{"ClrType.Transfer", func(c context.Context) error { return d.ClrTypeRef("dbo", "t").Transfer(c, "arch") }, []string{"ALTER SCHEMA [arch] TRANSFER TYPE::[dbo].[t]"}},

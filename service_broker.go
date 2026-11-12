@@ -43,6 +43,21 @@ import (
 // ids) or to routes (AutoCreatedLocal is 65536 itself).
 const firstUserBrokerID = 65536
 
+// ServiceBroker is a database's Service Broker: its message types, contracts,
+// queues, services, routes, remote service bindings and conversation
+// priorities. It is a value handle over the database and issues no query of
+// its own, so d.ServiceBroker() is free and never fails; every method reads
+// or writes through the database it came from, exactly as a method on
+// Database would. The object types it returns keep their names (BrokerQueue,
+// ServiceContract, …).
+type ServiceBroker struct{ db *Database }
+
+// ServiceBroker returns the handle to the database's Service Broker.
+func (d *Database) ServiceBroker() ServiceBroker { return ServiceBroker{db: d} }
+
+// Database returns the database this Service Broker belongs to.
+func (sb ServiceBroker) Database() *Database { return sb.db }
+
 // ============================================================
 // Message types
 // ============================================================
@@ -155,22 +170,22 @@ func decodeMessageTypeValidation(desc string, hasCollection bool) MessageTypeVal
 
 // MessageTypes returns the message types defined in the database, the ones
 // SQL Server ships included (marked IsSystemObject).
-func (d *Database) MessageTypes(ctx context.Context) ([]*MessageType, error) {
+func (sb ServiceBroker) MessageTypes(ctx context.Context) ([]*MessageType, error) {
 	const q = messageTypeSelect + `
 ORDER  BY mt.name`
 
-	rows, err := d.query(ctx, q)
-	return scanRows(rows, err, fmt.Sprintf("list message types in %q", d.Name), func(scan func(...any) error) (*MessageType, error) {
-		return scanMessageType(d, scan)
+	rows, err := sb.db.query(ctx, q)
+	return scanRows(rows, err, fmt.Sprintf("list message types in %q", sb.db.Name), func(scan func(...any) error) (*MessageType, error) {
+		return scanMessageType(sb.db, scan)
 	})
 }
 
 // MessageTypeByName returns one message type, or a not-found error
 // (errors.Is ErrNotFound) when the database has none by that name.
-func (d *Database) MessageTypeByName(ctx context.Context, name string) (*MessageType, error) {
-	return readByName(ctx, d, scanMessageType, messageTypeSelect+`
+func (sb ServiceBroker) MessageTypeByName(ctx context.Context, name string) (*MessageType, error) {
+	return readByName(ctx, sb.db, scanMessageType, messageTypeSelect+`
 WHERE  mt.name = @p1`, []any{name},
-		notFoundf("gosmo: message type %q not found in %q", name, d.Name), fmt.Sprintf("read message type %q in %q", name, d.Name))
+		notFoundf("gosmo: message type %q not found in %q", name, sb.db.Name), fmt.Sprintf("read message type %q in %q", name, sb.db.Name))
 }
 
 // MessageTypeRef returns a lightweight handle for a message type by name, without
@@ -181,8 +196,8 @@ WHERE  mt.name = @p1`, []any{name},
 // drop one the caller already knows exists — and is the form to use when
 // there is nothing to read yet, such as a script of a CREATE that was only
 // collected.
-func (d *Database) MessageTypeRef(name string) *MessageType {
-	return &MessageType{db: d, Name: name}
+func (sb ServiceBroker) MessageTypeRef(name string) *MessageType {
+	return &MessageType{db: sb.db, Name: name}
 }
 
 // Drop drops the message type. A message type still named by a contract is
@@ -350,17 +365,17 @@ ORDER  BY c.name`
 //
 // Two queries: the message usages for every contract come in one read and are
 // grouped in Go, never one read per contract inside the listing loop.
-func (d *Database) Contracts(ctx context.Context) ([]*ServiceContract, error) {
-	out, err := d.contractList(ctx)
+func (sb ServiceBroker) Contracts(ctx context.Context) ([]*ServiceContract, error) {
+	out, err := sb.db.contractList(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("gosmo: list contracts in %q: %w", d.Name, err)
+		return nil, fmt.Errorf("gosmo: list contracts in %q: %w", sb.db.Name, err)
 	}
 	if len(out) == 0 {
 		return nil, nil
 	}
-	byID, err := d.contractMessages(ctx, 0)
+	byID, err := sb.db.contractMessages(ctx, 0)
 	if err != nil {
-		return nil, fmt.Errorf("gosmo: list contracts in %q: %w", d.Name, err)
+		return nil, fmt.Errorf("gosmo: list contracts in %q: %w", sb.db.Name, err)
 	}
 	for _, c := range out {
 		c.Messages = byID[c.ContractID]
@@ -371,21 +386,21 @@ func (d *Database) Contracts(ctx context.Context) ([]*ServiceContract, error) {
 // ContractByName returns one service contract with its messages, or a
 // not-found error (errors.Is ErrNotFound) when the database has none by that
 // name.
-func (d *Database) ContractByName(ctx context.Context, name string) (*ServiceContract, error) {
-	c := &ServiceContract{db: d}
-	err := d.queryRow(ctx, func(row *sql.Row) error {
+func (sb ServiceBroker) ContractByName(ctx context.Context, name string) (*ServiceContract, error) {
+	c := &ServiceContract{db: sb.db}
+	err := sb.db.queryRow(ctx, func(row *sql.Row) error {
 		return row.Scan(&c.ContractID, &c.Name, &c.Owner)
 	}, contractSelect+`
 WHERE  c.name = @p1`, name)
 	if err != nil {
-		return nil, rowErr(err, notFoundf("gosmo: contract %q not found in %q", name, d.Name),
-			fmt.Sprintf("read contract %q in %q", name, d.Name))
+		return nil, rowErr(err, notFoundf("gosmo: contract %q not found in %q", name, sb.db.Name),
+			fmt.Sprintf("read contract %q in %q", name, sb.db.Name))
 	}
 	c.IsSystemObject = c.ContractID < firstUserBrokerID
 
-	byID, err := d.contractMessages(ctx, c.ContractID)
+	byID, err := sb.db.contractMessages(ctx, c.ContractID)
 	if err != nil {
-		return nil, fmt.Errorf("gosmo: read contract %q in %q: %w", name, d.Name, err)
+		return nil, fmt.Errorf("gosmo: read contract %q in %q: %w", name, sb.db.Name, err)
 	}
 	c.Messages = byID[c.ContractID]
 	return c, nil
@@ -399,8 +414,8 @@ WHERE  c.name = @p1`, name)
 // drop one the caller already knows exists — and is the form to use when
 // there is nothing to read yet, such as a script of a CREATE that was only
 // collected.
-func (d *Database) ContractRef(name string) *ServiceContract {
-	return &ServiceContract{db: d, Name: name}
+func (sb ServiceBroker) ContractRef(name string) *ServiceContract {
+	return &ServiceContract{db: sb.db, Name: name}
 }
 
 // Drop drops the contract. A contract still named by a service or a
@@ -535,22 +550,22 @@ ORDER  BY s.name`
 	return out, rows.Err()
 }
 
-// BrokerServices returns the Service Broker services defined in the
+// Services returns the Service Broker services defined in the
 // database, the ones SQL Server ships included (marked IsSystemObject), each
 // with its contracts.
 //
 // Two queries, the same shape as Contracts.
-func (d *Database) BrokerServices(ctx context.Context) ([]*BrokerService, error) {
-	out, err := d.brokerServiceList(ctx)
+func (sb ServiceBroker) Services(ctx context.Context) ([]*BrokerService, error) {
+	out, err := sb.db.brokerServiceList(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("gosmo: list services in %q: %w", d.Name, err)
+		return nil, fmt.Errorf("gosmo: list services in %q: %w", sb.db.Name, err)
 	}
 	if len(out) == 0 {
 		return nil, nil
 	}
-	byID, err := d.serviceContracts(ctx, 0)
+	byID, err := sb.db.serviceContracts(ctx, 0)
 	if err != nil {
-		return nil, fmt.Errorf("gosmo: list services in %q: %w", d.Name, err)
+		return nil, fmt.Errorf("gosmo: list services in %q: %w", sb.db.Name, err)
 	}
 	for _, s := range out {
 		s.Contracts = byID[s.ServiceID]
@@ -558,38 +573,38 @@ func (d *Database) BrokerServices(ctx context.Context) ([]*BrokerService, error)
 	return out, nil
 }
 
-// BrokerServiceByName returns one service with its contracts, or a not-found
+// ServiceByName returns one service with its contracts, or a not-found
 // error (errors.Is ErrNotFound) when the database has none by that name.
-func (d *Database) BrokerServiceByName(ctx context.Context, name string) (*BrokerService, error) {
-	s := &BrokerService{db: d}
-	err := d.queryRow(ctx, func(row *sql.Row) error {
+func (sb ServiceBroker) ServiceByName(ctx context.Context, name string) (*BrokerService, error) {
+	s := &BrokerService{db: sb.db}
+	err := sb.db.queryRow(ctx, func(row *sql.Row) error {
 		return row.Scan(&s.ServiceID, &s.Name, &s.Owner, &s.QueueSchema, &s.QueueName)
 	}, serviceSelect+`
 WHERE  s.name = @p1`, name)
 	if err != nil {
-		return nil, rowErr(err, notFoundf("gosmo: service %q not found in %q", name, d.Name),
-			fmt.Sprintf("read service %q in %q", name, d.Name))
+		return nil, rowErr(err, notFoundf("gosmo: service %q not found in %q", name, sb.db.Name),
+			fmt.Sprintf("read service %q in %q", name, sb.db.Name))
 	}
 	s.IsSystemObject = s.ServiceID < firstUserBrokerID
 
-	byID, err := d.serviceContracts(ctx, s.ServiceID)
+	byID, err := sb.db.serviceContracts(ctx, s.ServiceID)
 	if err != nil {
-		return nil, fmt.Errorf("gosmo: read service %q in %q: %w", name, d.Name, err)
+		return nil, fmt.Errorf("gosmo: read service %q in %q: %w", name, sb.db.Name, err)
 	}
 	s.Contracts = byID[s.ServiceID]
 	return s, nil
 }
 
-// BrokerServiceRef returns a lightweight handle for a Service Broker service by name, without
+// ServiceRef returns a lightweight handle for a Service Broker service by name, without
 // querying the catalog — the counterpart of Server.DatabaseRef. Every field
-// but the name stays at its zero value; BrokerServiceByName is what populates them.
+// but the name stays at its zero value; ServiceByName is what populates them.
 //
 // Every write on *BrokerService addresses it by name, so this handle is enough to
 // drop one the caller already knows exists — and is the form to use when
 // there is nothing to read yet, such as a script of a CREATE that was only
 // collected.
-func (d *Database) BrokerServiceRef(name string) *BrokerService {
-	return &BrokerService{db: d, Name: name}
+func (sb ServiceBroker) ServiceRef(name string) *BrokerService {
+	return &BrokerService{db: sb.db, Name: name}
 }
 
 // Drop drops the service. A service with conversations still open on it is

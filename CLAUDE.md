@@ -197,12 +197,15 @@ write, drop them; never mutate pre-existing objects.
   methods drop the prefix — `d.QueryStore().TopResourceQueries(ctx, opts)`, not
   `d.QueryStoreTopResourceQueries`. A facet changes nothing about lookups, `Ref`
   semantics or `WithScript`; its result and option types keep their names
-  (`QSQueryStat`). Three exist: `d.QueryStore()`, `s.Mail()` and `XEvents()` (on
-  both `Server` and `Database`: one type whose session methods follow the scope
-  it came from, like `EventSession`). Agent (`Jobs`, `Alerts`, …) stays
-  unprefixed on `Server`. A facet type holding a `ctx`-only read is pointed at by
-  `reflectSweep` in `live_versionsweep_test.go`; its `ctx`-only writes go in
-  `sweepSkip`.
+  (`QSQueryStat`). Five exist: `d.QueryStore()`, `d.ServiceBroker()`,
+  `d.FullText()`, `s.Mail()` and `XEvents()` (on both `Server` and `Database`:
+  one type whose session methods follow the scope it came from, like
+  `EventSession`). Agent (`Jobs`, `Alerts`, …) stays unprefixed on `Server`, as
+  do Resource Governor (`ResourceGovernor`/`ResourceGovernorRef` already name
+  the singleton), Backup (operations, not a family) and `Server.FullTextInfo`
+  (a one-method facet adds nothing) — decided 2026-11-12. A facet type
+  holding a `ctx`-only read is pointed at by `reflectSweep` in
+  `live_versionsweep_test.go`; its `ctx`-only writes go in `sweepSkip`.
 - **Every type holding a parent exposes it** as `Database() *Database` or
   `Server() *Server` — one line, no context, never another name (`Server.DB()` is
   the `*sql.DB` pool). `parent_accessor_wiring_test.go` enforces it; deliberate

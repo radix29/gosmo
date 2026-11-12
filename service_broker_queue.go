@@ -115,7 +115,7 @@ func (q *BrokerQueue) FullName() string { return qualifiedName(q.Schema, q.Name)
 // still lists, with an empty FileGroup. The message count is deliberately not
 // here: it needs sys.dm_db_partition_stats and VIEW DATABASE STATE with it,
 // and a caller without that right must still get the listing — see
-// Database.QueueMessageCounts.
+// ServiceBroker.QueueMessageCounts.
 //
 // The activation procedure is read twice: once as the catalog's own
 // bracketed text and once resolved through OBJECT_ID into its two unquoted
@@ -160,33 +160,33 @@ func scanBrokerQueue(d *Database, scan func(...any) error) (*BrokerQueue, error)
 	return q, nil
 }
 
-// BrokerQueues returns the queues defined in the database, the ones SQL
+// Queues returns the queues defined in the database, the ones SQL
 // Server ships included (marked IsSystemObject).
-func (d *Database) BrokerQueues(ctx context.Context) ([]*BrokerQueue, error) {
+func (sb ServiceBroker) Queues(ctx context.Context) ([]*BrokerQueue, error) {
 	const q = queueSelect + `
 ORDER  BY SCHEMA_NAME(q.schema_id), q.name`
 
-	rows, err := d.query(ctx, q)
-	return scanRows(rows, err, fmt.Sprintf("list queues in %q", d.Name), func(scan func(...any) error) (*BrokerQueue, error) {
-		return scanBrokerQueue(d, scan)
+	rows, err := sb.db.query(ctx, q)
+	return scanRows(rows, err, fmt.Sprintf("list queues in %q", sb.db.Name), func(scan func(...any) error) (*BrokerQueue, error) {
+		return scanBrokerQueue(sb.db, scan)
 	})
 }
 
-// BrokerQueueByName returns one queue, or a not-found error (errors.Is
+// QueueByName returns one queue, or a not-found error (errors.Is
 // ErrNotFound) when the database has none by that name. An empty schema
 // means dbo.
-func (d *Database) BrokerQueueByName(ctx context.Context, schema, name string) (*BrokerQueue, error) {
+func (sb ServiceBroker) QueueByName(ctx context.Context, schema, name string) (*BrokerQueue, error) {
 	if err := requireSchema("broker queue by name", schema, name); err != nil {
 		return nil, err
 	}
-	return readByName(ctx, d, scanBrokerQueue, queueSelect+`
+	return readByName(ctx, sb.db, scanBrokerQueue, queueSelect+`
 WHERE  SCHEMA_NAME(q.schema_id) COLLATE DATABASE_DEFAULT = @p1 AND q.name = @p2`, []any{schema, name},
-		notFoundf("gosmo: queue %s not found in %q", qualifiedName(schema, name), d.Name), fmt.Sprintf("read queue %s in %q", qualifiedName(schema, name), d.Name))
+		notFoundf("gosmo: queue %s not found in %q", qualifiedName(schema, name), sb.db.Name), fmt.Sprintf("read queue %s in %q", qualifiedName(schema, name), sb.db.Name))
 }
 
-// BrokerQueueRef returns a lightweight handle for a Service Broker queue by name, without
+// QueueRef returns a lightweight handle for a Service Broker queue by name, without
 // querying the catalog — the counterpart of Server.DatabaseRef. Every field
-// but the schema and name stays at its zero value; BrokerQueueByName is what populates them.
+// but the schema and name stays at its zero value; QueueByName is what populates them.
 //
 // Every write on *BrokerQueue addresses it by name, so this handle is enough to
 // drop one the caller already knows exists — and is the form to use when
@@ -195,8 +195,8 @@ WHERE  SCHEMA_NAME(q.schema_id) COLLATE DATABASE_DEFAULT = @p1 AND q.name = @p2`
 //
 // schema is taken as given: an empty one is refused by the handle's writes
 // (ErrSchemaRequired), never defaulted.
-func (d *Database) BrokerQueueRef(schema, name string) *BrokerQueue {
-	return &BrokerQueue{db: d, Schema: schema, Name: name}
+func (sb ServiceBroker) QueueRef(schema, name string) *BrokerQueue {
+	return &BrokerQueue{db: sb.db, Schema: schema, Name: name}
 }
 
 // Drop drops the queue. A queue a service still receives on is refused by the
@@ -234,10 +234,10 @@ GROUP  BY it.parent_object_id`
 // caller displaying the count treats a failure, and a queue missing from the
 // map, as "unknown" rather than as zero — a queue whose internal table has
 // not been materialised has no row here.
-func (d *Database) QueueMessageCounts(ctx context.Context) (map[int]int64, error) {
-	rows, err := d.query(ctx, queueMessageCountSelect)
+func (sb ServiceBroker) QueueMessageCounts(ctx context.Context) (map[int]int64, error) {
+	rows, err := sb.db.query(ctx, queueMessageCountSelect)
 	if err != nil {
-		return nil, fmt.Errorf("gosmo: read queue message counts in %q: %w", d.Name, err)
+		return nil, fmt.Errorf("gosmo: read queue message counts in %q: %w", sb.db.Name, err)
 	}
 	defer rows.Close()
 
@@ -246,14 +246,14 @@ func (d *Database) QueueMessageCounts(ctx context.Context) (map[int]int64, error
 		var id int
 		var count sql.NullInt64
 		if err := rows.Scan(&id, &count); err != nil {
-			return nil, fmt.Errorf("gosmo: read queue message counts in %q: %w", d.Name, err)
+			return nil, fmt.Errorf("gosmo: read queue message counts in %q: %w", sb.db.Name, err)
 		}
 		if count.Valid {
 			out[id] = count.Int64
 		}
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("gosmo: read queue message counts in %q: %w", d.Name, err)
+		return nil, fmt.Errorf("gosmo: read queue message counts in %q: %w", sb.db.Name, err)
 	}
 	return out, nil
 }
@@ -311,15 +311,15 @@ type QueueMonitor struct {
 // creates a monitor when it first has reason to look at the queue. Callers
 // index the result by QueueID and treat a missing queue as "never activated".
 // It needs VIEW DATABASE STATE, the same as the message counts.
-func (d *Database) QueueMonitors(ctx context.Context) ([]*QueueMonitor, error) {
+func (sb ServiceBroker) QueueMonitors(ctx context.Context) ([]*QueueMonitor, error) {
 	const q = `
 SELECT m.queue_id, ISNULL(m.state, ''), ISNULL(m.tasks_waiting, 0),
        m.last_activated_time, m.last_empty_rowset_time
 FROM   sys.dm_broker_queue_monitors m
 WHERE  m.database_id = DB_ID()`
 
-	rows, err := d.query(ctx, q)
-	return scanRows(rows, err, fmt.Sprintf("list queue monitors in %q", d.Name), func(scan func(...any) error) (*QueueMonitor, error) {
+	rows, err := sb.db.query(ctx, q)
+	return scanRows(rows, err, fmt.Sprintf("list queue monitors in %q", sb.db.Name), func(scan func(...any) error) (*QueueMonitor, error) {
 		m := &QueueMonitor{}
 		var activated, empty sql.NullTime
 		if err := scan(&m.QueueID, &m.State, &m.TasksWaiting, &activated, &empty); err != nil {

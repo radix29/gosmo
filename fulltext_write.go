@@ -58,13 +58,13 @@ func isHexLiteral(s string) bool {
 
 // -- Catalogs -----------------------------------------------------------------
 
-// FullTextCatalogRef returns a lightweight handle for a full-text catalog by
+// CatalogRef returns a lightweight handle for a full-text catalog by
 // name, without querying the catalog — the counterpart of
 // Server.DatabaseRef. Every field but the name stays at its zero value;
-// FullTextCatalogByName is what populates them. Every write on
+// CatalogByName is what populates them. Every write on
 // *FullTextCatalog addresses it by name, so the handle is enough for them.
-func (d *Database) FullTextCatalogRef(name string) *FullTextCatalog {
-	return &FullTextCatalog{db: d, Name: name}
+func (ft FullText) CatalogRef(name string) *FullTextCatalog {
+	return &FullTextCatalog{db: ft.db, Name: name}
 }
 
 // CreateFullTextCatalogRequest describes a full-text catalog to create.
@@ -80,18 +80,18 @@ type CreateFullTextCatalogRequest struct {
 	Owner string
 }
 
-// CreateFullTextCatalog creates a full-text catalog (CREATE FULLTEXT
+// CreateCatalog creates a full-text catalog (CREATE FULLTEXT
 // CATALOG). It works without the full-text component installed.
-func (d *Database) CreateFullTextCatalog(ctx context.Context, req CreateFullTextCatalogRequest) (*FullTextCatalog, error) {
-	if _, err := d.exec(ctx, createFullTextCatalogStatement(req)); err != nil {
+func (ft FullText) CreateCatalog(ctx context.Context, req CreateFullTextCatalogRequest) (*FullTextCatalog, error) {
+	if _, err := ft.db.exec(ctx, createFullTextCatalogStatement(req)); err != nil {
 		return nil, fmt.Errorf("gosmo: create full-text catalog %q: %w", req.Name, err)
 	}
-	return createdObject(ctx, d.FullTextCatalogRef(req.Name), func() (*FullTextCatalog, error) {
-		return d.FullTextCatalogByName(ctx, req.Name)
+	return createdObject(ctx, ft.CatalogRef(req.Name), func() (*FullTextCatalog, error) {
+		return ft.CatalogByName(ctx, req.Name)
 	})
 }
 
-// createFullTextCatalogStatement is CreateFullTextCatalog's statement, which
+// createFullTextCatalogStatement is CreateCatalog's statement, which
 // the scripter's CREATE shares.
 func createFullTextCatalogStatement(req CreateFullTextCatalogRequest) string {
 	var sb strings.Builder
@@ -168,13 +168,13 @@ func (c *FullTextCatalog) Drop(ctx context.Context) error {
 
 // -- Stoplists ----------------------------------------------------------------
 
-// FullTextStoplistRef returns a lightweight handle for a full-text stoplist
+// StoplistRef returns a lightweight handle for a full-text stoplist
 // by name, without querying the catalog — the counterpart of
 // Server.DatabaseRef. Every field but the name stays at its zero value;
-// FullTextStoplistByName is what populates them. Every write on
+// StoplistByName is what populates them. Every write on
 // *FullTextStoplist addresses it by name, so the handle is enough for them.
-func (d *Database) FullTextStoplistRef(name string) *FullTextStoplist {
-	return &FullTextStoplist{db: d, Name: name}
+func (ft FullText) StoplistRef(name string) *FullTextStoplist {
+	return &FullTextStoplist{db: ft.db, Name: name}
 }
 
 // CreateFullTextStoplistRequest describes a stoplist to create. It starts
@@ -190,18 +190,18 @@ type CreateFullTextStoplistRequest struct {
 	Owner string
 }
 
-// CreateFullTextStoplist creates a full-text stoplist (CREATE FULLTEXT
+// CreateStoplist creates a full-text stoplist (CREATE FULLTEXT
 // STOPLIST).
-func (d *Database) CreateFullTextStoplist(ctx context.Context, req CreateFullTextStoplistRequest) (*FullTextStoplist, error) {
+func (ft FullText) CreateStoplist(ctx context.Context, req CreateFullTextStoplistRequest) (*FullTextStoplist, error) {
 	q, err := createFullTextStoplistStatement(req)
 	if err != nil {
 		return nil, err
 	}
-	if _, err := d.exec(ctx, q); err != nil {
+	if _, err := ft.db.exec(ctx, q); err != nil {
 		return nil, fmt.Errorf("gosmo: create full-text stoplist %q: %w", req.Name, err)
 	}
-	return createdObject(ctx, d.FullTextStoplistRef(req.Name), func() (*FullTextStoplist, error) {
-		return d.FullTextStoplistByName(ctx, req.Name)
+	return createdObject(ctx, ft.StoplistRef(req.Name), func() (*FullTextStoplist, error) {
+		return ft.StoplistByName(ctx, req.Name)
 	})
 }
 
@@ -302,8 +302,8 @@ func (l *FullTextStoplist) Drop(ctx context.Context) error {
 // Server.DatabaseRef. Every field but the name stays at its zero value;
 // SearchPropertyListByName is what populates them. Every write on
 // *SearchPropertyList addresses it by name, so the handle is enough for them.
-func (d *Database) SearchPropertyListRef(name string) *SearchPropertyList {
-	return &SearchPropertyList{db: d, Name: name}
+func (ft FullText) SearchPropertyListRef(name string) *SearchPropertyList {
+	return &SearchPropertyList{db: ft.db, Name: name}
 }
 
 // CreateSearchPropertyListRequest describes a search property list to
@@ -319,16 +319,16 @@ type CreateSearchPropertyListRequest struct {
 
 // CreateSearchPropertyList creates a search property list (CREATE SEARCH
 // PROPERTY LIST).
-func (d *Database) CreateSearchPropertyList(ctx context.Context, req CreateSearchPropertyListRequest) (*SearchPropertyList, error) {
+func (ft FullText) CreateSearchPropertyList(ctx context.Context, req CreateSearchPropertyListRequest) (*SearchPropertyList, error) {
 	q, err := createSearchPropertyListStatement(req)
 	if err != nil {
 		return nil, err
 	}
-	if _, err := d.exec(ctx, q); err != nil {
+	if _, err := ft.db.exec(ctx, q); err != nil {
 		return nil, fmt.Errorf("gosmo: create search property list %q: %w", req.Name, err)
 	}
-	return createdObject(ctx, d.SearchPropertyListRef(req.Name), func() (*SearchPropertyList, error) {
-		return d.SearchPropertyListByName(ctx, req.Name)
+	return createdObject(ctx, ft.SearchPropertyListRef(req.Name), func() (*SearchPropertyList, error) {
+		return ft.SearchPropertyListByName(ctx, req.Name)
 	})
 }
 

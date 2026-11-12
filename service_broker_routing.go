@@ -149,22 +149,22 @@ func scanRoute(d *Database, scan func(...any) error) (*Route, error) {
 
 // Routes returns the routes defined in the database, AutoCreatedLocal
 // included.
-func (d *Database) Routes(ctx context.Context) ([]*Route, error) {
+func (sb ServiceBroker) Routes(ctx context.Context) ([]*Route, error) {
 	const q = routeSelect + `
 ORDER  BY r.name`
 
-	rows, err := d.query(ctx, q)
-	return scanRows(rows, err, fmt.Sprintf("list routes in %q", d.Name), func(scan func(...any) error) (*Route, error) {
-		return scanRoute(d, scan)
+	rows, err := sb.db.query(ctx, q)
+	return scanRows(rows, err, fmt.Sprintf("list routes in %q", sb.db.Name), func(scan func(...any) error) (*Route, error) {
+		return scanRoute(sb.db, scan)
 	})
 }
 
 // RouteByName returns one route, or a not-found error (errors.Is
 // ErrNotFound) when the database has none by that name.
-func (d *Database) RouteByName(ctx context.Context, name string) (*Route, error) {
-	return readByName(ctx, d, scanRoute, routeSelect+`
+func (sb ServiceBroker) RouteByName(ctx context.Context, name string) (*Route, error) {
+	return readByName(ctx, sb.db, scanRoute, routeSelect+`
 WHERE  r.name = @p1`, []any{name},
-		notFoundf("gosmo: route %q not found in %q", name, d.Name), fmt.Sprintf("read route %q in %q", name, d.Name))
+		notFoundf("gosmo: route %q not found in %q", name, sb.db.Name), fmt.Sprintf("read route %q in %q", name, sb.db.Name))
 }
 
 // RouteRef returns a lightweight handle for a route by name, without
@@ -175,8 +175,8 @@ WHERE  r.name = @p1`, []any{name},
 // drop one the caller already knows exists — and is the form to use when
 // there is nothing to read yet, such as a script of a CREATE that was only
 // collected.
-func (d *Database) RouteRef(name string) *Route {
-	return &Route{db: d, Name: name}
+func (sb ServiceBroker) RouteRef(name string) *Route {
+	return &Route{db: sb.db, Name: name}
 }
 
 // RouteChanges is what ALTER ROUTE can change. A nil field leaves that
@@ -364,23 +364,23 @@ func scanRemoteServiceBinding(d *Database, scan func(...any) error) (*RemoteServ
 
 // RemoteServiceBindings returns the remote service bindings defined in the
 // database.
-func (d *Database) RemoteServiceBindings(ctx context.Context) ([]*RemoteServiceBinding, error) {
+func (sb ServiceBroker) RemoteServiceBindings(ctx context.Context) ([]*RemoteServiceBinding, error) {
 	const q = remoteServiceBindingSelect + `
 ORDER  BY b.name`
 
-	rows, err := d.query(ctx, q)
-	return scanRows(rows, err, fmt.Sprintf("list remote service bindings in %q", d.Name), func(scan func(...any) error) (*RemoteServiceBinding, error) {
-		return scanRemoteServiceBinding(d, scan)
+	rows, err := sb.db.query(ctx, q)
+	return scanRows(rows, err, fmt.Sprintf("list remote service bindings in %q", sb.db.Name), func(scan func(...any) error) (*RemoteServiceBinding, error) {
+		return scanRemoteServiceBinding(sb.db, scan)
 	})
 }
 
 // RemoteServiceBindingByName returns one remote service binding, or a
 // not-found error (errors.Is ErrNotFound) when the database has none by that
 // name.
-func (d *Database) RemoteServiceBindingByName(ctx context.Context, name string) (*RemoteServiceBinding, error) {
-	return readByName(ctx, d, scanRemoteServiceBinding, remoteServiceBindingSelect+`
+func (sb ServiceBroker) RemoteServiceBindingByName(ctx context.Context, name string) (*RemoteServiceBinding, error) {
+	return readByName(ctx, sb.db, scanRemoteServiceBinding, remoteServiceBindingSelect+`
 WHERE  b.name = @p1`, []any{name},
-		notFoundf("gosmo: remote service binding %q not found in %q", name, d.Name), fmt.Sprintf("read remote service binding %q in %q", name, d.Name))
+		notFoundf("gosmo: remote service binding %q not found in %q", name, sb.db.Name), fmt.Sprintf("read remote service binding %q in %q", name, sb.db.Name))
 }
 
 // RemoteServiceBindingRef returns a lightweight handle for a remote service binding by name, without
@@ -391,8 +391,8 @@ WHERE  b.name = @p1`, []any{name},
 // drop one the caller already knows exists — and is the form to use when
 // there is nothing to read yet, such as a script of a CREATE that was only
 // collected.
-func (d *Database) RemoteServiceBindingRef(name string) *RemoteServiceBinding {
-	return &RemoteServiceBinding{db: d, Name: name}
+func (sb ServiceBroker) RemoteServiceBindingRef(name string) *RemoteServiceBinding {
+	return &RemoteServiceBinding{db: sb.db, Name: name}
 }
 
 // Drop drops the remote service binding.  The drop is accepted on Azure SQL
@@ -468,36 +468,36 @@ func scanBrokerPriority(d *Database, scan func(...any) error) (*BrokerPriority, 
 	return p, nil
 }
 
-// BrokerPriorities returns the conversation priorities defined in the
+// Priorities returns the conversation priorities defined in the
 // database.
-func (d *Database) BrokerPriorities(ctx context.Context) ([]*BrokerPriority, error) {
+func (sb ServiceBroker) Priorities(ctx context.Context) ([]*BrokerPriority, error) {
 	const q = brokerPrioritySelect + `
 ORDER  BY p.name`
 
-	rows, err := d.query(ctx, q)
-	return scanRows(rows, err, fmt.Sprintf("list broker priorities in %q", d.Name), func(scan func(...any) error) (*BrokerPriority, error) {
-		return scanBrokerPriority(d, scan)
+	rows, err := sb.db.query(ctx, q)
+	return scanRows(rows, err, fmt.Sprintf("list broker priorities in %q", sb.db.Name), func(scan func(...any) error) (*BrokerPriority, error) {
+		return scanBrokerPriority(sb.db, scan)
 	})
 }
 
-// BrokerPriorityByName returns one conversation priority, or a not-found
+// PriorityByName returns one conversation priority, or a not-found
 // error (errors.Is ErrNotFound) when the database has none by that name.
-func (d *Database) BrokerPriorityByName(ctx context.Context, name string) (*BrokerPriority, error) {
-	return readByName(ctx, d, scanBrokerPriority, brokerPrioritySelect+`
+func (sb ServiceBroker) PriorityByName(ctx context.Context, name string) (*BrokerPriority, error) {
+	return readByName(ctx, sb.db, scanBrokerPriority, brokerPrioritySelect+`
 WHERE  p.name = @p1`, []any{name},
-		notFoundf("gosmo: broker priority %q not found in %q", name, d.Name), fmt.Sprintf("read broker priority %q in %q", name, d.Name))
+		notFoundf("gosmo: broker priority %q not found in %q", name, sb.db.Name), fmt.Sprintf("read broker priority %q in %q", name, sb.db.Name))
 }
 
-// BrokerPriorityRef returns a lightweight handle for a conversation priority by name, without
+// PriorityRef returns a lightweight handle for a conversation priority by name, without
 // querying the catalog — the counterpart of Server.DatabaseRef. Every field
-// but the name stays at its zero value; BrokerPriorityByName is what populates them.
+// but the name stays at its zero value; PriorityByName is what populates them.
 //
 // Every write on *BrokerPriority addresses it by name, so this handle is enough to
 // drop one the caller already knows exists — and is the form to use when
 // there is nothing to read yet, such as a script of a CREATE that was only
 // collected.
-func (d *Database) BrokerPriorityRef(name string) *BrokerPriority {
-	return &BrokerPriority{db: d, Name: name}
+func (sb ServiceBroker) PriorityRef(name string) *BrokerPriority {
+	return &BrokerPriority{db: sb.db, Name: name}
 }
 
 // Drop drops the broker priority.  It needs ALTER on the database: SQL Server
