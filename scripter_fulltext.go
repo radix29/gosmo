@@ -24,7 +24,7 @@ import (
 // ScriptFullTextCatalog generates the CREATE (or DROP) script for one
 // full-text catalog.
 func (sc *Scripter) ScriptFullTextCatalog(ctx context.Context, name string) (string, error) {
-	c, err := sc.db.FullTextCatalogByName(ctx, name)
+	c, err := sc.db.FullText().CatalogByName(ctx, name)
 	if err != nil {
 		return "", err
 	}
@@ -45,7 +45,7 @@ func buildFullTextCatalogScript(c *FullTextCatalog, opts ScriptOptions) string {
 // ScriptFullTextStoplist generates the CREATE (or DROP) script for one
 // stoplist: the CREATE, then an ADD for each of its words.
 func (sc *Scripter) ScriptFullTextStoplist(ctx context.Context, name string) (string, error) {
-	l, err := sc.db.FullTextStoplistByName(ctx, name)
+	l, err := sc.db.FullText().StoplistByName(ctx, name)
 	if err != nil {
 		return "", err
 	}
@@ -81,7 +81,7 @@ func buildFullTextStoplistScript(l *FullTextStoplist, words []FullTextStopword, 
 // ScriptSearchPropertyList generates the CREATE (or DROP) script for one
 // search property list: the CREATE, then an ADD for each property.
 func (sc *Scripter) ScriptSearchPropertyList(ctx context.Context, name string) (string, error) {
-	p, err := sc.db.SearchPropertyListByName(ctx, name)
+	p, err := sc.db.FullText().SearchPropertyListByName(ctx, name)
 	if err != nil {
 		return "", err
 	}

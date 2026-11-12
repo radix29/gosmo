@@ -681,19 +681,7 @@ SELECT a.name, a.type, CAST(1 AS bit),
 FROM   dbo.sysschemaarticles AS a
 WHERE  a.pubid = @p1
 ORDER  BY 1`, p.pubID)
-	return scanRows(rows, err, what, func(scan func(...any) error) (*Article, error) {
-		a := &Article{pub: p}
-		var pre int
-		var opt int64
-		if err := scan(&a.Name, &a.TypeCode, &a.SchemaOnly, &a.SourceSchema, &a.SourceObject,
-			&a.DestinationOwner, &a.DestinationObject, &a.Filter, &pre, &opt, &a.Description); err != nil {
-			return nil, err
-		}
-		a.Type = typeName(articleTypeNames, a.TypeCode)
-		a.PreCreationCommand = preCreationCommands[pre]
-		a.SchemaOption = SchemaOption(uint64(opt))
-		return a, nil
-	})
+	return scanRows(rows, err, what, p.articleScanner(articleTypeNames))
 }
 
 func (p *Publication) mergeArticles(ctx context.Context, what string) ([]*Article, error) {
@@ -714,7 +702,16 @@ SELECT a.name, a.type, CAST(1 AS bit),
 FROM   dbo.sysmergeschemaarticles AS a
 WHERE  a.pubid = CONVERT(uniqueidentifier, @p1)
 ORDER  BY 1`, p.mergeID)
-	return scanRows(rows, err, what, func(scan func(...any) error) (*Article, error) {
+	return scanRows(rows, err, what, p.articleScanner(mergeArticleTypeNames))
+}
+
+// articleScanner builds an Article from a row of either Articles query — the
+// transactional/snapshot one or mergeArticles — which select the same columns
+// in the same order, so a new Article field is one scan here plus a column in
+// both. names maps the family's type codes (articleTypeNames,
+// mergeArticleTypeNames).
+func (p *Publication) articleScanner(names map[int]string) func(func(...any) error) (*Article, error) {
+	return func(scan func(...any) error) (*Article, error) {
 		a := &Article{pub: p}
 		var pre int
 		var opt int64
@@ -722,11 +719,11 @@ ORDER  BY 1`, p.mergeID)
 			&a.DestinationOwner, &a.DestinationObject, &a.Filter, &pre, &opt, &a.Description); err != nil {
 			return nil, err
 		}
-		a.Type = typeName(mergeArticleTypeNames, a.TypeCode)
+		a.Type = typeName(names, a.TypeCode)
 		a.PreCreationCommand = preCreationCommands[pre]
 		a.SchemaOption = SchemaOption(uint64(opt))
 		return a, nil
-	})
+	}
 }
 
 // SchemaOption is an article's schema_option bitmask: what the snapshot

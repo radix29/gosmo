@@ -49,12 +49,25 @@ ORDER  BY o.type_desc, SCHEMA_NAME(o.schema_id), o.name`
 // (Search's rule). An encrypted module has no readable text and is never
 // found; a CLR module has none either. A database-level DDL trigger is not a
 // schema-scoped object and is not searched.
+//
+// Both sides are lowered under the database's collation, as Search does, but
+// compared ordinally (COLLATE Latin1_General_100_BIN2): a '%…%' LIKE under a
+// linguistic collation walks every character of every module through the
+// collation's rules, and the texts are the whole database's code. Measured on
+// 2025 over 5,050 modules (63 MB): 8.3 s with the database's collation, 1.6 s
+// ordinal; dropping LOWER saves nothing, the LIKE is the cost. Case folding
+// is unchanged — LOWER still follows the database's collation (Turkish I to
+// ı, Greek sigma) — but what a linguistic collation counts as equal beyond
+// case is not: in an accent-insensitive database "cafe" no longer finds
+// "café", and full-width letters, ligatures (æ/ae) and ignorable characters
+// match only themselves. Search and SearchColumns keep the collation: names
+// are short.
 func (d *Database) SearchDefinitions(ctx context.Context, pattern string) ([]*SearchResult, error) {
 	const q = `
 SELECT SCHEMA_NAME(o.schema_id), o.name, o.type_desc
 FROM   sys.sql_modules m
 JOIN   sys.objects o ON o.object_id = m.object_id
-WHERE  LOWER(m.definition) LIKE '%' + LOWER(@p1) + '%' ESCAPE '\'
+WHERE  LOWER(m.definition) COLLATE Latin1_General_100_BIN2 LIKE '%' + LOWER(@p1) + '%' ESCAPE '\'
 ORDER  BY o.type_desc, SCHEMA_NAME(o.schema_id), o.name`
 
 	rows, err := d.query(ctx, q, likeEscape(pattern))

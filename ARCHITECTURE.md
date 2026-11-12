@@ -407,6 +407,7 @@ The instance and database halves pair up: `ServerResourceStat` and
 | `Database.Roles`                | `db.Roles(ctx)` / `db.RoleByName(ctx, name)` / `db.RoleRef(name)` (no-I/O handle) / `db.RoleMembers(ctx, roleName)`; writes on the handle — `role.AddMember(ctx, member)` / `role.RemoveMember(ctx, member)` |
 | Database role administration    | `db.CreateRole(ctx, req)` / `role.Rename(ctx, newName)` / `role.SetOwner(ctx, newOwner)` / `role.Drop(ctx)` / `db.RoleRef(name).Drop(ctx)` |
 | Application roles               | `db.ApplicationRoles(ctx)` / `db.ApplicationRoleByName(ctx, name)` / `db.ApplicationRoleRef(name)` (no-I/O handle) / `db.CreateApplicationRole(ctx, req)` (password redacted in captures); writes on the handle — `ar.Rename(ctx, newName)` / `ar.SetDefaultSchema(ctx, schemaName)` / `ar.ChangePassword(ctx, newPassword)` / `ar.Drop(ctx)`; `sc.ScriptApplicationRole(ctx, name)` (password placeholder) |
+| Database principals (one read)  | `db.Principals(ctx, kinds...)` — users, database roles and application roles in one round trip (`*DatabasePrincipals`, each family as its own read fills it; roles also carry SID and dates); `gosmo.PrincipalKindUser` / `PrincipalKindRole` / `PrincipalKindApplicationRole` narrow it, none means all |
 | `Database.FileGroups`           | `db.FileGroups(ctx)` — `fg.Type` is the `type_desc` (ROWS / FILESTREAM / MEMORY_OPTIMIZED), `fg.IsFileStream()` the common test |
 | `Database.Triggers`             | `db.Triggers(ctx)` / `db.ObjectTriggers(ctx, schema, name)` (one table or view, by name) / `db.TriggerByName(ctx, schema, name)` (the trigger's own schema = its parent's) / `db.TriggerRef(schema, name)` (no-I/O handle) / `tr.Drop(ctx)` / `tr.Rename(ctx, newName)` / `tr.Enable(ctx)` / `tr.Disable(ctx)` / `tr.SetEnabled(ctx, on)` (a `TriggerRef` looks up the parent it names) |
 | Database-scope DDL triggers     | `db.DatabaseTriggers(ctx)` / `db.DatabaseTriggerByName(ctx, name)` / `db.DatabaseTriggerRef(name)` (no-I/O handle) / `tr.Enable(ctx)` / `tr.Disable(ctx)` / `tr.Drop(ctx)` — see [Database DDL triggers](#database-ddl-triggers) |
@@ -1068,17 +1069,17 @@ are the ones that change in operation rather than at design time.
 
 | SSMS folder              | gosmo                                              |
 | ------------------------ | -------------------------------------------------- |
-| Message Types            | `db.MessageTypes(ctx)` / `db.MessageTypeByName(ctx, name)` / `mt.Drop(ctx)` / `db.MessageTypeRef(name).Drop(ctx)` |
-| Contracts                | `db.Contracts(ctx)` / `db.ContractByName(ctx, name)` / `c.Drop(ctx)` / `db.ContractRef(name).Drop(ctx)` |
-| Queues                   | `db.BrokerQueues(ctx)` / `db.BrokerQueueByName(ctx, schema, name)` / `q.Drop(ctx)` / `db.BrokerQueueRef(schema, name).Drop(ctx)` |
-| Services                 | `db.BrokerServices(ctx)` / `db.BrokerServiceByName(ctx, name)` / `s.Drop(ctx)` / `db.BrokerServiceRef(name).Drop(ctx)` |
-| Routes                   | `db.Routes(ctx)` / `db.RouteByName(ctx, name)` / `r.Drop(ctx)` / `db.RouteRef(name).Drop(ctx)` |
-| Remote Service Bindings  | `db.RemoteServiceBindings(ctx)` / `db.RemoteServiceBindingByName(ctx, name)` / `b.Drop(ctx)` / `db.RemoteServiceBindingRef(name).Drop(ctx)` |
-| Broker Priorities        | `db.BrokerPriorities(ctx)` / `db.BrokerPriorityByName(ctx, name)` / `p.Drop(ctx)` / `db.BrokerPriorityRef(name).Drop(ctx)` |
-| Queue Properties (write)  | `q.Alter(ctx, QueueChanges{…})` / `db.BrokerQueueRef(schema, name).Alter(ctx, s)` / `q.Transfer(ctx, targetSchema)` |
-| Route Properties (write)  | `r.Alter(ctx, RouteChanges{…})` / `db.RouteRef(name).Alter(ctx, s)` |
-| A queue's message counts | `db.QueueMessageCounts(ctx)` → `map[objectID]int64`, or `q.MessageCount(ctx)` |
-| A queue's activation state | `db.QueueMonitors(ctx)` → `[]*QueueMonitor` |
+| Message Types            | `db.ServiceBroker().MessageTypes(ctx)` / `db.ServiceBroker().MessageTypeByName(ctx, name)` / `mt.Drop(ctx)` / `db.ServiceBroker().MessageTypeRef(name).Drop(ctx)` |
+| Contracts                | `db.ServiceBroker().Contracts(ctx)` / `db.ServiceBroker().ContractByName(ctx, name)` / `c.Drop(ctx)` / `db.ServiceBroker().ContractRef(name).Drop(ctx)` |
+| Queues                   | `db.ServiceBroker().Queues(ctx)` / `db.ServiceBroker().QueueByName(ctx, schema, name)` / `q.Drop(ctx)` / `db.ServiceBroker().QueueRef(schema, name).Drop(ctx)` |
+| Services                 | `db.ServiceBroker().Services(ctx)` / `db.ServiceBroker().ServiceByName(ctx, name)` / `s.Drop(ctx)` / `db.ServiceBroker().ServiceRef(name).Drop(ctx)` |
+| Routes                   | `db.ServiceBroker().Routes(ctx)` / `db.ServiceBroker().RouteByName(ctx, name)` / `r.Drop(ctx)` / `db.ServiceBroker().RouteRef(name).Drop(ctx)` |
+| Remote Service Bindings  | `db.ServiceBroker().RemoteServiceBindings(ctx)` / `db.ServiceBroker().RemoteServiceBindingByName(ctx, name)` / `b.Drop(ctx)` / `db.ServiceBroker().RemoteServiceBindingRef(name).Drop(ctx)` |
+| Broker Priorities        | `db.ServiceBroker().Priorities(ctx)` / `db.ServiceBroker().PriorityByName(ctx, name)` / `p.Drop(ctx)` / `db.ServiceBroker().PriorityRef(name).Drop(ctx)` |
+| Queue Properties (write)  | `q.Alter(ctx, QueueChanges{…})` / `db.ServiceBroker().QueueRef(schema, name).Alter(ctx, s)` / `q.Transfer(ctx, targetSchema)` |
+| Route Properties (write)  | `r.Alter(ctx, RouteChanges{…})` / `db.ServiceBroker().RouteRef(name).Alter(ctx, s)` |
+| A queue's message counts | `db.ServiceBroker().QueueMessageCounts(ctx)` → `map[objectID]int64`, or `q.MessageCount(ctx)` |
+| A queue's activation state | `db.ServiceBroker().QueueMonitors(ctx)` → `[]*QueueMonitor` |
 
 Nothing here is gated on the broker being enabled: `ENABLE_BROKER` decides
 whether messages are delivered, not whether these objects can be read or
@@ -1946,25 +1947,25 @@ that check the role themselves. Their result sets are read by column name
 What SSMS shows under a database's Storage › Full Text Catalogs / Full Text
 Stoplists / Search Property Lists, and of a table's full-text index
 (`fulltext.go` reads, `fulltext_write.go` writes, `scripter_fulltext.go`
-scripts). Each family has a `Ref` handle — `db.FullTextCatalogRef(name)`,
-`db.FullTextStoplistRef(name)`, `db.SearchPropertyListRef(name)`,
+scripts). Each family has a `Ref` handle — `db.FullText().CatalogRef(name)`,
+`db.FullText().StoplistRef(name)`, `db.FullText().SearchPropertyListRef(name)`,
 `tbl.FullTextIndexRef()` (a table has at most one; works from a `TableRef`) —
 and every write addresses its object by name, so a handle is enough.
 
 | SSMS equivalent                     | gosmo                                                        |
 | ----------------------------------- | ------------------------------------------------------------ |
 | Is Full-Text installed; `sp_fulltext_service` settings | `srv.FullTextInfo(ctx)` → `Installed`, `LoadOSResources`, `VerifySignature`, `UpgradeOption`, `Languages` (`sys.fulltext_languages`), `DocumentTypes` (`sys.fulltext_document_types`) |
-| Full Text Catalogs                  | `db.FullTextCatalogs(ctx)` / `db.FullTextCatalogByName(ctx, name)` → `[]*FullTextCatalog` with the `FULLTEXTCATALOGPROPERTY` counters (items, unique keys, size, populate status, merge, last population) |
+| Full Text Catalogs                  | `db.FullText().Catalogs(ctx)` / `db.FullText().CatalogByName(ctx, name)` → `[]*FullTextCatalog` with the `FULLTEXTCATALOGPROPERTY` counters (items, unique keys, size, populate status, merge, last population) |
 | Catalog › Tables/Views              | `cat.Indexes(ctx)` → `[]*FullTextIndex` |
-| Full Text Stoplists                 | `db.FullTextStoplists(ctx)` / `db.FullTextStoplistByName(ctx, name)`; `list.Stopwords(ctx)` → `[]FullTextStopword` |
-| Search Property Lists               | `db.SearchPropertyLists(ctx)` / `db.SearchPropertyListByName(ctx, name)`; `list.Properties(ctx)` → `[]SearchProperty` |
-| Table › Full-Text index › Properties | `tbl.FullTextIndex(ctx)` (`ErrNotFound` without one; a `TableRef` is refused) / `db.FullTextIndexes(ctx)` → key index, catalog, filegroup, change tracking, stoplist (`StoplistKind` Off/System/User), property list, `IndexVersion` (2025), last crawl, the `OBJECTPROPERTYEX` `TableFulltext*` counters, `Columns` |
+| Full Text Stoplists                 | `db.FullText().Stoplists(ctx)` / `db.FullText().StoplistByName(ctx, name)`; `list.Stopwords(ctx)` → `[]FullTextStopword` |
+| Search Property Lists               | `db.FullText().SearchPropertyLists(ctx)` / `db.FullText().SearchPropertyListByName(ctx, name)`; `list.Properties(ctx)` → `[]SearchProperty` |
+| Table › Full-Text index › Properties | `tbl.FullTextIndex(ctx)` (`ErrNotFound` without one; a `TableRef` is refused) / `db.FullText().Indexes(ctx)` → key index, catalog, filegroup, change tracking, stoplist (`StoplistKind` Off/System/User), property list, `IndexVersion` (2025), last crawl, the `OBJECTPROPERTYEX` `TableFulltext*` counters, `Columns` |
 | Population in progress              | `idx.Populations(ctx)` → `[]FullTextPopulation` (`sys.dm_fts_index_population`) |
-| New Full-Text Catalog               | `db.CreateFullTextCatalog(ctx, CreateFullTextCatalogRequest{Name, AccentSensitive *bool, IsDefault, Owner})` |
+| New Full-Text Catalog               | `db.FullText().CreateCatalog(ctx, CreateFullTextCatalogRequest{Name, AccentSensitive *bool, IsDefault, Owner})` |
 | Catalog › Rebuild / Optimize / default / owner / Delete | `cat.Rebuild(ctx, accentSensitive *bool)`, `cat.Reorganize(ctx)`, `cat.SetDefault(ctx)`, `cat.SetOwner(ctx, o)`, `cat.Drop(ctx)` |
-| New Full-Text Stoplist              | `db.CreateFullTextStoplist(ctx, CreateFullTextStoplistRequest{Name, FromSystem \| From [+ FromDatabase], Owner})` |
+| New Full-Text Stoplist              | `db.FullText().CreateStoplist(ctx, CreateFullTextStoplistRequest{Name, FromSystem \| From [+ FromDatabase], Owner})` |
 | Stoplist › words / owner / Delete   | `list.AddStopword(ctx, word, language)`, `DropStopword`, `DropLanguageStopwords(ctx, language)`, `DropAllStopwords`, `SetOwner`, `Drop` — a language is an LCID (`"1033"`, `"0x0409"`, `"0"` neutral) or a name |
-| New Search Property List            | `db.CreateSearchPropertyList(ctx, CreateSearchPropertyListRequest{Name, From [+ FromDatabase], Owner})` |
+| New Search Property List            | `db.FullText().CreateSearchPropertyList(ctx, CreateSearchPropertyListRequest{Name, From [+ FromDatabase], Owner})` |
 | Property list › properties / owner / Delete | `pl.AddProperty(ctx, SearchProperty{Name, SetGUID, IntID, Description})`, `pl.DropProperty(ctx, name)`, `SetOwner`, `Drop` |
 | Table › Full-Text index › Define    | `tbl.CreateFullTextIndex(ctx, CreateFullTextIndexRequest{Columns []FullTextIndexColumnSpec, KeyIndex, Catalog, FileGroup, ChangeTracking, NoPopulation, StoplistOff \| Stoplist, SearchPropertyList})` |
 | Full-Text index › Enable/Disable, Track Changes, columns, stoplist, property list | `idx.Enable`, `Disable`, `SetChangeTracking(ctx, ct)`, `AddColumn(ctx, spec, pop)`, `DropColumn(ctx, name, pop)` (`gosmo.FullTextRepopulate` / `FullTextNoPopulation`), `SetStoplist(ctx, kind, name)`, `SetSearchPropertyList(ctx, name)` (`""` is OFF) |
@@ -2727,6 +2728,9 @@ sessions. A cause gosmo cannot predict (another session's write) is caught
 when it happens: once `Connect` has returned, a dial the login database
 refuses moves the pool to master and dials again (not on Azure SQL Database,
 whose master cannot reach the other databases). The pool never moves back.
+Database names are compared under the server collation (`SameName` on
+`ServerInfo.Collation`, set on the connector once `Connect` has read it), so
+on a case-sensitive server a write on `Sales` leaves a pool on `sales` alone.
 `Server.InitialDatabase` reports where the pool logs in now, for a caller
 cloning the options for another connection. A `NewServer` pool is never
 moved.

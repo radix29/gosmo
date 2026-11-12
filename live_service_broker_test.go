@@ -117,7 +117,7 @@ func TestLiveServiceBrokerFamiliesRoundTrip(t *testing.T) {
 	sc := NewScripter(src, DefaultScriptOptions())
 
 	t.Run("message type", func(t *testing.T) {
-		before, err := src.MessageTypeByName(ctx, "//gosmo/live/mt_xml")
+		before, err := src.ServiceBroker().MessageTypeByName(ctx, "//gosmo/live/mt_xml")
 		if err != nil {
 			t.Fatalf("MessageTypeByName: %v", err)
 		}
@@ -138,7 +138,7 @@ func TestLiveServiceBrokerFamiliesRoundTrip(t *testing.T) {
 		}
 		liveRunScript(t, dst, ctx, script)
 
-		after, err := dst.MessageTypeByName(ctx, "//gosmo/live/mt_xml")
+		after, err := dst.ServiceBroker().MessageTypeByName(ctx, "//gosmo/live/mt_xml")
 		if err != nil {
 			t.Fatalf("the scripted message type does not exist in the destination: %v", err)
 		}
@@ -160,7 +160,7 @@ func TestLiveServiceBrokerFamiliesRoundTrip(t *testing.T) {
 		}
 		liveRunScript(t, dst, ctx, script)
 
-		before, err := src.ContractByName(ctx, "//gosmo/live/contract")
+		before, err := src.ServiceBroker().ContractByName(ctx, "//gosmo/live/contract")
 		if err != nil {
 			t.Fatalf("ContractByName: %v", err)
 		}
@@ -186,7 +186,7 @@ func TestLiveServiceBrokerFamiliesRoundTrip(t *testing.T) {
 		}
 		liveRunScript(t, dst, ctx, script)
 
-		after, err := dst.ContractByName(ctx, "//gosmo/live/contract")
+		after, err := dst.ServiceBroker().ContractByName(ctx, "//gosmo/live/contract")
 		if err != nil {
 			t.Fatalf("the scripted contract does not exist in the destination: %v", err)
 		}
@@ -203,9 +203,9 @@ func TestLiveServiceBrokerFamiliesRoundTrip(t *testing.T) {
 	})
 
 	t.Run("queue", func(t *testing.T) {
-		before, err := src.BrokerQueueByName(ctx, "dbo", "sb_live_queue")
+		before, err := src.ServiceBroker().QueueByName(ctx, "dbo", "sb_live_queue")
 		if err != nil {
-			t.Fatalf("BrokerQueueByName: %v", err)
+			t.Fatalf("QueueByName: %v", err)
 		}
 		switch {
 		case !before.IsReceiveEnabled:
@@ -240,7 +240,7 @@ func TestLiveServiceBrokerFamiliesRoundTrip(t *testing.T) {
 		}
 		liveRunScript(t, dst, ctx, script)
 
-		after, err := dst.BrokerQueueByName(ctx, "dbo", "sb_live_queue")
+		after, err := dst.ServiceBroker().QueueByName(ctx, "dbo", "sb_live_queue")
 		if err != nil {
 			t.Fatalf("the scripted queue does not exist in the destination: %v", err)
 		}
@@ -258,9 +258,9 @@ func TestLiveServiceBrokerFamiliesRoundTrip(t *testing.T) {
 	})
 
 	t.Run("service", func(t *testing.T) {
-		before, err := src.BrokerServiceByName(ctx, "//gosmo/live/service")
+		before, err := src.ServiceBroker().ServiceByName(ctx, "//gosmo/live/service")
 		if err != nil {
-			t.Fatalf("BrokerServiceByName: %v", err)
+			t.Fatalf("ServiceByName: %v", err)
 		}
 		if before.QueueName != "sb_live_queue" || before.QueueSchema != "dbo" {
 			t.Errorf("the service's queue read back as [%s].[%s]", before.QueueSchema, before.QueueName)
@@ -275,7 +275,7 @@ func TestLiveServiceBrokerFamiliesRoundTrip(t *testing.T) {
 		}
 		liveRunScript(t, dst, ctx, script)
 
-		after, err := dst.BrokerServiceByName(ctx, "//gosmo/live/service")
+		after, err := dst.ServiceBroker().ServiceByName(ctx, "//gosmo/live/service")
 		if err != nil {
 			t.Fatalf("the scripted service does not exist in the destination: %v", err)
 		}
@@ -286,7 +286,7 @@ func TestLiveServiceBrokerFamiliesRoundTrip(t *testing.T) {
 	})
 
 	t.Run("route", func(t *testing.T) {
-		before, err := src.RouteByName(ctx, "sb_live_route")
+		before, err := src.ServiceBroker().RouteByName(ctx, "sb_live_route")
 		if err != nil {
 			t.Fatalf("RouteByName: %v", err)
 		}
@@ -311,7 +311,7 @@ func TestLiveServiceBrokerFamiliesRoundTrip(t *testing.T) {
 		}
 		liveRunScript(t, dst, ctx, script)
 
-		after, err := dst.RouteByName(ctx, "sb_live_route")
+		after, err := dst.ServiceBroker().RouteByName(ctx, "sb_live_route")
 		if err != nil {
 			t.Fatalf("the scripted route does not exist in the destination: %v", err)
 		}
@@ -326,9 +326,9 @@ func TestLiveServiceBrokerFamiliesRoundTrip(t *testing.T) {
 	})
 
 	t.Run("broker priority", func(t *testing.T) {
-		before, err := src.BrokerPriorityByName(ctx, "sb_live_priority")
+		before, err := src.ServiceBroker().PriorityByName(ctx, "sb_live_priority")
 		if err != nil {
-			t.Fatalf("BrokerPriorityByName: %v", err)
+			t.Fatalf("PriorityByName: %v", err)
 		}
 		if before.Level != 7 || before.Contract != "//gosmo/live/contract" ||
 			before.LocalService != "//gosmo/live/service" ||
@@ -342,7 +342,7 @@ func TestLiveServiceBrokerFamiliesRoundTrip(t *testing.T) {
 		}
 		liveRunScript(t, dst, ctx, script)
 
-		after, err := dst.BrokerPriorityByName(ctx, "sb_live_priority")
+		after, err := dst.ServiceBroker().PriorityByName(ctx, "sb_live_priority")
 		if err != nil {
 			t.Fatalf("the scripted priority does not exist in the destination: %v", err)
 		}
@@ -357,7 +357,7 @@ func TestLiveServiceBrokerFamiliesRoundTrip(t *testing.T) {
 		if !bindingCreated {
 			t.Skip("CREATE REMOTE SERVICE BINDING is not supported on this edition")
 		}
-		before, err := src.RemoteServiceBindingByName(ctx, "sb_live_binding")
+		before, err := src.ServiceBroker().RemoteServiceBindingByName(ctx, "sb_live_binding")
 		if err != nil {
 			t.Fatalf("RemoteServiceBindingByName: %v", err)
 		}
@@ -379,7 +379,7 @@ func TestLiveServiceBrokerFamiliesRoundTrip(t *testing.T) {
 		}
 		liveRunScript(t, dst, ctx, script)
 
-		after, err := dst.RemoteServiceBindingByName(ctx, "sb_live_binding")
+		after, err := dst.ServiceBroker().RemoteServiceBindingByName(ctx, "sb_live_binding")
 		if err != nil {
 			t.Fatalf("the scripted binding does not exist in the destination: %v", err)
 		}
@@ -394,7 +394,7 @@ func TestLiveServiceBrokerFamiliesRoundTrip(t *testing.T) {
 	// checked for the fixture object by name: a listing that returns only the
 	// system members is the failure a non-empty result would hide.
 	t.Run("listings", func(t *testing.T) {
-		mts, err := src.MessageTypes(ctx)
+		mts, err := src.ServiceBroker().MessageTypes(ctx)
 		if err != nil {
 			t.Fatalf("MessageTypes: %v", err)
 		}
@@ -411,7 +411,7 @@ func TestLiveServiceBrokerFamiliesRoundTrip(t *testing.T) {
 			t.Error("no message type was marked a system object; every database ships fourteen")
 		}
 
-		contracts, err := src.Contracts(ctx)
+		contracts, err := src.ServiceBroker().Contracts(ctx)
 		if err != nil {
 			t.Fatalf("Contracts: %v", err)
 		}
@@ -425,9 +425,9 @@ func TestLiveServiceBrokerFamiliesRoundTrip(t *testing.T) {
 			}
 		}
 
-		queues, err := src.BrokerQueues(ctx)
+		queues, err := src.ServiceBroker().Queues(ctx)
 		if err != nil {
-			t.Fatalf("BrokerQueues: %v", err)
+			t.Fatalf("Queues: %v", err)
 		}
 		if !containsNamed(t, len(queues), func(i int) string { return queues[i].Name }, "sb_live_queue") {
 			t.Error("the queue listing does not contain the fixture object")
@@ -444,15 +444,15 @@ func TestLiveServiceBrokerFamiliesRoundTrip(t *testing.T) {
 			t.Error("no queue was marked a system object; is_ms_shipped is not being read")
 		}
 
-		services, err := src.BrokerServices(ctx)
+		services, err := src.ServiceBroker().Services(ctx)
 		if err != nil {
-			t.Fatalf("BrokerServices: %v", err)
+			t.Fatalf("Services: %v", err)
 		}
 		if !containsNamed(t, len(services), func(i int) string { return services[i].Name }, "//gosmo/live/service") {
 			t.Error("the service listing does not contain the fixture object")
 		}
 
-		routes, err := src.Routes(ctx)
+		routes, err := src.ServiceBroker().Routes(ctx)
 		if err != nil {
 			t.Fatalf("Routes: %v", err)
 		}
@@ -460,18 +460,18 @@ func TestLiveServiceBrokerFamiliesRoundTrip(t *testing.T) {
 			t.Error("AutoCreatedLocal is missing from the route listing; it exists in every database")
 		}
 
-		prios, err := src.BrokerPriorities(ctx)
+		prios, err := src.ServiceBroker().Priorities(ctx)
 		if err != nil {
-			t.Fatalf("BrokerPriorities: %v", err)
+			t.Fatalf("Priorities: %v", err)
 		}
 		if !containsNamed(t, len(prios), func(i int) string { return prios[i].Name }, "sb_live_priority") {
 			t.Error("the broker priority listing does not contain the fixture object")
 		}
 
-		if _, err := src.QueueMonitors(ctx); err != nil {
+		if _, err := src.ServiceBroker().QueueMonitors(ctx); err != nil {
 			t.Errorf("QueueMonitors: %v", err)
 		}
-		counts, err := src.QueueMessageCounts(ctx)
+		counts, err := src.ServiceBroker().QueueMessageCounts(ctx)
 		if err != nil {
 			t.Fatalf("QueueMessageCounts: %v", err)
 		}
@@ -494,9 +494,9 @@ func TestLiveServiceBrokerFamiliesRoundTrip(t *testing.T) {
 		if err != nil {
 			t.Skipf("msdb is not reachable on this instance: %v", err)
 		}
-		queues, err := msdb.BrokerQueues(ctx)
+		queues, err := msdb.ServiceBroker().Queues(ctx)
 		if err != nil {
-			t.Fatalf("BrokerQueues(msdb): %v", err)
+			t.Fatalf("Queues(msdb): %v", err)
 		}
 		var mailQueue *BrokerQueue
 		for _, q := range queues {
@@ -511,9 +511,9 @@ func TestLiveServiceBrokerFamiliesRoundTrip(t *testing.T) {
 			t.Error("InternalMailQueue is is_ms_shipped = 1 and must read as a system object")
 		}
 
-		services, err := msdb.BrokerServices(ctx)
+		services, err := msdb.ServiceBroker().Services(ctx)
 		if err != nil {
-			t.Fatalf("BrokerServices(msdb): %v", err)
+			t.Fatalf("Services(msdb): %v", err)
 		}
 		for _, s := range services {
 			if strings.EqualFold(s.Name, "InternalMailService") && s.IsSystemObject {
@@ -529,9 +529,9 @@ func TestLiveServiceBrokerFamiliesRoundTrip(t *testing.T) {
 	// change in operation — a stuck activation, a queue taken out of service,
 	// a route repointed at a new address.
 	t.Run("queue alter", func(t *testing.T) {
-		q, err := src.BrokerQueueByName(ctx, "dbo", "sb_live_queue")
+		q, err := src.ServiceBroker().QueueByName(ctx, "dbo", "sb_live_queue")
 		if err != nil {
-			t.Fatalf("BrokerQueueByName: %v", err)
+			t.Fatalf("QueueByName: %v", err)
 		}
 
 		// Restating ACTIVATION from what the queue already has is the round
@@ -554,7 +554,7 @@ func TestLiveServiceBrokerFamiliesRoundTrip(t *testing.T) {
 			t.Fatalf("Alter: %v", err)
 		}
 
-		after, err := src.BrokerQueueByName(ctx, "dbo", "sb_live_queue")
+		after, err := src.ServiceBroker().QueueByName(ctx, "dbo", "sb_live_queue")
 		if err != nil {
 			t.Fatalf("re-read: %v", err)
 		}
@@ -590,7 +590,7 @@ func TestLiveServiceBrokerFamiliesRoundTrip(t *testing.T) {
 		if err := q.Alter(ctx, QueueChanges{DropActivation: true}); err != nil {
 			t.Fatalf("Alter(DropActivation): %v", err)
 		}
-		after, err = src.BrokerQueueByName(ctx, "dbo", "sb_live_queue")
+		after, err = src.ServiceBroker().QueueByName(ctx, "dbo", "sb_live_queue")
 		if err != nil {
 			t.Fatalf("re-read: %v", err)
 		}
@@ -611,7 +611,7 @@ func TestLiveServiceBrokerFamiliesRoundTrip(t *testing.T) {
 		}); err != nil {
 			t.Fatalf("Alter (revert): %v", err)
 		}
-		reverted, err := src.BrokerQueueByName(ctx, "dbo", "sb_live_queue")
+		reverted, err := src.ServiceBroker().QueueByName(ctx, "dbo", "sb_live_queue")
 		if err != nil {
 			t.Fatalf("re-read: %v", err)
 		}
@@ -629,7 +629,7 @@ func TestLiveServiceBrokerFamiliesRoundTrip(t *testing.T) {
 		}); err != nil {
 			t.Fatalf("Alter (EXECUTE AS SELF): %v", err)
 		}
-		self, err := src.BrokerQueueByName(ctx, "dbo", "sb_live_queue")
+		self, err := src.ServiceBroker().QueueByName(ctx, "dbo", "sb_live_queue")
 		if err != nil {
 			t.Fatalf("re-read: %v", err)
 		}
@@ -640,7 +640,7 @@ func TestLiveServiceBrokerFamiliesRoundTrip(t *testing.T) {
 	})
 
 	t.Run("route alter", func(t *testing.T) {
-		r, err := src.RouteByName(ctx, "sb_live_route")
+		r, err := src.ServiceBroker().RouteByName(ctx, "sb_live_route")
 		if err != nil {
 			t.Fatalf("RouteByName: %v", err)
 		}
@@ -650,7 +650,7 @@ func TestLiveServiceBrokerFamiliesRoundTrip(t *testing.T) {
 		}); err != nil {
 			t.Fatalf("Alter: %v", err)
 		}
-		after, err := src.RouteByName(ctx, "sb_live_route")
+		after, err := src.ServiceBroker().RouteByName(ctx, "sb_live_route")
 		if err != nil {
 			t.Fatalf("re-read: %v", err)
 		}
@@ -676,40 +676,40 @@ func TestLiveServiceBrokerFamiliesRoundTrip(t *testing.T) {
 	// is the normal case here, so the order is what makes them succeed.
 	t.Run("drops", func(t *testing.T) {
 		if bindingCreated {
-			if err := src.RemoteServiceBindingRef("sb_live_binding").Drop(ctx); err != nil {
+			if err := src.ServiceBroker().RemoteServiceBindingRef("sb_live_binding").Drop(ctx); err != nil {
 				t.Errorf("DropRemoteServiceBinding: %v", err)
 			}
 		}
-		if err := src.BrokerPriorityRef("sb_live_priority").Drop(ctx); err != nil {
+		if err := src.ServiceBroker().PriorityRef("sb_live_priority").Drop(ctx); err != nil {
 			t.Errorf("DropBrokerPriority: %v", err)
 		}
-		if err := src.RouteRef("sb_live_route").Drop(ctx); err != nil {
+		if err := src.ServiceBroker().RouteRef("sb_live_route").Drop(ctx); err != nil {
 			t.Errorf("DropRoute: %v", err)
 		}
-		if err := src.BrokerServiceRef("//gosmo/live/service").Drop(ctx); err != nil {
+		if err := src.ServiceBroker().ServiceRef("//gosmo/live/service").Drop(ctx); err != nil {
 			t.Errorf("DropBrokerService: %v", err)
 		}
-		if err := src.BrokerQueueRef("dbo", "sb_live_queue").Drop(ctx); err != nil {
+		if err := src.ServiceBroker().QueueRef("dbo", "sb_live_queue").Drop(ctx); err != nil {
 			t.Errorf("DropBrokerQueue: %v", err)
 		}
-		if err := src.ContractRef("//gosmo/live/contract").Drop(ctx); err != nil {
+		if err := src.ServiceBroker().ContractRef("//gosmo/live/contract").Drop(ctx); err != nil {
 			t.Errorf("DropContract: %v", err)
 		}
 		for _, name := range []string{"//gosmo/live/mt_xml", "//gosmo/live/mt_any"} {
-			if err := src.MessageTypeRef(name).Drop(ctx); err != nil {
+			if err := src.ServiceBroker().MessageTypeRef(name).Drop(ctx); err != nil {
 				t.Errorf("DropMessageType %s: %v", name, err)
 			}
 		}
 
 		// Every finder must now say not-found, not return a stale object.
-		if _, err := src.BrokerQueueByName(ctx, "dbo", "sb_live_queue"); !errors.Is(err, ErrNotFound) {
-			t.Errorf("after the drop, BrokerQueueByName returned %v, want ErrNotFound", err)
+		if _, err := src.ServiceBroker().QueueByName(ctx, "dbo", "sb_live_queue"); !errors.Is(err, ErrNotFound) {
+			t.Errorf("after the drop, QueueByName returned %v, want ErrNotFound", err)
 		}
-		if _, err := src.RouteByName(ctx, "sb_live_route"); !errors.Is(err, ErrNotFound) {
+		if _, err := src.ServiceBroker().RouteByName(ctx, "sb_live_route"); !errors.Is(err, ErrNotFound) {
 			t.Errorf("after the drop, RouteByName returned %v, want ErrNotFound", err)
 		}
-		if _, err := src.BrokerPriorityByName(ctx, "sb_live_priority"); !errors.Is(err, ErrNotFound) {
-			t.Errorf("after the drop, BrokerPriorityByName returned %v, want ErrNotFound", err)
+		if _, err := src.ServiceBroker().PriorityByName(ctx, "sb_live_priority"); !errors.Is(err, ErrNotFound) {
+			t.Errorf("after the drop, PriorityByName returned %v, want ErrNotFound", err)
 		}
 	})
 
@@ -717,7 +717,7 @@ func TestLiveServiceBrokerFamiliesRoundTrip(t *testing.T) {
 	// is what a caller shows: dropping the destination's message type while
 	// its contract still names it must fail, with Msg 3716.
 	t.Run("dependency refusal", func(t *testing.T) {
-		err := dst.MessageTypeRef("//gosmo/live/mt_any").Drop(ctx)
+		err := dst.ServiceBroker().MessageTypeRef("//gosmo/live/mt_any").Drop(ctx)
 		if err == nil {
 			t.Fatal("dropping a message type still bound to a contract succeeded")
 		}

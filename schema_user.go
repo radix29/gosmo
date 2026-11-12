@@ -19,6 +19,14 @@ type Schema struct {
 	Owner string
 }
 
+// IsSystem reports whether SQL Server creates the schema in every database:
+// guest, INFORMATION_SCHEMA and sys (schema_id 2–4) and the fixed database
+// roles' (16384–16399). dbo (1) holds user objects and is not one. It is
+// derived from ID, so it answers false on a Database.SchemaRef handle.
+func (s *Schema) IsSystem() bool {
+	return (s.ID >= 2 && s.ID <= 4) || (s.ID >= 16384 && s.ID < 16400)
+}
+
 // Database returns the database the schema belongs to.
 func (s *Schema) Database() *Database { return s.db }
 

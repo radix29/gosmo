@@ -5,7 +5,6 @@ import (
 	"database/sql/driver"
 	"errors"
 	"slices"
-	"strings"
 	"sync"
 
 	mssql "github.com/microsoft/go-mssqldb"
@@ -45,6 +44,13 @@ type retargetingConnector struct {
 	// master unannounced. It stays unset on Azure SQL Database, where master
 	// is a separate logical database that reads cannot reach any other from.
 	fallBack bool
+
+	// collation is the server's (ServerInfo.Collation), which database names
+	// follow: on a case-sensitive server `Sales` and `sales` are two
+	// databases, and a write on the other one must not move the pool. Connect
+	// sets it once the server info is read; until then it is "", which ignores
+	// case (CollationIgnoresCase).
+	collation string
 }
 
 // newRetargetingConnector builds opts's connector. opts has its defaults
@@ -83,10 +89,10 @@ func (c *retargetingConnector) current() driver.Connector {
 // (see InitialDatabase), as it does after leftLoginDatabase.
 func (c *retargetingConnector) Connect(ctx context.Context) (driver.Conn, error) {
 	c.mu.Lock()
-	cur, database, fallBack := c.cur, c.opts.Database, c.fallBack
+	cur, database, fallBack, collation := c.cur, c.opts.Database, c.fallBack, c.collation
 	c.mu.Unlock()
 	conn, err := cur.Connect(ctx)
-	if err == nil || !fallBack || strings.EqualFold(database, "master") || !loginDatabaseRefused(err) {
+	if err == nil || !fallBack || SameName(collation, database, "master") || !loginDatabaseRefused(err) {
 		return conn, err
 	}
 	c.retarget(database, "master")
@@ -102,6 +108,13 @@ func (c *retargetingConnector) enableFallBack() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.fallBack = true
+}
+
+// setCollation sets collation; see the field.
+func (c *retargetingConnector) setCollation(collation string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.collation = collation
 }
 
 // loginRefusalNumbers are the errors a login fails with when the server
@@ -148,22 +161,23 @@ func (c *retargetingConnector) database() string {
 }
 
 // retarget makes connections dialled from now on log in to database, if the
-// pool still logs in to from; connections already open keep theirs. Only the
+// pool still logs in to from (SameName under the server's collation), and
+// reports whether it did; connections already open keep theirs. Only the
 // database differs from what built the current connector, so a failure to
-// rebuild is not expected; it leaves the connector as it was.
-func (c *retargetingConnector) retarget(from, database string) {
+// rebuild is not expected; it leaves the connector as it was, and retarget
+// still reports true, since from was the pool's database.
+func (c *retargetingConnector) retarget(from, database string) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if !strings.EqualFold(c.opts.Database, from) {
-		return
+	if !SameName(c.collation, c.opts.Database, from) {
+		return false
 	}
 	opts := c.opts
 	opts.Database = database
-	connector, err := c.build(opts)
-	if err != nil {
-		return
+	if connector, err := c.build(opts); err == nil {
+		c.cur, c.opts = connector, opts
 	}
-	c.cur, c.opts = connector, opts
+	return true
 }
 
 // InitialDatabase returns the database a new pooled connection logs in to:
@@ -174,7 +188,8 @@ func (c *retargetingConnector) retarget(from, database string) {
 // group on a secondary moves the pool to master; renaming it moves it to the
 // new name. So does a login the database refuses for any other reason —
 // another session's write, say — once Connect has returned, except on Azure
-// SQL Database. The pool does not move back. The comparison ignores case.
+// SQL Database. The pool does not move back. Names are compared under the
+// server's collation (SameName): ignoring case unless it is case-sensitive.
 //
 // It is "" for a Server from NewServer, whose pool gosmo did not open and
 // never moves. A caller cloning this Server's ConnectionOptions for another
@@ -197,9 +212,8 @@ func (s *Server) InitialDatabase() string {
 // Idle connections are released too: a session left in a renamed or dropped
 // database would answer its next statement from there, or not at all.
 func (s *Server) leftLoginDatabase(ctx context.Context, from, database string) {
-	if Scripting(ctx) || s.login == nil || !strings.EqualFold(s.login.database(), from) {
+	if Scripting(ctx) || s.login == nil || !s.login.retarget(from, database) {
 		return
 	}
-	s.login.retarget(from, database)
 	s.releaseIdle(ctx)
 }

@@ -106,19 +106,7 @@ type CreateRoleRequest struct {
 // CreateRole creates a new database role, and returns it read back from the
 // catalog — or, under Scripting(ctx), the RoleRef handle, since nothing ran.
 func (d *Database) CreateRole(ctx context.Context, req CreateRoleRequest) (*DatabaseRole, error) {
-	if req.Name == "" {
-		return nil, invalidf("gosmo: create database role: name is required")
-	}
-	q := "CREATE ROLE " + quoteIdent(req.Name)
-	if req.Owner != "" {
-		q += " AUTHORIZATION " + quoteIdent(req.Owner)
-	}
-	if _, err := d.exec(ctx, q); err != nil {
-		return nil, fmt.Errorf("gosmo: create database role %q: %w", req.Name, err)
-	}
-	return createdObject(ctx, d.RoleRef(req.Name), func() (*DatabaseRole, error) {
-		return d.RoleByName(ctx, req.Name)
-	})
+	return createOwned(ctx, d.exec, "database role", "CREATE ROLE", req.Name, req.Owner, d.RoleRef(req.Name), d.RoleByName)
 }
 
 // Rename changes the database role's name.

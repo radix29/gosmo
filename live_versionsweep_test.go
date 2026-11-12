@@ -67,6 +67,10 @@ var sweepMustCall = []string{
 	// version exposure as the listings above.
 	"Database.Capabilities",
 
+	// The one-read principal listing: its kinds are variadic, which the
+	// reflective half reaches only through its IsVariadic branch.
+	"Database.Principals",
+
 	// Assemblies.
 	"Database.Assemblies",
 	"Database.AssemblyByName",
@@ -95,22 +99,22 @@ var sweepMustCall = []string{
 	// DMV-backed reads, which are the ones a caller without VIEW DATABASE
 	// STATE loses — they are separate calls precisely so that losing them
 	// does not cost the queue listing as well.
-	"Database.MessageTypes",
-	"Database.MessageTypeByName",
-	"Database.Contracts",
-	"Database.ContractByName",
-	"Database.BrokerQueues",
-	"Database.BrokerQueueByName",
-	"Database.BrokerServices",
-	"Database.BrokerServiceByName",
-	"Database.Routes",
-	"Database.RouteByName",
-	"Database.RemoteServiceBindings",
-	"Database.RemoteServiceBindingByName",
-	"Database.BrokerPriorities",
-	"Database.BrokerPriorityByName",
-	"Database.QueueMessageCounts",
-	"Database.QueueMonitors",
+	"ServiceBroker.MessageTypes",
+	"ServiceBroker.MessageTypeByName",
+	"ServiceBroker.Contracts",
+	"ServiceBroker.ContractByName",
+	"ServiceBroker.Queues",
+	"ServiceBroker.QueueByName",
+	"ServiceBroker.Services",
+	"ServiceBroker.ServiceByName",
+	"ServiceBroker.Routes",
+	"ServiceBroker.RouteByName",
+	"ServiceBroker.RemoteServiceBindings",
+	"ServiceBroker.RemoteServiceBindingByName",
+	"ServiceBroker.Priorities",
+	"ServiceBroker.PriorityByName",
+	"ServiceBroker.QueueMessageCounts",
+	"ServiceBroker.QueueMonitors",
 	"BrokerQueue.MessageCount",
 
 	// External resources.
@@ -273,10 +277,10 @@ var sweepMustCall = []string{
 	// listings and Server.FullTextInfo are swept on every instance;
 	// live_fulltext_test.go runs the rest against its own objects.
 	"Server.FullTextInfo",
-	"Database.FullTextCatalogs",
-	"Database.FullTextStoplists",
-	"Database.SearchPropertyLists",
-	"Database.FullTextIndexes",
+	"FullText.Catalogs",
+	"FullText.Stoplists",
+	"FullText.SearchPropertyLists",
+	"FullText.Indexes",
 	"Table.FullTextIndex",
 
 	// The command line's discovery reads (gossms review 2026-11-04 V1). Each
@@ -477,6 +481,8 @@ func TestLiveVersionSweep(t *testing.T) {
 	sw.reflectSweep("Server", srv.Name(), srv)
 	sw.reflectSweep("Database", d.Name, d)
 	sw.reflectSweep("QueryStore", d.Name, d.QueryStore())
+	sw.reflectSweep("ServiceBroker", d.Name, d.ServiceBroker())
+	sw.reflectSweep("FullText", d.Name, d.FullText())
 	sw.reflectSweep("Mail", srv.Name(), srv.Mail())
 	sw.reflectSweep("XEvents", srv.Name(), srv.XEvents())
 	sw.reflectSweep("XEvents", d.Name, d.XEvents()) // refused off Azure
@@ -669,10 +675,10 @@ func sweepDiscoveryReads(sw *sweep, d *Database) {
 // the listings and the not-found finders run.
 func sweepFullText(sw *sweep, d *Database) {
 	ctx := sw.ctx
-	if cats, err := d.FullTextCatalogs(ctx); err == nil {
+	if cats, err := d.FullText().Catalogs(ctx); err == nil {
 		for _, c := range cats {
-			sw.call("Database.FullTextCatalogByName("+c.Name+")", func() error {
-				_, err := d.FullTextCatalogByName(ctx, c.Name)
+			sw.call("FullText.CatalogByName("+c.Name+")", func() error {
+				_, err := d.FullText().CatalogByName(ctx, c.Name)
 				return err
 			})
 			sw.call("FullTextCatalog.Indexes("+c.Name+")", func() error {
@@ -681,10 +687,10 @@ func sweepFullText(sw *sweep, d *Database) {
 			})
 		}
 	}
-	if lists, err := d.FullTextStoplists(ctx); err == nil {
+	if lists, err := d.FullText().Stoplists(ctx); err == nil {
 		for _, l := range lists {
-			sw.call("Database.FullTextStoplistByName("+l.Name+")", func() error {
-				_, err := d.FullTextStoplistByName(ctx, l.Name)
+			sw.call("FullText.StoplistByName("+l.Name+")", func() error {
+				_, err := d.FullText().StoplistByName(ctx, l.Name)
 				return err
 			})
 			sw.call("FullTextStoplist.Stopwords("+l.Name+")", func() error {
@@ -693,10 +699,10 @@ func sweepFullText(sw *sweep, d *Database) {
 			})
 		}
 	}
-	if lists, err := d.SearchPropertyLists(ctx); err == nil {
+	if lists, err := d.FullText().SearchPropertyLists(ctx); err == nil {
 		for _, l := range lists {
-			sw.call("Database.SearchPropertyListByName("+l.Name+")", func() error {
-				_, err := d.SearchPropertyListByName(ctx, l.Name)
+			sw.call("FullText.SearchPropertyListByName("+l.Name+")", func() error {
+				_, err := d.FullText().SearchPropertyListByName(ctx, l.Name)
 				return err
 			})
 			sw.call("SearchPropertyList.Properties("+l.Name+")", func() error {
@@ -705,7 +711,7 @@ func sweepFullText(sw *sweep, d *Database) {
 			})
 		}
 	}
-	if idx, err := d.FullTextIndexes(ctx); err == nil {
+	if idx, err := d.FullText().Indexes(ctx); err == nil {
 		for _, i := range idx {
 			sw.call("FullTextIndex.Populations("+i.FullName()+")", func() error {
 				_, err := i.Populations(ctx)
@@ -724,12 +730,12 @@ func sweepServiceBroker(sw *sweep, d *Database) {
 			"Msg 41906): %v", err)
 	}
 
-	sw.call("Database.MessageTypeByName", func() error {
-		_, err := d.MessageTypeByName(sw.ctx, "//gosmo/sweep/mt")
+	sw.call("ServiceBroker.MessageTypeByName", func() error {
+		_, err := d.ServiceBroker().MessageTypeByName(sw.ctx, "//gosmo/sweep/mt")
 		return err
 	})
-	sw.call("Database.ContractByName", func() error {
-		c, err := d.ContractByName(sw.ctx, "//gosmo/sweep/contract")
+	sw.call("ServiceBroker.ContractByName", func() error {
+		c, err := d.ServiceBroker().ContractByName(sw.ctx, "//gosmo/sweep/contract")
 		if err != nil {
 			return err
 		}
@@ -741,8 +747,8 @@ func sweepServiceBroker(sw *sweep, d *Database) {
 		}
 		return nil
 	})
-	sw.call("Database.BrokerQueueByName", func() error {
-		q, err := d.BrokerQueueByName(sw.ctx, "dbo", "sweep_queue")
+	sw.call("ServiceBroker.QueueByName", func() error {
+		q, err := d.ServiceBroker().QueueByName(sw.ctx, "dbo", "sweep_queue")
 		if err != nil {
 			return err
 		}
@@ -754,15 +760,15 @@ func sweepServiceBroker(sw *sweep, d *Database) {
 		return nil
 	})
 	sw.call("BrokerQueue.MessageCount", func() error {
-		q, err := d.BrokerQueueByName(sw.ctx, "dbo", "sweep_queue")
+		q, err := d.ServiceBroker().QueueByName(sw.ctx, "dbo", "sweep_queue")
 		if err != nil {
 			return err
 		}
 		_, err = q.MessageCount(sw.ctx)
 		return err
 	})
-	sw.call("Database.BrokerServiceByName", func() error {
-		s, err := d.BrokerServiceByName(sw.ctx, "//gosmo/sweep/service")
+	sw.call("ServiceBroker.ServiceByName", func() error {
+		s, err := d.ServiceBroker().ServiceByName(sw.ctx, "//gosmo/sweep/service")
 		if err != nil {
 			return err
 		}
@@ -772,23 +778,23 @@ func sweepServiceBroker(sw *sweep, d *Database) {
 		}
 		return nil
 	})
-	sw.call("Database.RouteByName", func() error {
-		_, err := d.RouteByName(sw.ctx, "sweep_route")
+	sw.call("ServiceBroker.RouteByName", func() error {
+		_, err := d.ServiceBroker().RouteByName(sw.ctx, "sweep_route")
 		return err
 	})
-	sw.call("Database.RemoteServiceBindingByName", func() error {
-		_, err := d.RemoteServiceBindingByName(sw.ctx, "sweep_rsb")
+	sw.call("ServiceBroker.RemoteServiceBindingByName", func() error {
+		_, err := d.ServiceBroker().RemoteServiceBindingByName(sw.ctx, "sweep_rsb")
 		if !bindingCreated && errors.Is(err, ErrNotFound) {
 			return nil
 		}
 		return err
 	})
-	sw.call("Database.BrokerPriorityByName", func() error {
-		_, err := d.BrokerPriorityByName(sw.ctx, "sweep_priority")
+	sw.call("ServiceBroker.PriorityByName", func() error {
+		_, err := d.ServiceBroker().PriorityByName(sw.ctx, "sweep_priority")
 		return err
 	})
-	sw.call("Database.QueueMessageCounts", func() error {
-		counts, err := d.QueueMessageCounts(sw.ctx)
+	sw.call("ServiceBroker.QueueMessageCounts", func() error {
+		counts, err := d.ServiceBroker().QueueMessageCounts(sw.ctx)
 		if err != nil {
 			return err
 		}

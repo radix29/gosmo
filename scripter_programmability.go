@@ -43,8 +43,15 @@ func (sc *Scripter) ScriptUserDefinedDataType(ctx context.Context, schema, name 
 	if err != nil {
 		return "", err
 	}
-	return sc.withExtendedPropertiesAt(ctx, buildUserDefinedDataTypeScript(t, sc.opts), "type "+qualifiedName(t.Schema, t.Name),
-		6, t.UserTypeID, ExtendedPropertyLevel{Level0Type: "SCHEMA", Level0Name: t.Schema, Level1Type: "TYPE", Level1Name: t.Name})
+	return sc.withTypeExtendedProperties(ctx, buildUserDefinedDataTypeScript(t, sc.opts), t.Schema, t.Name, t.UserTypeID)
+}
+
+// withTypeExtendedProperties is withExtendedPropertiesAt for a type of any
+// kind — alias, table or CLR: class 6, keyed by user_type_id, addressed
+// SCHEMA/TYPE.
+func (sc *Scripter) withTypeExtendedProperties(ctx context.Context, script, schema, name string, userTypeID int) (string, error) {
+	return sc.withExtendedPropertiesAt(ctx, script, "type "+qualifiedName(schema, name),
+		6, userTypeID, ExtendedPropertyLevel{Level0Type: "SCHEMA", Level0Name: schema, Level1Type: "TYPE", Level1Name: name})
 }
 
 // buildUserDefinedDataTypeScript assembles one alias type's script.
@@ -121,8 +128,7 @@ func (sc *Scripter) ScriptUserDefinedTableType(ctx context.Context, schema, name
 			return "", err
 		}
 	}
-	script, err := sc.withExtendedPropertiesAt(ctx, buildUserDefinedTableTypeScript(t, p, sc.opts), "type "+t.FullName(),
-		6, t.UserTypeID, ExtendedPropertyLevel{Level0Type: "SCHEMA", Level0Name: t.Schema, Level1Type: "TYPE", Level1Name: t.Name})
+	script, err := sc.withTypeExtendedProperties(ctx, buildUserDefinedTableTypeScript(t, p, sc.opts), t.Schema, t.Name, t.UserTypeID)
 	if err != nil || !sc.wantsExtendedProperties() {
 		return script, err
 	}
@@ -298,8 +304,7 @@ func (sc *Scripter) ScriptClrType(ctx context.Context, schema, name string) (str
 	if err != nil {
 		return "", err
 	}
-	return sc.withExtendedPropertiesAt(ctx, buildClrTypeScript(t, sc.opts), "type "+qualifiedName(t.Schema, t.Name),
-		6, t.UserTypeID, ExtendedPropertyLevel{Level0Type: "SCHEMA", Level0Name: t.Schema, Level1Type: "TYPE", Level1Name: t.Name})
+	return sc.withTypeExtendedProperties(ctx, buildClrTypeScript(t, sc.opts), t.Schema, t.Name, t.UserTypeID)
 }
 
 // buildClrTypeScript assembles one CLR type's script. The CREATE names the
@@ -381,40 +386,37 @@ func xmlSchemaCollectionGuard(c *XMLSchemaCollection, sense string) string {
 // ScriptRule generates the CREATE (or DROP) script for one rule, with its
 // extended properties (ScriptOptions.ExtendedProperties).
 func (sc *Scripter) ScriptRule(ctx context.Context, schema, name string) (string, error) {
-	if err := requireSchema("script rule", schema, name); err != nil {
-		return "", err
-	}
-	def, err := sc.db.RuleRef(schema, name).Definition(ctx)
-	if err != nil {
-		return "", err
-	}
-	return sc.withBoundObjectExtendedProperties(ctx, "RULE", schema, name, def,
-		func() (int, error) {
-			r, err := sc.db.RuleByName(ctx, schema, name)
-			if err != nil {
-				return 0, err
-			}
-			return r.ObjectID, nil
-		})
+	return scriptBoundObject(ctx, sc, "RULE", schema, name, sc.db.RuleRef(schema, name).Definition,
+		sc.db.RuleByName, func(r *Rule) int { return r.ObjectID })
 }
 
 // ScriptDefault generates the CREATE (or DROP) script for one standalone
 // default, with its extended properties (ScriptOptions.ExtendedProperties).
 func (sc *Scripter) ScriptDefault(ctx context.Context, schema, name string) (string, error) {
-	if err := requireSchema("script default", schema, name); err != nil {
+	return scriptBoundObject(ctx, sc, "DEFAULT", schema, name, sc.db.DefaultRef(schema, name).Definition,
+		sc.db.DefaultByName, func(df *Default) int { return df.ObjectID })
+}
+
+// scriptBoundObject is ScriptRule and ScriptDefault: the text from definition,
+// and the object id — keyed by which its extended properties are read — from
+// byName, only when they are wanted. keyword is RULE or DEFAULT.
+func scriptBoundObject[T any](ctx context.Context, sc *Scripter, keyword, schema, name string,
+	definition func(context.Context) (string, error),
+	byName func(ctx context.Context, schema, name string) (T, error), objectID func(T) int) (string, error) {
+	if err := requireSchema("script "+strings.ToLower(keyword), schema, name); err != nil {
 		return "", err
 	}
-	def, err := sc.db.DefaultRef(schema, name).Definition(ctx)
+	def, err := definition(ctx)
 	if err != nil {
 		return "", err
 	}
-	return sc.withBoundObjectExtendedProperties(ctx, "DEFAULT", schema, name, def,
+	return sc.withBoundObjectExtendedProperties(ctx, keyword, schema, name, def,
 		func() (int, error) {
-			df, err := sc.db.DefaultByName(ctx, schema, name)
+			o, err := byName(ctx, schema, name)
 			if err != nil {
 				return 0, err
 			}
-			return df.ObjectID, nil
+			return objectID(o), nil
 		})
 }
 

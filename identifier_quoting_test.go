@@ -220,14 +220,10 @@ func captureTable(t *testing.T) *Table {
 // and the scripter's OBJECT_ID existence guards inverted.
 //
 // The fragmentation and storage reads bind the name (H7, review plan
-// 2026-10-04): one plan for every table, not one per name. Statistic.Columns
-// still builds it into a literal, which then needs escapeSingle as well.
+// 2026-10-04): one plan for every table, not one per name; Statistic.Columns
+// too since 2026-11-11 (D2, review plan 2026-11-11).
 func TestFragmentationQueriesBracketQuoteTheObjectName(t *testing.T) {
-	const (
-		wantArg  = `[my.schema].[Sales.Archive]`
-		wantName = `OBJECT_ID(N'[my.schema].[Sales.Archive]')`
-		badName  = `OBJECT_ID(N'my.schema.Sales.Archive')`
-	)
+	const wantArg = `[my.schema].[Sales.Archive]`
 
 	// bound checks that the statement containing needle passes the table to
 	// OBJECT_ID as parameter n, bracket-quoted, and has it nowhere in its text.
@@ -269,16 +265,9 @@ func TestFragmentationQueriesBracketQuoteTheObjectName(t *testing.T) {
 	t.Run("Statistic.Columns", func(t *testing.T) {
 		tbl := captureTable(t)
 		_, _ = tbl.StatisticRef("st_pad").Columns(context.Background())
-
-		q := captured.find("stats_columns")
-		if q == "" {
-			t.Fatal("no stats_columns statement was generated")
-		}
-		if strings.Contains(q, badName) {
-			t.Errorf("generated SQL uses the unbracketed name %s:\n%s", badName, q)
-		}
-		if !strings.Contains(q, wantName) {
-			t.Errorf("generated SQL does not contain %s:\n%s", wantName, q)
+		bound(t, "stats_columns", 2)
+		if _, args := captured.findArgs("stats_columns"); len(args) < 1 || args[0] != "st_pad" {
+			t.Errorf("args = %q, want @p1 = %q", args, "st_pad")
 		}
 	})
 

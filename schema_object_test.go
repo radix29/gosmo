@@ -46,7 +46,7 @@ func TestSchemaObjectHandleStatements(t *testing.T) {
 		{"Synonym.Transfer", func(c context.Context) error { return d.SynonymRef("dbo", "sy").Transfer(c, "arch") }, []string{"ALTER SCHEMA [arch] TRANSFER [dbo].[sy]"}},
 		{"Rule.Transfer", func(c context.Context) error { return d.RuleRef("dbo", "r").Transfer(c, "arch") }, []string{"ALTER SCHEMA [arch] TRANSFER [dbo].[r]"}},
 		{"Default.Transfer", func(c context.Context) error { return d.DefaultRef("dbo", "df").Transfer(c, "arch") }, []string{"ALTER SCHEMA [arch] TRANSFER [dbo].[df]"}},
-		{"BrokerQueue.Transfer", func(c context.Context) error { return d.BrokerQueueRef("dbo", "q").Transfer(c, "arch") }, []string{"ALTER SCHEMA [arch] TRANSFER [dbo].[q]"}},
+		{"BrokerQueue.Transfer", func(c context.Context) error { return d.ServiceBroker().QueueRef("dbo", "q").Transfer(c, "arch") }, []string{"ALTER SCHEMA [arch] TRANSFER [dbo].[q]"}},
 		{"UserDefinedDataType.Transfer", func(c context.Context) error { return d.UserDefinedDataTypeRef("dbo", "t").Transfer(c, "arch") }, []string{"ALTER SCHEMA [arch] TRANSFER TYPE::[dbo].[t]"}},
 		{"UserDefinedTableType.Transfer", func(c context.Context) error { return d.UserDefinedTableTypeRef("dbo", "t").Transfer(c, "arch") }, []string{"ALTER SCHEMA [arch] TRANSFER TYPE::[dbo].[t]"}},
 		{"ClrType.Transfer", func(c context.Context) error { return d.ClrTypeRef("dbo", "t").Transfer(c, "arch") }, []string{"ALTER SCHEMA [arch] TRANSFER TYPE::[dbo].[t]"}},
@@ -144,5 +144,25 @@ func TestDatabaseHandleWrites(t *testing.T) {
 				t.Errorf("got %v, want one statement containing %q", col.Statements(), tc.want)
 			}
 		})
+	}
+}
+
+// TestSchemaIsSystem pins the schemas SQL Server creates in every database:
+// guest, INFORMATION_SCHEMA, sys and the fixed roles' — not dbo, not a user
+// schema, and not a name-only handle.
+func TestSchemaIsSystem(t *testing.T) {
+	for _, tc := range []struct {
+		id   int
+		want bool
+	}{
+		{0, false}, {1, false}, {2, true}, {3, true}, {4, true}, {5, false},
+		{16383, false}, {16384, true}, {16393, true}, {16399, true}, {16400, false},
+	} {
+		if got := (&Schema{ID: tc.id}).IsSystem(); got != tc.want {
+			t.Errorf("Schema{ID: %d}.IsSystem() = %v, want %v", tc.id, got, tc.want)
+		}
+	}
+	if (&Database{}).SchemaRef("sys").IsSystem() {
+		t.Error("SchemaRef(\"sys\").IsSystem() = true; a handle carries no ID")
 	}
 }

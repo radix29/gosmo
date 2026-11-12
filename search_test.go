@@ -64,12 +64,13 @@ func TestSearchEscapesWildcardsInThePattern(t *testing.T) {
 // sides of the LIKE lowered, and the ESCAPE clause the escaped pattern needs.
 // Each is its own statement, so each is pinned — a copy that lowered only the
 // column, or dropped the ESCAPE, would pass every test of Search.
+// SearchDefinitions also compares ordinally (its doc has the measurement).
 func TestSearchVariantsFollowSearchsMatchingRule(t *testing.T) {
 	cases := []struct {
 		name, from, want string
 		call             func(context.Context, *Database) error
 	}{
-		{"SearchDefinitions", "sys.sql_modules", `LOWER(m.definition) LIKE '%' + LOWER(@p1) + '%' ESCAPE '\'`,
+		{"SearchDefinitions", "sys.sql_modules", `LOWER(m.definition) COLLATE Latin1_General_100_BIN2 LIKE '%' + LOWER(@p1) + '%' ESCAPE '\'`,
 			func(c context.Context, d *Database) error { _, err := d.SearchDefinitions(c, "Pct_1"); return err }},
 		{"SearchColumns", "sys.columns", `LOWER(c.name) LIKE '%' + LOWER(@p1) + '%' ESCAPE '\'`,
 			func(c context.Context, d *Database) error { _, err := d.SearchColumns(c, "Pct_1"); return err }},

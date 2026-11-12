@@ -29,6 +29,8 @@ func TestAlterModuleDefinition(t *testing.T) {
 		{"lowercase", "create   view dbo.v as select 1", "ALTER   view dbo.v as select 1"},
 		{"leading whitespace kept", "\n\nCREATE VIEW dbo.v AS SELECT 1", "\n\nALTER VIEW dbo.v AS SELECT 1"},
 		{"leading line comment kept", "-- header\nCREATE VIEW dbo.v AS SELECT 1", "-- header\nALTER VIEW dbo.v AS SELECT 1"},
+		// SQL Server ends a -- comment at a lone CR: the CREATE after it is code.
+		{"leading line comment ended by CR", "-- header\rCREATE PROCEDURE dbo.p AS SELECT 1", "-- header\rALTER PROCEDURE dbo.p AS SELECT 1"},
 		{"leading block comment kept", "/* header */ CREATE VIEW dbo.v AS SELECT 1", "/* header */ ALTER VIEW dbo.v AS SELECT 1"},
 		// Already re-runnable; rewriting would produce "ALTER OR ALTER".
 		{"create or alter untouched", "CREATE OR ALTER VIEW dbo.v AS SELECT 1", "CREATE OR ALTER VIEW dbo.v AS SELECT 1"},

@@ -156,6 +156,9 @@ func TestCreateIndexRefusesAWrongCombination(t *testing.T) {
 			`"a" appears more than once`},
 		{"NCCI ORDER column outside the index", CreateIndexRequest{Name: "ix", Type: IndexTypeColumnStore, KeyColumns: keyA, ColumnstoreOrder: []string{"b"}},
 			`"b" is not one of`},
+		{"NCCI ORDER column cased unlike its key column", CreateIndexRequest{Name: "ix", Type: IndexTypeColumnStore,
+			KeyColumns: []IndexColumnDef{{Name: "A"}}, ColumnstoreOrder: []string{"a"}},
+			`"a" is not one of`},
 		{"fill factor on a columnstore index", CreateIndexRequest{Name: "ix", Type: IndexTypeColumnStore, KeyColumns: keyA, FillFactor: 80},
 			"no fill factor"},
 		{"fill factor out of range", CreateIndexRequest{Name: "ix", KeyColumns: keyA, FillFactor: 101}, "out of range"},
@@ -214,12 +217,11 @@ func TestCreateIndexRefusesAWrongCombination(t *testing.T) {
 
 // TestCreateIndexColumnstoreOrderVersionGate pins where ORDER (…) is refused
 // before a statement is sent: clustered below SQL Server 2022, nonclustered
-// below 2025. A differently cased NCCI key column passes the check — the
-// server's collation decides that one.
+// below 2025.
 func TestCreateIndexColumnstoreOrderVersionGate(t *testing.T) {
 	cci := CreateIndexRequest{Name: "cci", Type: IndexTypeClusteredColumnStore, ColumnstoreOrder: []string{"a"}}
 	ncci := CreateIndexRequest{Name: "ncci", Type: IndexTypeColumnStore,
-		KeyColumns: []IndexColumnDef{{Name: "A"}, {Name: "b"}}, ColumnstoreOrder: []string{"a"}}
+		KeyColumns: []IndexColumnDef{{Name: "a"}, {Name: "b"}}, ColumnstoreOrder: []string{"a"}}
 	unordered := CreateIndexRequest{Name: "ncci", Type: IndexTypeColumnStore, KeyColumns: []IndexColumnDef{{Name: "a"}}}
 	for _, c := range []struct {
 		name    string

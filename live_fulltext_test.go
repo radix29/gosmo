@@ -76,12 +76,12 @@ func TestLiveFullText(t *testing.T) {
 	})
 
 	// Catalogs, with the counters a finished population leaves.
-	cats, err := d.FullTextCatalogs(ctx)
+	cats, err := d.FullText().Catalogs(ctx)
 	if err != nil {
-		t.Fatalf("FullTextCatalogs: %v", err)
+		t.Fatalf("Catalogs: %v", err)
 	}
 	if len(cats) != 2 || cats[0].Name != "ftc_a" || cats[1].Name != "ftc_b" {
-		t.Fatalf("FullTextCatalogs = %+v", cats)
+		t.Fatalf("Catalogs = %+v", cats)
 	}
 	a, b := cats[0], cats[1]
 	if !a.IsDefault || a.AccentSensitive || b.IsDefault || a.Owner != "dbo" || a.IndexCount != 1 || b.IndexCount != 1 {
@@ -98,11 +98,11 @@ func TestLiveFullText(t *testing.T) {
 	if !b.LastPopulated.IsZero() || b.ItemCount != 0 {
 		t.Errorf("ftc_b, never populated: LastPopulated %v, items %d", b.LastPopulated, b.ItemCount)
 	}
-	if c, err := d.FullTextCatalogByName(ctx, "FTC_B"); err != nil || c.ID != b.ID {
-		t.Errorf("FullTextCatalogByName(FTC_B) = %+v, %v", c, err)
+	if c, err := d.FullText().CatalogByName(ctx, "FTC_B"); err != nil || c.ID != b.ID {
+		t.Errorf("CatalogByName(FTC_B) = %+v, %v", c, err)
 	}
-	if _, err := d.FullTextCatalogByName(ctx, "nope"); !errors.Is(err, ErrNotFound) {
-		t.Errorf("FullTextCatalogByName(nope) err = %v, want ErrNotFound", err)
+	if _, err := d.FullText().CatalogByName(ctx, "nope"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("CatalogByName(nope) err = %v, want ErrNotFound", err)
 	}
 	if idx, err := b.Indexes(ctx); err != nil || len(idx) != 1 || idx[0].Table != "Note" {
 		t.Errorf("ftc_b.Indexes = %+v, %v", idx, err)
@@ -129,9 +129,9 @@ func TestLiveFullText(t *testing.T) {
 	if c := docIdx.Columns[1]; c.Name != "content" || c.TypeColumn != "ext" {
 		t.Errorf("content column = %+v", c)
 	}
-	all, err := d.FullTextIndexes(ctx)
+	all, err := d.FullText().Indexes(ctx)
 	if err != nil || len(all) != 2 || all[0].Table != "Doc" || all[1].Table != "Note" {
-		t.Fatalf("FullTextIndexes = %+v, %v", all, err)
+		t.Fatalf("Indexes = %+v, %v", all, err)
 	}
 	note := all[1]
 	if len(all[0].Columns) != 2 || len(note.Columns) != 1 || note.Columns[0].Name != "txt" {
@@ -142,7 +142,7 @@ func TestLiveFullText(t *testing.T) {
 		t.Errorf("Note's index: %+v", note)
 	}
 	liveExecIn(t, d, ctx, `ALTER FULLTEXT INDEX ON dbo.Note SET STOPLIST SYSTEM`)
-	if idx, err := d.FullTextIndexes(ctx); err != nil || idx[1].StoplistKind != FullTextStoplistSystem || idx[1].Stoplist != "" {
+	if idx, err := d.FullText().Indexes(ctx); err != nil || idx[1].StoplistKind != FullTextStoplistSystem || idx[1].Stoplist != "" {
 		t.Errorf("Note after STOPLIST SYSTEM: %+v, %v", idx, err)
 	}
 
@@ -173,18 +173,18 @@ func TestLiveFullText(t *testing.T) {
 	}
 
 	// Stoplists and property lists.
-	lists, err := d.FullTextStoplists(ctx)
+	lists, err := d.FullText().Stoplists(ctx)
 	if err != nil || len(lists) != 1 || lists[0].Name != "sl_a" || lists[0].Owner != "dbo" || lists[0].CreateDate.IsZero() {
-		t.Fatalf("FullTextStoplists = %+v, %v", lists, err)
+		t.Fatalf("Stoplists = %+v, %v", lists, err)
 	}
 	words, err := lists[0].Stopwords(ctx)
 	if err != nil || len(words) != 2 || words[0] != (FullTextStopword{"foo", "English", 1033}) || words[1] != (FullTextStopword{"bar", "Neutral", 0}) {
 		t.Errorf("Stopwords = %+v, %v", words, err)
 	}
-	if l, err := d.FullTextStoplistByName(ctx, "sl_a"); err != nil || l.ID != lists[0].ID {
-		t.Errorf("FullTextStoplistByName = %+v, %v", l, err)
+	if l, err := d.FullText().StoplistByName(ctx, "sl_a"); err != nil || l.ID != lists[0].ID {
+		t.Errorf("StoplistByName = %+v, %v", l, err)
 	}
-	pls, err := d.SearchPropertyLists(ctx)
+	pls, err := d.FullText().SearchPropertyLists(ctx)
 	if err != nil || len(pls) != 1 || pls[0].Name != "spl_a" || pls[0].Owner != "dbo" {
 		t.Fatalf("SearchPropertyLists = %+v, %v", pls, err)
 	}
@@ -193,7 +193,7 @@ func TestLiveFullText(t *testing.T) {
 		props[0].SetGUID != "F29F85E0-4FF9-1068-AB91-08002B27B3D9" || props[0].Description != "System.Title" || props[0].ID == 0 {
 		t.Errorf("Properties = %+v, %v", props, err)
 	}
-	if p, err := d.SearchPropertyListByName(ctx, "SPL_A"); err != nil || p.ID != pls[0].ID {
+	if p, err := d.FullText().SearchPropertyListByName(ctx, "SPL_A"); err != nil || p.ID != pls[0].ID {
 		t.Errorf("SearchPropertyListByName = %+v, %v", p, err)
 	}
 
@@ -225,9 +225,9 @@ func TestLiveFullText(t *testing.T) {
 		t.Fatalf("connect as %s: %v", login, err)
 	}
 	od := osrv.DatabaseRef(ftsDB)
-	oidx, err := od.FullTextIndexes(ctx)
+	oidx, err := od.FullText().Indexes(ctx)
 	if err != nil || len(oidx) != 2 || len(oidx[0].Columns) != 2 {
-		t.Fatalf("FullTextIndexes as %s = %+v, %v", login, oidx, err)
+		t.Fatalf("Indexes as %s = %+v, %v", login, oidx, err)
 	}
 	if _, err := oidx[0].Populations(ctx); err == nil {
 		t.Errorf("Populations as %s with no VIEW SERVER STATE: no error", login)
@@ -343,16 +343,16 @@ func TestLiveFullTextNotInstalled(t *testing.T) {
 		t.Skip("Full-Text Search is installed here — TestLiveFullText covers this instance")
 	}
 	d := srv.DatabaseRef("master")
-	if c, err := d.FullTextCatalogs(ctx); err != nil || len(c) != 0 {
-		t.Errorf("FullTextCatalogs = %+v, %v", c, err)
+	if c, err := d.FullText().Catalogs(ctx); err != nil || len(c) != 0 {
+		t.Errorf("Catalogs = %+v, %v", c, err)
 	}
-	if l, err := d.FullTextStoplists(ctx); err != nil || len(l) != 0 {
-		t.Errorf("FullTextStoplists = %+v, %v", l, err)
+	if l, err := d.FullText().Stoplists(ctx); err != nil || len(l) != 0 {
+		t.Errorf("Stoplists = %+v, %v", l, err)
 	}
-	if p, err := d.SearchPropertyLists(ctx); err != nil || len(p) != 0 {
+	if p, err := d.FullText().SearchPropertyLists(ctx); err != nil || len(p) != 0 {
 		t.Errorf("SearchPropertyLists = %+v, %v", p, err)
 	}
-	if i, err := d.FullTextIndexes(ctx); err != nil || len(i) != 0 {
-		t.Errorf("FullTextIndexes = %+v, %v", i, err)
+	if i, err := d.FullText().Indexes(ctx); err != nil || len(i) != 0 {
+		t.Errorf("Indexes = %+v, %v", i, err)
 	}
 }

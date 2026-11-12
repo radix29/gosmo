@@ -19,6 +19,7 @@ var hostileNames = []string{
 	"a/*/EVIL",
 	"a\nEVIL",
 	"a\r\nEVIL --x",
+	"a\rEVIL --x", // SQL Server ends a -- comment at a bare CR too
 }
 
 // TestScriptCommentsContainHostileNames scripts objects with hostile names
@@ -121,6 +122,27 @@ func TestScriptCommentsContainHostileNames(t *testing.T) {
 				t.Fatal(err)
 			}
 			return out[0].SQL
+		},
+		"database objects warning a caller built": func(n string) string {
+			return (&DatabaseObjectScript{Warnings: []string{"dependency cycle broken: " + n + " -> [dbo].[b]"}}).String()
+		},
+		"database objects dependency cycle warning": func(n string) string {
+			nodes := []orderNode{{key: objectKey('o', n, "a"), schema: n, name: "a"}, {key: objectKey('o', n, "b"), schema: n, name: "b"}}
+			_, warn, err := orderObjects(nodes, []orderEdge{{from: nodes[0].key, to: nodes[1].key}, {from: nodes[1].key, to: nodes[0].key}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			return (&DatabaseObjectScript{Warnings: warn}).String()
+		},
+		"database objects warning on a reference left out": func(n string) string {
+			_, warn, err := scriptQueue(t.Context(), []pendingObject{
+				{obj: ScriptedObject{Kind: ScriptedProcedure, Schema: n, Name: n}, late: []string{objectKey('o', n, n)},
+					gen: func() (string, error) { return "SELECT 1\n", nil }},
+			}, map[string]bool{objectKey('o', n, n): true}, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			return (&DatabaseObjectScript{Warnings: warn}).String()
 		},
 		"database security unscriptable permission": func(n string) string {
 			return buildDatabaseSecurityScript("d", &databaseSecurity{grants: []securityGrant{

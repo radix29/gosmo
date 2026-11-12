@@ -101,7 +101,9 @@ func (sw *sweep) call(label string, fn func() error) {
 
 // reflectSweep calls every exported Xxx(ctx) (…, error) method on recv that
 // sweepSkip does not name — and every Xxx(ctx, q) whose q is one of
-// sweepZeroQueries, with q's zero value, which asks for everything. Methods
+// sweepZeroQueries, with q's zero value, which asks for everything, and every
+// Xxx(ctx, f ...F) whose []F is one of sweepEmptyVariadics, called with no f,
+// which means the same. Methods
 // taking other arguments beyond the context are driven by hand in
 // TestLiveVersionSweep; this half is what keeps a newly added listing covered
 // without anyone remembering to add it here.
@@ -127,6 +129,8 @@ func (sw *sweep) reflectSweep(typeName, instance string, recv any) {
 		args := []reflect.Value{rv, reflect.ValueOf(wctx)}
 		if ft.NumIn() == 3 && slices.Contains(sweepZeroQueries, ft.In(2)) {
 			args = append(args, reflect.Zero(ft.In(2)))
+		} else if ft.NumIn() == 3 && ft.IsVariadic() && slices.Contains(sweepEmptyVariadics, ft.In(2)) {
+			// Called with no arguments: none means "all", like a zero query.
 		} else if ft.NumIn() != 2 {
 			continue
 		}
@@ -158,6 +162,13 @@ func (sw *sweep) reflectSweep(typeName, instance string, recv any) {
 var sweepZeroQueries = []reflect.Type{
 	reflect.TypeFor[ObjectFilter](),
 	reflect.TypeFor[TableQuery](),
+}
+
+// sweepEmptyVariadics are the variadic filters whose empty form means "all".
+// Not every variadic qualifies: Server.BackupHeaders with no target is a
+// refusal.
+var sweepEmptyVariadics = []reflect.Type{
+	reflect.TypeFor[[]PrincipalKind](),
 }
 
 // checkSkipList fails on an entry naming a method that no longer exists, so

@@ -40,6 +40,10 @@ func TestSpans(t *testing.T) {
 		{"[open]]", "bracket:[open]]!"},
 		{"N'", "nlit:N'!"},
 		{"-- '\n'--'", "line:-- ' | code:\n | lit:'--'"},
+		// SQL Server ends a -- comment at a lone CR as well as at LF.
+		{"-- a\rSELECT 1", "line:-- a | code:\rSELECT 1"},
+		{"-- a\r\nb", "line:-- a | code:\r\nb"},
+		{"SELECT 1 -- c\rDROP TABLE t", "code:SELECT 1  | line:-- c | code:\rDROP TABLE t"},
 		{"'/*' */", "lit:'/*' | code: */"},
 	} {
 		if got := spanString(tc.in); got != tc.want {
@@ -73,13 +77,14 @@ func TestSpanUnescape(t *testing.T) {
 // bytes it puts outside code are the bytes scriptCodeSpans skipped (less the
 // N of an N'…', which that walk left as code), and its literal values are
 // the ones redactSecrets read with scanQuoted. legacySkipped and
-// legacyLiterals are those walks as they stood, kept here as the oracle.
+// legacyLiterals are those walks as they stood, kept here as the oracle,
+// with one rule changed in both since: a -- comment ends at CR as well as LF.
 //
 //	go test -run XXX -fuzz FuzzSpans -fuzztime 60s -fuzzminimizetime 0
 func FuzzSpans(f *testing.F) {
 	for _, s := range []string{
 		"", "'a''b'", "N'x'", "IN'x'", "éN'x'", "[a]]'b]", `"a""b"`, "-- x", "-- x\ny",
-		"/* /* */ */", "/* /*", "'open", "[open", `"open`, "SELECT @p1, '@p2' -- @p2\n/* @p1 */ [@p1] \"@p2\"",
+		"-- x\ry", "-- x\r\ny", "/* /* */ */", "/* /*", "'open", "[open", `"open`, "SELECT @p1, '@p2' -- @p2\n/* @p1 */ [@p1] \"@p2\"",
 		"([sec].[fn)x]([c], N')'))",
 	} {
 		f.Add(s)
@@ -139,7 +144,7 @@ func legacySkipped(q string) []bool {
 			}
 		case strings.HasPrefix(q[i:], "--"):
 			j = len(q)
-			if k := strings.IndexByte(q[i:], '\n'); k >= 0 {
+			if k := strings.IndexAny(q[i:], "\r\n"); k >= 0 {
 				j = i + k
 			}
 		case strings.HasPrefix(q[i:], "/*"):
@@ -208,7 +213,7 @@ func legacyLiterals(stmt string) []string {
 		case c == '"':
 			_, i = scanQuoted(i, '"')
 		case strings.HasPrefix(stmt[i:], "--"):
-			if j := strings.IndexByte(stmt[i:], '\n'); j >= 0 {
+			if j := strings.IndexAny(stmt[i:], "\r\n"); j >= 0 {
 				i += j
 			} else {
 				i = len(stmt)

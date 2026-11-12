@@ -35,40 +35,40 @@ func TestLiveFullTextWrites(t *testing.T) {
 	const catA, catB, list, plist = "ftc'a]", "ftc_b", "sl'a]", "spl'a]"
 
 	// -- catalogs --
-	a, err := src.CreateFullTextCatalog(ctx, CreateFullTextCatalogRequest{Name: catA, AccentSensitive: new(false), IsDefault: true, Owner: "dbo"})
+	a, err := src.FullText().CreateCatalog(ctx, CreateFullTextCatalogRequest{Name: catA, AccentSensitive: new(false), IsDefault: true, Owner: "dbo"})
 	if err != nil {
-		t.Fatalf("CreateFullTextCatalog: %v", err)
+		t.Fatalf("CreateCatalog: %v", err)
 	}
 	if a.ID == 0 || !a.IsDefault || a.AccentSensitive || a.Owner != "dbo" {
 		t.Errorf("created catalog read back as %+v", a)
 	}
-	b, err := src.CreateFullTextCatalog(ctx, CreateFullTextCatalogRequest{Name: catB})
+	b, err := src.FullText().CreateCatalog(ctx, CreateFullTextCatalogRequest{Name: catB})
 	if err != nil {
-		t.Fatalf("CreateFullTextCatalog(%s): %v", catB, err)
+		t.Fatalf("CreateCatalog(%s): %v", catB, err)
 	}
 	if err := b.SetDefault(ctx); err != nil || !b.IsDefault {
 		t.Errorf("SetDefault: %v (IsDefault %v)", err, b.IsDefault)
 	}
-	if err := src.FullTextCatalogRef(catA).Rebuild(ctx, new(true)); err != nil {
+	if err := src.FullText().CatalogRef(catA).Rebuild(ctx, new(true)); err != nil {
 		t.Errorf("Rebuild: %v", err)
 	}
-	if err := src.FullTextCatalogRef(catA).Reorganize(ctx); err != nil {
+	if err := src.FullText().CatalogRef(catA).Reorganize(ctx); err != nil {
 		t.Errorf("Reorganize: %v", err)
 	}
-	if err := src.FullTextCatalogRef(catA).SetOwner(ctx, "dbo"); err != nil {
+	if err := src.FullText().CatalogRef(catA).SetOwner(ctx, "dbo"); err != nil {
 		t.Errorf("SetOwner: %v", err)
 	}
-	if a, err = src.FullTextCatalogByName(ctx, catA); err != nil || a.IsDefault || !a.AccentSensitive {
+	if a, err = src.FullText().CatalogByName(ctx, catA); err != nil || a.IsDefault || !a.AccentSensitive {
 		t.Errorf("after Rebuild and the other default: %+v, %v", a, err)
 	}
-	if err := src.FullTextCatalogRef(catA).SetDefault(ctx); err != nil {
+	if err := src.FullText().CatalogRef(catA).SetDefault(ctx); err != nil {
 		t.Errorf("SetDefault back: %v", err)
 	}
 
 	// -- stoplists --
-	sl, err := src.CreateFullTextStoplist(ctx, CreateFullTextStoplistRequest{Name: list, FromSystem: true, Owner: "dbo"})
+	sl, err := src.FullText().CreateStoplist(ctx, CreateFullTextStoplistRequest{Name: list, FromSystem: true, Owner: "dbo"})
 	if err != nil {
-		t.Fatalf("CreateFullTextStoplist: %v", err)
+		t.Fatalf("CreateStoplist: %v", err)
 	}
 	if sl.ID == 0 || sl.Owner != "dbo" {
 		t.Errorf("created stoplist read back as %+v", sl)
@@ -107,21 +107,21 @@ func TestLiveFullTextWrites(t *testing.T) {
 	if err := sl.SetOwner(ctx, "dbo"); err != nil {
 		t.Errorf("stoplist SetOwner: %v", err)
 	}
-	cp, err := src.CreateFullTextStoplist(ctx, CreateFullTextStoplistRequest{Name: "copy", From: list})
+	cp, err := src.FullText().CreateStoplist(ctx, CreateFullTextStoplistRequest{Name: "copy", From: list})
 	if err != nil || len(words(cp)) != 2 {
 		t.Errorf("a stoplist copied from %s: %+v, %v", list, cp, err)
 	}
-	if cp2, err := dst.CreateFullTextStoplist(ctx, CreateFullTextStoplistRequest{Name: "copy", From: list, FromDatabase: src.Name}); err != nil || len(words(cp2)) != 2 {
+	if cp2, err := dst.FullText().CreateStoplist(ctx, CreateFullTextStoplistRequest{Name: "copy", From: list, FromDatabase: src.Name}); err != nil || len(words(cp2)) != 2 {
 		t.Errorf("a stoplist copied across databases: %+v, %v", cp2, err)
 	} else if err := cp2.Drop(ctx); err != nil {
 		t.Errorf("drop the cross-database copy: %v", err)
 	}
-	if err := src.FullTextStoplistRef("copy").Drop(ctx); err != nil {
+	if err := src.FullText().StoplistRef("copy").Drop(ctx); err != nil {
 		t.Errorf("stoplist Drop: %v", err)
 	}
 
 	// -- search property lists --
-	pl, err := src.CreateSearchPropertyList(ctx, CreateSearchPropertyListRequest{Name: plist, Owner: "dbo"})
+	pl, err := src.FullText().CreateSearchPropertyList(ctx, CreateSearchPropertyListRequest{Name: plist, Owner: "dbo"})
 	if err != nil {
 		t.Fatalf("CreateSearchPropertyList: %v", err)
 	}
@@ -142,7 +142,7 @@ func TestLiveFullTextWrites(t *testing.T) {
 	if err := pl.SetOwner(ctx, "dbo"); err != nil {
 		t.Errorf("property list SetOwner: %v", err)
 	}
-	if c, err := src.CreateSearchPropertyList(ctx, CreateSearchPropertyListRequest{Name: "copy", From: plist}); err != nil {
+	if c, err := src.FullText().CreateSearchPropertyList(ctx, CreateSearchPropertyListRequest{Name: "copy", From: plist}); err != nil {
 		t.Errorf("a property list copied: %v", err)
 	} else if p, err := c.Properties(ctx); err != nil || len(p) != 1 {
 		t.Errorf("the copy's properties = %+v, %v", p, err)
@@ -310,15 +310,15 @@ func TestLiveFullTextWrites(t *testing.T) {
 			liveRunScript(t, dst, ctx, s)
 		}
 	}
-	if c, err := dst.FullTextCatalogByName(ctx, catA); err != nil || !c.IsDefault || !c.AccentSensitive || c.Owner != "dbo" {
+	if c, err := dst.FullText().CatalogByName(ctx, catA); err != nil || !c.IsDefault || !c.AccentSensitive || c.Owner != "dbo" {
 		t.Errorf("scripted catalog: %+v, %v", c, err)
 	}
-	if l, err := dst.FullTextStoplistByName(ctx, list); err != nil {
+	if l, err := dst.FullText().StoplistByName(ctx, list); err != nil {
 		t.Errorf("scripted stoplist: %v", err)
 	} else if w := words(l); !slices.Equal(w, words(sl)) {
 		t.Errorf("scripted stopwords %+v, want %+v", w, words(sl))
 	}
-	if p, err := dst.SearchPropertyListByName(ctx, plist); err != nil {
+	if p, err := dst.FullText().SearchPropertyListByName(ctx, plist); err != nil {
 		t.Errorf("scripted property list: %v", err)
 	} else if got, err := p.Properties(ctx); err != nil || len(got) != 1 || got[0].Name != "Title" || got[0].Description != title.Description {
 		t.Errorf("scripted properties: %+v, %v", got, err)
@@ -357,13 +357,13 @@ func TestLiveFullTextWrites(t *testing.T) {
 		liveRunScript(t, dst, ctx, s)
 		liveRunScript(t, dst, ctx, s) // guarded: a second run is a no-op
 	}
-	if c, err := dst.FullTextCatalogs(ctx); err != nil || len(c) != 0 {
+	if c, err := dst.FullText().Catalogs(ctx); err != nil || len(c) != 0 {
 		t.Errorf("catalogs after the DROP scripts: %+v, %v", c, err)
 	}
-	if l, err := dst.FullTextStoplists(ctx); err != nil || len(l) != 0 {
+	if l, err := dst.FullText().Stoplists(ctx); err != nil || len(l) != 0 {
 		t.Errorf("stoplists after the DROP scripts: %+v, %v", l, err)
 	}
-	if p, err := dst.SearchPropertyLists(ctx); err != nil || len(p) != 0 {
+	if p, err := dst.FullText().SearchPropertyLists(ctx); err != nil || len(p) != 0 {
 		t.Errorf("property lists after the DROP scripts: %+v, %v", p, err)
 	}
 
@@ -373,19 +373,19 @@ func TestLiveFullTextWrites(t *testing.T) {
 		do   func() error
 	}{
 		{"index", func() error { return h.Drop(ctx) }},
-		{"stoplist", func() error { return src.FullTextStoplistRef(list).Drop(ctx) }},
-		{"property list", func() error { return src.SearchPropertyListRef(plist).Drop(ctx) }},
-		{"catalog a", func() error { return src.FullTextCatalogRef(catA).Drop(ctx) }},
-		{"catalog b", func() error { return src.FullTextCatalogRef(catB).Drop(ctx) }},
+		{"stoplist", func() error { return src.FullText().StoplistRef(list).Drop(ctx) }},
+		{"property list", func() error { return src.FullText().SearchPropertyListRef(plist).Drop(ctx) }},
+		{"catalog a", func() error { return src.FullText().CatalogRef(catA).Drop(ctx) }},
+		{"catalog b", func() error { return src.FullText().CatalogRef(catB).Drop(ctx) }},
 	} {
 		if err := s.do(); err != nil {
 			t.Errorf("drop %s: %v", s.name, err)
 		}
 	}
-	if c, err := src.FullTextCatalogs(ctx); err != nil || len(c) != 0 {
+	if c, err := src.FullText().Catalogs(ctx); err != nil || len(c) != 0 {
 		t.Errorf("catalogs after the drops: %+v, %v", c, err)
 	}
-	if i, err := src.FullTextIndexes(ctx); err != nil || len(i) != 0 {
+	if i, err := src.FullText().Indexes(ctx); err != nil || len(i) != 0 {
 		t.Errorf("indexes after the drops: %+v, %v", i, err)
 	}
 }
