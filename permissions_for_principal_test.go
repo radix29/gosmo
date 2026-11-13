@@ -28,6 +28,7 @@ func TestPermissionsForPrincipalReportsEveryClass(t *testing.T) {
 		row("OBJECT_OR_COLUMN", "dbo", "clr_p", "PC"),
 		row("OBJECT_OR_COLUMN", "dbo", "sf", "FN"),
 		row("OBJECT_OR_COLUMN", "dbo", "clr_sf", "FS"),
+		row("OBJECT_OR_COLUMN", "dbo", "external_sf", "XF"),
 		row("OBJECT_OR_COLUMN", "dbo", "if", "IF"),
 		row("OBJECT_OR_COLUMN", "dbo", "tf", "TF"),
 		row("OBJECT_OR_COLUMN", "dbo", "clr_tf", "FT"),
@@ -50,6 +51,7 @@ func TestPermissionsForPrincipalReportsEveryClass(t *testing.T) {
 		{SecurableProcedure, "dbo", "clr_p", "EXECUTE", "GRANT"},
 		{SecurableScalarFunction, "dbo", "sf", "EXECUTE", "GRANT"},
 		{SecurableScalarFunction, "dbo", "clr_sf", "EXECUTE", "GRANT"},
+		{SecurableScalarFunction, "dbo", "external_sf", "EXECUTE", "GRANT"},
 		{SecurableInlineFunction, "dbo", "if", "EXECUTE", "GRANT"},
 		{SecurableTableFunction, "dbo", "tf", "EXECUTE", "GRANT"},
 		{SecurableTableFunction, "dbo", "clr_tf", "EXECUTE", "GRANT"},
@@ -70,6 +72,9 @@ func TestPermissionsForPrincipalReportsEveryClass(t *testing.T) {
 	// The type codes the query filters on are the ones the scan maps, and
 	// every class below the database that ApplyPermission takes is read.
 	q := captured.find("FROM   sys.database_permissions dp")
+	if !strings.Contains(q, "'XF'") {
+		t.Errorf("the principal permissions query excludes external functions:\n%s", q)
+	}
 	for code := range objectSecurableClasses {
 		if !strings.Contains(q, "'"+code+"'") {
 			t.Errorf("the query does not read type %s:\n%s", code, q)
@@ -125,18 +130,23 @@ func TestFindSecurablesSearchesEveryClass(t *testing.T) {
 	captured.reset(cannedRow{match: "TOP (@p2)", cols: []string{"kind", "schema", "name"}, rows: [][]driver.Value{
 		{"SCHEMA", "", "sales"},
 		{"PROCEDURE", "dbo", "p"},
+		{"SCALAR FUNCTION", "analytics", "external_sf"},
 		{"CERTIFICATE", "", "ce"},
 	}})
 	got, err := d.FindSecurables(t.Context(), SecurableSearch{Name: "x", Limit: 5})
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []Securable{{Class: SecurableSchema, Name: "sales"}, {Class: SecurableProcedure, Schema: "dbo", Name: "p"}, {Class: SecurableCertificate, Name: "ce"}}
+	want := []Securable{{Class: SecurableSchema, Name: "sales"}, {Class: SecurableProcedure, Schema: "dbo", Name: "p"},
+		{Class: SecurableScalarFunction, Schema: "analytics", Name: "external_sf"}, {Class: SecurableCertificate, Name: "ce"}}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("FindSecurables = %+v, want %+v", got, want)
 	}
 
 	q := captured.find("TOP (@p2)")
+	if !strings.Contains(q, "WHEN 'XF' THEN 'SCALAR FUNCTION'") {
+		t.Errorf("the securable picker excludes external scalar functions:\n%s", q)
+	}
 	for code, class := range objectSecurableClasses {
 		if !strings.Contains(q, "WHEN '"+code+"' THEN '"+string(class)+"'") {
 			t.Errorf("the search does not map type %s to %s:\n%s", code, class, q)

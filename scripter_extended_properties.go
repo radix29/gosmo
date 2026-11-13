@@ -77,7 +77,7 @@ CROSS  JOIN (
                   WHEN 'V'  THEN N'VIEW'
                   WHEN 'P'  THEN N'PROCEDURE' WHEN 'PC' THEN N'PROCEDURE' WHEN 'X' THEN N'PROCEDURE'
                   WHEN 'FN' THEN N'FUNCTION'  WHEN 'IF' THEN N'FUNCTION'  WHEN 'TF' THEN N'FUNCTION'
-                  WHEN 'FS' THEN N'FUNCTION'  WHEN 'FT' THEN N'FUNCTION'
+                  WHEN 'FS' THEN N'FUNCTION'  WHEN 'FT' THEN N'FUNCTION'  WHEN 'XF' THEN N'FUNCTION'
               END,
               ISNULL(par.name, o.name)
        FROM   sys.objects o

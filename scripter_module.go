@@ -45,11 +45,11 @@ WHERE  SCHEMA_NAME(p.schema_id) COLLATE DATABASE_DEFAULT = @p1 AND p.name = @p2`
 
 	moduleFunction = moduleKind{"FUNCTION", "function", `
 SELECT m.definition, ISNULL(m.uses_ansi_nulls, 0), ISNULL(m.uses_quoted_identifier, 0),
-       CAST(CASE WHEN m.object_id IS NULL THEN 1 ELSE 0 END AS bit), o.object_id
+       CAST(CASE WHEN o.type <> 'XF' AND m.object_id IS NULL THEN 1 ELSE 0 END AS bit), o.object_id, o.type
 FROM   sys.objects o
 LEFT   JOIN sys.sql_modules m ON m.object_id = o.object_id
 WHERE  SCHEMA_NAME(o.schema_id) COLLATE DATABASE_DEFAULT = @p1 AND o.name = @p2
-  AND  o.type IN ('FN','TF','IF','FS','FT')`, true}
+  AND  o.type IN ('FN','TF','IF','FS','FT','XF')`, true}
 
 	// A trigger's own schema is its parent table's — sys.triggers has no
 	// schema_id of its own.
@@ -65,6 +65,7 @@ WHERE  SCHEMA_NAME(o.schema_id) COLLATE DATABASE_DEFAULT = @p1 AND tr.name = @p2
 // scriptModule renders one sys.sql_modules-backed object. CREATE and ALTER
 // are the stored definition itself (rewritten for ALTER), never synthesized,
 // so nothing about the original text is lost.
+// Fabric DW external functions may store ALTER, so their CREATE is rewritten too.
 //
 // An encrypted module stores a NULL definition, and it is an error rather
 // than a script: envelopeErr discards the DROP it has already written, which
@@ -86,14 +87,23 @@ func (sc *Scripter) scriptModule(ctx context.Context, k moduleKind, schema, name
 		var def sql.NullString
 		var ansiNulls, quotedIdent, clr bool
 		var objectID int
+		var funcType FunctionType
 		err := sc.db.queryRow(ctx, func(row *sql.Row) error {
-			return row.Scan(&def, &ansiNulls, &quotedIdent, &clr, &objectID)
+			fields := []any{&def, &ansiNulls, &quotedIdent, &clr, &objectID}
+			if k.keyword == "FUNCTION" {
+				fields = append(fields, &funcType)
+			}
+			return row.Scan(fields...)
 		}, k.query, schema, name)
 		if err != nil {
 			return rowErr(err, notFoundf("gosmo: %s %s not found", k.noun, qualifiedName(schema, name)),
 				fmt.Sprintf("script %s %s", k.noun, qualifiedName(schema, name)))
 		}
-		if err := sc.writeModuleDefinition(ctx, sb, k, schema, name, def, ansiNulls, quotedIdent, clr, objectID); err != nil {
+		if funcType == FunctionTypeExternal {
+			// XF proxies use their stored definition, not SQL Server vector metadata.
+			k.params = false
+		}
+		if err := sc.writeModuleDefinition(ctx, sb, k, schema, name, def, ansiNulls, quotedIdent, clr, objectID, funcType); err != nil {
 			return err
 		}
 		if then != nil {
@@ -113,7 +123,7 @@ func (sc *Scripter) scriptModule(ctx context.Context, k moduleKind, schema, name
 // writeModuleDefinition writes scriptModule's CREATE or ALTER: the stored
 // definition with its SET options, or a CLR module's rebuilt one.
 func (sc *Scripter) writeModuleDefinition(ctx context.Context, sb *strings.Builder, k moduleKind, schema, name string,
-	def sql.NullString, ansiNulls, quotedIdent, clr bool, objectID int) error {
+	def sql.NullString, ansiNulls, quotedIdent, clr bool, objectID int, funcType FunctionType) error {
 	if clr {
 		m, err := sc.db.clrSchemaModule(ctx, k.keyword, objectID, schema, name)
 		if err != nil {
@@ -131,7 +141,9 @@ func (sc *Scripter) writeModuleDefinition(ctx context.Context, sb *strings.Build
 		return sc.db.hiddenModuleRefusal(ctx, k, schema, name, objectID)
 	}
 	text := renameModuleHeader(def.String, k.keyword, schema, name)
-	if sc.opts.verb() == ScriptAlter {
+	if funcType == FunctionTypeExternal {
+		text = rewriteModuleVerb(text, sc.opts.verb())
+	} else if sc.opts.verb() == ScriptAlter {
 		text = alterModuleDefinition(text)
 	}
 	var names []string
@@ -321,6 +333,23 @@ func alterModuleDefinition(def string) string {
 		return def
 	}
 	return def[:at] + "ALTER" + m[2] + def[at+len(m[0]):]
+}
+
+// rewriteModuleVerb preserves an XF definition's body, comments and CREATE OR ALTER.
+func rewriteModuleVerb(def string, verb ScriptVerb) string {
+	keyword := "CREATE"
+	if verb == ScriptAlter {
+		keyword = "ALTER"
+	}
+	tok, ok := nextHeaderToken(def, 0)
+	if !ok || tok.isWord(keyword) || !tok.isWord("CREATE") && !tok.isWord("ALTER") {
+		return def
+	}
+	next, ok := nextHeaderToken(def, tok.end)
+	if !ok || next.isWord("OR") {
+		return def
+	}
+	return def[:tok.start] + keyword + def[tok.end:]
 }
 
 // leadingTriviaEnd returns the offset of the first character of def that is

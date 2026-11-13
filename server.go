@@ -21,6 +21,10 @@ import (
 // Create one with Connect() and use it to enumerate or manage databases,
 // logins, server roles, linked servers, and more.
 type Server struct {
+	// IsFabricDW selects Fabric Warehouse catalog queries. Set it before
+	// issuing metadata reads and do not change it while the server is in use.
+	IsFabricDW bool
+
 	db   *sql.DB
 	info *ServerInfo
 	xe   xeCatalogCache // XEvents.Objects & co., filled on first use

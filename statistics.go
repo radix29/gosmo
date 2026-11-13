@@ -19,6 +19,8 @@ import (
 //
 // It carries the object it is on — exactly one of table and view is set —
 // so every write and read on it names that object itself.
+// On Fabric Warehouse, DMV-backed counts stay zero; use Header for those
+// values. LastUpdated is available through STATS_DATE.
 type Statistic struct {
 	table               *Table
 	view                *View
@@ -56,12 +58,27 @@ FROM   sys.stats s
 OUTER  APPLY sys.dm_db_stats_properties(s.object_id, s.stats_id) sp
 WHERE  s.object_id = @p1`
 
+func (t *Table) statisticSelect() string {
+	if !t.db.server.IsFabricDW {
+		return statisticSelect
+	}
+	return `
+SELECT s.name, s.stats_id,
+       s.auto_created, s.user_created,
+       s.has_filter, ISNULL(s.filter_definition, ''),
+       STATS_DATE(s.object_id, s.stats_id), NULL, NULL,
+       NULL, NULL,
+       s.no_recompute, s.is_incremental, NULL
+FROM   sys.stats s
+WHERE  s.object_id = @p1`
+}
+
 // Statistics returns all statistics objects for the table.
 func (t *Table) Statistics(ctx context.Context) ([]*Statistic, error) {
 	if err := t.requireLoaded("statistics for"); err != nil {
 		return nil, err
 	}
-	rows, err := t.db.query(ctx, statisticSelect+`
+	rows, err := t.db.query(ctx, t.statisticSelect()+`
 ORDER  BY s.name`, t.ObjectID)
 	return scanRows(rows, err, fmt.Sprintf("statistics for %s", t.FullName()), func(scan func(...any) error) (*Statistic, error) {
 		return scanStatistic(t, scan)
@@ -81,7 +98,7 @@ func (t *Table) StatisticByName(ctx context.Context, name string) (*Statistic, e
 		var err error
 		st, err = scanStatistic(t, row.Scan)
 		return err
-	}, statisticSelect+`
+	}, t.statisticSelect()+`
        AND s.name = @p2`, t.ObjectID, name)
 	return foundRow(st, err, notFoundf("gosmo: statistic %q not found on %s", name, t.FullName()), fmt.Sprintf("find statistic %q on %s", name, t.FullName()))
 }
@@ -372,13 +389,19 @@ type StatisticHeader struct {
 	PersistedSamplePercent float64
 }
 
-// Header returns this statistic's DBCC SHOW_STATISTICS header row.
-func (st *Statistic) Header(ctx context.Context) (*StatisticHeader, error) {
+func (st *Statistic) showStatisticsQuery(option string) string {
 	// DBCC SHOW_STATISTICS does not accept parameters for the table/stat
 	// name (same restriction Update already works around).
-	q := fmt.Sprintf("DBCC SHOW_STATISTICS (N'%s', N'%s') WITH STAT_HEADER, NO_INFOMSGS",
-		escapeSingle(st.on().FullName()), escapeSingle(st.Name))
+	q := fmt.Sprintf("DBCC SHOW_STATISTICS (N'%s', N'%s') WITH %s",
+		escapeSingle(st.on().FullName()), escapeSingle(st.Name), option)
+	if !st.on().db.server.IsFabricDW {
+		q += ", NO_INFOMSGS"
+	}
+	return q
+}
 
+// Header returns this statistic's DBCC SHOW_STATISTICS header row.
+func (st *Statistic) Header(ctx context.Context) (*StatisticHeader, error) {
 	// DBCC's result shape is not a documented contract and has changed: the
 	// header is 10 columns before SQL Server 2019 and 11 from it (Persisted
 	// Sample Percent), so a fixed destination list fails every statistic on an
@@ -403,7 +426,7 @@ func (st *Statistic) Header(ctx context.Context) (*StatisticHeader, error) {
 		"Persisted Sample Percent": &samplePct,
 	}
 
-	rows, err := st.on().db.query(ctx, q)
+	rows, err := st.on().db.query(ctx, st.showStatisticsQuery("STAT_HEADER"))
 	if err != nil {
 		return nil, fmt.Errorf("gosmo: statistics header for %q: %w", st.Name, err)
 	}
@@ -456,10 +479,7 @@ type StatisticDensity struct {
 
 // DensityVector returns this statistic's density vector.
 func (st *Statistic) DensityVector(ctx context.Context) ([]*StatisticDensity, error) {
-	q := fmt.Sprintf("DBCC SHOW_STATISTICS (N'%s', N'%s') WITH DENSITY_VECTOR, NO_INFOMSGS",
-		escapeSingle(st.on().FullName()), escapeSingle(st.Name))
-
-	rows, err := st.on().db.query(ctx, q)
+	rows, err := st.on().db.query(ctx, st.showStatisticsQuery("DENSITY_VECTOR"))
 	return scanRows(rows, err, fmt.Sprintf("density vector for %q", st.Name), func(scan func(...any) error) (*StatisticDensity, error) {
 		d := &StatisticDensity{}
 		if err := scan(&d.AllDensity, &d.AverageLength, &d.Columns); err != nil {
@@ -483,10 +503,7 @@ type StatisticHistogramStep struct {
 
 // Histogram returns this statistic's histogram steps.
 func (st *Statistic) Histogram(ctx context.Context) ([]*StatisticHistogramStep, error) {
-	q := fmt.Sprintf("DBCC SHOW_STATISTICS (N'%s', N'%s') WITH HISTOGRAM, NO_INFOMSGS",
-		escapeSingle(st.on().FullName()), escapeSingle(st.Name))
-
-	rows, err := st.on().db.query(ctx, q)
+	rows, err := st.on().db.query(ctx, st.showStatisticsQuery("HISTOGRAM"))
 	var key histogramKeyType
 	if err == nil {
 		if key, err = histogramKeyTypeOf(rows); err != nil {

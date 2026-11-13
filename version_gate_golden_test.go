@@ -157,7 +157,7 @@ func TestGatedQueriesMatchTheirGoldenFiles(t *testing.T) {
 			if err != nil {
 				t.Fatalf("read %s: %v (run go test -run TestGatedQueries -updategolden to create it)", path, err)
 			}
-			if got != string(want) {
+			if got != strings.ReplaceAll(string(want), "\r\n", "\n") {
 				t.Errorf("rendered SQL differs from %s.\n--- got ---\n%s\n--- want ---\n%s", path, got, want)
 			}
 		})
