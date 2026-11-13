@@ -319,7 +319,7 @@ The instance and database halves pair up: `ServerResourceStat` and
 | Connection lifetime      | `srv.Context()` — cancelled by `srv.Close()`, which also stops every gosmo statement in flight; derive work run on `srv.DB()` from it |
 | `Server.Logins`         | `srv.Logins(ctx)` / `srv.LoginByName(ctx, name)` / `srv.LoginRef(name)` (no-I/O handle) |
 | `Server.Roles`          | `srv.ServerRoles(ctx)` / `srv.ServerRoleByName(ctx, name)` / `srv.ServerRoleRef(name)` (no-I/O handle) / `srv.ServerRoleMembers(ctx, role)`; writes on the handle — `role.AddMember(ctx, member)` / `role.RemoveMember(ctx, member)` |
-| Server role administration | `role.Rename(ctx, newName)` / `role.SetOwner(ctx, owner)` / `role.AddMember\|RemoveMember(ctx, member)` / `login.AddToServerRole\|RemoveFromServerRole(ctx, role)` |
+| Server role administration | `role.Rename(ctx, newName)` / `role.SetOwner(ctx, owner)` / `role.AddMember\|RemoveMember(ctx, member)` — a login joins or leaves through the role, as a user does through `db.RoleRef(name)` |
 | Create a server role    | `srv.CreateServerRole(ctx, CreateServerRoleRequest{Name, Owner})` |
 | Drop a server role      | `srv.ServerRoleRef(name).Drop(ctx)` / `role.Drop(ctx)`  |
 | Drop a database         | `srv.DatabaseRef(name).Drop(ctx, term)` / `db.Drop(ctx, term)` — `gosmo.TerminationRollbackImmediate` closes other connections first |
@@ -354,7 +354,7 @@ The instance and database halves pair up: `ServerResourceStat` and
 | Extended Events sessions | `srv.XEvents().Sessions(ctx)` / `srv.XEvents().SessionByName(ctx, name)` / `srv.XEvents().SessionRef(name)` (no-I/O handle) / `srv.XEvents().CreateSession(ctx, spec)` — see [Extended Events](#extended-events) |
 | Backup devices           | `srv.BackupDevices(ctx)` / `srv.BackupDeviceByName(ctx, name)` / `srv.BackupDeviceRef(name)` (no-I/O handle) / `srv.CreateBackupDevice(ctx, gosmo.CreateBackupDeviceRequest{Name, Type, PhysicalName})` / `dev.Drop(ctx, gosmo.KeepDeviceFile)` (or `DeleteDeviceFile`) / `dev.Headers(ctx)` |
 | Endpoints (all protocols) | `srv.Endpoints(ctx)` / `srv.EndpointByName(ctx, name)` / `ep.SetState(ctx, state)` / `ep.Drop(ctx)` / `ep.MirroringDetail(ctx)` / `ep.ServiceBrokerDetail(ctx)` — see [Endpoints](#endpoints) |
-| Server DDL / logon triggers | `srv.ServerTriggers(ctx)` / `srv.ServerTriggerByName(ctx, name)` / `srv.ServerTriggerRef(name)` (no-I/O handle) / `tr.Enable(ctx)` / `tr.Disable(ctx)` / `tr.Drop(ctx)` |
+| Server DDL / logon triggers | `srv.ServerTriggers(ctx)` / `srv.ServerTriggerByName(ctx, name)` / `srv.ServerTriggerRef(name)` (no-I/O handle) / `tr.SetEnabled(ctx, on)` / `tr.Drop(ctx)` |
 | Azure engine edition             | `srv.Info().IsAzure()` — the test every version gate asks before it believes `VersionMajor`, which Azure freezes |
 | Azure resource history           | `srv.ServerResourceStats(ctx, max)` / `srv.LatestServerResourceStats(ctx)` — `sys.server_resource_stats`, one row per 15-second window |
 | Azure resource limits            | `srv.InstanceResourceGovernance(ctx)` / `srv.OSJobObject(ctx)` — see [Azure instance resources](#azure-instance-resources) |
@@ -395,7 +395,7 @@ The instance and database halves pair up: `ServerResourceStat` and
 | `Database.Tables`               | `db.Tables(ctx, gosmo.TableQuery{Kind, Filter})` (zero = every user table) / `db.TablesBySchema(ctx, schema)` |
 | One family of tables (System, FileTables, External, Graph) | `db.Tables(ctx, gosmo.TableQuery{Kind: kind})` / `db.TableKindsPresent(ctx)` — see [Table kinds](#table-kinds) |
 | Bulk table/view + column snapshot | `db.Catalog(ctx)` (user objects) / `db.SystemCatalog(ctx)` (`sys` schema); `Catalog.Functions` holds the table-valued functions (`IF`/`TF`/`FT`) and their result columns, kept out of `Objects`; `Catalog.Aggregates` the user-defined (CLR, `AF`) aggregates and their return types |
-| `Database.Views`                | `db.Views(ctx, f)` / `db.ViewByName(ctx, schema, name)` / `db.ViewRef(schema, name)` (no-I/O handle) / `v.Drop(ctx)` / `v.Triggers(ctx)` / `v.Columns(ctx)`; an indexed view's `v.Indexes` / `IndexByName` / `IndexRef` / `CreateIndex` / `RebuildAllIndexes` and `v.Statistics` / `StatisticByName` / `StatisticRef` / `CreateStatistic` / `UpdateAllStatistics` — a table's, through a carrier `Table`; the results answer `View()`, and `Table()` nil (see `view_indexes.go`) |
+| `Database.Views`                | `db.Views(ctx, f)` / `db.ViewByName(ctx, schema, name)` / `db.ViewRef(schema, name)` (no-I/O handle) / `v.Drop(ctx)` / `v.Triggers(ctx)` / `v.Columns(ctx)`; an indexed view's `v.Indexes` / `IndexByName` / `IndexRef` / `CreateIndex` / `RebuildAllIndexes` and `v.Statistics` / `StatisticByName` / `StatisticRef` / `CreateStatistic` / `UpdateStatistics` — a table's, through a carrier `Table`; the results answer `View()`, and `Table()` nil (see `view_indexes.go`) |
 | `Database.StoredProcedures`     | `db.StoredProcedures(ctx, f)` / `db.StoredProcedureByName(ctx, schema, name)` / `db.StoredProcedureRef(schema, name)` (no-I/O handle) / `db.CreateStoredProcedure(ctx, req)` / `p.Drop(ctx)` |
 | `Database.UserDefinedFunctions` | `db.UserDefinedFunctions(ctx, f)` (T-SQL and CLR; `f.FuncType` is a `FunctionType` — `IsScalar()`, `IsCLR()`) / `db.UserDefinedFunctionByName(ctx, schema, name)` / `db.UserDefinedFunctionRef(schema, name)` (no-I/O handle) / `f.Drop(ctx)` |
 | System Views/Procedures/Functions | `db.SystemViews(ctx, f)` / `db.SystemStoredProcedures(ctx, f)` / `db.SystemFunctions(ctx, f)` |
@@ -409,15 +409,15 @@ The instance and database halves pair up: `ServerResourceStat` and
 | Application roles               | `db.ApplicationRoles(ctx)` / `db.ApplicationRoleByName(ctx, name)` / `db.ApplicationRoleRef(name)` (no-I/O handle) / `db.CreateApplicationRole(ctx, req)` (password redacted in captures); writes on the handle — `ar.Rename(ctx, newName)` / `ar.SetDefaultSchema(ctx, schemaName)` / `ar.ChangePassword(ctx, newPassword)` / `ar.Drop(ctx)`; `sc.ScriptApplicationRole(ctx, name)` (password placeholder) |
 | Database principals (one read)  | `db.Principals(ctx, kinds...)` — users, database roles and application roles in one round trip (`*DatabasePrincipals`, each family as its own read fills it; roles also carry SID and dates); `gosmo.PrincipalKindUser` / `PrincipalKindRole` / `PrincipalKindApplicationRole` narrow it, none means all |
 | `Database.FileGroups`           | `db.FileGroups(ctx)` — `fg.Type` is the `type_desc` (ROWS / FILESTREAM / MEMORY_OPTIMIZED), `fg.IsFileStream()` the common test |
-| `Database.Triggers`             | `db.Triggers(ctx)` / `db.ObjectTriggers(ctx, schema, name)` (one table or view, by name) / `db.TriggerByName(ctx, schema, name)` (the trigger's own schema = its parent's) / `db.TriggerRef(schema, name)` (no-I/O handle) / `tr.Drop(ctx)` / `tr.Rename(ctx, newName)` / `tr.Enable(ctx)` / `tr.Disable(ctx)` / `tr.SetEnabled(ctx, on)` (a `TriggerRef` looks up the parent it names) |
-| Database-scope DDL triggers     | `db.DatabaseTriggers(ctx)` / `db.DatabaseTriggerByName(ctx, name)` / `db.DatabaseTriggerRef(name)` (no-I/O handle) / `tr.Enable(ctx)` / `tr.Disable(ctx)` / `tr.Drop(ctx)` — see [Database DDL triggers](#database-ddl-triggers) |
+| `Database.Triggers`             | `db.Triggers(ctx)` / `db.ObjectTriggers(ctx, schema, name)` (one table or view, by name) / `db.TriggerByName(ctx, schema, name)` (the trigger's own schema = its parent's) / `db.TriggerRef(schema, name)` (no-I/O handle) / `tr.Drop(ctx)` / `tr.Rename(ctx, newName)` / `tr.SetEnabled(ctx, on)` (a `TriggerRef` looks up the parent it names) |
+| Database-scope DDL triggers     | `db.DatabaseTriggers(ctx)` / `db.DatabaseTriggerByName(ctx, name)` / `db.DatabaseTriggerRef(name)` (no-I/O handle) / `tr.SetEnabled(ctx, on)` / `tr.Drop(ctx)` — see [Database DDL triggers](#database-ddl-triggers) |
 | `Database.Sequences`            | `db.Sequences(ctx)` / `db.SequenceByName(ctx, schema, name)` / `db.SequenceRef(schema, name).Drop(ctx)` / `db.CreateSequence(ctx, req)` (`Precision` for decimal and numeric) / `seq.Alter(ctx, gosmo.SequenceChanges{…})` (unset field = unchanged; values are decimal-digit strings) / `seq.TracksLastUsedValue()` |
 | `Database.Synonyms`             | `db.Synonyms(ctx)` / `db.SynonymByName(ctx, schema, name)` / `db.SynonymRef(schema, name).Drop(ctx)` |
 | `Database.UserDefinedDataTypes` / `...TableTypes` / `...Types` (CLR) | `db.UserDefinedDataTypes(ctx)` / `db.UserDefinedTableTypes(ctx)` / `db.ClrTypes(ctx)` (each with `...ByName(ctx, schema, name)`) / `db.SystemDataTypes(ctx)` — see [Types, rules and defaults](#types-rules-and-defaults) |
 | `Database.XMLSchemaCollections` | `db.XMLSchemaCollections(ctx)` / `db.XMLSchemaCollectionByName(ctx, schema, name)` / `c.Definition(ctx)` |
 | `Database.Rules` / `Database.Defaults` | `db.Rules(ctx)` / `db.Defaults(ctx)` (each with `...ByName(ctx, schema, name)` and `db.Drop...`) — read-only, deprecated families |
 | `Database.Assemblies`           | `db.Assemblies(ctx)` / `db.AssemblyByName(ctx, name)` / `a.Files(ctx)` / `a.Modules(ctx)` — see [Assemblies](#assemblies) |
-| `Database.PlanGuides`           | `db.PlanGuides(ctx)` / `db.PlanGuideByName(ctx, name)` / `db.PlanGuideRef(name)` (no-I/O handle) / `g.Enable(ctx)` / `g.Disable(ctx)` / `g.Drop(ctx)` — see [Plan guides](#plan-guides) |
+| `Database.PlanGuides`           | `db.PlanGuides(ctx)` / `db.PlanGuideByName(ctx, name)` / `db.PlanGuideRef(name)` (no-I/O handle) / `g.SetEnabled(ctx, on)` / `g.Drop(ctx)` — see [Plan guides](#plan-guides) |
 | External data sources / file formats / libraries | `db.ExternalDataSources(ctx)` / `db.ExternalFileFormats(ctx)` / `db.ExternalLibraries(ctx)` (each with `...ByName(ctx, name)` and `db.Drop...`) — see [External resources](#external-resources) |
 | Rename a schema-scoped object | `x.Rename(ctx, newName)` on its handle — table, view, procedure, function, trigger, sequence, synonym, rule, default, alias type; a constraint is `t.RenameConstraint(ctx, name, newName)` |
 | Move an object to another schema | `x.Transfer(ctx, targetSchema)` on its handle — `ALTER SCHEMA ... TRANSFER`, which `sp_rename` cannot do; every family above but the trigger, plus the table and CLR types, XML schema collections and queues |
@@ -495,7 +495,7 @@ The instance and database halves pair up: `ServerResourceStat` and
 | Index usage (seeks, scans, lookups, updates) | `t.IndexUsage(ctx)` / `v.IndexUsage(ctx)` — `sys.dm_db_index_usage_stats`; without VIEW SERVER STATE every row reads `UsageVisible` false |
 | Rebuild all indexes   | `t.RebuildAllIndexes(ctx, fillFactor)` / `t.RebuildAllIndexesWith(ctx, gosmo.IndexRebuildOptions{...})` (every rebuild option: fill factor, pad index, compression, `Online`, `MaxDOP`) |
 | Reorganize all indexes | `t.ReorganizeAllIndexes(ctx)` / `v.ReorganizeAllIndexes(ctx)` — `ALTER INDEX ALL … REORGANIZE` (`v.RebuildAllIndexesWith` too) |
-| Update all statistics | `t.UpdateAllStatistics(ctx, samplePct)` (0 is `FULLSCAN`) / `t.UpdateStatisticsWith(ctx, gosmo.StatisticsUpdateOptions{FullScan, SamplePercent, Resample})` — the zero value sends no WITH, so the server picks the sample; `v.UpdateStatisticsWith` for an indexed view |
+| Update all statistics | `t.UpdateStatistics(ctx, gosmo.StatisticsUpdateOptions{FullScan, SamplePercent, Resample})` — the zero value sends no WITH, so the server picks the sample; a full scan is `FullScan: true`; `v.UpdateStatistics` for an indexed view |
 | Create index          | `t.CreateIndex(ctx, req)` — every index type, see below |
 | Alter column          | `t.AlterColumn(ctx, col)`               |
 | Drop / rename a column | `t.DropColumn(ctx, name)` / `t.RenameColumn(ctx, name, newName)` |
@@ -550,7 +550,7 @@ that would read as "this database has none".
 | `idx.SetOptions(ctx, gosmo.IndexSetOptions{IgnoreDupKey, AllowRowLocks, AllowPageLocks})` — a nil field is not sent; leave `IgnoreDupKey` nil on a PK/UNIQUE-backing index, which rejects it |
 | `idx.SetIncludedColumns(ctx, columns)` — via `CREATE INDEX ... DROP_EXISTING`, every option and the ON clause restated; needs `IndexByName`, not a handle |
 | `idx.IncludedColumnsSupported()` — nil, or why the INCLUDE list cannot change |
-| `idx.UpdateStatistics(ctx, samplePct)` — 0 is `FULLSCAN`, as for `st.Update` |
+| `idx.UpdateStatistics(ctx, gosmo.StatisticsUpdateOptions{...})` — zero value: the server's sample, as for `st.Update` |
 | `idx.StorageInfo(ctx)` — filegroup, partitioning, allocation-unit space |
 | `idx.Fragmentation(ctx, mode)` — one index (`t.FragmentationStats(ctx, mode)` does all) |
 | `idx.DataSpace` — the filegroup or partition scheme it is on, read with the index |
@@ -599,7 +599,7 @@ instance is too old for is refused with `ErrUnsupportedVersion`.
 | ... density vector             | `st.DensityVector(ctx)` → `[]*StatisticDensity` |
 | ... histogram                  | `st.Histogram(ctx)` → `[]*StatisticHistogramStep` |
 | One statistic by name          | `t.StatisticByName(ctx, name)` / `t.StatisticRef(name)` (no-I/O handle) |
-| Update / drop                  | `st.Update(ctx, samplePct)` / `st.UpdateWith(ctx, gosmo.StatisticsUpdateOptions{...})` (zero value: the server's sample) / `st.Drop(ctx)` |
+| Update / drop                  | `st.Update(ctx, gosmo.StatisticsUpdateOptions{...})` (zero value: the server's sample) / `st.Drop(ctx)` |
 | Rename                         | `st.Rename(ctx, newName)`                      |
 
 ### Login
@@ -608,9 +608,8 @@ instance is too old for is refused with `ErrUnsupportedVersion`.
 | --------------------------------------- |
 | `srv.CreateLogin(ctx, req)` |
 | `login.ChangePassword(ctx, newPassword, gosmo.ChangePasswordOptions{MustChange, Unlock})` |
-| `login.Enable(ctx)` / `login.Disable(ctx)`   |
-| `login.AddToServerRole(ctx, role)`         |
-| `login.RemoveFromServerRole(ctx, role)`    |
+| `login.SetEnabled(ctx, on)`                 |
+| `srv.ServerRoleRef(role).AddMember\|RemoveMember(ctx, login.Name)` — role membership is the role's write |
 | `login.Drop(ctx)`                          |
 | `login.Rename(ctx, newName)`                 |
 | `login.SetDefaultDatabase(ctx, name)` / `login.SetDefaultLanguage(ctx, name)` |
@@ -1023,17 +1022,17 @@ VISIBILITY = OFF` back, so a re-created dependency stays hidden from
 | SSMS equivalent                   | gosmo                                          |
 | --------------------------------- | ---------------------------------------------- |
 | *db* → Programmability → Plan Guides | `db.PlanGuides(ctx)` / `db.PlanGuideByName(ctx, name)` / `db.PlanGuideRef(name)` (no-I/O handle) |
-| Enable / Disable                  | `g.Enable(ctx)` / `g.Disable(ctx)` — `sp_control_plan_guide` |
+| Enable / Disable                  | `g.SetEnabled(ctx, on)` — `sp_control_plan_guide` |
 | Delete                            | `g.Drop(ctx)` / `db.PlanGuideRef(name).Drop(ctx)`          |
 | Script                            | `sc.ScriptPlanGuide(ctx, name)` — the `sp_create_plan_guide` call, every argument named |
 
 `Scope` is a `PlanGuideScope` (`PlanGuideScopeObject`, `...SQL`,
 `...Template`); `ScopeObject`/`ScopeSchema`/`ScopeName` name the routine of
 an OBJECT guide and `ScopeBatch` holds the batch text of a SQL one.
-Enable/Disable is the one write: a disabled guide is invisible from the
+Enabling and disabling is the one write: a disabled guide is invisible from the
 query side, so it is the operation that makes the folder worth having.
 There is no create — its arguments *are* the statement, matched character
-for character. Enable and Disable address the guide by name, so the no-I/O
+for character. SetEnabled addresses the guide by name, so the no-I/O
 handle is enough.
 
 ### External resources
@@ -1404,7 +1403,7 @@ procedure name the driver sends over RPC.
 to any caller mirroring a write into its own state: under `WithScript` the
 write returns success without the server ever seeing it, so a rename
 followed by a re-read *by the new name* finds nothing. gosmo honours this
-for its own cached state too — a scripted `Rename`/`Enable`/`SetOwner`
+for its own cached state too — a scripted `Rename`/`SetEnabled`/`SetOwner`
 leaves the object it was called on unchanged. The lookup-free `…Ref` handles
 (`srv.DatabaseRef(name)`, `srv.LoginRef(name)`, `db.UserRef(name)`,
 `t.StatisticRef(name)` and the rest — `CLAUDE.md`'s `Ref` bullet lists
@@ -1692,18 +1691,17 @@ ID — so a schedule is writable from a no-I/O `ScheduleRef` handle. `Drop`,
 read keyed by id, `Schedule.Jobs`, looks the id up through `ScheduleByName`
 on a `ScheduleRef` instead, so a shared name is `ErrAmbiguous`, not "no jobs".
 
-`Alter` is the one spelling of these writes. `Enable()`/`Disable()`/
-`SetEnabled()`/`Rename()` stay beside it — they read better than a struct
-literal for a single edit — and each is a one-line wrapper over its family's
-`Alter`, so there is one statement builder and one receiver mirror per
-family. The other per-property setters (`Job.SetOwner`, `Alert.SetTrigger`,
-`Schedule.SetFrequency` and the rest) were removed on 2026-10-26: each was a
-second spelling of one `Changes` field. Every string argument is bound
-(`boundArgs`), not spliced: a captured or observed statement shows it as
-`N'...'` again. An empty
-category is sent as what each class accepts (`agentCategoryTarget`):
-`[Uncategorized]` for an alert or operator, `[DEFAULT]` for a job, mirrored
-as the `[Uncategorized (Local)]` msdb then reports.
+`Alter` is the one spelling of these writes. `SetEnabled()`/`Rename()` stay
+beside it — they read better than a struct literal for a single edit — and
+each is a one-line wrapper over its family's `Alter`, so there is one
+statement builder and one receiver mirror per family. The other per-property
+setters (`Job.SetOwner`, `Alert.SetTrigger`, `Schedule.SetFrequency` and the
+rest) were removed on 2026-10-26: each was a second spelling of one `Changes`
+field. Every string argument is bound (`boundArgs`), not spliced: a captured
+or observed statement shows it as `N'...'` again. An empty category is sent
+as what each class accepts (`agentCategoryTarget`): `[Uncategorized]` for an
+alert or operator, `[DEFAULT]` for a job, mirrored as the `[Uncategorized
+(Local)]` msdb then reports.
 
 `SetEnabled(ctx, on)` is `Enable` or `Disable` picked by a flag, for a caller
 that holds the wanted state (a menu toggle, a checkbox). Every handle with the
@@ -2088,13 +2086,13 @@ is the destination — a file, the Windows Application log or the Security log
 | Security → Audits              | `srv.ServerAudits(ctx)` / `srv.ServerAuditByName(ctx, name)` / `srv.ServerAuditRef(name)` (no-I/O handle) |
 | New audit                      | `srv.CreateServerAudit(ctx, gosmo.ServerAuditDefinition{...})`         |
 | Alter / rename / drop          | `a.Alter(ctx, spec)` / `a.Rename(ctx, newName)` / `a.Drop(ctx)`          |
-| Enable / disable               | `a.Enable(ctx)` / `a.Disable(ctx)`                               |
+| Enable / disable               | `a.SetEnabled(ctx, on)`                                          |
 | Is it running, and to which file | `a.Status(ctx)` → `*ServerAuditStatus`                       |
 | Security → Server Audit Specifications | `srv.ServerAuditSpecifications(ctx)` / `...ByName(ctx, name)` / `srv.ServerAuditSpecificationRef(name)` |
 | New specification              | `srv.CreateServerAuditSpecification(ctx, gosmo.CreateServerAuditSpecificationRequest{...})` |
 | Add / drop action groups       | `spec.AddActionGroups(ctx, g...)` / `spec.DropActionGroups(ctx, g...)` |
 | Point it at another audit      | `spec.SetAudit(ctx, auditName)`                                  |
-| Enable / disable / drop        | `spec.Enable(ctx)` / `spec.Disable(ctx)` / `spec.Drop(ctx)`          |
+| Enable / disable / drop        | `spec.SetEnabled(ctx, on)` / `spec.Drop(ctx)`                      |
 | What can be audited            | `srv.AuditActionGroups(ctx)`                                   |
 | Database → Security → Database Audit Specifications | `db.DatabaseAuditSpecifications(ctx)` / `...ByName(ctx, name)` / `db.DatabaseAuditSpecificationRef(name)` |
 | New database specification     | `db.CreateDatabaseAuditSpecification(ctx, gosmo.CreateDatabaseAuditSpecificationRequest{...})` |
@@ -2213,7 +2211,7 @@ Server-scope DDL and LOGON triggers — SSMS's Server Objects → Triggers.
 | SSMS equivalent            | gosmo                                              |
 | -------------------------- | -------------------------------------------------- |
 | Server Objects → Triggers  | `srv.ServerTriggers(ctx)` / `srv.ServerTriggerByName(ctx, name)` / `srv.ServerTriggerRef(name)` |
-| Enable / disable / drop    | `tr.Enable(ctx)` / `tr.Disable(ctx)` / `tr.Drop(ctx)`        |
+| Enable / disable / drop    | `tr.SetEnabled(ctx, on)` / `tr.Drop(ctx)`                    |
 
 A different family from `db.Triggers(ctx)`, which reads DML triggers on a table.
 A trigger declared `FOR` a whole event group lists that group's individual
@@ -2232,7 +2230,7 @@ server-scope ones (`parent_class = 100`), and these are `parent_class = 0`.
 | SSMS equivalent                        | gosmo                                        |
 | -------------------------------------- | -------------------------------------------- |
 | *db* → Programmability → Database Triggers | `db.DatabaseTriggers(ctx)` / `db.DatabaseTriggerByName(ctx, name)` / `db.DatabaseTriggerRef(name)` (no-I/O handle) |
-| Enable / disable / drop                | `tr.Enable(ctx)` / `tr.Disable(ctx)` / `tr.Drop(ctx)` |
+| Enable / disable / drop                | `tr.SetEnabled(ctx, on)` / `tr.Drop(ctx)` |
 | Script one                             | `sc.ScriptDatabaseTrigger(ctx, name)`             |
 
 The scope keyword differs from the server family's and is not

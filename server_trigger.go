@@ -95,7 +95,7 @@ func (s *Server) ServerTriggerByName(ctx context.Context, name string) (*ServerT
 // Every other field stays at its zero value; ServerTriggerByName is what
 // populates them.
 //
-// Enable, Disable and Drop address the trigger by name,
+// SetEnabled and Drop address the trigger by name,
 // so this handle is enough to act on one the caller already knows exists, and
 // is the form to use when there is nothing to read yet — under a
 // WithScript-derived context, ServerTriggerByName's lookup is a real
@@ -109,7 +109,7 @@ func (s *Server) ServerTriggerRef(name string) *ServerTrigger {
 //
 // Twin of scanDatabaseTrigger in database_trigger.go. That file and this one
 // are deliberately near-identical: this function, and the
-// Enable/Disable/SetEnabled block below it, differ only in the receiver type
+// SetEnabled block below it, differ only in the receiver type
 // and in the scope the statement targets (ON ALL SERVER here, ON DATABASE
 // there). Unifying them needs either generics over two receivers with
 // different db/server fields or a shared struct both embed, and the second
@@ -134,17 +134,8 @@ func scanServerTrigger(s *Server, scan func(...any) error) (*ServerTrigger, erro
 
 // -- Writes ----------------------------------------------------------------------
 
-// Enable enables the trigger.
-func (t *ServerTrigger) Enable(ctx context.Context) error {
-	return t.SetEnabled(ctx, true)
-}
-
-// Disable disables the trigger, leaving its definition in place.
-func (t *ServerTrigger) Disable(ctx context.Context) error {
-	return t.SetEnabled(ctx, false)
-}
-
-// SetEnabled is Enable when on is true and Disable otherwise.
+// SetEnabled enables the trigger when on is true and disables it otherwise;
+// a disabled trigger keeps its definition.
 func (t *ServerTrigger) SetEnabled(ctx context.Context, on bool) error {
 	verb := "DISABLE"
 	if on {

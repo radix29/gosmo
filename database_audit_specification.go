@@ -415,20 +415,11 @@ func (d *Database) CreateDatabaseAuditSpecification(ctx context.Context, spec Cr
 	})
 }
 
-// Enable turns the specification on (STATE = ON).
+// SetEnabled turns the specification on (STATE = ON) when on is true and off
+// (STATE = OFF) otherwise.
 //
 // STATE is the one ALTER form the server accepts on an enabled
 // specification.
-func (spec *DatabaseAuditSpecification) Enable(ctx context.Context) error {
-	return spec.SetEnabled(ctx, true)
-}
-
-// Disable turns the specification off (STATE = OFF).
-func (spec *DatabaseAuditSpecification) Disable(ctx context.Context) error {
-	return spec.SetEnabled(ctx, false)
-}
-
-// SetEnabled is Enable when on is true and Disable otherwise.
 func (spec *DatabaseAuditSpecification) SetEnabled(ctx context.Context, on bool) error {
 	state := "OFF"
 	if on {

@@ -347,11 +347,10 @@ as soon as two schedules share the name.
 ## The two DDL-trigger files stay near-identical — settled, do not re-raise
 
 `database_trigger.go` and `server_trigger.go` duplicate roughly thirty lines:
-`scanDatabaseTrigger`/`scanServerTrigger` are twelve identical lines apart from
-the receiver, and the `Enable`/`Disable`/
-`SetEnabled` block below each differs only in the scope the statement targets
-(`ON DATABASE` versus `ON ALL SERVER`) and in which exec helper it reaches
-(`db.exec` versus `server.exec`).
+`scanDatabaseTrigger`/`scanServerTrigger` are twelve identical lines apart
+from the receiver, and the `SetEnabled` block below each differs only in the
+scope the statement targets (`ON DATABASE` versus `ON ALL SERVER`) and in
+which exec helper it reaches (`db.exec` versus `server.exec`).
 
 Reviewed 2026-09-18 and **deliberately left duplicated.** Unifying it needs
 either generics over two receivers with different `db`/`server` fields, or a

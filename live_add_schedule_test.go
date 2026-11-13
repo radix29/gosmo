@@ -189,7 +189,7 @@ func TestLiveSharedScheduleNames(t *testing.T) {
 		t.Errorf("job schedules after detach = %v, %v; want none", attached, err)
 	}
 
-	if err := second.Disable(ctx); err != nil {
+	if err := second.SetEnabled(ctx, false); err != nil {
 		t.Fatalf("Disable second: %v", err)
 	}
 	if f, err := srv.ScheduleByID(ctx, first.ID); err != nil || !f.Enabled {

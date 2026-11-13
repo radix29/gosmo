@@ -150,34 +150,20 @@ ORDER  BY spr.object_id, spr.predicate_type_desc`
 	return byPolicy, rows.Err()
 }
 
-// Enable enables the security policy.
-func (p *SecurityPolicy) Enable(ctx context.Context) error {
-	_, err := p.db.exec(ctx,
-		fmt.Sprintf("ALTER SECURITY POLICY %s WITH (STATE = ON)", qualifiedName(p.Schema, p.Name)))
-	if err != nil {
-		return fmt.Errorf("gosmo: enable security policy %q: %w", p.Name, err)
-	}
-	setIfApplied(ctx, &p.IsEnabled, true)
-	return nil
-}
-
-// Disable disables the security policy.
-func (p *SecurityPolicy) Disable(ctx context.Context) error {
-	_, err := p.db.exec(ctx,
-		fmt.Sprintf("ALTER SECURITY POLICY %s WITH (STATE = OFF)", qualifiedName(p.Schema, p.Name)))
-	if err != nil {
-		return fmt.Errorf("gosmo: disable security policy %q: %w", p.Name, err)
-	}
-	setIfApplied(ctx, &p.IsEnabled, false)
-	return nil
-}
-
-// SetEnabled is Enable when on is true and Disable otherwise.
+// SetEnabled enables the security policy when on is true and disables it
+// otherwise.
 func (p *SecurityPolicy) SetEnabled(ctx context.Context, on bool) error {
+	state, verb := "OFF", "disable"
 	if on {
-		return p.Enable(ctx)
+		state, verb = "ON", "enable"
 	}
-	return p.Disable(ctx)
+	_, err := p.db.exec(ctx,
+		fmt.Sprintf("ALTER SECURITY POLICY %s WITH (STATE = %s)", qualifiedName(p.Schema, p.Name), state))
+	if err != nil {
+		return fmt.Errorf("gosmo: %s security policy %q: %w", verb, p.Name, err)
+	}
+	setIfApplied(ctx, &p.IsEnabled, on)
+	return nil
 }
 
 // Drop drops the security policy. A policy that isn't there is the server's

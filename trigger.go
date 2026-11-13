@@ -113,17 +113,8 @@ func (t *Trigger) Rename(ctx context.Context, newName string) error {
 	return nil
 }
 
-// Enable enables the trigger.
-func (t *Trigger) Enable(ctx context.Context) error {
-	return t.SetEnabled(ctx, true)
-}
-
-// Disable disables the trigger, leaving its definition in place.
-func (t *Trigger) Disable(ctx context.Context) error {
-	return t.SetEnabled(ctx, false)
-}
-
-// SetEnabled is Enable when on is true and Disable otherwise. The statement
+// SetEnabled enables the trigger when on is true and disables it otherwise;
+// a disabled trigger keeps its definition. The statement
 // names the table or view the trigger is on; a TriggerRef, which has no
 // TableName, looks it up by name first (ErrNotFound when there is no such
 // DML trigger) without caching it on the handle.

@@ -67,7 +67,7 @@ func main() {
 
 	// -- Server roles and permissions -------------------------------------
 	demo.Section("Server role membership and permissions")
-	demo.Must(login.AddToServerRole(ctx, "dbcreator"))
+	demo.Must(srv.ServerRoleRef("dbcreator").AddMember(ctx, login.Name))
 	for _, m := range demo.Value(srv.ServerRoleMembers(ctx, "dbcreator")) {
 		fmt.Printf("  dbcreator member: %s (%s)\n", m.Name, m.Type)
 	}
@@ -102,7 +102,7 @@ func main() {
 	// -- Database roles ----------------------------------------------------
 	demo.Section("Database role membership")
 	demo.Must(db.RoleRef("db_datareader").AddMember(ctx, userName))
-	demo.Must(user.AddToRole(ctx, "db_denydatawriter"))
+	demo.Must(db.RoleRef("db_denydatawriter").AddMember(ctx, user.Name))
 	for _, r := range demo.Value(db.Roles(ctx)) {
 		if contains(r.Members, userName) {
 			fmt.Printf("  %s is a member of %s\n", userName, r.Name)
@@ -163,7 +163,7 @@ func main() {
 	// deferred database drop.
 	demo.Must(user.Drop(ctx))
 	demo.Must(srv.ApplyPermission(ctx, gosmo.VerbRevoke, serverScope, gosmo.ServerPermission("VIEW SERVER STATE"), loginName, gosmo.PermissionOptions{}))
-	demo.Must(login.RemoveFromServerRole(ctx, "dbcreator"))
+	demo.Must(srv.ServerRoleRef("dbcreator").RemoveMember(ctx, login.Name))
 }
 
 func contains(haystack []string, needle string) bool {

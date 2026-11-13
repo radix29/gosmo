@@ -60,7 +60,7 @@ func TestLiveAPIPass(t *testing.T) {
 		if err := ix.Rebuild(ctx, IndexRebuildOptions{FillFactor: 80, PadIndex: new(true)}); err != nil {
 			t.Fatalf("Rebuild: %v", err)
 		}
-		if err := ix.UpdateStatistics(ctx, 0); err != nil {
+		if err := ix.UpdateStatistics(ctx, StatisticsUpdateOptions{FullScan: true}); err != nil {
 			t.Fatalf("UpdateStatistics: %v", err)
 		}
 	})

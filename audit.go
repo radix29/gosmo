@@ -298,7 +298,7 @@ func (spec ServerAuditDefinition) createServerAuditStatement() (string, error) {
 }
 
 // CreateServerAudit creates a server audit. It is created disabled, which is
-// what CREATE SERVER AUDIT does; use Enable to turn it on.
+// what CREATE SERVER AUDIT does; use SetEnabled to turn it on.
 func (s *Server) CreateServerAudit(ctx context.Context, spec ServerAuditDefinition) (*ServerAudit, error) {
 	stmt, err := spec.createServerAuditStatement()
 	if err != nil {
@@ -312,16 +312,11 @@ func (s *Server) CreateServerAudit(ctx context.Context, spec ServerAuditDefiniti
 	})
 }
 
-// Enable turns the audit on (STATE = ON).
+// SetEnabled turns the audit on (STATE = ON) when on is true and off
+// (STATE = OFF) otherwise.
 //
 // STATE is the one ALTER SERVER AUDIT form the server accepts on an enabled
 // audit.
-func (a *ServerAudit) Enable(ctx context.Context) error { return a.setStateNamed(ctx, a.Name, true) }
-
-// Disable turns the audit off (STATE = OFF).
-func (a *ServerAudit) Disable(ctx context.Context) error { return a.setStateNamed(ctx, a.Name, false) }
-
-// SetEnabled is Enable when on is true and Disable otherwise.
 func (a *ServerAudit) SetEnabled(ctx context.Context, on bool) error {
 	return a.setStateNamed(ctx, a.Name, on)
 }
@@ -407,7 +402,7 @@ func (a *ServerAudit) withAuditDisabled(ctx context.Context, fn func(context.Con
 	if !enabled {
 		return fn(inner)
 	}
-	if err := a.Disable(unobserved(ctx)); err != nil {
+	if err := a.SetEnabled(unobserved(ctx), false); err != nil {
 		return err
 	}
 	enable := func(ctx context.Context) error { return a.setStateNamed(ctx, name, true) }
@@ -503,7 +498,7 @@ func (a *ServerAudit) Rename(ctx context.Context, newName string) error {
 			return err
 		}
 		if enabled {
-			if err := a.Disable(unobserved(ctx)); err != nil {
+			if err := a.SetEnabled(unobserved(ctx), false); err != nil {
 				return err
 			}
 			restore = true
@@ -548,7 +543,7 @@ func (a *ServerAudit) Drop(ctx context.Context) error {
 		return err
 	}
 	if enabled {
-		if err := a.Disable(ctx); err != nil {
+		if err := a.SetEnabled(ctx, false); err != nil {
 			return err
 		}
 	}

@@ -12,9 +12,9 @@ func TestServerTriggerWriteStatements(t *testing.T) {
 		act  func(*ServerTrigger, context.Context) error
 		want string
 	}{
-		{"enable", func(tr *ServerTrigger, ctx context.Context) error { return tr.Enable(ctx) },
+		{"enable", func(tr *ServerTrigger, ctx context.Context) error { return tr.SetEnabled(ctx, true) },
 			"ENABLE TRIGGER [ddl_audit] ON ALL SERVER"},
-		{"disable", func(tr *ServerTrigger, ctx context.Context) error { return tr.Disable(ctx) },
+		{"disable", func(tr *ServerTrigger, ctx context.Context) error { return tr.SetEnabled(ctx, false) },
 			"DISABLE TRIGGER [ddl_audit] ON ALL SERVER"},
 		{"drop", func(tr *ServerTrigger, ctx context.Context) error { return tr.Drop(ctx) },
 			"DROP TRIGGER [ddl_audit] ON ALL SERVER"},
@@ -53,7 +53,7 @@ func TestServerTriggerNameIsQuoted(t *testing.T) {
 func TestServerTriggerEnabledFlagIsNotSetWhileScripting(t *testing.T) {
 	tr := (&Server{}).ServerTriggerRef("ddl_audit")
 	ctx, _ := WithScript(context.Background())
-	if err := tr.Enable(ctx); err != nil {
+	if err := tr.SetEnabled(ctx, true); err != nil {
 		t.Fatalf("Enable: %v", err)
 	}
 	if tr.IsEnabled {

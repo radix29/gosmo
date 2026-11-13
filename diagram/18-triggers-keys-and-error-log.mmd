@@ -13,8 +13,7 @@ classDiagram
         +Events []string
         +Definition string
         +Database() *Database
-        +Enable() error
-        +Disable() error
+        +SetEnabled(on) error
         +Drop() error
         The parent_class = 0 family: DDL triggers on
         the database itself. DISABLE TRIGGER takes

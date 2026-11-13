@@ -2,24 +2,26 @@ package gosmo
 
 import (
 	"context"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
 )
 
-// enabler is every handle with an Enable/Disable pair and the SetEnabled
-// that picks one by flag. Index and ResourceGovernor have the pair but no
-// SetEnabled: their Enable does more than flip a flag (a rebuild, a
+// enabler is every handle whose enabled state is one on/off switch. They
+// have SetEnabled only, no Enable/Disable pair (review R7, 2026-11-13).
+// Index and ResourceGovernor are the opposite: Enable/Disable and no
+// SetEnabled, since their Enable does more than flip a flag (a rebuild, a
 // RECONFIGURE that applies every pending change).
 type enabler interface {
-	Enable(context.Context) error
-	Disable(context.Context) error
 	SetEnabled(context.Context, bool) error
 }
 
-// TestSetEnabledIsEnableOrDisable pins SetEnabled(true) to Enable's statement
-// and SetEnabled(false) to Disable's, for each handle that has it.
-func TestSetEnabledIsEnableOrDisable(t *testing.T) {
+// TestSetEnabledIsTheOneForm checks that each switch-like handle has no
+// Enable/Disable pair beside SetEnabled, and that SetEnabled(true) and
+// SetEnabled(false) each send a statement and not the same one. The exact
+// statements are in each family's script_*_write_test.go table.
+func TestSetEnabledIsTheOneForm(t *testing.T) {
 	srv := &Server{}
 	handles := map[string]func() enabler{
 		"Job":                        func() enabler { return &Job{server: srv, Name: "j'1"} },
@@ -47,16 +49,17 @@ func TestSetEnabledIsEnableOrDisable(t *testing.T) {
 	}
 	for name, h := range handles {
 		t.Run(name, func(t *testing.T) {
-			for _, on := range []bool{true, false} {
-				want := capture(t, h().Disable)
-				if on {
-					want = capture(t, h().Enable)
+			typ := reflect.TypeOf(h())
+			for _, m := range []string{"Enable", "Disable"} {
+				if _, ok := typ.MethodByName(m); ok {
+					t.Errorf("%s has %s beside SetEnabled; keep the one form", typ, m)
 				}
-				got := capture(t, func(ctx context.Context) error { return h().SetEnabled(ctx, on) })
-				if len(want) == 0 || !slices.Equal(got, want) {
-					t.Errorf("SetEnabled(%v):\n got: %s\nwant: %s", on,
-						strings.Join(got, "\n---\n"), strings.Join(want, "\n---\n"))
-				}
+			}
+			on := capture(t, func(ctx context.Context) error { return h().SetEnabled(ctx, true) })
+			off := capture(t, func(ctx context.Context) error { return h().SetEnabled(ctx, false) })
+			if len(on) == 0 || len(off) == 0 || slices.Equal(on, off) {
+				t.Errorf("SetEnabled:\n true: %s\nfalse: %s",
+					strings.Join(on, "\n---\n"), strings.Join(off, "\n---\n"))
 			}
 		})
 	}

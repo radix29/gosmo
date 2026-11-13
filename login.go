@@ -92,29 +92,16 @@ SELECT ISNULL((SELECT TOP 1 name FROM master.sys.certificates    WHERE sid = @p1
 	return nil
 }
 
-// Disable disables the login.
-func (l *Login) Disable(ctx context.Context) error {
-	if _, err := l.server.exec(ctx, "ALTER LOGIN "+quoteIdent(l.Name)+" DISABLE"); err != nil {
-		return fmt.Errorf("gosmo: disable login %q: %w", l.Name, err)
-	}
-	setIfApplied(ctx, &l.IsDisabled, true)
-	return nil
-}
-
-// SetEnabled is Enable when on is true and Disable otherwise.
+// SetEnabled enables the login when on is true and disables it otherwise.
 func (l *Login) SetEnabled(ctx context.Context, on bool) error {
+	action := "DISABLE"
 	if on {
-		return l.Enable(ctx)
+		action = "ENABLE"
 	}
-	return l.Disable(ctx)
-}
-
-// Enable enables the login.
-func (l *Login) Enable(ctx context.Context) error {
-	if _, err := l.server.exec(ctx, "ALTER LOGIN "+quoteIdent(l.Name)+" ENABLE"); err != nil {
-		return fmt.Errorf("gosmo: enable login %q: %w", l.Name, err)
+	if _, err := l.server.exec(ctx, "ALTER LOGIN "+quoteIdent(l.Name)+" "+action); err != nil {
+		return fmt.Errorf("gosmo: %s login %q: %w", strings.ToLower(action), l.Name, err)
 	}
-	setIfApplied(ctx, &l.IsDisabled, false)
+	setIfApplied(ctx, &l.IsDisabled, !on)
 	return nil
 }
 
@@ -127,16 +114,6 @@ func (l *Login) Drop(ctx context.Context) error {
 		return fmt.Errorf("gosmo: drop login %q: %w", l.Name, err)
 	}
 	return nil
-}
-
-// AddToServerRole adds this login to a server role.
-func (l *Login) AddToServerRole(ctx context.Context, roleName string) error {
-	return l.server.ServerRoleRef(roleName).AddMember(ctx, l.Name)
-}
-
-// RemoveFromServerRole removes this login from a server role.
-func (l *Login) RemoveFromServerRole(ctx context.Context, roleName string) error {
-	return l.server.ServerRoleRef(roleName).RemoveMember(ctx, l.Name)
 }
 
 // -- Status / details --------------------------------------------------------
@@ -495,8 +472,8 @@ func (s *Server) LoginByName(ctx context.Context, name string) (*Login, error) {
 // LoginRef returns a lightweight handle for name without querying the server
 // at all — unlike LoginByName, it doesn't verify the
 // login exists or populate SID/LoginType/IsDisabled/etc. (they stay at
-// their zero value). The ALTER-style writes on *Login (AddToServerRole,
-// Disable, ChangePassword, ...) name the login and need nothing else, so
+// their zero value). The ALTER-style writes on *Login (SetEnabled,
+// ChangePassword, ...) name the login and need nothing else, so
 // this is sufficient for issuing them against a login the caller already
 // knows exists — most commonly one it just created in the same operation.
 // See Server.DatabaseRef's doc comment for why this also matters under a

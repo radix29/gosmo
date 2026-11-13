@@ -8,7 +8,7 @@
 // instance. This asks the two questions the sweep cannot, because both need
 // a write:
 //
-//   - a plan guide's Enable/Disable actually flips is_disabled, and the
+//   - a plan guide's SetEnabled actually flips is_disabled, and the
 //     receiver ends up agreeing with the server;
 //
 //   - a snapshot created from SnapshotFileDefaults is accepted by the server,
@@ -211,7 +211,7 @@ func TestLiveTreeFamiliesPlanGuideEnableDisable(t *testing.T) {
 			g.ScopeObject, g.ScopeSchema, g.ScopeName)
 	}
 
-	if err := g.Disable(ctx); err != nil {
+	if err := g.SetEnabled(ctx, false); err != nil {
 		t.Fatalf("Disable: %v", err)
 	}
 	if !g.IsDisabled {
@@ -225,7 +225,7 @@ func TestLiveTreeFamiliesPlanGuideEnableDisable(t *testing.T) {
 		t.Error("server still reports the plan guide as enabled after Disable")
 	}
 
-	if err := g.Enable(ctx); err != nil {
+	if err := g.SetEnabled(ctx, true); err != nil {
 		t.Fatalf("Enable: %v", err)
 	}
 	again, err = d.PlanGuideByName(ctx, "pg_live")

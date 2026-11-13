@@ -234,11 +234,11 @@ WHERE s.object_id = OBJECT_ID(@p1) AND s.name = @p2`, obj, stat); err != nil {
 		time.Sleep(1100 * time.Millisecond)
 		switch c.target {
 		case "table":
-			err = tbl.UpdateStatisticsWith(ctx, c.opts)
+			err = tbl.UpdateStatistics(ctx, c.opts)
 		case "view":
-			err = v.UpdateStatisticsWith(ctx, c.opts)
+			err = v.UpdateStatistics(ctx, c.opts)
 		default:
-			err = tbl.StatisticRef(stat).UpdateWith(ctx, c.opts)
+			err = tbl.StatisticRef(stat).Update(ctx, c.opts)
 		}
 		if err != nil {
 			t.Errorf("%s: %v", c.name, err)

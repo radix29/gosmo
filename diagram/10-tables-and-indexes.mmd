@@ -42,8 +42,7 @@ classDiagram
         +RebuildAllIndexes(fillFactor) error
         +RebuildAllIndexesWith(opts) error
         +ReorganizeAllIndexes() error
-        +UpdateAllStatistics(samplePct) error
-        +UpdateStatisticsWith(opts) error
+        +UpdateStatistics(opts) error
         +CreateIndex(req) *Index
         +CreateStatistic(req) *Statistic
         +IndexRef(name) *Index
@@ -134,7 +133,7 @@ classDiagram
         +SetOptions(opts IndexSetOptions) error
         +SetIncludedColumns(columns) error
         +IncludedColumnsSupported() error
-        +UpdateStatistics(samplePct) error
+        +UpdateStatistics(opts) error
         +StorageInfo() *IndexStorageInfo
         +Fragmentation(mode FragmentationMode) *IndexFragmentation
         +Drop() error

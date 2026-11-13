@@ -90,12 +90,6 @@ func TestScriptSecurityWrites(t *testing.T) {
 		}, "ALTER AUTHORIZATION ON DATABASE::[App'DB] TO [o'brien]"},
 
 		// --- User
-		{"User AddToRole", func(c context.Context) error {
-			return user().AddToRole(c, "db_datar]eader")
-		}, scriptUsePrefix + "ALTER ROLE [db_datar]]eader] ADD MEMBER [o'brien]"},
-		{"User RemoveFromRole", func(c context.Context) error {
-			return user().RemoveFromRole(c, "db_datar]eader")
-		}, scriptUsePrefix + "ALTER ROLE [db_datar]]eader] DROP MEMBER [o'brien]"},
 		{"User SetDefaultSchema", func(c context.Context) error {
 			return user().SetDefaultSchema(c, "sa]les")
 		}, scriptUsePrefix + "ALTER USER [o'brien] WITH DEFAULT_SCHEMA = [sa]]les]"},
@@ -129,16 +123,16 @@ func TestScriptSecurityWrites(t *testing.T) {
 			return user().Rename(c, "o]b")
 		}, scriptUsePrefix + "ALTER USER [o'brien] WITH NAME = [o]]b]"},
 		{"Login Enable", func(c context.Context) error {
-			return login().Enable(c)
+			return login().SetEnabled(c, true)
 		}, "ALTER LOGIN [o'brien] ENABLE"},
 		{"Login Disable", func(c context.Context) error {
-			return login().Disable(c)
+			return login().SetEnabled(c, false)
 		}, "ALTER LOGIN [o'brien] DISABLE"},
-		{"Login AddToServerRole", func(c context.Context) error {
-			return login().AddToServerRole(c, "sys]admin")
+		{"ServerRole AddMember", func(c context.Context) error {
+			return (&Server{}).ServerRoleRef("sys]admin").AddMember(c, "o'brien")
 		}, "ALTER SERVER ROLE [sys]]admin] ADD MEMBER [o'brien]"},
-		{"Login RemoveFromServerRole", func(c context.Context) error {
-			return login().RemoveFromServerRole(c, "sys]admin")
+		{"ServerRole RemoveMember", func(c context.Context) error {
+			return (&Server{}).ServerRoleRef("sys]admin").RemoveMember(c, "o'brien")
 		}, "ALTER SERVER ROLE [sys]]admin] DROP MEMBER [o'brien]"},
 		{"Login SetDefaultDatabase", func(c context.Context) error {
 			return login().SetDefaultDatabase(c, "App'DB")
@@ -207,10 +201,10 @@ func TestScriptSecurityWrites(t *testing.T) {
 			return serverRole().Drop(c)
 		}, "DROP SERVER ROLE [ro'le]"},
 		{"SecurityPolicy Enable", func(c context.Context) error {
-			return securityPolicy().Enable(c)
+			return securityPolicy().SetEnabled(c, true)
 		}, scriptUsePrefix + "ALTER SECURITY POLICY [Se]]c].[sp'1] WITH (STATE = ON)"},
 		{"SecurityPolicy Disable", func(c context.Context) error {
-			return securityPolicy().Disable(c)
+			return securityPolicy().SetEnabled(c, false)
 		}, scriptUsePrefix + "ALTER SECURITY POLICY [Se]]c].[sp'1] WITH (STATE = OFF)"},
 		{"Server DropLogin", func(c context.Context) error {
 			return (&Server{}).LoginRef("o'brien").Drop(c)

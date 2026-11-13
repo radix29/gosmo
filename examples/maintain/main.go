@@ -154,7 +154,7 @@ func main() {
 	demo.Value(tbl.CreateStatistic(ctx, gosmo.CreateStatisticRequest{
 		Name: "ST_Ledger_Amount", Columns: []string{"Amount"}, SamplePercent: 100,
 	}))
-	demo.Must(tbl.UpdateAllStatistics(ctx, 50))
+	demo.Must(tbl.UpdateStatistics(ctx, gosmo.StatisticsUpdateOptions{SamplePercent: 50}))
 	for _, st := range demo.Value(tbl.Statistics(ctx)) {
 		origin := "auto"
 		if st.IsUserCreated {

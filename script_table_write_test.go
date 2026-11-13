@@ -308,9 +308,9 @@ func TestScriptTriggerEnableDisable(t *testing.T) {
 		return &Trigger{db: scriptTestDB(), Schema: "Sales.Archive", Name: "tr]1", TableName: "o'brien"}
 	}
 	runScriptCases(t, []scriptCase{
-		{"Enable", func(c context.Context) error { return tr().Enable(c) },
+		{"Enable", func(c context.Context) error { return tr().SetEnabled(c, true) },
 			scriptUsePrefix + "ENABLE TRIGGER [Sales.Archive].[tr]]1] ON [Sales.Archive].[o'brien]"},
-		{"Disable", func(c context.Context) error { return tr().Disable(c) },
+		{"Disable", func(c context.Context) error { return tr().SetEnabled(c, false) },
 			scriptUsePrefix + "DISABLE TRIGGER [Sales.Archive].[tr]]1] ON [Sales.Archive].[o'brien]"},
 	})
 }
@@ -324,7 +324,7 @@ func TestTriggerRefSetEnabledLooksUpTheParent(t *testing.T) {
 	captured.reset(cannedRow{match: "FROM   sys.triggers tr", cols: []string{"name"}, row: []driver.Value{"o'brien"}})
 	d := &Database{server: s, Name: "appdb"}
 	h := d.TriggerRef("Sales.Archive", "tr1")
-	if err := h.Disable(t.Context()); err != nil {
+	if err := h.SetEnabled(t.Context(), false); err != nil {
 		t.Fatalf("Disable: %v", err)
 	}
 	q, args := captured.findArgs("FROM   sys.triggers tr")
@@ -342,7 +342,7 @@ func TestTriggerRefSetEnabledLooksUpTheParent(t *testing.T) {
 	}
 
 	captured.reset()
-	if err := d.TriggerRef("dbo", "gone").Enable(t.Context()); !errors.Is(err, ErrNotFound) {
+	if err := d.TriggerRef("dbo", "gone").SetEnabled(t.Context(), true); !errors.Is(err, ErrNotFound) {
 		t.Errorf("missing trigger: err = %v, want ErrNotFound", err)
 	}
 	if captured.count("ENABLE TRIGGER") != 0 {

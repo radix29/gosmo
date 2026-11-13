@@ -38,13 +38,16 @@ func TestScriptIndexAndStatisticsWrites(t *testing.T) {
 				return index().SetOptions(c, IndexSetOptions{AllowRowLocks: new(false), AllowPageLocks: new(true)})
 			}, scriptUsePrefix + "ALTER INDEX [IX_A]]B] ON [dbo].[Sales.Archive] SET (ALLOW_ROW_LOCKS = OFF, ALLOW_PAGE_LOCKS = ON)"},
 		{
-			// 0 is a FULLSCAN, as it is to Statistic.Update — not the
-			// server's default sample, which it was until 2026-09-23.
+			// The zero value is the server's sample, as it is to
+			// Statistic.Update; a full scan is asked for by name.
 			"Index UpdateStatistics", func(c context.Context) error {
-				return index().UpdateStatistics(c, 0)
-			}, scriptUsePrefix + "UPDATE STATISTICS [dbo].[Sales.Archive] ([IX_A]]B]) WITH FULLSCAN"},
+				return index().UpdateStatistics(c, StatisticsUpdateOptions{})
+			}, scriptUsePrefix + "UPDATE STATISTICS [dbo].[Sales.Archive] ([IX_A]]B])"},
+		{"Index UpdateStatistics fullscan", func(c context.Context) error {
+			return index().UpdateStatistics(c, StatisticsUpdateOptions{FullScan: true})
+		}, scriptUsePrefix + "UPDATE STATISTICS [dbo].[Sales.Archive] ([IX_A]]B]) WITH FULLSCAN"},
 		{"Index UpdateStatistics sampled", func(c context.Context) error {
-			return index().UpdateStatistics(c, 25)
+			return index().UpdateStatistics(c, StatisticsUpdateOptions{SamplePercent: 25})
 		}, scriptUsePrefix + "UPDATE STATISTICS [dbo].[Sales.Archive] ([IX_A]]B]) WITH SAMPLE 25 PERCENT"},
 		{"Index Disable", func(c context.Context) error {
 			return index().Disable(c)
@@ -87,9 +90,6 @@ func TestScriptIndexAndStatisticsWrites(t *testing.T) {
 				Name: "st1", Columns: []string{"ab"}, SamplePercent: 25,
 			}))
 		}, scriptUsePrefix + "CREATE STATISTICS [st1] ON [dbo].[Sales.Archive] ([ab]) WITH SAMPLE 25 PERCENT"},
-		{"Table UpdateAllStatistics", func(c context.Context) error {
-			return table().UpdateAllStatistics(c, 25)
-		}, scriptUsePrefix + "UPDATE STATISTICS [dbo].[Sales.Archive] WITH SAMPLE 25 PERCENT"},
 	})
 }
 
@@ -150,10 +150,10 @@ func TestScriptPlanGuideControls(t *testing.T) {
 
 	runScriptCases(t, []scriptCase{
 		{"PlanGuide Enable", func(c context.Context) error {
-			return guide().Enable(c)
+			return guide().SetEnabled(c, true)
 		}, scriptUsePrefix + "EXEC sp_control_plan_guide @operation = N'ENABLE', @name = N'PG_o''brien'"},
 		{"PlanGuide Disable", func(c context.Context) error {
-			return guide().Disable(c)
+			return guide().SetEnabled(c, false)
 		}, scriptUsePrefix + "EXEC sp_control_plan_guide @operation = N'DISABLE', @name = N'PG_o''brien'"},
 		{"PlanGuide Drop", func(c context.Context) error {
 			return guide().Drop(c)
@@ -170,7 +170,7 @@ func TestScriptedPlanGuideControlDoesNotMirrorOntoTheReceiver(t *testing.T) {
 	g := &PlanGuide{db: scriptTestDB(), Name: "PG", IsDisabled: true}
 
 	ctx, script := WithScript(context.Background())
-	if err := g.Enable(ctx); err != nil {
+	if err := g.SetEnabled(ctx, true); err != nil {
 		t.Fatalf("scripted enable: %v", err)
 	}
 	if !g.IsDisabled {

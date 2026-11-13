@@ -18,9 +18,9 @@ func TestDatabaseTriggerWriteStatements(t *testing.T) {
 		act  func(*DatabaseTrigger, context.Context) error
 		want string
 	}{
-		{"enable", func(tr *DatabaseTrigger, ctx context.Context) error { return tr.Enable(ctx) },
+		{"enable", func(tr *DatabaseTrigger, ctx context.Context) error { return tr.SetEnabled(ctx, true) },
 			use + "ENABLE TRIGGER [ddl_audit] ON DATABASE"},
-		{"disable", func(tr *DatabaseTrigger, ctx context.Context) error { return tr.Disable(ctx) },
+		{"disable", func(tr *DatabaseTrigger, ctx context.Context) error { return tr.SetEnabled(ctx, false) },
 			use + "DISABLE TRIGGER [ddl_audit] ON DATABASE"},
 		{"drop", func(tr *DatabaseTrigger, ctx context.Context) error { return tr.Drop(ctx) },
 			use + "DROP TRIGGER [ddl_audit] ON DATABASE"},
@@ -74,7 +74,7 @@ func TestDatabaseTriggerNameIsQuoted(t *testing.T) {
 func TestDatabaseTriggerEnabledFlagIsNotSetWhileScripting(t *testing.T) {
 	tr := dbTriggerFor("ddl_audit")
 	ctx, _ := WithScript(context.Background())
-	if err := tr.Enable(ctx); err != nil {
+	if err := tr.SetEnabled(ctx, true); err != nil {
 		t.Fatalf("Enable: %v", err)
 	}
 	if tr.IsEnabled {

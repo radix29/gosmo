@@ -1,6 +1,6 @@
 //go:build livedb
 
-// Live round trip of the DML trigger toggle (Trigger.Enable/Disable): the
+// Live round trip of the DML trigger toggle (Trigger.SetEnabled): the
 // statement names the parent, which a catalog-read Trigger carries and a
 // TriggerRef looks up. It runs both on a table and on a view, in a schema
 // other than dbo, and reads is_disabled back each time.
@@ -47,13 +47,13 @@ func TestLiveDMLTriggerToggle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("TriggerByName: %v", err)
 	}
-	if err := tr.Disable(ctx); err != nil {
+	if err := tr.SetEnabled(ctx, false); err != nil {
 		t.Fatalf("Disable: %v", err)
 	}
 	if tr.IsEnabled || enabled("tr]T") {
 		t.Error("table trigger still enabled after Disable")
 	}
-	if err := tr.Enable(ctx); err != nil {
+	if err := tr.SetEnabled(ctx, true); err != nil {
 		t.Fatalf("Enable: %v", err)
 	}
 	if !tr.IsEnabled || !enabled("tr]T") {
@@ -75,7 +75,7 @@ func TestLiveDMLTriggerToggle(t *testing.T) {
 		t.Error("view trigger still disabled after SetEnabled(true)")
 	}
 
-	if err := d.TriggerRef("Sales.Archive", "gone").Disable(ctx); !errors.Is(err, ErrNotFound) {
+	if err := d.TriggerRef("Sales.Archive", "gone").SetEnabled(ctx, false); !errors.Is(err, ErrNotFound) {
 		t.Errorf("missing trigger: err = %v, want ErrNotFound", err)
 	}
 }

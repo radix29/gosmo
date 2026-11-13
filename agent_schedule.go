@@ -322,13 +322,7 @@ func (sch *Schedule) Rename(ctx context.Context, newName string) error {
 	return sch.Alter(ctx, ScheduleChanges{Name: &newName})
 }
 
-// Enable enables the schedule.
-func (sch *Schedule) Enable(ctx context.Context) error { return sch.SetEnabled(ctx, true) }
-
-// Disable disables the schedule.
-func (sch *Schedule) Disable(ctx context.Context) error { return sch.SetEnabled(ctx, false) }
-
-// SetEnabled is Enable when on is true and Disable otherwise.
+// SetEnabled enables the schedule when on is true and disables it otherwise.
 func (sch *Schedule) SetEnabled(ctx context.Context, on bool) error {
 	return sch.Alter(ctx, ScheduleChanges{Enabled: &on})
 }

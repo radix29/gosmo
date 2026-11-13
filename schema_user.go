@@ -203,13 +203,3 @@ func (u *User) SetLogin(ctx context.Context, loginName string) error {
 	setIfApplied(ctx, &u.LoginName, loginName)
 	return nil
 }
-
-// AddToRole adds the user to a database role.
-func (u *User) AddToRole(ctx context.Context, roleName string) error {
-	return u.db.RoleRef(roleName).AddMember(ctx, u.Name)
-}
-
-// RemoveFromRole removes the user from a database role.
-func (u *User) RemoveFromRole(ctx context.Context, roleName string) error {
-	return u.db.RoleRef(roleName).RemoveMember(ctx, u.Name)
-}

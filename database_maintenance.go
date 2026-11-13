@@ -290,7 +290,7 @@ ORDER  BY 3 DESC, 7, 8, 1`, mode)
 // UpdateStatistics updates the statistics of every user table and indexed
 // view in the database that has had rows modified since its statistics were
 // last updated (sys.sp_updatestats) — the database-wide form of
-// Table.UpdateAllStatistics, which updates a table's whether stale or not.
+// Table.UpdateStatistics, which updates a table's whether stale or not.
 // With resample each statistic keeps the sample rate of its last update
 // (@resample = 'resample'); without it the server picks its default sample.
 //

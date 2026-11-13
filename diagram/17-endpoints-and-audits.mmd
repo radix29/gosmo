@@ -89,12 +89,11 @@ classDiagram
         +ReserveDiskSpace bool
         +Alter(spec) error
         +Rename(newName) error
-        +Enable() error
-        +Disable() error
+        +SetEnabled(on) error
         +Drop() error
         +Status() *ServerAuditStatus
         +WithDisabled(ctx, fn) error
-        Every write but Enable/Disable needs the audit
+        Every write but SetEnabled needs the audit
         disabled; each one disables, applies and
         re-enables, and only if it disabled.
         MaxFileSize uses 0 for UNLIMITED,
@@ -132,8 +131,7 @@ classDiagram
         +AddActionGroups(groups) error
         +DropActionGroups(groups) error
         +SetAudit(auditName) error
-        +Enable() error
-        +Disable() error
+        +SetEnabled(on) error
         +Drop() error
         +WithDisabled(ctx, fn) error
         AuditName is empty for an orphaned
@@ -161,8 +159,7 @@ classDiagram
         +AddActions(groups, actions) error
         +DropActions(groups, actions) error
         +SetAudit(auditName) error
-        +Enable() error
-        +Disable() error
+        +SetEnabled(on) error
         +Drop() error
         +WithDisabled(ctx, fn) error
         Unlike the server half it also records
@@ -196,8 +193,7 @@ classDiagram
         +ModifyDate time.Time
         +Events []string
         +Definition string
-        +Enable() error
-        +Disable() error
+        +SetEnabled(on) error
         +Drop() error
         A different family from Database.Triggers,
         which reads DML triggers on a table, and from

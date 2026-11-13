@@ -45,10 +45,10 @@ func TestScriptAgentWrites(t *testing.T) {
 			return job().Rename(c, "Nightly'Run 2")
 		}, "EXEC msdb.dbo.sp_update_job @job_name = N'Nightly''Run', @new_name = N'Nightly''Run 2'"},
 		{"Job Enable", func(c context.Context) error {
-			return job().Enable(c)
+			return job().SetEnabled(c, true)
 		}, "EXEC msdb.dbo.sp_update_job @job_name = N'Nightly''Run', @enabled = 1"},
 		{"Job Disable", func(c context.Context) error {
-			return job().Disable(c)
+			return job().SetEnabled(c, false)
 		}, "EXEC msdb.dbo.sp_update_job @job_name = N'Nightly''Run', @enabled = 0"},
 		{"Job Alter category", func(c context.Context) error {
 			return job().Alter(c, JobChanges{Category: new("Data'Loads")})
@@ -149,10 +149,10 @@ func TestScriptAgentWrites(t *testing.T) {
 			return alert().Rename(c, "Disk'Full 2")
 		}, "EXEC msdb.dbo.sp_update_alert @name = N'Disk''Full', @new_name = N'Disk''Full 2'"},
 		{"Alert Enable", func(c context.Context) error {
-			return alert().Enable(c)
+			return alert().SetEnabled(c, true)
 		}, "EXEC msdb.dbo.sp_update_alert @name = N'Disk''Full', @enabled = 1"},
 		{"Alert Disable", func(c context.Context) error {
-			return alert().Disable(c)
+			return alert().SetEnabled(c, false)
 		}, "EXEC msdb.dbo.sp_update_alert @name = N'Disk''Full', @enabled = 0"},
 		{"Alert Drop", func(c context.Context) error {
 			return alert().Drop(c)
@@ -203,10 +203,10 @@ func TestScriptAgentWrites(t *testing.T) {
 			return operator().Rename(c, "On'Call 2")
 		}, "EXEC msdb.dbo.sp_update_operator @name = N'On''Call', @new_name = N'On''Call 2'"},
 		{"Operator Enable", func(c context.Context) error {
-			return operator().Enable(c)
+			return operator().SetEnabled(c, true)
 		}, "EXEC msdb.dbo.sp_update_operator @name = N'On''Call', @enabled = 1"},
 		{"Operator Disable", func(c context.Context) error {
-			return operator().Disable(c)
+			return operator().SetEnabled(c, false)
 		}, "EXEC msdb.dbo.sp_update_operator @name = N'On''Call', @enabled = 0"},
 		{"Operator Alter category", func(c context.Context) error {
 			return operator().Alter(c, OperatorChanges{Category: new("Cat'1")})
@@ -246,10 +246,10 @@ func TestScriptAgentWrites(t *testing.T) {
 			return schedule().Rename(c, "Daily'3am")
 		}, "EXEC msdb.dbo.sp_update_schedule @schedule_id = 7, @new_name = N'Daily''3am'"},
 		{"Schedule Enable", func(c context.Context) error {
-			return schedule().Enable(c)
+			return schedule().SetEnabled(c, true)
 		}, "EXEC msdb.dbo.sp_update_schedule @schedule_id = 7, @enabled = 1"},
 		{"Schedule Disable", func(c context.Context) error {
-			return schedule().Disable(c)
+			return schedule().SetEnabled(c, false)
 		}, "EXEC msdb.dbo.sp_update_schedule @schedule_id = 7, @enabled = 0"},
 		{"Schedule Alter owner", func(c context.Context) error {
 			return schedule().Alter(c, ScheduleChanges{OwnerLogin: new("CONTOSO\\o'brien")})

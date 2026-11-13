@@ -99,7 +99,7 @@ WHERE  dp.type IN ` + userTypes + ` AND dp.name = @p1`
 // at all — unlike UserByName, it doesn't verify the user
 // exists or populate ID/UserType/DefaultSchema/AuthType/SID/LoginName/etc.
 // (they stay at their zero value). Every write method on *User (Drop,
-// Rename, SetDefaultSchema, SetLogin, AddToRole,
+// Rename, SetDefaultSchema, SetLogin,
 // Grant, ...) only ever needs the user's name, never those cached
 // fields, so this is sufficient for issuing further ALTER-style calls against
 // a user the caller already knows exists — most commonly one it just created

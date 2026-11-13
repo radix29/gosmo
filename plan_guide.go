@@ -8,7 +8,7 @@ package gosmo
 // sp_create_plan_guide call whose argument set is the statement itself.
 //
 // A disabled plan guide is invisible from the query side — the statements it
-// covers simply compile without it — so Enable/Disable is the operation that
+// covers simply compile without it — so SetEnabled is the operation that
 // makes the folder worth having.
 
 import (
@@ -133,7 +133,7 @@ WHERE  g.name = @p1`, []any{name},
 // Database.DatabaseTrigger.
 //
 // Every other field stays at its zero value; PlanGuideByName is what
-// populates them. Enable, Disable and Drop address the guide by name, so
+// populates them. SetEnabled and Drop address the guide by name, so
 // this handle is enough to act on one the caller already knows exists, and is
 // the form to use when there is nothing to read yet — under a
 // WithScript-derived context, PlanGuideByName's lookup is a real read
@@ -159,31 +159,19 @@ func (g *PlanGuide) controlPlanGuide(ctx context.Context, operation, verb string
 	return nil
 }
 
-// Enable enables the plan guide.
-func (g *PlanGuide) Enable(ctx context.Context) error {
-	if err := g.controlPlanGuide(ctx, "ENABLE", "enable"); err != nil {
-		return err
-	}
-	setIfApplied(ctx, &g.IsDisabled, false)
-	return nil
-}
-
-// Disable disables the plan guide. The optimizer then ignores it; the guide
-// itself stays defined.
-func (g *PlanGuide) Disable(ctx context.Context) error {
-	if err := g.controlPlanGuide(ctx, "DISABLE", "disable"); err != nil {
-		return err
-	}
-	setIfApplied(ctx, &g.IsDisabled, true)
-	return nil
-}
-
-// SetEnabled is Enable when on is true and Disable otherwise.
+// SetEnabled enables the plan guide when on is true and disables it
+// otherwise. The optimizer ignores a disabled guide; the guide itself stays
+// defined.
 func (g *PlanGuide) SetEnabled(ctx context.Context, on bool) error {
+	operation, verb := "DISABLE", "disable"
 	if on {
-		return g.Enable(ctx)
+		operation, verb = "ENABLE", "enable"
 	}
-	return g.Disable(ctx)
+	if err := g.controlPlanGuide(ctx, operation, verb); err != nil {
+		return err
+	}
+	setIfApplied(ctx, &g.IsDisabled, !on)
+	return nil
 }
 
 // Drop drops the plan guide.

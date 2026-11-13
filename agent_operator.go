@@ -162,13 +162,7 @@ func (o *Operator) Rename(ctx context.Context, newName string) error {
 	return o.Alter(ctx, OperatorChanges{Name: &newName})
 }
 
-// Enable enables the operator.
-func (o *Operator) Enable(ctx context.Context) error { return o.SetEnabled(ctx, true) }
-
-// Disable disables the operator.
-func (o *Operator) Disable(ctx context.Context) error { return o.SetEnabled(ctx, false) }
-
-// SetEnabled is Enable when on is true and Disable otherwise.
+// SetEnabled enables the operator when on is true and disables it otherwise.
 func (o *Operator) SetEnabled(ctx context.Context, on bool) error {
 	return o.Alter(ctx, OperatorChanges{Enabled: &on})
 }

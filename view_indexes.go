@@ -135,14 +135,8 @@ func (v *View) CreateStatistic(ctx context.Context, req CreateStatisticRequest) 
 	return v.adoptStatistic(st), err
 }
 
-// UpdateAllStatistics updates every statistic on the view — see
-// Table.UpdateAllStatistics.
-func (v *View) UpdateAllStatistics(ctx context.Context, samplePct int) error {
-	return v.carrier().UpdateAllStatistics(ctx, samplePct)
-}
-
-// UpdateStatisticsWith updates every statistic on the view with the sampling
-// opts asks for — see Table.UpdateStatisticsWith.
-func (v *View) UpdateStatisticsWith(ctx context.Context, opts StatisticsUpdateOptions) error {
-	return v.carrier().UpdateStatisticsWith(ctx, opts)
+// UpdateStatistics updates every statistic on the view with the sampling
+// opts asks for — see Table.UpdateStatistics.
+func (v *View) UpdateStatistics(ctx context.Context, opts StatisticsUpdateOptions) error {
+	return v.carrier().UpdateStatistics(ctx, opts)
 }

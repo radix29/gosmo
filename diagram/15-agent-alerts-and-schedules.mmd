@@ -23,8 +23,7 @@ classDiagram
         +LastResponse time.Time
         +Server() *Server
         +IsEventAlert() bool
-        +Enable() error
-        +Disable() error
+        +SetEnabled(on) error
         +Rename(newName) error
         +Alter(ch AlertChanges) error
         +Notifications() []*AlertNotification
@@ -63,8 +62,7 @@ classDiagram
         +LastPagerDate time.Time
         +LastNetSendDate time.Time
         +Server() *Server
-        +Enable() error
-        +Disable() error
+        +SetEnabled(on) error
         +Rename(newName) error
         +Alter(ch OperatorChanges) error
         +NotifyingAlerts() []*OperatorAlert
@@ -120,8 +118,7 @@ classDiagram
         +ModifyDate time.Time
         +Server() *Server
         +Description() string
-        +Enable() error
-        +Disable() error
+        +SetEnabled(on) error
         +Rename(newName) error
         +Alter(ch ScheduleChanges) error
         +Jobs() []*Job

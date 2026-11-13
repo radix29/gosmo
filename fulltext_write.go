@@ -579,32 +579,20 @@ func (i *FullTextIndex) alter(ctx context.Context, what, action string) error {
 	return nil
 }
 
-// Enable turns the index back on; with change tracking it catches up on
-// what changed while it was off.
-func (i *FullTextIndex) Enable(ctx context.Context) error {
-	if err := i.alter(ctx, "enable the full-text index on", "ENABLE"); err != nil {
-		return err
-	}
-	setIfApplied(ctx, &i.IsEnabled, true)
-	return nil
-}
-
-// Disable stops the index being maintained or used by queries; it keeps
-// its data.
-func (i *FullTextIndex) Disable(ctx context.Context) error {
-	if err := i.alter(ctx, "disable the full-text index on", "DISABLE"); err != nil {
-		return err
-	}
-	setIfApplied(ctx, &i.IsEnabled, false)
-	return nil
-}
-
-// SetEnabled is Enable when on is true and Disable otherwise.
+// SetEnabled turns the index on when on is true and off otherwise. A disabled
+// index keeps its data and full-text queries still read it (verified on SQL
+// Server 2025), but changes to the table stop reaching it; enabled again with
+// change tracking, it catches up on what changed while it was off.
 func (i *FullTextIndex) SetEnabled(ctx context.Context, on bool) error {
+	what, action := "disable the full-text index on", "DISABLE"
 	if on {
-		return i.Enable(ctx)
+		what, action = "enable the full-text index on", "ENABLE"
 	}
-	return i.Disable(ctx)
+	if err := i.alter(ctx, what, action); err != nil {
+		return err
+	}
+	setIfApplied(ctx, &i.IsEnabled, on)
+	return nil
 }
 
 // FullTextRepopulation says whether a column change to a full-text index

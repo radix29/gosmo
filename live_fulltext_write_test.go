@@ -249,7 +249,7 @@ func TestLiveFullTextWrites(t *testing.T) {
 		{"SetChangeTracking AUTO", func() error { return h.SetChangeTracking(ctx, FullTextChangeTrackingAuto) }},
 		{"SetStoplist SYSTEM", func() error { return h.SetStoplist(ctx, FullTextStoplistSystem, "") }},
 		{"SetSearchPropertyList OFF", func() error { return h.SetSearchPropertyList(ctx, "") }},
-		{"Disable", func() error { return h.Disable(ctx) }},
+		{"Disable", func() error { return h.SetEnabled(ctx, false) }},
 	} {
 		if err := s.do(); err != nil {
 			t.Fatalf("%s: %v", s.name, err)
@@ -264,11 +264,11 @@ func TestLiveFullTextWrites(t *testing.T) {
 		name string
 		do   func() error
 	}{
-		{"Enable", func() error { return h.Enable(ctx) }},
+		{"Enable", func() error { return h.SetEnabled(ctx, true) }},
 		{"SetStoplist user", func() error { return h.SetStoplist(ctx, FullTextStoplistUser, list) }},
 		{"SetSearchPropertyList", func() error { return h.SetSearchPropertyList(ctx, plist) }},
 		{"SetChangeTracking MANUAL", func() error { return h.SetChangeTracking(ctx, FullTextChangeTrackingManual) }},
-		{"Disable", func() error { return h.Disable(ctx) }},
+		{"Disable", func() error { return h.SetEnabled(ctx, false) }},
 	} {
 		if err := s.do(); err != nil {
 			t.Fatalf("%s: %v", s.name, err)

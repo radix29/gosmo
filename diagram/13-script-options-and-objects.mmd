@@ -71,7 +71,7 @@ classDiagram
         +FragmentationStats(mode) []*IndexFragmentation
         +RebuildAllIndexesWith(opts) error
         +ReorganizeAllIndexes() error
-        +UpdateStatisticsWith(opts) error
+        +UpdateStatistics(opts) error
     }
 
     class StoredProcedure {
@@ -189,8 +189,6 @@ classDiagram
         +Definition() string
         +Drop() error
         +Rename(newName) error
-        +Enable() error
-        +Disable() error
         +SetEnabled(on) error
         +AddSignature(by Signer, kind SignatureKind) error
         +DropSignature(by Signer, kind SignatureKind) error

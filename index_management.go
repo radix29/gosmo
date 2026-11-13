@@ -472,18 +472,16 @@ func (idx *Index) IncludedColumnsSupported() error {
 }
 
 // UpdateStatistics updates the statistics object tied to this index
-// (UPDATE STATISTICS table (index) — every index has an implicit
-// statistics object with the same name). samplePct means what it means to
-// Statistic.Update: 0 is a FULLSCAN, 1-100 SAMPLE n PERCENT.
-//
-// It took no sample until 2026-09-23 and so used the server's default
-// sampling, while Statistic.Update(0) was a FULLSCAN: "update statistics"
-// read the table differently depending on which node it was asked from.
-func (idx *Index) UpdateStatistics(ctx context.Context, samplePct int) error {
-	if err := checkSamplePct("update statistics for index "+idx.Name, samplePct); err != nil {
-		return err
+// (UPDATE STATISTICS table (index) [WITH ...] — every index has an implicit
+// statistics object with the same name), with the sampling opts asks for —
+// see StatisticsUpdateOptions; its zero value lets the server choose the
+// sample, as Statistic.Update's does.
+func (idx *Index) UpdateStatistics(ctx context.Context, opts StatisticsUpdateOptions) error {
+	with, err := opts.withClause()
+	if err != nil {
+		return fmt.Errorf("gosmo: update statistics for index %q: %w", idx.Name, err)
 	}
-	q := fmt.Sprintf("UPDATE STATISTICS %s (%s) WITH %s", idx.on().FullName(), quoteIdent(idx.Name), sampleClause(samplePct))
+	q := fmt.Sprintf("UPDATE STATISTICS %s (%s)", idx.on().FullName(), quoteIdent(idx.Name)) + with
 	if err := idx.on().exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: update statistics for index %q: %w", idx.Name, err)
 	}

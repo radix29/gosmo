@@ -124,7 +124,7 @@ func TestScriptAgentAlterWrites(t *testing.T) {
 			return (&Server{}).ScheduleRef("Daily'2am").Alter(c, ScheduleChanges{Enabled: new(false)})
 		}, "EXEC msdb.dbo.sp_update_schedule @name = N'Daily''2am', @enabled = 0"},
 		{"Schedule Disable from a Ref addresses by name", func(c context.Context) error {
-			return (&Server{}).ScheduleRef("Daily'2am").Disable(c)
+			return (&Server{}).ScheduleRef("Daily'2am").SetEnabled(c, false)
 		}, "EXEC msdb.dbo.sp_update_schedule @name = N'Daily''2am', @enabled = 0"},
 	})
 }

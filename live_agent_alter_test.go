@@ -57,7 +57,7 @@ func TestLiveAgentAlterClearsCategory(t *testing.T) {
 	if err := j.Rename(ctx, jobRenamed); err != nil {
 		t.Fatalf("Job.Rename: %v", err)
 	}
-	if err := j.Disable(ctx); err != nil {
+	if err := j.SetEnabled(ctx, false); err != nil {
 		t.Fatalf("Job.Disable: %v", err)
 	}
 	got, err := srv.JobByName(ctx, jobRenamed)

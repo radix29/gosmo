@@ -47,7 +47,7 @@ func TestRefHandleWriteStatements(t *testing.T) {
 		}, useAppDB + "DROP USER [app]"},
 
 		{"statistic update", func(ctx context.Context, s *Server) error {
-			return s.DatabaseRef("AppDB").TableRef("dbo", "Orders").StatisticRef("ix_o").Update(ctx, 0)
+			return s.DatabaseRef("AppDB").TableRef("dbo", "Orders").StatisticRef("ix_o").Update(ctx, StatisticsUpdateOptions{FullScan: true})
 		}, useAppDB + "UPDATE STATISTICS [dbo].[Orders] [ix_o] WITH FULLSCAN"},
 		{"statistic drop", func(ctx context.Context, s *Server) error {
 			return s.DatabaseRef("AppDB").TableRef("dbo", "Orders").StatisticRef("ix_o").Drop(ctx)

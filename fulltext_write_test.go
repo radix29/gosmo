@@ -125,9 +125,9 @@ func TestFullTextWriteStatements(t *testing.T) {
 				Columns: []FullTextIndexColumnSpec{{Name: "c"}}, KeyIndex: "pk", Catalog: "c"})
 			return err
 		}, u + "CREATE FULLTEXT INDEX ON [dbo].[t] ([c]) KEY INDEX [pk] ON [c]"},
-		{"index enable", func(c context.Context) error { return ix().Enable(c) },
+		{"index enable", func(c context.Context) error { return ix().SetEnabled(c, true) },
 			u + "ALTER FULLTEXT INDEX ON " + tbl + " ENABLE"},
-		{"index disable", func(c context.Context) error { return ix().Disable(c) },
+		{"index disable", func(c context.Context) error { return ix().SetEnabled(c, false) },
 			u + "ALTER FULLTEXT INDEX ON " + tbl + " DISABLE"},
 		{"index add column", func(c context.Context) error {
 			return ix().AddColumn(c, FullTextIndexColumnSpec{Name: "a]b", Language: "0"}, FullTextNoPopulation)
@@ -188,7 +188,7 @@ func TestFullTextCreatesReturnHandlesAndScriptedWritesDoNotMirror(t *testing.T) 
 	}
 
 	i.IsEnabled, i.ChangeTracking, i.StoplistKind, i.Stoplist, i.SearchPropertyList = true, FullTextChangeTrackingAuto, FullTextStoplistUser, "s", "p"
-	_ = i.Disable(ctx)
+	_ = i.SetEnabled(ctx, false)
 	_ = i.SetChangeTracking(ctx, FullTextChangeTrackingOff)
 	_ = i.SetStoplist(ctx, FullTextStoplistOff, "")
 	_ = i.SetSearchPropertyList(ctx, "")
@@ -235,7 +235,7 @@ func TestFullTextWritesRefuseBadRequests(t *testing.T) {
 		"unknown stoplist kind": func() error { return tbl.FullTextIndexRef().SetStoplist(ctx, 9, "") },
 		"unknown population":    func() error { return tbl.FullTextIndexRef().StartPopulation(ctx, "SOME") },
 		"drop without schema":   func() error { return d.TableRef("", "t").FullTextIndexRef().Drop(ctx) },
-		"alter without schema":  func() error { return d.TableRef("", "t").FullTextIndexRef().Enable(ctx) },
+		"alter without schema":  func() error { return d.TableRef("", "t").FullTextIndexRef().SetEnabled(ctx, true) },
 		"stoplist from both": func() error {
 			_, err := d.FullText().CreateStoplist(ctx, CreateFullTextStoplistRequest{Name: "l", FromSystem: true, From: "x"})
 			return err

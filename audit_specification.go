@@ -212,20 +212,11 @@ func (s *Server) CreateServerAuditSpecification(ctx context.Context, spec Create
 	})
 }
 
-// Enable turns the specification on (STATE = ON).
+// SetEnabled turns the specification on (STATE = ON) when on is true and off
+// (STATE = OFF) otherwise.
 //
 // STATE is the one ALTER form the server accepts on an enabled
 // specification.
-func (spec *ServerAuditSpecification) Enable(ctx context.Context) error {
-	return spec.SetEnabled(ctx, true)
-}
-
-// Disable turns the specification off (STATE = OFF).
-func (spec *ServerAuditSpecification) Disable(ctx context.Context) error {
-	return spec.SetEnabled(ctx, false)
-}
-
-// SetEnabled is Enable when on is true and Disable otherwise.
 func (spec *ServerAuditSpecification) SetEnabled(ctx context.Context, on bool) error {
 	state := "OFF"
 	if on {

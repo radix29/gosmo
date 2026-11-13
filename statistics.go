@@ -147,8 +147,8 @@ func scanStatistic(t *Table, scan func(...any) error) (*Statistic, error) {
 // checkSamplePct rejects a sampling percentage outside the 0-100 range
 // SAMPLE n PERCENT accepts, so a caller's out-of-range value fails here
 // with a gosmo error instead of as a server-side syntax error. 0 is always
-// allowed — every caller reads it as "not a percentage" (FULLSCAN, or the
-// server's default sampling).
+// allowed — CreateStatistic reads it as "not a percentage" (the server's
+// default sampling).
 func checkSamplePct(op string, samplePct int) error {
 	if samplePct < 0 || samplePct > 100 {
 		return invalidf("gosmo: %s: sample percentage %d out of range (0-100)", op, samplePct)
@@ -156,39 +156,15 @@ func checkSamplePct(op string, samplePct int) error {
 	return nil
 }
 
-// sampleClause is the WITH option for a sampling percentage checked by
-// checkSamplePct: FULLSCAN for 0, SAMPLE n PERCENT otherwise. Statistic.Update,
-// Table.UpdateAllStatistics and Index.UpdateStatistics share it so the three
-// read "0" the same way.
-func sampleClause(samplePct int) string {
-	if samplePct > 0 {
-		return fmt.Sprintf("SAMPLE %d PERCENT", samplePct)
-	}
-	return "FULLSCAN"
-}
-
-// Update updates this statistic.
-// Pass samplePct=0 for a FULLSCAN; any value 1-100 uses SAMPLE n PERCENT.
-func (st *Statistic) Update(ctx context.Context, samplePct int) error {
-	if err := checkSamplePct("update statistic "+st.Name, samplePct); err != nil {
-		return err
-	}
-	option := sampleClause(samplePct)
-	// UPDATE STATISTICS does not support parameterised stat names.
-	q := fmt.Sprintf("UPDATE STATISTICS %s %s WITH %s",
-		st.on().FullName(), quoteIdent(st.Name), option)
-	if err := st.on().exec(ctx, q); err != nil {
-		return fmt.Errorf("gosmo: update statistic %q: %w", st.Name, err)
-	}
-	return nil
-}
-
 // StatisticsUpdateOptions shapes the WITH clause of an UPDATE STATISTICS
-// made by Table.UpdateStatisticsWith, View.UpdateStatisticsWith and
-// Statistic.UpdateWith. At most one is set; the zero value sends no WITH at
-// all, so the server samples as it chooses — what a bare UPDATE STATISTICS
-// does, and what the samplePct methods cannot ask for (their 0 is a
-// FULLSCAN).
+// made by Statistic.Update, Index.UpdateStatistics, Table.UpdateStatistics
+// and View.UpdateStatistics. At most one is set; the zero value sends no
+// WITH at all, so the server samples as it chooses — what a bare UPDATE
+// STATISTICS does. A full scan is FullScan: true, never a zero percentage.
+//
+// Until 2026-11-13 each of these also had a samplePct form whose 0 meant
+// FULLSCAN — the opposite of this zero value — so one "update statistics"
+// read the table differently depending on which form was called.
 type StatisticsUpdateOptions struct {
 	// FullScan reads every row (WITH FULLSCAN).
 	FullScan bool
@@ -224,9 +200,9 @@ func (o StatisticsUpdateOptions) withClause() (string, error) {
 	return "", nil
 }
 
-// UpdateWith updates this statistic with the sampling opts asks for — see
+// Update updates this statistic with the sampling opts asks for — see
 // StatisticsUpdateOptions; its zero value lets the server choose the sample.
-func (st *Statistic) UpdateWith(ctx context.Context, opts StatisticsUpdateOptions) error {
+func (st *Statistic) Update(ctx context.Context, opts StatisticsUpdateOptions) error {
 	with, err := opts.withClause()
 	if err != nil {
 		return fmt.Errorf("gosmo: update statistic %q: %w", st.Name, err)
@@ -250,22 +226,10 @@ func (st *Statistic) Drop(ctx context.Context) error {
 	return nil
 }
 
-// UpdateAllStatistics updates all statistics on the table.
-func (t *Table) UpdateAllStatistics(ctx context.Context, samplePct int) error {
-	if err := checkSamplePct("update all statistics on "+t.FullName(), samplePct); err != nil {
-		return err
-	}
-	option := sampleClause(samplePct)
-	if err := t.exec(ctx, fmt.Sprintf("UPDATE STATISTICS %s WITH %s", t.FullName(), option)); err != nil {
-		return fmt.Errorf("gosmo: update all statistics on %s: %w", t.FullName(), err)
-	}
-	return nil
-}
-
-// UpdateStatisticsWith updates every statistic on the table with the
-// sampling opts asks for (UPDATE STATISTICS table [WITH ...]) — see
+// UpdateStatistics updates every statistic on the table with the sampling
+// opts asks for (UPDATE STATISTICS table [WITH ...]) — see
 // StatisticsUpdateOptions; its zero value lets the server choose the sample.
-func (t *Table) UpdateStatisticsWith(ctx context.Context, opts StatisticsUpdateOptions) error {
+func (t *Table) UpdateStatistics(ctx context.Context, opts StatisticsUpdateOptions) error {
 	with, err := opts.withClause()
 	if err != nil {
 		return fmt.Errorf("gosmo: update all statistics on %s: %w", t.FullName(), err)

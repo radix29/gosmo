@@ -455,13 +455,7 @@ func (j *Job) Stop(ctx context.Context) error {
 	return nil
 }
 
-// Enable enables the job.
-func (j *Job) Enable(ctx context.Context) error { return j.SetEnabled(ctx, true) }
-
-// Disable disables the job.
-func (j *Job) Disable(ctx context.Context) error { return j.SetEnabled(ctx, false) }
-
-// SetEnabled is Enable when on is true and Disable otherwise.
+// SetEnabled enables the job when on is true and disables it otherwise.
 func (j *Job) SetEnabled(ctx context.Context, on bool) error {
 	return j.Alter(ctx, JobChanges{Enabled: &on})
 }

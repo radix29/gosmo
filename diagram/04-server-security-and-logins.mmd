@@ -122,8 +122,7 @@ classDiagram
         +MappedObject string
         +Server() *Server
         +ResolveMapping() error
-        +Enable() error
-        +Disable() error
+        +SetEnabled(on) error
         +ChangePassword(newPassword, opts ChangePasswordOptions) error
         +AddServerRoleMember(role) error
         +RemoveServerRoleMember(role) error

@@ -4,18 +4,18 @@ package gosmo
 // writes: one Changes struct and one Alter method per family, each emitting
 // a single sp_update_* call naming only the parameters the caller set.
 //
-// Alter is the one way to change these properties. Rename, Enable, Disable
-// and SetEnabled stay beside it — they read better than a struct literal —
-// and each is a one-line wrapper over Alter, so there is one statement
-// builder, one binding path and one receiver update per family. The other
-// per-property setters (Job.SetOwner, Alert.SetTrigger, Schedule.SetFrequency
-// and the rest) were removed on 2026-10-26: each was a second spelling of one
-// Changes field, and five of them for a Properties dialog's five edits were
-// four round trips more than msdb's sp_update_* procedures, which take every
-// updatable parameter in one call, asked for. (They had begun as hand-rolled
-// copies, and the job copy and Alter both missed the empty-category mapping
-// the alert and operator paths had: a cleared job category was mirrored as ""
-// while msdb reported [Uncategorized (Local)].)
+// Alter is the one way to change these properties. Rename and SetEnabled stay
+// beside it — they read better than a struct literal — and each is a one-line
+// wrapper over Alter, so there is one statement builder, one binding path and
+// one receiver update per family. The other per-property setters
+// (Job.SetOwner, Alert.SetTrigger, Schedule.SetFrequency and the rest) were
+// removed on 2026-10-26: each was a second spelling of one Changes field, and
+// five of them for a Properties dialog's five edits were four round trips
+// more than msdb's sp_update_* procedures, which take every updatable
+// parameter in one call, asked for. (They had begun as hand-rolled copies,
+// and the job copy and Alter both missed the empty-category mapping the alert
+// and operator paths had: a cleared job category was mirrored as "" while
+// msdb reported [Uncategorized (Local)].)
 //
 // A nil field means "leave this alone" — the distinction a zero value
 // cannot make, since 0, "" and false are all values these parameters

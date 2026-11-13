@@ -79,7 +79,7 @@ AS
 		t.Errorf("list row disagrees with the by-name read: %+v vs %+v", got, tr)
 	}
 
-	if err := tr.Disable(ctx); err != nil {
+	if err := tr.SetEnabled(ctx, false); err != nil {
 		t.Fatalf("Disable: %v", err)
 	}
 	after, err := s.ServerTriggerByName(ctx, liveServerTriggerName)
@@ -101,7 +101,7 @@ AS
 		t.Errorf("script is missing a half:\n%s", script)
 	}
 
-	if err := after.Enable(ctx); err != nil {
+	if err := after.SetEnabled(ctx, true); err != nil {
 		t.Fatalf("Enable: %v", err)
 	}
 	if back, err := s.ServerTriggerByName(ctx, liveServerTriggerName); err != nil || !back.IsEnabled {

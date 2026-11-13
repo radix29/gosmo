@@ -95,12 +95,8 @@ func TestServerAuditStateStatements(t *testing.T) {
 	} {
 		ctx, col := WithScript(context.Background())
 		a := &ServerAudit{server: &Server{}, Name: "odd]name"}
-		set := a.Disable
-		if tc.on {
-			set = a.Enable
-		}
-		if err := set(ctx); err != nil {
-			t.Fatalf("Enable/Disable: %v", err)
+		if err := a.SetEnabled(ctx, tc.on); err != nil {
+			t.Fatalf("SetEnabled: %v", err)
 		}
 		if len(col.Statements()) != 1 || col.Statements()[0] != tc.want {
 			t.Errorf("got %v, want [%s]", col.Statements(), tc.want)

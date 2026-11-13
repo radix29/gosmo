@@ -167,7 +167,7 @@ write, drop them; never mutate pre-existing objects.
   under it:
   - A `Create*` reading its object back returns a name-only handle under
     `Scripting(ctx)` via `createdObject` (`helpers.go`); a new one must too.
-  - A write mirroring onto the receiver (`Rename` → `.Name`, `Enable` →
+  - A write mirroring onto the receiver (`Rename` → `.Name`, `SetEnabled` →
     `.IsEnabled`) goes through `setIfApplied`, never direct assignment.
   - Bound parameters in a captured statement are substituted to literals
     (`bindScriptArgs`) — nothing binds `@p1` in a query editor.

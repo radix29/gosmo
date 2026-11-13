@@ -153,8 +153,7 @@ classDiagram
         +History(limit) []*JobHistoryEntry
         +Start(stepName) error
         +Stop() error
-        +Enable() error
-        +Disable() error
+        +SetEnabled(on) error
         +Rename(newName) error
         +Alter(ch JobChanges) error
         +Drop() error

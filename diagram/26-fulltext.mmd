@@ -86,8 +86,7 @@ classDiagram
         +Columns []FullTextIndexColumn
         +Database() *Database
         +Populations() []FullTextPopulation
-        +Enable() error
-        +Disable() error
+        +SetEnabled(on) error
         +AddColumn(FullTextIndexColumnSpec, pop FullTextRepopulation) error
         +DropColumn(name, pop FullTextRepopulation) error
         +SetChangeTracking(FullTextChangeTracking) error

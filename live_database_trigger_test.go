@@ -95,7 +95,7 @@ AS
 		t.Errorf("ObjectTriggers(dbo.V) = %+v, want just tr_V", viewTrigs)
 	}
 
-	if err := d.DatabaseTriggerRef(ddlName).Disable(ctx); err != nil {
+	if err := d.DatabaseTriggerRef(ddlName).SetEnabled(ctx, false); err != nil {
 		t.Fatalf("Disable: %v", err)
 	}
 	after, err := d.DatabaseTriggerByName(ctx, ddlName)
@@ -122,7 +122,7 @@ AS
 		}
 	}
 
-	if err := d.DatabaseTriggerRef(ddlName).Enable(ctx); err != nil {
+	if err := d.DatabaseTriggerRef(ddlName).SetEnabled(ctx, true); err != nil {
 		t.Fatalf("Enable: %v", err)
 	}
 	if back, err := d.DatabaseTriggerByName(ctx, ddlName); err != nil || !back.IsEnabled {
