@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"math/big"
 	"strconv"
 	"strings"
 	"time"
@@ -297,6 +298,11 @@ func decimalText(neg bool, intPart, frac string) string {
 // numberText is an integer or a float as decimal text, a float rounded to
 // places: what decimal and money check like a caller's text. ok is false
 // for any other value, and for a float that is not finite.
+//
+// The float is rounded as CAST rounds it: its exact binary value, an exact
+// tie away from zero (2.5 → 3, 0.125 → 0.13). strconv rounds a tie to even
+// (2, 0.12), so a tie is found and rounded here; 1.005, whose binary value
+// is just below 1.005, stays 1.00 either way.
 func numberText(v any, places int) (text string, ok bool) {
 	switch v := v.(type) {
 	case int64:
@@ -305,9 +311,37 @@ func numberText(v any, places int) (text string, ok bool) {
 		if math.IsInf(v, 0) || math.IsNaN(v) {
 			return "", false
 		}
+		// One digit more, correctly rounded, ends in 5 for every exact tie
+		// (and some values near one); only then is exactness checked.
+		if t := strconv.FormatFloat(v, 'f', places+1, 64); t[len(t)-1] == '5' {
+			if r, _ := new(big.Rat).SetString(t); r.Cmp(new(big.Rat).SetFloat64(v)) == 0 {
+				return roundUpLastDigit(strings.TrimSuffix(t[:len(t)-1], ".")), true
+			}
+		}
 		return strconv.FormatFloat(v, 'f', places, 64), true
 	}
 	return "", false
+}
+
+// roundUpLastDigit adds one to the last digit of a decimal text's magnitude,
+// carrying: "-0.12" → "-0.13", "9.99" → "10.00".
+func roundUpLastDigit(s string) string {
+	b := []byte(s)
+	for i := len(b) - 1; i >= 0; i-- {
+		switch {
+		case b[i] == '.':
+			continue
+		case b[i] == '9':
+			b[i] = '0'
+			continue
+		case b[i] >= '0' && b[i] < '9':
+			b[i]++
+			return string(b)
+		}
+		// The sign: every digit carried.
+		return string(b[:i+1]) + "1" + string(b[i+1:])
+	}
+	return "1" + string(b)
 }
 
 // decimalConv returns the digits as text, which go-mssqldb scales to the

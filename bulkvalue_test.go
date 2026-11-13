@@ -68,7 +68,26 @@ func TestBulkConverterValues(t *testing.T) {
 		{BulkColumn{Type: "numeric", Precision: 5, Scale: 2}, ".5", "0.5"},
 		{BulkColumn{Type: "decimal", Precision: 5, Scale: 2}, 999, "999"},
 		{BulkColumn{Type: "decimal", Precision: 5, Scale: 2}, 1.005, "1.00"}, // 1.005 is 1.00499… in binary
-		{BulkColumn{Type: "decimal", Precision: 5, Scale: 2}, -0.125, "-0.12"},
+		// An exact binary tie rounds away from zero, as CAST does
+		// (strconv rounds it to even); a value just off the tie rounds to
+		// nearest. Live: TestLiveBulkInsertRoundsFloatsAsInsert.
+		{BulkColumn{Type: "decimal", Precision: 5, Scale: 2}, -0.125, "-0.13"},
+		{BulkColumn{Type: "decimal", Precision: 5, Scale: 2}, 0.125, "0.13"},
+		{BulkColumn{Type: "decimal", Precision: 5, Scale: 2}, 0.375, "0.38"},
+		{BulkColumn{Type: "decimal", Precision: 5, Scale: 0}, 2.5, "3"},
+		{BulkColumn{Type: "decimal", Precision: 5, Scale: 0}, -2.5, "-3"},
+		{BulkColumn{Type: "decimal", Precision: 5, Scale: 0}, 0.5, "1"},
+		{BulkColumn{Type: "decimal", Precision: 1, Scale: 0}, 0.5, "1"},
+		{BulkColumn{Type: "decimal", Precision: 5, Scale: 0}, -0.5, "-1"},
+		{BulkColumn{Type: "decimal", Precision: 3, Scale: 0}, 99.5, "100"},
+		{BulkColumn{Type: "decimal", Precision: 5, Scale: 1}, 9.75, "9.8"},
+		{BulkColumn{Type: "decimal", Precision: 5, Scale: 2}, 9.995, "9.99"}, // 9.99499… in binary
+		{BulkColumn{Type: "decimal", Precision: 5, Scale: 2}, 1.015, "1.01"}, // 1.01499…
+		{BulkColumn{Type: "decimal", Precision: 5, Scale: 2}, 1.025, "1.02"}, // 1.02499…
+		{BulkColumn{Type: "decimal", Precision: 5, Scale: 2}, 1.045, "1.04"}, // 1.04499…
+		{BulkColumn{Type: "money"}, 0.03125, "0.0313"},
+		{BulkColumn{Type: "money"}, -0.03125, "-0.0313"},
+		{BulkColumn{Type: "money"}, 2.00005, "2.0000"}, // 2.0000499…
 		{BulkColumn{Type: "decimal", Precision: 38, Scale: 0}, strings.Repeat("9", 38), strings.Repeat("9", 38)},
 		{BulkColumn{Type: "money"}, "12.50", "12.50"},
 		{BulkColumn{Type: "money"}, "-922337203685477.5808", "-922337203685477.5808"},
@@ -166,6 +185,7 @@ func TestBulkConverterRefuses(t *testing.T) {
 		{BulkColumn{Type: "decimal", Precision: 5, Scale: 2}, "1234.5", "does not fit decimal(5,2)"},
 		{BulkColumn{Type: "decimal", Precision: 5, Scale: 2}, 1000, "does not fit decimal(5,2)"},
 		{BulkColumn{Type: "decimal", Precision: 5, Scale: 2}, 999.995, "does not fit decimal(5,2)"},
+		{BulkColumn{Type: "decimal", Precision: 3, Scale: 0}, 999.5, "does not fit decimal(3,0)"},
 		{BulkColumn{Type: "decimal", Precision: 5, Scale: 2}, "1.234", "more than 2 decimal places"},
 		{BulkColumn{Type: "decimal", Precision: 5, Scale: 2}, "1e3", "not a decimal"},
 		{BulkColumn{Type: "decimal", Precision: 5, Scale: 2}, math.NaN(), "not a finite number"},
