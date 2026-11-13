@@ -236,7 +236,7 @@ func TestIndexOnClauseIsRelativeToTheTable(t *testing.T) {
 	view := viewIndexes([]*Index{
 		{Name: "cx", Type: IndexTypeClustered, IsClustered: true, IsUnique: true, KeyColumns: cols, DataSpace: fg2},
 		nc(primary),
-	}, "[dbo].[v]", plain)
+	}, nil, "[dbo].[v]", plain)
 	if !strings.Contains(view, "ON [PRIMARY]") {
 		t.Errorf("view index lost its ON [PRIMARY]:\n%s", view)
 	}

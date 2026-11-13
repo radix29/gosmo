@@ -446,3 +446,88 @@ func TestLiveRoundTripGraphSelect(t *testing.T) {
 		livePinnedRun(t, db, ctx, d.Name, script)
 	}
 }
+
+// liveUserStatistics is every user-created statistic with its options and
+// columns, the shape a table or view script must restate.
+const liveUserStatistics = `
+SELECT OBJECT_NAME(s.object_id) + '.' + s.name + ' nr=' + CAST(s.no_recompute AS varchar(1))
+       + ' f=' + ISNULL(s.filter_definition, '-') + ' cols=' +
+       STUFF((SELECT ',' + c.name FROM sys.stats_columns sc
+              JOIN sys.columns c ON c.object_id = sc.object_id AND c.column_id = sc.column_id
+              WHERE sc.object_id = s.object_id AND sc.stats_id = s.stats_id
+              ORDER BY sc.stats_column_id FOR XML PATH('')), 1, 1, '') AS st
+FROM   sys.stats s
+WHERE  s.user_created = 1 AND OBJECTPROPERTY(s.object_id, 'IsMSShipped') = 0
+ORDER  BY 1`
+
+// TestLiveRoundTripUserStatistics: a table's and an indexed view's
+// user-created statistics (ScriptOptions.Statistics) come back from
+// ScriptTable/ScriptView and from ScriptDatabaseObjectList, while the
+// auto-created and index-owned ones are left to the server. Before
+// 2026-11-14 neither script mentioned them.
+func TestLiveRoundTripUserStatistics(t *testing.T) {
+	db, ctx, done := liveDB(t)
+	defer done()
+	src, dropSrc := liveScratchDB(t, db, ctx, "gz_rt_stats_src")
+	defer dropSrc()
+	dst, dropDst := liveScratchDB(t, db, ctx, "gz_rt_stats_dst")
+	defer dropDst()
+	dst2, dropDst2 := liveScratchDB(t, db, ctx, "gz_rt_stats_dst2")
+	defer dropDst2()
+
+	liveExecIn(t, src, ctx,
+		`CREATE TABLE dbo.t (id int NOT NULL CONSTRAINT pk_t PRIMARY KEY, pid int NULL, qty int NULL, note varchar(20) NULL)`,
+		`CREATE INDEX ix_pid ON dbo.t (pid)`,
+		`CREATE STATISTICS st1 ON dbo.t (pid, qty) WITH NORECOMPUTE`,
+		`CREATE STATISTICS [st 2] ON dbo.t (qty) WHERE qty > 10`,
+		`INSERT dbo.t VALUES (1, 1, 5, 'a'), (2, 2, 50, 'b')`,
+		// Auto-creates a _WA_Sys_ statistic on note.
+		`SELECT COUNT(*) FROM dbo.t WHERE note = 'a'`,
+		`CREATE VIEW dbo.v WITH SCHEMABINDING AS SELECT id, pid, qty FROM dbo.t`,
+		`CREATE UNIQUE CLUSTERED INDEX cix_v ON dbo.v (id)`,
+		`CREATE STATISTICS st_v ON dbo.v (pid, qty)`,
+	)
+	want := liveRowsAsStrings(t, src, ctx, liveUserStatistics)
+	if len(want) != 3 {
+		t.Fatalf("setup: want three user statistics, got %v", want)
+	}
+	if auto := liveRowsAsStrings(t, src, ctx, `SELECT name FROM sys.stats WHERE auto_created = 1 AND object_id = OBJECT_ID('dbo.t')`); len(auto) == 0 {
+		t.Log("no auto-created statistic appeared; the exclusion is not exercised")
+	}
+
+	sc := NewScripter(src, DefaultScriptOptions())
+	tbl, err := sc.ScriptTable(ctx, "dbo", "t")
+	if err != nil {
+		t.Fatalf("ScriptTable: %v", err)
+	}
+	view, err := sc.ScriptView(ctx, "dbo", "v")
+	if err != nil {
+		t.Fatalf("ScriptView: %v", err)
+	}
+	if strings.Contains(tbl, "_WA_Sys_") || strings.Contains(tbl, "STATISTICS [ix_pid]") {
+		t.Errorf("table script restates a statistic that is not user-created:\n%s", tbl)
+	}
+	livePinnedRun(t, db, ctx, dst.Name, tbl)
+	livePinnedRun(t, db, ctx, dst.Name, view)
+	if got := liveRowsAsStrings(t, dst, ctx, liveUserStatistics); !slices.Equal(got, want) {
+		t.Errorf("object scripts: statistics differ\n got %v\nwant %v\n%s\n%s", got, want, tbl, view)
+	}
+
+	res, err := sc.ScriptDatabaseObjectList(ctx, ObjectScriptOptions{})
+	if err != nil {
+		t.Fatalf("ScriptDatabaseObjectList: %v", err)
+	}
+	if len(res.Warnings) != 0 {
+		t.Errorf("warnings: %v", res.Warnings)
+	}
+	livePinnedRun(t, db, ctx, dst2.Name, res.String())
+	if got := liveRowsAsStrings(t, dst2, ctx, liveUserStatistics); !slices.Equal(got, want) {
+		t.Errorf("database script: statistics differ\n got %v\nwant %v\n%s", got, want, res.String())
+	}
+
+	opts := DefaultScriptOptions()
+	opts.Statistics = false
+	if off, err := NewScripter(src, opts).ScriptTable(ctx, "dbo", "t"); err != nil || strings.Contains(off, "CREATE STATISTICS") {
+		t.Errorf("Statistics off: %v\n%s", err, off)
+	}
+}

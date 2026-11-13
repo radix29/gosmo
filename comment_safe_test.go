@@ -134,6 +134,16 @@ func TestScriptCommentsContainHostileNames(t *testing.T) {
 			}
 			return (&DatabaseObjectScript{Warnings: warn}).String()
 		},
+		"table statistic with a hidden filter": func(n string) string {
+			return buildTableScript(n, n, n, tableScriptParts{cols: col, stats: []scriptedStatistic{
+				{st: &Statistic{Name: n, HasFilter: true}, cols: []string{"id"}}}}, DefaultScriptOptions())
+		},
+		"database objects warning on a hidden statistic filter": func(n string) string {
+			tbl := &Table{Schema: n, Name: n, ObjectID: 1}
+			warn := hiddenStatisticWarnings(&tablePrefetch{stats: map[int][]scriptedStatistic{
+				1: {{st: &Statistic{Name: n, HasFilter: true}, cols: []string{"id"}}}}}, []*Table{tbl})
+			return (&DatabaseObjectScript{Warnings: warn}).String()
+		},
 		"database objects warning on a reference left out": func(n string) string {
 			_, warn, err := scriptQueue(t.Context(), []pendingObject{
 				{obj: ScriptedObject{Kind: ScriptedProcedure, Schema: n, Name: n}, late: []string{objectKey('o', n, n)},

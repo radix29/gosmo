@@ -86,7 +86,8 @@ type DatabaseObjectScript struct {
 	// scripted procedure,
 	// function or synonym naming an object the script leaves out, which SQL
 	// Server resolves only when it runs ("… references …, which is not
-	// scripted"). Each is comment-safe (tsql.CommentSafe; built by
+	// scripted"), and last each table statistic whose filter the login
+	// cannot see ("statistic … is not scripted"). Each is comment-safe (tsql.CommentSafe; built by
 	// warningf): it carries object names, which may hold a CR or LF, and
 	// String writes it into a -- comment, where a line break would end the
 	// comment and run the rest of the name as T-SQL.
@@ -305,9 +306,10 @@ func (sc *Scripter) ScriptDatabaseObjectList(ctx context.Context, o ObjectScript
 		scriptedTables = append(scriptedTables, t)
 		put('o', 4, ScriptedTable, t.Schema, t.Name, func() (string, error) { return s.scriptTable(ctx, t) })
 	}
-	if s.tables, err = d.prefetchTables(ctx, scriptedTables); err != nil {
+	if s.tables, err = d.prefetchTables(ctx, scriptedTables, s.opts.Statistics && s.opts.verb() != ScriptDrop); err != nil {
 		return nil, err
 	}
+	statWarnings := hiddenStatisticWarnings(s.tables, scriptedTables)
 	funcs, err := d.UserDefinedFunctions(ctx, ObjectFilter{})
 	if err != nil {
 		return nil, err
@@ -503,7 +505,28 @@ func (sc *Scripter) ScriptDatabaseObjectList(ctx context.Context, o ObjectScript
 		return nil, err
 	}
 	res.Warnings = append(res.Warnings, lateWarnings...)
+	res.Warnings = append(res.Warnings, statWarnings...)
 	return res, nil
+}
+
+// hiddenStatisticWarnings is a Warning for each prefetched statistic whose
+// filter the login cannot see, which the table's script leaves as a comment
+// (scriptTableStatistic). A view's are not checked: a login without VIEW
+// DEFINITION on a view cannot script the view at all.
+func hiddenStatisticWarnings(pre *tablePrefetch, tables []*Table) []string {
+	if pre == nil {
+		return nil
+	}
+	var out []string
+	for _, t := range tables {
+		for _, st := range pre.stats[t.ObjectID] {
+			if st.st.HasFilter && st.st.FilterDef == "" {
+				out = append(out, warningf("statistic %s on %s is not scripted: its filter is not visible to the login",
+					quoteIdent(st.st.Name), qualifiedName(t.Schema, t.Name)))
+			}
+		}
+	}
+	return out
 }
 
 // pendingObject is one object of a database script, queued with the call

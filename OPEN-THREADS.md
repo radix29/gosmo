@@ -133,6 +133,10 @@ What those four kinds still leave out:
   from 2022; 2026-10-02) — replay them on the Managed Instance or the first
   PolyBase instance. The data source's database-scoped credential is named, not
   scripted.
+  Its user-created statistics are not scripted (`ScriptOptions.Statistics`
+  covers disk-based tables and indexed views): `CREATE STATISTICS` on an
+  external table imports the remote data to build them, too heavy for a
+  script to do unasked.
 - **Always Encrypted**: the column master and column encryption keys are
   referenced by name and must exist where the script runs.
 

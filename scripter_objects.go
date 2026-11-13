@@ -2,10 +2,13 @@ package gosmo
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"math/big"
 	"strings"
+
+	"github.com/radix29/gosmo/tsql"
 )
 
 // ============================================================
@@ -228,6 +231,104 @@ func buildStatisticScript(st *Statistic, cols []string, tableName string, opts S
 		sb.WriteString(";\nGO\n")
 		return nil
 	})
+}
+
+// scriptedStatistic is one user-created statistic as a table or view script
+// restates it (ScriptOptions.Statistics): the Statistic's own fields and its
+// columns in stat-column order.
+type scriptedStatistic struct {
+	st   *Statistic
+	cols []string
+}
+
+// userStatisticsSelect reads the user-created statistics of the objects
+// object selects ("= @p1", or allTables), one row per statistic column,
+// ordered so each statistic's rows are adjacent. An index's own statistic
+// and an auto-created one have user_created = 0.
+func userStatisticsSelect(object string) string {
+	return `
+SELECT s.name, s.has_filter, ISNULL(s.filter_definition, ''),
+       s.no_recompute, s.is_incremental, c.name, s.object_id
+FROM   sys.stats s
+JOIN   sys.stats_columns sc ON sc.object_id = s.object_id AND sc.stats_id = s.stats_id
+JOIN   sys.columns c ON c.object_id = sc.object_id AND c.column_id = sc.column_id
+WHERE  s.user_created = 1 AND s.object_id ` + object + `
+ORDER  BY s.object_id, s.name, sc.stats_column_id`
+}
+
+// scanUserStatistics groups userStatisticsSelect's rows by object_id. owner
+// gives the table each statistic is on, nil for one to drop.
+func scanUserStatistics(rows *sql.Rows, owner func(id int) *Table) (map[int][]scriptedStatistic, error) {
+	out := map[int][]scriptedStatistic{}
+	for rows.Next() {
+		var id int
+		var col string
+		st := &Statistic{IsUserCreated: true}
+		if err := rows.Scan(&st.Name, &st.HasFilter, &st.FilterDef, &st.NoRecompute, &st.IsIncremental, &col, &id); err != nil {
+			return nil, err
+		}
+		t := owner(id)
+		if t == nil {
+			continue
+		}
+		list := out[id]
+		if n := len(list); n > 0 && list[n-1].st.Name == st.Name {
+			list[n-1].cols = append(list[n-1].cols, col)
+			continue
+		}
+		st.table = t
+		out[id] = append(list, scriptedStatistic{st: st, cols: []string{col}})
+	}
+	return out, rows.Err()
+}
+
+// scriptedStatistics is what ScriptOptions.Statistics adds to t's script:
+// its user-created statistics, from sc.tables when that covers t, and none
+// when the option is off or the verb is a bare DROP. t needs only its
+// ObjectID, so a Table carrying a view's serves ScriptView.
+func (sc *Scripter) scriptedStatistics(ctx context.Context, t *Table) ([]scriptedStatistic, error) {
+	if !sc.opts.Statistics || sc.opts.verb() == ScriptDrop {
+		return nil, nil
+	}
+	if pre := sc.tables; pre != nil {
+		if _, ok := pre.options[t.ObjectID]; ok {
+			return pre.stats[t.ObjectID], nil
+		}
+	}
+	rows, err := sc.db.query(ctx, userStatisticsSelect("= @p1"), t.ObjectID)
+	if err != nil {
+		return nil, fmt.Errorf("gosmo: read statistics for %s: %w", t.FullName(), err)
+	}
+	defer rows.Close()
+	stats, err := scanUserStatistics(rows.Rows, func(int) *Table { return t })
+	if err != nil {
+		return nil, fmt.Errorf("gosmo: read statistics for %s: %w", t.FullName(), err)
+	}
+	return stats[t.ObjectID], nil
+}
+
+// scriptTableStatistic renders one statistic of a table or view script as
+// CREATE STATISTICS, guarded as ScriptStatistic guards it. The surrounding
+// script carries the verb, so the statistic's own envelope is always the
+// CREATE: under DROP AND CREATE the DROP TABLE has already removed it.
+//
+// A statistic whose filter the login cannot see becomes a comment naming it,
+// where ScriptStatistic refuses: recreated unfiltered it would be a different
+// statistic, and one statistic must not fail the whole table.
+func scriptTableStatistic(s scriptedStatistic, tableName string, opts ScriptOptions) string {
+	if s.st.HasFilter && s.st.FilterDef == "" {
+		return "-- " + tsql.CommentSafe(fmt.Sprintf("Statistic %s on %s is not scripted: its filter is not visible to the login (it needs VIEW DEFINITION).",
+			quoteIdent(s.st.Name), tableName)) + "\n\n"
+	}
+	create := opts
+	create.Verb, create.ScriptDrops = ScriptCreate, false
+	script, err := buildStatisticScript(s.st, s.cols, tableName, create)
+	if err != nil {
+		// Unreachable from the catalog — a statistic has a name and a
+		// column — but a script must not lose one in silence.
+		return "-- " + tsql.CommentSafe(fmt.Sprintf("Statistic %s on %s is not scripted: %v", quoteIdent(s.st.Name), tableName, err)) + "\n\n"
+	}
+	return script + "\n"
 }
 
 // ScriptForeignKey generates the script for one foreign key, with its

@@ -106,6 +106,9 @@ func (sc *Scripter) scriptTable(ctx context.Context, t *Table) (string, error) {
 			return "", err
 		}
 	}
+	if p.stats, err = sc.scriptedStatistics(ctx, t); err != nil {
+		return "", err
+	}
 	if p.table.IsFileTable {
 		return sc.withTableExtendedProperties(ctx, t, p, buildFileTableScript(schema, name, sc.db.Name, p, sc.opts))
 	}
@@ -145,8 +148,11 @@ type tableScriptParts struct {
 	fks     []*ForeignKey
 	checks  []*CheckConstraint
 	ecs     []*EdgeConstraint
-	ds      DataSpace
-	table   tableScriptOptions
+	// stats are the user-created statistics, read only when
+	// ScriptOptions.Statistics asks for them and the verb creates.
+	stats []scriptedStatistic
+	ds    DataSpace
+	table tableScriptOptions
 	// boundBy and referencedBy are what block the DROP — read only for a
 	// script that has one.
 	boundBy      []schemaBoundDependent
@@ -536,7 +542,8 @@ func columnBindings(cols []*Column, fullName string) string {
 // writeTableDependents writes the statements that follow a CREATE TABLE:
 // the indexes and unique constraints not declared inside it (inline, by
 // name, and the primary key), the foreign keys, check constraints and edge
-// constraints, and last the disabling of any disabled index.
+// constraints, the user-created statistics, and last the disabling of any
+// disabled index.
 func writeTableDependents(sb *strings.Builder, indexes []*Index, inline map[string]bool,
 	p tableScriptParts, fullName string, opts ScriptOptions) {
 	// Non-PK indexes. A unique *constraint* is backed by an index in
@@ -579,9 +586,13 @@ func writeTableDependents(sb *strings.Builder, indexes []*Index, inline map[stri
 		}
 	}
 
+	for _, st := range p.stats {
+		sb.WriteString(scriptTableStatistic(st, fullName, opts))
+	}
+
 	// Disabled indexes are disabled last. Disabling a clustered index takes
 	// the whole table offline, so doing it where the index is created would
-	// fail every CREATE INDEX and ADD CONSTRAINT after it.
+	// fail every CREATE INDEX, ADD CONSTRAINT and CREATE STATISTICS after it.
 	for _, idx := range indexes {
 		sb.WriteString(indexDisableStatement(idx, fullName))
 	}

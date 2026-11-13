@@ -1302,6 +1302,16 @@ drops the view's indexes with their properties while `ALTER` keeps the rest.
 level, CREATE, ALTER and DROP AND CREATE, and every securable above. What is still not scripted is in
 `OPEN-THREADS.md` § Scripter fidelity.
 
+`ScriptOptions.Statistics` (on in `DefaultScriptOptions`, where SSMS defaults
+to "Do not script statistics") appends to `ScriptTable` and `ScriptView` — and
+so to `ScriptDatabaseObjects`, through the table prefetch — one guarded `CREATE
+STATISTICS` per user-created statistic, with its columns, filter,
+`NORECOMPUTE` and `INCREMENTAL`, after the constraints (a view's indexes) and
+before any index is disabled. An auto-created `_WA_Sys_` statistic and an
+index's own are left to the server. One whose filter the login cannot see is a
+comment naming it, and a `DatabaseObjectScript` warning, not a refusal of the
+whole table (`TestLiveRoundTripUserStatistics`).
+
 Beyond a plain disk-based table it scripts graph node and edge tables (`AS
 NODE`/`AS EDGE`, without the internal columns and the automatic
 `GRAPH_UNIQUE_INDEX_…`, an index on a pseudo-column as `$from_id`/`$to_id`,
