@@ -248,7 +248,7 @@ func buildRestoreStatement(opts RestoreOptions, killSessions bool) (string, erro
 		withs = append(withs, fmt.Sprintf("STATS = %d", opts.Stats))
 	}
 	if opts.StopAt != nil {
-		withs = append(withs, fmt.Sprintf("STOPAT = '%s'", opts.StopAt.Format("2006-01-02T15:04:05.000")))
+		withs = append(withs, "STOPAT = "+datetimeLiteral(*opts.StopAt))
 	}
 	if len(withs) > 0 {
 		fmt.Fprintf(&sb, "\nWITH %s", strings.Join(withs, ",\n     "))

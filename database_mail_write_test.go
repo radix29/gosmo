@@ -294,7 +294,7 @@ func TestMailServerStatementShapes(t *testing.T) {
 			"@subject = N'Database Mail Test', @body = N'it''s a test', @mailitem_id = @mailitem_id OUTPUT;\n" +
 			"SELECT @mailitem_id AS mailitem_id;"}},
 		{"purge items", func(ctx context.Context) error { return s.Mail().DeleteItems(ctx, before, MailFailed) },
-			[]string{"EXEC msdb.dbo.sysmail_delete_mailitems_sp @sent_before = '2026-10-01T13:04:05.000', @sent_status = N'failed'"}},
+			[]string{"EXEC msdb.dbo.sysmail_delete_mailitems_sp @sent_before = '2026-10-01T13:04:05', @sent_status = N'failed'"}},
 		{"purge log", func(ctx context.Context) error { return s.Mail().DeleteLog(ctx, time.Time{}, "") },
 			[]string{"EXEC msdb.dbo.sysmail_delete_log_sp"}},
 	}

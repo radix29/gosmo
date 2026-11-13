@@ -314,6 +314,11 @@ func TestScriptLiteral(t *testing.T) {
 		// go-mssqldb sends a nil slice as NULL, not as an empty value.
 		{[]byte(nil), "NULL"},
 		{time.Date(2026, 7, 30, 14, 5, 6, 0, time.UTC), "'2026-07-30T14:05:06'"},
+		// timeLiteral: the fraction trimmed to the digits it needs, the
+		// offset dropped (with it, datetime refuses the text).
+		{time.Date(2026, 7, 30, 14, 5, 6, 120_000_000, time.UTC), "'2026-07-30T14:05:06.12'"},
+		{time.Date(2026, 7, 30, 14, 5, 6, 123_456_789, time.UTC), "'2026-07-30T14:05:06.1234567'"},
+		{time.Date(2026, 7, 30, 14, 5, 6, 0, time.FixedZone("", 2*3600)), "'2026-07-30T14:05:06'"},
 	}
 	for _, tc := range cases {
 		got, err := scriptLiteral(tc.in)
@@ -323,6 +328,21 @@ func TestScriptLiteral(t *testing.T) {
 		}
 		if got != tc.want {
 			t.Errorf("scriptLiteral(%#v) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
+// TestDatetimeLiteral: a datetime literal takes at most three fractional
+// digits (Msg 241 for more, live on 17), so the text a datetime target gets
+// is truncated to the millisecond, never rounded up past it.
+func TestDatetimeLiteral(t *testing.T) {
+	for in, want := range map[time.Time]string{
+		time.Date(2026, 7, 30, 14, 5, 6, 0, time.UTC):           "'2026-07-30T14:05:06'",
+		time.Date(2026, 7, 30, 14, 5, 6, 123_999_999, time.UTC): "'2026-07-30T14:05:06.123'",
+		time.Date(2026, 7, 30, 14, 5, 6, 999_999, time.UTC):     "'2026-07-30T14:05:06'",
+	} {
+		if got := datetimeLiteral(in); got != want {
+			t.Errorf("datetimeLiteral(%v) = %s, want %s", in, got, want)
 		}
 	}
 }

@@ -213,7 +213,7 @@ func (dm Mail) DeleteItems(ctx context.Context, before time.Time, status MailSen
 	s := dm.server
 	var a procArgs
 	if !before.IsZero() {
-		a.raw("@sent_before", mailDateLiteral(before))
+		a.raw("@sent_before", datetimeLiteral(before))
 	}
 	if status != "" {
 		a.str("@sent_status", string(status))
@@ -232,7 +232,7 @@ func (dm Mail) DeleteLog(ctx context.Context, before time.Time, eventType MailEv
 	s := dm.server
 	var a procArgs
 	if !before.IsZero() {
-		a.raw("@logged_before", mailDateLiteral(before))
+		a.raw("@logged_before", datetimeLiteral(before))
 	}
 	if eventType != "" {
 		a.str("@event_type", string(eventType))

@@ -184,6 +184,12 @@ write, drop them; never mutate pre-existing objects.
   `Options`/`Settings`. A shared CREATE-and-ALTER `WITH` list
   (`ResourcePoolOptions`) or a T-SQL `SET (…)` mirror (`QueryStoreOptions`) is
   not a patch and keeps its name.
+- **A description of one part — a file, replica, column, listener — is
+  `XSpec`**: an element of a request's list (`DatabaseFileSpec`,
+  `AvailabilityReplicaSpec`, `FullTextIndexColumnSpec`) or the argument of a
+  write that adds or emits that part (`AvailabilityGroup.AddListener`'s
+  `AvailabilityListenerSpec`, `Certificate.Backup`'s
+  `CertificateBackupSpec`). Plain fields, no `Ref`, no writes of its own.
 - **A write on an existing object is a method on its handle** —
   `db.ViewRef(s, n).Drop(ctx)`, `t.Rename(ctx, n)` — never
   `Parent.VerbX(ctx, name, …)`. A new family gets its `Ref` and writes together.

@@ -110,6 +110,10 @@ func secretWrites() []secretWrite {
 			return errOnly(s.Mail().CreateAccount(ctx, CreateMailAccountRequest{Name: "a", EmailAddress: "a@b", ServerName: "x",
 				Credentials: MailCredentials{Authentication: MailAuthBasic, UserName: "u", Password: pw("mail")}}))
 		}},
+		{"MailAccount.Alter", []string{pw("mail")}, func(ctx context.Context, s *Server) error {
+			return s.Mail().AccountRef("a").Alter(ctx, MailAccountChanges{
+				Credentials: &MailCredentials{Authentication: MailAuthBasic, UserName: "u", Password: pw("mail")}})
+		}},
 	}
 }
 

@@ -116,10 +116,8 @@ type CreateBackupDeviceRequest struct {
 // back from the catalog — or, under Scripting(ctx), the BackupDeviceRef
 // handle, since nothing ran.
 //
-// The statement is built as literals rather than bound parameters because
-// every gosmo write goes through exec, which under a WithScript context
-// collects the statement text instead of running it — a parameterized EXEC
-// would script as a statement carrying @p1 and nothing to bind it to.
+// The three arguments are bound; under WithScript, exec substitutes them back
+// as literals (bindScriptArgs), so the captured statement runs by hand.
 func (s *Server) CreateBackupDevice(ctx context.Context, req CreateBackupDeviceRequest) (*BackupDevice, error) {
 	name, devType, physicalName := req.Name, req.Type, req.PhysicalName
 	if strings.TrimSpace(name) == "" {
@@ -132,9 +130,8 @@ func (s *Server) CreateBackupDevice(ctx context.Context, req CreateBackupDeviceR
 		devType = BackupDeviceDisk
 	}
 
-	stmt := fmt.Sprintf("EXEC sp_addumpdevice @devtype = N'%s', @logicalname = N'%s', @physicalname = N'%s'",
-		escapeSingle(string(devType)), escapeSingle(name), escapeSingle(physicalName))
-	if _, err := s.exec(ctx, stmt); err != nil {
+	const stmt = "EXEC sp_addumpdevice @devtype = @p1, @logicalname = @p2, @physicalname = @p3"
+	if _, err := s.exec(ctx, stmt, string(devType), name, physicalName); err != nil {
 		return nil, fmt.Errorf("gosmo: create backup device %q: %w", name, err)
 	}
 	return createdObject(ctx, s.BackupDeviceRef(name), func() (*BackupDevice, error) {
@@ -158,7 +155,7 @@ const (
 // Drop removes the logical backup device, and with DeleteDeviceFile the
 // physical file behind it.
 func (d *BackupDevice) Drop(ctx context.Context, file DeviceFileMode) error {
-	stmt := fmt.Sprintf("EXEC sp_dropdevice @logicalname = N'%s'", escapeSingle(d.Name))
+	stmt := "EXEC sp_dropdevice @logicalname = @p1"
 	switch file {
 	case KeepDeviceFile:
 	case DeleteDeviceFile:
@@ -166,7 +163,7 @@ func (d *BackupDevice) Drop(ctx context.Context, file DeviceFileMode) error {
 	default:
 		return invalidf("gosmo: drop backup device %q: unrecognized file mode %d", d.Name, file)
 	}
-	if _, err := d.server.exec(ctx, stmt); err != nil {
+	if _, err := d.server.exec(ctx, stmt, d.Name); err != nil {
 		return fmt.Errorf("gosmo: drop backup device %q: %w", d.Name, err)
 	}
 	return nil

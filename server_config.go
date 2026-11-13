@@ -115,8 +115,7 @@ func (s *Server) ConfigurationRef(name string) *ConfigurationOption {
 // option". Server.ApplyConfiguration handles that, and applies a set of
 // changes with one RECONFIGURE; prefer it for anything a user edits.
 func (c *ConfigurationOption) SetValue(ctx context.Context, value int64) error {
-	q := fmt.Sprintf("EXEC sp_configure N'%s', %d", escapeSingle(c.Name), value)
-	if _, err := c.server.exec(ctx, q); err != nil {
+	if _, err := c.server.exec(ctx, "EXEC sp_configure @p1, @p2", c.Name, value); err != nil {
 		return fmt.Errorf("gosmo: set configuration %q = %d: %w", c.Name, value, err)
 	}
 	setIfApplied(ctx, &c.Value, value)
@@ -211,31 +210,42 @@ func (s *Server) ApplyConfiguration(ctx context.Context, changes []ConfigChange,
 	if len(changes) == 0 {
 		return nil
 	}
-	if _, err := s.exec(ctx, buildApplyConfiguration(changes, opts)); err != nil {
+	q, args := buildApplyConfiguration(changes, opts)
+	if _, err := s.exec(ctx, q, args...); err != nil {
 		return fmt.Errorf("gosmo: apply configuration: %w", err)
 	}
 	return nil
 }
 
-// buildApplyConfiguration renders ApplyConfiguration's batch.
-func buildApplyConfiguration(changes []ConfigChange, opts ConfigApplyOptions) string {
+// buildApplyConfiguration renders ApplyConfiguration's batch and its
+// arguments: each change's name and value are bound (the name once, used in
+// both places it appears); only the constant "show advanced options" is
+// literal.
+func buildApplyConfiguration(changes []ConfigChange, opts ConfigApplyOptions) (string, []any) {
 	reconfigure := "RECONFIGURE"
 	if opts.Override {
 		reconfigure += " WITH OVERRIDE"
 	}
+	var args []any
+	bind := func(v any) string {
+		args = append(args, v)
+		return fmt.Sprintf("@p%d", len(args))
+	}
+	type boundChange struct{ name, value string }
 	var names []string
-	var ordered []ConfigChange
+	var ordered []boundChange
 	var showAdvanced *ConfigChange
 	for _, c := range changes {
 		if strings.EqualFold(c.Name, showAdvancedOptions) {
 			showAdvanced = &c
 			continue
 		}
-		ordered = append(ordered, c)
-		names = append(names, "N'"+escapeSingle(c.Name)+"'")
+		name := bind(c.Name)
+		ordered = append(ordered, boundChange{name, bind(c.Value)})
+		names = append(names, name)
 	}
 	if showAdvanced != nil {
-		ordered = append(ordered, *showAdvanced)
+		ordered = append(ordered, boundChange{bind(showAdvanced.Name), bind(showAdvanced.Value)})
 	}
 
 	var b strings.Builder
@@ -259,7 +269,7 @@ END;
 `, showAdvancedOptions, strings.Join(names, ", "), reconfigure)
 	}
 	for _, c := range ordered {
-		fmt.Fprintf(&b, "EXEC sys.sp_configure N'%s', %d;\n", escapeSingle(c.Name), c.Value)
+		fmt.Fprintf(&b, "EXEC sys.sp_configure %s, %s;\n", c.name, c.value)
 	}
 	if enable && showAdvanced == nil {
 		fmt.Fprintf(&b, `BEGIN TRY
@@ -279,7 +289,7 @@ END;`, showAdvancedOptions, reconfigure)
 		b.WriteString(reconfigure)
 		b.WriteString(";")
 	}
-	return b.String()
+	return b.String(), args
 }
 
 // ============================================================

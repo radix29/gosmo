@@ -448,3 +448,82 @@ WHERE  d.name = @p1`, d.Name)
 	}
 	return st, nil
 }
+
+// BackupRefusal is why SQL Server would refuse a backup of a database, from
+// what is known of it before anything is sent; BackupAllowed when nothing
+// known refuses it. Each is a certain refusal, its Msg number below the
+// server's (checked live on SQL Server 2025, 2026-11-13): a caller can stop
+// before the server does and say why in its own words.
+type BackupRefusal string
+
+const (
+	// BackupAllowed: nothing known refuses the backup. The server still has
+	// the last word — permissions, the device, and what was not known.
+	BackupAllowed BackupRefusal = ""
+	// BackupRefusedTempdb: tempdb takes no backup of any kind (Msg 3147).
+	BackupRefusedTempdb BackupRefusal = "tempdb"
+	// BackupRefusedSnapshot: a database snapshot takes no backup (Msg 3002).
+	BackupRefusedSnapshot BackupRefusal = "snapshot"
+	// BackupRefusedMasterFullOnly: master takes full backups only — a
+	// differential is Msg 3024, a log backup Msg 4212.
+	BackupRefusedMasterFullOnly BackupRefusal = "master-full-only"
+	// BackupRefusedSimpleRecovery: a log backup of a database in the SIMPLE
+	// recovery model (Msg 4208).
+	BackupRefusedSimpleRecovery BackupRefusal = "simple-recovery"
+	// BackupRefusedNoDifferentialBase: a differential with no full,
+	// non-COPY_ONLY backup to be taken against (Msg 3035).
+	BackupRefusedNoDifferentialBase BackupRefusal = "no-differential-base"
+	// BackupRefusedNoLogChain: a log backup with no full backup since the
+	// database last went to FULL or BULK_LOGGED — one taken while SIMPLE does
+	// not count (Msg 4214).
+	BackupRefusedNoLogChain BackupRefusal = "no-log-chain"
+)
+
+// BackupRefusal reports why a backup of d with action would be refused, from
+// d's catalog fields and status (its RecoveryStatus, or its row of
+// DatabaseRecoveryStatuses). It reads nothing.
+//
+// It fails open: what is not known refuses nothing. A nil status skips the
+// two chain rules; a status whose DifferentialBaseKnown is false (the login
+// cannot see sys.master_files) skips the differential base rule; a DatabaseRef
+// handle, whose RecoveryModel is zero, skips the SIMPLE rule. master and
+// tempdb are recognised by database_id when d carries one, else by name.
+//
+// The rules apply in a fixed order, so one database gets one answer:
+// tempdb, snapshot, master, SIMPLE recovery, then the chain. A COPY_ONLY
+// differential or log backup needs the same base and chain as any other.
+// BackupActionFiles is checked against tempdb and snapshots only.
+func (d *Database) BackupRefusal(action BackupAction, status *DatabaseRecoveryStatus) BackupRefusal {
+	if action == "" {
+		action = BackupActionDatabase
+	}
+	isSystemDB := func(id int, name string) bool {
+		if d.ID > 0 {
+			return d.ID == id
+		}
+		return strings.EqualFold(d.Name, name)
+	}
+	switch {
+	case isSystemDB(tempdbDatabaseID, "tempdb"):
+		return BackupRefusedTempdb
+	case d.IsSnapshot():
+		return BackupRefusedSnapshot
+	case action != BackupActionDifferential && action != BackupActionLog:
+		return BackupAllowed
+	case isSystemDB(masterDatabaseID, "master"):
+		return BackupRefusedMasterFullOnly
+	}
+	if action == BackupActionLog {
+		switch {
+		case d.RecoveryModel == RecoveryModelSimple:
+			return BackupRefusedSimpleRecovery
+		case status != nil && !status.LogBackupChainStarted:
+			return BackupRefusedNoLogChain
+		}
+		return BackupAllowed
+	}
+	if status != nil && status.DifferentialBaseKnown && !status.HasDifferentialBase {
+		return BackupRefusedNoDifferentialBase
+	}
+	return BackupAllowed
+}

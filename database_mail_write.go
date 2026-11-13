@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"strings"
-	"time"
 )
 
 // database_mail_write.go is the write half of database_mail.go: accounts,
@@ -104,12 +103,6 @@ func (a *procArgs) exec(proc string) string {
 		stmt += " " + strings.Join(a.parts, ", ")
 	}
 	return stmt
-}
-
-// mailDateLiteral renders t as a datetime literal the server reads the same
-// whatever its language setting (ISO 8601 with the T).
-func mailDateLiteral(t time.Time) string {
-	return "'" + t.Format("2006-01-02T15:04:05.000") + "'"
 }
 
 // ============================================================

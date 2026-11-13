@@ -57,6 +57,13 @@ type Database struct {
 // msdb=4. Every user database gets an id above this range.
 const systemDatabaseMaxID = 4
 
+// masterDatabaseID and tempdbDatabaseID are the two system databases a rule
+// singles out by id (Database.BackupRefusal).
+const (
+	masterDatabaseID = 1
+	tempdbDatabaseID = 2
+)
+
 // IsSystem reports whether this is one of SQL Server's four built-in
 // system databases (master, tempdb, model, msdb), identified by their
 // permanently reserved database_id (1-4) rather than by name. It is derived

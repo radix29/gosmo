@@ -118,12 +118,27 @@ func TestWithScriptApplyConfigurationOnlyShowAdvanced(t *testing.T) {
 	}
 }
 
-// TestApplyConfigurationEscapesNames: a name reaches the batch in two
-// places, each inside N'…'.
-func TestApplyConfigurationEscapesNames(t *testing.T) {
-	got := buildApplyConfiguration([]ConfigChange{{Name: "it's", Value: 1}}, ConfigApplyOptions{})
-	if strings.Count(got, "N'it''s'") != 2 || strings.Contains(got, "N'it's'") {
-		t.Errorf("name not escaped everywhere:\n%s", got)
+// TestApplyConfigurationBindsNames: a change's name and value are bound
+// (R9, review 2026-11-13), the name once for both places it appears, and
+// neither reaches the batch text; scripted, the name comes back escaped in
+// both places.
+func TestApplyConfigurationBindsNames(t *testing.T) {
+	q, args := buildApplyConfiguration([]ConfigChange{{Name: "o'brien", Value: 7}}, ConfigApplyOptions{})
+	if len(args) != 2 || args[0] != "o'brien" || args[1] != int64(7) {
+		t.Errorf("args = %#v, want [o'brien 7]", args)
+	}
+	if strings.Contains(q, "brien") || strings.Contains(q, " 7;") {
+		t.Errorf("a change reached the batch text:\n%s", q)
+	}
+	if strings.Count(q, "@p1") != 2 {
+		t.Errorf("the name is not bound once for both places:\n%s", q)
+	}
+	bound, err := bindScriptArgs(q, args)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Count(bound, "N'o''brien'") != 2 || !strings.Contains(bound, "N'o''brien', 7;") {
+		t.Errorf("scripted name not escaped everywhere:\n%s", bound)
 	}
 }
 

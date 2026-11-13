@@ -760,9 +760,7 @@ func scriptLiteral(v any) (string, error) {
 	case float64:
 		return strconv.FormatFloat(x, 'g', -1, 64), nil
 	case time.Time:
-		// The ISO 8601 form SQL Server parses unambiguously regardless of the
-		// session's DATEFORMAT/language.
-		return "'" + x.Format("2006-01-02T15:04:05.9999999") + "'", nil
+		return timeLiteral(x), nil
 	case driver.Valuer:
 		dv, err := x.Value()
 		if err != nil {
@@ -773,6 +771,30 @@ func scriptLiteral(v any) (string, error) {
 		return "", fmt.Errorf("named argument %q cannot be scripted positionally", x.Name)
 	}
 	return "", fmt.Errorf("cannot script a %T argument", v)
+}
+
+// timeLiteral is the one literal form of a time.Time, for a bound argument
+// (scriptLiteral) and, through datetimeLiteral, for a statement that writes a
+// time as text: ISO 8601 with the T, which SQL Server reads the same whatever
+// the session's DATEFORMAT or language, at t's wall-clock time.
+//
+//   - The offset is dropped. With it, the text no longer converts to datetime
+//     or smalldatetime (Msg 241/295, live on 17); without it, a datetime,
+//     datetime2 or date target reads the same wall-clock time the bound value
+//     (the driver sends datetimeoffset) converts to. A datetimeoffset target
+//     reads it as +00:00, so bind a UTC time for one.
+//   - The fraction is trimmed to the digits it needs, up to seven. datetime
+//     and smalldatetime take at most three (Msg 241/295 for more), so a time
+//     meant for one of them is truncated to the millisecond first
+//     (datetimeLiteral), or its script will not run by hand.
+func timeLiteral(t time.Time) string {
+	return "'" + t.Format("2006-01-02T15:04:05.9999999") + "'"
+}
+
+// datetimeLiteral is timeLiteral truncated to the millisecond, for text whose
+// target is a datetime: Database Mail's purge parameters and RESTORE's STOPAT.
+func datetimeLiteral(t time.Time) string {
+	return timeLiteral(t.Truncate(time.Millisecond))
 }
 
 // dereference reads through a pointer to the value it points at, so an

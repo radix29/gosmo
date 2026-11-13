@@ -309,7 +309,7 @@ func TestBuildRestoreStatementStandbyChecksumStopAt(t *testing.T) {
 		"FROM DISK = N'/var/backups/aw.bak'\n" +
 		"WITH STANDBY = N'/var/backups/aw_undo.bak',\n" +
 		"     CHECKSUM,\n" +
-		"     STOPAT = '2026-07-18T12:30:00.000'"
+		"     STOPAT = '2026-07-18T12:30:00'"
 	if got != want {
 		t.Errorf("BuildRestoreStatement =\n%q\nwant\n%q", got, want)
 	}

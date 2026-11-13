@@ -94,18 +94,8 @@ ORDER  BY name`,
 // a property with this name already exists at this level — see
 // SetExtendedProperty to update one.
 func (d *Database) AddExtendedProperty(ctx context.Context, name, value string, level ExtendedPropertyLevel) error {
-	q := fmt.Sprintf(`
-EXEC sp_addextendedproperty
-    @name = N'%s', @value = N'%s',
-    @level0type = %s, @level0name = %s,
-    @level1type = %s, @level1name = %s,
-    @level2type = %s, @level2name = %s`,
-		escapeSingle(name), escapeSingle(value),
-		nullableStr(level.Level0Type), nullableStr(level.Level0Name),
-		nullableStr(level.Level1Type), nullableStr(level.Level1Name),
-		nullableStr(level.Level2Type), nullableStr(level.Level2Name),
-	)
-	if _, err := d.exec(ctx, q); err != nil {
+	q, args := extendedPropertyWrite("sp_addextendedproperty", name, &value, level)
+	if _, err := d.exec(ctx, q, args...); err != nil {
 		return fmt.Errorf("gosmo: add extended property %q: %w", name, err)
 	}
 	return nil
@@ -115,18 +105,8 @@ EXEC sp_addextendedproperty
 // Fails if no property with this name exists at this level — see
 // AddExtendedProperty to create one.
 func (d *Database) SetExtendedProperty(ctx context.Context, name, value string, level ExtendedPropertyLevel) error {
-	q := fmt.Sprintf(`
-EXEC sp_updateextendedproperty
-    @name = N'%s', @value = N'%s',
-    @level0type = %s, @level0name = %s,
-    @level1type = %s, @level1name = %s,
-    @level2type = %s, @level2name = %s`,
-		escapeSingle(name), escapeSingle(value),
-		nullableStr(level.Level0Type), nullableStr(level.Level0Name),
-		nullableStr(level.Level1Type), nullableStr(level.Level1Name),
-		nullableStr(level.Level2Type), nullableStr(level.Level2Name),
-	)
-	if _, err := d.exec(ctx, q); err != nil {
+	q, args := extendedPropertyWrite("sp_updateextendedproperty", name, &value, level)
+	if _, err := d.exec(ctx, q, args...); err != nil {
 		return fmt.Errorf("gosmo: set extended property %q: %w", name, err)
 	}
 	return nil
@@ -134,22 +114,52 @@ EXEC sp_updateextendedproperty
 
 // DropExtendedProperty drops an extended property from an object.
 func (d *Database) DropExtendedProperty(ctx context.Context, name string, level ExtendedPropertyLevel) error {
-	q := fmt.Sprintf(`
-EXEC sp_dropextendedproperty
-    @name = N'%s',
-    @level0type = %s, @level0name = %s,
-    @level1type = %s, @level1name = %s,
-    @level2type = %s, @level2name = %s`,
-		escapeSingle(name),
-		nullableStr(level.Level0Type), nullableStr(level.Level0Name),
-		nullableStr(level.Level1Type), nullableStr(level.Level1Name),
-		nullableStr(level.Level2Type), nullableStr(level.Level2Name),
-	)
-	_, err := d.exec(ctx, q)
-	if err != nil {
+	q, args := extendedPropertyWrite("sp_dropextendedproperty", name, nil, level)
+	if _, err := d.exec(ctx, q, args...); err != nil {
 		return fmt.Errorf("gosmo: drop extended property %q: %w", name, err)
 	}
 	return nil
+}
+
+// extendedPropertyWrite builds one of the three extended-property procedure
+// calls with every caller-supplied argument bound: the name as @p1, the six
+// level arguments as @p2…@p7 (an empty one as NULL — an unused level is NULL,
+// not N”; see ExtendedProperties), and value, when there is one, as @p8.
+//
+// An empty value is the one argument written as a literal. The driver sends
+// an empty string as nvarchar(max) (a zero length is its "max" marker), and
+// @value is sql_variant, which refuses that type: "Operand type clash:
+// nvarchar(max) is incompatible with sql_variant" (live on 17). N” is a
+// constant, so nothing of the caller's reaches the text either way.
+func extendedPropertyWrite(proc, name string, value *string, level ExtendedPropertyLevel) (string, []any) {
+	args := []any{name}
+	for _, s := range []string{
+		level.Level0Type, level.Level0Name,
+		level.Level1Type, level.Level1Name,
+		level.Level2Type, level.Level2Name,
+	} {
+		if s == "" {
+			args = append(args, nil)
+		} else {
+			args = append(args, s)
+		}
+	}
+	valueClause := ""
+	switch {
+	case value == nil:
+	case *value == "":
+		valueClause = ", @value = N''"
+	default:
+		valueClause = ", @value = @p8"
+		args = append(args, *value)
+	}
+	q := fmt.Sprintf(`
+EXEC %s
+    @name = @p1%s,
+    @level0type = @p2, @level0name = @p3,
+    @level1type = @p4, @level1name = @p5,
+    @level2type = @p6, @level2name = @p7`, proc, valueClause)
+	return q, args
 }
 
 // -- Helpers -------------------------------------------------------------------
