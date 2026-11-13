@@ -352,7 +352,10 @@ SELECT ISNULL(bs.database_name,''), ISNULL(bs.name,''), ISNULL(bs.description,''
        ISNULL(bms.mirror_count,1), ISNULL(bs.is_copy_only,0),
        ISNULL(CONVERT(varchar(40), bs.first_lsn),''), ISNULL(CONVERT(varchar(40), bs.last_lsn),''),
        ISNULL(CONVERT(varchar(36), bs.backup_set_uuid),''),
-       ISNULL(CONVERT(varchar(36), bs.differential_base_guid),'')
+       ISNULL(CONVERT(varchar(36), bs.differential_base_guid),''),
+       ISNULL(CONVERT(varchar(36), bs.first_recovery_fork_guid),''),
+       ISNULL(CONVERT(varchar(36), bs.last_recovery_fork_guid),''),
+       ISNULL(CONVERT(varchar(40), bs.fork_point_lsn),'')
 FROM   msdb.dbo.backupset bs
 JOIN   msdb.dbo.backupmediafamily bmf ON bmf.media_set_id = bs.media_set_id AND bmf.mirror = 0
 LEFT JOIN msdb.dbo.backupmediaset bms ON bms.media_set_id = bs.media_set_id`
@@ -395,6 +398,7 @@ func scanBackupInfo(scan func(...any) error) (*BackupInfo, error) {
 	var size, dbVersion, compat, position, setID, mediaSetID, mirrors sql.NullInt64
 	var copyOnly sql.NullBool
 	var firstLSN, lastLSN, setGUID, baseGUID sql.NullString
+	var firstFork, lastFork, forkPoint sql.NullString
 	if err := scan(
 		&dbName, &setName, &desc, &bType,
 		&start, &finish, &size,
@@ -403,6 +407,7 @@ func scanBackupInfo(scan func(...any) error) (*BackupInfo, error) {
 		&position, &setID, &mediaSetID, &mirrors,
 		&copyOnly,
 		&firstLSN, &lastLSN, &setGUID, &baseGUID,
+		&firstFork, &lastFork, &forkPoint,
 	); err != nil {
 		return nil, err
 	}
@@ -419,6 +424,8 @@ func scanBackupInfo(scan func(...any) error) (*BackupInfo, error) {
 	b.IsCopyOnly = copyOnly.Bool
 	b.FirstLSN, b.LastLSN = firstLSN.String, lastLSN.String
 	b.BackupSetGUID, b.DifferentialBaseGUID = setGUID.String, baseGUID.String
+	b.FirstRecoveryForkGUID, b.LastRecoveryForkGUID = firstFork.String, lastFork.String
+	b.ForkPointLSN = forkPoint.String
 	return b, nil
 }
 

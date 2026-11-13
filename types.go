@@ -732,4 +732,14 @@ type BackupInfo struct {
 	// is, for a differential, the BackupSetGUID of the full backup it was
 	// taken against — the only full it restores onto — and "" otherwise.
 	BackupSetGUID, DifferentialBaseGUID string
+	// FirstRecoveryForkGUID and LastRecoveryForkGUID are the recovery forks
+	// the set starts and ends on (msdb's first_/last_recovery_fork_guid), ""
+	// when NULL. A restore WITH RECOVERY to an earlier point starts a new
+	// fork, and the backups taken after it overlap the abandoned timeline's
+	// LSNs, so LSNs alone cannot tell the two apart (PlanRestore). The two
+	// differ only on the set that crosses into a new fork; its ForkPointLSN
+	// is where it left the parent fork (msdb's fork_point_lsn, decimal text
+	// like FirstLSN, "" when NULL).
+	FirstRecoveryForkGUID, LastRecoveryForkGUID string
+	ForkPointLSN                                string
 }

@@ -36,7 +36,8 @@ func (r *histRows) Columns() []string {
 		"physical_device_name", "user_name", "server_name",
 		"database_version", "compatibility_level",
 		"position", "backup_set_id", "media_set_id", "mirror_count", "is_copy_only",
-		"first_lsn", "last_lsn", "backup_set_uuid", "differential_base_guid"}
+		"first_lsn", "last_lsn", "backup_set_uuid", "differential_base_guid",
+		"first_recovery_fork_guid", "last_recovery_fork_guid", "fork_point_lsn"}
 }
 func (r *histRows) Close() error { return nil }
 func (r *histRows) Next(dest []driver.Value) error {
@@ -58,12 +59,13 @@ func TestBackupHistoryScansNullColumns(t *testing.T) {
 	finished := time.Date(2026, 9, 8, 22, 5, 0, 0, time.UTC)
 	drv := &histDriver{rows: [][]driver.Value{
 		// Everything NULL — the automated-backup row.
-		{nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil},
+		{nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil},
 		// A populated row, to prove the values still arrive.
 		{"GoTest01", "set", "desc", "D", finished, finished, int64(2048),
 			"https://example.blob.core.windows.net/b/GoTest01.bak", "testgo", "t-qmi-01",
 			int64(957), int64(170), int64(1), int64(9), int64(4), int64(1), true,
-			"41000000012300001", "41000000045600001", "6f1c0e2a-1b2c-4d5e-8f90-a1b2c3d4e5f6", "0a1b2c3d-4e5f-4a6b-8c7d-e8f9a0b1c2d3"},
+			"41000000012300001", "41000000045600001", "6f1c0e2a-1b2c-4d5e-8f90-a1b2c3d4e5f6", "0a1b2c3d-4e5f-4a6b-8c7d-e8f9a0b1c2d3",
+			"53210000-0000-0000-0000-000000000001", "CD640000-0000-0000-0000-000000000002", "41000000012300001"},
 	}}
 	sql.Register("fakebackuphistory", drv)
 
@@ -93,7 +95,8 @@ func TestBackupHistoryScansNullColumns(t *testing.T) {
 		t.Errorf("all-NULL row numbers not zero: %+v", *null)
 	}
 	// A NULL type must not masquerade as a full backup.
-	if null.FirstLSN != "" || null.LastLSN != "" || null.BackupSetGUID != "" || null.DifferentialBaseGUID != "" {
+	if null.FirstLSN != "" || null.LastLSN != "" || null.BackupSetGUID != "" || null.DifferentialBaseGUID != "" ||
+		null.FirstRecoveryForkGUID != "" || null.LastRecoveryForkGUID != "" || null.ForkPointLSN != "" {
 		t.Errorf("all-NULL row LSNs/GUIDs not empty: %+v", *null)
 	}
 	if null.SetType != "" || null.IsCopyOnly {
@@ -111,6 +114,10 @@ func TestBackupHistoryScansNullColumns(t *testing.T) {
 		got.DifferentialBaseGUID != "0a1b2c3d-4e5f-4a6b-8c7d-e8f9a0b1c2d3" {
 		t.Errorf("populated row lost its LSNs/GUIDs: %+v", *got)
 	}
+	if got.FirstRecoveryForkGUID != "53210000-0000-0000-0000-000000000001" ||
+		got.LastRecoveryForkGUID != "CD640000-0000-0000-0000-000000000002" || got.ForkPointLSN != "41000000012300001" {
+		t.Errorf("populated row lost its recovery fork: %+v", *got)
+	}
 }
 
 // The Go-side Null destinations are only half the fix; the query wraps the
@@ -119,8 +126,8 @@ func TestBackupHistoryScansNullColumns(t *testing.T) {
 func TestBackupHistoryQueryWrapsEveryNullableColumn(t *testing.T) {
 	list := selectList(t, backupHistorySelect)
 	exprs := selectExprs(t, list)
-	if len(exprs) != 21 {
-		t.Fatalf("select list has %d expressions, want 21 — the scan passes 21 destinations", len(exprs))
+	if len(exprs) != 24 {
+		t.Fatalf("select list has %d expressions, want 24 — the scan passes 24 destinations", len(exprs))
 	}
 	for i, e := range exprs {
 		// The two dates are deliberately unwrapped: a zero Time says
@@ -145,7 +152,7 @@ func TestBackupHistoryGroupsStripedFamilies(t *testing.T) {
 	row := func(finish time.Time, device string, position, setID, mediaSetID int64) []driver.Value {
 		return []driver.Value{"GoTest01", "", "", "D", finish, finish, int64(1024),
 			device, "sa", "srv", int64(957), int64(160), position, setID, mediaSetID, int64(1), false,
-			"", "", "", ""}
+			"", "", "", "", "", "", ""}
 	}
 	drv := &histDriver{rows: [][]driver.Value{
 		// Newest: striped over two files.

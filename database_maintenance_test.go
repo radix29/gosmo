@@ -212,13 +212,13 @@ func TestLastBackupsGroupsByDatabaseAndKind(t *testing.T) {
 	at := time.Date(2026, 10, 30, 1, 0, 0, 0, time.UTC)
 	set := func(db, typ string, id int64, device string) []driver.Value {
 		return []driver.Value{db, "", "", typ, at, at, int64(1024), device, "sa", "srv",
-			int64(957), int64(160), int64(1), id, id, int64(1), false, "1", "2", "", ""}
+			int64(957), int64(160), int64(1), id, id, int64(1), false, "1", "2", "", "", "", "", ""}
 	}
 	d := qsRecDB(t, 17, nil, nil)
 	qsRec.route("FROM   sys.databases", []string{"name", "recovery_model_desc"}, [][]driver.Value{
 		{"app", "FULL"}, {"master", "SIMPLE"}, {"never", nil},
 	})
-	qsRec.route("msdb.dbo.backupset", anonCols(21), [][]driver.Value{
+	qsRec.route("msdb.dbo.backupset", anonCols(24), [][]driver.Value{
 		set("app", "D", 10, "/b/app_1.bak"),
 		set("app", "D", 10, "/b/app_2.bak"),
 		set("app", "L", 12, "/b/app.trn"),

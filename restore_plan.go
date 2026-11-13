@@ -275,18 +275,36 @@ type RestorePlan struct {
 // fall after its LastLSN, and SQL Server then leaves the database RESTORING
 // ("too early to apply") rather than recovering it. Restoring the next log,
 // or the tail, recovers it.
+//
+// Every set is first narrowed to one recovery path (BackupInfo's recovery
+// fork fields). A restore WITH RECOVERY to an earlier point starts a new
+// fork, and the logs taken after it continue from the same LSN as the
+// abandoned timeline's, so the LSN chain alone would pick whichever came
+// first — the timeline the user rolled back from. The path:
+//
+//   - its tip is the fork of the first set that finished at or after StopAt
+//     — the timeline that was live at that moment — or, with no StopAt or
+//     none finished by then, the fork of the newest set;
+//   - each fork on it continues back through the set that crossed into it
+//     (first fork its parent, last fork the child): the parent is on the
+//     path up to that set's ForkPointLSN;
+//   - a set is on the path when its last fork is, and, for a fork the path
+//     later left, its LastLSN is at or before the point it was left.
+//
+// A history with no fork GUIDs at all (hand-built, or never recorded) is
+// planned on LSNs alone. A crossing set no longer in msdb ends the path
+// there: the older forks are off it, and the plan is refused for want of a
+// full backup rather than guessing which timeline to take.
 func PlanRestore(history []*BackupInfo, opts RestorePlanOptions) (*RestorePlan, error) {
 	var stop time.Time
 	if opts.StopAt != nil {
 		stop = wallClock(*opts.StopAt)
 	}
 	by := func(t time.Time) bool { return opts.StopAt == nil || !wallClock(t).After(stop) }
-	newest := func(a, b *BackupInfo) int {
-		return cmp.Or(a.BackupFinish.Compare(b.BackupFinish), cmp.Compare(a.BackupSetID, b.BackupSetID))
-	}
+	onPath := recoveryPath(history, opts.StopAt)
 	var fulls, diffs, logs []*BackupInfo
 	for _, b := range history {
-		if !b.Restorable() || b.BackupFinish.IsZero() {
+		if !b.Restorable() || b.BackupFinish.IsZero() || !onPath(b) {
 			continue
 		}
 		switch b.SetType {
@@ -310,21 +328,21 @@ func PlanRestore(history []*BackupInfo, opts RestorePlanOptions) (*RestorePlan, 
 		}
 		return nil, notFoundf("gosmo: plan restore: no full database backup in the history")
 	}
-	full := slices.MaxFunc(fulls, newest)
+	full := slices.MaxFunc(fulls, compareFinish)
 	plan := &RestorePlan{Sets: []*BackupInfo{full}}
 
 	diffs = slices.DeleteFunc(diffs, func(d *BackupInfo) bool {
 		return full.IsCopyOnly || full.BackupSetGUID == "" || d.DifferentialBaseGUID != full.BackupSetGUID
 	})
 	if len(diffs) > 0 {
-		plan.Sets = append(plan.Sets, slices.MaxFunc(diffs, newest))
+		plan.Sets = append(plan.Sets, slices.MaxFunc(diffs, compareFinish))
 	}
 
 	// The chain: the first log holds the base's last LSN, each next one
 	// starts where the last ended.
 	base := plan.Sets[len(plan.Sets)-1]
 	slices.SortStableFunc(logs, func(a, b *BackupInfo) int {
-		return cmp.Or(CompareLSN(a.FirstLSN, b.FirstLSN), newest(a, b))
+		return cmp.Or(CompareLSN(a.FirstLSN, b.FirstLSN), compareFinish(a, b))
 	})
 	end, reached := base.LastLSN, false
 	for end != "" && !reached {
@@ -360,6 +378,56 @@ func PlanRestore(history []*BackupInfo, opts RestorePlanOptions) (*RestorePlan, 
 			stop.Format(time.DateTime), strings.ToLower(string(last.SetType)), last.BackupFinish.Format(time.DateTime), why)
 	}
 	return plan, nil
+}
+
+// compareFinish orders sets oldest first: by when they finished, then by
+// msdb's set id.
+func compareFinish(a, b *BackupInfo) int {
+	return cmp.Or(a.BackupFinish.Compare(b.BackupFinish), cmp.Compare(a.BackupSetID, b.BackupSetID))
+}
+
+// recoveryPath returns the test PlanRestore narrows the history with: whether
+// a set is on the recovery path that was live at stopAt (nil: the newest).
+// See PlanRestore for the rule.
+func recoveryPath(history []*BackupInfo, stopAt *time.Time) func(*BackupInfo) bool {
+	var forked []*BackupInfo
+	for _, b := range history {
+		if b.LastRecoveryForkGUID != "" && !b.BackupFinish.IsZero() {
+			forked = append(forked, b)
+		}
+	}
+	if len(forked) == 0 {
+		return func(*BackupInfo) bool { return true }
+	}
+	slices.SortFunc(forked, compareFinish)
+	tip := forked[len(forked)-1]
+	if stopAt != nil {
+		stop := wallClock(*stopAt)
+		if i := slices.IndexFunc(forked, func(b *BackupInfo) bool { return !wallClock(b.BackupFinish).Before(stop) }); i >= 0 {
+			tip = forked[i]
+		}
+	}
+	// left[fork] is the LSN the path left fork at, "" for the tip.
+	key := strings.ToUpper
+	fork := key(tip.LastRecoveryForkGUID)
+	left := map[string]string{fork: ""}
+	for {
+		i := slices.IndexFunc(forked, func(b *BackupInfo) bool {
+			return key(b.LastRecoveryForkGUID) == fork && b.FirstRecoveryForkGUID != "" && key(b.FirstRecoveryForkGUID) != fork
+		})
+		if i < 0 || forked[i].ForkPointLSN == "" {
+			break
+		}
+		parent := key(forked[i].FirstRecoveryForkGUID)
+		if _, seen := left[parent]; seen {
+			break
+		}
+		left[parent], fork = forked[i].ForkPointLSN, parent
+	}
+	return func(b *BackupInfo) bool {
+		at, ok := left[key(b.LastRecoveryForkGUID)]
+		return ok && (at == "" || CompareLSN(b.LastLSN, at) <= 0)
+	}
 }
 
 // wallClock is t's date and time fields read in UTC, so two times compare by

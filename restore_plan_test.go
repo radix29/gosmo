@@ -467,3 +467,118 @@ func TestCompareLSN(t *testing.T) {
 		}
 	}
 }
+
+// forkHistory is the msdb history read on win10cli (17) from gossms_forkprobe
+// (review plan 2026-11-13, B3): a full, log L1, log L2, then a restore of the
+// full and L1 WITH RECOVERY — a new recovery fork — then log L3, which starts
+// at the same LSN as the abandoned L2. Newest first, as BackupHistory returns
+// it.
+func forkHistory() []*BackupInfo {
+	const parent, child = "5321A0B4-0000-0000-0000-000000000001", "CD64F1E2-0000-0000-0000-000000000002"
+	at := func(h int) time.Time { return time.Date(2026, 11, 13, h, 0, 0, 0, time.UTC) }
+	set := func(id int64, t BackupSetType, h int, first, last, firstFork, lastFork, forkPoint string) *BackupInfo {
+		return &BackupInfo{BackupSetID: id, SetType: t, BackupFinish: at(h), DeviceName: "x.bak",
+			Devices: []string{"x.bak"}, FirstLSN: first, LastLSN: last, BackupSetGUID: fmt.Sprint("guid-", id),
+			FirstRecoveryForkGUID: firstFork, LastRecoveryForkGUID: lastFork, ForkPointLSN: forkPoint}
+	}
+	return []*BackupInfo{
+		set(730, BackupSetLog, 5, "36000000032800001", "36000000041600001", parent, child, "36000000032800001"), // L3, live
+		set(729, BackupSetLog, 3, "36000000032800001", "36000000041600001", parent, parent, ""),                 // L2, abandoned
+		set(728, BackupSetLog, 2, "36000000026400001", "36000000032800001", parent, parent, ""),                 // L1
+		set(727, BackupSetDatabase, 1, "36000000026400001", "36000000028800001", parent, parent, ""),
+	}
+}
+
+// Two logs continue from L1's last LSN, one on each timeline. The plan takes
+// the live one; on LSNs alone it took the older, abandoned L2 — restoring the
+// rows the user had rolled back — and accepted a tail log after it, which the
+// server then refused.
+func TestPlanRestoreFollowsTheLiveRecoveryFork(t *testing.T) {
+	for _, tail := range []bool{false, true} {
+		p, err := PlanRestore(forkHistory(), RestorePlanOptions{TailLog: tail})
+		if err != nil || !slices.Equal(planIDs(p), []int64{727, 728, 730}) || p.TailLog != tail {
+			t.Errorf("TailLog %v: plan %v, err %v; want [727 728 730]", tail, p, err)
+		}
+	}
+	// GUIDs compare without regard to case.
+	hist := forkHistory()
+	hist[0].LastRecoveryForkGUID = strings.ToLower(hist[0].LastRecoveryForkGUID)
+	if p, err := PlanRestore(hist, RestorePlanOptions{}); err != nil || !slices.Equal(planIDs(p), []int64{727, 728, 730}) {
+		t.Errorf("lower-case GUID: plan %v, err %v; want [727 728 730]", p, err)
+	}
+}
+
+// A point in time on the abandoned timeline — before the restore that left
+// it — restores that timeline: StopAt picks the fork.
+func TestPlanRestoreStopAtOnAnAbandonedFork(t *testing.T) {
+	stop := time.Date(2026, 11, 13, 2, 30, 0, 0, time.UTC)
+	p, err := PlanRestore(forkHistory(), RestorePlanOptions{StopAt: &stop})
+	if err != nil || !slices.Equal(planIDs(p), []int64{727, 728, 729}) {
+		t.Errorf("plan %v, err %v; want [727 728 729]", p, err)
+	}
+	stop = time.Date(2026, 11, 13, 4, 30, 0, 0, time.UTC)
+	p, err = PlanRestore(forkHistory(), RestorePlanOptions{StopAt: &stop})
+	if err != nil || !slices.Equal(planIDs(p), []int64{727, 728, 730}) {
+		t.Errorf("after the fork: plan %v, err %v; want [727 728 730]", p, err)
+	}
+}
+
+// Two forks deep: fork A abandoned after L1, fork B abandoned after L3, fork C
+// live. Each crossing log leads the path back one fork.
+func TestPlanRestoreTwoLevelFork(t *testing.T) {
+	const a, b, c = "A", "B", "C"
+	at := func(h int) time.Time { return time.Date(2026, 11, 13, h, 0, 0, 0, time.UTC) }
+	set := func(id int64, t BackupSetType, h int, first, last, firstFork, lastFork, forkPoint string) *BackupInfo {
+		return &BackupInfo{BackupSetID: id, SetType: t, BackupFinish: at(h), DeviceName: "x.bak",
+			FirstLSN: first, LastLSN: last, BackupSetGUID: fmt.Sprint("guid-", id),
+			FirstRecoveryForkGUID: firstFork, LastRecoveryForkGUID: lastFork, ForkPointLSN: forkPoint}
+	}
+	hist := []*BackupInfo{
+		set(6, BackupSetLog, 7, "300", "400", b, c, "300"), // L5: crosses B → C at L3's end
+		set(5, BackupSetLog, 6, "300", "400", b, b, ""),    // L4: abandoned B
+		set(4, BackupSetLog, 4, "200", "300", a, b, "200"), // L3: crosses A → B at L1's end
+		set(3, BackupSetLog, 3, "200", "300", a, a, ""),    // L2: abandoned A
+		set(2, BackupSetLog, 2, "100", "200", a, a, ""),    // L1
+		set(1, BackupSetDatabase, 1, "100", "120", a, a, ""),
+	}
+	if p, err := PlanRestore(hist, RestorePlanOptions{TailLog: true}); err != nil || !slices.Equal(planIDs(p), []int64{1, 2, 4, 6}) || !p.TailLog {
+		t.Errorf("plan %v, err %v; want [1 2 4 6] and the tail", p, err)
+	}
+	// A point inside L4, on fork B: B's path, back to A up to L1.
+	stop := time.Date(2026, 11, 13, 5, 30, 0, 0, time.UTC)
+	if p, err := PlanRestore(hist, RestorePlanOptions{StopAt: &stop}); err != nil || !slices.Equal(planIDs(p), []int64{1, 2, 4, 5}) {
+		t.Errorf("StopAt 05:30 on B: plan %v, err %v; want [1 2 4 5]", p, err)
+	}
+	// After the second restore: fork C.
+	stop = time.Date(2026, 11, 13, 6, 30, 0, 0, time.UTC)
+	if p, err := PlanRestore(hist, RestorePlanOptions{StopAt: &stop}); err != nil || !slices.Equal(planIDs(p), []int64{1, 2, 4, 6}) {
+		t.Errorf("StopAt 06:30 on C: plan %v, err %v; want [1 2 4 6]", p, err)
+	}
+}
+
+// Without any fork GUID — a hand-built history, or none recorded — the plan
+// is the LSN chain alone, as before forks were read.
+func TestPlanRestoreWithoutForkGUIDs(t *testing.T) {
+	hist := forkHistory()
+	for _, b := range hist {
+		b.FirstRecoveryForkGUID, b.LastRecoveryForkGUID, b.ForkPointLSN = "", "", ""
+	}
+	if p, err := PlanRestore(hist, RestorePlanOptions{}); err != nil || !slices.Equal(planIDs(p), []int64{727, 728, 729}) {
+		t.Errorf("plan %v, err %v; want the LSN chain [727 728 729]", p, err)
+	}
+}
+
+// When the set that crossed into the live fork is no longer in msdb, there
+// is no telling which older sets the live timeline shares: the path ends at
+// the live fork, and with no full on it the plan is refused, not guessed.
+func TestPlanRestoreMissingCrossingSetIsRefused(t *testing.T) {
+	hist := forkHistory()
+	child := hist[0].LastRecoveryForkGUID
+	l4 := &BackupInfo{BackupSetID: 731, SetType: BackupSetLog, BackupFinish: hist[0].BackupFinish.Add(time.Hour),
+		DeviceName: "x.bak", FirstLSN: "36000000041600001", LastLSN: "36000000050000001",
+		FirstRecoveryForkGUID: child, LastRecoveryForkGUID: child}
+	hist = append([]*BackupInfo{l4}, hist[1:]...) // L3, the crossing set, deleted
+	if p, err := PlanRestore(hist, RestorePlanOptions{}); !errors.Is(err, ErrNotFound) {
+		t.Errorf("plan %v, err %v; want ErrNotFound", p, err)
+	}
+}
