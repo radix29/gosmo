@@ -337,10 +337,7 @@ func TestLiveFileVolumesHiddenWithoutViewServerState(t *testing.T) {
 	}
 	t.Cleanup(func() { db.ExecContext(c, "DROP LOGIN ["+login+"]") })
 
-	pool, err := sql.Open("sqlserver", liveRestrictedDSN(t, login, pass))
-	if err != nil {
-		t.Fatalf("open as %s: %v", login, err)
-	}
+	pool := liveOpenAs(t, login, pass)
 	t.Cleanup(func() { pool.Close() })
 	// Not NewServer: its server-info read needs the permission withheld here.
 	vols, visible, err := (&Server{db: pool}).FileVolumes(ctx)

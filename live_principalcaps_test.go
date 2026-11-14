@@ -12,7 +12,6 @@ package gosmo
 
 import (
 	"context"
-	"database/sql"
 	"strings"
 	"testing"
 )
@@ -80,10 +79,7 @@ func TestLivePrincipalCapabilitiesMatchWhatTheServerEnforces(t *testing.T) {
 		`GRANT ALTER ON USER::granted_only TO [`+grantee+`]`,
 	)
 
-	pool, err := sql.Open("sqlserver", liveRestrictedDSN(t, login, pass))
-	if err != nil {
-		t.Fatalf("open as %s: %v", login, err)
-	}
+	pool := liveOpenAs(t, login, pass)
 	defer pool.Close()
 
 	// Not NewServer, for live_schemacaps_test.go's reason: loadInfo reads
@@ -151,10 +147,7 @@ func TestLivePrincipalCapabilitiesMatchWhatTheServerEnforces(t *testing.T) {
 	// goes through, because both need ALTER ANY USER at database scope. That is
 	// what makes the block DENY-only — there is no narrow grant here for a
 	// wider map to miss, unlike object and schema scope.
-	gpool, err := sql.Open("sqlserver", liveRestrictedDSN(t, grantee, pass))
-	if err != nil {
-		t.Fatalf("open as %s: %v", grantee, err)
-	}
+	gpool := liveOpenAs(t, grantee, pass)
 	defer gpool.Close()
 	gcaps, err := (&Server{db: gpool}).DatabaseRef(d.Name).Capabilities(ctx)
 	if err != nil {

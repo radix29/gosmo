@@ -20,7 +20,6 @@ package gosmo
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
 	"slices"
@@ -349,10 +348,7 @@ SELECT @id`, liveMailProfile).Scan(&id); err != nil {
 	// loadInfo's DMV half needs VIEW SERVER STATE.
 	login := func(name string) *Server {
 		t.Helper()
-		pool, err := sql.Open("sqlserver", liveRestrictedDSN(t, name, liveMailPassword))
-		if err != nil {
-			t.Fatalf("open as %s: %v", name, err)
-		}
+		pool := liveOpenAs(t, name, liveMailPassword)
 		t.Cleanup(func() { pool.Close() })
 		return &Server{db: pool}
 	}

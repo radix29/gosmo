@@ -69,7 +69,7 @@ func pushdownLocation(location string) bool {
 // buildExternalDataSourceScript assembles one external data source's script.
 func buildExternalDataSourceScript(s *ExternalDataSource, opts ScriptOptions) string {
 	drop := fmt.Sprintf("IF EXISTS (SELECT 1 FROM sys.external_data_sources WHERE name = N'%s')\n"+
-		"    DROP EXTERNAL DATA SOURCE %s;\nGO\n", escapeSingle(s.Name), quoteIdent(s.Name))
+		"    DROP EXTERNAL DATA SOURCE %s;\nGO\n", escapeSingle(s.Name), QuoteName(s.Name))
 	return opts.envelope(drop, "", func(sb *strings.Builder) {
 		kind := strings.ToUpper(s.Type)
 		if kind != "" && kind != "NONE" && !externalDataSourceTypes[kind] {
@@ -80,7 +80,7 @@ func buildExternalDataSourceScript(s *ExternalDataSource, opts ScriptOptions) st
 			fmt.Fprintf(sb, "IF NOT EXISTS (SELECT 1 FROM sys.external_data_sources WHERE name = N'%s')\n",
 				escapeSingle(s.Name))
 		}
-		fmt.Fprintf(sb, "CREATE EXTERNAL DATA SOURCE %s WITH (\n", quoteIdent(s.Name))
+		fmt.Fprintf(sb, "CREATE EXTERNAL DATA SOURCE %s WITH (\n", QuoteName(s.Name))
 
 		opt := newClauseList()
 		opt.addLiteral("LOCATION", s.Location)
@@ -88,7 +88,7 @@ func buildExternalDataSourceScript(s *ExternalDataSource, opts ScriptOptions) st
 			opt.addKeyword("TYPE", kind)
 		}
 		if s.Credential != "" {
-			opt.addKeyword("CREDENTIAL", quoteIdent(s.Credential))
+			opt.addKeyword("CREDENTIAL", QuoteName(s.Credential))
 		}
 		opt.addLiteral("RESOURCE_MANAGER_LOCATION", s.ResourceManagerLocation)
 		opt.addLiteral("DATABASE_NAME", s.DatabaseName)
@@ -124,7 +124,7 @@ func (sc *Scripter) ScriptExternalFileFormat(ctx context.Context, name string) (
 // or ORC format carries none.
 func buildExternalFileFormatScript(f *ExternalFileFormat, opts ScriptOptions) string {
 	drop := fmt.Sprintf("IF EXISTS (SELECT 1 FROM sys.external_file_formats WHERE name = N'%s')\n"+
-		"    DROP EXTERNAL FILE FORMAT %s;\nGO\n", escapeSingle(f.Name), quoteIdent(f.Name))
+		"    DROP EXTERNAL FILE FORMAT %s;\nGO\n", escapeSingle(f.Name), QuoteName(f.Name))
 	return opts.envelope(drop, "", func(sb *strings.Builder) {
 		if f.RowTerminator != "" {
 			// sys.external_file_formats stores it; CREATE EXTERNAL FILE FORMAT
@@ -136,7 +136,7 @@ func buildExternalFileFormatScript(f *ExternalFileFormat, opts ScriptOptions) st
 			fmt.Fprintf(sb, "IF NOT EXISTS (SELECT 1 FROM sys.external_file_formats WHERE name = N'%s')\n",
 				escapeSingle(f.Name))
 		}
-		fmt.Fprintf(sb, "CREATE EXTERNAL FILE FORMAT %s WITH (\n", quoteIdent(f.Name))
+		fmt.Fprintf(sb, "CREATE EXTERNAL FILE FORMAT %s WITH (\n", QuoteName(f.Name))
 
 		outer := newClauseList()
 		outer.addKeyword("FORMAT_TYPE", strings.ToUpper(f.FormatType))
@@ -194,7 +194,7 @@ func (sc *Scripter) ScriptExternalLibrary(ctx context.Context, name string) (str
 // and CREATE EXTERNAL LIBRARY has no clause that sets it.
 func buildExternalLibraryScript(l *ExternalLibrary, opts ScriptOptions) string {
 	drop := fmt.Sprintf("IF EXISTS (SELECT 1 FROM sys.external_libraries WHERE name = N'%s')\n"+
-		"    DROP EXTERNAL LIBRARY %s;\nGO\n", escapeSingle(l.Name), quoteIdent(l.Name))
+		"    DROP EXTERNAL LIBRARY %s;\nGO\n", escapeSingle(l.Name), QuoteName(l.Name))
 	return opts.envelope(drop, "", func(sb *strings.Builder) {
 		sb.WriteString("/* The library's package content cannot be scripted — it is not text.\n" +
 			"   Replace the placeholder below with the package bytes or its path. */\n")
@@ -202,9 +202,9 @@ func buildExternalLibraryScript(l *ExternalLibrary, opts ScriptOptions) string {
 			fmt.Fprintf(sb, "/* Scope: %s — set by ownership and package rights, not by this statement. */\n",
 				tsql.BlockCommentSafe(strings.ToUpper(l.Scope)))
 		}
-		fmt.Fprintf(sb, "CREATE EXTERNAL LIBRARY %s", quoteIdent(l.Name))
+		fmt.Fprintf(sb, "CREATE EXTERNAL LIBRARY %s", QuoteName(l.Name))
 		if l.Owner != "" {
-			fmt.Fprintf(sb, " AUTHORIZATION %s", quoteIdent(l.Owner))
+			fmt.Fprintf(sb, " AUTHORIZATION %s", QuoteName(l.Owner))
 		}
 		fmt.Fprintf(sb, "\nFROM (CONTENT = %s)", externalLibraryContentPlaceholder)
 		if l.Language != "" {

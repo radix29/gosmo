@@ -397,7 +397,7 @@ func (d *Database) CreateTable(ctx context.Context, req CreateTableRequest) (*Ta
 
 	var pkCols []string
 	for _, col := range req.Columns {
-		fmt.Fprintf(&sb, "    %s %s%s", quoteIdent(col.Name), colTypeSQL(col), collateClause(col.Collation))
+		fmt.Fprintf(&sb, "    %s %s%s", QuoteName(col.Name), colTypeSQL(col), collateClause(col.Collation))
 		switch {
 		case !col.IsIdentity:
 		case col.IdentitySeed == 0 && col.IdentityIncr == 0:
@@ -414,13 +414,13 @@ func (d *Database) CreateTable(ctx context.Context, req CreateTableRequest) (*Ta
 			fmt.Fprintf(&sb, " DEFAULT (%s)", col.DefaultValue)
 		}
 		if col.IsPrimaryKey {
-			pkCols = append(pkCols, quoteIdent(col.Name))
+			pkCols = append(pkCols, QuoteName(col.Name))
 		}
 		sb.WriteString(",\n")
 	}
 	if len(pkCols) > 0 {
 		fmt.Fprintf(&sb, "    CONSTRAINT %s PRIMARY KEY CLUSTERED (%s)\n",
-			quoteIdent("PK_"+req.Name), strings.Join(pkCols, ", "))
+			QuoteName("PK_"+req.Name), strings.Join(pkCols, ", "))
 	} else {
 		// trim the trailing comma from the last column line
 		s := sb.String()
@@ -660,7 +660,7 @@ func (t *Table) CheckWhereSyntax(ctx context.Context, predicate string) error {
 // CONSTRAINT; an index that is not backing a key constraint is not a
 // constraint and needs Index.Drop instead.
 func (t *Table) DropConstraint(ctx context.Context, name string) error {
-	q := fmt.Sprintf("ALTER TABLE %s DROP CONSTRAINT %s", t.FullName(), quoteIdent(name))
+	q := fmt.Sprintf("ALTER TABLE %s DROP CONSTRAINT %s", t.FullName(), QuoteName(name))
 	if err := t.exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: drop constraint %q on %s: %w", name, t.FullName(), err)
 	}

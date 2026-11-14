@@ -161,7 +161,7 @@ func orderObjects(nodes []orderNode, edges []orderEdge) ([]orderNode, []string, 
 
 func (n orderNode) display() string {
 	if n.schema == "" {
-		return quoteIdent(n.name)
+		return QuoteName(n.name)
 	}
 	return qualifiedName(n.schema, n.name)
 }

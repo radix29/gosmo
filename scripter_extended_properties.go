@@ -274,7 +274,7 @@ func (sc *Scripter) withTableChildExtendedProperties(ctx context.Context, script
 		return p.level.Level2Name != name || !slices.Contains(levels, p.level.Level2Type)
 	})
 	if err != nil {
-		return "", fmt.Errorf("gosmo: script %s on %s: %w", quoteIdent(name), t.FullName(), err)
+		return "", fmt.Errorf("gosmo: script %s on %s: %w", QuoteName(name), t.FullName(), err)
 	}
 	return script + props, nil
 }
@@ -330,7 +330,7 @@ func extendedPropertyStatement(p scriptedExtProp, guard bool) string {
 			where := make([]string, 0, 3)
 			for i := 1; i < len(levels); i += 2 {
 				if levels[i] != "" {
-					where = append(where, quoteIdent(levels[i]))
+					where = append(where, QuoteName(levels[i]))
 				}
 			}
 			on := "the database"

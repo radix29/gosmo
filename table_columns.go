@@ -372,7 +372,7 @@ func (t *Table) AlterColumn(ctx context.Context, col ColumnDefinition) error {
 
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "ALTER TABLE %s ALTER COLUMN %s %s%s",
-		t.FullName(), quoteIdent(col.Name), colTypeSQL(col), collateClause(col.Collation))
+		t.FullName(), QuoteName(col.Name), colTypeSQL(col), collateClause(col.Collation))
 	if current.sparse {
 		// SPARSE goes before NULL: "NULL SPARSE" is Msg 102.
 		sb.WriteString(" SPARSE")
@@ -388,7 +388,7 @@ func (t *Table) AlterColumn(ctx context.Context, col ColumnDefinition) error {
 	} else {
 		err = t.db.execAtomic(ctx, []string{sb.String(),
 			fmt.Sprintf("ALTER TABLE %s ALTER COLUMN %s ADD MASKED WITH (FUNCTION = %s)",
-				t.FullName(), quoteIdent(col.Name), QuoteLiteral(current.mask))})
+				t.FullName(), QuoteName(col.Name), QuoteLiteral(current.mask))})
 	}
 	if err != nil {
 		return fmt.Errorf("gosmo: alter column %q on %s: %w", col.Name, t.FullName(), err)
@@ -438,7 +438,7 @@ func (t *Table) DropColumn(ctx context.Context, name string) error {
 		return invalidf("gosmo: drop column on %s: name is required", t.FullName())
 	}
 	if err := t.exec(ctx,
-		fmt.Sprintf("ALTER TABLE %s DROP COLUMN %s", t.FullName(), quoteIdent(name))); err != nil {
+		fmt.Sprintf("ALTER TABLE %s DROP COLUMN %s", t.FullName(), QuoteName(name))); err != nil {
 		return fmt.Errorf("gosmo: drop column %q on %s: %w", name, t.FullName(), err)
 	}
 	return nil
@@ -459,7 +459,7 @@ func (t *Table) RenameColumn(ctx context.Context, name, newName string) error {
 	if name == "" || newName == "" {
 		return invalidf("gosmo: rename column on %s: both names are required", t.FullName())
 	}
-	objName := t.FullName() + "." + quoteIdent(name)
+	objName := t.FullName() + "." + QuoteName(name)
 	if err := t.exec(ctx,
 		"EXEC sp_rename @objname = @p1, @newname = @p2, @objtype = N'COLUMN'",
 		objName, newName,

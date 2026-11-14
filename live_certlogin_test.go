@@ -143,7 +143,7 @@ func TestLiveCertificateLoginRejectsADefaultDatabase(t *testing.T) {
 	if _, err := s.CreateLogin(ctx, CreateLoginRequest{Name: loginName, Source: LoginSourceCertificate, CertificateName: certName}); err != nil {
 		t.Fatalf("create certificate login: %v", err)
 	}
-	_, err = s.db.Exec("ALTER LOGIN " + quoteIdent(loginName) + " WITH DEFAULT_DATABASE = [tempdb]")
+	_, err = s.db.Exec("ALTER LOGIN " + QuoteName(loginName) + " WITH DEFAULT_DATABASE = [tempdb]")
 	if err == nil {
 		t.Error("ALTER LOGIN ... DEFAULT_DATABASE on a mapped login succeeded; gosmo refuses it for nothing")
 	} else if !strings.Contains(err.Error(), "DEFAULT_DATABASE") {

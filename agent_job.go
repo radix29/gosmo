@@ -503,9 +503,7 @@ func (s *Server) CreateJob(ctx context.Context, req CreateJobRequest) (*Job, err
 	if err := s.execAtomic(ctx, []string{q, enlistQ}, args...); err != nil {
 		return nil, fmt.Errorf("gosmo: create job %q: %w", req.Name, err)
 	}
-	return createdObject(ctx, s.JobRef(req.Name), func() (*Job, error) {
-		return s.JobByName(ctx, req.Name)
-	})
+	return createdByName(ctx, s.JobRef(req.Name), s.JobByName, req.Name)
 }
 
 // AddSchedule creates a schedule and attaches it to the job in one step

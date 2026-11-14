@@ -182,19 +182,19 @@ func (g securityGrant) securable() (string, bool) {
 	case 1:
 		on := "OBJECT::" + qualifiedName(g.schema, g.name)
 		if g.column != "" {
-			on += " (" + quoteIdent(g.column) + ")"
+			on += " (" + QuoteName(g.column) + ")"
 		}
 		return on, true
 	case 3:
-		return "SCHEMA::" + quoteIdent(g.name), true
+		return "SCHEMA::" + QuoteName(g.name), true
 	case 4:
 		switch g.kind {
 		case "R":
-			return "ROLE::" + quoteIdent(g.name), true
+			return "ROLE::" + QuoteName(g.name), true
 		case "A":
-			return "APPLICATION ROLE::" + quoteIdent(g.name), true
+			return "APPLICATION ROLE::" + QuoteName(g.name), true
 		}
-		return "USER::" + quoteIdent(g.name), true
+		return "USER::" + QuoteName(g.name), true
 	}
 	p, ok := securablePrefixes[g.class]
 	if !ok {
@@ -203,7 +203,7 @@ func (g securityGrant) securable() (string, bool) {
 	if g.schema != "" {
 		return p + "::" + qualifiedName(g.schema, g.name), true
 	}
-	return p + "::" + quoteIdent(g.name), true
+	return p + "::" + QuoteName(g.name), true
 }
 
 // objectKey is the objectKey of g's securable when a whole-database script
@@ -271,13 +271,13 @@ func (g securityGrant) statement() string {
 	on, ok := g.securable()
 	if !ok {
 		return "-- not scripted: " + tsql.CommentSafe(fmt.Sprintf("%s %s on %s id %d%s%s",
-			verb, g.permission, g.classDesc, g.majorID, strings.ToLower(to), quoteIdent(g.grantee))) + "\n"
+			verb, g.permission, g.classDesc, g.majorID, strings.ToLower(to), QuoteName(g.grantee))) + "\n"
 	}
 	stmt := verb + " " + g.permission
 	if on != "" {
 		stmt += " ON " + on
 	}
-	stmt += to + quoteIdent(g.grantee)
+	stmt += to + QuoteName(g.grantee)
 	if g.state == "W" {
 		stmt += " WITH GRANT OPTION"
 	}
@@ -310,7 +310,7 @@ func buildDatabaseSecurityParts(dbName string, sec *databaseSecurity, scope *gra
 	fmt.Fprintf(&sb, "/* Security of database %s. Every password below is a placeholder: the\n"+
 		"   server does not expose them. Set the real one on each line marked\n"+
 		"   \"set the real password\" before running this. */\n",
-		tsql.BlockCommentSafe(quoteIdent(dbName)))
+		tsql.BlockCommentSafe(QuoteName(dbName)))
 
 	section := func(title string) { fmt.Fprintf(&sb, "\n-- %s\n", title) }
 
@@ -320,7 +320,7 @@ func buildDatabaseSecurityParts(dbName string, sec *databaseSecurity, scope *gra
 	} else {
 		fmt.Fprintf(&sb, "DECLARE @db nvarchar(300) = QUOTENAME(DB_NAME());\n"+
 			"EXEC (N'ALTER AUTHORIZATION ON DATABASE::' + @db + N' TO %s;');\nGO\n",
-			escapeSingle(quoteIdent(sec.owner)))
+			escapeSingle(QuoteName(sec.owner)))
 	}
 
 	// principals is every name a membership may name: a scripted role or user.
@@ -372,13 +372,13 @@ func buildDatabaseSecurityParts(dbName string, sec *databaseSecurity, scope *gra
 	owned := false
 	for _, s := range schemas {
 		if s.Owner != "" {
-			fmt.Fprintf(&sb, "ALTER AUTHORIZATION ON SCHEMA::%s TO %s;\n", quoteIdent(s.Name), quoteIdent(s.Owner))
+			fmt.Fprintf(&sb, "ALTER AUTHORIZATION ON SCHEMA::%s TO %s;\n", QuoteName(s.Name), QuoteName(s.Owner))
 			owned = true
 		}
 	}
 	for _, r := range roles {
 		if r.Owner != "" && r.Owner != "dbo" {
-			fmt.Fprintf(&sb, "ALTER AUTHORIZATION ON ROLE::%s TO %s;\n", quoteIdent(r.Name), quoteIdent(r.Owner))
+			fmt.Fprintf(&sb, "ALTER AUTHORIZATION ON ROLE::%s TO %s;\n", QuoteName(r.Name), QuoteName(r.Owner))
 			owned = true
 		}
 	}
@@ -394,7 +394,7 @@ func buildDatabaseSecurityParts(dbName string, sec *databaseSecurity, scope *gra
 		}
 		for _, m := range r.Members {
 			if principals[m] {
-				fmt.Fprintf(&sb, "ALTER ROLE %s ADD MEMBER %s;\n", quoteIdent(r.Name), quoteIdent(m))
+				fmt.Fprintf(&sb, "ALTER ROLE %s ADD MEMBER %s;\n", QuoteName(r.Name), QuoteName(m))
 				members = true
 			}
 		}

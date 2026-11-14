@@ -15,7 +15,6 @@ package gosmo
 
 import (
 	"context"
-	"database/sql"
 	"strings"
 	"testing"
 )
@@ -69,10 +68,7 @@ func TestLiveAvailabilityGroupCapabilitiesMatchWhatTheServerEnforces(t *testing.
 		}
 	}
 
-	pool, err := sql.Open("sqlserver", liveRestrictedDSN(t, login, pass))
-	if err != nil {
-		t.Fatalf("open as %s: %v", login, err)
-	}
+	pool := liveOpenAs(t, login, pass)
 	defer pool.Close()
 
 	// Not NewServer, for live_schemacaps_test.go's reason.

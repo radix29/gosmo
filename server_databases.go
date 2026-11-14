@@ -149,21 +149,19 @@ func (s *Server) CreateDatabase(ctx context.Context, req CreateDatabaseRequest) 
 
 	if opts.RecoveryModel != "" {
 		if _, err := s.exec(ctx,
-			fmt.Sprintf("ALTER DATABASE %s SET RECOVERY %s", quoteIdent(name), opts.RecoveryModel),
+			fmt.Sprintf("ALTER DATABASE %s SET RECOVERY %s", QuoteName(name), opts.RecoveryModel),
 		); err != nil {
 			return nil, fmt.Errorf("gosmo: set recovery model for %q: %w", name, err)
 		}
 	}
 	if opts.CompatLevel > 0 {
 		if _, err := s.exec(ctx,
-			fmt.Sprintf("ALTER DATABASE %s SET COMPATIBILITY_LEVEL = %d", quoteIdent(name), opts.CompatLevel),
+			fmt.Sprintf("ALTER DATABASE %s SET COMPATIBILITY_LEVEL = %d", QuoteName(name), opts.CompatLevel),
 		); err != nil {
 			return nil, fmt.Errorf("gosmo: set compat level for %q: %w", name, err)
 		}
 	}
-	return createdObject(ctx, s.DatabaseRef(name), func() (*Database, error) {
-		return s.DatabaseByName(ctx, name)
-	})
+	return createdByName(ctx, s.DatabaseRef(name), s.DatabaseByName, name)
 }
 
 // defaultPrimaryFile is the data file CREATE DATABASE would have made on its
@@ -208,7 +206,7 @@ func placeUnpathedFile(spec *DatabaseFileSpec, dir, ext, kind string) (*Database
 // a server, mirroring buildAddFileStatement.
 func buildCreateDatabaseStatement(name string, opts *CreateDatabaseRequest) string {
 	var sb strings.Builder
-	fmt.Fprintf(&sb, "CREATE DATABASE %s", quoteIdent(name))
+	fmt.Fprintf(&sb, "CREATE DATABASE %s", QuoteName(name))
 	if opts.PrimaryFile != nil {
 		fmt.Fprintf(&sb, " ON PRIMARY \n%s", buildFileDefClause(*opts.PrimaryFile))
 	}

@@ -17,7 +17,6 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"net/url"
 	"slices"
 	"strings"
 	"testing"
@@ -200,24 +199,16 @@ func TestLiveFullText(t *testing.T) {
 	// A user with no VIEW SERVER STATE reads the index; only the
 	// population DMV is refused.
 	const login, pass = "gosmo_fts_probe", "Pr0be!pass-5521"
-	if _, err := db.ExecContext(ctx, "CREATE LOGIN "+quoteIdent(login)+" WITH PASSWORD = N'"+pass+"', CHECK_POLICY = OFF"); err != nil {
+	if _, err := db.ExecContext(ctx, "CREATE LOGIN "+QuoteName(login)+" WITH PASSWORD = N'"+pass+"', CHECK_POLICY = OFF"); err != nil {
 		t.Fatalf("create login: %v", err)
 	}
 	t.Cleanup(func() {
-		if _, err := db.ExecContext(ctx, "DROP LOGIN "+quoteIdent(login)); err != nil {
+		if _, err := db.ExecContext(ctx, "DROP LOGIN "+QuoteName(login)); err != nil {
 			t.Errorf("drop login: %v", err)
 		}
 	})
-	liveExecIn(t, d, ctx, "CREATE USER "+quoteIdent(login), "GRANT SELECT, VIEW DEFINITION TO "+quoteIdent(login))
-	u, err := url.Parse(*liveDSN)
-	if err != nil {
-		t.Fatal(err)
-	}
-	u.User = url.UserPassword(login, pass)
-	other, err := sql.Open("sqlserver", u.String())
-	if err != nil {
-		t.Fatal(err)
-	}
+	liveExecIn(t, d, ctx, "CREATE USER "+QuoteName(login), "GRANT SELECT, VIEW DEFINITION TO "+QuoteName(login))
+	other := liveOpenAs(t, login, pass)
 	// Closed before the database drop, which would otherwise wait on it.
 	t.Cleanup(func() { other.Close() })
 	osrv, err := NewServer(ctx, other)

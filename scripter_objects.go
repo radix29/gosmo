@@ -37,7 +37,7 @@ func (sc *Scripter) ScriptIndex(ctx context.Context, schema, table, name string)
 	if err != nil {
 		return "", err
 	}
-	if err := hiddenDefinitionRefusal("index "+quoteIdent(idx.Name)+" on "+qualifiedName(schema, table),
+	if err := hiddenDefinitionRefusal("index "+QuoteName(idx.Name)+" on "+qualifiedName(schema, table),
 		sc.opts.verb(), nil, []*Index{idx}, nil); err != nil {
 		return "", err
 	}
@@ -61,10 +61,10 @@ func tableChild[T any](kind string, items []T, schema, table, name string, key f
 	v, err := matchName(items, name, key)
 	if errors.Is(err, ErrAmbiguous) {
 		return v, fmt.Errorf("gosmo: %s %s on %s: %w: two or more differ from it only in case, give the exact name",
-			kind, quoteIdent(name), qualifiedName(schema, table), ErrAmbiguous)
+			kind, QuoteName(name), qualifiedName(schema, table), ErrAmbiguous)
 	}
 	if err != nil {
-		return v, notFoundf("gosmo: %s %s on %s not found", kind, quoteIdent(name), qualifiedName(schema, table))
+		return v, notFoundf("gosmo: %s %s on %s not found", kind, QuoteName(name), qualifiedName(schema, table))
 	}
 	return v, nil
 }
@@ -72,9 +72,9 @@ func tableChild[T any](kind string, items []T, schema, table, name string, key f
 // buildIndexScript assembles one index's script from metadata already read.
 func buildIndexScript(idx *Index, tableName string, tableDS DataSpace, opts ScriptOptions) string {
 	isConstraint := idx.IsPrimaryKey || idx.IsUniqueConstraint
-	drop := fmt.Sprintf("DROP INDEX IF EXISTS %s ON %s;\nGO\n", quoteIdent(idx.Name), tableName)
+	drop := fmt.Sprintf("DROP INDEX IF EXISTS %s ON %s;\nGO\n", QuoteName(idx.Name), tableName)
 	if isConstraint {
-		drop = fmt.Sprintf("ALTER TABLE %s DROP CONSTRAINT IF EXISTS %s;\nGO\n", tableName, quoteIdent(idx.Name))
+		drop = fmt.Sprintf("ALTER TABLE %s DROP CONSTRAINT IF EXISTS %s;\nGO\n", tableName, QuoteName(idx.Name))
 	}
 	return opts.envelope(drop, "", func(sb *strings.Builder) {
 		if isConstraint {
@@ -101,7 +101,7 @@ func scriptKeyConstraint(idx *Index, tableName string, tableDS DataSpace, opts S
 		clust = "CLUSTERED"
 	}
 	fmt.Fprintf(&sb, "ALTER TABLE %s\n    ADD CONSTRAINT %s PRIMARY KEY %s (%s)%s%s;\nGO\n\n",
-		tableName, quoteIdent(idx.Name), clust, indexColumnList(idx.KeyColumns),
+		tableName, QuoteName(idx.Name), clust, indexColumnList(idx.KeyColumns),
 		indexWithClause(idx, " "), indexDataSpaceClause(idx.DataSpace, tableDS))
 	return sb.String()
 }
@@ -130,7 +130,7 @@ func (sc *Scripter) ScriptCheckConstraint(ctx context.Context, schema, table, na
 
 // buildCheckConstraintScript assembles one CHECK constraint's script.
 func buildCheckConstraintScript(ck *CheckConstraint, tableName string, opts ScriptOptions) string {
-	drop := fmt.Sprintf("ALTER TABLE %s DROP CONSTRAINT IF EXISTS %s;\nGO\n", tableName, quoteIdent(ck.Name))
+	drop := fmt.Sprintf("ALTER TABLE %s DROP CONSTRAINT IF EXISTS %s;\nGO\n", tableName, QuoteName(ck.Name))
 	return opts.envelope(drop, "", func(sb *strings.Builder) {
 		sb.WriteString(scriptCheckConstraint(ck, tableName, opts))
 	})
@@ -158,9 +158,9 @@ func scriptCheckConstraint(ck *CheckConstraint, tableName string, opts ScriptOpt
 		nfr = " NOT FOR REPLICATION"
 	}
 	fmt.Fprintf(&sb, "ALTER TABLE %s %s\n    ADD CONSTRAINT %s CHECK%s %s;\nGO\n",
-		tableName, with, quoteIdent(ck.Name), nfr, ck.Definition)
+		tableName, with, QuoteName(ck.Name), nfr, ck.Definition)
 	if ck.IsDisabled {
-		fmt.Fprintf(&sb, "ALTER TABLE %s NOCHECK CONSTRAINT %s;\nGO\n", tableName, quoteIdent(ck.Name))
+		fmt.Fprintf(&sb, "ALTER TABLE %s NOCHECK CONSTRAINT %s;\nGO\n", tableName, QuoteName(ck.Name))
 	}
 	sb.WriteString("\n")
 	return sb.String()
@@ -214,7 +214,7 @@ func (sc *Scripter) ScriptStatistic(ctx context.Context, schema, table, name str
 func buildStatisticScript(st *Statistic, cols []string, tableName string, opts ScriptOptions) (string, error) {
 	exists := fmt.Sprintf("EXISTS (SELECT 1 FROM sys.stats WHERE name = N'%s' AND object_id = OBJECT_ID(N'%s'))",
 		escapeSingle(st.Name), escapeSingle(tableName))
-	drop := fmt.Sprintf("IF %s\n    DROP STATISTICS %s.%s;\nGO\n", exists, tableName, quoteIdent(st.Name))
+	drop := fmt.Sprintf("IF %s\n    DROP STATISTICS %s.%s;\nGO\n", exists, tableName, QuoteName(st.Name))
 	guard := fmt.Sprintf("IF NOT %s\n", exists)
 	return opts.envelopeErr(drop, guard, func(sb *strings.Builder) error {
 		stmt, err := buildCreateStatisticStatement(tableName, CreateStatisticRequest{
@@ -318,7 +318,7 @@ func (sc *Scripter) scriptedStatistics(ctx context.Context, t *Table) ([]scripte
 func scriptTableStatistic(s scriptedStatistic, tableName string, opts ScriptOptions) string {
 	if s.st.HasFilter && s.st.FilterDef == "" {
 		return "-- " + tsql.CommentSafe(fmt.Sprintf("Statistic %s on %s is not scripted: its filter is not visible to the login (it needs VIEW DEFINITION).",
-			quoteIdent(s.st.Name), tableName)) + "\n\n"
+			QuoteName(s.st.Name), tableName)) + "\n\n"
 	}
 	create := opts
 	create.Verb, create.ScriptDrops = ScriptCreate, false
@@ -326,7 +326,7 @@ func scriptTableStatistic(s scriptedStatistic, tableName string, opts ScriptOpti
 	if err != nil {
 		// Unreachable from the catalog — a statistic has a name and a
 		// column — but a script must not lose one in silence.
-		return "-- " + tsql.CommentSafe(fmt.Sprintf("Statistic %s on %s is not scripted: %v", quoteIdent(s.st.Name), tableName, err)) + "\n\n"
+		return "-- " + tsql.CommentSafe(fmt.Sprintf("Statistic %s on %s is not scripted: %v", QuoteName(s.st.Name), tableName, err)) + "\n\n"
 	}
 	return script + "\n"
 }
@@ -382,7 +382,7 @@ func (sc *Scripter) tableForeignKeys(ctx context.Context, t *Table) ([]*ForeignK
 // buildForeignKeyScript assembles one foreign key's script, reusing the same
 // renderer ScriptTable uses for the table's own keys.
 func buildForeignKeyScript(fk *ForeignKey, tableName string, opts ScriptOptions) string {
-	drop := fmt.Sprintf("ALTER TABLE %s DROP CONSTRAINT IF EXISTS %s;\nGO\n", tableName, quoteIdent(fk.Name))
+	drop := fmt.Sprintf("ALTER TABLE %s DROP CONSTRAINT IF EXISTS %s;\nGO\n", tableName, QuoteName(fk.Name))
 	return opts.envelope(drop, "", func(sb *strings.Builder) {
 		sb.WriteString(scriptForeignKey(fk, tableName, opts))
 	})
@@ -420,7 +420,7 @@ func buildSequenceScript(seq *Sequence, opts ScriptOptions) string {
 		// that is not a built-in. A built-in decimal/numeric carries its
 		// precision: the bare name means (18,0), so numeric(12,0) came back
 		// wider than it went in.
-		dataType := quoteIdent(string(seq.DataType))
+		dataType := QuoteName(string(seq.DataType))
 		if s := seq.DataTypeSchema; s != "" && !strings.EqualFold(s, "sys") {
 			dataType = qualifiedName(s, string(seq.DataType))
 		} else if (seq.DataType == DataTypeDecimal || seq.DataType == DataTypeNumeric) && seq.Precision > 0 {
@@ -543,7 +543,7 @@ func (sc *Scripter) ScriptPartitionFunction(ctx context.Context, name string) (s
 
 // buildPartitionFunctionScript assembles one partition function's script.
 func buildPartitionFunctionScript(pf *PartitionFunction, opts ScriptOptions) string {
-	drop := fmt.Sprintf("DROP PARTITION FUNCTION IF EXISTS %s;\nGO\n", quoteIdent(pf.Name))
+	drop := fmt.Sprintf("DROP PARTITION FUNCTION IF EXISTS %s;\nGO\n", QuoteName(pf.Name))
 	guard := fmt.Sprintf("IF NOT EXISTS (SELECT 1 FROM sys.partition_functions WHERE name = N'%s')\n",
 		escapeSingle(pf.Name))
 	return opts.envelope(drop, guard, func(sb *strings.Builder) {
@@ -552,7 +552,7 @@ func buildPartitionFunctionScript(pf *PartitionFunction, opts ScriptOptions) str
 			side = "RIGHT"
 		}
 		fmt.Fprintf(sb, "CREATE PARTITION FUNCTION %s (%s)\n    AS RANGE %s FOR VALUES (%s);\nGO\n",
-			quoteIdent(pf.Name), TypeString(pf.InputType, pf.MaxLength, pf.Precision, pf.Scale), side,
+			QuoteName(pf.Name), TypeString(pf.InputType, pf.MaxLength, pf.Precision, pf.Scale), side,
 			strings.Join(pf.Boundaries, ", "))
 	})
 }
@@ -573,15 +573,15 @@ func (sc *Scripter) ScriptPartitionScheme(ctx context.Context, name string) (str
 
 // buildPartitionSchemeScript assembles one partition scheme's script.
 func buildPartitionSchemeScript(ps *PartitionScheme, opts ScriptOptions) string {
-	drop := fmt.Sprintf("DROP PARTITION SCHEME IF EXISTS %s;\nGO\n", quoteIdent(ps.Name))
+	drop := fmt.Sprintf("DROP PARTITION SCHEME IF EXISTS %s;\nGO\n", QuoteName(ps.Name))
 	guard := fmt.Sprintf("IF NOT EXISTS (SELECT 1 FROM sys.partition_schemes WHERE name = N'%s')\n",
 		escapeSingle(ps.Name))
 	return opts.envelope(drop, guard, func(sb *strings.Builder) {
 		fgs := make([]string, len(ps.FileGroups))
 		for i, fg := range ps.FileGroups {
-			fgs[i] = quoteIdent(fg)
+			fgs[i] = QuoteName(fg)
 		}
 		fmt.Fprintf(sb, "CREATE PARTITION SCHEME %s\n    AS PARTITION %s TO (%s);\nGO\n",
-			quoteIdent(ps.Name), quoteIdent(ps.FunctionName), strings.Join(fgs, ", "))
+			QuoteName(ps.Name), QuoteName(ps.FunctionName), strings.Join(fgs, ", "))
 	})
 }

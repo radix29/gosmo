@@ -120,7 +120,7 @@ func scriptableColumns(cols []*Column, forInsert bool) []dmlColumn {
 			c.GeneratedAlwaysType != 0, c.GraphType != 0:
 			continue
 		default:
-			out = append(out, dmlColumn{name: quoteIdent(c.Name), placeholder: columnPlaceholder(c)})
+			out = append(out, dmlColumn{name: QuoteName(c.Name), placeholder: columnPlaceholder(c)})
 		}
 	}
 	return out
@@ -165,7 +165,7 @@ func buildSelectScript(schema, name string, cols []*Column) string {
 		case GraphColumnID, GraphColumnFromID, GraphColumnFromObjID, GraphColumnToID, GraphColumnToObjID:
 			continue
 		}
-		names = append(names, quoteIdent(c.Name))
+		names = append(names, QuoteName(c.Name))
 	}
 	return fmt.Sprintf("SELECT %s\nFROM   %s;\nGO\n", strings.Join(names, "\n     , "), full)
 }

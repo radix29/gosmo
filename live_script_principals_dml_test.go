@@ -27,17 +27,17 @@ func TestLiveScriptLoginServerRoles(t *testing.T) {
 	}
 	const login, role = "gosmo_live_rolemember", "gosmo live role]x"
 	dropLoginIfPresent(t, s, login)
-	s.db.Exec("IF SUSER_ID(N'" + escapeSingle(role) + "') IS NOT NULL DROP SERVER ROLE " + quoteIdent(role))
+	s.db.Exec("IF SUSER_ID(N'" + escapeSingle(role) + "') IS NOT NULL DROP SERVER ROLE " + QuoteName(role))
 	t.Cleanup(func() {
 		dropLoginIfPresent(t, s, login)
-		s.db.Exec("IF SUSER_ID(N'" + escapeSingle(role) + "') IS NOT NULL DROP SERVER ROLE " + quoteIdent(role))
+		s.db.Exec("IF SUSER_ID(N'" + escapeSingle(role) + "') IS NOT NULL DROP SERVER ROLE " + QuoteName(role))
 	})
 	for _, q := range []string{
-		"CREATE LOGIN " + quoteIdent(login) + " WITH PASSWORD = N'Sc0pe!Test#2026', CHECK_POLICY = OFF",
-		"ALTER LOGIN " + quoteIdent(login) + " DISABLE",
-		"CREATE SERVER ROLE " + quoteIdent(role),
-		"ALTER SERVER ROLE [dbcreator] ADD MEMBER " + quoteIdent(login),
-		"ALTER SERVER ROLE " + quoteIdent(role) + " ADD MEMBER " + quoteIdent(login),
+		"CREATE LOGIN " + QuoteName(login) + " WITH PASSWORD = N'Sc0pe!Test#2026', CHECK_POLICY = OFF",
+		"ALTER LOGIN " + QuoteName(login) + " DISABLE",
+		"CREATE SERVER ROLE " + QuoteName(role),
+		"ALTER SERVER ROLE [dbcreator] ADD MEMBER " + QuoteName(login),
+		"ALTER SERVER ROLE " + QuoteName(role) + " ADD MEMBER " + QuoteName(login),
 	} {
 		if _, err := s.db.ExecContext(ctx, q); err != nil {
 			t.Fatalf("%s: %v", q, err)
@@ -90,10 +90,10 @@ func TestLiveScriptOrphanedUser(t *testing.T) {
 	const login = "gosmo_live_orphan"
 	dropLoginIfPresent(t, d.server, login)
 	t.Cleanup(func() { dropLoginIfPresent(t, d.server, login) })
-	if _, err := db.ExecContext(ctx, "CREATE LOGIN "+quoteIdent(login)+" WITH PASSWORD = N'Sc0pe!Test#2026', CHECK_POLICY = OFF"); err != nil {
+	if _, err := db.ExecContext(ctx, "CREATE LOGIN "+QuoteName(login)+" WITH PASSWORD = N'Sc0pe!Test#2026', CHECK_POLICY = OFF"); err != nil {
 		t.Fatal(err)
 	}
-	liveExecIn(t, d, ctx, "CREATE USER u_orph FOR LOGIN "+quoteIdent(login))
+	liveExecIn(t, d, ctx, "CREATE USER u_orph FOR LOGIN "+QuoteName(login))
 	dropLoginIfPresent(t, d.server, login)
 
 	u, err := d.UserByName(ctx, "u_orph")

@@ -270,7 +270,7 @@ func (req CreateAvailabilityGroupRequest) createStatement(major int) (string, er
 		options = append(options, "CONTAINED")
 	}
 
-	stmt := "CREATE AVAILABILITY GROUP " + quoteIdent(req.Name)
+	stmt := "CREATE AVAILABILITY GROUP " + QuoteName(req.Name)
 	if len(options) > 0 {
 		stmt += " WITH (" + strings.Join(options, ", ") + ")"
 	}
@@ -284,7 +284,7 @@ func (req CreateAvailabilityGroupRequest) createStatement(major int) (string, er
 			if strings.TrimSpace(name) == "" {
 				return "", invalidf("availability group %q has an empty database name", req.Name)
 			}
-			names = append(names, quoteIdent(name))
+			names = append(names, QuoteName(name))
 		}
 		stmt += " DATABASE " + strings.Join(names, ", ")
 	}

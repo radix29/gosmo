@@ -4,7 +4,6 @@ package gosmo
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"reflect"
 	"slices"
@@ -135,10 +134,7 @@ WHERE  j.name IN (N'`+saJob+`', N'`+userJob+`') AND h.step_id = 0`).Scan(&n)
 
 	for login, role := range roles {
 		t.Run(role, func(t *testing.T) {
-			pool, err := sql.Open("sqlserver", liveRestrictedDSN(t, login, pass))
-			if err != nil {
-				t.Fatalf("open as %s: %v", login, err)
-			}
+			pool := liveOpenAs(t, login, pass)
 			t.Cleanup(func() { pool.Close() })
 			srv := &Server{db: pool}
 

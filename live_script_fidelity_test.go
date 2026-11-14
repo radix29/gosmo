@@ -34,7 +34,7 @@ func livePinnedRun(t *testing.T, db *sql.DB, ctx context.Context, dbName, script
 		t.Fatalf("pin a connection: %v", err)
 	}
 	defer conn.Close()
-	if _, err := conn.ExecContext(ctx, "USE "+quoteIdent(dbName)); err != nil {
+	if _, err := conn.ExecContext(ctx, "USE "+QuoteName(dbName)); err != nil {
 		t.Fatalf("USE %s: %v", dbName, err)
 	}
 	for _, batch := range splitGoBatches(script) {

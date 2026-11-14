@@ -14,7 +14,6 @@ package gosmo
 
 import (
 	"context"
-	"database/sql"
 	"strings"
 	"testing"
 	"time"
@@ -111,14 +110,11 @@ func TestLiveReadLogWithoutSysadmin(t *testing.T) {
 		t.Fatalf("create login: %v", err)
 	}
 	t.Cleanup(func() { db.ExecContext(c, "DROP LOGIN ["+login+"]") })
-	pool, err := sql.Open("sqlserver", liveRestrictedDSN(t, login, pass))
-	if err != nil {
-		t.Fatalf("open as %s: %v", login, err)
-	}
+	pool := liveOpenAs(t, login, pass)
 	t.Cleanup(func() { pool.Close() })
 	restricted := &Server{db: pool}
 
-	_, err = restricted.ReadLog(ctx, ErrorLogSQLServer, 0, LogSearch{})
+	_, err := restricted.ReadLog(ctx, ErrorLogSQLServer, 0, LogSearch{})
 	if se, ok := AsSQLError(err); !IsPermissionDenied(err) || !ok || se.Number != 27219 {
 		t.Fatalf("no permission: %v, want PermissionDenied Msg 27219", err)
 	}

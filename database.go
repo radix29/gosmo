@@ -420,7 +420,7 @@ func (d *Database) Drop(ctx context.Context, term Termination) error {
 	}
 	force := term == TerminationRollbackImmediate
 	s.releaseIdle(ctx)
-	drop := fmt.Sprintf("DROP DATABASE %s", quoteIdent(name))
+	drop := fmt.Sprintf("DROP DATABASE %s", QuoteName(name))
 	// Every form starts from master: see fromMaster.
 	switch {
 	case !force:
@@ -489,7 +489,7 @@ func (d *Database) rename(ctx context.Context, newName string, term Termination)
 		return fmt.Errorf("gosmo: rename database %q: %w", oldName, err)
 	}
 	force := term == TerminationRollbackImmediate
-	q := fmt.Sprintf("ALTER DATABASE %s MODIFY NAME = %s", quoteIdent(oldName), quoteIdent(newName))
+	q := fmt.Sprintf("ALTER DATABASE %s MODIFY NAME = %s", QuoteName(oldName), QuoteName(newName))
 	s.releaseIdle(ctx)
 	switch {
 	case !force:

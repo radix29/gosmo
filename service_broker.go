@@ -118,7 +118,7 @@ func (mt *MessageType) Database() *Database { return mt.db }
 // FullName returns the bracket-quoted name. A message type is not
 // schema-scoped, so this is a single identifier — but message type names are
 // conventionally URIs, and unquoted they do not parse.
-func (mt *MessageType) FullName() string { return quoteIdent(mt.Name) }
+func (mt *MessageType) FullName() string { return QuoteName(mt.Name) }
 
 // SchemaCollection returns the schema-qualified, bracket-quoted XML schema
 // collection the message type validates against, or an empty string when it
@@ -203,7 +203,7 @@ func (sb ServiceBroker) MessageTypeRef(name string) *MessageType {
 // Drop drops the message type. A message type still named by a contract is
 // refused by the server (Msg 3716) until the contract goes.
 func (mt *MessageType) Drop(ctx context.Context) error {
-	if _, err := mt.db.exec(ctx, "DROP MESSAGE TYPE "+quoteIdent(mt.Name)); err != nil {
+	if _, err := mt.db.exec(ctx, "DROP MESSAGE TYPE "+QuoteName(mt.Name)); err != nil {
 		return fmt.Errorf("gosmo: drop message type %q: %w", mt.Name, err)
 	}
 	return nil
@@ -262,7 +262,7 @@ func (c *ServiceContract) Database() *Database { return c.db }
 
 // FullName returns the bracket-quoted name. A contract is not schema-scoped,
 // so this is a single identifier.
-func (c *ServiceContract) FullName() string { return quoteIdent(c.Name) }
+func (c *ServiceContract) FullName() string { return QuoteName(c.Name) }
 
 // contractSelect is the SELECT the listing and the by-name finder share.
 const contractSelect = `
@@ -421,7 +421,7 @@ func (sb ServiceBroker) ContractRef(name string) *ServiceContract {
 // Drop drops the contract. A contract still named by a service or a
 // conversation priority is refused by the server (Msg 3716).
 func (c *ServiceContract) Drop(ctx context.Context) error {
-	if _, err := c.db.exec(ctx, "DROP CONTRACT "+quoteIdent(c.Name)); err != nil {
+	if _, err := c.db.exec(ctx, "DROP CONTRACT "+QuoteName(c.Name)); err != nil {
 		return fmt.Errorf("gosmo: drop contract %q: %w", c.Name, err)
 	}
 	return nil
@@ -466,7 +466,7 @@ func (s *BrokerService) Database() *Database { return s.db }
 
 // FullName returns the bracket-quoted name. A service is not schema-scoped,
 // so this is a single identifier.
-func (s *BrokerService) FullName() string { return quoteIdent(s.Name) }
+func (s *BrokerService) FullName() string { return QuoteName(s.Name) }
 
 // Queue returns the schema-qualified, bracket-quoted name of the queue the
 // service receives on.
@@ -610,7 +610,7 @@ func (sb ServiceBroker) ServiceRef(name string) *BrokerService {
 // Drop drops the service. A service with conversations still open on it is
 // refused by the server.
 func (s *BrokerService) Drop(ctx context.Context) error {
-	if _, err := s.db.exec(ctx, "DROP SERVICE "+quoteIdent(s.Name)); err != nil {
+	if _, err := s.db.exec(ctx, "DROP SERVICE "+QuoteName(s.Name)); err != nil {
 		return fmt.Errorf("gosmo: drop service %q: %w", s.Name, err)
 	}
 	return nil

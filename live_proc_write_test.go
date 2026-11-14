@@ -304,7 +304,7 @@ func TestLiveProcWriteParameterCollation(t *testing.T) {
 		if rpc {
 			_, err = d.exec(ctx, bare, "dbo", "Mixed")
 		} else {
-			_, err = db.ExecContext(ctx, "USE "+quoteIdent(d.Name)+"; "+bare, "dbo", "Mixed")
+			_, err = db.ExecContext(ctx, "USE "+QuoteName(d.Name)+"; "+bare, "dbo", "Mixed")
 		}
 		t.Logf("%s: %v", writePath(rpc), err)
 		if rpc && err != nil {

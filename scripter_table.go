@@ -424,19 +424,19 @@ func buildTableScript(schema, name, dbName string, p tableScriptParts, opts Scri
 		}
 		if p.table.PeriodStart != "" && p.table.PeriodEnd != "" {
 			elems = append(elems, fmt.Sprintf("PERIOD FOR SYSTEM_TIME (%s, %s)",
-				quoteIdent(p.table.PeriodStart), quoteIdent(p.table.PeriodEnd)))
+				QuoteName(p.table.PeriodStart), QuoteName(p.table.PeriodEnd)))
 		}
 		switch {
 		case pkIdx != nil && p.table.IsMemoryOptimized:
 			elems = append(elems, fmt.Sprintf("CONSTRAINT %s PRIMARY KEY %s",
-				quoteIdent(pkIdx.Name), memoryOptimizedIndexSpec(pkIdx)))
+				QuoteName(pkIdx.Name), memoryOptimizedIndexSpec(pkIdx)))
 		case pkIdx != nil:
 			clust := "NONCLUSTERED"
 			if pkIdx.IsClustered {
 				clust = "CLUSTERED"
 			}
 			elems = append(elems, fmt.Sprintf("CONSTRAINT %s PRIMARY KEY %s (%s)%s%s",
-				quoteIdent(pkIdx.Name), clust, indexColumnList(pkIdx.KeyColumns),
+				QuoteName(pkIdx.Name), clust, indexColumnList(pkIdx.KeyColumns),
 				indexWithClause(pkIdx, " "), indexDataSpaceClause(pkIdx.DataSpace, p.ds)))
 		}
 		for _, idx := range indexes {
@@ -523,7 +523,7 @@ func lockEscalationStatement(o tableScriptOptions, fullName string) string {
 func columnBindings(cols []*Column, fullName string) string {
 	var sb strings.Builder
 	for _, col := range cols {
-		column := fullName + "." + quoteIdent(col.Name)
+		column := fullName + "." + QuoteName(col.Name)
 		if col.BoundRule != "" {
 			fmt.Fprintf(&sb, "EXEC sp_bindrule N'%s', N'%s';\nGO\n",
 				escapeSingle(qualifiedName(col.BoundRuleSchema, col.BoundRule)), escapeSingle(column))
@@ -603,7 +603,7 @@ func writeTableDependents(sb *strings.Builder, indexes []*Index, inline map[stri
 // a column collated differently gets a COLLATE clause.
 func tableColumnDefinition(col *Column, dbCollation string) string {
 	var sb strings.Builder
-	name := quoteIdent(col.Name)
+	name := QuoteName(col.Name)
 	switch {
 	case col.IsComputed && col.ComputedText != "":
 		fmt.Fprintf(&sb, "%s AS %s", name, col.ComputedText)
@@ -654,7 +654,7 @@ func tableColumnDefinition(col *Column, dbCollation string) string {
 	}
 	if col.ColumnEncryptionKey != "" {
 		fmt.Fprintf(&sb, " ENCRYPTED WITH (COLUMN_ENCRYPTION_KEY = %s, ENCRYPTION_TYPE = %s, ALGORITHM = '%s')",
-			quoteIdent(col.ColumnEncryptionKey), col.EncryptionType, escapeSingle(col.EncryptionAlgorithm))
+			QuoteName(col.ColumnEncryptionKey), col.EncryptionType, escapeSingle(col.EncryptionAlgorithm))
 	}
 	if !col.IsNullable {
 		sb.WriteString(" NOT NULL")
@@ -663,7 +663,7 @@ func tableColumnDefinition(col *Column, dbCollation string) string {
 	}
 	if col.DefaultValue != nil {
 		fmt.Fprintf(&sb, " CONSTRAINT %s DEFAULT %s",
-			quoteIdent(col.DefaultValue.Name), col.DefaultValue.Definition)
+			QuoteName(col.DefaultValue.Name), col.DefaultValue.Definition)
 	}
 	return sb.String()
 }
@@ -692,7 +692,7 @@ func scriptUniqueConstraint(idx *Index, tableName string, tableDS DataSpace, opt
 		clust = "CLUSTERED"
 	}
 	fmt.Fprintf(&sb, "ALTER TABLE %s\n    ADD CONSTRAINT %s UNIQUE %s (%s)%s%s;\nGO\n\n",
-		tableName, quoteIdent(idx.Name), clust, indexColumnList(idx.KeyColumns),
+		tableName, QuoteName(idx.Name), clust, indexColumnList(idx.KeyColumns),
 		indexWithClause(idx, " "), indexDataSpaceClause(idx.DataSpace, tableDS))
 	return sb.String()
 }
@@ -725,11 +725,11 @@ func scriptForeignKey(fk *ForeignKey, tableName string, opts ScriptOptions) stri
 	}
 	cols := make([]string, len(fk.Columns))
 	for i, c := range fk.Columns {
-		cols[i] = quoteIdent(c)
+		cols[i] = QuoteName(c)
 	}
 	refCols := make([]string, len(fk.ReferencedColumns))
 	for i, c := range fk.ReferencedColumns {
-		refCols[i] = quoteIdent(c)
+		refCols[i] = QuoteName(c)
 	}
 	with := "WITH CHECK"
 	if fk.IsDisabled || fk.IsNotTrusted {
@@ -737,7 +737,7 @@ func scriptForeignKey(fk *ForeignKey, tableName string, opts ScriptOptions) stri
 	}
 	fmt.Fprintf(&sb,
 		"ALTER TABLE %s %s\n    ADD CONSTRAINT %s\n    FOREIGN KEY (%s)\n    REFERENCES %s (%s)",
-		tableName, with, quoteIdent(fk.Name),
+		tableName, with, QuoteName(fk.Name),
 		strings.Join(cols, ", "),
 		qualifiedName(fk.ReferencedSchema, fk.ReferencedTable),
 		strings.Join(refCols, ", "),
@@ -753,7 +753,7 @@ func scriptForeignKey(fk *ForeignKey, tableName string, opts ScriptOptions) stri
 	}
 	sb.WriteString(";\nGO\n")
 	if fk.IsDisabled {
-		fmt.Fprintf(&sb, "ALTER TABLE %s NOCHECK CONSTRAINT %s;\nGO\n", tableName, quoteIdent(fk.Name))
+		fmt.Fprintf(&sb, "ALTER TABLE %s NOCHECK CONSTRAINT %s;\nGO\n", tableName, QuoteName(fk.Name))
 	}
 	sb.WriteString("\n")
 	return sb.String()

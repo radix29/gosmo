@@ -85,7 +85,7 @@ func TestLiveBackupDeviceCreateReadDrop(t *testing.T) {
 
 	// Write a backup set onto the device, addressing it by its logical name —
 	// which is also the form BACKUP takes.
-	if _, err := db.ExecContext(ctx, "BACKUP DATABASE master TO "+quoteIdent(liveBackupDeviceName)+
+	if _, err := db.ExecContext(ctx, "BACKUP DATABASE master TO "+QuoteName(liveBackupDeviceName)+
 		" WITH INIT, COPY_ONLY, NAME = N'gosmo live device probe'"); err != nil {
 		t.Fatalf("BACKUP to the device: %v", err)
 	}

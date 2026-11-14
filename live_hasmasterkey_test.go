@@ -11,7 +11,6 @@ package gosmo
 
 import (
 	"context"
-	"database/sql"
 	"testing"
 )
 
@@ -40,10 +39,7 @@ func TestLiveHasMasterKeySeenByALowPrivilegeUser(t *testing.T) {
 	u := "[" + login + "]"
 	liveExecIn(t, d, ctx, `CREATE USER `+u+` FOR LOGIN `+u, `GRANT CREATE CERTIFICATE TO `+u)
 
-	pool, err := sql.Open("sqlserver", liveRestrictedDSN(t, login, pass))
-	if err != nil {
-		t.Fatalf("open as %s: %v", login, err)
-	}
+	pool := liveOpenAs(t, login, pass)
 	defer pool.Close()
 	has := func(s *Server) bool {
 		t.Helper()

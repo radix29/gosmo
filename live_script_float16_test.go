@@ -62,7 +62,7 @@ func TestLiveFloat16VectorScript(t *testing.T) {
 	if err != nil {
 		t.Fatalf("pin a connection: %v", err)
 	}
-	if _, err := conn.ExecContext(ctx, "USE "+quoteIdent(dst.Name)); err != nil {
+	if _, err := conn.ExecContext(ctx, "USE "+QuoteName(dst.Name)); err != nil {
 		t.Fatalf("USE %s: %v", dst.Name, err)
 	}
 	var runErr error
@@ -148,7 +148,7 @@ func TestLiveFloat16ParameterScript(t *testing.T) {
 		if err != nil {
 			t.Fatalf("pin a connection: %v", err)
 		}
-		if _, err := conn.ExecContext(ctx, "USE "+quoteIdent(dst.Name)); err != nil {
+		if _, err := conn.ExecContext(ctx, "USE "+QuoteName(dst.Name)); err != nil {
 			t.Fatalf("USE %s: %v", dst.Name, err)
 		}
 		var runErr error
@@ -232,7 +232,7 @@ func TestLiveFloat16DefinitionScript(t *testing.T) {
 		if err != nil {
 			t.Fatalf("pin a connection: %v", err)
 		}
-		if _, err := conn.ExecContext(ctx, "USE "+quoteIdent(dst.Name)); err != nil {
+		if _, err := conn.ExecContext(ctx, "USE "+QuoteName(dst.Name)); err != nil {
 			t.Fatalf("USE %s: %v", dst.Name, err)
 		}
 		var runErr error
@@ -295,7 +295,7 @@ func TestLiveFloat16DynamicSQLScript(t *testing.T) {
 		t.Fatalf("pin a connection: %v", err)
 	}
 	defer conn.Close()
-	if _, err := conn.ExecContext(ctx, "USE "+quoteIdent(dst.Name)); err != nil {
+	if _, err := conn.ExecContext(ctx, "USE "+QuoteName(dst.Name)); err != nil {
 		t.Fatalf("USE %s: %v", dst.Name, err)
 	}
 	_, runErr := conn.ExecContext(ctx, "EXEC dbo.Dyn")

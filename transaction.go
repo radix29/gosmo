@@ -165,7 +165,7 @@ func (s *Server) InTransaction(ctx context.Context, fn func(ctx context.Context)
 // database-scoped statement left it elsewhere.
 func (t *serverTx) serverConn(ctx context.Context) (sqlConn, error) {
 	if t.home != "" && !t.in(t.home) {
-		if _, err := t.tx.ExecContext(ctx, "USE "+quoteIdent(t.home)); err != nil {
+		if _, err := t.tx.ExecContext(ctx, "USE "+QuoteName(t.home)); err != nil {
 			t.lost()
 			return nil, &EntryError{Database: t.home, Err: err}
 		}
@@ -188,7 +188,7 @@ func (t *serverTx) goHome(ctx context.Context) {
 	}
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), txHomeTimeout)
 	defer cancel()
-	if _, err := t.tx.ExecContext(ctx, "USE "+quoteIdent(t.home)); err == nil {
+	if _, err := t.tx.ExecContext(ctx, "USE "+QuoteName(t.home)); err == nil {
 		t.at(t.home)
 	}
 }

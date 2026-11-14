@@ -13,7 +13,6 @@ package gosmo
 
 import (
 	"context"
-	"database/sql"
 	"testing"
 )
 
@@ -50,10 +49,7 @@ func TestLiveDottedCapabilityKeys(t *testing.T) {
 		`GRANT VIEW DEFINITION ON TYPE::[a.b].c TO [`+login+`]`,
 	)
 
-	pool, err := sql.Open("sqlserver", liveRestrictedDSN(t, login, pass))
-	if err != nil {
-		t.Fatalf("open as %s: %v", login, err)
-	}
+	pool := liveOpenAs(t, login, pass)
 	defer pool.Close()
 	caps, err := (&Server{db: pool}).DatabaseRef(d.Name).Capabilities(ctx)
 	if err != nil {

@@ -225,7 +225,7 @@ func (ag *AvailabilityGroup) AddDatabase(ctx context.Context, name string) error
 	if strings.TrimSpace(name) == "" {
 		return invalidf("gosmo: add database to availability group %q: empty database name", ag.Name)
 	}
-	if err := ag.alter(ctx, "ADD DATABASE "+quoteIdent(name)); err != nil {
+	if err := ag.alter(ctx, "ADD DATABASE "+QuoteName(name)); err != nil {
 		return fmt.Errorf("gosmo: add database %q to availability group %q: %w", name, ag.Name, err)
 	}
 	return nil
@@ -243,7 +243,7 @@ func (ag *AvailabilityGroup) RemoveDatabase(ctx context.Context, name string) er
 	if strings.TrimSpace(name) == "" {
 		return invalidf("gosmo: remove database from availability group %q: empty database name", ag.Name)
 	}
-	if err := ag.alter(ctx, "REMOVE DATABASE "+quoteIdent(name)); err != nil {
+	if err := ag.alter(ctx, "REMOVE DATABASE "+QuoteName(name)); err != nil {
 		return fmt.Errorf("gosmo: remove database %q from availability group %q: %w", name, ag.Name, err)
 	}
 	return nil
@@ -259,7 +259,7 @@ func (ag *AvailabilityGroup) RemoveDatabase(ctx context.Context, name string) er
 // alterDatabaseHADR runs one ALTER DATABASE <name> SET HADR <clause> statement.
 func (ag *AvailabilityGroup) alterDatabaseHADR(ctx context.Context, name, clause string) error {
 	_, err := ag.server.exec(ctx,
-		fmt.Sprintf("ALTER DATABASE %s SET HADR %s", quoteIdent(name), clause))
+		fmt.Sprintf("ALTER DATABASE %s SET HADR %s", QuoteName(name), clause))
 	return err
 }
 
@@ -272,7 +272,7 @@ func (ag *AvailabilityGroup) JoinDatabase(ctx context.Context, name string) erro
 	if strings.TrimSpace(name) == "" {
 		return invalidf("gosmo: join database to availability group %q: empty database name", ag.Name)
 	}
-	if err := ag.alterDatabaseHADR(ctx, name, "AVAILABILITY GROUP = "+quoteIdent(ag.Name)); err != nil {
+	if err := ag.alterDatabaseHADR(ctx, name, "AVAILABILITY GROUP = "+QuoteName(ag.Name)); err != nil {
 		return fmt.Errorf("gosmo: join database %q to availability group %q: %w", name, ag.Name, err)
 	}
 	return nil

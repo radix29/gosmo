@@ -87,7 +87,7 @@ ORDER  BY k.name`)
 func (d *Database) AsymmetricKeyByName(ctx context.Context, name string) (*AsymmetricKey, error) {
 	return readByName(ctx, d, scanAsymmetricKey, asymmetricKeySelect+`
 WHERE  k.name = @p1`, []any{name},
-		notFoundf("gosmo: asymmetric key %s not found in %q", quoteIdent(name), d.Name),
+		notFoundf("gosmo: asymmetric key %s not found in %q", QuoteName(name), d.Name),
 		fmt.Sprintf("read asymmetric key %q in %q", name, d.Name))
 }
 
@@ -170,9 +170,9 @@ func (spec CreateAsymmetricKeyRequest) createAsymmetricKeyStatement() (string, e
 	if strings.TrimSpace(spec.Name) == "" {
 		return "", invalidf("asymmetric key has no name")
 	}
-	stmt := "CREATE ASYMMETRIC KEY " + quoteIdent(spec.Name)
+	stmt := "CREATE ASYMMETRIC KEY " + QuoteName(spec.Name)
 	if spec.Authorization != "" {
-		stmt += " AUTHORIZATION " + quoteIdent(spec.Authorization)
+		stmt += " AUTHORIZATION " + QuoteName(spec.Authorization)
 	}
 	if p := spec.FromProvider; p != nil {
 		if spec.EncryptionPassword != "" {
@@ -212,15 +212,13 @@ func (d *Database) CreateAsymmetricKey(ctx context.Context, spec CreateAsymmetri
 	if _, err := d.execPasswords(ctx, stmt, spec.EncryptionPassword); err != nil {
 		return nil, fmt.Errorf("gosmo: create asymmetric key %q in %q: %w", spec.Name, d.Name, err)
 	}
-	return createdObject(ctx, d.AsymmetricKeyRef(spec.Name), func() (*AsymmetricKey, error) {
-		return d.AsymmetricKeyByName(ctx, spec.Name)
-	})
+	return createdByName(ctx, d.AsymmetricKeyRef(spec.Name), d.AsymmetricKeyByName, spec.Name)
 }
 
 // Drop deletes the asymmetric key. SQL Server refuses (Msg 15559) while a
 // login or user is mapped to it.
 func (k *AsymmetricKey) Drop(ctx context.Context) error {
-	if _, err := k.db.exec(ctx, "DROP ASYMMETRIC KEY "+quoteIdent(k.Name)); err != nil {
+	if _, err := k.db.exec(ctx, "DROP ASYMMETRIC KEY "+QuoteName(k.Name)); err != nil {
 		return fmt.Errorf("gosmo: drop asymmetric key %q in %q: %w", k.Name, k.db.Name, err)
 	}
 	return nil
@@ -231,7 +229,7 @@ func (k *AsymmetricKey) Drop(ctx context.Context) error {
 // Server has no BACKUP ASYMMETRIC KEY (a syntax error on 17), so unlike a
 // certificate's the private key cannot have been exported first.
 func (k *AsymmetricKey) RemovePrivateKey(ctx context.Context) error {
-	if _, err := k.db.exec(ctx, "ALTER ASYMMETRIC KEY "+quoteIdent(k.Name)+" REMOVE PRIVATE KEY"); err != nil {
+	if _, err := k.db.exec(ctx, "ALTER ASYMMETRIC KEY "+QuoteName(k.Name)+" REMOVE PRIVATE KEY"); err != nil {
 		return fmt.Errorf("gosmo: remove private key of asymmetric key %q in %q: %w", k.Name, k.db.Name, err)
 	}
 	setIfApplied(ctx, &k.PvtKeyEncryptionType, "NO_PRIVATE_KEY")
@@ -242,7 +240,7 @@ func (k *AsymmetricKey) RemovePrivateKey(ctx context.Context) error {
 // AUTHORIZATION. SQL Server drops every explicit permission on the key as it
 // does so.
 func (k *AsymmetricKey) SetOwner(ctx context.Context, newOwner string) error {
-	q := "ALTER AUTHORIZATION ON ASYMMETRIC KEY::" + quoteIdent(k.Name) + " TO " + quoteIdent(newOwner)
+	q := "ALTER AUTHORIZATION ON ASYMMETRIC KEY::" + QuoteName(k.Name) + " TO " + QuoteName(newOwner)
 	if _, err := k.db.exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: change asymmetric key %q owner to %q in %q: %w", k.Name, newOwner, k.db.Name, err)
 	}

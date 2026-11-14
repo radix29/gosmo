@@ -123,6 +123,14 @@ func createdObject[T any](ctx context.Context, handle T, read func() (T, error))
 	return v, err
 }
 
+// createdByName is createdObject for the common case of an object read back
+// by its one name: handle is the family's Ref(name), byName its ByName. An
+// object keyed by more than a name (schema, class, id) passes its own read
+// closure to createdObject instead.
+func createdByName[T any](ctx context.Context, handle T, byName func(context.Context, string) (T, error), name string) (T, error) {
+	return createdObject(ctx, handle, func() (T, error) { return byName(ctx, name) })
+}
+
 // createOwned is the shared body of the CREATE … AUTHORIZATION creates —
 // CreateSchema, CreateRole, CreateServerRole: refuse an empty name, run
 // "<stmt> [name] [AUTHORIZATION [owner]]" through exec, and hand back the
@@ -134,14 +142,14 @@ func createOwned[T any](ctx context.Context, exec func(context.Context, string, 
 	if name == "" {
 		return zero, invalidf("gosmo: create %s: name is required", what)
 	}
-	q := stmt + " " + quoteIdent(name)
+	q := stmt + " " + QuoteName(name)
 	if owner != "" {
-		q += " AUTHORIZATION " + quoteIdent(owner)
+		q += " AUTHORIZATION " + QuoteName(owner)
 	}
 	if _, err := exec(ctx, q); err != nil {
 		return zero, fmt.Errorf("gosmo: create %s %q: %w", what, name, err)
 	}
-	return createdObject(ctx, ref, func() (T, error) { return byName(ctx, name) })
+	return createdByName(ctx, ref, byName, name)
 }
 
 // matchName picks the item whose key is name. A name read from the catalog
@@ -177,20 +185,13 @@ func matchName[T any](items []T, name string, key func(T) string) (T, error) {
 	return zero, ErrAmbiguous
 }
 
-// quoteIdent wraps a SQL Server identifier in square brackets, escaping any
-// embedded closing brackets. Thin internal alias for the exported QuoteName
-// (see quoting.go) so the many internal call sites stay terse.
-func quoteIdent(name string) string {
-	return QuoteName(name)
-}
-
 // escapeSingle escapes single quotes in a string literal for use in T-SQL.
 // Prefer parameterised queries ($1 / ?) for values; use this only where
 // parameters are not accepted (e.g. DDL statements, stored procedure names).
 //
 // It escapes only — the surrounding quotes come from the caller's format
 // string. It does not bracket-quote: an identifier going into a literal needs
-// qualifiedName/quoteIdent first. See QuoteLiteral (quoting.go) for when to
+// qualifiedName/QuoteName first. See QuoteLiteral (quoting.go) for when to
 // reach for which.
 func escapeSingle(s string) string {
 	return strings.ReplaceAll(s, "'", "''")
@@ -459,7 +460,7 @@ func perDatabaseBatch[T any](ctx context.Context, s *Server, what string, dbs []
 // when that statement executes, inside its TRY (probed on 2025, 2026-10-08).
 // The literal form passed a live test only while the batch's plan was cached.
 func perDatabaseExec(database, args string) string {
-	return "BEGIN TRY SET @proc = " + QuoteLiteral(quoteIdent(database)+".sys.sp_executesql") +
+	return "BEGIN TRY SET @proc = " + QuoteLiteral(QuoteName(database)+".sys.sp_executesql") +
 		"; EXEC @proc @q" + args + "; END TRY BEGIN CATCH IF ERROR_NUMBER() NOT IN (" +
 		perDatabaseSkipErrors + ") THROW; END CATCH;\n"
 }

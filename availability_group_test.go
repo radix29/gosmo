@@ -297,7 +297,7 @@ func TestAvailabilityGroupOperationStatements(t *testing.T) {
 	}
 }
 
-// A database name goes through quoteIdent and a group name into the ALTER
+// A database name goes through QuoteName and a group name into the ALTER
 // DATABASE tail, so an awkward name has to survive both halves of the join
 // statement.
 func TestJoinDatabaseQuotesBothNames(t *testing.T) {

@@ -137,14 +137,14 @@ func selectiveXMLIndexCreate(idx *Index, tableName string) string {
 		col = idx.KeyColumns[0].ref()
 	}
 	if idx.IsSelectiveXML {
-		fmt.Fprintf(&sb, "CREATE SELECTIVE XML INDEX %s\n    ON %s (%s)", quoteIdent(idx.Name), tableName, col)
+		fmt.Fprintf(&sb, "CREATE SELECTIVE XML INDEX %s\n    ON %s (%s)", QuoteName(idx.Name), tableName, col)
 		if len(idx.SelectiveXMLNamespaces) > 0 {
 			ns := make([]string, len(idx.SelectiveXMLNamespaces))
 			for i, n := range idx.SelectiveXMLNamespaces {
 				if n.Prefix == "" {
 					ns[i] = "DEFAULT " + QuoteLiteral(n.URI)
 				} else {
-					ns[i] = QuoteLiteral(n.URI) + " AS " + quoteIdent(n.Prefix)
+					ns[i] = QuoteLiteral(n.URI) + " AS " + QuoteName(n.Prefix)
 				}
 			}
 			fmt.Fprintf(&sb, "\n    WITH XMLNAMESPACES (%s)", strings.Join(ns, ", "))
@@ -156,7 +156,7 @@ func selectiveXMLIndexCreate(idx *Index, tableName string) string {
 		fmt.Fprintf(&sb, "\n    FOR (\n        %s\n    )", strings.Join(paths, ",\n        "))
 	} else {
 		fmt.Fprintf(&sb, "CREATE XML INDEX %s\n    ON %s (%s)\n    USING XML INDEX %s FOR (%s)",
-			quoteIdent(idx.Name), tableName, col, quoteIdent(idx.PrimaryXMLIndex), quoteIdent(idx.SelectiveXMLPath))
+			QuoteName(idx.Name), tableName, col, QuoteName(idx.PrimaryXMLIndex), QuoteName(idx.SelectiveXMLPath))
 	}
 	sb.WriteString(xmlIndexWithClause(idx))
 	return sb.String()
@@ -165,7 +165,7 @@ func selectiveXMLIndexCreate(idx *Index, tableName string) string {
 // clause renders the path as one FOR (…) item. An XQUERY path with nothing
 // declared takes no AS clause at all.
 func (p SelectiveXMLPath) clause() string {
-	s := quoteIdent(p.Name) + " = " + QuoteLiteral(p.Path)
+	s := QuoteName(p.Name) + " = " + QuoteLiteral(p.Path)
 	if p.IsSQL {
 		s += " AS SQL " + p.SQLType
 		if p.IsSingleton {

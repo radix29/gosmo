@@ -81,7 +81,7 @@ func loginRoleMemberships(login string, roles []string) string {
 		if r == "public" {
 			continue
 		}
-		fmt.Fprintf(&sb, "ALTER SERVER ROLE %s ADD MEMBER %s;\nGO\n", quoteIdent(r), quoteIdent(login))
+		fmt.Fprintf(&sb, "ALTER SERVER ROLE %s ADD MEMBER %s;\nGO\n", QuoteName(r), QuoteName(login))
 	}
 	return sb.String()
 }
@@ -110,10 +110,10 @@ func loginRoleMemberships(login string, roles []string) string {
 // the drop is guarded by SUSER_ID instead.
 func buildLoginScript(l *Login, opts ScriptOptions) string {
 	drop := fmt.Sprintf("IF SUSER_ID(N'%s') IS NOT NULL\n    DROP LOGIN %s;\nGO\n",
-		escapeSingle(l.Name), quoteIdent(l.Name))
+		escapeSingle(l.Name), QuoteName(l.Name))
 	guard := fmt.Sprintf("IF SUSER_ID(N'%s') IS NULL\n", escapeSingle(l.Name))
 	return opts.envelope(drop, guard, func(sb *strings.Builder) {
-		stmt := "CREATE LOGIN " + quoteIdent(l.Name)
+		stmt := "CREATE LOGIN " + QuoteName(l.Name)
 
 		// withOpen tracks whether the WITH keyword has already been emitted, so
 		// the next clause knows to continue the list with a comma. Read from the
@@ -167,9 +167,9 @@ func buildLoginScript(l *Login, opts ScriptOptions) string {
 			switch {
 			case opt.value == "":
 			case takesWithOptions:
-				with(opt.clause + quoteIdent(opt.value))
+				with(opt.clause + QuoteName(opt.value))
 			case alterDefaultDB:
-				altered = append(altered, opt.clause+quoteIdent(opt.value))
+				altered = append(altered, opt.clause+QuoteName(opt.value))
 			}
 		}
 		if l.IsSQLLogin() {
@@ -182,10 +182,10 @@ func buildLoginScript(l *Login, opts ScriptOptions) string {
 		fmt.Fprintf(sb, "%s;\nGO\n", stmt)
 		if len(altered) > 0 {
 			fmt.Fprintf(sb, "ALTER LOGIN %s WITH %s;\nGO\n",
-				quoteIdent(l.Name), strings.Join(altered, ", "))
+				QuoteName(l.Name), strings.Join(altered, ", "))
 		}
 		if l.IsDisabled {
-			fmt.Fprintf(sb, "ALTER LOGIN %s DISABLE;\nGO\n", quoteIdent(l.Name))
+			fmt.Fprintf(sb, "ALTER LOGIN %s DISABLE;\nGO\n", QuoteName(l.Name))
 		}
 	})
 }
@@ -199,7 +199,7 @@ func mappedObjectName(l *Login, kind string) string {
 	if l.MappedObject == "" {
 		return fmt.Sprintf("[<%s name, sysname, >]", kind)
 	}
-	return quoteIdent(l.MappedObject)
+	return QuoteName(l.MappedObject)
 }
 
 // ScriptServerRole generates the CREATE (or DROP) script for one server role,
@@ -216,16 +216,16 @@ func (sc *ServerScripter) ScriptServerRole(ctx context.Context, name string) (st
 // has no IF EXISTS form, so the drop is guarded the same way a login's is.
 func buildServerRoleScript(r *ServerRole, opts ScriptOptions) string {
 	drop := fmt.Sprintf("IF SUSER_ID(N'%s') IS NOT NULL\n    DROP SERVER ROLE %s;\nGO\n",
-		escapeSingle(r.Name), quoteIdent(r.Name))
+		escapeSingle(r.Name), QuoteName(r.Name))
 	guard := fmt.Sprintf("IF SUSER_ID(N'%s') IS NULL\n", escapeSingle(r.Name))
 	return opts.envelope(drop, guard, func(sb *strings.Builder) {
-		fmt.Fprintf(sb, "CREATE SERVER ROLE %s", quoteIdent(r.Name))
+		fmt.Fprintf(sb, "CREATE SERVER ROLE %s", QuoteName(r.Name))
 		if r.Owner != "" {
-			fmt.Fprintf(sb, " AUTHORIZATION %s", quoteIdent(r.Owner))
+			fmt.Fprintf(sb, " AUTHORIZATION %s", QuoteName(r.Owner))
 		}
 		sb.WriteString(";\nGO\n")
 		for _, m := range r.Members {
-			fmt.Fprintf(sb, "ALTER SERVER ROLE %s ADD MEMBER %s;\nGO\n", quoteIdent(r.Name), quoteIdent(m))
+			fmt.Fprintf(sb, "ALTER SERVER ROLE %s ADD MEMBER %s;\nGO\n", QuoteName(r.Name), QuoteName(m))
 		}
 	})
 }
@@ -308,7 +308,7 @@ func (sc *ServerScripter) ScriptEndpoint(ctx context.Context, name string) (stri
 	}
 
 	drop := fmt.Sprintf("IF EXISTS (SELECT 1 FROM sys.endpoints WHERE name = N'%s')\n    DROP ENDPOINT %s;\nGO\n",
-		escapeSingle(e.Name), quoteIdent(e.Name))
+		escapeSingle(e.Name), QuoteName(e.Name))
 	guard := fmt.Sprintf("IF NOT EXISTS (SELECT 1 FROM sys.endpoints WHERE name = N'%s')\n",
 		escapeSingle(e.Name))
 	return sc.opts.envelopeErr(drop, guard, func(sb *strings.Builder) error {
@@ -316,9 +316,9 @@ func (sc *ServerScripter) ScriptEndpoint(ctx context.Context, name string) (stri
 		if err != nil {
 			return err
 		}
-		fmt.Fprintf(sb, "CREATE ENDPOINT %s", quoteIdent(e.Name))
+		fmt.Fprintf(sb, "CREATE ENDPOINT %s", QuoteName(e.Name))
 		if e.Owner != "" {
-			fmt.Fprintf(sb, "\n    AUTHORIZATION %s", quoteIdent(e.Owner))
+			fmt.Fprintf(sb, "\n    AUTHORIZATION %s", QuoteName(e.Owner))
 		}
 		if e.State != "" {
 			fmt.Fprintf(sb, "\n    STATE = %s", e.State)
@@ -401,7 +401,7 @@ func endpointAuthClause(desc, certificate string) string {
 				// which beats one that silently authenticates differently.
 				out = append(out, "CERTIFICATE <certificate name>")
 			} else {
-				out = append(out, "CERTIFICATE "+quoteIdent(certificate))
+				out = append(out, "CERTIFICATE "+QuoteName(certificate))
 			}
 		default:
 			out = append(out, "WINDOWS "+p)
@@ -441,7 +441,7 @@ func backupDeviceKeyword(typeDesc string) BackupDeviceType {
 // way a server role's is guarded with SUSER_ID.
 func buildCredentialScript(c *Credential, opts ScriptOptions) string {
 	drop := fmt.Sprintf("IF EXISTS (SELECT 1 FROM sys.credentials WHERE name = N'%s')\n    DROP CREDENTIAL %s;\nGO\n",
-		escapeSingle(c.Name), quoteIdent(c.Name))
+		escapeSingle(c.Name), QuoteName(c.Name))
 	return opts.envelope(drop, "", func(sb *strings.Builder) {
 		sb.WriteString("/* The credential's secret cannot be read from the server. Replace the\n" +
 			"   placeholder below, or remove the SECRET clause if it has none. */\n")
@@ -450,9 +450,9 @@ func buildCredentialScript(c *Credential, opts ScriptOptions) string {
 				escapeSingle(c.Name))
 		}
 		fmt.Fprintf(sb, "CREATE CREDENTIAL %s WITH IDENTITY = N'%s', SECRET = N'%s'",
-			quoteIdent(c.Name), escapeSingle(c.Identity), SecretPlaceholder)
+			QuoteName(c.Name), escapeSingle(c.Identity), SecretPlaceholder)
 		if c.CryptographicProvider != "" {
-			fmt.Fprintf(sb, " FOR CRYPTOGRAPHIC PROVIDER %s", quoteIdent(c.CryptographicProvider))
+			fmt.Fprintf(sb, " FOR CRYPTOGRAPHIC PROVIDER %s", QuoteName(c.CryptographicProvider))
 		}
 		sb.WriteString(";\nGO\n")
 	})
@@ -478,7 +478,7 @@ func (sc *ServerScripter) ScriptServerAudit(ctx context.Context, name string) (s
 func buildServerAuditScript(a *ServerAudit, opts ScriptOptions) string {
 	drop := fmt.Sprintf("IF EXISTS (SELECT 1 FROM sys.server_audits WHERE name = N'%s')\nBEGIN\n"+
 		"    ALTER SERVER AUDIT %s WITH ( STATE = OFF );\n    DROP SERVER AUDIT %s;\nEND\nGO\n",
-		escapeSingle(a.Name), quoteIdent(a.Name), quoteIdent(a.Name))
+		escapeSingle(a.Name), QuoteName(a.Name), QuoteName(a.Name))
 	return opts.envelope(drop, "", func(sb *strings.Builder) {
 
 		spec := ServerAuditDefinition{
@@ -505,7 +505,7 @@ func buildServerAuditScript(a *ServerAudit, opts ScriptOptions) string {
 			sb.WriteString("\nGO\n")
 		}
 		if a.IsEnabled {
-			fmt.Fprintf(sb, "\nALTER SERVER AUDIT %s WITH ( STATE = ON );\nGO\n", quoteIdent(a.Name))
+			fmt.Fprintf(sb, "\nALTER SERVER AUDIT %s WITH ( STATE = ON );\nGO\n", QuoteName(a.Name))
 		}
 	})
 }
@@ -529,7 +529,7 @@ func buildServerAuditSpecificationScript(s *ServerAuditSpecification, opts Scrip
 	drop := fmt.Sprintf("IF EXISTS (SELECT 1 FROM sys.server_audit_specifications WHERE name = N'%s')\nBEGIN\n"+
 		"    ALTER SERVER AUDIT SPECIFICATION %s WITH ( STATE = OFF );\n"+
 		"    DROP SERVER AUDIT SPECIFICATION %s;\nEND\nGO\n",
-		escapeSingle(s.Name), quoteIdent(s.Name), quoteIdent(s.Name))
+		escapeSingle(s.Name), QuoteName(s.Name), QuoteName(s.Name))
 	return opts.envelopeErr(drop, "", func(sb *strings.Builder) error {
 
 		if s.AuditName == "" {

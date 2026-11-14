@@ -73,7 +73,7 @@ func (d *Database) EffectiveObjectPermissions(ctx context.Context, schema, name,
 // holds on a schema. principal must be a database user — see
 // EffectivePermissions for why a role cannot be one.
 func (d *Database) EffectiveSchemaPermissions(ctx context.Context, schemaName, principal string) ([]*EffectivePermission, error) {
-	ref := quoteIdent(schemaName)
+	ref := QuoteName(schemaName)
 	return d.effectivePermissions(ctx, principal, ref, "SCHEMA",
 		fmt.Sprintf("effective permissions on schema %q for %q in %q", schemaName, principal, d.Name))
 }

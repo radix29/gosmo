@@ -30,7 +30,7 @@ func TestLiveAsymmetricKeysListingAndFinderAgree(t *testing.T) {
 	const keyName = "gosmo_live_asymkey"
 	drop := func() {
 		if k, err := master.AsymmetricKeyByName(ctx, keyName); err == nil && k != nil {
-			if _, err := s.exec(ctx, "USE [master]; DROP ASYMMETRIC KEY "+quoteIdent(keyName)); err != nil {
+			if _, err := s.exec(ctx, "USE [master]; DROP ASYMMETRIC KEY "+QuoteName(keyName)); err != nil {
 				t.Logf("cleanup of asymmetric key %q: %v", keyName, err)
 			}
 		}

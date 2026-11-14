@@ -16,9 +16,7 @@ package gosmo
 import (
 	"bytes"
 	"context"
-	"database/sql"
 	"errors"
-	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -182,15 +180,7 @@ func TestLiveQueryProfiles(t *testing.T) {
 		}
 		t.Cleanup(func() { db.ExecContext(context.Background(), "DROP LOGIN "+login) })
 
-		u, err := url.Parse(*liveDSN)
-		if err != nil {
-			t.Fatalf("parse DSN: %v", err)
-		}
-		u.User = url.UserPassword(login, pass)
-		ldb, err := sql.Open("sqlserver", u.String())
-		if err != nil {
-			t.Fatalf("open as %s: %v", login, err)
-		}
+		ldb := liveOpenAs(t, login, pass)
 		// Closed before the DROP LOGIN cleanup, which runs after this.
 		defer ldb.Close()
 		lsrv := liveServer(t, ldb, ctx)

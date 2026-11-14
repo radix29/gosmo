@@ -14,7 +14,6 @@ package gosmo
 
 import (
 	"context"
-	"database/sql"
 	"testing"
 )
 
@@ -94,10 +93,7 @@ func TestLiveFullTextCapabilitiesMatchWhatTheServerEnforces(t *testing.T) {
 		`GRANT ALTER ON SEARCH PROPERTY LIST::p_alt TO `+u,
 	)
 
-	pool, err := sql.Open("sqlserver", liveRestrictedDSN(t, login, pass))
-	if err != nil {
-		t.Fatalf("open as %s: %v", login, err)
-	}
+	pool := liveOpenAs(t, login, pass)
 	defer pool.Close()
 	exec := func(stmt string) error {
 		_, err := pool.ExecContext(ctx, "USE ["+d.Name+"]; "+stmt)
@@ -245,10 +241,7 @@ func TestLiveFullTextCreateAlterAndReferencesMatchWhatTheServerEnforces(t *testi
 		`CREATE FULLTEXT INDEX ON dbo.T2 (body) KEY INDEX PK_T2 ON c1 WITH CHANGE_TRACKING OFF, NO POPULATION`,
 	)
 
-	pool, err := sql.Open("sqlserver", liveRestrictedDSN(t, login, pass))
-	if err != nil {
-		t.Fatalf("open as %s: %v", login, err)
-	}
+	pool := liveOpenAs(t, login, pass)
 	defer pool.Close()
 	exec := func(stmt string) error {
 		_, err := pool.ExecContext(ctx, "USE ["+d.Name+"]; "+stmt)

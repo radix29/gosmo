@@ -131,7 +131,7 @@ func DeviceTarget(name string) BackupTarget { return BackupTarget{name: name, lo
 // RESTORE — the same form in both.
 func (t BackupTarget) clause() string {
 	if t.logical {
-		return quoteIdent(t.name)
+		return QuoteName(t.name)
 	}
 	return deviceClause(t.name, t.url)
 }

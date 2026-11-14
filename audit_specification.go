@@ -146,7 +146,7 @@ type CreateServerAuditSpecificationRequest struct {
 // validateAuditActionGroup rejects anything that is not a bare group name.
 //
 // A group name is a keyword inside the ADD (...) clause, not an identifier:
-// brackets are a syntax error there, so quoteIdent cannot be used and the name
+// brackets are a syntax error there, so QuoteName cannot be used and the name
 // goes into the statement literally. Names come from sys.dm_audit_actions, but
 // nothing stops a caller passing its own string, so the charset is checked
 // rather than trusted.
@@ -183,7 +183,7 @@ func (spec CreateServerAuditSpecificationRequest) createStatement() (string, err
 		return "", invalidf("server audit specification %q names no audit", spec.Name)
 	}
 	stmt := fmt.Sprintf("CREATE SERVER AUDIT SPECIFICATION %s\nFOR SERVER AUDIT %s",
-		quoteIdent(spec.Name), quoteIdent(spec.AuditName))
+		QuoteName(spec.Name), QuoteName(spec.AuditName))
 	if len(spec.ActionGroups) > 0 {
 		clauses, err := auditActionGroupClauses("ADD", spec.ActionGroups)
 		if err != nil {
@@ -207,9 +207,7 @@ func (s *Server) CreateServerAuditSpecification(ctx context.Context, spec Create
 	if _, err := s.exec(ctx, stmt); err != nil {
 		return nil, fmt.Errorf("gosmo: create server audit specification %q: %w", spec.Name, err)
 	}
-	return createdObject(ctx, s.ServerAuditSpecificationRef(spec.Name), func() (*ServerAuditSpecification, error) {
-		return s.ServerAuditSpecificationByName(ctx, spec.Name)
-	})
+	return createdByName(ctx, s.ServerAuditSpecificationRef(spec.Name), s.ServerAuditSpecificationByName, spec.Name)
 }
 
 // SetEnabled turns the specification on (STATE = ON) when on is true and off
@@ -223,7 +221,7 @@ func (spec *ServerAuditSpecification) SetEnabled(ctx context.Context, on bool) e
 		state = "ON"
 	}
 	stmt := fmt.Sprintf("ALTER SERVER AUDIT SPECIFICATION %s WITH ( STATE = %s )",
-		quoteIdent(spec.Name), state)
+		QuoteName(spec.Name), state)
 	if _, err := spec.server.exec(ctx, stmt); err != nil {
 		return fmt.Errorf("gosmo: set server audit specification %q state: %w", spec.Name, err)
 	}
@@ -349,7 +347,7 @@ func (sc auditSpecScope) setAudit(ctx context.Context, auditName string) error {
 		return invalidf("gosmo: alter %s audit specification %q: audit name is empty", strings.ToLower(sc.keyword), sc.name)
 	}
 	return sc.alter(ctx, fmt.Sprintf("ALTER %s AUDIT SPECIFICATION %s\nFOR SERVER AUDIT %s",
-		sc.keyword, quoteIdent(sc.name), quoteIdent(auditName)))
+		sc.keyword, QuoteName(sc.name), QuoteName(auditName)))
 }
 
 // AddActionGroups adds audit action groups to the specification.
@@ -372,7 +370,7 @@ func (spec *ServerAuditSpecification) alterActionGroups(ctx context.Context, ver
 	if err != nil {
 		return fmt.Errorf("gosmo: alter server audit specification %q: %w", spec.Name, err)
 	}
-	return spec.scope().alter(ctx, fmt.Sprintf("ALTER SERVER AUDIT SPECIFICATION %s\n    %s", quoteIdent(spec.Name), clauses))
+	return spec.scope().alter(ctx, fmt.Sprintf("ALTER SERVER AUDIT SPECIFICATION %s\n    %s", QuoteName(spec.Name), clauses))
 }
 
 // SetAudit rebinds the specification to a different server audit.
@@ -400,7 +398,7 @@ func (spec *ServerAuditSpecification) Drop(ctx context.Context) error {
 			return err
 		}
 	}
-	stmt := "DROP SERVER AUDIT SPECIFICATION " + quoteIdent(spec.Name)
+	stmt := "DROP SERVER AUDIT SPECIFICATION " + QuoteName(spec.Name)
 	if _, err := spec.server.exec(ctx, stmt); err != nil {
 		return fmt.Errorf("gosmo: drop server audit specification %q: %w", spec.Name, err)
 	}

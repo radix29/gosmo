@@ -155,7 +155,7 @@ func (c *ScriptCollector) String() string {
 // the statement after it open a batch — CREATE SCHEMA and CREATE PROCEDURE
 // refuse to run after a USE in the same one (Msg 111).
 func scriptUse(db string) string {
-	return "USE " + quoteIdent(db) + ";\nGO\n"
+	return "USE " + QuoteName(db) + ";\nGO\n"
 }
 
 // WithScript returns a derived context carrying a *ScriptCollector. Every

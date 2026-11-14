@@ -48,7 +48,7 @@ func dropXESessionAfter(t *testing.T, s *Server, db *sql.DB, name string) {
 	drop := func() {
 		if _, err := db.ExecContext(context.Background(), fmt.Sprintf(
 			"IF EXISTS (SELECT 1 FROM sys.server_event_sessions WHERE name = N'%s') DROP EVENT SESSION %s ON SERVER",
-			escapeSingle(name), quoteIdent(name))); err != nil {
+			escapeSingle(name), QuoteName(name))); err != nil {
 			t.Errorf("cleanup: %v", err)
 			return
 		}
@@ -235,7 +235,7 @@ func TestLiveEventSessionLifecycle(t *testing.T) {
 
 	// The stop window is needed: the same option change by hand, on the
 	// running session, is refused.
-	if _, err := db.ExecContext(ctx, "ALTER EVENT SESSION "+quoteIdent(name)+" ON SERVER WITH (MAX_DISPATCH_LATENCY = 3 SECONDS)"); err == nil ||
+	if _, err := db.ExecContext(ctx, "ALTER EVENT SESSION "+QuoteName(name)+" ON SERVER WITH (MAX_DISPATCH_LATENCY = 3 SECONDS)"); err == nil ||
 		!strings.Contains(err.Error(), "running") {
 		t.Errorf("changing an option on a running session was not refused: %v", err)
 	}

@@ -260,7 +260,7 @@ func tableTypeIndex(idx *Index, memoryOptimized bool) string {
 	case idx.IsUniqueConstraint:
 		head = "UNIQUE "
 	default:
-		head = "INDEX " + quoteIdent(idx.Name) + " "
+		head = "INDEX " + QuoteName(idx.Name) + " "
 		if idx.IsUnique && !memoryOptimized {
 			head += "UNIQUE "
 		}
@@ -318,9 +318,9 @@ func buildClrTypeScript(t *ClrType, opts ScriptOptions) string {
 		if opts.IncludeIfNotExists {
 			fmt.Fprintf(sb, "IF TYPE_ID(N'%s') IS NULL\n", escapeSingle(fullName))
 		}
-		externalName := quoteIdent(t.Assembly)
+		externalName := QuoteName(t.Assembly)
 		if t.AssemblyClass != "" {
-			externalName += "." + quoteIdent(t.AssemblyClass)
+			externalName += "." + QuoteName(t.AssemblyClass)
 		}
 		fmt.Fprintf(sb, "CREATE TYPE %s EXTERNAL NAME %s;\nGO\n", fullName, externalName)
 	})
@@ -493,13 +493,13 @@ func (sc *Scripter) ScriptAssembly(ctx context.Context, name string) (string, er
 // registered UNSAFE that came back SAFE would run under a policy it was not
 // given.
 func buildAssemblyScript(a *Assembly, opts ScriptOptions) string {
-	drop := fmt.Sprintf("DROP ASSEMBLY IF EXISTS %s;\nGO\n", quoteIdent(a.Name))
+	drop := fmt.Sprintf("DROP ASSEMBLY IF EXISTS %s;\nGO\n", QuoteName(a.Name))
 	return opts.envelope(drop, "", func(sb *strings.Builder) {
 		sb.WriteString("/* The assembly binary cannot be scripted — it is not text. Replace the\n" +
 			"   placeholder below with the assembly's bytes, or with a FROM '<path>' clause. */\n")
-		fmt.Fprintf(sb, "CREATE ASSEMBLY %s", quoteIdent(a.Name))
+		fmt.Fprintf(sb, "CREATE ASSEMBLY %s", QuoteName(a.Name))
 		if a.Owner != "" {
-			fmt.Fprintf(sb, " AUTHORIZATION %s", quoteIdent(a.Owner))
+			fmt.Fprintf(sb, " AUTHORIZATION %s", QuoteName(a.Owner))
 		}
 		permSet := a.PermissionSet
 		if permSet == "" {
@@ -511,7 +511,7 @@ func buildAssemblyScript(a *Assembly, opts ScriptOptions) string {
 			// is_visible = 0 is how a referenced-only dependency is registered;
 			// recreating it visible would let CREATE PROCEDURE bind to routines
 			// the original assembly deliberately hides.
-			fmt.Fprintf(sb, "\nALTER ASSEMBLY %s WITH VISIBILITY = OFF;\nGO\n", quoteIdent(a.Name))
+			fmt.Fprintf(sb, "\nALTER ASSEMBLY %s WITH VISIBILITY = OFF;\nGO\n", QuoteName(a.Name))
 		}
 	})
 }

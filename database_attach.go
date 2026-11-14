@@ -140,13 +140,11 @@ func (s *Server) AttachDatabase(ctx context.Context, req AttachDatabaseRequest) 
 	}
 	if req.Owner != "" {
 		if _, err := s.exec(ctx, fmt.Sprintf("ALTER AUTHORIZATION ON DATABASE::%s TO %s",
-			quoteIdent(req.Name), quoteIdent(req.Owner))); err != nil {
+			QuoteName(req.Name), QuoteName(req.Owner))); err != nil {
 			return nil, fmt.Errorf("gosmo: set owner of attached database %q: %w", req.Name, err)
 		}
 	}
-	return createdObject(ctx, s.DatabaseRef(req.Name), func() (*Database, error) {
-		return s.DatabaseByName(ctx, req.Name)
-	})
+	return createdByName(ctx, s.DatabaseRef(req.Name), s.DatabaseByName, req.Name)
 }
 
 // buildAttachStatement builds the CREATE DATABASE ... FOR ATTACH statement.
@@ -162,7 +160,7 @@ func buildAttachStatement(spec AttachDatabaseRequest) string {
 		forClause = "FOR ATTACH_REBUILD_LOG"
 	}
 	return fmt.Sprintf("CREATE DATABASE %s ON\n%s\n%s",
-		quoteIdent(spec.Name), strings.Join(clauses, ",\n"), forClause)
+		QuoteName(spec.Name), strings.Join(clauses, ",\n"), forClause)
 }
 
 // DetachedFile is one file of a detached database, as its primary data file

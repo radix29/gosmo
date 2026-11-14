@@ -13,7 +13,6 @@ package gosmo
 
 import (
 	"context"
-	"database/sql"
 	"testing"
 )
 
@@ -94,10 +93,7 @@ func TestLiveKeyCapabilitiesMatchWhatTheServerEnforces(t *testing.T) {
 		`GRANT VIEW DEFINITION ON SYMMETRIC KEY::s_view TO `+u,
 	)
 
-	pool, err := sql.Open("sqlserver", liveRestrictedDSN(t, login, pass))
-	if err != nil {
-		t.Fatalf("open as %s: %v", login, err)
-	}
+	pool := liveOpenAs(t, login, pass)
 	defer pool.Close()
 	exec := func(stmt string) error {
 		_, err := pool.ExecContext(ctx, "USE ["+d.Name+"]; "+stmt)

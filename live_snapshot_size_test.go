@@ -13,7 +13,6 @@ package gosmo
 
 import (
 	"context"
-	"database/sql"
 	"testing"
 )
 
@@ -72,10 +71,7 @@ func TestLiveSnapshotSizeOnDisk(t *testing.T) {
 	if _, err := db.ExecContext(ctx, "GRANT VIEW ANY DEFINITION TO ["+login+"]"); err != nil {
 		t.Fatalf("grant: %v", err)
 	}
-	pool, err := sql.Open("sqlserver", liveRestrictedDSN(t, login, pass))
-	if err != nil {
-		t.Fatalf("open as %s: %v", login, err)
-	}
+	pool := liveOpenAs(t, login, pass)
 	t.Cleanup(func() { pool.Close() })
 	low, err := (&Server{db: pool}).DatabaseFiles(ctx, snapName)
 	if err != nil {

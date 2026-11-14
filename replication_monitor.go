@@ -274,7 +274,7 @@ type MonitorPublication struct {
 // publisher, in the procedure's order.
 func (dd *DistributionDatabase) MonitorPublications(ctx context.Context) ([]MonitorPublication, error) {
 	what := fmt.Sprintf("read replication monitor publications in %q", dd.Name)
-	rows, err := dd.srv.query(ctx, "EXEC "+quoteIdent(dd.Name)+".dbo.sp_replmonitorhelppublication")
+	rows, err := dd.srv.query(ctx, "EXEC "+QuoteName(dd.Name)+".dbo.sp_replmonitorhelppublication")
 	return scanNamed(rows, err, what, func(r *namedRow) MonitorPublication {
 		p := MonitorPublication{
 			Publisher:                r.str("publisher"),
@@ -372,7 +372,7 @@ func (dd *DistributionDatabase) MonitorSubscriptions(ctx context.Context) ([]Mon
 	var out []MonitorSubscription
 	// @publication_type is required, so one call per type.
 	for _, pt := range []int{0, 1, 2} {
-		rows, err := dd.srv.query(ctx, "EXEC "+quoteIdent(dd.Name)+".dbo.sp_replmonitorhelpsubscription @publication_type = @p1", pt)
+		rows, err := dd.srv.query(ctx, "EXEC "+QuoteName(dd.Name)+".dbo.sp_replmonitorhelpsubscription @publication_type = @p1", pt)
 		subs, err := scanNamed(rows, err, what, func(r *namedRow) MonitorSubscription {
 			return MonitorSubscription{
 				Status:                   ReplAgentStatus(r.intv("status")),
@@ -549,7 +549,7 @@ func (dd *DistributionDatabase) Agents(ctx context.Context) ([]*ReplicationAgent
 	what := fmt.Sprintf("read replication agents in %q", dd.Name)
 	var out []*ReplicationAgent
 	for _, p := range replAgentProcs {
-		rows, err := dd.srv.query(ctx, "EXEC "+quoteIdent(dd.Name)+".dbo."+p.proc)
+		rows, err := dd.srv.query(ctx, "EXEC "+QuoteName(dd.Name)+".dbo."+p.proc)
 		agents, err := scanNamed(rows, err, what, func(r *namedRow) *ReplicationAgent {
 			a := &ReplicationAgent{
 				dd:                    dd,
@@ -647,7 +647,7 @@ func (a *ReplicationAgent) Sessions(ctx context.Context, hours int, filter ReplS
 	default:
 		return nil, invalidf("gosmo: %s: unrecognized session filter %d", what, filter)
 	}
-	rows, err := a.dd.srv.query(ctx, "EXEC "+quoteIdent(a.dd.Name)+".dbo."+replAgentProc(a.Kind)+
+	rows, err := a.dd.srv.query(ctx, "EXEC "+QuoteName(a.dd.Name)+".dbo."+replAgentProc(a.Kind)+
 		"_s @name = @p1, @hours = @p2, @session_type = @p3", a.Name, hours, sessionType)
 	out, err := scanNamed(rows, err, what, func(r *namedRow) ReplAgentSession {
 		s := ReplAgentSession{
@@ -700,7 +700,7 @@ func (a *ReplicationAgent) SessionActions(ctx context.Context, s ReplAgentSessio
 	// End, never its Start: history cleanup keeps only an agent's last row,
 	// and once a session's opening row is gone no row is at or before its
 	// Start — the session read as empty.
-	rows, err := a.dd.srv.query(ctx, "EXEC "+quoteIdent(a.dd.Name)+".dbo."+replAgentProc(a.Kind)+
+	rows, err := a.dd.srv.query(ctx, "EXEC "+QuoteName(a.dd.Name)+".dbo."+replAgentProc(a.Kind)+
 		"_sd @name = @p1, @time = @p2", a.Name, s.End.Format(replTimeLayout))
 	return scanNamed(rows, err, what, func(r *namedRow) ReplAgentAction {
 		return ReplAgentAction{
@@ -745,7 +745,7 @@ func (dd *DistributionDatabase) Errors(ctx context.Context, id int) ([]Replicati
 	// sp_MSget_repl_error: source_type_id, source_name, error_code,
 	// error_text, the time (unnamed), error_type_id, has_xact_seqno,
 	// xact_seqno, command_id.
-	rows, err := dd.srv.query(ctx, "EXEC "+quoteIdent(dd.Name)+".dbo.sp_MSget_repl_error @id = @p1", id)
+	rows, err := dd.srv.query(ctx, "EXEC "+QuoteName(dd.Name)+".dbo.sp_MSget_repl_error @id = @p1", id)
 	return scanRows(rows, err, what, func(scan func(...any) error) (ReplicationError, error) {
 		var e ReplicationError
 		var sourceType, errType, cmd sql.NullInt64

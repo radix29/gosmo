@@ -12,24 +12,8 @@ package gosmo
 
 import (
 	"context"
-	"database/sql"
-	"net/url"
 	"testing"
 )
-
-// liveRestrictedDSN is the -livedb DSN with its credentials swapped for the
-// throwaway login's. The probe has to run *as* that login: HAS_PERMS_BY_NAME
-// answers for the session's own principal, so sa's connection reports sa's
-// rights whatever database it is pointed at.
-func liveRestrictedDSN(t *testing.T, user, pass string) string {
-	t.Helper()
-	u, err := url.Parse(*liveDSN)
-	if err != nil {
-		t.Fatalf("parse -livedb DSN: %v", err)
-	}
-	u.User = url.UserPassword(user, pass)
-	return u.String()
-}
 
 func TestLiveSchemaCapabilitiesSeeAGrantTheDatabaseScopeCannot(t *testing.T) {
 	db, ctx, done := liveDB(t)
@@ -57,10 +41,7 @@ func TestLiveSchemaCapabilitiesSeeAGrantTheDatabaseScopeCannot(t *testing.T) {
 		`GRANT ALTER ON SCHEMA::app TO [`+login+`]`,
 	)
 
-	pool, err := sql.Open("sqlserver", liveRestrictedDSN(t, login, pass))
-	if err != nil {
-		t.Fatalf("open as %s: %v", login, err)
-	}
+	pool := liveOpenAs(t, login, pass)
 	defer pool.Close()
 
 	// Not NewServer: loadInfo reads server-scope DMVs this login has no rights

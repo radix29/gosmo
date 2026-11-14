@@ -12,9 +12,7 @@
 package gosmo
 
 import (
-	"database/sql"
 	"errors"
-	"net/url"
 	"testing"
 )
 
@@ -43,15 +41,7 @@ func TestLiveHiddenUserType(t *testing.T) {
 		"GRANT UPDATE ON dbo.S TO "+login)
 	defer liveExecIn(t, d, ctx, "DROP USER "+login)
 
-	u, err := url.Parse(*liveDSN)
-	if err != nil {
-		t.Fatalf("parse DSN: %v", err)
-	}
-	u.User = url.UserPassword(login, pass)
-	ldb, err := sql.Open("sqlserver", u.String())
-	if err != nil {
-		t.Fatalf("open as %s: %v", login, err)
-	}
+	ldb := liveOpenAs(t, login, pass)
 	defer ldb.Close()
 	ld, err := liveServer(t, ldb, ctx).DatabaseByName(ctx, d.Name)
 	if err != nil {

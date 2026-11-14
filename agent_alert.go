@@ -222,9 +222,7 @@ func (s *Server) CreateAlert(ctx context.Context, req CreateAlertRequest) (*Aler
 	if _, err := s.exec(ctx, q, args.vals...); err != nil {
 		return nil, fmt.Errorf("gosmo: create alert %q: %w", req.Name, err)
 	}
-	return createdObject(ctx, s.AlertRef(req.Name), func() (*Alert, error) {
-		return s.AlertByName(ctx, req.Name)
-	})
+	return createdByName(ctx, s.AlertRef(req.Name), s.AlertByName, req.Name)
 }
 
 // Rename changes the alert's name.

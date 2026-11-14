@@ -20,7 +20,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"net/url"
 	"slices"
 	"strings"
 	"testing"
@@ -988,15 +987,7 @@ func TestLiveScriptDatabaseUnencryptedWithoutViewServerState(t *testing.T) {
 		}
 	}
 
-	u, err := url.Parse(*liveDSN)
-	if err != nil {
-		t.Fatalf("parse DSN: %v", err)
-	}
-	u.User = url.UserPassword(login, pass)
-	ldb, err := sql.Open("sqlserver", u.String())
-	if err != nil {
-		t.Fatalf("open as %s: %v", login, err)
-	}
+	ldb := liveOpenAs(t, login, pass)
 	defer ldb.Close()
 	var vss int
 	if err := ldb.QueryRowContext(ctx, "SELECT HAS_PERMS_BY_NAME(NULL, NULL, 'VIEW SERVER STATE')").Scan(&vss); err != nil || vss != 0 {

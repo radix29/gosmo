@@ -269,7 +269,7 @@ ORDER  BY SCHEMA_NAME(o.schema_id), o.name`
 // Drop drops the assembly. An assembly still referenced by a routine or type
 // is refused by the server, as is one another assembly depends on.
 func (a *Assembly) Drop(ctx context.Context) error {
-	if _, err := a.db.exec(ctx, "DROP ASSEMBLY "+quoteIdent(a.Name)); err != nil {
+	if _, err := a.db.exec(ctx, "DROP ASSEMBLY "+QuoteName(a.Name)); err != nil {
 		return fmt.Errorf("gosmo: drop assembly %q in %q: %w", a.Name, a.db.Name, err)
 	}
 	return nil

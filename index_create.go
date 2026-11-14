@@ -120,9 +120,7 @@ func (t *Table) CreateIndex(ctx context.Context, req CreateIndexRequest) (*Index
 	if err := t.exec(ctx, stmt); err != nil {
 		return nil, fmt.Errorf("gosmo: create index %q on %s: %w", req.Name, t.FullName(), err)
 	}
-	return createdObject(ctx, t.IndexRef(req.Name), func() (*Index, error) {
-		return t.IndexByName(ctx, req.Name)
-	})
+	return createdByName(ctx, t.IndexRef(req.Name), t.IndexByName, req.Name)
 }
 
 // buildCreateIndexStatement renders one CREATE INDEX statement, or reports
@@ -138,7 +136,7 @@ func buildCreateIndexStatement(tableName string, major int, req CreateIndexReque
 	}
 
 	var sb strings.Builder
-	name := quoteIdent(req.Name)
+	name := QuoteName(req.Name)
 	switch req.Type {
 	case IndexTypeClusteredColumnStore:
 		fmt.Fprintf(&sb, "CREATE CLUSTERED COLUMNSTORE INDEX %s ON %s%s", name, tableName, req.orderClause())
@@ -152,7 +150,7 @@ func buildCreateIndexStatement(tableName string, major int, req CreateIndexReque
 		} else {
 			fmt.Fprintf(&sb, "CREATE XML INDEX %s ON %s (%s) USING XML INDEX %s FOR %s",
 				name, tableName, createIndexColumnList(req.KeyColumns, false),
-				quoteIdent(req.PrimaryXMLIndex), req.SecondaryXMLType)
+				QuoteName(req.PrimaryXMLIndex), req.SecondaryXMLType)
 		}
 	case IndexTypeSpatial:
 		fmt.Fprintf(&sb, "CREATE SPATIAL INDEX %s ON %s (%s) USING %s",
@@ -171,7 +169,7 @@ func buildCreateIndexStatement(tableName string, major int, req CreateIndexReque
 		if len(req.IncludedColumns) > 0 {
 			inc := make([]string, len(req.IncludedColumns))
 			for i, c := range req.IncludedColumns {
-				inc[i] = quoteIdent(c)
+				inc[i] = QuoteName(c)
 			}
 			fmt.Fprintf(&sb, " INCLUDE (%s)", strings.Join(inc, ", "))
 		}
@@ -187,11 +185,11 @@ func buildCreateIndexStatement(tableName string, major int, req CreateIndexReque
 	case req.PartitionScheme != "":
 		cols := make([]string, len(req.PartitionColumns))
 		for i, c := range req.PartitionColumns {
-			cols[i] = quoteIdent(c)
+			cols[i] = QuoteName(c)
 		}
-		fmt.Fprintf(&sb, " ON %s (%s)", quoteIdent(req.PartitionScheme), strings.Join(cols, ", "))
+		fmt.Fprintf(&sb, " ON %s (%s)", QuoteName(req.PartitionScheme), strings.Join(cols, ", "))
 	case req.FileGroup != "":
-		fmt.Fprintf(&sb, " ON %s", quoteIdent(req.FileGroup))
+		fmt.Fprintf(&sb, " ON %s", QuoteName(req.FileGroup))
 	}
 	return sb.String(), nil
 }
@@ -204,7 +202,7 @@ func (req CreateIndexRequest) orderClause() string {
 	}
 	cols := make([]string, len(req.ColumnstoreOrder))
 	for i, c := range req.ColumnstoreOrder {
-		cols[i] = quoteIdent(c)
+		cols[i] = QuoteName(c)
 	}
 	return " ORDER (" + strings.Join(cols, ", ") + ")"
 }
@@ -277,7 +275,7 @@ func (req CreateIndexRequest) withOptions() []string {
 func createIndexColumnList(cols []IndexColumnDef, withDirection bool) string {
 	out := make([]string, len(cols))
 	for i, c := range cols {
-		out[i] = quoteIdent(c.Name)
+		out[i] = QuoteName(c.Name)
 		if withDirection {
 			dir := "ASC"
 			if c.Descending {

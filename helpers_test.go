@@ -20,8 +20,8 @@ func TestQuoteIdent(t *testing.T) {
 		{"]]", "[]]]]]"},
 	}
 	for _, c := range cases {
-		if got := quoteIdent(c.name); got != c.want {
-			t.Errorf("quoteIdent(%q) = %q, want %q", c.name, got, c.want)
+		if got := QuoteName(c.name); got != c.want {
+			t.Errorf("QuoteName(%q) = %q, want %q", c.name, got, c.want)
 		}
 	}
 }

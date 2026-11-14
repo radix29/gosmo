@@ -86,9 +86,7 @@ func (ft FullText) CreateCatalog(ctx context.Context, req CreateFullTextCatalogR
 	if _, err := ft.db.exec(ctx, createFullTextCatalogStatement(req)); err != nil {
 		return nil, fmt.Errorf("gosmo: create full-text catalog %q: %w", req.Name, err)
 	}
-	return createdObject(ctx, ft.CatalogRef(req.Name), func() (*FullTextCatalog, error) {
-		return ft.CatalogByName(ctx, req.Name)
-	})
+	return createdByName(ctx, ft.CatalogRef(req.Name), ft.CatalogByName, req.Name)
 }
 
 // createFullTextCatalogStatement is CreateCatalog's statement, which
@@ -96,7 +94,7 @@ func (ft FullText) CreateCatalog(ctx context.Context, req CreateFullTextCatalogR
 func createFullTextCatalogStatement(req CreateFullTextCatalogRequest) string {
 	var sb strings.Builder
 	sb.WriteString("CREATE FULLTEXT CATALOG ")
-	sb.WriteString(quoteIdent(req.Name))
+	sb.WriteString(QuoteName(req.Name))
 	if req.AccentSensitive != nil {
 		sb.WriteString(" WITH ACCENT_SENSITIVITY = ")
 		sb.WriteString(onOff(*req.AccentSensitive))
@@ -106,7 +104,7 @@ func createFullTextCatalogStatement(req CreateFullTextCatalogRequest) string {
 	}
 	if req.Owner != "" {
 		sb.WriteString(" AUTHORIZATION ")
-		sb.WriteString(quoteIdent(req.Owner))
+		sb.WriteString(QuoteName(req.Owner))
 	}
 	return sb.String()
 }
@@ -115,7 +113,7 @@ func createFullTextCatalogStatement(req CreateFullTextCatalogRequest) string {
 // … REBUILD), SSMS's Rebuild. accentSensitive changes the catalog's accent
 // sensitivity on the way — a rebuild is the only way to — and nil keeps it.
 func (c *FullTextCatalog) Rebuild(ctx context.Context, accentSensitive *bool) error {
-	q := "ALTER FULLTEXT CATALOG " + quoteIdent(c.Name) + " REBUILD"
+	q := "ALTER FULLTEXT CATALOG " + QuoteName(c.Name) + " REBUILD"
 	if accentSensitive != nil {
 		q += " WITH ACCENT_SENSITIVITY = " + onOff(*accentSensitive)
 	}
@@ -131,7 +129,7 @@ func (c *FullTextCatalog) Rebuild(ctx context.Context, accentSensitive *bool) er
 // Reorganize merges the catalog's index fragments into one (ALTER FULLTEXT
 // CATALOG … REORGANIZE), SSMS's Optimize.
 func (c *FullTextCatalog) Reorganize(ctx context.Context) error {
-	if _, err := c.db.exec(ctx, "ALTER FULLTEXT CATALOG "+quoteIdent(c.Name)+" REORGANIZE"); err != nil {
+	if _, err := c.db.exec(ctx, "ALTER FULLTEXT CATALOG "+QuoteName(c.Name)+" REORGANIZE"); err != nil {
 		return fmt.Errorf("gosmo: reorganize full-text catalog %q: %w", c.Name, err)
 	}
 	return nil
@@ -141,7 +139,7 @@ func (c *FullTextCatalog) Reorganize(ctx context.Context) error {
 // CATALOG … AS DEFAULT). There is no statement to unset it: another catalog
 // becomes the default instead.
 func (c *FullTextCatalog) SetDefault(ctx context.Context) error {
-	if _, err := c.db.exec(ctx, "ALTER FULLTEXT CATALOG "+quoteIdent(c.Name)+" AS DEFAULT"); err != nil {
+	if _, err := c.db.exec(ctx, "ALTER FULLTEXT CATALOG "+QuoteName(c.Name)+" AS DEFAULT"); err != nil {
 		return fmt.Errorf("gosmo: make full-text catalog %q the default: %w", c.Name, err)
 	}
 	setIfApplied(ctx, &c.IsDefault, true)
@@ -150,7 +148,7 @@ func (c *FullTextCatalog) SetDefault(ctx context.Context) error {
 
 // SetOwner transfers ownership of the catalog (ALTER AUTHORIZATION).
 func (c *FullTextCatalog) SetOwner(ctx context.Context, owner string) error {
-	q := "ALTER AUTHORIZATION ON FULLTEXT CATALOG::" + quoteIdent(c.Name) + " TO " + quoteIdent(owner)
+	q := "ALTER AUTHORIZATION ON FULLTEXT CATALOG::" + QuoteName(c.Name) + " TO " + QuoteName(owner)
 	if _, err := c.db.exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: set owner of full-text catalog %q: %w", c.Name, err)
 	}
@@ -160,7 +158,7 @@ func (c *FullTextCatalog) SetOwner(ctx context.Context, owner string) error {
 
 // Drop drops the catalog. The server refuses while an index is in it.
 func (c *FullTextCatalog) Drop(ctx context.Context) error {
-	if _, err := c.db.exec(ctx, "DROP FULLTEXT CATALOG "+quoteIdent(c.Name)); err != nil {
+	if _, err := c.db.exec(ctx, "DROP FULLTEXT CATALOG "+QuoteName(c.Name)); err != nil {
 		return fmt.Errorf("gosmo: drop full-text catalog %q: %w", c.Name, err)
 	}
 	return nil
@@ -200,9 +198,7 @@ func (ft FullText) CreateStoplist(ctx context.Context, req CreateFullTextStoplis
 	if _, err := ft.db.exec(ctx, q); err != nil {
 		return nil, fmt.Errorf("gosmo: create full-text stoplist %q: %w", req.Name, err)
 	}
-	return createdObject(ctx, ft.StoplistRef(req.Name), func() (*FullTextStoplist, error) {
-		return ft.StoplistByName(ctx, req.Name)
-	})
+	return createdByName(ctx, ft.StoplistRef(req.Name), ft.StoplistByName, req.Name)
 }
 
 func createFullTextStoplistStatement(req CreateFullTextStoplistRequest) (string, error) {
@@ -214,22 +210,22 @@ func createFullTextStoplistStatement(req CreateFullTextStoplistRequest) (string,
 	}
 	var sb strings.Builder
 	sb.WriteString("CREATE FULLTEXT STOPLIST ")
-	sb.WriteString(quoteIdent(req.Name))
+	sb.WriteString(QuoteName(req.Name))
 	switch {
 	case req.FromSystem:
 		sb.WriteString(" FROM SYSTEM STOPLIST")
 	case req.FromDatabase != "":
 		sb.WriteString(" FROM ")
-		sb.WriteString(quoteIdent(req.FromDatabase))
+		sb.WriteString(QuoteName(req.FromDatabase))
 		sb.WriteString(".")
-		sb.WriteString(quoteIdent(req.From))
+		sb.WriteString(QuoteName(req.From))
 	case req.From != "":
 		sb.WriteString(" FROM ")
-		sb.WriteString(quoteIdent(req.From))
+		sb.WriteString(QuoteName(req.From))
 	}
 	if req.Owner != "" {
 		sb.WriteString(" AUTHORIZATION ")
-		sb.WriteString(quoteIdent(req.Owner))
+		sb.WriteString(QuoteName(req.Owner))
 	}
 	sb.WriteString(";")
 	return sb.String(), nil
@@ -240,7 +236,7 @@ func createFullTextStoplistStatement(req CreateFullTextStoplistRequest) (string,
 // Adding a word the stoplist already has in that language is an error
 // (Msg 30033).
 func (l *FullTextStoplist) AddStopword(ctx context.Context, word, language string) error {
-	q := "ALTER FULLTEXT STOPLIST " + quoteIdent(l.Name) + " ADD " + QuoteLiteral(word) +
+	q := "ALTER FULLTEXT STOPLIST " + QuoteName(l.Name) + " ADD " + QuoteLiteral(word) +
 		" LANGUAGE " + fullTextLanguage(language) + ";"
 	if _, err := l.db.exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: add stopword %q to full-text stoplist %q: %w", word, l.Name, err)
@@ -251,7 +247,7 @@ func (l *FullTextStoplist) AddStopword(ctx context.Context, word, language strin
 // DropStopword removes word in language (as AddStopword takes it) from the
 // stoplist.
 func (l *FullTextStoplist) DropStopword(ctx context.Context, word, language string) error {
-	q := "ALTER FULLTEXT STOPLIST " + quoteIdent(l.Name) + " DROP " + QuoteLiteral(word) +
+	q := "ALTER FULLTEXT STOPLIST " + QuoteName(l.Name) + " DROP " + QuoteLiteral(word) +
 		" LANGUAGE " + fullTextLanguage(language) + ";"
 	if _, err := l.db.exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: drop stopword %q from full-text stoplist %q: %w", word, l.Name, err)
@@ -262,7 +258,7 @@ func (l *FullTextStoplist) DropStopword(ctx context.Context, word, language stri
 // DropLanguageStopwords removes every word of one language from the
 // stoplist (DROP ALL LANGUAGE).
 func (l *FullTextStoplist) DropLanguageStopwords(ctx context.Context, language string) error {
-	q := "ALTER FULLTEXT STOPLIST " + quoteIdent(l.Name) + " DROP ALL LANGUAGE " + fullTextLanguage(language) + ";"
+	q := "ALTER FULLTEXT STOPLIST " + QuoteName(l.Name) + " DROP ALL LANGUAGE " + fullTextLanguage(language) + ";"
 	if _, err := l.db.exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: drop %s stopwords from full-text stoplist %q: %w", language, l.Name, err)
 	}
@@ -271,7 +267,7 @@ func (l *FullTextStoplist) DropLanguageStopwords(ctx context.Context, language s
 
 // DropAllStopwords empties the stoplist (DROP ALL).
 func (l *FullTextStoplist) DropAllStopwords(ctx context.Context) error {
-	if _, err := l.db.exec(ctx, "ALTER FULLTEXT STOPLIST "+quoteIdent(l.Name)+" DROP ALL;"); err != nil {
+	if _, err := l.db.exec(ctx, "ALTER FULLTEXT STOPLIST "+QuoteName(l.Name)+" DROP ALL;"); err != nil {
 		return fmt.Errorf("gosmo: drop all stopwords from full-text stoplist %q: %w", l.Name, err)
 	}
 	return nil
@@ -279,7 +275,7 @@ func (l *FullTextStoplist) DropAllStopwords(ctx context.Context) error {
 
 // SetOwner transfers ownership of the stoplist (ALTER AUTHORIZATION).
 func (l *FullTextStoplist) SetOwner(ctx context.Context, owner string) error {
-	q := "ALTER AUTHORIZATION ON FULLTEXT STOPLIST::" + quoteIdent(l.Name) + " TO " + quoteIdent(owner)
+	q := "ALTER AUTHORIZATION ON FULLTEXT STOPLIST::" + QuoteName(l.Name) + " TO " + QuoteName(owner)
 	if _, err := l.db.exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: set owner of full-text stoplist %q: %w", l.Name, err)
 	}
@@ -289,7 +285,7 @@ func (l *FullTextStoplist) SetOwner(ctx context.Context, owner string) error {
 
 // Drop drops the stoplist. The server refuses while an index uses it.
 func (l *FullTextStoplist) Drop(ctx context.Context) error {
-	if _, err := l.db.exec(ctx, "DROP FULLTEXT STOPLIST "+quoteIdent(l.Name)+";"); err != nil {
+	if _, err := l.db.exec(ctx, "DROP FULLTEXT STOPLIST "+QuoteName(l.Name)+";"); err != nil {
 		return fmt.Errorf("gosmo: drop full-text stoplist %q: %w", l.Name, err)
 	}
 	return nil
@@ -327,9 +323,7 @@ func (ft FullText) CreateSearchPropertyList(ctx context.Context, req CreateSearc
 	if _, err := ft.db.exec(ctx, q); err != nil {
 		return nil, fmt.Errorf("gosmo: create search property list %q: %w", req.Name, err)
 	}
-	return createdObject(ctx, ft.SearchPropertyListRef(req.Name), func() (*SearchPropertyList, error) {
-		return ft.SearchPropertyListByName(ctx, req.Name)
-	})
+	return createdByName(ctx, ft.SearchPropertyListRef(req.Name), ft.SearchPropertyListByName, req.Name)
 }
 
 func createSearchPropertyListStatement(req CreateSearchPropertyListRequest) (string, error) {
@@ -338,20 +332,20 @@ func createSearchPropertyListStatement(req CreateSearchPropertyListRequest) (str
 	}
 	var sb strings.Builder
 	sb.WriteString("CREATE SEARCH PROPERTY LIST ")
-	sb.WriteString(quoteIdent(req.Name))
+	sb.WriteString(QuoteName(req.Name))
 	switch {
 	case req.FromDatabase != "":
 		sb.WriteString(" FROM ")
-		sb.WriteString(quoteIdent(req.FromDatabase))
+		sb.WriteString(QuoteName(req.FromDatabase))
 		sb.WriteString(".")
-		sb.WriteString(quoteIdent(req.From))
+		sb.WriteString(QuoteName(req.From))
 	case req.From != "":
 		sb.WriteString(" FROM ")
-		sb.WriteString(quoteIdent(req.From))
+		sb.WriteString(QuoteName(req.From))
 	}
 	if req.Owner != "" {
 		sb.WriteString(" AUTHORIZATION ")
-		sb.WriteString(quoteIdent(req.Owner))
+		sb.WriteString(QuoteName(req.Owner))
 	}
 	sb.WriteString(";")
 	return sb.String(), nil
@@ -368,7 +362,7 @@ func (p *SearchPropertyList) AddProperty(ctx context.Context, prop SearchPropert
 
 func addSearchPropertyStatement(list string, prop SearchProperty) string {
 	q := fmt.Sprintf("ALTER SEARCH PROPERTY LIST %s ADD %s WITH (PROPERTY_SET_GUID = %s, PROPERTY_INT_ID = %d",
-		quoteIdent(list), QuoteLiteral(prop.Name), QuoteLiteral(prop.SetGUID), prop.IntID)
+		QuoteName(list), QuoteLiteral(prop.Name), QuoteLiteral(prop.SetGUID), prop.IntID)
 	if prop.Description != "" {
 		q += ", PROPERTY_DESCRIPTION = " + QuoteLiteral(prop.Description)
 	}
@@ -377,7 +371,7 @@ func addSearchPropertyStatement(list string, prop SearchProperty) string {
 
 // DropProperty removes the property called name from the list.
 func (p *SearchPropertyList) DropProperty(ctx context.Context, name string) error {
-	q := "ALTER SEARCH PROPERTY LIST " + quoteIdent(p.Name) + " DROP " + QuoteLiteral(name) + ";"
+	q := "ALTER SEARCH PROPERTY LIST " + QuoteName(p.Name) + " DROP " + QuoteLiteral(name) + ";"
 	if _, err := p.db.exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: drop property %q from search property list %q: %w", name, p.Name, err)
 	}
@@ -386,7 +380,7 @@ func (p *SearchPropertyList) DropProperty(ctx context.Context, name string) erro
 
 // SetOwner transfers ownership of the list (ALTER AUTHORIZATION).
 func (p *SearchPropertyList) SetOwner(ctx context.Context, owner string) error {
-	q := "ALTER AUTHORIZATION ON SEARCH PROPERTY LIST::" + quoteIdent(p.Name) + " TO " + quoteIdent(owner)
+	q := "ALTER AUTHORIZATION ON SEARCH PROPERTY LIST::" + QuoteName(p.Name) + " TO " + QuoteName(owner)
 	if _, err := p.db.exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: set owner of search property list %q: %w", p.Name, err)
 	}
@@ -396,7 +390,7 @@ func (p *SearchPropertyList) SetOwner(ctx context.Context, owner string) error {
 
 // Drop drops the list. The server refuses while an index uses it.
 func (p *SearchPropertyList) Drop(ctx context.Context) error {
-	if _, err := p.db.exec(ctx, "DROP SEARCH PROPERTY LIST "+quoteIdent(p.Name)+";"); err != nil {
+	if _, err := p.db.exec(ctx, "DROP SEARCH PROPERTY LIST "+QuoteName(p.Name)+";"); err != nil {
 		return fmt.Errorf("gosmo: drop search property list %q: %w", p.Name, err)
 	}
 	return nil
@@ -430,9 +424,9 @@ type FullTextIndexColumnSpec struct {
 }
 
 func (c FullTextIndexColumnSpec) clause() string {
-	s := quoteIdent(c.Name)
+	s := QuoteName(c.Name)
 	if c.TypeColumn != "" {
-		s += " TYPE COLUMN " + quoteIdent(c.TypeColumn)
+		s += " TYPE COLUMN " + QuoteName(c.TypeColumn)
 	}
 	if c.Language != "" {
 		s += " LANGUAGE " + fullTextLanguage(c.Language)
@@ -527,20 +521,20 @@ func createFullTextIndexStatement(table string, req CreateFullTextIndexRequest) 
 		sb.WriteString(")")
 	}
 	sb.WriteString(" KEY INDEX ")
-	sb.WriteString(quoteIdent(req.KeyIndex))
+	sb.WriteString(QuoteName(req.KeyIndex))
 	switch {
 	case req.Catalog != "" && req.FileGroup != "":
 		sb.WriteString(" ON (")
-		sb.WriteString(quoteIdent(req.Catalog))
+		sb.WriteString(QuoteName(req.Catalog))
 		sb.WriteString(", FILEGROUP ")
-		sb.WriteString(quoteIdent(req.FileGroup))
+		sb.WriteString(QuoteName(req.FileGroup))
 		sb.WriteString(")")
 	case req.Catalog != "":
 		sb.WriteString(" ON ")
-		sb.WriteString(quoteIdent(req.Catalog))
+		sb.WriteString(QuoteName(req.Catalog))
 	case req.FileGroup != "":
 		sb.WriteString(" ON (FILEGROUP ")
-		sb.WriteString(quoteIdent(req.FileGroup))
+		sb.WriteString(QuoteName(req.FileGroup))
 		sb.WriteString(")")
 	}
 	var with []string
@@ -555,10 +549,10 @@ func createFullTextIndexStatement(table string, req CreateFullTextIndexRequest) 
 	case req.StoplistOff:
 		with = append(with, "STOPLIST = OFF")
 	case req.Stoplist != "":
-		with = append(with, "STOPLIST = "+quoteIdent(req.Stoplist))
+		with = append(with, "STOPLIST = "+QuoteName(req.Stoplist))
 	}
 	if req.SearchPropertyList != "" {
-		with = append(with, "SEARCH PROPERTY LIST = "+quoteIdent(req.SearchPropertyList))
+		with = append(with, "SEARCH PROPERTY LIST = "+QuoteName(req.SearchPropertyList))
 	}
 	if len(with) > 0 {
 		sb.WriteString(" WITH (")
@@ -640,7 +634,7 @@ func (i *FullTextIndex) DropColumn(ctx context.Context, name string, pop FullTex
 	if err != nil {
 		return fmt.Errorf("gosmo: %s %s: %w", what, i.FullName(), err)
 	}
-	return i.alter(ctx, what, "DROP ("+quoteIdent(name)+")"+with)
+	return i.alter(ctx, what, "DROP ("+QuoteName(name)+")"+with)
 }
 
 // SetChangeTracking sets how changes reach the index: AUTO as they happen,
@@ -670,7 +664,7 @@ func (i *FullTextIndex) SetStoplist(ctx context.Context, kind FullTextStoplistKi
 		if name == "" {
 			return invalidf("gosmo: set stoplist of the full-text index on %s: a user stoplist needs a name", i.FullName())
 		}
-		term = quoteIdent(name)
+		term = QuoteName(name)
 	default:
 		return invalidf("gosmo: set stoplist of the full-text index on %s: unknown kind %v", i.FullName(), kind)
 	}
@@ -687,7 +681,7 @@ func (i *FullTextIndex) SetStoplist(ctx context.Context, kind FullTextStoplistKi
 func (i *FullTextIndex) SetSearchPropertyList(ctx context.Context, name string) error {
 	term := "OFF"
 	if name != "" {
-		term = quoteIdent(name)
+		term = QuoteName(name)
 	}
 	if err := i.alter(ctx, "set search property list of the full-text index on", "SET SEARCH PROPERTY LIST = "+term); err != nil {
 		return err

@@ -21,7 +21,6 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"net/url"
 	"strings"
 	"testing"
 )
@@ -29,15 +28,7 @@ import (
 // openAs dials the same server the -livedb DSN names, as a different login.
 func openAs(t *testing.T, user, pass string) (*sql.DB, error) {
 	t.Helper()
-	u, err := url.Parse(*liveDSN)
-	if err != nil {
-		return nil, err
-	}
-	u.User = url.UserPassword(user, pass)
-	db, err := sql.Open("sqlserver", u.String())
-	if err != nil {
-		return nil, err
-	}
+	db := liveOpenAs(t, user, pass)
 	db.SetMaxOpenConns(1)
 	return db, db.Ping()
 }
@@ -71,14 +62,14 @@ func TestLiveNotFoundDoesNotSwallowAVisibleLogin(t *testing.T) {
 	// endpoint dialog's branch, which skips creation on this answer.
 	const name = "zz_gossms_notfound_probe"
 	if _, err := db.ExecContext(ctx,
-		`IF SUSER_ID(@p1) IS NOT NULL DROP LOGIN `+quoteIdent(name), name); err != nil {
+		`IF SUSER_ID(@p1) IS NOT NULL DROP LOGIN `+QuoteName(name), name); err != nil {
 		t.Fatalf("pre-clean: %v", err)
 	}
 	if _, err := srv.CreateLogin(ctx, CreateLoginRequest{Name: name, Password: "inSecure123!Probe"}); err != nil {
 		t.Fatalf("create throwaway login: %v", err)
 	}
 	defer func() {
-		if _, err := db.ExecContext(ctx, `DROP LOGIN `+quoteIdent(name)); err != nil {
+		if _, err := db.ExecContext(ctx, `DROP LOGIN `+QuoteName(name)); err != nil {
 			t.Errorf("drop throwaway login %s: %v", name, err)
 		}
 	}()
@@ -137,19 +128,19 @@ func TestLiveNotFoundCannotSeePastMetadataVisibility(t *testing.T) {
 	const name = "zz_gossms_visibility_probe"
 	const pass = "inSecure123!Probe"
 	if _, err := db.ExecContext(ctx,
-		`IF SUSER_ID(@p1) IS NOT NULL DROP LOGIN `+quoteIdent(name), name); err != nil {
+		`IF SUSER_ID(@p1) IS NOT NULL DROP LOGIN `+QuoteName(name), name); err != nil {
 		t.Fatalf("pre-clean: %v", err)
 	}
-	if _, err := db.ExecContext(ctx, `CREATE LOGIN `+quoteIdent(name)+
+	if _, err := db.ExecContext(ctx, `CREATE LOGIN `+QuoteName(name)+
 		` WITH PASSWORD = `+QuoteLiteral(pass)+`, CHECK_POLICY = OFF`); err != nil {
 		t.Fatalf("create throwaway login: %v", err)
 	}
 	defer func() {
-		if _, err := db.ExecContext(ctx, `DROP LOGIN `+quoteIdent(name)); err != nil {
+		if _, err := db.ExecContext(ctx, `DROP LOGIN `+QuoteName(name)); err != nil {
 			t.Errorf("drop throwaway login %s: %v", name, err)
 		}
 	}()
-	if _, err := db.ExecContext(ctx, `DENY VIEW ANY DEFINITION TO `+quoteIdent(name)); err != nil {
+	if _, err := db.ExecContext(ctx, `DENY VIEW ANY DEFINITION TO `+QuoteName(name)); err != nil {
 		t.Fatalf("deny: %v", err)
 	}
 
@@ -195,19 +186,19 @@ func TestLiveCertificateNotFoundIsErrNotFound(t *testing.T) {
 	const name = "zz_gossms_cert_probe"
 	if _, err := db.ExecContext(ctx,
 		`USE master; IF EXISTS (SELECT 1 FROM sys.certificates WHERE name = @p1) DROP CERTIFICATE `+
-			quoteIdent(name), name); err != nil {
+			QuoteName(name), name); err != nil {
 		t.Fatalf("pre-clean: %v", err)
 	}
 	// ENCRYPTION BY PASSWORD, not the database master key: master has no DMK
 	// on a stock instance, and creating one there would be a real and lasting
 	// change to the server for the sake of a test.
-	if _, err := db.ExecContext(ctx, `USE master; CREATE CERTIFICATE `+quoteIdent(name)+
+	if _, err := db.ExecContext(ctx, `USE master; CREATE CERTIFICATE `+QuoteName(name)+
 		` ENCRYPTION BY PASSWORD = `+QuoteLiteral("inSecure123!Cert")+
 		` WITH SUBJECT = `+QuoteLiteral("gossms not-found probe")); err != nil {
 		t.Fatalf("create throwaway certificate: %v", err)
 	}
 	defer func() {
-		if _, err := db.ExecContext(ctx, `USE master; DROP CERTIFICATE `+quoteIdent(name)); err != nil {
+		if _, err := db.ExecContext(ctx, `USE master; DROP CERTIFICATE `+QuoteName(name)); err != nil {
 			t.Errorf("drop throwaway certificate %s: %v", name, err)
 		}
 	}()

@@ -34,7 +34,7 @@ import (
 // An argument type procParamType does not declare is a programming error, and
 // the call fails with it (ErrUnsupported): there is no fallback to a USE.
 func (d *Database) procRead(q string, args []any) (query string, rpcArgs []any, err error) {
-	query = quoteIdent(d.Name) + ".sys.sp_executesql"
+	query = QuoteName(d.Name) + ".sys.sp_executesql"
 	if len(args) == 0 {
 		return query, []any{q}, nil
 	}
@@ -118,7 +118,7 @@ func (d *Database) recheckEntry(ctx context.Context, conn sqlConn, err error) (u
 	if !ok || !slices.Contains(cannotEnterErrors, me.Number) || ctx.Err() != nil {
 		return nil
 	}
-	if _, perr := conn.ExecContext(ctx, quoteIdent(d.Name)+".sys.sp_executesql", "SELECT NULL"); perr != nil {
+	if _, perr := conn.ExecContext(ctx, QuoteName(d.Name)+".sys.sp_executesql", "SELECT NULL"); perr != nil {
 		return &EntryError{Database: d.Name, Err: perr}
 	}
 	return nil

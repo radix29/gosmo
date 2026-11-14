@@ -138,7 +138,7 @@ func (d *Database) ExternalDataSourceRef(name string) *ExternalDataSource {
 // Drop drops the external data source. One still referenced by an external
 // table is refused by the server.
 func (s *ExternalDataSource) Drop(ctx context.Context) error {
-	if _, err := s.db.exec(ctx, "DROP EXTERNAL DATA SOURCE "+quoteIdent(s.Name)); err != nil {
+	if _, err := s.db.exec(ctx, "DROP EXTERNAL DATA SOURCE "+QuoteName(s.Name)); err != nil {
 		return fmt.Errorf("gosmo: drop external data source %q in %q: %w", s.Name, s.db.Name, err)
 	}
 	return nil
@@ -241,7 +241,7 @@ func (d *Database) ExternalFileFormatRef(name string) *ExternalFileFormat {
 // Drop drops the external file format. One still referenced by an external
 // table is refused by the server.
 func (f *ExternalFileFormat) Drop(ctx context.Context) error {
-	if _, err := f.db.exec(ctx, "DROP EXTERNAL FILE FORMAT "+quoteIdent(f.Name)); err != nil {
+	if _, err := f.db.exec(ctx, "DROP EXTERNAL FILE FORMAT "+QuoteName(f.Name)); err != nil {
 		return fmt.Errorf("gosmo: drop external file format %q in %q: %w", f.Name, f.db.Name, err)
 	}
 	return nil
@@ -349,7 +349,7 @@ func (l *ExternalLibrary) Drop(ctx context.Context) error {
 	if err := l.db.requireExternalLibraries(); err != nil {
 		return err
 	}
-	if _, err := l.db.exec(ctx, "DROP EXTERNAL LIBRARY "+quoteIdent(l.Name)); err != nil {
+	if _, err := l.db.exec(ctx, "DROP EXTERNAL LIBRARY "+QuoteName(l.Name)); err != nil {
 		return fmt.Errorf("gosmo: drop external library %q in %q: %w", l.Name, l.db.Name, err)
 	}
 	return nil

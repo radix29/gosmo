@@ -40,18 +40,6 @@ func readRow(ctx context.Context, proc bool, d *Database, scan func(*sql.Row) er
 	return scan(conn.QueryRowContext(ctx, d.useBatch(q), args...))
 }
 
-// liveSecondDB is a second pool on the live DSN: another session, which
-// neither shares nor resets gosmo's pooled connections.
-func liveSecondDB(t *testing.T) *sql.DB {
-	t.Helper()
-	db, err := sql.Open("sqlserver", *liveDSN)
-	if err != nil {
-		t.Fatalf("open second pool: %v", err)
-	}
-	t.Cleanup(func() { db.Close() })
-	return db
-}
-
 func pathName(proc bool) string {
 	if proc {
 		return "procRead"

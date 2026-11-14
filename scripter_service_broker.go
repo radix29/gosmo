@@ -50,7 +50,7 @@ func brokerCatalogGuard(sense, view, name string) string {
 // …) and view the catalog view its names live in.
 func brokerDropScript(keyword, view, name string) string {
 	return brokerCatalogGuard("EXISTS", view, name) +
-		fmt.Sprintf("    DROP %s %s;\nGO\n", keyword, quoteIdent(name))
+		fmt.Sprintf("    DROP %s %s;\nGO\n", keyword, QuoteName(name))
 }
 
 // authorizationClause is the AUTHORIZATION line the five owned families
@@ -61,7 +61,7 @@ func authorizationClause(owner string) string {
 	if owner == "" {
 		return ""
 	}
-	return "    AUTHORIZATION " + quoteIdent(owner) + "\n"
+	return "    AUTHORIZATION " + QuoteName(owner) + "\n"
 }
 
 // ============================================================
@@ -142,7 +142,7 @@ func buildContractScript(c *ServiceContract, opts ScriptOptions) string {
 			if i > 0 {
 				sb.WriteString(",\n     ")
 			}
-			fmt.Fprintf(sb, "%s SENT BY %s", quoteIdent(m.MessageType), m.SentBy)
+			fmt.Fprintf(sb, "%s SENT BY %s", QuoteName(m.MessageType), m.SentBy)
 		}
 		sb.WriteString(");\nGO\n")
 	})
@@ -191,7 +191,7 @@ func buildBrokerQueueScript(q *BrokerQueue, opts ScriptOptions) string {
 		fmt.Fprintf(sb, ",\n         POISON_MESSAGE_HANDLING (STATUS = %s)",
 			onOff(q.IsPoisonMessageHandlingEnabled))
 		if q.FileGroup != "" {
-			fmt.Fprintf(sb, "\n    ON %s", quoteIdent(q.FileGroup))
+			fmt.Fprintf(sb, "\n    ON %s", QuoteName(q.FileGroup))
 		}
 		sb.WriteString(";\nGO\n")
 	})
@@ -241,7 +241,7 @@ func buildBrokerServiceScript(s *BrokerService, opts ScriptOptions) string {
 				if i > 0 {
 					sb.WriteString(",\n     ")
 				}
-				sb.WriteString(quoteIdent(c))
+				sb.WriteString(QuoteName(c))
 			}
 			sb.WriteString(")")
 		}
@@ -322,7 +322,7 @@ func buildRemoteServiceBindingScript(b *RemoteServiceBinding, opts ScriptOptions
 		sb.WriteString(authorizationClause(b.Owner))
 		fmt.Fprintf(sb, "    TO SERVICE %s\n", QuoteLiteral(b.RemoteService))
 		fmt.Fprintf(sb, "    WITH USER = %s, ANONYMOUS = %s;\nGO\n",
-			quoteIdent(b.User), onOff(b.IsAnonymous))
+			QuoteName(b.User), onOff(b.IsAnonymous))
 	})
 }
 
@@ -364,7 +364,7 @@ func anyOrIdent(name string) string {
 	if name == "" {
 		return "ANY"
 	}
-	return quoteIdent(name)
+	return QuoteName(name)
 }
 
 // anyOrLiteral renders the remote service criterion, which is a name in

@@ -309,14 +309,14 @@ func (d *Database) SetDatabaseOption(ctx context.Context, opt DatabaseOption, va
 	if opt == DBOptContainment {
 		sep = " = "
 	}
-	q := fmt.Sprintf("ALTER DATABASE %s SET %s%s%s%s", quoteIdent(d.Name), opt, sep, value, with)
+	q := fmt.Sprintf("ALTER DATABASE %s SET %s%s%s%s", QuoteName(d.Name), opt, sep, value, with)
 	if opt == DBOptContainment && term == TerminationRollbackImmediate {
 		// SET CONTAINMENT parses WITH ROLLBACK IMMEDIATE and ignores it, as
 		// MODIFY FILEGROUP does (see FileGroup.SetReadOnly): probed on 17.0,
 		// it failed Msg 5061 behind another session either way. The kill
 		// batch ahead of it is what gets past.
 		q = killDatabaseSessionsBatch(d.Name) + ";\n" +
-			fmt.Sprintf("ALTER DATABASE %s SET %s%s%s", quoteIdent(d.Name), opt, sep, value) + ";"
+			fmt.Sprintf("ALTER DATABASE %s SET %s%s%s", QuoteName(d.Name), opt, sep, value) + ";"
 	}
 	if opt.NeedsExclusiveAccess() {
 		d.server.releaseIdle(ctx)
@@ -329,7 +329,7 @@ func (d *Database) SetDatabaseOption(ctx context.Context, opt DatabaseOption, va
 
 // SetOwner transfers database ownership to a new principal.
 func (d *Database) SetOwner(ctx context.Context, principal string) error {
-	q := fmt.Sprintf("ALTER AUTHORIZATION ON DATABASE::%s TO %s", quoteIdent(d.Name), quoteIdent(principal))
+	q := fmt.Sprintf("ALTER AUTHORIZATION ON DATABASE::%s TO %s", QuoteName(d.Name), QuoteName(principal))
 	if _, err := d.server.exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: set owner of %q to %q: %w", d.Name, principal, err)
 	}

@@ -170,7 +170,7 @@ func (rg *ResourceGovernor) SetClassifier(ctx context.Context, schema, name stri
 		if schema == "" {
 			return fmt.Errorf("gosmo: set resource governor classifier %q: %w", name, ErrSchemaRequired)
 		}
-		fn = quoteIdent(schema) + "." + quoteIdent(name)
+		fn = QuoteName(schema) + "." + QuoteName(name)
 	}
 	if err := rg.alter(ctx, "WITH (CLASSIFIER_FUNCTION = "+fn+")", "set resource governor classifier"); err != nil {
 		return err
@@ -293,7 +293,7 @@ func (k *poolKind[P]) create(ctx context.Context, s *Server, name string, render
 	if err != nil {
 		return nil, fmt.Errorf("gosmo: create %s %q: %w", k.noun, name, err)
 	}
-	if _, err := s.exec(ctx, "CREATE "+k.ddl+" "+quoteIdent(name)+w.with()); err != nil {
+	if _, err := s.exec(ctx, "CREATE "+k.ddl+" "+QuoteName(name)+w.with()); err != nil {
 		return nil, fmt.Errorf("gosmo: create %s %q: %w", k.noun, name, err)
 	}
 	return createdObject(ctx, ref, func() (P, error) { return k.byName(ctx, s, name) })
@@ -309,14 +309,14 @@ func (k *poolKind[P]) alter(ctx context.Context, s *Server, name string, render 
 	if len(w.parts) == 0 {
 		return false, nil
 	}
-	if _, err := s.exec(ctx, "ALTER "+k.ddl+" "+quoteIdent(name)+w.with()); err != nil {
+	if _, err := s.exec(ctx, "ALTER "+k.ddl+" "+QuoteName(name)+w.with()); err != nil {
 		return false, fmt.Errorf("gosmo: alter %s %q: %w", k.noun, name, err)
 	}
 	return true, nil
 }
 
 func (k *poolKind[P]) drop(ctx context.Context, s *Server, name string) error {
-	if _, err := s.exec(ctx, "DROP "+k.ddl+" "+quoteIdent(name)); err != nil {
+	if _, err := s.exec(ctx, "DROP "+k.ddl+" "+QuoteName(name)); err != nil {
 		return fmt.Errorf("gosmo: drop %s %q: %w", k.noun, name, err)
 	}
 	return nil
@@ -472,10 +472,10 @@ func (o WorkloadGroupOptions) render(major int) (*rgOptions, string, error) {
 
 	var using []string
 	if o.Pool != nil {
-		using = append(using, quoteIdent(*o.Pool))
+		using = append(using, QuoteName(*o.Pool))
 	}
 	if o.ExternalPool != nil {
-		using = append(using, "EXTERNAL "+quoteIdent(*o.ExternalPool))
+		using = append(using, "EXTERNAL "+QuoteName(*o.ExternalPool))
 	}
 	u := ""
 	if len(using) > 0 {
@@ -510,13 +510,11 @@ func (s *Server) CreateWorkloadGroup(ctx context.Context, req CreateWorkloadGrou
 	if err != nil {
 		return nil, fmt.Errorf("gosmo: create workload group %q: %w", req.Name, err)
 	}
-	stmt := "CREATE WORKLOAD GROUP " + quoteIdent(req.Name) + w.with() + using
+	stmt := "CREATE WORKLOAD GROUP " + QuoteName(req.Name) + w.with() + using
 	if _, err := s.exec(ctx, stmt); err != nil {
 		return nil, fmt.Errorf("gosmo: create workload group %q: %w", req.Name, err)
 	}
-	return createdObject(ctx, s.WorkloadGroupRef(req.Name), func() (*WorkloadGroup, error) {
-		return s.WorkloadGroupByName(ctx, req.Name)
-	})
+	return createdByName(ctx, s.WorkloadGroupRef(req.Name), s.WorkloadGroupByName, req.Name)
 }
 
 // Alter applies every option set on o in one ALTER WORKLOAD GROUP; a
@@ -533,7 +531,7 @@ func (g *WorkloadGroup) Alter(ctx context.Context, o WorkloadGroupOptions) error
 	if len(w.parts) == 0 && using == "" {
 		return nil
 	}
-	if _, err := g.server.exec(ctx, "ALTER WORKLOAD GROUP "+quoteIdent(g.Name)+w.with()+using); err != nil {
+	if _, err := g.server.exec(ctx, "ALTER WORKLOAD GROUP "+QuoteName(g.Name)+w.with()+using); err != nil {
 		return fmt.Errorf("gosmo: alter workload group %q: %w", g.Name, err)
 	}
 	if o.Importance != nil {
@@ -567,7 +565,7 @@ func (g *WorkloadGroup) Alter(ctx context.Context, o WorkloadGroupOptions) error
 // default. Sessions already classified into the group keep running in it
 // until they end.
 func (g *WorkloadGroup) Drop(ctx context.Context) error {
-	if _, err := g.server.exec(ctx, "DROP WORKLOAD GROUP "+quoteIdent(g.Name)); err != nil {
+	if _, err := g.server.exec(ctx, "DROP WORKLOAD GROUP "+QuoteName(g.Name)); err != nil {
 		return fmt.Errorf("gosmo: drop workload group %q: %w", g.Name, err)
 	}
 	return nil
