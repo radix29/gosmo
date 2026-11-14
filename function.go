@@ -38,12 +38,9 @@ const (
 
 // IsScalar reports a function that returns a value, T-SQL or CLR — the one
 // a call selects rather than selects from.
-// Fabric DW external functions return a scalar value too.
+// A Fabric DW external function (XF) is scalar too.
 func (t FunctionType) IsScalar() bool {
-	if t == FunctionTypeExternal {
-		return true
-	}
-	return t == FunctionTypeScalar || t == FunctionTypeCLRScalar
+	return t == FunctionTypeScalar || t == FunctionTypeCLRScalar || t == FunctionTypeExternal
 }
 
 // IsCLR reports a function implemented in an assembly, with no T-SQL
