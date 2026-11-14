@@ -107,7 +107,7 @@ func TestBuildFunctionCallScriptShapeFollowsFunctionType(t *testing.T) {
 	params := []*Parameter{{Name: "@id", Ordinal: 1, DataType: DataTypeInt}}
 
 	// A CLR scalar function (FS) is a value too: selected from, it is Msg 208.
-	for _, ft := range []FunctionType{FunctionTypeScalar, FunctionTypeCLRScalar} {
+	for _, ft := range []FunctionType{FunctionTypeScalar, FunctionTypeCLRScalar, FunctionTypeExternal} {
 		scalar := buildFunctionCallScript("dbo", "fn_Total", ft, params)
 		if !strings.Contains(scalar, "SELECT [dbo].[fn_Total](<id, int,>)") || strings.Contains(scalar, "FROM") {
 			t.Errorf("%s function call wrong:\n%s", ft, scalar)

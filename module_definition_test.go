@@ -7,6 +7,7 @@ import (
 	"maps"
 	"strings"
 	"testing"
+	"time"
 )
 
 // TestModuleListingsDoNotReadTheDefinition pins T52: a listing of modules
@@ -20,6 +21,7 @@ func TestModuleListingsDoNotReadTheDefinition(t *testing.T) {
 		"Views":                  func(d *Database) error { _, err := d.Views(ctx, ObjectFilter{}); return err },
 		"SystemViews":            func(d *Database) error { _, err := d.SystemViews(ctx, ObjectFilter{}); return err },
 		"UserDefinedFunctions":   func(d *Database) error { _, err := d.UserDefinedFunctions(ctx, ObjectFilter{}); return err },
+		"ExternalFunctions":      func(d *Database) error { _, err := d.ExternalFunctions(ctx, ObjectFilter{}); return err },
 		"SystemFunctions":        func(d *Database) error { _, err := d.SystemFunctions(ctx, ObjectFilter{}); return err },
 		"Triggers":               func(d *Database) error { _, err := d.Triggers(ctx); return err },
 		"Rules":                  func(d *Database) error { _, err := d.Rules(ctx); return err },
@@ -102,7 +104,7 @@ func TestModuleDefinitionReadsByName(t *testing.T) {
 	}{
 		"StoredProcedure": {func(d *Database) (string, error) { return d.StoredProcedureRef("dbo", "p").Definition(ctx) }, "o.type IN ('P','PC')"},
 		"View":            {func(d *Database) (string, error) { return d.ViewRef("dbo", "p").Definition(ctx) }, "o.type = 'V'"},
-		"Function":        {func(d *Database) (string, error) { return d.UserDefinedFunctionRef("dbo", "p").Definition(ctx) }, "o.type IN ('FN','TF','IF','FS','FT')"},
+		"Function":        {func(d *Database) (string, error) { return d.UserDefinedFunctionRef("dbo", "p").Definition(ctx) }, "o.type IN ('FN','TF','IF','FS','FT','XF')"},
 		"Trigger":         {func(d *Database) (string, error) { return d.TriggerRef("dbo", "p").Definition(ctx) }, "o.type IN ('TR','TA')"},
 		"Rule":            {func(d *Database) (string, error) { return d.RuleRef("dbo", "p").Definition(ctx) }, "o.type = 'R'"},
 		"Default":         {func(d *Database) (string, error) { return d.DefaultRef("dbo", "p").Definition(ctx) }, "o.type = 'D' AND o.parent_object_id = 0"},
@@ -131,6 +133,55 @@ func TestModuleDefinitionReadsByName(t *testing.T) {
 			t.Error("a statement was sent for an empty schema")
 		}
 	})
+}
+
+func TestExternalFunctionsReadOnlyXFObjects(t *testing.T) {
+	created := time.Date(2026, 10, 21, 10, 0, 0, 0, time.UTC)
+	for _, filtered := range []bool{false, true} {
+		d := captureDatabase(t)
+		captured.reset(cannedRow{match: "FROM   sys.objects o",
+			cols: []string{"object_id", "schema_name", "name", "create_date", "modify_date", "type"},
+			rows: [][]driver.Value{{int64(42), "analytics", "Predict", created, created, "XF"}}})
+		var funcs []*UserDefinedFunction
+		var err error
+		if filtered {
+			funcs, err = d.ExternalFunctions(context.Background(),
+				ObjectFilter{Name: []TextCriterion{{Op: TextEquals, Value: "Predict"}}})
+		} else {
+			funcs, err = d.ExternalFunctions(context.Background(), ObjectFilter{})
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(funcs) != 1 {
+			t.Fatalf("ExternalFunctions = %v, want one function", funcs)
+		}
+		f := funcs[0]
+		if f.ObjectID != 42 || f.Schema != "analytics" || f.Name != "Predict" || f.FuncType != "XF" ||
+			!f.CreateDate.Equal(created) || !f.ModifyDate.Equal(created) || f.Database() != d {
+			t.Errorf("external function lost catalog fields or database: %+v", f)
+		}
+		if !f.FuncType.IsScalar() || f.FuncType.IsCLR() {
+			t.Errorf("XF must be scalar and not CLR")
+		}
+		q, args := captured.findArgs("FROM   sys.objects o")
+		if !strings.Contains(q, "WHERE  o.type = 'XF'") || strings.Contains(q, "o.type IN") {
+			t.Errorf("external listing is not restricted to XF:\n%s", q)
+		}
+		if filtered && (!strings.Contains(q, "LOWER(o.name) = LOWER(@p1)") || len(args) != 1 || args[0] != "Predict") {
+			t.Errorf("external listing lost its pushed-down filter: %s %v", q, args)
+		}
+	}
+	d := captureDatabase(t)
+	if funcs, err := d.ExternalFunctions(context.Background(), ObjectFilter{}); err != nil || len(funcs) != 0 {
+		t.Errorf("empty external function listing = %v, %v", funcs, err)
+	}
+	if _, err := d.UserDefinedFunctions(context.Background(), ObjectFilter{}); err != nil {
+		t.Fatal(err)
+	}
+	if q := captured.find("WHERE  o.type IN"); !strings.Contains(q, "o.type IN ('FN','TF','IF','FS','FT') AND o.is_ms_shipped = 0") {
+		t.Errorf("regular function listing changed or includes XF:\n%s", q)
+	}
 }
 
 // TestBoundObjectDefinitionsReadEveryRowAtOnce pins RuleDefinitions and

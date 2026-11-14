@@ -24,6 +24,7 @@ type UserDefinedFunction struct {
 // FunctionType is a function's sys.objects type: the three T-SQL forms and
 // the two CLR ones. A CLR aggregate (AF) is not one — CREATE AGGREGATE makes
 // it and DROP AGGREGATE removes it.
+// Fabric DW external functions are supported as type XF.
 type FunctionType string
 
 const (
@@ -32,11 +33,16 @@ const (
 	FunctionTypeTable       FunctionType = "TF" // T-SQL multi-statement table-valued
 	FunctionTypeCLRScalar   FunctionType = "FS" // CLR scalar
 	FunctionTypeCLRTable    FunctionType = "FT" // CLR table-valued
+	FunctionTypeExternal    FunctionType = "XF" // Fabric external scalar
 )
 
 // IsScalar reports a function that returns a value, T-SQL or CLR — the one
 // a call selects rather than selects from.
+// Fabric DW external functions return a scalar value too.
 func (t FunctionType) IsScalar() bool {
+	if t == FunctionTypeExternal {
+		return true
+	}
 	return t == FunctionTypeScalar || t == FunctionTypeCLRScalar
 }
 
@@ -53,10 +59,20 @@ func (d *Database) UserDefinedFunctions(ctx context.Context, filter ObjectFilter
 	return moduleListWhere(ctx, d, "UDFs", userFunctions, functionExtra, where, args, scanFunction)
 }
 
+// ExternalFunctions returns Fabric external functions (sys.objects type XF)
+// matching filter, separately from the T-SQL and CLR UserDefinedFunctions.
+// The zero ObjectFilter returns every external function.
+func (d *Database) ExternalFunctions(ctx context.Context, filter ObjectFilter) ([]*UserDefinedFunction, error) {
+	where, args := filter.clause(moduleFilterColumns)
+	return moduleListWhere(ctx, d, "external UDFs", externalFunctions, functionExtra, where, args, scanFunction)
+}
+
 var (
 	userFunctions   = moduleSource{from: "sys.objects o", kind: "o.type IN ('FN','TF','IF','FS','FT') AND o.is_ms_shipped = 0"}
 	systemFunctions = moduleSource{from: "sys.all_objects o", kind: "o.type IN ('FN','TF','IF') AND o.is_ms_shipped = 1 AND o.schema_id = 4", system: true}
 )
+
+var externalFunctions = moduleSource{from: "sys.objects o", kind: "o.type = 'XF'"}
 
 // functionExtra is the column a function carries beyond moduleColumns.
 const functionExtra = `, o.type`
@@ -121,7 +137,7 @@ func (f *UserDefinedFunction) Database() *Database { return f.db }
 // function, ErrNotFound when there is no such function. Listings do not
 // carry it; this reads it by name, so a UserDefinedFunctionRef is enough.
 func (f *UserDefinedFunction) Definition(ctx context.Context) (string, error) {
-	return f.db.moduleDefinition(ctx, "function", "o.type IN ('FN','TF','IF','FS','FT')", f.Schema, f.Name)
+	return f.db.moduleDefinition(ctx, "function", "o.type IN ('FN','TF','IF','FS','FT','XF')", f.Schema, f.Name)
 }
 
 // Drop drops the function — scalar, inline table-valued or multi-statement

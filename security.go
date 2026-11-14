@@ -108,10 +108,12 @@ type PrincipalSecurable struct {
 // (CLR). An object of any other type — a CLR aggregate, an extended stored
 // procedure, a queue — has no class here, so the reads below leave it out
 // rather than report a securable no caller can address.
+// Fabric DW external functions (XF) use the scalar-function class too.
 var objectSecurableClasses = map[string]SecurableClass{
 	"U": SecurableTable, "V": SecurableView,
 	"P": SecurableProcedure, "PC": SecurableProcedure,
 	"FN": SecurableScalarFunction, "FS": SecurableScalarFunction,
+	"XF": SecurableScalarFunction,
 	"IF": SecurableInlineFunction,
 	"TF": SecurableTableFunction, "FT": SecurableTableFunction,
 	"SO": SecurableSequence, "SN": SecurableSynonym,
