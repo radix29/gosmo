@@ -521,7 +521,7 @@ func nextHeaderToken(def string, i int) (headerToken, bool) {
 // ============================================================
 
 // ScriptView returns the CREATE VIEW definition as stored in sys.sql_modules,
-// followed by the view's indexes (viewIndexes).
+// followed by the view's indexes and user-created statistics (viewIndexes).
 func (sc *Scripter) ScriptView(ctx context.Context, schema, name string) (string, error) {
 	if err := requireSchema("script view", schema, name); err != nil {
 		return "", err
@@ -529,11 +529,19 @@ func (sc *Scripter) ScriptView(ctx context.Context, schema, name string) (string
 	return sc.scriptModule(ctx, moduleView, schema, name, func(sb *strings.Builder, objectID int) error {
 		// The index reads are keyed by object_id alone, so a Table carrying
 		// the view's serves them; it goes no further than this call.
-		indexes, err := (&Table{db: sc.db, Schema: schema, Name: name, ObjectID: objectID}).Indexes(ctx)
+		carrier := &Table{db: sc.db, Schema: schema, Name: name, ObjectID: objectID}
+		indexes, err := carrier.Indexes(ctx)
 		if err != nil {
 			return err
 		}
-		sb.WriteString(viewIndexes(indexes, qualifiedName(schema, name), sc.opts))
+		var stats []scriptedStatistic
+		if len(indexes) > 0 {
+			// A view without an index cannot have a statistic.
+			if stats, err = sc.scriptedStatistics(ctx, carrier); err != nil {
+				return err
+			}
+		}
+		sb.WriteString(viewIndexes(indexes, stats, qualifiedName(schema, name), sc.opts))
 		return nil
 	})
 }
@@ -543,12 +551,12 @@ func (sc *Scripter) ScriptView(ctx context.Context, schema, name string) (string
 // which every other index on a view needs, then the nonclustered ones, then
 // the disabling of any disabled one. Without them a DROP AND CREATE turns an
 // indexed view into a plain one, and every query relying on its
-// materialisation silently regresses. A view's statistics are not scripted,
-// as a table's are not.
+// materialisation silently regresses. Its user-created statistics follow the
+// indexes (ScriptOptions.Statistics), before any disabling.
 //
 // Under ScriptAlter they follow too, after a comment saying why: ALTER VIEW
 // drops every index on the view.
-func viewIndexes(indexes []*Index, fullName string, opts ScriptOptions) string {
+func viewIndexes(indexes []*Index, stats []scriptedStatistic, fullName string, opts ScriptOptions) string {
 	if len(indexes) == 0 {
 		return ""
 	}
@@ -568,7 +576,7 @@ func viewIndexes(indexes []*Index, fullName string, opts ScriptOptions) string {
 	}
 	// The view's data space is its clustered index's: a nonclustered index
 	// with no ON clause lands there (indexDataSpaceClause).
-	var p tableScriptParts
+	p := tableScriptParts{stats: stats}
 	if ordered[0].IsClustered {
 		p.ds = ordered[0].DataSpace
 	}

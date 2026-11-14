@@ -12,6 +12,7 @@ package gosmo
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -109,5 +110,67 @@ func TestLiveBulkInsertChecksValues(t *testing.T) {
 	var n int
 	if err := db.QueryRowContext(ctx, "SELECT COUNT(*) FROM "+quoteIdent(name)+".dbo.t").Scan(&n); err != nil || n != 1 {
 		t.Errorf("table has %d rows (%v) after the refused loads, want 1", n, err)
+	}
+}
+
+// TestLiveBulkInsertRoundsFloatsAsInsert: a float bound for decimal or money
+// is stored as an INSERT of the same float parameter stores it — an exact
+// binary tie rounded away from zero, not to even as strconv rounds it
+// (bug-fix plan 2026-11-13 B3), and a value just off a tie (1.005 is
+// 1.00499… in binary) to nearest.
+func TestLiveBulkInsertRoundsFloatsAsInsert(t *testing.T) {
+	db, ctx, done := liveDB(t)
+	defer done()
+
+	const name = "gosmo_bulkround_live"
+	d, drop := liveScratchDB(t, db, ctx, name)
+	defer drop()
+	for _, tbl := range []string{"loaded", "ins"} {
+		if _, err := db.ExecContext(ctx, "CREATE TABLE "+quoteIdent(name)+".dbo."+tbl+
+			" (id int, d2 decimal(5,2), d0 decimal(5,0), m money, sm smallmoney)"); err != nil {
+			t.Fatalf("create table %s: %v", tbl, err)
+		}
+	}
+	values := []float64{2.5, -2.5, 0.5, -0.5, 99.5, 0.125, -0.125, 0.375, 9.75, 1.005, 9.995,
+		0.03125, -0.03125, 0.00005, -0.00015, 2.00005, 1.0e-10}
+	rows := make([][]any, len(values))
+	for i, v := range values {
+		rows[i] = []any{i, v, v, v, v}
+		if _, err := db.ExecContext(ctx, "INSERT "+quoteIdent(name)+".dbo.ins VALUES (@p1, @p2, @p2, @p2, @p2)", i, v); err != nil {
+			t.Fatalf("insert %v: %v", v, err)
+		}
+	}
+	bc := BulkCopy{Schema: "dbo", Table: "loaded", Columns: []string{"id", "d2", "d0", "m", "sm"}}
+	if _, err := d.BulkInsert(ctx, bc, SliceRows(rows)); err != nil {
+		t.Fatalf("BulkInsert: %v", err)
+	}
+	// Money in style 2: the default shows two places and hides the ties at
+	// the fourth.
+	row := func(a string) string {
+		return fmt.Sprintf("CONCAT(%[1]s.d2, ' ', %[1]s.d0, ' ', CONVERT(varchar(30), %[1]s.m, 2), ' ', CONVERT(varchar(30), %[1]s.sm, 2))", a)
+	}
+	q, err := db.QueryContext(ctx, "SELECT i.id, "+row("b")+", "+row("i")+" "+
+		"FROM "+quoteIdent(name)+".dbo.ins i JOIN "+quoteIdent(name)+".dbo.loaded b ON b.id = i.id ORDER BY i.id")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer q.Close()
+	n := 0
+	for q.Next() {
+		var id int
+		var bulk, ins string
+		if err := q.Scan(&id, &bulk, &ins); err != nil {
+			t.Fatal(err)
+		}
+		n++
+		if bulk != ins {
+			t.Errorf("%v: bulk loaded %s, INSERT stored %s", values[id], bulk, ins)
+		}
+	}
+	if err := q.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if n != len(values) {
+		t.Errorf("compared %d rows, want %d", n, len(values))
 	}
 }

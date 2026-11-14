@@ -207,6 +207,71 @@ func TestBuildStatisticScriptKeepsFilterAndOptions(t *testing.T) {
 	}
 }
 
+// A table script restates its user-created statistics after the
+// constraints and before any index is disabled — a disabled clustered index
+// takes the table offline and CREATE STATISTICS then fails. Under DROP AND
+// CREATE the statistic carries no DROP of its own: DROP TABLE removed it.
+func TestTableScriptRestatesUserStatistics(t *testing.T) {
+	col := []*Column{{Name: "a", DataType: DataTypeInt}, {Name: "b", DataType: DataTypeInt}}
+	cix := &Index{Name: "CIX", IsClustered: true, IsDisabled: true, Type: IndexTypeClustered,
+		KeyColumns: []IndexColumn{{Name: "a"}}}
+	p := tableScriptParts{cols: col, indexes: []*Index{cix},
+		checks: []*CheckConstraint{{Name: "CK", Definition: "([a]>(0))"}},
+		stats: []scriptedStatistic{
+			{st: &Statistic{Name: "st1", IsUserCreated: true, NoRecompute: true}, cols: []string{"a", "b"}},
+			{st: &Statistic{Name: "st2", IsUserCreated: true, HasFilter: true, FilterDef: "([b] IS NOT NULL)"}, cols: []string{"b"}},
+			{st: &Statistic{Name: "st3", IsUserCreated: true, HasFilter: true}, cols: []string{"a"}},
+		}}
+	opts := DefaultScriptOptions()
+	opts.Verb = ScriptDropAndCreate
+	got := buildTableScript("dbo", "T", "d", p, opts)
+	st1 := "IF NOT EXISTS (SELECT 1 FROM sys.stats WHERE name = N'st1' AND object_id = OBJECT_ID(N'[dbo].[T]'))\n" +
+		"CREATE STATISTICS [st1] ON [dbo].[T] ([a], [b]) WITH NORECOMPUTE;\nGO\n\n"
+	st2 := "CREATE STATISTICS [st2] ON [dbo].[T] ([b]) WHERE ([b] IS NOT NULL);\nGO\n\n"
+	st3 := "-- Statistic [st3] on [dbo].[T] is not scripted: its filter is not visible to the login (it needs VIEW DEFINITION).\n\n"
+	for _, want := range []string{st1, st2, st3} {
+		if !strings.Contains(got, want) {
+			t.Errorf("table script lacks\n%s\nin\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "DROP STATISTICS") {
+		t.Errorf("DROP AND CREATE drops a statistic of its own:\n%s", got)
+	}
+	ck, s1, dis := strings.Index(got, "ADD CONSTRAINT [CK]"), strings.Index(got, st1), strings.Index(got, "ALTER INDEX [CIX] ON [dbo].[T] DISABLE")
+	if ck < 0 || dis < 0 || ck >= s1 || s1 >= dis {
+		t.Errorf("want the check constraint, then the statistics, then the disable (at %d, %d, %d):\n%s", ck, s1, dis, got)
+	}
+
+	opts.Verb = ScriptDrop
+	if got := buildTableScript("dbo", "T", "d", p, opts); strings.Contains(got, "STATISTICS") {
+		t.Errorf("a DROP script carries a statistic:\n%s", got)
+	}
+}
+
+// With ScriptOptions.Statistics off, or under a bare DROP, the table script
+// reads no statistics at all: the Scripter here has no database to read from.
+func TestScriptedStatisticsReadsNothingWhenNotAsked(t *testing.T) {
+	tbl := &Table{Schema: "dbo", Name: "T", ObjectID: 7}
+	for _, opts := range []ScriptOptions{{Statistics: false}, {Statistics: true, Verb: ScriptDrop}, {Statistics: true, ScriptDrops: true}} {
+		got, err := (&Scripter{opts: opts}).scriptedStatistics(t.Context(), tbl)
+		if err != nil || got != nil {
+			t.Errorf("%+v: got %v, %v; want nothing read", opts, got, err)
+		}
+	}
+	if !DefaultScriptOptions().Statistics {
+		t.Error("DefaultScriptOptions leaves statistics out")
+	}
+}
+
+// The read keeps only user-created statistics — never an auto-created
+// _WA_Sys_ one or an index's own — and groups each statistic's columns.
+func TestUserStatisticsSelect(t *testing.T) {
+	if q := userStatisticsSelect("= @p1"); !strings.Contains(q, "s.user_created = 1 AND s.object_id = @p1") ||
+		!strings.Contains(q, "ORDER  BY s.object_id, s.name, sc.stats_column_id") {
+		t.Errorf("userStatisticsSelect:\n%s", q)
+	}
+}
+
 // The Scripter's index, check-constraint and foreign-key lookups go through
 // matchName: in a _CS_ database a table can hold IX_a and ix_A, and the name
 // an Object Explorer node carries is exact. A case-blind first match scripted
@@ -256,14 +321,14 @@ func TestViewIndexesFollowTheView(t *testing.T) {
 		"IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'IX_vB_n' AND object_id = OBJECT_ID(N'[dbo].[vB]'))\n" +
 		"CREATE NONCLUSTERED INDEX [IX_vB_n]\n    ON [dbo].[vB] ([n] ASC);\nGO\n\n" +
 		"ALTER INDEX [IX_vB_n] ON [dbo].[vB] DISABLE;\nGO\n\n"
-	if got := viewIndexes([]*Index{ix, cix}, "[dbo].[vB]", opts); got != want {
+	if got := viewIndexes([]*Index{ix, cix}, nil, "[dbo].[vB]", opts); got != want {
 		t.Errorf("view indexes:\n%s\nwant:\n%s", got, want)
 	}
 	opts.Verb = ScriptAlter
-	if got := viewIndexes([]*Index{cix}, "[dbo].[vB]", opts); !strings.HasPrefix(got, "-- ALTER VIEW drops every index on the view") {
+	if got := viewIndexes([]*Index{cix}, nil, "[dbo].[vB]", opts); !strings.HasPrefix(got, "-- ALTER VIEW drops every index on the view") {
 		t.Errorf("under ALTER:\n%s", got)
 	}
-	if got := viewIndexes(nil, "[dbo].[v]", opts); got != "" {
+	if got := viewIndexes(nil, nil, "[dbo].[v]", opts); got != "" {
 		t.Errorf("a plain view: %q", got)
 	}
 }

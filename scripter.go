@@ -65,6 +65,17 @@ type ScriptOptions struct {
 	// afterwards as ALTER TABLE … ADD CONSTRAINT, once every table exists
 	// (see ScriptDatabaseObjectList). Applies to ScriptTable only.
 	DeferReferences bool
+	// Statistics restates the user-created statistics of what the script
+	// creates — a CREATE STATISTICS after a table's constraints, or an
+	// indexed view's indexes, with its filter, NORECOMPUTE and INCREMENTAL.
+	// An auto-created statistic is the optimizer's to rebuild and an index's
+	// own is created with the index, so neither is scripted. A statistic
+	// whose filter the login cannot see (no VIEW DEFINITION) becomes a
+	// comment naming it rather than failing the whole script. Applies to
+	// ScriptTable and ScriptView (and so to ScriptDatabaseObjects); never to
+	// a DROP. Off is SSMS's own default, "Do not script statistics"; gosmo's
+	// default is on, so a replayed script plans as the original did.
+	Statistics bool
 }
 
 // DefaultScriptOptions returns sensible defaults.
@@ -75,6 +86,7 @@ func DefaultScriptOptions() ScriptOptions {
 		IncludeIfNotExists: true,
 		AnsiPadding:        true,
 		ExtendedProperties: true,
+		Statistics:         true,
 	}
 }
 
