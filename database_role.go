@@ -111,7 +111,7 @@ func (d *Database) CreateRole(ctx context.Context, req CreateRoleRequest) (*Data
 
 // Rename changes the database role's name.
 func (r *DatabaseRole) Rename(ctx context.Context, newName string) error {
-	q := fmt.Sprintf("ALTER ROLE %s WITH NAME = %s", quoteIdent(r.Name), quoteIdent(newName))
+	q := fmt.Sprintf("ALTER ROLE %s WITH NAME = %s", QuoteName(r.Name), QuoteName(newName))
 	if _, err := r.db.exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: rename database role %q to %q: %w", r.Name, newName, err)
 	}
@@ -121,7 +121,7 @@ func (r *DatabaseRole) Rename(ctx context.Context, newName string) error {
 
 // SetOwner transfers ownership of the database role to a new principal.
 func (r *DatabaseRole) SetOwner(ctx context.Context, newOwner string) error {
-	q := fmt.Sprintf("ALTER AUTHORIZATION ON ROLE::%s TO %s", quoteIdent(r.Name), quoteIdent(newOwner))
+	q := fmt.Sprintf("ALTER AUTHORIZATION ON ROLE::%s TO %s", QuoteName(r.Name), QuoteName(newOwner))
 	if _, err := r.db.exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: change database role %q owner to %q: %w", r.Name, newOwner, err)
 	}
@@ -161,7 +161,7 @@ ORDER  BY m.name`
 // role.
 func (r *DatabaseRole) AddMember(ctx context.Context, member string) error {
 	if _, err := r.db.exec(ctx,
-		fmt.Sprintf("ALTER ROLE %s ADD MEMBER %s", quoteIdent(r.Name), quoteIdent(member)),
+		fmt.Sprintf("ALTER ROLE %s ADD MEMBER %s", QuoteName(r.Name), QuoteName(member)),
 	); err != nil {
 		return fmt.Errorf("gosmo: add %q to role %q: %w", member, r.Name, err)
 	}
@@ -171,7 +171,7 @@ func (r *DatabaseRole) AddMember(ctx context.Context, member string) error {
 // RemoveMember removes member from the role.
 func (r *DatabaseRole) RemoveMember(ctx context.Context, member string) error {
 	if _, err := r.db.exec(ctx,
-		fmt.Sprintf("ALTER ROLE %s DROP MEMBER %s", quoteIdent(r.Name), quoteIdent(member)),
+		fmt.Sprintf("ALTER ROLE %s DROP MEMBER %s", QuoteName(r.Name), QuoteName(member)),
 	); err != nil {
 		return fmt.Errorf("gosmo: remove %q from role %q: %w", member, r.Name, err)
 	}
@@ -181,7 +181,7 @@ func (r *DatabaseRole) RemoveMember(ctx context.Context, member string) error {
 // Drop drops this database role. A role that still owns a schema or has
 // members is refused by the server, not here.
 func (r *DatabaseRole) Drop(ctx context.Context) error {
-	if _, err := r.db.exec(ctx, "DROP ROLE "+quoteIdent(r.Name)); err != nil {
+	if _, err := r.db.exec(ctx, "DROP ROLE "+QuoteName(r.Name)); err != nil {
 		return fmt.Errorf("gosmo: drop database role %q: %w", r.Name, err)
 	}
 	return nil

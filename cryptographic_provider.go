@@ -56,5 +56,5 @@ func (p *ProviderKey) clauses() (from string, opts []string, err error) {
 	default:
 		return "", nil, invalidf("unknown creation disposition %q", p.Disposition)
 	}
-	return " FROM PROVIDER " + quoteIdent(p.Provider), opts, nil
+	return " FROM PROVIDER " + QuoteName(p.Provider), opts, nil
 }

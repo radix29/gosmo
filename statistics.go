@@ -224,7 +224,7 @@ func (st *Statistic) Update(ctx context.Context, opts StatisticsUpdateOptions) e
 	if err != nil {
 		return fmt.Errorf("gosmo: update statistic %q: %w", st.Name, err)
 	}
-	q := fmt.Sprintf("UPDATE STATISTICS %s %s", st.on().FullName(), quoteIdent(st.Name)) + with
+	q := fmt.Sprintf("UPDATE STATISTICS %s %s", st.on().FullName(), QuoteName(st.Name)) + with
 	if err := st.on().exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: update statistic %q: %w", st.Name, err)
 	}
@@ -236,7 +236,7 @@ func (st *Statistic) Update(ctx context.Context, opts StatisticsUpdateOptions) e
 func (st *Statistic) Drop(ctx context.Context) error {
 	// DROP STATISTICS syntax: schema.table.stat (not quoted as one unit)
 	q := fmt.Sprintf("DROP STATISTICS %s.%s.%s",
-		quoteIdent(st.on().Schema), quoteIdent(st.on().Name), quoteIdent(st.Name))
+		QuoteName(st.on().Schema), QuoteName(st.on().Name), QuoteName(st.Name))
 	if err := st.on().exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: drop statistic %q: %w", st.Name, err)
 	}
@@ -290,9 +290,7 @@ func (t *Table) CreateStatistic(ctx context.Context, req CreateStatisticRequest)
 	if err := t.exec(ctx, q); err != nil {
 		return nil, fmt.Errorf("gosmo: create statistic %q: %w", req.Name, err)
 	}
-	return createdObject(ctx, t.StatisticRef(req.Name), func() (*Statistic, error) {
-		return t.StatisticByName(ctx, req.Name)
-	})
+	return createdByName(ctx, t.StatisticRef(req.Name), t.StatisticByName, req.Name)
 }
 
 // buildCreateStatisticStatement renders one CREATE STATISTICS statement, or
@@ -314,10 +312,10 @@ func buildCreateStatisticStatement(tableName string, req CreateStatisticRequest)
 
 	quotedCols := make([]string, len(req.Columns))
 	for i, c := range req.Columns {
-		quotedCols[i] = quoteIdent(c)
+		quotedCols[i] = QuoteName(c)
 	}
 	q := fmt.Sprintf("CREATE STATISTICS %s ON %s (%s)",
-		quoteIdent(req.Name), tableName, strings.Join(quotedCols, ", "))
+		QuoteName(req.Name), tableName, strings.Join(quotedCols, ", "))
 	if req.FilterDefinition != "" {
 		q += " WHERE " + req.FilterDefinition
 	}
@@ -614,7 +612,7 @@ func (k histogramKeyType) timeLayout() string {
 
 // Rename renames the statistic using sp_rename.
 func (st *Statistic) Rename(ctx context.Context, newName string) error {
-	objName := st.on().FullName() + "." + quoteIdent(st.Name)
+	objName := st.on().FullName() + "." + QuoteName(st.Name)
 	if err := st.on().exec(ctx,
 		"EXEC sp_rename @objname = @p1, @newname = @p2, @objtype = N'STATISTICS'",
 		objName, newName,

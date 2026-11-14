@@ -155,7 +155,7 @@ func (d *Database) BulkInsert(ctx context.Context, bc BulkCopy, rows iter.Seq2[[
 	}
 	cols := make([]string, len(bc.Columns))
 	for i, c := range bc.Columns {
-		cols[i] = quoteIdent(c)
+		cols[i] = QuoteName(c)
 	}
 	observe(ctx, d.server, ScriptEntry{
 		Server:   scriptServerName(ctx, d.server),

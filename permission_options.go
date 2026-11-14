@@ -293,11 +293,11 @@ func (s Securable) on() string {
 	case SecurableServer, SecurableDatabase:
 		return ""
 	case SecurableSchema:
-		return "ON SCHEMA::" + quoteIdent(s.Name)
+		return "ON SCHEMA::" + QuoteName(s.Name)
 	case SecurableUserType:
 		return "ON TYPE::" + qualifiedName(s.Schema, s.Name)
 	case SecurableCertificate:
-		return "ON CERTIFICATE::" + quoteIdent(s.Name)
+		return "ON CERTIFICATE::" + QuoteName(s.Name)
 	}
 	return "ON " + qualifiedName(s.Schema, s.Name)
 }
@@ -444,7 +444,7 @@ func onText(sec Securable) string {
 	if len(sec.Columns) > 0 {
 		cols := make([]string, len(sec.Columns))
 		for i, c := range sec.Columns {
-			cols[i] = quoteIdent(c)
+			cols[i] = QuoteName(c)
 		}
 		on += " (" + strings.Join(cols, ", ") + ")"
 	}
@@ -500,7 +500,7 @@ func (p permissionStmt) render() (string, error) {
 			if i > 0 {
 				b.WriteString(", ")
 			}
-			b.WriteString(quoteIdent(c))
+			b.WriteString(QuoteName(c))
 		}
 		b.WriteByte(')')
 	}
@@ -513,7 +513,7 @@ func (p permissionStmt) render() (string, error) {
 	} else {
 		b.WriteString(" TO ")
 	}
-	b.WriteString(quoteIdent(p.principal))
+	b.WriteString(QuoteName(p.principal))
 	switch {
 	case o.WithGrantOption:
 		b.WriteString(" WITH GRANT OPTION")

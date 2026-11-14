@@ -210,7 +210,7 @@ func buildRestoreStatement(opts RestoreOptions, killSessions bool) (string, erro
 	}
 
 	var sb strings.Builder
-	fmt.Fprintf(&sb, "RESTORE %s %s", action, quoteIdent(opts.Database))
+	fmt.Fprintf(&sb, "RESTORE %s %s", action, QuoteName(opts.Database))
 	if opts.Action == BackupActionFiles {
 		spec, err := backupFileSpec("restore", opts.Files, opts.FileGroups)
 		if err != nil {
@@ -281,7 +281,7 @@ func buildRestoreStatement(opts RestoreOptions, killSessions bool) (string, erro
 	// SET MULTI_USER this replaced opened a database the DBA had left
 	// RESTRICTED_USER to everyone when the RESTORE was refused, and opened a
 	// restored RESTRICTED_USER backup when it succeeded.
-	db := quoteIdent(opts.Database)
+	db := QuoteName(opts.Database)
 	online := restoreOnline(opts.Database, "")
 	standby := fmt.Sprintf("EXISTS (SELECT 1 FROM sys.databases WHERE name = %s AND state = 0 AND is_in_standby = 1)", QuoteLiteral(opts.Database))
 	return fmt.Sprintf(`%[6]s
@@ -327,7 +327,7 @@ func (s *Server) releaseAfterRestore(ctx context.Context, name string, mode User
 	rctx, cancel := context.WithTimeout(context.WithoutCancel(unobserved(ctx)), multiUserRepairTimeout)
 	defer cancel()
 	_, err := s.exec(rctx, fmt.Sprintf("IF %s\n    ALTER DATABASE %s SET %s",
-		restoreOnline(name, "SINGLE_USER"), quoteIdent(name), releaseMode(mode)))
+		restoreOnline(name, "SINGLE_USER"), QuoteName(name), releaseMode(mode)))
 	return err
 }
 

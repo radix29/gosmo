@@ -127,7 +127,7 @@ func (d *Database) withSessionIn(ctx context.Context, fn func(context.Context, *
 		// left in d must not reach the pool either way.
 		bg, cancel := context.WithTimeout(context.WithoutCancel(ctx), switchBackTimeout)
 		defer cancel()
-		if _, err := conn.ExecContext(bg, "USE "+quoteIdent(home)); err != nil {
+		if _, err := conn.ExecContext(bg, "USE "+QuoteName(home)); err != nil {
 			_ = conn.Raw(func(any) error { return driver.ErrBadConn })
 		}
 	}()
@@ -225,7 +225,7 @@ func (r *dbRows) Close() error {
 // use switches conn to d's database on its own, reporting a database it
 // cannot enter as an EntryError, as every database-scoped call does.
 func (d *Database) use(ctx context.Context, conn sqlConn) error {
-	if _, err := conn.ExecContext(ctx, "USE "+quoteIdent(d.Name)); err != nil {
+	if _, err := conn.ExecContext(ctx, "USE "+QuoteName(d.Name)); err != nil {
 		return &EntryError{Database: d.Name, Err: err}
 	}
 	return nil
@@ -256,7 +256,7 @@ func (d *Database) use(ctx context.Context, conn sqlConn) error {
 // TestNoNameBuiltinComparesWithAParameterUncollated enforces; recheckUse is
 // the safety net for one it misses, at three round trips.
 func (d *Database) useBatch(q string) string {
-	return "USE " + quoteIdent(d.Name) + "; IF @@ERROR <> 0 RETURN; " + q
+	return "USE " + QuoteName(d.Name) + "; IF @@ERROR <> 0 RETURN; " + q
 }
 
 // msgCollationConflict is Msg 468, "Cannot resolve the collation conflict".

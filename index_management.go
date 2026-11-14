@@ -43,7 +43,7 @@ func (t *Table) IndexRef(name string) *Index {
 // target is the `[index] ON [schema].[table]` pair every ALTER/DROP INDEX
 // statement names.
 func (idx *Index) target() string {
-	return quoteIdent(idx.Name) + " ON " + idx.on().FullName()
+	return QuoteName(idx.Name) + " ON " + idx.on().FullName()
 }
 
 // Reorganize reorganizes the index (ALTER INDEX ... REORGANIZE).
@@ -192,7 +192,7 @@ func (idx *Index) SetOptions(ctx context.Context, opts IndexSetOptions) error {
 // renaming a PRIMARY KEY or UNIQUE constraint, since its name is the
 // backing index's name in sys.indexes.
 func (idx *Index) Rename(ctx context.Context, newName string) error {
-	objName := idx.on().FullName() + "." + quoteIdent(idx.Name)
+	objName := idx.on().FullName() + "." + QuoteName(idx.Name)
 	if err := idx.on().exec(ctx,
 		"EXEC sp_rename @objname = @p1, @newname = @p2, @objtype = N'INDEX'",
 		objName, newName,
@@ -481,7 +481,7 @@ func (idx *Index) UpdateStatistics(ctx context.Context, opts StatisticsUpdateOpt
 	if err != nil {
 		return fmt.Errorf("gosmo: update statistics for index %q: %w", idx.Name, err)
 	}
-	q := fmt.Sprintf("UPDATE STATISTICS %s (%s)", idx.on().FullName(), quoteIdent(idx.Name)) + with
+	q := fmt.Sprintf("UPDATE STATISTICS %s (%s)", idx.on().FullName(), QuoteName(idx.Name)) + with
 	if err := idx.on().exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: update statistics for index %q: %w", idx.Name, err)
 	}

@@ -10,7 +10,6 @@ package gosmo
 
 import (
 	"context"
-	"database/sql"
 	"testing"
 )
 
@@ -36,10 +35,7 @@ func TestLiveCallerDefaultSchema(t *testing.T) {
 	u := "[" + login + "]"
 	liveExecIn(t, d, ctx, `CREATE SCHEMA sales`, `CREATE USER `+u+` FOR LOGIN `+u+` WITH DEFAULT_SCHEMA = sales`)
 
-	pool, err := sql.Open("sqlserver", liveRestrictedDSN(t, login, pass))
-	if err != nil {
-		t.Fatalf("open as %s: %v", login, err)
-	}
+	pool := liveOpenAs(t, login, pass)
 	defer pool.Close()
 	admin, low := &Server{db: db}, &Server{db: pool}
 

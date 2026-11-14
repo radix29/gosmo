@@ -335,7 +335,7 @@ func TestScriptPermissionOptionWrites(t *testing.T) {
 
 // TestCreateUserRefusesWhatItsKindCannotCarry pins the refusals. The first is
 // the guard on the one parameter CreateUser cannot quote its way out of:
-// quoteIdent("") is "[]", so an empty login produced "CREATE USER [x] FOR
+// QuoteName("") is "[]", so an empty login produced "CREATE USER [x] FOR
 // LOGIN []" — rejected by the server with a message naming an empty login the
 // caller never typed. The rest refuse a field set for a kind with no clause
 // for it, which would otherwise be dropped silently — a password typed for a

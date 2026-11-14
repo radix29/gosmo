@@ -73,7 +73,7 @@ func buildResourceGovernorScript(rg *ResourceGovernor, opts ScriptOptions) (stri
 	var sb strings.Builder
 	if rg.ClassifierName != "" {
 		fmt.Fprintf(&sb, "ALTER RESOURCE GOVERNOR WITH (CLASSIFIER_FUNCTION = %s.%s);\nGO\n",
-			quoteIdent(rg.ClassifierSchema), quoteIdent(rg.ClassifierName))
+			QuoteName(rg.ClassifierSchema), QuoteName(rg.ClassifierName))
 	}
 	if rg.MaxOutstandingIOPerVolume != 0 {
 		fmt.Fprintf(&sb, "ALTER RESOURCE GOVERNOR WITH (MAX_OUTSTANDING_IO_PER_VOLUME = %d);\nGO\n",
@@ -183,10 +183,10 @@ func idRanges(ids []int) string {
 // differs from the defaults, or a comment when nothing does.
 func systemRGScript(sb *strings.Builder, alter, kind, name string, w *rgOptions, using string) {
 	if len(w.parts) == 0 && using == "" {
-		fmt.Fprintf(sb, "-- %s %s is built in and has its default settings.\n", kind, tsql.CommentSafe(quoteIdent(name)))
+		fmt.Fprintf(sb, "-- %s %s is built in and has its default settings.\n", kind, tsql.CommentSafe(QuoteName(name)))
 		return
 	}
-	fmt.Fprintf(sb, "%s %s%s%s;\nGO\n", alter, quoteIdent(name), w.with(), using)
+	fmt.Fprintf(sb, "%s %s%s%s;\nGO\n", alter, QuoteName(name), w.with(), using)
 }
 
 func refuseSystemDrop(opts ScriptOptions, kind, name string) error {
@@ -218,11 +218,11 @@ func (k *poolKind[P]) script(p P, w *rgOptions, opts ScriptOptions, sizes groupS
 		return sb.String(), nil
 	}
 	drop := fmt.Sprintf("IF EXISTS (SELECT 1 FROM %s WHERE name = N'%s')\n    DROP %s %s;\nGO\n",
-		k.view, escapeSingle(name), k.ddl, quoteIdent(name))
+		k.view, escapeSingle(name), k.ddl, QuoteName(name))
 	guard := fmt.Sprintf("IF NOT EXISTS (SELECT 1 FROM %s WHERE name = N'%s')\n",
 		k.view, escapeSingle(name))
 	return opts.envelope(drop, guard, func(sb *strings.Builder) {
-		fmt.Fprintf(sb, "CREATE %s %s%s;\nGO\n%s", k.ddl, quoteIdent(name), w.with(), rgReconfigureNote)
+		fmt.Fprintf(sb, "CREATE %s %s%s;\nGO\n%s", k.ddl, QuoteName(name), w.with(), rgReconfigureNote)
 	}), nil
 }
 
@@ -332,11 +332,11 @@ func buildWorkloadGroupScript(g *WorkloadGroup, opts ScriptOptions) (string, err
 		return sb.String(), nil
 	}
 	drop := fmt.Sprintf("IF EXISTS (SELECT 1 FROM sys.resource_governor_workload_groups WHERE name = N'%s')\n    DROP WORKLOAD GROUP %s;\nGO\n",
-		escapeSingle(g.Name), quoteIdent(g.Name))
+		escapeSingle(g.Name), QuoteName(g.Name))
 	guard := fmt.Sprintf("IF NOT EXISTS (SELECT 1 FROM sys.resource_governor_workload_groups WHERE name = N'%s')\n",
 		escapeSingle(g.Name))
 	return opts.envelope(drop, guard, func(sb *strings.Builder) {
-		fmt.Fprintf(sb, "CREATE WORKLOAD GROUP %s%s%s;\nGO\n%s", quoteIdent(g.Name), w.with(), using, rgReconfigureNote)
+		fmt.Fprintf(sb, "CREATE WORKLOAD GROUP %s%s%s;\nGO\n%s", QuoteName(g.Name), w.with(), using, rgReconfigureNote)
 	}), nil
 }
 

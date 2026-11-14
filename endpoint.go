@@ -220,7 +220,7 @@ func (spec CreateDatabaseMirroringEndpointRequest) createEndpointStatement() (st
 	return fmt.Sprintf(
 		"CREATE ENDPOINT %s STATE = STARTED AS TCP (LISTENER_PORT = %d, LISTENER_IP = ALL) "+
 			"FOR DATABASE_MIRRORING (AUTHENTICATION = %s, ENCRYPTION = %s, ROLE = %s)",
-		quoteIdent(n.Name), n.Port,
+		QuoteName(n.Name), n.Port,
 		n.Authentication, encryption, n.Role), nil
 }
 
@@ -288,7 +288,7 @@ func (e *DatabaseMirroringEndpoint) Stop(ctx context.Context) error {
 
 func (e *DatabaseMirroringEndpoint) setState(ctx context.Context, state EndpointState) error {
 	if _, err := e.server.exec(ctx,
-		fmt.Sprintf("ALTER ENDPOINT %s STATE = %s", quoteIdent(e.Name), state)); err != nil {
+		fmt.Sprintf("ALTER ENDPOINT %s STATE = %s", QuoteName(e.Name), state)); err != nil {
 		return fmt.Errorf("gosmo: set endpoint %q state to %s: %w", e.Name, state, err)
 	}
 	setIfApplied(ctx, &e.State, state)
@@ -297,7 +297,7 @@ func (e *DatabaseMirroringEndpoint) setState(ctx context.Context, state Endpoint
 
 // Drop deletes the endpoint.
 func (e *DatabaseMirroringEndpoint) Drop(ctx context.Context) error {
-	if _, err := e.server.exec(ctx, "DROP ENDPOINT "+quoteIdent(e.Name)); err != nil {
+	if _, err := e.server.exec(ctx, "DROP ENDPOINT "+QuoteName(e.Name)); err != nil {
 		return fmt.Errorf("gosmo: drop endpoint %q: %w", e.Name, err)
 	}
 	return nil
@@ -310,7 +310,7 @@ func (e *DatabaseMirroringEndpoint) GrantConnect(ctx context.Context, login stri
 		return invalidf("gosmo: grant connect on endpoint %q: empty login", e.Name)
 	}
 	if _, err := e.server.exec(ctx, fmt.Sprintf("GRANT CONNECT ON ENDPOINT::%s TO %s",
-		quoteIdent(e.Name), quoteIdent(login))); err != nil {
+		QuoteName(e.Name), QuoteName(login))); err != nil {
 		return fmt.Errorf("gosmo: grant connect on endpoint %q to %q: %w", e.Name, login, err)
 	}
 	return nil
@@ -456,7 +456,7 @@ func (e *Endpoint) SetState(ctx context.Context, state EndpointState) error {
 	default:
 		return invalidf("gosmo: set state of endpoint %q: unknown state %q", e.Name, state)
 	}
-	stmt := fmt.Sprintf("ALTER ENDPOINT %s STATE = %s", quoteIdent(e.Name), state)
+	stmt := fmt.Sprintf("ALTER ENDPOINT %s STATE = %s", QuoteName(e.Name), state)
 	if _, err := e.server.exec(ctx, stmt); err != nil {
 		return fmt.Errorf("gosmo: set state of endpoint %q: %w", e.Name, err)
 	}
@@ -472,7 +472,7 @@ func (e *Endpoint) Drop(ctx context.Context) error {
 	if err := e.refuseSystem("drop"); err != nil {
 		return err
 	}
-	if _, err := e.server.exec(ctx, "DROP ENDPOINT "+quoteIdent(e.Name)); err != nil {
+	if _, err := e.server.exec(ctx, "DROP ENDPOINT "+QuoteName(e.Name)); err != nil {
 		return fmt.Errorf("gosmo: drop endpoint %q: %w", e.Name, err)
 	}
 	return nil

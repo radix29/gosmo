@@ -289,7 +289,7 @@ func (spec ServerAuditDefinition) createServerAuditStatement() (string, error) {
 		return "", invalidf("server audit %q has no file path", spec.Name)
 	}
 
-	stmt := "CREATE SERVER AUDIT " + quoteIdent(spec.Name) +
+	stmt := "CREATE SERVER AUDIT " + QuoteName(spec.Name) +
 		spec.auditTargetClause() + spec.auditWithClause()
 	if spec.Predicate != "" {
 		stmt += "\nWHERE " + spec.Predicate
@@ -307,9 +307,7 @@ func (s *Server) CreateServerAudit(ctx context.Context, spec ServerAuditDefiniti
 	if _, err := s.exec(ctx, stmt); err != nil {
 		return nil, fmt.Errorf("gosmo: create server audit %q: %w", spec.Name, err)
 	}
-	return createdObject(ctx, s.ServerAuditRef(spec.Name), func() (*ServerAudit, error) {
-		return s.ServerAuditByName(ctx, spec.Name)
-	})
+	return createdByName(ctx, s.ServerAuditRef(spec.Name), s.ServerAuditByName, spec.Name)
 }
 
 // SetEnabled turns the audit on (STATE = ON) when on is true and off
@@ -332,7 +330,7 @@ func (a *ServerAudit) setStateNamed(ctx context.Context, name string, on bool) e
 	if on {
 		state = "ON"
 	}
-	stmt := fmt.Sprintf("ALTER SERVER AUDIT %s WITH ( STATE = %s )", quoteIdent(name), state)
+	stmt := fmt.Sprintf("ALTER SERVER AUDIT %s WITH ( STATE = %s )", QuoteName(name), state)
 	if _, err := a.server.exec(ctx, stmt); err != nil {
 		return fmt.Errorf("gosmo: set server audit %q state: %w", name, err)
 	}
@@ -449,12 +447,12 @@ func restoreWindow(ctx context.Context, enable func(context.Context) error) erro
 // an existing predicate alone, so a caller changing anything else must carry
 // the current predicate forward in the spec.
 func (spec ServerAuditDefinition) alterServerAuditStatements(name string) []string {
-	stmt := "ALTER SERVER AUDIT " + quoteIdent(name) +
+	stmt := "ALTER SERVER AUDIT " + QuoteName(name) +
 		spec.auditTargetClause() + spec.auditWithClause()
 	if spec.Predicate != "" {
 		return []string{stmt + "\nWHERE " + spec.Predicate}
 	}
-	return []string{stmt, "ALTER SERVER AUDIT " + quoteIdent(name) + " REMOVE WHERE"}
+	return []string{stmt, "ALTER SERVER AUDIT " + QuoteName(name) + " REMOVE WHERE"}
 }
 
 // Alter changes the audit's settings.
@@ -505,7 +503,7 @@ func (a *ServerAudit) Rename(ctx context.Context, newName string) error {
 		}
 	}
 	stmt := fmt.Sprintf("ALTER SERVER AUDIT %s MODIFY NAME = %s",
-		quoteIdent(a.Name), quoteIdent(newName))
+		QuoteName(a.Name), QuoteName(newName))
 	if _, err := a.server.exec(ctx, stmt); err != nil {
 		err = fmt.Errorf("gosmo: rename server audit %q: %w", a.Name, err)
 		if restore {
@@ -547,7 +545,7 @@ func (a *ServerAudit) Drop(ctx context.Context) error {
 			return err
 		}
 	}
-	if _, err := a.server.exec(ctx, "DROP SERVER AUDIT "+quoteIdent(a.Name)); err != nil {
+	if _, err := a.server.exec(ctx, "DROP SERVER AUDIT "+QuoteName(a.Name)); err != nil {
 		return fmt.Errorf("gosmo: drop server audit %q: %w", a.Name, err)
 	}
 	return nil

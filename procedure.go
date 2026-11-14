@@ -148,7 +148,7 @@ func (d *Database) ExecProc(ctx context.Context, schema, name string, params ...
 	args = append(args, &status)
 
 	err := d.withConn(ctx, func(ctx context.Context, c sqlConn) error {
-		_, err := c.ExecContext(ctx, quoteIdent(d.Name)+"."+proc, args...)
+		_, err := c.ExecContext(ctx, QuoteName(d.Name)+"."+proc, args...)
 		if err != nil && txFrom(ctx, d.server) == nil {
 			if uerr := d.recheckEntry(ctx, c, err); uerr != nil {
 				return uerr

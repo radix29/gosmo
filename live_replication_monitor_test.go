@@ -8,8 +8,6 @@
 package gosmo
 
 import (
-	"database/sql"
-	"net/url"
 	"slices"
 	"strings"
 	"testing"
@@ -242,27 +240,19 @@ func TestLiveReplicationMonitorAccess(t *testing.T) {
 	liveReplicationFixture(t, db, ctx)
 
 	const login, pass = "gosmo_repl_monitor_probe", "Pr0be!pass-9172"
-	if _, err := db.ExecContext(ctx, "CREATE LOGIN "+quoteIdent(login)+" WITH PASSWORD = N'"+pass+"', CHECK_POLICY = OFF"); err != nil {
+	if _, err := db.ExecContext(ctx, "CREATE LOGIN "+QuoteName(login)+" WITH PASSWORD = N'"+pass+"', CHECK_POLICY = OFF"); err != nil {
 		t.Fatalf("create login: %v", err)
 	}
 	t.Cleanup(func() {
-		if _, err := db.ExecContext(ctx, "USE distribution; DROP USER IF EXISTS "+quoteIdent(login)); err != nil {
+		if _, err := db.ExecContext(ctx, "USE distribution; DROP USER IF EXISTS "+QuoteName(login)); err != nil {
 			t.Errorf("drop user: %v", err)
 		}
-		if _, err := db.ExecContext(ctx, "DROP LOGIN "+quoteIdent(login)); err != nil {
+		if _, err := db.ExecContext(ctx, "DROP LOGIN "+QuoteName(login)); err != nil {
 			t.Errorf("drop login: %v", err)
 		}
 	})
 
-	u, err := url.Parse(*liveDSN)
-	if err != nil {
-		t.Fatal(err)
-	}
-	u.User = url.UserPassword(login, pass)
-	other, err := sql.Open("sqlserver", u.String())
-	if err != nil {
-		t.Fatal(err)
-	}
+	other := liveOpenAs(t, login, pass)
 	t.Cleanup(func() { other.Close() })
 	srv, err := NewServer(ctx, other)
 	if err != nil {
@@ -273,7 +263,7 @@ func TestLiveReplicationMonitorAccess(t *testing.T) {
 	if ok, err := dd.CanMonitor(ctx); err != nil || ok {
 		t.Errorf("CanMonitor with no user = %v, %v; want false", ok, err)
 	}
-	if _, err := db.ExecContext(ctx, "USE distribution; CREATE USER "+quoteIdent(login)+"; ALTER ROLE replmonitor ADD MEMBER "+quoteIdent(login)); err != nil {
+	if _, err := db.ExecContext(ctx, "USE distribution; CREATE USER "+QuoteName(login)+"; ALTER ROLE replmonitor ADD MEMBER "+QuoteName(login)); err != nil {
 		t.Fatalf("add to replmonitor: %v", err)
 	}
 	if ok, err := dd.CanMonitor(ctx); err != nil || !ok {

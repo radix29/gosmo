@@ -98,7 +98,7 @@ func (l *Login) SetEnabled(ctx context.Context, on bool) error {
 	if on {
 		action = "ENABLE"
 	}
-	if _, err := l.server.exec(ctx, "ALTER LOGIN "+quoteIdent(l.Name)+" "+action); err != nil {
+	if _, err := l.server.exec(ctx, "ALTER LOGIN "+QuoteName(l.Name)+" "+action); err != nil {
 		return fmt.Errorf("gosmo: %s login %q: %w", strings.ToLower(action), l.Name, err)
 	}
 	setIfApplied(ctx, &l.IsDisabled, !on)
@@ -110,7 +110,7 @@ func (l *Login) Drop(ctx context.Context) error {
 	if l.Name == "" {
 		return invalidf("gosmo: drop login: name is required")
 	}
-	if _, err := l.server.exec(ctx, fmt.Sprintf("DROP LOGIN %s", quoteIdent(l.Name))); err != nil {
+	if _, err := l.server.exec(ctx, fmt.Sprintf("DROP LOGIN %s", QuoteName(l.Name))); err != nil {
 		return fmt.Errorf("gosmo: drop login %q: %w", l.Name, err)
 	}
 	return nil
@@ -213,7 +213,7 @@ func loginPropertyTime(t sql.NullTime) time.Time {
 
 // Rename changes the login's name.
 func (l *Login) Rename(ctx context.Context, newName string) error {
-	q := fmt.Sprintf("ALTER LOGIN %s WITH NAME = %s", quoteIdent(l.Name), quoteIdent(newName))
+	q := fmt.Sprintf("ALTER LOGIN %s WITH NAME = %s", QuoteName(l.Name), QuoteName(newName))
 	if _, err := l.server.exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: rename login %q to %q: %w", l.Name, newName, err)
 	}
@@ -223,7 +223,7 @@ func (l *Login) Rename(ctx context.Context, newName string) error {
 
 // SetDefaultDatabase changes the login's default database.
 func (l *Login) SetDefaultDatabase(ctx context.Context, name string) error {
-	q := fmt.Sprintf("ALTER LOGIN %s WITH DEFAULT_DATABASE = %s", quoteIdent(l.Name), quoteIdent(name))
+	q := fmt.Sprintf("ALTER LOGIN %s WITH DEFAULT_DATABASE = %s", QuoteName(l.Name), QuoteName(name))
 	if _, err := l.server.exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: set default database for login %q to %q: %w", l.Name, name, err)
 	}
@@ -235,7 +235,7 @@ func (l *Login) SetDefaultDatabase(ctx context.Context, name string) error {
 // onto DefaultLanguage as given, so pass the language's name rather than an
 // alias for the handle to read as the catalog does.
 func (l *Login) SetDefaultLanguage(ctx context.Context, lang string) error {
-	q := fmt.Sprintf("ALTER LOGIN %s WITH DEFAULT_LANGUAGE = %s", quoteIdent(l.Name), quoteIdent(lang))
+	q := fmt.Sprintf("ALTER LOGIN %s WITH DEFAULT_LANGUAGE = %s", QuoteName(l.Name), QuoteName(lang))
 	if _, err := l.server.exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: set default language for login %q to %q: %w", l.Name, lang, err)
 	}
@@ -267,7 +267,7 @@ func (l *Login) SetPasswordPolicy(ctx context.Context, p PasswordPolicy) error {
 		expiration = "ON"
 	}
 	q := fmt.Sprintf("ALTER LOGIN %s WITH CHECK_POLICY = %s, CHECK_EXPIRATION = %s",
-		quoteIdent(l.Name), policy, expiration)
+		QuoteName(l.Name), policy, expiration)
 	if _, err := l.server.exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: set password policy for login %q: %w", l.Name, err)
 	}
@@ -366,7 +366,7 @@ func buildChangePasswordStatement(loginName, newPassword string, opts ChangePass
 	case policyOff && opts.CheckExpiration != nil && *opts.CheckExpiration:
 		return "", invalidf("CheckExpiration cannot be on when CheckPolicy is off")
 	}
-	login := quoteIdent(loginName)
+	login := QuoteName(loginName)
 	var pw strings.Builder
 	fmt.Fprintf(&pw, "ALTER LOGIN %s WITH PASSWORD = %s", login, QuoteLiteral(newPassword))
 	if opts.MustChange {
@@ -408,7 +408,7 @@ ELSE
 
 // MapCredential maps a server credential to the login.
 func (l *Login) MapCredential(ctx context.Context, credential string) error {
-	q := fmt.Sprintf("ALTER LOGIN %s ADD CREDENTIAL %s", quoteIdent(l.Name), quoteIdent(credential))
+	q := fmt.Sprintf("ALTER LOGIN %s ADD CREDENTIAL %s", QuoteName(l.Name), QuoteName(credential))
 	if _, err := l.server.exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: map credential %q to login %q: %w", credential, l.Name, err)
 	}
@@ -417,7 +417,7 @@ func (l *Login) MapCredential(ctx context.Context, credential string) error {
 
 // UnmapCredential removes a credential mapping from the login.
 func (l *Login) UnmapCredential(ctx context.Context, credential string) error {
-	q := fmt.Sprintf("ALTER LOGIN %s DROP CREDENTIAL %s", quoteIdent(l.Name), quoteIdent(credential))
+	q := fmt.Sprintf("ALTER LOGIN %s DROP CREDENTIAL %s", QuoteName(l.Name), QuoteName(credential))
 	if _, err := l.server.exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: unmap credential %q from login %q: %w", credential, l.Name, err)
 	}
@@ -561,12 +561,12 @@ func (s *Server) CreateLogin(ctx context.Context, req CreateLoginRequest) (*Logi
 	if alterDefaults {
 		var set []string
 		if opts.DefaultDatabase != "" {
-			set = append(set, "DEFAULT_DATABASE = "+quoteIdent(opts.DefaultDatabase))
+			set = append(set, "DEFAULT_DATABASE = "+QuoteName(opts.DefaultDatabase))
 		}
 		if opts.DefaultLanguage != "" {
-			set = append(set, "DEFAULT_LANGUAGE = "+quoteIdent(opts.DefaultLanguage))
+			set = append(set, "DEFAULT_LANGUAGE = "+QuoteName(opts.DefaultLanguage))
 		}
-		stmts = append(stmts, fmt.Sprintf("ALTER LOGIN %s WITH %s", quoteIdent(name), strings.Join(set, ", ")))
+		stmts = append(stmts, fmt.Sprintf("ALTER LOGIN %s WITH %s", QuoteName(name), strings.Join(set, ", ")))
 	}
 	switch {
 	case len(stmts) == 1:
@@ -583,9 +583,7 @@ func (s *Server) CreateLogin(ctx context.Context, req CreateLoginRequest) (*Logi
 	if err != nil {
 		return nil, fmt.Errorf("gosmo: create login %q: %w", name, err)
 	}
-	return createdObject(ctx, s.LoginRef(name), func() (*Login, error) {
-		return s.LoginByName(ctx, name)
-	})
+	return createdByName(ctx, s.LoginRef(name), s.LoginByName, name)
 }
 
 // createLoginStatement builds the CREATE LOGIN statement for one resolved
@@ -627,7 +625,7 @@ func createLoginStatement(name, password string, src LoginSource, opts *CreateLo
 	}
 
 	var sb strings.Builder
-	fmt.Fprintf(&sb, "CREATE LOGIN %s", quoteIdent(name))
+	fmt.Fprintf(&sb, "CREATE LOGIN %s", QuoteName(name))
 
 	switch src {
 	case LoginSourceSQL:
@@ -670,7 +668,7 @@ func createLoginStatement(name, password string, src LoginSource, opts *CreateLo
 			sb.WriteString(onOff(*opts.CheckPolicy))
 		}
 		if opts.Credential != "" {
-			fmt.Fprintf(&sb, ", CREDENTIAL = %s", quoteIdent(opts.Credential))
+			fmt.Fprintf(&sb, ", CREDENTIAL = %s", QuoteName(opts.Credential))
 		}
 	case LoginSourceWindows:
 		sb.WriteString(" FROM WINDOWS")
@@ -689,13 +687,13 @@ func createLoginStatement(name, password string, src LoginSource, opts *CreateLo
 		if opts.CertificateName == "" {
 			return "", false, invalidf("a certificate login requires CertificateName")
 		}
-		fmt.Fprintf(&sb, " FROM CERTIFICATE %s", quoteIdent(opts.CertificateName))
+		fmt.Fprintf(&sb, " FROM CERTIFICATE %s", QuoteName(opts.CertificateName))
 		return sb.String(), false, nil
 	case LoginSourceAsymmetricKey:
 		if opts.AsymmetricKeyName == "" {
 			return "", false, invalidf("an asymmetric key login requires AsymmetricKeyName")
 		}
-		fmt.Fprintf(&sb, " FROM ASYMMETRIC KEY %s", quoteIdent(opts.AsymmetricKeyName))
+		fmt.Fprintf(&sb, " FROM ASYMMETRIC KEY %s", QuoteName(opts.AsymmetricKeyName))
 		return sb.String(), false, nil
 	default:
 		return "", false, invalidf("unknown login source %d", int(src))
@@ -708,11 +706,11 @@ func createLoginStatement(name, password string, src LoginSource, opts *CreateLo
 // Windows login, whose CREATE has no other option).
 func writeLoginDefaults(sb *strings.Builder, lead string, opts *CreateLoginRequest) {
 	if opts.DefaultDatabase != "" {
-		fmt.Fprintf(sb, "%sDEFAULT_DATABASE = %s", lead, quoteIdent(opts.DefaultDatabase))
+		fmt.Fprintf(sb, "%sDEFAULT_DATABASE = %s", lead, QuoteName(opts.DefaultDatabase))
 		lead = ", "
 	}
 	if opts.DefaultLanguage != "" {
-		fmt.Fprintf(sb, "%sDEFAULT_LANGUAGE = %s", lead, quoteIdent(opts.DefaultLanguage))
+		fmt.Fprintf(sb, "%sDEFAULT_LANGUAGE = %s", lead, QuoteName(opts.DefaultLanguage))
 	}
 }
 

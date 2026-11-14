@@ -149,7 +149,7 @@ func (t *DatabaseTrigger) SetEnabled(ctx context.Context, on bool) error {
 	if on {
 		verb = "ENABLE"
 	}
-	stmt := fmt.Sprintf("%s TRIGGER %s ON DATABASE", verb, quoteIdent(t.Name))
+	stmt := fmt.Sprintf("%s TRIGGER %s ON DATABASE", verb, QuoteName(t.Name))
 	if _, err := t.db.exec(ctx, stmt); err != nil {
 		return fmt.Errorf("gosmo: %s database trigger %q: %w", strings.ToLower(verb), t.Name, err)
 	}
@@ -164,7 +164,7 @@ func (t *DatabaseTrigger) SetEnabled(ctx context.Context, on bool) error {
 // a DDL trigger has no schema for, and omits the ON DATABASE clause the
 // server requires here.
 func (t *DatabaseTrigger) Drop(ctx context.Context) error {
-	stmt := fmt.Sprintf("DROP TRIGGER %s ON DATABASE", quoteIdent(t.Name))
+	stmt := fmt.Sprintf("DROP TRIGGER %s ON DATABASE", QuoteName(t.Name))
 	if _, err := t.db.exec(ctx, stmt); err != nil {
 		return fmt.Errorf("gosmo: drop database trigger %q: %w", t.Name, err)
 	}

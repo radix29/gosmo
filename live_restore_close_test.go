@@ -78,7 +78,7 @@ func TestLiveRestoreCloseExistingConnections(t *testing.T) {
 		t.Fatalf("second session: %v", err)
 	}
 	defer parked.Close()
-	if _, err := parked.ExecContext(ctx, "USE "+quoteIdent(name)); err != nil {
+	if _, err := parked.ExecContext(ctx, "USE "+QuoteName(name)); err != nil {
 		t.Fatalf("park the second session: %v", err)
 	}
 
@@ -126,7 +126,7 @@ func TestLiveRestoreCloseExistingConnections(t *testing.T) {
 	// overwrote.
 	setAccess := func(t *testing.T, mode string) {
 		t.Helper()
-		if _, err := srv.db.ExecContext(ctx, "ALTER DATABASE "+quoteIdent(name)+" SET "+mode+" WITH ROLLBACK IMMEDIATE"); err != nil {
+		if _, err := srv.db.ExecContext(ctx, "ALTER DATABASE "+QuoteName(name)+" SET "+mode+" WITH ROLLBACK IMMEDIATE"); err != nil {
 			t.Fatalf("set %s: %v", mode, err)
 		}
 	}
@@ -226,7 +226,7 @@ func TestLiveRestoreCloseExistingConnections(t *testing.T) {
 			move = append(move, RelocateFile{LogicalName: f.LogicalName,
 				PhysicalName: liveBackupPath(t, srv, ctx, copyName+"_"+f.LogicalName)})
 		}
-		defer db.ExecContext(context.Background(), "IF DB_ID('"+copyName+"') IS NOT NULL DROP DATABASE "+quoteIdent(copyName))
+		defer db.ExecContext(context.Background(), "IF DB_ID('"+copyName+"') IS NOT NULL DROP DATABASE "+QuoteName(copyName))
 		if err := srv.Restore(ctx, RestoreOptions{
 			Database: copyName, Devices: []BackupTarget{DiskTarget(device)}, RelocateFiles: move,
 			CloseExistingConnections: true,
@@ -255,7 +255,7 @@ func TestLiveRestoreCloseReleasesAStandbyReader(t *testing.T) {
 	// so recover it first; on a database already online this is refused and
 	// harmless.
 	defer drop()
-	defer db.ExecContext(context.Background(), "RESTORE DATABASE "+quoteIdent(name)+" WITH RECOVERY")
+	defer db.ExecContext(context.Background(), "RESTORE DATABASE "+QuoteName(name)+" WITH RECOVERY")
 	srv, err := NewServer(ctx, db)
 	if err != nil {
 		t.Fatalf("NewServer: %v", err)
@@ -272,13 +272,13 @@ func TestLiveRestoreCloseReleasesAStandbyReader(t *testing.T) {
 	}
 	defer db.ExecContext(context.Background(), "EXEC msdb.dbo.sp_delete_database_backuphistory @database_name = N'"+name+"'")
 
-	if _, err := db.ExecContext(ctx, "ALTER DATABASE "+quoteIdent(name)+" SET RECOVERY FULL"); err != nil {
+	if _, err := db.ExecContext(ctx, "ALTER DATABASE "+QuoteName(name)+" SET RECOVERY FULL"); err != nil {
 		t.Fatalf("recovery model: %v", err)
 	}
 	if err := srv.Backup(ctx, BackupOptions{Database: name, Devices: []BackupTarget{DiskTarget(full)}, Init: true}); err != nil {
 		t.Fatalf("full backup: %v", err)
 	}
-	if _, err := db.ExecContext(ctx, "CREATE TABLE "+quoteIdent(name)+".dbo.t (i int); INSERT "+quoteIdent(name)+".dbo.t VALUES (1)"); err != nil {
+	if _, err := db.ExecContext(ctx, "CREATE TABLE "+QuoteName(name)+".dbo.t (i int); INSERT "+QuoteName(name)+".dbo.t VALUES (1)"); err != nil {
 		t.Fatalf("log some work: %v", err)
 	}
 	if err := srv.Backup(ctx, BackupOptions{Database: name, Action: BackupActionLog, Devices: []BackupTarget{DiskTarget(logDev)}, Init: true}); err != nil {
@@ -303,7 +303,7 @@ func TestLiveRestoreCloseReleasesAStandbyReader(t *testing.T) {
 	}
 	defer parked.Close()
 	var spid int
-	if err := parked.QueryRowContext(ctx, "USE "+quoteIdent(name)+"; SELECT @@SPID").Scan(&spid); err != nil {
+	if err := parked.QueryRowContext(ctx, "USE "+QuoteName(name)+"; SELECT @@SPID").Scan(&spid); err != nil {
 		t.Fatalf("park the reader: %v", err)
 	}
 
@@ -330,7 +330,7 @@ func TestLiveRestoreCloseReleasesAStandbyReader(t *testing.T) {
 		t.Errorf("the reader's session %d is still in the database", spid)
 	}
 	var n int
-	if err := db.QueryRowContext(ctx, "SELECT COUNT(*) FROM "+quoteIdent(name)+".dbo.t").Scan(&n); err != nil || n != 1 {
+	if err := db.QueryRowContext(ctx, "SELECT COUNT(*) FROM "+QuoteName(name)+".dbo.t").Scan(&n); err != nil || n != 1 {
 		t.Errorf("the log's row after the restore: %d, %v; want 1", n, err)
 	}
 }

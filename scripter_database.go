@@ -302,7 +302,7 @@ func writeDatabaseFileClauses(sb *strings.Builder, l *databaseLayout) {
 		if g == primary || len(g.Files) == 0 {
 			continue
 		}
-		fmt.Fprintf(sb, ",\n FILEGROUP %s%s", quoteIdent(g.Name), fileGroupContains(g.Type))
+		fmt.Fprintf(sb, ",\n FILEGROUP %s%s", QuoteName(g.Name), fileGroupContains(g.Type))
 		// DEFAULT is per filegroup type: the one FILESTREAM filegroup always
 		// reports it, and saying so is harmless. A memory-optimized
 		// filegroup cannot take it.
@@ -341,21 +341,21 @@ func (sc *Scripter) scriptDatabaseFrom(d *Database, layout *databaseLayout) (str
 	if sc.opts.IncludeIfNotExists {
 		drop += fmt.Sprintf("IF DB_ID(N'%s') IS NOT NULL\n    ", escapeSingle(d.Name))
 	}
-	drop += fmt.Sprintf("DROP DATABASE %s;\nGO\n", quoteIdent(d.Name))
+	drop += fmt.Sprintf("DROP DATABASE %s;\nGO\n", QuoteName(d.Name))
 	sb.WriteString(sc.opts.envelope(drop, "", func(sb *strings.Builder) {
 		if sc.opts.IncludeIfNotExists {
 			fmt.Fprintf(sb, "IF DB_ID(N'%s') IS NULL\nBEGIN\n    ", escapeSingle(d.Name))
 		}
-		fmt.Fprintf(sb, "CREATE DATABASE %s", quoteIdent(d.Name))
+		fmt.Fprintf(sb, "CREATE DATABASE %s", QuoteName(d.Name))
 		if layout != nil && layout.snapshotOf != "" {
 			for i, f := range layout.snapshotFiles {
 				sep := ",\n"
 				if i == 0 {
 					sep = " ON\n"
 				}
-				fmt.Fprintf(sb, "%s( NAME = %s, FILENAME = %s )", sep, quoteIdent(f.Name), QuoteLiteral(f.PhysicalName))
+				fmt.Fprintf(sb, "%s( NAME = %s, FILENAME = %s )", sep, QuoteName(f.Name), QuoteLiteral(f.PhysicalName))
 			}
-			fmt.Fprintf(sb, "\nAS SNAPSHOT OF %s;\n", quoteIdent(layout.snapshotOf))
+			fmt.Fprintf(sb, "\nAS SNAPSHOT OF %s;\n", QuoteName(layout.snapshotOf))
 			if sc.opts.IncludeIfNotExists {
 				sb.WriteString("END\nGO\n")
 			} else {
@@ -390,11 +390,11 @@ func (sc *Scripter) scriptDatabaseFrom(d *Database, layout *databaseLayout) (str
 		}
 		if d.RecoveryModel != "" {
 			fmt.Fprintf(sb, "ALTER DATABASE %s SET RECOVERY %s;\nGO\n",
-				quoteIdent(d.Name), d.RecoveryModel)
+				QuoteName(d.Name), d.RecoveryModel)
 		}
 		if d.CompatibilityLevel != 0 {
 			fmt.Fprintf(sb, "ALTER DATABASE %s SET COMPATIBILITY_LEVEL = %d;\nGO\n",
-				quoteIdent(d.Name), d.CompatibilityLevel)
+				QuoteName(d.Name), d.CompatibilityLevel)
 		}
 		if layout != nil {
 			for _, g := range layout.groups {
@@ -403,7 +403,7 @@ func (sc *Scripter) scriptDatabaseFrom(d *Database, layout *databaseLayout) (str
 				}
 				if len(g.Files) == 0 {
 					fmt.Fprintf(sb, "ALTER DATABASE %s ADD FILEGROUP %s%s;\nGO\n",
-						quoteIdent(d.Name), quoteIdent(g.Name), fileGroupContains(g.Type))
+						QuoteName(d.Name), QuoteName(g.Name), fileGroupContains(g.Type))
 				}
 			}
 			for _, g := range layout.groups {
@@ -412,7 +412,7 @@ func (sc *Scripter) scriptDatabaseFrom(d *Database, layout *databaseLayout) (str
 				// READ_ONLY comes last (writeDatabaseSettings).
 				if g.IsReadOnly && g.Name != "PRIMARY" {
 					fmt.Fprintf(sb, "ALTER DATABASE %s MODIFY FILEGROUP %s READ_ONLY;\nGO\n",
-						quoteIdent(d.Name), quoteIdent(g.Name))
+						QuoteName(d.Name), QuoteName(g.Name))
 				}
 			}
 			writeDatabaseSettings(sb, d, layout)
@@ -478,7 +478,7 @@ func writeCreateWithOptions(sb *strings.Builder, o *DatabaseOptions) {
 func writeDatabaseSettings(sb *strings.Builder, d *Database, l *databaseLayout) {
 	name := d.Name
 	set := func(clause string) {
-		fmt.Fprintf(sb, "ALTER DATABASE %s SET %s;\nGO\n", quoteIdent(name), clause)
+		fmt.Fprintf(sb, "ALTER DATABASE %s SET %s;\nGO\n", QuoteName(name), clause)
 	}
 	onOff := func(opt string, v bool) {
 		if v {
@@ -544,7 +544,7 @@ func writeDatabaseSettings(sb *strings.Builder, d *Database, l *databaseLayout) 
 			// filegroup exists by now: CREATE DATABASE made every one.
 			switch {
 			case o.AcceleratedDatabaseRecovery && l.pvsFileGroup != "" && l.pvsFileGroup != "PRIMARY":
-				set("ACCELERATED_DATABASE_RECOVERY = ON (PERSISTENT_VERSION_STORE_FILEGROUP = " + quoteIdent(l.pvsFileGroup) + ")")
+				set("ACCELERATED_DATABASE_RECOVERY = ON (PERSISTENT_VERSION_STORE_FILEGROUP = " + QuoteName(l.pvsFileGroup) + ")")
 			case o.AcceleratedDatabaseRecovery && l.pvsRefused:
 				sb.WriteString("-- Reading ADR's version store filegroup needs VIEW DATABASE PERFORMANCE STATE (VIEW SERVER STATE before 2022): PERSISTENT_VERSION_STORE_FILEGROUP not scripted.\n")
 				fallthrough
@@ -588,7 +588,7 @@ func writeDatabaseSettings(sb *strings.Builder, d *Database, l *databaseLayout) 
 	writeInDatabaseSettings(sb, name, l)
 	if o != nil {
 		if o.Owner != "" {
-			fmt.Fprintf(sb, "ALTER AUTHORIZATION ON DATABASE::%s TO %s;\nGO\n", quoteIdent(name), quoteIdent(o.Owner))
+			fmt.Fprintf(sb, "ALTER AUTHORIZATION ON DATABASE::%s TO %s;\nGO\n", QuoteName(name), QuoteName(o.Owner))
 		} else {
 			sb.WriteString("-- The owner's SID maps to no login: ALTER AUTHORIZATION not scripted.\n")
 		}
@@ -620,15 +620,15 @@ func writeInDatabaseSettings(sb *strings.Builder, name string, l *databaseLayout
 	if l.tde == nil && !l.tdeRefused && len(scoped) == 0 && l.extProps == "" {
 		return
 	}
-	fmt.Fprintf(sb, "USE %s;\nGO\n", quoteIdent(name))
+	fmt.Fprintf(sb, "USE %s;\nGO\n", QuoteName(name))
 	encrypt := false
 	if k := l.tde; k != nil {
 		var by string
 		switch {
 		case k.ServerCertificate != "":
-			by = "SERVER CERTIFICATE " + quoteIdent(k.ServerCertificate)
+			by = "SERVER CERTIFICATE " + QuoteName(k.ServerCertificate)
 		case k.ServerAsymmetricKey != "":
-			by = "SERVER ASYMMETRIC KEY " + quoteIdent(k.ServerAsymmetricKey)
+			by = "SERVER ASYMMETRIC KEY " + QuoteName(k.ServerAsymmetricKey)
 		}
 		switch alg := k.Algorithm(); {
 		case by == "":
@@ -650,7 +650,7 @@ func writeInDatabaseSettings(sb *strings.Builder, name string, l *databaseLayout
 	sb.WriteString(l.extProps)
 	sb.WriteString("USE [master];\nGO\n")
 	if encrypt {
-		fmt.Fprintf(sb, "ALTER DATABASE %s SET ENCRYPTION ON;\nGO\n", quoteIdent(name))
+		fmt.Fprintf(sb, "ALTER DATABASE %s SET ENCRYPTION ON;\nGO\n", QuoteName(name))
 	}
 }
 

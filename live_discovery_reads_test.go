@@ -13,9 +13,7 @@
 package gosmo
 
 import (
-	"database/sql"
 	"errors"
-	"net/url"
 	"slices"
 	"testing"
 )
@@ -184,15 +182,7 @@ func TestLiveDiscoveryReads(t *testing.T) {
 		liveExecIn(t, d, ctx, "CREATE USER "+login+" FOR LOGIN "+login, "GRANT VIEW DEFINITION TO "+login)
 		defer liveExecIn(t, d, ctx, "DROP USER "+login)
 
-		u, err := url.Parse(*liveDSN)
-		if err != nil {
-			t.Fatalf("parse DSN: %v", err)
-		}
-		u.User = url.UserPassword(login, pass)
-		ldb, err := sql.Open("sqlserver", u.String())
-		if err != nil {
-			t.Fatalf("open as %s: %v", login, err)
-		}
+		ldb := liveOpenAs(t, login, pass)
 		defer ldb.Close()
 		lsrv := liveServer(t, ldb, ctx)
 		got, err := lsrv.DatabaseRef(d.Name).TableRef("Sales", "Customer").IndexUsage(ctx)
@@ -252,15 +242,7 @@ func TestLiveDiscoveryReads(t *testing.T) {
 			t.Fatalf("create login: %v", err)
 		}
 		defer db.ExecContext(ctx, "DROP LOGIN "+login)
-		u, err := url.Parse(*liveDSN)
-		if err != nil {
-			t.Fatalf("parse DSN: %v", err)
-		}
-		u.User = url.UserPassword(login, pass)
-		ldb, err := sql.Open("sqlserver", u.String())
-		if err != nil {
-			t.Fatalf("open as %s: %v", login, err)
-		}
+		ldb := liveOpenAs(t, login, pass)
 		defer ldb.Close()
 		lsrv := liveServer(t, ldb, ctx)
 		la, err := lsrv.DatabaseAccess(ctx)

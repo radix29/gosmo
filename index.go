@@ -187,7 +187,7 @@ func (c IndexColumn) ref() string {
 	if c.pseudo {
 		return c.Name
 	}
-	return quoteIdent(c.Name)
+	return QuoteName(c.Name)
 }
 
 // Indexes returns all indexes on the table.

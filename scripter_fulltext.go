@@ -33,7 +33,7 @@ func (sc *Scripter) ScriptFullTextCatalog(ctx context.Context, name string) (str
 
 func buildFullTextCatalogScript(c *FullTextCatalog, opts ScriptOptions) string {
 	exists := fmt.Sprintf("EXISTS (SELECT 1 FROM sys.fulltext_catalogs WHERE name = N'%s')", escapeSingle(c.Name))
-	drop := fmt.Sprintf("IF %s\nDROP FULLTEXT CATALOG %s\nGO\n", exists, quoteIdent(c.Name))
+	drop := fmt.Sprintf("IF %s\nDROP FULLTEXT CATALOG %s\nGO\n", exists, QuoteName(c.Name))
 	return opts.envelope(drop, "IF NOT "+exists+"\n", func(sb *strings.Builder) {
 		sb.WriteString(createFullTextCatalogStatement(CreateFullTextCatalogRequest{
 			Name: c.Name, AccentSensitive: &c.AccentSensitive, IsDefault: c.IsDefault, Owner: c.Owner,
@@ -60,7 +60,7 @@ func (sc *Scripter) ScriptFullTextStoplist(ctx context.Context, name string) (st
 
 func buildFullTextStoplistScript(l *FullTextStoplist, words []FullTextStopword, opts ScriptOptions) string {
 	exists := fmt.Sprintf("EXISTS (SELECT 1 FROM sys.fulltext_stoplists WHERE name = N'%s')", escapeSingle(l.Name))
-	drop := fmt.Sprintf("IF %s\nDROP FULLTEXT STOPLIST %s;\nGO\n", exists, quoteIdent(l.Name))
+	drop := fmt.Sprintf("IF %s\nDROP FULLTEXT STOPLIST %s;\nGO\n", exists, QuoteName(l.Name))
 	return opts.envelope(drop, "IF NOT "+exists+"\n", func(sb *strings.Builder) {
 		// Cannot fail: the request names no source.
 		create, _ := createFullTextStoplistStatement(CreateFullTextStoplistRequest{Name: l.Name, Owner: l.Owner})
@@ -73,7 +73,7 @@ func buildFullTextStoplistScript(l *FullTextStoplist, words []FullTextStopword, 
 					escapeSingle(l.Name), escapeSingle(w.Word), w.LanguageID)
 			}
 			fmt.Fprintf(sb, "ALTER FULLTEXT STOPLIST %s ADD %s LANGUAGE %d;\nGO\n",
-				quoteIdent(l.Name), QuoteLiteral(w.Word), w.LanguageID)
+				QuoteName(l.Name), QuoteLiteral(w.Word), w.LanguageID)
 		}
 	})
 }
@@ -96,7 +96,7 @@ func (sc *Scripter) ScriptSearchPropertyList(ctx context.Context, name string) (
 
 func buildSearchPropertyListScript(p *SearchPropertyList, props []SearchProperty, opts ScriptOptions) string {
 	exists := fmt.Sprintf("EXISTS (SELECT 1 FROM sys.registered_search_property_lists WHERE name = N'%s')", escapeSingle(p.Name))
-	drop := fmt.Sprintf("IF %s\nDROP SEARCH PROPERTY LIST %s;\nGO\n", exists, quoteIdent(p.Name))
+	drop := fmt.Sprintf("IF %s\nDROP SEARCH PROPERTY LIST %s;\nGO\n", exists, QuoteName(p.Name))
 	return opts.envelope(drop, "IF NOT "+exists+"\n", func(sb *strings.Builder) {
 		// Cannot fail: the request names no source.
 		create, _ := createSearchPropertyListStatement(CreateSearchPropertyListRequest{Name: p.Name, Owner: p.Owner})

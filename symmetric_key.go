@@ -170,7 +170,7 @@ WHERE  k.name = @p1 AND k.name NOT LIKE '##%'`, name)
 		return nil, fmt.Errorf("gosmo: read symmetric key %q in %q: %w", name, d.Name, err)
 	}
 	if len(out) == 0 {
-		return nil, notFoundf("gosmo: symmetric key %s not found in %q", quoteIdent(name), d.Name)
+		return nil, notFoundf("gosmo: symmetric key %s not found in %q", QuoteName(name), d.Name)
 	}
 	return out[0], nil
 }
@@ -366,7 +366,7 @@ func (e SymmetricKeyEncryptor) clause() (string, error) {
 		if strings.TrimSpace(e.Name) == "" {
 			return "", invalidf("encryption by %s has no name", strings.ToLower(string(e.Kind)))
 		}
-		return string(e.Kind) + " " + quoteIdent(e.Name), nil
+		return string(e.Kind) + " " + QuoteName(e.Name), nil
 	}
 	return "", invalidf("a symmetric key cannot be encrypted by %q", e.Kind)
 }
@@ -384,7 +384,7 @@ func (dec SymmetricKeyDecryptor) clause() (string, error) {
 		if strings.TrimSpace(dec.Name) == "" {
 			return "", invalidf("decryption by %s has no name", strings.ToLower(string(dec.Kind)))
 		}
-		s := string(dec.Kind) + " " + quoteIdent(dec.Name)
+		s := string(dec.Kind) + " " + QuoteName(dec.Name)
 		if dec.Password != "" && dec.Kind != SymmetricKeyBySymmetricKey {
 			s += " WITH PASSWORD = " + QuoteLiteral(dec.Password)
 		}
@@ -441,7 +441,7 @@ func (o *keyOpens) add(name string, dec *SymmetricKeyDecryptor, depth int) error
 		return fmt.Errorf("symmetric key %q: %w", name, err)
 	}
 	o.names = append(o.names, name)
-	o.opens = append(o.opens, "OPEN SYMMETRIC KEY "+quoteIdent(name)+" DECRYPTION BY "+c)
+	o.opens = append(o.opens, "OPEN SYMMETRIC KEY "+QuoteName(name)+" DECRYPTION BY "+c)
 	return nil
 }
 
@@ -480,13 +480,13 @@ func (o *keyOpens) wrap(stmt string) string {
 	b.WriteString(";\n")
 	for _, v := range slices.Backward(o.names) {
 		b.WriteString("CLOSE SYMMETRIC KEY ")
-		b.WriteString(quoteIdent(v))
+		b.WriteString(QuoteName(v))
 		b.WriteString(";\n")
 	}
 	b.WriteString("END TRY\nBEGIN CATCH\n")
 	for _, v := range slices.Backward(o.names) {
 		fmt.Fprintf(&b, "IF EXISTS (SELECT 1 FROM sys.openkeys WHERE database_id = DB_ID() AND key_name = N'%s')\n"+
-			"    CLOSE SYMMETRIC KEY %s;\n", escapeSingle(v), quoteIdent(v))
+			"    CLOSE SYMMETRIC KEY %s;\n", escapeSingle(v), QuoteName(v))
 	}
 	b.WriteString("THROW;\nEND CATCH;")
 	return b.String()
@@ -554,9 +554,9 @@ func (spec CreateSymmetricKeyRequest) createSymmetricKeyStatement() (string, err
 		}
 		items = append(items, c)
 	}
-	stmt := "CREATE SYMMETRIC KEY " + quoteIdent(spec.Name)
+	stmt := "CREATE SYMMETRIC KEY " + QuoteName(spec.Name)
 	if spec.Authorization != "" {
-		stmt += " AUTHORIZATION " + quoteIdent(spec.Authorization)
+		stmt += " AUTHORIZATION " + QuoteName(spec.Authorization)
 	}
 	stmt += " WITH ALGORITHM = " + string(spec.Algorithm)
 	if spec.KeySource != "" {
@@ -579,9 +579,9 @@ func (spec CreateSymmetricKeyRequest) createProviderSymmetricKeyStatement() (str
 	if spec.KeySource != "" || spec.IdentityValue != "" {
 		return "", invalidf("symmetric key %q is held by a provider, so it takes no KEY_SOURCE or IDENTITY_VALUE", spec.Name)
 	}
-	stmt := "CREATE SYMMETRIC KEY " + quoteIdent(spec.Name)
+	stmt := "CREATE SYMMETRIC KEY " + QuoteName(spec.Name)
 	if spec.Authorization != "" {
-		stmt += " AUTHORIZATION " + quoteIdent(spec.Authorization)
+		stmt += " AUTHORIZATION " + QuoteName(spec.Authorization)
 	}
 	var opts []string
 	if spec.Algorithm != "" || p.Disposition != ProviderOpenExisting {
@@ -619,16 +619,14 @@ func (d *Database) CreateSymmetricKey(ctx context.Context, spec CreateSymmetricK
 	if _, err := d.execSecret(ctx, stmt, shown); err != nil {
 		return nil, fmt.Errorf("gosmo: create symmetric key %q in %q: %w", spec.Name, d.Name, err)
 	}
-	return createdObject(ctx, d.SymmetricKeyRef(spec.Name), func() (*SymmetricKey, error) {
-		return d.SymmetricKeyByName(ctx, spec.Name)
-	})
+	return createdByName(ctx, d.SymmetricKeyRef(spec.Name), d.SymmetricKeyByName, spec.Name)
 }
 
 // Drop deletes the symmetric key. Data encrypted with it cannot be decrypted
 // again, unless the key was created with KEY_SOURCE and IDENTITY_VALUE and is
 // re-created from them.
 func (k *SymmetricKey) Drop(ctx context.Context) error {
-	if _, err := k.db.exec(ctx, "DROP SYMMETRIC KEY "+quoteIdent(k.Name)); err != nil {
+	if _, err := k.db.exec(ctx, "DROP SYMMETRIC KEY "+QuoteName(k.Name)); err != nil {
 		return fmt.Errorf("gosmo: drop symmetric key %q in %q: %w", k.Name, k.db.Name, err)
 	}
 	return nil
@@ -638,7 +636,7 @@ func (k *SymmetricKey) Drop(ctx context.Context) error {
 // AUTHORIZATION. SQL Server drops every explicit permission on the key as it
 // does so.
 func (k *SymmetricKey) SetOwner(ctx context.Context, newOwner string) error {
-	q := "ALTER AUTHORIZATION ON SYMMETRIC KEY::" + quoteIdent(k.Name) + " TO " + quoteIdent(newOwner)
+	q := "ALTER AUTHORIZATION ON SYMMETRIC KEY::" + QuoteName(k.Name) + " TO " + QuoteName(newOwner)
 	if _, err := k.db.exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: change symmetric key %q owner to %q in %q: %w", k.Name, newOwner, k.db.Name, err)
 	}
@@ -661,7 +659,7 @@ func (k *SymmetricKey) alterEncryptionStatement(verb string, enc SymmetricKeyEnc
 	if err := opens.addEncryptor(enc); err != nil {
 		return "", err
 	}
-	return opens.wrap("ALTER SYMMETRIC KEY " + quoteIdent(k.Name) + " " + verb + " ENCRYPTION BY " + c), nil
+	return opens.wrap("ALTER SYMMETRIC KEY " + QuoteName(k.Name) + " " + verb + " ENCRYPTION BY " + c), nil
 }
 
 // AddEncryption adds enc to what protects the key. The server alters a key

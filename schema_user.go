@@ -32,7 +32,7 @@ func (s *Schema) Database() *Database { return s.db }
 
 // Drop drops the schema.
 func (s *Schema) Drop(ctx context.Context) error {
-	if _, err := s.db.exec(ctx, "DROP SCHEMA "+quoteIdent(s.Name)); err != nil {
+	if _, err := s.db.exec(ctx, "DROP SCHEMA "+QuoteName(s.Name)); err != nil {
 		return fmt.Errorf("gosmo: drop schema %q: %w", s.Name, err)
 	}
 	return nil
@@ -41,7 +41,7 @@ func (s *Schema) Drop(ctx context.Context) error {
 // SetOwner transfers schema ownership to a new principal.
 func (s *Schema) SetOwner(ctx context.Context, newOwner string) error {
 	q := fmt.Sprintf("ALTER AUTHORIZATION ON SCHEMA::%s TO %s",
-		quoteIdent(s.Name), quoteIdent(newOwner))
+		QuoteName(s.Name), QuoteName(newOwner))
 	if _, err := s.db.exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: change schema %q owner to %q: %w", s.Name, newOwner, err)
 	}
@@ -168,7 +168,7 @@ func (u *User) IsExternal() bool {
 
 // Drop drops the database user.
 func (u *User) Drop(ctx context.Context) error {
-	if _, err := u.db.exec(ctx, "DROP USER "+quoteIdent(u.Name)); err != nil {
+	if _, err := u.db.exec(ctx, "DROP USER "+QuoteName(u.Name)); err != nil {
 		return fmt.Errorf("gosmo: drop user %q: %w", u.Name, err)
 	}
 	return nil
@@ -176,7 +176,7 @@ func (u *User) Drop(ctx context.Context) error {
 
 // Rename changes the database user's name.
 func (u *User) Rename(ctx context.Context, newName string) error {
-	q := fmt.Sprintf("ALTER USER %s WITH NAME = %s", quoteIdent(u.Name), quoteIdent(newName))
+	q := fmt.Sprintf("ALTER USER %s WITH NAME = %s", QuoteName(u.Name), QuoteName(newName))
 	if _, err := u.db.exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: rename database user %q to %q: %w", u.Name, newName, err)
 	}
@@ -186,7 +186,7 @@ func (u *User) Rename(ctx context.Context, newName string) error {
 
 // SetDefaultSchema changes the user's default schema.
 func (u *User) SetDefaultSchema(ctx context.Context, schemaName string) error {
-	q := fmt.Sprintf("ALTER USER %s WITH DEFAULT_SCHEMA = %s", quoteIdent(u.Name), quoteIdent(schemaName))
+	q := fmt.Sprintf("ALTER USER %s WITH DEFAULT_SCHEMA = %s", QuoteName(u.Name), QuoteName(schemaName))
 	if _, err := u.db.exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: set default schema for user %q to %q: %w", u.Name, schemaName, err)
 	}
@@ -196,7 +196,7 @@ func (u *User) SetDefaultSchema(ctx context.Context, schemaName string) error {
 
 // SetLogin remaps the user to a different server login.
 func (u *User) SetLogin(ctx context.Context, loginName string) error {
-	q := fmt.Sprintf("ALTER USER %s WITH LOGIN = %s", quoteIdent(u.Name), quoteIdent(loginName))
+	q := fmt.Sprintf("ALTER USER %s WITH LOGIN = %s", QuoteName(u.Name), QuoteName(loginName))
 	if _, err := u.db.exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: map user %q to login %q: %w", u.Name, loginName, err)
 	}

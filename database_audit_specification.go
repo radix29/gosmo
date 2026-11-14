@@ -32,7 +32,7 @@ import (
 // the wrong way round is the injection hole here: the action name and the
 // class are keywords, checked with validateAuditActionGroup and interpolated
 // literally, while the securable and the principal are identifiers and go
-// through qualifiedName/quoteIdent.
+// through qualifiedName/QuoteName.
 
 // DatabaseAuditSpecification mirrors a row of
 // sys.database_audit_specifications.
@@ -355,7 +355,7 @@ func (a DatabaseAuditAction) clause() (string, error) {
 	// The securable and the principal are identifiers, and quote the
 	// opposite way to the two keywords above.
 	return fmt.Sprintf("%s ON %s::%s BY %s",
-		a.ActionName, class, a.FullName(), quoteIdent(principal)), nil
+		a.ActionName, class, a.FullName(), QuoteName(principal)), nil
 }
 
 // databaseAuditClauses renders the whole ADD/DROP clause list — groups first,
@@ -386,7 +386,7 @@ func (spec CreateDatabaseAuditSpecificationRequest) createStatement() (string, e
 		return "", invalidf("database audit specification %q names no audit", spec.Name)
 	}
 	stmt := fmt.Sprintf("CREATE DATABASE AUDIT SPECIFICATION %s\nFOR SERVER AUDIT %s",
-		quoteIdent(spec.Name), quoteIdent(spec.AuditName))
+		QuoteName(spec.Name), QuoteName(spec.AuditName))
 	if len(spec.ActionGroups) > 0 || len(spec.Actions) > 0 {
 		clauses, err := databaseAuditClauses("ADD", spec.ActionGroups, spec.Actions)
 		if err != nil {
@@ -410,9 +410,7 @@ func (d *Database) CreateDatabaseAuditSpecification(ctx context.Context, spec Cr
 	if _, err := d.exec(ctx, stmt); err != nil {
 		return nil, fmt.Errorf("gosmo: create database audit specification %q in %q: %w", spec.Name, d.Name, err)
 	}
-	return createdObject(ctx, d.DatabaseAuditSpecificationRef(spec.Name), func() (*DatabaseAuditSpecification, error) {
-		return d.DatabaseAuditSpecificationByName(ctx, spec.Name)
-	})
+	return createdByName(ctx, d.DatabaseAuditSpecificationRef(spec.Name), d.DatabaseAuditSpecificationByName, spec.Name)
 }
 
 // SetEnabled turns the specification on (STATE = ON) when on is true and off
@@ -426,7 +424,7 @@ func (spec *DatabaseAuditSpecification) SetEnabled(ctx context.Context, on bool)
 		state = "ON"
 	}
 	stmt := fmt.Sprintf("ALTER DATABASE AUDIT SPECIFICATION %s WITH ( STATE = %s )",
-		quoteIdent(spec.Name), state)
+		QuoteName(spec.Name), state)
 	if _, err := spec.db.exec(ctx, stmt); err != nil {
 		return fmt.Errorf("gosmo: set database audit specification %q state: %w", spec.Name, err)
 	}
@@ -501,7 +499,7 @@ func (spec *DatabaseAuditSpecification) alterActions(ctx context.Context, verb s
 	if err != nil {
 		return fmt.Errorf("gosmo: alter database audit specification %q: %w", spec.Name, err)
 	}
-	return spec.scope().alter(ctx, fmt.Sprintf("ALTER DATABASE AUDIT SPECIFICATION %s\n    %s", quoteIdent(spec.Name), clauses))
+	return spec.scope().alter(ctx, fmt.Sprintf("ALTER DATABASE AUDIT SPECIFICATION %s\n    %s", QuoteName(spec.Name), clauses))
 }
 
 // SetAudit rebinds the specification to a different server audit.
@@ -529,7 +527,7 @@ func (spec *DatabaseAuditSpecification) Drop(ctx context.Context) error {
 			return err
 		}
 	}
-	stmt := "DROP DATABASE AUDIT SPECIFICATION " + quoteIdent(spec.Name)
+	stmt := "DROP DATABASE AUDIT SPECIFICATION " + QuoteName(spec.Name)
 	if _, err := spec.db.exec(ctx, stmt); err != nil {
 		return fmt.Errorf("gosmo: drop database audit specification %q: %w", spec.Name, err)
 	}

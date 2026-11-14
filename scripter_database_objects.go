@@ -522,7 +522,7 @@ func hiddenStatisticWarnings(pre *tablePrefetch, tables []*Table) []string {
 		for _, st := range pre.stats[t.ObjectID] {
 			if st.st.HasFilter && st.st.FilterDef == "" {
 				out = append(out, warningf("statistic %s on %s is not scripted: its filter is not visible to the login",
-					quoteIdent(st.st.Name), qualifiedName(t.Schema, t.Name)))
+					QuoteName(st.st.Name), qualifiedName(t.Schema, t.Name)))
 			}
 		}
 	}
@@ -607,7 +607,7 @@ func warningf(format string, args ...any) string {
 // schema, and for a foreign key, edge constraint or trigger with its table.
 func (o ScriptedObject) display() string {
 	if o.Schema == "" {
-		return quoteIdent(o.Name)
+		return QuoteName(o.Name)
 	}
 	n := qualifiedName(o.Schema, o.Name)
 	if o.Table != "" {

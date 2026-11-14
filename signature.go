@@ -197,7 +197,7 @@ func (s Signer) clause(withPassword bool) (string, error) {
 	if strings.TrimSpace(s.Name) == "" {
 		return "", invalidf("signature by %s has no name", strings.ToLower(string(s.Kind)))
 	}
-	c := string(s.Kind) + " " + quoteIdent(s.Name)
+	c := string(s.Kind) + " " + QuoteName(s.Name)
 	if withPassword && s.Password != "" {
 		c += " WITH PASSWORD = " + QuoteLiteral(s.Password)
 	}

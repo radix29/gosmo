@@ -27,8 +27,8 @@ func TestLiveSnapshotDefaultsForFilesDifferingOnlyByExtension(t *testing.T) {
 	const name, snap = "gossms_live_snapdef", "gossms_live_snapdef_snap"
 	cleanup := func() {
 		c := context.Background()
-		srv.exec(c, "IF DB_ID('"+snap+"') IS NOT NULL DROP DATABASE "+quoteIdent(snap))
-		srv.exec(c, "IF DB_ID('"+name+"') IS NOT NULL DROP DATABASE "+quoteIdent(name))
+		srv.exec(c, "IF DB_ID('"+snap+"') IS NOT NULL DROP DATABASE "+QuoteName(snap))
+		srv.exec(c, "IF DB_ID('"+name+"') IS NOT NULL DROP DATABASE "+QuoteName(name))
 	}
 	cleanup()
 	defer cleanup()
@@ -44,10 +44,10 @@ func TestLiveSnapshotDefaultsForFilesDifferingOnlyByExtension(t *testing.T) {
 	}
 	dir = strings.TrimRight(dir, `\/`) + sep
 	stem := dir + name
-	if _, err := srv.exec(ctx, "CREATE DATABASE "+quoteIdent(name)+
-		" ON PRIMARY (NAME = "+quoteIdent(name)+", FILENAME = "+QuoteLiteral(stem+".mdf")+"),"+
-		" FILEGROUP fg2 (NAME = "+quoteIdent(name+"_2")+", FILENAME = "+QuoteLiteral(stem+".ndf")+")"+
-		" LOG ON (NAME = "+quoteIdent(name+"_log")+", FILENAME = "+QuoteLiteral(stem+"_log.ldf")+")"); err != nil {
+	if _, err := srv.exec(ctx, "CREATE DATABASE "+QuoteName(name)+
+		" ON PRIMARY (NAME = "+QuoteName(name)+", FILENAME = "+QuoteLiteral(stem+".mdf")+"),"+
+		" FILEGROUP fg2 (NAME = "+QuoteName(name+"_2")+", FILENAME = "+QuoteLiteral(stem+".ndf")+")"+
+		" LOG ON (NAME = "+QuoteName(name+"_log")+", FILENAME = "+QuoteLiteral(stem+"_log.ldf")+")"); err != nil {
 		t.Fatalf("create %s: %v", name, err)
 	}
 

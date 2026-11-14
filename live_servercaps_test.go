@@ -13,7 +13,6 @@ package gosmo
 
 import (
 	"context"
-	"database/sql"
 	"strings"
 	"testing"
 )
@@ -112,10 +111,7 @@ func TestLiveServerCapabilitiesMatchWhatTheServerEnforces(t *testing.T) {
 	defer cleanup("REVOKE ALTER ON SERVER ROLE::[" + deniedRole + "] TO [" + login + "]")
 	defer cleanup("REVOKE ALTER ON ENDPOINT::[" + deniedEP + "] TO [" + login + "]")
 
-	pool, err := sql.Open("sqlserver", liveRestrictedDSN(t, login, pass))
-	if err != nil {
-		t.Fatalf("open as %s: %v", login, err)
-	}
+	pool := liveOpenAs(t, login, pass)
 	defer pool.Close()
 
 	// Not NewServer, for live_schemacaps_test.go's reason: loadInfo reads

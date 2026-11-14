@@ -14,9 +14,7 @@ package gosmo
 
 import (
 	"context"
-	"database/sql"
 	"errors"
-	"net/url"
 	"slices"
 	"strings"
 	"testing"
@@ -123,15 +121,7 @@ func TestLivePerDatabaseBatchSkipsOnlyUnenterable(t *testing.T) {
 		t.Errorf("as sa, entered %q; want only the two ONLINE databases", got)
 	}
 	// ... and 916 as a login with no user in gosmo_pdb_noaccess.
-	u, err := url.Parse(*liveDSN)
-	if err != nil {
-		t.Fatalf("parse -livedb: %v", err)
-	}
-	u.User = url.UserPassword(login, password)
-	ldb, err := sql.Open("sqlserver", u.String())
-	if err != nil {
-		t.Fatalf("open as %s: %v", login, err)
-	}
+	ldb := liveOpenAs(t, login, password)
 	defer ldb.Close()
 	lsrv, err := NewServer(ctx, ldb)
 	if err != nil {

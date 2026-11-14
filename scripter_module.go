@@ -750,7 +750,7 @@ type ddlTriggerScript struct {
 // every module's is (moduleSetOptions) — except a CLR trigger's, which has
 // no T-SQL to compile.
 func buildDDLTriggerScript(t ddlTriggerScript, opts ScriptOptions) (string, error) {
-	drop := fmt.Sprintf("DROP TRIGGER IF EXISTS %s ON %s;\nGO\n", quoteIdent(t.name), t.scope)
+	drop := fmt.Sprintf("DROP TRIGGER IF EXISTS %s ON %s;\nGO\n", QuoteName(t.name), t.scope)
 	return opts.envelopeErr(drop, "", func(sb *strings.Builder) error {
 		if strings.TrimSpace(t.definition) == "" {
 			return unsupportedf("gosmo: script %s trigger %q: definition is not readable (encrypted)", t.kind, t.name)
@@ -765,7 +765,7 @@ func buildDDLTriggerScript(t ddlTriggerScript, opts ScriptOptions) (string, erro
 		sb.WriteString(def)
 		sb.WriteString("\nGO\n")
 		if !t.enabled {
-			fmt.Fprintf(sb, "DISABLE TRIGGER %s ON %s;\nGO\n", quoteIdent(t.name), t.scope)
+			fmt.Fprintf(sb, "DISABLE TRIGGER %s ON %s;\nGO\n", QuoteName(t.name), t.scope)
 		}
 		return nil
 	})

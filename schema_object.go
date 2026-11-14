@@ -85,8 +85,8 @@ func (d *Database) transferSchemaObject(ctx context.Context, what, class, target
 		securable = class + "::" + securable
 	}
 	if _, err := d.exec(ctx, fmt.Sprintf("ALTER SCHEMA %s TRANSFER %s",
-		quoteIdent(targetSchema), securable)); err != nil {
-		return fmt.Errorf("gosmo: transfer %s %s to schema %s: %w", what, qualifiedName(schema, name), quoteIdent(targetSchema), err)
+		QuoteName(targetSchema), securable)); err != nil {
+		return fmt.Errorf("gosmo: transfer %s %s to schema %s: %w", what, qualifiedName(schema, name), QuoteName(targetSchema), err)
 	}
 	return nil
 }
@@ -106,11 +106,11 @@ func (d *Database) refuseSameSchemaTransfer(ctx context.Context, what, targetSch
 		err := d.queryRow(ctx, func(row *sql.Row) error { return row.Scan(&same) },
 			`SELECT CAST(CASE WHEN SCHEMA_ID(@p1) = SCHEMA_ID(@p2) THEN 1 ELSE 0 END AS bit)`, targetSchema, schema)
 		if err != nil {
-			return fmt.Errorf("gosmo: transfer %s %s to schema %s: %w", what, qualifiedName(schema, name), quoteIdent(targetSchema), err)
+			return fmt.Errorf("gosmo: transfer %s %s to schema %s: %w", what, qualifiedName(schema, name), QuoteName(targetSchema), err)
 		}
 	}
 	if same {
-		return invalidf("gosmo: transfer %s %s: it is already in schema %s", what, qualifiedName(schema, name), quoteIdent(schema))
+		return invalidf("gosmo: transfer %s %s: it is already in schema %s", what, qualifiedName(schema, name), QuoteName(schema))
 	}
 	return nil
 }

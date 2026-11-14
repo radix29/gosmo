@@ -211,7 +211,7 @@ func (qs QueryStore) SetOptions(ctx context.Context, opts QueryStoreOptions) err
 	d := qs.db
 	if opts.DesiredState == QueryStoreOff {
 		if _, err := d.server.exec(ctx,
-			fmt.Sprintf("ALTER DATABASE %s SET QUERY_STORE = OFF", quoteIdent(d.Name)),
+			fmt.Sprintf("ALTER DATABASE %s SET QUERY_STORE = OFF", QuoteName(d.Name)),
 		); err != nil {
 			return fmt.Errorf("gosmo: disable query store on %q: %w", d.Name, err)
 		}
@@ -227,7 +227,7 @@ func (qs QueryStore) SetOptions(ctx context.Context, opts QueryStoreOptions) err
 		return fmt.Errorf("gosmo: set query store options on %q: %w", d.Name, err)
 	}
 
-	q := fmt.Sprintf("ALTER DATABASE %s SET QUERY_STORE = ON (%s)", quoteIdent(d.Name), withs)
+	q := fmt.Sprintf("ALTER DATABASE %s SET QUERY_STORE = ON (%s)", QuoteName(d.Name), withs)
 	if _, err := d.server.exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: set query store options on %q: %w", d.Name, err)
 	}
@@ -311,7 +311,7 @@ func (qs QueryStore) Flush(ctx context.Context) error {
 func (qs QueryStore) Clear(ctx context.Context) error {
 	d := qs.db
 	if _, err := d.server.exec(ctx,
-		fmt.Sprintf("ALTER DATABASE %s SET QUERY_STORE CLEAR", quoteIdent(d.Name)),
+		fmt.Sprintf("ALTER DATABASE %s SET QUERY_STORE CLEAR", QuoteName(d.Name)),
 	); err != nil {
 		return fmt.Errorf("gosmo: clear query store on %q: %w", d.Name, err)
 	}

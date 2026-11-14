@@ -279,7 +279,7 @@ const databaseSessionPredicate = `s.is_user_process = 1 AND s.session_id <> @@SP
 // error with THROW. Only a database this batch set SINGLE_USER (@closed) is
 // released.
 func exclusiveBatch(name, op string) string {
-	db := quoteIdent(name)
+	db := QuoteName(name)
 	standby := fmt.Sprintf("EXISTS (SELECT 1 FROM sys.databases WHERE name = %s AND state = 0 AND is_in_standby = 1)", QuoteLiteral(name))
 	return fmt.Sprintf(`%[4]s
 DECLARE @closed bit = 0, @run bit = 0;
@@ -342,8 +342,8 @@ BEGIN
         THROW;
     END CATCH;
     %[5]s
-END;`, quoteIdent(oldName), quoteIdent(newName), captureAccessMode(oldName),
-		releaseAccessMode(quoteIdent(oldName), "        "), releaseAccessMode(quoteIdent(newName), "    "))
+END;`, QuoteName(oldName), QuoteName(newName), captureAccessMode(oldName),
+		releaseAccessMode(QuoteName(oldName), "        "), releaseAccessMode(QuoteName(newName), "    "))
 }
 
 // captureAccessMode declares @access, the database's user-access mode before
@@ -457,7 +457,7 @@ func (s *Server) restoreAccessMode(ctx context.Context, name string, mode UserAc
 	}
 	rctx, cancel := context.WithTimeout(context.WithoutCancel(unobserved(ctx)), multiUserRepairTimeout)
 	defer cancel()
-	_, err := s.exec(rctx, fmt.Sprintf("ALTER DATABASE %s SET %s", quoteIdent(name), releaseMode(mode)))
+	_, err := s.exec(rctx, fmt.Sprintf("ALTER DATABASE %s SET %s", QuoteName(name), releaseMode(mode)))
 	return err
 }
 
@@ -475,7 +475,7 @@ func (s *Server) restoreAccessModeAfterRename(ctx context.Context, oldName, newN
 	m := releaseMode(mode)
 	_, err := s.exec(rctx, fmt.Sprintf(`IF DB_ID(%s) IS NOT NULL ALTER DATABASE %s SET %s
 ELSE IF DB_ID(%s) IS NOT NULL ALTER DATABASE %s SET %s`,
-		QuoteLiteral(oldName), quoteIdent(oldName), m, QuoteLiteral(newName), quoteIdent(newName), m))
+		QuoteLiteral(oldName), QuoteName(oldName), m, QuoteLiteral(newName), QuoteName(newName), m))
 	return err
 }
 

@@ -142,7 +142,7 @@ IF EXISTS (SELECT 1 FROM sys.trusted_assemblies WHERE hash = @h)
 			}
 		})
 	}
-	if _, err := d.exec(ctx, `CREATE ASSEMBLY `+quoteIdent(name)+` FROM @p1 WITH PERMISSION_SET = SAFE`, dll); err != nil {
+	if _, err := d.exec(ctx, `CREATE ASSEMBLY `+QuoteName(name)+` FROM @p1 WITH PERMISSION_SET = SAFE`, dll); err != nil {
 		t.Fatalf("CREATE ASSEMBLY: %v", err)
 	}
 }
@@ -327,7 +327,7 @@ func liveCompileError(ctx context.Context, db *sql.DB, dbName, stmt string) int3
 		return -1
 	}
 	defer conn.Close()
-	if _, err := conn.ExecContext(ctx, "USE "+quoteIdent(dbName)); err != nil {
+	if _, err := conn.ExecContext(ctx, "USE "+QuoteName(dbName)); err != nil {
 		return -1
 	}
 	if _, err := conn.ExecContext(ctx, "SET SHOWPLAN_XML ON"); err != nil {

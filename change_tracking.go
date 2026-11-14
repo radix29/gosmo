@@ -96,7 +96,7 @@ func (d *Database) SetChangeTracking(ctx context.Context, info ChangeTrackingInf
 // Accepted inside IF on 13, 14 and 17, and under a login holding only ALTER
 // on the database (the catalog view shows it its own database's row).
 func buildSetChangeTrackingStatement(dbName string, info ChangeTrackingInfo) (string, error) {
-	db := quoteIdent(dbName)
+	db := QuoteName(dbName)
 	if !info.Enabled {
 		return fmt.Sprintf("ALTER DATABASE %s SET CHANGE_TRACKING = OFF", db), nil
 	}

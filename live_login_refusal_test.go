@@ -79,7 +79,7 @@ func readAfterIdle(t *testing.T, ctx context.Context, srv *Server, want string) 
 // recoverProbe brings the throwaway database back out of RESTORING, so the
 // setup's drop finds it ONLINE.
 func recoverProbe(admin *Server) {
-	admin.exec(context.Background(), "IF DATABASEPROPERTYEX(N'"+initDBLiveName+"', 'Status') = 'RESTORING' RESTORE DATABASE "+quoteIdent(initDBLiveName)+" WITH RECOVERY")
+	admin.exec(context.Background(), "IF DATABASEPROPERTYEX(N'"+initDBLiveName+"', 'Status') = 'RESTORING' RESTORE DATABASE "+QuoteName(initDBLiveName)+" WITH RECOVERY")
 }
 
 func TestLiveLoginRefusal(t *testing.T) {
@@ -176,11 +176,11 @@ func TestLiveLoginRefusal(t *testing.T) {
 				t.Fatal(err)
 			}
 			t.Cleanup(func() {
-				conn.ExecContext(context.Background(), "ALTER DATABASE "+quoteIdent(initDBLiveName)+" SET MULTI_USER")
+				conn.ExecContext(context.Background(), "ALTER DATABASE "+QuoteName(initDBLiveName)+" SET MULTI_USER")
 				conn.Close()
 			})
-			if _, err := conn.ExecContext(ctx, "USE "+quoteIdent(initDBLiveName)+"; ALTER DATABASE "+
-				quoteIdent(initDBLiveName)+" SET SINGLE_USER WITH ROLLBACK IMMEDIATE"); err != nil {
+			if _, err := conn.ExecContext(ctx, "USE "+QuoteName(initDBLiveName)+"; ALTER DATABASE "+
+				QuoteName(initDBLiveName)+" SET SINGLE_USER WITH ROLLBACK IMMEDIATE"); err != nil {
 				t.Fatalf("SINGLE_USER: %v", err)
 			}
 		}},

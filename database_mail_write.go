@@ -240,9 +240,7 @@ func (dm Mail) CreateAccount(ctx context.Context, req CreateMailAccountRequest) 
 	if err != nil {
 		return nil, fmt.Errorf("gosmo: create mail account %q: %w", req.Name, err)
 	}
-	return createdObject(ctx, s.Mail().AccountRef(req.Name), func() (*MailAccount, error) {
-		return s.Mail().AccountByName(ctx, req.Name)
-	})
+	return createdByName(ctx, s.Mail().AccountRef(req.Name), s.Mail().AccountByName, req.Name)
 }
 
 // MailAccountChanges is a change to an account. A nil field is left as
@@ -402,9 +400,7 @@ func (dm Mail) CreateProfile(ctx context.Context, req CreateMailProfileRequest) 
 	if _, err := s.exec(ctx, mailProfileCreateStmt(req.Name, req.Description)); err != nil {
 		return nil, fmt.Errorf("gosmo: create mail profile %q: %w", req.Name, err)
 	}
-	return createdObject(ctx, s.Mail().ProfileRef(req.Name), func() (*MailProfile, error) {
-		return s.Mail().ProfileByName(ctx, req.Name)
-	})
+	return createdByName(ctx, s.Mail().ProfileRef(req.Name), s.Mail().ProfileByName, req.Name)
 }
 
 func mailProfileCreateStmt(name, description string) string {

@@ -129,7 +129,7 @@ func (spec CreateDatabaseScopedCredentialRequest) createDatabaseScopedCredential
 	}
 
 	stmt := fmt.Sprintf("CREATE DATABASE SCOPED CREDENTIAL %s WITH IDENTITY = N'%s'",
-		quoteIdent(spec.Name), escapeSingle(spec.Identity))
+		QuoteName(spec.Name), escapeSingle(spec.Identity))
 	if spec.Secret != "" {
 		stmt += ", SECRET = " + QuoteLiteral(spec.Secret)
 	}
@@ -145,9 +145,7 @@ func (d *Database) CreateDatabaseScopedCredential(ctx context.Context, spec Crea
 	if _, err := d.execSecret(ctx, stmt, redactSecrets(stmt, SecretPlaceholder, spec.Secret)); err != nil {
 		return nil, fmt.Errorf("gosmo: create database scoped credential %q in %q: %w", spec.Name, d.Name, err)
 	}
-	return createdObject(ctx, d.DatabaseScopedCredentialRef(spec.Name), func() (*DatabaseScopedCredential, error) {
-		return d.DatabaseScopedCredentialByName(ctx, spec.Name)
-	})
+	return createdByName(ctx, d.DatabaseScopedCredentialRef(spec.Name), d.DatabaseScopedCredentialByName, spec.Name)
 }
 
 // Alter changes the credential's identity, and its secret.
@@ -166,7 +164,7 @@ func (c *DatabaseScopedCredential) Alter(ctx context.Context, o CredentialOption
 		return invalidf("gosmo: alter database scoped credential %q: identity is required", c.Name)
 	}
 	stmt := fmt.Sprintf("ALTER DATABASE SCOPED CREDENTIAL %s WITH IDENTITY = N'%s'",
-		quoteIdent(c.Name), escapeSingle(identity))
+		QuoteName(c.Name), escapeSingle(identity))
 	shown := stmt
 	if secret != nil {
 		stmt += ", SECRET = " + QuoteLiteral(*secret)
@@ -184,7 +182,7 @@ func (c *DatabaseScopedCredential) Alter(ctx context.Context, o CredentialOption
 // No IF EXISTS: dropping one that isn't there reaches the caller as the
 // server's error, the way every other Drop* in this package does.
 func (c *DatabaseScopedCredential) Drop(ctx context.Context) error {
-	if _, err := c.db.exec(ctx, "DROP DATABASE SCOPED CREDENTIAL "+quoteIdent(c.Name)); err != nil {
+	if _, err := c.db.exec(ctx, "DROP DATABASE SCOPED CREDENTIAL "+QuoteName(c.Name)); err != nil {
 		return fmt.Errorf("gosmo: drop database scoped credential %q in %q: %w", c.Name, c.db.Name, err)
 	}
 	return nil

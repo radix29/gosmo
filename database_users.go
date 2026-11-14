@@ -209,9 +209,7 @@ func (d *Database) CreateUser(ctx context.Context, req CreateUserRequest) (*User
 	if _, err := d.execPasswords(ctx, stmt, req.Password); err != nil {
 		return nil, fmt.Errorf("gosmo: create user %q: %w", req.Name, err)
 	}
-	return createdObject(ctx, d.UserRef(req.Name), func() (*User, error) {
-		return d.UserByName(ctx, req.Name)
-	})
+	return createdByName(ctx, d.UserRef(req.Name), d.UserByName, req.Name)
 }
 
 // everyDatabaseContained reports whether the engine takes contained users in
@@ -244,16 +242,16 @@ func createUserStatement(req CreateUserRequest) (string, error) {
 	}
 
 	var opts []string
-	stmt := "CREATE USER " + quoteIdent(req.Name)
+	stmt := "CREATE USER " + QuoteName(req.Name)
 	switch k {
 	case UserForLogin:
-		// Without this, quoteIdent("") turns an empty login into "FOR LOGIN
+		// Without this, QuoteName("") turns an empty login into "FOR LOGIN
 		// []" — a statement the server rejects with a message naming an empty
 		// login the caller never typed.
 		if req.Login == "" {
 			return "", invalidf("login name is required")
 		}
-		stmt += " FOR LOGIN " + quoteIdent(req.Login)
+		stmt += " FOR LOGIN " + QuoteName(req.Login)
 	case UserWithoutLogin:
 		stmt += " WITHOUT LOGIN"
 	case UserWithPassword:
@@ -263,18 +261,18 @@ func createUserStatement(req CreateUserRequest) (string, error) {
 		opts = append(opts, "PASSWORD = "+QuoteLiteral(req.Password))
 	case UserWindows:
 		if req.Login != "" {
-			stmt += " FOR LOGIN " + quoteIdent(req.Login)
+			stmt += " FOR LOGIN " + QuoteName(req.Login)
 		}
 	case UserFromCertificate:
 		if req.Certificate == "" {
 			return "", invalidf("a certificate-mapped user requires Certificate")
 		}
-		stmt += " FROM CERTIFICATE " + quoteIdent(req.Certificate)
+		stmt += " FROM CERTIFICATE " + QuoteName(req.Certificate)
 	case UserFromAsymmetricKey:
 		if req.AsymmetricKey == "" {
 			return "", invalidf("an asymmetric-key-mapped user requires AsymmetricKey")
 		}
-		stmt += " FROM ASYMMETRIC KEY " + quoteIdent(req.AsymmetricKey)
+		stmt += " FROM ASYMMETRIC KEY " + QuoteName(req.AsymmetricKey)
 	case UserFromExternalProvider:
 		stmt += " FROM EXTERNAL PROVIDER"
 		if req.ObjectID != "" {
@@ -284,7 +282,7 @@ func createUserStatement(req CreateUserRequest) (string, error) {
 		return "", invalidf("unknown user kind %s", k)
 	}
 	if req.DefaultSchema != "" {
-		opts = append(opts, "DEFAULT_SCHEMA = "+quoteIdent(req.DefaultSchema))
+		opts = append(opts, "DEFAULT_SCHEMA = "+QuoteName(req.DefaultSchema))
 	}
 	if len(opts) > 0 {
 		stmt += " WITH " + strings.Join(opts, ", ")

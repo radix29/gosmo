@@ -12,7 +12,6 @@ package gosmo
 
 import (
 	"context"
-	"database/sql"
 	"testing"
 )
 
@@ -70,10 +69,7 @@ func TestLiveSecurableCapabilitiesMatchWhatTheServerEnforces(t *testing.T) {
 		`DENY CONTROL ON TYPE::s1.t_hidden TO [`+login+`]`,
 	)
 
-	pool, err := sql.Open("sqlserver", liveRestrictedDSN(t, login, pass))
-	if err != nil {
-		t.Fatalf("open as %s: %v", login, err)
-	}
+	pool := liveOpenAs(t, login, pass)
 	defer pool.Close()
 	// Not NewServer, for live_schemacaps_test.go's reason: loadInfo reads
 	// server-scope DMVs this login has no rights to.

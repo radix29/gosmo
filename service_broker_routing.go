@@ -77,7 +77,7 @@ func (r *Route) Database() *Database { return r.db }
 
 // FullName returns the bracket-quoted name. A route is not schema-scoped, so
 // this is a single identifier.
-func (r *Route) FullName() string { return quoteIdent(r.Name) }
+func (r *Route) FullName() string { return QuoteName(r.Name) }
 
 // LifetimeSeconds returns the seconds remaining until the route expires, for
 // a script that has to restate it as CREATE ROUTE's LIFETIME clause, and 0
@@ -266,7 +266,7 @@ func (r *Route) Alter(ctx context.Context, s RouteChanges) error {
 	if err != nil {
 		return fmt.Errorf("gosmo: alter route %q: %w", r.Name, err)
 	}
-	stmt := "ALTER ROUTE " + quoteIdent(r.Name) + "\n    WITH " +
+	stmt := "ALTER ROUTE " + QuoteName(r.Name) + "\n    WITH " +
 		strings.Join(clauses, ",\n         ")
 	if _, err := r.db.exec(ctx, stmt); err != nil {
 		return fmt.Errorf("gosmo: alter route %q: %w", r.Name, err)
@@ -292,7 +292,7 @@ func (r *Route) Alter(ctx context.Context, s RouteChanges) error {
 
 // Drop drops the route.
 func (r *Route) Drop(ctx context.Context) error {
-	if _, err := r.db.exec(ctx, "DROP ROUTE "+quoteIdent(r.Name)); err != nil {
+	if _, err := r.db.exec(ctx, "DROP ROUTE "+QuoteName(r.Name)); err != nil {
 		return fmt.Errorf("gosmo: drop route %q: %w", r.Name, err)
 	}
 	return nil
@@ -339,7 +339,7 @@ func (b *RemoteServiceBinding) Database() *Database { return b.db }
 
 // FullName returns the bracket-quoted name. A remote service binding is not
 // schema-scoped, so this is a single identifier.
-func (b *RemoteServiceBinding) FullName() string { return quoteIdent(b.Name) }
+func (b *RemoteServiceBinding) FullName() string { return QuoteName(b.Name) }
 
 // remoteServiceBindingSelect is the SELECT the listing and the by-name finder
 // share.
@@ -400,7 +400,7 @@ func (sb ServiceBroker) RemoteServiceBindingRef(name string) *RemoteServiceBindi
 // is refused there at compile time with Msg 41906, while ALTER and DROP parse
 // and run normally.
 func (b *RemoteServiceBinding) Drop(ctx context.Context) error {
-	if _, err := b.db.exec(ctx, "DROP REMOTE SERVICE BINDING "+quoteIdent(b.Name)); err != nil {
+	if _, err := b.db.exec(ctx, "DROP REMOTE SERVICE BINDING "+QuoteName(b.Name)); err != nil {
 		return fmt.Errorf("gosmo: drop remote service binding %q: %w", b.Name, err)
 	}
 	return nil
@@ -443,7 +443,7 @@ func (p *BrokerPriority) Database() *Database { return p.db }
 
 // FullName returns the bracket-quoted name. A broker priority is not
 // schema-scoped, so this is a single identifier.
-func (p *BrokerPriority) FullName() string { return quoteIdent(p.Name) }
+func (p *BrokerPriority) FullName() string { return QuoteName(p.Name) }
 
 // brokerPrioritySelect is the SELECT the listing and the by-name finder
 // share. Both joins are outer: a NULL criterion means ANY, and an inner join
@@ -505,7 +505,7 @@ func (sb ServiceBroker) PriorityRef(name string) *BrokerPriority {
 // ALTER ANY … to grant instead — HAS_PERMS_BY_NAME answers NULL for every
 // spelling of one.
 func (p *BrokerPriority) Drop(ctx context.Context) error {
-	if _, err := p.db.exec(ctx, "DROP BROKER PRIORITY "+quoteIdent(p.Name)); err != nil {
+	if _, err := p.db.exec(ctx, "DROP BROKER PRIORITY "+QuoteName(p.Name)); err != nil {
 		return fmt.Errorf("gosmo: drop broker priority %q: %w", p.Name, err)
 	}
 	return nil

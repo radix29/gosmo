@@ -73,7 +73,7 @@ func TestLiveApplyPermissionEveryClassAndName(t *testing.T) {
 				var state string
 				// Under USE: a [db].sys… plan compiled from master keeps a
 				// recreated database's old id (live_scriptdatabase_test.go).
-				row := db.QueryRowContext(ctx, `USE `+quoteIdent(d.Name)+`;
+				row := db.QueryRowContext(ctx, `USE `+QuoteName(d.Name)+`;
 SELECT dp.state_desc
 FROM   sys.database_permissions dp
 JOIN   sys.database_principals pr ON pr.principal_id = dp.grantee_principal_id
@@ -122,10 +122,10 @@ func TestLiveApplyPermissionServer(t *testing.T) {
 
 	const login = "gosmo_apply_perm_login"
 	srv := liveServer(t, db, ctx)
-	if _, err := db.ExecContext(ctx, `CREATE LOGIN `+quoteIdent(login)+` WITH PASSWORD = 'Ap-Pa55-word!', CHECK_POLICY = OFF`); err != nil {
+	if _, err := db.ExecContext(ctx, `CREATE LOGIN `+QuoteName(login)+` WITH PASSWORD = 'Ap-Pa55-word!', CHECK_POLICY = OFF`); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { db.ExecContext(context.Background(), `DROP LOGIN `+quoteIdent(login)) })
+	t.Cleanup(func() { db.ExecContext(context.Background(), `DROP LOGIN `+QuoteName(login)) })
 
 	sec := Securable{Class: SecurableServer}
 	if err := srv.ApplyPermission(ctx, VerbGrant, sec, ServerPermission("VIEW SERVER STATE"), login, PermissionOptions{}); err != nil {

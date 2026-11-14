@@ -153,7 +153,7 @@ func buildBackupStatement(opts BackupOptions) (string, error) {
 	}
 
 	var sb strings.Builder
-	fmt.Fprintf(&sb, "BACKUP %s %s", action, quoteIdent(opts.Database))
+	fmt.Fprintf(&sb, "BACKUP %s %s", action, QuoteName(opts.Database))
 	if opts.Action == BackupActionFiles {
 		spec, err := backupFileSpec("backup", opts.Files, opts.FileGroups)
 		if err != nil {

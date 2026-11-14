@@ -15,8 +15,6 @@ package gosmo
 
 import (
 	"context"
-	"database/sql"
-	"net/url"
 	"strings"
 	"testing"
 )
@@ -45,15 +43,7 @@ func TestLiveBackupProgressLocalised(t *testing.T) {
 		}
 	}
 
-	u, err := url.Parse(*liveDSN)
-	if err != nil {
-		t.Fatalf("parse -livedb DSN: %v", err)
-	}
-	u.User = url.UserPassword(login, password)
-	de, err := sql.Open("sqlserver", u.String())
-	if err != nil {
-		t.Fatalf("open as %s: %v", login, err)
-	}
+	de := liveOpenAs(t, login, password)
 	t.Cleanup(func() { de.Close() })
 
 	var lang string
@@ -71,7 +61,7 @@ func TestLiveBackupProgressLocalised(t *testing.T) {
 	}
 	var pcts []int
 	var texts []string
-	err = srv.Backup(ctx, BackupOptions{
+	err := srv.Backup(ctx, BackupOptions{
 		Database: dbName, Devices: []BackupTarget{DiskTarget(null)}, CopyOnly: true, Stats: 50,
 		Progress: func(pct int, msg string) {
 			texts = append(texts, msg)

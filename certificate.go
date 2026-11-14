@@ -126,7 +126,7 @@ ORDER  BY c.name`)
 func (d *Database) CertificateByName(ctx context.Context, name string) (*Certificate, error) {
 	return readByName(ctx, d, scanCertificate, certificateSelect+`
 WHERE  c.name = @p1`, []any{name},
-		notFoundf("gosmo: certificate %s not found in %q", quoteIdent(name), d.Name),
+		notFoundf("gosmo: certificate %s not found in %q", QuoteName(name), d.Name),
 		fmt.Sprintf("read certificate %q in %q", name, d.Name))
 }
 
@@ -219,9 +219,9 @@ func (spec CreateCertificateRequest) createCertificateStatement() (string, error
 		return "", invalidf("certificate %q has neither a subject nor an encoded certificate to import", spec.Name)
 	}
 
-	stmt := "CREATE CERTIFICATE " + quoteIdent(spec.Name)
+	stmt := "CREATE CERTIFICATE " + QuoteName(spec.Name)
 	if spec.Authorization != "" {
-		stmt += " AUTHORIZATION " + quoteIdent(spec.Authorization)
+		stmt += " AUTHORIZATION " + QuoteName(spec.Authorization)
 	}
 	if len(spec.FromBinary) > 0 {
 		if spec.EncryptionPassword != "" || !spec.StartDate.IsZero() || !spec.ExpiryDate.IsZero() {
@@ -254,14 +254,12 @@ func (d *Database) CreateCertificate(ctx context.Context, spec CreateCertificate
 	if _, err := d.execPasswords(ctx, stmt, spec.EncryptionPassword); err != nil {
 		return nil, fmt.Errorf("gosmo: create certificate %q in %q: %w", spec.Name, d.Name, err)
 	}
-	return createdObject(ctx, d.CertificateRef(spec.Name), func() (*Certificate, error) {
-		return d.CertificateByName(ctx, spec.Name)
-	})
+	return createdByName(ctx, d.CertificateRef(spec.Name), d.CertificateByName, spec.Name)
 }
 
 // Drop deletes the certificate.
 func (c *Certificate) Drop(ctx context.Context) error {
-	if _, err := c.db.exec(ctx, "DROP CERTIFICATE "+quoteIdent(c.Name)); err != nil {
+	if _, err := c.db.exec(ctx, "DROP CERTIFICATE "+QuoteName(c.Name)); err != nil {
 		return fmt.Errorf("gosmo: drop certificate %q in %q: %w", c.Name, c.db.Name, err)
 	}
 	return nil
@@ -288,7 +286,7 @@ func (c *Certificate) backupStatement(spec CertificateBackupSpec) (string, error
 	if strings.TrimSpace(spec.File) == "" {
 		return "", invalidf("no file to back up to")
 	}
-	stmt := "BACKUP CERTIFICATE " + quoteIdent(c.Name) + " TO FILE = " + QuoteLiteral(spec.File)
+	stmt := "BACKUP CERTIFICATE " + QuoteName(c.Name) + " TO FILE = " + QuoteLiteral(spec.File)
 	if spec.PrivateKeyFile == "" {
 		if spec.EncryptionPassword != "" || spec.DecryptionPassword != "" {
 			return "", invalidf("a password was given but no private key file")
@@ -326,7 +324,7 @@ func (c *Certificate) Backup(ctx context.Context, spec CertificateBackupSpec) er
 // short of re-importing the key from a backup: nothing the certificate signed
 // or encrypts can be signed or decrypted by it afterwards.
 func (c *Certificate) RemovePrivateKey(ctx context.Context) error {
-	if _, err := c.db.exec(ctx, "ALTER CERTIFICATE "+quoteIdent(c.Name)+" REMOVE PRIVATE KEY"); err != nil {
+	if _, err := c.db.exec(ctx, "ALTER CERTIFICATE "+QuoteName(c.Name)+" REMOVE PRIVATE KEY"); err != nil {
 		return fmt.Errorf("gosmo: remove private key of certificate %q in %q: %w", c.Name, c.db.Name, err)
 	}
 	setIfApplied(ctx, &c.PvtKeyEncryptionType, "NO_PRIVATE_KEY")
@@ -337,7 +335,7 @@ func (c *Certificate) RemovePrivateKey(ctx context.Context) error {
 // ALTER AUTHORIZATION. SQL Server drops every explicit permission on the
 // certificate as it does so (verified 2026-09-22 on 13 and 17).
 func (c *Certificate) SetOwner(ctx context.Context, newOwner string) error {
-	q := "ALTER AUTHORIZATION ON CERTIFICATE::" + quoteIdent(c.Name) + " TO " + quoteIdent(newOwner)
+	q := "ALTER AUTHORIZATION ON CERTIFICATE::" + QuoteName(c.Name) + " TO " + QuoteName(newOwner)
 	if _, err := c.db.exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: change certificate %q owner to %q in %q: %w", c.Name, newOwner, c.db.Name, err)
 	}

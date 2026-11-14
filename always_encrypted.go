@@ -145,19 +145,17 @@ CREATE COLUMN MASTER KEY %s
 WITH (
     KEY_STORE_PROVIDER_NAME = N'%s',
     KEY_PATH = N'%s'%s
-)`, quoteIdent(req.Name), escapeSingle(req.KeyStoreProvider), escapeSingle(req.KeyPath), enclave)
+)`, QuoteName(req.Name), escapeSingle(req.KeyStoreProvider), escapeSingle(req.KeyPath), enclave)
 	if _, err := d.exec(ctx, q); err != nil {
 		return nil, fmt.Errorf("gosmo: create column master key %q: %w", req.Name, err)
 	}
-	return createdObject(ctx, d.ColumnMasterKeyRef(req.Name), func() (*ColumnMasterKey, error) {
-		return d.ColumnMasterKeyByName(ctx, req.Name)
-	})
+	return createdByName(ctx, d.ColumnMasterKeyRef(req.Name), d.ColumnMasterKeyByName, req.Name)
 }
 
 // Drop drops the column master key.
 func (cmk *ColumnMasterKey) Drop(ctx context.Context) error {
 	_, err := cmk.db.exec(ctx,
-		fmt.Sprintf("DROP COLUMN MASTER KEY %s", quoteIdent(cmk.Name)))
+		fmt.Sprintf("DROP COLUMN MASTER KEY %s", QuoteName(cmk.Name)))
 	if err != nil {
 		return fmt.Errorf("gosmo: drop column master key %q: %w", cmk.Name, err)
 	}
@@ -218,7 +216,7 @@ func (v ColumnEncryptionKeyValue) missing() string {
 // KEY and ALTER ... ADD VALUE both take.
 func (v ColumnEncryptionKeyValue) valueClause() string {
 	return fmt.Sprintf("(\n    COLUMN_MASTER_KEY = %s,\n    ALGORITHM = '%s',\n    ENCRYPTED_VALUE = %s\n)",
-		quoteIdent(v.MasterKeyName), escapeSingle(v.EncryptionAlgorithm), binaryLiteral(v.EncryptedValue))
+		QuoteName(v.MasterKeyName), escapeSingle(v.EncryptionAlgorithm), binaryLiteral(v.EncryptedValue))
 }
 
 // columnEncryptionKeySelect is the column list and joins every column
@@ -349,7 +347,7 @@ func (d *Database) CreateColumnEncryptionKey(ctx context.Context, req CreateColu
 	}
 
 	var sb strings.Builder
-	fmt.Fprintf(&sb, "CREATE COLUMN ENCRYPTION KEY %s\nWITH VALUES", quoteIdent(name))
+	fmt.Fprintf(&sb, "CREATE COLUMN ENCRYPTION KEY %s\nWITH VALUES", QuoteName(name))
 	for i, v := range values {
 		if i > 0 {
 			sb.WriteString(",")
@@ -359,9 +357,7 @@ func (d *Database) CreateColumnEncryptionKey(ctx context.Context, req CreateColu
 	if _, err := d.exec(ctx, sb.String()); err != nil {
 		return nil, fmt.Errorf("gosmo: create column encryption key %q: %w", name, err)
 	}
-	return createdObject(ctx, d.ColumnEncryptionKeyRef(name), func() (*ColumnEncryptionKey, error) {
-		return d.ColumnEncryptionKeyByName(ctx, name)
-	})
+	return createdByName(ctx, d.ColumnEncryptionKeyRef(name), d.ColumnEncryptionKeyByName, name)
 }
 
 // AddValue encrypts the key under one more column master key, the first half
@@ -377,7 +373,7 @@ func (cek *ColumnEncryptionKey) AddValue(ctx context.Context, value ColumnEncryp
 		return invalidf("gosmo: add value to column encryption key %q: the value has %s", cek.Name, missing)
 	}
 	stmt := fmt.Sprintf("ALTER COLUMN ENCRYPTION KEY %s\nADD VALUE\n%s",
-		quoteIdent(cek.Name), value.valueClause())
+		QuoteName(cek.Name), value.valueClause())
 	if _, err := cek.db.exec(ctx, stmt); err != nil {
 		return fmt.Errorf("gosmo: add value to column encryption key %q: %w", cek.Name, err)
 	}
@@ -403,7 +399,7 @@ func (cek *ColumnEncryptionKey) DropValue(ctx context.Context, masterKeyName str
 		return invalidf("gosmo: drop value from column encryption key %q: the column master key name is required", cek.Name)
 	}
 	stmt := fmt.Sprintf("ALTER COLUMN ENCRYPTION KEY %s\nDROP VALUE\n(\n    COLUMN_MASTER_KEY = %s\n)",
-		quoteIdent(cek.Name), quoteIdent(masterKeyName))
+		QuoteName(cek.Name), QuoteName(masterKeyName))
 	if _, err := cek.db.exec(ctx, stmt); err != nil {
 		return fmt.Errorf("gosmo: drop value from column encryption key %q: %w", cek.Name, err)
 	}
@@ -436,7 +432,7 @@ func (cek *ColumnEncryptionKey) reseatSummary() {
 // Drop drops the column encryption key.
 func (cek *ColumnEncryptionKey) Drop(ctx context.Context) error {
 	_, err := cek.db.exec(ctx,
-		fmt.Sprintf("DROP COLUMN ENCRYPTION KEY %s", quoteIdent(cek.Name)))
+		fmt.Sprintf("DROP COLUMN ENCRYPTION KEY %s", QuoteName(cek.Name)))
 	if err != nil {
 		return fmt.Errorf("gosmo: drop column encryption key %q: %w", cek.Name, err)
 	}

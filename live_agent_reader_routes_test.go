@@ -4,7 +4,6 @@ package gosmo
 
 import (
 	"context"
-	"database/sql"
 	"reflect"
 	"slices"
 	"strings"
@@ -130,10 +129,7 @@ func TestLiveAgentReaderOperatorsAndJobAlerts(t *testing.T) {
 		t.Fatalf("sysadmin's job alerts = %+v", wantAlerts)
 	}
 
-	pool, err := sql.Open("sqlserver", liveRestrictedDSN(t, login, pass))
-	if err != nil {
-		t.Fatalf("open as %s: %v", login, err)
-	}
+	pool := liveOpenAs(t, login, pass)
 	t.Cleanup(func() { pool.Close() })
 	rd := &Server{db: pool}
 

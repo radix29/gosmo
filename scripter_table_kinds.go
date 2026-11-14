@@ -42,7 +42,7 @@ func hiddenTypeRefusal(what string, cols []*Column) error {
 	for _, c := range cols {
 		if c.IsTypeHidden {
 			return unsupportedf("gosmo: script %s: column %s has a user-defined type the login cannot see; "+
-				"it needs REFERENCES or VIEW DEFINITION on the type", what, quoteIdent(c.Name))
+				"it needs REFERENCES or VIEW DEFINITION on the type", what, QuoteName(c.Name))
 		}
 	}
 	return nil
@@ -63,9 +63,9 @@ func hiddenDefinitionRefusal(what string, v ScriptVerb, cols []*Column, indexes 
 	for _, c := range cols {
 		switch {
 		case c.IsComputed && c.ComputedText == "":
-			hidden = "computed column " + quoteIdent(c.Name)
+			hidden = "computed column " + QuoteName(c.Name)
 		case c.DefaultValue != nil && c.DefaultValue.Definition == "":
-			hidden = "default " + quoteIdent(c.DefaultValue.Name)
+			hidden = "default " + QuoteName(c.DefaultValue.Name)
 		default:
 			continue
 		}
@@ -73,12 +73,12 @@ func hiddenDefinitionRefusal(what string, v ScriptVerb, cols []*Column, indexes 
 	}
 	for _, idx := range indexes {
 		if hidden == "" && idx.IsFilterHidden {
-			hidden = "index " + quoteIdent(idx.Name) + "'s filter"
+			hidden = "index " + QuoteName(idx.Name) + "'s filter"
 		}
 	}
 	for _, ck := range checks {
 		if hidden == "" && ck.Definition == "" {
-			hidden = "check constraint " + quoteIdent(ck.Name)
+			hidden = "check constraint " + QuoteName(ck.Name)
 		}
 	}
 	if hidden == "" {
@@ -113,7 +113,7 @@ func ledgerOptions(o tableScriptOptions) []string {
 		if c := o.LedgerViewColumns; len(c) == 4 {
 			view += fmt.Sprintf(" (TRANSACTION_ID_COLUMN_NAME = %s, SEQUENCE_NUMBER_COLUMN_NAME = %s, "+
 				"OPERATION_TYPE_COLUMN_NAME = %s, OPERATION_TYPE_DESC_COLUMN_NAME = %s)",
-				quoteIdent(c[0]), quoteIdent(c[1]), quoteIdent(c[2]), quoteIdent(c[3]))
+				QuoteName(c[0]), QuoteName(c[1]), QuoteName(c[2]), QuoteName(c[3]))
 		}
 		ledger = append(ledger, view)
 	}
@@ -228,9 +228,9 @@ func inlineIndexes(indexes []*Index, cols []*Column, o tableScriptOptions) map[s
 // inlineIndexDefinition renders an index declared inside CREATE TABLE: a
 // unique constraint as `CONSTRAINT … UNIQUE`, anything else as `INDEX …`.
 func inlineIndexDefinition(idx *Index, o tableScriptOptions, tableDS DataSpace) string {
-	head := "INDEX " + quoteIdent(idx.Name) + " "
+	head := "INDEX " + QuoteName(idx.Name) + " "
 	if idx.IsUniqueConstraint {
-		head = "CONSTRAINT " + quoteIdent(idx.Name) + " UNIQUE "
+		head = "CONSTRAINT " + QuoteName(idx.Name) + " UNIQUE "
 	} else if idx.IsUnique && idx.Type != IndexTypeClusteredColumnStore {
 		head += "UNIQUE "
 	}
@@ -289,10 +289,10 @@ func tableStorageClauses(p tableScriptParts) string {
 	o := p.table
 	if o.LobDataSpace != "" && o.LobIsFileGroup && p.ds.Name != "" && !p.ds.IsPartitionScheme &&
 		o.LobDataSpace != p.ds.Name && hasLOBColumn(p.cols) {
-		fmt.Fprintf(&sb, " TEXTIMAGE_ON %s", quoteIdent(o.LobDataSpace))
+		fmt.Fprintf(&sb, " TEXTIMAGE_ON %s", QuoteName(o.LobDataSpace))
 	}
 	if o.FileStreamDataSpace != "" && hasFileStreamColumn(p.cols) {
-		fmt.Fprintf(&sb, " FILESTREAM_ON %s", quoteIdent(o.FileStreamDataSpace))
+		fmt.Fprintf(&sb, " FILESTREAM_ON %s", QuoteName(o.FileStreamDataSpace))
 	}
 	return sb.String()
 }
@@ -340,13 +340,13 @@ func scriptEdgeConstraint(ec *EdgeConstraint, tableName string, opts ScriptOptio
 		with = "WITH NOCHECK"
 	}
 	fmt.Fprintf(&sb, "ALTER TABLE %s %s\n    ADD CONSTRAINT %s\n    CONNECTION (%s)",
-		tableName, with, quoteIdent(ec.Name), strings.Join(clauses, ", "))
+		tableName, with, QuoteName(ec.Name), strings.Join(clauses, ", "))
 	if ec.DeleteAction != "" && ec.DeleteAction != "NO_ACTION" {
 		fmt.Fprintf(&sb, "\n    ON DELETE %s", strings.ReplaceAll(ec.DeleteAction, "_", " "))
 	}
 	sb.WriteString(";\nGO\n")
 	if ec.IsDisabled {
-		fmt.Fprintf(&sb, "ALTER TABLE %s NOCHECK CONSTRAINT %s;\nGO\n", tableName, quoteIdent(ec.Name))
+		fmt.Fprintf(&sb, "ALTER TABLE %s NOCHECK CONSTRAINT %s;\nGO\n", tableName, QuoteName(ec.Name))
 	}
 	sb.WriteString("\n")
 	return sb.String()
@@ -395,11 +395,11 @@ func buildFileTableScript(schema, name, dbName string, p tableScriptParts, opts 
 		}
 		switch {
 		case idx.IsPrimaryKey:
-			with.addKeyword("FILETABLE_PRIMARY_KEY_CONSTRAINT_NAME", quoteIdent(idx.Name))
+			with.addKeyword("FILETABLE_PRIMARY_KEY_CONSTRAINT_NAME", QuoteName(idx.Name))
 		case idx.IsUniqueConstraint && len(idx.KeyColumns) == 1 && idx.KeyColumns[0].Name == "stream_id":
-			with.addKeyword("FILETABLE_STREAMID_UNIQUE_CONSTRAINT_NAME", quoteIdent(idx.Name))
+			with.addKeyword("FILETABLE_STREAMID_UNIQUE_CONSTRAINT_NAME", QuoteName(idx.Name))
 		case idx.IsUniqueConstraint:
-			with.addKeyword("FILETABLE_FULLPATH_UNIQUE_CONSTRAINT_NAME", quoteIdent(idx.Name))
+			with.addKeyword("FILETABLE_FULLPATH_UNIQUE_CONSTRAINT_NAME", QuoteName(idx.Name))
 		}
 	}
 	rest := p
@@ -424,7 +424,7 @@ func buildFileTableScript(schema, name, dbName string, p tableScriptParts, opts 
 		}
 		fmt.Fprintf(sb, "CREATE TABLE %s AS FILETABLE%s", fullName, dataSpaceClause(p.ds))
 		if p.table.FileStreamDataSpace != "" {
-			fmt.Fprintf(sb, " FILESTREAM_ON %s", quoteIdent(p.table.FileStreamDataSpace))
+			fmt.Fprintf(sb, " FILESTREAM_ON %s", QuoteName(p.table.FileStreamDataSpace))
 		}
 		if !with.empty() {
 			sb.WriteString("\nWITH (\n")
@@ -487,10 +487,10 @@ func buildExternalTableScript(schema, name, dbName string, p tableScriptParts, d
 	with := newClauseList()
 	with.addLiteral("LOCATION", e.Location)
 	if e.DataSource != "" {
-		with.addKeyword("DATA_SOURCE", quoteIdent(e.DataSource))
+		with.addKeyword("DATA_SOURCE", QuoteName(e.DataSource))
 	}
 	if e.FileFormat != "" {
-		with.addKeyword("FILE_FORMAT", quoteIdent(e.FileFormat))
+		with.addKeyword("FILE_FORMAT", QuoteName(e.FileFormat))
 		// The reject options belong to a file-format table; the catalog
 		// reports the defaults, VALUE and 0, for one created without them.
 		if e.RejectType != "" && e.RejectValue.Valid {
@@ -508,7 +508,7 @@ func buildExternalTableScript(schema, name, dbName string, p tableScriptParts, d
 	switch e.Distribution {
 	case "SHARDED":
 		if e.ShardingColumn != "" {
-			with.addKeyword("DISTRIBUTION", "SHARDED("+quoteIdent(e.ShardingColumn)+")")
+			with.addKeyword("DISTRIBUTION", "SHARDED("+QuoteName(e.ShardingColumn)+")")
 		}
 	case "REPLICATED", "ROUND_ROBIN":
 		with.addKeyword("DISTRIBUTION", e.Distribution)

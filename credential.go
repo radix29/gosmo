@@ -135,14 +135,14 @@ func (spec CreateCredentialRequest) createCredentialStatement() (string, error) 
 	}
 
 	stmt := fmt.Sprintf("CREATE CREDENTIAL %s WITH IDENTITY = N'%s'",
-		quoteIdent(spec.Name), escapeSingle(spec.Identity))
+		QuoteName(spec.Name), escapeSingle(spec.Identity))
 	if spec.Secret != "" {
 		stmt += ", SECRET = " + QuoteLiteral(spec.Secret)
 	}
 	// FOR CRYPTOGRAPHIC PROVIDER follows the whole WITH clause; it is not
 	// another comma-separated option inside it.
 	if spec.CryptographicProvider != "" {
-		stmt += " FOR CRYPTOGRAPHIC PROVIDER " + quoteIdent(spec.CryptographicProvider)
+		stmt += " FOR CRYPTOGRAPHIC PROVIDER " + QuoteName(spec.CryptographicProvider)
 	}
 	return stmt, nil
 }
@@ -156,9 +156,7 @@ func (s *Server) CreateCredential(ctx context.Context, spec CreateCredentialRequ
 	if _, err := s.execSecret(ctx, stmt, redactSecrets(stmt, SecretPlaceholder, spec.Secret)); err != nil {
 		return nil, fmt.Errorf("gosmo: create credential %q: %w", spec.Name, err)
 	}
-	return createdObject(ctx, s.CredentialRef(spec.Name), func() (*Credential, error) {
-		return s.CredentialByName(ctx, spec.Name)
-	})
+	return createdByName(ctx, s.CredentialRef(spec.Name), s.CredentialByName, spec.Name)
 }
 
 // CredentialOptions is what ALTER CREDENTIAL and ALTER DATABASE SCOPED
@@ -184,7 +182,7 @@ func (c *Credential) Alter(ctx context.Context, o CredentialOptions) error {
 		return invalidf("gosmo: alter credential %q: identity is required", c.Name)
 	}
 	stmt := fmt.Sprintf("ALTER CREDENTIAL %s WITH IDENTITY = N'%s'",
-		quoteIdent(c.Name), escapeSingle(identity))
+		QuoteName(c.Name), escapeSingle(identity))
 	shown := stmt
 	if secret != nil {
 		stmt += ", SECRET = " + QuoteLiteral(*secret)
@@ -199,7 +197,7 @@ func (c *Credential) Alter(ctx context.Context, o CredentialOptions) error {
 
 // Drop deletes the credential.
 func (c *Credential) Drop(ctx context.Context) error {
-	if _, err := c.server.exec(ctx, "DROP CREDENTIAL "+quoteIdent(c.Name)); err != nil {
+	if _, err := c.server.exec(ctx, "DROP CREDENTIAL "+QuoteName(c.Name)); err != nil {
 		return fmt.Errorf("gosmo: drop credential %q: %w", c.Name, err)
 	}
 	return nil

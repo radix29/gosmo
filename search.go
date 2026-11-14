@@ -16,6 +16,16 @@ type SearchResult struct {
 	TypeDesc string // e.g. "USER_TABLE", "VIEW", "SQL_STORED_PROCEDURE"
 }
 
+// scanSearchResult reads one (schema, name, type_desc) row, the shape both
+// Search and SearchDefinitions select.
+func scanSearchResult(scan func(...any) error) (*SearchResult, error) {
+	r := &SearchResult{}
+	if err := scan(&r.Schema, &r.Name, &r.TypeDesc); err != nil {
+		return nil, err
+	}
+	return r, nil
+}
+
 // Search finds tables, views, stored procedures, functions, and triggers
 // whose name contains pattern, matching SSMS's Object Explorer Details search
 // box. The match is case-insensitive whatever the database's collation is.
@@ -34,13 +44,7 @@ AND    LOWER(o.name) LIKE '%' + LOWER(@p1) + '%' ESCAPE '\'
 ORDER  BY o.type_desc, SCHEMA_NAME(o.schema_id), o.name`
 
 	rows, err := d.query(ctx, q, likeEscape(pattern))
-	return scanRows(rows, err, fmt.Sprintf("search objects matching %q", pattern), func(scan func(...any) error) (*SearchResult, error) {
-		r := &SearchResult{}
-		if err := scan(&r.Schema, &r.Name, &r.TypeDesc); err != nil {
-			return nil, err
-		}
-		return r, nil
-	})
+	return scanRows(rows, err, fmt.Sprintf("search objects matching %q", pattern), scanSearchResult)
 }
 
 // SearchDefinitions finds the modules — procedures, functions, views,
@@ -71,13 +75,7 @@ WHERE  LOWER(m.definition) COLLATE Latin1_General_100_BIN2 LIKE '%' + LOWER(@p1)
 ORDER  BY o.type_desc, SCHEMA_NAME(o.schema_id), o.name`
 
 	rows, err := d.query(ctx, q, likeEscape(pattern))
-	return scanRows(rows, err, fmt.Sprintf("search definitions containing %q", pattern), func(scan func(...any) error) (*SearchResult, error) {
-		r := &SearchResult{}
-		if err := scan(&r.Schema, &r.Name, &r.TypeDesc); err != nil {
-			return nil, err
-		}
-		return r, nil
-	})
+	return scanRows(rows, err, fmt.Sprintf("search definitions containing %q", pattern), scanSearchResult)
 }
 
 // ColumnSearchResult is one column matched by Database.SearchColumns.

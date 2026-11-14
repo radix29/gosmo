@@ -97,21 +97,19 @@ func (d *Database) CreateApplicationRole(ctx context.Context, req CreateApplicat
 	if req.Password == "" {
 		return nil, invalidf("gosmo: create application role %q: a password is required", req.Name)
 	}
-	stmt := "CREATE APPLICATION ROLE " + quoteIdent(req.Name) + " WITH PASSWORD = " + QuoteLiteral(req.Password)
+	stmt := "CREATE APPLICATION ROLE " + QuoteName(req.Name) + " WITH PASSWORD = " + QuoteLiteral(req.Password)
 	if req.DefaultSchema != "" {
-		stmt += ", DEFAULT_SCHEMA = " + quoteIdent(req.DefaultSchema)
+		stmt += ", DEFAULT_SCHEMA = " + QuoteName(req.DefaultSchema)
 	}
 	if _, err := d.execPasswords(ctx, stmt, req.Password); err != nil {
 		return nil, fmt.Errorf("gosmo: create application role %q: %w", req.Name, err)
 	}
-	return createdObject(ctx, d.ApplicationRoleRef(req.Name), func() (*ApplicationRole, error) {
-		return d.ApplicationRoleByName(ctx, req.Name)
-	})
+	return createdByName(ctx, d.ApplicationRoleRef(req.Name), d.ApplicationRoleByName, req.Name)
 }
 
 // Rename changes the application role's name.
 func (r *ApplicationRole) Rename(ctx context.Context, newName string) error {
-	q := fmt.Sprintf("ALTER APPLICATION ROLE %s WITH NAME = %s", quoteIdent(r.Name), quoteIdent(newName))
+	q := fmt.Sprintf("ALTER APPLICATION ROLE %s WITH NAME = %s", QuoteName(r.Name), QuoteName(newName))
 	if _, err := r.db.exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: rename application role %q to %q: %w", r.Name, newName, err)
 	}
@@ -121,7 +119,7 @@ func (r *ApplicationRole) Rename(ctx context.Context, newName string) error {
 
 // SetDefaultSchema changes the application role's default schema.
 func (r *ApplicationRole) SetDefaultSchema(ctx context.Context, schemaName string) error {
-	q := fmt.Sprintf("ALTER APPLICATION ROLE %s WITH DEFAULT_SCHEMA = %s", quoteIdent(r.Name), quoteIdent(schemaName))
+	q := fmt.Sprintf("ALTER APPLICATION ROLE %s WITH DEFAULT_SCHEMA = %s", QuoteName(r.Name), QuoteName(schemaName))
 	if _, err := r.db.exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: set default schema for application role %q to %q: %w", r.Name, schemaName, err)
 	}
@@ -136,7 +134,7 @@ func (r *ApplicationRole) ChangePassword(ctx context.Context, newPassword string
 	if newPassword == "" {
 		return invalidf("gosmo: change password of application role %q: a password is required", r.Name)
 	}
-	stmt := "ALTER APPLICATION ROLE " + quoteIdent(r.Name) + " WITH PASSWORD = " + QuoteLiteral(newPassword)
+	stmt := "ALTER APPLICATION ROLE " + QuoteName(r.Name) + " WITH PASSWORD = " + QuoteLiteral(newPassword)
 	if _, err := r.db.execPasswords(ctx, stmt, newPassword); err != nil {
 		return fmt.Errorf("gosmo: change password of application role %q: %w", r.Name, err)
 	}
@@ -146,7 +144,7 @@ func (r *ApplicationRole) ChangePassword(ctx context.Context, newPassword string
 // Drop drops the application role. One that still owns a schema is refused
 // by the server, not here.
 func (r *ApplicationRole) Drop(ctx context.Context) error {
-	if _, err := r.db.exec(ctx, "DROP APPLICATION ROLE "+quoteIdent(r.Name)); err != nil {
+	if _, err := r.db.exec(ctx, "DROP APPLICATION ROLE "+QuoteName(r.Name)); err != nil {
 		return fmt.Errorf("gosmo: drop application role %q: %w", r.Name, err)
 	}
 	return nil

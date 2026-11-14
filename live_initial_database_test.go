@@ -60,16 +60,16 @@ func liveServerInDatabase(t *testing.T, ctx context.Context, database string) *S
 func initDBLiveSetup(t *testing.T, ctx context.Context, admin *Server) []string {
 	t.Helper()
 	drop := func() {
-		admin.exec(context.Background(), "IF DB_ID(N'"+initDBLiveName+"_snap') IS NOT NULL DROP DATABASE "+quoteIdent(initDBLiveName+"_snap"))
-		admin.exec(context.Background(), "IF DB_ID(N'"+initDBLiveName+"2') IS NOT NULL ALTER DATABASE "+quoteIdent(initDBLiveName+"2")+" MODIFY NAME = "+quoteIdent(initDBLiveName))
+		admin.exec(context.Background(), "IF DB_ID(N'"+initDBLiveName+"_snap') IS NOT NULL DROP DATABASE "+QuoteName(initDBLiveName+"_snap"))
+		admin.exec(context.Background(), "IF DB_ID(N'"+initDBLiveName+"2') IS NOT NULL ALTER DATABASE "+QuoteName(initDBLiveName+"2")+" MODIFY NAME = "+QuoteName(initDBLiveName))
 		admin.exec(context.Background(),
 			"IF DB_ID(N'"+initDBLiveName+"') IS NOT NULL BEGIN "+
-				"ALTER DATABASE "+quoteIdent(initDBLiveName)+" SET ONLINE; "+
-				"ALTER DATABASE "+quoteIdent(initDBLiveName)+" SET MULTI_USER WITH ROLLBACK IMMEDIATE; "+
-				"DROP DATABASE "+quoteIdent(initDBLiveName)+"; END")
+				"ALTER DATABASE "+QuoteName(initDBLiveName)+" SET ONLINE; "+
+				"ALTER DATABASE "+QuoteName(initDBLiveName)+" SET MULTI_USER WITH ROLLBACK IMMEDIATE; "+
+				"DROP DATABASE "+QuoteName(initDBLiveName)+"; END")
 	}
 	drop()
-	if _, err := admin.exec(ctx, "CREATE DATABASE "+quoteIdent(initDBLiveName)); err != nil {
+	if _, err := admin.exec(ctx, "CREATE DATABASE "+QuoteName(initDBLiveName)); err != nil {
 		t.Fatalf("create throwaway database: %v", err)
 	}
 	t.Cleanup(drop)

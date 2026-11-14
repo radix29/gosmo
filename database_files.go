@@ -300,7 +300,7 @@ func fileSizeLiteral(kb int64) string {
 // definition, as used inside CREATE DATABASE's ON PRIMARY/LOG ON clauses.
 func buildFileDefClause(spec DatabaseFileSpec) string {
 	var sb strings.Builder
-	fmt.Fprintf(&sb, "( NAME = %s, FILENAME = %s", quoteIdent(spec.Name), QuoteLiteral(spec.Path))
+	fmt.Fprintf(&sb, "( NAME = %s, FILENAME = %s", QuoteName(spec.Name), QuoteLiteral(spec.Path))
 	writeFileSizeClauses(&sb, spec)
 	sb.WriteString(" )")
 	return sb.String()
@@ -324,11 +324,11 @@ func buildAddFileStatement(dbName string, spec DatabaseFileSpec) (string, error)
 
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "ALTER DATABASE %s %s (NAME = %s, FILENAME = %s",
-		quoteIdent(dbName), clause, quoteIdent(spec.Name), QuoteLiteral(spec.Path))
+		QuoteName(dbName), clause, QuoteName(spec.Name), QuoteLiteral(spec.Path))
 	writeFileSizeClauses(&sb, spec)
 	sb.WriteString(")")
 	if spec.FileGroup != "" && !isLog {
-		fmt.Fprintf(&sb, " TO FILEGROUP %s", quoteIdent(spec.FileGroup))
+		fmt.Fprintf(&sb, " TO FILEGROUP %s", QuoteName(spec.FileGroup))
 	}
 	return sb.String(), nil
 }
@@ -382,9 +382,9 @@ func buildAlterFileStatement(dbName, name string, m DatabaseFileChanges) (string
 	if name == "" {
 		return "", invalidf("gosmo: alter file: name is required")
 	}
-	props := []string{"NAME = " + quoteIdent(name)}
+	props := []string{"NAME = " + QuoteName(name)}
 	if m.NewName != "" {
-		props = append(props, "NEWNAME = "+quoteIdent(m.NewName))
+		props = append(props, "NEWNAME = "+QuoteName(m.NewName))
 	}
 	if m.SizeKB > 0 {
 		props = append(props, "SIZE = "+fileSizeLiteral(m.SizeKB))
@@ -406,14 +406,14 @@ func buildAlterFileStatement(dbName, name string, m DatabaseFileChanges) (string
 	if len(props) == 1 {
 		return "", nil // only the identifying NAME — nothing to change
 	}
-	return fmt.Sprintf("ALTER DATABASE %s MODIFY FILE (%s)", quoteIdent(dbName), strings.Join(props, ", ")), nil
+	return fmt.Sprintf("ALTER DATABASE %s MODIFY FILE (%s)", QuoteName(dbName), strings.Join(props, ", ")), nil
 }
 
 // Drop removes the file from its database (ALTER DATABASE ... REMOVE FILE).
 // The file must be empty (0 bytes of used space) — SQL Server itself
 // enforces this, not gosmo.
 func (f *DatabaseFileInfo) Drop(ctx context.Context) error {
-	q := fmt.Sprintf("ALTER DATABASE %s REMOVE FILE %s", quoteIdent(f.db.Name), quoteIdent(f.Name))
+	q := fmt.Sprintf("ALTER DATABASE %s REMOVE FILE %s", QuoteName(f.db.Name), QuoteName(f.Name))
 	if _, err := f.db.server.exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: remove file %q from %q: %w", f.Name, f.db.Name, err)
 	}
@@ -478,7 +478,7 @@ ORDER  BY fg.name`
 
 // AddFileGroup adds a new (empty) filegroup to the database.
 func (d *Database) AddFileGroup(ctx context.Context, name string) error {
-	q := fmt.Sprintf("ALTER DATABASE %s ADD FILEGROUP %s", quoteIdent(d.Name), quoteIdent(name))
+	q := fmt.Sprintf("ALTER DATABASE %s ADD FILEGROUP %s", QuoteName(d.Name), QuoteName(name))
 	if _, err := d.server.exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: add filegroup %q to %q: %w", name, d.Name, err)
 	}
@@ -490,7 +490,7 @@ func (d *Database) AddFileGroup(ctx context.Context, name string) error {
 // not gosmo.
 func (fg *FileGroup) Drop(ctx context.Context) error {
 	d := fg.db
-	q := fmt.Sprintf("ALTER DATABASE %s REMOVE FILEGROUP %s", quoteIdent(d.Name), quoteIdent(fg.Name))
+	q := fmt.Sprintf("ALTER DATABASE %s REMOVE FILEGROUP %s", QuoteName(d.Name), QuoteName(fg.Name))
 	if _, err := d.server.exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: remove filegroup %q from %q: %w", fg.Name, d.Name, err)
 	}
@@ -501,7 +501,7 @@ func (fg *FileGroup) Drop(ctx context.Context) error {
 // type — see FileGroup.IsDefault).
 func (fg *FileGroup) SetDefault(ctx context.Context) error {
 	d := fg.db
-	q := fmt.Sprintf("ALTER DATABASE %s MODIFY FILEGROUP %s DEFAULT", quoteIdent(d.Name), quoteIdent(fg.Name))
+	q := fmt.Sprintf("ALTER DATABASE %s MODIFY FILEGROUP %s DEFAULT", QuoteName(d.Name), QuoteName(fg.Name))
 	if _, err := d.server.exec(ctx, q); err != nil {
 		return fmt.Errorf("gosmo: set default filegroup %q on %q: %w", fg.Name, d.Name, err)
 	}
@@ -534,7 +534,7 @@ func (fg *FileGroup) SetReadOnly(ctx context.Context, readOnly bool, term Termin
 	if _, err := term.withClause(); err != nil {
 		return fmt.Errorf("gosmo: set filegroup %q read-only=%v on %q: %w", name, readOnly, d.Name, err)
 	}
-	q := fmt.Sprintf("ALTER DATABASE %s MODIFY FILEGROUP %s %s", quoteIdent(d.Name), quoteIdent(name), mode)
+	q := fmt.Sprintf("ALTER DATABASE %s MODIFY FILEGROUP %s %s", QuoteName(d.Name), QuoteName(name), mode)
 	if term == TerminationRollbackImmediate {
 		q = killDatabaseSessionsBatch(d.Name) + ";\n" + q + ";"
 	}

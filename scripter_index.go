@@ -46,14 +46,14 @@ func scriptIndex(idx *Index, tableName string, tableDS DataSpace, opts ScriptOpt
 	switch {
 	case idx.IsHypothetical:
 		fmt.Fprintf(&sb, "-- hypothetical index %s on %s (tuning advisor) not scripted\n\n",
-			tsql.CommentSafe(quoteIdent(idx.Name)), tsql.CommentSafe(tableName))
+			tsql.CommentSafe(QuoteName(idx.Name)), tsql.CommentSafe(tableName))
 		return sb.String()
 	case idx.Type == IndexTypeClusteredColumnStore:
 		if opts.IncludeIfNotExists {
 			sb.WriteString(indexExistenceGuard(idx.Name, tableName))
 		}
 		fmt.Fprintf(&sb, "CREATE CLUSTERED COLUMNSTORE INDEX %s ON %s%s%s%s;\nGO\n\n",
-			quoteIdent(idx.Name), tableName, columnstoreOrderClause(idx), columnstoreWithClause(idx), indexDataSpaceClause(idx.DataSpace, tableDS))
+			QuoteName(idx.Name), tableName, columnstoreOrderClause(idx), columnstoreWithClause(idx), indexDataSpaceClause(idx.DataSpace, tableDS))
 		return sb.String()
 	case idx.Type == IndexTypeColumnStore:
 		// sys.index_columns marks every column of a nonclustered columnstore
@@ -68,7 +68,7 @@ func scriptIndex(idx *Index, tableName string, tableDS DataSpace, opts ScriptOpt
 			sb.WriteString(indexExistenceGuard(idx.Name, tableName))
 		}
 		fmt.Fprintf(&sb, "CREATE NONCLUSTERED COLUMNSTORE INDEX %s\n    ON %s (%s)%s",
-			quoteIdent(idx.Name), tableName, strings.Join(cols, ", "), columnstoreOrderClause(idx))
+			QuoteName(idx.Name), tableName, strings.Join(cols, ", "), columnstoreOrderClause(idx))
 		// A filtered NCCI (2016+) recreated without its WHERE covers every
 		// row instead — a different, larger index under the same name.
 		if idx.FilterDefinition != "" {
@@ -93,7 +93,7 @@ func scriptIndex(idx *Index, tableName string, tableDS DataSpace, opts ScriptOpt
 		return sb.String()
 	case idx.Type == IndexTypeXML || idx.Type == IndexTypeSpatial:
 		fmt.Fprintf(&sb, "-- %s index %s on %s is not scripted (its DDL has no generic form here).\n\n",
-			idx.Type, tsql.CommentSafe(quoteIdent(idx.Name)), tsql.CommentSafe(tableName))
+			idx.Type, tsql.CommentSafe(QuoteName(idx.Name)), tsql.CommentSafe(tableName))
 		return sb.String()
 	}
 
@@ -114,7 +114,7 @@ func columnstoreOrderClause(idx *Index) string {
 	}
 	cols := make([]string, len(idx.ColumnstoreOrder))
 	for i, c := range idx.ColumnstoreOrder {
-		cols[i] = quoteIdent(c)
+		cols[i] = QuoteName(c)
 	}
 	return " ORDER (" + strings.Join(cols, ", ") + ")"
 }
@@ -136,14 +136,14 @@ func xmlOrSpatialIndexCreate(idx *Index, tableName string, tableDS DataSpace) st
 	var o []string
 	if idx.Type == IndexTypeXML {
 		if idx.IsPrimaryXML {
-			fmt.Fprintf(&sb, "CREATE PRIMARY XML INDEX %s\n    ON %s (%s)", quoteIdent(idx.Name), tableName, col)
+			fmt.Fprintf(&sb, "CREATE PRIMARY XML INDEX %s\n    ON %s (%s)", QuoteName(idx.Name), tableName, col)
 		} else {
 			fmt.Fprintf(&sb, "CREATE XML INDEX %s\n    ON %s (%s)\n    USING XML INDEX %s FOR %s",
-				quoteIdent(idx.Name), tableName, col, quoteIdent(idx.PrimaryXMLIndex), idx.SecondaryXMLType)
+				QuoteName(idx.Name), tableName, col, QuoteName(idx.PrimaryXMLIndex), idx.SecondaryXMLType)
 		}
 	} else {
 		fmt.Fprintf(&sb, "CREATE SPATIAL INDEX %s\n    ON %s (%s)\n    USING %s",
-			quoteIdent(idx.Name), tableName, col, idx.Tessellation)
+			QuoteName(idx.Name), tableName, col, idx.Tessellation)
 		if b := idx.BoundingBox; b != nil && idx.Tessellation.IsGeometry() {
 			o = append(o, fmt.Sprintf("BOUNDING_BOX = (%s, %s, %s, %s)",
 				floatLiteral(b.XMin), floatLiteral(b.YMin), floatLiteral(b.XMax), floatLiteral(b.YMax)))
@@ -220,7 +220,7 @@ func rowstoreIndexCreate(idx *Index, tableName, with, on string) string {
 		clust = "CLUSTERED"
 	}
 	fmt.Fprintf(&sb, "CREATE %s%s INDEX %s\n    ON %s (%s)",
-		uniq, clust, quoteIdent(idx.Name), tableName, indexColumnList(idx.KeyColumns))
+		uniq, clust, QuoteName(idx.Name), tableName, indexColumnList(idx.KeyColumns))
 	if len(idx.IncludedColumns) > 0 {
 		inc := make([]string, len(idx.IncludedColumns))
 		for i, c := range idx.IncludedColumns {
@@ -385,7 +385,7 @@ func indexDisableStatement(idx *Index, tableName string) string {
 	if !idx.IsDisabled || idx.IsHypothetical {
 		return ""
 	}
-	return fmt.Sprintf("ALTER INDEX %s ON %s DISABLE;\nGO\n\n", quoteIdent(idx.Name), tableName)
+	return fmt.Sprintf("ALTER INDEX %s ON %s DISABLE;\nGO\n\n", QuoteName(idx.Name), tableName)
 }
 
 // dataSpaceClause renders the ON clause naming where an object's rows go, or
@@ -400,14 +400,14 @@ func indexDisableStatement(idx *Index, tableName string) string {
 func dataSpaceClause(ds DataSpace) string {
 	switch {
 	case ds.IsPartitionScheme && ds.PartitionColumn != "":
-		return fmt.Sprintf(" ON %s(%s)", quoteIdent(ds.Name), quoteIdent(ds.PartitionColumn))
+		return fmt.Sprintf(" ON %s(%s)", QuoteName(ds.Name), QuoteName(ds.PartitionColumn))
 	case ds.Name == "" || ds.IsDefaultFileGroup || ds.IsPartitionScheme:
 		// A partition scheme with no partitioning column is not a clause
 		// anything can be written from: emit nothing rather than DDL that
 		// cannot parse.
 		return ""
 	default:
-		return fmt.Sprintf(" ON %s", quoteIdent(ds.Name))
+		return fmt.Sprintf(" ON %s", QuoteName(ds.Name))
 	}
 }
 
@@ -442,11 +442,11 @@ func explicitDataSpaceClause(ds DataSpace) (string, error) {
 	case ds.Name == "":
 		return "", unsupportedf("the index has no data space to recreate it on")
 	case ds.IsPartitionScheme && ds.PartitionColumn == "":
-		return "", fmt.Errorf("partition scheme %s has no partitioning column", quoteIdent(ds.Name))
+		return "", fmt.Errorf("partition scheme %s has no partitioning column", QuoteName(ds.Name))
 	case ds.IsPartitionScheme:
-		return fmt.Sprintf(" ON %s(%s)", quoteIdent(ds.Name), quoteIdent(ds.PartitionColumn)), nil
+		return fmt.Sprintf(" ON %s(%s)", QuoteName(ds.Name), QuoteName(ds.PartitionColumn)), nil
 	default:
-		return fmt.Sprintf(" ON %s", quoteIdent(ds.Name)), nil
+		return fmt.Sprintf(" ON %s", QuoteName(ds.Name)), nil
 	}
 }
 

@@ -34,11 +34,11 @@ func liveSingleUserDB(t *testing.T, srv *Server, ctx context.Context, name strin
 	drop := func() {
 		srv.exec(context.Background(),
 			"IF DB_ID('"+name+"') IS NOT NULL BEGIN "+
-				"ALTER DATABASE "+quoteIdent(name)+" SET MULTI_USER; "+
-				"DROP DATABASE "+quoteIdent(name)+"; END")
+				"ALTER DATABASE "+QuoteName(name)+" SET MULTI_USER; "+
+				"DROP DATABASE "+QuoteName(name)+"; END")
 	}
 	drop()
-	if _, err := srv.exec(ctx, "CREATE DATABASE "+quoteIdent(name)); err != nil {
+	if _, err := srv.exec(ctx, "CREATE DATABASE "+QuoteName(name)); err != nil {
 		t.Fatalf("create %s: %v", name, err)
 	}
 	return drop
@@ -78,7 +78,7 @@ func TestLiveSingleUserForcedDropThatFailsLeavesTheDatabaseUsable(t *testing.T) 
 
 	const name, snap = "gossms_live_su_drop", "gossms_live_su_drop_snap"
 	dropSnap := func() {
-		srv.exec(context.Background(), "IF DB_ID('"+snap+"') IS NOT NULL DROP DATABASE "+quoteIdent(snap))
+		srv.exec(context.Background(), "IF DB_ID('"+snap+"') IS NOT NULL DROP DATABASE "+QuoteName(snap))
 	}
 	dropSnap()
 	drop := liveSingleUserDB(t, srv, ctx, name)
@@ -91,8 +91,8 @@ func TestLiveSingleUserForcedDropThatFailsLeavesTheDatabaseUsable(t *testing.T) 
 			"WHERE database_id = DB_ID(@p1) AND type = 0", name).Scan(&file); err != nil {
 		t.Fatalf("locate the data file: %v", err)
 	}
-	if _, err := srv.exec(ctx, "CREATE DATABASE "+quoteIdent(snap)+
-		" ON (NAME = "+quoteIdent(name)+", FILENAME = '"+escapeSingle(file)+"') AS SNAPSHOT OF "+quoteIdent(name)); err != nil {
+	if _, err := srv.exec(ctx, "CREATE DATABASE "+QuoteName(snap)+
+		" ON (NAME = "+QuoteName(name)+", FILENAME = '"+escapeSingle(file)+"') AS SNAPSHOT OF "+QuoteName(name)); err != nil {
 		t.Fatalf("create snapshot: %v", err)
 	}
 
@@ -129,7 +129,7 @@ func TestLiveSingleUserRepairSurvivesAnExpiredContext(t *testing.T) {
 	defer drop()
 
 	setSingle := func() {
-		if _, err := srv.exec(ctx, "ALTER DATABASE "+quoteIdent(name)+
+		if _, err := srv.exec(ctx, "ALTER DATABASE "+QuoteName(name)+
 			" SET SINGLE_USER WITH ROLLBACK IMMEDIATE"); err != nil {
 			t.Fatalf("set single user: %v", err)
 		}
@@ -144,7 +144,7 @@ func TestLiveSingleUserRepairSurvivesAnExpiredContext(t *testing.T) {
 	// First the pre-fix form, to show the context really is dead and that this
 	// is what used to strand the database.
 	setSingle()
-	if _, err := srv.exec(dead, "ALTER DATABASE "+quoteIdent(name)+" SET MULTI_USER"); err == nil {
+	if _, err := srv.exec(dead, "ALTER DATABASE "+QuoteName(name)+" SET MULTI_USER"); err == nil {
 		t.Fatal("the ALTER on a cancelled context succeeded; the A/B below proves nothing")
 	}
 	if got := userAccess(t, srv, ctx, name); got != "SINGLE_USER" {
@@ -173,8 +173,8 @@ func TestLiveSingleUserForcedRenameReleasesTheDatabase(t *testing.T) {
 	dropRenamed := func() {
 		srv.exec(context.Background(),
 			"IF DB_ID('"+renamed+"') IS NOT NULL BEGIN "+
-				"ALTER DATABASE "+quoteIdent(renamed)+" SET MULTI_USER; "+
-				"DROP DATABASE "+quoteIdent(renamed)+"; END")
+				"ALTER DATABASE "+QuoteName(renamed)+" SET MULTI_USER; "+
+				"DROP DATABASE "+QuoteName(renamed)+"; END")
 	}
 	dropRenamed()
 	drop := liveSingleUserDB(t, srv, ctx, name)
@@ -187,7 +187,7 @@ func TestLiveSingleUserForcedRenameReleasesTheDatabase(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open a second connection: %v", err)
 	}
-	if _, err := holder.ExecContext(ctx, "USE "+quoteIdent(name)+"; BEGIN TRANSACTION; SELECT 1"); err != nil {
+	if _, err := holder.ExecContext(ctx, "USE "+QuoteName(name)+"; BEGIN TRANSACTION; SELECT 1"); err != nil {
 		holder.Close()
 		t.Fatalf("occupy the database: %v", err)
 	}
@@ -224,7 +224,7 @@ func TestLiveSingleUserForcedWritesKeepTheAccessMode(t *testing.T) {
 	const name, renamed, taken, snap = "gossms_live_su_mode", "gossms_live_su_mode2",
 		"gossms_live_su_mode_taken", "gossms_live_su_mode_snap"
 	dropSnap := func() {
-		srv.exec(context.Background(), "IF DB_ID('"+snap+"') IS NOT NULL DROP DATABASE "+quoteIdent(snap))
+		srv.exec(context.Background(), "IF DB_ID('"+snap+"') IS NOT NULL DROP DATABASE "+QuoteName(snap))
 	}
 	dropRenamed := liveSingleUserDB(t, srv, ctx, renamed) // created only so the dropper exists
 	dropRenamed()
@@ -238,7 +238,7 @@ func TestLiveSingleUserForcedWritesKeepTheAccessMode(t *testing.T) {
 		drop := liveSingleUserDB(t, srv, ctx, name)
 		set := func(db string) {
 			t.Helper()
-			if _, err := srv.exec(ctx, "ALTER DATABASE "+quoteIdent(db)+" SET "+mode+" WITH ROLLBACK IMMEDIATE"); err != nil {
+			if _, err := srv.exec(ctx, "ALTER DATABASE "+QuoteName(db)+" SET "+mode+" WITH ROLLBACK IMMEDIATE"); err != nil {
 				t.Fatalf("set %s %s: %v", db, mode, err)
 			}
 		}
@@ -272,8 +272,8 @@ func TestLiveSingleUserForcedWritesKeepTheAccessMode(t *testing.T) {
 				"WHERE database_id = DB_ID(@p1) AND type = 0", name).Scan(&file); err != nil {
 			t.Fatalf("locate the data file: %v", err)
 		}
-		if _, err := srv.exec(ctx, "CREATE DATABASE "+quoteIdent(snap)+
-			" ON (NAME = "+quoteIdent(name)+", FILENAME = '"+escapeSingle(file)+"') AS SNAPSHOT OF "+quoteIdent(name)); err != nil {
+		if _, err := srv.exec(ctx, "CREATE DATABASE "+QuoteName(snap)+
+			" ON (NAME = "+QuoteName(name)+", FILENAME = '"+escapeSingle(file)+"') AS SNAPSHOT OF "+QuoteName(name)); err != nil {
 			t.Fatalf("create snapshot: %v", err)
 		}
 		if err := srv.DatabaseRef(name).Drop(ctx, TerminationRollbackImmediate); err == nil {
@@ -290,15 +290,15 @@ func TestLiveSingleUserForcedWritesKeepTheAccessMode(t *testing.T) {
 		if string(before) != mode {
 			t.Errorf("accessModeBefore read %s, want %s", before, mode)
 		}
-		if _, err := srv.exec(ctx, "ALTER DATABASE "+quoteIdent(name)+" SET SINGLE_USER WITH ROLLBACK IMMEDIATE"); err != nil {
+		if _, err := srv.exec(ctx, "ALTER DATABASE "+QuoteName(name)+" SET SINGLE_USER WITH ROLLBACK IMMEDIATE"); err != nil {
 			t.Fatalf("set single user: %v", err)
 		}
 		if err := srv.restoreAccessMode(dead, name, before); err != nil {
 			t.Fatalf("restoreAccessMode: %v", err)
 		}
 		check("the repair of a cut-short drop", name)
-		if _, err := srv.exec(ctx, "ALTER DATABASE "+quoteIdent(name)+" SET SINGLE_USER WITH ROLLBACK IMMEDIATE; "+
-			"ALTER DATABASE "+quoteIdent(name)+" MODIFY NAME = "+quoteIdent(renamed)); err != nil {
+		if _, err := srv.exec(ctx, "ALTER DATABASE "+QuoteName(name)+" SET SINGLE_USER WITH ROLLBACK IMMEDIATE; "+
+			"ALTER DATABASE "+QuoteName(name)+" MODIFY NAME = "+QuoteName(renamed)); err != nil {
 			t.Fatalf("stage a rename that happened: %v", err)
 		}
 		if err := srv.restoreAccessModeAfterRename(dead, name, renamed, before); err != nil {

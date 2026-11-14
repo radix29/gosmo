@@ -117,7 +117,7 @@ func (s *Server) LinkedServerCatalog(ctx context.Context, linked, database strin
 // database, not this one. Each column gets its own alias because OPENQUERY
 // refuses a result with duplicate column names.
 func linkedCatalogQuery(database string) string {
-	db := quoteIdent(database)
+	db := QuoteName(database)
 	return `SELECT o.object_id, s.name AS schema_name, o.name AS object_name, o.type,
        c.name AS column_name, tp.name AS type_name,
        c.max_length, c.precision, c.scale, c.is_nullable
@@ -132,7 +132,7 @@ ORDER  BY s.name, o.name, o.object_id, c.column_id`
 // openQuery wraps remote, a query for linked server linked, in OPENQUERY.
 // OPENQUERY takes only a literal — no variable or parameter — so the remote
 // text is embedded as one, and anything it names must already be quoted
-// (quoteIdent) before this quotes the whole of it again.
+// (QuoteName) before this quotes the whole of it again.
 func openQuery(linked, remote string) string {
-	return "SELECT * FROM OPENQUERY(" + quoteIdent(linked) + ", " + QuoteLiteral(remote) + ")"
+	return "SELECT * FROM OPENQUERY(" + QuoteName(linked) + ", " + QuoteLiteral(remote) + ")"
 }

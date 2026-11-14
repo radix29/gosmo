@@ -22,7 +22,7 @@ func previewFeaturesNote(cols []*Column) string {
 			continue
 		}
 		if col.DataType == DataTypeVector && strings.EqualFold(col.VectorBaseType, "float16") {
-			names = append(names, tsql.CommentSafe(quoteIdent(col.Name)))
+			names = append(names, tsql.CommentSafe(QuoteName(col.Name)))
 		}
 	}
 	return float16Note(names)
@@ -178,7 +178,7 @@ func referencingForeignKeyNote(fullName string, fks []referencingForeignKey, ver
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "-- This DROP fails with Msg 3726 while these foreign keys reference %s:\n", tsql.CommentSafe(fullName))
 	for _, fk := range fks {
-		fmt.Fprintf(&sb, "--   %s.%s (FOREIGN KEY)\n", tsql.CommentSafe(qualifiedName(fk.schema, fk.table)), tsql.CommentSafe(quoteIdent(fk.name)))
+		fmt.Fprintf(&sb, "--   %s.%s (FOREIGN KEY)\n", tsql.CommentSafe(qualifiedName(fk.schema, fk.table)), tsql.CommentSafe(QuoteName(fk.name)))
 	}
 	sb.WriteString("-- Drop them first, and recreate them after.\n")
 	if versioned {

@@ -14,8 +14,6 @@
 package gosmo
 
 import (
-	"database/sql"
-	"net/url"
 	"testing"
 )
 
@@ -138,15 +136,7 @@ func TestLiveDMVReads(t *testing.T) {
 			t.Fatalf("Statistics as sa: %v", err)
 		}
 
-		u, err := url.Parse(*liveDSN)
-		if err != nil {
-			t.Fatalf("parse DSN: %v", err)
-		}
-		u.User = url.UserPassword(login, pass)
-		ldb, err := sql.Open("sqlserver", u.String())
-		if err != nil {
-			t.Fatalf("open as %s: %v", login, err)
-		}
+		ldb := liveOpenAs(t, login, pass)
 		// The login must be gone from the server before DROP LOGIN runs.
 		defer ldb.Close()
 		lsrv := liveServer(t, ldb, ctx)

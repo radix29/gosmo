@@ -15,7 +15,7 @@ func (d *Database) SetRecoveryModel(ctx context.Context, model RecoveryModel) er
 		return invalidf("gosmo: set recovery model of %q: unrecognized recovery model %q", d.Name, model)
 	}
 	if _, err := d.server.exec(ctx,
-		fmt.Sprintf("ALTER DATABASE %s SET RECOVERY %s", quoteIdent(d.Name), model),
+		fmt.Sprintf("ALTER DATABASE %s SET RECOVERY %s", QuoteName(d.Name), model),
 	); err != nil {
 		return fmt.Errorf("gosmo: set recovery model of %q: %w", d.Name, err)
 	}
@@ -26,7 +26,7 @@ func (d *Database) SetRecoveryModel(ctx context.Context, model RecoveryModel) er
 // SetCompatibilityLevel changes the database compatibility level.
 func (d *Database) SetCompatibilityLevel(ctx context.Context, level CompatibilityLevel) error {
 	if _, err := d.server.exec(ctx,
-		fmt.Sprintf("ALTER DATABASE %s SET COMPATIBILITY_LEVEL = %d", quoteIdent(d.Name), level),
+		fmt.Sprintf("ALTER DATABASE %s SET COMPATIBILITY_LEVEL = %d", QuoteName(d.Name), level),
 	); err != nil {
 		return fmt.Errorf("gosmo: set compatibility level of %q: %w", d.Name, err)
 	}
@@ -79,7 +79,7 @@ func (d *Database) SetReadOnly(ctx context.Context, readOnly bool, term Terminat
 	}
 	d.server.releaseIdle(ctx)
 	if _, err := d.server.exec(ctx,
-		fmt.Sprintf("ALTER DATABASE %s SET %s%s", quoteIdent(d.Name), mode, with),
+		fmt.Sprintf("ALTER DATABASE %s SET %s%s", QuoteName(d.Name), mode, with),
 	); err != nil {
 		return fmt.Errorf("gosmo: set read-only %v on %q: %w", readOnly, d.Name, err)
 	}
@@ -131,7 +131,7 @@ func (d *Database) SetUserAccess(ctx context.Context, mode UserAccess) error {
 	if !userAccessModes[mode] {
 		return invalidf("gosmo: set user access on %q: unrecognized mode %q", d.Name, mode)
 	}
-	alter := fmt.Sprintf("ALTER DATABASE %s SET %s WITH ROLLBACK IMMEDIATE", quoteIdent(d.Name), mode)
+	alter := fmt.Sprintf("ALTER DATABASE %s SET %s WITH ROLLBACK IMMEDIATE", QuoteName(d.Name), mode)
 	d.server.releaseIdle(ctx)
 	for attempt := 1; ; attempt++ {
 		_, err := d.server.execShown(ctx, "SET DEADLOCK_PRIORITY HIGH;\n"+alter, alter)
@@ -191,7 +191,7 @@ func isUserAccessContention(err error) bool {
 // Server's pool logs in to moves the pool to master (see InitialDatabase).
 func (d *Database) SetOffline(ctx context.Context) error {
 	if _, err := d.server.exec(ctx,
-		fmt.Sprintf("ALTER DATABASE %s SET OFFLINE WITH ROLLBACK IMMEDIATE", quoteIdent(d.Name)),
+		fmt.Sprintf("ALTER DATABASE %s SET OFFLINE WITH ROLLBACK IMMEDIATE", QuoteName(d.Name)),
 	); err != nil {
 		return fmt.Errorf("gosmo: set %q offline: %w", d.Name, err)
 	}
@@ -203,7 +203,7 @@ func (d *Database) SetOffline(ctx context.Context) error {
 // SetOnline brings an offline database back online.
 func (d *Database) SetOnline(ctx context.Context) error {
 	if _, err := d.server.exec(ctx,
-		fmt.Sprintf("ALTER DATABASE %s SET ONLINE", quoteIdent(d.Name)),
+		fmt.Sprintf("ALTER DATABASE %s SET ONLINE", QuoteName(d.Name)),
 	); err != nil {
 		return fmt.Errorf("gosmo: set %q online: %w", d.Name, err)
 	}
@@ -224,7 +224,7 @@ func (d *Database) SetOnline(ctx context.Context) error {
 // show what is missing.
 func (d *Database) RecoverFromRestoring(ctx context.Context) error {
 	if _, err := d.server.exec(ctx,
-		fmt.Sprintf("RESTORE DATABASE %s WITH RECOVERY", quoteIdent(d.Name)),
+		fmt.Sprintf("RESTORE DATABASE %s WITH RECOVERY", QuoteName(d.Name)),
 	); err != nil {
 		return fmt.Errorf("gosmo: recover %q from restoring: %w", d.Name, err)
 	}

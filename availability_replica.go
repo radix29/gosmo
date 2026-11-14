@@ -309,7 +309,7 @@ func (r *AvailabilityReplica) modifyReplica(ctx context.Context, with string) er
 	}
 	_, err := r.server.exec(ctx, fmt.Sprintf(
 		"ALTER AVAILABILITY GROUP %s MODIFY REPLICA ON N'%s' WITH (%s)",
-		quoteIdent(r.GroupName), escapeSingle(r.ReplicaServerName), with))
+		QuoteName(r.GroupName), escapeSingle(r.ReplicaServerName), with))
 	return err
 }
 
@@ -515,7 +515,7 @@ func (ag *AvailabilityGroup) AddReplica(ctx context.Context, spec AvailabilityRe
 
 // removeReplicaClause builds the REMOVE REPLICA clause. The replica is named as
 // a string literal, not an identifier, which is why escapeSingle rather than
-// quoteIdent guards it — the same asymmetry as MODIFY REPLICA ON.
+// QuoteName guards it — the same asymmetry as MODIFY REPLICA ON.
 func removeReplicaClause(serverName string) string {
 	return fmt.Sprintf("REMOVE REPLICA ON N'%s'", escapeSingle(serverName))
 }
@@ -549,7 +549,7 @@ func (r *AvailabilityReplica) Drop(ctx context.Context) error {
 		return invalidf("gosmo: drop replica %q: replica did not come from AvailabilityGroup.Replicas", r.ReplicaServerName)
 	}
 	if _, err := r.server.exec(ctx, fmt.Sprintf("ALTER AVAILABILITY GROUP %s %s",
-		quoteIdent(r.GroupName), removeReplicaClause(r.ReplicaServerName))); err != nil {
+		QuoteName(r.GroupName), removeReplicaClause(r.ReplicaServerName))); err != nil {
 		return fmt.Errorf("gosmo: remove replica %q from availability group %q: %w", r.ReplicaServerName, r.GroupName, err)
 	}
 	return nil

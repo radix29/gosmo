@@ -27,7 +27,7 @@ import (
 // that was never created. DROP LOGIN has no IF EXISTS form.
 func dropLoginIfPresent(t *testing.T, s *Server, name string) {
 	t.Helper()
-	if _, err := s.db.Exec("IF SUSER_ID(N'" + escapeSingle(name) + "') IS NOT NULL DROP LOGIN " + quoteIdent(name)); err != nil {
+	if _, err := s.db.Exec("IF SUSER_ID(N'" + escapeSingle(name) + "') IS NOT NULL DROP LOGIN " + QuoteName(name)); err != nil {
 		t.Logf("cleanup of login %q: %v", name, err)
 	}
 }
@@ -86,7 +86,7 @@ func TestLiveScriptLoginRoundTripsTheSID(t *testing.T) {
 
 	// Drop it and rebuild it from its own script — the move the SID exists
 	// for, on the server it would really be done on.
-	if _, err := db.ExecContext(ctx, "DROP LOGIN "+quoteIdent(name)); err != nil {
+	if _, err := db.ExecContext(ctx, "DROP LOGIN "+QuoteName(name)); err != nil {
 		t.Fatalf("drop before replay: %v", err)
 	}
 	runScript(t, s, script)
@@ -128,7 +128,7 @@ func TestLiveScriptedLoginKeepsAUserMapped(t *testing.T) {
 	}
 	_, drop := liveScratchDB(t, db, ctx, dbName)
 	defer drop()
-	if _, err := db.ExecContext(ctx, "USE ["+dbName+"]; CREATE USER "+quoteIdent(login)+" FOR LOGIN "+quoteIdent(login)); err != nil {
+	if _, err := db.ExecContext(ctx, "USE ["+dbName+"]; CREATE USER "+QuoteName(login)+" FOR LOGIN "+QuoteName(login)); err != nil {
 		t.Fatalf("create the mapped user: %v", err)
 	}
 
@@ -158,7 +158,7 @@ func TestLiveScriptedLoginKeepsAUserMapped(t *testing.T) {
 	script := strings.ReplaceAll(buildLoginScript(l, opts),
 		"N'<password, sysname, >'", "N'Sc0pe!Test#2026'")
 
-	if _, err := db.ExecContext(ctx, "DROP LOGIN "+quoteIdent(login)); err != nil {
+	if _, err := db.ExecContext(ctx, "DROP LOGIN "+QuoteName(login)); err != nil {
 		t.Fatalf("drop login: %v", err)
 	}
 	if !orphaned() {

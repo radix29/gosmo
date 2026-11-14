@@ -134,9 +134,7 @@ func (s *Server) CreateBackupDevice(ctx context.Context, req CreateBackupDeviceR
 	if _, err := s.exec(ctx, stmt, string(devType), name, physicalName); err != nil {
 		return nil, fmt.Errorf("gosmo: create backup device %q: %w", name, err)
 	}
-	return createdObject(ctx, s.BackupDeviceRef(name), func() (*BackupDevice, error) {
-		return s.BackupDeviceByName(ctx, name)
-	})
+	return createdByName(ctx, s.BackupDeviceRef(name), s.BackupDeviceByName, name)
 }
 
 // DeviceFileMode says whether BackupDevice.Drop deletes the physical file

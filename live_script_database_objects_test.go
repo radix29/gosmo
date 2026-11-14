@@ -4,7 +4,6 @@ package gosmo
 
 import (
 	"context"
-	"database/sql"
 	"slices"
 	"strings"
 	"testing"
@@ -352,10 +351,7 @@ func TestLiveScriptDatabaseObjectsCascadeAsRestrictedLogin(t *testing.T) {
 		`GRANT SELECT ON SCHEMA::dbo TO [`+login+`]`,
 	)
 
-	pool, err := sql.Open("sqlserver", liveRestrictedDSN(t, login, pass))
-	if err != nil {
-		t.Fatalf("open as %s: %v", login, err)
-	}
+	pool := liveOpenAs(t, login, pass)
 	t.Cleanup(func() { pool.Close() })
 	srv, err := NewServer(ctx, pool)
 	if err != nil {
@@ -453,10 +449,7 @@ func TestLiveScriptDatabaseObjectsOrderWithoutDatabaseViewDefinition(t *testing.
 			liveExecIn(t, src, ctx, append([]string{`CREATE USER [` + c.login + `] FOR LOGIN [` + c.login + `]`}, c.grants...)...)
 			t.Cleanup(func() { src.exec(context.Background(), "DROP USER ["+c.login+"]") })
 
-			pool, err := sql.Open("sqlserver", liveRestrictedDSN(t, c.login, pass))
-			if err != nil {
-				t.Fatalf("open as %s: %v", c.login, err)
-			}
+			pool := liveOpenAs(t, c.login, pass)
 			t.Cleanup(func() { pool.Close() })
 			srv, err := NewServer(ctx, pool)
 			if err != nil {

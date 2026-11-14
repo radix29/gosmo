@@ -247,7 +247,7 @@ func (spec EventSessionDefinition) createStatement(sc xeScope) (string, error) {
 		return "", err
 	}
 	var sb strings.Builder
-	fmt.Fprintf(&sb, "CREATE EVENT SESSION %s %s", quoteIdent(spec.Name), sc.on)
+	fmt.Fprintf(&sb, "CREATE EVENT SESSION %s %s", QuoteName(spec.Name), sc.on)
 	for i, e := range spec.Events {
 		if i > 0 {
 			sb.WriteString(",")
@@ -302,7 +302,7 @@ func (es *EventSession) setState(ctx context.Context, start bool) error {
 	if start {
 		state = "START"
 	}
-	stmt := fmt.Sprintf("ALTER EVENT SESSION %s %s STATE = %s", quoteIdent(es.Name), es.scope().on, state)
+	stmt := fmt.Sprintf("ALTER EVENT SESSION %s %s STATE = %s", QuoteName(es.Name), es.scope().on, state)
 	if err := es.exec(ctx, stmt); err != nil {
 		return fmt.Errorf("gosmo: %s event session %q: %w", strings.ToLower(state), es.Name, err)
 	}
@@ -321,7 +321,7 @@ func (es *EventSession) AddTarget(ctx context.Context, t SessionTarget) error {
 	if err := checkFields("target "+t.QualifiedName(), t.Fields); err != nil {
 		return fmt.Errorf("gosmo: add target to event session %q: %w", es.Name, err)
 	}
-	stmt := fmt.Sprintf("ALTER EVENT SESSION %s %s\nADD TARGET %s", quoteIdent(es.Name), es.scope().on, t.clause())
+	stmt := fmt.Sprintf("ALTER EVENT SESSION %s %s\nADD TARGET %s", QuoteName(es.Name), es.scope().on, t.clause())
 	if err := es.exec(ctx, stmt); err != nil {
 		return fmt.Errorf("gosmo: add target %s to event session %q: %w", t.QualifiedName(), es.Name, err)
 	}
@@ -331,7 +331,7 @@ func (es *EventSession) AddTarget(ctx context.Context, t SessionTarget) error {
 
 // Drop deletes the session. A running session needs no stopping first.
 func (es *EventSession) Drop(ctx context.Context) error {
-	stmt := fmt.Sprintf("DROP EVENT SESSION %s %s", quoteIdent(es.Name), es.scope().on)
+	stmt := fmt.Sprintf("DROP EVENT SESSION %s %s", QuoteName(es.Name), es.scope().on)
 	if err := es.exec(ctx, stmt); err != nil {
 		return fmt.Errorf("gosmo: drop event session %q: %w", es.Name, err)
 	}
@@ -356,7 +356,7 @@ type eventSessionAlter struct {
 // Events are matched by package.name, targets likewise; a session cannot hold
 // two of either with one name.
 func (spec EventSessionDefinition) alterStatements(cur *EventSession) eventSessionAlter {
-	head := fmt.Sprintf("ALTER EVENT SESSION %s %s", quoteIdent(cur.Name), cur.scope().on)
+	head := fmt.Sprintf("ALTER EVENT SESSION %s %s", QuoteName(cur.Name), cur.scope().on)
 	var out eventSessionAlter
 
 	curEvents := map[string]SessionEvent{}
@@ -552,7 +552,7 @@ func (sc *Scripter) ScriptEventSession(ctx context.Context, name string) (string
 func buildEventSessionScript(es *EventSession, opts ScriptOptions) (string, error) {
 	sc := es.scope()
 	exists := fmt.Sprintf("SELECT 1 FROM %s WHERE name = N'%s'", sc.sessions, escapeSingle(es.Name))
-	drop := fmt.Sprintf("IF EXISTS (%s)\n    DROP EVENT SESSION %s %s;\nGO\n", exists, quoteIdent(es.Name), sc.on)
+	drop := fmt.Sprintf("IF EXISTS (%s)\n    DROP EVENT SESSION %s %s;\nGO\n", exists, QuoteName(es.Name), sc.on)
 	guard := fmt.Sprintf("IF NOT EXISTS (%s)\n", exists)
 	return opts.envelopeErr(drop, guard, func(sb *strings.Builder) error {
 		create, err := es.Definition().createStatement(sc)

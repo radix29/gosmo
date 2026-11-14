@@ -15,7 +15,6 @@ package gosmo
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
 	"reflect"
@@ -237,10 +236,7 @@ func TestLiveResourceGovernorInvisibleToALoginWithoutRights(t *testing.T) {
 	}
 	t.Cleanup(func() { db.ExecContext(context.Background(), "DROP LOGIN ["+liveRGLogin+"]") })
 
-	pool, err := sql.Open("sqlserver", liveRestrictedDSN(t, liveRGLogin, liveRGPassword))
-	if err != nil {
-		t.Fatalf("open as %s: %v", liveRGLogin, err)
-	}
+	pool := liveOpenAs(t, liveRGLogin, liveRGPassword)
 	t.Cleanup(func() { pool.Close() })
 	// Not NewServer: loadInfo's DMV half needs rights this login lacks. The
 	// zero major reads as newest, which is right for the 17 instance and

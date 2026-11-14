@@ -123,11 +123,11 @@ func renderCLRModule(m clrModule) string {
 			sb.WriteString("\nNOT FOR REPLICATION")
 		}
 	}
-	externalName := quoteIdent(m.assembly)
+	externalName := QuoteName(m.assembly)
 	if m.class != "" {
-		externalName += "." + quoteIdent(m.class)
+		externalName += "." + QuoteName(m.class)
 	}
-	externalName += "." + quoteIdent(m.method)
+	externalName += "." + QuoteName(m.method)
 	fmt.Fprintf(&sb, "\nAS EXTERNAL NAME %s;", externalName)
 	return sb.String()
 }
@@ -333,7 +333,7 @@ ORDER  BY oc.order_column_id`, objectID)
 		if desc {
 			dir = " DESC"
 		}
-		return quoteIdent(colName) + dir, err
+		return QuoteName(colName) + dir, err
 	})
 	return m, err
 }
@@ -344,7 +344,7 @@ ORDER  BY oc.order_column_id`, objectID)
 // follows (tableColumnDefinition). Without it a replayed string column takes
 // the database default.
 func clrTableColumn(name, typ, collation, dbCollation string) string {
-	s := quoteIdent(name) + " " + typ
+	s := QuoteName(name) + " " + typ
 	if collation != "" && dbCollation != "" && !strings.EqualFold(collation, dbCollation) {
 		s += " COLLATE " + collation
 	}
@@ -366,7 +366,7 @@ WHERE  tr.parent_class = 0 AND tr.name = @p1`, name)
 	if err != nil {
 		return "", err
 	}
-	m := clrModule{keyword: "TRIGGER", name: quoteIdent(name), on: "DATABASE"}
+	m := clrModule{keyword: "TRIGGER", name: QuoteName(name), on: "DATABASE"}
 	if err := clrMethod(ctx, d, &m, objectID, "sys.assembly_modules", "sys.assemblies", "USER_NAME"); err != nil {
 		return "", err
 	}
@@ -392,7 +392,7 @@ WHERE  tr.name = @p1`, name)
 	if err != nil {
 		return "", err
 	}
-	m := clrModule{keyword: "TRIGGER", name: quoteIdent(name), on: "ALL SERVER"}
+	m := clrModule{keyword: "TRIGGER", name: QuoteName(name), on: "ALL SERVER"}
 	if err := clrMethod(ctx, s, &m, objectID, "sys.server_assembly_modules", "master.sys.assemblies", "SUSER_NAME"); err != nil {
 		return "", err
 	}

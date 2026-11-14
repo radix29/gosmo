@@ -629,7 +629,7 @@ func TestTransferCaseOnlyDifferenceAsksTheServer(t *testing.T) {
 }
 
 // TestDropColumnRefusesAnEmptyName is the same guard DropColumn needs:
-// quoteIdent("") is "[]", which the server rejects naming a column the caller
+// QuoteName("") is "[]", which the server rejects naming a column the caller
 // never asked for.
 func TestDropColumnRefusesAnEmptyName(t *testing.T) {
 	d := &Database{server: &Server{}, Name: "AppDB"}
