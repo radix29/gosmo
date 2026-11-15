@@ -64,6 +64,37 @@ func (d *Database) prefetchTables(ctx context.Context, tables []*Table, withStat
 	}
 	idxCols := map[int]map[int][]IndexColumn{}
 
+	withEdges := d.atLeast(SQLServer2019)
+	q := tablePrefetchQuery(d, probe, withStats, withEdges)
+
+	rows, err := d.query(ctx, q)
+	if err != nil {
+		return nil, fmt.Errorf("gosmo: read table scripts for %q: %w", d.Name, err)
+	}
+	defer rows.Close()
+
+	reads := p.resultReaders(rows, byID, idxCols, withStats, withEdges)
+	for i, read := range reads {
+		if i > 0 && !rows.NextResultSet() {
+			err := rows.Err()
+			if err == nil {
+				err = fmt.Errorf("result set %d of %d is missing", i+1, len(reads))
+			}
+			return nil, fmt.Errorf("gosmo: read table scripts for %q: %w", d.Name, err)
+		}
+		if err := read(); err != nil {
+			return nil, fmt.Errorf("gosmo: read table scripts for %q: %w", d.Name, err)
+		}
+	}
+	for id, idxs := range p.indexes {
+		distributeIndexColumns(idxs, idxCols[id])
+	}
+	return p, nil
+}
+
+// tablePrefetchQuery is prefetchTables's batch: one SELECT per result set, in
+// the order resultReaders reads them.
+func tablePrefetchQuery(d *Database, probe *Table, withStats, withEdges bool) string {
 	q := probe.scriptOptionsSelectWith(", t.object_id", allTables) + ";\n" +
 		d.columnSelectWith(", c.object_id") + "\nWHERE  c.object_id " + allTables + "\nORDER  BY c.column_id;\n" +
 		probe.indexListSelectWith(", i.object_id", allTables) + "\nORDER  BY i.index_id;\n" +
@@ -74,17 +105,16 @@ func (d *Database) prefetchTables(ctx context.Context, tables []*Table, withStat
 	if withStats {
 		q += ";\n" + userStatisticsSelect(allTables)
 	}
-	withEdges := d.atLeast(SQLServer2019)
 	if withEdges {
 		q += ";\n" + edgeConstraintSelect(", ec.parent_object_id", allTables)
 	}
+	return q
+}
 
-	rows, err := d.query(ctx, q)
-	if err != nil {
-		return nil, fmt.Errorf("gosmo: read table scripts for %q: %w", d.Name, err)
-	}
-	defer rows.Close()
-
+// resultReaders reads each of the batch's result sets into p, in
+// tablePrefetchQuery's order. Index columns go to idxCols, to be distributed
+// once the indexes are read.
+func (p *tablePrefetch) resultReaders(rows *dbRows, byID map[int]*Table, idxCols map[int]map[int][]IndexColumn, withStats, withEdges bool) []func() error {
 	reads := []func() error{
 		func() error {
 			for rows.Next() {
@@ -200,20 +230,5 @@ func (d *Database) prefetchTables(ctx context.Context, tables []*Table, withStat
 			return rows.Err()
 		})
 	}
-	for i, read := range reads {
-		if i > 0 && !rows.NextResultSet() {
-			err := rows.Err()
-			if err == nil {
-				err = fmt.Errorf("result set %d of %d is missing", i+1, len(reads))
-			}
-			return nil, fmt.Errorf("gosmo: read table scripts for %q: %w", d.Name, err)
-		}
-		if err := read(); err != nil {
-			return nil, fmt.Errorf("gosmo: read table scripts for %q: %w", d.Name, err)
-		}
-	}
-	for id, idxs := range p.indexes {
-		distributeIndexColumns(idxs, idxCols[id])
-	}
-	return p, nil
+	return reads
 }

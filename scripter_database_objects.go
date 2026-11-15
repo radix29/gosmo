@@ -164,39 +164,114 @@ func (sc *Scripter) ScriptDatabaseObjectList(ctx context.Context, o ObjectScript
 	if sc.opts.verb() != ScriptCreate {
 		return nil, invalidf("gosmo: script database objects: only the CREATE verb is supported")
 	}
-	d := sc.db
 	opts := sc.opts
 	opts.DeferReferences = true
-	s := &Scripter{db: d, opts: opts}
-	want := func(k ScriptedKind) bool { return o.Kinds == nil || slices.Contains(o.Kinds, k) }
+	b := &objectListBuild{
+		ctx: ctx, o: o, d: sc.db,
+		s:     &Scripter{db: sc.db, opts: opts},
+		items: map[string]orderedObject{},
+	}
 
 	// Every list is read first and every object queued in script order, so
 	// the total is known before the first object is scripted (Progress).
-	var queue []pendingObject
-	queue1 := func(obj ScriptedObject, gen func() (string, error)) {
-		queue = append(queue, pendingObject{obj: obj, gen: gen})
+	if err := b.queuePrincipalsAndPartitioning(); err != nil {
+		return nil, err
 	}
-	sqlOf := func(sql string) func() (string, error) { return func() (string, error) { return sql, nil } }
+	if err := b.collectOrderedObjects(); err != nil {
+		return nil, err
+	}
+	statWarnings := hiddenStatisticWarnings(b.s.tables, b.scriptedTables)
+	res, err := b.queueOrderedObjects()
+	if err != nil {
+		return nil, err
+	}
+	if err := b.queueTableDependents(); err != nil {
+		return nil, err
+	}
+	if err := b.queuePermissionsAndDatabaseTriggers(); err != nil {
+		return nil, err
+	}
 
-	// 1. principals and schemas, partitioning.
-	var sec *databaseSecurity
-	if o.IncludePermissions && (want(ScriptedPrincipals) || want(ScriptedPermissions)) {
+	var lateWarnings []string
+	if res.Objects, lateWarnings, err = scriptQueue(ctx, b.queue, b.missing, o.Progress); err != nil {
+		return nil, err
+	}
+	res.Warnings = append(res.Warnings, lateWarnings...)
+	res.Warnings = append(res.Warnings, statWarnings...)
+	return res, nil
+}
+
+// objectListBuild is one ScriptDatabaseObjectList call's state, filled by its
+// stages in script order: each stage reads its lists and appends to queue.
+type objectListBuild struct {
+	ctx context.Context
+	o   ObjectScriptOptions
+	d   *Database
+	// s is the call's own Scripter: the caller's options with
+	// DeferReferences, and the table prefetch.
+	s     *Scripter
+	queue []pendingObject
+
+	// sec is the database's principals and permissions, read only with
+	// IncludePermissions.
+	sec *databaseSecurity
+
+	// items and nodes are the dependency-ordered objects of stage 2, by
+	// objectKey and in reading order.
+	items map[string]orderedObject
+	nodes []orderNode
+	// byParent is the objects a parent table's CREATE creates (a history
+	// table, a ledger view), true where the parent is a dropped ledger table.
+	byParent       map[string]bool
+	scriptedTables []*Table
+
+	// missing is every object the script leaves out, by objectKey: the
+	// dropped ledger objects nothing creates, then whatever scriptQueue notes.
+	missing map[string]bool
+}
+
+// orderedObject is one dependency-ordered object of stage 2.
+type orderedObject struct {
+	node orderNode
+	kind ScriptedKind
+	gen  func() (string, error)
+	// late marks an object whose CREATE does not resolve the objects
+	// its body names (deferred name resolution): a procedure, a
+	// multi-statement or scalar function, a synonym.
+	late bool
+}
+
+func (b *objectListBuild) want(k ScriptedKind) bool {
+	return b.o.Kinds == nil || slices.Contains(b.o.Kinds, k)
+}
+
+func (b *objectListBuild) queue1(obj ScriptedObject, gen func() (string, error)) {
+	b.queue = append(b.queue, pendingObject{obj: obj, gen: gen})
+}
+
+func sqlOf(sql string) func() (string, error) { return func() (string, error) { return sql, nil } }
+
+// queuePrincipalsAndPartitioning is stage 1: principals and schemas,
+// partitioning.
+func (b *objectListBuild) queuePrincipalsAndPartitioning() error {
+	ctx, d, s := b.ctx, b.d, b.s
+	if b.o.IncludePermissions && (b.want(ScriptedPrincipals) || b.want(ScriptedPermissions)) {
 		var err error
-		if sec, err = s.readDatabaseSecurity(ctx); err != nil {
-			return nil, err
+		if b.sec, err = s.readDatabaseSecurity(ctx); err != nil {
+			return err
 		}
-		head, _ := buildDatabaseSecurityParts(d.Name, sec, nil)
-		if want(ScriptedPrincipals) {
-			queue1(ScriptedObject{Kind: ScriptedPrincipals, Name: d.Name}, sqlOf(head))
+		head, _ := buildDatabaseSecurityParts(d.Name, b.sec, nil)
+		if b.want(ScriptedPrincipals) {
+			b.queue1(ScriptedObject{Kind: ScriptedPrincipals, Name: d.Name}, sqlOf(head))
 		}
 	}
 	// The principals block creates the schemas with their owners; without it
 	// (no IncludePermissions, or ScriptedPrincipals excluded by Kinds) they
 	// are created bare, under dbo.
-	if (sec == nil || !want(ScriptedPrincipals)) && want(ScriptedSchema) {
+	if (b.sec == nil || !b.want(ScriptedPrincipals)) && b.want(ScriptedSchema) {
 		schemas, err := d.Schemas(ctx)
 		if err != nil {
-			return nil, err
+			return err
 		}
 		for _, sch := range schemas {
 			if sch.ID <= 4 || sch.ID >= 16384 {
@@ -206,132 +281,124 @@ func (sc *Scripter) ScriptDatabaseObjectList(ctx context.Context, o ObjectScript
 			c.Owner = "dbo"
 			opts := s.opts
 			opts.IncludeIfNotExists = true
-			queue1(ScriptedObject{Kind: ScriptedSchema, Name: sch.Name}, sqlOf(buildSchemaScript(&c, opts)))
+			b.queue1(ScriptedObject{Kind: ScriptedSchema, Name: sch.Name}, sqlOf(buildSchemaScript(&c, opts)))
 		}
 	}
-	if want(ScriptedPartitionFunction) {
+	if b.want(ScriptedPartitionFunction) {
 		pfs, err := d.PartitionFunctions(ctx)
 		if err != nil {
-			return nil, err
+			return err
 		}
 		for _, pf := range pfs {
-			queue1(ScriptedObject{Kind: ScriptedPartitionFunction, Name: pf.Name},
+			b.queue1(ScriptedObject{Kind: ScriptedPartitionFunction, Name: pf.Name},
 				func() (string, error) { return s.ScriptPartitionFunction(ctx, pf.Name) })
 		}
 	}
-	if want(ScriptedPartitionScheme) {
+	if b.want(ScriptedPartitionScheme) {
 		pss, err := d.PartitionSchemes(ctx)
 		if err != nil {
-			return nil, err
+			return err
 		}
 		for _, ps := range pss {
-			queue1(ScriptedObject{Kind: ScriptedPartitionScheme, Name: ps.Name},
+			b.queue1(ScriptedObject{Kind: ScriptedPartitionScheme, Name: ps.Name},
 				func() (string, error) { return s.ScriptPartitionScheme(ctx, ps.Name) })
 		}
 	}
+	return nil
+}
 
-	// 2. the dependency-ordered objects.
-	type item struct {
-		node orderNode
-		kind ScriptedKind
-		gen  func() (string, error)
-		// late marks an object whose CREATE does not resolve the objects
-		// its body names (deferred name resolution): a procedure, a
-		// multi-statement or scalar function, a synonym.
-		late bool
-	}
-	items := map[string]item{}
-	var nodes []orderNode
-	put := func(prefix byte, rank int, kind ScriptedKind, schema, name string, gen func() (string, error)) {
-		n := orderNode{key: objectKey(prefix, schema, name), rank: rank, schema: schema, name: name}
-		nodes = append(nodes, n)
-		late := kind == ScriptedProcedure || kind == ScriptedSynonym
-		items[n.key] = item{n, kind, gen, late}
-	}
+func (b *objectListBuild) put(prefix byte, rank int, kind ScriptedKind, schema, name string, gen func() (string, error)) {
+	n := orderNode{key: objectKey(prefix, schema, name), rank: rank, schema: schema, name: name}
+	b.nodes = append(b.nodes, n)
+	late := kind == ScriptedProcedure || kind == ScriptedSynonym
+	b.items[n.key] = orderedObject{n, kind, gen, late}
+}
+
+// collectOrderedObjects reads stage 2's objects into items and nodes, and
+// prefetches the tables among them.
+func (b *objectListBuild) collectOrderedObjects() error {
+	ctx, d, s := b.ctx, b.d, b.s
 	xmls, err := d.XMLSchemaCollections(ctx)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	for _, x := range xmls {
-		put('x', 0, ScriptedXMLSchemaCollection, x.Schema, x.Name, func() (string, error) { return s.ScriptXMLSchemaCollection(ctx, x.Schema, x.Name) })
+		b.put('x', 0, ScriptedXMLSchemaCollection, x.Schema, x.Name, func() (string, error) { return s.ScriptXMLSchemaCollection(ctx, x.Schema, x.Name) })
 	}
 	rules, err := d.Rules(ctx)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	for _, r := range rules {
-		put('o', 0, ScriptedRule, r.Schema, r.Name, func() (string, error) { return s.ScriptRule(ctx, r.Schema, r.Name) })
+		b.put('o', 0, ScriptedRule, r.Schema, r.Name, func() (string, error) { return s.ScriptRule(ctx, r.Schema, r.Name) })
 	}
 	defaults, err := d.Defaults(ctx)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	for _, df := range defaults {
-		put('o', 0, ScriptedDefault, df.Schema, df.Name, func() (string, error) { return s.ScriptDefault(ctx, df.Schema, df.Name) })
+		b.put('o', 0, ScriptedDefault, df.Schema, df.Name, func() (string, error) { return s.ScriptDefault(ctx, df.Schema, df.Name) })
 	}
 	types, err := d.UserDefinedDataTypes(ctx)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	for _, t := range types {
-		put('t', 1, ScriptedType, t.Schema, t.Name, func() (string, error) { return s.ScriptUserDefinedDataType(ctx, t.Schema, t.Name) })
+		b.put('t', 1, ScriptedType, t.Schema, t.Name, func() (string, error) { return s.ScriptUserDefinedDataType(ctx, t.Schema, t.Name) })
 	}
 	ttypes, err := d.UserDefinedTableTypes(ctx)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	for _, t := range ttypes {
-		put('t', 2, ScriptedTableType, t.Schema, t.Name, func() (string, error) { return s.ScriptUserDefinedTableType(ctx, t.Schema, t.Name) })
+		b.put('t', 2, ScriptedTableType, t.Schema, t.Name, func() (string, error) { return s.ScriptUserDefinedTableType(ctx, t.Schema, t.Name) })
 	}
 	seqs, err := d.Sequences(ctx)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	for _, q := range seqs {
-		put('o', 3, ScriptedSequence, q.Schema, q.Name, func() (string, error) { return s.ScriptSequence(ctx, q.Schema, q.Name) })
+		b.put('o', 3, ScriptedSequence, q.Schema, q.Name, func() (string, error) { return s.ScriptSequence(ctx, q.Schema, q.Name) })
 	}
-	byParent, err := d.createdByParent(ctx)
-	if err != nil {
-		return nil, err
+	if b.byParent, err = d.createdByParent(ctx); err != nil {
+		return err
 	}
 	tables, err := d.Tables(ctx, TableQuery{})
 	if err != nil {
-		return nil, err
+		return err
 	}
-	var scriptedTables []*Table
 	for _, t := range tables {
-		if _, ok := byParent[objectKey('o', t.Schema, t.Name)]; ok {
+		if _, ok := b.byParent[objectKey('o', t.Schema, t.Name)]; ok {
 			continue
 		}
-		scriptedTables = append(scriptedTables, t)
-		put('o', 4, ScriptedTable, t.Schema, t.Name, func() (string, error) { return s.scriptTable(ctx, t) })
+		b.scriptedTables = append(b.scriptedTables, t)
+		b.put('o', 4, ScriptedTable, t.Schema, t.Name, func() (string, error) { return s.scriptTable(ctx, t) })
 	}
-	if s.tables, err = d.prefetchTables(ctx, scriptedTables, s.opts.Statistics && s.opts.verb() != ScriptDrop); err != nil {
-		return nil, err
+	if s.tables, err = d.prefetchTables(ctx, b.scriptedTables, s.opts.Statistics && s.opts.verb() != ScriptDrop); err != nil {
+		return err
 	}
-	statWarnings := hiddenStatisticWarnings(s.tables, scriptedTables)
 	funcs, err := d.UserDefinedFunctions(ctx, ObjectFilter{})
 	if err != nil {
-		return nil, err
+		return err
 	}
 	for _, f := range funcs {
-		put('o', 5, ScriptedFunction, f.Schema, f.Name, func() (string, error) { return s.ScriptFunction(ctx, f.Schema, f.Name) })
+		b.put('o', 5, ScriptedFunction, f.Schema, f.Name, func() (string, error) { return s.ScriptFunction(ctx, f.Schema, f.Name) })
 		if f.FuncType != FunctionTypeInlineTable {
 			// An inline function's SELECT is compiled by its CREATE, like
 			// a view's; the other forms' bodies resolve when they run.
 			k := objectKey('o', f.Schema, f.Name)
-			it := items[k]
+			it := b.items[k]
 			it.late = true
-			items[k] = it
+			b.items[k] = it
 		}
 	}
 	views, err := d.Views(ctx, ObjectFilter{})
 	if err != nil {
-		return nil, err
+		return err
 	}
 	for _, v := range views {
 		gen := func() (string, error) { return s.ScriptView(ctx, v.Schema, v.Name) }
-		switch dropped, ok := byParent[objectKey('o', v.Schema, v.Name)]; {
+		switch dropped, ok := b.byParent[objectKey('o', v.Schema, v.Name)]; {
 		case ok && dropped:
 			// Its dropped ledger table gets a refusal note; a CREATE VIEW
 			// would select from a table the replay never creates.
@@ -341,24 +408,31 @@ func (sc *Scripter) ScriptDatabaseObjectList(ctx context.Context, o ObjectScript
 		case ok:
 			continue
 		}
-		put('o', 6, ScriptedView, v.Schema, v.Name, gen)
+		b.put('o', 6, ScriptedView, v.Schema, v.Name, gen)
 	}
 	procs, err := d.StoredProcedures(ctx, ObjectFilter{})
 	if err != nil {
-		return nil, err
+		return err
 	}
 	for _, p := range procs {
-		put('o', 7, ScriptedProcedure, p.Schema, p.Name, func() (string, error) { return s.ScriptStoredProcedure(ctx, p.Schema, p.Name) })
+		b.put('o', 7, ScriptedProcedure, p.Schema, p.Name, func() (string, error) { return s.ScriptStoredProcedure(ctx, p.Schema, p.Name) })
 	}
 	syns, err := d.Synonyms(ctx)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	for _, y := range syns {
-		put('o', 8, ScriptedSynonym, y.Schema, y.Name, func() (string, error) { return s.ScriptSynonym(ctx, y.Schema, y.Name) })
+		b.put('o', 8, ScriptedSynonym, y.Schema, y.Name, func() (string, error) { return s.ScriptSynonym(ctx, y.Schema, y.Name) })
 	}
+	return nil
+}
 
-	edges, sourceWarning, err := readOrderEdges(ctx,
+// queueOrderedObjects is the rest of stage 2: read the dependency edges, sort
+// items by them, and queue each with what its creation needs. The result
+// carries the ordering's warnings.
+func (b *objectListBuild) queueOrderedObjects() (*DatabaseObjectScript, error) {
+	d := b.d
+	edges, sourceWarning, err := readOrderEdges(b.ctx,
 		func(ctx context.Context) (bool, error) { return d.HasPermission(ctx, "VIEW DEFINITION") },
 		func(ctx context.Context) ([]orderEdge, error) {
 			return d.dependencyOrderEdges(ctx, expressionDependencyRefs)
@@ -369,7 +443,7 @@ func (sc *Scripter) ScriptDatabaseObjectList(ctx context.Context, o ObjectScript
 	if err != nil {
 		return nil, err
 	}
-	order, warnings, err := orderObjects(nodes, edges)
+	order, warnings, err := orderObjects(b.nodes, edges)
 	if err != nil {
 		return nil, err
 	}
@@ -383,7 +457,7 @@ func (sc *Scripter) ScriptDatabaseObjectList(ctx context.Context, o ObjectScript
 	// object's other references are only warned about.
 	needs, lateRefs := map[string][]string{}, map[string][]string{}
 	for _, e := range edges {
-		it, ok := items[e.from]
+		it, ok := b.items[e.from]
 		if !ok || e.from == e.to {
 			continue
 		}
@@ -394,25 +468,29 @@ func (sc *Scripter) ScriptDatabaseObjectList(ctx context.Context, o ObjectScript
 		}
 	}
 	for _, n := range order {
-		it := items[n.key]
-		if want(it.kind) {
-			queue = append(queue, pendingObject{obj: ScriptedObject{Kind: it.kind, Schema: n.schema, Name: n.name},
+		it := b.items[n.key]
+		if b.want(it.kind) {
+			b.queue = append(b.queue, pendingObject{obj: ScriptedObject{Kind: it.kind, Schema: n.schema, Name: n.name},
 				gen: it.gen, key: n.key, needs: needs[n.key], late: lateRefs[n.key]})
 		}
 	}
+	return res, nil
+}
 
-	// 3. what needs every table: foreign keys, edge constraints, then DML
-	// triggers. The keys and edge constraints come from the table prefetch:
-	// a ScriptForeignKey each re-read the table and its keys, 1 + 2×keys
-	// round trips per table.
-	if want(ScriptedForeignKey) {
-		for _, t := range scriptedTables {
+// queueTableDependents is stage 3: what needs every table — foreign keys,
+// edge constraints, then DML triggers. The keys and edge constraints come
+// from the table prefetch: a ScriptForeignKey each re-read the table and its
+// keys, 1 + 2×keys round trips per table.
+func (b *objectListBuild) queueTableDependents() error {
+	ctx, s := b.ctx, b.s
+	if b.want(ScriptedForeignKey) {
+		for _, t := range b.scriptedTables {
 			fks, err := s.tableForeignKeys(ctx, t)
 			if err != nil {
-				return nil, err
+				return err
 			}
 			for _, fk := range fks {
-				queue = append(queue, pendingObject{
+				b.queue = append(b.queue, pendingObject{
 					obj:   ScriptedObject{Kind: ScriptedForeignKey, Schema: t.Schema, Name: fk.Name, Table: t.Name},
 					gen:   func() (string, error) { return s.scriptTableForeignKey(ctx, t, fk) },
 					key:   objectKey('o', t.Schema, fk.Name),
@@ -421,21 +499,21 @@ func (sc *Scripter) ScriptDatabaseObjectList(ctx context.Context, o ObjectScript
 			}
 		}
 	}
-	if want(ScriptedEdgeConstraint) {
-		for _, t := range scriptedTables {
+	if b.want(ScriptedEdgeConstraint) {
+		for _, t := range b.scriptedTables {
 			if !t.IsEdge {
 				continue
 			}
 			ecs, err := s.tableEdgeConstraints(ctx, t)
 			if err != nil {
-				return nil, err
+				return err
 			}
 			for _, ec := range ecs {
 				ecNeeds := []string{objectKey('o', t.Schema, t.Name)}
 				for _, c := range ec.Clauses {
 					ecNeeds = append(ecNeeds, objectKey('o', c.FromSchema, c.FromTable), objectKey('o', c.ToSchema, c.ToTable))
 				}
-				queue = append(queue, pendingObject{
+				b.queue = append(b.queue, pendingObject{
 					obj: ScriptedObject{Kind: ScriptedEdgeConstraint, Schema: t.Schema, Name: ec.Name, Table: t.Name},
 					// No extended properties: an edge constraint cannot
 					// carry one (see withTableExtendedProperties).
@@ -446,13 +524,13 @@ func (sc *Scripter) ScriptDatabaseObjectList(ctx context.Context, o ObjectScript
 			}
 		}
 	}
-	if want(ScriptedTrigger) {
-		trs, err := d.Triggers(ctx)
+	if b.want(ScriptedTrigger) {
+		trs, err := b.d.Triggers(ctx)
 		if err != nil {
-			return nil, err
+			return err
 		}
 		for _, tr := range trs {
-			queue = append(queue, pendingObject{
+			b.queue = append(b.queue, pendingObject{
 				obj:   ScriptedObject{Kind: ScriptedTrigger, Schema: tr.Schema, Name: tr.Name, Table: tr.TableName},
 				gen:   func() (string, error) { return s.ScriptTrigger(ctx, tr.Schema, tr.Name) },
 				key:   objectKey('o', tr.Schema, tr.Name),
@@ -460,26 +538,31 @@ func (sc *Scripter) ScriptDatabaseObjectList(ctx context.Context, o ObjectScript
 			})
 		}
 	}
+	return nil
+}
 
-	// missing is every object the script leaves out, by objectKey: the
-	// dropped ledger objects nothing creates, then whatever scriptQueue notes.
-	// listed is every one it lists, and what their CREATE TABLEs create.
-	missing, listed := map[string]bool{}, make(map[string]bool, len(items)+len(byParent))
-	for k, dropped := range byParent {
+// queuePermissionsAndDatabaseTriggers is stages 4 and 5, and sets missing.
+func (b *objectListBuild) queuePermissionsAndDatabaseTriggers() error {
+	ctx, d, s := b.ctx, b.d, b.s
+	// listed is every object the script lists, and what their CREATE TABLEs
+	// create.
+	missing, listed := map[string]bool{}, make(map[string]bool, len(b.items)+len(b.byParent))
+	for k, dropped := range b.byParent {
 		listed[k] = true
 		if dropped {
 			missing[k] = true
 		}
 	}
-	for k := range items {
+	for k := range b.items {
 		listed[k] = true
 	}
+	b.missing = missing
 
 	// 4. permissions, built at their turn: a GRANT on a securable the script
 	// does not create would fail the replay (Msg 15151), so it becomes a
 	// comment.
-	if sec != nil && want(ScriptedPermissions) {
-		queue1(ScriptedObject{Kind: ScriptedPermissions, Name: d.Name}, func() (string, error) {
+	if sec := b.sec; sec != nil && b.want(ScriptedPermissions) {
+		b.queue1(ScriptedObject{Kind: ScriptedPermissions, Name: d.Name}, func() (string, error) {
 			_, tail := buildDatabaseSecurityParts(d.Name, sec, &grantScope{listed: listed, missing: missing})
 			return tail, nil
 		})
@@ -489,24 +572,17 @@ func (sc *Scripter) ScriptDatabaseObjectList(ctx context.Context, o ObjectScript
 	// events, so a trigger created before the permissions would fire on each
 	// of them in the replay (a "no DDL" ROLLBACK guard aborts the first, Msg
 	// 3609; an audit trigger logs them as if someone had run them).
-	if want(ScriptedDatabaseTrigger) {
+	if b.want(ScriptedDatabaseTrigger) {
 		trs, err := d.DatabaseTriggers(ctx)
 		if err != nil {
-			return nil, err
+			return err
 		}
 		for _, tr := range trs {
-			queue1(ScriptedObject{Kind: ScriptedDatabaseTrigger, Name: tr.Name},
+			b.queue1(ScriptedObject{Kind: ScriptedDatabaseTrigger, Name: tr.Name},
 				func() (string, error) { return s.ScriptDatabaseTrigger(ctx, tr.Name) })
 		}
 	}
-
-	var lateWarnings []string
-	if res.Objects, lateWarnings, err = scriptQueue(ctx, queue, missing, o.Progress); err != nil {
-		return nil, err
-	}
-	res.Warnings = append(res.Warnings, lateWarnings...)
-	res.Warnings = append(res.Warnings, statWarnings...)
-	return res, nil
+	return nil
 }
 
 // hiddenStatisticWarnings is a Warning for each prefetched statistic whose
