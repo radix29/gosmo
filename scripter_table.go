@@ -558,10 +558,11 @@ func columnBindings(cols []*Column, fullName string) string {
 // disabled index.
 func writeTableDependents(sb *strings.Builder, indexes []*Index, inline map[string]bool,
 	p tableScriptParts, fullName string, opts ScriptOptions) {
-	// Fabric primary keys must follow CREATE TABLE and are not enforced.
-	// SQL Server's primary key is inline. A unique *constraint* is backed by
-	// an index in sys.indexes but is not created with CREATE INDEX — it belongs to the
-	// table, and scripting it as an index leaves the constraint missing.
+	// Non-PK indexes. A unique *constraint* is backed by an index in
+	// sys.indexes but is not created with CREATE INDEX — it belongs to the
+	// table, and scripting it as an index leaves the constraint missing. On
+	// SQL Server the primary key is inline in the CREATE TABLE; Fabric DW
+	// takes it only as a NOT ENFORCED ALTER TABLE, so there it is added here.
 	//
 	// A secondary XML index is built over its primary, which must exist
 	// first, so the secondaries go last whatever their index IDs say.

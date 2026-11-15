@@ -314,7 +314,7 @@ func TestBuildTableScriptFabricPrimaryKey(t *testing.T) {
 			opts := DefaultScriptOptions()
 			opts.Verb, opts.IncludeIfNotExists = tc.verb, tc.guard
 			got := buildTableScript("dbo", "FactSale", "SampleDW1", p, opts)
-			const key = "ALTER TABLE [dbo].[FactSale]\n    ADD CONSTRAINT [PK_FactSale] PRIMARY KEY NONCLUSTERED ([SaleKey] ASC) NOT ENFORCED;\nGO\n"
+			const key = "ALTER TABLE [dbo].[FactSale]\n    ADD CONSTRAINT [PK_FactSale] PRIMARY KEY NONCLUSTERED ([SaleKey]) NOT ENFORCED;\nGO\n"
 			if tc.verb == ScriptDrop {
 				if strings.Contains(got, "PRIMARY KEY") {
 					t.Fatalf("DROP script creates a primary key:\n%s", got)
@@ -346,14 +346,19 @@ func TestBuildTableScriptFabricConstraintsNotEnforced(t *testing.T) {
 				ReferencedSchema: "dbo", ReferencedTable: "Parent", ReferencedColumns: []string{"ID"}}},
 		}
 		got := buildTableScript("dbo", "T", "db", p, DefaultScriptOptions())
-		for _, clause := range []string{
+		clauses := []string{
 			"PRIMARY KEY NONCLUSTERED ([ID] ASC)",
 			"UNIQUE NONCLUSTERED ([ID] ASC)",
 			"REFERENCES [dbo].[Parent] ([ID])",
-		} {
-			if fabric {
-				clause += " NOT ENFORCED"
+		}
+		if fabric {
+			clauses = []string{
+				"PRIMARY KEY NONCLUSTERED ([ID]) NOT ENFORCED",
+				"UNIQUE NONCLUSTERED ([ID]) NOT ENFORCED",
+				"REFERENCES [dbo].[Parent] ([ID]) NOT ENFORCED",
 			}
+		}
+		for _, clause := range clauses {
 			if !strings.Contains(got, clause) {
 				t.Errorf("fabric=%v: missing %q:\n%s", fabric, clause, got)
 			}

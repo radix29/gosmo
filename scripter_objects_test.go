@@ -19,7 +19,7 @@ func TestBuildIndexScriptFabricConstraints(t *testing.T) {
 			if strings.Contains(got, "ALTER INDEX") == fabric {
 				t.Errorf("fabric=%v primary=%v: incorrect ALTER INDEX inclusion:\n%s", fabric, primary, got)
 			}
-			if fabric && (!strings.Contains(got, "NONCLUSTERED ([ID] ASC) NOT ENFORCED;") || strings.Contains(got, "WITH (")) {
+			if fabric && (!strings.Contains(got, "NONCLUSTERED ([ID]) NOT ENFORCED;") || strings.Contains(got, "WITH (")) {
 				t.Errorf("Fabric key has unsupported clustered or index options:\n%s", got)
 			}
 		}

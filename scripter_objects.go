@@ -111,6 +111,10 @@ func scriptKeyConstraint(idx *Index, tableName string, tableDS DataSpace, opts S
 	return sb.String()
 }
 
+// scriptFabricKeyConstraint renders a primary key or unique constraint the way
+// Fabric DW accepts one: an ALTER TABLE after the CREATE, always NONCLUSTERED
+// NOT ENFORCED, with bare column names. Fabric builds no index for the key, so
+// its grammar takes no ASC/DESC, WITH (...) or ON clause.
 func scriptFabricKeyConstraint(idx *Index, tableName string, opts ScriptOptions) string {
 	var sb strings.Builder
 	if opts.IncludeIfNotExists {
@@ -120,8 +124,12 @@ func scriptFabricKeyConstraint(idx *Index, tableName string, opts ScriptOptions)
 	if idx.IsPrimaryKey {
 		kind = "PRIMARY KEY"
 	}
+	cols := make([]string, len(idx.KeyColumns))
+	for i, kc := range idx.KeyColumns {
+		cols[i] = kc.ref()
+	}
 	fmt.Fprintf(&sb, "ALTER TABLE %s\n    ADD CONSTRAINT %s %s NONCLUSTERED (%s) NOT ENFORCED;\nGO\n\n",
-		tableName, QuoteName(idx.Name), kind, indexColumnList(idx.KeyColumns))
+		tableName, QuoteName(idx.Name), kind, strings.Join(cols, ", "))
 	return sb.String()
 }
 
