@@ -7,6 +7,29 @@ import (
 	"testing"
 )
 
+func TestTableColumnIdentityArguments(t *testing.T) {
+	for _, tc := range []struct {
+		name, seed, increment, want string
+		fabric                      bool
+	}{
+		{"Fabric managed identity", "", "", "[SaleKey] bigint IDENTITY NOT NULL", true},
+		{"SQL Server missing arguments unchanged", "", "", "[SaleKey] bigint IDENTITY(,) NOT NULL", false},
+		{"SQL Server custom identity", "100", "-5", "[SaleKey] bigint IDENTITY(100,-5) NOT NULL", false},
+		{"SQL Server zero seed", "0", "1", "[SaleKey] bigint IDENTITY(0,1) NOT NULL", false},
+		{"SQL Server large seed", "100000000000000000000", "1", "[SaleKey] bigint IDENTITY(100000000000000000000,1) NOT NULL", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			col := &Column{Name: "SaleKey", DataType: DataTypeBigInt, IsIdentity: true,
+				IdentitySeed: tc.seed, IdentityIncrement: tc.increment}
+			script := buildTableScript("dbo", "FactSale", "SampleDW1",
+				tableScriptParts{cols: []*Column{col}, isFabricDW: tc.fabric}, DefaultScriptOptions())
+			if !strings.Contains(script, tc.want) {
+				t.Errorf("script must contain %q:\n%s", tc.want, script)
+			}
+		})
+	}
+}
+
 func TestColumnTypeString(t *testing.T) {
 	cases := []struct {
 		name string

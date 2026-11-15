@@ -235,7 +235,7 @@ func buildUserDefinedTableTypeScript(t *UserDefinedTableType, p tableTypeScriptP
 func tableTypeColumn(col *Column, dbCollation string) string {
 	bare := *col
 	bare.DefaultValue = nil
-	def := tableColumnDefinition(&bare, dbCollation)
+	def := tableColumnDefinition(&bare, dbCollation, false)
 	if col.DefaultValue != nil && !col.IsComputed {
 		// A table type's default has no constraint name to keep: the name
 		// belongs to the internal table, and naming it in the CREATE would

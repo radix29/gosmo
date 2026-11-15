@@ -35,7 +35,7 @@ func TestScriptForeignKeyCarriesTrustAndState(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			fk := base()
 			c.mut(fk)
-			got := scriptForeignKey(fk, "[dbo].[C]", DefaultScriptOptions())
+			got := scriptForeignKey(fk, "[dbo].[C]", DefaultScriptOptions(), false)
 			for _, w := range c.want {
 				if !strings.Contains(got, w) {
 					t.Errorf("script:\n%s\nwant it to contain:\n%q", got, w)

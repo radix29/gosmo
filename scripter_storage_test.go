@@ -203,9 +203,9 @@ func TestIndexOnClauseIsRelativeToTheTable(t *testing.T) {
 		{"table unknown keeps the default rule", scriptIndex(nc(primary), "[dbo].[t]", DataSpace{}, plain), "", ") ON "},
 		{"on fg 2 beside its table", scriptIndex(nc(fg2), "[dbo].[t]", fg2, plain), " ON [fg 2]", ""},
 		{"unique constraint", scriptUniqueConstraint(&Index{Name: "uq", IsUniqueConstraint: true, KeyColumns: cols, DataSpace: primary},
-			"[dbo].[t]", fg2, plain), " ON [PRIMARY]", ""},
+			"[dbo].[t]", fg2, plain, false), " ON [PRIMARY]", ""},
 		{"primary key", scriptKeyConstraint(&Index{Name: "pk", IsPrimaryKey: true, KeyColumns: cols, DataSpace: primary},
-			"[dbo].[t]", ps, plain), " ON [PRIMARY]", ""},
+			"[dbo].[t]", ps, plain, false), " ON [PRIMARY]", ""},
 		{"inline index", inlineIndexDefinition(nc(primary), tableScriptOptions{}, fg2), " ON [PRIMARY]", ""},
 		{"columnstore", scriptIndex(&Index{Name: "cs", Type: IndexTypeColumnStore, IncludedColumns: cols, DataSpace: primary},
 			"[dbo].[t]", ps, plain), " ON [PRIMARY]", ""},
@@ -236,7 +236,7 @@ func TestIndexOnClauseIsRelativeToTheTable(t *testing.T) {
 	view := viewIndexes([]*Index{
 		{Name: "cx", Type: IndexTypeClustered, IsClustered: true, IsUnique: true, KeyColumns: cols, DataSpace: fg2},
 		nc(primary),
-	}, nil, "[dbo].[v]", plain)
+	}, nil, "[dbo].[v]", plain, false)
 	if !strings.Contains(view, "ON [PRIMARY]") {
 		t.Errorf("view index lost its ON [PRIMARY]:\n%s", view)
 	}

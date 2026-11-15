@@ -528,7 +528,7 @@ func buildExternalTableScript(schema, name, dbName string, p tableScriptParts, d
 		fmt.Fprintf(sb, "CREATE EXTERNAL TABLE %s (\n", fullName)
 		for i, col := range p.cols {
 			sb.WriteString("    ")
-			sb.WriteString(tableColumnDefinition(col, p.table.DatabaseCollation))
+			sb.WriteString(tableColumnDefinition(col, p.table.DatabaseCollation, p.isFabricDW))
 			if i < len(p.cols)-1 {
 				sb.WriteString(",")
 			}

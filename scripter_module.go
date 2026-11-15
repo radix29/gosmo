@@ -541,7 +541,7 @@ func (sc *Scripter) ScriptView(ctx context.Context, schema, name string) (string
 				return err
 			}
 		}
-		sb.WriteString(viewIndexes(indexes, stats, qualifiedName(schema, name), sc.opts))
+		sb.WriteString(viewIndexes(indexes, stats, qualifiedName(schema, name), sc.opts, sc.db.server.IsFabricDW))
 		return nil
 	})
 }
@@ -556,7 +556,7 @@ func (sc *Scripter) ScriptView(ctx context.Context, schema, name string) (string
 //
 // Under ScriptAlter they follow too, after a comment saying why: ALTER VIEW
 // drops every index on the view.
-func viewIndexes(indexes []*Index, stats []scriptedStatistic, fullName string, opts ScriptOptions) string {
+func viewIndexes(indexes []*Index, stats []scriptedStatistic, fullName string, opts ScriptOptions, isFabricDW bool) string {
 	if len(indexes) == 0 {
 		return ""
 	}
@@ -576,7 +576,7 @@ func viewIndexes(indexes []*Index, stats []scriptedStatistic, fullName string, o
 	}
 	// The view's data space is its clustered index's: a nonclustered index
 	// with no ON clause lands there (indexDataSpaceClause).
-	p := tableScriptParts{stats: stats}
+	p := tableScriptParts{stats: stats, isFabricDW: isFabricDW}
 	if ordered[0].IsClustered {
 		p.ds = ordered[0].DataSpace
 	}

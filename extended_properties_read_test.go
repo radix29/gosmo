@@ -90,6 +90,46 @@ func TestExtendedPropertiesReadNullsAnUnusedLevel(t *testing.T) {
 	}
 }
 
+func TestScriptingSkipsExtendedPropertiesOnFabric(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		fabric      bool
+		wantQueries int
+	}{
+		{"SQL Server", false, 1},
+		{"Fabric DW", true, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			d := captureDatabase(t)
+			d.server.IsFabricDW = tc.fabric
+			sc := NewScripter(d, ScriptOptions{ExtendedProperties: true})
+			ctx := context.Background()
+			for name, read := range map[string]func() (string, error){
+				"object": func() (string, error) {
+					return sc.scriptExtendedProperties(ctx, 42, true, nil)
+				},
+				"securable": func() (string, error) {
+					return sc.scriptExtendedPropertiesAt(ctx, 3, 42, ExtendedPropertyLevel{})
+				},
+				"file layout": func() (string, error) {
+					return sc.scriptFileLayoutExtendedProperties(ctx)
+				},
+			} {
+				t.Run(name, func(t *testing.T) {
+					captured.reset()
+					script, err := read()
+					if err != nil || script != "" {
+						t.Fatalf("script = %q, error = %v; want empty script without error", script, err)
+					}
+					if got := captured.count("sys.extended_properties"); got != tc.wantQueries {
+						t.Errorf("extended-property queries = %d, want %d", got, tc.wantQueries)
+					}
+				})
+			}
+		})
+	}
+}
+
 // -- NULL values ---------------------------------------------------------------
 
 // extPropDriver replays name/value rows for both extended-property reads.

@@ -21,7 +21,8 @@ type Column struct {
 	IsIdentity      bool
 	// IdentitySeed and IdentityIncrement are the IDENTITY arguments as the
 	// decimal digits the catalog holds, "" when the column is not an
-	// identity. They are strings because a decimal(38,0) identity can be
+	// identity or Fabric DW manages the identity without arguments.
+	// They are strings because a decimal(38,0) identity can be
 	// seeded past int64 — reading it as an integer failed the whole column
 	// listing for the table — and they are only ever rendered back into T-SQL.
 	IdentitySeed      string

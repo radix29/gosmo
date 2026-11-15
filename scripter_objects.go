@@ -47,7 +47,7 @@ func (sc *Scripter) ScriptIndex(ctx context.Context, schema, table, name string)
 	if err != nil {
 		return "", err
 	}
-	script := buildIndexScript(idx, qualifiedName(schema, table), tableDS, sc.opts)
+	script := buildIndexScript(idx, qualifiedName(schema, table), tableDS, sc.opts, sc.db.server.IsFabricDW)
 	if idx.IsPrimaryKey || idx.IsUniqueConstraint {
 		return sc.withTableChildExtendedProperties(ctx, script, t, idx.Name, "INDEX", "CONSTRAINT")
 	}
@@ -70,7 +70,7 @@ func tableChild[T any](kind string, items []T, schema, table, name string, key f
 }
 
 // buildIndexScript assembles one index's script from metadata already read.
-func buildIndexScript(idx *Index, tableName string, tableDS DataSpace, opts ScriptOptions) string {
+func buildIndexScript(idx *Index, tableName string, tableDS DataSpace, opts ScriptOptions, isFabricDW bool) string {
 	isConstraint := idx.IsPrimaryKey || idx.IsUniqueConstraint
 	drop := fmt.Sprintf("DROP INDEX IF EXISTS %s ON %s;\nGO\n", QuoteName(idx.Name), tableName)
 	if isConstraint {
@@ -78,19 +78,24 @@ func buildIndexScript(idx *Index, tableName string, tableDS DataSpace, opts Scri
 	}
 	return opts.envelope(drop, "", func(sb *strings.Builder) {
 		if isConstraint {
-			sb.WriteString(scriptKeyConstraint(idx, tableName, tableDS, opts))
+			sb.WriteString(scriptKeyConstraint(idx, tableName, tableDS, opts, isFabricDW))
 		} else {
 			sb.WriteString(scriptIndex(idx, tableName, tableDS, opts))
 		}
-		sb.WriteString(indexDisableStatement(idx, tableName))
+		if !isFabricDW {
+			sb.WriteString(indexDisableStatement(idx, tableName))
+		}
 	})
 }
 
 // scriptKeyConstraint renders the primary key or unique constraint idx backs
 // as the ALTER TABLE ... ADD CONSTRAINT that creates it.
-func scriptKeyConstraint(idx *Index, tableName string, tableDS DataSpace, opts ScriptOptions) string {
+func scriptKeyConstraint(idx *Index, tableName string, tableDS DataSpace, opts ScriptOptions, isFabricDW bool) string {
+	if isFabricDW {
+		return scriptFabricKeyConstraint(idx, tableName, opts)
+	}
 	if !idx.IsPrimaryKey {
-		return scriptUniqueConstraint(idx, tableName, tableDS, opts)
+		return scriptUniqueConstraint(idx, tableName, tableDS, opts, false)
 	}
 	var sb strings.Builder
 	if opts.IncludeIfNotExists {
@@ -103,6 +108,20 @@ func scriptKeyConstraint(idx *Index, tableName string, tableDS DataSpace, opts S
 	fmt.Fprintf(&sb, "ALTER TABLE %s\n    ADD CONSTRAINT %s PRIMARY KEY %s (%s)%s%s;\nGO\n\n",
 		tableName, QuoteName(idx.Name), clust, indexColumnList(idx.KeyColumns),
 		indexWithClause(idx, " "), indexDataSpaceClause(idx.DataSpace, tableDS))
+	return sb.String()
+}
+
+func scriptFabricKeyConstraint(idx *Index, tableName string, opts ScriptOptions) string {
+	var sb strings.Builder
+	if opts.IncludeIfNotExists {
+		sb.WriteString(constraintExistenceGuard(idx.Name, tableName))
+	}
+	kind := "UNIQUE"
+	if idx.IsPrimaryKey {
+		kind = "PRIMARY KEY"
+	}
+	fmt.Fprintf(&sb, "ALTER TABLE %s\n    ADD CONSTRAINT %s %s NONCLUSTERED (%s) NOT ENFORCED;\nGO\n\n",
+		tableName, QuoteName(idx.Name), kind, indexColumnList(idx.KeyColumns))
 	return sb.String()
 }
 
@@ -354,7 +373,7 @@ func (sc *Scripter) ScriptForeignKey(ctx context.Context, schema, table, name st
 
 // scriptTableForeignKey is ScriptForeignKey for a key already read.
 func (sc *Scripter) scriptTableForeignKey(ctx context.Context, t *Table, fk *ForeignKey) (string, error) {
-	return sc.withTableChildExtendedProperties(ctx, buildForeignKeyScript(fk, qualifiedName(t.Schema, t.Name), sc.opts),
+	return sc.withTableChildExtendedProperties(ctx, buildForeignKeyScript(fk, qualifiedName(t.Schema, t.Name), sc.opts, sc.db.server.IsFabricDW),
 		t, fk.Name, "CONSTRAINT")
 }
 
@@ -381,10 +400,10 @@ func (sc *Scripter) tableForeignKeys(ctx context.Context, t *Table) ([]*ForeignK
 
 // buildForeignKeyScript assembles one foreign key's script, reusing the same
 // renderer ScriptTable uses for the table's own keys.
-func buildForeignKeyScript(fk *ForeignKey, tableName string, opts ScriptOptions) string {
+func buildForeignKeyScript(fk *ForeignKey, tableName string, opts ScriptOptions, isFabricDW bool) string {
 	drop := fmt.Sprintf("ALTER TABLE %s DROP CONSTRAINT IF EXISTS %s;\nGO\n", tableName, QuoteName(fk.Name))
 	return opts.envelope(drop, "", func(sb *strings.Builder) {
-		sb.WriteString(scriptForeignKey(fk, tableName, opts))
+		sb.WriteString(scriptForeignKey(fk, tableName, opts, isFabricDW))
 	})
 }
 

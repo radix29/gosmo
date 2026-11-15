@@ -32,7 +32,7 @@ func (sc *Scripter) ScriptTable(ctx context.Context, schema, name string) (strin
 func (sc *Scripter) scriptTable(ctx context.Context, t *Table) (string, error) {
 	schema, name := t.Schema, t.Name
 	var err error
-	var p tableScriptParts
+	p := tableScriptParts{isFabricDW: sc.db.server.IsFabricDW}
 	pre := sc.tables
 	if pre != nil {
 		if _, ok := pre.options[t.ObjectID]; !ok {
@@ -161,6 +161,8 @@ type tableScriptParts struct {
 	// DEFINITION on the database, sys.sql_expression_dependencies shows no
 	// rows at all, so an empty boundBy says nothing.
 	boundByHidden bool
+
+	isFabricDW bool
 }
 
 // tableScriptOptions is what a CREATE TABLE says about the table as a whole
@@ -313,6 +315,12 @@ func (t *Table) scriptOptionsSelect() string { return t.scriptOptionsSelectWith(
 // select list and the object predicate set to object, as indexListSelectWith.
 func (t *Table) scriptOptionsSelectWith(extra, object string) string {
 	major := t.db.serverMajorVersion()
+	fileFormat := "ISNULL(eff.name, '')"
+	fileFormatJoin := "\nLEFT   JOIN sys.external_file_formats eff ON eff.file_format_id = et.file_format_id"
+	if t.db.server.IsFabricDW {
+		fileFormat = "CAST('' AS sysname)"
+		fileFormatJoin = ""
+	}
 	return `
 SELECT CAST(CASE WHEN t.temporal_type = 2 THEN 1 ELSE 0 END AS BIT),
        ISNULL(OBJECT_SCHEMA_NAME(t.history_table_id), ''),
@@ -336,7 +344,7 @@ SELECT CAST(CASE WHEN t.temporal_type = 2 THEN 1 ELSE 0 END AS BIT),
        ISNULL(ft.directory_name, ''), ISNULL(ft.filename_collation_name, ''), ISNULL(ft.is_enabled, 0),
        ` + jsonList("OBJECT_NAME(so.object_id)",
 		"\n        FROM sys.filetable_system_defined_objects so WHERE so.parent_object_id = t.object_id", "") + `,
-       ISNULL(eds.name, ''), ISNULL(eff.name, ''), ISNULL(et.location, ''),
+       ISNULL(eds.name, ''), ` + fileFormat + `, ISNULL(et.location, ''),
        ISNULL(et.reject_type, ''), et.reject_value, et.reject_sample_value,
        ISNULL(et.remote_schema_name, ''), ISNULL(et.remote_object_name, ''),
        ISNULL(et.distribution_desc, ''), ISNULL(COL_NAME(et.object_id, et.sharding_col_id), ''),
@@ -348,8 +356,7 @@ LEFT   JOIN sys.data_spaces lds ON lds.data_space_id = NULLIF(t.lob_data_space_i
 LEFT   JOIN sys.data_spaces fds ON fds.data_space_id = t.filestream_data_space_id
 LEFT   JOIN sys.filetables ft ON ft.object_id = t.object_id
 LEFT   JOIN sys.external_tables et ON et.object_id = t.object_id
-LEFT   JOIN sys.external_data_sources eds ON eds.data_source_id = et.data_source_id
-LEFT   JOIN sys.external_file_formats eff ON eff.file_format_id = et.file_format_id
+LEFT   JOIN sys.external_data_sources eds ON eds.data_source_id = et.data_source_id` + fileFormatJoin + `
 WHERE  t.object_id ` + object
 }
 
@@ -402,6 +409,11 @@ func buildTableScript(schema, name, dbName string, p tableScriptParts, opts Scri
 		fmt.Fprintf(sb, "CREATE TABLE %s (\n", fullName)
 
 		indexes := graphScriptIndexes(p.indexes, p.cols, p.table)
+		if p.isFabricDW {
+			indexes = slices.DeleteFunc(slices.Clone(indexes), func(idx *Index) bool {
+				return idx.Type == IndexTypeClusteredColumnStore
+			})
+		}
 		inline := inlineIndexes(indexes, p.cols, p.table)
 
 		var pkIdx *Index
@@ -420,7 +432,7 @@ func buildTableScript(schema, name, dbName string, p tableScriptParts, opts Scri
 			if col.GraphType != 0 || col.IsDroppedLedgerColumn {
 				continue
 			}
-			elems = append(elems, tableColumnDefinition(col, p.table.DatabaseCollation))
+			elems = append(elems, tableColumnDefinition(col, p.table.DatabaseCollation, p.isFabricDW))
 		}
 		if p.table.PeriodStart != "" && p.table.PeriodEnd != "" {
 			elems = append(elems, fmt.Sprintf("PERIOD FOR SYSTEM_TIME (%s, %s)",
@@ -430,7 +442,7 @@ func buildTableScript(schema, name, dbName string, p tableScriptParts, opts Scri
 		case pkIdx != nil && p.table.IsMemoryOptimized:
 			elems = append(elems, fmt.Sprintf("CONSTRAINT %s PRIMARY KEY %s",
 				QuoteName(pkIdx.Name), memoryOptimizedIndexSpec(pkIdx)))
-		case pkIdx != nil:
+		case pkIdx != nil && !p.isFabricDW:
 			clust := "NONCLUSTERED"
 			if pkIdx.IsClustered {
 				clust = "CLUSTERED"
@@ -546,8 +558,9 @@ func columnBindings(cols []*Column, fullName string) string {
 // disabled index.
 func writeTableDependents(sb *strings.Builder, indexes []*Index, inline map[string]bool,
 	p tableScriptParts, fullName string, opts ScriptOptions) {
-	// Non-PK indexes. A unique *constraint* is backed by an index in
-	// sys.indexes but is not created with CREATE INDEX — it belongs to the
+	// Fabric primary keys must follow CREATE TABLE and are not enforced.
+	// SQL Server's primary key is inline. A unique *constraint* is backed by
+	// an index in sys.indexes but is not created with CREATE INDEX — it belongs to the
 	// table, and scripting it as an index leaves the constraint missing.
 	//
 	// A secondary XML index is built over its primary, which must exist
@@ -562,11 +575,15 @@ func writeTableDependents(sb *strings.Builder, indexes []*Index, inline map[stri
 	}
 	ordered = append(ordered, secondaryXML...)
 	for _, idx := range ordered {
+		if idx.IsPrimaryKey && p.isFabricDW {
+			sb.WriteString(scriptKeyConstraint(idx, fullName, p.ds, opts, true))
+			continue
+		}
 		if idx.IsPrimaryKey || inline[idx.Name] {
 			continue
 		}
 		if idx.IsUniqueConstraint {
-			sb.WriteString(scriptUniqueConstraint(idx, fullName, p.ds, opts))
+			sb.WriteString(scriptUniqueConstraint(idx, fullName, p.ds, opts, p.isFabricDW))
 			continue
 		}
 		sb.WriteString(scriptIndex(idx, fullName, p.ds, opts))
@@ -574,7 +591,7 @@ func writeTableDependents(sb *strings.Builder, indexes []*Index, inline map[stri
 
 	if !opts.DeferReferences {
 		for _, fk := range p.fks {
-			sb.WriteString(scriptForeignKey(fk, fullName, opts))
+			sb.WriteString(scriptForeignKey(fk, fullName, opts, p.isFabricDW))
 		}
 	}
 	for _, ck := range p.checks {
@@ -593,15 +610,17 @@ func writeTableDependents(sb *strings.Builder, indexes []*Index, inline map[stri
 	// Disabled indexes are disabled last. Disabling a clustered index takes
 	// the whole table offline, so doing it where the index is created would
 	// fail every CREATE INDEX, ADD CONSTRAINT and CREATE STATISTICS after it.
-	for _, idx := range indexes {
-		sb.WriteString(indexDisableStatement(idx, fullName))
+	if !p.isFabricDW {
+		for _, idx := range indexes {
+			sb.WriteString(indexDisableStatement(idx, fullName))
+		}
 	}
 }
 
 // tableColumnDefinition renders one column of a CREATE TABLE, in the clause
 // order the CREATE TABLE grammar lists. dbCollation is the database default;
 // a column collated differently gets a COLLATE clause.
-func tableColumnDefinition(col *Column, dbCollation string) string {
+func tableColumnDefinition(col *Column, dbCollation string, isFabricDW bool) string {
 	var sb strings.Builder
 	name := QuoteName(col.Name)
 	switch {
@@ -635,7 +654,11 @@ func tableColumnDefinition(col *Column, dbCollation string) string {
 		fmt.Fprintf(&sb, " MASKED WITH (FUNCTION = '%s')", escapeSingle(col.MaskingFunction))
 	}
 	if col.IsIdentity {
-		fmt.Fprintf(&sb, " IDENTITY(%s,%s)", col.IdentitySeed, col.IdentityIncrement)
+		if isFabricDW && col.IdentitySeed == "" && col.IdentityIncrement == "" {
+			sb.WriteString(" IDENTITY")
+		} else {
+			fmt.Fprintf(&sb, " IDENTITY(%s,%s)", col.IdentitySeed, col.IdentityIncrement)
+		}
 		if col.IdentityNotForReplication {
 			sb.WriteString(" NOT FOR REPLICATION")
 		}
@@ -682,7 +705,10 @@ var generatedAlwaysClauses = map[int]string{
 
 // scriptUniqueConstraint renders a unique constraint backed by idx as the
 // ALTER TABLE ... ADD CONSTRAINT it really is.
-func scriptUniqueConstraint(idx *Index, tableName string, tableDS DataSpace, opts ScriptOptions) string {
+func scriptUniqueConstraint(idx *Index, tableName string, tableDS DataSpace, opts ScriptOptions, isFabricDW bool) string {
+	if isFabricDW {
+		return scriptFabricKeyConstraint(idx, tableName, opts)
+	}
 	var sb strings.Builder
 	if opts.IncludeIfNotExists {
 		sb.WriteString(constraintExistenceGuard(idx.Name, tableName))
@@ -718,7 +744,7 @@ func constraintExistenceGuard(name, tableName string) string {
 // untrusted key WITH CHECK fails (Msg 547) on the very rows it was left
 // untrusted for, and a key recreated enabled starts refusing writes the
 // original let through.
-func scriptForeignKey(fk *ForeignKey, tableName string, opts ScriptOptions) string {
+func scriptForeignKey(fk *ForeignKey, tableName string, opts ScriptOptions, isFabricDW bool) string {
 	var sb strings.Builder
 	if opts.IncludeIfNotExists {
 		sb.WriteString(constraintExistenceGuard(fk.Name, tableName))
@@ -730,6 +756,12 @@ func scriptForeignKey(fk *ForeignKey, tableName string, opts ScriptOptions) stri
 	refCols := make([]string, len(fk.ReferencedColumns))
 	for i, c := range fk.ReferencedColumns {
 		refCols[i] = QuoteName(c)
+	}
+	if isFabricDW {
+		fmt.Fprintf(&sb, "ALTER TABLE %s\n    ADD CONSTRAINT %s\n    FOREIGN KEY (%s)\n    REFERENCES %s (%s) NOT ENFORCED;\nGO\n\n",
+			tableName, QuoteName(fk.Name), strings.Join(cols, ", "),
+			qualifiedName(fk.ReferencedSchema, fk.ReferencedTable), strings.Join(refCols, ", "))
+		return sb.String()
 	}
 	with := "WITH CHECK"
 	if fk.IsDisabled || fk.IsNotTrusted {
