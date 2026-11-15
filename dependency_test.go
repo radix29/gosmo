@@ -5,6 +5,7 @@ import (
 	"database/sql/driver"
 	"errors"
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -18,6 +19,10 @@ var dependencyReads = []struct {
 		return d.Dependencies(context.Background(), schema, name)
 	}},
 	{"Dependents", func(d *Database, schema, name string) ([]*Dependency, error) {
+		return d.Dependents(context.Background(), schema, name)
+	}},
+	{"FabricDependents", func(d *Database, schema, name string) ([]*Dependency, error) {
+		d.server.IsFabricDW = true
 		return d.Dependents(context.Background(), schema, name)
 	}},
 }
@@ -69,6 +74,44 @@ func TestDependencyReadsBindTheQuotedNameAndScanInOrder(t *testing.T) {
 			for i := range want {
 				if *got[i] != want[i] {
 					t.Errorf("edge %d = %+v, want %+v", i, *got[i], want[i])
+				}
+			}
+		})
+	}
+}
+
+func TestDependentsUsesFabricCatalogOnlyOnFabricDW(t *testing.T) {
+	for _, fabric := range []bool{false, true} {
+		name := "SQLServer"
+		if fabric {
+			name = "FabricDW"
+		}
+		t.Run(name, func(t *testing.T) {
+			d := qsRecDB(t, 17, nil, nil)
+			d.server.IsFabricDW = fabric
+			if _, err := d.Dependents(t.Context(), "dbo", "orders"); err != nil {
+				t.Fatal(err)
+			}
+			q := strings.Join(strings.Fields(qsRec.last(t).sql), " ")
+			if strings.Contains(q, "sys.dm_sql_referencing_entities") == fabric {
+				t.Errorf("fabric=%v: incorrect dependency source:\n%s", fabric, q)
+			}
+			if fabric {
+				for _, clause := range []string{
+					"JOIN sys.objects o ON o.object_id = sed.referencing_id",
+					"COALESCE(sed.referenced_id,",
+					"sed.referenced_schema_name IS NULL",
+					"sed.referenced_database_name IS NULL",
+					"sed.referenced_server_name IS NULL",
+					"OBJECT_SCHEMA_NAME(sed.referencing_id)",
+					"OBJECT_ID(N'[dbo].' + QUOTENAME(sed.referenced_entity_name))",
+					"= OBJECT_ID(@p1)",
+					"sed.referencing_class = 1",
+					"sed.referenced_class = 1",
+				} {
+					if !strings.Contains(q, clause) {
+						t.Errorf("Fabric dependency lookup lost %q:\n%s", clause, q)
+					}
 				}
 			}
 		})

@@ -62,7 +62,7 @@ ORDER  BY o.name`
 // Dependents returns the objects whose own definition references
 // schema.name — SSMS's "Object Dependencies > Objects that depend on ...".
 //
-// The list comes from sys.dm_sql_referencing_entities, not from joining
+// On SQL Server, the list comes from sys.dm_sql_referencing_entities, not from joining
 // sys.sql_expression_dependencies on referenced_id: a caller-dependent
 // reference — an unqualified EXEC target, resolved against the caller's
 // default schema at run time — is stored with referenced_id NULL, so that
@@ -73,9 +73,32 @@ ORDER  BY o.name`
 // server's own is_caller_dependent is set by any one unqualified reference.
 // referenced_class = 1 keeps a type or XML schema collection whose id equals
 // schema.name's object id out.
+// Fabric Warehouse has no such DMV; its catalog lookup resolves unqualified
+// references with the same schema-then-dbo rule as Dependencies.
 func (d *Database) Dependents(ctx context.Context, schema, name string) ([]*Dependency, error) {
 	if err := requireSchema("dependents", schema, name); err != nil {
 		return nil, err
+	}
+	if d.server.IsFabricDW {
+		const q = `
+SELECT SCHEMA_NAME(o.schema_id), o.name, o.type_desc,
+       CAST(MAX(CAST(sed.is_schema_bound_reference AS int)) AS bit),
+       CAST(MIN(CASE WHEN sed.referenced_id IS NULL THEN 1 ELSE 0 END) AS bit)
+FROM   sys.sql_expression_dependencies sed
+JOIN   sys.objects o ON o.object_id = sed.referencing_id
+WHERE  COALESCE(sed.referenced_id,
+           CASE WHEN sed.referenced_schema_name IS NULL
+                 AND sed.referenced_database_name IS NULL
+                 AND sed.referenced_server_name IS NULL
+           THEN COALESCE(
+               OBJECT_ID(QUOTENAME(OBJECT_SCHEMA_NAME(sed.referencing_id)) + N'.' + QUOTENAME(sed.referenced_entity_name)),
+               OBJECT_ID(N'[dbo].' + QUOTENAME(sed.referenced_entity_name)))
+           END) = OBJECT_ID(@p1)
+  AND  sed.referencing_class = 1
+  AND  sed.referenced_class = 1
+GROUP  BY o.schema_id, o.name, o.type_desc
+ORDER  BY o.name`
+		return d.dependencyEdges(ctx, q, schema, name)
 	}
 	const q = `
 SELECT DISTINCT SCHEMA_NAME(o.schema_id), o.name, o.type_desc,
