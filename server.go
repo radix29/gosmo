@@ -3,7 +3,6 @@ package gosmo
 import (
 	"context"
 	"database/sql"
-	"database/sql/driver"
 	"errors"
 	"fmt"
 	"strconv"
@@ -416,10 +415,9 @@ func (s *Server) ReleaseIdleConnections(ctx context.Context) error {
 		if err != nil {
 			return fmt.Errorf("gosmo: release idle connections: %w", err)
 		}
-		// Returning ErrBadConn from Raw is database/sql's one way to close a
-		// pooled connection rather than hand it back: Close would return it
-		// to the idle list, which is what this is emptying.
-		_ = conn.Raw(func(any) error { return driver.ErrBadConn })
+		// Not Close: that would return it to the idle list, which is what
+		// this is emptying.
+		DiscardConn(conn)
 	}
 	return nil
 }
@@ -429,36 +427,74 @@ func (s *Server) ReleaseIdleConnections(ctx context.Context) error {
 // moment later, reported there with what was being attempted.
 func (s *Server) releaseIdle(ctx context.Context) { _ = s.ReleaseIdleConnections(ctx) }
 
-// multiUserRepairTimeout bounds restoreAccessMode's statement. Short on
-// purpose: the caller still holds the single-user slot, so the ALTER has
-// nothing to wait for, and a repair that hangs is worse than one that gives up.
-const multiUserRepairTimeout = 10 * time.Second
+// repairTimeout bounds a repair's statement. Short on purpose: an access-mode
+// repair runs while the caller still holds the single-user slot, a window's
+// re-enable has nothing to wait for either, and a repair that hangs is worse
+// than one that gives up.
+const repairTimeout = 10 * time.Second
+
+// repair runs fn, the statement that puts back what a write changed for its
+// own purposes — an access mode a forced write set (restoreAccessMode and its
+// variants), or a disable window's closing re-enable (withAuditDisabled,
+// auditSpecScope.withDisabled, EventSession.Alter's stop window) — under ctx's
+// values but not its cancellation, bounded at repairTimeout.
+//
+// The case a repair exists for is the one where ctx is already dead: SET
+// SINGLE_USER WITH ROLLBACK IMMEDIATE waits out the rollback of whatever it
+// killed, a user cancels a slow Apply, a deadline runs out inside the window.
+// A repair issued on that context fails without reaching the server, leaving
+// the database locked to a single login, or auditing switched off, exactly
+// when the write promised it would not. Same shape, and the same reason, as
+// capturePlan's deferred SET ... OFF (executionplan.go).
+//
+// The values are kept, so under WithScript the repair is still captured rather
+// than run, and a rename inside an audit window still restores under its new
+// name. The repair is not reported to a statement observer: it puts back what
+// the write changed (see WithStatementObserver).
+//
+// A failed repair is never discarded: on a failure path it goes through
+// withRepair, alongside the write's own error.
+func repair(ctx context.Context, fn func(context.Context) error) error {
+	rctx, cancel := context.WithTimeout(context.WithoutCancel(unobserved(ctx)), repairTimeout)
+	defer cancel()
+	return fn(rctx)
+}
+
+// withRepair is err, the failure that made a repair necessary, with the
+// repair's own failure rerr joined after it as a *RepairError when there was
+// one. The write's error stays first — it is what the caller asked about, and
+// errors.Is/As still find it — but a failed repair leaves the database
+// SINGLE_USER or auditing switched off, which the caller has to be told rather
+// than find out.
+func withRepair(err, rerr error) error {
+	if rerr == nil {
+		return err
+	}
+	return errors.Join(err, &RepairError{Err: rerr})
+}
+
+// RepairError is the failure of the statement that puts back what a write
+// changed for its own purposes, joined after the write's error: a forced Drop,
+// Detach, Rename or a Restore with CloseExistingConnections cut short whose
+// database could not be set back from SINGLE_USER, or a failed write inside an
+// audit, audit specification or event session's disable window that could not
+// re-enable it. Its message says what was left behind.
+//
+// The write's own error is usually a cancellation, which a caller tends to
+// report as just "cancelled" — errors.AsType finds this one so that the state
+// the server was left in is reported too.
+type RepairError struct{ Err error }
+
+func (e *RepairError) Error() string { return e.Err.Error() }
+func (e *RepairError) Unwrap() error { return e.Err }
 
 // restoreAccessMode puts a database this package set to SINGLE_USER back to
 // mode, the access mode it had before (accessModeBefore) — the repair after a
 // forced detach or drop cut short with the database still there. A database
 // that was SINGLE_USER already is left as it is.
-//
-// The context is derived with context.WithoutCancel because the case this
-// exists for is the one where ctx is already dead. SET SINGLE_USER WITH
-// ROLLBACK IMMEDIATE waits out the rollback of whatever it killed, so the
-// statement before this one is precisely the one likely to have exhausted the
-// caller's deadline — and a repair issued on the expired context fails without
-// reaching the server, leaving the database locked to a single login for a
-// reason nobody asked for. Same shape, and the same reason, as capturePlan's
-// deferred SET ... OFF (executionplan.go).
-//
-// WithoutCancel keeps ctx's values, so a caller under WithScript still captures
-// the statement rather than running it. The repair is not reported to a
-// statement observer: it puts back what the failed write changed.
 func (s *Server) restoreAccessMode(ctx context.Context, name string, mode UserAccess) error {
-	if mode == UserAccessSingle {
-		return nil
-	}
-	rctx, cancel := context.WithTimeout(context.WithoutCancel(unobserved(ctx)), multiUserRepairTimeout)
-	defer cancel()
-	_, err := s.exec(rctx, fmt.Sprintf("ALTER DATABASE %s SET %s", QuoteName(name), releaseMode(mode)))
-	return err
+	return s.repairAccessMode(ctx, name, mode,
+		fmt.Sprintf("ALTER DATABASE %s SET %s", QuoteName(name), releaseMode(mode)))
 }
 
 // restoreAccessModeAfterRename is restoreAccessMode for a forced rename cut
@@ -467,16 +503,29 @@ func (s *Server) restoreAccessMode(ctx context.Context, name string, mode UserAc
 // case where the new name exists and the rename did not happen — and there the
 // old name exists too, so the other database is never touched.
 func (s *Server) restoreAccessModeAfterRename(ctx context.Context, oldName, newName string, mode UserAccess) error {
+	m := releaseMode(mode)
+	return s.repairAccessMode(ctx, oldName, mode, fmt.Sprintf(`IF DB_ID(%s) IS NOT NULL ALTER DATABASE %s SET %s
+ELSE IF DB_ID(%s) IS NOT NULL ALTER DATABASE %s SET %s`,
+		QuoteLiteral(oldName), QuoteName(oldName), m, QuoteLiteral(newName), QuoteName(newName), m))
+}
+
+// repairAccessMode runs stmt, an access-mode repair of the database name, via
+// repair — nothing at all when the database was SINGLE_USER before the write.
+// Its error says what the failure leaves behind, since the caller sees it
+// joined after the write's own (withRepair).
+func (s *Server) repairAccessMode(ctx context.Context, name string, mode UserAccess, stmt string) error {
 	if mode == UserAccessSingle {
 		return nil
 	}
-	rctx, cancel := context.WithTimeout(context.WithoutCancel(unobserved(ctx)), multiUserRepairTimeout)
-	defer cancel()
-	m := releaseMode(mode)
-	_, err := s.exec(rctx, fmt.Sprintf(`IF DB_ID(%s) IS NOT NULL ALTER DATABASE %s SET %s
-ELSE IF DB_ID(%s) IS NOT NULL ALTER DATABASE %s SET %s`,
-		QuoteLiteral(oldName), QuoteName(oldName), m, QuoteLiteral(newName), QuoteName(newName), m))
-	return err
+	err := repair(ctx, func(ctx context.Context) error {
+		_, err := s.exec(ctx, stmt)
+		return err
+	})
+	if err != nil {
+		return fmt.Errorf("gosmo: database %q may still be SINGLE_USER: setting it back to %s failed: %w",
+			name, releaseMode(mode), err)
+	}
+	return nil
 }
 
 // releaseMode is the mode a repair releases to: RESTRICTED_USER kept, anything

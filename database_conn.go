@@ -3,7 +3,6 @@ package gosmo
 import (
 	"context"
 	"database/sql"
-	"database/sql/driver"
 	"errors"
 	"fmt"
 	"time"
@@ -128,7 +127,7 @@ func (d *Database) withSessionIn(ctx context.Context, fn func(context.Context, *
 		bg, cancel := context.WithTimeout(context.WithoutCancel(ctx), switchBackTimeout)
 		defer cancel()
 		if _, err := conn.ExecContext(bg, "USE "+QuoteName(home)); err != nil {
-			_ = conn.Raw(func(any) error { return driver.ErrBadConn })
+			DiscardConn(conn)
 		}
 	}()
 	return withAllMessages(fn(ctx, conn))

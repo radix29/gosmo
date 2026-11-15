@@ -3,7 +3,6 @@ package gosmo
 import (
 	"context"
 	"database/sql"
-	"database/sql/driver"
 	"errors"
 	"fmt"
 	"iter"
@@ -185,11 +184,8 @@ func (bc *BulkCopy) load(ctx context.Context, conn *sql.Conn, target string, row
 	// mid-bulk-copy: the server is still waiting for rows, so the next
 	// statement run on it fails with "Bulk load data was expected but not
 	// sent". Returning it to the pool hands that failure to an unrelated
-	// caller, so poison it instead — sql.Conn.Raw marks the connection bad
-	// when f returns driver.ErrBadConn, and the pool discards it.
-	discard := func() {
-		_ = conn.Raw(func(any) error { return driver.ErrBadConn })
-	}
+	// caller, so it is discarded instead (DiscardConn).
+	discard := func() { DiscardConn(conn) }
 
 	var n int64
 	for row, rerr := range rows {

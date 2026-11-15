@@ -427,6 +427,9 @@ func buildSequenceScript(seq *Sequence, opts ScriptOptions) string {
 			dataType += fmt.Sprintf("(%d,%d)", seq.Precision, seq.Scale)
 		}
 		start, exhausted := sequenceStartWith(seq)
+		// Checked before the comment below as well as the statement: a
+		// hand-built Sequence may carry a line break there.
+		start = scriptInteger("sequence start value", start)
 		if exhausted {
 			// The name stays out of the comment: a bracketed name may hold a
 			// line break, which would end the comment and turn the rest into
@@ -439,7 +442,8 @@ func buildSequenceScript(seq *Sequence, opts ScriptOptions) string {
 			fmt.Fprintf(sb, "IF OBJECT_ID(%s, N'SO') IS NULL\n", QuoteLiteral(fullName))
 		}
 		fmt.Fprintf(sb, "CREATE SEQUENCE %s\n    AS %s\n    START WITH %s\n    INCREMENT BY %s\n    MINVALUE %s\n    MAXVALUE %s\n",
-			fullName, dataType, start, seq.Increment, seq.MinValue, seq.MaxValue)
+			fullName, dataType, start, scriptInteger("sequence increment", seq.Increment),
+			scriptInteger("sequence minimum", seq.MinValue), scriptInteger("sequence maximum", seq.MaxValue))
 		if seq.IsCycling {
 			sb.WriteString("    CYCLE\n")
 		} else {
@@ -525,7 +529,7 @@ func buildSynonymScript(syn *Synonym, opts ScriptOptions) string {
 	drop := fmt.Sprintf("DROP SYNONYM IF EXISTS %s;\nGO\n", fullName)
 	guard := fmt.Sprintf("IF OBJECT_ID(%s, N'SN') IS NULL\n", QuoteLiteral(fullName))
 	return opts.envelope(drop, guard, func(sb *strings.Builder) {
-		fmt.Fprintf(sb, "CREATE SYNONYM %s FOR %s;\nGO\n", fullName, syn.BaseObject)
+		fmt.Fprintf(sb, "CREATE SYNONYM %s FOR %s;\nGO\n", fullName, scriptObjectName("base object name", syn.BaseObject))
 	})
 }
 

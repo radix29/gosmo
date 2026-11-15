@@ -184,7 +184,7 @@ func buildBrokerQueueScript(q *BrokerQueue, opts ScriptOptions) string {
 		if q.ActivationProcedure != "" {
 			sb.WriteString(",\n         ACTIVATION\n         (  ")
 			fmt.Fprintf(sb, "STATUS = %s,\n            PROCEDURE_NAME = %s,\n",
-				onOff(q.IsActivationEnabled), q.ActivationProcedure)
+				onOff(q.IsActivationEnabled), scriptObjectName("activation procedure name", q.ActivationProcedure))
 			fmt.Fprintf(sb, "            MAX_QUEUE_READERS = %d,\n", q.MaxReaders)
 			fmt.Fprintf(sb, "            EXECUTE AS %s\n         )", queueExecuteAsClause(q))
 		}

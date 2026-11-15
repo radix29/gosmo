@@ -390,7 +390,8 @@ func (sc *Scripter) scriptDatabaseFrom(d *Database, layout *databaseLayout) (str
 		}
 		if d.RecoveryModel != "" {
 			fmt.Fprintf(sb, "ALTER DATABASE %s SET RECOVERY %s;\nGO\n",
-				QuoteName(d.Name), d.RecoveryModel)
+				QuoteName(d.Name), scriptKeyword("recovery model", d.RecoveryModel,
+					RecoveryModelSimple, RecoveryModelFull, RecoveryModelBulkLogged))
 		}
 		if d.CompatibilityLevel != 0 {
 			fmt.Fprintf(sb, "ALTER DATABASE %s SET COMPATIBILITY_LEVEL = %d;\nGO\n",

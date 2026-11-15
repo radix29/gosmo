@@ -80,10 +80,12 @@ func (d *Database) Detach(ctx context.Context, opts DetachOptions) error {
 	// not have got that far.
 	mode := s.accessModeBefore(ctx, name)
 	if _, err := s.exec(ctx, fromMaster(exclusiveBatch(name, detach))); err != nil {
-		if batchCutShort(err) {
-			_ = s.restoreAccessMode(ctx, name, mode)
+		cutShort := batchCutShort(err)
+		err = fmt.Errorf("gosmo: detach database %q: %w", name, err)
+		if cutShort {
+			err = withRepair(err, s.restoreAccessMode(ctx, name, mode))
 		}
-		return fmt.Errorf("gosmo: detach database %q: %w", name, err)
+		return err
 	}
 	s.leftLoginDatabase(ctx, name, "master")
 	return nil

@@ -139,11 +139,14 @@ func xmlOrSpatialIndexCreate(idx *Index, tableName string, tableDS DataSpace) st
 			fmt.Fprintf(&sb, "CREATE PRIMARY XML INDEX %s\n    ON %s (%s)", QuoteName(idx.Name), tableName, col)
 		} else {
 			fmt.Fprintf(&sb, "CREATE XML INDEX %s\n    ON %s (%s)\n    USING XML INDEX %s FOR %s",
-				QuoteName(idx.Name), tableName, col, QuoteName(idx.PrimaryXMLIndex), idx.SecondaryXMLType)
+				QuoteName(idx.Name), tableName, col, QuoteName(idx.PrimaryXMLIndex),
+				scriptKeyword("secondary XML index type", idx.SecondaryXMLType,
+					XMLSecondaryPath, XMLSecondaryValue, XMLSecondaryProperty))
 		}
 	} else {
 		fmt.Fprintf(&sb, "CREATE SPATIAL INDEX %s\n    ON %s (%s)\n    USING %s",
-			QuoteName(idx.Name), tableName, col, idx.Tessellation)
+			QuoteName(idx.Name), tableName, col, scriptKeyword("tessellation scheme", idx.Tessellation,
+				SpatialGeometryGrid, SpatialGeometryAutoGrid, SpatialGeographyGrid, SpatialGeographyAutoGrid))
 		if b := idx.BoundingBox; b != nil && idx.Tessellation.IsGeometry() {
 			o = append(o, fmt.Sprintf("BOUNDING_BOX = (%s, %s, %s, %s)",
 				floatLiteral(b.XMin), floatLiteral(b.YMin), floatLiteral(b.XMax), floatLiteral(b.YMax)))
@@ -323,15 +326,24 @@ func compressionOptions(partitions []PartitionOptions, named func(DataCompressio
 		var o []string
 		for _, c := range order {
 			if named(c) {
-				o = append(o, fmt.Sprintf("DATA_COMPRESSION = %s ON PARTITIONS (%s)", c, strings.Join(ranges[c], ", ")))
+				o = append(o, fmt.Sprintf("DATA_COMPRESSION = %s ON PARTITIONS (%s)", compressionKeyword(c), strings.Join(ranges[c], ", ")))
 			}
 		}
 		return o
 	}
 	if named(parts[0]) {
-		return []string{"DATA_COMPRESSION = " + string(parts[0])}
+		return []string{"DATA_COMPRESSION = " + compressionKeyword(parts[0])}
 	}
 	return nil
+}
+
+// compressionKeyword is c as the DATA_COMPRESSION keyword, checked: c is a
+// catalog data_compression_desc here, not a validated request.
+func compressionKeyword(c DataCompression) string {
+	if c.valid() {
+		return string(c)
+	}
+	return unrecognized("data compression")
 }
 
 // xmlCompressionOptions renders XML_COMPRESSION for a heap or rowstore index

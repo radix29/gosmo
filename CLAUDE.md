@@ -123,6 +123,10 @@ write, drop them; never mutate pre-existing objects.
   `escapeSingle(t.FullName())`. Wrong forms resolve to the wrong object or NULL —
   and a NULL `object_id` means "every object" to `sys.dm_db_index_physical_stats`.
   `identifier_quoting_test.go` pins it. Prefer a query parameter where accepted.
+  A catalog `*_desc` keyword, numeric text or stored name going into a script
+  passes `catalog_keyword.go`'s `scriptKeyword`/`scriptInteger`/
+  `scriptObjectName` (closed set, else a placeholder the server refuses);
+  `TestNoRawStringFieldIsInterpolatedIntoSQL` fails on a bare `%s` field.
 - **A name built-in compared with a parameter is collated**:
   `SCHEMA_NAME(x.schema_id) COLLATE DATABASE_DEFAULT = @p1`. A `USE d; …` batch
   (a read inside `InTransaction`, `useBatch`) binds parameters in the starting

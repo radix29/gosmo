@@ -491,8 +491,8 @@ func systemVersioningOption(o tableScriptOptions) string {
 		sub = append(sub, "HISTORY_TABLE = "+qualifiedName(o.HistorySchema, o.HistoryTable))
 	}
 	if o.HistoryRetentionPeriod > 0 && o.HistoryRetentionUnit != "" {
-		unit := o.HistoryRetentionUnit
-		if o.HistoryRetentionPeriod != 1 {
+		unit := scriptKeyword("history retention unit", o.HistoryRetentionUnit, "DAY", "WEEK", "MONTH", "YEAR")
+		if o.HistoryRetentionPeriod != 1 && !strings.HasPrefix(unit, "<") {
 			unit += "S"
 		}
 		sub = append(sub, fmt.Sprintf("HISTORY_RETENTION_PERIOD = %d %s", o.HistoryRetentionPeriod, unit))
@@ -512,7 +512,8 @@ func lockEscalationStatement(o tableScriptOptions, fullName string) string {
 	if o.LockEscalation == "" || strings.EqualFold(o.LockEscalation, "TABLE") || o.IsMemoryOptimized {
 		return ""
 	}
-	return fmt.Sprintf("ALTER TABLE %s SET (LOCK_ESCALATION = %s);\nGO\n\n", fullName, o.LockEscalation)
+	return fmt.Sprintf("ALTER TABLE %s SET (LOCK_ESCALATION = %s);\nGO\n\n", fullName,
+		scriptKeyword("lock escalation", o.LockEscalation, "AUTO", "DISABLE"))
 }
 
 // columnBindings renders the sp_bindrule and sp_bindefault that bind a legacy
@@ -654,7 +655,9 @@ func tableColumnDefinition(col *Column, dbCollation string) string {
 	}
 	if col.ColumnEncryptionKey != "" {
 		fmt.Fprintf(&sb, " ENCRYPTED WITH (COLUMN_ENCRYPTION_KEY = %s, ENCRYPTION_TYPE = %s, ALGORITHM = '%s')",
-			QuoteName(col.ColumnEncryptionKey), col.EncryptionType, escapeSingle(col.EncryptionAlgorithm))
+			QuoteName(col.ColumnEncryptionKey),
+			scriptKeyword("encryption type", col.EncryptionType, "DETERMINISTIC", "RANDOMIZED"),
+			escapeSingle(col.EncryptionAlgorithm))
 	}
 	if !col.IsNullable {
 		sb.WriteString(" NOT NULL")

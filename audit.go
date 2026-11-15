@@ -3,7 +3,6 @@ package gosmo
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -404,37 +403,14 @@ func (a *ServerAudit) withAuditDisabled(ctx context.Context, fn func(context.Con
 		return err
 	}
 	enable := func(ctx context.Context) error { return a.setStateNamed(ctx, name, true) }
+	// The re-enable goes through repair (server.go) on both paths: a cancelled
+	// context is the likeliest way for fn to fail part-way, and the window
+	// exists so that such a failure cannot leave auditing off. A failed
+	// re-enable after a failed fn is joined after fn's error (withRepair).
 	if err := fn(inner); err != nil {
-		// Best effort: report the original failure, not the restore's.
-		_ = restoreWindow(ctx, enable)
-		return err
+		return withRepair(err, repair(ctx, enable))
 	}
-	return restoreWindow(ctx, enable)
-}
-
-// windowRestoreTimeout bounds a disable window's closing re-enable. Short for
-// the same reason as multiUserRepairTimeout: the statement has nothing to wait
-// for, and one that hangs is worse than one that gives up.
-const windowRestoreTimeout = 10 * time.Second
-
-// restoreWindow runs a disable window's closing re-enable — every
-// WithDisabled, server and database scope alike — under ctx's values but not
-// its cancellation.
-//
-// The window exists so that a write failing part-way cannot leave auditing off,
-// and a cancelled context is the likeliest way for one to fail part-way: a user
-// cancelling a slow Apply, or the caller's deadline running out inside fn.
-// Re-enabling on that same context fails without reaching the server, so the
-// audit stayed switched off exactly when the window promised it would not. Same
-// shape as restoreAccessMode (server.go). The values are kept, so under WithScript
-// the re-enable is still captured rather than run, and a rename inside the
-// window still restores under its new name. Neither the re-enable nor the
-// disable that opened the window is reported to a statement observer — see
-// WithStatementObserver.
-func restoreWindow(ctx context.Context, enable func(context.Context) error) error {
-	rctx, cancel := context.WithTimeout(context.WithoutCancel(unobserved(ctx)), windowRestoreTimeout)
-	defer cancel()
-	return enable(rctx)
+	return repair(ctx, enable)
 }
 
 // alterServerAuditStatements builds the statements ALTER needs for the spec.
@@ -480,8 +456,8 @@ func (a *ServerAudit) Alter(ctx context.Context, spec ServerAuditDefinition) err
 // restores the state through the receiver's name, and MODIFY NAME has changed
 // what that name has to be. The restore is therefore spelled out here,
 // addressed to newName on the path where the rename committed and to the old
-// name on the path where it did not. Both restores go through restoreWindow,
-// for the reason its comment gives: a rename cancelled by the user, or one
+// name on the path where it did not. Both restores go through repair
+// (server.go), for the reason its comment gives: a rename cancelled by the user, or one
 // whose MODIFY NAME ran out the deadline, is the likeliest way to reach them,
 // and a re-enable on that same context never reaches the server.
 func (a *ServerAudit) Rename(ctx context.Context, newName string) error {
@@ -508,14 +484,10 @@ func (a *ServerAudit) Rename(ctx context.Context, newName string) error {
 		err = fmt.Errorf("gosmo: rename server audit %q: %w", a.Name, err)
 		if restore {
 			// The rename did not commit, so the audit is still the old name.
-			// A failed restore is reported alongside the rename's error, not
-			// instead of it: the caller has to know auditing is still off.
 			oldName := a.Name
-			if rerr := restoreWindow(ctx, func(ctx context.Context) error {
+			err = withRepair(err, repair(ctx, func(ctx context.Context) error {
 				return a.setStateNamed(ctx, oldName, true)
-			}); rerr != nil {
-				err = errors.Join(err, rerr)
-			}
+			}))
 		}
 		return err
 	}
@@ -525,7 +497,7 @@ func (a *ServerAudit) Rename(ctx context.Context, newName string) error {
 		*window = newName
 	}
 	if restore {
-		return restoreWindow(ctx, func(ctx context.Context) error {
+		return repair(ctx, func(ctx context.Context) error {
 			return a.setStateNamed(ctx, newName, true)
 		})
 	}

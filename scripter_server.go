@@ -321,7 +321,8 @@ func (sc *ServerScripter) ScriptEndpoint(ctx context.Context, name string) (stri
 			fmt.Fprintf(sb, "\n    AUTHORIZATION %s", QuoteName(e.Owner))
 		}
 		if e.State != "" {
-			fmt.Fprintf(sb, "\n    STATE = %s", e.State)
+			fmt.Fprintf(sb, "\n    STATE = %s", scriptKeyword("endpoint state", e.State,
+				EndpointStarted, EndpointStopped, EndpointDisabled))
 		}
 		fmt.Fprintf(sb, "\n    AS TCP (LISTENER_PORT = %d, LISTENER_IP = ALL)\n    FOR %s;\nGO\n", e.Port, payload)
 		return nil
@@ -358,7 +359,7 @@ func (sc *ServerScripter) endpointPayloadClause(ctx context.Context, e *Endpoint
 		return fmt.Sprintf("DATABASE_MIRRORING (AUTHENTICATION = %s, ENCRYPTION = %s, ROLE = %s)",
 			endpointAuthClause(d.ConnectionAuth, cert),
 			endpointEncryptionClause(d.IsEncryptionEnabled, d.EncryptionAlgorithm),
-			orElse(d.Role, "ALL")), nil
+			scriptKeyword("endpoint role", orElse(d.Role, "ALL"), "ALL", "PARTNER", "WITNESS")), nil
 
 	case "SERVICE_BROKER":
 		d, err := e.ServiceBrokerDetail(ctx)
@@ -404,7 +405,7 @@ func endpointAuthClause(desc, certificate string) string {
 				out = append(out, "CERTIFICATE "+QuoteName(certificate))
 			}
 		default:
-			out = append(out, "WINDOWS "+p)
+			out = append(out, "WINDOWS "+scriptKeyword("Windows authentication method", p, "NTLM", "KERBEROS", "NEGOTIATE"))
 		}
 	}
 	if len(out) == 0 {
@@ -422,7 +423,13 @@ func endpointEncryptionClause(enabled bool, algorithm string) string {
 	if algorithm == "" || algorithm == "NONE" {
 		return "REQUIRED"
 	}
-	return "REQUIRED ALGORITHM " + algorithm
+	// The clause separates a mixed form with a space ("AES RC4"); accept the
+	// desc's comma spelling too.
+	alg := strings.Join(strings.Fields(strings.ReplaceAll(algorithm, ",", " ")), " ")
+	if !endpointAlgorithms[strings.ToUpper(alg)] {
+		return "REQUIRED ALGORITHM " + unrecognized("encryption algorithm")
+	}
+	return "REQUIRED ALGORITHM " + strings.ToUpper(alg)
 }
 
 // backupDeviceKeyword maps sys.backup_devices.type_desc to the keyword

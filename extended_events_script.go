@@ -477,7 +477,8 @@ func fieldsEqual(a, b []SessionField) bool {
 //
 // Options a running session refuses are applied inside a stop window: the
 // session is stopped, altered and started again, and started again on the
-// failure path too — see restoreWindow. The spec's Name is ignored; there is
+// failure path too — see repair (server.go); a failed restart is joined after
+// the alter's error. The spec's Name is ignored; there is
 // no rename.
 //
 // The statements are not one transaction — the server runs event-session DDL
@@ -513,10 +514,9 @@ func (es *EventSession) Alter(ctx context.Context, spec EventSessionDefinition) 
 	}
 	start := func(ctx context.Context) error { return es.setState(ctx, true) }
 	if err := apply(ctx); err != nil {
-		_ = restoreWindow(ctx, start)
-		return err
+		return withRepair(err, repair(ctx, start))
 	}
-	return restoreWindow(ctx, start)
+	return repair(ctx, start)
 }
 
 // refLike returns a name-only handle in the receiver's scope.

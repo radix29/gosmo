@@ -3,7 +3,6 @@ package gosmo
 import (
 	"context"
 	"database/sql"
-	"database/sql/driver"
 	"fmt"
 )
 
@@ -192,17 +191,17 @@ REVERT;`, QuoteLiteral(login))
 // under a millisecond, and 280 cancelled reads through this package did not
 // hit it.
 //
-// A stopped scan cannot say whether the REVERT ran, so the connection goes
-// (sql.Conn.Raw returning driver.ErrBadConn, as BulkCopy does) rather than
-// back to the pool for an unrelated caller to trip over. A cancel before the
-// first row needs none of this — go-mssqldb drops that connection itself —
-// but cannot be told apart here, and discarding it again is harmless.
+// A stopped scan cannot say whether the REVERT ran, so the connection is
+// discarded (DiscardConn) rather than going back to the pool for an unrelated
+// caller to trip over. A cancel before the first row needs none of this —
+// go-mssqldb drops that connection itself — but cannot be told apart here,
+// and discarding it again is harmless.
 func readImpersonated(rows *dbRows) ([]*EffectivePermission, error) {
 	defer rows.Close()
 	perms, err := scanEffectivePermissions(rows.Rows)
 	if err != nil {
 		rows.Rows.Close()
-		_ = rows.conn.Raw(func(any) error { return driver.ErrBadConn })
+		DiscardConn(rows.conn)
 		return nil, err
 	}
 	return perms, nil
