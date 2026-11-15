@@ -73,8 +73,12 @@ ORDER  BY o.name`
 // server's own is_caller_dependent is set by any one unqualified reference.
 // referenced_class = 1 keeps a type or XML schema collection whose id equals
 // schema.name's object id out.
-// Fabric Warehouse has no such DMV; its catalog lookup resolves unqualified
-// references with the same schema-then-dbo rule as Dependencies.
+//
+// Fabric Warehouse has no such DMV (Msg 15871), so there the list joins
+// sys.sql_expression_dependencies instead, resolving a NULL referenced_id with
+// Dependencies' schema-then-dbo rule. That finds a caller-dependent reference
+// only when it resolves to schema.name for the referencing object's owner, as
+// Dependencies would report it from the other side.
 func (d *Database) Dependents(ctx context.Context, schema, name string) ([]*Dependency, error) {
 	if err := requireSchema("dependents", schema, name); err != nil {
 		return nil, err

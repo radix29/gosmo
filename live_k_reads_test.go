@@ -106,26 +106,31 @@ func TestLiveKReads(t *testing.T) {
 			slices.Sort(out)
 			return out
 		}
-		deps, err := d.Dependents(ctx, "dbo", "target")
-		if err != nil {
-			t.Fatalf("Dependents(dbo.target): %v", err)
-		}
-		if got, want := names(deps), []string{"dbo.calls_qualified", "dbo.calls_unqualified", "s2.calls_unqualified"}; !slices.Equal(got, want) {
-			t.Errorf("Dependents(dbo.target) = %v, want %v", got, want)
-		}
-		deps, err = d.Dependents(ctx, "dbo", "t")
-		if err != nil {
-			t.Fatalf("Dependents(dbo.t): %v", err)
-		}
-		bound := map[string]bool{}
-		for _, dep := range deps {
-			bound[dep.Name] = dep.IsSchemaBound
-		}
-		if len(bound) != 2 || !bound["v_sb"] || bound["v_plain"] {
-			t.Errorf("Dependents(dbo.t) schema binding = %v, want v_sb bound, v_plain not", bound)
-		}
-		if deps, err := d.Dependents(ctx, "dbo", "nosuch"); err != nil || len(deps) != 0 {
-			t.Errorf("Dependents(dbo.nosuch) = %v, %v; want none, no error", deps, err)
+		// Fabric Warehouse's catalog query reads only sys.sql_expression_dependencies,
+		// which SQL Server has too, so it must answer the same as the DMV here.
+		for _, fabric := range []bool{false, true} {
+			setFabricDW(t, srv, fabric)
+			deps, err := d.Dependents(ctx, "dbo", "target")
+			if err != nil {
+				t.Fatalf("fabric=%v: Dependents(dbo.target): %v", fabric, err)
+			}
+			if got, want := names(deps), []string{"dbo.calls_qualified", "dbo.calls_unqualified", "s2.calls_unqualified"}; !slices.Equal(got, want) {
+				t.Errorf("fabric=%v: Dependents(dbo.target) = %v, want %v", fabric, got, want)
+			}
+			deps, err = d.Dependents(ctx, "dbo", "t")
+			if err != nil {
+				t.Fatalf("fabric=%v: Dependents(dbo.t): %v", fabric, err)
+			}
+			bound := map[string]bool{}
+			for _, dep := range deps {
+				bound[dep.Name] = dep.IsSchemaBound
+			}
+			if len(bound) != 2 || !bound["v_sb"] || bound["v_plain"] {
+				t.Errorf("fabric=%v: Dependents(dbo.t) schema binding = %v, want v_sb bound, v_plain not", fabric, bound)
+			}
+			if deps, err := d.Dependents(ctx, "dbo", "nosuch"); err != nil || len(deps) != 0 {
+				t.Errorf("fabric=%v: Dependents(dbo.nosuch) = %v, %v; want none, no error", fabric, deps, err)
+			}
 		}
 	})
 
@@ -166,18 +171,21 @@ func TestLiveKReads(t *testing.T) {
 		if got, want := edges("dbo", "dep_both"), map[string]bool{"dbo.dep_b": false}; !maps.Equal(got, want) {
 			t.Errorf("Dependencies(dbo.dep_both) caller-dependent = %v, want %v", got, want)
 		}
-		deps, err := d.Dependents(ctx, "dbo", "dep_b")
-		if err != nil {
-			t.Fatalf("Dependents(dbo.dep_b): %v", err)
-		}
-		callerDep := map[string]bool{}
-		for _, dep := range deps {
-			callerDep[dep.Schema+"."+dep.Name] = dep.IsCallerDependent
-		}
-		// The same rule both ways: dep_both names dbo.dep_b exactly once,
-		// though the server's own is_caller_dependent says 1 for it.
-		if want := map[string]bool{"dbo.dep_a": true, "s3.dep_a": true, "dbo.dep_both": false}; !maps.Equal(callerDep, want) {
-			t.Errorf("Dependents(dbo.dep_b) caller-dependent = %v, want %v", callerDep, want)
+		for _, fabric := range []bool{false, true} {
+			setFabricDW(t, srv, fabric)
+			deps, err := d.Dependents(ctx, "dbo", "dep_b")
+			if err != nil {
+				t.Fatalf("fabric=%v: Dependents(dbo.dep_b): %v", fabric, err)
+			}
+			callerDep := map[string]bool{}
+			for _, dep := range deps {
+				callerDep[dep.Schema+"."+dep.Name] = dep.IsCallerDependent
+			}
+			// The same rule both ways: dep_both names dbo.dep_b exactly once,
+			// though the server's own is_caller_dependent says 1 for it.
+			if want := map[string]bool{"dbo.dep_a": true, "s3.dep_a": true, "dbo.dep_both": false}; !maps.Equal(callerDep, want) {
+				t.Errorf("fabric=%v: Dependents(dbo.dep_b) caller-dependent = %v, want %v", fabric, callerDep, want)
+			}
 		}
 	})
 
@@ -200,4 +208,12 @@ func TestLiveKReads(t *testing.T) {
 			t.Error("PasswordLastSet is zero for a login whose password was just set")
 		}
 	})
+}
+
+// setFabricDW points srv at the Fabric Warehouse catalog queries (or back) for
+// the rest of the test, restoring the SQL Server path afterwards.
+func setFabricDW(t *testing.T, srv *Server, fabric bool) {
+	t.Helper()
+	srv.IsFabricDW = fabric
+	t.Cleanup(func() { srv.IsFabricDW = false })
 }
