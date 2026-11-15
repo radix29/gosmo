@@ -1,17 +1,71 @@
 package gosmo
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"testing"
 )
+
+func TestBuildIndexScriptFabricConstraints(t *testing.T) {
+	for _, fabric := range []bool{false, true} {
+		for _, primary := range []bool{false, true} {
+			idx := &Index{Name: "K", IsPrimaryKey: primary, IsUniqueConstraint: !primary,
+				IsClustered: true, IsDisabled: true, KeyColumns: []IndexColumn{{Name: "ID"}}}
+			got := buildIndexScript(idx, "[dbo].[T]", DataSpace{}, DefaultScriptOptions(), fabric)
+			if strings.Contains(got, "NOT ENFORCED") != fabric {
+				t.Errorf("fabric=%v primary=%v: incorrect constraint enforcement:\n%s", fabric, primary, got)
+			}
+			if strings.Contains(got, "ALTER INDEX") == fabric {
+				t.Errorf("fabric=%v primary=%v: incorrect ALTER INDEX inclusion:\n%s", fabric, primary, got)
+			}
+			if fabric && (!strings.Contains(got, "NONCLUSTERED ([ID]) NOT ENFORCED;") || strings.Contains(got, "WITH (")) {
+				t.Errorf("Fabric key has unsupported clustered or index options:\n%s", got)
+			}
+		}
+	}
+}
+
+func TestViewIndexesOmitsAlterIndexOnFabric(t *testing.T) {
+	idx := &Index{Name: "IX", Type: IndexTypeNonClustered, IsDisabled: true,
+		KeyColumns: []IndexColumn{{Name: "ID"}}}
+	for _, fabric := range []bool{false, true} {
+		got := viewIndexes([]*Index{idx}, nil, "[dbo].[V]", DefaultScriptOptions(), fabric)
+		if strings.Contains(got, "ALTER INDEX") == fabric {
+			t.Errorf("fabric=%v: incorrect ALTER INDEX inclusion:\n%s", fabric, got)
+		}
+	}
+}
+
+func TestScriptTableForeignKeyFabricNotEnforced(t *testing.T) {
+	for _, fabric := range []bool{false, true} {
+		d := captureDatabase(t)
+		d.server.IsFabricDW = fabric
+		sc := NewScripter(d, DefaultScriptOptions())
+		fk := &ForeignKey{Name: "FK", Columns: []string{"ID"}, ReferencedSchema: "dbo",
+			ReferencedTable: "Parent", ReferencedColumns: []string{"ID"},
+			IsDisabled: true, IsNotTrusted: true, IsNotForReplication: true, DeleteAction: "CASCADE"}
+		got, err := sc.scriptTableForeignKey(context.Background(), &Table{db: d, Schema: "dbo", Name: "T"}, fk)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(got, "REFERENCES [dbo].[Parent] ([ID]) NOT ENFORCED;") != fabric {
+			t.Errorf("fabric=%v: incorrect foreign-key enforcement:\n%s", fabric, got)
+		}
+		for _, sqlServerOnly := range []string{"WITH NOCHECK", "NOCHECK CONSTRAINT", "NOT FOR REPLICATION", "ON DELETE CASCADE"} {
+			if strings.Contains(got, sqlServerOnly) == fabric {
+				t.Errorf("fabric=%v: incorrect inclusion of %q:\n%s", fabric, sqlServerOnly, got)
+			}
+		}
+	}
+}
 
 func TestBuildIndexScriptConstraintBackedIndexIsAConstraint(t *testing.T) {
 	opts := DefaultScriptOptions()
 	pk := &Index{AllowRowLocks: true, AllowPageLocks: true, Name: "PK_T", IsPrimaryKey: true, IsUnique: true, IsClustered: true,
 		KeyColumns: []IndexColumn{{Name: "id"}}}
 
-	got := buildIndexScript(pk, "[dbo].[T]", DataSpace{}, opts)
+	got := buildIndexScript(pk, "[dbo].[T]", DataSpace{}, opts, false)
 	if !strings.Contains(got, "ADD CONSTRAINT [PK_T] PRIMARY KEY CLUSTERED ([id] ASC)") {
 		t.Errorf("primary key not scripted as a constraint — CREATE INDEX cannot recreate one:\n%s", got)
 	}
@@ -20,7 +74,7 @@ func TestBuildIndexScriptConstraintBackedIndexIsAConstraint(t *testing.T) {
 	}
 
 	opts.Verb = ScriptDrop
-	if got := buildIndexScript(pk, "[dbo].[T]", DataSpace{}, opts); !strings.Contains(got, "ALTER TABLE [dbo].[T] DROP CONSTRAINT IF EXISTS [PK_T]") {
+	if got := buildIndexScript(pk, "[dbo].[T]", DataSpace{}, opts, false); !strings.Contains(got, "ALTER TABLE [dbo].[T] DROP CONSTRAINT IF EXISTS [PK_T]") {
 		t.Errorf("dropping a key-backed index must drop the constraint:\n%s", got)
 	}
 }
@@ -29,18 +83,18 @@ func TestBuildIndexScriptOrdinaryIndex(t *testing.T) {
 	idx := &Index{AllowRowLocks: true, AllowPageLocks: true, Name: "IX_T_a", KeyColumns: []IndexColumn{{Name: "a"}}}
 	opts := DefaultScriptOptions()
 
-	got := buildIndexScript(idx, "[dbo].[T]", DataSpace{}, opts)
+	got := buildIndexScript(idx, "[dbo].[T]", DataSpace{}, opts, false)
 	if !strings.Contains(got, "CREATE NONCLUSTERED INDEX [IX_T_a]") {
 		t.Errorf("index not scripted as CREATE INDEX:\n%s", got)
 	}
 
 	opts.Verb = ScriptDrop
-	if got := buildIndexScript(idx, "[dbo].[T]", DataSpace{}, opts); !strings.Contains(got, "DROP INDEX IF EXISTS [IX_T_a] ON [dbo].[T]") {
+	if got := buildIndexScript(idx, "[dbo].[T]", DataSpace{}, opts, false); !strings.Contains(got, "DROP INDEX IF EXISTS [IX_T_a] ON [dbo].[T]") {
 		t.Errorf("index drop wrong:\n%s", got)
 	}
 
 	opts.Verb = ScriptDropAndCreate
-	got = buildIndexScript(idx, "[dbo].[T]", DataSpace{}, opts)
+	got = buildIndexScript(idx, "[dbo].[T]", DataSpace{}, opts, false)
 	if drop, create := strings.Index(got, "DROP INDEX"), strings.Index(got, "CREATE NONCLUSTERED"); drop < 0 || create < 0 || drop > create {
 		t.Errorf("DROP-and-CREATE out of order or incomplete:\n%s", got)
 	}
@@ -321,14 +375,14 @@ func TestViewIndexesFollowTheView(t *testing.T) {
 		"IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'IX_vB_n' AND object_id = OBJECT_ID(N'[dbo].[vB]'))\n" +
 		"CREATE NONCLUSTERED INDEX [IX_vB_n]\n    ON [dbo].[vB] ([n] ASC);\nGO\n\n" +
 		"ALTER INDEX [IX_vB_n] ON [dbo].[vB] DISABLE;\nGO\n\n"
-	if got := viewIndexes([]*Index{ix, cix}, nil, "[dbo].[vB]", opts); got != want {
+	if got := viewIndexes([]*Index{ix, cix}, nil, "[dbo].[vB]", opts, false); got != want {
 		t.Errorf("view indexes:\n%s\nwant:\n%s", got, want)
 	}
 	opts.Verb = ScriptAlter
-	if got := viewIndexes([]*Index{cix}, nil, "[dbo].[vB]", opts); !strings.HasPrefix(got, "-- ALTER VIEW drops every index on the view") {
+	if got := viewIndexes([]*Index{cix}, nil, "[dbo].[vB]", opts, false); !strings.HasPrefix(got, "-- ALTER VIEW drops every index on the view") {
 		t.Errorf("under ALTER:\n%s", got)
 	}
-	if got := viewIndexes(nil, nil, "[dbo].[v]", opts); got != "" {
+	if got := viewIndexes(nil, nil, "[dbo].[v]", opts, false); got != "" {
 		t.Errorf("a plain view: %q", got)
 	}
 }

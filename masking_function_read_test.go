@@ -68,7 +68,7 @@ func TestMaskingFunctionReadsUnescaped(t *testing.T) {
 	if got, want := cols[0].MaskingFunction, `partial(1, "X'X", 2)`; got != want {
 		t.Errorf("MaskingFunction = %q, want %q (as written, unescaped)", got, want)
 	}
-	if got, want := tableColumnDefinition(cols[0], ""), `MASKED WITH (FUNCTION = '`+stored+`')`; !strings.Contains(got, want) {
+	if got, want := tableColumnDefinition(cols[0], "", false), `MASKED WITH (FUNCTION = '`+stored+`')`; !strings.Contains(got, want) {
 		t.Errorf("column definition = %q, want it to contain %q — the stored text, escaped once", got, want)
 	}
 }

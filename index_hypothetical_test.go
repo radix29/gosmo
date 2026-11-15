@@ -61,7 +61,7 @@ func TestScriptSkipsHypotheticalIndex(t *testing.T) {
 
 	for name, script := range map[string]string{
 		"table":       buildTableScript("dbo", "t", "d", parts, DefaultScriptOptions()),
-		"index alone": buildIndexScript(hypo, "[dbo].[t]", DataSpace{}, DefaultScriptOptions()),
+		"index alone": buildIndexScript(hypo, "[dbo].[t]", DataSpace{}, DefaultScriptOptions(), false),
 	} {
 		if strings.Contains(script, "[ix_hypo] ON") || strings.Contains(script, "INDEX [ix_hypo]") {
 			t.Errorf("%s script creates or alters the hypothetical index:\n%s", name, script)

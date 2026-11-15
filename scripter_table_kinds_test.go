@@ -268,6 +268,147 @@ func TestExternalTableOptionsGate(t *testing.T) {
 	}
 }
 
+func TestBuildTableScriptOmitsClusteredColumnstoreOnFabric(t *testing.T) {
+	for _, fabric := range []bool{false, true} {
+		for _, disabled := range []bool{false, true} {
+			p := tableScriptParts{
+				isFabricDW: fabric,
+				cols:       []*Column{{Name: "SaleKey", DataType: DataTypeBigInt}},
+				indexes: []*Index{
+					{Name: "CCI_FactSale", Type: IndexTypeClusteredColumnStore, IsClustered: true, IsDisabled: disabled},
+					{Name: "NCCI_FactSale", Type: IndexTypeColumnStore, IncludedColumns: []IndexColumn{{Name: "SaleKey"}}},
+				},
+			}
+			got := buildTableScript("dbo", "FactSale", "SampleDW1", p, DefaultScriptOptions())
+			if strings.Contains(got, "[CCI_FactSale]") == fabric {
+				t.Errorf("fabric=%v disabled=%v: clustered columnstore inclusion is wrong:\n%s", fabric, disabled, got)
+			}
+			if !strings.Contains(got, "CREATE NONCLUSTERED COLUMNSTORE INDEX [NCCI_FactSale]") {
+				t.Errorf("fabric=%v disabled=%v: nonclustered columnstore was lost:\n%s", fabric, disabled, got)
+			}
+			if len(p.indexes) != 2 || p.indexes[0].Name != "CCI_FactSale" {
+				t.Fatal("script generation mutated the source indexes")
+			}
+		}
+	}
+}
+
+func TestBuildTableScriptFabricPrimaryKey(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		verb  ScriptVerb
+		guard bool
+	}{
+		{"create", ScriptCreate, false},
+		{"guarded create", ScriptCreate, true},
+		{"drop and create", ScriptDropAndCreate, false},
+		{"drop", ScriptDrop, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := tableScriptParts{
+				isFabricDW: true,
+				cols:       []*Column{{Name: "SaleKey", DataType: DataTypeBigInt, IsIdentity: true}},
+				indexes: []*Index{{Name: "PK_FactSale", IsPrimaryKey: true,
+					KeyColumns: []IndexColumn{{Name: "SaleKey"}}}},
+			}
+			opts := DefaultScriptOptions()
+			opts.Verb, opts.IncludeIfNotExists = tc.verb, tc.guard
+			got := buildTableScript("dbo", "FactSale", "SampleDW1", p, opts)
+			const key = "ALTER TABLE [dbo].[FactSale]\n    ADD CONSTRAINT [PK_FactSale] PRIMARY KEY NONCLUSTERED ([SaleKey]) NOT ENFORCED;\nGO\n"
+			if tc.verb == ScriptDrop {
+				if strings.Contains(got, "PRIMARY KEY") {
+					t.Fatalf("DROP script creates a primary key:\n%s", got)
+				}
+				return
+			}
+			end := strings.Index(got, ");\nGO\n")
+			pos := strings.Index(got, key)
+			if end < 0 || pos < end || strings.Count(got, "PRIMARY KEY") != 1 {
+				t.Fatalf("primary key must be added once, after CREATE TABLE, with NOT ENFORCED:\n%s", got)
+			}
+			if tc.guard && !strings.Contains(got, constraintExistenceGuard("PK_FactSale", "[dbo].[FactSale]")+key) {
+				t.Errorf("ALTER TABLE is missing its existence guard:\n%s", got)
+			}
+		})
+	}
+}
+
+func TestBuildTableScriptFabricConstraintsNotEnforced(t *testing.T) {
+	for _, fabric := range []bool{false, true} {
+		p := tableScriptParts{
+			isFabricDW: fabric,
+			cols:       []*Column{{Name: "ID", DataType: DataTypeBigInt}},
+			indexes: []*Index{
+				{Name: "PK_T", IsPrimaryKey: true, IsDisabled: true, KeyColumns: []IndexColumn{{Name: "ID"}}},
+				{Name: "UQ_T", IsUniqueConstraint: true, IsDisabled: true, KeyColumns: []IndexColumn{{Name: "ID"}}},
+			},
+			fks: []*ForeignKey{{Name: "FK_T", Columns: []string{"ID"},
+				ReferencedSchema: "dbo", ReferencedTable: "Parent", ReferencedColumns: []string{"ID"}}},
+		}
+		got := buildTableScript("dbo", "T", "db", p, DefaultScriptOptions())
+		clauses := []string{
+			"PRIMARY KEY NONCLUSTERED ([ID] ASC)",
+			"UNIQUE NONCLUSTERED ([ID] ASC)",
+			"REFERENCES [dbo].[Parent] ([ID])",
+		}
+		if fabric {
+			clauses = []string{
+				"PRIMARY KEY NONCLUSTERED ([ID]) NOT ENFORCED",
+				"UNIQUE NONCLUSTERED ([ID]) NOT ENFORCED",
+				"REFERENCES [dbo].[Parent] ([ID]) NOT ENFORCED",
+			}
+		}
+		for _, clause := range clauses {
+			if !strings.Contains(got, clause) {
+				t.Errorf("fabric=%v: missing %q:\n%s", fabric, clause, got)
+			}
+		}
+		want := 0
+		if fabric {
+			want = 3
+			if strings.Contains(got, "WITH CHECK") || strings.Contains(got, "WITH NOCHECK") {
+				t.Errorf("Fabric constraints contain SQL Server enforcement options:\n%s", got)
+			}
+		}
+		if n := strings.Count(got, "NOT ENFORCED"); n != want {
+			t.Errorf("fabric=%v: NOT ENFORCED count=%d, want %d:\n%s", fabric, n, want, got)
+		}
+		if strings.Contains(got, "ALTER INDEX") == fabric {
+			t.Errorf("fabric=%v: incorrect ALTER INDEX inclusion:\n%s", fabric, got)
+		}
+	}
+}
+
+func TestTableScriptOptionsOmitFileFormatsOnFabric(t *testing.T) {
+	const column = "ISNULL(eff.name, '')"
+	const join = "\nLEFT   JOIN sys.external_file_formats eff ON eff.file_format_id = et.file_format_id"
+	for _, c := range []struct {
+		name, extra, object string
+	}{
+		{"single table", "", "= @p1"},
+		{"bulk tables", ", t.object_id", allTables},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			db := dbAtMajor(17)
+			table := &Table{db: db}
+			normal := table.scriptOptionsSelectWith(c.extra, c.object)
+			if !strings.Contains(normal, column) || !strings.Contains(normal, join) {
+				t.Fatal("SQL Server query lost its external file-format metadata")
+			}
+			db.server.IsFabricDW = true
+			got := table.scriptOptionsSelectWith(c.extra, c.object)
+			if strings.Contains(got, "sys.external_file_formats") || strings.Contains(got, "eff.") {
+				t.Fatal("Fabric query still references external file formats")
+			}
+			want := strings.Replace(normal, column, "CAST('' AS sysname)", 1)
+			want = strings.Replace(want, join, "", 1)
+			if got != want {
+				t.Errorf("Fabric query changed beyond the file-format column and join:\n%s", got)
+			}
+		})
+	}
+}
+
 // graphTestColumns is a node or edge table's catalog columns as sys.columns
 // reports them: the internal ones first, with their per-table GUID names.
 func graphTestColumns(edge bool) []*Column {
