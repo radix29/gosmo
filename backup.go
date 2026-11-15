@@ -169,16 +169,16 @@ func buildBackupStatement(opts BackupOptions) (string, error) {
 		withs = append(withs, "DIFFERENTIAL")
 	}
 	if opts.BackupSetName != "" {
-		withs = append(withs, fmt.Sprintf("NAME = N'%s'", escapeSingle(opts.BackupSetName)))
+		withs = append(withs, fmt.Sprintf("NAME = %s", QuoteLiteral(opts.BackupSetName)))
 	}
 	if opts.Description != "" {
-		withs = append(withs, fmt.Sprintf("DESCRIPTION = N'%s'", escapeSingle(opts.Description)))
+		withs = append(withs, fmt.Sprintf("DESCRIPTION = %s", QuoteLiteral(opts.Description)))
 	}
 	if opts.MediaDescription != "" {
-		withs = append(withs, fmt.Sprintf("MEDIADESCRIPTION = N'%s'", escapeSingle(opts.MediaDescription)))
+		withs = append(withs, fmt.Sprintf("MEDIADESCRIPTION = %s", QuoteLiteral(opts.MediaDescription)))
 	}
 	if opts.Credential != "" {
-		withs = append(withs, fmt.Sprintf("CREDENTIAL = N'%s'", escapeSingle(opts.Credential)))
+		withs = append(withs, fmt.Sprintf("CREDENTIAL = %s", QuoteLiteral(opts.Credential)))
 	}
 	if opts.CopyOnly {
 		withs = append(withs, "COPY_ONLY")
@@ -228,10 +228,10 @@ func backupFileSpec(verb string, files, fileGroups []string) (string, error) {
 	}
 	parts := make([]string, 0, len(files)+len(fileGroups))
 	for _, f := range files {
-		parts = append(parts, fmt.Sprintf("FILE = N'%s'", escapeSingle(f)))
+		parts = append(parts, fmt.Sprintf("FILE = %s", QuoteLiteral(f)))
 	}
 	for _, g := range fileGroups {
-		parts = append(parts, fmt.Sprintf("FILEGROUP = N'%s'", escapeSingle(g)))
+		parts = append(parts, fmt.Sprintf("FILEGROUP = %s", QuoteLiteral(g)))
 	}
 	return strings.Join(parts, ", "), nil
 }

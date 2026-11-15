@@ -368,14 +368,14 @@ func buildTableScript(schema, name, dbName string, p tableScriptParts, opts Scri
 	drop.WriteString(referencingForeignKeyNote(fullName, p.referencedBy, p.table.SystemVersioned))
 	if p.table.SystemVersioned {
 		if opts.IncludeIfNotExists {
-			fmt.Fprintf(&drop, "IF OBJECT_ID(N'%s', N'U') IS NOT NULL\n    ",
-				escapeSingle(fullName))
+			fmt.Fprintf(&drop, "IF OBJECT_ID(%s, N'U') IS NOT NULL\n    ",
+				QuoteLiteral(fullName))
 		}
 		fmt.Fprintf(&drop, "ALTER TABLE %s SET (SYSTEM_VERSIONING = OFF);\nGO\n", fullName)
 	}
 	if opts.IncludeIfNotExists {
-		fmt.Fprintf(&drop, "IF OBJECT_ID(N'%s', N'U') IS NOT NULL\n    ",
-			escapeSingle(fullName))
+		fmt.Fprintf(&drop, "IF OBJECT_ID(%s, N'U') IS NOT NULL\n    ",
+			QuoteLiteral(fullName))
 	}
 	fmt.Fprintf(&drop, "DROP TABLE %s;\nGO\n", fullName)
 
@@ -397,7 +397,7 @@ func buildTableScript(schema, name, dbName string, p tableScriptParts, opts Scri
 		// whole script failed to parse. Each following statement gets its own
 		// guard instead, which is also what SSMS emits.
 		if opts.IncludeIfNotExists {
-			fmt.Fprintf(sb, "IF OBJECT_ID(N'%s', N'U') IS NULL\n", escapeSingle(fullName))
+			fmt.Fprintf(sb, "IF OBJECT_ID(%s, N'U') IS NULL\n", QuoteLiteral(fullName))
 		}
 		fmt.Fprintf(sb, "CREATE TABLE %s (\n", fullName)
 
@@ -525,12 +525,12 @@ func columnBindings(cols []*Column, fullName string) string {
 	for _, col := range cols {
 		column := fullName + "." + QuoteName(col.Name)
 		if col.BoundRule != "" {
-			fmt.Fprintf(&sb, "EXEC sp_bindrule N'%s', N'%s';\nGO\n",
-				escapeSingle(qualifiedName(col.BoundRuleSchema, col.BoundRule)), escapeSingle(column))
+			fmt.Fprintf(&sb, "EXEC sp_bindrule %s, %s;\nGO\n",
+				QuoteLiteral(qualifiedName(col.BoundRuleSchema, col.BoundRule)), QuoteLiteral(column))
 		}
 		if col.BoundDefault != "" {
-			fmt.Fprintf(&sb, "EXEC sp_bindefault N'%s', N'%s';\nGO\n",
-				escapeSingle(qualifiedName(col.BoundDefaultSchema, col.BoundDefault)), escapeSingle(column))
+			fmt.Fprintf(&sb, "EXEC sp_bindefault %s, %s;\nGO\n",
+				QuoteLiteral(qualifiedName(col.BoundDefaultSchema, col.BoundDefault)), QuoteLiteral(column))
 		}
 	}
 	if sb.Len() > 0 {
@@ -707,8 +707,8 @@ func scriptUniqueConstraint(idx *Index, tableName string, tableDS DataSpace, opt
 // re-running it and getting an error. Both unique constraints and foreign
 // keys carry the table as their parent.
 func constraintExistenceGuard(name, tableName string) string {
-	return fmt.Sprintf("IF NOT EXISTS (SELECT 1 FROM sys.objects WHERE name = N'%s' AND parent_object_id = OBJECT_ID(N'%s'))\n",
-		escapeSingle(name), escapeSingle(tableName))
+	return fmt.Sprintf("IF NOT EXISTS (SELECT 1 FROM sys.objects WHERE name = %s AND parent_object_id = OBJECT_ID(%s))\n",
+		QuoteLiteral(name), QuoteLiteral(tableName))
 }
 
 // scriptForeignKey renders the ALTER TABLE ... ADD CONSTRAINT that creates fk.

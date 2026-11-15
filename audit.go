@@ -242,7 +242,7 @@ func (spec ServerAuditDefinition) auditTargetClause() string {
 
 	var opts []string
 	if spec.FilePath != "" {
-		opts = append(opts, fmt.Sprintf("FILEPATH = N'%s'", escapeSingle(spec.FilePath)))
+		opts = append(opts, fmt.Sprintf("FILEPATH = %s", QuoteLiteral(spec.FilePath)))
 	}
 	if spec.MaxFileSize > 0 {
 		opts = append(opts, fmt.Sprintf("MAXSIZE = %d MB", spec.MaxFileSize))

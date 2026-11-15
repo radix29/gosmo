@@ -226,14 +226,14 @@ func buildRestoreStatement(opts RestoreOptions, killSessions bool) (string, erro
 		withs = append(withs, fmt.Sprintf("FILE = %d", opts.FileNumber))
 	}
 	for _, rf := range opts.RelocateFiles {
-		withs = append(withs, fmt.Sprintf("MOVE N'%s' TO N'%s'",
-			escapeSingle(rf.LogicalName), escapeSingle(rf.PhysicalName)))
+		withs = append(withs, fmt.Sprintf("MOVE %s TO %s",
+			QuoteLiteral(rf.LogicalName), QuoteLiteral(rf.PhysicalName)))
 	}
 	switch opts.Recovery {
 	case RestoreWithRecovery, RestoreWithNoRecovery:
 		withs = append(withs, string(opts.Recovery))
 	case RestoreWithStandBy:
-		withs = append(withs, fmt.Sprintf("STANDBY = N'%s'", escapeSingle(opts.StandByFile)))
+		withs = append(withs, fmt.Sprintf("STANDBY = %s", QuoteLiteral(opts.StandByFile)))
 	}
 	if opts.Replace {
 		withs = append(withs, "REPLACE")
@@ -242,7 +242,7 @@ func buildRestoreStatement(opts RestoreOptions, killSessions bool) (string, erro
 		withs = append(withs, "CHECKSUM")
 	}
 	if opts.Credential != "" {
-		withs = append(withs, fmt.Sprintf("CREDENTIAL = N'%s'", escapeSingle(opts.Credential)))
+		withs = append(withs, fmt.Sprintf("CREDENTIAL = %s", QuoteLiteral(opts.Credential)))
 	}
 	if opts.Stats > 0 {
 		withs = append(withs, fmt.Sprintf("STATS = %d", opts.Stats))

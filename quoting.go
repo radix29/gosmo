@@ -204,18 +204,21 @@ VALUES VARYING VIEW WAITFOR WHEN WHERE WHILE WITH WRITETEXT`)
 // returned the driver's bare '…' and every caller that knew added the N by
 // hand; the ones that did not were the bug (S9).
 //
-// Use QuoteLiteral where the whole literal is being produced. Where the
-// quotes are already part of a format string — the common shape in this
-// package, e.g. "@name = N'%s'" — use the unexported escapeSingle (helpers.go)
-// instead, which escapes without adding quotes of its own.
+// It is the one way this package puts a value in an nvarchar literal: the
+// format string says "@name = %s" and the argument is QuoteLiteral(v), never
+// "N'%s'" with the quoting split between the two — a format string that
+// forgot the N or a quote was the failure that shape invited. The unexported
+// escapeSingle (helpers.go) is left for the few literals that are not
+// QuoteLiteral's shape: a varchar '…' (no N) or a value spliced into a
+// larger literal (dynamic SQL inside EXEC (N'…')).
 //
-// Neither one quotes an *identifier*. An identifier that ends up inside a
+// It does not quote an *identifier*. An identifier that ends up inside a
 // string literal — the argument to OBJECT_ID, DBCC SHOW_STATISTICS,
 // fn_listextendedproperty, and similar — needs QuoteName/qualifiedName
-// applied first and escapeSingle on top of that:
+// applied first and QuoteLiteral on top of that:
 //
-//	escapeSingle(qualifiedName(schema, name))  // -> [dbo].[Sales.Archive]
-//	escapeSingle(t.FullName())                 // same, for a *Table
+//	QuoteLiteral(qualifiedName(schema, name))  // -> N'[dbo].[Sales.Archive]'
+//	QuoteLiteral(t.FullName())                 // same, for a *Table
 //
 // Skipping the bracket-quoting is not cosmetic. A name containing '.' then
 // parses as a multi-part name and resolves to the wrong object or to NULL,

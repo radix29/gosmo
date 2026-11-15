@@ -68,8 +68,8 @@ func pushdownLocation(location string) bool {
 
 // buildExternalDataSourceScript assembles one external data source's script.
 func buildExternalDataSourceScript(s *ExternalDataSource, opts ScriptOptions) string {
-	drop := fmt.Sprintf("IF EXISTS (SELECT 1 FROM sys.external_data_sources WHERE name = N'%s')\n"+
-		"    DROP EXTERNAL DATA SOURCE %s;\nGO\n", escapeSingle(s.Name), QuoteName(s.Name))
+	drop := fmt.Sprintf("IF EXISTS (SELECT 1 FROM sys.external_data_sources WHERE name = %s)\n"+
+		"    DROP EXTERNAL DATA SOURCE %s;\nGO\n", QuoteLiteral(s.Name), QuoteName(s.Name))
 	return opts.envelope(drop, "", func(sb *strings.Builder) {
 		kind := strings.ToUpper(s.Type)
 		if kind != "" && kind != "NONE" && !externalDataSourceTypes[kind] {
@@ -77,8 +77,8 @@ func buildExternalDataSourceScript(s *ExternalDataSource, opts ScriptOptions) st
 				"   for it, so the type is left to the location prefix. */\n", tsql.BlockCommentSafe(kind))
 		}
 		if opts.IncludeIfNotExists {
-			fmt.Fprintf(sb, "IF NOT EXISTS (SELECT 1 FROM sys.external_data_sources WHERE name = N'%s')\n",
-				escapeSingle(s.Name))
+			fmt.Fprintf(sb, "IF NOT EXISTS (SELECT 1 FROM sys.external_data_sources WHERE name = %s)\n",
+				QuoteLiteral(s.Name))
 		}
 		fmt.Fprintf(sb, "CREATE EXTERNAL DATA SOURCE %s WITH (\n", QuoteName(s.Name))
 
@@ -123,18 +123,18 @@ func (sc *Scripter) ScriptExternalFileFormat(ctx context.Context, name string) (
 // valid empty, and every option in it belongs to DELIMITEDTEXT — a PARQUET
 // or ORC format carries none.
 func buildExternalFileFormatScript(f *ExternalFileFormat, opts ScriptOptions) string {
-	drop := fmt.Sprintf("IF EXISTS (SELECT 1 FROM sys.external_file_formats WHERE name = N'%s')\n"+
-		"    DROP EXTERNAL FILE FORMAT %s;\nGO\n", escapeSingle(f.Name), QuoteName(f.Name))
+	drop := fmt.Sprintf("IF EXISTS (SELECT 1 FROM sys.external_file_formats WHERE name = %s)\n"+
+		"    DROP EXTERNAL FILE FORMAT %s;\nGO\n", QuoteLiteral(f.Name), QuoteName(f.Name))
 	return opts.envelope(drop, "", func(sb *strings.Builder) {
 		if f.RowTerminator != "" {
 			// sys.external_file_formats stores it; CREATE EXTERNAL FILE FORMAT
 			// takes no option for it, so it is reported rather than emitted.
-			fmt.Fprintf(sb, "/* Row terminator stored with this format: N'%s' — CREATE EXTERNAL FILE\n"+
-				"   FORMAT has no option for it. */\n", tsql.BlockCommentSafe(escapeSingle(f.RowTerminator)))
+			fmt.Fprintf(sb, "/* Row terminator stored with this format: %s — CREATE EXTERNAL FILE\n"+
+				"   FORMAT has no option for it. */\n", tsql.BlockCommentSafe(QuoteLiteral(f.RowTerminator)))
 		}
 		if opts.IncludeIfNotExists {
-			fmt.Fprintf(sb, "IF NOT EXISTS (SELECT 1 FROM sys.external_file_formats WHERE name = N'%s')\n",
-				escapeSingle(f.Name))
+			fmt.Fprintf(sb, "IF NOT EXISTS (SELECT 1 FROM sys.external_file_formats WHERE name = %s)\n",
+				QuoteLiteral(f.Name))
 		}
 		fmt.Fprintf(sb, "CREATE EXTERNAL FILE FORMAT %s WITH (\n", QuoteName(f.Name))
 
@@ -193,8 +193,8 @@ func (sc *Scripter) ScriptExternalLibrary(ctx context.Context, name string) (str
 // PRIVATE or PUBLIC by who owns it and who was granted the package rights,
 // and CREATE EXTERNAL LIBRARY has no clause that sets it.
 func buildExternalLibraryScript(l *ExternalLibrary, opts ScriptOptions) string {
-	drop := fmt.Sprintf("IF EXISTS (SELECT 1 FROM sys.external_libraries WHERE name = N'%s')\n"+
-		"    DROP EXTERNAL LIBRARY %s;\nGO\n", escapeSingle(l.Name), QuoteName(l.Name))
+	drop := fmt.Sprintf("IF EXISTS (SELECT 1 FROM sys.external_libraries WHERE name = %s)\n"+
+		"    DROP EXTERNAL LIBRARY %s;\nGO\n", QuoteLiteral(l.Name), QuoteName(l.Name))
 	return opts.envelope(drop, "", func(sb *strings.Builder) {
 		sb.WriteString("/* The library's package content cannot be scripted — it is not text.\n" +
 			"   Replace the placeholder below with the package bytes or its path. */\n")
@@ -208,7 +208,7 @@ func buildExternalLibraryScript(l *ExternalLibrary, opts ScriptOptions) string {
 		}
 		fmt.Fprintf(sb, "\nFROM (CONTENT = %s)", externalLibraryContentPlaceholder)
 		if l.Language != "" {
-			fmt.Fprintf(sb, "\nWITH (LANGUAGE = N'%s')", escapeSingle(l.Language))
+			fmt.Fprintf(sb, "\nWITH (LANGUAGE = %s)", QuoteLiteral(l.Language))
 		}
 		sb.WriteString(";\nGO\n")
 	})
@@ -235,7 +235,7 @@ func (c *clauseList) addLiteral(name, value string) {
 	if value == "" {
 		return
 	}
-	c.parts = append(c.parts, fmt.Sprintf("%s = N'%s'", name, escapeSingle(value)))
+	c.parts = append(c.parts, fmt.Sprintf("%s = %s", name, QuoteLiteral(value)))
 }
 
 // addKeyword appends NAME = value with the value emitted as written — a

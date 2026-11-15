@@ -64,17 +64,17 @@ func (sc *Scripter) withTypeExtendedProperties(ctx context.Context, script, sche
 func buildUserDefinedDataTypeScript(t *UserDefinedDataType, opts ScriptOptions) string {
 	fullName := qualifiedName(t.Schema, t.Name)
 	drop := fmt.Sprintf("DROP TYPE IF EXISTS %s;\nGO\n", fullName)
-	guard := fmt.Sprintf("IF TYPE_ID(N'%s') IS NULL\n", escapeSingle(fullName))
+	guard := fmt.Sprintf("IF TYPE_ID(%s) IS NULL\n", QuoteLiteral(fullName))
 	return opts.envelope(drop, guard, func(sb *strings.Builder) {
 		fmt.Fprintf(sb, "CREATE TYPE %s FROM %s %s;\nGO\n",
 			fullName, t.BaseTypeString(), nullClause(t.IsNullable))
 		if t.Rule != "" {
-			fmt.Fprintf(sb, "\nEXEC sp_bindrule N'%s', N'%s';\nGO\n",
-				escapeSingle(qualifiedName(t.RuleSchema, t.Rule)), escapeSingle(fullName))
+			fmt.Fprintf(sb, "\nEXEC sp_bindrule %s, %s;\nGO\n",
+				QuoteLiteral(qualifiedName(t.RuleSchema, t.Rule)), QuoteLiteral(fullName))
 		}
 		if t.Default != "" {
-			fmt.Fprintf(sb, "\nEXEC sp_bindefault N'%s', N'%s';\nGO\n",
-				escapeSingle(qualifiedName(t.DefaultSchema, t.Default)), escapeSingle(fullName))
+			fmt.Fprintf(sb, "\nEXEC sp_bindefault %s, %s;\nGO\n",
+				QuoteLiteral(qualifiedName(t.DefaultSchema, t.Default)), QuoteLiteral(fullName))
 		}
 	})
 }
@@ -195,7 +195,7 @@ func readTableTypeScriptParts(ctx context.Context, t *UserDefinedTableType) (tab
 func buildUserDefinedTableTypeScript(t *UserDefinedTableType, p tableTypeScriptParts, opts ScriptOptions) string {
 	fullName := qualifiedName(t.Schema, t.Name)
 	drop := fmt.Sprintf("DROP TYPE IF EXISTS %s;\nGO\n", fullName)
-	guard := fmt.Sprintf("IF TYPE_ID(N'%s') IS NULL\n", escapeSingle(fullName))
+	guard := fmt.Sprintf("IF TYPE_ID(%s) IS NULL\n", QuoteLiteral(fullName))
 	return opts.envelope(drop, guard, func(sb *strings.Builder) {
 		var elems, keys, checks, indexes []string
 		for _, col := range p.cols {
@@ -316,7 +316,7 @@ func buildClrTypeScript(t *ClrType, opts ScriptOptions) string {
 	return opts.envelope(drop, "", func(sb *strings.Builder) {
 		sb.WriteString("/* The assembly named below must already be registered in the database. */\n")
 		if opts.IncludeIfNotExists {
-			fmt.Fprintf(sb, "IF TYPE_ID(N'%s') IS NULL\n", escapeSingle(fullName))
+			fmt.Fprintf(sb, "IF TYPE_ID(%s) IS NULL\n", QuoteLiteral(fullName))
 		}
 		externalName := QuoteName(t.Assembly)
 		if t.AssemblyClass != "" {
@@ -366,8 +366,8 @@ func buildXMLSchemaCollectionScript(c *XMLSchemaCollection, def string, opts Scr
 	drop := xmlSchemaCollectionGuard(c, "IF EXISTS") + "    DROP XML SCHEMA COLLECTION " + fullName + ";\nGO\n"
 	guard := xmlSchemaCollectionGuard(c, "IF NOT EXISTS")
 	return opts.envelope(drop, guard, func(sb *strings.Builder) {
-		fmt.Fprintf(sb, "CREATE XML SCHEMA COLLECTION %s AS N'%s';\nGO\n",
-			fullName, escapeSingle(def))
+		fmt.Fprintf(sb, "CREATE XML SCHEMA COLLECTION %s AS %s;\nGO\n",
+			fullName, QuoteLiteral(def))
 	})
 }
 
@@ -375,8 +375,8 @@ func buildXMLSchemaCollectionScript(c *XMLSchemaCollection, def string, opts Scr
 // sense the caller asks for.
 func xmlSchemaCollectionGuard(c *XMLSchemaCollection, sense string) string {
 	return fmt.Sprintf("%s (SELECT 1 FROM sys.xml_schema_collections x\n"+
-		"    WHERE x.name = N'%s' AND SCHEMA_NAME(x.schema_id) = N'%s')\n",
-		sense, escapeSingle(c.Name), escapeSingle(c.Schema))
+		"    WHERE x.name = %s AND SCHEMA_NAME(x.schema_id) = %s)\n",
+		sense, QuoteLiteral(c.Name), QuoteLiteral(c.Schema))
 }
 
 // ============================================================
@@ -547,11 +547,11 @@ func (sc *Scripter) ScriptPlanGuide(ctx context.Context, name string) (string, e
 // The drop is sp_control_plan_guide's, the statement gosmo's own
 // PlanGuide.Drop runs.
 func buildPlanGuideScript(g *PlanGuide, opts ScriptOptions) string {
-	drop := fmt.Sprintf("EXEC sp_control_plan_guide @operation = N'DROP', @name = N'%s';\nGO\n",
-		escapeSingle(g.Name))
+	drop := fmt.Sprintf("EXEC sp_control_plan_guide @operation = N'DROP', @name = %s;\nGO\n",
+		QuoteLiteral(g.Name))
 	return opts.envelope(drop, "", func(sb *strings.Builder) {
-		fmt.Fprintf(sb, "EXEC sp_create_plan_guide\n     @name = N'%s',\n     @stmt = N'%s',\n     @type = N'%s',\n",
-			escapeSingle(g.Name), escapeSingle(g.QueryText), escapeSingle(string(g.Scope)))
+		fmt.Fprintf(sb, "EXEC sp_create_plan_guide\n     @name = %s,\n     @stmt = %s,\n     @type = %s,\n",
+			QuoteLiteral(g.Name), QuoteLiteral(g.QueryText), QuoteLiteral(string(g.Scope)))
 		fmt.Fprintf(sb, "     @module_or_batch = %s,\n", planGuideModuleOrBatch(g))
 		fmt.Fprintf(sb, "     @params = %s,\n", nullableLiteral(g.Parameters))
 		fmt.Fprintf(sb, "     @hints = %s;\nGO\n", nullableLiteral(g.Hints))
@@ -559,8 +559,8 @@ func buildPlanGuideScript(g *PlanGuide, opts ScriptOptions) string {
 			// A guide created by sp_create_plan_guide is enabled; recreating a
 			// disabled one without this would quietly start applying hints the
 			// original stopped applying.
-			fmt.Fprintf(sb, "\nEXEC sp_control_plan_guide @operation = N'DISABLE', @name = N'%s';\nGO\n",
-				escapeSingle(g.Name))
+			fmt.Fprintf(sb, "\nEXEC sp_control_plan_guide @operation = N'DISABLE', @name = %s;\nGO\n",
+				QuoteLiteral(g.Name))
 		}
 	})
 }
@@ -587,5 +587,5 @@ func nullableLiteral(s string) string {
 	if s == "" {
 		return "NULL"
 	}
-	return "N'" + escapeSingle(s) + "'"
+	return QuoteLiteral(s)
 }

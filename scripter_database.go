@@ -339,12 +339,12 @@ func (sc *Scripter) scriptDatabaseFrom(d *Database, layout *databaseLayout) (str
 	}
 	drop := "USE [master];\nGO\n"
 	if sc.opts.IncludeIfNotExists {
-		drop += fmt.Sprintf("IF DB_ID(N'%s') IS NOT NULL\n    ", escapeSingle(d.Name))
+		drop += fmt.Sprintf("IF DB_ID(%s) IS NOT NULL\n    ", QuoteLiteral(d.Name))
 	}
 	drop += fmt.Sprintf("DROP DATABASE %s;\nGO\n", QuoteName(d.Name))
 	sb.WriteString(sc.opts.envelope(drop, "", func(sb *strings.Builder) {
 		if sc.opts.IncludeIfNotExists {
-			fmt.Fprintf(sb, "IF DB_ID(N'%s') IS NULL\nBEGIN\n    ", escapeSingle(d.Name))
+			fmt.Fprintf(sb, "IF DB_ID(%s) IS NULL\nBEGIN\n    ", QuoteLiteral(d.Name))
 		}
 		fmt.Fprintf(sb, "CREATE DATABASE %s", QuoteName(d.Name))
 		if layout != nil && layout.snapshotOf != "" {

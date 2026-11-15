@@ -98,11 +98,11 @@ func (d *Database) EffectiveSchemaPermissions(ctx context.Context, schemaName, p
 // escaped into the batch text; the securable name a parameter can carry.
 func (d *Database) effectivePermissions(ctx context.Context, principal string, securable any, class, what string) ([]*EffectivePermission, error) {
 	q := fmt.Sprintf(`
-EXECUTE AS USER = N'%s';
+EXECUTE AS USER = %s;
 SELECT entity_name, COALESCE(subentity_name, N''), permission_name
 FROM   fn_my_permissions(@p1, '%s')
 ORDER  BY entity_name, subentity_name, permission_name;
-REVERT;`, escapeSingle(principal), class)
+REVERT;`, QuoteLiteral(principal), class)
 
 	// readImpersonated may have to discard the session, which a transaction's
 	// cannot be.
@@ -144,11 +144,11 @@ func (s *Server) EffectiveServerPermissions(ctx context.Context, login string) (
 	// Server.ApplyPermission.
 	q := fmt.Sprintf(`
 USE master;
-EXECUTE AS LOGIN = N'%s';
+EXECUTE AS LOGIN = %s;
 SELECT entity_name, COALESCE(subentity_name, N''), permission_name
 FROM   fn_my_permissions(NULL, 'SERVER')
 ORDER  BY permission_name;
-REVERT;`, escapeSingle(login))
+REVERT;`, QuoteLiteral(login))
 
 	// Pinned rather than read off the pool, so readImpersonated can discard
 	// the one connection the impersonation ran on.

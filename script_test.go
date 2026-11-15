@@ -618,7 +618,7 @@ func TestScriptedSetterDoesNotMirrorOntoTheReceiver(t *testing.T) {
 // whole statement, which was correct for every statement this package binds
 // today and silently wrong for the first one to both interpolate a name and
 // bind a parameter. An object named "@p1" reaches such a statement inside an
-// escapeSingle'd literal, and rewriting it there changes which object the DDL
+// QuoteLiteral'd literal, and rewriting it there changes which object the DDL
 // names — in a script the user is handed to run by hand, which is exactly the
 // failure scriptLiteral refuses to risk for a literal it cannot render.
 //

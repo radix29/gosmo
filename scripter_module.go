@@ -679,8 +679,8 @@ ORDER  BY te.type`
 		default:
 			continue
 		}
-		fmt.Fprintf(&sb, "EXEC sys.sp_settriggerorder @triggername = N'%s', @order = N'%s', @stmttype = N'%s';\nGO\n",
-			escapeSingle(trigger), order, escapeSingle(r.event))
+		fmt.Fprintf(&sb, "EXEC sys.sp_settriggerorder @triggername = %s, @order = N'%s', @stmttype = %s;\nGO\n",
+			QuoteLiteral(trigger), order, QuoteLiteral(r.event))
 	}
 	if got[0].disabled {
 		fmt.Fprintf(&sb, "DISABLE TRIGGER %s ON %s;\nGO\n", trigger, qualifiedName(schema, got[0].parent))

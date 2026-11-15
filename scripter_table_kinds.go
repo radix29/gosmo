@@ -374,7 +374,7 @@ func buildFileTableScript(schema, name, dbName string, p tableScriptParts, opts 
 	drop.WriteString(schemaBoundNote(fullName, p.boundBy, p.boundByHidden))
 	drop.WriteString(referencingForeignKeyNote(fullName, p.referencedBy, false))
 	if opts.IncludeIfNotExists {
-		fmt.Fprintf(&drop, "IF OBJECT_ID(N'%s', N'U') IS NOT NULL\n    ", escapeSingle(fullName))
+		fmt.Fprintf(&drop, "IF OBJECT_ID(%s, N'U') IS NOT NULL\n    ", QuoteLiteral(fullName))
 	}
 	fmt.Fprintf(&drop, "DROP TABLE %s;\nGO\n", fullName)
 
@@ -420,7 +420,7 @@ func buildFileTableScript(schema, name, dbName string, p tableScriptParts, opts 
 			fmt.Fprintf(sb, "/* FileTable: %s  Database: %s */\n", tsql.BlockCommentSafe(fullName), tsql.BlockCommentSafe(dbName))
 		}
 		if opts.IncludeIfNotExists {
-			fmt.Fprintf(sb, "IF OBJECT_ID(N'%s', N'U') IS NULL\n", escapeSingle(fullName))
+			fmt.Fprintf(sb, "IF OBJECT_ID(%s, N'U') IS NULL\n", QuoteLiteral(fullName))
 		}
 		fmt.Fprintf(sb, "CREATE TABLE %s AS FILETABLE%s", fullName, dataSpaceClause(p.ds))
 		if p.table.FileStreamDataSpace != "" {
@@ -479,7 +479,7 @@ func buildExternalTableScript(schema, name, dbName string, p tableScriptParts, d
 	fullName := qualifiedName(schema, name)
 	var drop strings.Builder
 	if opts.IncludeIfNotExists {
-		fmt.Fprintf(&drop, "IF OBJECT_ID(N'%s') IS NOT NULL\n    ", escapeSingle(fullName))
+		fmt.Fprintf(&drop, "IF OBJECT_ID(%s) IS NOT NULL\n    ", QuoteLiteral(fullName))
 	}
 	fmt.Fprintf(&drop, "DROP EXTERNAL TABLE %s;\nGO\n", fullName)
 
@@ -523,7 +523,7 @@ func buildExternalTableScript(schema, name, dbName string, p tableScriptParts, d
 			sb.WriteString("\n")
 		}
 		if opts.IncludeIfNotExists {
-			fmt.Fprintf(sb, "IF OBJECT_ID(N'%s') IS NULL\n", escapeSingle(fullName))
+			fmt.Fprintf(sb, "IF OBJECT_ID(%s) IS NULL\n", QuoteLiteral(fullName))
 		}
 		fmt.Fprintf(sb, "CREATE EXTERNAL TABLE %s (\n", fullName)
 		for i, col := range p.cols {

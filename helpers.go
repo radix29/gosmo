@@ -189,10 +189,11 @@ func matchName[T any](items []T, name string, key func(T) string) (T, error) {
 // Prefer parameterised queries ($1 / ?) for values; use this only where
 // parameters are not accepted (e.g. DDL statements, stored procedure names).
 //
-// It escapes only — the surrounding quotes come from the caller's format
-// string. It does not bracket-quote: an identifier going into a literal needs
-// qualifiedName/QuoteName first. See QuoteLiteral (quoting.go) for when to
-// reach for which.
+// It escapes only — the surrounding quotes come from the caller. An nvarchar
+// literal of its own is QuoteLiteral's job, not this one's: this is for a
+// varchar '…' (no N) and for a value spliced into a larger literal. It does
+// not bracket-quote: an identifier going into a literal needs
+// qualifiedName/QuoteName first. See QuoteLiteral (quoting.go).
 func escapeSingle(s string) string {
 	return strings.ReplaceAll(s, "'", "''")
 }
@@ -220,7 +221,7 @@ func nullableStr(s string) string {
 	if s == "" {
 		return "NULL"
 	}
-	return fmt.Sprintf("N'%s'", escapeSingle(s))
+	return QuoteLiteral(s)
 }
 
 // binaryLiteral renders b as a T-SQL 0x… binary literal in uppercase hex.

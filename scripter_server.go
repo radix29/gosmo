@@ -109,9 +109,9 @@ func loginRoleMemberships(login string, roles []string) string {
 // Note DROP LOGIN has no IF EXISTS form — unlike DROP USER or DROP ROLE — so
 // the drop is guarded by SUSER_ID instead.
 func buildLoginScript(l *Login, opts ScriptOptions) string {
-	drop := fmt.Sprintf("IF SUSER_ID(N'%s') IS NOT NULL\n    DROP LOGIN %s;\nGO\n",
-		escapeSingle(l.Name), QuoteName(l.Name))
-	guard := fmt.Sprintf("IF SUSER_ID(N'%s') IS NULL\n", escapeSingle(l.Name))
+	drop := fmt.Sprintf("IF SUSER_ID(%s) IS NOT NULL\n    DROP LOGIN %s;\nGO\n",
+		QuoteLiteral(l.Name), QuoteName(l.Name))
+	guard := fmt.Sprintf("IF SUSER_ID(%s) IS NULL\n", QuoteLiteral(l.Name))
 	return opts.envelope(drop, guard, func(sb *strings.Builder) {
 		stmt := "CREATE LOGIN " + QuoteName(l.Name)
 
@@ -215,9 +215,9 @@ func (sc *ServerScripter) ScriptServerRole(ctx context.Context, name string) (st
 // buildServerRoleScript assembles one server role's script. DROP SERVER ROLE
 // has no IF EXISTS form, so the drop is guarded the same way a login's is.
 func buildServerRoleScript(r *ServerRole, opts ScriptOptions) string {
-	drop := fmt.Sprintf("IF SUSER_ID(N'%s') IS NOT NULL\n    DROP SERVER ROLE %s;\nGO\n",
-		escapeSingle(r.Name), QuoteName(r.Name))
-	guard := fmt.Sprintf("IF SUSER_ID(N'%s') IS NULL\n", escapeSingle(r.Name))
+	drop := fmt.Sprintf("IF SUSER_ID(%s) IS NOT NULL\n    DROP SERVER ROLE %s;\nGO\n",
+		QuoteLiteral(r.Name), QuoteName(r.Name))
+	guard := fmt.Sprintf("IF SUSER_ID(%s) IS NULL\n", QuoteLiteral(r.Name))
 	return opts.envelope(drop, guard, func(sb *strings.Builder) {
 		fmt.Fprintf(sb, "CREATE SERVER ROLE %s", QuoteName(r.Name))
 		if r.Owner != "" {
@@ -258,13 +258,13 @@ func (sc *ServerScripter) ScriptBackupDevice(ctx context.Context, name string) (
 // sp_addumpdevice takes, so it is mapped back — a script emitting
 // @devtype = N'VIRTUAL_DEVICE' is one the server refuses.
 func buildBackupDeviceScript(d *BackupDevice, opts ScriptOptions) string {
-	drop := fmt.Sprintf("IF EXISTS (SELECT 1 FROM sys.backup_devices WHERE name = N'%s')\n    EXEC sp_dropdevice @logicalname = N'%s';\nGO\n",
-		escapeSingle(d.Name), escapeSingle(d.Name))
-	guard := fmt.Sprintf("IF NOT EXISTS (SELECT 1 FROM sys.backup_devices WHERE name = N'%s')\n",
-		escapeSingle(d.Name))
+	drop := fmt.Sprintf("IF EXISTS (SELECT 1 FROM sys.backup_devices WHERE name = %s)\n    EXEC sp_dropdevice @logicalname = %s;\nGO\n",
+		QuoteLiteral(d.Name), QuoteLiteral(d.Name))
+	guard := fmt.Sprintf("IF NOT EXISTS (SELECT 1 FROM sys.backup_devices WHERE name = %s)\n",
+		QuoteLiteral(d.Name))
 	return opts.envelope(drop, guard, func(sb *strings.Builder) {
-		fmt.Fprintf(sb, "EXEC sp_addumpdevice @devtype = N'%s', @logicalname = N'%s', @physicalname = N'%s';\nGO\n",
-			escapeSingle(string(backupDeviceKeyword(d.Type))), escapeSingle(d.Name), escapeSingle(d.PhysicalName))
+		fmt.Fprintf(sb, "EXEC sp_addumpdevice @devtype = %s, @logicalname = %s, @physicalname = %s;\nGO\n",
+			QuoteLiteral(string(backupDeviceKeyword(d.Type))), QuoteLiteral(d.Name), QuoteLiteral(d.PhysicalName))
 	})
 }
 
@@ -307,10 +307,10 @@ func (sc *ServerScripter) ScriptEndpoint(ctx context.Context, name string) (stri
 		return "", fmt.Errorf("gosmo: script endpoint %q: %w", e.Name, ErrSystemEndpoint)
 	}
 
-	drop := fmt.Sprintf("IF EXISTS (SELECT 1 FROM sys.endpoints WHERE name = N'%s')\n    DROP ENDPOINT %s;\nGO\n",
-		escapeSingle(e.Name), QuoteName(e.Name))
-	guard := fmt.Sprintf("IF NOT EXISTS (SELECT 1 FROM sys.endpoints WHERE name = N'%s')\n",
-		escapeSingle(e.Name))
+	drop := fmt.Sprintf("IF EXISTS (SELECT 1 FROM sys.endpoints WHERE name = %s)\n    DROP ENDPOINT %s;\nGO\n",
+		QuoteLiteral(e.Name), QuoteName(e.Name))
+	guard := fmt.Sprintf("IF NOT EXISTS (SELECT 1 FROM sys.endpoints WHERE name = %s)\n",
+		QuoteLiteral(e.Name))
 	return sc.opts.envelopeErr(drop, guard, func(sb *strings.Builder) error {
 		payload, err := sc.endpointPayloadClause(ctx, e)
 		if err != nil {
@@ -440,17 +440,17 @@ func backupDeviceKeyword(typeDesc string) BackupDeviceType {
 // no IF EXISTS form, so the drop is guarded with a sys.credentials lookup the
 // way a server role's is guarded with SUSER_ID.
 func buildCredentialScript(c *Credential, opts ScriptOptions) string {
-	drop := fmt.Sprintf("IF EXISTS (SELECT 1 FROM sys.credentials WHERE name = N'%s')\n    DROP CREDENTIAL %s;\nGO\n",
-		escapeSingle(c.Name), QuoteName(c.Name))
+	drop := fmt.Sprintf("IF EXISTS (SELECT 1 FROM sys.credentials WHERE name = %s)\n    DROP CREDENTIAL %s;\nGO\n",
+		QuoteLiteral(c.Name), QuoteName(c.Name))
 	return opts.envelope(drop, "", func(sb *strings.Builder) {
 		sb.WriteString("/* The credential's secret cannot be read from the server. Replace the\n" +
 			"   placeholder below, or remove the SECRET clause if it has none. */\n")
 		if opts.IncludeIfNotExists {
-			fmt.Fprintf(sb, "IF NOT EXISTS (SELECT 1 FROM sys.credentials WHERE name = N'%s')\n",
-				escapeSingle(c.Name))
+			fmt.Fprintf(sb, "IF NOT EXISTS (SELECT 1 FROM sys.credentials WHERE name = %s)\n",
+				QuoteLiteral(c.Name))
 		}
-		fmt.Fprintf(sb, "CREATE CREDENTIAL %s WITH IDENTITY = N'%s', SECRET = N'%s'",
-			QuoteName(c.Name), escapeSingle(c.Identity), SecretPlaceholder)
+		fmt.Fprintf(sb, "CREATE CREDENTIAL %s WITH IDENTITY = %s, SECRET = N'%s'",
+			QuoteName(c.Name), QuoteLiteral(c.Identity), SecretPlaceholder)
 		if c.CryptographicProvider != "" {
 			fmt.Fprintf(sb, " FOR CRYPTOGRAPHIC PROVIDER %s", QuoteName(c.CryptographicProvider))
 		}
@@ -476,9 +476,9 @@ func (sc *ServerScripter) ScriptServerAudit(ctx context.Context, name string) (s
 // create. DROP SERVER AUDIT has no IF EXISTS form of its own, hence the catalog
 // guard — the same shape as the credential's.
 func buildServerAuditScript(a *ServerAudit, opts ScriptOptions) string {
-	drop := fmt.Sprintf("IF EXISTS (SELECT 1 FROM sys.server_audits WHERE name = N'%s')\nBEGIN\n"+
+	drop := fmt.Sprintf("IF EXISTS (SELECT 1 FROM sys.server_audits WHERE name = %s)\nBEGIN\n"+
 		"    ALTER SERVER AUDIT %s WITH ( STATE = OFF );\n    DROP SERVER AUDIT %s;\nEND\nGO\n",
-		escapeSingle(a.Name), QuoteName(a.Name), QuoteName(a.Name))
+		QuoteLiteral(a.Name), QuoteName(a.Name), QuoteName(a.Name))
 	return opts.envelope(drop, "", func(sb *strings.Builder) {
 
 		spec := ServerAuditDefinition{
@@ -498,8 +498,8 @@ func buildServerAuditScript(a *ServerAudit, opts ScriptOptions) string {
 		create, _ := spec.createServerAuditStatement()
 
 		if opts.IncludeIfNotExists {
-			fmt.Fprintf(sb, "IF NOT EXISTS (SELECT 1 FROM sys.server_audits WHERE name = N'%s')\nBEGIN\n%s\nEND\nGO\n",
-				escapeSingle(a.Name), create)
+			fmt.Fprintf(sb, "IF NOT EXISTS (SELECT 1 FROM sys.server_audits WHERE name = %s)\nBEGIN\n%s\nEND\nGO\n",
+				QuoteLiteral(a.Name), create)
 		} else {
 			sb.WriteString(create)
 			sb.WriteString("\nGO\n")
@@ -526,10 +526,10 @@ func (sc *ServerScripter) ScriptServerAuditSpecification(ctx context.Context, na
 // it, which SQL Server allows — is refused rather than scripted with an empty
 // FOR SERVER AUDIT clause, which would not parse.
 func buildServerAuditSpecificationScript(s *ServerAuditSpecification, opts ScriptOptions) (string, error) {
-	drop := fmt.Sprintf("IF EXISTS (SELECT 1 FROM sys.server_audit_specifications WHERE name = N'%s')\nBEGIN\n"+
+	drop := fmt.Sprintf("IF EXISTS (SELECT 1 FROM sys.server_audit_specifications WHERE name = %s)\nBEGIN\n"+
 		"    ALTER SERVER AUDIT SPECIFICATION %s WITH ( STATE = OFF );\n"+
 		"    DROP SERVER AUDIT SPECIFICATION %s;\nEND\nGO\n",
-		escapeSingle(s.Name), QuoteName(s.Name), QuoteName(s.Name))
+		QuoteLiteral(s.Name), QuoteName(s.Name), QuoteName(s.Name))
 	return opts.envelopeErr(drop, "", func(sb *strings.Builder) error {
 
 		if s.AuditName == "" {
@@ -546,8 +546,8 @@ func buildServerAuditSpecificationScript(s *ServerAuditSpecification, opts Scrip
 		}
 
 		if opts.IncludeIfNotExists {
-			fmt.Fprintf(sb, "IF NOT EXISTS (SELECT 1 FROM sys.server_audit_specifications WHERE name = N'%s')\nBEGIN\n%s\nEND\nGO\n",
-				escapeSingle(s.Name), create)
+			fmt.Fprintf(sb, "IF NOT EXISTS (SELECT 1 FROM sys.server_audit_specifications WHERE name = %s)\nBEGIN\n%s\nEND\nGO\n",
+				QuoteLiteral(s.Name), create)
 		} else {
 			sb.WriteString(create)
 			sb.WriteString("\nGO\n")

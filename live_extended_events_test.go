@@ -47,8 +47,8 @@ func dropXESessionAfter(t *testing.T, s *Server, db *sql.DB, name string) {
 	t.Helper()
 	drop := func() {
 		if _, err := db.ExecContext(context.Background(), fmt.Sprintf(
-			"IF EXISTS (SELECT 1 FROM sys.server_event_sessions WHERE name = N'%s') DROP EVENT SESSION %s ON SERVER",
-			escapeSingle(name), QuoteName(name))); err != nil {
+			"IF EXISTS (SELECT 1 FROM sys.server_event_sessions WHERE name = %s) DROP EVENT SESSION %s ON SERVER",
+			QuoteLiteral(name), QuoteName(name))); err != nil {
 			t.Errorf("cleanup: %v", err)
 			return
 		}

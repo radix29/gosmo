@@ -27,7 +27,7 @@ import (
 // that was never created. DROP LOGIN has no IF EXISTS form.
 func dropLoginIfPresent(t *testing.T, s *Server, name string) {
 	t.Helper()
-	if _, err := s.db.Exec("IF SUSER_ID(N'" + escapeSingle(name) + "') IS NOT NULL DROP LOGIN " + QuoteName(name)); err != nil {
+	if _, err := s.db.Exec("IF SUSER_ID(" + QuoteLiteral(name) + ") IS NOT NULL DROP LOGIN " + QuoteName(name)); err != nil {
 		t.Logf("cleanup of login %q: %v", name, err)
 	}
 }

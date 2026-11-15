@@ -230,7 +230,7 @@ func buildExecuteScript(schema, name string, params []*Parameter) string {
 	sb.WriteString(";\n\n")
 	for _, p := range params {
 		if p.IsOutput {
-			fmt.Fprintf(&sb, "SELECT %s AS N'%s';\n", p.Name, escapeSingle(p.Name))
+			fmt.Fprintf(&sb, "SELECT %s AS %s;\n", p.Name, QuoteLiteral(p.Name))
 		}
 	}
 	sb.WriteString("SELECT 'Return Value' = @return_value;\nGO\n")
@@ -247,7 +247,7 @@ func buildFunctionCallScript(schema, name string, funcType FunctionType, params 
 	}
 	call := fmt.Sprintf("%s(%s)", qualifiedName(schema, name), strings.Join(args, ", "))
 	if funcType.IsScalar() {
-		return fmt.Sprintf("SELECT %s AS N'%s';\nGO\n", call, escapeSingle(name))
+		return fmt.Sprintf("SELECT %s AS %s;\nGO\n", call, QuoteLiteral(name))
 	}
 	return fmt.Sprintf("SELECT *\nFROM   %s;\nGO\n", call)
 }

@@ -454,6 +454,6 @@ func explicitDataSpaceClause(ds DataSpace) (string, error) {
 // the index is already there. A single statement, so no BEGIN block — see
 // buildTableScript on why a block here would break the batch.
 func indexExistenceGuard(indexName, tableName string) string {
-	return fmt.Sprintf("IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'%s' AND object_id = OBJECT_ID(N'%s'))\n",
-		escapeSingle(indexName), escapeSingle(tableName))
+	return fmt.Sprintf("IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = %s AND object_id = OBJECT_ID(%s))\n",
+		QuoteLiteral(indexName), QuoteLiteral(tableName))
 }

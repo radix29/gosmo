@@ -156,7 +156,7 @@ func partitionBoundaryLiteral(baseType, value string) string {
 		"binary", "varbinary":
 		return value
 	}
-	return "N'" + escapeSingle(value) + "'"
+	return QuoteLiteral(value)
 }
 
 // CreatePartitionFunctionRequest describes a partition function to create.

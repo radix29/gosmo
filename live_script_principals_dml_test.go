@@ -27,10 +27,10 @@ func TestLiveScriptLoginServerRoles(t *testing.T) {
 	}
 	const login, role = "gosmo_live_rolemember", "gosmo live role]x"
 	dropLoginIfPresent(t, s, login)
-	s.db.Exec("IF SUSER_ID(N'" + escapeSingle(role) + "') IS NOT NULL DROP SERVER ROLE " + QuoteName(role))
+	s.db.Exec("IF SUSER_ID(" + QuoteLiteral(role) + ") IS NOT NULL DROP SERVER ROLE " + QuoteName(role))
 	t.Cleanup(func() {
 		dropLoginIfPresent(t, s, login)
-		s.db.Exec("IF SUSER_ID(N'" + escapeSingle(role) + "') IS NOT NULL DROP SERVER ROLE " + QuoteName(role))
+		s.db.Exec("IF SUSER_ID(" + QuoteLiteral(role) + ") IS NOT NULL DROP SERVER ROLE " + QuoteName(role))
 	})
 	for _, q := range []string{
 		"CREATE LOGIN " + QuoteName(login) + " WITH PASSWORD = N'Sc0pe!Test#2026', CHECK_POLICY = OFF",

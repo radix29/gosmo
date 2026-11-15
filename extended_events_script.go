@@ -551,7 +551,7 @@ func (sc *Scripter) ScriptEventSession(ctx context.Context, name string) (string
 // definition, a session that happens to be running now is not.
 func buildEventSessionScript(es *EventSession, opts ScriptOptions) (string, error) {
 	sc := es.scope()
-	exists := fmt.Sprintf("SELECT 1 FROM %s WHERE name = N'%s'", sc.sessions, escapeSingle(es.Name))
+	exists := fmt.Sprintf("SELECT 1 FROM %s WHERE name = %s", sc.sessions, QuoteLiteral(es.Name))
 	drop := fmt.Sprintf("IF EXISTS (%s)\n    DROP EVENT SESSION %s %s;\nGO\n", exists, QuoteName(es.Name), sc.on)
 	guard := fmt.Sprintf("IF NOT EXISTS (%s)\n", exists)
 	return opts.envelopeErr(drop, guard, func(sb *strings.Builder) error {

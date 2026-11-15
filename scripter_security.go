@@ -37,8 +37,8 @@ func buildSchemaScript(s *Schema, opts ScriptOptions) string {
 			stmt += " AUTHORIZATION " + QuoteName(s.Owner)
 		}
 		if opts.IncludeIfNotExists {
-			fmt.Fprintf(sb, "IF SCHEMA_ID(N'%s') IS NULL\n    EXEC(N'%s');\nGO\n",
-				escapeSingle(s.Name), escapeSingle(stmt))
+			fmt.Fprintf(sb, "IF SCHEMA_ID(%s) IS NULL\n    EXEC(%s);\nGO\n",
+				QuoteLiteral(s.Name), QuoteLiteral(stmt))
 			return
 		}
 		fmt.Fprintf(sb, "%s;\nGO\n", stmt)
@@ -78,7 +78,7 @@ func (sc *Scripter) ScriptUser(ctx context.Context, name string) (string, error)
 // the user silently maps to it, whoever it belongs to.
 func buildUserScript(u *User, opts ScriptOptions) string {
 	drop := fmt.Sprintf("DROP USER IF EXISTS %s;\nGO\n", QuoteName(u.Name))
-	guard := fmt.Sprintf("IF DATABASE_PRINCIPAL_ID(N'%s') IS NULL\n", escapeSingle(u.Name))
+	guard := fmt.Sprintf("IF DATABASE_PRINCIPAL_ID(%s) IS NULL\n", QuoteLiteral(u.Name))
 	orphaned := isOrphanedUser(u)
 	if orphaned {
 		// The note goes ahead of the guard, which envelope would write first.
@@ -88,7 +88,7 @@ func buildUserScript(u *User, opts ScriptOptions) string {
 		if orphaned {
 			sb.WriteString(orphanedUserNote(u))
 			if opts.IncludeIfNotExists {
-				fmt.Fprintf(sb, "IF DATABASE_PRINCIPAL_ID(N'%s') IS NULL\n", escapeSingle(u.Name))
+				fmt.Fprintf(sb, "IF DATABASE_PRINCIPAL_ID(%s) IS NULL\n", QuoteLiteral(u.Name))
 			}
 		}
 		stmt := "CREATE USER " + QuoteName(u.Name)
@@ -183,7 +183,7 @@ func (sc *Scripter) ScriptDatabaseRole(ctx context.Context, name string) (string
 // buildDatabaseRoleScript assembles one database role's script.
 func buildDatabaseRoleScript(r *DatabaseRole, opts ScriptOptions) string {
 	drop := fmt.Sprintf("DROP ROLE IF EXISTS %s;\nGO\n", QuoteName(r.Name))
-	guard := fmt.Sprintf("IF DATABASE_PRINCIPAL_ID(N'%s') IS NULL\n", escapeSingle(r.Name))
+	guard := fmt.Sprintf("IF DATABASE_PRINCIPAL_ID(%s) IS NULL\n", QuoteLiteral(r.Name))
 	return opts.envelope(drop, guard, func(sb *strings.Builder) {
 		fmt.Fprintf(sb, "CREATE ROLE %s", QuoteName(r.Name))
 		if r.Owner != "" {
@@ -218,9 +218,9 @@ func (sc *Scripter) ScriptApplicationRole(ctx context.Context, name string) (str
 // catalog check that also requires type 'A': a user or role of the same name
 // is not this principal.
 func buildApplicationRoleScript(r *ApplicationRole, opts ScriptOptions) string {
-	drop := fmt.Sprintf("IF EXISTS (SELECT 1 FROM sys.database_principals WHERE name = N'%s' AND type = 'A')\n"+
-		"DROP APPLICATION ROLE %s;\nGO\n", escapeSingle(r.Name), QuoteName(r.Name))
-	guard := fmt.Sprintf("IF DATABASE_PRINCIPAL_ID(N'%s') IS NULL\n", escapeSingle(r.Name))
+	drop := fmt.Sprintf("IF EXISTS (SELECT 1 FROM sys.database_principals WHERE name = %s AND type = 'A')\n"+
+		"DROP APPLICATION ROLE %s;\nGO\n", QuoteLiteral(r.Name), QuoteName(r.Name))
+	guard := fmt.Sprintf("IF DATABASE_PRINCIPAL_ID(%s) IS NULL\n", QuoteLiteral(r.Name))
 	return opts.envelope(drop, guard, func(sb *strings.Builder) {
 		fmt.Fprintf(sb, "CREATE APPLICATION ROLE %s WITH PASSWORD = N'%s'", QuoteName(r.Name), PasswordPlaceholder)
 		if r.DefaultSchema != "" {
@@ -247,10 +247,10 @@ func (sc *Scripter) ScriptDatabaseAuditSpecification(ctx context.Context, name s
 // it, which SQL Server allows — is refused rather than scripted with an empty
 // FOR SERVER AUDIT clause, which would not parse. Same as the server half.
 func buildDatabaseAuditSpecificationScript(s *DatabaseAuditSpecification, opts ScriptOptions) (string, error) {
-	drop := fmt.Sprintf("IF EXISTS (SELECT 1 FROM sys.database_audit_specifications WHERE name = N'%s')\nBEGIN\n"+
+	drop := fmt.Sprintf("IF EXISTS (SELECT 1 FROM sys.database_audit_specifications WHERE name = %s)\nBEGIN\n"+
 		"    ALTER DATABASE AUDIT SPECIFICATION %s WITH ( STATE = OFF );\n"+
 		"    DROP DATABASE AUDIT SPECIFICATION %s;\nEND\nGO\n",
-		escapeSingle(s.Name), QuoteName(s.Name), QuoteName(s.Name))
+		QuoteLiteral(s.Name), QuoteName(s.Name), QuoteName(s.Name))
 	return opts.envelopeErr(drop, "", func(sb *strings.Builder) error {
 
 		if s.AuditName == "" {
@@ -268,8 +268,8 @@ func buildDatabaseAuditSpecificationScript(s *DatabaseAuditSpecification, opts S
 		}
 
 		if opts.IncludeIfNotExists {
-			fmt.Fprintf(sb, "IF NOT EXISTS (SELECT 1 FROM sys.database_audit_specifications WHERE name = N'%s')\nBEGIN\n%s\nEND\nGO\n",
-				escapeSingle(s.Name), create)
+			fmt.Fprintf(sb, "IF NOT EXISTS (SELECT 1 FROM sys.database_audit_specifications WHERE name = %s)\nBEGIN\n%s\nEND\nGO\n",
+				QuoteLiteral(s.Name), create)
 		} else {
 			sb.WriteString(create)
 			sb.WriteString("\nGO\n")
@@ -298,18 +298,18 @@ func (sc *Scripter) ScriptDatabaseScopedCredential(ctx context.Context, name str
 // DROP DATABASE SCOPED CREDENTIAL has no IF EXISTS form, so the drop is
 // guarded with a sys.database_scoped_credentials lookup.
 func buildDatabaseScopedCredentialScript(c *DatabaseScopedCredential, opts ScriptOptions) string {
-	drop := fmt.Sprintf("IF EXISTS (SELECT 1 FROM sys.database_scoped_credentials WHERE name = N'%s')\n"+
+	drop := fmt.Sprintf("IF EXISTS (SELECT 1 FROM sys.database_scoped_credentials WHERE name = %s)\n"+
 		"    DROP DATABASE SCOPED CREDENTIAL %s;\nGO\n",
-		escapeSingle(c.Name), QuoteName(c.Name))
+		QuoteLiteral(c.Name), QuoteName(c.Name))
 	return opts.envelope(drop, "", func(sb *strings.Builder) {
 		sb.WriteString("/* The credential's secret cannot be read from the server. Replace the\n" +
 			"   placeholder below, or remove the SECRET clause if it has none. */\n")
 		if opts.IncludeIfNotExists {
-			fmt.Fprintf(sb, "IF NOT EXISTS (SELECT 1 FROM sys.database_scoped_credentials WHERE name = N'%s')\n",
-				escapeSingle(c.Name))
+			fmt.Fprintf(sb, "IF NOT EXISTS (SELECT 1 FROM sys.database_scoped_credentials WHERE name = %s)\n",
+				QuoteLiteral(c.Name))
 		}
-		fmt.Fprintf(sb, "CREATE DATABASE SCOPED CREDENTIAL %s WITH IDENTITY = N'%s', SECRET = N'%s';\nGO\n",
-			QuoteName(c.Name), escapeSingle(c.Identity), SecretPlaceholder)
+		fmt.Fprintf(sb, "CREATE DATABASE SCOPED CREDENTIAL %s WITH IDENTITY = %s, SECRET = N'%s';\nGO\n",
+			QuoteName(c.Name), QuoteLiteral(c.Identity), SecretPlaceholder)
 	})
 }
 
@@ -344,9 +344,9 @@ func (sc *Scripter) ScriptCertificate(ctx context.Context, name string) (string,
 // CERTIFICATE has no IF EXISTS form, so the drop is guarded with a
 // sys.certificates lookup.
 func buildCertificateScript(c *Certificate, encoded []byte, opts ScriptOptions) string {
-	drop := fmt.Sprintf("IF EXISTS (SELECT 1 FROM sys.certificates WHERE name = N'%s')\n"+
+	drop := fmt.Sprintf("IF EXISTS (SELECT 1 FROM sys.certificates WHERE name = %s)\n"+
 		"    DROP CERTIFICATE %s;\nGO\n",
-		escapeSingle(c.Name), QuoteName(c.Name))
+		QuoteLiteral(c.Name), QuoteName(c.Name))
 	return opts.envelope(drop, "", func(sb *strings.Builder) {
 		if c.HasPrivateKey() {
 			sb.WriteString("/* The certificate's private key cannot be read from the server, so it is\n" +
@@ -354,8 +354,8 @@ func buildCertificateScript(c *Certificate, encoded []byte, opts ScriptOptions) 
 				"   verify signatures and encrypt, but not sign or decrypt. */\n")
 		}
 		if opts.IncludeIfNotExists {
-			fmt.Fprintf(sb, "IF NOT EXISTS (SELECT 1 FROM sys.certificates WHERE name = N'%s')\n",
-				escapeSingle(c.Name))
+			fmt.Fprintf(sb, "IF NOT EXISTS (SELECT 1 FROM sys.certificates WHERE name = %s)\n",
+				QuoteLiteral(c.Name))
 		}
 		sb.WriteString("CREATE CERTIFICATE ")
 		sb.WriteString(QuoteName(c.Name))
@@ -392,9 +392,9 @@ func (sc *Scripter) ScriptAsymmetricKey(ctx context.Context, name string) (strin
 // ASYMMETRIC KEY has no IF EXISTS form, so the drop is guarded with a
 // sys.asymmetric_keys lookup.
 func buildAsymmetricKeyScript(k *AsymmetricKey, opts ScriptOptions) string {
-	drop := fmt.Sprintf("IF EXISTS (SELECT 1 FROM sys.asymmetric_keys WHERE name = N'%s')\n"+
+	drop := fmt.Sprintf("IF EXISTS (SELECT 1 FROM sys.asymmetric_keys WHERE name = %s)\n"+
 		"    DROP ASYMMETRIC KEY %s;\nGO\n",
-		escapeSingle(k.Name), QuoteName(k.Name))
+		QuoteLiteral(k.Name), QuoteName(k.Name))
 	return opts.envelope(drop, "", func(sb *strings.Builder) {
 		sb.WriteString("/* An asymmetric key cannot be recreated from what the server exposes, so\n" +
 			"   this creates a NEW key pair with the same algorithm, not this key: what\n" +
@@ -407,8 +407,8 @@ func buildAsymmetricKeyScript(k *AsymmetricKey, opts ScriptOptions) string {
 		}
 		sb.WriteString(" */\n")
 		if opts.IncludeIfNotExists {
-			fmt.Fprintf(sb, "IF NOT EXISTS (SELECT 1 FROM sys.asymmetric_keys WHERE name = N'%s')\n",
-				escapeSingle(k.Name))
+			fmt.Fprintf(sb, "IF NOT EXISTS (SELECT 1 FROM sys.asymmetric_keys WHERE name = %s)\n",
+				QuoteLiteral(k.Name))
 		}
 		sb.WriteString("CREATE ASYMMETRIC KEY ")
 		sb.WriteString(QuoteName(k.Name))
@@ -450,9 +450,9 @@ func (sc *Scripter) ScriptSymmetricKey(ctx context.Context, name string) (string
 // SYMMETRIC KEY has no IF EXISTS form, so the drop is guarded with a
 // sys.symmetric_keys lookup.
 func buildSymmetricKeyScript(k *SymmetricKey, opts ScriptOptions) string {
-	drop := fmt.Sprintf("IF EXISTS (SELECT 1 FROM sys.symmetric_keys WHERE name = N'%s')\n"+
+	drop := fmt.Sprintf("IF EXISTS (SELECT 1 FROM sys.symmetric_keys WHERE name = %s)\n"+
 		"    DROP SYMMETRIC KEY %s;\nGO\n",
-		escapeSingle(k.Name), QuoteName(k.Name))
+		QuoteLiteral(k.Name), QuoteName(k.Name))
 	return opts.envelope(drop, "", func(sb *strings.Builder) {
 
 		// Each encryptor becomes one ENCRYPTION BY item. An encryptor the reader
@@ -501,8 +501,8 @@ func buildSymmetricKeyScript(k *SymmetricKey, opts ScriptOptions) string {
 		sb.WriteString(" */\n")
 
 		if opts.IncludeIfNotExists {
-			fmt.Fprintf(sb, "IF NOT EXISTS (SELECT 1 FROM sys.symmetric_keys WHERE name = N'%s')\n",
-				escapeSingle(k.Name))
+			fmt.Fprintf(sb, "IF NOT EXISTS (SELECT 1 FROM sys.symmetric_keys WHERE name = %s)\n",
+				QuoteLiteral(k.Name))
 		}
 		sb.WriteString("CREATE SYMMETRIC KEY ")
 		sb.WriteString(QuoteName(k.Name))
@@ -562,7 +562,7 @@ func (sc *Scripter) ScriptSecurityPolicy(ctx context.Context, schema, name strin
 func buildSecurityPolicyScript(p *SecurityPolicy, opts ScriptOptions) string {
 	full := qualifiedName(p.Schema, p.Name)
 	drop := fmt.Sprintf("DROP SECURITY POLICY IF EXISTS %s;\nGO\n", full)
-	guard := fmt.Sprintf("IF OBJECT_ID(N'%s', N'SP') IS NULL\n", escapeSingle(full))
+	guard := fmt.Sprintf("IF OBJECT_ID(%s, N'SP') IS NULL\n", QuoteLiteral(full))
 	return opts.envelope(drop, guard, func(sb *strings.Builder) {
 		fmt.Fprintf(sb, "CREATE SECURITY POLICY %s", full)
 		for i, pred := range p.Predicates {
@@ -604,13 +604,13 @@ func (sc *Scripter) ScriptColumnMasterKey(ctx context.Context, name string) (str
 // recomputed here.
 func buildColumnMasterKeyScript(k *ColumnMasterKey, opts ScriptOptions) string {
 	// DROP COLUMN MASTER KEY has no IF EXISTS form.
-	drop := fmt.Sprintf("IF EXISTS (SELECT 1 FROM sys.column_master_keys WHERE name = N'%s')\n    DROP COLUMN MASTER KEY %s;\nGO\n",
-		escapeSingle(k.Name), QuoteName(k.Name))
-	guard := fmt.Sprintf("IF NOT EXISTS (SELECT 1 FROM sys.column_master_keys WHERE name = N'%s')\n",
-		escapeSingle(k.Name))
+	drop := fmt.Sprintf("IF EXISTS (SELECT 1 FROM sys.column_master_keys WHERE name = %s)\n    DROP COLUMN MASTER KEY %s;\nGO\n",
+		QuoteLiteral(k.Name), QuoteName(k.Name))
+	guard := fmt.Sprintf("IF NOT EXISTS (SELECT 1 FROM sys.column_master_keys WHERE name = %s)\n",
+		QuoteLiteral(k.Name))
 	return opts.envelope(drop, guard, func(sb *strings.Builder) {
-		fmt.Fprintf(sb, "CREATE COLUMN MASTER KEY %s\nWITH (\n    KEY_STORE_PROVIDER_NAME = N'%s',\n    KEY_PATH = N'%s'",
-			QuoteName(k.Name), escapeSingle(k.KeyStoreProviderName), escapeSingle(k.KeyPath))
+		fmt.Fprintf(sb, "CREATE COLUMN MASTER KEY %s\nWITH (\n    KEY_STORE_PROVIDER_NAME = %s,\n    KEY_PATH = %s",
+			QuoteName(k.Name), QuoteLiteral(k.KeyStoreProviderName), QuoteLiteral(k.KeyPath))
 		if k.AllowEnclaveComputations {
 			fmt.Fprintf(sb, ",\n    ENCLAVE_COMPUTATIONS (SIGNATURE = %s)", binaryLiteral(k.Signature))
 		}
@@ -634,10 +634,10 @@ func (sc *Scripter) ScriptColumnEncryptionKey(ctx context.Context, name string) 
 // under it unreadable.
 func buildColumnEncryptionKeyScript(k *ColumnEncryptionKey, opts ScriptOptions) string {
 	// DROP COLUMN ENCRYPTION KEY has no IF EXISTS form either.
-	drop := fmt.Sprintf("IF EXISTS (SELECT 1 FROM sys.column_encryption_keys WHERE name = N'%s')\n    DROP COLUMN ENCRYPTION KEY %s;\nGO\n",
-		escapeSingle(k.Name), QuoteName(k.Name))
-	guard := fmt.Sprintf("IF NOT EXISTS (SELECT 1 FROM sys.column_encryption_keys WHERE name = N'%s')\n",
-		escapeSingle(k.Name))
+	drop := fmt.Sprintf("IF EXISTS (SELECT 1 FROM sys.column_encryption_keys WHERE name = %s)\n    DROP COLUMN ENCRYPTION KEY %s;\nGO\n",
+		QuoteLiteral(k.Name), QuoteName(k.Name))
+	guard := fmt.Sprintf("IF NOT EXISTS (SELECT 1 FROM sys.column_encryption_keys WHERE name = %s)\n",
+		QuoteLiteral(k.Name))
 	return opts.envelope(drop, guard, func(sb *strings.Builder) {
 		fmt.Fprintf(sb, "CREATE COLUMN ENCRYPTION KEY %s\nWITH VALUES", QuoteName(k.Name))
 		for i, v := range k.Values {

@@ -128,8 +128,8 @@ func (spec CreateDatabaseScopedCredentialRequest) createDatabaseScopedCredential
 		return "", invalidf("database scoped credential %q has no identity", spec.Name)
 	}
 
-	stmt := fmt.Sprintf("CREATE DATABASE SCOPED CREDENTIAL %s WITH IDENTITY = N'%s'",
-		QuoteName(spec.Name), escapeSingle(spec.Identity))
+	stmt := fmt.Sprintf("CREATE DATABASE SCOPED CREDENTIAL %s WITH IDENTITY = %s",
+		QuoteName(spec.Name), QuoteLiteral(spec.Identity))
 	if spec.Secret != "" {
 		stmt += ", SECRET = " + QuoteLiteral(spec.Secret)
 	}
@@ -163,8 +163,8 @@ func (c *DatabaseScopedCredential) Alter(ctx context.Context, o CredentialOption
 	if identity == "" {
 		return invalidf("gosmo: alter database scoped credential %q: identity is required", c.Name)
 	}
-	stmt := fmt.Sprintf("ALTER DATABASE SCOPED CREDENTIAL %s WITH IDENTITY = N'%s'",
-		QuoteName(c.Name), escapeSingle(identity))
+	stmt := fmt.Sprintf("ALTER DATABASE SCOPED CREDENTIAL %s WITH IDENTITY = %s",
+		QuoteName(c.Name), QuoteLiteral(identity))
 	shown := stmt
 	if secret != nil {
 		stmt += ", SECRET = " + QuoteLiteral(*secret)

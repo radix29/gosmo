@@ -143,9 +143,9 @@ func (d *Database) CreateColumnMasterKey(ctx context.Context, req CreateColumnMa
 	q := fmt.Sprintf(`
 CREATE COLUMN MASTER KEY %s
 WITH (
-    KEY_STORE_PROVIDER_NAME = N'%s',
-    KEY_PATH = N'%s'%s
-)`, QuoteName(req.Name), escapeSingle(req.KeyStoreProvider), escapeSingle(req.KeyPath), enclave)
+    KEY_STORE_PROVIDER_NAME = %s,
+    KEY_PATH = %s%s
+)`, QuoteName(req.Name), QuoteLiteral(req.KeyStoreProvider), QuoteLiteral(req.KeyPath), enclave)
 	if _, err := d.exec(ctx, q); err != nil {
 		return nil, fmt.Errorf("gosmo: create column master key %q: %w", req.Name, err)
 	}
