@@ -130,13 +130,15 @@ func (s *Server) Restore(ctx context.Context, opts RestoreOptions) error {
 		// statement-level (Msg 3201/3013 at severity 16, probed on 17 and
 		// 13), so the batch has already released what it took, and a
 		// repair after any error would flip a database deliberately left
-		// RESTRICTED_USER to MULTI_USER (see batchCutShort). Best effort: a
-		// database left RESTORING, or never created, is not touched, and the
-		// restore's error is what the caller is told about.
-		if closing && batchCutShort(err) {
-			_ = s.releaseAfterRestore(ctx, opts.Database, mode)
+		// RESTRICTED_USER to MULTI_USER (see batchCutShort). A database left
+		// RESTORING, or never created, is not touched. The restore's error
+		// comes first; a failed repair is joined after it (withRepair).
+		cutShort := closing && batchCutShort(err)
+		err = fmt.Errorf("gosmo: restore %q: %w", opts.Database, err)
+		if cutShort {
+			err = withRepair(err, s.releaseAfterRestore(ctx, opts.Database, mode))
 		}
-		return fmt.Errorf("gosmo: restore %q: %w", opts.Database, err)
+		return err
 	}
 	// RESTORING refuses every login (Msg 927), and the reset of a pooled
 	// session in it.
@@ -226,14 +228,14 @@ func buildRestoreStatement(opts RestoreOptions, killSessions bool) (string, erro
 		withs = append(withs, fmt.Sprintf("FILE = %d", opts.FileNumber))
 	}
 	for _, rf := range opts.RelocateFiles {
-		withs = append(withs, fmt.Sprintf("MOVE N'%s' TO N'%s'",
-			escapeSingle(rf.LogicalName), escapeSingle(rf.PhysicalName)))
+		withs = append(withs, fmt.Sprintf("MOVE %s TO %s",
+			QuoteLiteral(rf.LogicalName), QuoteLiteral(rf.PhysicalName)))
 	}
 	switch opts.Recovery {
 	case RestoreWithRecovery, RestoreWithNoRecovery:
 		withs = append(withs, string(opts.Recovery))
 	case RestoreWithStandBy:
-		withs = append(withs, fmt.Sprintf("STANDBY = N'%s'", escapeSingle(opts.StandByFile)))
+		withs = append(withs, fmt.Sprintf("STANDBY = %s", QuoteLiteral(opts.StandByFile)))
 	}
 	if opts.Replace {
 		withs = append(withs, "REPLACE")
@@ -242,7 +244,7 @@ func buildRestoreStatement(opts RestoreOptions, killSessions bool) (string, erro
 		withs = append(withs, "CHECKSUM")
 	}
 	if opts.Credential != "" {
-		withs = append(withs, fmt.Sprintf("CREDENTIAL = N'%s'", escapeSingle(opts.Credential)))
+		withs = append(withs, fmt.Sprintf("CREDENTIAL = %s", QuoteLiteral(opts.Credential)))
 	}
 	if opts.Stats > 0 {
 		withs = append(withs, fmt.Sprintf("STATS = %d", opts.Stats))
@@ -321,14 +323,8 @@ func restoreOnline(name, access string) string {
 // SINGLE_USER. A database left RESTORING, never created, or carrying the
 // access mode of a backup that did restore is not touched.
 func (s *Server) releaseAfterRestore(ctx context.Context, name string, mode UserAccess) error {
-	if mode == UserAccessSingle {
-		return nil
-	}
-	rctx, cancel := context.WithTimeout(context.WithoutCancel(unobserved(ctx)), multiUserRepairTimeout)
-	defer cancel()
-	_, err := s.exec(rctx, fmt.Sprintf("IF %s\n    ALTER DATABASE %s SET %s",
+	return s.repairAccessMode(ctx, name, mode, fmt.Sprintf("IF %s\n    ALTER DATABASE %s SET %s",
 		restoreOnline(name, "SINGLE_USER"), QuoteName(name), releaseMode(mode)))
-	return err
 }
 
 // backupHistorySelect is the msdb read behind BackupHistory and LastBackups

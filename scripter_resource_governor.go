@@ -217,10 +217,10 @@ func (k *poolKind[P]) script(p P, w *rgOptions, opts ScriptOptions, sizes groupS
 		systemRGScript(&sb, "ALTER "+k.ddl, k.noun, name, w, "")
 		return sb.String(), nil
 	}
-	drop := fmt.Sprintf("IF EXISTS (SELECT 1 FROM %s WHERE name = N'%s')\n    DROP %s %s;\nGO\n",
-		k.view, escapeSingle(name), k.ddl, QuoteName(name))
-	guard := fmt.Sprintf("IF NOT EXISTS (SELECT 1 FROM %s WHERE name = N'%s')\n",
-		k.view, escapeSingle(name))
+	drop := fmt.Sprintf("IF EXISTS (SELECT 1 FROM %s WHERE name = %s)\n    DROP %s %s;\nGO\n",
+		k.view, QuoteLiteral(name), k.ddl, QuoteName(name))
+	guard := fmt.Sprintf("IF NOT EXISTS (SELECT 1 FROM %s WHERE name = %s)\n",
+		k.view, QuoteLiteral(name))
 	return opts.envelope(drop, guard, func(sb *strings.Builder) {
 		fmt.Fprintf(sb, "CREATE %s %s%s;\nGO\n%s", k.ddl, QuoteName(name), w.with(), rgReconfigureNote)
 	}), nil
@@ -331,10 +331,10 @@ func buildWorkloadGroupScript(g *WorkloadGroup, opts ScriptOptions) (string, err
 		systemRGScript(&sb, "ALTER WORKLOAD GROUP", "workload group", g.Name, w, using)
 		return sb.String(), nil
 	}
-	drop := fmt.Sprintf("IF EXISTS (SELECT 1 FROM sys.resource_governor_workload_groups WHERE name = N'%s')\n    DROP WORKLOAD GROUP %s;\nGO\n",
-		escapeSingle(g.Name), QuoteName(g.Name))
-	guard := fmt.Sprintf("IF NOT EXISTS (SELECT 1 FROM sys.resource_governor_workload_groups WHERE name = N'%s')\n",
-		escapeSingle(g.Name))
+	drop := fmt.Sprintf("IF EXISTS (SELECT 1 FROM sys.resource_governor_workload_groups WHERE name = %s)\n    DROP WORKLOAD GROUP %s;\nGO\n",
+		QuoteLiteral(g.Name), QuoteName(g.Name))
+	guard := fmt.Sprintf("IF NOT EXISTS (SELECT 1 FROM sys.resource_governor_workload_groups WHERE name = %s)\n",
+		QuoteLiteral(g.Name))
 	return opts.envelope(drop, guard, func(sb *strings.Builder) {
 		fmt.Fprintf(sb, "CREATE WORKLOAD GROUP %s%s%s;\nGO\n%s", QuoteName(g.Name), w.with(), using, rgReconfigureNote)
 	}), nil

@@ -134,8 +134,8 @@ func (spec CreateCredentialRequest) createCredentialStatement() (string, error) 
 		return "", invalidf("credential %q has no identity", spec.Name)
 	}
 
-	stmt := fmt.Sprintf("CREATE CREDENTIAL %s WITH IDENTITY = N'%s'",
-		QuoteName(spec.Name), escapeSingle(spec.Identity))
+	stmt := fmt.Sprintf("CREATE CREDENTIAL %s WITH IDENTITY = %s",
+		QuoteName(spec.Name), QuoteLiteral(spec.Identity))
 	if spec.Secret != "" {
 		stmt += ", SECRET = " + QuoteLiteral(spec.Secret)
 	}
@@ -181,8 +181,8 @@ func (c *Credential) Alter(ctx context.Context, o CredentialOptions) error {
 	if identity == "" {
 		return invalidf("gosmo: alter credential %q: identity is required", c.Name)
 	}
-	stmt := fmt.Sprintf("ALTER CREDENTIAL %s WITH IDENTITY = N'%s'",
-		QuoteName(c.Name), escapeSingle(identity))
+	stmt := fmt.Sprintf("ALTER CREDENTIAL %s WITH IDENTITY = %s",
+		QuoteName(c.Name), QuoteLiteral(identity))
 	shown := stmt
 	if secret != nil {
 		stmt += ", SECRET = " + QuoteLiteral(*secret)

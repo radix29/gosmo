@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"database/sql/driver"
+	"errors"
 	"strings"
 	"testing"
 )
@@ -829,6 +830,66 @@ func TestAForcedWriteCutShortRepairsToTheModeTheDatabaseHad(t *testing.T) {
 				t.Errorf("%s from SINGLE_USER: statements %v, want only the batch — the database was single-user already", name, stmts)
 			case want != "" && (len(stmts) != 2 || stmts[1] != w.repair(want)):
 				t.Errorf("%s from %s: statements %v, want the batch then %q", name, before, stmts, w.repair(want))
+			}
+		}
+	}
+}
+
+// TestAFailedAccessModeRepairIsReportedAfterTheWritesError. A repair that
+// fails too leaves the database SINGLE_USER — locked to one login — and was
+// discarded, so the caller (and goSSMS's message) said only "cancelled". The
+// write's own error stays first and reachable through errors.Is; the repair's
+// is joined after it, naming the database and the mode it could not set.
+func TestAFailedAccessModeRepairIsReportedAfterTheWritesError(t *testing.T) {
+	writes := map[string]struct {
+		cancelOn, prefix string
+		write            func(context.Context, *Server) error
+	}{
+		"drop": {"DROP DATABASE", `gosmo: drop database "appdb"`,
+			func(ctx context.Context, s *Server) error {
+				return s.DatabaseRef("appdb").Drop(ctx, TerminationRollbackImmediate)
+			}},
+		"detach": {"sp_detach_db", `gosmo: detach database "appdb"`,
+			func(ctx context.Context, s *Server) error {
+				return s.DatabaseRef("appdb").Detach(ctx, DetachOptions{DropConnections: true})
+			}},
+		"rename": {"MODIFY NAME", `gosmo: rename database "appdb" to "appdb2"`,
+			func(ctx context.Context, s *Server) error {
+				return s.DatabaseRef("appdb").Rename(ctx, "appdb2", TerminationRollbackImmediate)
+			}},
+		"restore": {"RESTORE DATABASE", `gosmo: restore "appdb"`,
+			func(ctx context.Context, s *Server) error {
+				return s.Restore(ctx, RestoreOptions{
+					Database: "appdb", Devices: []BackupTarget{DiskTarget("d.bak")}, CloseExistingConnections: true,
+				})
+			}},
+	}
+	const left = `gosmo: database "appdb" may still be SINGLE_USER: setting it back to MULTI_USER failed: `
+	for name, w := range writes {
+		for _, repairFails := range []bool{true, false} {
+			s := detServer(t)
+			ctx := detCancelOn(t, w.cancelOn)
+			if repairFails {
+				// A plain error on the repair's statement; the batch itself
+				// is cut short by the cancel, which the recorder checks first.
+				detLog.mu.Lock()
+				detLog.failOn = "SET MULTI_USER"
+				detLog.mu.Unlock()
+			}
+			err := w.write(ctx, s)
+			if !errors.Is(err, context.Canceled) {
+				t.Errorf("%s repairFails=%v: %v, want the write's own cancellation reachable", name, repairFails, err)
+				continue
+			}
+			msg := err.Error()
+			if !strings.HasPrefix(msg, w.prefix) {
+				t.Errorf("%s repairFails=%v: %q, want the write's error first", name, repairFails, msg)
+			}
+			if got := strings.Contains(msg, "\n"+left+"scripted failure"); got != repairFails {
+				t.Errorf("%s repairFails=%v: %q, want the repair's failure joined after it only when it failed", name, repairFails, msg)
+			}
+			if re, ok := errors.AsType[*RepairError](err); ok != repairFails || ok && re.Error() != left+"scripted failure" {
+				t.Errorf("%s repairFails=%v: %q, want a *RepairError holding only the repair's failure exactly when it failed", name, repairFails, msg)
 			}
 		}
 	}

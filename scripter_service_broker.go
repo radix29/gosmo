@@ -41,8 +41,8 @@ import (
 // value here, not an identifier, and the bracket-quoted form would find
 // nothing.
 func brokerCatalogGuard(sense, view, name string) string {
-	return fmt.Sprintf("IF %s (SELECT 1 FROM sys.%s WHERE name = N'%s')\n",
-		sense, view, escapeSingle(name))
+	return fmt.Sprintf("IF %s (SELECT 1 FROM sys.%s WHERE name = %s)\n",
+		sense, view, QuoteLiteral(name))
 }
 
 // brokerDropScript is the guarded drop for one of the six schemaless
@@ -175,8 +175,8 @@ func (sc *Scripter) ScriptBrokerQueue(ctx context.Context, schema, name string) 
 // procedure, including with STATUS = OFF — activation that is configured but
 // switched off is a state a script has to preserve, not one to drop.
 func buildBrokerQueueScript(q *BrokerQueue, opts ScriptOptions) string {
-	drop := fmt.Sprintf("IF OBJECT_ID(N'%s', 'SQ') IS NOT NULL\n    DROP QUEUE %s;\nGO\n", escapeSingle(q.FullName()), q.FullName())
-	guard := fmt.Sprintf("IF OBJECT_ID(N'%s', 'SQ') IS NULL\n", escapeSingle(q.FullName()))
+	drop := fmt.Sprintf("IF OBJECT_ID(%s, 'SQ') IS NOT NULL\n    DROP QUEUE %s;\nGO\n", QuoteLiteral(q.FullName()), q.FullName())
+	guard := fmt.Sprintf("IF OBJECT_ID(%s, 'SQ') IS NULL\n", QuoteLiteral(q.FullName()))
 	return opts.envelope(drop, guard, func(sb *strings.Builder) {
 		fmt.Fprintf(sb, "CREATE QUEUE %s\n", q.FullName())
 		fmt.Fprintf(sb, "    WITH STATUS = %s,\n", onOff(q.IsReceiveEnabled))
@@ -184,7 +184,7 @@ func buildBrokerQueueScript(q *BrokerQueue, opts ScriptOptions) string {
 		if q.ActivationProcedure != "" {
 			sb.WriteString(",\n         ACTIVATION\n         (  ")
 			fmt.Fprintf(sb, "STATUS = %s,\n            PROCEDURE_NAME = %s,\n",
-				onOff(q.IsActivationEnabled), q.ActivationProcedure)
+				onOff(q.IsActivationEnabled), scriptObjectName("activation procedure name", q.ActivationProcedure))
 			fmt.Fprintf(sb, "            MAX_QUEUE_READERS = %d,\n", q.MaxReaders)
 			fmt.Fprintf(sb, "            EXECUTE AS %s\n         )", queueExecuteAsClause(q))
 		}

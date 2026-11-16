@@ -299,7 +299,7 @@ func upperKeyword[K ~string](v K) K { return K(strings.ToUpper(string(v))) }
 // WITH (<with>) statement.
 //
 // The replica is addressed by name as a string literal, not an identifier —
-// that is the syntax ALTER requires — so escapeSingle is what protects it.
+// that is the syntax ALTER requires — so QuoteLiteral is what protects it.
 //
 // Its refusal carries no "gosmo:" prefix: every caller wraps it with one plus
 // the setting and the replica.
@@ -308,8 +308,8 @@ func (r *AvailabilityReplica) modifyReplica(ctx context.Context, with string) er
 		return invalidf("replica did not come from AvailabilityGroup.Replicas")
 	}
 	_, err := r.server.exec(ctx, fmt.Sprintf(
-		"ALTER AVAILABILITY GROUP %s MODIFY REPLICA ON N'%s' WITH (%s)",
-		QuoteName(r.GroupName), escapeSingle(r.ReplicaServerName), with))
+		"ALTER AVAILABILITY GROUP %s MODIFY REPLICA ON %s WITH (%s)",
+		QuoteName(r.GroupName), QuoteLiteral(r.ReplicaServerName), with))
 	return err
 }
 
@@ -514,10 +514,10 @@ func (ag *AvailabilityGroup) AddReplica(ctx context.Context, spec AvailabilityRe
 }
 
 // removeReplicaClause builds the REMOVE REPLICA clause. The replica is named as
-// a string literal, not an identifier, which is why escapeSingle rather than
+// a string literal, not an identifier, which is why QuoteLiteral rather than
 // QuoteName guards it — the same asymmetry as MODIFY REPLICA ON.
 func removeReplicaClause(serverName string) string {
-	return fmt.Sprintf("REMOVE REPLICA ON N'%s'", escapeSingle(serverName))
+	return fmt.Sprintf("REMOVE REPLICA ON %s", QuoteLiteral(serverName))
 }
 
 // RemoveReplica removes a secondary replica from the group.

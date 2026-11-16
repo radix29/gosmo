@@ -44,89 +44,8 @@ func buildDSN(opts ConnectionOptions) (dsn, driverName string, err error) {
 		// -- Entra ID (Azure AD) path: uses the "azuresql" driver --
 		driverName = "azuresql"
 
-		fv, ok := fedauthValue[opts.Auth]
-		if !ok {
-			return "", "", invalidf("gosmo: unsupported auth method %d", opts.Auth)
-		}
-		q.Set("fedauth", fv)
-
-		if err := checkEntraFields(opts); err != nil {
+		if err := setEntraDSNValues(q, opts); err != nil {
 			return "", "", err
-		}
-
-		// Per-method extra parameters. Every key here is one go-mssqldb's
-		// azuread driver reads for that workflow (azuread/configuration.go,
-		// validateParameters); auth_test.go runs each through it.
-		switch opts.Auth {
-		case AuthEntraMSI:
-			if opts.ClientID != "" {
-				// user-assigned managed identity
-				q.Set("user id", opts.ClientID)
-			}
-			if opts.TokenFilePath != "" {
-				q.Set("tokenfilepath", opts.TokenFilePath)
-			}
-
-		case AuthEntraServicePrincipal:
-			userID, err := entraClientAtTenant(opts)
-			if err != nil {
-				return "", "", err
-			}
-			q.Set("user id", userID)
-			setEntraAppCredential(q, opts)
-
-		case AuthEntraServicePrincipalAccessToken:
-			q.Set("password", opts.AccessToken)
-
-		case AuthEntraOnBehalfOf:
-			userID, err := entraClientAtTenant(opts)
-			if err != nil {
-				return "", "", err
-			}
-			q.Set("user id", userID)
-			q.Set("userassertion", opts.AccessToken)
-			setEntraAppCredential(q, opts)
-
-		case AuthEntraPassword:
-			q.Set("user id", opts.User)
-			q.Set("password", opts.Password)
-			q.Set("applicationclientid", cmp.Or(opts.ApplicationClientID, defaultPublicClientID))
-
-		case AuthEntraInteractive:
-			q.Set("applicationclientid", cmp.Or(opts.ApplicationClientID, defaultPublicClientID))
-			if opts.User != "" {
-				q.Set("user id", opts.User) // login hint
-			}
-
-		case AuthEntraDeviceCode:
-			if opts.ApplicationClientID != "" {
-				q.Set("applicationclientid", opts.ApplicationClientID)
-			}
-
-		case AuthEntraAzurePipelines:
-			// With no User the driver takes the client and tenant from
-			// AZURESUBSCRIPTION_CLIENT_ID / _TENANT_ID. "serviceconnectionid"
-			// and "systemtoken" are deliberately left to ExtraParams (or the
-			// environment) and not reserved: that is the one route by which
-			// this method has always connected.
-			if opts.User != "" {
-				userID, err := entraClientAtTenant(opts)
-				if err != nil {
-					return "", "", err
-				}
-				q.Set("user id", userID)
-			}
-		}
-
-		if opts.DisableInstanceDiscovery {
-			q.Set("disableinstancediscovery", "true")
-		}
-		if opts.TenantID != "" {
-			// go-mssqldb's own azuread connector never reads this key (its
-			// credential gets a tenant only from "user id"); gosmo's credential
-			// does (parseEntraConfig), which is how TenantID reaches the
-			// methods with no "user id" to carry it.
-			q.Set("tenantid", opts.TenantID)
 		}
 		if err := mergeExtraParams(q, opts.ExtraParams); err != nil {
 			return "", "", err
@@ -153,6 +72,109 @@ func buildDSN(opts ConnectionOptions) (dsn, driverName string, err error) {
 		u.Path = "/" + instance
 	}
 
+	setClassicDSNAuth(u, q, opts)
+
+	if err := mergeExtraParams(q, opts.ExtraParams); err != nil {
+		return "", "", err
+	}
+	u.RawQuery = q.Encode()
+	return u.String(), driverName, nil
+}
+
+// setEntraDSNValues sets the Entra (Azure AD) keys: fedauth and each
+// method's own credential parameters, then the instance-discovery and tenant
+// keys every method shares.
+func setEntraDSNValues(q url.Values, opts ConnectionOptions) error {
+	fv, ok := fedauthValue[opts.Auth]
+	if !ok {
+		return invalidf("gosmo: unsupported auth method %d", opts.Auth)
+	}
+	q.Set("fedauth", fv)
+
+	if err := checkEntraFields(opts); err != nil {
+		return err
+	}
+
+	// Per-method extra parameters. Every key here is one go-mssqldb's
+	// azuread driver reads for that workflow (azuread/configuration.go,
+	// validateParameters); auth_test.go runs each through it.
+	switch opts.Auth {
+	case AuthEntraMSI:
+		if opts.ClientID != "" {
+			// user-assigned managed identity
+			q.Set("user id", opts.ClientID)
+		}
+		if opts.TokenFilePath != "" {
+			q.Set("tokenfilepath", opts.TokenFilePath)
+		}
+
+	case AuthEntraServicePrincipal:
+		userID, err := entraClientAtTenant(opts)
+		if err != nil {
+			return err
+		}
+		q.Set("user id", userID)
+		setEntraAppCredential(q, opts)
+
+	case AuthEntraServicePrincipalAccessToken:
+		q.Set("password", opts.AccessToken)
+
+	case AuthEntraOnBehalfOf:
+		userID, err := entraClientAtTenant(opts)
+		if err != nil {
+			return err
+		}
+		q.Set("user id", userID)
+		q.Set("userassertion", opts.AccessToken)
+		setEntraAppCredential(q, opts)
+
+	case AuthEntraPassword:
+		q.Set("user id", opts.User)
+		q.Set("password", opts.Password)
+		q.Set("applicationclientid", cmp.Or(opts.ApplicationClientID, defaultPublicClientID))
+
+	case AuthEntraInteractive:
+		q.Set("applicationclientid", cmp.Or(opts.ApplicationClientID, defaultPublicClientID))
+		if opts.User != "" {
+			q.Set("user id", opts.User) // login hint
+		}
+
+	case AuthEntraDeviceCode:
+		if opts.ApplicationClientID != "" {
+			q.Set("applicationclientid", opts.ApplicationClientID)
+		}
+
+	case AuthEntraAzurePipelines:
+		// With no User the driver takes the client and tenant from
+		// AZURESUBSCRIPTION_CLIENT_ID / _TENANT_ID. "serviceconnectionid"
+		// and "systemtoken" are deliberately left to ExtraParams (or the
+		// environment) and not reserved: that is the one route by which
+		// this method has always connected.
+		if opts.User != "" {
+			userID, err := entraClientAtTenant(opts)
+			if err != nil {
+				return err
+			}
+			q.Set("user id", userID)
+		}
+	}
+
+	if opts.DisableInstanceDiscovery {
+		q.Set("disableinstancediscovery", "true")
+	}
+	if opts.TenantID != "" {
+		// go-mssqldb's own azuread connector never reads this key (its
+		// credential gets a tenant only from "user id"); gosmo's credential
+		// does (parseEntraConfig), which is how TenantID reaches the
+		// methods with no "user id" to carry it.
+		q.Set("tenantid", opts.TenantID)
+	}
+	return nil
+}
+
+// setClassicDSNAuth sets SQL Server or Windows authentication: the URL's user
+// info, and for Kerberos its DSN keys.
+func setClassicDSNAuth(u *url.URL, q url.Values, opts ConnectionOptions) {
 	switch opts.Auth {
 	case AuthWindows:
 		if opts.ServerSPN != "" {
@@ -182,12 +204,6 @@ func buildDSN(opts ConnectionOptions) (dsn, driverName string, err error) {
 			u.User = url.UserPassword(opts.User, opts.Password)
 		}
 	}
-
-	if err := mergeExtraParams(q, opts.ExtraParams); err != nil {
-		return "", "", err
-	}
-	u.RawQuery = q.Encode()
-	return u.String(), driverName, nil
 }
 
 // checkEntraFields refuses, in ConnectionOptions vocabulary, options an Entra

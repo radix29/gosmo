@@ -2118,6 +2118,17 @@ it was the one that disabled — and restores the state on the failure path
 too. `a.WithDisabled(ctx, fn)` and `spec.WithDisabled(ctx, fn)` expose that
 for a caller making several changes at once.
 
+**A repair that fails is reported, never dropped.** The re-enable above, an
+event session's restart after its stop window, and the access-mode repair of
+a forced `Drop`/`Detach`/`Rename` or a `Restore` with
+`CloseExistingConnections` cut short all run through one helper (`repair`,
+`server.go`: off the caller's cancellation, ten seconds). When the write
+failed and the repair failed too, the result is `errors.Join(writeErr,
+*RepairError)` — the write's error first, the repair's message saying what was
+left (`database "x" may still be SINGLE_USER…`). A caller that shows a
+cancellation as just "cancelled" looks for the `*RepairError` with
+`errors.AsType`.
+
 Two details do not follow from the catalog. The constants
 (`AuditToApplicationLog`, `AuditFailureShutdown`, …) are `type_desc` values,
 not T-SQL keywords — `APPLICATION LOG` is written `TO APPLICATION_LOG` and
@@ -2726,6 +2737,9 @@ and retries on a fresh connection under the same budget and rule when
 the pool hands back a dead one — the protection `withRetry` gives gosmo's
 own reads, which `database/sql` does not extend to a pinned conn. Only
 the prologue is retried; whatever the caller goes on to run is not.
+`gosmo.DiscardConn(conn)` is its release-side partner: the connection is
+closed rather than pooled, for a caller that cannot vouch for the session
+it leaves (an open transaction, a switched role, an interrupted batch).
 
 A pool `Connect` opens dials through `retargetingConnector`
 (`connection_retarget.go`), not the driver connector directly: a login names

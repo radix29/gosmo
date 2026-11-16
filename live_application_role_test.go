@@ -13,7 +13,6 @@ package gosmo
 
 import (
 	"context"
-	"database/sql/driver"
 	"errors"
 	"strings"
 	"testing"
@@ -67,9 +66,8 @@ func TestLiveApplicationRoleRoundTrip(t *testing.T) {
 			t.Fatalf("Conn: %v", err)
 		}
 		defer func() {
-			// ErrBadConn makes database/sql discard the connection rather
-			// than return it to the pool with the role still set.
-			_ = conn.Raw(func(any) error { return driver.ErrBadConn })
+			// Discarded, not pooled with the role still set.
+			DiscardConn(conn)
 			_ = conn.Close()
 		}()
 		// Literals, not parameters: a parameterised batch runs through

@@ -32,7 +32,7 @@ func (sc *Scripter) ScriptFullTextCatalog(ctx context.Context, name string) (str
 }
 
 func buildFullTextCatalogScript(c *FullTextCatalog, opts ScriptOptions) string {
-	exists := fmt.Sprintf("EXISTS (SELECT 1 FROM sys.fulltext_catalogs WHERE name = N'%s')", escapeSingle(c.Name))
+	exists := fmt.Sprintf("EXISTS (SELECT 1 FROM sys.fulltext_catalogs WHERE name = %s)", QuoteLiteral(c.Name))
 	drop := fmt.Sprintf("IF %s\nDROP FULLTEXT CATALOG %s\nGO\n", exists, QuoteName(c.Name))
 	return opts.envelope(drop, "IF NOT "+exists+"\n", func(sb *strings.Builder) {
 		sb.WriteString(createFullTextCatalogStatement(CreateFullTextCatalogRequest{
@@ -59,7 +59,7 @@ func (sc *Scripter) ScriptFullTextStoplist(ctx context.Context, name string) (st
 }
 
 func buildFullTextStoplistScript(l *FullTextStoplist, words []FullTextStopword, opts ScriptOptions) string {
-	exists := fmt.Sprintf("EXISTS (SELECT 1 FROM sys.fulltext_stoplists WHERE name = N'%s')", escapeSingle(l.Name))
+	exists := fmt.Sprintf("EXISTS (SELECT 1 FROM sys.fulltext_stoplists WHERE name = %s)", QuoteLiteral(l.Name))
 	drop := fmt.Sprintf("IF %s\nDROP FULLTEXT STOPLIST %s;\nGO\n", exists, QuoteName(l.Name))
 	return opts.envelope(drop, "IF NOT "+exists+"\n", func(sb *strings.Builder) {
 		// Cannot fail: the request names no source.
@@ -69,8 +69,8 @@ func buildFullTextStoplistScript(l *FullTextStoplist, words []FullTextStopword, 
 		for _, w := range words {
 			if opts.IncludeIfNotExists {
 				fmt.Fprintf(sb, "IF NOT EXISTS (SELECT 1 FROM sys.fulltext_stopwords w JOIN sys.fulltext_stoplists l ON l.stoplist_id = w.stoplist_id\n"+
-					"               WHERE l.name = N'%s' AND w.stopword = N'%s' AND w.language_id = %d)\n",
-					escapeSingle(l.Name), escapeSingle(w.Word), w.LanguageID)
+					"               WHERE l.name = %s AND w.stopword = %s AND w.language_id = %d)\n",
+					QuoteLiteral(l.Name), QuoteLiteral(w.Word), w.LanguageID)
 			}
 			fmt.Fprintf(sb, "ALTER FULLTEXT STOPLIST %s ADD %s LANGUAGE %d;\nGO\n",
 				QuoteName(l.Name), QuoteLiteral(w.Word), w.LanguageID)
@@ -95,7 +95,7 @@ func (sc *Scripter) ScriptSearchPropertyList(ctx context.Context, name string) (
 }
 
 func buildSearchPropertyListScript(p *SearchPropertyList, props []SearchProperty, opts ScriptOptions) string {
-	exists := fmt.Sprintf("EXISTS (SELECT 1 FROM sys.registered_search_property_lists WHERE name = N'%s')", escapeSingle(p.Name))
+	exists := fmt.Sprintf("EXISTS (SELECT 1 FROM sys.registered_search_property_lists WHERE name = %s)", QuoteLiteral(p.Name))
 	drop := fmt.Sprintf("IF %s\nDROP SEARCH PROPERTY LIST %s;\nGO\n", exists, QuoteName(p.Name))
 	return opts.envelope(drop, "IF NOT "+exists+"\n", func(sb *strings.Builder) {
 		// Cannot fail: the request names no source.
@@ -105,8 +105,8 @@ func buildSearchPropertyListScript(p *SearchPropertyList, props []SearchProperty
 		for _, prop := range props {
 			if opts.IncludeIfNotExists {
 				fmt.Fprintf(sb, "IF NOT EXISTS (SELECT 1 FROM sys.registered_search_properties sp JOIN sys.registered_search_property_lists l ON l.property_list_id = sp.property_list_id\n"+
-					"               WHERE l.name = N'%s' AND sp.property_name = N'%s')\n",
-					escapeSingle(p.Name), escapeSingle(prop.Name))
+					"               WHERE l.name = %s AND sp.property_name = %s)\n",
+					QuoteLiteral(p.Name), QuoteLiteral(prop.Name))
 			}
 			sb.WriteString(addSearchPropertyStatement(p.Name, prop))
 			sb.WriteString("\nGO\n")
@@ -133,7 +133,7 @@ func (sc *Scripter) ScriptFullTextIndex(ctx context.Context, schema, table strin
 }
 
 func buildFullTextIndexScript(i *FullTextIndex, opts ScriptOptions) string {
-	exists := fmt.Sprintf("EXISTS (SELECT 1 FROM sys.fulltext_indexes WHERE object_id = OBJECT_ID(N'%s'))", escapeSingle(i.FullName()))
+	exists := fmt.Sprintf("EXISTS (SELECT 1 FROM sys.fulltext_indexes WHERE object_id = OBJECT_ID(%s))", QuoteLiteral(i.FullName()))
 	drop := fmt.Sprintf("IF %s\nDROP FULLTEXT INDEX ON %s\nGO\n", exists, i.FullName())
 	return opts.envelope(drop, "IF NOT "+exists+"\n", func(sb *strings.Builder) {
 		req := CreateFullTextIndexRequest{

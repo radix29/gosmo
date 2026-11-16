@@ -424,6 +424,41 @@ func TestRenamingAnEnabledAuditRestoresAfterACancel(t *testing.T) {
 	}
 }
 
+// A failed write inside a disable window whose re-enable also fails reports
+// both, the write's error first — as Rename always did. The windows discarded
+// the re-enable's failure, so a caller was told the Apply failed but not that
+// auditing was left off.
+func TestAFailedWindowKeepsTheReenableError(t *testing.T) {
+	for name, window := range map[string]func(*auditScript, context.Context, func(context.Context) error) error{
+		"server audit": func(s *auditScript, ctx context.Context, fn func(context.Context) error) error {
+			return auditServer(t, s).ServerAuditRef("a").WithDisabled(ctx, fn)
+		},
+		"server audit specification": func(s *auditScript, ctx context.Context, fn func(context.Context) error) error {
+			return auditServer(t, s).ServerAuditSpecificationRef("s").WithDisabled(ctx, fn)
+		},
+		"database audit specification": func(s *auditScript, ctx context.Context, fn func(context.Context) error) error {
+			return auditDatabase(t, s).DatabaseAuditSpecificationRef("s").WithDisabled(ctx, fn)
+		},
+	} {
+		writeErr, enableErr := errors.New("alter refused"), errors.New("enable refused")
+		s := &auditScript{enabled: true, onExec: func(q string) error {
+			if strings.Contains(q, "STATE = ON") {
+				return enableErr
+			}
+			return nil
+		}}
+		err := window(s, context.Background(), func(context.Context) error { return writeErr })
+		if !errors.Is(err, writeErr) || !errors.Is(err, enableErr) {
+			t.Errorf("%s: WithDisabled = %v, want both the write's and the re-enable's error", name, err)
+		} else if !strings.HasPrefix(err.Error(), "alter refused\n") {
+			t.Errorf("%s: WithDisabled = %q, want the write's error first", name, err)
+		}
+		if re, ok := errors.AsType[*RepairError](err); !ok || !errors.Is(re, enableErr) || errors.Is(re, writeErr) {
+			t.Errorf("%s: WithDisabled = %v, want the re-enable's failure (only) as a *RepairError", name, err)
+		}
+	}
+}
+
 // A failed rename whose restore also fails reports both: dropping the
 // restore's error hid that auditing was still off.
 func TestRenameFailureKeepsTheRestoreError(t *testing.T) {

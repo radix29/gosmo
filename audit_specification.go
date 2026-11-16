@@ -322,12 +322,12 @@ func (sc auditSpecScope) withDisabled(ctx context.Context, fn func(context.Conte
 		return err
 	}
 	enable := func(ctx context.Context) error { return sc.setEnabled(ctx, true) }
+	// See withAuditDisabled: both paths through repair, a failed re-enable
+	// joined after fn's error.
 	if err := fn(inner); err != nil {
-		// Best effort: report the original failure, not the restore's.
-		_ = restoreWindow(ctx, enable)
-		return err
+		return withRepair(err, repair(ctx, enable))
 	}
-	return restoreWindow(ctx, enable)
+	return repair(ctx, enable)
 }
 
 // alter runs one ALTER statement inside the disable window.

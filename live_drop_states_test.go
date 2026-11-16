@@ -45,7 +45,7 @@ func TestLiveForcedDropDeletesADatabaseInAnyState(t *testing.T) {
 	}
 	dir := dataFile[:strings.LastIndexAny(dataFile, `\/`)+1]
 	bak := dir + src + ".bak"
-	if _, err := srv.exec(ctx, "BACKUP DATABASE "+QuoteName(src)+" TO DISK = N'"+escapeSingle(bak)+"' WITH INIT, COPY_ONLY"); err != nil {
+	if _, err := srv.exec(ctx, "BACKUP DATABASE "+QuoteName(src)+" TO DISK = "+QuoteLiteral(bak)+" WITH INIT, COPY_ONLY"); err != nil {
 		t.Fatalf("back up: %v", err)
 	}
 	defer liveRemoveFile(t, db, bak)
@@ -63,9 +63,9 @@ func TestLiveForcedDropDeletesADatabaseInAnyState(t *testing.T) {
 		return s
 	}
 	restore := func(name, with string) error {
-		_, err := srv.exec(ctx, "RESTORE DATABASE "+QuoteName(name)+" FROM DISK = N'"+escapeSingle(bak)+"' WITH "+with+
-			", MOVE N'"+escapeSingle(src)+"' TO N'"+escapeSingle(dir+name+".mdf")+"'"+
-			", MOVE N'"+escapeSingle(src+"_log")+"' TO N'"+escapeSingle(dir+name+"_log.ldf")+"'")
+		_, err := srv.exec(ctx, "RESTORE DATABASE "+QuoteName(name)+" FROM DISK = "+QuoteLiteral(bak)+" WITH "+with+
+			", MOVE "+QuoteLiteral(src)+" TO "+QuoteLiteral(dir+name+".mdf")+
+			", MOVE "+QuoteLiteral(src+"_log")+" TO "+QuoteLiteral(dir+name+"_log.ldf"))
 		return err
 	}
 	cleanup := func(name string) {
@@ -83,7 +83,7 @@ func TestLiveForcedDropDeletesADatabaseInAnyState(t *testing.T) {
 		}},
 		{"gossms_live_dropstate_standby", "ONLINE STANDBY", func(t *testing.T, name string) {
 			t.Cleanup(func() { liveRemoveFile(t, db, dir+name+".tuf") })
-			if err := restore(name, "STANDBY = N'"+escapeSingle(dir+name+".tuf")+"'"); err != nil {
+			if err := restore(name, "STANDBY = "+QuoteLiteral(dir+name+".tuf")); err != nil {
 				t.Fatalf("restore with standby: %v", err)
 			}
 			// A reader, as on a log-shipping secondary: the drop must get it out.
@@ -98,8 +98,8 @@ func TestLiveForcedDropDeletesADatabaseInAnyState(t *testing.T) {
 		}},
 		{"gossms_live_dropstate_offline", "OFFLINE", func(t *testing.T, name string) {
 			if _, err := srv.exec(ctx, "CREATE DATABASE "+QuoteName(name)+
-				" ON (NAME = N'"+name+"', FILENAME = N'"+escapeSingle(dir+name+".mdf")+"')"+
-				" LOG ON (NAME = N'"+name+"_log', FILENAME = N'"+escapeSingle(dir+name+"_log.ldf")+"')"+
+				" ON (NAME = N'"+name+"', FILENAME = "+QuoteLiteral(dir+name+".mdf")+")"+
+				" LOG ON (NAME = N'"+name+"_log', FILENAME = "+QuoteLiteral(dir+name+"_log.ldf")+")"+
 				"; ALTER DATABASE "+QuoteName(name)+" SET OFFLINE"); err != nil {
 				t.Fatalf("create and set offline: %v", err)
 			}
@@ -122,7 +122,7 @@ func TestLiveForcedDropDeletesADatabaseInAnyState(t *testing.T) {
 			if c.want == "OFFLINE" {
 				// The files outlive the drop; attach them back to delete them.
 				if _, err := srv.exec(ctx, "CREATE DATABASE "+QuoteName(c.name)+
-					" ON (FILENAME = N'"+escapeSingle(dir+c.name+".mdf")+"'), (FILENAME = N'"+escapeSingle(dir+c.name+"_log.ldf")+"') FOR ATTACH"); err != nil {
+					" ON (FILENAME = "+QuoteLiteral(dir+c.name+".mdf")+"), (FILENAME = "+QuoteLiteral(dir+c.name+"_log.ldf")+") FOR ATTACH"); err != nil {
 					t.Errorf("the OFFLINE database's files did not survive the drop to be attached back: %v", err)
 				}
 			}

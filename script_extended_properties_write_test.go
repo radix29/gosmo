@@ -15,7 +15,7 @@ import (
 // These are the sharpest case for a whole-statement assertion in the package.
 // Every one of the eight level arguments is a *literal*, not an identifier, so
 // nothing brackets them and the only thing standing between a table named
-// O'Brien and a syntax error is escapeSingle. The level pairs also carry a
+// O'Brien and a syntax error is QuoteLiteral. The level pairs also carry a
 // second rule: an unused level is the NULL keyword, not an empty string
 // literal — nullableStr maps an empty string to NULL for exactly that, and a
 // build that quoted it instead would look right and address the wrong object

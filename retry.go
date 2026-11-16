@@ -202,3 +202,18 @@ func AcquireConn(ctx context.Context, db *sql.DB, database string) (*sql.Conn, e
 		return conn, nil
 	}
 }
+
+// DiscardConn makes conn be closed rather than returned to the pool when it is
+// released: the caller cannot vouch for its session state — a bulk copy left
+// mid-load, a scan stopped before its REVERT, a USE back that failed, an open
+// transaction a pooled session would sit on holding locks. Close alone hands
+// the session back to the idle list for an unrelated caller to trip over.
+//
+// It works through database/sql's one way to close a pooled connection rather
+// than pool it: sql.Conn.Raw marks the connection bad when its function
+// returns driver.ErrBadConn. The caller still calls conn.Close (a no-op after
+// this). On an already-closed conn Raw returns sql.ErrConnDone and nothing
+// happens, so DiscardConn is idempotent.
+func DiscardConn(conn *sql.Conn) {
+	_ = conn.Raw(func(any) error { return driver.ErrBadConn })
+}

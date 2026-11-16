@@ -87,7 +87,7 @@ func deviceClause(name string, isURL bool) string {
 	if isURL {
 		kw = "URL"
 	}
-	return fmt.Sprintf("%s = N'%s'", kw, escapeSingle(name))
+	return fmt.Sprintf("%s = %s", kw, QuoteLiteral(name))
 }
 
 // BackupTarget names where a backup is written or read: a physical path, a

@@ -239,8 +239,8 @@ func (sc *Scripter) ScriptStatistic(ctx context.Context, schema, table, name str
 // The DROP is always guarded: DROP STATISTICS has no IF EXISTS form, and the
 // DROP half of DROP And CREATE must be re-runnable.
 func buildStatisticScript(st *Statistic, cols []string, tableName string, opts ScriptOptions) (string, error) {
-	exists := fmt.Sprintf("EXISTS (SELECT 1 FROM sys.stats WHERE name = N'%s' AND object_id = OBJECT_ID(N'%s'))",
-		escapeSingle(st.Name), escapeSingle(tableName))
+	exists := fmt.Sprintf("EXISTS (SELECT 1 FROM sys.stats WHERE name = %s AND object_id = OBJECT_ID(%s))",
+		QuoteLiteral(st.Name), QuoteLiteral(tableName))
 	drop := fmt.Sprintf("IF %s\n    DROP STATISTICS %s.%s;\nGO\n", exists, tableName, QuoteName(st.Name))
 	guard := fmt.Sprintf("IF NOT %s\n", exists)
 	return opts.envelopeErr(drop, guard, func(sb *strings.Builder) error {
@@ -454,6 +454,9 @@ func buildSequenceScript(seq *Sequence, opts ScriptOptions) string {
 			dataType += fmt.Sprintf("(%d,%d)", seq.Precision, seq.Scale)
 		}
 		start, exhausted := sequenceStartWith(seq)
+		// Checked before the comment below as well as the statement: a
+		// hand-built Sequence may carry a line break there.
+		start = scriptInteger("sequence start value", start)
 		if exhausted {
 			// The name stays out of the comment: a bracketed name may hold a
 			// line break, which would end the comment and turn the rest into
@@ -463,10 +466,11 @@ func buildSequenceScript(seq *Sequence, opts ScriptOptions) string {
 				"-- recreated sequence hands it out once more, then is exhausted too.\n", start)
 		}
 		if opts.IncludeIfNotExists {
-			fmt.Fprintf(sb, "IF OBJECT_ID(N'%s', N'SO') IS NULL\n", escapeSingle(fullName))
+			fmt.Fprintf(sb, "IF OBJECT_ID(%s, N'SO') IS NULL\n", QuoteLiteral(fullName))
 		}
 		fmt.Fprintf(sb, "CREATE SEQUENCE %s\n    AS %s\n    START WITH %s\n    INCREMENT BY %s\n    MINVALUE %s\n    MAXVALUE %s\n",
-			fullName, dataType, start, seq.Increment, seq.MinValue, seq.MaxValue)
+			fullName, dataType, start, scriptInteger("sequence increment", seq.Increment),
+			scriptInteger("sequence minimum", seq.MinValue), scriptInteger("sequence maximum", seq.MaxValue))
 		if seq.IsCycling {
 			sb.WriteString("    CYCLE\n")
 		} else {
@@ -550,9 +554,9 @@ func (sc *Scripter) ScriptSynonym(ctx context.Context, schema, name string) (str
 func buildSynonymScript(syn *Synonym, opts ScriptOptions) string {
 	fullName := qualifiedName(syn.Schema, syn.Name)
 	drop := fmt.Sprintf("DROP SYNONYM IF EXISTS %s;\nGO\n", fullName)
-	guard := fmt.Sprintf("IF OBJECT_ID(N'%s', N'SN') IS NULL\n", escapeSingle(fullName))
+	guard := fmt.Sprintf("IF OBJECT_ID(%s, N'SN') IS NULL\n", QuoteLiteral(fullName))
 	return opts.envelope(drop, guard, func(sb *strings.Builder) {
-		fmt.Fprintf(sb, "CREATE SYNONYM %s FOR %s;\nGO\n", fullName, syn.BaseObject)
+		fmt.Fprintf(sb, "CREATE SYNONYM %s FOR %s;\nGO\n", fullName, scriptObjectName("base object name", syn.BaseObject))
 	})
 }
 
@@ -571,8 +575,8 @@ func (sc *Scripter) ScriptPartitionFunction(ctx context.Context, name string) (s
 // buildPartitionFunctionScript assembles one partition function's script.
 func buildPartitionFunctionScript(pf *PartitionFunction, opts ScriptOptions) string {
 	drop := fmt.Sprintf("DROP PARTITION FUNCTION IF EXISTS %s;\nGO\n", QuoteName(pf.Name))
-	guard := fmt.Sprintf("IF NOT EXISTS (SELECT 1 FROM sys.partition_functions WHERE name = N'%s')\n",
-		escapeSingle(pf.Name))
+	guard := fmt.Sprintf("IF NOT EXISTS (SELECT 1 FROM sys.partition_functions WHERE name = %s)\n",
+		QuoteLiteral(pf.Name))
 	return opts.envelope(drop, guard, func(sb *strings.Builder) {
 		side := "LEFT"
 		if pf.IsRight {
@@ -601,8 +605,8 @@ func (sc *Scripter) ScriptPartitionScheme(ctx context.Context, name string) (str
 // buildPartitionSchemeScript assembles one partition scheme's script.
 func buildPartitionSchemeScript(ps *PartitionScheme, opts ScriptOptions) string {
 	drop := fmt.Sprintf("DROP PARTITION SCHEME IF EXISTS %s;\nGO\n", QuoteName(ps.Name))
-	guard := fmt.Sprintf("IF NOT EXISTS (SELECT 1 FROM sys.partition_schemes WHERE name = N'%s')\n",
-		escapeSingle(ps.Name))
+	guard := fmt.Sprintf("IF NOT EXISTS (SELECT 1 FROM sys.partition_schemes WHERE name = %s)\n",
+		QuoteLiteral(ps.Name))
 	return opts.envelope(drop, guard, func(sb *strings.Builder) {
 		fgs := make([]string, len(ps.FileGroups))
 		for i, fg := range ps.FileGroups {

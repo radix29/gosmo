@@ -443,11 +443,14 @@ func (d *Database) Drop(ctx context.Context, term Termination) error {
 			// database belongs to an availability group, the login may set
 			// state but not drop — and the batch puts it back to the access
 			// mode it had itself. Only a batch cut short needs the repair from here.
-			// Best effort: the drop's own error is what the caller is told.
-			if batchCutShort(err) {
-				_ = s.restoreAccessMode(ctx, name, mode)
+			// The drop's own error comes first; a failed repair is joined
+			// after it (withRepair).
+			cutShort := batchCutShort(err)
+			err = fmt.Errorf("gosmo: drop database %q: %w", name, err)
+			if cutShort {
+				err = withRepair(err, s.restoreAccessMode(ctx, name, mode))
 			}
-			return fmt.Errorf("gosmo: drop database %q: %w", name, err)
+			return err
 		}
 	}
 	s.leftLoginDatabase(ctx, name, "master")
@@ -500,10 +503,12 @@ func (d *Database) rename(ctx context.Context, newName string, term Termination)
 	default:
 		mode := s.accessModeBefore(ctx, oldName)
 		if _, err := s.exec(ctx, renameExclusiveBatch(oldName, newName)); err != nil {
-			if batchCutShort(err) {
-				_ = s.restoreAccessModeAfterRename(ctx, oldName, newName, mode)
+			cutShort := batchCutShort(err)
+			err = fmt.Errorf("gosmo: rename database %q to %q: %w", oldName, newName, err)
+			if cutShort {
+				err = withRepair(err, s.restoreAccessModeAfterRename(ctx, oldName, newName, mode))
 			}
-			return fmt.Errorf("gosmo: rename database %q to %q: %w", oldName, newName, err)
+			return err
 		}
 		return nil
 	}

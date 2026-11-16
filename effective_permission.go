@@ -3,7 +3,6 @@ package gosmo
 import (
 	"context"
 	"database/sql"
-	"database/sql/driver"
 	"fmt"
 )
 
@@ -98,11 +97,11 @@ func (d *Database) EffectiveSchemaPermissions(ctx context.Context, schemaName, p
 // escaped into the batch text; the securable name a parameter can carry.
 func (d *Database) effectivePermissions(ctx context.Context, principal string, securable any, class, what string) ([]*EffectivePermission, error) {
 	q := fmt.Sprintf(`
-EXECUTE AS USER = N'%s';
+EXECUTE AS USER = %s;
 SELECT entity_name, COALESCE(subentity_name, N''), permission_name
 FROM   fn_my_permissions(@p1, '%s')
 ORDER  BY entity_name, subentity_name, permission_name;
-REVERT;`, escapeSingle(principal), class)
+REVERT;`, QuoteLiteral(principal), class)
 
 	// readImpersonated may have to discard the session, which a transaction's
 	// cannot be.
@@ -144,11 +143,11 @@ func (s *Server) EffectiveServerPermissions(ctx context.Context, login string) (
 	// Server.ApplyPermission.
 	q := fmt.Sprintf(`
 USE master;
-EXECUTE AS LOGIN = N'%s';
+EXECUTE AS LOGIN = %s;
 SELECT entity_name, COALESCE(subentity_name, N''), permission_name
 FROM   fn_my_permissions(NULL, 'SERVER')
 ORDER  BY permission_name;
-REVERT;`, escapeSingle(login))
+REVERT;`, QuoteLiteral(login))
 
 	// Pinned rather than read off the pool, so readImpersonated can discard
 	// the one connection the impersonation ran on.
@@ -192,17 +191,17 @@ REVERT;`, escapeSingle(login))
 // under a millisecond, and 280 cancelled reads through this package did not
 // hit it.
 //
-// A stopped scan cannot say whether the REVERT ran, so the connection goes
-// (sql.Conn.Raw returning driver.ErrBadConn, as BulkCopy does) rather than
-// back to the pool for an unrelated caller to trip over. A cancel before the
-// first row needs none of this — go-mssqldb drops that connection itself —
-// but cannot be told apart here, and discarding it again is harmless.
+// A stopped scan cannot say whether the REVERT ran, so the connection is
+// discarded (DiscardConn) rather than going back to the pool for an unrelated
+// caller to trip over. A cancel before the first row needs none of this —
+// go-mssqldb drops that connection itself — but cannot be told apart here,
+// and discarding it again is harmless.
 func readImpersonated(rows *dbRows) ([]*EffectivePermission, error) {
 	defer rows.Close()
 	perms, err := scanEffectivePermissions(rows.Rows)
 	if err != nil {
 		rows.Rows.Close()
-		_ = rows.conn.Raw(func(any) error { return driver.ErrBadConn })
+		DiscardConn(rows.conn)
 		return nil, err
 	}
 	return perms, nil

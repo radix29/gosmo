@@ -320,7 +320,7 @@ func scriptFrom(ctx context.Context) (*ScriptCollector, bool) {
 // args bind @p1, @p2, … and are substituted into the text a WithScript
 // collector captures or an observer sees (see bindScriptArgs). DDL cannot
 // take a parameter, so its callers pass none and build the statement complete
-// via QuoteName/QuoteLiteral/escapeSingle; a procedure's arguments can, and
+// via QuoteName/QuoteLiteral; a procedure's arguments can, and
 // the Agent procedures bind theirs (boundArgs).
 func (s *Server) exec(ctx context.Context, q string, args ...any) (sql.Result, error) {
 	return s.execShown(ctx, q, q, args...)
@@ -639,7 +639,7 @@ var placeholderPat = regexp.MustCompile(`@p([0-9]+)`)
 // tsql.Spans). Textual replacement over the whole statement was correct
 // for every statement this package binds today, and silently wrong for the
 // first one to both interpolate a name and bind a parameter: an object
-// actually named "@p1" reaches the statement inside an escapeSingle'd literal,
+// actually named "@p1" reaches the statement inside a QuoteLiteral'd literal,
 // and rewriting it there changes which object the DDL names — in a script the
 // user is about to run by hand, which is the failure scriptLiteral refuses to
 // risk for a literal it cannot render.

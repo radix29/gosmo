@@ -254,3 +254,26 @@ func TestSetDatabaseOptionReleasesIdleSessionsForAnExclusiveOption(t *testing.T)
 		db.Close()
 	}
 }
+
+// DiscardConn must close the connection instead of pooling it, and be a
+// harmless no-op on a conn already closed.
+func TestDiscardConnClosesInsteadOfPooling(t *testing.T) {
+	fc := &countingConnector{}
+	db := sql.OpenDB(fc)
+	defer db.Close()
+	db.SetMaxIdleConns(5)
+
+	conn, err := db.Conn(t.Context())
+	if err != nil {
+		t.Fatalf("Conn: %v", err)
+	}
+	DiscardConn(conn)
+	conn.Close()
+	DiscardConn(conn) // idempotent on a closed conn
+	if got := fc.closed.Load(); got != 1 {
+		t.Errorf("closed = %d, want 1", got)
+	}
+	if got := db.Stats().Idle; got != 0 {
+		t.Errorf("idle = %d, want 0 (discarded, not pooled)", got)
+	}
+}

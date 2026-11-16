@@ -390,8 +390,8 @@ type StatisticHeader struct {
 func (st *Statistic) showStatisticsQuery(option string) string {
 	// DBCC SHOW_STATISTICS does not accept parameters for the table/stat
 	// name (same restriction Update already works around).
-	q := fmt.Sprintf("DBCC SHOW_STATISTICS (N'%s', N'%s') WITH %s",
-		escapeSingle(st.on().FullName()), escapeSingle(st.Name), option)
+	q := fmt.Sprintf("DBCC SHOW_STATISTICS (%s, %s) WITH %s",
+		QuoteLiteral(st.on().FullName()), QuoteLiteral(st.Name), option)
 	if !st.on().db.server.IsFabricDW {
 		q += ", NO_INFOMSGS"
 	}
