@@ -374,7 +374,8 @@ func (b *objectListBuild) collectOrderedObjects() error {
 		b.scriptedTables = append(b.scriptedTables, t)
 		b.put('o', 4, ScriptedTable, t.Schema, t.Name, func() (string, error) { return s.scriptTable(ctx, t) })
 	}
-	if s.tables, err = d.prefetchTables(ctx, b.scriptedTables, s.opts.Statistics && s.opts.verb() != ScriptDrop); err != nil {
+	if s.tables, err = d.prefetchTables(ctx, b.scriptedTables, s.opts.Statistics && s.opts.verb() != ScriptDrop,
+		s.wantsExtendedProperties()); err != nil {
 		return err
 	}
 	funcs, err := d.UserDefinedFunctions(ctx, ObjectFilter{})

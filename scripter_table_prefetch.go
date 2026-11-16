@@ -7,7 +7,8 @@ import (
 
 // tablePrefetch is what ScriptTable reads per table — options, columns,
 // indexes with their columns, foreign keys, check constraints, the data
-// space, user-created statistics and (2019+) edge constraints — read for every table of a database in one round trip, keyed by
+// space, user-created statistics, (2019+) edge constraints and extended
+// properties — read for every table of a database in one round trip, keyed by
 // object_id. ScriptDatabaseObjectList scripts every table of a database, and
 // ten reads each made the loop's cost a function of the table count, over a
 // connection per read.
@@ -26,6 +27,10 @@ type tablePrefetch struct {
 	// stats is filled only for a Scripter whose options script statistics
 	// (scriptedStatistics).
 	stats map[int][]scriptedStatistic
+	// extProps is nil unless the Scripter restates extended properties
+	// (wantsExtendedProperties): each table's, its constraints' included, as
+	// objectExtendedProperties reads them.
+	extProps map[int][]scriptedExtProp
 }
 
 // The batch reads every table in the database, so it also reads the ones the
@@ -37,13 +42,14 @@ type tablePrefetch struct {
 const allTables = "IN (SELECT object_id FROM sys.tables)"
 
 // prefetchTables reads the script inputs of tables in one batch of seven
-// result sets on one connection (one more for statistics, and one more from
-// SQL Server 2019, whose sys.edge_constraints adds the edge constraints), and
-// nothing when there are none.
+// result sets on one connection (one more for statistics, one more from
+// SQL Server 2019, whose sys.edge_constraints adds the edge constraints, and
+// one more for extended properties), and nothing when there are none.
 //
 // withStats adds the user-created statistics (ScriptOptions.Statistics) as one
-// more result set before the edge constraints.
-func (d *Database) prefetchTables(ctx context.Context, tables []*Table, withStats bool) (*tablePrefetch, error) {
+// more result set before the edge constraints, and withExtProps the extended
+// properties as the last.
+func (d *Database) prefetchTables(ctx context.Context, tables []*Table, withStats, withExtProps bool) (*tablePrefetch, error) {
 	if len(tables) == 0 {
 		return nil, nil
 	}
@@ -62,10 +68,13 @@ func (d *Database) prefetchTables(ctx context.Context, tables []*Table, withStat
 		ecs:     map[int][]*EdgeConstraint{},
 		stats:   map[int][]scriptedStatistic{},
 	}
+	if withExtProps {
+		p.extProps = map[int][]scriptedExtProp{}
+	}
 	idxCols := map[int]map[int][]IndexColumn{}
 
 	withEdges := d.atLeast(SQLServer2019)
-	q := tablePrefetchQuery(d, probe, withStats, withEdges)
+	q := tablePrefetchQuery(d, probe, withStats, withEdges, withExtProps)
 
 	rows, err := d.query(ctx, q)
 	if err != nil {
@@ -73,7 +82,7 @@ func (d *Database) prefetchTables(ctx context.Context, tables []*Table, withStat
 	}
 	defer rows.Close()
 
-	reads := p.resultReaders(rows, byID, idxCols, withStats, withEdges)
+	reads := p.resultReaders(rows, byID, idxCols, withStats, withEdges, withExtProps)
 	for i, read := range reads {
 		if i > 0 && !rows.NextResultSet() {
 			err := rows.Err()
@@ -94,7 +103,7 @@ func (d *Database) prefetchTables(ctx context.Context, tables []*Table, withStat
 
 // tablePrefetchQuery is prefetchTables's batch: one SELECT per result set, in
 // the order resultReaders reads them.
-func tablePrefetchQuery(d *Database, probe *Table, withStats, withEdges bool) string {
+func tablePrefetchQuery(d *Database, probe *Table, withStats, withEdges, withExtProps bool) string {
 	q := probe.scriptOptionsSelectWith(", t.object_id", allTables) + ";\n" +
 		d.columnSelectWith(", c.object_id") + "\nWHERE  c.object_id " + allTables + "\nORDER  BY c.column_id;\n" +
 		probe.indexListSelectWith(", i.object_id", allTables) + "\nORDER  BY i.index_id;\n" +
@@ -108,13 +117,16 @@ func tablePrefetchQuery(d *Database, probe *Table, withStats, withEdges bool) st
 	if withEdges {
 		q += ";\n" + edgeConstraintSelect(", ec.parent_object_id", allTables)
 	}
+	if withExtProps {
+		q += ";\n" + tableExtendedPropertiesSelect()
+	}
 	return q
 }
 
 // resultReaders reads each of the batch's result sets into p, in
 // tablePrefetchQuery's order. Index columns go to idxCols, to be distributed
 // once the indexes are read.
-func (p *tablePrefetch) resultReaders(rows *dbRows, byID map[int]*Table, idxCols map[int]map[int][]IndexColumn, withStats, withEdges bool) []func() error {
+func (p *tablePrefetch) resultReaders(rows *dbRows, byID map[int]*Table, idxCols map[int]map[int][]IndexColumn, withStats, withEdges, withExtProps bool) []func() error {
 	reads := []func() error{
 		func() error {
 			for rows.Next() {
@@ -226,6 +238,19 @@ func (p *tablePrefetch) resultReaders(rows *dbRows, byID map[int]*Table, idxCols
 					return err
 				}
 				p.ecs[id] = append(p.ecs[id], ec)
+			}
+			return rows.Err()
+		})
+	}
+	if withExtProps {
+		reads = append(reads, func() error {
+			for rows.Next() {
+				var id int
+				ep, err := scanScriptedExtProp(rows.Scan, &id)
+				if err != nil {
+					return err
+				}
+				p.extProps[id] = append(p.extProps[id], ep)
 			}
 			return rows.Err()
 		})

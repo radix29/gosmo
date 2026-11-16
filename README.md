@@ -239,10 +239,6 @@ All of the above require WMI or Windows-only APIs and are out of scope for a cro
 
 ## Contributing
 
-The codebase is currently unstable and going through regular refactoring,
-so I'm not accepting pull requests at this time — please open an issue
-instead. I'll start accepting PRs once the project reaches a released,
-more stable state. In the near future I'm planning to update the project
-regularly.
-
+Pull requests are welcome. Please open an issue first for anything beyond a
+small fix; see [CONTRIBUTING.md](CONTRIBUTING.md).
 

@@ -62,15 +62,43 @@ const extPropValueText = `CASE CONVERT(sysname, SQL_VARIANT_PROPERTY(ep.value, '
 // The levels come back fully named, so the caller renders them as read. An
 // object of a kind with no level-1 type here reads as no properties.
 func (d *Database) objectExtendedProperties(ctx context.Context, objectID int, constraints bool) ([]scriptedExtProp, error) {
-	q := `
-SELECT me.sch, me.l1type, me.l1name, ISNULL(p.l2type, ''), ISNULL(p.l2name, ''), ep.name,
+	q := "\nSELECT " + objectExtPropColumns + "\nFROM   sys.extended_properties ep" +
+		objectExtPropBody("@p1", "@p2") + "\nORDER  BY p.kind, p.ord, ep.name"
+	rows, err := d.query(ctx, q, objectID, constraints)
+	return scanRows(rows, err, "extended properties to script", func(scan func(...any) error) (scriptedExtProp, error) {
+		return scanScriptedExtProp(scan)
+	})
+}
+
+// tableExtendedPropertiesSelect is objectExtendedProperties, constraints set,
+// for every table of the database at once, with the table's object_id first:
+// prefetchTables's result set for them. It is driven from the properties, each
+// joined to the table it belongs to (the object itself, or the parent of a
+// constraint, trigger or other child), so its cost follows the number of
+// properties, not tables times properties.
+func tableExtendedPropertiesSelect() string {
+	return "SELECT tt.object_id, " + objectExtPropColumns + `
+FROM   sys.extended_properties ep
+JOIN   sys.objects eo ON eo.object_id = ep.major_id
+JOIN   sys.tables tt ON tt.object_id = ISNULL(NULLIF(eo.parent_object_id, 0), eo.object_id)` +
+		objectExtPropBody("tt.object_id", "1") + "\nORDER  BY tt.object_id, p.kind, p.ord, ep.name"
+}
+
+// objectExtPropColumns is the select list objectExtendedProperties scans
+// (scanScriptedExtProp).
+const objectExtPropColumns = `me.sch, me.l1type, me.l1name, ISNULL(p.l2type, ''), ISNULL(p.l2name, ''), ep.name,
        ISNULL(CONVERT(sysname, SQL_VARIANT_PROPERTY(ep.value, 'BaseType')), ''),
        ISNULL(CONVERT(int, SQL_VARIANT_PROPERTY(ep.value, 'Precision')), 0),
        ISNULL(CONVERT(int, SQL_VARIANT_PROPERTY(ep.value, 'Scale')), 0),
        ISNULL(CONVERT(int, SQL_VARIANT_PROPERTY(ep.value, 'MaxLength')), 0),
-       ` + extPropValueText + `
-FROM   sys.extended_properties ep
-CROSS  JOIN (
+       ` + extPropValueText
+
+// objectExtPropBody is the rest of objectExtendedProperties's query after
+// its FROM: id is the object's id (a parameter, or a column of a table the
+// FROM joins), constraints whether its constraints' properties are read.
+func objectExtPropBody(id, constraints string) string {
+	return strings.NewReplacer("{id}", id, "{constraints}", constraints).Replace(`
+CROSS  APPLY (
        SELECT SCHEMA_NAME(o.schema_id),
               CASE ISNULL(par.type, o.type)
                   WHEN 'U'  THEN N'TABLE'     WHEN 'ET' THEN N'TABLE'
@@ -82,43 +110,44 @@ CROSS  JOIN (
               ISNULL(par.name, o.name)
        FROM   sys.objects o
        LEFT   JOIN sys.objects par ON par.object_id = NULLIF(o.parent_object_id, 0)
-       WHERE  o.object_id = @p1) AS me (sch, l1type, l1name)
+       WHERE  o.object_id = {id}) AS me (sch, l1type, l1name)
 CROSS  APPLY (
        SELECT 0, 0, CASE WHEN o.parent_object_id <> 0 THEN N'TRIGGER' END,
               CASE WHEN o.parent_object_id <> 0 THEN o.name END
        FROM   sys.objects o
-       WHERE  ep.class = 1 AND ep.major_id = @p1 AND ep.minor_id = 0 AND o.object_id = @p1
+       WHERE  ep.class = 1 AND ep.major_id = {id} AND ep.minor_id = 0 AND o.object_id = {id}
        UNION ALL
        SELECT 1, c.column_id, N'COLUMN', c.name
        FROM   sys.columns c
-       WHERE  ep.class = 1 AND ep.major_id = @p1 AND c.object_id = @p1 AND c.column_id = ep.minor_id
+       WHERE  ep.class = 1 AND ep.major_id = {id} AND c.object_id = {id} AND c.column_id = ep.minor_id
        UNION ALL
        SELECT 2, pr.parameter_id, N'PARAMETER', pr.name
        FROM   sys.parameters pr
-       WHERE  ep.class = 2 AND ep.major_id = @p1 AND pr.object_id = @p1 AND pr.parameter_id = ep.minor_id
+       WHERE  ep.class = 2 AND ep.major_id = {id} AND pr.object_id = {id} AND pr.parameter_id = ep.minor_id
        UNION ALL
        SELECT 3, i.index_id, N'INDEX', i.name
        FROM   sys.indexes i
-       WHERE  ep.class = 7 AND ep.major_id = @p1 AND i.object_id = @p1 AND i.index_id = ep.minor_id
+       WHERE  ep.class = 7 AND ep.major_id = {id} AND i.object_id = {id} AND i.index_id = ep.minor_id
          AND  i.is_hypothetical = 0
        UNION ALL
        SELECT 4, k.object_id, N'CONSTRAINT', k.name
        FROM   sys.objects k
-       WHERE  @p2 = 1 AND ep.class = 1 AND ep.minor_id = 0 AND k.object_id = ep.major_id
-         AND  k.parent_object_id = @p1 AND k.type IN ('PK', 'UQ', 'F', 'C', 'D', 'EC')
+       WHERE  {constraints} = 1 AND ep.class = 1 AND ep.minor_id = 0 AND k.object_id = ep.major_id
+         AND  k.parent_object_id = {id} AND k.type IN ('PK', 'UQ', 'F', 'C', 'D', 'EC')
        ) AS p (kind, ord, l2type, l2name)
 WHERE  ep.class IN (1, 2, 7) AND me.l1type IS NOT NULL
-  AND  (ep.major_id = @p1 OR ep.major_id IN (SELECT object_id FROM sys.objects WHERE parent_object_id = @p1))
-ORDER  BY p.kind, p.ord, ep.name`
-	rows, err := d.query(ctx, q, objectID, constraints)
-	return scanRows(rows, err, "extended properties to script", func(scan func(...any) error) (scriptedExtProp, error) {
-		var p scriptedExtProp
-		p.level.Level0Type = "SCHEMA"
-		err := scan(&p.level.Level0Name, &p.level.Level1Type, &p.level.Level1Name,
-			&p.level.Level2Type, &p.level.Level2Name, &p.name,
-			&p.baseType, &p.precision, &p.scale, &p.maxLength, &p.value)
-		return p, err
-	})
+  AND  (ep.major_id = {id} OR ep.major_id IN (SELECT object_id FROM sys.objects WHERE parent_object_id = {id}))`)
+}
+
+// scanScriptedExtProp scans one row of objectExtPropColumns, after any
+// leading columns dest names.
+func scanScriptedExtProp(scan func(...any) error, dest ...any) (scriptedExtProp, error) {
+	var p scriptedExtProp
+	p.level.Level0Type = "SCHEMA"
+	err := scan(append(dest, &p.level.Level0Name, &p.level.Level1Type, &p.level.Level1Name,
+		&p.level.Level2Type, &p.level.Level2Name, &p.name,
+		&p.baseType, &p.precision, &p.scale, &p.maxLength, &p.value)...)
+	return p, err
 }
 
 // extendedPropertiesAt reads the extended properties on one entry of
@@ -223,12 +252,18 @@ func (sc *Scripter) wantsExtendedProperties() bool {
 }
 
 // scriptExtendedProperties appends the extended-property statements for
-// objectID to a script (see wantsExtendedProperties). skip drops properties
+// objectID to a script (see wantsExtendedProperties), from sc.tables when that
+// covers a table read with its constraints. skip drops properties
 // at levels the script does not create (nil keeps every one).
 func (sc *Scripter) scriptExtendedProperties(ctx context.Context, objectID int, constraints bool,
 	skip func(scriptedExtProp) bool) (string, error) {
 	if !sc.wantsExtendedProperties() || objectID == 0 {
 		return "", nil
+	}
+	if pre := sc.tables; constraints && pre != nil && pre.extProps != nil {
+		if _, ok := pre.options[objectID]; ok {
+			return sc.renderExtendedProperties(pre.extProps[objectID], skip), nil
+		}
 	}
 	props, err := sc.db.objectExtendedProperties(ctx, objectID, constraints)
 	if err != nil {

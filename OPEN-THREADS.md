@@ -248,6 +248,26 @@ a select list and a scanner and reading them as one multi-result-set batch, as
 user-triggered script per table. Worth doing only if a whole-database script
 (every table in a loop) is built; then batch per database, not per table.
 
+That is what `ScriptDatabaseObjectList` does (`prefetchTables`). Its
+extended properties were still read per table — and again per foreign key,
+for its parent table — until gossms review step D1 (2026-11-16) added them to
+the batch: a database of 500 tables went from ~1,020 queries to 20, the same
+as at 50 tables (`TestLiveScriptingManyTablesReadsPerCallNotPerTable`).
+
+## Whole-database scripting: the prefetch batch is slow to compile
+
+Measured in D1 (win10cli, SQL Server 17, Extended Events): scripting 500
+tables takes ~9 s warm and ~11 s cold, all server-side (client CPU was 0.7 s
+over the whole test). The prefetch batch alone is ~5.8 s at 50 tables and
+~8.4 s at 500, of which its statements *execute* in ~0.3 s and ~3.7 s
+(`scriptOptionsSelectWith` 1.4 s, the columns 0.7 s, the extended properties
+0.4 s, the indexes 0.4 s at 500) — the rest is compiling seven to ten large
+catalog SELECTs, with a few "Statistics changed" / CE-feedback recompiles.
+Not acted on: a whole-database script is a one-off, and seconds for hundreds
+of tables is acceptable. Where to look first if it matters: the per-row
+scalar functions in `scriptOptionsSelectWith`, and whether splitting the batch
+lets the plans stay cached between runs.
+
 ## Keys `FROM PROVIDER` have never executed
 
 `CreateAsymmetricKeyRequest.FromProvider` and `CreateSymmetricKeyRequest.FromProvider`
