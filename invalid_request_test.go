@@ -50,8 +50,6 @@ func TestEveryArgumentRefusalWrapsErrInvalidRequest(t *testing.T) {
 		},
 		"scripter_security.go": {"gosmo: script database audit specification %q: it names no audit"},
 		"scripter_server.go": {
-			"gosmo: script endpoint %q: its database mirroring detail could not be read",
-			"gosmo: script endpoint %q: its service broker detail could not be read",
 			"gosmo: script server audit specification %q: it names no audit",
 		},
 		// Script mode's argument binding: the statement is fine, the capture

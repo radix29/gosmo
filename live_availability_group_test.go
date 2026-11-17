@@ -18,6 +18,7 @@ package gosmo
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"strings"
 	"testing"
@@ -1151,11 +1152,11 @@ func liveOtherReplicaName(t *testing.T, ctx context.Context, srv *Server) string
 func liveEndpoint(t *testing.T, ctx context.Context, srv *Server) *DatabaseMirroringEndpoint {
 	t.Helper()
 	ep, err := srv.DatabaseMirroringEndpoint(ctx)
+	if errors.Is(err, ErrNotFound) {
+		t.Skipf("%s has no database mirroring endpoint; creating one needs a certificate exchange this test will not do", srv.Name())
+	}
 	if err != nil {
 		t.Fatalf("read the database mirroring endpoint on %s: %v", srv.Name(), err)
-	}
-	if ep == nil {
-		t.Skipf("%s has no database mirroring endpoint; creating one needs a certificate exchange this test will not do", srv.Name())
 	}
 	if !strings.EqualFold(string(ep.State), "STARTED") {
 		t.Skipf("%s's endpoint %q is %s, not STARTED", srv.Name(), ep.Name, ep.State)

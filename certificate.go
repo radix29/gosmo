@@ -8,8 +8,8 @@ import (
 	"time"
 )
 
-// certificate.go covers certificates and the database master key that protects
-// their private keys.
+// certificate.go covers certificates. The database master key that protects
+// their private keys is master_key.go's.
 //
 // # Moving a certificate between instances without files
 //
@@ -341,68 +341,4 @@ func (c *Certificate) SetOwner(ctx context.Context, newOwner string) error {
 	}
 	setIfApplied(ctx, &c.Owner, newOwner)
 	return nil
-}
-
-// -- The database master key -----------------------------------------------
-
-// HasMasterKey reports whether the database has a master key. A certificate
-// whose private key is to open without a password needs one.
-//
-// sys.symmetric_keys alone is not enough: it shows a principal only the keys
-// it holds a right on, so for a user with CREATE CERTIFICATE and nothing else
-// the master key's row is absent and the answer would be a confident false —
-// and CREATE MASTER KEY then fails Msg 15247, not "already exists". The
-// database's is_master_key_encrypted_by_server flag, in sys.databases and
-// visible to anyone who can see the database, answers for the usual key,
-// which SQL Server encrypts by the service master key on creation. What stays
-// invisible to such a principal is a master key whose service-master-key
-// encryption was dropped; that one still reads false.
-func (d *Database) HasMasterKey(ctx context.Context) (bool, error) {
-	var n int
-	err := d.queryRow(ctx, func(row *sql.Row) error {
-		return row.Scan(&n)
-	}, `SELECT CASE WHEN EXISTS (SELECT 1 FROM sys.symmetric_keys WHERE name = '##MS_DatabaseMasterKey##')
-	                  OR EXISTS (SELECT 1 FROM sys.databases WHERE database_id = DB_ID() AND is_master_key_encrypted_by_server = 1)
-	             THEN 1 ELSE 0 END`)
-	if err != nil {
-		return false, fmt.Errorf("gosmo: check for a master key in %q: %w", d.Name, err)
-	}
-	return n > 0, nil
-}
-
-// CreateMasterKeyRequest describes a database master key.
-type CreateMasterKeyRequest struct {
-	// Password protects the key (ENCRYPTION BY PASSWORD); required.
-	Password string
-}
-
-// CreateMasterKey creates the database master key, protected by a password.
-//
-// The key is also encrypted by the service master key automatically, which is
-// what lets SQL Server open it without the password at startup. Losing that —
-// a restore onto another instance, or a service master key that no longer
-// decrypts — leaves the password as the only way in, so it is worth keeping.
-//
-// It returns the key read back — or, under Scripting(ctx), the MasterKeyRef
-// handle, since nothing ran.
-func (d *Database) CreateMasterKey(ctx context.Context, req CreateMasterKeyRequest) (*MasterKey, error) {
-	if req.Password == "" {
-		return nil, invalidf("gosmo: create master key in %q: empty password", d.Name)
-	}
-	if _, err := d.execPasswords(ctx, "CREATE MASTER KEY ENCRYPTION BY PASSWORD = "+QuoteLiteral(req.Password), req.Password); err != nil {
-		return nil, fmt.Errorf("gosmo: create master key in %q: %w", d.Name, err)
-	}
-	if Scripting(ctx) {
-		return d.MasterKeyRef(), nil
-	}
-	m, err := d.MasterKey(ctx)
-	if err != nil {
-		return nil, err
-	}
-	if m == nil {
-		// Created, but its row is not visible to this principal — see
-		// MasterKey and createdObject. The handle still addresses it.
-		return d.MasterKeyRef(), nil
-	}
-	return m, nil
 }

@@ -432,7 +432,7 @@ The instance and database halves pair up: `ServerResourceStat` and
 | `Database.Certificates`         | `db.Certificates(ctx)` / `db.CertificateByName(ctx, name)` / `db.CreateCertificate(ctx, req)` / `cert.Drop(ctx)` — see [Certificates](#certificates-and-the-database-master-key) |
 | `Database.AsymmetricKeys`       | `db.AsymmetricKeys(ctx)` / `db.AsymmetricKeyByName(ctx, name)` / `db.AsymmetricKeyRef(name)` / `db.CreateAsymmetricKey(ctx, req)` / `key.Drop(ctx)` — generated keys only; every import form reads the server's own filesystem or an EKM provider |
 | `Database.SymmetricKeys`        | `db.SymmetricKeys(ctx)` / `db.SymmetricKeyByName(ctx, name)` / `db.SymmetricKeyRef(name)` / `db.CreateSymmetricKey(ctx, req)` / `key.AddEncryption(ctx, enc, dec)` / `key.DropEncryption(ctx, enc, dec)` / `key.Drop(ctx)` — each key with its `Encryptions` (certificate / asymmetric key / symmetric key / password), the master key excluded |
-| Database master key             | `db.HasMasterKey(ctx)` / `db.CreateMasterKey(ctx, gosmo.CreateMasterKeyRequest{Password})` / `db.MasterKey(ctx)` / `db.MasterKeyRef()` — see [Certificates](#certificates-and-the-database-master-key) |
+| Database master key             | `db.HasMasterKey(ctx)` / `db.CreateMasterKey(ctx, gosmo.CreateMasterKeyRequest{Password})` / `db.EnsureMasterKey(ctx, password)` / `db.MasterKey(ctx)` / `db.MasterKeyRef()` — see [Certificates](#certificates-and-the-database-master-key) |
 | Module signatures               | `db.ModuleSignatures(ctx)` / `db.SignaturesOn(ctx, schema, module)` / `db.SignableModules(ctx)` / `proc.AddSignature(ctx, ...)` / `.DropSignature(ctx, ...)` on a `StoredProcedure`, `UserDefinedFunction` or `Trigger` handle / `cert.SignedModules(ctx)` / `key.SignedModules(ctx)` |
 | Column master keys              | `db.ColumnMasterKeys(ctx)` / `db.ColumnMasterKeyByName(ctx, name)` / `db.ColumnMasterKeyRef(name)` / `db.CreateColumnMasterKey(ctx, gosmo.CreateColumnMasterKeyRequest{Name, KeyStoreProvider, KeyPath, Signature})` — a `Signature` makes it allow enclave computations |
 | Column encryption keys          | `db.ColumnEncryptionKeys(ctx)` / `db.ColumnEncryptionKeyByName(ctx, name)` / `db.ColumnEncryptionKeyRef(name)` / `db.CreateColumnEncryptionKey(ctx, gosmo.CreateColumnEncryptionKeyRequest{Name, Values})` / `cek.AddValue(ctx, value)` / `cek.DropValue(ctx, masterKeyName)` — the two halves of a master-key rotation |
@@ -2012,8 +2012,8 @@ refused.
 | Security → Asymmetric Keys       | `db.AsymmetricKeys(ctx)` / `db.AsymmetricKeyByName(ctx, name)` / `db.AsymmetricKeyRef(name)` |
 | Security → Symmetric Keys        | `db.SymmetricKeys(ctx)` / `db.SymmetricKeyByName(ctx, name)` (`ErrNotFound` on absence) / `db.SymmetricKeyRef(name)` |
 | New / drop certificate           | `db.CreateCertificate(ctx, gosmo.CreateCertificateRequest{...})` / `cert.Drop(ctx)` |
-| Database master key              | `db.HasMasterKey(ctx)` / `db.CreateMasterKey(ctx, req)`           |
-| Master key properties / regenerate | `db.MasterKey(ctx)` (`nil` when absent or invisible) / `mk.Regenerate(ctx, password, gosmo.MasterKeyRegenerate, openPassword)` (or `MasterKeyForceRegenerate`) |
+| Database master key              | `db.HasMasterKey(ctx)` / `db.CreateMasterKey(ctx, req)` / `db.EnsureMasterKey(ctx, password)` (creates it only when absent; under `WithScript` the check is real and only the `CREATE` is captured) |
+| Master key properties / regenerate | `db.MasterKey(ctx)` (`ErrNotFound` when absent or invisible) / `mk.Regenerate(ctx, password, gosmo.MasterKeyRegenerate, openPassword)` (or `MasterKeyForceRegenerate`) |
 | Master key encryptions / backup  | `mk.AddEncryption(ctx, enc, openPassword)` / `mk.DropEncryption(ctx, ...)` (service master key or password) / `mk.Backup(ctx, file, password, openPassword)` / `mk.Drop(ctx)` — `openPassword` opens a key the service master key no longer encrypts |
 | Back up a certificate            | `cert.Backup(ctx, gosmo.CertificateBackupSpec{...})` — files on the *server*, private key optional |
 | Remove a private key             | `cert.RemovePrivateKey(ctx)` / `asymKey.RemovePrivateKey(ctx)` — irreversible; there is no `BACKUP ASYMMETRIC KEY` |
@@ -2435,7 +2435,10 @@ Two conventions coexist, deliberately:
   `ConfigurationByName`, `AvailabilityGroupByName`, `CertificateByName`,
   `AsymmetricKeyByName`, `SymmetricKeyByName`, and the Scripter's lookups —
   return an error wrapping `ErrNotFound`. (`CertificateByName` and
-  `AsymmetricKeyByName` answered `(nil, nil)` until 2026-09-22.)
+  `AsymmetricKeyByName` answered `(nil, nil)` until 2026-09-22.) So do the
+  optional singletons — `MasterKey`, `DatabaseMirroringEndpoint`,
+  `MirroringDetail`, `ServiceBrokerDetail` — for "none" (`(nil, nil)` until
+  2026-11-17).
 - `AgentStatus` reports an unreachable Agent as a populated value
   (`StatusText` "Unknown"), not an error.
 

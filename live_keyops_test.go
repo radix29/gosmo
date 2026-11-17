@@ -4,6 +4,7 @@ package gosmo
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"os"
 	"testing"
@@ -210,7 +211,7 @@ func TestLiveKeyOps(t *testing.T) {
 	if err := m.Drop(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if m, err := d.MasterKey(ctx); m != nil || err != nil {
-		t.Errorf("after the drop MasterKey = %v, %v; want (nil, nil)", m, err)
+	if m, err := d.MasterKey(ctx); m != nil || !errors.Is(err, ErrNotFound) {
+		t.Errorf("after the drop MasterKey = %v, %v; want ErrNotFound", m, err)
 	}
 }

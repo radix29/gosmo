@@ -14,7 +14,7 @@ import (
 // symmetric_key.go covers symmetric keys — sys.symmetric_keys and the
 // encryptions sys.key_encryptions records for each. The database master key
 // lives in the same catalog view as ##MS_DatabaseMasterKey## and is kept out
-// of this type: HasMasterKey and CreateMasterKey (certificate.go) are its
+// of this type: MasterKey and its siblings (master_key.go) are its
 // surface, and every read here skips the ##...## keys, as Certificates and
 // AsymmetricKeys do.
 
@@ -118,21 +118,24 @@ func symmetricKeyEncryptionKind(desc string) SymmetricKeyEncryptionKind {
 	return ""
 }
 
-// symmetricKeySelect returns one row per (key, encryption), keys in name
+// symmetricKeyColumns + symmetricKeyFrom return one row per (key, encryption), keys in name
 // order, so a key's encryptions arrive together and are grouped in Go — one
 // query for the whole list, never one per key.
 //
 // A symmetric-key encryptor's thumbprint is its key_guid, so that join
 // converts it — guarded to 16-byte values, the only length CONVERT to
 // uniqueidentifier reads whole. The kind predicates keep each join to its own
-// rows. The caller appends a WHERE on k and the ORDER BY.
-const symmetricKeySelect = `
+// rows. The caller appends a WHERE on k and the ORDER BY. The two halves are
+// split so readSymmetricKeys can add a column between them.
+const symmetricKeyColumns = `
 SELECT k.name, k.symmetric_key_id, k.principal_id, ISNULL(p.name, N''),
        ISNULL(k.algorithm_desc, N''), ISNULL(k.key_length, 0),
        ISNULL(CONVERT(nvarchar(36), k.key_guid), N''),
        k.create_date, k.modify_date, ISNULL(k.provider_type, N''),
        e.crypt_type_desc, e.thumbprint,
-       COALESCE(c.name, a.name, s.name)
+       COALESCE(c.name, a.name, s.name)`
+
+const symmetricKeyFrom = `
 FROM   sys.symmetric_keys k
 LEFT   JOIN sys.database_principals p ON p.principal_id = k.principal_id
 LEFT   JOIN sys.key_encryptions e ON e.key_id = k.symmetric_key_id
@@ -175,10 +178,18 @@ WHERE  k.name = @p1 AND k.name NOT LIKE '##%'`, name)
 	return out[0], nil
 }
 
-// symmetricKeys runs symmetricKeySelect with the given WHERE and groups the
+// symmetricKeys runs the symmetric key read with the given WHERE and groups the
 // rows into keys. The error is bare; each caller names its operation.
 func (d *Database) symmetricKeys(ctx context.Context, where string, args ...any) ([]*SymmetricKey, error) {
-	rows, err := d.query(ctx, symmetricKeySelect+where+symmetricKeyOrder, args...)
+	return d.readSymmetricKeys(ctx, "", nil, where, args...)
+}
+
+// readSymmetricKeys is symmetricKeys with one more column, extraColumn (its
+// text starts with the comma), scanned into extra on every row — for a value
+// that is the same on each, such as MasterKey's database flag, so the read
+// stays one round trip. An empty extraColumn adds nothing and extra is unused.
+func (d *Database) readSymmetricKeys(ctx context.Context, extraColumn string, extra any, where string, args ...any) ([]*SymmetricKey, error) {
+	rows, err := d.query(ctx, symmetricKeyColumns+extraColumn+symmetricKeyFrom+where+symmetricKeyOrder, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -191,10 +202,14 @@ func (d *Database) symmetricKeys(ctx context.Context, where string, args ...any)
 			desc, name sql.NullString
 			thumbprint []byte
 		)
-		if err := rows.Scan(&k.Name, &k.KeyID, &k.PrincipalID, &k.Owner,
+		dest := []any{&k.Name, &k.KeyID, &k.PrincipalID, &k.Owner,
 			&k.Algorithm, &k.KeyLength, &k.KeyGUID,
 			&k.CreateDate, &k.ModifyDate, &k.ProviderType,
-			&desc, &thumbprint, &name); err != nil {
+			&desc, &thumbprint, &name}
+		if extraColumn != "" {
+			dest = append(dest, extra)
+		}
+		if err := rows.Scan(dest...); err != nil {
 			return nil, err
 		}
 		// Rows arrive ordered by key, so a key's later rows follow its first.

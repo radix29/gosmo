@@ -349,9 +349,6 @@ func (sc *ServerScripter) endpointPayloadClause(ctx context.Context, e *Endpoint
 		if err != nil {
 			return "", err
 		}
-		if d == nil {
-			return "", fmt.Errorf("gosmo: script endpoint %q: its database mirroring detail could not be read", e.Name)
-		}
 		cert, err := e.mirroringCertificateName(ctx)
 		if err != nil {
 			return "", err
@@ -365,9 +362,6 @@ func (sc *ServerScripter) endpointPayloadClause(ctx context.Context, e *Endpoint
 		d, err := e.ServiceBrokerDetail(ctx)
 		if err != nil {
 			return "", err
-		}
-		if d == nil {
-			return "", fmt.Errorf("gosmo: script endpoint %q: its service broker detail could not be read", e.Name)
 		}
 		forwarding := "DISABLED"
 		if d.IsMessageForwardingEnabled {
