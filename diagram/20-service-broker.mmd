@@ -189,17 +189,22 @@ classDiagram
     class Database {
     }
 
+    class ServiceBroker {
+        +Database() *Database
+    }
+
     class Scripter {
     }
 
-    Database --> MessageType : MessageTypes / MessageTypeByName
-    Database --> ServiceContract : Contracts / ContractByName
-    Database --> BrokerService : BrokerServices / BrokerServiceByName
-    Database --> BrokerQueue : BrokerQueues / BrokerQueueByName
-    Database --> QueueMonitor : QueueMonitors
-    Database --> Route : Routes / RouteByName
-    Database --> RemoteServiceBinding : RemoteServiceBindings / ByName
-    Database --> BrokerPriority : BrokerPriorities / BrokerPriorityByName
+    Database ..> ServiceBroker : ServiceBroker()
+    ServiceBroker --> MessageType : MessageTypes / MessageTypeByName
+    ServiceBroker --> ServiceContract : Contracts / ContractByName
+    ServiceBroker --> BrokerService : Services / ServiceByName
+    ServiceBroker --> BrokerQueue : Queues / QueueByName
+    ServiceBroker --> QueueMonitor : QueueMonitors
+    ServiceBroker --> Route : Routes / RouteByName
+    ServiceBroker --> RemoteServiceBinding : RemoteServiceBindings / ByName
+    ServiceBroker --> BrokerPriority : Priorities / PriorityByName
     BrokerQueue --> QueueSettings : Alter
     QueueSettings --> QueueActivation
     Route --> RouteSettings : Alter

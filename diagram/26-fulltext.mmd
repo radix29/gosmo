@@ -7,6 +7,14 @@ classDiagram
     %% and running populations
     %% =========================================================
 
+    class FullText {
+        +Database() *Database
+        +Catalogs() []*FullTextCatalog
+        +Stoplists() []*FullTextStoplist
+        +SearchPropertyLists() []*SearchPropertyList
+        +Indexes() []*FullTextIndex
+    }
+
     class FullTextInfo {
         +Installed bool
         +LoadOSResources bool
@@ -126,13 +134,14 @@ classDiagram
     Server ..> FullTextInfo : FullTextInfo
     FullTextInfo *-- FullTextLanguage
     FullTextInfo *-- FullTextDocumentType
-    Database "1" --> "*" FullTextCatalog : FullTextCatalogs / FullTextCatalogByName
-    Database "1" --> "*" FullTextStoplist : FullTextStoplists / FullTextStoplistByName
-    Database "1" --> "*" SearchPropertyList : SearchPropertyLists / SearchPropertyListByName
-    Database "1" --> "*" FullTextIndex : FullTextIndexes
-    Database ..> FullTextCatalog : FullTextCatalogRef / CreateFullTextCatalog
-    Database ..> FullTextStoplist : FullTextStoplistRef / CreateFullTextStoplist
-    Database ..> SearchPropertyList : SearchPropertyListRef / CreateSearchPropertyList
+    Database ..> FullText : FullText()
+    FullText "1" --> "*" FullTextCatalog : Catalogs / CatalogByName
+    FullText "1" --> "*" FullTextStoplist : Stoplists / StoplistByName
+    FullText "1" --> "*" SearchPropertyList : SearchPropertyLists / SearchPropertyListByName
+    FullText "1" --> "*" FullTextIndex : Indexes
+    FullText ..> FullTextCatalog : CatalogRef / CreateCatalog
+    FullText ..> FullTextStoplist : StoplistRef / CreateStoplist
+    FullText ..> SearchPropertyList : SearchPropertyListRef / CreateSearchPropertyList
     Table ..> FullTextIndex : FullTextIndex / FullTextIndexRef / CreateFullTextIndex
     FullTextCatalog ..> FullTextIndex : Indexes
     FullTextStoplist *-- FullTextStopword

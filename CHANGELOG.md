@@ -6,39 +6,70 @@ release only, as a short summary of the entry below it.
 
 ## v0.3.0
 
-An API-consistency release for gossms v0.3.0. Full-text search and Service
-Broker leave `*Database` for facet handles, `d.FullText()` and
-`d.ServiceBroker()`, so their calls drop the family prefix; a few helpers
-gossms carried twice move into gosmo; and name comparisons that ignored the
-collation now follow it. **Breaking.** **Migrating:** call the moved methods on
-the facet, renamed as in the tables under Changed — e.g.
-`d.FullTextCatalogs(ctx)` becomes `d.FullText().Catalogs(ctx)` and
-`d.BrokerQueues(ctx)` becomes `d.ServiceBroker().Queues(ctx)`. Each facet's
-`Database()` returns its database. `Server.FullTextInfo`, Resource Governor
-and Backup keep their place (`CLAUDE.md` § Conventions).
+An API-consistency and hardening release for gossms. Full-text search and
+Service Broker leave `*Database` for facet handles, `d.FullText()` and
+`d.ServiceBroker()`, so their calls drop the family prefix; enabling and
+disabling is one call, `SetEnabled(ctx, on)`, everywhere; statistics updates
+take one options struct; a few helpers gossms carried twice move into gosmo;
+and name comparisons that ignored the collation now follow it. Fabric
+Warehouse gains table scripting and dependency reads. **Breaking.**
+**Migrating:**
+
+- `d.FullTextCatalogs(ctx)` becomes `d.FullText().Catalogs(ctx)` and
+  `d.BrokerQueues(ctx)` becomes `d.ServiceBroker().Queues(ctx)`; the renames
+  are under Changed. Each facet's `Database()` returns its database.
+  `Server.FullTextInfo`, Resource Governor and Backup keep their place
+  (`CLAUDE.md` § Conventions).
+- `x.Enable(ctx)` / `x.Disable(ctx)` become `x.SetEnabled(ctx, true)` /
+  `x.SetEnabled(ctx, false)` on every type listed under Changed. `Index` and
+  `ResourceGovernor` keep `Enable`/`Disable`.
+- `login.AddToServerRole(ctx, r)` becomes
+  `srv.ServerRoleRef(r).AddMember(ctx, login.Name)` (likewise
+  `RemoveFromServerRole` → `RemoveMember`); `user.AddToRole(ctx, r)` becomes
+  `db.RoleRef(r).AddMember(ctx, user.Name)` (likewise `RemoveFromRole`).
+- A `samplePct int` statistics call becomes `StatisticsUpdateOptions`:
+  `Update(ctx, 0)` (FULLSCAN) is `Update(ctx, StatisticsUpdateOptions{FullScan: true})`;
+  `Update(ctx, 50)` is `{SamplePercent: 50}`. The zero value now means the
+  server's default sampling, never a full scan.
 
 ### Added
 
 - **`Database.Principals(ctx, kinds ...PrincipalKind)`** returns `DatabasePrincipals{Users, Roles, ApplicationRoles}` in one round trip instead of three; `PrincipalKindUser`, `PrincipalKindRole` and `PrincipalKindApplicationRole` limit the read. A role carries what `RoleByName` fills, SID and dates included.
+- **`Database.BackupRefusal(action, status)`** returns a `BackupRefusal` — why SQL Server would refuse a backup (`BackupRefusedTempdb`, `…Snapshot`, `…MasterFullOnly`, `…SimpleRecovery`, `…NoDifferentialBase`, `…NoLogChain`; `BackupAllowed` is the empty value), decided from the database state without a round trip.
+- **`DiscardConn(conn)`** closes a pooled `*sql.Conn` instead of returning it to the pool, for a session the caller cannot vouch for (a bulk copy left mid-load, a failed `USE` back, an open transaction). Idempotent.
+- **`RepairError`** — a write whose disable window (audit, audit specification, event session, database access mode) could not be re-opened reports what was left behind; `errors.AsType[*RepairError]` finds it behind a cancellation.
 - **`JobState.Running() (running, known bool)`** — whether `sp_start_job` would refuse the job as already running; `JobStateUnknown` and `JobStateSuspended` answer `known=false`.
 - **`SecurableClass.Permission(name)`** — the name as the class's `PermissionName` type (`ServerPermission`, `DatabasePermission` or `ObjectPermission`).
 - **`Schema.IsSystem()`** — guest, `INFORMATION_SCHEMA`, `sys` and the fixed database roles' schemas; `dbo` is not one. Derived from `ID`, so false on a `SchemaRef` handle.
+- **Fabric Warehouse:** `Database.ExternalFunctions` (type `XF`); `CREATE TABLE` scripting (key constraints as `NONCLUSTERED … NOT ENFORCED`, bare column names); `Statistics` reads from `sys.stats` and `STATS_DATE`.
+- **Scripting user-created statistics:** table and view scripts, and `ScriptDatabaseObjects`, emit `CREATE STATISTICS` for user-created statistics.
+- `CONTRIBUTING.md`.
 
 ### Changed
 
 - **Breaking — full-text** (`fulltext.go`, `fulltext_write.go`): `Database.FullText()` returns a `FullText` handle with `Catalogs`, `CatalogByName`, `CatalogRef`, `CreateCatalog`, `Stoplists`, `StoplistByName`, `StoplistRef`, `CreateStoplist`, `SearchPropertyLists`, `SearchPropertyListByName`, `SearchPropertyListRef`, `CreateSearchPropertyList` and `Indexes`, replacing `Database.FullTextCatalogs`, `FullTextCatalogByName`, `FullTextCatalogRef`, `CreateFullTextCatalog`, `FullTextStoplists`, `FullTextStoplistByName`, `FullTextStoplistRef`, `CreateFullTextStoplist`, `SearchPropertyLists`, `SearchPropertyListByName`, `SearchPropertyListRef`, `CreateSearchPropertyList` and `FullTextIndexes`.
 - **Breaking — Service Broker** (`service_broker*.go`): `Database.ServiceBroker()` returns a `ServiceBroker` handle with `Queues`/`QueueByName`/`QueueRef`, `Services`/`ServiceByName`/`ServiceRef`, `Priorities`/`PriorityByName`/`PriorityRef`, `MessageTypes`, `Contracts`, `Routes`, `RemoteServiceBindings` (each with `…ByName` and `…Ref`), `QueueMessageCounts` and `QueueMonitors`, replacing the `Database` methods of the same families (`BrokerQueues`, `BrokerServices`, `BrokerPriorities` and their finders lose the `Broker` prefix).
-- Script output, the version sweep (`reflectSweep`, `sweepMustCall`) and the documentation follow both facets.
+- **Breaking — `SetEnabled` only:** `Enable` and `Disable` are removed from `Alert`, `Job`, `Operator`, `Schedule`, `ServerAudit`, `ServerAuditSpecification`, `DatabaseAuditSpecification`, `Trigger`, `DatabaseTrigger`, `ServerTrigger`, `FullTextIndex`, `Login`, `PlanGuide` and `SecurityPolicy`; use `SetEnabled(ctx, on)`.
+- **Breaking — role membership:** `Login.AddToServerRole`, `Login.RemoveFromServerRole`, `User.AddToRole` and `User.RemoveFromRole` are removed; use the role's `AddMember` / `RemoveMember`.
+- **Breaking — statistics updates:** `Statistic.Update`, `Index.UpdateStatistics`, `Table.UpdateStatistics` and `View.UpdateStatistics` take `StatisticsUpdateOptions` instead of `samplePct int`; `Statistic.UpdateWith`, `Table.UpdateStatisticsWith` and `View.UpdateStatisticsWith` are gone (`Table.UpdateAllStatistics` is now `UpdateStatistics`). The zero options value sends no `WITH`, so the server samples as it chooses; before, a bare `0` meant FULLSCAN.
+- **`PlanRestore`** narrows the history to one recovery path using the recovery-fork fields, so a restore to an earlier point no longer picks the timeline the user rolled back from.
 - **`SearchDefinitions`** still folds case under the database's collation but compares ordinally (`Latin1_General_100_BIN2`): about 5× faster over a large database (8.3 s → 1.6 s, 5,050 modules). What a linguistic collation treats as equal beyond case no longer matches — in an accent-insensitive database "cafe" no longer finds "café".
+- **Whole-database scripting** reads extended properties and table facets in bulk (one read per kind, not per object); `ScriptDatabaseObjects` scales with the number of properties rather than tables × properties.
+- **`Dependents`** on Fabric Warehouse reads `sys.sql_expression_dependencies` (the DMV is refused with Msg 15871), resolving unqualified names schema-then-`dbo`.
+- Identifiers go through `QuoteName` and string literals through `QuoteLiteral` everywhere; backup-device and extended-property writes bind their arguments; a catalog keyword, number or stored name reaching a script passes a closed-set check, and an unrecognised value becomes a placeholder the server refuses.
 - `Statistic` column reads bind the table name instead of splicing it into an `OBJECT_ID` literal: one plan for every table.
 - Schema, database-role and server-role creation share one code path; the output is unchanged.
+- Script output, the version sweep (`reflectSweep`, `sweepMustCall`) and the documentation follow the facets.
 - Go 1.27.4 (the `toolchain` line is gone); `golang.org/x/crypto` v0.59.0.
 
 ### Fixed
 
 - **Connection retargeting** compared database names case-blind: on a case-sensitive server a write to `Sales` could re-point a pool whose login database is `sales`. Names now compare under the server collation (`retargetingConnector.setCollation`, set by `Connect`). Pinned offline; not yet run against a case-sensitive server.
+- **Pool hygiene:** a connection left in a state the caller could not vouch for is discarded (`DiscardConn`) rather than pooled, and a failed access-mode repair is reported instead of lost.
 - **Columnstore `ORDER`** accepted a column cased unlike its key column (the server refused it later with a less useful error); both checks are now exact.
 - **`ScriptDatabaseObjects`** scripts database DDL triggers last, after the permissions, so a replay no longer fires them on its own GRANT/DENY (a "no DDL" `ROLLBACK` guard aborted with Msg 3609). Warnings are comment-safe: a name holding a CR or LF can no longer end the `--` comment and run as T-SQL.
+- **Bulk loads** round a `float` bound for a `decimal` column as `CAST` does — an exact tie away from zero (2.5 → 3, 0.125 → 0.13) — instead of to even.
+- **Fabric Warehouse** key constraints no longer emit `ASC`/`DESC`, which its grammar rejects.
 
 ## v0.2.0
 
