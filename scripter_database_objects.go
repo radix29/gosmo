@@ -64,7 +64,9 @@ type ObjectScriptOptions struct {
 	// memberships and every GRANT/DENY (ScriptDatabaseSecurity's content),
 	// the principals first and the permissions last. Without it the custom
 	// schemas are still created, as their objects need them, but under dbo:
-	// their owner may be a principal the script does not create.
+	// their owner may be a principal the script does not create. A user
+	// mapped to a certificate or asymmetric key is a comment, as is every
+	// statement naming it: the script creates no certificate or key.
 	IncludePermissions bool
 	// Progress, when set, is called once every list has been read, with done
 	// 0 and the number of ScriptedObjects the script will hold, then after
@@ -260,7 +262,10 @@ func (b *objectListBuild) queuePrincipalsAndPartitioning() error {
 		if b.sec, err = s.readDatabaseSecurity(ctx); err != nil {
 			return err
 		}
-		head, _ := buildDatabaseSecurityParts(d.Name, b.sec, nil)
+		// A scope, though its maps are filled only at stage 4: the principals
+		// block reads none of them, only that this is a whole-database script
+		// (a certificate-mapped user is left out).
+		head, _ := buildDatabaseSecurityParts(d.Name, b.sec, &grantScope{})
 		if b.want(ScriptedPrincipals) {
 			b.queue1(ScriptedObject{Kind: ScriptedPrincipals, Name: d.Name}, sqlOf(head))
 		}

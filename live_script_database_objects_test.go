@@ -4,6 +4,7 @@ package gosmo
 
 import (
 	"context"
+	"database/sql"
 	"slices"
 	"strings"
 	"testing"
@@ -553,4 +554,81 @@ FROM sys.edge_constraints ec JOIN sys.edge_constraint_clauses ecc ON ecc.object_
 	}
 	slices.Sort(out)
 	return out
+}
+
+// TestLiveScriptDatabaseObjectsMappedUsers scripts a database holding a
+// certificate-mapped and an asymmetric-key-mapped user, a schema and a role
+// one owns, their memberships, a grant to each and one on one. The script
+// creates no certificate or key, so CREATE USER … FROM CERTIFICATE failed the
+// replay, and every statement naming the user after it: each must be a
+// comment, the schema be created under dbo, and the replay succeed.
+func TestLiveScriptDatabaseObjectsMappedUsers(t *testing.T) {
+	db, ctx, done := liveDBTimeout(t, 120*time.Second)
+	t.Cleanup(done) // not defer: the drops below run in t.Cleanup
+
+	src, dropSrc := liveScratchDB(t, db, ctx, "gosmo_objs_msrc_live")
+	t.Cleanup(dropSrc)
+	dst, dropDst := liveScratchDB(t, db, ctx, "gosmo_objs_mdst_live")
+	t.Cleanup(dropDst)
+
+	liveExecIn(t, src, ctx,
+		`CREATE CERTIFICATE gosmo_objs_cert ENCRYPTION BY PASSWORD = 'P@ssw0rd_gosmo_live' WITH SUBJECT = 'gosmo live'`,
+		`CREATE ASYMMETRIC KEY gosmo_objs_key WITH ALGORITHM = RSA_2048 ENCRYPTION BY PASSWORD = 'P@ssw0rd_gosmo_live'`,
+		`CREATE USER gosmo_objs_cu FROM CERTIFICATE gosmo_objs_cert`,
+		`CREATE USER gosmo_objs_ku FROM ASYMMETRIC KEY gosmo_objs_key`,
+		`CREATE USER gosmo_objs_u WITHOUT LOGIN`,
+		`CREATE ROLE gosmo_objs_r`,
+		`CREATE ROLE gosmo_objs_owned AUTHORIZATION gosmo_objs_cu`,
+		`ALTER ROLE gosmo_objs_r ADD MEMBER gosmo_objs_cu`,
+		`ALTER ROLE gosmo_objs_r ADD MEMBER gosmo_objs_ku`,
+		`ALTER ROLE gosmo_objs_r ADD MEMBER gosmo_objs_u`,
+		`CREATE SCHEMA cs AUTHORIZATION gosmo_objs_cu`,
+		`CREATE TABLE dbo.t (id INT NOT NULL)`,
+		`GRANT SELECT ON dbo.t TO gosmo_objs_cu`,
+		`DENY UPDATE ON dbo.t TO gosmo_objs_ku`,
+		`GRANT SELECT ON dbo.t TO gosmo_objs_u`,
+		`GRANT VIEW DEFINITION ON USER::gosmo_objs_cu TO gosmo_objs_u`,
+	)
+
+	res, err := NewScripter(src, DefaultScriptOptions()).ScriptDatabaseObjectList(ctx, ObjectScriptOptions{IncludePermissions: true})
+	if err != nil {
+		t.Fatalf("ScriptDatabaseObjectList: %v", err)
+	}
+	all := res.String()
+	for _, want := range []string{
+		"-- not scripted: CREATE USER [gosmo_objs_cu] FROM CERTIFICATE [gosmo_objs_cert]: CERTIFICATE::[gosmo_objs_cert] is not scripted",
+		"-- not scripted: CREATE USER [gosmo_objs_ku] FROM ASYMMETRIC KEY [gosmo_objs_key]: ASYMMETRIC KEY::[gosmo_objs_key] is not scripted",
+		"-- not scripted: ALTER AUTHORIZATION ON SCHEMA::[cs] TO [gosmo_objs_cu]: USER::[gosmo_objs_cu] is not scripted",
+		"-- not scripted: ALTER AUTHORIZATION ON ROLE::[gosmo_objs_owned] TO [gosmo_objs_cu]: USER::[gosmo_objs_cu] is not scripted",
+		"-- not scripted: ALTER ROLE [gosmo_objs_r] ADD MEMBER [gosmo_objs_cu]: USER::[gosmo_objs_cu] is not scripted",
+		"-- not scripted: ALTER ROLE [gosmo_objs_r] ADD MEMBER [gosmo_objs_ku]: USER::[gosmo_objs_ku] is not scripted",
+		"-- not scripted: GRANT SELECT ON OBJECT::[dbo].[t] TO [gosmo_objs_cu]: USER::[gosmo_objs_cu] is not scripted",
+		"-- not scripted: DENY UPDATE ON OBJECT::[dbo].[t] TO [gosmo_objs_ku]: USER::[gosmo_objs_ku] is not scripted",
+		"-- not scripted: GRANT VIEW DEFINITION ON USER::[gosmo_objs_cu] TO [gosmo_objs_u]: USER::[gosmo_objs_cu] is not scripted",
+		"\nGRANT SELECT ON OBJECT::[dbo].[t] TO [gosmo_objs_u];\n",
+	} {
+		if !strings.Contains(all, want) {
+			t.Errorf("script lacks %q:\n%s", want, all)
+		}
+	}
+
+	script := NewScripter(src, DefaultScriptOptions()).DatabaseContext() + all
+	script = strings.Replace(script, "USE [gosmo_objs_msrc_live]", "USE [gosmo_objs_mdst_live]", 1)
+	liveRunScript(t, dst, ctx, script)
+
+	// What the replay made: the schema under dbo, the roles, the plain user
+	// and its membership and grant; no mapped user.
+	var got string
+	if err := dst.queryRow(ctx, func(row *sql.Row) error { return row.Scan(&got) }, `
+SELECT CONCAT(
+  (SELECT USER_NAME(principal_id) FROM sys.schemas WHERE name = 'cs'), '|',
+  (SELECT COUNT(*) FROM sys.database_principals WHERE name IN ('gosmo_objs_cu', 'gosmo_objs_ku')), '|',
+  (SELECT COUNT(*) FROM sys.database_principals WHERE name IN ('gosmo_objs_r', 'gosmo_objs_owned', 'gosmo_objs_u')), '|',
+  IS_ROLEMEMBER('gosmo_objs_r', 'gosmo_objs_u'), '|',
+  (SELECT COUNT(*) FROM sys.database_permissions WHERE grantee_principal_id = DATABASE_PRINCIPAL_ID('gosmo_objs_u') AND permission_name = 'SELECT'))`); err != nil {
+		t.Fatalf("read the replay: %v", err)
+	}
+	if got != "dbo|0|3|1|1" {
+		t.Errorf("replay: schema owner|mapped users|roles and user|membership|grant = %q, want dbo|0|3|1|1", got)
+	}
 }

@@ -144,3 +144,81 @@ func TestSecurityGrantSecurable(t *testing.T) {
 		}
 	}
 }
+
+// TestDatabaseSecurityPartsLeavesOutMappedUsers: with a scope (a
+// whole-database script, which creates no certificate or key) a certificate-
+// or key-mapped user is a comment, and so is every statement naming it — its
+// schema's ownership (the schema is created under dbo), a role's ownership,
+// its membership, a grant to it or on it. Everything else is unchanged, and
+// without a scope the user is scripted.
+func TestDatabaseSecurityPartsLeavesOutMappedUsers(t *testing.T) {
+	sec := &databaseSecurity{
+		owner: "sa",
+		roles: []*DatabaseRole{
+			{Name: "db_owner", ID: 16384, IsFixedRole: true, Members: []string{"cu"}},
+			{Name: "readers", ID: 5, Owner: "dbo", Members: []string{"app", "cu", "ku"}},
+			{Name: "writers", ID: 6, Owner: "cu"},
+		},
+		users: []*User{
+			{Name: "app", ID: 7, AuthType: "INSTANCE", LoginName: "app_login"},
+			{Name: "cu", ID: 8, AuthType: "NONE", UserType: PrincipalCertificateMappedUser, MappedObject: "cert1"},
+			{Name: "ku", ID: 9, AuthType: "NONE", UserType: PrincipalAsymmetricKeyMappedUser, MappedObject: "key1"},
+		},
+		schemas: []*Schema{{Name: "cs", ID: 5, Owner: "cu"}, {Name: "as", ID: 6, Owner: "app"}},
+		grants: []securityGrant{
+			{grantee: "app", state: "G", permission: "CONNECT"},
+			{grantee: "app", state: "G", permission: "IMPERSONATE", class: 4, kind: "S", name: "cu"},
+			{grantee: "cu", state: "G", permission: "SELECT", class: 1, schema: "dbo", name: "t"},
+			{grantee: "ku", state: "D", permission: "CONNECT"},
+			{grantee: "readers", state: "G", permission: "SELECT", class: 1, schema: "dbo", name: "t"},
+		},
+	}
+	scope := &grantScope{listed: map[string]bool{"o:[dbo].[t]": true}}
+	head, tail := buildDatabaseSecurityParts("d", sec, scope)
+	all := head + tail
+	for _, want := range []string{
+		"-- not scripted: CREATE USER [cu] FROM CERTIFICATE [cert1]: CERTIFICATE::[cert1] is not scripted\n",
+		"-- not scripted: CREATE USER [ku] FROM ASYMMETRIC KEY [key1]: ASYMMETRIC KEY::[key1] is not scripted\n",
+		"EXEC(N'CREATE SCHEMA [cs]');",
+		"-- not scripted: ALTER AUTHORIZATION ON SCHEMA::[cs] TO [cu]: USER::[cu] is not scripted\n",
+		"-- not scripted: ALTER AUTHORIZATION ON ROLE::[writers] TO [cu]: USER::[cu] is not scripted\n",
+		"-- not scripted: ALTER ROLE [db_owner] ADD MEMBER [cu]: USER::[cu] is not scripted\n",
+		"-- not scripted: ALTER ROLE [readers] ADD MEMBER [cu]: USER::[cu] is not scripted\n",
+		"-- not scripted: ALTER ROLE [readers] ADD MEMBER [ku]: USER::[ku] is not scripted\n",
+		"-- not scripted: GRANT IMPERSONATE ON USER::[cu] TO [app]: USER::[cu] is not scripted\n",
+		"-- not scripted: GRANT SELECT ON OBJECT::[dbo].[t] TO [cu]: USER::[cu] is not scripted\n",
+		"-- not scripted: DENY CONNECT TO [ku]: USER::[ku] is not scripted\n",
+		// Unchanged:
+		"CREATE USER [app] FOR LOGIN [app_login];",
+		"EXEC(N'CREATE SCHEMA [as] AUTHORIZATION [app]');",
+		"\nALTER AUTHORIZATION ON SCHEMA::[as] TO [app];\n",
+		"\nALTER ROLE [readers] ADD MEMBER [app];\n",
+		"\nGRANT CONNECT TO [app];\n",
+		"\nGRANT SELECT ON OBJECT::[dbo].[t] TO [readers];\n",
+	} {
+		if !strings.Contains(all, want) {
+			t.Errorf("script lacks %q:\n%s", want, all)
+		}
+	}
+	// Every line naming a mapped user is a comment.
+	for line := range strings.SplitSeq(all, "\n") {
+		if (strings.Contains(line, "[cu]") || strings.Contains(line, "[ku]")) && !strings.HasPrefix(line, "--") {
+			t.Errorf("live statement names a mapped user: %q", line)
+		}
+	}
+
+	all = buildDatabaseSecurityScript("d", sec)
+	for _, want := range []string{
+		"CREATE USER [cu] FROM CERTIFICATE [cert1];",
+		"CREATE USER [ku] FROM ASYMMETRIC KEY [key1];",
+		"\nALTER ROLE [readers] ADD MEMBER [cu];\n",
+		"\nGRANT SELECT ON OBJECT::[dbo].[t] TO [cu];\n",
+	} {
+		if !strings.Contains(all, want) {
+			t.Errorf("unscoped script lacks %q:\n%s", want, all)
+		}
+	}
+	if strings.Contains(all, "not scripted") {
+		t.Errorf("unscoped script left something out:\n%s", all)
+	}
+}
