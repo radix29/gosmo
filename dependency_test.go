@@ -22,7 +22,7 @@ var dependencyReads = []struct {
 		return d.Dependents(context.Background(), schema, name)
 	}},
 	{"FabricDependents", func(d *Database, schema, name string) ([]*Dependency, error) {
-		d.server.IsFabricDW = true
+		d.server.fabricDW = true
 		return d.Dependents(context.Background(), schema, name)
 	}},
 }
@@ -88,7 +88,7 @@ func TestDependentsUsesFabricCatalogOnlyOnFabricDW(t *testing.T) {
 		}
 		t.Run(name, func(t *testing.T) {
 			d := qsRecDB(t, 17, nil, nil)
-			d.server.IsFabricDW = fabric
+			d.server.fabricDW = fabric
 			if _, err := d.Dependents(t.Context(), "dbo", "orders"); err != nil {
 				t.Fatal(err)
 			}

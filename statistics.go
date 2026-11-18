@@ -59,7 +59,7 @@ OUTER  APPLY sys.dm_db_stats_properties(s.object_id, s.stats_id) sp
 WHERE  s.object_id = @p1`
 
 func (t *Table) statisticSelect() string {
-	if !t.db.server.IsFabricDW {
+	if !t.db.server.IsFabricDW() {
 		return statisticSelect
 	}
 	return `
@@ -392,7 +392,7 @@ func (st *Statistic) showStatisticsQuery(option string) string {
 	// name (same restriction Update already works around).
 	q := fmt.Sprintf("DBCC SHOW_STATISTICS (%s, %s) WITH %s",
 		QuoteLiteral(st.on().FullName()), QuoteLiteral(st.Name), option)
-	if !st.on().db.server.IsFabricDW {
+	if !st.on().db.server.IsFabricDW() {
 		q += ", NO_INFOMSGS"
 	}
 	return q

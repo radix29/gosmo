@@ -304,6 +304,14 @@ func buildDatabaseSecurityScript(dbName string, sec *databaseSecurity) string {
 // A permission on a securable the script does not create (scope nil for a
 // security-only script, which keeps them all) is a comment line instead: the
 // replay would fail it (Msg 15151).
+//
+// With a scope, a user mapped to a certificate or asymmetric key is a
+// comment too, as is every statement naming it — a schema's owner (the
+// schema is created under dbo instead), a role's owner, a membership, a
+// permission to it or on it: the script creates no certificate or key, so
+// the CREATE USER would fail the replay and every statement after it naming
+// the user. Without a scope (ScriptDatabaseSecurity, which replays into a
+// database that may hold the certificate) the user is scripted.
 func buildDatabaseSecurityParts(dbName string, sec *databaseSecurity, scope *grantScope) (principalsPart, permissionsPart string) {
 	opts := ScriptOptions{IncludeIfNotExists: true}
 	var sb strings.Builder
@@ -313,6 +321,21 @@ func buildDatabaseSecurityParts(dbName string, sec *databaseSecurity, scope *gra
 		tsql.BlockCommentSafe(QuoteName(dbName)))
 
 	section := func(title string) { fmt.Fprintf(&sb, "\n-- %s\n", title) }
+
+	// unmapped is every certificate- or key-mapped user a scoped script
+	// leaves out; notScripted writes stmt as the comment naming why.
+	unmapped := map[string]bool{}
+	if scope != nil {
+		for _, u := range sec.users {
+			if u.IsMapped() && !isServerPrincipal(u.ID, u.Name) {
+				unmapped[u.Name] = true
+			}
+		}
+	}
+	notScripted := func(sb *strings.Builder, stmt, what string) {
+		fmt.Fprintf(sb, "-- not scripted: %s\n", tsql.CommentSafe(stmt+": "+what+" is not scripted"))
+	}
+	userOn := func(name string) string { return "USER::" + QuoteName(name) }
 
 	section("Database owner")
 	if sec.owner == "" {
@@ -347,6 +370,15 @@ func buildDatabaseSecurityParts(dbName string, sec *databaseSecurity, scope *gra
 		if isServerPrincipal(u.ID, u.Name) {
 			continue
 		}
+		if unmapped[u.Name] {
+			on, kind := "CERTIFICATE", "certificate"
+			if u.UserType == PrincipalAsymmetricKeyMappedUser {
+				on, kind = "ASYMMETRIC KEY", "asymmetric key"
+			}
+			obj := mappedUserObject(u, kind)
+			notScripted(&sb, "CREATE USER "+QuoteName(u.Name)+" FROM "+on+" "+obj, on+"::"+obj)
+			continue
+		}
 		principals[u.Name] = true
 		s := buildUserScript(u, opts)
 		if strings.EqualFold(u.AuthType, "DATABASE") {
@@ -363,6 +395,11 @@ func buildDatabaseSecurityParts(dbName string, sec *databaseSecurity, scope *gra
 	}
 	section("Schemas")
 	for _, s := range schemas {
+		if unmapped[s.Owner] {
+			c := *s
+			c.Owner = ""
+			s = &c
+		}
 		sb.WriteString(buildSchemaScript(s, opts))
 	}
 
@@ -372,13 +409,23 @@ func buildDatabaseSecurityParts(dbName string, sec *databaseSecurity, scope *gra
 	owned := false
 	for _, s := range schemas {
 		if s.Owner != "" {
-			fmt.Fprintf(&sb, "ALTER AUTHORIZATION ON SCHEMA::%s TO %s;\n", QuoteName(s.Name), QuoteName(s.Owner))
+			stmt := fmt.Sprintf("ALTER AUTHORIZATION ON SCHEMA::%s TO %s", QuoteName(s.Name), QuoteName(s.Owner))
+			if unmapped[s.Owner] {
+				notScripted(&sb, stmt, userOn(s.Owner))
+				continue
+			}
+			sb.WriteString(stmt + ";\n")
 			owned = true
 		}
 	}
 	for _, r := range roles {
 		if r.Owner != "" && r.Owner != "dbo" {
-			fmt.Fprintf(&sb, "ALTER AUTHORIZATION ON ROLE::%s TO %s;\n", QuoteName(r.Name), QuoteName(r.Owner))
+			stmt := fmt.Sprintf("ALTER AUTHORIZATION ON ROLE::%s TO %s", QuoteName(r.Name), QuoteName(r.Owner))
+			if unmapped[r.Owner] {
+				notScripted(&sb, stmt, userOn(r.Owner))
+				continue
+			}
+			sb.WriteString(stmt + ";\n")
 			owned = true
 		}
 	}
@@ -393,6 +440,10 @@ func buildDatabaseSecurityParts(dbName string, sec *databaseSecurity, scope *gra
 			continue
 		}
 		for _, m := range r.Members {
+			if unmapped[m] {
+				notScripted(&sb, fmt.Sprintf("ALTER ROLE %s ADD MEMBER %s", QuoteName(r.Name), QuoteName(m)), userOn(m))
+				continue
+			}
 			if principals[m] {
 				fmt.Fprintf(&sb, "ALTER ROLE %s ADD MEMBER %s;\n", QuoteName(r.Name), QuoteName(m))
 				members = true
@@ -407,9 +458,16 @@ func buildDatabaseSecurityParts(dbName string, sec *databaseSecurity, scope *gra
 	sb.Reset()
 	section("Permissions")
 	for _, g := range sec.grants {
-		if what, out := scope.leftOut(g); out {
-			fmt.Fprintf(&sb, "-- not scripted: %s\n", tsql.CommentSafe(
-				strings.TrimSuffix(g.statement(), ";\n")+": "+what+" is not scripted"))
+		what, out := scope.leftOut(g)
+		switch {
+		case out:
+		case unmapped[g.grantee]:
+			what, out = userOn(g.grantee), true
+		case g.class == 4 && unmapped[g.name]:
+			what, out = userOn(g.name), true
+		}
+		if out {
+			notScripted(&sb, strings.TrimSuffix(g.statement(), ";\n"), what)
 			continue
 		}
 		sb.WriteString(g.statement())

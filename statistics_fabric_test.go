@@ -14,7 +14,7 @@ func TestFabricDWStatisticsAvoidUnsupportedDMV(t *testing.T) {
 			for _, byName := range []bool{false, true} {
 				t.Run(fmt.Sprintf("fabric=%v/view=%v/byName=%v", fabric, view, byName), func(t *testing.T) {
 					d := captureDatabase(t)
-					d.server.IsFabricDW = fabric
+					d.server.fabricDW = fabric
 					updated := time.Date(2026, 10, 22, 8, 0, 0, 0, time.UTC)
 					values := []driver.Value{
 						"st_Sales", int64(7), false, true, true, "[Amount] > 0",
@@ -95,7 +95,7 @@ func TestFabricDWStatisticsDBCCUsesSupportedOptions(t *testing.T) {
 	for _, fabric := range []bool{true, false} {
 		t.Run(fmt.Sprintf("fabric=%v", fabric), func(t *testing.T) {
 			d := captureDatabase(t)
-			d.server.IsFabricDW = fabric
+			d.server.fabricDW = fabric
 			st := d.TableRef("s'a]les", "Order's]").StatisticRef("st_']")
 			for _, option := range []string{"STAT_HEADER", "DENSITY_VECTOR", "HISTOGRAM"} {
 				switch option {

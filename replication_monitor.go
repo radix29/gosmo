@@ -692,7 +692,9 @@ type ReplAgentAction struct {
 
 // SessionActions returns the actions of one of the agent's sessions, newest
 // first, as Sessions returned it. A merge session's actions all carry the
-// session's figures: merge history keeps only its messages per action.
+// session's figures: merge history keeps only its messages per action. A
+// session history retention has cleaned up since Sessions returned it
+// returns none.
 func (a *ReplicationAgent) SessionActions(ctx context.Context, s ReplAgentSession) ([]ReplAgentAction, error) {
 	what := fmt.Sprintf("read a session of replication agent %q", a.Name)
 	// Every _sd procedure reads the session of the agent's newest history

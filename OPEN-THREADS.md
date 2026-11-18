@@ -202,17 +202,6 @@ refuses:
   on the same instance under the same name after a DROP that is right; as a
   copy, the caller edits them.
 
-## `ScriptDatabaseObjectList`: a user mapped to a certificate or key
-
-With `IncludePermissions`, the principals block scripts a certificate- or
-asymmetric-key-mapped user as `CREATE USER … FROM CERTIFICATE`/`ASYMMETRIC
-KEY`, but the whole-database script never creates certificates or keys, so
-the replay into an empty database fails on that user (and on its
-memberships and grants). Found 2026-11-07 next to the fix commenting out
-GRANTs on securables the script does not create (`grantScope`); not fixed
-or run live. Likely shape: comment the user out like those grants, and
-everything naming it.
-
 ## Scripter: extended properties beyond tables and modules
 
 `ScriptOptions.ExtendedProperties` restates the properties of every object
@@ -254,19 +243,37 @@ for its parent table — until gossms review step D1 (2026-11-16) added them to
 the batch: a database of 500 tables went from ~1,020 queries to 20, the same
 as at 50 tables (`TestLiveScriptingManyTablesReadsPerCallNotPerTable`).
 
-## Whole-database scripting: the prefetch batch is slow to compile
+## Whole-database scripting: the prefetch batch (measured, partly fixed)
 
 Measured in D1 (win10cli, SQL Server 17, Extended Events): scripting 500
-tables takes ~9 s warm and ~11 s cold, all server-side (client CPU was 0.7 s
-over the whole test). The prefetch batch alone is ~5.8 s at 50 tables and
-~8.4 s at 500, of which its statements *execute* in ~0.3 s and ~3.7 s
-(`scriptOptionsSelectWith` 1.4 s, the columns 0.7 s, the extended properties
-0.4 s, the indexes 0.4 s at 500) — the rest is compiling seven to ten large
-catalog SELECTs, with a few "Statistics changed" / CE-feedback recompiles.
-Not acted on: a whole-database script is a one-off, and seconds for hundreds
-of tables is acceptable. Where to look first if it matters: the per-row
-scalar functions in `scriptOptionsSelectWith`, and whether splitting the batch
-lets the plans stay cached between runs.
+tables took ~9 s warm and ~11 s cold, all server-side; the prefetch batch
+alone ~8.4 s at 500 tables, most of it compiling.
+
+Remeasured 2026-11-18 (gossms fix plan F5, same instance, per-statement
+`sys.dm_exec_query_stats` and actual plans): **that compile cost belongs to a
+freshly built database.** D1's test creates its tables just before scripting,
+so system-table statistics are still moving and five of the ten statements
+recompile ("Statistics changed") on every run. Once the database settles, the
+plans stay cached between runs (execution_count climbs, plan_generation_num
+stays) and a warm prefetch at 500 tables was **~3.2 s of pure execution**.
+Only the index-columns and data-space statements still recompile now and then
+("Cardinality estimation feedback", cheap). So splitting the batch to keep
+plans cached would buy nothing, and was not done.
+
+Per-row scalar functions in `scriptOptionsSelectWith` are not the cost:
+replacing all seven `OBJECT_NAME`/`COL_NAME`-style calls changed nothing;
+dropping the three JSON subqueries saved ~0.3 s. The cost was the
+`sys.filetables` join: the view's full `sysschobjs` scan re-ran once per table
+under an empty table spool (500 executions, 2.7 M rows read, ~1.05 s). Gating
+the join on `t.is_filetable = 1` took the statement from ~1.45 s to ~0.45 s
+and the warm prefetch from ~3.2 s to **~2.1 s** at 500 tables.
+`TestLiveScriptingManyTablesReadsPerCallNotPerTable` passes on 17 and 13 (40
+round trips at both 50 and 500 tables), as does `TestLiveScriptTableKinds`'s
+FileTable case.
+
+What remains at 500 tables, warm: options ~0.45 s, columns ~0.5 s, extended
+properties ~0.4 s, indexes ~0.35 s, the rest under 0.15 s each — ordinary
+per-row seeks, no further spool rescans. Not worth more for a one-off script.
 
 ## Keys `FROM PROVIDER` have never executed
 
@@ -350,14 +357,16 @@ discard theirs). `ReleaseIdleConnections` still frees those before this
 `Server`'s exclusive writes (`live_release_idle_test.go` parks sessions that
 way now). gossms dropped its 60 s `ConnMaxIdleTime` for gosmo's default.
 
-## Live tests leave non-backup files on 13 and 14
+## Live tests leave non-backup files on 13 and 14 — closed when `GOSMO_LIVE_SSH_HOST` is set
 
 `liveRemoveFile` (`live_remove_file_test.go`) cannot delete a file that is
-not a backup on 2016 or 2017 with `xp_cmdshell` off. `xp_delete_files` is
-2019+, and `xp_delete_file 0` refuses anything without a backup header. Such
-a file (a STANDBY undo `.dat`/`.tuf`, an `.xel`) is logged by name, not
-failed. Closing this needs `xp_cmdshell` enabled for the run, which the
-tests deliberately do not do.
+not a backup (a STANDBY undo `.dat`/`.tuf`, an `.xel`) on 2016 or 2017 with
+`xp_cmdshell` off: `xp_delete_files` is 2019+, and `xp_delete_file 0` refuses
+anything without a backup header. With `GOSMO_LIVE_SSH_HOST=win10cli` it
+falls back to `ssh win10cli del /q "<file>"` (only when the host matches
+`@@SERVERNAME`'s machine part); verified on 13 and 14, 2026-11-18. Without the
+variable such a file is still logged by name, not failed. The tests
+deliberately never enable `xp_cmdshell`.
 
 ## Agent schedules are addressed by id — settled, do not re-raise
 

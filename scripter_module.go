@@ -541,7 +541,7 @@ func (sc *Scripter) ScriptView(ctx context.Context, schema, name string) (string
 				return err
 			}
 		}
-		sb.WriteString(viewIndexes(indexes, stats, qualifiedName(schema, name), sc.opts, sc.db.server.IsFabricDW))
+		sb.WriteString(viewIndexes(indexes, stats, qualifiedName(schema, name), sc.opts, sc.db.server.IsFabricDW()))
 		return nil
 	})
 }

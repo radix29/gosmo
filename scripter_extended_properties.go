@@ -248,7 +248,7 @@ func (sc *Scripter) scriptFileLayoutExtendedProperties(ctx context.Context) (str
 // properties: when the options ask for them and the script creates anything
 // — a DROP alone leaves them out. Fabric DW has no extended properties.
 func (sc *Scripter) wantsExtendedProperties() bool {
-	return sc.opts.ExtendedProperties && sc.opts.verb() != ScriptDrop && !sc.db.server.IsFabricDW
+	return sc.opts.ExtendedProperties && sc.opts.verb() != ScriptDrop && !sc.db.server.IsFabricDW()
 }
 
 // scriptExtendedProperties appends the extended-property statements for

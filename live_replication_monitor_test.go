@@ -148,6 +148,14 @@ func TestLiveReplicationMonitor(t *testing.T) {
 				t.Errorf("SessionActions(%q, %d): %v", name, i, err)
 				continue
 			}
+			if len(acts) == 0 && !sessionStillListed(t, a, s) {
+				// The fixture's snapshot agents run every 5 minutes and
+				// "Agent history clean up" every 10, so the oldest sessions
+				// sit at the retention edge and can go between Sessions and
+				// here (the loop takes ~15 s) — read last, newest first.
+				t.Logf("SessionActions(%q, %d): session cleaned up by history retention while read", name, i)
+				continue
+			}
 			if len(acts) == 0 || acts[0].Message == "" || acts[0].Time.IsZero() {
 				t.Errorf("SessionActions(%q, %d) = %+v", name, i, acts)
 				continue
@@ -177,6 +185,17 @@ func TestLiveReplicationMonitor(t *testing.T) {
 	if errs, err := dd.Errors(ctx, 0); err != nil || len(errs) != 0 {
 		t.Errorf("Errors(0) = %+v, %v", errs, err)
 	}
+}
+
+// sessionStillListed reports whether a's history still has session s, read
+// afresh: false means history cleanup removed it after Sessions listed it.
+func sessionStillListed(t *testing.T, a *ReplicationAgent, s ReplAgentSession) bool {
+	t.Helper()
+	sess, err := a.Sessions(t.Context(), 0, AllReplSessions)
+	if err != nil {
+		t.Fatalf("Sessions(%q) re-read: %v", a.Name, err)
+	}
+	return slices.ContainsFunc(sess, func(x ReplAgentSession) bool { return x.Start.Equal(s.Start) })
 }
 
 // TestLiveReplicationMonitorErrors reads the detail behind every error a

@@ -4,6 +4,57 @@ All notable changes to gosmo are documented here, newest first, from
 `v0.0.4` onward — this is the history. `RELEASE.md` carries the current
 release only, as a short summary of the entry below it.
 
+## v0.4.0 (unreleased)
+
+A Fabric and consistency release for gossms. gosmo now decides on its own
+whether a connection is a Fabric Warehouse, so `Server.IsFabricDW` becomes a
+read-only method; `ServerInfo.EngineEdition` is typed and SQL database in
+Fabric is a known edition; the optional singletons (master key, mirroring
+endpoint, endpoint details) report "none" as `ErrNotFound` like every other
+lookup. Whole-database scripting no longer fails its replay on a user mapped
+to a certificate or asymmetric key, and its prefetch is about a third faster.
+**Breaking.** **Migrating:**
+
+- `srv.IsFabricDW` becomes `srv.IsFabricDW()`. Code that assigned it after
+  `Connect` drops the assignment: detection is automatic, and
+  `ConnectionOptions.FabricDW` overrides it (`FabricDW: new(true)`). A
+  `NewServer` caller gets detection by EngineEdition alone.
+- `ServerInfo.EngineEdition` is `EngineEdition`, not `int`: drop the
+  `EngineEdition(info.EngineEdition)` conversion, and compare with the
+  `Engine*` constants directly — or better, ask `IsAzure`, `IsDatabaseScoped`,
+  `IsManagedInstance` or `IsFabricSQLDatabase`. Code that wanted
+  `== EngineAzureSQLDatabase` to mean "no instance scope" wants
+  `IsDatabaseScoped()`, which covers Fabric's SQL database too.
+- `Database.MasterKey`, `Server.DatabaseMirroringEndpoint`,
+  `Endpoint.MirroringDetail` and `Endpoint.ServiceBrokerDetail` return an
+  error wrapping `ErrNotFound` where they returned `(nil, nil)`: replace
+  `if m == nil` with `if errors.Is(err, ErrNotFound)`.
+
+### Added
+
+- **`ConnectionOptions.FabricDW *bool`** — overrides Fabric Warehouse detection; nil detects.
+- **Fabric Warehouse detection:** `Connect` and `NewServer` decide `IsFabricDW()` from `SERVERPROPERTY('EngineEdition')`. Edition 11 is Fabric (Warehouse or SQL analytics endpoint) unless the host is an Azure Synapse serverless endpoint (`*.sql.azuresynapse.net` and its sovereign-cloud forms); an edition gosmo does not know falls back to the host name (`*datawarehouse.fabric.microsoft.com`). Fixed for the life of the `Server`.
+- **SQL database in Fabric:** `EngineFabricSQLDatabase` (12); `IsAzure` includes it. `EngineEdition.String()` gives the edition names SSMS shows.
+- **Edition helpers:** `EngineEdition.IsDatabaseScoped`, and on `ServerInfo` (nil-safe) `IsDatabaseScoped`, `IsManagedInstance` and `IsFabricSQLDatabase`.
+- **`Table.RebuildAllIndexesScript` / `View.RebuildAllIndexesScript`** — the batch `RebuildAllIndexesWith` would send, without sending it.
+- **`Database.EnsureMasterKey(ctx, password)`** — creates the master key only when the database has none and reports whether it did; under `Scripting(ctx)` the check still reads the real server.
+- **`QueryStoreReportOptions.Effective()`** — the options with the report reads' defaults filled in, for labelling a report from the same values the query uses.
+
+### Changed
+
+- **Breaking — `Server.IsFabricDW`** is a method, decided at connect, and can no longer be set (see Migrating).
+- **Breaking — `ServerInfo.EngineEdition`** is typed (`gosmotest`'s `Info` too).
+- **Breaking — optional singletons** report absence as `ErrNotFound` (see Migrating).
+- **SQL database in Fabric** is treated as a single-database engine everywhere an Azure SQL Database check stood: it is no longer version-gated as a SQL Server 2014 engine, and the replication refusal names the edition. `RebuildAllIndexes*` and `ReorganizeAllIndexes` on it send one `ALTER INDEX` per index, since it refuses `ALTER INDEX ALL`.
+- `HasMasterKey` and `CreateMasterKey` move to `master_key.go` with the rest of the master key; `MasterKey` reads the key and its server-encryption flag in one round trip.
+- A retry ended by its context returns the context error joined with the transient error that caused the retry; `errors.Is(err, context.Canceled)` still holds.
+
+### Fixed
+
+- **`ScriptDatabaseObjects` / `ScriptDatabaseObjectList` with `IncludePermissions`:** a user mapped to a certificate or asymmetric key is a `-- not scripted:` comment, as is every statement naming it (schema and role ownership, memberships, permissions), since the script creates no certificate or key; the replay into an empty database failed on it. `ScriptDatabaseSecurity` still scripts the user.
+- **Whole-database scripting prefetch:** the table-options read joins `sys.filetables` only for a FileTable. Unconditional, SQL Server 17 rescanned the view once per table; at 500 tables that statement went from ~1.45 s to ~0.45 s and the warm prefetch from ~3.2 s to ~2.1 s.
+- Error messages that truncate a value cut at a rune boundary instead of through a multi-byte character.
+
 ## v0.3.0
 
 An API-consistency and hardening release for gossms. Full-text search and

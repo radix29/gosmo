@@ -40,7 +40,7 @@ func TestViewIndexesOmitsAlterIndexOnFabric(t *testing.T) {
 func TestScriptTableForeignKeyFabricNotEnforced(t *testing.T) {
 	for _, fabric := range []bool{false, true} {
 		d := captureDatabase(t)
-		d.server.IsFabricDW = fabric
+		d.server.fabricDW = fabric
 		sc := NewScripter(d, DefaultScriptOptions())
 		fk := &ForeignKey{Name: "FK", Columns: []string{"ID"}, ReferencedSchema: "dbo",
 			ReferencedTable: "Parent", ReferencedColumns: []string{"ID"},

@@ -453,10 +453,15 @@ ORDER  BY s.scheduler_id`)
 // no permission but trails the start by however long recovery took, so it is
 // not used.
 func (s *Server) StartTime(ctx context.Context) (start time.Time, uptime time.Duration, err error) {
+	// sqlserver_start_time is a datetime (1/300 s ticks): the driver rounds
+	// .1566667 to .157, while DATEDIFF measured from .1566667 and counted ms
+	// boundaries, so start + uptime ran up to ~1.3 ms past SYSDATETIME. Both
+	// now use the same millisecond-aligned value, whose DATEDIFF is a floor.
 	const q = `
-SELECT sqlserver_start_time,
-       DATEDIFF_BIG(millisecond, sqlserver_start_time, SYSDATETIME())
-FROM   sys.dm_os_sys_info`
+SELECT s.start_time,
+       DATEDIFF_BIG(millisecond, s.start_time, SYSDATETIME())
+FROM   sys.dm_os_sys_info
+CROSS APPLY (SELECT CAST(sqlserver_start_time AS datetime2(3)) AS start_time) AS s`
 	var ms int64
 	if err := s.queryRowScan(ctx, q, nil, &start, &ms); err != nil {
 		return time.Time{}, 0, fmt.Errorf("gosmo: server start time: %w", err)
