@@ -494,8 +494,8 @@ The instance and database halves pair up: `ServerResourceStat` and
 | Drop / rename / move  | `t.Drop(ctx, gosmo.DropTableOnly)` (or `DropTableCascade`) / `t.Rename(ctx, newName)` / `t.Transfer(ctx, targetSchema)` |
 | Fragmentation         | `t.FragmentationStats(ctx, mode)` / `v.FragmentationStats(ctx, mode)` (an indexed view) |
 | Index usage (seeks, scans, lookups, updates) | `t.IndexUsage(ctx)` / `v.IndexUsage(ctx)` — `sys.dm_db_index_usage_stats`; without VIEW SERVER STATE every row reads `UsageVisible` false |
-| Rebuild all indexes   | `t.RebuildAllIndexes(ctx, fillFactor)` / `t.RebuildAllIndexesWith(ctx, gosmo.IndexRebuildOptions{...})` (every rebuild option: fill factor, pad index, compression, `Online`, `MaxDOP`) |
-| Reorganize all indexes | `t.ReorganizeAllIndexes(ctx)` / `v.ReorganizeAllIndexes(ctx)` — `ALTER INDEX ALL … REORGANIZE` (`v.RebuildAllIndexesWith` too) |
+| Rebuild all indexes   | `t.RebuildAllIndexes(ctx, fillFactor)` / `t.RebuildAllIndexesWith(ctx, gosmo.IndexRebuildOptions{...})` (every rebuild option: fill factor, pad index, compression, `Online`, `MaxDOP`); `t.RebuildAllIndexesScript(ctx, opts)` returns the batch without running it. On SQL database in Fabric, which refuses `ALTER INDEX ALL`, all three send one `ALTER INDEX [name]` per index |
+| Reorganize all indexes | `t.ReorganizeAllIndexes(ctx)` / `v.ReorganizeAllIndexes(ctx)` — `ALTER INDEX ALL … REORGANIZE` (`v.RebuildAllIndexesWith` / `v.RebuildAllIndexesScript` too) |
 | Update all statistics | `t.UpdateStatistics(ctx, gosmo.StatisticsUpdateOptions{FullScan, SamplePercent, Resample})` — the zero value sends no WITH, so the server picks the sample; a full scan is `FullScan: true`; `v.UpdateStatistics` for an indexed view |
 | Create index          | `t.CreateIndex(ctx, req)` — every index type, see below |
 | Alter column          | `t.AlterColumn(ctx, col)`               |

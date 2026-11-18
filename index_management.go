@@ -88,15 +88,14 @@ func (idx *Index) Drop(ctx context.Context) error {
 
 // RebuildAllIndexes rebuilds all indexes on the table (ALTER INDEX ALL ... REBUILD).
 // RebuildAllIndexesWith takes every rebuild option, not only a fill factor.
+// On SQL database in Fabric it sends one ALTER INDEX per index instead — see
+// RebuildAllIndexesScript.
 func (t *Table) RebuildAllIndexes(ctx context.Context, fillFactor int) error {
-	q := fmt.Sprintf("ALTER INDEX ALL ON %s REBUILD", t.FullName())
+	with := ""
 	if fillFactor > 0 {
-		q += fmt.Sprintf(" WITH (FILLFACTOR = %d)", fillFactor)
+		with = fmt.Sprintf(" WITH (FILLFACTOR = %d)", fillFactor)
 	}
-	if err := t.exec(ctx, q); err != nil {
-		return fmt.Errorf("gosmo: rebuild all indexes on %s: %w", t.FullName(), err)
-	}
-	return nil
+	return t.alterAllIndexes(ctx, "rebuild all indexes on", "REBUILD", with)
 }
 
 // RebuildAllIndexesWith rebuilds every index on the table (ALTER INDEX ALL
@@ -104,26 +103,145 @@ func (t *Table) RebuildAllIndexes(ctx context.Context, fillFactor int) error {
 // options, for the whole table. Unlike Rebuild it knows no index's type, so
 // an option one of the table's indexes refuses (FILLFACTOR on a columnstore,
 // ONLINE on an edition without online index operations) is left for the server to refuse.
+// On SQL database in Fabric it sends one ALTER INDEX per index instead — see
+// RebuildAllIndexesScript.
 func (t *Table) RebuildAllIndexesWith(ctx context.Context, opts IndexRebuildOptions) error {
 	with, err := opts.withClause()
 	if err != nil {
 		return fmt.Errorf("gosmo: rebuild all indexes on %s: %w", t.FullName(), err)
 	}
-	q := fmt.Sprintf("ALTER INDEX ALL ON %s REBUILD", t.FullName()) + with
-	if err := t.exec(ctx, q); err != nil {
-		return fmt.Errorf("gosmo: rebuild all indexes on %s: %w", t.FullName(), err)
+	return t.alterAllIndexes(ctx, "rebuild all indexes on", "REBUILD", with)
+}
+
+// RebuildAllIndexesScript returns the batch RebuildAllIndexesWith would run
+// for opts, without running it — for a caller that shows the statement for
+// the user to run (a query window) and must not drift from what the method
+// sends.
+//
+// Everywhere but SQL database in Fabric that is the one ALTER INDEX ALL
+// statement, and nothing is read. Fabric refuses ALTER INDEX ALL (a named
+// index is accepted), so there the table's indexes are read and the batch is
+// one ALTER INDEX [name] ON ... REBUILD per index, in index_id order (the
+// clustered index first), each with the same WITH clause: every index ALL
+// would rebuild, disabled ones included (a rebuild enables them, as ALL
+// does), hypothetical ones left out (ALTER INDEX does nothing to them). A
+// table with no indexes — a heap — gives "", which RebuildAllIndexesWith
+// sends nothing for.
+func (t *Table) RebuildAllIndexesScript(ctx context.Context, opts IndexRebuildOptions) (string, error) {
+	with, err := opts.withClause()
+	if err != nil {
+		return "", fmt.Errorf("gosmo: rebuild all indexes on %s: %w", t.FullName(), err)
 	}
-	return nil
+	if err := requireSchema("rebuild all indexes on", t.Schema, t.Name); err != nil {
+		return "", err
+	}
+	q, err := t.allIndexesBatch(ctx, "REBUILD", with)
+	if err != nil {
+		return "", fmt.Errorf("gosmo: rebuild all indexes on %s: %w", t.FullName(), err)
+	}
+	return q, nil
 }
 
 // ReorganizeAllIndexes reorganizes every index on the table (ALTER INDEX
 // ALL ... REORGANIZE): Index.Reorganize for the whole table, in one
-// statement. A reorganize is always online and takes no options.
+// statement. A reorganize is always online and takes no options. On SQL
+// database in Fabric, which refuses ALTER INDEX ALL, it sends one ALTER
+// INDEX ... REORGANIZE per index ALL would reorganize — every index that is
+// neither disabled nor hypothetical — in one batch (see
+// RebuildAllIndexesScript).
 func (t *Table) ReorganizeAllIndexes(ctx context.Context) error {
-	if err := t.exec(ctx, fmt.Sprintf("ALTER INDEX ALL ON %s REORGANIZE", t.FullName())); err != nil {
-		return fmt.Errorf("gosmo: reorganize all indexes on %s: %w", t.FullName(), err)
+	return t.alterAllIndexes(ctx, "reorganize all indexes on", "REORGANIZE", "")
+}
+
+// alterAllIndexes runs allIndexesBatch's batch, wrapping every error with
+// op ("rebuild all indexes on") and the table. An empty batch sends nothing.
+// A table with no schema is refused first, as Table.exec would, so the Fabric
+// read never resolves an unqualified name.
+func (t *Table) alterAllIndexes(ctx context.Context, op, verb, with string) error {
+	if err := requireSchema(op, t.Schema, t.Name); err != nil {
+		return err
+	}
+	q, err := t.allIndexesBatch(ctx, verb, with)
+	if err == nil && q != "" {
+		err = t.exec(ctx, q)
+	}
+	if err != nil {
+		return fmt.Errorf("gosmo: %s %s: %w", op, t.FullName(), err)
 	}
 	return nil
+}
+
+// allIndexesBatch is the text an …All… method sends: ALTER INDEX ALL ON the
+// table verb with, or, on SQL database in Fabric, the per-index expansion
+// RebuildAllIndexesScript describes ("" when nothing qualifies). A
+// REORGANIZE skips disabled indexes too: the server refuses one by name,
+// and ALL passes over it.
+func (t *Table) allIndexesBatch(ctx context.Context, verb, with string) (string, error) {
+	if !t.db.serverInfo().IsFabricSQLDatabase() {
+		return "ALTER INDEX ALL ON " + t.FullName() + " " + verb + with, nil
+	}
+	targets, err := t.allIndexTargets(ctx)
+	if err != nil {
+		return "", err
+	}
+	var stmts []string
+	for _, x := range targets {
+		if x.hypothetical || (x.disabled && verb == "REORGANIZE") {
+			continue
+		}
+		stmts = append(stmts, "ALTER INDEX "+QuoteName(x.name)+" ON "+t.FullName()+" "+verb+with+";")
+	}
+	return strings.Join(stmts, "\n"), nil
+}
+
+// allIndexTarget is one row allIndexTargets reads.
+type allIndexTarget struct {
+	name                   string
+	disabled, hypothetical bool
+}
+
+// allIndexTargetsQuery reads the indexes ALTER INDEX ALL would act on (type
+// > 0: not the heap) by object id, or, for a TableRef with none, by name.
+// The derived table gives one row even when the object is missing — a NULL
+// object_id, refused as not found as ALL would be — or has no index (a NULL
+// name).
+const allIndexTargetsQuery = `
+SELECT o.object_id, i.name, ISNULL(i.is_disabled, CAST(0 AS bit)), ISNULL(i.is_hypothetical, CAST(0 AS bit))
+FROM   (SELECT ISNULL(NULLIF(@p1, 0), OBJECT_ID(@p2)) AS object_id) o
+LEFT   JOIN sys.indexes i ON i.object_id = o.object_id AND i.type > 0
+ORDER  BY i.index_id`
+
+// allIndexTargets lists the table's indexes for allIndexesBatch's Fabric
+// expansion: a lean read, not Indexes, so a TableRef handle works as it does
+// for ALTER INDEX ALL.
+func (t *Table) allIndexTargets(ctx context.Context) ([]allIndexTarget, error) {
+	rows, err := t.db.query(ctx, allIndexTargetsQuery, t.ObjectID, t.FullName())
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []allIndexTarget
+	found := false
+	for rows.Next() {
+		var oid sql.NullInt64
+		var name sql.NullString
+		var x allIndexTarget
+		if err := rows.Scan(&oid, &name, &x.disabled, &x.hypothetical); err != nil {
+			return nil, err
+		}
+		found = found || oid.Valid
+		if name.Valid {
+			x.name = name.String
+			out = append(out, x)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if !found {
+		return nil, notFoundf("table %s not found", t.FullName())
+	}
+	return out, nil
 }
 
 // onOffKeyword renders a bool as the ON/OFF keyword ALTER INDEX SET/REBUILD

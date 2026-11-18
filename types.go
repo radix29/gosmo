@@ -653,6 +653,13 @@ func (i *ServerInfo) IsManagedInstance() bool {
 	return i != nil && i.EngineEdition == EngineAzureManagedInst
 }
 
+// IsFabricSQLDatabase reports whether the connection is to SQL database in
+// Fabric: Azure SQL Database's engine (IsDatabaseScoped), with refusals of its
+// own — ALTER INDEX ALL among them (Table.RebuildAllIndexesScript).
+func (i *ServerInfo) IsFabricSQLDatabase() bool {
+	return i != nil && i.EngineEdition == EngineFabricSQLDatabase
+}
+
 // IsWindows reports whether the server host uses Windows path conventions.
 // Platform is the direct answer; for an instance that reported none, or an
 // Azure one, the default backup path decides, a Windows path being
@@ -694,8 +701,8 @@ func (i *ServerInfo) SupportsBackupCompression() bool {
 
 // SupportsOnlineIndexOperations reports whether the edition accepts
 // ONLINE = ON in index DDL (ALTER INDEX ... REBUILD, CREATE INDEX): Enterprise
-// and Developer (EngineEdition 3), Azure SQL Database (5) and Managed
-// Instance (8). Standard, Web and Express refuse it with Msg 1712, and so do
+// and Developer (EngineEdition 3), Azure SQL Database (5), Managed Instance
+// (8) and SQL database in Fabric (12, Azure SQL Database's engine). Standard, Web and Express refuse it with Msg 1712, and so do
 // the other Azure engines. OFFLINE is accepted everywhere, so this gates only
 // asking for an online operation.
 //
@@ -705,7 +712,7 @@ func (i *ServerInfo) SupportsOnlineIndexOperations() bool {
 		return true
 	}
 	switch i.EngineEdition {
-	case EngineEnterprise, EngineAzureSQLDatabase, EngineAzureManagedInst:
+	case EngineEnterprise, EngineAzureSQLDatabase, EngineAzureManagedInst, EngineFabricSQLDatabase:
 		return true
 	}
 	return false

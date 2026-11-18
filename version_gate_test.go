@@ -372,16 +372,19 @@ func TestFabricSQLDatabaseIsAzureAndDatabaseScoped(t *testing.T) {
 		t.Error("Fabric must count as newest, not as its reported 12")
 	}
 	for _, c := range []struct {
-		info              *ServerInfo
-		scoped, isManaged bool
+		info                      *ServerInfo
+		scoped, isManaged, fabric bool
 	}{
-		{nil, false, false},
-		{&ServerInfo{EngineEdition: EngineEnterprise}, false, false},
-		{&ServerInfo{EngineEdition: EngineAzureSQLDatabase}, true, false},
-		{fabric, true, false},
-		{azureMI(), false, true},
-		{&ServerInfo{EngineEdition: EngineAzureSynapseSrvls}, false, false},
+		{nil, false, false, false},
+		{&ServerInfo{EngineEdition: EngineEnterprise}, false, false, false},
+		{&ServerInfo{EngineEdition: EngineAzureSQLDatabase}, true, false, false},
+		{fabric, true, false, true},
+		{azureMI(), false, true, false},
+		{&ServerInfo{EngineEdition: EngineAzureSynapseSrvls}, false, false, false},
 	} {
+		if got := c.info.IsFabricSQLDatabase(); got != c.fabric {
+			t.Errorf("%+v.IsFabricSQLDatabase() = %v, want %v", c.info, got, c.fabric)
+		}
 		if got := c.info.IsDatabaseScoped(); got != c.scoped {
 			t.Errorf("%+v.IsDatabaseScoped() = %v, want %v", c.info, got, c.scoped)
 		}

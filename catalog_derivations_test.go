@@ -163,6 +163,7 @@ func TestServerInfoSupportsOnlineIndexOperations(t *testing.T) {
 		{EngineExpress, "Express Edition (64-bit)", false},
 		{EngineAzureSQLDatabase, "SQL Azure", true},
 		{EngineAzureManagedInst, "SQL Azure", true},
+		{EngineFabricSQLDatabase, "SQL Azure", true},
 		{EngineAzureSQLEdge, "Azure SQL Edge", false},
 	} {
 		info := &ServerInfo{EngineEdition: tc.engine, Edition: tc.edition}
