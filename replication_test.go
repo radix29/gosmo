@@ -46,7 +46,7 @@ func TestSchemaOptionBitsAreDistinctAndAscending(t *testing.T) {
 // Azure SQL Database has no replication catalog: each entry point refuses
 // before any statement is sent (this Server has no connection to send one).
 func TestReplicationRefusedOnAzureSQLDatabase(t *testing.T) {
-	s := &Server{info: &ServerInfo{EngineEdition: int(EngineAzureSQLDatabase)}}
+	s := &Server{info: &ServerInfo{EngineEdition: EngineAzureSQLDatabase}}
 	d := s.DatabaseRef("db")
 	ctx := context.Background()
 	calls := map[string]func() error{
@@ -140,7 +140,7 @@ func TestParseReplTime(t *testing.T) {
 }
 
 func TestMonitorPublishersRefusedOnAzureSQLDatabase(t *testing.T) {
-	s := &Server{info: &ServerInfo{EngineEdition: int(EngineAzureSQLDatabase)}}
+	s := &Server{info: &ServerInfo{EngineEdition: EngineAzureSQLDatabase}}
 	if _, err := s.MonitorPublishers(context.Background()); !errors.Is(err, ErrUnsupportedVersion) {
 		t.Errorf("MonitorPublishers: err = %v, want ErrUnsupportedVersion", err)
 	}

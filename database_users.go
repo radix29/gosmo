@@ -71,11 +71,11 @@ ORDER  BY dp.name`
 	})
 }
 
-// serverIsAzureSQLDatabase reports whether d is on Azure SQL Database, whose
-// user databases cannot see sys.server_principals.
+// serverIsAzureSQLDatabase reports whether d is on a single-database engine
+// (Azure SQL Database, SQL database in Fabric), whose user databases cannot
+// see sys.server_principals.
 func (d *Database) serverIsAzureSQLDatabase() bool {
-	i := d.serverInfo()
-	return i != nil && EngineEdition(i.EngineEdition) == EngineAzureSQLDatabase
+	return d.serverInfo().IsDatabaseScoped()
 }
 
 // UserByName returns a single database user by name, with its SID, matching
@@ -213,10 +213,11 @@ func (d *Database) CreateUser(ctx context.Context, req CreateUserRequest) (*User
 }
 
 // everyDatabaseContained reports whether the engine takes contained users in
-// any database without CONTAINMENT = PARTIAL — Azure SQL Database does, and
-// reports containment NONE for all of them.
+// any database without CONTAINMENT = PARTIAL — the single-database engines
+// (Azure SQL Database, SQL database in Fabric) do, and report containment NONE
+// for all of them.
 func (s *Server) everyDatabaseContained() bool {
-	return s.info != nil && EngineEdition(s.info.EngineEdition) == EngineAzureSQLDatabase
+	return s.info.IsDatabaseScoped()
 }
 
 // createUserStatement validates req and builds its CREATE USER statement.

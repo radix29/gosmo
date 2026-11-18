@@ -327,7 +327,7 @@ func TestScopedConfigSelectGatesTheIsValueDefaultColumn(t *testing.T) {
 // returns: engine edition 8 with SQL Server 2014's version number, while the
 // engine is an 18.x build carrying every catalog column gosmo gates on.
 func azureMI() *ServerInfo {
-	return &ServerInfo{EngineEdition: int(EngineAzureManagedInst), VersionMajor: 12,
+	return &ServerInfo{EngineEdition: EngineAzureManagedInst, VersionMajor: 12,
 		ProductVersion: "12.0.2000.8", Edition: "SQL Azure"}
 }
 
@@ -339,18 +339,66 @@ func TestIsAzureCoversEveryAzureEngineEdition(t *testing.T) {
 		{EnginePersonal, false}, {EngineStandard, false}, {EngineEnterprise, false},
 		{EngineExpress, false}, {EngineAzureSQLDatabase, true}, {EngineAzureSynapse, true},
 		{7, false}, {EngineAzureManagedInst, true}, {EngineAzureSQLEdge, true},
-		{10, false}, {EngineAzureSynapseSrvls, true}, {12, false}, {0, false},
+		{10, false}, {EngineAzureSynapseSrvls, true}, {EngineFabricSQLDatabase, true},
+		{13, false}, {0, false},
 	} {
 		if got := c.edition.IsAzure(); got != c.want {
 			t.Errorf("EngineEdition(%d).IsAzure() = %v, want %v", c.edition, got, c.want)
 		}
-		info := &ServerInfo{EngineEdition: int(c.edition)}
+		info := &ServerInfo{EngineEdition: c.edition}
 		if got := info.IsAzure(); got != c.want {
 			t.Errorf("ServerInfo{EngineEdition: %d}.IsAzure() = %v, want %v", c.edition, got, c.want)
 		}
 	}
 	if (*ServerInfo)(nil).IsAzure() {
 		t.Error("nil ServerInfo.IsAzure() = true, want false")
+	}
+}
+
+// E1 of the 2026-11-18 review: SQL database in Fabric (EngineEdition 12)
+// reports Azure SQL Database's 12.x ProductVersion, and before it counted as
+// Azure every gate read it as SQL Server 2014, below gosmo's floor. It is
+// also single-database, like edition 5 and unlike a Managed Instance.
+func TestFabricSQLDatabaseIsAzureAndDatabaseScoped(t *testing.T) {
+	fabric := &ServerInfo{EngineEdition: EngineFabricSQLDatabase, VersionMajor: 12,
+		ProductVersion: "12.0.2000.8"}
+	if got := fabric.featureMajor(); got != 0 {
+		t.Errorf("featureMajor() on Fabric = %d, want 0", got)
+	}
+	if !fabric.Supported() {
+		t.Error("Supported() = false on Fabric: its 12 is a compatibility fiction")
+	}
+	if s := (&Server{info: fabric}); !s.atLeast(SQLServer2025) {
+		t.Error("Fabric must count as newest, not as its reported 12")
+	}
+	for _, c := range []struct {
+		info              *ServerInfo
+		scoped, isManaged bool
+	}{
+		{nil, false, false},
+		{&ServerInfo{EngineEdition: EngineEnterprise}, false, false},
+		{&ServerInfo{EngineEdition: EngineAzureSQLDatabase}, true, false},
+		{fabric, true, false},
+		{azureMI(), false, true},
+		{&ServerInfo{EngineEdition: EngineAzureSynapseSrvls}, false, false},
+	} {
+		if got := c.info.IsDatabaseScoped(); got != c.scoped {
+			t.Errorf("%+v.IsDatabaseScoped() = %v, want %v", c.info, got, c.scoped)
+		}
+		if got := c.info.IsManagedInstance(); got != c.isManaged {
+			t.Errorf("%+v.IsManagedInstance() = %v, want %v", c.info, got, c.isManaged)
+		}
+	}
+}
+
+func TestEngineEditionString(t *testing.T) {
+	for e, want := range map[EngineEdition]string{
+		EngineEnterprise: "Enterprise", EngineAzureManagedInst: "Managed Instance",
+		EngineFabricSQLDatabase: "SQL database in Fabric", 7: "7", 0: "0",
+	} {
+		if got := e.String(); got != want {
+			t.Errorf("EngineEdition(%d).String() = %q, want %q", int(e), got, want)
+		}
 	}
 }
 

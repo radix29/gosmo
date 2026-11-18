@@ -145,7 +145,7 @@ func TestFillDefaultFollowsTheServer(t *testing.T) {
 		t.Errorf("on 16: Default %d, HasDefault %v; want 15, true", c.Default, c.HasDefault)
 	}
 
-	mi := &Server{info: &ServerInfo{VersionMajor: 12, EngineEdition: int(EngineAzureManagedInst)}}
+	mi := &Server{info: &ServerInfo{VersionMajor: 12, EngineEdition: EngineAzureManagedInst}}
 	c = &ConfigurationOption{server: mi, Name: "max degree of parallelism", Default: 99, HasDefault: true}
 	c.fillDefault()
 	if c.Default != 0 || c.HasDefault {

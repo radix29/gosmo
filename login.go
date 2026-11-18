@@ -571,7 +571,7 @@ func (s *Server) CreateLogin(ctx context.Context, req CreateLoginRequest) (*Logi
 	switch {
 	case len(stmts) == 1:
 		_, err = s.execPasswords(ctx, stmt, password)
-	case s.info != nil && EngineEdition(s.info.EngineEdition) == EngineAzureSQLDatabase:
+	case s.info.IsDatabaseScoped():
 		for _, q := range stmts {
 			if _, err = s.execPasswords(ctx, q, password); err != nil {
 				break

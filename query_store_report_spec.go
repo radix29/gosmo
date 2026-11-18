@@ -303,21 +303,18 @@ type qsReportSpec struct {
 	opts   QueryStoreReportOptions
 }
 
-// resolve validates o and fills in its defaults.
-func (o QueryStoreReportOptions) resolve() (qsReportSpec, error) {
+// Effective returns o with every zero field replaced by the default the report
+// reads apply: Metric Duration, Statistic Avg, To now, From an hour before To,
+// the baseline the same length ending at From, Top QSDefaultTop. A caller
+// labelling a report ("Avg Duration") reads the names from here, so the label
+// cannot disagree with the query. It validates nothing: an unknown metric or
+// statistic is returned as given and refused by the read.
+func (o QueryStoreReportOptions) Effective() QueryStoreReportOptions {
 	if o.Metric == "" {
 		o.Metric = QSMetricDuration
 	}
 	if o.Statistic == "" {
 		o.Statistic = QSStatAvg
-	}
-	m, ok := qsMetric(o.Metric)
-	if !ok {
-		return qsReportSpec{}, invalidf("gosmo: query store report: unknown metric %q", o.Metric)
-	}
-	s, ok := qsStatistic(o.Statistic)
-	if !ok {
-		return qsReportSpec{}, invalidf("gosmo: query store report: unknown statistic %q", o.Statistic)
 	}
 	if o.To.IsZero() {
 		o.To = time.Now()
@@ -333,6 +330,20 @@ func (o QueryStoreReportOptions) resolve() (qsReportSpec, error) {
 	}
 	if o.Top <= 0 {
 		o.Top = QSDefaultTop
+	}
+	return o
+}
+
+// resolve fills in o's defaults (Effective) and validates the result.
+func (o QueryStoreReportOptions) resolve() (qsReportSpec, error) {
+	o = o.Effective()
+	m, ok := qsMetric(o.Metric)
+	if !ok {
+		return qsReportSpec{}, invalidf("gosmo: query store report: unknown metric %q", o.Metric)
+	}
+	s, ok := qsStatistic(o.Statistic)
+	if !ok {
+		return qsReportSpec{}, invalidf("gosmo: query store report: unknown statistic %q", o.Statistic)
 	}
 	return qsReportSpec{metric: m, stat: s, opts: o}, nil
 }

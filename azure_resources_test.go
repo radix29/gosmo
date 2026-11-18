@@ -57,7 +57,7 @@ func TestAzureResourceReadsRefuseOffAzure(t *testing.T) {
 		for _, r := range azureReads {
 			t.Run(r.name, func(t *testing.T) {
 				d := qsRecDB(t, 17, nil, nil)
-				d.server.info.EngineEdition = int(edition)
+				d.server.info.EngineEdition = edition
 				if err := r.read(d); !errors.Is(err, ErrUnsupportedVersion) {
 					t.Fatalf("edition %d: err = %v, want ErrUnsupportedVersion", edition, err)
 				}
@@ -94,7 +94,7 @@ func TestAzureSingleRowReadsReportAnEmptyViewAsNotFound(t *testing.T) {
 		}
 		t.Run(r.name, func(t *testing.T) {
 			d := qsRecDB(t, 17, nil, nil)
-			d.server.info.EngineEdition = int(EngineAzureManagedInst)
+			d.server.info.EngineEdition = EngineAzureManagedInst
 			if err := r.read(d); !errors.Is(err, ErrNotFound) {
 				t.Fatalf("err = %v, want ErrNotFound", err)
 			}
@@ -112,7 +112,7 @@ func TestAzureResourceReadsBindTheirArguments(t *testing.T) {
 	ctx := context.Background()
 	newDB := func(t *testing.T) *Database {
 		d := qsRecDB(t, 17, nil, nil)
-		d.server.info.EngineEdition = int(EngineAzureManagedInst)
+		d.server.info.EngineEdition = EngineAzureManagedInst
 		return d
 	}
 	cases := []struct {

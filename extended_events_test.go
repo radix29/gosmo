@@ -215,7 +215,7 @@ func TestEventSessionStateAndDropStatements(t *testing.T) {
 	if err := es.Drop(ctx); err != nil {
 		t.Fatal(err)
 	}
-	azure := &Server{info: &ServerInfo{EngineEdition: int(EngineAzureSQLDatabase)}}
+	azure := &Server{info: &ServerInfo{EngineEdition: EngineAzureSQLDatabase}}
 	db := azure.DatabaseRef("AppDB").XEvents().SessionRef("d")
 	if err := db.Start(ctx); err != nil {
 		t.Fatal(err)
@@ -242,7 +242,7 @@ func TestEventSessionStateAndDropStatements(t *testing.T) {
 func TestDatabaseScopedEventSessionsRefusedOffAzure(t *testing.T) {
 	ctx, col := WithScript(context.Background())
 	for _, edition := range []EngineEdition{EngineEnterprise, EngineStandard, 0} {
-		s := &Server{info: &ServerInfo{EngineEdition: int(edition), VersionMajor: 17}}
+		s := &Server{info: &ServerInfo{EngineEdition: edition, VersionMajor: 17}}
 		d := s.DatabaseRef("AppDB")
 		es := d.XEvents().SessionRef("d")
 		spec := EventSessionDefinition{Name: "d", Events: []SessionEvent{{Package: "sqlserver", Name: "sql_batch_completed"}}}

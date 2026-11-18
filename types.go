@@ -4,6 +4,7 @@
 package gosmo
 
 import (
+	"strconv"
 	"strings"
 	"time"
 )
@@ -43,7 +44,9 @@ const MinimumServerVersion = SQLServer2016
 
 // EngineEdition values as returned by SERVERPROPERTY('EngineEdition') and
 // carried in ServerInfo.EngineEdition. 7 is unassigned and 10 was never
-// shipped publicly, so the list is deliberately not contiguous.
+// shipped publicly, so the list is deliberately not contiguous. 11 is shared
+// by Azure Synapse serverless SQL pool and Microsoft Fabric's SQL analytics
+// endpoint and Warehouse.
 type EngineEdition int
 
 const (
@@ -56,7 +59,32 @@ const (
 	EngineAzureManagedInst  EngineEdition = 8
 	EngineAzureSQLEdge      EngineEdition = 9
 	EngineAzureSynapseSrvls EngineEdition = 11
+	EngineFabricSQLDatabase EngineEdition = 12
 )
+
+// engineEditionNames is the name SSMS's server General page shows for each
+// edition.
+var engineEditionNames = map[EngineEdition]string{
+	EnginePersonal:          "Personal/Desktop Engine",
+	EngineStandard:          "Standard",
+	EngineEnterprise:        "Enterprise",
+	EngineExpress:           "Express",
+	EngineAzureSQLDatabase:  "SQL Database",
+	EngineAzureSynapse:      "SQL Data Warehouse",
+	EngineAzureManagedInst:  "Managed Instance",
+	EngineAzureSQLEdge:      "SQL Edge",
+	EngineAzureSynapseSrvls: "Azure Synapse serverless SQL pool / Fabric",
+	EngineFabricSQLDatabase: "SQL database in Fabric",
+}
+
+// String is the edition's name as SSMS shows it, or the bare number for one
+// this build does not know.
+func (e EngineEdition) String() string {
+	if name, ok := engineEditionNames[e]; ok {
+		return name
+	}
+	return strconv.Itoa(int(e))
+}
 
 // IsAzure reports whether e is one of the Azure-hosted engine editions, whose
 // ProductVersion is a fixed compatibility fiction rather than a feature level:
@@ -67,10 +95,19 @@ const (
 func (e EngineEdition) IsAzure() bool {
 	switch e {
 	case EngineAzureSQLDatabase, EngineAzureSynapse, EngineAzureManagedInst,
-		EngineAzureSQLEdge, EngineAzureSynapseSrvls:
+		EngineAzureSQLEdge, EngineAzureSynapseSrvls, EngineFabricSQLDatabase:
 		return true
 	}
 	return false
+}
+
+// IsDatabaseScoped reports whether e is an engine that hosts single databases
+// rather than an instance — Azure SQL Database and SQL database in Fabric: no
+// USE to another database, no msdb, no server-scoped catalog (logins, Agent,
+// server audits, replication). Ask this, never a comparison with
+// EngineAzureSQLDatabase: a site that named the one constant missed Fabric's.
+func (e EngineEdition) IsDatabaseScoped() bool {
+	return e == EngineAzureSQLDatabase || e == EngineFabricSQLDatabase
 }
 
 // RecoveryModel mirrors SQL Server recovery model options.
@@ -547,11 +584,12 @@ type ServerInfo struct {
 	IsClustered    bool
 	IsHADREnabled  bool
 	IsSingleUser   bool
-	// EngineEdition is SERVERPROPERTY('EngineEdition'). Compare it against
-	// the Engine* constants; ServerInfo.IsAzure is the test every version
-	// gate wants, since an Azure edition's ProductVersion says nothing about
-	// what the instance can do.
-	EngineEdition int
+	// EngineEdition is SERVERPROPERTY('EngineEdition'). Prefer the
+	// derivations — IsAzure (what every version gate wants, since an Azure
+	// edition's ProductVersion says nothing about what the instance can do),
+	// IsDatabaseScoped, IsManagedInstance — to comparing it with an Engine*
+	// constant.
+	EngineEdition EngineEdition
 	// OSVersion is @@VERSION verbatim: the multi-line SQL Server product
 	// banner, whose last line names the host OS. Despite the name it is not
 	// an OS version string, and it is unfit for a fixed-width label/value row
@@ -593,11 +631,26 @@ type ServerInfo struct {
 }
 
 // IsAzure reports whether the connected instance is one of the Azure-hosted
-// engine editions — SQL Database, Managed Instance, Synapse, SQL Edge. On
-// those, VersionMajor is a fixed number Azure returns for compatibility (12 on
-// a Managed Instance) and is not the feature level; read it for display only.
+// engine editions — SQL Database, Managed Instance, Synapse, SQL Edge, Fabric.
+// On those, VersionMajor is a fixed number Azure returns for compatibility (12
+// on a Managed Instance) and is not the feature level; read it for display
+// only.
 func (i *ServerInfo) IsAzure() bool {
-	return i != nil && EngineEdition(i.EngineEdition).IsAzure()
+	return i != nil && i.EngineEdition.IsAzure()
+}
+
+// IsDatabaseScoped reports whether the connection is to a single-database
+// engine (EngineEdition.IsDatabaseScoped). A nil ServerInfo is not: with
+// nothing read, the instance is assumed, as everywhere else.
+func (i *ServerInfo) IsDatabaseScoped() bool {
+	return i != nil && i.EngineEdition.IsDatabaseScoped()
+}
+
+// IsManagedInstance reports whether the connection is to Azure SQL Managed
+// Instance: an instance (msdb, Agent, server scope) with Azure's limits on
+// files, backups and ALTER DATABASE.
+func (i *ServerInfo) IsManagedInstance() bool {
+	return i != nil && i.EngineEdition == EngineAzureManagedInst
 }
 
 // IsWindows reports whether the server host uses Windows path conventions.
@@ -630,7 +683,7 @@ func (i *ServerInfo) SupportsBackupCompression() bool {
 	if i == nil {
 		return true
 	}
-	switch EngineEdition(i.EngineEdition) {
+	switch i.EngineEdition {
 	case EngineEnterprise, EngineAzureManagedInst:
 		return true
 	case EngineStandard:
@@ -651,7 +704,7 @@ func (i *ServerInfo) SupportsOnlineIndexOperations() bool {
 	if i == nil {
 		return true
 	}
-	switch EngineEdition(i.EngineEdition) {
+	switch i.EngineEdition {
 	case EngineEnterprise, EngineAzureSQLDatabase, EngineAzureManagedInst:
 		return true
 	}

@@ -12,6 +12,7 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"unicode/utf8"
 )
 
 func mustConverter(t *testing.T, c BulkColumn) func(any) (any, error) {
@@ -387,5 +388,21 @@ func TestBulkLoadConvertsEachValue(t *testing.T) {
 	}
 	if n != 1 || len(bulkFake.execs) != 1 {
 		t.Errorf("load sent %d rows (count %d) before the bad one, want 1", len(bulkFake.execs), n)
+	}
+}
+
+// TestTruncateForErrorKeepsUTF8Valid: a multi-byte rune straddling byte 40
+// is dropped whole, not cut in half (an invalid sequence in the message).
+func TestTruncateForErrorKeepsUTF8Valid(t *testing.T) {
+	s := strings.Repeat("a", 39) + "é" + strings.Repeat("b", 10) // é is bytes 39–40
+	got := truncateForError(s)
+	if !utf8.ValidString(got) {
+		t.Fatalf("truncateForError(%q) = %q, not valid UTF-8", s, got)
+	}
+	if want := strings.Repeat("a", 39) + "…"; got != want {
+		t.Errorf("truncateForError(%q) = %q, want %q", s, got, want)
+	}
+	if short := "é"; truncateForError(short) != short {
+		t.Errorf("a short string must come back unchanged")
 	}
 }

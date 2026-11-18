@@ -483,7 +483,7 @@ func TestCreateLoginContextScriptsCreateThenAlter(t *testing.T) {
 		want []string
 	}{
 		{"one atomic batch", &Server{}, []string{atomicBatch(halves)}},
-		{"Azure SQL Database", &Server{info: &ServerInfo{EngineEdition: int(EngineAzureSQLDatabase)}}, halves},
+		{"Azure SQL Database", &Server{info: &ServerInfo{EngineEdition: EngineAzureSQLDatabase}}, halves},
 	} {
 		ctx, script := WithScript(context.Background())
 		if _, err := c.s.CreateLogin(ctx, req); err != nil {

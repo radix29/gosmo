@@ -62,7 +62,7 @@ func TestUsersJoinsLoginsExceptOnAzureSQLDatabase(t *testing.T) {
 		row := userRow()
 		row[8], row[9] = nil, nil // the CAST(NULL …) columns
 		d := qsRecDB(t, 17, userCols, [][]driver.Value{row})
-		d.server.info.EngineEdition = int(tc.edition)
+		d.server.info.EngineEdition = tc.edition
 		users, err := d.Users(t.Context())
 		if err != nil || len(users) != 1 {
 			t.Fatalf("edition %d: Users = %v, %v", tc.edition, users, err)

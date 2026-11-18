@@ -13,7 +13,7 @@ classDiagram
         +IsClustered bool
         +IsHADREnabled bool
         +IsSingleUser bool
-        +EngineEdition int
+        +EngineEdition EngineEdition
         +OSVersion string
         +Platform string
         +PhysicalMemoryMB int64
@@ -27,10 +27,13 @@ classDiagram
         +VersionMinor int
         +VersionBuild int
         +IsAzure() bool
+        +IsDatabaseScoped() bool
+        +IsManagedInstance() bool
         +SupportsBackupCompression() bool
         +SupportsOnlineIndexOperations() bool
         EngineEdition is SERVERPROPERTY('EngineEdition');
-        IsAzure folds the five Azure-hosted ones.
+        IsAzure folds the six Azure-hosted ones;
+        IsDatabaseScoped is SQL Database and Fabric.
         ProductVersion is frozen on Azure — a Managed
         Instance answers 12.0.2000.8 while running an
         18.x engine, so no version gate may believe it.
@@ -47,7 +50,10 @@ classDiagram
         EngineAzureManagedInst
         EngineAzureSQLEdge
         EngineAzureSynapseSrvls
+        EngineFabricSQLDatabase
         +IsAzure() bool
+        +IsDatabaseScoped() bool
+        +String() string
     }
 
     %% =========================================================

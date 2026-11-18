@@ -137,7 +137,7 @@ func TestServerInfoSupportsBackupCompression(t *testing.T) {
 		{EngineAzureManagedInst, "SQL Azure", true},
 		{EngineAzureSQLDatabase, "SQL Azure", false},
 	} {
-		info := &ServerInfo{EngineEdition: int(tc.engine), Edition: tc.edition}
+		info := &ServerInfo{EngineEdition: tc.engine, Edition: tc.edition}
 		if got := info.SupportsBackupCompression(); got != tc.want {
 			t.Errorf("%d %q: SupportsBackupCompression = %v, want %v", tc.engine, tc.edition, got, tc.want)
 		}
@@ -165,7 +165,7 @@ func TestServerInfoSupportsOnlineIndexOperations(t *testing.T) {
 		{EngineAzureManagedInst, "SQL Azure", true},
 		{EngineAzureSQLEdge, "Azure SQL Edge", false},
 	} {
-		info := &ServerInfo{EngineEdition: int(tc.engine), Edition: tc.edition}
+		info := &ServerInfo{EngineEdition: tc.engine, Edition: tc.edition}
 		if got := info.SupportsOnlineIndexOperations(); got != tc.want {
 			t.Errorf("%d %q: SupportsOnlineIndexOperations = %v, want %v", tc.engine, tc.edition, got, tc.want)
 		}
@@ -191,8 +191,8 @@ func TestServerInfoSupported(t *testing.T) {
 		{&ServerInfo{VersionMajor: 13, VersionBuild: 4001}, true},
 		{&ServerInfo{VersionMajor: 13, VersionBuild: 6300}, true},
 		{&ServerInfo{VersionMajor: 14, VersionBuild: 1000}, true},
-		{&ServerInfo{VersionMajor: 12, EngineEdition: int(EngineAzureManagedInst)}, true},
-		{&ServerInfo{VersionMajor: 12, EngineEdition: int(EngineAzureSQLDatabase)}, true},
+		{&ServerInfo{VersionMajor: 12, EngineEdition: EngineAzureManagedInst}, true},
+		{&ServerInfo{VersionMajor: 12, EngineEdition: EngineAzureSQLDatabase}, true},
 	} {
 		if got := c.info.Supported(); got != c.want {
 			t.Errorf("%+v: Supported = %v, want %v", c.info, got, c.want)
