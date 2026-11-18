@@ -919,7 +919,7 @@ func TestAForcedWriteUnderWithScriptReadsNoAccessMode(t *testing.T) {
 func TestAForcedDropOnAManagedInstanceKillsSessionsInsteadOfSingleUser(t *testing.T) {
 	for _, fail := range []bool{false, true} {
 		s := detServer(t)
-		s.info = &ServerInfo{EngineEdition: int(EngineAzureManagedInst)}
+		s.info = &ServerInfo{EngineEdition: EngineAzureManagedInst}
 		if fail {
 			detLog.mu.Lock()
 			detLog.failOn = "DROP DATABASE"
@@ -949,7 +949,7 @@ func TestAForcedDropOnAManagedInstanceKillsSessionsInsteadOfSingleUser(t *testin
 // rename's half of the same refusal.
 func TestAForcedRenameOnAManagedInstanceKillsSessionsInsteadOfSingleUser(t *testing.T) {
 	s := detServer(t)
-	s.info = &ServerInfo{EngineEdition: int(EngineAzureManagedInst)}
+	s.info = &ServerInfo{EngineEdition: EngineAzureManagedInst}
 	if err := s.DatabaseRef("AppDB").Rename(context.Background(), "AppDB2", TerminationRollbackImmediate); err != nil {
 		t.Fatalf("Database.Rename: %v", err)
 	}
@@ -964,7 +964,7 @@ func TestAForcedRenameOnAManagedInstanceKillsSessionsInsteadOfSingleUser(t *test
 // on the edition, and every other one keeps ROLLBACK IMMEDIATE.
 func TestAForcedDropOnPremStillUsesSingleUser(t *testing.T) {
 	s := detServer(t)
-	s.info = &ServerInfo{EngineEdition: int(EngineEnterprise)}
+	s.info = &ServerInfo{EngineEdition: EngineEnterprise}
 	if err := s.DatabaseRef("appdb").Drop(context.Background(), TerminationRollbackImmediate); err != nil {
 		t.Fatalf("Database.Drop: %v", err)
 	}
@@ -997,7 +997,7 @@ func TestWithScriptForcedExclusiveWritesAreOneStatement(t *testing.T) {
 			}
 			s := &Server{}
 			if mi {
-				s.info = &ServerInfo{EngineEdition: int(EngineAzureManagedInst)}
+				s.info = &ServerInfo{EngineEdition: EngineAzureManagedInst}
 			}
 			ctx, script := WithScript(context.Background())
 			if err := write(ctx, s); err != nil {

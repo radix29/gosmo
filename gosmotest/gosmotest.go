@@ -82,9 +82,9 @@ type Info struct {
 	ProductVersion string // "16.0.4135.4": the major version gates gosmo's reads
 	ProductLevel   string
 	Collation      string
-	EngineEdition  int    // gosmo.EngineEdition: 3 Enterprise, 5 Azure SQL Database, 8 Managed Instance
-	Version        string // @@VERSION; its "on Linux" or "on Windows" sets Info.Platform
-	Login          string // SUSER_NAME()
+	EngineEdition  gosmo.EngineEdition // 3 Enterprise, 5 Azure SQL Database, 8 Managed Instance
+	Version        string              // @@VERSION; its "on Linux" or "on Windows" sets Info.Platform
+	Login          string              // SUSER_NAME()
 	DataPath       string
 	LogPath        string
 	BackupPath     string

@@ -75,7 +75,7 @@ func filestreamFile() *DatabaseFileInfo {
 // refused before anything is captured or sent.
 func TestShrinkRefusals(t *testing.T) {
 	old := &Database{server: &Server{info: &ServerInfo{VersionMajor: 15}}, Name: "AppDB"}
-	azure := &Database{server: &Server{info: &ServerInfo{VersionMajor: 12, EngineEdition: int(EngineAzureManagedInst)}}, Name: "AppDB"}
+	azure := &Database{server: &Server{info: &ServerInfo{VersionMajor: 12, EngineEdition: EngineAzureManagedInst}}, Name: "AppDB"}
 	cases := []struct {
 		name string
 		call func(context.Context) error
@@ -175,7 +175,7 @@ func TestSupportsShrinkLowPriority(t *testing.T) {
 		{&ServerInfo{VersionMajor: 15}, false},
 		{&ServerInfo{VersionMajor: 16}, true},
 		{&ServerInfo{VersionMajor: 17}, true},
-		{&ServerInfo{VersionMajor: 12, EngineEdition: int(EngineAzureManagedInst)}, true},
+		{&ServerInfo{VersionMajor: 12, EngineEdition: EngineAzureManagedInst}, true},
 	} {
 		if got := c.info.SupportsShrinkLowPriority(); got != c.want {
 			t.Errorf("%+v: SupportsShrinkLowPriority = %v, want %v", c.info, got, c.want)

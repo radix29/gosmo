@@ -83,11 +83,9 @@ func endpointURL(host string, port int) string {
 }
 
 // DatabaseMirroringEndpoint returns the instance's database mirroring
-// endpoint, or nil when it has none.
-//
-// Returns (nil, nil) when the instance has no such endpoint — a normal state
-// on an instance that has never been put in an availability group, and not an
-// error.
+// endpoint, or an error wrapping ErrNotFound when it has none — a normal state
+// on an instance that has never been put in an availability group, so a
+// caller branches on errors.Is(err, ErrNotFound).
 func (s *Server) DatabaseMirroringEndpoint(ctx context.Context) (*DatabaseMirroringEndpoint, error) {
 	const q = `
 	SELECT e.name, ISNULL(t.port, 0), ISNULL(e.state_desc,''),
@@ -108,7 +106,7 @@ func (s *Server) DatabaseMirroringEndpoint(ctx context.Context) (*DatabaseMirror
 		if err := rows.Err(); err != nil {
 			return nil, fmt.Errorf("gosmo: read database mirroring endpoint on %q: %w", s.Name(), err)
 		}
-		return nil, nil
+		return nil, notFoundf("gosmo: %q has no database mirroring endpoint", s.Name())
 	}
 	e := &DatabaseMirroringEndpoint{server: s}
 	if err := rows.Scan(&e.Name, &e.Port, &e.State, &e.Role, &e.IsEncryptionEnabled,
@@ -260,7 +258,7 @@ func (s *Server) CreateDatabaseMirroringEndpoint(ctx context.Context, spec Creat
 	}
 	if Scripting(ctx) {
 		// The read-back is a real query and the CREATE above was only
-		// collected, so it would find no endpoint and return (nil, nil) —
+		// collected, so it would find no endpoint and return ErrNotFound —
 		// indistinguishable from a failed create, and leaving the caller
 		// nothing to script the GRANT CONNECTs and the ALTERs against. Hand
 		// out a handle built from the spec, as every other scripted create
@@ -268,7 +266,7 @@ func (s *Server) CreateDatabaseMirroringEndpoint(ctx context.Context, spec Creat
 		return spec.handle(s), nil
 	}
 	e, err := s.DatabaseMirroringEndpoint(ctx)
-	if err == nil && e == nil {
+	if errors.Is(err, ErrNotFound) {
 		// Created, but not visible to this principal — see createdObject.
 		return spec.handle(s), nil
 	}
@@ -491,13 +489,14 @@ func (e *Endpoint) refuseSystem(verb string) error {
 // MirroringDetail reads the database mirroring settings of a
 // DATABASE_MIRRORING endpoint — role, encryption and connection auth.
 //
-// It returns (nil, nil) for an endpoint that is not a mirroring one, matching
-// DatabaseMirroringEndpoint's convention: a caller asking every
-// endpoint for its mirroring detail branches on absence as the ordinary case.
-// An instance has at most one mirroring endpoint, so the read needs no name.
+// It returns an error wrapping ErrNotFound for an endpoint that is not a
+// mirroring one, matching DatabaseMirroringEndpoint: a caller asking every
+// endpoint for its mirroring detail branches on errors.Is(err, ErrNotFound) as
+// the ordinary case. An instance has at most one mirroring endpoint, so the
+// read needs no name.
 func (e *Endpoint) MirroringDetail(ctx context.Context) (*DatabaseMirroringEndpoint, error) {
 	if e.Type != "DATABASE_MIRRORING" {
-		return nil, nil
+		return nil, notFoundf("gosmo: endpoint %q is not a database mirroring endpoint", e.Name)
 	}
 	return e.server.DatabaseMirroringEndpoint(ctx)
 }
@@ -529,11 +528,11 @@ type ServiceBrokerEndpointDetail struct {
 // ServiceBrokerDetail reads the Service Broker settings of a SERVICE_BROKER
 // endpoint.
 //
-// It returns (nil, nil) for an endpoint that is not a Service Broker one, the
-// same convention MirroringDetail follows.
+// It returns an error wrapping ErrNotFound for an endpoint that is not a
+// Service Broker one, the same convention MirroringDetail follows.
 func (e *Endpoint) ServiceBrokerDetail(ctx context.Context) (*ServiceBrokerEndpointDetail, error) {
 	if e.Type != "SERVICE_BROKER" {
-		return nil, nil
+		return nil, notFoundf("gosmo: endpoint %q is not a service broker endpoint", e.Name)
 	}
 	d := &ServiceBrokerEndpointDetail{}
 	err := e.server.queryRowScan(ctx, `

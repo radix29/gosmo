@@ -33,7 +33,10 @@ import (
 //     SymmetricKeyByName and the scripter's lookups among them — returns an
 //     error wrapping ErrNotFound. CertificateByName and AsymmetricKeyByName
 //     answered (nil, nil) instead until 2026-09-22. ScheduleByName also
-//     returns ErrAmbiguous for a name two schedules share.
+//     returns ErrAmbiguous for a name two schedules share. The optional
+//     singletons — Database.MasterKey, Server.DatabaseMirroringEndpoint,
+//     Endpoint.MirroringDetail and Endpoint.ServiceBrokerDetail — report
+//     "none" the same way; they answered (nil, nil) until 2026-11-17.
 //   - AgentInfo reports an unreachable Agent as a populated value
 //     (StatusText "Unknown"), not an error.
 //

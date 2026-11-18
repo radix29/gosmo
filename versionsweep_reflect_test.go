@@ -90,6 +90,11 @@ func (sw *sweep) call(label string, fn func() error) {
 	case strings.HasPrefix(label, "Database.EncryptionKey") && errors.Is(err, ErrNotFound):
 		// The sweep's database is not TDE-encrypted, so "no key" is the
 		// read working.
+	case (strings.HasPrefix(label, "Database.MasterKey ") ||
+		strings.HasPrefix(label, "Server.DatabaseMirroringEndpoint ")) && errors.Is(err, ErrNotFound):
+		// Optional singletons: the sweep's database has no master key, and
+		// an instance never put in an availability group has no mirroring
+		// endpoint — "none" is the read working.
 	default:
 		sw.failed = append(sw.failed, fmt.Sprintf("%s: %v", label, err))
 	}

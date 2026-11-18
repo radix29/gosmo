@@ -124,7 +124,7 @@ func TestSecretsNeverCapturedOrObserved(t *testing.T) {
 	// Azure SQL Database takes contained users without the containment read
 	// CreateUser otherwise makes — reads go to the server even under
 	// WithScript, and these servers have none.
-	azure := &ServerInfo{EngineEdition: int(EngineAzureSQLDatabase)}
+	azure := &ServerInfo{EngineEdition: EngineAzureSQLDatabase}
 	for _, w := range secretWrites() {
 		t.Run(w.name, func(t *testing.T) {
 			// Captured: redacted by default.

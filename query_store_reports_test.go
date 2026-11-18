@@ -6,6 +6,7 @@ import (
 	"database/sql/driver"
 	"errors"
 	"io"
+	"reflect"
 	"slices"
 	"strings"
 	"sync"
@@ -469,6 +470,29 @@ func TestQueryStoreReportOptionsResolveFillsDefaults(t *testing.T) {
 	if !sp.opts.BaselineTo.Equal(from) || !sp.opts.BaselineFrom.Equal(from.Add(-6*time.Hour)) {
 		t.Errorf("baseline = [%v, %v), want [%v, %v)",
 			sp.opts.BaselineFrom, sp.opts.BaselineTo, from.Add(-6*time.Hour), from)
+	}
+}
+
+// TestQueryStoreReportOptionsEffectiveIsWhatTheReadUses pins Effective to
+// resolve: a caller labelling a report from Effective names what the query
+// ranked by. It validates nothing, so an unknown name comes back as given.
+func TestQueryStoreReportOptionsEffectiveIsWhatTheReadUses(t *testing.T) {
+	to := time.Date(2026, 3, 4, 12, 0, 0, 0, time.UTC)
+	for _, o := range []QueryStoreReportOptions{
+		{To: to},
+		{To: to, Metric: QSMetricCPUTime},
+		{To: to, Statistic: QSStatMax, Top: 7},
+	} {
+		sp, err := o.resolve()
+		if err != nil {
+			t.Fatalf("resolve(%+v): %v", o, err)
+		}
+		if got := o.Effective(); !reflect.DeepEqual(got, sp.opts) {
+			t.Errorf("Effective(%+v) = %+v, resolve used %+v", o, got, sp.opts)
+		}
+	}
+	if got := (QueryStoreReportOptions{Metric: "nope"}).Effective().Metric; got != "nope" {
+		t.Errorf("Effective rewrote an unknown metric to %q", got)
 	}
 }
 

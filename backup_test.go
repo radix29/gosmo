@@ -747,7 +747,7 @@ func TestBuildRestoreStatementClosesConnectionsInTheSameBatch(t *testing.T) {
 // instead, in the same batch, and touches no access mode.
 func TestServerBuildRestoreStatementKillsSessionsOnAManagedInstance(t *testing.T) {
 	opts := RestoreOptions{Database: "AppDB", Devices: []BackupTarget{DiskTarget("d.bak")}, CloseExistingConnections: true}
-	mi := &Server{info: &ServerInfo{EngineEdition: int(EngineAzureManagedInst)}}
+	mi := &Server{info: &ServerInfo{EngineEdition: EngineAzureManagedInst}}
 	got, err := mi.BuildRestoreStatement(opts)
 	if err != nil {
 		t.Fatalf("BuildRestoreStatement: %v", err)
@@ -760,7 +760,7 @@ func TestServerBuildRestoreStatementKillsSessionsOnAManagedInstance(t *testing.T
 		t.Errorf("Managed Instance statement sets an access mode it refuses:\n%s", got)
 	}
 
-	onPrem := &Server{info: &ServerInfo{EngineEdition: int(EngineEnterprise)}}
+	onPrem := &Server{info: &ServerInfo{EngineEdition: EngineEnterprise}}
 	got, err = onPrem.BuildRestoreStatement(opts)
 	want, _ := (&Server{}).BuildRestoreStatement(opts)
 	if err != nil || got != want {
@@ -834,7 +834,7 @@ func TestAFailedRestoreLeavesAnAccessModeItDidNotSet(t *testing.T) {
 	} {
 		s := detServer(t)
 		if c.mi {
-			s.info = &ServerInfo{EngineEdition: int(EngineAzureManagedInst)}
+			s.info = &ServerInfo{EngineEdition: EngineAzureManagedInst}
 		}
 		if c.server {
 			detFailOn("RESTORE DATABASE")

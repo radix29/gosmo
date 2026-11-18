@@ -91,7 +91,7 @@ func TestBuildAtLeast(t *testing.T) {
 		{"2016 SP3", &ServerInfo{VersionMajor: 13, VersionBuild: 6500}, true},
 		{"2017 RTM, a lower build of a later major", &ServerInfo{VersionMajor: 14, VersionBuild: 1000}, true},
 		{"2014, below the major", &ServerInfo{VersionMajor: 12, VersionBuild: 9000}, false},
-		{"Managed Instance reporting 12", &ServerInfo{VersionMajor: 12, VersionBuild: 2000, EngineEdition: int(EngineAzureManagedInst)}, true},
+		{"Managed Instance reporting 12", &ServerInfo{VersionMajor: 12, VersionBuild: 2000, EngineEdition: EngineAzureManagedInst}, true},
 	} {
 		if got := buildAtLeast(c.info, SQLServer2016, logInfoBuild); got != c.want {
 			t.Errorf("%s: buildAtLeast = %v, want %v", c.name, got, c.want)

@@ -108,6 +108,9 @@ func TestWithRetryHonoursContextCancel(t *testing.T) {
 	if !errors.Is(err, context.Canceled) {
 		t.Errorf("err = %v, want context.Canceled", err)
 	}
+	if !errors.Is(err, driver.ErrBadConn) {
+		t.Errorf("err = %v, want the transient error that caused the retry kept", err)
+	}
 	if calls != 1 {
 		t.Errorf("calls = %d, want 1 (cancelled before retry)", calls)
 	}

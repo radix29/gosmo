@@ -36,6 +36,10 @@ type mapRecorder struct {
 	// mappings answers userMappingsQuery: rows of (DB_NAME(), principal_id,
 	// user name, default schema, role name or nil), keyed by database.
 	mappings map[string][][]driver.Value
+
+	// masterKeys names the databases HasMasterKey finds a master key in
+	// (master_key_test.go).
+	masterKeys map[string]bool
 }
 
 var mapLog mapRecorder
@@ -125,8 +129,15 @@ func (c *mapConn) QueryContext(_ context.Context, q string, args []driver.NamedV
 			return &detRows{cols: make([]string, 5)}, nil
 		}
 		return &detRows{cols: make([]string, 5), rows: mapLog.mappings[strings.Trim(db, "[]")]}, nil
+	case strings.Contains(rest, "is_master_key_encrypted_by_server = 1") && strings.Contains(rest, "THEN 1 ELSE 0 END"):
+		has := int64(0)
+		if mapLog.masterKeys[strings.Trim(db, "[]")] {
+			has = 1
+		}
+		return &detRows{cols: make([]string, 1), rows: [][]driver.Value{{has}}}, nil
 	}
-	// Anything else — CreateUser's read-back among them — finds nothing.
+	// Anything else — CreateUser's and CreateMasterKey's read-backs among
+	// them — finds nothing.
 	return &detRows{cols: make([]string, 1)}, nil
 }
 
@@ -145,6 +156,7 @@ func mapServer(t *testing.T) *Server {
 	mapLog.databases = map[string]bool{"Sales": true}
 	mapLog.sids = map[string][]byte{"alice": mapTestSID}
 	mapLog.mappings = map[string][][]driver.Value{}
+	mapLog.masterKeys = map[string]bool{"Keyed": true}
 	mapLog.mu.Unlock()
 	return &Server{db: pool}
 }

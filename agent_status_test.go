@@ -13,7 +13,7 @@ import (
 func agentStatusServer(t *testing.T, edition EngineEdition, cols []string, rows [][]driver.Value) *Server {
 	t.Helper()
 	s := qsRecDB(t, 17, cols, rows).server
-	s.info.EngineEdition = int(edition)
+	s.info.EngineEdition = edition
 	return s
 }
 

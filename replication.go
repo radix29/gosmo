@@ -51,12 +51,12 @@ import (
 // any user of that database. A read refused for a permission returns the
 // server's error.
 
-// refuseAzureReplication refuses what on Azure SQL Database, which has no
-// replication catalog: it can only be a push subscriber, and keeps no
+// refuseAzureReplication refuses what on a single-database engine (Azure SQL
+// Database, SQL database in Fabric), which has no replication catalog: it can only be a push subscriber, and keeps no
 // subscriber-side tables a login could read.
 func (s *Server) refuseAzureReplication(what string) error {
-	if s.info != nil && EngineEdition(s.info.EngineEdition) == EngineAzureSQLDatabase {
-		return unsupportedVersionf("gosmo: %s: Azure SQL Database has no replication catalog", what)
+	if s.info.IsDatabaseScoped() {
+		return unsupportedVersionf("gosmo: %s: %s has no replication catalog", what, s.info.EngineEdition)
 	}
 	return nil
 }

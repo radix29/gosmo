@@ -137,7 +137,7 @@ func TestPrincipalsJoinsLoginsExceptOnAzureSQLDatabase(t *testing.T) {
 		{EngineAzureSQLDatabase, false},
 	} {
 		d := qsRecDB(t, 17, principalCols, nil)
-		d.server.info.EngineEdition = int(tc.edition)
+		d.server.info.EngineEdition = tc.edition
 		if _, err := d.Principals(t.Context()); err != nil {
 			t.Fatalf("edition %d: %v", tc.edition, err)
 		}

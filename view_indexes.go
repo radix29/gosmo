@@ -99,6 +99,12 @@ func (v *View) RebuildAllIndexesWith(ctx context.Context, opts IndexRebuildOptio
 	return v.carrier().RebuildAllIndexesWith(ctx, opts)
 }
 
+// RebuildAllIndexesScript returns the batch RebuildAllIndexesWith would run
+// on the view — see Table.RebuildAllIndexesScript.
+func (v *View) RebuildAllIndexesScript(ctx context.Context, opts IndexRebuildOptions) (string, error) {
+	return v.carrier().RebuildAllIndexesScript(ctx, opts)
+}
+
 // ReorganizeAllIndexes reorganizes every index on the view — see
 // Table.ReorganizeAllIndexes.
 func (v *View) ReorganizeAllIndexes(ctx context.Context) error {

@@ -172,7 +172,7 @@ func (s *Server) CurrentLogin(ctx context.Context) (string, error) {
 // DATABASE statement is not supported" (verified live, 2026-09-11) — and a
 // forced drop that led with it failed before reaching the DROP at all.
 func (s *Server) refusesSingleUser() bool {
-	return s.info != nil && EngineEdition(s.info.EngineEdition) == EngineAzureManagedInst
+	return s.info.IsManagedInstance()
 }
 
 // fromMaster prefixes stmt with USE [master] in the same batch, for a
@@ -699,7 +699,7 @@ func (s *Server) loadInfo(ctx context.Context) error {
 	info.IsClustered = isClustered.Int64 == 1
 	info.IsHADREnabled = isHADR.Int64 == 1
 	info.IsSingleUser = isSingleUser.Int64 == 1
-	info.EngineEdition = int(engineEdition.Int64)
+	info.EngineEdition = EngineEdition(engineEdition.Int64)
 	info.OSVersion = osVer.String
 	info.Platform = platformFromVersionString(osVer.String)
 	info.PhysicalMemoryMB = memMB.Int64

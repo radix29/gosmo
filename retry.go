@@ -126,7 +126,9 @@ func readRetryDelay(attempt int) time.Duration {
 // readRetryAttempts times with a short backoff between tries. It is meant only
 // for idempotent operations — a single read that can be re-run safely — and
 // never inside InTransaction. A cancelled ctx stops the retry loop and returns
-// ctx's error.
+// ctx's error joined with the transient error that caused the retry —
+// errors.Is(err, context.Canceled) still holds, and the cause (the useful part
+// when a deadline ends a flapping read) is not lost.
 //
 // It covers what fn returns, nothing later: a deadlock or a dropped connection
 // that surfaces while the caller is iterating rows it was already handed
@@ -145,7 +147,7 @@ func withRetry[T any](ctx context.Context, fn func() (T, error)) (T, error) {
 		select {
 		case <-ctx.Done():
 			var zero T
-			return zero, ctx.Err()
+			return zero, errors.Join(ctx.Err(), withAllMessages(err))
 		case <-time.After(readRetryDelay(attempt)):
 		}
 	}
