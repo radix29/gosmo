@@ -395,7 +395,7 @@ func TestTableScriptOptionsOmitFileFormatsOnFabric(t *testing.T) {
 			if !strings.Contains(normal, column) || !strings.Contains(normal, join) {
 				t.Fatal("SQL Server query lost its external file-format metadata")
 			}
-			db.server.IsFabricDW = true
+			db.server.fabricDW = true
 			got := table.scriptOptionsSelectWith(c.extra, c.object)
 			if strings.Contains(got, "sys.external_file_formats") || strings.Contains(got, "eff.") {
 				t.Fatal("Fabric query still references external file formats")

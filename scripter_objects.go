@@ -47,7 +47,7 @@ func (sc *Scripter) ScriptIndex(ctx context.Context, schema, table, name string)
 	if err != nil {
 		return "", err
 	}
-	script := buildIndexScript(idx, qualifiedName(schema, table), tableDS, sc.opts, sc.db.server.IsFabricDW)
+	script := buildIndexScript(idx, qualifiedName(schema, table), tableDS, sc.opts, sc.db.server.IsFabricDW())
 	if idx.IsPrimaryKey || idx.IsUniqueConstraint {
 		return sc.withTableChildExtendedProperties(ctx, script, t, idx.Name, "INDEX", "CONSTRAINT")
 	}
@@ -381,7 +381,7 @@ func (sc *Scripter) ScriptForeignKey(ctx context.Context, schema, table, name st
 
 // scriptTableForeignKey is ScriptForeignKey for a key already read.
 func (sc *Scripter) scriptTableForeignKey(ctx context.Context, t *Table, fk *ForeignKey) (string, error) {
-	return sc.withTableChildExtendedProperties(ctx, buildForeignKeyScript(fk, qualifiedName(t.Schema, t.Name), sc.opts, sc.db.server.IsFabricDW),
+	return sc.withTableChildExtendedProperties(ctx, buildForeignKeyScript(fk, qualifiedName(t.Schema, t.Name), sc.opts, sc.db.server.IsFabricDW()),
 		t, fk.Name, "CONSTRAINT")
 }
 

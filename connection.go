@@ -204,6 +204,13 @@ type ConnectionOptions struct {
 	// through it that set one.
 	DeviceCodePrompt func(ctx context.Context, m DeviceCodeMessage) error
 
+	// -- Engine ------------------------------------------------------------------
+
+	// FabricDW, when set, decides Server.IsFabricDW instead of detection: a
+	// test pointing Fabric's catalog forms at another engine, or an endpoint
+	// the rule gets wrong. Nil detects (see Server.IsFabricDW).
+	FabricDW *bool
+
 	// -- Connection pool ---------------------------------------------------------
 
 	// ConnectTimeout is the maximum time to wait for the initial connection,
@@ -321,6 +328,7 @@ func Connect(ctx context.Context, opts ConnectionOptions) (*Server, error) {
 		s.Close()
 		return nil, err
 	}
+	s.fabricDW = opts.fabricDW(s.info.EngineEdition)
 	login.setCollation(s.info.Collation)
 	if !s.info.IsDatabaseScoped() {
 		login.enableFallBack()
@@ -351,7 +359,57 @@ func NewServer(ctx context.Context, db *sql.DB) (*Server, error) {
 		s.cancel()
 		return nil, err
 	}
+	s.fabricDW = detectFabricDW(s.info.EngineEdition, "")
 	return s, nil
+}
+
+// fabricDW is Server.IsFabricDW for a Connect with o to an engine of edition
+// e: the FabricDW override, else detectFabricDW on o.Server's host.
+func (o ConnectionOptions) fabricDW(e EngineEdition) bool {
+	if o.FabricDW != nil {
+		return *o.FabricDW
+	}
+	host, _, _ := ParseServerAddress(strings.TrimSpace(o.Server))
+	return detectFabricDW(e, host)
+}
+
+// detectFabricDW is Server.IsFabricDW's rule. EngineEdition 11 is both a Fabric
+// Warehouse (or SQL analytics endpoint) and an Azure Synapse serverless SQL
+// pool, and nothing read at connect yet tells them apart, so the hostname is
+// the tiebreak: 11 is Fabric unless host is a Synapse endpoint. Fabric's
+// catalog forms are the narrower ones, so a Synapse pool behind an alias
+// errs towards reads that work. Any other known edition is not Fabric, whatever
+// the hostname. An edition gosmo does not know — 0 when the property came back
+// NULL, or one added after this was written — falls back to the hostname:
+// Fabric only under a *datawarehouse.fabric.microsoft.com name. host is "" for
+// NewServer, which has none.
+func detectFabricDW(e EngineEdition, host string) bool {
+	host = strings.TrimSuffix(strings.ToLower(host), ".")
+	if e == EngineAzureSynapseSrvls {
+		for _, suffix := range synapseDomains {
+			if strings.HasSuffix(host, suffix) {
+				return false
+			}
+		}
+		return true
+	}
+	if _, known := engineEditionNames[e]; known {
+		return false
+	}
+	return strings.HasSuffix(host, fabricDWDomain)
+}
+
+// fabricDWDomain ends every Fabric Warehouse endpoint name, its regional
+// (msit-datawarehouse…) forms included.
+const fabricDWDomain = "datawarehouse.fabric.microsoft.com"
+
+// synapseDomains end Azure Synapse serverless endpoint names, public and
+// sovereign clouds; a private link's name (…privatelink.sql.azuresynapse.net)
+// ends the same way.
+var synapseDomains = []string{
+	".sql.azuresynapse.net",
+	".sql.azuresynapse.azure.cn",
+	".sql.azuresynapse.usgovcloudapi.net",
 }
 
 // applyDefaults fills zero-value fields with sensible defaults.

@@ -35,7 +35,7 @@ FROM   sys.tables AS t
 LEFT   JOIN sys.periods p ON p.object_id = t.object_id
 LEFT   JOIN sys.data_spaces lds ON lds.data_space_id = NULLIF(t.lob_data_space_id, 0)
 LEFT   JOIN sys.data_spaces fds ON fds.data_space_id = t.filestream_data_space_id
-LEFT   JOIN sys.filetables ft ON ft.object_id = t.object_id
+LEFT   JOIN sys.filetables ft ON t.is_filetable = 1 AND ft.object_id = t.object_id
 LEFT   JOIN sys.external_tables et ON et.object_id = t.object_id
 LEFT   JOIN sys.external_data_sources eds ON eds.data_source_id = et.data_source_id
 LEFT   JOIN sys.external_file_formats eff ON eff.file_format_id = et.file_format_id
@@ -77,7 +77,7 @@ FROM   sys.tables AS t
 LEFT   JOIN sys.periods p ON p.object_id = t.object_id
 LEFT   JOIN sys.data_spaces lds ON lds.data_space_id = NULLIF(t.lob_data_space_id, 0)
 LEFT   JOIN sys.data_spaces fds ON fds.data_space_id = t.filestream_data_space_id
-LEFT   JOIN sys.filetables ft ON ft.object_id = t.object_id
+LEFT   JOIN sys.filetables ft ON t.is_filetable = 1 AND ft.object_id = t.object_id
 LEFT   JOIN sys.external_tables et ON et.object_id = t.object_id
 LEFT   JOIN sys.external_data_sources eds ON eds.data_source_id = et.data_source_id
 LEFT   JOIN sys.external_file_formats eff ON eff.file_format_id = et.file_format_id
@@ -119,7 +119,7 @@ FROM   sys.tables AS t
 LEFT   JOIN sys.periods p ON p.object_id = t.object_id
 LEFT   JOIN sys.data_spaces lds ON lds.data_space_id = NULLIF(t.lob_data_space_id, 0)
 LEFT   JOIN sys.data_spaces fds ON fds.data_space_id = t.filestream_data_space_id
-LEFT   JOIN sys.filetables ft ON ft.object_id = t.object_id
+LEFT   JOIN sys.filetables ft ON t.is_filetable = 1 AND ft.object_id = t.object_id
 LEFT   JOIN sys.external_tables et ON et.object_id = t.object_id
 LEFT   JOIN sys.external_data_sources eds ON eds.data_source_id = et.data_source_id
 LEFT   JOIN sys.external_file_formats eff ON eff.file_format_id = et.file_format_id
@@ -161,7 +161,7 @@ FROM   sys.tables AS t
 LEFT   JOIN sys.periods p ON p.object_id = t.object_id
 LEFT   JOIN sys.data_spaces lds ON lds.data_space_id = NULLIF(t.lob_data_space_id, 0)
 LEFT   JOIN sys.data_spaces fds ON fds.data_space_id = t.filestream_data_space_id
-LEFT   JOIN sys.filetables ft ON ft.object_id = t.object_id
+LEFT   JOIN sys.filetables ft ON t.is_filetable = 1 AND ft.object_id = t.object_id
 LEFT   JOIN sys.external_tables et ON et.object_id = t.object_id
 LEFT   JOIN sys.external_data_sources eds ON eds.data_source_id = et.data_source_id
 LEFT   JOIN sys.external_file_formats eff ON eff.file_format_id = et.file_format_id
@@ -203,7 +203,7 @@ FROM   sys.tables AS t
 LEFT   JOIN sys.periods p ON p.object_id = t.object_id
 LEFT   JOIN sys.data_spaces lds ON lds.data_space_id = NULLIF(t.lob_data_space_id, 0)
 LEFT   JOIN sys.data_spaces fds ON fds.data_space_id = t.filestream_data_space_id
-LEFT   JOIN sys.filetables ft ON ft.object_id = t.object_id
+LEFT   JOIN sys.filetables ft ON t.is_filetable = 1 AND ft.object_id = t.object_id
 LEFT   JOIN sys.external_tables et ON et.object_id = t.object_id
 LEFT   JOIN sys.external_data_sources eds ON eds.data_source_id = et.data_source_id
 LEFT   JOIN sys.external_file_formats eff ON eff.file_format_id = et.file_format_id

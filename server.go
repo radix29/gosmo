@@ -20,13 +20,13 @@ import (
 // Create one with Connect() and use it to enumerate or manage databases,
 // logins, server roles, linked servers, and more.
 type Server struct {
-	// IsFabricDW selects Fabric Warehouse catalog queries. Set it before
-	// issuing metadata reads and do not change it while the server is in use.
-	IsFabricDW bool
-
 	db   *sql.DB
 	info *ServerInfo
 	xe   xeCatalogCache // XEvents.Objects & co., filled on first use
+
+	// fabricDW selects Fabric Warehouse catalog queries; fixed at connect by
+	// detectFabricDW. See IsFabricDW.
+	fabricDW bool
 
 	// login is the pool's connector when Connect opened it, nil for
 	// NewServer; see InitialDatabase.
@@ -82,6 +82,13 @@ func (s *Server) bound(ctx context.Context) (_ context.Context, release func()) 
 		cancel()
 	}
 }
+
+// IsFabricDW reports whether s is a Microsoft Fabric Warehouse (or a SQL
+// analytics endpoint), whose catalog lacks much of SQL Server's: gosmo then
+// sends Fabric's forms of its catalog reads and scripts. It is decided once,
+// at Connect or NewServer, and never changes: see detectFabricDW for the rule,
+// and ConnectionOptions.FabricDW to override it.
+func (s *Server) IsFabricDW() bool { return s != nil && s.fabricDW }
 
 // DB returns the underlying *sql.DB for ad-hoc queries. A statement run on
 // it is bounded only by the context it is given; derive that from Context

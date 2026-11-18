@@ -214,6 +214,6 @@ func TestLiveKReads(t *testing.T) {
 // the rest of the test, restoring the SQL Server path afterwards.
 func setFabricDW(t *testing.T, srv *Server, fabric bool) {
 	t.Helper()
-	srv.IsFabricDW = fabric
-	t.Cleanup(func() { srv.IsFabricDW = false })
+	srv.fabricDW = fabric
+	t.Cleanup(func() { srv.fabricDW = false })
 }

@@ -83,7 +83,7 @@ func (d *Database) Dependents(ctx context.Context, schema, name string) ([]*Depe
 	if err := requireSchema("dependents", schema, name); err != nil {
 		return nil, err
 	}
-	if d.server.IsFabricDW {
+	if d.server.IsFabricDW() {
 		const q = `
 SELECT SCHEMA_NAME(o.schema_id), o.name, o.type_desc,
        CAST(MAX(CAST(sed.is_schema_bound_reference AS int)) AS bit),

@@ -101,7 +101,7 @@ func TestScriptingSkipsExtendedPropertiesOnFabric(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			d := captureDatabase(t)
-			d.server.IsFabricDW = tc.fabric
+			d.server.fabricDW = tc.fabric
 			sc := NewScripter(d, ScriptOptions{ExtendedProperties: true})
 			ctx := context.Background()
 			for name, read := range map[string]func() (string, error){

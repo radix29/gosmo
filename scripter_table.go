@@ -32,7 +32,7 @@ func (sc *Scripter) ScriptTable(ctx context.Context, schema, name string) (strin
 func (sc *Scripter) scriptTable(ctx context.Context, t *Table) (string, error) {
 	schema, name := t.Schema, t.Name
 	var err error
-	p := tableScriptParts{isFabricDW: sc.db.server.IsFabricDW}
+	p := tableScriptParts{isFabricDW: sc.db.server.IsFabricDW()}
 	pre := sc.tables
 	if pre != nil {
 		if _, ok := pre.options[t.ObjectID]; !ok {
@@ -308,6 +308,11 @@ func scanTableScriptOptions(scan func(...any) error, o *tableScriptOptions, extr
 // 2017's; -1 is INFINITE, read as 0 so that it is left implicit.
 // sys.filetables and sys.external_tables are older than gosmo's 2016 floor;
 // external_tables' rejected_row_location and table_options are 2022's.
+//
+// The sys.filetables join is gated on t.is_filetable: ungated, SQL Server 17
+// re-ran the view's full sysschobjs scan once per table under an empty table
+// spool, and over every table of a database (prefetchTables) that was ~1.0 s
+// of this statement's ~1.45 s at 500 tables (fix plan F5, 2026-11-18).
 // https://learn.microsoft.com/sql/relational-databases/system-catalog-views/sys-tables-transact-sql
 func (t *Table) scriptOptionsSelect() string { return t.scriptOptionsSelectWith("", "= @p1") }
 
@@ -317,7 +322,7 @@ func (t *Table) scriptOptionsSelectWith(extra, object string) string {
 	major := t.db.serverMajorVersion()
 	fileFormat := "ISNULL(eff.name, '')"
 	fileFormatJoin := "\nLEFT   JOIN sys.external_file_formats eff ON eff.file_format_id = et.file_format_id"
-	if t.db.server.IsFabricDW {
+	if t.db.server.IsFabricDW() {
 		fileFormat = "CAST('' AS sysname)"
 		fileFormatJoin = ""
 	}
@@ -354,7 +359,7 @@ FROM   sys.tables AS t
 LEFT   JOIN sys.periods p ON p.object_id = t.object_id
 LEFT   JOIN sys.data_spaces lds ON lds.data_space_id = NULLIF(t.lob_data_space_id, 0)
 LEFT   JOIN sys.data_spaces fds ON fds.data_space_id = t.filestream_data_space_id
-LEFT   JOIN sys.filetables ft ON ft.object_id = t.object_id
+LEFT   JOIN sys.filetables ft ON t.is_filetable = 1 AND ft.object_id = t.object_id
 LEFT   JOIN sys.external_tables et ON et.object_id = t.object_id
 LEFT   JOIN sys.external_data_sources eds ON eds.data_source_id = et.data_source_id` + fileFormatJoin + `
 WHERE  t.object_id ` + object
