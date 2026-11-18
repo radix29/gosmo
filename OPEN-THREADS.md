@@ -357,14 +357,16 @@ discard theirs). `ReleaseIdleConnections` still frees those before this
 `Server`'s exclusive writes (`live_release_idle_test.go` parks sessions that
 way now). gossms dropped its 60 s `ConnMaxIdleTime` for gosmo's default.
 
-## Live tests leave non-backup files on 13 and 14
+## Live tests leave non-backup files on 13 and 14 — closed when `GOSMO_LIVE_SSH_HOST` is set
 
 `liveRemoveFile` (`live_remove_file_test.go`) cannot delete a file that is
-not a backup on 2016 or 2017 with `xp_cmdshell` off. `xp_delete_files` is
-2019+, and `xp_delete_file 0` refuses anything without a backup header. Such
-a file (a STANDBY undo `.dat`/`.tuf`, an `.xel`) is logged by name, not
-failed. Closing this needs `xp_cmdshell` enabled for the run, which the
-tests deliberately do not do.
+not a backup (a STANDBY undo `.dat`/`.tuf`, an `.xel`) on 2016 or 2017 with
+`xp_cmdshell` off: `xp_delete_files` is 2019+, and `xp_delete_file 0` refuses
+anything without a backup header. With `GOSMO_LIVE_SSH_HOST=win10cli` it
+falls back to `ssh win10cli del /q "<file>"` (only when the host matches
+`@@SERVERNAME`'s machine part); verified on 13 and 14, 2026-11-18. Without the
+variable such a file is still logged by name, not failed. The tests
+deliberately never enable `xp_cmdshell`.
 
 ## Agent schedules are addressed by id — settled, do not re-raise
 

@@ -40,6 +40,7 @@ go test -race -count=1 ./...  # a change touching concurrency (retry, pool, gosm
 go vet -tags livedb ./...   # after any rename, and before a tag
 go test -tags livedb . -run '^(TestLiveA|TestLiveB)$' -livedb '<dsn>'   # the tests a change touches
 go test -tags livedb . -short -livedb '<dsn>'   # broad check: skips tests over 15 s
+GOSMO_LIVE_SSH_HOST=win10cli go test -tags livedb ...   # on 13/14: lets cleanup delete non-backup files over ssh
 ```
 
 Live runs cover what the change touches; the full run (~16 min per instance)
