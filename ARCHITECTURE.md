@@ -389,7 +389,7 @@ The instance and database halves pair up: `ServerResourceStat` and
 | SMO equivalent                  | gosmo                                       |
 | ------------------------------- | ------------------------------------------- |
 | Catalog row fields               | `db.Name` / `db.ID` / `db.State` / `db.RecoveryModel` / `db.CompatibilityLevel` / `db.Collation` / `db.IsReadOnly` / `db.CreateDate` / `db.SourceDatabaseID` — exported fields, like every other type's; a `DatabaseRef` handle carries only `Name` |
-| Do two names match?              | `gosmo.SameName(collation, a, b)` / `gosmo.CollationIgnoresCase(collation)`; map key: `gosmo.NameKey(collation, name)` — by the scope's collation token (`CS`, `BIN`, `BIN2` compare exactly); no query |
+| Do two names match?              | `gosmo.SameName(collation, a, b)` / `gosmo.CollationIgnoresCase(collation)`; map key: `gosmo.NameKey(collation, name)` — by the scope's collation token (`CS`, `BIN`, `BIN2` compare exactly); which letters pair is the server's, per collation, from the generated `collation_case_tables.go`; no query |
 | Is a system database             | `db.IsSystem()` — derived from `db.ID`, so false on a `DatabaseRef` handle, `master` included |
 | Is a database snapshot           | `db.IsSnapshot()` — derived from `db.SourceDatabaseID`; see [Database snapshots](#database-snapshots) |
 | Parent server                    | `db.Server()` — a back-pointer, so still a method |
