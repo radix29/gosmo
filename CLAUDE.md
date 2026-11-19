@@ -84,6 +84,11 @@ write, drop them; never mutate pre-existing objects.
   `go test -run XXX -fuzz FuzzNames -fuzztime 60s -fuzzminimizetime 0`; a
   crasher's `testdata/fuzz/` file stays as the regression seed. A change to
   `tsql.Spans` also runs `FuzzSpans` in `./tsql`.
+- **`collation_case_tables.go` is generated** (which letters each collation
+  pairs ignoring case). Regenerate it against the newest instance with
+  `go test -tags livedb . -run TestLiveCaseTables -update-case-tables -livedb '<dsn>'`
+  (~4 min), then run it again without the flag on every instance; never
+  hand-edit it.
 - Build and test **here** before relying on a change from gossms — a gossms
   build compiles only the packages it imports.
 
