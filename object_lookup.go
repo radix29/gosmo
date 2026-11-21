@@ -10,7 +10,9 @@ import (
 // Kind-generic object lookup
 // ============================================================
 
-// ObjectInfo is one row of sys.objects: a schema-scoped object of any kind —
+// ObjectInfo is one row of sys.all_objects: a schema-scoped object of any kind,
+// user or shipped by SQL Server (IsMSShipped; sys.objects, sys.databases and
+// INFORMATION_SCHEMA.TABLES resolve like a user table) —
 // table, view, module, synonym, sequence, constraint or DML trigger — found
 // by name without knowing which family it belongs to. It is what a caller
 // holding only a name ("Sales.Customer") reads first, to dispatch on Type to
@@ -19,7 +21,7 @@ type ObjectInfo struct {
 	ObjectID int
 	Schema   string
 	Name     string
-	// Type is sys.objects.type with its padding trimmed: "U", "V", "P", "FN",
+	// Type is sys.all_objects.type with its padding trimmed: "U", "V", "P", "FN",
 	// "IF", "TF", "TR", "SN", "SO", "PK", …
 	Type     string
 	TypeDesc string // e.g. "USER_TABLE", "SQL_STORED_PROCEDURE"
@@ -36,7 +38,7 @@ const objectInfoSelect = `
 SELECT o.object_id, SCHEMA_NAME(o.schema_id), o.name, RTRIM(o.type), o.type_desc,
        ISNULL(OBJECT_SCHEMA_NAME(o.parent_object_id), N''), ISNULL(OBJECT_NAME(o.parent_object_id), N''),
        o.create_date, o.modify_date, o.is_ms_shipped
-FROM   sys.objects o`
+FROM   sys.all_objects o`
 
 func scanObjectInfo(_ *Database, scan func(...any) error) (*ObjectInfo, error) {
 	o := &ObjectInfo{}
@@ -49,7 +51,7 @@ func scanObjectInfo(_ *Database, scan func(...any) error) (*ObjectInfo, error) {
 
 // ObjectByName returns the schema-scoped object schema.name, whatever its
 // kind — ErrNotFound when there is none. Object names are unique within a
-// schema across every kind sys.objects holds, so the answer is one row.
+// schema across every kind sys.all_objects holds, so the answer is one row.
 //
 // The name is compared by the catalog's own = (its collation), as OBJECT_ID
 // does: in a case-sensitive database sales.customer is not Sales.Customer,
@@ -68,11 +70,15 @@ WHERE  SCHEMA_NAME(o.schema_id) COLLATE DATABASE_DEFAULT = @p1
 // ObjectsNamed returns every schema-scoped object called name, in any schema,
 // ordered by schema — what resolving a one-part name needs: one row is the
 // object, several are an ambiguity only the caller can settle, none is
-// nothing by that name. The comparison follows the catalog's collation, as
+// nothing by that name. A shipped (system) object is returned only when no
+// user object has the name, so a user table Patients never becomes ambiguous
+// with a system object of the same name. The comparison follows the catalog's collation, as
 // ObjectByName's does.
 func (d *Database) ObjectsNamed(ctx context.Context, name string) ([]*ObjectInfo, error) {
 	rows, err := d.query(ctx, objectInfoSelect+`
 WHERE  o.name = @p1
+  AND  (o.is_ms_shipped = 0
+        OR NOT EXISTS (SELECT 1 FROM sys.all_objects u WHERE u.name = @p1 AND u.is_ms_shipped = 0))
 ORDER  BY SCHEMA_NAME(o.schema_id)`, name)
 	return scanRows(rows, err, fmt.Sprintf("find objects named %q in %q", name, d.Name), func(scan func(...any) error) (*ObjectInfo, error) {
 		return scanObjectInfo(d, scan)

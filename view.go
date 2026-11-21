@@ -38,7 +38,7 @@ var (
 // viewSelect is the column list Views and ViewByName share, so a view
 // carries the same fields however it was fetched.
 const viewSelect = moduleColumns + viewExtra + `
-FROM   sys.views o`
+FROM   sys.all_views o`
 
 // viewExtra is the column a view carries beyond moduleColumns.
 const viewExtra = `,
@@ -53,10 +53,10 @@ func scanView(d *Database, scan func(...any) error) (*View, error) {
 	return v, nil
 }
 
-// ViewByName returns one view by schema and name from sys.views — the
+// ViewByName returns one view by schema and name from sys.all_views — the
 // populated counterpart of ViewRef, carrying the ObjectID its index and
-// statistics reads are keyed by. The sys schema's catalog views are not in
-// sys.views and are not found here (see SystemViews).
+// statistics reads are keyed by. The sys schema's catalog views are found
+// too, as is INFORMATION_SCHEMA's (see SystemViews to list them).
 //
 // It returns an error satisfying errors.Is(err, ErrNotFound) when there is
 // no such view.

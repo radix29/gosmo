@@ -145,6 +145,8 @@ const (
 // a type the login cannot see. Such a column binds nothing here — its type's
 // rule_object_id is unknown, so the column's own binding cannot be told from
 // the type's.
+// It reads sys.all_columns, the superset that also holds the columns of
+// shipped objects (sys.objects, INFORMATION_SCHEMA.TABLES), which sys.columns hides.
 // https://learn.microsoft.com/sql/relational-databases/system-catalog-views/sys-columns-transact-sql
 func (d *Database) columnSelect() string { return d.columnSelectWith("") }
 
@@ -177,7 +179,7 @@ SELECT c.name, c.column_id,
        ISNULL(SCHEMA_NAME(br.schema_id), ''), ISNULL(br.name, ''),
        ISNULL(SCHEMA_NAME(bd.schema_id), ''), ISNULL(bd.name, ''),
        ` + typeHiddenSQL + extra + `
-FROM   sys.columns c
+FROM   sys.all_columns c
 LEFT   JOIN sys.types tp ON tp.user_type_id = c.user_type_id
 LEFT   JOIN sys.objects br
        ON  br.object_id = NULLIF(c.rule_object_id, tp.rule_object_id) AND tp.user_type_id IS NOT NULL
