@@ -94,12 +94,14 @@ func TestLiveDiscoveryReads(t *testing.T) {
 		}
 		// A user object wins over any shipped one of the same name.
 		got, err = d.ObjectsNamed(ctx, "Customer")
+		if err != nil {
+			t.Fatalf("ObjectsNamed(Customer): %v", err)
+		}
 		for _, o := range got {
 			if o.IsMSShipped {
 				t.Errorf("ObjectsNamed(Customer) returned shipped %s.%s beside user objects", o.Schema, o.Name)
 			}
 		}
-		_ = err
 	})
 
 	t.Run("ObjectsNamed", func(t *testing.T) {
