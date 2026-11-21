@@ -38,7 +38,7 @@ func TestConnectReadsInfo(t *testing.T) {
 // query, the database and the inner arguments.
 func TestDatabaseReadIsUnwrapped(t *testing.T) {
 	f := gosmotest.New(t)
-	f.On("FROM   sys.objects o", func(q gosmotest.Query) gosmotest.Result {
+	f.On("FROM   sys.all_objects o", func(q gosmotest.Query) gosmotest.Result {
 		if q.Database != "a]pp" || q.Arg(0) != "Sales" || q.Arg(1) != "Customer" {
 			return gosmotest.Result{}
 		}

@@ -78,6 +78,30 @@ func TestLiveDiscoveryReads(t *testing.T) {
 		}
 	})
 
+	t.Run("ObjectByName system", func(t *testing.T) {
+		for _, c := range [][2]string{{"sys", "objects"}, {"sys", "databases"}, {"INFORMATION_SCHEMA", "TABLES"}} {
+			o, err := d.ObjectByName(ctx, c[0], c[1])
+			if err != nil || !o.IsMSShipped {
+				t.Errorf("ObjectByName(%s.%s) = %+v, %v; want a shipped object", c[0], c[1], o, err)
+			}
+		}
+	})
+
+	t.Run("ObjectsNamed system", func(t *testing.T) {
+		got, err := d.ObjectsNamed(ctx, "databases")
+		if err != nil || len(got) == 0 {
+			t.Errorf("ObjectsNamed(databases) = %v, %v; want the sys view", got, err)
+		}
+		// A user object wins over any shipped one of the same name.
+		got, err = d.ObjectsNamed(ctx, "Customer")
+		for _, o := range got {
+			if o.IsMSShipped {
+				t.Errorf("ObjectsNamed(Customer) returned shipped %s.%s beside user objects", o.Schema, o.Name)
+			}
+		}
+		_ = err
+	})
+
 	t.Run("ObjectsNamed", func(t *testing.T) {
 		got, err := d.ObjectsNamed(ctx, "Customer")
 		if err != nil {

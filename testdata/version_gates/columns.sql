@@ -23,7 +23,7 @@ SELECT c.name, c.column_id,
        ISNULL(SCHEMA_NAME(br.schema_id), ''), ISNULL(br.name, ''),
        ISNULL(SCHEMA_NAME(bd.schema_id), ''), ISNULL(bd.name, ''),
        CAST(CASE WHEN tp.user_type_id IS NULL THEN 1 ELSE 0 END AS bit)
-FROM   sys.columns c
+FROM   sys.all_columns c
 LEFT   JOIN sys.types tp ON tp.user_type_id = c.user_type_id
 LEFT   JOIN sys.objects br
        ON  br.object_id = NULLIF(c.rule_object_id, tp.rule_object_id) AND tp.user_type_id IS NOT NULL
@@ -73,7 +73,7 @@ SELECT c.name, c.column_id,
        ISNULL(SCHEMA_NAME(br.schema_id), ''), ISNULL(br.name, ''),
        ISNULL(SCHEMA_NAME(bd.schema_id), ''), ISNULL(bd.name, ''),
        CAST(CASE WHEN tp.user_type_id IS NULL THEN 1 ELSE 0 END AS bit)
-FROM   sys.columns c
+FROM   sys.all_columns c
 LEFT   JOIN sys.types tp ON tp.user_type_id = c.user_type_id
 LEFT   JOIN sys.objects br
        ON  br.object_id = NULLIF(c.rule_object_id, tp.rule_object_id) AND tp.user_type_id IS NOT NULL
@@ -123,7 +123,7 @@ SELECT c.name, c.column_id,
        ISNULL(SCHEMA_NAME(br.schema_id), ''), ISNULL(br.name, ''),
        ISNULL(SCHEMA_NAME(bd.schema_id), ''), ISNULL(bd.name, ''),
        CAST(CASE WHEN tp.user_type_id IS NULL THEN 1 ELSE 0 END AS bit)
-FROM   sys.columns c
+FROM   sys.all_columns c
 LEFT   JOIN sys.types tp ON tp.user_type_id = c.user_type_id
 LEFT   JOIN sys.objects br
        ON  br.object_id = NULLIF(c.rule_object_id, tp.rule_object_id) AND tp.user_type_id IS NOT NULL
@@ -173,7 +173,7 @@ SELECT c.name, c.column_id,
        ISNULL(SCHEMA_NAME(br.schema_id), ''), ISNULL(br.name, ''),
        ISNULL(SCHEMA_NAME(bd.schema_id), ''), ISNULL(bd.name, ''),
        CAST(CASE WHEN tp.user_type_id IS NULL THEN 1 ELSE 0 END AS bit)
-FROM   sys.columns c
+FROM   sys.all_columns c
 LEFT   JOIN sys.types tp ON tp.user_type_id = c.user_type_id
 LEFT   JOIN sys.objects br
        ON  br.object_id = NULLIF(c.rule_object_id, tp.rule_object_id) AND tp.user_type_id IS NOT NULL
@@ -223,7 +223,7 @@ SELECT c.name, c.column_id,
        ISNULL(SCHEMA_NAME(br.schema_id), ''), ISNULL(br.name, ''),
        ISNULL(SCHEMA_NAME(bd.schema_id), ''), ISNULL(bd.name, ''),
        CAST(CASE WHEN tp.user_type_id IS NULL THEN 1 ELSE 0 END AS bit)
-FROM   sys.columns c
+FROM   sys.all_columns c
 LEFT   JOIN sys.types tp ON tp.user_type_id = c.user_type_id
 LEFT   JOIN sys.objects br
        ON  br.object_id = NULLIF(c.rule_object_id, tp.rule_object_id) AND tp.user_type_id IS NOT NULL
