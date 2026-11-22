@@ -14,6 +14,8 @@ func TestDatabaseBackupRefusal(t *testing.T) {
 	st := func(chain, base, known bool) *DatabaseRecoveryStatus {
 		return &DatabaseRecoveryStatus{LogBackupChainStarted: chain, HasDifferentialBase: base, DifferentialBaseKnown: known}
 	}
+	csServer := &Server{info: &ServerInfo{Collation: "Latin1_General_CS_AS"}}
+	ciServer := &Server{info: &ServerInfo{Collation: "SQL_Latin1_General_CP1_CI_AS"}}
 	backedUp := st(true, true, true)
 	never := st(false, false, true)
 	const (
@@ -55,6 +57,13 @@ func TestDatabaseBackupRefusal(t *testing.T) {
 		{"tempdb handle", &Database{Name: "TempDB"}, F, nil, BackupRefusedTempdb},
 		{"master handle, diff", &Database{Name: "master"}, D, nil, BackupRefusedMasterFullOnly},
 		{"handle, log", &Database{Name: "AppDB"}, L, nil, BackupAllowed},
+		// A handle on a case-sensitive server: TempDB and Master are user
+		// databases beside the system ones; the exact names still match.
+		{"CS handle TempDB", &Database{Name: "TempDB", server: csServer}, F, nil, BackupAllowed},
+		{"CS handle Master, diff", &Database{Name: "Master", server: csServer}, D, nil, BackupAllowed},
+		{"CS handle tempdb", &Database{Name: "tempdb", server: csServer}, F, nil, BackupRefusedTempdb},
+		{"CS handle master, diff", &Database{Name: "master", server: csServer}, D, nil, BackupRefusedMasterFullOnly},
+		{"CI handle TempDB", &Database{Name: "TempDB", server: ciServer}, F, nil, BackupRefusedTempdb},
 		// With an id, the id decides: a user database named like a system one
 		// on a case-sensitive server is not it.
 		{"user database named MASTER", &Database{ID: 12, Name: "MASTER", RecoveryModel: RecoveryModelFull}, D, backedUp, BackupAllowed},
