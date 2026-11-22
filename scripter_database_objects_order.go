@@ -159,9 +159,9 @@ func orderObjects(nodes []orderNode, edges []orderEdge) ([]orderNode, []string, 
 	return out, warnings, nil
 }
 
-func (n orderNode) display() string {
-	if n.schema == "" {
-		return QuoteName(n.name)
+func (a orderNode) display() string {
+	if a.schema == "" {
+		return QuoteName(a.name)
 	}
-	return qualifiedName(n.schema, n.name)
+	return qualifiedName(a.schema, a.name)
 }
