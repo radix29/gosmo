@@ -163,7 +163,8 @@ write, drop them; never mutate pre-existing objects.
   column, `atLeast`/`before` (on `Server`/`Database`, or `majorAtLeast`/
   `majorBefore` on a `major int`) for everything else. Major 0 (unread, or Azure)
   is newest; a bare `major < int(…)` blanked AG columns on every Managed
-  Instance. Never gate at or below 2016, the floor.
+  Instance. Never gate at or below 2016, the floor. Callers gate through the
+  exported `ServerInfo.AtLeast`/`AtLeastBuild`, the same comparison.
   `TestVersionGatesGoThroughMajorAtLeast` enforces it.
 - **Zoneless server clocks are `time.UTC`, never `time.Local`** — go-mssqldb
   returns `datetime` in UTC, so hand-decoded values (`parseSQLAgentDate`,

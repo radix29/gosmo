@@ -32,11 +32,12 @@ func (d *Database) Views(ctx context.Context, filter ObjectFilter) ([]*View, err
 
 var (
 	userViews   = moduleSource{from: "sys.views o", kind: "o.is_ms_shipped = 0"}
-	systemViews = moduleSource{from: "sys.all_objects o", kind: "o.type = 'V' AND o.is_ms_shipped = 1 AND o.schema_id = 4", system: true}
+	systemViews = moduleSource{from: "sys.all_objects o", kind: "o.type = 'V' AND o.is_ms_shipped = 1 AND o.schema_id IN (3, 4)", system: true}
 )
 
-// viewSelect is the column list Views and ViewByName share, so a view
-// carries the same fields however it was fetched.
+// viewSelect is ViewByName's read. Its columns are moduleColumns plus
+// viewExtra, the ones Views and SystemViews read through moduleListWhere, so
+// a view carries the same fields however it was fetched.
 const viewSelect = moduleColumns + viewExtra + `
 FROM   sys.all_views o`
 
@@ -73,15 +74,16 @@ WHERE  SCHEMA_NAME(o.schema_id) COLLATE DATABASE_DEFAULT = @p1
 		fmt.Sprintf("find view %s in %q", qualifiedName(schema, name), d.Name))
 }
 
-// SystemViews returns every catalog view SQL Server ships in the "sys"
-// schema (sys.tables, sys.columns, sys.objects, ...) — see SystemViews.
+// SystemViews returns every view SQL Server ships in the "INFORMATION_SCHEMA"
+// and "sys" schemas (INFORMATION_SCHEMA.TABLES, sys.tables, sys.columns, ...),
+// the two SSMS's System Views folder lists, ordered INFORMATION_SCHEMA first,
+// then by name.
 //
-// Unlike Views, this reads sys.all_objects/sys.all_sql_modules rather than
-// sys.views/sys.sql_modules: the "sys." schema's own views are shipped objects
-// (is_ms_shipped=1), invisible through the non-"all_" catalog views — same
-// reasoning as SystemCatalog. The "sys" schema's catalog views are
-// defined identically in every database on a server, so a caller only needs to
-// load this once per connection. The zero ObjectFilter returns every one.
+// Unlike Views, this reads sys.all_objects rather than sys.views: the shipped
+// views (is_ms_shipped=1) are invisible through the non-"all_" catalog views —
+// same reasoning as SystemCatalog. They are defined identically in every
+// database on a server, so a caller only needs to load this once per
+// connection. The zero ObjectFilter returns every one.
 func (d *Database) SystemViews(ctx context.Context, filter ObjectFilter) ([]*View, error) {
 	where, args := filter.clause(moduleFilterColumns)
 	return moduleListWhere(ctx, d, "system views", systemViews, viewExtra, where, args, scanView)

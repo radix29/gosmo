@@ -87,9 +87,30 @@ func buildAtLeast(info *ServerInfo, v ServerVersion, build int) bool {
 	return major != int(v) || info.VersionBuild >= build
 }
 
+// AtLeast reports whether the instance is v or later. An unread version, an
+// Azure edition and a nil ServerInfo count as newest (majorAtLeast): Azure's
+// VersionMajor is not a feature level (IsAzure), and with nothing read a
+// caller offers the feature and lets the server's refusal speak.
+//
+// It is the exported form of gosmo's one version comparison, for a caller
+// that gates its own feature on the server's version: comparing VersionMajor
+// by hand is how a gate ends up blanking a Managed Instance (majorAtLeast).
+func (i *ServerInfo) AtLeast(v ServerVersion) bool { return majorAtLeast(i.featureMajor(), v) }
+
+// AtLeastBuild is AtLeast for a feature a service pack or cumulative update
+// of v brought: true when the instance is a later major than v, or v itself
+// at build or later. An unread version, an Azure edition and a nil ServerInfo
+// count as newest, as AtLeast does (buildAtLeast).
+func (i *ServerInfo) AtLeastBuild(v ServerVersion, build int) bool { return buildAtLeast(i, v, build) }
+
 // atLeast reports whether the connected instance is v or later, with an
 // unread version and Azure counting as newest (majorAtLeast).
-func (s *Server) atLeast(v ServerVersion) bool { return majorAtLeast(s.serverMajorVersion(), v) }
+func (s *Server) atLeast(v ServerVersion) bool {
+	if s == nil {
+		return majorAtLeast(0, v)
+	}
+	return s.info.AtLeast(v)
+}
 
 // before reports whether the connected instance is known to be older than v.
 func (s *Server) before(v ServerVersion) bool { return majorBefore(s.serverMajorVersion(), v) }

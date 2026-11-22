@@ -46,11 +46,11 @@ func TestModuleListingsDoNotReadTheDefinition(t *testing.T) {
 
 // TestModuleListingsReadTheirSource pins S3's one module-list reader: each
 // family reads its own source and kind, orders as its scope wants, and a
-// system listing finds the sys schema by schema_id 4, which a SCHEMA_NAME()
-// comparison could not seek on. SystemCatalog's three reads do the same.
+// system listing finds the sys schema by schema_id 4 (and system views
+// INFORMATION_SCHEMA by 3), which a SCHEMA_NAME() comparison could not seek on. SystemCatalog's three reads do the same.
 func TestModuleListingsReadTheirSource(t *testing.T) {
 	ctx := context.Background()
-	const userOrder, systemOrder = "ORDER  BY SCHEMA_NAME(o.schema_id), o.name", "ORDER  BY o.name"
+	const userOrder, systemOrder = "ORDER  BY SCHEMA_NAME(o.schema_id), o.name", "ORDER  BY o.schema_id, o.name"
 	for name, tc := range map[string]struct {
 		list func(*Database) error
 		want []string
@@ -58,7 +58,7 @@ func TestModuleListingsReadTheirSource(t *testing.T) {
 		"Views": {func(d *Database) error { _, err := d.Views(ctx, ObjectFilter{}); return err },
 			[]string{"FROM   sys.views o\nWHERE  o.is_ms_shipped = 0 ", "'IsSchemaBound'", userOrder}},
 		"SystemViews": {func(d *Database) error { _, err := d.SystemViews(ctx, ObjectFilter{}); return err },
-			[]string{"FROM   sys.all_objects o\nWHERE  o.type = 'V' AND o.is_ms_shipped = 1 AND o.schema_id = 4 ", "'IsSchemaBound'", systemOrder}},
+			[]string{"FROM   sys.all_objects o\nWHERE  o.type = 'V' AND o.is_ms_shipped = 1 AND o.schema_id IN (3, 4) ", "'IsSchemaBound'", systemOrder}},
 		"StoredProcedures": {func(d *Database) error { _, err := d.StoredProcedures(ctx, ObjectFilter{}); return err },
 			[]string{"FROM   sys.procedures o\nWHERE  o.is_ms_shipped = 0 ", userOrder}},
 		"SystemStoredProcedures": {func(d *Database) error { _, err := d.SystemStoredProcedures(ctx, ObjectFilter{}); return err },
@@ -72,7 +72,7 @@ func TestModuleListingsReadTheirSource(t *testing.T) {
 			return err
 		}, []string{"SCHEMA_NAME(o.schema_id) COLLATE DATABASE_DEFAULT", userOrder}},
 		"SystemCatalog": {func(d *Database) error { _, err := d.SystemCatalog(ctx); return err },
-			[]string{"o.type = 'V' AND o.schema_id = 4", "o.type IN ('IF','TF','FT') AND o.schema_id = 4", "o.type = 'AF' AND o.schema_id = 4"}},
+			[]string{"o.type = 'V' AND o.schema_id IN (3, 4)", "o.type IN ('IF','TF','FT') AND o.schema_id = 4", "o.type = 'AF' AND o.schema_id = 4"}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			d := captureDatabase(t)

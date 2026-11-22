@@ -29,6 +29,19 @@ to a certificate or asymmetric key, and its prefetch is about a third faster.
   `Endpoint.MirroringDetail` and `Endpoint.ServiceBrokerDetail` return an
   error wrapping `ErrNotFound` where they returned `(nil, nil)`: replace
   `if m == nil` with `if errors.Is(err, ErrNotFound)`.
+- `ObjectByName`, `ObjectsNamed`, `ViewByName` and the column reads
+  (`ObjectColumns`, `Table.Columns`, `View.Columns`, which now read
+  `sys.all_columns`) now see what SQL Server ships: `sys.objects`,
+  `INFORMATION_SCHEMA.TABLES` and the type-`S` system base tables resolve, and
+  their columns read, where they were not found. `ObjectsNamed` returns a
+  shipped object only when no user object has the name, so a one-part name
+  that was unambiguous stays so. Code that used `ObjectByName` to mean "a user
+  object exists" tests `ObjectInfo.IsMSShipped` as well.
+- `SystemViews` and `SystemCatalog` include INFORMATION_SCHEMA's views
+  beside `sys`'s, as SSMS's System Views folder does, and `SystemViews`,
+  `SystemStoredProcedures` and `SystemFunctions` order by schema then name
+  (INFORMATION_SCHEMA first). A caller that wanted only `sys` filters on
+  `View.Schema`.
 
 ### Added
 
@@ -39,9 +52,11 @@ to a certificate or asymmetric key, and its prefetch is about a third faster.
 - **`Table.RebuildAllIndexesScript` / `View.RebuildAllIndexesScript`** — the batch `RebuildAllIndexesWith` would send, without sending it.
 - **`Database.EnsureMasterKey(ctx, password)`** — creates the master key only when the database has none and reports whether it did; under `Scripting(ctx)` the check still reads the real server.
 - **`QueryStoreReportOptions.Effective()`** — the options with the report reads' defaults filled in, for labelling a report from the same values the query uses.
+- **`ServerInfo.AtLeast(v)` / `ServerInfo.AtLeastBuild(v, build)`** — gosmo's version gate, exported (nil-safe): an unread version and an Azure edition count as newest, as every gate inside gosmo does. For a caller gating its own feature, instead of comparing `VersionMajor` by hand.
 
 ### Changed
 
+- **Breaking — shipped objects resolve by name** (`ObjectByName`, `ObjectsNamed`, `ViewByName`, column reads), and **`SystemViews` / `SystemCatalog` include INFORMATION_SCHEMA** (see Migrating).
 - **Breaking — `Server.IsFabricDW`** is a method, decided at connect, and can no longer be set (see Migrating).
 - **Breaking — `ServerInfo.EngineEdition`** is typed (`gosmotest`'s `Info` too).
 - **Breaking — optional singletons** report absence as `ErrNotFound` (see Migrating).

@@ -572,3 +572,53 @@ func TestVersionGatesGoThroughMajorAtLeast(t *testing.T) {
 		}
 	}
 }
+
+// AtLeast and AtLeastBuild are the exported gate for gossms and other callers:
+// they must answer exactly as the unexported helpers do, nil and Azure
+// included, or a caller's gate and gosmo's own disagree on the same server.
+func TestServerInfoAtLeast(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		info *ServerInfo
+		want bool
+	}{
+		{"nil info counts as newest", nil, true},
+		{"unread version counts as newest", &ServerInfo{}, true},
+		{"Managed Instance reporting 12", &ServerInfo{VersionMajor: 12, EngineEdition: EngineAzureManagedInst}, true},
+		{"Azure SQL Database reporting 12", &ServerInfo{VersionMajor: 12, EngineEdition: EngineAzureSQLDatabase}, true},
+		{"below", &ServerInfo{VersionMajor: 15}, false},
+		{"at", &ServerInfo{VersionMajor: 16}, true},
+		{"above", &ServerInfo{VersionMajor: 17}, true},
+	} {
+		if got := c.info.AtLeast(SQLServer2022); got != c.want {
+			t.Errorf("%s: AtLeast(2022) = %v, want %v", c.name, got, c.want)
+		}
+		if got := (&Server{info: c.info}).atLeast(SQLServer2022); got != c.want {
+			t.Errorf("%s: Server.atLeast(2022) = %v, want %v", c.name, got, c.want)
+		}
+	}
+	if !(*Server)(nil).atLeast(SQLServer2025) {
+		t.Error("a nil Server's atLeast = false, want true (never read counts as newest)")
+	}
+}
+
+func TestServerInfoAtLeastBuild(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		info *ServerInfo
+		want bool
+	}{
+		{"nil info counts as newest", nil, true},
+		{"unread version counts as newest", &ServerInfo{}, true},
+		{"Managed Instance reporting 12", &ServerInfo{VersionMajor: 12, VersionBuild: 2000, EngineEdition: EngineAzureManagedInst}, true},
+		{"below the major", &ServerInfo{VersionMajor: 12, VersionBuild: 9000}, false},
+		{"the major, one build short", &ServerInfo{VersionMajor: 13, VersionBuild: 5025}, false},
+		{"the major, at the build", &ServerInfo{VersionMajor: 13, VersionBuild: 5026}, true},
+		{"the major, above the build", &ServerInfo{VersionMajor: 13, VersionBuild: 6300}, true},
+		{"a later major, lower build", &ServerInfo{VersionMajor: 14, VersionBuild: 1000}, true},
+	} {
+		if got := c.info.AtLeastBuild(SQLServer2016, 5026); got != c.want {
+			t.Errorf("%s: AtLeastBuild(2016, 5026) = %v, want %v", c.name, got, c.want)
+		}
+	}
+}

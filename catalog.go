@@ -110,11 +110,12 @@ func (d *Database) CallerDefaultSchema(ctx context.Context) (string, error) {
 }
 
 // SystemCatalog returns a bulk snapshot of every catalog view in the "sys"
-// schema (sys.tables, sys.columns, sys.objects, ...), and of every
+// schema (sys.tables, sys.columns, sys.objects, ...) and every view in
+// INFORMATION_SCHEMA (TABLES, COLUMNS, ...), and of every
 // table-valued function there that records its result columns
 // (sys.dm_exec_sql_text, sys.dm_db_index_physical_stats, ...).
 //
-// The "sys" schema's catalog views are defined identically in every database
+// The shipped views are defined identically in every database
 // on a server, so a caller only needs to load this once per connection — any
 // database works equally well as the query target, not just master.
 //
@@ -130,7 +131,7 @@ func (d *Database) CallerDefaultSchema(ctx context.Context) (string, error) {
 // SUM, COUNT and the rest — are not objects and appear in neither catalog.
 func (d *Database) SystemCatalog(ctx context.Context) (*Catalog, error) {
 	return d.catalog(ctx, catalogAllViews,
-		"o.type = 'V' AND o.schema_id = 4",
+		"o.type = 'V' AND o.schema_id IN (3, 4)",
 		"o.type IN ('IF','TF','FT') AND o.schema_id = 4",
 		"o.type = 'AF' AND o.schema_id = 4")
 }
