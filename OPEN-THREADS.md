@@ -221,15 +221,6 @@ system-defined constraints' and indexes' (AS FILETABLE names those afresh).
 A `sql_variant` base type without a case in `extPropType` is a comment, not
 a statement — none known to exist.
 
-## `ScriptSecurityPolicy`'s schema-less lookup is unreachable
-
-`Scripter.ScriptSecurityPolicy` branches on `schema != ""` and, for an empty
-schema, scans `SecurityPolicies` for the name — but `requireSchema` above it
-already refuses an empty schema with `ErrSchemaRequired`, so that branch never
-runs (found 2026-11-22 writing `scripter_database_offline_test.go`). Either
-drop the branch or let an empty schema through on purpose; until then only
-the by-schema path is tested.
-
 ## `ScriptTable` is 8–12 round trips — considered, not batched
 
 gossms review plan G15 (2026-10-08) batched `LocalPublications`,
