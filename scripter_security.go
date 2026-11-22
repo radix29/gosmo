@@ -534,26 +534,11 @@ func (sc *Scripter) ScriptSecurityPolicy(ctx context.Context, schema, name strin
 	if err := requireSchema("script security policy", schema, name); err != nil {
 		return "", err
 	}
-	if schema != "" {
-		p, err := sc.db.SecurityPolicyByName(ctx, schema, name)
-		if err != nil {
-			return "", err
-		}
-		return buildSecurityPolicyScript(p, sc.opts), nil
-	}
-	// No schema: the first policy of that name in any schema. The name is
-	// compared exactly rather than case-blind, so a case-sensitive database
-	// cannot hand back a different policy that differs only in case.
-	policies, err := sc.db.SecurityPolicies(ctx)
+	p, err := sc.db.SecurityPolicyByName(ctx, schema, name)
 	if err != nil {
 		return "", err
 	}
-	for _, p := range policies {
-		if p.Name == name {
-			return buildSecurityPolicyScript(p, sc.opts), nil
-		}
-	}
-	return "", notFoundf("gosmo: security policy %s not found", QuoteName(name))
+	return buildSecurityPolicyScript(p, sc.opts), nil
 }
 
 // buildSecurityPolicyScript assembles one security policy's script. STATE

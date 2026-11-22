@@ -1,7 +1,7 @@
 //go:build livedb
 
 // Live verification of the lean listings (T52, T53): module listings carry
-// no text and Definition(ctx) reads it by name; Catalog is one batch of five
+// no text and Definition(ctx) reads it by name; Catalog is one batch of six
 // result sets; SecurityPolicies reads every predicate in one query; and
 // UserMappings reads every database in one batch, skipping one it cannot
 // enter.
@@ -38,6 +38,8 @@ func TestLiveLeanListings(t *testing.T) {
 		`CREATE TRIGGER dbo.lean_tr ON dbo.lean_t AFTER INSERT AS SELECT 'lean trigger marker'`,
 		`CREATE RULE dbo.lean_rule AS @value > 0`,
 		`CREATE DEFAULT dbo.lean_default AS 42`,
+		`CREATE TYPE dbo.lean_alias FROM INT NOT NULL`,
+		`CREATE TYPE dbo.lean_tt AS TABLE (id INT)`,
 		`CREATE SCHEMA rls`,
 		`CREATE FUNCTION rls.lean_pred(@owner AS SYSNAME) RETURNS TABLE WITH SCHEMABINDING
 		 AS RETURN SELECT 1 AS ok WHERE @owner = USER_NAME()`,
@@ -146,13 +148,24 @@ func TestLiveLeanListings(t *testing.T) {
 		if fn == nil || len(fn.Columns) != 3 || fn.Columns[2].Name != "m" {
 			t.Errorf("lean_f = %+v, want its three result columns", fn)
 		}
+		wantTypes := []CatalogType{{Schema: "dbo", Name: "lean_alias", Kind: CatalogAliasType}, {Schema: "dbo", Name: "lean_tt", Kind: CatalogTableType}}
+		gotTypes := slices.Clone(cat.Types)
+		for i := range gotTypes {
+			if gotTypes[i].UserTypeID <= 256 {
+				t.Errorf("type %s: user_type_id %d, want a user one", gotTypes[i].Name, gotTypes[i].UserTypeID)
+			}
+			gotTypes[i].UserTypeID = 0
+		}
+		if !slices.Equal(gotTypes, wantTypes) {
+			t.Errorf("types = %+v, want %+v", gotTypes, wantTypes)
+		}
 
 		sysCat, err := d.SystemCatalog(ctx)
 		if err != nil {
 			t.Fatalf("SystemCatalog: %v", err)
 		}
-		if len(sysCat.Objects) < 100 || len(sysCat.Functions) == 0 {
-			t.Errorf("SystemCatalog = %d objects, %d functions", len(sysCat.Objects), len(sysCat.Functions))
+		if len(sysCat.Objects) < 100 || len(sysCat.Functions) == 0 || len(sysCat.Types) != 0 {
+			t.Errorf("SystemCatalog = %d objects, %d functions, %d types", len(sysCat.Objects), len(sysCat.Functions), len(sysCat.Types))
 		}
 	})
 

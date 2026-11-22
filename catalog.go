@@ -66,29 +66,55 @@ type CatalogAggregate struct {
 	Returns  CatalogColumn
 }
 
+// CatalogTypeKind distinguishes a CatalogType's kind: where T-SQL accepts it.
+type CatalogTypeKind int
+
+const (
+	// CatalogAliasType is an alias type (CREATE TYPE ... FROM a system type).
+	CatalogAliasType CatalogTypeKind = iota
+	// CatalogClrType is a CLR user-defined type (CREATE TYPE ... EXTERNAL NAME).
+	CatalogClrType
+	// CatalogTableType is a table type: valid only as a READONLY parameter
+	// or a table variable's type, never a column's.
+	CatalogTableType
+)
+
+// CatalogType is one user-defined data type, by name: the kind decides where
+// it may be written, and nothing more is read (see UserDefinedDataType,
+// UserDefinedTableType and ClrType for the full definitions).
+type CatalogType struct {
+	UserTypeID int
+	Schema     string
+	Name       string
+	Kind       CatalogTypeKind
+}
+
 // Catalog is a bulk snapshot of every user table and view in a database,
 // each with its columns already loaded — see Database.Catalog.
 //
 // Functions is kept apart from Objects because a table-valued function is
 // not interchangeable with a table: it is only usable called, with its
-// argument list. Schemas names the schemas Objects spans, not Functions'
-// or Aggregates'.
+// argument list. Schemas names the schemas Objects spans, not Functions',
+// Aggregates' or Types'.
 type Catalog struct {
 	Schemas    []string
 	Objects    []CatalogObject
 	Functions  []CatalogObject
 	Aggregates []CatalogAggregate
+	Types      []CatalogType
 }
 
 // Catalog returns a bulk snapshot of every user table and view in the
 // database, every user table-valued function, each with its columns, and
-// every user-defined aggregate with its return type, sorted by schema then
-// name.
+// every user-defined aggregate with its return type, and every user-defined
+// data type (alias, CLR and table types) the login can see, sorted by schema
+// then name.
 func (d *Database) Catalog(ctx context.Context) (*Catalog, error) {
 	return d.catalog(ctx, catalogUserViews,
 		"o.type IN ('U','V') AND o.is_ms_shipped = 0",
 		"o.type IN ('IF','TF','FT') AND o.is_ms_shipped = 0",
-		"o.type = 'AF' AND o.is_ms_shipped = 0")
+		"o.type = 'AF' AND o.is_ms_shipped = 0",
+		"t.is_user_defined = 1")
 }
 
 // CallerDefaultSchema returns the connected login's default schema in the
@@ -129,11 +155,14 @@ func (d *Database) CallerDefaultSchema(ctx context.Context) (string, error) {
 // Its Aggregates are the shipped CLR ones in "sys" (ORMask, and the spatial
 // ones behind geometry::UnionAggregate and kin). The built-in aggregates —
 // SUM, COUNT and the rest — are not objects and appear in neither catalog.
+// Its Types is empty: the shipped types (int, geography, ...) are not
+// user-defined, and no user-defined type lives in "sys".
 func (d *Database) SystemCatalog(ctx context.Context) (*Catalog, error) {
 	return d.catalog(ctx, catalogAllViews,
 		"o.type = 'V' AND o.schema_id IN (3, 4)",
 		"o.type IN ('IF','TF','FT') AND o.schema_id = 4",
-		"o.type = 'AF' AND o.schema_id = 4")
+		"o.type = 'AF' AND o.schema_id = 4",
+		"t.is_user_defined = 1 AND t.schema_id = 4")
 }
 
 // catalogViews names the catalog views a catalog read selects from: the
@@ -151,16 +180,18 @@ var (
 // catalog is the shared implementation behind Catalog and
 // SystemCatalog — they differ only in which views and where clauses (fixed,
 // package-internal constants — never caller-supplied) select the rows: where
-// for Objects, fnWhere for Functions, aggWhere for Aggregates.
+// for Objects, fnWhere for Functions, aggWhere for Aggregates, typeWhere for
+// Types.
 //
-// It is one batch of five result sets — objects, their columns, functions,
-// their columns, aggregates — in one round trip on one connection.
-func (d *Database) catalog(ctx context.Context, v catalogViews, where, fnWhere, aggWhere string) (*Catalog, error) {
+// It is one batch of six result sets — objects, their columns, functions,
+// their columns, aggregates, types — in one round trip on one connection.
+func (d *Database) catalog(ctx context.Context, v catalogViews, where, fnWhere, aggWhere, typeWhere string) (*Catalog, error) {
 	q := catalogObjectsSelect(v.objects, where) + ";\n" +
 		catalogColumnsSelect(v.objects, v.columns, where) + ";\n" +
 		catalogObjectsSelect(v.objects, fnWhere) + ";\n" +
 		catalogColumnsSelect(v.objects, v.columns, fnWhere) + ";\n" +
-		catalogAggregatesSelect(v.objects, v.parameters, aggWhere)
+		catalogAggregatesSelect(v.objects, v.parameters, aggWhere) + ";\n" +
+		catalogTypesSelect(typeWhere)
 
 	rows, err := d.query(ctx, q)
 	if err != nil {
@@ -170,12 +201,14 @@ func (d *Database) catalog(ctx context.Context, v catalogViews, where, fnWhere, 
 
 	var objects, functions []CatalogObject
 	var aggregates []CatalogAggregate
+	var types []CatalogType
 	reads := []func() error{
 		func() (err error) { objects, err = scanCatalogObjects(rows); return err },
 		func() error { return scanCatalogColumns(rows, objects) },
 		func() (err error) { functions, err = scanCatalogObjects(rows); return err },
 		func() error { return scanCatalogColumns(rows, functions) },
 		func() (err error) { aggregates, err = scanCatalogAggregates(rows); return err },
+		func() (err error) { types, err = scanCatalogTypes(rows); return err },
 	}
 	for i, read := range reads {
 		if i > 0 && !rows.NextResultSet() {
@@ -202,7 +235,7 @@ func (d *Database) catalog(ctx context.Context, v catalogViews, where, fnWhere, 
 	}
 	slices.Sort(schemas)
 
-	return &Catalog{Schemas: schemas, Objects: objects, Functions: functions, Aggregates: aggregates}, nil
+	return &Catalog{Schemas: schemas, Objects: objects, Functions: functions, Aggregates: aggregates, Types: types}, nil
 }
 
 // catalogObjectType maps a sys.objects.type code to a CatalogObjectType —
@@ -307,6 +340,31 @@ func scanCatalogAggregates(rows *dbRows) ([]CatalogAggregate, error) {
 			return nil, err
 		}
 		out = append(out, a)
+	}
+	return out, rows.Err()
+}
+
+// catalogTypesSelect selects every type in sys.types matching where with its
+// kind, sorted by schema then name.
+func catalogTypesSelect(where string) string {
+	return fmt.Sprintf(`
+SELECT t.user_type_id, SCHEMA_NAME(t.schema_id), t.name,
+       CASE WHEN t.is_table_type = 1 THEN %d WHEN t.is_assembly_type = 1 THEN %d ELSE %d END
+FROM   sys.types t
+WHERE  %s
+ORDER  BY SCHEMA_NAME(t.schema_id), t.name`, CatalogTableType, CatalogClrType, CatalogAliasType, where)
+}
+
+// scanCatalogTypes drains the current result set of catalogTypesSelect rows.
+// Bare errors, as scanCatalogObjects.
+func scanCatalogTypes(rows *dbRows) ([]CatalogType, error) {
+	var out []CatalogType
+	for rows.Next() {
+		var t CatalogType
+		if err := rows.Scan(&t.UserTypeID, &t.Schema, &t.Name, &t.Kind); err != nil {
+			return nil, err
+		}
+		out = append(out, t)
 	}
 	return out, rows.Err()
 }
