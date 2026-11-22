@@ -293,13 +293,17 @@ func (d *Database) recheckUse(ctx context.Context, conn sqlConn, err error) (use
 	return nil, ok && me.Number == msgCollationConflict
 }
 
+// query runs a rows-returning read in d. It cannot use withConn, which would
+// release the connection before the caller finishes iterating: it acquires a
+// dedicated connection, runs q in d through procRead, and returns the rows
+// wrapped with that connection — the caller's defer rows.Close() releases
+// both. A failure is told apart by recheckEntry (d refusing entry, or q's own
+// failure). A single read is idempotent, so a transient failure (IsTransient:
+// a dropped connection, a deadlock victim, one of Azure SQL's transient
+// errors) is re-run on a fresh connection, up to readRetryAttempts tries in
+// all (withRetry). Inside InTransaction it runs on the transaction's
+// connection through queryOn and is never retried.
 func (d *Database) query(ctx context.Context, q string, args ...any) (*dbRows, error) {
-	// For queries that return rows we cannot use withConn (the conn would be
-	// released before the caller finishes iterating). Instead we acquire a
-	// dedicated conn, run the query in d through procRead, and return the rows
-	// wrapped with that conn — the caller's defer rows.Close() releases both.
-	// A single read is idempotent, so a transient failure (dropped pooled
-	// connection, etc.) is retried on a fresh connection.
 	ctx, release := d.server.bound(ctx)
 	if t := txFrom(ctx, d.server); t != nil {
 		rows, err := d.queryOn(ctx, t, q, args...)

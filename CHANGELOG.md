@@ -64,6 +64,8 @@ to a certificate or asymmetric key, and its prefetch is about a third faster.
 - **SQL database in Fabric** is treated as a single-database engine everywhere an Azure SQL Database check stood: it is no longer version-gated as a SQL Server 2014 engine, and the replication refusal names the edition. `RebuildAllIndexes*` and `ReorganizeAllIndexes` on it send one `ALTER INDEX` per index, since it refuses `ALTER INDEX ALL`.
 - `HasMasterKey` and `CreateMasterKey` move to `master_key.go` with the rest of the master key; `MasterKey` reads the key and its server-encryption flag in one round trip.
 - A retry ended by its context returns the context error joined with the transient error that caused the retry; `errors.Is(err, context.Canceled)` still holds.
+- **go-mssqldb v1.12.0** (from v1.11.2). Its Kerberos client is now the community-maintained `go-krb5/krb5` fork of `jcmturner/gokrb5` (indirect dependencies change accordingly); `KerberosOptions` is unchanged.
+- **`ExtraParams` refuses `Authentication`** as a reserved key: v1.12.0 reads it as the ADO.NET synonym of `fedauth`, which `ConnectionOptions.AuthMethod` controls. Before, it was silently ignored in the URL gosmo builds. Set `AuthMethod` instead.
 
 ### Fixed
 

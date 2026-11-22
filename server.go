@@ -563,12 +563,13 @@ func (s *Server) accessModeBefore(ctx context.Context, name string) UserAccess {
 	return UserAccess(mode)
 }
 
-// query runs a server-scoped, rows-returning read against the pool,
-// retrying on a transient connection failure (up to readRetryAttempts tries) (a dropped pooled
-// connection, etc.) — the Server-level counterpart of Database.query. A
-// single read is idempotent, so it's always safe to re-run on a fresh
-// connection; unlike Database.query, there's no USE to redo first, since a
-// Server-scoped query never targets a specific database.
+// query runs a server-scoped, rows-returning read against the pool — the
+// Server-level counterpart of Database.query. A single read is idempotent, so
+// a transient failure (IsTransient: a dropped connection, a deadlock victim,
+// one of Azure SQL's transient errors) is re-run on a fresh connection, up to
+// readRetryAttempts tries in all (withRetry). Unlike Database.query there is
+// no database to enter, so q runs as given. Inside InTransaction it runs on
+// the transaction's connection and is never retried.
 func (s *Server) query(ctx context.Context, q string, args ...any) (*dbRows, error) {
 	ctx, release := s.bound(ctx)
 	var rows *sql.Rows

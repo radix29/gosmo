@@ -541,8 +541,9 @@ func TestConnectionStringReportsConnectsErrors(t *testing.T) {
 // does not translate synonyms, so before adoDSNSynonyms "Application
 // Intent=ReadOnly" parsed without error and without effect. A synonym a
 // future driver adds to a keyword listed here fails this test instead of
-// silently diverging. Keywords reservedDSNKeys refuses are skipped: they never
-// reach the DSN.
+// silently diverging — including one whose target Config does not hold, as
+// v1.12.0's "authentication" (fedauth, read from Parameters). Keywords
+// reservedDSNKeys refuses are skipped: they never reach the DSN.
 func TestExtraParamsADOSynonymsMatchTheDriver(t *testing.T) {
 	keywords := []string{
 		"Addr", "Address", "App", "Application Intent", "ApplicationIntent", "Application Name",
@@ -613,6 +614,18 @@ func TestExtraParamsADOSynonymsMatchTheDriver(t *testing.T) {
 		case urlErr == nil:
 			if u, a := comparableConfig(urlCfg), comparableConfig(adoCfg); !reflect.DeepEqual(u, a) {
 				t.Errorf("%s=%s: driver reads the URL form as\n%+v\nbut the key=value form as\n%+v", kw, val, u, a)
+			}
+			// Config does not carry every key: "fedauth" (and its v1.12.0
+			// synonym "authentication") is read later from Parameters by the
+			// azuread connector. So every parameter the key=value form adds
+			// or changes must appear in the URL form under the same key.
+			for k, v := range adoCfg.Parameters {
+				if bv, ok := baseCfg.Parameters[k]; ok && bv == v {
+					continue
+				}
+				if uv, ok := urlCfg.Parameters[k]; !ok || uv != v {
+					t.Errorf("%s=%s: key=value form sets driver parameter %q=%q, URL form has %q (present %v)", kw, val, k, v, uv, ok)
+				}
 			}
 		}
 	}

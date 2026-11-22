@@ -7,8 +7,8 @@ import (
 	// Registers the "krb5" integrated-authentication provider with
 	// go-mssqldb. Without this blank import the provider is unknown and a
 	// Kerberos connection fails with "provider krb5 not found". The package
-	// is pure Go (gokrb5), so it works on every platform gossms targets, not
-	// just Windows.
+	// is pure Go (go-krb5/krb5, the maintained gokrb5 fork, since go-mssqldb
+	// v1.12.0), so it works on every platform gossms targets, not just Windows.
 	_ "github.com/microsoft/go-mssqldb/integratedauth/krb5"
 )
 
