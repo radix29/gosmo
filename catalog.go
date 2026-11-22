@@ -67,11 +67,13 @@ type CatalogAggregate struct {
 }
 
 // CatalogTypeKind distinguishes a CatalogType's kind: where T-SQL accepts it.
+// The zero value is no kind, so a zero CatalogType reads as no type rather
+// than as an alias type.
 type CatalogTypeKind int
 
 const (
 	// CatalogAliasType is an alias type (CREATE TYPE ... FROM a system type).
-	CatalogAliasType CatalogTypeKind = iota
+	CatalogAliasType CatalogTypeKind = iota + 1
 	// CatalogClrType is a CLR user-defined type (CREATE TYPE ... EXTERNAL NAME).
 	CatalogClrType
 	// CatalogTableType is a table type: valid only as a READONLY parameter
@@ -110,11 +112,13 @@ type Catalog struct {
 // data type (alias, CLR and table types) the login can see, sorted by schema
 // then name.
 func (d *Database) Catalog(ctx context.Context) (*Catalog, error) {
-	return d.catalog(ctx, catalogUserViews,
-		"o.type IN ('U','V') AND o.is_ms_shipped = 0",
-		"o.type IN ('IF','TF','FT') AND o.is_ms_shipped = 0",
-		"o.type = 'AF' AND o.is_ms_shipped = 0",
-		"t.is_user_defined = 1")
+	return d.catalog(ctx, catalogQuery{
+		views:      catalogUserViews,
+		objects:    "o.type IN ('U','V') AND o.is_ms_shipped = 0",
+		functions:  "o.type IN ('IF','TF','FT') AND o.is_ms_shipped = 0",
+		aggregates: "o.type = 'AF' AND o.is_ms_shipped = 0",
+		types:      "t.is_user_defined = 1",
+	})
 }
 
 // CallerDefaultSchema returns the connected login's default schema in the
@@ -156,13 +160,15 @@ func (d *Database) CallerDefaultSchema(ctx context.Context) (string, error) {
 // ones behind geometry::UnionAggregate and kin). The built-in aggregates —
 // SUM, COUNT and the rest — are not objects and appear in neither catalog.
 // Its Types is empty: the shipped types (int, geography, ...) are not
-// user-defined, and no user-defined type lives in "sys".
+// user-defined, and no user-defined type lives in "sys", so sys.types is not
+// read at all.
 func (d *Database) SystemCatalog(ctx context.Context) (*Catalog, error) {
-	return d.catalog(ctx, catalogAllViews,
-		"o.type = 'V' AND o.schema_id IN (3, 4)",
-		"o.type IN ('IF','TF','FT') AND o.schema_id = 4",
-		"o.type = 'AF' AND o.schema_id = 4",
-		"t.is_user_defined = 1 AND t.schema_id = 4")
+	return d.catalog(ctx, catalogQuery{
+		views:      catalogAllViews,
+		objects:    "o.type = 'V' AND o.schema_id IN (3, 4)",
+		functions:  "o.type IN ('IF','TF','FT') AND o.schema_id = 4",
+		aggregates: "o.type = 'AF' AND o.schema_id = 4",
+	})
 }
 
 // catalogViews names the catalog views a catalog read selects from: the
@@ -177,21 +183,31 @@ var (
 	catalogAllViews  = catalogViews{"sys.all_objects", "sys.all_columns", "sys.all_parameters"}
 )
 
+// catalogQuery is what a catalog read selects: the views it reads and one
+// where clause per family — fixed, package-internal constants, never
+// caller-supplied. An empty types skips the sys.types read (Types stays
+// empty); every other clause is required.
+type catalogQuery struct {
+	views                                 catalogViews
+	objects, functions, aggregates, types string
+}
+
 // catalog is the shared implementation behind Catalog and
-// SystemCatalog — they differ only in which views and where clauses (fixed,
-// package-internal constants — never caller-supplied) select the rows: where
-// for Objects, fnWhere for Functions, aggWhere for Aggregates, typeWhere for
-// Types.
+// SystemCatalog — they differ only in their catalogQuery.
 //
 // It is one batch of six result sets — objects, their columns, functions,
-// their columns, aggregates, types — in one round trip on one connection.
-func (d *Database) catalog(ctx context.Context, v catalogViews, where, fnWhere, aggWhere, typeWhere string) (*Catalog, error) {
-	q := catalogObjectsSelect(v.objects, where) + ";\n" +
-		catalogColumnsSelect(v.objects, v.columns, where) + ";\n" +
-		catalogObjectsSelect(v.objects, fnWhere) + ";\n" +
-		catalogColumnsSelect(v.objects, v.columns, fnWhere) + ";\n" +
-		catalogAggregatesSelect(v.objects, v.parameters, aggWhere) + ";\n" +
-		catalogTypesSelect(typeWhere)
+// their columns, aggregates, types — in one round trip on one connection;
+// five when cq.types is empty. A refusal of any one fails the whole read.
+func (d *Database) catalog(ctx context.Context, cq catalogQuery) (*Catalog, error) {
+	v := cq.views
+	q := catalogObjectsSelect(v.objects, cq.objects) + ";\n" +
+		catalogColumnsSelect(v.objects, v.columns, cq.objects) + ";\n" +
+		catalogObjectsSelect(v.objects, cq.functions) + ";\n" +
+		catalogColumnsSelect(v.objects, v.columns, cq.functions) + ";\n" +
+		catalogAggregatesSelect(v.objects, v.parameters, cq.aggregates)
+	if cq.types != "" {
+		q += ";\n" + catalogTypesSelect(cq.types)
+	}
 
 	rows, err := d.query(ctx, q)
 	if err != nil {
@@ -208,7 +224,9 @@ func (d *Database) catalog(ctx context.Context, v catalogViews, where, fnWhere, 
 		func() (err error) { functions, err = scanCatalogObjects(rows); return err },
 		func() error { return scanCatalogColumns(rows, functions) },
 		func() (err error) { aggregates, err = scanCatalogAggregates(rows); return err },
-		func() (err error) { types, err = scanCatalogTypes(rows); return err },
+	}
+	if cq.types != "" {
+		reads = append(reads, func() (err error) { types, err = scanCatalogTypes(rows); return err })
 	}
 	for i, read := range reads {
 		if i > 0 && !rows.NextResultSet() {

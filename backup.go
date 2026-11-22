@@ -487,7 +487,8 @@ const (
 // two chain rules; a status whose DifferentialBaseKnown is false (the login
 // cannot see sys.master_files) skips the differential base rule; a DatabaseRef
 // handle, whose RecoveryModel is zero, skips the SIMPLE rule. master and
-// tempdb are recognised by database_id when d carries one, else by name.
+// tempdb are recognised by database_id when d carries one, else by name
+// under the server's collation (SameName; case-blind when it was not read).
 //
 // The rules apply in a fixed order, so one database gets one answer:
 // tempdb, snapshot, master, SIMPLE recovery, then the chain. A COPY_ONLY
@@ -501,7 +502,13 @@ func (d *Database) BackupRefusal(action BackupAction, status *DatabaseRecoverySt
 		if d.ID > 0 {
 			return d.ID == id
 		}
-		return strings.EqualFold(d.Name, name)
+		// By name under the server's collation: on a case-sensitive server a
+		// user database TempDB or Master can sit beside the system one.
+		collation := ""
+		if d.server != nil {
+			collation = d.server.collation()
+		}
+		return SameName(collation, d.Name, name)
 	}
 	switch {
 	case isSystemDB(tempdbDatabaseID, "tempdb"):
