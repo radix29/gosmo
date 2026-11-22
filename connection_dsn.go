@@ -439,6 +439,7 @@ var reservedDSNKeys = map[string]bool{
 	"initial catalog": true, "user": true, "uid": true, "pwd": true,
 	"app": true, "application name": true, "connect timeout": true, "timeout": true,
 	"trust server certificate": true, "host name in certificate": true, "server spn": true,
+	"authentication": true, // fedauth, since go-mssqldb v1.12.0
 }
 
 // overridableDSNKeys are the driver parameters gosmo writes as a default

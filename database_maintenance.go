@@ -3,7 +3,7 @@ package gosmo
 // database_maintenance.go is the whole-database maintenance a DBA runs on a
 // schedule: DBCC CHECKDB, fragmentation across every index, and
 // sp_updatestats. The per-table and per-index forms are in
-// index_management.go and statistics.go.
+// index_management.go, index_stats.go (fragmentation) and statistics.go.
 
 import (
 	"context"

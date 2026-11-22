@@ -330,9 +330,10 @@ WHERE  o.object_id = OBJECT_ID(@p1) AND ` + kind
 // moduleSource is where one module listing reads its rows: from, a catalog
 // view aliased o, and kind, the predicate that keeps the family's rows. A
 // system listing reads sys.all_objects (shipped objects are invisible
-// through the non-"all_" views) in the sys schema, and orders by name alone.
-// The sys schema is schema_id 4 in every database; comparing the id rather
-// than SCHEMA_NAME(o.schema_id) = 'sys' lets the predicate seek.
+// through the non-"all_" views) in the sys schema (and INFORMATION_SCHEMA,
+// for views), and orders by schema_id then name. INFORMATION_SCHEMA and sys
+// are schema_id 3 and 4 in every database; comparing the id rather than
+// SCHEMA_NAME(o.schema_id) = 'sys' lets the predicate seek.
 type moduleSource struct {
 	from, kind string
 	system     bool
@@ -360,7 +361,7 @@ func moduleListWhere[T any](ctx context.Context, d *Database, what string, src m
 	build func(*Database, func(...any) error) (T, error)) ([]T, error) {
 	order := "SCHEMA_NAME(o.schema_id), o.name"
 	if src.system {
-		order = "o.name"
+		order = "o.schema_id, o.name"
 	}
 	q := moduleColumns + extra + `
 FROM   ` + src.from + `

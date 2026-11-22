@@ -87,6 +87,32 @@ func TestLiveDiscoveryReads(t *testing.T) {
 		}
 	})
 
+	t.Run("SystemViews and SystemCatalog include INFORMATION_SCHEMA", func(t *testing.T) {
+		views, err := d.SystemViews(ctx, ObjectFilter{})
+		if err != nil {
+			t.Fatalf("SystemViews: %v", err)
+		}
+		var schemas []string
+		for _, v := range views {
+			if len(schemas) == 0 || schemas[len(schemas)-1] != v.Schema {
+				schemas = append(schemas, v.Schema)
+			}
+		}
+		if !slices.Equal(schemas, []string{"INFORMATION_SCHEMA", "sys"}) {
+			t.Errorf("SystemViews schemas in order = %q, want [INFORMATION_SCHEMA sys]", schemas)
+		}
+		cat, err := d.SystemCatalog(ctx)
+		if err != nil {
+			t.Fatalf("SystemCatalog: %v", err)
+		}
+		i := slices.IndexFunc(cat.Objects, func(o CatalogObject) bool {
+			return o.Schema == "INFORMATION_SCHEMA" && o.Name == "TABLES"
+		})
+		if i < 0 || len(cat.Objects[i].Columns) == 0 {
+			t.Errorf("SystemCatalog has no INFORMATION_SCHEMA.TABLES with columns (index %d)", i)
+		}
+	})
+
 	t.Run("ObjectsNamed system", func(t *testing.T) {
 		got, err := d.ObjectsNamed(ctx, "databases")
 		if err != nil || len(got) == 0 {
