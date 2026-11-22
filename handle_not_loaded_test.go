@@ -25,6 +25,7 @@ func TestTableRefReadsAreRefused(t *testing.T) {
 		{"Detail", func(c context.Context, t *Table) error { return errOnly(t.Detail(c)) }},
 		{"Columns", func(c context.Context, t *Table) error { return errOnly(t.Columns(c)) }},
 		{"ForeignKeys", func(c context.Context, t *Table) error { return errOnly(t.ForeignKeys(c)) }},
+		{"ReferencingForeignKeys", func(c context.Context, t *Table) error { return errOnly(t.ReferencingForeignKeys(c)) }},
 		{"ForeignKeyByName", func(c context.Context, t *Table) error { return errOnly(t.ForeignKeyByName(c, "fk")) }},
 		{"CheckConstraints", func(c context.Context, t *Table) error { return errOnly(t.CheckConstraints(c)) }},
 		{"Triggers", func(c context.Context, t *Table) error { return errOnly(t.Triggers(c)) }},

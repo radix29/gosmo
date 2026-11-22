@@ -386,6 +386,37 @@ func TestLiveSchemaAndTableChildFindersMatchTheirListings(t *testing.T) {
 		}
 	})
 
+	t.Run("ReferencingForeignKeys", func(t *testing.T) {
+		parent, err := d.TableByName(ctx, "app", "parent")
+		if err != nil {
+			t.Fatalf("parent: %v", err)
+		}
+		list, err := parent.ReferencingForeignKeys(ctx)
+		if err != nil {
+			t.Fatalf("list: %v", err)
+		}
+		if len(list) != 1 {
+			t.Fatalf("listing returned %d foreign keys, want 1", len(list))
+		}
+		fk := list[0]
+		if fk.Name != "fk_child_parent" || fk.Schema != "app" || fk.TableName != "child" ||
+			fk.ReferencedSchema != "app" || fk.ReferencedTable != "parent" ||
+			fk.DeleteAction != "CASCADE" || fk.UpdateAction != "NO_ACTION" || fk.IsDisabled {
+			t.Errorf("referencing key = %+v", fk)
+		}
+		// The parent side is filled on the owning table's read too.
+		own, err := child.ForeignKeyByName(ctx, "fk_child_parent")
+		if err != nil {
+			t.Fatalf("by name: %v", err)
+		}
+		if own.Schema != "app" || own.TableName != "child" {
+			t.Errorf("own key's table = %s.%s, want app.child", own.Schema, own.TableName)
+		}
+		if refs, err := child.ReferencingForeignKeys(ctx); err != nil || len(refs) != 0 {
+			t.Errorf("child's referencing keys = %v, %v; want none", refs, err)
+		}
+	})
+
 	t.Run("TableChangeTracking", func(t *testing.T) {
 		list, err := d.TableChangeTracking(ctx)
 		if err != nil {

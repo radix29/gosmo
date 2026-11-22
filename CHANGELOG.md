@@ -53,6 +53,7 @@ to a certificate or asymmetric key, and its prefetch is about a third faster.
 - **`Database.EnsureMasterKey(ctx, password)`** — creates the master key only when the database has none and reports whether it did; under `Scripting(ctx)` the check still reads the real server.
 - **`QueryStoreReportOptions.Effective()`** — the options with the report reads' defaults filled in, for labelling a report from the same values the query uses.
 - **`ServerInfo.AtLeast(v)` / `ServerInfo.AtLeastBuild(v, build)`** — gosmo's version gate, exported (nil-safe): an unread version and an Azure edition count as newest, as every gate inside gosmo does. For a caller gating its own feature, instead of comparing `VersionMajor` by hand.
+- **`Table.ReferencingForeignKeys`** — the foreign keys that reference the table (a self-reference included), each with its `DeleteAction`/`UpdateAction`: what a DELETE or UPDATE of the table does to rows the server does not count. **`ForeignKey.Schema` / `TableName`** name the table a key is on, filled by `Table`'s foreign-key reads.
 
 ### Changed
 

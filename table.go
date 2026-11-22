@@ -153,7 +153,13 @@ WHERE  t.object_id = @p1`
 
 // ForeignKey mirrors Microsoft.SqlServer.Management.Smo.ForeignKey.
 type ForeignKey struct {
-	Name              string
+	Name string
+	// Schema and TableName are the table the key is on (its parent): t's own
+	// on Table.ForeignKeys and ForeignKeyByName, the referencing table's on
+	// Table.ReferencingForeignKeys. A whole-database script's prefetch leaves
+	// them empty.
+	Schema            string
+	TableName         string
 	Columns           []string
 	ReferencedTable   string
 	ReferencedSchema  string
@@ -177,6 +183,12 @@ var foreignKeySelect = foreignKeySelectWith("", "= @p1")
 // list and the parent-table predicate set to parent ("= @p1" for one table,
 // "IN (…)" for a batch).
 func foreignKeySelectWith(extra, parent string) string {
+	return foreignKeySelectWhere(extra, "fk.parent_object_id "+parent)
+}
+
+// foreignKeySelectWhere is the foreign-key read with extra appended to the
+// select list and where as its whole predicate.
+func foreignKeySelectWhere(extra, where string) string {
 	return `
 SELECT fk.name, fk.is_disabled, fk.is_not_trusted, fk.is_not_for_replication,
        fk.delete_referential_action_desc, fk.update_referential_action_desc,
@@ -197,7 +209,7 @@ SELECT fk.name, fk.is_disabled, fk.is_not_trusted, fk.is_not_for_replication,
 		"fkc.constraint_column_id") + extra + `
 FROM   sys.foreign_keys fk
 JOIN   sys.tables rt ON rt.object_id = fk.referenced_object_id
-WHERE  fk.parent_object_id ` + parent
+WHERE  ` + where
 }
 
 // ForeignKeys returns all foreign keys on the table.
@@ -208,8 +220,46 @@ func (t *Table) ForeignKeys(ctx context.Context) ([]*ForeignKey, error) {
 	rows, err := t.db.query(ctx, foreignKeySelect+`
 ORDER  BY fk.name`, t.ObjectID)
 	return scanRows(rows, err, fmt.Sprintf("list foreign keys for %s", t.FullName()), func(scan func(...any) error) (*ForeignKey, error) {
-		return scanForeignKey(scan)
+		return t.scanOwnForeignKey(scan)
 	})
+}
+
+// ReferencingForeignKeys returns the foreign keys that reference the table —
+// the keys on other tables, and a self-reference, whose referenced side it
+// is — ordered by the referencing table, then the key's name. Each key's
+// Schema and TableName name the table it is on.
+//
+// A key's DeleteAction and UpdateAction say what a DELETE or UPDATE of this
+// table does to that table's rows: anything but NO_ACTION changes them
+// (CASCADE, SET_NULL, SET_DEFAULT), and the server counts none of it in the
+// statement's rows affected. A disabled key (IsDisabled) does nothing.
+func (t *Table) ReferencingForeignKeys(ctx context.Context) ([]*ForeignKey, error) {
+	if err := t.requireLoaded("list foreign keys referencing"); err != nil {
+		return nil, err
+	}
+	// A key's schema is its table's.
+	rows, err := t.db.query(ctx, foreignKeySelectWhere(", SCHEMA_NAME(fk.schema_id), OBJECT_NAME(fk.parent_object_id)",
+		"fk.referenced_object_id = @p1")+`
+ORDER  BY SCHEMA_NAME(fk.schema_id), OBJECT_NAME(fk.parent_object_id), fk.name`, t.ObjectID)
+	return scanRows(rows, err, fmt.Sprintf("list foreign keys referencing %s", t.FullName()), func(scan func(...any) error) (*ForeignKey, error) {
+		var schema, table string
+		fk, err := scanForeignKey(scan, &schema, &table)
+		if err != nil {
+			return nil, err
+		}
+		fk.Schema, fk.TableName = schema, table
+		return fk, nil
+	})
+}
+
+// scanOwnForeignKey is scanForeignKey for a key on t itself.
+func (t *Table) scanOwnForeignKey(scan func(...any) error) (*ForeignKey, error) {
+	fk, err := scanForeignKey(scan)
+	if err != nil {
+		return nil, err
+	}
+	fk.Schema, fk.TableName = t.Schema, t.Name
+	return fk, nil
 }
 
 // ForeignKeyByName returns one foreign key on the table by name.
@@ -223,7 +273,7 @@ func (t *Table) ForeignKeyByName(ctx context.Context, name string) (*ForeignKey,
 	var fk *ForeignKey
 	err := t.db.queryRow(ctx, func(row *sql.Row) error {
 		var err error
-		fk, err = scanForeignKey(row.Scan)
+		fk, err = t.scanOwnForeignKey(row.Scan)
 		return err
 	}, foreignKeySelect+`
        AND fk.name = @p2`, t.ObjectID, name)
