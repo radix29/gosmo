@@ -355,7 +355,9 @@ The instance and database halves pair up: `ServerResourceStat` and
 | Backup devices           | `srv.BackupDevices(ctx)` / `srv.BackupDeviceByName(ctx, name)` / `srv.BackupDeviceRef(name)` (no-I/O handle) / `srv.CreateBackupDevice(ctx, gosmo.CreateBackupDeviceRequest{Name, Type, PhysicalName})` / `dev.Drop(ctx, gosmo.KeepDeviceFile)` (or `DeleteDeviceFile`) / `dev.Headers(ctx)` |
 | Endpoints (all protocols) | `srv.Endpoints(ctx)` / `srv.EndpointByName(ctx, name)` / `ep.SetState(ctx, state)` / `ep.Drop(ctx)` / `ep.MirroringDetail(ctx)` / `ep.ServiceBrokerDetail(ctx)` — see [Endpoints](#endpoints) |
 | Server DDL / logon triggers | `srv.ServerTriggers(ctx)` / `srv.ServerTriggerByName(ctx, name)` / `srv.ServerTriggerRef(name)` (no-I/O handle) / `tr.SetEnabled(ctx, on)` / `tr.Drop(ctx)` |
-| Azure engine edition             | `srv.Info().IsAzure()` — the test every version gate asks before it believes `VersionMajor`, which Azure freezes |
+| Azure engine edition             | `srv.Info().IsAzure()` — the test every version gate asks before it believes `VersionMajor`, which Azure freezes; `IsDatabaseScoped()` / `IsManagedInstance()` / `IsFabricSQLDatabase()` refine it (all nil-safe) |
+| Fabric Warehouse                 | `srv.IsFabricDW()` — decided once at `Connect`/`NewServer` from `EngineEdition` (11, unless a Synapse serverless host) and the host name; `ConnectionOptions.FabricDW` (`new(true)`) overrides it |
+| Version gate for a caller        | `srv.Info().AtLeast(v)` / `AtLeastBuild(v, build)` — gosmo's own gate, exported: an unread version and an Azure edition count as newest |
 | Azure resource history           | `srv.ServerResourceStats(ctx, max)` / `srv.LatestServerResourceStats(ctx)` — `sys.server_resource_stats`, one row per 15-second window |
 | Azure resource limits            | `srv.InstanceResourceGovernance(ctx)` / `srv.OSJobObject(ctx)` — see [Azure instance resources](#azure-instance-resources) |
 | Azure per-database limits        | `srv.UserDBResourceGovernance(ctx)` — one row per database on the instance, from wherever the connection is |
@@ -395,7 +397,7 @@ The instance and database halves pair up: `ServerResourceStat` and
 | Parent server                    | `db.Server()` — a back-pointer, so still a method |
 | `Database.Tables`               | `db.Tables(ctx, gosmo.TableQuery{Kind, Filter})` (zero = every user table) / `db.TablesBySchema(ctx, schema)` |
 | One family of tables (System, FileTables, External, Graph) | `db.Tables(ctx, gosmo.TableQuery{Kind: kind})` / `db.TableKindsPresent(ctx)` — see [Table kinds](#table-kinds) |
-| Bulk table/view + column snapshot | `db.Catalog(ctx)` (user objects) / `db.SystemCatalog(ctx)` (`sys` schema, plus INFORMATION_SCHEMA's views); `Catalog.Functions` holds the table-valued functions (`IF`/`TF`/`FT`) and their result columns, kept out of `Objects`; `Catalog.Aggregates` the user-defined (CLR, `AF`) aggregates and their return types |
+| Bulk table/view + column snapshot | `db.Catalog(ctx)` (user objects) / `db.SystemCatalog(ctx)` (`sys` schema, plus INFORMATION_SCHEMA's views); `Catalog.Functions` holds the table-valued functions (`IF`/`TF`/`FT`) and their result columns, kept out of `Objects`; `Catalog.Aggregates` the user-defined (CLR, `AF`) aggregates and their return types; `Catalog.Types` the user-defined types (alias, CLR, table) as `CatalogType{UserTypeID, Schema, Name, Kind}` (empty for `SystemCatalog`) |
 | `Database.Views`                | `db.Views(ctx, f)` / `db.ViewByName(ctx, schema, name)` / `db.ViewRef(schema, name)` (no-I/O handle) / `v.Drop(ctx)` / `v.Triggers(ctx)` / `v.Columns(ctx)`; an indexed view's `v.Indexes` / `IndexByName` / `IndexRef` / `CreateIndex` / `RebuildAllIndexes` and `v.Statistics` / `StatisticByName` / `StatisticRef` / `CreateStatistic` / `UpdateStatistics` — a table's, through a carrier `Table`; the results answer `View()`, and `Table()` nil (see `view_indexes.go`) |
 | `Database.StoredProcedures`     | `db.StoredProcedures(ctx, f)` / `db.StoredProcedureByName(ctx, schema, name)` / `db.StoredProcedureRef(schema, name)` (no-I/O handle) / `db.CreateStoredProcedure(ctx, req)` / `p.Drop(ctx)` |
 | `Database.UserDefinedFunctions` | `db.UserDefinedFunctions(ctx, f)` (T-SQL and CLR; `f.FuncType` is a `FunctionType` — `IsScalar()`, `IsCLR()`) / `db.UserDefinedFunctionByName(ctx, schema, name)` / `db.UserDefinedFunctionRef(schema, name)` (no-I/O handle) / `f.Drop(ctx)` |
@@ -479,7 +481,7 @@ The instance and database halves pair up: `ServerResourceStat` and
 | `Table.Columns`       | `t.Columns(ctx)`                      |
 | `Table.Indexes`       | `t.Indexes(ctx)` / `t.IndexByName(ctx, name)` |
 | XML indexes           | `t.XMLIndexes(ctx)` → `[]*XMLIndex` (primary/secondary/selective, and which primary) |
-| `Table.ForeignKeys`   | `t.ForeignKeys(ctx)` / `t.ForeignKeyByName(ctx, name)` |
+| `Table.ForeignKeys`   | `t.ForeignKeys(ctx)` / `t.ForeignKeyByName(ctx, name)`; `t.ReferencingForeignKeys(ctx)` — the keys that reference the table, with their `DeleteAction`/`UpdateAction` (`ForeignKey.Schema`/`TableName` name the table a key is on) |
 | `Table.Checks`        | `t.CheckConstraints(ctx)`             |
 | Graph edge constraints | `t.EdgeConstraints(ctx)` → `[]*EdgeConstraint` (2019+; empty below) |
 | `Table.Statistics`    | `t.Statistics(ctx)` / `t.StatisticByName(ctx, name)` / `t.StatisticRef(name)` (no-I/O handle) |

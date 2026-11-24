@@ -29,6 +29,9 @@ classDiagram
         +IsAzure() bool
         +IsDatabaseScoped() bool
         +IsManagedInstance() bool
+        +IsFabricSQLDatabase() bool
+        +AtLeast(v ServerVersion) bool
+        +AtLeastBuild(v ServerVersion, build int) bool
         +SupportsBackupCompression() bool
         +SupportsOnlineIndexOperations() bool
         EngineEdition is SERVERPROPERTY('EngineEdition');

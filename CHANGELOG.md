@@ -4,7 +4,7 @@ All notable changes to gosmo are documented here, newest first, from
 `v0.0.4` onward — this is the history. `RELEASE.md` carries the current
 release only, as a short summary of the entry below it.
 
-## v0.4.0 (unreleased)
+## v0.4.0
 
 A Fabric and consistency release for gossms. gosmo now decides on its own
 whether a connection is a Fabric Warehouse, so `Server.IsFabricDW` becomes a
@@ -13,7 +13,8 @@ Fabric is a known edition; the optional singletons (master key, mirroring
 endpoint, endpoint details) report "none" as `ErrNotFound` like every other
 lookup. Whole-database scripting no longer fails its replay on a user mapped
 to a certificate or asymmetric key, and its prefetch is about a third faster.
-**Breaking.** **Migrating:**
+`Catalog` lists user-defined types, and name matching follows each
+collation's own case rules. **Breaking.** **Migrating:**
 
 - `srv.IsFabricDW` becomes `srv.IsFabricDW()`. Code that assigned it after
   `Connect` drops the assignment: detection is automatic, and
@@ -54,6 +55,7 @@ to a certificate or asymmetric key, and its prefetch is about a third faster.
 - **`QueryStoreReportOptions.Effective()`** — the options with the report reads' defaults filled in, for labelling a report from the same values the query uses.
 - **`ServerInfo.AtLeast(v)` / `ServerInfo.AtLeastBuild(v, build)`** — gosmo's version gate, exported (nil-safe): an unread version and an Azure edition count as newest, as every gate inside gosmo does. For a caller gating its own feature, instead of comparing `VersionMajor` by hand.
 - **`Table.ReferencingForeignKeys`** — the foreign keys that reference the table (a self-reference included), each with its `DeleteAction`/`UpdateAction`: what a DELETE or UPDATE of the table does to rows the server does not count. **`ForeignKey.Schema` / `TableName`** name the table a key is on, filled by `Table`'s foreign-key reads.
+- **`Catalog.Types`** — the user-defined data types (alias, CLR, table) the login can see, as `CatalogType{UserTypeID, Schema, Name, Kind}` with `CatalogTypeKind` (`CatalogAliasType`, `CatalogClrType`, `CatalogTableType`), read in the same round trip as the rest of the snapshot; empty for `SystemCatalog`.
 
 ### Changed
 
@@ -62,6 +64,7 @@ to a certificate or asymmetric key, and its prefetch is about a third faster.
 - **Breaking — `ServerInfo.EngineEdition`** is typed (`gosmotest`'s `Info` too).
 - **Breaking — optional singletons** report absence as `ErrNotFound` (see Migrating).
 - **SQL database in Fabric** is treated as a single-database engine everywhere an Azure SQL Database check stood: it is no longer version-gated as a SQL Server 2014 engine, and the replication refusal names the edition. `RebuildAllIndexes*` and `ReorganizeAllIndexes` on it send one `ALTER INDEX` per index, since it refuses `ALTER INDEX ALL`.
+- **`SameName` / `NameKey` follow the collation's own case pairing:** which letters pair is the server's, per collation (Turkish and Azeri pair `i` with `İ`, Kazakh keeps `Ё`/`ё` apart, the Kelvin sign pairs with `K` from the 140 collations), taken from the generated `collation_case_tables.go` for every collation SQL Server 2025 lists. A collation not listed, or an unread one, still folds by Unicode simple folding. `TestLiveCaseTables` regenerates and checks the table against the server.
 - `HasMasterKey` and `CreateMasterKey` move to `master_key.go` with the rest of the master key; `MasterKey` reads the key and its server-encryption flag in one round trip.
 - A retry ended by its context returns the context error joined with the transient error that caused the retry; `errors.Is(err, context.Canceled)` still holds.
 - **go-mssqldb v1.12.0** (from v1.11.2). Its Kerberos client is now the community-maintained `go-krb5/krb5` fork of `jcmturner/gokrb5` (indirect dependencies change accordingly); `KerberosOptions` is unchanged.
@@ -71,6 +74,7 @@ to a certificate or asymmetric key, and its prefetch is about a third faster.
 
 - **`ScriptDatabaseObjects` / `ScriptDatabaseObjectList` with `IncludePermissions`:** a user mapped to a certificate or asymmetric key is a `-- not scripted:` comment, as is every statement naming it (schema and role ownership, memberships, permissions), since the script creates no certificate or key; the replay into an empty database failed on it. `ScriptDatabaseSecurity` still scripts the user.
 - **Whole-database scripting prefetch:** the table-options read joins `sys.filetables` only for a FileTable. Unconditional, SQL Server 17 rescanned the view once per table; at 500 tables that statement went from ~1.45 s to ~0.45 s and the warm prefetch from ~3.2 s to ~2.1 s.
+- **`BackupRefusal`:** `tempdb` and `master` are recognised by name under the server's collation, so on a case-sensitive server a user database `TempDB` or `Master` is no longer refused as the system one.
 - Error messages that truncate a value cut at a rune boundary instead of through a multi-byte character.
 
 ## v0.3.0

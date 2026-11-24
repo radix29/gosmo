@@ -139,6 +139,7 @@ classDiagram
         +CreateSymmetricKey(req) *SymmetricKey
         +HasMasterKey() bool
         +CreateMasterKey(req) *MasterKey
+        +EnsureMasterKey(password) bool
         +MasterKey() *MasterKey
         +MasterKeyRef() *MasterKey
         +ModuleSignatures() []*ModuleSignature

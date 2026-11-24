@@ -70,6 +70,7 @@ classDiagram
         +IndexUsage() []*IndexUsage
         +FragmentationStats(mode) []*IndexFragmentation
         +RebuildAllIndexesWith(opts) error
+        +RebuildAllIndexesScript(opts) string
         +ReorganizeAllIndexes() error
         +UpdateStatistics(opts) error
     }

@@ -3,33 +3,32 @@
 The current release, in brief. Detail and history are in
 [CHANGELOG.md](CHANGELOG.md).
 
-## v0.3.0
+## v0.4.0
 
 ### New
 
-- `Database.Principals`: users, roles and application roles in one round trip.
-- `Database.BackupRefusal`: why SQL Server would refuse a backup.
-- `DiscardConn` and `RepairError` for sessions and disable windows left in doubt.
-- `JobState.Running`, `SecurableClass.Permission`, `Schema.IsSystem`.
-- Fabric Warehouse: `ExternalFunctions`, `CREATE TABLE` scripting, statistics reads.
-- Table and view scripts include user-created statistics.
+- Fabric Warehouse is detected at connect; `ConnectionOptions.FabricDW` overrides it.
+- SQL database in Fabric: `EngineFabricSQLDatabase`; edition helpers `IsDatabaseScoped`, `IsManagedInstance`, `IsFabricSQLDatabase`.
+- `ServerInfo.AtLeast` / `AtLeastBuild`: gosmo's version gate, exported.
+- `Catalog.Types`: user-defined alias, CLR and table types.
+- `Table.ReferencingForeignKeys`; `ForeignKey.Schema` / `TableName`.
+- `Database.EnsureMasterKey`, `RebuildAllIndexesScript` (table, view), `QueryStoreReportOptions.Effective`.
 
 ### Fixes
 
-- Connection retargeting compares database names under the server collation.
-- Failed connections are discarded, not pooled; failed repairs are reported.
-- Columnstore `ORDER` columns must match their key column's case exactly.
-- `ScriptDatabaseObjects` scripts DDL triggers last; its warnings are comment-safe.
-- Bulk loads round `float` to `decimal` ties away from zero, as `CAST` does.
-- Fabric key constraints no longer emit `ASC`/`DESC`; `Dependents` works on Fabric.
+- Whole-database scripting no longer fails on a user mapped to a certificate or asymmetric key.
+- Whole-database scripting prefetch is about a third faster.
+- `BackupRefusal` recognises `tempdb`/`master` by server collation.
+- Truncated error messages cut at a rune boundary.
 
 ### Changes
 
-- **Breaking:** full-text calls move to `d.FullText()`, Service Broker calls to `d.ServiceBroker()`.
-- **Breaking:** `Enable`/`Disable` removed (except `Index`, `ResourceGovernor`); use `SetEnabled(ctx, on)`.
-- **Breaking:** `AddToServerRole`, `RemoveFromServerRole`, `AddToRole`, `RemoveFromRole` removed; use the role's `AddMember`/`RemoveMember`.
-- **Breaking:** statistics updates take `StatisticsUpdateOptions`; `UpdateWith` variants removed.
-- `PlanRestore` follows the live recovery fork.
-- `SearchDefinitions` compares ordinally: about 5× faster, no longer accent-insensitive.
-- Whole-database scripting reads extended properties in bulk.
-- Go 1.27.4; `golang.org/x/crypto` v0.59.0.
+- **Breaking:** `Server.IsFabricDW` is a method and can no longer be set.
+- **Breaking:** `ServerInfo.EngineEdition` is typed `EngineEdition`, not `int`.
+- **Breaking:** `MasterKey`, `DatabaseMirroringEndpoint`, `MirroringDetail`, `ServiceBrokerDetail` return `ErrNotFound`, not `(nil, nil)`.
+- **Breaking:** `ObjectByName`, `ObjectsNamed`, `ViewByName` and column reads resolve shipped objects (`sys.objects`).
+- **Breaking:** `SystemViews` / `SystemCatalog` include INFORMATION_SCHEMA; system listings sort by schema, then name.
+- **Breaking:** `ExtraParams` refuses `Authentication`; use `AuthMethod`.
+- `SameName` / `NameKey` follow each collation's case pairing.
+- SQL database in Fabric: no longer version-gated as SQL Server 2014; per-index `ALTER INDEX`.
+- go-mssqldb v1.12.0 (Kerberos via `go-krb5/krb5`).

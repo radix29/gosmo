@@ -111,6 +111,22 @@ classDiagram
         +Schemas []string
         +Objects []CatalogObject
         +Functions []CatalogObject
+        +Aggregates []CatalogObject
+        +Types []CatalogType
+    }
+
+    class CatalogType {
+        +UserTypeID int
+        +Schema string
+        +Name string
+        +Kind CatalogTypeKind
+    }
+
+    class CatalogTypeKind {
+        <<enumeration>>
+        CatalogAliasType
+        CatalogClrType
+        CatalogTableType
     }
 
     class CatalogObject {

@@ -20,6 +20,7 @@ classDiagram
         +XMLIndexes() []*XMLIndex
         +ForeignKeys() []*ForeignKey
         +ForeignKeyByName(name) *ForeignKey
+        +ReferencingForeignKeys() []*ForeignKey
         +CheckConstraints() []*CheckConstraint
         +EdgeConstraints() []*EdgeConstraint
         +Statistics() []*Statistic
@@ -41,6 +42,7 @@ classDiagram
         +IndexUsage() []*IndexUsage
         +RebuildAllIndexes(fillFactor) error
         +RebuildAllIndexesWith(opts) error
+        +RebuildAllIndexesScript(opts) string
         +ReorganizeAllIndexes() error
         +UpdateStatistics(opts) error
         +CreateIndex(req) *Index
