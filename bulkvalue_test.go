@@ -40,6 +40,11 @@ func sameBulkValue(got, want any) bool {
 	return got == want
 }
 
+// zoned is a time at a fixed offset of offset seconds east of UTC.
+func zoned(y, mo, d, h, mi, offset int) time.Time {
+	return time.Date(y, time.Month(mo), d, h, mi, 0, 0, time.FixedZone("", offset))
+}
+
 type myInt int16 // a named integer, which database/sql would send as int64
 
 // TestBulkConverterValues pins what each value is sent as, by hand. Each
@@ -95,6 +100,14 @@ func TestBulkConverterValues(t *testing.T) {
 		{BulkColumn{Type: "money"}, 3, "3"},
 		{BulkColumn{Type: "money"}, 0.1 + 0.2, "0.3000"},
 		{BulkColumn{Type: "smallmoney"}, "-214748.3648", "-214748.3648"},
+		// Trailing zeros past the scale round nothing: accepted, and sent
+		// without them. Text that already fits keeps its zeros (12.50 above).
+		{BulkColumn{Type: "decimal", Precision: 5, Scale: 1}, "1.50", "1.5"},
+		{BulkColumn{Type: "decimal", Precision: 10, Scale: 2}, "12.5000", "12.5"},
+		{BulkColumn{Type: "decimal", Precision: 3, Scale: 0}, "100.0", "100"},
+		{BulkColumn{Type: "decimal", Precision: 3, Scale: 0}, "-.000", "-0"},
+		{BulkColumn{Type: "money"}, "12.50000", "12.5"},
+		{BulkColumn{Type: "smallmoney"}, "1.000000", "1"},
 		{BulkColumn{Type: "float"}, 1.5e300, 1.5e300},
 		{BulkColumn{Type: "float"}, "0.1", 0.1},
 		{BulkColumn{Type: "float"}, 3, 3.0},
@@ -108,6 +121,12 @@ func TestBulkConverterValues(t *testing.T) {
 		{BulkColumn{Type: "smalldatetime"}, utc(2024, 2, 29, 13, 45, 29, 999000000), utc(2024, 2, 29, 13, 46, 0, 0)},
 		{BulkColumn{Type: "smalldatetime"}, utc(2024, 2, 29, 23, 59, 30, 0), utc(2024, 3, 1, 0, 0, 0, 0)},
 		{BulkColumn{Type: "datetime2"}, "2024-01-01 00:00:00", "2024-01-01 00:00:00"}, // text is the driver's
+		// datetimeoffset is stored as its UTC instant: in range when the UTC
+		// year is, whatever the local year (go-mssqldb encodes val.In(time.UTC)).
+		{BulkColumn{Type: "datetimeoffset"}, zoned(2026, 1, 1, 10, 0, 60*60), zoned(2026, 1, 1, 10, 0, 60*60)},
+		{BulkColumn{Type: "datetimeoffset"}, zoned(1, 1, 1, 0, 30, -60*60), zoned(1, 1, 1, 0, 30, -60*60)},
+		{BulkColumn{Type: "datetimeoffset"}, zoned(9999, 12, 31, 23, 30, 60*60), zoned(9999, 12, 31, 23, 30, 60*60)},
+		{BulkColumn{Type: "datetimeoffset"}, zoned(2026, 1, 1, 10, 0, 14*60*60), zoned(2026, 1, 1, 10, 0, 14*60*60)},
 		{BulkColumn{Type: "uniqueidentifier"}, guid, guid},
 		{BulkColumn{Type: "uniqueidentifier"}, "6F9619FF-8B86-D011-B42D-00C04FD430C8", guid},
 		{BulkColumn{Type: "uniqueidentifier"}, "{6f9619ff-8b86-d011-b42d-00c04fd430c8}", guid},
@@ -192,6 +211,9 @@ func TestBulkConverterRefuses(t *testing.T) {
 		{BulkColumn{Type: "decimal", Precision: 5, Scale: 2}, math.NaN(), "not a finite number"},
 		{BulkColumn{Type: "money"}, "922337203685477.5808", "out of range (-922337203685477.5808 to 922337203685477.5807)"},
 		{BulkColumn{Type: "money"}, "1.23456", "more than 4 decimal places"},
+		{BulkColumn{Type: "money"}, "1.234560", "more than 4 decimal places"},
+		{BulkColumn{Type: "decimal", Precision: 5, Scale: 2}, "1.2340", "more than 2 decimal places"},
+		{BulkColumn{Type: "decimal", Precision: 3, Scale: 0}, "1000.0", "does not fit decimal(3,0)"},
 		{BulkColumn{Type: "money"}, "$1", "not a money amount"},
 		{BulkColumn{Type: "smallmoney"}, 214749, "out of range (-214748.3648 to 214748.3647)"},
 		{BulkColumn{Type: "float"}, math.NaN(), "out of range for float"},
@@ -205,6 +227,10 @@ func TestBulkConverterRefuses(t *testing.T) {
 		{BulkColumn{Type: "datetime"}, utc(9999, 12, 31, 23, 59, 59, 998500000), "out of range for datetime"},
 		{BulkColumn{Type: "smalldatetime"}, utc(1899, 12, 31, 23, 59, 0, 0), "out of range for smalldatetime"},
 		{BulkColumn{Type: "smalldatetime"}, utc(2079, 6, 6, 23, 59, 30, 0), "out of range for smalldatetime"},
+		{BulkColumn{Type: "datetimeoffset"}, zoned(1, 1, 1, 0, 30, 60*60), "its UTC time must be within years 1 to 9999"},
+		{BulkColumn{Type: "datetimeoffset"}, zoned(9999, 12, 31, 23, 30, -60*60), "its UTC time must be within years 1 to 9999"},
+		{BulkColumn{Type: "datetimeoffset"}, zoned(1900, 1, 1, 0, 0, 30), "offset datetimeoffset cannot hold"},
+		{BulkColumn{Type: "datetimeoffset"}, zoned(2026, 1, 1, 0, 0, 14*60*60+60), "offset datetimeoffset cannot hold"},
 		{BulkColumn{Type: "uniqueidentifier"}, []byte{1, 2}, "2 bytes is not a uniqueidentifier"},
 		{BulkColumn{Type: "uniqueidentifier"}, "nope", "not a uniqueidentifier"},
 		{BulkColumn{Type: "uniqueidentifier"}, "6F9619FF8B86D011B42D00C04FD430C8", "not a uniqueidentifier"},

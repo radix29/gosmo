@@ -114,13 +114,17 @@ func (e *BulkValueError) Unwrap() error { return ErrInvalidRequest }
 //     ("+7"), in the type's range; sent as int64.
 //   - bit: a bool, or "1", "0", "true", "false" in any case.
 //   - decimal, numeric: an integer, decimal text (no exponent) with no more
-//     than Scale decimal places, or a finite float, rounded to Scale as CAST
-//     rounds; the integer part within Precision-Scale digits. Sent as text,
-//     which the driver scales exactly.
-//   - money, smallmoney: as decimal, with 4 places, in the type's range.
+//     than Scale significant decimal places (trailing zeros do not count:
+//     12.5000 fits scale 2, and is sent without the zeros past it), or a
+//     finite float, rounded to Scale as CAST rounds; the integer part within
+//     Precision-Scale digits. Sent as text, which the driver scales exactly.
+//   - money, smallmoney: as decimal, with 4 places (trailing zeros do not
+//     count), in the type's range.
 //   - float, real: a number or its text, finite and within real's range for
 //     real; real is sent as float32.
-//   - date … datetimeoffset: a time.Time within the type's range;
+//   - date … datetimeoffset: a time.Time within the type's range, for
+//     datetimeoffset in UTC as well, with an offset in whole minutes within
+//     ±14:00 (the driver sends the UTC instant and truncates the offset);
 //     smalldatetime rounded to the minute as SQL Server rounds (29.998
 //     seconds down, 29.999 up), which go-mssqldb would truncate. Text passes
 //     through to the driver's own parsing.
@@ -282,6 +286,19 @@ func digitsOnly(s string) bool {
 	return true
 }
 
+// fitFraction is frac as a column of scale places keeps it: unchanged when
+// it fits, its trailing zeros dropped when only they are past scale (12.5000
+// for scale 2 is 12.5, exact), and ok false when a significant digit is.
+// Trimming only what does not fit keeps the converter idempotent and leaves
+// text that already fits as the caller wrote it.
+func fitFraction(frac string, scale int) (string, bool) {
+	if len(frac) <= scale {
+		return frac, true
+	}
+	frac = strings.TrimRight(frac, "0")
+	return frac, len(frac) <= scale
+}
+
 func decimalText(neg bool, intPart, frac string) string {
 	if intPart == "" {
 		intPart = "0"
@@ -362,7 +379,7 @@ func decimalConv(precision, scale int) bulkConv {
 			return nil, fmt.Sprintf("%q is not a decimal number", s)
 		}
 		intPart = strings.TrimLeft(intPart, "0")
-		if len(frac) > scale {
+		if frac, ok = fitFraction(frac, scale); !ok {
 			return nil, fmt.Sprintf("%s has more than %d decimal places", s, scale)
 		}
 		if len(intPart) > precision-scale {
@@ -390,7 +407,7 @@ func moneyConv(lo, hi int64) bulkConv {
 		if !ok {
 			return nil, fmt.Sprintf("%q is not a money amount", s)
 		}
-		if len(frac) > 4 {
+		if frac, ok = fitFraction(frac, 4); !ok {
 			return nil, fmt.Sprintf("%s has more than 4 decimal places", s)
 		}
 		digits := strings.TrimLeft(intPart+frac+strings.Repeat("0", 4-len(frac)), "0")
@@ -471,6 +488,19 @@ func timeConv(typ string) bulkConv {
 		case "date", "datetime2", "datetimeoffset":
 			if t.Year() < 1 || t.Year() > 9999 {
 				return nil, fmt.Sprintf("%s is out of range for %s (years 1 to 9999)", text(), typ)
+			}
+			if typ != "datetimeoffset" {
+				break
+			}
+			// The driver sends the UTC instant and the offset in whole
+			// minutes: a UTC year outside 1–9999 wraps or clamps on the
+			// server, and a seconds offset (LMT) is truncated, shifting the
+			// stored local time.
+			if u := t.UTC(); u.Year() < 1 || u.Year() > 9999 {
+				return nil, fmt.Sprintf("%s is out of range for datetimeoffset (its UTC time must be within years 1 to 9999)", t.Format("2006-01-02 15:04:05.999999999 -07:00"))
+			}
+			if _, off := t.Zone(); off%60 != 0 || off < -14*3600 || off > 14*3600 {
+				return nil, fmt.Sprintf("%s has an offset datetimeoffset cannot hold (whole minutes within ±14:00)", t.Format("2006-01-02 15:04:05.999999999 -07:00:00"))
 			}
 		case "datetime":
 			// .9985 and up rounds to the next 1/300 second, past the last day.
