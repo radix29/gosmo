@@ -512,7 +512,10 @@ func timeConv(typ string) bulkConv {
 			if r.Second()*1000+r.Nanosecond()/1e6 >= 29999 {
 				r = r.Add(time.Minute)
 			}
-			r = r.Truncate(time.Minute)
+			// On the wall clock, which the driver sends: Truncate works on
+			// the absolute instant, so an LMT offset with seconds
+			// (Europe/Amsterdam before 1937) would land mid-minute.
+			r = time.Date(r.Year(), r.Month(), r.Day(), r.Hour(), r.Minute(), 0, 0, r.Location())
 			if r.Before(time.Date(1900, 1, 1, 0, 0, 0, 0, r.Location())) || r.After(time.Date(2079, 6, 6, 23, 59, 0, 0, r.Location())) {
 				return nil, fmt.Sprintf("%s is out of range for smalldatetime (1900-01-01 to 2079-06-06 23:59)", text())
 			}

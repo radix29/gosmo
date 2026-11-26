@@ -179,6 +179,33 @@ func TestBulkConverterValues(t *testing.T) {
 	}
 }
 
+// TestBulkConverterSmalldatetimeRoundsWallClock: a zone whose offset has
+// seconds (Amsterdam's +00:19:32 local mean time) rounds on the wall clock
+// the driver sends, not on the absolute instant.
+func TestBulkConverterSmalldatetimeRoundsWallClock(t *testing.T) {
+	ams, err := time.LoadLocation("Europe/Amsterdam")
+	if err != nil {
+		t.Skipf("no zone database: %v", err)
+	}
+	if _, off := time.Date(1920, 1, 1, 12, 0, 0, 0, ams).Zone(); off%60 == 0 {
+		t.Skipf("zone database has no seconds offset for Amsterdam in 1920 (%d)", off)
+	}
+	conv := mustConverter(t, BulkColumn{Type: "smalldatetime"})
+	for _, c := range []struct{ in, want time.Time }{
+		{time.Date(1920, 1, 1, 12, 0, 10, 0, ams), time.Date(1920, 1, 1, 12, 0, 0, 0, ams)},
+		{time.Date(1920, 1, 1, 12, 0, 29, 999000000, ams), time.Date(1920, 1, 1, 12, 1, 0, 0, ams)},
+	} {
+		got, err := conv(c.in)
+		if err != nil {
+			t.Errorf("%v: %v", c.in, err)
+			continue
+		}
+		if !sameBulkValue(got, c.want) {
+			t.Errorf("%v = %v, want %v", c.in, got, c.want)
+		}
+	}
+}
+
 // TestBulkConverterRefuses: each value go-mssqldb would load wrong, or SQL
 // Server would round or reject unnamed, is a *BulkValueError that says why
 // and wraps ErrInvalidRequest.
