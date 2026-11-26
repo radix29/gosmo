@@ -63,14 +63,9 @@ func scanCapabilityRows(rows *sql.Rows, into capabilityDest) error {
 			// name is the schema here, and the permission rides in kind — see
 			// schemaCapabilityQuery. A server probe passes a nil map and drops
 			// these rows, which it never asks for.
-			st, ok := capabilityStateOf(answer)
-			if !ok || into.schemas == nil {
-				continue
+			if st, ok := capabilityStateOf(answer); ok {
+				setSecurableState(into.schemas, name, strings.TrimPrefix(kind, "S:"), st)
 			}
-			if into.schemas[name] == nil {
-				into.schemas[name] = map[string]CapabilityState{}
-			}
-			into.schemas[name][strings.TrimPrefix(kind, "S:")] = st
 		case strings.HasPrefix(kind, "E:"):
 			// The schema catalog block, keyed by schema name. Kept apart from
 			// the "S:" rows because those answer HAS_PERMS_BY_NAME, whose 0
@@ -116,27 +111,17 @@ func scanCapabilityRows(rows *sql.Rows, into capabilityDest) error {
 			// goes through capabilityStateOf for the same reason the "P" rows
 			// do: a NULL is "this instance does not define the permission",
 			// not a denial.
-			st, ok := capabilityStateOf(answer)
-			if !ok || into.availabilityGroups == nil {
-				continue
+			if st, ok := capabilityStateOf(answer); ok {
+				setSecurableState(into.availabilityGroups, name, strings.TrimPrefix(kind, "G:"), st)
 			}
-			if into.availabilityGroups[name] == nil {
-				into.availabilityGroups[name] = map[string]CapabilityState{}
-			}
-			into.availabilityGroups[name][strings.TrimPrefix(kind, "G:")] = st
 		case strings.HasPrefix(kind, "K:"):
 			// The class 5/6/10/23/24/25/26/29/31 block, keyed by DatabaseSecurableKey. A
 			// HAS_PERMS_BY_NAME answer like "G:", so a NULL is skipped rather
 			// than recorded as a denial — and like "G:" there is one row per
 			// securable, so nothing needs a denial to win over a grant.
-			st, ok := capabilityStateOf(answer)
-			if !ok || into.securables == nil {
-				continue
+			if st, ok := capabilityStateOf(answer); ok {
+				setSecurableState(into.securables, name, strings.TrimPrefix(kind, "K:"), st)
 			}
-			if into.securables[name] == nil {
-				into.securables[name] = map[string]CapabilityState{}
-			}
-			into.securables[name][strings.TrimPrefix(kind, "K:")] = st
 		case strings.HasPrefix(kind, "V:"):
 			// The server-scope catalog block, keyed "<kind>::<name>" — see
 			// ServerSecurableKey. It is the one catalog block the *server*
@@ -182,6 +167,20 @@ func recordSecurableState(m map[string]map[string]CapabilityState, key, perm str
 	}
 	if m[key][perm] == CapabilityDenied {
 		return
+	}
+	m[key][perm] = st
+}
+
+// setSecurableState files one answer under its securable, into a map a probe
+// that did not ask for the block passes as nil and so drops. Unlike
+// recordSecurableState the last row wins: it is for the HAS_PERMS_BY_NAME
+// blocks, which produce one row per securable and permission.
+func setSecurableState(m map[string]map[string]CapabilityState, key, perm string, st CapabilityState) {
+	if m == nil {
+		return
+	}
+	if m[key] == nil {
+		m[key] = map[string]CapabilityState{}
 	}
 	m[key][perm] = st
 }
