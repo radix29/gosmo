@@ -351,11 +351,14 @@ the statement's own error (Msg 544, no 266), `ExecProc` returns OUTPUT and the
 return status and runs `sys.sp_rename` in `db`, a `SET` in a write ends with
 the call, and plans and bulk copy leave no session behind.
 
-What can still park a session in a database: a connection a caller switched
-with `AcquireConn` and closed back into the same pool (gossms's query panels
-discard theirs). `ReleaseIdleConnections` still frees those before this
-`Server`'s exclusive writes (`live_release_idle_test.go` parks sessions that
-way now). gossms dropped its 60 s `ConnMaxIdleTime` for gosmo's default.
+**Pinned connections fixed 2026-11-26 (`PinnedConn.Release`, `retry.go`).**
+`AcquireConn` reads `DB_NAME()` in its prologue and returns a `*PinnedConn`
+whose `Release` pools the connection only if the session is still in that
+database, discarding it otherwise or when the read fails. Only a caller that
+closes `PinnedConn.Conn` directly can still park a session (as
+`live_release_idle_test.go` does on purpose); `ReleaseIdleConnections` still
+frees those before this `Server`'s exclusive writes. gossms dropped its 60 s
+`ConnMaxIdleTime` for gosmo's default.
 
 ## Live tests leave non-backup files on 13 and 14 — closed when `GOSMO_LIVE_SSH_HOST` is set
 

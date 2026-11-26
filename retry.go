@@ -157,7 +157,7 @@ func withRetry[T any](ctx context.Context, fn func() (T, error)) (T, error) {
 // Pinned connections for callers running their own statements
 // ============================================================
 
-// AcquireConn returns a live pinned *sql.Conn from db, switched to database
+// AcquireConn returns a live pinned connection from db, switched to database
 // (USE) if non-empty, retrying on a fresh connection when the pool hands back
 // a dead one. It is for callers that run a whole script or session on one
 // connection: database/sql's own bad-connection retry covers only *sql.DB
@@ -165,16 +165,24 @@ func withRetry[T any](ctx context.Context, fn func() (T, error)) (T, error) {
 // timeout, killed session, failover) fails the next statement the caller
 // issues. gosmo's own reads get the same treatment through withRetry.
 //
-// Only the USE/SELECT-1 prologue is retried, never anything the caller goes
-// on to run — the retry is safe precisely because the prologue is idempotent.
-// A dead connection is closed rather than returned to the pool, which evicts
-// it via driver.Validator.IsValid. Retries follow readRetryAttempts and
+// Only the prologue (USE if database is given, then SELECT DB_NAME(), in one
+// batch) is retried, never anything the caller goes on to run — the retry is
+// safe precisely because the prologue is idempotent. A dead connection is
+// closed rather than returned to the pool, which evicts it via
+// driver.Validator.IsValid. Retries follow readRetryAttempts and
 // readRetryDelay, the same budget as gosmo's read helpers, and stop early on
-// a non-transient error (see IsTransient) or a cancelled ctx.
-func AcquireConn(ctx context.Context, db *sql.DB, database string) (*sql.Conn, error) {
-	prologue := "SELECT 1"
+// a non-transient error (see IsTransient) or a cancelled ctx; a cancel during
+// the backoff returns ctx's error joined with the transient one.
+//
+// The caller ends it with PinnedConn.Release, which pools the connection only
+// if its session is still in the database the prologue read (Home), or with
+// DiscardConn and Close when it cannot vouch for the session at all. Closing
+// PinnedConn.Conn directly pools it wherever it is — a session switched to
+// another database then sits idle there holding a shared database lock.
+func AcquireConn(ctx context.Context, db *sql.DB, database string) (*PinnedConn, error) {
+	prologue := "SELECT DB_NAME()"
 	if database != "" {
-		prologue = "USE " + QuoteName(database)
+		prologue = "USE " + QuoteName(database) + "; " + prologue
 	}
 	wrapErr := func(err error) error {
 		if database != "" {
@@ -189,20 +197,58 @@ func AcquireConn(ctx context.Context, db *sql.DB, database string) (*sql.Conn, e
 		if err != nil {
 			return nil, fmt.Errorf("gosmo: acquire connection: %w", err)
 		}
-		if _, err := conn.ExecContext(ctx, prologue); err != nil {
+		var home string
+		if err := conn.QueryRowContext(ctx, prologue).Scan(&home); err != nil {
 			conn.Close() // dead — evicted from the pool via driver.Validator.IsValid
 			if ctx.Err() != nil || attempt >= readRetryAttempts || !IsTransient(err) {
 				return nil, wrapErr(err)
 			}
 			select {
 			case <-ctx.Done():
-				return nil, ctx.Err()
+				return nil, errors.Join(ctx.Err(), wrapErr(err))
 			case <-time.After(readRetryDelay(attempt)):
 			}
 			continue
 		}
-		return conn, nil
+		return &PinnedConn{Conn: conn, home: home}, nil
 	}
+}
+
+// PinnedConn is a connection AcquireConn checked out: Conn for the caller's
+// statements, and the database its session was in when handed over.
+type PinnedConn struct {
+	Conn *sql.Conn
+	home string
+
+	released bool
+}
+
+// Home is DB_NAME() as AcquireConn's prologue read it: the database given to
+// AcquireConn, or the pool's login database when none was.
+func (p *PinnedConn) Home() string { return p.home }
+
+// Release reads the session's DB_NAME() and returns the connection to the
+// pool only if it is still Home; otherwise — the caller's statements switched
+// it, or the read failed (a cancelled ctx included) — the connection is
+// discarded (DiscardConn), so no idle pooled session sits in another database
+// holding a shared lock that fails someone else's RESTORE, SET OFFLINE or
+// SET SINGLE_USER. It returns what the read found, for a caller reporting
+// where its statements ended. A second call returns sql.ErrConnDone.
+func (p *PinnedConn) Release(ctx context.Context) (string, error) {
+	if p.released {
+		return "", sql.ErrConnDone
+	}
+	p.released = true
+	defer p.Conn.Close()
+	var name string
+	if err := p.Conn.QueryRowContext(ctx, "SELECT DB_NAME()").Scan(&name); err != nil {
+		DiscardConn(p.Conn)
+		return "", withAllMessages(err)
+	}
+	if name != p.home {
+		DiscardConn(p.Conn)
+	}
+	return name, nil
 }
 
 // DiscardConn makes conn be closed rather than returned to the pool when it is

@@ -325,7 +325,7 @@ The instance and database halves pair up: `ServerResourceStat` and
 | Drop a database         | `srv.DatabaseRef(name).Drop(ctx, term)` / `db.Drop(ctx, term)` — `gosmo.TerminationRollbackImmediate` closes other connections first |
 | Rename a database       | `srv.DatabaseRef(old).Rename(ctx, new, term)` / `db.Rename(ctx, new, term)` — `gosmo.TerminationRollbackImmediate` puts it in single-user mode first |
 | Detach a database       | `srv.DatabaseRef(name).Detach(ctx, gosmo.DetachOptions{...})` — leaves the files on disk; a detach that fails after `DropConnections` is put back to the access mode it had |
-| Free the pool's own sessions from a database | `srv.ReleaseIdleConnections(ctx)` — closes idle pooled connections, so none blocks an exclusive-access statement (detach, rename, drop, `SET READ_ONLY`, RCSI, filegroup read-only — each of which calls it itself) from inside the database. gosmo's own reads and writes never leave one there (`procRead`, `execIn`); a session a caller switched with `AcquireConn` and returned to the same pool does |
+| Free the pool's own sessions from a database | `srv.ReleaseIdleConnections(ctx)` — closes idle pooled connections, so none blocks an exclusive-access statement (detach, rename, drop, `SET READ_ONLY`, RCSI, filegroup read-only — each of which calls it itself) from inside the database. gosmo's own reads and writes never leave one there (`procRead`, `execIn`); only a session a caller switched with `AcquireConn` and closed directly, bypassing `PinnedConn.Release`, does |
 | Attach a database       | `srv.AttachDatabase(ctx, gosmo.AttachDatabaseRequest{Name, Files, Owner, RebuildLog})` → `*Database` (read back; the `DatabaseRef` under `Scripting`) — the name need not be the one it was detached under |
 | Read a detached file    | `srv.DetachedDatabaseInfo(ctx, primaryFilePath)` → `*DetachedDatabase` (`.Name`, `.Files`, `.DataFiles()`, `.LogFiles()`) — the only way to learn a detached database's other files |
 | Database snapshots      | `srv.DatabaseSnapshots(ctx)` / `srv.DatabaseSnapshotByName(ctx, name)` / `srv.DatabaseSnapshotRef(name)` (no-I/O handle) / `srv.SnapshotsOf(ctx, database)` / `srv.CreateDatabaseSnapshot(ctx, req)` / `srv.RestoreFromSnapshot(ctx, database, snapshot)` — see [Database snapshots](#database-snapshots) |
@@ -2737,12 +2737,16 @@ running their own idempotent reads outside gosmo's query helpers.
 
 `gosmo.AcquireConn(ctx, db, database)` is the pinned-connection
 counterpart, for a caller that runs a whole script or session on one
-`*sql.Conn` of its own: it acquires, runs the `USE`/`SELECT 1` prologue,
-and retries on a fresh connection under the same budget and rule when
-the pool hands back a dead one — the protection `withRetry` gives gosmo's
-own reads, which `database/sql` does not extend to a pinned conn. Only
-the prologue is retried; whatever the caller goes on to run is not.
-`gosmo.DiscardConn(conn)` is its release-side partner: the connection is
+`*sql.Conn` of its own: it acquires, runs the `[USE …;] SELECT DB_NAME()`
+prologue, and retries on a fresh connection under the same budget and rule
+when the pool hands back a dead one — the protection `withRetry` gives
+gosmo's own reads, which `database/sql` does not extend to a pinned conn.
+Only the prologue is retried; whatever the caller goes on to run is not.
+It returns a `*PinnedConn` (`.Conn`, `.Home()`) whose `Release(ctx)` reads
+`DB_NAME()` again and pools the connection only if it is still `Home()`,
+discarding it otherwise or when the read fails, so a caller's `USE` never
+parks an idle session in a database.
+`gosmo.DiscardConn(conn)` is the unconditional release: the connection is
 closed rather than pooled, for a caller that cannot vouch for the session
 it leaves (an open transaction, a switched role, an interrupted batch).
 

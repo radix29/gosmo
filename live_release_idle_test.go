@@ -67,7 +67,8 @@ func liveObserver(t *testing.T, ctx context.Context) *sql.DB {
 // database — which is what happens as soon as statements overlap, as
 // gossms's do. gosmo's own reads and writes no longer park a session
 // (procRead, execIn); a session switched with AcquireConn and closed still
-// does, so two of those, held at once, are what this parks.
+// does when closed directly instead of through Release, so two of those,
+// held at once, are what this parks.
 func leaveTwoIdleIn(t *testing.T, observer *sql.DB, d *Database, ctx context.Context) {
 	t.Helper()
 	var conns []*sql.Conn
@@ -76,10 +77,10 @@ func leaveTwoIdleIn(t *testing.T, observer *sql.DB, d *Database, ctx context.Con
 		if err != nil {
 			t.Fatalf("park a session: %v", err)
 		}
-		conns = append(conns, conn)
+		conns = append(conns, conn.Conn)
 	}
 	for _, c := range conns {
-		c.Close()
+		c.Close() // not Release, which would discard them: parking them is the point
 	}
 	if n := ownSessionsIn(t, observer, ctx, d.Name); n < 2 {
 		t.Fatalf("%d idle sessions left in the database after two overlapping sessions, want 2 — the precondition this test exists for did not hold", n)

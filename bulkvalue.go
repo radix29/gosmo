@@ -126,8 +126,10 @@ func (e *BulkValueError) Unwrap() error { return ErrInvalidRequest }
 //     datetimeoffset in UTC as well, with an offset in whole minutes within
 //     ±14:00 (the driver sends the UTC instant and truncates the offset);
 //     smalldatetime rounded to the minute as SQL Server rounds (29.998
-//     seconds down, 29.999 up), which go-mssqldb would truncate. Text passes
-//     through to the driver's own parsing.
+//     seconds down, 29.999 up), which go-mssqldb would truncate.
+//     smalldatetime and datetime are sent as the value's wall clock in UTC,
+//     whatever its Location, so they store what was written, not the UTC
+//     instant. Text passes through to the driver's own parsing.
 //   - uniqueidentifier: 16 bytes in wire order, or the dashed text.
 //   - binary, varbinary, image: []byte within Length; binary(n) zero-padded
 //     to n as an INSERT pads.
@@ -503,23 +505,41 @@ func timeConv(typ string) bulkConv {
 				return nil, fmt.Sprintf("%s has an offset datetimeoffset cannot hold (whole minutes within ±14:00)", t.Format("2006-01-02 15:04:05.999999999 -07:00:00"))
 			}
 		case "datetime":
+			// The driver's encodeDateTime reads the wall fields only; the
+			// same UTC rebuild as smalldatetime keeps one rule for both.
+			w := wallUTC(t)
 			// .9985 and up rounds to the next 1/300 second, past the last day.
-			if t.Year() < 1753 || t.Year() > 9999 || t.Year() == 9999 && t.YearDay() == 365 && t.Hour() == 23 && t.Minute() == 59 && t.Second() == 59 && t.Nanosecond() >= 998500000 {
+			if w.Year() < 1753 || w.Year() > 9999 || w.Year() == 9999 && w.YearDay() == 365 && w.Hour() == 23 && w.Minute() == 59 && w.Second() == 59 && w.Nanosecond() >= 998500000 {
 				return nil, fmt.Sprintf("%s is out of range for datetime (1753-01-01 to 9999-12-31 23:59:59.997)", text())
 			}
+			return w, ""
 		case "smalldatetime":
-			r := t
-			if r.Second()*1000+r.Nanosecond()/1e6 >= 29999 {
-				r = r.Add(time.Minute)
+			// go-mssqldb's encodeDateTim4 takes the day from the absolute
+			// instant (since 1900-01-01 in the connection's timezone, UTC by
+			// default) but the minutes from the wall clock, so a zoned value
+			// whose UTC date differs lands a day off. Rebuilt in UTC, the two
+			// agree and the stored value is the input's wall clock, as SQL
+			// Server stores a literal. Rounding on that UTC value is also
+			// rounding on the wall clock: no DST change can move it an hour,
+			// and an LMT offset with seconds (Europe/Amsterdam before 1937)
+			// cannot leave it mid-minute.
+			w := wallUTC(t)
+			if w.Second()*1000+w.Nanosecond()/1e6 >= 29999 {
+				w = w.Add(time.Minute)
 			}
-			r = r.Truncate(time.Minute)
-			if r.Before(time.Date(1900, 1, 1, 0, 0, 0, 0, r.Location())) || r.After(time.Date(2079, 6, 6, 23, 59, 0, 0, r.Location())) {
+			w = w.Truncate(time.Minute)
+			if w.Before(time.Date(1900, 1, 1, 0, 0, 0, 0, time.UTC)) || w.After(time.Date(2079, 6, 6, 23, 59, 0, 0, time.UTC)) {
 				return nil, fmt.Sprintf("%s is out of range for smalldatetime (1900-01-01 to 2079-06-06 23:59)", text())
 			}
-			return r, ""
+			return w, ""
 		}
 		return t, ""
 	}
+}
+
+// wallUTC is t's wall clock read as a UTC time.
+func wallUTC(t time.Time) time.Time {
+	return time.Date(t.Year(), t.Month(), t.Day(), t.Hour(), t.Minute(), t.Second(), t.Nanosecond(), time.UTC)
 }
 
 // convGUID takes a uniqueidentifier's 16 wire-order bytes as they are, and
