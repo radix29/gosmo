@@ -113,6 +113,61 @@ func TestLiveBulkInsertChecksValues(t *testing.T) {
 	}
 }
 
+// TestLiveBulkInsertSmalldatetimeKeepsWallClock: a zoned time.Time lands in
+// smalldatetime (and datetime) as its own wall clock, rounded on it — not on
+// the UTC day go-mssqldb's encodeDateTim4 would take (review plan
+// 2026-11-26 B1): 23:30 −05:00 stays on 2026-01-01, and 01:59:45 EDT on the
+// fall-back day rounds to 02:00, not back an hour to 01:00.
+func TestLiveBulkInsertSmalldatetimeKeepsWallClock(t *testing.T) {
+	db, ctx, done := liveDB(t)
+	defer done()
+
+	ny, err := time.LoadLocation("America/New_York")
+	if err != nil {
+		t.Skipf("no zone database: %v", err)
+	}
+	const name = "gosmo_bulksdt_live"
+	d, drop := liveScratchDB(t, db, ctx, name)
+	defer drop()
+	if _, err := db.ExecContext(ctx, "CREATE TABLE "+QuoteName(name)+".dbo.t (id int, sdt smalldatetime, dt datetime)"); err != nil {
+		t.Fatalf("create table: %v", err)
+	}
+	cases := []struct {
+		in   time.Time
+		want string // smalldatetime, then datetime
+	}{
+		{time.Date(2026, 1, 1, 23, 30, 0, 0, time.FixedZone("", -5*3600)), "2026-01-01 23:30|2026-01-01 23:30:00.000"},
+		{time.Date(2026, 1, 1, 0, 30, 0, 0, time.FixedZone("", 3600)), "2026-01-01 00:30|2026-01-01 00:30:00.000"},
+		{time.Date(2026, 11, 1, 5, 59, 45, 0, time.UTC).In(ny), "2026-11-01 02:00|2026-11-01 01:59:45.000"}, // EDT
+	}
+	rows := make([][]any, len(cases))
+	for i, c := range cases {
+		rows[i] = []any{i, c.in, c.in}
+	}
+	bc := BulkCopy{Schema: "dbo", Table: "t", Columns: []string{"id", "sdt", "dt"}}
+	if _, err := d.BulkInsert(ctx, bc, SliceRows(rows)); err != nil {
+		t.Fatalf("BulkInsert: %v", err)
+	}
+	got, err := db.QueryContext(ctx, "SELECT CONVERT(varchar(16), sdt, 120) + '|' + CONVERT(varchar(23), dt, 121) FROM "+
+		QuoteName(name)+".dbo.t ORDER BY id")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer got.Close()
+	for i := 0; got.Next(); i++ {
+		var s string
+		if err := got.Scan(&s); err != nil {
+			t.Fatal(err)
+		}
+		if s != cases[i].want {
+			t.Errorf("%v stored %s, want %s", cases[i].in, s, cases[i].want)
+		}
+	}
+	if err := got.Err(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // TestLiveBulkInsertRoundsFloatsAsInsert: a float bound for decimal or money
 // is stored as an INSERT of the same float parameter stores it — an exact
 // binary tie rounded away from zero, not to even as strconv rounds it

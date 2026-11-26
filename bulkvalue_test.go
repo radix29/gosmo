@@ -179,30 +179,75 @@ func TestBulkConverterValues(t *testing.T) {
 	}
 }
 
-// TestBulkConverterSmalldatetimeRoundsWallClock: a zone whose offset has
-// seconds (Amsterdam's +00:19:32 local mean time) rounds on the wall clock
-// the driver sends, not on the absolute instant.
+// TestBulkConverterSmalldatetimeRoundsWallClock: a zoned value comes back as
+// its wall clock in UTC, rounded on that wall clock — the value
+// go-mssqldb's encodeDateTim4 stores as written (review plan 2026-11-26 B1).
+// A UTC date that differs from the wall date no longer moves the day, a DST
+// change no longer moves the hour, and a zone whose offset has seconds
+// (Amsterdam's +00:19:32 local mean time) still lands on a whole minute.
 func TestBulkConverterSmalldatetimeRoundsWallClock(t *testing.T) {
+	ny, err := time.LoadLocation("America/New_York")
+	if err != nil {
+		t.Skipf("no zone database: %v", err)
+	}
 	ams, err := time.LoadLocation("Europe/Amsterdam")
 	if err != nil {
 		t.Skipf("no zone database: %v", err)
 	}
-	if _, off := time.Date(1920, 1, 1, 12, 0, 0, 0, ams).Zone(); off%60 == 0 {
-		t.Skipf("zone database has no seconds offset for Amsterdam in 1920 (%d)", off)
+	utc := func(y, mo, d, h, mi, s, ns int) time.Time {
+		return time.Date(y, time.Month(mo), d, h, mi, s, ns, time.UTC)
+	}
+	// Built from UTC so each ambiguous wall clock is the occurrence named.
+	at := func(loc *time.Location, u time.Time) time.Time { return u.In(loc) }
+	type wallCase struct {
+		name     string
+		in, want time.Time
+	}
+	cases := []wallCase{
+		{"fall back, first 01:59:45 (EDT)", at(ny, utc(2026, 11, 1, 5, 59, 45, 0)), utc(2026, 11, 1, 2, 0, 0, 0)},
+		{"fall back, second 01:59:45 (EST)", at(ny, utc(2026, 11, 1, 6, 59, 45, 0)), utc(2026, 11, 1, 2, 0, 0, 0)},
+		{"spring forward, 01:59:45 EST", at(ny, utc(2026, 3, 8, 6, 59, 45, 0)), utc(2026, 3, 8, 2, 0, 0, 0)},
+		{"23:30 -05:00 (next day in UTC)", zoned(2026, 1, 1, 23, 30, -5*3600), utc(2026, 1, 1, 23, 30, 0, 0)},
+		{"00:30 +01:00 (previous day in UTC)", zoned(2026, 1, 1, 0, 30, 3600), utc(2026, 1, 1, 0, 30, 0, 0)},
+		{"last value, zoned", time.Date(2079, 6, 6, 23, 59, 29, 998000000, time.FixedZone("", -5*3600)), utc(2079, 6, 6, 23, 59, 0, 0)},
+	}
+	if _, off := time.Date(1920, 1, 1, 12, 0, 0, 0, ams).Zone(); off%60 != 0 {
+		cases = append(cases,
+			wallCase{"LMT, 10 s down", time.Date(1920, 1, 1, 12, 0, 10, 0, ams), utc(1920, 1, 1, 12, 0, 0, 0)},
+			wallCase{"LMT, 29.999 s up", time.Date(1920, 1, 1, 12, 0, 29, 999000000, ams), utc(1920, 1, 1, 12, 1, 0, 0)},
+		)
+	} else {
+		t.Logf("zone database has no seconds offset for Amsterdam in 1920 (%d): LMT cases skipped", off)
 	}
 	conv := mustConverter(t, BulkColumn{Type: "smalldatetime"})
-	for _, c := range []struct{ in, want time.Time }{
-		{time.Date(1920, 1, 1, 12, 0, 10, 0, ams), time.Date(1920, 1, 1, 12, 0, 0, 0, ams)},
-		{time.Date(1920, 1, 1, 12, 0, 29, 999000000, ams), time.Date(1920, 1, 1, 12, 1, 0, 0, ams)},
-	} {
+	for _, c := range cases {
 		got, err := conv(c.in)
 		if err != nil {
-			t.Errorf("%v: %v", c.in, err)
+			t.Errorf("%s, %v: %v", c.name, c.in, err)
 			continue
 		}
 		if !sameBulkValue(got, c.want) {
-			t.Errorf("%v = %v, want %v", c.in, got, c.want)
+			t.Errorf("%s, %v = %v, want %v", c.name, c.in, got, c.want)
+			continue
 		}
+		if again, err := conv(got); err != nil || !sameBulkValue(again, got) {
+			t.Errorf("%s: converting %v again = %v, %v; want it unchanged", c.name, got, again, err)
+		}
+	}
+	last := time.Date(2079, 6, 6, 23, 59, 29, 999000000, time.FixedZone("", -5*3600))
+	if _, err := conv(last); err == nil || !strings.Contains(err.Error(), "out of range for smalldatetime") {
+		t.Errorf("%v = %v, want out of range for smalldatetime", last, err)
+	}
+}
+
+// TestBulkConverterDatetimeKeepsWallClock: datetime takes the same UTC
+// rebuild, its wall fields (all the driver reads) unchanged.
+func TestBulkConverterDatetimeKeepsWallClock(t *testing.T) {
+	conv := mustConverter(t, BulkColumn{Type: "datetime"})
+	in := time.Date(2026, 1, 1, 23, 30, 15, 3000000, time.FixedZone("", -5*3600))
+	want := time.Date(2026, 1, 1, 23, 30, 15, 3000000, time.UTC)
+	if got, err := conv(in); err != nil || !sameBulkValue(got, want) {
+		t.Errorf("%v = %v, %v; want %v", in, got, err, want)
 	}
 }
 

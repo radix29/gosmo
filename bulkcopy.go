@@ -111,6 +111,9 @@ func SliceRows(rows [][]any) iter.Seq2[[]any, error] {
 // list (the table cannot be seen, or has no such column) is left unchecked,
 // for the server to refuse. A refused value aborts the load like any other
 // error: a load with no RowsPerBatch is one batch, so nothing is copied.
+// A smalldatetime is stored as its time.Time's wall clock on the driver's
+// default (UTC) session timezone; a go-mssqldb "timezone" DSN parameter
+// moves its day by the difference.
 //
 // Cancelling ctx stops the load; the count of rows copied before cancellation
 // is returned alongside the error.
