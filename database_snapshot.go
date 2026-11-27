@@ -175,7 +175,11 @@ func (s *Server) SnapshotFileDefaults(ctx context.Context, source, snapshotName 
 
 // snapshotFilePath derives a sparse-file path from the source file's path:
 // the same directory and stem with "_<snapshot>.ss" in place of the
-// extension, which is the convention Microsoft's own examples use.
+// extension, which is the convention Microsoft's own examples use. The
+// snapshot name goes through FileNameSafe: a time typed into it ("10:30")
+// made the path name an NTFS stream, which the server accepted (the sparse
+// file hidden in a stream of a 0-byte file), and a "/" named a missing
+// directory.
 //
 // Stripping the extension maps two files in one folder that differ only by
 // it (db.mdf and db.ndf) onto one path, and the CREATE DATABASE then failed
@@ -205,7 +209,8 @@ func snapshotFilePath(physical, logical, snapshotName string, taken map[string]b
 	if ext != "" {
 		withExt += "_" + ext
 	}
-	candidates := []string{stem, withExt, withExt + "_" + fileNameSafe(logical)}
+	candidates := []string{stem, withExt, withExt + "_" + FileNameSafe(logical)}
+	snapshotName = FileNameSafe(snapshotName)
 	for i := 0; ; i++ {
 		var c string
 		if i < len(candidates) {

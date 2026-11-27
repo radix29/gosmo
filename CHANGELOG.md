@@ -4,6 +4,16 @@ All notable changes to gosmo are documented here, newest first, from
 `v0.0.4` onward — this is the history. `RELEASE.md` carries the current
 release only, as a short summary of the entry below it.
 
+## Unreleased
+
+### Added
+
+- **`FileNameSafe(name)`** — replaces with `_` each character a Windows file name cannot hold (`\ / : * ? " < > |`, control characters), for a sysname that becomes one element of a server path (a backup, standby or data file named after a database). `RestoreRelocation.Moves` already applied it; now exported.
+
+### Fixed
+
+- **`CreateDatabaseSnapshot`'s default sparse-file path** put the snapshot name in unchanged: a name holding a time (`Sales_snapshot 10:30`) made the path an NTFS alternate data stream: the CREATE succeeded, with the sparse file hidden in a stream of a 0-byte file `…_Sales_snapshot 10` that DROP DATABASE then left behind. A `/` named a missing directory. The name now goes through `FileNameSafe`.
+
 ## v0.4.0
 
 A Fabric and consistency release for gossms. gosmo now decides on its own

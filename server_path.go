@@ -59,6 +59,21 @@ func ServerPathExt(path string) string {
 	return ""
 }
 
+// FileNameSafe replaces with "_" each character a Windows file name cannot
+// hold (`\ / : * ? " < > |` and control characters), for a name — a
+// database, snapshot or logical file name, all sysnames that may hold any of
+// them — that becomes one element of a server path. Unchanged, a separator
+// names a subdirectory and a colon an NTFS alternate data stream. Applied on
+// every server, since a Linux server's path may be copied to a Windows one.
+func FileNameSafe(name string) string {
+	return strings.Map(func(r rune) rune {
+		if r < 0x20 || strings.ContainsRune(`\/:*?"<>|`, r) {
+			return '_'
+		}
+		return r
+	}, name)
+}
+
 // serverPathSeparator returns the separator a server-side path uses — a
 // backslash for Windows paths, "/" otherwise. Deciding from the path itself
 // rather than from runtime.GOOS is what keeps a Linux client correct against
