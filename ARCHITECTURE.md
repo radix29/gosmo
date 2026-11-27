@@ -2767,6 +2767,18 @@ on a case-sensitive server a write on `Sales` leaves a pool on `sales` alone.
 cloning the options for another connection. A `NewServer` pool is never
 moved.
 
+On Azure SQL Database and Fabric SQL Database, database-scoped pooled calls
+instead use a lazily opened pool logging directly into their target database
+(`connection_database.go`). These pools clone the original connection options,
+including the shared Entra cache, and keep the original Server's identity and
+lifetime. Concurrent callers reuse a pool per database; Close cancels its work
+and closes every pool, and ReleaseIdleConnections includes their idle sessions.
+Transactions stay on their original session rather than escaping to a target
+pool. NewServer cannot clone an externally supplied pool, so it must already
+connect to the database being used. Capabilities on database-scoped engines
+proves accessibility through the target query, not HAS_DBACCESS in master;
+a target login failure remains an error rather than a cached false denial.
+
 ---
 
 ## Security
