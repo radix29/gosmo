@@ -872,8 +872,22 @@ func TestLiveScriptDatabaseReadsAClosedDatabaseFromInside(t *testing.T) {
 
 // A key SET ENCRYPTION OFF left behind is restated, and encryption is not
 // turned on: the replay has the same key, algorithm and protector, and is
-// not encrypted.
+// not encrypted. TRIPLE_DES_3KEY parses only under compatibility level 120
+// or lower (Msg 102 at 130+, on 13 and 17); the script sets the level before
+// its USE [db] section, so the replay creates the key.
 func TestLiveScriptDatabaseKeyLeftByEncryptionOff(t *testing.T) {
+	for _, tc := range []struct {
+		alg, dmv string
+		compat   int
+	}{
+		{"AES_192", "AES192", 0},
+		{"TRIPLE_DES_3KEY", "TRIPLE_DES_3KEY192", 120},
+	} {
+		t.Run(tc.alg, func(t *testing.T) { liveScriptDatabaseKeyLeftByEncryptionOff(t, tc.alg, tc.dmv, tc.compat) })
+	}
+}
+
+func liveScriptDatabaseKeyLeftByEncryptionOff(t *testing.T, alg, dmv string, compat int) {
 	db, ctx, done := liveDBTimeout(t, 3*time.Minute)
 	t.Cleanup(done)
 
@@ -912,12 +926,17 @@ func TestLiveScriptDatabaseKeyLeftByEncryptionOff(t *testing.T) {
 		}
 		t.Fatalf("%s never reached encryption state %d", n, want)
 	}
-	for _, q := range []string{
+	setup := []string{
 		"USE [master]; CREATE CERTIFICATE [" + cert + "] WITH SUBJECT = 'gosmo ScriptDatabase TDE off test'",
 		"CREATE DATABASE [" + name + "]",
-		"USE [" + name + "]; CREATE DATABASE ENCRYPTION KEY WITH ALGORITHM = AES_192 ENCRYPTION BY SERVER CERTIFICATE [" + cert + "]",
-		"USE [master]; ALTER DATABASE [" + name + "] SET ENCRYPTION ON",
-	} {
+	}
+	if compat != 0 {
+		setup = append(setup, fmt.Sprintf("ALTER DATABASE [%s] SET COMPATIBILITY_LEVEL = %d", name, compat))
+	}
+	setup = append(setup,
+		"USE ["+name+"]; CREATE DATABASE ENCRYPTION KEY WITH ALGORITHM = "+alg+" ENCRYPTION BY SERVER CERTIFICATE ["+cert+"]",
+		"USE [master]; ALTER DATABASE ["+name+"] SET ENCRYPTION ON")
+	for _, q := range setup {
 		if _, err := db.ExecContext(ctx, q); err != nil {
 			t.Fatalf("setup %.100q: %v", q, err)
 		}
@@ -935,7 +954,7 @@ func TestLiveScriptDatabaseKeyLeftByEncryptionOff(t *testing.T) {
 		t.Fatalf("ScriptDatabase: %v", err)
 	}
 	t.Logf("script:\n%s", script)
-	if !strings.Contains(script, "CREATE DATABASE ENCRYPTION KEY WITH ALGORITHM = AES_192 ENCRYPTION BY SERVER CERTIFICATE ["+cert+"];") ||
+	if !strings.Contains(script, "CREATE DATABASE ENCRYPTION KEY WITH ALGORITHM = "+alg+" ENCRYPTION BY SERVER CERTIFICATE ["+cert+"];") ||
 		strings.Contains(script, "ENCRYPTION ON") {
 		t.Fatalf("script does not restate the key alone")
 	}
@@ -953,7 +972,7 @@ WHERE  d.name = @p1`, n).Scan(&s); err != nil {
 		}
 		return s
 	}
-	if want, got := key(name), key(copyName); got != want || want != "0|1|AES192|"+cert {
+	if want, got := key(name), key(copyName); got != want || want != "0|1|"+dmv+"|"+cert {
 		t.Errorf("replayed key %q, source %q", got, want)
 	}
 }

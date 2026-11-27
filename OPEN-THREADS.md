@@ -186,8 +186,8 @@ refuses:
   comment says so — for an unencrypted database that the leftover key was
   not checked (2026-11-05). The protecting certificate or
   asymmetric key is named, not scripted — it must exist, with its private
-  key, where the script runs. `TRIPLE_DES_3KEY` and an asymmetric-key
-  protector are unit-tested only.
+  key, where the script runs. An asymmetric-key protector is unit-tested
+  only (needs EKM).
 - **Scoped configurations** are written only where they differ from the
   default (`is_value_default`; on 2016, which lacks it, the four documented
   defaults — any other row is skipped). The value's sql_variant base type
