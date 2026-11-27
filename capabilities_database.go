@@ -16,9 +16,9 @@ import (
 //
 // Obtain one with Database.Capabilities. Every method is nil-safe.
 type DatabaseCapabilities struct {
-	// Accessible reports HAS_DBACCESS: whether the login can open the
-	// database at all. When it is false the two maps are empty, because
-	// nothing inside the database could be asked — a USE into it fails.
+	// Accessible reports whether the login can open the database: HAS_DBACCESS
+	// on an instance, a direct target probe on database-scoped engines.
+	// When false the maps are empty because nothing inside could be asked.
 	//
 	// This is the one field to check before expanding a database in a tree or
 	// opening its properties: every folder under an inaccessible database
@@ -533,30 +533,30 @@ func (d *Database) HasPermission(ctx context.Context, permission string) (bool, 
 
 // Capabilities reports what the connected login may do inside d.
 //
-// Accessibility is settled first, at the *server* scope, and an inaccessible
-// database returns early with Accessible false and no error. That ordering is
-// required rather than tidy: the role and permission probe runs inside the
-// database, and Database.query opens with a USE, which is itself what fails
-// for a login that cannot connect there.
+// On an instance, HAS_DBACCESS settles accessibility before the in-database
+// probe. Database-scoped engines instead prove access through a direct target
+// connection: the logical server's master cannot assess another database's
+// access. A failed target connection is an error, not a cached negative probe.
 func (d *Database) Capabilities(ctx context.Context) (*DatabaseCapabilities, error) {
-	var access sql.NullBool
-	if err := d.server.queryRowScan(ctx, "SELECT HAS_DBACCESS(@p1)", []any{d.Name}, &access); err != nil {
-		return nil, fmt.Errorf("gosmo: read capabilities for database %q: %w", d.Name, err)
-	}
-	// NULL means the database does not exist or is not visible; either way
-	// there is nothing inside it to ask about.
-	if !access.Valid || !access.Bool {
-		return &DatabaseCapabilities{
-			Roles:                        map[string]bool{},
-			Permissions:                  map[string]CapabilityState{},
-			SchemaPermissions:            map[string]map[string]CapabilityState{},
-			ExplicitSchemaPermissions:    map[string]map[string]CapabilityState{},
-			ExplicitDatabasePermissions:  map[string]CapabilityState{},
-			ExplicitPrincipalPermissions: map[string]map[string]CapabilityState{},
-			ObjectPermissions:            map[string]map[string]CapabilityState{},
-			ColumnPermissions:            map[string]map[string]CapabilityState{},
-			SecurablePermissions:         map[string]map[string]CapabilityState{},
-		}, nil
+	if !d.server.info.IsDatabaseScoped() {
+		var access sql.NullBool
+		if err := d.server.queryRowScan(ctx, "SELECT HAS_DBACCESS(@p1)", []any{d.Name}, &access); err != nil {
+			return nil, fmt.Errorf("gosmo: read capabilities for database %q: %w", d.Name, err)
+		}
+		// NULL means the database does not exist or is not visible.
+		if !access.Valid || !access.Bool {
+			return &DatabaseCapabilities{
+				Roles:                        map[string]bool{},
+				Permissions:                  map[string]CapabilityState{},
+				SchemaPermissions:            map[string]map[string]CapabilityState{},
+				ExplicitSchemaPermissions:    map[string]map[string]CapabilityState{},
+				ExplicitDatabasePermissions:  map[string]CapabilityState{},
+				ExplicitPrincipalPermissions: map[string]map[string]CapabilityState{},
+				ObjectPermissions:            map[string]map[string]CapabilityState{},
+				ColumnPermissions:            map[string]map[string]CapabilityState{},
+				SecurablePermissions:         map[string]map[string]CapabilityState{},
+			}, nil
+		}
 	}
 
 	q, args := capabilityQuery(
@@ -625,6 +625,8 @@ func (d *Database) Capabilities(ctx context.Context) (*DatabaseCapabilities, err
 // keyed by database_id — what DatabaseCapabilities.Accessible answers for
 // one database, for the whole instance in one round trip, where
 // Capabilities costs a probe per database.
+// On database-scoped engines these answers are limited to the current pool's
+// scope; use Database.Capabilities to test a different database by direct login.
 //
 // True means the login can open the database now. A database that is not
 // ONLINE reads false for every login, sysadmin included (verified on majors

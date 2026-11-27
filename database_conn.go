@@ -47,8 +47,12 @@ func (d *Database) withConn(ctx context.Context, fn func(context.Context, sqlCon
 		}
 		return err
 	}
+	pool, err := d.server.databasePool(d.Name)
+	if err != nil {
+		return err
+	}
 	conn, err := withRetry(ctx, func() (*sql.Conn, error) {
-		conn, err := d.server.db.Conn(ctx)
+		conn, err := pool.Conn(ctx)
 		if err != nil {
 			return nil, fmt.Errorf("gosmo: acquire connection: %w", err)
 		}
@@ -105,9 +109,13 @@ func (d *Database) withSessionIn(ctx context.Context, fn func(context.Context, *
 	}
 	ctx, release := d.server.bound(ctx)
 	defer release()
+	pool, err := d.server.databasePool(d.Name)
+	if err != nil {
+		return err
+	}
 	var home string
 	conn, err := withRetry(ctx, func() (*sql.Conn, error) {
-		conn, err := d.server.db.Conn(ctx)
+		conn, err := pool.Conn(ctx)
 		if err != nil {
 			return nil, fmt.Errorf("gosmo: acquire connection: %w", err)
 		}
@@ -318,8 +326,13 @@ func (d *Database) query(ctx context.Context, q string, args ...any) (*dbRows, e
 		release()
 		return nil, err
 	}
+	pool, err := d.server.databasePool(d.Name)
+	if err != nil {
+		release()
+		return nil, err
+	}
 	rows, err := withRetry(ctx, func() (*dbRows, error) {
-		conn, err := d.server.db.Conn(ctx)
+		conn, err := pool.Conn(ctx)
 		if err != nil {
 			return nil, fmt.Errorf("gosmo: acquire connection: %w", err)
 		}
@@ -403,8 +416,12 @@ func (d *Database) queryRow(ctx context.Context, scan func(*sql.Row) error, q st
 	if err != nil {
 		return err
 	}
+	pool, err := d.server.databasePool(d.Name)
+	if err != nil {
+		return err
+	}
 	_, err = withRetry(ctx, func() (struct{}, error) {
-		conn, err := d.server.db.Conn(ctx)
+		conn, err := pool.Conn(ctx)
 		if err != nil {
 			return struct{}{}, fmt.Errorf("gosmo: acquire connection: %w", err)
 		}

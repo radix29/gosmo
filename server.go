@@ -30,7 +30,8 @@ type Server struct {
 
 	// login is the pool's connector when Connect opened it, nil for
 	// NewServer; see InitialDatabase.
-	login *retargetingConnector
+	login     *retargetingConnector
+	databases databasePoolCache
 
 	// ctx is the Server's lifetime, cancelled by Close. Every statement gosmo
 	// runs is bounded by it as well as by the caller's ctx (see bound): closing
@@ -47,12 +48,12 @@ func newServer(db *sql.DB) *Server {
 }
 
 // Close cancels every statement still running through s, then closes the
-// pool. Work a caller rooted in Context stops with it.
+// pools. Work a caller rooted in Context stops with it.
 func (s *Server) Close() error {
 	if s.cancel != nil {
 		s.cancel()
 	}
-	return s.db.Close()
+	return errors.Join(s.closeDatabasePools(), s.db.Close())
 }
 
 // Context is cancelled by Close. A caller's own background work that should
@@ -414,17 +415,25 @@ func (s *Server) ReleaseIdleConnections(ctx context.Context) error {
 	if Scripting(ctx) {
 		return nil
 	}
-	for range s.db.Stats().Idle {
-		if s.db.Stats().Idle == 0 {
-			break
+	s.databases.mu.Lock()
+	pools := []*sql.DB{s.db}
+	for _, pool := range s.databases.pools {
+		pools = append(pools, pool)
+	}
+	s.databases.mu.Unlock()
+	for _, pool := range pools {
+		for range pool.Stats().Idle {
+			if pool.Stats().Idle == 0 {
+				break
+			}
+			conn, err := pool.Conn(ctx)
+			if err != nil {
+				return fmt.Errorf("gosmo: release idle connections: %w", err)
+			}
+			// Not Close: that would return it to the idle list, which is what
+			// this is emptying.
+			DiscardConn(conn)
 		}
-		conn, err := s.db.Conn(ctx)
-		if err != nil {
-			return fmt.Errorf("gosmo: release idle connections: %w", err)
-		}
-		// Not Close: that would return it to the idle list, which is what
-		// this is emptying.
-		DiscardConn(conn)
 	}
 	return nil
 }

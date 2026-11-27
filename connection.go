@@ -307,15 +307,7 @@ func Connect(ctx context.Context, opts ConnectionOptions) (*Server, error) {
 	}
 	pool := sql.OpenDB(login)
 
-	// Pool tuning
-	if opts.MaxOpenConns > 0 {
-		pool.SetMaxOpenConns(opts.MaxOpenConns)
-	}
-	pool.SetMaxIdleConns(opts.MaxIdleConns)
-	if opts.ConnMaxLifetime > 0 {
-		pool.SetConnMaxLifetime(opts.ConnMaxLifetime)
-	}
-	pool.SetConnMaxIdleTime(opts.ConnMaxIdleTime)
+	configurePool(pool, opts)
 
 	if err = pool.PingContext(ctx); err != nil {
 		pool.Close()
@@ -344,6 +336,8 @@ func Connect(ctx context.Context, opts ConnectionOptions) (*Server, error) {
 // db must be a SQL Server pool — gosmo builds T-SQL and reads system views,
 // and nothing here checks the dialect. Ownership passes to the returned
 // Server: Close closes db, as it does for a pool Connect opened.
+// On a database-scoped engine db must already log in to the target database;
+// unlike Connect, NewServer has no connection options to open other databases.
 //
 // This is the inverse of DB(), and the seam that makes gosmo's read and
 // write paths reachable from a caller's tests. Without it a Server can only
