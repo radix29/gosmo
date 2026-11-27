@@ -16,6 +16,13 @@ classDiagram
         +State string
     }
 
+    class BuiltinPermission {
+        +Class string
+        +Name string
+        Engine vocabulary, not the caller's grants.
+        Unavailable on Fabric Warehouse.
+    }
+
     class Credential {
         -server *Server
         +CredentialID int

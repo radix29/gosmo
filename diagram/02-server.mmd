@@ -43,6 +43,7 @@ classDiagram
         +ServerRoleRef(name) *ServerRole
         +CreateServerRole(req) *ServerRole
         +ServerRoleMembers(role) []*RoleMember
+        +BuiltinPermissions() []BuiltinPermission
         +LinkedServers() []*LinkedServer
         +Configurations() []*ConfigurationOption
         +ConfigurationRef(name) *ConfigurationOption
