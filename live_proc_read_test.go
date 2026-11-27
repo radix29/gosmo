@@ -1,11 +1,11 @@
 //go:build livedb
 
-// Live proof for procRead (OPEN-THREADS.md § Idle pooled connections camp in
-// the last database written to): a database-scoped read sent as an RPC call of
-// [db].sys.sp_executesql, which every pooled read is, against the USE batch
-// it replaced (useBatch, sent here by hand on a pooled connection). Each test
-// runs both, so a test that passes for procRead and fails for useBatch shows
-// it can see the difference it claims.
+// Live proof for procRead (ARCHITECTURE.md § Connection helpers (internal)):
+// a database-scoped read sent as an RPC call of [db].sys.sp_executesql,
+// which every pooled read is, against the USE batch it replaced (useBatch,
+// sent here by hand on a pooled connection). Each test runs both, so a test
+// that passes for procRead and fails for useBatch shows it can see the
+// difference it claims.
 //
 //	go test -tags livedb . -run TestLiveProcRead -v \
 //	  -livedb 'sqlserver://sa:PASS@host?TrustServerCertificate=true'
@@ -212,7 +212,9 @@ func TestLiveProcReadRefusesADatabaseItCannotEnter(t *testing.T) {
 // against. Two databases are read, dropped and created again in the other
 // order, so they swap ids, as a rerun's drops and creates did on 17: each read
 // must still find its own database's marker. The literal [db].sys.… form from
-// master runs alongside as the control.
+// master runs alongside as the control — and on 13, 14 and 17 it did not
+// reproduce the trap (why is unknown), so this shows procRead reads the right
+// database after a swap, not that it would have caught the trap.
 func TestLiveProcReadSurvivesAnIdSwap(t *testing.T) {
 	db, ctx, done := liveDBTimeout(t, 3*time.Minute)
 	defer done()

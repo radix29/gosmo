@@ -1,12 +1,12 @@
 //go:build livedb
 
-// Live proof for execIn (OPEN-THREADS.md § Idle pooled connections camp in
-// the last database written to): a database-scoped write sent as an RPC call
-// of [db].sys.sp_executesql, which every pooled write is, against the USE it
-// replaced (a pooled connection switched by hand, then the statement) — the
-// five rules live_proc_read_test.go proves for reads, each run both ways so a
-// test that passes for execIn and fails for USE shows it can see the
-// difference it claims. Then the shapes a write takes that a read does not:
+// Live proof for execIn (ARCHITECTURE.md § Connection helpers (internal)):
+// a database-scoped write sent as an RPC call of [db].sys.sp_executesql,
+// which every pooled write is, against the USE it replaced (a pooled
+// connection switched by hand, then the statement) — the five rules
+// live_proc_read_test.go proves for reads, each run both ways so a test that
+// passes for execIn and fails for USE shows it can see the difference it
+// claims. Then the shapes a write takes that a read does not:
 // statements that must open their batch, atomic batches, ExecProc, writes
 // that return a row, plans and bulk copy.
 //
