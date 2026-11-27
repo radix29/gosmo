@@ -44,3 +44,21 @@ func TestSnapshotFilePathsAreDistinct(t *testing.T) {
 		}
 	}
 }
+
+// TestSnapshotFilePathIsFileNameSafe: the snapshot name is a sysname and was
+// put into the sparse-file path unchanged, so a time typed into it ("10:30")
+// made the path an NTFS stream and a "/" named a missing directory. Two
+// names differing only by an unsafe character map to one safe name; the
+// taken fallback still keeps their paths apart.
+func TestSnapshotFilePathIsFileNameSafe(t *testing.T) {
+	taken := map[string]bool{}
+	if got, want := snapshotFilePath(`D:\data\Sales.mdf`, "Sales", "Sales/2026:1", taken), `D:\data\Sales_Sales_2026_1.ss`; got != want {
+		t.Errorf("Sales/2026:1 → %q, want %q", got, want)
+	}
+	taken = map[string]bool{}
+	a := snapshotFilePath(`/d/x.mdf`, "x", "a:b", taken)
+	b := snapshotFilePath(`/d/x.mdf`, "x", "a/b", taken)
+	if a != `/d/x_a_b.ss` || b == a || ServerPathDir(b) != "/d" {
+		t.Errorf("a:b → %q, a/b → %q: want /d/x_a_b.ss and a distinct path in /d", a, b)
+	}
+}

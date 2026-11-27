@@ -186,8 +186,8 @@ refuses:
   comment says so — for an unencrypted database that the leftover key was
   not checked (2026-11-05). The protecting certificate or
   asymmetric key is named, not scripted — it must exist, with its private
-  key, where the script runs. `TRIPLE_DES_3KEY` and an asymmetric-key
-  protector are unit-tested only.
+  key, where the script runs. An asymmetric-key protector is unit-tested
+  only (needs EKM).
 - **Scoped configurations** are written only where they differ from the
   default (`is_value_default`; on 2016, which lacks it, the four documented
   defaults — any other row is skipped). The value's sql_variant base type
@@ -303,62 +303,6 @@ user or group to name.
 What to check when one exists: that `FROM EXTERNAL PROVIDER WITH OBJECT_ID =
 …, DEFAULT_SCHEMA = …` parses in that order, and that an Entra login takes
 `DEFAULT_LANGUAGE` through `ALTER LOGIN` as it does `DEFAULT_DATABASE`.
-
-## Idle pooled connections camp in the last database written to (fixed)
-
-**Reads fixed 2026-10-23 (`procRead`, `proc_read.go`).** A pooled
-`Database.query`/`queryRow` is an RPC call of `[db].sys.sp_executesql`, so
-the session never leaves its login database. Before, it sent `USE [db]; …`
-(`useBatch`) and went back to the pool still in `db`, holding a shared
-database lock until the next checkout reset it: someone else's `RESTORE`,
-`SET OFFLINE` (no ROLLBACK) or `SET SINGLE_USER` failed "Exclusive access
-could not be obtained", and an `AUTO_CLOSE` database never closed. Only a read
-inside `InTransaction` still uses `useBatch`, since that session is meant to
-stay in `db`.
-
-Evidence, on 13, 14 and 17: the five `live_proc_read_test.go` tests (no
-session left behind; another session's `RESTORE … WITH REPLACE` straight after
-a read succeeds where `useBatch` fails Msg 3101; 911/924/942 refuse the read;
-reads stay right across a database-id swap; parameters bind in `db`'s
-collation, where `useBatch` fails Msg 468 uncollated), `TestLiveVersionSweep`,
-the collation tests and the whole `livedb` suite on procRead. A can't-enter
-error is an `EntryError` through `recheckEntry`. The id-swap
-test's control, a literal `[db].sys.…` read from master, did **not** reproduce
-the plan-cache trap of `CLAUDE.md` § Read another database's catalog (why is
-unknown), so procRead is shown to read the right database after a swap, but
-the test cannot show it would have caught the trap.
-
-**Writes fixed 2026-10-24 (`execIn`, `database.go`).** A pooled
-`Database.exec` is the same RPC call, in `procRead`'s form, never retried;
-`ExecProc` calls `[db].[schema].[proc]`; `Sequence.NextValue` and
-`DatabaseFileInfo.Shrink` go through `execIn` too. `capturePlan` and
-`BulkInsert`, which need a session in `db` across calls, switch it with `USE`
-and back (`withSessionIn`), discarding a session that cannot switch back.
-Inside `InTransaction` everything still runs on the transaction's session
-switched to `db`; `InTransaction` now switches it home before COMMIT or
-ROLLBACK (`goHome`), where before it went back to the pool still in `db`.
-
-Evidence, on 13, 14 and 17: the five rules mirrored for writes in
-`live_proc_write_test.go`, each against a hand-switched `USE` control (no
-session left behind where `USE` leaves one; a `RESTORE … WITH REPLACE`
-straight after a write succeeds where `USE` fails Msg 3101; 911/924/942
-refuse the write as an `EntryError` and nothing lands in `master`; writes
-land right across an id swap; parameters bind in `db`'s collation where a
-`USE` batch fails Msg 468), plus `TestLiveProcWriteShapes`: `CREATE
-SCHEMA/VIEW/PROCEDURE/FUNCTION/TRIGGER/SEQUENCE` each open their batch inside
-the call, `RowsAffected` comes back, `execAtomic` commits and rolls back with
-the statement's own error (Msg 544, no 266), `ExecProc` returns OUTPUT and the
-return status and runs `sys.sp_rename` in `db`, a `SET` in a write ends with
-the call, and plans and bulk copy leave no session behind.
-
-**Pinned connections fixed 2026-11-26 (`PinnedConn.Release`, `retry.go`).**
-`AcquireConn` reads `DB_NAME()` in its prologue and returns a `*PinnedConn`
-whose `Release` pools the connection only if the session is still in that
-database, discarding it otherwise or when the read fails. Only a caller that
-closes `PinnedConn.Conn` directly can still park a session (as
-`live_release_idle_test.go` does on purpose); `ReleaseIdleConnections` still
-frees those before this `Server`'s exclusive writes. gossms dropped its 60 s
-`ConnMaxIdleTime` for gosmo's default.
 
 ## Live tests leave non-backup files on 13 and 14 — closed when `GOSMO_LIVE_SSH_HOST` is set
 

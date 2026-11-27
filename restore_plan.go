@@ -176,7 +176,7 @@ func (r RestoreRelocation) Moves(files []*BackupFile, source, target string) []R
 		} else if ext != "" {
 			ext = ServerPathExt(name) // the kept name's own, if any
 		}
-		stem := fileNameSafe(strings.TrimSuffix(name, ext))
+		stem := FileNameSafe(strings.TrimSuffix(name, ext))
 		path := JoinServerPath(dir, stem+ext)
 		// NameKey under the empty (case-insensitive) collation folds case.
 		for n := 2; taken[NameKey("", path)]; n++ {
@@ -186,17 +186,6 @@ func (r RestoreRelocation) Moves(files []*BackupFile, source, target string) []R
 		moves = append(moves, RelocateFile{LogicalName: f.LogicalName, PhysicalName: path})
 	}
 	return moves
-}
-
-// fileNameSafe replaces each character a Windows file name cannot hold with
-// "_".
-func fileNameSafe(name string) string {
-	return strings.Map(func(r rune) rune {
-		if r < 0x20 || strings.ContainsRune(`\/:*?"<>|`, r) {
-			return '_'
-		}
-		return r
-	}, name)
 }
 
 // FromHeader points o at backup set h: the verb its type restores with

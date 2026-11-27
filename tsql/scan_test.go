@@ -1,6 +1,7 @@
 package tsql
 
 import (
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -45,6 +46,17 @@ func TestSpans(t *testing.T) {
 		{"-- a\r\nb", "line:-- a | code:\r\nb"},
 		{"SELECT 1 -- c\rDROP TABLE t", "code:SELECT 1  | line:-- c | code:\rDROP TABLE t"},
 		{"'/*' */", "lit:'/*' | code: */"},
+		// An exponent's sign is the number's even with no digits after it:
+		// the server reads "1e--5" as 1e- then -5, not a comment.
+		{"SELECT 1e--5 DELETE t", "code:SELECT 1e--5 DELETE t"},
+		{"1.e-- x 1E+--c", "code:1.e-- x 1E+ | line:--c"},
+		{"1e---c", "code:1e- | line:--c"},
+		// Inside a word, after money's '$', in hex: no exponent, a comment.
+		{"a1e--c", "code:a1e | line:--c"},
+		{"é1e--c", "code:é1e | line:--c"},
+		{"$1e--c", "code:$1e | line:--c"},
+		{"0x1e--c", "code:0x1e | line:--c"},
+		{"'x'1e--5 [y]1e--5", "lit:'x' | code:1e--5  | bracket:[y] | code:1e--5"},
 	} {
 		if got := spanString(tc.in); got != tc.want {
 			t.Errorf("Spans(%q)\n got %s\nwant %s", tc.in, got, tc.want)
@@ -85,7 +97,7 @@ func FuzzSpans(f *testing.F) {
 	for _, s := range []string{
 		"", "'a''b'", "N'x'", "IN'x'", "éN'x'", "[a]]'b]", `"a""b"`, "-- x", "-- x\ny",
 		"-- x\ry", "-- x\r\ny", "/* /* */ */", "/* /*", "'open", "[open", `"open`, "SELECT @p1, '@p2' -- @p2\n/* @p1 */ [@p1] \"@p2\"",
-		"([sec].[fn)x]([c], N')'))",
+		"([sec].[fn)x]([c], N')'))", "SELECT 1e--5, @p1", "1.e-- x 1E+--c a1e--c",
 	} {
 		f.Add(s)
 	}
@@ -111,6 +123,9 @@ func FuzzSpans(f *testing.F) {
 		if at != len(s) {
 			t.Fatalf("%q: spans end at %d", s, at)
 		}
+		if exponentDash.MatchString(s) {
+			return // the one place Spans and the legacy scans part: see TestSpans
+		}
 		if want := legacySkipped(s); !slices.Equal(skipped, want) {
 			t.Fatalf("%q: skipped bytes\n got %v\nwant %v", s, skipped, want)
 		}
@@ -119,6 +134,10 @@ func FuzzSpans(f *testing.F) {
 		}
 	})
 }
+
+// exponentDash matches a number's exponent sign followed by '-', which the
+// legacy scans below read as the start of a comment and the server does not.
+var exponentDash = regexp.MustCompile(`[0-9.][eE]--`)
 
 // legacySkipped is scriptCodeSpans as it stood before Spans, reduced to
 // which bytes of q it skipped.
